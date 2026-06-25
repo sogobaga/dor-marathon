@@ -1,0 +1,11 @@
+# 統一換行符：checkout 用 LF，避免 Windows CRLF 污染
+* text=auto eol=lf
+
+# Shell scripts 強制 LF（在 Docker/Linux 執行）
+*.sh text eol=lf
+Makefile text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.ico binary

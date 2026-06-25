@@ -1,0 +1,22 @@
+# 環境變數（絕對不能進 git）
+.env
+.env.local
+*.env
+
+# Go
+services/*/tmp/
+services/*/vendor/
+
+# Node
+apps/*/node_modules/
+apps/*/.next/
+apps/*/out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
