@@ -3,8 +3,6 @@ package middleware
 import (
 	"context"
 	"net/http"
-
-	"github.com/dor/api/internal/auth"
 )
 
 // roleKey 用於在 context 存放 role（與 userID 共存）

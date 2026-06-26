@@ -99,7 +99,7 @@ func (m *Manager) GetOrCreateHub(raceID string) *Hub {
 		broadcast: make(chan []byte, 256),
 		join:      make(chan *Client, 64),
 		leave:     make(chan *Client, 64),
-		rdb:       rdb,
+		rdb:       m.rdb,
 		cancel:    cancel,
 	}
 

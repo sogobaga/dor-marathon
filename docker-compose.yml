@@ -29,7 +29,7 @@ services:
       retries: 5
 
   pgbouncer:
-    image: bitnami/pgbouncer:1.22.1
+    image: bitnamilegacy/pgbouncer:1.22.1
     environment:
       POSTGRESQL_HOST: postgres
       POSTGRESQL_PORT: 5432
@@ -52,7 +52,8 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - DATABASE_URL=postgres://dor:dor_dev_secret@pgbouncer:6432/dor_db
+      # 本地開發直連 Postgres（pgbouncer 連線池留待正式環境）
+      - DATABASE_URL=postgres://dor:dor_dev_secret@postgres:5432/dor_db?sslmode=disable
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=dev_jwt_secret_change_in_production
       - ENV=development
@@ -70,7 +71,8 @@ services:
       context: ./services/worker
       dockerfile: Dockerfile.dev
     environment:
-      - DATABASE_URL=postgres://dor:dor_dev_secret@pgbouncer:6432/dor_db
+      # 本地開發直連 Postgres（pgbouncer 連線池留待正式環境）
+      - DATABASE_URL=postgres://dor:dor_dev_secret@postgres:5432/dor_db?sslmode=disable
       - REDIS_URL=redis://redis:6379
       - ENV=development
     volumes:
