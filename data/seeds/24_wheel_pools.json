@@ -1,0 +1,9 @@
+[
+  { "pool_id": "wp-hunt-lp50",  "race_id": "hunt2026", "prize_code": "lp50",  "prize_kind": "line",    "prize_label": "LINE Points",  "prize_amount": 50,  "weight": 26, "color": "gold",   "is_active": 1 },
+  { "pool_id": "wp-hunt-lp100", "race_id": "hunt2026", "prize_code": "lp100", "prize_kind": "line",    "prize_label": "LINE Points",  "prize_amount": 100, "weight": 14, "color": "gold",   "is_active": 1 },
+  { "pool_id": "wp-hunt-lp300", "race_id": "hunt2026", "prize_code": "lp300", "prize_kind": "line",    "prize_label": "LINE Points",  "prize_amount": 300, "weight": 4,  "color": "gold",   "is_active": 1 },
+  { "pool_id": "wp-hunt-card1", "race_id": "hunt2026", "prize_code": "card",  "prize_kind": "sticker", "prize_label": "九宮格集點卡",  "prize_amount": 1,   "weight": 30, "color": "violet", "is_active": 1 },
+  { "pool_id": "wp-hunt-card2", "race_id": "hunt2026", "prize_code": "card2", "prize_kind": "sticker", "prize_label": "集點卡 ×2",     "prize_amount": 2,   "weight": 8,  "color": "violet", "is_active": 1 },
+  { "pool_id": "wp-hunt-again", "race_id": "hunt2026", "prize_code": "again", "prize_kind": "again",   "prize_label": "再轉一次",       "prize_amount": 0,   "weight": 10, "color": "fug",    "is_active": 1 },
+  { "pool_id": "wp-hunt-miss",  "race_id": "hunt2026", "prize_code": "miss",  "prize_kind": "miss",    "prize_label": "銘謝惠顧",       "prize_amount": 0,   "weight": 8,  "color": "dim",    "is_active": 1 }
+]

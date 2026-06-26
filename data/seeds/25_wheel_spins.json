@@ -1,0 +1,44 @@
+[
+  {
+    "spin_id": "spin-ziachen-001",
+    "user_id": "usr-ziachen",
+    "race_id": "hunt2026",
+    "pool_id": "wp-hunt-card1",
+    "spun_at": "2026-06-13 21:00:00"
+  },
+  {
+    "spin_id": "spin-ziachen-002",
+    "user_id": "usr-ziachen",
+    "race_id": "hunt2026",
+    "pool_id": "wp-hunt-lp50",
+    "spun_at": "2026-06-14 21:05:00"
+  },
+  {
+    "spin_id": "spin-siyu-001",
+    "user_id": "usr-siyu",
+    "race_id": "hunt2026",
+    "pool_id": "wp-hunt-card2",
+    "spun_at": "2026-06-12 22:10:00"
+  },
+  {
+    "spin_id": "spin-siyu-002",
+    "user_id": "usr-siyu",
+    "race_id": "hunt2026",
+    "pool_id": "wp-hunt-again",
+    "spun_at": "2026-06-12 22:11:00"
+  },
+  {
+    "spin_id": "spin-siyu-003",
+    "user_id": "usr-siyu",
+    "race_id": "hunt2026",
+    "pool_id": "wp-hunt-lp100",
+    "spun_at": "2026-06-12 22:12:00"
+  },
+  {
+    "spin_id": "spin-siyu-004",
+    "user_id": "usr-siyu",
+    "race_id": "hunt2026",
+    "pool_id": "wp-hunt-miss",
+    "spun_at": "2026-06-13 21:30:00"
+  }
+]

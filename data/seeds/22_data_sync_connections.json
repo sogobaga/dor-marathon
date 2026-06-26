@@ -1,0 +1,42 @@
+[
+  {
+    "conn_id": "dsc-yifan-apple",
+    "user_id": "usr-yifan",
+    "provider": "apple_health",
+    "is_connected": 1,
+    "connected_at": "2026-05-11 08:00:00",
+    "disconnected_at": null
+  },
+  {
+    "conn_id": "dsc-ziachen-garmin",
+    "user_id": "usr-ziachen",
+    "provider": "garmin",
+    "is_connected": 1,
+    "connected_at": "2025-08-01 10:00:00",
+    "disconnected_at": null
+  },
+  {
+    "conn_id": "dsc-siyu-strava",
+    "user_id": "usr-siyu",
+    "provider": "strava",
+    "is_connected": 1,
+    "connected_at": "2025-09-15 14:00:00",
+    "disconnected_at": null
+  },
+  {
+    "conn_id": "dsc-siyu-apple",
+    "user_id": "usr-siyu",
+    "provider": "apple_health",
+    "is_connected": 0,
+    "connected_at": "2025-09-10 10:00:00",
+    "disconnected_at": "2025-09-15 14:00:00"
+  },
+  {
+    "conn_id": "dsc-yaowen-samsung",
+    "user_id": "usr-yaowen",
+    "provider": "samsung_health",
+    "is_connected": 1,
+    "connected_at": "2026-05-22 09:00:00",
+    "disconnected_at": null
+  }
+]

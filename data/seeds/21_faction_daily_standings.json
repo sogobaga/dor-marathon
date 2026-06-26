@@ -1,0 +1,74 @@
+[
+  {
+    "standing_id": "fds-hunt-fug-0612",
+    "race_id": "hunt2026",
+    "faction_id": "fct-hunt-fug",
+    "standing_date": "2026-06-12",
+    "percentage": 55.00,
+    "escaped_count": 220,
+    "captured_count": 0,
+    "member_count": 2641,
+    "active_count": 1820,
+    "total_km": 5248.40
+  },
+  {
+    "standing_id": "fds-hunt-hunt-0612",
+    "race_id": "hunt2026",
+    "faction_id": "fct-hunt-hunt",
+    "standing_date": "2026-06-12",
+    "percentage": 45.00,
+    "escaped_count": 0,
+    "captured_count": 180,
+    "member_count": 2171,
+    "active_count": 1420,
+    "total_km": 4010.20
+  },
+  {
+    "standing_id": "fds-hunt-fug-0613",
+    "race_id": "hunt2026",
+    "faction_id": "fct-hunt-fug",
+    "standing_date": "2026-06-13",
+    "percentage": 56.00,
+    "escaped_count": 490,
+    "captured_count": 0,
+    "member_count": 2641,
+    "active_count": 2050,
+    "total_km": 6892.80
+  },
+  {
+    "standing_id": "fds-hunt-hunt-0613",
+    "race_id": "hunt2026",
+    "faction_id": "fct-hunt-hunt",
+    "standing_date": "2026-06-13",
+    "percentage": 44.00,
+    "escaped_count": 0,
+    "captured_count": 380,
+    "member_count": 2171,
+    "active_count": 1680,
+    "total_km": 5124.60
+  },
+  {
+    "standing_id": "fds-hunt-fug-0614",
+    "race_id": "hunt2026",
+    "faction_id": "fct-hunt-fug",
+    "standing_date": "2026-06-14",
+    "percentage": 58.00,
+    "escaped_count": 742,
+    "captured_count": 0,
+    "member_count": 2641,
+    "active_count": 2290,
+    "total_km": 8740.50
+  },
+  {
+    "standing_id": "fds-hunt-hunt-0614",
+    "race_id": "hunt2026",
+    "faction_id": "fct-hunt-hunt",
+    "standing_date": "2026-06-14",
+    "percentage": 42.00,
+    "escaped_count": 0,
+    "captured_count": 531,
+    "member_count": 2171,
+    "active_count": 1820,
+    "total_km": 6230.40
+  }
+]

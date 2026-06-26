@@ -1,0 +1,171 @@
+/* ============================================================
+   DOR CLOUD MARATHON — Design System tokens + shared styles
+   Dark cinematic running-game aesthetic.
+   Faction duality: 逃亡者 = mint signal-green · 獵人 = crimson chase-red
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+
+:root {
+  /* surfaces */
+  --bg-0:  #07080b;
+  --bg-1:  #0d0f14;
+  --bg-2:  #161a23;
+  --bg-3:  #1e2330;
+  --bg-4:  #272d3c;
+
+  /* lines */
+  --line:        rgba(255,255,255,0.07);
+  --line-2:      rgba(255,255,255,0.12);
+  --line-strong: rgba(255,255,255,0.20);
+
+  /* text */
+  --tx:      #ECEEF3;
+  --tx-dim:  #99A1B2;
+  --tx-faint:#5A6173;
+
+  /* faction + accents */
+  --fug:     #2DE59A;   /* 逃亡者 / signal / GO */
+  --fug-deep:#0c3b2c;
+  --hunt:    #FF4B5C;   /* 獵人 / chase / danger */
+  --hunt-deep:#3d1118;
+  --gold:    #FFC24B;   /* LINE Points / reward */
+  --gold-deep:#3a2b0e;
+  --violet:  #9D8CFF;   /* collectible / 公仔 / special */
+  --violet-deep:#241f47;
+
+  /* glows */
+  --glow-fug:  0 0 24px rgba(45,229,154,0.35);
+  --glow-hunt: 0 0 24px rgba(255,75,92,0.35);
+  --glow-gold: 0 0 22px rgba(255,194,75,0.35);
+
+  --r-sm: 10px;
+  --r:    16px;
+  --r-lg: 22px;
+  --r-xl: 28px;
+
+  --font-disp: 'Space Grotesk','Noto Sans TC',system-ui,sans-serif;
+  --font-body: 'Noto Sans TC','Space Grotesk',system-ui,sans-serif;
+  --font-mono: 'Space Mono',ui-monospace,monospace;
+}
+
+* { box-sizing: border-box; }
+
+/* board background for the canvas / overview */
+.dor-board {
+  margin: 0;
+  background: #0a0b0e;
+  color: var(--tx);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- the in-phone app surface ---- */
+.dor-app {
+  position: relative;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 50% -10%, #14202b 0%, transparent 55%),
+    var(--bg-1);
+  color: var(--tx);
+  font-family: var(--font-body);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dor-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+.dor-scroll::-webkit-scrollbar { width: 0; height: 0; }
+
+/* faint grid texture overlay */
+.dor-grid-tex {
+  position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(180deg, #000 0%, transparent 60%);
+}
+
+/* ---------- typography helpers ---------- */
+.disp   { font-family: var(--font-disp); }
+.mono   { font-family: var(--font-mono); }
+.eyebrow{
+  font-family: var(--font-mono);
+  font-size: 11px; letter-spacing: .22em; text-transform: uppercase;
+  color: var(--tx-faint);
+}
+.num    { font-family: var(--font-disp); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ---------- chips / badges ---------- */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .04em;
+  padding: 4px 9px; border-radius: 999px;
+  border: 1px solid var(--line-2); color: var(--tx-dim);
+  background: rgba(255,255,255,0.03);
+  white-space: nowrap;
+}
+.chip.fug  { color: var(--fug);  border-color: rgba(45,229,154,.4);  background: rgba(45,229,154,.08); }
+.chip.hunt { color: var(--hunt); border-color: rgba(255,75,92,.4);   background: rgba(255,75,92,.08); }
+.chip.gold { color: var(--gold); border-color: rgba(255,194,75,.4);  background: rgba(255,194,75,.08); }
+.chip.violet{color: var(--violet);border-color: rgba(157,140,255,.4);background: rgba(157,140,255,.08);}
+
+/* ---------- buttons ---------- */
+.btn {
+  font-family: var(--font-disp); font-weight: 600; font-size: 16px;
+  border: none; border-radius: 14px; padding: 15px 20px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  cursor: pointer; width: 100%; transition: transform .08s ease, filter .15s ease;
+  letter-spacing: .01em;
+}
+.btn:active { transform: scale(.975); }
+.btn-primary { background: var(--fug); color: #05140e; box-shadow: var(--glow-fug); }
+.btn-hunt    { background: var(--hunt); color: #fff; box-shadow: var(--glow-hunt); }
+.btn-gold    { background: var(--gold); color: #2a1d00; box-shadow: var(--glow-gold); }
+.btn-ghost   { background: rgba(255,255,255,0.05); color: var(--tx); border: 1px solid var(--line-2); }
+.btn:disabled{ filter: grayscale(.6) brightness(.6); cursor: default; box-shadow: none; }
+
+/* ---------- cards ---------- */
+.card {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  position: relative;
+}
+.card-pad { padding: 16px; }
+
+/* progress bar */
+.bar { height: 8px; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; position: relative; }
+.bar > i { display: block; height: 100%; border-radius: 999px; }
+
+/* divider */
+.hr { height: 1px; background: var(--line); border: 0; margin: 0; }
+
+/* generic tappable */
+.tap { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+
+/* ---------- image placeholder ---------- */
+.ph {
+  background:
+    repeating-linear-gradient(45deg, rgba(255,255,255,0.035) 0 10px, rgba(255,255,255,0.06) 10px 20px),
+    var(--bg-3);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--tx-faint); font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: .06em; text-transform: uppercase; text-align: center;
+}
+
+/* faction halves */
+.tone-fug  { color: var(--fug); }
+.tone-hunt { color: var(--hunt); }
+.tone-gold { color: var(--gold); }
+.tone-violet{color: var(--violet); }
+
+/* small uppercase label */
+.lbl { font-family: var(--font-mono); font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--tx-faint); }

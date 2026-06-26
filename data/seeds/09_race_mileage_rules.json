@@ -1,0 +1,74 @@
+[
+  {
+    "rule_id": "rmr-hunt-wheel",
+    "race_id": "hunt2026",
+    "rule_type": "wheel",
+    "wheel_km_per_spin": 50.00,
+    "mileage_source": "actual",
+    "description": "每累積 50 公里實跑里程，獲得轉盤機會 ×1"
+  },
+  {
+    "rule_id": "rmr-hunt-cert",
+    "race_id": "hunt2026",
+    "rule_type": "cert",
+    "wheel_km_per_spin": null,
+    "mileage_source": "actual",
+    "description": "達成目標里程即可下載電子完賽證書"
+  },
+  {
+    "rule_id": "rmr-relay-wheel",
+    "race_id": "relay2026",
+    "rule_type": "wheel",
+    "wheel_km_per_spin": 50.00,
+    "mileage_source": "actual",
+    "description": "每累積 50 公里實跑里程，獲得轉盤機會 ×1"
+  },
+  {
+    "rule_id": "rmr-relay-cert",
+    "race_id": "relay2026",
+    "rule_type": "cert",
+    "wheel_km_per_spin": null,
+    "mileage_source": "actual",
+    "description": "達成目標里程即可下載電子完賽證書"
+  },
+  {
+    "rule_id": "rmr-signal-wheel",
+    "race_id": "signal2026",
+    "rule_type": "wheel",
+    "wheel_km_per_spin": 30.00,
+    "mileage_source": "actual",
+    "description": "每累積 30 公里實跑里程，獲得轉盤機會 ×1"
+  },
+  {
+    "rule_id": "rmr-spring-wheel",
+    "race_id": "spring2026",
+    "rule_type": "wheel",
+    "wheel_km_per_spin": 50.00,
+    "mileage_source": "actual",
+    "description": "每累積 50 公里實跑里程，獲得轉盤機會 ×1"
+  },
+  {
+    "rule_id": "rmr-winter-wheel",
+    "race_id": "winter2025",
+    "rule_type": "wheel",
+    "wheel_km_per_spin": 50.00,
+    "mileage_source": "actual",
+    "description": "每累積 50 公里實跑里程，獲得轉盤機會 ×1"
+  },
+  {
+    "rule_id": "rmr-auto-wheel",
+    "race_id": "auto2025",
+    "rule_type": "wheel",
+    "wheel_km_per_spin": 50.00,
+    "mileage_source": "actual",
+    "description": "每累積 50 公里實跑里程，獲得轉盤機會 ×1"
+  },
+  {
+    "rule_id": "rmr-sum-wheel",
+    "race_id": "sum2025",
+    "rule_type": "wheel",
+    "wheel_km_per_spin": 10.00,
+    "mileage_source": "actual",
+    "description": "每累積 10 公里實跑里程，獲得轉盤機會 ×1"
+  }
+]

@@ -1,0 +1,44 @@
+[
+  {
+    "race_id": "hunt2026",
+    "store_id": "s1",
+    "task_desc": "抵達門市出示身份卡，領取今日補給包",
+    "rescue_reward": 0,
+    "is_stamp_spot": 1
+  },
+  {
+    "race_id": "hunt2026",
+    "store_id": "s2",
+    "task_desc": "完成 3K 後於門市打卡，解鎖支線任務",
+    "rescue_reward": 0,
+    "is_stamp_spot": 0
+  },
+  {
+    "race_id": "hunt2026",
+    "store_id": "s3",
+    "task_desc": "夜間打卡點，獵人偵測範圍外",
+    "rescue_reward": 0,
+    "is_stamp_spot": 0
+  },
+  {
+    "race_id": "hunt2026",
+    "store_id": "s4",
+    "task_desc": "跨區打卡，額外 +50 救援值",
+    "rescue_reward": 50,
+    "is_stamp_spot": 0
+  },
+  {
+    "race_id": "relay2026",
+    "store_id": "s1",
+    "task_desc": "公會集合打卡點，集滿 5 人獲得公會加速",
+    "rescue_reward": 0,
+    "is_stamp_spot": 1
+  },
+  {
+    "race_id": "relay2026",
+    "store_id": "s2",
+    "task_desc": "完成里程後打卡確認",
+    "rescue_reward": 0,
+    "is_stamp_spot": 0
+  }
+]

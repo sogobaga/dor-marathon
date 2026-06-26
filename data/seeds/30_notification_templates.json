@@ -1,0 +1,29 @@
+[
+  {
+    "template_id": "nt-hunt-battle",
+    "race_id": "hunt2026",
+    "notif_type": "battle_report",
+    "title_template": "DOR 戰報 · DAY {day} 結算",
+    "body_template": "今日逃脫 {escaped} 人，捕獲 {captured} 人。明日任務：{next_mission}。繼續出發！",
+    "scheduled_time": "20:00:00",
+    "is_active": 1
+  },
+  {
+    "template_id": "nt-hunt-mission",
+    "race_id": "hunt2026",
+    "notif_type": "mission_reminder",
+    "title_template": "DOR · 今日任務提醒",
+    "body_template": "DAY {day}「{mission_title}」尚未完成，還有 {hours_left} 小時！快去跑吧 🏃",
+    "scheduled_time": "18:00:00",
+    "is_active": 1
+  },
+  {
+    "template_id": "nt-system-welcome",
+    "race_id": null,
+    "notif_type": "system",
+    "title_template": "歡迎加入 DOR！",
+    "body_template": "你的帳號已啟用。探索即將開始的賽事，選擇你的陣營，出發！",
+    "scheduled_time": null,
+    "is_active": 1
+  }
+]

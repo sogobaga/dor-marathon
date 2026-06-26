@@ -1,0 +1,102 @@
+[
+  {
+    "progress_id": "ump-yifan-d1",
+    "user_id": "usr-yifan",
+    "template_id": "mt-hunt-d1",
+    "race_id": "hunt2026",
+    "status": "done",
+    "km_done": 2.40,
+    "rescued_count": 0,
+    "completed_at": "2026-06-12 07:22:00"
+  },
+  {
+    "progress_id": "ump-yifan-d2",
+    "user_id": "usr-yifan",
+    "template_id": "mt-hunt-d2",
+    "race_id": "hunt2026",
+    "status": "done",
+    "km_done": 3.20,
+    "rescued_count": 0,
+    "completed_at": "2026-06-13 06:58:00"
+  },
+  {
+    "progress_id": "ump-yifan-d3",
+    "user_id": "usr-yifan",
+    "template_id": "mt-hunt-d3",
+    "race_id": "hunt2026",
+    "status": "in_progress",
+    "km_done": 1.80,
+    "rescued_count": 1,
+    "completed_at": null
+  },
+  {
+    "progress_id": "ump-yifan-d4",
+    "user_id": "usr-yifan",
+    "template_id": "mt-hunt-d4",
+    "race_id": "hunt2026",
+    "status": "pending",
+    "km_done": 0.00,
+    "rescued_count": 0,
+    "completed_at": null
+  },
+  {
+    "progress_id": "ump-yifan-d5",
+    "user_id": "usr-yifan",
+    "template_id": "mt-hunt-d5",
+    "race_id": "hunt2026",
+    "status": "pending",
+    "km_done": 0.00,
+    "rescued_count": 0,
+    "completed_at": null
+  },
+  {
+    "progress_id": "ump-yifan-d6",
+    "user_id": "usr-yifan",
+    "template_id": "mt-hunt-d6",
+    "race_id": "hunt2026",
+    "status": "pending",
+    "km_done": 0.00,
+    "rescued_count": 0,
+    "completed_at": null
+  },
+  {
+    "progress_id": "ump-yifan-d7",
+    "user_id": "usr-yifan",
+    "template_id": "mt-hunt-d7",
+    "race_id": "hunt2026",
+    "status": "pending",
+    "km_done": 0.00,
+    "rescued_count": 0,
+    "completed_at": null
+  },
+  {
+    "progress_id": "ump-ziachen-d1",
+    "user_id": "usr-ziachen",
+    "template_id": "mt-hunt-d1",
+    "race_id": "hunt2026",
+    "status": "done",
+    "km_done": 2.10,
+    "rescued_count": 0,
+    "completed_at": "2026-06-12 19:30:00"
+  },
+  {
+    "progress_id": "ump-ziachen-d2",
+    "user_id": "usr-ziachen",
+    "template_id": "mt-hunt-d2",
+    "race_id": "hunt2026",
+    "status": "done",
+    "km_done": 3.50,
+    "rescued_count": 0,
+    "completed_at": "2026-06-13 20:05:00"
+  },
+  {
+    "progress_id": "ump-ziachen-d3",
+    "user_id": "usr-ziachen",
+    "template_id": "mt-hunt-d3",
+    "race_id": "hunt2026",
+    "status": "done",
+    "km_done": 4.20,
+    "rescued_count": 0,
+    "completed_at": "2026-06-14 19:45:00"
+  }
+]

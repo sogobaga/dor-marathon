@@ -1,0 +1,58 @@
+[
+  {
+    "user_id": "usr-yifan",
+    "email": "yifan.chen@example.com",
+    "password_hash": "$2b$12$examplehashforYifan000000000000000000000000000",
+    "handle": "@yifan.runs",
+    "status": "active",
+    "created_at": "2025-06-01 10:00:00"
+  },
+  {
+    "user_id": "usr-ziachen",
+    "email": "ziachen.lin@example.com",
+    "password_hash": "$2b$12$examplehashforZiachen00000000000000000000000000",
+    "handle": "@ziachen.run",
+    "status": "active",
+    "created_at": "2025-07-15 09:30:00"
+  },
+  {
+    "user_id": "usr-siyu",
+    "email": "siyu.wang@example.com",
+    "password_hash": "$2b$12$examplehashforSiyu0000000000000000000000000000",
+    "handle": "@siyu.pace",
+    "status": "active",
+    "created_at": "2025-08-20 14:00:00"
+  },
+  {
+    "user_id": "usr-yaowen",
+    "email": "yaowen.chang@example.com",
+    "password_hash": "$2b$12$examplehashforYaowen000000000000000000000000000",
+    "handle": "@yaowen.hunter",
+    "status": "active",
+    "created_at": "2025-09-05 11:00:00"
+  },
+  {
+    "user_id": "usr-yongqing",
+    "email": "yongqing.huang@example.com",
+    "password_hash": "$2b$12$examplehashforYongqing0000000000000000000000000",
+    "handle": "@yongqing.fly",
+    "status": "active",
+    "created_at": "2025-10-10 16:00:00"
+  },
+  {
+    "user_id": "usr-guanyu",
+    "email": "guanyu.zhou@example.com",
+    "password_hash": "$2b$12$examplehashforGuanyu000000000000000000000000000",
+    "handle": "@guanyu.night",
+    "status": "active",
+    "created_at": "2025-11-01 08:00:00"
+  },
+  {
+    "user_id": "usr-admin",
+    "email": "admin@dor.run",
+    "password_hash": "$2b$12$examplehashforAdmin0000000000000000000000000000",
+    "handle": "@dor.admin",
+    "status": "active",
+    "created_at": "2024-01-01 00:00:00"
+  }
+]

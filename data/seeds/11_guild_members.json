@@ -1,0 +1,11 @@
+[
+  { "guild_id": "guild-taipei",  "user_id": "usr-yifan",    "role": "captain", "joined_at": "2025-05-01 09:00:00" },
+  { "guild_id": "guild-taipei",  "user_id": "usr-guanyu",   "role": "member",  "joined_at": "2025-11-05 10:00:00" },
+
+  { "guild_id": "guild-nankang", "user_id": "usr-ziachen",  "role": "captain", "joined_at": "2025-06-10 10:00:00" },
+  { "guild_id": "guild-nankang", "user_id": "usr-yaowen",   "role": "member",  "joined_at": "2025-09-10 12:00:00" },
+
+  { "guild_id": "guild-neihu",   "user_id": "usr-siyu",     "role": "captain", "joined_at": "2025-07-20 11:00:00" },
+
+  { "guild_id": "guild-banqiao", "user_id": "usr-yongqing", "role": "member",  "joined_at": "2025-10-12 15:00:00" }
+]

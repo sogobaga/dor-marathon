@@ -1,0 +1,42 @@
+[
+  {
+    "store_id": "s1",
+    "name": "DOR 補給站・信義門市",
+    "address": "台北市信義區松壽路 12 號",
+    "city": "台北",
+    "latitude": 25.0355,
+    "longitude": 121.5673,
+    "hours": "24 小時",
+    "is_active": 1
+  },
+  {
+    "store_id": "s2",
+    "name": "DOR 補給站・大安門市",
+    "address": "台北市大安區敦化南路一段 187 號",
+    "city": "台北",
+    "latitude": 25.0440,
+    "longitude": 121.5500,
+    "hours": "06:00 – 24:00",
+    "is_active": 1
+  },
+  {
+    "store_id": "s3",
+    "name": "DOR 補給站・中山門市",
+    "address": "台北市中山區南京東路二段 45 號",
+    "city": "台北",
+    "latitude": 25.0531,
+    "longitude": 121.5294,
+    "hours": "24 小時",
+    "is_active": 1
+  },
+  {
+    "store_id": "s4",
+    "name": "DOR 補給站・板橋門市",
+    "address": "新北市板橋區文化路一段 268 號",
+    "city": "新北",
+    "latitude": 25.0068,
+    "longitude": 121.4619,
+    "hours": "06:00 – 24:00",
+    "is_active": 1
+  }
+]

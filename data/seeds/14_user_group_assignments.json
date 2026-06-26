@@ -1,0 +1,92 @@
+[
+  {
+    "assignment_id": "uga-yifan-hunt",
+    "user_id": "usr-yifan",
+    "race_id": "hunt2026",
+    "faction_id": "fct-hunt-fug",
+    "club_id": null,
+    "guild_id": "guild-taipei",
+    "assigned_at": "2026-06-12 00:01:00",
+    "assigned_by": "system_random"
+  },
+  {
+    "assignment_id": "uga-ziachen-hunt",
+    "user_id": "usr-ziachen",
+    "race_id": "hunt2026",
+    "faction_id": "fct-hunt-hunt",
+    "club_id": null,
+    "guild_id": "guild-nankang",
+    "assigned_at": "2026-06-12 00:01:00",
+    "assigned_by": "system_random"
+  },
+  {
+    "assignment_id": "uga-siyu-hunt",
+    "user_id": "usr-siyu",
+    "race_id": "hunt2026",
+    "faction_id": "fct-hunt-fug",
+    "club_id": null,
+    "guild_id": "guild-neihu",
+    "assigned_at": "2026-06-12 00:01:00",
+    "assigned_by": "system_random"
+  },
+  {
+    "assignment_id": "uga-yaowen-hunt",
+    "user_id": "usr-yaowen",
+    "race_id": "hunt2026",
+    "faction_id": "fct-hunt-hunt",
+    "club_id": null,
+    "guild_id": "guild-nankang",
+    "assigned_at": "2026-06-12 00:01:00",
+    "assigned_by": "system_random"
+  },
+  {
+    "assignment_id": "uga-yongqing-relay",
+    "user_id": "usr-yongqing",
+    "race_id": "relay2026",
+    "faction_id": null,
+    "club_id": null,
+    "guild_id": null,
+    "assigned_at": "2026-07-01 00:01:00",
+    "assigned_by": "self"
+  },
+  {
+    "assignment_id": "uga-guanyu-relay",
+    "user_id": "usr-guanyu",
+    "race_id": "relay2026",
+    "faction_id": null,
+    "club_id": null,
+    "guild_id": "guild-taipei",
+    "assigned_at": "2026-07-01 00:01:00",
+    "assigned_by": "self"
+  },
+  {
+    "assignment_id": "uga-yifan-spring",
+    "user_id": "usr-yifan",
+    "race_id": "spring2026",
+    "faction_id": "fct-spring-fug",
+    "club_id": null,
+    "guild_id": "guild-taipei",
+    "assigned_at": "2026-03-03 00:01:00",
+    "assigned_by": "system_random"
+  },
+  {
+    "assignment_id": "uga-yifan-winter",
+    "user_id": "usr-yifan",
+    "race_id": "winter2025",
+    "faction_id": "fct-winter-hunt",
+    "club_id": null,
+    "guild_id": "guild-taipei",
+    "assigned_at": "2025-12-15 00:01:00",
+    "assigned_by": "system_random"
+  },
+  {
+    "assignment_id": "uga-yifan-auto",
+    "user_id": "usr-yifan",
+    "race_id": "auto2025",
+    "faction_id": "fct-auto-fug",
+    "club_id": null,
+    "guild_id": "guild-taipei",
+    "assigned_at": "2025-10-06 00:01:00",
+    "assigned_by": "system_random"
+  }
+]

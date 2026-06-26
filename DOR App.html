@@ -1,0 +1,2833 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DOR 雲端馬拉松 · App</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --bg:#FFFFFF; --surface:#FFFFFF; --surface-2:#FDFDFD; --surface-3:#F5F5F5;
+  --border:#E8E8E8; --border-2:#D0D0D0;
+  --tx:#111111; --tx-mid:#606060; --tx-light:#AAAAAA;
+  --sage:#C8102E; --sage-bg:#FFF0F2; --sage-deep:#8C0B1E;
+  --coral:#1A1A1A; --coral-bg:#F0F0F0; --coral-deep:#000000;
+  --honey:#C07B22; --honey-bg:#FEF6E8; --honey-deep:#7E4E0F;
+  --lavender:#6B7280; --lavender-bg:#F3F4F6; --lavender-deep:#374151;
+  --shadow-xs:0 1px 4px rgba(0,0,0,.05);
+  --shadow:0 2px 12px rgba(0,0,0,.08);
+  --shadow-md:0 6px 24px rgba(0,0,0,.10);
+  --r-sm:8px; --r:12px; --r-lg:14px; --r-xl:18px;
+  --font-disp:'Plus Jakarta Sans','Noto Sans TC',system-ui,sans-serif;
+  --font-body:'Noto Sans TC','Plus Jakarta Sans',system-ui,sans-serif;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;background:#FFFFFF;}
+.dor-board{margin:0;background:#FFFFFF;color:var(--tx);font-family:var(--font-body);-webkit-font-smoothing:antialiased;}
+.dor-app{position:relative;height:100%;width:100%;overflow:hidden;background:var(--bg);color:var(--tx);font-family:var(--font-body);display:flex;flex-direction:column;}
+.dor-scroll{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;cursor:grab;}
+.dor-scroll::-webkit-scrollbar{width:0;height:0;}
+.has-tabbar .dor-scroll{padding-bottom:74px;}
+.dor-scroll.is-dragging,.dor-scroll.is-dragging *{cursor:grabbing !important;}
+.dor-scroll button,.dor-scroll .tap,.dor-scroll a{cursor:pointer;}
+.dor-grid-tex{display:none;}
+.disp{font-family:var(--font-disp);}
+.eyebrow{font-family:var(--font-disp);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--tx-light);font-weight:600;}
+.num{font-family:var(--font-disp);font-weight:700;font-variant-numeric:tabular-nums;}
+.chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-disp);font-size:11px;font-weight:600;letter-spacing:.02em;padding:4px 10px;border-radius:999px;border:1.5px solid var(--border-2);color:var(--tx-mid);background:var(--surface);white-space:nowrap;}
+.chip.fug{color:var(--sage);border-color:rgba(200,16,46,.4);background:var(--surface);}
+.chip.hunt{color:var(--tx);border-color:var(--border-2);background:var(--surface);}
+.chip.gold{color:var(--tx);border-color:var(--border-2);background:var(--surface);}
+.chip.violet{color:var(--tx);border-color:var(--border-2);background:var(--surface);}
+.chip.dim{color:var(--tx-light);border-color:var(--border);background:var(--surface);}
+.btn{font-family:var(--font-disp);font-weight:700;font-size:16px;border:none;border-radius:14px;padding:15px 20px;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;width:100%;transition:transform .08s ease,filter .12s ease;letter-spacing:.01em;}
+.btn:active{transform:scale(.975);}
+.btn-primary{background:var(--sage);color:#fff;box-shadow:0 4px 16px rgba(200,16,46,.25);}
+.btn-hunt{background:var(--coral);color:#fff;box-shadow:0 4px 16px rgba(26,26,26,.18);}
+.btn-gold{background:var(--honey);color:#fff;box-shadow:0 4px 16px rgba(192,123,34,.22);}
+.btn-ghost{background:var(--surface);color:var(--tx);border:1.5px solid var(--tx);}
+.btn:disabled{filter:grayscale(.5) opacity(.55);cursor:default;box-shadow:none;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);position:relative;box-shadow:var(--shadow-xs);}
+.card-pad{padding:16px;}
+.bar{height:6px;border-radius:999px;background:var(--border);overflow:hidden;position:relative;}
+.bar>i{display:block;height:100%;border-radius:999px;}
+.hr{height:1px;background:var(--border);border:0;margin:0;}
+.tap{cursor:pointer;-webkit-tap-highlight-color:transparent;}
+.ph{background:#F5F5F5;display:flex;align-items:center;justify-content:center;color:var(--tx-light);font-family:var(--font-disp);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;text-align:center;}
+.tone-fug{color:var(--sage);} .tone-hunt{color:var(--coral);} .tone-gold{color:var(--honey);} .tone-violet{color:var(--lavender);}
+.lbl{font-family:var(--font-disp);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--tx-light);font-weight:600;}
+@keyframes dorPulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+@keyframes dorSlideUp{0%{opacity:0;transform:scale(.88) translateY(24px)}100%{opacity:1;transform:scale(1) translateY(0)}}
+@keyframes dorStar{0%{opacity:1;transform:translateY(0) scale(1) rotate(0deg)}100%{opacity:0;transform:translateY(-70px) scale(.4) rotate(180deg)}}
+.inner-tabs{display:flex;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+.inner-tabs::-webkit-scrollbar{display:none;}
+.fi{width:100%;padding:11px 13px;border:1.5px solid var(--border-2);border-radius:12px;font-size:14.5px;font-family:var(--font-body);color:var(--tx);background:var(--bg);outline:none;box-sizing:border-box;-webkit-appearance:none;}
+.fi:focus{border-color:var(--sage);}
+.fi::placeholder{color:var(--tx-light);}
+.toggle-seg{display:flex;border:1.5px solid var(--border-2);border-radius:12px;overflow:hidden;background:var(--surface);}
+.toggle-seg button{flex:1;padding:10px 0;font-size:13.5px;font-family:var(--font-disp);font-weight:600;border:none;cursor:pointer;transition:background .15s,color .15s;}
+.toggle-seg button.on{background:var(--tx);color:#fff;}
+.toggle-seg button:not(.on){background:transparent;color:var(--tx-mid);}
+.stage{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 16px;background:#FFFFFF;}
+.switch{position:fixed;top:18px;right:18px;z-index:100;display:flex;gap:8px;}
+.switch a{text-decoration:none;font-family:var(--font-disp);font-size:11px;font-weight:600;letter-spacing:.06em;padding:8px 13px;border-radius:999px;border:1.5px solid var(--border-2);color:var(--tx-mid);background:var(--surface);display:inline-flex;align-items:center;gap:6px;box-shadow:var(--shadow-xs);}
+.switch a.on{color:var(--tx);border-color:var(--tx);background:var(--surface);}
+.switch a:hover{color:var(--tx);}
+</style>
+</head>
+<body class="dor-board">
+<nav class="switch">
+  <a class="on" href="DOR App.html">● App</a>
+  <a href="DOR Admin.html">營運後台 ↗</a>
+</nav>
+<div class="stage"><div id="root"></div></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin></script>
+
+<script>
+window.DOR = (function () {
+  const races = [
+    { id:'morning2026', title:'早安慢跑月', sub:'MORNING RUN JUNE', type:'mileage', world:'健走 + 慢跑均可', status:'live', distances:[30,50], myDistance:50, days:30, dayNow:16, start:'06/01', end:'06/30', teams:1024, mine:'', faction:null, hero:'主視覺 ｜ 晨光公園步道', blurb:'每天一點點，累積屬於你的里程。無論你是健走還是慢跑，都是完賽的一步。', progressKm:28.5, goalKm:50 },
+    { id:'hunt2026', title:'獵人之夜', sub:'HUNTERS NIGHT', world:'獵人 vs 逃亡者', status:'live', distances:[10,21,42], myDistance:21, days:7, dayNow:3, start:'06/12', end:'06/18', teams:1284, mine:'台北夜行者', faction:'fugitive', hero:'主視覺 ｜ 城市夜景 + 霓虹追逐', blurb:'一半的人追，一半的人逃。對抗只在虛擬戰局，不在真實世界。', progressKm:12.4, goalKm:21 },
+    { id:'relay2026', title:'城市公會戰', sub:'GUILD RELAY', world:'跑團 vs 跑團', status:'open', distances:[10,21,42], days:14, dayNow:0, start:'07/01', end:'07/14', teams:642, mine:null, faction:null, hero:'主視覺 ｜ 城市地圖 + 公會旗幟', blurb:'跑團不只是團報，而是代表自己的公會出征。比完成率、比救援、比逆轉。', progressKm:0, goalKm:0 },
+    { id:'signal2026', title:'穩定訊號', sub:'STEADY SIGNAL', world:'配速控制挑戰', status:'soon', distances:[10,21], days:5, dayNow:0, start:'07/20', end:'07/24', teams:0, mine:null, faction:null, hero:'主視覺 ｜ 心率波形 + 城市晨光', blurb:'慢不是弱，是潛伏。把配速波動控制在區間內，維持訊號不被獵人偵測。', progressKm:0, goalKm:0 },
+    { id:'spring2026', title:'春季逃亡賽', sub:'SPRING ESCAPE', world:'獵人 vs 逃亡者', status:'done', distances:[21,42], myDistance:42, days:7, dayNow:7, start:'03/03', end:'03/09', teams:980, mine:'台北夜行者', faction:'fugitive', hero:'主視覺 ｜ 春日街景', blurb:'', progressKm:42, goalKm:42 },
+    { id:'walk2026', title:'夏日健走挑戰', sub:'SUMMER WALK', type:'mileage', world:'健走 + 慢跑均可', status:'open', distances:[30,50,100], days:30, dayNow:0, start:'07/01', end:'07/30', teams:0, mine:null, faction:null, hero:'主視覺 ｜ 夏日公園晨光', blurb:'無論快跑或散步，每一步都算數。30 天內累積指定里程，完成你的第一個里程碑。', progressKm:0, goalKm:0 },
+  ];
+  const missions = [
+    { day:1, title:'身份啟動', tag:'IDENTITY', type:'base', icon:'id', base:2.0, paceLo:null, paceHi:null, done:true, kmDone:2.4, rescued:0, desc:'揭曉你的陣營身份。完成 2K 啟動跑，啟用今日身份卡。' },
+    { day:2, title:'低速潛伏', tag:'STEALTH', type:'pace', icon:'stealth', base:3.0, paceLo:'9:30', paceHi:'10:30', done:true, kmDone:3.2, rescued:0, desc:'以 9:30–10:30 配速完成 3K，維持低訊號避免被獵人偵測。' },
+    { day:3, title:'高速追擊', tag:'CHASE', type:'pace', icon:'chase', base:3.0, paceLo:'4:30', paceHi:'5:30', done:false, kmDone:1.8, rescued:1, desc:'以 4:30–5:30 配速完成 3K 追擊。完成基礎里程後，每多跑 1K 可多拯救 1 位夥伴。' },
+    { day:4, title:'誘餌與搜索', tag:'DECOY', type:'base', icon:'decoy', base:4.0, paceLo:null, paceHi:null, done:false, kmDone:0, rescued:0, desc:'完成 4K 佈設誘餌，擾亂獵人搜索路線。' },
+    { day:5, title:'救援日', tag:'RESCUE', type:'rescue', icon:'rescue', base:3.0, paceLo:null, paceHi:null, done:false, kmDone:0, rescued:0, desc:'完成 3K 基礎里程後，每多完成 1K 釋放 1 位被捕的夥伴。今日救援值加倍。' },
+    { day:6, title:'壓縮戰局', tag:'SQUEEZE', type:'pace', icon:'squeeze', base:5.0, paceLo:'5:30', paceHi:'6:30', done:false, kmDone:0, rescued:0, desc:'以 5:30–6:30 配速完成 5K，壓縮獵人包圍圈。' },
+    { day:7, title:'最終追逐', tag:'FINALE', type:'base', icon:'finale', base:6.0, paceLo:null, paceHi:null, done:false, kmDone:0, rescued:0, desc:'最終結算日。完成 6K 決定戰局翻盤與否。' },
+  ];
+  const factionBoard = { fugitive:{label:'逃亡者',val:58,escaped:742,color:'fug'}, hunter:{label:'獵人',val:42,captured:531,color:'hunt'} };
+  const stores = [
+    { id:'s1', name:'DOR 補給站・信義門市', addr:'台北市信義區松壽路 12 號', dist:0.4, hours:'24 小時', stamp:true, task:'抵達門市出示身份卡，領取今日補給包', city:'台北' },
+    { id:'s2', name:'DOR 補給站・大安門市', addr:'台北市大安區敦化南路一段 187 號', dist:1.2, hours:'06:00 – 24:00', stamp:false, task:'完成 3K 後於門市打卡，解鎖支線任務', city:'台北' },
+    { id:'s3', name:'DOR 補給站・中山門市', addr:'台北市中山區南京東路二段 45 號', dist:2.8, hours:'24 小時', stamp:false, task:'夜間打卡點，獵人偵測範圍外', city:'台北' },
+    { id:'s4', name:'DOR 補給站・板橋門市', addr:'新北市板橋區文化路一段 268 號', dist:5.1, hours:'06:00 – 24:00', stamp:false, task:'跨區打卡，額外 +50 救援值', city:'新北' },
+  ];
+  const wheel = [
+    { id:'lp50',  kind:'line',    label:'LINE Points', amount:50,  weight:26, color:'gold' },
+    { id:'lp100', kind:'line',    label:'LINE Points', amount:100, weight:14, color:'gold' },
+    { id:'lp300', kind:'line',    label:'LINE Points', amount:300, weight:4,  color:'gold' },
+    { id:'card',  kind:'sticker', label:'九宮格集點卡', amount:1,   weight:30, color:'violet' },
+    { id:'card2', kind:'sticker', label:'集點卡 ×2',    amount:2,   weight:8,  color:'violet' },
+    { id:'again', kind:'again',   label:'再轉一次',      amount:0,   weight:10, color:'fug' },
+    { id:'miss',  kind:'miss',    label:'銘謝惠顧',      amount:0,   weight:8,  color:'dim' },
+  ];
+  const stickers = [
+    {i:1,name:'逃亡者',got:true},{i:2,name:'獵人',got:true},{i:3,name:'誘餌',got:true},
+    {i:4,name:'訊號',got:true},{i:5,name:'救援',got:false},{i:6,name:'潛伏',got:true},
+    {i:7,name:'追擊',got:false},{i:8,name:'戰報',got:false},{i:9,name:'公仔',got:false},
+  ];
+  const records = [
+    {id:'spring2026',title:'春季逃亡賽',dist:42,time:'4:58:12',date:'2026.03.09',faction:'fugitive',rank:'逆轉者',medal:'#C8102E'},
+    {id:'winter2025',title:'冬季獵殺賽',dist:21,time:'2:12:40',date:'2025.12.21',faction:'hunter',rank:'捕獲王',medal:'#1A1A1A'},
+    {id:'auto2025',title:'秋季潛行賽',dist:21,time:'2:31:05',date:'2025.10.12',faction:'fugitive',rank:'潛伏者',medal:'#C8102E'},
+    {id:'sum2025',title:'夏季訊號賽',dist:10,time:'1:02:18',date:'2025.07.30',faction:'fugitive',rank:'穩定訊號',medal:'#C07B22'},
+  ];
+  const profile = {
+    name:'陳逸帆', nickname:'夜行者YF', handle:'@yifan.runs',
+    faction:'fugitive', factionLabel:'逃亡者', team:'台北夜行者', avatar:'跑者頭像',
+    totalKm:94, spinsUsed:0, races:4, rescues:17, streak:12,
+    idType:'tw', idNumber:'A123456789', birthday:'1990-05-15', gender:'m',
+    email:'yifan@example.com', phone:'0912-345-678', address:'台北市大安區敦化南路一段'
+  };
+  return { races, missions, factionBoard, stores, wheel, stickers, records, profile };
+})();
+</script>
+
+<script type="text/babel" data-presets="react">
+/* ── iOS Frame ── */
+function IOSStatusBar({ time='9:41' }) {
+  const c = '#1C1916';
+  return (
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 24px 0',boxSizing:'border-box',position:'relative',zIndex:20,width:'100%',height:50}}>
+      <span style={{fontFamily:'-apple-system,"SF Pro",system-ui',fontWeight:600,fontSize:15,color:c}}>{time}</span>
+      <div style={{display:'flex',alignItems:'center',gap:6}}>
+        <svg width="17" height="11" viewBox="0 0 19 12"><rect x="0" y="7.5" width="3.2" height="4.5" rx="0.7" fill={c}/><rect x="4.8" y="5" width="3.2" height="7" rx="0.7" fill={c}/><rect x="9.6" y="2.5" width="3.2" height="9.5" rx="0.7" fill={c}/><rect x="14.4" y="0" width="3.2" height="12" rx="0.7" fill={c}/></svg>
+        <svg width="15" height="11" viewBox="0 0 17 12"><path d="M8.5 3.2C10.8 3.2 12.9 4.1 14.4 5.6L15.5 4.5C13.7 2.7 11.2 1.5 8.5 1.5C5.8 1.5 3.3 2.7 1.5 4.5L2.6 5.6C4.1 4.1 6.2 3.2 8.5 3.2Z" fill={c}/><path d="M8.5 6.8C9.9 6.8 11.1 7.3 12 8.2L13.1 7.1C11.8 5.9 10.2 5.1 8.5 5.1C6.8 5.1 5.2 5.9 3.9 7.1L5 8.2C5.9 7.3 7.1 6.8 8.5 6.8Z" fill={c}/><circle cx="8.5" cy="10.5" r="1.5" fill={c}/></svg>
+        <svg width="25" height="12" viewBox="0 0 27 13"><rect x="0.5" y="0.5" width="23" height="12" rx="3.5" stroke={c} strokeOpacity="0.35" fill="none"/><rect x="2" y="2" width="20" height="9" rx="2" fill={c}/><path d="M25 4.5V8.5C25.8 8.2 26.5 7.2 26.5 6.5C26.5 5.8 25.8 4.8 25 4.5Z" fill={c} fillOpacity="0.4"/></svg>
+      </div>
+    </div>
+  );
+}
+function IOSDevice({ children, width=390, height=844 }) {
+  return (
+    <div style={{width,height,borderRadius:48,overflow:'hidden',position:'relative',background:'#1C1916',boxShadow:'0 40px 80px rgba(0,0,0,.22),0 0 0 1px rgba(0,0,0,.18)',fontFamily:'-apple-system,system-ui,sans-serif',WebkitFontSmoothing:'antialiased'}}>
+      <div style={{position:'absolute',top:11,left:'50%',transform:'translateX(-50%)',width:126,height:37,borderRadius:24,background:'#1C1916',zIndex:50}}/>
+      <div style={{position:'absolute',top:0,left:0,right:0,zIndex:10}}><IOSStatusBar/></div>
+      <div style={{height:'100%',display:'flex',flexDirection:'column'}}>
+        <div style={{flex:1,overflow:'auto'}}>{children}</div>
+      </div>
+      <div style={{position:'absolute',bottom:0,left:0,right:0,zIndex:60,height:34,display:'flex',justifyContent:'center',alignItems:'flex-end',paddingBottom:8,pointerEvents:'none'}}>
+        <div style={{width:139,height:5,borderRadius:100,background:'rgba(28,25,22,.22)'}}/>
+      </div>
+    </div>
+  );
+}
+Object.assign(window,{IOSDevice});
+
+/* ── Shared UI ── */
+function Icon({ name, size=24, color='currentColor', sw=1.8 }) {
+  const p = { fill:'none', stroke:color, strokeWidth:sw, strokeLinecap:'round', strokeLinejoin:'round' };
+  const F = { fill:color, stroke:'none' };
+  const paths = {
+    target:<g {...p}><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1" {...F}/></g>,
+    flag:<g {...p}><path d="M5 21V4"/><path d="M5 4.5C8 2.5 12 6 18 4v9c-6 2-10-1.5-13 .5"/></g>,
+    wheel:<g {...p}><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17M3.5 12h17M6 6l12 12M18 6L6 18"/><circle cx="12" cy="12" r="1.4" {...F}/></g>,
+    user:<g {...p}><circle cx="12" cy="8" r="4"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></g>,
+    back:<g {...p}><path d="M15 5l-7 7 7 7"/></g>,
+    chev:<g {...p}><path d="M9 5l7 7-7 7"/></g>,
+    chevDown:<g {...p}><path d="M5 9l7 7 7-7"/></g>,
+    check:<g {...p}><path d="M4 12.5l5 5 11-11"/></g>,
+    pin:<g {...p}><path d="M12 21s7-6.5 7-12a7 7 0 1 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="9" r="2.5"/></g>,
+    bolt:<g><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8Z" {...F}/></g>,
+    stealth:<g {...p}><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.4"/></g>,
+    chase:<g {...p}><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></g>,
+    rescue:<g {...p}><path d="M12 20s-7-4.3-7-9.2A4.3 4.3 0 0 1 12 8a4.3 4.3 0 0 1 7 2.8C19 15.7 12 20 12 20Z"/></g>,
+    id:<g {...p}><rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="8.5" cy="11" r="2"/><path d="M6 16c.4-1.4 1.5-2 2.5-2s2.1.6 2.5 2M14 9.5h5M14 13h5"/></g>,
+    decoy:<g {...p}><circle cx="12" cy="12" r="8.5"/><path d="M12 12l4-4M9 12h.01M12 9v.01"/></g>,
+    squeeze:<g {...p}><path d="M4 7h16M6 12h12M9 17h6"/></g>,
+    finale:<g {...p}><path d="M5 21V4M5 4.5C8 2.5 12 6 18 4v9c-6 2-10-1.5-13 .5"/><path d="M12 9l1.2 2.4 2.6.4-1.9 1.8.5 2.6L12 15l-2.4 1.2.5-2.6-1.9-1.8 2.6-.4Z" {...F}/></g>,
+    spin:<g {...p}><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v4h-4"/></g>,
+    lock:<g {...p}><rect x="5" y="11" width="14" height="9" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></g>,
+    gift:<g {...p}><rect x="4" y="9" width="16" height="11" rx="2"/><path d="M2.5 9h19M12 9v11M12 9S10 3 7.5 4.5 9.5 9 12 9ZM12 9s2-6 4.5-4.5S14.5 9 12 9Z"/></g>,
+    share:<g {...p}><circle cx="6" cy="12" r="2.5"/><circle cx="17" cy="6" r="2.5"/><circle cx="17" cy="18" r="2.5"/><path d="M8.2 10.8l6.6-3.6M8.2 13.2l6.6 3.6"/></g>,
+    clock:<g {...p}><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></g>,
+    route:<g {...p}><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M8 16c8-1 2-9 8-10"/></g>,
+    medal:<g {...p}><circle cx="12" cy="14" r="6"/><path d="M9 3l3 5 3-5M12 11.5l1 2 2 .3-1.5 1.4.4 2.1-1.9-1-1.9 1 .4-2.1L9 13.8l2-.3Z"/></g>,
+    plus:<g {...p}><path d="M12 5v14M5 12h14"/></g>,
+    settings:<g {...p}><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M5 5l2 2M17 17l2 2M2 12h3M19 12h3M5 19l2-2M17 7l2-2"/></g>,
+    bell:<g {...p}><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z"/><path d="M10.5 19a2 2 0 0 0 3 0"/></g>,
+    fire:<g {...p}><path d="M12 3s5 4 5 9a5 5 0 0 1-10 0c0-1.5.7-2.8 1.5-3.5C9 11 9.5 12 10 12c0-2 2-4 2-9Z"/></g>,
+    arrowUp:<g {...p}><path d="M12 19V5M6 11l6-6 6 6"/></g>,
+    qr:<g {...p}><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2v2M20 14v.01M14 20h.01M18 18h2v2"/></g>,
+    globe:<g {...p}><circle cx="12" cy="12" r="8.5"/><path d="M2 12h20M12 3.5c-2.5 2.8-4 5.4-4 8.5s1.5 5.7 4 8.5M12 3.5c2.5 2.8 4 5.4 4 8.5s-1.5 5.7-4 8.5"/></g>,
+  };
+  return <svg width={size} height={size} viewBox="0 0 24 24" style={{display:'block',flexShrink:0}}>{paths[name]||null}</svg>;
+}
+const iconBtn = {width:36,height:36,borderRadius:12,border:'1.5px solid var(--border-2)',background:'var(--surface)',color:'var(--tx-mid)',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'var(--shadow-xs)',cursor:'pointer'};
+function TopBar({ title, onBack, right }) {
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:12,padding:'0 16px',height:52,borderBottom:'1px solid var(--border)',background:'var(--surface)',position:'relative',zIndex:5}}>
+      {onBack && <button className="tap" onClick={onBack} style={iconBtn}><Icon name="back" size={20} color="var(--tx-mid)"/></button>}
+      <div style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:18,flex:1,color:'var(--tx)'}}>{title}</div>
+      {right}
+    </div>
+  );
+}
+function SafeTop({ h=54 }) { return <div style={{height:h,flexShrink:0}}/>; }
+function Bar({ pct, color='var(--sage)' }) {
+  return <div className="bar"><i style={{width:Math.min(100,pct)+'%',background:color}}/></div>;
+}
+function DayDots({ total, now }) {
+  return (
+    <div style={{display:'flex',gap:4}}>
+      {Array.from({length:total}).map((_,i)=>{
+        const d=i+1, isDone=d<now, isNow=d===now;
+        return <div key={i} style={{flex:1,height:4,borderRadius:999,background:isNow?'var(--sage)':isDone?'rgba(200,16,46,.45)':'var(--border)'}}/>;
+      })}
+    </div>
+  );
+}
+function StatusBadge({ status }) {
+  const t=useT();
+  const map = { live:{t:t('status_live'),c:'fug'}, open:{t:t('status_open'),c:'gold'}, soon:{t:t('status_soon'),c:'violet'}, done:{t:t('status_done'),c:'dim'} };
+  const s = map[status]||map.done; const live=status==='live';
+  return <span className={'chip '+(s.c)} style={{fontWeight:700}}>{live&&<span style={{width:6,height:6,borderRadius:999,background:'var(--sage)',animation:'dorPulse 1.4s infinite',display:'inline-block',marginRight:2}}/>}{s.t}</span>;
+}
+const FAC = { fugitive:{label:'逃亡者',color:'var(--sage)',deep:'var(--sage-bg)',icon:'stealth',en:'FUGITIVE'}, hunter:{label:'獵人',color:'var(--coral)',deep:'var(--coral-bg)',icon:'target',en:'HUNTER'} };
+Object.assign(window,{Icon,TopBar,SafeTop,Bar,DayDots,StatusBadge,FAC});
+
+/* ── 語言系統 ── */
+const I18N={
+  zh:{
+    tab_races:'賽事', tab_wheel:'里程', tab_me:'我的',
+    status_live:'進行中', status_open:'報名中', status_soon:'即將開始', status_done:'已完賽',
+    lang:'語言', lang_zh:'中文', lang_en:'English', lang_ja:'日本語', settings_lang_desc:'切換介面語言',
+    home_title:'賽事',
+    sec_live:'進行中', sec_open:'報名中', sec_soon:'即將開始',
+    card_progress:'完賽進度', card_enter:'進入賽事', card_tonight:'今晚戰局',
+    card_escaped:'已逃脫', card_captured:'已捕獲', card_my_rescue:'我的救援', card_streak:'連續天',
+    card_mission_label:'個人任務',
+    card_accum:'累積進度', card_enter_activity:'進入活動', card_beginner:'新手友善',
+    card_today_km:'今日活動', card_avg_km:'日均里程', card_days_left:'剩餘天數',
+    dtab_battle:'戰局', dtab_daily:'每日戰報', dtab_personal:'個人任務',
+    dtab_team:'團體任務', dtab_challenge:'挑戰任務',
+    dtab_progress:'我的進度', dtab_actlog:'活動記錄', dtab_rank:'排行榜',
+    ring_label_battle:'完賽進度', sec_tonight:'今晚戰局', chip_mine:'我的',
+    sec_guild:'公會戰 ｜ 跑團排行',
+    sec_race_schedule:'賽程進度', chip_today:'今日',
+    mission_type_pace:'配速任務', mission_type_rescue:'救援任務', mission_type_base:'里程任務',
+    label_target_pace:'目標配速', label_base_km:'基礎里程', sub_km_goal:'km 完成目標',
+    pace_unlimited:'不限', pace_free:'自由配速',
+    chip_base_done:'基礎達成', chip_need:'尚差',
+    sec_rescue_ladder:'救援階梯 ｜ 多跑 1K = 救 1 人',
+    rescued_count:'已拯救', rescued_unit:'位夥伴', rescue_double:'今日救援值加倍',
+    label_today_progress:'今日進度', btn_report_run:'回報跑步 +1.0K',
+    sync_label:'由 Garmin · Apple Health · Strava 自動同步',
+    pace_zone_label:'配速區間 ｜ 維持在綠區', pace_current:'目前', pace_safe:'安全區', pace_fast:'快', pace_slow:'慢',
+    label_team_done:'已完成今日', label_member_count:'隊員總數', label_team_km:'團體里程',
+    sec_members:'隊員進度', sec_team_goal:'本週團體目標',
+    member_done_text:'✓ 已完成', member_inprogress:'進行中', chip_me_small:'我',
+    checkin_card_title:'補給站打卡', sec_time_challenges:'限時挑戰', challenge_done_text:'✓ 挑戰完成',
+    ring_label_mileage:'已累積',
+    label_today_activity:'今日活動', label_daily_avg:'日均里程',
+    label_remaining_km:'還差', label_suggested_daily:'建議日均',
+    sub_km_per_day:'km / 天', sub_km_finish:'km 完賽',
+    sec_activity_types:'活動類型 ｜ 任何方式都算',
+    stat_week_km:'本週累積', stat_active_sessions:'共計活動', stat_times_unit:'次',
+    sec_activity_log:'活動記錄',
+    leaderboard_my_rank:'你目前排名第', leaderboard_gap_text:'km 可以超越第 2 名', leaderboard_need:'還差',
+    sec_participants:'參加者排行',
+    label_rules:'玩法規則', label_schedule:'賽程簡章',
+    sched_open:'開放報名', sched_race_start:'賽事開始', sched_race_end:'賽事結束', sched_result:'結果公布',
+    label_pick_group:'選擇報名組別', unit_km:'公里',
+    label_mileage_goal:'累積里程目標', mileage_goal_desc:'完賽後將累積', mileage_goal_unit:'km 至轉盤',
+    btn_register:'立即報名', confirm_register_title:'確認報名', label_entry_fee:'報名費',
+    btn_back:'返回', btn_confirm_pay:'確認付款',
+    register_done_text:'報名完成！', register_done_desc:'賽事開始時，你將收到任務通知。祝你跑步愉快！',
+    coming_soon_title:'即將開放報名', coming_soon_desc:'將於近期開放報名，敬請期待。',
+    beginner_highlight_title:'健走與跑步都算數',
+    label_activity_rules:'活動規則', label_activity_schedule:'活動簡章',
+    sched_activity_start:'活動開始', sched_activity_end:'活動結束', sched_finish_pub:'完賽公布',
+    label_pick_distance:'選擇挑戰距離', unit_days_challenge:'天挑戰',
+    label_daily_suggest:'每日建議', label_est_calories:'預計消耗', unit_calories:'大卡',
+    btn_register_mileage:'立即報名', unit_challenge:'K 挑戰',
+    activity_done_desc:'活動開始時，你將收到通知。加油！一步一步地達成你的里程目標。',
+    checkin_title:'打卡任務', checkin_show_card:'到店出示身份卡打卡',
+    checkin_race_done_prefix:'本賽事已打卡', checkin_unit:'間門市',
+    sec_stores:'補給門市', chip_checked:'已打卡', btn_scan:'掃碼打卡',
+    checkin_success:'✓ 打卡完成 · +50 救援值',
+    mileage_page_title:'累積里程', label_total_mileage:'完賽累積里程',
+    label_next_spin:'距離下一次轉盤', label_spin_gap:'還差',
+    note_50km:'每累積 50 KM 可轉動轉盤一次',
+    label_spin_count:'可轉動次數', spin_go_desc:'立即前往里程轉盤', spin_locked_desc:'完成更多賽事里程解鎖',
+    sec_mileage_source:'里程來源 ｜ 完賽賽事目標',
+    wheel_title:'里程轉盤', wheel_remaining:'剩餘',
+    btn_spinning:'轉動中…', btn_spin:'轉動轉盤', btn_no_spins:'已無轉動次數',
+    wheel_note:'獎勵為隨機取得 · LINE Points 與九宮格集點卡', sec_prizes:'獎項與機率',
+    wheel_win:'恭喜獲得', wheel_result_label:'結果',
+    wheel_line_desc:'已存入你的 LINE 錢包', wheel_sticker_desc:'已加入九宮格集點卡',
+    wheel_again_desc:'獲得一次額外轉動機會', wheel_miss_desc:'再接再厲，下次一定中', btn_collect:'收下',
+    sticker_title:'九宮格集點卡', sticker_goal_label:'集滿九宮格 · 兌換完賽公仔',
+    sticker_collected_chip:'已收集', sticker_locked_text:'未取得',
+    sec_sticker_reward:'集滿獎勵', sticker_prize_name:'完賽公仔', sticker_prize_tag:'特殊獎勵',
+    sticker_prize_desc:'集滿九宮格全部 9 張集點卡，即可免費兌換限定完賽公仔。',
+    btn_redeem:'免費兌換完賽公仔', btn_need_more_prefix:'再集', btn_need_more_suffix:'張即可兌換',
+    login_title:'歡迎加入 DOR',
+    login_desc:'登入後追蹤你的里程與成就\n參與賽事、累積等級',
+    btn_google_login:'使用 Google 帳號登入', btn_logging_in:'登入中…',
+    btn_guest_browse:'以訪客身份繼續瀏覽',
+    login_legal:'登入即表示同意服務條款及隱私政策',
+    levelup_congrats:'恭喜升級',
+    levelup_exp_races:'完賽場次', levelup_exp_races_sub:'每場 +30 EXP',
+    levelup_exp_km:'里程貢獻', levelup_exp_km_sub:'每 km +1 EXP',
+    btn_levelup_close:'太好了！繼續跑 🏃',
+    profile_guest_name:'未登入會員', profile_guest_handle:'登入後解鎖完整資料',
+    profile_guest_login_btn:'登入 / 註冊', btn_login_quick:'登入',
+    next_level_prefix:'下一級', next_level_max:'MAX',
+    stat_races:'完賽場次', stat_km:'累積里程', stat_rescues:'救援人數', stat_streak:'連續出勤',
+    sec_my:'我的',
+    menu_records:'完賽紀錄', menu_km:'累積里程', menu_stickers:'九宮格集點卡',
+    menu_wheel:'里程轉盤', menu_datasync:'數據串接',
+    wheel_avail_unit:'次可轉', wheel_none:'尚無次數',
+    sec_id_cards:'身份卡收藏', btn_account_settings:'帳號設定與數據串接',
+    records_title:'完賽紀錄', stat_finish_count:'完賽場次', stat_finish_km:'完賽里程 km', stat_medals:'獲得獎牌',
+    sec_history:'歷史賽事',
+    settings_title:'設定', sec_account:'帳號', sec_other:'其他', btn_logout:'登出帳號',
+    datasync_title:'數據串接', profile_edit_title:'個人資料',
+    btn_save:'儲存更改', btn_saving:'儲存中…',
+    progress_title:'賽事進度', ring_label_progress:'已完成里程', sec_daily_progress:'每日任務進度', chip_in_progress:'進行中',
+    unit_days_race:'日賽程', mission_day_suffix:'任務',
+    card_identity_fugitive:'逃亡者', card_identity_hunter:'獵人', card_identity_decoy:'誘餌', card_identity_signal:'訊號',
+    settings_menu_profile:'個人資料', settings_menu_profile_desc:'名稱、暱稱、生日、聯絡方式',
+    settings_menu_datasync:'數據串接', settings_menu_datasync_desc:'手錶、健身 App 連結',
+    settings_menu_notifications:'通知設定', settings_menu_notifications_desc:'賽事提醒與戰報推播',
+    settings_menu_invite:'邀請朋友', settings_menu_invite_desc:'分享 DOR 給跑友',
+    settings_menu_about:'關於 DOR', settings_menu_about_desc:'版本 1.0.0-preview',
+    btn_save_short:'儲存', btn_saved:'✓ 已儲存', btn_connected:'已連結', btn_connect:'連結',
+    datasync_group_health_app:'手機健康 App', datasync_group_gps_watch:'GPS 運動手錶', datasync_group_platform:'運動追蹤平台',
+    label_distance:'距離', label_finish_time:'完賽時間', label_date:'日期',
+    rule_id_title:'身份分配', rule_id_desc:'開賽揭曉獵人或逃亡者，每日收到陣營任務。',
+    rule_daily_title:'每日任務卡', rule_daily_desc:'距離、配速、路線、救援 — 在條件下完成遊戲行動。',
+    rule_rescue_title:'小隊救援', rule_rescue_desc:'完成基礎里程後，每多 1K 釋放一位被捕夥伴。',
+    rule_mileage_title:'里程累積', rule_mileage_desc:'完賽里程計入轉盤，每 50 km 可轉動一次獎勵轉盤。',
+    mileage_rule_accum_title:'里程累積', mileage_rule_accum_desc:'在活動期間內，以任何方式累積跑走里程達標即完賽。',
+    mileage_rule_wheel_title:'轉盤獎勵', mileage_rule_wheel_desc:'完賽里程計入獎勵轉盤，每 50 km 可轉動一次。',
+    mileage_rule_cert_title:'完賽證書', mileage_rule_cert_desc:'活動結束後，系統自動核發電子完賽證書及紀念貼圖。',
+    mileage_rule_share_title:'成就分享', mileage_rule_share_desc:'達到里程里碑時可分享至社群，邀請朋友一起挑戰。',
+    beginner_highlight_tips:['步行、健走、快走、慢跑、跑步均可累積里程','手機計步或運動手錶均可自動同步','不設配速限制，以自己的節奏完成即可','可分多次完成，累積達標即視為完賽'],
+    team_goal_title:'合計完成 100 km', team_goal_desc:'全隊本賽期合計完成 100 km，解鎖限定公會徽章及隊長稱號。',
+    label_current:'目前', label_goal:'目標',
+    leaderboard_rank_label:'我', checkin_map_label:'地圖 ｜ 門市打卡點分佈',
+    profile_edit_sec_public:'公開資訊', profile_edit_public_notice:'其他跑者看到的都是「暱稱」，本名及個人資訊不對外公開。',
+    profile_edit_label_nickname:'暱稱 ｜ 公開顯示名稱', profile_edit_ph_nickname:'輸入暱稱',
+    profile_edit_label_gender:'性別',
+    profile_edit_gender_m:'男', profile_edit_gender_f:'女', profile_edit_gender_x:'非二元', profile_edit_gender_n:'不透露',
+    profile_edit_sec_private:'個人資訊 ｜ 私密，不對外公開',
+    profile_edit_label_name:'姓名（本名）', profile_edit_ph_name:'請輸入真實姓名',
+    profile_edit_label_id_type:'身分別', profile_edit_id_tw:'本國人', profile_edit_id_foreign:'外國人',
+    profile_edit_label_id_tw:'身分證字號', profile_edit_label_id_foreign:'護照號碼',
+    profile_edit_note_id:'用於賽事報名核驗', profile_edit_ph_passport:'護照號碼',
+    profile_edit_label_birthday:'生日', profile_edit_label_phone:'手機號碼', profile_edit_ph_phone:'09XX-XXX-XXX',
+    profile_edit_label_address:'地址', profile_edit_ph_address:'縣市、區、路段', profile_edit_note_optional:'選填',
+    datasync_info:'連結後，運動數據將自動同步，無需手動回報里程。',
+    datasync_name_xiaomi:'小米健康',
+    datasync_desc_apple:'iPhone 及 Apple Watch 健康與運動數據',
+    datasync_desc_gfit:'Android 裝置健康數據，支援 Pixel / 一般 Android',
+    datasync_desc_samsung:'Galaxy 系列手機及手錶數據',
+    datasync_desc_xiaomi:'Xiaomi Smart Band 智慧手環數據',
+    datasync_desc_garmin:'Garmin Forerunner / Fenix / Venu 系列',
+    datasync_desc_coros:'COROS Pace 3 / Apex 2 / Vertix 2S',
+    datasync_desc_polar:'Polar Pacer / Vantage / Grit X 系列',
+    datasync_desc_suunto:'Suunto Race / 9 Peak / Vertical 系列',
+    datasync_desc_wahoo:'Wahoo TICKR 心率帶與 ELEMNT 碼錶',
+    datasync_desc_fitbit:'Fitbit Charge / Sense / Versa 系列',
+    datasync_desc_strava:'跑步、騎行、健行記錄，支援路線分享',
+    datasync_desc_nike:'NRC App 跑步紀錄與引導訓練',
+    race_period:'賽期', race_teams:'參賽隊伍',
+    group_random_title:'開賽揭曉分組', group_random_faction_desc:'本賽事陣營採隨機分配，開賽時才知道你是獵人還是逃亡者——準備迎接任何挑戰！', group_random_club_desc:'本賽事跑團採隨機分配，開賽前一天公告所屬跑團，準備為你的隊友奮戰！',
+    label_pick_faction:'選擇陣營', label_pick_club:'選擇跑團', label_faction:'陣營', label_club:'跑團',
+    label_target_dist:'完賽距離目標', group_reveal_on_start:'開賽揭曉',
+    register_done_random_desc:'報名成功！分組將於開賽時公告，請密切注意通知。',
+    reg_form_title:'填寫寄件資料', reg_form_notice:'為了順利將賽事物資寄送至指定地址，請務必填寫正確資料；電子發票亦將寄送至您的 Email，請確認填寫正確。',
+    label_name:'姓名', reg_ph_name:'請輸入您的姓名', reg_ph_address_full:'縣市、區、路段、門牌號（完整地址）',
+    btn_next:'下一步',
+  },
+  en:{
+    tab_races:'Events', tab_wheel:'Miles', tab_me:'Me',
+    status_live:'Live', status_open:'Open', status_soon:'Coming Soon', status_done:'Finished',
+    lang:'Language', lang_zh:'中文', lang_en:'English', lang_ja:'日本語', settings_lang_desc:'Switch interface language',
+    home_title:'Events',
+    sec_live:'Active', sec_open:'Registration Open', sec_soon:'Coming Soon',
+    card_progress:'Completion', card_enter:'Enter Race', card_tonight:"Tonight's Battle",
+    card_escaped:'Escaped', card_captured:'Captured', card_my_rescue:'My Rescues', card_streak:'Streak',
+    card_mission_label:'Personal Mission',
+    card_accum:'Progress', card_enter_activity:'Enter Activity', card_beginner:'Beginner-friendly',
+    card_today_km:"Today's Activity", card_avg_km:'Daily Avg', card_days_left:'Days Left',
+    dtab_battle:'Battle', dtab_daily:'Daily Report', dtab_personal:'My Mission',
+    dtab_team:'Team Mission', dtab_challenge:'Challenges',
+    dtab_progress:'My Progress', dtab_actlog:'Activity Log', dtab_rank:'Leaderboard',
+    ring_label_battle:'Completion', sec_tonight:"Tonight's Battle", chip_mine:'Mine',
+    sec_guild:'Guild War | Team Ranking',
+    sec_race_schedule:'Race Schedule', chip_today:'Today',
+    mission_type_pace:'Pace Mission', mission_type_rescue:'Rescue Mission', mission_type_base:'Mileage Mission',
+    label_target_pace:'Target Pace', label_base_km:'Base Distance', sub_km_goal:'km to complete',
+    pace_unlimited:'Unlimited', pace_free:'Free Pace',
+    chip_base_done:'Base Done', chip_need:'Need',
+    sec_rescue_ladder:'Rescue Ladder | +1 per extra km',
+    rescued_count:'Rescued', rescued_unit:'teammates', rescue_double:'Rescue bonus doubled today',
+    label_today_progress:"Today's Progress", btn_report_run:'Report Run +1.0K',
+    sync_label:'Auto-sync: Garmin · Apple Health · Strava',
+    pace_zone_label:'Pace Zone | Stay in the green', pace_current:'Current', pace_safe:'Safe Zone', pace_fast:'Fast', pace_slow:'Slow',
+    label_team_done:'Completed Today', label_member_count:'Members', label_team_km:'Team Mileage',
+    sec_members:'Member Progress', sec_team_goal:'Weekly Team Goal',
+    member_done_text:'✓ Done', member_inprogress:'In Progress', chip_me_small:'Me',
+    checkin_card_title:'Store Check-in', sec_time_challenges:'Timed Challenges', challenge_done_text:'✓ Challenge Done',
+    ring_label_mileage:'Accumulated',
+    label_today_activity:"Today's Activity", label_daily_avg:'Daily Avg',
+    label_remaining_km:'Remaining', label_suggested_daily:'Suggested Daily',
+    sub_km_per_day:'km / day', sub_km_finish:'km to finish',
+    sec_activity_types:'Activity Types | Any mode counts',
+    stat_week_km:'This Week', stat_active_sessions:'Total Sessions', stat_times_unit:'times',
+    sec_activity_log:'Activity Log',
+    leaderboard_my_rank:"You're rank", leaderboard_gap_text:'km from 2nd place', leaderboard_need:'Need',
+    sec_participants:'Leaderboard',
+    label_rules:'Rules', label_schedule:'Race Schedule',
+    sched_open:'Registration Opens', sched_race_start:'Race Start', sched_race_end:'Race End', sched_result:'Results',
+    label_pick_group:'Choose Your Group', unit_km:'km',
+    label_mileage_goal:'Mileage Goal', mileage_goal_desc:'Completing adds', mileage_goal_unit:'km to wheel',
+    btn_register:'Register Now', confirm_register_title:'Confirm Registration', label_entry_fee:'Entry Fee',
+    btn_back:'Back', btn_confirm_pay:'Confirm Payment',
+    register_done_text:'Registered!', register_done_desc:"You'll receive a mission notification when the race starts. Happy running!",
+    coming_soon_title:'Registration Opening Soon', coming_soon_desc:'Registration will open shortly. Stay tuned!',
+    beginner_highlight_title:'Walking & Running Both Count',
+    label_activity_rules:'Activity Rules', label_activity_schedule:'Activity Schedule',
+    sched_activity_start:'Activity Start', sched_activity_end:'Activity End', sched_finish_pub:'Results',
+    label_pick_distance:'Choose Distance', unit_days_challenge:'-Day Challenge',
+    label_daily_suggest:'Daily Suggestion', label_est_calories:'Est. Calories', unit_calories:'kcal',
+    btn_register_mileage:'Register Now', unit_challenge:'K Challenge',
+    activity_done_desc:"You'll be notified when the activity starts. Keep going step by step!",
+    checkin_title:'Check-in Mission', checkin_show_card:'Show your ID card at the store',
+    checkin_race_done_prefix:'Checked in at', checkin_unit:'stores',
+    sec_stores:'Supply Stores', chip_checked:'Checked In', btn_scan:'Scan QR',
+    checkin_success:'✓ Checked In · +50 Rescue Points',
+    mileage_page_title:'Mileage Bank', label_total_mileage:'Total Mileage',
+    label_next_spin:'Until Next Spin', label_spin_gap:'Need',
+    note_50km:'Spin the wheel every 50 km accumulated',
+    label_spin_count:'Spins Available', spin_go_desc:'Go to Mileage Wheel', spin_locked_desc:'Complete more races to unlock',
+    sec_mileage_source:'Mileage Source | Race Completion Goals',
+    wheel_title:'Mileage Wheel', wheel_remaining:'Remaining',
+    btn_spinning:'Spinning…', btn_spin:'Spin the Wheel', btn_no_spins:'No spins left',
+    wheel_note:'Prizes are random · LINE Points & Stamp Cards', sec_prizes:'Prizes & Odds',
+    wheel_win:'You Won!', wheel_result_label:'Result',
+    wheel_line_desc:'Added to your LINE Wallet', wheel_sticker_desc:'Added to your Stamp Card',
+    wheel_again_desc:'You got a bonus spin!', wheel_miss_desc:'Better luck next time!', btn_collect:'Collect',
+    sticker_title:'9-Square Stamp Card', sticker_goal_label:'Complete all 9 · Redeem prize figure',
+    sticker_collected_chip:'Collected', sticker_locked_text:'Not Obtained',
+    sec_sticker_reward:'Full Collection Reward', sticker_prize_name:'Prize Figure', sticker_prize_tag:'Special Reward',
+    sticker_prize_desc:'Collect all 9 stamps to redeem a limited edition prize figure for free.',
+    btn_redeem:'Redeem Prize Figure', btn_need_more_prefix:'Collect ', btn_need_more_suffix:' more to redeem',
+    login_title:'Welcome to DOR',
+    login_desc:'Track your mileage and achievements after logging in\nJoin races, level up',
+    btn_google_login:'Sign in with Google', btn_logging_in:'Signing in…',
+    btn_guest_browse:'Continue as Guest',
+    login_legal:'By signing in, you agree to our Terms of Service and Privacy Policy',
+    levelup_congrats:'Level Up!',
+    levelup_exp_races:'Races Completed', levelup_exp_races_sub:'+30 EXP each',
+    levelup_exp_km:'Mileage', levelup_exp_km_sub:'+1 EXP per km',
+    btn_levelup_close:'Awesome! Keep Running 🏃',
+    profile_guest_name:'Guest', profile_guest_handle:'Log in to unlock full profile',
+    profile_guest_login_btn:'Login / Sign Up', btn_login_quick:'Login',
+    next_level_prefix:'Next Level', next_level_max:'MAX',
+    stat_races:'Races', stat_km:'Total km', stat_rescues:'Rescues', stat_streak:'Streak',
+    sec_my:'My',
+    menu_records:'Race Records', menu_km:'Total Mileage', menu_stickers:'Stamp Card',
+    menu_wheel:'Mileage Wheel', menu_datasync:'Data Sync',
+    wheel_avail_unit:' spins', wheel_none:'No spins yet',
+    sec_id_cards:'ID Card Collection', btn_account_settings:'Account & Data Sync',
+    records_title:'Race Records', stat_finish_count:'Races Finished', stat_finish_km:'Total km', stat_medals:'Medals',
+    sec_history:'Race History',
+    settings_title:'Settings', sec_account:'Account', sec_other:'Other', btn_logout:'Sign Out',
+    datasync_title:'Data Sync', profile_edit_title:'Profile',
+    btn_save:'Save Changes', btn_saving:'Saving…',
+    progress_title:'Race Progress', ring_label_progress:'Completed', sec_daily_progress:'Daily Mission Progress', chip_in_progress:'Active',
+    unit_days_race:'-Day Race', mission_day_suffix:'Mission',
+    card_identity_fugitive:'Fugitive', card_identity_hunter:'Hunter', card_identity_decoy:'Decoy', card_identity_signal:'Signal',
+    settings_menu_profile:'Profile', settings_menu_profile_desc:'Name, nickname, birthday & contacts',
+    settings_menu_datasync:'Data Sync', settings_menu_datasync_desc:'Connect watch & fitness apps',
+    settings_menu_notifications:'Notifications', settings_menu_notifications_desc:'Race alerts & battle reports',
+    settings_menu_invite:'Invite Friends', settings_menu_invite_desc:'Share DOR with friends',
+    settings_menu_about:'About DOR', settings_menu_about_desc:'Version 1.0.0-preview',
+    btn_save_short:'Save', btn_saved:'✓ Saved', btn_connected:'Connected', btn_connect:'Connect',
+    datasync_group_health_app:'Mobile Health Apps', datasync_group_gps_watch:'GPS Running Watches', datasync_group_platform:'Fitness Platforms',
+    label_distance:'Distance', label_finish_time:'Finish Time', label_date:'Date',
+    rule_id_title:'Identity Assignment', rule_id_desc:'Your faction is revealed at race start — daily faction missions await.',
+    rule_daily_title:'Daily Mission Card', rule_daily_desc:'Distance, pace, route, rescue — complete game actions under set conditions.',
+    rule_rescue_title:'Team Rescue', rule_rescue_desc:'After your base distance, each extra 1K rescues one captured teammate.',
+    rule_mileage_title:'Mileage Accumulation', rule_mileage_desc:'Race mileage feeds the wheel; spin once per 50 km accumulated.',
+    mileage_rule_accum_title:'Mileage Goal', mileage_rule_accum_desc:'Accumulate target mileage in any way during the activity period to finish.',
+    mileage_rule_wheel_title:'Wheel Rewards', mileage_rule_wheel_desc:'Mileage goes into the reward wheel; spin once per 50 km.',
+    mileage_rule_cert_title:'Finisher Certificate', mileage_rule_cert_desc:"After the activity ends, you'll automatically receive an e-certificate and sticker.",
+    mileage_rule_share_title:'Achievement Share', mileage_rule_share_desc:'Share your milestone on social media and invite friends to challenge.',
+    beginner_highlight_tips:['Walking, jogging, or running all count toward mileage','Auto-sync via smartphone pedometer or sports watch','No pace restrictions — complete at your own pace','Can be split across multiple sessions — accumulate to finish'],
+    team_goal_title:'Complete 100 km total', team_goal_desc:'Complete 100 km as a team to unlock a limited guild badge and captain title.',
+    label_current:'Current', label_goal:'Goal',
+    leaderboard_rank_label:'Me', checkin_map_label:'Map | Store Check-in Locations',
+    profile_edit_sec_public:'Public Profile', profile_edit_public_notice:"Other runners only see your nickname — your real name and personal info are kept private.",
+    profile_edit_label_nickname:'Nickname | Public Display Name', profile_edit_ph_nickname:'Enter nickname',
+    profile_edit_label_gender:'Gender',
+    profile_edit_gender_m:'Male', profile_edit_gender_f:'Female', profile_edit_gender_x:'Non-binary', profile_edit_gender_n:'Prefer not to say',
+    profile_edit_sec_private:'Personal Info | Private, Not Disclosed',
+    profile_edit_label_name:'Full Name (Legal Name)', profile_edit_ph_name:'Enter your legal name',
+    profile_edit_label_id_type:'Nationality', profile_edit_id_tw:'Domestic', profile_edit_id_foreign:'Foreign',
+    profile_edit_label_id_tw:'National ID Number', profile_edit_label_id_foreign:'Passport Number',
+    profile_edit_note_id:'For race registration verification', profile_edit_ph_passport:'Passport number',
+    profile_edit_label_birthday:'Date of Birth', profile_edit_label_phone:'Phone Number', profile_edit_ph_phone:'+886-9XX-XXX-XXX',
+    profile_edit_label_address:'Address', profile_edit_ph_address:'City, District, Street', profile_edit_note_optional:'Optional',
+    datasync_info:'Once connected, workout data syncs automatically — no manual mileage reporting needed.',
+    datasync_name_xiaomi:'Xiaomi Health',
+    datasync_desc_apple:'Health & workout data from iPhone and Apple Watch',
+    datasync_desc_gfit:'Android device health data — Pixel and standard Android',
+    datasync_desc_samsung:'Galaxy phone and watch data',
+    datasync_desc_xiaomi:'Xiaomi Smart Band wearable data',
+    datasync_desc_garmin:'Garmin Forerunner / Fenix / Venu series',
+    datasync_desc_coros:'COROS Pace 3 / Apex 2 / Vertix 2S',
+    datasync_desc_polar:'Polar Pacer / Vantage / Grit X series',
+    datasync_desc_suunto:'Suunto Race / 9 Peak / Vertical series',
+    datasync_desc_wahoo:'Wahoo TICKR heart rate strap and ELEMNT bike computer',
+    datasync_desc_fitbit:'Fitbit Charge / Sense / Versa series',
+    datasync_desc_strava:'Running, cycling & hiking logs with route sharing',
+    datasync_desc_nike:'NRC App running logs and guided runs',
+    race_period:'Period', race_teams:'Teams',
+    group_random_title:'Random Group Assignment', group_random_faction_desc:"Factions are randomly assigned at race start — you won't know if you're a Hunter or Fugitive until the gun goes off!", group_random_club_desc:'Clubs are randomly assigned and announced the day before race start — get ready to run for your team!',
+    label_pick_faction:'Choose Your Faction', label_pick_club:'Choose Your Club', label_faction:'Faction', label_club:'Club',
+    label_target_dist:'Finish Distance Goal', group_reveal_on_start:'Revealed at Start',
+    register_done_random_desc:'Registered! Your group will be announced when the race begins — watch for notifications.',
+    reg_form_title:'Shipping Information', reg_form_notice:'To ensure timely delivery of race materials to the correct address, please fill in accurate details. Your e-invoice will also be sent to your email — make sure it is correct.',
+    label_name:'Full Name', reg_ph_name:'Enter your full name', reg_ph_address_full:'City, district, street and door number (full address)',
+    btn_next:'Next',
+  },
+  ja:{
+    tab_races:'レース', tab_wheel:'マイル', tab_me:'マイページ',
+    status_live:'開催中', status_open:'受付中', status_soon:'まもなく開始', status_done:'終了',
+    lang:'言語', lang_zh:'中文', lang_en:'English', lang_ja:'日本語', settings_lang_desc:'表示言語を切り替える',
+    home_title:'レース',
+    sec_live:'開催中', sec_open:'受付中', sec_soon:'まもなく開始',
+    card_progress:'完走進捗', card_enter:'レースへ', card_tonight:'本夜の戦況',
+    card_escaped:'脱出済み', card_captured:'捕獲済み', card_my_rescue:'レスキュー数', card_streak:'継続日数',
+    card_mission_label:'個人ミッション',
+    card_accum:'累積進捗', card_enter_activity:'アクティビティへ', card_beginner:'初心者向け',
+    card_today_km:'本日の活動', card_avg_km:'日平均', card_days_left:'残り日数',
+    dtab_battle:'戦況', dtab_daily:'デイリーレポート', dtab_personal:'個人ミッション',
+    dtab_team:'チームミッション', dtab_challenge:'チャレンジ',
+    dtab_progress:'マイ進捗', dtab_actlog:'活動ログ', dtab_rank:'ランキング',
+    ring_label_battle:'完走進捗', sec_tonight:'本夜の戦況', chip_mine:'自分',
+    sec_guild:'ギルド戦 | チームランキング',
+    sec_race_schedule:'レース進捗', chip_today:'今日',
+    mission_type_pace:'ペースミッション', mission_type_rescue:'レスキューミッション', mission_type_base:'走行ミッション',
+    label_target_pace:'目標ペース', label_base_km:'基本距離', sub_km_goal:'km 達成目標',
+    pace_unlimited:'制限なし', pace_free:'フリーペース',
+    chip_base_done:'基本達成', chip_need:'あと',
+    sec_rescue_ladder:'レスキューラダー | 1km追加ごとに1人救出',
+    rescued_count:'救出済み', rescued_unit:'人', rescue_double:'本日レスキューボーナス2倍',
+    label_today_progress:'本日の進捗', btn_report_run:'走行報告 +1.0K',
+    sync_label:'自動同期: Garmin · Apple Health · Strava',
+    pace_zone_label:'ペースゾーン | グリーンゾーン維持', pace_current:'現在', pace_safe:'セーフゾーン', pace_fast:'速い', pace_slow:'遅い',
+    label_team_done:'本日完了', label_member_count:'メンバー数', label_team_km:'チーム走行距離',
+    sec_members:'メンバー進捗', sec_team_goal:'今週のチーム目標',
+    member_done_text:'✓ 完了', member_inprogress:'進行中', chip_me_small:'自分',
+    checkin_card_title:'補給ステーションチェックイン', sec_time_challenges:'期間限定チャレンジ', challenge_done_text:'✓ チャレンジ完了',
+    ring_label_mileage:'累積走行',
+    label_today_activity:'本日の活動', label_daily_avg:'日平均',
+    label_remaining_km:'残り', label_suggested_daily:'推奨日量',
+    sub_km_per_day:'km / 日', sub_km_finish:'km で完走',
+    sec_activity_types:'アクティビティタイプ | どの方法でも可',
+    stat_week_km:'今週の合計', stat_active_sessions:'合計活動', stat_times_unit:'回',
+    sec_activity_log:'活動ログ',
+    leaderboard_my_rank:'現在のランキング', leaderboard_gap_text:'km差で2位を抜ける', leaderboard_need:'あと',
+    sec_participants:'ランキング',
+    label_rules:'ルール', label_schedule:'レーススケジュール',
+    sched_open:'受付開始', sched_race_start:'レース開始', sched_race_end:'レース終了', sched_result:'結果発表',
+    label_pick_group:'グループ選択', unit_km:'km',
+    label_mileage_goal:'マイレージ目標', mileage_goal_desc:'完走後に', mileage_goal_unit:'km がホイールに加算',
+    btn_register:'今すぐ登録', confirm_register_title:'登録確認', label_entry_fee:'エントリーフィー',
+    btn_back:'戻る', btn_confirm_pay:'決済確認',
+    register_done_text:'登録完了！', register_done_desc:'レース開始時にミッション通知が届きます。楽しいランを！',
+    coming_soon_title:'受付開始まもなく', coming_soon_desc:'近日中に受付開始予定。お楽しみに！',
+    beginner_highlight_title:'ウォーキングもランニングも対象',
+    label_activity_rules:'アクティビティルール', label_activity_schedule:'アクティビティスケジュール',
+    sched_activity_start:'開始日', sched_activity_end:'終了日', sched_finish_pub:'結果発表',
+    label_pick_distance:'距離を選択', unit_days_challenge:'日間チャレンジ',
+    label_daily_suggest:'1日の推奨', label_est_calories:'予想消費カロリー', unit_calories:'kcal',
+    btn_register_mileage:'今すぐ登録', unit_challenge:'K チャレンジ',
+    activity_done_desc:'開始時に通知が届きます。一歩一歩、目標に向かって頑張りましょう！',
+    checkin_title:'チェックインミッション', checkin_show_card:'店舗でIDカードを提示',
+    checkin_race_done_prefix:'チェックイン済み', checkin_unit:'店舗',
+    sec_stores:'補給ステーション', chip_checked:'チェックイン済', btn_scan:'QRスキャン',
+    checkin_success:'✓ チェックイン完了 · +50 レスキューポイント',
+    mileage_page_title:'マイレージバンク', label_total_mileage:'累積走行距離',
+    label_next_spin:'次のスピンまで', label_spin_gap:'あと',
+    note_50km:'50 km ごとにホイールをスピン',
+    label_spin_count:'スピン残回数', spin_go_desc:'マイレージホイールへ', spin_locked_desc:'レースを完走してアンロック',
+    sec_mileage_source:'マイレージ源 | レース完走目標',
+    wheel_title:'マイレージホイール', wheel_remaining:'残り',
+    btn_spinning:'スピン中…', btn_spin:'ホイールをスピン', btn_no_spins:'スピン回数なし',
+    wheel_note:'賞品はランダム · LINE ポイント & スタンプカード', sec_prizes:'賞品と確率',
+    wheel_win:'おめでとう！', wheel_result_label:'結果',
+    wheel_line_desc:'LINE ウォレットに追加されました', wheel_sticker_desc:'スタンプカードに追加されました',
+    wheel_again_desc:'ボーナススピンを獲得！', wheel_miss_desc:'次回頑張りましょう！', btn_collect:'受け取る',
+    sticker_title:'9マス スタンプカード', sticker_goal_label:'9マス全制覇 · フィギュアと交換',
+    sticker_collected_chip:'収集済み', sticker_locked_text:'未取得',
+    sec_sticker_reward:'コンプリート特典', sticker_prize_name:'完走フィギュア', sticker_prize_tag:'特別報酬',
+    sticker_prize_desc:'9マス全てのスタンプを集めると、限定完走フィギュアと無料交換できます。',
+    btn_redeem:'フィギュアを交換', btn_need_more_prefix:'あと', btn_need_more_suffix:'枚で交換可能',
+    login_title:'DOR へようこそ',
+    login_desc:'ログインしてマイレージと実績を追跡\nレースに参加してレベルアップ',
+    btn_google_login:'Google アカウントでログイン', btn_logging_in:'ログイン中…',
+    btn_guest_browse:'ゲストとして続ける',
+    login_legal:'ログインすることで利用規約とプライバシーポリシーに同意したことになります',
+    levelup_congrats:'レベルアップ！',
+    levelup_exp_races:'完走レース数', levelup_exp_races_sub:'各 +30 EXP',
+    levelup_exp_km:'走行距離', levelup_exp_km_sub:'1km あたり +1 EXP',
+    btn_levelup_close:'やった！走り続けよう 🏃',
+    profile_guest_name:'ゲスト', profile_guest_handle:'ログインしてフルプロフィールを解放',
+    profile_guest_login_btn:'ログイン / 新規登録', btn_login_quick:'ログイン',
+    next_level_prefix:'次のレベル', next_level_max:'MAX',
+    stat_races:'完走レース', stat_km:'累積走行距離', stat_rescues:'レスキュー数', stat_streak:'継続日数',
+    sec_my:'マイ',
+    menu_records:'レース記録', menu_km:'累積走行距離', menu_stickers:'スタンプカード',
+    menu_wheel:'マイレージホイール', menu_datasync:'データ同期',
+    wheel_avail_unit:' スピン', wheel_none:'スピンなし',
+    sec_id_cards:'IDカードコレクション', btn_account_settings:'アカウントとデータ同期',
+    records_title:'レース記録', stat_finish_count:'完走レース数', stat_finish_km:'累積 km', stat_medals:'獲得メダル',
+    sec_history:'レース履歴',
+    settings_title:'設定', sec_account:'アカウント', sec_other:'その他', btn_logout:'ログアウト',
+    datasync_title:'データ同期', profile_edit_title:'プロフィール',
+    btn_save:'変更を保存', btn_saving:'保存中…',
+    progress_title:'レース進捗', ring_label_progress:'完走済み', sec_daily_progress:'デイリーミッション進捗', chip_in_progress:'進行中',
+    unit_days_race:'日レース', mission_day_suffix:'ミッション',
+    card_identity_fugitive:'逃亡者', card_identity_hunter:'ハンター', card_identity_decoy:'デコイ', card_identity_signal:'シグナル',
+    settings_menu_profile:'プロフィール', settings_menu_profile_desc:'名前・ニックネーム・生年月日・連絡先',
+    settings_menu_datasync:'データ同期', settings_menu_datasync_desc:'ウォッチとフィットネスアプリを連携',
+    settings_menu_notifications:'通知設定', settings_menu_notifications_desc:'レースアラートと戦況レポート',
+    settings_menu_invite:'友達を招待', settings_menu_invite_desc:'DORをランナー仲間とシェア',
+    settings_menu_about:'DORについて', settings_menu_about_desc:'バージョン 1.0.0-preview',
+    btn_save_short:'保存', btn_saved:'✓ 保存済み', btn_connected:'接続済み', btn_connect:'接続する',
+    datasync_group_health_app:'モバイルヘルスアプリ', datasync_group_gps_watch:'GPS スポーツウォッチ', datasync_group_platform:'フィットネスプラットフォーム',
+    label_distance:'距離', label_finish_time:'完走タイム', label_date:'日付',
+    rule_id_title:'アイデンティティ配布', rule_id_desc:'レース開始時にハンターか逃亡者かが決まり、毎日陣営ミッションが届く。',
+    rule_daily_title:'デイリーミッションカード', rule_daily_desc:'距離・ペース・ルート・レスキュー — 設定条件のもとでゲームアクションを完了。',
+    rule_rescue_title:'チームレスキュー', rule_rescue_desc:'基本距離達成後、1km追加ごとに捕獲されたチームメイト1人を救出。',
+    rule_mileage_title:'マイレージ積み上げ', rule_mileage_desc:'完走マイレージがホイールに積算され、50kmごとに1回スピンできる。',
+    mileage_rule_accum_title:'マイレージ目標', mileage_rule_accum_desc:'活動期間内に任意の方法で目標マイレージを達成すれば完走。',
+    mileage_rule_wheel_title:'ホイール報酬', mileage_rule_wheel_desc:'完走マイレージが報酬ホイールに積算され、50kmごとに1回スピン。',
+    mileage_rule_cert_title:'完走証書', mileage_rule_cert_desc:'活動終了後、電子完走証書と記念スタンプが自動発行される。',
+    mileage_rule_share_title:'実績シェア', mileage_rule_share_desc:'マイレージマイルストーン達成時にSNSでシェアして友達を招待。',
+    beginner_highlight_tips:['ウォーキング・ジョギング・ランニング、どれでもマイレージに換算','スマートフォン歩数計やスポーツウォッチで自動同期','ペース制限なし — 自分のペースで完了すればOK','複数回に分けてもOK — 累積達成で完走とみなされる'],
+    team_goal_title:'チーム合計 100 km 達成', team_goal_desc:'チーム全体で100 km達成すると限定ギルドバッジとキャプテン称号がアンロック。',
+    label_current:'現在', label_goal:'目標',
+    leaderboard_rank_label:'自分', checkin_map_label:'マップ | 店舗チェックインポイント',
+    profile_edit_sec_public:'公開プロフィール', profile_edit_public_notice:'他のランナーには「ニックネーム」のみ表示されます。本名や個人情報は公開されません。',
+    profile_edit_label_nickname:'ニックネーム ｜ 公開表示名', profile_edit_ph_nickname:'ニックネームを入力',
+    profile_edit_label_gender:'性別',
+    profile_edit_gender_m:'男性', profile_edit_gender_f:'女性', profile_edit_gender_x:'ノンバイナリー', profile_edit_gender_n:'回答しない',
+    profile_edit_sec_private:'個人情報 ｜ 非公開',
+    profile_edit_label_name:'氏名（本名）', profile_edit_ph_name:'本名を入力してください',
+    profile_edit_label_id_type:'国籍区分', profile_edit_id_tw:'国内', profile_edit_id_foreign:'外国人',
+    profile_edit_label_id_tw:'国民身分証番号', profile_edit_label_id_foreign:'パスポート番号',
+    profile_edit_note_id:'レース登録確認用', profile_edit_ph_passport:'パスポート番号',
+    profile_edit_label_birthday:'生年月日', profile_edit_label_phone:'携帯電話番号', profile_edit_ph_phone:'080-XXXX-XXXX',
+    profile_edit_label_address:'住所', profile_edit_ph_address:'市区町村、番地', profile_edit_note_optional:'任意',
+    datasync_info:'連結後、運動データが自動同期されます。手動での里程申告は不要です。',
+    datasync_name_xiaomi:'Xiaomiヘルス',
+    datasync_desc_apple:'iPhoneおよびApple Watchの健康・運動データ',
+    datasync_desc_gfit:'AndroidデバイスのヘルスデータはPixelおよび一般Androidに対応',
+    datasync_desc_samsung:'Galaxyシリーズのスマートフォン・時計データ',
+    datasync_desc_xiaomi:'Xiaomiスマートバンドのデータ',
+    datasync_desc_garmin:'Garmin Forerunner / Fenix / Venuシリーズ',
+    datasync_desc_coros:'COROS Pace 3 / Apex 2 / Vertix 2S',
+    datasync_desc_polar:'Polar Pacer / Vantage / Grit Xシリーズ',
+    datasync_desc_suunto:'Suunto Race / 9 Peak / Verticalシリーズ',
+    datasync_desc_wahoo:'Wahoo TICKRハートレートストラップとELEMNTサイクルコンピュータ',
+    datasync_desc_fitbit:'Fitbit Charge / Sense / Versaシリーズ',
+    datasync_desc_strava:'ランニング・サイクリング・ハイキング記録、ルート共有に対応',
+    datasync_desc_nike:'NRC Appのランニング記録とガイド付きトレーニング',
+    race_period:'開催期間', race_teams:'参加チーム',
+    group_random_title:'ランダム分組通知', group_random_faction_desc:'陣営はスタート時にランダム決定されます。ハンターか逃亡者か——どちらになっても準備を！', group_random_club_desc:'クラブはランダム分配され、レース前日に発表されます。チームのために全力を尽くせ！',
+    label_pick_faction:'陣営を選択', label_pick_club:'クラブを選択', label_faction:'陣営', label_club:'クラブ',
+    label_target_dist:'完走距離目標', group_reveal_on_start:'開始時に公開',
+    register_done_random_desc:'登録完了！グループはレース開始時に発表されます。通知にご注意ください。',
+    reg_form_title:'配送先情報', reg_form_notice:'レース物資を確実にお届けするため、正しい情報を必ずご記入ください。電子領収書もご登録のメールアドレスに送信されます。',
+    label_name:'氏名', reg_ph_name:'お名前を入力してください', reg_ph_address_full:'都道府県・市区町村・番地を含む完全な住所',
+    btn_next:'次へ',
+  },
+};
+const LangCtx=React.createContext(['zh',()=>{}]);
+function LangProvider({children}){
+  const [lang,setLangRaw]=React.useState(()=>{
+    try{ return localStorage.getItem('dor_lang')||'zh'; }catch(e){ return 'zh'; }
+  });
+  const setLang=(l)=>{ setLangRaw(l); try{ localStorage.setItem('dor_lang',l); }catch(e){} };
+  return <LangCtx.Provider value={[lang,setLang]}>{children}</LangCtx.Provider>;
+}
+function useT(){
+  const [lang]=React.useContext(LangCtx);
+  return (k)=>I18N[lang]?.[k]??I18N.zh[k]??k;
+}
+
+/* ── 等級系統 ── */
+const LEVELS=[
+  {level:1,name:'新手跑者',   minExp:0,   maxExp:100,  color:'var(--tx-mid)',    badge:'#AAAAAA'},
+  {level:2,name:'初級挑戰者', minExp:100, maxExp:300,  color:'var(--sage)',      badge:'#C8102E'},
+  {level:3,name:'進階跑者',   minExp:300, maxExp:600,  color:'var(--honey)',     badge:'#C07B22'},
+  {level:4,name:'菁英跑者',   minExp:600, maxExp:1000, color:'var(--coral)',     badge:'#1A1A1A'},
+  {level:5,name:'傳說跑者',   minExp:1000,maxExp:9999, color:'var(--sage)',      badge:'#C8102E'},
+];
+function calcExp(p){ return Math.floor(p.totalKm) + p.races*30 + p.rescues*2; }
+function getLevelInfo(exp){
+  const cur=[...LEVELS].reverse().find(l=>exp>=l.minExp)||LEVELS[0];
+  const pct=cur.maxExp<9999?Math.round((exp-cur.minExp)/(cur.maxExp-cur.minExp)*100):100;
+  return {...cur,exp,pct};
+}
+
+/* ── Home ── */
+function SectionLabel({ children }) { return <div className="lbl" style={{padding:'22px 18px 10px'}}>{children}</div>; }
+function DayChip({ now, total }) {
+  return <div style={{display:'flex',alignItems:'center',gap:8}}>
+    <span style={{fontFamily:'var(--font-disp)',fontSize:12,fontWeight:700,color:'var(--sage)'}}>DAY {now}/{total}</span>
+    <div style={{width:80}}><DayDots total={total} now={now}/></div>
+  </div>;
+}
+function MiniStat({ n, l, tone }) {
+  const c=tone==='fug'?'var(--sage)':tone==='gold'?'var(--honey)':tone==='hunt'?'var(--coral)':'var(--tx)';
+  return <div style={{flex:1,textAlign:'center',padding:'9px 4px',background:'var(--bg)',borderRadius:12,border:'1px solid var(--border)'}}>
+    <div className="num" style={{fontSize:18,color:c}}>{n}</div>
+    <div className="lbl" style={{fontSize:9,marginTop:2}}>{l}</div>
+  </div>;
+}
+
+/* 進行中賽事大卡 */
+function LiveRaceCard({ r, nav }) {
+  const t=useT();
+  const D=window.DOR; const board=D.factionBoard; const today=D.missions.find(m=>m.day===r.dayNow); const fac=FAC[r.faction]; const pct=r.progressKm/r.goalKm*100;
+  return (
+    <div className="card tap" onClick={()=>nav('raceDetail',{id:r.id})} style={{padding:0,overflow:'hidden',borderColor:'rgba(200,16,46,.3)'}}>
+      <div style={{padding:'16px 18px 14px',background:'var(--surface)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+          <div style={{flex:1,minWidth:0,paddingRight:12}}>
+            <StatusBadge status={r.status}/>
+            <div style={{fontFamily:'var(--font-disp)',fontSize:21,fontWeight:800,marginTop:8,lineHeight:1.1,color:'var(--tx)'}}>{r.title}</div>
+            <div style={{fontSize:12,color:'var(--tx-mid)',marginTop:3,fontFamily:'var(--font-disp)',fontWeight:600}}>{r.world} · {r.start}–{r.end}</div>
+          </div>
+          <div style={{textAlign:'center',flexShrink:0}}>
+            <div style={{width:52,height:52,borderRadius:14,background:'var(--surface)',border:'1.5px solid rgba(200,16,46,.3)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <Icon name={fac.icon} size={26} color="var(--sage)"/>
+            </div>
+            <div style={{fontSize:10.5,color:'var(--sage)',fontFamily:'var(--font-disp)',fontWeight:700,marginTop:4}}>{fac.label}</div>
+          </div>
+        </div>
+        <div style={{marginTop:14}}>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:6,fontSize:12}}>
+            <span style={{color:'var(--tx-mid)',fontFamily:'var(--font-disp)',fontWeight:600}}>{t('card_progress')}</span>
+            <span style={{color:'var(--sage)',fontFamily:'var(--font-disp)',fontWeight:700}}>{r.progressKm} / {r.goalKm} km</span>
+          </div>
+          <Bar pct={pct}/>
+        </div>
+        <div style={{marginTop:12,padding:'12px 13px',background:'rgba(255,255,255,.7)',borderRadius:12,border:'1px solid var(--border)'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:7}}>
+            <span style={{fontFamily:'var(--font-disp)',fontSize:11,fontWeight:700,color:'var(--sage)'}}>{board.fugitive.label} {board.fugitive.val}%</span>
+            <span className="lbl" style={{fontSize:9}}>{t('sec_tonight')}</span>
+            <span style={{fontFamily:'var(--font-disp)',fontSize:11,fontWeight:700,color:'var(--coral)'}}>{board.hunter.val}% {board.hunter.label}</span>
+          </div>
+          <div style={{height:6,borderRadius:999,overflow:'hidden',background:'var(--surface)'}}>
+            <div style={{width:board.fugitive.val+'%',height:'100%',background:'var(--sage)',borderRadius:999}}/>
+          </div>
+          <div style={{display:'flex',gap:8,marginTop:10}}>
+            <MiniStat n={board.fugitive.escaped} l={t('card_escaped')} tone="fug"/>
+            <MiniStat n={board.hunter.captured} l={t('card_captured')} tone="hunt"/>
+            <MiniStat n={D.profile.rescues} l={t('card_my_rescue')} tone="gold"/>
+            <MiniStat n={D.profile.streak} l={t('card_streak')}/>
+          </div>
+        </div>
+        {today&&<div style={{marginTop:10,display:'flex',alignItems:'center',gap:11,padding:'10px 12px',background:'var(--surface)',borderRadius:12,border:'1px solid rgba(26,26,26,.2)'}}>
+          <div style={{width:36,height:36,borderRadius:10,background:'var(--surface)',border:'1px solid rgba(26,26,26,.25)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+            <Icon name={today.icon} size={18} color="var(--coral)"/>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:1}}>
+              <span className="lbl" style={{fontSize:9}}>DAY {today.day} {t('card_mission_label')}</span>
+              <span className="chip hunt" style={{fontSize:9,padding:'1px 6px'}}>{today.tag}</span>
+            </div>
+            <div style={{fontWeight:700,fontSize:14,color:'var(--tx)'}}>{today.title}</div>
+          </div>
+          <div style={{textAlign:'right',flexShrink:0}}>
+            <div style={{fontSize:13,fontFamily:'var(--font-disp)',fontWeight:800,color:today.kmDone>=today.base?'var(--sage)':'var(--coral)'}}>{today.kmDone.toFixed(1)}/{today.base.toFixed(1)}<span style={{fontSize:10,fontWeight:600}}> km</span></div>
+          </div>
+        </div>}
+      </div>
+      <div style={{borderTop:'1px solid var(--border)',padding:'11px 18px',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--surface-2)'}}>
+        <DayChip now={r.dayNow} total={r.days}/>
+        <span style={{display:'flex',alignItems:'center',gap:4,color:'var(--tx-mid)',fontSize:13,fontFamily:'var(--font-disp)',fontWeight:600}}>{t('card_enter')} <Icon name="chev" size={15} color="var(--tx-mid)"/></span>
+      </div>
+    </div>
+  );
+}
+
+/* 新手里程型進行中大卡 */
+function MileageLiveCard({ r, nav }) {
+  const t=useT();
+  const pct=r.progressKm/r.goalKm*100; const daysLeft=r.days-r.dayNow;
+  const dailyAvg=r.dayNow>0?(r.progressKm/r.dayNow):0; const todayKm=2.8;
+  return (
+    <div className="card tap" onClick={()=>nav('raceDetail',{id:r.id})} style={{padding:0,overflow:'hidden',borderColor:'rgba(192,123,34,.3)'}}>
+      <div style={{padding:'16px 18px 14px',background:'var(--surface)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+          <div style={{flex:1,minWidth:0,paddingRight:12}}>
+            <StatusBadge status={r.status}/>
+            <div style={{fontFamily:'var(--font-disp)',fontSize:21,fontWeight:800,marginTop:8,lineHeight:1.1,color:'var(--tx)'}}>{r.title}</div>
+            <div style={{fontSize:12,color:'var(--tx-mid)',marginTop:3,fontFamily:'var(--font-disp)',fontWeight:600}}>{r.world} · {r.start}–{r.end}</div>
+          </div>
+          <div style={{textAlign:'center',flexShrink:0}}>
+            <div style={{width:52,height:52,borderRadius:14,background:'var(--surface)',border:'1.5px solid rgba(192,123,34,.3)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <Icon name="route" size={26} color="var(--honey)"/>
+            </div>
+            <div style={{fontSize:10.5,color:'var(--honey)',fontFamily:'var(--font-disp)',fontWeight:700,marginTop:4}}>{t('card_beginner')}</div>
+          </div>
+        </div>
+        <div style={{marginTop:14}}>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:6,fontSize:12}}>
+            <span style={{color:'var(--tx-mid)',fontFamily:'var(--font-disp)',fontWeight:600}}>{t('card_accum')}</span>
+            <span style={{color:'var(--honey)',fontFamily:'var(--font-disp)',fontWeight:700}}>{r.progressKm} / {r.goalKm} km</span>
+          </div>
+          <Bar pct={pct} color="var(--honey)"/>
+        </div>
+        <div style={{marginTop:12,display:'flex',gap:8}}>
+          {[{l:t('card_today_km'),v:todayKm.toFixed(1),u:'km',c:'var(--honey)'},{l:t('card_avg_km'),v:dailyAvg.toFixed(1),u:'km/日',c:'var(--tx)'},{l:t('card_days_left'),v:daysLeft,u:'',c:'var(--tx)'}].map((s,i)=>(
+            <div key={i} style={{flex:1,padding:'11px 10px',background:'rgba(255,255,255,.7)',borderRadius:12,border:'1px solid var(--border)'}}>
+              <div className="lbl" style={{fontSize:9}}>{s.l}</div>
+              <div className="num" style={{fontSize:20,color:s.c,marginTop:4}}>{s.v}</div>
+              <div style={{fontSize:10,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600,marginTop:1}}>{s.u}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{borderTop:'1px solid var(--border)',padding:'11px 18px',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--surface-2)'}}>
+        <DayChip now={r.dayNow} total={r.days}/>
+        <span style={{display:'flex',alignItems:'center',gap:4,color:'var(--tx-mid)',fontSize:13,fontFamily:'var(--font-disp)',fontWeight:600}}>{t('card_enter_activity')} <Icon name="chev" size={15} color="var(--tx-mid)"/></span>
+      </div>
+    </div>
+  );
+}
+
+/* 標準賽事卡片（報名中 / 即將開始） */
+function KV({ label, value }) {
+  return <div>
+    <div className="lbl" style={{fontSize:9}}>{label}</div>
+    <div style={{fontSize:13,marginTop:2,color:'var(--tx)',fontFamily:'var(--font-disp)',fontWeight:600}}>{value}</div>
+  </div>;
+}
+function RaceCard({ r, onClick }) {
+  const t=useT();
+  return (
+    <div className="card tap" onClick={onClick} style={{padding:0,overflow:'hidden'}}>
+      <div className="ph" style={{height:110,borderRadius:0,position:'relative'}}>{r.hero}
+        <div style={{position:'absolute',top:12,left:12}}><StatusBadge status={r.status}/></div>
+        <div style={{position:'absolute',left:14,bottom:11,right:14}}>
+          <div style={{fontSize:10,letterSpacing:'.14em',color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600,textTransform:'uppercase'}}>{r.sub}</div>
+          <div style={{fontFamily:'var(--font-disp)',fontSize:21,fontWeight:800,lineHeight:1.1,color:'var(--tx)'}}>{r.title}</div>
+        </div>
+      </div>
+      <div style={{padding:14}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+          <span className="chip">{r.world}</span>
+          {r.distances.map(d=><span key={d} className="chip" style={{fontWeight:700}}>{d}K</span>)}
+        </div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:12}}>
+          <div style={{display:'flex',gap:16}}>
+            <KV label={t('race_period')} value={`${r.start}–${r.end}`}/>
+            <KV label={t('race_teams')} value={r.teams?r.teams.toLocaleString():'—'}/>
+          </div>
+          <Icon name="chev" size={18} color="var(--tx-light)"/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* 首頁 = 賽事列表 */
+function HomeScreen({ nav }) {
+  const t=useT();
+  const D=window.DOR;
+  const liveRaces=D.races.filter(r=>r.status==='live');
+  const openRaces=D.races.filter(r=>r.status==='open');
+  const soonRaces=D.races.filter(r=>r.status==='soon');
+  return (
+    <div className="dor-scroll">
+      <SafeTop/>
+      <div style={{padding:'0 18px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div>
+          <div className="eyebrow">DOR CLOUD MARATHON</div>
+          <div style={{fontFamily:'var(--font-disp)',fontSize:22,fontWeight:800,marginTop:4,color:'var(--tx)'}}>{t('home_title')}</div>
+        </div>
+        <button className="tap" style={iconBtn}><Icon name="bell" size={20} color="var(--tx-mid)"/></button>
+      </div>
+      {liveRaces.length>0&&<>
+        <SectionLabel>{t('sec_live')}</SectionLabel>
+        <div style={{padding:'0 18px',display:'flex',flexDirection:'column',gap:14}}>
+          {liveRaces.map(r=>r.type==='mileage'?<MileageLiveCard key={r.id} r={r} nav={nav}/>:<LiveRaceCard key={r.id} r={r} nav={nav}/>)}
+        </div>
+      </>}
+      {openRaces.length>0&&<>
+        <SectionLabel>{t('sec_open')}</SectionLabel>
+        <div style={{padding:'0 18px',display:'flex',flexDirection:'column',gap:14}}>
+          {openRaces.map(r=><RaceCard key={r.id} r={r} onClick={()=>nav('raceDetail',{id:r.id})}/>)}
+        </div>
+      </>}
+      {soonRaces.length>0&&<>
+        <SectionLabel>{t('sec_soon')}</SectionLabel>
+        <div style={{padding:'0 18px',display:'flex',flexDirection:'column',gap:14}}>
+          {soonRaces.map(r=><RaceCard key={r.id} r={r} onClick={()=>nav('raceDetail',{id:r.id})}/>)}
+        </div>
+      </>}
+    </div>
+  );
+}
+
+/* ── Race Detail 共用元件 ── */
+function RuleRow({ icon, tone, t, d }) {
+  const c=tone==='fug'?'var(--sage)':tone==='hunt'?'var(--coral)':tone==='violet'?'var(--lavender)':'var(--honey)';
+  const bg='var(--surface)';
+  return <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+    <div style={{width:38,height:38,borderRadius:11,background:bg,border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+      <Icon name={icon} size={20} color={c}/>
+    </div>
+    <div style={{flex:1}}>
+      <div style={{fontWeight:700,fontSize:14.5,color:'var(--tx)'}}>{t}</div>
+      <div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:2,lineHeight:1.5}}>{d}</div>
+    </div>
+  </div>;
+}
+
+/* ── 進行中賽事的 5 個內部 Tab ── */
+function BattleTab({ r }) {
+  const t=useT();
+  const D=window.DOR; const board=D.factionBoard; const pct=r.progressKm/r.goalKm; const R=78,C=2*Math.PI*R;
+  return (
+    <div style={{padding:'8px 0 20px'}}>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'16px 0 8px'}}>
+        <div style={{position:'relative',width:190,height:190}}>
+          <svg width="190" height="190" style={{transform:'rotate(-90deg)'}}>
+            <circle cx="95" cy="95" r={R} fill="none" stroke="var(--border)" strokeWidth="12"/>
+            <circle cx="95" cy="95" r={R} fill="none" stroke="var(--sage)" strokeWidth="12" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C*(1-pct)}/>
+          </svg>
+          <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
+            <div className="lbl" style={{fontSize:9}}>{t('ring_label_battle')}</div>
+            <div className="num" style={{fontSize:42,lineHeight:1,marginTop:4,color:'var(--sage)'}}>{r.progressKm}</div>
+            <div style={{fontSize:12,color:'var(--tx-mid)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>/ {r.goalKm} km</div>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:8,marginTop:6}}>
+          <span className="chip fug">{FAC[r.faction].label}</span>
+          <span className="chip">{r.mine}</span>
+        </div>
+      </div>
+      <div style={{padding:'0 18px'}}>
+        <div className="card card-pad">
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
+            <span style={{color:'var(--sage)',fontFamily:'var(--font-disp)',fontWeight:700,fontSize:13}}>{board.fugitive.label} {board.fugitive.val}%</span>
+            <span style={{color:'var(--coral)',fontFamily:'var(--font-disp)',fontWeight:700,fontSize:13}}>{board.hunter.val}% {board.hunter.label}</span>
+          </div>
+          <div style={{height:10,borderRadius:999,overflow:'hidden',background:'var(--surface)'}}>
+            <div style={{width:board.fugitive.val+'%',height:'100%',background:'var(--sage)',borderRadius:999}}/>
+          </div>
+          <div style={{display:'flex',gap:10,marginTop:14}}>
+            <MiniStat n={board.fugitive.escaped} l={t('card_escaped')} tone="fug"/>
+            <MiniStat n={board.hunter.captured} l={t('card_captured')} tone="hunt"/>
+            <MiniStat n={D.profile.rescues} l={t('card_my_rescue')} tone="gold"/>
+          </div>
+        </div>
+      </div>
+      <SectionLabel>{t('sec_guild')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card" style={{padding:0,overflow:'hidden'}}>
+          {[{rank:1,name:'南港獵殺者',rate:94,me:false},{rank:2,name:'台北夜行者',rate:88,me:true},{rank:3,name:'內湖逃逸線',rate:81,me:false}].map((tm,i)=>(
+            <div key={i} style={{display:'flex',alignItems:'center',gap:12,padding:'13px 15px',borderTop:i?'1px solid var(--border)':'none',background:'transparent',borderLeft:tm.me?'3px solid var(--sage)':'3px solid transparent',paddingLeft:tm.me?12:15}}>
+              <span className="num" style={{width:22,fontSize:17,color:tm.rank===1?'var(--honey)':'var(--tx-light)'}}>{tm.rank}</span>
+              <span style={{flex:1,fontWeight:tm.me?700:500,fontSize:14.5,color:'var(--tx)'}}>{tm.name}{tm.me&&<span className="chip fug" style={{marginLeft:8,fontSize:9,padding:'2px 7px'}}>{t('chip_mine')}</span>}</span>
+              <div style={{width:70}}><Bar pct={tm.rate} color={tm.me?'var(--sage)':'var(--border-2)'}/></div>
+              <span style={{fontSize:12,color:'var(--tx-mid)',width:34,textAlign:'right',fontFamily:'var(--font-disp)',fontWeight:700}}>{tm.rate}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DailyReportTab({ r, nav }) {
+  const t=useT();
+  const D=window.DOR;
+  return (
+    <div style={{padding:'8px 0 20px'}}>
+      <SectionLabel>{t('sec_race_schedule')} ｜ {r.dayNow}/{r.days}</SectionLabel>
+      <div style={{padding:'0 18px 8px'}}><DayDots total={r.days} now={r.dayNow}/></div>
+      <div style={{padding:'10px 18px 0',display:'flex',flexDirection:'column',gap:8}}>
+        {D.missions.map(m=>{
+          const state=m.day<r.dayNow?'done':m.day===r.dayNow?'now':'lock';
+          const c=state==='done'?'var(--sage)':state==='now'?'var(--coral)':'var(--tx-light)';
+          const bg='var(--surface)';
+          return <div key={m.day} className="card tap" onClick={()=>state!=='lock'&&nav('mission',{day:m.day})} style={{padding:'12px 14px',display:'flex',alignItems:'center',gap:13,opacity:state==='lock'?.4:1,borderColor:state==='now'?'var(--tx)':'var(--border)',borderWidth:state==='now'?'1.5px':'1px'}}>
+            <div style={{width:42,height:42,borderRadius:12,background:state==='now'?'var(--sage)':bg,border:'none',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              {state==='done'?<Icon name="check" size={20} color={state==='now'?'#fff':c}/>:state==='lock'?<Icon name="lock" size={17} color={c}/>:<Icon name={m.icon} size={20} color={state==='now'?'#fff':c}/>}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:'flex',alignItems:'center',gap:7}}>
+                <span className="lbl" style={{fontSize:9}}>DAY {m.day}</span>
+                <span className="chip dim" style={{fontSize:9,padding:'1px 7px'}}>{m.tag}</span>
+                {state==='now'&&<span className="chip hunt" style={{fontSize:9,padding:'1px 7px'}}>{t('chip_today')}</span>}
+              </div>
+              <div style={{fontWeight:700,fontSize:14.5,marginTop:2,color:'var(--tx)'}}>{m.title}</div>
+              {state!=='lock'&&<div style={{fontSize:12,color:'var(--tx-light)',marginTop:2}}>{m.desc.slice(0,32)}…</div>}
+            </div>
+            <div style={{textAlign:'right',flexShrink:0}}>
+              <div style={{fontSize:13,fontFamily:'var(--font-disp)',fontWeight:700,color:state==='done'?'var(--sage)':'var(--tx-mid)'}}>{m.kmDone.toFixed(1)}/{m.base.toFixed(1)}K</div>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PersonalMissionTab({ r }) {
+  const t=useT();
+  const D=window.DOR; const today=D.missions.find(m=>m.day===r.dayNow)||D.missions[2];
+  const [km,setKm]=React.useState(today.kmDone);
+  const baseReached=km>=today.base; const extra=Math.max(0,Math.floor(km-today.base)); const rescued=Math.min(5,extra+today.rescued);
+  return (
+    <div style={{padding:'16px 18px 20px'}}>
+      <div className="card" style={{padding:18,background:'var(--surface)',borderColor:'rgba(26,26,26,.25)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <span className="chip hunt">{today.tag}</span>
+          <span className="lbl">{today.type==='pace'?t('mission_type_pace'):today.type==='rescue'?t('mission_type_rescue'):t('mission_type_base')}</span>
+        </div>
+        <div style={{fontFamily:'var(--font-disp)',fontSize:22,fontWeight:800,marginTop:10,color:'var(--tx)'}}>{today.title}</div>
+        <p style={{fontSize:14,color:'var(--tx-mid)',lineHeight:1.65,margin:'8px 0 0'}}>{today.desc}</p>
+      </div>
+      <div style={{display:'flex',gap:10,marginTop:12}}>
+        <div style={{flex:1,background:'var(--surface)',border:'1px solid rgba(26,26,26,.2)',borderRadius:12,padding:'12px 14px'}}>
+          <div className="lbl" style={{fontSize:9}}>{t('label_target_pace')}</div>
+          <div className="num" style={{fontSize:22,color:'var(--coral)',marginTop:6}}>{today.paceLo||t('pace_unlimited')}</div>
+          <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{today.paceLo?`–${today.paceHi} /km`:t('pace_free')}</div>
+        </div>
+        <div style={{flex:1,background:'var(--surface)',border:'1px solid rgba(200,16,46,.2)',borderRadius:12,padding:'12px 14px'}}>
+          <div className="lbl" style={{fontSize:9}}>{t('label_base_km')}</div>
+          <div className="num" style={{fontSize:22,color:'var(--sage)',marginTop:6}}>{today.base.toFixed(1)}</div>
+          <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{t('sub_km_goal')}</div>
+        </div>
+      </div>
+      <div style={{marginTop:12}} className="card card-pad">
+        <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between'}}>
+          <div style={{display:'flex',alignItems:'baseline',gap:5}}>
+            <span className="num" style={{fontSize:34,color:baseReached?'var(--sage)':'var(--coral)'}}>{km.toFixed(1)}</span>
+            <span style={{color:'var(--tx-mid)',fontFamily:'var(--font-disp)',fontWeight:600}}>/ {today.base.toFixed(1)} km</span>
+          </div>
+          {baseReached?<span className="chip fug"><Icon name="check" size={13} color="var(--sage)"/> {t('chip_base_done')}</span>:<span className="chip hunt">{t('chip_need')} {(today.base-km).toFixed(1)}K</span>}
+        </div>
+        <div style={{marginTop:12}}><Bar pct={km/today.base*100} color={baseReached?'var(--sage)':'var(--coral)'}/></div>
+      </div>
+      <div className="lbl" style={{marginTop:18,marginBottom:10}}>{t('sec_rescue_ladder')}</div>
+      <div className="card card-pad" style={{borderColor:'rgba(200,16,46,.2)'}}>
+        <div style={{display:'flex',gap:9,justifyContent:'space-between'}}>
+          {Array.from({length:5}).map((_,i)=>{
+            const on=i<rescued;
+            return <div key={i} style={{flex:1,textAlign:'center'}}>
+              <div style={{height:48,borderRadius:12,border:`1px solid ${on?'rgba(200,16,46,.4)':'var(--border)'}`,background:on?'var(--sage)':'var(--surface)',display:'flex',alignItems:'center',justifyContent:'center',transition:'all .2s'}}>
+                <Icon name="rescue" size={22} color={on?'var(--sage)':'var(--tx-light)'}/>
+              </div>
+              <div style={{fontSize:9,marginTop:5,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600}}>+{today.base+i+1}K</div>
+            </div>;
+          })}
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:7,marginTop:12,fontSize:13}}>
+          <Icon name="rescue" size={16} color="var(--sage)"/>
+          <span style={{color:'var(--tx-mid)'}}>{t('rescued_count')} <span className="num" style={{color:'var(--sage)',fontSize:15}}>{rescued}</span> {t('rescued_unit')}</span>
+        </div>
+      </div>
+      <button className="btn btn-primary" style={{marginTop:16}} onClick={()=>setKm(k=>Math.round((k+1)*10)/10)}><Icon name="plus" size={18} color="#fff"/> {t('btn_report_run')}</button>
+      <div style={{textAlign:'center',marginTop:8}}><span className="lbl">{t('sync_label')}</span></div>
+    </div>
+  );
+}
+
+function TeamTab({ r }) {
+  const t=useT();
+  const D=window.DOR;
+  const members=[
+    {name:'夜行者YF',  handle:'@yifan.runs',km:12.4,done:true, me:true},
+    {name:'城市奔跑者',handle:'@lin.run',   km:18.2,done:true, me:false},
+    {name:'追風訊號',  handle:'@sihanw',    km:8.7, done:false,me:false},
+    {name:'逃亡特工',  handle:'@yu.x',      km:3.1, done:false,me:false},
+    {name:'晨跑達人',  handle:'@peisan',    km:21.0,done:true, me:false},
+  ];
+  const teamGoal=100; const teamKm=members.reduce((a,m)=>a+m.km,0);
+  return (
+    <div style={{padding:'8px 0 20px'}}>
+      <div style={{padding:'8px 18px 0'}}>
+        <div className="card" style={{padding:18,background:'var(--surface)',borderColor:'rgba(107,114,128,.25)'}}>
+          <div className="lbl">跑團 ｜ {D.profile.team}</div>
+          <div style={{display:'flex',alignItems:'baseline',gap:6,marginTop:6}}>
+            <span className="num" style={{fontSize:40,color:'var(--lavender)'}}>{teamKm.toFixed(1)}</span>
+            <span style={{color:'var(--tx-mid)',fontFamily:'var(--font-disp)',fontWeight:600}}>/ {teamGoal} km</span>
+          </div>
+          <div style={{marginTop:12}}><Bar pct={teamKm/teamGoal*100} color="var(--lavender)"/></div>
+          <div style={{display:'flex',gap:10,marginTop:14}}>
+            <MiniStat n={members.filter(m=>m.done).length} l={t('label_team_done')} tone="fug"/>
+            <MiniStat n={members.length} l={t('label_member_count')}/>
+            <MiniStat n={teamKm.toFixed(0)} l={t('label_team_km')}/>
+          </div>
+        </div>
+      </div>
+      <SectionLabel>{t('sec_members')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card" style={{padding:0,overflow:'hidden'}}>
+          {members.map((m,i)=>(
+            <div key={i} style={{display:'flex',alignItems:'center',gap:12,padding:'12px 15px',borderTop:i?'1px solid var(--border)':'none',background:'transparent',borderLeft:m.me?'3px solid var(--sage)':'3px solid transparent',paddingLeft:m.me?12:15}}>
+              <div style={{width:36,height:36,borderRadius:'50%',background:m.done?'var(--sage)':'var(--surface)',border:'none',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <Icon name={m.done?'check':'route'} size={17} color={m.done?'var(--sage)':'var(--tx-light)'}/>
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:'flex',alignItems:'center',gap:7}}>
+                  <span style={{fontWeight:m.me?700:500,fontSize:14,color:'var(--tx)'}}>{m.name}</span>
+                  {m.me&&<span className="chip violet" style={{fontSize:9,padding:'1px 6px'}}>{t('chip_me_small')}</span>}
+                </div>
+                <div style={{fontSize:11,color:'var(--tx-light)',marginTop:1,fontFamily:'var(--font-disp)'}}>{m.handle}</div>
+              </div>
+              <div style={{textAlign:'right',flexShrink:0}}>
+                <div style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:14,color:m.done?'var(--sage)':'var(--tx-mid)'}}>{m.km.toFixed(1)} km</div>
+                <div style={{fontSize:10,color:m.done?'var(--sage)':'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600,marginTop:1}}>{m.done?t('member_done_text'):t('member_inprogress')}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <SectionLabel>{t('sec_team_goal')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card card-pad" style={{borderColor:'rgba(107,114,128,.25)'}}>
+          <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+            <div style={{width:42,height:42,borderRadius:12,background:'var(--surface)',border:'1px solid rgba(107,114,128,.3)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              <Icon name="flag" size={20} color="var(--lavender)"/>
+            </div>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,fontSize:15,color:'var(--tx)'}}>{t('team_goal_title')}</div>
+              <div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:3,lineHeight:1.5}}>{t('team_goal_desc')}</div>
+            </div>
+          </div>
+          <div style={{marginTop:12}}><Bar pct={teamKm/teamGoal*100} color="var(--lavender)"/></div>
+          <div style={{display:'flex',justifyContent:'space-between',marginTop:7,fontSize:12}}>
+            <span style={{color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600}}>{t('label_current')} {teamKm.toFixed(1)} km</span>
+            <span style={{color:'var(--lavender)',fontFamily:'var(--font-disp)',fontWeight:700}}>{t('label_goal')} {teamGoal} km</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChallengeTab({ nav }) {
+  const t=useT();
+  const D=window.DOR; const stores=D.stores; const done=stores.filter(s=>s.stamp).length;
+  const challenges=[
+    {id:'c1',title:'夜間特攻',icon:'stealth',tag:'解鎖任務',desc:'於 22:00–00:00 完成 3K，解鎖夜間行動稱號。',done:true,tone:'fug'},
+    {id:'c2',title:'速攻奪旗',icon:'bolt',tag:'限時挑戰',desc:'以 4:30 以內完成連續 2K，奪取對方旗幟。',done:false,tone:'hunt'},
+    {id:'c3',title:'全員集結',icon:'rescue',tag:'救援挑戰',desc:'當日累計救援 3 位隊友，解鎖「守護者」稱號。',done:false,tone:'violet'},
+  ];
+  return (
+    <div style={{padding:'8px 0 20px'}}>
+      <div style={{padding:'8px 18px 0'}}>
+        <div className="card tap" onClick={()=>nav('checkin',{})} style={{padding:14,display:'flex',alignItems:'center',gap:13,borderColor:'rgba(107,114,128,.25)'}}>
+          <div style={{width:48,height:48,borderRadius:14,background:'var(--surface)',border:'1px solid rgba(107,114,128,.3)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+            <Icon name="qr" size={24} color="var(--lavender)"/>
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:15,color:'var(--tx)'}}>{t('checkin_card_title')}</div>
+            <div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:2}}>{t('checkin_show_card')} · {done}/{stores.length}</div>
+          </div>
+          <div style={{textAlign:'right'}}>
+            <div className="num" style={{color:'var(--lavender)',fontSize:20}}>{done}/{stores.length}</div>
+            <Icon name="chev" size={14} color="var(--tx-light)"/>
+          </div>
+        </div>
+      </div>
+      <SectionLabel>{t('sec_time_challenges')}</SectionLabel>
+      <div style={{padding:'0 18px',display:'flex',flexDirection:'column',gap:10}}>
+        {challenges.map(ch=>{
+          const c=ch.tone==='fug'?'var(--sage)':ch.tone==='hunt'?'var(--coral)':'var(--lavender)';
+          const bg='var(--surface)';
+          return <div key={ch.id} className="card" style={{padding:14,opacity:ch.done?1:.85,borderColor:ch.done?c+'55':'var(--border)'}}>
+            <div style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+              <div style={{width:40,height:40,borderRadius:11,background:bg,border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                {ch.done?<Icon name="check" size={20} color={c}/>:<Icon name={ch.icon} size={20} color={c}/>}
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:'flex',alignItems:'center',gap:7}}>
+                  <span style={{fontWeight:700,fontSize:14.5,color:'var(--tx)'}}>{ch.title}</span>
+                  <span className="chip" style={{fontSize:9,padding:'1px 7px',color:c,borderColor:c+'55',background:bg}}>{ch.tag}</span>
+                </div>
+                <div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:4,lineHeight:1.5}}>{ch.desc}</div>
+              </div>
+            </div>
+            {ch.done&&<div style={{marginTop:10,padding:'6px 12px',background:'var(--surface)',borderRadius:8,border:'1px solid rgba(200,16,46,.25)',fontSize:12.5,color:'var(--sage)',fontWeight:700}}>{t('challenge_done_text')}</div>}
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── 里程型活動 進行中的 3 個內部 Tab ── */
+function MileageProgressTab({ r }) {
+  const t=useT();
+  const pct=r.progressKm/r.goalKm; const R=78,C=2*Math.PI*R;
+  const daysLeft=r.days-r.dayNow; const remaining=Math.max(0,r.goalKm-r.progressKm);
+  const dailyAvg=r.dayNow>0?(r.progressKm/r.dayNow):0;
+  const needed=daysLeft>0?(remaining/daysLeft):0; const todayKm=2.8;
+  return (
+    <div style={{padding:'8px 0 20px'}}>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'16px 0 8px'}}>
+        <div style={{position:'relative',width:190,height:190}}>
+          <svg width="190" height="190" style={{transform:'rotate(-90deg)'}}>
+            <circle cx="95" cy="95" r={R} fill="none" stroke="var(--border)" strokeWidth="12"/>
+            <circle cx="95" cy="95" r={R} fill="none" stroke="var(--honey)" strokeWidth="12" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C*(1-pct)}/>
+          </svg>
+          <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
+            <div className="lbl" style={{fontSize:9}}>{t('ring_label_mileage')}</div>
+            <div className="num" style={{fontSize:42,lineHeight:1,marginTop:4,color:'var(--honey)'}}>{r.progressKm}</div>
+            <div style={{fontSize:12,color:'var(--tx-mid)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>/ {r.goalKm} km</div>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:8,marginTop:6}}>
+          <span className="chip" style={{color:'var(--honey-deep)',borderColor:'rgba(192,123,34,.4)',background:'var(--surface)'}}>{t('card_beginner')}</span>
+          <span className="chip">{r.world}</span>
+        </div>
+      </div>
+      <div style={{padding:'0 18px'}}>
+        <div style={{display:'flex',gap:10}}>
+          <div style={{flex:1,background:'var(--surface)',border:'1px solid rgba(192,123,34,.2)',borderRadius:12,padding:'12px 14px'}}>
+            <div className="lbl" style={{fontSize:9}}>{t('label_today_activity')}</div>
+            <div className="num" style={{fontSize:24,color:'var(--honey)',marginTop:6}}>{todayKm.toFixed(1)}</div>
+            <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>km</div>
+          </div>
+          <div style={{flex:1,background:'var(--surface)',border:'1px solid rgba(200,16,46,.2)',borderRadius:12,padding:'12px 14px'}}>
+            <div className="lbl" style={{fontSize:9}}>{t('label_daily_avg')}</div>
+            <div className="num" style={{fontSize:24,color:'var(--sage)',marginTop:6}}>{dailyAvg.toFixed(1)}</div>
+            <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{t('sub_km_per_day')}</div>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:10,marginTop:10}}>
+          <div style={{flex:1,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:'12px 14px'}}>
+            <div className="lbl" style={{fontSize:9}}>{t('label_remaining_km')}</div>
+            <div className="num" style={{fontSize:24,color:'var(--tx)',marginTop:6}}>{remaining.toFixed(1)}</div>
+            <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{t('sub_km_finish')}</div>
+          </div>
+          <div style={{flex:1,background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:'12px 14px'}}>
+            <div className="lbl" style={{fontSize:9}}>{t('label_suggested_daily')}</div>
+            <div className="num" style={{fontSize:24,color:needed<=dailyAvg?'var(--sage)':'var(--coral)',marginTop:6}}>{needed.toFixed(1)}</div>
+            <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{t('sub_km_per_day')}</div>
+          </div>
+        </div>
+      </div>
+      <SectionLabel>{t('sec_activity_types')}</SectionLabel>
+      <div style={{padding:'0 18px',display:'flex',flexDirection:'column',gap:8}}>
+        {[{icon:'route',label:'健走',desc:'步行、快走均可累積，無速度限制',c:'var(--honey)',bg:'var(--surface)'},{icon:'chase',label:'慢跑 / 跑步',desc:'任意配速跑步，自動同步運動 App',c:'var(--sage)',bg:'var(--surface)'}].map((a,i)=>(
+          <div key={i} style={{display:'flex',gap:12,alignItems:'center',padding:'12px 14px',background:a.bg,borderRadius:14,border:'1px solid var(--border)'}}>
+            <div style={{width:40,height:40,borderRadius:11,background:'var(--surface)',border:`1px solid ${a.c}44`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              <Icon name={a.icon} size={20} color={a.c}/>
+            </div>
+            <div>
+              <div style={{fontWeight:700,fontSize:14.5,color:'var(--tx)'}}>{a.label}</div>
+              <div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:2}}>{a.desc}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ActivityLogTab({ r }) {
+  const t=useT();
+  const logs=[
+    {date:'今天',km:2.8,type:'跑步',duration:'24 分鐘',icon:'chase'},
+    {date:'昨天',km:3.5,type:'慢跑',duration:'32 分鐘',icon:'chase'},
+    {date:'06/14',km:1.2,type:'健走',duration:'18 分鐘',icon:'route'},
+    {date:'06/13',km:4.0,type:'跑步',duration:'38 分鐘',icon:'chase'},
+    {date:'06/12',km:2.1,type:'健走',duration:'28 分鐘',icon:'route'},
+    {date:'06/11',km:3.2,type:'慢跑',duration:'30 分鐘',icon:'chase'},
+    {date:'06/10',km:0,type:'休息',duration:'—',icon:'clock'},
+    {date:'06/09',km:5.0,type:'長跑',duration:'52 分鐘',icon:'chase'},
+  ];
+  const weekKm=logs.slice(0,7).reduce((a,l)=>a+l.km,0);
+  const activeDays=logs.filter(l=>l.km>0).length;
+  return (
+    <div style={{padding:'8px 0 20px'}}>
+      <div style={{padding:'8px 18px 0'}}>
+        <div className="card card-pad" style={{borderColor:'rgba(192,123,34,.25)'}}>
+          <div style={{display:'flex',alignItems:'center'}}>
+            <div style={{flex:1}}>
+              <div className="lbl" style={{fontSize:9}}>{t('stat_week_km')}</div>
+              <div className="num" style={{fontSize:32,color:'var(--honey)',marginTop:4}}>{weekKm.toFixed(1)}</div>
+              <div style={{fontSize:12,color:'var(--tx-mid)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>km</div>
+            </div>
+            <div style={{width:1,height:50,background:'var(--border)',flexShrink:0}}/>
+            <div style={{flex:1,paddingLeft:16}}>
+              <div className="lbl" style={{fontSize:9}}>{t('stat_active_sessions')}</div>
+              <div className="num" style={{fontSize:32,color:'var(--tx)',marginTop:4}}>{activeDays}</div>
+              <div style={{fontSize:12,color:'var(--tx-mid)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{t('stat_times_unit')}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <SectionLabel>{t('sec_activity_log')}</SectionLabel>
+      <div style={{padding:'0 18px',display:'flex',flexDirection:'column',gap:8}}>
+        {logs.map((log,i)=>{
+          const isRest=log.km===0;
+          const c=isRest?'var(--tx-light)':log.type==='健走'?'var(--honey)':'var(--sage)';
+          const bg='var(--surface)';
+          return <div key={i} style={{display:'flex',alignItems:'center',gap:12,padding:'12px 14px',background:'var(--surface)',borderRadius:14,border:'1px solid var(--border)'}}>
+            <div style={{width:40,height:40,borderRadius:11,background:bg,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              <Icon name={log.icon} size={19} color={c}/>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <span style={{fontWeight:600,fontSize:14,color:'var(--tx)'}}>{log.date}</span>
+                <span className="chip" style={{fontSize:9,padding:'1px 7px',color:c,borderColor:c+'55',background:bg}}>{log.type}</span>
+              </div>
+              <div style={{fontSize:12,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{log.duration}</div>
+            </div>
+            <div style={{textAlign:'right',flexShrink:0}}>
+              <div className="num" style={{fontSize:18,color:isRest?'var(--tx-light)':'var(--tx)'}}>{isRest?'—':log.km.toFixed(1)}</div>
+              {!isRest&&<div style={{fontSize:10,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600}}>km</div>}
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MileageLeaderboardTab({ r }) {
+  const t=useT();
+  const board=[
+    {rank:1,name:'晨跑達人',  handle:'@peisan',    km:48.2,me:false},
+    {rank:2,name:'城市奔跑者',handle:'@lin.run',   km:42.5,me:false},
+    {rank:3,name:'夜行者YF',  handle:'@yifan.runs',km:28.5,me:true},
+    {rank:4,name:'追風訊號',  handle:'@sihanw',    km:25.1,me:false},
+    {rank:5,name:'逃亡特工',  handle:'@yu.x',      km:19.8,me:false},
+    {rank:6,name:'步道新星',  handle:'@jingyi.li', km:15.3,me:false},
+  ];
+  return (
+    <div style={{padding:'8px 0 20px'}}>
+      <div style={{padding:'8px 18px 0'}}>
+        <div className="card card-pad" style={{borderColor:'rgba(192,123,34,.25)'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{width:48,height:48,borderRadius:14,background:'var(--surface)',border:'1px solid rgba(192,123,34,.3)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              <Icon name="flag" size={24} color="var(--honey)"/>
+            </div>
+            <div>
+              <div style={{fontWeight:700,fontSize:15,color:'var(--tx)'}}>{t('leaderboard_my_rank')} 3</div>
+              <div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:3}}>{t('leaderboard_need')} <span className="num" style={{color:'var(--honey)',fontSize:14}}>{(42.5-28.5).toFixed(1)}</span> {t('leaderboard_gap_text')}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <SectionLabel>{t('sec_participants')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card" style={{padding:0,overflow:'hidden'}}>
+          {board.map((p,i)=>(
+            <div key={i} style={{display:'flex',alignItems:'center',gap:12,padding:'13px 15px',borderTop:i?'1px solid var(--border)':'none',background:'transparent',borderLeft:p.me?'3px solid var(--sage)':'3px solid transparent',paddingLeft:p.me?12:15}}>
+              <span className="num" style={{width:22,fontSize:17,color:p.rank===1?'var(--honey)':p.rank<=3?'var(--tx-mid)':'var(--tx-light)'}}>{p.rank}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:'flex',alignItems:'center',gap:7}}>
+                  <span style={{fontWeight:p.me?700:500,fontSize:14.5,color:'var(--tx)'}}>{p.name}</span>
+                  {p.me&&<span className="chip dim" style={{fontSize:9,padding:'2px 7px'}}>{t('leaderboard_rank_label')}</span>}
+                </div>
+                <div style={{fontSize:11,color:'var(--tx-light)',fontFamily:'var(--font-disp)',marginTop:1}}>{p.handle}</div>
+              </div>
+              <div style={{textAlign:'right',flexShrink:0}}>
+                <div className="num" style={{fontSize:16,color:p.me?'var(--honey)':'var(--tx)'}}>{p.km.toFixed(1)}</div>
+                <div style={{fontSize:10,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600}}>km</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* 報名資料表單欄位 — 定義於元件外，避免 re-render 時 focus 跳開 */
+function RegField({ label, value, onChange, placeholder, type='text' }) {
+  return (
+    <div>
+      <div className="lbl" style={{marginBottom:6,fontSize:9.5}}>{label}</div>
+      <input className="fi" type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}/>
+    </div>
+  );
+}
+
+/* 報名中 / 即將開始 賽事詳情 */
+function OpenRaceInfo({ r, nav }) {
+  const t=useT();
+  const groupType=r.groupType||'distance';
+  const groupMode=r.groupMode||'self';
+  const [pickDist,setPickDist]=React.useState(r.distances[r.distances.length-1]);
+  const [pickGroup,setPickGroup]=React.useState(
+    groupType==='faction'?r.factions?.[0]?.id:
+    groupType==='club'?r.clubs?.[0]?.id:null
+  );
+  const [step,setStep]=React.useState('view');
+  const [regForm,setRegForm]=React.useState({
+    name:    window.DOR?.profile?.name    || '',
+    email:   window.DOR?.profile?.email   || '',
+    phone:   window.DOR?.profile?.phone   || '',
+    address: window.DOR?.profile?.address || '',
+    gender:  window.DOR?.profile?.gender  || '',
+  });
+  const setReg=(k,v)=>setRegForm(f=>({...f,[k]:v}));
+
+  const selFaction=r.factions?.find(f=>f.id===pickGroup);
+  const selClub=r.clubs?.find(c=>c.id===pickGroup);
+  const ftColor=col=>col==='fug'?'var(--fug)':col==='hunt'?'var(--hunt)':'var(--violet)';
+  const ftBg=col=>col==='fug'?'rgba(45,229,154,.08)':col==='hunt'?'rgba(255,75,92,.08)':'rgba(107,114,128,.08)';
+  const ftGlow=col=>col==='fug'?'0 4px 16px rgba(45,229,154,.2)':col==='hunt'?'0 4px 16px rgba(255,75,92,.2)':'0 4px 16px rgba(107,114,128,.2)';
+
+  const registerLabel=()=>{
+    const base=`${t('btn_register')} · ${pickDist}K`;
+    if(groupMode==='random'||groupType==='distance') return base;
+    if(groupType==='faction'&&selFaction) return `${t('btn_register')} · ${selFaction.name} · ${pickDist}K`;
+    if(groupType==='club'&&selClub) return `${t('btn_register')} · ${selClub.name} · ${pickDist}K`;
+    return base;
+  };
+
+  return (
+    <div style={{padding:'4px 18px 20px'}}>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:14}}>
+        <span className="chip">{r.world}</span><span className="chip">{r.start}–{r.end}</span><span className="chip">{r.days}{t('unit_days_race')}</span>
+      </div>
+      {r.blurb&&<p style={{fontSize:14.5,lineHeight:1.7,color:'var(--tx-mid)',margin:'0 0 4px'}}>{r.blurb}</p>}
+      <div className="lbl" style={{marginTop:22,marginBottom:11}}>{t('label_rules')}</div>
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        <RuleRow icon="id" tone="fug" t={t('rule_id_title')} d={t('rule_id_desc')}/>
+        <RuleRow icon="chase" tone="hunt" t={t('rule_daily_title')} d={t('rule_daily_desc')}/>
+        <RuleRow icon="rescue" tone="violet" t={t('rule_rescue_title')} d={t('rule_rescue_desc')}/>
+        <RuleRow icon="wheel" tone="gold" t={t('rule_mileage_title')} d={t('rule_mileage_desc')}/>
+      </div>
+      <div className="lbl" style={{marginTop:22,marginBottom:11}}>{t('label_schedule')}</div>
+      <div className="card" style={{padding:0,overflow:'hidden'}}>
+        {[[t('sched_open'),r.start+' 前'],[t('sched_race_start'),r.start],[t('sched_race_end'),r.end],[t('sched_result'),r.end+' 20:00']].map(([l,v],i)=>(
+          <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'12px 15px',borderTop:i?'1px solid var(--border)':'none'}}>
+            <span style={{fontSize:14,color:'var(--tx-mid)'}}>{l}</span>
+            <span style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:14,color:'var(--tx)'}}>{v}</span>
+          </div>
+        ))}
+      </div>
+
+      {r.status==='open'&&<>
+        {/* ── 分組區塊 ── */}
+        {groupType!=='distance'&&(groupMode==='random'?(
+          /* 隨機分組通知卡 */
+          <div className="card" style={{padding:16,marginTop:22,borderColor:'rgba(107,114,128,.3)',background:'rgba(107,114,128,.04)'}}>
+            <div style={{display:'flex',alignItems:'flex-start',gap:12}}>
+              <div style={{width:40,height:40,borderRadius:12,background:'rgba(107,114,128,.12)',border:'1px solid rgba(107,114,128,.25)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <Icon name="id" size={21} color="var(--lavender)"/>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,color:'var(--tx)',fontSize:14.5}}>{t('group_random_title')}</div>
+                <div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:4,lineHeight:1.55}}>
+                  {groupType==='faction'?t('group_random_faction_desc'):t('group_random_club_desc')}
+                </div>
+                <div style={{display:'flex',gap:7,marginTop:12,flexWrap:'wrap'}}>
+                  {groupType==='faction'&&r.factions?.map(f=>(
+                    <span key={f.id} style={{padding:'5px 13px',borderRadius:20,fontSize:12.5,fontFamily:'var(--font-disp)',fontWeight:700,color:ftColor(f.color),background:ftBg(f.color),border:`1px solid ${ftColor(f.color)}44`}}>{f.name}</span>
+                  ))}
+                  {groupType==='club'&&r.clubs?.map(c=>(
+                    <span key={c.id} className="chip" style={{fontSize:11.5}}>{c.name}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        ):groupType==='faction'?(
+          /* 自選陣營 */
+          <>
+            <div className="lbl" style={{marginTop:22,marginBottom:11}}>{t('label_pick_faction')}</div>
+            <div style={{display:'flex',gap:10}}>
+              {r.factions?.map(f=>{
+                const on=pickGroup===f.id;
+                const tc=ftColor(f.color);
+                return (
+                  <button key={f.id} className="tap" onClick={()=>setPickGroup(f.id)} style={{flex:1,borderRadius:16,padding:'18px 0',textAlign:'center',border:`1.5px solid ${on?tc:'var(--border-2)'}`,background:on?ftBg(f.color):'var(--surface)',boxShadow:on?ftGlow(f.color):'var(--shadow-xs)',transition:'all .15s'}}>
+                    <Icon name="id" size={27} color={on?tc:'var(--tx-light)'}/>
+                    <div style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:15,color:on?tc:'var(--tx)',marginTop:8}}>{f.name}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        ):(
+          /* 自選跑團 */
+          <>
+            <div className="lbl" style={{marginTop:22,marginBottom:11}}>{t('label_pick_club')}</div>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {r.clubs?.map(c=>{
+                const on=pickGroup===c.id;
+                return (
+                  <button key={c.id} className="tap" onClick={()=>setPickGroup(c.id)} style={{width:'100%',borderRadius:14,padding:'12px 15px',textAlign:'left',border:`2px solid ${on?'var(--tx)':'var(--border-2)'}`,background:'var(--surface)',boxShadow:'none',display:'flex',alignItems:'center',gap:12,transition:'all .15s'}}>
+                    <div style={{width:32,height:32,borderRadius:9,background:on?'var(--tx)':'var(--surface)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'background .15s'}}>
+                      <Icon name="rescue" size={17} color={on?'#fff':'var(--tx-mid)'}/>
+                    </div>
+                    <div style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:14.5,color:'var(--tx)',flex:1}}>{c.name}</div>
+                    {on&&<Icon name="check" size={16} color="var(--tx)"/>}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        ))}
+
+        {/* ── 完賽距離選擇 ── */}
+        <div className="lbl" style={{marginTop:22,marginBottom:11}}>{groupType==='distance'?t('label_pick_group'):t('label_target_dist')}</div>
+        <div style={{display:'flex',gap:10}}>
+          {r.distances.map(d=><button key={d} className="tap" onClick={()=>setPickDist(d)} style={{flex:1,borderRadius:16,padding:'16px 0',textAlign:'center',border:`2px solid ${pickDist===d?'var(--sage)':'var(--border-2)'}`,background:'var(--surface)',boxShadow:'none'}}>
+            <div className="num" style={{fontSize:28,color:pickDist===d?'var(--sage)':'var(--tx)'}}>{d}</div>
+            <div className="lbl" style={{marginTop:2}}>{t('unit_km')}</div>
+          </button>)}
+        </div>
+        <div className="card" style={{padding:14,marginTop:14,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div>
+            <div className="lbl">{t('label_mileage_goal')}</div>
+            <div style={{fontSize:13,color:'var(--tx-mid)',marginTop:3}}>{t('mileage_goal_desc')} <span className="num" style={{color:'var(--sage)',fontSize:15}}>{pickDist}</span> {t('mileage_goal_unit')}</div>
+          </div>
+          <Icon name="wheel" size={26} color="var(--sage)"/>
+        </div>
+
+        {/* ── 報名流程 ── */}
+        <div style={{marginTop:14}}>
+          {step==='view'&&<button className="btn btn-primary" onClick={()=>setStep('form')}>{registerLabel()}</button>}
+
+          {step==='form'&&<div className="card" style={{padding:16}}>
+            <div style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:15,color:'var(--tx)',marginBottom:14}}>{t('reg_form_title')}</div>
+            <div style={{padding:'10px 13px',background:'rgba(192,123,34,.08)',border:'1px solid rgba(192,123,34,.22)',borderRadius:10,fontSize:12.5,color:'var(--honey-deep)',lineHeight:1.6,marginBottom:16,display:'flex',gap:9,alignItems:'flex-start'}}>
+              <Icon name="bell" size={14} color="var(--honey)" style={{flexShrink:0,marginTop:1}}/><span>{t('reg_form_notice')}</span>
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:13}}>
+              <RegField label={t('label_name')} value={regForm.name} onChange={v=>setReg('name',v)} placeholder={t('reg_ph_name')}/>
+              <RegField label="Email" value={regForm.email} onChange={v=>setReg('email',v)} placeholder="your@email.com" type="email"/>
+              <RegField label={t('profile_edit_label_phone')} value={regForm.phone} onChange={v=>setReg('phone',v)} placeholder={t('profile_edit_ph_phone')} type="tel"/>
+              <RegField label={t('profile_edit_label_address')} value={regForm.address} onChange={v=>setReg('address',v)} placeholder={t('reg_ph_address_full')}/>
+              <div>
+                <div className="lbl" style={{marginBottom:6,fontSize:9.5}}>{t('profile_edit_label_gender')}</div>
+                <div style={{display:'flex',gap:7}}>
+                  {[['m','profile_edit_gender_m'],['f','profile_edit_gender_f'],['x','profile_edit_gender_x'],['n','profile_edit_gender_n']].map(([v,gk])=>(
+                    <button key={v} className="tap" onClick={()=>setReg('gender',v)} style={{flex:1,padding:'8px 0',borderRadius:10,border:`2px solid ${regForm.gender===v?'var(--tx)':'var(--border-2)'}`,background:'var(--surface)',fontSize:11.5,fontFamily:'var(--font-disp)',fontWeight:regForm.gender===v?700:500,color:regForm.gender===v?'var(--tx)':'var(--tx-mid)'}}>
+                      {t(gk)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:10,marginTop:18}}>
+              <button className="btn btn-ghost" style={{flex:1}} onClick={()=>setStep('view')}>{t('btn_back')}</button>
+              <button className="btn btn-primary" style={{flex:1.4}} onClick={()=>setStep('confirm')}>{t('btn_next')}</button>
+            </div>
+          </div>}
+
+          {step==='confirm'&&<div className="card" style={{padding:16}}>
+            <div style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:17,color:'var(--tx)'}}>{t('confirm_register_title')}</div>
+            <div style={{display:'flex',justifyContent:'space-between',marginTop:12,fontSize:14}}>
+              <span style={{color:'var(--tx-mid)'}}>{r.title}</span>
+              <span style={{fontFamily:'var(--font-disp)',fontWeight:700}}>{pickDist}K</span>
+            </div>
+            {groupType==='faction'&&(
+              <div style={{display:'flex',justifyContent:'space-between',marginTop:8,fontSize:14}}>
+                <span style={{color:'var(--tx-mid)'}}>{t('label_faction')}</span>
+                <span style={{fontFamily:'var(--font-disp)',fontWeight:700,color:groupMode==='random'?'var(--lavender)':ftColor(selFaction?.color||'fug')}}>
+                  {groupMode==='random'?t('group_reveal_on_start'):selFaction?.name}
+                </span>
+              </div>
+            )}
+            {groupType==='club'&&(
+              <div style={{display:'flex',justifyContent:'space-between',marginTop:8,fontSize:14}}>
+                <span style={{color:'var(--tx-mid)'}}>{t('label_club')}</span>
+                <span style={{fontFamily:'var(--font-disp)',fontWeight:700,color:groupMode==='random'?'var(--lavender)':'var(--honey-deep)'}}>
+                  {groupMode==='random'?t('group_reveal_on_start'):selClub?.name}
+                </span>
+              </div>
+            )}
+            <div style={{display:'flex',justifyContent:'space-between',marginTop:8,fontSize:14}}>
+              <span style={{color:'var(--tx-mid)'}}>{t('label_name')}</span>
+              <span style={{fontFamily:'var(--font-disp)',fontWeight:600}}>{regForm.name||'—'}</span>
+            </div>
+            <div style={{display:'flex',justifyContent:'space-between',marginTop:8,fontSize:14}}>
+              <span style={{color:'var(--tx-mid)'}}>Email</span>
+              <span style={{fontFamily:'var(--font-disp)',fontWeight:600,fontSize:12.5}}>{regForm.email||'—'}</span>
+            </div>
+            <div style={{display:'flex',justifyContent:'space-between',marginTop:8,fontSize:14}}>
+              <span style={{color:'var(--tx-mid)'}}>{t('label_entry_fee')}</span>
+              <span style={{fontFamily:'var(--font-disp)',fontWeight:700,color:'var(--honey)'}}>NT$ 690</span>
+            </div>
+            <div style={{display:'flex',gap:10,marginTop:16}}>
+              <button className="btn btn-ghost" style={{flex:1}} onClick={()=>setStep('form')}>{t('btn_back')}</button>
+              <button className="btn btn-primary" style={{flex:1.4}} onClick={()=>setStep('joined')}>{t('btn_confirm_pay')}</button>
+            </div>
+          </div>}
+
+          {step==='joined'&&<div className="card" style={{padding:16,borderColor:'rgba(200,16,46,.3)'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}><Icon name="check" size={18} color="var(--sage)"/><span style={{fontWeight:700,color:'var(--tx)'}}>{t('register_done_text')}</span></div>
+            <div style={{fontSize:13,color:'var(--tx-mid)',marginTop:8}}>
+              {groupMode==='random'?t('register_done_random_desc'):t('register_done_desc')}
+            </div>
+          </div>}
+        </div>
+      </>}
+
+      {r.status==='soon'&&<div className="card" style={{padding:16,marginTop:22,borderColor:'rgba(107,114,128,.3)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}><Icon name="clock" size={20} color="var(--lavender)"/><div><div style={{fontWeight:700,color:'var(--tx)'}}>{t('coming_soon_title')}</div><div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:2}}>{t('coming_soon_desc')}</div></div></div>
+      </div>}
+    </div>
+  );
+}
+
+/* 里程型活動 報名中 / 即將開始 */
+function MileageOpenInfo({ r }) {
+  const [pick,setPick]=React.useState(r.distances[0]);
+  const [step,setStep]=React.useState('view');
+  const t=useT();
+  return (
+    <div style={{padding:'4px 18px 20px'}}>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:14}}>
+        <span className="chip" style={{color:'var(--honey-deep)',borderColor:'rgba(192,123,34,.4)',background:'var(--surface)'}}>{t('card_beginner')}</span>
+        <span className="chip">{r.world}</span>
+        <span className="chip">{r.start}–{r.end}</span>
+        <span className="chip">{r.days}{t('unit_days_challenge')}</span>
+      </div>
+      {r.blurb&&<p style={{fontSize:14.5,lineHeight:1.7,color:'var(--tx-mid)',margin:'0 0 4px'}}>{r.blurb}</p>}
+
+      {/* 新手友善亮點 */}
+      <div className="card" style={{padding:16,marginTop:8,background:'var(--surface)',borderColor:'rgba(192,123,34,.25)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
+          <Icon name="route" size={18} color="var(--honey)"/>
+          <span style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:14.5,color:'var(--tx)'}}>{t('beginner_highlight_title')}</span>
+        </div>
+        {[...t('beginner_highlight_tips')].map((tip,i)=>(
+          <div key={i} style={{display:'flex',alignItems:'flex-start',gap:8,marginBottom:i<3?7:0}}>
+            <div style={{width:16,height:16,borderRadius:'50%',background:'var(--surface)',border:'1px solid rgba(192,123,34,.4)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginTop:2}}>
+              <Icon name="check" size={10} color="var(--honey)"/>
+            </div>
+            <span style={{fontSize:13.5,color:'var(--tx-mid)',lineHeight:1.5}}>{tip}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* 活動規則 */}
+      <div className="lbl" style={{marginTop:22,marginBottom:11}}>{t('label_activity_rules')}</div>
+      <div style={{display:'flex',flexDirection:'column',gap:10}}>
+        <RuleRow icon="route" tone="gold" t={t('mileage_rule_accum_title')} d={t('mileage_rule_accum_desc')}/>
+        <RuleRow icon="spin" tone="fug" t={t('mileage_rule_wheel_title')} d={t('mileage_rule_wheel_desc')}/>
+        <RuleRow icon="medal" tone="violet" t={t('mileage_rule_cert_title')} d={t('mileage_rule_cert_desc')}/>
+        <RuleRow icon="share" tone="hunt" t={t('mileage_rule_share_title')} d={t('mileage_rule_share_desc')}/>
+      </div>
+
+      {/* 賽程簡章 */}
+      <div className="lbl" style={{marginTop:22,marginBottom:11}}>{t('label_activity_schedule')}</div>
+      <div className="card" style={{padding:0,overflow:'hidden'}}>
+        {[[t('sched_open'),r.start+' 前'],[t('sched_activity_start'),r.start],[t('sched_activity_end'),r.end],[t('sched_finish_pub'),r.end+' 20:00']].map(([l,v],i)=>(
+          <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'12px 15px',borderTop:i?'1px solid var(--border)':'none'}}>
+            <span style={{fontSize:14,color:'var(--tx-mid)'}}>{l}</span>
+            <span style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:14,color:'var(--tx)'}}>{v}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* 距離選擇 */}
+      {r.status==='open'&&<>
+        <div className="lbl" style={{marginTop:22,marginBottom:11}}>{t('label_pick_distance')}</div>
+        <div style={{display:'grid',gridTemplateColumns:`repeat(${r.distances.length},1fr)`,gap:10}}>
+          {r.distances.map(d=><button key={d} className="tap" onClick={()=>setPick(d)} style={{borderRadius:16,padding:'16px 0',textAlign:'center',border:`2px solid ${pick===d?'var(--sage)':'var(--border-2)'}`,background:'var(--surface)',boxShadow:'none'}}>
+            <div className="num" style={{fontSize:26,color:pick===d?'var(--sage)':'var(--tx)'}}>{d}</div>
+            <div className="lbl" style={{marginTop:2,fontSize:9}}>{t('unit_km')}</div>
+          </button>)}
+        </div>
+        <div className="card" style={{padding:14,marginTop:14,borderColor:'rgba(192,123,34,.2)'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div>
+              <div className="lbl">{t('label_daily_suggest')}</div>
+              <div style={{fontSize:13,color:'var(--tx-mid)',marginTop:3}}>～ <span className="num" style={{color:'var(--honey)',fontSize:15}}>{(pick/r.days).toFixed(1)}</span> {t('sub_km_per_day')}</div>
+            </div>
+            <div style={{textAlign:'right'}}>
+              <div className="lbl">{t('label_est_calories')}</div>
+              <div style={{fontSize:13,color:'var(--tx-mid)',marginTop:3}}>～ <span className="num" style={{color:'var(--sage)',fontSize:15}}>{Math.round(pick*50)}</span> {t('unit_calories')}</div>
+            </div>
+          </div>
+        </div>
+        <div style={{marginTop:14}}>
+          {step==='view'&&<button className="btn btn-primary" style={{background:'var(--honey)',border:'none'}} onClick={()=>setStep('confirm')}>{t('btn_register_mileage')} · {pick}K {t('unit_challenge')}</button>}
+          {step==='confirm'&&<div className="card" style={{padding:16}}>
+            <div style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:17,color:'var(--tx)'}}>{t('confirm_register_title')}</div>
+            <div style={{display:'flex',justifyContent:'space-between',marginTop:12,fontSize:14}}><span style={{color:'var(--tx-mid)'}}>{r.title}</span><span style={{fontFamily:'var(--font-disp)',fontWeight:700}}>{pick}K</span></div>
+            <div style={{display:'flex',justifyContent:'space-between',marginTop:8,fontSize:14}}><span style={{color:'var(--tx-mid)'}}>{t('label_entry_fee')}</span><span style={{fontFamily:'var(--font-disp)',fontWeight:700,color:'var(--honey)'}}>NT$ 490</span></div>
+            <div style={{display:'flex',gap:10,marginTop:16}}>
+              <button className="btn btn-ghost" style={{flex:1}} onClick={()=>setStep('view')}>{t('btn_back')}</button>
+              <button className="btn btn-primary" style={{flex:1.4,background:'var(--honey)',border:'none'}} onClick={()=>setStep('joined')}>{t('btn_confirm_pay')}</button>
+            </div>
+          </div>}
+          {step==='joined'&&<div className="card" style={{padding:16,borderColor:'rgba(192,123,34,.3)'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}><Icon name="check" size={18} color="var(--honey)"/><span style={{fontWeight:700,color:'var(--tx)'}}>{t('register_done_text')}</span></div>
+            <div style={{fontSize:13,color:'var(--tx-mid)',marginTop:8}}>{t('activity_done_desc')}</div>
+          </div>}
+        </div>
+      </>}
+      {r.status==='soon'&&<div className="card" style={{padding:16,marginTop:22,borderColor:'rgba(192,123,34,.3)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}><Icon name="clock" size={20} color="var(--honey)"/><div><div style={{fontWeight:700,color:'var(--tx)'}}>{t('coming_soon_title')}</div><div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:2}}>{t('coming_soon_desc')}</div></div></div>
+      </div>}
+    </div>
+  );
+}
+
+/* 進行中賽事 + 內部 Tab 導覽 */
+function RaceDetailScreen({ route, nav, back }) {
+  const t=useT();
+  const D=window.DOR; const r=D.races.find(x=>x.id===route.id);
+  const isLive=r.status==='live'; const isMileage=r.type==='mileage';
+  const [innerTab,setInnerTab]=React.useState(isMileage?'progress':'battle');
+  const factionTabs=[{key:'battle',label:t('dtab_battle')},{key:'daily',label:t('dtab_daily')},{key:'personal',label:t('dtab_personal')},{key:'team',label:t('dtab_team')},{key:'challenge',label:t('dtab_challenge')}];
+  const mileageTabs=[{key:'progress',label:t('dtab_progress')},{key:'actlog',label:t('dtab_actlog')},{key:'rank',label:t('dtab_rank')}];
+  const activeTabs=isMileage?mileageTabs:factionTabs;
+  const activeColor=isMileage?'var(--honey)':'var(--sage)';
+  return (
+    <div className="dor-scroll">
+      <div style={{position:'relative'}}>
+        <div className="ph" style={{height:200,borderRadius:0}}>{r.hero}</div>
+        <div style={{position:'absolute',top:0,left:0,right:0}}>
+          <SafeTop h={50}/>
+          <div style={{padding:'0 16px'}}><button className="tap" onClick={back} style={iconBtn}><Icon name="back" size={20} color="var(--tx-mid)"/></button></div>
+        </div>
+        <div style={{position:'absolute',left:18,right:18,bottom:14}}>
+          <StatusBadge status={r.status}/>
+          {isMileage&&<span className="chip" style={{marginLeft:8,color:'var(--honey-deep)',borderColor:'rgba(192,123,34,.4)',background:'var(--surface)',fontSize:9}}>{t('card_beginner')}</span>}
+          <div style={{fontSize:10,letterSpacing:'.14em',color:'var(--tx-mid)',marginTop:8,textTransform:'uppercase',fontFamily:'var(--font-disp)',fontWeight:600}}>{r.sub}</div>
+          <div style={{fontFamily:'var(--font-disp)',fontSize:24,fontWeight:800,lineHeight:1.1,color:'var(--tx)'}}>{r.title}</div>
+        </div>
+      </div>
+      {isLive?(<>
+        <div className="inner-tabs" style={{position:'sticky',top:0,zIndex:10,borderBottom:'1px solid var(--border)',background:'var(--surface)'}}>
+          {activeTabs.map(t=>(
+            <button key={t.key} className="tap" onClick={()=>setInnerTab(t.key)} style={{
+              flexShrink:0,padding:'12px 16px',fontSize:13,fontWeight:innerTab===t.key?700:500,
+              fontFamily:'var(--font-disp)',color:innerTab===t.key?activeColor:'var(--tx-mid)',
+              border:'none',borderBottom:`2.5px solid ${innerTab===t.key?activeColor:'transparent'}`,
+              background:'none',whiteSpace:'nowrap',transition:'color .12s',marginBottom:-1,
+            }}>{t.label}</button>
+          ))}
+        </div>
+        {isMileage?(<>
+          {innerTab==='progress'&&<MileageProgressTab r={r}/>}
+          {innerTab==='actlog'&&<ActivityLogTab r={r}/>}
+          {innerTab==='rank'&&<MileageLeaderboardTab r={r}/>}
+        </>):(<>
+          {innerTab==='battle'&&<BattleTab r={r}/>}
+          {innerTab==='daily'&&<DailyReportTab r={r} nav={nav}/>}
+          {innerTab==='personal'&&<PersonalMissionTab r={r}/>}
+          {innerTab==='team'&&<TeamTab r={r}/>}
+          {innerTab==='challenge'&&<ChallengeTab nav={nav}/>}
+        </>)}
+      </>):(
+        isMileage?<MileageOpenInfo r={r}/>:<OpenRaceInfo r={r} nav={nav}/>
+      )}
+    </div>
+  );
+}
+
+/* ── Progress Screen ── */
+function ProgressScreen({ route, nav, back }) {
+  const t=useT();
+  const D=window.DOR; const r=D.races.find(x=>x.id===route.id)||D.races[0]; const board=D.factionBoard; const pct=r.progressKm/r.goalKm; const R=78, C=2*Math.PI*R;
+  return (
+    <div className="dor-scroll">
+      <SafeTop h={50}/>
+      <TopBar title={t('progress_title')} onBack={back} right={<button className="tap" style={iconBtn}><Icon name="share" size={18} color="var(--tx-mid)"/></button>}/>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'22px 0 8px'}}>
+        <div style={{position:'relative',width:200,height:200}}>
+          <svg width="200" height="200" style={{transform:'rotate(-90deg)'}}>
+            <circle cx="100" cy="100" r={R} fill="none" stroke="var(--border)" strokeWidth="12"/>
+            <circle cx="100" cy="100" r={R} fill="none" stroke="var(--sage)" strokeWidth="12" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={C*(1-pct)}/>
+          </svg>
+          <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
+            <div className="lbl">{t('ring_label_progress')}</div>
+            <div className="num" style={{fontSize:46,lineHeight:1,marginTop:4,color:'var(--sage)'}}>{r.progressKm}</div>
+            <div style={{fontSize:12,color:'var(--tx-mid)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>/ {r.goalKm} km · {r.myDistance}K</div>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:10,marginTop:8}}>
+          <span className="chip fug"><Icon name="stealth" size={13} color="var(--sage)"/> {board.fugitive.label}</span>
+          <span className="chip">{r.mine}</span>
+        </div>
+      </div>
+
+      <SectionLabel>{t('sec_tonight')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card card-pad">
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
+            <span style={{color:'var(--sage)',fontFamily:'var(--font-disp)',fontWeight:700,fontSize:13}}>{board.fugitive.label} {board.fugitive.val}%</span>
+            <span style={{color:'var(--coral)',fontFamily:'var(--font-disp)',fontWeight:700,fontSize:13}}>{board.hunter.val}% {board.hunter.label}</span>
+          </div>
+          <div style={{height:10,borderRadius:999,overflow:'hidden',background:'var(--surface)'}}>
+            <div style={{width:board.fugitive.val+'%',height:'100%',background:'var(--sage)',borderRadius:999}}/>
+          </div>
+          <div style={{display:'flex',gap:10,marginTop:14}}>
+            <MiniStat n={board.fugitive.escaped} l={t('card_escaped')} tone="fug"/>
+            <MiniStat n={board.hunter.captured} l={t('card_captured')} tone="hunt"/>
+            <MiniStat n={D.profile.rescues} l={t('card_my_rescue')} tone="gold"/>
+          </div>
+        </div>
+      </div>
+
+      <SectionLabel>{t('sec_guild')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card" style={{padding:0,overflow:'hidden'}}>
+          {[{rank:1,name:'南港獵殺者',rate:94,me:false},{rank:2,name:'台北夜行者',rate:88,me:true},{rank:3,name:'內湖逃逸線',rate:81,me:false}].map((gm,i)=>(
+            <div key={i} style={{display:'flex',alignItems:'center',gap:12,padding:'13px 15px',borderTop:i?'1px solid var(--border)':'none',background:'transparent',borderLeft:gm.me?'3px solid var(--sage)':'3px solid transparent',paddingLeft:gm.me?12:15}}>
+              <span className="num" style={{width:22,fontSize:17,color:gm.rank===1?'var(--honey)':'var(--tx-light)'}}>{gm.rank}</span>
+              <span style={{flex:1,fontWeight:gm.me?700:500,fontSize:14.5,color:'var(--tx)'}}>{gm.name}{gm.me&&<span className="chip fug" style={{marginLeft:8,fontSize:9,padding:'2px 7px'}}>{t('chip_mine')}</span>}</span>
+              <div style={{width:70}}><Bar pct={gm.rate} color={gm.me?'var(--sage)':'var(--border-2)'}/></div>
+              <span style={{fontSize:12,color:'var(--tx-mid)',width:34,textAlign:'right',fontFamily:'var(--font-disp)',fontWeight:700}}>{gm.rate}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <SectionLabel>{t('sec_daily_progress')}</SectionLabel>
+      <div style={{padding:'0 18px 20px',display:'flex',flexDirection:'column',gap:8}}>
+        {D.missions.map(m=>{
+          const state=m.day<r.dayNow?'done':m.day===r.dayNow?'now':'lock';
+          const c=state==='done'?'var(--sage)':state==='now'?'var(--coral)':'var(--tx-light)';
+          const bg='var(--surface)';
+          return <div key={m.day} className="card tap" onClick={()=>state!=='lock'&&nav('mission',{day:m.day})} style={{padding:'12px 14px',display:'flex',alignItems:'center',gap:13,opacity:state==='lock'?.5:1,borderColor:state==='now'?'rgba(26,26,26,.3)':'var(--border)'}}>
+            <div style={{width:40,height:40,borderRadius:11,background:bg,border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              {state==='done'?<Icon name="check" size={20} color={c}/>:state==='lock'?<Icon name="lock" size={17} color={c}/>:<Icon name={m.icon} size={20} color={c}/>}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:'flex',alignItems:'center',gap:7}}>
+                <span className="lbl" style={{fontSize:9}}>DAY {m.day}</span>
+                {state==='now'&&<span className="chip hunt" style={{fontSize:9,padding:'1px 7px'}}>{t('chip_in_progress')}</span>}
+              </div>
+              <div style={{fontWeight:700,fontSize:14.5,marginTop:2,color:'var(--tx)'}}>{m.title}</div>
+            </div>
+            <div style={{textAlign:'right'}}>
+              <div style={{fontSize:12,color:state==='done'?'var(--sage)':'var(--tx-mid)',fontFamily:'var(--font-disp)',fontWeight:700}}>{m.kmDone.toFixed(1)}/{m.base.toFixed(1)}K</div>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── Mission + Checkin ── */
+function BigTarget({ label, value, sub, tone, icon }) {
+  const c=tone==='hunt'?'var(--coral)':tone==='fug'?'var(--sage)':'var(--honey)';
+  const bg='var(--surface)';
+  return <div className="card" style={{flex:1,padding:14}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <span className="lbl">{label}</span>
+      <div style={{width:28,height:28,borderRadius:8,background:bg,display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <Icon name={icon} size={15} color={c}/>
+      </div>
+    </div>
+    <div className="num" style={{fontSize:26,color:c,marginTop:8}}>{value}</div>
+    <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{sub}</div>
+  </div>;
+}
+function PaceGauge({ lo, hi }) {
+  const t=useT();
+  return <div className="card card-pad" style={{marginTop:14}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+      <span className="lbl">{t('pace_zone_label')}</span>
+      <span style={{fontSize:11,color:'var(--sage)',fontFamily:'var(--font-disp)',fontWeight:700}}>{t('pace_current')} 5:02</span>
+    </div>
+    <div style={{position:'relative',height:10}}>
+      <div style={{position:'absolute',inset:0,borderRadius:999,display:'flex',overflow:'hidden'}}>
+        <div style={{flex:'0 0 38%',background:'var(--surface)'}}/>
+        <div style={{flex:'0 0 24%',background:'var(--surface)',borderLeft:'1px solid rgba(200,16,46,.2)',borderRight:'1px solid rgba(200,16,46,.2)'}}/>
+        <div style={{flex:1,background:'var(--surface)'}}/>
+      </div>
+      <div style={{position:'absolute',left:'38%',width:'24%',top:-2,bottom:-2,borderRadius:999,border:'2px solid var(--sage)'}}/>
+      <div style={{position:'absolute',left:'50%',top:-5,width:3,height:20,borderRadius:9,background:'var(--sage-deep)',transform:'translateX(-50%)'}}/>
+    </div>
+    <div style={{display:'flex',justifyContent:'space-between',marginTop:9}}>
+      <span style={{fontSize:10,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600}}>{t('pace_fast')} {hi}</span>
+      <span style={{fontSize:10,color:'var(--sage)',fontFamily:'var(--font-disp)',fontWeight:700}}>{lo}–{hi} {t('pace_safe')}</span>
+      <span style={{fontSize:10,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600}}>{t('pace_slow')} {lo}</span>
+    </div>
+  </div>;
+}
+function MissionScreen({ route, back }) {
+  const t=useT();
+  const D=window.DOR; const m=D.missions.find(x=>x.day===route.day)||D.missions[2]; const [km,setKm]=React.useState(m.kmDone); const baseReached=km>=m.base; const extra=Math.max(0,Math.floor(km-m.base)); const rescued=Math.min(5,extra+m.rescued); const report=()=>setKm(k=>Math.round((k+1)*10)/10);
+  return (
+    <div className="dor-scroll">
+      <SafeTop h={50}/>
+      <TopBar title={`DAY ${m.day} ${t('mission_day_suffix')}`} onBack={back}/>
+      <div style={{padding:'16px 18px 20px'}}>
+        <div className="card" style={{padding:18,background:'var(--surface)',borderColor:'rgba(26,26,26,.25)'}}>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <span className="chip hunt">{m.tag}</span>
+            <span className="lbl">{m.type==='pace'?t('mission_type_pace'):m.type==='rescue'?t('mission_type_rescue'):t('mission_type_base')}</span>
+          </div>
+          <div style={{fontFamily:'var(--font-disp)',fontSize:24,fontWeight:800,marginTop:10,color:'var(--tx)'}}>{m.title}</div>
+          <p style={{fontSize:14,color:'var(--tx-mid)',lineHeight:1.65,margin:'8px 0 0'}}>{m.desc}</p>
+        </div>
+        <div style={{display:'flex',gap:12,marginTop:14}}>
+          <BigTarget label={t('label_target_pace')} value={m.paceLo||t('pace_unlimited')} sub={m.paceLo?`– ${m.paceHi} /km`:t('pace_free')} tone="hunt" icon="chase"/>
+          <BigTarget label={t('label_base_km')} value={m.base.toFixed(1)} sub={t('sub_km_goal')} tone="fug" icon="route"/>
+        </div>
+        {m.paceLo&&<PaceGauge lo={m.paceLo} hi={m.paceHi}/>}
+        <div className="lbl" style={{marginTop:22,marginBottom:10}}>{t('label_today_progress')}</div>
+        <div className="card card-pad">
+          <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between'}}>
+            <div style={{display:'flex',alignItems:'baseline',gap:5}}>
+              <span className="num" style={{fontSize:36,color:baseReached?'var(--sage)':'var(--coral)'}}>{km.toFixed(1)}</span>
+              <span style={{color:'var(--tx-mid)',fontFamily:'var(--font-disp)',fontWeight:600}}>/ {m.base.toFixed(1)} km</span>
+            </div>
+            {baseReached?<span className="chip fug"><Icon name="check" size={13} color="var(--sage)"/> {t('chip_base_done')}</span>:<span className="chip hunt">{t('chip_need')} {(m.base-km).toFixed(1)}K</span>}
+          </div>
+          <div style={{marginTop:12}}><Bar pct={km/m.base*100} color={baseReached?'var(--sage)':'var(--coral)'}/></div>
+        </div>
+        <div className="lbl" style={{marginTop:22,marginBottom:10}}>{t('sec_rescue_ladder')}</div>
+        <div className="card card-pad" style={{borderColor:'rgba(200,16,46,.2)'}}>
+          <div style={{display:'flex',gap:9,justifyContent:'space-between'}}>
+            {Array.from({length:5}).map((_,i)=>{
+              const on=i<rescued;
+              return <div key={i} style={{flex:1,textAlign:'center'}}>
+                <div style={{height:50,borderRadius:12,border:`1px solid ${on?'rgba(200,16,46,.4)':'var(--border)'}`,background:on?'var(--sage)':'var(--surface)',display:'flex',alignItems:'center',justifyContent:'center',transition:'all .2s'}}>
+                  <Icon name="rescue" size={22} color={on?'var(--sage)':'var(--tx-light)'}/>
+                </div>
+                <div style={{fontSize:9,marginTop:5,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600}}>+{m.base+i+1}K</div>
+              </div>;
+            })}
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:7,marginTop:13,fontSize:13}}>
+            <Icon name="rescue" size={16} color="var(--sage)"/>
+            <span style={{color:'var(--tx-mid)'}}>{t('rescued_count')} <span className="num" style={{color:'var(--sage)',fontSize:15}}>{rescued}</span> {t('rescued_unit')}{m.type==='rescue'&&<span style={{color:'var(--sage)',fontWeight:700}}> · {t('rescue_double')}</span>}</span>
+          </div>
+        </div>
+        <button className="btn btn-primary" style={{marginTop:18}} onClick={report}><Icon name="plus" size={18} color="#fff"/> {t('btn_report_run')}</button>
+        <div style={{textAlign:'center',marginTop:10}}><span className="lbl">{t('sync_label')}</span></div>
+      </div>
+    </div>
+  );
+}
+function CheckinScreen({ back }) {
+  const t=useT();
+  const D=window.DOR; const [stores,setStores]=React.useState(D.stores); const [open,setOpen]=React.useState(null); const done=stores.filter(s=>s.stamp).length; const check=(id)=>setStores(ss=>ss.map(s=>s.id===id?{...s,stamp:true}:s));
+  return (
+    <div className="dor-scroll">
+      <SafeTop h={50}/>
+      <TopBar title={t('checkin_title')} onBack={back}/>
+      <div style={{padding:'12px 18px 0'}}>
+        <div className="ph" style={{height:155,borderRadius:18,position:'relative',overflow:'hidden'}}>{t('checkin_map_label')}
+          {[[28,40],[62,30],[46,64],[78,70]].map(([l,tp],i)=><div key={i} style={{position:'absolute',left:l+'%',top:tp+'%',transform:'translate(-50%,-100%)'}}><Icon name="pin" size={24} color={stores[i]&&stores[i].stamp?'var(--sage)':'var(--lavender)'}/></div>)}
+        </div>
+      </div>
+      <div style={{padding:'12px 18px 0'}}>
+        <div className="card card-pad" style={{display:'flex',alignItems:'center',gap:13,borderColor:'rgba(107,114,128,.25)'}}>
+          <div style={{width:46,height:46,borderRadius:12,background:'var(--surface)',border:'1px solid rgba(107,114,128,.3)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <Icon name="qr" size={24} color="var(--lavender)"/>
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,color:'var(--tx)'}}>{t('checkin_show_card')}</div>
+            <div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:2}}>{t('checkin_race_done_prefix')} {done}/{stores.length} {t('checkin_unit')}</div>
+          </div>
+          <div className="num" style={{color:'var(--lavender)',fontSize:22}}>{done}/{stores.length}</div>
+        </div>
+      </div>
+      <SectionLabel>{t('sec_stores')}</SectionLabel>
+      <div style={{padding:'0 18px 20px',display:'flex',flexDirection:'column',gap:12}}>
+        {stores.map(s=>(
+          <div key={s.id} className="card" style={{padding:0,overflow:'hidden',borderColor:s.stamp?'rgba(200,16,46,.3)':'var(--border)'}}>
+            <div className="tap" onClick={()=>setOpen(open===s.id?null:s.id)} style={{padding:14,display:'flex',gap:12,alignItems:'flex-start'}}>
+              <div style={{width:42,height:42,borderRadius:11,background:s.stamp?'var(--sage)':'var(--surface)',border:'none',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <Icon name={s.stamp?'check':'pin'} size={20} color={s.stamp?'var(--sage)':'var(--lavender)'}/>
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontWeight:700,fontSize:14.5,color:'var(--tx)'}}>{s.name}</span>
+                  {s.stamp&&<span className="chip fug" style={{fontSize:9,padding:'1px 7px'}}>{t('chip_checked')}</span>}
+                </div>
+                <div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:3}}>{s.addr}</div>
+                <div style={{display:'flex',gap:12,marginTop:6}}>
+                  <span style={{fontSize:11,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600}}>{s.dist} km</span>
+                  <span style={{fontSize:11,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600}}>{s.hours}</span>
+                </div>
+              </div>
+              <Icon name={open===s.id?'chevDown':'chev'} size={16} color="var(--tx-light)"/>
+            </div>
+            {open===s.id&&<div style={{padding:'0 14px 14px',borderTop:'1px solid var(--border)'}}>
+              <div style={{display:'flex',gap:10,padding:'12px 0'}}>
+                <div className="ph" style={{width:60,height:60,borderRadius:10,flexShrink:0}}>QR</div>
+                <div style={{fontSize:13,color:'var(--tx-mid)',lineHeight:1.5,flex:1}}>{s.task}</div>
+              </div>
+              {!s.stamp?<button className="btn" style={{background:'var(--lavender)',color:'#fff'}} onClick={()=>check(s.id)}><Icon name="qr" size={18} color="#fff"/> {t('btn_scan')}</button>:<div style={{textAlign:'center',padding:10,color:'var(--sage)',fontWeight:700,fontFamily:'var(--font-disp)'}}>{t('checkin_success')}</div>}
+            </div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Reward Screens ── */
+function MileageScreen({ nav }) {
+  const t=useT();
+  const D=window.DOR; const total=D.profile.totalKm; const earned=Math.floor(total/50); const avail=earned-D.profile.spinsUsed; const toNext=50-(total%50); const contrib=D.records.map(r=>({title:r.title,km:r.dist}));
+  return (
+    <div className="dor-scroll">
+      <SafeTop/>
+      <div style={{padding:'0 18px'}}>
+        <div className="eyebrow">MILEAGE BANK</div>
+        <div style={{fontFamily:'var(--font-disp)',fontSize:26,fontWeight:800,marginTop:3,color:'var(--tx)'}}>{t('mileage_page_title')}</div>
+      </div>
+      <div style={{padding:'16px 18px 0'}}>
+        <div className="card" style={{padding:22,textAlign:'center',background:'var(--surface)',borderColor:'rgba(200,16,46,.25)'}}>
+          <div className="lbl">{t('label_total_mileage')}</div>
+          <div style={{display:'flex',alignItems:'baseline',justifyContent:'center',gap:6,marginTop:6}}>
+            <span className="num" style={{fontSize:64,lineHeight:1,color:'var(--sage)'}}>{total}</span>
+            <span style={{fontSize:18,color:'var(--tx-mid)',fontFamily:'var(--font-disp)',fontWeight:600}}>km</span>
+          </div>
+          <div style={{marginTop:18}}>
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:'var(--tx-mid)',marginBottom:7}}>
+              <span style={{fontFamily:'var(--font-disp)',fontWeight:600}}>{t('label_next_spin')}</span>
+              <span style={{color:'var(--sage)',fontFamily:'var(--font-disp)',fontWeight:700}}>{t('label_spin_gap')} {toNext} km</span>
+            </div>
+            <Bar pct={(total%50)/50*100}/>
+            <div className="lbl" style={{textAlign:'left',marginTop:6}}>{t('note_50km')}</div>
+          </div>
+        </div>
+      </div>
+      <div style={{padding:'14px 18px 0'}}>
+        <div className="card tap" onClick={()=>nav('wheel',{})} style={{padding:16,display:'flex',alignItems:'center',gap:14,borderColor:avail>0?'rgba(192,123,34,.35)':'var(--border)'}}>
+          <div style={{width:52,height:52,borderRadius:14,background:'var(--surface)',border:'1px solid rgba(192,123,34,.3)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <Icon name="wheel" size={28} color="var(--honey)"/>
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:16,color:'var(--tx)'}}>{t('label_spin_count')}</div>
+            <div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:2}}>{avail>0?t('spin_go_desc'):t('spin_locked_desc')}</div>
+          </div>
+          <div className="num" style={{color:'var(--honey)',fontSize:30}}>{avail}</div>
+        </div>
+      </div>
+      <SectionLabel>{t('sec_mileage_source')}</SectionLabel>
+      <div style={{padding:'0 18px 20px'}}>
+        <div className="card" style={{padding:0,overflow:'hidden'}}>
+          {contrib.map((c,i)=><div key={i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'13px 15px',borderTop:i?'1px solid var(--border)':'none'}}>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <Icon name="medal" size={18} color="var(--tx-light)"/>
+              <span style={{fontSize:14,color:'var(--tx)'}}>{c.title}</span>
+            </div>
+            <span className="num" style={{color:'var(--sage)',fontSize:15}}>+{c.km} km</span>
+          </div>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+function WheelResult({ result, onClose }) {
+  const t=useT();
+  const cMap={dim:'var(--tx-light)',gold:'var(--honey)',fug:'var(--sage)',violet:'var(--lavender)'};
+  const bgMap={dim:'var(--surface)',gold:'var(--surface)',fug:'var(--surface)',violet:'var(--surface)'};
+  const c=cMap[result.color]||'var(--tx-mid)'; const bg=bgMap[result.color]||'var(--surface)';
+  const win=result.kind==='line'||result.kind==='sticker';
+  return <div onClick={onClose} style={{position:'absolute',inset:0,zIndex:40,background:'rgba(245,243,239,.88)',backdropFilter:'blur(8px)',display:'flex',alignItems:'center',justifyContent:'center',padding:28}}>
+    <div className="card" onClick={e=>e.stopPropagation()} style={{width:'100%',maxWidth:320,padding:26,textAlign:'center',borderColor:c,boxShadow:`0 12px 40px rgba(0,0,0,.14)`}}>
+      <div className="lbl">{win?t('wheel_win'):t('wheel_result_label')}</div>
+      <div style={{width:86,height:86,borderRadius:22,margin:'16px auto',background:bg,border:`1.5px solid ${c}`,display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <Icon name={result.kind==='line'?'gift':result.kind==='sticker'?'id':result.kind==='again'?'spin':'bell'} size={40} color={c}/>
+      </div>
+      <div style={{fontFamily:'var(--font-disp)',fontSize:22,fontWeight:800,color:c}}>{result.kind==='line'?`LINE Points ${result.amount}`:result.kind==='sticker'?`${t('sticker_title')} ×${result.amount}`:result.label}</div>
+      <div style={{fontSize:13,color:'var(--tx-mid)',marginTop:8}}>{result.kind==='line'?t('wheel_line_desc'):result.kind==='sticker'?t('wheel_sticker_desc'):result.kind==='again'?t('wheel_again_desc'):t('wheel_miss_desc')}</div>
+      <button className="btn btn-ghost" style={{marginTop:20}} onClick={onClose}>{t('btn_collect')}</button>
+    </div>
+  </div>;
+}
+function WheelScreen({ back }) {
+  const t=useT();
+  const D=window.DOR; const pool=D.wheel; const n=pool.length; const seg=360/n;
+  const colorOf=(c)=>({dim:'#E5E5E5',gold:'#C07B22',fug:'#C8102E',violet:'#6B7280'}[c]||'#CCCCCC');
+  const textOf=(c)=>({dim:'#606060',gold:'#7E4E0F',fug:'#8C0B1E',violet:'#374151'}[c]||'#111111');
+  const [rot,setRot]=React.useState(0); const [spinning,setSpinning]=React.useState(false); const [result,setResult]=React.useState(null); const [spins,setSpins]=React.useState(Math.floor(D.profile.totalKm/50)-D.profile.spinsUsed);
+  const conic=`conic-gradient(${pool.map((p,i)=>`${colorOf(p.color)} ${i*seg}deg ${(i+1)*seg}deg`).join(',')})`;
+  const spin=()=>{
+    if(spinning||spins<=0)return; setResult(null); setSpinning(true); setSpins(s=>s-1);
+    const tot=pool.reduce((a,p)=>a+p.weight,0); let rnd=Math.random()*tot,idx=0;
+    for(let i=0;i<n;i++){rnd-=pool[i].weight;if(rnd<=0){idx=i;break;}}
+    const target=360*5+(360-(idx*seg+seg/2)); const base=rot-(rot%360); setRot(base+target);
+    setTimeout(()=>{setSpinning(false);setResult(pool[idx]);if(pool[idx].kind==='again')setSpins(s=>s+1);},4200);
+  };
+  return (
+    <div className="dor-scroll">
+      <SafeTop h={50}/>
+      <TopBar title={t('wheel_title')} onBack={back} right={<span className="chip gold" style={{fontWeight:700}}>{t('wheel_remaining')} {spins}</span>}/>
+      <div style={{padding:'16px 18px 0',display:'flex',flexDirection:'column',alignItems:'center'}}>
+        <div style={{width:0,height:0,borderLeft:'10px solid transparent',borderRight:'10px solid transparent',borderTop:'16px solid var(--honey)',zIndex:3,marginBottom:-6}}/>
+        <div style={{position:'relative',width:272,height:272}}>
+          <div style={{position:'absolute',inset:0,borderRadius:'50%',background:conic,transform:`rotate(${rot}deg)`,transition:spinning?'transform 4.2s cubic-bezier(.17,.67,.12,1)':'none',boxShadow:'0 0 0 5px var(--surface),0 0 0 7px var(--border),0 16px 40px rgba(0,0,0,.14)'}}>
+            {pool.map((p,i)=><div key={i} style={{position:'absolute',left:'50%',top:'50%',transformOrigin:'0 0',transform:`rotate(${i*seg+seg/2}deg) translate(0,-108px)`}}>
+              <div style={{transform:'translate(-50%,-50%) rotate(90deg)',width:70,textAlign:'center'}}>
+                <div style={{fontSize:10.5,fontWeight:700,fontFamily:'var(--font-disp)',color:textOf(p.color),lineHeight:1.2}}>{p.kind==='line'?`LINE ${p.amount}`:p.label}</div>
+              </div>
+            </div>)}
+          </div>
+          <div style={{position:'absolute',left:'50%',top:'50%',transform:'translate(-50%,-50%)',width:58,height:58,borderRadius:'50%',background:'var(--surface)',border:'2px solid var(--border-2)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:2,boxShadow:'var(--shadow)'}}>
+            <Icon name="bolt" size={22} color="var(--honey)"/>
+          </div>
+        </div>
+        <button className="btn btn-gold" style={{marginTop:22,maxWidth:256}} disabled={spinning||spins<=0} onClick={spin}>
+          {spinning?t('btn_spinning'):spins>0?<><Icon name="spin" size={18} color="#fff"/> {t('btn_spin')}</>:t('btn_no_spins')}
+        </button>
+        <div className="lbl" style={{marginTop:12}}>{t('wheel_note')}</div>
+      </div>
+      <SectionLabel>{t('sec_prizes')}</SectionLabel>
+      <div style={{padding:'0 18px 24px',display:'flex',flexDirection:'column',gap:8}}>
+        {pool.map((p,i)=>{
+          const tot=pool.reduce((a,x)=>a+x.weight,0);
+          return <div key={i} className="card" style={{padding:'11px 14px',display:'flex',alignItems:'center',gap:11}}>
+            <span style={{width:11,height:11,borderRadius:4,background:colorOf(p.color),display:'inline-block',flexShrink:0}}/>
+            <span style={{flex:1,fontSize:14,color:'var(--tx)'}}>{p.kind==='line'?`LINE Points ${p.amount}`:p.label}</span>
+            <span style={{fontSize:12,color:'var(--tx-mid)',fontFamily:'var(--font-disp)',fontWeight:700}}>{Math.round(p.weight/tot*100)}%</span>
+          </div>;
+        })}
+      </div>
+      {result&&<WheelResult result={result} onClose={()=>setResult(null)}/>}
+    </div>
+  );
+}
+function StickerScreen({ back }) {
+  const t=useT();
+  const D=window.DOR; const cards=D.stickers; const got=cards.filter(c=>c.got).length; const complete=got===cards.length;
+  return (
+    <div className="dor-scroll">
+      <SafeTop h={50}/>
+      <TopBar title={t('sticker_title')} onBack={back}/>
+      <div style={{padding:'12px 18px 0'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end'}}>
+          <div>
+            <div className="lbl">{t('sticker_goal_label')}</div>
+            <div style={{fontFamily:'var(--font-disp)',fontSize:28,fontWeight:800,marginTop:5,color:'var(--tx)'}}>{got}<span style={{color:'var(--tx-light)',fontSize:20}}> / {cards.length}</span></div>
+          </div>
+          <span className="chip violet" style={{fontWeight:700}}>{t('sticker_collected_chip')} {got}</span>
+        </div>
+        <div style={{marginTop:12}}><Bar pct={got/cards.length*100} color="var(--lavender)"/></div>
+      </div>
+      <div style={{padding:'16px 18px 0'}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+          {cards.map(c=><div key={c.i} style={{aspectRatio:'1',borderRadius:16,position:'relative',overflow:'hidden',border:`1.5px solid ${c.got?'var(--border-2)':'var(--border)'}`,background:c.got?'var(--surface)':'var(--surface)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:7,boxShadow:c.got?'var(--shadow-xs)':'none'}}>
+            <Icon name={c.got?'id':'lock'} size={26} color={c.got?'var(--lavender)':'var(--tx-light)'}/>
+            <div style={{fontSize:11,color:c.got?'var(--tx)':'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:700}}>{c.got?c.name:t('sticker_locked_text')}</div>
+            <div className="lbl" style={{position:'absolute',top:8,left:9,fontSize:9}}>{String(c.i).padStart(2,'0')}</div>
+          </div>)}
+        </div>
+      </div>
+      <SectionLabel>{t('sec_sticker_reward')}</SectionLabel>
+      <div style={{padding:'0 18px 24px'}}>
+        <div className="card" style={{padding:16,display:'flex',gap:14,alignItems:'center',borderColor:complete?'var(--lavender)':'var(--border)'}}>
+          <div className="ph" style={{width:76,height:76,borderRadius:14,flexShrink:0}}>公仔</div>
+          <div style={{flex:1}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontWeight:700,fontSize:16,color:'var(--tx)'}}>{t('sticker_prize_name')}</span>
+              <span className="chip violet" style={{fontSize:9,padding:'1px 7px'}}>{t('sticker_prize_tag')}</span>
+            </div>
+            <div style={{fontSize:12.5,color:'var(--tx-mid)',marginTop:4,lineHeight:1.5}}>{t('sticker_prize_desc')}</div>
+          </div>
+        </div>
+        <button className="btn" style={{marginTop:14,background:complete?'var(--lavender)':'var(--surface)',color:complete?'#fff':'var(--tx-mid)',border:complete?'none':'1.5px solid var(--border-2)'}} disabled={!complete}>
+          {complete?t('btn_redeem'):`${t('btn_need_more_prefix')}${cards.length-got}${t('btn_need_more_suffix')}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── 登入 / 等級升級 ── */
+function LoginScreen({ back, setAuth }) {
+  const t=useT();
+  const [phase,setPhase]=React.useState('idle'); // idle | loading | done
+  const doLogin=()=>{
+    setPhase('loading');
+    setTimeout(()=>{
+      const D=window.DOR; const p=D.profile;
+      const exp=calcExp(p); const lv=getLevelInfo(exp);
+      setAuth({...p, exp, level:lv.level, levelName:lv.name, levelColor:lv.color, levelBadge:lv.badge, levelPct:lv.pct});
+      back();
+    },1300);
+  };
+  return (
+    <div className="dor-scroll" style={{display:'flex',flexDirection:'column',minHeight:'100%'}}>
+      <SafeTop/>
+      <div style={{padding:'0 18px'}}>
+        <button className="tap" onClick={back} style={iconBtn}><Icon name="back" size={20} color="var(--tx-mid)"/></button>
+      </div>
+      <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'0 28px',textAlign:'center'}}>
+        <div style={{width:76,height:76,borderRadius:22,background:'var(--surface)',border:'2px solid rgba(200,16,46,.35)',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 8px 30px rgba(200,16,46,.2)'}}>
+          <Icon name="target" size={36} color="var(--sage)"/>
+        </div>
+        <div style={{fontFamily:'var(--font-disp)',fontSize:28,fontWeight:800,color:'var(--tx)',marginTop:22}}>{t('login_title')}</div>
+        <div style={{fontSize:14.5,color:'var(--tx-mid)',marginTop:9,lineHeight:1.65}}>{t('login_desc').split('\n').map((ln,i)=><React.Fragment key={i}>{ln}{i===0&&<br/>}</React.Fragment>)}</div>
+        <div style={{width:'100%',marginTop:40,display:'flex',flexDirection:'column',gap:12}}>
+          <button onClick={doLogin} disabled={phase==='loading'} style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'center',gap:10,padding:'15px 0',borderRadius:16,border:'1.5px solid var(--border-2)',background:'var(--surface)',fontFamily:'var(--font-disp)',fontWeight:700,fontSize:15.5,color:'var(--tx)',cursor:phase==='loading'?'default':'pointer',opacity:phase==='loading'?.65:1,boxShadow:'var(--shadow)',transition:'opacity .2s'}}>
+            <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09Z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23Z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84Z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53Z"/></svg>
+            {phase==='loading'?t('btn_logging_in'):t('btn_google_login')}
+          </button>
+        </div>
+        <button className="tap" onClick={back} style={{marginTop:20,fontSize:13,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600,background:'none',border:'none',cursor:'pointer'}}>{t('btn_guest_browse')}</button>
+      </div>
+      <div style={{padding:'0 28px 32px',textAlign:'center'}}>
+        <span className="lbl" style={{fontSize:10}}>{t('login_legal')}</span>
+      </div>
+    </div>
+  );
+}
+
+function LevelUpModal({ from, to, onClose }) {
+  const t=useT();
+  const stars=[...Array(6)].map((_,i)=>({
+    x:30+Math.random()*40, delay:i*0.08, size:14+Math.random()*10, dur:0.9+Math.random()*0.4,
+  }));
+  return (
+    <div style={{position:'absolute',inset:0,zIndex:200,background:'rgba(28,25,22,.72)',display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(6px)'}}>
+      <div style={{margin:'0 24px',background:'var(--surface)',borderRadius:28,padding:'32px 24px',textAlign:'center',boxShadow:'0 24px 60px rgba(0,0,0,.25)',animation:'dorSlideUp .38s ease-out',position:'relative',overflow:'hidden',width:'100%',maxWidth:320}}>
+        <div style={{position:'absolute',top:0,left:0,right:0,height:80,pointerEvents:'none'}}>
+          {stars.map((s,i)=><div key={i} style={{position:'absolute',left:s.x+'%',top:16,width:s.size,height:s.size,borderRadius:'50%',background:to.color,animation:`dorStar ${s.dur}s ${s.delay}s ease-out both`,opacity:0}}/>)}
+        </div>
+        <div style={{fontSize:48,lineHeight:1,marginBottom:4}}>✨</div>
+        <div style={{fontFamily:'var(--font-disp)',fontSize:13,fontWeight:700,color:'var(--tx-light)',letterSpacing:'.1em',textTransform:'uppercase',marginBottom:6}}>{t('levelup_congrats')}</div>
+        <div style={{fontFamily:'var(--font-disp)',fontSize:15,color:'var(--tx-mid)',marginBottom:16}}>
+          <span style={{color:from.color,fontWeight:700}}>Lv.{from.level} {from.name}</span> &rarr;
+        </div>
+        <div style={{display:'inline-flex',alignItems:'center',gap:10,background:`${to.badge}18`,border:`1.5px solid ${to.badge}55`,borderRadius:20,padding:'12px 20px'}}>
+          <div style={{width:44,height:44,borderRadius:14,background:to.badge,display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <Icon name="target" size={24} color="#fff"/>
+          </div>
+          <div style={{textAlign:'left'}}>
+            <div style={{fontSize:11,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600,letterSpacing:'.08em'}}>LEVEL {to.level}</div>
+            <div style={{fontFamily:'var(--font-disp)',fontSize:22,fontWeight:800,color:to.color}}>{to.name}</div>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:10,marginTop:18,padding:'0 4px'}}>
+          <div style={{flex:1,background:'var(--surface)',borderRadius:10,padding:'10px 12px'}}>
+            <div className="lbl" style={{fontSize:8.5}}>{t('levelup_exp_races')}</div>
+            <div style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:13,color:'var(--tx)',marginTop:3}}>{t('levelup_exp_races_sub')}</div>
+          </div>
+          <div style={{flex:1,background:'var(--surface)',borderRadius:10,padding:'10px 12px'}}>
+            <div className="lbl" style={{fontSize:8.5}}>{t('levelup_exp_km')}</div>
+            <div style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:13,color:'var(--tx)',marginTop:3}}>{t('levelup_exp_km_sub')}</div>
+          </div>
+        </div>
+        <button className="btn btn-primary" style={{marginTop:20}} onClick={onClose}>{t('btn_levelup_close')}</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Profile + Records ── */
+function ProfStat({ n, l, tone }) {
+  const c=tone==='fug'?'var(--sage)':tone==='gold'?'var(--honey)':tone==='hunt'?'var(--coral)':'var(--tx)';
+  return <div style={{flex:1,textAlign:'center'}}>
+    <div className="num" style={{fontSize:22,color:c}}>{n}</div>
+    <div className="lbl" style={{fontSize:8.5,marginTop:3}}>{l}</div>
+  </div>;
+}
+function Field({ l, v }) {
+  return <div>
+    <div className="lbl" style={{fontSize:8.5}}>{l}</div>
+    <div style={{fontSize:12.5,marginTop:2,fontFamily:'var(--font-disp)',fontWeight:700,color:'var(--tx)'}}>{v}</div>
+  </div>;
+}
+function ProfileScreen({ nav, setTab, auth, setAuth }) {
+  const t=useT();
+  const D=window.DOR; const p=D.profile;
+  const isGuest=!auth;
+  const earned=auth?Math.floor(p.totalKm/50)-p.spinsUsed:0;
+  const lv=auth?getLevelInfo(auth.exp):null;
+  const fac=p.faction?FAC[p.faction]:null;
+  const displayNick=auth?.nickname||p.nickname;
+  const menu=[
+    {icon:'medal',label:t('menu_records'),  d:isGuest?'—':`${p.races} ${t('stat_races')}`,   go:()=>nav('records',{})},
+    {icon:'route',label:t('menu_km'),       d:isGuest?'—':`${p.totalKm} km`,                  go:()=>setTab('wheel')},
+    {icon:'id',   label:t('menu_stickers'), d:isGuest?'—':'5 / 9',                             go:()=>nav('stickers',{})},
+    {icon:'wheel',label:t('menu_wheel'),    d:isGuest?'—':earned>0?`${earned}${t('wheel_avail_unit')}`:t('wheel_none'),go:()=>setTab('wheel')},
+    {icon:'spin', label:t('menu_datasync'), d:isGuest?'—':'Garmin · Apple Health · Strava',   go:()=>nav('dataSync',{})},
+  ];
+  const idCards=[[t('card_identity_fugitive'),'sage','stealth'],[t('card_identity_hunter'),'coral','target'],[t('card_identity_decoy'),'lavender','decoy'],[t('card_identity_signal'),'honey','route']];
+  return (
+    <div className="dor-scroll">
+      <SafeTop/>
+      <div style={{display:'flex',justifyContent:'flex-end',padding:'0 18px',gap:10}}>
+        {isGuest
+          ? <button className="tap" onClick={()=>nav('login',{})} style={{...iconBtn,width:'auto',padding:'0 16px',fontSize:13,fontFamily:'var(--font-disp)',fontWeight:700,color:'var(--sage)',borderColor:'rgba(200,16,46,.4)',gap:6}}>{t('btn_login_quick')}</button>
+          : <button className="tap" onClick={()=>nav('settings',{})} style={iconBtn}><Icon name="settings" size={19} color="var(--tx-mid)"/></button>}
+      </div>
+
+      <div style={{padding:'6px 18px 0'}}>
+        <div className="card" style={{padding:18,background:'var(--surface)',borderColor:'var(--border)'}}>
+          <div style={{display:'flex',gap:15,alignItems:'center'}}>
+            <div className={isGuest?'':'ph'} style={{width:72,height:72,borderRadius:20,flexShrink:0,border:`2px solid ${isGuest?'var(--border)':'rgba(200,16,46,.35)'}`,display:'flex',alignItems:'center',justifyContent:'center',background:isGuest?'var(--surface)':''}}>
+              {isGuest?<Icon name="user" size={32} color="var(--tx-light)"/>:p.avatar}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontFamily:'var(--font-disp)',fontSize:21,fontWeight:800,color:isGuest?'var(--tx-light)':'var(--tx)'}}>{isGuest?t('profile_guest_name'):displayNick}</div>
+              <div style={{fontSize:12,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{isGuest?t('profile_guest_handle'):auth.handle}</div>
+              {!isGuest&&<div style={{display:'flex',gap:7,marginTop:9}}>
+                {fac&&<span className="chip fug" style={{fontWeight:700}}><Icon name={fac.icon} size={12} color="var(--sage)"/> {fac.label}</span>}
+                <span className="chip">{p.team}</span>
+              </div>}
+              {isGuest&&<button className="btn btn-primary" style={{marginTop:12,padding:'8px 18px',fontSize:13}} onClick={()=>nav('login',{})}>{t('profile_guest_login_btn')}</button>}
+            </div>
+          </div>
+
+          {!isGuest&&lv&&<div style={{marginTop:16,padding:'13px 14px',background:'var(--surface)',borderRadius:14,border:'1px solid var(--border)'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <div style={{width:30,height:30,borderRadius:9,background:lv.badge,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  <Icon name="target" size={16} color="#fff"/>
+                </div>
+                <div>
+                  <div style={{fontFamily:'var(--font-disp)',fontWeight:800,fontSize:14,color:lv.color}}>Lv.{lv.level} {lv.name}</div>
+                  <div style={{fontSize:10.5,color:'var(--tx-light)',fontFamily:'var(--font-disp)',fontWeight:600,marginTop:1}}>{lv.exp} EXP · {t('next_level_prefix')} {lv.maxExp<9999?lv.maxExp+' EXP':t('next_level_max')}</div>
+                </div>
+              </div>
+              <div style={{fontSize:12,fontFamily:'var(--font-disp)',fontWeight:700,color:lv.color}}>{lv.pct}%</div>
+            </div>
+            <div style={{height:6,borderRadius:999,overflow:'hidden',background:'var(--border)'}}>
+              <div style={{width:lv.pct+'%',height:'100%',background:lv.color,borderRadius:999,transition:'width .6s'}}/>
+            </div>
+          </div>}
+
+          <div style={{display:'flex',gap:10,marginTop:16,paddingTop:16,borderTop:'1px solid var(--border)'}}>
+            <ProfStat n={isGuest?'—':p.races}    l={t('stat_races')}/>
+            <ProfStat n={isGuest?'—':p.totalKm}  l={t('stat_km')} tone={isGuest?'':'fug'}/>
+            <ProfStat n={isGuest?'—':p.rescues}  l={t('stat_rescues')} tone={isGuest?'':'gold'}/>
+            <ProfStat n={isGuest?'—':p.streak}   l={t('stat_streak')} tone={isGuest?'':'hunt'}/>
+          </div>
+        </div>
+      </div>
+
+      <SectionLabel>{t('sec_my')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card" style={{padding:0,overflow:'hidden'}}>
+          {menu.map((m,i)=><div key={i} className="tap" onClick={isGuest?()=>nav('login',{}):m.go} style={{display:'flex',alignItems:'center',gap:13,padding:'14px 15px',borderTop:i?'1px solid var(--border)':'none',opacity:isGuest?.55:1}}>
+            <div style={{width:38,height:38,borderRadius:11,background:'var(--surface)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <Icon name={m.icon} size={19} color="var(--tx-mid)"/>
+            </div>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,fontSize:15,color:'var(--tx)'}}>{m.label}</div>
+              <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{m.d}</div>
+            </div>
+            <Icon name={isGuest?'lock':'chev'} size={16} color="var(--tx-light)"/>
+          </div>)}
+        </div>
+      </div>
+
+      {!isGuest&&<>
+        <SectionLabel>{t('sec_id_cards')}</SectionLabel>
+        <div style={{padding:'0 18px 24px',display:'flex',gap:10,overflowX:'auto'}}>
+          {idCards.map(([label,c,ic],i)=>
+            <div key={i} style={{width:96,flexShrink:0,borderRadius:14,padding:14,textAlign:'center',border:'1px solid var(--border)',background:`var(--${c}-bg)`,boxShadow:'var(--shadow-xs)'}}>
+              <Icon name={ic} size={26} color={`var(--${c})`}/>
+              <div style={{fontWeight:700,fontSize:13,marginTop:8,color:'var(--tx)'}}>{label}</div>
+              <div className="lbl" style={{fontSize:8,marginTop:3}}>IDENTITY</div>
+            </div>
+          )}
+        </div>
+      </>}
+
+      {!isGuest&&<div style={{padding:'0 18px 28px'}}>
+        <button className="btn btn-ghost" style={{fontSize:13,color:'var(--tx-mid)'}} onClick={()=>nav('settings',{})}>{t('btn_account_settings')}</button>
+      </div>}
+    </div>
+  );
+}
+function RecordsScreen({ back }) {
+  const t=useT();
+  const D=window.DOR; const recs=D.records; const totalKm=recs.reduce((a,r)=>a+r.dist,0);
+  return (
+    <div className="dor-scroll">
+      <SafeTop h={50}/>
+      <TopBar title={t('records_title')} onBack={back}/>
+      <div style={{padding:'12px 18px 0'}}>
+        <div className="card card-pad" style={{display:'flex',justifyContent:'space-around'}}>
+          <div style={{textAlign:'center'}}>
+            <div className="num" style={{fontSize:28,color:'var(--tx)'}}>{recs.length}</div>
+            <div className="lbl" style={{marginTop:3}}>{t('stat_finish_count')}</div>
+          </div>
+          <div style={{width:1,background:'var(--border)'}}/>
+          <div style={{textAlign:'center'}}>
+            <div className="num" style={{fontSize:28,color:'var(--sage)'}}>{totalKm}</div>
+            <div className="lbl" style={{marginTop:3}}>{t('stat_finish_km')}</div>
+          </div>
+          <div style={{width:1,background:'var(--border)'}}/>
+          <div style={{textAlign:'center'}}>
+            <div className="num" style={{fontSize:28,color:'var(--honey)'}}>4</div>
+            <div className="lbl" style={{marginTop:3}}>{t('stat_medals')}</div>
+          </div>
+        </div>
+      </div>
+      <SectionLabel>{t('sec_history')}</SectionLabel>
+      <div style={{padding:'0 18px 24px',display:'flex',flexDirection:'column',gap:12}}>
+        {recs.map(r=>{
+          const fac=FAC[r.faction];
+          return <div key={r.id} className="card" style={{padding:15,display:'flex',gap:14,alignItems:'center'}}>
+            <div style={{width:54,height:54,borderRadius:'50%',border:`2px solid ${r.medal}`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:`${r.medal}22`}}>
+              <Icon name="medal" size={26} color={r.medal}/>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <span style={{fontWeight:700,fontSize:15.5,color:'var(--tx)'}}>{r.title}</span>
+                <span className="chip" style={{fontSize:9,padding:'1px 7px',color:fac.color,borderColor:fac.color+'55'}}>{r.rank}</span>
+              </div>
+              <div style={{display:'flex',gap:14,marginTop:8}}>
+                <Field l={t('label_distance')} v={`${r.dist}K`}/>
+                <Field l={t('label_finish_time')} v={r.time}/>
+                <Field l={t('label_date')} v={r.date}/>
+              </div>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── 設定 ── */
+function SettingsScreen({ nav, back, auth, setAuth }) {
+  const [lang,setLang]=React.useContext(LangCtx);
+  const t=useT();
+  const items=[
+    {icon:'id',   label:t('settings_menu_profile'), desc:t('settings_menu_profile_desc'), go:()=>nav('profileEdit',{})},
+    {icon:'spin', label:t('settings_menu_datasync'), desc:t('settings_menu_datasync_desc'), go:()=>nav('dataSync',{})},
+  ];
+  const misc=[
+    {icon:'bell',  label:t('settings_menu_notifications'), desc:t('settings_menu_notifications_desc')},
+    {icon:'share', label:t('settings_menu_invite'),         desc:t('settings_menu_invite_desc')},
+    {icon:'medal', label:t('settings_menu_about'),          desc:t('settings_menu_about_desc')},
+  ];
+  const langOpts=[{k:'zh',l:t('lang_zh')},{k:'en',l:t('lang_en')},{k:'ja',l:t('lang_ja')}];
+  return (
+    <div className="dor-scroll">
+      <SafeTop h={50}/>
+      <TopBar title={t('settings_title')} onBack={back}/>
+      <SectionLabel>{t('sec_account')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card" style={{padding:0,overflow:'hidden'}}>
+          {items.map((m,i)=>(
+            <div key={i} className="tap" onClick={m.go} style={{display:'flex',alignItems:'center',gap:13,padding:'14px 15px',borderTop:i?'1px solid var(--border)':'none'}}>
+              <div style={{width:38,height:38,borderRadius:11,background:'var(--surface)',border:'1px solid rgba(200,16,46,.2)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <Icon name={m.icon} size={19} color="var(--sage)"/>
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:15,color:'var(--tx)'}}>{m.label}</div>
+                <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{m.desc}</div>
+              </div>
+              <Icon name="chev" size={16} color="var(--tx-light)"/>
+            </div>
+          ))}
+        </div>
+      </div>
+      <SectionLabel>{t('lang')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card" style={{padding:'14px 15px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}>
+            <div style={{width:38,height:38,borderRadius:11,background:'var(--lavender-bg,rgba(107,114,128,.1))',border:'1px solid rgba(107,114,128,.2)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              <Icon name="globe" size={19} color="var(--lavender)"/>
+            </div>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,fontSize:15,color:'var(--tx)'}}>{t('lang')}</div>
+              <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{t('settings_lang_desc')}</div>
+            </div>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            {langOpts.map(o=>(
+              <button key={o.k} className="tap" onClick={()=>setLang(o.k)} style={{flex:1,padding:'8px 0',borderRadius:10,border:`1.5px solid ${lang===o.k?'var(--lavender)':'var(--border)'}`,background:lang===o.k?'rgba(107,114,128,.12)':'var(--surface-2)',fontWeight:lang===o.k?700:500,fontSize:13,color:lang===o.k?'var(--lavender)':'var(--tx-mid)',fontFamily:'var(--font-disp)',transition:'all .15s'}}>
+                {o.l}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <SectionLabel>{t('sec_other')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card" style={{padding:0,overflow:'hidden'}}>
+          {misc.map((m,i)=>(
+            <div key={i} className="tap" style={{display:'flex',alignItems:'center',gap:13,padding:'14px 15px',borderTop:i?'1px solid var(--border)':'none',opacity:.7}}>
+              <div style={{width:38,height:38,borderRadius:11,background:'var(--surface)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <Icon name={m.icon} size={19} color="var(--tx-mid)"/>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:15,color:'var(--tx)'}}>{m.label}</div>
+                <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:600}}>{m.desc}</div>
+              </div>
+              <Icon name="chev" size={16} color="var(--tx-light)"/>
+            </div>
+          ))}
+        </div>
+      </div>
+      {auth&&<div style={{padding:'24px 18px 8px'}}>
+        <button className="btn btn-ghost" style={{fontSize:13,color:'var(--coral)'}} onClick={()=>{setAuth(null);back();}}>{t('btn_logout')}</button>
+      </div>}
+    </div>
+  );
+}
+
+/* 個人資料編輯欄位列 — 定義於元件外，避免 re-render 時 focus 跳開 */
+function FormRow({ label, children, note }) {
+  return (
+    <div style={{marginBottom:14}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+        <span className="lbl" style={{fontSize:9.5}}>{label}</span>
+        {note&&<span className="lbl" style={{fontSize:8.5,color:'var(--tx-light)'}}>{note}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ProfileEditScreen({ back, auth, setAuth }) {
+  const t=useT();
+  const D=window.DOR; const p=D.profile;
+  const [form,setForm]=React.useState({
+    name:    auth?.name    || p.name,
+    nickname:auth?.nickname|| p.nickname,
+    idType:  p.idType,
+    idNumber:p.idNumber,
+    birthday:p.birthday,
+    gender:  p.gender,
+    email:   p.email,
+    phone:   p.phone,
+    address: p.address,
+  });
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const [saved,setSaved]=React.useState(false);
+  const save=()=>{
+    if(auth) setAuth({...auth,...form});
+    setSaved(true);
+    setTimeout(()=>{setSaved(false);back();},900);
+  };
+
+  return (
+    <div className="dor-scroll">
+      <SafeTop h={50}/>
+      <TopBar title={t('profile_edit_title')} onBack={back} right={
+        <button className="tap" onClick={save} style={{...iconBtn,width:'auto',padding:'0 16px',fontSize:13,fontFamily:'var(--font-disp)',fontWeight:700,color:'var(--sage)',borderColor:'rgba(200,16,46,.4)'}}>
+          {saved?t('btn_saved'):t('btn_save_short')}
+        </button>
+      }/>
+
+      <SectionLabel>{t('profile_edit_sec_public')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card card-pad" style={{display:'flex',flexDirection:'column',gap:0}}>
+          <div style={{marginBottom:14,padding:'12px 14px',background:'var(--surface)',borderRadius:12,border:'1px solid rgba(200,16,46,.2)',fontSize:12.5,color:'var(--tx-mid)',lineHeight:1.55}}>
+            <Icon name="id" size={13} color="var(--sage)" style={{display:'inline',marginRight:5}}/> {t('profile_edit_public_notice')}
+          </div>
+          <FormRow label={t('profile_edit_label_nickname')}>
+            <input className="fi" value={form.nickname} onChange={e=>set('nickname',e.target.value)} placeholder={t('profile_edit_ph_nickname')}/>
+          </FormRow>
+          <FormRow label={t('profile_edit_label_gender')}>
+            <div className="toggle-seg">
+              {[['m','profile_edit_gender_m'],['f','profile_edit_gender_f'],['x','profile_edit_gender_x'],['n','profile_edit_gender_n']].map(([v,gk])=>(
+                <button key={v} className={form.gender===v?'on':''} onClick={()=>set('gender',v)}>{t(gk)}</button>
+              ))}
+            </div>
+          </FormRow>
+        </div>
+      </div>
+
+      <SectionLabel>{t('profile_edit_sec_private')}</SectionLabel>
+      <div style={{padding:'0 18px'}}>
+        <div className="card card-pad" style={{display:'flex',flexDirection:'column',gap:0}}>
+          <FormRow label={t('profile_edit_label_name')}>
+            <input className="fi" value={form.name} onChange={e=>set('name',e.target.value)} placeholder={t('profile_edit_ph_name')}/>
+          </FormRow>
+          <FormRow label={t('profile_edit_label_id_type')}>
+            <div className="toggle-seg" style={{width:'50%'}}>
+              <button className={form.idType==='tw'?'on':''} onClick={()=>set('idType','tw')}>{t('profile_edit_id_tw')}</button>
+              <button className={form.idType==='foreign'?'on':''} onClick={()=>set('idType','foreign')}>{t('profile_edit_id_foreign')}</button>
+            </div>
+          </FormRow>
+          <FormRow label={form.idType==='tw'?t('profile_edit_label_id_tw'):t('profile_edit_label_id_foreign')} note={t('profile_edit_note_id')}>
+            <input className="fi" value={form.idNumber} onChange={e=>set('idNumber',e.target.value)} placeholder={form.idType==='tw'?'A123456789':t('profile_edit_ph_passport')}/>
+          </FormRow>
+          <FormRow label={t('profile_edit_label_birthday')}>
+            <input className="fi" type="date" value={form.birthday} onChange={e=>set('birthday',e.target.value)}/>
+          </FormRow>
+          <FormRow label="Email">
+            <input className="fi" type="email" value={form.email} onChange={e=>set('email',e.target.value)} placeholder="your@email.com"/>
+          </FormRow>
+          <FormRow label={t('profile_edit_label_phone')}>
+            <input className="fi" type="tel" value={form.phone} onChange={e=>set('phone',e.target.value)} placeholder={t('profile_edit_ph_phone')}/>
+          </FormRow>
+          <FormRow label={t('profile_edit_label_address')} note={t('profile_edit_note_optional')}>
+            <input className="fi" value={form.address} onChange={e=>set('address',e.target.value)} placeholder={t('profile_edit_ph_address')}/>
+          </FormRow>
+        </div>
+      </div>
+      <div style={{padding:'12px 18px 28px',textAlign:'center'}}>
+        <span className="lbl" style={{fontSize:10,lineHeight:1.6}}>個人資訊依個資法保護，僅用於賽事核驗，<br/>未來加入實體賽事合作時，姓名欄位將強制核驗。</span>
+      </div>
+    </div>
+  );
+}
+
+function DataSyncScreen({ back }) {
+  const t=useT();
+  const [conn,setConn]=React.useState({apple:true,garmin:true,strava:true});
+  const toggle=id=>setConn(s=>({...s,[id]:!s[id]}));
+  const groups=[
+    {labelKey:'datasync_group_health_app',items:[
+      {id:'apple', name:'Apple Health',    abbr:'AH', color:'#1C1C1E', descKey:'datasync_desc_apple'},
+      {id:'gfit',  name:'Google Fit',      abbr:'GF', color:'#4285F4', descKey:'datasync_desc_gfit'},
+      {id:'samsung',name:'Samsung Health', abbr:'SH', color:'#1428A0', descKey:'datasync_desc_samsung'},
+      {id:'xiaomi',nameKey:'datasync_name_xiaomi',    abbr:'小', color:'#FF6900', descKey:'datasync_desc_xiaomi'},
+    ]},
+    {labelKey:'datasync_group_gps_watch',items:[
+      {id:'garmin',name:'Garmin Connect', abbr:'G',  color:'#009CDE', descKey:'datasync_desc_garmin'},
+      {id:'coros', name:'COROS',          abbr:'CO', color:'#C8102E', descKey:'datasync_desc_coros'},
+      {id:'polar', name:'Polar',          abbr:'P',  color:'#C8102E', descKey:'datasync_desc_polar'},
+      {id:'suunto',name:'Suunto',         abbr:'Su', color:'#EF3E23', descKey:'datasync_desc_suunto'},
+      {id:'wahoo', name:'Wahoo',          abbr:'W',  color:'#00AEEF', descKey:'datasync_desc_wahoo'},
+      {id:'fitbit',name:'Fitbit',         abbr:'Fb', color:'#00B0B9', descKey:'datasync_desc_fitbit'},
+    ]},
+    {labelKey:'datasync_group_platform',items:[
+      {id:'strava',name:'Strava',         abbr:'St', color:'#FC4C02', descKey:'datasync_desc_strava'},
+      {id:'nike',  name:'Nike Run Club',  abbr:'NRC',color:'#111111', descKey:'datasync_desc_nike'},
+    ]},
+  ];
+  return (
+    <div className="dor-scroll">
+      <SafeTop h={50}/>
+      <TopBar title={t('datasync_title')} onBack={back}/>
+      <div style={{padding:'8px 18px 0'}}>
+        <div style={{padding:'12px 14px',background:'var(--surface)',borderRadius:12,border:'1px solid rgba(200,16,46,.2)',fontSize:12.5,color:'var(--tx-mid)',lineHeight:1.55,marginBottom:4}}>
+          <Icon name="spin" size={13} color="var(--sage)"/> {t('datasync_info')}
+        </div>
+      </div>
+      {groups.map((g,gi)=>(
+        <React.Fragment key={gi}>
+          <SectionLabel>{t(g.labelKey)}</SectionLabel>
+          <div style={{padding:'0 18px'}}>
+            <div className="card" style={{padding:0,overflow:'hidden'}}>
+              {g.items.map((p,i)=>{
+                const on=!!conn[p.id];
+                return (
+                  <div key={p.id} style={{display:'flex',alignItems:'center',gap:13,padding:'14px 15px',borderTop:i?'1px solid var(--border)':'none'}}>
+                    <div style={{width:44,height:44,borderRadius:13,background:p.color,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,boxShadow:`0 3px 10px ${p.color}44`}}>
+                      <span style={{color:'#fff',fontFamily:'var(--font-disp)',fontWeight:800,fontSize:p.abbr.length>2?10:13}}>{p.abbr}</span>
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:700,fontSize:14.5,color:'var(--tx)'}}>{p.nameKey?t(p.nameKey):p.name}</div>
+                      <div style={{fontSize:11,color:'var(--tx-light)',marginTop:2,fontFamily:'var(--font-disp)',fontWeight:500,lineHeight:1.4}}>{t(p.descKey)}</div>
+                    </div>
+                    <button className="tap" onClick={()=>toggle(p.id)} style={{flexShrink:0,padding:'7px 14px',borderRadius:20,border:`1.5px solid ${on?'var(--tx)':'var(--border-2)'}`,background:on?'var(--tx)':'var(--surface)',fontFamily:'var(--font-disp)',fontWeight:700,fontSize:12.5,color:on?'#fff':'var(--tx-mid)',cursor:'pointer',whiteSpace:'nowrap'}}>
+                      {on?t('btn_connected'):t('btn_connect')}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </React.Fragment>
+      ))}
+      <div style={{padding:'16px 18px 28px',textAlign:'center'}}>
+        <span className="lbl" style={{fontSize:10,lineHeight:1.6}}>數據僅用於賽事里程計算，不用於其他用途。<br/>可隨時取消連結。</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── App Shell ── */
+const ROOT={home:'HomeScreen',wheel:'MileageScreen',me:'ProfileScreen'};
+const SCREENS={HomeScreen,MileageScreen,ProfileScreen,raceDetail:RaceDetailScreen,mission:MissionScreen,checkin:CheckinScreen,wheel:WheelScreen,stickers:StickerScreen,records:RecordsScreen,login:LoginScreen,settings:SettingsScreen,profileEdit:ProfileEditScreen,dataSync:DataSyncScreen};
+const TABS=[{key:'home',label:'賽事',icon:'flag'},{key:'wheel',label:'里程',icon:'wheel'},{key:'me',label:'我的',icon:'user'}];
+
+function DORApp() {
+  const [tab,setTabState]=React.useState('home');
+  const [stack,setStack]=React.useState([]);
+  const [auth,setAuthRaw]=React.useState(()=>{
+    try{ const s=localStorage.getItem('dor_auth'); return s?JSON.parse(s):null; }catch(e){ return null; }
+  });
+  const [levelUp,setLevelUp]=React.useState(null);
+  const tl=useT();
+  const TAB_LABELS={home:tl('tab_races'),wheel:tl('tab_wheel'),me:tl('tab_me')};
+
+  const nav=(screen,params={})=>setStack(s=>[...s,{screen,params}]);
+  const back=()=>setStack(s=>s.slice(0,-1));
+  const setTab=(t)=>{setStack([]);setTabState(t);};
+  const setAuth=(userData)=>{
+    setAuthRaw(userData);
+    try{
+      if(userData) localStorage.setItem('dor_auth',JSON.stringify(userData));
+      else localStorage.removeItem('dor_auth');
+    }catch(e){}
+    if(userData?.prevLevel && userData.level>userData.prevLevel){
+      setLevelUp({from:LEVELS.find(l=>l.level===userData.prevLevel),to:LEVELS.find(l=>l.level===userData.level)});
+    }
+  };
+
+  const onRoot=stack.length===0;
+  const current=onRoot?{screen:ROOT[tab],params:{}}:stack[stack.length-1];
+  const Comp=SCREENS[current.screen]||(()=><div style={{padding:40,color:'var(--tx-mid)'}}>—</div>);
+  return (
+    <div className={`dor-app${onRoot?' has-tabbar':''}`}>
+      <Comp route={current.params} nav={nav} back={back} setTab={setTab} auth={auth} setAuth={setAuth}/>
+      {onRoot&&<div style={{position:'absolute',left:0,right:0,bottom:0,zIndex:30,paddingBottom:'calc(env(safe-area-inset-bottom) + 16px)',paddingTop:10,display:'flex',background:'var(--surface)',borderTop:'1px solid var(--border-2)'}}>
+        {TABS.map(t=>{
+          const on=tab===t.key;
+          return <button key={t.key} className="tap" onClick={()=>setTab(t.key)} style={{flex:1,background:'none',border:'none',display:'flex',flexDirection:'column',alignItems:'center',gap:4,padding:'4px 0',color:on?'var(--sage)':'var(--tx-light)'}}>
+            <Icon name={t.icon} size={24} color={on?'var(--sage)':'var(--tx-light)'}/>
+            <span style={{fontSize:10.5,fontWeight:on?700:500,fontFamily:'var(--font-disp)',color:on?'var(--sage)':'var(--tx-light)'}}>{TAB_LABELS[t.key]}</span>
+          </button>;
+        })}
+      </div>}
+      {levelUp&&<LevelUpModal from={levelUp.from} to={levelUp.to} onClose={()=>setLevelUp(null)}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <LangProvider><IOSDevice width={390} height={844}><DORApp/></IOSDevice></LangProvider>
+);
+</script>
+<script>
+/* 拖曳捲動 + 橡皮筋彈跳回饋
+   - 可捲動背景區域：grab 手形游標
+   - 拖曳中：grabbing 手形游標
+   - 按鈕 / .tap 互動元素：維持 pointer，點擊優先
+   - 捲到頂部或底部後繼續拖曳：以阻力感偏移，放開後彈回 */
+(function () {
+  var drag = null;
+  var RESISTANCE = 0.38;           /* 超出邊界時的移動比例 (0=完全卡死, 1=完全跟手) */
+  var SNAP = 'transform 0.48s cubic-bezier(0.22, 1, 0.36, 1)'; /* 彈回動畫 */
+
+  function maxScroll(el) {
+    return Math.max(0, el.scrollHeight - el.clientHeight);
+  }
+
+  document.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return;
+    var scroll = e.target.closest('.dor-scroll');
+    if (!scroll) return;
+    if (e.target.closest('button, a, input, select, textarea, .tap')) return;
+
+    e.preventDefault();
+    /* 中斷正在進行的彈回動畫，從當前位置重新開始 */
+    scroll.style.transition = 'none';
+    scroll.style.transform  = 'translateY(0)';
+
+    drag = {
+      scroll:    scroll,
+      startY:    e.clientY,
+      scrollTop: scroll.scrollTop,
+    };
+    scroll.classList.add('is-dragging');
+  });
+
+  document.addEventListener('mousemove', function (e) {
+    if (!drag) return;
+    var scroll = drag.scroll;
+    var max    = maxScroll(scroll);
+    var target = drag.scrollTop - (e.clientY - drag.startY);
+
+    if (target < 0) {
+      /* 超出頂部：固定在頂，往下偏移（阻力） */
+      scroll.scrollTop       = 0;
+      scroll.style.transform = 'translateY(' + (-target * RESISTANCE) + 'px)';
+    } else if (target > max) {
+      /* 超出底部：固定在底，往上偏移（阻力） */
+      scroll.scrollTop       = max;
+      scroll.style.transform = 'translateY(' + (-(target - max) * RESISTANCE) + 'px)';
+    } else {
+      scroll.scrollTop       = target;
+      scroll.style.transform = 'translateY(0)';
+    }
+  });
+
+  function release() {
+    if (!drag) return;
+    var scroll = drag.scroll;
+    drag = null;
+    scroll.classList.remove('is-dragging');
+    /* 彈回原位 */
+    scroll.style.transition = SNAP;
+    scroll.style.transform  = 'translateY(0)';
+    scroll.addEventListener('transitionend', function onEnd() {
+      scroll.style.transition = '';
+      scroll.removeEventListener('transitionend', onEnd);
+    }, { once: true });
+  }
+
+  document.addEventListener('mouseup',    release);
+  document.addEventListener('mouseleave', release);
+})();
+</script>
+</body>
+</html>

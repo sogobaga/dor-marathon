@@ -1,0 +1,32 @@
+[
+  {
+    "checkin_id": "ci-yifan-hunt-s1",
+    "user_id": "usr-yifan",
+    "race_id": "hunt2026",
+    "store_id": "s1",
+    "checkin_at": "2026-06-14 20:02:00",
+    "latitude": 25.0355,
+    "longitude": 121.5673,
+    "reward_granted": 1
+  },
+  {
+    "checkin_id": "ci-siyu-hunt-s1",
+    "user_id": "usr-siyu",
+    "race_id": "hunt2026",
+    "store_id": "s1",
+    "checkin_at": "2026-06-13 19:45:00",
+    "latitude": 25.0355,
+    "longitude": 121.5673,
+    "reward_granted": 1
+  },
+  {
+    "checkin_id": "ci-ziachen-hunt-s2",
+    "user_id": "usr-ziachen",
+    "race_id": "hunt2026",
+    "store_id": "s2",
+    "checkin_at": "2026-06-14 20:09:00",
+    "latitude": 25.0440,
+    "longitude": 121.5500,
+    "reward_granted": 0
+  }
+]

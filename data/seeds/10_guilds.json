@@ -1,0 +1,30 @@
+[
+  {
+    "guild_id": "guild-taipei",
+    "name": "台北夜行者",
+    "city": "台北",
+    "captain_id": "usr-yifan",
+    "created_at": "2025-05-01 09:00:00"
+  },
+  {
+    "guild_id": "guild-nankang",
+    "name": "南港獵殺者",
+    "city": "台北",
+    "captain_id": "usr-ziachen",
+    "created_at": "2025-06-10 10:00:00"
+  },
+  {
+    "guild_id": "guild-neihu",
+    "name": "內湖逃逸線",
+    "city": "台北",
+    "captain_id": "usr-siyu",
+    "created_at": "2025-07-20 11:00:00"
+  },
+  {
+    "guild_id": "guild-banqiao",
+    "name": "板橋暗夜跑者",
+    "city": "新北",
+    "captain_id": null,
+    "created_at": "2025-08-05 08:00:00"
+  }
+]

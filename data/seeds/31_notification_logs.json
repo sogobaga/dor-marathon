@@ -1,0 +1,47 @@
+[
+  {
+    "log_id": "nl-hunt-battle-0615",
+    "template_id": "nt-hunt-battle",
+    "user_id": null,
+    "race_id": "hunt2026",
+    "title": "DOR 戰報 · DAY 3 結算",
+    "body": "今日逃脫 742 人，捕獲 531 人。明日任務：誘餌與搜索。繼續出發！",
+    "target_group": "all",
+    "channel": "push",
+    "status": "sent",
+    "recipient_count": 4812,
+    "open_rate": 68.00,
+    "sent_at": "2026-06-14 20:00:05",
+    "created_at": "2026-06-14 20:00:00"
+  },
+  {
+    "log_id": "nl-hunt-battle-0614",
+    "template_id": "nt-hunt-battle",
+    "user_id": null,
+    "race_id": "hunt2026",
+    "title": "DOR 戰報 · DAY 2 結算",
+    "body": "今日逃脫 490 人，捕獲 380 人。明日任務：高速追擊。繼續出發！",
+    "target_group": "all",
+    "channel": "push",
+    "status": "sent",
+    "recipient_count": 4789,
+    "open_rate": 71.00,
+    "sent_at": "2026-06-13 20:00:04",
+    "created_at": "2026-06-13 20:00:00"
+  },
+  {
+    "log_id": "nl-hunt-broadcast-0614",
+    "template_id": null,
+    "user_id": null,
+    "race_id": "hunt2026",
+    "title": "DOR 緊急通知",
+    "body": "系統維護完畢，里程數據同步已恢復正常。感謝耐心等候。",
+    "target_group": "all",
+    "channel": "push",
+    "status": "sent",
+    "recipient_count": 1240,
+    "open_rate": 55.00,
+    "sent_at": "2026-06-14 15:30:02",
+    "created_at": "2026-06-14 15:30:00"
+  }
+]

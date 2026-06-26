@@ -1,0 +1,79 @@
+[
+  {
+    "user_id": "usr-yifan",
+    "current_level": 4,
+    "total_exp": 1240,
+    "total_races": 4,
+    "total_km": 94.00,
+    "total_rescues": 17,
+    "current_streak": 12,
+    "longest_streak": 18,
+    "spins_available": 1
+  },
+  {
+    "user_id": "usr-ziachen",
+    "current_level": 5,
+    "total_exp": 2180,
+    "total_races": 6,
+    "total_km": 157.00,
+    "total_rescues": 38,
+    "current_streak": 7,
+    "longest_streak": 24,
+    "spins_available": 1
+  },
+  {
+    "user_id": "usr-siyu",
+    "current_level": 6,
+    "total_exp": 3420,
+    "total_races": 8,
+    "total_km": 231.00,
+    "total_rescues": 62,
+    "current_streak": 21,
+    "longest_streak": 30,
+    "spins_available": 0
+  },
+  {
+    "user_id": "usr-yaowen",
+    "current_level": 4,
+    "total_exp": 1560,
+    "total_races": 5,
+    "total_km": 105.00,
+    "total_rescues": 12,
+    "current_streak": 5,
+    "longest_streak": 14,
+    "spins_available": 1
+  },
+  {
+    "user_id": "usr-yongqing",
+    "current_level": 2,
+    "total_exp": 340,
+    "total_races": 1,
+    "total_km": 0.00,
+    "total_rescues": 0,
+    "current_streak": 0,
+    "longest_streak": 0,
+    "spins_available": 0
+  },
+  {
+    "user_id": "usr-guanyu",
+    "current_level": 1,
+    "total_exp": 80,
+    "total_races": 1,
+    "total_km": 0.00,
+    "total_rescues": 0,
+    "current_streak": 0,
+    "longest_streak": 0,
+    "spins_available": 0
+  },
+  {
+    "user_id": "usr-admin",
+    "current_level": 1,
+    "total_exp": 0,
+    "total_races": 0,
+    "total_km": 0.00,
+    "total_rescues": 0,
+    "current_streak": 0,
+    "longest_streak": 0,
+    "spins_available": 0
+  }
+]

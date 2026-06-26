@@ -1,0 +1,62 @@
+[
+  {
+    "result_id": "rr-yifan-spring",
+    "user_id": "usr-yifan",
+    "race_id": "spring2026",
+    "reg_id": "reg-yifan-spring",
+    "faction_id": "fct-spring-fug",
+    "distance_km": 42.00,
+    "finish_time": "04:58:12",
+    "rank_title": "逆轉者",
+    "medal_color": "#FFC24B",
+    "total_rescues": 8,
+    "cert_url": "/certs/spring2026/usr-yifan.pdf",
+    "finished_at": "2026-03-09 17:58:12",
+    "created_at": "2026-03-09 18:00:00"
+  },
+  {
+    "result_id": "rr-yifan-winter",
+    "user_id": "usr-yifan",
+    "race_id": "winter2025",
+    "reg_id": "reg-yifan-winter",
+    "faction_id": "fct-winter-hunt",
+    "distance_km": 21.00,
+    "finish_time": "02:12:40",
+    "rank_title": "捕獲王",
+    "medal_color": "#FF4B5C",
+    "total_rescues": 0,
+    "cert_url": "/certs/winter2025/usr-yifan.pdf",
+    "finished_at": "2025-12-21 19:12:40",
+    "created_at": "2025-12-21 19:15:00"
+  },
+  {
+    "result_id": "rr-yifan-auto",
+    "user_id": "usr-yifan",
+    "race_id": "auto2025",
+    "reg_id": "reg-yifan-auto",
+    "faction_id": "fct-auto-fug",
+    "distance_km": 21.00,
+    "finish_time": "02:31:05",
+    "rank_title": "潛伏者",
+    "medal_color": "#2DE59A",
+    "total_rescues": 5,
+    "cert_url": "/certs/auto2025/usr-yifan.pdf",
+    "finished_at": "2025-10-12 17:31:05",
+    "created_at": "2025-10-12 17:35:00"
+  },
+  {
+    "result_id": "rr-yifan-sum",
+    "user_id": "usr-yifan",
+    "race_id": "sum2025",
+    "reg_id": "reg-yifan-sum",
+    "faction_id": null,
+    "distance_km": 10.00,
+    "finish_time": "01:02:18",
+    "rank_title": "穩定訊號",
+    "medal_color": "#9D8CFF",
+    "total_rescues": 0,
+    "cert_url": "/certs/sum2025/usr-yifan.pdf",
+    "finished_at": "2025-07-30 07:02:18",
+    "created_at": "2025-07-30 07:05:00"
+  }
+]

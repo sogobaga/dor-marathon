@@ -1,0 +1,11 @@
+[
+  { "sticker_id": "st-hunt-1", "race_id": "hunt2026", "slot_no": 1, "name": "逃亡者", "how_to_earn": "完成第 1 天身份啟動任務" },
+  { "sticker_id": "st-hunt-2", "race_id": "hunt2026", "slot_no": 2, "name": "獵人",   "how_to_earn": "完成第 3 天高速追擊任務" },
+  { "sticker_id": "st-hunt-3", "race_id": "hunt2026", "slot_no": 3, "name": "誘餌",   "how_to_earn": "完成第 4 天誘餌與搜索任務" },
+  { "sticker_id": "st-hunt-4", "race_id": "hunt2026", "slot_no": 4, "name": "訊號",   "how_to_earn": "完成第 2 天低速潛伏任務" },
+  { "sticker_id": "st-hunt-5", "race_id": "hunt2026", "slot_no": 5, "name": "救援",   "how_to_earn": "完成第 5 天救援日任務" },
+  { "sticker_id": "st-hunt-6", "race_id": "hunt2026", "slot_no": 6, "name": "潛伏",   "how_to_earn": "完成門市打卡任務（任意 1 家）" },
+  { "sticker_id": "st-hunt-7", "race_id": "hunt2026", "slot_no": 7, "name": "追擊",   "how_to_earn": "完成第 6 天壓縮戰局任務" },
+  { "sticker_id": "st-hunt-8", "race_id": "hunt2026", "slot_no": 8, "name": "戰報",   "how_to_earn": "連續 5 日出勤不中斷" },
+  { "sticker_id": "st-hunt-9", "race_id": "hunt2026", "slot_no": 9, "name": "公仔",   "how_to_earn": "集滿全部 8 格貼紙後解鎖（兌換完賽公仔）" }
+]

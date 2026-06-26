@@ -1,0 +1,47 @@
+[
+  {
+    "redemption_id": "pr-ziachen-001",
+    "user_id": "usr-ziachen",
+    "race_id": "hunt2026",
+    "prize_type": "figurine",
+    "prize_name": "逃亡者・限定完賽公仔",
+    "status": "pending",
+    "ship_name": "林子澄",
+    "ship_address": "台北市南港區南港路三段 52 號",
+    "ship_phone": "0923-456-789",
+    "tracking_no": null,
+    "redeemed_at": "2026-06-10 14:30:00",
+    "shipped_at": null,
+    "delivered_at": null
+  },
+  {
+    "redemption_id": "pr-siyu-001",
+    "user_id": "usr-siyu",
+    "race_id": "hunt2026",
+    "prize_type": "figurine",
+    "prize_name": "逃亡者・限定完賽公仔",
+    "status": "shipped",
+    "ship_name": "王思妤",
+    "ship_address": "台北市內湖區內湖路一段 737 號",
+    "ship_phone": "0934-567-890",
+    "tracking_no": "9261290100830450622178",
+    "redeemed_at": "2026-06-08 10:00:00",
+    "shipped_at": "2026-06-11 09:00:00",
+    "delivered_at": null
+  },
+  {
+    "redemption_id": "pr-guanyu-001",
+    "user_id": "usr-guanyu",
+    "race_id": "hunt2026",
+    "prize_type": "figurine",
+    "prize_name": "逃亡者・限定完賽公仔",
+    "status": "delivered",
+    "ship_name": "周冠宇",
+    "ship_address": "台北市大安區敦化南路二段 201 號",
+    "ship_phone": "0967-890-123",
+    "tracking_no": "9261290100830450621005",
+    "redeemed_at": "2026-06-05 16:00:00",
+    "shipped_at": "2026-06-07 08:30:00",
+    "delivered_at": "2026-06-09 14:20:00"
+  }
+]

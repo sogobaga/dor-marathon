@@ -1,0 +1,30 @@
+[
+  {
+    "race_id": "hunt2026",
+    "fugitive_target_pct": 55.00,
+    "rescue_multiplier": 2.00,
+    "report_time": "20:00:00",
+    "rescue_km_per_person": 1.00
+  },
+  {
+    "race_id": "spring2026",
+    "fugitive_target_pct": 55.00,
+    "rescue_multiplier": 2.00,
+    "report_time": "20:00:00",
+    "rescue_km_per_person": 1.00
+  },
+  {
+    "race_id": "winter2025",
+    "fugitive_target_pct": 55.00,
+    "rescue_multiplier": 1.50,
+    "report_time": "21:00:00",
+    "rescue_km_per_person": 1.00
+  },
+  {
+    "race_id": "auto2025",
+    "fugitive_target_pct": 50.00,
+    "rescue_multiplier": 2.00,
+    "report_time": "20:00:00",
+    "rescue_km_per_person": 1.00
+  }
+]

@@ -1,0 +1,13 @@
+[
+  { "faction_id": "fct-hunt-fug",    "race_id": "hunt2026",  "faction_code": "fugitive", "name": "逃亡者", "color": "fug",  "target_ratio": 55.00, "sort_order": 1 },
+  { "faction_id": "fct-hunt-hunt",   "race_id": "hunt2026",  "faction_code": "hunter",   "name": "獵人",   "color": "hunt", "target_ratio": 45.00, "sort_order": 2 },
+
+  { "faction_id": "fct-spring-fug",  "race_id": "spring2026","faction_code": "fugitive", "name": "逃亡者", "color": "fug",  "target_ratio": 55.00, "sort_order": 1 },
+  { "faction_id": "fct-spring-hunt", "race_id": "spring2026","faction_code": "hunter",   "name": "獵人",   "color": "hunt", "target_ratio": 45.00, "sort_order": 2 },
+
+  { "faction_id": "fct-winter-fug",  "race_id": "winter2025","faction_code": "fugitive", "name": "逃亡者", "color": "fug",  "target_ratio": 55.00, "sort_order": 1 },
+  { "faction_id": "fct-winter-hunt", "race_id": "winter2025","faction_code": "hunter",   "name": "獵人",   "color": "hunt", "target_ratio": 45.00, "sort_order": 2 },
+
+  { "faction_id": "fct-auto-fug",    "race_id": "auto2025",  "faction_code": "fugitive", "name": "逃亡者", "color": "fug",  "target_ratio": 55.00, "sort_order": 1 },
+  { "faction_id": "fct-auto-hunt",   "race_id": "auto2025",  "faction_code": "hunter",   "name": "獵人",   "color": "hunt", "target_ratio": 45.00, "sort_order": 2 }
+]

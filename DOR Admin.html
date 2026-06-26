@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DOR 雲端馬拉松 · 後台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --bg-0:#07080b; --bg-1:#0d0f14; --bg-2:#161a23; --bg-3:#1e2330; --bg-4:#272d3c;
+  --line:rgba(255,255,255,0.07); --line-2:rgba(255,255,255,0.12); --line-strong:rgba(255,255,255,0.20);
+  --tx:#ECEEF3; --tx-dim:#99A1B2; --tx-faint:#5A6173;
+  --fug:#2DE59A; --fug-deep:#0c3b2c; --hunt:#FF4B5C; --hunt-deep:#3d1118;
+  --gold:#FFC24B; --gold-deep:#3a2b0e; --violet:#9D8CFF; --violet-deep:#241f47;
+  --glow-fug:0 0 24px rgba(45,229,154,0.35); --glow-hunt:0 0 24px rgba(255,75,92,0.35); --glow-gold:0 0 22px rgba(255,194,75,0.35);
+  --font-disp:'Space Grotesk','Noto Sans TC',system-ui,sans-serif;
+  --font-body:'Noto Sans TC','Space Grotesk',system-ui,sans-serif;
+  --font-mono:'Space Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;background:#0a0b0e;}
+.dor-board{margin:0;background:#0a0b0e;color:var(--tx);font-family:var(--font-body);-webkit-font-smoothing:antialiased;}
+.disp{font-family:var(--font-disp);}
+.mono{font-family:var(--font-mono);}
+.lbl{font-family:var(--font-mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--tx-faint);}
+.num{font-family:var(--font-disp);font-weight:700;font-variant-numeric:tabular-nums;}
+.ph{background:repeating-linear-gradient(45deg,rgba(255,255,255,0.035) 0 10px,rgba(255,255,255,0.06) 10px 20px),var(--bg-3);display:flex;align-items:center;justify-content:center;color:var(--tx-faint);font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;text-align:center;}
+.tone-fug{color:var(--fug);} .tone-hunt{color:var(--hunt);} .tone-gold{color:var(--gold);} .tone-violet{color:var(--violet);}
+.bar{height:8px;border-radius:999px;background:rgba(255,255,255,0.08);overflow:hidden;position:relative;}
+.bar>i{display:block;height:100%;border-radius:999px;}
+.tap{cursor:pointer;-webkit-tap-highlight-color:transparent;}
+
+/* admin layout */
+.adm{display:flex;height:100%;background:var(--bg-1);color:var(--tx);font-family:var(--font-body);position:relative;}
+.adm-side{width:232px;flex-shrink:0;background:var(--bg-0);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 14px;}
+.adm-logo{display:flex;align-items:center;gap:10px;padding:6px 8px 18px;}
+.adm-logo .mark{width:30px;height:30px;border-radius:9px;background:var(--fug);display:flex;align-items:center;justify-content:center;box-shadow:var(--glow-fug);}
+.adm-nav{display:flex;flex-direction:column;gap:2px;}
+.adm-nav .grp{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--tx-faint);padding:16px 10px 7px;}
+.adm-nav a{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:10px;color:var(--tx-dim);font-size:14px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .12s,color .12s;text-decoration:none;}
+.adm-nav a:hover{background:rgba(255,255,255,.04);color:var(--tx);}
+.adm-nav a.on{background:rgba(45,229,154,.1);color:var(--fug);}
+.adm-main{flex:1;display:flex;flex-direction:column;min-width:0;}
+.adm-top{height:60px;flex-shrink:0;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 26px;background:var(--bg-1);}
+.adm-body{flex:1;overflow-y:auto;padding:26px;}
+.adm-body::-webkit-scrollbar{width:8px;}
+.adm-body::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:8px;}
+.adm-h1{font-family:var(--font-disp);font-weight:700;font-size:22px;}
+.adm-sub{color:var(--tx-dim);font-size:13px;margin-top:2px;}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
+.kpi{background:var(--bg-2);border:1px solid var(--line);border-radius:16px;padding:18px;}
+.kpi .l{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--tx-faint);}
+.kpi .v{font-family:var(--font-disp);font-weight:700;font-size:32px;margin-top:8px;font-variant-numeric:tabular-nums;}
+.kpi .d{font-size:12px;margin-top:4px;}
+.panel{background:var(--bg-2);border:1px solid var(--line);border-radius:16px;}
+.panel-h{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;}
+.panel-h .t{font-family:var(--font-disp);font-weight:600;font-size:15px;}
+table.adm-tbl{width:100%;border-collapse:collapse;font-size:13.5px;}
+.adm-tbl th{text-align:left;font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--tx-faint);font-weight:400;padding:12px 18px;border-bottom:1px solid var(--line);}
+.adm-tbl td{padding:13px 18px;border-bottom:1px solid var(--line);color:var(--tx);}
+.adm-tbl tr:last-child td{border-bottom:none;}
+.adm-tbl tr:hover td{background:rgba(255,255,255,.02);}
+.abtn{font-family:var(--font-disp);font-weight:600;font-size:13.5px;border:none;border-radius:10px;padding:9px 15px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;}
+.abtn-pri{background:var(--fug);color:#05140e;}
+.abtn-gh{background:rgba(255,255,255,.05);color:var(--tx);border:1px solid var(--line-2);}
+.tag{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--line-2);color:var(--tx-dim);}
+.tag.g{color:var(--fug);border-color:rgba(45,229,154,.4);background:rgba(45,229,154,.08);}
+.tag.r{color:var(--hunt);border-color:rgba(255,75,92,.4);background:rgba(255,75,92,.08);}
+.tag.y{color:var(--gold);border-color:rgba(255,194,75,.4);background:rgba(255,194,75,.08);}
+.tag.v{color:var(--violet);border-color:rgba(157,140,255,.4);background:rgba(157,140,255,.08);}
+.field{display:flex;flex-direction:column;gap:6px;}
+.field label{font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--tx-faint);}
+.field input,.field select{background:var(--bg-1);border:1px solid var(--line-2);border-radius:10px;padding:10px 12px;color:var(--tx);font-family:var(--font-body);font-size:14px;}
+.field input:focus,.field select:focus{outline:none;border-color:var(--fug);}
+
+.stage{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 16px;background:radial-gradient(60% 50% at 50% 0%,#131c24 0%,transparent 60%),#0a0b0e;}
+.switch{position:fixed;top:18px;right:18px;z-index:100;display:flex;gap:8px;}
+.switch a{text-decoration:none;font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;padding:8px 13px;border-radius:999px;border:1px solid var(--line-2);color:var(--tx-dim);background:rgba(255,255,255,.04);display:inline-flex;align-items:center;gap:6px;}
+.switch a.on{color:var(--fug);border-color:rgba(45,229,154,.4);background:rgba(45,229,154,.1);}
+.switch a:hover{color:var(--tx);}
+</style>
+</head>
+<body class="dor-board">
+<nav class="switch">
+  <a href="DOR App.html">↗ App 原型</a>
+  <a class="on" href="DOR Admin.html">● 營運後台</a>
+</nav>
+<div class="stage"><div id="root"></div></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin></script>
+
+<script>
+window.DOR = (function () {
+  const races = [
+    { id:'hunt2026', title:'獵人之夜', sub:'HUNTERS NIGHT', world:'獵人 vs 逃亡者', status:'live', distances:[10,21,42], myDistance:21, days:7, dayNow:3, start:'06/12', end:'06/18', teams:1284, mine:'台北夜行者', faction:'fugitive', blurb:'一半的人追，一半的人逃。', progressKm:12.4, goalKm:21 },
+    { id:'relay2026', title:'城市公會戰', sub:'GUILD RELAY', world:'跑團 vs 跑團', status:'open', distances:[10,21,42], days:14, dayNow:0, start:'07/01', end:'07/14', teams:642, mine:null, faction:null, blurb:'', progressKm:0, goalKm:0 },
+    { id:'signal2026', title:'穩定訊號', sub:'STEADY SIGNAL', world:'配速控制挑戰', status:'soon', distances:[10,21], days:5, dayNow:0, start:'07/20', end:'07/24', teams:0, mine:null, faction:null, blurb:'', progressKm:0, goalKm:0 },
+    { id:'spring2026', title:'春季逃亡賽', sub:'SPRING ESCAPE', world:'獵人 vs 逃亡者', status:'done', distances:[21,42], myDistance:42, days:7, dayNow:7, start:'03/03', end:'03/09', teams:980, mine:'台北夜行者', faction:'fugitive', blurb:'', progressKm:42, goalKm:42 },
+  ];
+  const missions = [
+    { day:1, title:'身份啟動', tag:'IDENTITY', type:'base', icon:'id', base:2.0, paceLo:null, paceHi:null, done:true, kmDone:2.4, rescued:0, desc:'揭曉你的陣營身份。完成 2K 啟動跑，啟用今日身份卡。' },
+    { day:2, title:'低速潛伏', tag:'STEALTH', type:'pace', icon:'stealth', base:3.0, paceLo:'9:30', paceHi:'10:30', done:true, kmDone:3.2, rescued:0, desc:'以 9:30–10:30 配速完成 3K，維持低訊號。' },
+    { day:3, title:'高速追擊', tag:'CHASE', type:'pace', icon:'chase', base:3.0, paceLo:'4:30', paceHi:'5:30', done:false, kmDone:1.8, rescued:1, desc:'以 4:30–5:30 配速完成 3K 追擊。' },
+    { day:4, title:'誘餌與搜索', tag:'DECOY', type:'base', icon:'decoy', base:4.0, paceLo:null, paceHi:null, done:false, kmDone:0, rescued:0, desc:'完成 4K 佈設誘餌，擾亂獵人搜索路線。' },
+    { day:5, title:'救援日', tag:'RESCUE', type:'rescue', icon:'rescue', base:3.0, paceLo:null, paceHi:null, done:false, kmDone:0, rescued:0, desc:'完成 3K 基礎里程後，每多完成 1K 釋放 1 位被捕的夥伴。今日救援值加倍。' },
+    { day:6, title:'壓縮戰局', tag:'SQUEEZE', type:'pace', icon:'squeeze', base:5.0, paceLo:'5:30', paceHi:'6:30', done:false, kmDone:0, rescued:0, desc:'以 5:30–6:30 配速完成 5K，壓縮獵人包圍圈。' },
+    { day:7, title:'最終追逐', tag:'FINALE', type:'base', icon:'finale', base:6.0, paceLo:null, paceHi:null, done:false, kmDone:0, rescued:0, desc:'最終結算日。完成 6K 決定戰局翻盤與否。' },
+  ];
+  const stores = [
+    { id:'s1', name:'DOR 補給站・信義門市', addr:'台北市信義區松壽路 12 號', dist:0.4, hours:'24 小時', stamp:true, task:'抵達門市出示身份卡，領取今日補給包', city:'台北' },
+    { id:'s2', name:'DOR 補給站・大安門市', addr:'台北市大安區敦化南路一段 187 號', dist:1.2, hours:'06:00 – 24:00', stamp:false, task:'完成 3K 後於門市打卡，解鎖支線任務', city:'台北' },
+    { id:'s3', name:'DOR 補給站・中山門市', addr:'台北市中山區南京東路二段 45 號', dist:2.8, hours:'24 小時', stamp:false, task:'夜間打卡點，獵人偵測範圍外', city:'台北' },
+    { id:'s4', name:'DOR 補給站・板橋門市', addr:'新北市板橋區文化路一段 268 號', dist:5.1, hours:'06:00 – 24:00', stamp:false, task:'跨區打卡，額外 +50 救援值', city:'新北' },
+  ];
+  const wheel = [
+    { id:'lp50', kind:'line', label:'LINE Points', amount:50, weight:26, color:'gold' },
+    { id:'lp100', kind:'line', label:'LINE Points', amount:100, weight:14, color:'gold' },
+    { id:'lp300', kind:'line', label:'LINE Points', amount:300, weight:4, color:'gold' },
+    { id:'card', kind:'sticker', label:'九宮格集點卡', amount:1, weight:30, color:'violet' },
+    { id:'card2', kind:'sticker', label:'集點卡 ×2', amount:2, weight:8, color:'violet' },
+    { id:'again', kind:'again', label:'再轉一次', amount:0, weight:10, color:'fug' },
+    { id:'miss', kind:'miss', label:'銘謝惠顧', amount:0, weight:8, color:'dim' },
+  ];
+  const stickers = [
+    {i:1,name:'逃亡者',got:true},{i:2,name:'獵人',got:true},{i:3,name:'誘餌',got:true},
+    {i:4,name:'訊號',got:true},{i:5,name:'救援',got:false},{i:6,name:'潛伏',got:true},
+    {i:7,name:'追擊',got:false},{i:8,name:'戰報',got:false},{i:9,name:'公仔',got:false},
+  ];
+  return { races, missions, stores, wheel, stickers };
+})();
+</script>
+
+<script type="text/babel" data-presets="react">
+/* ── Icon ── */
+function Icon({ name, size=24, color='currentColor', sw=1.8 }) {
+  const p={fill:'none',stroke:color,strokeWidth:sw,strokeLinecap:'round',strokeLinejoin:'round'};
+  const F={fill:color,stroke:'none'};
+  const paths={
+    target:<g {...p}><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1" {...F}/></g>,
+    flag:<g {...p}><path d="M5 21V4"/><path d="M5 4.5C8 2.5 12 6 18 4v9c-6 2-10-1.5-13 .5"/></g>,
+    wheel:<g {...p}><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17M3.5 12h17M6 6l12 12M18 6L6 18"/><circle cx="12" cy="12" r="1.4" {...F}/></g>,
+    user:<g {...p}><circle cx="12" cy="8" r="4"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></g>,
+    bolt:<g><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8Z" {...F}/></g>,
+    chase:<g {...p}><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></g>,
+    rescue:<g {...p}><path d="M12 20s-7-4.3-7-9.2A4.3 4.3 0 0 1 12 8a4.3 4.3 0 0 1 7 2.8C19 15.7 12 20 12 20Z"/></g>,
+    id:<g {...p}><rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="8.5" cy="11" r="2"/><path d="M6 16c.4-1.4 1.5-2 2.5-2s2.1.6 2.5 2M14 9.5h5M14 13h5"/></g>,
+    decoy:<g {...p}><circle cx="12" cy="12" r="8.5"/><path d="M12 12l4-4M9 12h.01M12 9v.01"/></g>,
+    squeeze:<g {...p}><path d="M4 7h16M6 12h12M9 17h6"/></g>,
+    finale:<g {...p}><path d="M5 21V4M5 4.5C8 2.5 12 6 18 4v9c-6 2-10-1.5-13 .5"/><path d="M12 9l1.2 2.4 2.6.4-1.9 1.8.5 2.6L12 15l-2.4 1.2.5-2.6-1.9-1.8 2.6-.4Z" {...F}/></g>,
+    stealth:<g {...p}><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.4"/></g>,
+    pin:<g {...p}><path d="M12 21s7-6.5 7-12a7 7 0 1 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="9" r="2.5"/></g>,
+    plus:<g {...p}><path d="M12 5v14M5 12h14"/></g>,
+    settings:<g {...p}><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M5 5l2 2M17 17l2 2M2 12h3M19 12h3M5 19l2-2M17 7l2-2"/></g>,
+    bell:<g {...p}><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z"/><path d="M10.5 19a2 2 0 0 0 3 0"/></g>,
+    arrowUp:<g {...p}><path d="M12 19V5M6 11l6-6 6 6"/></g>,
+    route:<g {...p}><path d="M3 17c0-2 1.5-4 4-4h8c2.5 0 4-2 4-4 0-2.2-1.8-4-4-4h-2M6 21l-3-3 3-3"/></g>,
+    receipt:<g {...p}><path d="M4 4v16l2-1.5 2 1.5 2-1.5 2 1.5 2-1.5 2 1.5V4"/><path d="M8 9h8M8 13h5"/></g>,
+    globe:<g {...p}><circle cx="12" cy="12" r="8.5"/><path d="M2 12h20M12 3.5c-2.5 2.8-4 5.4-4 8.5s1.5 5.7 4 8.5M12 3.5c2.5 2.8 4 5.4 4 8.5s-1.5 5.7-4 8.5"/></g>,
+    lock:<g {...p}><rect x="5" y="11" width="14" height="9" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></g>,
+  };
+  return <svg width={size} height={size} viewBox="0 0 24 24" style={{display:'block',flexShrink:0}}>{paths[name]||null}</svg>;
+}
+
+/* ── Chrome Frame ── */
+const CC={barBg:'#202124',tabBg:'#35363a',text:'#e8eaed',dim:'#9aa0a6',urlBg:'#282a2d'};
+function ChromeWindow({ tabs=[{title:'New Tab'}], activeIndex=0, url='example.com', width=900, height=600, children }) {
+  return (
+    <div style={{width,height,borderRadius:10,overflow:'hidden',boxShadow:'0 24px 80px rgba(0,0,0,0.35),0 0 0 1px rgba(0,0,0,0.1)',display:'flex',flexDirection:'column',background:CC.tabBg}}>
+      <div style={{display:'flex',alignItems:'center',height:44,background:CC.barBg,paddingRight:8}}>
+        <div style={{display:'flex',gap:8,padding:'0 14px'}}>{['#ff5f57','#febc2e','#28c840'].map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:'50%',background:c}}/>)}</div>
+        <div style={{display:'flex',alignItems:'flex-end',height:'100%',paddingLeft:4,flex:1}}>
+          {tabs.map((t,i)=><div key={i} style={{position:'relative',height:34,alignSelf:'flex-end',padding:'0 12px',display:'flex',alignItems:'center',gap:8,background:i===activeIndex?CC.tabBg:'transparent',borderRadius:'8px 8px 0 0',minWidth:120,maxWidth:220,fontFamily:'system-ui,sans-serif',fontSize:12,color:i===activeIndex?CC.text:CC.dim}}><div style={{width:14,height:14,borderRadius:'50%',background:'#5f6368',flexShrink:0}}/><span style={{flex:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.title}</span></div>)}
+        </div>
+      </div>
+      <div style={{height:40,background:CC.tabBg,display:'flex',alignItems:'center',gap:4,padding:'0 8px'}}>
+        <div style={{width:28,height:28,display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{width:16,height:16,borderRadius:'50%',background:CC.dim,opacity:0.4}}/></div>
+        <div style={{flex:1,height:30,borderRadius:15,background:CC.urlBg,display:'flex',alignItems:'center',gap:8,padding:'0 14px',margin:'0 6px'}}><div style={{width:12,height:12,borderRadius:'50%',background:CC.dim,opacity:0.4}}/><span style={{flex:1,color:CC.text,fontSize:13,fontFamily:'system-ui,sans-serif'}}>{url}</span></div>
+        <div style={{width:28,height:28,display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{width:16,height:16,borderRadius:'50%',background:CC.dim,opacity:0.4}}/></div>
+      </div>
+      <div style={{flex:1,overflow:'auto'}}>{children}</div>
+    </div>
+  );
+}
+
+/* ── Admin Helpers ── */
+function StatusTag({ s }) {
+  const m={live:['進行中','g'],open:['報名中','y'],soon:['即將開始','v'],done:['已結束','']};
+  const [t,c]=m[s]||m.done;
+  return <span className={'tag '+c}>{t}</span>;
+}
+const ovl={position:'absolute',inset:0,zIndex:50,background:'rgba(5,6,9,.7)',backdropFilter:'blur(4px)',display:'flex',alignItems:'center',justifyContent:'center',padding:30};
+const titleInput={background:'transparent',border:'none',borderBottom:'1px solid var(--line-2)',color:'var(--tx)',fontFamily:'var(--font-disp)',fontWeight:700,fontSize:16,padding:'3px 0',width:'100%',marginTop:2};
+
+/* ── Dashboard ── */
+function Dashboard() {
+  const att=[62,70,58,81,74,88,92]; const days=['一','二','三','四','五','六','日'];
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:20}}>
+      <div className="kpi-grid">
+        {[{l:'報名人數',v:'4,812',d:'+12.4% 週',c:'var(--fug)'},{l:'今日出勤',v:'3,106',d:'64.5% 出勤率',c:'var(--fug)'},{l:'任務完成率',v:'78%',d:'+6pt 對比上場',c:'var(--gold)'},{l:'報名轉換',v:'31%',d:'等待名單 1,204',c:'var(--violet)'}].map((k,i)=><div className="kpi" key={i}><div className="l">{k.l}</div><div className="v" style={{color:k.c}}>{k.v}</div><div className="d" style={{color:'var(--tx-dim)'}}>{k.d}</div></div>)}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1.5fr 1fr',gap:20}}>
+        <div className="panel">
+          <div className="panel-h"><span className="t">每日出勤趨勢</span><span className="tag">本賽事 7 日</span></div>
+          <div style={{padding:20,display:'flex',alignItems:'flex-end',gap:16,height:220}}>
+            {att.map((v,i)=><div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:8,height:'100%',justifyContent:'flex-end'}}><div style={{width:'100%',maxWidth:38,height:v+'%',borderRadius:'8px 8px 0 0',background:i===2?'var(--fug)':'rgba(45,229,154,.3)',boxShadow:i===2?'var(--glow-fug)':'none'}}/><span className="mono" style={{fontSize:11,color:i===2?'var(--fug)':'var(--tx-faint)'}}>{days[i]}</span></div>)}
+          </div>
+        </div>
+        <div className="panel">
+          <div className="panel-h"><span className="t">陣營平衡</span><span className="tag g">健康</span></div>
+          <div style={{padding:20}}>
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:13,marginBottom:8}}><span className="tone-fug">逃亡者 58%</span><span className="tone-hunt">42% 獵人</span></div>
+            <div style={{height:12,borderRadius:999,overflow:'hidden',display:'flex',background:'var(--hunt)'}}><div style={{width:'58%',background:'var(--fug)',boxShadow:'var(--glow-fug)'}}/></div>
+            <div style={{display:'flex',flexDirection:'column',gap:12,marginTop:20}}>
+              {[['今日救援觸發','1,842','var(--fug)'],['今日捕獲','1,531','var(--hunt)'],['身份卡分享','624','var(--gold)'],['LINE 互動','8,210','var(--violet)']].map(([l,v,c],i)=><div key={i} style={{display:'flex',justifyContent:'space-between',fontSize:13.5}}><span style={{color:'var(--tx-dim)'}}>{l}</span><span className="num" style={{color:c}}>{v}</span></div>)}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="panel">
+        <div className="panel-h"><span className="t">即時動態</span><span className="tag">自動更新</span></div>
+        <table className="adm-tbl">
+          <thead><tr><th>時間</th><th>跑者</th><th>事件</th><th>賽事</th><th>影響</th></tr></thead>
+          <tbody>
+            {[['20:14','陳逸帆','完成救援任務 +2K','獵人之夜','釋放 2 位夥伴'],['20:09','林子澄','高速追擊達標','獵人之夜','捕獲 +1'],['20:02','王思妤','門市打卡 · 信義店','獵人之夜','+50 救援值'],['19:58','張耀文','累積里程達 50K','—','獲得轉盤 ×1']].map((r,i)=><tr key={i}><td className="mono" style={{color:'var(--tx-dim)'}}>{r[0]}</td><td style={{fontWeight:600}}>{r[1]}</td><td>{r[2]}</td><td><span className="tag">{r[3]}</span></td><td className="tone-fug" style={{fontFamily:'var(--font-mono)',fontSize:12.5}}>{r[4]}</td></tr>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ── Races Admin ── */
+function RaceModal({ onClose }) {
+  const [world,setWorld]=React.useState('獵人 vs 逃亡者');
+  return <div onClick={onClose} style={ovl}><div onClick={e=>e.stopPropagation()} className="panel" style={{width:560,maxHeight:'90%',overflow:'auto'}}>
+    <div className="panel-h"><span className="t">新增賽事</span><button className="abtn abtn-gh" style={{padding:'6px 9px'}} onClick={onClose}>✕</button></div>
+    <div style={{padding:20,display:'flex',flexDirection:'column',gap:16}}>
+      <div className="field"><label>賽事名稱</label><input defaultValue="" placeholder="例：獵人之夜"/></div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+        <div className="field"><label>英文代號</label><input placeholder="HUNTERS NIGHT"/></div>
+        <div className="field"><label>世界觀</label><select value={world} onChange={e=>setWorld(e.target.value)}><option>獵人 vs 逃亡者</option><option>跑團 vs 跑團</option><option>配速控制挑戰</option></select></div>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:14}}>
+        <div className="field"><label>開賽日</label><input type="date"/></div>
+        <div className="field"><label>結束日</label><input type="date"/></div>
+        <div className="field"><label>賽程天數</label><input type="number" defaultValue="7"/></div>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+        <div className="field"><label>報名組別 (km，逗號分隔)</label><input defaultValue="10, 21, 42"/></div>
+        <div className="field"><label>各組報名費 (NT$，逗號分隔)</label><input defaultValue="490, 690, 890"/></div>
+      </div>
+      {world==='獵人 vs 逃亡者'&&<div style={{background:'rgba(45,229,154,.06)',border:'1px solid rgba(45,229,154,.2)',borderRadius:10,padding:14,display:'flex',flexDirection:'column',gap:12}}>
+        <div className="lbl" style={{color:'var(--fug)',fontSize:11}}>陣營玩法設定</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+          <div className="field"><label>逃亡者目標比例 %</label><input type="number" defaultValue="55"/></div>
+          <div className="field"><label>救援倍率（救援日）</label><input type="number" defaultValue="2"/></div>
+          <div className="field"><label>晚間戰報時間</label><input type="time" defaultValue="20:00"/></div>
+        </div>
+      </div>}
+      <div className="field"><label>賽事簡介</label><textarea rows="2" placeholder="一半的人追，一半的人逃…" style={{resize:'vertical',background:'var(--bg-1)',border:'1px solid var(--line-2)',borderRadius:10,padding:'10px 12px',color:'var(--tx)',fontFamily:'var(--font-body)',fontSize:14}}/></div>
+      <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:4}}><button className="abtn abtn-gh" onClick={onClose}>取消</button><button className="abtn abtn-pri" onClick={onClose}>建立賽事</button></div>
+    </div>
+  </div></div>;
+}
+function RacesAdmin() {
+  const [modal,setModal]=React.useState(false); const races=window.DOR.races;
+  return <div style={{display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{display:'flex',justifyContent:'flex-end'}}><button className="abtn abtn-pri" onClick={()=>setModal(true)}><Icon name="plus" size={16} color="#05140e"/> 新增賽事</button></div>
+    <div className="panel"><table className="adm-tbl">
+      <thead><tr><th>賽事</th><th>世界觀</th><th>組別</th><th>賽期</th><th>隊伍</th><th>狀態</th><th></th></tr></thead>
+      <tbody>{races.map(r=><tr key={r.id}><td><div style={{fontWeight:700}}>{r.title}</div><div className="mono" style={{fontSize:10.5,color:'var(--tx-faint)'}}>{r.sub}</div></td><td style={{color:'var(--tx-dim)'}}>{r.world}</td><td><div style={{display:'flex',gap:5}}>{r.distances.map(d=><span key={d} className="tag" style={{fontSize:10,padding:'2px 7px'}}>{d}K</span>)}</div></td><td className="mono" style={{fontSize:12,color:'var(--tx-dim)'}}>{r.start}–{r.end}</td><td className="num">{r.teams?r.teams.toLocaleString():'—'}</td><td><StatusTag s={r.status}/></td><td><button className="abtn abtn-gh" style={{padding:'6px 10px'}}><Icon name="settings" size={14}/></button></td></tr>)}</tbody>
+    </table></div>
+    {modal&&<RaceModal onClose={()=>setModal(false)}/>}
+  </div>;
+}
+
+/* ── Signups Admin ── */
+function SignupsAdmin() {
+  const rows=[['陳逸帆','獵人之夜',21,'fug','台北夜行者',59,'進行中'],['林子澄','獵人之夜',42,'hunt','南港獵殺者',41,'進行中'],['王思妤','獵人之夜',10,'fug','內湖逃逸線',88,'進行中'],['張耀文','獵人之夜',21,'hunt','南港獵殺者',33,'進行中'],['黃詠晴','城市公會戰',42,null,'—',0,'已報名'],['周冠宇','城市公會戰',21,null,'—',0,'已報名']];
+  const [f,setF]=React.useState('all');
+  return <div style={{display:'flex',flexDirection:'column',gap:16}}>
+    <div style={{display:'flex',gap:8}}>
+      {[['all','全部 4,812'],['fug','逃亡者 2,790'],['hunt','獵人 2,022']].map(([k,t])=><button key={k} className={'abtn '+(f===k?'abtn-pri':'abtn-gh')} onClick={()=>setF(k)}>{t}</button>)}
+      <div style={{flex:1}}/><button className="abtn abtn-gh"><Icon name="arrowUp" size={15}/> 匯出 CSV</button>
+    </div>
+    <div className="panel"><table className="adm-tbl">
+      <thead><tr><th>跑者</th><th>賽事</th><th>組別</th><th>陣營</th><th>跑團</th><th>進度</th><th>狀態</th></tr></thead>
+      <tbody>{rows.filter(r=>f==='all'||r[3]===f).map((r,i)=><tr key={i}><td style={{fontWeight:600}}>{r[0]}</td><td style={{color:'var(--tx-dim)'}}>{r[1]}</td><td className="mono">{r[2]}K</td><td>{r[3]?<span className={'tag '+(r[3]==='fug'?'g':'r')}>{r[3]==='fug'?'逃亡者':'獵人'}</span>:<span className="tag">未分配</span>}</td><td style={{color:'var(--tx-dim)'}}>{r[4]}</td><td><div style={{display:'flex',alignItems:'center',gap:8}}><div className="bar" style={{width:70}}><i style={{width:r[5]+'%',background:'var(--fug)'}}/></div><span className="mono" style={{fontSize:11,color:'var(--tx-dim)'}}>{r[5]}%</span></div></td><td><span className="tag g">{r[6]}</span></td></tr>)}</tbody>
+    </table></div>
+  </div>;
+}
+
+/* ── Missions Admin ── */
+function MissionsAdmin() {
+  const [missions,setMissions]=React.useState(window.DOR.missions.map(m=>({...m})));
+  const upd=(day,key,val)=>setMissions(ms=>ms.map(m=>m.day===day?{...m,[key]:val}:m));
+  const types={base:'里程任務',pace:'配速任務',rescue:'救援任務'};
+  return <div style={{display:'flex',flexDirection:'column',gap:14}}>
+    <div className="tag y" style={{alignSelf:'flex-start'}}>獵人之夜 · 7 日任務卡</div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+      {missions.map(m=><div key={m.day} className="panel" style={{padding:16}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}>
+          <div style={{width:34,height:34,borderRadius:10,background:'rgba(255,255,255,.04)',border:'1px solid var(--line-2)',display:'flex',alignItems:'center',justifyContent:'center'}}><Icon name={m.icon} size={18} color="var(--fug)"/></div>
+          <div style={{flex:1}}><div className="lbl" style={{fontSize:9}}>DAY {m.day} · {m.tag}</div><input value={m.title} onChange={e=>upd(m.day,'title',e.target.value)} style={titleInput}/></div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <div className="field"><label>任務類型</label><select value={m.type} onChange={e=>upd(m.day,'type',e.target.value)}>{Object.entries(types).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></div>
+          <div className="field"><label>基礎里程 (km)</label><input type="number" step="0.5" value={m.base} onChange={e=>upd(m.day,'base',+e.target.value)}/></div>
+        </div>
+        {m.type==='pace'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:12}}><div className="field"><label>配速下限 /km</label><input value={m.paceLo||''} onChange={e=>upd(m.day,'paceLo',e.target.value)} placeholder="4:30"/></div><div className="field"><label>配速上限 /km</label><input value={m.paceHi||''} onChange={e=>upd(m.day,'paceHi',e.target.value)} placeholder="5:30"/></div></div>}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:12}}>
+          <div className="field"><label>救援倍率</label><select defaultValue={m.type==='rescue'?'2':'1'}><option value="1">×1（標準）</option><option value="2">×2（加倍）</option><option value="3">×3（三倍）</option></select></div>
+          <div className="field"><label>推播提醒</label><select defaultValue="auto"><option value="auto">自動（賽事開始時）</option><option value="manual">手動推播</option><option value="off">關閉</option></select></div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginTop:12,padding:'10px 13px',background:'rgba(45,229,154,.06)',borderRadius:10,border:'1px solid rgba(45,229,154,.2)'}}><span style={{fontSize:13,display:'flex',alignItems:'center',gap:7}}><Icon name="rescue" size={15} color="var(--fug)"/> 多跑 1K 救援 1 人</span><span className="tag g">{m.type==='rescue'?'加倍 ×2':'啟用'}</span></div>
+      </div>)}
+    </div>
+  </div>;
+}
+
+/* ── Stores Admin ── */
+function StoresAdmin() {
+  const stores=window.DOR.stores;
+  return <div style={{display:'grid',gridTemplateColumns:'1fr 320px',gap:20}}>
+    <div className="panel">
+      <div className="panel-h"><span className="t">補給門市 ({stores.length})</span><button className="abtn abtn-pri" style={{padding:'7px 12px'}}><Icon name="plus" size={14} color="#05140e"/> 新增門市</button></div>
+      <table className="adm-tbl"><thead><tr><th>門市</th><th>城市</th><th>營業時間</th><th>打卡數</th><th>狀態</th></tr></thead>
+      <tbody>{stores.map((s,i)=><tr key={s.id}><td><div style={{fontWeight:600}}>{s.name}</div><div style={{fontSize:11.5,color:'var(--tx-faint)'}}>{s.addr}</div></td><td style={{color:'var(--tx-dim)'}}>{s.city}</td><td className="mono" style={{fontSize:12,color:'var(--tx-dim)'}}>{s.hours}</td><td className="num">{[842,531,410,233][i]}</td><td><span className="tag g">啟用中</span></td></tr>)}</tbody>
+      </table>
+    </div>
+    <div className="panel" style={{alignSelf:'start'}}>
+      <div className="panel-h"><span className="t">門市分佈</span></div>
+      <div className="ph" style={{height:240,borderRadius:0,position:'relative'}}>地圖{[[30,35],[60,28],[45,62],[76,70]].map(([l,t],i)=><div key={i} style={{position:'absolute',left:l+'%',top:t+'%',transform:'translate(-50%,-100%)'}}><Icon name="pin" size={24} color="var(--violet)"/></div>)}</div>
+      <div style={{padding:16}}><div className="field"><label>打卡獎勵設定</label><input defaultValue="+50 救援值"/></div></div>
+    </div>
+  </div>;
+}
+
+/* ── Wheel Admin ── */
+function WheelAdmin() {
+  const [pool,setPool]=React.useState(window.DOR.wheel.map(p=>({...p})));
+  const tot=pool.reduce((a,p)=>a+p.weight,0);
+  const setW=(id,w)=>setPool(ps=>ps.map(p=>p.id===id?{...p,weight:+w}:p));
+  const colorOf=(c)=>c==='dim'?'var(--tx-faint)':`var(--${c})`;
+  return <div style={{display:'grid',gridTemplateColumns:'1fr 300px',gap:20}}>
+    <div className="panel">
+      <div className="panel-h"><span className="t">獎項與中獎機率</span><button className="abtn abtn-pri" style={{padding:'7px 12px'}}><Icon name="plus" size={14} color="#05140e"/> 新增獎項</button></div>
+      <div style={{padding:'8px 18px 18px'}}>
+        {pool.map(p=><div key={p.id} style={{display:'flex',alignItems:'center',gap:14,padding:'13px 0',borderBottom:'1px solid var(--line)'}}><span style={{width:12,height:12,borderRadius:4,background:colorOf(p.color),flexShrink:0}}/><div style={{width:150,flexShrink:0}}><div style={{fontWeight:600,fontSize:13.5}}>{p.kind==='line'?`LINE Points ${p.amount}`:p.label}</div><div className="lbl" style={{fontSize:8.5,marginTop:2}}>{p.kind==='line'?'LINE POINT':p.kind==='sticker'?'九宮格集點卡':p.kind.toUpperCase()}</div></div><input type="range" min="0" max="40" value={p.weight} onChange={e=>setW(p.id,e.target.value)} style={{flex:1,accentColor:colorOf(p.color)}}/><span className="num" style={{width:48,textAlign:'right',color:colorOf(p.color)}}>{Math.round(p.weight/tot*100)}%</span></div>)}
+        <div className="lbl" style={{marginTop:14}}>機率依權重自動正規化 · 總和恆為 100%</div>
+      </div>
+    </div>
+    <div className="panel" style={{alignSelf:'start'}}>
+      <div className="panel-h"><span className="t">即時預覽</span></div>
+      <div style={{padding:24,display:'flex',justifyContent:'center'}}><div style={{width:180,height:180,borderRadius:'50%',background:`conic-gradient(${pool.map((p,i)=>{const s=pool.slice(0,i).reduce((a,x)=>a+x.weight,0)/tot*360;const e=s+p.weight/tot*360;return `${colorOf(p.color)} ${s}deg ${e}deg`;}).join(',')})`,boxShadow:'0 0 0 5px var(--bg-3),0 10px 30px rgba(0,0,0,.5)'}}/></div>
+      <div style={{padding:'0 18px 18px'}}><div className="field"><label>觸發條件</label><input defaultValue="每累積 50 km 轉動 1 次"/></div></div>
+    </div>
+  </div>;
+}
+
+/* ── Stickers Admin ── */
+function StickersAdmin() {
+  const cards=window.DOR.stickers;
+  const queue=[['林子澄','南港獵殺者','2026.06.10','備貨中','y'],['王思妤','內湖逃逸線','2026.06.08','已出貨','g'],['周冠宇','台北夜行者','2026.06.05','已領取','']];
+  return <div style={{display:'flex',flexDirection:'column',gap:20}}>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+      <div className="panel">
+        <div className="panel-h"><span className="t">九宮格集點卡</span><span className="tag v">9 張一組</span></div>
+        <div style={{padding:18,display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10}}>
+          {cards.map(c=><div key={c.i} style={{aspectRatio:'1',borderRadius:12,border:'1px solid rgba(157,140,255,.3)',background:'radial-gradient(120% 120% at 30% 20%,rgba(157,140,255,.14),var(--bg-1))',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:6}}><Icon name="id" size={22} color="var(--violet)"/><div className="mono" style={{fontSize:10}}>{c.name}</div><div className="lbl" style={{fontSize:8}}>{String(c.i).padStart(2,'0')}</div></div>)}
+        </div>
+      </div>
+      <div className="panel" style={{alignSelf:'start'}}>
+        <div className="panel-h"><span className="t">完賽公仔</span><span className="tag v">特殊獎勵</span></div>
+        <div style={{padding:18,display:'flex',gap:14,alignItems:'center'}}><div className="ph" style={{width:92,height:92,borderRadius:14}}>公仔 3D</div><div style={{flex:1,fontSize:13,color:'var(--tx-dim)',lineHeight:1.6}}>集滿 9 張集點卡可免費兌換。本季已兌換 <span className="num tone-violet">312</span> 座。</div></div>
+        <div style={{padding:'0 18px 18px',display:'flex',flexDirection:'column',gap:12}}><div className="field"><label>公仔名稱</label><input defaultValue="逃亡者・限定完賽公仔"/></div><div className="field"><label>庫存</label><input type="number" defaultValue="500"/></div></div>
+      </div>
+    </div>
+    <div className="panel">
+      <div className="panel-h"><span className="t">公仔兌換隊列</span><span className="tag y">待處理 1</span></div>
+      <table className="adm-tbl"><thead><tr><th>跑者</th><th>跑團</th><th>集滿日期</th><th>出貨狀態</th><th></th></tr></thead>
+      <tbody>{queue.map((q,i)=><tr key={i}><td style={{fontWeight:600}}>{q[0]}</td><td style={{color:'var(--tx-dim)'}}>{q[1]}</td><td className="mono" style={{fontSize:12}}>{q[2]}</td><td><span className={'tag '+q[4]}>{q[3]}</span></td><td><button className="abtn abtn-gh" style={{padding:'6px 11px'}}>{q[3]==='備貨中'?'標記出貨':'查看'}</button></td></tr>)}</tbody>
+      </table>
+    </div>
+  </div>;
+}
+
+/* ── 陣營設定 ── */
+function FactionsAdmin() {
+  const [method,setMethod]=React.useState('random');
+  const [fugTarget,setFugTarget]=React.useState(55);
+  const huntTarget=100-fugTarget;
+  const races=window.DOR.races.filter(r=>r.world==='獵人 vs 逃亡者');
+  const reassignRows=[['陳逸帆','獵人之夜','逃亡者','台北夜行者'],['林子澄','獵人之夜','獵人','南港獵殺者'],['王思妤','獵人之夜','逃亡者','內湖逃逸線'],['張耀文','獵人之夜','獵人','南港獵殺者']];
+  return <div style={{display:'flex',flexDirection:'column',gap:20}}>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+      <div className="panel">
+        <div className="panel-h"><span className="t">分配方式</span></div>
+        <div style={{padding:'14px 18px 18px',display:'flex',flexDirection:'column',gap:10}}>
+          {[['random','隨機分配','開賽時系統依目標比例自動分配'],['choice','玩家自選','報名時讓玩家自行選擇陣營'],['admin','後台指定','由營運人員手動指派每位參賽者']].map(([k,t,d])=>(
+            <label key={k} style={{display:'flex',gap:12,alignItems:'flex-start',cursor:'pointer',padding:'12px 14px',borderRadius:10,border:'1px solid '+(method===k?'var(--fug)':'var(--line)'),background:method===k?'rgba(45,229,154,.07)':'transparent'}}>
+              <input type="radio" name="faction-method" value={k} checked={method===k} onChange={()=>setMethod(k)} style={{marginTop:3,accentColor:'var(--fug)'}}/>
+              <div><div style={{fontWeight:700,fontSize:14}}>{t}</div><div className="lbl" style={{marginTop:2}}>{d}</div></div>
+            </label>
+          ))}
+        </div>
+      </div>
+      <div className="panel" style={{alignSelf:'start'}}>
+        <div className="panel-h"><span className="t">比例目標</span><span className="tag g">健康範圍 45–65%</span></div>
+        <div style={{padding:'14px 18px 18px'}}>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
+            <span className="mono" style={{color:'var(--fug)',fontSize:13}}>逃亡者 {fugTarget}%</span>
+            <span className="mono" style={{color:'var(--hunt)',fontSize:13}}>{huntTarget}% 獵人</span>
+          </div>
+          <div style={{height:10,borderRadius:999,overflow:'hidden',display:'flex',background:'var(--hunt)',marginBottom:14}}>
+            <div style={{width:fugTarget+'%',background:'var(--fug)',boxShadow:'var(--glow-fug)',transition:'width .2s'}}/>
+          </div>
+          <div className="field"><label>逃亡者目標比例 (%)</label><input type="range" min="30" max="70" value={fugTarget} onChange={e=>setFugTarget(+e.target.value)} style={{accentColor:'var(--fug)'}}/></div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:14}}>
+            <div style={{textAlign:'center',padding:'10px 0',borderRadius:10,border:'1px solid rgba(45,229,154,.3)',background:'rgba(45,229,154,.06)'}}><div className="num" style={{color:'var(--fug)',fontSize:26}}>2,790</div><div className="lbl" style={{marginTop:3}}>逃亡者（現況）</div></div>
+            <div style={{textAlign:'center',padding:'10px 0',borderRadius:10,border:'1px solid rgba(255,75,92,.3)',background:'rgba(255,75,92,.06)'}}><div className="num" style={{color:'var(--hunt)',fontSize:26}}>2,022</div><div className="lbl" style={{marginTop:3}}>獵人（現況）</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div className="panel">
+      <div className="panel-h"><span className="t">各賽事陣營分佈</span></div>
+      <table className="adm-tbl">
+        <thead><tr><th>賽事</th><th>逃亡者</th><th>獵人</th><th>比例視覺</th><th>健康度</th></tr></thead>
+        <tbody>{races.map(r=>{const fug=r.id==='hunt2026'?58:52;const hunt=100-fug;const ok=fug>=45&&fug<=65;return(<tr key={r.id}><td style={{fontWeight:600}}>{r.title}</td><td><span className="mono tone-fug">{fug}%</span></td><td><span className="mono tone-hunt">{hunt}%</span></td><td style={{width:140}}><div className="bar" style={{width:120}}><i style={{width:fug+'%',background:'var(--fug)'}}/></div></td><td><span className={'tag '+(ok?'g':'r')}>{ok?'健康':'失衡'}</span></td></tr>);})}</tbody>
+      </table>
+    </div>
+    <div className="panel">
+      <div className="panel-h"><span className="t">手動調整陣營</span><span className="tag y">謹慎操作</span></div>
+      <table className="adm-tbl">
+        <thead><tr><th>跑者</th><th>賽事</th><th>目前陣營</th><th>跑團</th><th>調整為</th></tr></thead>
+        <tbody>{reassignRows.map((r,i)=><tr key={i}><td style={{fontWeight:600}}>{r[0]}</td><td style={{color:'var(--tx-dim)'}}>{r[1]}</td><td><span className={'tag '+(r[2]==='逃亡者'?'g':'r')}>{r[2]}</span></td><td style={{color:'var(--tx-dim)'}}>{r[3]}</td><td><select style={{background:'var(--bg-2)',color:'var(--tx)',border:'1px solid var(--line-2)',borderRadius:6,padding:'4px 8px',fontSize:12}} defaultValue={r[2]}><option>逃亡者</option><option>獵人</option></select></td></tr>)}</tbody>
+      </table>
+      <div style={{padding:'12px 18px'}}><button className="abtn abtn-pri" style={{padding:'8px 18px'}}>儲存調整</button></div>
+    </div>
+  </div>;
+}
+
+/* ── 跑團管理 ── */
+function TeamsAdmin() {
+  const [modal,setModal]=React.useState(false);
+  const [scoring,setScoring]=React.useState('completion');
+  const teams=[{name:'南港獵殺者',city:'台北',members:48,km:2142,rate:94,rank:1},{name:'台北夜行者',city:'台北',members:52,km:1988,rate:88,rank:2},{name:'內湖逃逸線',city:'台北',members:37,km:1654,rate:81,rank:3},{name:'板橋暗夜跑者',city:'新北',members:29,km:1210,rate:74,rank:4}];
+  return <div style={{display:'flex',flexDirection:'column',gap:20}}>
+    <div className="panel">
+      <div className="panel-h"><span className="t">公會戰評分設定</span><span className="tag g">獵人之夜</span></div>
+      <div style={{padding:'14px 18px 18px',display:'flex',flexDirection:'column',gap:14}}>
+        <div className="lbl" style={{fontSize:11}}>排行計算方式</div>
+        <div style={{display:'flex',gap:10}}>
+          {[['completion','任務完成率','依每日任務達成比例加總'],['rescue','救援總計','依全體成員救援次數加總'],['km','累積里程','依全體成員公里數加總']].map(([k,t,d])=>(
+            <label key={k} style={{flex:1,display:'flex',flexDirection:'column',gap:4,cursor:'pointer',padding:'12px 14px',borderRadius:10,border:'1px solid '+(scoring===k?'var(--fug)':'var(--line)'),background:scoring===k?'rgba(45,229,154,.07)':'transparent'}}>
+              <div style={{display:'flex',gap:8,alignItems:'center'}}><input type="radio" name="scoring" value={k} checked={scoring===k} onChange={()=>setScoring(k)} style={{accentColor:'var(--fug)'}}/><span style={{fontWeight:700,fontSize:13.5}}>{t}</span></div>
+              <span className="lbl" style={{paddingLeft:20}}>{d}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    </div>
+    <div className="panel">
+      <div className="panel-h"><span className="t">跑團列表</span><button className="abtn abtn-pri" style={{padding:'7px 12px'}} onClick={()=>setModal(true)}><Icon name="plus" size={14} color="#05140e"/> 新增跑團</button></div>
+      <table className="adm-tbl">
+        <thead><tr><th>排名</th><th>跑團</th><th>城市</th><th>成員數</th><th>累積里程</th><th>完成率</th><th></th></tr></thead>
+        <tbody>{teams.map(t=><tr key={t.name}><td className="num" style={{color:t.rank===1?'var(--gold)':'var(--tx-dim)',fontSize:16}}>{t.rank}</td><td style={{fontWeight:600}}>{t.name}</td><td style={{color:'var(--tx-dim)'}}>{t.city}</td><td className="num">{t.members}</td><td><span className="mono tone-fug">{t.km.toLocaleString()} km</span></td><td><div style={{display:'flex',alignItems:'center',gap:8}}><div className="bar" style={{width:70}}><i style={{width:t.rate+'%',background:'var(--fug)'}}/></div><span className="mono" style={{fontSize:11,color:'var(--tx-dim)'}}>{t.rate}%</span></div></td><td><button className="abtn abtn-gh" style={{padding:'5px 10px'}}><Icon name="settings" size={13}/></button></td></tr>)}</tbody>
+      </table>
+    </div>
+    {modal&&<div onClick={()=>setModal(false)} style={ovl}><div onClick={e=>e.stopPropagation()} className="panel" style={{width:420}}>
+      <div className="panel-h"><span className="t">新增跑團</span><button className="abtn abtn-gh" style={{padding:'6px 9px'}} onClick={()=>setModal(false)}>✕</button></div>
+      <div style={{padding:20,display:'flex',flexDirection:'column',gap:14}}>
+        <div className="field"><label>跑團名稱</label><input placeholder="例：南港獵殺者"/></div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}><div className="field"><label>城市</label><input placeholder="台北"/></div><div className="field"><label>隊長帳號</label><input placeholder="@handle"/></div></div>
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}><button className="abtn abtn-gh" onClick={()=>setModal(false)}>取消</button><button className="abtn abtn-pri" onClick={()=>setModal(false)}>建立跑團</button></div>
+      </div>
+    </div></div>}
+  </div>;
+}
+
+/* ── 推播通知 ── */
+function NotificationsAdmin() {
+  const [reportTime,setReportTime]=React.useState('20:00');
+  const [reportOn,setReportOn]=React.useState(true);
+  const [draft,setDraft]=React.useState('');
+  const history=[
+    {time:'06/15 20:00',type:'晚間戰報',msg:'今日捕獲 531 · 逃脫 742 · 明日任務：誘餌與搜索',sent:4812,open:'68%'},
+    {time:'06/14 20:00',type:'晚間戰報',msg:'高速追擊達標者 384 人 · 明日救援日，倍率 ×2',sent:4789,open:'71%'},
+    {time:'06/13 09:00',type:'手動推播',msg:'補給站・板橋門市今日 12:00 起開放打卡',sent:1240,open:'55%'},
+  ];
+  const taStyle={background:'var(--bg-1)',border:'1px solid var(--line-2)',borderRadius:10,padding:'10px 12px',color:'var(--tx)',fontFamily:'var(--font-body)',fontSize:14,resize:'vertical',width:'100%'};
+  return <div style={{display:'flex',flexDirection:'column',gap:20}}>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+      <div className="panel">
+        <div className="panel-h"><span className="t">晚間戰報設定</span><span className={'tag '+(reportOn?'g':'')}>{reportOn?'啟用中':'已停用'}</span></div>
+        <div style={{padding:'14px 18px 18px',display:'flex',flexDirection:'column',gap:14}}>
+          <div className="field"><label>每日推播時間</label><input type="time" value={reportTime} onChange={e=>setReportTime(e.target.value)}/></div>
+          <div className="field"><label>推播標題模板</label><input defaultValue="DOR 戰報 · DAY {day} 結算"/></div>
+          <div className="field"><label>內文模板</label><textarea rows="3" defaultValue="今日捕獲 {captured} · 逃脫 {escaped}。明日任務：{next_mission}" style={taStyle}/></div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span style={{fontSize:13.5}}>自動推播</span>
+            <button className={'abtn '+(reportOn?'abtn-pri':'abtn-gh')} style={{padding:'6px 14px'}} onClick={()=>setReportOn(v=>!v)}>{reportOn?'啟用中':'已停用'}</button>
+          </div>
+        </div>
+      </div>
+      <div className="panel" style={{alignSelf:'start'}}>
+        <div className="panel-h"><span className="t">手動推播</span></div>
+        <div style={{padding:'14px 18px 18px',display:'flex',flexDirection:'column',gap:14}}>
+          <div className="field"><label>推播對象</label><select><option>全體參賽者 (4,812)</option><option>逃亡者 (2,790)</option><option>獵人 (2,022)</option><option>今日未出勤者</option></select></div>
+          <div className="field"><label>訊息內容</label><textarea rows="4" value={draft} onChange={e=>setDraft(e.target.value)} placeholder="輸入推播訊息…" style={taStyle}/></div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span className="lbl">{draft.length} / 150 字</span>
+            <button className="abtn abtn-pri" style={{padding:'8px 16px'}} disabled={!draft.trim()}>立即推播</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div className="panel">
+      <div className="panel-h"><span className="t">推播紀錄</span></div>
+      <table className="adm-tbl">
+        <thead><tr><th>時間</th><th>類型</th><th>內容摘要</th><th>發送數</th><th>開啟率</th></tr></thead>
+        <tbody>{history.map((h,i)=><tr key={i}><td className="mono" style={{color:'var(--tx-dim)',fontSize:12}}>{h.time}</td><td><span className={'tag '+(h.type==='晚間戰報'?'g':'v')}>{h.type}</span></td><td style={{color:'var(--tx-dim)',maxWidth:280}}>{h.msg}</td><td className="num">{h.sent.toLocaleString()}</td><td className="mono tone-fug">{h.open}</td></tr>)}</tbody>
+      </table>
+    </div>
+  </div>;
+}
+
+/* ── 里程規則 ── */
+function MileageAdmin() {
+  const [threshold,setThreshold]=React.useState(50);
+  const top=[{name:'王思妤',team:'內湖逃逸線',km:231,spins:4,used:4},{name:'林子澄',team:'南港獵殺者',km:157,spins:3,used:2},{name:'張耀文',team:'南港獵殺者',km:105,spins:2,used:1},{name:'陳逸帆',team:'台北夜行者',km:94,spins:1,used:0}];
+  return <div style={{display:'flex',flexDirection:'column',gap:20}}>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+      <div className="panel">
+        <div className="panel-h"><span className="t">里程銀行規則</span></div>
+        <div style={{padding:'14px 18px 18px',display:'flex',flexDirection:'column',gap:16}}>
+          <div className="field">
+            <label>每累積幾公里獲得一次轉盤機會</label>
+            <div style={{display:'flex',alignItems:'center',gap:14,marginTop:8}}>
+              <input type="range" min="10" max="100" step="5" value={threshold} onChange={e=>setThreshold(+e.target.value)} style={{flex:1,accentColor:'var(--fug)'}}/>
+              <span className="num tone-fug" style={{fontSize:22,minWidth:60,textAlign:'right'}}>{threshold}<span className="mono" style={{fontSize:12,color:'var(--tx-dim)'}}> km</span></span>
+            </div>
+          </div>
+          <div className="field"><label>里程計算來源</label><select defaultValue="goal"><option value="goal">完賽目標距離（10K / 21K / 42K）</option><option value="actual">實際跑步里程</option><option value="both">兩者取較大值</option></select></div>
+          <div className="field"><label>是否跨賽事累積</label><select defaultValue="yes"><option value="yes">是（全部賽事合計）</option><option value="no">否（各賽事獨立計算）</option></select></div>
+          <div style={{padding:'12px 14px',background:'rgba(255,194,75,.07)',border:'1px solid rgba(255,194,75,.25)',borderRadius:10,fontSize:13,color:'var(--tx-dim)',lineHeight:1.65}}>
+            目前設定：完賽任一賽事後，依報名組別里程計入銀行。每累積 <span className="num tone-gold">{threshold}</span> km 解鎖一次轉盤。
+          </div>
+          <button className="abtn abtn-pri" style={{alignSelf:'flex-start',padding:'8px 20px'}}>儲存規則</button>
+        </div>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:16}}>
+        {[{l:'全平台累積里程',v:'428,610 km',c:'var(--fug)'},{l:'已發放轉盤次數',v:'8,572 次',c:'var(--gold)'},{l:'已使用轉盤次數',v:'6,134 次',c:'var(--hunt)'},{l:'未使用（剩餘）',v:'2,438 次',c:'var(--violet)'}].map((s,i)=>(
+          <div key={i} className="panel" style={{padding:'14px 18px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{fontSize:13.5,color:'var(--tx-dim)'}}>{s.l}</span>
+            <span className="num" style={{fontSize:22,color:s.c}}>{s.v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+    <div className="panel">
+      <div className="panel-h"><span className="t">里程排行榜</span><span className="tag">跨賽事累積</span></div>
+      <table className="adm-tbl">
+        <thead><tr><th>排名</th><th>跑者</th><th>跑團</th><th>累積里程</th><th>已獲得轉盤</th><th>已使用</th><th>剩餘</th></tr></thead>
+        <tbody>{top.map((r,i)=><tr key={i}><td className="num" style={{color:i===0?'var(--gold)':'var(--tx-dim)',fontSize:16}}>{i+1}</td><td style={{fontWeight:600}}>{r.name}</td><td style={{color:'var(--tx-dim)'}}>{r.team}</td><td><span className="mono tone-fug">{r.km} km</span></td><td className="num">{r.spins}</td><td className="num" style={{color:'var(--tx-dim)'}}>{r.used}</td><td><span className={'tag '+(r.spins-r.used>0?'y':'')}>{r.spins-r.used}</span></td></tr>)}</tbody>
+      </table>
+    </div>
+  </div>;
+}
+
+/* ── 訂單管理 ── */
+function OrdersAdmin(){
+  const [filter,setFilter]=React.useState('all');
+  const orders=[
+    {id:'ORD-20240601-001',user:'陳逸帆',race:'獵人之夜 2024 春季',group:'菁英組',fee:890,method:'信用卡',status:'paid',time:'2024-05-20 14:22'},
+    {id:'ORD-20240601-002',user:'林子澄',race:'獵人之夜 2024 春季',group:'標準組',fee:690,method:'LINE Pay',status:'paid',time:'2024-05-20 15:08'},
+    {id:'ORD-20240601-003',user:'王思妤',race:'獵人之夜 2024 春季',group:'挑戰組',fee:490,method:'信用卡',status:'pending',time:'2024-05-21 09:44'},
+    {id:'ORD-20240601-004',user:'張耀文',race:'曙光競速 2024',group:'標準組',fee:690,method:'ATM',status:'failed',time:'2024-05-21 11:00'},
+    {id:'ORD-20240601-005',user:'黃雅婷',race:'獵人之夜 2024 春季',group:'菁英組',fee:890,method:'Apple Pay',status:'refunded',time:'2024-05-22 08:30'},
+    {id:'ORD-20240601-006',user:'吳柏成',race:'曙光競速 2024',group:'挑戰組',fee:490,method:'信用卡',status:'paid',time:'2024-05-22 10:15'},
+  ];
+  const sc={paid:{l:'已付款',c:'var(--fug)'},pending:{l:'待付款',c:'var(--gold)'},failed:{l:'付款失敗',c:'var(--hunt)'},refunded:{l:'已退款',c:'var(--violet)'}};
+  const list=filter==='all'?orders:orders.filter(o=>o.status===filter);
+  const total=orders.filter(o=>o.status==='paid').reduce((s,o)=>s+o.fee,0);
+  return <div style={{display:'flex',flexDirection:'column',gap:20}}>
+    <div className="kpi-grid" style={{gridTemplateColumns:'repeat(4,1fr)'}}>
+      {[{l:'總訂單數',v:orders.length,c:'var(--tx)'},{l:'已付款',v:orders.filter(o=>o.status==='paid').length,c:'var(--fug)'},{l:'待付款',v:orders.filter(o=>o.status==='pending').length,c:'var(--gold)'},{l:'總收入 NT$',v:total.toLocaleString(),c:'var(--fug)'}].map((k,i)=><div className="kpi" key={i}><div className="l">{k.l}</div><div className="v" style={{color:k.c}}>{k.v}</div></div>)}
+    </div>
+    <div className="panel">
+      <div className="panel-h" style={{flexWrap:'wrap',gap:8}}>
+        <span className="t">訂單列表</span>
+        <div style={{display:'flex',gap:8,marginLeft:'auto'}}>
+          {['all','paid','pending','failed','refunded'].map(s=><button key={s} onClick={()=>setFilter(s)} className={'abtn '+(filter===s?'abtn-g':'')} style={{fontSize:12}}>{s==='all'?'全部':sc[s]?.l}</button>)}
+        </div>
+        <button className="abtn abtn-g" style={{fontSize:12}}>匯出 CSV</button>
+      </div>
+      <table className="adm-tbl">
+        <thead><tr><th>訂單編號</th><th>跑者</th><th>賽事</th><th>組別</th><th>金額</th><th>付款方式</th><th>狀態</th><th>時間</th><th>操作</th></tr></thead>
+        <tbody>{list.map((o,i)=><tr key={i}>
+          <td className="mono" style={{fontSize:11,color:'var(--tx-dim)'}}>{o.id}</td>
+          <td style={{fontWeight:600}}>{o.user}</td>
+          <td style={{color:'var(--tx-dim)',fontSize:12}}>{o.race}</td>
+          <td><span className="tag">{o.group}</span></td>
+          <td className="num tone-fug">NT${o.fee}</td>
+          <td style={{color:'var(--tx-dim)',fontSize:12}}>{o.method}</td>
+          <td><span className="tag" style={{color:sc[o.status].c,borderColor:sc[o.status].c+'44'}}>{sc[o.status].l}</span></td>
+          <td className="mono" style={{fontSize:11,color:'var(--tx-dim)'}}>{o.time}</td>
+          <td><button className="abtn" style={{fontSize:11}}>查看</button>{o.status==='paid'&&<button className="abtn" style={{fontSize:11,marginLeft:4}}>退款</button>}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </div>;
+}
+
+/* ── 操作紀錄管理 ── */
+function AuditAdmin(){
+  const [search,setSearch]=React.useState('');
+  const logs=[
+    {id:1,admin:'admin@dor.run',action:'編輯賽事',target:'獵人之夜 2024 春季',detail:'修改報名截止日期',ip:'192.168.1.1',time:'2024-05-22 14:32:10',level:'info'},
+    {id:2,admin:'ops@dor.run',action:'手動推播',target:'全體用戶',detail:'發送晚間戰報通知',ip:'192.168.1.2',time:'2024-05-22 21:00:05',level:'info'},
+    {id:3,admin:'admin@dor.run',action:'陣營調整',target:'王思妤 (U-3847)',detail:'從獵人改為逃亡者',ip:'192.168.1.1',time:'2024-05-22 16:15:44',level:'warn'},
+    {id:4,admin:'super@dor.run',action:'新增管理員',target:'ops@dor.run',detail:'建立操作員帳號',ip:'10.0.0.1',time:'2024-05-21 09:00:00',level:'info'},
+    {id:5,admin:'admin@dor.run',action:'訂單退款',target:'ORD-20240601-005',detail:'手動核准退款 NT$890',ip:'192.168.1.1',time:'2024-05-22 13:40:22',level:'warn'},
+    {id:6,admin:'ops@dor.run',action:'刪除任務',target:'任務 #7 — 深夜衝刺',detail:'誤刪後還原',ip:'192.168.1.2',time:'2024-05-20 22:10:03',level:'error'},
+    {id:7,admin:'super@dor.run',action:'權限變更',target:'admin@dor.run',detail:'新增退款權限',ip:'10.0.0.1',time:'2024-05-19 11:05:30',level:'warn'},
+  ];
+  const lc={info:{l:'一般',c:'var(--fug)'},warn:{l:'警告',c:'var(--gold)'},error:{l:'錯誤',c:'var(--hunt)'}};
+  const list=search?logs.filter(l=>l.admin.includes(search)||l.action.includes(search)||l.target.includes(search)):logs;
+  return <div style={{display:'flex',flexDirection:'column',gap:20}}>
+    <div className="panel">
+      <div className="panel-h">
+        <span className="t">操作紀錄</span>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋管理員、動作、對象…" style={{background:'var(--card)',border:'1px solid var(--line)',borderRadius:8,padding:'5px 10px',color:'var(--tx)',fontSize:13,width:240}}/>
+        <button className="abtn abtn-g" style={{fontSize:12,marginLeft:8}}>匯出日誌</button>
+      </div>
+      <table className="adm-tbl">
+        <thead><tr><th>#</th><th>管理員</th><th>動作</th><th>對象</th><th>詳情</th><th>IP</th><th>等級</th><th>時間</th></tr></thead>
+        <tbody>{list.map((l,i)=><tr key={i}>
+          <td className="mono" style={{color:'var(--tx-faint)',fontSize:11}}>{l.id}</td>
+          <td style={{fontWeight:600,fontSize:12}}>{l.admin}</td>
+          <td style={{color:'var(--tx)'}}>{l.action}</td>
+          <td style={{color:'var(--tx-dim)',fontSize:12}}>{l.target}</td>
+          <td style={{color:'var(--tx-dim)',fontSize:12}}>{l.detail}</td>
+          <td className="mono" style={{fontSize:11,color:'var(--tx-faint)'}}>{l.ip}</td>
+          <td><span className="tag" style={{color:lc[l.level].c,borderColor:lc[l.level].c+'44'}}>{lc[l.level].l}</span></td>
+          <td className="mono" style={{fontSize:11,color:'var(--tx-dim)'}}>{l.time}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+    <div className="panel">
+      <div className="panel-h"><span className="t">日誌保存設定</span></div>
+      <div style={{padding:'0 0 16px',display:'flex',gap:24,flexWrap:'wrap'}}>
+        {[['保存天數','90 天'],['自動清除','已啟用'],['日誌大小','2.4 MB'],['最後備份','2024-05-22']].map(([l,v],i)=><div key={i} style={{background:'var(--card)',borderRadius:10,padding:'12px 20px',minWidth:140}}><div style={{fontSize:11,color:'var(--tx-dim)',marginBottom:4}}>{l}</div><div style={{fontSize:16,fontWeight:700}}>{v}</div></div>)}
+      </div>
+    </div>
+  </div>;
+}
+
+/* ── 管理員管理 ── */
+function AdminsAdmin(){
+  const [showModal,setShowModal]=React.useState(false);
+  const admins=[
+    {id:1,name:'超級管理員',email:'super@dor.run',role:'超級管理員',status:'active',last:'2024-05-22 14:32'},
+    {id:2,name:'主要管理員',email:'admin@dor.run',role:'管理員',status:'active',last:'2024-05-22 16:15'},
+    {id:3,name:'操作員小林',email:'ops@dor.run',role:'操作員',status:'active',last:'2024-05-22 21:00'},
+    {id:4,name:'客服專員王',email:'cs@dor.run',role:'客服',status:'inactive',last:'2024-05-10 09:30'},
+  ];
+  const rc={超級管理員:'var(--hunt)',管理員:'var(--fug)',操作員:'var(--gold)',客服:'var(--violet)'};
+  const [form,setForm]=React.useState({name:'',email:'',role:'操作員'});
+  return <div style={{display:'flex',flexDirection:'column',gap:20}}>
+    {showModal&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100}}>
+      <div className="panel" style={{width:400,padding:24}}>
+        <div className="panel-h" style={{marginBottom:16}}><span className="t">新增管理員</span><button className="abtn" onClick={()=>setShowModal(false)}>✕</button></div>
+        {[['姓名','name','text'],['電子郵件','email','email']].map(([l,k,t])=><label key={k} style={{display:'block',marginBottom:12}}>
+          <div style={{fontSize:11,color:'var(--tx-dim)',marginBottom:4}}>{l}</div>
+          <input type={t} value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} style={{width:'100%',background:'var(--card)',border:'1px solid var(--line)',borderRadius:8,padding:'6px 10px',color:'var(--tx)',fontSize:13}}/>
+        </label>)}
+        <label style={{display:'block',marginBottom:16}}>
+          <div style={{fontSize:11,color:'var(--tx-dim)',marginBottom:4}}>角色</div>
+          <select value={form.role} onChange={e=>setForm(f=>({...f,role:e.target.value}))} style={{width:'100%',background:'var(--card)',border:'1px solid var(--line)',borderRadius:8,padding:'6px 10px',color:'var(--tx)',fontSize:13}}>
+            {['管理員','操作員','客服'].map(r=><option key={r}>{r}</option>)}
+          </select>
+        </label>
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <button className="abtn" onClick={()=>setShowModal(false)}>取消</button>
+          <button className="abtn abtn-g" onClick={()=>setShowModal(false)}>建立帳號</button>
+        </div>
+      </div>
+    </div>}
+    <div className="panel">
+      <div className="panel-h"><span className="t">管理員帳號列表</span><button className="abtn abtn-g" onClick={()=>setShowModal(true)} style={{marginLeft:'auto',fontSize:12}}><Icon name="plus" size={12}/>新增管理員</button></div>
+      <table className="adm-tbl">
+        <thead><tr><th>#</th><th>姓名</th><th>電子郵件</th><th>角色</th><th>狀態</th><th>最後登入</th><th>操作</th></tr></thead>
+        <tbody>{admins.map((a,i)=><tr key={i}>
+          <td className="mono" style={{color:'var(--tx-faint)'}}>{a.id}</td>
+          <td style={{fontWeight:600}}>{a.name}</td>
+          <td style={{color:'var(--tx-dim)',fontSize:12}}>{a.email}</td>
+          <td><span className="tag" style={{color:rc[a.role],borderColor:rc[a.role]+'44'}}>{a.role}</span></td>
+          <td><span className="tag" style={{color:a.status==='active'?'var(--fug)':'var(--tx-dim)'}}>{a.status==='active'?'啟用':'停用'}</span></td>
+          <td className="mono" style={{fontSize:11,color:'var(--tx-dim)'}}>{a.last}</td>
+          <td style={{display:'flex',gap:4}}>
+            <button className="abtn" style={{fontSize:11}}>編輯</button>
+            {a.id!==1&&<button className="abtn" style={{fontSize:11,color:'var(--hunt)'}}>停用</button>}
+          </td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+    <div className="panel">
+      <div className="panel-h"><span className="t">登入安全設定</span></div>
+      <div style={{display:'flex',flexDirection:'column',gap:12,padding:'0 0 12px'}}>
+        {[['兩步驟驗證 (2FA)','所有管理員必須啟用','啟用'],['Session 逾時','閒置 30 分鐘自動登出','30 分鐘'],['IP 白名單','限制可登入的 IP 範圍','未啟用']].map(([l,d,v],i)=><div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 0',borderBottom:'1px solid var(--line)'}}>
+          <div><div style={{fontSize:13.5,fontWeight:600}}>{l}</div><div style={{fontSize:12,color:'var(--tx-dim)',marginTop:2}}>{d}</div></div>
+          <span className="tag g">{v}</span>
+        </div>)}
+      </div>
+    </div>
+  </div>;
+}
+
+/* ── 權限管理 ── */
+function PermissionsAdmin(){
+  const roles=['超級管理員','管理員','操作員','客服'];
+  const perms=[
+    {cat:'賽事管理',items:['查看賽事','建立賽事','編輯賽事','刪除賽事']},
+    {cat:'報名管理',items:['查看報名','審核報名','匯出報名']},
+    {cat:'訂單管理',items:['查看訂單','處理退款','匯出訂單']},
+    {cat:'用戶管理',items:['查看用戶','編輯用戶','停用用戶']},
+    {cat:'推播通知',items:['查看紀錄','手動推播','編輯模板']},
+    {cat:'陣營設定',items:['查看陣營','調整陣營']},
+    {cat:'管理員設定',items:['查看管理員','新增管理員','編輯權限']},
+    {cat:'系統設定',items:['查看設定','修改設定','操作紀錄']},
+  ];
+  const defaults={
+    超級管理員:()=>true,
+    管理員:(c,p)=>!['刪除賽事','停用用戶','新增管理員','編輯權限','修改設定','操作紀錄'].includes(p),
+    操作員:(c,p)=>['查看賽事','查看報名','查看訂單','查看用戶','查看紀錄','手動推播','查看陣營'].includes(p),
+    客服:(c,p)=>['查看報名','查看訂單','查看用戶'].includes(p),
+  };
+  const [checks,setChecks]=React.useState(()=>{
+    const m={};
+    perms.forEach(({cat,items})=>items.forEach(p=>roles.forEach(r=>{m[`${r}:${p}`]=defaults[r](cat,p);})));
+    return m;
+  });
+  const toggle=(r,p)=>setChecks(c=>({...c,[`${r}:${p}`]:!c[`${r}:${p}`]}));
+  return <div style={{display:'flex',flexDirection:'column',gap:20}}>
+    <div className="panel">
+      <div className="panel-h"><span className="t">角色權限矩陣</span><button className="abtn abtn-g" style={{fontSize:12,marginLeft:'auto'}}>儲存設定</button></div>
+      <div style={{overflowX:'auto'}}>
+        <table className="adm-tbl" style={{minWidth:700}}>
+          <thead><tr><th style={{textAlign:'left'}}>功能</th>{roles.map(r=><th key={r} style={{textAlign:'center',minWidth:100}}>{r}</th>)}</tr></thead>
+          <tbody>{perms.map(({cat,items})=><React.Fragment key={cat}>
+            <tr style={{background:'var(--bg)'}}><td colSpan={roles.length+1} style={{fontWeight:700,fontSize:11,color:'var(--tx-dim)',padding:'10px 12px',textTransform:'uppercase',letterSpacing:1}}>{cat}</td></tr>
+            {items.map(p=><tr key={p}>
+              <td style={{paddingLeft:24,color:'var(--tx-dim)',fontSize:13}}>{p}</td>
+              {roles.map(r=><td key={r} style={{textAlign:'center'}}>
+                <input type="checkbox" checked={!!checks[`${r}:${p}`]} onChange={()=>r!=='超級管理員'&&toggle(r,p)} style={{accentColor:'var(--fug)',width:16,height:16,cursor:r==='超級管理員'?'not-allowed':'pointer'}} disabled={r==='超級管理員'}/>
+              </td>)}
+            </tr>)}
+          </React.Fragment>)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>;
+}
+
+/* ── 多語言管理 ── */
+function I18nAdmin(){
+  const [lang,setLang]=React.useState('en');
+  const [search,setSearch]=React.useState('');
+  const keys=[
+    {key:'tab.races',zh:'賽事',en:'Events',ja:'レース',cat:'導航'},
+    {key:'tab.wheel',zh:'里程',en:'Miles',ja:'マイル',cat:'導航'},
+    {key:'tab.me',zh:'我的',en:'Me',ja:'マイページ',cat:'導航'},
+    {key:'status.live',zh:'進行中',en:'Live',ja:'開催中',cat:'狀態'},
+    {key:'status.open',zh:'報名中',en:'Open',ja:'受付中',cat:'狀態'},
+    {key:'status.soon',zh:'即將開始',en:'Coming Soon',ja:'まもなく開始',cat:'狀態'},
+    {key:'status.done',zh:'已完賽',en:'Finished',ja:'終了',cat:'狀態'},
+    {key:'btn.register',zh:'立即報名',en:'Register Now',ja:'今すぐ登録',cat:'按鈕'},
+    {key:'btn.back',zh:'返回',en:'Back',ja:'戻る',cat:'按鈕'},
+    {key:'btn.confirm',zh:'確認',en:'Confirm',ja:'確認',cat:'按鈕'},
+    {key:'label.lang',zh:'語言',en:'Language',ja:'言語',cat:'設定'},
+    {key:'label.zh',zh:'中文',en:'Chinese',ja:'中国語',cat:'設定'},
+    {key:'label.en',zh:'英文',en:'English',ja:'英語',cat:'設定'},
+    {key:'label.ja',zh:'日文',en:'Japanese',ja:'日本語',cat:'設定'},
+    {key:'race.detail',zh:'賽事詳情',en:'Race Details',ja:'レース詳細',cat:'賽事'},
+    {key:'race.group',zh:'組別',en:'Group',ja:'グループ',cat:'賽事'},
+    {key:'mission.daily',zh:'每日任務',en:'Daily Mission',ja:'デイリーミッション',cat:'任務'},
+    {key:'mission.rescue',zh:'救援任務',en:'Rescue Mission',ja:'救助ミッション',cat:'任務'},
+  ];
+  const cats=['全部',...new Set(keys.map(k=>k.cat))];
+  const [cat,setCat]=React.useState('全部');
+  const langs=['en','ja'];
+  const lname={en:'英文',ja:'日文'};
+  const [edits,setEdits]=React.useState({});
+  const list=keys.filter(k=>(cat==='全部'||k.cat===cat)&&(!search||k.key.includes(search)||k.zh.includes(search)));
+  const completion=lang=>{
+    const filled=keys.filter(k=>k[lang]&&k[lang].trim()).length;
+    return Math.round(filled/keys.length*100);
+  };
+  return <div style={{display:'flex',flexDirection:'column',gap:20}}>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16}}>
+      {['zh',...langs].map(l=>{
+        const pct=l==='zh'?100:completion(l);
+        return <div className="kpi" key={l}>
+          <div className="l">{l==='zh'?'中文（基準）':lname[l]}</div>
+          <div className="v" style={{color:'var(--fug)'}}>{pct}%</div>
+          <div style={{height:4,borderRadius:999,background:'var(--line)',marginTop:8}}>
+            <div style={{width:pct+'%',height:'100%',borderRadius:999,background:'var(--fug)'}}/>
+          </div>
+          <div className="d" style={{color:'var(--tx-dim)',marginTop:4}}>{pct===100?'已完成翻譯':`${keys.length-Math.round(pct/100*keys.length)} 個待翻譯`}</div>
+        </div>;
+      })}
+    </div>
+    <div className="panel">
+      <div className="panel-h" style={{flexWrap:'wrap',gap:8}}>
+        <span className="t">翻譯詞條</span>
+        <div style={{display:'flex',gap:6}}>
+          {langs.map(l=><button key={l} className={'abtn '+(lang===l?'abtn-g':'')} style={{fontSize:12}} onClick={()=>setLang(l)}>{lname[l]}</button>)}
+        </div>
+        <div style={{display:'flex',gap:6}}>
+          {cats.map(c=><button key={c} className={'abtn '+(cat===c?'abtn-g':'')} style={{fontSize:11}} onClick={()=>setCat(c)}>{c}</button>)}
+        </div>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="搜尋 key 或中文…" style={{background:'var(--card)',border:'1px solid var(--line)',borderRadius:8,padding:'5px 10px',color:'var(--tx)',fontSize:13,width:180}}/>
+      </div>
+      <table className="adm-tbl">
+        <thead><tr><th>Key</th><th>分類</th><th>中文（基準）</th><th>{lname[lang]}</th><th>狀態</th></tr></thead>
+        <tbody>{list.map((k,i)=>{
+          const val=edits[`${lang}:${k.key}`]??k[lang]??'';
+          const missing=!k[lang];
+          return <tr key={i}>
+            <td className="mono" style={{fontSize:11,color:'var(--tx-dim)'}}>{k.key}</td>
+            <td><span className="tag">{k.cat}</span></td>
+            <td style={{fontWeight:600}}>{k.zh}</td>
+            <td><input value={val} onChange={e=>setEdits(ed=>({...ed,[`${lang}:${k.key}`]:e.target.value}))} style={{background:'var(--card)',border:'1px solid var(--line)',borderRadius:6,padding:'4px 8px',color:'var(--tx)',fontSize:13,width:'100%'}}/></td>
+            <td><span className="tag" style={{color:missing?'var(--hunt)':'var(--fug)',borderColor:(missing?'var(--hunt)':'var(--fug)')+'44'}}>{missing?'待翻譯':'已完成'}</span></td>
+          </tr>;
+        })}</tbody>
+      </table>
+      <div style={{padding:'12px 0 0',display:'flex',justifyContent:'flex-end'}}><button className="abtn abtn-g">儲存翻譯</button></div>
+    </div>
+  </div>;
+}
+
+/* ── Admin Shell ── */
+const NAV=[
+  {grp:'營運',items:[{k:'dash',t:'數據總覽',icon:'target'},{k:'races',t:'賽事管理',icon:'flag'},{k:'signups',t:'報名管理',icon:'user'},{k:'teams',t:'跑團管理',icon:'rescue'},{k:'notifications',t:'推播通知',icon:'bell'}]},
+  {grp:'遊戲設定',items:[{k:'factions',t:'陣營設定',icon:'stealth'},{k:'missions',t:'每日任務',icon:'chase'},{k:'stores',t:'打卡門市',icon:'pin'},{k:'mileage',t:'里程規則',icon:'route'},{k:'wheel',t:'轉盤獎勵',icon:'wheel'},{k:'stickers',t:'集點卡 & 公仔',icon:'id'}]},
+  {grp:'系統管理',items:[{k:'orders',t:'訂單管理',icon:'receipt'},{k:'audit',t:'操作紀錄',icon:'bolt'},{k:'admins',t:'管理員管理',icon:'user'},{k:'permissions',t:'權限管理',icon:'lock'},{k:'i18n',t:'多語言管理',icon:'globe'}]},
+];
+const TITLES={
+  dash:['數據總覽','出勤、完成率與戰局平衡'],
+  races:['賽事管理','建立與編輯雲端賽事'],
+  signups:['報名管理','參賽者與組別'],
+  teams:['跑團管理','公會戰排名與跑團設定'],
+  notifications:['推播通知','晚間戰報排程與手動推播'],
+  factions:['陣營設定','陣營分配方式、比例目標與手動調整'],
+  missions:['每日任務','配置 7 日任務卡與救援規則'],
+  stores:['打卡門市','補給站與打卡點'],
+  mileage:['里程規則','里程銀行閾值、計算規則與積分概覽'],
+  wheel:['轉盤獎勵','獎項與中獎機率設定'],
+  stickers:['集點卡 & 公仔','九宮格集點卡與完賽公仔兌換'],
+  orders:['訂單管理','報名費收款紀錄與退款處理'],
+  audit:['操作紀錄','管理員操作歷史與安全審計'],
+  admins:['管理員管理','後台帳號新增、停用與角色指派'],
+  permissions:['權限管理','角色功能存取控制矩陣'],
+  i18n:['多語言管理','介面翻譯詞條 — 中文、英文、日文'],
+};
+const PAGE_COMP={dash:Dashboard,races:RacesAdmin,signups:SignupsAdmin,teams:TeamsAdmin,notifications:NotificationsAdmin,factions:FactionsAdmin,missions:MissionsAdmin,stores:StoresAdmin,mileage:MileageAdmin,wheel:WheelAdmin,stickers:StickersAdmin,orders:OrdersAdmin,audit:AuditAdmin,admins:AdminsAdmin,permissions:PermissionsAdmin,i18n:I18nAdmin};
+
+function AdminApp() {
+  const [page,setPage]=React.useState('dash'); const [t,sub]=TITLES[page]; const Comp=PAGE_COMP[page];
+  return (
+    <div className="adm">
+      <aside className="adm-side">
+        <div className="adm-logo"><div className="mark"><Icon name="bolt" size={18} color="#05140e"/></div><div><div style={{fontFamily:'var(--font-disp)',fontWeight:700,fontSize:15}}>DOR</div><div className="lbl" style={{fontSize:8}}>CONSOLE</div></div></div>
+        <nav className="adm-nav">
+          {NAV.map(g=><React.Fragment key={g.grp}><div className="grp">{g.grp}</div>{g.items.map(it=><a key={it.k} className={page===it.k?'on':''} onClick={()=>setPage(it.k)}><Icon name={it.icon} size={18} color={page===it.k?'var(--fug)':'var(--tx-dim)'}/>{it.t}</a>)}</React.Fragment>)}
+        </nav>
+        <div style={{marginTop:'auto',display:'flex',alignItems:'center',gap:10,padding:'10px',borderTop:'1px solid var(--line)'}}><div className="ph" style={{width:30,height:30,borderRadius:8}}>OP</div><div style={{fontSize:12.5}}>營運後台<div className="lbl" style={{fontSize:8,marginTop:1}}>admin@dor.run</div></div></div>
+      </aside>
+      <main className="adm-main">
+        <header className="adm-top">
+          <div style={{flex:1}}><div className="adm-h1" style={{fontSize:18}}>{t}</div></div>
+          <div className="tag g"><span style={{width:6,height:6,borderRadius:9,background:'var(--fug)',boxShadow:'var(--glow-fug)'}}/>獵人之夜 · 進行中</div>
+          <button className="abtn abtn-gh"><Icon name="bell" size={16}/></button>
+        </header>
+        <div className="adm-body">
+          <div style={{marginBottom:20}}><div className="adm-sub">{sub}</div></div>
+          <Comp/>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <ChromeWindow width={1320} height={860} url="console.dor.run/dashboard" tabs={[{title:'DOR Console'},{title:'分析'}]} activeIndex={0}>
+    <AdminApp/>
+  </ChromeWindow>
+);
+</script>
+</body>
+</html>

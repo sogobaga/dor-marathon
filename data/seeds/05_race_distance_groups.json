@@ -1,0 +1,23 @@
+[
+  { "group_id": "rdg-hunt-10k",    "race_id": "hunt2026",  "distance_km": 10.00, "entry_fee": 490, "quota": null, "sort_order": 1 },
+  { "group_id": "rdg-hunt-21k",    "race_id": "hunt2026",  "distance_km": 21.10, "entry_fee": 690, "quota": null, "sort_order": 2 },
+  { "group_id": "rdg-hunt-42k",    "race_id": "hunt2026",  "distance_km": 42.20, "entry_fee": 890, "quota": null, "sort_order": 3 },
+
+  { "group_id": "rdg-relay-10k",   "race_id": "relay2026", "distance_km": 10.00, "entry_fee": 490, "quota": null, "sort_order": 1 },
+  { "group_id": "rdg-relay-21k",   "race_id": "relay2026", "distance_km": 21.10, "entry_fee": 690, "quota": null, "sort_order": 2 },
+  { "group_id": "rdg-relay-42k",   "race_id": "relay2026", "distance_km": 42.20, "entry_fee": 890, "quota": null, "sort_order": 3 },
+
+  { "group_id": "rdg-signal-10k",  "race_id": "signal2026","distance_km": 10.00, "entry_fee": 390, "quota": null, "sort_order": 1 },
+  { "group_id": "rdg-signal-21k",  "race_id": "signal2026","distance_km": 21.10, "entry_fee": 590, "quota": null, "sort_order": 2 },
+
+  { "group_id": "rdg-spring-21k",  "race_id": "spring2026","distance_km": 21.10, "entry_fee": 690, "quota": null, "sort_order": 1 },
+  { "group_id": "rdg-spring-42k",  "race_id": "spring2026","distance_km": 42.20, "entry_fee": 890, "quota": null, "sort_order": 2 },
+
+  { "group_id": "rdg-winter-21k",  "race_id": "winter2025","distance_km": 21.10, "entry_fee": 690, "quota": null, "sort_order": 1 },
+  { "group_id": "rdg-winter-42k",  "race_id": "winter2025","distance_km": 42.20, "entry_fee": 890, "quota": null, "sort_order": 2 },
+
+  { "group_id": "rdg-auto-10k",    "race_id": "auto2025",  "distance_km": 10.00, "entry_fee": 490, "quota": null, "sort_order": 1 },
+  { "group_id": "rdg-auto-21k",    "race_id": "auto2025",  "distance_km": 21.10, "entry_fee": 690, "quota": null, "sort_order": 2 },
+
+  { "group_id": "rdg-sum-10k",     "race_id": "sum2025",   "distance_km": 10.00, "entry_fee": 390, "quota": null, "sort_order": 1 }
+]

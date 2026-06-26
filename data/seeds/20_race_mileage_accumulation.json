@@ -1,0 +1,90 @@
+[
+  {
+    "accum_id": "rma-yifan-hunt",
+    "user_id": "usr-yifan",
+    "race_id": "hunt2026",
+    "total_km": 12.40,
+    "goal_km": 21.10,
+    "spins_earned": 0,
+    "spins_used": 0,
+    "is_finished": 0,
+    "finished_at": null
+  },
+  {
+    "accum_id": "rma-ziachen-hunt",
+    "user_id": "usr-ziachen",
+    "race_id": "hunt2026",
+    "total_km": 17.50,
+    "goal_km": 42.20,
+    "spins_earned": 0,
+    "spins_used": 0,
+    "is_finished": 0,
+    "finished_at": null
+  },
+  {
+    "accum_id": "rma-siyu-hunt",
+    "user_id": "usr-siyu",
+    "race_id": "hunt2026",
+    "total_km": 8.80,
+    "goal_km": 10.00,
+    "spins_earned": 0,
+    "spins_used": 0,
+    "is_finished": 0,
+    "finished_at": null
+  },
+  {
+    "accum_id": "rma-yaowen-hunt",
+    "user_id": "usr-yaowen",
+    "race_id": "hunt2026",
+    "total_km": 7.00,
+    "goal_km": 21.10,
+    "spins_earned": 0,
+    "spins_used": 0,
+    "is_finished": 0,
+    "finished_at": null
+  },
+  {
+    "accum_id": "rma-yifan-spring",
+    "user_id": "usr-yifan",
+    "race_id": "spring2026",
+    "total_km": 42.00,
+    "goal_km": 42.20,
+    "spins_earned": 0,
+    "spins_used": 0,
+    "is_finished": 1,
+    "finished_at": "2026-03-08 18:30:00"
+  },
+  {
+    "accum_id": "rma-yifan-winter",
+    "user_id": "usr-yifan",
+    "race_id": "winter2025",
+    "total_km": 21.00,
+    "goal_km": 21.10,
+    "spins_earned": 0,
+    "spins_used": 0,
+    "is_finished": 1,
+    "finished_at": "2025-12-20 19:45:00"
+  },
+  {
+    "accum_id": "rma-yifan-auto",
+    "user_id": "usr-yifan",
+    "race_id": "auto2025",
+    "total_km": 21.00,
+    "goal_km": 21.10,
+    "spins_earned": 0,
+    "spins_used": 0,
+    "is_finished": 1,
+    "finished_at": "2025-10-11 17:20:00"
+  },
+  {
+    "accum_id": "rma-yifan-sum",
+    "user_id": "usr-yifan",
+    "race_id": "sum2025",
+    "total_km": 10.00,
+    "goal_km": 10.00,
+    "spins_earned": 1,
+    "spins_used": 0,
+    "is_finished": 1,
+    "finished_at": "2025-07-29 07:05:00"
+  }
+]

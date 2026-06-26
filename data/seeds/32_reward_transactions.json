@@ -1,0 +1,102 @@
+[
+  {
+    "tx_id": "rt-yifan-spin-earned-sum",
+    "user_id": "usr-yifan",
+    "race_id": "sum2025",
+    "tx_type": "spin_earned",
+    "amount": 1,
+    "description": "累積 10 km，獲得轉盤機會",
+    "ref_id": "rma-yifan-sum",
+    "created_at": "2025-07-29 07:05:00"
+  },
+  {
+    "tx_id": "rt-ziachen-spin-earned-001",
+    "user_id": "usr-ziachen",
+    "race_id": "hunt2026",
+    "tx_type": "spin_earned",
+    "amount": 1,
+    "description": "累積 50 km，獲得轉盤機會",
+    "ref_id": "rma-ziachen-hunt",
+    "created_at": "2026-06-13 21:00:00"
+  },
+  {
+    "tx_id": "rt-ziachen-spin-used-001",
+    "user_id": "usr-ziachen",
+    "race_id": "hunt2026",
+    "tx_type": "spin_used",
+    "amount": -1,
+    "description": "使用轉盤 → 九宮格集點卡 ×1",
+    "ref_id": "spin-ziachen-001",
+    "created_at": "2026-06-13 21:00:00"
+  },
+  {
+    "tx_id": "rt-ziachen-spin-earned-002",
+    "user_id": "usr-ziachen",
+    "race_id": "hunt2026",
+    "tx_type": "spin_earned",
+    "amount": 1,
+    "description": "累積 100 km，獲得轉盤機會",
+    "ref_id": "rma-ziachen-hunt",
+    "created_at": "2026-06-14 21:05:00"
+  },
+  {
+    "tx_id": "rt-ziachen-spin-used-002",
+    "user_id": "usr-ziachen",
+    "race_id": "hunt2026",
+    "tx_type": "spin_used",
+    "amount": -1,
+    "description": "使用轉盤 → LINE Points ×50",
+    "ref_id": "spin-ziachen-002",
+    "created_at": "2026-06-14 21:05:00"
+  },
+  {
+    "tx_id": "rt-ziachen-line-001",
+    "user_id": "usr-ziachen",
+    "race_id": "hunt2026",
+    "tx_type": "line_points",
+    "amount": 50,
+    "description": "轉盤獎勵：LINE Points ×50",
+    "ref_id": "spin-ziachen-002",
+    "created_at": "2026-06-14 21:05:00"
+  },
+  {
+    "tx_id": "rt-siyu-spin-earned-001",
+    "user_id": "usr-siyu",
+    "race_id": "hunt2026",
+    "tx_type": "spin_earned",
+    "amount": 4,
+    "description": "累積 50/100/150/200 km，獲得轉盤機會 ×4",
+    "ref_id": "rma-siyu-hunt",
+    "created_at": "2026-06-12 22:00:00"
+  },
+  {
+    "tx_id": "rt-siyu-spin-used-all",
+    "user_id": "usr-siyu",
+    "race_id": "hunt2026",
+    "tx_type": "spin_used",
+    "amount": -4,
+    "description": "使用全部 4 次轉盤",
+    "ref_id": null,
+    "created_at": "2026-06-13 22:00:00"
+  },
+  {
+    "tx_id": "rt-siyu-line-001",
+    "user_id": "usr-siyu",
+    "race_id": "hunt2026",
+    "tx_type": "line_points",
+    "amount": 100,
+    "description": "轉盤獎勵：LINE Points ×100",
+    "ref_id": "spin-siyu-003",
+    "created_at": "2026-06-12 22:12:00"
+  },
+  {
+    "tx_id": "rt-yifan-checkin-001",
+    "user_id": "usr-yifan",
+    "race_id": "hunt2026",
+    "tx_type": "checkin",
+    "amount": 0,
+    "description": "信義門市打卡，取得集點貼紙",
+    "ref_id": "ci-yifan-hunt-s1",
+    "created_at": "2026-06-14 20:02:00"
+  }
+]

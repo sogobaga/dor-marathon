@@ -1,0 +1,6 @@
+[
+  { "club_id": "club-relay-c1", "race_id": "relay2026", "name": "台北夜行者",   "sort_order": 1 },
+  { "club_id": "club-relay-c2", "race_id": "relay2026", "name": "高雄海岸騎士", "sort_order": 2 },
+  { "club_id": "club-relay-c3", "race_id": "relay2026", "name": "台中節拍跑者", "sort_order": 3 },
+  { "club_id": "club-relay-c4", "race_id": "relay2026", "name": "新竹晨曦跑者", "sort_order": 4 }
+]
