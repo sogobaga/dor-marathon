@@ -99,6 +99,21 @@ export const racesApi = {
   get: (slug: string) => request<Race>(`/races/${slug}`),
 }
 
+// --- Admin: Races ---
+
+export const adminRacesApi = {
+  list: (token: string) =>
+    request<{ races: Race[] }>('/admin/races', { headers: withAuth(token) }),
+  get: (token: string, id: string) =>
+    request<{ race: Race }>(`/admin/races/${id}`, { headers: withAuth(token) }),
+  update: (token: string, id: string, race: Race) =>
+    request<{ race: Race }>(`/admin/races/${id}`, {
+      method: 'PUT',
+      headers: withAuth(token),
+      body: JSON.stringify(race),
+    }),
+}
+
 // --- WebSocket helper ---
 
 export function createRaceSocket(raceID: string, accessToken: string): WebSocket {

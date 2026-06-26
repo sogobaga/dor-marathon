@@ -76,6 +76,36 @@ func (r *Repository) UpdateStatus(ctx context.Context, raceID, status string) er
 	return err
 }
 
+// Update 更新賽事所有可編輯欄位（admin 用），不動 review_status / created_by
+func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
+	cfgBytes, err := configToBytes(race.Config)
+	if err != nil {
+		return nil, fmt.Errorf("marshal config: %w", err)
+	}
+
+	dist32 := make([]int32, len(race.Distances))
+	for i, d := range race.Distances {
+		dist32[i] = int32(d)
+	}
+
+	_, err = r.db.Exec(ctx, `
+		UPDATE races SET
+			slug=$1, title=$2, subtitle=$3, world=$4, blurb=$5, hero_image_url=$6,
+			status=$7, distances=$8, group_type=$9, group_mode=$10,
+			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
+			updated_at=NOW()
+		WHERE id=$16`,
+		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
+		race.Status, dist32, race.GroupType, race.GroupMode,
+		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
+		race.ID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update race: %w", err)
+	}
+	return r.GetByID(ctx, race.ID)
+}
+
 // Create 新增賽事（admin 用）
 func (r *Repository) Create(ctx context.Context, race *Race) (*Race, error) {
 	cfgBytes, err := configToBytes(race.Config)

@@ -34,6 +34,8 @@ func (h *Handler) AdminRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.AdminListRaces)
 	r.Post("/", h.AdminCreateRace)
+	r.Get("/{raceID}", h.AdminGetRace)
+	r.Put("/{raceID}", h.AdminUpdateRace)
 	r.Patch("/{raceID}/status", h.AdminUpdateStatus)
 	r.Get("/{raceID}/signups", h.AdminListSignups)
 	return r
@@ -183,6 +185,50 @@ func (h *Handler) AdminCreateRace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusCreated, map[string]any{"race": created})
+}
+
+// GET /api/v1/admin/races/:raceID — 管理員取得單一賽事（含未審核），供編輯表單載入
+func (h *Handler) AdminGetRace(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	race, _, err := h.svc.GetDetail(r.Context(), raceID, "")
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get race")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"race": race})
+}
+
+// PUT /api/v1/admin/races/:raceID — 更新賽事所有可編輯欄位
+func (h *Handler) AdminUpdateRace(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	var race Race
+	if err := json.NewDecoder(r.Body).Decode(&race); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if race.Slug == "" || race.Title == "" || len(race.Distances) == 0 {
+		respondErr(w, http.StatusBadRequest, "slug, title, distances are required")
+		return
+	}
+	validStatuses := map[string]bool{"soon": true, "open": true, "live": true, "done": true}
+	if race.Status != "" && !validStatuses[race.Status] {
+		respondErr(w, http.StatusBadRequest, "invalid status")
+		return
+	}
+	updated, err := h.svc.UpdateRace(r.Context(), raceID, &race)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to update race")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"race": updated})
 }
 
 // PATCH /api/v1/admin/races/:raceID/status

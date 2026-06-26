@@ -249,6 +249,22 @@ func (s *Service) UpdateRaceStatus(ctx context.Context, raceID, status string) e
 	return s.repo.UpdateStatus(ctx, raceID, status)
 }
 
+// UpdateRace 更新賽事可編輯欄位（admin 用）。status 留空則沿用原值。
+func (s *Service) UpdateRace(ctx context.Context, raceID string, race *Race) (*Race, error) {
+	existing, err := s.repo.GetByID(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, ErrRaceNotFound
+	}
+	race.ID = raceID
+	if race.Status == "" {
+		race.Status = existing.Status
+	}
+	return s.repo.Update(ctx, race)
+}
+
 // CreateRace 建立新賽事（admin 用，直接 approved）
 func (s *Service) CreateRace(ctx context.Context, race *Race) (*Race, error) {
 	race.ReviewStatus = "approved"
