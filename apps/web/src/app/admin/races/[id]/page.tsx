@@ -95,7 +95,7 @@ export default function AdminRaceEdit() {
   if (!race) return <Centered color="var(--tx-dim)">載入中…</Centered>
 
   return (
-    <div style={{ maxWidth: 640, margin: '0 auto', padding: '32px 24px 60px' }}>
+    <div style={{ maxWidth: 640, margin: '0 auto' }}>
       <Link href="/admin/races" style={{ color: 'var(--tx-dim)', fontSize: 13, textDecoration: 'none' }}>
         ← 返回賽事列表
       </Link>
@@ -180,7 +180,7 @@ function Row({ children }: { children: React.ReactNode }) {
 }
 
 function Centered({ children, color = 'var(--hunt)' }: { children: React.ReactNode; color?: string }) {
-  return <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', color }}>{children}</div>
+  return <div style={{ textAlign: 'center', padding: '60px 0', color }}>{children}</div>
 }
 
 const inp: React.CSSProperties = {

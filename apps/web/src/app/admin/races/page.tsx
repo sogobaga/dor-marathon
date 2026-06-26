@@ -38,24 +38,8 @@ export default function AdminRacesList() {
   }, [router])
 
   return (
-    <div style={{ maxWidth: 880, margin: '0 auto', padding: '36px 24px 60px' }}>
-      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-        <div>
-          <div style={{ fontSize: 11, letterSpacing: '.18em', color: 'var(--fug)', fontWeight: 600 }}>
-            DOR · CONSOLE
-          </div>
-          <h1 style={{ margin: '6px 0 0', fontSize: 24, fontWeight: 800 }}>賽事管理</h1>
-        </div>
-        <button
-          onClick={() => {
-            clearToken()
-            router.replace('/admin/login')
-          }}
-          style={ghostBtn}
-        >
-          登出
-        </button>
-      </header>
+    <div>
+      <h1 style={{ margin: '0 0 20px', fontSize: 24, fontWeight: 800 }}>賽事管理</h1>
 
       {err && <div style={{ color: 'var(--hunt)', padding: 20 }}>{err}</div>}
       {!races && !err && <div style={{ color: 'var(--tx-dim)', padding: 20 }}>載入中…</div>}
@@ -95,14 +79,4 @@ export default function AdminRacesList() {
       )}
     </div>
   )
-}
-
-const ghostBtn: React.CSSProperties = {
-  background: 'rgba(255,255,255,.05)',
-  color: 'var(--tx)',
-  border: '1px solid var(--line-2)',
-  borderRadius: 10,
-  padding: '8px 14px',
-  cursor: 'pointer',
-  fontSize: 13,
 }
