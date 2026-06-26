@@ -54,7 +54,7 @@ services:
     environment:
       # DATABASE_URL 可由根目錄 .env 覆寫（指向雲端 DB，如 Neon）；預設為本地 Postgres
       - DATABASE_URL=${DATABASE_URL:-postgres://dor:dor_dev_secret@postgres:5432/dor_db?sslmode=disable}
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - JWT_SECRET=dev_jwt_secret_change_in_production
       - ENV=development
     volumes:
@@ -73,7 +73,7 @@ services:
     environment:
       # DATABASE_URL 可由根目錄 .env 覆寫（指向雲端 DB，如 Neon）；預設為本地 Postgres
       - DATABASE_URL=${DATABASE_URL:-postgres://dor:dor_dev_secret@postgres:5432/dor_db?sslmode=disable}
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - ENV=development
     volumes:
       - ./services/worker:/app
