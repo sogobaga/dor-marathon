@@ -17,6 +17,26 @@ export interface User {
   total_km: number
 }
 
+export interface Race {
+  id: string
+  slug: string
+  title: string
+  subtitle: string
+  world: string
+  blurb: string
+  hero_image_url: string
+  status: 'live' | 'open' | 'soon' | 'done'
+  distances: number[]
+  group_type: string
+  group_mode: string
+  slots_total: number
+  entry_fee: number
+  start_date: string
+  end_date: string
+  review_status: string
+  created_at: string
+}
+
 class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message)
@@ -70,6 +90,13 @@ export const authApi = {
 
   me: (token: string) =>
     request<User>('/auth/me', { headers: withAuth(token) }),
+}
+
+// --- Races ---
+
+export const racesApi = {
+  list: () => request<{ races: Race[] }>('/races'),
+  get: (slug: string) => request<Race>(`/races/${slug}`),
 }
 
 // --- WebSocket helper ---

@@ -75,18 +75,11 @@ table.adm-tbl{width:100%;border-collapse:collapse;font-size:13.5px;}
 .field input,.field select{background:var(--bg-1);border:1px solid var(--line-2);border-radius:10px;padding:10px 12px;color:var(--tx);font-family:var(--font-body);font-size:14px;}
 .field input:focus,.field select:focus{outline:none;border-color:var(--fug);}
 
-.stage{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 16px;background:radial-gradient(60% 50% at 50% 0%,#131c24 0%,transparent 60%),#0a0b0e;}
-.switch{position:fixed;top:18px;right:18px;z-index:100;display:flex;gap:8px;}
-.switch a{text-decoration:none;font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;padding:8px 13px;border-radius:999px;border:1px solid var(--line-2);color:var(--tx-dim);background:rgba(255,255,255,.04);display:inline-flex;align-items:center;gap:6px;}
-.switch a.on{color:var(--fug);border-color:rgba(45,229,154,.4);background:rgba(45,229,154,.1);}
-.switch a:hover{color:var(--tx);}
+.stage{height:100vh;background:var(--bg-1);}
+#root{height:100%;}
 </style>
 </head>
 <body class="dor-board">
-<nav class="switch">
-  <a href="DOR App.html">↗ App 原型</a>
-  <a class="on" href="DOR Admin.html">● 營運後台</a>
-</nav>
 <div class="stage"><div id="root"></div></div>
 
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
@@ -163,27 +156,6 @@ function Icon({ name, size=24, color='currentColor', sw=1.8 }) {
     lock:<g {...p}><rect x="5" y="11" width="14" height="9" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></g>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" style={{display:'block',flexShrink:0}}>{paths[name]||null}</svg>;
-}
-
-/* ── Chrome Frame ── */
-const CC={barBg:'#202124',tabBg:'#35363a',text:'#e8eaed',dim:'#9aa0a6',urlBg:'#282a2d'};
-function ChromeWindow({ tabs=[{title:'New Tab'}], activeIndex=0, url='example.com', width=900, height=600, children }) {
-  return (
-    <div style={{width,height,borderRadius:10,overflow:'hidden',boxShadow:'0 24px 80px rgba(0,0,0,0.35),0 0 0 1px rgba(0,0,0,0.1)',display:'flex',flexDirection:'column',background:CC.tabBg}}>
-      <div style={{display:'flex',alignItems:'center',height:44,background:CC.barBg,paddingRight:8}}>
-        <div style={{display:'flex',gap:8,padding:'0 14px'}}>{['#ff5f57','#febc2e','#28c840'].map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:'50%',background:c}}/>)}</div>
-        <div style={{display:'flex',alignItems:'flex-end',height:'100%',paddingLeft:4,flex:1}}>
-          {tabs.map((t,i)=><div key={i} style={{position:'relative',height:34,alignSelf:'flex-end',padding:'0 12px',display:'flex',alignItems:'center',gap:8,background:i===activeIndex?CC.tabBg:'transparent',borderRadius:'8px 8px 0 0',minWidth:120,maxWidth:220,fontFamily:'system-ui,sans-serif',fontSize:12,color:i===activeIndex?CC.text:CC.dim}}><div style={{width:14,height:14,borderRadius:'50%',background:'#5f6368',flexShrink:0}}/><span style={{flex:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{t.title}</span></div>)}
-        </div>
-      </div>
-      <div style={{height:40,background:CC.tabBg,display:'flex',alignItems:'center',gap:4,padding:'0 8px'}}>
-        <div style={{width:28,height:28,display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{width:16,height:16,borderRadius:'50%',background:CC.dim,opacity:0.4}}/></div>
-        <div style={{flex:1,height:30,borderRadius:15,background:CC.urlBg,display:'flex',alignItems:'center',gap:8,padding:'0 14px',margin:'0 6px'}}><div style={{width:12,height:12,borderRadius:'50%',background:CC.dim,opacity:0.4}}/><span style={{flex:1,color:CC.text,fontSize:13,fontFamily:'system-ui,sans-serif'}}>{url}</span></div>
-        <div style={{width:28,height:28,display:'flex',alignItems:'center',justifyContent:'center'}}><div style={{width:16,height:16,borderRadius:'50%',background:CC.dim,opacity:0.4}}/></div>
-      </div>
-      <div style={{flex:1,overflow:'auto'}}>{children}</div>
-    </div>
-  );
 }
 
 /* ── Admin Helpers ── */
@@ -901,9 +873,7 @@ function AdminApp() {
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <ChromeWindow width={1320} height={860} url="console.dor.run/dashboard" tabs={[{title:'DOR Console'},{title:'分析'}]} activeIndex={0}>
-    <AdminApp/>
-  </ChromeWindow>
+  <AdminApp/>
 );
 </script>
 </body>

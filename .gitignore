@@ -11,6 +11,8 @@ services/*/vendor/
 apps/*/node_modules/
 apps/*/.next/
 apps/*/out/
+apps/*/next-env.d.ts
+apps/*/*.tsbuildinfo
 
 # OS
 .DS_Store
