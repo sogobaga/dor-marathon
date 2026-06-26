@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // 生產容器化：輸出 standalone（自帶最小 node server，映像更小）
+  output: 'standalone',
   // 重寫 API 請求到 Go 後端（開發環境）
   async rewrites() {
     return [

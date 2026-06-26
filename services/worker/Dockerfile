@@ -6,12 +6,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /dor-api ./cmd/api/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /dor-worker ./main.go
 
 # 最終映像：distroless（無 shell，攻擊面最小）
 FROM gcr.io/distroless/static-debian12
 
-COPY --from=builder /dor-api /dor-api
+COPY --from=builder /dor-worker /dor-worker
 
-EXPOSE 8080
-ENTRYPOINT ["/dor-api"]
+ENTRYPOINT ["/dor-worker"]
