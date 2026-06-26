@@ -60,7 +60,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 // POST /api/v1/auth/login
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email    string `json:"email"    validate:"required,email"`
+		// 登入識別：可為 email 或純帳號（如 admin），故不限定 email 格式
+		Email    string `json:"email"    validate:"required"`
 		Password string `json:"password" validate:"required"`
 	}
 
