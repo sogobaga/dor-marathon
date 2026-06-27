@@ -57,6 +57,8 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - JWT_SECRET=dev_jwt_secret_change_in_production
       - ENV=development
+      # Google 登入（選用）：由根目錄 .env 帶入；未設時 Google 登入回 503
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
     volumes:
       - ./services/api:/app
     depends_on:
