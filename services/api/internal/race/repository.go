@@ -556,6 +556,23 @@ func defaultStr(s, def string) string {
 	return s
 }
 
+// CountRegistrations 計算某賽事的報名筆數（刪除前檢查用）
+func (r *Repository) CountRegistrations(ctx context.Context, raceID string) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM registrations WHERE race_id=$1`, raceID).Scan(&n)
+	return n, err
+}
+
+// Delete 刪除賽事。子表（race_groups/race_addons/race_supplies/race_group_standings）
+// 由 FK ON DELETE CASCADE 連帶清除；呼叫方須先確認無報名等阻擋資料。
+func (r *Repository) Delete(ctx context.Context, raceID string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM races WHERE id=$1`, raceID)
+	if err != nil {
+		return fmt.Errorf("delete race: %w", err)
+	}
+	return nil
+}
+
 // --- Registration ---
 
 // GetRegistration 查詢使用者在某賽事的報名

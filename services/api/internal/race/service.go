@@ -18,6 +18,7 @@ var (
 	ErrRegistrationClosed = errors.New("registration is not open")
 	ErrSoldOut          = errors.New("race is sold out")
 	ErrInvalidDistance  = errors.New("invalid distance for this race")
+	ErrRaceHasRegistrations = errors.New("race has registrations and cannot be deleted")
 )
 
 type Service struct {
@@ -499,6 +500,25 @@ func (s *Service) CreatePreset(ctx context.Context, name string, distanceKm *flo
 func (s *Service) CreateRaceWithReview(ctx context.Context, race *Race, reviewStatus string) (*Race, error) {
 	race.ReviewStatus = reviewStatus
 	return s.repo.Create(ctx, race)
+}
+
+// DeleteRace 刪除賽事（admin 用）。有報名的賽事不可刪，其餘連同子資料一併移除。
+func (s *Service) DeleteRace(ctx context.Context, raceID string) error {
+	existing, err := s.repo.GetByID(ctx, raceID)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrRaceNotFound
+	}
+	n, err := s.repo.CountRegistrations(ctx, raceID)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return ErrRaceHasRegistrations
+	}
+	return s.repo.Delete(ctx, raceID)
 }
 
 // UpdateFactionKm 更新陣營累積里程（activity upload 後呼叫）

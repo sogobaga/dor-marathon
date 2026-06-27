@@ -221,6 +221,11 @@ export const adminRacesApi = {
       headers: withAuth(token),
       body: JSON.stringify(payload),
     }),
+  remove: (token: string, id: string) =>
+    request<void>(`/admin/races/${id}`, {
+      method: 'DELETE',
+      headers: withAuth(token),
+    }),
 }
 
 // --- 個人資訊 (Profile) ---

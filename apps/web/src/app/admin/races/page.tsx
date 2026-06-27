@@ -20,6 +20,24 @@ export default function AdminRacesList() {
   const [err, setErr] = useState('')
   const [showNew, setShowNew] = useState(false)
   const [token, setTokenState] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  async function handleDelete(e: React.MouseEvent, r: Race) {
+    e.preventDefault() // 阻止 Link 導航
+    e.stopPropagation()
+    if (!token) return
+    if (!window.confirm(`確定要刪除賽事「${r.title}」？此動作無法復原。`)) return
+    setErr('')
+    setDeletingId(r.id)
+    try {
+      await adminRacesApi.remove(token, r.id)
+      setRaces((rs) => (rs ? rs.filter((x) => x.id !== r.id) : rs))
+    } catch (e: any) {
+      setErr(e?.message || '刪除失敗')
+    } finally {
+      setDeletingId(null)
+    }
+  }
 
   const load = useCallback(() => {
     const t = getToken()
@@ -103,6 +121,17 @@ export default function AdminRacesList() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>{STATUS_LABEL[r.status] ?? r.status}</span>
                 <span style={{ color: 'var(--fug)', fontSize: 13 }}>編輯 →</span>
+                <button
+                  onClick={(e) => handleDelete(e, r)}
+                  disabled={deletingId === r.id}
+                  title="刪除賽事"
+                  style={{
+                    background: 'rgba(255,80,80,.08)', color: 'var(--hunt)', border: '1px solid rgba(255,80,80,.25)',
+                    borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+                  }}
+                >
+                  {deletingId === r.id ? '刪除中…' : '刪除'}
+                </button>
               </div>
             </Link>
           ))}

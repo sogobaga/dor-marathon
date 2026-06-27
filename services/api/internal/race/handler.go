@@ -54,6 +54,7 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Post("/", h.AdminCreateRace)
 	r.Get("/{raceID}", h.AdminGetRace)
 	r.Put("/{raceID}", h.AdminUpdateRace)
+	r.Delete("/{raceID}", h.AdminDeleteRace)
 	r.Patch("/{raceID}/status", h.AdminUpdateStatus)
 	r.Get("/{raceID}/signups", h.AdminListSignups)
 	return r
@@ -283,6 +284,25 @@ func (h *Handler) AdminUpdateRace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"race": detail})
+}
+
+// DELETE /api/v1/admin/races/:raceID — 刪除賽事（有報名則擋下）
+func (h *Handler) AdminDeleteRace(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	err := h.svc.DeleteRace(r.Context(), raceID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if errors.Is(err, ErrRaceHasRegistrations) {
+		respondErr(w, http.StatusConflict, "賽事已有報名，無法刪除")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to delete race")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // PATCH /api/v1/admin/races/:raceID/status
