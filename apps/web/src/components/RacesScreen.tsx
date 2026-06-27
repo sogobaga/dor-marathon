@@ -1,7 +1,8 @@
 'use client'
 
 import useSWR from 'swr'
-import { racesApi, type Race } from '@/lib/api'
+import { racesApi, type Race, type MyRegLite } from '@/lib/api'
+import { getUserToken } from '@/lib/userAuth'
 import UserAuthBar from './UserAuthBar'
 
 const STATUS: Record<Race['status'], { label: string; color: string }> = {
@@ -29,7 +30,9 @@ export default function RacesScreen({
   onRegister?: (race: Race) => void
   onOpenProfile?: () => void
 }) {
-  const { data, error, isLoading } = useSWR('races', racesApi.list)
+  const token = getUserToken() || undefined
+  const { data, error, isLoading } = useSWR(['races', token], () => racesApi.list(token))
+  const regs = data?.registrations || {}
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
@@ -55,7 +58,7 @@ export default function RacesScreen({
         {data && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {data.races.map((r) => (
-              <RaceCard key={r.id} race={r} onOpenRanking={onOpenRanking} onRegister={onRegister} />
+              <RaceCard key={r.id} race={r} reg={regs[r.id]} onOpenRanking={onOpenRanking} onRegister={onRegister} />
             ))}
           </div>
         )}
@@ -66,10 +69,12 @@ export default function RacesScreen({
 
 function RaceCard({
   race,
+  reg,
   onOpenRanking,
   onRegister,
 }: {
   race: Race
+  reg?: MyRegLite
   onOpenRanking?: (race: Race) => void
   onRegister?: (race: Race) => void
 }) {
@@ -151,7 +156,13 @@ function RaceCard({
           {isCompetition && onOpenRanking && (
             <button onClick={() => onOpenRanking(race)} style={linkBtnStyle}>排行榜</button>
           )}
-          {canRegister && onRegister ? (
+          {reg ? (
+            reg.status === 'paid' ? (
+              <span style={{ color: 'var(--fug)', fontWeight: 700, fontSize: 13 }}>報名完成</span>
+            ) : (
+              <button onClick={() => onRegister?.(race)} style={payBtnStyle}>已報名，前往繳費</button>
+            )
+          ) : canRegister && onRegister ? (
             <button onClick={() => onRegister(race)} style={registerBtnStyle}>報名</button>
           ) : (
             <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{fmtFee(race.entry_fee)}</span>
@@ -173,5 +184,9 @@ const linkBtnStyle: React.CSSProperties = {
 }
 const registerBtnStyle: React.CSSProperties = {
   background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
+  borderRadius: 9, padding: '6px 14px', cursor: 'pointer', fontSize: 13,
+}
+const payBtnStyle: React.CSSProperties = {
+  background: 'var(--gold)', color: '#1a1200', fontWeight: 700, border: 'none',
   borderRadius: 9, padding: '6px 14px', cursor: 'pointer', fontSize: 13,
 }

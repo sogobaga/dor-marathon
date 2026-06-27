@@ -104,7 +104,15 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to list races")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"races": races})
+
+	resp := map[string]any{"races": races}
+	// 登入時附帶使用者各賽事報名狀態（race_id → {status, group_revealed}）
+	if userID, _ := r.Context().Value(auth.CtxKeyUserID).(string); userID != "" {
+		if regs, err := h.svc.GetUserRegistrations(r.Context(), userID); err == nil {
+			resp["registrations"] = regs
+		}
+	}
+	respondJSON(w, http.StatusOK, resp)
 }
 
 // GET /api/v1/races/:raceID — 公開賽事詳情（含分組/加購/物資）+ 報名狀態

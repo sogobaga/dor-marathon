@@ -45,6 +45,11 @@ func (s *Service) List(ctx context.Context, status string) ([]*Race, error) {
 	return s.repo.List(ctx, status)
 }
 
+// GetUserRegistrations 取得使用者所有報名的精簡狀態（賽事列表用）
+func (s *Service) GetUserRegistrations(ctx context.Context, userID string) (map[string]MyRegLite, error) {
+	return s.repo.GetUserRegistrations(ctx, userID)
+}
+
 // GetDetail 回傳賽事詳情 + 使用者的報名狀態
 func (s *Service) GetDetail(ctx context.Context, raceID, userID string) (*Race, *Registration, error) {
 	race, err := s.repo.GetByID(ctx, raceID)

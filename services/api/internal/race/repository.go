@@ -495,6 +495,27 @@ func (r *Repository) GetStandings(ctx context.Context, raceID string) ([]GroupSt
 	return standings, rows.Err()
 }
 
+// GetUserRegistrations 取得使用者所有報名的精簡狀態（race_id → 狀態），供賽事列表附帶
+func (r *Repository) GetUserRegistrations(ctx context.Context, userID string) (map[string]MyRegLite, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT race_id, status, group_revealed FROM registrations WHERE user_id=$1`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get user registrations: %w", err)
+	}
+	defer rows.Close()
+
+	m := map[string]MyRegLite{}
+	for rows.Next() {
+		var raceID string
+		var lite MyRegLite
+		if err := rows.Scan(&raceID, &lite.Status, &lite.GroupRevealed); err != nil {
+			return nil, err
+		}
+		m[raceID] = lite
+	}
+	return m, rows.Err()
+}
+
 // GetUserGroupID 取得使用者在某賽事報名的分組 id（無報名或未分組回空字串）
 func (r *Repository) GetUserGroupID(ctx context.Context, userID, raceID string) (string, error) {
 	var gid *string

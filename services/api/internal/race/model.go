@@ -207,6 +207,12 @@ type RegisterRequest struct {
 	Participant ParticipantInfo  `json:"participant"`
 }
 
+// MyRegLite 使用者在某賽事的精簡報名狀態（賽事列表附帶用）
+type MyRegLite struct {
+	Status        string `json:"status"`         // pending|paid|cancelled
+	GroupRevealed bool   `json:"group_revealed"`
+}
+
 // Order 訂單
 type Order struct {
 	ID         string `json:"id"`

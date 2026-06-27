@@ -228,8 +228,18 @@ export interface RegisterResult {
   group_revealed: boolean
 }
 
+export interface MyRegLite {
+  status: string // pending|paid|cancelled
+  group_revealed: boolean
+}
+
 export const racesApi = {
-  list: () => request<{ races: Race[] }>('/races'),
+  // 公開列表；帶 token 則附 registrations（race_id → 報名狀態）
+  list: (token?: string) =>
+    request<{ races: Race[]; registrations?: Record<string, MyRegLite> }>(
+      '/races',
+      token ? { headers: withAuth(token) } : undefined
+    ),
   // 公開賽事詳情（含分組/加購/物資）+ 報名狀態（帶 token）
   detail: (raceID: string, token?: string) =>
     request<{ race: RaceDetail; registration: RegistrationState | null }>(
