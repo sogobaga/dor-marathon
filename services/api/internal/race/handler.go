@@ -60,6 +60,97 @@ func (h *Handler) AdminRouter() http.Handler {
 	return r
 }
 
+// SignupRouter 後台報名管理路由（掛載在 /api/v1/admin/signups）
+func (h *Handler) SignupRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/", h.AdminListSignupRows)
+	r.Patch("/{regID}/pay", h.AdminMarkRegistrationPaid)
+	return r
+}
+
+// OrderRouter 後台訂單管理路由（掛載在 /api/v1/admin/orders）
+func (h *Handler) OrderRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/", h.AdminListOrders)
+	r.Get("/{orderID}", h.AdminGetOrder)
+	r.Patch("/{orderID}/pay", h.AdminMarkOrderPaid)
+	return r
+}
+
+// GET /api/v1/admin/signups?race_id=&q=
+func (h *Handler) AdminListSignupRows(w http.ResponseWriter, r *http.Request) {
+	raceID := r.URL.Query().Get("race_id")
+	if raceID == "" {
+		respondErr(w, http.StatusBadRequest, "race_id is required")
+		return
+	}
+	rows, err := h.svc.ListSignups(r.Context(), raceID, r.URL.Query().Get("q"))
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list signups")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"signups": rows, "count": len(rows)})
+}
+
+// PATCH /api/v1/admin/signups/{regID}/pay
+func (h *Handler) AdminMarkRegistrationPaid(w http.ResponseWriter, r *http.Request) {
+	regID := chi.URLParam(r, "regID")
+	err := h.svc.MarkRegistrationPaid(r.Context(), regID)
+	if errors.Is(err, ErrRegistrationNotFound) {
+		respondErr(w, http.StatusNotFound, "registration not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to mark paid")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GET /api/v1/admin/orders?race_id=&status=
+func (h *Handler) AdminListOrders(w http.ResponseWriter, r *http.Request) {
+	orders, err := h.svc.ListOrders(r.Context(),
+		r.URL.Query().Get("race_id"), r.URL.Query().Get("status"), 100, 0)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list orders")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"orders": orders, "count": len(orders)})
+}
+
+// GET /api/v1/admin/orders/{orderID}
+func (h *Handler) AdminGetOrder(w http.ResponseWriter, r *http.Request) {
+	detail, err := h.svc.GetOrderDetail(r.Context(), chi.URLParam(r, "orderID"))
+	if errors.Is(err, ErrOrderNotFound) {
+		respondErr(w, http.StatusNotFound, "order not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get order")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"order": detail})
+}
+
+// PATCH /api/v1/admin/orders/{orderID}/pay
+func (h *Handler) AdminMarkOrderPaid(w http.ResponseWriter, r *http.Request) {
+	orderID := chi.URLParam(r, "orderID")
+	var req struct {
+		PaymentRef string `json:"payment_ref"`
+	}
+	json.NewDecoder(r.Body).Decode(&req) // body 可空
+	err := h.svc.MarkOrderPaid(r.Context(), orderID, req.PaymentRef)
+	if errors.Is(err, ErrOrderNotFound) {
+		respondErr(w, http.StatusNotFound, "order not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to mark paid")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // PresetRouter 分組預設選單路由（掛載在 /api/v1/admin/group-presets）
 func (h *Handler) PresetRouter() http.Handler {
 	r := chi.NewRouter()

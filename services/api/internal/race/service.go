@@ -29,6 +29,8 @@ var (
 	ErrAddonNotFound       = errors.New("addon not found")
 	ErrAddonLimit          = errors.New("addon quantity exceeds per-user limit")
 	ErrAddonSoldOut        = errors.New("addon sold out")
+	ErrOrderNotFound        = errors.New("order not found")
+	ErrRegistrationNotFound = errors.New("registration not found")
 )
 
 type Service struct {
@@ -660,9 +662,44 @@ func (s *Service) GetRegistrationForUser(ctx context.Context, userID, raceID str
 	return s.repo.GetRegistration(ctx, userID, raceID)
 }
 
-// AdminListSignups 列出某賽事報名（admin 用）
+// AdminListSignups 列出某賽事報名（admin 用，舊版相容）
 func (s *Service) AdminListSignups(ctx context.Context, raceID string) ([]*Registration, error) {
 	return s.repo.ListRegistrations(ctx, raceID)
+}
+
+// --- 後台報名 / 訂單管理 ---
+
+func (s *Service) ListSignups(ctx context.Context, raceID, q string) ([]SignupRow, error) {
+	return s.repo.ListSignups(ctx, raceID, q)
+}
+
+func (s *Service) ListOrders(ctx context.Context, raceID, status string, limit, offset int) ([]OrderRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return s.repo.ListOrders(ctx, raceID, status, limit, offset)
+}
+
+func (s *Service) GetOrderDetail(ctx context.Context, orderID string) (*OrderDetail, error) {
+	d, err := s.repo.GetOrderDetail(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
+		return nil, ErrOrderNotFound
+	}
+	return d, nil
+}
+
+func (s *Service) MarkOrderPaid(ctx context.Context, orderID, paymentRef string) error {
+	return s.repo.MarkOrderPaid(ctx, orderID, paymentRef)
+}
+
+func (s *Service) MarkRegistrationPaid(ctx context.Context, regID string) error {
+	return s.repo.MarkRegistrationPaid(ctx, regID)
 }
 
 // computeDayNow 計算目前是賽事第幾天（1-indexed，賽前為 0）

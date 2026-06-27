@@ -207,6 +207,51 @@ type RegisterRequest struct {
 	Participant ParticipantInfo  `json:"participant"`
 }
 
+// SignupRow 後台報名管理列表單筆
+type SignupRow struct {
+	ID            string    `json:"id"`
+	UserName      string    `json:"user_name"`
+	UserEmail     string    `json:"user_email"`
+	GroupName     string    `json:"group_name"`
+	Status        string    `json:"status"`
+	GroupRevealed bool      `json:"group_revealed"`
+	SnapRealName  string    `json:"snap_real_name"`
+	SnapPhone     string    `json:"snap_phone"`
+	CreatedAt     time.Time `json:"created_at"`
+	OrderID       string    `json:"order_id,omitempty"`
+	OrderTotal    int       `json:"order_total_cents"`
+	OrderStatus   string    `json:"order_status,omitempty"`
+}
+
+// OrderRow 後台訂單管理列表單筆
+type OrderRow struct {
+	ID             string     `json:"id"`
+	UserName       string     `json:"user_name"`
+	UserEmail      string     `json:"user_email"`
+	RaceTitle      string     `json:"race_title"`
+	TotalCents     int        `json:"total_cents"`
+	Status         string     `json:"status"`
+	PaymentRef     string     `json:"payment_ref,omitempty"`
+	PaidAt         *time.Time `json:"paid_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	RegistrationID string     `json:"registration_id,omitempty"`
+}
+
+// OrderItemRow 訂單明細單筆
+type OrderItemRow struct {
+	ItemType       string `json:"item_type"` // entry|addon
+	AddonName      string `json:"addon_name,omitempty"`
+	Qty            int    `json:"qty"`
+	UnitPriceCents int    `json:"unit_price_cents"`
+	SubtotalCents  int    `json:"subtotal_cents"`
+}
+
+// OrderDetail 訂單 + 明細
+type OrderDetail struct {
+	OrderRow
+	Items []OrderItemRow `json:"items"`
+}
+
 // MyRegLite 使用者在某賽事的精簡報名狀態（賽事列表附帶用）
 type MyRegLite struct {
 	Status        string `json:"status"`         // pending|paid|cancelled

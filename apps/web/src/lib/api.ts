@@ -350,6 +350,78 @@ export const adminMembersApi = {
     request<{ member: MemberDetail }>(`/admin/members/${id}`, { headers: withAuth(token) }),
 }
 
+// --- Admin: 報名管理 / 訂單管理 ---
+
+export interface SignupRow {
+  id: string
+  user_name: string
+  user_email: string
+  group_name: string
+  status: string
+  group_revealed: boolean
+  snap_real_name: string
+  snap_phone: string
+  created_at: string
+  order_id?: string
+  order_total_cents: number
+  order_status?: string
+}
+
+export interface OrderItemRow {
+  item_type: string
+  addon_name?: string
+  qty: number
+  unit_price_cents: number
+  subtotal_cents: number
+}
+
+export interface OrderRow {
+  id: string
+  user_name: string
+  user_email: string
+  race_title: string
+  total_cents: number
+  status: string
+  payment_ref?: string
+  paid_at?: string | null
+  created_at: string
+  registration_id?: string
+}
+
+export interface OrderDetail extends OrderRow {
+  items: OrderItemRow[]
+}
+
+export const adminSignupsApi = {
+  list: (token: string, params: { race_id: string; q?: string }) => {
+    const qs = new URLSearchParams({ race_id: params.race_id })
+    if (params.q) qs.set('q', params.q)
+    return request<{ signups: SignupRow[]; count: number }>(`/admin/signups?${qs.toString()}`, {
+      headers: withAuth(token),
+    })
+  },
+  markPaid: (token: string, regID: string) =>
+    request<void>(`/admin/signups/${regID}/pay`, { method: 'PATCH', headers: withAuth(token) }),
+}
+
+export const adminOrdersApi = {
+  list: (token: string, params?: { race_id?: string; status?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.race_id) qs.set('race_id', params.race_id)
+    if (params?.status) qs.set('status', params.status)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ orders: OrderRow[]; count: number }>(`/admin/orders${suffix}`, { headers: withAuth(token) })
+  },
+  get: (token: string, id: string) =>
+    request<{ order: OrderDetail }>(`/admin/orders/${id}`, { headers: withAuth(token) }),
+  markPaid: (token: string, id: string, payment_ref?: string) =>
+    request<void>(`/admin/orders/${id}/pay`, {
+      method: 'PATCH',
+      headers: withAuth(token),
+      body: JSON.stringify({ payment_ref: payment_ref ?? '' }),
+    }),
+}
+
 // --- Admin: 分組預設選單 ---
 
 export const adminPresetsApi = {

@@ -16,7 +16,7 @@ const NAV: { grp: string; items: { k: string; t: string; href?: string }[] }[] =
       { k: 'dash', t: '數據總覽' },
       { k: 'races', t: '賽事管理', href: '/admin/races' },
       { k: 'members', t: '會員管理', href: '/admin/members' },
-      { k: 'signups', t: '報名管理' },
+      { k: 'signups', t: '報名管理', href: '/admin/signups' },
       { k: 'teams', t: '跑團管理' },
       { k: 'notifications', t: '推播通知' },
     ],
@@ -35,7 +35,7 @@ const NAV: { grp: string; items: { k: string; t: string; href?: string }[] }[] =
   {
     grp: '系統管理',
     items: [
-      { k: 'orders', t: '訂單管理' },
+      { k: 'orders', t: '訂單管理', href: '/admin/orders' },
       { k: 'audit', t: '操作紀錄' },
       { k: 'admins', t: '管理員' },
       { k: 'permissions', t: '權限' },

@@ -840,6 +840,155 @@ func (r *Repository) ListRegistrations(ctx context.Context, raceID string) ([]*R
 	return regs, rows.Err()
 }
 
+// --- 後台報名 / 訂單管理 ---
+
+// ListSignups 列出某賽事的報名（含會員、分組、訂單狀態），q 可搜尋姓名/email/手機
+func (r *Repository) ListSignups(ctx context.Context, raceID, q string) ([]SignupRow, error) {
+	like := "%" + q + "%"
+	rows, err := r.db.Query(ctx, `
+		SELECT reg.id, u.name, u.email, COALESCE(g.name,''), reg.status,
+		       reg.group_revealed, COALESCE(reg.snap_real_name,''), COALESCE(reg.snap_phone,''),
+		       reg.created_at,
+		       COALESCE(o.id::text,''), COALESCE(o.total_cents,0), COALESCE(o.status,'')
+		FROM registrations reg
+		JOIN users u ON u.id = reg.user_id
+		LEFT JOIN race_groups g ON g.id = reg.group_id
+		LEFT JOIN orders o ON o.registration_id = reg.id
+		WHERE reg.race_id = $1
+		  AND ($2='' OR u.name ILIKE $3 OR u.email ILIKE $3
+		       OR COALESCE(reg.snap_real_name,'') ILIKE $3 OR COALESCE(reg.snap_phone,'') ILIKE $3)
+		ORDER BY reg.created_at DESC`, raceID, q, like)
+	if err != nil {
+		return nil, fmt.Errorf("list signups: %w", err)
+	}
+	defer rows.Close()
+
+	out := []SignupRow{}
+	for rows.Next() {
+		var s SignupRow
+		if err := rows.Scan(&s.ID, &s.UserName, &s.UserEmail, &s.GroupName, &s.Status,
+			&s.GroupRevealed, &s.SnapRealName, &s.SnapPhone, &s.CreatedAt,
+			&s.OrderID, &s.OrderTotal, &s.OrderStatus); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// ListOrders 列出訂單（race_id/status 可選過濾）
+func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limit, offset int) ([]OrderRow, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT o.id, u.name, u.email, rc.title, o.total_cents, o.status,
+		       COALESCE(o.payment_ref,''), o.paid_at, o.created_at, COALESCE(o.registration_id::text,'')
+		FROM orders o
+		JOIN users u ON u.id = o.user_id
+		JOIN races rc ON rc.id = o.race_id
+		WHERE ($1='' OR o.race_id = $1::uuid)
+		  AND ($2='' OR o.status = $2)
+		ORDER BY o.created_at DESC
+		LIMIT $3 OFFSET $4`, raceID, status, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list orders: %w", err)
+	}
+	defer rows.Close()
+
+	out := []OrderRow{}
+	for rows.Next() {
+		var o OrderRow
+		if err := rows.Scan(&o.ID, &o.UserName, &o.UserEmail, &o.RaceTitle, &o.TotalCents,
+			&o.Status, &o.PaymentRef, &o.PaidAt, &o.CreatedAt, &o.RegistrationID); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// GetOrderDetail 取得訂單 + 明細
+func (r *Repository) GetOrderDetail(ctx context.Context, orderID string) (*OrderDetail, error) {
+	var o OrderRow
+	err := r.db.QueryRow(ctx, `
+		SELECT o.id, u.name, u.email, rc.title, o.total_cents, o.status,
+		       COALESCE(o.payment_ref,''), o.paid_at, o.created_at, COALESCE(o.registration_id::text,'')
+		FROM orders o JOIN users u ON u.id=o.user_id JOIN races rc ON rc.id=o.race_id
+		WHERE o.id=$1`, orderID).Scan(
+		&o.ID, &o.UserName, &o.UserEmail, &o.RaceTitle, &o.TotalCents, &o.Status,
+		&o.PaymentRef, &o.PaidAt, &o.CreatedAt, &o.RegistrationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get order: %w", err)
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT oi.item_type, COALESCE(a.name,''), oi.qty, oi.unit_price_cents, oi.subtotal_cents
+		FROM order_items oi LEFT JOIN race_addons a ON a.id = oi.addon_id
+		WHERE oi.order_id=$1 ORDER BY oi.item_type`, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("get order items: %w", err)
+	}
+	defer rows.Close()
+
+	detail := &OrderDetail{OrderRow: o, Items: []OrderItemRow{}}
+	for rows.Next() {
+		var it OrderItemRow
+		if err := rows.Scan(&it.ItemType, &it.AddonName, &it.Qty, &it.UnitPriceCents, &it.SubtotalCents); err != nil {
+			return nil, err
+		}
+		detail.Items = append(detail.Items, it)
+	}
+	return detail, rows.Err()
+}
+
+// MarkOrderPaid 標記訂單已付，並連動其對應 registration（交易）
+func (r *Repository) MarkOrderPaid(ctx context.Context, orderID, paymentRef string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var regID *string
+	err = tx.QueryRow(ctx, `
+		UPDATE orders SET status='paid', paid_at=NOW(), payment_ref=NULLIF($2,'')
+		WHERE id=$1 RETURNING registration_id`, orderID, paymentRef).Scan(&regID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrOrderNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("mark order paid: %w", err)
+	}
+	if regID != nil {
+		if _, err = tx.Exec(ctx, `UPDATE registrations SET status='paid', paid_at=NOW() WHERE id=$1`, *regID); err != nil {
+			return fmt.Errorf("mark reg paid: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// MarkRegistrationPaid 標記報名已付，並連動其對應 order（交易）
+func (r *Repository) MarkRegistrationPaid(ctx context.Context, regID string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	ct, err := tx.Exec(ctx, `UPDATE registrations SET status='paid', paid_at=NOW() WHERE id=$1`, regID)
+	if err != nil {
+		return fmt.Errorf("mark reg paid: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrRegistrationNotFound
+	}
+	if _, err = tx.Exec(ctx, `UPDATE orders SET status='paid', paid_at=NOW() WHERE registration_id=$1 AND status<>'paid'`, regID); err != nil {
+		return fmt.Errorf("mark order paid: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
 // GetUserHandles 批次查詢 userID → handle/name（排行榜用）
 func (r *Repository) GetUserHandles(ctx context.Context, userIDs []string) (map[string][2]string, error) {
 	if len(userIDs) == 0 {
