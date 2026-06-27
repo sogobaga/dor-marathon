@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	streamKey     = "activity_queue"
-	consumerGroup = "activity_workers"
-	batchSize     = 100
-	batchInterval = 5 * time.Second
+	streamKey         = "activity_queue"
+	consumerGroup     = "activity_workers"
+	batchSize         = 100
+	batchInterval     = 5 * time.Second
+	standingsInterval = 30 * time.Second // 競賽分組成績重算間隔
 )
 
 // ActivityEvent is the message pushed to Redis Streams when a user uploads a run.
@@ -66,6 +67,7 @@ func main() {
 	log.Info().Str("consumer", consumerName).Msg("DOR Activity Worker started")
 
 	w := &Worker{db: pool, rdb: rdb, consumerName: consumerName}
+	go w.standingsLoop(ctx) // 背景定期重算競賽分組成績
 	w.run(ctx)
 }
 
@@ -87,6 +89,61 @@ func (w *Worker) run(ctx context.Context) {
 		case <-ticker.C:
 			w.processBatch(ctx)
 		}
+	}
+}
+
+// standingsLoop 背景定期重算競賽分組成績（與 activity stream 分開，避免被 XReadGroup 阻塞）
+func (w *Worker) standingsLoop(ctx context.Context) {
+	ticker := time.NewTicker(standingsInterval)
+	defer ticker.Stop()
+
+	w.aggregateStandings(ctx) // 啟動時先算一次
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.aggregateStandings(ctx)
+		}
+	}
+}
+
+// aggregateStandings 以單一查詢重算所有競賽模式賽事的 race_group_standings（預聚合，前台直接讀）。
+// 各分組：總累積里程、成員數、平均里程、平均配速（總時間/總里程）、完成累計總時間（成員總移動時間）。
+func (w *Worker) aggregateStandings(ctx context.Context) {
+	tag, err := w.db.Exec(ctx, `
+		INSERT INTO race_group_standings
+			(race_id, group_id, total_km, member_count, avg_km, avg_pace_s, finish_total_s, updated_at)
+		SELECT
+			rg.race_id,
+			rg.id,
+			COALESCE(SUM(a.distance_km), 0),
+			COUNT(DISTINCT reg.user_id),
+			CASE WHEN COUNT(DISTINCT reg.user_id) > 0
+			     THEN COALESCE(SUM(a.distance_km), 0) / COUNT(DISTINCT reg.user_id) ELSE 0 END,
+			CASE WHEN COALESCE(SUM(a.distance_km), 0) > 0
+			     THEN (SUM(a.duration_s) / SUM(a.distance_km))::int ELSE 0 END,
+			COALESCE(SUM(a.duration_s), 0),
+			NOW()
+		FROM race_groups rg
+		JOIN races r ON r.id = rg.race_id AND r.event_mode = 'competition'
+		LEFT JOIN registrations reg ON reg.group_id = rg.id AND reg.status = 'paid'
+		LEFT JOIN activities a ON a.user_id = reg.user_id AND a.race_id = rg.race_id
+		GROUP BY rg.race_id, rg.id
+		ON CONFLICT (race_id, group_id) DO UPDATE SET
+			total_km       = EXCLUDED.total_km,
+			member_count   = EXCLUDED.member_count,
+			avg_km         = EXCLUDED.avg_km,
+			avg_pace_s     = EXCLUDED.avg_pace_s,
+			finish_total_s = EXCLUDED.finish_total_s,
+			updated_at     = NOW()
+	`)
+	if err != nil {
+		log.Error().Err(err).Msg("aggregate standings failed")
+		return
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		log.Debug().Int64("groups", n).Msg("standings aggregated")
 	}
 }
 

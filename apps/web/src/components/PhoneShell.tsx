@@ -2,9 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import RacesScreen from './RacesScreen'
+import RaceRankingScreen from './RaceRankingScreen'
+import type { Race } from '@/lib/api'
 
 export default function PhoneShell() {
   const [isMobile, setIsMobile] = useState(false)
+  const [rankingRace, setRankingRace] = useState<Race | null>(null)
 
   useEffect(() => {
     setIsMobile(window.innerWidth <= 430)
@@ -27,8 +30,12 @@ export default function PhoneShell() {
         paddingTop: isMobile ? 'env(safe-area-inset-top)' : 0,
         overflow: 'hidden',
       }}>
-        {/* 賽事列表 — 串接 Go API 真實資料 */}
-        <RacesScreen />
+        {/* 賽事列表 / 排行榜 — 串接 Go API 真實資料 */}
+        {rankingRace ? (
+          <RaceRankingScreen race={rankingRace} onBack={() => setRankingRace(null)} />
+        ) : (
+          <RacesScreen onOpenRanking={setRankingRace} />
+        )}
       </div>
     </div>
   )

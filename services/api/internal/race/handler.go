@@ -25,8 +25,26 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/{raceID}", h.Detail)
 	r.Post("/{raceID}/register", h.Register)
 	r.Get("/{raceID}/ranking", h.Ranking)
+	r.Get("/{raceID}/standings", h.Standings)
 	r.Get("/{raceID}/status", h.LiveStatus)
 	return r
+}
+
+// GET /api/v1/races/:raceID/standings — 競賽分組排行榜（公開；帶 token 則附自己分組名次）
+func (h *Handler) Standings(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+
+	ranking, err := h.svc.GetCompetitionRanking(r.Context(), raceID, userID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get standings")
+		return
+	}
+	respondJSON(w, http.StatusOK, ranking)
 }
 
 // AdminRouter 回傳管理員路由

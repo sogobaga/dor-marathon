@@ -459,6 +459,48 @@ func (r *Repository) GetSupplies(ctx context.Context, raceID string) ([]RaceSupp
 	return supplies, rows.Err()
 }
 
+// GetStandings 取得某賽事的所有分組成績（worker 預聚合的 race_group_standings）
+func (r *Repository) GetStandings(ctx context.Context, raceID string) ([]GroupStanding, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT s.group_id, g.name, s.total_km, s.member_count, s.avg_km, s.avg_pace_s, s.finish_total_s
+		FROM race_group_standings s
+		JOIN race_groups g ON g.id = s.group_id
+		WHERE s.race_id = $1`, raceID)
+	if err != nil {
+		return nil, fmt.Errorf("get standings: %w", err)
+	}
+	defer rows.Close()
+
+	standings := []GroupStanding{}
+	for rows.Next() {
+		var s GroupStanding
+		if err := rows.Scan(&s.GroupID, &s.GroupName, &s.TotalKm, &s.MemberCount,
+			&s.AvgKm, &s.AvgPaceS, &s.FinishTotalS); err != nil {
+			return nil, err
+		}
+		standings = append(standings, s)
+	}
+	return standings, rows.Err()
+}
+
+// GetUserGroupID 取得使用者在某賽事報名的分組 id（無報名或未分組回空字串）
+func (r *Repository) GetUserGroupID(ctx context.Context, userID, raceID string) (string, error) {
+	var gid *string
+	err := r.db.QueryRow(ctx,
+		`SELECT group_id::text FROM registrations WHERE user_id=$1 AND race_id=$2`,
+		userID, raceID).Scan(&gid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if gid == nil {
+		return "", nil
+	}
+	return *gid, nil
+}
+
 // --- Group presets ---
 
 // ListPresets 取得分組預設選單

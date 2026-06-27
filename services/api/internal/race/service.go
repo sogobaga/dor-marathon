@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strconv"
 	"time"
 
@@ -390,6 +391,98 @@ func (s *Service) GetRaceDetail(ctx context.Context, raceID string) (*RaceDetail
 		return nil, ErrRaceNotFound
 	}
 	return detail, nil
+}
+
+// GetCompetitionRanking 取得競賽分組排行榜（兩個榜 + 使用者所屬分組名次）。
+// 累積榜：總里程 DESC；完成時間榜：finish_total_s ASC（0=尚無紀錄，排最後）。
+func (s *Service) GetCompetitionRanking(ctx context.Context, raceID, userID string) (*CompetitionRanking, error) {
+	race, err := s.repo.GetByID(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	if race == nil {
+		return nil, ErrRaceNotFound
+	}
+
+	standings, err := s.repo.GetStandings(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 累積里程榜：里程多者在前
+	cumulative := make([]GroupStanding, len(standings))
+	copy(cumulative, standings)
+	sort.SliceStable(cumulative, func(i, j int) bool {
+		return cumulative[i].TotalKm > cumulative[j].TotalKm
+	})
+
+	// 完成時間榜：時間少者在前，但 0（尚無紀錄）排到最後
+	finish := make([]GroupStanding, len(standings))
+	copy(finish, standings)
+	sort.SliceStable(finish, func(i, j int) bool {
+		a, b := finish[i].FinishTotalS, finish[j].FinishTotalS
+		if a == 0 {
+			return false
+		}
+		if b == 0 {
+			return true
+		}
+		return a < b
+	})
+
+	// 記下每個分組在兩榜的名次（給 my_group 用）
+	cumRankByGroup := make(map[string]int, len(cumulative))
+	for i, g := range cumulative {
+		cumRankByGroup[g.GroupID] = i + 1
+	}
+	finRankByGroup := make(map[string]int, len(finish))
+	for i, g := range finish {
+		finRankByGroup[g.GroupID] = i + 1
+	}
+
+	result := &CompetitionRanking{
+		RaceID:       raceID,
+		EventMode:    race.EventMode,
+		GoalType:     race.GoalType,
+		ByCumulative: toRanked(cumulative, 20),
+		ByFinishTime: toRanked(finish, 20),
+	}
+
+	// 使用者所屬分組名次
+	if userID != "" {
+		gid, err := s.repo.GetUserGroupID(ctx, userID, raceID)
+		if err != nil {
+			return nil, err
+		}
+		if gid != "" {
+			for _, g := range standings {
+				if g.GroupID == gid {
+					result.MyGroup = &MyGroupRank{
+						GroupID:        g.GroupID,
+						GroupName:      g.GroupName,
+						CumulativeRank: cumRankByGroup[gid],
+						FinishRank:     finRankByGroup[gid],
+						TotalKm:        g.TotalKm,
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// toRanked 將排序後的成績轉成含名次、最多 limit 筆的榜單
+func toRanked(sorted []GroupStanding, limit int) []StandingRank {
+	if limit > len(sorted) {
+		limit = len(sorted)
+	}
+	out := make([]StandingRank, limit)
+	for i := 0; i < limit; i++ {
+		out[i] = StandingRank{Rank: i + 1, GroupStanding: sorted[i]}
+	}
+	return out
 }
 
 // ListPresets 取得分組預設選單

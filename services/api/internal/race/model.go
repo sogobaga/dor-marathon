@@ -101,6 +101,42 @@ type GroupPreset struct {
 	IsSystem          bool     `json:"is_system"`
 }
 
+// GroupStanding 競賽分組成績（讀自 race_group_standings 預聚合表）
+type GroupStanding struct {
+	GroupID      string  `json:"group_id"`
+	GroupName    string  `json:"group_name"`
+	TotalKm      float64 `json:"total_km"`
+	MemberCount  int     `json:"member_count"`
+	AvgKm        float64 `json:"avg_km"`
+	AvgPaceS     int     `json:"avg_pace_s"`
+	FinishTotalS int64   `json:"finish_total_s"`
+}
+
+// StandingRank 排行榜單筆（含名次）
+type StandingRank struct {
+	Rank int `json:"rank"`
+	GroupStanding
+}
+
+// MyGroupRank 使用者所屬分組目前在兩個榜的名次
+type MyGroupRank struct {
+	GroupID        string  `json:"group_id"`
+	GroupName      string  `json:"group_name"`
+	CumulativeRank int     `json:"cumulative_rank"`
+	FinishRank     int     `json:"finish_rank"`
+	TotalKm        float64 `json:"total_km"`
+}
+
+// CompetitionRanking 競賽排行榜 API 回應
+type CompetitionRanking struct {
+	RaceID       string         `json:"race_id"`
+	EventMode    string         `json:"event_mode"`
+	GoalType     string         `json:"goal_type"`
+	ByCumulative []StandingRank `json:"by_cumulative"` // 總累積里程榜（前 20）
+	ByFinishTime []StandingRank `json:"by_finish_time"` // 完成累計總時間榜（前 20）
+	MyGroup      *MyGroupRank   `json:"my_group,omitempty"`
+}
+
 // RaceConfig 儲存在 JSONB 欄位，定義陣營/公會/每日任務
 type RaceConfig struct {
 	Factions []FactionDef `json:"factions,omitempty"`

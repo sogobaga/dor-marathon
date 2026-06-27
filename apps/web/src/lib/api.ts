@@ -157,9 +157,43 @@ export const authApi = {
 
 // --- Races ---
 
+export interface GroupStanding {
+  group_id: string
+  group_name: string
+  total_km: number
+  member_count: number
+  avg_km: number
+  avg_pace_s: number
+  finish_total_s: number
+}
+
+export interface StandingRank extends GroupStanding {
+  rank: number
+}
+
+export interface MyGroupRank {
+  group_id: string
+  group_name: string
+  cumulative_rank: number
+  finish_rank: number
+  total_km: number
+}
+
+export interface CompetitionRanking {
+  race_id: string
+  event_mode: EventMode
+  goal_type: GoalType
+  by_cumulative: StandingRank[]
+  by_finish_time: StandingRank[]
+  my_group?: MyGroupRank | null
+}
+
 export const racesApi = {
   list: () => request<{ races: Race[] }>('/races'),
   get: (slug: string) => request<Race>(`/races/${slug}`),
+  // 競賽排行榜（公開；帶 token 則附自己分組名次）
+  standings: (raceID: string, token?: string) =>
+    request<CompetitionRanking>(`/races/${raceID}/standings`, token ? { headers: withAuth(token) } : undefined),
 }
 
 // --- Admin: Races ---
