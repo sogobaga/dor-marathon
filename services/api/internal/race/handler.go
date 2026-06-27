@@ -41,6 +41,42 @@ func (h *Handler) AdminRouter() http.Handler {
 	return r
 }
 
+// PresetRouter 分組預設選單路由（掛載在 /api/v1/admin/group-presets）
+func (h *Handler) PresetRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/", h.AdminListPresets)
+	r.Post("/", h.AdminCreatePreset)
+	return r
+}
+
+// GET /api/v1/admin/group-presets
+func (h *Handler) AdminListPresets(w http.ResponseWriter, r *http.Request) {
+	presets, err := h.svc.ListPresets(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list presets")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"presets": presets})
+}
+
+// POST /api/v1/admin/group-presets
+func (h *Handler) AdminCreatePreset(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name              string   `json:"name"`
+		DefaultDistanceKm *float64 `json:"default_distance_km"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		respondErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	preset, err := h.svc.CreatePreset(r.Context(), req.Name, req.DefaultDistanceKm)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to create preset")
+		return
+	}
+	respondJSON(w, http.StatusCreated, map[string]any{"preset": preset})
+}
+
 // GET /api/v1/races?status=open
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status") // open|live|soon|done|（空 = 全部）
@@ -166,31 +202,31 @@ func (h *Handler) AdminListRaces(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"races": races})
 }
 
-// POST /api/v1/admin/races
+// POST /api/v1/admin/races — 建立賽事（含巢狀分組/加購/物資）
 func (h *Handler) AdminCreateRace(w http.ResponseWriter, r *http.Request) {
-	var race Race
-	if err := json.NewDecoder(r.Body).Decode(&race); err != nil {
+	var req CreateRaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if race.Slug == "" || race.Title == "" || len(race.Distances) == 0 {
-		respondErr(w, http.StatusBadRequest, "slug, title, distances are required")
+	if req.Slug == "" || req.Title == "" {
+		respondErr(w, http.StatusBadRequest, "slug, title are required")
 		return
 	}
-	race.Status = "soon" // 新建賽事預設 soon
 
-	created, err := h.svc.CreateRace(r.Context(), &race)
+	detail, err := h.svc.CreateRaceFull(r.Context(), &req)
 	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to create race")
+		// 驗證類錯誤回 400，其餘 500
+		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	respondJSON(w, http.StatusCreated, map[string]any{"race": created})
+	respondJSON(w, http.StatusCreated, map[string]any{"race": detail})
 }
 
-// GET /api/v1/admin/races/:raceID — 管理員取得單一賽事（含未審核），供編輯表單載入
+// GET /api/v1/admin/races/:raceID — 管理員取得單一賽事（含巢狀子資料），供編輯表單載入
 func (h *Handler) AdminGetRace(w http.ResponseWriter, r *http.Request) {
 	raceID := chi.URLParam(r, "raceID")
-	race, _, err := h.svc.GetDetail(r.Context(), raceID, "")
+	detail, err := h.svc.GetRaceDetail(r.Context(), raceID)
 	if errors.Is(err, ErrRaceNotFound) {
 		respondErr(w, http.StatusNotFound, "race not found")
 		return
@@ -199,7 +235,7 @@ func (h *Handler) AdminGetRace(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to get race")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"race": race})
+	respondJSON(w, http.StatusOK, map[string]any{"race": detail})
 }
 
 // PUT /api/v1/admin/races/:raceID — 更新賽事所有可編輯欄位

@@ -14,19 +14,91 @@ type Race struct {
 	World        string     `json:"world"`
 	Blurb        string     `json:"blurb"`
 	HeroImageURL string     `json:"hero_image_url"`
-	Status       string     `json:"status"` // soon|open|live|done
+	Status       string     `json:"status"`     // soon|open|live|done
+	EventMode    string     `json:"event_mode"` // general|competition|faction_battle
+	GoalType     string     `json:"goal_type"`  // cumulative|distance（競賽完賽目標）
 	Distances    []int      `json:"distances"`
 	GroupType    string     `json:"group_type"` // faction|club|distance
 	GroupMode    string     `json:"group_mode"` // random|self
 	SlotsTotal   int        `json:"slots_total"`
 	EntryFee     int        `json:"entry_fee"` // 分（NT$ × 100）
-	StartDate    time.Time  `json:"start_date"`
-	EndDate      time.Time  `json:"end_date"`
+	RegStart     *time.Time `json:"registration_start,omitempty"` // 報名開始
+	RegEnd       *time.Time `json:"registration_end,omitempty"`   // 報名截止
+	StartDate    time.Time  `json:"start_date"`                   // 競賽時間 起
+	EndDate      time.Time  `json:"end_date"`                     // 競賽時間 迄
 	Config       RaceConfig `json:"config"`
 	CreatedBy    string     `json:"created_by,omitempty"` // organizer userID
 	ReviewStatus string     `json:"review_status"`        // pending|approved|rejected
 	ReviewNote   string     `json:"review_note,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
+}
+
+// RaceGroup 分組（一般/競賽=選手自選，分組對抗=隨機分配）
+type RaceGroup struct {
+	ID               string   `json:"id,omitempty"`
+	RaceID           string   `json:"race_id,omitempty"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	DisplayOrder     int      `json:"display_order"`
+	SlotLimit        *int     `json:"slot_limit,omitempty"`    // nil=不限
+	SlotsTaken       int      `json:"slots_taken"`
+	GenderLimit      string   `json:"gender_limit"`            // any|male|female
+	AgeMin           *int     `json:"age_min,omitempty"`
+	AgeMax           *int     `json:"age_max,omitempty"`
+	TargetDistanceKm *float64 `json:"target_distance_km,omitempty"`
+}
+
+// RaceAddon 加購項目
+type RaceAddon struct {
+	ID           string `json:"id,omitempty"`
+	RaceID       string `json:"race_id,omitempty"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	ImageURL     string `json:"image_url,omitempty"`
+	PriceCents   int    `json:"price_cents"`
+	PerUserLimit *int   `json:"per_user_limit,omitempty"` // nil=不限
+	TotalStock   *int   `json:"total_stock,omitempty"`    // nil=不限
+	SoldCount    int    `json:"sold_count"`
+	DisplayOrder int    `json:"display_order"`
+	Active       bool   `json:"active"`
+}
+
+// RaceSupply 物資（共用 or 分組 × 參賽 or 完賽）
+// GroupIndex：建立時前端尚無 group UUID，用分組陣列索引對應（nil=賽事層級共用）。
+type RaceSupply struct {
+	ID           string `json:"id,omitempty"`
+	RaceID       string `json:"race_id,omitempty"`
+	GroupID      string `json:"group_id,omitempty"`    // 回傳時填實際 UUID（空=共用）
+	GroupIndex   *int   `json:"group_index,omitempty"` // 建立時用：對應 Groups 陣列索引
+	Kind         string `json:"kind"`                  // race_pack|finisher
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	ImageURL     string `json:"image_url,omitempty"`
+	DisplayOrder int    `json:"display_order"`
+}
+
+// CreateRaceRequest 後台新增賽事的巢狀 payload
+type CreateRaceRequest struct {
+	Race
+	Groups   []RaceGroup  `json:"groups"`
+	Addons   []RaceAddon  `json:"addons"`
+	Supplies []RaceSupply `json:"supplies"`
+}
+
+// RaceDetail 含巢狀子資料（供後台編輯載入）
+type RaceDetail struct {
+	Race
+	Groups   []RaceGroup  `json:"groups"`
+	Addons   []RaceAddon  `json:"addons"`
+	Supplies []RaceSupply `json:"supplies"`
+}
+
+// GroupPreset 分組預設選單（可擴充）
+type GroupPreset struct {
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	DefaultDistanceKm *float64 `json:"default_distance_km,omitempty"`
+	IsSystem          bool     `json:"is_system"`
 }
 
 // RaceConfig 儲存在 JSONB 欄位，定義陣營/公會/每日任務

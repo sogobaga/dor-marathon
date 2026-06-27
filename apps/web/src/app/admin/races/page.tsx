@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { adminRacesApi, type Race } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
+import NewRaceModal from './NewRaceModal'
 
 const STATUS_LABEL: Record<string, string> = {
   live: '進行中',
@@ -17,15 +18,18 @@ export default function AdminRacesList() {
   const router = useRouter()
   const [races, setRaces] = useState<Race[] | null>(null)
   const [err, setErr] = useState('')
+  const [showNew, setShowNew] = useState(false)
+  const [token, setTokenState] = useState<string | null>(null)
 
-  useEffect(() => {
-    const token = getToken()
-    if (!token) {
+  const load = useCallback(() => {
+    const t = getToken()
+    if (!t) {
       router.replace('/admin/login')
       return
     }
+    setTokenState(t)
     adminRacesApi
-      .list(token)
+      .list(t)
       .then((res) => setRaces(res.races))
       .catch((e) => {
         if (e?.status === 401) {
@@ -37,9 +41,36 @@ export default function AdminRacesList() {
       })
   }, [router])
 
+  useEffect(() => {
+    load()
+  }, [load])
+
   return (
     <div>
-      <h1 style={{ margin: '0 0 20px', fontSize: 24, fontWeight: 800 }}>賽事管理</h1>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '0 0 20px' }}>
+        <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0 }}>賽事管理</h1>
+        <button
+          onClick={() => setShowNew(true)}
+          style={{
+            background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
+            borderRadius: 10, padding: '10px 18px', cursor: 'pointer', fontSize: 14,
+          }}
+        >
+          ＋ 新增賽事
+        </button>
+      </div>
+
+      {showNew && token && (
+        <NewRaceModal
+          token={token}
+          onClose={() => setShowNew(false)}
+          onCreated={() => {
+            setShowNew(false)
+            setRaces(null)
+            load()
+          }}
+        />
+      )}
 
       {err && <div style={{ color: 'var(--hunt)', padding: 20 }}>{err}</div>}
       {!races && !err && <div style={{ color: 'var(--tx-dim)', padding: 20 }}>載入中…</div>}

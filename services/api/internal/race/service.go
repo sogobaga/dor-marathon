@@ -271,6 +271,113 @@ func (s *Service) CreateRace(ctx context.Context, race *Race) (*Race, error) {
 	return s.repo.Create(ctx, race)
 }
 
+var (
+	validEventModes  = map[string]bool{"general": true, "competition": true, "faction_battle": true}
+	validGoalTypes   = map[string]bool{"cumulative": true, "distance": true}
+	validGenderLimit = map[string]bool{"any": true, "male": true, "female": true}
+	validSupplyKinds = map[string]bool{"race_pack": true, "finisher": true}
+)
+
+// CreateRaceFull 建立含巢狀分組/加購/物資的賽事（後台新增賽事用）。
+func (s *Service) CreateRaceFull(ctx context.Context, req *CreateRaceRequest) (*RaceDetail, error) {
+	// 預設與正規化
+	if req.EventMode == "" {
+		req.EventMode = "general"
+	}
+	if !validEventModes[req.EventMode] {
+		return nil, fmt.Errorf("invalid event_mode: %s", req.EventMode)
+	}
+	// 分組對抗 = 隨機分配；其餘 = 選手自選
+	if req.EventMode == "faction_battle" {
+		req.GroupMode = "random"
+	} else if req.GroupMode == "" {
+		req.GroupMode = "self"
+	}
+	if req.GroupType == "" {
+		req.GroupType = "distance"
+	}
+	// goal_type 只在競賽模式有意義，其餘固定 distance
+	if req.EventMode == "competition" {
+		if req.GoalType == "" {
+			req.GoalType = "distance"
+		}
+		if !validGoalTypes[req.GoalType] {
+			return nil, fmt.Errorf("invalid goal_type: %s", req.GoalType)
+		}
+	} else {
+		req.GoalType = "distance"
+	}
+
+	// 分組驗證
+	for i := range req.Groups {
+		g := &req.Groups[i]
+		if g.Name == "" {
+			return nil, fmt.Errorf("group %d: name is required", i)
+		}
+		if g.GenderLimit == "" {
+			g.GenderLimit = "any"
+		}
+		if !validGenderLimit[g.GenderLimit] {
+			return nil, fmt.Errorf("group %d: invalid gender_limit", i)
+		}
+	}
+	// 物資驗證
+	for i := range req.Supplies {
+		su := &req.Supplies[i]
+		if su.Name == "" {
+			return nil, fmt.Errorf("supply %d: name is required", i)
+		}
+		if !validSupplyKinds[su.Kind] {
+			return nil, fmt.Errorf("supply %d: invalid kind", i)
+		}
+	}
+
+	req.ReviewStatus = "approved"
+	if req.Status == "" {
+		req.Status = "soon"
+	}
+	// 同步 distances（沿用既有欄位；用各分組目標里程推導，至少給一筆避免 NOT NULL 空陣列）
+	if len(req.Distances) == 0 {
+		seen := map[int]bool{}
+		for _, g := range req.Groups {
+			if g.TargetDistanceKm != nil {
+				d := int(*g.TargetDistanceKm)
+				if d > 0 && !seen[d] {
+					seen[d] = true
+					req.Distances = append(req.Distances, d)
+				}
+			}
+		}
+		if len(req.Distances) == 0 {
+			req.Distances = []int{0}
+		}
+	}
+
+	return s.repo.CreateWithChildren(ctx, req)
+}
+
+// GetRaceDetail 取得賽事 + 巢狀子資料（後台編輯載入用）
+func (s *Service) GetRaceDetail(ctx context.Context, raceID string) (*RaceDetail, error) {
+	detail, err := s.repo.GetDetail(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	if detail == nil {
+		return nil, ErrRaceNotFound
+	}
+	return detail, nil
+}
+
+// ListPresets 取得分組預設選單
+func (s *Service) ListPresets(ctx context.Context) ([]GroupPreset, error) {
+	return s.repo.ListPresets(ctx)
+}
+
+// CreatePreset 新增分組預設（後台擴充選單）
+func (s *Service) CreatePreset(ctx context.Context, name string, distanceKm *float64) (*GroupPreset, error) {
+	return s.repo.CreatePreset(ctx, name, distanceKm)
+}
+
 // CreateRaceWithReview 合作方提交賽事，指定審核狀態（pending）
 func (s *Service) CreateRaceWithReview(ctx context.Context, race *Race, reviewStatus string) (*Race, error) {
 	race.ReviewStatus = reviewStatus

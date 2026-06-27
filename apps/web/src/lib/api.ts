@@ -17,6 +17,9 @@ export interface User {
   total_km: number
 }
 
+export type EventMode = 'general' | 'competition' | 'faction_battle'
+export type GoalType = 'cumulative' | 'distance'
+
 export interface Race {
   id: string
   slug: string
@@ -26,15 +29,75 @@ export interface Race {
   blurb: string
   hero_image_url: string
   status: 'live' | 'open' | 'soon' | 'done'
+  event_mode: EventMode
+  goal_type: GoalType
   distances: number[]
   group_type: string
   group_mode: string
   slots_total: number
   entry_fee: number
+  registration_start?: string | null
+  registration_end?: string | null
   start_date: string
   end_date: string
   review_status: string
   created_at: string
+}
+
+export interface RaceGroup {
+  id?: string
+  name: string
+  description?: string
+  display_order: number
+  slot_limit?: number | null
+  slots_taken?: number
+  gender_limit: 'any' | 'male' | 'female'
+  age_min?: number | null
+  age_max?: number | null
+  target_distance_km?: number | null
+}
+
+export interface RaceAddon {
+  id?: string
+  name: string
+  description?: string
+  image_url?: string
+  price_cents: number
+  per_user_limit?: number | null
+  total_stock?: number | null
+  display_order: number
+  active: boolean
+}
+
+export interface RaceSupply {
+  id?: string
+  group_id?: string // 回傳時的實際 UUID（空=共用）
+  group_index?: number | null // 建立時對應 groups 陣列索引（null=共用）
+  kind: 'race_pack' | 'finisher'
+  name: string
+  description?: string
+  image_url?: string
+  display_order: number
+}
+
+export interface RaceDetail extends Race {
+  groups: RaceGroup[]
+  addons: RaceAddon[]
+  supplies: RaceSupply[]
+}
+
+// 建立賽事的巢狀 payload（Race 基本欄位 + 子陣列）
+export type CreateRacePayload = Partial<Race> & {
+  groups: RaceGroup[]
+  addons: RaceAddon[]
+  supplies: RaceSupply[]
+}
+
+export interface GroupPreset {
+  id: string
+  name: string
+  default_distance_km?: number | null
+  is_system: boolean
 }
 
 class ApiError extends Error {
@@ -105,12 +168,31 @@ export const adminRacesApi = {
   list: (token: string) =>
     request<{ races: Race[] }>('/admin/races', { headers: withAuth(token) }),
   get: (token: string, id: string) =>
-    request<{ race: Race }>(`/admin/races/${id}`, { headers: withAuth(token) }),
+    request<{ race: RaceDetail }>(`/admin/races/${id}`, { headers: withAuth(token) }),
+  create: (token: string, payload: CreateRacePayload) =>
+    request<{ race: RaceDetail }>('/admin/races', {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify(payload),
+    }),
   update: (token: string, id: string, race: Race) =>
     request<{ race: Race }>(`/admin/races/${id}`, {
       method: 'PUT',
       headers: withAuth(token),
       body: JSON.stringify(race),
+    }),
+}
+
+// --- Admin: 分組預設選單 ---
+
+export const adminPresetsApi = {
+  list: (token: string) =>
+    request<{ presets: GroupPreset[] }>('/admin/group-presets', { headers: withAuth(token) }),
+  create: (token: string, body: { name: string; default_distance_km?: number | null }) =>
+    request<{ preset: GroupPreset }>('/admin/group-presets', {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify(body),
     }),
 }
 

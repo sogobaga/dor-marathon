@@ -22,8 +22,9 @@ const selectCols = `
 	SELECT id, slug, title, COALESCE(subtitle,'') as subtitle,
 	       COALESCE(world,'') as world, COALESCE(blurb,'') as blurb,
 	       COALESCE(hero_image_url,'') as hero_image_url,
-	       status, distances, group_type, group_mode,
-	       slots_total, entry_fee, start_date, end_date, config,
+	       status, event_mode, goal_type, distances, group_type, group_mode,
+	       slots_total, entry_fee, registration_start, registration_end,
+	       start_date, end_date, config,
 	       COALESCE(created_by::text,'') as created_by,
 	       review_status,
 	       COALESCE(review_note,'') as review_note,
@@ -93,11 +94,13 @@ func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
 			slug=$1, title=$2, subtitle=$3, world=$4, blurb=$5, hero_image_url=$6,
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
+			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
 			updated_at=NOW()
-		WHERE id=$16`,
+		WHERE id=$20`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
+		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
 		race.ID,
 	)
 	if err != nil {
@@ -106,19 +109,19 @@ func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
 	return r.GetByID(ctx, race.ID)
 }
 
-// Create 新增賽事（admin 用）
-func (r *Repository) Create(ctx context.Context, race *Race) (*Race, error) {
+// CreateWithChildren 在單一交易內建立賽事 + 分組 + 加購 + 物資。
+// 物資的 GroupIndex 對應 req.Groups 陣列索引，插完分組後回填成實際 group UUID。
+func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequest) (*RaceDetail, error) {
+	race := &req.Race
+
 	cfgBytes, err := configToBytes(race.Config)
 	if err != nil {
 		return nil, fmt.Errorf("marshal config: %w", err)
 	}
-
-	// 將 []int 轉為 pgx 可接受的 int32 slice
 	dist32 := make([]int32, len(race.Distances))
 	for i, d := range race.Distances {
 		dist32[i] = int32(d)
 	}
-
 	reviewStatus := race.ReviewStatus
 	if reviewStatus == "" {
 		reviewStatus = "approved"
@@ -128,23 +131,241 @@ func (r *Repository) Create(ctx context.Context, race *Race) (*Race, error) {
 		createdBy = race.CreatedBy
 	}
 
-	var id string
-	err = r.db.QueryRow(ctx, `
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) // Commit 後為 no-op
+
+	var raceID string
+	err = tx.QueryRow(ctx, `
 		INSERT INTO races (slug, title, subtitle, world, blurb, hero_image_url,
-		                   status, distances, group_type, group_mode,
-		                   slots_total, entry_fee, start_date, end_date, config,
-		                   created_by, review_status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		                   status, event_mode, goal_type, distances, group_type, group_mode,
+		                   slots_total, entry_fee, registration_start, registration_end,
+		                   start_date, end_date, config, created_by, review_status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
-		race.Status, dist32, race.GroupType, race.GroupMode,
-		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
-		createdBy, reviewStatus,
-	).Scan(&id)
+		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
+		race.SlotsTotal, race.EntryFee, race.RegStart, race.RegEnd,
+		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus,
+	).Scan(&raceID)
 	if err != nil {
-		return nil, fmt.Errorf("create race: %w", err)
+		return nil, fmt.Errorf("insert race: %w", err)
 	}
-	return r.GetByID(ctx, id)
+
+	// 分組（記錄索引 → 實際 UUID，供物資對應）
+	groupIDByIndex := make([]string, len(req.Groups))
+	for i := range req.Groups {
+		g := &req.Groups[i]
+		var gid string
+		err = tx.QueryRow(ctx, `
+			INSERT INTO race_groups (race_id, name, description, display_order,
+			                         slot_limit, gender_limit, age_min, age_max, target_distance_km)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			RETURNING id`,
+			raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
+			g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
+		).Scan(&gid)
+		if err != nil {
+			return nil, fmt.Errorf("insert group %d: %w", i, err)
+		}
+		groupIDByIndex[i] = gid
+	}
+
+	// 加購
+	for i := range req.Addons {
+		a := &req.Addons[i]
+		_, err = tx.Exec(ctx, `
+			INSERT INTO race_addons (race_id, name, description, image_url, price_cents,
+			                         per_user_limit, total_stock, display_order, active)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			raceID, a.Name, nullStr(a.Description), nullStr(a.ImageURL), a.PriceCents,
+			a.PerUserLimit, a.TotalStock, a.DisplayOrder, a.Active,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("insert addon %d: %w", i, err)
+		}
+	}
+
+	// 物資（GroupIndex → group UUID；nil 或越界 = 賽事層級共用）
+	for i := range req.Supplies {
+		s := &req.Supplies[i]
+		var groupID interface{}
+		if s.GroupIndex != nil && *s.GroupIndex >= 0 && *s.GroupIndex < len(groupIDByIndex) {
+			groupID = groupIDByIndex[*s.GroupIndex]
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO race_supplies (race_id, group_id, kind, name, description, image_url, display_order)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			raceID, groupID, s.Kind, s.Name, nullStr(s.Description), nullStr(s.ImageURL), s.DisplayOrder,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("insert supply %d: %w", i, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return r.GetDetail(ctx, raceID)
+}
+
+// Create 建立賽事（無子資料；供合作方提交等簡單流程沿用）
+func (r *Repository) Create(ctx context.Context, race *Race) (*Race, error) {
+	detail, err := r.CreateWithChildren(ctx, &CreateRaceRequest{Race: *race})
+	if err != nil {
+		return nil, err
+	}
+	return &detail.Race, nil
+}
+
+// GetDetail 取得賽事 + 巢狀分組/加購/物資（後台編輯載入用）
+func (r *Repository) GetDetail(ctx context.Context, raceID string) (*RaceDetail, error) {
+	race, err := r.GetByID(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	if race == nil {
+		return nil, nil
+	}
+	groups, err := r.GetGroups(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	addons, err := r.GetAddons(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	supplies, err := r.GetSupplies(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	return &RaceDetail{Race: *race, Groups: groups, Addons: addons, Supplies: supplies}, nil
+}
+
+// GetGroups 取得賽事的所有分組
+func (r *Repository) GetGroups(ctx context.Context, raceID string) ([]RaceGroup, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, race_id, name, COALESCE(description,''), display_order,
+		       slot_limit, slots_taken, gender_limit, age_min, age_max, target_distance_km
+		FROM race_groups WHERE race_id=$1 ORDER BY display_order, created_at`, raceID)
+	if err != nil {
+		return nil, fmt.Errorf("list groups: %w", err)
+	}
+	defer rows.Close()
+
+	groups := []RaceGroup{}
+	for rows.Next() {
+		var g RaceGroup
+		if err := rows.Scan(&g.ID, &g.RaceID, &g.Name, &g.Description, &g.DisplayOrder,
+			&g.SlotLimit, &g.SlotsTaken, &g.GenderLimit, &g.AgeMin, &g.AgeMax, &g.TargetDistanceKm); err != nil {
+			return nil, err
+		}
+		groups = append(groups, g)
+	}
+	return groups, rows.Err()
+}
+
+// GetAddons 取得賽事的所有加購項目
+func (r *Repository) GetAddons(ctx context.Context, raceID string) ([]RaceAddon, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, race_id, name, COALESCE(description,''), COALESCE(image_url,''),
+		       price_cents, per_user_limit, total_stock, sold_count, display_order, active
+		FROM race_addons WHERE race_id=$1 ORDER BY display_order, created_at`, raceID)
+	if err != nil {
+		return nil, fmt.Errorf("list addons: %w", err)
+	}
+	defer rows.Close()
+
+	addons := []RaceAddon{}
+	for rows.Next() {
+		var a RaceAddon
+		if err := rows.Scan(&a.ID, &a.RaceID, &a.Name, &a.Description, &a.ImageURL,
+			&a.PriceCents, &a.PerUserLimit, &a.TotalStock, &a.SoldCount, &a.DisplayOrder, &a.Active); err != nil {
+			return nil, err
+		}
+		addons = append(addons, a)
+	}
+	return addons, rows.Err()
+}
+
+// GetSupplies 取得賽事的所有物資（含共用與分組）
+func (r *Repository) GetSupplies(ctx context.Context, raceID string) ([]RaceSupply, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, race_id, COALESCE(group_id::text,''), kind, name,
+		       COALESCE(description,''), COALESCE(image_url,''), display_order
+		FROM race_supplies WHERE race_id=$1 ORDER BY display_order, created_at`, raceID)
+	if err != nil {
+		return nil, fmt.Errorf("list supplies: %w", err)
+	}
+	defer rows.Close()
+
+	supplies := []RaceSupply{}
+	for rows.Next() {
+		var s RaceSupply
+		if err := rows.Scan(&s.ID, &s.RaceID, &s.GroupID, &s.Kind, &s.Name,
+			&s.Description, &s.ImageURL, &s.DisplayOrder); err != nil {
+			return nil, err
+		}
+		supplies = append(supplies, s)
+	}
+	return supplies, rows.Err()
+}
+
+// --- Group presets ---
+
+// ListPresets 取得分組預設選單
+func (r *Repository) ListPresets(ctx context.Context) ([]GroupPreset, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, name, default_distance_km, is_system
+		FROM group_presets ORDER BY is_system DESC, name`)
+	if err != nil {
+		return nil, fmt.Errorf("list presets: %w", err)
+	}
+	defer rows.Close()
+
+	presets := []GroupPreset{}
+	for rows.Next() {
+		var p GroupPreset
+		if err := rows.Scan(&p.ID, &p.Name, &p.DefaultDistanceKm, &p.IsSystem); err != nil {
+			return nil, err
+		}
+		presets = append(presets, p)
+	}
+	return presets, rows.Err()
+}
+
+// CreatePreset 新增分組預設（後台擴充選單用）。name 重複時回傳既有的。
+func (r *Repository) CreatePreset(ctx context.Context, name string, distanceKm *float64) (*GroupPreset, error) {
+	p := &GroupPreset{}
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO group_presets (name, default_distance_km, is_system)
+		VALUES ($1, $2, FALSE)
+		ON CONFLICT (name) DO UPDATE SET default_distance_km = EXCLUDED.default_distance_km
+		RETURNING id, name, default_distance_km, is_system`,
+		name, distanceKm,
+	).Scan(&p.ID, &p.Name, &p.DefaultDistanceKm, &p.IsSystem)
+	if err != nil {
+		return nil, fmt.Errorf("create preset: %w", err)
+	}
+	return p, nil
+}
+
+// nullStr 空字串轉 nil，讓 DB 存 NULL 而非空字串
+func nullStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// defaultStr 空字串時回傳預設值
+func defaultStr(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 // --- Registration ---
@@ -272,8 +493,9 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 	err := row.Scan(
 		&race.ID, &race.Slug, &race.Title, &race.Subtitle,
 		&race.World, &race.Blurb, &race.HeroImageURL,
-		&race.Status, &dist32, &race.GroupType, &race.GroupMode,
-		&race.SlotsTotal, &race.EntryFee,
+		&race.Status, &race.EventMode, &race.GoalType,
+		&dist32, &race.GroupType, &race.GroupMode,
+		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
 		&race.StartDate, &race.EndDate, &cfgBytes,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CreatedAt,
@@ -297,8 +519,9 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 	err := rows.Scan(
 		&race.ID, &race.Slug, &race.Title, &race.Subtitle,
 		&race.World, &race.Blurb, &race.HeroImageURL,
-		&race.Status, &dist32, &race.GroupType, &race.GroupMode,
-		&race.SlotsTotal, &race.EntryFee,
+		&race.Status, &race.EventMode, &race.GoalType,
+		&dist32, &race.GroupType, &race.GroupMode,
+		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
 		&race.StartDate, &race.EndDate, &cfgBytes,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CreatedAt,
