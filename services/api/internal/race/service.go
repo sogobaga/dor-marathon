@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -19,6 +20,15 @@ var (
 	ErrSoldOut          = errors.New("race is sold out")
 	ErrInvalidDistance  = errors.New("invalid distance for this race")
 	ErrRaceHasRegistrations = errors.New("race has registrations and cannot be deleted")
+	ErrGroupNotFound       = errors.New("group not found in this race")
+	ErrGroupFull           = errors.New("group is full")
+	ErrGroupRequired       = errors.New("group selection is required")
+	ErrMissingRequiredField = errors.New("missing required participant field")
+	ErrGroupRestriction    = errors.New("participant does not meet group restriction")
+	ErrNoGroups            = errors.New("race has no groups")
+	ErrAddonNotFound       = errors.New("addon not found")
+	ErrAddonLimit          = errors.New("addon quantity exceeds per-user limit")
+	ErrAddonSoldOut        = errors.New("addon sold out")
 )
 
 type Service struct {
@@ -56,93 +66,157 @@ func (s *Service) GetDetail(ctx context.Context, raceID, userID string) (*Race, 
 	return race, reg, nil
 }
 
-// Register 處理報名邏輯
-func (s *Service) Register(ctx context.Context, userID, raceID string, distance int) (*Registration, error) {
-	race, err := s.repo.GetByID(ctx, raceID)
+// GetPublicDetail 取得公開賽事詳情（含分組/加購/物資）+ 使用者報名狀態。
+func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*RaceDetail, *Registration, error) {
+	detail, err := s.repo.GetDetail(ctx, raceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if detail == nil || detail.ReviewStatus != "approved" {
+		return nil, nil, ErrRaceNotFound
+	}
+	var reg *Registration
+	if userID != "" {
+		reg, err = s.repo.GetRegistration(ctx, userID, raceID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return detail, reg, nil
+}
+
+// Register 處理前台報名（分組 + 加購 + 訂單 + 個資回填）。
+func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*RegisterResult, error) {
+	race, err := s.repo.GetByID(ctx, req.RaceID)
 	if err != nil {
 		return nil, err
 	}
-	if race == nil {
+	if race == nil || race.ReviewStatus != "approved" {
 		return nil, ErrRaceNotFound
 	}
 	if race.Status != "open" {
 		return nil, ErrRegistrationClosed
 	}
 
-	// 確認距離合法
-	validDist := false
-	for _, d := range race.Distances {
-		if d == distance {
-			validDist = true
-			break
-		}
-	}
-	if !validDist {
-		return nil, ErrInvalidDistance
-	}
-
-	// 確認未重複報名
-	existing, err := s.repo.GetRegistration(ctx, userID, raceID)
-	if err != nil {
+	// 重複報名先擋（交易內 UNIQUE 仍是最終保證）
+	if existing, err := s.repo.GetRegistration(ctx, req.UserID, req.RaceID); err != nil {
 		return nil, err
-	}
-	if existing != nil {
+	} else if existing != nil {
 		return nil, ErrAlreadyRegistered
 	}
 
-	// 名額控制：Redis DECR 原子操作（slots_total > 0 才做）
-	if race.SlotsTotal > 0 {
-		slotsKey := "race:" + raceID + ":slots"
-		// 若 Redis 尚未初始化此 key，先設定初始值
-		if s.rdb.Exists(ctx, slotsKey).Val() == 0 {
-			s.rdb.Set(ctx, slotsKey, race.SlotsTotal, 0)
-		}
-		remaining := s.rdb.Decr(ctx, slotsKey).Val()
-		if remaining < 0 {
-			s.rdb.Incr(ctx, slotsKey) // 歸還
-			return nil, ErrSoldOut
-		}
-	}
-
-	// 分配陣營（faction-type + random 模式）
-	faction := ""
-	if race.GroupType == "faction" && race.GroupMode == "random" && len(race.Config.Factions) > 0 {
-		faction = s.assignFactionBalanced(ctx, raceID, race.Config.Factions)
-	}
-
-	// 寫入 DB
-	reg := &Registration{
-		UserID:   userID,
-		RaceID:   raceID,
-		Distance: distance,
-		Faction:  faction,
-		Status:   "pending",
-		Amount:   race.EntryFee,
-	}
-	reg, err = s.repo.CreateRegistration(ctx, reg)
+	groups, err := s.repo.GetGroups(ctx, req.RaceID)
 	if err != nil {
-		return nil, fmt.Errorf("create registration: %w", err)
+		return nil, err
+	}
+	if len(groups) == 0 {
+		return nil, ErrNoGroups
 	}
 
-	// Mock 付款：立即確認（真實整合時改為送金流後 webhook 回呼）
-	if err := s.repo.ConfirmPayment(ctx, reg.ID); err != nil {
-		return nil, fmt.Errorf("confirm payment: %w", err)
+	// 決定分組
+	var chosen *RaceGroup
+	revealed := true
+	if race.EventMode == "faction_battle" {
+		chosen = pickBalancedGroup(groups) // 隨機/平衡指派
+		revealed = false                   // 賽事當天才公布
+	} else {
+		if req.GroupID == "" {
+			return nil, ErrGroupRequired
+		}
+		for i := range groups {
+			if groups[i].ID == req.GroupID {
+				chosen = &groups[i]
+				break
+			}
+		}
+		if chosen == nil {
+			return nil, ErrGroupNotFound
+		}
 	}
-	reg.Status = "paid"
+
+	// 必填欄位驗證
+	if err := validateRequiredFields(race.RequiredFields, req.Participant); err != nil {
+		return nil, err
+	}
+	// 分組性別/年齡限制
+	if err := validateGroupRestriction(chosen, req.Participant); err != nil {
+		return nil, err
+	}
+
+	distance := 0
+	if chosen.TargetDistanceKm != nil {
+		distance = int(*chosen.TargetDistanceKm)
+	}
+
+	return s.repo.RegisterWithOrder(ctx, RegisterTxInput{
+		UserID:        req.UserID,
+		RaceID:        req.RaceID,
+		GroupID:       chosen.ID,
+		EntryFee:      race.EntryFee,
+		GroupRevealed: revealed,
+		Distance:      distance,
+		Addons:        req.Addons,
+		Participant:   req.Participant,
+	})
+}
+
+// pickBalancedGroup 從分組中挑人數最少者（同最少則取第一個），用於分組對抗隨機指派
+func pickBalancedGroup(groups []RaceGroup) *RaceGroup {
+	idx := 0
+	for i := range groups {
+		if groups[i].SlotsTaken < groups[idx].SlotsTaken {
+			idx = i
+		}
+	}
+	return &groups[idx]
+}
+
+func validateRequiredFields(required []string, p ParticipantInfo) error {
+	get := map[string]string{
+		"real_name": p.RealName, "nickname": p.Nickname, "phone": p.Phone,
+		"address": p.Address, "birthday": p.Birthday, "gender": p.Gender,
+	}
+	for _, f := range required {
+		if strings.TrimSpace(get[f]) == "" {
+			return fmt.Errorf("%w: %s", ErrMissingRequiredField, f)
+		}
+	}
+	return nil
+}
+
+func validateGroupRestriction(g *RaceGroup, p ParticipantInfo) error {
+	if g.GenderLimit != "" && g.GenderLimit != "any" {
+		if p.Gender != g.GenderLimit {
+			return fmt.Errorf("%w: gender", ErrGroupRestriction)
+		}
+	}
+	if g.AgeMin != nil || g.AgeMax != nil {
+		age, ok := ageFromBirthday(p.Birthday)
+		if !ok {
+			return fmt.Errorf("%w: birthday required", ErrGroupRestriction)
+		}
+		if g.AgeMin != nil && age < *g.AgeMin {
+			return fmt.Errorf("%w: age below min", ErrGroupRestriction)
+		}
+		if g.AgeMax != nil && age > *g.AgeMax {
+			return fmt.Errorf("%w: age above max", ErrGroupRestriction)
+		}
+	}
+	return nil
+}
+
+// ageFromBirthday 由 YYYY-MM-DD 算現在年齡
+func ageFromBirthday(birthday string) (int, bool) {
+	t, err := time.Parse("2006-01-02", birthday)
+	if err != nil {
+		return 0, false
+	}
 	now := time.Now()
-	reg.PaidAt = &now
-
-	// 初始化 Redis 排行榜分數（0km 起跑）
-	rankKey := "race:" + raceID + ":ranking"
-	s.rdb.ZAddNX(ctx, rankKey, redis.Z{Score: 0, Member: userID})
-
-	// 初始化陣營貢獻（若有陣營）
-	if faction != "" {
-		factionKmKey := "race:" + raceID + ":faction_km"
-		s.rdb.HSetNX(ctx, factionKmKey, faction, 0)
+	age := now.Year() - t.Year()
+	if now.YearDay() < t.YearDay() {
+		age--
 	}
-
-	return reg, nil
+	return age, true
 }
 
 // GetLiveStatus 取得即時陣營分數

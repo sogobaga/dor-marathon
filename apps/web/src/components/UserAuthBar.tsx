@@ -6,7 +6,7 @@ import { authApi, type User } from '@/lib/api'
 import { getUser, setUserSession, clearUserSession } from '@/lib/userAuth'
 import { googleConfigured } from './GoogleAuthProvider'
 
-export default function UserAuthBar() {
+export default function UserAuthBar({ onProfile }: { onProfile?: () => void }) {
   const [user, setUser] = useState<User | null>(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -30,9 +30,9 @@ export default function UserAuthBar() {
         ) : (
           <div style={avatar}>{(user.name || 'U').slice(0, 1)}</div>
         )}
-        <span style={{ fontSize: 13, color: 'var(--tx)', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <button onClick={onProfile} style={{ ...logoutBtn, color: 'var(--tx)', maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title="個人資訊">
           {user.name}
-        </span>
+        </button>
         <button onClick={logout} style={logoutBtn}>登出</button>
       </div>
     )

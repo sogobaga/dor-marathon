@@ -26,11 +26,12 @@ type Race struct {
 	RegEnd       *time.Time `json:"registration_end,omitempty"`   // 報名截止
 	StartDate    time.Time  `json:"start_date"`                   // 競賽時間 起
 	EndDate      time.Time  `json:"end_date"`                     // 競賽時間 迄
-	Config       RaceConfig `json:"config"`
-	CreatedBy    string     `json:"created_by,omitempty"` // organizer userID
-	ReviewStatus string     `json:"review_status"`        // pending|approved|rejected
-	ReviewNote   string     `json:"review_note,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	Config         RaceConfig `json:"config"`
+	RequiredFields []string   `json:"required_fields"` // 報名必填欄位：real_name|nickname|phone|address|birthday|gender
+	CreatedBy      string     `json:"created_by,omitempty"` // organizer userID
+	ReviewStatus   string     `json:"review_status"`        // pending|approved|rejected
+	ReviewNote     string     `json:"review_note,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // RaceGroup 分組（一般/競賽=選手自選，分組對抗=隨機分配）
@@ -169,14 +170,56 @@ type MissionDef struct {
 
 // Registration 報名記錄
 type Registration struct {
-	ID       string     `json:"id"`
-	UserID   string     `json:"user_id"`
-	RaceID   string     `json:"race_id"`
-	Distance int        `json:"distance"`
-	Faction  string     `json:"faction,omitempty"`
-	Status   string     `json:"status"` // pending|paid|cancelled
-	PaidAt   *time.Time `json:"paid_at,omitempty"`
-	Amount   int        `json:"amount"`
+	ID            string     `json:"id"`
+	UserID        string     `json:"user_id"`
+	RaceID        string     `json:"race_id"`
+	Distance      int        `json:"distance"`
+	Faction       string     `json:"faction,omitempty"`
+	GroupID       string     `json:"group_id,omitempty"`
+	GroupRevealed bool       `json:"group_revealed"`
+	Status        string     `json:"status"` // pending|paid|cancelled
+	PaidAt        *time.Time `json:"paid_at,omitempty"`
+	Amount        int        `json:"amount"`
+}
+
+// ParticipantInfo 報名時填的參賽者資料（也用於回填 user_profiles）
+type ParticipantInfo struct {
+	RealName string `json:"real_name"`
+	Nickname string `json:"nickname"`
+	Phone    string `json:"phone"`
+	Address  string `json:"address"`
+	Birthday string `json:"birthday"` // YYYY-MM-DD
+	Gender   string `json:"gender"`   // male|female|other
+}
+
+// AddonSelection 報名時選購的加購項目
+type AddonSelection struct {
+	AddonID string `json:"addon_id"`
+	Qty     int    `json:"qty"`
+}
+
+// RegisterRequest 前台報名 payload
+type RegisterRequest struct {
+	RaceID      string           `json:"-"`
+	UserID      string           `json:"-"`
+	GroupID     string           `json:"group_id"` // 一般/競賽必填；分組對抗忽略（隨機）
+	Addons      []AddonSelection `json:"addons"`
+	Participant ParticipantInfo  `json:"participant"`
+}
+
+// Order 訂單
+type Order struct {
+	ID         string `json:"id"`
+	TotalCents int    `json:"total_cents"`
+	Status     string `json:"status"` // pending|paid|cancelled|refunded
+}
+
+// RegisterResult 報名結果
+type RegisterResult struct {
+	Registration   *Registration `json:"registration"`
+	Order          *Order        `json:"order"`
+	AssignedGroup  string        `json:"assigned_group"`  // 指派/選擇的分組名稱
+	GroupRevealed  bool          `json:"group_revealed"`  // 分組是否已公布
 }
 
 // RankEntry 排行榜單筆記錄

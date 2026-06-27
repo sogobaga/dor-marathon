@@ -107,12 +107,12 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"races": races})
 }
 
-// GET /api/v1/races/:raceID
+// GET /api/v1/races/:raceID — 公開賽事詳情（含分組/加購/物資）+ 報名狀態
 func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 	raceID := chi.URLParam(r, "raceID")
 	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 
-	race, reg, err := h.svc.GetDetail(r.Context(), raceID, userID)
+	detail, reg, err := h.svc.GetPublicDetail(r.Context(), raceID, userID)
 	if errors.Is(err, ErrRaceNotFound) {
 		respondErr(w, http.StatusNotFound, "race not found")
 		return
@@ -123,12 +123,12 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{
-		"race":         race,
+		"race":         detail,
 		"registration": reg, // nil if not registered
 	})
 }
 
-// POST /api/v1/races/:raceID/register
+// POST /api/v1/races/:raceID/register — 前台報名（分組 + 加購 + 訂單）
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	raceID := chi.URLParam(r, "raceID")
 	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
@@ -137,41 +137,36 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Distance int `json:"distance" validate:"required"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Distance == 0 {
-		respondErr(w, http.StatusBadRequest, "distance is required")
+	var req RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	req.RaceID = raceID
+	req.UserID = userID
 
-	reg, err := h.svc.Register(r.Context(), userID, raceID, req.Distance)
-	if errors.Is(err, ErrRaceNotFound) {
+	result, err := h.svc.Register(r.Context(), &req)
+	switch {
+	case err == nil:
+		respondJSON(w, http.StatusCreated, result)
+	case errors.Is(err, ErrRaceNotFound):
 		respondErr(w, http.StatusNotFound, "race not found")
-		return
-	}
-	if errors.Is(err, ErrRegistrationClosed) {
-		respondErr(w, http.StatusConflict, "registration is not open")
-		return
-	}
-	if errors.Is(err, ErrAlreadyRegistered) {
-		respondErr(w, http.StatusConflict, "already registered")
-		return
-	}
-	if errors.Is(err, ErrSoldOut) {
-		respondErr(w, http.StatusConflict, "sold out")
-		return
-	}
-	if errors.Is(err, ErrInvalidDistance) {
-		respondErr(w, http.StatusBadRequest, "invalid distance")
-		return
-	}
-	if err != nil {
+	case errors.Is(err, ErrRegistrationClosed):
+		respondErr(w, http.StatusConflict, "報名未開放")
+	case errors.Is(err, ErrAlreadyRegistered):
+		respondErr(w, http.StatusConflict, "您已報名此賽事")
+	case errors.Is(err, ErrGroupFull):
+		respondErr(w, http.StatusConflict, "該分組名額已滿")
+	case errors.Is(err, ErrAddonSoldOut):
+		respondErr(w, http.StatusConflict, "加購商品已售完")
+	case errors.Is(err, ErrGroupRequired), errors.Is(err, ErrGroupNotFound),
+		errors.Is(err, ErrNoGroups), errors.Is(err, ErrMissingRequiredField),
+		errors.Is(err, ErrGroupRestriction), errors.Is(err, ErrAddonNotFound),
+		errors.Is(err, ErrAddonLimit):
+		respondErr(w, http.StatusBadRequest, err.Error())
+	default:
 		respondErr(w, http.StatusInternalServerError, "registration failed")
-		return
 	}
-
-	respondJSON(w, http.StatusCreated, map[string]any{"registration": reg})
 }
 
 // GET /api/v1/races/:raceID/ranking?limit=100

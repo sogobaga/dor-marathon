@@ -40,9 +40,12 @@ export interface Race {
   registration_end?: string | null
   start_date: string
   end_date: string
+  required_fields: string[]
   review_status: string
   created_at: string
 }
+
+export type ParticipantField = 'real_name' | 'nickname' | 'phone' | 'address' | 'birthday' | 'gender'
 
 export interface RaceGroup {
   id?: string
@@ -204,9 +207,41 @@ export interface CompetitionRanking {
   my_group?: MyGroupRank | null
 }
 
+export interface RegistrationState {
+  id: string
+  group_id?: string
+  group_revealed: boolean
+  status: string
+  amount: number
+}
+
+export interface RegisterPayload {
+  group_id?: string
+  addons?: { addon_id: string; qty: number }[]
+  participant: Partial<Record<ParticipantField, string>>
+}
+
+export interface RegisterResult {
+  registration: RegistrationState
+  order: { id: string; total_cents: number; status: string }
+  assigned_group: string
+  group_revealed: boolean
+}
+
 export const racesApi = {
   list: () => request<{ races: Race[] }>('/races'),
-  get: (slug: string) => request<Race>(`/races/${slug}`),
+  // 公開賽事詳情（含分組/加購/物資）+ 報名狀態（帶 token）
+  detail: (raceID: string, token?: string) =>
+    request<{ race: RaceDetail; registration: RegistrationState | null }>(
+      `/races/${raceID}`,
+      token ? { headers: withAuth(token) } : undefined
+    ),
+  register: (raceID: string, token: string, payload: RegisterPayload) =>
+    request<RegisterResult>(`/races/${raceID}/register`, {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify(payload),
+    }),
   // 競賽排行榜（公開；帶 token 則附自己分組名次）
   standings: (raceID: string, token?: string) =>
     request<CompetitionRanking>(`/races/${raceID}/standings`, token ? { headers: withAuth(token) } : undefined),

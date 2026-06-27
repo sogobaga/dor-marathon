@@ -20,7 +20,15 @@ function fmtDate(iso: string) {
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
-export default function RacesScreen({ onOpenRanking }: { onOpenRanking?: (race: Race) => void }) {
+export default function RacesScreen({
+  onOpenRanking,
+  onRegister,
+  onOpenProfile,
+}: {
+  onOpenRanking?: (race: Race) => void
+  onRegister?: (race: Race) => void
+  onOpenProfile?: () => void
+}) {
   const { data, error, isLoading } = useSWR('races', racesApi.list)
 
   return (
@@ -34,7 +42,7 @@ export default function RacesScreen({ onOpenRanking }: { onOpenRanking?: (race: 
             </div>
             <h1 style={{ margin: '6px 0 0', fontSize: 26, fontWeight: 800, color: 'var(--tx)' }}>賽事列表</h1>
           </div>
-          <UserAuthBar />
+          <UserAuthBar onProfile={onOpenProfile} />
         </div>
       </header>
 
@@ -47,7 +55,7 @@ export default function RacesScreen({ onOpenRanking }: { onOpenRanking?: (race: 
         {data && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {data.races.map((r) => (
-              <RaceCard key={r.id} race={r} onOpenRanking={onOpenRanking} />
+              <RaceCard key={r.id} race={r} onOpenRanking={onOpenRanking} onRegister={onRegister} />
             ))}
           </div>
         )}
@@ -56,12 +64,20 @@ export default function RacesScreen({ onOpenRanking }: { onOpenRanking?: (race: 
   )
 }
 
-function RaceCard({ race, onOpenRanking }: { race: Race; onOpenRanking?: (race: Race) => void }) {
+function RaceCard({
+  race,
+  onOpenRanking,
+  onRegister,
+}: {
+  race: Race
+  onOpenRanking?: (race: Race) => void
+  onRegister?: (race: Race) => void
+}) {
   const s = STATUS[race.status] ?? STATUS.done
   const isCompetition = race.event_mode === 'competition'
+  const canRegister = race.status === 'open'
   return (
     <div
-      onClick={() => onOpenRanking?.(race)}
       style={{
         background: 'var(--bg-1)',
         border: '1px solid var(--line)',
@@ -70,7 +86,6 @@ function RaceCard({ race, onOpenRanking }: { race: Race; onOpenRanking?: (race: 
         display: 'flex',
         flexDirection: 'column',
         gap: 10,
-        cursor: onOpenRanking ? 'pointer' : 'default',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
@@ -132,11 +147,16 @@ function RaceCard({ race, onOpenRanking }: { race: Race; onOpenRanking?: (race: 
         <span>
           {fmtDate(race.start_date)} – {fmtDate(race.end_date)}
         </span>
-        {isCompetition && onOpenRanking ? (
-          <span style={{ color: 'var(--fug)', fontWeight: 700 }}>分組排行榜 →</span>
-        ) : (
-          <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{fmtFee(race.entry_fee)}</span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {isCompetition && onOpenRanking && (
+            <button onClick={() => onOpenRanking(race)} style={linkBtnStyle}>排行榜</button>
+          )}
+          {canRegister && onRegister ? (
+            <button onClick={() => onRegister(race)} style={registerBtnStyle}>報名</button>
+          ) : (
+            <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{fmtFee(race.entry_fee)}</span>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -146,4 +166,12 @@ function Hint({ children, color = 'var(--tx-dim)' }: { children: React.ReactNode
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', fontSize: 13.5, color }}>{children}</div>
   )
+}
+
+const linkBtnStyle: React.CSSProperties = {
+  background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 12.5, padding: 0,
+}
+const registerBtnStyle: React.CSSProperties = {
+  background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
+  borderRadius: 9, padding: '6px 14px', cursor: 'pointer', fontSize: 13,
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,7 +25,7 @@ const selectCols = `
 	       COALESCE(hero_image_url,'') as hero_image_url,
 	       status, event_mode, goal_type, distances, group_type, group_mode,
 	       slots_total, entry_fee, registration_start, registration_end,
-	       start_date, end_date, config,
+	       start_date, end_date, config, required_fields,
 	       COALESCE(created_by::text,'') as created_by,
 	       review_status,
 	       COALESCE(review_note,'') as review_note,
@@ -137,18 +138,24 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 	}
 	defer tx.Rollback(ctx) // Commit 後為 no-op
 
+	// nil（payload 未帶此鍵）→ 套用預設；明確空陣列 []→ 尊重「全部選填」
+	requiredFields := race.RequiredFields
+	if requiredFields == nil {
+		requiredFields = []string{"real_name", "phone"}
+	}
+
 	var raceID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO races (slug, title, subtitle, world, blurb, hero_image_url,
 		                   status, event_mode, goal_type, distances, group_type, group_mode,
 		                   slots_total, entry_fee, registration_start, registration_end,
-		                   start_date, end_date, config, created_by, review_status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+		                   start_date, end_date, config, created_by, review_status, required_fields)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.RegStart, race.RegEnd,
-		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus,
+		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus, requiredFields,
 	).Scan(&raceID)
 	if err != nil {
 		return nil, fmt.Errorf("insert race: %w", err)
@@ -233,6 +240,11 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 	}
 	defer tx.Rollback(ctx)
 
+	requiredFields := race.RequiredFields
+	if requiredFields == nil {
+		requiredFields = []string{"real_name", "phone"}
+	}
+
 	// 1. 更新賽事本體
 	_, err = tx.Exec(ctx, `
 		UPDATE races SET
@@ -240,13 +252,13 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
-			updated_at=NOW()
-		WHERE id=$20`,
+			required_fields=$20, updated_at=NOW()
+		WHERE id=$21`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
-		raceID,
+		requiredFields, raceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -610,6 +622,171 @@ func (r *Repository) CreateRegistration(ctx context.Context, reg *Registration) 
 	return reg, nil
 }
 
+// RegisterTxInput 報名交易輸入（service 已完成登入/必填/性別年齡驗證）
+type RegisterTxInput struct {
+	UserID        string
+	RaceID        string
+	GroupID       string
+	EntryFee      int
+	GroupRevealed bool
+	Distance      int
+	Addons        []AddonSelection
+	Participant   ParticipantInfo
+}
+
+// RegisterWithOrder 在單一交易內完成報名：分組名額 row-lock 防超賣、加購庫存、
+// 寫 registration + order/order_items、個資回填（只補空欄位）。
+func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) (*RegisterResult, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. 鎖分組、檢查名額
+	var slotLimit *int
+	var slotsTaken int
+	var groupName string
+	err = tx.QueryRow(ctx, `
+		SELECT slot_limit, slots_taken, name FROM race_groups
+		WHERE id=$1 AND race_id=$2 FOR UPDATE`,
+		in.GroupID, in.RaceID).Scan(&slotLimit, &slotsTaken, &groupName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrGroupNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock group: %w", err)
+	}
+	if slotLimit != nil && slotsTaken >= *slotLimit {
+		return nil, ErrGroupFull
+	}
+	if _, err = tx.Exec(ctx, `UPDATE race_groups SET slots_taken = slots_taken + 1 WHERE id=$1`, in.GroupID); err != nil {
+		return nil, fmt.Errorf("bump slots: %w", err)
+	}
+
+	// 2. 加購：鎖庫存、檢查、扣量、累計金額
+	total := in.EntryFee
+	type lineItem struct {
+		addonID   string
+		qty       int
+		unitCents int
+	}
+	var items []lineItem
+	for _, a := range in.Addons {
+		if a.Qty <= 0 {
+			continue
+		}
+		var price int
+		var totalStock, perUserLimit *int
+		var soldCount int
+		err = tx.QueryRow(ctx, `
+			SELECT price_cents, total_stock, per_user_limit, sold_count FROM race_addons
+			WHERE id=$1 AND race_id=$2 AND active FOR UPDATE`,
+			a.AddonID, in.RaceID).Scan(&price, &totalStock, &perUserLimit, &soldCount)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrAddonNotFound
+		}
+		if err != nil {
+			return nil, fmt.Errorf("lock addon: %w", err)
+		}
+		if perUserLimit != nil && a.Qty > *perUserLimit {
+			return nil, ErrAddonLimit
+		}
+		if totalStock != nil && soldCount+a.Qty > *totalStock {
+			return nil, ErrAddonSoldOut
+		}
+		if _, err = tx.Exec(ctx, `UPDATE race_addons SET sold_count = sold_count + $1 WHERE id=$2`, a.Qty, a.AddonID); err != nil {
+			return nil, fmt.Errorf("bump sold_count: %w", err)
+		}
+		total += price * a.Qty
+		items = append(items, lineItem{a.AddonID, a.Qty, price})
+	}
+
+	// 3. registration（UNIQUE(user_id,race_id) 衝突 → 已報名）
+	reg := &Registration{
+		UserID: in.UserID, RaceID: in.RaceID, GroupID: in.GroupID,
+		Distance: in.Distance, GroupRevealed: in.GroupRevealed,
+		Status: "pending", Amount: in.EntryFee,
+	}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO registrations
+			(user_id, race_id, group_id, distance, status, amount,
+			 group_revealed, snap_real_name, snap_phone, snap_address)
+		VALUES ($1,$2,$3,$4,'pending',$5,$6,NULLIF($7,''),NULLIF($8,''),NULLIF($9,''))
+		RETURNING id`,
+		in.UserID, in.RaceID, in.GroupID, in.Distance, in.EntryFee, in.GroupRevealed,
+		in.Participant.RealName, in.Participant.Phone, in.Participant.Address,
+	).Scan(&reg.ID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrAlreadyRegistered
+		}
+		return nil, fmt.Errorf("insert registration: %w", err)
+	}
+
+	// 4. order + order_items
+	order := &Order{TotalCents: total, Status: "pending"}
+	if err = tx.QueryRow(ctx, `
+		INSERT INTO orders (user_id, race_id, registration_id, total_cents, status)
+		VALUES ($1,$2,$3,$4,'pending') RETURNING id`,
+		in.UserID, in.RaceID, reg.ID, total).Scan(&order.ID); err != nil {
+		return nil, fmt.Errorf("insert order: %w", err)
+	}
+	if in.EntryFee > 0 {
+		if _, err = tx.Exec(ctx, `
+			INSERT INTO order_items (order_id, item_type, qty, unit_price_cents, subtotal_cents)
+			VALUES ($1,'entry',1,$2,$2)`, order.ID, in.EntryFee); err != nil {
+			return nil, fmt.Errorf("insert entry item: %w", err)
+		}
+	}
+	for _, it := range items {
+		if _, err = tx.Exec(ctx, `
+			INSERT INTO order_items (order_id, item_type, addon_id, qty, unit_price_cents, subtotal_cents)
+			VALUES ($1,'addon',$2,$3,$4,$5)`,
+			order.ID, it.addonID, it.qty, it.unitCents, it.unitCents*it.qty); err != nil {
+			return nil, fmt.Errorf("insert addon item: %w", err)
+		}
+	}
+
+	// 5. 個資回填：只補目前為空的欄位
+	p := in.Participant
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO user_profiles (user_id, real_name, nickname, phone, address, birthday, gender, updated_at)
+		VALUES ($1, NULLIF($2,''), NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULLIF($6,'')::date, NULLIF($7,''), NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			real_name = COALESCE(user_profiles.real_name, EXCLUDED.real_name),
+			nickname  = COALESCE(user_profiles.nickname,  EXCLUDED.nickname),
+			phone     = COALESCE(user_profiles.phone,     EXCLUDED.phone),
+			address   = COALESCE(user_profiles.address,   EXCLUDED.address),
+			birthday  = COALESCE(user_profiles.birthday,  EXCLUDED.birthday),
+			gender    = COALESCE(user_profiles.gender,    EXCLUDED.gender),
+			updated_at = NOW()`,
+		in.UserID, p.RealName, p.Nickname, p.Phone, p.Address, p.Birthday, p.Gender,
+	); err != nil {
+		return nil, fmt.Errorf("upsert profile: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+
+	return &RegisterResult{
+		Registration:  reg,
+		Order:         order,
+		AssignedGroup: groupName,
+		GroupRevealed: in.GroupRevealed,
+	}, nil
+}
+
+// isUniqueViolation 判斷是否為 Postgres 唯一鍵衝突（SQLSTATE 23505）
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
+}
+
 // ConfirmPayment 確認付款（mock）
 func (r *Repository) ConfirmPayment(ctx context.Context, regID string) error {
 	_, err := r.db.Exec(ctx, `
@@ -701,7 +878,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&race.Status, &race.EventMode, &race.GoalType,
 		&dist32, &race.GroupType, &race.GroupMode,
 		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
-		&race.StartDate, &race.EndDate, &cfgBytes,
+		&race.StartDate, &race.EndDate, &cfgBytes, &race.RequiredFields,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CreatedAt,
 	)
@@ -727,7 +904,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&race.Status, &race.EventMode, &race.GoalType,
 		&dist32, &race.GroupType, &race.GroupMode,
 		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
-		&race.StartDate, &race.EndDate, &cfgBytes,
+		&race.StartDate, &race.EndDate, &cfgBytes, &race.RequiredFields,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CreatedAt,
 	)

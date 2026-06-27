@@ -35,6 +35,15 @@ const STATUSES: { v: string; t: string }[] = [
   { v: 'done', t: '已結束' },
 ]
 
+const REQUIRED_FIELD_OPTS: { v: string; t: string }[] = [
+  { v: 'real_name', t: '真實姓名' },
+  { v: 'nickname', t: '暱稱' },
+  { v: 'phone', t: '手機' },
+  { v: 'address', t: '地址' },
+  { v: 'birthday', t: '生日' },
+  { v: 'gender', t: '性別' },
+]
+
 function slugify(s: string): string {
   const base = s
     .toLowerCase()
@@ -110,6 +119,9 @@ export default function RaceForm({
   const [startDate, setStartDate] = useState(toDateInput(initial?.start_date))
   const [endDate, setEndDate] = useState(toDateInput(initial?.end_date))
   const [entryFeeNtd, setEntryFeeNtd] = useState(String((initial?.entry_fee ?? 0) / 100))
+  const [requiredFields, setRequiredFields] = useState<string[]>(
+    initial?.required_fields ?? ['real_name', 'phone']
+  )
 
   const [groups, setGroups] = useState<RaceGroup[]>(
     initial?.groups?.length ? initial.groups.map((g) => ({ ...g })) : [emptyGroup(0)]
@@ -186,6 +198,7 @@ export default function RaceForm({
       group_mode: isRandom ? 'random' : 'self',
       status: status as CreateRacePayload['status'],
       entry_fee: Math.round(parseFloat(entryFeeNtd || '0') * 100),
+      required_fields: requiredFields,
       registration_start: regStart ? new Date(regStart).toISOString() : null,
       registration_end: regEnd ? new Date(regEnd).toISOString() : null,
       start_date: startDate ? new Date(startDate).toISOString() : new Date().toISOString(),
@@ -326,6 +339,37 @@ export default function RaceForm({
                 <div style={{ flex: 1 }} />
               )}
             </Row>
+
+            <div>
+              <span style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-faint)', textTransform: 'uppercase' }}>
+                報名必填欄位
+              </span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 8 }}>
+                {REQUIRED_FIELD_OPTS.map((f) => {
+                  const on = requiredFields.includes(f.v)
+                  return (
+                    <button
+                      key={f.v}
+                      type="button"
+                      onClick={() =>
+                        setRequiredFields((rf) => (on ? rf.filter((x) => x !== f.v) : [...rf, f.v]))
+                      }
+                      style={{
+                        padding: '7px 13px', borderRadius: 999, cursor: 'pointer', fontSize: 13,
+                        border: on ? '1px solid var(--fug)' : '1px solid var(--line-2)',
+                        background: on ? 'rgba(45,212,150,.1)' : 'var(--bg-2)',
+                        color: on ? 'var(--fug)' : 'var(--tx-dim)',
+                      }}
+                    >
+                      {on ? '✓ ' : ''}{f.t}
+                    </button>
+                  )
+                })}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>
+                未勾選者為選填。報名時若分組有性別/年齡限制，會自動要求對應欄位。
+              </div>
+            </div>
           </div>
         )}
 
