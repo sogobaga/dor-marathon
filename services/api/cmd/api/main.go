@@ -60,7 +60,7 @@ func main() {
 
 	// Auth
 	authRepo := auth.NewRepository(pool)
-	authSvc := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.AccessTTL, cfg.RefreshTTL)
+	authSvc := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.AccessTTL, cfg.RefreshTTL, cfg.GoogleClientID)
 	authHandler := auth.NewHandler(authSvc)
 
 	// WebSocket Manager（各模組共用）
@@ -118,6 +118,7 @@ func main() {
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/register", authHandler.Register)
 			r.Post("/login", authHandler.Login)
+			r.Post("/google", authHandler.Google)
 			r.Post("/refresh", authHandler.Refresh)
 			r.With(middleware.RequireAuth(authSvc)).Delete("/logout", authHandler.Logout)
 			r.With(middleware.RequireAuth(authSvc)).Get("/me", authHandler.Me)

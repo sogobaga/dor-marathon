@@ -147,6 +147,13 @@ export const authApi = {
       body: JSON.stringify(body),
     }),
 
+  // Google 登入（GIS ID-token）
+  google: (id_token: string) =>
+    request<{ user: User; tokens: TokenPair }>('/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ id_token }),
+    }),
+
   refresh: (refresh_token: string) =>
     request<TokenPair>('/auth/refresh', {
       method: 'POST',

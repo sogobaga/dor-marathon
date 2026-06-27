@@ -2,6 +2,7 @@
 
 import useSWR from 'swr'
 import { racesApi, type Race } from '@/lib/api'
+import UserAuthBar from './UserAuthBar'
 
 const STATUS: Record<Race['status'], { label: string; color: string }> = {
   live: { label: '進行中', color: 'var(--fug)' },
@@ -26,10 +27,15 @@ export default function RacesScreen({ onOpenRanking }: { onOpenRanking?: (race: 
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       {/* Header */}
       <header style={{ padding: '52px 22px 16px', flexShrink: 0 }}>
-        <div style={{ fontSize: 11, letterSpacing: '.18em', color: 'var(--fug)', fontWeight: 600 }}>
-          DOR · 雲端馬拉松
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ fontSize: 11, letterSpacing: '.18em', color: 'var(--fug)', fontWeight: 600 }}>
+              DOR · 雲端馬拉松
+            </div>
+            <h1 style={{ margin: '6px 0 0', fontSize: 26, fontWeight: 800, color: 'var(--tx)' }}>賽事列表</h1>
+          </div>
+          <UserAuthBar />
         </div>
-        <h1 style={{ margin: '6px 0 0', fontSize: 26, fontWeight: 800, color: 'var(--tx)' }}>賽事列表</h1>
       </header>
 
       {/* Body */}

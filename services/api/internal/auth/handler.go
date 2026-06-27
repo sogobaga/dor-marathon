@@ -90,6 +90,40 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// POST /api/v1/auth/google — Google ID token 登入（GIS 流程）
+func (h *Handler) Google(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IDToken string `json:"id_token" validate:"required"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := validate.Struct(req); err != nil {
+		respondErr(w, http.StatusBadRequest, "id_token is required")
+		return
+	}
+
+	user, pair, err := h.svc.LoginWithGoogle(r.Context(), req.IDToken)
+	if errors.Is(err, ErrGoogleNotConfigured) {
+		respondErr(w, http.StatusServiceUnavailable, "google login not configured")
+		return
+	}
+	if errors.Is(err, ErrGoogleTokenInvalid) {
+		respondErr(w, http.StatusUnauthorized, "invalid google token")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "google login failed")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"user":   toPublicUser(user),
+		"tokens": pair,
+	})
+}
+
 // POST /api/v1/auth/refresh
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req struct {

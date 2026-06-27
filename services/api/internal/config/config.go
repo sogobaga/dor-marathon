@@ -16,6 +16,7 @@ type Config struct {
 	AccessTTL    time.Duration
 	RefreshTTL   time.Duration
 	CORSOrigins  []string
+	GoogleClientID string // 選用：空字串 = Google 登入未啟用
 }
 
 func Load() *Config {
@@ -28,6 +29,7 @@ func Load() *Config {
 		AccessTTL:   parseDuration(getEnv("JWT_ACCESS_TTL", "15m")),
 		RefreshTTL:  parseDuration(getEnv("JWT_REFRESH_TTL", "168h")),
 		CORSOrigins: strings.Split(getEnv("CORS_ORIGINS", "http://localhost:3000"), ","),
+		GoogleClientID: getEnv("GOOGLE_CLIENT_ID", ""),
 	}
 }
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import RacesScreen from './RacesScreen'
 import RaceRankingScreen from './RaceRankingScreen'
+import GoogleAuthProvider from './GoogleAuthProvider'
 import type { Race } from '@/lib/api'
 
 export default function PhoneShell() {
@@ -14,6 +15,7 @@ export default function PhoneShell() {
   }, [])
 
   return (
+    <GoogleAuthProvider>
     <div className={isMobile ? 'w-full h-dvh' : 'phone-shell'}>
       {/* iOS notch */}
       {!isMobile && (
@@ -38,5 +40,6 @@ export default function PhoneShell() {
         )}
       </div>
     </div>
+    </GoogleAuthProvider>
   )
 }
