@@ -114,8 +114,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   })
-  const data = await res.json()
-  if (!res.ok) throw new ApiError(res.status, data.error ?? 'request failed')
+  // 204 No Content 或空 body（如 DELETE / logout）不解析 JSON，避免 "Unexpected end of JSON input"
+  const text = await res.text()
+  let data: any = null
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = null
+    }
+  }
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? 'request failed')
   return data as T
 }
 
