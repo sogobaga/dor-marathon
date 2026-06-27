@@ -183,6 +183,67 @@ export const adminRacesApi = {
     }),
 }
 
+// --- 個人資訊 (Profile) ---
+
+export interface Profile {
+  user_id: string
+  email: string
+  real_name: string
+  nickname: string
+  phone: string
+  address: string
+  birthday: string // YYYY-MM-DD
+  gender: '' | 'male' | 'female' | 'other'
+}
+
+export const profileApi = {
+  getMe: (token: string) =>
+    request<{ profile: Profile }>('/profile', { headers: withAuth(token) }),
+  updateMe: (token: string, body: Partial<Profile>) =>
+    request<{ profile: Profile }>('/profile', {
+      method: 'PUT',
+      headers: withAuth(token),
+      body: JSON.stringify(body),
+    }),
+}
+
+// --- Admin: 會員管理 ---
+
+export interface MemberSummary {
+  id: string
+  email: string
+  handle: string
+  name: string
+  role: string
+  real_name: string
+  phone: string
+  gender: string
+  total_km: number
+  created_at: string
+}
+
+export interface MemberDetail extends MemberSummary {
+  nickname: string
+  address: string
+  birthday: string
+  race_count: number
+}
+
+export const adminMembersApi = {
+  list: (token: string, params?: { q?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.q) qs.set('q', params.q)
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.offset) qs.set('offset', String(params.offset))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ members: MemberSummary[]; count: number }>(`/admin/members${suffix}`, {
+      headers: withAuth(token),
+    })
+  },
+  get: (token: string, id: string) =>
+    request<{ member: MemberDetail }>(`/admin/members/${id}`, { headers: withAuth(token) }),
+}
+
 // --- Admin: 分組預設選單 ---
 
 export const adminPresetsApi = {

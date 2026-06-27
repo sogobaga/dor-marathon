@@ -153,6 +153,7 @@ func main() {
 			r.Use(middleware.RequireAdmin)
 			r.Mount("/admin/races", raceHandler.AdminRouter())
 			r.Mount("/admin/group-presets", raceHandler.PresetRouter())
+			r.Mount("/admin/members", profileHandler.AdminMembersRouter())
 			r.Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 		})
 	})

@@ -1,12 +1,16 @@
-// Profile 模組：個人資料、完賽紀錄、成就統計
+// Profile 模組：個人資料、完賽紀錄、成就統計、後台會員管理
 package profile
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/dor/api/internal/auth"
 )
@@ -19,18 +23,197 @@ func NewHandler(db *pgxpool.Pool) *Handler {
 	return &Handler{db: db}
 }
 
-// Router 個人資料路由（掛載在 /api/v1/profile）
+// Router 個人資料路由（掛載在 /api/v1/profile，需登入）
 func (h *Handler) Router() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/records":
-			h.Records(w, r)
-		case "/stats":
-			h.Stats(w, r)
-		default:
-			http.NotFound(w, r)
+	r := chi.NewRouter()
+	r.Get("/", h.GetMe)
+	r.Put("/", h.UpdateMe)
+	r.Get("/records", h.Records)
+	r.Get("/stats", h.Stats)
+	return r
+}
+
+// AdminMembersRouter 後台會員管理路由（掛載在 /api/v1/admin/members，需 admin）
+func (h *Handler) AdminMembersRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/", h.AdminListMembers)
+	r.Get("/{userID}", h.AdminGetMember)
+	return r
+}
+
+// Profile 個人資訊（user_profiles + users.email）
+type Profile struct {
+	UserID   string `json:"user_id"`
+	Email    string `json:"email"`
+	RealName string `json:"real_name"`
+	Nickname string `json:"nickname"`
+	Phone    string `json:"phone"`
+	Address  string `json:"address"`
+	Birthday string `json:"birthday"` // YYYY-MM-DD，空=未填
+	Gender   string `json:"gender"`   // male|female|other|空
+}
+
+// GET /api/v1/profile — 取得自己的個人資訊（無資料則回空白可編輯結構）
+func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	p, err := h.fetchProfile(r.Context(), userID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to fetch profile")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"profile": p})
+}
+
+// PUT /api/v1/profile — 更新（upsert）自己的個人資訊
+func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	var req Profile
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Gender != "" && req.Gender != "male" && req.Gender != "female" && req.Gender != "other" {
+		respondErr(w, http.StatusBadRequest, "invalid gender")
+		return
+	}
+	if _, err := h.db.Exec(r.Context(), `
+		INSERT INTO user_profiles (user_id, real_name, nickname, phone, address, birthday, gender, updated_at)
+		VALUES ($1, NULLIF($2,''), NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULLIF($6,'')::date, NULLIF($7,''), NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			real_name=EXCLUDED.real_name, nickname=EXCLUDED.nickname, phone=EXCLUDED.phone,
+			address=EXCLUDED.address, birthday=EXCLUDED.birthday, gender=EXCLUDED.gender, updated_at=NOW()`,
+		userID, req.RealName, req.Nickname, req.Phone, req.Address, req.Birthday, req.Gender,
+	); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to save profile")
+		return
+	}
+	p, err := h.fetchProfile(r.Context(), userID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "saved but reload failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"profile": p})
+}
+
+func (h *Handler) fetchProfile(ctx context.Context, userID string) (*Profile, error) {
+	p := &Profile{UserID: userID}
+	var birthday *time.Time
+	err := h.db.QueryRow(ctx, `
+		SELECT u.email,
+		       COALESCE(p.real_name,''), COALESCE(p.nickname,''), COALESCE(p.phone,''),
+		       COALESCE(p.address,''), p.birthday, COALESCE(p.gender,'')
+		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
+		WHERE u.id = $1`, userID).
+		Scan(&p.Email, &p.RealName, &p.Nickname, &p.Phone, &p.Address, &birthday, &p.Gender)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return p, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if birthday != nil {
+		p.Birthday = birthday.Format("2006-01-02")
+	}
+	return p, nil
+}
+
+// MemberSummary 後台會員列表單筆
+type MemberSummary struct {
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Handle    string    `json:"handle"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	RealName  string    `json:"real_name"`
+	Phone     string    `json:"phone"`
+	Gender    string    `json:"gender"`
+	TotalKm   float64   `json:"total_km"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// MemberDetail 後台會員詳情（含完整個資與報名數）
+type MemberDetail struct {
+	MemberSummary
+	Nickname  string `json:"nickname"`
+	Address   string `json:"address"`
+	Birthday  string `json:"birthday"`
+	RaceCount int    `json:"race_count"`
+}
+
+// GET /api/v1/admin/members?q=&limit=&offset=
+func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+
+	like := "%" + q + "%"
+	rows, err := h.db.Query(r.Context(), `
+		SELECT u.id, u.email, u.handle, u.name, u.role, u.total_km, u.created_at,
+		       COALESCE(p.real_name,''), COALESCE(p.phone,''), COALESCE(p.gender,'')
+		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
+		WHERE ($1 = '' OR u.email ILIKE $2 OR u.name ILIKE $2
+		       OR COALESCE(p.real_name,'') ILIKE $2 OR COALESCE(p.phone,'') ILIKE $2)
+		ORDER BY u.created_at DESC
+		LIMIT $3 OFFSET $4`, q, like, limit, offset)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list members")
+		return
+	}
+	defer rows.Close()
+
+	members := []MemberSummary{}
+	for rows.Next() {
+		var m MemberSummary
+		if err := rows.Scan(&m.ID, &m.Email, &m.Handle, &m.Name, &m.Role, &m.TotalKm, &m.CreatedAt,
+			&m.RealName, &m.Phone, &m.Gender); err != nil {
+			respondErr(w, http.StatusInternalServerError, "scan failed")
+			return
 		}
-	})
+		members = append(members, m)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"members": members, "count": len(members)})
+}
+
+// GET /api/v1/admin/members/:userID
+func (h *Handler) AdminGetMember(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userID")
+	var m MemberDetail
+	var birthday *time.Time
+	err := h.db.QueryRow(r.Context(), `
+		SELECT u.id, u.email, u.handle, u.name, u.role, u.total_km, u.created_at,
+		       COALESCE(p.real_name,''), COALESCE(p.nickname,''), COALESCE(p.phone,''),
+		       COALESCE(p.address,''), p.birthday, COALESCE(p.gender,''),
+		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id = u.id)
+		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
+		WHERE u.id = $1`, userID).
+		Scan(&m.ID, &m.Email, &m.Handle, &m.Name, &m.Role, &m.TotalKm, &m.CreatedAt,
+			&m.RealName, &m.Nickname, &m.Phone, &m.Address, &birthday, &m.Gender, &m.RaceCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondErr(w, http.StatusNotFound, "member not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to fetch member")
+		return
+	}
+	if birthday != nil {
+		m.Birthday = birthday.Format("2006-01-02")
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"member": m})
 }
 
 // RaceRecord 個人完賽紀錄

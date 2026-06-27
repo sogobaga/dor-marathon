@@ -15,6 +15,7 @@ const NAV: { grp: string; items: { k: string; t: string; href?: string }[] }[] =
     items: [
       { k: 'dash', t: '數據總覽' },
       { k: 'races', t: '賽事管理', href: '/admin/races' },
+      { k: 'members', t: '會員管理', href: '/admin/members' },
       { k: 'signups', t: '報名管理' },
       { k: 'teams', t: '跑團管理' },
       { k: 'notifications', t: '推播通知' },
