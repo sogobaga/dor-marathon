@@ -181,6 +181,12 @@ export const adminRacesApi = {
       headers: withAuth(token),
       body: JSON.stringify(race),
     }),
+  updateFull: (token: string, id: string, payload: CreateRacePayload) =>
+    request<{ race: RaceDetail }>(`/admin/races/${id}`, {
+      method: 'PUT',
+      headers: withAuth(token),
+      body: JSON.stringify(payload),
+    }),
 }
 
 // --- 個人資訊 (Profile) ---

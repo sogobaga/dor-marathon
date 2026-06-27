@@ -238,33 +238,33 @@ func (h *Handler) AdminGetRace(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"race": detail})
 }
 
-// PUT /api/v1/admin/races/:raceID — 更新賽事所有可編輯欄位
+// PUT /api/v1/admin/races/:raceID — 更新賽事（含巢狀分組/加購/物資）
 func (h *Handler) AdminUpdateRace(w http.ResponseWriter, r *http.Request) {
 	raceID := chi.URLParam(r, "raceID")
-	var race Race
-	if err := json.NewDecoder(r.Body).Decode(&race); err != nil {
+	var req CreateRaceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if race.Slug == "" || race.Title == "" || len(race.Distances) == 0 {
-		respondErr(w, http.StatusBadRequest, "slug, title, distances are required")
+	if req.Slug == "" || req.Title == "" {
+		respondErr(w, http.StatusBadRequest, "slug, title are required")
 		return
 	}
 	validStatuses := map[string]bool{"soon": true, "open": true, "live": true, "done": true}
-	if race.Status != "" && !validStatuses[race.Status] {
+	if req.Status != "" && !validStatuses[req.Status] {
 		respondErr(w, http.StatusBadRequest, "invalid status")
 		return
 	}
-	updated, err := h.svc.UpdateRace(r.Context(), raceID, &race)
+	detail, err := h.svc.UpdateRaceFull(r.Context(), raceID, &req)
 	if errors.Is(err, ErrRaceNotFound) {
 		respondErr(w, http.StatusNotFound, "race not found")
 		return
 	}
 	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to update race")
+		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"race": updated})
+	respondJSON(w, http.StatusOK, map[string]any{"race": detail})
 }
 
 // PATCH /api/v1/admin/races/:raceID/status

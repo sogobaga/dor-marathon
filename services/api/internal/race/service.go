@@ -278,14 +278,13 @@ var (
 	validSupplyKinds = map[string]bool{"race_pack": true, "finisher": true}
 )
 
-// CreateRaceFull 建立含巢狀分組/加購/物資的賽事（後台新增賽事用）。
-func (s *Service) CreateRaceFull(ctx context.Context, req *CreateRaceRequest) (*RaceDetail, error) {
-	// 預設與正規化
+// normalizeRequest 套用預設值並驗證巢狀 payload（建立與更新共用）。
+func normalizeRequest(req *CreateRaceRequest) error {
 	if req.EventMode == "" {
 		req.EventMode = "general"
 	}
 	if !validEventModes[req.EventMode] {
-		return nil, fmt.Errorf("invalid event_mode: %s", req.EventMode)
+		return fmt.Errorf("invalid event_mode: %s", req.EventMode)
 	}
 	// 分組對抗 = 隨機分配；其餘 = 選手自選
 	if req.EventMode == "faction_battle" {
@@ -302,37 +301,34 @@ func (s *Service) CreateRaceFull(ctx context.Context, req *CreateRaceRequest) (*
 			req.GoalType = "distance"
 		}
 		if !validGoalTypes[req.GoalType] {
-			return nil, fmt.Errorf("invalid goal_type: %s", req.GoalType)
+			return fmt.Errorf("invalid goal_type: %s", req.GoalType)
 		}
 	} else {
 		req.GoalType = "distance"
 	}
 
-	// 分組驗證
 	for i := range req.Groups {
 		g := &req.Groups[i]
 		if g.Name == "" {
-			return nil, fmt.Errorf("group %d: name is required", i)
+			return fmt.Errorf("group %d: name is required", i)
 		}
 		if g.GenderLimit == "" {
 			g.GenderLimit = "any"
 		}
 		if !validGenderLimit[g.GenderLimit] {
-			return nil, fmt.Errorf("group %d: invalid gender_limit", i)
+			return fmt.Errorf("group %d: invalid gender_limit", i)
 		}
 	}
-	// 物資驗證
 	for i := range req.Supplies {
 		su := &req.Supplies[i]
 		if su.Name == "" {
-			return nil, fmt.Errorf("supply %d: name is required", i)
+			return fmt.Errorf("supply %d: name is required", i)
 		}
 		if !validSupplyKinds[su.Kind] {
-			return nil, fmt.Errorf("supply %d: invalid kind", i)
+			return fmt.Errorf("supply %d: invalid kind", i)
 		}
 	}
 
-	req.ReviewStatus = "approved"
 	if req.Status == "" {
 		req.Status = "soon"
 	}
@@ -352,8 +348,36 @@ func (s *Service) CreateRaceFull(ctx context.Context, req *CreateRaceRequest) (*
 			req.Distances = []int{0}
 		}
 	}
+	return nil
+}
 
+// CreateRaceFull 建立含巢狀分組/加購/物資的賽事（後台新增賽事用）。
+func (s *Service) CreateRaceFull(ctx context.Context, req *CreateRaceRequest) (*RaceDetail, error) {
+	if err := normalizeRequest(req); err != nil {
+		return nil, err
+	}
+	req.ReviewStatus = "approved"
 	return s.repo.CreateWithChildren(ctx, req)
+}
+
+// UpdateRaceFull 更新含巢狀分組/加購/物資的賽事（後台編輯賽事用）。
+func (s *Service) UpdateRaceFull(ctx context.Context, raceID string, req *CreateRaceRequest) (*RaceDetail, error) {
+	existing, err := s.repo.GetByID(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, ErrRaceNotFound
+	}
+	// 編輯時若未指定 status，沿用原值（須在 normalize 預設成 soon 之前判斷）
+	statusSpecified := req.Status != ""
+	if err := normalizeRequest(req); err != nil {
+		return nil, err
+	}
+	if !statusSpecified {
+		req.Status = existing.Status
+	}
+	return s.repo.UpdateWithChildren(ctx, raceID, req)
 }
 
 // GetRaceDetail 取得賽事 + 巢狀子資料（後台編輯載入用）

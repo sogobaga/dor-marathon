@@ -211,6 +211,152 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 	return r.GetDetail(ctx, raceID)
 }
 
+// UpdateWithChildren 在單一交易內更新賽事 + 同步分組/加購/物資。
+// 分組與加購用 id upsert（保留 slots_taken/sold_count 計數器）並刪除 payload 中沒有的；
+// 物資直接整批刪除重建（無計數器、無外部 FK 依賴）。
+// 物資的 GroupIndex 對應 req.Groups 陣列索引（含更新後的最終 group id）。
+func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req *CreateRaceRequest) (*RaceDetail, error) {
+	race := &req.Race
+
+	cfgBytes, err := configToBytes(race.Config)
+	if err != nil {
+		return nil, fmt.Errorf("marshal config: %w", err)
+	}
+	dist32 := make([]int32, len(race.Distances))
+	for i, d := range race.Distances {
+		dist32[i] = int32(d)
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. 更新賽事本體
+	_, err = tx.Exec(ctx, `
+		UPDATE races SET
+			slug=$1, title=$2, subtitle=$3, world=$4, blurb=$5, hero_image_url=$6,
+			status=$7, distances=$8, group_type=$9, group_mode=$10,
+			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
+			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
+			updated_at=NOW()
+		WHERE id=$20`,
+		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
+		race.Status, dist32, race.GroupType, race.GroupMode,
+		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
+		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
+		raceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update race: %w", err)
+	}
+
+	// 2. 同步分組（upsert by id，記錄最終 id 供物資對應），刪除已移除的
+	finalGroupIDs := make([]string, len(req.Groups))
+	keptGroups := make([]string, 0, len(req.Groups))
+	for i := range req.Groups {
+		g := &req.Groups[i]
+		if g.ID != "" {
+			_, err = tx.Exec(ctx, `
+				UPDATE race_groups SET name=$1, description=$2, display_order=$3,
+				    slot_limit=$4, gender_limit=$5, age_min=$6, age_max=$7, target_distance_km=$8
+				WHERE id=$9 AND race_id=$10`,
+				g.Name, nullStr(g.Description), g.DisplayOrder,
+				g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
+				g.ID, raceID,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("update group %d: %w", i, err)
+			}
+			finalGroupIDs[i] = g.ID
+		} else {
+			var gid string
+			err = tx.QueryRow(ctx, `
+				INSERT INTO race_groups (race_id, name, description, display_order,
+				                         slot_limit, gender_limit, age_min, age_max, target_distance_km)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+				raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
+				g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
+			).Scan(&gid)
+			if err != nil {
+				return nil, fmt.Errorf("insert group %d: %w", i, err)
+			}
+			finalGroupIDs[i] = gid
+		}
+		keptGroups = append(keptGroups, finalGroupIDs[i])
+	}
+	// 刪除 payload 中不存在的分組（若該分組已有報名，FK RESTRICT 會讓交易失敗 → 正確阻擋）
+	if _, err = tx.Exec(ctx,
+		`DELETE FROM race_groups WHERE race_id=$1 AND NOT (id = ANY($2::uuid[]))`,
+		raceID, keptGroups,
+	); err != nil {
+		return nil, fmt.Errorf("delete removed groups: %w", err)
+	}
+
+	// 3. 同步加購（upsert by id，保留 sold_count），刪除已移除的
+	keptAddons := make([]string, 0, len(req.Addons))
+	for i := range req.Addons {
+		a := &req.Addons[i]
+		if a.ID != "" {
+			_, err = tx.Exec(ctx, `
+				UPDATE race_addons SET name=$1, description=$2, image_url=$3, price_cents=$4,
+				    per_user_limit=$5, total_stock=$6, display_order=$7, active=$8
+				WHERE id=$9 AND race_id=$10`,
+				a.Name, nullStr(a.Description), nullStr(a.ImageURL), a.PriceCents,
+				a.PerUserLimit, a.TotalStock, a.DisplayOrder, a.Active, a.ID, raceID,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("update addon %d: %w", i, err)
+			}
+			keptAddons = append(keptAddons, a.ID)
+		} else {
+			var aid string
+			err = tx.QueryRow(ctx, `
+				INSERT INTO race_addons (race_id, name, description, image_url, price_cents,
+				                         per_user_limit, total_stock, display_order, active)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+				raceID, a.Name, nullStr(a.Description), nullStr(a.ImageURL), a.PriceCents,
+				a.PerUserLimit, a.TotalStock, a.DisplayOrder, a.Active,
+			).Scan(&aid)
+			if err != nil {
+				return nil, fmt.Errorf("insert addon %d: %w", i, err)
+			}
+			keptAddons = append(keptAddons, aid)
+		}
+	}
+	if _, err = tx.Exec(ctx,
+		`DELETE FROM race_addons WHERE race_id=$1 AND NOT (id = ANY($2::uuid[]))`,
+		raceID, keptAddons,
+	); err != nil {
+		return nil, fmt.Errorf("delete removed addons: %w", err)
+	}
+
+	// 4. 物資整批重建
+	if _, err = tx.Exec(ctx, `DELETE FROM race_supplies WHERE race_id=$1`, raceID); err != nil {
+		return nil, fmt.Errorf("clear supplies: %w", err)
+	}
+	for i := range req.Supplies {
+		s := &req.Supplies[i]
+		var groupID interface{}
+		if s.GroupIndex != nil && *s.GroupIndex >= 0 && *s.GroupIndex < len(finalGroupIDs) {
+			groupID = finalGroupIDs[*s.GroupIndex]
+		}
+		if _, err = tx.Exec(ctx, `
+			INSERT INTO race_supplies (race_id, group_id, kind, name, description, image_url, display_order)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			raceID, groupID, s.Kind, s.Name, nullStr(s.Description), nullStr(s.ImageURL), s.DisplayOrder,
+		); err != nil {
+			return nil, fmt.Errorf("insert supply %d: %w", i, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return r.GetDetail(ctx, raceID)
+}
+
 // Create 建立賽事（無子資料；供合作方提交等簡單流程沿用）
 func (r *Repository) Create(ctx context.Context, race *Race) (*Race, error) {
 	detail, err := r.CreateWithChildren(ctx, &CreateRaceRequest{Race: *race})
