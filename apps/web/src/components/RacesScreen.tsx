@@ -24,6 +24,16 @@ function fmtDate(iso: string) {
   const d = new Date(iso)
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
+function fmtDateTime(iso: string) {
+  const d = new Date(iso)
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return `${d.getMonth() + 1}/${d.getDate()} ${hm}`
+}
+function periodText(start?: string | null, end?: string | null, withTime?: boolean) {
+  const f = withTime ? fmtDateTime : fmtDate
+  if (!start && !end) return '未設定'
+  return `${start ? f(start) : '—'} – ${end ? f(end) : '—'}`
+}
 
 export default function RacesScreen({
   onOpenRanking,
@@ -146,21 +156,27 @@ function RaceCard({
         ))}
       </div>
 
+      <div style={{ marginTop: 4, paddingTop: 12, borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', gap: 8, fontSize: 12.5 }}>
+          <span style={{ color: 'var(--tx-faint)', width: 56, flexShrink: 0 }}>報名期間</span>
+          <span style={{ color: 'var(--tx)' }}>{periodText(race.registration_start, race.registration_end, true)}</span>
+        </div>
+        <div style={{ display: 'flex', gap: 8, fontSize: 12.5 }}>
+          <span style={{ color: 'var(--tx-faint)', width: 56, flexShrink: 0 }}>賽事期間</span>
+          <span style={{ color: 'var(--tx)' }}>{periodText(race.start_date, race.end_date)}</span>
+        </div>
+      </div>
+
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          marginTop: 4,
-          paddingTop: 12,
-          borderTop: '1px solid var(--line)',
           fontSize: 12.5,
           color: 'var(--tx-dim)',
         }}
       >
-        <span>
-          {fmtDate(race.start_date)} – {fmtDate(race.end_date)}
-        </span>
+        <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{fmtFee(race.entry_fee)}</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {isCompetition && onOpenRanking && (
             <button onClick={() => onOpenRanking(race)} style={linkBtnStyle}>排行榜</button>
@@ -174,7 +190,7 @@ function RaceCard({
           ) : canRegister && onRegister ? (
             <button onClick={() => onRegister(race)} style={registerBtnStyle}>報名</button>
           ) : (
-            <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{fmtFee(race.entry_fee)}</span>
+            <span style={{ color: 'var(--tx-faint)', fontSize: 12.5 }}>{s.label}</span>
           )}
         </div>
       </div>
