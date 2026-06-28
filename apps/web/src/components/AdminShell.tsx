@@ -36,6 +36,7 @@ const NAV: { grp: string; items: { k: string; t: string; href?: string }[] }[] =
     grp: '系統管理',
     items: [
       { k: 'orders', t: '訂單管理', href: '/admin/orders' },
+      { k: 'promo', t: '序號管理', href: '/admin/promo' },
       { k: 'audit', t: '操作紀錄' },
       { k: 'admins', t: '管理員' },
       { k: 'permissions', t: '權限' },

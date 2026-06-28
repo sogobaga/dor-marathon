@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/promo"
 )
 
 type Handler struct {
@@ -27,7 +28,36 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/{raceID}/ranking", h.Ranking)
 	r.Get("/{raceID}/standings", h.Standings)
 	r.Get("/{raceID}/status", h.LiveStatus)
+	r.Post("/{raceID}/promo/check", h.PromoCheck)
 	return r
+}
+
+// POST /api/v1/races/:raceID/promo/check — 報名前試算優惠序號（需登入）
+func (h *Handler) PromoCheck(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	var req struct {
+		Code   string           `json:"code"`
+		Addons []AddonSelection `json:"addons"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	quote, err := h.svc.QuotePromo(r.Context(), raceID, userID, req.Code, req.Addons)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to check promo")
+		return
+	}
+	respondJSON(w, http.StatusOK, quote)
 }
 
 // GET /api/v1/races/:raceID/standings — 競賽分組排行榜（公開；帶 token 則附自己分組名次）
@@ -258,10 +288,15 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusConflict, "該分組名額已滿")
 	case errors.Is(err, ErrAddonSoldOut):
 		respondErr(w, http.StatusConflict, "加購商品已售完")
+	case errors.Is(err, promo.ErrUsedUp), errors.Is(err, promo.ErrUserUsed):
+		respondErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrGroupRequired), errors.Is(err, ErrGroupNotFound),
 		errors.Is(err, ErrNoGroups), errors.Is(err, ErrMissingRequiredField),
 		errors.Is(err, ErrGroupRestriction), errors.Is(err, ErrAddonNotFound),
-		errors.Is(err, ErrAddonLimit):
+		errors.Is(err, ErrAddonLimit),
+		errors.Is(err, promo.ErrNotFound), errors.Is(err, promo.ErrInactive),
+		errors.Is(err, promo.ErrNotStarted), errors.Is(err, promo.ErrExpired),
+		errors.Is(err, promo.ErrWrongRace), errors.Is(err, promo.ErrWrongUser):
 		respondErr(w, http.StatusBadRequest, err.Error())
 	default:
 		respondErr(w, http.StatusInternalServerError, "registration failed")

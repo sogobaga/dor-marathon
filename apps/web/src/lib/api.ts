@@ -219,6 +219,7 @@ export interface RegisterPayload {
   group_id?: string
   addons?: { addon_id: string; qty: number }[]
   participant: Partial<Record<ParticipantField, string>>
+  promo_code?: string
 }
 
 export interface RegisterResult {
@@ -226,6 +227,18 @@ export interface RegisterResult {
   order: { id: string; total_cents: number; status: string }
   assigned_group: string
   group_revealed: boolean
+  discount_cents: number
+  payable_cents: number
+  paid: boolean
+}
+
+export interface PromoQuote {
+  valid: boolean
+  code?: string
+  discount_cents: number
+  payable_cents: number
+  free: boolean
+  reason?: string
 }
 
 export interface MyRegLite {
@@ -251,6 +264,12 @@ export const racesApi = {
       method: 'POST',
       headers: withAuth(token),
       body: JSON.stringify(payload),
+    }),
+  promoCheck: (raceID: string, token: string, body: { code: string; addons?: { addon_id: string; qty: number }[] }) =>
+    request<PromoQuote>(`/races/${raceID}/promo/check`, {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify(body),
     }),
   // 競賽排行榜（公開；帶 token 則附自己分組名次）
   standings: (raceID: string, token?: string) =>
@@ -420,6 +439,73 @@ export const adminOrdersApi = {
       headers: withAuth(token),
       body: JSON.stringify({ payment_ref: payment_ref ?? '' }),
     }),
+}
+
+// --- Admin: 優惠序號 ---
+
+export interface PromoCode {
+  id: string
+  code: string
+  discount_type: 'amount' | 'percent'
+  discount_value: number
+  max_uses?: number | null
+  used_count: number
+  per_user_once: boolean
+  race_id?: string | null
+  target_user_id?: string | null
+  valid_from?: string | null
+  valid_until?: string | null
+  batch_id?: string | null
+  note?: string
+  active: boolean
+  created_at: string
+}
+
+export interface PromoUsage {
+  id: string
+  user_name: string
+  user_email: string
+  race_title: string
+  discount_cents: number
+  used_at: string
+}
+
+export interface PromoCreateInput {
+  code?: string
+  discount_type: 'amount' | 'percent'
+  discount_value: number
+  max_uses?: number | null
+  per_user_once: boolean
+  race_id?: string | null
+  target_email?: string
+  valid_from?: string | null
+  valid_until?: string | null
+  note?: string
+  quantity: number
+}
+
+export const adminPromoApi = {
+  list: (token: string, params?: { race_id?: string; q?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.race_id) qs.set('race_id', params.race_id)
+    if (params?.q) qs.set('q', params.q)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ codes: PromoCode[]; count: number }>(`/admin/promo-codes${suffix}`, { headers: withAuth(token) })
+  },
+  create: (token: string, body: PromoCreateInput) =>
+    request<{ codes: PromoCode[]; count: number }>('/admin/promo-codes', {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify(body),
+    }),
+  setActive: (token: string, id: string, active: boolean) =>
+    request<void>(`/admin/promo-codes/${id}`, {
+      method: 'PATCH',
+      headers: withAuth(token),
+      body: JSON.stringify({ active }),
+    }),
+  usages: (token: string, id: string) =>
+    request<{ usages: PromoUsage[]; count: number }>(`/admin/promo-codes/${id}/usages`, { headers: withAuth(token) }),
 }
 
 // --- Admin: 分組預設選單 ---

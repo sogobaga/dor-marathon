@@ -24,6 +24,7 @@ import (
 	"github.com/dor/api/internal/middleware"
 	"github.com/dor/api/internal/organizer"
 	"github.com/dor/api/internal/profile"
+	"github.com/dor/api/internal/promo"
 	"github.com/dor/api/internal/race"
 	"github.com/dor/api/internal/realtime"
 	"github.com/dor/api/internal/reward"
@@ -66,9 +67,14 @@ func main() {
 	// WebSocket Manager（各模組共用）
 	wsManager := realtime.NewManager(rdb)
 
+	// Promo（優惠序號）
+	promoRepo := promo.NewRepository(pool)
+	promoSvc := promo.NewService(promoRepo)
+	promoHandler := promo.NewHandler(promoSvc)
+
 	// Race
 	raceRepo := race.NewRepository(pool)
-	raceSvc := race.NewService(raceRepo, rdb)
+	raceSvc := race.NewService(raceRepo, rdb, promoSvc)
 	raceHandler := race.NewHandler(raceSvc)
 
 	// Activity
@@ -156,6 +162,7 @@ func main() {
 			r.Mount("/admin/group-presets", raceHandler.PresetRouter())
 			r.Mount("/admin/signups", raceHandler.SignupRouter())
 			r.Mount("/admin/orders", raceHandler.OrderRouter())
+			r.Mount("/admin/promo-codes", promoHandler.Router())
 			r.Mount("/admin/members", profileHandler.AdminMembersRouter())
 			r.Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 		})

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/dor/api/internal/promo"
 )
 
 var (
@@ -34,12 +36,13 @@ var (
 )
 
 type Service struct {
-	repo *Repository
-	rdb  *redis.Client
+	repo  *Repository
+	rdb   *redis.Client
+	promo *promo.Service
 }
 
-func NewService(repo *Repository, rdb *redis.Client) *Service {
-	return &Service{repo: repo, rdb: rdb}
+func NewService(repo *Repository, rdb *redis.Client, promoSvc *promo.Service) *Service {
+	return &Service{repo: repo, rdb: rdb, promo: promoSvc}
 }
 
 // List 回傳賽事列表，附帶 Redis 剩餘名額
@@ -164,7 +167,64 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		Distance:      distance,
 		Addons:        req.Addons,
 		Participant:   req.Participant,
+		PromoCode:     strings.TrimSpace(req.PromoCode),
 	})
+}
+
+// QuotePromo 報名前試算優惠序號折抵（不寫入）。序號無效時回 Valid=false + Reason。
+func (s *Service) QuotePromo(ctx context.Context, raceID, userID, code string, addons []AddonSelection) (*PromoQuote, error) {
+	race, err := s.repo.GetByID(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	if race == nil || race.ReviewStatus != "approved" {
+		return nil, ErrRaceNotFound
+	}
+
+	p, err := s.promo.ValidateForRace(ctx, code, raceID, userID)
+	if err != nil {
+		return &PromoQuote{Valid: false, Reason: err.Error()}, nil
+	}
+
+	discount := promo.DiscountCents(p, race.EntryFee)
+	addonsTotal, err := s.addonsTotal(ctx, raceID, addons)
+	if err != nil {
+		return nil, err
+	}
+	payable := race.EntryFee - discount
+	if payable < 0 {
+		payable = 0
+	}
+	payable += addonsTotal
+	return &PromoQuote{
+		Valid:         true,
+		Code:          p.Code,
+		DiscountCents: discount,
+		PayableCents:  payable,
+		Free:          payable < 50,
+	}, nil
+}
+
+// addonsTotal 依選購計算加購總額（分）
+func (s *Service) addonsTotal(ctx context.Context, raceID string, sel []AddonSelection) (int, error) {
+	if len(sel) == 0 {
+		return 0, nil
+	}
+	addons, err := s.repo.GetAddons(ctx, raceID)
+	if err != nil {
+		return 0, err
+	}
+	priceByID := map[string]int{}
+	for _, a := range addons {
+		priceByID[a.ID] = a.PriceCents
+	}
+	total := 0
+	for _, a := range sel {
+		if a.Qty > 0 {
+			total += priceByID[a.AddonID] * a.Qty
+		}
+	}
+	return total, nil
 }
 
 // pickBalancedGroup 從分組中挑人數最少者（同最少則取第一個），用於分組對抗隨機指派

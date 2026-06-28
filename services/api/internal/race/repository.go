@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dor/api/internal/promo"
 )
 
 type Repository struct {
@@ -653,6 +656,7 @@ type RegisterTxInput struct {
 	Distance      int
 	Addons        []AddonSelection
 	Participant   ParticipantInfo
+	PromoCode     string
 }
 
 // RegisterWithOrder 在單一交易內完成報名：分組名額 row-lock 防超賣、加購庫存、
@@ -685,8 +689,8 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		return nil, fmt.Errorf("bump slots: %w", err)
 	}
 
-	// 2. 加購：鎖庫存、檢查、扣量、累計金額
-	total := in.EntryFee
+	// 2. 加購：鎖庫存、檢查、扣量、累計加購金額
+	addonsTotal := 0
 	type lineItem struct {
 		addonID   string
 		qty       int
@@ -719,24 +723,53 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		if _, err = tx.Exec(ctx, `UPDATE race_addons SET sold_count = sold_count + $1 WHERE id=$2`, a.Qty, a.AddonID); err != nil {
 			return nil, fmt.Errorf("bump sold_count: %w", err)
 		}
-		total += price * a.Qty
+		addonsTotal += price * a.Qty
 		items = append(items, lineItem{a.AddonID, a.Qty, price})
+	}
+
+	// 2b. 優惠序號：鎖定 + 驗證 + 計算折抵（只折報名費）
+	discount := 0
+	var appliedPromo *promo.PromoCode
+	if in.PromoCode != "" {
+		ap, err := promo.LockAndValidateTx(ctx, tx, in.PromoCode, in.RaceID, in.UserID, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		appliedPromo = ap
+		discount = promo.DiscountCents(ap, in.EntryFee)
+	}
+
+	// 應付 = max(0, 報名費-折抵) + 加購；不足 0.5 元（<50 分）視為 0、直接完成不跳金流
+	payable := in.EntryFee - discount
+	if payable < 0 {
+		payable = 0
+	}
+	payable += addonsTotal
+	paid := payable < 50
+	regStatus := "pending"
+	var paymentRef interface{}
+	if paid {
+		regStatus = "paid"
+		if appliedPromo != nil {
+			paymentRef = "PROMO:" + appliedPromo.Code
+		}
 	}
 
 	// 3. registration（UNIQUE(user_id,race_id) 衝突 → 已報名）
 	reg := &Registration{
 		UserID: in.UserID, RaceID: in.RaceID, GroupID: in.GroupID,
 		Distance: in.Distance, GroupRevealed: in.GroupRevealed,
-		Status: "pending", Amount: in.EntryFee,
+		Status: regStatus, Amount: payable,
 	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO registrations
 			(user_id, race_id, group_id, distance, status, amount,
-			 group_revealed, snap_real_name, snap_phone, snap_address)
-		VALUES ($1,$2,$3,$4,'pending',$5,$6,NULLIF($7,''),NULLIF($8,''),NULLIF($9,''))
+			 group_revealed, snap_real_name, snap_phone, snap_address, paid_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),NULLIF($9,''),NULLIF($10,''),
+		        CASE WHEN $11 THEN NOW() ELSE NULL END)
 		RETURNING id`,
-		in.UserID, in.RaceID, in.GroupID, in.Distance, in.EntryFee, in.GroupRevealed,
-		in.Participant.RealName, in.Participant.Phone, in.Participant.Address,
+		in.UserID, in.RaceID, in.GroupID, in.Distance, regStatus, payable, in.GroupRevealed,
+		in.Participant.RealName, in.Participant.Phone, in.Participant.Address, paid,
 	).Scan(&reg.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -746,11 +779,11 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 	}
 
 	// 4. order + order_items
-	order := &Order{TotalCents: total, Status: "pending"}
+	order := &Order{TotalCents: payable, Status: regStatus}
 	if err = tx.QueryRow(ctx, `
-		INSERT INTO orders (user_id, race_id, registration_id, total_cents, status)
-		VALUES ($1,$2,$3,$4,'pending') RETURNING id`,
-		in.UserID, in.RaceID, reg.ID, total).Scan(&order.ID); err != nil {
+		INSERT INTO orders (user_id, race_id, registration_id, total_cents, status, payment_ref, paid_at)
+		VALUES ($1,$2,$3,$4,$5,$6,CASE WHEN $7 THEN NOW() ELSE NULL END) RETURNING id`,
+		in.UserID, in.RaceID, reg.ID, payable, regStatus, paymentRef, paid).Scan(&order.ID); err != nil {
 		return nil, fmt.Errorf("insert order: %w", err)
 	}
 	if in.EntryFee > 0 {
@@ -760,12 +793,26 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 			return nil, fmt.Errorf("insert entry item: %w", err)
 		}
 	}
+	if discount > 0 {
+		if _, err = tx.Exec(ctx, `
+			INSERT INTO order_items (order_id, item_type, qty, unit_price_cents, subtotal_cents)
+			VALUES ($1,'discount',1,$2,$2)`, order.ID, -discount); err != nil {
+			return nil, fmt.Errorf("insert discount item: %w", err)
+		}
+	}
 	for _, it := range items {
 		if _, err = tx.Exec(ctx, `
 			INSERT INTO order_items (order_id, item_type, addon_id, qty, unit_price_cents, subtotal_cents)
 			VALUES ($1,'addon',$2,$3,$4,$5)`,
 			order.ID, it.addonID, it.qty, it.unitCents, it.unitCents*it.qty); err != nil {
 			return nil, fmt.Errorf("insert addon item: %w", err)
+		}
+	}
+
+	// 4b. 記錄序號使用
+	if appliedPromo != nil {
+		if err = promo.RecordUsageTx(ctx, tx, appliedPromo.ID, in.UserID, in.RaceID, reg.ID, order.ID, discount); err != nil {
+			return nil, fmt.Errorf("record promo usage: %w", err)
 		}
 	}
 
@@ -796,6 +843,9 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		Order:         order,
 		AssignedGroup: groupName,
 		GroupRevealed: in.GroupRevealed,
+		DiscountCents: discount,
+		PayableCents:  payable,
+		Paid:          paid,
 	}, nil
 }
 

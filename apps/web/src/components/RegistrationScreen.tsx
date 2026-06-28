@@ -38,7 +38,11 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     real_name: '', nickname: '', phone: '', address: '', birthday: '', gender: '',
   })
   const [submitting, setSubmitting] = useState(false)
-  const [done, setDone] = useState<{ group: string; revealed: boolean } | null>(null)
+  const [done, setDone] = useState<{ group: string; revealed: boolean; paid: boolean; payable: number } | null>(null)
+
+  const [promoCode, setPromoCode] = useState('')
+  const [promoQuote, setPromoQuote] = useState<import('@/lib/api').PromoQuote | null>(null)
+  const [promoBusy, setPromoBusy] = useState(false)
 
   const loggedIn = !!getUserToken() && !!getUser()
   const isBattle = race.event_mode === 'faction_battle'
@@ -86,11 +90,36 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     return s
   }, [detail, selectedGroup])
 
+  const addonsList = useMemo(
+    () => Object.entries(qty).filter(([, q]) => q > 0).map(([addon_id, q]) => ({ addon_id, qty: q })),
+    [qty]
+  )
+
   const total = useMemo(() => {
     let t = race.entry_fee
     for (const a of detail?.addons || []) t += (qty[a.id!] || 0) * a.price_cents
     return t
   }, [detail, qty, race.entry_fee])
+
+  // 加購變動時，已套用的優惠序號重算（payable 含加購）
+  const payable = promoQuote?.valid ? promoQuote.payable_cents : total
+
+  async function applyPromo() {
+    const code = promoCode.trim()
+    if (!code) {
+      setPromoQuote(null)
+      return
+    }
+    setPromoBusy(true)
+    try {
+      const quote = await withUserAuth((t) => racesApi.promoCheck(race.id, t, { code, addons: addonsList }))
+      setPromoQuote(quote)
+    } catch (e: any) {
+      setPromoQuote({ valid: false, discount_cents: 0, payable_cents: total, free: false, reason: e instanceof SessionExpiredError ? '登入已過期' : (e?.message || '驗證失敗') })
+    } finally {
+      setPromoBusy(false)
+    }
+  }
 
   async function submit() {
     setErr('')
@@ -114,9 +143,10 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
           group_id: isBattle ? undefined : groupId,
           addons,
           participant,
+          promo_code: promoCode.trim() || undefined,
         })
       )
-      setDone({ group: res.assigned_group, revealed: res.group_revealed })
+      setDone({ group: res.assigned_group, revealed: res.group_revealed, paid: res.paid, payable: res.payable_cents })
     } catch (e: any) {
       setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '報名失敗')
     } finally {
@@ -141,11 +171,15 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
 
         {!loading && loggedIn && done && (
           <div style={card}>
-            <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--fug)' }}>✓ 報名完成 · 待繳費</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--fug)' }}>
+              ✓ 報名完成{done.paid ? '' : ' · 待繳費'}
+            </div>
             <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 8 }}>
               {done.revealed ? `分組：${done.group}` : '已隨機分組，賽事當天公布所屬分組'}
             </div>
-            <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 4 }}>應繳金額：{ntd(total)}（後續繳費）</div>
+            <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 4 }}>
+              {done.paid ? '已使用優惠序號 0 元完成，無需付款' : `應繳金額：${ntd(done.payable)}（後續繳費）`}
+            </div>
             <button onClick={onBack} style={{ ...primaryBtn, marginTop: 14 }}>回賽事列表</button>
           </div>
         )}
@@ -249,9 +283,38 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               ))}
             </Section>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 4 }}>
-              <span style={{ fontSize: 13, color: 'var(--tx-dim)' }}>應繳金額</span>
-              <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--gold)' }}>{ntd(total)}</span>
+            {/* 優惠序號 */}
+            <Section title="優惠序號">
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  value={promoCode}
+                  onChange={(e) => { setPromoCode(e.target.value.toUpperCase()); setPromoQuote(null) }}
+                  placeholder="輸入序號（選填）"
+                  style={{ ...inp, flex: 1, textTransform: 'uppercase' }}
+                />
+                <button onClick={applyPromo} disabled={promoBusy} style={{ ...primaryBtn, width: 'auto', padding: '0 18px' }}>
+                  {promoBusy ? '驗證中…' : '套用'}
+                </button>
+              </div>
+              {promoQuote && (
+                <div style={{ fontSize: 12.5, marginTop: 8, color: promoQuote.valid ? 'var(--fug)' : 'var(--hunt)' }}>
+                  {promoQuote.valid
+                    ? `✓ 已折抵 ${ntd(promoQuote.discount_cents)}${promoQuote.free ? '（0 元免付款）' : ''}`
+                    : `✕ ${promoQuote.reason || '序號無效'}`}
+                </div>
+              )}
+            </Section>
+
+            <div style={{ paddingTop: 4 }}>
+              {promoQuote?.valid && promoQuote.discount_cents > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--tx-dim)' }}>
+                  <span>原價 {ntd(total)} · 折抵 −{ntd(promoQuote.discount_cents)}</span>
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                <span style={{ fontSize: 13, color: 'var(--tx-dim)' }}>應繳金額</span>
+                <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--gold)' }}>{ntd(payable)}</span>
+              </div>
             </div>
 
             {err && <div style={{ color: 'var(--hunt)', fontSize: 13 }}>{err}</div>}

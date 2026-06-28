@@ -205,6 +205,17 @@ type RegisterRequest struct {
 	GroupID     string           `json:"group_id"` // 一般/競賽必填；分組對抗忽略（隨機）
 	Addons      []AddonSelection `json:"addons"`
 	Participant ParticipantInfo  `json:"participant"`
+	PromoCode   string           `json:"promo_code,omitempty"`
+}
+
+// PromoQuote 優惠序號折抵預覽（報名前即時試算）
+type PromoQuote struct {
+	Valid         bool   `json:"valid"`
+	Code          string `json:"code,omitempty"`
+	DiscountCents int    `json:"discount_cents"`
+	PayableCents  int    `json:"payable_cents"`
+	Free          bool   `json:"free"` // 應付 < 0.5 元 → 0 元免金流
+	Reason        string `json:"reason,omitempty"`
 }
 
 // SignupRow 後台報名管理列表單筆
@@ -267,10 +278,13 @@ type Order struct {
 
 // RegisterResult 報名結果
 type RegisterResult struct {
-	Registration   *Registration `json:"registration"`
-	Order          *Order        `json:"order"`
-	AssignedGroup  string        `json:"assigned_group"`  // 指派/選擇的分組名稱
-	GroupRevealed  bool          `json:"group_revealed"`  // 分組是否已公布
+	Registration  *Registration `json:"registration"`
+	Order         *Order        `json:"order"`
+	AssignedGroup string        `json:"assigned_group"` // 指派/選擇的分組名稱
+	GroupRevealed bool          `json:"group_revealed"` // 分組是否已公布
+	DiscountCents int           `json:"discount_cents"`
+	PayableCents  int           `json:"payable_cents"`
+	Paid          bool          `json:"paid"` // 是否已直接完成（0 元）
 }
 
 // RankEntry 排行榜單筆記錄
