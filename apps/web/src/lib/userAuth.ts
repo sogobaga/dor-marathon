@@ -43,20 +43,29 @@ export function clearUserSession() {
   emitAuthChange()
 }
 
-// 用 refresh token 換發新的 access token（access token 僅 15 分鐘）。
-// 成功回傳新 access token 並更新 localStorage；失敗回 null。
-export async function refreshUserToken(): Promise<string | null> {
-  if (typeof window === 'undefined') return null
-  const rt = localStorage.getItem(REFRESH_KEY)
-  if (!rt) return null
-  try {
-    const pair = await authApi.refresh(rt)
-    localStorage.setItem(TOKEN_KEY, pair.access_token)
-    localStorage.setItem(REFRESH_KEY, pair.refresh_token)
-    return pair.access_token
-  } catch {
-    return null
-  }
+// 用 refresh token 換發新 access token。後端 refresh 是「一次性輪替」，
+// 因此多個並發呼叫必須共用同一次 refresh（否則第一個用掉舊 token、其餘失敗 → 誤登出）。
+let refreshInFlight: Promise<string | null> | null = null
+
+export function refreshUserToken(): Promise<string | null> {
+  if (typeof window === 'undefined') return Promise.resolve(null)
+  if (refreshInFlight) return refreshInFlight // 並發去重：共用同一次 refresh
+  refreshInFlight = (async () => {
+    const rt = localStorage.getItem(REFRESH_KEY)
+    if (!rt) return null
+    try {
+      const pair = await authApi.refresh(rt)
+      localStorage.setItem(TOKEN_KEY, pair.access_token)
+      localStorage.setItem(REFRESH_KEY, pair.refresh_token)
+      return pair.access_token
+    } catch {
+      return null
+    }
+  })()
+  refreshInFlight.finally(() => {
+    refreshInFlight = null
+  })
+  return refreshInFlight
 }
 
 // 包裝需登入的 API 呼叫：token 過期（401）時自動 refresh 後重試一次。

@@ -34,8 +34,8 @@ func Load() *Config {
 		DatabaseURL: mustEnv("DATABASE_URL"),
 		RedisURL:    mustEnv("REDIS_URL"),
 		JWTSecret:   mustEnv("JWT_SECRET"),
-		AccessTTL:   parseDuration(getEnv("JWT_ACCESS_TTL", "15m")),
-		RefreshTTL:  parseDuration(getEnv("JWT_REFRESH_TTL", "168h")),
+		AccessTTL:   parseDuration(getEnv("JWT_ACCESS_TTL", "60m")),
+		RefreshTTL:  parseDuration(getEnv("JWT_REFRESH_TTL", "720h")), // 30 天；每次登入/refresh 重置（滑動視窗）
 		CORSOrigins: strings.Split(getEnv("CORS_ORIGINS", "http://localhost:3000"), ","),
 		GoogleClientID: getEnv("GOOGLE_CLIENT_ID", ""),
 
