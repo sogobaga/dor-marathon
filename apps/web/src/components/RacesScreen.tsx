@@ -40,11 +40,13 @@ export default function RacesScreen({
   onRegister,
   onPay,
   onOpenProfile,
+  onOpenBrochure,
 }: {
   onOpenRanking?: (race: Race) => void
   onRegister?: (race: Race) => void
   onPay?: (race: Race) => void
   onOpenProfile?: () => void
+  onOpenBrochure?: (race: Race) => void
 }) {
   const user = useUser() // 登入狀態變動時重新渲染 → 用最新 token 重抓報名狀態
   const token = getUserToken() || undefined
@@ -75,7 +77,7 @@ export default function RacesScreen({
         {data && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {data.races.map((r) => (
-              <RaceCard key={r.id} race={r} reg={regs[r.id]} onOpenRanking={onOpenRanking} onRegister={onRegister} onPay={onPay} />
+              <RaceCard key={r.id} race={r} reg={regs[r.id]} onOpenRanking={onOpenRanking} onRegister={onRegister} onPay={onPay} onOpenBrochure={onOpenBrochure} />
             ))}
           </div>
         )}
@@ -90,18 +92,22 @@ function RaceCard({
   onOpenRanking,
   onRegister,
   onPay,
+  onOpenBrochure,
 }: {
   race: Race
   reg?: MyRegLite
   onOpenRanking?: (race: Race) => void
   onRegister?: (race: Race) => void
   onPay?: (race: Race) => void
+  onOpenBrochure?: (race: Race) => void
 }) {
   const s = DISPLAY_STATUS[race.display_status] ?? { label: race.display_status, color: 'var(--tx-faint)' }
   const isCompetition = race.event_mode === 'competition'
   const canRegister = race.can_register
+  const stop = (e: React.MouseEvent) => e.stopPropagation()
   return (
     <div
+      onClick={() => onOpenBrochure?.(race)}
       style={{
         background: 'var(--bg-1)',
         border: '1px solid var(--line)',
@@ -110,6 +116,7 @@ function RaceCard({
         display: 'flex',
         flexDirection: 'column',
         gap: 10,
+        cursor: onOpenBrochure ? 'pointer' : 'default',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
@@ -179,16 +186,16 @@ function RaceCard({
         <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{fmtFee(race.entry_fee)}</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {isCompetition && onOpenRanking && (
-            <button onClick={() => onOpenRanking(race)} style={linkBtnStyle}>排行榜</button>
+            <button onClick={(e) => { stop(e); onOpenRanking(race) }} style={linkBtnStyle}>排行榜</button>
           )}
           {reg ? (
             reg.status === 'paid' ? (
               <span style={{ color: 'var(--fug)', fontWeight: 700, fontSize: 13 }}>報名完成</span>
             ) : (
-              <button onClick={() => onPay?.(race)} style={payBtnStyle}>已報名，前往繳費</button>
+              <button onClick={(e) => { stop(e); onPay?.(race) }} style={payBtnStyle}>已報名，前往繳費</button>
             )
           ) : canRegister && onRegister ? (
-            <button onClick={() => onRegister(race)} style={registerBtnStyle}>報名</button>
+            <button onClick={(e) => { stop(e); onRegister(race) }} style={registerBtnStyle}>報名</button>
           ) : (
             <span style={{ color: 'var(--tx-faint)', fontSize: 12.5 }}>{s.label}</span>
           )}

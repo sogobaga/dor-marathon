@@ -30,7 +30,7 @@ const selectCols = `
 	       status, event_mode, goal_type, distances, group_type, group_mode,
 	       slots_total, entry_fee, registration_start, registration_end,
 	       start_date, end_date, config, required_fields,
-	       control_status, starting_soon_days,
+	       control_status, starting_soon_days, COALESCE(brochure_title,'') as brochure_title,
 	       COALESCE(created_by::text,'') as created_by,
 	       review_status,
 	       COALESCE(review_note,'') as review_note,
@@ -164,14 +164,14 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		                   status, event_mode, goal_type, distances, group_type, group_mode,
 		                   slots_total, entry_fee, registration_start, registration_end,
 		                   start_date, end_date, config, created_by, review_status, required_fields,
-		                   control_status, starting_soon_days)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+		                   control_status, starting_soon_days, brochure_title)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.RegStart, race.RegEnd,
 		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus, requiredFields,
-		controlStatus, startingSoonDays,
+		controlStatus, startingSoonDays, race.BrochureTitle,
 	).Scan(&raceID)
 	if err != nil {
 		return nil, fmt.Errorf("insert race: %w", err)
@@ -184,6 +184,11 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 				return nil, fmt.Errorf("insert whitelist: %w", err)
 			}
 		}
+	}
+
+	// 簡章區塊
+	if err = insertBrochure(ctx, tx, raceID, req.Brochure); err != nil {
+		return nil, err
 	}
 
 	// 分組（記錄索引 → 實際 UUID，供物資對應）
@@ -286,13 +291,13 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
-			required_fields=$20, control_status=$21, starting_soon_days=$22, updated_at=NOW()
-		WHERE id=$23`,
+			required_fields=$20, control_status=$21, starting_soon_days=$22, brochure_title=$23, updated_at=NOW()
+		WHERE id=$24`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
-		requiredFields, controlStatus, startingSoonDays, raceID,
+		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, raceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -308,6 +313,14 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 				return nil, fmt.Errorf("insert whitelist: %w", err)
 			}
 		}
+	}
+
+	// 簡章區塊：整批重建
+	if _, err = tx.Exec(ctx, `DELETE FROM race_brochure_blocks WHERE race_id=$1`, raceID); err != nil {
+		return nil, fmt.Errorf("clear brochure: %w", err)
+	}
+	if err = insertBrochure(ctx, tx, raceID, req.Brochure); err != nil {
+		return nil, err
 	}
 
 	// 2. 同步分組（upsert by id，記錄最終 id 供物資對應），刪除已移除的
@@ -449,7 +462,48 @@ func (r *Repository) GetDetail(ctx context.Context, raceID string) (*RaceDetail,
 	if err != nil {
 		return nil, err
 	}
-	return &RaceDetail{Race: *race, Groups: groups, Addons: addons, Supplies: supplies, TestWhitelist: whitelist}, nil
+	brochure, err := r.GetBrochure(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	return &RaceDetail{Race: *race, Groups: groups, Addons: addons, Supplies: supplies, TestWhitelist: whitelist, Brochure: brochure}, nil
+}
+
+// insertBrochure 依陣列順序寫入簡章區塊（交易內，呼叫前須先清空舊區塊）
+func insertBrochure(ctx context.Context, tx pgx.Tx, raceID string, blocks []BrochureBlock) error {
+	for i := range blocks {
+		b := &blocks[i]
+		if b.BlockType == "" || b.Content == "" {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO race_brochure_blocks (race_id, block_type, content, caption, display_order)
+			VALUES ($1,$2,$3,NULLIF($4,''),$5)`,
+			raceID, b.BlockType, b.Content, b.Caption, i); err != nil {
+			return fmt.Errorf("insert brochure block %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// GetBrochure 取得賽事簡章區塊（依顯示順序）
+func (r *Repository) GetBrochure(ctx context.Context, raceID string) ([]BrochureBlock, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, block_type, content, COALESCE(caption,''), display_order
+		FROM race_brochure_blocks WHERE race_id=$1 ORDER BY display_order, created_at`, raceID)
+	if err != nil {
+		return nil, fmt.Errorf("get brochure: %w", err)
+	}
+	defer rows.Close()
+	out := []BrochureBlock{}
+	for rows.Next() {
+		var b BrochureBlock
+		if err := rows.Scan(&b.ID, &b.BlockType, &b.Content, &b.Caption, &b.DisplayOrder); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 // --- 測試白名單 ---
@@ -1229,7 +1283,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&dist32, &race.GroupType, &race.GroupMode,
 		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
 		&race.StartDate, &race.EndDate, &cfgBytes, &race.RequiredFields,
-		&race.ControlStatus, &race.StartingSoonDays,
+		&race.ControlStatus, &race.StartingSoonDays, &race.BrochureTitle,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CreatedAt,
 	)
@@ -1256,7 +1310,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&dist32, &race.GroupType, &race.GroupMode,
 		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
 		&race.StartDate, &race.EndDate, &cfgBytes, &race.RequiredFields,
-		&race.ControlStatus, &race.StartingSoonDays,
+		&race.ControlStatus, &race.StartingSoonDays, &race.BrochureTitle,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CreatedAt,
 	)

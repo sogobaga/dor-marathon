@@ -5,6 +5,7 @@ import RacesScreen from './RacesScreen'
 import RaceRankingScreen from './RaceRankingScreen'
 import RegistrationScreen from './RegistrationScreen'
 import ProfileScreen from './ProfileScreen'
+import BrochureScreen from './BrochureScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
 import { validateSession } from '@/lib/userAuth'
 import type { Race } from '@/lib/api'
@@ -15,6 +16,7 @@ export default function PhoneShell() {
   const [registerRace, setRegisterRace] = useState<Race | null>(null)
   const [showProfile, setShowProfile] = useState(false)
   const [payRace, setPayRace] = useState<Race | null>(null)
+  const [brochureRace, setBrochureRace] = useState<Race | null>(null)
 
   useEffect(() => {
     setIsMobile(window.innerWidth <= 430)
@@ -48,6 +50,12 @@ export default function PhoneShell() {
           />
         ) : registerRace ? (
           <RegistrationScreen race={registerRace} onBack={() => setRegisterRace(null)} />
+        ) : brochureRace ? (
+          <BrochureScreen
+            race={brochureRace}
+            onBack={() => setBrochureRace(null)}
+            onRegister={(r) => { setBrochureRace(null); setRegisterRace(r) }}
+          />
         ) : rankingRace ? (
           <RaceRankingScreen race={rankingRace} onBack={() => setRankingRace(null)} />
         ) : (
@@ -56,6 +64,7 @@ export default function PhoneShell() {
             onRegister={setRegisterRace}
             onPay={setPayRace}
             onOpenProfile={() => setShowProfile(true)}
+            onOpenBrochure={setBrochureRace}
           />
         )}
       </div>

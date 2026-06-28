@@ -41,6 +41,7 @@ export interface Race {
   start_date: string
   end_date: string
   required_fields: string[]
+  brochure_title?: string
   control_status: ControlStatus
   starting_soon_days: number
   display_status: DisplayStatus
@@ -93,11 +94,20 @@ export interface RaceSupply {
   display_order: number
 }
 
+export interface BrochureBlock {
+  id?: string
+  block_type: 'text' | 'image' | 'video'
+  content: string
+  caption?: string
+  display_order: number
+}
+
 export interface RaceDetail extends Race {
   groups: RaceGroup[]
   addons: RaceAddon[]
   supplies: RaceSupply[]
   test_whitelist: string[]
+  brochure: BrochureBlock[]
 }
 
 // 建立賽事的巢狀 payload（Race 基本欄位 + 子陣列）
@@ -106,6 +116,7 @@ export type CreateRacePayload = Partial<Race> & {
   addons: RaceAddon[]
   supplies: RaceSupply[]
   test_whitelist?: string[]
+  brochure?: BrochureBlock[]
 }
 
 export interface GroupPreset {

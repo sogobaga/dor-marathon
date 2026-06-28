@@ -11,6 +11,7 @@ import {
   type RaceGroup,
   type RaceAddon,
   type GroupPreset,
+  type BrochureBlock,
 } from '@/lib/api'
 
 // 物資編輯用的中介型別：scope 用「-1=共用」或分組索引表示
@@ -123,13 +124,15 @@ export default function RaceForm({
 }) {
   const isEdit = !!initial?.id
 
-  const [tab, setTab] = useState<'basic' | 'groups' | 'addons' | 'supplies'>('basic')
+  const [tab, setTab] = useState<'basic' | 'groups' | 'addons' | 'supplies' | 'brochure'>('basic')
   const [mode, setMode] = useState<EventMode>(initial?.event_mode ?? 'general')
   const [goalType, setGoalType] = useState<GoalType>(initial?.goal_type ?? 'distance')
   const [controlStatus, setControlStatus] = useState<string>(initial?.control_status ?? 'active')
   const [startingSoonDays, setStartingSoonDays] = useState<string>(String(initial?.starting_soon_days ?? 5))
   const [testWhitelist, setTestWhitelist] = useState<string[]>(initial?.test_whitelist ?? [])
   const [wlInput, setWlInput] = useState('')
+  const [brochureTitle, setBrochureTitle] = useState(initial?.brochure_title ?? '')
+  const [brochure, setBrochure] = useState<BrochureBlock[]>(initial?.brochure ?? [])
 
   const [title, setTitle] = useState(initial?.title ?? '')
   const [slug, setSlug] = useState(initial?.slug ?? '')
@@ -222,6 +225,10 @@ export default function RaceForm({
       control_status: controlStatus as CreateRacePayload['control_status'],
       starting_soon_days: parseInt(startingSoonDays || '5', 10) || 5,
       test_whitelist: testWhitelist,
+      brochure_title: brochureTitle.trim(),
+      brochure: brochure
+        .filter((b) => b.content.trim())
+        .map((b, idx) => ({ ...b, content: b.content.trim(), display_order: idx })),
       entry_fee: Math.round(parseFloat(entryFeeNtd || '0') * 100),
       required_fields: requiredFields,
       registration_start: regStart ? new Date(regStart).toISOString() : null,
@@ -293,6 +300,7 @@ export default function RaceForm({
           ['groups', `分組 (${groups.filter((g) => g.name.trim()).length})`],
           ['addons', `加購 (${addons.filter((a) => a.name.trim()).length})`],
           ['supplies', `物資 (${supplies.filter((s) => s.name.trim()).length})`],
+          ['brochure', `簡章 (${brochure.filter((b) => b.content.trim()).length})`],
         ].map(([v, label]) => (
           <button
             key={v}
@@ -583,6 +591,61 @@ export default function RaceForm({
               onClick={() => setSupplies((ss) => [...ss, { scope: -1, kind: 'race_pack', name: '', description: '', image_url: '' }])}
               style={ghostBtn}
             >＋ 新增物資</button>
+          </div>
+        )}
+
+        {tab === 'brochure' && (
+          <div style={col}>
+            <Field label="簡章大主標">
+              <input style={inp} value={brochureTitle} onChange={(e) => setBrochureTitle(e.target.value)} placeholder="例：2026 英雄馬拉松 賽事簡章" />
+            </Field>
+
+            {brochure.map((b, i) => {
+              const upd = (patch: Partial<BrochureBlock>) =>
+                setBrochure((bs) => bs.map((x, idx) => (idx === i ? { ...x, ...patch } : x)))
+              const move = (d: number) =>
+                setBrochure((bs) => {
+                  const j = i + d
+                  if (j < 0 || j >= bs.length) return bs
+                  const n = [...bs]; [n[i], n[j]] = [n[j], n[i]]; return n
+                })
+              const TYPE_LABEL = { text: '文字', image: '圖片', video: '影片' } as const
+              return (
+                <div key={b.id ?? `new-${i}`} style={card}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <strong style={{ fontSize: 13 }}>區塊 {i + 1}・{TYPE_LABEL[b.block_type]}</strong>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <button onClick={() => move(-1)} style={linkBtn} title="上移">↑</button>
+                      <button onClick={() => move(1)} style={linkBtn} title="下移">↓</button>
+                      <button onClick={() => setBrochure((bs) => bs.filter((_, idx) => idx !== i))} style={{ ...linkBtn, color: 'var(--hunt)' }}>移除</button>
+                    </div>
+                  </div>
+                  {b.block_type === 'text' && (
+                    <Field label="文字內容（可用 HTML，如 <h2> <p> <b> <ul> <a>）">
+                      <textarea style={{ ...inp, minHeight: 120, resize: 'vertical', fontFamily: 'monospace' }} value={b.content} onChange={(e) => upd({ content: e.target.value })} />
+                    </Field>
+                  )}
+                  {b.block_type === 'image' && (
+                    <>
+                      <Field label="圖片網址"><input style={inp} value={b.content} onChange={(e) => upd({ content: e.target.value })} placeholder="https://…" /></Field>
+                      <Field label="圖說（選填）"><input style={inp} value={b.caption ?? ''} onChange={(e) => upd({ caption: e.target.value })} /></Field>
+                    </>
+                  )}
+                  {b.block_type === 'video' && (
+                    <>
+                      <Field label="YouTube 連結"><input style={inp} value={b.content} onChange={(e) => upd({ content: e.target.value })} placeholder="https://www.youtube.com/watch?v=…" /></Field>
+                      <Field label="影片說明（選填）"><input style={inp} value={b.caption ?? ''} onChange={(e) => upd({ caption: e.target.value })} /></Field>
+                    </>
+                  )}
+                </div>
+              )
+            })}
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button onClick={() => setBrochure((bs) => [...bs, { block_type: 'text', content: '', display_order: bs.length }])} style={ghostBtn}>＋ 文字區塊</button>
+              <button onClick={() => setBrochure((bs) => [...bs, { block_type: 'image', content: '', display_order: bs.length }])} style={ghostBtn}>＋ 圖片</button>
+              <button onClick={() => setBrochure((bs) => [...bs, { block_type: 'video', content: '', display_order: bs.length }])} style={ghostBtn}>＋ YouTube 影片</button>
+            </div>
           </div>
         )}
       </div>

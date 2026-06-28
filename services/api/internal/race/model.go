@@ -28,6 +28,7 @@ type Race struct {
 	EndDate      time.Time  `json:"end_date"`                     // 競賽時間 迄
 	Config         RaceConfig `json:"config"`
 	RequiredFields []string   `json:"required_fields"` // 報名必填欄位：real_name|nickname|phone|address|birthday|gender
+	BrochureTitle  string     `json:"brochure_title"`  // 簡章大主標
 	ControlStatus  string     `json:"control_status"`  // active|paused|suspended|closed|hidden|testing（admin 手動）
 	StartingSoonDays int      `json:"starting_soon_days"` // 賽事即將開始 倒數天數
 	DisplayStatus  string     `json:"display_status"`  // 計算欄位（讀取時填）：upcoming_reg|registering|reg_closed|starting_soon|racing|ended|paused|suspended
@@ -128,22 +129,33 @@ type RaceSupply struct {
 	DisplayOrder int    `json:"display_order"`
 }
 
+// BrochureBlock 簡章內容區塊
+type BrochureBlock struct {
+	ID           string `json:"id,omitempty"`
+	BlockType    string `json:"block_type"` // text | image | video
+	Content      string `json:"content"`    // text:HTML / image:URL / video:YouTube
+	Caption      string `json:"caption,omitempty"`
+	DisplayOrder int    `json:"display_order"`
+}
+
 // CreateRaceRequest 後台新增賽事的巢狀 payload
 type CreateRaceRequest struct {
 	Race
-	Groups        []RaceGroup  `json:"groups"`
-	Addons        []RaceAddon  `json:"addons"`
-	Supplies      []RaceSupply `json:"supplies"`
-	TestWhitelist []string     `json:"test_whitelist"` // 該賽事測試白名單 email
+	Groups        []RaceGroup     `json:"groups"`
+	Addons        []RaceAddon     `json:"addons"`
+	Supplies      []RaceSupply    `json:"supplies"`
+	TestWhitelist []string        `json:"test_whitelist"` // 該賽事測試白名單 email
+	Brochure      []BrochureBlock `json:"brochure"`
 }
 
 // RaceDetail 含巢狀子資料（供後台編輯載入）
 type RaceDetail struct {
 	Race
-	Groups        []RaceGroup  `json:"groups"`
-	Addons        []RaceAddon  `json:"addons"`
-	Supplies      []RaceSupply `json:"supplies"`
-	TestWhitelist []string     `json:"test_whitelist"`
+	Groups        []RaceGroup     `json:"groups"`
+	Addons        []RaceAddon     `json:"addons"`
+	Supplies      []RaceSupply    `json:"supplies"`
+	TestWhitelist []string        `json:"test_whitelist"`
+	Brochure      []BrochureBlock `json:"brochure"`
 }
 
 // GroupPreset 分組預設選單（可擴充）
