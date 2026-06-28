@@ -87,6 +87,23 @@ function toDateInput(iso?: string | null): string {
   return new Date(d.getTime() - off).toISOString().slice(0, 10)
 }
 
+// Date → datetime-local 字串（本地時間）
+function dtLocal(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+// 新增賽事的預設時間：報名=今天00:00~當月最後一日12:00；賽事=下月1日00:00~下月最後一日12:00
+function makeDefaults() {
+  const n = new Date()
+  return {
+    regStart: dtLocal(new Date(n.getFullYear(), n.getMonth(), n.getDate(), 0, 0)),
+    regEnd: dtLocal(new Date(n.getFullYear(), n.getMonth() + 1, 0, 12, 0)),
+    start: dtLocal(new Date(n.getFullYear(), n.getMonth() + 1, 1, 0, 0)),
+    end: dtLocal(new Date(n.getFullYear(), n.getMonth() + 2, 0, 12, 0)),
+  }
+}
+
 /**
  * 賽事表單（新增與編輯共用）。
  * 傳入 initial（RaceDetail）= 編輯模式；不傳 = 新增模式。
@@ -119,10 +136,11 @@ export default function RaceForm({
   const [slugTouched, setSlugTouched] = useState(isEdit)
   const [subtitle, setSubtitle] = useState(initial?.subtitle ?? '')
   const [blurb, setBlurb] = useState(initial?.blurb ?? '')
-  const [regStart, setRegStart] = useState(toLocalInput(initial?.registration_start))
-  const [regEnd, setRegEnd] = useState(toLocalInput(initial?.registration_end))
-  const [startDate, setStartDate] = useState(toDateInput(initial?.start_date))
-  const [endDate, setEndDate] = useState(toDateInput(initial?.end_date))
+  const def = makeDefaults() // 新增時的預設時間（編輯則用既有值）
+  const [regStart, setRegStart] = useState(initial?.registration_start ? toLocalInput(initial.registration_start) : (isEdit ? '' : def.regStart))
+  const [regEnd, setRegEnd] = useState(initial?.registration_end ? toLocalInput(initial.registration_end) : (isEdit ? '' : def.regEnd))
+  const [startDate, setStartDate] = useState(initial?.start_date ? toLocalInput(initial.start_date) : (isEdit ? '' : def.start))
+  const [endDate, setEndDate] = useState(initial?.end_date ? toLocalInput(initial.end_date) : (isEdit ? '' : def.end))
   const [entryFeeNtd, setEntryFeeNtd] = useState(String((initial?.entry_fee ?? 0) / 100))
   const [requiredFields, setRequiredFields] = useState<string[]>(
     initial?.required_fields ?? ['real_name', 'phone']
@@ -318,10 +336,10 @@ export default function RaceForm({
             </Row>
             <Row>
               <Field label="競賽開始">
-                <input style={inp} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                <input style={inp} type="datetime-local" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
               </Field>
               <Field label="競賽結束">
-                <input style={inp} type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                <input style={inp} type="datetime-local" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
               </Field>
             </Row>
             <Row>
