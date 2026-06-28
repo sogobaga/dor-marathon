@@ -181,6 +181,52 @@ func (h *Handler) AdminMarkOrderPaid(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// TestWhitelistRouter 全域預設測試白名單路由（掛載在 /api/v1/admin/test-whitelist）
+func (h *Handler) TestWhitelistRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/", h.AdminListDefaultWhitelist)
+	r.Post("/", h.AdminAddDefaultWhitelist)
+	r.Delete("/", h.AdminRemoveDefaultWhitelist)
+	return r
+}
+
+func (h *Handler) AdminListDefaultWhitelist(w http.ResponseWriter, r *http.Request) {
+	emails, err := h.svc.ListDefaultWhitelist(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list whitelist")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"emails": emails})
+}
+
+func (h *Handler) AdminAddDefaultWhitelist(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" {
+		respondErr(w, http.StatusBadRequest, "email is required")
+		return
+	}
+	if err := h.svc.AddDefaultWhitelist(r.Context(), req.Email); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to add")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) AdminRemoveDefaultWhitelist(w http.ResponseWriter, r *http.Request) {
+	email := r.URL.Query().Get("email")
+	if email == "" {
+		respondErr(w, http.StatusBadRequest, "email is required")
+		return
+	}
+	if err := h.svc.RemoveDefaultWhitelist(r.Context(), email); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to remove")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // PresetRouter 分組預設選單路由（掛載在 /api/v1/admin/group-presets）
 func (h *Handler) PresetRouter() http.Handler {
 	r := chi.NewRouter()
@@ -217,10 +263,10 @@ func (h *Handler) AdminCreatePreset(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, map[string]any{"preset": preset})
 }
 
-// GET /api/v1/races?status=open
+// GET /api/v1/races — 前台賽事列表（依 control_status 過濾可見性，display_status 自動推導）
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	status := r.URL.Query().Get("status") // open|live|soon|done|（空 = 全部）
-	races, err := h.svc.List(r.Context(), status)
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	races, err := h.svc.ListPublic(r.Context(), userID)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to list races")
 		return
@@ -228,7 +274,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]any{"races": races}
 	// 登入時附帶使用者各賽事報名狀態（race_id → {status, group_revealed}）
-	if userID, _ := r.Context().Value(auth.CtxKeyUserID).(string); userID != "" {
+	if userID != "" {
 		if regs, err := h.svc.GetUserRegistrations(r.Context(), userID); err == nil {
 			resp["registrations"] = regs
 		}
@@ -284,6 +330,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusConflict, "報名未開放")
 	case errors.Is(err, ErrAlreadyRegistered):
 		respondErr(w, http.StatusConflict, "您已報名此賽事")
+	case errors.Is(err, ErrRegistrationPaused):
+		respondErr(w, http.StatusConflict, "此賽事目前暫停報名")
 	case errors.Is(err, ErrGroupFull):
 		respondErr(w, http.StatusConflict, "該分組名額已滿")
 	case errors.Is(err, ErrAddonSoldOut):

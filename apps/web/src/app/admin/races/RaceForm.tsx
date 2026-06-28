@@ -28,11 +28,13 @@ const MODES: { v: EventMode; t: string; desc: string }[] = [
   { v: 'faction_battle', t: '分組對抗模式', desc: '隨機分組，賽前不公開所屬分組' },
 ]
 
-const STATUSES: { v: string; t: string }[] = [
-  { v: 'soon', t: '即將開始' },
-  { v: 'open', t: '報名中' },
-  { v: 'live', t: '進行中' },
-  { v: 'done', t: '已結束' },
+const CONTROL_STATUSES: { v: string; t: string; d: string }[] = [
+  { v: 'active', t: '正常運作中', d: '依報名/賽事時間自動切換狀態' },
+  { v: 'paused', t: '暫停報名', d: '強制暫停，報名一律失敗' },
+  { v: 'suspended', t: '賽事中止', d: '中止統計，直到恢復正常' },
+  { v: 'closed', t: '賽事關閉', d: '中止且前台完全不顯示' },
+  { v: 'hidden', t: '賽事隱藏', d: '正常運作但不列在前台（有連結可進）' },
+  { v: 'testing', t: '賽事測試中', d: '比照正常，但僅白名單 email 看得到' },
 ]
 
 const REQUIRED_FIELD_OPTS: { v: string; t: string }[] = [
@@ -107,7 +109,10 @@ export default function RaceForm({
   const [tab, setTab] = useState<'basic' | 'groups' | 'addons' | 'supplies'>('basic')
   const [mode, setMode] = useState<EventMode>(initial?.event_mode ?? 'general')
   const [goalType, setGoalType] = useState<GoalType>(initial?.goal_type ?? 'distance')
-  const [status, setStatus] = useState<string>(initial?.status ?? 'soon')
+  const [controlStatus, setControlStatus] = useState<string>(initial?.control_status ?? 'active')
+  const [startingSoonDays, setStartingSoonDays] = useState<string>(String(initial?.starting_soon_days ?? 5))
+  const [testWhitelist, setTestWhitelist] = useState<string[]>(initial?.test_whitelist ?? [])
+  const [wlInput, setWlInput] = useState('')
 
   const [title, setTitle] = useState(initial?.title ?? '')
   const [slug, setSlug] = useState(initial?.slug ?? '')
@@ -196,7 +201,9 @@ export default function RaceForm({
       event_mode: mode,
       goal_type: mode === 'competition' ? goalType : 'distance',
       group_mode: isRandom ? 'random' : 'self',
-      status: status as CreateRacePayload['status'],
+      control_status: controlStatus as CreateRacePayload['control_status'],
+      starting_soon_days: parseInt(startingSoonDays || '5', 10) || 5,
+      test_whitelist: testWhitelist,
       entry_fee: Math.round(parseFloat(entryFeeNtd || '0') * 100),
       required_fields: requiredFields,
       registration_start: regStart ? new Date(regStart).toISOString() : null,
@@ -321,12 +328,8 @@ export default function RaceForm({
               <Field label="報名費 (NT$)">
                 <input style={inp} type="number" value={entryFeeNtd} onChange={(e) => setEntryFeeNtd(e.target.value)} />
               </Field>
-              <Field label="狀態">
-                <select style={inp} value={status} onChange={(e) => setStatus(e.target.value)}>
-                  {STATUSES.map((s) => (
-                    <option key={s.v} value={s.v}>{s.t}</option>
-                  ))}
-                </select>
+              <Field label="賽事即將開始 倒數天數">
+                <input style={inp} type="number" min={0} value={startingSoonDays} onChange={(e) => setStartingSoonDays(e.target.value)} />
               </Field>
               {mode === 'competition' ? (
                 <Field label="完賽目標型態">
@@ -339,6 +342,54 @@ export default function RaceForm({
                 <div style={{ flex: 1 }} />
               )}
             </Row>
+
+            <Field label="賽事控制狀態">
+              <select style={inp} value={controlStatus} onChange={(e) => setControlStatus(e.target.value)}>
+                {CONTROL_STATUSES.map((s) => (
+                  <option key={s.v} value={s.v}>{s.t}</option>
+                ))}
+              </select>
+              <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
+                {CONTROL_STATUSES.find((s) => s.v === controlStatus)?.d}
+                　顯示狀態（報名中/賽事進行中…）由系統依時間自動推導。
+              </span>
+            </Field>
+
+            {controlStatus === 'testing' && (
+              <Field label="此賽事測試白名單（email，只有名單內帳號看得到）">
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    style={inp} value={wlInput} placeholder="someone@example.com"
+                    onChange={(e) => setWlInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        const v = wlInput.trim().toLowerCase()
+                        if (v && !testWhitelist.includes(v)) setTestWhitelist((w) => [...w, v])
+                        setWlInput('')
+                      }
+                    }}
+                  />
+                  <button
+                    type="button" style={ghostBtn}
+                    onClick={() => {
+                      const v = wlInput.trim().toLowerCase()
+                      if (v && !testWhitelist.includes(v)) setTestWhitelist((w) => [...w, v])
+                      setWlInput('')
+                    }}
+                  >＋ 加入</button>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                  {testWhitelist.map((e) => (
+                    <span key={e} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '4px 10px', fontSize: 12 }}>
+                      {e}
+                      <button type="button" onClick={() => setTestWhitelist((w) => w.filter((x) => x !== e))} style={{ ...linkBtn, color: 'var(--hunt)' }}>✕</button>
+                    </span>
+                  ))}
+                </div>
+                <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>另也吃「後台 → 測試白名單」的全域預設名單。</span>
+              </Field>
+            )}
 
             <div>
               <span style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-faint)', textTransform: 'uppercase' }}>

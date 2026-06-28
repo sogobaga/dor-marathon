@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -29,6 +30,7 @@ const selectCols = `
 	       status, event_mode, goal_type, distances, group_type, group_mode,
 	       slots_total, entry_fee, registration_start, registration_end,
 	       start_date, end_date, config, required_fields,
+	       control_status, starting_soon_days,
 	       COALESCE(created_by::text,'') as created_by,
 	       review_status,
 	       COALESCE(review_note,'') as review_note,
@@ -147,21 +149,41 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		requiredFields = []string{"real_name", "phone"}
 	}
 
+	controlStatus := race.ControlStatus
+	if controlStatus == "" {
+		controlStatus = "active"
+	}
+	startingSoonDays := race.StartingSoonDays
+	if startingSoonDays <= 0 {
+		startingSoonDays = 5
+	}
+
 	var raceID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO races (slug, title, subtitle, world, blurb, hero_image_url,
 		                   status, event_mode, goal_type, distances, group_type, group_mode,
 		                   slots_total, entry_fee, registration_start, registration_end,
-		                   start_date, end_date, config, created_by, review_status, required_fields)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+		                   start_date, end_date, config, created_by, review_status, required_fields,
+		                   control_status, starting_soon_days)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.RegStart, race.RegEnd,
 		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus, requiredFields,
+		controlStatus, startingSoonDays,
 	).Scan(&raceID)
 	if err != nil {
 		return nil, fmt.Errorf("insert race: %w", err)
+	}
+
+	// 測試白名單
+	for _, email := range req.TestWhitelist {
+		if e := normEmail(email); e != "" {
+			if _, err = tx.Exec(ctx, `INSERT INTO race_test_whitelist (race_id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, raceID, e); err != nil {
+				return nil, fmt.Errorf("insert whitelist: %w", err)
+			}
+		}
 	}
 
 	// 分組（記錄索引 → 實際 UUID，供物資對應）
@@ -248,6 +270,15 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 		requiredFields = []string{"real_name", "phone"}
 	}
 
+	controlStatus := race.ControlStatus
+	if controlStatus == "" {
+		controlStatus = "active"
+	}
+	startingSoonDays := race.StartingSoonDays
+	if startingSoonDays <= 0 {
+		startingSoonDays = 5
+	}
+
 	// 1. 更新賽事本體
 	_, err = tx.Exec(ctx, `
 		UPDATE races SET
@@ -255,16 +286,28 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
-			required_fields=$20, updated_at=NOW()
-		WHERE id=$21`,
+			required_fields=$20, control_status=$21, starting_soon_days=$22, updated_at=NOW()
+		WHERE id=$23`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
-		requiredFields, raceID,
+		requiredFields, controlStatus, startingSoonDays, raceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
+	}
+
+	// 測試白名單：整批重建
+	if _, err = tx.Exec(ctx, `DELETE FROM race_test_whitelist WHERE race_id=$1`, raceID); err != nil {
+		return nil, fmt.Errorf("clear whitelist: %w", err)
+	}
+	for _, email := range req.TestWhitelist {
+		if e := normEmail(email); e != "" {
+			if _, err = tx.Exec(ctx, `INSERT INTO race_test_whitelist (race_id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, raceID, e); err != nil {
+				return nil, fmt.Errorf("insert whitelist: %w", err)
+			}
+		}
 	}
 
 	// 2. 同步分組（upsert by id，記錄最終 id 供物資對應），刪除已移除的
@@ -402,7 +445,89 @@ func (r *Repository) GetDetail(ctx context.Context, raceID string) (*RaceDetail,
 	if err != nil {
 		return nil, err
 	}
-	return &RaceDetail{Race: *race, Groups: groups, Addons: addons, Supplies: supplies}, nil
+	whitelist, err := r.GetTestWhitelist(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	return &RaceDetail{Race: *race, Groups: groups, Addons: addons, Supplies: supplies, TestWhitelist: whitelist}, nil
+}
+
+// --- 測試白名單 ---
+
+// GetTestWhitelist 取得某賽事的專屬白名單 email
+func (r *Repository) GetTestWhitelist(ctx context.Context, raceID string) ([]string, error) {
+	rows, err := r.db.Query(ctx, `SELECT email FROM race_test_whitelist WHERE race_id=$1 ORDER BY email`, raceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var e string
+		if err := rows.Scan(&e); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// IsEmailWhitelisted 該 email 是否在「該賽事白名單 ∪ 全域預設白名單」內
+func (r *Repository) IsEmailWhitelisted(ctx context.Context, raceID, email string) (bool, error) {
+	e := normEmail(email)
+	if e == "" {
+		return false, nil
+	}
+	var ok bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM race_test_whitelist WHERE race_id=$1 AND lower(email)=$2)
+		    OR EXISTS(SELECT 1 FROM default_test_whitelist WHERE lower(email)=$2)`,
+		raceID, e).Scan(&ok)
+	return ok, err
+}
+
+// GetUserEmail 取得使用者 email（白名單比對用）
+func (r *Repository) GetUserEmail(ctx context.Context, userID string) (string, error) {
+	if userID == "" {
+		return "", nil
+	}
+	var email string
+	err := r.db.QueryRow(ctx, `SELECT email FROM users WHERE id=$1`, userID).Scan(&email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return email, err
+}
+
+func (r *Repository) ListDefaultWhitelist(ctx context.Context) ([]string, error) {
+	rows, err := r.db.Query(ctx, `SELECT email FROM default_test_whitelist ORDER BY email`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var e string
+		if err := rows.Scan(&e); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) AddDefaultWhitelist(ctx context.Context, email string) error {
+	e := normEmail(email)
+	if e == "" {
+		return fmt.Errorf("email required")
+	}
+	_, err := r.db.Exec(ctx, `INSERT INTO default_test_whitelist (email) VALUES ($1) ON CONFLICT DO NOTHING`, e)
+	return err
+}
+
+func (r *Repository) RemoveDefaultWhitelist(ctx context.Context, email string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM default_test_whitelist WHERE lower(email)=$1`, normEmail(email))
+	return err
 }
 
 // GetGroups 取得賽事的所有分組
@@ -574,6 +699,11 @@ func (r *Repository) CreatePreset(ctx context.Context, name string, distanceKm *
 		return nil, fmt.Errorf("create preset: %w", err)
 	}
 	return p, nil
+}
+
+// normEmail 正規化 email（去空白、小寫）
+func normEmail(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
 }
 
 // nullStr 空字串轉 nil，讓 DB 存 NULL 而非空字串
@@ -1099,6 +1229,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&dist32, &race.GroupType, &race.GroupMode,
 		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
 		&race.StartDate, &race.EndDate, &cfgBytes, &race.RequiredFields,
+		&race.ControlStatus, &race.StartingSoonDays,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CreatedAt,
 	)
@@ -1125,6 +1256,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&dist32, &race.GroupType, &race.GroupMode,
 		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
 		&race.StartDate, &race.EndDate, &cfgBytes, &race.RequiredFields,
+		&race.ControlStatus, &race.StartingSoonDays,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CreatedAt,
 	)

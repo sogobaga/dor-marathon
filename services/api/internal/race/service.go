@@ -33,6 +33,7 @@ var (
 	ErrAddonSoldOut        = errors.New("addon sold out")
 	ErrOrderNotFound        = errors.New("order not found")
 	ErrRegistrationNotFound = errors.New("registration not found")
+	ErrRegistrationPaused   = errors.New("此賽事目前暫停報名")
 )
 
 type Service struct {
@@ -45,14 +46,65 @@ func NewService(repo *Repository, rdb *redis.Client, promoSvc *promo.Service) *S
 	return &Service{repo: repo, rdb: rdb, promo: promoSvc}
 }
 
-// List 回傳賽事列表，附帶 Redis 剩餘名額
+// List 回傳賽事列表（admin 用，含全部 control_status，填入 display_status）
 func (s *Service) List(ctx context.Context, status string) ([]*Race, error) {
-	return s.repo.List(ctx, status)
+	races, err := s.repo.List(ctx, status)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	for _, r := range races {
+		r.FillDisplay(now)
+	}
+	return races, nil
+}
+
+// ListPublic 前台賽事列表：排除 closed/hidden，testing 只給白名單 email，並填入 display_status。
+func (s *Service) ListPublic(ctx context.Context, userID string) ([]*Race, error) {
+	races, err := s.repo.List(ctx, "") // 不依舊 status 欄位過濾
+	if err != nil {
+		return nil, err
+	}
+	email, _ := s.repo.GetUserEmail(ctx, userID)
+	now := time.Now()
+	out := []*Race{}
+	for _, r := range races {
+		switch r.ControlStatus {
+		case "closed", "hidden":
+			continue
+		case "testing":
+			if email == "" {
+				continue
+			}
+			ok, err := s.repo.IsEmailWhitelisted(ctx, r.ID, email)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+		}
+		r.FillDisplay(now)
+		out = append(out, r)
+	}
+	return out, nil
 }
 
 // GetUserRegistrations 取得使用者所有報名的精簡狀態（賽事列表用）
 func (s *Service) GetUserRegistrations(ctx context.Context, userID string) (map[string]MyRegLite, error) {
 	return s.repo.GetUserRegistrations(ctx, userID)
+}
+
+// --- 全域預設測試白名單 ---
+
+func (s *Service) ListDefaultWhitelist(ctx context.Context) ([]string, error) {
+	return s.repo.ListDefaultWhitelist(ctx)
+}
+func (s *Service) AddDefaultWhitelist(ctx context.Context, email string) error {
+	return s.repo.AddDefaultWhitelist(ctx, email)
+}
+func (s *Service) RemoveDefaultWhitelist(ctx context.Context, email string) error {
+	return s.repo.RemoveDefaultWhitelist(ctx, email)
 }
 
 // GetDetail 回傳賽事詳情 + 使用者的報名狀態
@@ -85,6 +137,25 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 	if detail == nil || detail.ReviewStatus != "approved" {
 		return nil, nil, ErrRaceNotFound
 	}
+	// 可見性：closed 全擋；testing 僅白名單 email（hidden 有連結可進）
+	if detail.ControlStatus == "closed" {
+		return nil, nil, ErrRaceNotFound
+	}
+	if detail.ControlStatus == "testing" {
+		email, _ := s.repo.GetUserEmail(ctx, userID)
+		if email == "" {
+			return nil, nil, ErrRaceNotFound
+		}
+		ok, err := s.repo.IsEmailWhitelisted(ctx, raceID, email)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			return nil, nil, ErrRaceNotFound
+		}
+	}
+	detail.FillDisplay(time.Now())
+
 	var reg *Registration
 	if userID != "" {
 		reg, err = s.repo.GetRegistration(ctx, userID, raceID)
@@ -104,7 +175,29 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 	if race == nil || race.ReviewStatus != "approved" {
 		return nil, ErrRaceNotFound
 	}
-	if race.Status != "open" {
+	// control_status 守門
+	switch race.ControlStatus {
+	case "closed":
+		return nil, ErrRaceNotFound
+	case "paused":
+		return nil, ErrRegistrationPaused
+	case "suspended":
+		return nil, ErrRegistrationClosed
+	case "testing":
+		email, _ := s.repo.GetUserEmail(ctx, req.UserID)
+		if email == "" {
+			return nil, ErrRaceNotFound
+		}
+		ok, err := s.repo.IsEmailWhitelisted(ctx, req.RaceID, email)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrRaceNotFound
+		}
+	}
+	// 時間規則：非「報名中」不可報名
+	if _, canReg := race.ComputeDisplay(time.Now()); !canReg {
 		return nil, ErrRegistrationClosed
 	}
 

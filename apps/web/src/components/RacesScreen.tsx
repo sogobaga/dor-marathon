@@ -5,11 +5,15 @@ import { racesApi, type Race, type MyRegLite } from '@/lib/api'
 import { getUserToken, useUser } from '@/lib/userAuth'
 import UserAuthBar from './UserAuthBar'
 
-const STATUS: Record<Race['status'], { label: string; color: string }> = {
-  live: { label: '進行中', color: 'var(--fug)' },
-  open: { label: '報名中', color: 'var(--gold)' },
-  soon: { label: '即將開始', color: 'var(--violet)' },
-  done: { label: '已結束', color: 'var(--tx-faint)' },
+const DISPLAY_STATUS: Record<string, { label: string; color: string }> = {
+  upcoming_reg: { label: '即將報名', color: 'var(--violet)' },
+  registering: { label: '報名中', color: 'var(--gold)' },
+  reg_closed: { label: '報名結束', color: 'var(--tx-faint)' },
+  starting_soon: { label: '賽事即將開始', color: 'var(--violet)' },
+  racing: { label: '賽事進行中', color: 'var(--fug)' },
+  ended: { label: '賽事結束', color: 'var(--tx-faint)' },
+  paused: { label: '暫停報名', color: 'var(--hunt)' },
+  suspended: { label: '賽事中止', color: 'var(--hunt)' },
 }
 
 function fmtFee(cents: number) {
@@ -83,9 +87,9 @@ function RaceCard({
   onRegister?: (race: Race) => void
   onPay?: (race: Race) => void
 }) {
-  const s = STATUS[race.status] ?? STATUS.done
+  const s = DISPLAY_STATUS[race.display_status] ?? { label: race.display_status, color: 'var(--tx-faint)' }
   const isCompetition = race.event_mode === 'competition'
-  const canRegister = race.status === 'open'
+  const canRegister = race.can_register
   return (
     <div
       style={{

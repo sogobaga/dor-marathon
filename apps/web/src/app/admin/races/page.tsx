@@ -7,11 +7,14 @@ import { adminRacesApi, type Race } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import NewRaceModal from './NewRaceModal'
 
-const STATUS_LABEL: Record<string, string> = {
-  live: '進行中',
-  open: '報名中',
-  soon: '即將開始',
-  done: '已結束',
+const CONTROL_LABEL: Record<string, string> = {
+  active: '正常運作', paused: '暫停報名', suspended: '賽事中止',
+  closed: '賽事關閉', hidden: '賽事隱藏', testing: '測試中',
+}
+const DISPLAY_LABEL: Record<string, string> = {
+  upcoming_reg: '即將報名', registering: '報名中', reg_closed: '報名結束',
+  starting_soon: '賽事即將開始', racing: '賽事進行中', ended: '賽事結束',
+  paused: '暫停報名', suspended: '賽事中止',
 }
 
 export default function AdminRacesList() {
@@ -119,7 +122,10 @@ export default function AdminRacesList() {
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>{STATUS_LABEL[r.status] ?? r.status}</span>
+                <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
+                  {CONTROL_LABEL[r.control_status] ?? r.control_status}
+                  <span style={{ color: 'var(--tx-faint)' }}> · {DISPLAY_LABEL[r.display_status] ?? r.display_status}</span>
+                </span>
                 <span style={{ color: 'var(--fug)', fontSize: 13 }}>編輯 →</span>
                 <button
                   onClick={(e) => handleDelete(e, r)}

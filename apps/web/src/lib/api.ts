@@ -41,9 +41,19 @@ export interface Race {
   start_date: string
   end_date: string
   required_fields: string[]
+  control_status: ControlStatus
+  starting_soon_days: number
+  display_status: DisplayStatus
+  can_register: boolean
   review_status: string
   created_at: string
 }
+
+export type ControlStatus = 'active' | 'paused' | 'suspended' | 'closed' | 'hidden' | 'testing'
+export type DisplayStatus =
+  | 'upcoming_reg' | 'registering' | 'reg_closed'
+  | 'starting_soon' | 'racing' | 'ended'
+  | 'paused' | 'suspended'
 
 export type ParticipantField = 'real_name' | 'nickname' | 'phone' | 'address' | 'birthday' | 'gender'
 
@@ -87,6 +97,7 @@ export interface RaceDetail extends Race {
   groups: RaceGroup[]
   addons: RaceAddon[]
   supplies: RaceSupply[]
+  test_whitelist: string[]
 }
 
 // 建立賽事的巢狀 payload（Race 基本欄位 + 子陣列）
@@ -94,6 +105,7 @@ export type CreateRacePayload = Partial<Race> & {
   groups: RaceGroup[]
   addons: RaceAddon[]
   supplies: RaceSupply[]
+  test_whitelist?: string[]
 }
 
 export interface GroupPreset {
@@ -558,6 +570,24 @@ export const adminPromoApi = {
     }),
   usages: (token: string, id: string) =>
     request<{ usages: PromoUsage[]; count: number }>(`/admin/promo-codes/${id}/usages`, { headers: withAuth(token) }),
+}
+
+// --- Admin: 全域預設測試白名單 ---
+
+export const adminTestWhitelistApi = {
+  list: (token: string) =>
+    request<{ emails: string[] }>('/admin/test-whitelist', { headers: withAuth(token) }),
+  add: (token: string, email: string) =>
+    request<void>('/admin/test-whitelist', {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify({ email }),
+    }),
+  remove: (token: string, email: string) =>
+    request<void>(`/admin/test-whitelist?email=${encodeURIComponent(email)}`, {
+      method: 'DELETE',
+      headers: withAuth(token),
+    }),
 }
 
 // --- Admin: 分組預設選單 ---

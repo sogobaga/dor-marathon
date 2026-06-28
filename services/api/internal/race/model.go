@@ -28,10 +28,54 @@ type Race struct {
 	EndDate      time.Time  `json:"end_date"`                     // 競賽時間 迄
 	Config         RaceConfig `json:"config"`
 	RequiredFields []string   `json:"required_fields"` // 報名必填欄位：real_name|nickname|phone|address|birthday|gender
+	ControlStatus  string     `json:"control_status"`  // active|paused|suspended|closed|hidden|testing（admin 手動）
+	StartingSoonDays int      `json:"starting_soon_days"` // 賽事即將開始 倒數天數
+	DisplayStatus  string     `json:"display_status"`  // 計算欄位（讀取時填）：upcoming_reg|registering|reg_closed|starting_soon|racing|ended|paused|suspended
+	CanRegister    bool       `json:"can_register"`    // 計算欄位
 	CreatedBy      string     `json:"created_by,omitempty"` // organizer userID
 	ReviewStatus   string     `json:"review_status"`        // pending|approved|rejected
 	ReviewNote     string     `json:"review_note,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
+}
+
+// ComputeDisplay 依現在時間推導顯示狀態與是否可報名（control=active/testing/hidden 才走時間規則）。
+func (r *Race) ComputeDisplay(now time.Time) (string, bool) {
+	switch r.ControlStatus {
+	case "paused":
+		return "paused", false
+	case "suspended":
+		return "suspended", false
+	}
+	days := r.StartingSoonDays
+	if days <= 0 {
+		days = 5
+	}
+	startingSoon := r.StartDate.AddDate(0, 0, -days)
+
+	var display string
+	switch {
+	case now.After(r.EndDate) || now.Equal(r.EndDate):
+		display = "ended"
+	case !now.Before(r.StartDate): // now >= start
+		display = "racing"
+	case !now.Before(startingSoon): // now >= start - N days
+		display = "starting_soon"
+	case r.RegEnd != nil && now.After(*r.RegEnd):
+		display = "reg_closed"
+	case r.RegStart != nil && now.Before(*r.RegStart):
+		display = "upcoming_reg"
+	default:
+		display = "registering"
+	}
+
+	canRegister := display == "registering" &&
+		(r.ControlStatus == "active" || r.ControlStatus == "testing" || r.ControlStatus == "hidden")
+	return display, canRegister
+}
+
+// FillDisplay 將計算欄位填入 race（讀取後呼叫）
+func (r *Race) FillDisplay(now time.Time) {
+	r.DisplayStatus, r.CanRegister = r.ComputeDisplay(now)
 }
 
 // RaceGroup 分組（一般/競賽=選手自選，分組對抗=隨機分配）
@@ -81,17 +125,19 @@ type RaceSupply struct {
 // CreateRaceRequest 後台新增賽事的巢狀 payload
 type CreateRaceRequest struct {
 	Race
-	Groups   []RaceGroup  `json:"groups"`
-	Addons   []RaceAddon  `json:"addons"`
-	Supplies []RaceSupply `json:"supplies"`
+	Groups        []RaceGroup  `json:"groups"`
+	Addons        []RaceAddon  `json:"addons"`
+	Supplies      []RaceSupply `json:"supplies"`
+	TestWhitelist []string     `json:"test_whitelist"` // 該賽事測試白名單 email
 }
 
 // RaceDetail 含巢狀子資料（供後台編輯載入）
 type RaceDetail struct {
 	Race
-	Groups   []RaceGroup  `json:"groups"`
-	Addons   []RaceAddon  `json:"addons"`
-	Supplies []RaceSupply `json:"supplies"`
+	Groups        []RaceGroup  `json:"groups"`
+	Addons        []RaceAddon  `json:"addons"`
+	Supplies      []RaceSupply `json:"supplies"`
+	TestWhitelist []string     `json:"test_whitelist"`
 }
 
 // GroupPreset 分組預設選單（可擴充）

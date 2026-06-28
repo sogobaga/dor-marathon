@@ -178,6 +178,7 @@ func main() {
 			r.Use(middleware.RequireAdmin)
 			r.Mount("/admin/races", raceHandler.AdminRouter())
 			r.Mount("/admin/group-presets", raceHandler.PresetRouter())
+			r.Mount("/admin/test-whitelist", raceHandler.TestWhitelistRouter())
 			r.Mount("/admin/signups", raceHandler.SignupRouter())
 			r.Mount("/admin/orders", raceHandler.OrderRouter())
 			r.Mount("/admin/promo-codes", promoHandler.Router())

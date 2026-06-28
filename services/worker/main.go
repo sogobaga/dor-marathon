@@ -127,6 +127,7 @@ func (w *Worker) aggregateStandings(ctx context.Context) {
 			NOW()
 		FROM race_groups rg
 		JOIN races r ON r.id = rg.race_id AND r.event_mode = 'competition'
+		             AND r.control_status NOT IN ('suspended','closed')
 		LEFT JOIN registrations reg ON reg.group_id = rg.id AND reg.status = 'paid'
 		LEFT JOIN activities a ON a.user_id = reg.user_id AND a.race_id = rg.race_id
 		GROUP BY rg.race_id, rg.id
