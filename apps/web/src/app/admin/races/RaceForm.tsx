@@ -134,18 +134,43 @@ export default function RaceForm({
   const [wlInput, setWlInput] = useState('')
   const [brochureTitle, setBrochureTitle] = useState(initial?.brochure_title ?? '')
   const [brochure, setBrochure] = useState<BrochureBlock[]>(initial?.brochure ?? [])
-  const [uploadingIdx, setUploadingIdx] = useState<number | null>(null)
+  const [uploadingKey, setUploadingKey] = useState<string | null>(null)
 
-  async function uploadBlockImage(i: number, file: File) {
-    setUploadingIdx(i)
+  // 圖片區塊 content 存「圖片網址陣列」JSON；相容舊的單一網址字串
+  function imagesOf(content: string): string[] {
+    const c = (content ?? '').trim()
+    if (!c) return []
+    if (c.startsWith('[')) {
+      try {
+        const a = JSON.parse(c)
+        return Array.isArray(a) ? a.filter(Boolean) : []
+      } catch {
+        return []
+      }
+    }
+    return [c]
+  }
+  function blockHasContent(b: { block_type: string; content: string }): boolean {
+    return b.block_type === 'image' ? imagesOf(b.content).length > 0 : !!b.content.trim()
+  }
+  function setBlockImages(i: number, imgs: string[]) {
+    setBrochure((bs) => bs.map((x, idx) => (idx === i ? { ...x, content: JSON.stringify(imgs) } : x)))
+  }
+  async function uploadImage(i: number, k: number, file: File) {
+    setUploadingKey(`${i}-${k}`)
     setErr('')
     try {
       const { url } = await adminImagesApi.upload(token, file)
-      setBrochure((bs) => bs.map((x, idx) => (idx === i ? { ...x, content: url } : x)))
+      setBrochure((bs) => bs.map((x, idx) => {
+        if (idx !== i) return x
+        const imgs = imagesOf(x.content)
+        imgs[k] = url
+        return { ...x, content: JSON.stringify(imgs) }
+      }))
     } catch (e: any) {
       setErr(e?.message || '圖片上傳失敗')
     } finally {
-      setUploadingIdx(null)
+      setUploadingKey(null)
     }
   }
 
@@ -242,8 +267,12 @@ export default function RaceForm({
       test_whitelist: testWhitelist,
       brochure_title: brochureTitle.trim(),
       brochure: brochure
-        .filter((b) => b.content.trim())
-        .map((b, idx) => ({ ...b, content: b.content.trim(), display_order: idx })),
+        .filter(blockHasContent)
+        .map((b, idx) => ({
+          ...b,
+          content: b.block_type === 'image' ? JSON.stringify(imagesOf(b.content)) : b.content.trim(),
+          display_order: idx,
+        })),
       entry_fee: Math.round(parseFloat(entryFeeNtd || '0') * 100),
       required_fields: requiredFields,
       registration_start: regStart ? new Date(regStart).toISOString() : null,
@@ -315,7 +344,7 @@ export default function RaceForm({
           ['groups', `分組 (${groups.filter((g) => g.name.trim()).length})`],
           ['addons', `加購 (${addons.filter((a) => a.name.trim()).length})`],
           ['supplies', `物資 (${supplies.filter((s) => s.name.trim()).length})`],
-          ['brochure', `簡章 (${brochure.filter((b) => b.content.trim()).length})`],
+          ['brochure', `簡章 (${brochure.filter(blockHasContent).length})`],
         ].map(([v, label]) => (
           <button
             key={v}
@@ -642,19 +671,28 @@ export default function RaceForm({
                   )}
                   {b.block_type === 'image' && (
                     <>
-                      <Field label="圖片（上傳檔案，或貼網址）">
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                          <input style={{ ...inp, flex: 1, minWidth: 180 }} value={b.content} onChange={(e) => upd({ content: e.target.value })} placeholder="https://… 或上傳" />
-                          <label style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
-                            {uploadingIdx === i ? '上傳中…' : '⬆ 上傳圖片'}
-                            <input type="file" accept="image/*" style={{ display: 'none' }}
-                              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadBlockImage(i, f); e.target.value = '' }} />
-                          </label>
+                      <Field label="圖片（可多張；前台會左右滑動瀏覽）">
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          {imagesOf(b.content).map((src, k) => (
+                            <div key={k} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 11, color: 'var(--tx-faint)', width: 16 }}>{k + 1}</span>
+                              <input style={{ ...inp, flex: 1, minWidth: 160 }} value={src}
+                                onChange={(e) => { const imgs = imagesOf(b.content); imgs[k] = e.target.value; setBlockImages(i, imgs) }}
+                                placeholder="https://… 或上傳" />
+                              <label style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                                {uploadingKey === `${i}-${k}` ? '上傳中…' : '⬆ 上傳'}
+                                <input type="file" accept="image/*" style={{ display: 'none' }}
+                                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage(i, k, f); e.target.value = '' }} />
+                              </label>
+                              {src && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={src} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)' }} />
+                              )}
+                              <button type="button" onClick={() => setBlockImages(i, imagesOf(b.content).filter((_, x) => x !== k))} style={{ ...linkBtn, color: 'var(--hunt)' }}>移除</button>
+                            </div>
+                          ))}
+                          <button type="button" onClick={() => setBlockImages(i, [...imagesOf(b.content), ''])} style={ghostBtn}>＋ 新增圖片</button>
                         </div>
-                        {b.content && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={b.content} alt="" style={{ maxWidth: 200, maxHeight: 140, borderRadius: 8, marginTop: 8, border: '1px solid var(--line-2)' }} />
-                        )}
                       </Field>
                       <Field label="圖說（選填）"><input style={inp} value={b.caption ?? ''} onChange={(e) => upd({ caption: e.target.value })} /></Field>
                     </>

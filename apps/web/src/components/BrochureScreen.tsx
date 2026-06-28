@@ -1,9 +1,24 @@
 'use client'
 
 import useSWR from 'swr'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { racesApi, type Race, type BrochureBlock } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
+
+// 圖片區塊 content：新版存「網址陣列」JSON；相容舊的單一網址字串
+function imagesOf(content: string): string[] {
+  const c = (content ?? '').trim()
+  if (!c) return []
+  if (c.startsWith('[')) {
+    try {
+      const a = JSON.parse(c)
+      return Array.isArray(a) ? a.filter(Boolean) : []
+    } catch {
+      return []
+    }
+  }
+  return [c]
+}
 
 // 從各種 YouTube 連結取出 video id
 function ytId(url: string): string | null {
@@ -86,14 +101,20 @@ function Block({ block, onZoom }: { block: BrochureBlock; onZoom: (url: string) 
     return <div style={{ fontSize: 14.5, lineHeight: 1.7, color: 'var(--tx)' }} dangerouslySetInnerHTML={{ __html: block.content }} />
   }
   if (block.block_type === 'image') {
+    const imgs = imagesOf(block.content)
+    if (imgs.length === 0) return null
     return (
       <figure style={{ margin: 0 }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={block.content} alt={block.caption ?? ''}
-          onClick={() => onZoom(block.content)}
-          style={{ width: '100%', borderRadius: 12, cursor: 'zoom-in', display: 'block' }}
-        />
+        {imgs.length === 1 ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={imgs[0]} alt={block.caption ?? ''}
+            onClick={() => onZoom(imgs[0])}
+            style={{ width: '100%', borderRadius: 12, cursor: 'zoom-in', display: 'block' }}
+          />
+        ) : (
+          <Carousel images={imgs} onZoom={onZoom} />
+        )}
         {block.caption && <figcaption style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 6, textAlign: 'center' }}>{block.caption}</figcaption>}
       </figure>
     )
@@ -120,6 +141,76 @@ function Block({ block, onZoom }: { block: BrochureBlock; onZoom: (url: string) 
     )
   }
   return null
+}
+
+function Carousel({ images, onZoom }: { images: string[]; onZoom: (url: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [idx, setIdx] = useState(0)
+
+  function onScroll() {
+    const el = ref.current
+    if (!el) return
+    const i = Math.round(el.scrollLeft / el.clientWidth)
+    if (i !== idx) setIdx(i)
+  }
+  function go(i: number) {
+    const el = ref.current
+    if (!el) return
+    const next = Math.max(0, Math.min(images.length - 1, i))
+    el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div
+        ref={ref}
+        onScroll={onScroll}
+        style={{
+          display: 'flex', overflowX: 'auto', scrollSnapType: 'x mandatory',
+          borderRadius: 12, WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none',
+        }}
+      >
+        {images.map((src, i) => (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={i} src={src} alt=""
+            onClick={() => onZoom(src)}
+            style={{ flex: '0 0 100%', width: '100%', scrollSnapAlign: 'center', cursor: 'zoom-in', display: 'block', objectFit: 'cover' }}
+          />
+        ))}
+      </div>
+
+      {/* 左右箭頭引導 */}
+      {idx > 0 && <button onClick={() => go(idx - 1)} style={{ ...arrowBtn, left: 8 }} aria-label="上一張">‹</button>}
+      {idx < images.length - 1 && <button onClick={() => go(idx + 1)} style={{ ...arrowBtn, right: 8 }} aria-label="下一張">›</button>}
+
+      {/* 計數徽章 */}
+      <div style={{ position: 'absolute', top: 8, right: 10, background: 'rgba(0,0,0,.55)', color: '#fff', fontSize: 11, padding: '2px 8px', borderRadius: 999 }}>
+        {idx + 1} / {images.length}
+      </div>
+
+      {/* 頁碼點 ○●○○○ */}
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, marginTop: 8 }}>
+        {images.map((_, i) => (
+          <button
+            key={i} onClick={() => go(i)} aria-label={`第 ${i + 1} 張`}
+            style={{
+              width: i === idx ? 8 : 7, height: i === idx ? 8 : 7, borderRadius: 999, border: 'none', padding: 0, cursor: 'pointer',
+              background: i === idx ? 'var(--tx)' : 'var(--line-2)', transition: 'background .2s',
+            }}
+          />
+        ))}
+      </div>
+      <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>← 左右滑動瀏覽 →</div>
+    </div>
+  )
+}
+
+const arrowBtn: React.CSSProperties = {
+  position: 'absolute', top: '50%', transform: 'translateY(-50%)',
+  width: 32, height: 32, borderRadius: 999, border: 'none', cursor: 'pointer',
+  background: 'rgba(0,0,0,.45)', color: '#fff', fontSize: 20, lineHeight: '30px',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
 }
 
 function Hint({ children, color = 'var(--tx-dim)' }: { children: React.ReactNode; color?: string }) {
