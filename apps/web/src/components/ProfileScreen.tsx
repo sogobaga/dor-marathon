@@ -1,8 +1,25 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, type Profile, type MyRegistration, type MyOrder } from '@/lib/api'
+import { profileApi, paymentsApi, type Profile, type MyRegistration, type MyOrder } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
+
+// 動態建立 hidden 表單並 POST 到綠界（瀏覽器導去付款頁）
+function submitEcpayForm(actionURL: string, params: Record<string, string>) {
+  const form = document.createElement('form')
+  form.method = 'POST'
+  form.action = actionURL
+  form.acceptCharset = 'UTF-8'
+  for (const [k, v] of Object.entries(params)) {
+    const input = document.createElement('input')
+    input.type = 'hidden'
+    input.name = k
+    input.value = v
+    form.appendChild(input)
+  }
+  document.body.appendChild(form)
+  form.submit()
+}
 
 const GENDERS = [
   { v: '', t: '未填' },
@@ -25,6 +42,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
   const [p, setP] = useState<Profile | null>(null)
   const [regs, setRegs] = useState<MyRegistration[] | null>(null)
   const [payOrder, setPayOrder] = useState<MyOrder | null>(null)
+  const [paying, setPaying] = useState(false)
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -56,6 +74,18 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
       setPayOrder(order)
     } catch (e: any) {
       setErr(e?.message || '載入繳費資訊失敗')
+    }
+  }
+
+  async function goEcpay() {
+    if (!payOrder) return
+    setPaying(true)
+    try {
+      const { action_url, params } = await withUserAuth((t) => paymentsApi.ecpayCheckout(t, payOrder.id))
+      submitEcpayForm(action_url, params) // 導去綠界，不會 return
+    } catch (e: any) {
+      setErr(e instanceof SessionExpiredError ? '登入已過期，請重新登入' : e?.message || '無法前往付款')
+      setPaying(false)
     }
   }
 
@@ -173,13 +203,17 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             {payOrder.status === 'paid' ? (
               <div style={{ color: 'var(--fug)', fontSize: 14, fontWeight: 700 }}>✓ 已完成繳費</div>
             ) : (
-              <div style={{ fontSize: 13, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
-                線上金流串接中。目前可透過<strong style={{ color: 'var(--tx)' }}>優惠序號</strong>於報名時折抵，或聯繫主辦單位完成繳費；
-                主辦確認後狀態將更新為「報名完成」。
-                <div style={{ marginTop: 8, fontSize: 11, color: 'var(--tx-faint)' }}>訂單編號：{payOrder.id}</div>
-              </div>
+              <>
+                <button onClick={goEcpay} disabled={paying} style={{ ...primaryBtn, width: '100%', background: 'var(--gold)', color: '#1a1200' }}>
+                  {paying ? '前往綠界…' : '前往綠界付款'}
+                </button>
+                <div style={{ marginTop: 10, fontSize: 11, color: 'var(--tx-faint)', lineHeight: 1.6 }}>
+                  將導向綠界 ECPay 安全付款頁（信用卡 / ATM / 超商）。付款完成後返回本站，狀態會自動更新為「報名完成」。
+                  <div style={{ marginTop: 4 }}>訂單編號：{payOrder.id}</div>
+                </div>
+              </>
             )}
-            <button onClick={() => setPayOrder(null)} style={{ ...primaryBtn, width: '100%', marginTop: 16 }}>關閉</button>
+            <button onClick={() => setPayOrder(null)} style={{ ...primaryBtn, width: '100%', marginTop: 12, background: 'rgba(255,255,255,.06)', color: 'var(--tx)' }}>關閉</button>
           </div>
         </div>
       )}

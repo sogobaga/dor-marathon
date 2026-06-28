@@ -367,6 +367,23 @@ export const profileApi = {
     request<{ order: MyOrder }>(`/profile/orders/${orderID}`, { headers: withAuth(token) }),
 }
 
+// --- 金流（綠界 ECPay）---
+
+export interface EcpayCheckout {
+  action_url: string
+  params: Record<string, string>
+}
+
+export const paymentsApi = {
+  // 取得綠界結帳表單參數（前端據此 POST 表單導去綠界）
+  ecpayCheckout: (token: string, orderID: string) =>
+    request<EcpayCheckout>('/payments/ecpay/checkout', {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify({ order_id: orderID }),
+    }),
+}
+
 // --- Admin: 會員管理 ---
 
 export interface MemberSummary {

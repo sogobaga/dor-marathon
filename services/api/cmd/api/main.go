@@ -23,6 +23,7 @@ import (
 	"github.com/dor/api/internal/db"
 	"github.com/dor/api/internal/middleware"
 	"github.com/dor/api/internal/organizer"
+	"github.com/dor/api/internal/payment"
 	"github.com/dor/api/internal/profile"
 	"github.com/dor/api/internal/promo"
 	"github.com/dor/api/internal/race"
@@ -76,6 +77,17 @@ func main() {
 	raceRepo := race.NewRepository(pool)
 	raceSvc := race.NewService(raceRepo, rdb, promoSvc)
 	raceHandler := race.NewHandler(raceSvc)
+
+	// Payment（綠界 ECPay）
+	payCfg := &payment.Config{
+		MerchantID:    cfg.ECPayMerchantID,
+		HashKey:       cfg.ECPayHashKey,
+		HashIV:        cfg.ECPayHashIV,
+		Env:           cfg.ECPayEnv,
+		ReturnURL:     cfg.ECPayReturnURL,
+		ClientBackURL: cfg.ECPayClientBackURL,
+	}
+	paymentHandler := payment.NewHandler(payCfg, payment.NewRepository(pool), raceSvc)
 
 	// Activity
 	actRepo := activity.NewRepository(pool)
@@ -133,9 +145,15 @@ func main() {
 		// 賽事列表和詳情（公開，登入後附帶報名狀態）
 		r.With(middleware.OptionalAuth(authSvc)).Mount("/races", raceHandler.Router())
 
+		// 綠界付款結果通知（公開，server 對 server，自帶 CheckMacValue 驗章）
+		r.Post("/payments/ecpay/notify", paymentHandler.Notify)
+
 		// --- 需要登入的端點 ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireAuth(authSvc))
+
+			// 綠界結帳（產生付款表單參數）
+			r.Post("/payments/ecpay/checkout", paymentHandler.Checkout)
 
 			// 活動上傳
 			r.Mount("/activities", actHandler.Router())
