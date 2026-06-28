@@ -163,7 +163,7 @@ function RaceCard({
         </div>
         <div style={{ display: 'flex', gap: 8, fontSize: 12.5 }}>
           <span style={{ color: 'var(--tx-faint)', width: 56, flexShrink: 0 }}>賽事期間</span>
-          <span style={{ color: 'var(--tx)' }}>{periodText(race.start_date, race.end_date)}</span>
+          <span style={{ color: 'var(--tx)' }}>{periodText(race.start_date, race.end_date, true)}</span>
         </div>
       </div>
 
