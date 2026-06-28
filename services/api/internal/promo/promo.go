@@ -49,6 +49,7 @@ type PromoCode struct {
 	Note          string     `json:"note,omitempty"`
 	Active        bool       `json:"active"`
 	CreatedAt     time.Time  `json:"created_at"`
+	TargetEmail   string     `json:"target_email,omitempty"` // 計算欄位（指定帳號的 email，供後台顯示/編輯）
 }
 
 type Usage struct {
@@ -251,6 +252,43 @@ func (r *Repository) CreateBatch(ctx context.Context, n int, tmpl *PromoCode) ([
 	return out, nil
 }
 
+// GetEmailByUserID 由 user_id 取 email（後台顯示指定帳號用）
+func (r *Repository) GetEmailByUserID(ctx context.Context, userID string) (string, error) {
+	var email string
+	err := r.db.QueryRow(ctx, `SELECT email FROM users WHERE id=$1`, userID).Scan(&email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return email, err
+}
+
+// Update 更新既有序號的設定（不動 code / used_count / batch_id）
+func (r *Repository) Update(ctx context.Context, id string, p *PromoCode) error {
+	ct, err := r.db.Exec(ctx, `
+		UPDATE promo_codes SET
+			discount_type=$1, discount_value=$2, max_uses=$3, per_user_once=$4,
+			race_id=$5, target_user_id=$6, valid_from=$7, valid_until=$8,
+			note=NULLIF($9,''), active=$10
+		WHERE id=$11`,
+		p.DiscountType, p.DiscountValue, p.MaxUses, p.PerUserOnce,
+		p.RaceID, p.TargetUserID, p.ValidFrom, p.ValidUntil, p.Note, p.Active, id)
+	if err != nil {
+		return fmt.Errorf("update promo: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) GetByID(ctx context.Context, id string) (*PromoCode, error) {
+	p, err := scanPromo(r.db.QueryRow(ctx, `SELECT `+promoCols+` FROM promo_codes WHERE id=$1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return p, err
+}
+
 func (r *Repository) SetActive(ctx context.Context, id string, active bool) error {
 	ct, err := r.db.Exec(ctx, `UPDATE promo_codes SET active=$1 WHERE id=$2`, active, id)
 	if err != nil {
@@ -315,7 +353,64 @@ type Service struct{ repo *Repository }
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
 
 func (s *Service) List(ctx context.Context, raceID, q string) ([]PromoCode, error) {
-	return s.repo.List(ctx, raceID, q)
+	codes, err := s.repo.List(ctx, raceID, q)
+	if err != nil {
+		return nil, err
+	}
+	// 補上指定帳號 email（供後台顯示/編輯）
+	for i := range codes {
+		if codes[i].TargetUserID != nil {
+			if email, err := s.repo.GetEmailByUserID(ctx, *codes[i].TargetUserID); err == nil {
+				codes[i].TargetEmail = email
+			}
+		}
+	}
+	return codes, nil
+}
+
+// Update 更新既有序號設定
+func (s *Service) Update(ctx context.Context, id string, in CreateInput, active bool) error {
+	if in.DiscountType != "amount" && in.DiscountType != "percent" {
+		return fmt.Errorf("%w: discount_type", ErrInvalidConfig)
+	}
+	if in.DiscountValue <= 0 {
+		return fmt.Errorf("%w: discount_value", ErrInvalidConfig)
+	}
+	if in.DiscountType == "percent" && in.DiscountValue > 100 {
+		return fmt.Errorf("%w: percent > 100", ErrInvalidConfig)
+	}
+
+	existing, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrNotFound
+	}
+
+	p := &PromoCode{
+		DiscountType:  in.DiscountType,
+		DiscountValue: in.DiscountValue,
+		MaxUses:       in.MaxUses,
+		PerUserOnce:   in.PerUserOnce,
+		RaceID:        in.RaceID,
+		Note:          in.Note,
+		Active:        active,
+	}
+	if in.TargetEmail != "" {
+		uid, err := s.repo.FindUserIDByEmail(ctx, in.TargetEmail)
+		if err != nil {
+			return err
+		}
+		if uid == "" {
+			return fmt.Errorf("%w: 指定帳號 email 不存在", ErrInvalidConfig)
+		}
+		p.TargetUserID = &uid
+	}
+	p.ValidFrom = parseTime(in.ValidFrom)
+	p.ValidUntil = parseTime(in.ValidUntil)
+
+	return s.repo.Update(ctx, id, p)
 }
 func (s *Service) ListUsages(ctx context.Context, codeID string) ([]Usage, error) {
 	return s.repo.ListUsages(ctx, codeID)
@@ -429,9 +524,32 @@ func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.List)
 	r.Post("/", h.Create)
+	r.Put("/{id}", h.Update)
 	r.Patch("/{id}", h.Patch)
 	r.Get("/{id}/usages", h.Usages)
 	return r
+}
+
+// PUT /api/v1/admin/promo-codes/{id} — 編輯既有序號設定
+func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CreateInput
+		Active bool `json:"active"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), req.CreateInput, req.Active)
+	if errors.Is(err, ErrNotFound) {
+		respondErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {

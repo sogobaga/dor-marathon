@@ -20,6 +20,7 @@ export default function AdminPromoPage() {
   const [err, setErr] = useState('')
   const [created, setCreated] = useState<string[]>([])
   const [usagesFor, setUsagesFor] = useState<{ code: string; rows: PromoUsage[] } | null>(null)
+  const [editing, setEditing] = useState<PromoCode | null>(null)
 
   // 建立表單
   const [discountType, setDiscountType] = useState<'amount' | 'percent'>('amount')
@@ -170,9 +171,12 @@ export default function AdminPromoPage() {
               </C>
               <C w={1}>{p.used_count}{p.max_uses != null ? ` / ${p.max_uses}` : ''}</C>
               <C w={1}>
-                <button onClick={() => toggle(p)} style={p.active ? activeBtn : inactiveBtn}>
-                  {p.active ? '啟用中' : '已停用'}
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button onClick={() => toggle(p)} style={p.active ? activeBtn : inactiveBtn}>
+                    {p.active ? '啟用中' : '已停用'}
+                  </button>
+                  <button onClick={() => setEditing(p)} style={linkBtn}>編輯</button>
+                </div>
               </C>
             </Row>
           ))}
@@ -198,8 +202,124 @@ export default function AdminPromoPage() {
           </div>
         </div>
       )}
+
+      {/* 編輯序號 */}
+      {editing && token && (
+        <EditPromoModal
+          token={token}
+          races={races}
+          code={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load() }}
+        />
+      )}
     </div>
   )
+}
+
+function EditPromoModal({
+  token, races, code, onClose, onSaved,
+}: {
+  token: string
+  races: Race[]
+  code: PromoCode
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [discountType, setDiscountType] = useState<'amount' | 'percent'>(code.discount_type)
+  const [value, setValue] = useState(String(code.discount_type === 'amount' ? code.discount_value / 100 : code.discount_value))
+  const [raceID, setRaceID] = useState(code.race_id ?? '')
+  const [maxUses, setMaxUses] = useState(code.max_uses != null ? String(code.max_uses) : '')
+  const [perUserOnce, setPerUserOnce] = useState(code.per_user_once)
+  const [validUntil, setValidUntil] = useState(code.valid_until ? toLocalInput(code.valid_until) : '')
+  const [targetEmail, setTargetEmail] = useState(code.target_email ?? '')
+  const [active, setActive] = useState(code.active)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  async function save() {
+    setErr(''); setSaving(true)
+    try {
+      const dv = discountType === 'amount' ? Math.round(parseFloat(value || '0') * 100) : parseInt(value || '0', 10)
+      await adminPromoApi.update(token, code.id, {
+        discount_type: discountType,
+        discount_value: dv,
+        max_uses: maxUses ? parseInt(maxUses, 10) : null,
+        per_user_once: perUserOnce,
+        race_id: raceID || null,
+        target_email: targetEmail.trim() || undefined,
+        valid_until: validUntil ? new Date(validUntil).toISOString() : null,
+        quantity: 1,
+        active,
+      })
+      onSaved()
+    } catch (e: any) {
+      setErr(e?.message || '儲存失敗')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={overlay} onClick={onClose}>
+      <div style={{ ...panel, maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <strong style={{ fontSize: 16 }}>編輯序號 · <span style={{ fontFamily: 'monospace' }}>{code.code}</span></strong>
+          <button onClick={onClose} style={linkBtn}>✕</button>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+          <F label="折抵型態">
+            <select style={inp} value={discountType} onChange={(e) => setDiscountType(e.target.value as any)}>
+              <option value="amount">折抵金額 (NT$)</option>
+              <option value="percent">折抵 %</option>
+            </select>
+          </F>
+          <F label={discountType === 'amount' ? '折抵金額 (NT$)' : '折抵 %（1–100）'}>
+            <input style={inp} type="number" value={value} onChange={(e) => setValue(e.target.value)} />
+          </F>
+          <F label="適用賽事">
+            <select style={inp} value={raceID} onChange={(e) => setRaceID(e.target.value)}>
+              <option value="">全部賽事</option>
+              {races.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
+            </select>
+          </F>
+          <F label="總使用次數上限（空=不限）">
+            <input style={inp} type="number" value={maxUses} onChange={(e) => setMaxUses(e.target.value)} />
+          </F>
+          <F label="有效期限（空=不限）">
+            <input style={inp} type="datetime-local" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+          </F>
+          <F label="指定帳號 Email（空=不限）">
+            <input style={inp} value={targetEmail} onChange={(e) => setTargetEmail(e.target.value)} />
+          </F>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--tx-dim)' }}>
+            <input type="checkbox" checked={perUserOnce} onChange={(e) => setPerUserOnce(e.target.checked)} /> 每帳號限用一次
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--tx-dim)' }}>
+            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> 啟用
+          </label>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 10 }}>
+          序號本身與已使用次數（{code.used_count}）不可變更。
+        </div>
+        {err && <div style={{ color: 'var(--hunt)', fontSize: 13, marginTop: 8 }}>{err}</div>}
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 14 }}>
+          <button onClick={onClose} style={inactiveBtn}>取消</button>
+          <button onClick={save} disabled={saving} style={{ background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none', borderRadius: 10, padding: '8px 18px', cursor: 'pointer', fontSize: 14 }}>
+            {saving ? '儲存中…' : '儲存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ISO → datetime-local（本地時間）
+function toLocalInput(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const off = d.getTimezoneOffset() * 60000
+  return new Date(d.getTime() - off).toISOString().slice(0, 16)
 }
 
 function F({ label, children }: { label: string; children: React.ReactNode }) {

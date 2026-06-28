@@ -523,6 +523,7 @@ export interface PromoCode {
   note?: string
   active: boolean
   created_at: string
+  target_email?: string
 }
 
 export interface PromoUsage {
@@ -567,6 +568,12 @@ export const adminPromoApi = {
       method: 'PATCH',
       headers: withAuth(token),
       body: JSON.stringify({ active }),
+    }),
+  update: (token: string, id: string, body: PromoCreateInput & { active: boolean }) =>
+    request<void>(`/admin/promo-codes/${id}`, {
+      method: 'PUT',
+      headers: withAuth(token),
+      body: JSON.stringify(body),
     }),
   usages: (token: string, id: string) =>
     request<{ usages: PromoUsage[]; count: number }>(`/admin/promo-codes/${id}/usages`, { headers: withAuth(token) }),
