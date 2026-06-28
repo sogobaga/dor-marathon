@@ -373,8 +373,8 @@ export default function RaceForm({
               </span>
             </Field>
 
-            {controlStatus === 'testing' && (
-              <Field label="此賽事測試白名單（email，只有名單內帳號看得到）">
+            {(
+              <Field label="此賽事測試白名單（email）">
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input
                     style={inp} value={wlInput} placeholder="someone@example.com"
@@ -404,8 +404,14 @@ export default function RaceForm({
                       <button type="button" onClick={() => setTestWhitelist((w) => w.filter((x) => x !== e))} style={{ ...linkBtn, color: 'var(--hunt)' }}>✕</button>
                     </span>
                   ))}
+                  {testWhitelist.length === 0 && <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚未加入任何 email</span>}
                 </div>
-                <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>另也吃「後台 → 測試白名單」的全域預設名單。</span>
+                <span style={{ fontSize: 11, color: controlStatus === 'testing' ? 'var(--fug)' : 'var(--tx-faint)', marginTop: 4 }}>
+                  {controlStatus === 'testing'
+                    ? '此賽事為「測試中」：只有此名單 + 全域預設白名單的帳號看得到。'
+                    : '僅在「賽事控制狀態 = 賽事測試中」時生效；可先在此預設好名單。'}
+                  　另也吃「後台 → 測試白名單」的全域預設名單。
+                </span>
               </Field>
             )}
 
