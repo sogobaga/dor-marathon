@@ -6,6 +6,7 @@ import RaceRankingScreen from './RaceRankingScreen'
 import RegistrationScreen from './RegistrationScreen'
 import ProfileScreen from './ProfileScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
+import { validateSession } from '@/lib/userAuth'
 import type { Race } from '@/lib/api'
 
 export default function PhoneShell() {
@@ -17,6 +18,8 @@ export default function PhoneShell() {
 
   useEffect(() => {
     setIsMobile(window.innerWidth <= 430)
+    // 開啟 app 即驗證/換發 token：避免「顯示已登入但實際過期」的不一致
+    validateSession()
   }, [])
 
   return (

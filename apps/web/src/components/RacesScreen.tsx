@@ -2,7 +2,7 @@
 
 import useSWR from 'swr'
 import { racesApi, type Race, type MyRegLite } from '@/lib/api'
-import { getUserToken } from '@/lib/userAuth'
+import { getUserToken, useUser } from '@/lib/userAuth'
 import UserAuthBar from './UserAuthBar'
 
 const STATUS: Record<Race['status'], { label: string; color: string }> = {
@@ -32,8 +32,9 @@ export default function RacesScreen({
   onPay?: (race: Race) => void
   onOpenProfile?: () => void
 }) {
+  const user = useUser() // 登入狀態變動時重新渲染 → 用最新 token 重抓報名狀態
   const token = getUserToken() || undefined
-  const { data, error, isLoading } = useSWR(['races', token], () => racesApi.list(token))
+  const { data, error, isLoading } = useSWR(['races', user?.id ?? null, token], () => racesApi.list(token))
   const regs = data?.registrations || {}
 
   return (

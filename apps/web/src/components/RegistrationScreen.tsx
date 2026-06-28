@@ -10,7 +10,7 @@ import {
   type RegistrationState,
   type ParticipantField,
 } from '@/lib/api'
-import { getUserToken, getUser, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
+import { getUserToken, withUserAuth, SessionExpiredError, useUser } from '@/lib/userAuth'
 
 const FIELD_LABEL: Record<ParticipantField, string> = {
   real_name: '真實姓名', nickname: '暱稱', phone: '手機',
@@ -44,7 +44,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [promoQuote, setPromoQuote] = useState<import('@/lib/api').PromoQuote | null>(null)
   const [promoBusy, setPromoBusy] = useState(false)
 
-  const loggedIn = !!getUserToken() && !!getUser()
+  const loggedIn = !!useUser()
   const isBattle = race.event_mode === 'faction_battle'
 
   useEffect(() => {

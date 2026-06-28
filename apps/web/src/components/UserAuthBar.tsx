@@ -1,23 +1,18 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { GoogleLogin } from '@react-oauth/google'
-import { authApi, type User } from '@/lib/api'
-import { getUser, setUserSession, clearUserSession } from '@/lib/userAuth'
+import { authApi } from '@/lib/api'
+import { setUserSession, clearUserSession, useUser } from '@/lib/userAuth'
 import { googleConfigured } from './GoogleAuthProvider'
 
 export default function UserAuthBar({ onProfile }: { onProfile?: () => void }) {
-  const [user, setUser] = useState<User | null>(null)
+  const user = useUser()
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    setUser(getUser())
-  }, [])
-
   function logout() {
-    clearUserSession()
-    setUser(null)
+    clearUserSession() // 觸發 useUser 更新
   }
 
   // 已登入：顯示名稱 + 登出
@@ -57,8 +52,7 @@ export default function UserAuthBar({ onProfile }: { onProfile?: () => void }) {
             setBusy(true)
             try {
               const res = await authApi.google(cred.credential)
-              setUserSession(res.tokens.access_token, res.tokens.refresh_token, res.user)
-              setUser(res.user)
+              setUserSession(res.tokens.access_token, res.tokens.refresh_token, res.user) // 觸發 useUser 更新
             } catch (e: any) {
               setErr(e?.message || '登入失敗')
             } finally {
