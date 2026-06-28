@@ -30,6 +30,8 @@ func (h *Handler) Router() http.Handler {
 	r.Put("/", h.UpdateMe)
 	r.Get("/records", h.Records)
 	r.Get("/stats", h.Stats)
+	r.Get("/registrations", h.Registrations)
+	r.Get("/orders/{orderID}", h.OrderDetail)
 	return r
 }
 
@@ -123,6 +125,121 @@ func (h *Handler) fetchProfile(ctx context.Context, userID string) (*Profile, er
 		p.Birthday = birthday.Format("2006-01-02")
 	}
 	return p, nil
+}
+
+// MyRegistration 使用者自己的報名紀錄（含賽事/分組/訂單狀態）
+type MyRegistration struct {
+	RegistrationID string    `json:"registration_id"`
+	RaceID         string    `json:"race_id"`
+	RaceTitle      string    `json:"race_title"`
+	RaceSlug       string    `json:"race_slug"`
+	GroupName      string    `json:"group_name"`
+	GroupRevealed  bool      `json:"group_revealed"`
+	Status         string    `json:"status"` // pending|paid|cancelled
+	CreatedAt      time.Time `json:"created_at"`
+	OrderID        string    `json:"order_id,omitempty"`
+	OrderTotal     int       `json:"order_total_cents"`
+	OrderStatus    string    `json:"order_status,omitempty"`
+}
+
+// GET /api/v1/profile/registrations — 我的報名紀錄
+func (h *Handler) Registrations(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	rows, err := h.db.Query(r.Context(), `
+		SELECT reg.id, reg.race_id, rc.title, rc.slug, COALESCE(g.name,''),
+		       reg.group_revealed, reg.status, reg.created_at,
+		       COALESCE(o.id::text,''), COALESCE(o.total_cents,0), COALESCE(o.status,'')
+		FROM registrations reg
+		JOIN races rc ON rc.id = reg.race_id
+		LEFT JOIN race_groups g ON g.id = reg.group_id
+		LEFT JOIN orders o ON o.registration_id = reg.id
+		WHERE reg.user_id = $1
+		ORDER BY reg.created_at DESC`, userID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list registrations")
+		return
+	}
+	defer rows.Close()
+
+	out := []MyRegistration{}
+	for rows.Next() {
+		var m MyRegistration
+		if err := rows.Scan(&m.RegistrationID, &m.RaceID, &m.RaceTitle, &m.RaceSlug, &m.GroupName,
+			&m.GroupRevealed, &m.Status, &m.CreatedAt, &m.OrderID, &m.OrderTotal, &m.OrderStatus); err != nil {
+			respondErr(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		out = append(out, m)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"registrations": out, "count": len(out)})
+}
+
+// MyOrderItem 訂單明細單筆
+type MyOrderItem struct {
+	ItemType      string `json:"item_type"`
+	AddonName     string `json:"addon_name,omitempty"`
+	Qty           int    `json:"qty"`
+	SubtotalCents int    `json:"subtotal_cents"`
+}
+
+// MyOrder 我的訂單（繳費頁面用）
+type MyOrder struct {
+	ID         string        `json:"id"`
+	RaceTitle  string        `json:"race_title"`
+	TotalCents int           `json:"total_cents"`
+	Status     string        `json:"status"`
+	PaymentRef string        `json:"payment_ref,omitempty"`
+	CreatedAt  time.Time     `json:"created_at"`
+	Items      []MyOrderItem `json:"items"`
+}
+
+// GET /api/v1/profile/orders/{orderID} — 我的訂單明細（繳費資訊；僅本人訂單）
+func (h *Handler) OrderDetail(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	orderID := chi.URLParam(r, "orderID")
+
+	var o MyOrder
+	err := h.db.QueryRow(r.Context(), `
+		SELECT o.id, rc.title, o.total_cents, o.status, COALESCE(o.payment_ref,''), o.created_at
+		FROM orders o JOIN races rc ON rc.id = o.race_id
+		WHERE o.id = $1 AND o.user_id = $2`, orderID, userID).
+		Scan(&o.ID, &o.RaceTitle, &o.TotalCents, &o.Status, &o.PaymentRef, &o.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondErr(w, http.StatusNotFound, "order not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get order")
+		return
+	}
+
+	rows, err := h.db.Query(r.Context(), `
+		SELECT oi.item_type, COALESCE(a.name,''), oi.qty, oi.subtotal_cents
+		FROM order_items oi LEFT JOIN race_addons a ON a.id = oi.addon_id
+		WHERE oi.order_id = $1 ORDER BY oi.item_type`, orderID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get items")
+		return
+	}
+	defer rows.Close()
+	o.Items = []MyOrderItem{}
+	for rows.Next() {
+		var it MyOrderItem
+		if err := rows.Scan(&it.ItemType, &it.AddonName, &it.Qty, &it.SubtotalCents); err != nil {
+			respondErr(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		o.Items = append(o.Items, it)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"order": o})
 }
 
 // MemberSummary 後台會員列表單筆

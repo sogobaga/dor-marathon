@@ -321,6 +321,37 @@ export interface Profile {
   gender: '' | 'male' | 'female' | 'other'
 }
 
+export interface MyRegistration {
+  registration_id: string
+  race_id: string
+  race_title: string
+  race_slug: string
+  group_name: string
+  group_revealed: boolean
+  status: string
+  created_at: string
+  order_id?: string
+  order_total_cents: number
+  order_status?: string
+}
+
+export interface MyOrderItem {
+  item_type: string
+  addon_name?: string
+  qty: number
+  subtotal_cents: number
+}
+
+export interface MyOrder {
+  id: string
+  race_title: string
+  total_cents: number
+  status: string
+  payment_ref?: string
+  created_at: string
+  items: MyOrderItem[]
+}
+
 export const profileApi = {
   getMe: (token: string) =>
     request<{ profile: Profile }>('/profile', { headers: withAuth(token) }),
@@ -330,6 +361,10 @@ export const profileApi = {
       headers: withAuth(token),
       body: JSON.stringify(body),
     }),
+  registrations: (token: string) =>
+    request<{ registrations: MyRegistration[]; count: number }>('/profile/registrations', { headers: withAuth(token) }),
+  order: (token: string, orderID: string) =>
+    request<{ order: MyOrder }>(`/profile/orders/${orderID}`, { headers: withAuth(token) }),
 }
 
 // --- Admin: 會員管理 ---

@@ -24,10 +24,12 @@ function fmtDate(iso: string) {
 export default function RacesScreen({
   onOpenRanking,
   onRegister,
+  onPay,
   onOpenProfile,
 }: {
   onOpenRanking?: (race: Race) => void
   onRegister?: (race: Race) => void
+  onPay?: (race: Race) => void
   onOpenProfile?: () => void
 }) {
   const token = getUserToken() || undefined
@@ -58,7 +60,7 @@ export default function RacesScreen({
         {data && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {data.races.map((r) => (
-              <RaceCard key={r.id} race={r} reg={regs[r.id]} onOpenRanking={onOpenRanking} onRegister={onRegister} />
+              <RaceCard key={r.id} race={r} reg={regs[r.id]} onOpenRanking={onOpenRanking} onRegister={onRegister} onPay={onPay} />
             ))}
           </div>
         )}
@@ -72,11 +74,13 @@ function RaceCard({
   reg,
   onOpenRanking,
   onRegister,
+  onPay,
 }: {
   race: Race
   reg?: MyRegLite
   onOpenRanking?: (race: Race) => void
   onRegister?: (race: Race) => void
+  onPay?: (race: Race) => void
 }) {
   const s = STATUS[race.status] ?? STATUS.done
   const isCompetition = race.event_mode === 'competition'
@@ -160,7 +164,7 @@ function RaceCard({
             reg.status === 'paid' ? (
               <span style={{ color: 'var(--fug)', fontWeight: 700, fontSize: 13 }}>報名完成</span>
             ) : (
-              <button onClick={() => onRegister?.(race)} style={payBtnStyle}>已報名，前往繳費</button>
+              <button onClick={() => onPay?.(race)} style={payBtnStyle}>已報名，前往繳費</button>
             )
           ) : canRegister && onRegister ? (
             <button onClick={() => onRegister(race)} style={registerBtnStyle}>報名</button>

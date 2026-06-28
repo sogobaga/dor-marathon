@@ -13,6 +13,7 @@ export default function PhoneShell() {
   const [rankingRace, setRankingRace] = useState<Race | null>(null)
   const [registerRace, setRegisterRace] = useState<Race | null>(null)
   const [showProfile, setShowProfile] = useState(false)
+  const [payRace, setPayRace] = useState<Race | null>(null)
 
   useEffect(() => {
     setIsMobile(window.innerWidth <= 430)
@@ -37,8 +38,11 @@ export default function PhoneShell() {
         overflow: 'hidden',
       }}>
         {/* 賽事列表 / 排行榜 / 報名 / 個人資訊 — 串接 Go API 真實資料 */}
-        {showProfile ? (
-          <ProfileScreen onBack={() => setShowProfile(false)} />
+        {showProfile || payRace ? (
+          <ProfileScreen
+            focusRaceID={payRace?.id}
+            onBack={() => { setShowProfile(false); setPayRace(null) }}
+          />
         ) : registerRace ? (
           <RegistrationScreen race={registerRace} onBack={() => setRegisterRace(null)} />
         ) : rankingRace ? (
@@ -47,6 +51,7 @@ export default function PhoneShell() {
           <RacesScreen
             onOpenRanking={setRankingRace}
             onRegister={setRegisterRace}
+            onPay={setPayRace}
             onOpenProfile={() => setShowProfile(true)}
           />
         )}
