@@ -52,13 +52,19 @@ func (r *Race) ComputeDisplay(now time.Time) (string, bool) {
 	}
 	startingSoon := r.StartDate.AddDate(0, 0, -days)
 
+	// 報名期間是否開放（nil 視為不限該側）
+	regOpen := (r.RegStart == nil || !now.Before(*r.RegStart)) &&
+		(r.RegEnd == nil || !now.After(*r.RegEnd))
+
 	var display string
 	switch {
 	case now.After(r.EndDate) || now.Equal(r.EndDate):
 		display = "ended"
-	case !now.Before(r.StartDate): // now >= start
+	case !now.Before(r.StartDate): // now >= start → 賽事進行中
 		display = "racing"
-	case !now.Before(startingSoon): // now >= start - N days
+	case regOpen: // 報名期間開放優先（即使已進入賽前 N 天）
+		display = "registering"
+	case !now.Before(startingSoon): // 報名已截止但在賽前 N 天內
 		display = "starting_soon"
 	case r.RegEnd != nil && now.After(*r.RegEnd):
 		display = "reg_closed"
