@@ -10,7 +10,7 @@ import {
   type RegistrationState,
   type ParticipantField,
 } from '@/lib/api'
-import { getUserToken, getUser } from '@/lib/userAuth'
+import { getUserToken, getUser, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 
 const FIELD_LABEL: Record<ParticipantField, string> = {
   real_name: '真實姓名', nickname: '暱稱', phone: '手機',
@@ -44,17 +44,19 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const isBattle = race.event_mode === 'faction_battle'
 
   useEffect(() => {
-    const token = getUserToken() || undefined
-    racesApi
-      .detail(race.id, token)
+    const hasToken = !!getUserToken()
+    const loadDetail = hasToken
+      ? withUserAuth((t) => racesApi.detail(race.id, t)).catch(() => racesApi.detail(race.id))
+      : racesApi.detail(race.id)
+    loadDetail
       .then((r) => {
         setDetail(r.race)
         setExisting(r.registration)
       })
       .catch((e) => setErr(e?.message || '載入失敗'))
       .finally(() => setLoading(false))
-    if (token) {
-      profileApi.getMe(token).then((r) => {
+    if (hasToken) {
+      withUserAuth((t) => profileApi.getMe(t)).then((r) => {
         setParticipant((prev) => ({
           ...prev,
           real_name: r.profile.real_name || '',
@@ -102,24 +104,21 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         return
       }
     }
-    const token = getUserToken()
-    if (!token) {
-      setErr('請先登入')
-      return
-    }
     setSubmitting(true)
     try {
       const addons = Object.entries(qty)
         .filter(([, q]) => q > 0)
         .map(([addon_id, q]) => ({ addon_id, qty: q }))
-      const res = await racesApi.register(race.id, token, {
-        group_id: isBattle ? undefined : groupId,
-        addons,
-        participant,
-      })
+      const res = await withUserAuth((token) =>
+        racesApi.register(race.id, token, {
+          group_id: isBattle ? undefined : groupId,
+          addons,
+          participant,
+        })
+      )
       setDone({ group: res.assigned_group, revealed: res.group_revealed })
     } catch (e: any) {
-      setErr(e?.message || '報名失敗')
+      setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '報名失敗')
     } finally {
       setSubmitting(false)
     }

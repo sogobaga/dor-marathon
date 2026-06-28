@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { profileApi, type Profile } from '@/lib/api'
-import { getUserToken } from '@/lib/userAuth'
+import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 
 const GENDERS = [
   { v: '', t: '未填' },
@@ -18,15 +18,13 @@ export default function ProfileScreen({ onBack }: { onBack: () => void }) {
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    const token = getUserToken()
-    if (!token) {
+    if (!getUserToken()) {
       setErr('請先登入')
       return
     }
-    profileApi
-      .getMe(token)
+    withUserAuth((t) => profileApi.getMe(t))
       .then((r) => setP(r.profile))
-      .catch((e) => setErr(e?.message || '載入失敗'))
+      .catch((e) => setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '載入失敗'))
   }, [])
 
   function set<K extends keyof Profile>(k: K, v: Profile[K]) {
@@ -35,23 +33,24 @@ export default function ProfileScreen({ onBack }: { onBack: () => void }) {
   }
 
   async function save() {
-    const token = getUserToken()
-    if (!token || !p) return
+    if (!p) return
     setErr('')
     setSaving(true)
     try {
-      const res = await profileApi.updateMe(token, {
-        real_name: p.real_name,
-        nickname: p.nickname,
-        phone: p.phone,
-        address: p.address,
-        birthday: p.birthday,
-        gender: p.gender,
-      })
+      const res = await withUserAuth((t) =>
+        profileApi.updateMe(t, {
+          real_name: p.real_name,
+          nickname: p.nickname,
+          phone: p.phone,
+          address: p.address,
+          birthday: p.birthday,
+          gender: p.gender,
+        })
+      )
       setP(res.profile)
       setSaved(true)
     } catch (e: any) {
-      setErr(e?.message || '儲存失敗')
+      setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '儲存失敗')
     } finally {
       setSaving(false)
     }
