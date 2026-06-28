@@ -45,6 +45,8 @@ html, body {
   justify-content: center;
   align-items: center;
   min-height: 100dvh;
+  padding: 20px;
+  overflow-y: auto; /* 視窗極矮時整框可捲動，避免內容被裁切 */
   background: var(--bg);
 }
 
@@ -58,6 +60,7 @@ html, body {
 .phone-shell {
   width: 390px;
   height: 844px;
+  max-height: calc(100dvh - 40px); /* 視窗較矮時縮小，內部列表底部才不會跑到畫面外 */
   background: var(--bg-1);
   border-radius: 54px;
   border: 1px solid rgba(255,255,255,.10);
