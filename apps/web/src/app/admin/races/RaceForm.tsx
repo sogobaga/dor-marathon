@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import {
   adminRacesApi,
   adminPresetsApi,
+  adminImagesApi,
   type CreateRacePayload,
   type EventMode,
   type GoalType,
@@ -133,6 +134,20 @@ export default function RaceForm({
   const [wlInput, setWlInput] = useState('')
   const [brochureTitle, setBrochureTitle] = useState(initial?.brochure_title ?? '')
   const [brochure, setBrochure] = useState<BrochureBlock[]>(initial?.brochure ?? [])
+  const [uploadingIdx, setUploadingIdx] = useState<number | null>(null)
+
+  async function uploadBlockImage(i: number, file: File) {
+    setUploadingIdx(i)
+    setErr('')
+    try {
+      const { url } = await adminImagesApi.upload(token, file)
+      setBrochure((bs) => bs.map((x, idx) => (idx === i ? { ...x, content: url } : x)))
+    } catch (e: any) {
+      setErr(e?.message || '圖片上傳失敗')
+    } finally {
+      setUploadingIdx(null)
+    }
+  }
 
   const [title, setTitle] = useState(initial?.title ?? '')
   const [slug, setSlug] = useState(initial?.slug ?? '')
@@ -627,7 +642,20 @@ export default function RaceForm({
                   )}
                   {b.block_type === 'image' && (
                     <>
-                      <Field label="圖片網址"><input style={inp} value={b.content} onChange={(e) => upd({ content: e.target.value })} placeholder="https://…" /></Field>
+                      <Field label="圖片（上傳檔案，或貼網址）">
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <input style={{ ...inp, flex: 1, minWidth: 180 }} value={b.content} onChange={(e) => upd({ content: e.target.value })} placeholder="https://… 或上傳" />
+                          <label style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                            {uploadingIdx === i ? '上傳中…' : '⬆ 上傳圖片'}
+                            <input type="file" accept="image/*" style={{ display: 'none' }}
+                              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadBlockImage(i, f); e.target.value = '' }} />
+                          </label>
+                        </div>
+                        {b.content && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={b.content} alt="" style={{ maxWidth: 200, maxHeight: 140, borderRadius: 8, marginTop: 8, border: '1px solid var(--line-2)' }} />
+                        )}
+                      </Field>
                       <Field label="圖說（選填）"><input style={inp} value={b.caption ?? ''} onChange={(e) => upd({ caption: e.target.value })} /></Field>
                     </>
                   )}

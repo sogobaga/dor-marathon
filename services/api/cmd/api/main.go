@@ -22,6 +22,7 @@ import (
 	"github.com/dor/api/internal/config"
 	"github.com/dor/api/internal/db"
 	"github.com/dor/api/internal/middleware"
+	"github.com/dor/api/internal/image"
 	"github.com/dor/api/internal/organizer"
 	"github.com/dor/api/internal/payment"
 	"github.com/dor/api/internal/profile"
@@ -107,6 +108,9 @@ func main() {
 	// Profile（完賽紀錄 + 個人統計）
 	profileHandler := profile.NewHandler(pool)
 
+	// Image（圖片上傳，存 Postgres）
+	imageHandler := image.NewHandler(image.NewRepository(pool))
+
 	// --- 路由 ---
 	r := chi.NewRouter()
 
@@ -145,6 +149,9 @@ func main() {
 		// 賽事列表和詳情（公開，登入後附帶報名狀態）
 		r.With(middleware.OptionalAuth(authSvc)).Mount("/races", raceHandler.Router())
 
+		// 圖片取用（公開）
+		r.Mount("/images", imageHandler.PublicRouter())
+
 		// 綠界付款結果通知（公開，server 對 server，自帶 CheckMacValue 驗章）
 		r.Post("/payments/ecpay/notify", paymentHandler.Notify)
 
@@ -179,6 +186,7 @@ func main() {
 			r.Mount("/admin/races", raceHandler.AdminRouter())
 			r.Mount("/admin/group-presets", raceHandler.PresetRouter())
 			r.Mount("/admin/test-whitelist", raceHandler.TestWhitelistRouter())
+			r.Mount("/admin/images", imageHandler.AdminRouter())
 			r.Mount("/admin/signups", raceHandler.SignupRouter())
 			r.Mount("/admin/orders", raceHandler.OrderRouter())
 			r.Mount("/admin/promo-codes", promoHandler.Router())

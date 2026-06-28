@@ -590,6 +590,25 @@ export const adminPromoApi = {
     request<{ usages: PromoUsage[]; count: number }>(`/admin/promo-codes/${id}/usages`, { headers: withAuth(token) }),
 }
 
+// --- Admin: 圖片上傳 ---
+
+export const adminImagesApi = {
+  // 上傳圖片檔（multipart）→ { id, url }；不可手動設 Content-Type（讓瀏覽器帶 boundary）
+  upload: async (token: string, file: File): Promise<{ id: string; url: string }> => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await fetch(`${BASE}/admin/images`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    })
+    const text = await res.text()
+    const data = text ? JSON.parse(text) : null
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? '上傳失敗')
+    return data as { id: string; url: string }
+  },
+}
+
 // --- Admin: 全域預設測試白名單 ---
 
 export const adminTestWhitelistApi = {
