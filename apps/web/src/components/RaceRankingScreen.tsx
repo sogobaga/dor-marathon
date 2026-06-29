@@ -76,6 +76,41 @@ export default function RaceRankingScreen({ race, onBack }: { race: Race; onBack
   )
 }
 
+// RankingBody 排名內容，供賽事資訊頁「排名」頁籤重用
+export function RankingBody({ race }: { race: Race }) {
+  const { data, error, isLoading } = useSWR(['standings', race.id], () => racesApi.standings(race.id), { refreshInterval: 30000 })
+  const isCompetition = race.event_mode === 'competition'
+  return (
+    <div>
+      {!isCompetition && (
+        <Hint>此賽事為「{race.event_mode === 'faction_battle' ? '分組對抗' : '一般'}」模式，無分組成績排行。</Hint>
+      )}
+      {isCompetition && isLoading && <Hint>載入排行榜…</Hint>}
+      {isCompetition && error && <Hint color="var(--hunt)">無法載入排行榜</Hint>}
+      {isCompetition && data && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {data.my_group && (
+            <div style={myBanner}>
+              <div style={{ fontSize: 11, letterSpacing: '.12em', color: 'var(--fug)' }}>我的分組</div>
+              <div style={{ fontSize: 17, fontWeight: 800, marginTop: 3 }}>{data.my_group.group_name}</div>
+              <div style={{ display: 'flex', gap: 18, marginTop: 8, fontSize: 13, color: 'var(--tx-dim)' }}>
+                <span>累積榜 第 <b style={{ color: 'var(--tx)' }}>{data.my_group.cumulative_rank}</b> 名</span>
+                <span>完成時間榜 第 <b style={{ color: 'var(--tx)' }}>{data.my_group.finish_rank}</b> 名</span>
+              </div>
+            </div>
+          )}
+          <RankList title="累積里程榜" subtitle="各分組總累積里程" entries={data.by_cumulative}
+            metric={(e) => `${e.total_km.toFixed(1)} K`} highlightId={data.my_group?.group_id} />
+          {data.goal_type === 'distance' && (
+            <RankList title="完成時間榜" subtitle="完成指定里程的累計總時間" entries={data.by_finish_time}
+              metric={(e) => fmtDuration(e.finish_total_s)} highlightId={data.my_group?.group_id} />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function RankList({
   title,
   subtitle,

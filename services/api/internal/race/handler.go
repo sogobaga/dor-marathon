@@ -29,6 +29,7 @@ func (h *Handler) Router() http.Handler {
 	r.Post("/{raceID}/groups", h.CreateTeamGroup)
 	r.Get("/{raceID}/ranking", h.Ranking)
 	r.Get("/{raceID}/standings", h.Standings)
+	r.Get("/{raceID}/progress", h.Progress)
 	r.Get("/{raceID}/status", h.LiveStatus)
 	r.Post("/{raceID}/promo/check", h.PromoCheck)
 	return r
@@ -476,6 +477,22 @@ func (h *Handler) CreateTeamGroup(w http.ResponseWriter, r *http.Request) {
 	default:
 		respondErr(w, http.StatusInternalServerError, "create team group failed")
 	}
+}
+
+// GET /api/v1/races/:raceID/progress — 使用者相關任務的達成度 + 個人統計（公開，登入後含個人）
+func (h *Handler) Progress(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	prog, err := h.svc.GetRaceProgress(r.Context(), raceID, userID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get progress")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"progress": prog})
 }
 
 // GET /api/v1/races/:raceID/ranking?limit=100

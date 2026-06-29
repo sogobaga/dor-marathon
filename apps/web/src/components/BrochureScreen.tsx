@@ -2,7 +2,7 @@
 
 import useSWR from 'swr'
 import { useEffect, useRef, useState } from 'react'
-import { racesApi, type Race, type BrochureBlock } from '@/lib/api'
+import { racesApi, type Race, type RaceDetail, type BrochureBlock } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 
 // 圖片區塊 content：新版存「網址陣列」JSON；相容舊的單一網址字串
@@ -90,6 +90,28 @@ export default function BrochureScreen({
       {lightbox && (
         <Lightbox images={lightbox.images} index={lightbox.index} onClose={() => setLightbox(null)} />
       )}
+    </div>
+  )
+}
+
+// BrochureBody 簡章內容（標題+區塊+燈箱），供賽事資訊頁「簡章」頁籤重用
+export function BrochureBody({ detail }: { detail: RaceDetail }) {
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null)
+  const zoom = (images: string[], index: number) => setLightbox({ images, index })
+  const blocks = detail.brochure ?? []
+  return (
+    <div>
+      <h1 style={{ fontSize: 22, fontWeight: 800, color: 'var(--tx)', margin: '0 0 4px' }}>
+        {detail.brochure_title || detail.title}
+      </h1>
+      {detail.subtitle && <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginBottom: 18 }}>{detail.subtitle}</div>}
+      {blocks.length === 0 && <Hint>此賽事尚未提供簡章內容</Hint>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {blocks.map((b: BrochureBlock, i) => (
+          <Block key={b.id ?? i} block={b} onZoom={zoom} />
+        ))}
+      </div>
+      {lightbox && <Lightbox images={lightbox.images} index={lightbox.index} onClose={() => setLightbox(null)} />}
     </div>
   )
 }

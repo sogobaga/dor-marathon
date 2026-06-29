@@ -428,6 +428,24 @@ export const racesApi = {
   // 競賽排行榜（公開；帶 token 則附自己分組名次）
   standings: (raceID: string, token?: string) =>
     request<CompetitionRanking>(`/races/${raceID}/standings`, token ? { headers: withAuth(token) } : undefined),
+  // 賽事進度（任務達成度 + 個人統計；帶 token 則含個人）
+  progress: (raceID: string, token?: string) =>
+    request<{ progress: RaceProgress }>(`/races/${raceID}/progress`, token ? { headers: withAuth(token) } : undefined),
+}
+
+export interface TaskProgress extends RaceTask {
+  group_name?: string
+  scope_label: string // 賽事集體 / 本組團體 / 本組個人
+  current: number
+  done: boolean
+  qualify_count: number
+}
+export interface RaceProgress {
+  my: { total_km: number; activities: number; ascent_m: number }
+  has_group: boolean
+  group_name?: string
+  started: boolean
+  tasks: TaskProgress[]
 }
 
 // --- Admin: Races ---

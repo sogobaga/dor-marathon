@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import RacesScreen from './RacesScreen'
-import RaceRankingScreen from './RaceRankingScreen'
 import RegistrationScreen from './RegistrationScreen'
 import ProfileScreen from './ProfileScreen'
-import BrochureScreen from './BrochureScreen'
+import RaceDetailScreen from './RaceDetailScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
 import VersionBadge from './VersionBadge'
 import { validateSession } from '@/lib/userAuth'
@@ -13,11 +12,11 @@ import type { Race } from '@/lib/api'
 
 export default function PhoneShell() {
   const [isMobile, setIsMobile] = useState(false)
-  const [rankingRace, setRankingRace] = useState<Race | null>(null)
+  const [detailRace, setDetailRace] = useState<Race | null>(null)
+  const [detailTab, setDetailTab] = useState<'brochure' | 'progress' | 'rank' | undefined>(undefined)
   const [registerRace, setRegisterRace] = useState<Race | null>(null)
   const [showProfile, setShowProfile] = useState(false)
   const [payRace, setPayRace] = useState<Race | null>(null)
-  const [brochureRace, setBrochureRace] = useState<Race | null>(null)
 
   useEffect(() => {
     setIsMobile(window.innerWidth <= 430)
@@ -47,7 +46,7 @@ export default function PhoneShell() {
         paddingTop: isMobile ? 'env(safe-area-inset-top)' : 0,
         overflow: 'hidden',
       }}>
-        {/* 賽事列表 / 排行榜 / 報名 / 個人資訊 — 串接 Go API 真實資料 */}
+        {/* 賽事列表 / 賽事資訊(簡章·進度·排名) / 報名 / 個人資訊 — 串接 Go API 真實資料 */}
         {showProfile || payRace ? (
           <ProfileScreen
             focusRaceID={payRace?.id}
@@ -55,21 +54,20 @@ export default function PhoneShell() {
           />
         ) : registerRace ? (
           <RegistrationScreen race={registerRace} onBack={() => setRegisterRace(null)} />
-        ) : brochureRace ? (
-          <BrochureScreen
-            race={brochureRace}
-            onBack={() => setBrochureRace(null)}
-            onRegister={(r) => { setBrochureRace(null); setRegisterRace(r) }}
+        ) : detailRace ? (
+          <RaceDetailScreen
+            race={detailRace}
+            initialTab={detailTab}
+            onBack={() => setDetailRace(null)}
+            onRegister={(r) => { setDetailRace(null); setRegisterRace(r) }}
           />
-        ) : rankingRace ? (
-          <RaceRankingScreen race={rankingRace} onBack={() => setRankingRace(null)} />
         ) : (
           <RacesScreen
-            onOpenRanking={setRankingRace}
+            onOpenRanking={(r) => { setDetailTab('rank'); setDetailRace(r) }}
             onRegister={setRegisterRace}
             onPay={setPayRace}
             onOpenProfile={() => setShowProfile(true)}
-            onOpenBrochure={setBrochureRace}
+            onOpenBrochure={(r) => { setDetailTab(undefined); setDetailRace(r) }}
           />
         )}
       </div>
