@@ -322,7 +322,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             <Field label="暱稱"><input style={inp} value={p.nickname} onChange={(e) => set('nickname', e.target.value)} /></Field>
             <Field label="手機"><input style={inp} value={p.phone} onChange={(e) => set('phone', e.target.value)} /></Field>
             <Field label="地址"><input style={inp} value={p.address} onChange={(e) => set('address', e.target.value)} /></Field>
-            <Field label="生日"><input style={inp} type="date" value={p.birthday} onChange={(e) => set('birthday', e.target.value)} /></Field>
+            <Field label="生日"><input style={dateInp} type="date" value={p.birthday} onChange={(e) => set('birthday', e.target.value)} /></Field>
             <Field label="性別">
               <select style={inp} value={p.gender} onChange={(e) => set('gender', e.target.value as Profile['gender'])}>
                 {GENDERS.map((g) => <option key={g.v} value={g.v}>{g.t}</option>)}
@@ -518,6 +518,10 @@ const backBtn: React.CSSProperties = { background: 'none', border: 'none', color
 const inp: React.CSSProperties = {
   background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 10,
   padding: '11px 12px', color: 'var(--tx)', fontSize: 14, width: '100%', boxSizing: 'border-box', fontFamily: 'inherit',
+}
+// iOS 原生日期框：去除原生外觀以吃滿寬度、文字靠左
+const dateInp: React.CSSProperties = {
+  ...inp, WebkitAppearance: 'none', appearance: 'none', textAlign: 'left', minWidth: 0, maxWidth: '100%',
 }
 const primaryBtn: React.CSSProperties = {
   background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
