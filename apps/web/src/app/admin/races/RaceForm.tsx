@@ -232,6 +232,8 @@ export default function RaceForm({
   const [presets, setPresets] = useState<GroupPreset[]>([])
   const [certBgUrl, setCertBgUrl] = useState(initial?.certificate_bg_url ?? '')
   const [certBgUploading, setCertBgUploading] = useState(false)
+  const [bannerUrl, setBannerUrl] = useState(initial?.hero_image_url ?? '')
+  const [bannerUploading, setBannerUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -244,6 +246,18 @@ export default function RaceForm({
       setErr(e?.message || '底圖上傳失敗')
     } finally {
       setCertBgUploading(false)
+    }
+  }
+
+  async function uploadBanner(file: File) {
+    setBannerUploading(true); setErr('')
+    try {
+      const { url } = await adminImagesApi.upload(token, file)
+      setBannerUrl(url)
+    } catch (e: any) {
+      setErr(e?.message || 'Banner 上傳失敗')
+    } finally {
+      setBannerUploading(false)
     }
   }
 
@@ -373,6 +387,7 @@ export default function RaceForm({
       slug: slug.trim(),
       subtitle: subtitle.trim(),
       blurb: blurb.trim(),
+      hero_image_url: bannerUrl,
       event_mode: mode,
       goal_type: mode === 'competition' ? goalType : 'distance',
       group_mode: isRandom ? 'random' : 'self',
@@ -630,6 +645,24 @@ export default function RaceForm({
                 未勾選者為選填。報名時若分組有性別/年齡限制，會自動要求對應欄位。
               </div>
             </div>
+
+            <Field label="賽事 Banner（選填，顯示於賽事資訊頁頂部）">
+              {bannerUrl ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={bannerUrl} alt="banner" style={{ width: 200, height: 75, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line-2)' }} />
+                  <button type="button" style={{ ...ghostBtn, color: 'var(--hunt)' }} onClick={() => setBannerUrl('')}>移除</button>
+                </div>
+              ) : (
+                <label style={{ ...ghostBtn, display: 'inline-block', cursor: 'pointer' }}>
+                  {bannerUploading ? '上傳中…' : '＋ 上傳 Banner'}
+                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadBanner(f); e.target.value = '' }} />
+                </label>
+              )}
+              <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
+                建議寬幅橫式（約 1200×400）；顯示於賽事資訊頁最上方。
+              </span>
+            </Field>
 
             <Field label="完賽證明底圖（選填，留空用系統預設設計）">
               {certBgUrl ? (

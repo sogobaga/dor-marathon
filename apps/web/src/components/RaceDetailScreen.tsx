@@ -75,6 +75,15 @@ export default function RaceDetailScreen({
       </header>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 18px 30px' }}>
+        {/* 賽事 Banner */}
+        {(detail?.hero_image_url || race.hero_image_url) && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={detail?.hero_image_url || race.hero_image_url}
+            alt=""
+            style={{ width: 'calc(100% + 36px)', margin: '0 -18px 14px', display: 'block', maxHeight: 200, objectFit: 'cover' }}
+          />
+        )}
         {/* 賽事資訊 Dashboard */}
         <div style={dashCard}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>

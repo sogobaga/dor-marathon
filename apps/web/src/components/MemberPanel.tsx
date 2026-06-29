@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, type DashboardInfo } from '@/lib/api'
+import useSWR from 'swr'
+import { profileApi, settingsApi, type DashboardInfo } from '@/lib/api'
 import { useUser, getUserToken, withUserAuth, clearUserSession } from '@/lib/userAuth'
 import { LoginModal } from './UserAuthBar'
 
@@ -10,6 +11,8 @@ export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => v
   const user = useUser()
   const [dash, setDash] = useState<DashboardInfo | null>(null)
   const [showLogin, setShowLogin] = useState(false)
+  const { data: settings } = useSWR('site-settings', () => settingsApi.get())
+  const bgUrl = settings?.settings.member_panel_bg_url
 
   useEffect(() => {
     let cancelled = false
@@ -28,7 +31,16 @@ export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => v
 
   return (
     <>
-      <div style={{ ...card, cursor: user && onOpenProfile ? 'pointer' : 'default' }} onClick={user ? onOpenProfile : undefined}>
+      <div
+        style={{
+          ...card,
+          ...(bgUrl
+            ? { backgroundImage: `linear-gradient(rgba(10,13,12,.74),rgba(10,13,12,.84)), url(${bgUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+            : {}),
+          cursor: user && onOpenProfile ? 'pointer' : 'default',
+        }}
+        onClick={user ? onOpenProfile : undefined}
+      >
         <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
           <div style={avatarWrap}>
             {user && dash?.avatar_url

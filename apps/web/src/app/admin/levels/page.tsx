@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminLevelsApi, type LevelConfig, type ExpRules, type AthleteMetricConfig, type AthleteLevel } from '@/lib/api'
+import { adminLevelsApi, settingsApi, adminSettingsApi, adminImagesApi, type LevelConfig, type ExpRules, type AthleteMetricConfig, type AthleteLevel } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
 const METRIC_LABEL: Record<string, { t: string; u: string }> = {
@@ -20,6 +20,8 @@ export default function AdminLevelsPage() {
   const [rules, setRules] = useState<ExpRules | null>(null)
   const [aMetrics, setAMetrics] = useState<AthleteMetricConfig[] | null>(null)
   const [aLevels, setALevels] = useState<AthleteLevel[] | null>(null)
+  const [panelBg, setPanelBg] = useState('')
+  const [panelBgUploading, setPanelBgUploading] = useState(false)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [saving, setSaving] = useState(false)
@@ -33,7 +35,26 @@ export default function AdminLevelsPage() {
     })
     adminLevelsApi.expRules(t).then((r) => setRules(r.exp_rules)).catch(() => {})
     adminLevelsApi.athleteConfig(t).then((r) => { setAMetrics(r.metrics); setALevels(r.levels) }).catch(() => {})
+    settingsApi.get().then((r) => setPanelBg(r.settings.member_panel_bg_url)).catch(() => {})
   }, [router])
+
+  async function uploadPanelBg(file: File) {
+    if (!token) return
+    setPanelBgUploading(true); setErr(''); setMsg('')
+    try {
+      const { url } = await adminImagesApi.upload(token, file)
+      const r = await adminSettingsApi.set(token, { member_panel_bg_url: url })
+      setPanelBg(r.settings.member_panel_bg_url); setMsg('✓ 會員面板底圖已更新')
+    } catch (e: any) { setErr(e?.message || '上傳失敗') } finally { setPanelBgUploading(false) }
+  }
+  async function removePanelBg() {
+    if (!token) return
+    setSaving(true); setErr(''); setMsg('')
+    try {
+      const r = await adminSettingsApi.set(token, { member_panel_bg_url: '' })
+      setPanelBg(r.settings.member_panel_bg_url); setMsg('✓ 已移除會員面板底圖')
+    } catch (e: any) { setErr(e?.message || '移除失敗') } finally { setSaving(false) }
+  }
 
   async function saveAthlete() {
     if (!token || !aMetrics || !aLevels) return
@@ -87,6 +108,29 @@ export default function AdminLevelsPage() {
       </p>
       {err && <div style={{ color: 'var(--hunt)', padding: '8px 0' }}>{err}</div>}
       {msg && <div style={{ color: 'var(--fug)', padding: '8px 0', fontSize: 13 }}>{msg}</div>}
+
+      {/* 外觀：會員資訊面板底圖 */}
+      <div style={panel}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>會員資訊面板底圖</h2>
+        <p style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 0 }}>
+          套用於前台賽事列表頂部的會員資訊面板背景（全站共用）。建議橫式、深色或會壓暗以保文字可讀。
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <div style={{ width: 200, height: 96, borderRadius: 12, border: '1px solid var(--line-2)', overflow: 'hidden', background: 'var(--bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {panelBg
+              // eslint-disable-next-line @next/next/no-img-element
+              ? <img src={panelBg} alt="底圖" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              : <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>無底圖（預設）</span>}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <label style={{ ...primaryBtn, display: 'inline-block', cursor: 'pointer', opacity: panelBgUploading ? 0.6 : 1 }}>
+              {panelBgUploading ? '上傳中…' : '上傳底圖'}
+              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadPanelBg(f); e.target.value = '' }} />
+            </label>
+            {panelBg && <button onClick={removePanelBg} disabled={saving} style={{ ...primaryBtn, background: 'var(--bg-2)', color: 'var(--hunt)', border: '1px solid var(--line-2)' }}>移除</button>}
+          </div>
+        </div>
+      </div>
 
       {/* EXP 規則 */}
       <div style={panel}>

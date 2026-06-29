@@ -228,6 +228,25 @@ function withAuth(token: string): HeadersInit {
   return { Authorization: `Bearer ${token}` }
 }
 
+// --- 全站外觀設定 ---
+
+export interface SiteSettings {
+  member_panel_bg_url: string
+}
+
+export const settingsApi = {
+  get: () => request<{ settings: SiteSettings }>('/settings'),
+}
+
+export const adminSettingsApi = {
+  set: (token: string, settings: SiteSettings) =>
+    request<{ settings: SiteSettings }>('/admin/settings', {
+      method: 'PUT',
+      headers: withAuth(token),
+      body: JSON.stringify(settings),
+    }),
+}
+
 // --- Auth ---
 
 export const authApi = {

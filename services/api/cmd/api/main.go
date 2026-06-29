@@ -174,6 +174,9 @@ func main() {
 		// 圖片取用（公開）
 		r.Mount("/images", imageHandler.PublicRouter())
 
+		// 全站外觀設定（公開讀取，前台會員面板底圖等）
+		r.Get("/settings", profileHandler.GetSettings)
+
 		// Strava 整合（callback/webhook 公開；connect/status/disconnect 由 router 內自帶登入）
 		r.Mount("/integrations/strava", stravaHandler.Router())
 
@@ -222,6 +225,7 @@ func main() {
 			r.Mount("/admin/members", profileHandler.AdminMembersRouter())
 			r.Mount("/admin/membership", profileHandler.MembershipAdminRouter())
 			r.Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
+			r.Put("/admin/settings", profileHandler.PutSettings)
 		})
 	})
 
