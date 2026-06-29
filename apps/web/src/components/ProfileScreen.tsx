@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, paymentsApi, type Profile, type MyRegistration, type MyOrder } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 
 // 動態建立 hidden 表單並 POST 到綠界（瀏覽器導去付款頁）
@@ -46,11 +46,32 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [strava, setStrava] = useState<StravaStatus | null>(null)
+  const [stravaBusy, setStravaBusy] = useState(false)
+  const [stravaMsg, setStravaMsg] = useState('')
+
+  function loadStrava() {
+    withUserAuth((t) => integrationsApi.stravaStatus(t)).then(setStrava).catch(() => {})
+  }
 
   useEffect(() => {
     if (!getUserToken()) {
       setErr('請先登入')
       return
+    }
+    loadStrava()
+    // 處理 Strava OAuth 導回參數
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location.search)
+      const s = sp.get('strava')
+      if (s) {
+        setStravaMsg(s === 'connected' ? '✓ 已連接 Strava，正在同步近期活動…'
+          : s === 'denied' ? '已取消授權'
+          : 'Strava 連接失敗，請再試一次')
+        sp.delete('strava')
+        const qs = sp.toString()
+        window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''))
+      }
     }
     withUserAuth((t) => profileApi.getMe(t))
       .then((r) => setP(r.profile))
@@ -86,6 +107,30 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
     } catch (e: any) {
       setErr(e instanceof SessionExpiredError ? '登入已過期，請重新登入' : e?.message || '無法前往付款')
       setPaying(false)
+    }
+  }
+
+  async function connectStrava() {
+    setStravaBusy(true)
+    try {
+      const { url } = await withUserAuth((t) => integrationsApi.stravaConnectUrl(t))
+      window.location.href = url // 導去 Strava 授權
+    } catch (e: any) {
+      setStravaMsg(e?.message || '無法連接 Strava')
+      setStravaBusy(false)
+    }
+  }
+  async function disconnectStrava() {
+    if (!window.confirm('中斷 Strava 連接？已同步的活動會保留。')) return
+    setStravaBusy(true)
+    try {
+      await withUserAuth((t) => integrationsApi.stravaDisconnect(t))
+      setStrava({ connected: false, enabled: strava?.enabled ?? true })
+      setStravaMsg('已中斷 Strava 連接')
+    } catch (e: any) {
+      setStravaMsg(e?.message || '中斷失敗')
+    } finally {
+      setStravaBusy(false)
     }
   }
 
@@ -145,6 +190,33 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             <button onClick={save} disabled={saving} style={primaryBtn}>{saving ? '儲存中…' : '儲存'}</button>
           </div>
         )}
+
+        {/* 運動數據連接 */}
+        <div style={{ marginTop: 28 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', marginBottom: 10 }}>運動數據</div>
+          <div style={recCard}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, color: '#fc4c02' }}>Strava</div>
+                <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
+                  {strava?.connected
+                    ? `已連接${strava.athlete_name ? `：${strava.athlete_name}` : ''} · 活動自動同步`
+                    : '連接後自動同步跑步活動（含 COROS/Garmin 等同步到 Strava 的裝置），用於任務達成與排行榜'}
+                </div>
+              </div>
+              {strava?.connected ? (
+                <button onClick={disconnectStrava} disabled={stravaBusy} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>中斷連接</button>
+              ) : (
+                <button onClick={connectStrava} disabled={stravaBusy || strava?.enabled === false}
+                  style={{ background: '#fc4c02', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', cursor: 'pointer', fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', opacity: stravaBusy ? 0.6 : 1 }}>
+                  {stravaBusy ? '處理中…' : '連接 Strava'}
+                </button>
+              )}
+            </div>
+            {strava?.enabled === false && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 8 }}>（Strava 整合尚未由管理者設定）</div>}
+            {stravaMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginTop: 8 }}>{stravaMsg}</div>}
+          </div>
+        </div>
 
         {/* 報名紀錄 */}
         <div style={{ marginTop: 28 }}>
@@ -240,6 +312,10 @@ const primaryBtn: React.CSSProperties = {
   borderRadius: 10, padding: '12px 20px', cursor: 'pointer', fontSize: 14, marginTop: 4,
 }
 const recCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: 14 }
+const ghostBtn: React.CSSProperties = {
+  background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)',
+  borderRadius: 10, padding: '9px 14px', cursor: 'pointer', fontSize: 13, fontFamily: 'inherit',
+}
 const payBtn: React.CSSProperties = {
   background: 'var(--gold)', color: '#1a1200', fontWeight: 700, border: 'none',
   borderRadius: 9, padding: '7px 14px', cursor: 'pointer', fontSize: 13,

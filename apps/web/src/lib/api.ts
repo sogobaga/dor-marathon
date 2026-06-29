@@ -346,6 +346,21 @@ export interface MyRegLite {
   group_revealed: boolean
 }
 
+export interface StravaStatus {
+  connected: boolean
+  enabled: boolean
+  athlete_name?: string
+}
+
+export const integrationsApi = {
+  stravaStatus: (token: string) =>
+    request<StravaStatus>('/integrations/strava/status', { headers: withAuth(token) }),
+  stravaConnectUrl: (token: string) =>
+    request<{ url: string }>('/integrations/strava/connect', { headers: withAuth(token) }),
+  stravaDisconnect: (token: string) =>
+    request<null>('/integrations/strava/disconnect', { method: 'DELETE', headers: withAuth(token) }),
+}
+
 export const racesApi = {
   // 公開列表；帶 token 則附 registrations（race_id → 報名狀態）
   list: (token?: string) =>

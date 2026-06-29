@@ -25,6 +25,13 @@ type Config struct {
 	ECPayEnv           string // stage | prod
 	ECPayReturnURL     string // server 對 server 付款結果通知（須公開可達）
 	ECPayClientBackURL string // 付款後返回商店網址
+
+	// Strava 運動數據整合（選用：空 ClientID = 未啟用）
+	StravaClientID          string
+	StravaClientSecret      string
+	StravaRedirectURI       string // 須與 Strava app 設定的 Authorization Callback Domain 相符
+	StravaWebhookVerifyToken string
+	FrontendURL             string // OAuth 完成後導回前台
 }
 
 func Load() *Config {
@@ -45,6 +52,12 @@ func Load() *Config {
 		ECPayEnv:           getEnv("ECPAY_ENV", "stage"),
 		ECPayReturnURL:     getEnv("ECPAY_RETURN_URL", "https://dor-marathon-production.up.railway.app/api/v1/payments/ecpay/notify"),
 		ECPayClientBackURL: getEnv("ECPAY_CLIENT_BACK_URL", "https://dor.hero-mi.com"),
+
+		StravaClientID:           getEnv("STRAVA_CLIENT_ID", ""),
+		StravaClientSecret:       getEnv("STRAVA_CLIENT_SECRET", ""),
+		StravaRedirectURI:        getEnv("STRAVA_REDIRECT_URI", "https://dor-marathon-production.up.railway.app/api/v1/integrations/strava/callback"),
+		StravaWebhookVerifyToken: getEnv("STRAVA_WEBHOOK_VERIFY_TOKEN", "dor-strava-webhook"),
+		FrontendURL:              getEnv("FRONTEND_URL", "https://dor.hero-mi.com"),
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/dor/api/internal/db"
 	"github.com/dor/api/internal/middleware"
 	"github.com/dor/api/internal/image"
+	"github.com/dor/api/internal/integration"
 	"github.com/dor/api/internal/organizer"
 	"github.com/dor/api/internal/payment"
 	"github.com/dor/api/internal/profile"
@@ -111,6 +112,20 @@ func main() {
 	// Image（圖片上傳，存 Postgres）
 	imageHandler := image.NewHandler(image.NewRepository(pool))
 
+	// Strava 運動數據整合
+	stravaHandler := integration.NewStravaHandler(
+		integration.NewRepository(pool),
+		integration.StravaConfig{
+			ClientID:           cfg.StravaClientID,
+			ClientSecret:       cfg.StravaClientSecret,
+			RedirectURI:        cfg.StravaRedirectURI,
+			WebhookVerifyToken: cfg.StravaWebhookVerifyToken,
+			FrontendURL:        cfg.FrontendURL,
+			JWTSecret:          cfg.JWTSecret,
+		},
+		middleware.RequireAuth(authSvc),
+	)
+
 	// --- 路由 ---
 	r := chi.NewRouter()
 
@@ -151,6 +166,9 @@ func main() {
 
 		// 圖片取用（公開）
 		r.Mount("/images", imageHandler.PublicRouter())
+
+		// Strava 整合（callback/webhook 公開；connect/status/disconnect 由 router 內自帶登入）
+		r.Mount("/integrations/strava", stravaHandler.Router())
 
 		// 綠界付款結果通知（公開，server 對 server，自帶 CheckMacValue 驗章）
 		r.Post("/payments/ecpay/notify", paymentHandler.Notify)
