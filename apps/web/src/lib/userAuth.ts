@@ -52,14 +52,17 @@ export function refreshUserToken(): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight // 並發去重：共用同一次 refresh
   refreshInFlight = (async () => {
     const rt = localStorage.getItem(REFRESH_KEY)
-    if (!rt) return null
+    if (!rt) return null // 沒有 refresh token = session 已死
     try {
       const pair = await authApi.refresh(rt)
       localStorage.setItem(TOKEN_KEY, pair.access_token)
       localStorage.setItem(REFRESH_KEY, pair.refresh_token)
       return pair.access_token
-    } catch {
-      return null
+    } catch (e: any) {
+      // 只有「明確的無效 token」(401/400) 才視為 session 已死（回傳 null → 登出）。
+      // 暫時性錯誤（網路中斷、API 重新部署中的 5xx）必須往外丟，避免誤登出。
+      if (e?.status === 401 || e?.status === 400) return null
+      throw e
     }
   })()
   refreshInFlight.finally(() => {
@@ -84,9 +87,15 @@ export async function withUserAuth<T>(fn: (token: string) => Promise<T>): Promis
     return await fn(token)
   } catch (e: any) {
     if (e?.status === 401) {
-      const fresh = await refreshUserToken()
+      let fresh: string | null = null
+      try {
+        fresh = await refreshUserToken()
+      } catch {
+        // refresh 遇到暫時性錯誤（網路/5xx）→ 保留 session、丟回原錯誤，不要登出
+        throw e
+      }
       if (fresh) return await fn(fresh)
-      clearUserSession()
+      clearUserSession() // refresh 明確失敗（無/無效 refresh token）才登出
       throw new SessionExpiredError()
     }
     throw e

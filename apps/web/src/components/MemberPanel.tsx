@@ -12,11 +12,13 @@ export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => v
   const [showLogin, setShowLogin] = useState(false)
 
   useEffect(() => {
+    let cancelled = false
     if (user && getUserToken()) {
-      withUserAuth((t) => profileApi.dashboard(t)).then((r) => setDash(r.dashboard)).catch(() => {})
+      withUserAuth((t) => profileApi.dashboard(t)).then((r) => { if (!cancelled) setDash(r.dashboard) }).catch(() => {})
     } else {
       setDash(null)
     }
+    return () => { cancelled = true } // 登出後別讓還在飛的請求把舊資料寫回（頭像殘留）
   }, [user])
 
   const expPct =
@@ -29,7 +31,7 @@ export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => v
       <div style={{ ...card, cursor: user && onOpenProfile ? 'pointer' : 'default' }} onClick={user ? onOpenProfile : undefined}>
         <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
           <div style={avatarWrap}>
-            {dash?.avatar_url
+            {user && dash?.avatar_url
               // eslint-disable-next-line @next/next/no-img-element
               ? <img src={dash.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               : <span style={{ fontSize: 22, fontWeight: 800, color: 'var(--tx-dim)' }}>{user ? (dash?.name || user.name || '?').slice(0, 1) : '？'}</span>}
