@@ -319,6 +319,24 @@ export interface CompetitionRanking {
   my_group?: MyGroupRank | null
 }
 
+export interface ExpBreakdownItem {
+  label: string
+  amount: number
+  kind: string // completion | mileage | task
+}
+export interface ExpLevelRow {
+  level: number
+  title: string
+  exp_required: number
+}
+export interface ExpBreakdown {
+  gained: number
+  exp_before: number
+  exp_after: number
+  items: ExpBreakdownItem[]
+  levels: ExpLevelRow[]
+}
+
 export interface Certificate {
   completed: boolean
   race_title: string
@@ -475,6 +493,9 @@ export const racesApi = {
 
   certificate: (raceID: string, token: string) =>
     request<{ certificate: Certificate }>(`/races/${raceID}/certificate`, { headers: withAuth(token) }),
+
+  expBreakdown: (raceID: string, token: string) =>
+    request<{ breakdown: ExpBreakdown }>(`/races/${raceID}/exp-breakdown`, { headers: withAuth(token) }),
 }
 
 export interface TaskProgress extends RaceTask {

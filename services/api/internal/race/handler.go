@@ -32,6 +32,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/{raceID}/progress", h.Progress)
 	r.Get("/{raceID}/leaderboard", h.Leaderboard)
 	r.Get("/{raceID}/certificate", h.Certificate)
+	r.Get("/{raceID}/exp-breakdown", h.ExpBreakdown)
 	r.Get("/{raceID}/status", h.LiveStatus)
 	r.Post("/{raceID}/promo/check", h.PromoCheck)
 	return r
@@ -533,6 +534,26 @@ func (h *Handler) Certificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"certificate": cert})
+}
+
+// GET /api/v1/races/:raceID/exp-breakdown — 登入者本場 EXP 結算明細（需登入）
+func (h *Handler) ExpBreakdown(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	bd, err := h.svc.GetExpBreakdown(r.Context(), raceID, userID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get exp breakdown")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"breakdown": bd})
 }
 
 // GET /api/v1/races/:raceID/ranking?limit=100

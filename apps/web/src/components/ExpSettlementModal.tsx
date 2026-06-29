@@ -1,0 +1,207 @@
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import type { ExpBreakdown, ExpLevelRow } from '@/lib/api'
+
+type Step = {
+  level: number
+  title: string
+  nextLevel: number
+  nextTitle: string
+  fromPct: number
+  toPct: number
+  willLevelUp: boolean
+  maxed: boolean
+}
+
+// 依累積門檻把 expBefore→expAfter 拆成逐級的 bar 演出段
+function buildSteps(before: number, after: number, levelsIn: ExpLevelRow[]): Step[] {
+  const levels = [...levelsIn].sort((a, b) => a.exp_required - b.exp_required)
+  if (levels.length === 0) return []
+  const idxAt = (exp: number) => {
+    let i = 0
+    for (let k = 0; k < levels.length; k++) if (exp >= levels[k].exp_required) i = k
+    return i
+  }
+  const steps: Step[] = []
+  let cur = before
+  let guard = 0
+  while (cur < after && guard++ < 100) {
+    const i = idxAt(cur)
+    const floor = levels[i].exp_required
+    const hasNext = i + 1 < levels.length
+    if (!hasNext) {
+      steps.push({ level: levels[i].level, title: levels[i].title, nextLevel: levels[i].level, nextTitle: '', fromPct: 1, toPct: 1, willLevelUp: false, maxed: true })
+      break
+    }
+    const next = levels[i + 1].exp_required
+    const span = Math.max(1, next - floor)
+    const segEnd = Math.min(after, next)
+    steps.push({
+      level: levels[i].level,
+      title: levels[i].title,
+      nextLevel: levels[i + 1].level,
+      nextTitle: levels[i + 1].title,
+      fromPct: (cur - floor) / span,
+      toPct: (segEnd - floor) / span,
+      willLevelUp: segEnd >= next,
+      maxed: false,
+    })
+    cur = segEnd
+  }
+  return steps
+}
+
+const easeOut = (t: number) => 1 - Math.pow(1 - t, 3)
+
+export default function ExpSettlementModal({ breakdown, raceTitle, onClose }: { breakdown: ExpBreakdown; raceTitle: string; onClose: () => void }) {
+  const { gained, exp_before, exp_after, items, levels } = breakdown
+  const steps = useMemo(() => buildSteps(exp_before, exp_after, levels), [exp_before, exp_after, levels])
+
+  const [phase, setPhase] = useState<'intro' | 'items' | 'total' | 'levels' | 'done'>('intro')
+  const [revealed, setRevealed] = useState(0)
+  const [total, setTotal] = useState(0)
+  const [stepIdx, setStepIdx] = useState(0)
+  const [barPct, setBarPct] = useState(steps[0]?.fromPct ?? 0)
+  const [flash, setFlash] = useState(false)
+  const [canClose, setCanClose] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+    const animate = (from: number, to: number, dur: number, cb: (v: number) => void) =>
+      new Promise<void>((resolve) => {
+        const start = performance.now()
+        const tick = (now: number) => {
+          if (cancelled) return resolve()
+          const t = Math.min(1, (now - start) / dur)
+          cb(from + (to - from) * easeOut(t))
+          if (t < 1) requestAnimationFrame(tick)
+          else resolve()
+        }
+        requestAnimationFrame(tick)
+      })
+
+    ;(async () => {
+      setPhase('intro'); await sleep(750); if (cancelled) return
+      setPhase('items')
+      for (let i = 0; i < items.length; i++) { if (cancelled) return; setRevealed(i + 1); await sleep(300) }
+      await sleep(280); if (cancelled) return
+      setPhase('total')
+      await animate(0, gained, Math.min(1700, 650 + gained * 4), (v) => setTotal(Math.round(v)))
+      setTotal(gained); await sleep(350); if (cancelled) return
+      setPhase('levels')
+      for (let si = 0; si < steps.length; si++) {
+        if (cancelled) return
+        setStepIdx(si); setBarPct(steps[si].fromPct); await sleep(60)
+        const delta = steps[si].toPct - steps[si].fromPct
+        // 連續升級時略加速，維持速度感；最後一段稍慢留住結果
+        const accel = steps[si].willLevelUp ? Math.max(0.55, 1 - si * 0.06) : 1
+        await animate(steps[si].fromPct, steps[si].toPct, (230 + delta * 340) * accel, setBarPct)
+        setBarPct(steps[si].toPct)
+        if (steps[si].willLevelUp) { setFlash(true); await sleep(Math.max(300, 400 - si * 12)); setFlash(false) }
+      }
+      if (cancelled) return
+      setPhase('done'); setCanClose(true)
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const step = steps[stepIdx]
+  const finalLevel = levels.length ? [...levels].sort((a, b) => a.exp_required - b.exp_required).filter((l) => exp_after >= l.exp_required).pop() : undefined
+
+  return (
+    <div style={overlay}>
+      <style>{KEYFRAMES}</style>
+      <div style={glow} />
+
+      <div style={panel}>
+        {/* 副本完成橫幅 */}
+        <div style={{ textAlign: 'center', animation: 'slamIn .6s cubic-bezier(.2,1.4,.5,1) both' }}>
+          <div style={{ fontSize: 13, letterSpacing: '.4em', color: 'var(--gold)', fontWeight: 700 }}>RACE&nbsp;CLEAR</div>
+          <div style={{ fontSize: 34, fontWeight: 900, color: '#fff', textShadow: '0 0 24px rgba(229,196,107,.6)', margin: '2px 0 2px' }}>副本完成</div>
+          <div style={{ fontSize: 12, color: 'var(--tx-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{raceTitle}</div>
+        </div>
+
+        {/* 明細 */}
+        <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 7, minHeight: 8 }}>
+          {items.slice(0, revealed).map((it, i) => (
+            <div key={i} style={{ ...rowItem, animation: 'itemIn .4s ease both' }}>
+              <span style={{ fontSize: 13, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label}</span>
+              <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--fug)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>+{it.amount}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* 總 EXP 跳碼 */}
+        {(phase === 'total' || phase === 'levels' || phase === 'done') && (
+          <div style={{ textAlign: 'center', margin: '16px 0 4px' }}>
+            <div style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--tx-faint)' }}>本場獲得經驗值</div>
+            <div style={{ fontSize: 40, fontWeight: 900, color: 'var(--gold)', fontVariantNumeric: 'tabular-nums', textShadow: '0 0 20px rgba(229,196,107,.5)', lineHeight: 1.15 }}>
+              +{total}<span style={{ fontSize: 18, marginLeft: 4 }}>EXP</span>
+            </div>
+          </div>
+        )}
+
+        {/* 等級 + EXP bar */}
+        {(phase === 'levels' || phase === 'done') && step && (
+          <div style={{ marginTop: 10, position: 'relative' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+              <span style={{ fontSize: 17, fontWeight: 900, color: 'var(--fug)', transition: 'transform .2s', display: 'inline-block', transform: flash ? 'scale(1.25)' : 'scale(1)' }}>
+                Lv.{phase === 'done' ? (finalLevel?.level ?? step.level) : step.level}
+                {phase === 'done' && finalLevel?.title ? <span style={{ fontSize: 12, color: 'var(--tx-dim)', marginLeft: 6 }}>{finalLevel.title}</span> : null}
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--tx-dim)', fontVariantNumeric: 'tabular-nums' }}>
+                {step.maxed ? 'MAX' : `${Math.round(barPct * 100)}%`}
+              </span>
+            </div>
+            <div style={barOuter}>
+              <div style={{ ...barInner, width: `${Math.max(0, Math.min(100, barPct * 100))}%` }}>
+                <div style={shine} />
+              </div>
+            </div>
+            {!step.maxed && (
+              <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>下一級 Lv.{step.nextLevel}</div>
+            )}
+
+            {/* LEVEL UP 爆點 */}
+            {flash && (
+              <div style={levelUpBurst}>
+                <div style={{ fontSize: 24, fontWeight: 900, color: 'var(--gold)', textShadow: '0 0 24px rgba(229,196,107,.9)', animation: 'burst .56s ease both' }}>LEVEL&nbsp;UP!</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 關閉 */}
+        <button
+          onClick={canClose ? onClose : undefined}
+          disabled={!canClose}
+          style={{ ...closeBtn, opacity: canClose ? 1 : 0.35, cursor: canClose ? 'pointer' : 'default', animation: canClose ? 'pulse 1.6s ease-in-out infinite' : 'none' }}
+        >
+          {canClose ? '完成 ✓' : '結算中…'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const overlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 120, background: 'radial-gradient(120% 90% at 50% 30%, #11201b 0%, #070a09 70%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, overflow: 'hidden' }
+const glow: React.CSSProperties = { position: 'absolute', top: '18%', left: '50%', width: 420, height: 420, transform: 'translateX(-50%)', background: 'radial-gradient(circle, rgba(229,196,107,.16), transparent 60%)', pointerEvents: 'none', animation: 'glowPulse 3s ease-in-out infinite' }
+const panel: React.CSSProperties = { position: 'relative', width: '100%', maxWidth: 380, background: 'rgba(10,14,12,.82)', border: '1px solid rgba(229,196,107,.35)', borderRadius: 18, padding: '24px 22px 20px', boxShadow: '0 20px 80px rgba(0,0,0,.6)', backdropFilter: 'blur(4px)' }
+const rowItem: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '8px 12px' }
+const barOuter: React.CSSProperties = { height: 16, borderRadius: 999, background: 'rgba(255,255,255,.07)', border: '1px solid var(--line-2)', overflow: 'hidden', position: 'relative' }
+const barInner: React.CSSProperties = { height: '100%', borderRadius: 999, background: 'linear-gradient(90deg,#2ad18f,#46E3A0,#9bffd2)', boxShadow: '0 0 16px rgba(70,227,160,.7)', position: 'relative', overflow: 'hidden' }
+const shine: React.CSSProperties = { position: 'absolute', inset: 0, background: 'linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent)', animation: 'shine 1.1s linear infinite' }
+const levelUpBurst: React.CSSProperties = { position: 'absolute', left: 0, right: 0, top: -2, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }
+const closeBtn: React.CSSProperties = { marginTop: 22, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#1a1200', fontWeight: 800, border: 'none', borderRadius: 12, padding: '13px 20px', fontSize: 15 }
+
+const KEYFRAMES = `
+@keyframes slamIn { 0% { transform: scale(2.2); opacity: 0; filter: blur(6px) } 60% { opacity: 1 } 100% { transform: scale(1); opacity: 1; filter: blur(0) } }
+@keyframes itemIn { 0% { transform: translateX(-14px); opacity: 0 } 100% { transform: translateX(0); opacity: 1 } }
+@keyframes shine { 0% { transform: translateX(-120%) } 100% { transform: translateX(220%) } }
+@keyframes glowPulse { 0%,100% { opacity: .65 } 50% { opacity: 1 } }
+@keyframes burst { 0% { transform: scale(.4) translateY(6px); opacity: 0 } 40% { transform: scale(1.15) translateY(0); opacity: 1 } 100% { transform: scale(1) translateY(-10px); opacity: 0 } }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(229,196,107,.5) } 50% { box-shadow: 0 0 0 8px rgba(229,196,107,0) } }
+`

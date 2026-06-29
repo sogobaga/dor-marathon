@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import { racesApi, METRIC_BY_KEY, type Race, type TaskProgress } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { renderCertificate, downloadDataURL } from '@/lib/certificate'
+import ExpSettlementModal from './ExpSettlementModal'
 import { BrochureBody } from './BrochureScreen'
 import { RankingBody } from './RaceRankingScreen'
 
@@ -60,6 +61,22 @@ export default function RaceDetailScreen({
     if (cert?.completed) renderCertificate(cert).then(setCertImg).catch(() => {})
     else setCertImg('')
   }, [cert])
+
+  // 本場 EXP 結算明細（賽事結束 + 已報名）
+  const { data: bdData } = useSWR(
+    ended && registration && token ? ['exp-bd', race.id] : null,
+    () => racesApi.expBreakdown(race.id, token!),
+  )
+  const breakdown = bdData?.breakdown
+  const [showExp, setShowExp] = useState(false)
+  useEffect(() => {
+    if (!breakdown || breakdown.gained <= 0) return
+    const key = `dor_exp_seen_${race.id}`
+    if (typeof window !== 'undefined' && !localStorage.getItem(key)) {
+      localStorage.setItem(key, '1')
+      setShowExp(true) // 完賽後首次自動演出
+    }
+  }, [breakdown, race.id])
 
   const started = race.display_status === 'racing' || race.display_status === 'ended'
   // 競賽/分組對抗才有「當天揭曉分組＋分組戰報」；一般模式分組直接顯示
@@ -158,6 +175,11 @@ export default function RaceDetailScreen({
           {ended && cert && !cert.completed && registration && (
             <div style={{ marginTop: 10, fontSize: 12, color: 'var(--tx-faint)', textAlign: 'center' }}>本場未達完賽標準，無完賽證明</div>
           )}
+
+          {/* 本場 EXP 結算（重看） */}
+          {ended && breakdown && breakdown.gained > 0 && (
+            <button onClick={() => setShowExp(true)} style={expBtn}>🎮 查看本場結算（+{breakdown.gained} EXP）</button>
+          )}
         </div>
 
         {/* 頁籤 */}
@@ -188,6 +210,11 @@ export default function RaceDetailScreen({
           <button onClick={(e) => { e.stopPropagation(); downloadDataURL(certImg, `完賽證明_${cert.race_title}.png`) }} style={lightboxDl}>🏅 下載完賽證明</button>
           <div onClick={() => setCertZoom(false)} style={{ position: 'absolute', top: 14, right: 20, color: '#fff', fontSize: 30, cursor: 'pointer', lineHeight: 1 }}>✕</div>
         </div>
+      )}
+
+      {/* 本場 EXP 結算演出 */}
+      {showExp && breakdown && breakdown.gained > 0 && (
+        <ExpSettlementModal breakdown={breakdown} raceTitle={race.title} onClose={() => setShowExp(false)} />
       )}
     </div>
   )
@@ -294,6 +321,7 @@ const statusBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color:
 const registerBtn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none', borderRadius: 12, padding: '12px 20px', cursor: 'pointer', fontSize: 15, width: '100%' }
 const registeredBox: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '11px 16px', textAlign: 'center', fontSize: 14, fontWeight: 700, color: 'var(--fug)' }
 const certBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#1a1200', fontWeight: 800, border: 'none', borderRadius: 12, padding: '12px 20px', cursor: 'pointer', fontSize: 15 }
+const expBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'rgba(70,227,160,.1)', color: 'var(--fug)', fontWeight: 800, border: '1px solid rgba(70,227,160,.35)', borderRadius: 12, padding: '11px 20px', cursor: 'pointer', fontSize: 14 }
 const lightbox: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,.88)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 16 }
 const lightboxDl: React.CSSProperties = { background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#1a1200', fontWeight: 800, border: 'none', borderRadius: 10, padding: '11px 22px', cursor: 'pointer', fontSize: 15 }
 const notStartedHint: React.CSSProperties = { background: 'rgba(255,210,90,.08)', border: '1px solid var(--line)', borderRadius: 12, padding: '12px 14px', fontSize: 13, color: 'var(--gold)', marginBottom: 14, textAlign: 'center' }
