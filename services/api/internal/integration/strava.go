@@ -79,13 +79,18 @@ func (h *StravaHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusServiceUnavailable, "Strava 整合尚未設定")
 		return
 	}
+	// 回程網址：導回使用者原本所在頁面（同源→不會被登出）。前端傳 return；缺省用 FrontendURL。
+	ret := r.URL.Query().Get("return")
+	if !strings.HasPrefix(ret, "https://") && !strings.HasPrefix(ret, "http://") {
+		ret = h.cfg.FrontendURL
+	}
 	q := url.Values{}
 	q.Set("client_id", h.cfg.ClientID)
 	q.Set("redirect_uri", h.cfg.RedirectURI)
 	q.Set("response_type", "code")
-	q.Set("approval_prompt", "auto")
+	q.Set("approval_prompt", "force") // 每次都顯示授權頁，才能更換連結帳號
 	q.Set("scope", stravaScope)
-	q.Set("state", h.signState(userID))
+	q.Set("state", h.signState(userID, ret))
 	respondJSON(w, http.StatusOK, map[string]string{"url": stravaAuthURL + "?" + q.Encode()})
 }
 
@@ -116,18 +121,18 @@ func (h *StravaHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 
 // --- 公開端點 ---
 
-// GET /callback?code=&state= → 交換 token、存檔、回填近期活動、導回前台
+// GET /callback?code=&state= → 交換 token、存檔、回填近期活動、導回原頁面
 func (h *StravaHandler) Callback(w http.ResponseWriter, r *http.Request) {
+	userID, ret, ok := h.verifyState(r.URL.Query().Get("state"))
+	if !ok {
+		http.Redirect(w, r, appendQuery(h.cfg.FrontendURL, "strava", "invalid"), http.StatusFound)
+		return
+	}
 	redirectFront := func(status string) {
-		http.Redirect(w, r, h.cfg.FrontendURL+"/?strava="+status, http.StatusFound)
+		http.Redirect(w, r, appendQuery(ret, "strava", status), http.StatusFound)
 	}
 	if r.URL.Query().Get("error") != "" {
 		redirectFront("denied")
-		return
-	}
-	userID, ok := h.verifyState(r.URL.Query().Get("state"))
-	if !ok {
-		redirectFront("invalid")
 		return
 	}
 	code := r.URL.Query().Get("code")
@@ -367,34 +372,47 @@ func (h *StravaHandler) importOne(ctx context.Context, userID string, a *stravaA
 
 // --- state 簽章（callback 無登入，用 HMAC 綁定發起者）---
 
-func (h *StravaHandler) signState(userID string) string {
-	msg := userID + "." + strconv.FormatInt(time.Now().Add(15*time.Minute).Unix(), 10)
+func (h *StravaHandler) signState(userID, returnURL string) string {
+	// 以 \n 分隔（userID 為 UUID、無換行）：userID \n exp \n returnURL
+	msg := strings.Join([]string{userID, strconv.FormatInt(time.Now().Add(15*time.Minute).Unix(), 10), returnURL}, "\n")
 	return base64.RawURLEncoding.EncodeToString([]byte(msg)) + "." + h.mac(msg)
 }
 
-func (h *StravaHandler) verifyState(state string) (string, bool) {
+func (h *StravaHandler) verifyState(state string) (userID, returnURL string, ok bool) {
 	i := strings.LastIndex(state, ".")
 	if i < 0 {
-		return "", false
+		return "", "", false
 	}
 	raw, sig := state[:i], state[i+1:]
 	msgBytes, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	msg := string(msgBytes)
 	if !hmac.Equal([]byte(sig), []byte(h.mac(msg))) {
-		return "", false
+		return "", "", false
 	}
-	parts := strings.SplitN(msg, ".", 2)
-	if len(parts) != 2 {
-		return "", false
+	parts := strings.Split(msg, "\n")
+	if len(parts) != 3 {
+		return "", "", false
 	}
 	exp, _ := strconv.ParseInt(parts[1], 10, 64)
 	if time.Now().Unix() > exp {
-		return "", false
+		return "", "", false
 	}
-	return parts[0], true
+	return parts[0], parts[2], true
+}
+
+// appendQuery 在 URL 上加一個查詢參數（保留既有 query）
+func appendQuery(base, key, val string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	q := u.Query()
+	q.Set(key, val)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func (h *StravaHandler) mac(msg string) string {

@@ -22,6 +22,10 @@ export default function PhoneShell() {
     setIsMobile(window.innerWidth <= 430)
     // 開啟 app 即驗證/換發 token：避免「顯示已登入但實際過期」的不一致
     validateSession()
+    // Strava 授權導回（?strava=...）→ 直接開個人資訊頁顯示結果
+    if (new URLSearchParams(window.location.search).has('strava')) {
+      setShowProfile(true)
+    }
   }, [])
 
   return (

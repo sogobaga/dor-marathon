@@ -113,7 +113,9 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
   async function connectStrava() {
     setStravaBusy(true)
     try {
-      const { url } = await withUserAuth((t) => integrationsApi.stravaConnectUrl(t))
+      // 帶回程網址＝目前頁面（同源），授權後導回這裡，session 不會掉
+      const returnUrl = window.location.origin + window.location.pathname
+      const { url } = await withUserAuth((t) => integrationsApi.stravaConnectUrl(t, returnUrl))
       window.location.href = url // 導去 Strava 授權
     } catch (e: any) {
       setStravaMsg(e?.message || '無法連接 Strava')

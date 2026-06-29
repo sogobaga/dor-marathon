@@ -355,8 +355,11 @@ export interface StravaStatus {
 export const integrationsApi = {
   stravaStatus: (token: string) =>
     request<StravaStatus>('/integrations/strava/status', { headers: withAuth(token) }),
-  stravaConnectUrl: (token: string) =>
-    request<{ url: string }>('/integrations/strava/connect', { headers: withAuth(token) }),
+  stravaConnectUrl: (token: string, returnUrl?: string) =>
+    request<{ url: string }>(
+      `/integrations/strava/connect${returnUrl ? `?return=${encodeURIComponent(returnUrl)}` : ''}`,
+      { headers: withAuth(token) }
+    ),
   stravaDisconnect: (token: string) =>
     request<null>('/integrations/strava/disconnect', { method: 'DELETE', headers: withAuth(token) }),
 }
