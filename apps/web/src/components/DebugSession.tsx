@@ -1,0 +1,53 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { authApi } from '@/lib/api'
+
+// 暫時診斷用：顯示本機 session 狀態與 /auth/me、/auth/refresh 的實際結果。
+// 確認登入問題後即移除。
+export default function DebugSession() {
+  const [info, setInfo] = useState<string>('檢查中…')
+
+  useEffect(() => {
+    const t = localStorage.getItem('dor_user_token')
+    const r = localStorage.getItem('dor_user_refresh')
+    const u = localStorage.getItem('dor_user')
+    const out: Record<string, unknown> = {
+      hasToken: !!t, tokenLen: t?.length ?? 0,
+      hasRefresh: !!r, refreshLen: r?.length ?? 0,
+      hasUser: !!u,
+    }
+    // access token 的 exp 與現在比較
+    if (t) {
+      try {
+        const payload = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+        out.accExp = payload.exp
+        out.now = Math.floor(Date.now() / 1000)
+        out.accExpired = payload.exp < Math.floor(Date.now() / 1000)
+      } catch { out.accDecode = 'fail' }
+    }
+    ;(async () => {
+      if (t) {
+        try { await authApi.me(t); out.me = 200 } catch (e: any) { out.me = e?.status ?? `ERR:${e?.message}` }
+      }
+      if (r) {
+        try {
+          const p = await authApi.refresh(r)
+          // 換到新 token 就存回去，避免診斷把 session 弄壞
+          localStorage.setItem('dor_user_token', p.access_token)
+          localStorage.setItem('dor_user_refresh', p.refresh_token)
+          out.refresh = 'OK'
+        } catch (e: any) { out.refresh = e?.status ?? `ERR:${e?.message}` }
+      }
+      setInfo(JSON.stringify(out, null, 1))
+    })()
+  }, [])
+
+  return (
+    <pre style={{
+      fontSize: 11, lineHeight: 1.4, color: '#9fffea', background: '#04231c',
+      border: '1px solid #0a6', borderRadius: 10, padding: 10, margin: '0 0 12px',
+      whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+    }}>SESSION DEBUG{'\n'}{info}</pre>
+  )
+}
