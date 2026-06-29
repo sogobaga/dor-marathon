@@ -242,14 +242,26 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 			set, label = acts, "賽事集體"
 		case ScopeGroupTeam:
 			if myGroup == "" || (t.GroupID != "" && t.GroupID != myGroup) {
-				continue // 與使用者所屬分組無關
+				continue // 與使用者所屬分組無關（其他分組的專屬任務）
 			}
-			set, label, gname = groupActs, "本組團體", groupName[myGroup]
+			gname = groupName[myGroup]
+			if t.GroupID == "" {
+				label = "所有分組共同（團體）"
+			} else {
+				label = "本組團體"
+			}
+			set = groupActs
 		case ScopeGroupIndividual:
 			if t.GroupID != "" && t.GroupID != myGroup {
 				continue
 			}
-			set, label, gname = mine, "本組個人", groupName[myGroup]
+			gname = groupName[myGroup]
+			if t.GroupID == "" {
+				label = "所有分組共同（個人）"
+			} else {
+				label = "本組個人"
+			}
+			set = mine
 		default:
 			continue
 		}

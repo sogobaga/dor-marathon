@@ -133,7 +133,7 @@ function ProgressBody({ race }: { race: Race }) {
   const tasks = prog.tasks ?? []
   const my = prog.my ?? { total_km: 0, activities: 0, ascent_m: 0 }
   const groupsBy: { label: string; tasks: TaskProgress[] }[] = []
-  for (const label of ['賽事集體', '本組團體', '本組個人']) {
+  for (const label of ['賽事集體', '所有分組共同（團體）', '本組團體', '所有分組共同（個人）', '本組個人']) {
     const ts = tasks.filter((t) => t.scope_label === label)
     if (ts.length) groupsBy.push({ label, tasks: ts })
   }
