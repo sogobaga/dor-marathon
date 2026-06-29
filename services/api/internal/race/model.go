@@ -37,6 +37,7 @@ type Race struct {
 	CreatedBy      string     `json:"created_by,omitempty"` // organizer userID
 	ReviewStatus   string     `json:"review_status"`        // pending|approved|rejected
 	ReviewNote     string     `json:"review_note,omitempty"`
+	CertificateBgURL string   `json:"certificate_bg_url"`   // 完賽證明底圖（空=預設設計）
 	CreatedAt      time.Time  `json:"created_at"`
 }
 

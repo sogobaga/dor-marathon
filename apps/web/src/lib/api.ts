@@ -48,6 +48,7 @@ export interface Race {
   display_status: DisplayStatus
   can_register: boolean
   review_status: string
+  certificate_bg_url?: string
   created_at: string
 }
 
@@ -312,6 +313,7 @@ export interface Certificate {
   finished_count: number
   race_end?: string
   race_ended: boolean
+  bg_url?: string
 }
 
 export interface RegistrationState {
@@ -500,6 +502,12 @@ export const adminRacesApi = {
     request<void>(`/admin/races/${id}`, {
       method: 'DELETE',
       headers: withAuth(token),
+    }),
+  setCertificateBg: (token: string, id: string, url: string) =>
+    request<void>(`/admin/races/${id}/certificate-bg`, {
+      method: 'PUT',
+      headers: withAuth(token),
+      body: JSON.stringify({ url }),
     }),
 }
 

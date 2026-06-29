@@ -230,8 +230,22 @@ export default function RaceForm({
   const [taskModules, setTaskModules] = useState<TaskModule[]>([])
 
   const [presets, setPresets] = useState<GroupPreset[]>([])
+  const [certBgUrl, setCertBgUrl] = useState(initial?.certificate_bg_url ?? '')
+  const [certBgUploading, setCertBgUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+
+  async function uploadCertBg(file: File) {
+    setCertBgUploading(true); setErr('')
+    try {
+      const { url } = await adminImagesApi.upload(token, file)
+      setCertBgUrl(url)
+    } catch (e: any) {
+      setErr(e?.message || '底圖上傳失敗')
+    } finally {
+      setCertBgUploading(false)
+    }
+  }
 
   useEffect(() => {
     adminPresetsApi.list(token).then((r) => setPresets(r.presets)).catch(() => {})
@@ -421,6 +435,10 @@ export default function RaceForm({
       const res = isEdit
         ? await adminRacesApi.updateFull(token, initial!.id, payload)
         : await adminRacesApi.create(token, payload)
+      // 完賽證明底圖（獨立端點；新賽事建立後才有 id）
+      if ((certBgUrl || '') !== (initial?.certificate_bg_url || '')) {
+        await adminRacesApi.setCertificateBg(token, res.race.id, certBgUrl)
+      }
       onDone(res.race)
     } catch (e: any) {
       setErr(e?.message || (isEdit ? '儲存失敗' : '建立失敗'))
@@ -612,6 +630,24 @@ export default function RaceForm({
                 未勾選者為選填。報名時若分組有性別/年齡限制，會自動要求對應欄位。
               </div>
             </div>
+
+            <Field label="完賽證明底圖（選填，留空用系統預設設計）">
+              {certBgUrl ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={certBgUrl} alt="底圖" style={{ width: 140, height: 99, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line-2)' }} />
+                  <button type="button" style={{ ...ghostBtn, color: 'var(--hunt)' }} onClick={() => setCertBgUrl('')}>移除</button>
+                </div>
+              ) : (
+                <label style={{ ...ghostBtn, display: 'inline-block', cursor: 'pointer' }}>
+                  {certBgUploading ? '上傳中…' : '＋ 上傳底圖'}
+                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadCertBg(f); e.target.value = '' }} />
+                </label>
+              )}
+              <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
+                建議橫式、比例約 1240×877；姓名與成績會自動疊加在中下方。
+              </span>
+            </Field>
           </div>
         )}
 

@@ -19,7 +19,8 @@ type Certificate struct {
 	FinishRank    int        `json:"finish_rank"` // 完成時間名次
 	FinishedCount int        `json:"finished_count"`
 	RaceEnd       *time.Time `json:"race_end,omitempty"`
-	RaceEnded     bool       `json:"race_ended"` // 賽事是否已結束（迄日已過）
+	RaceEnded     bool       `json:"race_ended"`        // 賽事是否已結束（迄日已過）
+	BgURL         string     `json:"bg_url,omitempty"` // 後台自訂底圖（空=前台用預設設計）
 }
 
 // certInfo 取得證書顯示姓名與該使用者分組目標里程
@@ -56,6 +57,7 @@ func (s *Service) GetMyCertificate(ctx context.Context, raceID, userID string) (
 		TargetKm:  target,
 		RaceEnd:   &end,
 		RaceEnded: time.Now().After(race.EndDate),
+		BgURL:     race.CertificateBgURL,
 	}
 
 	finishers, _, err := s.repo.computeFinishers(ctx, raceID)

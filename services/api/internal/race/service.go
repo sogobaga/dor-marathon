@@ -555,6 +555,11 @@ func (s *Service) UpdateRaceStatus(ctx context.Context, raceID, status string) e
 	return s.repo.UpdateStatus(ctx, raceID, status)
 }
 
+// SetCertificateBg 設定完賽證明底圖（admin 用）
+func (s *Service) SetCertificateBg(ctx context.Context, raceID, url string) error {
+	return s.repo.SetCertificateBg(ctx, raceID, url)
+}
+
 // UpdateRace 更新賽事可編輯欄位（admin 用）。status 留空則沿用原值。
 func (s *Service) UpdateRace(ctx context.Context, raceID string, race *Race) (*Race, error) {
 	existing, err := s.repo.GetByID(ctx, raceID)

@@ -35,6 +35,7 @@ const selectCols = `
 	       COALESCE(created_by::text,'') as created_by,
 	       review_status,
 	       COALESCE(review_note,'') as review_note,
+	       COALESCE(certificate_bg_url,'') as certificate_bg_url,
 	       created_at
 	FROM races`
 
@@ -81,6 +82,12 @@ func (r *Repository) getBy(ctx context.Context, col, val string) (*Race, error) 
 // UpdateStatus 更新賽事狀態（admin 用）
 func (r *Repository) UpdateStatus(ctx context.Context, raceID, status string) error {
 	_, err := r.db.Exec(ctx, `UPDATE races SET status=$1, updated_at=NOW() WHERE id=$2`, status, raceID)
+	return err
+}
+
+// SetCertificateBg 設定完賽證明底圖（admin 用；空字串=清除改用預設）
+func (r *Repository) SetCertificateBg(ctx context.Context, raceID, url string) error {
+	_, err := r.db.Exec(ctx, `UPDATE races SET certificate_bg_url=$1, updated_at=NOW() WHERE id=$2`, url, raceID)
 	return err
 }
 
@@ -1580,6 +1587,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&race.ControlStatus, &race.StartingSoonDays, &race.BrochureTitle,
 		&race.AllowTeamGroups,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
+		&race.CertificateBgURL,
 		&race.CreatedAt,
 	)
 	if err != nil {
@@ -1608,6 +1616,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&race.ControlStatus, &race.StartingSoonDays, &race.BrochureTitle,
 		&race.AllowTeamGroups,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
+		&race.CertificateBgURL,
 		&race.CreatedAt,
 	)
 	if err != nil {

@@ -91,6 +91,7 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Put("/{raceID}", h.AdminUpdateRace)
 	r.Delete("/{raceID}", h.AdminDeleteRace)
 	r.Patch("/{raceID}/status", h.AdminUpdateStatus)
+	r.Put("/{raceID}/certificate-bg", h.AdminSetCertificateBg)
 	r.Get("/{raceID}/signups", h.AdminListSignups)
 	return r
 }
@@ -681,6 +682,23 @@ func (h *Handler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.svc.UpdateRaceStatus(r.Context(), raceID, req.Status); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to update status")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PUT /api/v1/admin/races/:raceID/certificate-bg — 設定完賽證明底圖（空=用預設）
+func (h *Handler) AdminSetCertificateBg(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := h.svc.SetCertificateBg(r.Context(), raceID, strings.TrimSpace(req.URL)); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to set certificate bg")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
