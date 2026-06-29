@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import type { ExpBreakdown, ExpLevelRow } from '@/lib/api'
+import * as sfx from '@/lib/sfx'
 
 type Step = {
   level: number
@@ -65,6 +66,7 @@ export default function ExpSettlementModal({ breakdown, raceTitle, onClose }: { 
   const [barPct, setBarPct] = useState(steps[0]?.fromPct ?? 0)
   const [flash, setFlash] = useState(false)
   const [canClose, setCanClose] = useState(false)
+  const [muted, setMuted] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -97,24 +99,34 @@ export default function ExpSettlementModal({ breakdown, raceTitle, onClose }: { 
         const delta = steps[si].toPct - steps[si].fromPct
         // 連續升級時略加速，維持速度感；最後一段稍慢留住結果
         const accel = steps[si].willLevelUp ? Math.max(0.55, 1 - si * 0.06) : 1
-        await animate(steps[si].fromPct, steps[si].toPct, (230 + delta * 340) * accel, setBarPct)
+        sfx.startFill() // bar 開始增加 → 上升音效
+        await animate(steps[si].fromPct, steps[si].toPct, (230 + delta * 340) * accel, (v) => { setBarPct(v); sfx.updateFill(v) })
         setBarPct(steps[si].toPct)
-        if (steps[si].willLevelUp) { setFlash(true); await sleep(Math.max(300, 400 - si * 12)); setFlash(false) }
+        sfx.stopFill()
+        if (steps[si].willLevelUp) { sfx.playDing(); setFlash(true); await sleep(Math.max(300, 400 - si * 12)); setFlash(false) } // 到 100% → 噹
       }
       if (cancelled) return
       setPhase('done'); setCanClose(true)
     })()
-    return () => { cancelled = true }
+    return () => { cancelled = true; sfx.stopFill() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => { sfx.unlockAudio() }, [])
+  useEffect(() => { sfx.setMuted(muted) }, [muted])
 
   const step = steps[stepIdx]
   const finalLevel = levels.length ? [...levels].sort((a, b) => a.exp_required - b.exp_required).filter((l) => exp_after >= l.exp_required).pop() : undefined
 
   return (
-    <div style={overlay}>
+    <div style={overlay} onPointerDown={() => sfx.unlockAudio()}>
       <style>{KEYFRAMES}</style>
       <div style={glow} />
+      <button
+        onClick={() => setMuted((m) => !m)}
+        title={muted ? '開啟音效' : '靜音'}
+        style={muteBtn}
+      >{muted ? '🔇' : '🔊'}</button>
 
       <div style={panel}>
         {/* 副本完成橫幅 */}
@@ -196,6 +208,7 @@ const barInner: React.CSSProperties = { height: '100%', borderRadius: 999, backg
 const shine: React.CSSProperties = { position: 'absolute', inset: 0, background: 'linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent)', animation: 'shine 1.1s linear infinite' }
 const levelUpBurst: React.CSSProperties = { position: 'absolute', left: 0, right: 0, top: -2, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }
 const closeBtn: React.CSSProperties = { marginTop: 22, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#1a1200', fontWeight: 800, border: 'none', borderRadius: 12, padding: '13px 20px', fontSize: 15 }
+const muteBtn: React.CSSProperties = { position: 'absolute', top: 16, right: 18, zIndex: 2, background: 'rgba(255,255,255,.08)', border: '1px solid var(--line-2)', borderRadius: 999, width: 38, height: 38, fontSize: 16, cursor: 'pointer', color: '#fff' }
 
 const KEYFRAMES = `
 @keyframes slamIn { 0% { transform: scale(2.2); opacity: 0; filter: blur(6px) } 60% { opacity: 1 } 100% { transform: scale(1); opacity: 1; filter: blur(0) } }
