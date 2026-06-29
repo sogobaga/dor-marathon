@@ -214,14 +214,18 @@ export default function RaceForm({
     }))
   )
 
-  // 賽事任務（三層 scope）：group 範圍以「目前 groups 陣列索引」關聯（group_index）
+  // 賽事任務（scope）：race_collective=全體；group scope 的 group_index 為「目前 groups 索引」，
+  // group_index=null 代表「所有分組共同」（後端 group_id NULL）。
   const [tasks, setTasks] = useState<RaceTask[]>(
     (initial?.tasks ?? [])
       .map((t) => ({
         ...t,
-        group_index: t.scope === 'race_collective' ? null : officialGroups.findIndex((g) => g.id === t.group_id),
+        group_index:
+          t.scope === 'race_collective' ? null
+            : t.group_id ? officialGroups.findIndex((g) => g.id === t.group_id)
+            : null, // group scope 且無 group_id → 所有分組共同
       }))
-      .filter((t) => t.scope === 'race_collective' || (t.group_index ?? -1) >= 0)
+      .filter((t) => t.scope === 'race_collective' || t.group_index === null || (t.group_index ?? -1) >= 0)
   )
   const [taskModules, setTaskModules] = useState<TaskModule[]>([])
 
@@ -273,10 +277,15 @@ export default function RaceForm({
   }
 
   // --- 賽事任務 helpers（tasks 為扁平陣列，靠 scope + group_index 分區）---
+  // race_collective：忽略 gi。group scope：gi=null→所有分組共同(group_index null)；gi=number→指定分組。
   function sectionTasks(scope: TaskScope, gi: number | null) {
     return tasks
       .map((t, idx) => ({ t, idx }))
-      .filter(({ t }) => t.scope === scope && (scope === 'race_collective' || t.group_index === gi))
+      .filter(({ t }) => {
+        if (t.scope !== scope) return false
+        if (scope === 'race_collective') return true
+        return gi === null ? t.group_index == null : t.group_index === gi
+      })
   }
   function newTask(scope: TaskScope, gi: number | null): RaceTask {
     return {
@@ -853,15 +862,20 @@ export default function RaceForm({
 
             {taskSection('race_collective', null, '賽事集體任務（全部參賽者）', '全體參賽者數值「加總」達標即完成，例：全員合計爬升 8848m。')}
 
+            <div style={{ fontWeight: 800, fontSize: 14, marginTop: 6 }}>所有分組共同任務</div>
+            <div style={hint}>套用到「每一個分組」的統一目標，設一次即可（前台所有分組都會顯示）。例：所有組都需完成總里程 200K。</div>
+            {taskSection('group_team', null, '團體任務（每組加總）', '套用到所有分組：各分組成員加總達標。')}
+            {taskSection('group_individual', null, '個人任務（每人各自）', '套用到所有分組：每位成員各自達標。')}
+
             {groups.filter((g) => g.name.trim()).map((g, gi) => (
               <div key={g.id ?? `g-${gi}`} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ fontWeight: 800, fontSize: 14, marginTop: 6 }}>分組：{g.name || `分組 ${gi + 1}`}</div>
-                {taskSection('group_team', gi, '團體任務（全組加總）', '該分組所有成員數值加總達標即完成。')}
-                {taskSection('group_individual', gi, '個人任務（每人各自）', '該分組每位成員都需各自達標。')}
+                <div style={{ fontWeight: 800, fontSize: 14, marginTop: 6 }}>分組專屬：{g.name || `分組 ${gi + 1}`}</div>
+                {taskSection('group_team', gi, '本組團體任務（全組加總）', '僅此分組：成員加總達標。例：本組需維持團體配速。')}
+                {taskSection('group_individual', gi, '本組個人任務（每人各自）', '僅此分組：每位成員各自達標。例：A 組配速 7:00–8:00、B 組 5:00–6:00。')}
               </div>
             ))}
             {groups.filter((g) => g.name.trim()).length === 0 && (
-              <div style={{ fontSize: 12.5, color: 'var(--tx-faint)' }}>請先到「分組」分頁建立分組，才能設定分組團體/個人任務。</div>
+              <div style={{ fontSize: 12.5, color: 'var(--tx-faint)' }}>請先到「分組」分頁建立分組，才能設定分組專屬任務。</div>
             )}
           </div>
         )}

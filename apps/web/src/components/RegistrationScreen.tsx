@@ -79,6 +79,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [groupKey, setGroupKey] = useState('') // 加入需鑰匙的分組時輸入
   const [canCreate, setCanCreate] = useState(false) // 此會員是否獲准建立跑團分組
   const [showAllGroups, setShowAllGroups] = useState(false) // 分組過多時的「全部分組」選單
+  const [previewId, setPreviewId] = useState<string | null>(null) // 選單內展開預覽任務的分組
   const [qty, setQty] = useState<Record<string, number>>({})
 
   // 自建跑團分組表單
@@ -135,18 +136,41 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     [detail, groupId]
   )
 
-  // 賽事任務分層
+  // 賽事任務分層：集體（全體合計）/ 所有分組共同（group scope 無 group_id）/ 各分組專屬
   const collectiveTasks = useMemo(
     () => (detail?.tasks ?? []).filter((t) => t.scope === 'race_collective'),
     [detail]
   )
-  const selectedGroupTasks = useMemo(() => {
+  const allGroupsTasks = useMemo(() => {
     const all = detail?.tasks ?? []
     return {
-      team: all.filter((t) => t.scope === 'group_team' && t.group_id === groupId),
-      individual: all.filter((t) => t.scope === 'group_individual' && t.group_id === groupId),
+      team: all.filter((t) => t.scope === 'group_team' && !t.group_id),
+      individual: all.filter((t) => t.scope === 'group_individual' && !t.group_id),
     }
-  }, [detail, groupId])
+  }, [detail])
+  const hasAllGroupsTasks = allGroupsTasks.team.length + allGroupsTasks.individual.length > 0
+  function groupSpecific(gid: string) {
+    const all = detail?.tasks ?? []
+    return {
+      team: all.filter((t) => t.scope === 'group_team' && t.group_id === gid),
+      individual: all.filter((t) => t.scope === 'group_individual' && t.group_id === gid),
+    }
+  }
+  // 某分組的專屬任務內嵌顯示（accordion / 選單 / 摘要共用）
+  function renderGroupSpecific(gid: string) {
+    const s = groupSpecific(gid)
+    if (s.team.length === 0 && s.individual.length === 0) {
+      return hasAllGroupsTasks
+        ? <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', padding: '6px 2px' }}>本組無專屬任務（僅共同任務）</div>
+        : null
+    }
+    return (
+      <div style={{ paddingLeft: 2 }}>
+        <TaskList label="本組團體任務（全組加總達標）" items={s.team} />
+        <TaskList label="本組個人任務（每人各自達成）" items={s.individual} />
+      </div>
+    )
+  }
 
   // 必填欄位：賽事設定 + 所選分組限制
   const requiredSet = useMemo(() => {
@@ -350,6 +374,15 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             {/* 分組 */}
             <Section title="選擇分組">
+              {/* 所有分組共同任務（統一目標，顯示一次） */}
+              {hasAllGroupsTasks && (
+                <div style={{ background: 'rgba(45,212,150,.06)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px', marginBottom: 10 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--fug)' }}>所有分組共同任務</div>
+                  <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 2 }}>不論加入哪一組都需達成</div>
+                  <TaskList label="團體任務（全組加總達標）" items={allGroupsTasks.team} />
+                  <TaskList label="個人任務（每人各自達成）" items={allGroupsTasks.individual} />
+                </div>
+              )}
               {isBattle ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div style={hint}>分組對抗模式：報名後隨機分組，賽事當天才公布。以下為對抗分組：</div>
@@ -363,10 +396,17 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {!manyGroups ? (
-                    // 分組 ≤ 8：直接內嵌全部
-                    detail.groups.map((g) => groupCard(g, () => { setGroupId(g.id!); setGroupKey('') }))
+                    // 分組 ≤ 8：直接內嵌全部；點選後就地展開該組專屬任務（accordion）
+                    detail.groups.map((g) => (
+                      <div key={g.id}>
+                        {groupCard(g, () => { setGroupId(g.id!); setGroupKey('') })}
+                        {groupId === g.id && (
+                          <div style={{ margin: '6px 0 2px' }}>{renderGroupSpecific(g.id!)}</div>
+                        )}
+                      </div>
+                    ))
                   ) : (
-                    // 分組 > 8：顯示已選 + 「全部分組」按鈕
+                    // 分組 > 8：顯示已選 + 「全部分組」按鈕；已選組就地展開專屬任務
                     <>
                       <div style={{ ...groupRow, cursor: 'default', alignItems: 'flex-start' }}>
                         <div>
@@ -384,6 +424,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                           {selectedGroup ? '更換分組' : '全部分組'}
                         </button>
                       </div>
+                      {selectedGroup && <div style={{ margin: '2px 0' }}>{renderGroupSpecific(selectedGroup.id!)}</div>}
                       <button onClick={() => setShowAllGroups(true)} style={ghostBtn}>
                         全部分組（共 {detail.groups.length} 組）
                       </button>
@@ -431,14 +472,6 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                 </div>
               )}
             </Section>
-
-            {/* 所選分組的任務目標 */}
-            {!isBattle && selectedGroup && (selectedGroupTasks.team.length > 0 || selectedGroupTasks.individual.length > 0) && (
-              <Section title={`「${selectedGroup.name}」任務目標`}>
-                <TaskList label="團體任務（全組加總達標）" items={selectedGroupTasks.team} />
-                <TaskList label="個人任務（每人各自達成）" items={selectedGroupTasks.individual} />
-              </Section>
-            )}
 
             {/* 賽事集體任務（全體參賽者） */}
             {collectiveTasks.length > 0 && (
@@ -533,16 +566,39 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         {err && (loading || !detail) && <Hint color="var(--hunt)">{err}</Hint>}
       </div>
 
-      {/* 全部分組 選單（分組過多時） */}
+      {/* 全部分組 選單（分組過多時）：可逐組展開比較任務目標再選用 */}
       {showAllGroups && detail && (
-        <div style={pickerOverlay} onClick={() => setShowAllGroups(false)}>
+        <div style={pickerOverlay} onClick={() => { setShowAllGroups(false); setPreviewId(null) }}>
           <div style={pickerSheet} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>全部分組（{detail.groups.length}）</div>
-              <button onClick={() => setShowAllGroups(false)} style={{ ...ghostBtn, padding: '6px 12px' }}>關閉</button>
+              <button onClick={() => { setShowAllGroups(false); setPreviewId(null) }} style={{ ...ghostBtn, padding: '6px 12px' }}>關閉</button>
             </div>
+            {hasAllGroupsTasks && (
+              <div style={{ background: 'rgba(45,212,150,.06)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px', marginBottom: 10 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--fug)' }}>所有分組共同任務</div>
+                <TaskList label="團體任務（全組加總）" items={allGroupsTasks.team} />
+                <TaskList label="個人任務（每人達成）" items={allGroupsTasks.individual} />
+              </div>
+            )}
+            <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 6 }}>點分組可展開查看該組專屬任務，再「選用此分組」。</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
-              {detail.groups.map((g) => groupCard(g, () => { setGroupId(g.id!); setGroupKey(''); setShowAllGroups(false) }))}
+              {detail.groups.map((g) => (
+                <div key={g.id}>
+                  {groupCard(g, () => setPreviewId(previewId === g.id ? null : g.id!))}
+                  {previewId === g.id && (
+                    <div style={{ margin: '6px 0 2px' }}>
+                      {renderGroupSpecific(g.id!)}
+                      <button
+                        onClick={() => { setGroupId(g.id!); setGroupKey(''); setShowAllGroups(false); setPreviewId(null) }}
+                        style={{ ...primaryBtn, marginTop: 8 }}
+                      >
+                        選用此分組
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </div>
