@@ -342,15 +342,17 @@ type SyncResult struct {
 	Total      int `json:"total"`
 }
 
-// syncRecent 拉近期活動並匯入，回傳統計
-func (h *StravaHandler) syncRecent(ctx context.Context, conn *Connection, perPage int) (SyncResult, error) {
+// syncRecent 拉「最近 sinceDays 日」的活動並匯入，回傳統計。
+// 用 Strava 的 after（epoch 秒）依日期過濾；per_page=100（30 日內通常足夠，未來量大再分頁）。
+func (h *StravaHandler) syncRecent(ctx context.Context, conn *Connection, sinceDays int) (SyncResult, error) {
 	var res SyncResult
 	access, err := h.tokenForUser(ctx, conn)
 	if err != nil {
 		return res, err
 	}
+	after := time.Now().AddDate(0, 0, -sinceDays).Unix()
 	var acts []stravaActivity
-	if err := h.getJSON(ctx, access, fmt.Sprintf("/athlete/activities?per_page=%d", perPage), &acts); err != nil {
+	if err := h.getJSON(ctx, access, fmt.Sprintf("/athlete/activities?after=%d&per_page=100", after), &acts); err != nil {
 		return res, err
 	}
 	for i := range acts {

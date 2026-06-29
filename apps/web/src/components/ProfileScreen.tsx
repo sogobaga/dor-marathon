@@ -272,7 +272,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             <div style={{ marginTop: 12 }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 8 }}>已同步活動</div>
               {!activities && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>載入中…</div>}
-              {activities && activities.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚無活動，按「重新同步」匯入近期跑步。</div>}
+              {activities && activities.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚無活動，按「重新同步」匯入近 30 日跑步。</div>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {activities?.map((a) => (
                   <div key={a.id} style={{ ...recCard, padding: 12, opacity: a.flagged ? 0.6 : 1 }}>
