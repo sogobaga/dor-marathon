@@ -1,7 +1,7 @@
 'use client'
 
 import useSWR from 'swr'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { racesApi, type Race, type BrochureBlock } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 
@@ -48,7 +48,8 @@ export default function BrochureScreen({
 }) {
   const token = getUserToken() || undefined
   const { data, error, isLoading } = useSWR(['brochure', race.id], () => racesApi.detail(race.id, token))
-  const [lightbox, setLightbox] = useState<string | null>(null)
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null)
+  const zoom = (images: string[], index: number) => setLightbox({ images, index })
 
   const detail = data?.race
   const blocks = detail?.brochure ?? []
@@ -74,7 +75,7 @@ export default function BrochureScreen({
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
               {blocks.map((b: BrochureBlock, i) => (
-                <Block key={b.id ?? i} block={b} onZoom={setLightbox} />
+                <Block key={b.id ?? i} block={b} onZoom={zoom} />
               ))}
             </div>
 
@@ -85,18 +86,15 @@ export default function BrochureScreen({
         )}
       </div>
 
-      {/* 圖片燈箱 */}
+      {/* 圖片燈箱（支援左右切換同組圖） */}
       {lightbox && (
-        <div style={lightboxStyle} onClick={() => setLightbox(null)}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={lightbox} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-        </div>
+        <Lightbox images={lightbox.images} index={lightbox.index} onClose={() => setLightbox(null)} />
       )}
     </div>
   )
 }
 
-function Block({ block, onZoom }: { block: BrochureBlock; onZoom: (url: string) => void }) {
+function Block({ block, onZoom }: { block: BrochureBlock; onZoom: (images: string[], index: number) => void }) {
   if (block.block_type === 'text') {
     return <div style={{ fontSize: 14.5, lineHeight: 1.7, color: 'var(--tx)' }} dangerouslySetInnerHTML={{ __html: block.content }} />
   }
@@ -109,7 +107,7 @@ function Block({ block, onZoom }: { block: BrochureBlock; onZoom: (url: string) 
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={imgs[0]} alt={block.caption ?? ''}
-            onClick={() => onZoom(imgs[0])}
+            onClick={() => onZoom(imgs, 0)}
             style={{ width: '100%', borderRadius: 12, cursor: 'zoom-in', display: 'block' }}
           />
         ) : (
@@ -143,7 +141,64 @@ function Block({ block, onZoom }: { block: BrochureBlock; onZoom: (url: string) 
   return null
 }
 
-function Carousel({ images, onZoom }: { images: string[]; onZoom: (url: string) => void }) {
+function Lightbox({ images, index, onClose }: { images: string[]; index: number; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [idx, setIdx] = useState(index)
+
+  useEffect(() => {
+    const el = ref.current
+    if (el) el.scrollLeft = index * el.clientWidth
+  }, [index])
+
+  function onScroll() {
+    const el = ref.current
+    if (!el) return
+    const i = Math.round(el.scrollLeft / el.clientWidth)
+    if (i !== idx) setIdx(i)
+  }
+  function go(e: React.MouseEvent, i: number) {
+    e.stopPropagation()
+    const el = ref.current
+    if (!el) return
+    const next = Math.max(0, Math.min(images.length - 1, i))
+    el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
+  }
+
+  return (
+    <div style={lightboxStyle} onClick={onClose}>
+      <button onClick={onClose} style={closeBtn} aria-label="關閉">✕</button>
+
+      <div
+        ref={ref} onScroll={onScroll}
+        style={{ display: 'flex', width: '100%', height: '100%', overflowX: 'auto', scrollSnapType: 'x mandatory', scrollbarWidth: 'none' }}
+      >
+        {images.map((src, i) => (
+          <div key={i} style={{ flex: '0 0 100%', height: '100%', scrollSnapAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+          </div>
+        ))}
+      </div>
+
+      {images.length > 1 && (
+        <>
+          {idx > 0 && <button onClick={(e) => go(e, idx - 1)} style={{ ...arrowBtn, left: 12, width: 42, height: 42, fontSize: 26 }} aria-label="上一張">‹</button>}
+          {idx < images.length - 1 && <button onClick={(e) => go(e, idx + 1)} style={{ ...arrowBtn, right: 12, width: 42, height: 42, fontSize: 26 }} aria-label="下一張">›</button>}
+          <div style={{ position: 'absolute', top: 16, left: 16, color: '#fff', fontSize: 13, background: 'rgba(0,0,0,.5)', padding: '3px 10px', borderRadius: 999 }}>
+            {idx + 1} / {images.length}
+          </div>
+          <div style={{ position: 'absolute', bottom: 22, left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: 8 }}>
+            {images.map((_, i) => (
+              <span key={i} style={{ width: 8, height: 8, borderRadius: 999, background: i === idx ? '#fff' : 'rgba(255,255,255,.4)' }} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function Carousel({ images, onZoom }: { images: string[]; onZoom: (images: string[], index: number) => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const [idx, setIdx] = useState(0)
 
@@ -174,7 +229,7 @@ function Carousel({ images, onZoom }: { images: string[]; onZoom: (url: string) 
           // eslint-disable-next-line @next/next/no-img-element
           <img
             key={i} src={src} alt=""
-            onClick={() => onZoom(src)}
+            onClick={() => onZoom(images, i)}
             style={{ flex: '0 0 100%', width: '100%', scrollSnapAlign: 'center', cursor: 'zoom-in', display: 'block', objectFit: 'cover' }}
           />
         ))}
@@ -224,5 +279,10 @@ const registerBtn: React.CSSProperties = {
 }
 const lightboxStyle: React.CSSProperties = {
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,.92)', zIndex: 90,
-  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, cursor: 'zoom-out',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out',
+}
+const closeBtn: React.CSSProperties = {
+  position: 'absolute', top: 14, right: 14, zIndex: 2, width: 38, height: 38, borderRadius: 999,
+  border: 'none', cursor: 'pointer', background: 'rgba(0,0,0,.5)', color: '#fff', fontSize: 18,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
 }
