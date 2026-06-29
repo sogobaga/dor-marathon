@@ -1,10 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { authApi } from '@/lib/api'
 
-// 暫時診斷用：顯示本機 session 狀態與 /auth/me、/auth/refresh 的實際結果。
+// 暫時診斷用：顯示 token 解碼、/auth/me 的狀態與 body、伺服器時間 vs token 效期。
 // 確認登入問題後即移除。
+function b64urlJson(seg: string): any {
+  try { return JSON.parse(atob(seg.replace(/-/g, '+').replace(/_/g, '/'))) } catch { return null }
+}
+
 export default function DebugSession() {
   const [info, setInfo] = useState<string>('檢查中…')
 
@@ -13,24 +16,28 @@ export default function DebugSession() {
     const r = localStorage.getItem('dor_user_refresh')
     const u = localStorage.getItem('dor_user')
     const out: Record<string, unknown> = {
-      hasToken: !!t, tokenLen: t?.length ?? 0,
-      hasRefresh: !!r, refreshLen: r?.length ?? 0,
-      hasUser: !!u,
+      hasToken: !!t, tokenLen: t?.length ?? 0, hasRefresh: !!r, hasUser: !!u,
     }
-    // access token 的 exp 與現在比較
     if (t) {
-      try {
-        const payload = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
-        out.accExp = payload.exp
-        out.now = Math.floor(Date.now() / 1000)
-        out.accExpired = payload.exp < Math.floor(Date.now() / 1000)
-      } catch { out.accDecode = 'fail' }
+      const parts = t.split('.')
+      out.header = b64urlJson(parts[1] ? parts[0] : '')
+      const p = b64urlJson(parts[1] || '')
+      if (p) { out.uid = p.uid; out.role = p.role; out.iat = p.iat; out.exp = p.exp }
+      out.clientNow = Math.floor(Date.now() / 1000)
     }
     ;(async () => {
-      // 只做唯讀的 me 探測；refresh 改由 validateSession 走（麵包屑會記錄），
-      // 避免一次性輪替下兩邊互搶 refresh token。
       if (t) {
-        try { await authApi.me(t); out.me = 200 } catch (e: any) { out.me = e?.status ?? `ERR:${e?.message}` }
+        try {
+          const res = await fetch('/api/v1/auth/me', { headers: { Authorization: `Bearer ${t}` } })
+          out.me = res.status
+          out.meBody = (await res.text()).slice(0, 120)
+          const d = res.headers.get('date')
+          if (d) {
+            const serverNow = Math.floor(new Date(d).getTime() / 1000)
+            out.serverNow = serverNow
+            if (out.exp) out.serverVsExp = (out.exp as number) - serverNow // 負=伺服器認為已過期
+          }
+        } catch (e: any) { out.me = `ERR:${e?.message}` }
       }
       let log: string[] = []
       try { log = JSON.parse(localStorage.getItem('dor_diag') || '[]') } catch { /* ignore */ }
