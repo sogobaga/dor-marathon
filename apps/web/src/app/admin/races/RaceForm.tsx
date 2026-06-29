@@ -136,14 +136,15 @@ export default function RaceForm({
   const [brochure, setBrochure] = useState<BrochureBlock[]>(initial?.brochure ?? [])
   const [uploadingKey, setUploadingKey] = useState<string | null>(null)
 
-  // 圖片區塊 content 存「圖片網址陣列」JSON；相容舊的單一網址字串
+  // 圖片區塊 content 存「圖片網址陣列」JSON；相容舊的單一網址字串。
+  // 編輯時保留空白格（讓使用者剛新增的空格不會被吃掉）；送出/驗證時才濾空。
   function imagesOf(content: string): string[] {
     const c = (content ?? '').trim()
     if (!c) return []
     if (c.startsWith('[')) {
       try {
         const a = JSON.parse(c)
-        return Array.isArray(a) ? a.filter(Boolean) : []
+        return Array.isArray(a) ? a.map((x) => String(x ?? '')) : []
       } catch {
         return []
       }
@@ -151,7 +152,7 @@ export default function RaceForm({
     return [c]
   }
   function blockHasContent(b: { block_type: string; content: string }): boolean {
-    return b.block_type === 'image' ? imagesOf(b.content).length > 0 : !!b.content.trim()
+    return b.block_type === 'image' ? imagesOf(b.content).some((x) => x.trim()) : !!b.content.trim()
   }
   function setBlockImages(i: number, imgs: string[]) {
     setBrochure((bs) => bs.map((x, idx) => (idx === i ? { ...x, content: JSON.stringify(imgs) } : x)))
@@ -270,7 +271,7 @@ export default function RaceForm({
         .filter(blockHasContent)
         .map((b, idx) => ({
           ...b,
-          content: b.block_type === 'image' ? JSON.stringify(imagesOf(b.content)) : b.content.trim(),
+          content: b.block_type === 'image' ? JSON.stringify(imagesOf(b.content).map((x) => x.trim()).filter(Boolean)) : b.content.trim(),
           display_order: idx,
         })),
       entry_fee: Math.round(parseFloat(entryFeeNtd || '0') * 100),
