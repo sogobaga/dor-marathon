@@ -39,7 +39,9 @@ export default function DebugSession() {
           out.refresh = 'OK'
         } catch (e: any) { out.refresh = e?.status ?? `ERR:${e?.message}` }
       }
-      setInfo(JSON.stringify(out, null, 1))
+      let log: string[] = []
+      try { log = JSON.parse(localStorage.getItem('dor_diag') || '[]') } catch { /* ignore */ }
+      setInfo(JSON.stringify(out, null, 1) + '\n\nLOG:\n' + log.join('\n'))
     })()
   }, [])
 

@@ -50,7 +50,7 @@ export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => v
             )}
           </div>
           {user && (
-            <button onClick={(e) => { e.stopPropagation(); clearUserSession() }} style={logoutBtn}>登出</button>
+            <button onClick={(e) => { e.stopPropagation(); clearUserSession('user-click-memberpanel') }} style={logoutBtn}>登出</button>
           )}
         </div>
 

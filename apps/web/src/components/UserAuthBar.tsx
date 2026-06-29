@@ -11,7 +11,7 @@ export default function UserAuthBar({ onProfile }: { onProfile?: () => void }) {
   const [showLogin, setShowLogin] = useState(false)
 
   function logout() {
-    clearUserSession() // 觸發 useUser 更新
+    clearUserSession('user-click-authbar') // 觸發 useUser 更新
   }
 
   // 已登入：顯示名稱 + 登出

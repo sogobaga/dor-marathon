@@ -13,6 +13,17 @@ function emitAuthChange() {
   if (typeof window !== 'undefined') window.dispatchEvent(new Event(AUTH_EVENT))
 }
 
+// 暫時診斷：把 session 事件寫進不會被 clearUserSession 清掉的 key，跨刷新保留
+export function diag(msg: string) {
+  if (typeof window === 'undefined') return
+  try {
+    const arr: string[] = JSON.parse(localStorage.getItem('dor_diag') || '[]')
+    arr.push(new Date().toISOString().slice(11, 19) + ' ' + msg)
+    while (arr.length > 25) arr.shift()
+    localStorage.setItem('dor_diag', JSON.stringify(arr))
+  } catch { /* ignore */ }
+}
+
 export function getUserToken(): string | null {
   if (typeof window === 'undefined') return null
   return localStorage.getItem(TOKEN_KEY)
@@ -33,10 +44,14 @@ export function setUserSession(accessToken: string, refreshToken: string, user: 
   localStorage.setItem(TOKEN_KEY, accessToken)
   localStorage.setItem(REFRESH_KEY, refreshToken)
   localStorage.setItem(USER_KEY, JSON.stringify(user))
+  diag(`setUserSession t=${accessToken?.length} r=${refreshToken?.length}`)
+  // 立刻回讀，確認真的寫進去了（Safari 隱私模式 setItem 可能無效）
+  diag(`readback t=${!!localStorage.getItem(TOKEN_KEY)} r=${!!localStorage.getItem(REFRESH_KEY)}`)
   emitAuthChange()
 }
 
-export function clearUserSession() {
+export function clearUserSession(reason = 'unknown') {
+  diag(`clearUserSession reason=${reason}`)
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(REFRESH_KEY)
   localStorage.removeItem(USER_KEY)
@@ -87,15 +102,17 @@ export async function withUserAuth<T>(fn: (token: string) => Promise<T>): Promis
     return await fn(token)
   } catch (e: any) {
     if (e?.status === 401) {
+      diag('withUserAuth got 401 → refreshing')
       let fresh: string | null = null
       try {
         fresh = await refreshUserToken()
-      } catch {
+      } catch (re: any) {
         // refresh 遇到暫時性錯誤（網路/5xx）→ 保留 session、丟回原錯誤，不要登出
+        diag(`refresh transient err=${re?.status ?? re?.message} (keep session)`)
         throw e
       }
-      if (fresh) return await fn(fresh)
-      clearUserSession() // refresh 明確失敗（無/無效 refresh token）才登出
+      if (fresh) { diag('refresh OK → retry'); return await fn(fresh) }
+      clearUserSession('refresh-null') // refresh 明確失敗（無/無效 refresh token）才登出
       throw new SessionExpiredError()
     }
     throw e
@@ -105,16 +122,19 @@ export async function withUserAuth<T>(fn: (token: string) => Promise<T>): Promis
 // 開啟 app 時主動驗證 session：有 token 就打 /auth/me（401 會自動 refresh 重試），
 // 成功 = 維持登入（並順便更新使用者資料）；失敗 = session 已被清除（一開始就顯示未登入）。
 export async function validateSession(): Promise<boolean> {
+  diag(`validateSession start hasToken=${!!getUserToken()} hasRefresh=${!!(typeof window !== 'undefined' && localStorage.getItem(REFRESH_KEY))}`)
   if (!getUserToken()) return false
   try {
     const user = await withUserAuth((t) => authApi.me(t))
+    diag('validateSession me OK')
     // 更新快取的使用者資料（名稱/頭像可能有變）
     if (typeof window !== 'undefined') {
       localStorage.setItem(USER_KEY, JSON.stringify(user))
       emitAuthChange()
     }
     return true
-  } catch {
+  } catch (e: any) {
+    diag(`validateSession FAIL ${e?.name ?? e?.message}`)
     return false // withUserAuth 在 refresh 失敗時已清除 session
   }
 }
