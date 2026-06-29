@@ -42,7 +42,7 @@ export default function UserAuthBar({ onProfile }: { onProfile?: () => void }) {
 }
 
 // 登入彈窗：預設提供 Google 登入，未來可在此擴充其他第三方
-function LoginModal({ onClose }: { onClose: () => void }) {
+export function LoginModal({ onClose }: { onClose: () => void }) {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
 

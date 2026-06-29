@@ -105,7 +105,9 @@ type DashboardInfo struct {
 	IsVIP        bool       `json:"is_vip"`
 	VIPExpiresAt *time.Time `json:"vip_expires_at,omitempty"`
 	TotalKm      float64    `json:"total_km"`
-	RaceCount    int        `json:"race_count"`
+	RaceCount    int        `json:"race_count"`     // 報名場數（未取消）
+	OngoingCount   int      `json:"ongoing_count"`   // 進行中場數
+	CompletedCount int      `json:"completed_count"` // 已完成場數
 	FollowingCount int      `json:"following_count"`
 	FollowerCount  int      `json:"follower_count"`
 }
@@ -125,9 +127,10 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	var d DashboardInfo
 	d.AccountCode = code
 	if err := h.db.QueryRow(r.Context(), `
-		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.vip_expires_at, u.total_km,
+		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.vip_expires_at,
+		       COALESCE((SELECT SUM(distance_km) FROM activities WHERE user_id=u.id AND NOT flagged),0),
 		       COALESCE(p.nickname,''),
-		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id)
+		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id AND rg.status<>'cancelled')
 		FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
 		WHERE u.id=$1`, userID).
 		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.VIPExpiresAt, &d.TotalKm, &d.Nickname, &d.RaceCount); err != nil {
@@ -143,6 +146,21 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	d.IsVIP = d.VIPExpiresAt != nil && d.VIPExpiresAt.After(time.Now())
 	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE follower_id=$1`, userID).Scan(&d.FollowingCount)
 	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE followee_id=$1`, userID).Scan(&d.FollowerCount)
+	// 進行中（賽事期間內）
+	h.db.QueryRow(r.Context(), `
+		SELECT COUNT(*) FROM registrations rg JOIN races r ON r.id=rg.race_id
+		WHERE rg.user_id=$1 AND rg.status<>'cancelled' AND NOW() BETWEEN r.start_date AND r.end_date`, userID).Scan(&d.OngoingCount)
+	// 已完成（累積里程達分組目標）
+	h.db.QueryRow(r.Context(), `
+		SELECT COUNT(*) FROM (
+			SELECT reg.race_id
+			FROM registrations reg
+			JOIN race_groups g ON g.id=reg.group_id AND g.target_distance_km > 0
+			LEFT JOIN activities a ON a.user_id=reg.user_id AND a.race_id=reg.race_id AND NOT a.flagged
+			WHERE reg.user_id=$1 AND reg.status<>'cancelled'
+			GROUP BY reg.race_id, g.target_distance_km
+			HAVING COALESCE(SUM(a.distance_km),0) >= g.target_distance_km
+		) t`, userID).Scan(&d.CompletedCount)
 	respondJSON(w, http.StatusOK, map[string]any{"dashboard": d})
 }
 

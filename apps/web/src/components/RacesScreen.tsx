@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { racesApi, type Race, type MyRegLite } from '@/lib/api'
 import { getUserToken, useUser } from '@/lib/userAuth'
-import UserAuthBar from './UserAuthBar'
+import MemberPanel from './MemberPanel'
 
 const DISPLAY_STATUS: Record<string, { label: string; color: string }> = {
   upcoming_reg: { label: '即將報名', color: 'var(--violet)' },
@@ -58,21 +58,19 @@ export default function RacesScreen({
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      {/* Header */}
-      <header style={{ padding: '52px 22px 16px', flexShrink: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <div style={{ fontSize: 11, letterSpacing: '.18em', color: 'var(--fug)', fontWeight: 600 }}>
-              DOR · 雲端馬拉松
-            </div>
-            <h1 style={{ margin: '6px 0 0', fontSize: 26, fontWeight: 800, color: 'var(--tx)' }}>賽事列表</h1>
-          </div>
-          <UserAuthBar onProfile={onOpenProfile} />
+      {/* Header（精簡品牌列） */}
+      <header style={{ padding: '52px 22px 10px', flexShrink: 0 }}>
+        <div style={{ fontSize: 11, letterSpacing: '.18em', color: 'var(--fug)', fontWeight: 600 }}>
+          DOR · 雲端馬拉松
         </div>
       </header>
 
       {/* Body */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 18px 28px' }}>
+        {/* 會員資訊面板 */}
+        <MemberPanel onOpenProfile={onOpenProfile} />
+
+        <h1 style={{ margin: '22px 0 12px', fontSize: 20, fontWeight: 800, color: 'var(--tx)' }}>賽事列表</h1>
         {isLoading && <Hint>載入中…</Hint>}
         {error && <Hint color="var(--hunt)">無法載入賽事：{String(error.message || error)}</Hint>}
         {data && data.races.length === 0 && <Hint>目前沒有賽事</Hint>}

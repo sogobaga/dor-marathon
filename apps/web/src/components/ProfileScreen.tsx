@@ -242,9 +242,8 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <header style={{ padding: '52px 22px 10px', flexShrink: 0 }}>
+      <header style={{ padding: '52px 22px 8px', flexShrink: 0 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
-        <h1 style={{ margin: '10px 0 0', fontSize: 23, fontWeight: 800, color: 'var(--tx)' }}>會員中心</h1>
       </header>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 18px 28px' }}>

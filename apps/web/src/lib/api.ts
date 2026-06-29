@@ -513,6 +513,8 @@ export interface DashboardInfo {
   vip_expires_at?: string
   total_km: number
   race_count: number
+  ongoing_count: number
+  completed_count: number
   following_count: number
   follower_count: number
 }
