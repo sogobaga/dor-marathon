@@ -322,14 +322,12 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             <Field label="暱稱"><input style={inp} value={p.nickname} onChange={(e) => set('nickname', e.target.value)} /></Field>
             <Field label="手機"><input style={inp} value={p.phone} onChange={(e) => set('phone', e.target.value)} /></Field>
             <Field label="地址"><input style={inp} value={p.address} onChange={(e) => set('address', e.target.value)} /></Field>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <Field label="生日"><input style={inp} type="date" value={p.birthday} onChange={(e) => set('birthday', e.target.value)} /></Field>
-              <Field label="性別">
-                <select style={inp} value={p.gender} onChange={(e) => set('gender', e.target.value as Profile['gender'])}>
-                  {GENDERS.map((g) => <option key={g.v} value={g.v}>{g.t}</option>)}
-                </select>
-              </Field>
-            </div>
+            <Field label="生日"><input style={inp} type="date" value={p.birthday} onChange={(e) => set('birthday', e.target.value)} /></Field>
+            <Field label="性別">
+              <select style={inp} value={p.gender} onChange={(e) => set('gender', e.target.value as Profile['gender'])}>
+                {GENDERS.map((g) => <option key={g.v} value={g.v}>{g.t}</option>)}
+              </select>
+            </Field>
             {saved && <div style={{ color: 'var(--fug)', fontSize: 13 }}>✓ 已儲存</div>}
             <button onClick={save} disabled={saving} style={primaryBtn}>{saving ? '儲存中…' : '儲存'}</button>
 
