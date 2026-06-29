@@ -76,14 +76,17 @@ export default function RaceDetailScreen({
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
               <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>我的分組</div>
               <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>
-                {registration.group_revealed ? '已加入分組' : '分組賽事當天公布'}
+                {standings?.my_group?.group_name || (registration.group_revealed ? '已加入分組' : '分組賽事當天公布')}
               </div>
-              {standings?.my_group && (
-                <div style={{ display: 'flex', gap: 16, marginTop: 6, fontSize: 12, color: 'var(--tx-dim)' }}>
-                  <span>{standings.my_group.group_name}</span>
-                  <span>累積榜 第 <b style={{ color: 'var(--fug)' }}>{standings.my_group.cumulative_rank}</b> 名</span>
-                  <span>{standings.my_group.total_km.toFixed(1)} K</span>
-                </div>
+              {started ? (
+                standings?.my_group && (
+                  <div style={{ display: 'flex', gap: 16, marginTop: 6, fontSize: 12, color: 'var(--tx-dim)' }}>
+                    <span>累積榜 第 <b style={{ color: 'var(--fug)' }}>{standings.my_group.cumulative_rank}</b> 名</span>
+                    <span>{standings.my_group.total_km.toFixed(1)} K</span>
+                  </div>
+                )
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 6 }}>賽事開始後顯示分組戰報</div>
               )}
             </div>
           )}
@@ -127,9 +130,11 @@ function ProgressBody({ race }: { race: Race }) {
   const prog = data?.progress
   if (isLoading || !prog) return <Hint>載入中…</Hint>
 
+  const tasks = prog.tasks ?? []
+  const my = prog.my ?? { total_km: 0, activities: 0, ascent_m: 0 }
   const groupsBy: { label: string; tasks: TaskProgress[] }[] = []
   for (const label of ['賽事集體', '本組團體', '本組個人']) {
-    const ts = prog.tasks.filter((t) => t.scope_label === label)
+    const ts = tasks.filter((t) => t.scope_label === label)
     if (ts.length) groupsBy.push({ label, tasks: ts })
   }
 
@@ -137,12 +142,12 @@ function ProgressBody({ race }: { race: Race }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* 我的統計 */}
       <div style={{ display: 'flex', gap: 10 }}>
-        <Stat label="我的里程" value={`${prog.my.total_km.toFixed(1)} K`} />
-        <Stat label="活動" value={`${prog.my.activities}`} />
-        <Stat label="爬升" value={`${Math.round(prog.my.ascent_m)} m`} />
+        <Stat label="我的里程" value={`${my.total_km.toFixed(1)} K`} />
+        <Stat label="活動" value={`${my.activities}`} />
+        <Stat label="爬升" value={`${Math.round(my.ascent_m)} m`} />
       </div>
 
-      {prog.tasks.length === 0 && <Hint>此賽事尚未設定任務目標</Hint>}
+      {tasks.length === 0 && <Hint>此賽事尚未設定任務目標</Hint>}
 
       {groupsBy.map((g) => (
         <div key={g.label}>

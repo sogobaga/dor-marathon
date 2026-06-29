@@ -215,7 +215,7 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 			mine = append(mine, a)
 		}
 	}
-	prog := &RaceProgress{HasGroup: myGroup != "", GroupName: groupName[myGroup]}
+	prog := &RaceProgress{HasGroup: myGroup != "", GroupName: groupName[myGroup], Tasks: []TaskProgress{}}
 	prog.Started = !time.Now().Before(race.StartDate)
 	for _, a := range mine {
 		prog.My.TotalKm += a.Dist
