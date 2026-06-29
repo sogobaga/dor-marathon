@@ -25,3 +25,7 @@ Thumbs.db
 
 # Claude Code 本機設定
 .claude/settings.local.json
+
+# build artifacts
+services/worker/worker.exe
+*.exe
