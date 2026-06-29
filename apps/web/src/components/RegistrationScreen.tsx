@@ -4,9 +4,11 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   racesApi,
   profileApi,
+  METRIC_BY_KEY,
   type Race,
   type RaceDetail,
   type RaceGroup,
+  type RaceTask,
   type RegistrationState,
   type ParticipantField,
 } from '@/lib/api'
@@ -20,6 +22,47 @@ const GENDER_OPTS = [{ v: '', t: '請選擇' }, { v: 'male', t: '男' }, { v: 'f
 
 function ntd(cents: number) {
   return 'NT$ ' + Math.round(cents / 100).toLocaleString('zh-TW')
+}
+
+// 配速秒數 → m:ss
+function paceFmt(sec: number) {
+  return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
+}
+// 任務目標 → 人類可讀字串
+function taskTarget(t: RaceTask): string {
+  const m = METRIC_BY_KEY[t.metric_type]
+  if (!m) return ''
+  if (m.kind === 'range') {
+    if (t.metric_type === 'avg_pace_range') return `${paceFmt(t.range_lo ?? 0)}–${paceFmt(t.range_hi ?? 0)} /km`
+    return `${t.range_lo ?? '—'}–${t.range_hi ?? '—'} ${m.unit}`
+  }
+  return `≥ ${t.target_value ?? '—'} ${m.unit}`
+}
+
+// 任務清單（團體/個人/集體共用）
+function TaskList({ label, items }: { label: string; items: RaceTask[] }) {
+  if (items.length === 0) return null
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tx)', marginBottom: 6 }}>{label}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {items.map((t, i) => {
+          const m = METRIC_BY_KEY[t.metric_type]
+          return (
+            <div key={t.id ?? i} style={{ background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 10, padding: '8px 11px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t.title || m?.label || '任務'}</span>
+                <span style={{ fontSize: 12, color: 'var(--fug)', whiteSpace: 'nowrap' }}>{taskTarget(t)}</span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 2 }}>
+                {m?.label}{t.description ? ` · ${t.description}` : ''}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 function remaining(g: RaceGroup) {
   if (g.slot_limit == null) return null
@@ -91,6 +134,19 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     () => detail?.groups.find((g) => g.id === groupId) || null,
     [detail, groupId]
   )
+
+  // 賽事任務分層
+  const collectiveTasks = useMemo(
+    () => (detail?.tasks ?? []).filter((t) => t.scope === 'race_collective'),
+    [detail]
+  )
+  const selectedGroupTasks = useMemo(() => {
+    const all = detail?.tasks ?? []
+    return {
+      team: all.filter((t) => t.scope === 'group_team' && t.group_id === groupId),
+      individual: all.filter((t) => t.scope === 'group_individual' && t.group_id === groupId),
+    }
+  }, [detail, groupId])
 
   // 必填欄位：賽事設定 + 所選分組限制
   const requiredSet = useMemo(() => {
@@ -375,6 +431,21 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                 </div>
               )}
             </Section>
+
+            {/* 所選分組的任務目標 */}
+            {!isBattle && selectedGroup && (selectedGroupTasks.team.length > 0 || selectedGroupTasks.individual.length > 0) && (
+              <Section title={`「${selectedGroup.name}」任務目標`}>
+                <TaskList label="團體任務（全組加總達標）" items={selectedGroupTasks.team} />
+                <TaskList label="個人任務（每人各自達成）" items={selectedGroupTasks.individual} />
+              </Section>
+            )}
+
+            {/* 賽事集體任務（全體參賽者） */}
+            {collectiveTasks.length > 0 && (
+              <Section title="賽事任務（全體參賽者）">
+                <TaskList label="集體任務（全員合計達標）" items={collectiveTasks} />
+              </Section>
+            )}
 
             {/* 加購 */}
             {detail.addons.length > 0 && (
