@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -226,15 +228,23 @@ func randSuffix(n int) string {
 	return string(b)
 }
 
+// revokeKey 用整個 refresh token 的 SHA-256 當撤銷名單的 key。
+// （舊版用 refreshToken[:16] 是 JWT 標頭前綴、所有 token 都相同 → 撤銷會誤傷，已修正）
+func revokeKey(userID, refreshToken string) string {
+	h := sha256.Sum256([]byte(refreshToken))
+	return "revoked:refresh:" + userID + ":" + hex.EncodeToString(h[:])
+}
+
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
 	claims, err := s.parseToken(refreshToken)
 	if err != nil {
-		return nil, ErrTokenInvalid
+		return nil, ErrTokenInvalid // 簽章/效期無效（含過期 30 天）
 	}
 
-	// 確認 refresh token 未被撤銷（存在 Redis）
-	key := "user:" + claims.UserID + ":refresh:" + refreshToken[:16]
-	if s.rdb.Exists(ctx, key).Val() == 0 {
+	// 撤銷名單（denylist）：只有「明確被撤銷」的 token 才拒絕。
+	// Redis 查無 = 放行 —— 避免 Redis 重啟/清空時把所有人誤登出（refresh token 本身是
+	// 簽章有效、未過期的 JWT，足以信任）。
+	if s.rdb.Exists(ctx, revokeKey(claims.UserID, refreshToken)).Val() > 0 {
 		return nil, ErrTokenInvalid
 	}
 
@@ -244,14 +254,23 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 		return nil, ErrTokenInvalid
 	}
 
-	// 舊 token 撤銷，發新的
-	s.rdb.Del(ctx, key)
+	// 一次性輪替：把用掉的舊 refresh token 加入撤銷名單（剩餘效期內）
+	if claims.ExpiresAt != nil {
+		if ttl := time.Until(claims.ExpiresAt.Time); ttl > 0 {
+			s.rdb.Set(ctx, revokeKey(claims.UserID, refreshToken), 1, ttl)
+		}
+	}
 	return s.issueTokens(ctx, user.ID, user.Role)
 }
 
 func (s *Service) Logout(ctx context.Context, userID, refreshToken string) error {
-	key := "user:" + userID + ":refresh:" + refreshToken[:16]
-	return s.rdb.Del(ctx, key).Err()
+	ttl := s.refreshTTL
+	if claims, err := s.parseToken(refreshToken); err == nil && claims.ExpiresAt != nil {
+		if d := time.Until(claims.ExpiresAt.Time); d > 0 {
+			ttl = d
+		}
+	}
+	return s.rdb.Set(ctx, revokeKey(userID, refreshToken), 1, ttl).Err()
 }
 
 // GetUserByID 查詢使用者資料（供 handler 呼叫）
@@ -294,9 +313,8 @@ func (s *Service) issueTokens(ctx context.Context, userID, role string) (*TokenP
 		return nil, fmt.Errorf("sign refresh token: %w", err)
 	}
 
-	// 將 Refresh Token 存入 Redis（用於撤銷驗證）
-	key := "user:" + userID + ":refresh:" + refreshToken[:16]
-	s.rdb.Set(ctx, key, 1, s.refreshTTL)
+	// 改用撤銷名單（denylist）：簽發時不需在 Redis 註冊，refresh 只擋被撤銷的 token。
+	// 這樣 Redis 重啟/清空也不會把人誤登出。
 
 	return &TokenPair{
 		AccessToken:  accessToken,
