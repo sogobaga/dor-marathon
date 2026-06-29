@@ -31,6 +31,7 @@ const selectCols = `
 	       slots_total, entry_fee, registration_start, registration_end,
 	       start_date, end_date, config, required_fields,
 	       control_status, starting_soon_days, COALESCE(brochure_title,'') as brochure_title,
+	       allow_team_groups,
 	       COALESCE(created_by::text,'') as created_by,
 	       review_status,
 	       COALESCE(review_note,'') as review_note,
@@ -1344,6 +1345,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
 		&race.StartDate, &race.EndDate, &cfgBytes, &race.RequiredFields,
 		&race.ControlStatus, &race.StartingSoonDays, &race.BrochureTitle,
+		&race.AllowTeamGroups,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CreatedAt,
 	)
@@ -1371,6 +1373,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
 		&race.StartDate, &race.EndDate, &cfgBytes, &race.RequiredFields,
 		&race.ControlStatus, &race.StartingSoonDays, &race.BrochureTitle,
+		&race.AllowTeamGroups,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CreatedAt,
 	)
