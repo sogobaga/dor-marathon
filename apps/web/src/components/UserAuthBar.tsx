@@ -20,7 +20,7 @@ export default function UserAuthBar({ onProfile }: { onProfile?: () => void }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {user.avatar_url ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={user.avatar_url} alt="" width={26} height={26} style={{ borderRadius: 999 }} />
+          <img src={user.avatar_url} alt="" style={{ width: 26, height: 26, borderRadius: '50%', objectFit: 'cover', display: 'block', flexShrink: 0 }} />
         ) : (
           <div style={avatar}>{(user.name || 'U').slice(0, 1)}</div>
         )}
