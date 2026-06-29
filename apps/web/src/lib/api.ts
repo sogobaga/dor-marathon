@@ -303,6 +303,7 @@ export interface RegistrationState {
   id: string
   group_id?: string
   group_revealed: boolean
+  group_name?: string
   status: string
   amount: number
 }

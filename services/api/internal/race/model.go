@@ -354,7 +354,8 @@ type Registration struct {
 	Faction       string     `json:"faction,omitempty"`
 	GroupID       string     `json:"group_id,omitempty"`
 	GroupRevealed bool       `json:"group_revealed"`
-	Status        string     `json:"status"` // pending|paid|cancelled
+	GroupName     string     `json:"group_name,omitempty"` // 報名分組名稱（一般模式直接顯示）
+	Status        string     `json:"status"`               // pending|paid|cancelled
 	PaidAt        *time.Time `json:"paid_at,omitempty"`
 	Amount        int        `json:"amount"`
 }
@@ -445,6 +446,7 @@ type OrderDetail struct {
 type MyRegLite struct {
 	Status        string `json:"status"`         // pending|paid|cancelled
 	GroupRevealed bool   `json:"group_revealed"`
+	GroupName     string `json:"group_name"` // 報名分組名稱（一般模式直接顯示；競賽模式當天才揭曉）
 }
 
 // Order 訂單

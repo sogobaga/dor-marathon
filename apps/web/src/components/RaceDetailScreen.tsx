@@ -47,6 +47,8 @@ export default function RaceDetailScreen({
   const registration = detailData?.registration
 
   const started = race.display_status === 'racing' || race.display_status === 'ended'
+  // 競賽/分組對抗才有「當天揭曉分組＋分組戰報」；一般模式分組直接顯示
+  const battleMode = race.event_mode === 'competition' || race.event_mode === 'faction_battle'
   const defaultTab: Tab = race.display_status === 'racing' ? 'progress' : race.display_status === 'ended' ? 'rank' : 'brochure'
   const [tab, setTab] = useState<Tab>(initialTab ?? defaultTab)
 
@@ -71,22 +73,28 @@ export default function RaceDetailScreen({
             <Row k="賽事期間" v={`${fmt(race.start_date)} – ${fmt(race.end_date)}`} />
           </div>
 
-          {/* 我的分組戰報 */}
-          {registration && (
+          {/* 我的分組（競賽/分組對抗：當天揭曉＋戰報；一般：直接顯示分組） */}
+          {registration && (battleMode || registration.group_name) && (
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
               <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>我的分組</div>
-              <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>
-                {standings?.my_group?.group_name || (registration.group_revealed ? '已加入分組' : '分組賽事當天公布')}
-              </div>
-              {started ? (
-                standings?.my_group && (
-                  <div style={{ display: 'flex', gap: 16, marginTop: 6, fontSize: 12, color: 'var(--tx-dim)' }}>
-                    <span>累積榜 第 <b style={{ color: 'var(--fug)' }}>{standings.my_group.cumulative_rank}</b> 名</span>
-                    <span>{standings.my_group.total_km.toFixed(1)} K</span>
+              {battleMode ? (
+                <>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>
+                    {standings?.my_group?.group_name || (registration.group_revealed ? '已加入分組' : '分組賽事當天公布')}
                   </div>
-                )
+                  {started ? (
+                    standings?.my_group && (
+                      <div style={{ display: 'flex', gap: 16, marginTop: 6, fontSize: 12, color: 'var(--tx-dim)' }}>
+                        <span>累積榜 第 <b style={{ color: 'var(--fug)' }}>{standings.my_group.cumulative_rank}</b> 名</span>
+                        <span>{standings.my_group.total_km.toFixed(1)} K</span>
+                      </div>
+                    )
+                  ) : (
+                    <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 6 }}>賽事開始後顯示分組戰報</div>
+                  )}
+                </>
               ) : (
-                <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 6 }}>賽事開始後顯示分組戰報</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>{registration.group_name}</div>
               )}
             </div>
           )}

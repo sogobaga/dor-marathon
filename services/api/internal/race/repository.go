@@ -904,7 +904,10 @@ func (r *Repository) GetStandings(ctx context.Context, raceID string) ([]GroupSt
 // GetUserRegistrations 取得使用者所有報名的精簡狀態（race_id → 狀態），供賽事列表附帶
 func (r *Repository) GetUserRegistrations(ctx context.Context, userID string) (map[string]MyRegLite, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT race_id, status, group_revealed FROM registrations WHERE user_id=$1`, userID)
+		`SELECT reg.race_id, reg.status, reg.group_revealed, COALESCE(g.name,'')
+		 FROM registrations reg
+		 LEFT JOIN race_groups g ON g.id = reg.group_id
+		 WHERE reg.user_id=$1`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user registrations: %w", err)
 	}
@@ -914,7 +917,7 @@ func (r *Repository) GetUserRegistrations(ctx context.Context, userID string) (m
 	for rows.Next() {
 		var raceID string
 		var lite MyRegLite
-		if err := rows.Scan(&raceID, &lite.Status, &lite.GroupRevealed); err != nil {
+		if err := rows.Scan(&raceID, &lite.Status, &lite.GroupRevealed, &lite.GroupName); err != nil {
 			return nil, err
 		}
 		m[raceID] = lite
@@ -1074,12 +1077,16 @@ func (r *Repository) Delete(ctx context.Context, raceID string) error {
 func (r *Repository) GetRegistration(ctx context.Context, userID, raceID string) (*Registration, error) {
 	reg := &Registration{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, user_id, race_id, distance, COALESCE(faction,'') as faction,
-		       status, paid_at, amount
-		FROM registrations WHERE user_id=$1 AND race_id=$2
+		SELECT reg.id, reg.user_id, reg.race_id, reg.distance, COALESCE(reg.faction,'') as faction,
+		       COALESCE(reg.group_id::text,'') as group_id, reg.group_revealed,
+		       reg.status, reg.paid_at, reg.amount, COALESCE(g.name,'') as group_name
+		FROM registrations reg
+		LEFT JOIN race_groups g ON g.id = reg.group_id
+		WHERE reg.user_id=$1 AND reg.race_id=$2
 	`, userID, raceID).Scan(
 		&reg.ID, &reg.UserID, &reg.RaceID, &reg.Distance, &reg.Faction,
-		&reg.Status, &reg.PaidAt, &reg.Amount,
+		&reg.GroupID, &reg.GroupRevealed,
+		&reg.Status, &reg.PaidAt, &reg.Amount, &reg.GroupName,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
