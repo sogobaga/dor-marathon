@@ -47,7 +47,7 @@ func (r *Repository) Create(ctx context.Context, email, handle, name, hash, role
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*User, error) {
 	u := &User{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, email, handle, name, password_hash,
+		SELECT id, email, handle, name, COALESCE(password_hash,'') as password_hash,
 		       COALESCE(avatar_url, '') as avatar_url, total_km, role
 		FROM users WHERE email = $1
 	`, email).Scan(
@@ -65,7 +65,7 @@ func (r *Repository) FindByEmail(ctx context.Context, email string) (*User, erro
 func (r *Repository) FindByID(ctx context.Context, id string) (*User, error) {
 	u := &User{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, email, handle, name, password_hash,
+		SELECT id, email, handle, name, COALESCE(password_hash,'') as password_hash,
 		       COALESCE(avatar_url, '') as avatar_url, total_km, role
 		FROM users WHERE id = $1
 	`, id).Scan(

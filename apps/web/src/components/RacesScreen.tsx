@@ -4,7 +4,6 @@ import useSWR from 'swr'
 import { racesApi, type Race, type MyRegLite } from '@/lib/api'
 import { getUserToken, useUser } from '@/lib/userAuth'
 import MemberPanel from './MemberPanel'
-import DebugSession from './DebugSession'
 
 const DISPLAY_STATUS: Record<string, { label: string; color: string }> = {
   upcoming_reg: { label: '即將報名', color: 'var(--violet)' },
@@ -68,7 +67,6 @@ export default function RacesScreen({
 
       {/* Body */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 18px 28px' }}>
-        <DebugSession />
         {/* 會員資訊面板 */}
         <MemberPanel onOpenProfile={onOpenProfile} />
 

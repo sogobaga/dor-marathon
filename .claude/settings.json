@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($env:PATH = \"C:\\\\Program Files\\\\Docker\\\\Docker\\\\resources\\\\bin;\" + $env:PATH; Set-Location \"c:\\\\Project Dev\\\\04_Online Marathon Project\"; docker compose up -d --build worker 2>&1 | Select-Object -Last 8; Start-Sleep -Seconds 6; \"=== worker 日誌 ===\"; docker compose logs worker --tail 15 2>&1)"
+    ]
+  }
+}
