@@ -11,6 +11,7 @@ import {
   type RaceTask,
   type RegistrationState,
   type ParticipantField,
+  type RecommendRow,
 } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError, useUser } from '@/lib/userAuth'
 
@@ -78,6 +79,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [groupId, setGroupId] = useState('')
   const [groupKey, setGroupKey] = useState('') // 加入需鑰匙的分組時輸入
   const [canCreate, setCanCreate] = useState(false) // 此會員是否獲准建立跑團分組
+  const [recommends, setRecommends] = useState<RecommendRow[]>([]) // 追蹤者中也報名此賽事（前三）
   const [showAllGroups, setShowAllGroups] = useState(false) // 分組過多時的「全部分組」選單
   const [previewId, setPreviewId] = useState<string | null>(null) // 選單內展開預覽任務的分組
   const [expandedId, setExpandedId] = useState<string | null>(null) // 內嵌清單中展開任務的分組（可再點收合）
@@ -129,6 +131,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
           gender: r.profile.gender || '',
         }))
       }).catch(() => {})
+      withUserAuth((t) => profileApi.recommendations(t, race.id)).then((r) => setRecommends(r.recommendations)).catch(() => {})
     }
   }, [race.id])
 
@@ -383,6 +386,26 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
 
         {!loading && loggedIn && !done && !existing && detail && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            {/* 追蹤的跑者也報名了 */}
+            {recommends.length > 0 && (
+              <div style={{ background: 'rgba(45,212,150,.06)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px' }}>
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--fug)', marginBottom: 8 }}>你追蹤的跑者也報名了</div>
+                <div style={{ display: 'flex', gap: 14 }}>
+                  {recommends.map((rc) => (
+                    <div key={rc.user_id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, width: 64 }}>
+                      <div style={{ width: 44, height: 44, borderRadius: '50%', overflow: 'hidden', background: 'var(--bg-2)', border: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {rc.avatar_url
+                          // eslint-disable-next-line @next/next/no-img-element
+                          ? <img src={rc.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          : <span style={{ fontWeight: 800, color: 'var(--tx-dim)' }}>{(rc.nickname || '?').slice(0, 1)}</span>}
+                      </div>
+                      <span style={{ fontSize: 11, color: 'var(--tx-dim)', maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rc.nickname}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* 分組 */}
             <Section title="選擇分組">
               {/* 所有分組共同任務（統一目標，顯示一次） */}

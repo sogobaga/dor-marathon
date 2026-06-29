@@ -32,6 +32,7 @@ func (h *Handler) Router() http.Handler {
 	r.Post("/follow", h.Follow)
 	r.Delete("/follow/{userID}", h.Unfollow)
 	r.Get("/follows", h.Follows)
+	r.Get("/recommendations/{raceID}", h.RaceRecommendations)
 	r.Get("/records", h.Records)
 	r.Get("/stats", h.Stats)
 	r.Get("/registrations", h.Registrations)
@@ -57,6 +58,8 @@ func (h *Handler) MembershipAdminRouter() http.Handler {
 	r.Put("/level-config", h.PutLevelConfig)
 	r.Get("/exp-rules", h.GetExpRules)
 	r.Put("/exp-rules", h.PutExpRules)
+	r.Get("/athlete-config", h.GetAthleteConfig)
+	r.Put("/athlete-config", h.PutAthleteConfig)
 	return r
 }
 
@@ -294,8 +297,9 @@ type MemberDetail struct {
 	Exp          int        `json:"exp"`
 	Level        int        `json:"level"`
 	LevelTitle   string     `json:"level_title"`
-	IsVIP        bool       `json:"is_vip"`
-	VIPExpiresAt *time.Time `json:"vip_expires_at,omitempty"`
+	IsVIP        bool         `json:"is_vip"`
+	VIPExpiresAt *time.Time   `json:"vip_expires_at,omitempty"`
+	Athlete      AthleteStats `json:"athlete"` // 選手分級（後台限定顯示）
 }
 
 // GET /api/v1/admin/members?q=&limit=&offset=
@@ -369,6 +373,9 @@ func (h *Handler) AdminGetMember(w http.ResponseWriter, r *http.Request) {
 		m.Level, m.LevelTitle, _, _ = computeLevel(m.Exp, levels)
 	}
 	m.IsVIP = m.VIPExpiresAt != nil && m.VIPExpiresAt.After(time.Now())
+	if a, err := h.athleteStatsFor(r.Context(), userID); err == nil {
+		m.Athlete = a
+	}
 	respondJSON(w, http.StatusOK, map[string]any{"member": m})
 }
 

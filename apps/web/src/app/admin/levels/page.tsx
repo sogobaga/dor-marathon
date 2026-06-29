@@ -2,14 +2,24 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminLevelsApi, type LevelConfig, type ExpRules } from '@/lib/api'
+import { adminLevelsApi, type LevelConfig, type ExpRules, type AthleteMetricConfig, type AthleteLevel } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
+
+const METRIC_LABEL: Record<string, { t: string; u: string }> = {
+  volume: { t: '跑量', u: '累積 km' },
+  pace: { t: '配速', u: '秒/km（越低越好）' },
+  avg_dist: { t: '平均每次距離', u: 'km' },
+  longest: { t: '最長單次', u: 'km' },
+  monthly_freq: { t: '月平均次數', u: '次/月' },
+}
 
 export default function AdminLevelsPage() {
   const router = useRouter()
   const [token, setToken] = useState<string | null>(null)
   const [levels, setLevels] = useState<LevelConfig[] | null>(null)
   const [rules, setRules] = useState<ExpRules | null>(null)
+  const [aMetrics, setAMetrics] = useState<AthleteMetricConfig[] | null>(null)
+  const [aLevels, setALevels] = useState<AthleteLevel[] | null>(null)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [saving, setSaving] = useState(false)
@@ -22,7 +32,20 @@ export default function AdminLevelsPage() {
       if (e?.status === 401) { clearToken(); router.replace('/admin/login') } else setErr(e?.message || '載入失敗')
     })
     adminLevelsApi.expRules(t).then((r) => setRules(r.exp_rules)).catch(() => {})
+    adminLevelsApi.athleteConfig(t).then((r) => { setAMetrics(r.metrics); setALevels(r.levels) }).catch(() => {})
   }, [router])
+
+  async function saveAthlete() {
+    if (!token || !aMetrics || !aLevels) return
+    setSaving(true); setErr(''); setMsg('')
+    try {
+      const r = await adminLevelsApi.setAthleteConfig(token, {
+        metrics: aMetrics.map((m) => ({ ...m, weight: Number(m.weight), ref_lo: Number(m.ref_lo), ref_hi: Number(m.ref_hi) })),
+        levels: aLevels.map((l) => ({ min_score: Number(l.min_score), name: l.name })),
+      })
+      setAMetrics(r.metrics); setALevels(r.levels); setMsg('✓ 選手分級設定已儲存')
+    } catch (e: any) { setErr(e?.message || '儲存失敗') } finally { setSaving(false) }
+  }
   useEffect(() => { load() }, [load])
 
   function updLevel(i: number, patch: Partial<LevelConfig>) {
@@ -95,6 +118,39 @@ export default function AdminLevelsPage() {
           <button onClick={saveLevels} disabled={saving} style={primaryBtn}>{saving ? '儲存中…' : '儲存等級門檻'}</button>
         </div>
         <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>提示：Level 1 的所需 EXP 應為 0；門檻需隨等級遞增。</div>
+      </div>
+
+      {/* 選手分級（報名推薦評分用；前台不顯示標籤） */}
+      <div style={{ ...panel, marginTop: 16 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>選手分級評分</h2>
+        <p style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 0 }}>
+          依匯入數據將會員分級（入門/初級/中級/進階/菁英），供報名頁「追蹤者推薦」相似度評分。各指標正規化到 0–100 後依權重加總。
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {aMetrics?.map((m, i) => (
+            <div key={m.metric_key} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div style={{ width: 110, fontSize: 13, fontWeight: 600 }}>{METRIC_LABEL[m.metric_key]?.t ?? m.metric_key}<div style={{ fontSize: 10, color: 'var(--tx-faint)', fontWeight: 400 }}>{METRIC_LABEL[m.metric_key]?.u}</div></div>
+              <Field label="權重"><input style={{ ...inp, width: 70 }} type="number" value={m.weight} onChange={(e) => setAMetrics((a) => a!.map((x, idx) => idx === i ? { ...x, weight: parseInt(e.target.value || '0', 10) } : x))} /></Field>
+              <Field label="0 分值"><input style={{ ...inp, width: 90 }} type="number" value={m.ref_lo} onChange={(e) => setAMetrics((a) => a!.map((x, idx) => idx === i ? { ...x, ref_lo: parseFloat(e.target.value || '0') } : x))} /></Field>
+              <Field label="100 分值"><input style={{ ...inp, width: 90 }} type="number" value={m.ref_hi} onChange={(e) => setAMetrics((a) => a!.map((x, idx) => idx === i ? { ...x, ref_hi: parseFloat(e.target.value || '0') } : x))} /></Field>
+            </div>
+          ))}
+        </div>
+
+        <h3 style={{ fontSize: 14, fontWeight: 700, margin: '16px 0 8px' }}>等級門檻（綜合分數）</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {aLevels?.map((l, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+              <Field label="最低分數"><input style={{ ...inp, width: 90 }} type="number" value={l.min_score} onChange={(e) => setALevels((a) => a!.map((x, idx) => idx === i ? { ...x, min_score: parseInt(e.target.value || '0', 10) } : x))} /></Field>
+              <Field label="等級名稱"><input style={{ ...inp, width: 130 }} value={l.name} onChange={(e) => setALevels((a) => a!.map((x, idx) => idx === i ? { ...x, name: e.target.value } : x))} /></Field>
+              <button onClick={() => setALevels((a) => a!.filter((_, idx) => idx !== i))} style={{ ...ghostBtn, color: 'var(--hunt)' }}>移除</button>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+          <button onClick={() => setALevels((a) => [...(a ?? []), { min_score: 0, name: '' }])} style={ghostBtn}>＋ 新增等級</button>
+          <button onClick={saveAthlete} disabled={saving} style={primaryBtn}>{saving ? '儲存中…' : '儲存選手分級設定'}</button>
+        </div>
       </div>
     </div>
   )

@@ -145,6 +145,22 @@ export default function AdminMemberDetailPage() {
           <button onClick={() => saveVip(true)} disabled={busy} style={ghostBtnSm}>清除</button>
         </div>
       </div>
+
+      {/* 選手分級（依匯入數據；僅後台顯示） */}
+      <h2 style={{ margin: '26px 0 10px', fontSize: 16, fontWeight: 800 }}>選手分級<span style={{ fontSize: 11, color: 'var(--tx-faint)', fontWeight: 400, marginLeft: 8 }}>（依數據自動計算，前台不顯示）</span></h2>
+      <div style={ctrlCard}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--fug)' }}>{m.athlete.level || '—'}</span>
+          <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>綜合分數 {m.athlete.score}</span>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+          <span>跑量 {m.athlete.volume_km.toFixed(1)} K（{m.athlete.activities} 次）</span>
+          <span>配速 {m.athlete.pace_s ? `${Math.floor(m.athlete.pace_s / 60)}:${String(m.athlete.pace_s % 60).padStart(2, '0')}/km` : '—'}</span>
+          <span>平均每次 {m.athlete.avg_dist_km.toFixed(1)} K</span>
+          <span>最長 {m.athlete.longest_km.toFixed(1)} K</span>
+          <span>月均 {m.athlete.monthly_freq.toFixed(1)} 次</span>
+        </div>
+      </div>
     </div>
   )
 }

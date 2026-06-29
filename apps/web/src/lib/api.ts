@@ -552,6 +552,34 @@ export interface ExpRules {
   per_task: number
 }
 
+export interface AthleteStats {
+  volume_km: number
+  activities: number
+  pace_s: number
+  avg_dist_km: number
+  longest_km: number
+  monthly_freq: number
+  score: number
+  level: string
+}
+export interface AthleteMetricConfig {
+  metric_key: string
+  weight: number
+  ref_lo: number
+  ref_hi: number
+  display_order: number
+}
+export interface AthleteLevel {
+  min_score: number
+  name: string
+}
+export interface RecommendRow {
+  user_id: string
+  nickname: string
+  avatar_url: string
+  account_code: string
+}
+
 export interface MyRegistration {
   registration_id: string
   race_id: string
@@ -609,6 +637,8 @@ export const profileApi = {
     request<{ order: MyOrder }>(`/profile/orders/${orderID}`, { headers: withAuth(token) }),
   follows: (token: string) =>
     request<{ following: FollowRow[]; following_count: number; follower_count: number }>('/profile/follows', { headers: withAuth(token) }),
+  recommendations: (token: string, raceID: string) =>
+    request<{ recommendations: RecommendRow[] }>(`/profile/recommendations/${raceID}`, { headers: withAuth(token) }),
 }
 
 export const followApi = {
@@ -629,6 +659,12 @@ export const adminLevelsApi = {
     request<{ exp_rules: ExpRules }>('/admin/membership/exp-rules', { headers: withAuth(token) }),
   setExpRules: (token: string, body: ExpRules) =>
     request<{ exp_rules: ExpRules }>('/admin/membership/exp-rules', {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  athleteConfig: (token: string) =>
+    request<{ metrics: AthleteMetricConfig[]; levels: AthleteLevel[] }>('/admin/membership/athlete-config', { headers: withAuth(token) }),
+  setAthleteConfig: (token: string, body: { metrics: AthleteMetricConfig[]; levels: AthleteLevel[] }) =>
+    request<{ metrics: AthleteMetricConfig[]; levels: AthleteLevel[] }>('/admin/membership/athlete-config', {
       method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
     }),
 }
@@ -676,6 +712,7 @@ export interface MemberDetail extends MemberSummary {
   level_title: string
   is_vip: boolean
   vip_expires_at?: string
+  athlete: AthleteStats
 }
 
 export const adminMembersApi = {
