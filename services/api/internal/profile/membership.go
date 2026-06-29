@@ -294,14 +294,18 @@ func (h *Handler) PutLevelConfig(w http.ResponseWriter, r *http.Request) {
 // --- 後台：EXP 規則 ---
 
 type ExpRules struct {
-	PerRace int `json:"per_race"`
-	PerTask int `json:"per_task"`
+	PerCollectiveTask int `json:"per_collective_task"` // 全體任務完成
+	PerGroupTask      int `json:"per_group_task"`      // 分組任務完成
+	PerIndividualTask int `json:"per_individual_task"` // 個人任務完成
+	PerKm             int `json:"per_km"`              // 日常每公里
 }
 
 // GET /api/v1/admin/membership/exp-rules
 func (h *Handler) GetExpRules(w http.ResponseWriter, r *http.Request) {
 	var e ExpRules
-	if err := h.db.QueryRow(r.Context(), `SELECT per_race, per_task FROM exp_rules WHERE id=TRUE`).Scan(&e.PerRace, &e.PerTask); err != nil {
+	if err := h.db.QueryRow(r.Context(),
+		`SELECT per_collective_task, per_group_task, per_individual_task, per_km FROM exp_rules WHERE id=TRUE`).
+		Scan(&e.PerCollectiveTask, &e.PerGroupTask, &e.PerIndividualTask, &e.PerKm); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
@@ -316,7 +320,8 @@ func (h *Handler) PutExpRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.db.Exec(r.Context(),
-		`UPDATE exp_rules SET per_race=$1, per_task=$2 WHERE id=TRUE`, e.PerRace, e.PerTask); err != nil {
+		`UPDATE exp_rules SET per_collective_task=$1, per_group_task=$2, per_individual_task=$3, per_km=$4 WHERE id=TRUE`,
+		e.PerCollectiveTask, e.PerGroupTask, e.PerIndividualTask, e.PerKm); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}

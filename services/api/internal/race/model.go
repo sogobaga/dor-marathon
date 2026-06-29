@@ -103,6 +103,7 @@ type RaceGroup struct {
 	GroupKey         string   `json:"group_key,omitempty"`     // 鑰匙明碼：後台/建立時可帶；公開回傳一律清空
 	CreatedBy        string   `json:"created_by,omitempty"`    // 自建者 userID（空=官方建立）
 	IsUserCreated    bool     `json:"is_user_created"`         // created_by 非空
+	ExpReward        int      `json:"exp_reward"`              // 完成此分組可獲得的 EXP
 }
 
 // CreateTeamGroupRequest 前台跑團成員自建分組 payload

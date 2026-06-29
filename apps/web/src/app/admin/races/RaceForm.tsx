@@ -70,7 +70,7 @@ function emptyGroup(order: number): RaceGroup {
   return {
     name: '', description: '', display_order: order, slot_limit: null,
     gender_limit: 'any', age_min: null, age_max: null, target_distance_km: null,
-    requires_key: false, group_key: '',
+    requires_key: false, group_key: '', exp_reward: 0,
   }
 }
 function emptyAddon(order: number): RaceAddon {
@@ -659,6 +659,11 @@ export default function RaceForm({
                   </Field>
                   <Field label="人數限制 (空=不限)">
                     <input style={inp} type="number" value={g.slot_limit ?? ''} onChange={(e) => updateGroup(i, { slot_limit: e.target.value === '' ? null : parseInt(e.target.value, 10) })} />
+                  </Field>
+                </Row>
+                <Row>
+                  <Field label="完成此分組獎勵 EXP">
+                    <input style={inp} type="number" value={g.exp_reward ?? 0} onChange={(e) => updateGroup(i, { exp_reward: parseInt(e.target.value || '0', 10) })} />
                   </Field>
                 </Row>
                 <Row>

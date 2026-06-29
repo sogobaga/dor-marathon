@@ -69,7 +69,12 @@ export default function AdminLevelsPage() {
     if (!token || !rules) return
     setSaving(true); setErr(''); setMsg('')
     try {
-      const r = await adminLevelsApi.setExpRules(token, { per_race: Number(rules.per_race), per_task: Number(rules.per_task) })
+      const r = await adminLevelsApi.setExpRules(token, {
+        per_collective_task: Number(rules.per_collective_task),
+        per_group_task: Number(rules.per_group_task),
+        per_individual_task: Number(rules.per_individual_task),
+        per_km: Number(rules.per_km),
+      })
       setRules(r.exp_rules); setMsg('✓ EXP 規則已儲存')
     } catch (e: any) { setErr(e?.message || '儲存失敗') } finally { setSaving(false) }
   }
@@ -85,17 +90,30 @@ export default function AdminLevelsPage() {
 
       {/* EXP 規則 */}
       <div style={panel}>
-        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 12px' }}>EXP 取得規則</h2>
+        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>EXP 取得規則</h2>
+        <p style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 0 }}>
+          來源：① 完成賽事 → 各分組各自設定（見下方賽事的分組）② 完成任務 → 依層級 ③ 日常里程 → 每公里。
+        </p>
         {rules ? (
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <Field label="每場參賽 EXP">
-              <input style={inp} type="number" value={rules.per_race} onChange={(e) => setRules({ ...rules, per_race: parseInt(e.target.value || '0', 10) })} />
-            </Field>
-            <Field label="每完成一個任務 EXP">
-              <input style={inp} type="number" value={rules.per_task} onChange={(e) => setRules({ ...rules, per_task: parseInt(e.target.value || '0', 10) })} />
-            </Field>
-            <button onClick={saveRules} disabled={saving} style={primaryBtn}>儲存規則</button>
-          </div>
+          <>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <Field label="完成「全體」任務 EXP">
+                <input style={{ ...inp, width: 110 }} type="number" value={rules.per_collective_task} onChange={(e) => setRules({ ...rules, per_collective_task: parseInt(e.target.value || '0', 10) })} />
+              </Field>
+              <Field label="完成「分組」任務 EXP">
+                <input style={{ ...inp, width: 110 }} type="number" value={rules.per_group_task} onChange={(e) => setRules({ ...rules, per_group_task: parseInt(e.target.value || '0', 10) })} />
+              </Field>
+              <Field label="完成「個人」任務 EXP">
+                <input style={{ ...inp, width: 110 }} type="number" value={rules.per_individual_task} onChange={(e) => setRules({ ...rules, per_individual_task: parseInt(e.target.value || '0', 10) })} />
+              </Field>
+              <Field label="日常每 1 公里 EXP">
+                <input style={{ ...inp, width: 110 }} type="number" value={rules.per_km} onChange={(e) => setRules({ ...rules, per_km: parseInt(e.target.value || '0', 10) })} />
+              </Field>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <button onClick={saveRules} disabled={saving} style={primaryBtn}>儲存規則</button>
+            </div>
+          </>
         ) : <div style={{ color: 'var(--tx-dim)' }}>載入中…</div>}
       </div>
 

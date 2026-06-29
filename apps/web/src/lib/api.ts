@@ -74,6 +74,7 @@ export interface RaceGroup {
   group_key?: string // 後台編輯時可帶；公開回傳一律為空
   created_by?: string
   is_user_created?: boolean
+  exp_reward?: number // 完成此分組可獲得的 EXP
 }
 
 export interface RaceAddon {
@@ -550,8 +551,10 @@ export interface LevelConfig {
   exp_required: number
 }
 export interface ExpRules {
-  per_race: number
-  per_task: number
+  per_collective_task: number
+  per_group_task: number
+  per_individual_task: number
+  per_km: number
 }
 
 export interface AthleteStats {
