@@ -471,7 +471,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
       <span style={{ fontSize: 11, letterSpacing: '.08em', color: 'var(--tx-faint)' }}>{label}</span>
       {children}
     </label>
@@ -481,7 +481,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0 }
 const inp: React.CSSProperties = {
   background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 10,
-  padding: '11px 12px', color: 'var(--tx)', fontSize: 14, width: '100%', fontFamily: 'inherit',
+  padding: '11px 12px', color: 'var(--tx)', fontSize: 14, width: '100%', boxSizing: 'border-box', fontFamily: 'inherit',
 }
 const primaryBtn: React.CSSProperties = {
   background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
