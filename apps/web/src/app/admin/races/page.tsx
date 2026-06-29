@@ -47,6 +47,25 @@ export default function AdminRacesList() {
   const [showNew, setShowNew] = useState(false)
   const [token, setTokenState] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [settlingId, setSettlingId] = useState<string | null>(null)
+
+  async function handleSettle(e: React.MouseEvent, r: Race) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!token) return
+    setErr('')
+    setSettlingId(r.id)
+    try {
+      const { result } = await adminRacesApi.settleExp(token, r.id)
+      window.alert(result.already_settled
+        ? `「${r.title}」先前已結算過（可至會員看 EXP）。`
+        : `「${r.title}」EXP 結算完成：${result.awarded_users} 人共獲得 ${result.total_exp} EXP（參賽 ${result.participants} 人）。`)
+    } catch (e: any) {
+      setErr(e?.message || '結算失敗')
+    } finally {
+      setSettlingId(null)
+    }
+  }
 
   async function handleDelete(e: React.MouseEvent, r: Race) {
     e.preventDefault() // 阻止 Link 導航
@@ -146,6 +165,19 @@ export default function AdminRacesList() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                   <span style={{ color: 'var(--fug)', fontSize: 13 }}>編輯 →</span>
+                  {r.display_status === 'ended' && (
+                    <button
+                      onClick={(e) => handleSettle(e, r)}
+                      disabled={settlingId === r.id}
+                      title="結算此賽事 EXP（完成賽事/任務/里程）"
+                      style={{
+                        background: 'rgba(45,212,150,.1)', color: 'var(--fug)', border: '1px solid rgba(45,212,150,.3)',
+                        borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+                      }}
+                    >
+                      {settlingId === r.id ? '結算中…' : '結算 EXP'}
+                    </button>
+                  )}
                   <button
                     onClick={(e) => handleDelete(e, r)}
                     disabled={deletingId === r.id}

@@ -528,6 +528,11 @@ export const adminRacesApi = {
       headers: withAuth(token),
       body: JSON.stringify({ url }),
     }),
+  settleExp: (token: string, id: string, force = false) =>
+    request<{ result: { race_id: string; participants: number; awarded_users: number; total_exp: number; already_settled: boolean } }>(
+      `/admin/races/${id}/settle-exp${force ? '?force=1' : ''}`,
+      { method: 'POST', headers: withAuth(token) },
+    ),
 }
 
 // --- 個人資訊 (Profile) ---

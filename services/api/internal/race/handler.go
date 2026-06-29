@@ -92,6 +92,7 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Delete("/{raceID}", h.AdminDeleteRace)
 	r.Patch("/{raceID}/status", h.AdminUpdateStatus)
 	r.Put("/{raceID}/certificate-bg", h.AdminSetCertificateBg)
+	r.Post("/{raceID}/settle-exp", h.AdminSettleEXP)
 	r.Get("/{raceID}/signups", h.AdminListSignups)
 	return r
 }
@@ -685,6 +686,26 @@ func (h *Handler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /api/v1/admin/races/:raceID/settle-exp?force=1 — 結算該賽事 EXP（idempotent）
+func (h *Handler) AdminSettleEXP(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	force := r.URL.Query().Get("force") == "1"
+	res, err := h.svc.SettleRaceEXP(r.Context(), raceID, force)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if errors.Is(err, ErrRaceNotEnded) {
+		respondErr(w, http.StatusBadRequest, "賽事尚未結束，如需提前結算請加 force")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "settle failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"result": res})
 }
 
 // PUT /api/v1/admin/races/:raceID/certificate-bg — 設定完賽證明底圖（空=用預設）

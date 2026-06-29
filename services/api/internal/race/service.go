@@ -162,6 +162,16 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 	}
 	detail.FillDisplay(time.Now())
 
+	// 賽事已結束 → 背景自動結算 EXP（idempotent；已結算會便宜跳過、失敗則下次讀取重試）
+	if detail.DisplayStatus == "ended" {
+		raceID := detail.ID
+		go func() {
+			bg, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_, _ = s.SettleRaceEXP(bg, raceID, false)
+		}()
+	}
+
 	// 安全：公開回傳一律不洩漏跑團鑰匙明碼（前台只需 requires_key 旗標）
 	for i := range detail.Groups {
 		detail.Groups[i].GroupKey = ""
