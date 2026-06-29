@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { clearToken } from '@/lib/adminAuth'
+import VersionBadge from './VersionBadge'
 
 type View = 'pc' | 'mobile'
 const VIEW_KEY = 'dor_admin_view'
@@ -235,6 +236,8 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
         <div style={{ flex: 1, overflowY: 'auto', padding: 28 }}>
           <div style={{ maxWidth: 1000, margin: '0 auto' }}>{children}</div>
         </div>
+        {/* 版號（置底置中）：同時顯示前台 + 後端 API 版號 */}
+        <VersionBadge showApi />
       </main>
     </div>
   )

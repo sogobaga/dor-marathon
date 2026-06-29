@@ -352,6 +352,10 @@ export interface StravaStatus {
   athlete_name?: string
 }
 
+export const metaApi = {
+  version: () => request<{ version: string; base: string; commit: string }>('/version'),
+}
+
 export const integrationsApi = {
   stravaStatus: (token: string) =>
     request<StravaStatus>('/integrations/strava/status', { headers: withAuth(token) }),

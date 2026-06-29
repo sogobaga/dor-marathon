@@ -31,6 +31,7 @@ import (
 	"github.com/dor/api/internal/race"
 	"github.com/dor/api/internal/realtime"
 	"github.com/dor/api/internal/reward"
+	"github.com/dor/api/internal/version"
 )
 
 func main() {
@@ -151,6 +152,12 @@ func main() {
 
 	// API v1
 	r.Route("/api/v1", func(r chi.Router) {
+		// 版號（公開）：v<base>.<commit>
+		r.Get("/version", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"version":%q,"base":%q,"commit":%q}`, version.Full(), version.Base, version.Commit())
+		})
+
 		// --- 公開端點 ---
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/register", authHandler.Register)

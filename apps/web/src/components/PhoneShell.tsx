@@ -7,6 +7,7 @@ import RegistrationScreen from './RegistrationScreen'
 import ProfileScreen from './ProfileScreen'
 import BrochureScreen from './BrochureScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
+import VersionBadge from './VersionBadge'
 import { validateSession } from '@/lib/userAuth'
 import type { Race } from '@/lib/api'
 
@@ -72,6 +73,9 @@ export default function PhoneShell() {
           />
         )}
       </div>
+
+      {/* 版號（置底置中） */}
+      <VersionBadge absolute />
     </div>
     </GoogleAuthProvider>
   )
