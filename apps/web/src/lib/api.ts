@@ -352,6 +352,27 @@ export interface StravaStatus {
   athlete_name?: string
 }
 
+export interface SyncedActivity {
+  id: string
+  source: string
+  distance_km: number
+  duration_s: number
+  avg_pace_s: number
+  ascent_m?: number
+  avg_hr?: number
+  recorded_at: string
+  race_title?: string
+  flagged: boolean
+  flag_reason?: string
+}
+
+export interface SyncResult {
+  imported: number
+  duplicates: number
+  existing: number
+  total: number
+}
+
 export const metaApi = {
   version: () => request<{ version: string; base: string; commit: string }>('/version'),
 }
@@ -366,6 +387,10 @@ export const integrationsApi = {
     ),
   stravaDisconnect: (token: string) =>
     request<null>('/integrations/strava/disconnect', { method: 'DELETE', headers: withAuth(token) }),
+  stravaSync: (token: string) =>
+    request<SyncResult>('/integrations/strava/sync', { method: 'POST', headers: withAuth(token) }),
+  stravaActivities: (token: string) =>
+    request<{ activities: SyncedActivity[] }>('/integrations/strava/activities', { headers: withAuth(token) }),
 }
 
 export const racesApi = {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 
 // 動態建立 hidden 表單並 POST 到綠界（瀏覽器導去付款頁）
@@ -33,9 +33,24 @@ const REG_STATUS: Record<string, { t: string; c: string }> = {
   cancelled: { t: '已取消', c: 'var(--tx-faint)' },
 }
 const ITEM_LABEL: Record<string, string> = { entry: '報名費', addon: '加購', discount: '優惠折抵' }
+const FLAG_LABEL: Record<string, string> = {
+  multi_device_duplicate: '多裝置重複',
+  cross_account_duplicate: '跨帳號重複',
+  duplicate: '重複資料',
+}
 
 function ntd(c: number) {
   return 'NT$ ' + Math.round(c / 100).toLocaleString('zh-TW')
+}
+function fmtDate(iso: string) {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+function paceStr(sec: number) {
+  if (!sec || sec <= 0) return '—'
+  return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
 }
 
 export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => void; focusRaceID?: string }) {
@@ -49,9 +64,29 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
   const [strava, setStrava] = useState<StravaStatus | null>(null)
   const [stravaBusy, setStravaBusy] = useState(false)
   const [stravaMsg, setStravaMsg] = useState('')
+  const [activities, setActivities] = useState<SyncedActivity[] | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
   function loadStrava() {
-    withUserAuth((t) => integrationsApi.stravaStatus(t)).then(setStrava).catch(() => {})
+    withUserAuth((t) => integrationsApi.stravaStatus(t))
+      .then((s) => { setStrava(s); if (s.connected) loadActivities() })
+      .catch(() => {})
+  }
+  function loadActivities() {
+    withUserAuth((t) => integrationsApi.stravaActivities(t)).then((r) => setActivities(r.activities)).catch(() => {})
+  }
+  async function syncNow() {
+    setSyncing(true)
+    setStravaMsg('')
+    try {
+      const r = await withUserAuth((t) => integrationsApi.stravaSync(t))
+      setStravaMsg(`同步完成：新增 ${r.imported} 筆${r.duplicates ? `、排除重複 ${r.duplicates} 筆` : ''}`)
+      loadActivities()
+    } catch (e: any) {
+      setStravaMsg(e?.message || '同步失敗')
+    } finally {
+      setSyncing(false)
+    }
   }
 
   useEffect(() => {
@@ -207,7 +242,13 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
                 </div>
               </div>
               {strava?.connected ? (
-                <button onClick={disconnectStrava} disabled={stravaBusy} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>中斷連接</button>
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                  <button onClick={syncNow} disabled={syncing}
+                    style={{ background: '#fc4c02', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', opacity: syncing ? 0.6 : 1 }}>
+                    {syncing ? '同步中…' : '重新同步'}
+                  </button>
+                  <button onClick={disconnectStrava} disabled={stravaBusy} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>中斷</button>
+                </div>
               ) : (
                 <button onClick={connectStrava} disabled={stravaBusy || strava?.enabled === false}
                   style={{ background: '#fc4c02', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', cursor: 'pointer', fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', opacity: stravaBusy ? 0.6 : 1 }}>
@@ -217,7 +258,45 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             </div>
             {strava?.enabled === false && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 8 }}>（Strava 整合尚未由管理者設定）</div>}
             {stravaMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginTop: 8 }}>{stravaMsg}</div>}
+            {strava?.connected && (
+              <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>
+                要更換 Strava 帳號？請先{' '}
+                <a href="https://www.strava.com/logout" target="_blank" rel="noreferrer" style={{ color: '#fc4c02' }}>登出 Strava</a>
+                ，再「中斷」後重新連接（連接的是你瀏覽器當下登入的 Strava 帳號）。
+              </div>
+            )}
           </div>
+
+          {/* 已同步活動 */}
+          {strava?.connected && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 8 }}>已同步活動</div>
+              {!activities && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>載入中…</div>}
+              {activities && activities.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚無活動，按「重新同步」匯入近期跑步。</div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {activities?.map((a) => (
+                  <div key={a.id} style={{ ...recCard, padding: 12, opacity: a.flagged ? 0.6 : 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                      <span style={{ fontWeight: 700, fontSize: 14 }}>{a.distance_km.toFixed(2)} K</span>
+                      <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{fmtDate(a.recorded_at)}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 3 }}>
+                      配速 {paceStr(a.avg_pace_s)}/km · {Math.round(a.duration_s / 60)} 分
+                      {a.ascent_m != null ? ` · 爬升 ${Math.round(a.ascent_m)}m` : ''}
+                      {a.avg_hr != null ? ` · 心率 ${a.avg_hr}` : ''}
+                    </div>
+                    <div style={{ fontSize: 11, marginTop: 3 }}>
+                      {a.flagged
+                        ? <span style={{ color: 'var(--hunt)' }}>⚠ {FLAG_LABEL[a.flag_reason ?? ''] ?? '重複'}（不計入賽事）</span>
+                        : a.race_title
+                          ? <span style={{ color: 'var(--fug)' }}>計入：{a.race_title}</span>
+                          : <span style={{ color: 'var(--tx-faint)' }}>未對應賽事</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 報名紀錄 */}

@@ -62,6 +62,8 @@ func (h *StravaHandler) Router() http.Handler {
 		r.Get("/connect", h.Connect)        // 取得授權 URL
 		r.Get("/status", h.Status)          // 連線狀態
 		r.Delete("/disconnect", h.Disconnect)
+		r.Post("/sync", h.Sync)             // 手動匯入近期活動
+		r.Get("/activities", h.Activities)  // 已同步活動清單
 	})
 	return r
 }
@@ -107,6 +109,37 @@ func (h *StravaHandler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"connected": true, "enabled": h.enabled(), "athlete_name": conn.AthleteName})
+}
+
+// POST /sync — 手動匯入近期活動
+func (h *StravaHandler) Sync(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	conn, err := h.repo.GetByUser(r.Context(), userID, providerStrava)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if conn == nil {
+		respondErr(w, http.StatusBadRequest, "尚未連接 Strava")
+		return
+	}
+	res, err := h.syncRecent(r.Context(), conn, 30)
+	if err != nil {
+		respondErr(w, http.StatusBadGateway, "向 Strava 取得活動失敗")
+		return
+	}
+	respondJSON(w, http.StatusOK, res)
+}
+
+// GET /activities — 已同步活動清單
+func (h *StravaHandler) Activities(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	acts, err := h.repo.ListActivities(r.Context(), userID, 30)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"activities": acts})
 }
 
 // DELETE /disconnect
@@ -301,26 +334,58 @@ func (h *StravaHandler) getActivity(ctx context.Context, access string, id int64
 	return &a, nil
 }
 
-// backfill 連線後回填近期活動（最多 30 筆）
-func (h *StravaHandler) backfill(conn *Connection) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+// SyncResult 同步統計
+type SyncResult struct {
+	Imported   int `json:"imported"`
+	Duplicates int `json:"duplicates"`
+	Existing   int `json:"existing"`
+	Total      int `json:"total"`
+}
+
+// syncRecent 拉近期活動並匯入，回傳統計
+func (h *StravaHandler) syncRecent(ctx context.Context, conn *Connection, perPage int) (SyncResult, error) {
+	var res SyncResult
 	access, err := h.tokenForUser(ctx, conn)
 	if err != nil {
-		return
+		return res, err
 	}
 	var acts []stravaActivity
-	if err := h.getJSON(ctx, access, "/athlete/activities?per_page=30", &acts); err != nil {
-		log.Error().Err(err).Msg("strava backfill list failed")
-		return
+	if err := h.getJSON(ctx, access, fmt.Sprintf("/athlete/activities?per_page=%d", perPage), &acts); err != nil {
+		return res, err
 	}
-	n := 0
 	for i := range acts {
-		if h.importOne(ctx, conn.UserID, &acts[i]) {
-			n++
+		r := h.importOne(ctx, conn.UserID, &acts[i])
+		switch r.Status {
+		case "inserted":
+			res.Imported++
+			res.Total++
+		case "duplicate":
+			res.Duplicates++
+			res.Total++
+		case "exists":
+			res.Existing++
+			res.Total++
 		}
 	}
-	log.Info().Int("imported", n).Str("user", conn.UserID).Msg("strava backfill done")
+	return res, nil
+}
+
+// backfill 連線後背景回填近期活動
+func (h *StravaHandler) backfill(conn *Connection) {
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	res, err := h.syncRecent(ctx, conn, 30)
+	if err != nil {
+		log.Error().Err(err).Msg("strava backfill failed")
+		return
+	}
+	log.Info().Int("imported", res.Imported).Int("dup", res.Duplicates).Str("user", conn.UserID).Msg("strava backfill done")
+}
+
+// fingerprintOf 精確指紋：起始秒|距離公尺|移動秒（同一筆檔案在不同帳號會一致）
+func fingerprintOf(startUnix int64, distanceM float64, durationS int) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%d|%.0f|%d", startUnix, distanceM, durationS)))
+	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
 func isRun(a *stravaActivity) bool {
@@ -335,24 +400,25 @@ func isRun(a *stravaActivity) bool {
 	return false
 }
 
-// importOne 正規化單筆 Strava 活動並寫入（回傳是否新插入）
-func (h *StravaHandler) importOne(ctx context.Context, userID string, a *stravaActivity) bool {
+// importOne 正規化單筆 Strava 活動並寫入
+func (h *StravaHandler) importOne(ctx context.Context, userID string, a *stravaActivity) ImportResult {
 	if !isRun(a) || a.Distance <= 0 || a.MovingTime <= 0 {
-		return false
+		return ImportResult{Status: "skipped"}
 	}
 	recordedAt, err := time.Parse(time.RFC3339, a.StartDate)
 	if err != nil {
-		return false
+		return ImportResult{Status: "skipped"}
 	}
 	distanceKm := a.Distance / 1000.0
 	na := &NormalizedActivity{
-		UserID:     userID,
-		Source:     providerStrava,
-		ExternalID: strconv.FormatInt(a.ID, 10),
-		DistanceKm: distanceKm,
-		DurationS:  a.MovingTime,
-		AvgPaceS:   int(math.Round(float64(a.MovingTime) / distanceKm)),
-		RecordedAt: recordedAt,
+		UserID:      userID,
+		Source:      providerStrava,
+		ExternalID:  strconv.FormatInt(a.ID, 10),
+		Fingerprint: fingerprintOf(recordedAt.Unix(), a.Distance, a.MovingTime),
+		DistanceKm:  distanceKm,
+		DurationS:   a.MovingTime,
+		AvgPaceS:    int(math.Round(float64(a.MovingTime) / distanceKm)),
+		RecordedAt:  recordedAt,
 	}
 	if a.TotalElevationGain > 0 {
 		v := a.TotalElevationGain
@@ -362,12 +428,12 @@ func (h *StravaHandler) importOne(ctx context.Context, userID string, a *stravaA
 		v := int(math.Round(a.AverageHeartrate))
 		na.AvgHR = &v
 	}
-	inserted, err := h.repo.ImportActivity(ctx, na)
+	res, err := h.repo.ImportActivity(ctx, na)
 	if err != nil {
 		log.Error().Err(err).Msg("strava import activity failed")
-		return false
+		return ImportResult{Status: "error"}
 	}
-	return inserted
+	return res
 }
 
 // --- state 簽章（callback 無登入，用 HMAC 綁定發起者）---
