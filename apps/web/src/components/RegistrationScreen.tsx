@@ -80,6 +80,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [canCreate, setCanCreate] = useState(false) // 此會員是否獲准建立跑團分組
   const [showAllGroups, setShowAllGroups] = useState(false) // 分組過多時的「全部分組」選單
   const [previewId, setPreviewId] = useState<string | null>(null) // 選單內展開預覽任務的分組
+  const [expandedId, setExpandedId] = useState<string | null>(null) // 內嵌清單中展開任務的分組（可再點收合）
   const [qty, setQty] = useState<Record<string, number>>({})
 
   // 自建跑團分組表單
@@ -295,7 +296,12 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   }
 
   // 單一分組選擇卡片（內嵌清單與「全部分組」選單共用）
-  function groupCard(g: RaceGroup, onPick: () => void) {
+  // 該分組是否有可展開的任務內容（專屬 or 共同）
+  function groupHasDetail(gid: string): boolean {
+    const s = groupSpecific(gid)
+    return s.team.length + s.individual.length > 0 || hasAllGroupsTasks
+  }
+  function groupCard(g: RaceGroup, onPick: () => void, expanded?: boolean) {
     const rem = remaining(g)
     const full = rem === 0
     const selected = groupId === g.id
@@ -322,8 +328,13 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
             {g.requires_key ? ' · 需鑰匙' : ''}
           </div>
         </div>
-        <span style={{ fontSize: 12, color: full ? 'var(--hunt)' : 'var(--tx-dim)' }}>
-          {rem == null ? '名額不限' : full ? '已額滿' : `剩 ${rem}`}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: full ? 'var(--hunt)' : 'var(--tx-dim)' }}>
+            {rem == null ? '名額不限' : full ? '已額滿' : `剩 ${rem}`}
+          </span>
+          {expanded !== undefined && (
+            <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{expanded ? '▾ 收合' : '▸ 任務'}</span>
+          )}
         </span>
       </button>
     )
@@ -396,11 +407,14 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {!manyGroups ? (
-                    // 分組 ≤ 8：直接內嵌全部；點選後就地展開該組專屬任務（accordion）
+                    // 分組 ≤ 8：直接內嵌全部；點選即選用並展開任務，再點同一組則收合（保留選用）
                     detail.groups.map((g) => (
                       <div key={g.id}>
-                        {groupCard(g, () => { setGroupId(g.id!); setGroupKey('') })}
-                        {groupId === g.id && (
+                        {groupCard(g, () => {
+                          setGroupId(g.id!); setGroupKey('')
+                          setExpandedId((cur) => (cur === g.id ? null : g.id!))
+                        }, groupHasDetail(g.id!) ? expandedId === g.id : undefined)}
+                        {expandedId === g.id && (
                           <div style={{ margin: '6px 0 2px' }}>{renderGroupSpecific(g.id!)}</div>
                         )}
                       </div>
@@ -585,7 +599,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
               {detail.groups.map((g) => (
                 <div key={g.id}>
-                  {groupCard(g, () => setPreviewId(previewId === g.id ? null : g.id!))}
+                  {groupCard(g, () => setPreviewId(previewId === g.id ? null : g.id!), groupHasDetail(g.id!) ? previewId === g.id : undefined)}
                   {previewId === g.id && (
                     <div style={{ margin: '6px 0 2px' }}>
                       {renderGroupSpecific(g.id!)}
