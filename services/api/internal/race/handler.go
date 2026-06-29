@@ -31,6 +31,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/{raceID}/standings", h.Standings)
 	r.Get("/{raceID}/progress", h.Progress)
 	r.Get("/{raceID}/leaderboard", h.Leaderboard)
+	r.Get("/{raceID}/certificate", h.Certificate)
 	r.Get("/{raceID}/status", h.LiveStatus)
 	r.Post("/{raceID}/promo/check", h.PromoCheck)
 	return r
@@ -510,6 +511,26 @@ func (h *Handler) Leaderboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"leaderboard": lb})
+}
+
+// GET /api/v1/races/:raceID/certificate — 登入者完賽證明資料（需登入）
+func (h *Handler) Certificate(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	cert, err := h.svc.GetMyCertificate(r.Context(), raceID, userID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get certificate")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"certificate": cert})
 }
 
 // GET /api/v1/races/:raceID/ranking?limit=100

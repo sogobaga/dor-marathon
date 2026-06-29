@@ -299,6 +299,21 @@ export interface CompetitionRanking {
   my_group?: MyGroupRank | null
 }
 
+export interface Certificate {
+  completed: boolean
+  race_title: string
+  name: string
+  group_name?: string
+  target_km: number
+  completed_km: number
+  completion_at?: string
+  total_time_s: number
+  finish_rank: number
+  finished_count: number
+  race_end?: string
+  race_ended: boolean
+}
+
 export interface RegistrationState {
   id: string
   group_id?: string
@@ -436,6 +451,9 @@ export const racesApi = {
   // 一般模式個人完成排名（帶 token 則含追蹤狀態）
   leaderboard: (raceID: string, token?: string) =>
     request<{ leaderboard: Leaderboard }>(`/races/${raceID}/leaderboard`, token ? { headers: withAuth(token) } : undefined),
+
+  certificate: (raceID: string, token: string) =>
+    request<{ certificate: Certificate }>(`/races/${raceID}/certificate`, { headers: withAuth(token) }),
 }
 
 export interface TaskProgress extends RaceTask {

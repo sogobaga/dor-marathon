@@ -4,6 +4,7 @@ import useSWR from 'swr'
 import { useState } from 'react'
 import { racesApi, METRIC_BY_KEY, type Race, type TaskProgress } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
+import { downloadCertificate } from '@/lib/certificate'
 import { BrochureBody } from './BrochureScreen'
 import { RankingBody } from './RaceRankingScreen'
 
@@ -45,6 +46,14 @@ export default function RaceDetailScreen({
   )
   const detail = detailData?.race
   const registration = detailData?.registration
+
+  // 完賽證明：賽事結束後、已報名、已登入才查
+  const ended = race.display_status === 'ended'
+  const { data: certData } = useSWR(
+    ended && registration && token ? ['cert', race.id] : null,
+    () => racesApi.certificate(race.id, token!),
+  )
+  const cert = certData?.certificate
 
   const started = race.display_status === 'racing' || race.display_status === 'ended'
   // 競賽/分組對抗才有「當天揭曉分組＋分組戰報」；一般模式分組直接顯示
@@ -107,6 +116,14 @@ export default function RaceDetailScreen({
               <button onClick={() => onRegister(race)} style={registerBtn}>立即報名</button>
             ) : null}
           </div>
+
+          {/* 完賽證明（賽事結束後，完賽者可下載） */}
+          {ended && cert?.completed && (
+            <button onClick={() => downloadCertificate(cert)} style={certBtn}>🏅 下載完賽證明</button>
+          )}
+          {ended && cert && !cert.completed && registration && (
+            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--tx-faint)', textAlign: 'center' }}>本場未達完賽標準，無完賽證明</div>
+          )}
         </div>
 
         {/* 頁籤 */}
@@ -232,4 +249,5 @@ const dashCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px 
 const statusBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: 'var(--fug)', background: 'rgba(45,212,150,.1)', border: '1px solid var(--fug)', borderRadius: 999, padding: '2px 10px' }
 const registerBtn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none', borderRadius: 12, padding: '12px 20px', cursor: 'pointer', fontSize: 15, width: '100%' }
 const registeredBox: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '11px 16px', textAlign: 'center', fontSize: 14, fontWeight: 700, color: 'var(--fug)' }
+const certBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#1a1200', fontWeight: 800, border: 'none', borderRadius: 12, padding: '12px 20px', cursor: 'pointer', fontSize: 15 }
 const notStartedHint: React.CSSProperties = { background: 'rgba(255,210,90,.08)', border: '1px solid var(--line)', borderRadius: 12, padding: '12px 14px', fontSize: 13, color: 'var(--gold)', marginBottom: 14, textAlign: 'center' }
