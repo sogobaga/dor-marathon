@@ -30,6 +30,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/{raceID}/ranking", h.Ranking)
 	r.Get("/{raceID}/standings", h.Standings)
 	r.Get("/{raceID}/progress", h.Progress)
+	r.Get("/{raceID}/leaderboard", h.Leaderboard)
 	r.Get("/{raceID}/status", h.LiveStatus)
 	r.Post("/{raceID}/promo/check", h.PromoCheck)
 	return r
@@ -493,6 +494,22 @@ func (h *Handler) Progress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"progress": prog})
+}
+
+// GET /api/v1/races/:raceID/leaderboard — 一般模式個人完成排名（公開，登入後含追蹤狀態）
+func (h *Handler) Leaderboard(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	lb, err := h.svc.GetLeaderboard(r.Context(), raceID, userID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get leaderboard")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"leaderboard": lb})
 }
 
 // GET /api/v1/races/:raceID/ranking?limit=100

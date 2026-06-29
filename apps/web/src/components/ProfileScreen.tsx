@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type DashboardInfo } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, followApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type DashboardInfo, type FollowRow } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 
 // 動態建立 hidden 表單並 POST 到綠界（瀏覽器導去付款頁）
@@ -76,9 +76,20 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
   const [tab, setTab] = useState<'info' | 'sports' | 'records'>('info')
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
+  const [follows, setFollows] = useState<FollowRow[] | null>(null)
 
   function loadDashboard() {
     withUserAuth((t) => profileApi.dashboard(t)).then((r) => setDash(r.dashboard)).catch(() => {})
+  }
+  function loadFollows() {
+    withUserAuth((t) => profileApi.follows(t)).then((r) => setFollows(r.following)).catch(() => {})
+  }
+  async function unfollow(userId: string) {
+    try {
+      await withUserAuth((t) => followApi.unfollow(t, userId))
+      setFollows((f) => (f ? f.filter((x) => x.user_id !== userId) : f))
+      loadDashboard()
+    } catch { /* ignore */ }
   }
   function profilePayload(x: Profile): Partial<Profile> {
     return { name: x.name, avatar_url: x.avatar_url, real_name: x.real_name, nickname: x.nickname, phone: x.phone, address: x.address, birthday: x.birthday, gender: x.gender }
@@ -144,6 +155,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
       }
     }
     loadDashboard()
+    loadFollows()
     withUserAuth((t) => profileApi.getMe(t))
       .then((r) => setP(r.profile))
       .catch((e) => setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '載入失敗'))
@@ -278,9 +290,11 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 11.5, color: 'var(--tx-dim)' }}>
+            <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 11.5, color: 'var(--tx-dim)', flexWrap: 'wrap' }}>
               <span>累積 {dash.total_km.toFixed(1)} K</span>
               <span>報名 {dash.race_count} 場</span>
+              <span>追蹤 <b style={{ color: 'var(--tx)' }}>{dash.following_count}</b></span>
+              <span>粉絲 <b style={{ color: 'var(--tx)' }}>{dash.follower_count}</b></span>
               <span>{dash.is_vip ? `VIP 至 ${dash.vip_expires_at ? fmtDate(dash.vip_expires_at).slice(0, 10) : ''}` : '一般會員'}</span>
             </div>
           </div>
@@ -318,6 +332,30 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             </div>
             {saved && <div style={{ color: 'var(--fug)', fontSize: 13 }}>✓ 已儲存</div>}
             <button onClick={save} disabled={saving} style={primaryBtn}>{saving ? '儲存中…' : '儲存'}</button>
+
+            {/* 追蹤列表 */}
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)', marginBottom: 8 }}>追蹤列表</div>
+              {!follows && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>載入中…</div>}
+              {follows && follows.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚未追蹤任何人，可在賽事「排名」頁追蹤跑者。</div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {follows?.map((f) => (
+                  <div key={f.user_id} style={{ ...recCard, padding: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ width: 38, height: 38, borderRadius: '50%', overflow: 'hidden', background: 'var(--bg-2)', border: '1px solid var(--line-2)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {f.avatar_url
+                        // eslint-disable-next-line @next/next/no-img-element
+                        ? <img src={f.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        : <span style={{ fontWeight: 800, color: 'var(--tx-dim)' }}>{(f.nickname || '?').slice(0, 1)}</span>}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.nickname}</div>
+                      {f.account_code && <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontFamily: 'monospace' }}>#{f.account_code}</div>}
+                    </div>
+                    <button onClick={() => unfollow(f.user_id)} style={{ ...ghostBtn, padding: '6px 12px', fontSize: 12, flexShrink: 0 }}>解除追蹤</button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 

@@ -106,6 +106,8 @@ type DashboardInfo struct {
 	VIPExpiresAt *time.Time `json:"vip_expires_at,omitempty"`
 	TotalKm      float64    `json:"total_km"`
 	RaceCount    int        `json:"race_count"`
+	FollowingCount int      `json:"following_count"`
+	FollowerCount  int      `json:"follower_count"`
 }
 
 // GET /api/v1/profile/dashboard
@@ -139,7 +141,87 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Level, d.LevelTitle, d.LevelFloor, d.NextLevelExp = computeLevel(d.Exp, levels)
 	d.IsVIP = d.VIPExpiresAt != nil && d.VIPExpiresAt.After(time.Now())
+	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE follower_id=$1`, userID).Scan(&d.FollowingCount)
+	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE followee_id=$1`, userID).Scan(&d.FollowerCount)
 	respondJSON(w, http.StatusOK, map[string]any{"dashboard": d})
+}
+
+// --- 追蹤系統 ---
+
+// POST /api/v1/profile/follow  body: {"user_id":"..."}
+func (h *Handler) Follow(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	var body struct {
+		UserID string `json:"user_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.UserID == "" {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if body.UserID == userID {
+		respondErr(w, http.StatusBadRequest, "不能追蹤自己")
+		return
+	}
+	if _, err := h.db.Exec(r.Context(),
+		`INSERT INTO follows (follower_id, followee_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+		userID, body.UserID); err != nil {
+		respondErr(w, http.StatusBadRequest, "追蹤失敗（帳號不存在？）")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]bool{"following": true})
+}
+
+// DELETE /api/v1/profile/follow/{userID}
+func (h *Handler) Unfollow(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	target := chi.URLParam(r, "userID")
+	if _, err := h.db.Exec(r.Context(),
+		`DELETE FROM follows WHERE follower_id=$1 AND followee_id=$2`, userID, target); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type FollowRow struct {
+	UserID      string `json:"user_id"`
+	Nickname    string `json:"nickname"`
+	AccountCode string `json:"account_code"`
+	AvatarURL   string `json:"avatar_url"`
+}
+
+// GET /api/v1/profile/follows
+func (h *Handler) Follows(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	rows, err := h.db.Query(r.Context(), `
+		SELECT u.id::text, COALESCE(NULLIF(p.nickname,''), u.handle), COALESCE(u.account_code,''), COALESCE(u.avatar_url,'')
+		FROM follows f
+		JOIN users u ON u.id = f.followee_id
+		LEFT JOIN user_profiles p ON p.user_id = u.id
+		WHERE f.follower_id = $1
+		ORDER BY f.created_at DESC`, userID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer rows.Close()
+	out := []FollowRow{}
+	for rows.Next() {
+		var fr FollowRow
+		if err := rows.Scan(&fr.UserID, &fr.Nickname, &fr.AccountCode, &fr.AvatarURL); err != nil {
+			respondErr(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		out = append(out, fr)
+	}
+	var followingCount, followerCount int
+	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE follower_id=$1`, userID).Scan(&followingCount)
+	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE followee_id=$1`, userID).Scan(&followerCount)
+	respondJSON(w, http.StatusOK, map[string]any{"following": out, "following_count": followingCount, "follower_count": followerCount})
 }
 
 // --- 後台：等級門檻 ---

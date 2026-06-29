@@ -431,6 +431,9 @@ export const racesApi = {
   // 賽事進度（任務達成度 + 個人統計；帶 token 則含個人）
   progress: (raceID: string, token?: string) =>
     request<{ progress: RaceProgress }>(`/races/${raceID}/progress`, token ? { headers: withAuth(token) } : undefined),
+  // 一般模式個人完成排名（帶 token 則含追蹤狀態）
+  leaderboard: (raceID: string, token?: string) =>
+    request<{ leaderboard: Leaderboard }>(`/races/${raceID}/leaderboard`, token ? { headers: withAuth(token) } : undefined),
 }
 
 export interface TaskProgress extends RaceTask {
@@ -510,6 +513,33 @@ export interface DashboardInfo {
   vip_expires_at?: string
   total_km: number
   race_count: number
+  following_count: number
+  follower_count: number
+}
+
+export interface FollowRow {
+  user_id: string
+  nickname: string
+  account_code: string
+  avatar_url: string
+}
+
+export interface LeaderboardRow {
+  rank: number
+  user_id: string
+  nickname: string
+  group_name?: string
+  completion_at?: string
+  total_time_s: number
+  distance_km: number
+  is_following: boolean
+  is_me: boolean
+}
+export interface Leaderboard {
+  finished_count: number
+  total_count: number
+  by_completion: LeaderboardRow[]
+  by_total_time: LeaderboardRow[]
 }
 
 export interface LevelConfig {
@@ -577,6 +607,15 @@ export const profileApi = {
     request<{ registrations: MyRegistration[]; count: number }>('/profile/registrations', { headers: withAuth(token) }),
   order: (token: string, orderID: string) =>
     request<{ order: MyOrder }>(`/profile/orders/${orderID}`, { headers: withAuth(token) }),
+  follows: (token: string) =>
+    request<{ following: FollowRow[]; following_count: number; follower_count: number }>('/profile/follows', { headers: withAuth(token) }),
+}
+
+export const followApi = {
+  follow: (token: string, userId: string) =>
+    request<{ following: boolean }>('/profile/follow', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ user_id: userId }) }),
+  unfollow: (token: string, userId: string) =>
+    request<null>(`/profile/follow/${userId}`, { method: 'DELETE', headers: withAuth(token) }),
 }
 
 export const adminLevelsApi = {

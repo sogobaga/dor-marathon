@@ -1,7 +1,9 @@
 'use client'
 
 import useSWR from 'swr'
-import { racesApi, type Race, type StandingRank } from '@/lib/api'
+import { useState } from 'react'
+import { racesApi, followApi, type Race, type StandingRank, type LeaderboardRow } from '@/lib/api'
+import { getUserToken } from '@/lib/userAuth'
 
 function fmtPace(s: number) {
   if (!s) return '—'
@@ -14,6 +16,13 @@ function fmtDuration(s: number) {
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
   return h > 0 ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m`
+}
+function fmtDateTime(iso?: string) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 export default function RaceRankingScreen({ race, onBack }: { race: Race; onBack: () => void }) {
@@ -76,15 +85,18 @@ export default function RaceRankingScreen({ race, onBack }: { race: Race; onBack
   )
 }
 
-// RankingBody 排名內容，供賽事資訊頁「排名」頁籤重用
+// RankingBody 排名內容，供賽事資訊頁「排名」頁籤重用。
+// 競賽模式：分組榜；其他（一般）模式：個人完成排名。
 export function RankingBody({ race }: { race: Race }) {
+  if (race.event_mode !== 'competition') return <GeneralLeaderboard race={race} />
+  return <CompetitionStandings race={race} />
+}
+
+function CompetitionStandings({ race }: { race: Race }) {
   const { data, error, isLoading } = useSWR(['standings', race.id], () => racesApi.standings(race.id), { refreshInterval: 30000 })
   const isCompetition = race.event_mode === 'competition'
   return (
     <div>
-      {!isCompetition && (
-        <Hint>此賽事為「{race.event_mode === 'faction_battle' ? '分組對抗' : '一般'}」模式，無分組成績排行。</Hint>
-      )}
       {isCompetition && isLoading && <Hint>載入排行榜…</Hint>}
       {isCompetition && error && <Hint color="var(--hunt)">無法載入排行榜</Hint>}
       {isCompetition && data && (
@@ -105,6 +117,91 @@ export function RankingBody({ race }: { race: Race }) {
             <RankList title="完成時間榜" subtitle="完成指定里程的累計總時間" entries={data.by_finish_time}
               metric={(e) => fmtDuration(e.finish_total_s)} highlightId={data.my_group?.group_id} />
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// GeneralLeaderboard 一般模式個人完成排名（完成時間榜 + 累計時間榜 + 追蹤鈕）
+function GeneralLeaderboard({ race }: { race: Race }) {
+  const token = getUserToken() || undefined
+  const { data, isLoading } = useSWR(['leaderboard', race.id], () => racesApi.leaderboard(race.id, token), { refreshInterval: 30000 })
+  const [override, setOverride] = useState<Record<string, boolean>>({})
+  const lb = data?.leaderboard
+  if (isLoading || !lb) return <Hint>載入排名…</Hint>
+
+  const following = (r: LeaderboardRow) => override[r.user_id] ?? r.is_following
+  async function toggle(r: LeaderboardRow) {
+    const t = getUserToken()
+    if (!t) return
+    const cur = following(r)
+    setOverride((o) => ({ ...o, [r.user_id]: !cur }))
+    try {
+      if (cur) await followApi.unfollow(t, r.user_id)
+      else await followApi.follow(t, r.user_id)
+    } catch {
+      setOverride((o) => ({ ...o, [r.user_id]: cur }))
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ ...myBanner, borderColor: 'var(--line)' }}>
+        <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>
+          已完成 <b style={{ color: 'var(--fug)', fontSize: 17 }}>{lb.finished_count}</b> / 報名 {lb.total_count} 人
+        </div>
+      </div>
+      <LbList title="完成時間榜" subtitle="活動開始後最快完成" rows={lb.by_completion}
+        metric={(r) => fmtDateTime(r.completion_at)} following={following} onToggle={toggle} loggedIn={!!token} />
+      <LbList title="累計時間榜" subtitle="完成所花費的總時間最短" rows={lb.by_total_time}
+        metric={(r) => fmtDuration(r.total_time_s)} following={following} onToggle={toggle} loggedIn={!!token} />
+    </div>
+  )
+}
+
+function LbList({
+  title, subtitle, rows, metric, following, onToggle, loggedIn,
+}: {
+  title: string
+  subtitle: string
+  rows: LeaderboardRow[]
+  metric: (r: LeaderboardRow) => string
+  following: (r: LeaderboardRow) => boolean
+  onToggle: (r: LeaderboardRow) => void
+  loggedIn: boolean
+}) {
+  return (
+    <div>
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>{title}</div>
+        <div style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>{subtitle}</div>
+      </div>
+      {rows.length === 0 ? (
+        <Hint>尚無完成者</Hint>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {rows.map((r) => (
+            <div key={r.user_id} style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 12,
+              background: r.is_me ? 'rgba(45,212,150,.1)' : 'var(--bg-1)',
+              border: r.is_me ? '1px solid var(--fug)' : '1px solid var(--line)',
+            }}>
+              <div style={{ width: 24, textAlign: 'center', fontWeight: 800, color: r.rank <= 3 ? 'var(--gold)' : 'var(--tx-dim)' }}>{r.rank}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {r.nickname}{r.is_me ? '（我）' : ''}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{r.group_name || ''} · {r.distance_km.toFixed(1)}K</div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fug)', whiteSpace: 'nowrap' }}>{metric(r)}</div>
+              {loggedIn && !r.is_me && (
+                <button onClick={() => onToggle(r)} style={following(r) ? followingBtn : followBtn}>
+                  {following(r) ? '追蹤中' : '＋追蹤'}
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -173,4 +270,12 @@ const backBtn: React.CSSProperties = {
 }
 const myBanner: React.CSSProperties = {
   background: 'var(--bg-1)', border: '1px solid var(--fug)', borderRadius: 16, padding: 16,
+}
+const followBtn: React.CSSProperties = {
+  flexShrink: 0, background: 'var(--fug)', color: '#05140e', border: 'none', borderRadius: 999,
+  padding: '5px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+}
+const followingBtn: React.CSSProperties = {
+  flexShrink: 0, background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)',
+  borderRadius: 999, padding: '5px 12px', fontSize: 12, cursor: 'pointer',
 }
