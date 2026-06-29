@@ -195,6 +195,9 @@ func main() {
 
 			// 個人資料（完賽紀錄 + 統計）
 			r.Mount("/profile", profileHandler.Router())
+
+			// 頭像上傳（重用圖片上傳，登入即可）
+			r.Post("/profile/avatar", imageHandler.Upload)
 		})
 
 		// --- 合作方端點（需 organizer 或 admin role）---
@@ -217,6 +220,7 @@ func main() {
 			r.Mount("/admin/orders", raceHandler.OrderRouter())
 			r.Mount("/admin/promo-codes", promoHandler.Router())
 			r.Mount("/admin/members", profileHandler.AdminMembersRouter())
+			r.Mount("/admin/membership", profileHandler.MembershipAdminRouter())
 			r.Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 		})
 	})

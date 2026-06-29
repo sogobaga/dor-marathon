@@ -1,0 +1,282 @@
+package profile
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/dor/api/internal/auth"
+)
+
+// --- 帳號專屬編碼 ---
+
+const codeAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ" // 去易混淆字（無 0/1/I/O）
+
+func genAccountCode(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	out := make([]byte, n)
+	for i := range b {
+		out[i] = codeAlphabet[int(b[i])%len(codeAlphabet)]
+	}
+	return string(out)
+}
+
+// getOrCreateAccountCode：null 時產生唯一 8 碼並寫回
+func (h *Handler) getOrCreateAccountCode(ctx context.Context, userID string) (string, error) {
+	var code *string
+	if err := h.db.QueryRow(ctx, `SELECT account_code FROM users WHERE id=$1`, userID).Scan(&code); err != nil {
+		return "", err
+	}
+	if code != nil && *code != "" {
+		return *code, nil
+	}
+	for i := 0; i < 8; i++ {
+		c := genAccountCode(8)
+		ct, err := h.db.Exec(ctx, `UPDATE users SET account_code=$1 WHERE id=$2 AND account_code IS NULL`, c, userID)
+		if err == nil && ct.RowsAffected() == 1 {
+			return c, nil
+		}
+		// 衝突或併發：重讀一次
+		if err == nil {
+			if err2 := h.db.QueryRow(ctx, `SELECT account_code FROM users WHERE id=$1`, userID).Scan(&code); err2 == nil && code != nil && *code != "" {
+				return *code, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// --- 等級 ---
+
+type LevelConfig struct {
+	Level       int    `json:"level"`
+	Title       string `json:"title"`
+	ExpRequired int    `json:"exp_required"`
+}
+
+func (h *Handler) levelConfigList(ctx context.Context) ([]LevelConfig, error) {
+	rows, err := h.db.Query(ctx, `SELECT level, COALESCE(title,''), exp_required FROM level_config ORDER BY exp_required`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []LevelConfig{}
+	for rows.Next() {
+		var l LevelConfig
+		if err := rows.Scan(&l.Level, &l.Title, &l.ExpRequired); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// computeLevel 依 exp 與門檻表推導目前等級、本級門檻、下一級門檻（nil=已達頂級）
+func computeLevel(exp int, levels []LevelConfig) (level int, title string, floor int, next *int) {
+	level, title, floor = 1, "", 0
+	for i := range levels {
+		if exp >= levels[i].ExpRequired {
+			level, title, floor = levels[i].Level, levels[i].Title, levels[i].ExpRequired
+		} else {
+			v := levels[i].ExpRequired
+			return level, title, floor, &v
+		}
+	}
+	return level, title, floor, nil
+}
+
+// --- Dashboard ---
+
+type DashboardInfo struct {
+	Name         string     `json:"name"`
+	Nickname     string     `json:"nickname"`
+	Handle       string     `json:"handle"`
+	AvatarURL    string     `json:"avatar_url"`
+	AccountCode  string     `json:"account_code"`
+	Exp          int        `json:"exp"`
+	Level        int        `json:"level"`
+	LevelTitle   string     `json:"level_title"`
+	LevelFloor   int        `json:"level_floor"`      // 本級門檻 EXP
+	NextLevelExp *int       `json:"next_level_exp"`   // 下一級門檻（null=已頂級）
+	IsVIP        bool       `json:"is_vip"`
+	VIPExpiresAt *time.Time `json:"vip_expires_at,omitempty"`
+	TotalKm      float64    `json:"total_km"`
+	RaceCount    int        `json:"race_count"`
+}
+
+// GET /api/v1/profile/dashboard
+func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	code, err := h.getOrCreateAccountCode(r.Context(), userID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	var d DashboardInfo
+	d.AccountCode = code
+	if err := h.db.QueryRow(r.Context(), `
+		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.vip_expires_at, u.total_km,
+		       COALESCE(p.nickname,''),
+		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id)
+		FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
+		WHERE u.id=$1`, userID).
+		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.VIPExpiresAt, &d.TotalKm, &d.Nickname, &d.RaceCount); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to load dashboard")
+		return
+	}
+	levels, err := h.levelConfigList(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	d.Level, d.LevelTitle, d.LevelFloor, d.NextLevelExp = computeLevel(d.Exp, levels)
+	d.IsVIP = d.VIPExpiresAt != nil && d.VIPExpiresAt.After(time.Now())
+	respondJSON(w, http.StatusOK, map[string]any{"dashboard": d})
+}
+
+// --- 後台：等級門檻 ---
+
+// GET /api/v1/admin/membership/level-config
+func (h *Handler) GetLevelConfig(w http.ResponseWriter, r *http.Request) {
+	levels, err := h.levelConfigList(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"levels": levels})
+}
+
+// PUT /api/v1/admin/membership/level-config —— 整批取代
+func (h *Handler) PutLevelConfig(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Levels []LevelConfig `json:"levels"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	tx, err := h.db.Begin(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if _, err := tx.Exec(r.Context(), `DELETE FROM level_config`); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	for _, l := range body.Levels {
+		if l.Level <= 0 {
+			continue
+		}
+		if _, err := tx.Exec(r.Context(),
+			`INSERT INTO level_config (level, title, exp_required) VALUES ($1,NULLIF($2,''),$3)`,
+			l.Level, l.Title, l.ExpRequired); err != nil {
+			respondErr(w, http.StatusBadRequest, "level config 寫入失敗（檢查 level 是否重複）")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	h.GetLevelConfig(w, r)
+}
+
+// --- 後台：EXP 規則 ---
+
+type ExpRules struct {
+	PerRace int `json:"per_race"`
+	PerTask int `json:"per_task"`
+}
+
+// GET /api/v1/admin/membership/exp-rules
+func (h *Handler) GetExpRules(w http.ResponseWriter, r *http.Request) {
+	var e ExpRules
+	if err := h.db.QueryRow(r.Context(), `SELECT per_race, per_task FROM exp_rules WHERE id=TRUE`).Scan(&e.PerRace, &e.PerTask); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"exp_rules": e})
+}
+
+// PUT /api/v1/admin/membership/exp-rules
+func (h *Handler) PutExpRules(w http.ResponseWriter, r *http.Request) {
+	var e ExpRules
+	if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if _, err := h.db.Exec(r.Context(),
+		`UPDATE exp_rules SET per_race=$1, per_task=$2 WHERE id=TRUE`, e.PerRace, e.PerTask); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"exp_rules": e})
+}
+
+// --- 後台：會員 VIP / EXP ---
+
+// PUT /api/v1/admin/members/{userID}/vip  body: {"vip_expires_at":"2026-12-31T00:00:00Z"} 空字串=清除
+func (h *Handler) AdminSetVIP(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userID")
+	var body struct {
+		VIPExpiresAt string `json:"vip_expires_at"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	ct, err := h.db.Exec(r.Context(),
+		`UPDATE users SET vip_expires_at=NULLIF($1,'')::timestamptz WHERE id=$2`, body.VIPExpiresAt, userID)
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, "日期格式錯誤或更新失敗")
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		respondErr(w, http.StatusNotFound, "member not found")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"vip_expires_at": body.VIPExpiresAt})
+}
+
+// PUT /api/v1/admin/members/{userID}/exp  body: {"set":300} 或 {"delta":50}
+func (h *Handler) AdminSetExp(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userID")
+	var body struct {
+		Set   *int `json:"set"`
+		Delta *int `json:"delta"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	var newExp int
+	var err error
+	if body.Set != nil {
+		v := *body.Set
+		if v < 0 {
+			v = 0
+		}
+		err = h.db.QueryRow(r.Context(), `UPDATE users SET exp=$1 WHERE id=$2 RETURNING exp`, v, userID).Scan(&newExp)
+	} else if body.Delta != nil {
+		err = h.db.QueryRow(r.Context(),
+			`UPDATE users SET exp=GREATEST(0, exp + $1) WHERE id=$2 RETURNING exp`, *body.Delta, userID).Scan(&newExp)
+	} else {
+		respondErr(w, http.StatusBadRequest, "需提供 set 或 delta")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusNotFound, "member not found")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"exp": newExp})
+}

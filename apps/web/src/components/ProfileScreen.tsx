@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type DashboardInfo } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 
 // 動態建立 hidden 表單並 POST 到綠界（瀏覽器導去付款頁）
@@ -52,6 +52,12 @@ function paceStr(sec: number) {
   if (!sec || sec <= 0) return '—'
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
 }
+function expPct(d: { exp: number; level_floor: number; next_level_exp: number | null }) {
+  if (d.next_level_exp == null) return 100
+  const span = d.next_level_exp - d.level_floor
+  if (span <= 0) return 100
+  return Math.max(0, Math.min(100, ((d.exp - d.level_floor) / span) * 100))
+}
 
 export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => void; focusRaceID?: string }) {
   const [p, setP] = useState<Profile | null>(null)
@@ -66,6 +72,35 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
   const [stravaMsg, setStravaMsg] = useState('')
   const [activities, setActivities] = useState<SyncedActivity[] | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [dash, setDash] = useState<DashboardInfo | null>(null)
+  const [tab, setTab] = useState<'info' | 'sports' | 'records'>('info')
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [codeCopied, setCodeCopied] = useState(false)
+
+  function loadDashboard() {
+    withUserAuth((t) => profileApi.dashboard(t)).then((r) => setDash(r.dashboard)).catch(() => {})
+  }
+  function profilePayload(x: Profile): Partial<Profile> {
+    return { name: x.name, avatar_url: x.avatar_url, real_name: x.real_name, nickname: x.nickname, phone: x.phone, address: x.address, birthday: x.birthday, gender: x.gender }
+  }
+  async function onAvatar(file: File) {
+    if (!p) return
+    setUploadingAvatar(true); setErr('')
+    try {
+      const { url } = await withUserAuth((t) => profileApi.uploadAvatar(t, file))
+      const res = await withUserAuth((t) => profileApi.updateMe(t, { ...profilePayload(p), avatar_url: url }))
+      setP(res.profile)
+      loadDashboard()
+    } catch (e: any) {
+      setErr(e?.message || '頭像上傳失敗')
+    } finally {
+      setUploadingAvatar(false)
+    }
+  }
+  function copyCode() {
+    if (!dash?.account_code) return
+    navigator.clipboard?.writeText(dash.account_code).then(() => { setCodeCopied(true); setTimeout(() => setCodeCopied(false), 1500) }).catch(() => {})
+  }
 
   function loadStrava() {
     withUserAuth((t) => integrationsApi.stravaStatus(t))
@@ -108,6 +143,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
         window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''))
       }
     }
+    loadDashboard()
     withUserAuth((t) => profileApi.getMe(t))
       .then((r) => setP(r.profile))
       .catch((e) => setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '載入失敗'))
@@ -181,14 +217,10 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
     setErr('')
     setSaving(true)
     try {
-      const res = await withUserAuth((t) =>
-        profileApi.updateMe(t, {
-          real_name: p.real_name, nickname: p.nickname, phone: p.phone,
-          address: p.address, birthday: p.birthday, gender: p.gender,
-        })
-      )
+      const res = await withUserAuth((t) => profileApi.updateMe(t, profilePayload(p)))
       setP(res.profile)
       setSaved(true)
+      loadDashboard()
     } catch (e: any) {
       setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '儲存失敗')
     } finally {
@@ -198,18 +230,79 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <header style={{ padding: '52px 22px 14px', flexShrink: 0 }}>
+      <header style={{ padding: '52px 22px 10px', flexShrink: 0 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
-        <h1 style={{ margin: '10px 0 2px', fontSize: 23, fontWeight: 800, color: 'var(--tx)' }}>個人資訊</h1>
-        <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>報名時會自動帶入這些資料</div>
+        <h1 style={{ margin: '10px 0 0', fontSize: 23, fontWeight: 800, color: 'var(--tx)' }}>會員中心</h1>
       </header>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 18px 28px' }}>
         {err && <div style={{ color: 'var(--hunt)', padding: 16, fontSize: 13 }}>{err}</div>}
+
+        {/* Dashboard */}
+        {dash && (
+          <div style={dashCard}>
+            <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+              <label style={avatarWrap} title="更換頭像">
+                {dash.avatar_url
+                  // eslint-disable-next-line @next/next/no-img-element
+                  ? <img src={dash.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : <span style={{ fontSize: 24, fontWeight: 800, color: 'var(--tx-dim)' }}>{(dash.name || '?').slice(0, 1)}</span>}
+                <span style={avatarEdit}>{uploadingAvatar ? '…' : '✎'}</span>
+                <input type="file" accept="image/*" style={{ display: 'none' }}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) onAvatar(f); e.target.value = '' }} />
+              </label>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)' }}>{dash.name || '未命名'}</span>
+                  {dash.is_vip && <span style={vipBadge}>VIP</span>}
+                </div>
+                {dash.nickname && <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>{dash.nickname}</div>}
+                <button onClick={copyCode} style={codeChip} title="複製帳號編碼">
+                  #{dash.account_code} {codeCopied ? '已複製' : '⧉'}
+                </button>
+              </div>
+            </div>
+
+            {/* 等級 + EXP */}
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 12 }}>
+                <span style={{ fontWeight: 800, color: 'var(--fug)' }}>Lv.{dash.level}{dash.level_title ? ` ${dash.level_title}` : ''}</span>
+                <span style={{ color: 'var(--tx-dim)' }}>{dash.exp} EXP</span>
+              </div>
+              <div style={expBarOuter}>
+                <div style={{ ...expBarInner, width: `${expPct(dash)}%` }} />
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 4, textAlign: 'right' }}>
+                {dash.next_level_exp == null ? '已達最高等級'
+                  : `距 Lv.${dash.level + 1} 還需 ${dash.next_level_exp - dash.exp} EXP`}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 11.5, color: 'var(--tx-dim)' }}>
+              <span>累積 {dash.total_km.toFixed(1)} K</span>
+              <span>報名 {dash.race_count} 場</span>
+              <span>{dash.is_vip ? `VIP 至 ${dash.vip_expires_at ? fmtDate(dash.vip_expires_at).slice(0, 10) : ''}` : '一般會員'}</span>
+            </div>
+          </div>
+        )}
+
+        {/* 頁籤 */}
+        <div style={{ display: 'flex', gap: 6, margin: '18px 0 14px', borderBottom: '1px solid var(--line)' }}>
+          {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄']] as const).map(([v, label]) => (
+            <button key={v} onClick={() => setTab(v)} style={{
+              padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14,
+              color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 700 : 400,
+              borderBottom: tab === v ? '2px solid var(--fug)' : '2px solid transparent',
+            }}>{label}</button>
+          ))}
+        </div>
+
         {!p && !err && <div style={{ color: 'var(--tx-dim)', padding: 16 }}>載入中…</div>}
 
-        {p && (
+        {/* 頁籤①個人資料 */}
+        {tab === 'info' && p && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <Field label="顯示名稱"><input style={inp} value={p.name} onChange={(e) => set('name', e.target.value)} /></Field>
             <Field label="Email（Google 帳號）"><input style={{ ...inp, opacity: 0.6 }} value={p.email} disabled /></Field>
             <Field label="真實姓名"><input style={inp} value={p.real_name} onChange={(e) => set('real_name', e.target.value)} /></Field>
             <Field label="暱稱"><input style={inp} value={p.nickname} onChange={(e) => set('nickname', e.target.value)} /></Field>
@@ -228,9 +321,9 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
           </div>
         )}
 
-        {/* 運動數據連接 */}
-        <div style={{ marginTop: 28 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', marginBottom: 10 }}>運動數據</div>
+        {/* 頁籤②運動數據 */}
+        {tab === 'sports' && (
+        <div>
           <div style={recCard}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
@@ -298,10 +391,11 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             </div>
           )}
         </div>
+        )}
 
-        {/* 報名紀錄 */}
-        <div style={{ marginTop: 28 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', marginBottom: 10 }}>報名紀錄</div>
+        {/* 頁籤③報名紀錄 */}
+        {tab === 'records' && (
+        <div>
           {!regs && <div style={{ color: 'var(--tx-dim)', fontSize: 13 }}>載入中…</div>}
           {regs && regs.length === 0 && <div style={{ color: 'var(--tx-dim)', fontSize: 13 }}>尚無報名紀錄</div>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -329,6 +423,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             })}
           </div>
         </div>
+        )}
       </div>
 
       {/* 繳費頁面 */}
@@ -397,6 +492,16 @@ const ghostBtn: React.CSSProperties = {
   background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)',
   borderRadius: 10, padding: '9px 14px', cursor: 'pointer', fontSize: 13, fontFamily: 'inherit',
 }
+const dashCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: 16 }
+const avatarWrap: React.CSSProperties = {
+  position: 'relative', width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
+  background: 'var(--bg-2)', border: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+}
+const avatarEdit: React.CSSProperties = { position: 'absolute', bottom: 0, left: 0, right: 0, fontSize: 10, textAlign: 'center', background: 'rgba(0,0,0,.55)', color: '#fff', padding: '1px 0' }
+const vipBadge: React.CSSProperties = { fontSize: 10, fontWeight: 800, color: '#1a1200', background: 'var(--gold)', borderRadius: 6, padding: '1px 7px', letterSpacing: '.05em' }
+const codeChip: React.CSSProperties = { marginTop: 4, fontSize: 11, color: 'var(--tx-dim)', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '2px 10px', cursor: 'pointer', fontFamily: 'monospace' }
+const expBarOuter: React.CSSProperties = { height: 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden', marginTop: 5 }
+const expBarInner: React.CSSProperties = { height: '100%', background: 'var(--fug)', borderRadius: 999, transition: 'width .3s' }
 const payBtn: React.CSSProperties = {
   background: 'var(--gold)', color: '#1a1200', fontWeight: 700, border: 'none',
   borderRadius: 9, padding: '7px 14px', cursor: 'pointer', fontSize: 13,

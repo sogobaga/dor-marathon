@@ -467,12 +467,41 @@ export const adminRacesApi = {
 export interface Profile {
   user_id: string
   email: string
+  name: string         // 顯示名稱
+  avatar_url: string
   real_name: string
   nickname: string
   phone: string
   address: string
   birthday: string // YYYY-MM-DD
   gender: '' | 'male' | 'female' | 'other'
+}
+
+export interface DashboardInfo {
+  name: string
+  nickname: string
+  handle: string
+  avatar_url: string
+  account_code: string
+  exp: number
+  level: number
+  level_title: string
+  level_floor: number
+  next_level_exp: number | null
+  is_vip: boolean
+  vip_expires_at?: string
+  total_km: number
+  race_count: number
+}
+
+export interface LevelConfig {
+  level: number
+  title: string
+  exp_required: number
+}
+export interface ExpRules {
+  per_race: number
+  per_task: number
 }
 
 export interface MyRegistration {
@@ -515,10 +544,36 @@ export const profileApi = {
       headers: withAuth(token),
       body: JSON.stringify(body),
     }),
+  dashboard: (token: string) =>
+    request<{ dashboard: DashboardInfo }>('/profile/dashboard', { headers: withAuth(token) }),
+  uploadAvatar: async (token: string, file: File): Promise<{ id: string; url: string }> => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await fetch(`${BASE}/profile/avatar`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
+    const text = await res.text()
+    const data = text ? JSON.parse(text) : null
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? '頭像上傳失敗')
+    return data as { id: string; url: string }
+  },
   registrations: (token: string) =>
     request<{ registrations: MyRegistration[]; count: number }>('/profile/registrations', { headers: withAuth(token) }),
   order: (token: string, orderID: string) =>
     request<{ order: MyOrder }>(`/profile/orders/${orderID}`, { headers: withAuth(token) }),
+}
+
+export const adminLevelsApi = {
+  levelConfig: (token: string) =>
+    request<{ levels: LevelConfig[] }>('/admin/membership/level-config', { headers: withAuth(token) }),
+  setLevelConfig: (token: string, levels: LevelConfig[]) =>
+    request<{ levels: LevelConfig[] }>('/admin/membership/level-config', {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify({ levels }),
+    }),
+  expRules: (token: string) =>
+    request<{ exp_rules: ExpRules }>('/admin/membership/exp-rules', { headers: withAuth(token) }),
+  setExpRules: (token: string, body: ExpRules) =>
+    request<{ exp_rules: ExpRules }>('/admin/membership/exp-rules', {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
+    }),
 }
 
 // --- 金流（綠界 ECPay）---
@@ -559,6 +614,11 @@ export interface MemberDetail extends MemberSummary {
   address: string
   birthday: string
   race_count: number
+  exp: number
+  level: number
+  level_title: string
+  is_vip: boolean
+  vip_expires_at?: string
 }
 
 export const adminMembersApi = {
@@ -579,6 +639,14 @@ export const adminMembersApi = {
       method: 'PUT',
       headers: withAuth(token),
       body: JSON.stringify({ allowed }),
+    }),
+  setVip: (token: string, id: string, vipExpiresAt: string) =>
+    request<{ vip_expires_at: string }>(`/admin/members/${id}/vip`, {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify({ vip_expires_at: vipExpiresAt }),
+    }),
+  setExp: (token: string, id: string, body: { set?: number; delta?: number }) =>
+    request<{ exp: number }>(`/admin/members/${id}/exp`, {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
     }),
 }
 

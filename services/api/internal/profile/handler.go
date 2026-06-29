@@ -28,6 +28,7 @@ func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.GetMe)
 	r.Put("/", h.UpdateMe)
+	r.Get("/dashboard", h.Dashboard)
 	r.Get("/records", h.Records)
 	r.Get("/stats", h.Stats)
 	r.Get("/registrations", h.Registrations)
@@ -41,19 +42,33 @@ func (h *Handler) AdminMembersRouter() http.Handler {
 	r.Get("/", h.AdminListMembers)
 	r.Get("/{userID}", h.AdminGetMember)
 	r.Put("/{userID}/team-group-permission", h.AdminSetTeamGroupPermission)
+	r.Put("/{userID}/vip", h.AdminSetVIP)
+	r.Put("/{userID}/exp", h.AdminSetExp)
+	return r
+}
+
+// MembershipAdminRouter 後台等級/EXP 設定（掛載在 /api/v1/admin/membership，需 admin）
+func (h *Handler) MembershipAdminRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/level-config", h.GetLevelConfig)
+	r.Put("/level-config", h.PutLevelConfig)
+	r.Get("/exp-rules", h.GetExpRules)
+	r.Put("/exp-rules", h.PutExpRules)
 	return r
 }
 
 // Profile 個人資訊（user_profiles + users.email）
 type Profile struct {
-	UserID   string `json:"user_id"`
-	Email    string `json:"email"`
-	RealName string `json:"real_name"`
-	Nickname string `json:"nickname"`
-	Phone    string `json:"phone"`
-	Address  string `json:"address"`
-	Birthday string `json:"birthday"` // YYYY-MM-DD，空=未填
-	Gender   string `json:"gender"`   // male|female|other|空
+	UserID    string `json:"user_id"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`       // 顯示名稱（users.name）
+	AvatarURL string `json:"avatar_url"` // users.avatar_url
+	RealName  string `json:"real_name"`
+	Nickname  string `json:"nickname"`
+	Phone     string `json:"phone"`
+	Address   string `json:"address"`
+	Birthday  string `json:"birthday"` // YYYY-MM-DD，空=未填
+	Gender    string `json:"gender"`   // male|female|other|空
 }
 
 // GET /api/v1/profile — 取得自己的個人資訊（無資料則回空白可編輯結構）
@@ -98,6 +113,14 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to save profile")
 		return
 	}
+	// 顯示名稱（非空才改，避免清空）與頭像（空字串=移除）
+	if _, err := h.db.Exec(r.Context(),
+		`UPDATE users SET name=COALESCE(NULLIF($2,''), name), avatar_url=NULLIF($3,''), updated_at=NOW() WHERE id=$1`,
+		userID, req.Name, req.AvatarURL,
+	); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to save profile")
+		return
+	}
 	p, err := h.fetchProfile(r.Context(), userID)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "saved but reload failed")
@@ -110,12 +133,12 @@ func (h *Handler) fetchProfile(ctx context.Context, userID string) (*Profile, er
 	p := &Profile{UserID: userID}
 	var birthday *time.Time
 	err := h.db.QueryRow(ctx, `
-		SELECT u.email,
+		SELECT u.email, u.name, COALESCE(u.avatar_url,''),
 		       COALESCE(p.real_name,''), COALESCE(p.nickname,''), COALESCE(p.phone,''),
 		       COALESCE(p.address,''), p.birthday, COALESCE(p.gender,'')
 		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
 		WHERE u.id = $1`, userID).
-		Scan(&p.Email, &p.RealName, &p.Nickname, &p.Phone, &p.Address, &birthday, &p.Gender)
+		Scan(&p.Email, &p.Name, &p.AvatarURL, &p.RealName, &p.Nickname, &p.Phone, &p.Address, &birthday, &p.Gender)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, nil
 	}
@@ -261,10 +284,15 @@ type MemberSummary struct {
 // MemberDetail 後台會員詳情（含完整個資與報名數）
 type MemberDetail struct {
 	MemberSummary
-	Nickname  string `json:"nickname"`
-	Address   string `json:"address"`
-	Birthday  string `json:"birthday"`
-	RaceCount int    `json:"race_count"`
+	Nickname     string     `json:"nickname"`
+	Address      string     `json:"address"`
+	Birthday     string     `json:"birthday"`
+	RaceCount    int        `json:"race_count"`
+	Exp          int        `json:"exp"`
+	Level        int        `json:"level"`
+	LevelTitle   string     `json:"level_title"`
+	IsVIP        bool       `json:"is_vip"`
+	VIPExpiresAt *time.Time `json:"vip_expires_at,omitempty"`
 }
 
 // GET /api/v1/admin/members?q=&limit=&offset=
@@ -316,11 +344,13 @@ func (h *Handler) AdminGetMember(w http.ResponseWriter, r *http.Request) {
 		SELECT u.id, u.email, u.handle, u.name, u.role, u.total_km, u.created_at, u.can_create_team_group,
 		       COALESCE(p.real_name,''), COALESCE(p.nickname,''), COALESCE(p.phone,''),
 		       COALESCE(p.address,''), p.birthday, COALESCE(p.gender,''),
-		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id = u.id)
+		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id = u.id),
+		       u.exp, u.vip_expires_at
 		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
 		WHERE u.id = $1`, userID).
 		Scan(&m.ID, &m.Email, &m.Handle, &m.Name, &m.Role, &m.TotalKm, &m.CreatedAt, &m.CanCreateTeamGroup,
-			&m.RealName, &m.Nickname, &m.Phone, &m.Address, &birthday, &m.Gender, &m.RaceCount)
+			&m.RealName, &m.Nickname, &m.Phone, &m.Address, &birthday, &m.Gender, &m.RaceCount,
+			&m.Exp, &m.VIPExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		respondErr(w, http.StatusNotFound, "member not found")
 		return
@@ -332,6 +362,10 @@ func (h *Handler) AdminGetMember(w http.ResponseWriter, r *http.Request) {
 	if birthday != nil {
 		m.Birthday = birthday.Format("2006-01-02")
 	}
+	if levels, err := h.levelConfigList(r.Context()); err == nil {
+		m.Level, m.LevelTitle, _, _ = computeLevel(m.Exp, levels)
+	}
+	m.IsVIP = m.VIPExpiresAt != nil && m.VIPExpiresAt.After(time.Now())
 	respondJSON(w, http.StatusOK, map[string]any{"member": m})
 }
 
