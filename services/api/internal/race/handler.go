@@ -299,8 +299,9 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{
-		"race":         detail,
-		"registration": reg, // nil if not registered
+		"race":                  detail,
+		"registration":          reg, // nil if not registered
+		"can_create_team_group": h.svc.CanUserCreateTeamGroup(r.Context(), userID, &detail.Race),
 	})
 }
 
@@ -377,7 +378,7 @@ func (h *Handler) CreateTeamGroup(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusCreated, group)
 	case errors.Is(err, ErrRaceNotFound):
 		respondErr(w, http.StatusNotFound, "race not found")
-	case errors.Is(err, ErrTeamGroupsDisabled):
+	case errors.Is(err, ErrTeamGroupsDisabled), errors.Is(err, ErrTeamGroupNotAllowed):
 		respondErr(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrTeamGroupName):
 		respondErr(w, http.StatusBadRequest, err.Error())

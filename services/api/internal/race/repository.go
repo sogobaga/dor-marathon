@@ -795,6 +795,19 @@ func groupKeyVal(requiresKey bool, key string) interface{} {
 	return key
 }
 
+// UserCanCreateTeamGroup 讀取使用者是否具「開放建立跑團分組」權限
+func (r *Repository) UserCanCreateTeamGroup(ctx context.Context, userID string) (bool, error) {
+	if userID == "" {
+		return false, nil
+	}
+	var ok bool
+	err := r.db.QueryRow(ctx, `SELECT can_create_team_group FROM users WHERE id=$1`, userID).Scan(&ok)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return ok, err
+}
+
 // CreateTeamGroup 前台跑團成員自建分組（competition + allow_team_groups 已於 service 驗證）。
 // display_order 接在現有分組之後；slot_limit 不限；created_by 記錄自建者。
 func (r *Repository) CreateTeamGroup(ctx context.Context, in CreateTeamGroupRequest) (*RaceGroup, error) {

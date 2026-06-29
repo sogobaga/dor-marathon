@@ -40,6 +40,7 @@ func (h *Handler) AdminMembersRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.AdminListMembers)
 	r.Get("/{userID}", h.AdminGetMember)
+	r.Put("/{userID}/team-group-permission", h.AdminSetTeamGroupPermission)
 	return r
 }
 
@@ -253,6 +254,7 @@ type MemberSummary struct {
 	Phone     string    `json:"phone"`
 	Gender    string    `json:"gender"`
 	TotalKm   float64   `json:"total_km"`
+	CanCreateTeamGroup bool `json:"can_create_team_group"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -280,7 +282,7 @@ func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 	like := "%" + q + "%"
 	rows, err := h.db.Query(r.Context(), `
 		SELECT u.id, u.email, u.handle, u.name, u.role, u.total_km, u.created_at,
-		       COALESCE(p.real_name,''), COALESCE(p.phone,''), COALESCE(p.gender,'')
+		       COALESCE(p.real_name,''), COALESCE(p.phone,''), COALESCE(p.gender,''), u.can_create_team_group
 		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
 		WHERE ($1 = '' OR u.email ILIKE $2 OR u.name ILIKE $2
 		       OR COALESCE(p.real_name,'') ILIKE $2 OR COALESCE(p.phone,'') ILIKE $2)
@@ -296,7 +298,7 @@ func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var m MemberSummary
 		if err := rows.Scan(&m.ID, &m.Email, &m.Handle, &m.Name, &m.Role, &m.TotalKm, &m.CreatedAt,
-			&m.RealName, &m.Phone, &m.Gender); err != nil {
+			&m.RealName, &m.Phone, &m.Gender, &m.CanCreateTeamGroup); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -311,13 +313,13 @@ func (h *Handler) AdminGetMember(w http.ResponseWriter, r *http.Request) {
 	var m MemberDetail
 	var birthday *time.Time
 	err := h.db.QueryRow(r.Context(), `
-		SELECT u.id, u.email, u.handle, u.name, u.role, u.total_km, u.created_at,
+		SELECT u.id, u.email, u.handle, u.name, u.role, u.total_km, u.created_at, u.can_create_team_group,
 		       COALESCE(p.real_name,''), COALESCE(p.nickname,''), COALESCE(p.phone,''),
 		       COALESCE(p.address,''), p.birthday, COALESCE(p.gender,''),
 		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id = u.id)
 		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
 		WHERE u.id = $1`, userID).
-		Scan(&m.ID, &m.Email, &m.Handle, &m.Name, &m.Role, &m.TotalKm, &m.CreatedAt,
+		Scan(&m.ID, &m.Email, &m.Handle, &m.Name, &m.Role, &m.TotalKm, &m.CreatedAt, &m.CanCreateTeamGroup,
 			&m.RealName, &m.Nickname, &m.Phone, &m.Address, &birthday, &m.Gender, &m.RaceCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		respondErr(w, http.StatusNotFound, "member not found")
@@ -331,6 +333,29 @@ func (h *Handler) AdminGetMember(w http.ResponseWriter, r *http.Request) {
 		m.Birthday = birthday.Format("2006-01-02")
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"member": m})
+}
+
+// PUT /api/v1/admin/members/:userID/team-group-permission  {"allowed":true}
+func (h *Handler) AdminSetTeamGroupPermission(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userID")
+	var body struct {
+		Allowed bool `json:"allowed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	ct, err := h.db.Exec(r.Context(),
+		`UPDATE users SET can_create_team_group=$1 WHERE id=$2`, body.Allowed, userID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to update permission")
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		respondErr(w, http.StatusNotFound, "member not found")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"can_create_team_group": body.Allowed})
 }
 
 // RaceRecord 個人完賽紀錄

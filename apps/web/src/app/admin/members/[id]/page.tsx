@@ -15,6 +15,7 @@ export default function AdminMemberDetailPage() {
 
   const [m, setM] = useState<MemberDetail | null>(null)
   const [err, setErr] = useState('')
+  const [savingPerm, setSavingPerm] = useState(false)
 
   useEffect(() => {
     const token = getToken()
@@ -34,6 +35,22 @@ export default function AdminMemberDetailPage() {
         }
       })
   }, [id, router])
+
+  async function toggleTeamGroupPerm() {
+    const token = getToken()
+    if (!token || !m) return
+    const next = !m.can_create_team_group
+    setSavingPerm(true)
+    setErr('')
+    try {
+      await adminMembersApi.setTeamGroupPermission(token, id, next)
+      setM((prev) => (prev ? { ...prev, can_create_team_group: next } : prev))
+    } catch (e: any) {
+      setErr(e?.message || '更新失敗')
+    } finally {
+      setSavingPerm(false)
+    }
+  }
 
   if (err) return <Centered>{err}</Centered>
   if (!m) return <Centered color="var(--tx-dim)">載入中…</Centered>
@@ -58,6 +75,31 @@ export default function AdminMemberDetailPage() {
         <div style={{ gridColumn: '1 / -1' }}>
           <Info label="地址" value={m.address} />
         </div>
+      </div>
+
+      {/* 權限設定 */}
+      <h2 style={{ margin: '26px 0 10px', fontSize: 16, fontWeight: 800 }}>權限設定</h2>
+      <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>開放建立跑團分組</div>
+          <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
+            開啟後，此會員可在有「開放跑團分組申請」的競賽中，於前台自建跑團分組。
+          </div>
+        </div>
+        <button
+          onClick={toggleTeamGroupPerm}
+          disabled={savingPerm}
+          style={{
+            flexShrink: 0, borderRadius: 999, cursor: savingPerm ? 'default' : 'pointer',
+            padding: '8px 16px', fontSize: 13, fontWeight: 700,
+            background: m.can_create_team_group ? 'var(--fug)' : 'var(--bg-2)',
+            color: m.can_create_team_group ? '#05140e' : 'var(--tx-dim)',
+            border: m.can_create_team_group ? '1px solid var(--fug)' : '1px solid var(--line-2)',
+            opacity: savingPerm ? 0.6 : 1,
+          }}
+        >
+          {savingPerm ? '更新中…' : m.can_create_team_group ? '已開放 ✓' : '未開放'}
+        </button>
       </div>
     </div>
   )

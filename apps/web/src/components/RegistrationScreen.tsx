@@ -34,6 +34,8 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
 
   const [groupId, setGroupId] = useState('')
   const [groupKey, setGroupKey] = useState('') // 加入需鑰匙的分組時輸入
+  const [canCreate, setCanCreate] = useState(false) // 此會員是否獲准建立跑團分組
+  const [showAllGroups, setShowAllGroups] = useState(false) // 分組過多時的「全部分組」選單
   const [qty, setQty] = useState<Record<string, number>>({})
 
   // 自建跑團分組表單
@@ -66,6 +68,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
       .then((r) => {
         setDetail(r.race)
         setExisting(r.registration)
+        setCanCreate(!!r.can_create_team_group)
       })
       .catch((e) => setErr(e?.message || '載入失敗'))
       .finally(() => setLoading(false))
@@ -138,6 +141,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
       : racesApi.detail(race.id)
     const r = await p
     setDetail(r.race)
+    setCanCreate(!!r.can_create_team_group)
     if (selectId) setGroupId(selectId)
   }
 
@@ -210,8 +214,44 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     }
   }
 
+  // 單一分組選擇卡片（內嵌清單與「全部分組」選單共用）
+  function groupCard(g: RaceGroup, onPick: () => void) {
+    const rem = remaining(g)
+    const full = rem === 0
+    const selected = groupId === g.id
+    return (
+      <button
+        key={g.id}
+        disabled={full}
+        onClick={onPick}
+        style={{
+          ...groupRow, cursor: full ? 'not-allowed' : 'pointer', opacity: full ? 0.5 : 1,
+          border: selected ? '1px solid var(--fug)' : '1px solid var(--line)',
+          background: selected ? 'rgba(45,212,150,.08)' : 'var(--bg-1)', textAlign: 'left',
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 600 }}>
+            {g.requires_key ? '🔒 ' : ''}{g.name}
+            {g.is_user_created ? <span style={{ fontSize: 10, color: 'var(--tx-faint)', marginLeft: 6 }}>跑團</span> : null}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+            {g.target_distance_km != null ? `${g.target_distance_km}K` : ''}
+            {g.gender_limit && g.gender_limit !== 'any' ? ` · 限${g.gender_limit === 'male' ? '男' : '女'}` : ''}
+            {g.age_min != null || g.age_max != null ? ` · 年齡${g.age_min ?? ''}–${g.age_max ?? ''}` : ''}
+            {g.requires_key ? ' · 需鑰匙' : ''}
+          </div>
+        </div>
+        <span style={{ fontSize: 12, color: full ? 'var(--hunt)' : 'var(--tx-dim)' }}>
+          {rem == null ? '名額不限' : full ? '已額滿' : `剩 ${rem}`}
+        </span>
+      </button>
+    )
+  }
+  const manyGroups = (detail?.groups.length ?? 0) > 8
+
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)', position: 'relative' }}>
       <header style={{ padding: '52px 22px 14px', flexShrink: 0 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <h1 style={{ margin: '10px 0 2px', fontSize: 22, fontWeight: 800, color: 'var(--tx)' }}>{race.title}</h1>
@@ -266,38 +306,33 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {detail.groups.map((g) => {
-                    const rem = remaining(g)
-                    const full = rem === 0
-                    return (
-                      <button
-                        key={g.id}
-                        disabled={full}
-                        onClick={() => { setGroupId(g.id!); setGroupKey('') }}
-                        style={{
-                          ...groupRow, cursor: full ? 'not-allowed' : 'pointer', opacity: full ? 0.5 : 1,
-                          border: groupId === g.id ? '1px solid var(--fug)' : '1px solid var(--line)',
-                          background: groupId === g.id ? 'rgba(45,212,150,.08)' : 'var(--bg-1)', textAlign: 'left',
-                        }}
-                      >
+                  {!manyGroups ? (
+                    // 分組 ≤ 8：直接內嵌全部
+                    detail.groups.map((g) => groupCard(g, () => { setGroupId(g.id!); setGroupKey('') }))
+                  ) : (
+                    // 分組 > 8：顯示已選 + 「全部分組」按鈕
+                    <>
+                      <div style={{ ...groupRow, cursor: 'default', alignItems: 'flex-start' }}>
                         <div>
-                          <div style={{ fontWeight: 600 }}>
-                            {g.requires_key ? '🔒 ' : ''}{g.name}
-                            {g.is_user_created ? <span style={{ fontSize: 10, color: 'var(--tx-faint)', marginLeft: 6 }}>跑團</span> : null}
-                          </div>
-                          <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
-                            {g.target_distance_km != null ? `${g.target_distance_km}K` : ''}
-                            {g.gender_limit && g.gender_limit !== 'any' ? ` · 限${g.gender_limit === 'male' ? '男' : '女'}` : ''}
-                            {g.age_min != null || g.age_max != null ? ` · 年齡${g.age_min ?? ''}–${g.age_max ?? ''}` : ''}
-                            {g.requires_key ? ' · 需鑰匙' : ''}
-                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 2 }}>目前已選擇分組</div>
+                          {selectedGroup ? (
+                            <div style={{ fontWeight: 600 }}>
+                              {selectedGroup.requires_key ? '🔒 ' : ''}{selectedGroup.name}
+                              {selectedGroup.is_user_created ? <span style={{ fontSize: 10, color: 'var(--tx-faint)', marginLeft: 6 }}>跑團</span> : null}
+                            </div>
+                          ) : (
+                            <div style={{ color: 'var(--tx-dim)' }}>尚未選擇</div>
+                          )}
                         </div>
-                        <span style={{ fontSize: 12, color: full ? 'var(--hunt)' : 'var(--tx-dim)' }}>
-                          {rem == null ? '名額不限' : full ? '已額滿' : `剩 ${rem}`}
-                        </span>
+                        <button onClick={() => setShowAllGroups(true)} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>
+                          {selectedGroup ? '更換分組' : '全部分組'}
+                        </button>
+                      </div>
+                      <button onClick={() => setShowAllGroups(true)} style={ghostBtn}>
+                        全部分組（共 {detail.groups.length} 組）
                       </button>
-                    )
-                  })}
+                    </>
+                  )}
 
                   {/* 選到需鑰匙的分組 → 要求輸入跑團鑰匙 */}
                   {selectedGroup?.requires_key && (
@@ -311,8 +346,8 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                     </div>
                   )}
 
-                  {/* 開放跑團分組申請：前台自建分組 */}
-                  {detail.allow_team_groups && detail.can_register && (
+                  {/* 開放跑團分組申請：前台自建分組（限獲准會員） */}
+                  {detail.allow_team_groups && detail.can_register && canCreate && (
                     showCreate ? (
                       <div style={{ ...groupRow, flexDirection: 'column', alignItems: 'stretch', gap: 8, cursor: 'default' }}>
                         <div style={{ fontWeight: 600, fontSize: 13 }}>建立跑團分組</div>
@@ -426,8 +461,32 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
 
         {err && (loading || !detail) && <Hint color="var(--hunt)">{err}</Hint>}
       </div>
+
+      {/* 全部分組 選單（分組過多時） */}
+      {showAllGroups && detail && (
+        <div style={pickerOverlay} onClick={() => setShowAllGroups(false)}>
+          <div style={pickerSheet} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>全部分組（{detail.groups.length}）</div>
+              <button onClick={() => setShowAllGroups(false)} style={{ ...ghostBtn, padding: '6px 12px' }}>關閉</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+              {detail.groups.map((g) => groupCard(g, () => { setGroupId(g.id!); setGroupKey(''); setShowAllGroups(false) }))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
+}
+
+const pickerOverlay: React.CSSProperties = {
+  position: 'absolute', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 60,
+  display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+}
+const pickerSheet: React.CSSProperties = {
+  width: '100%', maxHeight: '78%', background: 'var(--bg)', borderTopLeftRadius: 18, borderTopRightRadius: 18,
+  border: '1px solid var(--line)', padding: '16px 16px 22px', display: 'flex', flexDirection: 'column',
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

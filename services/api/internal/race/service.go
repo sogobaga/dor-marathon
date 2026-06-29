@@ -37,6 +37,7 @@ var (
 	ErrGroupKeyWrong        = errors.New("跑團鑰匙錯誤")
 	ErrTeamGroupsDisabled   = errors.New("此賽事未開放跑團分組申請")
 	ErrTeamGroupName        = errors.New("請輸入跑團分組名稱")
+	ErrTeamGroupNotAllowed  = errors.New("您的帳號未開放建立跑團分組")
 )
 
 type Service struct {
@@ -191,6 +192,14 @@ func (s *Service) CreateTeamGroup(ctx context.Context, req *CreateTeamGroupReque
 	if race.EventMode != "competition" || !race.AllowTeamGroups {
 		return nil, ErrTeamGroupsDisabled
 	}
+	// 權限：僅開放的會員可建立
+	allowed, err := s.repo.UserCanCreateTeamGroup(ctx, req.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrTeamGroupNotAllowed
+	}
 	// testing 模式僅白名單可建立；closed 全擋
 	switch race.ControlStatus {
 	case "closed":
@@ -213,6 +222,15 @@ func (s *Service) CreateTeamGroup(ctx context.Context, req *CreateTeamGroupReque
 		return nil, ErrRegistrationClosed
 	}
 	return s.repo.CreateTeamGroup(ctx, *req)
+}
+
+// CanUserCreateTeamGroup 該使用者於此賽事是否可建立跑團分組（前台顯示按鈕用）
+func (s *Service) CanUserCreateTeamGroup(ctx context.Context, userID string, race *Race) bool {
+	if userID == "" || race == nil || race.EventMode != "competition" || !race.AllowTeamGroups {
+		return false
+	}
+	ok, _ := s.repo.UserCanCreateTeamGroup(ctx, userID)
+	return ok
 }
 
 // Register 處理前台報名（分組 + 加購 + 訂單 + 個資回填）。

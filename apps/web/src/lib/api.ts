@@ -292,7 +292,7 @@ export const racesApi = {
     ),
   // 公開賽事詳情（含分組/加購/物資）+ 報名狀態（帶 token）
   detail: (raceID: string, token?: string) =>
-    request<{ race: RaceDetail; registration: RegistrationState | null }>(
+    request<{ race: RaceDetail; registration: RegistrationState | null; can_create_team_group?: boolean }>(
       `/races/${raceID}`,
       token ? { headers: withAuth(token) } : undefined
     ),
@@ -440,6 +440,7 @@ export interface MemberSummary {
   phone: string
   gender: string
   total_km: number
+  can_create_team_group: boolean
   created_at: string
 }
 
@@ -463,6 +464,12 @@ export const adminMembersApi = {
   },
   get: (token: string, id: string) =>
     request<{ member: MemberDetail }>(`/admin/members/${id}`, { headers: withAuth(token) }),
+  setTeamGroupPermission: (token: string, id: string, allowed: boolean) =>
+    request<{ can_create_team_group: boolean }>(`/admin/members/${id}/team-group-permission`, {
+      method: 'PUT',
+      headers: withAuth(token),
+      body: JSON.stringify({ allowed }),
+    }),
 }
 
 // --- Admin: 報名管理 / 訂單管理 ---
