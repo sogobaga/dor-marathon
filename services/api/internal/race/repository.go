@@ -245,6 +245,11 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		}
 	}
 
+	// 賽事任務（GroupIndex → group UUID；race_collective 不帶 group）
+	if err = insertRaceTasks(ctx, tx, raceID, req.Tasks, groupIDByIndex); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
@@ -430,6 +435,14 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 		}
 	}
 
+	// 5. 賽事任務整批重建（GroupIndex → finalGroupIDs）
+	if _, err = tx.Exec(ctx, `DELETE FROM race_tasks WHERE race_id=$1`, raceID); err != nil {
+		return nil, fmt.Errorf("clear tasks: %w", err)
+	}
+	if err = insertRaceTasks(ctx, tx, raceID, req.Tasks, finalGroupIDs); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
@@ -474,7 +487,11 @@ func (r *Repository) GetDetail(ctx context.Context, raceID string) (*RaceDetail,
 	if err != nil {
 		return nil, err
 	}
-	return &RaceDetail{Race: *race, Groups: groups, Addons: addons, Supplies: supplies, TestWhitelist: whitelist, Brochure: brochure}, nil
+	tasks, err := r.GetRaceTasks(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	return &RaceDetail{Race: *race, Groups: groups, Addons: addons, Supplies: supplies, TestWhitelist: whitelist, Brochure: brochure, Tasks: tasks}, nil
 }
 
 // insertBrochure 依陣列順序寫入簡章區塊（交易內，呼叫前須先清空舊區塊）
@@ -492,6 +509,202 @@ func insertBrochure(ctx context.Context, tx pgx.Tx, raceID string, blocks []Broc
 		}
 	}
 	return nil
+}
+
+// insertRaceTasks 依序寫入賽事任務（交易內，呼叫前更新時須先清空）。
+// groupIDs：分組陣列索引→UUID；scope=race_collective 不帶 group，其餘用 GroupIndex 對應。
+func insertRaceTasks(ctx context.Context, tx pgx.Tx, raceID string, tasks []RaceTask, groupIDs []string) error {
+	for i := range tasks {
+		t := &tasks[i]
+		if t.Title == "" || !ValidMetric(t.MetricType) {
+			continue
+		}
+		var groupID interface{}
+		if t.Scope != ScopeRaceCollective && t.GroupIndex != nil &&
+			*t.GroupIndex >= 0 && *t.GroupIndex < len(groupIDs) {
+			groupID = groupIDs[*t.GroupIndex]
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO race_tasks (race_id, scope, group_id, metric_type,
+			                        target_value, range_lo, range_hi, title, description, display_order)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+			raceID, t.Scope, groupID, t.MetricType,
+			t.TargetValue, t.RangeLo, t.RangeHi, t.Title, nullStr(t.Description), i); err != nil {
+			return fmt.Errorf("insert race task %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// GetRaceTasks 取得賽事所有任務（依顯示順序；group_id 為實際 UUID 字串）
+func (r *Repository) GetRaceTasks(ctx context.Context, raceID string) ([]RaceTask, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, race_id, scope, COALESCE(group_id::text,''), metric_type,
+		       target_value, range_lo, range_hi, title, COALESCE(description,''), display_order
+		FROM race_tasks WHERE race_id=$1 ORDER BY scope, display_order, created_at`, raceID)
+	if err != nil {
+		return nil, fmt.Errorf("get race tasks: %w", err)
+	}
+	defer rows.Close()
+	out := []RaceTask{}
+	for rows.Next() {
+		var t RaceTask
+		if err := rows.Scan(&t.ID, &t.RaceID, &t.Scope, &t.GroupID, &t.MetricType,
+			&t.TargetValue, &t.RangeLo, &t.RangeHi, &t.Title, &t.Description, &t.DisplayOrder); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// --- 任務模組（全站共用範本）CRUD ---
+
+func insertModuleItems(ctx context.Context, tx pgx.Tx, moduleID string, items []TaskModuleItem) error {
+	for i := range items {
+		it := &items[i]
+		if it.Title == "" || !ValidMetric(it.MetricType) {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO task_module_items (module_id, metric_type, target_value, range_lo, range_hi, title, description, display_order)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+			moduleID, it.MetricType, it.TargetValue, it.RangeLo, it.RangeHi, it.Title, nullStr(it.Description), i); err != nil {
+			return fmt.Errorf("insert module item %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// ListTaskModules 全站任務模組（含項目）
+func (r *Repository) ListTaskModules(ctx context.Context) ([]TaskModule, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, name, COALESCE(description,''), is_system FROM task_modules
+		ORDER BY is_system DESC, name`)
+	if err != nil {
+		return nil, fmt.Errorf("list task modules: %w", err)
+	}
+	defer rows.Close()
+	mods := []TaskModule{}
+	idx := map[string]int{}
+	for rows.Next() {
+		var m TaskModule
+		if err := rows.Scan(&m.ID, &m.Name, &m.Description, &m.IsSystem); err != nil {
+			return nil, err
+		}
+		m.Items = []TaskModuleItem{}
+		idx[m.ID] = len(mods)
+		mods = append(mods, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	itemRows, err := r.db.Query(ctx, `
+		SELECT id, module_id, metric_type, target_value, range_lo, range_hi, title, COALESCE(description,''), display_order
+		FROM task_module_items ORDER BY display_order, id`)
+	if err != nil {
+		return nil, fmt.Errorf("list module items: %w", err)
+	}
+	defer itemRows.Close()
+	for itemRows.Next() {
+		var it TaskModuleItem
+		if err := itemRows.Scan(&it.ID, &it.ModuleID, &it.MetricType, &it.TargetValue, &it.RangeLo, &it.RangeHi,
+			&it.Title, &it.Description, &it.DisplayOrder); err != nil {
+			return nil, err
+		}
+		if i, ok := idx[it.ModuleID]; ok {
+			mods[i].Items = append(mods[i].Items, it)
+		}
+	}
+	return mods, itemRows.Err()
+}
+
+// GetTaskModule 單一模組（含項目）
+func (r *Repository) GetTaskModule(ctx context.Context, id string) (*TaskModule, error) {
+	var m TaskModule
+	err := r.db.QueryRow(ctx, `SELECT id, name, COALESCE(description,''), is_system FROM task_modules WHERE id=$1`, id).
+		Scan(&m.ID, &m.Name, &m.Description, &m.IsSystem)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id, module_id, metric_type, target_value, range_lo, range_hi, title, COALESCE(description,''), display_order
+		FROM task_module_items WHERE module_id=$1 ORDER BY display_order, id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m.Items = []TaskModuleItem{}
+	for rows.Next() {
+		var it TaskModuleItem
+		if err := rows.Scan(&it.ID, &it.ModuleID, &it.MetricType, &it.TargetValue, &it.RangeLo, &it.RangeHi,
+			&it.Title, &it.Description, &it.DisplayOrder); err != nil {
+			return nil, err
+		}
+		m.Items = append(m.Items, it)
+	}
+	return &m, rows.Err()
+}
+
+// CreateTaskModule 建立模組 + 項目
+func (r *Repository) CreateTaskModule(ctx context.Context, m *TaskModule) (*TaskModule, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	var id string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO task_modules (name, description, is_system) VALUES ($1,$2,FALSE) RETURNING id`,
+		m.Name, nullStr(m.Description)).Scan(&id); err != nil {
+		return nil, fmt.Errorf("insert task module: %w", err)
+	}
+	if err := insertModuleItems(ctx, tx, id, m.Items); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return r.GetTaskModule(ctx, id)
+}
+
+// UpdateTaskModule 更新模組 header + 項目刪除重建
+func (r *Repository) UpdateTaskModule(ctx context.Context, id string, m *TaskModule) (*TaskModule, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	ct, err := tx.Exec(ctx, `UPDATE task_modules SET name=$1, description=$2 WHERE id=$3`,
+		m.Name, nullStr(m.Description), id)
+	if err != nil {
+		return nil, fmt.Errorf("update task module: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return nil, nil
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM task_module_items WHERE module_id=$1`, id); err != nil {
+		return nil, err
+	}
+	if err := insertModuleItems(ctx, tx, id, m.Items); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return r.GetTaskModule(ctx, id)
+}
+
+// DeleteTaskModule 刪除模組（items CASCADE）
+func (r *Repository) DeleteTaskModule(ctx context.Context, id string) (bool, error) {
+	ct, err := r.db.Exec(ctx, `DELETE FROM task_modules WHERE id=$1`, id)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
 }
 
 // GetBrochure 取得賽事簡章區塊（依顯示順序）

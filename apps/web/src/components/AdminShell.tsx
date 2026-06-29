@@ -25,6 +25,7 @@ const NAV: { grp: string; items: { k: string; t: string; href?: string }[] }[] =
     grp: '遊戲設定',
     items: [
       { k: 'factions', t: '陣營設定' },
+      { k: 'task-modules', t: '賽事任務', href: '/admin/task-modules' },
       { k: 'missions', t: '每日任務' },
       { k: 'stores', t: '打卡門市' },
       { k: 'mileage', t: '里程規則' },

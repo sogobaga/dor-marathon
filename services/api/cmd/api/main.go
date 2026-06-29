@@ -185,6 +185,7 @@ func main() {
 			r.Use(middleware.RequireAdmin)
 			r.Mount("/admin/races", raceHandler.AdminRouter())
 			r.Mount("/admin/group-presets", raceHandler.PresetRouter())
+			r.Mount("/admin/task-modules", raceHandler.TaskModuleRouter())
 			r.Mount("/admin/test-whitelist", raceHandler.TestWhitelistRouter())
 			r.Mount("/admin/images", imageHandler.AdminRouter())
 			r.Mount("/admin/signups", raceHandler.SignupRouter())

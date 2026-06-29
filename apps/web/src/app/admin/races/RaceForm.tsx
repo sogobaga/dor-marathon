@@ -5,6 +5,8 @@ import {
   adminRacesApi,
   adminPresetsApi,
   adminImagesApi,
+  adminTaskModulesApi,
+  METRIC_BY_KEY,
   type CreateRacePayload,
   type EventMode,
   type GoalType,
@@ -13,7 +15,11 @@ import {
   type RaceAddon,
   type GroupPreset,
   type BrochureBlock,
+  type RaceTask,
+  type TaskScope,
+  type TaskModule,
 } from '@/lib/api'
+import { TaskItemEditor, type TaskFields } from '../TaskItemEditor'
 
 // 物資編輯用的中介型別：scope 用「-1=共用」或分組索引表示
 interface SupplyDraft {
@@ -126,7 +132,7 @@ export default function RaceForm({
 }) {
   const isEdit = !!initial?.id
 
-  const [tab, setTab] = useState<'basic' | 'groups' | 'addons' | 'supplies' | 'brochure'>('basic')
+  const [tab, setTab] = useState<'basic' | 'groups' | 'addons' | 'supplies' | 'brochure' | 'tasks'>('basic')
   const [mode, setMode] = useState<EventMode>(initial?.event_mode ?? 'general')
   const [goalType, setGoalType] = useState<GoalType>(initial?.goal_type ?? 'distance')
   const [controlStatus, setControlStatus] = useState<string>(initial?.control_status ?? 'active')
@@ -208,12 +214,24 @@ export default function RaceForm({
     }))
   )
 
+  // 賽事任務（三層 scope）：group 範圍以「目前 groups 陣列索引」關聯（group_index）
+  const [tasks, setTasks] = useState<RaceTask[]>(
+    (initial?.tasks ?? [])
+      .map((t) => ({
+        ...t,
+        group_index: t.scope === 'race_collective' ? null : officialGroups.findIndex((g) => g.id === t.group_id),
+      }))
+      .filter((t) => t.scope === 'race_collective' || (t.group_index ?? -1) >= 0)
+  )
+  const [taskModules, setTaskModules] = useState<TaskModule[]>([])
+
   const [presets, setPresets] = useState<GroupPreset[]>([])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
   useEffect(() => {
     adminPresetsApi.list(token).then((r) => setPresets(r.presets)).catch(() => {})
+    adminTaskModulesApi.list(token).then((r) => setTaskModules(r.modules)).catch(() => {})
   }, [token])
 
   useEffect(() => {
@@ -252,6 +270,74 @@ export default function RaceForm({
     } catch {
       /* 忽略重複 */
     }
+  }
+
+  // --- 賽事任務 helpers（tasks 為扁平陣列，靠 scope + group_index 分區）---
+  function sectionTasks(scope: TaskScope, gi: number | null) {
+    return tasks
+      .map((t, idx) => ({ t, idx }))
+      .filter(({ t }) => t.scope === scope && (scope === 'race_collective' || t.group_index === gi))
+  }
+  function newTask(scope: TaskScope, gi: number | null): RaceTask {
+    return {
+      scope, group_index: scope === 'race_collective' ? null : gi,
+      metric_type: 'cumulative_distance', target_value: null, range_lo: null, range_hi: null,
+      title: '', description: '', display_order: 0,
+    }
+  }
+  function addTask(scope: TaskScope, gi: number | null) {
+    setTasks((ts) => [...ts, newTask(scope, gi)])
+  }
+  function patchTask(idx: number, patch: Partial<RaceTask>) {
+    setTasks((ts) => ts.map((t, i) => (i === idx ? { ...t, ...patch } : t)))
+  }
+  function removeTask(idx: number) {
+    setTasks((ts) => ts.filter((_, i) => i !== idx))
+  }
+  function applyModule(scope: TaskScope, gi: number | null, moduleId: string) {
+    const mod = taskModules.find((m) => m.id === moduleId)
+    if (!mod) return
+    const add: RaceTask[] = mod.items.map((it) => ({
+      scope, group_index: scope === 'race_collective' ? null : gi,
+      metric_type: it.metric_type, target_value: it.target_value ?? null,
+      range_lo: it.range_lo ?? null, range_hi: it.range_hi ?? null,
+      title: it.title, description: it.description ?? '', display_order: 0,
+    }))
+    setTasks((ts) => [...ts, ...add])
+  }
+  // 任務是否填妥（threshold 需 target；range 需 lo/hi）→ 送出前過濾，避免後端 400
+  function taskComplete(t: RaceTask): boolean {
+    const m = METRIC_BY_KEY[t.metric_type]
+    if (!m) return false
+    return m.kind === 'range' ? t.range_lo != null && t.range_hi != null : t.target_value != null
+  }
+  // 用「函式呼叫」而非元件，避免每次 render 重新掛載造成輸入失焦
+  function taskSection(scope: TaskScope, gi: number | null, label: string, sub: string) {
+    const rows = sectionTasks(scope, gi)
+    return (
+      <div style={{ ...card, background: 'var(--bg-2)' }}>
+        <div style={{ fontWeight: 700, fontSize: 13.5 }}>{label}</div>
+        <div style={hint}>{sub}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
+          {rows.map(({ t, idx }) => (
+            <TaskItemEditor key={idx} value={t as TaskFields} onChange={(p) => patchTask(idx, p)} onRemove={() => removeTask(idx)} />
+          ))}
+          {rows.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚未設定任務</div>}
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button type="button" onClick={() => addTask(scope, gi)} style={ghostBtn}>＋ 新增任務</button>
+          {taskModules.length > 0 && (
+            <select
+              style={{ ...inp, width: 'auto' }} value=""
+              onChange={(e) => { if (e.target.value) { applyModule(scope, gi, e.target.value); e.target.value = '' } }}
+            >
+              <option value="">套用任務模組…</option>
+              {taskModules.map((m) => <option key={m.id} value={m.id}>{m.name}（{m.items.length}）</option>)}
+            </select>
+          )}
+        </div>
+      </div>
+    )
   }
 
   function buildPayload(): CreateRacePayload {
@@ -296,6 +382,19 @@ export default function RaceForm({
           image_url: s.image_url.trim(),
           display_order: idx,
           group_index: s.scope < 0 ? null : s.scope,
+        })),
+      tasks: tasks
+        .filter(taskComplete)
+        .map((t, idx) => ({
+          scope: t.scope,
+          group_index: t.scope === 'race_collective' ? null : t.group_index,
+          metric_type: t.metric_type,
+          target_value: t.target_value ?? null,
+          range_lo: t.range_lo ?? null,
+          range_hi: t.range_hi ?? null,
+          title: t.title.trim(),
+          description: (t.description ?? '').trim(),
+          display_order: idx,
         })),
     }
   }
@@ -351,6 +450,7 @@ export default function RaceForm({
           ['addons', `加購 (${addons.filter((a) => a.name.trim()).length})`],
           ['supplies', `物資 (${supplies.filter((s) => s.name.trim()).length})`],
           ['brochure', `簡章 (${brochure.filter(blockHasContent).length})`],
+          ['tasks', `任務 (${tasks.filter(taskComplete).length})`],
         ].map(([v, label]) => (
           <button
             key={v}
@@ -742,6 +842,27 @@ export default function RaceForm({
               <button onClick={() => setBrochure((bs) => [...bs, { block_type: 'image', content: '', display_order: bs.length }])} style={ghostBtn}>＋ 圖片</button>
               <button onClick={() => setBrochure((bs) => [...bs, { block_type: 'video', content: '', display_order: bs.length }])} style={ghostBtn}>＋ YouTube 影片</button>
             </div>
+          </div>
+        )}
+
+        {tab === 'tasks' && (
+          <div style={col}>
+            <div style={hint}>
+              本輪為任務設定：可設賽事集體、各分組團體與個人的任務目標。完成判定與前台進度顯示將於後續推出（部分指標需擴充活動上傳資料）。
+            </div>
+
+            {taskSection('race_collective', null, '賽事集體任務（全部參賽者）', '全體參賽者數值「加總」達標即完成，例：全員合計爬升 8848m。')}
+
+            {groups.filter((g) => g.name.trim()).map((g, gi) => (
+              <div key={g.id ?? `g-${gi}`} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontWeight: 800, fontSize: 14, marginTop: 6 }}>分組：{g.name || `分組 ${gi + 1}`}</div>
+                {taskSection('group_team', gi, '團體任務（全組加總）', '該分組所有成員數值加總達標即完成。')}
+                {taskSection('group_individual', gi, '個人任務（每人各自）', '該分組每位成員都需各自達標。')}
+              </div>
+            ))}
+            {groups.filter((g) => g.name.trim()).length === 0 && (
+              <div style={{ fontSize: 12.5, color: 'var(--tx-faint)' }}>請先到「分組」分頁建立分組，才能設定分組團體/個人任務。</div>
+            )}
           </div>
         )}
       </div>

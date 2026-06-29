@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/dor/api/internal/auth"
@@ -262,6 +263,94 @@ func (h *Handler) AdminCreatePreset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusCreated, map[string]any{"preset": preset})
+}
+
+// TaskModuleRouter 任務模組路由（掛載在 /api/v1/admin/task-modules）
+func (h *Handler) TaskModuleRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/", h.AdminListTaskModules)
+	r.Post("/", h.AdminCreateTaskModule)
+	r.Get("/{id}", h.AdminGetTaskModule)
+	r.Put("/{id}", h.AdminUpdateTaskModule)
+	r.Delete("/{id}", h.AdminDeleteTaskModule)
+	return r
+}
+
+// GET /api/v1/admin/task-modules — 含 metric catalog 供前端鏡像
+func (h *Handler) AdminListTaskModules(w http.ResponseWriter, r *http.Request) {
+	mods, err := h.svc.ListTaskModules(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list task modules")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"modules": mods, "metrics": MetricCatalogList()})
+}
+
+// GET /api/v1/admin/task-modules/{id}
+func (h *Handler) AdminGetTaskModule(w http.ResponseWriter, r *http.Request) {
+	m, err := h.svc.GetTaskModule(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get task module")
+		return
+	}
+	if m == nil {
+		respondErr(w, http.StatusNotFound, "task module not found")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"module": m})
+}
+
+// POST /api/v1/admin/task-modules
+func (h *Handler) AdminCreateTaskModule(w http.ResponseWriter, r *http.Request) {
+	var m TaskModule
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	created, err := h.svc.CreateTaskModule(r.Context(), &m)
+	h.respondTaskModule(w, http.StatusCreated, created, err)
+}
+
+// PUT /api/v1/admin/task-modules/{id}
+func (h *Handler) AdminUpdateTaskModule(w http.ResponseWriter, r *http.Request) {
+	var m TaskModule
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	updated, err := h.svc.UpdateTaskModule(r.Context(), chi.URLParam(r, "id"), &m)
+	h.respondTaskModule(w, http.StatusOK, updated, err)
+}
+
+// DELETE /api/v1/admin/task-modules/{id}
+func (h *Handler) AdminDeleteTaskModule(w http.ResponseWriter, r *http.Request) {
+	err := h.svc.DeleteTaskModule(r.Context(), chi.URLParam(r, "id"))
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrTaskModuleNotFound):
+		respondErr(w, http.StatusNotFound, "task module not found")
+	default:
+		respondErr(w, http.StatusInternalServerError, "failed to delete task module")
+	}
+}
+
+func (h *Handler) respondTaskModule(w http.ResponseWriter, okStatus int, m *TaskModule, err error) {
+	switch {
+	case err == nil:
+		respondJSON(w, okStatus, map[string]any{"module": m})
+	case errors.Is(err, ErrTaskModuleName):
+		respondErr(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrTaskModuleNotFound):
+		respondErr(w, http.StatusNotFound, "task module not found")
+	default:
+		// 驗證錯誤（invalid metric / 缺值）回 400，其餘 500
+		if strings.Contains(err.Error(), "metric") || strings.Contains(err.Error(), "range") || strings.Contains(err.Error(), "item") {
+			respondErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to save task module")
+	}
 }
 
 // GET /api/v1/races — 前台賽事列表（依 control_status 過濾可見性，display_status 自動推導）

@@ -38,6 +38,8 @@ var (
 	ErrTeamGroupsDisabled   = errors.New("此賽事未開放跑團分組申請")
 	ErrTeamGroupName        = errors.New("請輸入跑團分組名稱")
 	ErrTeamGroupNotAllowed  = errors.New("您的帳號未開放建立跑團分組")
+	ErrTaskModuleName       = errors.New("請輸入任務模組名稱")
+	ErrTaskModuleNotFound   = errors.New("task module not found")
 )
 
 type Service struct {
@@ -580,7 +582,32 @@ var (
 	validGoalTypes   = map[string]bool{"cumulative": true, "distance": true}
 	validGenderLimit = map[string]bool{"any": true, "male": true, "female": true}
 	validSupplyKinds = map[string]bool{"race_pack": true, "finisher": true}
+	validTaskScope   = map[string]bool{
+		ScopeRaceCollective: true, ScopeGroupTeam: true, ScopeGroupIndividual: true,
+	}
 )
+
+// validateTaskMetric 驗證任務指標與其數值（threshold 需 target>0；range 需 lo/hi 且 lo<=hi）。
+func validateTaskMetric(metric string, target, lo, hi *float64) error {
+	spec, ok := MetricCatalog[metric]
+	if !ok {
+		return fmt.Errorf("invalid metric_type: %s", metric)
+	}
+	switch spec.Kind {
+	case MetricThreshold:
+		if target == nil || *target <= 0 {
+			return fmt.Errorf("metric %s requires positive target_value", metric)
+		}
+	case MetricRange:
+		if lo == nil || hi == nil {
+			return fmt.Errorf("metric %s requires range_lo and range_hi", metric)
+		}
+		if *lo > *hi {
+			return fmt.Errorf("metric %s: range_lo must be <= range_hi", metric)
+		}
+	}
+	return nil
+}
 
 // normalizeRequest 套用預設值並驗證巢狀 payload（建立與更新共用）。
 func normalizeRequest(req *CreateRaceRequest) error {
@@ -630,6 +657,18 @@ func normalizeRequest(req *CreateRaceRequest) error {
 		}
 		if !validSupplyKinds[su.Kind] {
 			return fmt.Errorf("supply %d: invalid kind", i)
+		}
+	}
+	for i := range req.Tasks {
+		t := &req.Tasks[i]
+		if !validTaskScope[t.Scope] {
+			return fmt.Errorf("task %d: invalid scope", i)
+		}
+		if err := validateTaskMetric(t.MetricType, t.TargetValue, t.RangeLo, t.RangeHi); err != nil {
+			return fmt.Errorf("task %d: %w", i, err)
+		}
+		if t.Title == "" {
+			t.Title = MetricCatalog[t.MetricType].Label
 		}
 	}
 
@@ -796,6 +835,65 @@ func (s *Service) ListPresets(ctx context.Context) ([]GroupPreset, error) {
 // CreatePreset 新增分組預設（後台擴充選單）
 func (s *Service) CreatePreset(ctx context.Context, name string, distanceKm *float64) (*GroupPreset, error) {
 	return s.repo.CreatePreset(ctx, name, distanceKm)
+}
+
+// --- 任務模組（全站共用範本）---
+
+func validateModule(m *TaskModule) error {
+	m.Name = strings.TrimSpace(m.Name)
+	if m.Name == "" {
+		return ErrTaskModuleName
+	}
+	for i := range m.Items {
+		it := &m.Items[i]
+		if err := validateTaskMetric(it.MetricType, it.TargetValue, it.RangeLo, it.RangeHi); err != nil {
+			return fmt.Errorf("item %d: %w", i, err)
+		}
+		if it.Title == "" {
+			it.Title = MetricCatalog[it.MetricType].Label
+		}
+	}
+	return nil
+}
+
+func (s *Service) ListTaskModules(ctx context.Context) ([]TaskModule, error) {
+	return s.repo.ListTaskModules(ctx)
+}
+
+func (s *Service) GetTaskModule(ctx context.Context, id string) (*TaskModule, error) {
+	return s.repo.GetTaskModule(ctx, id)
+}
+
+func (s *Service) CreateTaskModule(ctx context.Context, m *TaskModule) (*TaskModule, error) {
+	if err := validateModule(m); err != nil {
+		return nil, err
+	}
+	return s.repo.CreateTaskModule(ctx, m)
+}
+
+func (s *Service) UpdateTaskModule(ctx context.Context, id string, m *TaskModule) (*TaskModule, error) {
+	if err := validateModule(m); err != nil {
+		return nil, err
+	}
+	updated, err := s.repo.UpdateTaskModule(ctx, id, m)
+	if err != nil {
+		return nil, err
+	}
+	if updated == nil {
+		return nil, ErrTaskModuleNotFound
+	}
+	return updated, nil
+}
+
+func (s *Service) DeleteTaskModule(ctx context.Context, id string) error {
+	ok, err := s.repo.DeleteTaskModule(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrTaskModuleNotFound
+	}
+	return nil
 }
 
 // CreateRaceWithReview 合作方提交賽事，指定審核狀態（pending）

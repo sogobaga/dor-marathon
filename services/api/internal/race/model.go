@@ -116,6 +116,100 @@ type CreateTeamGroupRequest struct {
 	GroupKey         string   `json:"group_key,omitempty"`
 }
 
+// --- 賽事任務系統 ---
+
+// MetricSpec 任務指標規格（後端為單一真實來源，前端鏡像）
+type MetricSpec struct {
+	Key     string `json:"key"`
+	Label   string `json:"label"`
+	Unit    string `json:"unit"`
+	Kind    string `json:"kind"`     // threshold | range
+	HasData bool   `json:"has_data"` // 目前 activities 是否有資料源
+}
+
+// MetricKind
+const (
+	MetricThreshold = "threshold" // 實際值 >= target_value 即完成
+	MetricRange     = "range"     // 實際值落在 [range_lo, range_hi] 即完成
+)
+
+// TaskScope
+const (
+	ScopeRaceCollective  = "race_collective"  // 全部參賽者集體加總
+	ScopeGroupTeam       = "group_team"       // 分組團體加總
+	ScopeGroupIndividual = "group_individual" // 分組個人各自
+)
+
+// MetricCatalog 9 種任務指標（key → 規格）。爬升/心率目前無資料源（HasData=false）。
+var MetricCatalog = map[string]MetricSpec{
+	"cumulative_distance": {"cumulative_distance", "累計總里程", "km", MetricThreshold, true},
+	"single_distance":     {"single_distance", "單次里程", "km", MetricThreshold, true},
+	"daily_distance":      {"daily_distance", "每日里程", "km", MetricThreshold, true},
+	"streak_days":         {"streak_days", "連續進行任務天數", "天", MetricThreshold, true},
+	"weekly_distance":     {"weekly_distance", "每週總里程", "km", MetricThreshold, true},
+	"avg_pace_range":      {"avg_pace_range", "平均配速區間", "秒/km", MetricRange, true},
+	"cumulative_ascent":   {"cumulative_ascent", "累積爬升海拔", "m", MetricThreshold, false},
+	"single_ascent":       {"single_ascent", "單次爬升海拔", "m", MetricThreshold, false},
+	"avg_hr_range":        {"avg_hr_range", "平均心率區間", "bpm", MetricRange, false},
+}
+
+// MetricCatalogList 依固定順序回傳 catalog（API/驗證用）
+func MetricCatalogList() []MetricSpec {
+	order := []string{
+		"cumulative_distance", "single_distance", "daily_distance", "streak_days",
+		"weekly_distance", "avg_pace_range", "cumulative_ascent", "single_ascent", "avg_hr_range",
+	}
+	out := make([]MetricSpec, 0, len(order))
+	for _, k := range order {
+		out = append(out, MetricCatalog[k])
+	}
+	return out
+}
+
+// ValidMetric 是否為已知指標
+func ValidMetric(k string) bool {
+	_, ok := MetricCatalog[k]
+	return ok
+}
+
+// RaceTask 賽事任務（三層 scope）。GroupIndex 仿 RaceSupply：建立時對應 Groups 陣列索引。
+type RaceTask struct {
+	ID           string   `json:"id,omitempty"`
+	RaceID       string   `json:"race_id,omitempty"`
+	Scope        string   `json:"scope"`                 // race_collective | group_team | group_individual
+	GroupID      string   `json:"group_id,omitempty"`    // 回傳時填實際 UUID（race_collective 為空）
+	GroupIndex   *int     `json:"group_index,omitempty"` // 建立時用：對應 Groups 陣列索引
+	MetricType   string   `json:"metric_type"`
+	TargetValue  *float64 `json:"target_value,omitempty"` // threshold 用
+	RangeLo      *float64 `json:"range_lo,omitempty"`     // range 用
+	RangeHi      *float64 `json:"range_hi,omitempty"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description,omitempty"`
+	DisplayOrder int      `json:"display_order"`
+}
+
+// TaskModule 全站共用任務模組（範本）
+type TaskModule struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	IsSystem    bool              `json:"is_system"`
+	Items       []TaskModuleItem  `json:"items"`
+}
+
+// TaskModuleItem 模組內任務項目
+type TaskModuleItem struct {
+	ID           string   `json:"id,omitempty"`
+	ModuleID     string   `json:"module_id,omitempty"`
+	MetricType   string   `json:"metric_type"`
+	TargetValue  *float64 `json:"target_value,omitempty"`
+	RangeLo      *float64 `json:"range_lo,omitempty"`
+	RangeHi      *float64 `json:"range_hi,omitempty"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description,omitempty"`
+	DisplayOrder int      `json:"display_order"`
+}
+
 // RaceAddon 加購項目
 type RaceAddon struct {
 	ID           string `json:"id,omitempty"`
@@ -162,6 +256,7 @@ type CreateRaceRequest struct {
 	Supplies      []RaceSupply    `json:"supplies"`
 	TestWhitelist []string        `json:"test_whitelist"` // 該賽事測試白名單 email
 	Brochure      []BrochureBlock `json:"brochure"`
+	Tasks         []RaceTask      `json:"tasks"`
 }
 
 // RaceDetail 含巢狀子資料（供後台編輯載入）
@@ -172,6 +267,7 @@ type RaceDetail struct {
 	Supplies      []RaceSupply    `json:"supplies"`
 	TestWhitelist []string        `json:"test_whitelist"`
 	Brochure      []BrochureBlock `json:"brochure"`
+	Tasks         []RaceTask      `json:"tasks"`
 }
 
 // GroupPreset 分組預設選單（可擴充）

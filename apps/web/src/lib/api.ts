@@ -107,12 +107,74 @@ export interface BrochureBlock {
   display_order: number
 }
 
+// --- 賽事任務系統 ---
+export type MetricType =
+  | 'cumulative_distance' | 'single_distance' | 'daily_distance' | 'streak_days'
+  | 'weekly_distance' | 'avg_pace_range' | 'cumulative_ascent' | 'single_ascent' | 'avg_hr_range'
+export type TaskScope = 'race_collective' | 'group_team' | 'group_individual'
+
+export interface MetricSpec {
+  key: MetricType
+  label: string
+  unit: string
+  kind: 'threshold' | 'range'
+  has_data: boolean
+}
+
+// 前端鏡像後端 MetricCatalog（順序、文案一致）
+export const METRIC_CATALOG: MetricSpec[] = [
+  { key: 'cumulative_distance', label: '累計總里程', unit: 'km', kind: 'threshold', has_data: true },
+  { key: 'single_distance', label: '單次里程', unit: 'km', kind: 'threshold', has_data: true },
+  { key: 'daily_distance', label: '每日里程', unit: 'km', kind: 'threshold', has_data: true },
+  { key: 'streak_days', label: '連續進行任務天數', unit: '天', kind: 'threshold', has_data: true },
+  { key: 'weekly_distance', label: '每週總里程', unit: 'km', kind: 'threshold', has_data: true },
+  { key: 'avg_pace_range', label: '平均配速區間', unit: '秒/km', kind: 'range', has_data: true },
+  { key: 'cumulative_ascent', label: '累積爬升海拔', unit: 'm', kind: 'threshold', has_data: false },
+  { key: 'single_ascent', label: '單次爬升海拔', unit: 'm', kind: 'threshold', has_data: false },
+  { key: 'avg_hr_range', label: '平均心率區間', unit: 'bpm', kind: 'range', has_data: false },
+]
+export const METRIC_BY_KEY: Record<string, MetricSpec> = Object.fromEntries(METRIC_CATALOG.map((m) => [m.key, m]))
+
+export interface RaceTask {
+  id?: string
+  scope: TaskScope
+  group_id?: string
+  group_index?: number | null // 建立時對應 groups 陣列索引（race_collective 為 null）
+  metric_type: MetricType
+  target_value?: number | null
+  range_lo?: number | null
+  range_hi?: number | null
+  title: string
+  description?: string
+  display_order: number
+}
+
+export interface TaskModuleItem {
+  id?: string
+  metric_type: MetricType
+  target_value?: number | null
+  range_lo?: number | null
+  range_hi?: number | null
+  title: string
+  description?: string
+  display_order: number
+}
+
+export interface TaskModule {
+  id: string
+  name: string
+  description?: string
+  is_system: boolean
+  items: TaskModuleItem[]
+}
+
 export interface RaceDetail extends Race {
   groups: RaceGroup[]
   addons: RaceAddon[]
   supplies: RaceSupply[]
   test_whitelist: string[]
   brochure: BrochureBlock[]
+  tasks: RaceTask[]
 }
 
 // 建立賽事的巢狀 payload（Race 基本欄位 + 子陣列）
@@ -122,6 +184,7 @@ export type CreateRacePayload = Partial<Race> & {
   supplies: RaceSupply[]
   test_whitelist?: string[]
   brochure?: BrochureBlock[]
+  tasks?: RaceTask[]
 }
 
 export interface GroupPreset {
@@ -470,6 +533,25 @@ export const adminMembersApi = {
       headers: withAuth(token),
       body: JSON.stringify({ allowed }),
     }),
+}
+
+export type TaskModuleInput = { name: string; description?: string; items: TaskModuleItem[] }
+
+export const adminTaskModulesApi = {
+  list: (token: string) =>
+    request<{ modules: TaskModule[]; metrics: MetricSpec[] }>('/admin/task-modules', { headers: withAuth(token) }),
+  get: (token: string, id: string) =>
+    request<{ module: TaskModule }>(`/admin/task-modules/${id}`, { headers: withAuth(token) }),
+  create: (token: string, body: TaskModuleInput) =>
+    request<{ module: TaskModule }>('/admin/task-modules', {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  update: (token: string, id: string, body: TaskModuleInput) =>
+    request<{ module: TaskModule }>(`/admin/task-modules/${id}`, {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  remove: (token: string, id: string) =>
+    request<null>(`/admin/task-modules/${id}`, { method: 'DELETE', headers: withAuth(token) }),
 }
 
 // --- Admin: 報名管理 / 訂單管理 ---
