@@ -20,7 +20,11 @@ export default function DebugSession() {
     }
     if (t) {
       const parts = t.split('.')
-      out.header = b64urlJson(parts[1] ? parts[0] : '')
+      out.parts = parts.length
+      out.sigLen = parts[2]?.length ?? 0 // HS256 正常 43
+      out.tokHead = t.slice(0, 16)
+      out.tokTail = t.slice(-16)
+      out.header = b64urlJson(parts[0] || '')
       const p = b64urlJson(parts[1] || '')
       if (p) { out.uid = p.uid; out.role = p.role; out.iat = p.iat; out.exp = p.exp }
       out.clientNow = Math.floor(Date.now() / 1000)
