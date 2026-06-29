@@ -44,6 +44,7 @@ export interface Race {
   brochure_title?: string
   control_status: ControlStatus
   starting_soon_days: number
+  allow_team_groups?: boolean
   display_status: DisplayStatus
   can_register: boolean
   review_status: string
@@ -69,6 +70,10 @@ export interface RaceGroup {
   age_min?: number | null
   age_max?: number | null
   target_distance_km?: number | null
+  requires_key?: boolean
+  group_key?: string // 後台編輯時可帶；公開回傳一律為空
+  created_by?: string
+  is_user_created?: boolean
 }
 
 export interface RaceAddon {
@@ -240,9 +245,18 @@ export interface RegistrationState {
 
 export interface RegisterPayload {
   group_id?: string
+  group_key?: string // 加入需鑰匙的分組時帶入
   addons?: { addon_id: string; qty: number }[]
   participant: Partial<Record<ParticipantField, string>>
   promo_code?: string
+}
+
+export interface CreateTeamGroupPayload {
+  name: string
+  description?: string
+  target_distance_km?: number | null
+  requires_key: boolean
+  group_key?: string
 }
 
 export interface RegisterResult {
@@ -284,6 +298,13 @@ export const racesApi = {
     ),
   register: (raceID: string, token: string, payload: RegisterPayload) =>
     request<RegisterResult>(`/races/${raceID}/register`, {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify(payload),
+    }),
+  // 前台跑團成員自建分組（competition + allow_team_groups）
+  createTeamGroup: (raceID: string, token: string, payload: CreateTeamGroupPayload) =>
+    request<RaceGroup>(`/races/${raceID}/groups`, {
       method: 'POST',
       headers: withAuth(token),
       body: JSON.stringify(payload),

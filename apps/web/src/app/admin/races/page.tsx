@@ -16,6 +16,29 @@ const DISPLAY_LABEL: Record<string, string> = {
   starting_soon: '賽事即將開始', racing: '賽事進行中', ended: '賽事結束',
   paused: '暫停報名', suspended: '賽事中止',
 }
+const MODE_LABEL: Record<string, string> = {
+  general: '一般', competition: '競賽', faction_battle: '分組對抗',
+}
+
+function fmtDate(s?: string | null) {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (isNaN(d.getTime())) return '—'
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+function fmtFee(cents: number) {
+  return cents > 0 ? `NT$${Math.round(cents / 100).toLocaleString()}` : '免費'
+}
+
+function InfoItem({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginBottom: 1 }}>{label}</div>
+      <div style={{ fontSize: 12, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
+    </div>
+  )
+}
 
 export default function AdminRacesList() {
   const router = useRouter()
@@ -110,34 +133,45 @@ export default function AdminRacesList() {
                 borderRadius: 14,
                 padding: 18,
                 display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
+                flexDirection: 'column',
                 gap: 12,
               }}
             >
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>{r.title}</div>
-                <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
-                  {r.subtitle} · {r.distances.join('/')}K · {r.slots_total} 名額
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>{r.title}</div>
+                  <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
+                    {r.subtitle} · {r.distances.join('/')}K · {r.slots_total} 名額
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                  <span style={{ color: 'var(--fug)', fontSize: 13 }}>編輯 →</span>
+                  <button
+                    onClick={(e) => handleDelete(e, r)}
+                    disabled={deletingId === r.id}
+                    title="刪除賽事"
+                    style={{
+                      background: 'rgba(255,80,80,.08)', color: 'var(--hunt)', border: '1px solid rgba(255,80,80,.25)',
+                      borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+                    }}
+                  >
+                    {deletingId === r.id ? '刪除中…' : '刪除'}
+                  </button>
                 </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
-                  {CONTROL_LABEL[r.control_status] ?? r.control_status}
-                  <span style={{ color: 'var(--tx-faint)' }}> · {DISPLAY_LABEL[r.display_status] ?? r.display_status}</span>
-                </span>
-                <span style={{ color: 'var(--fug)', fontSize: 13 }}>編輯 →</span>
-                <button
-                  onClick={(e) => handleDelete(e, r)}
-                  disabled={deletingId === r.id}
-                  title="刪除賽事"
-                  style={{
-                    background: 'rgba(255,80,80,.08)', color: 'var(--hunt)', border: '1px solid rgba(255,80,80,.25)',
-                    borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13,
-                  }}
-                >
-                  {deletingId === r.id ? '刪除中…' : '刪除'}
-                </button>
+
+              <div
+                style={{
+                  display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10,
+                  borderTop: '1px solid var(--line)', paddingTop: 12,
+                }}
+              >
+                <InfoItem label="賽事模式" value={MODE_LABEL[r.event_mode] ?? r.event_mode} />
+                <InfoItem label="報名費" value={fmtFee(r.entry_fee)} />
+                <InfoItem label="報名狀態" value={DISPLAY_LABEL[r.display_status] ?? r.display_status} />
+                <InfoItem label="賽事狀態" value={CONTROL_LABEL[r.control_status] ?? r.control_status} />
+                <InfoItem label="報名時間" value={`${fmtDate(r.registration_start)} ~ ${fmtDate(r.registration_end)}`} />
+                <InfoItem label="賽事時間" value={`${fmtDate(r.start_date)} ~ ${fmtDate(r.end_date)}`} />
               </div>
             </Link>
           ))}

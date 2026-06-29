@@ -64,6 +64,7 @@ function emptyGroup(order: number): RaceGroup {
   return {
     name: '', description: '', display_order: order, slot_limit: null,
     gender_limit: 'any', age_min: null, age_max: null, target_distance_km: null,
+    requires_key: false, group_key: '',
   }
 }
 function emptyAddon(order: number): RaceAddon {
@@ -130,6 +131,7 @@ export default function RaceForm({
   const [goalType, setGoalType] = useState<GoalType>(initial?.goal_type ?? 'distance')
   const [controlStatus, setControlStatus] = useState<string>(initial?.control_status ?? 'active')
   const [startingSoonDays, setStartingSoonDays] = useState<string>(String(initial?.starting_soon_days ?? 5))
+  const [allowTeamGroups, setAllowTeamGroups] = useState<boolean>(initial?.allow_team_groups ?? false)
   const [testWhitelist, setTestWhitelist] = useState<string[]>(initial?.test_whitelist ?? [])
   const [wlInput, setWlInput] = useState('')
   const [brochureTitle, setBrochureTitle] = useState(initial?.brochure_title ?? '')
@@ -190,13 +192,15 @@ export default function RaceForm({
     initial?.required_fields ?? ['real_name', 'phone']
   )
 
+  // 後台僅編輯「官方」分組；前台自建的跑團分組(is_user_created)不在此處管理、亦不會被儲存誤刪
+  const officialGroups = (initial?.groups ?? []).filter((g) => !g.is_user_created)
   const [groups, setGroups] = useState<RaceGroup[]>(
-    initial?.groups?.length ? initial.groups.map((g) => ({ ...g })) : [emptyGroup(0)]
+    officialGroups.length ? officialGroups.map((g) => ({ ...g })) : [emptyGroup(0)]
   )
   const [addons, setAddons] = useState<RaceAddon[]>(initial?.addons?.map((a) => ({ ...a })) ?? [])
   const [supplies, setSupplies] = useState<SupplyDraft[]>(
     (initial?.supplies ?? []).map((s) => ({
-      scope: s.group_id ? (initial!.groups.findIndex((g) => g.id === s.group_id)) : -1,
+      scope: s.group_id ? officialGroups.findIndex((g) => g.id === s.group_id) : -1,
       kind: s.kind,
       name: s.name,
       description: s.description ?? '',
@@ -265,6 +269,7 @@ export default function RaceForm({
       group_mode: isRandom ? 'random' : 'self',
       control_status: controlStatus as CreateRacePayload['control_status'],
       starting_soon_days: parseInt(startingSoonDays || '5', 10) || 5,
+      allow_team_groups: mode === 'competition' ? allowTeamGroups : false,
       test_whitelist: testWhitelist,
       brochure_title: brochureTitle.trim(),
       brochure: brochure
@@ -503,6 +508,17 @@ export default function RaceForm({
 
         {tab === 'groups' && (
           <div style={col}>
+            {mode === 'competition' && (
+              <div style={{ ...card, background: 'var(--bg-2)' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--tx)', fontWeight: 600 }}>
+                  <input type="checkbox" checked={allowTeamGroups} onChange={(e) => setAllowTeamGroups(e.target.checked)} />
+                  開放「跑團分組申請」
+                </label>
+                <div style={{ ...hint, marginTop: 6 }}>
+                  開啟後，前台跑團成員可自行建立跑團分組；建立者可自選是否需要「跑團鑰匙」。此處設定的為官方分組。
+                </div>
+              </div>
+            )}
             {isRandom && <div style={hint}>分組對抗模式：報名時隨機分配、賽前不公開。以下分組即為對抗陣營。</div>}
             {groups.map((g, i) => (
               <div key={g.id ?? `new-${i}`} style={card}>
@@ -550,6 +566,19 @@ export default function RaceForm({
                   <Field label="年齡上限 (空=不限)">
                     <input style={inp} type="number" value={g.age_max ?? ''} onChange={(e) => updateGroup(i, { age_max: e.target.value === '' ? null : parseInt(e.target.value, 10) })} />
                   </Field>
+                </Row>
+                <Row>
+                  <Field label="跑團鑰匙">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tx)', padding: '6px 0' }}>
+                      <input type="checkbox" checked={!!g.requires_key} onChange={(e) => updateGroup(i, { requires_key: e.target.checked })} />
+                      需要鑰匙才能加入此分組
+                    </label>
+                  </Field>
+                  {g.requires_key && (
+                    <Field label="鑰匙密碼（報名時需輸入）">
+                      <input style={inp} value={g.group_key ?? ''} onChange={(e) => updateGroup(i, { group_key: e.target.value })} placeholder="例：DOR2026" />
+                    </Field>
+                  )}
                 </Row>
                 <button onClick={() => saveCurrentAsPreset(i)} style={linkBtn}>＋ 加入預設選單</button>
               </div>

@@ -31,6 +31,7 @@ type Race struct {
 	BrochureTitle  string     `json:"brochure_title"`  // 簡章大主標
 	ControlStatus  string     `json:"control_status"`  // active|paused|suspended|closed|hidden|testing（admin 手動）
 	StartingSoonDays int      `json:"starting_soon_days"` // 賽事即將開始 倒數天數
+	AllowTeamGroups  bool     `json:"allow_team_groups"`  // 競賽模式：是否開放前台自建跑團分組
 	DisplayStatus  string     `json:"display_status"`  // 計算欄位（讀取時填）：upcoming_reg|registering|reg_closed|starting_soon|racing|ended|paused|suspended
 	CanRegister    bool       `json:"can_register"`    // 計算欄位
 	CreatedBy      string     `json:"created_by,omitempty"` // organizer userID
@@ -98,6 +99,21 @@ type RaceGroup struct {
 	AgeMin           *int     `json:"age_min,omitempty"`
 	AgeMax           *int     `json:"age_max,omitempty"`
 	TargetDistanceKm *float64 `json:"target_distance_km,omitempty"`
+	RequiresKey      bool     `json:"requires_key"`            // 需要「跑團鑰匙」才能加入
+	GroupKey         string   `json:"group_key,omitempty"`     // 鑰匙明碼：後台/建立時可帶；公開回傳一律清空
+	CreatedBy        string   `json:"created_by,omitempty"`    // 自建者 userID（空=官方建立）
+	IsUserCreated    bool     `json:"is_user_created"`         // created_by 非空
+}
+
+// CreateTeamGroupRequest 前台跑團成員自建分組 payload
+type CreateTeamGroupRequest struct {
+	RaceID           string   `json:"-"`
+	UserID           string   `json:"-"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	TargetDistanceKm *float64 `json:"target_distance_km,omitempty"`
+	RequiresKey      bool     `json:"requires_key"`
+	GroupKey         string   `json:"group_key,omitempty"`
 }
 
 // RaceAddon 加購項目
@@ -266,7 +282,8 @@ type AddonSelection struct {
 type RegisterRequest struct {
 	RaceID      string           `json:"-"`
 	UserID      string           `json:"-"`
-	GroupID     string           `json:"group_id"` // 一般/競賽必填；分組對抗忽略（隨機）
+	GroupID     string           `json:"group_id"`           // 一般/競賽必填；分組對抗忽略（隨機）
+	GroupKey    string           `json:"group_key,omitempty"` // 加入需鑰匙的分組時帶入
 	Addons      []AddonSelection `json:"addons"`
 	Participant ParticipantInfo  `json:"participant"`
 	PromoCode   string           `json:"promo_code,omitempty"`

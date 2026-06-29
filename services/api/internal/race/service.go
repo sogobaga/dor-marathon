@@ -34,6 +34,9 @@ var (
 	ErrOrderNotFound        = errors.New("order not found")
 	ErrRegistrationNotFound = errors.New("registration not found")
 	ErrRegistrationPaused   = errors.New("此賽事目前暫停報名")
+	ErrGroupKeyWrong        = errors.New("跑團鑰匙錯誤")
+	ErrTeamGroupsDisabled   = errors.New("此賽事未開放跑團分組申請")
+	ErrTeamGroupName        = errors.New("請輸入跑團分組名稱")
 )
 
 type Service struct {
@@ -156,6 +159,11 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 	}
 	detail.FillDisplay(time.Now())
 
+	// 安全：公開回傳一律不洩漏跑團鑰匙明碼（前台只需 requires_key 旗標）
+	for i := range detail.Groups {
+		detail.Groups[i].GroupKey = ""
+	}
+
 	var reg *Registration
 	if userID != "" {
 		reg, err = s.repo.GetRegistration(ctx, userID, raceID)
@@ -164,6 +172,47 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 		}
 	}
 	return detail, reg, nil
+}
+
+// CreateTeamGroup 前台跑團成員自建分組（限 competition 且已開放 allow_team_groups、報名期間內）。
+func (s *Service) CreateTeamGroup(ctx context.Context, req *CreateTeamGroupRequest) (*RaceGroup, error) {
+	req.Name = strings.TrimSpace(req.Name)
+	req.GroupKey = strings.TrimSpace(req.GroupKey)
+	if req.Name == "" {
+		return nil, ErrTeamGroupName
+	}
+	race, err := s.repo.GetByID(ctx, req.RaceID)
+	if err != nil {
+		return nil, err
+	}
+	if race == nil || race.ReviewStatus != "approved" {
+		return nil, ErrRaceNotFound
+	}
+	if race.EventMode != "competition" || !race.AllowTeamGroups {
+		return nil, ErrTeamGroupsDisabled
+	}
+	// testing 模式僅白名單可建立；closed 全擋
+	switch race.ControlStatus {
+	case "closed":
+		return nil, ErrRaceNotFound
+	case "testing":
+		email, _ := s.repo.GetUserEmail(ctx, req.UserID)
+		if email == "" {
+			return nil, ErrRaceNotFound
+		}
+		ok, err := s.repo.IsEmailWhitelisted(ctx, req.RaceID, email)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrRaceNotFound
+		}
+	}
+	// 僅報名期間可建立
+	if _, canReg := race.ComputeDisplay(time.Now()); !canReg {
+		return nil, ErrRegistrationClosed
+	}
+	return s.repo.CreateTeamGroup(ctx, *req)
 }
 
 // Register 處理前台報名（分組 + 加購 + 訂單 + 個資回填）。
@@ -255,6 +304,7 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		UserID:        req.UserID,
 		RaceID:        req.RaceID,
 		GroupID:       chosen.ID,
+		GroupKey:      strings.TrimSpace(req.GroupKey),
 		EntryFee:      race.EntryFee,
 		GroupRevealed: revealed,
 		Distance:      distance,

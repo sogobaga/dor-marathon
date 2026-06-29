@@ -164,14 +164,14 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		                   status, event_mode, goal_type, distances, group_type, group_mode,
 		                   slots_total, entry_fee, registration_start, registration_end,
 		                   start_date, end_date, config, created_by, review_status, required_fields,
-		                   control_status, starting_soon_days, brochure_title)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+		                   control_status, starting_soon_days, brochure_title, allow_team_groups)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.RegStart, race.RegEnd,
 		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus, requiredFields,
-		controlStatus, startingSoonDays, race.BrochureTitle,
+		controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups,
 	).Scan(&raceID)
 	if err != nil {
 		return nil, fmt.Errorf("insert race: %w", err)
@@ -198,11 +198,13 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		var gid string
 		err = tx.QueryRow(ctx, `
 			INSERT INTO race_groups (race_id, name, description, display_order,
-			                         slot_limit, gender_limit, age_min, age_max, target_distance_km)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			                         slot_limit, gender_limit, age_min, age_max, target_distance_km,
+			                         requires_key, group_key)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 			RETURNING id`,
 			raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
 			g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
+			g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey),
 		).Scan(&gid)
 		if err != nil {
 			return nil, fmt.Errorf("insert group %d: %w", i, err)
@@ -291,13 +293,14 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
-			required_fields=$20, control_status=$21, starting_soon_days=$22, brochure_title=$23, updated_at=NOW()
-		WHERE id=$24`,
+			required_fields=$20, control_status=$21, starting_soon_days=$22, brochure_title=$23,
+			allow_team_groups=$24, updated_at=NOW()
+		WHERE id=$25`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
-		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, raceID,
+		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, raceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -331,11 +334,12 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 		if g.ID != "" {
 			_, err = tx.Exec(ctx, `
 				UPDATE race_groups SET name=$1, description=$2, display_order=$3,
-				    slot_limit=$4, gender_limit=$5, age_min=$6, age_max=$7, target_distance_km=$8
-				WHERE id=$9 AND race_id=$10`,
+				    slot_limit=$4, gender_limit=$5, age_min=$6, age_max=$7, target_distance_km=$8,
+				    requires_key=$9, group_key=$10
+				WHERE id=$11 AND race_id=$12`,
 				g.Name, nullStr(g.Description), g.DisplayOrder,
 				g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
-				g.ID, raceID,
+				g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ID, raceID,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("update group %d: %w", i, err)
@@ -345,10 +349,12 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			var gid string
 			err = tx.QueryRow(ctx, `
 				INSERT INTO race_groups (race_id, name, description, display_order,
-				                         slot_limit, gender_limit, age_min, age_max, target_distance_km)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+				                         slot_limit, gender_limit, age_min, age_max, target_distance_km,
+				                         requires_key, group_key)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
 				raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
 				g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
+				g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey),
 			).Scan(&gid)
 			if err != nil {
 				return nil, fmt.Errorf("insert group %d: %w", i, err)
@@ -357,9 +363,10 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 		}
 		keptGroups = append(keptGroups, finalGroupIDs[i])
 	}
-	// 刪除 payload 中不存在的分組（若該分組已有報名，FK RESTRICT 會讓交易失敗 → 正確阻擋）
+	// 刪除 payload 中不存在的「官方」分組；前台自建分組(created_by 非空)永不被後台儲存誤刪。
+	// （若該分組已有報名，FK RESTRICT 會讓交易失敗 → 正確阻擋）
 	if _, err = tx.Exec(ctx,
-		`DELETE FROM race_groups WHERE race_id=$1 AND NOT (id = ANY($2::uuid[]))`,
+		`DELETE FROM race_groups WHERE race_id=$1 AND created_by IS NULL AND NOT (id = ANY($2::uuid[]))`,
 		raceID, keptGroups,
 	); err != nil {
 		return nil, fmt.Errorf("delete removed groups: %w", err)
@@ -588,7 +595,8 @@ func (r *Repository) RemoveDefaultWhitelist(ctx context.Context, email string) e
 func (r *Repository) GetGroups(ctx context.Context, raceID string) ([]RaceGroup, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, race_id, name, COALESCE(description,''), display_order,
-		       slot_limit, slots_taken, gender_limit, age_min, age_max, target_distance_km
+		       slot_limit, slots_taken, gender_limit, age_min, age_max, target_distance_km,
+		       requires_key, COALESCE(group_key,''), COALESCE(created_by::text,'')
 		FROM race_groups WHERE race_id=$1 ORDER BY display_order, created_at`, raceID)
 	if err != nil {
 		return nil, fmt.Errorf("list groups: %w", err)
@@ -599,9 +607,11 @@ func (r *Repository) GetGroups(ctx context.Context, raceID string) ([]RaceGroup,
 	for rows.Next() {
 		var g RaceGroup
 		if err := rows.Scan(&g.ID, &g.RaceID, &g.Name, &g.Description, &g.DisplayOrder,
-			&g.SlotLimit, &g.SlotsTaken, &g.GenderLimit, &g.AgeMin, &g.AgeMax, &g.TargetDistanceKm); err != nil {
+			&g.SlotLimit, &g.SlotsTaken, &g.GenderLimit, &g.AgeMin, &g.AgeMax, &g.TargetDistanceKm,
+			&g.RequiresKey, &g.GroupKey, &g.CreatedBy); err != nil {
 			return nil, err
 		}
+		g.IsUserCreated = g.CreatedBy != ""
 		groups = append(groups, g)
 	}
 	return groups, rows.Err()
@@ -776,6 +786,44 @@ func defaultStr(s, def string) string {
 	return s
 }
 
+// groupKeyVal 只有在「需要鑰匙且鑰匙非空」時才存明碼，否則存 NULL
+func groupKeyVal(requiresKey bool, key string) interface{} {
+	if !requiresKey || key == "" {
+		return nil
+	}
+	return key
+}
+
+// CreateTeamGroup 前台跑團成員自建分組（competition + allow_team_groups 已於 service 驗證）。
+// display_order 接在現有分組之後；slot_limit 不限；created_by 記錄自建者。
+func (r *Repository) CreateTeamGroup(ctx context.Context, in CreateTeamGroupRequest) (*RaceGroup, error) {
+	var nextOrder int
+	if err := r.db.QueryRow(ctx,
+		`SELECT COALESCE(MAX(display_order),0)+1 FROM race_groups WHERE race_id=$1`, in.RaceID,
+	).Scan(&nextOrder); err != nil {
+		return nil, fmt.Errorf("next order: %w", err)
+	}
+	g := &RaceGroup{}
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO race_groups (race_id, name, description, display_order,
+		                         gender_limit, target_distance_km, requires_key, group_key, created_by)
+		VALUES ($1,$2,$3,$4,'any',$5,$6,$7,$8)
+		RETURNING id, race_id, name, COALESCE(description,''), display_order,
+		          slot_limit, slots_taken, gender_limit, age_min, age_max, target_distance_km,
+		          requires_key, COALESCE(created_by::text,'')`,
+		in.RaceID, in.Name, nullStr(in.Description), nextOrder,
+		in.TargetDistanceKm, in.RequiresKey, groupKeyVal(in.RequiresKey, in.GroupKey), in.UserID,
+	).Scan(&g.ID, &g.RaceID, &g.Name, &g.Description, &g.DisplayOrder,
+		&g.SlotLimit, &g.SlotsTaken, &g.GenderLimit, &g.AgeMin, &g.AgeMax, &g.TargetDistanceKm,
+		&g.RequiresKey, &g.CreatedBy)
+	if err != nil {
+		return nil, fmt.Errorf("insert team group: %w", err)
+	}
+	g.IsUserCreated = g.CreatedBy != ""
+	g.GroupKey = "" // 不回傳明碼
+	return g, nil
+}
+
 // CountRegistrations 計算某賽事的報名筆數（刪除前檢查用）
 func (r *Repository) CountRegistrations(ctx context.Context, raceID string) (int, error) {
 	var n int
@@ -835,6 +883,7 @@ type RegisterTxInput struct {
 	UserID        string
 	RaceID        string
 	GroupID       string
+	GroupKey      string
 	EntryFee      int
 	GroupRevealed bool
 	Distance      int
@@ -852,19 +901,30 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 	}
 	defer tx.Rollback(ctx)
 
-	// 1. 鎖分組、檢查名額
+	// 1. 鎖分組、檢查名額、驗證跑團鑰匙
 	var slotLimit *int
 	var slotsTaken int
 	var groupName string
+	var requiresKey bool
+	var groupKey *string
 	err = tx.QueryRow(ctx, `
-		SELECT slot_limit, slots_taken, name FROM race_groups
+		SELECT slot_limit, slots_taken, name, requires_key, group_key FROM race_groups
 		WHERE id=$1 AND race_id=$2 FOR UPDATE`,
-		in.GroupID, in.RaceID).Scan(&slotLimit, &slotsTaken, &groupName)
+		in.GroupID, in.RaceID).Scan(&slotLimit, &slotsTaken, &groupName, &requiresKey, &groupKey)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrGroupNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("lock group: %w", err)
+	}
+	if requiresKey {
+		want := ""
+		if groupKey != nil {
+			want = *groupKey
+		}
+		if want != "" && in.GroupKey != want {
+			return nil, ErrGroupKeyWrong
+		}
 	}
 	if slotLimit != nil && slotsTaken >= *slotLimit {
 		return nil, ErrGroupFull

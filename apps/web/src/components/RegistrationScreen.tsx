@@ -33,7 +33,17 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [loading, setLoading] = useState(true)
 
   const [groupId, setGroupId] = useState('')
+  const [groupKey, setGroupKey] = useState('') // 加入需鑰匙的分組時輸入
   const [qty, setQty] = useState<Record<string, number>>({})
+
+  // 自建跑團分組表單
+  const [showCreate, setShowCreate] = useState(false)
+  const [tgName, setTgName] = useState('')
+  const [tgDesc, setTgDesc] = useState('')
+  const [tgRequiresKey, setTgRequiresKey] = useState(false)
+  const [tgKey, setTgKey] = useState('')
+  const [tgBusy, setTgBusy] = useState(false)
+  const [tgErr, setTgErr] = useState('')
   const [participant, setParticipant] = useState<Record<ParticipantField, string>>({
     real_name: '', nickname: '', phone: '', address: '', birthday: '', gender: '',
   })
@@ -121,10 +131,55 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     }
   }
 
+  async function refreshDetail(selectId?: string) {
+    const hasToken = !!getUserToken()
+    const p = hasToken
+      ? withUserAuth((t) => racesApi.detail(race.id, t)).catch(() => racesApi.detail(race.id))
+      : racesApi.detail(race.id)
+    const r = await p
+    setDetail(r.race)
+    if (selectId) setGroupId(selectId)
+  }
+
+  async function createTeamGroup() {
+    setTgErr('')
+    if (!tgName.trim()) {
+      setTgErr('請輸入跑團分組名稱')
+      return
+    }
+    if (tgRequiresKey && !tgKey.trim()) {
+      setTgErr('請設定跑團鑰匙')
+      return
+    }
+    setTgBusy(true)
+    try {
+      const g = await withUserAuth((t) =>
+        racesApi.createTeamGroup(race.id, t, {
+          name: tgName.trim(),
+          description: tgDesc.trim() || undefined,
+          requires_key: tgRequiresKey,
+          group_key: tgRequiresKey ? tgKey.trim() : undefined,
+        })
+      )
+      await refreshDetail(g.id)
+      setGroupKey(tgRequiresKey ? tgKey.trim() : '') // 自動帶入建立者的鑰匙，方便接著報名
+      setShowCreate(false)
+      setTgName(''); setTgDesc(''); setTgRequiresKey(false); setTgKey('')
+    } catch (e: any) {
+      setTgErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '建立失敗')
+    } finally {
+      setTgBusy(false)
+    }
+  }
+
   async function submit() {
     setErr('')
     if (!isBattle && !groupId) {
       setErr('請選擇分組')
+      return
+    }
+    if (!isBattle && selectedGroup?.requires_key && !groupKey.trim()) {
+      setErr('此分組需要「跑團鑰匙」才能報名')
       return
     }
     for (const f of requiredSet) {
@@ -141,6 +196,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
       const res = await withUserAuth((token) =>
         racesApi.register(race.id, token, {
           group_id: isBattle ? undefined : groupId,
+          group_key: !isBattle && selectedGroup?.requires_key ? groupKey.trim() : undefined,
           addons,
           participant,
           promo_code: promoCode.trim() || undefined,
@@ -217,7 +273,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                       <button
                         key={g.id}
                         disabled={full}
-                        onClick={() => setGroupId(g.id!)}
+                        onClick={() => { setGroupId(g.id!); setGroupKey('') }}
                         style={{
                           ...groupRow, cursor: full ? 'not-allowed' : 'pointer', opacity: full ? 0.5 : 1,
                           border: groupId === g.id ? '1px solid var(--fug)' : '1px solid var(--line)',
@@ -225,11 +281,15 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                         }}
                       >
                         <div>
-                          <div style={{ fontWeight: 600 }}>{g.name}</div>
+                          <div style={{ fontWeight: 600 }}>
+                            {g.requires_key ? '🔒 ' : ''}{g.name}
+                            {g.is_user_created ? <span style={{ fontSize: 10, color: 'var(--tx-faint)', marginLeft: 6 }}>跑團</span> : null}
+                          </div>
                           <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
                             {g.target_distance_km != null ? `${g.target_distance_km}K` : ''}
                             {g.gender_limit && g.gender_limit !== 'any' ? ` · 限${g.gender_limit === 'male' ? '男' : '女'}` : ''}
                             {g.age_min != null || g.age_max != null ? ` · 年齡${g.age_min ?? ''}–${g.age_max ?? ''}` : ''}
+                            {g.requires_key ? ' · 需鑰匙' : ''}
                           </div>
                         </div>
                         <span style={{ fontSize: 12, color: full ? 'var(--hunt)' : 'var(--tx-dim)' }}>
@@ -238,6 +298,45 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                       </button>
                     )
                   })}
+
+                  {/* 選到需鑰匙的分組 → 要求輸入跑團鑰匙 */}
+                  {selectedGroup?.requires_key && (
+                    <div style={{ marginTop: 2 }}>
+                      <div style={hint}>「{selectedGroup.name}」需要跑團鑰匙才能加入：</div>
+                      <input
+                        style={inp} type="text" value={groupKey}
+                        onChange={(e) => setGroupKey(e.target.value)}
+                        placeholder="請輸入跑團鑰匙"
+                      />
+                    </div>
+                  )}
+
+                  {/* 開放跑團分組申請：前台自建分組 */}
+                  {detail.allow_team_groups && detail.can_register && (
+                    showCreate ? (
+                      <div style={{ ...groupRow, flexDirection: 'column', alignItems: 'stretch', gap: 8, cursor: 'default' }}>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>建立跑團分組</div>
+                        <input style={inp} value={tgName} onChange={(e) => setTgName(e.target.value)} placeholder="跑團分組名稱（例：清晨跑團）" />
+                        <input style={inp} value={tgDesc} onChange={(e) => setTgDesc(e.target.value)} placeholder="說明（選填）" />
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tx)' }}>
+                          <input type="checkbox" checked={tgRequiresKey} onChange={(e) => setTgRequiresKey(e.target.checked)} />
+                          設定跑團鑰匙（需鑰匙才能加入）
+                        </label>
+                        {tgRequiresKey && (
+                          <input style={inp} value={tgKey} onChange={(e) => setTgKey(e.target.value)} placeholder="設定鑰匙密碼，分享給團員" />
+                        )}
+                        {tgErr && <div style={{ fontSize: 12, color: 'var(--hunt)' }}>{tgErr}</div>}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button onClick={createTeamGroup} disabled={tgBusy} style={{ ...primaryBtn, flex: 1, opacity: tgBusy ? 0.6 : 1 }}>
+                            {tgBusy ? '建立中…' : '建立並選用'}
+                          </button>
+                          <button onClick={() => { setShowCreate(false); setTgErr('') }} style={ghostBtn}>取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button onClick={() => setShowCreate(true)} style={ghostBtn}>＋ 建立跑團分組</button>
+                    )
+                  )}
                 </div>
               )}
             </Section>
@@ -357,4 +456,8 @@ const inp: React.CSSProperties = {
 const primaryBtn: React.CSSProperties = {
   background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
   borderRadius: 12, padding: '13px 20px', cursor: 'pointer', fontSize: 15, width: '100%',
+}
+const ghostBtn: React.CSSProperties = {
+  background: 'transparent', color: 'var(--tx)', border: '1px dashed var(--line-2)',
+  borderRadius: 10, padding: '10px 14px', cursor: 'pointer', fontSize: 13, fontFamily: 'inherit',
 }

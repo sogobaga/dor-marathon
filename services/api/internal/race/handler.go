@@ -25,6 +25,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/", h.List)
 	r.Get("/{raceID}", h.Detail)
 	r.Post("/{raceID}/register", h.Register)
+	r.Post("/{raceID}/groups", h.CreateTeamGroup)
 	r.Get("/{raceID}/ranking", h.Ranking)
 	r.Get("/{raceID}/standings", h.Standings)
 	r.Get("/{raceID}/status", h.LiveStatus)
@@ -334,6 +335,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusConflict, "此賽事目前暫停報名")
 	case errors.Is(err, ErrGroupFull):
 		respondErr(w, http.StatusConflict, "該分組名額已滿")
+	case errors.Is(err, ErrGroupKeyWrong):
+		respondErr(w, http.StatusForbidden, "跑團鑰匙錯誤")
 	case errors.Is(err, ErrAddonSoldOut):
 		respondErr(w, http.StatusConflict, "加購商品已售完")
 	case errors.Is(err, promo.ErrUsedUp), errors.Is(err, promo.ErrUserUsed):
@@ -348,6 +351,40 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, err.Error())
 	default:
 		respondErr(w, http.StatusInternalServerError, "registration failed")
+	}
+}
+
+// POST /api/v1/races/:raceID/groups — 前台跑團成員自建分組（competition + allow_team_groups）
+func (h *Handler) CreateTeamGroup(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+
+	var req CreateTeamGroupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.RaceID = raceID
+	req.UserID = userID
+
+	group, err := h.svc.CreateTeamGroup(r.Context(), &req)
+	switch {
+	case err == nil:
+		respondJSON(w, http.StatusCreated, group)
+	case errors.Is(err, ErrRaceNotFound):
+		respondErr(w, http.StatusNotFound, "race not found")
+	case errors.Is(err, ErrTeamGroupsDisabled):
+		respondErr(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrTeamGroupName):
+		respondErr(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrRegistrationClosed):
+		respondErr(w, http.StatusConflict, "非報名期間，無法建立跑團分組")
+	default:
+		respondErr(w, http.StatusInternalServerError, "create team group failed")
 	}
 }
 
