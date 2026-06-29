@@ -43,6 +43,7 @@ export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => v
                   <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dash?.name || user.name}</span>
                   {dash?.is_vip && <span style={vipBadge}>VIP</span>}
                 </div>
+                {dash?.nickname && <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dash.nickname}</div>}
                 <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontFamily: 'monospace', marginTop: 2 }}>#{dash?.account_code ?? '…'}</div>
               </>
             ) : (
