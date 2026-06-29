@@ -27,17 +27,10 @@ export default function DebugSession() {
       } catch { out.accDecode = 'fail' }
     }
     ;(async () => {
+      // 只做唯讀的 me 探測；refresh 改由 validateSession 走（麵包屑會記錄），
+      // 避免一次性輪替下兩邊互搶 refresh token。
       if (t) {
         try { await authApi.me(t); out.me = 200 } catch (e: any) { out.me = e?.status ?? `ERR:${e?.message}` }
-      }
-      if (r) {
-        try {
-          const p = await authApi.refresh(r)
-          // 換到新 token 就存回去，避免診斷把 session 弄壞
-          localStorage.setItem('dor_user_token', p.access_token)
-          localStorage.setItem('dor_user_refresh', p.refresh_token)
-          out.refresh = 'OK'
-        } catch (e: any) { out.refresh = e?.status ?? `ERR:${e?.message}` }
       }
       let log: string[] = []
       try { log = JSON.parse(localStorage.getItem('dor_diag') || '[]') } catch { /* ignore */ }
