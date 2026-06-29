@@ -73,7 +73,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
   const [activities, setActivities] = useState<SyncedActivity[] | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [dash, setDash] = useState<DashboardInfo | null>(null)
-  const [tab, setTab] = useState<'info' | 'sports' | 'records'>('info')
+  const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>('info')
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
   const [follows, setFollows] = useState<FollowRow[] | null>(null)
@@ -301,9 +301,9 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
 
         {/* 頁籤 */}
         <div style={{ display: 'flex', gap: 6, margin: '18px 0 14px', borderBottom: '1px solid var(--line)' }}>
-          {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄']] as const).map(([v, label]) => (
+          {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄'], ['follows', '追蹤']] as const).map(([v, label]) => (
             <button key={v} onClick={() => setTab(v)} style={{
-              padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14,
+              padding: '8px 9px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap',
               color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 700 : 400,
               borderBottom: tab === v ? '2px solid var(--fug)' : '2px solid transparent',
             }}>{label}</button>
@@ -329,29 +329,30 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             </Field>
             {saved && <div style={{ color: 'var(--fug)', fontSize: 13 }}>✓ 已儲存</div>}
             <button onClick={save} disabled={saving} style={primaryBtn}>{saving ? '儲存中…' : '儲存'}</button>
+          </div>
+        )}
 
-            {/* 追蹤列表 */}
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)', marginBottom: 8 }}>追蹤列表</div>
-              {!follows && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>載入中…</div>}
-              {follows && follows.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚未追蹤任何人，可在賽事「排名」頁追蹤跑者。</div>}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {follows?.map((f) => (
-                  <div key={f.user_id} style={{ ...recCard, padding: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ width: 38, height: 38, borderRadius: '50%', overflow: 'hidden', background: 'var(--bg-2)', border: '1px solid var(--line-2)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {f.avatar_url
-                        // eslint-disable-next-line @next/next/no-img-element
-                        ? <img src={f.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        : <span style={{ fontWeight: 800, color: 'var(--tx-dim)' }}>{(f.nickname || '?').slice(0, 1)}</span>}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.nickname}</div>
-                      {f.account_code && <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontFamily: 'monospace' }}>#{f.account_code}</div>}
-                    </div>
-                    <button onClick={() => unfollow(f.user_id)} style={{ ...ghostBtn, padding: '6px 12px', fontSize: 12, flexShrink: 0 }}>解除追蹤</button>
+        {/* 頁籤④追蹤列表 */}
+        {tab === 'follows' && (
+          <div>
+            {!follows && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>載入中…</div>}
+            {follows && follows.length === 0 && <div style={{ fontSize: 13, color: 'var(--tx-dim)', padding: '8px 0' }}>尚未追蹤任何人，可在賽事「排名」頁追蹤跑者。</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {follows?.map((f) => (
+                <div key={f.user_id} style={{ ...recCard, padding: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: '50%', overflow: 'hidden', background: 'var(--bg-2)', border: '1px solid var(--line-2)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {f.avatar_url
+                      // eslint-disable-next-line @next/next/no-img-element
+                      ? <img src={f.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      : <span style={{ fontWeight: 800, color: 'var(--tx-dim)' }}>{(f.nickname || '?').slice(0, 1)}</span>}
                   </div>
-                ))}
-              </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.nickname}</div>
+                    {f.account_code && <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontFamily: 'monospace' }}>#{f.account_code}</div>}
+                  </div>
+                  <button onClick={() => unfollow(f.user_id)} style={{ ...ghostBtn, padding: '6px 12px', fontSize: 12, flexShrink: 0 }}>解除追蹤</button>
+                </div>
+              ))}
             </div>
           </div>
         )}
