@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 )
 
@@ -195,7 +194,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 		}
 	}
 
-	// 完成賽事 EXP（達分組目標里程）+ 里程 EXP
+	// 完成賽事 EXP（達分組目標里程）。里程 EXP 改為日常發放（worker），不在此結算。
 	for _, p := range parts {
 		totalKm := 0.0
 		for _, a := range byUser[p.userID] {
@@ -203,11 +202,6 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 		}
 		if tgt := groupTarget[p.groupID]; tgt > 0 && totalKm >= tgt {
 			add(p.userID, "completion", groupReward[p.groupID])
-		}
-		if rules.perKm > 0 {
-			if km := int(math.Floor(totalKm)); km > 0 {
-				add(p.userID, "mileage", km*rules.perKm)
-			}
 		}
 	}
 

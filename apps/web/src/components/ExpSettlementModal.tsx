@@ -55,7 +55,7 @@ function buildSteps(before: number, after: number, levelsIn: ExpLevelRow[]): Ste
 
 const easeOut = (t: number) => 1 - Math.pow(1 - t, 3)
 
-export default function ExpSettlementModal({ breakdown, raceTitle, onClose }: { breakdown: ExpBreakdown; raceTitle: string; onClose: () => void }) {
+export default function ExpSettlementModal({ breakdown, title = '副本完成', tagline = 'RACE CLEAR', subtitle, onClose }: { breakdown: ExpBreakdown; title?: string; tagline?: string; subtitle: string; onClose: () => void }) {
   const { gained, exp_before, exp_after, items, levels } = breakdown
   const steps = useMemo(() => buildSteps(exp_before, exp_after, levels), [exp_before, exp_after, levels])
 
@@ -131,9 +131,9 @@ export default function ExpSettlementModal({ breakdown, raceTitle, onClose }: { 
       <div style={panel}>
         {/* 副本完成橫幅 */}
         <div style={{ textAlign: 'center', animation: 'slamIn .6s cubic-bezier(.2,1.4,.5,1) both' }}>
-          <div style={{ fontSize: 13, letterSpacing: '.4em', color: 'var(--gold)', fontWeight: 700 }}>RACE&nbsp;CLEAR</div>
-          <div style={{ fontSize: 34, fontWeight: 900, color: '#fff', textShadow: '0 0 24px rgba(229,196,107,.6)', margin: '2px 0 2px' }}>副本完成</div>
-          <div style={{ fontSize: 12, color: 'var(--tx-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{raceTitle}</div>
+          <div style={{ fontSize: 13, letterSpacing: '.4em', color: 'var(--gold)', fontWeight: 700 }}>{tagline}</div>
+          <div style={{ fontSize: 34, fontWeight: 900, color: '#fff', textShadow: '0 0 24px rgba(229,196,107,.6)', margin: '2px 0 2px' }}>{title}</div>
+          <div style={{ fontSize: 12, color: 'var(--tx-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</div>
         </div>
 
         {/* 明細 */}

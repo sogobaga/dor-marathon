@@ -238,6 +238,11 @@ export const settingsApi = {
   get: () => request<{ settings: SiteSettings }>('/settings'),
 }
 
+export const mileageExpApi = {
+  get: (token: string) => request<{ breakdown: ExpBreakdown }>('/profile/mileage-exp', { headers: withAuth(token) }),
+  markSeen: (token: string) => request<void>('/profile/mileage-exp/seen', { method: 'POST', headers: withAuth(token) }),
+}
+
 export const adminSettingsApi = {
   set: (token: string, settings: SiteSettings) =>
     request<{ settings: SiteSettings }>('/admin/settings', {
@@ -818,6 +823,11 @@ export const adminMembersApi = {
   setExp: (token: string, id: string, body: { set?: number; delta?: number }) =>
     request<{ exp: number }>(`/admin/members/${id}/exp`, {
       method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  // 模擬加里程（測試用）：推一筆活動 → worker 寫入並發日常里程 EXP
+  addMileage: (token: string, userID: string, distanceKm: number) =>
+    request<void>('/admin/activities/add-mileage', {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify({ user_id: userID, distance_km: distanceKm }),
     }),
 }
 

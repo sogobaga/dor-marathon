@@ -28,6 +28,27 @@ func (h *Handler) Router() http.Handler {
 	return r
 }
 
+// POST /api/v1/admin/activities/add-mileage — 後台模擬加里程（測試用）
+func (h *Handler) AdminAddMileage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserID     string  `json:"user_id"`
+		DistanceKm float64 `json:"distance_km"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if body.UserID == "" || body.DistanceKm <= 0 {
+		http.Error(w, `{"error":"user_id 與 distance_km 必填"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.svc.AdminAddMileage(r.Context(), body.UserID, body.DistanceKm); err != nil {
+		http.Error(w, `{"error":"failed"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // POST /api/v1/activities
 // 上傳跑步資料 — 核心業務端點
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {

@@ -18,7 +18,22 @@ export default function AdminMemberDetailPage() {
   const [savingPerm, setSavingPerm] = useState(false)
   const [expInput, setExpInput] = useState('')
   const [vipInput, setVipInput] = useState('')
+  const [kmInput, setKmInput] = useState('5')
+  const [kmMsg, setKmMsg] = useState('')
   const [busy, setBusy] = useState(false)
+
+  async function addMileage() {
+    const token = getToken()
+    if (!token) return
+    const km = parseFloat(kmInput)
+    if (!(km > 0)) { setErr('里程需大於 0'); return }
+    setBusy(true); setErr(''); setKmMsg('')
+    try {
+      await adminMembersApi.addMileage(token, id, km)
+      setKmMsg(`已送出 +${km} km，數秒後由背景處理並發放日常里程 EXP（該會員下次開 App 會跳結算）。`)
+      setTimeout(reload, 1500)
+    } catch (e: any) { setErr(e?.message || '加里程失敗') } finally { setBusy(false) }
+  }
 
   function reload() {
     const token = getToken()
@@ -128,6 +143,18 @@ export default function AdminMemberDetailPage() {
           <button onClick={saveExp} disabled={busy} style={primaryBtnSm}>儲存</button>
         </div>
         <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>（EXP 之後會由賽事結算自動累加，這裡供測試/營運手動調整）</div>
+      </div>
+
+      {/* 加里程（測試） */}
+      <h2 style={{ margin: '20px 0 10px', fontSize: 16, fontWeight: 800 }}>加里程（測試模擬跑步）</h2>
+      <div style={ctrlCard}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>里程 (km)</span>
+          <input style={ctrlInp} type="number" value={kmInput} onChange={(e) => setKmInput(e.target.value)} />
+          <button onClick={addMileage} disabled={busy} style={primaryBtnSm}>＋ 加里程</button>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>模擬一筆跑步活動：背景寫入並依「日常里程」規則發 EXP（每整公里 × 每公里EXP），該會員下次開 App 會跳出里程結算演出。</div>
+        {kmMsg && <div style={{ fontSize: 12, color: 'var(--fug)', marginTop: 6 }}>{kmMsg}</div>}
       </div>
 
       {/* VIP */}

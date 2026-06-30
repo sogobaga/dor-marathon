@@ -226,6 +226,7 @@ func main() {
 			r.Mount("/admin/membership", profileHandler.MembershipAdminRouter())
 			r.Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 			r.Put("/admin/settings", profileHandler.PutSettings)
+			r.Post("/admin/activities/add-mileage", actHandler.AdminAddMileage)
 		})
 	})
 

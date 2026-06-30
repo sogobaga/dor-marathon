@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
@@ -195,11 +196,13 @@ func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) error {
 		return fmt.Errorf("unmarshal event: %w", err)
 	}
 
-	// 寫入 PostgreSQL
-	_, err := w.db.Exec(ctx, `
+	// 寫入 PostgreSQL（RETURNING 偵測是否真的新插入，避免重複事件灌爆里程）
+	var newID string
+	err := w.db.QueryRow(ctx, `
 		INSERT INTO activities (user_id, race_id, mission_day, distance_km, duration_s, avg_pace_s, recorded_at, processed)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
 		ON CONFLICT DO NOTHING
+		RETURNING id
 	`,
 		evt.UserID,
 		nullableString(evt.RaceID),
@@ -208,17 +211,57 @@ func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) error {
 		evt.DurationS,
 		evt.AvgPaceS,
 		evt.RecordedAt,
-	)
+	).Scan(&newID)
+	if err == pgx.ErrNoRows {
+		return nil // 重複活動，略過（不再累加里程）
+	}
 	if err != nil {
 		return fmt.Errorf("insert activity: %w", err)
 	}
 
 	// 更新使用者累積里程
-	w.db.Exec(ctx, `
+	if _, err := w.db.Exec(ctx, `
 		UPDATE users SET total_km = total_km + $1, updated_at = NOW() WHERE id = $2
-	`, evt.DistanceKm, evt.UserID)
+	`, evt.DistanceKm, evt.UserID); err != nil {
+		return fmt.Errorf("update total_km: %w", err)
+	}
+
+	// 日常里程 EXP：每跨一整公里 × per_km，並記事件供前台彈窗
+	w.awardMileageExp(ctx, evt.UserID, evt.DistanceKm, evt.RecordedAt)
 
 	return nil
+}
+
+// awardMileageExp 依使用者累積里程的「整公里跨越」發 EXP（idempotent：只發 exp_rewarded_km 之後的差額）
+func (w *Worker) awardMileageExp(ctx context.Context, userID string, distanceKm float64, recordedAt string) {
+	tx, err := w.db.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var oldKm, newKm, perKm int
+	if err := tx.QueryRow(ctx, `
+		SELECT exp_rewarded_km, floor(total_km)::int, COALESCE((SELECT per_km FROM exp_rules WHERE id=TRUE),0)
+		FROM users WHERE id=$1`, userID).Scan(&oldKm, &newKm, &perKm); err != nil {
+		return
+	}
+	delta := newKm - oldKm
+	if delta <= 0 || perKm <= 0 {
+		return
+	}
+	expAmt := delta * perKm
+	if _, err := tx.Exec(ctx,
+		`UPDATE users SET exp = exp + $1, exp_rewarded_km = $2 WHERE id=$3 AND exp_rewarded_km = $4`,
+		expAmt, newKm, userID, oldKm); err != nil {
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO mileage_exp_events (user_id, exp_amount, km_added, distance_km, recorded_at)
+		 VALUES ($1,$2,$3,$4,$5)`, userID, expAmt, delta, distanceKm, recordedAt); err != nil {
+		return
+	}
+	tx.Commit(ctx)
 }
 
 func nullableString(s string) interface{} {

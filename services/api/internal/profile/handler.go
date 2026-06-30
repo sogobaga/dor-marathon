@@ -33,6 +33,8 @@ func (h *Handler) Router() http.Handler {
 	r.Delete("/follow/{userID}", h.Unfollow)
 	r.Get("/follows", h.Follows)
 	r.Get("/recommendations/{raceID}", h.RaceRecommendations)
+	r.Get("/mileage-exp", h.GetMileageExp)
+	r.Post("/mileage-exp/seen", h.MarkMileageSeen)
 	r.Get("/records", h.Records)
 	r.Get("/stats", h.Stats)
 	r.Get("/registrations", h.Registrations)

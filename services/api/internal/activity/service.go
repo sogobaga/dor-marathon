@@ -46,6 +46,23 @@ func NewService(repo *Repository, raceSvc *race.Service, rdb *redis.Client, wsm 
 	}
 }
 
+// AdminAddMileage 後台模擬一筆里程活動（無賽事）：推入 stream，worker 寫入並發日常里程 EXP
+func (s *Service) AdminAddMileage(ctx context.Context, userID string, distanceKm float64) error {
+	if distanceKm <= 0 {
+		return ErrInvalidDistance
+	}
+	paceS := 360 // 預設 6:00/km
+	evt := ActivityEvent{
+		UserID:     userID,
+		DistanceKm: distanceKm,
+		DurationS:  int(distanceKm * float64(paceS)),
+		AvgPaceS:   paceS,
+		RecordedAt: time.Now().Format(time.RFC3339),
+	}
+	b, _ := json.Marshal(evt)
+	return s.rdb.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{"data": string(b)}}).Err()
+}
+
 // Upload 處理跑步資料上傳的完整流程：
 //  1. 驗證資料
 //  2. 立即更新 Redis 排行榜 + 陣營分數

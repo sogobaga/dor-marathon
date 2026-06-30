@@ -214,7 +214,7 @@ export default function RaceDetailScreen({
 
       {/* 本場 EXP 結算演出 */}
       {showExp && breakdown && breakdown.gained > 0 && (
-        <ExpSettlementModal breakdown={breakdown} raceTitle={race.title} onClose={() => setShowExp(false)} />
+        <ExpSettlementModal breakdown={breakdown} subtitle={race.title} onClose={() => setShowExp(false)} />
       )}
     </div>
   )

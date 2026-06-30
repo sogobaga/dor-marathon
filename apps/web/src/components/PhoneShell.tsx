@@ -7,6 +7,7 @@ import ProfileScreen from './ProfileScreen'
 import RaceDetailScreen from './RaceDetailScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
 import VersionBadge from './VersionBadge'
+import MileageExpGate from './MileageExpGate'
 import { validateSession } from '@/lib/userAuth'
 import type { Race } from '@/lib/api'
 
@@ -74,6 +75,9 @@ export default function PhoneShell() {
 
       {/* 版號（置底置中） */}
       <VersionBadge absolute />
+
+      {/* 日常里程 EXP 結算彈窗（全域） */}
+      <MileageExpGate />
     </div>
     </GoogleAuthProvider>
   )
