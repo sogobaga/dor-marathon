@@ -71,7 +71,7 @@ export default function RacesScreen({
         <MemberPanel onOpenProfile={onOpenProfile} />
 
         {/* GPS 跑步追蹤（PoC） */}
-        <a href="/track" style={{ display: 'block', marginTop: 12, textDecoration: 'none', textAlign: 'center', background: 'rgba(70,227,160,.1)', border: '1px solid rgba(70,227,160,.35)', color: 'var(--fug)', fontWeight: 800, borderRadius: 12, padding: '12px 16px', fontSize: 14 }}>🏃 GPS 跑步追蹤（測試）</a>
+        <a href="/track" style={{ display: 'block', marginTop: 12, textDecoration: 'none', textAlign: 'center', background: 'rgba(70,227,160,.1)', border: '1px solid rgba(70,227,160,.35)', color: 'var(--fug)', fontWeight: 800, borderRadius: 12, padding: '12px 16px', fontSize: 14 }}>🏃 開始跑步</a>
 
         <h1 style={{ margin: '22px 0 12px', fontSize: 20, fontWeight: 800, color: 'var(--tx)' }}>賽事列表</h1>
         {isLoading && <Hint>載入中…</Hint>}
