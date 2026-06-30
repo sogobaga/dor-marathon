@@ -538,13 +538,30 @@ func insertRaceTasks(ctx context.Context, tx pgx.Tx, raceID string, tasks []Race
 			*t.GroupIndex >= 0 && *t.GroupIndex < len(groupIDs) {
 			groupID = groupIDs[*t.GroupIndex]
 		}
-		if _, err := tx.Exec(ctx, `
+		var taskID string
+		if err := tx.QueryRow(ctx, `
 			INSERT INTO race_tasks (race_id, scope, group_id, metric_type,
 			                        target_value, range_lo, range_hi, title, description, display_order)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
 			raceID, t.Scope, groupID, t.MetricType,
-			t.TargetValue, t.RangeLo, t.RangeHi, t.Title, nullStr(t.Description), i); err != nil {
+			t.TargetValue, t.RangeLo, t.RangeHi, t.Title, nullStr(t.Description), i).Scan(&taskID); err != nil {
 			return fmt.Errorf("insert race task %d: %w", i, err)
+		}
+		// checkpoint 任務：寫入各打卡點
+		if t.MetricType == MetricCheckpoint {
+			for ci := range t.Checkpoints {
+				c := &t.Checkpoints[ci]
+				radius := c.RadiusM
+				if radius <= 0 {
+					radius = 20
+				}
+				if _, err := tx.Exec(ctx, `
+					INSERT INTO task_checkpoints (task_id, lat, lng, radius_m, title, display_order)
+					VALUES ($1,$2,$3,$4,$5,$6)`,
+					taskID, c.Lat, c.Lng, radius, nullStr(c.Title), ci); err != nil {
+					return fmt.Errorf("insert checkpoint %d/%d: %w", i, ci, err)
+				}
+			}
 		}
 	}
 	return nil
@@ -569,7 +586,54 @@ func (r *Repository) GetRaceTasks(ctx context.Context, raceID string) ([]RaceTas
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// 載入 checkpoint 任務的打卡點
+	if err := r.attachCheckpoints(ctx, raceID, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// attachCheckpoints 批次載入賽事所有 checkpoint 任務的打卡點並掛回對應任務
+func (r *Repository) attachCheckpoints(ctx context.Context, raceID string, tasks []RaceTask) error {
+	hasCheckpoint := false
+	for i := range tasks {
+		if tasks[i].MetricType == MetricCheckpoint {
+			hasCheckpoint = true
+			break
+		}
+	}
+	if !hasCheckpoint {
+		return nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT tc.task_id::text, tc.id, tc.lat, tc.lng, tc.radius_m, COALESCE(tc.title,''), tc.display_order
+		FROM task_checkpoints tc JOIN race_tasks t ON t.id = tc.task_id
+		WHERE t.race_id=$1 ORDER BY tc.display_order, tc.created_at`, raceID)
+	if err != nil {
+		return fmt.Errorf("load checkpoints: %w", err)
+	}
+	defer rows.Close()
+	byTask := map[string][]Checkpoint{}
+	for rows.Next() {
+		var taskID string
+		var c Checkpoint
+		if err := rows.Scan(&taskID, &c.ID, &c.Lat, &c.Lng, &c.RadiusM, &c.Title, &c.DisplayOrder); err != nil {
+			return err
+		}
+		byTask[taskID] = append(byTask[taskID], c)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range tasks {
+		if tasks[i].MetricType == MetricCheckpoint {
+			tasks[i].Checkpoints = byTask[tasks[i].ID]
+		}
+	}
+	return nil
 }
 
 // --- 任務模組（全站共用範本）CRUD ---

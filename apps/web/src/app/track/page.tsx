@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, type GpsPoint, type GpsRunResult } from '@/lib/api'
+import { activitiesApi, checkpointApi, type GpsPoint, type GpsRunResult, type ActiveCheckpoint } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
+import { loadLeaflet } from '@/lib/leaflet'
 import GoogleAuthProvider from '@/components/GoogleAuthProvider'
 import { LoginModal } from '@/components/UserAuthBar'
 
@@ -30,22 +31,6 @@ function fmtPace(s: number) {
   return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
 }
 
-function loadLeaflet(): Promise<any> {
-  return new Promise((resolve, reject) => {
-    if ((window as any).L) return resolve((window as any).L)
-    if (!document.getElementById('leaflet-css')) {
-      const l = document.createElement('link')
-      l.id = 'leaflet-css'; l.rel = 'stylesheet'; l.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
-      document.head.appendChild(l)
-    }
-    const s = document.createElement('script')
-    s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
-    s.onload = () => resolve((window as any).L)
-    s.onerror = () => reject(new Error('地圖載入失敗'))
-    document.head.appendChild(s)
-  })
-}
-
 export default function TrackPage() {
   const user = useUser()
   const [status, setStatus] = useState<'idle' | 'tracking' | 'done'>('idle')
@@ -58,6 +43,10 @@ export default function TrackPage() {
   const [result, setResult] = useState<GpsRunResult | null>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [checkpoints, setCheckpoints] = useState<ActiveCheckpoint[]>([])
+  const [curPos, setCurPos] = useState<{ lat: number; lng: number; acc: number } | null>(null)
+  const [cpBusy, setCpBusy] = useState('') // 正在打卡的 checkpoint id
+  const [cpMsg, setCpMsg] = useState('')
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -86,6 +75,7 @@ export default function TrackPage() {
 
   const onPos = useCallback((pos: GeolocationPosition) => {
     const p: GpsPoint = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: pos.timestamp, acc: pos.coords.accuracy ?? 0 }
+    setCurPos({ lat: p.lat, lng: p.lng, acc: p.acc })
     ensureMap(p.lat, p.lng)
     const goodAcc = p.acc === 0 || p.acc <= MAX_ACC
 
@@ -194,6 +184,45 @@ export default function TrackPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 打卡點：載入「進行中賽事 + 已報名」的可打卡點
+  const fetchCheckpoints = useCallback(async () => {
+    const token = getUserToken()
+    if (!token) { setCheckpoints([]); return }
+    try {
+      const { checkpoints } = await checkpointApi.active(token)
+      setCheckpoints(checkpoints)
+    } catch { /* ignore */ }
+  }, [])
+  useEffect(() => { fetchCheckpoints() }, [fetchCheckpoints, user?.id])
+
+  async function doCheckin(cp: ActiveCheckpoint) {
+    setCpMsg('')
+    const token = getUserToken()
+    if (!token) { setShowLogin(true); return }
+    setCpBusy(cp.id)
+    try {
+      let lat = curPos?.lat, lng = curPos?.lng, acc = curPos?.acc ?? 0
+      // 非追蹤中（無 live 位置）→ 一次性定位
+      if (status !== 'tracking' || lat == null) {
+        const pos = await new Promise<GeolocationPosition>((res, rej) =>
+          navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }))
+        lat = pos.coords.latitude; lng = pos.coords.longitude; acc = pos.coords.accuracy ?? 0
+      }
+      // 追蹤中附上近期軌跡作為佐證
+      const points = status === 'tracking'
+        ? pointsRef.current.slice(-40).map((p) => ({ lat: p.lat, lng: p.lng, t: p.t, acc: p.acc }))
+        : []
+      const { result } = await checkpointApi.checkin(token, cp.id, { lat: lat!, lng: lng!, acc, points })
+      setCpMsg(result.message)
+      await fetchCheckpoints()
+    } catch (e: any) {
+      setCpMsg(e?.code === 1 ? '需要定位權限才能打卡' : (e?.message || '打卡失敗，請重試'))
+    } finally { setCpBusy('') }
+  }
+
+  const cpDist = (cp: ActiveCheckpoint): number | null =>
+    curPos ? haversineM({ lat: curPos.lat, lng: curPos.lng, t: 0, acc: 0 }, { lat: cp.lat, lng: cp.lng, t: 0, acc: 0 }) : null
+
   const distKm = distance / 1000
   const avgPace = distKm >= PACE_MIN_KM ? elapsed / distKm : 0 // 未達門檻先顯示 --:--，避免爆數字
 
@@ -221,6 +250,44 @@ export default function TrackPage() {
           <Big label="平均配速" value={fmtPace(avgPace)} unit="/km" />
           <Big label="異常區段" value={String(anomalies)} unit="段" warn={anomalies > 0} />
         </div>
+
+        {/* 打卡點任務 */}
+        {checkpoints.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}>📍 打卡點任務</div>
+            {cpMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginBottom: 8, wordBreak: 'break-word' }}>{cpMsg}</div>}
+            {status !== 'tracking' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>建議按「開始跑步」邊跑邊打卡（有軌跡佐證，免審核）。</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {checkpoints.map((cp) => {
+                const d = cpDist(cp)
+                const inRange = d != null && d <= cp.radius_m
+                const busy = cpBusy === cp.id
+                const blocked = busy || (curPos != null && !inRange)
+                return (
+                  <div key={cp.id} style={{ background: 'var(--bg-2)', borderRadius: 10, padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cp.title || '打卡點'}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {cp.race_title}{cp.task_title ? ` · ${cp.task_title}` : ''}
+                        {d != null && !cp.checked && <> · {d < 1000 ? `還有 ${Math.round(d)}m` : `${(d / 1000).toFixed(1)}km`}</>}
+                      </div>
+                    </div>
+                    {cp.checked ? (
+                      <span style={{ color: 'var(--fug)', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>✓ 已打卡</span>
+                    ) : cp.pending ? (
+                      <span style={{ color: 'var(--gold)', fontSize: 12.5, flexShrink: 0 }}>審核中</span>
+                    ) : (
+                      <button onClick={() => doCheckin(cp)} disabled={blocked}
+                        style={{ flexShrink: 0, background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: blocked ? 'default' : 'pointer', opacity: blocked ? 0.45 : 1 }}>
+                        {busy ? '打卡中…' : curPos != null && !inRange ? '未到範圍' : '打卡'}
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* 分段 */}
         {splits.length > 0 && (

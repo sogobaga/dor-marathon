@@ -348,6 +348,7 @@ export default function RaceForm({
   function taskComplete(t: RaceTask): boolean {
     const m = METRIC_BY_KEY[t.metric_type]
     if (!m) return false
+    if (m.kind === 'checkpoint') return (t.checkpoints ?? []).some((c) => c.lat && c.lng)
     return m.kind === 'range' ? t.range_lo != null && t.range_hi != null : t.target_value != null
   }
   // 用「函式呼叫」而非元件，避免每次 render 重新掛載造成輸入失焦
@@ -435,6 +436,11 @@ export default function RaceForm({
           title: t.title.trim(),
           description: (t.description ?? '').trim(),
           display_order: idx,
+          checkpoints: t.metric_type === 'checkpoint'
+            ? (t.checkpoints ?? []).filter((c) => c.lat && c.lng).map((c, ci) => ({
+                lat: c.lat, lng: c.lng, radius_m: c.radius_m || 20, title: (c.title ?? '').trim(), display_order: ci,
+              }))
+            : undefined,
         })),
     }
   }

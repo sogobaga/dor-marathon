@@ -127,6 +127,11 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 	if err != nil {
 		return nil, err
 	}
+	// checkpoint 任務完成度：map[taskID]map[userID]bool（集滿全部點且未標記）
+	cpDone, err := r.checkpointCompletion(ctx, race.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	// 活動索引
 	byUser := map[string][]progAct{}
@@ -161,6 +166,25 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 	// 完成任務 EXP（依層級）
 	for ti := range tasks {
 		t := tasks[ti]
+		// 打卡點任務：依集滿與否、依 scope 給對應額度（集滿全部點才發）
+		if t.MetricType == MetricCheckpoint {
+			amt := rules.individual
+			switch t.Scope {
+			case ScopeRaceCollective:
+				amt = rules.collective
+			case ScopeGroupTeam:
+				amt = rules.group
+			}
+			for _, p := range parts {
+				if t.Scope != ScopeRaceCollective && t.GroupID != "" && t.GroupID != p.groupID {
+					continue
+				}
+				if cpDone[t.ID][p.userID] {
+					add(p.userID, "task:"+t.ID, amt)
+				}
+			}
+			continue
+		}
 		switch t.Scope {
 		case ScopeRaceCollective:
 			if taskDone(acts, t) {

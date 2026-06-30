@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
-import { METRIC_CATALOG, METRIC_BY_KEY, type MetricType } from '@/lib/api'
+import { useState, useEffect, useRef } from 'react'
+import { METRIC_CATALOG, METRIC_BY_KEY, type MetricType, type Checkpoint } from '@/lib/api'
+import { loadLeaflet } from '@/lib/leaflet'
 
 // 配速秒數 ↔ 「分:秒」字串
 export function paceToStr(sec?: number | null): string {
@@ -34,6 +35,7 @@ export type TaskFields = {
   range_hi?: number | null
   title: string
   description?: string
+  checkpoints?: Checkpoint[]
 }
 
 export function emptyTask(): TaskFields {
@@ -45,6 +47,7 @@ export function taskSummary(t: TaskFields): string {
   const m = METRIC_BY_KEY[t.metric_type]
   if (!m) return t.title || '任務'
   const label = t.title || m.label
+  if (m.kind === 'checkpoint') return `${label}（打卡點 ${t.checkpoints?.length ?? 0} 個）`
   if (m.kind === 'range') {
     if (t.metric_type === 'avg_pace_range') return `${label}（${m.label} ${paceToStr(t.range_lo)}–${paceToStr(t.range_hi)} /km）`
     return `${label}（${m.label} ${t.range_lo ?? '—'}–${t.range_hi ?? '—'} ${m.unit}）`
@@ -67,6 +70,7 @@ export function TaskItemEditor({
 }) {
   const spec = METRIC_BY_KEY[value.metric_type]
   const isRange = spec?.kind === 'range'
+  const isCheckpoint = spec?.kind === 'checkpoint'
   const isPace = value.metric_type === 'avg_pace_range'
 
   return (
@@ -82,7 +86,7 @@ export function TaskItemEditor({
           </select>
         </Field>
 
-        {isRange ? (
+        {isCheckpoint ? null : isRange ? (
           <>
             <Field label={isPace ? '下限 (分:秒/km)' : `下限 (${spec.unit})`}>
               {isPace
@@ -117,14 +121,124 @@ export function TaskItemEditor({
         </Field>
       </div>
 
+      {isCheckpoint && (
+        <CheckpointsEditor
+          points={value.checkpoints ?? []}
+          onChange={(cps) => onChange({ checkpoints: cps })}
+        />
+      )}
+
       <div style={hint}>
-        {isRange
+        {isCheckpoint
+          ? '判定：在賽事期間到各打卡點半徑內打卡，集滿全部點即完成（建議搭配「開始跑步」GPS 追蹤打卡以利防弊）。⚠ 賽事開放後重新編輯任務會重置打卡紀錄，請於開賽前定稿。'
+          : isRange
           ? `判定：實際${spec.label}落在區間內即完成${isPace ? '（配速可打 6:30 或直接 630→6:30；數字越小越快）' : ''}`
           : `判定：實際${spec?.label ?? ''} ≥ 目標值即完成`}
         {spec && !spec.has_data ? ' · ⚠ 此指標目前無資料源，設定後待之後擴充活動上傳才會判定' : ''}
       </div>
     </div>
   )
+}
+
+// 打卡點清單編輯：手動座標（可貼 Google Map）+ 地圖點選
+function CheckpointsEditor({ points, onChange }: { points: Checkpoint[]; onChange: (p: Checkpoint[]) => void }) {
+  const [activeIdx, setActiveIdx] = useState(0)
+  const [showMap, setShowMap] = useState(false)
+  const mapRef = useRef<any>(null)
+  const layerRef = useRef<any>(null)
+  const stateRef = useRef({ points, activeIdx, onChange })
+  stateRef.current = { points, activeIdx, onChange }
+
+  const r6 = (n: number) => Math.round(n * 1e6) / 1e6
+  const patch = (i: number, p: Partial<Checkpoint>) => onChange(points.map((c, idx) => (idx === i ? { ...c, ...p } : c)))
+  const add = () => {
+    onChange([...points, { lat: 0, lng: 0, radius_m: 20, title: '', display_order: points.length }])
+    setActiveIdx(points.length)
+    setShowMap(true)
+  }
+  const remove = (i: number) => onChange(points.filter((_, idx) => idx !== i).map((c, idx) => ({ ...c, display_order: idx })))
+
+  // 初始化地圖（顯示時）
+  useEffect(() => {
+    if (!showMap) return
+    let cancelled = false
+    loadLeaflet().then((L) => {
+      if (cancelled || mapRef.current) return
+      const first = points.find((p) => p.lat || p.lng)
+      const center: [number, number] = [first?.lat || 25.0376, first?.lng || 121.5645] // 預設台北
+      const map = L.map('cp-edit-map').setView(center, 16)
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map)
+      layerRef.current = L.layerGroup().addTo(map)
+      map.on('click', (e: any) => {
+        const st = stateRef.current
+        if (!st.points.length) return
+        const i = Math.min(st.activeIdx, st.points.length - 1)
+        st.onChange(st.points.map((c, idx) => (idx === i ? { ...c, lat: r6(e.latlng.lat), lng: r6(e.latlng.lng) } : c)))
+      })
+      mapRef.current = map
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showMap])
+
+  // 重畫標記
+  useEffect(() => {
+    const L = (window as any).L
+    if (!showMap || !L || !layerRef.current) return
+    layerRef.current.clearLayers()
+    points.forEach((p, i) => {
+      if (!p.lat && !p.lng) return
+      const active = i === activeIdx
+      L.circle([p.lat, p.lng], { radius: p.radius_m || 20, color: active ? '#46E3A0' : '#888', weight: active ? 2 : 1, fillOpacity: 0.12 }).addTo(layerRef.current)
+      L.marker([p.lat, p.lng]).addTo(layerRef.current).bindTooltip(`${i + 1}. ${p.title || '打卡點'}`, { permanent: false })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [points, activeIdx, showMap])
+
+  return (
+    <div style={{ marginTop: 10, border: '1px dashed var(--line-2)', borderRadius: 10, padding: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx)' }}>打卡點（集滿全部即完成）</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" onClick={() => setShowMap((v) => !v)} style={smallBtn}>{showMap ? '收合地圖' : '地圖選點'}</button>
+          <button type="button" onClick={add} style={smallBtn}>＋ 新增打卡點</button>
+        </div>
+      </div>
+
+      {points.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}>尚無打卡點，請新增。可貼上 Google 地圖座標，或用「地圖選點」直接點。</div>}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {points.map((p, i) => (
+          <div
+            key={i}
+            onClick={() => setActiveIdx(i)}
+            style={{ display: 'flex', gap: 6, alignItems: 'flex-end', flexWrap: 'wrap', padding: 8, borderRadius: 8, cursor: 'pointer', background: i === activeIdx ? 'rgba(70,227,160,.08)' : 'var(--bg-2)', border: `1px solid ${i === activeIdx ? 'rgba(70,227,160,.4)' : 'var(--line-2)'}` }}
+          >
+            <span style={{ fontSize: 12, color: 'var(--tx-dim)', width: 18 }}>{i + 1}</span>
+            <Field label="名稱"><input style={{ ...inp, width: 110 }} value={p.title ?? ''} onChange={(e) => patch(i, { title: e.target.value })} placeholder="如：起點公園" /></Field>
+            <Field label="緯度 lat"><input style={{ ...inp, width: 110 }} type="number" value={p.lat || ''} onChange={(e) => patch(i, { lat: parseFloat(e.target.value) || 0 })} placeholder="25.0376" /></Field>
+            <Field label="經度 lng"><input style={{ ...inp, width: 110 }} type="number" value={p.lng || ''} onChange={(e) => patch(i, { lng: parseFloat(e.target.value) || 0 })} placeholder="121.5645" /></Field>
+            <Field label="半徑(m)"><input style={{ ...inp, width: 70 }} type="number" value={p.radius_m || ''} onChange={(e) => patch(i, { radius_m: parseInt(e.target.value, 10) || 0 })} placeholder="20" /></Field>
+            <button type="button" onClick={(e) => { e.stopPropagation(); remove(i) }} style={removeBtn}>移除</button>
+          </div>
+        ))}
+      </div>
+
+      {showMap && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 4 }}>點地圖即可設定「目前選取（綠框）」打卡點的座標；先點上方某列選取它，再點地圖。</div>
+          <div id="cp-edit-map" style={{ width: '100%', height: 240, borderRadius: 8, background: 'var(--bg-2)' }} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+const smallBtn: React.CSSProperties = {
+  background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8,
+  padding: '5px 10px', color: 'var(--tx)', fontSize: 12, cursor: 'pointer',
 }
 
 // 配速輸入：顯示「分:秒」、對外回傳秒數。編輯時用本地字串，失焦時正規化顯示。

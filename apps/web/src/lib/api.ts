@@ -114,14 +114,14 @@ export interface BrochureBlock {
 // --- 賽事任務系統 ---
 export type MetricType =
   | 'cumulative_distance' | 'single_distance' | 'daily_distance' | 'streak_days'
-  | 'weekly_distance' | 'avg_pace_range' | 'cumulative_ascent' | 'single_ascent' | 'avg_hr_range'
+  | 'weekly_distance' | 'avg_pace_range' | 'checkpoint' | 'cumulative_ascent' | 'single_ascent' | 'avg_hr_range'
 export type TaskScope = 'race_collective' | 'group_team' | 'group_individual'
 
 export interface MetricSpec {
   key: MetricType
   label: string
   unit: string
-  kind: 'threshold' | 'range'
+  kind: 'threshold' | 'range' | 'checkpoint'
   has_data: boolean
 }
 
@@ -133,11 +133,23 @@ export const METRIC_CATALOG: MetricSpec[] = [
   { key: 'streak_days', label: '連續進行任務天數', unit: '天', kind: 'threshold', has_data: true },
   { key: 'weekly_distance', label: '每週總里程', unit: 'km', kind: 'threshold', has_data: true },
   { key: 'avg_pace_range', label: '平均配速區間', unit: '秒/km', kind: 'range', has_data: true },
+  { key: 'checkpoint', label: '指定地點打卡', unit: '點', kind: 'checkpoint', has_data: true },
   { key: 'cumulative_ascent', label: '累積爬升海拔', unit: 'm', kind: 'threshold', has_data: false },
   { key: 'single_ascent', label: '單次爬升海拔', unit: 'm', kind: 'threshold', has_data: false },
   { key: 'avg_hr_range', label: '平均心率區間', unit: 'bpm', kind: 'range', has_data: false },
 ]
 export const METRIC_BY_KEY: Record<string, MetricSpec> = Object.fromEntries(METRIC_CATALOG.map((m) => [m.key, m]))
+
+export interface Checkpoint {
+  id?: string
+  lat: number
+  lng: number
+  radius_m: number
+  title?: string
+  display_order: number
+  collected?: boolean // 進度用：已通過審核打卡
+  pending?: boolean   // 進度用：已打卡待審
+}
 
 export interface RaceTask {
   id?: string
@@ -151,6 +163,7 @@ export interface RaceTask {
   title: string
   description?: string
   display_order: number
+  checkpoints?: Checkpoint[] // metric_type=checkpoint 時的打卡點清單
 }
 
 export interface TaskModuleItem {
@@ -269,6 +282,36 @@ export const activitiesApi = {
     request<{ result: GpsRunResult }>('/activities/gps', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   gpsHistory: (token: string) => request<{ runs: GpsRunHistory[] }>('/activities/gps/history', { headers: withAuth(token) }),
   gpsDetail: (token: string, id: string) => request<{ run: GpsRunHistory }>(`/activities/gps/${id}`, { headers: withAuth(token) }),
+}
+
+// --- 打卡點任務（geofence check-in）---
+export interface ActiveCheckpoint {
+  id: string
+  lat: number
+  lng: number
+  radius_m: number
+  title?: string
+  task_id: string
+  task_title?: string
+  race_id: string
+  race_title?: string
+  checked: boolean
+  pending: boolean
+}
+export interface CheckinResult {
+  ok: boolean
+  status: 'verified' | 'pending' | 'already' | 'out_of_range' | 'low_accuracy' | 'not_open'
+  distance_m: number
+  message: string
+  collected: number
+  required: number
+  task_done: boolean
+}
+export const checkpointApi = {
+  active: (token: string) =>
+    request<{ checkpoints: ActiveCheckpoint[] }>('/checkpoints', { headers: withAuth(token) }),
+  checkin: (token: string, id: string, body: { lat: number; lng: number; acc: number; points?: { lat: number; lng: number; t: number; acc: number }[] }) =>
+    request<{ result: CheckinResult }>(`/checkpoints/${id}/checkin`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
 }
 
 export interface GpsRunSummary {

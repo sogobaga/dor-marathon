@@ -193,6 +193,9 @@ func main() {
 			// 活動上傳
 			r.Mount("/activities", actHandler.Router())
 
+			// 打卡點任務（geofence check-in）
+			r.Mount("/checkpoints", raceHandler.CheckpointRouter())
+
 			// 獎勵系統（轉盤 + 集點卡）
 			r.Mount("/rewards", rewardHandler.Router())
 

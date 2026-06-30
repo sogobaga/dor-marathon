@@ -256,6 +256,32 @@ function ProgressBody({ race }: { race: Race }) {
 
 function TaskRow({ t }: { t: TaskProgress }) {
   const m = METRIC_BY_KEY[t.metric_type]
+  if (m?.kind === 'checkpoint') {
+    const cps = t.checkpoints ?? []
+    const collected = cps.filter((c) => c.collected).length
+    return (
+      <div style={{ background: 'var(--bg-1)', border: `1px solid ${t.done ? 'var(--fug)' : 'var(--line)'}`, borderRadius: 12, padding: '11px 13px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+          <span style={{ fontSize: 13.5, fontWeight: 700 }}>{t.done ? '✓ ' : ''}{t.title || m?.label}</span>
+          <span style={{ fontSize: 12, color: t.done ? 'var(--fug)' : 'var(--tx-dim)', whiteSpace: 'nowrap' }}>集章 {collected}/{cps.length}</span>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 2 }}>指定地點打卡</div>
+        {cps.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+            {cps.map((c, i) => (
+              <span key={c.id ?? i} style={{
+                fontSize: 11.5, padding: '3px 9px', borderRadius: 999,
+                background: c.collected ? 'rgba(70,227,160,.15)' : c.pending ? 'rgba(245,194,66,.15)' : 'var(--bg-2)',
+                border: `1px solid ${c.collected ? 'var(--fug)' : c.pending ? 'var(--gold)' : 'var(--line-2)'}`,
+                color: c.collected ? 'var(--fug)' : c.pending ? 'var(--gold)' : 'var(--tx-dim)',
+              }}>{c.collected ? '✓ ' : c.pending ? '⏳ ' : '○ '}{c.title || `點 ${i + 1}`}</span>
+            ))}
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>到各點半徑內以「開始跑步」打卡，集滿即完成</div>
+      </div>
+    )
+  }
   const isRange = m?.kind === 'range'
   let targetText = ''
   let pct = 0

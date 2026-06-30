@@ -208,8 +208,10 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 	}
 
 	myGroup := ""
+	myCheckins := map[string]bool{} // checkpointID → flagged（待審）
 	if userID != "" {
 		myGroup, _ = s.repo.GetUserGroupID(ctx, userID, raceID)
+		myCheckins, _ = s.repo.userRaceCheckins(ctx, userID, raceID)
 	}
 
 	// 個人統計
@@ -271,6 +273,26 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 		}
 
 		tp := TaskProgress{RaceTask: t, ScopeLabel: label, GroupName: gname}
+		// 打卡點任務：依當前會員的打卡紀錄計算集點進度（與 set/活動無關）
+		if t.MetricType == MetricCheckpoint {
+			collected := 0
+			for ci := range tp.Checkpoints {
+				st, ok := myCheckins[tp.Checkpoints[ci].ID]
+				if !ok {
+					continue
+				}
+				if st { // flagged → 待審
+					tp.Checkpoints[ci].Pending = true
+				} else {
+					tp.Checkpoints[ci].Collected = true
+					collected++
+				}
+			}
+			tp.Current = float64(collected)
+			tp.Done = len(tp.Checkpoints) > 0 && collected >= len(tp.Checkpoints)
+			prog.Tasks = append(prog.Tasks, tp)
+			continue
+		}
 		spec, ok := MetricCatalog[t.MetricType]
 		if ok && spec.Kind == MetricRange {
 			lo, hi := 0.0, 0.0

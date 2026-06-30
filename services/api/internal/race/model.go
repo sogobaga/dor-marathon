@@ -7,40 +7,40 @@ import (
 
 // Race 資料庫模型
 type Race struct {
-	ID           string     `json:"id"`
-	Slug         string     `json:"slug"`
-	Title        string     `json:"title"`
-	Subtitle     string     `json:"subtitle"`
-	World        string     `json:"world"`
-	Blurb        string     `json:"blurb"`
-	HeroImageURL string     `json:"hero_image_url"`
-	Status       string     `json:"status"`     // soon|open|live|done
-	EventMode    string     `json:"event_mode"` // general|competition|faction_battle
-	GoalType     string     `json:"goal_type"`  // cumulative|distance（競賽完賽目標）
-	Distances    []int      `json:"distances"`
-	GroupType    string     `json:"group_type"` // faction|club|distance
-	GroupMode    string     `json:"group_mode"` // random|self
-	SlotsTotal   int        `json:"slots_total"`
-	EntryFee     int        `json:"entry_fee"` // 分（NT$ × 100）
-	RegStart     *time.Time `json:"registration_start,omitempty"` // 報名開始
-	RegEnd       *time.Time `json:"registration_end,omitempty"`   // 報名截止
-	StartDate    time.Time  `json:"start_date"`                   // 競賽時間 起
-	EndDate      time.Time  `json:"end_date"`                     // 競賽時間 迄
-	Config         RaceConfig `json:"config"`
-	RequiredFields []string   `json:"required_fields"` // 報名必填欄位：real_name|nickname|phone|address|birthday|gender
-	BrochureTitle  string     `json:"brochure_title"`  // 簡章大主標
-	ControlStatus  string     `json:"control_status"`  // active|paused|suspended|closed|hidden|testing（admin 手動）
-	StartingSoonDays int      `json:"starting_soon_days"` // 賽事即將開始 倒數天數
-	AllowTeamGroups  bool     `json:"allow_team_groups"`  // 競賽模式：是否開放前台自建跑團分組
-	DisplayStatus  string     `json:"display_status"`  // 計算欄位（讀取時填）：upcoming_reg|registering|reg_closed|starting_soon|racing|ended|paused|suspended
-	CanRegister    bool       `json:"can_register"`    // 計算欄位
-	CreatedBy      string     `json:"created_by,omitempty"` // organizer userID
-	ReviewStatus   string     `json:"review_status"`        // pending|approved|rejected
-	ReviewNote     string     `json:"review_note,omitempty"`
-	CertificateBgURL string   `json:"certificate_bg_url"`   // 完賽證明底圖（空=預設設計）
-	ShowDistanceRank bool     `json:"show_distance_rank"`   // 顯示累積里程榜（預設 true）
-	ShowTimeRank     bool     `json:"show_time_rank"`       // 顯示完成時間榜（預設 true）
-	CreatedAt      time.Time  `json:"created_at"`
+	ID               string     `json:"id"`
+	Slug             string     `json:"slug"`
+	Title            string     `json:"title"`
+	Subtitle         string     `json:"subtitle"`
+	World            string     `json:"world"`
+	Blurb            string     `json:"blurb"`
+	HeroImageURL     string     `json:"hero_image_url"`
+	Status           string     `json:"status"`     // soon|open|live|done
+	EventMode        string     `json:"event_mode"` // general|competition|faction_battle
+	GoalType         string     `json:"goal_type"`  // cumulative|distance（競賽完賽目標）
+	Distances        []int      `json:"distances"`
+	GroupType        string     `json:"group_type"` // faction|club|distance
+	GroupMode        string     `json:"group_mode"` // random|self
+	SlotsTotal       int        `json:"slots_total"`
+	EntryFee         int        `json:"entry_fee"`                    // 分（NT$ × 100）
+	RegStart         *time.Time `json:"registration_start,omitempty"` // 報名開始
+	RegEnd           *time.Time `json:"registration_end,omitempty"`   // 報名截止
+	StartDate        time.Time  `json:"start_date"`                   // 競賽時間 起
+	EndDate          time.Time  `json:"end_date"`                     // 競賽時間 迄
+	Config           RaceConfig `json:"config"`
+	RequiredFields   []string   `json:"required_fields"`      // 報名必填欄位：real_name|nickname|phone|address|birthday|gender
+	BrochureTitle    string     `json:"brochure_title"`       // 簡章大主標
+	ControlStatus    string     `json:"control_status"`       // active|paused|suspended|closed|hidden|testing（admin 手動）
+	StartingSoonDays int        `json:"starting_soon_days"`   // 賽事即將開始 倒數天數
+	AllowTeamGroups  bool       `json:"allow_team_groups"`    // 競賽模式：是否開放前台自建跑團分組
+	DisplayStatus    string     `json:"display_status"`       // 計算欄位（讀取時填）：upcoming_reg|registering|reg_closed|starting_soon|racing|ended|paused|suspended
+	CanRegister      bool       `json:"can_register"`         // 計算欄位
+	CreatedBy        string     `json:"created_by,omitempty"` // organizer userID
+	ReviewStatus     string     `json:"review_status"`        // pending|approved|rejected
+	ReviewNote       string     `json:"review_note,omitempty"`
+	CertificateBgURL string     `json:"certificate_bg_url"` // 完賽證明底圖（空=預設設計）
+	ShowDistanceRank bool       `json:"show_distance_rank"` // 顯示累積里程榜（預設 true）
+	ShowTimeRank     bool       `json:"show_time_rank"`     // 顯示完成時間榜（預設 true）
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 // ComputeDisplay 依現在時間推導顯示狀態與是否可報名（control=active/testing/hidden 才走時間規則）。
@@ -96,17 +96,17 @@ type RaceGroup struct {
 	Name             string   `json:"name"`
 	Description      string   `json:"description,omitempty"`
 	DisplayOrder     int      `json:"display_order"`
-	SlotLimit        *int     `json:"slot_limit,omitempty"`    // nil=不限
+	SlotLimit        *int     `json:"slot_limit,omitempty"` // nil=不限
 	SlotsTaken       int      `json:"slots_taken"`
-	GenderLimit      string   `json:"gender_limit"`            // any|male|female
+	GenderLimit      string   `json:"gender_limit"` // any|male|female
 	AgeMin           *int     `json:"age_min,omitempty"`
 	AgeMax           *int     `json:"age_max,omitempty"`
 	TargetDistanceKm *float64 `json:"target_distance_km,omitempty"`
-	RequiresKey      bool     `json:"requires_key"`            // 需要「跑團鑰匙」才能加入
-	GroupKey         string   `json:"group_key,omitempty"`     // 鑰匙明碼：後台/建立時可帶；公開回傳一律清空
-	CreatedBy        string   `json:"created_by,omitempty"`    // 自建者 userID（空=官方建立）
-	IsUserCreated    bool     `json:"is_user_created"`         // created_by 非空
-	ExpReward        int      `json:"exp_reward"`              // 完成此分組可獲得的 EXP
+	RequiresKey      bool     `json:"requires_key"`         // 需要「跑團鑰匙」才能加入
+	GroupKey         string   `json:"group_key,omitempty"`  // 鑰匙明碼：後台/建立時可帶；公開回傳一律清空
+	CreatedBy        string   `json:"created_by,omitempty"` // 自建者 userID（空=官方建立）
+	IsUserCreated    bool     `json:"is_user_created"`      // created_by 非空
+	ExpReward        int      `json:"exp_reward"`           // 完成此分組可獲得的 EXP
 }
 
 // CreateTeamGroupRequest 前台跑團成員自建分組 payload
@@ -133,8 +133,9 @@ type MetricSpec struct {
 
 // MetricKind
 const (
-	MetricThreshold = "threshold" // 實際值 >= target_value 即完成
-	MetricRange     = "range"     // 實際值落在 [range_lo, range_hi] 即完成
+	MetricThreshold  = "threshold"  // 實際值 >= target_value 即完成
+	MetricRange      = "range"      // 實際值落在 [range_lo, range_hi] 即完成
+	MetricCheckpoint = "checkpoint" // 到指定座標半徑內打卡，集滿全部點即完成
 )
 
 // TaskScope
@@ -155,13 +156,14 @@ var MetricCatalog = map[string]MetricSpec{
 	"cumulative_ascent":   {"cumulative_ascent", "累積爬升海拔", "m", MetricThreshold, false},
 	"single_ascent":       {"single_ascent", "單次爬升海拔", "m", MetricThreshold, false},
 	"avg_hr_range":        {"avg_hr_range", "平均心率區間", "bpm", MetricRange, false},
+	"checkpoint":          {"checkpoint", "指定地點打卡", "點", MetricCheckpoint, true},
 }
 
 // MetricCatalogList 依固定順序回傳 catalog（API/驗證用）
 func MetricCatalogList() []MetricSpec {
 	order := []string{
 		"cumulative_distance", "single_distance", "daily_distance", "streak_days",
-		"weekly_distance", "avg_pace_range", "cumulative_ascent", "single_ascent", "avg_hr_range",
+		"weekly_distance", "avg_pace_range", "checkpoint", "cumulative_ascent", "single_ascent", "avg_hr_range",
 	}
 	out := make([]MetricSpec, 0, len(order))
 	for _, k := range order {
@@ -178,27 +180,40 @@ func ValidMetric(k string) bool {
 
 // RaceTask 賽事任務（三層 scope）。GroupIndex 仿 RaceSupply：建立時對應 Groups 陣列索引。
 type RaceTask struct {
-	ID           string   `json:"id,omitempty"`
-	RaceID       string   `json:"race_id,omitempty"`
-	Scope        string   `json:"scope"`                 // race_collective | group_team | group_individual
-	GroupID      string   `json:"group_id,omitempty"`    // 回傳時填實際 UUID（race_collective 為空）
-	GroupIndex   *int     `json:"group_index,omitempty"` // 建立時用：對應 Groups 陣列索引
-	MetricType   string   `json:"metric_type"`
-	TargetValue  *float64 `json:"target_value,omitempty"` // threshold 用
-	RangeLo      *float64 `json:"range_lo,omitempty"`     // range 用
-	RangeHi      *float64 `json:"range_hi,omitempty"`
-	Title        string   `json:"title"`
-	Description  string   `json:"description,omitempty"`
-	DisplayOrder int      `json:"display_order"`
+	ID           string       `json:"id,omitempty"`
+	RaceID       string       `json:"race_id,omitempty"`
+	Scope        string       `json:"scope"`                 // race_collective | group_team | group_individual
+	GroupID      string       `json:"group_id,omitempty"`    // 回傳時填實際 UUID（race_collective 為空）
+	GroupIndex   *int         `json:"group_index,omitempty"` // 建立時用：對應 Groups 陣列索引
+	MetricType   string       `json:"metric_type"`
+	TargetValue  *float64     `json:"target_value,omitempty"` // threshold 用
+	RangeLo      *float64     `json:"range_lo,omitempty"`     // range 用
+	RangeHi      *float64     `json:"range_hi,omitempty"`
+	Title        string       `json:"title"`
+	Description  string       `json:"description,omitempty"`
+	DisplayOrder int          `json:"display_order"`
+	Checkpoints  []Checkpoint `json:"checkpoints,omitempty"` // metric_type=checkpoint 時的打卡點清單
+}
+
+// Checkpoint 打卡點（屬於某 checkpoint 任務）。Collected 為讀取進度時填當前會員是否已打卡。
+type Checkpoint struct {
+	ID           string  `json:"id,omitempty"`
+	Lat          float64 `json:"lat"`
+	Lng          float64 `json:"lng"`
+	RadiusM      int     `json:"radius_m"`
+	Title        string  `json:"title,omitempty"`
+	DisplayOrder int     `json:"display_order"`
+	Collected    bool    `json:"collected,omitempty"` // 進度用：當前會員已通過審核打卡
+	Pending      bool    `json:"pending,omitempty"`   // 進度用：已打卡但待審（缺軌跡佐證）
 }
 
 // TaskModule 全站共用任務模組（範本）
 type TaskModule struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	IsSystem    bool              `json:"is_system"`
-	Items       []TaskModuleItem  `json:"items"`
+	ID          string           `json:"id"`
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	IsSystem    bool             `json:"is_system"`
+	Items       []TaskModuleItem `json:"items"`
 }
 
 // TaskModuleItem 模組內任務項目
@@ -313,7 +328,7 @@ type CompetitionRanking struct {
 	RaceID       string         `json:"race_id"`
 	EventMode    string         `json:"event_mode"`
 	GoalType     string         `json:"goal_type"`
-	ByCumulative []StandingRank `json:"by_cumulative"` // 總累積里程榜（前 20）
+	ByCumulative []StandingRank `json:"by_cumulative"`  // 總累積里程榜（前 20）
 	ByFinishTime []StandingRank `json:"by_finish_time"` // 完成累計總時間榜（前 20）
 	MyGroup      *MyGroupRank   `json:"my_group,omitempty"`
 }
@@ -341,7 +356,7 @@ type MissionDef struct {
 	Day    int     `json:"day"`
 	Title  string  `json:"title"`
 	Tag    string  `json:"tag"`
-	Type   string  `json:"type"`             // base|pace|rescue
+	Type   string  `json:"type"` // base|pace|rescue
 	BaseKm float64 `json:"base_km"`
 	PaceLo string  `json:"pace_lo,omitempty"` // e.g. "4:30"（分:秒）
 	PaceHi string  `json:"pace_hi,omitempty"` // e.g. "5:30"
@@ -383,7 +398,7 @@ type AddonSelection struct {
 type RegisterRequest struct {
 	RaceID      string           `json:"-"`
 	UserID      string           `json:"-"`
-	GroupID     string           `json:"group_id"`           // 一般/競賽必填；分組對抗忽略（隨機）
+	GroupID     string           `json:"group_id"`            // 一般/競賽必填；分組對抗忽略（隨機）
 	GroupKey    string           `json:"group_key,omitempty"` // 加入需鑰匙的分組時帶入
 	Addons      []AddonSelection `json:"addons"`
 	Participant ParticipantInfo  `json:"participant"`
@@ -447,7 +462,7 @@ type OrderDetail struct {
 
 // MyRegLite 使用者在某賽事的精簡報名狀態（賽事列表附帶用）
 type MyRegLite struct {
-	Status        string `json:"status"`         // pending|paid|cancelled
+	Status        string `json:"status"` // pending|paid|cancelled
 	GroupRevealed bool   `json:"group_revealed"`
 	GroupName     string `json:"group_name"` // 報名分組名稱（一般模式直接顯示；競賽模式當天才揭曉）
 }
@@ -482,21 +497,21 @@ type RankEntry struct {
 
 // FactionStatus 陣營即時分數
 type FactionStatus struct {
-	ID         string  `json:"id"`
-	Name       string  `json:"name"`
-	Color      string  `json:"color"`
-	TotalKm    float64 `json:"total_km"`
-	ScorePct   float64 `json:"score_pct"`   // 百分比（0–100）
-	MemberCount int    `json:"member_count"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Color       string  `json:"color"`
+	TotalKm     float64 `json:"total_km"`
+	ScorePct    float64 `json:"score_pct"` // 百分比（0–100）
+	MemberCount int     `json:"member_count"`
 }
 
 // LiveStatus 賽事即時狀態（API 回應用）
 type LiveStatus struct {
 	RaceID   string          `json:"race_id"`
 	Status   string          `json:"status"`
-	DayNow   int             `json:"day_now"`   // 目前是第幾天（1-indexed）
+	DayNow   int             `json:"day_now"` // 目前是第幾天（1-indexed）
 	Factions []FactionStatus `json:"factions,omitempty"`
-	WSCount  int             `json:"ws_count"`  // 在線人數（WebSocket）
+	WSCount  int             `json:"ws_count"` // 在線人數（WebSocket）
 }
 
 // configToBytes 將 RaceConfig 序列化為 JSON bytes，供 pgx 存入 JSONB
