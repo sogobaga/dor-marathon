@@ -471,6 +471,22 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
           </div>
         </div>
         )}
+
+        {/* 支援與隱私（聯絡 / Strava / 隱私權） */}
+        <div style={{ marginTop: 22, paddingTop: 16, borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 7 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)' }}>支援與隱私</div>
+          <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
+            聯絡我們：<a href="mailto:info@hero-mi.com" style={{ color: 'var(--fug)', textDecoration: 'none', fontWeight: 700 }}>info@hero-mi.com</a>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--tx-faint)', lineHeight: 1.7 }}>
+            連接 Strava：到上方「運動數據」分頁點官方「Connect with Strava」即可；要中斷請按「中斷」。我們僅匯入你連接之後的活動，並可隨時中斷。
+          </div>
+          <div style={{ fontSize: 12.5, marginTop: 2 }}>
+            <a href="/support" style={{ color: 'var(--fug)', textDecoration: 'underline' }}>支援說明</a>
+            <span style={{ color: 'var(--tx-faint)', margin: '0 8px' }}>·</span>
+            <a href="/privacy" style={{ color: 'var(--fug)', textDecoration: 'underline' }}>隱私權政策</a>
+          </div>
+        </div>
       </div>
 
       {/* 繳費頁面 */}
