@@ -130,7 +130,8 @@ func (w *Worker) aggregateStandings(ctx context.Context) {
 		JOIN races r ON r.id = rg.race_id AND r.event_mode = 'competition'
 		             AND r.control_status NOT IN ('suspended','closed')
 		LEFT JOIN registrations reg ON reg.group_id = rg.id AND reg.status = 'paid'
-		LEFT JOIN activities a ON a.user_id = reg.user_id AND a.race_id = rg.race_id
+		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
+		                       AND a.recorded_at BETWEEN r.start_date AND r.end_date
 		GROUP BY rg.race_id, rg.id
 		ON CONFLICT (race_id, group_id) DO UPDATE SET
 			total_km       = EXCLUDED.total_km,

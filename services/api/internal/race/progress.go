@@ -49,12 +49,16 @@ type RaceProgress struct {
 
 // LoadRaceActivities 取得某賽事所有未標記活動（含活動者目前分組）
 func (r *Repository) LoadRaceActivities(ctx context.Context, raceID string) ([]progAct, error) {
+	// 跨賽事歸戶：一筆跑步計入「該會員所有報名中、且 recorded_at 落在賽事期間內」的賽事，
+	// 不再看 activity.race_id（同一筆可同時計入多場賽事/挑戰）。
 	rows, err := r.db.Query(ctx, `
 		SELECT a.user_id::text, COALESCE(reg.group_id::text,''),
 		       a.distance_km, COALESCE(a.ascent_m,0), COALESCE(a.avg_hr,0), a.avg_pace_s, a.recorded_at
-		FROM activities a
-		LEFT JOIN registrations reg ON reg.user_id = a.user_id AND reg.race_id = a.race_id
-		WHERE a.race_id = $1 AND NOT a.flagged`, raceID)
+		FROM races rc
+		JOIN registrations reg ON reg.race_id = rc.id AND reg.status <> 'cancelled'
+		JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
+		                  AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
+		WHERE rc.id = $1`, raceID)
 	if err != nil {
 		return nil, fmt.Errorf("load race activities: %w", err)
 	}

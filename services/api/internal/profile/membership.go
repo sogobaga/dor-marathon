@@ -155,8 +155,10 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		SELECT COUNT(*) FROM (
 			SELECT reg.race_id
 			FROM registrations reg
+			JOIN races r ON r.id=reg.race_id
 			JOIN race_groups g ON g.id=reg.group_id AND g.target_distance_km > 0
-			LEFT JOIN activities a ON a.user_id=reg.user_id AND a.race_id=reg.race_id AND NOT a.flagged
+			LEFT JOIN activities a ON a.user_id=reg.user_id AND NOT a.flagged
+			                      AND a.recorded_at BETWEEN r.start_date AND r.end_date
 			WHERE reg.user_id=$1 AND reg.status<>'cancelled'
 			GROUP BY reg.race_id, g.target_distance_km
 			HAVING COALESCE(SUM(a.distance_km),0) >= g.target_distance_km

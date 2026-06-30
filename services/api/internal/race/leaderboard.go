@@ -39,15 +39,18 @@ type finisher struct {
 
 // computeFinishers 逐使用者累積里程，達分組目標即記為完成
 func (r *Repository) computeFinishers(ctx context.Context, raceID string) ([]finisher, int, error) {
+	// 跨賽事歸戶：依「報名中 + recorded_at 落在賽事期間」計入，不看 activity.race_id
 	rows, err := r.db.Query(ctx, `
 		SELECT a.user_id::text, COALESCE(NULLIF(p.nickname,''), u.handle), COALESCE(g.name,''),
 		       COALESCE(g.target_distance_km, 0), a.distance_km, a.duration_s, a.recorded_at
-		FROM activities a
-		JOIN registrations reg ON reg.user_id = a.user_id AND reg.race_id = a.race_id AND reg.status <> 'cancelled'
+		FROM races rc
+		JOIN registrations reg ON reg.race_id = rc.id AND reg.status <> 'cancelled'
+		JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
+		                  AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
 		LEFT JOIN race_groups g ON g.id = reg.group_id
-		JOIN users u ON u.id = a.user_id
-		LEFT JOIN user_profiles p ON p.user_id = a.user_id
-		WHERE a.race_id = $1 AND NOT a.flagged
+		JOIN users u ON u.id = reg.user_id
+		LEFT JOIN user_profiles p ON p.user_id = reg.user_id
+		WHERE rc.id = $1
 		ORDER BY a.user_id, a.recorded_at`, raceID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("leaderboard query: %w", err)
