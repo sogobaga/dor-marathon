@@ -50,7 +50,7 @@ export default function PrivacyPage() {
         <p style={p}>隱私相關問題請來信：<a href="mailto:info@hero-mi.com" style={link}>info@hero-mi.com</a></p>
 
         <div style={{ textAlign: 'center', marginTop: 28, fontSize: 12, color: 'var(--tx-faint)' }}>
-          DOR · 雲端馬拉松　·　<a href="/support" style={link}>支援與聯絡</a>
+          DOR · 雲端馬拉松　·　<a href="/terms" style={link}>服務條款</a>　·　<a href="/support" style={link}>支援與聯絡</a>
         </div>
       </div>
     </div>

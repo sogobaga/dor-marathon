@@ -28,12 +28,16 @@ export default function SupportPage() {
           </div>
         </Section>
 
+        <Section title="報名與退款">
+          <p style={p}>雲端馬拉松為線上活動／數位服務，<b>報名繳費完成後恕不退款</b>，且<b>不適用七天鑑賞期</b>。詳見 <a href="/terms" style={link}>服務條款與退款政策</a>。</p>
+        </Section>
+
         <Section title="隱私與資料">
           <p style={p}>我們如何蒐集與使用你的資料，請見 <a href="/privacy" style={link}>隱私權政策</a>。你可隨時來信要求查詢或刪除你的個人資料／帳號。</p>
         </Section>
 
         <div style={{ textAlign: 'center', marginTop: 28, fontSize: 12, color: 'var(--tx-faint)' }}>
-          DOR · 雲端馬拉松　·　<a href="/privacy" style={link}>隱私權政策</a>
+          DOR · 雲端馬拉松　·　<a href="/terms" style={link}>服務條款</a>　·　<a href="/privacy" style={link}>隱私權政策</a>
         </div>
       </div>
     </div>
