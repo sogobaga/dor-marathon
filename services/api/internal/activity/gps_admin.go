@@ -13,19 +13,21 @@ import (
 
 var errGPSNotPending = errors.New("此筆已審核或不存在")
 
-// GPSRunSummary 後台審核清單/詳情
+// GPSRunSummary 後台審核 / 個人歷史 共用
 type GPSRunSummary struct {
-	ID         string          `json:"id"`
-	UserID     string          `json:"user_id"`
-	UserName   string          `json:"user_name"`
-	DistanceKm float64         `json:"distance_km"`
-	DurationS  int             `json:"duration_s"`
-	AvgPaceS   int             `json:"avg_pace_s"`
-	PointCount int             `json:"point_count"`
-	FlagReason string          `json:"flag_reason"`
-	StartedAt  time.Time       `json:"started_at"`
-	EndedAt    time.Time       `json:"ended_at"`
-	Points     json.RawMessage `json:"points,omitempty"` // 僅詳情回傳
+	ID           string    `json:"id"`
+	UserID       string    `json:"user_id,omitempty"`
+	UserName     string    `json:"user_name,omitempty"`
+	DistanceKm   float64   `json:"distance_km"`
+	DurationS    int       `json:"duration_s"`
+	AvgPaceS     int       `json:"avg_pace_s"`
+	PointCount   int       `json:"point_count"`
+	Flagged      bool      `json:"flagged"`
+	FlagReason   string    `json:"flag_reason,omitempty"`
+	ReviewAction string    `json:"review_action,omitempty"`
+	StartedAt    time.Time `json:"started_at"`
+	EndedAt      time.Time `json:"ended_at"`
+	Polyline     string    `json:"polyline,omitempty"` // 僅詳情回傳（壓縮軌跡）
 }
 
 func (r *Repository) ListPendingGPS(ctx context.Context) ([]GPSRunSummary, error) {
@@ -53,17 +55,16 @@ func (r *Repository) ListPendingGPS(ctx context.Context) ([]GPSRunSummary, error
 
 func (r *Repository) GetGPSRun(ctx context.Context, id string) (*GPSRunSummary, error) {
 	var s GPSRunSummary
-	var pts []byte
 	err := r.db.QueryRow(ctx, `
 		SELECT g.id::text, g.user_id::text, COALESCE(u.name,''), g.distance_km, g.duration_s, g.avg_pace_s,
-		       g.point_count, COALESCE(g.flag_reason,''), g.started_at, g.ended_at, COALESCE(g.points,'[]'::jsonb)
+		       g.point_count, g.flagged, COALESCE(g.flag_reason,''), COALESCE(g.review_action,''),
+		       g.started_at, g.ended_at, COALESCE(g.polyline,'')
 		FROM gps_runs g JOIN users u ON u.id=g.user_id WHERE g.id=$1`, id).
 		Scan(&s.ID, &s.UserID, &s.UserName, &s.DistanceKm, &s.DurationS, &s.AvgPaceS,
-			&s.PointCount, &s.FlagReason, &s.StartedAt, &s.EndedAt, &pts)
+			&s.PointCount, &s.Flagged, &s.FlagReason, &s.ReviewAction, &s.StartedAt, &s.EndedAt, &s.Polyline)
 	if err != nil {
 		return nil, err
 	}
-	s.Points = pts
 	return &s, nil
 }
 

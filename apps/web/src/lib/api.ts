@@ -248,9 +248,24 @@ export interface GpsRunResult {
   exp_awarded: boolean
 }
 export interface GpsPoint { lat: number; lng: number; t: number; acc: number }
+export interface GpsRunHistory {
+  id: string
+  distance_km: number
+  duration_s: number
+  avg_pace_s: number
+  point_count: number
+  flagged: boolean
+  flag_reason?: string
+  review_action?: string
+  started_at: string
+  ended_at: string
+  polyline?: string
+}
 export const activitiesApi = {
   uploadGps: (token: string, body: { race_id?: string; started_at: string; ended_at: string; points: GpsPoint[] }) =>
     request<{ result: GpsRunResult }>('/activities/gps', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  gpsHistory: (token: string) => request<{ runs: GpsRunHistory[] }>('/activities/gps/history', { headers: withAuth(token) }),
+  gpsDetail: (token: string, id: string) => request<{ run: GpsRunHistory }>(`/activities/gps/${id}`, { headers: withAuth(token) }),
 }
 
 export interface GpsRunSummary {
@@ -264,7 +279,7 @@ export interface GpsRunSummary {
   flag_reason: string
   started_at: string
   ended_at: string
-  points?: [number, number, number, number][] | { lat: number; lng: number; t: number; acc: number }[]
+  polyline?: string
 }
 export const adminGpsApi = {
   list: (token: string) => request<{ runs: GpsRunSummary[] }>('/admin/gps-runs', { headers: withAuth(token) }),

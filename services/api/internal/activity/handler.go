@@ -23,6 +23,8 @@ func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Post("/", h.Upload)
 	r.Post("/gps", h.UploadGPS)
+	r.Get("/gps/history", h.GPSHistory)
+	r.Get("/gps/{id}", h.GPSDetail)
 	r.Get("/me", h.MyActivities)
 	r.Get("/me/race/{raceID}", h.MyRaceActivities)
 	r.Get("/missions/{raceID}", h.MissionStatus)

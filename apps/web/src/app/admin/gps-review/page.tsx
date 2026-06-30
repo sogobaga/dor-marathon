@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { adminGpsApi, type GpsRunSummary } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
+import { decodePolyline } from '@/lib/polyline'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -55,13 +56,12 @@ export default function AdminGpsReviewPage() {
   // 畫軌跡
   useEffect(() => {
     if (!sel) return
-    const pts = (sel.points as any[]) || []
     let cancelled = false
     ;(async () => {
       const L = await loadLeaflet()
       if (cancelled) return
       if (mapRef.current) { mapRef.current.remove(); mapRef.current = null }
-      const latlngs = pts.map((p) => [p.lat, p.lng] as [number, number]).filter((x) => x[0] && x[1])
+      const latlngs = decodePolyline(sel.polyline || '')
       const center = latlngs[0] || [25.04, 121.56]
       const map = L.map('gps-review-map').setView(center, 15)
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map)

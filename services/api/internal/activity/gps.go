@@ -108,13 +108,16 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 
 	started, _ := time.Parse(time.RFC3339, req.StartedAt)
 	ended, _ := time.Parse(time.RFC3339, req.EndedAt)
-	// 軌跡點只在「標記待審」時保留（供後台審核）；乾淨的跑步只存摘要列，節省儲存
-	var pointsJSON []byte
-	if flagged {
-		pointsJSON, _ = json.Marshal(req.Points)
+	// 軌跡壓縮：精度過差的點剔除 → Douglas-Peucker 簡化(5m) → encoded polyline（數百 bytes）
+	latlng := make([][2]float64, 0, len(req.Points))
+	for _, p := range req.Points {
+		if p.Acc == 0 || p.Acc <= gpsMaxAccuracyM {
+			latlng = append(latlng, [2]float64{p.Lat, p.Lng})
+		}
 	}
+	polyline := encodePolyline(simplifyPath(latlng, 5))
 	if err := s.repo.InsertGPSRun(ctx, userID, req.RaceID, started, ended,
-		round2(distanceKm), durationS, avgPaceS, flagged, flagReason, len(req.Points), pointsJSON); err != nil {
+		round2(distanceKm), durationS, avgPaceS, flagged, flagReason, len(req.Points), polyline); err != nil {
 		return nil, err
 	}
 
@@ -149,18 +152,18 @@ func (r *Repository) HistAvgPace(ctx context.Context, userID string) int {
 	return int(v)
 }
 
-// InsertGPSRun 寫入 GPS 軌跡 + 防弊結果
+// InsertGPSRun 寫入 GPS 軌跡（壓縮 polyline）+ 防弊結果
 func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, started, ended time.Time,
-	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, points []byte) error {
+	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, polyline string) error {
 	var rid interface{}
 	if raceID != "" {
 		rid = raceID
 	}
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO gps_runs (user_id, race_id, started_at, ended_at, distance_km, duration_s,
-		                      avg_pace_s, flagged, flag_reason, point_count, points)
+		                      avg_pace_s, flagged, flag_reason, point_count, polyline)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11)`,
-		userID, rid, started, ended, distanceKm, durationS, avgPaceS, flagged, flagReason, pointCount, points)
+		userID, rid, started, ended, distanceKm, durationS, avgPaceS, flagged, flagReason, pointCount, polyline)
 	return err
 }
 

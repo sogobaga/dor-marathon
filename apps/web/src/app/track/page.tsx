@@ -175,7 +175,7 @@ export default function TrackPage() {
       <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         <a href="/" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 返回</a>
         <strong style={{ fontSize: 16 }}>GPS 跑步追蹤</strong>
-        <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>{user ? '' : '需登入'}</span>
+        <a href="/track/history" style={{ color: 'var(--fug)', fontSize: 13, textDecoration: 'none' }}>歷史</a>
       </header>
 
       {/* 地圖 */}
