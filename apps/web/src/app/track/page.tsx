@@ -12,7 +12,7 @@ const LS_KEY = 'dor_gps_run'
 const MAX_ACC = 40 // 精度差於此（公尺）的點不採計距離
 const MAX_SPEED = 1000 / 120 // 8.33 m/s（2:00/km）人類極限上限
 const JITTER_MIN = 6 // 公尺：距上一個採納點移動不足此值視為原地抖動，不計距離
-const PACE_MIN_KM = 0.05 // 累積達此距離才顯示平均配速（避免起跑瞬間爆出超大數字）
+const PACE_MIN_KM = 0.005 // 累積達此距離（5m，約顯示 0.01km 時）即顯示平均配速
 
 function haversineM(a: GpsPoint, b: GpsPoint) {
   const R = 6371000, rad = Math.PI / 180
@@ -199,7 +199,7 @@ export default function TrackPage() {
 
   return (
    <GoogleAuthProvider>
-    <div style={{ minHeight: '100dvh', background: 'var(--bg)', color: 'var(--tx)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100dvh', background: 'var(--bg)', color: 'var(--tx)', display: 'flex', flexDirection: 'column' }}>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
       <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         <a href="/" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 返回</a>
@@ -210,8 +210,8 @@ export default function TrackPage() {
       {/* 地圖 */}
       <div id="gps-map" style={{ width: '100%', height: 280, background: 'var(--bg-2)' }} />
 
-      <div style={{ padding: 16, flex: 1 }}>
-        {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12 }}>⚠️ {warn}</div>}
+      <div style={{ padding: 16, flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, wordBreak: 'break-word' }}>⚠️ {warn}</div>}
         {err && <div style={{ color: 'var(--hunt)', fontSize: 13, marginBottom: 12 }}>{err}</div>}
 
         {/* 即時數據 */}
@@ -239,13 +239,21 @@ export default function TrackPage() {
 
         {/* 結果 */}
         {status === 'done' && result && (
-          <div style={{ marginTop: 16, background: 'var(--bg-1)', border: `1px solid ${result.flagged ? 'rgba(255,90,90,.4)' : 'var(--line-2)'}`, borderRadius: 12, padding: 14 }}>
-            <div style={{ fontWeight: 800, marginBottom: 8 }}>{result.flagged ? '⚠️ 數據異常，已標記待審' : '✓ 已記錄'}</div>
+          <div style={{ marginTop: 16, background: 'var(--bg-1)', border: `1px solid ${result.flagged ? 'rgba(255,90,90,.4)' : 'var(--line-2)'}`, borderRadius: 12, padding: 14, wordBreak: 'break-word' }}>
+            <div style={{ fontWeight: 800, marginBottom: 8 }}>
+              {result.too_short ? 'ℹ️ 移動距離不足，無法計算' : result.flagged ? '⚠️ 數據異常，已標記待審' : '✓ 已記錄'}
+            </div>
             <div style={{ fontSize: 13, color: 'var(--tx-dim)', lineHeight: 1.8 }}>
-              距離 {result.distance_km.toFixed(2)} km · 時間 {fmtTime(result.duration_s)} · 平均配速 {fmtPace(result.avg_pace_s)}/km<br />
-              {result.flagged
-                ? <span style={{ color: '#ff8a8a' }}>原因：{result.flag_reason}（不發 EXP，待後台審核）</span>
-                : <span style={{ color: 'var(--fug)' }}>已進活動記錄{result.exp_awarded ? '，里程 EXP 將於數秒後發放' : ''}</span>}
+              {result.too_short ? (
+                <span>本次移動距離過短（{result.distance_km.toFixed(2)} km），未達可計算配速的最小距離，故不記錄。請實際移動一段距離後再試。</span>
+              ) : (
+                <>
+                  距離 {result.distance_km.toFixed(2)} km · 時間 {fmtTime(result.duration_s)} · 平均配速 {fmtPace(result.avg_pace_s)}/km<br />
+                  {result.flagged
+                    ? <span style={{ color: '#ff8a8a' }}>原因：{result.flag_reason}（不發 EXP，待後台審核）</span>
+                    : <span style={{ color: 'var(--fug)' }}>已進活動記錄{result.exp_awarded ? '，里程 EXP 將於數秒後發放' : ''}</span>}
+                </>
+              )}
             </div>
           </div>
         )}

@@ -16,8 +16,11 @@ import (
 
 // 防弊參數
 const (
-	gpsMaxAccuracyM = 40.0 // 精度差於此（公尺）的點不列入距離計算
-	gpsMinSegMeters = 5.0  // 太短的位移不做超速判定（避免 GPS 飄移誤判）
+	gpsMaxAccuracyM   = 40.0  // 精度差於此（公尺）的點不列入距離計算
+	gpsMinSegMeters   = 5.0   // 太短的位移不做超速判定（避免 GPS 飄移誤判）
+	gpsMinDistKm      = 0.005 // 短於此（公里=5m）視為移動距離不足，不計算/不記錄/不判異常
+	gpsFastRatioFlag  = 0.30  // 超速距離占比達此且總距離足夠 → 判定疑似載具
+	gpsRatioMinDistKm = 0.3   // 套用「超速占比」判定所需的最低總距離（避免短程單一跳點誤判）
 )
 
 type gpsPoint struct {
@@ -35,13 +38,14 @@ type gpsRunReq struct {
 }
 
 type gpsRunResult struct {
-	DistanceKm   float64 `json:"distance_km"`
-	DurationS    int     `json:"duration_s"`
-	AvgPaceS     int     `json:"avg_pace_s"`
-	Flagged      bool    `json:"flagged"`
-	FlagReason   string  `json:"flag_reason,omitempty"`
-	AnomalySegs  int     `json:"anomaly_segments"`
-	ExpAwarded   bool    `json:"exp_awarded"` // 未標記才進活動管線發里程 EXP
+	DistanceKm  float64 `json:"distance_km"`
+	DurationS   int     `json:"duration_s"`
+	AvgPaceS    int     `json:"avg_pace_s"`
+	Flagged     bool    `json:"flagged"`
+	FlagReason  string  `json:"flag_reason,omitempty"`
+	AnomalySegs int     `json:"anomaly_segments"`
+	ExpAwarded  bool    `json:"exp_awarded"` // 未標記才進活動管線發里程 EXP
+	TooShort    bool    `json:"too_short"`   // 移動距離不足，無法計算（非異常）
 }
 
 func haversineM(lat1, lon1, lat2, lon2 float64) float64 {
@@ -61,7 +65,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 	}
 
 	maxSpeed := 1000.0 / float64(minPaceSecPerKm) // 公尺/秒（= 2:00/km 對應速度）
-	var distM float64
+	var distM, fastDistM float64
 	var anomalies int
 	var prev *gpsPoint
 	for i := range req.Points {
@@ -74,7 +78,8 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 			dt := float64(p.T-prev.T) / 1000.0
 			if dt > 0 {
 				if d > gpsMinSegMeters && d/dt > maxSpeed {
-					anomalies++ // 超過人類極限速度的區段
+					anomalies++    // 超過人類極限速度的區段
+					fastDistM += d // 累計超速距離（判斷是否「持續」超速 → 載具）
 				}
 				distM += d
 			}
@@ -92,16 +97,25 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		avgPaceS = int(float64(durationS) / distanceKm)
 	}
 
-	// 防弊判定
+	// 移動距離不足 → 無法可靠計算配速，視為「距離不足」（非異常），不記錄、不發 EXP
+	if distanceKm < gpsMinDistKm {
+		return &gpsRunResult{
+			DistanceKm: round2(distanceKm), DurationS: durationS, AvgPaceS: avgPaceS, TooShort: true,
+		}, nil
+	}
+
+	// 防弊判定：只抓「過快」（疑似騎車/搭車等載具），不抓過慢（走路、慢跑皆正常）
+	fastRatio := 0.0
+	if distM > 0 {
+		fastRatio = fastDistM / distM
+	}
 	var reasons []string
 	if avgPaceS > 0 && avgPaceS < minPaceSecPerKm {
-		reasons = append(reasons, "平均配速快於 2:00/km")
+		reasons = append(reasons, "平均配速快於 2:00/km（疑似使用交通工具）")
 	}
-	if hist := s.repo.HistAvgPace(ctx, userID); hist > 0 && avgPaceS > 0 && avgPaceS < hist/2 {
-		reasons = append(reasons, "遠快於日常配速")
-	}
-	if anomalies > 0 {
-		reasons = append(reasons, fmt.Sprintf("%d 個超速區段", anomalies))
+	// 超速占比：需有足夠總距離才判定，避免短程單一 GPS 跳點被誤判為異常
+	if distanceKm >= gpsRatioMinDistKm && fastRatio >= gpsFastRatioFlag {
+		reasons = append(reasons, fmt.Sprintf("逾三成距離超過人體極限速度（%d 段，疑似載具）", anomalies))
 	}
 	flagged := len(reasons) > 0
 	flagReason := strings.Join(reasons, "；")

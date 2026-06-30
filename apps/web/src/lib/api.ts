@@ -248,6 +248,7 @@ export interface GpsRunResult {
   flag_reason?: string
   anomaly_segments: number
   exp_awarded: boolean
+  too_short?: boolean
 }
 export interface GpsPoint { lat: number; lng: number; t: number; acc: number }
 export interface GpsRunHistory {
