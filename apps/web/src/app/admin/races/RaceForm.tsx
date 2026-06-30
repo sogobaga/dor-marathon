@@ -234,6 +234,8 @@ export default function RaceForm({
   const [certBgUploading, setCertBgUploading] = useState(false)
   const [bannerUrl, setBannerUrl] = useState(initial?.hero_image_url ?? '')
   const [bannerUploading, setBannerUploading] = useState(false)
+  const [showDistanceRank, setShowDistanceRank] = useState(initial?.show_distance_rank ?? true)
+  const [showTimeRank, setShowTimeRank] = useState(initial?.show_time_rank ?? true)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -454,6 +456,10 @@ export default function RaceForm({
       if ((certBgUrl || '') !== (initial?.certificate_bg_url || '')) {
         await adminRacesApi.setCertificateBg(token, res.race.id, certBgUrl)
       }
+      // 排行榜顯示設定（獨立端點）
+      if (showDistanceRank !== (initial?.show_distance_rank ?? true) || showTimeRank !== (initial?.show_time_rank ?? true) || !isEdit) {
+        await adminRacesApi.setRankDisplay(token, res.race.id, { show_distance_rank: showDistanceRank, show_time_rank: showTimeRank })
+      }
       onDone(res.race)
     } catch (e: any) {
       setErr(e?.message || (isEdit ? '儲存失敗' : '建立失敗'))
@@ -645,6 +651,19 @@ export default function RaceForm({
                 未勾選者為選填。報名時若分組有性別/年齡限制，會自動要求對應欄位。
               </div>
             </div>
+
+            <Field label="排行榜顯示（預設兩種都顯示，可關閉其一）">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 2 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--tx)' }}>
+                  <input type="checkbox" checked={showDistanceRank} onChange={(e) => setShowDistanceRank(e.target.checked)} />
+                  顯示「累積里程榜」
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--tx)' }}>
+                  <input type="checkbox" checked={showTimeRank} onChange={(e) => setShowTimeRank(e.target.checked)} />
+                  顯示「完成時間榜」（時間／配速；非配速賽可關閉）
+                </label>
+              </div>
+            </Field>
 
             <Field label="賽事 Banner（選填，顯示於賽事資訊頁頂部）">
               {bannerUrl ? (

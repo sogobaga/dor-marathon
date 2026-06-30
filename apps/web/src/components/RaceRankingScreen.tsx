@@ -95,6 +95,8 @@ export function RankingBody({ race }: { race: Race }) {
 function CompetitionStandings({ race }: { race: Race }) {
   const { data, error, isLoading } = useSWR(['standings', race.id], () => racesApi.standings(race.id), { refreshInterval: 30000 })
   const isCompetition = race.event_mode === 'competition'
+  const showDist = race.show_distance_rank ?? true
+  const showTime = race.show_time_rank ?? true
   return (
     <div>
       {isCompetition && isLoading && <Hint>載入排行榜…</Hint>}
@@ -106,14 +108,16 @@ function CompetitionStandings({ race }: { race: Race }) {
               <div style={{ fontSize: 11, letterSpacing: '.12em', color: 'var(--fug)' }}>我的分組</div>
               <div style={{ fontSize: 17, fontWeight: 800, marginTop: 3 }}>{data.my_group.group_name}</div>
               <div style={{ display: 'flex', gap: 18, marginTop: 8, fontSize: 13, color: 'var(--tx-dim)' }}>
-                <span>累積榜 第 <b style={{ color: 'var(--tx)' }}>{data.my_group.cumulative_rank}</b> 名</span>
-                <span>完成時間榜 第 <b style={{ color: 'var(--tx)' }}>{data.my_group.finish_rank}</b> 名</span>
+                {showDist && <span>累積榜 第 <b style={{ color: 'var(--tx)' }}>{data.my_group.cumulative_rank}</b> 名</span>}
+                {showTime && <span>完成時間榜 第 <b style={{ color: 'var(--tx)' }}>{data.my_group.finish_rank}</b> 名</span>}
               </div>
             </div>
           )}
-          <RankList title="累積里程榜" subtitle="各分組總累積里程" entries={data.by_cumulative}
-            metric={(e) => `${e.total_km.toFixed(1)} K`} highlightId={data.my_group?.group_id} />
-          {data.goal_type === 'distance' && (
+          {showDist && (
+            <RankList title="累積里程榜" subtitle="各分組總累積里程" entries={data.by_cumulative}
+              metric={(e) => `${e.total_km.toFixed(1)} K`} highlightId={data.my_group?.group_id} />
+          )}
+          {showTime && data.goal_type === 'distance' && (
             <RankList title="完成時間榜" subtitle="完成指定里程的累計總時間" entries={data.by_finish_time}
               metric={(e) => fmtDuration(e.finish_total_s)} highlightId={data.my_group?.group_id} />
           )}
@@ -152,10 +156,14 @@ function GeneralLeaderboard({ race }: { race: Race }) {
           已完成 <b style={{ color: 'var(--fug)', fontSize: 17 }}>{lb.finished_count}</b> / 報名 {lb.total_count} 人
         </div>
       </div>
-      <LbList title="完成時間榜" subtitle="活動開始後最快完成" rows={lb.by_completion}
-        metric={(r) => fmtDateTime(r.completion_at)} following={following} onToggle={toggle} loggedIn={!!token} />
-      <LbList title="累計時間榜" subtitle="完成所花費的總時間最短" rows={lb.by_total_time}
-        metric={(r) => fmtDuration(r.total_time_s)} following={following} onToggle={toggle} loggedIn={!!token} />
+      {(race.show_time_rank ?? true) && (
+        <LbList title="完成時間榜" subtitle="活動開始後最快完成" rows={lb.by_completion}
+          metric={(r) => fmtDateTime(r.completion_at)} following={following} onToggle={toggle} loggedIn={!!token} />
+      )}
+      {(race.show_time_rank ?? true) && (
+        <LbList title="累計時間榜" subtitle="完成所花費的總時間最短" rows={lb.by_total_time}
+          metric={(r) => fmtDuration(r.total_time_s)} following={following} onToggle={toggle} loggedIn={!!token} />
+      )}
     </div>
   )
 }

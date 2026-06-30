@@ -93,6 +93,7 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Delete("/{raceID}", h.AdminDeleteRace)
 	r.Patch("/{raceID}/status", h.AdminUpdateStatus)
 	r.Put("/{raceID}/certificate-bg", h.AdminSetCertificateBg)
+	r.Put("/{raceID}/rank-display", h.AdminSetRankDisplay)
 	r.Post("/{raceID}/settle-exp", h.AdminSettleEXP)
 	r.Get("/{raceID}/signups", h.AdminListSignups)
 	return r
@@ -727,6 +728,24 @@ func (h *Handler) AdminSettleEXP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"result": res})
+}
+
+// PUT /api/v1/admin/races/:raceID/rank-display — 設定兩種排行榜是否顯示
+func (h *Handler) AdminSetRankDisplay(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	var req struct {
+		ShowDistanceRank bool `json:"show_distance_rank"`
+		ShowTimeRank     bool `json:"show_time_rank"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := h.svc.SetRankDisplay(r.Context(), raceID, req.ShowDistanceRank, req.ShowTimeRank); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to set rank display")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // PUT /api/v1/admin/races/:raceID/certificate-bg — 設定完賽證明底圖（空=用預設）

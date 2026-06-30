@@ -38,6 +38,8 @@ type Race struct {
 	ReviewStatus   string     `json:"review_status"`        // pending|approved|rejected
 	ReviewNote     string     `json:"review_note,omitempty"`
 	CertificateBgURL string   `json:"certificate_bg_url"`   // 完賽證明底圖（空=預設設計）
+	ShowDistanceRank bool     `json:"show_distance_rank"`   // 顯示累積里程榜（預設 true）
+	ShowTimeRank     bool     `json:"show_time_rank"`       // 顯示完成時間榜（預設 true）
 	CreatedAt      time.Time  `json:"created_at"`
 }
 

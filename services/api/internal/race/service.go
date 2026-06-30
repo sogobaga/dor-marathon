@@ -570,6 +570,11 @@ func (s *Service) SetCertificateBg(ctx context.Context, raceID, url string) erro
 	return s.repo.SetCertificateBg(ctx, raceID, url)
 }
 
+// SetRankDisplay 設定排行榜顯示（admin 用）
+func (s *Service) SetRankDisplay(ctx context.Context, raceID string, dist, time bool) error {
+	return s.repo.SetRankDisplay(ctx, raceID, dist, time)
+}
+
 // UpdateRace 更新賽事可編輯欄位（admin 用）。status 留空則沿用原值。
 func (s *Service) UpdateRace(ctx context.Context, raceID string, race *Race) (*Race, error) {
 	existing, err := s.repo.GetByID(ctx, raceID)

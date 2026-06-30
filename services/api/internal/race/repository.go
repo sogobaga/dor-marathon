@@ -36,6 +36,7 @@ const selectCols = `
 	       review_status,
 	       COALESCE(review_note,'') as review_note,
 	       COALESCE(certificate_bg_url,'') as certificate_bg_url,
+	       COALESCE(show_distance_rank,TRUE), COALESCE(show_time_rank,TRUE),
 	       created_at
 	FROM races`
 
@@ -88,6 +89,12 @@ func (r *Repository) UpdateStatus(ctx context.Context, raceID, status string) er
 // SetCertificateBg 設定完賽證明底圖（admin 用；空字串=清除改用預設）
 func (r *Repository) SetCertificateBg(ctx context.Context, raceID, url string) error {
 	_, err := r.db.Exec(ctx, `UPDATE races SET certificate_bg_url=$1, updated_at=NOW() WHERE id=$2`, url, raceID)
+	return err
+}
+
+// SetRankDisplay 設定兩種排行榜是否顯示
+func (r *Repository) SetRankDisplay(ctx context.Context, raceID string, dist, time bool) error {
+	_, err := r.db.Exec(ctx, `UPDATE races SET show_distance_rank=$1, show_time_rank=$2, updated_at=NOW() WHERE id=$3`, dist, time, raceID)
 	return err
 }
 
@@ -1588,6 +1595,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&race.AllowTeamGroups,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CertificateBgURL,
+		&race.ShowDistanceRank, &race.ShowTimeRank,
 		&race.CreatedAt,
 	)
 	if err != nil {
@@ -1617,6 +1625,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&race.AllowTeamGroups,
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CertificateBgURL,
+		&race.ShowDistanceRank, &race.ShowTimeRank,
 		&race.CreatedAt,
 	)
 	if err != nil {

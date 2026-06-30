@@ -49,6 +49,8 @@ export interface Race {
   can_register: boolean
   review_status: string
   certificate_bg_url?: string
+  show_distance_rank?: boolean
+  show_time_rank?: boolean
   created_at: string
 }
 
@@ -603,6 +605,12 @@ export const adminRacesApi = {
       method: 'PUT',
       headers: withAuth(token),
       body: JSON.stringify({ url }),
+    }),
+  setRankDisplay: (token: string, id: string, body: { show_distance_rank: boolean; show_time_rank: boolean }) =>
+    request<void>(`/admin/races/${id}/rank-display`, {
+      method: 'PUT',
+      headers: withAuth(token),
+      body: JSON.stringify(body),
     }),
   settleExp: (token: string, id: string, force = false) =>
     request<{ result: { race_id: string; participants: number; awarded_users: number; total_exp: number; already_settled: boolean } }>(
