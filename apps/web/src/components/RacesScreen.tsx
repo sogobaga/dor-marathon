@@ -63,7 +63,9 @@ export default function RacesScreen({
       </header>
 
       {/* Body */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 18px 28px' }}>
+      <div style={{ flex: 1, overflowY: 'scroll', WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'auto' }}>
+        {/* minHeight 比容器高 1px → 內容沒滿版時也可滑動，保留 iOS 回彈手感 */}
+        <div style={{ minHeight: 'calc(100% + 1px)', padding: '4px 18px 28px' }}>
         {/* 會員資訊面板 */}
         <MemberPanel onOpenProfile={onOpenProfile} />
 
@@ -82,6 +84,7 @@ export default function RacesScreen({
             ))}
           </div>
         )}
+        </div>
       </div>
     </div>
   )
