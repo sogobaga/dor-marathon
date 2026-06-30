@@ -238,6 +238,21 @@ export const settingsApi = {
   get: () => request<{ settings: SiteSettings }>('/settings'),
 }
 
+export interface GpsRunResult {
+  distance_km: number
+  duration_s: number
+  avg_pace_s: number
+  flagged: boolean
+  flag_reason?: string
+  anomaly_segments: number
+  exp_awarded: boolean
+}
+export interface GpsPoint { lat: number; lng: number; t: number; acc: number }
+export const activitiesApi = {
+  uploadGps: (token: string, body: { race_id?: string; started_at: string; ended_at: string; points: GpsPoint[] }) =>
+    request<{ result: GpsRunResult }>('/activities/gps', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+}
+
 export const mileageExpApi = {
   get: (token: string) => request<{ breakdown: ExpBreakdown }>('/profile/mileage-exp', { headers: withAuth(token) }),
   markSeen: (token: string) => request<void>('/profile/mileage-exp/seen', { method: 'POST', headers: withAuth(token) }),
