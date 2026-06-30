@@ -1,5 +1,5 @@
 // 版號：v<VERSION_BASE>.<commit8>。正式發布進大版號時改 VERSION_BASE（後端 internal/version 同步）。
-const VERSION_BASE = '0.0'
+const VERSION_BASE = '0.1'
 const COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || 'dev').slice(0, 8)
 
 /** @type {import('next').NextConfig} */

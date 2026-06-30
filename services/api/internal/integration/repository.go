@@ -67,6 +67,13 @@ func (r *Repository) GetByProviderUser(ctx context.Context, provider, providerUs
 	return scanConn(r.db.QueryRow(ctx, connCols+` WHERE provider=$1 AND provider_user_id=$2`, provider, providerUserID))
 }
 
+// UserCreatedAt 會員註冊時間（Strava 只抓此時間之後的活動）
+func (r *Repository) UserCreatedAt(ctx context.Context, userID string) (time.Time, error) {
+	var t time.Time
+	err := r.db.QueryRow(ctx, `SELECT created_at FROM users WHERE id=$1`, userID).Scan(&t)
+	return t, err
+}
+
 func (r *Repository) UpdateTokens(ctx context.Context, id, access, refresh string, expiresAt time.Time) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE user_integrations SET access_token=$1, refresh_token=$2, expires_at=$3, updated_at=NOW() WHERE id=$4`,

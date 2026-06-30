@@ -123,7 +123,7 @@ func (h *StravaHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "尚未連接 Strava")
 		return
 	}
-	res, err := h.syncRecent(r.Context(), conn, 30)
+	res, err := h.syncRecent(r.Context(), conn)
 	if err != nil {
 		respondErr(w, http.StatusBadGateway, "向 Strava 取得活動失敗")
 		return
@@ -238,7 +238,8 @@ func (h *StravaHandler) handleActivityEvent(ownerID, activityID int64) {
 		log.Error().Err(err).Int64("activity", activityID).Msg("strava get activity failed")
 		return
 	}
-	h.importOne(ctx, conn.UserID, act)
+	regAt, _ := h.repo.UserCreatedAt(ctx, conn.UserID)
+	h.importOne(ctx, conn.UserID, regAt, act)
 }
 
 // --- Strava API ---
@@ -342,21 +343,26 @@ type SyncResult struct {
 	Total      int `json:"total"`
 }
 
-// syncRecent 拉「最近 sinceDays 日」的活動並匯入，回傳統計。
-// 用 Strava 的 after（epoch 秒）依日期過濾；per_page=100（30 日內通常足夠，未來量大再分頁）。
-func (h *StravaHandler) syncRecent(ctx context.Context, conn *Connection, sinceDays int) (SyncResult, error) {
+// syncRecent 拉「會員註冊時間之後」的活動並匯入，回傳統計。
+// 用 Strava 的 after（epoch 秒）=會員 created_at 過濾；per_page=100（未來量大再分頁）。
+func (h *StravaHandler) syncRecent(ctx context.Context, conn *Connection) (SyncResult, error) {
 	var res SyncResult
 	access, err := h.tokenForUser(ctx, conn)
 	if err != nil {
 		return res, err
 	}
-	after := time.Now().AddDate(0, 0, -sinceDays).Unix()
+	// 只抓會員註冊後的活動（統一規則：註冊前不抓，避免影響 EXP/等級）
+	regAt, err := h.repo.UserCreatedAt(ctx, conn.UserID)
+	if err != nil {
+		return res, err
+	}
+	after := regAt.Unix()
 	var acts []stravaActivity
 	if err := h.getJSON(ctx, access, fmt.Sprintf("/athlete/activities?after=%d&per_page=100", after), &acts); err != nil {
 		return res, err
 	}
 	for i := range acts {
-		r := h.importOne(ctx, conn.UserID, &acts[i])
+		r := h.importOne(ctx, conn.UserID, regAt, &acts[i])
 		switch r.Status {
 		case "inserted":
 			res.Imported++
@@ -376,7 +382,7 @@ func (h *StravaHandler) syncRecent(ctx context.Context, conn *Connection, sinceD
 func (h *StravaHandler) backfill(conn *Connection) {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
-	res, err := h.syncRecent(ctx, conn, 30)
+	res, err := h.syncRecent(ctx, conn)
 	if err != nil {
 		log.Error().Err(err).Msg("strava backfill failed")
 		return
@@ -402,13 +408,17 @@ func isRun(a *stravaActivity) bool {
 	return false
 }
 
-// importOne 正規化單筆 Strava 活動並寫入
-func (h *StravaHandler) importOne(ctx context.Context, userID string, a *stravaActivity) ImportResult {
+// importOne 正規化單筆 Strava 活動並寫入。regAt=會員註冊時間，註冊前的活動一律不抓。
+func (h *StravaHandler) importOne(ctx context.Context, userID string, regAt time.Time, a *stravaActivity) ImportResult {
 	if !isRun(a) || a.Distance <= 0 || a.MovingTime <= 0 {
 		return ImportResult{Status: "skipped"}
 	}
 	recordedAt, err := time.Parse(time.RFC3339, a.StartDate)
 	if err != nil {
+		return ImportResult{Status: "skipped"}
+	}
+	// 會員註冊時間以前的資料一律不抓（避免舊資料影響 EXP/等級）
+	if !regAt.IsZero() && recordedAt.Before(regAt) {
 		return ImportResult{Status: "skipped"}
 	}
 	distanceKm := a.Distance / 1000.0
