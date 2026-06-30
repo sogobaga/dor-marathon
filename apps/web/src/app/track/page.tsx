@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { activitiesApi, type GpsPoint, type GpsRunResult } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
+import GoogleAuthProvider from '@/components/GoogleAuthProvider'
+import { LoginModal } from '@/components/UserAuthBar'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -52,6 +54,7 @@ export default function TrackPage() {
   const [warn, setWarn] = useState('')
   const [err, setErr] = useState('')
   const [result, setResult] = useState<GpsRunResult | null>(null)
+  const [showLogin, setShowLogin] = useState(false)
   const [uploading, setUploading] = useState(false)
 
   const pointsRef = useRef<GpsPoint[]>([])
@@ -171,7 +174,9 @@ export default function TrackPage() {
   const avgPace = distKm > 0 ? elapsed / distKm : 0
 
   return (
+   <GoogleAuthProvider>
     <div style={{ minHeight: '100dvh', background: 'var(--bg)', color: 'var(--tx)', display: 'flex', flexDirection: 'column' }}>
+      {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
       <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         <a href="/" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 返回</a>
         <strong style={{ fontSize: 16 }}>GPS 跑步追蹤</strong>
@@ -224,12 +229,17 @@ export default function TrackPage() {
 
       {/* 操作 */}
       <div style={{ padding: 16, borderTop: '1px solid var(--line)', position: 'sticky', bottom: 0, background: 'var(--bg)' }}>
-        {status === 'idle' && <button onClick={start} disabled={!user} style={btn}>{user ? '▶ 開始跑步' : '請先登入'}</button>}
+        {status === 'idle' && (
+          user
+            ? <button onClick={start} style={btn}>▶ 開始跑步</button>
+            : <button onClick={() => setShowLogin(true)} style={btn}>請先登入</button>
+        )}
         {status === 'tracking' && <button onClick={finish} style={{ ...btn, background: 'var(--hunt)', color: '#fff' }}>■ 結束並上傳</button>}
         {status === 'done' && <button onClick={() => { setStatus('idle'); setElapsed(0); setDistance(0); setSplits([]); setAnomalies(0) }} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)' }}>再跑一次</button>}
         {status === 'tracking' && <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>追蹤中請保持本頁在前景、螢幕勿關（背景追蹤瀏覽器不支援）{uploading ? ' · 上傳中…' : ''}</div>}
       </div>
     </div>
+   </GoogleAuthProvider>
   )
 }
 
