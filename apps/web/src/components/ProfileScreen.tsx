@@ -380,8 +380,11 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
                 </div>
               ) : (
                 <button onClick={connectStrava} disabled={stravaBusy || strava?.enabled === false}
-                  style={{ background: '#fc4c02', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 16px', cursor: 'pointer', fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap', opacity: stravaBusy ? 0.6 : 1 }}>
-                  {stravaBusy ? '處理中…' : '連接 Strava'}
+                  aria-label="Connect with Strava"
+                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0, opacity: stravaBusy || strava?.enabled === false ? 0.5 : 1 }}>
+                  {/* 官方「Connect with Strava」按鈕（送審前以 Strava ZIP 內官方 PNG 取代同路徑檔即可） */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/strava/btn_strava_connect_orange.svg" alt="Connect with Strava" style={{ height: 44, display: 'block' }} />
                 </button>
               )}
             </div>
@@ -426,6 +429,14 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
               </div>
             </div>
           )}
+
+          {/* Strava 資料來源歸屬（品牌合規） */}
+          <div style={{ marginTop: 16, display: 'flex', justifyContent: 'center' }}>
+            <a href="https://www.strava.com" target="_blank" rel="noreferrer" aria-label="Powered by Strava">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/strava/powered_by_strava.svg" alt="Powered by Strava" style={{ height: 18, display: 'block', opacity: 0.85 }} />
+            </a>
+          </div>
         </div>
         )}
 
