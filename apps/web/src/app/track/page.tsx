@@ -120,18 +120,26 @@ export default function TrackPage() {
     try { wakeRef.current = await (navigator as any).wakeLock?.request('screen') } catch { /* ignore */ }
   }
 
-  async function start() {
+  function start() {
     setErr('')
     if (!navigator.geolocation) { setErr('此裝置/瀏覽器不支援定位'); return }
     pointsRef.current = []; distRef.current = 0; splitMarkRef.current = []
     setDistance(0); setSplits([]); setAnomalies(0); setResult(null)
     startRef.current = Date.now()
     setStatus('tracking')
-    await acquireWake()
+    // ⚠️ iOS：定位權限提示必須在使用者手勢「同步」流程內直接請求，不能先 await 任何東西
+    //（否則會失去使用者手勢 → Safari 直接判定拒絕，code 1）。故先請求定位，wake lock 之後再背景取得。
+    watchRef.current = navigator.geolocation.watchPosition(
+      onPos,
+      (e) => {
+        if (e.code === 1) setErr('定位權限被拒：Safari 跳出詢問時請按「允許」；若沒跳出，到 設定 → Apps → Safari → 位置 設為「詢問」或「允許」後重試。')
+        else if (e.code === 3) setErr('定位逾時，請到較空曠處再試（室內 GPS 收訊較差）。')
+        else setErr('定位失敗：' + (e.message || '請確認已開啟定位'))
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
+    )
     timerRef.current = setInterval(() => setElapsed((Date.now() - startRef.current) / 1000), 250)
-    watchRef.current = navigator.geolocation.watchPosition(onPos, (e) => {
-      setErr(e.code === 1 ? '需要定位權限才能追蹤跑步' : '定位失敗：' + e.message)
-    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 })
+    acquireWake() // 不 await：wake lock 失敗或延遲都不影響定位
   }
 
   const cleanup = useCallback(() => {
