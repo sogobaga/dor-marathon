@@ -11,6 +11,8 @@ import { LoginModal } from '@/components/UserAuthBar'
 const LS_KEY = 'dor_gps_run'
 const MAX_ACC = 40 // 精度差於此（公尺）的點不採計距離
 const MAX_SPEED = 1000 / 120 // 8.33 m/s（2:00/km）人類極限上限
+const JITTER_MIN = 6 // 公尺：距上一個採納點移動不足此值視為原地抖動，不計距離
+const PACE_MIN_KM = 0.05 // 累積達此距離才顯示平均配速（避免起跑瞬間爆出超大數字）
 
 function haversineM(a: GpsPoint, b: GpsPoint) {
   const R = 6371000, rad = Math.PI / 180
@@ -70,6 +72,7 @@ export default function TrackPage() {
   const warnTimer = useRef<any>(null)
   const statusRef = useRef(status)
   statusRef.current = status
+  const lastAccRef = useRef<GpsPoint | null>(null) // 上一個「採納」的點（過濾原地抖動用）
 
   const ensureMap = useCallback(async (lat: number, lng: number) => {
     const L = await loadLeaflet()
@@ -84,38 +87,47 @@ export default function TrackPage() {
   const onPos = useCallback((pos: GeolocationPosition) => {
     const p: GpsPoint = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: pos.timestamp, acc: pos.coords.accuracy ?? 0 }
     ensureMap(p.lat, p.lng)
-    const pts = pointsRef.current
-    const prev = pts.length ? pts[pts.length - 1] : null
-    pts.push(p)
+    const goodAcc = p.acc === 0 || p.acc <= MAX_ACC
 
-    if (prev && (p.acc === 0 || p.acc <= MAX_ACC)) {
-      const d = haversineM(prev, p)
-      const dt = (p.t - prev.t) / 1000
-      if (dt > 0) {
-        if (d > 5 && d / dt > MAX_SPEED) {
-          setAnomalies((n) => n + 1)
-          setWarn(`偵測到異常速度區段（${(d / dt).toFixed(1)} m/s），此筆將標記待審`)
-          clearTimeout(warnTimer.current)
-          warnTimer.current = setTimeout(() => setWarn(''), 4000)
-        }
-        distRef.current += d
-        setDistance(distRef.current)
-        // 每公里分段
-        const km = Math.floor(distRef.current / 1000)
-        const el = (p.t - startRef.current) / 1000
-        while (splitMarkRef.current.length < km) {
-          const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
-          splitMarkRef.current.push(el)
-          setSplits((s) => [...s, el - prevEl])
+    // 距離以「上一個採納點」為基準計算；移動不足門檻 → 視為原地抖動，不採納、不累積
+    if (goodAcc) {
+      const lastAcc = lastAccRef.current
+      if (!lastAcc) {
+        // 第一個有效點：當作起點
+        lastAccRef.current = p
+        pointsRef.current.push(p)
+        if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
+      } else {
+        const d = haversineM(lastAcc, p)
+        const dt = (p.t - lastAcc.t) / 1000
+        if (d >= JITTER_MIN && dt > 0) {
+          if (d / dt > MAX_SPEED) {
+            setAnomalies((n) => n + 1)
+            setWarn(`偵測到異常速度區段（${(d / dt).toFixed(1)} m/s），此筆將標記待審`)
+            clearTimeout(warnTimer.current)
+            warnTimer.current = setTimeout(() => setWarn(''), 4000)
+          }
+          distRef.current += d
+          setDistance(distRef.current)
+          // 每公里分段
+          const km = Math.floor(distRef.current / 1000)
+          const el = (p.t - startRef.current) / 1000
+          while (splitMarkRef.current.length < km) {
+            const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
+            splitMarkRef.current.push(el)
+            setSplits((s) => [...s, el - prevEl])
+          }
+          lastAccRef.current = p
+          pointsRef.current.push(p)
+          if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
         }
       }
     }
-    // 地圖更新
-    if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
+    // 標記點與地圖永遠跟著「目前」位置（即時感），即使該點未被採納為距離
     if (markRef.current) markRef.current.setLatLng([p.lat, p.lng])
     if (mapRef.current) mapRef.current.panTo([p.lat, p.lng])
-    // 防當掉：暫存
-    localStorage.setItem(LS_KEY, JSON.stringify({ start: startRef.current, points: pts.slice(-2000) }))
+    // 防當掉：暫存採納後的軌跡
+    localStorage.setItem(LS_KEY, JSON.stringify({ start: startRef.current, points: pointsRef.current.slice(-2000) }))
   }, [ensureMap])
 
   async function acquireWake() {
@@ -125,7 +137,7 @@ export default function TrackPage() {
   function start() {
     setErr('')
     if (!navigator.geolocation) { setErr('此裝置/瀏覽器不支援定位'); return }
-    pointsRef.current = []; distRef.current = 0; splitMarkRef.current = []
+    pointsRef.current = []; distRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null)
     startRef.current = Date.now()
     setStatus('tracking')
@@ -183,7 +195,7 @@ export default function TrackPage() {
   }, [])
 
   const distKm = distance / 1000
-  const avgPace = distKm > 0 ? elapsed / distKm : 0
+  const avgPace = distKm >= PACE_MIN_KM ? elapsed / distKm : 0 // 未達門檻先顯示 --:--，避免爆數字
 
   return (
    <GoogleAuthProvider>
