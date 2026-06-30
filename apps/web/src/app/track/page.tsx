@@ -68,6 +68,8 @@ export default function TrackPage() {
   const lineRef = useRef<any>(null)
   const markRef = useRef<any>(null)
   const warnTimer = useRef<any>(null)
+  const statusRef = useRef(status)
+  statusRef.current = status
 
   const ensureMap = useCallback(async (lat: number, lng: number) => {
     const L = await loadLeaflet()
@@ -124,7 +126,7 @@ export default function TrackPage() {
     setErr('')
     if (!navigator.geolocation) { setErr('此裝置/瀏覽器不支援定位'); return }
     pointsRef.current = []; distRef.current = 0; splitMarkRef.current = []
-    setDistance(0); setSplits([]); setAnomalies(0); setResult(null)
+    setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null)
     startRef.current = Date.now()
     setStatus('tracking')
     // ⚠️ iOS：定位權限提示必須在使用者手勢「同步」流程內直接請求，不能先 await 任何東西
@@ -172,11 +174,13 @@ export default function TrackPage() {
   }
 
   // 螢幕回到前景時重新取得 wake lock
+  // 只在掛載/卸載執行：status 變動不可觸發 cleanup（否則會清掉 start 剛建立的計時器與定位）
   useEffect(() => {
-    const onVis = () => { if (document.visibilityState === 'visible' && status === 'tracking') acquireWake() }
+    const onVis = () => { if (document.visibilityState === 'visible' && statusRef.current === 'tracking') acquireWake() }
     document.addEventListener('visibilitychange', onVis)
     return () => { document.removeEventListener('visibilitychange', onVis); cleanup() }
-  }, [status, cleanup])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const distKm = distance / 1000
   const avgPace = distKm > 0 ? elapsed / distKm : 0
