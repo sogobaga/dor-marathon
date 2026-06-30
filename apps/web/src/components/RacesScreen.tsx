@@ -26,11 +26,8 @@ function fmtDate(iso: string) {
 }
 function fmtDateTime(iso: string) {
   const d = new Date(iso)
-  const h = d.getHours()
-  const ap = h < 12 ? 'a.m.' : 'p.m.'
-  const h12 = h % 12 === 0 ? 12 : h % 12 // 0時→12 a.m.、12時→12 p.m.
-  const hm = `${h12}:${String(d.getMinutes()).padStart(2, '0')}`
-  return `${d.getMonth() + 1}/${d.getDate()} ${hm} ${ap}`
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 function periodText(start?: string | null, end?: string | null, withTime?: boolean) {
   const f = withTime ? fmtDateTime : fmtDate

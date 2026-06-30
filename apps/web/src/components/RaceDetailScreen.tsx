@@ -20,10 +20,7 @@ function fmt(iso?: string | null) {
   const d = new Date(iso)
   if (isNaN(d.getTime())) return '—'
   const p = (n: number) => String(n).padStart(2, '0')
-  const h = d.getHours()
-  const ap = h < 12 ? 'a.m.' : 'p.m.'
-  const h12 = h % 12 === 0 ? 12 : h % 12
-  return `${d.getMonth() + 1}/${d.getDate()} ${h12}:${p(d.getMinutes())} ${ap}`
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 function paceFmt(sec: number) {
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
