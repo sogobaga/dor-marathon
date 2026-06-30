@@ -227,6 +227,7 @@ func main() {
 			r.Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 			r.Put("/admin/settings", profileHandler.PutSettings)
 			r.Post("/admin/activities/add-mileage", actHandler.AdminAddMileage)
+			r.Mount("/admin/gps-runs", actHandler.AdminRouter())
 		})
 	})
 

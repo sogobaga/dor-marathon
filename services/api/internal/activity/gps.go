@@ -108,7 +108,11 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 
 	started, _ := time.Parse(time.RFC3339, req.StartedAt)
 	ended, _ := time.Parse(time.RFC3339, req.EndedAt)
-	pointsJSON, _ := json.Marshal(req.Points)
+	// 軌跡點只在「標記待審」時保留（供後台審核）；乾淨的跑步只存摘要列，節省儲存
+	var pointsJSON []byte
+	if flagged {
+		pointsJSON, _ = json.Marshal(req.Points)
+	}
 	if err := s.repo.InsertGPSRun(ctx, userID, req.RaceID, started, ended,
 		round2(distanceKm), durationS, avgPaceS, flagged, flagReason, len(req.Points), pointsJSON); err != nil {
 		return nil, err

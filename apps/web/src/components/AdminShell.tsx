@@ -40,6 +40,7 @@ const NAV: { grp: string; items: { k: string; t: string; href?: string }[] }[] =
     items: [
       { k: 'orders', t: '訂單管理', href: '/admin/orders' },
       { k: 'promo', t: '序號管理', href: '/admin/promo' },
+      { k: 'gps-review', t: 'GPS 審核', href: '/admin/gps-review' },
       { k: 'whitelist', t: '測試白名單', href: '/admin/settings' },
       { k: 'audit', t: '操作紀錄' },
       { k: 'admins', t: '管理員' },

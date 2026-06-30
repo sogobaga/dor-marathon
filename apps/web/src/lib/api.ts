@@ -253,6 +253,26 @@ export const activitiesApi = {
     request<{ result: GpsRunResult }>('/activities/gps', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
 }
 
+export interface GpsRunSummary {
+  id: string
+  user_id: string
+  user_name: string
+  distance_km: number
+  duration_s: number
+  avg_pace_s: number
+  point_count: number
+  flag_reason: string
+  started_at: string
+  ended_at: string
+  points?: [number, number, number, number][] | { lat: number; lng: number; t: number; acc: number }[]
+}
+export const adminGpsApi = {
+  list: (token: string) => request<{ runs: GpsRunSummary[] }>('/admin/gps-runs', { headers: withAuth(token) }),
+  get: (token: string, id: string) => request<{ run: GpsRunSummary }>(`/admin/gps-runs/${id}`, { headers: withAuth(token) }),
+  approve: (token: string, id: string) => request<void>(`/admin/gps-runs/${id}/approve`, { method: 'POST', headers: withAuth(token) }),
+  reject: (token: string, id: string) => request<void>(`/admin/gps-runs/${id}/reject`, { method: 'POST', headers: withAuth(token) }),
+}
+
 export const mileageExpApi = {
   get: (token: string) => request<{ breakdown: ExpBreakdown }>('/profile/mileage-exp', { headers: withAuth(token) }),
   markSeen: (token: string) => request<void>('/profile/mileage-exp/seen', { method: 'POST', headers: withAuth(token) }),
