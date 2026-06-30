@@ -406,17 +406,8 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               </div>
             )}
 
-            {/* 分組 */}
+            {/* 分組（分組選擇置頂） */}
             <Section title="選擇分組">
-              {/* 所有分組共同任務（統一目標，顯示一次） */}
-              {hasAllGroupsTasks && (
-                <div style={{ background: 'rgba(45,212,150,.06)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px', marginBottom: 10 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--fug)' }}>所有分組共同任務</div>
-                  <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 2 }}>不論加入哪一組都需達成</div>
-                  <TaskList label="團體任務（全組加總達標）" items={allGroupsTasks.team} />
-                  <TaskList label="個人任務（每人各自達成）" items={allGroupsTasks.individual} />
-                </div>
-              )}
               {isBattle ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div style={hint}>分組對抗模式：報名後隨機分組，賽事當天才公布。以下為對抗分組：</div>
@@ -510,10 +501,18 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               )}
             </Section>
 
-            {/* 賽事集體任務（全體參賽者） */}
-            {collectiveTasks.length > 0 && (
+            {/* 賽事集體任務（全體參賽者）+ 所有分組共同任務（移到集體任務下方） */}
+            {(collectiveTasks.length > 0 || hasAllGroupsTasks) && (
               <Section title="賽事任務（全體參賽者）">
-                <TaskList label="集體任務（全員合計達標）" items={collectiveTasks} />
+                {collectiveTasks.length > 0 && <TaskList label="集體任務（全員合計達標）" items={collectiveTasks} />}
+                {hasAllGroupsTasks && (
+                  <div style={{ background: 'rgba(45,212,150,.06)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px', marginTop: 10 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--fug)' }}>所有分組共同任務</div>
+                    <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 2 }}>不論加入哪一組都需達成</div>
+                    <TaskList label="團體任務（全組加總達標）" items={allGroupsTasks.team} />
+                    <TaskList label="個人任務（每人各自達成）" items={allGroupsTasks.individual} />
+                  </div>
+                )}
               </Section>
             )}
 
