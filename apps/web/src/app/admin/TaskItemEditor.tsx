@@ -17,8 +17,13 @@ export function parsePace(v: string): number | null {
     const [mm, ss = ''] = s.split(':')
     return (parseInt(mm || '0', 10) || 0) * 60 + (parseInt(ss || '0', 10) || 0)
   }
-  const m = parseFloat(s) // 純數字當「分」
-  return isNaN(m) ? null : Math.round(m * 60)
+  // 純數字：1–2 碼當「分」（5→5:00）；3 碼以上末兩碼當「秒」（630→6:30）
+  const digits = s.replace(/\D/g, '')
+  if (digits === '') return null
+  if (digits.length <= 2) return (parseInt(digits, 10) || 0) * 60
+  const sec = parseInt(digits.slice(-2), 10) || 0
+  const min = parseInt(digits.slice(0, -2), 10) || 0
+  return min * 60 + sec
 }
 
 // 任務/模組項目共用的可編輯欄位
@@ -114,7 +119,7 @@ export function TaskItemEditor({
 
       <div style={hint}>
         {isRange
-          ? `判定：實際${spec.label}落在區間內即完成${isPace ? '（配速用 分:秒，例 5:00；數字越小越快）' : ''}`
+          ? `判定：實際${spec.label}落在區間內即完成${isPace ? '（配速可打 6:30 或直接 630→6:30；數字越小越快）' : ''}`
           : `判定：實際${spec?.label ?? ''} ≥ 目標值即完成`}
         {spec && !spec.has_data ? ' · ⚠ 此指標目前無資料源，設定後待之後擴充活動上傳才會判定' : ''}
       </div>
@@ -130,7 +135,6 @@ function PaceInput({ valueSec, onChangeSec }: { valueSec?: number | null; onChan
       style={{ ...inp, width: 96 }}
       value={txt}
       placeholder="5:00"
-      inputMode="numeric"
       onChange={(e) => { setTxt(e.target.value); onChangeSec(parsePace(e.target.value)) }}
       onBlur={() => setTxt(paceToStr(parsePace(txt)))}
     />
