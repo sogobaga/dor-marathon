@@ -273,6 +273,9 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
                   #{dash.account_code} {codeCopied ? '已複製' : '⧉'}
                 </button>
               </div>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 15, fontVariantNumeric: 'tabular-nums', flexShrink: 0, alignSelf: 'flex-start' }} title="DP 幣">
+                <DpCoin size={18} />{(dash.dp ?? 0).toLocaleString()}
+              </span>
             </div>
 
             {/* 等級 + EXP */}
@@ -290,11 +293,6 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
               </div>
             </div>
 
-            {/* DP 幣餘額 */}
-            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,210,77,.08)', border: '1px solid rgba(255,210,77,.3)', borderRadius: 10, padding: '8px 12px' }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: 'var(--tx-dim)' }}><DpCoin size={18} /> DP 幣</span>
-              <span style={{ fontSize: 16, fontWeight: 900, color: '#FFD24D', fontVariantNumeric: 'tabular-nums' }}>{dash.dp ?? 0}</span>
-            </div>
 
             <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 11.5, color: 'var(--tx-dim)', flexWrap: 'wrap' }}>
               <span>累積 {dash.total_km.toFixed(1)} K</span>

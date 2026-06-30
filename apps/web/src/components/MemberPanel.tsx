@@ -64,7 +64,14 @@ export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => v
             )}
           </div>
           {user && (
-            <button onClick={(e) => { e.stopPropagation(); clearUserSession() }} style={logoutBtn}>登出</button>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+              {dash && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>
+                  <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
+                </span>
+              )}
+              <button onClick={(e) => { e.stopPropagation(); clearUserSession() }} style={logoutBtn}>登出</button>
+            </div>
           )}
         </div>
 
@@ -72,10 +79,7 @@ export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => v
           <div style={{ marginTop: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 12 }}>
               <span style={{ fontWeight: 800, color: 'var(--fug)' }}>Lv.{dash.level}{dash.level_title ? ` ${dash.level_title}` : ''}</span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--tx-dim)' }}>
-                <span>{dash.exp} EXP</span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#FFD24D', fontWeight: 800 }}><DpCoin size={14} />{dash.dp ?? 0}</span>
-              </span>
+              <span style={{ color: 'var(--tx-dim)' }}>{dash.exp} EXP</span>
             </div>
             <div style={barOuter}><div style={{ ...barInner, width: `${expPct}%` }} /></div>
           </div>
