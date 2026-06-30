@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import useSWR from 'swr'
 import { profileApi, settingsApi, type DashboardInfo } from '@/lib/api'
-import { useUser, getUserToken, withUserAuth, clearUserSession } from '@/lib/userAuth'
+import { useUser, getUserToken, withUserAuth } from '@/lib/userAuth'
 import { LoginModal } from './UserAuthBar'
 import DpCoin from './DpCoin'
 
@@ -63,15 +63,10 @@ export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => v
               <button onClick={(e) => { e.stopPropagation(); setShowLogin(true) }} style={loginBtn}>註冊 / 登入</button>
             )}
           </div>
-          {user && (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-              {dash && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>
-                  <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
-                </span>
-              )}
-              <button onClick={(e) => { e.stopPropagation(); clearUserSession() }} style={logoutBtn}>登出</button>
-            </div>
+          {user && dash && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }} title="DP 幣">
+              <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
+            </span>
           )}
         </div>
 
@@ -116,4 +111,3 @@ const vipBadge: React.CSSProperties = { fontSize: 10, fontWeight: 800, color: '#
 const barOuter: React.CSSProperties = { height: 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden', marginTop: 5 }
 const barInner: React.CSSProperties = { height: '100%', background: 'var(--fug)', borderRadius: 999, transition: 'width .3s' }
 const loginBtn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none', borderRadius: 10, padding: '9px 18px', cursor: 'pointer', fontSize: 14 }
-const logoutBtn: React.CSSProperties = { flexShrink: 0, background: 'rgba(255,255,255,.05)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontSize: 12 }

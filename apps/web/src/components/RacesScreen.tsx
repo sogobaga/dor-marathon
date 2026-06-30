@@ -2,7 +2,7 @@
 
 import useSWR from 'swr'
 import { racesApi, type Race, type MyRegLite } from '@/lib/api'
-import { getUserToken, useUser } from '@/lib/userAuth'
+import { getUserToken, useUser, clearUserSession } from '@/lib/userAuth'
 import MemberPanel from './MemberPanel'
 
 const DISPLAY_STATUS: Record<string, { label: string; color: string }> = {
@@ -55,11 +55,17 @@ export default function RacesScreen({
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      {/* Header（精簡品牌列） */}
-      <header style={{ padding: '52px 22px 10px', flexShrink: 0 }}>
+      {/* Header（精簡品牌列；登出置最右上角） */}
+      <header style={{ padding: '52px 22px 10px', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
         <div style={{ fontSize: 11, letterSpacing: '.18em', color: 'var(--fug)', fontWeight: 600 }}>
           DOR · 雲端馬拉松
         </div>
+        {user && (
+          <button
+            onClick={() => clearUserSession()}
+            style={{ flexShrink: 0, background: 'rgba(255,255,255,.05)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontSize: 12 }}
+          >登出</button>
+        )}
       </header>
 
       {/* Body */}
