@@ -98,7 +98,7 @@ export default function RaceDetailScreen({
           <img
             src={detail?.hero_image_url || race.hero_image_url}
             alt=""
-            style={{ width: 'calc(100% + 36px)', margin: '0 -18px 14px', display: 'block', maxHeight: 200, objectFit: 'cover' }}
+            style={{ width: '100%', display: 'block', margin: '0 auto 14px', borderRadius: 12, maxHeight: 220, objectFit: 'contain', objectPosition: 'center' }}
           />
         )}
         {/* 賽事資訊 Dashboard */}
