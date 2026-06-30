@@ -1,6 +1,25 @@
 'use client'
 
+import { useState } from 'react'
 import { METRIC_CATALOG, METRIC_BY_KEY, type MetricType } from '@/lib/api'
+
+// 配速秒數 ↔ 「分:秒」字串
+export function paceToStr(sec?: number | null): string {
+  if (sec == null || isNaN(sec)) return ''
+  const m = Math.floor(sec / 60)
+  const s = Math.round(sec % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+export function parsePace(v: string): number | null {
+  const s = v.trim()
+  if (s === '') return null
+  if (s.includes(':')) {
+    const [mm, ss = ''] = s.split(':')
+    return (parseInt(mm || '0', 10) || 0) * 60 + (parseInt(ss || '0', 10) || 0)
+  }
+  const m = parseFloat(s) // 純數字當「分」
+  return isNaN(m) ? null : Math.round(m * 60)
+}
 
 // 任務/模組項目共用的可編輯欄位
 export type TaskFields = {
@@ -21,7 +40,10 @@ export function taskSummary(t: TaskFields): string {
   const m = METRIC_BY_KEY[t.metric_type]
   if (!m) return t.title || '任務'
   const label = t.title || m.label
-  if (m.kind === 'range') return `${label}（${m.label} ${t.range_lo ?? '—'}–${t.range_hi ?? '—'} ${m.unit}）`
+  if (m.kind === 'range') {
+    if (t.metric_type === 'avg_pace_range') return `${label}（${m.label} ${paceToStr(t.range_lo)}–${paceToStr(t.range_hi)} /km）`
+    return `${label}（${m.label} ${t.range_lo ?? '—'}–${t.range_hi ?? '—'} ${m.unit}）`
+  }
   return `${label}（${m.label} ≥ ${t.target_value ?? '—'} ${m.unit}）`
 }
 
@@ -40,6 +62,7 @@ export function TaskItemEditor({
 }) {
   const spec = METRIC_BY_KEY[value.metric_type]
   const isRange = spec?.kind === 'range'
+  const isPace = value.metric_type === 'avg_pace_range'
 
   return (
     <div style={card}>
@@ -56,11 +79,15 @@ export function TaskItemEditor({
 
         {isRange ? (
           <>
-            <Field label={`下限 (${spec.unit})`}>
-              <input style={{ ...inp, width: 96 }} type="number" value={value.range_lo ?? ''} onChange={(e) => onChange({ range_lo: num(e.target.value) })} />
+            <Field label={isPace ? '下限 (分:秒/km)' : `下限 (${spec.unit})`}>
+              {isPace
+                ? <PaceInput valueSec={value.range_lo} onChangeSec={(s) => onChange({ range_lo: s })} />
+                : <input style={{ ...inp, width: 96 }} type="number" value={value.range_lo ?? ''} onChange={(e) => onChange({ range_lo: num(e.target.value) })} />}
             </Field>
-            <Field label={`上限 (${spec.unit})`}>
-              <input style={{ ...inp, width: 96 }} type="number" value={value.range_hi ?? ''} onChange={(e) => onChange({ range_hi: num(e.target.value) })} />
+            <Field label={isPace ? '上限 (分:秒/km)' : `上限 (${spec.unit})`}>
+              {isPace
+                ? <PaceInput valueSec={value.range_hi} onChangeSec={(s) => onChange({ range_hi: s })} />
+                : <input style={{ ...inp, width: 96 }} type="number" value={value.range_hi ?? ''} onChange={(e) => onChange({ range_hi: num(e.target.value) })} />}
             </Field>
           </>
         ) : (
@@ -87,11 +114,26 @@ export function TaskItemEditor({
 
       <div style={hint}>
         {isRange
-          ? `判定：實際${spec.label}落在區間內即完成`
+          ? `判定：實際${spec.label}落在區間內即完成${isPace ? '（配速用 分:秒，例 5:00；數字越小越快）' : ''}`
           : `判定：實際${spec?.label ?? ''} ≥ 目標值即完成`}
         {spec && !spec.has_data ? ' · ⚠ 此指標目前無資料源，設定後待之後擴充活動上傳才會判定' : ''}
       </div>
     </div>
+  )
+}
+
+// 配速輸入：顯示「分:秒」、對外回傳秒數。編輯時用本地字串，失焦時正規化顯示。
+function PaceInput({ valueSec, onChangeSec }: { valueSec?: number | null; onChangeSec: (s: number | null) => void }) {
+  const [txt, setTxt] = useState(paceToStr(valueSec))
+  return (
+    <input
+      style={{ ...inp, width: 96 }}
+      value={txt}
+      placeholder="5:00"
+      inputMode="numeric"
+      onChange={(e) => { setTxt(e.target.value); onChangeSec(parsePace(e.target.value)) }}
+      onBlur={() => setTxt(paceToStr(parsePace(txt)))}
+    />
   )
 }
 
