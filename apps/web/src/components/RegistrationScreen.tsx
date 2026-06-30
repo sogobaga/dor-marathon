@@ -315,8 +315,9 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         onClick={onPick}
         style={{
           ...groupRow, cursor: full ? 'not-allowed' : 'pointer', opacity: full ? 0.5 : 1,
-          border: selected ? '1px solid var(--fug)' : '1px solid var(--line)',
-          background: selected ? 'rgba(45,212,150,.08)' : 'var(--bg-1)', textAlign: 'left',
+          border: selected ? '1.5px solid var(--fug)' : '1.5px solid rgba(255,255,255,.28)',
+          background: selected ? 'rgba(45,212,150,.1)' : 'var(--bg-2)', textAlign: 'left',
+          boxShadow: selected ? '0 0 0 3px rgba(45,212,150,.12)' : 'none',
         }}
       >
         <div>
