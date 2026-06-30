@@ -107,6 +107,7 @@ type RaceGroup struct {
 	CreatedBy        string   `json:"created_by,omitempty"` // 自建者 userID（空=官方建立）
 	IsUserCreated    bool     `json:"is_user_created"`      // created_by 非空
 	ExpReward        int      `json:"exp_reward"`           // 完成此分組可獲得的 EXP
+	DpReward         int      `json:"dp_reward"`            // 完成此分組可獲得的 DP
 }
 
 // CreateTeamGroupRequest 前台跑團成員自建分組 payload

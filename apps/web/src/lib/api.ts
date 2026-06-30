@@ -78,6 +78,7 @@ export interface RaceGroup {
   created_by?: string
   is_user_created?: boolean
   exp_reward?: number // 完成此分組可獲得的 EXP
+  dp_reward?: number // 完成此分組可獲得的 DP
 }
 
 export interface RaceAddon {
@@ -423,6 +424,7 @@ export interface CompetitionRanking {
 export interface ExpBreakdownItem {
   label: string
   amount: number
+  dp?: number // 同來源同時獲得的 DP
   kind: string // completion | mileage | task
 }
 export interface ExpLevelRow {
@@ -434,6 +436,8 @@ export interface ExpBreakdown {
   gained: number
   exp_before: number
   exp_after: number
+  dp_gained?: number
+  dp_after?: number
   items: ExpBreakdownItem[]
   levels: ExpLevelRow[]
 }
@@ -685,6 +689,7 @@ export interface DashboardInfo {
   avatar_url: string
   account_code: string
   exp: number
+  dp: number
   level: number
   level_title: string
   level_floor: number
@@ -734,6 +739,10 @@ export interface ExpRules {
   per_group_task: number
   per_individual_task: number
   per_km: number
+  dp_per_collective_task: number
+  dp_per_group_task: number
+  dp_per_individual_task: number
+  dp_per_km: number
 }
 
 export interface AthleteStats {

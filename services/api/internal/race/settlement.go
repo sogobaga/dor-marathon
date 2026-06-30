@@ -16,6 +16,7 @@ type SettleResult struct {
 	Participants   int    `json:"participants"`
 	AwardedUsers   int    `json:"awarded_users"`
 	TotalExp       int    `json:"total_exp"`
+	TotalDp        int    `json:"total_dp"`
 	AlreadySettled bool   `json:"already_settled"`
 }
 
@@ -24,11 +25,22 @@ type expRulesVals struct {
 	group      int
 	individual int
 	perKm      int
+	// DP 平行費率
+	dpCollective int
+	dpGroup      int
+	dpIndividual int
+	dpPerKm      int
 }
 
 type participant struct {
 	userID  string
 	groupID string
+}
+
+// award 單一來源同時記 EXP 與 DP
+type award struct {
+	exp int
+	dp  int
 }
 
 // SettleRaceEXP 結算某賽事的 EXP（idempotent；force=true 可提前/重跑補發）
@@ -69,8 +81,11 @@ func taskDone(set []progAct, t RaceTask) bool {
 func (r *Repository) expRules(ctx context.Context) (expRulesVals, error) {
 	var v expRulesVals
 	err := r.db.QueryRow(ctx,
-		`SELECT per_collective_task, per_group_task, per_individual_task, per_km FROM exp_rules WHERE id=TRUE`).
-		Scan(&v.collective, &v.group, &v.individual, &v.perKm)
+		`SELECT per_collective_task, per_group_task, per_individual_task, per_km,
+		        dp_per_collective_task, dp_per_group_task, dp_per_individual_task, dp_per_km
+		 FROM exp_rules WHERE id=TRUE`).
+		Scan(&v.collective, &v.group, &v.individual, &v.perKm,
+			&v.dpCollective, &v.dpGroup, &v.dpIndividual, &v.dpPerKm)
 	return v, err
 }
 
@@ -144,23 +159,25 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 	}
 	groupTarget := map[string]float64{}
 	groupReward := map[string]int{}
+	groupDpReward := map[string]int{}
 	for i := range groups {
 		if groups[i].TargetDistanceKm != nil {
 			groupTarget[groups[i].ID] = *groups[i].TargetDistanceKm
 		}
 		groupReward[groups[i].ID] = groups[i].ExpReward
+		groupDpReward[groups[i].ID] = groups[i].DpReward
 	}
 
-	// awards[userID][source] = amount
-	awards := map[string]map[string]int{}
-	add := func(uid, source string, amt int) {
-		if amt <= 0 {
+	// awards[userID][source] = {exp, dp}（同一 source 同列記 EXP 與 DP）
+	awards := map[string]map[string]award{}
+	add := func(uid, source string, exp, dp int) {
+		if exp <= 0 && dp <= 0 {
 			return
 		}
 		if awards[uid] == nil {
-			awards[uid] = map[string]int{}
+			awards[uid] = map[string]award{}
 		}
-		awards[uid][source] = amt
+		awards[uid][source] = award{exp: exp, dp: dp}
 	}
 
 	// 完成任務 EXP（依層級）
@@ -168,19 +185,19 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 		t := tasks[ti]
 		// 打卡點任務：依集滿與否、依 scope 給對應額度（集滿全部點才發）
 		if t.MetricType == MetricCheckpoint {
-			amt := rules.individual
+			exp, dp := rules.individual, rules.dpIndividual
 			switch t.Scope {
 			case ScopeRaceCollective:
-				amt = rules.collective
+				exp, dp = rules.collective, rules.dpCollective
 			case ScopeGroupTeam:
-				amt = rules.group
+				exp, dp = rules.group, rules.dpGroup
 			}
 			for _, p := range parts {
 				if t.Scope != ScopeRaceCollective && t.GroupID != "" && t.GroupID != p.groupID {
 					continue
 				}
 				if cpDone[t.ID][p.userID] {
-					add(p.userID, "task:"+t.ID, amt)
+					add(p.userID, "task:"+t.ID, exp, dp)
 				}
 			}
 			continue
@@ -189,7 +206,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 		case ScopeRaceCollective:
 			if taskDone(acts, t) {
 				for _, p := range parts {
-					add(p.userID, "task:"+t.ID, rules.collective)
+					add(p.userID, "task:"+t.ID, rules.collective, rules.dpCollective)
 				}
 			}
 		case ScopeGroupTeam:
@@ -201,7 +218,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 				if taskDone(byGroup[g.ID], t) {
 					for _, p := range parts {
 						if p.groupID == g.ID {
-							add(p.userID, "task:"+t.ID, rules.group)
+							add(p.userID, "task:"+t.ID, rules.group, rules.dpGroup)
 						}
 					}
 				}
@@ -212,7 +229,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 					continue
 				}
 				if taskDone(byUser[p.userID], t) {
-					add(p.userID, "task:"+t.ID, rules.individual)
+					add(p.userID, "task:"+t.ID, rules.individual, rules.dpIndividual)
 				}
 			}
 		}
@@ -225,7 +242,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 			totalKm += a.Dist
 		}
 		if tgt := groupTarget[p.groupID]; tgt > 0 && totalKm >= tgt {
-			add(p.userID, "completion", groupReward[p.groupID])
+			add(p.userID, "completion", groupReward[p.groupID], groupDpReward[p.groupID])
 		}
 	}
 
@@ -253,23 +270,25 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 
 	res := &SettleResult{RaceID: race.ID, Participants: len(parts)}
 	for uid, sources := range awards {
-		userDelta := 0
-		for source, amt := range sources {
+		expDelta, dpDelta := 0, 0
+		for source, a := range sources {
 			tag, err := tx.Exec(ctx,
-				`INSERT INTO exp_ledger (user_id, race_id, source, amount) VALUES ($1,$2,$3,$4)
-				 ON CONFLICT (user_id, race_id, source) DO NOTHING`, uid, race.ID, source, amt)
+				`INSERT INTO exp_ledger (user_id, race_id, source, amount, dp_amount) VALUES ($1,$2,$3,$4,$5)
+				 ON CONFLICT (user_id, race_id, source) DO NOTHING`, uid, race.ID, source, a.exp, a.dp)
 			if err != nil {
 				return nil, err
 			}
 			if tag.RowsAffected() == 1 {
-				userDelta += amt
+				expDelta += a.exp
+				dpDelta += a.dp
 			}
 		}
-		if userDelta > 0 {
-			if _, err := tx.Exec(ctx, `UPDATE users SET exp = exp + $1 WHERE id=$2`, userDelta, uid); err != nil {
+		if expDelta > 0 || dpDelta > 0 {
+			if _, err := tx.Exec(ctx, `UPDATE users SET exp = exp + $1, dp = dp + $2 WHERE id=$3`, expDelta, dpDelta, uid); err != nil {
 				return nil, err
 			}
-			res.TotalExp += userDelta
+			res.TotalExp += expDelta
+			res.TotalDp += dpDelta
 			res.AwardedUsers++
 		}
 	}

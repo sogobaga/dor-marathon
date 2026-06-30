@@ -9,6 +9,7 @@ import (
 type ExpBreakdownItem struct {
 	Label  string `json:"label"`
 	Amount int    `json:"amount"`
+	Dp     int    `json:"dp"`   // 同來源同時獲得的 DP
 	Kind   string `json:"kind"` // completion | mileage | task
 }
 
@@ -24,6 +25,8 @@ type ExpBreakdown struct {
 	Gained    int                `json:"gained"`
 	ExpBefore int                `json:"exp_before"`
 	ExpAfter  int                `json:"exp_after"`
+	DpGained  int                `json:"dp_gained"` // 本場總獲得 DP
+	DpAfter   int                `json:"dp_after"`  // 結算後 DP 餘額
 	Items     []ExpBreakdownItem `json:"items"`
 	Levels    []ExpLevelRow      `json:"levels"`
 }
@@ -61,7 +64,7 @@ func (r *Repository) expBreakdown(ctx context.Context, raceID, userID string) (*
 
 	// 明細（task 來源 join 任務標題）
 	rows, err := r.db.Query(ctx, `
-		SELECT l.source, l.amount, COALESCE(t.title,''), COALESCE(t.scope,'')
+		SELECT l.source, l.amount, l.dp_amount, COALESCE(t.title,''), COALESCE(t.scope,'')
 		FROM exp_ledger l
 		LEFT JOIN race_tasks t ON ('task:' || t.id::text) = l.source
 		WHERE l.user_id=$1 AND l.race_id=$2
@@ -74,11 +77,11 @@ func (r *Repository) expBreakdown(ctx context.Context, raceID, userID string) (*
 	defer rows.Close()
 	for rows.Next() {
 		var source, title, scope string
-		var amount int
-		if err := rows.Scan(&source, &amount, &title, &scope); err != nil {
+		var amount, dp int
+		if err := rows.Scan(&source, &amount, &dp, &title, &scope); err != nil {
 			return nil, err
 		}
-		item := ExpBreakdownItem{Amount: amount}
+		item := ExpBreakdownItem{Amount: amount, Dp: dp}
 		switch {
 		case source == "completion":
 			item.Kind, item.Label = "completion", "完成賽事"
@@ -98,14 +101,15 @@ func (r *Repository) expBreakdown(ctx context.Context, raceID, userID string) (*
 		}
 		out.Items = append(out.Items, item)
 		out.Gained += amount
+		out.DpGained += dp
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	// 目前 EXP（= 結算後），回推結算前
+	// 目前 EXP/DP（= 結算後），回推結算前
 	if userID != "" {
-		_ = r.db.QueryRow(ctx, `SELECT COALESCE(exp,0) FROM users WHERE id=$1`, userID).Scan(&out.ExpAfter)
+		_ = r.db.QueryRow(ctx, `SELECT COALESCE(exp,0), COALESCE(dp,0) FROM users WHERE id=$1`, userID).Scan(&out.ExpAfter, &out.DpAfter)
 	}
 	out.ExpBefore = out.ExpAfter - out.Gained
 	if out.ExpBefore < 0 {

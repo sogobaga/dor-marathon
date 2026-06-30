@@ -214,12 +214,12 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		err = tx.QueryRow(ctx, `
 			INSERT INTO race_groups (race_id, name, description, display_order,
 			                         slot_limit, gender_limit, age_min, age_max, target_distance_km,
-			                         requires_key, group_key, exp_reward)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			                         requires_key, group_key, exp_reward, dp_reward)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 			RETURNING id`,
 			raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
 			g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
-			g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward,
+			g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward,
 		).Scan(&gid)
 		if err != nil {
 			return nil, fmt.Errorf("insert group %d: %w", i, err)
@@ -355,11 +355,11 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			_, err = tx.Exec(ctx, `
 				UPDATE race_groups SET name=$1, description=$2, display_order=$3,
 				    slot_limit=$4, gender_limit=$5, age_min=$6, age_max=$7, target_distance_km=$8,
-				    requires_key=$9, group_key=$10, exp_reward=$11
-				WHERE id=$12 AND race_id=$13`,
+				    requires_key=$9, group_key=$10, exp_reward=$11, dp_reward=$12
+				WHERE id=$13 AND race_id=$14`,
 				g.Name, nullStr(g.Description), g.DisplayOrder,
 				g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
-				g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.ID, raceID,
+				g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward, g.ID, raceID,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("update group %d: %w", i, err)
@@ -370,11 +370,11 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			err = tx.QueryRow(ctx, `
 				INSERT INTO race_groups (race_id, name, description, display_order,
 				                         slot_limit, gender_limit, age_min, age_max, target_distance_km,
-				                         requires_key, group_key, exp_reward)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+				                         requires_key, group_key, exp_reward, dp_reward)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
 				raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
 				g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
-				g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward,
+				g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward,
 			).Scan(&gid)
 			if err != nil {
 				return nil, fmt.Errorf("insert group %d: %w", i, err)
@@ -888,7 +888,7 @@ func (r *Repository) GetGroups(ctx context.Context, raceID string) ([]RaceGroup,
 	rows, err := r.db.Query(ctx, `
 		SELECT id, race_id, name, COALESCE(description,''), display_order,
 		       slot_limit, slots_taken, gender_limit, age_min, age_max, target_distance_km,
-		       requires_key, COALESCE(group_key,''), COALESCE(created_by::text,''), exp_reward
+		       requires_key, COALESCE(group_key,''), COALESCE(created_by::text,''), exp_reward, dp_reward
 		FROM race_groups WHERE race_id=$1 ORDER BY display_order, created_at`, raceID)
 	if err != nil {
 		return nil, fmt.Errorf("list groups: %w", err)
@@ -900,7 +900,7 @@ func (r *Repository) GetGroups(ctx context.Context, raceID string) ([]RaceGroup,
 		var g RaceGroup
 		if err := rows.Scan(&g.ID, &g.RaceID, &g.Name, &g.Description, &g.DisplayOrder,
 			&g.SlotLimit, &g.SlotsTaken, &g.GenderLimit, &g.AgeMin, &g.AgeMax, &g.TargetDistanceKm,
-			&g.RequiresKey, &g.GroupKey, &g.CreatedBy, &g.ExpReward); err != nil {
+			&g.RequiresKey, &g.GroupKey, &g.CreatedBy, &g.ExpReward, &g.DpReward); err != nil {
 			return nil, err
 		}
 		g.IsUserCreated = g.CreatedBy != ""

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { profileApi, paymentsApi, integrationsApi, followApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type DashboardInfo, type FollowRow } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
+import DpCoin from './DpCoin'
 
 // 動態建立 hidden 表單並 POST 到綠界（瀏覽器導去付款頁）
 function submitEcpayForm(actionURL: string, params: Record<string, string>) {
@@ -287,6 +288,12 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
                 {dash.next_level_exp == null ? '已達最高等級'
                   : `距 Lv.${dash.level + 1} 還需 ${dash.next_level_exp - dash.exp} EXP`}
               </div>
+            </div>
+
+            {/* DP 幣餘額 */}
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,210,77,.08)', border: '1px solid rgba(255,210,77,.3)', borderRadius: 10, padding: '8px 12px' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: 'var(--tx-dim)' }}><DpCoin size={18} /> DP 幣</span>
+              <span style={{ fontSize: 16, fontWeight: 900, color: '#FFD24D', fontVariantNumeric: 'tabular-nums' }}>{dash.dp ?? 0}</span>
             </div>
 
             <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 11.5, color: 'var(--tx-dim)', flexWrap: 'wrap' }}>

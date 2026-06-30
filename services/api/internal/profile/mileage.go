@@ -9,15 +9,18 @@ import (
 
 // MileageBreakdown 與 race.ExpBreakdown 同 JSON 形狀，前台共用結算彈窗
 type MileageBreakdown struct {
-	Gained    int                `json:"gained"`
-	ExpBefore int                `json:"exp_before"`
-	ExpAfter  int                `json:"exp_after"`
-	Items     []mileageItem      `json:"items"`
-	Levels    []mileageLevelRow  `json:"levels"`
+	Gained    int               `json:"gained"`
+	ExpBefore int               `json:"exp_before"`
+	ExpAfter  int               `json:"exp_after"`
+	DpGained  int               `json:"dp_gained"`
+	DpAfter   int               `json:"dp_after"`
+	Items     []mileageItem     `json:"items"`
+	Levels    []mileageLevelRow `json:"levels"`
 }
 type mileageItem struct {
 	Label  string `json:"label"`
 	Amount int    `json:"amount"`
+	Dp     int    `json:"dp"`
 	Kind   string `json:"kind"`
 }
 type mileageLevelRow struct {
@@ -36,7 +39,7 @@ func (h *Handler) GetMileageExp(w http.ResponseWriter, r *http.Request) {
 	bd := MileageBreakdown{Items: []mileageItem{}, Levels: []mileageLevelRow{}}
 
 	rows, err := h.db.Query(r.Context(),
-		`SELECT exp_amount, distance_km FROM mileage_exp_events
+		`SELECT exp_amount, dp_amount, distance_km FROM mileage_exp_events
 		 WHERE user_id=$1 AND seen_at IS NULL ORDER BY created_at`, userID)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
@@ -44,17 +47,18 @@ func (h *Handler) GetMileageExp(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var amt int
+		var amt, dp int
 		var dist float64
-		if err := rows.Scan(&amt, &dist); err != nil {
+		if err := rows.Scan(&amt, &dp, &dist); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
 		}
-		bd.Items = append(bd.Items, mileageItem{Label: fmt.Sprintf("里程 %.1f km", dist), Amount: amt, Kind: "mileage"})
+		bd.Items = append(bd.Items, mileageItem{Label: fmt.Sprintf("里程 %.1f km", dist), Amount: amt, Dp: dp, Kind: "mileage"})
 		bd.Gained += amt
+		bd.DpGained += dp
 	}
 
-	_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(exp,0) FROM users WHERE id=$1`, userID).Scan(&bd.ExpAfter)
+	_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(exp,0), COALESCE(dp,0) FROM users WHERE id=$1`, userID).Scan(&bd.ExpAfter, &bd.DpAfter)
 	bd.ExpBefore = bd.ExpAfter - bd.Gained
 	if bd.ExpBefore < 0 {
 		bd.ExpBefore = 0

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ExpBreakdown, ExpLevelRow } from '@/lib/api'
 import * as sfx from '@/lib/sfx'
+import DpCoin from './DpCoin'
 
 type Step = {
   level: number
@@ -56,12 +57,13 @@ function buildSteps(before: number, after: number, levelsIn: ExpLevelRow[]): Ste
 const easeOut = (t: number) => 1 - Math.pow(1 - t, 3)
 
 export default function ExpSettlementModal({ breakdown, title = '副本完成', tagline = 'RACE CLEAR', subtitle, onClose }: { breakdown: ExpBreakdown; title?: string; tagline?: string; subtitle: string; onClose: () => void }) {
-  const { gained, exp_before, exp_after, items, levels } = breakdown
+  const { gained, exp_before, exp_after, items, levels, dp_gained = 0 } = breakdown
   const steps = useMemo(() => buildSteps(exp_before, exp_after, levels), [exp_before, exp_after, levels])
 
   const [phase, setPhase] = useState<'intro' | 'items' | 'total' | 'levels' | 'done'>('intro')
   const [revealed, setRevealed] = useState(0)
   const [total, setTotal] = useState(0)
+  const [totalDp, setTotalDp] = useState(0)
   const [stepIdx, setStepIdx] = useState(0)
   const [barPct, setBarPct] = useState(steps[0]?.fromPct ?? 0)
   const [flash, setFlash] = useState(false)
@@ -91,7 +93,11 @@ export default function ExpSettlementModal({ breakdown, title = '副本完成', 
       await sleep(280); if (cancelled) return
       setPhase('total')
       await animate(0, gained, Math.min(1700, 650 + gained * 4), (v) => setTotal(Math.round(v)))
-      setTotal(gained); await sleep(350); if (cancelled) return
+      setTotal(gained); await sleep(250); if (cancelled) return
+      if (dp_gained > 0) {
+        await animate(0, dp_gained, Math.min(1400, 500 + dp_gained * 4), (v) => setTotalDp(Math.round(v)))
+        setTotalDp(dp_gained); await sleep(300); if (cancelled) return
+      }
       setPhase('levels')
       for (let si = 0; si < steps.length; si++) {
         if (cancelled) return
@@ -141,7 +147,10 @@ export default function ExpSettlementModal({ breakdown, title = '副本完成', 
           {items.slice(0, revealed).map((it, i) => (
             <div key={i} style={{ ...rowItem, animation: 'itemIn .4s ease both' }}>
               <span style={{ fontSize: 13, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label}</span>
-              <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--fug)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>+{it.amount}</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--fug)' }}>+{it.amount}</span>
+                {it.dp ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 13, fontWeight: 800, color: 'var(--gold)' }}><DpCoin size={13} />+{it.dp}</span> : null}
+              </span>
             </div>
           ))}
         </div>
@@ -153,6 +162,11 @@ export default function ExpSettlementModal({ breakdown, title = '副本完成', 
             <div style={{ fontSize: 40, fontWeight: 900, color: 'var(--gold)', fontVariantNumeric: 'tabular-nums', textShadow: '0 0 20px rgba(229,196,107,.5)', lineHeight: 1.15 }}>
               +{total}<span style={{ fontSize: 18, marginLeft: 4 }}>EXP</span>
             </div>
+            {dp_gained > 0 && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 22, fontWeight: 900, color: '#FFD24D', fontVariantNumeric: 'tabular-nums' }}>
+                <DpCoin size={22} /> +{totalDp}<span style={{ fontSize: 13, marginLeft: 2 }}>DP</span>
+              </div>
+            )}
           </div>
         )}
 

@@ -241,25 +241,29 @@ func (w *Worker) awardMileageExp(ctx context.Context, userID string, distanceKm 
 	}
 	defer tx.Rollback(ctx)
 
-	var oldKm, newKm, perKm int
+	var oldKm, newKm, perKm, dpPerKm int
 	if err := tx.QueryRow(ctx, `
-		SELECT exp_rewarded_km, floor(total_km)::int, COALESCE((SELECT per_km FROM exp_rules WHERE id=TRUE),0)
-		FROM users WHERE id=$1`, userID).Scan(&oldKm, &newKm, &perKm); err != nil {
+		SELECT exp_rewarded_km, floor(total_km)::int,
+		       COALESCE((SELECT per_km FROM exp_rules WHERE id=TRUE),0),
+		       COALESCE((SELECT dp_per_km FROM exp_rules WHERE id=TRUE),0)
+		FROM users WHERE id=$1`, userID).Scan(&oldKm, &newKm, &perKm, &dpPerKm); err != nil {
 		return
 	}
 	delta := newKm - oldKm
-	if delta <= 0 || perKm <= 0 {
+	if delta <= 0 || (perKm <= 0 && dpPerKm <= 0) {
 		return
 	}
 	expAmt := delta * perKm
+	dpAmt := delta * dpPerKm
+	// 同一 km 跨越同時發 EXP 與 DP，共用 exp_rewarded_km 計數器（冪等守門）
 	if _, err := tx.Exec(ctx,
-		`UPDATE users SET exp = exp + $1, exp_rewarded_km = $2 WHERE id=$3 AND exp_rewarded_km = $4`,
-		expAmt, newKm, userID, oldKm); err != nil {
+		`UPDATE users SET exp = exp + $1, dp = dp + $2, exp_rewarded_km = $3 WHERE id=$4 AND exp_rewarded_km = $5`,
+		expAmt, dpAmt, newKm, userID, oldKm); err != nil {
 		return
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO mileage_exp_events (user_id, exp_amount, km_added, distance_km, recorded_at)
-		 VALUES ($1,$2,$3,$4,$5)`, userID, expAmt, delta, distanceKm, recordedAt); err != nil {
+		`INSERT INTO mileage_exp_events (user_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
+		 VALUES ($1,$2,$3,$4,$5,$6)`, userID, expAmt, dpAmt, delta, distanceKm, recordedAt); err != nil {
 		return
 	}
 	tx.Commit(ctx)

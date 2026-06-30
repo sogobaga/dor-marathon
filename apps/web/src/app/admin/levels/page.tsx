@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { adminLevelsApi, settingsApi, adminSettingsApi, adminImagesApi, type LevelConfig, type ExpRules, type AthleteMetricConfig, type AthleteLevel } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
+import DpCoin from '@/components/DpCoin'
 
 const METRIC_LABEL: Record<string, { t: string; u: string }> = {
   volume: { t: '跑量', u: '累積 km' },
@@ -95,8 +96,12 @@ export default function AdminLevelsPage() {
         per_group_task: Number(rules.per_group_task),
         per_individual_task: Number(rules.per_individual_task),
         per_km: Number(rules.per_km),
+        dp_per_collective_task: Number(rules.dp_per_collective_task),
+        dp_per_group_task: Number(rules.dp_per_group_task),
+        dp_per_individual_task: Number(rules.dp_per_individual_task),
+        dp_per_km: Number(rules.dp_per_km),
       })
-      setRules(r.exp_rules); setMsg('✓ EXP 規則已儲存')
+      setRules(r.exp_rules); setMsg('✓ EXP / DP 規則已儲存')
     } catch (e: any) { setErr(e?.message || '儲存失敗') } finally { setSaving(false) }
   }
 
@@ -153,6 +158,25 @@ export default function AdminLevelsPage() {
               <Field label="日常每 1 公里 EXP">
                 <input style={{ ...inp, width: 110 }} type="number" value={rules.per_km} onChange={(e) => setRules({ ...rules, per_km: parseInt(e.target.value || '0', 10) })} />
               </Field>
+            </div>
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <DpCoin size={16} /> DP 幣取得規則（來源同 EXP，獨立費率）
+              </div>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <Field label="完成「全體」任務 DP">
+                  <input style={{ ...inp, width: 110 }} type="number" value={rules.dp_per_collective_task} onChange={(e) => setRules({ ...rules, dp_per_collective_task: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+                <Field label="完成「分組」任務 DP">
+                  <input style={{ ...inp, width: 110 }} type="number" value={rules.dp_per_group_task} onChange={(e) => setRules({ ...rules, dp_per_group_task: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+                <Field label="完成「個人」任務 DP">
+                  <input style={{ ...inp, width: 110 }} type="number" value={rules.dp_per_individual_task} onChange={(e) => setRules({ ...rules, dp_per_individual_task: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+                <Field label="日常每 1 公里 DP">
+                  <input style={{ ...inp, width: 110 }} type="number" value={rules.dp_per_km} onChange={(e) => setRules({ ...rules, dp_per_km: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+              </div>
             </div>
             <div style={{ marginTop: 12 }}>
               <button onClick={saveRules} disabled={saving} style={primaryBtn}>儲存規則</button>

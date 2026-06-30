@@ -5,6 +5,7 @@ import useSWR from 'swr'
 import { profileApi, settingsApi, type DashboardInfo } from '@/lib/api'
 import { useUser, getUserToken, withUserAuth, clearUserSession } from '@/lib/userAuth'
 import { LoginModal } from './UserAuthBar'
+import DpCoin from './DpCoin'
 
 // 賽事列表頂部會員資訊面板（與會員中心 Dashboard 同尺寸；未登入顯示 -- 與「註冊/登入」）
 export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => void }) {
@@ -71,7 +72,10 @@ export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => v
           <div style={{ marginTop: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 12 }}>
               <span style={{ fontWeight: 800, color: 'var(--fug)' }}>Lv.{dash.level}{dash.level_title ? ` ${dash.level_title}` : ''}</span>
-              <span style={{ color: 'var(--tx-dim)' }}>{dash.exp} EXP</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--tx-dim)' }}>
+                <span>{dash.exp} EXP</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#FFD24D', fontWeight: 800 }}><DpCoin size={14} />{dash.dp ?? 0}</span>
+              </span>
             </div>
             <div style={barOuter}><div style={{ ...barInner, width: `${expPct}%` }} /></div>
           </div>

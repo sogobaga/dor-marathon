@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/dor/api/internal/auth"
+	"github.com/go-chi/chi/v5"
 )
 
 // --- 帳號專屬編碼 ---
@@ -92,24 +92,25 @@ func computeLevel(exp int, levels []LevelConfig) (level int, title string, floor
 // --- Dashboard ---
 
 type DashboardInfo struct {
-	Name         string     `json:"name"`
-	Nickname     string     `json:"nickname"`
-	Handle       string     `json:"handle"`
-	AvatarURL    string     `json:"avatar_url"`
-	AccountCode  string     `json:"account_code"`
-	Exp          int        `json:"exp"`
-	Level        int        `json:"level"`
-	LevelTitle   string     `json:"level_title"`
-	LevelFloor   int        `json:"level_floor"`      // 本級門檻 EXP
-	NextLevelExp *int       `json:"next_level_exp"`   // 下一級門檻（null=已頂級）
-	IsVIP        bool       `json:"is_vip"`
-	VIPExpiresAt *time.Time `json:"vip_expires_at,omitempty"`
-	TotalKm      float64    `json:"total_km"`
-	RaceCount    int        `json:"race_count"`     // 報名場數（未取消）
-	OngoingCount   int      `json:"ongoing_count"`   // 進行中場數
-	CompletedCount int      `json:"completed_count"` // 已完成場數
-	FollowingCount int      `json:"following_count"`
-	FollowerCount  int      `json:"follower_count"`
+	Name           string     `json:"name"`
+	Nickname       string     `json:"nickname"`
+	Handle         string     `json:"handle"`
+	AvatarURL      string     `json:"avatar_url"`
+	AccountCode    string     `json:"account_code"`
+	Exp            int        `json:"exp"`
+	Dp             int        `json:"dp"` // DP 幣餘額
+	Level          int        `json:"level"`
+	LevelTitle     string     `json:"level_title"`
+	LevelFloor     int        `json:"level_floor"`    // 本級門檻 EXP
+	NextLevelExp   *int       `json:"next_level_exp"` // 下一級門檻（null=已頂級）
+	IsVIP          bool       `json:"is_vip"`
+	VIPExpiresAt   *time.Time `json:"vip_expires_at,omitempty"`
+	TotalKm        float64    `json:"total_km"`
+	RaceCount      int        `json:"race_count"`      // 報名場數（未取消）
+	OngoingCount   int        `json:"ongoing_count"`   // 進行中場數
+	CompletedCount int        `json:"completed_count"` // 已完成場數
+	FollowingCount int        `json:"following_count"`
+	FollowerCount  int        `json:"follower_count"`
 }
 
 // GET /api/v1/profile/dashboard
@@ -127,13 +128,13 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	var d DashboardInfo
 	d.AccountCode = code
 	if err := h.db.QueryRow(r.Context(), `
-		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.vip_expires_at,
+		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.dp, u.vip_expires_at,
 		       COALESCE((SELECT SUM(distance_km) FROM activities WHERE user_id=u.id AND NOT flagged),0),
 		       COALESCE(p.nickname,''),
 		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id AND rg.status<>'cancelled')
 		FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
 		WHERE u.id=$1`, userID).
-		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.VIPExpiresAt, &d.TotalKm, &d.Nickname, &d.RaceCount); err != nil {
+		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.VIPExpiresAt, &d.TotalKm, &d.Nickname, &d.RaceCount); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load dashboard")
 		return
 	}
@@ -300,14 +301,22 @@ type ExpRules struct {
 	PerGroupTask      int `json:"per_group_task"`      // 分組任務完成
 	PerIndividualTask int `json:"per_individual_task"` // 個人任務完成
 	PerKm             int `json:"per_km"`              // 日常每公里
+	// DP 平行費率（取得來源同 EXP，獨立設定）
+	DpPerCollectiveTask int `json:"dp_per_collective_task"`
+	DpPerGroupTask      int `json:"dp_per_group_task"`
+	DpPerIndividualTask int `json:"dp_per_individual_task"`
+	DpPerKm             int `json:"dp_per_km"`
 }
 
 // GET /api/v1/admin/membership/exp-rules
 func (h *Handler) GetExpRules(w http.ResponseWriter, r *http.Request) {
 	var e ExpRules
 	if err := h.db.QueryRow(r.Context(),
-		`SELECT per_collective_task, per_group_task, per_individual_task, per_km FROM exp_rules WHERE id=TRUE`).
-		Scan(&e.PerCollectiveTask, &e.PerGroupTask, &e.PerIndividualTask, &e.PerKm); err != nil {
+		`SELECT per_collective_task, per_group_task, per_individual_task, per_km,
+		        dp_per_collective_task, dp_per_group_task, dp_per_individual_task, dp_per_km
+		 FROM exp_rules WHERE id=TRUE`).
+		Scan(&e.PerCollectiveTask, &e.PerGroupTask, &e.PerIndividualTask, &e.PerKm,
+			&e.DpPerCollectiveTask, &e.DpPerGroupTask, &e.DpPerIndividualTask, &e.DpPerKm); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
@@ -322,8 +331,10 @@ func (h *Handler) PutExpRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.db.Exec(r.Context(),
-		`UPDATE exp_rules SET per_collective_task=$1, per_group_task=$2, per_individual_task=$3, per_km=$4 WHERE id=TRUE`,
-		e.PerCollectiveTask, e.PerGroupTask, e.PerIndividualTask, e.PerKm); err != nil {
+		`UPDATE exp_rules SET per_collective_task=$1, per_group_task=$2, per_individual_task=$3, per_km=$4,
+		        dp_per_collective_task=$5, dp_per_group_task=$6, dp_per_individual_task=$7, dp_per_km=$8 WHERE id=TRUE`,
+		e.PerCollectiveTask, e.PerGroupTask, e.PerIndividualTask, e.PerKm,
+		e.DpPerCollectiveTask, e.DpPerGroupTask, e.DpPerIndividualTask, e.DpPerKm); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
