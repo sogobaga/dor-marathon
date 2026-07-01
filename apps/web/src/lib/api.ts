@@ -341,12 +341,14 @@ export const eventApi = {
   complete: (token: string, id: string, body: { moved_m: number; window_s: number }) =>
     request<{ completed: boolean; reward_exp?: number; reward_dp?: number; message?: string }>(`/events/occurrences/${id}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   fail: (token: string, id: string) => request<void>(`/events/occurrences/${id}/fail`, { method: 'POST', headers: withAuth(token) }),
+  claimManual: (token: string) => request<{ armed: boolean; def?: EventDef; occ_id?: string }>('/events/manual/claim', { method: 'POST', headers: withAuth(token) }),
 }
 export const adminEventsApi = {
   list: (token: string) => request<{ defs: EventDef[]; trigger_catalog: EventTypeSpec[]; completion_catalog: EventTypeSpec[] }>('/admin/events', { headers: withAuth(token) }),
   create: (token: string, body: EventDef) => request<{ def: EventDef }>('/admin/events', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   update: (token: string, id: string, body: EventDef) => request<{ def: EventDef }>(`/admin/events/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
   remove: (token: string, id: string) => request<void>(`/admin/events/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+  push: (token: string, id: string, email: string) => request<{ ok: boolean; target: string }>(`/admin/events/${id}/push`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ email }) }),
 }
 
 // --- 賽事多人連動事件（Phase B）---

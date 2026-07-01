@@ -27,6 +27,19 @@ export default function AdminEventsPage() {
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [imgUploading, setImgUploading] = useState(false)
+  const [pushFor, setPushFor] = useState<string | null>(null)
+  const [pushEmail, setPushEmail] = useState('')
+  const [pushBusy, setPushBusy] = useState(false)
+
+  async function doPush(d: EventDef) {
+    if (!token || !d.id || !pushEmail.trim()) return
+    setPushBusy(true); setErr(''); setMsg('')
+    try {
+      const r = await adminEventsApi.push(token, d.id, pushEmail.trim())
+      setMsg(`✓ 已觸發「${d.name}」給 ${r.target}。對方需正在「開始跑步」，約數秒內出現；若當下沒在跑步，本次觸發 3 分鐘後失效。`)
+      setPushFor(null); setPushEmail('')
+    } catch (e: any) { setErr(e?.message || '觸發失敗') } finally { setPushBusy(false) }
+  }
 
   async function uploadImg(file: File) {
     if (!token || !edit) return
@@ -88,6 +101,11 @@ export default function AdminEventsPage() {
           <p style={{ color: 'var(--tx-dim)', fontSize: 13, margin: 0 }}>跑步中依 GPS 即時觸發的小任務。設定好的組合即為可重複引用的範本，完成給 EXP/DP。</p>
         </div>
         {!edit && <button onClick={startNew} style={primaryBtn}>＋ 新增事件</button>}
+      </div>
+
+      <div style={{ background: 'rgba(255,194,75,.1)', border: '1px solid rgba(255,194,75,.35)', borderRadius: 10, padding: '10px 12px', fontSize: 12.5, color: 'var(--gold)', marginTop: 12, lineHeight: 1.7 }}>
+        🧪 <strong>測試觸發說明</strong>：每張事件卡右下的「測試觸發」可把該事件<strong>直接推給指定帳號</strong>，用來測試前台顯示與流程。<br />
+        ⚠️ 前提：<strong>該帳號必須正在「開始跑步」狀態</strong>（其跑步頁會在數秒內認領並觸發）。若對方當下沒在跑步，這次觸發會在 <strong>3 分鐘</strong>後自動失效，需重新觸發。
       </div>
 
       {err && <div style={{ color: 'var(--hunt)', padding: '10px 0', fontSize: 13 }}>{err}</div>}
@@ -184,12 +202,21 @@ export default function AdminEventsPage() {
                   <span style={{ color: 'var(--tx-faint)' }}>權重 {d.weight}・冷卻 {d.cooldown_sec}s</span>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+                <button onClick={() => { setPushFor(pushFor === d.id ? null : d.id!); setPushEmail('') }} style={{ ...ghostBtn, color: 'var(--gold)', borderColor: 'rgba(255,194,75,.4)' }}>🧪 測試觸發</button>
                 <button onClick={() => startEdit(d)} style={ghostBtn}>編輯</button>
                 <button onClick={() => duplicate(d)} style={ghostBtn}>複製</button>
                 <button onClick={() => remove(d)} style={{ ...ghostBtn, color: 'var(--hunt)' }}>刪除</button>
               </div>
             </div>
+            {pushFor === d.id && (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12.5, color: 'var(--tx-dim)' }}>觸發給帳號：</span>
+                <input style={{ ...inp, width: 240 }} type="email" value={pushEmail} onChange={(e) => setPushEmail(e.target.value)} placeholder="對方登入 email（需正在開始跑步）" onKeyDown={(e) => { if (e.key === 'Enter') doPush(d) }} />
+                <button onClick={() => doPush(d)} disabled={pushBusy || !pushEmail.trim()} style={{ ...primaryBtn, opacity: pushBusy || !pushEmail.trim() ? 0.5 : 1 }}>{pushBusy ? '觸發中…' : '送出觸發'}</button>
+                <button onClick={() => { setPushFor(null); setPushEmail('') }} style={ghostBtn}>取消</button>
+              </div>
+            )}
           </div>
         ))}
       </div>

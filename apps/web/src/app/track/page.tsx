@@ -87,6 +87,7 @@ export default function TrackPage() {
   const wsRef = useRef<WebSocket | null>(null)
   const raceIdRef = useRef('') // 綁定的賽事（供回報里程/接收邀請）
   const lastTriggerRef = useRef(0) // 里程回報節流
+  const lastClaimRef = useRef(0) // 認領後台手動觸發事件的節流
   const raceInviteRef = useRef<RaceEventInvite | null>(null)
   raceInviteRef.current = raceInvite
 
@@ -267,11 +268,31 @@ export default function TrackPage() {
     } catch { setCpMsg('加入失敗，請重試') }
   }
 
+  // 測試：認領後台手動觸發的事件，直接 arm（沿用一般 activeEvent 引擎）
+  async function claimManualEvent() {
+    const token = getUserToken(); if (!token) return
+    try {
+      const res = await eventApi.claimManual(token)
+      if (!res.armed || !res.def || activeEventRef.current) return
+      const def = res.def
+      const triggerT = Date.now()
+      const limitS = def.completion_params.limit_s || 60
+      const readyUntil = triggerT + EVENT_GRACE_MS
+      const ae: ActiveEvent = { def, occId: res.occ_id || '', triggerD: distRef.current, triggerT, readyUntil, deadline: readyUntil + limitS * 1000 }
+      activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
+    } catch { /* ignore */ }
+  }
+
   function evalTick() {
     if (statusRef.current !== 'tracking') return
     const now = Date.now()
     distSamplesRef.current.push({ t: now, d: distRef.current })
     if (distSamplesRef.current.length > 1600) distSamplesRef.current.splice(0, 400) // 上限 ~25 分鐘
+    // 測試：跑步中、無進行中事件時輪詢認領後台手動觸發（每 5 秒）
+    if (!activeEventRef.current && now - lastClaimRef.current > 5000) {
+      lastClaimRef.current = now
+      claimManualEvent()
+    }
     // Phase B：節流回報里程給後端（由後端依定義門檻/冷卻決定是否觸發多人事件）
     if (raceIdRef.current && distRef.current > 0 && now - lastTriggerRef.current > 20000) {
       lastTriggerRef.current = now
@@ -316,7 +337,7 @@ export default function TrackPage() {
     distSamplesRef.current = []; activeEventRef.current = null; lastEventEndRef.current = 0
     setActiveEvent(null); setEventResult(null); setEventMoved(0)
     // Phase B 重置
-    setRaceInvite(null); raceIdRef.current = ''; lastTriggerRef.current = 0
+    setRaceInvite(null); raceIdRef.current = ''; lastTriggerRef.current = 0; lastClaimRef.current = 0
     startRef.current = Date.now()
     setStatus('tracking')
     connectRaceWS() // 連 WS 監聽多人事件（不 await；失敗不影響跑步）

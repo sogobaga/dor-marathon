@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -122,7 +123,47 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Post("/", h.Create)
 	r.Put("/{id}", h.Update)
 	r.Delete("/{id}", h.Delete)
+	r.Post("/{id}/push", h.PushToUser) // 測試：手動觸發此事件給指定帳號
 	return r
+}
+
+// POST /admin/events/{id}/push  {email} — 手動觸發事件給指定帳號（測試用）。
+// 對方需在「開始跑步」狀態，其 /track 會於數秒內認領並觸發；未認領 3 分鐘後過期。
+func (h *Handler) PushToUser(w http.ResponseWriter, r *http.Request) {
+	adminID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	defID := chi.URLParam(r, "id")
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Email) == "" {
+		respondErr(w, http.StatusBadRequest, "請提供帳號 email")
+		return
+	}
+	var uid, name string
+	err := h.db.QueryRow(r.Context(),
+		`SELECT id::text, COALESCE(NULLIF(name,''),email) FROM users WHERE lower(email)=lower($1)`,
+		strings.TrimSpace(body.Email)).Scan(&uid, &name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondErr(w, http.StatusNotFound, "查無此 email 的帳號")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	var exists bool
+	_ = h.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM event_task_defs WHERE id=$1)`, defID).Scan(&exists)
+	if !exists {
+		respondErr(w, http.StatusNotFound, "事件不存在")
+		return
+	}
+	if _, err := h.db.Exec(r.Context(),
+		`INSERT INTO event_manual_pushes (def_id, target_user_id, created_by) VALUES ($1,$2,NULLIF($3,'')::uuid)`,
+		defID, uid, adminID); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "target": name})
 }
 
 func scanDef(row pgx.Row) (EventDef, error) {
@@ -258,7 +299,44 @@ func (h *Handler) Router() http.Handler {
 	r.Post("/occurrences", h.CreateOccurrence)
 	r.Post("/occurrences/{id}/complete", h.Complete)
 	r.Post("/occurrences/{id}/fail", h.Fail)
+	r.Post("/manual/claim", h.ClaimManual) // 跑步中輪詢：認領後台手動觸發的事件
 	return r
+}
+
+// POST /events/manual/claim — 跑步中的 /track 輪詢，認領後台手動觸發的事件（測試用）。
+// 認領即建立 occurrence（測試觸發不套全域冷卻閘門）。無待認領則 armed=false。
+func (h *Handler) ClaimManual(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	ctx := r.Context()
+	var defID string
+	err := h.db.QueryRow(ctx, `
+		UPDATE event_manual_pushes SET consumed_at=NOW()
+		WHERE id = (SELECT id FROM event_manual_pushes
+		            WHERE target_user_id=$1 AND consumed_at IS NULL AND created_at > NOW()-INTERVAL '3 minutes'
+		            ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+		RETURNING def_id::text`, uid).Scan(&defID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondJSON(w, http.StatusOK, map[string]any{"armed": false})
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	def, err := scanDef(h.db.QueryRow(ctx, `SELECT `+defCols+` FROM event_task_defs WHERE id=$1`, defID))
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	var occID string
+	if err := h.db.QueryRow(ctx, `
+		INSERT INTO event_task_occurrences (user_id, def_id, reward_exp, reward_dp, trigger_dist_m, trigger_elapsed_s)
+		VALUES ($1,$2,$3,$4,0,0) RETURNING id`,
+		uid, defID, def.RewardExp, def.RewardDp).Scan(&occID); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"armed": true, "def": def, "occ_id": occID})
 }
 
 // GET /events/active — 供跑步引擎的啟用中事件定義
