@@ -87,6 +87,7 @@ type EventDef struct {
 	CompletionType   string             `json:"completion_type"`
 	CompletionParams map[string]float64 `json:"completion_params"`
 	Message          string             `json:"message"`
+	ImageURL         string             `json:"image_url"`
 	RewardExp        int                `json:"reward_exp"`
 	RewardDp         int                `json:"reward_dp"`
 }
@@ -129,7 +130,7 @@ func scanDef(row pgx.Row) (EventDef, error) {
 	var tp, cp []byte
 	var desc *string
 	err := row.Scan(&d.ID, &d.Name, &desc, &d.Enabled, &d.Weight, &d.CooldownSec,
-		&d.TriggerType, &tp, &d.CompletionType, &cp, &d.Message, &d.RewardExp, &d.RewardDp)
+		&d.TriggerType, &tp, &d.CompletionType, &cp, &d.Message, &d.ImageURL, &d.RewardExp, &d.RewardDp)
 	if err != nil {
 		return d, err
 	}
@@ -147,7 +148,7 @@ func scanDef(row pgx.Row) (EventDef, error) {
 	return d, nil
 }
 
-const defCols = `id, name, description, enabled, weight, cooldown_sec, trigger_type, trigger_params, completion_type, completion_params, message, reward_exp, reward_dp`
+const defCols = `id, name, description, enabled, weight, cooldown_sec, trigger_type, trigger_params, completion_type, completion_params, message, image_url, reward_exp, reward_dp`
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(), `SELECT `+defCols+` FROM event_task_defs ORDER BY created_at DESC`)
@@ -206,11 +207,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	cp, _ := json.Marshal(d.CompletionParams)
 	out, err := scanDef(h.db.QueryRow(r.Context(), `
 		INSERT INTO event_task_defs (name, description, enabled, weight, cooldown_sec,
-			trigger_type, trigger_params, completion_type, completion_params, message, reward_exp, reward_dp)
-		VALUES ($1,NULLIF($2,''),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			trigger_type, trigger_params, completion_type, completion_params, message, image_url, reward_exp, reward_dp)
+		VALUES ($1,NULLIF($2,''),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING `+defCols,
 		d.Name, d.Description, d.Enabled, d.Weight, d.CooldownSec,
-		d.TriggerType, tp, d.CompletionType, cp, d.Message, d.RewardExp, d.RewardDp))
+		d.TriggerType, tp, d.CompletionType, cp, d.Message, d.ImageURL, d.RewardExp, d.RewardDp))
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "建立失敗")
 		return
@@ -229,10 +230,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	out, err := scanDef(h.db.QueryRow(r.Context(), `
 		UPDATE event_task_defs SET name=$2, description=NULLIF($3,''), enabled=$4, weight=$5, cooldown_sec=$6,
 			trigger_type=$7, trigger_params=$8, completion_type=$9, completion_params=$10,
-			message=$11, reward_exp=$12, reward_dp=$13, updated_at=NOW()
+			message=$11, image_url=$12, reward_exp=$13, reward_dp=$14, updated_at=NOW()
 		WHERE id=$1 RETURNING `+defCols,
 		id, d.Name, d.Description, d.Enabled, d.Weight, d.CooldownSec,
-		d.TriggerType, tp, d.CompletionType, cp, d.Message, d.RewardExp, d.RewardDp))
+		d.TriggerType, tp, d.CompletionType, cp, d.Message, d.ImageURL, d.RewardExp, d.RewardDp))
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "更新失敗")
 		return

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminEventsApi, type EventDef, type EventTypeSpec } from '@/lib/api'
+import { adminEventsApi, adminImagesApi, type EventDef, type EventTypeSpec } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import DpCoin from '@/components/DpCoin'
 
@@ -11,7 +11,7 @@ function emptyDef(tCat: EventTypeSpec[], cCat: EventTypeSpec[]): EventDef {
     name: '', description: '', enabled: true, weight: 100, cooldown_sec: 300,
     trigger_type: tCat[0]?.key ?? '', trigger_params: {},
     completion_type: cCat[0]?.key ?? '', completion_params: {},
-    message: '', reward_exp: 0, reward_dp: 0,
+    message: '', image_url: '', reward_exp: 0, reward_dp: 0,
   }
 }
 
@@ -26,6 +26,14 @@ export default function AdminEventsPage() {
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  const [imgUploading, setImgUploading] = useState(false)
+
+  async function uploadImg(file: File) {
+    if (!token || !edit) return
+    setImgUploading(true); setErr('')
+    try { const { url } = await adminImagesApi.upload(token, file); setEdit((e) => e ? { ...e, image_url: url } : e) }
+    catch (e: any) { setErr(e?.message || '圖片上傳失敗') } finally { setImgUploading(false) }
+  }
 
   const load = useCallback(() => {
     const t = getToken()
@@ -127,6 +135,22 @@ export default function AdminEventsPage() {
             <Field label="觸發文案（跑者看到的劇情）" grow>
               <textarea style={{ ...inp, minHeight: 60, resize: 'vertical' }} value={edit.message} onChange={(e) => setEdit({ ...edit, message: e.target.value })} placeholder="後方有三隻狗往你衝過來，請趕快跑起來！" />
             </Field>
+          </div>
+
+          {/* 事件插圖（前台橫幅顯示，增加沉浸感） */}
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 4 }}>事件插圖（前台橫幅顯示，如狗群插圖）</div>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              {edit.image_url
+                ? <img src={edit.image_url} alt="事件插圖" style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--line-2)' }} />
+                : <div style={{ width: 72, height: 72, borderRadius: 10, border: '1px dashed var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tx-faint)', fontSize: 22 }}>🐾</div>}
+              <label style={{ ...ghostBtn, display: 'inline-block' }}>
+                {imgUploading ? '上傳中…' : (edit.image_url ? '更換圖片' : '上傳圖片')}
+                <input type="file" accept="image/*" style={{ display: 'none' }} disabled={imgUploading}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImg(f); e.target.value = '' }} />
+              </label>
+              {edit.image_url && <button onClick={() => setEdit({ ...edit, image_url: '' })} style={{ ...ghostBtn, color: 'var(--hunt)' }}>移除</button>}
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
             <Field label="完成獎勵 EXP"><input style={{ ...inp, width: 110 }} type="number" value={edit.reward_exp} onChange={(e) => setEdit({ ...edit, reward_exp: parseInt(e.target.value || '0', 10) })} /></Field>

@@ -330,6 +330,7 @@ export interface EventDef {
   completion_type: string
   completion_params: Record<string, number>
   message: string
+  image_url?: string
   reward_exp: number
   reward_dp: number
 }

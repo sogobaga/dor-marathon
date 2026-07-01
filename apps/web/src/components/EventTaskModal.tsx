@@ -38,6 +38,7 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
           {ready ? `準備 ${readyRemain}` : `${remain}s`}
         </span>
       </div>
+      {def.image_url && <img src={def.image_url} alt="" style={{ width: '100%', height: 120, objectFit: 'cover', borderRadius: 8, margin: '8px 0 2px', display: 'block' }} />}
       <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>{def.message || def.name}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 5 }}>
         <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>目標：{goalText(def)}</span>
