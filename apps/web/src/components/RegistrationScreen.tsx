@@ -347,7 +347,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const manyGroups = (detail?.groups.length ?? 0) > 8
 
   return (
-    <div className="app-screen" style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)', position: 'relative' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)', position: 'relative' }}>
       <header style={{ padding: '52px 22px 14px', flexShrink: 0 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <h1 style={{ margin: '10px 0 2px', fontSize: 22, fontWeight: 800, color: 'var(--tx)' }}>{race.title}</h1>

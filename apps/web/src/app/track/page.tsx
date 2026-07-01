@@ -230,7 +230,7 @@ export default function TrackPage() {
 
   return (
    <GoogleAuthProvider>
-    <PhoneFrame fixed>
+    <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
       <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         <a href="/" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 返回</a>
@@ -241,7 +241,7 @@ export default function TrackPage() {
       {/* 地圖 */}
       <div id="gps-map" style={{ width: '100%', height: 280, background: 'var(--bg-2)' }} />
 
-      <ScrollArea padding="16" fixed>
+      <ScrollArea padding="16">
         {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, wordBreak: 'break-word' }}>⚠️ {warn}</div>}
         {err && <div style={{ color: 'var(--hunt)', fontSize: 13, marginBottom: 12 }}>{err}</div>}
 

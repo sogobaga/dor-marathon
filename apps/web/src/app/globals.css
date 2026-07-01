@@ -50,23 +50,11 @@ html, body {
   background: var(--bg);
 }
 
-/* 手機：改為「文件流」捲動（body 為主捲動體）→ 內容超過一頁時，Chrome/Safari 的
-   底部工具列會隨捲動自動隱藏/顯示（如一般網頁）。需固定畫面的頁面（如 /track 現場地圖）
-   在容器加 .is-fixed 維持 app-shell（畫面固定、內層捲動）。 */
+/* 在真實手機上直接全屏（app-shell：外框固定、內層 ScrollArea 捲動）。
+   完全無瀏覽器介面的沉浸體驗＝將本站「加入主畫面」以 PWA standalone 啟動。 */
 @media (max-width: 430px) {
-  html, body { height: auto; min-height: 100%; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-  .phone-frame { display: block; padding: 0; height: auto; min-height: 100dvh; overflow: visible; }
-  .phone-shell { width: 100% !important; height: auto !important; min-height: 100dvh; border-radius: 0 !important; border: none !important; box-shadow: none !important; overflow: visible !important; }
-  .app-shell-body { position: static !important; inset: auto !important; height: auto !important; overflow: visible !important; }
-  .app-screen { height: auto !important; min-height: 100dvh; }
-  .app-scroll { flex: none !important; min-height: 0 !important; overflow: visible !important; }
-  .app-scroll-inner { min-height: 0 !important; }
-
-  /* .is-fixed：維持 app-shell（畫面固定、內層捲動；工具列不隱藏）— 給需固定的頁面 */
-  .phone-frame.is-fixed { height: 100dvh; min-height: 0; overflow: hidden; }
-  .phone-shell.is-fixed { height: 100dvh !important; min-height: 0; overflow: hidden !important; }
-  .app-shell-body.is-fixed { position: absolute !important; inset: 0 !important; height: auto !important; overflow: hidden !important; }
-  .app-scroll.is-fixed { flex: 1 !important; overflow: scroll !important; }
+  .phone-frame { display: block; padding: 0; height: 100dvh; min-height: 0; overflow: hidden; }
+  .phone-shell { width: 100% !important; height: 100dvh !important; border-radius: 0 !important; border: none !important; box-shadow: none !important; }
 }
 
 /* iOS 模擬外框 */

@@ -31,8 +31,8 @@ export default function PhoneShell() {
 
   return (
     <GoogleAuthProvider>
-    <div className="phone-shell">
-      {/* iOS notch（僅 PC 模擬框顯示） */}
+    <div className={isMobile ? 'w-full h-dvh' : 'phone-shell'}>
+      {/* iOS notch */}
       {!isMobile && (
         <div style={{
           position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
@@ -41,7 +41,7 @@ export default function PhoneShell() {
       )}
 
       {/* App content 區域 */}
-      <div className="app-shell-body" style={{
+      <div style={{
         position: 'absolute',
         inset: 0,
         paddingTop: isMobile ? 'env(safe-area-inset-top)' : 0,

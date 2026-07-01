@@ -54,7 +54,7 @@ export default function RacesScreen({
   const regs = data?.registrations || {}
 
   return (
-    <div className="app-screen" style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       {/* Header（精簡品牌列；登出置最右上角） */}
       <header style={{ padding: '52px 22px 10px', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
         <div style={{ fontSize: 11, letterSpacing: '.18em', color: 'var(--fug)', fontWeight: 600 }}>
@@ -69,9 +69,9 @@ export default function RacesScreen({
       </header>
 
       {/* Body */}
-      <div className="app-scroll" style={{ flex: 1, overflowY: 'scroll', WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'auto' }}>
+      <div style={{ flex: 1, overflowY: 'scroll', WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'auto' }}>
         {/* minHeight 比容器高 1px → 內容沒滿版時也可滑動，保留 iOS 回彈手感 */}
-        <div className="app-scroll-inner" style={{ minHeight: 'calc(100% + 1px)', padding: '4px 18px 28px' }}>
+        <div style={{ minHeight: 'calc(100% + 1px)', padding: '4px 18px 28px' }}>
         {/* 會員資訊面板 */}
         <MemberPanel onOpenProfile={onOpenProfile} />
 
