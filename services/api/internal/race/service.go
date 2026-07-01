@@ -33,6 +33,7 @@ var (
 	ErrAddonSoldOut        = errors.New("addon sold out")
 	ErrOrderNotFound        = errors.New("order not found")
 	ErrRegistrationNotFound = errors.New("registration not found")
+	ErrCheckinNotFound      = errors.New("checkin not found or already reviewed")
 	ErrRegistrationPaused   = errors.New("此賽事目前暫停報名")
 	ErrGroupKeyWrong        = errors.New("跑團鑰匙錯誤")
 	ErrTeamGroupsDisabled   = errors.New("此賽事未開放跑團分組申請")

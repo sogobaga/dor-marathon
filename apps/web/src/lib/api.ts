@@ -1102,6 +1102,33 @@ export const adminSignupsApi = {
     request<void>(`/admin/signups/${regID}/group`, { method: 'PATCH', headers: withAuth(token), body: JSON.stringify({ group_id: groupID }) }),
 }
 
+export interface PendingCheckin {
+  id: string
+  user_name: string
+  user_email: string
+  checkpoint_id: string
+  checkpoint_name: string
+  task_title: string
+  lat: number
+  lng: number
+  cp_lat: number
+  cp_lng: number
+  radius_m: number
+  accuracy: number
+  distance_m: number
+  flag_reason: string
+  checked_at: string
+}
+
+export const adminCheckinReviewApi = {
+  list: (token: string, raceID: string) =>
+    request<{ checkins: PendingCheckin[]; count: number }>(`/admin/checkin-review?race_id=${encodeURIComponent(raceID)}`, { headers: withAuth(token) }),
+  approve: (token: string, checkinID: string) =>
+    request<void>(`/admin/checkin-review/${checkinID}/approve`, { method: 'PATCH', headers: withAuth(token) }),
+  reject: (token: string, checkinID: string) =>
+    request<void>(`/admin/checkin-review/${checkinID}/reject`, { method: 'PATCH', headers: withAuth(token) }),
+}
+
 export const adminOrdersApi = {
   list: (token: string, params?: { race_id?: string; status?: string }) => {
     const qs = new URLSearchParams()

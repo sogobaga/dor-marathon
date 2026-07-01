@@ -71,6 +71,25 @@ type ActiveCheckpoint struct {
 	Pending   bool    `json:"pending"`
 }
 
+// PendingCheckin 後台待審核的打卡（flagged=true）：含會員、打卡點、位置與佐證資訊
+type PendingCheckin struct {
+	ID             string    `json:"id"`
+	UserName       string    `json:"user_name"`
+	UserEmail      string    `json:"user_email"`
+	CheckpointID   string    `json:"checkpoint_id"`
+	CheckpointName string    `json:"checkpoint_name"`
+	TaskTitle      string    `json:"task_title"`
+	Lat            float64   `json:"lat"`     // 會員打卡當下位置
+	Lng            float64   `json:"lng"`
+	CpLat          float64   `json:"cp_lat"`  // 打卡點座標
+	CpLng          float64   `json:"cp_lng"`
+	RadiusM        int       `json:"radius_m"`
+	Accuracy       float64   `json:"accuracy"`
+	DistanceM      float64   `json:"distance_m"`
+	FlagReason     string    `json:"flag_reason"`
+	CheckedAt      time.Time `json:"checked_at"`
+}
+
 // --- Repository ---
 
 type checkpointInfo struct {
@@ -240,6 +259,54 @@ func (r *Repository) checkpointCompletion(ctx context.Context, raceID string) (m
 	return done, cr.Err()
 }
 
+// listPendingCheckins 某賽事所有待審核（flagged）打卡
+func (r *Repository) listPendingCheckins(ctx context.Context, raceID string) ([]PendingCheckin, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT ci.id::text, u.name, u.email, ci.checkpoint_id::text,
+		       COALESCE(tc.title,''), COALESCE(rt.title,''),
+		       ci.lat, ci.lng, tc.lat, tc.lng, tc.radius_m,
+		       COALESCE(ci.accuracy,0), COALESCE(ci.distance_m,0), COALESCE(ci.flag_reason,''), ci.checked_at
+		FROM checkpoint_checkins ci
+		JOIN users u ON u.id = ci.user_id
+		JOIN task_checkpoints tc ON tc.id = ci.checkpoint_id
+		JOIN race_tasks rt ON rt.id = tc.task_id
+		WHERE ci.race_id = $1 AND ci.flagged
+		ORDER BY ci.checked_at ASC`, raceID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending checkins: %w", err)
+	}
+	defer rows.Close()
+	out := []PendingCheckin{}
+	for rows.Next() {
+		var p PendingCheckin
+		if err := rows.Scan(&p.ID, &p.UserName, &p.UserEmail, &p.CheckpointID,
+			&p.CheckpointName, &p.TaskTitle, &p.Lat, &p.Lng, &p.CpLat, &p.CpLng, &p.RadiusM,
+			&p.Accuracy, &p.DistanceM, &p.FlagReason, &p.CheckedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// approveCheckin 核准：flagged=false → 計入集章。回傳是否有更新到（找不到/已非待審=false）
+func (r *Repository) approveCheckin(ctx context.Context, checkinID string) (bool, error) {
+	tag, err := r.db.Exec(ctx, `UPDATE checkpoint_checkins SET flagged=false, flag_reason=NULL WHERE id=$1 AND flagged`, checkinID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// rejectCheckin 退回：刪除該筆待審打卡（會員可重新打卡）。
+func (r *Repository) rejectCheckin(ctx context.Context, checkinID string) (bool, error) {
+	tag, err := r.db.Exec(ctx, `DELETE FROM checkpoint_checkins WHERE id=$1 AND flagged`, checkinID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // --- Service ---
 
 // CheckIn 會員對某打卡點打卡：伺服器重算距離 + 精度 + 時間窗 + 軌跡佐證
@@ -323,6 +390,29 @@ func (s *Service) ActiveCheckpoints(ctx context.Context, userID string) ([]Activ
 	return s.repo.activeCheckpointsForUser(ctx, userID)
 }
 
+// ListPendingCheckins 後台：某賽事待審核打卡
+func (s *Service) ListPendingCheckins(ctx context.Context, raceID string) ([]PendingCheckin, error) {
+	return s.repo.listPendingCheckins(ctx, raceID)
+}
+
+// ReviewCheckin 後台核准/退回一筆待審打卡。approve=true 核准；false 退回。
+func (s *Service) ReviewCheckin(ctx context.Context, checkinID string, approve bool) error {
+	var ok bool
+	var err error
+	if approve {
+		ok, err = s.repo.approveCheckin(ctx, checkinID)
+	} else {
+		ok, err = s.repo.rejectCheckin(ctx, checkinID)
+	}
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrCheckinNotFound
+	}
+	return nil
+}
+
 // --- Handler ---
 
 // CheckpointRouter 打卡相關路由（掛載在 /api/v1/checkpoints，需登入）
@@ -371,4 +461,52 @@ func (h *Handler) Checkin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"result": res})
+}
+
+// --- 後台：打卡審核 ---
+
+// CheckinReviewRouter 打卡審核路由（掛載在 /api/v1/admin/checkin-review）
+func (h *Handler) CheckinReviewRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/", h.AdminListPendingCheckins)
+	r.Patch("/{checkinID}/approve", h.AdminApproveCheckin)
+	r.Patch("/{checkinID}/reject", h.AdminRejectCheckin)
+	return r
+}
+
+// GET /api/v1/admin/checkin-review?race_id=
+func (h *Handler) AdminListPendingCheckins(w http.ResponseWriter, r *http.Request) {
+	raceID := r.URL.Query().Get("race_id")
+	if raceID == "" {
+		respondErr(w, http.StatusBadRequest, "race_id is required")
+		return
+	}
+	list, err := h.svc.ListPendingCheckins(r.Context(), raceID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list pending checkins")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"checkins": list, "count": len(list)})
+}
+
+// PATCH /api/v1/admin/checkin-review/{checkinID}/approve
+func (h *Handler) AdminApproveCheckin(w http.ResponseWriter, r *http.Request) {
+	h.reviewCheckin(w, r, true)
+}
+
+// PATCH /api/v1/admin/checkin-review/{checkinID}/reject
+func (h *Handler) AdminRejectCheckin(w http.ResponseWriter, r *http.Request) {
+	h.reviewCheckin(w, r, false)
+}
+
+func (h *Handler) reviewCheckin(w http.ResponseWriter, r *http.Request, approve bool) {
+	err := h.svc.ReviewCheckin(r.Context(), chi.URLParam(r, "checkinID"), approve)
+	switch {
+	case err == ErrCheckinNotFound:
+		respondErr(w, http.StatusNotFound, "打卡不存在或已審核")
+	case err != nil:
+		respondErr(w, http.StatusInternalServerError, "failed to review checkin")
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }

@@ -43,6 +43,7 @@ const NAV: { grp: string; items: NavItem[] }[] = [
       { k: 'orders', t: '訂單管理', href: '/admin/orders', perm: 'orders' },
       { k: 'promo', t: '序號管理', href: '/admin/promo', perm: 'promo' },
       { k: 'gps-review', t: 'GPS 審核', href: '/admin/gps-review', perm: 'gps_review' },
+      { k: 'checkin-review', t: '打卡審核', href: '/admin/checkin-review', perm: 'gps_review' },
       { k: 'whitelist', t: '測試白名單', href: '/admin/settings', perm: 'settings' },
       { k: 'audit', t: '操作紀錄', href: '/admin/audit', super: true },
       { k: 'admins', t: '管理者', href: '/admin/admins', super: true },
