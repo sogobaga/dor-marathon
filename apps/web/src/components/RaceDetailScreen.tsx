@@ -8,6 +8,7 @@ import { renderCertificate, downloadDataURL } from '@/lib/certificate'
 import ExpSettlementModal from './ExpSettlementModal'
 import { BrochureBody } from './BrochureScreen'
 import { RankingBody } from './RaceRankingScreen'
+import { ExploreBody } from './ExploreBody'
 import ScrollArea from './ScrollArea'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -27,7 +28,7 @@ function paceFmt(sec: number) {
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
 }
 
-type Tab = 'brochure' | 'progress' | 'rank'
+type Tab = 'brochure' | 'progress' | 'explore' | 'rank'
 
 export default function RaceDetailScreen({
   race, onBack, onRegister, initialTab,
@@ -81,6 +82,9 @@ export default function RaceDetailScreen({
   const battleMode = race.event_mode === 'competition' || race.event_mode === 'faction_battle'
   const defaultTab: Tab = race.display_status === 'racing' ? 'progress' : race.display_status === 'ended' ? 'rank' : 'brochure'
   const [tab, setTab] = useState<Tab>(initialTab ?? defaultTab)
+  // 是否有打卡點任務 → 決定是否顯示「探索」頁籤（與 ProgressBody 共用同一 SWR key，去重）
+  const { data: progData } = useSWR(['progress', race.id], () => racesApi.progress(race.id, token))
+  const hasCheckpoints = (progData?.progress.tasks ?? []).some((t) => t.metric_type === 'checkpoint')
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
@@ -182,7 +186,7 @@ export default function RaceDetailScreen({
 
         {/* 頁籤 */}
         <div style={{ display: 'flex', gap: 6, margin: '16px 0 14px', borderBottom: '1px solid var(--line)' }}>
-          {([['brochure', '簡章'], ['progress', '進度'], ['rank', '排名']] as const).map(([v, label]) => (
+          {(([['brochure', '簡章'], ['progress', '進度'], ...(hasCheckpoints ? [['explore', '探索']] : []), ['rank', '排名']]) as [Tab, string][]).map(([v, label]) => (
             <button key={v} onClick={() => setTab(v)} style={{
               padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14,
               color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 700 : 400,
@@ -197,6 +201,7 @@ export default function RaceDetailScreen({
 
         {tab === 'brochure' && (detail ? <BrochureBody detail={detail} /> : <Hint>載入中…</Hint>)}
         {tab === 'progress' && <ProgressBody race={race} />}
+        {tab === 'explore' && <ExploreBody race={race} />}
         {tab === 'rank' && <RankingBody race={race} />}
       </ScrollArea>
 

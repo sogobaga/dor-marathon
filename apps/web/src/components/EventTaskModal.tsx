@@ -20,8 +20,13 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t) }, [])
   const remain = Math.max(0, Math.ceil((active.deadline - now) / 1000))
   const def = active.def
-  const target = def.completion_type === 'move_more' ? (def.completion_params.target_m ?? 0) : 0
-  const pct = target > 0 ? Math.max(0, Math.min(100, (moved / target) * 100)) : 0
+  const isLess = def.completion_type === 'move_less'
+  // move_more：目標距離（填滿＝完成）；move_less：上限距離（填滿＝失敗，越接近越危險）
+  const limit = isLess ? (def.completion_params.max_m ?? 0) : (def.completion_params.target_m ?? 0)
+  const pct = limit > 0 ? Math.max(0, Math.min(100, (moved / limit) * 100)) : 0
+  const barColor = isLess
+    ? (pct > 80 ? 'linear-gradient(90deg,#ff6b6b,#ff4b5c)' : 'linear-gradient(90deg,#FFC24B,#ff8a4b)')
+    : 'linear-gradient(90deg,#FFD24D,#46E3A0)'
 
   return (
     <div style={{ ...banner, borderColor: 'rgba(255,194,75,.5)' }}>
@@ -31,10 +36,17 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
       </div>
       <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>{def.message || def.name}</div>
       <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4 }}>目標：{goalText(def)}</div>
-      {target > 0 && (
+      {limit > 0 && (
         <>
-          <div style={barOuter}><div style={{ ...barInner, width: `${pct}%` }} /></div>
-          <div style={{ fontSize: 11, color: 'var(--tx-faint)', textAlign: 'right', marginTop: 3 }}>已移動 {Math.round(moved)} / {Math.round(target)} m</div>
+          <div style={barOuter}><div style={{ ...barInner, width: `${pct}%`, background: barColor }} /></div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 3 }}>
+            <span style={{ color: isLess ? (pct > 80 ? 'var(--hunt)' : 'var(--tx-faint)') : 'var(--tx-faint)' }}>
+              {isLess ? '不可超過上限' : '達標即完成'}
+            </span>
+            <span style={{ color: 'var(--tx)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+              已移動 {Math.round(moved)} / {Math.round(limit)} m
+            </span>
+          </div>
         </>
       )}
     </div>
