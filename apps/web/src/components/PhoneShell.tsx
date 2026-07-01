@@ -45,6 +45,7 @@ export default function PhoneShell() {
         position: 'absolute',
         inset: 0,
         paddingTop: isMobile ? 'env(safe-area-inset-top)' : 0,
+        paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : 0,
         overflow: 'hidden',
       }}>
         {/* 賽事列表 / 賽事資訊(簡章·進度·排名) / 報名 / 個人資訊 — 串接 Go API 真實資料 */}

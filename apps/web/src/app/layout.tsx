@@ -5,8 +5,15 @@ export const metadata: Metadata = {
   title: 'DOR 雲端馬拉松',
   description: '獵人 vs 逃亡者 — 城市配速挑戰賽',
   manifest: '/manifest.json',
+  icons: {
+    icon: [
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: '/apple-touch-icon.png', // iOS 加入主畫面的圖示
+  },
   appleWebApp: {
-    capable: true,
+    capable: true, // iOS 從主畫面啟動時全螢幕（無瀏覽器介面）
     statusBarStyle: 'black-translucent',
     title: 'DOR',
   },

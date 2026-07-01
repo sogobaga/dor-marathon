@@ -16,6 +16,7 @@ export default function PhoneFrame({ children }: { children: ReactNode }) {
         <div style={{
           position: 'absolute', inset: 0,
           paddingTop: isMobile ? 'env(safe-area-inset-top)' : 0,
+          paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : 0,
           display: 'flex', flexDirection: 'column',
           background: 'var(--bg)', color: 'var(--tx)',
         }}>
