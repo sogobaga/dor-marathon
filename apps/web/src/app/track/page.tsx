@@ -56,6 +56,7 @@ export default function TrackPage() {
   const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null)
   const [eventMoved, setEventMoved] = useState(0)
   const [eventResult, setEventResult] = useState<EventResult | null>(null)
+  const [mapReady, setMapReady] = useState(false)
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -67,6 +68,7 @@ export default function TrackPage() {
   const mapRef = useRef<any>(null)
   const lineRef = useRef<any>(null)
   const markRef = useRef<any>(null)
+  const cpLayerRef = useRef<any>(null) // 地圖上的打卡點圖層
   const warnTimer = useRef<any>(null)
   const statusRef = useRef(status)
   statusRef.current = status
@@ -85,8 +87,10 @@ export default function TrackPage() {
     const map = L.map('gps-map', { zoomControl: true }).setView([lat, lng], 16)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map)
     lineRef.current = L.polyline([], { color: '#46E3A0', weight: 5 }).addTo(map)
+    cpLayerRef.current = L.layerGroup().addTo(map)
     markRef.current = L.circleMarker([lat, lng], { radius: 7, color: '#fff', fillColor: '#46E3A0', fillOpacity: 1, weight: 2 }).addTo(map)
     mapRef.current = map
+    setMapReady(true)
   }, [])
 
   const onPos = useCallback((pos: GeolocationPosition) => {
@@ -315,6 +319,20 @@ export default function TrackPage() {
   }, [])
   useEffect(() => { fetchEventDefs() }, [fetchEventDefs, user?.id])
 
+  // 在跑步地圖上標出打卡點（已打卡綠/待審金/未打卡灰）→ 邊跑邊探索、就近打卡
+  useEffect(() => {
+    if (!mapReady || !mapRef.current || !cpLayerRef.current) return
+    loadLeaflet().then((L) => {
+      const layer = cpLayerRef.current
+      layer.clearLayers()
+      checkpoints.forEach((cp) => {
+        const color = cp.checked ? '#46E3A0' : cp.pending ? '#FFC24B' : '#9aa0a6'
+        L.circle([cp.lat, cp.lng], { radius: cp.radius_m || 20, color, weight: 1.5, fillOpacity: 0.1 }).addTo(layer)
+        L.circleMarker([cp.lat, cp.lng], { radius: 6, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(layer).bindTooltip(cp.title || '打卡點')
+      })
+    })
+  }, [checkpoints, mapReady])
+
   async function doCheckin(cp: ActiveCheckpoint) {
     setCpMsg('')
     const token = getUserToken()
@@ -351,9 +369,14 @@ export default function TrackPage() {
     <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
       <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
-        <a href="/" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 返回</a>
+        {/* 跑步期間隱藏「返回/歷史」，避免誤離開而中斷；只能按「結束並上傳」正常結束 */}
+        {status === 'tracking'
+          ? <span style={{ color: 'var(--hunt)', fontSize: 13, fontWeight: 700 }}>● 跑步中</span>
+          : <a href="/" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 返回</a>}
         <strong style={{ fontSize: 16 }}>GPS 跑步追蹤</strong>
-        <a href="/track/history" style={{ color: 'var(--fug)', fontSize: 13, textDecoration: 'none' }}>歷史</a>
+        {status === 'tracking'
+          ? <span style={{ width: 32 }} />
+          : <a href="/track/history" style={{ color: 'var(--fug)', fontSize: 13, textDecoration: 'none' }}>歷史</a>}
       </header>
 
       {/* 地圖（事件橫幅直接疊在地圖上方，任務結束才收起；地圖與數據不位移） */}
@@ -372,6 +395,11 @@ export default function TrackPage() {
       </div>
 
       <ScrollArea padding="16">
+        {status === 'tracking' && curPos && (
+          <div style={{ fontSize: 11.5, marginBottom: 10, color: curPos.acc > MAX_ACC ? 'var(--hunt)' : 'var(--tx-faint)' }}>
+            📶 GPS 精度 ±{Math.round(curPos.acc)}m{curPos.acc > MAX_ACC ? '（訊號弱，移動可能未計入 → 請到空曠處）' : '（正常）'}
+          </div>
+        )}
         {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, wordBreak: 'break-word' }}>⚠️ {warn}</div>}
         {err && <div style={{ color: 'var(--hunt)', fontSize: 13, marginBottom: 12 }}>{err}</div>}
 
