@@ -3,21 +3,23 @@
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { clearToken } from '@/lib/adminAuth'
+import { clearToken, getToken } from '@/lib/adminAuth'
+import { adminMeApi, type AdminAccount } from '@/lib/api'
 import VersionBadge from './VersionBadge'
 
 type View = 'pc' | 'mobile'
 const VIEW_KEY = 'dor_admin_view'
 
-// 後台功能列表（左側導覽）。目前僅「賽事管理」已實作，其餘為規劃中項目（淡色、暫不可點）。
-const NAV: { grp: string; items: { k: string; t: string; href?: string }[] }[] = [
+// 後台功能列表（左側導覽）。perm＝需要的模組權限（無 perm＝任何 admin 可見）；super＝僅超級管理員。
+type NavItem = { k: string; t: string; href?: string; perm?: string; super?: boolean }
+const NAV: { grp: string; items: NavItem[] }[] = [
   {
     grp: '營運',
     items: [
       { k: 'dash', t: '數據總覽' },
-      { k: 'races', t: '賽事管理', href: '/admin/races' },
-      { k: 'members', t: '會員管理', href: '/admin/members' },
-      { k: 'signups', t: '報名管理', href: '/admin/signups' },
+      { k: 'races', t: '賽事管理', href: '/admin/races', perm: 'races' },
+      { k: 'members', t: '會員管理', href: '/admin/members', perm: 'members' },
+      { k: 'signups', t: '報名管理', href: '/admin/signups', perm: 'signups' },
       { k: 'teams', t: '跑團管理' },
       { k: 'notifications', t: '推播通知' },
     ],
@@ -26,8 +28,8 @@ const NAV: { grp: string; items: { k: string; t: string; href?: string }[] }[] =
     grp: '遊戲設定',
     items: [
       { k: 'factions', t: '陣營設定' },
-      { k: 'task-modules', t: '賽事任務', href: '/admin/task-modules' },
-      { k: 'levels', t: '等級設定', href: '/admin/levels' },
+      { k: 'task-modules', t: '賽事任務', href: '/admin/task-modules', perm: 'tasks' },
+      { k: 'levels', t: '等級設定', href: '/admin/levels', perm: 'settings' },
       { k: 'missions', t: '每日任務' },
       { k: 'stores', t: '打卡門市' },
       { k: 'mileage', t: '里程規則' },
@@ -38,26 +40,35 @@ const NAV: { grp: string; items: { k: string; t: string; href?: string }[] }[] =
   {
     grp: '系統管理',
     items: [
-      { k: 'orders', t: '訂單管理', href: '/admin/orders' },
-      { k: 'promo', t: '序號管理', href: '/admin/promo' },
-      { k: 'gps-review', t: 'GPS 審核', href: '/admin/gps-review' },
-      { k: 'whitelist', t: '測試白名單', href: '/admin/settings' },
+      { k: 'orders', t: '訂單管理', href: '/admin/orders', perm: 'orders' },
+      { k: 'promo', t: '序號管理', href: '/admin/promo', perm: 'promo' },
+      { k: 'gps-review', t: 'GPS 審核', href: '/admin/gps-review', perm: 'gps_review' },
+      { k: 'whitelist', t: '測試白名單', href: '/admin/settings', perm: 'settings' },
       { k: 'audit', t: '操作紀錄' },
-      { k: 'admins', t: '管理員' },
-      { k: 'permissions', t: '權限' },
+      { k: 'admins', t: '管理者', href: '/admin/admins', super: true },
       { k: 'i18n', t: '多語言' },
     ],
   },
 ]
 
+// 依當前管理者權限決定某項目是否顯示。me=null（載入中）→ 只顯示無權限限制的項目。
+function canSee(it: NavItem, me: AdminAccount | null): boolean {
+  if (it.super) return !!me?.is_super
+  if (it.perm) return !!me && (me.is_super || me.permissions.includes(it.perm))
+  return true
+}
+
 export default function AdminShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const [view, setViewState] = useState<View>('pc')
+  const [me, setMe] = useState<AdminAccount | null>(null)
 
   useEffect(() => {
     const saved = (typeof window !== 'undefined' && localStorage.getItem(VIEW_KEY)) as View | null
     if (saved === 'pc' || saved === 'mobile') setViewState(saved)
+    const token = getToken()
+    if (token) adminMeApi.get(token).then((r) => setMe(r.admin)).catch(() => {})
   }, [])
 
   function setView(v: View) {
@@ -146,7 +157,10 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
         </div>
 
         <nav style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {NAV.map((g) => (
+          {NAV.map((g) => {
+            const items = g.items.filter((it) => canSee(it, me))
+            if (items.length === 0) return null
+            return (
             <div key={g.grp}>
               <div
                 style={{
@@ -159,7 +173,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
               >
                 {g.grp}
               </div>
-              {g.items.map((it) => {
+              {items.map((it) => {
                 const active = !!it.href && pathname.startsWith(it.href)
                 const base: React.CSSProperties = {
                   display: 'flex',
@@ -198,7 +212,8 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
                 )
               })}
             </div>
-          ))}
+            )
+          })}
         </nav>
 
         <div

@@ -908,6 +908,31 @@ export interface MemberDetail extends MemberSummary {
   athlete: AthleteStats
 }
 
+// --- 後台管理者帳號 + 權限 ---
+export interface AdminScope { key: string; label: string }
+export interface AdminAccount {
+  id: string
+  login: string
+  name: string
+  is_super: boolean
+  permissions: string[]
+  created_at: string
+}
+export interface AdminMe { admin: AdminAccount; scopes: AdminScope[] }
+
+export const adminMeApi = {
+  get: (token: string) => request<AdminMe>('/admin/me', { headers: withAuth(token) }),
+}
+export const adminAccountsApi = {
+  list: (token: string) => request<{ admins: AdminAccount[] }>('/admin/admins', { headers: withAuth(token) }),
+  create: (token: string, body: { login: string; password: string; name: string; is_super: boolean; permissions: string[] }) =>
+    request<{ admin: AdminAccount }>('/admin/admins', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, id: string, body: { name?: string; password?: string; is_super: boolean; permissions: string[] }) =>
+    request<{ admin: AdminAccount }>(`/admin/admins/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  remove: (token: string, id: string) =>
+    request<void>(`/admin/admins/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
 export const adminMembersApi = {
   list: (token: string, params?: { q?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams()

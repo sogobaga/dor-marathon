@@ -17,13 +17,14 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/activity"
+	"github.com/dor/api/internal/adminacct"
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/cache"
 	"github.com/dor/api/internal/config"
 	"github.com/dor/api/internal/db"
-	"github.com/dor/api/internal/middleware"
 	"github.com/dor/api/internal/image"
 	"github.com/dor/api/internal/integration"
+	"github.com/dor/api/internal/middleware"
 	"github.com/dor/api/internal/organizer"
 	"github.com/dor/api/internal/payment"
 	"github.com/dor/api/internal/profile"
@@ -109,6 +110,9 @@ func main() {
 
 	// Profile（完賽紀錄 + 個人統計）
 	profileHandler := profile.NewHandler(pool)
+
+	// Admin 帳號管理 + 各模組權限
+	adminAcctHandler := adminacct.NewHandler(pool)
 
 	// Image（圖片上傳，存 Postgres）
 	imageHandler := image.NewHandler(image.NewRepository(pool))
@@ -213,24 +217,30 @@ func main() {
 			r.Mount("/organizer", orgHandler.OrganizerRouter())
 		})
 
-		// --- Admin 端點（需 admin role）---
+		// --- Admin 端點（需 admin role；各模組再依 adminacct 權限把關）---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireAuth(authSvc))
 			r.Use(middleware.RequireAdmin)
-			r.Mount("/admin/races", raceHandler.AdminRouter())
-			r.Mount("/admin/group-presets", raceHandler.PresetRouter())
-			r.Mount("/admin/task-modules", raceHandler.TaskModuleRouter())
-			r.Mount("/admin/test-whitelist", raceHandler.TestWhitelistRouter())
-			r.Mount("/admin/images", imageHandler.AdminRouter())
-			r.Mount("/admin/signups", raceHandler.SignupRouter())
-			r.Mount("/admin/orders", raceHandler.OrderRouter())
-			r.Mount("/admin/promo-codes", promoHandler.Router())
-			r.Mount("/admin/members", profileHandler.AdminMembersRouter())
-			r.Mount("/admin/membership", profileHandler.MembershipAdminRouter())
-			r.Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
-			r.Put("/admin/settings", profileHandler.PutSettings)
-			r.Post("/admin/activities/add-mileage", actHandler.AdminAddMileage)
-			r.Mount("/admin/gps-runs", actHandler.AdminRouter())
+			perm := adminAcctHandler.RequirePerm
+			// 自己的身分與權限（任何 admin 皆可讀，前台用來決定選單）
+			r.Get("/admin/me", adminAcctHandler.Me)
+			// 管理者管理（僅超級管理員）
+			r.With(adminAcctHandler.RequireSuper).Mount("/admin/admins", adminAcctHandler.Router())
+
+			r.With(perm("races")).Mount("/admin/races", raceHandler.AdminRouter())
+			r.With(perm("races")).Mount("/admin/group-presets", raceHandler.PresetRouter())
+			r.With(perm("tasks")).Mount("/admin/task-modules", raceHandler.TaskModuleRouter())
+			r.With(perm("settings")).Mount("/admin/test-whitelist", raceHandler.TestWhitelistRouter())
+			r.Mount("/admin/images", imageHandler.AdminRouter()) // 共用工具，任何 admin 可上傳
+			r.With(perm("signups")).Mount("/admin/signups", raceHandler.SignupRouter())
+			r.With(perm("orders")).Mount("/admin/orders", raceHandler.OrderRouter())
+			r.With(perm("promo")).Mount("/admin/promo-codes", promoHandler.Router())
+			r.With(perm("members")).Mount("/admin/members", profileHandler.AdminMembersRouter())
+			r.With(perm("settings")).Mount("/admin/membership", profileHandler.MembershipAdminRouter())
+			r.With(perm("organizer")).Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
+			r.With(perm("settings")).Put("/admin/settings", profileHandler.PutSettings)
+			r.With(perm("gps_review")).Post("/admin/activities/add-mileage", actHandler.AdminAddMileage)
+			r.With(perm("gps_review")).Mount("/admin/gps-runs", actHandler.AdminRouter())
 		})
 	})
 

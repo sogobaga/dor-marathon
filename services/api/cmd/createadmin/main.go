@@ -42,14 +42,16 @@ func main() {
 	}
 	defer pool.Close()
 
-	// 以 email 欄位作為登入帳號；存在則更新密碼並確保 role=admin
+	// 以 email 欄位作為登入帳號；存在則更新密碼並確保 role=admin。
+	// CLI 建立的一律為超級管理員（bootstrap；可管理其他管理者與全部模組）。
 	_, err = pool.Exec(ctx, `
-		INSERT INTO users (email, handle, name, password_hash, role)
-		VALUES ($1, $1, $2, $3, 'admin')
+		INSERT INTO users (email, handle, name, password_hash, role, is_super_admin)
+		VALUES ($1, $1, $2, $3, 'admin', TRUE)
 		ON CONFLICT (email) DO UPDATE
-		  SET password_hash = EXCLUDED.password_hash,
-		      role          = 'admin',
-		      name          = EXCLUDED.name
+		  SET password_hash  = EXCLUDED.password_hash,
+		      role           = 'admin',
+		      name           = EXCLUDED.name,
+		      is_super_admin = TRUE
 	`, login, name, string(hash))
 	if err != nil {
 		log.Fatal().Err(err).Msg("upsert admin")
