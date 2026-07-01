@@ -155,7 +155,7 @@ func main() {
 		// 版號（公開）：v<base>.<commit>
 		r.Get("/version", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"version":%q,"base":%q,"commit":%q}`, version.Full(), version.Base, version.Commit())
+			fmt.Fprintf(w, `{"version":%q,"base":%q,"serial":%q,"commit":%q}`, version.Full(), version.Base, version.Serial, version.Commit())
 		})
 
 		// --- 公開端點 ---
