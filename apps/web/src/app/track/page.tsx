@@ -422,19 +422,29 @@ export default function TrackPage() {
   useEffect(() => { fetchEventDefs() }, [fetchEventDefs, user?.id])
 
   // 追蹤螢幕方向：橫向時顯示「轉回直立」提示（跨平台保底；真正鎖定見 start() 的 orientation.lock）
+  // 用 resize + orientationchange（iOS Safari 對 matchMedia 的 change 事件不可靠），並以視窗長寬保底判斷。
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return
-    const mq = window.matchMedia('(orientation: landscape)')
+    if (typeof window === 'undefined') return
     let t: any
-    const on = () => {
+    const isLand = () => (window.matchMedia?.('(orientation: landscape)').matches) ?? (window.innerWidth > window.innerHeight)
+    const check = () => {
       clearTimeout(t)
-      // 橫向需持續 ~0.7 秒才顯示提示（避免晃動瞬間翻轉狂閃）；轉回直立立即收起
-      if (mq.matches) t = setTimeout(() => setIsLandscape(true), 700)
+      // 橫向需持續 ~0.5 秒才顯示提示（避免晃動瞬間翻轉狂閃）；轉回直立立即收起。
+      // timeout 內再判一次，閃避 iOS 剛旋轉時回報舊尺寸的問題。
+      if (isLand()) t = setTimeout(() => { if (isLand()) setIsLandscape(true) }, 500)
       else setIsLandscape(false)
     }
-    on()
-    mq.addEventListener?.('change', on)
-    return () => { clearTimeout(t); mq.removeEventListener?.('change', on) }
+    check()
+    const mq = window.matchMedia?.('(orientation: landscape)')
+    window.addEventListener('resize', check)
+    window.addEventListener('orientationchange', check)
+    mq?.addEventListener?.('change', check)
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener('resize', check)
+      window.removeEventListener('orientationchange', check)
+      mq?.removeEventListener?.('change', check)
+    }
   }, [])
 
   // 在跑步地圖上標出打卡點（已打卡綠/待審金/未打卡灰）→ 邊跑邊探索、就近打卡
@@ -486,12 +496,12 @@ export default function TrackPage() {
    <GoogleAuthProvider>
     <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
-      {status === 'tracking' && isLandscape && (
+      {isLandscape && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'var(--bg-1, #0b0e13)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, textAlign: 'center' }}>
           <div style={{ fontSize: 46 }}>📱↻</div>
           <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)' }}>請將手機轉回直立</div>
           <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7, maxWidth: 300 }}>
-            跑步追蹤僅支援直式畫面。你的移動<strong style={{ color: 'var(--fug)' }}>仍在背景持續記錄</strong>，轉回直立即可繼續。<br />
+            此頁僅支援直式畫面。{status === 'tracking' && <>跑步中你的移動<strong style={{ color: 'var(--fug)' }}>仍在背景持續記錄</strong>，</>}轉回直立即可繼續。<br />
             建議把手機「自動旋轉」關閉，或將本站「加入主畫面」以固定直屏。
           </div>
         </div>
