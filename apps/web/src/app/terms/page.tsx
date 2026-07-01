@@ -1,14 +1,18 @@
 'use client'
 
+import PhoneFrame from '@/components/PhoneFrame'
+import ScrollArea from '@/components/ScrollArea'
+
 export default function TermsPage() {
   return (
-    <div style={wrap}>
+    <PhoneFrame>
       <header style={header}>
         <a href="/" style={back}>← 返回</a>
         <strong style={{ fontSize: 16 }}>服務條款與退款政策</strong>
         <span style={{ width: 36 }} />
       </header>
 
+      <ScrollArea>
       <div style={body}>
         <p style={{ ...p, color: 'var(--tx-faint)' }}>最後更新：2026 年 6 月</p>
 
@@ -50,7 +54,8 @@ export default function TermsPage() {
           DOR · 雲端馬拉松　·　<a href="/privacy" style={link}>隱私權政策</a>　·　<a href="/support" style={link}>支援與聯絡</a>
         </div>
       </div>
-    </div>
+      </ScrollArea>
+    </PhoneFrame>
   )
 }
 
@@ -58,7 +63,6 @@ function H({ children }: { children: React.ReactNode }) {
   return <h2 style={{ fontSize: 15, fontWeight: 800, margin: '22px 0 8px', color: 'var(--tx)' }}>{children}</h2>
 }
 
-const wrap: React.CSSProperties = { minHeight: '100dvh', background: 'var(--bg)', color: 'var(--tx)' }
 const header: React.CSSProperties = { padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }
 const back: React.CSSProperties = { color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }
 const body: React.CSSProperties = { maxWidth: 640, margin: '0 auto', padding: '18px 20px 40px' }

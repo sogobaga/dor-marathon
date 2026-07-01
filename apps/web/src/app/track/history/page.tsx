@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { activitiesApi, type GpsRunHistory } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { decodePolyline } from '@/lib/polyline'
+import PhoneFrame from '@/components/PhoneFrame'
+import ScrollArea from '@/components/ScrollArea'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -69,13 +71,14 @@ export default function TrackHistoryPage() {
   }, [sel])
 
   return (
-    <div style={{ minHeight: '100dvh', background: 'var(--bg)', color: 'var(--tx)' }}>
+    <PhoneFrame>
       <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         <a href="/track" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 追蹤</a>
         <strong style={{ fontSize: 16 }}>跑步軌跡歷史</strong>
         <a href="/" style={{ color: 'var(--tx-faint)', fontSize: 13, textDecoration: 'none' }}>首頁</a>
       </header>
 
+      <ScrollArea>
       {sel && (
         <div style={{ padding: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -111,7 +114,8 @@ export default function TrackHistoryPage() {
           ))}
         </div>
       </div>
-    </div>
+      </ScrollArea>
+    </PhoneFrame>
   )
 }
 

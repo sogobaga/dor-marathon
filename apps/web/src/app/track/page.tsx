@@ -6,6 +6,7 @@ import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
 import GoogleAuthProvider from '@/components/GoogleAuthProvider'
 import { LoginModal } from '@/components/UserAuthBar'
+import PhoneFrame from '@/components/PhoneFrame'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -228,7 +229,7 @@ export default function TrackPage() {
 
   return (
    <GoogleAuthProvider>
-    <div style={{ height: '100dvh', background: 'var(--bg)', color: 'var(--tx)', display: 'flex', flexDirection: 'column' }}>
+    <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
       <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         <a href="/" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 返回</a>
@@ -337,7 +338,7 @@ export default function TrackPage() {
         {status === 'done' && <button onClick={() => { setStatus('idle'); setElapsed(0); setDistance(0); setSplits([]); setAnomalies(0) }} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)' }}>再跑一次</button>}
         {status === 'tracking' && <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>追蹤中請保持本頁在前景、螢幕勿關（背景追蹤瀏覽器不支援）{uploading ? ' · 上傳中…' : ''}</div>}
       </div>
-    </div>
+    </PhoneFrame>
    </GoogleAuthProvider>
   )
 }

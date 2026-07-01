@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { profileApi, paymentsApi, integrationsApi, followApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type DashboardInfo, type FollowRow } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import DpCoin from './DpCoin'
+import ScrollArea from './ScrollArea'
 
 // 動態建立 hidden 表單並 POST 到綠界（瀏覽器導去付款頁）
 function submitEcpayForm(actionURL: string, params: Record<string, string>) {
@@ -247,7 +248,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
         <button onClick={onBack} style={backBtn}>← 返回</button>
       </header>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 18px 28px' }}>
+      <ScrollArea padding="4px 18px 28px">
         {err && <div style={{ color: 'var(--hunt)', padding: 16, fontSize: 13 }}>{err}</div>}
 
         {/* Dashboard */}
@@ -497,7 +498,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             <a href="/privacy" style={{ color: 'var(--fug)', textDecoration: 'underline' }}>隱私權政策</a>
           </div>
         </div>
-      </div>
+      </ScrollArea>
 
       {/* 繳費頁面 */}
       {payOrder && (

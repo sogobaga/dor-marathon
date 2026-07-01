@@ -1,14 +1,18 @@
 'use client'
 
+import PhoneFrame from '@/components/PhoneFrame'
+import ScrollArea from '@/components/ScrollArea'
+
 export default function SupportPage() {
   return (
-    <div style={wrap}>
+    <PhoneFrame>
       <header style={header}>
         <a href="/" style={back}>← 返回</a>
         <strong style={{ fontSize: 16 }}>支援與聯絡</strong>
         <span style={{ width: 36 }} />
       </header>
 
+      <ScrollArea>
       <div style={body}>
         <Section title="聯絡我們">
           <p style={p}>有任何問題、帳號或資料相關需求，歡迎來信：</p>
@@ -40,7 +44,8 @@ export default function SupportPage() {
           DOR · 雲端馬拉松　·　<a href="/terms" style={link}>服務條款</a>　·　<a href="/privacy" style={link}>隱私權政策</a>
         </div>
       </div>
-    </div>
+      </ScrollArea>
+    </PhoneFrame>
   )
 }
 
@@ -53,7 +58,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
-const wrap: React.CSSProperties = { minHeight: '100dvh', background: 'var(--bg)', color: 'var(--tx)' }
 const header: React.CSSProperties = { padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }
 const back: React.CSSProperties = { color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }
 const body: React.CSSProperties = { maxWidth: 640, margin: '0 auto', padding: '18px 18px 40px', display: 'flex', flexDirection: 'column', gap: 14 }

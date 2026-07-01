@@ -8,6 +8,7 @@ import { renderCertificate, downloadDataURL } from '@/lib/certificate'
 import ExpSettlementModal from './ExpSettlementModal'
 import { BrochureBody } from './BrochureScreen'
 import { RankingBody } from './RaceRankingScreen'
+import ScrollArea from './ScrollArea'
 
 const STATUS_LABEL: Record<string, string> = {
   registering: '報名中', upcoming_reg: '即將報名', reg_closed: '報名結束',
@@ -88,7 +89,7 @@ export default function RaceDetailScreen({
         <h1 style={{ margin: '10px 0 0', fontSize: 22, fontWeight: 800, color: 'var(--tx)' }}>{race.title}</h1>
       </header>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 18px 30px' }}>
+      <ScrollArea padding="4px 18px 30px">
         {/* 賽事 Banner */}
         {(detail?.hero_image_url || race.hero_image_url) && (
           // eslint-disable-next-line @next/next/no-img-element
@@ -197,7 +198,7 @@ export default function RaceDetailScreen({
         {tab === 'brochure' && (detail ? <BrochureBody detail={detail} /> : <Hint>載入中…</Hint>)}
         {tab === 'progress' && <ProgressBody race={race} />}
         {tab === 'rank' && <RankingBody race={race} />}
-      </div>
+      </ScrollArea>
 
       {/* 完賽證明全屏檢視 */}
       {certZoom && certImg && cert && (

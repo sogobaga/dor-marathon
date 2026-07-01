@@ -14,6 +14,7 @@ import {
   type RecommendRow,
 } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError, useUser } from '@/lib/userAuth'
+import ScrollArea from './ScrollArea'
 
 const FIELD_LABEL: Record<ParticipantField, string> = {
   real_name: '真實姓名', nickname: '暱稱', phone: '手機',
@@ -353,7 +354,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>報名</div>
       </header>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 18px 28px' }}>
+      <ScrollArea padding="4px 18px 28px">
         {loading && <Hint>載入中…</Hint>}
 
         {!loading && !loggedIn && (
@@ -604,7 +605,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         )}
 
         {err && (loading || !detail) && <Hint color="var(--hunt)">{err}</Hint>}
-      </div>
+      </ScrollArea>
 
       {/* 全部分組 選單（分組過多時）：可逐組展開比較任務目標再選用 */}
       {showAllGroups && detail && (
