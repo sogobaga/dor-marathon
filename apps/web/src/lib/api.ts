@@ -649,6 +649,7 @@ export interface RaceProgress {
   has_group: boolean
   group_name?: string
   started: boolean
+  registered?: boolean
   tasks: TaskProgress[]
 }
 

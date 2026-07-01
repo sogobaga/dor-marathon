@@ -40,11 +40,12 @@ type MyRaceStats struct {
 
 // RaceProgress 進度頁回應
 type RaceProgress struct {
-	My        MyRaceStats    `json:"my"`
-	HasGroup  bool           `json:"has_group"`
-	GroupName string         `json:"group_name,omitempty"`
-	Started   bool           `json:"started"` // 賽事是否已開始（未開始 → 前台顯示提示）
-	Tasks     []TaskProgress `json:"tasks"`
+	My         MyRaceStats    `json:"my"`
+	HasGroup   bool           `json:"has_group"`
+	GroupName  string         `json:"group_name,omitempty"`
+	Started    bool           `json:"started"`    // 賽事是否已開始（未開始 → 前台顯示提示）
+	Registered bool           `json:"registered"` // 目前登入者是否已報名此賽事（未報名 → 打卡等需報名的操作先提示）
+	Tasks      []TaskProgress `json:"tasks"`
 }
 
 // LoadRaceActivities 取得某賽事所有未標記活動（含活動者目前分組）
@@ -209,9 +210,11 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 
 	myGroup := ""
 	myCheckins := map[string]bool{} // checkpointID → flagged（待審）
+	registered := false
 	if userID != "" {
 		myGroup, _ = s.repo.GetUserGroupID(ctx, userID, raceID)
 		myCheckins, _ = s.repo.userRaceCheckins(ctx, userID, raceID)
+		registered, _ = s.repo.userRegisteredInRace(ctx, userID, raceID)
 	}
 
 	// 個人統計
@@ -221,7 +224,7 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 			mine = append(mine, a)
 		}
 	}
-	prog := &RaceProgress{HasGroup: myGroup != "", GroupName: groupName[myGroup], Tasks: []TaskProgress{}}
+	prog := &RaceProgress{HasGroup: myGroup != "", GroupName: groupName[myGroup], Registered: registered, Tasks: []TaskProgress{}}
 	prog.Started = !time.Now().Before(race.StartDate)
 	for _, a := range mine {
 		prog.My.TotalKm += a.Dist

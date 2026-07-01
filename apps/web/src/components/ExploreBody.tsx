@@ -21,6 +21,7 @@ type CP = { id: string; lat: number; lng: number; radius_m: number; title?: stri
 export function ExploreBody({ race }: { race: Race }) {
   const token = getUserToken() || undefined
   const { data, mutate } = useSWR(['progress', race.id], () => racesApi.progress(race.id, token), { refreshInterval: 30000 })
+  const registered = data?.progress.registered ?? false
   const cpTasks = (data?.progress.tasks ?? []).filter((t) => t.metric_type === 'checkpoint')
   const points: CP[] = cpTasks.flatMap((t) => (t.checkpoints ?? []).map((c) => ({ ...c, id: c.id ?? '', taskTitle: t.title })))
 
@@ -99,6 +100,12 @@ export function ExploreBody({ race }: { race: Race }) {
 
       <div id="explore-map" style={{ width: '100%', height: 260, borderRadius: 12, overflow: 'hidden', background: 'var(--bg-2)' }} />
 
+      {!registered && (
+        <div style={{ background: 'rgba(255,194,75,.1)', border: '1px solid rgba(255,194,75,.4)', color: 'var(--gold)', borderRadius: 12, padding: '11px 13px', fontSize: 13, lineHeight: 1.6 }}>
+          ⚠️ 你尚未報名此賽事，無法打卡。請先完成報名，才能收集打卡點。
+        </div>
+      )}
+
       {/* 打卡請到「開始跑步」邊跑邊進行（有 GPS 軌跡佐證＝免審核；且中途離開會中斷追蹤） */}
       <a href="/track" style={{ display: 'block', textAlign: 'center', background: 'rgba(70,227,160,.1)', border: '1px solid rgba(70,227,160,.4)', color: 'var(--fug)', fontWeight: 800, borderRadius: 12, padding: '12px', fontSize: 14, textDecoration: 'none' }}>🏃 到「開始跑步」邊跑邊打卡</a>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -122,9 +129,9 @@ export function ExploreBody({ race }: { race: Race }) {
               </div>
               {cp.collected ? <span style={{ color: 'var(--fug)', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>✓ 已打卡</span>
                 : cp.pending ? <span style={{ color: 'var(--gold)', fontSize: 12.5, flexShrink: 0 }}>審核中</span>
-                  : <button onClick={() => checkin(cp)} disabled={busyThis || (curPos != null && !inRange)}
-                    style={{ ...cpBtn, opacity: busyThis || (curPos != null && !inRange) ? 0.45 : 1 }}>
-                    {busyThis ? '打卡中…' : !curPos ? '定位打卡' : inRange ? '打卡' : '未到範圍'}
+                  : <button onClick={() => checkin(cp)} disabled={!registered || busyThis || (curPos != null && !inRange)}
+                    style={{ ...cpBtn, opacity: !registered || busyThis || (curPos != null && !inRange) ? 0.45 : 1 }}>
+                    {!registered ? '未報名' : busyThis ? '打卡中…' : !curPos ? '定位打卡' : inRange ? '打卡' : '未到範圍'}
                   </button>}
             </div>
           )
