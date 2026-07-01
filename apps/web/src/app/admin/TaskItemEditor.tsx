@@ -218,13 +218,16 @@ function CheckpointsEditor({ points, onChange }: { points: Checkpoint[]; onChang
           >
             <span style={{ fontSize: 12, color: 'var(--tx-dim)', width: 18 }}>{i + 1}</span>
             <Field label="名稱"><input style={{ ...inp, width: 110 }} value={p.title ?? ''} onChange={(e) => patch(i, { title: e.target.value })} placeholder="如：起點公園" /></Field>
-            <Field label="緯度 lat"><input style={{ ...inp, width: 110 }} type="number" value={p.lat || ''} onChange={(e) => patch(i, { lat: parseFloat(e.target.value) || 0 })} placeholder="25.0376" /></Field>
-            <Field label="經度 lng"><input style={{ ...inp, width: 110 }} type="number" value={p.lng || ''} onChange={(e) => patch(i, { lng: parseFloat(e.target.value) || 0 })} placeholder="121.5645" /></Field>
+            <Field label={p.lat ? '緯度 lat' : '緯度 lat ⚠未填'}><input style={{ ...inp, width: 110, ...(p.lat ? {} : missingInp) }} type="number" value={p.lat || ''} onChange={(e) => patch(i, { lat: parseFloat(e.target.value) || 0 })} placeholder="貼上緯度" /></Field>
+            <Field label={p.lng ? '經度 lng' : '經度 lng ⚠未填'}><input style={{ ...inp, width: 110, ...(p.lng ? {} : missingInp) }} type="number" value={p.lng || ''} onChange={(e) => patch(i, { lng: parseFloat(e.target.value) || 0 })} placeholder="貼上經度" /></Field>
             <Field label="半徑(m)"><input style={{ ...inp, width: 70 }} type="number" value={p.radius_m || ''} onChange={(e) => patch(i, { radius_m: parseInt(e.target.value, 10) || 0 })} placeholder="20" /></Field>
             <button type="button" onClick={(e) => { e.stopPropagation(); remove(i) }} style={removeBtn}>移除</button>
           </div>
         ))}
       </div>
+      {points.some((p) => !p.lat || !p.lng) && (
+        <div style={{ fontSize: 11.5, color: 'var(--hunt)', marginTop: 6 }}>⚠ 有打卡點的座標未填（灰字為提示，不是實際值）。請填入緯度/經度，未填的打卡點不會被儲存。</div>
+      )}
 
       {showMap && (
         <div style={{ marginTop: 8 }}>
@@ -269,6 +272,7 @@ const inp: React.CSSProperties = {
   background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8,
   padding: '8px 10px', color: 'var(--tx)', fontSize: 13.5, fontFamily: 'inherit', width: '100%',
 }
+const missingInp: React.CSSProperties = { borderColor: 'var(--hunt)', background: 'rgba(255,75,92,.07)' }
 const removeBtn: React.CSSProperties = {
   background: 'none', border: 'none', color: 'var(--hunt)', cursor: 'pointer', fontSize: 13, padding: '8px 4px',
 }

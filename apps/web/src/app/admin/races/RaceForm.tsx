@@ -452,6 +452,13 @@ export default function RaceForm({
       setTab('basic')
       return
     }
+    // 打卡任務：座標未填會被靜默丟棄 → 明確擋下並提醒（避免誤把提示座標當成已填）
+    const badCheckpoint = tasks.find((t) => t.metric_type === 'checkpoint' && (t.checkpoints ?? []).some((c) => !c.lat || !c.lng))
+    if (badCheckpoint) {
+      setErr(`打卡任務「${badCheckpoint.title || '未命名'}」有打卡點的座標未填（緯度/經度）。灰字只是提示，不是實際值，請確實填入後再儲存。`)
+      setTab('tasks')
+      return
+    }
     setSaving(true)
     try {
       const payload = buildPayload()

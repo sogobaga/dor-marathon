@@ -16,6 +16,7 @@ const LS_KEY = 'dor_gps_run'
 const MAX_ACC = 65 // 精度差於此（公尺）的點不採計距離（城市/大樓旁訊號較差，放寬以免整趟記不到）
 const MAX_SPEED = 1000 / 120 // 8.33 m/s（2:00/km）人類極限上限
 const JITTER_MIN = 6 // 公尺：距上一個採納點移動不足此值視為原地抖動，不計距離
+const EVENT_GRACE_MS = 3000 // 事件觸發後的「準備期」：吸收偵測+反應+延遲，倒數結束才開始計算
 const PACE_MIN_KM = 0.005 // 累積達此距離（5m，約顯示 0.01km 時）即顯示平均配速
 
 function haversineM(a: GpsPoint, b: GpsPoint) {
@@ -176,7 +177,8 @@ export default function TrackPage() {
     const token = getUserToken(); if (!token || !def.id) return
     const triggerD = distRef.current, triggerT = Date.now()
     const limitS = def.completion_params.limit_s || 60
-    const ae: ActiveEvent = { def, occId: '', triggerD, triggerT, deadline: triggerT + limitS * 1000 }
+    const readyUntil = triggerT + EVENT_GRACE_MS // 準備期結束才開始計算完成
+    const ae: ActiveEvent = { def, occId: '', triggerD, triggerT, readyUntil, deadline: readyUntil + limitS * 1000 }
     activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
     try {
       const occ = await eventApi.createOccurrence(token, { def_id: def.id, trigger_dist_m: triggerD, trigger_elapsed_s: Math.floor((triggerT - startRef.current) / 1000) })
@@ -207,15 +209,18 @@ export default function TrackPage() {
     if (distSamplesRef.current.length > 1600) distSamplesRef.current.splice(0, 400) // 上限 ~25 分鐘
     const ae = activeEventRef.current
     if (ae) {
+      // 準備期：基準線持續對齊「目前位置」，完成計算尚未起算（吸收偵測/反應/延遲誤差）
+      if (now < ae.readyUntil) { ae.triggerD = distRef.current; setEventMoved(0); return }
       const moved = distRef.current - ae.triggerD
       setEventMoved(moved)
       const cp = ae.def.completion_params
+      const windowS = (now - ae.readyUntil) / 1000 // 計時從準備結束起算
       if (ae.def.completion_type === 'move_more') {
-        if (moved >= (cp.target_m ?? 0)) completeEvent(ae, moved, (now - ae.triggerT) / 1000)
+        if (moved >= (cp.target_m ?? 0)) completeEvent(ae, moved, windowS)
         else if (now > ae.deadline) failEvent(ae)
       } else if (ae.def.completion_type === 'move_less') {
         if (moved > (cp.max_m ?? 0)) failEvent(ae)
-        else if (now >= ae.deadline) completeEvent(ae, moved, (now - ae.triggerT) / 1000)
+        else if (now >= ae.deadline) completeEvent(ae, moved, windowS)
       }
       return
     }
@@ -351,12 +356,20 @@ export default function TrackPage() {
         <a href="/track/history" style={{ color: 'var(--fug)', fontSize: 13, textDecoration: 'none' }}>歷史</a>
       </header>
 
-      {/* 地圖 */}
-      <div id="gps-map" style={{ width: '100%', height: 280, background: 'var(--bg-2)' }} />
-
-      {/* 事件任務：內嵌橫幅（地圖不變，數據往下移；不用彈窗） */}
-      {activeEvent && <EventBanner active={activeEvent} moved={eventMoved} />}
-      {!activeEvent && eventResult && <EventResultBanner result={eventResult} onClose={() => { setEventResult(null); fetchEventDefs() }} />}
+      {/* 地圖（事件橫幅直接疊在地圖上方，任務結束才收起；地圖與數據不位移） */}
+      <div style={{ position: 'relative' }}>
+        <div id="gps-map" style={{ width: '100%', height: 280, background: 'var(--bg-2)' }} />
+        {activeEvent && (
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1000, pointerEvents: 'none' }}>
+            <EventBanner active={activeEvent} moved={eventMoved} />
+          </div>
+        )}
+        {!activeEvent && eventResult && (
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1000 }}>
+            <EventResultBanner result={eventResult} onClose={() => { setEventResult(null); fetchEventDefs() }} />
+          </div>
+        )}
+      </div>
 
       <ScrollArea padding="16">
         {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, wordBreak: 'break-word' }}>⚠️ {warn}</div>}

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import type { EventDef } from '@/lib/api'
 import DpCoin from './DpCoin'
 
-export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; deadline: number }
+export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number }
 export type EventResult = { status: 'completed' | 'failed'; def: EventDef; reward_exp: number; reward_dp: number }
 
 function goalText(def: EventDef): string {
@@ -18,6 +18,8 @@ function goalText(def: EventDef): string {
 export function EventBanner({ active, moved }: { active: ActiveEvent; moved: number }) {
   const [now, setNow] = useState(Date.now())
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t) }, [])
+  const ready = now < active.readyUntil
+  const readyRemain = Math.max(0, Math.ceil((active.readyUntil - now) / 1000))
   const remain = Math.max(0, Math.ceil((active.deadline - now) / 1000))
   const def = active.def
   const isLess = def.completion_type === 'move_less'
@@ -29,14 +31,21 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
     : 'linear-gradient(90deg,#FFD24D,#46E3A0)'
 
   return (
-    <div style={{ ...banner, borderColor: 'rgba(255,194,75,.5)' }}>
+    <div style={{ ...banner, borderColor: 'rgba(255,194,75,.55)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
         <span style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--gold)', fontWeight: 800 }}>⚡ 事件任務</span>
-        <span style={{ fontSize: 20, fontWeight: 900, color: remain <= 10 ? 'var(--hunt)' : 'var(--gold)', fontVariantNumeric: 'tabular-nums' }}>{remain}s</span>
+        <span style={{ fontSize: 20, fontWeight: 900, color: ready ? 'var(--fug)' : remain <= 10 ? 'var(--hunt)' : 'var(--gold)', fontVariantNumeric: 'tabular-nums' }}>
+          {ready ? `準備 ${readyRemain}` : `${remain}s`}
+        </span>
       </div>
       <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>{def.message || def.name}</div>
       <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4 }}>目標：{goalText(def)}</div>
-      {limit > 0 && (
+      {ready ? (
+        // 準備期（吸收偵測+反應+延遲）：倒數結束才開始計算，讓跑者先反應
+        <div style={{ textAlign: 'center', margin: '10px 0 2px', fontSize: 17, fontWeight: 900, color: 'var(--fug)' }}>
+          {isLess ? '準備停下！' : '準備出發！'} {readyRemain}…
+        </div>
+      ) : limit > 0 && (
         <>
           <div style={barOuter}><div style={{ ...barInner, width: `${pct}%`, background: barColor }} /></div>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 3 }}>
@@ -62,7 +71,7 @@ export function EventResultBanner({ result, onClose }: { result: EventResult; on
     <div style={{
       ...banner,
       borderColor: ok ? 'rgba(70,227,160,.5)' : 'rgba(255,90,90,.4)',
-      background: ok ? 'linear-gradient(180deg, rgba(70,227,160,.15), rgba(70,227,160,.05))' : 'linear-gradient(180deg, rgba(255,90,90,.13), rgba(255,90,90,.04))',
+      background: ok ? 'linear-gradient(180deg, rgba(70,227,160,.20), rgba(9,12,16,.95))' : 'linear-gradient(180deg, rgba(255,90,90,.18), rgba(9,12,16,.95))',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
         <span style={{ fontSize: 16, fontWeight: 900, color: ok ? 'var(--fug)' : 'var(--hunt)' }}>{ok ? '🎉 任務完成！' : '🐾 任務失敗'}</span>
@@ -80,6 +89,6 @@ export function EventResultBanner({ result, onClose }: { result: EventResult; on
   )
 }
 
-const banner: React.CSSProperties = { margin: '10px 16px 0', background: 'linear-gradient(180deg, rgba(255,194,75,.12), rgba(255,194,75,.05))', border: '1px solid rgba(255,194,75,.45)', borderRadius: 12, padding: '12px 14px', boxShadow: '0 4px 20px rgba(0,0,0,.3)' }
+const banner: React.CSSProperties = { margin: '10px 12px 0', background: 'rgba(9,12,16,.94)', border: '1px solid rgba(255,194,75,.45)', borderRadius: 12, padding: '12px 14px', boxShadow: '0 6px 24px rgba(0,0,0,.5)', backdropFilter: 'blur(3px)' }
 const barOuter: React.CSSProperties = { height: 8, borderRadius: 999, background: 'rgba(255,255,255,.08)', overflow: 'hidden', marginTop: 8 }
 const barInner: React.CSSProperties = { height: '100%', borderRadius: 999, background: 'linear-gradient(90deg,#FFD24D,#FFC24B)', transition: 'width .3s' }
