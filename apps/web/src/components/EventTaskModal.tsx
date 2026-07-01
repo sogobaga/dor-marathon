@@ -39,7 +39,16 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
         </span>
       </div>
       <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>{def.message || def.name}</div>
-      <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4 }}>目標：{goalText(def)}</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 5 }}>
+        <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>目標：{goalText(def)}</span>
+        {(def.reward_exp > 0 || def.reward_dp > 0) && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(255,210,77,.12)', border: '1px solid rgba(255,210,77,.35)', borderRadius: 999, padding: '3px 10px' }}>
+            <span style={{ fontSize: 10, letterSpacing: '.1em', color: 'var(--tx-faint)', fontWeight: 700 }}>獎勵</span>
+            {def.reward_exp > 0 && <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--gold)' }}>+{def.reward_exp} EXP</span>}
+            {def.reward_dp > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 13, fontWeight: 900, color: '#FFD24D' }}><DpCoin size={14} />+{def.reward_dp}</span>}
+          </span>
+        )}
+      </div>
       {ready ? (
         // 準備期（吸收偵測+反應+延遲）：倒數結束才開始計算，讓跑者先反應
         <div style={{ textAlign: 'center', margin: '10px 0 2px', fontSize: 17, fontWeight: 900, color: 'var(--fug)' }}>
