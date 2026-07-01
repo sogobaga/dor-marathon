@@ -14,7 +14,7 @@ function goalText(def: EventDef): string {
   return ''
 }
 
-// 進行中事件：夾在地圖與內容之間、常駐可見的橫幅（不擋畫面）
+// 進行中事件：夾在地圖與數據之間、常駐可見的橫幅（不擋畫面、不能被隨手關掉）
 export function EventBanner({ active, moved }: { active: ActiveEvent; moved: number }) {
   const [now, setNow] = useState(Date.now())
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t) }, [])
@@ -24,12 +24,12 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
   const pct = target > 0 ? Math.max(0, Math.min(100, (moved / target) * 100)) : 0
 
   return (
-    <div style={banner}>
+    <div style={{ ...banner, borderColor: 'rgba(255,194,75,.5)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
         <span style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--gold)', fontWeight: 800 }}>⚡ 事件任務</span>
-        <span style={{ fontSize: 18, fontWeight: 900, color: remain <= 10 ? 'var(--hunt)' : 'var(--gold)', fontVariantNumeric: 'tabular-nums' }}>{remain}s</span>
+        <span style={{ fontSize: 20, fontWeight: 900, color: remain <= 10 ? 'var(--hunt)' : 'var(--gold)', fontVariantNumeric: 'tabular-nums' }}>{remain}s</span>
       </div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>{def.message || def.name}</div>
+      <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>{def.message || def.name}</div>
       <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4 }}>目標：{goalText(def)}</div>
       {target > 0 && (
         <>
@@ -41,25 +41,29 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
   )
 }
 
-// 完成/失敗結果：置中彈窗
-export function EventResultModal({ result, onClose }: { result: EventResult; onClose: () => void }) {
+// 完成/失敗結果：同樣以「內嵌橫幅」呈現（不是彈窗），需按「收下」或約 12 秒後才收起
+export function EventResultBanner({ result, onClose }: { result: EventResult; onClose: () => void }) {
+  useEffect(() => { const t = setTimeout(onClose, 12000); return () => clearTimeout(t) }, [onClose])
   const ok = result.status === 'completed'
+  const hasReward = result.reward_exp > 0 || result.reward_dp > 0
   return (
-    <div style={overlay} onClick={onClose}>
-      <div style={panel} onClick={(e) => e.stopPropagation()}>
-        <div style={{ fontSize: 34, marginBottom: 4 }}>{ok ? '🎉' : '🐾'}</div>
-        <div style={{ fontSize: 22, fontWeight: 900, color: ok ? 'var(--fug)' : 'var(--tx)' }}>{ok ? '任務完成！' : '任務失敗'}</div>
-        <div style={{ fontSize: 13, color: 'var(--tx-dim)', margin: '6px 0 2px' }}>{result.def.name}</div>
-        {ok ? (
-          <div style={{ display: 'flex', gap: 14, justifyContent: 'center', margin: '14px 0 4px', alignItems: 'center' }}>
-            {result.reward_exp > 0 && <span style={{ fontSize: 20, fontWeight: 900, color: 'var(--gold)' }}>+{result.reward_exp} EXP</span>}
-            {result.reward_dp > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 20, fontWeight: 900, color: '#FFD24D' }}><DpCoin size={20} />+{result.reward_dp}</span>}
-          </div>
-        ) : (
-          <div style={{ fontSize: 13, color: 'var(--tx-faint)', margin: '10px 0' }}>沒關係，下次加油！</div>
-        )}
-        <button onClick={onClose} style={btn}>{ok ? '太棒了' : '關閉'}</button>
+    <div style={{
+      ...banner,
+      borderColor: ok ? 'rgba(70,227,160,.5)' : 'rgba(255,90,90,.4)',
+      background: ok ? 'linear-gradient(180deg, rgba(70,227,160,.15), rgba(70,227,160,.05))' : 'linear-gradient(180deg, rgba(255,90,90,.13), rgba(255,90,90,.04))',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 16, fontWeight: 900, color: ok ? 'var(--fug)' : 'var(--hunt)' }}>{ok ? '🎉 任務完成！' : '🐾 任務失敗'}</span>
+        <button onClick={onClose} style={{ background: 'rgba(255,255,255,.08)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 14px', color: 'var(--tx)', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>收下</button>
       </div>
+      <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 3 }}>{result.def.name}</div>
+      {ok && hasReward && (
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 8 }}>
+          {result.reward_exp > 0 && <span style={{ fontSize: 18, fontWeight: 900, color: 'var(--gold)' }}>+{result.reward_exp} EXP</span>}
+          {result.reward_dp > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 18, fontWeight: 900, color: '#FFD24D' }}><DpCoin size={18} />+{result.reward_dp}</span>}
+        </div>
+      )}
+      {!ok && <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 4 }}>沒關係，下次加油！</div>}
     </div>
   )
 }
@@ -67,6 +71,3 @@ export function EventResultModal({ result, onClose }: { result: EventResult; onC
 const banner: React.CSSProperties = { margin: '10px 16px 0', background: 'linear-gradient(180deg, rgba(255,194,75,.12), rgba(255,194,75,.05))', border: '1px solid rgba(255,194,75,.45)', borderRadius: 12, padding: '12px 14px', boxShadow: '0 4px 20px rgba(0,0,0,.3)' }
 const barOuter: React.CSSProperties = { height: 8, borderRadius: 999, background: 'rgba(255,255,255,.08)', overflow: 'hidden', marginTop: 8 }
 const barInner: React.CSSProperties = { height: '100%', borderRadius: 999, background: 'linear-gradient(90deg,#FFD24D,#FFC24B)', transition: 'width .3s' }
-const overlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 130, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }
-const panel: React.CSSProperties = { width: '100%', maxWidth: 340, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 18, padding: '24px 22px', textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,.6)' }
-const btn: React.CSSProperties = { marginTop: 16, width: '100%', background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 12, padding: '12px', fontSize: 15, cursor: 'pointer' }

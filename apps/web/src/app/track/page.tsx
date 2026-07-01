@@ -8,7 +8,7 @@ import GoogleAuthProvider from '@/components/GoogleAuthProvider'
 import { LoginModal } from '@/components/UserAuthBar'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
-import { EventBanner, EventResultModal, type ActiveEvent, type EventResult } from '@/components/EventTaskModal'
+import { EventBanner, EventResultBanner, type ActiveEvent, type EventResult } from '@/components/EventTaskModal'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -107,24 +107,27 @@ export default function TrackPage() {
         const dt = (p.t - lastAcc.t) / 1000
         if (d >= JITTER_MIN && dt > 0) {
           if (d / dt > MAX_SPEED) {
+            // 速度超過人體極限 → 視為 GPS 跳點（城市多路徑常見），直接丟棄：
+            // 不累積距離、不前進採納點（等下一個合理點），避免灌爆距離/害配速失真/誤判異常。
             setAnomalies((n) => n + 1)
-            setWarn(`偵測到異常速度區段（${(d / dt).toFixed(1)} m/s），此筆將標記待審`)
+            setWarn('已自動濾除 GPS 跳點（不影響成績）')
             clearTimeout(warnTimer.current)
-            warnTimer.current = setTimeout(() => setWarn(''), 4000)
+            warnTimer.current = setTimeout(() => setWarn(''), 3000)
+          } else {
+            distRef.current += d
+            setDistance(distRef.current)
+            // 每公里分段
+            const km = Math.floor(distRef.current / 1000)
+            const el = (p.t - startRef.current) / 1000
+            while (splitMarkRef.current.length < km) {
+              const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
+              splitMarkRef.current.push(el)
+              setSplits((s) => [...s, el - prevEl])
+            }
+            lastAccRef.current = p
+            pointsRef.current.push(p)
+            if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
           }
-          distRef.current += d
-          setDistance(distRef.current)
-          // 每公里分段
-          const km = Math.floor(distRef.current / 1000)
-          const el = (p.t - startRef.current) / 1000
-          while (splitMarkRef.current.length < km) {
-            const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
-            splitMarkRef.current.push(el)
-            setSplits((s) => [...s, el - prevEl])
-          }
-          lastAccRef.current = p
-          pointsRef.current.push(p)
-          if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
         }
       }
     }
@@ -224,6 +227,7 @@ export default function TrackPage() {
     if (!navigator.geolocation) { setErr('此裝置/瀏覽器不支援定位'); return }
     pointsRef.current = []; distRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null)
+    if (lineRef.current) lineRef.current.setLatLngs([]) // 清掉上一趟的軌跡線（避免地圖殘留）
     // 事件引擎重置
     distSamplesRef.current = []; activeEventRef.current = null; lastEventEndRef.current = 0
     setActiveEvent(null); setEventResult(null); setEventMoved(0)
@@ -338,7 +342,6 @@ export default function TrackPage() {
    <GoogleAuthProvider>
     <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
-      {eventResult && <EventResultModal result={eventResult} onClose={() => { setEventResult(null); fetchEventDefs() }} />}
       <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         <a href="/" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 返回</a>
         <strong style={{ fontSize: 16 }}>GPS 跑步追蹤</strong>
@@ -348,8 +351,9 @@ export default function TrackPage() {
       {/* 地圖 */}
       <div id="gps-map" style={{ width: '100%', height: 280, background: 'var(--bg-2)' }} />
 
-      {/* 進行中事件橫幅（常駐可見） */}
+      {/* 事件任務：內嵌橫幅（地圖不變，數據往下移；不用彈窗） */}
       {activeEvent && <EventBanner active={activeEvent} moved={eventMoved} />}
+      {!activeEvent && eventResult && <EventResultBanner result={eventResult} onClose={() => { setEventResult(null); fetchEventDefs() }} />}
 
       <ScrollArea padding="16">
         {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, wordBreak: 'break-word' }}>⚠️ {warn}</div>}
@@ -360,7 +364,7 @@ export default function TrackPage() {
           <Big label="距離" value={distKm.toFixed(2)} unit="km" />
           <Big label="時間" value={fmtTime(elapsed)} unit="" />
           <Big label="平均配速" value={fmtPace(avgPace)} unit="/km" />
-          <Big label="異常區段" value={String(anomalies)} unit="段" warn={anomalies > 0} />
+          <Big label="濾除跳點" value={String(anomalies)} unit="個" />
         </div>
 
         {/* 打卡點任務 */}
