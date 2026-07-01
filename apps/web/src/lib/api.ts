@@ -330,7 +330,10 @@ export interface EventDef {
   completion_type: string
   completion_params: Record<string, number>
   message: string
-  image_url?: string
+  image_url?: string // 預設圖（時段未設定時回退）
+  image_day_url?: string // 白天 06:00–17:00
+  image_dusk_url?: string // 黃昏 17:00–19:00
+  image_night_url?: string // 晚上 19:00–06:00
   reward_exp: number
   reward_dp: number
 }

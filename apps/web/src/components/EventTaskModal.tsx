@@ -7,6 +7,13 @@ import DpCoin from './DpCoin'
 export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string }
 export type EventResult = { status: 'completed' | 'failed'; def: EventDef; reward_exp: number; reward_dp: number }
 
+// 依跑者當下時間挑時段插圖：白天 06–17、黃昏 17–19、晚上 19–06；未設定該時段回退預設圖
+export function pickEventImage(def: EventDef): string {
+  const h = new Date().getHours()
+  const seg = (h >= 6 && h < 17) ? def.image_day_url : (h >= 17 && h < 19) ? def.image_dusk_url : def.image_night_url
+  return seg || def.image_url || ''
+}
+
 function goalText(def: EventDef): string {
   const p = def.completion_params
   if (def.completion_type === 'move_more') return `${Math.round(p.limit_s ?? 0)} 秒內再移動 ${Math.round(p.target_m ?? 0)} 公尺`
@@ -38,7 +45,7 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
           {ready ? `準備 ${readyRemain}` : `${remain}s`}
         </span>
       </div>
-      {def.image_url && <img src={def.image_url} alt="" style={{ width: '100%', height: 120, objectFit: 'cover', borderRadius: 8, margin: '8px 0 2px', display: 'block' }} />}
+      {pickEventImage(def) && <img src={pickEventImage(def)} alt="" style={{ width: '100%', height: 120, objectFit: 'cover', borderRadius: 8, margin: '8px 0 2px', display: 'block' }} />}
       <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>{def.message || def.name}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 5 }}>
         <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>目標：{goalText(def)}</span>

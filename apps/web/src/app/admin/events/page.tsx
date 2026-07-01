@@ -6,6 +6,13 @@ import { adminEventsApi, adminImagesApi, type EventDef, type EventTypeSpec } fro
 import { getToken, clearToken } from '@/lib/adminAuth'
 import DpCoin from '@/components/DpCoin'
 
+const IMG_SLOTS = [
+  { field: 'image_url', label: '預設圖', emoji: '🖼️', hint: '（時段未設定時）' },
+  { field: 'image_day_url', label: '白天', emoji: '☀️', hint: '06–17' },
+  { field: 'image_dusk_url', label: '黃昏', emoji: '🌆', hint: '17–19' },
+  { field: 'image_night_url', label: '晚上', emoji: '🌙', hint: '19–06' },
+] as const
+
 function emptyDef(tCat: EventTypeSpec[], cCat: EventTypeSpec[]): EventDef {
   return {
     name: '', description: '', enabled: true, weight: 100, cooldown_sec: 300,
@@ -26,7 +33,7 @@ export default function AdminEventsPage() {
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
-  const [imgUploading, setImgUploading] = useState(false)
+  const [imgUploadingField, setImgUploadingField] = useState('')
   const [pushFor, setPushFor] = useState<string | null>(null)
   const [pushEmail, setPushEmail] = useState('')
   const [pushBusy, setPushBusy] = useState(false)
@@ -41,11 +48,12 @@ export default function AdminEventsPage() {
     } catch (e: any) { setErr(e?.message || '觸發失敗') } finally { setPushBusy(false) }
   }
 
-  async function uploadImg(file: File) {
+  type ImgField = 'image_url' | 'image_day_url' | 'image_dusk_url' | 'image_night_url'
+  async function uploadImg(field: ImgField, file: File) {
     if (!token || !edit) return
-    setImgUploading(true); setErr('')
-    try { const { url } = await adminImagesApi.upload(token, file); setEdit((e) => e ? { ...e, image_url: url } : e) }
-    catch (e: any) { setErr(e?.message || '圖片上傳失敗') } finally { setImgUploading(false) }
+    setImgUploadingField(field); setErr('')
+    try { const { url } = await adminImagesApi.upload(token, file); setEdit((e) => e ? { ...e, [field]: url } : e) }
+    catch (e: any) { setErr(e?.message || '圖片上傳失敗') } finally { setImgUploadingField('') }
   }
 
   const load = useCallback(() => {
@@ -155,19 +163,33 @@ export default function AdminEventsPage() {
             </Field>
           </div>
 
-          {/* 事件插圖（前台橫幅顯示，增加沉浸感） */}
+          {/* 事件插圖（前台橫幅顯示；依跑者當下時間顯示對應時段圖，未設定該時段則用預設圖） */}
           <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 4 }}>事件插圖（前台橫幅顯示，如狗群插圖）</div>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-              {edit.image_url
-                ? <img src={edit.image_url} alt="事件插圖" style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 10, border: '1px solid var(--line-2)' }} />
-                : <div style={{ width: 72, height: 72, borderRadius: 10, border: '1px dashed var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tx-faint)', fontSize: 22 }}>🐾</div>}
-              <label style={{ ...ghostBtn, display: 'inline-block' }}>
-                {imgUploading ? '上傳中…' : (edit.image_url ? '更換圖片' : '上傳圖片')}
-                <input type="file" accept="image/*" style={{ display: 'none' }} disabled={imgUploading}
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImg(f); e.target.value = '' }} />
-              </label>
-              {edit.image_url && <button onClick={() => setEdit({ ...edit, image_url: '' })} style={{ ...ghostBtn, color: 'var(--hunt)' }}>移除</button>}
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tx)', marginBottom: 2 }}>事件插圖（前台橫幅顯示）</div>
+            <div style={{ fontSize: 11, color: 'var(--gold)', marginBottom: 8, lineHeight: 1.6 }}>
+              建議尺寸 <strong>800 × 400 px（2:1 橫幅，JPG/PNG）</strong>；前台會等比裁切為滿版、約 120px 高。<br />
+              可分時段上圖：跑者當下時間落在哪個時段就顯示對應圖，該時段未設定則回退「預設圖」。
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+              {IMG_SLOTS.map((s) => {
+                const url = (edit[s.field] as string) || ''
+                return (
+                  <div key={s.field} style={{ border: '1px solid var(--line-2)', borderRadius: 10, padding: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{s.emoji} {s.label} <span style={{ color: 'var(--tx-faint)', fontWeight: 400 }}>{s.hint}</span></div>
+                    {url
+                      ? <img src={url} alt="" style={{ width: '100%', height: 74, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line-2)' }} />
+                      : <div style={{ width: '100%', height: 74, borderRadius: 8, border: '1px dashed var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tx-faint)', fontSize: 12 }}>未設定</div>}
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                      <label style={{ ...ghostBtn, padding: '5px 10px', fontSize: 12, display: 'inline-block' }}>
+                        {imgUploadingField === s.field ? '上傳中…' : (url ? '更換' : '上傳')}
+                        <input type="file" accept="image/*" style={{ display: 'none' }} disabled={!!imgUploadingField}
+                          onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImg(s.field, f); e.target.value = '' }} />
+                      </label>
+                      {url && <button onClick={() => setEdit({ ...edit, [s.field]: '' })} style={{ ...ghostBtn, padding: '5px 10px', fontSize: 12, color: 'var(--hunt)' }}>移除</button>}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
