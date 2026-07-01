@@ -16,7 +16,7 @@ import (
 
 // 防弊參數
 const (
-	gpsMaxAccuracyM   = 40.0  // 精度差於此（公尺）的點不列入距離計算
+	gpsMaxAccuracyM   = 65.0  // 精度差於此（公尺）的點不列入距離計算（城市訊號較差，放寬）
 	gpsMinSegMeters   = 5.0   // 太短的位移不做超速判定（避免 GPS 飄移誤判）
 	gpsMinDistKm      = 0.005 // 短於此（公里=5m）視為移動距離不足，不計算/不記錄/不判異常
 	gpsFastRatioFlag  = 0.30  // 超速距離占比達此且總距離足夠 → 判定疑似載具
@@ -77,11 +77,13 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 			d := haversineM(prev.Lat, prev.Lng, p.Lat, p.Lng)
 			dt := float64(p.T-prev.T) / 1000.0
 			if dt > 0 {
+				seg := d
 				if d > gpsMinSegMeters && d/dt > maxSpeed {
-					anomalies++    // 超過人類極限速度的區段
-					fastDistM += d // 累計超速距離（判斷是否「持續」超速 → 載具）
+					anomalies++         // 超過人類極限速度的區段
+					seg = maxSpeed * dt // GPS 跳點 → 距離只計到極限值上限（不灌爆）
+					fastDistM += seg    // 累計超速距離（判斷是否「持續」超速 → 載具）
 				}
-				distM += d
+				distM += seg
 			}
 		}
 		prev = p

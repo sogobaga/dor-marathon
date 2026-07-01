@@ -13,7 +13,7 @@ import { EventBanner, EventResultBanner, type ActiveEvent, type EventResult } fr
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const LS_KEY = 'dor_gps_run'
-const MAX_ACC = 40 // 精度差於此（公尺）的點不採計距離
+const MAX_ACC = 65 // 精度差於此（公尺）的點不採計距離（城市/大樓旁訊號較差，放寬以免整趟記不到）
 const MAX_SPEED = 1000 / 120 // 8.33 m/s（2:00/km）人類極限上限
 const JITTER_MIN = 6 // 公尺：距上一個採納點移動不足此值視為原地抖動，不計距離
 const PACE_MIN_KM = 0.005 // 累積達此距離（5m，約顯示 0.01km 時）即顯示平均配速
@@ -93,6 +93,11 @@ export default function TrackPage() {
     setCurPos({ lat: p.lat, lng: p.lng, acc: p.acc })
     ensureMap(p.lat, p.lng)
     const goodAcc = p.acc === 0 || p.acc <= MAX_ACC
+    if (!goodAcc) {
+      setWarn(`GPS 訊號較弱（±${Math.round(p.acc)}m），移動可能未被記錄，請到較空曠處`)
+      clearTimeout(warnTimer.current)
+      warnTimer.current = setTimeout(() => setWarn(''), 4000)
+    }
 
     // 距離以「上一個採納點」為基準計算；移動不足門檻 → 視為原地抖動，不採納、不累積
     if (goodAcc) {
@@ -106,28 +111,26 @@ export default function TrackPage() {
         const d = haversineM(lastAcc, p)
         const dt = (p.t - lastAcc.t) / 1000
         if (d >= JITTER_MIN && dt > 0) {
+          // 超過人體極限的段落 → 視為 GPS 跳點（城市多路徑常見）：距離只計到「極限值」上限
+          //（不灌爆里程/害配速失真），但仍前進採納點、仍累積距離 → 移動不會整段消失。
+          let seg = d
           if (d / dt > MAX_SPEED) {
-            // 速度超過人體極限 → 視為 GPS 跳點（城市多路徑常見），直接丟棄：
-            // 不累積距離、不前進採納點（等下一個合理點），避免灌爆距離/害配速失真/誤判異常。
+            seg = MAX_SPEED * dt
             setAnomalies((n) => n + 1)
-            setWarn('已自動濾除 GPS 跳點（不影響成績）')
-            clearTimeout(warnTimer.current)
-            warnTimer.current = setTimeout(() => setWarn(''), 3000)
-          } else {
-            distRef.current += d
-            setDistance(distRef.current)
-            // 每公里分段
-            const km = Math.floor(distRef.current / 1000)
-            const el = (p.t - startRef.current) / 1000
-            while (splitMarkRef.current.length < km) {
-              const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
-              splitMarkRef.current.push(el)
-              setSplits((s) => [...s, el - prevEl])
-            }
-            lastAccRef.current = p
-            pointsRef.current.push(p)
-            if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
           }
+          distRef.current += seg
+          setDistance(distRef.current)
+          // 每公里分段
+          const km = Math.floor(distRef.current / 1000)
+          const el = (p.t - startRef.current) / 1000
+          while (splitMarkRef.current.length < km) {
+            const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
+            splitMarkRef.current.push(el)
+            setSplits((s) => [...s, el - prevEl])
+          }
+          lastAccRef.current = p
+          pointsRef.current.push(p)
+          if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
         }
       }
     }
