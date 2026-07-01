@@ -923,6 +923,30 @@ export interface AdminMe { admin: AdminAccount; scopes: AdminScope[] }
 export const adminMeApi = {
   get: (token: string) => request<AdminMe>('/admin/me', { headers: withAuth(token) }),
 }
+export interface AuditLog {
+  id: string
+  actor_id: string
+  actor_login: string
+  actor_name: string
+  method: string
+  path: string
+  resource: string
+  action: string
+  status: number
+  ip: string
+  created_at: string
+}
+export const auditApi = {
+  list: (token: string, params?: { limit?: number; offset?: number; resource?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.offset) qs.set('offset', String(params.offset))
+    if (params?.resource) qs.set('resource', params.resource)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ logs: AuditLog[]; count: number }>(`/admin/audit${suffix}`, { headers: withAuth(token) })
+  },
+}
+
 export const adminAccountsApi = {
   list: (token: string) => request<{ admins: AdminAccount[] }>('/admin/admins', { headers: withAuth(token) }),
   create: (token: string, body: { login: string; password: string; name: string; is_super: boolean; permissions: string[] }) =>

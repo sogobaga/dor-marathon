@@ -11,7 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"strconv"
+
 	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
@@ -349,4 +352,146 @@ func respondJSON(w http.ResponseWriter, status int, data any) {
 
 func respondErr(w http.ResponseWriter, status int, msg string) {
 	respondJSON(w, status, map[string]string{"error": msg})
+}
+
+// --- 操作紀錄（audit log）---
+
+var auditResourceLabel = map[string]string{
+	"races": "賽事", "admins": "管理者", "promo-codes": "序號", "members": "會員",
+	"orders": "訂單", "signups": "報名", "task-modules": "賽事任務", "membership": "等級設定",
+	"settings": "系統設定", "group-presets": "分組範本", "test-whitelist": "測試白名單",
+	"gps-runs": "GPS 軌跡", "images": "圖片", "organizer": "主辦", "activities": "活動",
+}
+var auditVerb = map[string]string{"POST": "新增", "PUT": "更新", "PATCH": "更新", "DELETE": "刪除"}
+
+func auditResource(path string) string {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	for i, p := range parts {
+		if p == "admin" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
+}
+
+func auditAction(method, resource string) string {
+	verb := auditVerb[method]
+	if verb == "" {
+		verb = method
+	}
+	label := auditResourceLabel[resource]
+	if label == "" {
+		label = resource
+	}
+	return verb + label
+}
+
+func clientIP(r *http.Request) string {
+	ip := r.RemoteAddr
+	if i := strings.LastIndex(ip, ":"); i > 0 {
+		ip = ip[:i]
+	}
+	return strings.Trim(ip, "[]")
+}
+
+func isUUID(s string) bool {
+	return len(s) == 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
+}
+
+// auditTargetID 從 path 取 resource 之後、看起來是 UUID 的那段當目標 id（否則 nil）
+func auditTargetID(path, resource string) interface{} {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	for i, p := range parts {
+		if p == resource && i+1 < len(parts) && isUUID(parts[i+1]) {
+			return parts[i+1]
+		}
+	}
+	return nil
+}
+
+// Audit 中介層：自動記錄異動類 (POST/PUT/PATCH/DELETE) 的 admin 請求（掛在 RequireAdmin 之後）。
+func (h *Handler) Audit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodOptions || r.Method == http.MethodHead {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(ww, r)
+		uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+		if uid == "" {
+			return
+		}
+		resource := auditResource(r.URL.Path)
+		action := auditAction(r.Method, resource)
+		targetID := auditTargetID(r.URL.Path, resource)
+		ip := clientIP(r)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		// 沿用 001 既有 audit_logs：meta 存 method/path/status + 操作者快照
+		_, _ = h.db.Exec(ctx, `
+			INSERT INTO audit_logs (user_id, action, resource, resource_id, meta, ip)
+			SELECT id, $2, $3, $4,
+			       jsonb_build_object('method',$5::text,'path',$6::text,'status',$7::int,'login',email,'name',name),
+			       $8
+			FROM users WHERE id=$1`,
+			uid, action, resource, targetID, r.Method, r.URL.Path, ww.Status(), ip)
+	})
+}
+
+// AuditLog 一筆操作紀錄
+type AuditLog struct {
+	ID         string    `json:"id"`
+	ActorID    string    `json:"actor_id"`
+	ActorLogin string    `json:"actor_login"`
+	ActorName  string    `json:"actor_name"`
+	Method     string    `json:"method"`
+	Path       string    `json:"path"`
+	Resource   string    `json:"resource"`
+	Action     string    `json:"action"`
+	Status     int       `json:"status"`
+	IP         string    `json:"ip"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// AuditList GET /admin/audit?limit=&offset=&resource=（僅超級管理員）
+func (h *Handler) AuditList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit := 50
+	if v, err := strconv.Atoi(q.Get("limit")); err == nil && v > 0 && v <= 200 {
+		limit = v
+	}
+	offset := 0
+	if v, err := strconv.Atoi(q.Get("offset")); err == nil && v > 0 {
+		offset = v
+	}
+	resource := q.Get("resource")
+
+	var total int
+	h.db.QueryRow(r.Context(),
+		`SELECT COUNT(*) FROM audit_logs WHERE ($1='' OR resource=$1)`, resource).Scan(&total)
+
+	rows, err := h.db.Query(r.Context(), `
+		SELECT id::text, COALESCE(user_id::text,''), COALESCE(action,''), COALESCE(resource,''),
+		       COALESCE(meta->>'method',''), COALESCE(meta->>'path',''), COALESCE((meta->>'status')::int,0),
+		       COALESCE(meta->>'login',''), COALESCE(meta->>'name',''), COALESCE(ip,''), created_at
+		FROM audit_logs
+		WHERE ($1='' OR resource=$1)
+		ORDER BY created_at DESC LIMIT $2 OFFSET $3`, resource, limit, offset)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer rows.Close()
+	out := []AuditLog{}
+	for rows.Next() {
+		var a AuditLog
+		if err := rows.Scan(&a.ID, &a.ActorID, &a.Action, &a.Resource,
+			&a.Method, &a.Path, &a.Status, &a.ActorLogin, &a.ActorName, &a.IP, &a.CreatedAt); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		out = append(out, a)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"logs": out, "count": total})
 }

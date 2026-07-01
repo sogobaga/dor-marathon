@@ -221,11 +221,13 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireAuth(authSvc))
 			r.Use(middleware.RequireAdmin)
+			r.Use(adminAcctHandler.Audit) // 自動記錄異動操作（在身分確認之後）
 			perm := adminAcctHandler.RequirePerm
 			// 自己的身分與權限（任何 admin 皆可讀，前台用來決定選單）
 			r.Get("/admin/me", adminAcctHandler.Me)
-			// 管理者管理（僅超級管理員）
+			// 管理者管理 + 操作紀錄（僅超級管理員）
 			r.With(adminAcctHandler.RequireSuper).Mount("/admin/admins", adminAcctHandler.Router())
+			r.With(adminAcctHandler.RequireSuper).Get("/admin/audit", adminAcctHandler.AuditList)
 
 			r.With(perm("races")).Mount("/admin/races", raceHandler.AdminRouter())
 			r.With(perm("races")).Mount("/admin/group-presets", raceHandler.PresetRouter())
