@@ -50,9 +50,10 @@ html, body {
   background: var(--bg);
 }
 
-/* 在真實手機上直接全屏 */
+/* 在真實手機上直接全屏。固定高度、不留內距、不可捲動 → 文件/外框都不會捲動，
+   所有捲動都發生在內層 ScrollArea（巢狀捲動不會觸發 Chrome 底部工具列隱藏/顯示）。 */
 @media (max-width: 430px) {
-  .phone-frame { display: block; }
+  .phone-frame { display: block; padding: 0; height: 100dvh; min-height: 0; overflow: hidden; }
   .phone-shell { width: 100% !important; height: 100dvh !important; border-radius: 0 !important; }
 }
 
