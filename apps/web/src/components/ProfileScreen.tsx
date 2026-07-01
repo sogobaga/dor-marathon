@@ -273,8 +273,8 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
                   #{dash.account_code} {codeCopied ? '已複製' : '⧉'}
                 </button>
               </div>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 15, fontVariantNumeric: 'tabular-nums', flexShrink: 0, alignSelf: 'flex-start' }} title="DP 幣">
-                <DpCoin size={18} />{(dash.dp ?? 0).toLocaleString()}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }} title="DP 幣">
+                <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
               </span>
             </div>
 
