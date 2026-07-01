@@ -1051,6 +1051,7 @@ export interface SignupRow {
   id: string
   user_name: string
   user_email: string
+  group_id?: string
   group_name: string
   status: string
   group_revealed: boolean
@@ -1091,12 +1092,14 @@ export const adminSignupsApi = {
   list: (token: string, params: { race_id: string; q?: string }) => {
     const qs = new URLSearchParams({ race_id: params.race_id })
     if (params.q) qs.set('q', params.q)
-    return request<{ signups: SignupRow[]; count: number }>(`/admin/signups?${qs.toString()}`, {
+    return request<{ signups: SignupRow[]; count: number; groups: RaceGroup[] }>(`/admin/signups?${qs.toString()}`, {
       headers: withAuth(token),
     })
   },
   markPaid: (token: string, regID: string) =>
     request<void>(`/admin/signups/${regID}/pay`, { method: 'PATCH', headers: withAuth(token) }),
+  changeGroup: (token: string, regID: string, groupID: string) =>
+    request<void>(`/admin/signups/${regID}/group`, { method: 'PATCH', headers: withAuth(token), body: JSON.stringify({ group_id: groupID }) }),
 }
 
 export const adminOrdersApi = {

@@ -1012,6 +1012,23 @@ func (s *Service) ListSignups(ctx context.Context, raceID, q string) ([]SignupRo
 	return s.repo.ListSignups(ctx, raceID, q)
 }
 
+// ListRaceGroups 後台報名管理用：取分組（含名額上限/已用），並清掉鑰匙明碼。
+func (s *Service) ListRaceGroups(ctx context.Context, raceID string) ([]RaceGroup, error) {
+	gs, err := s.repo.GetGroups(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range gs {
+		gs[i].GroupKey = ""
+	}
+	return gs, nil
+}
+
+// ChangeSignupGroup 後台調整某報名的分組（額滿擋下）。
+func (s *Service) ChangeSignupGroup(ctx context.Context, regID, groupID string) error {
+	return s.repo.ChangeSignupGroup(ctx, regID, groupID)
+}
+
 func (s *Service) ListOrders(ctx context.Context, raceID, status string, limit, offset int) ([]OrderRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100

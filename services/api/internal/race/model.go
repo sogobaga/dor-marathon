@@ -421,6 +421,7 @@ type SignupRow struct {
 	ID            string    `json:"id"`
 	UserName      string    `json:"user_name"`
 	UserEmail     string    `json:"user_email"`
+	GroupID       string    `json:"group_id,omitempty"`
 	GroupName     string    `json:"group_name"`
 	Status        string    `json:"status"`
 	GroupRevealed bool      `json:"group_revealed"`

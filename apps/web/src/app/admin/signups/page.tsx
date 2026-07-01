@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminRacesApi, adminSignupsApi, type Race, type SignupRow } from '@/lib/api'
+import { adminRacesApi, adminSignupsApi, type Race, type SignupRow, type RaceGroup } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
 const STATUS_LABEL: Record<string, { t: string; c: string }> = {
@@ -20,8 +20,11 @@ export default function AdminSignupsPage() {
   const [races, setRaces] = useState<Race[]>([])
   const [raceID, setRaceID] = useState('')
   const [rows, setRows] = useState<SignupRow[] | null>(null)
+  const [groups, setGroups] = useState<RaceGroup[]>([])
   const [q, setQ] = useState('')
+  const [appliedQ, setAppliedQ] = useState('')
   const [err, setErr] = useState('')
+  const [busyGroup, setBusyGroup] = useState('')
   const [token, setTok] = useState<string | null>(null)
 
   useEffect(() => {
@@ -40,10 +43,23 @@ export default function AdminSignupsPage() {
     const t = getToken()
     if (!t || !rid) return
     setRows(null)
+    setAppliedQ(query)
     adminSignupsApi.list(t, { race_id: rid, q: query })
-      .then((r) => setRows(r.signups))
+      .then((r) => { setRows(r.signups); setGroups(r.groups ?? []) })
       .catch((e) => setErr(e?.message || '載入失敗'))
   }, [])
+
+  async function changeGroup(s: SignupRow, groupID: string) {
+    if (!token || groupID === (s.group_id ?? '')) return
+    setErr(''); setBusyGroup(s.id)
+    try {
+      await adminSignupsApi.changeGroup(token, s.id, groupID)
+      load(raceID, appliedQ) // 重載以更新各組已用名額
+    } catch (e: any) {
+      setErr(e?.message || '調整分組失敗')
+      setBusyGroup('')
+    }
+  }
 
   useEffect(() => { if (raceID) load(raceID, '') }, [raceID, load])
 
@@ -87,7 +103,31 @@ export default function AdminSignupsPage() {
                   <div style={{ fontWeight: 600 }}>{s.user_name}{s.snap_real_name && s.snap_real_name !== s.user_name ? `（${s.snap_real_name}）` : ''}</div>
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{s.user_email}{s.snap_phone ? ` · ${s.snap_phone}` : ''}</div>
                 </C>
-                <C w={1}>{s.group_revealed ? (s.group_name || '—') : '未公布'}</C>
+                <C w={1}>
+                  {groups.length === 0
+                    ? (s.group_name || '—')
+                    : (
+                      <select
+                        value={s.group_id ?? ''}
+                        disabled={busyGroup === s.id}
+                        onChange={(e) => changeGroup(s, e.target.value)}
+                        style={{ ...inp, padding: '7px 8px', fontSize: 13, opacity: busyGroup === s.id ? 0.5 : 1 }}
+                      >
+                        {!s.group_id && <option value="">未分組</option>}
+                        {groups.map((g) => {
+                          const full = g.slot_limit != null && (g.slots_taken ?? 0) >= g.slot_limit
+                          const isCur = g.id === s.group_id
+                          const cap = g.slot_limit != null ? `${g.slots_taken ?? 0}/${g.slot_limit}` : `${g.slots_taken ?? 0}/∞`
+                          return (
+                            <option key={g.id} value={g.id} disabled={full && !isCur}>
+                              {g.name}（{cap}）{full && !isCur ? ' 額滿' : ''}
+                            </option>
+                          )
+                        })}
+                      </select>
+                    )}
+                  {!s.group_revealed && <div style={{ fontSize: 10, color: 'var(--tx-faint)', marginTop: 2 }}>對選手未公布</div>}
+                </C>
                 <C w={1}><span style={{ color: st.c }}>{st.t}</span></C>
                 <C w={1}>{s.order_id ? `${ntd(s.order_total_cents)}` : '—'}</C>
                 <C w={1}>

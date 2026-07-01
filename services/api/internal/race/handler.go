@@ -104,6 +104,7 @@ func (h *Handler) SignupRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.AdminListSignupRows)
 	r.Patch("/{regID}/pay", h.AdminMarkRegistrationPaid)
+	r.Patch("/{regID}/group", h.AdminChangeSignupGroup)
 	return r
 }
 
@@ -128,7 +129,37 @@ func (h *Handler) AdminListSignupRows(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to list signups")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"signups": rows, "count": len(rows)})
+	groups, err := h.svc.ListRaceGroups(r.Context(), raceID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list groups")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"signups": rows, "count": len(rows), "groups": groups})
+}
+
+// PATCH /api/v1/admin/signups/{regID}/group  {group_id}
+func (h *Handler) AdminChangeSignupGroup(w http.ResponseWriter, r *http.Request) {
+	regID := chi.URLParam(r, "regID")
+	var body struct {
+		GroupID string `json:"group_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	err := h.svc.ChangeSignupGroup(r.Context(), regID, body.GroupID)
+	switch {
+	case errors.Is(err, ErrRegistrationNotFound):
+		respondErr(w, http.StatusNotFound, "registration not found")
+	case errors.Is(err, ErrGroupNotFound):
+		respondErr(w, http.StatusBadRequest, "分組不存在或不屬於此賽事")
+	case errors.Is(err, ErrGroupFull):
+		respondErr(w, http.StatusConflict, "該分組已額滿，無法調整進入")
+	case err != nil:
+		respondErr(w, http.StatusInternalServerError, "failed to change group")
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 // PATCH /api/v1/admin/signups/{regID}/pay

@@ -1452,7 +1452,7 @@ func (r *Repository) ListRegistrations(ctx context.Context, raceID string) ([]*R
 func (r *Repository) ListSignups(ctx context.Context, raceID, q string) ([]SignupRow, error) {
 	like := "%" + q + "%"
 	rows, err := r.db.Query(ctx, `
-		SELECT reg.id, u.name, u.email, COALESCE(g.name,''), reg.status,
+		SELECT reg.id, u.name, u.email, COALESCE(reg.group_id::text,''), COALESCE(g.name,''), reg.status,
 		       reg.group_revealed, COALESCE(reg.snap_real_name,''), COALESCE(reg.snap_phone,''),
 		       reg.created_at,
 		       COALESCE(o.id::text,''), COALESCE(o.total_cents,0), COALESCE(o.status,'')
@@ -1472,7 +1472,7 @@ func (r *Repository) ListSignups(ctx context.Context, raceID, q string) ([]Signu
 	out := []SignupRow{}
 	for rows.Next() {
 		var s SignupRow
-		if err := rows.Scan(&s.ID, &s.UserName, &s.UserEmail, &s.GroupName, &s.Status,
+		if err := rows.Scan(&s.ID, &s.UserName, &s.UserEmail, &s.GroupID, &s.GroupName, &s.Status,
 			&s.GroupRevealed, &s.SnapRealName, &s.SnapPhone, &s.CreatedAt,
 			&s.OrderID, &s.OrderTotal, &s.OrderStatus); err != nil {
 			return nil, err
@@ -1480,6 +1480,68 @@ func (r *Repository) ListSignups(ctx context.Context, raceID, q string) ([]Signu
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// ChangeSignupGroup 後台將某報名調整到另一個分組：交易內鎖新分組檢查名額（額滿擋下），
+// 舊組 slots_taken-1、新組 +1，並更新 registration.group_id。額滿回 ErrGroupFull。
+func (r *Repository) ChangeSignupGroup(ctx context.Context, regID, newGroupID string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if newGroupID == "" {
+		return ErrGroupNotFound
+	}
+
+	// 1. 取報名的現況（race_id、目前分組、狀態）並鎖列
+	var raceID, status, oldGroup string
+	err = tx.QueryRow(ctx, `
+		SELECT race_id::text, COALESCE(group_id::text,''), status FROM registrations
+		WHERE id=$1 FOR UPDATE`, regID).Scan(&raceID, &oldGroup, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrRegistrationNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock registration: %w", err)
+	}
+	if status == "cancelled" {
+		return ErrRegistrationNotFound
+	}
+	if oldGroup == newGroupID {
+		return nil // 未變更，直接成功
+	}
+
+	// 2. 鎖新分組、確認屬同賽事、檢查名額
+	var slotLimit *int
+	var slotsTaken int
+	err = tx.QueryRow(ctx, `
+		SELECT slot_limit, slots_taken FROM race_groups
+		WHERE id=$1 AND race_id=$2 FOR UPDATE`, newGroupID, raceID).Scan(&slotLimit, &slotsTaken)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrGroupNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock new group: %w", err)
+	}
+	if slotLimit != nil && slotsTaken >= *slotLimit {
+		return ErrGroupFull
+	}
+
+	// 3. 舊組 -1（若有）、新組 +1、更新 registration
+	if oldGroup != "" {
+		if _, err = tx.Exec(ctx, `UPDATE race_groups SET slots_taken = GREATEST(slots_taken-1,0) WHERE id=$1`, oldGroup); err != nil {
+			return fmt.Errorf("dec old group: %w", err)
+		}
+	}
+	if _, err = tx.Exec(ctx, `UPDATE race_groups SET slots_taken = slots_taken + 1 WHERE id=$1`, newGroupID); err != nil {
+		return fmt.Errorf("inc new group: %w", err)
+	}
+	if _, err = tx.Exec(ctx, `UPDATE registrations SET group_id=$1, group_revealed=true WHERE id=$2`, newGroupID, regID); err != nil {
+		return fmt.Errorf("update registration group: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 // ListOrders 列出訂單（race_id/status 可選過濾）

@@ -3,7 +3,7 @@ import './globals.css'
 
 export const metadata: Metadata = {
   title: 'DOR 雲端馬拉松',
-  description: '獵人 vs 逃亡者 — 城市配速挑戰賽',
+  description: '一場把城市變成賽道的跑步挑戰——不用站上起跑線，也能用每一次出門，跑出屬於自己的完賽故事。',
   manifest: '/manifest.json',
   icons: {
     icon: [
