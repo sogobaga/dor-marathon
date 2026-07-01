@@ -4,6 +4,7 @@
 package event
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/realtime"
 )
 
 const maxSpeedMS = 1000.0 / 120.0 // 8.33 m/s（2:00/km）人類極限，防瞬移
@@ -91,10 +93,24 @@ type EventDef struct {
 
 type Handler struct {
 	db *pgxpool.Pool
+	rt *realtime.Manager
 }
 
-func NewHandler(db *pgxpool.Pool) *Handler {
-	return &Handler{db: db}
+func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler {
+	return &Handler{db: db, rt: rt}
+}
+
+// taskGateOpen 全域任務閘門：一個跑者同時只有一個進行中任務、任務間至少 15 分鐘冷卻。
+// 只要近 15 分鐘內有任何 Phase A 觸發或 Phase B 加入紀錄 → 閘門關閉（不再觸發/不可加入）。
+func (h *Handler) taskGateOpen(ctx context.Context, uid string) (bool, error) {
+	var recent bool
+	err := h.db.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM event_task_occurrences WHERE user_id=$1 AND triggered_at > NOW() - INTERVAL '15 minutes'
+			UNION ALL
+			SELECT 1 FROM event_race_participants WHERE user_id=$1 AND joined_at > NOW() - INTERVAL '15 minutes'
+		)`, uid).Scan(&recent)
+	return !recent, err
 }
 
 // --- Admin CRUD（掛 /admin/events，需 event_tasks 權限）---
@@ -276,6 +292,11 @@ func (h *Handler) CreateOccurrence(w http.ResponseWriter, r *http.Request) {
 	var req occReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DefID == "" {
 		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	// 全域閘門：一次一任務 + 15 分冷卻（跨 Phase A/B）
+	if open, err := h.taskGateOpen(r.Context(), uid); err == nil && !open {
+		respondJSON(w, http.StatusOK, map[string]any{"blocked": true, "message": "任務冷卻中"})
 		return
 	}
 	var id string

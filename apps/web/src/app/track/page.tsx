@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, eventApi, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef } from '@/lib/api'
+import { activitiesApi, checkpointApi, eventApi, eventRaceApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
 import GoogleAuthProvider from '@/components/GoogleAuthProvider'
@@ -57,6 +57,9 @@ export default function TrackPage() {
   const [eventMoved, setEventMoved] = useState(0)
   const [eventResult, setEventResult] = useState<EventResult | null>(null)
   const [mapReady, setMapReady] = useState(false)
+  // 賽事多人連動事件（Phase B）
+  const [raceInvite, setRaceInvite] = useState<RaceEventInvite | null>(null)
+  const [inviteNow, setInviteNow] = useState(0) // 驅動邀請倒數重繪
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -80,6 +83,12 @@ export default function TrackPage() {
   const lastEventEndRef = useRef(0) // 上次事件結束時間（冷卻用）
   const evalTimerRef = useRef<any>(null)
   eventDefsRef.current = eventDefs
+  // Phase B 用
+  const wsRef = useRef<WebSocket | null>(null)
+  const raceIdRef = useRef('') // 綁定的賽事（供回報里程/接收邀請）
+  const lastTriggerRef = useRef(0) // 里程回報節流
+  const raceInviteRef = useRef<RaceEventInvite | null>(null)
+  raceInviteRef.current = raceInvite
 
   const ensureMap = useCallback(async (lat: number, lng: number) => {
     const L = await loadLeaflet()
@@ -186,6 +195,7 @@ export default function TrackPage() {
     activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
     try {
       const occ = await eventApi.createOccurrence(token, { def_id: def.id, trigger_dist_m: triggerD, trigger_elapsed_s: Math.floor((triggerT - startRef.current) / 1000) })
+      if (!occ.id) { activeEventRef.current = null; setActiveEvent(null); return } // 被全域閘門擋下（冷卻中）
       const armed = { ...ae, occId: occ.id }
       activeEventRef.current = armed; setActiveEvent(armed)
     } catch { activeEventRef.current = null; setActiveEvent(null) }
@@ -194,7 +204,11 @@ export default function TrackPage() {
     activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now()
     const token = getUserToken()
     try {
-      const res = token ? await eventApi.complete(token, ae.occId, { moved_m: moved, window_s: windowS }) : { completed: false }
+      const res = token
+        ? (ae.raceInstanceId
+          ? await eventRaceApi.complete(token, ae.raceInstanceId, { moved_m: moved, window_s: windowS })
+          : await eventApi.complete(token, ae.occId, { moved_m: moved, window_s: windowS }))
+        : { completed: false }
       setEventResult(res.completed
         ? { status: 'completed', def: ae.def, reward_exp: res.reward_exp ?? 0, reward_dp: res.reward_dp ?? 0 }
         : { status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 })
@@ -203,14 +217,72 @@ export default function TrackPage() {
   function failEvent(ae: ActiveEvent) {
     activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now()
     const token = getUserToken()
-    if (token && ae.occId) eventApi.fail(token, ae.occId).catch(() => {})
+    if (token) {
+      if (ae.raceInstanceId) eventRaceApi.fail(token, ae.raceInstanceId).catch(() => {})
+      else if (ae.occId) eventApi.fail(token, ae.occId).catch(() => {})
+    }
     setEventResult({ status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 })
   }
+  // Phase B：連 WS（綁第一場「進行中且已報名」賽事）＋ 監聽多人事件邀請
+  async function connectRaceWS() {
+    const token = getUserToken()
+    if (!token || wsRef.current) return
+    try {
+      const { races } = await eventRaceApi.context(token)
+      if (!races.length) return
+      raceIdRef.current = races[0].id
+      const ws = createRaceSocket(raceIdRef.current, token)
+      wsRef.current = ws
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data)
+          if (msg.type !== 'event_race_invite') return
+          const p = msg.payload as RaceEventInvite
+          if (!user?.id || !p.target_user_ids?.includes(user.id)) return
+          if (activeEventRef.current || raceInviteRef.current) return // 一次一任務
+          if (Date.now() > p.join_deadline) return
+          setRaceInvite(p)
+        } catch { /* ignore */ }
+      }
+      ws.onclose = () => { if (wsRef.current === ws) wsRef.current = null }
+    } catch { /* ignore */ }
+  }
+  // 加入多人事件 → 轉為一般 activeEvent，交給既有引擎評估完成
+  async function joinRace(inv: RaceEventInvite) {
+    const token = getUserToken(); if (!token) return
+    setRaceInvite(null)
+    try {
+      const res = await eventRaceApi.join(token, inv.instance_id)
+      if (!res.joined) { setCpMsg(res.message || '無法加入此事件'); return }
+      const now = Date.now()
+      const def: EventDef = {
+        name: res.name || inv.name, description: '', enabled: true, weight: 100, cooldown_sec: 0,
+        trigger_type: '', trigger_params: {}, completion_type: res.completion_type || inv.completion_type,
+        completion_params: res.completion_params || inv.completion_params, message: res.message || inv.message,
+        reward_exp: res.reward_exp ?? inv.reward_exp, reward_dp: res.reward_dp ?? inv.reward_dp,
+      }
+      const deadline = res.deadline || (now + (def.completion_params.limit_s || 180) * 1000)
+      const ae: ActiveEvent = { def, occId: '', raceInstanceId: inv.instance_id, triggerD: distRef.current, triggerT: now, readyUntil: now, deadline }
+      activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
+    } catch { setCpMsg('加入失敗，請重試') }
+  }
+
   function evalTick() {
     if (statusRef.current !== 'tracking') return
     const now = Date.now()
     distSamplesRef.current.push({ t: now, d: distRef.current })
     if (distSamplesRef.current.length > 1600) distSamplesRef.current.splice(0, 400) // 上限 ~25 分鐘
+    // Phase B：節流回報里程給後端（由後端依定義門檻/冷卻決定是否觸發多人事件）
+    if (raceIdRef.current && distRef.current > 0 && now - lastTriggerRef.current > 20000) {
+      lastTriggerRef.current = now
+      const token = getUserToken()
+      if (token) eventRaceApi.trigger(token, { race_id: raceIdRef.current, moved_m: distRef.current, elapsed_s: Math.floor((now - startRef.current) / 1000) }).catch(() => {})
+    }
+    // 邀請倒數重繪＋逾時自動關閉
+    if (raceInviteRef.current) {
+      if (now > raceInviteRef.current.join_deadline) setRaceInvite(null)
+      else setInviteNow(now)
+    }
     const ae = activeEventRef.current
     if (ae) {
       // 準備期：基準線持續對齊「目前位置」，完成計算尚未起算（吸收偵測/反應/延遲誤差）
@@ -243,8 +315,11 @@ export default function TrackPage() {
     // 事件引擎重置
     distSamplesRef.current = []; activeEventRef.current = null; lastEventEndRef.current = 0
     setActiveEvent(null); setEventResult(null); setEventMoved(0)
+    // Phase B 重置
+    setRaceInvite(null); raceIdRef.current = ''; lastTriggerRef.current = 0
     startRef.current = Date.now()
     setStatus('tracking')
+    connectRaceWS() // 連 WS 監聽多人事件（不 await；失敗不影響跑步）
     // ⚠️ iOS：定位權限提示必須在使用者手勢「同步」流程內直接請求，不能先 await 任何東西
     //（否則會失去使用者手勢 → Safari 直接判定拒絕，code 1）。故先請求定位，wake lock 之後再背景取得。
     watchRef.current = navigator.geolocation.watchPosition(
@@ -266,6 +341,8 @@ export default function TrackPage() {
     watchRef.current = null
     clearInterval(timerRef.current)
     clearInterval(evalTimerRef.current)
+    try { wsRef.current?.close() } catch { /* ignore */ }
+    wsRef.current = null; raceIdRef.current = ''
     try { wakeRef.current?.release() } catch { /* ignore */ }
     wakeRef.current = null
   }, [])
@@ -392,6 +469,28 @@ export default function TrackPage() {
             <EventResultBanner result={eventResult} onClose={() => { setEventResult(null); fetchEventDefs() }} />
           </div>
         )}
+        {!activeEvent && raceInvite && (() => {
+          const remain = Math.max(0, Math.ceil((raceInvite.join_deadline - (inviteNow || Date.now())) / 1000))
+          return (
+            <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1001, margin: '10px 12px 0', background: 'rgba(9,12,16,.96)', border: '1px solid rgba(255,194,75,.6)', borderRadius: 12, padding: '12px 14px', boxShadow: '0 6px 24px rgba(0,0,0,.55)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
+                <span style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--gold)', fontWeight: 800 }}>⚡ 多人事件邀請</span>
+                <span style={{ fontSize: 18, fontWeight: 900, color: remain <= 10 ? 'var(--hunt)' : 'var(--gold)', fontVariantNumeric: 'tabular-nums' }}>{remain}s</span>
+              </div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>
+                <span style={{ color: 'var(--fug)' }}>{raceInvite.initiator_name}</span> 發起：{raceInvite.message || raceInvite.name}
+              </div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 6 }}>
+                {raceInvite.reward_exp > 0 && <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--gold)' }}>+{raceInvite.reward_exp} EXP</span>}
+                {raceInvite.reward_dp > 0 && <span style={{ fontSize: 13, fontWeight: 900, color: '#FFD24D' }}>🪙 +{raceInvite.reward_dp}</span>}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button onClick={() => joinRace(raceInvite)} style={{ flex: 1, background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px', fontSize: 14, cursor: 'pointer' }}>加入一起跑</button>
+                <button onClick={() => setRaceInvite(null)} style={{ background: 'transparent', color: 'var(--tx-faint)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '9px 14px', fontSize: 13, cursor: 'pointer' }}>略過</button>
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       <ScrollArea padding="16">

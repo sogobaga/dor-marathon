@@ -348,6 +348,63 @@ export const adminEventsApi = {
   remove: (token: string, id: string) => request<void>(`/admin/events/${id}`, { method: 'DELETE', headers: withAuth(token) }),
 }
 
+// --- 賽事多人連動事件（Phase B）---
+export interface RelOption { key: string; label: string }
+export interface RaceEventDef {
+  id?: string
+  name: string
+  description?: string
+  enabled: boolean
+  race_id?: string // '' = 適用所有賽事
+  weight: number
+  trigger_min_m: number
+  initiator_cooldown_sec: number
+  target_count: number
+  group_rel: string
+  follow_rel: string
+  gender_rel: string
+  join_window_s: number
+  completion_type: string
+  completion_params: Record<string, number>
+  message: string
+  reward_exp: number
+  reward_dp: number
+  per_user_daily_cap: number
+}
+
+// WS 邀請 payload
+export interface RaceEventInvite {
+  instance_id: string
+  target_user_ids: string[]
+  initiator_name: string
+  name: string
+  message: string
+  completion_type: string
+  completion_params: Record<string, number>
+  join_window_s: number
+  reward_exp: number
+  reward_dp: number
+  join_deadline: number // epoch ms
+}
+
+export const eventRaceApi = {
+  context: (token: string) => request<{ races: { id: string; title: string }[] }>('/events/race/context', { headers: withAuth(token) }),
+  trigger: (token: string, body: { race_id: string; moved_m: number; elapsed_s: number }) =>
+    request<{ triggered: boolean; instance_id?: string; targets?: number }>('/events/race/trigger', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  join: (token: string, instID: string) =>
+    request<{ joined: boolean; message?: string; name?: string; completion_type?: string; completion_params?: Record<string, number>; reward_exp?: number; reward_dp?: number; deadline?: number }>(`/events/race/instances/${instID}/join`, { method: 'POST', headers: withAuth(token) }),
+  complete: (token: string, instID: string, body: { moved_m: number; window_s: number }) =>
+    request<{ completed: boolean; reward_exp?: number; reward_dp?: number; message?: string; capped?: boolean }>(`/events/race/instances/${instID}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  fail: (token: string, instID: string) => request<void>(`/events/race/instances/${instID}/fail`, { method: 'POST', headers: withAuth(token) }),
+}
+
+export const adminEventRacesApi = {
+  list: (token: string) => request<{ defs: RaceEventDef[]; completion_catalog: EventTypeSpec[]; group_rel_options: RelOption[]; follow_rel_options: RelOption[]; gender_rel_options: RelOption[] }>('/admin/event-races', { headers: withAuth(token) }),
+  create: (token: string, body: RaceEventDef) => request<{ def: RaceEventDef }>('/admin/event-races', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, id: string, body: RaceEventDef) => request<{ def: RaceEventDef }>(`/admin/event-races/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  remove: (token: string, id: string) => request<void>(`/admin/event-races/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
 export interface GpsRunSummary {
   id: string
   user_id: string

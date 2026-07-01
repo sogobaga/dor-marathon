@@ -116,7 +116,7 @@ func main() {
 	adminAcctHandler := adminacct.NewHandler(pool)
 
 	// 事件任務（日常隨機事件）
-	eventHandler := event.NewHandler(pool)
+	eventHandler := event.NewHandler(pool, wsManager)
 
 	// Image（圖片上傳，存 Postgres）
 	imageHandler := image.NewHandler(image.NewRepository(pool))
@@ -206,6 +206,8 @@ func main() {
 
 			// 事件任務（日常隨機事件）— 跑步引擎用
 			r.Mount("/events", eventHandler.Router())
+			// 賽事多人連動事件（Phase B）— 觸發/加入/完成
+			r.Mount("/events/race", eventHandler.RaceRouter())
 
 			// 獎勵系統（轉盤 + 集點卡）
 			r.Mount("/rewards", rewardHandler.Router())
@@ -240,6 +242,7 @@ func main() {
 			r.With(perm("races")).Mount("/admin/group-presets", raceHandler.PresetRouter())
 			r.With(perm("tasks")).Mount("/admin/task-modules", raceHandler.TaskModuleRouter())
 			r.With(perm("event_tasks")).Mount("/admin/events", eventHandler.AdminRouter())
+			r.With(perm("event_tasks")).Mount("/admin/event-races", eventHandler.RaceAdminRouter())
 			r.With(perm("settings")).Mount("/admin/test-whitelist", raceHandler.TestWhitelistRouter())
 			r.Mount("/admin/images", imageHandler.AdminRouter()) // 共用工具，任何 admin 可上傳
 			r.With(perm("signups")).Mount("/admin/signups", raceHandler.SignupRouter())

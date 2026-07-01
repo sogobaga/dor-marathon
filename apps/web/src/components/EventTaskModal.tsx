@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import type { EventDef } from '@/lib/api'
 import DpCoin from './DpCoin'
 
-export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number }
+export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string }
 export type EventResult = { status: 'completed' | 'failed'; def: EventDef; reward_exp: number; reward_dp: number }
 
 function goalText(def: EventDef): string {
