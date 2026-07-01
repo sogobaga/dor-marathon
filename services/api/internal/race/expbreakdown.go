@@ -22,13 +22,14 @@ type ExpLevelRow struct {
 
 // ExpBreakdown 結算彈窗資料
 type ExpBreakdown struct {
-	Gained    int                `json:"gained"`
-	ExpBefore int                `json:"exp_before"`
-	ExpAfter  int                `json:"exp_after"`
-	DpGained  int                `json:"dp_gained"` // 本場總獲得 DP
-	DpAfter   int                `json:"dp_after"`  // 結算後 DP 餘額
-	Items     []ExpBreakdownItem `json:"items"`
-	Levels    []ExpLevelRow      `json:"levels"`
+	Gained        int                `json:"gained"`
+	ExpBefore     int                `json:"exp_before"`
+	ExpAfter      int                `json:"exp_after"`
+	DpGained      int                `json:"dp_gained"`      // 本場總獲得 DP
+	DpAfter       int                `json:"dp_after"`       // 結算後 DP 餘額
+	CompletionPct float64            `json:"completion_pct"` // 完成度（累積里程/分組目標，0~100；無目標則 100）
+	Items         []ExpBreakdownItem `json:"items"`
+	Levels        []ExpLevelRow      `json:"levels"`
 }
 
 // GetExpBreakdown 取得登入者在某賽事的 EXP 結算明細（會先確保已結算）
@@ -114,6 +115,26 @@ func (r *Repository) expBreakdown(ctx context.Context, raceID, userID string) (*
 	out.ExpBefore = out.ExpAfter - out.Gained
 	if out.ExpBefore < 0 {
 		out.ExpBefore = 0
+	}
+
+	// 完成度：本場累積里程 / 分組目標里程（無目標則視為 100%）
+	var totalKm, targetKm float64
+	_ = r.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(a.distance_km),0), COALESCE(MAX(g.target_distance_km),0)
+		FROM registrations reg
+		JOIN races r ON r.id = reg.race_id
+		LEFT JOIN race_groups g ON g.id = reg.group_id
+		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
+		                      AND a.recorded_at BETWEEN r.start_date AND r.end_date
+		WHERE reg.user_id=$1 AND reg.race_id=$2 AND reg.status<>'cancelled'`,
+		userID, raceID).Scan(&totalKm, &targetKm)
+	if targetKm > 0 {
+		out.CompletionPct = totalKm / targetKm * 100
+		if out.CompletionPct > 100 {
+			out.CompletionPct = 100
+		}
+	} else {
+		out.CompletionPct = 100
 	}
 
 	// 等級門檻

@@ -471,6 +471,7 @@ export interface ExpBreakdown {
   exp_after: number
   dp_gained?: number
   dp_after?: number
+  completion_pct?: number
   items: ExpBreakdownItem[]
   levels: ExpLevelRow[]
 }

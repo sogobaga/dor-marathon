@@ -56,17 +56,21 @@ function buildSteps(before: number, after: number, levelsIn: ExpLevelRow[]): Ste
 
 const easeOut = (t: number) => 1 - Math.pow(1 - t, 3)
 
-export default function ExpSettlementModal({ breakdown, title = '副本完成', tagline = 'RACE CLEAR', subtitle, onClose }: { breakdown: ExpBreakdown; title?: string; tagline?: string; subtitle: string; onClose: () => void }) {
-  const { gained, exp_before, exp_after, items, levels, dp_gained = 0 } = breakdown
+export default function ExpSettlementModal({ breakdown, title = '成績結算', tagline = 'RESULT', subtitle, onClose }: { breakdown: ExpBreakdown; title?: string; tagline?: string; subtitle: string; onClose: () => void }) {
+  const { gained, exp_before, exp_after, items, levels, dp_gained = 0, completion_pct } = breakdown
   const steps = useMemo(() => buildSteps(exp_before, exp_after, levels), [exp_before, exp_after, levels])
+  // 完成度 → 星等（85~100→3、60~85→2、60 以下→1）。無 completion_pct（如里程彈窗）不顯示星星。
+  const showStars = completion_pct != null
+  const earnedStars = completion_pct == null ? 0 : completion_pct >= 85 ? 3 : completion_pct >= 60 ? 2 : 1
 
-  const [phase, setPhase] = useState<'intro' | 'items' | 'total' | 'levels' | 'done'>('intro')
+  const [phase, setPhase] = useState<'intro' | 'items' | 'total' | 'levels' | 'stars' | 'done'>('intro')
   const [revealed, setRevealed] = useState(0)
   const [total, setTotal] = useState(0)
   const [totalDp, setTotalDp] = useState(0)
   const [stepIdx, setStepIdx] = useState(0)
   const [barPct, setBarPct] = useState(steps[0]?.fromPct ?? 0)
   const [flash, setFlash] = useState(false)
+  const [litStars, setLitStars] = useState(0)
   const [canClose, setCanClose] = useState(false)
   const [muted, setMuted] = useState(false)
 
@@ -112,6 +116,12 @@ export default function ExpSettlementModal({ breakdown, title = '副本完成', 
         if (steps[si].willLevelUp) { sfx.playDing(); setFlash(true); await sleep(Math.max(300, 400 - si * 12)); setFlash(false) } // 到 100% → 噹
       }
       if (cancelled) return
+      // 星等演出：earned 顆星依序點亮（pop + 噹）
+      if (showStars) {
+        setPhase('stars'); await sleep(350)
+        for (let s = 1; s <= earnedStars; s++) { if (cancelled) return; setLitStars(s); sfx.playDing(); await sleep(520) }
+        await sleep(300); if (cancelled) return
+      }
       setPhase('done'); setCanClose(true)
     })()
     return () => { cancelled = true; sfx.stopFill() }
@@ -141,6 +151,28 @@ export default function ExpSettlementModal({ breakdown, title = '副本完成', 
           <div style={{ fontSize: 34, fontWeight: 900, color: '#fff', textShadow: '0 0 24px rgba(229,196,107,.6)', margin: '2px 0 2px' }}>{title}</div>
           <div style={{ fontSize: 12, color: 'var(--tx-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</div>
         </div>
+
+        {/* 星等（依完成度）：預設三顆未亮，達成後依序點亮 */}
+        {showStars && (
+          <div style={{ textAlign: 'center', marginTop: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
+              {[0, 1, 2].map((i) => {
+                const lit = i < litStars
+                return (
+                  <span key={i} style={{
+                    fontSize: 44, lineHeight: 1, display: 'inline-block',
+                    color: lit ? '#FFD24D' : 'rgba(255,255,255,.14)',
+                    textShadow: lit ? '0 0 18px rgba(255,210,77,.8)' : 'none',
+                    animation: lit ? 'starPop .5s cubic-bezier(.2,1.7,.4,1) both' : 'none',
+                  }}>★</span>
+                )
+              })}
+            </div>
+            {(phase === 'stars' || phase === 'done') && (
+              <div style={{ fontSize: 11, letterSpacing: '.15em', color: 'var(--tx-faint)', marginTop: 4 }}>完成度 {Math.round(completion_pct ?? 0)}%</div>
+            )}
+          </div>
+        )}
 
         {/* 明細 */}
         <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 7, minHeight: 8 }}>
@@ -231,4 +263,5 @@ const KEYFRAMES = `
 @keyframes glowPulse { 0%,100% { opacity: .65 } 50% { opacity: 1 } }
 @keyframes burst { 0% { transform: scale(.4) translateY(6px); opacity: 0 } 40% { transform: scale(1.15) translateY(0); opacity: 1 } 100% { transform: scale(1) translateY(-10px); opacity: 0 } }
 @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(229,196,107,.5) } 50% { box-shadow: 0 0 0 8px rgba(229,196,107,0) } }
+@keyframes starPop { 0% { transform: scale(.2) rotate(-30deg); opacity: 0 } 55% { transform: scale(1.4) rotate(10deg); opacity: 1 } 100% { transform: scale(1) rotate(0); opacity: 1 } }
 `
