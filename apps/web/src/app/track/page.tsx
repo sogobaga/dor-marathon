@@ -60,6 +60,7 @@ export default function TrackPage() {
   // 賽事多人連動事件（Phase B）
   const [raceInvite, setRaceInvite] = useState<RaceEventInvite | null>(null)
   const [inviteNow, setInviteNow] = useState(0) // 驅動邀請倒數重繪
+  const [isLandscape, setIsLandscape] = useState(false) // 橫向時顯示「轉回直立」提示
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -355,6 +356,8 @@ export default function TrackPage() {
     timerRef.current = setInterval(() => setElapsed((Date.now() - startRef.current) / 1000), 250)
     evalTimerRef.current = setInterval(evalTick, 1000) // 事件引擎每秒評估
     acquireWake() // 不 await：wake lock 失敗或延遲都不影響定位
+    // 盡力鎖直屏（Android/PWA 全螢幕有效；iOS Safari 不支援 → 靠下方「轉回直立」提示保底）
+    try { (screen.orientation as any)?.lock?.('portrait').catch(() => {}) } catch { /* 不支援就忽略 */ }
   }
 
   const cleanup = useCallback(() => {
@@ -366,6 +369,7 @@ export default function TrackPage() {
     wsRef.current = null; raceIdRef.current = ''
     try { wakeRef.current?.release() } catch { /* ignore */ }
     wakeRef.current = null
+    try { (screen.orientation as any)?.unlock?.() } catch { /* ignore */ }
   }, [])
 
   async function finish() {
@@ -417,6 +421,16 @@ export default function TrackPage() {
   }, [])
   useEffect(() => { fetchEventDefs() }, [fetchEventDefs, user?.id])
 
+  // 追蹤螢幕方向：橫向時顯示「轉回直立」提示（跨平台保底；真正鎖定見 start() 的 orientation.lock）
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(orientation: landscape)')
+    const on = () => setIsLandscape(mq.matches)
+    on()
+    mq.addEventListener?.('change', on)
+    return () => mq.removeEventListener?.('change', on)
+  }, [])
+
   // 在跑步地圖上標出打卡點（已打卡綠/待審金/未打卡灰）→ 邊跑邊探索、就近打卡
   useEffect(() => {
     if (!mapReady || !mapRef.current || !cpLayerRef.current) return
@@ -466,6 +480,16 @@ export default function TrackPage() {
    <GoogleAuthProvider>
     <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
+      {status === 'tracking' && isLandscape && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'var(--bg-1, #0b0e13)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, textAlign: 'center' }}>
+          <div style={{ fontSize: 46 }}>📱↻</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)' }}>請將手機轉回直立</div>
+          <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7, maxWidth: 300 }}>
+            跑步追蹤僅支援直式畫面。你的移動<strong style={{ color: 'var(--fug)' }}>仍在背景持續記錄</strong>，轉回直立即可繼續。<br />
+            建議把手機「自動旋轉」關閉，或將本站「加入主畫面」以固定直屏。
+          </div>
+        </div>
+      )}
       <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         {/* 跑步期間隱藏「返回/歷史」，避免誤離開而中斷；只能按「結束並上傳」正常結束 */}
         {status === 'tracking'
