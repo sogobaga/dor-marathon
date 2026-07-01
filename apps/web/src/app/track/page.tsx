@@ -7,6 +7,7 @@ import { loadLeaflet } from '@/lib/leaflet'
 import GoogleAuthProvider from '@/components/GoogleAuthProvider'
 import { LoginModal } from '@/components/UserAuthBar'
 import PhoneFrame from '@/components/PhoneFrame'
+import ScrollArea from '@/components/ScrollArea'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -240,7 +241,7 @@ export default function TrackPage() {
       {/* 地圖 */}
       <div id="gps-map" style={{ width: '100%', height: 280, background: 'var(--bg-2)' }} />
 
-      <div style={{ padding: 16, flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      <ScrollArea padding="16">
         {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, wordBreak: 'break-word' }}>⚠️ {warn}</div>}
         {err && <div style={{ color: 'var(--hunt)', fontSize: 13, marginBottom: 12 }}>{err}</div>}
 
@@ -325,7 +326,7 @@ export default function TrackPage() {
             </div>
           </div>
         )}
-      </div>
+      </ScrollArea>
 
       {/* 操作 */}
       <div style={{ padding: 16, borderTop: '1px solid var(--line)', position: 'sticky', bottom: 0, background: 'var(--bg)' }}>
