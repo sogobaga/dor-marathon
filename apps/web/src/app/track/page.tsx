@@ -425,10 +425,16 @@ export default function TrackPage() {
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
     const mq = window.matchMedia('(orientation: landscape)')
-    const on = () => setIsLandscape(mq.matches)
+    let t: any
+    const on = () => {
+      clearTimeout(t)
+      // 橫向需持續 ~0.7 秒才顯示提示（避免晃動瞬間翻轉狂閃）；轉回直立立即收起
+      if (mq.matches) t = setTimeout(() => setIsLandscape(true), 700)
+      else setIsLandscape(false)
+    }
     on()
     mq.addEventListener?.('change', on)
-    return () => mq.removeEventListener?.('change', on)
+    return () => { clearTimeout(t); mq.removeEventListener?.('change', on) }
   }, [])
 
   // 在跑步地圖上標出打卡點（已打卡綠/待審金/未打卡灰）→ 邊跑邊探索、就近打卡
