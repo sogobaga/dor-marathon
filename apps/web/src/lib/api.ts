@@ -315,6 +315,39 @@ export const checkpointApi = {
     request<{ result: CheckinResult }>(`/checkpoints/${id}/checkin`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
 }
 
+// --- 事件任務（日常隨機事件）---
+export interface EventParamSpec { key: string; label: string; unit: string }
+export interface EventTypeSpec { key: string; label: string; params: EventParamSpec[] }
+export interface EventDef {
+  id?: string
+  name: string
+  description?: string
+  enabled: boolean
+  weight: number
+  cooldown_sec: number
+  trigger_type: string
+  trigger_params: Record<string, number>
+  completion_type: string
+  completion_params: Record<string, number>
+  message: string
+  reward_exp: number
+  reward_dp: number
+}
+export const eventApi = {
+  active: (token: string) => request<{ defs: EventDef[] }>('/events/active', { headers: withAuth(token) }),
+  createOccurrence: (token: string, body: { def_id: string; trigger_dist_m: number; trigger_elapsed_s: number }) =>
+    request<{ id: string; reward_exp: number; reward_dp: number }>('/events/occurrences', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  complete: (token: string, id: string, body: { moved_m: number; window_s: number }) =>
+    request<{ completed: boolean; reward_exp?: number; reward_dp?: number; message?: string }>(`/events/occurrences/${id}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  fail: (token: string, id: string) => request<void>(`/events/occurrences/${id}/fail`, { method: 'POST', headers: withAuth(token) }),
+}
+export const adminEventsApi = {
+  list: (token: string) => request<{ defs: EventDef[]; trigger_catalog: EventTypeSpec[]; completion_catalog: EventTypeSpec[] }>('/admin/events', { headers: withAuth(token) }),
+  create: (token: string, body: EventDef) => request<{ def: EventDef }>('/admin/events', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, id: string, body: EventDef) => request<{ def: EventDef }>(`/admin/events/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  remove: (token: string, id: string) => request<void>(`/admin/events/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
 export interface GpsRunSummary {
   id: string
   user_id: string

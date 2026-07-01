@@ -30,7 +30,7 @@ const NAV: { grp: string; items: NavItem[] }[] = [
       { k: 'factions', t: '陣營設定' },
       { k: 'task-modules', t: '賽事任務', href: '/admin/task-modules', perm: 'tasks' },
       { k: 'levels', t: '等級設定', href: '/admin/levels', perm: 'settings' },
-      { k: 'missions', t: '每日任務' },
+      { k: 'events', t: '事件任務', href: '/admin/events', perm: 'event_tasks' },
       { k: 'stores', t: '打卡門市' },
       { k: 'mileage', t: '里程規則' },
       { k: 'wheel', t: '轉盤獎勵' },

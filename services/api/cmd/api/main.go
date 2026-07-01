@@ -22,6 +22,7 @@ import (
 	"github.com/dor/api/internal/cache"
 	"github.com/dor/api/internal/config"
 	"github.com/dor/api/internal/db"
+	"github.com/dor/api/internal/event"
 	"github.com/dor/api/internal/image"
 	"github.com/dor/api/internal/integration"
 	"github.com/dor/api/internal/middleware"
@@ -114,6 +115,9 @@ func main() {
 	// Admin 帳號管理 + 各模組權限
 	adminAcctHandler := adminacct.NewHandler(pool)
 
+	// 事件任務（日常隨機事件）
+	eventHandler := event.NewHandler(pool)
+
 	// Image（圖片上傳，存 Postgres）
 	imageHandler := image.NewHandler(image.NewRepository(pool))
 
@@ -200,6 +204,9 @@ func main() {
 			// 打卡點任務（geofence check-in）
 			r.Mount("/checkpoints", raceHandler.CheckpointRouter())
 
+			// 事件任務（日常隨機事件）— 跑步引擎用
+			r.Mount("/events", eventHandler.Router())
+
 			// 獎勵系統（轉盤 + 集點卡）
 			r.Mount("/rewards", rewardHandler.Router())
 
@@ -232,6 +239,7 @@ func main() {
 			r.With(perm("races")).Mount("/admin/races", raceHandler.AdminRouter())
 			r.With(perm("races")).Mount("/admin/group-presets", raceHandler.PresetRouter())
 			r.With(perm("tasks")).Mount("/admin/task-modules", raceHandler.TaskModuleRouter())
+			r.With(perm("event_tasks")).Mount("/admin/events", eventHandler.AdminRouter())
 			r.With(perm("settings")).Mount("/admin/test-whitelist", raceHandler.TestWhitelistRouter())
 			r.Mount("/admin/images", imageHandler.AdminRouter()) // 共用工具，任何 admin 可上傳
 			r.With(perm("signups")).Mount("/admin/signups", raceHandler.SignupRouter())

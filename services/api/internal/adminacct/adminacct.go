@@ -37,6 +37,7 @@ var Scopes = []Scope{
 	{"promo", "序號管理"},
 	{"gps_review", "GPS 審核"},
 	{"tasks", "賽事任務"},
+	{"event_tasks", "事件任務"},
 	{"settings", "等級／系統設定"},
 	{"organizer", "主辦審核"},
 }

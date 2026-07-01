@@ -1,13 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, type GpsPoint, type GpsRunResult, type ActiveCheckpoint } from '@/lib/api'
+import { activitiesApi, checkpointApi, eventApi, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
 import GoogleAuthProvider from '@/components/GoogleAuthProvider'
 import { LoginModal } from '@/components/UserAuthBar'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
+import { EventBanner, EventResultModal, type ActiveEvent, type EventResult } from '@/components/EventTaskModal'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -49,6 +50,11 @@ export default function TrackPage() {
   const [curPos, setCurPos] = useState<{ lat: number; lng: number; acc: number } | null>(null)
   const [cpBusy, setCpBusy] = useState('') // 正在打卡的 checkpoint id
   const [cpMsg, setCpMsg] = useState('')
+  // 事件任務（日常隨機）
+  const [eventDefs, setEventDefs] = useState<EventDef[]>([])
+  const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null)
+  const [eventMoved, setEventMoved] = useState(0)
+  const [eventResult, setEventResult] = useState<EventResult | null>(null)
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -64,6 +70,13 @@ export default function TrackPage() {
   const statusRef = useRef(status)
   statusRef.current = status
   const lastAccRef = useRef<GpsPoint | null>(null) // 上一個「採納」的點（過濾原地抖動用）
+  // 事件引擎用
+  const distSamplesRef = useRef<{ t: number; d: number }[]>([]) // {時間ms, 累積距離m}
+  const eventDefsRef = useRef<EventDef[]>([])
+  const activeEventRef = useRef<ActiveEvent | null>(null)
+  const lastEventEndRef = useRef(0) // 上次事件結束時間（冷卻用）
+  const evalTimerRef = useRef<any>(null)
+  eventDefsRef.current = eventDefs
 
   const ensureMap = useCallback(async (lat: number, lng: number) => {
     const L = await loadLeaflet()
@@ -118,6 +131,8 @@ export default function TrackPage() {
     // 標記點與地圖永遠跟著「目前」位置（即時感），即使該點未被採納為距離
     if (markRef.current) markRef.current.setLatLng([p.lat, p.lng])
     if (mapRef.current) mapRef.current.panTo([p.lat, p.lng])
+    // 事件進行中：更新即時位移（進度條）
+    if (activeEventRef.current) setEventMoved(distRef.current - activeEventRef.current.triggerD)
     // 防當掉：暫存採納後的軌跡
     localStorage.setItem(LS_KEY, JSON.stringify({ start: startRef.current, points: pointsRef.current.slice(-2000) }))
   }, [ensureMap])
@@ -126,11 +141,92 @@ export default function TrackPage() {
     try { wakeRef.current = await (navigator as any).wakeLock?.request('screen') } catch { /* ignore */ }
   }
 
+  // --- 事件任務引擎 ---
+  // 近 windowMs 的位移（公尺）；歷史不足回 null
+  function movedInWindow(windowMs: number): number | null {
+    const s = distSamplesRef.current
+    if (s.length < 2) return null
+    const target = Date.now() - windowMs
+    let past: { t: number; d: number } | null = null
+    for (let i = s.length - 1; i >= 0; i--) { if (s[i].t <= target) { past = s[i]; break } }
+    if (!past) return null // 尚無足夠歷史（跑步時間短於觀察視窗）
+    return distRef.current - past.d
+  }
+  function triggerEligible(def: EventDef): boolean {
+    const p = def.trigger_params
+    const moved = movedInWindow((p.window_s ?? 0) * 1000)
+    if (moved == null) return false
+    if (def.trigger_type === 'distance_below') return moved < (p.max_move_m ?? 0)
+    if (def.trigger_type === 'distance_above') return moved > (p.min_move_m ?? 0)
+    return false
+  }
+  function pickWeighted(list: EventDef[]): EventDef {
+    const total = list.reduce((s, d) => s + Math.max(1, d.weight), 0)
+    let r = Math.random() * total
+    for (const d of list) { r -= Math.max(1, d.weight); if (r <= 0) return d }
+    return list[list.length - 1]
+  }
+  async function armEvent(def: EventDef) {
+    const token = getUserToken(); if (!token || !def.id) return
+    const triggerD = distRef.current, triggerT = Date.now()
+    const limitS = def.completion_params.limit_s || 60
+    const ae: ActiveEvent = { def, occId: '', triggerD, triggerT, deadline: triggerT + limitS * 1000 }
+    activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
+    try {
+      const occ = await eventApi.createOccurrence(token, { def_id: def.id, trigger_dist_m: triggerD, trigger_elapsed_s: Math.floor((triggerT - startRef.current) / 1000) })
+      const armed = { ...ae, occId: occ.id }
+      activeEventRef.current = armed; setActiveEvent(armed)
+    } catch { activeEventRef.current = null; setActiveEvent(null) }
+  }
+  async function completeEvent(ae: ActiveEvent, moved: number, windowS: number) {
+    activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now()
+    const token = getUserToken()
+    try {
+      const res = token ? await eventApi.complete(token, ae.occId, { moved_m: moved, window_s: windowS }) : { completed: false }
+      setEventResult(res.completed
+        ? { status: 'completed', def: ae.def, reward_exp: res.reward_exp ?? 0, reward_dp: res.reward_dp ?? 0 }
+        : { status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 })
+    } catch { setEventResult({ status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 }) }
+  }
+  function failEvent(ae: ActiveEvent) {
+    activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now()
+    const token = getUserToken()
+    if (token && ae.occId) eventApi.fail(token, ae.occId).catch(() => {})
+    setEventResult({ status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 })
+  }
+  function evalTick() {
+    if (statusRef.current !== 'tracking') return
+    const now = Date.now()
+    distSamplesRef.current.push({ t: now, d: distRef.current })
+    if (distSamplesRef.current.length > 1600) distSamplesRef.current.splice(0, 400) // 上限 ~25 分鐘
+    const ae = activeEventRef.current
+    if (ae) {
+      const moved = distRef.current - ae.triggerD
+      setEventMoved(moved)
+      const cp = ae.def.completion_params
+      if (ae.def.completion_type === 'move_more') {
+        if (moved >= (cp.target_m ?? 0)) completeEvent(ae, moved, (now - ae.triggerT) / 1000)
+        else if (now > ae.deadline) failEvent(ae)
+      } else if (ae.def.completion_type === 'move_less') {
+        if (moved > (cp.max_m ?? 0)) failEvent(ae)
+        else if (now >= ae.deadline) completeEvent(ae, moved, (now - ae.triggerT) / 1000)
+      }
+      return
+    }
+    // 無進行中事件 → 依冷卻 + 觸發條件挑選
+    const eligible = eventDefsRef.current.filter((d) =>
+      now - lastEventEndRef.current >= (d.cooldown_sec || 0) * 1000 && triggerEligible(d))
+    if (eligible.length > 0) armEvent(pickWeighted(eligible))
+  }
+
   function start() {
     setErr('')
     if (!navigator.geolocation) { setErr('此裝置/瀏覽器不支援定位'); return }
     pointsRef.current = []; distRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null)
+    // 事件引擎重置
+    distSamplesRef.current = []; activeEventRef.current = null; lastEventEndRef.current = 0
+    setActiveEvent(null); setEventResult(null); setEventMoved(0)
     startRef.current = Date.now()
     setStatus('tracking')
     // ⚠️ iOS：定位權限提示必須在使用者手勢「同步」流程內直接請求，不能先 await 任何東西
@@ -145,6 +241,7 @@ export default function TrackPage() {
       { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
     )
     timerRef.current = setInterval(() => setElapsed((Date.now() - startRef.current) / 1000), 250)
+    evalTimerRef.current = setInterval(evalTick, 1000) // 事件引擎每秒評估
     acquireWake() // 不 await：wake lock 失敗或延遲都不影響定位
   }
 
@@ -152,6 +249,7 @@ export default function TrackPage() {
     if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current)
     watchRef.current = null
     clearInterval(timerRef.current)
+    clearInterval(evalTimerRef.current)
     try { wakeRef.current?.release() } catch { /* ignore */ }
     wakeRef.current = null
   }, [])
@@ -197,6 +295,14 @@ export default function TrackPage() {
   }, [])
   useEffect(() => { fetchCheckpoints() }, [fetchCheckpoints, user?.id])
 
+  // 載入啟用中的事件定義（供跑步引擎）
+  const fetchEventDefs = useCallback(async () => {
+    const token = getUserToken()
+    if (!token) { setEventDefs([]); return }
+    try { const { defs } = await eventApi.active(token); setEventDefs(defs) } catch { /* ignore */ }
+  }, [])
+  useEffect(() => { fetchEventDefs() }, [fetchEventDefs, user?.id])
+
   async function doCheckin(cp: ActiveCheckpoint) {
     setCpMsg('')
     const token = getUserToken()
@@ -232,6 +338,7 @@ export default function TrackPage() {
    <GoogleAuthProvider>
     <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
+      {eventResult && <EventResultModal result={eventResult} onClose={() => { setEventResult(null); fetchEventDefs() }} />}
       <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         <a href="/" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 返回</a>
         <strong style={{ fontSize: 16 }}>GPS 跑步追蹤</strong>
@@ -240,6 +347,9 @@ export default function TrackPage() {
 
       {/* 地圖 */}
       <div id="gps-map" style={{ width: '100%', height: 280, background: 'var(--bg-2)' }} />
+
+      {/* 進行中事件橫幅（常駐可見） */}
+      {activeEvent && <EventBanner active={activeEvent} moved={eventMoved} />}
 
       <ScrollArea padding="16">
         {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, wordBreak: 'break-word' }}>⚠️ {warn}</div>}
