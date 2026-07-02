@@ -111,14 +111,16 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
       onPointerCancel={isTap ? undefined : onUpHold}
       style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'radial-gradient(circle at 50% 40%, rgba(20,26,34,.96), rgba(6,8,11,.98))', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '20px 18px', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', overflow: 'hidden' }}
     >
-      {/* 準備期：略過 321 直接開始；進行中：放棄（以目前完成度計，讓跑者可退出去按結束） */}
-      <button
-        onClick={ready ? skipPrep : finish}
-        onPointerDown={(e) => e.stopPropagation()}
-        style={{ position: 'absolute', top: 14, right: 14, zIndex: 2001, background: 'rgba(255,255,255,.1)', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 999, padding: '5px 12px', fontSize: 12.5, cursor: 'pointer' }}
-      >{ready ? '⏭ 略過準備' : '✕ 放棄'}</button>
+      {/* 準備期：略過 321 直接開始；進行中：放棄。獨立一列靠右，避免和下方文字重疊 */}
+      <div style={{ width: '100%', maxWidth: 420, display: 'flex', justifyContent: 'flex-end' }}>
+        <button
+          onClick={ready ? skipPrep : finish}
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{ background: 'rgba(255,255,255,.1)', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 999, padding: '6px 14px', fontSize: 12.5, cursor: 'pointer' }}
+        >{ready ? '⏭ 略過準備' : '✕ 放棄'}</button>
+      </div>
 
-      <div style={{ width: '100%', maxWidth: 420, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingRight: 70 }}>
+      <div style={{ width: '100%', maxWidth: 420, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 10 }}>
         <span style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--gold)', fontWeight: 800 }}>⚡ 事件任務</span>
         <span style={{ fontSize: 22, fontWeight: 900, color: ready ? 'var(--fug)' : remain <= 3 ? 'var(--hunt)' : accent, fontVariantNumeric: 'tabular-nums' }}>{ready ? `準備 ${readyRemain}` : `${remain}s`}</span>
       </div>
