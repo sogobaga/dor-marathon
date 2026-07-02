@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useIsMobile } from '@/lib/useIsMobile'
 import RacesScreen from './RacesScreen'
 import RegistrationScreen from './RegistrationScreen'
 import ProfileScreen from './ProfileScreen'
@@ -12,7 +13,7 @@ import { validateSession } from '@/lib/userAuth'
 import type { Race } from '@/lib/api'
 
 export default function PhoneShell() {
-  const [isMobile, setIsMobile] = useState(false)
+  const isMobile = useIsMobile()
   const [detailRace, setDetailRace] = useState<Race | null>(null)
   const [detailTab, setDetailTab] = useState<'brochure' | 'progress' | 'rank' | undefined>(undefined)
   const [registerRace, setRegisterRace] = useState<Race | null>(null)
@@ -20,7 +21,6 @@ export default function PhoneShell() {
   const [payRace, setPayRace] = useState<Race | null>(null)
 
   useEffect(() => {
-    setIsMobile(window.innerWidth <= 430)
     // 開啟 app 即驗證/換發 token：避免「顯示已登入但實際過期」的不一致
     validateSession()
     // Strava 授權導回（?strava=...）→ 直接開個人資訊頁顯示結果
@@ -32,13 +32,8 @@ export default function PhoneShell() {
   return (
     <GoogleAuthProvider>
     <div className={isMobile ? 'w-full h-dvh' : 'phone-shell'}>
-      {/* iOS notch */}
-      {!isMobile && (
-        <div style={{
-          position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
-          width: 120, height: 34, background: '#000', borderRadius: 999, zIndex: 50,
-        }} />
-      )}
+      {/* 假動態島（僅桌面模擬框顯示；真手機由 CSS .fake-notch media query 隱藏） */}
+      <div className="fake-notch" />
 
       {/* App content 區域 */}
       <div style={{

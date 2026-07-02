@@ -34,7 +34,7 @@ export default function RaceRankingScreen({ race, onBack }: { race: Race; onBack
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <header style={{ padding: '52px 22px 14px', flexShrink: 0 }}>
+      <header style={{ padding: 'var(--app-top) 22px 14px', flexShrink: 0 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <h1 style={{ margin: '10px 0 2px', fontSize: 23, fontWeight: 800, color: 'var(--tx)' }}>{race.title}</h1>
         <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>分組排行榜</div>

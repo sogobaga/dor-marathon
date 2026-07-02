@@ -24,6 +24,9 @@
   --glow-fug:  0 0 20px rgba(45,229,154,.25);
   --glow-hunt: 0 0 20px rgba(255,75,92,.25);
   --glow-gold: 0 0 20px rgba(255,194,75,.25);
+
+  /* 頁首頂部內距：桌面模擬框預留「假動態島」高度；真手機於下方 media query 縮小。 */
+  --app-top: 52px;
 }
 
 /* Skin: default（暗黑電影風）— 顯式宣告一份，讓子樹（如後台）可用 data-skin="default" 覆寫回暗色，
@@ -103,11 +106,19 @@ html, body {
   background: var(--bg);
 }
 
-/* 在真實手機上直接全屏（app-shell：外框固定、內層 ScrollArea 捲動）。
+/* 桌面模擬框上方的「假動態島」（前鏡頭瀏海）。真手機不需要（見下方 media query 隱藏）。 */
+.fake-notch {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  width: 120px; height: 34px; background: #000; border-radius: 999px; z-index: 50;
+}
+
+/* 真手機（窄視窗，或觸控裝置且非平板）：直接全屏、去除模擬外框與假動態島，頁首頂距縮小。
    完全無瀏覽器介面的沉浸體驗＝將本站「加入主畫面」以 PWA standalone 啟動。 */
-@media (max-width: 430px) {
+@media (max-width: 500px), (pointer: coarse) and (max-width: 600px) {
+  :root { --app-top: 16px; } /* 真手機沒有假動態島，頁首只留少量呼吸空間（真瀏海由 safe-area 處理） */
   .phone-frame { display: block; padding: 0; height: 100dvh; min-height: 0; overflow: hidden; }
-  .phone-shell { width: 100% !important; height: 100dvh !important; border-radius: 0 !important; border: none !important; box-shadow: none !important; }
+  .phone-shell { width: 100% !important; height: 100dvh !important; max-height: none !important; border-radius: 0 !important; border: none !important; box-shadow: none !important; }
+  .fake-notch { display: none !important; }
 }
 
 /* iOS 模擬外框 */

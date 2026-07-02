@@ -1,14 +1,12 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
+import { useIsMobile } from '@/lib/useIsMobile'
 
-// 前台獨立頁面共用的「手機模擬框」：PC 上以手機寬度置中呈現（含瀏海），手機上全屏。
+// 前台獨立頁面共用的「手機模擬框」：PC 上以手機寬度置中呈現，手機上全屏。
 // 內部為直向 flex 欄；頁面自行放 header + <ScrollArea>。與首頁 PhoneShell 一致。
 export default function PhoneFrame({ children }: { children: ReactNode }) {
-  const [isMobile, setIsMobile] = useState(false)
-  useEffect(() => {
-    setIsMobile(window.innerWidth <= 430)
-  }, [])
+  const isMobile = useIsMobile()
 
   return (
     <main className="phone-frame">
