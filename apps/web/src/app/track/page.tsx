@@ -12,6 +12,8 @@ import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
 import { EventBanner, EventResultBanner, pickTimeImage, isInteractionType, type ActiveEvent, type EventResult } from '@/components/EventTaskModal'
 import { EventInteraction } from '@/components/EventInteraction'
+import { useIsPhone } from '@/lib/useIsMobile'
+import { useIsLandscape } from '@/lib/useIsLandscape'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -63,7 +65,7 @@ export default function TrackPage() {
   // 賽事多人連動事件（Phase B）
   const [raceInvite, setRaceInvite] = useState<RaceEventInvite | null>(null)
   const [inviteNow, setInviteNow] = useState(0) // 驅動邀請倒數重繪
-  const [isLandscape, setIsLandscape] = useState(false) // 橫向時顯示「轉回直立」提示
+  const isLandscape = useIsPhone() && useIsLandscape() // 手機橫向：暫停互動小遊戲（「請轉直」提示改由全域 LandscapeNotice 顯示）
   const [fxAssets, setFxAssets] = useState<Record<string, string>>({}) // 效果覆寫（正式圖片/音檔）
   const [confirmEnd, setConfirmEnd] = useState(false) // 事件進行中按「結束」→ 先跳確認（損失規避）
   const [muted, setMuted] = useState(false) // 事件音效靜音（震動不受影響）
@@ -574,31 +576,6 @@ export default function TrackPage() {
   }, [])
   useEffect(() => { fetchEventDefs() }, [fetchEventDefs, user?.id])
 
-  // 追蹤螢幕方向：橫向時顯示「轉回直立」提示（跨平台保底；真正鎖定見 start() 的 orientation.lock）
-  // 用 resize + orientationchange（iOS Safari 對 matchMedia 的 change 事件不可靠），並以視窗長寬保底判斷。
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    let t: any
-    const isLand = () => (window.matchMedia?.('(orientation: landscape)').matches) ?? (window.innerWidth > window.innerHeight)
-    const check = () => {
-      clearTimeout(t)
-      // 橫向需持續 ~0.5 秒才顯示提示（避免晃動瞬間翻轉狂閃）；轉回直立立即收起。
-      // timeout 內再判一次，閃避 iOS 剛旋轉時回報舊尺寸的問題。
-      if (isLand()) t = setTimeout(() => { if (isLand()) setIsLandscape(true) }, 500)
-      else setIsLandscape(false)
-    }
-    check()
-    const mq = window.matchMedia?.('(orientation: landscape)')
-    window.addEventListener('resize', check)
-    window.addEventListener('orientationchange', check)
-    mq?.addEventListener?.('change', check)
-    return () => {
-      clearTimeout(t)
-      window.removeEventListener('resize', check)
-      window.removeEventListener('orientationchange', check)
-      mq?.removeEventListener?.('change', check)
-    }
-  }, [])
 
   // 在跑步地圖上標出打卡點（已打卡綠/待審金/未打卡灰）→ 邊跑邊探索、就近打卡
   useEffect(() => {
@@ -649,16 +626,6 @@ export default function TrackPage() {
    <GoogleAuthProvider>
     <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
-      {isLandscape && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'var(--bg-1, #0b0e13)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, textAlign: 'center' }}>
-          <div style={{ fontSize: 46 }}>📱↻</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)' }}>請將手機轉回直立</div>
-          <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7, maxWidth: 300 }}>
-            此頁僅支援直式畫面。{status === 'tracking' && <>跑步中你的移動<strong style={{ color: 'var(--fug)' }}>仍在背景持續記錄</strong>，</>}轉回直立即可繼續。<br />
-            建議把手機「自動旋轉」關閉，或將本站「加入主畫面」以固定直屏。
-          </div>
-        </div>
-      )}
       {status === 'tracking' && activeEvent && isInteractionType(activeEvent.def.completion_type) && (
         <EventInteraction active={activeEvent} onDone={handleInteractionDone} paused={isLandscape} assets={fxAssets} />
       )}

@@ -3,6 +3,7 @@ import { cache } from 'react'
 import './globals.css'
 import InAppBrowserNotice from '@/components/InAppBrowserNotice'
 import InterstitialAd from '@/components/InterstitialAd'
+import LandscapeNotice from '@/components/LandscapeNotice'
 
 export const metadata: Metadata = {
   title: 'DOR 雲端馬拉松',
@@ -58,7 +59,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const skin = await getActiveSkin()
   return (
     <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined}>
-      <body><InAppBrowserNotice /><InterstitialAd />{children}</body>
+      <body><InAppBrowserNotice /><InterstitialAd /><LandscapeNotice />{children}</body>
     </html>
   )
 }

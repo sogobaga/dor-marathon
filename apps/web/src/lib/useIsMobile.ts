@@ -17,3 +17,24 @@ export function useIsMobile(): boolean {
   }, [])
   return mobile
 }
+
+// 是否為「手機」但與方向無關（橫向時寬度會 > 600 讓 useIsMobile 失準）：觸控裝置 + 短邊 ≤ 500（排除平板）。
+// 用於「橫向請轉直」這類需在任一方向都正確判斷是不是手機的情境。
+export function useIsPhone(): boolean {
+  const [phone, setPhone] = useState(false)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const check = () => {
+      const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false
+      setPhone(coarse && Math.min(window.innerWidth, window.innerHeight) <= 500)
+    }
+    check()
+    window.addEventListener('resize', check)
+    window.addEventListener('orientationchange', check)
+    return () => {
+      window.removeEventListener('resize', check)
+      window.removeEventListener('orientationchange', check)
+    }
+  }, [])
+  return phone
+}
