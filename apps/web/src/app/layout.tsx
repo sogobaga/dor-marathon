@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next'
+import { cache } from 'react'
 import './globals.css'
-import SkinProvider from '@/components/SkinProvider'
 
 export const metadata: Metadata = {
   title: 'DOR 雲端馬拉松',
@@ -20,26 +20,43 @@ export const metadata: Metadata = {
   },
 }
 
-export const viewport: Viewport = {
-  width: 'device-width',
-  initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  viewportFit: 'cover',
-  themeColor: '#09090f',
+// 各 skin 的瀏覽器 chrome（狀態列）色；新增 skin 時在此與 globals.css/appSettings/後端 specs 一併加。
+const SKIN_THEME_COLOR: Record<string, string> = { default: '#09090f', warm: '#FBF4E9' }
+
+// 伺服器端讀取目前前台 skin：直接把 data-skin 寫進 SSR 的 <html>，第一次繪製就正確，
+// 完全不靠 localStorage、也不會有暗→亮/亮→暗的閃爍。用 React cache 讓同一請求只查一次；
+// fetch 快取 30 秒（改設定約 30 秒內於「下次載入」生效，且始終不閃畫面）。
+const getActiveSkin = cache(async (): Promise<string> => {
+  try {
+    const base = process.env.API_URL || 'http://localhost:8080'
+    // 逾時保護：API 慢/不可達時不拖住 SSR/build，退回預設（不影響前台其餘功能）
+    const res = await fetch(`${base}/api/v1/app-settings/public`, { next: { revalidate: 30 }, signal: AbortSignal.timeout(2500) })
+    if (!res.ok) return 'default'
+    const j = await res.json()
+    const s = j?.settings?.active_skin
+    return typeof s === 'string' && SKIN_THEME_COLOR[s] && s !== 'default' ? s : 'default'
+  } catch {
+    return 'default'
+  }
+})
+
+export async function generateViewport(): Promise<Viewport> {
+  const skin = await getActiveSkin()
+  return {
+    width: 'device-width',
+    initialScale: 1,
+    maximumScale: 1,
+    userScalable: false,
+    viewportFit: 'cover',
+    themeColor: SKIN_THEME_COLOR[skin] || SKIN_THEME_COLOR.default,
+  }
 }
 
-// 進畫面前先套用快取的 skin（避免暗→亮閃一下）；後台維持預設。
-const SKIN_INIT = `try{var s=localStorage.getItem('dor_skin');if(s&&s!=='default'&&location.pathname.indexOf('/admin')!==0){document.documentElement.setAttribute('data-skin',s)}}catch(e){}`
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const skin = await getActiveSkin()
   return (
-    <html lang="zh-TW">
-      <body>
-        <script dangerouslySetInnerHTML={{ __html: SKIN_INIT }} />
-        <SkinProvider />
-        {children}
-      </body>
+    <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined}>
+      <body>{children}</body>
     </html>
   )
 }

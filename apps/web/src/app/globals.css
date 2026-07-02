@@ -26,6 +26,27 @@
   --glow-gold: 0 0 20px rgba(255,194,75,.25);
 }
 
+/* Skin: default（暗黑電影風）— 顯式宣告一份，讓子樹（如後台）可用 data-skin="default" 覆寫回暗色，
+   即使 <html> 被設為其他 skin。值與 :root 相同。 */
+[data-skin="default"] {
+  --bg:       #09090f;
+  --bg-1:     #0d0f14;
+  --bg-2:     #12141a;
+  --line:     rgba(255,255,255,.08);
+  --line-2:   rgba(255,255,255,.12);
+  --tx:       rgba(255,255,255,.92);
+  --tx-dim:   rgba(255,255,255,.55);
+  --tx-faint: rgba(255,255,255,.28);
+  --fug:    #2DE59A;
+  --hunt:   #FF4B5C;
+  --gold:   #FFC24B;
+  --violet: #9D8CFF;
+  --dim:    rgba(255,255,255,.18);
+  --glow-fug:  0 0 20px rgba(45,229,154,.25);
+  --glow-hunt: 0 0 20px rgba(255,75,92,.25);
+  --glow-gold: 0 0 20px rgba(255,194,75,.25);
+}
+
 /* Skin: warm（溫暖貓狗風 — Pawrathon）— 奶油淺色、暖棕字、柔和多彩點綴，適合寵物主題、親和女性 */
 [data-skin="warm"] {
   --bg:       #FBF4E9;
