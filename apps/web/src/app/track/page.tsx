@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, eventApi, eventRaceApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite } from '@/lib/api'
+import { activitiesApi, checkpointApi, eventApi, eventRaceApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
 import { unlockAudio, playEventAlert, playEventComplete, vibrate, setMuted as sfxSetMuted, isMuted } from '@/lib/sfx'
@@ -210,18 +210,19 @@ export default function TrackPage() {
       playEventAlert(); vibrate([200, 100, 200]) // 事件來了：音效 + 震動
     } catch { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) } }
   }
-  async function completeEvent(ae: ActiveEvent, moved: number, windowS: number) {
+  async function completeEvent(ae: ActiveEvent, moved: number, windowS: number, extra: Partial<CompleteEvidence> = {}) {
     activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now()
     completingRef.current = true
     // 樂觀顯示「任務完成」：與 modal/EventBanner 收起同一批渲染出現，避免等 API 往返的空窗（獎勵數字回來再補）
     setEventResult({ status: 'completed', def: ae.def, reward_exp: 0, reward_dp: 0 })
     playEventComplete(); vibrate([90, 50, 90]) // 事件完成：成功音 + 短震動
     const token = getUserToken()
+    const body: CompleteEvidence = { moved_m: moved, window_s: windowS, ...extra }
     try {
       const res = token
         ? (ae.raceInstanceId
-          ? await eventRaceApi.complete(token, ae.raceInstanceId, { moved_m: moved, window_s: windowS })
-          : await eventApi.complete(token, ae.occId, { moved_m: moved, window_s: windowS }))
+          ? await eventRaceApi.complete(token, ae.raceInstanceId, body)
+          : await eventApi.complete(token, ae.occId, body))
         : { completed: false }
       setEventResult(res.completed
         ? { status: 'completed', def: ae.def, reward_exp: res.reward_exp ?? 0, reward_dp: res.reward_dp ?? 0 }
@@ -300,6 +301,32 @@ export default function TrackPage() {
     } catch { /* ignore */ }
   }
 
+  // 配速類完成用：由每秒累積距離樣本推算指標
+  function distAt(t: number): number {
+    const s = distSamplesRef.current
+    if (!s.length) return distRef.current
+    let d = s[0].d
+    for (const p of s) { if (p.t <= t) d = p.d; else break }
+    return d
+  }
+  function bestBurst(fromT: number, toT: number, burstMs: number): number {
+    const s = distSamplesRef.current.filter((p) => p.t >= fromT && p.t <= toT)
+    let best = 0
+    for (let i = 0; i < s.length; i++) {
+      const endT = s[i].t + burstMs
+      let endD = s[i].d
+      for (let j = i; j < s.length && s[j].t <= endT; j++) endD = s[j].d
+      best = Math.max(best, endD - s[i].d)
+    }
+    return best
+  }
+  function minInterval(fromT: number, toT: number, checkMs: number): number {
+    if (toT - fromT < checkMs) return distAt(toT) - distAt(fromT)
+    let min = Infinity
+    for (let a = fromT; a + checkMs <= toT + 1; a += checkMs) min = Math.min(min, distAt(a + checkMs) - distAt(a))
+    return min === Infinity ? 0 : min
+  }
+
   function evalTick() {
     if (statusRef.current !== 'tracking') return
     const now = Date.now()
@@ -335,6 +362,31 @@ export default function TrackPage() {
       } else if (ae.def.completion_type === 'move_less') {
         if (moved > (cp.max_m ?? 0)) failEvent(ae)
         else if (now >= ae.deadline) completeEvent(ae, moved, windowS)
+      } else if (ae.def.completion_type === 'sprint') {
+        // 衝刺：任一 burst_s 區間移動達標即完成
+        const maxSeg = bestBurst(ae.readyUntil, now, (cp.burst_s ?? 5) * 1000)
+        setEventMoved(maxSeg)
+        if (maxSeg >= (cp.burst_m ?? 0)) completeEvent(ae, moved, windowS, { max_seg_m: maxSeg })
+        else if (now > ae.deadline) failEvent(ae)
+      } else if (ae.def.completion_type === 'hold_pace') {
+        // 維持配速：撐滿時間 + 每個 check_s 區間都達標（到時間才判定）
+        const checkMs = (cp.check_s ?? 10) * 1000
+        setEventMoved(distAt(now) - distAt(Math.max(ae.readyUntil, now - checkMs)))
+        if (now >= ae.deadline) {
+          const minSeg = minInterval(ae.readyUntil, ae.deadline, checkMs)
+          if (minSeg >= (cp.min_m ?? 0)) completeEvent(ae, moved, windowS, { min_seg_m: minSeg })
+          else failEvent(ae)
+        }
+      } else if (ae.def.completion_type === 'negative_split') {
+        // 後段加速：後半移動 ≥ 前半 × 比例（到時間才判定）
+        setEventMoved(moved)
+        if (now >= ae.deadline) {
+          const mid = ae.readyUntil + (ae.deadline - ae.readyUntil) / 2
+          const firstHalf = distAt(mid) - distAt(ae.readyUntil)
+          const secondHalf = distAt(ae.deadline) - distAt(mid)
+          if (firstHalf > 5 && secondHalf >= firstHalf * ((cp.ratio_pct ?? 100) / 100)) completeEvent(ae, moved, windowS, { first_half_m: firstHalf, second_half_m: secondHalf })
+          else failEvent(ae)
+        }
       }
       return
     }

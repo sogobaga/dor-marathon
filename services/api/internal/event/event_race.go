@@ -531,7 +531,7 @@ func (h *Handler) RaceComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	var params map[string]float64
 	_ = json.Unmarshal(cpRaw, &params)
-	if !validateCompletion(ctype, params, req.MovedM, req.WindowS) {
+	if !validateCompletion(ctype, params, req) {
 		respondJSON(w, http.StatusOK, map[string]any{"completed": false, "message": "尚未達成完成條件"})
 		return
 	}

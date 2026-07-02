@@ -55,6 +55,20 @@ var CompletionCatalog = []TypeSpec{
 		{"limit_s", "維持時間", "秒"},
 		{"max_m", "移動需小於", "公尺"},
 	}},
+	{"hold_pace", "維持配速（全程不能停）", []ParamSpec{
+		{"limit_s", "維持時間", "秒"},
+		{"check_s", "檢查區間", "秒"},
+		{"min_m", "每區間至少移動", "公尺"},
+	}},
+	{"sprint", "衝刺加速（短時間爆發）", []ParamSpec{
+		{"limit_s", "時限", "秒"},
+		{"burst_s", "爆發區間", "秒"},
+		{"burst_m", "爆發區間需移動", "公尺"},
+	}},
+	{"negative_split", "後段加速（越跑越快）", []ParamSpec{
+		{"limit_s", "時限", "秒"},
+		{"ratio_pct", "後半需為前半的", "%"},
+	}},
 }
 
 func validTrigger(k string) bool {
@@ -405,20 +419,36 @@ func (h *Handler) CreateOccurrence(w http.ResponseWriter, r *http.Request) {
 }
 
 type completeReq struct {
-	MovedM  float64 `json:"moved_m"`
-	WindowS float64 `json:"window_s"`
+	MovedM      float64 `json:"moved_m"`
+	WindowS     float64 `json:"window_s"`
+	MinSegM     float64 `json:"min_seg_m"`     // hold_pace：所有檢查區間中最小的移動量
+	MaxSegM     float64 `json:"max_seg_m"`     // sprint：最佳爆發區間的移動量
+	FirstHalfM  float64 `json:"first_half_m"`  // negative_split：前半段移動
+	SecondHalfM float64 `json:"second_half_m"` // negative_split：後半段移動
 }
 
 // validateCompletion 依完成模組驗證 evidence（含瞬移防弊）
-func validateCompletion(ctype string, params map[string]float64, movedM, windowS float64) bool {
-	if movedM < 0 || windowS <= 0 || movedM > maxSpeedMS*windowS*1.2 {
+func validateCompletion(ctype string, params map[string]float64, ev completeReq) bool {
+	if ev.MovedM < 0 || ev.WindowS <= 0 || ev.MovedM > maxSpeedMS*ev.WindowS*1.2 {
 		return false
 	}
 	switch ctype {
 	case "move_more":
-		return windowS <= params["limit_s"]+2 && movedM >= params["target_m"]
+		return ev.WindowS <= params["limit_s"]+2 && ev.MovedM >= params["target_m"]
 	case "move_less":
-		return windowS >= params["limit_s"]-2 && movedM <= params["max_m"]
+		return ev.WindowS >= params["limit_s"]-2 && ev.MovedM <= params["max_m"]
+	case "hold_pace":
+		// 全程維持移動：撐滿時間 + 最小區間移動達標（區間移動上限做瞬移防弊）
+		return ev.WindowS >= params["limit_s"]-2 && ev.MinSegM >= params["min_m"] &&
+			ev.MinSegM <= maxSpeedMS*(params["check_s"]+1)*1.2
+	case "sprint":
+		// 短時間爆發：最佳爆發區間達標（上限做瞬移防弊）
+		return ev.WindowS <= params["limit_s"]+3 && ev.MaxSegM >= params["burst_m"] &&
+			ev.MaxSegM <= maxSpeedMS*(params["burst_s"]+1)*1.2
+	case "negative_split":
+		// 後段加速：前半需有實際移動，後半 ≥ 前半 × 比例
+		return ev.WindowS <= params["limit_s"]+2 && ev.FirstHalfM > 5 &&
+			ev.SecondHalfM >= ev.FirstHalfM*(params["ratio_pct"]/100)
 	}
 	return false
 }
@@ -459,7 +489,7 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 	var params map[string]float64
 	_ = json.Unmarshal(cpRaw, &params)
-	if !validateCompletion(ctype, params, req.MovedM, req.WindowS) {
+	if !validateCompletion(ctype, params, req) {
 		respondJSON(w, http.StatusOK, map[string]any{"completed": false, "message": "尚未達成完成條件"})
 		return
 	}

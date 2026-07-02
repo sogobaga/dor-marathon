@@ -18,8 +18,14 @@ export function pickEventImage(def: EventDef): string { return pickTimeImage(def
 
 function goalText(def: EventDef): string {
   const p = def.completion_params
-  if (def.completion_type === 'move_more') return `${Math.round(p.limit_s ?? 0)} 秒內再移動 ${Math.round(p.target_m ?? 0)} 公尺`
-  if (def.completion_type === 'move_less') return `維持 ${Math.round(p.limit_s ?? 0)} 秒，移動不超過 ${Math.round(p.max_m ?? 0)} 公尺`
+  const r = (k: string) => Math.round(p[k] ?? 0)
+  switch (def.completion_type) {
+    case 'move_more': return `${r('limit_s')} 秒內再移動 ${r('target_m')} 公尺`
+    case 'move_less': return `維持 ${r('limit_s')} 秒，移動不超過 ${r('max_m')} 公尺`
+    case 'hold_pace': return `維持 ${r('limit_s')} 秒不停下（每 ${r('check_s')} 秒至少移動 ${r('min_m')}m）`
+    case 'sprint': return `${r('limit_s')} 秒內衝刺：任一 ${r('burst_s')} 秒移動 ≥ ${r('burst_m')}m`
+    case 'negative_split': return `${r('limit_s')} 秒內後段加速：後半移動 ≥ 前半的 ${r('ratio_pct')}%`
+  }
   return ''
 }
 
@@ -31,10 +37,17 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
   const readyRemain = Math.max(0, Math.ceil((active.readyUntil - now) / 1000))
   const remain = Math.max(0, Math.ceil((active.deadline - now) / 1000))
   const def = active.def
-  const isLess = def.completion_type === 'move_less'
-  // move_more：目標距離（填滿＝完成）；move_less：上限距離（填滿＝失敗，越接近越危險）
-  const limit = isLess ? (def.completion_params.max_m ?? 0) : (def.completion_params.target_m ?? 0)
+  const ct = def.completion_type
+  const p = def.completion_params
+  const isLess = ct === 'move_less'
+  // 各完成型態的「進度條上限」：填滿＝達標（move_less 例外，填滿＝危險）。negative_split 無單一進度條。
+  const limit = ct === 'move_less' ? (p.max_m ?? 0)
+    : ct === 'move_more' ? (p.target_m ?? 0)
+    : ct === 'sprint' ? (p.burst_m ?? 0)
+    : ct === 'hold_pace' ? (p.min_m ?? 0)
+    : 0
   const pct = limit > 0 ? Math.max(0, Math.min(100, (moved / limit) * 100)) : 0
+  const barLabel = isLess ? '不可超過上限' : ct === 'hold_pace' ? '保持不低於' : '達標即完成'
   const barColor = isLess
     ? (pct > 80 ? 'linear-gradient(90deg,#ff6b6b,#ff4b5c)' : 'linear-gradient(90deg,#FFC24B,#ff8a4b)')
     : 'linear-gradient(90deg,#FFD24D,#46E3A0)'
@@ -69,7 +82,7 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
           <div style={barOuter}><div style={{ ...barInner, width: `${pct}%`, background: barColor }} /></div>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 3 }}>
             <span style={{ color: isLess ? (pct > 80 ? 'var(--hunt)' : 'var(--tx-faint)') : 'var(--tx-faint)' }}>
-              {isLess ? '不可超過上限' : '達標即完成'}
+              {barLabel}
             </span>
             <span style={{ color: 'var(--tx)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
               已移動 {Math.round(moved)} / {Math.round(limit)} m
