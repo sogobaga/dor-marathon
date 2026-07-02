@@ -8,22 +8,31 @@ import { LoginModal } from './UserAuthBar'
 import DpCoin from './DpCoin'
 
 // 賽事列表頂部會員資訊面板（與會員中心 Dashboard 同尺寸；未登入顯示 -- 與「註冊/登入」）
-export default function MemberPanel({ onOpenProfile }: { onOpenProfile?: () => void }) {
+export default function MemberPanel({ onOpenProfile, onReady }: { onOpenProfile?: () => void; onReady?: () => void }) {
   const user = useUser()
   const [dash, setDash] = useState<DashboardInfo | null>(null)
   const [showLogin, setShowLogin] = useState(false)
+  const [ready, setReady] = useState(false) // 面板資料就緒（登入者含儀表板）→ 供首頁決定何時顯示「開始跑步」
   const { data: settings } = useSWR('site-settings', () => settingsApi.get())
   const bgUrl = settings?.settings.member_panel_bg_url
 
   useEffect(() => {
     let cancelled = false
     if (user && getUserToken()) {
-      withUserAuth((t) => profileApi.dashboard(t)).then((r) => { if (!cancelled) setDash(r.dashboard) }).catch(() => {})
+      withUserAuth((t) => profileApi.dashboard(t))
+        .then((r) => { if (!cancelled) setDash(r.dashboard) })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setReady(true) }) // 儀表板到齊（成功/失敗都算就緒）
     } else {
       setDash(null)
+      if (!getUserToken()) setReady(true) // 確定未登入 → 面板已定版
     }
     return () => { cancelled = true } // 登出後別讓還在飛的請求把舊資料寫回（頭像殘留）
   }, [user])
+
+  // 安全網：最多等 2.5 秒，避免帳號資料異常時「開始跑步」永不出現
+  useEffect(() => { const t = setTimeout(() => setReady(true), 2500); return () => clearTimeout(t) }, [])
+  useEffect(() => { if (ready) onReady?.() }, [ready, onReady])
 
   const expPct =
     dash && dash.next_level_exp != null && dash.next_level_exp > dash.level_floor

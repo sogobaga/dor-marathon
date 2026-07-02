@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import useSWR from 'swr'
 import { racesApi, type Race, type MyRegLite } from '@/lib/api'
 import { getUserToken, useUser, clearUserSession } from '@/lib/userAuth'
@@ -50,6 +51,7 @@ export default function RacesScreen({
 }) {
   const user = useUser() // 登入狀態變動時重新渲染 → 用最新 token 重抓報名狀態
   const token = getUserToken() || undefined
+  const [panelReady, setPanelReady] = useState(false) // 會員面板定版後才顯示「開始跑步」，避免面板晚出現造成誤點
   const { data, error, isLoading } = useSWR(['races', user?.id ?? null, token], () => racesApi.list(token))
   const regs = data?.registrations || {}
 
@@ -73,10 +75,10 @@ export default function RacesScreen({
         {/* minHeight 比容器高 1px → 內容沒滿版時也可滑動，保留 iOS 回彈手感 */}
         <div style={{ minHeight: 'calc(100% + 1px)', padding: '4px 18px 28px' }}>
         {/* 會員資訊面板 */}
-        <MemberPanel onOpenProfile={onOpenProfile} />
+        <MemberPanel onOpenProfile={onOpenProfile} onReady={() => setPanelReady(true)} />
 
-        {/* GPS 跑步追蹤（PoC） */}
-        <a href="/track" style={{ display: 'block', marginTop: 12, textDecoration: 'none', textAlign: 'center', background: 'rgba(70,227,160,.1)', border: '1px solid rgba(70,227,160,.35)', color: 'var(--fug)', fontWeight: 800, borderRadius: 12, padding: '12px 16px', fontSize: 14 }}>🏃 開始跑步</a>
+        {/* GPS 跑步追蹤：面板定版後才淡入，避免面板晚出現時誤點到面板（切到個人資訊頁） */}
+        <a href="/track" style={{ display: 'block', marginTop: 12, textDecoration: 'none', textAlign: 'center', background: 'rgba(70,227,160,.1)', border: '1px solid rgba(70,227,160,.35)', color: 'var(--fug)', fontWeight: 800, borderRadius: 12, padding: '12px 16px', fontSize: 14, opacity: panelReady ? 1 : 0, pointerEvents: panelReady ? 'auto' : 'none', transition: 'opacity .25s ease', visibility: panelReady ? 'visible' : 'hidden' }}>🏃 開始跑步</a>
 
         <h1 style={{ margin: '22px 0 12px', fontSize: 20, fontWeight: 800, color: 'var(--tx)' }}>賽事列表</h1>
         {isLoading && <Hint>載入中…</Hint>}
