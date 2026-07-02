@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -87,10 +88,20 @@ var CompletionCatalog = []TypeSpec{
 	}},
 	{"draw_shape", "畫出圖形（魔法陣）", []ParamSpec{
 		{"limit_s", "時限", "秒"},
-		{"shape", "圖形：3=三角 4=四角 5=五芒星", "碼"},
 		{"attempts", "可嘗試次數", "次"},
-		{"bonus_exp", "完美(首次成功) BONUS EXP", "點"},
-		{"bonus_dp", "完美(首次成功) BONUS DP", "點"},
+		{"w3", "三角 出現權重", ""},
+		{"w4", "四角 出現權重", ""},
+		{"w5", "五芒星 出現權重", ""},
+		{"x4_exp", "四角 完成加碼 EXP", "點"},
+		{"x4_dp", "四角 完成加碼 DP", "點"},
+		{"x5_exp", "五芒星 完成加碼 EXP", "點"},
+		{"x5_dp", "五芒星 完成加碼 DP", "點"},
+		{"b3_exp", "三角 完美BONUS EXP", "點"},
+		{"b3_dp", "三角 完美BONUS DP", "點"},
+		{"b4_exp", "四角 完美BONUS EXP", "點"},
+		{"b4_dp", "四角 完美BONUS DP", "點"},
+		{"b5_exp", "五芒星 完美BONUS EXP", "點"},
+		{"b5_dp", "五芒星 完美BONUS DP", "點"},
 	}},
 }
 
@@ -544,6 +555,7 @@ type completeReq struct {
 	SwipePx     float64      `json:"swipe_px"`  // swipe_charge：累積滑動距離
 	Swipes      int          `json:"swipes"`    // dodge_swipe：滑動段數
 	ShapePts    [][2]float64 `json:"shape_pts"` // draw_shape：實際筆跡點（伺服器重算辨識，防前端刷分）
+	Shape       int          `json:"shape"`     // draw_shape：本次抽到要畫的圖形（3/4/5）
 }
 
 // --- 互動型完成（觸控小遊戲）：依完成度分級發獎 ---
@@ -607,8 +619,15 @@ func interactionDegree(ctype string, params map[string]float64, ev completeReq) 
 		}
 		return clamp01(float64(ev.Swipes) / tgt)
 	case "draw_shape":
-		// 伺服器用實際筆跡重算辨識（品質距離 + margin），非信任前端分數
-		return shapeDegree(ev.ShapePts, int(params["shape"]))
+		// 伺服器用實際筆跡重算辨識（品質距離 + margin）。本次圖形由前端依權重抽出並回報。
+		s := ev.Shape
+		if s != 3 && s != 4 && s != 5 {
+			return 0
+		}
+		if params["w3"]+params["w4"]+params["w5"] > 0 && params[fmt.Sprintf("w%d", s)] <= 0 {
+			return 0 // 有設權重時，未啟用的圖形不給分
+		}
+		return shapeDegree(ev.ShapePts, s)
 	}
 	return 0
 }
@@ -641,6 +660,19 @@ func roundReward(full int, f float64) int { return int(float64(full)*f + 0.5) }
 func gradeInteraction(ctype string, params map[string]float64, ev completeReq, rexp, rdp int) (giveExp, giveDp, stars, bonusExp, bonusDp int) {
 	stars = starsFor(interactionDegree(ctype, params, ev))
 	f := rewardFactor(stars)
+	if ctype == "draw_shape" {
+		// 基礎（共用）+ 該圖形完成加碼（依星等分級）；完美(3★) 再加該圖形 BONUS
+		s := ev.Shape
+		baseExp := rexp + int(params[fmt.Sprintf("x%d_exp", s)])
+		baseDp := rdp + int(params[fmt.Sprintf("x%d_dp", s)])
+		giveExp, giveDp = roundReward(baseExp, f), roundReward(baseDp, f)
+		if stars == 3 {
+			bonusExp, bonusDp = int(params[fmt.Sprintf("b%d_exp", s)]), int(params[fmt.Sprintf("b%d_dp", s)])
+			giveExp += bonusExp
+			giveDp += bonusDp
+		}
+		return
+	}
 	giveExp, giveDp = roundReward(rexp, f), roundReward(rdp, f)
 	if stars == 3 {
 		bonusExp, bonusDp = int(params["bonus_exp"]), int(params["bonus_dp"])

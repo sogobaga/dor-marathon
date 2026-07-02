@@ -7,7 +7,17 @@ import { shapeAccepts, recognizeShape, shapeSvgPoints, shapeName, type Pt } from
 
 // 互動小遊戲全屏層：點擊攻擊 / 按住防禦 / 滑動蓄力(魔法) / 滑動閃避 / 畫圖形(魔法陣)。
 // 依完成度計分，時間到（或按「放棄」）回傳 evidence 給 /track 送後端分級發獎。
-type Ev = { taps: number; held_ms: number; swipe_px: number; swipes: number; shape_pts: [number, number][] }
+type Ev = { taps: number; held_ms: number; swipe_px: number; swipes: number; shape_pts: [number, number][]; shape: number }
+
+// 依權重抽出本次要畫的圖形（w3/w4/w5；都未設則平均隨機）
+function pickShape(p: Record<string, number>): number {
+  const w: Record<number, number> = { 3: p.w3 || 0, 4: p.w4 || 0, 5: p.w5 || 0 }
+  const total = w[3] + w[4] + w[5]
+  if (total <= 0) return [3, 4, 5][Math.floor(Math.random() * 3)]
+  let r = Math.random() * total
+  for (const s of [3, 4, 5]) { r -= w[s]; if (r < 0) return s }
+  return 5
+}
 
 export function EventInteraction({ active, onDone, paused, assets }: { active: ActiveEvent; onDone: (ev: Ev) => void; paused?: boolean; assets?: Record<string, string> }) {
   const def = active.def
@@ -23,8 +33,8 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const needMs = Math.max(1, (p.hold_s ?? 5) * 1000)
   const targetPx = Math.max(1, Math.round(p.target_px ?? 4000))
   const targetSwipes = Math.max(1, Math.round(p.target_swipes ?? 5))
-  const shape = Math.round(p.shape ?? 3)
   const attempts = Math.max(1, Math.round(p.attempts ?? 3))
+  const [shape] = useState(() => isShape ? pickShape(p) : 0) // 本次抽到的圖形（整場固定）
 
   const [now, setNow] = useState(Date.now())
   const [taps, setTaps] = useState(0)
@@ -73,7 +83,7 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
     if (doneRef.current) return
     doneRef.current = true
     if (holdStartRef.current != null) { heldRef.current += Date.now() - holdStartRef.current; holdStartRef.current = null }
-    onDoneRef.current({ taps: tapsRef.current, held_ms: heldRef.current, swipe_px: travelRef.current, swipes: swipesRef.current, shape_pts: bestPtsRef.current.map((p) => [p.x, p.y]) })
+    onDoneRef.current({ taps: tapsRef.current, held_ms: heldRef.current, swipe_px: travelRef.current, swipes: swipesRef.current, shape_pts: bestPtsRef.current.map((p) => [p.x, p.y]), shape })
   }
   function spawnBurst() {
     const parts = Array.from({ length: 16 }, (_, i) => {

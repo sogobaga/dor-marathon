@@ -331,6 +331,7 @@ export interface CompleteEvidence {
   swipe_px?: number // swipe_charge：累積滑動距離
   swipes?: number // dodge_swipe：滑動段數
   shape_pts?: [number, number][] // draw_shape：實際筆跡點（伺服器重算辨識）
+  shape?: number // draw_shape：本次抽到的圖形（3/4/5）
 }
 
 export interface EventDef {
