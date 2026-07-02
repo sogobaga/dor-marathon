@@ -1,17 +1,14 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
-import { useIsPhone } from '@/lib/useIsMobile'
-import { useIsLandscape } from '@/lib/useIsLandscape'
 
-// 手機橫向時，全站統一跳出「請轉回直立」提示（前台專用，後台不顯示）。
+// 手機橫向時全站統一「請轉回直立」。顯示完全由 CSS media query 控制（.landscape-lock，見 globals.css）：
+// 旋轉當下即蓋上、幾乎看不到橫式畫面，且只回應真實裝置方向、不會因晃動誤觸。後台不顯示。
 export default function LandscapeNotice() {
   const pathname = usePathname()
-  const phone = useIsPhone()
-  const landscape = useIsLandscape()
-  if (pathname?.startsWith('/admin') || !phone || !landscape) return null
+  if (pathname?.startsWith('/admin')) return null
   return (
-    <div style={overlay}>
+    <div className="landscape-lock">
       <div style={{ fontSize: 46 }}>📱↻</div>
       <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)' }}>請將手機轉回直立</div>
       <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7, maxWidth: 300 }}>
@@ -21,5 +18,3 @@ export default function LandscapeNotice() {
     </div>
   )
 }
-
-const overlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 4000, background: 'var(--bg-1)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, textAlign: 'center' }

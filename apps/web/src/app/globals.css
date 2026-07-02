@@ -121,6 +121,20 @@ html, body {
   .fake-notch { display: none !important; }
 }
 
+/* 手機橫向時全站統一「請轉回直立」蓋板：純 CSS 依 media query 即時顯示，
+   旋轉當下就蓋上、幾乎看不到橫式畫面；且只回應「真實裝置方向」（OS 有自己的遲滯），
+   不會因晃動誤觸。只在觸控手機的橫向（短邊 = 橫向高度 ≤ 500）出現，PC／平板不受影響。 */
+.landscape-lock {
+  display: none;
+  position: fixed; inset: 0; z-index: 4000;
+  flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; padding: 24px; text-align: center;
+  background: var(--bg-1);
+}
+@media (orientation: landscape) and (pointer: coarse) and (max-height: 500px) {
+  .landscape-lock { display: flex; }
+}
+
 /* iOS 模擬外框 */
 .phone-shell {
   width: 390px;
