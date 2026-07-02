@@ -229,7 +229,7 @@ export default function TrackPage() {
           : await eventApi.complete(token, ae.occId, body))
         : { completed: false }
       setEventResult(res.completed
-        ? { status: 'completed', def: ae.def, reward_exp: res.reward_exp ?? 0, reward_dp: res.reward_dp ?? 0, stars: (res as any).stars }
+        ? { status: 'completed', def: ae.def, reward_exp: res.reward_exp ?? 0, reward_dp: res.reward_dp ?? 0, stars: (res as any).stars, bonus_exp: (res as any).bonus_exp, bonus_dp: (res as any).bonus_dp }
         : { status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 })
     } catch { setEventResult({ status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 }) }
     finally { completingRef.current = false }
@@ -244,11 +244,11 @@ export default function TrackPage() {
     setEventResult({ status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 })
   }
   // 互動小遊戲時間到 → 用收集到的 evidence 送後端分級發獎
-  function handleInteractionDone(ev: { taps: number; held_ms: number; swipe_px: number; swipes: number }) {
+  function handleInteractionDone(ev: { taps: number; held_ms: number; swipe_px: number; swipes: number; shape_score: number }) {
     const ae = activeEventRef.current
     if (!ae) return
     const windowS = Math.max(0, (ae.deadline - ae.readyUntil) / 1000)
-    completeEvent(ae, 0, windowS, { taps: ev.taps, held_ms: ev.held_ms, swipe_px: ev.swipe_px, swipes: ev.swipes })
+    completeEvent(ae, 0, windowS, { taps: ev.taps, held_ms: ev.held_ms, swipe_px: ev.swipe_px, swipes: ev.swipes, shape_score: ev.shape_score })
   }
   // Phase B：連 WS（綁第一場「進行中且已報名」賽事）＋ 監聽多人事件邀請
   async function connectRaceWS() {

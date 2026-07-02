@@ -330,6 +330,7 @@ export interface CompleteEvidence {
   held_ms?: number // hold_press：累積按住毫秒
   swipe_px?: number // swipe_charge：累積滑動距離
   swipes?: number // dodge_swipe：滑動段數
+  shape_score?: number // draw_shape：0..1（依成功嘗試次序）
 }
 
 export interface EventDef {
@@ -356,7 +357,7 @@ export const eventApi = {
   createOccurrence: (token: string, body: { def_id: string; trigger_dist_m: number; trigger_elapsed_s: number }) =>
     request<{ id: string; reward_exp: number; reward_dp: number }>('/events/occurrences', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   complete: (token: string, id: string, body: CompleteEvidence) =>
-    request<{ completed: boolean; reward_exp?: number; reward_dp?: number; stars?: number; message?: string }>(`/events/occurrences/${id}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+    request<{ completed: boolean; reward_exp?: number; reward_dp?: number; stars?: number; bonus_exp?: number; bonus_dp?: number; message?: string }>(`/events/occurrences/${id}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   fail: (token: string, id: string) => request<void>(`/events/occurrences/${id}/fail`, { method: 'POST', headers: withAuth(token) }),
   claimManual: (token: string) => request<{ armed: boolean; def?: EventDef; occ_id?: string }>('/events/manual/claim', { method: 'POST', headers: withAuth(token) }),
 }
@@ -438,7 +439,7 @@ export const eventRaceApi = {
   join: (token: string, instID: string) =>
     request<{ joined: boolean; message?: string; name?: string; completion_type?: string; completion_params?: Record<string, number>; reward_exp?: number; reward_dp?: number; deadline?: number }>(`/events/race/instances/${instID}/join`, { method: 'POST', headers: withAuth(token) }),
   complete: (token: string, instID: string, body: CompleteEvidence) =>
-    request<{ completed: boolean; reward_exp?: number; reward_dp?: number; stars?: number; message?: string; capped?: boolean }>(`/events/race/instances/${instID}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+    request<{ completed: boolean; reward_exp?: number; reward_dp?: number; stars?: number; bonus_exp?: number; bonus_dp?: number; message?: string; capped?: boolean }>(`/events/race/instances/${instID}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   fail: (token: string, instID: string) => request<void>(`/events/race/instances/${instID}/fail`, { method: 'POST', headers: withAuth(token) }),
 }
 

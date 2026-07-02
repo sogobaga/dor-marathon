@@ -532,12 +532,10 @@ func (h *Handler) RaceComplete(w http.ResponseWriter, r *http.Request) {
 	var params map[string]float64
 	_ = json.Unmarshal(cpRaw, &params)
 
-	// 互動型：依完成度分級（可能 0★）；其餘：pass/fail 全額
-	var giveExp, giveDp, stars int
+	// 互動型：依完成度分級（可能 0★）+ 完美 bonus；其餘：pass/fail 全額
+	var giveExp, giveDp, stars, bonusExp, bonusDp int
 	if isInteraction(ctype) {
-		stars = starsFor(interactionDegree(ctype, params, req))
-		f := rewardFactor(stars)
-		giveExp, giveDp = roundReward(rexp, f), roundReward(rdp, f)
+		giveExp, giveDp, stars, bonusExp, bonusDp = gradeInteraction(ctype, params, req, rexp, rdp)
 	} else {
 		if !validateCompletion(ctype, params, req) {
 			respondJSON(w, http.StatusOK, map[string]any{"completed": false, "message": "尚未達成完成條件"})
@@ -562,7 +560,7 @@ func (h *Handler) RaceComplete(w http.ResponseWriter, r *http.Request) {
 			WHERE p.user_id=$1 AND i.def_id=$2 AND p.awarded AND p.completed_at::date = CURRENT_DATE`,
 			uid, defID).Scan(&todayCnt)
 		if todayCnt >= cap {
-			giveExp, giveDp = 0, 0
+			giveExp, giveDp, bonusExp, bonusDp = 0, 0, 0, 0
 		}
 	}
 
@@ -584,7 +582,7 @@ func (h *Handler) RaceComplete(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"completed": true, "reward_exp": giveExp, "reward_dp": giveDp, "stars": stars, "capped": giveExp == 0 && rexp > 0})
+	respondJSON(w, http.StatusOK, map[string]any{"completed": true, "reward_exp": giveExp, "reward_dp": giveDp, "stars": stars, "bonus_exp": bonusExp, "bonus_dp": bonusDp, "capped": giveExp == 0 && rexp > 0})
 }
 
 // POST /events/race/instances/{id}/fail — 逾時/放棄

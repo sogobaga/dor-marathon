@@ -5,9 +5,9 @@ import type { EventDef } from '@/lib/api'
 import DpCoin from './DpCoin'
 
 export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string }
-export type EventResult = { status: 'completed' | 'failed'; def: EventDef; reward_exp: number; reward_dp: number; stars?: number; pending?: boolean }
+export type EventResult = { status: 'completed' | 'failed'; def: EventDef; reward_exp: number; reward_dp: number; stars?: number; bonus_exp?: number; bonus_dp?: number; pending?: boolean }
 
-export function isInteractionType(ct: string): boolean { return ct === 'tap_burst' || ct === 'hold_press' || ct === 'swipe_charge' || ct === 'dodge_swipe' }
+export function isInteractionType(ct: string): boolean { return ct === 'tap_burst' || ct === 'hold_press' || ct === 'swipe_charge' || ct === 'dodge_swipe' || ct === 'draw_shape' }
 
 // 依跑者當下時間挑時段插圖：白天 06–17、黃昏 17–19、晚上 19–06；未設定該時段回退預設圖。
 // 事件任務 / 多人事件邀請共用（欄位名一致）。
@@ -31,6 +31,7 @@ function goalText(def: EventDef): string {
     case 'hold_press': return `按住螢幕 ${r('hold_s')} 秒（物理防禦）`
     case 'swipe_charge': return `${r('limit_s')} 秒內連續滑動蓄力（魔法攻擊）`
     case 'dodge_swipe': return `${r('limit_s')} 秒內連續滑動 ${r('target_swipes')} 次閃避`
+    case 'draw_shape': return `${r('limit_s')} 秒內畫出指定圖形（魔法陣）`
   }
   return ''
 }
@@ -133,6 +134,13 @@ export function EventResultBanner({ result, onClose }: { result: EventResult; on
         <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 8 }}>
           {result.reward_exp > 0 && <span style={{ fontSize: 18, fontWeight: 900, color: 'var(--gold)' }}>+{result.reward_exp} EXP</span>}
           {result.reward_dp > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 18, fontWeight: 900, color: '#FFD24D' }}><DpCoin size={18} />+{result.reward_dp}</span>}
+        </div>
+      )}
+      {ok && !result.pending && ((result.bonus_exp ?? 0) > 0 || (result.bonus_dp ?? 0) > 0) && (
+        <div style={{ marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(255,210,77,.14)', border: '1px solid rgba(255,210,77,.5)', borderRadius: 999, padding: '3px 12px' }}>
+          <span style={{ fontSize: 12, fontWeight: 900, color: '#FFD24D' }}>🎁 完美 BONUS</span>
+          {(result.bonus_exp ?? 0) > 0 && <span style={{ fontSize: 13, fontWeight: 900, color: 'var(--gold)' }}>+{result.bonus_exp} EXP</span>}
+          {(result.bonus_dp ?? 0) > 0 && <span style={{ fontSize: 13, fontWeight: 900, color: '#FFD24D' }}>🪙+{result.bonus_dp}</span>}
         </div>
       )}
       {!ok && !result.pending && <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 4 }}>沒關係，下次加油！</div>}

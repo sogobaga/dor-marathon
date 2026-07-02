@@ -85,6 +85,13 @@ var CompletionCatalog = []TypeSpec{
 		{"limit_s", "時限", "秒"},
 		{"target_swipes", "閃避次數（滑動段數）", "次"},
 	}},
+	{"draw_shape", "畫出圖形（魔法陣）", []ParamSpec{
+		{"limit_s", "時限", "秒"},
+		{"shape", "圖形：3=三角 4=四角 5=五芒星", "碼"},
+		{"attempts", "可嘗試次數", "次"},
+		{"bonus_exp", "完美(首次成功) BONUS EXP", "點"},
+		{"bonus_dp", "完美(首次成功) BONUS DP", "點"},
+	}},
 }
 
 func validTrigger(k string) bool {
@@ -536,12 +543,13 @@ type completeReq struct {
 	HeldMs      float64 `json:"held_ms"`       // hold_press：累積按住毫秒
 	SwipePx     float64 `json:"swipe_px"`      // swipe_charge：累積滑動距離
 	Swipes      int     `json:"swipes"`        // dodge_swipe：滑動段數
+	ShapeScore  float64 `json:"shape_score"`   // draw_shape：0..1（依成功嘗試次序給分）
 }
 
 // --- 互動型完成（觸控小遊戲）：依完成度分級發獎 ---
 
 func isInteraction(ct string) bool {
-	return ct == "tap_burst" || ct == "hold_press" || ct == "swipe_charge" || ct == "dodge_swipe"
+	return ct == "tap_burst" || ct == "hold_press" || ct == "swipe_charge" || ct == "dodge_swipe" || ct == "draw_shape"
 }
 
 func clamp01(x float64) float64 {
@@ -598,6 +606,9 @@ func interactionDegree(ctype string, params map[string]float64, ev completeReq) 
 			return 0
 		}
 		return clamp01(float64(ev.Swipes) / tgt)
+	case "draw_shape":
+		// 前端做圖形辨識，回傳 0..1（依第幾次成功給分：1st=1.0/2nd=0.6/3rd=0.3、失敗=0）
+		return clamp01(ev.ShapeScore)
 	}
 	return 0
 }
@@ -625,6 +636,19 @@ func rewardFactor(stars int) float64 {
 	return 0
 }
 func roundReward(full int, f float64) int { return int(float64(full)*f + 0.5) }
+
+// gradeInteraction 依完成度給基礎獎勵（分級）+ 完美(3★/首次滿分)額外 bonus（讀 completion_params）
+func gradeInteraction(ctype string, params map[string]float64, ev completeReq, rexp, rdp int) (giveExp, giveDp, stars, bonusExp, bonusDp int) {
+	stars = starsFor(interactionDegree(ctype, params, ev))
+	f := rewardFactor(stars)
+	giveExp, giveDp = roundReward(rexp, f), roundReward(rdp, f)
+	if stars == 3 {
+		bonusExp, bonusDp = int(params["bonus_exp"]), int(params["bonus_dp"])
+		giveExp += bonusExp
+		giveDp += bonusDp
+	}
+	return
+}
 
 // validateCompletion 依完成模組驗證 evidence（含瞬移防弊）
 func validateCompletion(ctype string, params map[string]float64, ev completeReq) bool {
@@ -689,12 +713,10 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	var params map[string]float64
 	_ = json.Unmarshal(cpRaw, &params)
 
-	// 互動型：依完成度分級發獎（可能 0★）；其餘：pass/fail 全額
-	var giveExp, giveDp, stars int
+	// 互動型：依完成度分級發獎（可能 0★）+ 完美 bonus；其餘：pass/fail 全額
+	var giveExp, giveDp, stars, bonusExp, bonusDp int
 	if isInteraction(ctype) {
-		stars = starsFor(interactionDegree(ctype, params, req))
-		f := rewardFactor(stars)
-		giveExp, giveDp = roundReward(rexp, f), roundReward(rdp, f)
+		giveExp, giveDp, stars, bonusExp, bonusDp = gradeInteraction(ctype, params, req, rexp, rdp)
 	} else {
 		if !validateCompletion(ctype, params, req) {
 			respondJSON(w, http.StatusOK, map[string]any{"completed": false, "message": "尚未達成完成條件"})
@@ -726,7 +748,7 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"completed": true, "reward_exp": giveExp, "reward_dp": giveDp, "stars": stars})
+	respondJSON(w, http.StatusOK, map[string]any{"completed": true, "reward_exp": giveExp, "reward_dp": giveDp, "stars": stars, "bonus_exp": bonusExp, "bonus_dp": bonusDp})
 }
 
 // POST /events/occurrences/{id}/fail — 逾時/放棄

@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { pickTimeImage, type ActiveEvent } from './EventTaskModal'
 import { playTapHit, playDefend, vibrate } from '@/lib/sfx'
+import { shapeMatchDistance, shapeSvgPoints, shapeName, SHAPE_MATCH_THRESHOLD, type Pt } from '@/lib/shapes'
 
-// 互動小遊戲全屏層：點擊攻擊 / 按住防禦 / 滑動蓄力(魔法) / 滑動閃避。
+// 互動小遊戲全屏層：點擊攻擊 / 按住防禦 / 滑動蓄力(魔法) / 滑動閃避 / 畫圖形(魔法陣)。
 // 依完成度計分，時間到（或按「放棄」）回傳 evidence 給 /track 送後端分級發獎。
-type Ev = { taps: number; held_ms: number; swipe_px: number; swipes: number }
+type Ev = { taps: number; held_ms: number; swipe_px: number; swipes: number; shape_score: number }
 
 export function EventInteraction({ active, onDone, paused, assets }: { active: ActiveEvent; onDone: (ev: Ev) => void; paused?: boolean; assets?: Record<string, string> }) {
   const def = active.def
@@ -17,10 +18,13 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const isCharge = ct === 'swipe_charge'
   const isDodge = ct === 'dodge_swipe'
   const isSwipe = isCharge || isDodge
+  const isShape = ct === 'draw_shape'
   const targetTaps = Math.max(1, Math.round(p.target_taps ?? 20))
   const needMs = Math.max(1, (p.hold_s ?? 5) * 1000)
   const targetPx = Math.max(1, Math.round(p.target_px ?? 4000))
   const targetSwipes = Math.max(1, Math.round(p.target_swipes ?? 5))
+  const shape = Math.round(p.shape ?? 3)
+  const attempts = Math.max(1, Math.round(p.attempts ?? 3))
 
   const [now, setNow] = useState(Date.now())
   const [taps, setTaps] = useState(0)
@@ -30,6 +34,10 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const [swipes, setSwipes] = useState(0)
   const [fx, setFx] = useState<{ id: number; x: number; y: number; e: string }[]>([])
   const [trail, setTrail] = useState<{ id: number; x: number; y: number }[]>([])
+  const [strokePts, setStrokePts] = useState<Pt[]>([]) // 畫圖形：目前這筆的螢幕座標
+  const [shapeOk, setShapeOk] = useState(false)
+  const [attemptsLeft, setAttemptsLeft] = useState(attempts)
+  const [shapeMsg, setShapeMsg] = useState('')
 
   const tapsRef = useRef(0)
   const heldRef = useRef(0)
@@ -40,6 +48,10 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const strokeDistRef = useRef(0)
   const lastPtRef = useRef<{ x: number; y: number } | null>(null)
   const activeSwipeIdRef = useRef<number | null>(null) // 只認「主滑動指」，其餘手指不影響累積（多點觸控防暴衝/防弊）
+  const drawnRef = useRef<Pt[]>([]) // 畫圖形：目前這筆的點
+  const shapeScoreRef = useRef(0)
+  const shapeOkRef = useRef(false)
+  const attemptsLeftRef = useRef(attempts)
   const lastTrailRef = useRef(0)
   const lastTravelUiRef = useRef(0)
   const fxId = useRef(0)
@@ -54,7 +66,7 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
     if (doneRef.current) return
     doneRef.current = true
     if (holdStartRef.current != null) { heldRef.current += Date.now() - holdStartRef.current; holdStartRef.current = null }
-    onDoneRef.current({ taps: tapsRef.current, held_ms: heldRef.current, swipe_px: travelRef.current, swipes: swipesRef.current })
+    onDoneRef.current({ taps: tapsRef.current, held_ms: heldRef.current, swipe_px: travelRef.current, swipes: swipesRef.current, shape_score: shapeScoreRef.current })
   }
   function skipPrep() {
     const n = Date.now()
@@ -105,6 +117,9 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
       const id = fxId.current++
       setFx((f) => [...f.slice(-14), { id, x, y, e: ['💥', '💧', '⭐', '🪨'][id % 4] }])
       setTimeout(() => setFx((f) => f.filter((z) => z.id !== id)), 520)
+    } else if (isShape) {
+      if (shapeOkRef.current) return
+      if (activeSwipeIdRef.current == null) { activeSwipeIdRef.current = e.pointerId; drawnRef.current = [ptOf(e)]; setStrokePts([ptOf(e)]) }
     } else if (isSwipe) {
       // 只讓第一根按下的指驅動滑動；第二指落下不重置進行中的段落
       if (activeSwipeIdRef.current == null) { activeSwipeIdRef.current = e.pointerId; lastPtRef.current = ptOf(e); strokeDistRef.current = 0 }
@@ -114,8 +129,16 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
     }
   }
   function onMove(e: React.PointerEvent) {
-    if (!isSwipe || !active2) return
-    if (e.pointerId !== activeSwipeIdRef.current) return // 只累加主滑動指的位移
+    if (!(isSwipe || isShape) || !active2) return
+    if (e.pointerId !== activeSwipeIdRef.current) return // 只認主指
+    if (isShape) {
+      if (shapeOkRef.current) return
+      const pt = ptOf(e)
+      drawnRef.current.push(pt)
+      const t = Date.now()
+      if (t - lastTravelUiRef.current > 24) { lastTravelUiRef.current = t; setStrokePts(drawnRef.current.slice()) }
+      return
+    }
     const { x, y } = ptOf(e)
     const last = lastPtRef.current
     if (last) {
@@ -143,22 +166,42 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
     if (isDodge && strokeDistRef.current > 45) { swipesRef.current += 1; setSwipes(swipesRef.current); playDefend(); vibrate(30) }
     strokeDistRef.current = 0; lastPtRef.current = null; activeSwipeIdRef.current = null; setTravel(travelRef.current)
   }
-  const onUp = isHold ? onUpHold : isSwipe ? onUpSwipe : undefined
+  function onUpShape(e: React.PointerEvent) {
+    if (e.pointerId !== activeSwipeIdRef.current) return
+    activeSwipeIdRef.current = null
+    if (shapeOkRef.current) return
+    const pts = drawnRef.current.slice()
+    setStrokePts(pts)
+    if (pts.length < 8) { drawnRef.current = []; return } // 太短：不算一次嘗試
+    const dist = shapeMatchDistance(pts, shape)
+    if (dist <= SHAPE_MATCH_THRESHOLD) {
+      const attemptNo = attempts - attemptsLeftRef.current + 1 // 第幾次成功
+      shapeScoreRef.current = attemptNo <= 1 ? 1.0 : attemptNo === 2 ? 0.6 : 0.3
+      shapeOkRef.current = true; setShapeOk(true); setShapeMsg('')
+      playDefend(); vibrate([50, 40, 120])
+      setTimeout(() => finish(), 850) // 顯示邊線發光後結束
+    } else {
+      attemptsLeftRef.current -= 1; setAttemptsLeft(attemptsLeftRef.current); vibrate(60)
+      if (attemptsLeftRef.current <= 0) { finish() } // 用完 → 0 分
+      else { setShapeMsg('形狀不太對，再試一次'); drawnRef.current = []; setTimeout(() => setStrokePts([]), 300) }
+    }
+  }
+  const onUp = isHold ? onUpHold : isShape ? onUpShape : isSwipe ? onUpSwipe : undefined
 
-  const accent = isTap ? '#FFC24B' : isHold ? '#46E3A0' : isCharge ? '#a78bfa' : '#22d3ee'
+  const accent = isTap ? '#FFC24B' : isHold ? '#46E3A0' : isCharge ? '#a78bfa' : isDodge ? '#22d3ee' : '#c084fc'
   const img = pickTimeImage(def)
   const iconUrl = (isTap ? assets?.['interaction.tap.icon'] : isHold ? (holding ? assets?.['interaction.defend.icon'] : assets?.['interaction.idle.icon']) : isCharge ? assets?.['interaction.swipe.icon'] : assets?.['interaction.dodge.icon']) || ''
   const fxUrl = assets?.['interaction.tap.fx'] || ''
   const trailUrl = assets?.['interaction.swipe.trail'] || ''
   const emoji = isTap ? '👊' : isHold ? (holding ? '🛡️' : '✋') : isCharge ? '🌀' : '💨'
   const readout = isTap ? `${taps} / ${targetTaps} 次` : isHold ? `${(heldMs / 1000).toFixed(1)} / ${(needMs / 1000).toFixed(0)} 秒` : isCharge ? `${Math.round(travel)} / ${targetPx}` : `${swipes} / ${targetSwipes} 次`
-  const readyMsg = isTap ? '準備連續點擊！' : isHold ? '準備按住防禦！' : isCharge ? '準備滑動蓄力！' : '準備滑動閃避！'
+  const readyMsg = isTap ? '準備連續點擊！' : isHold ? '準備按住防禦！' : isCharge ? '準備滑動蓄力！' : isDodge ? '準備滑動閃避！' : '準備畫魔法陣！'
   const actionHint = isTap ? '連續點擊！💥' : isHold ? (holding ? '穩住！繼續按住 🛡️' : '按住螢幕不放！') : isCharge ? '快速來回滑動！🌀' : '用力滑動閃避！💨'
 
   return (
     <div
       onPointerDown={onDown}
-      onPointerMove={isSwipe ? onMove : undefined}
+      onPointerMove={(isSwipe || isShape) ? onMove : undefined}
       onPointerUp={onUp}
       onPointerCancel={onUp}
       style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'radial-gradient(circle at 50% 40%, rgba(20,26,34,.96), rgba(6,8,11,.98))', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '20px 18px', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', overflow: 'hidden' }}
@@ -181,6 +224,21 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, width: '100%' }}>
         {ready ? (
           <div style={{ fontSize: 26, fontWeight: 900, color: accent }}>{readyMsg}</div>
+        ) : isShape ? (
+          <>
+            {/* 半透明底圖提示：一筆畫描出圖形；成功時邊線發光 */}
+            <div style={{ position: 'relative', width: 264, height: 264 }}>
+              <svg width="264" height="264" style={{ position: 'absolute', inset: 0 }}>
+                <polyline points={shapeSvgPoints(shape, 264)} fill="none"
+                  stroke={shapeOk ? accent : 'rgba(255,255,255,.26)'} strokeWidth={shapeOk ? 7 : 3}
+                  strokeLinecap="round" strokeLinejoin="round" strokeDasharray={shapeOk ? undefined : '9 9'}
+                  style={{ filter: shapeOk ? `drop-shadow(0 0 16px ${accent}) drop-shadow(0 0 6px ${accent})` : undefined, transition: 'all .2s' }} />
+              </svg>
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: accent }}>{shapeOk ? '✦ 施法成功！' : `描出 ${shapeName(shape)}`}</div>
+            {!shapeOk && <div style={{ fontSize: 13.5, color: 'var(--tx)' }}>一筆畫完成・剩 {attemptsLeft} 次機會</div>}
+            {shapeMsg && <div style={{ fontSize: 12.5, color: 'var(--hunt)' }}>{shapeMsg}</div>}
+          </>
         ) : (
           <>
             <div style={{ position: 'relative', width: 190, height: 190, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -202,6 +260,12 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
         )}
       </div>
 
+      {/* 畫圖形：玩家這一筆的軌跡（螢幕座標，發光） */}
+      {isShape && strokePts.length > 1 && (
+        <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
+          <polyline points={strokePts.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={accent} strokeWidth={6} strokeLinecap="round" strokeLinejoin="round" style={{ filter: `drop-shadow(0 0 6px ${accent})` }} />
+        </svg>
+      )}
       {/* 滑動拖尾 */}
       {trail.map((z, i) => (
         trailUrl
