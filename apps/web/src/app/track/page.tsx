@@ -61,6 +61,7 @@ export default function TrackPage() {
   const [raceInvite, setRaceInvite] = useState<RaceEventInvite | null>(null)
   const [inviteNow, setInviteNow] = useState(0) // 驅動邀請倒數重繪
   const [isLandscape, setIsLandscape] = useState(false) // 橫向時顯示「轉回直立」提示
+  const [confirmEnd, setConfirmEnd] = useState(false) // 事件進行中按「結束」→ 先跳確認（損失規避）
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -83,6 +84,7 @@ export default function TrackPage() {
   const activeEventRef = useRef<ActiveEvent | null>(null)
   const lastEventEndRef = useRef(0) // 上次事件結束時間（冷卻用）
   const evalTimerRef = useRef<any>(null)
+  const completingRef = useRef(false) // 完成/失敗結算中：避免 evalTick 在空窗期又 arm 新事件蓋掉結果
   eventDefsRef.current = eventDefs
   // Phase B 用
   const wsRef = useRef<WebSocket | null>(null)
@@ -197,13 +199,18 @@ export default function TrackPage() {
     activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
     try {
       const occ = await eventApi.createOccurrence(token, { def_id: def.id, trigger_dist_m: triggerD, trigger_elapsed_s: Math.floor((triggerT - startRef.current) / 1000) })
-      if (!occ.id) { activeEventRef.current = null; setActiveEvent(null); return } // 被全域閘門擋下（冷卻中）
+      if (!occ.id) { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) }; return } // 被全域閘門擋下（冷卻中）
+      // 若在 createOccurrence 飛行期間使用者已放棄/結束（ref 被清）→ 補送 fail，避免留下 active 孤兒列
+      if (activeEventRef.current !== ae) { eventApi.fail(token, occ.id).catch(() => {}); return }
       const armed = { ...ae, occId: occ.id }
       activeEventRef.current = armed; setActiveEvent(armed)
-    } catch { activeEventRef.current = null; setActiveEvent(null) }
+    } catch { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) } }
   }
   async function completeEvent(ae: ActiveEvent, moved: number, windowS: number) {
     activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now()
+    completingRef.current = true
+    // 樂觀顯示「任務完成」：與 modal/EventBanner 收起同一批渲染出現，避免等 API 往返的空窗（獎勵數字回來再補）
+    setEventResult({ status: 'completed', def: ae.def, reward_exp: 0, reward_dp: 0 })
     const token = getUserToken()
     try {
       const res = token
@@ -215,6 +222,7 @@ export default function TrackPage() {
         ? { status: 'completed', def: ae.def, reward_exp: res.reward_exp ?? 0, reward_dp: res.reward_dp ?? 0 }
         : { status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 })
     } catch { setEventResult({ status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 }) }
+    finally { completingRef.current = false }
   }
   function failEvent(ae: ActiveEvent) {
     activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now()
@@ -289,8 +297,8 @@ export default function TrackPage() {
     const now = Date.now()
     distSamplesRef.current.push({ t: now, d: distRef.current })
     if (distSamplesRef.current.length > 1600) distSamplesRef.current.splice(0, 400) // 上限 ~25 分鐘
-    // 測試：跑步中、無進行中事件時輪詢認領後台手動觸發（每 5 秒）
-    if (!activeEventRef.current && now - lastClaimRef.current > 5000) {
+    // 測試：跑步中、無進行中事件時輪詢認領後台手動觸發（每 5 秒；結算中不認領）
+    if (!activeEventRef.current && !completingRef.current && now - lastClaimRef.current > 5000) {
       lastClaimRef.current = now
       claimManualEvent()
     }
@@ -322,7 +330,8 @@ export default function TrackPage() {
       }
       return
     }
-    // 無進行中事件 → 依冷卻 + 觸發條件挑選
+    // 無進行中事件 → 依冷卻 + 觸發條件挑選（結算中不 arm，避免蓋掉剛完成的結果通知）
+    if (completingRef.current) return
     const eligible = eventDefsRef.current.filter((d) =>
       now - lastEventEndRef.current >= (d.cooldown_sec || 0) * 1000 && triggerEligible(d))
     if (eligible.length > 0) armEvent(pickWeighted(eligible))
@@ -371,6 +380,30 @@ export default function TrackPage() {
     wakeRef.current = null
     try { (screen.orientation as any)?.unlock?.() } catch { /* ignore */ }
   }, [])
+
+  // 按「結束並上傳」：事件任務進行中 → 先跳確認（損失規避）；否則直接結束
+  function requestFinish() {
+    if (activeEventRef.current) { setConfirmEnd(true); return }
+    finish()
+  }
+  // 確認放棄事件並結束：伺服器端標記事件失敗（釋放 occurrence/閘門），再結束上傳
+  function endWithForfeit() {
+    setConfirmEnd(false)
+    const ae = activeEventRef.current
+    if (ae) {
+      activeEventRef.current = null; setActiveEvent(null); setEventMoved(0)
+      lastEventEndRef.current = Date.now()
+      const token = getUserToken()
+      if (token) {
+        if (ae.raceInstanceId) eventRaceApi.fail(token, ae.raceInstanceId).catch(() => {})
+        else if (ae.occId) eventApi.fail(token, ae.occId).catch(() => {})
+      }
+    }
+    finish()
+  }
+
+  // 確認視窗開啟時若事件已結束（完成/失敗）→ 強制關閉，讓「事件完成/結果」通知顯示
+  useEffect(() => { if (confirmEnd && !activeEvent) setConfirmEnd(false) }, [confirmEnd, activeEvent])
 
   async function finish() {
     cleanup()
@@ -506,6 +539,29 @@ export default function TrackPage() {
           </div>
         </div>
       )}
+      {confirmEnd && activeEvent && (() => {
+        const ev = activeEvent
+        const remain = Math.max(0, Math.ceil((ev.deadline - Date.now()) / 1000))
+        const rExp = ev.def.reward_exp ?? 0
+        const rDp = ev.def.reward_dp ?? 0
+        return (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 2500, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+            <div style={{ background: 'var(--bg-1, #0b0e13)', border: '1px solid var(--line-2)', borderRadius: 16, padding: '20px 18px', maxWidth: 340, width: '100%', boxShadow: '0 12px 40px rgba(0,0,0,.6)' }}>
+              <div style={{ fontSize: 17, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>⚠️ 事件任務進行中</div>
+              <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
+                你有一個事件任務還在進行（剩 <strong style={{ color: 'var(--gold)' }}>{remain}s</strong>）。<br />
+                現在結束跑步的話，<strong style={{ color: 'var(--hunt)' }}>事件任務也會一起結束，無法取得任務獎勵</strong>
+                {(rExp > 0 || rDp > 0) && <>（<span style={{ color: 'var(--gold)', fontWeight: 700 }}>{rExp > 0 ? `+${rExp} EXP` : ''}{rExp > 0 && rDp > 0 ? '、' : ''}{rDp > 0 ? `🪙+${rDp}` : ''}</span>）</>}
+                。確定要結束嗎？
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+                <button onClick={() => setConfirmEnd(false)} style={{ background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 10, padding: '11px', fontSize: 14.5, cursor: 'pointer' }}>再撐一下、完成任務</button>
+                <button onClick={endWithForfeit} style={{ background: 'transparent', color: 'var(--hunt)', fontWeight: 700, border: '1px solid rgba(255,75,92,.5)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer' }}>放棄獎勵、仍要結束</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
       <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         {/* 跑步期間隱藏「返回/歷史」，避免誤離開而中斷；只能按「結束並上傳」正常結束 */}
         {status === 'tracking'
@@ -653,7 +709,7 @@ export default function TrackPage() {
             ? <button onClick={start} style={btn}>▶ 開始跑步</button>
             : <button onClick={() => setShowLogin(true)} style={btn}>請先登入</button>
         )}
-        {status === 'tracking' && <button onClick={finish} style={{ ...btn, background: 'var(--hunt)', color: '#fff' }}>■ 結束並上傳</button>}
+        {status === 'tracking' && <button onClick={requestFinish} style={{ ...btn, background: 'var(--hunt)', color: '#fff' }}>■ 結束並上傳</button>}
         {status === 'done' && <button onClick={() => { setStatus('idle'); setElapsed(0); setDistance(0); setSplits([]); setAnomalies(0) }} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)' }}>再跑一次</button>}
         {status === 'tracking' && <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>追蹤中請保持本頁在前景、螢幕勿關（背景追蹤瀏覽器不支援）{uploading ? ' · 上傳中…' : ''}</div>}
       </div>
