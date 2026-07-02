@@ -39,7 +39,9 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const swipesRef = useRef(0)
   const strokeDistRef = useRef(0)
   const lastPtRef = useRef<{ x: number; y: number } | null>(null)
+  const activeSwipeIdRef = useRef<number | null>(null) // 只認「主滑動指」，其餘手指不影響累積（多點觸控防暴衝/防弊）
   const lastTrailRef = useRef(0)
+  const lastTravelUiRef = useRef(0)
   const fxId = useRef(0)
   const doneRef = useRef(false)
   const onDoneRef = useRef(onDone); onDoneRef.current = onDone
@@ -104,7 +106,8 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
       setFx((f) => [...f.slice(-14), { id, x, y, e: ['💥', '💧', '⭐', '🪨'][id % 4] }])
       setTimeout(() => setFx((f) => f.filter((z) => z.id !== id)), 520)
     } else if (isSwipe) {
-      lastPtRef.current = ptOf(e); strokeDistRef.current = 0
+      // 只讓第一根按下的指驅動滑動；第二指落下不重置進行中的段落
+      if (activeSwipeIdRef.current == null) { activeSwipeIdRef.current = e.pointerId; lastPtRef.current = ptOf(e); strokeDistRef.current = 0 }
     } else {
       pointersRef.current.add(e.pointerId)
       if (holdStartRef.current == null) { holdStartRef.current = Date.now(); setHolding(true); playDefend(); vibrate(35) }
@@ -112,12 +115,14 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   }
   function onMove(e: React.PointerEvent) {
     if (!isSwipe || !active2) return
+    if (e.pointerId !== activeSwipeIdRef.current) return // 只累加主滑動指的位移
     const { x, y } = ptOf(e)
     const last = lastPtRef.current
     if (last) {
       const d = Math.hypot(x - last.x, y - last.y)
-      travelRef.current += d; strokeDistRef.current += d; setTravel(travelRef.current)
+      travelRef.current += d; strokeDistRef.current += d
       const t = Date.now()
+      if (t - lastTravelUiRef.current > 40) { lastTravelUiRef.current = t; setTravel(travelRef.current) } // UI 節流；計數仍即時
       if (t - lastTrailRef.current > 24) { // 節流拋出拖尾
         lastTrailRef.current = t
         const id = fxId.current++
@@ -133,9 +138,10 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
       heldRef.current += Date.now() - holdStartRef.current; holdStartRef.current = null; setHeldMs(heldRef.current); setHolding(false)
     }
   }
-  function onUpSwipe() {
+  function onUpSwipe(e: React.PointerEvent) {
+    if (e.pointerId !== activeSwipeIdRef.current) return // 非主指放開不結算
     if (isDodge && strokeDistRef.current > 45) { swipesRef.current += 1; setSwipes(swipesRef.current); playDefend(); vibrate(30) }
-    strokeDistRef.current = 0; lastPtRef.current = null
+    strokeDistRef.current = 0; lastPtRef.current = null; activeSwipeIdRef.current = null; setTravel(travelRef.current)
   }
   const onUp = isHold ? onUpHold : isSwipe ? onUpSwipe : undefined
 
