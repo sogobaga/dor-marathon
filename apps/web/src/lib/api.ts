@@ -397,6 +397,27 @@ export const publicSettingsApi = {
   get: () => request<{ settings: Record<string, string> }>('/app-settings/public'),
 }
 
+// 蓋板廣告（拍立得卡片堆疊）
+export interface InterstitialAd {
+  id?: string
+  enabled: boolean
+  sort_order: number
+  image_url: string
+  headline: string
+  description: string
+  cta_label: string
+  cta_url: string
+}
+export const interstitialApi = {
+  get: () => request<{ ads: InterstitialAd[] }>('/interstitial'), // 公開，前台開啟時讀取
+}
+export const adminInterstitialApi = {
+  list: (token: string) => request<{ ads: InterstitialAd[] }>('/admin/interstitial', { headers: withAuth(token) }),
+  create: (token: string, body: InterstitialAd) => request<{ id: string }>('/admin/interstitial', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, id: string, body: InterstitialAd) => request<{ ok: boolean }>(`/admin/interstitial/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  remove: (token: string, id: string) => request<{ ok: boolean }>(`/admin/interstitial/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
 // --- 賽事多人連動事件（Phase B）---
 export interface RelOption { key: string; label: string }
 export interface RaceEventDef {

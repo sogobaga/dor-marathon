@@ -190,6 +190,9 @@ func main() {
 		// 通用系統設定的公開白名單（前台外觀，如 active_skin）
 		r.Get("/app-settings/public", appSettingsHandler.Public)
 
+		// 蓋板廣告（前台開啟時彈出）— 公開讀取，受總開關 interstitial_enabled 控制
+		r.Get("/interstitial", appSettingsHandler.PublicInterstitial)
+
 		// Strava 整合（callback/webhook 公開；connect/status/disconnect 由 router 內自帶登入）
 		r.Mount("/integrations/strava", stravaHandler.Router())
 
@@ -252,6 +255,7 @@ func main() {
 			r.With(perm("event_tasks")).Mount("/admin/event-races", eventHandler.RaceAdminRouter())
 			r.With(perm("event_tasks")).Mount("/admin/effect-assets", eventHandler.EffectAssetsRouter())
 			r.With(perm("settings")).Mount("/admin/app-settings", appSettingsHandler.AdminRouter())
+			r.With(perm("settings")).Mount("/admin/interstitial", appSettingsHandler.InterstitialAdminRouter())
 			r.With(perm("settings")).Mount("/admin/test-whitelist", raceHandler.TestWhitelistRouter())
 			r.Mount("/admin/images", imageHandler.AdminRouter()) // 共用工具，任何 admin 可上傳
 			r.With(perm("signups")).Mount("/admin/signups", raceHandler.SignupRouter())

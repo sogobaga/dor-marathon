@@ -15,9 +15,10 @@ import (
 
 // specs 登記所有合法設定 key 及其值驗證器（後端權威；新增設定時在此加一列）。
 var specs = map[string]func(string) bool{
-	"event_wait_min_sec": isNonNegInt,
-	"event_wait_max_sec": isNonNegInt,
-	"active_skin":        func(v string) bool { return v == "" || v == "default" || v == "warm" },
+	"event_wait_min_sec":   isNonNegInt,
+	"event_wait_max_sec":   isNonNegInt,
+	"active_skin":          func(v string) bool { return v == "" || v == "default" || v == "warm" },
+	"interstitial_enabled": func(v string) bool { return v == "" || v == "0" || v == "1" }, // 蓋板廣告總開關
 }
 
 // publicKeys 允許未登入前台讀取的 key（皆為非敏感外觀設定）。
