@@ -103,18 +103,20 @@ export function EventResultBanner({ result, onClose }: { result: EventResult; on
   useEffect(() => { if (result.pending) return; const t = setTimeout(onClose, 12000); return () => clearTimeout(t) }, [onClose, result.pending])
   const isInter = isInteractionType(result.def.completion_type)
   const stars = result.stars ?? 0
-  const weak = result.status === 'completed' && isInter && stars === 0 // 互動 0★＝差一點
-  const ok = result.status === 'completed' && !weak
+  const pending = !!result.pending // 結算中：中性樣式，避免先閃紅（失敗）再變綠（完成）
+  const weak = !pending && result.status === 'completed' && isInter && stars === 0 // 互動 0★＝差一點
+  const ok = !pending && result.status === 'completed' && !weak
   const hasReward = result.reward_exp > 0 || result.reward_dp > 0
-  const title = result.pending ? '🎉 任務完成！' : ok ? '🎉 任務完成！' : weak ? '🐾 差一點…' : '🐾 任務失敗'
+  const title = pending ? '🎉 任務完成！' : ok ? '🎉 任務完成！' : weak ? '🐾 差一點…' : '🐾 任務失敗'
+  const borderColor = pending ? 'rgba(255,194,75,.5)' : ok ? 'rgba(70,227,160,.5)' : 'rgba(255,90,90,.4)'
+  const bg = pending ? 'linear-gradient(180deg, rgba(255,194,75,.14), rgba(9,12,16,.95))'
+    : ok ? 'linear-gradient(180deg, rgba(70,227,160,.20), rgba(9,12,16,.95))'
+      : 'linear-gradient(180deg, rgba(255,90,90,.18), rgba(9,12,16,.95))'
+  const titleColor = pending ? 'var(--gold)' : ok ? 'var(--fug)' : 'var(--hunt)'
   return (
-    <div style={{
-      ...banner,
-      borderColor: ok ? 'rgba(70,227,160,.5)' : 'rgba(255,90,90,.4)',
-      background: ok ? 'linear-gradient(180deg, rgba(70,227,160,.20), rgba(9,12,16,.95))' : 'linear-gradient(180deg, rgba(255,90,90,.18), rgba(9,12,16,.95))',
-    }}>
+    <div style={{ ...banner, borderColor, background: bg }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 16, fontWeight: 900, color: ok ? 'var(--fug)' : 'var(--hunt)' }}>{title}</span>
+        <span style={{ fontSize: 16, fontWeight: 900, color: titleColor }}>{title}</span>
         {!result.pending && <button onClick={onClose} style={{ background: 'rgba(255,255,255,.08)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 14px', color: 'var(--tx)', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>收下</button>}
       </div>
       <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 3 }}>{result.def.name}</div>
