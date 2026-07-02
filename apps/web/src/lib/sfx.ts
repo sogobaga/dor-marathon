@@ -27,6 +27,36 @@ export function isMuted() {
   return muted
 }
 
+// --- 音效覆寫：後台「效果管理」上傳的正式音檔（slug → 已解碼 AudioBuffer）---
+const soundBuffers: Record<string, AudioBuffer> = {}
+
+// 設定/更新覆寫音檔（傳入 slug→url），逐一 fetch + decode 快取。
+export async function setSoundOverrides(map: Record<string, string>) {
+  const c = ac()
+  if (!c) return
+  for (const [slug, url] of Object.entries(map || {})) {
+    if (!slug.startsWith('sound.') || !url || soundBuffers[slug]) continue
+    try {
+      const res = await fetch(url)
+      const ab = await res.arrayBuffer()
+      soundBuffers[slug] = await c.decodeAudioData(ab)
+    } catch { /* 解碼失敗就沿用合成音 */ }
+  }
+}
+
+// 若該 slug 有覆寫音檔則播放並回 true；否則回 false（讓合成音接手）
+function playOverride(slug: string): boolean {
+  if (muted) return false
+  const c = ac()
+  const b = soundBuffers[slug]
+  if (!c || !b) return false
+  const s = c.createBufferSource()
+  s.buffer = b
+  s.connect(c.destination)
+  s.start()
+  return true
+}
+
 let fillOsc: OscillatorNode | null = null
 let fillGain: GainNode | null = null
 
@@ -81,6 +111,7 @@ export function vibrate(pattern: number | number[]) {
 // 事件任務「來了」的提示音：beep-beep-BOOP（上揚、有警示感）
 export function playEventAlert() {
   if (muted) return
+  if (playOverride('sound.event_alert')) return
   const c = ac()
   if (!c) return
   const now = c.currentTime
@@ -103,6 +134,7 @@ export function playEventAlert() {
 // 點擊攻擊：短促打擊聲（每次點擊）
 export function playTapHit() {
   if (muted) return
+  if (playOverride('sound.tap_hit')) return
   const c = ac()
   if (!c) return
   const now = c.currentTime
@@ -121,6 +153,7 @@ export function playTapHit() {
 // 按住防禦：低沉的「起盾」聲
 export function playDefend() {
   if (muted) return
+  if (playOverride('sound.defend')) return
   const c = ac()
   if (!c) return
   const now = c.currentTime
@@ -140,6 +173,7 @@ export function playDefend() {
 // 事件完成的成功音：C6→E6→G6 上行琶音
 export function playEventComplete() {
   if (muted) return
+  if (playOverride('sound.event_complete')) return
   const c = ac()
   if (!c) return
   const now = c.currentTime
@@ -162,6 +196,7 @@ export function playEventComplete() {
 // 升級到 100% 的「噹」——鐘聲（多諧波 + 快速衰減）
 export function playDing() {
   if (muted) return
+  if (playOverride('sound.ding')) return
   const c = ac()
   if (!c) return
   const now = c.currentTime

@@ -372,6 +372,16 @@ export const adminEventsApi = {
 }
 export interface TestTarget { email: string; is_default: boolean }
 
+// 效果資產覆寫（把暫代 emoji/合成音效換成正式圖片/音檔）
+export const effectsApi = {
+  get: (token: string) => request<{ assets: Record<string, string> }>('/effect-assets', { headers: withAuth(token) }),
+}
+export const adminEffectsApi = {
+  list: (token: string) => request<{ assets: Record<string, string> }>('/admin/effect-assets', { headers: withAuth(token) }),
+  set: (token: string, slug: string, url: string) => request<{ assets: Record<string, string> }>(`/admin/effect-assets/${slug}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ url }) }),
+  clear: (token: string, slug: string) => request<{ assets: Record<string, string> }>(`/admin/effect-assets/${slug}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
 // --- 賽事多人連動事件（Phase B）---
 export interface RelOption { key: string; label: string }
 export interface RaceEventDef {

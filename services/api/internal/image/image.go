@@ -88,8 +88,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	if mime == "" {
 		mime = http.DetectContentType(data)
 	}
-	if !strings.HasPrefix(mime, "image/") {
-		respondErr(w, http.StatusBadRequest, "僅接受圖片檔")
+	if !strings.HasPrefix(mime, "image/") && !strings.HasPrefix(mime, "audio/") {
+		respondErr(w, http.StatusBadRequest, "僅接受圖片或音檔")
 		return
 	}
 

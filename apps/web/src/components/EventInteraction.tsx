@@ -6,7 +6,7 @@ import { playTapHit, playDefend, vibrate } from '@/lib/sfx'
 
 // 互動小遊戲全屏層：tap_burst（連點攻擊）/ hold_press（按住防禦）。
 // 依完成度計分，時間到（或按「略過」）回傳 { taps, held_ms } 給 /track 送後端分級發獎。
-export function EventInteraction({ active, onDone, paused }: { active: ActiveEvent; onDone: (ev: { taps: number; held_ms: number }) => void; paused?: boolean }) {
+export function EventInteraction({ active, onDone, paused, assets }: { active: ActiveEvent; onDone: (ev: { taps: number; held_ms: number }) => void; paused?: boolean; assets?: Record<string, string> }) {
   const def = active.def
   const p = def.completion_params
   const isTap = def.completion_type === 'tap_burst'
@@ -94,6 +94,8 @@ export function EventInteraction({ active, onDone, paused }: { active: ActiveEve
 
   const accent = isTap ? '#FFC24B' : '#46E3A0'
   const img = pickTimeImage(def)
+  const iconUrl = (isTap ? assets?.['interaction.tap.icon'] : (holding ? assets?.['interaction.defend.icon'] : assets?.['interaction.idle.icon'])) || ''
+  const fxUrl = assets?.['interaction.tap.fx'] || ''
 
   return (
     <div
@@ -128,7 +130,11 @@ export function EventInteraction({ active, onDone, paused }: { active: ActiveEve
                 <circle cx="95" cy="95" r="84" fill="none" stroke={accent} strokeWidth="10" strokeLinecap="round"
                   strokeDasharray={2 * Math.PI * 84} strokeDashoffset={2 * Math.PI * 84 * (1 - progress)} style={{ transition: 'stroke-dashoffset .12s' }} />
               </svg>
-              <div style={{ fontSize: 60, transform: holding ? 'scale(1.12)' : 'scale(1)', transition: 'transform .1s' }}>{isTap ? '👊' : holding ? '🛡️' : '✋'}</div>
+              <div style={{ transform: holding ? 'scale(1.12)' : 'scale(1)', transition: 'transform .1s', display: 'flex' }}>
+                {iconUrl
+                  ? <img src={iconUrl} alt="" draggable={false} style={{ width: 88, height: 88, objectFit: 'contain', pointerEvents: 'none' }} />
+                  : <span style={{ fontSize: 60 }}>{isTap ? '👊' : holding ? '🛡️' : '✋'}</span>}
+              </div>
             </div>
             {/* 圈外：大數字進度（不被手指遮住、也不會被選取） */}
             <div style={{ fontSize: 34, fontWeight: 900, color: accent, fontVariantNumeric: 'tabular-nums' }}>
@@ -141,7 +147,9 @@ export function EventInteraction({ active, onDone, paused }: { active: ActiveEve
       </div>
 
       {fx.map((z) => (
-        <span key={z.id} style={{ position: 'absolute', left: z.x, top: z.y, fontSize: 34, pointerEvents: 'none', transform: 'translate(-50%,-50%)', animation: 'fxPop .5s ease-out forwards' }}>{z.e}</span>
+        fxUrl
+          ? <img key={z.id} src={fxUrl} alt="" draggable={false} style={{ position: 'absolute', left: z.x, top: z.y, width: 44, height: 44, objectFit: 'contain', pointerEvents: 'none', transform: 'translate(-50%,-50%)', animation: 'fxPop .5s ease-out forwards' }} />
+          : <span key={z.id} style={{ position: 'absolute', left: z.x, top: z.y, fontSize: 34, pointerEvents: 'none', transform: 'translate(-50%,-50%)', animation: 'fxPop .5s ease-out forwards' }}>{z.e}</span>
       ))}
       <style>{`@keyframes fxPop{0%{opacity:1;transform:translate(-50%,-50%) scale(.5)}100%{opacity:0;transform:translate(-50%,-140%) scale(1.6)}}`}</style>
     </div>

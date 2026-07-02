@@ -32,6 +32,7 @@ const NAV: { grp: string; items: NavItem[] }[] = [
       { k: 'levels', t: '等級設定', href: '/admin/levels', perm: 'settings' },
       { k: 'events', t: '事件任務', href: '/admin/events', perm: 'event_tasks' },
       { k: 'event-races', t: '多人事件', href: '/admin/event-races', perm: 'event_tasks' },
+      { k: 'effects', t: '效果管理', href: '/admin/effects', perm: 'event_tasks' },
       { k: 'stores', t: '打卡門市' },
       { k: 'mileage', t: '里程規則' },
       { k: 'wheel', t: '轉盤獎勵' },

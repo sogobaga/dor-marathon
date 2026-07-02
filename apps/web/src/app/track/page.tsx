@@ -5,6 +5,7 @@ import { activitiesApi, checkpointApi, eventApi, eventRaceApi, createRaceSocket,
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
 import { unlockAudio, playEventAlert, playEventComplete, vibrate, setMuted as sfxSetMuted, isMuted } from '@/lib/sfx'
+import { loadEffectAssets } from '@/lib/effects'
 import GoogleAuthProvider from '@/components/GoogleAuthProvider'
 import { LoginModal } from '@/components/UserAuthBar'
 import PhoneFrame from '@/components/PhoneFrame'
@@ -63,6 +64,7 @@ export default function TrackPage() {
   const [raceInvite, setRaceInvite] = useState<RaceEventInvite | null>(null)
   const [inviteNow, setInviteNow] = useState(0) // 驅動邀請倒數重繪
   const [isLandscape, setIsLandscape] = useState(false) // 橫向時顯示「轉回直立」提示
+  const [fxAssets, setFxAssets] = useState<Record<string, string>>({}) // 效果覆寫（正式圖片/音檔）
   const [confirmEnd, setConfirmEnd] = useState(false) // 事件進行中按「結束」→ 先跳確認（損失規避）
   const [muted, setMuted] = useState(false) // 事件音效靜音（震動不受影響）
 
@@ -476,6 +478,8 @@ export default function TrackPage() {
   useEffect(() => { if (confirmEnd && !activeEvent) setConfirmEnd(false) }, [confirmEnd, activeEvent])
 
   useEffect(() => { setMuted(isMuted()) }, [])
+  // 載入效果覆寫（正式圖片/音檔）：圖片給互動層、音效交給 sfx 解碼
+  useEffect(() => { const t = getUserToken(); if (t) loadEffectAssets(t).then(setFxAssets) }, [user?.id])
   function toggleMute() { const next = !isMuted(); sfxSetMuted(next); setMuted(next); if (!next) unlockAudio() }
 
   async function finish() {
@@ -613,7 +617,7 @@ export default function TrackPage() {
         </div>
       )}
       {status === 'tracking' && activeEvent && isInteractionType(activeEvent.def.completion_type) && (
-        <EventInteraction active={activeEvent} onDone={handleInteractionDone} paused={isLandscape} />
+        <EventInteraction active={activeEvent} onDone={handleInteractionDone} paused={isLandscape} assets={fxAssets} />
       )}
       {confirmEnd && activeEvent && (() => {
         const ev = activeEvent
