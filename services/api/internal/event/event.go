@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/realtime"
 )
@@ -154,16 +155,35 @@ func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler {
 	return &Handler{db: db, rt: rt}
 }
 
-// taskGateOpen 全域任務閘門：一個跑者同時只有一個進行中任務、任務間至少 15 分鐘冷卻。
-// 只要近 15 分鐘內有任何 Phase A 觸發或 Phase B 加入紀錄 → 閘門關閉（不再觸發/不可加入）。
+// eventWaitBounds 事件任務的隨機等待區間（秒）。取自系統設定 app_settings，含合理夾限。
+// 前端跑步引擎每次事件間會在 [min,max] 隨機取一個等待時間；min 同時作為伺服器端防濫用地板。
+func (h *Handler) eventWaitBounds(ctx context.Context) (minSec, maxSec int) {
+	minSec = appsettings.GetInt(ctx, h.db, "event_wait_min_sec", 300)
+	maxSec = appsettings.GetInt(ctx, h.db, "event_wait_max_sec", 900)
+	if minSec < 60 {
+		minSec = 60
+	}
+	if maxSec < minSec {
+		maxSec = minSec
+	}
+	if maxSec > 3600 {
+		maxSec = 3600
+	}
+	return
+}
+
+// taskGateOpen 全域任務閘門：一個跑者同時只有一個進行中任務、任務間至少 min 等待（防濫用地板）。
+// 只要近 min 秒內有任何 Phase A 觸發或 Phase B 加入紀錄 → 閘門關閉（不再觸發/不可加入）。
+// 實際節奏由前端在 [min,max] 隨機等待決定；此處僅擋「比 min 還快」的重複觸發。
 func (h *Handler) taskGateOpen(ctx context.Context, uid string) (bool, error) {
+	floor, _ := h.eventWaitBounds(ctx)
 	var recent bool
 	err := h.db.QueryRow(ctx, `
 		SELECT EXISTS(
-			SELECT 1 FROM event_task_occurrences WHERE user_id=$1 AND triggered_at > NOW() - INTERVAL '15 minutes'
+			SELECT 1 FROM event_task_occurrences WHERE user_id=$1 AND triggered_at > NOW() - make_interval(secs => $2)
 			UNION ALL
-			SELECT 1 FROM event_race_participants WHERE user_id=$1 AND joined_at > NOW() - INTERVAL '15 minutes'
-		)`, uid).Scan(&recent)
+			SELECT 1 FROM event_race_participants WHERE user_id=$1 AND joined_at > NOW() - make_interval(secs => $2)
+		)`, uid, floor).Scan(&recent)
 	return !recent, err
 }
 
@@ -504,7 +524,8 @@ func (h *Handler) Active(w http.ResponseWriter, r *http.Request) {
 		}
 		defs = append(defs, d)
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"defs": defs})
+	minSec, maxSec := h.eventWaitBounds(r.Context())
+	respondJSON(w, http.StatusOK, map[string]any{"defs": defs, "wait_min_sec": minSec, "wait_max_sec": maxSec})
 }
 
 type occReq struct {

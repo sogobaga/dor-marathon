@@ -18,6 +18,7 @@ import (
 
 	"github.com/dor/api/internal/activity"
 	"github.com/dor/api/internal/adminacct"
+	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/cache"
 	"github.com/dor/api/internal/config"
@@ -117,6 +118,7 @@ func main() {
 
 	// 事件任務（日常隨機事件）
 	eventHandler := event.NewHandler(pool, wsManager)
+	appSettingsHandler := appsettings.NewHandler(pool)
 
 	// Image（圖片上傳，存 Postgres）
 	imageHandler := image.NewHandler(image.NewRepository(pool))
@@ -246,6 +248,7 @@ func main() {
 			r.With(perm("event_tasks")).Mount("/admin/events", eventHandler.AdminRouter())
 			r.With(perm("event_tasks")).Mount("/admin/event-races", eventHandler.RaceAdminRouter())
 			r.With(perm("event_tasks")).Mount("/admin/effect-assets", eventHandler.EffectAssetsRouter())
+			r.With(perm("settings")).Mount("/admin/app-settings", appSettingsHandler.AdminRouter())
 			r.With(perm("settings")).Mount("/admin/test-whitelist", raceHandler.TestWhitelistRouter())
 			r.Mount("/admin/images", imageHandler.AdminRouter()) // 共用工具，任何 admin 可上傳
 			r.With(perm("signups")).Mount("/admin/signups", raceHandler.SignupRouter())

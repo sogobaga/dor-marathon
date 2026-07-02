@@ -47,6 +47,7 @@ const NAV: { grp: string; items: NavItem[] }[] = [
       { k: 'gps-review', t: 'GPS 審核', href: '/admin/gps-review', perm: 'gps_review' },
       { k: 'checkin-review', t: '打卡審核', href: '/admin/checkin-review', perm: 'gps_review' },
       { k: 'whitelist', t: '測試白名單', href: '/admin/settings', perm: 'settings' },
+      { k: 'system', t: '系統設定', href: '/admin/system', perm: 'settings' },
       { k: 'audit', t: '操作紀錄', href: '/admin/audit', super: true },
       { k: 'admins', t: '管理者', href: '/admin/admins', super: true },
       { k: 'i18n', t: '多語言' },

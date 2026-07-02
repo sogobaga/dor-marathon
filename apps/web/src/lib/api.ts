@@ -355,7 +355,7 @@ export interface EventDef {
   reward_dp: number
 }
 export const eventApi = {
-  active: (token: string) => request<{ defs: EventDef[] }>('/events/active', { headers: withAuth(token) }),
+  active: (token: string) => request<{ defs: EventDef[]; wait_min_sec?: number; wait_max_sec?: number }>('/events/active', { headers: withAuth(token) }),
   createOccurrence: (token: string, body: { def_id: string; trigger_dist_m: number; trigger_elapsed_s: number }) =>
     request<{ id: string; reward_exp: number; reward_dp: number }>('/events/occurrences', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   complete: (token: string, id: string, body: CompleteEvidence) =>
@@ -385,6 +385,12 @@ export const adminEffectsApi = {
   list: (token: string) => request<{ assets: Record<string, string> }>('/admin/effect-assets', { headers: withAuth(token) }),
   set: (token: string, slug: string, url: string) => request<{ assets: Record<string, string> }>(`/admin/effect-assets/${slug}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ url }) }),
   clear: (token: string, slug: string) => request<{ assets: Record<string, string> }>(`/admin/effect-assets/${slug}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
+// 通用系統設定（key-value）
+export const adminAppSettingsApi = {
+  list: (token: string) => request<{ settings: Record<string, string> }>('/admin/app-settings', { headers: withAuth(token) }),
+  set: (token: string, key: string, value: string) => request<{ settings: Record<string, string> }>(`/admin/app-settings/${key}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ value }) }),
 }
 
 // --- 賽事多人連動事件（Phase B）---

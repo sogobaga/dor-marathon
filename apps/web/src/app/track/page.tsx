@@ -87,7 +87,10 @@ export default function TrackPage() {
   const distSamplesRef = useRef<{ t: number; d: number }[]>([]) // {時間ms, 累積距離m}
   const eventDefsRef = useRef<EventDef[]>([])
   const activeEventRef = useRef<ActiveEvent | null>(null)
-  const lastEventEndRef = useRef(0) // 上次事件結束時間（冷卻用）
+  const lastEventEndRef = useRef(0) // 上次事件結束時間（per-def cooldown 用）
+  const waitMinRef = useRef(300) // 事件隨機等待區間（秒），由系統設定帶入
+  const waitMaxRef = useRef(900)
+  const nextEventAtRef = useRef(0) // 下一個事件最早可觸發的時間（開始跑步/每次事件結束後隨機重取）
   const evalTimerRef = useRef<any>(null)
   const completingRef = useRef(false) // 完成/失敗結算中：避免 evalTick 在空窗期又 arm 新事件蓋掉結果
   eventDefsRef.current = eventDefs
@@ -171,6 +174,13 @@ export default function TrackPage() {
   }
 
   // --- 事件任務引擎 ---
+  // 事件隨機等待：開始跑步 / 每次事件結束後，重取一個落在 [min,max] 的等待時間，
+  // 決定「下一個事件最早何時可觸發」（時間到、且符合觸發條件時才真的出現）。取代原本寫死的 15 分鐘冷卻。
+  function rollNextEvent() {
+    const min = Math.max(1, waitMinRef.current)
+    const max = Math.max(min, waitMaxRef.current)
+    nextEventAtRef.current = Date.now() + (min + Math.random() * (max - min)) * 1000
+  }
   // 近 windowMs 的位移（公尺）；歷史不足回 null
   function movedInWindow(windowMs: number): number | null {
     const s = distSamplesRef.current
@@ -208,7 +218,7 @@ export default function TrackPage() {
     try {
       const occ = await eventApi.createOccurrence(token, { def_id: def.id, trigger_dist_m: triggerD, trigger_elapsed_s: elapsedS })
       // 被全域閘門擋下（冷卻中）：退回並設冷卻，避免每秒重試又閃橫幅/重複提示
-      if (!occ.id) { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) }; lastEventEndRef.current = Date.now(); return }
+      if (!occ.id) { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) }; lastEventEndRef.current = Date.now(); rollNextEvent(); return }
       // 若在 createOccurrence 飛行期間使用者已放棄/結束（ref 被清）→ 補送 fail，避免留下 active 孤兒列
       if (activeEventRef.current !== ae) { eventApi.fail(token, occ.id).catch(() => {}); return }
       const armed = { ...ae, occId: occ.id }
@@ -217,7 +227,7 @@ export default function TrackPage() {
     } catch { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) } }
   }
   async function completeEvent(ae: ActiveEvent, moved: number, windowS: number, extra: Partial<CompleteEvidence> = {}) {
-    activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now()
+    activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now(); rollNextEvent()
     completingRef.current = true
     const inter = isInteractionType(ae.def.completion_type)
     // 樂觀顯示：非互動直接「完成」；互動先「結算中」（星等要等後端算完成度）
@@ -238,7 +248,7 @@ export default function TrackPage() {
     finally { completingRef.current = false }
   }
   function failEvent(ae: ActiveEvent) {
-    activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now()
+    activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now(); rollNextEvent()
     const token = getUserToken()
     if (token) {
       if (ae.raceInstanceId) eventRaceApi.fail(token, ae.raceInstanceId).catch(() => {})
@@ -428,8 +438,8 @@ export default function TrackPage() {
       }
       return
     }
-    // 無進行中事件 → 依冷卻 + 觸發條件挑選（結算中不 arm，避免蓋掉剛完成的結果通知）
-    if (completingRef.current) return
+    // 無進行中事件 → 等隨機等待時間到 + 符合觸發條件才挑選（結算中不 arm，避免蓋掉剛完成的結果通知）
+    if (completingRef.current || now < nextEventAtRef.current) return
     const eligible = eventDefsRef.current.filter((d) =>
       now - lastEventEndRef.current >= (d.cooldown_sec || 0) * 1000 && triggerEligible(d))
     if (eligible.length > 0) armEvent(pickWeighted(eligible))
@@ -443,6 +453,7 @@ export default function TrackPage() {
     if (lineRef.current) lineRef.current.setLatLngs([]) // 清掉上一趟的軌跡線（避免地圖殘留）
     // 事件引擎重置
     distSamplesRef.current = []; activeEventRef.current = null; lastEventEndRef.current = 0
+    rollNextEvent() // 開始跑步：取第一段隨機等待時間
     setActiveEvent(null); setEventResult(null); setEventMoved(0)
     // Phase B 重置
     setRaceInvite(null); raceIdRef.current = ''; lastTriggerRef.current = 0; lastClaimRef.current = 0
@@ -554,7 +565,12 @@ export default function TrackPage() {
   const fetchEventDefs = useCallback(async () => {
     const token = getUserToken()
     if (!token) { setEventDefs([]); return }
-    try { const { defs } = await eventApi.active(token); setEventDefs(defs) } catch { /* ignore */ }
+    try {
+      const r = await eventApi.active(token)
+      setEventDefs(r.defs)
+      if (r.wait_min_sec && r.wait_min_sec > 0) waitMinRef.current = r.wait_min_sec
+      if (r.wait_max_sec && r.wait_max_sec > 0) waitMaxRef.current = Math.max(waitMinRef.current, r.wait_max_sec)
+    } catch { /* ignore */ }
   }, [])
   useEffect(() => { fetchEventDefs() }, [fetchEventDefs, user?.id])
 

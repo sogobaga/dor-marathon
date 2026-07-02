@@ -402,16 +402,17 @@ func (h *Handler) selectAudience(ctx context.Context, raceID, initiatorID string
 	case "diff":
 		q += ` AND (SELECT gender FROM user_profiles WHERE user_id=reg.user_id) IS DISTINCT FROM (SELECT gender FROM user_profiles WHERE user_id=$2)`
 	}
-	// 全域閘門：近 15 分鐘無任何任務觸發/加入
+	// 全域閘門：近 floor 秒內無任何任務觸發/加入（與 taskGateOpen/RaceJoin 同一地板，避免發出無法接受的邀請）
+	floor, _ := h.eventWaitBounds(ctx)
 	q += `
-		AND NOT EXISTS (SELECT 1 FROM event_task_occurrences o WHERE o.user_id=reg.user_id AND o.triggered_at > NOW()-INTERVAL '15 minutes')
-		AND NOT EXISTS (SELECT 1 FROM event_race_participants p WHERE p.user_id=reg.user_id AND p.joined_at > NOW()-INTERVAL '15 minutes')
+		AND NOT EXISTS (SELECT 1 FROM event_task_occurrences o WHERE o.user_id=reg.user_id AND o.triggered_at > NOW()-make_interval(secs => $3))
+		AND NOT EXISTS (SELECT 1 FROM event_race_participants p WHERE p.user_id=reg.user_id AND p.joined_at > NOW()-make_interval(secs => $3))
 		ORDER BY random()`
 	if def.TargetCount > 0 {
 		q += fmt.Sprintf(" LIMIT %d", def.TargetCount)
 	}
 
-	rows, err := h.db.Query(ctx, q, raceID, initiatorID)
+	rows, err := h.db.Query(ctx, q, raceID, initiatorID, floor)
 	if err != nil {
 		return nil, err
 	}
