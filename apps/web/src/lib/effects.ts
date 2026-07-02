@@ -25,6 +25,9 @@ export const EFFECT_SPECS: EffectSpec[] = [
   { slug: 'interaction.swipe.icon', category: '互動小遊戲', label: '滑動蓄力 圖示', where: '「滑動蓄力（魔法）」小遊戲的中央圖示', type: 'image', placeholder: '🌀', size: '512 × 512 px（正方）', format: 'PNG（去背透明）', maxKB: 120 },
   { slug: 'interaction.dodge.icon', category: '互動小遊戲', label: '滑動閃避 圖示', where: '「滑動閃避」小遊戲的中央圖示', type: 'image', placeholder: '💨', size: '512 × 512 px（正方）', format: 'PNG（去背透明）', maxKB: 120 },
   { slug: 'interaction.swipe.trail', category: '互動小遊戲', label: '滑動拖尾', where: '滑動時手指軌跡的拖尾點', type: 'image', placeholder: '（發光圓點）', size: '64 × 64 px（正方）', format: 'PNG（去背透明）', maxKB: 30, note: '目前為程式生成的發光圓點；上傳小圖可換成星塵/魔法粒子' },
+  { slug: 'interaction.shape.bg3', category: '圖形魔法陣底圖', label: '三角形 魔法陣底圖', where: '畫「三角形」時的底圖（未上傳則只有幾何虛線）', type: 'image', placeholder: '（幾何虛線）', size: '512 × 512 px（正方）', format: 'PNG（去背透明）', maxKB: 200, note: '圖中三角形「頂點朝上、置中」、約佔畫面 8 成，才能與描繪判定對齊' },
+  { slug: 'interaction.shape.bg4', category: '圖形魔法陣底圖', label: '四角形 魔法陣底圖', where: '畫「四角形」時的底圖', type: 'image', placeholder: '（幾何虛線）', size: '512 × 512 px（正方）', format: 'PNG（去背透明）', maxKB: 200, note: '圖中正方形「軸對齊（上下左右邊水平垂直）、置中」、約佔畫面 8 成' },
+  { slug: 'interaction.shape.bg5', category: '圖形魔法陣底圖', label: '五芒星 魔法陣底圖', where: '畫「五芒星」時的底圖', type: 'image', placeholder: '（幾何虛線）', size: '512 × 512 px（正方）', format: 'PNG（去背透明）', maxKB: 200, note: '圖中五芒星「一角朝上、置中」、約佔畫面 8 成' },
   // --- 音效 ---
   { slug: 'sound.event_alert', category: '音效', label: '事件來了 提示音', where: '事件任務／多人事件邀請「跳出」時', type: 'audio', placeholder: '合成音（beep-beep-BOOP）', size: '約 0.4–0.6 秒', format: 'MP3 或 OGG（單聲道即可）', maxKB: 40 },
   { slug: 'sound.event_complete', category: '音效', label: '事件完成 成功音', where: '事件任務完成結算時', type: 'audio', placeholder: '合成音（上行琶音）', size: '約 0.5–0.8 秒', format: 'MP3 或 OGG', maxKB: 40 },

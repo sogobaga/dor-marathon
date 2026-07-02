@@ -219,6 +219,7 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const iconUrl = (isTap ? assets?.['interaction.tap.icon'] : isHold ? (holding ? assets?.['interaction.defend.icon'] : assets?.['interaction.idle.icon']) : isCharge ? assets?.['interaction.swipe.icon'] : assets?.['interaction.dodge.icon']) || ''
   const fxUrl = assets?.['interaction.tap.fx'] || ''
   const trailUrl = assets?.['interaction.swipe.trail'] || ''
+  const shapeBgUrl = assets?.[`interaction.shape.bg${shape}`] || '' // 圖形魔法陣底圖（可在效果管理上傳）
   const emoji = isTap ? '👊' : isHold ? (holding ? '🛡️' : '✋') : isCharge ? '🌀' : '💨'
   const readout = isTap ? `${taps} / ${targetTaps} 次` : isHold ? `${(heldMs / 1000).toFixed(1)} / ${(needMs / 1000).toFixed(0)} 秒` : isCharge ? `${Math.round(travel)} / ${targetPx}` : `${swipes} / ${targetSwipes} 次`
   const readyMsg = isTap ? '準備連續點擊！' : isHold ? '準備按住防禦！' : isCharge ? '準備滑動蓄力！' : isDodge ? '準備滑動閃避！' : '請跟隨身體的能量流動，畫出圖形。'
@@ -252,11 +253,12 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
           <div style={{ fontSize: 26, fontWeight: 900, color: accent }}>{readyMsg}</div>
         ) : isShape ? (
           <>
-            {/* 半透明底圖提示：一筆畫描出圖形；成功時邊線發光＋脈動 */}
+            {/* 底圖：優先用上傳的魔法陣圖（可在效果管理擴充/調整），其上疊描繪判定用的幾何導引線；成功時發光＋脈動 */}
             <div style={{ position: 'relative', width: 264, height: 264, animation: shapeOk ? 'shapePulse .8s ease-in-out infinite' : undefined }}>
+              {shapeBgUrl && <img src={shapeBgUrl} alt="" draggable={false} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: shapeOk ? 1 : 0.5, filter: shapeOk ? `drop-shadow(0 0 20px ${accent})` : undefined, transition: 'all .2s', pointerEvents: 'none' }} />}
               <svg width="264" height="264" style={{ position: 'absolute', inset: 0 }}>
                 <polyline points={shapeSvgPoints(shape, 264)} fill="none"
-                  stroke={shapeOk ? accent : 'rgba(255,255,255,.26)'} strokeWidth={shapeOk ? 8 : 3}
+                  stroke={shapeOk ? accent : shapeBgUrl ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.26)'} strokeWidth={shapeOk ? 8 : 3}
                   strokeLinecap="round" strokeLinejoin="round" strokeDasharray={shapeOk ? undefined : '9 9'}
                   style={{ filter: shapeOk ? `drop-shadow(0 0 22px ${accent}) drop-shadow(0 0 10px ${accent})` : undefined, transition: 'all .2s' }} />
               </svg>
