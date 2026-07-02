@@ -373,6 +373,10 @@ export interface RaceEventDef {
   completion_type: string
   completion_params: Record<string, number>
   message: string
+  image_url?: string
+  image_day_url?: string
+  image_dusk_url?: string
+  image_night_url?: string
   reward_exp: number
   reward_dp: number
   per_user_daily_cap: number
@@ -390,6 +394,10 @@ export interface RaceEventInvite {
   join_window_s: number
   reward_exp: number
   reward_dp: number
+  image_url?: string
+  image_day_url?: string
+  image_dusk_url?: string
+  image_night_url?: string
   join_deadline: number // epoch ms
 }
 

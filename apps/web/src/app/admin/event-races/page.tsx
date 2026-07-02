@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { adminEventRacesApi, adminRacesApi, type RaceEventDef, type EventTypeSpec, type RelOption, type Race } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import DpCoin from '@/components/DpCoin'
+import EventImageSlots from '@/components/EventImageSlots'
 
 function emptyDef(cCat: EventTypeSpec[]): RaceEventDef {
   return {
@@ -134,6 +135,10 @@ export default function AdminEventRacesPage() {
             <Field label="邀請文案（收邀者看到的劇情）" grow>
               <textarea style={{ ...inp, minHeight: 56, resize: 'vertical' }} value={edit.message} onChange={(e) => setEdit({ ...edit, message: e.target.value })} placeholder="有人發起衝刺！限時一起跑，達標領獎！" />
             </Field>
+          </div>
+
+          <div style={{ marginTop: 12 }}>
+            <EventImageSlots value={edit} token={token} onChange={(patch) => setEdit({ ...edit, ...patch })} />
           </div>
           <div style={{ display: 'flex', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
             <Field label="完成獎勵 EXP"><input style={{ ...inp, width: 110 }} type="number" value={edit.reward_exp} onChange={(e) => setEdit({ ...edit, reward_exp: parseInt(e.target.value || '0', 10) })} /></Field>

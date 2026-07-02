@@ -7,12 +7,14 @@ import DpCoin from './DpCoin'
 export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string }
 export type EventResult = { status: 'completed' | 'failed'; def: EventDef; reward_exp: number; reward_dp: number }
 
-// 依跑者當下時間挑時段插圖：白天 06–17、黃昏 17–19、晚上 19–06；未設定該時段回退預設圖
-export function pickEventImage(def: EventDef): string {
+// 依跑者當下時間挑時段插圖：白天 06–17、黃昏 17–19、晚上 19–06；未設定該時段回退預設圖。
+// 事件任務 / 多人事件邀請共用（欄位名一致）。
+export function pickTimeImage(imgs: { image_url?: string; image_day_url?: string; image_dusk_url?: string; image_night_url?: string }): string {
   const h = new Date().getHours()
-  const seg = (h >= 6 && h < 17) ? def.image_day_url : (h >= 17 && h < 19) ? def.image_dusk_url : def.image_night_url
-  return seg || def.image_url || ''
+  const seg = (h >= 6 && h < 17) ? imgs.image_day_url : (h >= 17 && h < 19) ? imgs.image_dusk_url : imgs.image_night_url
+  return seg || imgs.image_url || ''
 }
+export function pickEventImage(def: EventDef): string { return pickTimeImage(def) }
 
 function goalText(def: EventDef): string {
   const p = def.completion_params

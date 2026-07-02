@@ -9,7 +9,7 @@ import GoogleAuthProvider from '@/components/GoogleAuthProvider'
 import { LoginModal } from '@/components/UserAuthBar'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
-import { EventBanner, EventResultBanner, type ActiveEvent, type EventResult } from '@/components/EventTaskModal'
+import { EventBanner, EventResultBanner, pickTimeImage, type ActiveEvent, type EventResult } from '@/components/EventTaskModal'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -275,6 +275,7 @@ export default function TrackPage() {
         name: res.name || inv.name, description: '', enabled: true, weight: 100, cooldown_sec: 0,
         trigger_type: '', trigger_params: {}, completion_type: res.completion_type || inv.completion_type,
         completion_params: res.completion_params || inv.completion_params, message: res.message || inv.message,
+        image_url: inv.image_url, image_day_url: inv.image_day_url, image_dusk_url: inv.image_dusk_url, image_night_url: inv.image_night_url,
         reward_exp: res.reward_exp ?? inv.reward_exp, reward_dp: res.reward_dp ?? inv.reward_dp,
       }
       const deadline = res.deadline || (now + (def.completion_params.limit_s || 180) * 1000)
@@ -606,6 +607,7 @@ export default function TrackPage() {
                 <span style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--gold)', fontWeight: 800 }}>⚡ 多人事件邀請</span>
                 <span style={{ fontSize: 18, fontWeight: 900, color: remain <= 10 ? 'var(--hunt)' : 'var(--gold)', fontVariantNumeric: 'tabular-nums' }}>{remain}s</span>
               </div>
+              {pickTimeImage(raceInvite) && <img src={pickTimeImage(raceInvite)} alt="" style={{ width: '100%', height: 110, objectFit: 'cover', borderRadius: 8, margin: '8px 0 2px', display: 'block' }} />}
               <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>
                 <span style={{ color: 'var(--fug)' }}>{raceInvite.initiator_name}</span> 發起：{raceInvite.message || raceInvite.name}
               </div>

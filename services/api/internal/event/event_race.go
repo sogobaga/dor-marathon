@@ -57,6 +57,10 @@ type RaceEventDef struct {
 	CompletionType       string             `json:"completion_type"`
 	CompletionParams     map[string]float64 `json:"completion_params"`
 	Message              string             `json:"message"`
+	ImageURL             string             `json:"image_url"`       // 預設圖（時段未設定時回退）
+	ImageDayURL          string             `json:"image_day_url"`   // 白天 06:00–17:00
+	ImageDuskURL         string             `json:"image_dusk_url"`  // 黃昏 17:00–19:00
+	ImageNightURL        string             `json:"image_night_url"` // 晚上 19:00–06:00
 	RewardExp            int                `json:"reward_exp"`
 	RewardDp             int                `json:"reward_dp"`
 	PerUserDailyCap      int                `json:"per_user_daily_cap"`
@@ -64,7 +68,8 @@ type RaceEventDef struct {
 
 const raceDefCols = `id, name, description, enabled, COALESCE(race_id::text,''), weight, trigger_min_m,
 	initiator_cooldown_sec, target_count, group_rel, follow_rel, gender_rel, join_window_s,
-	completion_type, completion_params, message, reward_exp, reward_dp, per_user_daily_cap`
+	completion_type, completion_params, message, image_url, image_day_url, image_dusk_url, image_night_url,
+	reward_exp, reward_dp, per_user_daily_cap`
 
 func scanRaceDef(row pgx.Row) (RaceEventDef, error) {
 	var d RaceEventDef
@@ -72,7 +77,8 @@ func scanRaceDef(row pgx.Row) (RaceEventDef, error) {
 	var cp []byte
 	err := row.Scan(&d.ID, &d.Name, &desc, &d.Enabled, &d.RaceID, &d.Weight, &d.TriggerMinM,
 		&d.InitiatorCooldownSec, &d.TargetCount, &d.GroupRel, &d.FollowRel, &d.GenderRel, &d.JoinWindowS,
-		&d.CompletionType, &cp, &d.Message, &d.RewardExp, &d.RewardDp, &d.PerUserDailyCap)
+		&d.CompletionType, &cp, &d.Message, &d.ImageURL, &d.ImageDayURL, &d.ImageDuskURL, &d.ImageNightURL,
+		&d.RewardExp, &d.RewardDp, &d.PerUserDailyCap)
 	if err != nil {
 		return d, err
 	}
@@ -163,12 +169,14 @@ func (h *Handler) RaceDefCreate(w http.ResponseWriter, r *http.Request) {
 	out, err := scanRaceDef(h.db.QueryRow(r.Context(), `
 		INSERT INTO event_race_defs (name, description, enabled, race_id, weight, trigger_min_m,
 			initiator_cooldown_sec, target_count, group_rel, follow_rel, gender_rel, join_window_s,
-			completion_type, completion_params, message, reward_exp, reward_dp, per_user_daily_cap)
-		VALUES ($1,NULLIF($2,''),$3,NULLIF($4,'')::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+			completion_type, completion_params, message, image_url, image_day_url, image_dusk_url, image_night_url,
+			reward_exp, reward_dp, per_user_daily_cap)
+		VALUES ($1,NULLIF($2,''),$3,NULLIF($4,'')::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		RETURNING `+raceDefCols,
 		d.Name, d.Description, d.Enabled, d.RaceID, d.Weight, d.TriggerMinM,
 		d.InitiatorCooldownSec, d.TargetCount, d.GroupRel, d.FollowRel, d.GenderRel, d.JoinWindowS,
-		d.CompletionType, cp, d.Message, d.RewardExp, d.RewardDp, d.PerUserDailyCap))
+		d.CompletionType, cp, d.Message, d.ImageURL, d.ImageDayURL, d.ImageDuskURL, d.ImageNightURL,
+		d.RewardExp, d.RewardDp, d.PerUserDailyCap))
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "建立失敗")
 		return
@@ -187,12 +195,14 @@ func (h *Handler) RaceDefUpdate(w http.ResponseWriter, r *http.Request) {
 		UPDATE event_race_defs SET name=$2, description=NULLIF($3,''), enabled=$4, race_id=NULLIF($5,'')::uuid,
 			weight=$6, trigger_min_m=$7, initiator_cooldown_sec=$8, target_count=$9,
 			group_rel=$10, follow_rel=$11, gender_rel=$12, join_window_s=$13,
-			completion_type=$14, completion_params=$15, message=$16, reward_exp=$17, reward_dp=$18,
-			per_user_daily_cap=$19, updated_at=NOW()
+			completion_type=$14, completion_params=$15, message=$16,
+			image_url=$17, image_day_url=$18, image_dusk_url=$19, image_night_url=$20,
+			reward_exp=$21, reward_dp=$22, per_user_daily_cap=$23, updated_at=NOW()
 		WHERE id=$1 RETURNING `+raceDefCols,
 		id, d.Name, d.Description, d.Enabled, d.RaceID, d.Weight, d.TriggerMinM,
 		d.InitiatorCooldownSec, d.TargetCount, d.GroupRel, d.FollowRel, d.GenderRel, d.JoinWindowS,
-		d.CompletionType, cp, d.Message, d.RewardExp, d.RewardDp, d.PerUserDailyCap))
+		d.CompletionType, cp, d.Message, d.ImageURL, d.ImageDayURL, d.ImageDuskURL, d.ImageNightURL,
+		d.RewardExp, d.RewardDp, d.PerUserDailyCap))
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "更新失敗")
 		return
@@ -338,6 +348,10 @@ func (h *Handler) RaceTrigger(w http.ResponseWriter, r *http.Request) {
 			"join_window_s":     def.JoinWindowS,
 			"reward_exp":        def.RewardExp,
 			"reward_dp":         def.RewardDp,
+			"image_url":         def.ImageURL,
+			"image_day_url":     def.ImageDayURL,
+			"image_dusk_url":    def.ImageDuskURL,
+			"image_night_url":   def.ImageNightURL,
 			"join_deadline":     joinDeadline.UnixMilli(),
 		},
 	})
