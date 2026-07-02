@@ -332,6 +332,7 @@ export interface CompleteEvidence {
   swipes?: number // dodge_swipe：滑動段數
   shape_pts?: [number, number][] // draw_shape：實際筆跡點（伺服器重算辨識）
   shape?: number // draw_shape：本次抽到的圖形（3/4/5）
+  baseline_spk?: number // pace_shift：觸發時平均配速（秒/公里）。Phase A 伺服器會以快照覆寫；Phase B 用此值
 }
 
 export interface EventDef {

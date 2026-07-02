@@ -66,9 +66,10 @@ var CompletionCatalog = []TypeSpec{
 		{"burst_s", "爆發區間", "秒"},
 		{"burst_m", "爆發區間需移動", "公尺"},
 	}},
-	{"negative_split", "後段加速（越跑越快）", []ParamSpec{
-		{"limit_s", "時限", "秒"},
-		{"ratio_pct", "後半需為前半的", "%"},
+	{"pace_shift", "變速跑（相對平均配速）", []ParamSpec{
+		{"limit_s", "持續時間", "秒"},
+		{"faster", "方向（1=加速 0=減速）", ""},
+		{"delta_spk", "與平均配速差", "秒/公里"},
 	}},
 	{"tap_burst", "連續點擊（物理攻擊）", []ParamSpec{
 		{"limit_s", "時限", "秒"},
@@ -98,6 +99,10 @@ var CompletionCatalog = []TypeSpec{
 		{"w5", "五芒星 出現權重", ""},
 		{"x5_exp", "五芒星 加碼 EXP", "點"},
 		{"x5_dp", "五芒星 加碼 DP", "點"},
+	}},
+	{"negative_split", "後段加速（舊，建議改用變速跑）", []ParamSpec{
+		{"limit_s", "時限", "秒"},
+		{"ratio_pct", "後半需為前半的", "%"},
 	}},
 }
 
@@ -544,8 +549,9 @@ type completeReq struct {
 	WindowS     float64 `json:"window_s"`
 	MinSegM     float64 `json:"min_seg_m"`     // hold_pace：所有檢查區間中最小的移動量
 	MaxSegM     float64 `json:"max_seg_m"`     // sprint：最佳爆發區間的移動量
-	FirstHalfM  float64 `json:"first_half_m"`  // negative_split：前半段移動
-	SecondHalfM float64 `json:"second_half_m"` // negative_split：後半段移動
+	FirstHalfM  float64 `json:"first_half_m"`  // negative_split（舊）：前半段移動
+	SecondHalfM float64 `json:"second_half_m"` // negative_split（舊）：後半段移動
+	BaselineSpk float64 `json:"baseline_spk"`  // pace_shift：觸發時的平均配速（秒/公里）。Phase A 由伺服器依 occurrence 快照覆寫（權威）；Phase B 用 client 值（夾範圍）
 	Taps        int     `json:"taps"`          // tap_burst：點擊次數
 	HeldMs      float64 `json:"held_ms"`       // hold_press：累積按住毫秒
 	SwipePx     float64      `json:"swipe_px"`  // swipe_charge：累積滑動距離
@@ -691,12 +697,43 @@ func validateCompletion(ctype string, params map[string]float64, ev completeReq)
 		// 短時間爆發：最佳爆發區間達標（上限做瞬移防弊）
 		return ev.WindowS <= params["limit_s"]+3 && ev.MaxSegM >= params["burst_m"] &&
 			ev.MaxSegM <= maxSpeedMS*(params["burst_s"]+1)*1.2
-	case "negative_split":
-		// 後段加速：前半需有實際移動，後半 ≥ 前半 × 比例
+	case "negative_split": // 舊型（型錄已移除，保留驗證給既有 def）
 		return ev.WindowS <= params["limit_s"]+2 && ev.FirstHalfM > 5 &&
 			ev.SecondHalfM >= ev.FirstHalfM*(params["ratio_pct"]/100)
+	case "pace_shift":
+		// 變速跑：整段維持「比平均配速快/慢 delta 秒/公里」。撐滿時間 + 視窗均速達標 + 分段防瞬移。
+		lim := params["limit_s"]
+		if lim <= 0 || ev.WindowS < lim-2 || ev.MovedM <= 0 || ev.BaselineSpk <= 0 {
+			return false
+		}
+		// 分段防瞬移：任一 5 秒區間位移不得超過人類極限（擋單點 GPS 跳動/竄改把「站著不動」算成快跑）
+		if ev.MaxSegM > maxSpeedMS*6*1.2 {
+			return false
+		}
+		delta := params["delta_spk"]
+		if delta < 0 {
+			delta = -delta // 防呆：距離差一律取絕對值，避免負值把「加速」變成可低於平均也算過
+		}
+		winPace := ev.WindowS / (ev.MovedM / 1000) // 本段均速（秒/公里）
+		if params["faster"] >= 0.5 {
+			target := ev.BaselineSpk - delta // 需更快 → 秒/公里更小
+			return target > 0 && winPace <= target
+		}
+		// 減速：需更慢（秒/公里更大），但仍須持續移動（不可完全停下、均速 ≥ 0.5 m/s）
+		return winPace >= ev.BaselineSpk+delta && ev.MovedM >= ev.WindowS*0.5
 	}
 	return false
+}
+
+// clampBaselineSpk 把平均配速夾在合理範圍 [180, 1200] 秒/公里（3:00–20:00/km），濾除 GPS 噪音極值。
+func clampBaselineSpk(x float64) float64 {
+	if x < 180 {
+		return 180
+	}
+	if x > 1200 {
+		return 1200
+	}
+	return x
 }
 
 // POST /events/occurrences/{id}/complete — 驗證完成 + 發獎（冪等）
@@ -713,10 +750,12 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	var awarded bool
 	var rexp, rdp int
 	var cpRaw []byte
+	var trigDist float64
+	var trigElapsed int
 	err := h.db.QueryRow(r.Context(), `
-		SELECT o.status, o.awarded, o.reward_exp, o.reward_dp, d.completion_type, d.completion_params
+		SELECT o.status, o.awarded, o.reward_exp, o.reward_dp, d.completion_type, d.completion_params, o.trigger_dist_m, o.trigger_elapsed_s
 		FROM event_task_occurrences o JOIN event_task_defs d ON d.id=o.def_id
-		WHERE o.id=$1 AND o.user_id=$2`, id, uid).Scan(&status, &awarded, &rexp, &rdp, &ctype, &cpRaw)
+		WHERE o.id=$1 AND o.user_id=$2`, id, uid).Scan(&status, &awarded, &rexp, &rdp, &ctype, &cpRaw, &trigDist, &trigElapsed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		respondErr(w, http.StatusNotFound, "找不到此事件")
 		return
@@ -735,6 +774,15 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 	var params map[string]float64
 	_ = json.Unmarshal(cpRaw, &params)
+
+	// pace_shift：平均配速基準以伺服器儲存的觸發快照為準（權威，覆寫 client 送的值防弊）
+	if ctype == "pace_shift" {
+		if trigDist > 0 && trigElapsed > 0 {
+			req.BaselineSpk = clampBaselineSpk(float64(trigElapsed) / (trigDist / 1000))
+		} else {
+			req.BaselineSpk = 0 // 無有效觸發快照（距離或時間為 0）→ 無法判定，視為未達成（與前端一致）
+		}
+	}
 
 	// 互動型：依完成度分級發獎（可能 0★）+ 完美 bonus；其餘：pass/fail 全額
 	var giveExp, giveDp, stars, bonusExp, bonusDp int

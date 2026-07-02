@@ -4,7 +4,14 @@ import { useEffect, useState } from 'react'
 import type { EventDef } from '@/lib/api'
 import DpCoin from './DpCoin'
 
-export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string }
+export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string; baseSpk?: number }
+
+// 配速（秒/公里）格式化為 M:SS/km；無效回 '—'
+export function fmtPace(spk: number): string {
+  if (!isFinite(spk) || spk <= 0) return '—'
+  const m = Math.floor(spk / 60), s = Math.round(spk % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
 export type EventResult = { status: 'completed' | 'failed'; def: EventDef; reward_exp: number; reward_dp: number; stars?: number; bonus_exp?: number; bonus_dp?: number; pending?: boolean }
 
 export function isInteractionType(ct: string): boolean { return ct === 'tap_burst' || ct === 'hold_press' || ct === 'swipe_charge' || ct === 'dodge_swipe' || ct === 'draw_shape' }
@@ -27,6 +34,9 @@ function goalText(def: EventDef): string {
     case 'hold_pace': return `維持 ${r('limit_s')} 秒不停下（每 ${r('check_s')} 秒至少移動 ${r('min_m')}m）`
     case 'sprint': return `${r('limit_s')} 秒內衝刺：任一 ${r('burst_s')} 秒移動 ≥ ${r('burst_m')}m`
     case 'negative_split': return `${r('limit_s')} 秒內後段加速：後半移動 ≥ 前半的 ${r('ratio_pct')}%`
+    case 'pace_shift': return p.faster >= 0.5
+      ? `維持 ${r('limit_s')} 秒，配速比你的平均快 ${r('delta_spk')} 秒/公里`
+      : `維持 ${r('limit_s')} 秒，配速比你的平均慢 ${r('delta_spk')} 秒/公里`
     case 'tap_burst': return `${r('limit_s')} 秒內連續點擊 ${r('target_taps')} 次（物理攻擊）`
     case 'hold_press': return `按住螢幕 ${r('hold_s')} 秒（物理防禦）`
     case 'swipe_charge': return `${r('limit_s')} 秒內連續滑動蓄力（魔法攻擊）`
@@ -97,6 +107,30 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
           </div>
         </>
       )}
+      {!ready && ct === 'pace_shift' && (() => {
+        const base = active.baseSpk ?? 0
+        const delta = p.delta_spk ?? 0
+        const faster = (p.faster ?? 0) >= 0.5
+        const target = faster ? base - delta : base + delta
+        const winSec = Math.max(0.001, (now - active.readyUntil) / 1000)
+        const livePace = moved > 0 ? winSec / (moved / 1000) : Infinity
+        const meeting = base > 0 && (faster ? livePace <= target : (livePace >= target && moved >= winSec * 0.5))
+        return (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--tx-faint)' }}>
+              <span>你的平均 {fmtPace(base)}/km</span>
+              <span>目標 {base > 0 ? `${faster ? '≤' : '≥'} ${fmtPace(target)}/km` : '—'}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 2 }}>
+              <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>目前配速</span>
+              <span style={{ fontSize: 20, fontWeight: 900, fontVariantNumeric: 'tabular-nums', color: meeting ? 'var(--fug)' : 'var(--gold)' }}>{fmtPace(livePace)}<span style={{ fontSize: 12, fontWeight: 700 }}>/km</span></span>
+            </div>
+            <div style={{ fontSize: 11, color: meeting ? 'var(--fug)' : 'var(--tx-faint)', marginTop: 2 }}>
+              {meeting ? (faster ? '很好，維持這個速度！' : '很好，保持這個節奏！') : (faster ? '再加快一點！' : '再放慢一點！')}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

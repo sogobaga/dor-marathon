@@ -532,6 +532,11 @@ func (h *Handler) RaceComplete(w http.ResponseWriter, r *http.Request) {
 	var params map[string]float64
 	_ = json.Unmarshal(cpRaw, &params)
 
+	// pace_shift：Phase B 無「觸發快照」可算基準，改用 client 回報的平均配速（夾範圍防極值；0 則判未達成）
+	if ctype == "pace_shift" && req.BaselineSpk > 0 {
+		req.BaselineSpk = clampBaselineSpk(req.BaselineSpk)
+	}
+
 	// 互動型：依完成度分級（可能 0★）+ 完美 bonus；其餘：pass/fail 全額
 	var giveExp, giveDp, stars, bonusExp, bonusDp int
 	if isInteraction(ctype) {

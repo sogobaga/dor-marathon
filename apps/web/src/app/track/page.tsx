@@ -198,12 +198,15 @@ export default function TrackPage() {
   async function armEvent(def: EventDef) {
     const token = getUserToken(); if (!token || !def.id) return
     const triggerD = distRef.current, triggerT = Date.now()
+    const elapsedS = Math.floor((triggerT - startRef.current) / 1000)
+    const baseSpk = baselineSpk(triggerD, elapsedS)
+    if (def.completion_type === 'pace_shift' && baseSpk <= 0) return // 變速跑需配速基準；里程/時間不足時不觸發（避免必敗任務）
     const limitS = def.completion_params.limit_s || 60
     const readyUntil = triggerT + EVENT_GRACE_MS // 準備期結束才開始計算完成
-    const ae: ActiveEvent = { def, occId: '', triggerD, triggerT, readyUntil, deadline: readyUntil + limitS * 1000 }
+    const ae: ActiveEvent = { def, occId: '', triggerD, triggerT, readyUntil, deadline: readyUntil + limitS * 1000, baseSpk }
     activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
     try {
-      const occ = await eventApi.createOccurrence(token, { def_id: def.id, trigger_dist_m: triggerD, trigger_elapsed_s: Math.floor((triggerT - startRef.current) / 1000) })
+      const occ = await eventApi.createOccurrence(token, { def_id: def.id, trigger_dist_m: triggerD, trigger_elapsed_s: elapsedS })
       // 被全域閘門擋下（冷卻中）：退回並設冷卻，避免每秒重試又閃橫幅/重複提示
       if (!occ.id) { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) }; lastEventEndRef.current = Date.now(); return }
       // 若在 createOccurrence 飛行期間使用者已放棄/結束（ref 被清）→ 補送 fail，避免留下 active 孤兒列
@@ -279,6 +282,8 @@ export default function TrackPage() {
   async function joinRace(inv: RaceEventInvite) {
     const token = getUserToken(); if (!token) return
     setRaceInvite(null)
+    const baseSpk = baselineSpk(distRef.current, Math.floor((Date.now() - startRef.current) / 1000))
+    if (inv.completion_type === 'pace_shift' && baseSpk <= 0) { setCpMsg('需先跑一小段建立配速基準，才能加入此變速跑任務'); return }
     try {
       const res = await eventRaceApi.join(token, inv.instance_id)
       if (!res.joined) { setCpMsg(res.message || '無法加入此事件'); return }
@@ -291,7 +296,7 @@ export default function TrackPage() {
         reward_exp: res.reward_exp ?? inv.reward_exp, reward_dp: res.reward_dp ?? inv.reward_dp,
       }
       const deadline = res.deadline || (now + (def.completion_params.limit_s || 180) * 1000)
-      const ae: ActiveEvent = { def, occId: '', raceInstanceId: inv.instance_id, triggerD: distRef.current, triggerT: now, readyUntil: now, deadline }
+      const ae: ActiveEvent = { def, occId: '', raceInstanceId: inv.instance_id, triggerD: distRef.current, triggerT: now, readyUntil: now, deadline, baseSpk }
       activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
     } catch { setCpMsg('加入失敗，請重試') }
   }
@@ -306,12 +311,18 @@ export default function TrackPage() {
       const triggerT = Date.now()
       const limitS = def.completion_params.limit_s || 60
       const readyUntil = triggerT + EVENT_GRACE_MS
-      const ae: ActiveEvent = { def, occId: res.occ_id || '', triggerD: distRef.current, triggerT, readyUntil, deadline: readyUntil + limitS * 1000 }
+      const ae: ActiveEvent = { def, occId: res.occ_id || '', triggerD: distRef.current, triggerT, readyUntil, deadline: readyUntil + limitS * 1000, baseSpk: baselineSpk(distRef.current, Math.floor((triggerT - startRef.current) / 1000)) }
       activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
       playEventAlert(); vibrate([200, 100, 200]) // 事件來了：音效 + 震動
     } catch { /* ignore */ }
   }
 
+  // pace_shift 基準：觸發時的平均配速（秒/公里），夾在 [180,1200]（與伺服器 clampBaselineSpk 一致）。
+  // 0 = 無有效資料（距離/時間不足），該任務將無法達成。
+  function baselineSpk(distM: number, elapsedS: number): number {
+    if (distM <= 0 || elapsedS <= 0) return 0
+    return Math.min(1200, Math.max(180, elapsedS / (distM / 1000)))
+  }
   // 配速類完成用：由每秒累積距離樣本推算指標
   function distAt(t: number): number {
     const s = distSamplesRef.current
@@ -389,13 +400,29 @@ export default function TrackPage() {
           else failEvent(ae)
         }
       } else if (ae.def.completion_type === 'negative_split') {
-        // 後段加速：後半移動 ≥ 前半 × 比例（到時間才判定）
+        // 後段加速（舊型）：後半移動 ≥ 前半 × 比例（到時間才判定）
         setEventMoved(moved)
         if (now >= ae.deadline) {
           const mid = ae.readyUntil + (ae.deadline - ae.readyUntil) / 2
           const firstHalf = distAt(mid) - distAt(ae.readyUntil)
           const secondHalf = distAt(ae.deadline) - distAt(mid)
           if (firstHalf > 5 && secondHalf >= firstHalf * ((cp.ratio_pct ?? 100) / 100)) completeEvent(ae, moved, windowS, { first_half_m: firstHalf, second_half_m: secondHalf })
+          else failEvent(ae)
+        }
+      } else if (ae.def.completion_type === 'pace_shift') {
+        // 變速跑：整段維持比平均配速快/慢 delta（到時間才判定；伺服器以觸發快照重算基準 + 分段防瞬移）
+        setEventMoved(moved)
+        if (now >= ae.deadline) {
+          const winDist = distAt(ae.deadline) - distAt(ae.readyUntil)
+          const winSec = (ae.deadline - ae.readyUntil) / 1000
+          const winPace = winDist > 0 ? winSec / (winDist / 1000) : Infinity
+          const base = ae.baseSpk ?? 0
+          const delta = Math.abs(cp.delta_spk ?? 0) // 與伺服器一致：距離差取絕對值
+          const faster = (cp.faster ?? 0) >= 0.5
+          const maxSeg = bestBurst(ae.readyUntil, ae.deadline, 5000) // 任一 5 秒最大位移（防瞬移，與伺服器同門檻）
+          const ok = base > 0 && maxSeg <= (1000 / 120) * 6 * 1.2 &&
+            (faster ? (base - delta > 0 && winPace <= base - delta) : (winPace >= base + delta && winDist >= winSec * 0.5))
+          if (ok) completeEvent(ae, winDist, winSec, { baseline_spk: base, max_seg_m: maxSeg })
           else failEvent(ae)
         }
       }
