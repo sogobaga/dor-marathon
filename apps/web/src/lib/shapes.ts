@@ -95,4 +95,21 @@ export function shapeMatchDistance(drawn: Pt[], shape: number): number {
   return best
 }
 
-export const SHAPE_MATCH_THRESHOLD = 0.34 // 平均距離低於此視為畫對（可調）
+export const SHAPE_MATCH_THRESHOLD = 0.24 // 絕對距離上限（與伺服器一致；三角↔四角跨類約 0.28，故壓在其下）
+
+// 找最接近的圖形 + 次佳（供 margin 判別，避免三角/四角互相誤判）
+export function recognizeShape(drawn: Pt[]): { shape: number; dist: number; second: number } {
+  let best = Infinity, second = Infinity, bestShape = 0
+  for (const s of [3, 4, 5]) {
+    const d = shapeMatchDistance(drawn, s)
+    if (d < best) { second = best; best = d; bestShape = s }
+    else if (d < second) second = d
+  }
+  return { shape: bestShape, dist: best, second }
+}
+
+// 前端本地判定「畫對目標圖形」：目標須為最接近、領先次佳 >=0.05、且絕對距離 <= 上限（與伺服器同規則）
+export function shapeAccepts(drawn: Pt[], target: number): boolean {
+  const r = recognizeShape(drawn)
+  return r.shape === target && r.second - r.dist >= 0.05 && r.dist <= SHAPE_MATCH_THRESHOLD
+}

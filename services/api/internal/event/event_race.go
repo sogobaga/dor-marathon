@@ -557,7 +557,7 @@ func (h *Handler) RaceComplete(w http.ResponseWriter, r *http.Request) {
 		var todayCnt int
 		_ = tx.QueryRow(ctx, `
 			SELECT count(*) FROM event_race_participants p JOIN event_race_instances i ON i.id=p.instance_id
-			WHERE p.user_id=$1 AND i.def_id=$2 AND p.awarded AND p.completed_at::date = CURRENT_DATE`,
+			WHERE p.user_id=$1 AND i.def_id=$2 AND p.awarded AND (p.reward_exp>0 OR p.reward_dp>0) AND p.completed_at::date = CURRENT_DATE`,
 			uid, defID).Scan(&todayCnt)
 		if todayCnt >= cap {
 			giveExp, giveDp, bonusExp, bonusDp = 0, 0, 0, 0

@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { pickTimeImage, type ActiveEvent } from './EventTaskModal'
 import { playTapHit, playDefend, vibrate } from '@/lib/sfx'
-import { shapeMatchDistance, shapeSvgPoints, shapeName, SHAPE_MATCH_THRESHOLD, type Pt } from '@/lib/shapes'
+import { shapeAccepts, recognizeShape, shapeSvgPoints, shapeName, type Pt } from '@/lib/shapes'
 
 // 互動小遊戲全屏層：點擊攻擊 / 按住防禦 / 滑動蓄力(魔法) / 滑動閃避 / 畫圖形(魔法陣)。
 // 依完成度計分，時間到（或按「放棄」）回傳 evidence 給 /track 送後端分級發獎。
-type Ev = { taps: number; held_ms: number; swipe_px: number; swipes: number; shape_score: number }
+type Ev = { taps: number; held_ms: number; swipe_px: number; swipes: number; shape_pts: [number, number][] }
 
 export function EventInteraction({ active, onDone, paused, assets }: { active: ActiveEvent; onDone: (ev: Ev) => void; paused?: boolean; assets?: Record<string, string> }) {
   const def = active.def
@@ -38,6 +38,7 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const [shapeOk, setShapeOk] = useState(false)
   const [attemptsLeft, setAttemptsLeft] = useState(attempts)
   const [shapeMsg, setShapeMsg] = useState('')
+  const [burst, setBurst] = useState<{ id: number; dx: number; dy: number; e: string }[]>([]) // 成功噴發粒子
 
   const tapsRef = useRef(0)
   const heldRef = useRef(0)
@@ -49,9 +50,12 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const lastPtRef = useRef<{ x: number; y: number } | null>(null)
   const activeSwipeIdRef = useRef<number | null>(null) // 只認「主滑動指」，其餘手指不影響累積（多點觸控防暴衝/防弊）
   const drawnRef = useRef<Pt[]>([]) // 畫圖形：目前這筆的點
-  const shapeScoreRef = useRef(0)
+  const bestPtsRef = useRef<Pt[]>([]) // 最接近的一次筆跡（結算送後端重算）
+  const bestDistRef = useRef(Infinity)
   const shapeOkRef = useRef(false)
   const attemptsLeftRef = useRef(attempts)
+  const finishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearStrokeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastTrailRef = useRef(0)
   const lastTravelUiRef = useRef(0)
   const fxId = useRef(0)
@@ -66,7 +70,16 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
     if (doneRef.current) return
     doneRef.current = true
     if (holdStartRef.current != null) { heldRef.current += Date.now() - holdStartRef.current; holdStartRef.current = null }
-    onDoneRef.current({ taps: tapsRef.current, held_ms: heldRef.current, swipe_px: travelRef.current, swipes: swipesRef.current, shape_score: shapeScoreRef.current })
+    onDoneRef.current({ taps: tapsRef.current, held_ms: heldRef.current, swipe_px: travelRef.current, swipes: swipesRef.current, shape_pts: bestPtsRef.current.map((p) => [p.x, p.y]) })
+  }
+  function spawnBurst() {
+    const parts = Array.from({ length: 16 }, (_, i) => {
+      const a = (i / 16) * Math.PI * 2 + Math.random() * 0.5
+      const dist = 120 + Math.random() * 120
+      return { id: fxId.current++, dx: Math.cos(a) * dist, dy: Math.sin(a) * dist, e: ['✨', '⭐', '💫', '🌟'][i % 4] }
+    })
+    setBurst(parts)
+    setTimeout(() => setBurst([]), 1000)
   }
   function skipPrep() {
     const n = Date.now()
@@ -92,6 +105,11 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active.deadline])
+
+  useEffect(() => () => { // 卸載清掉待觸發的計時器
+    if (finishTimerRef.current) clearTimeout(finishTimerRef.current)
+    if (clearStrokeTimerRef.current) clearTimeout(clearStrokeTimerRef.current)
+  }, [])
 
   const effReady = active.readyUntil + pausedMsRef.current - skipMsRef.current
   const effDeadline = active.deadline + pausedMsRef.current - skipMsRef.current
@@ -119,6 +137,7 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
       setTimeout(() => setFx((f) => f.filter((z) => z.id !== id)), 520)
     } else if (isShape) {
       if (shapeOkRef.current) return
+      if (clearStrokeTimerRef.current) clearTimeout(clearStrokeTimerRef.current) // 別讓上一筆的清除蓋掉新筆
       if (activeSwipeIdRef.current == null) { activeSwipeIdRef.current = e.pointerId; drawnRef.current = [ptOf(e)]; setStrokePts([ptOf(e)]) }
     } else if (isSwipe) {
       // 只讓第一根按下的指驅動滑動；第二指落下不重置進行中的段落
@@ -169,21 +188,28 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   function onUpShape(e: React.PointerEvent) {
     if (e.pointerId !== activeSwipeIdRef.current) return
     activeSwipeIdRef.current = null
+    // 暫停(橫向)/時間到時放開 → 不判定、不消耗次數
+    if (pausedRef.current || Date.now() >= active.deadline + pausedMsRef.current - skipMsRef.current) { drawnRef.current = []; return }
     if (shapeOkRef.current) return
     const pts = drawnRef.current.slice()
     setStrokePts(pts)
     if (pts.length < 8) { drawnRef.current = []; return } // 太短：不算一次嘗試
-    const dist = shapeMatchDistance(pts, shape)
-    if (dist <= SHAPE_MATCH_THRESHOLD) {
-      const attemptNo = attempts - attemptsLeftRef.current + 1 // 第幾次成功
-      shapeScoreRef.current = attemptNo <= 1 ? 1.0 : attemptNo === 2 ? 0.6 : 0.3
+    const r = recognizeShape(pts)
+    if (r.dist < bestDistRef.current) { bestDistRef.current = r.dist; bestPtsRef.current = pts } // 保留最接近的一次，供結算送出
+    if (shapeAccepts(pts, shape)) {
       shapeOkRef.current = true; setShapeOk(true); setShapeMsg('')
-      playDefend(); vibrate([50, 40, 120])
-      setTimeout(() => finish(), 850) // 顯示邊線發光後結束
+      bestPtsRef.current = pts
+      playDefend(); vibrate([50, 40, 160]); spawnBurst()
+      if (finishTimerRef.current) clearTimeout(finishTimerRef.current)
+      finishTimerRef.current = setTimeout(() => finish(), 1300) // 演出（發光+噴發）後才結束
     } else {
       attemptsLeftRef.current -= 1; setAttemptsLeft(attemptsLeftRef.current); vibrate(60)
-      if (attemptsLeftRef.current <= 0) { finish() } // 用完 → 0 分
-      else { setShapeMsg('形狀不太對，再試一次'); drawnRef.current = []; setTimeout(() => setStrokePts([]), 300) }
+      if (attemptsLeftRef.current <= 0) { finish() } // 用完 → 送最接近的一次交伺服器判（多半 0 分）
+      else {
+        setShapeMsg('形狀不太對，再試一次'); drawnRef.current = []
+        if (clearStrokeTimerRef.current) clearTimeout(clearStrokeTimerRef.current)
+        clearStrokeTimerRef.current = setTimeout(() => setStrokePts([]), 300)
+      }
     }
   }
   const onUp = isHold ? onUpHold : isShape ? onUpShape : isSwipe ? onUpSwipe : undefined
@@ -195,7 +221,7 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const trailUrl = assets?.['interaction.swipe.trail'] || ''
   const emoji = isTap ? '👊' : isHold ? (holding ? '🛡️' : '✋') : isCharge ? '🌀' : '💨'
   const readout = isTap ? `${taps} / ${targetTaps} 次` : isHold ? `${(heldMs / 1000).toFixed(1)} / ${(needMs / 1000).toFixed(0)} 秒` : isCharge ? `${Math.round(travel)} / ${targetPx}` : `${swipes} / ${targetSwipes} 次`
-  const readyMsg = isTap ? '準備連續點擊！' : isHold ? '準備按住防禦！' : isCharge ? '準備滑動蓄力！' : isDodge ? '準備滑動閃避！' : '準備畫魔法陣！'
+  const readyMsg = isTap ? '準備連續點擊！' : isHold ? '準備按住防禦！' : isCharge ? '準備滑動蓄力！' : isDodge ? '準備滑動閃避！' : '請跟隨身體的能量流動，畫出圖形。'
   const actionHint = isTap ? '連續點擊！💥' : isHold ? (holding ? '穩住！繼續按住 🛡️' : '按住螢幕不放！') : isCharge ? '快速來回滑動！🌀' : '用力滑動閃避！💨'
 
   return (
@@ -226,13 +252,13 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
           <div style={{ fontSize: 26, fontWeight: 900, color: accent }}>{readyMsg}</div>
         ) : isShape ? (
           <>
-            {/* 半透明底圖提示：一筆畫描出圖形；成功時邊線發光 */}
-            <div style={{ position: 'relative', width: 264, height: 264 }}>
+            {/* 半透明底圖提示：一筆畫描出圖形；成功時邊線發光＋脈動 */}
+            <div style={{ position: 'relative', width: 264, height: 264, animation: shapeOk ? 'shapePulse .8s ease-in-out infinite' : undefined }}>
               <svg width="264" height="264" style={{ position: 'absolute', inset: 0 }}>
                 <polyline points={shapeSvgPoints(shape, 264)} fill="none"
-                  stroke={shapeOk ? accent : 'rgba(255,255,255,.26)'} strokeWidth={shapeOk ? 7 : 3}
+                  stroke={shapeOk ? accent : 'rgba(255,255,255,.26)'} strokeWidth={shapeOk ? 8 : 3}
                   strokeLinecap="round" strokeLinejoin="round" strokeDasharray={shapeOk ? undefined : '9 9'}
-                  style={{ filter: shapeOk ? `drop-shadow(0 0 16px ${accent}) drop-shadow(0 0 6px ${accent})` : undefined, transition: 'all .2s' }} />
+                  style={{ filter: shapeOk ? `drop-shadow(0 0 22px ${accent}) drop-shadow(0 0 10px ${accent})` : undefined, transition: 'all .2s' }} />
               </svg>
             </div>
             <div style={{ fontSize: 20, fontWeight: 900, color: accent }}>{shapeOk ? '✦ 施法成功！' : `描出 ${shapeName(shape)}`}</div>
@@ -260,6 +286,10 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
         )}
       </div>
 
+      {/* 施法成功：中央噴發粒子 */}
+      {burst.map((b) => (
+        <span key={b.id} style={{ position: 'absolute', left: '50%', top: '48%', fontSize: 26, pointerEvents: 'none', ['--dx' as string]: `${b.dx}px`, ['--dy' as string]: `${b.dy}px`, animation: 'burstFly .95s ease-out forwards' } as React.CSSProperties}>{b.e}</span>
+      ))}
       {/* 畫圖形：玩家這一筆的軌跡（螢幕座標，發光） */}
       {isShape && strokePts.length > 1 && (
         <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
@@ -278,7 +308,11 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
           ? <img key={z.id} src={fxUrl} alt="" draggable={false} style={{ position: 'absolute', left: z.x, top: z.y, width: 44, height: 44, objectFit: 'contain', pointerEvents: 'none', transform: 'translate(-50%,-50%)', animation: 'fxPop .5s ease-out forwards' }} />
           : <span key={z.id} style={{ position: 'absolute', left: z.x, top: z.y, fontSize: 34, pointerEvents: 'none', transform: 'translate(-50%,-50%)', animation: 'fxPop .5s ease-out forwards' }}>{z.e}</span>
       ))}
-      <style>{`@keyframes fxPop{0%{opacity:1;transform:translate(-50%,-50%) scale(.5)}100%{opacity:0;transform:translate(-50%,-140%) scale(1.6)}}`}</style>
+      <style>{`
+        @keyframes fxPop{0%{opacity:1;transform:translate(-50%,-50%) scale(.5)}100%{opacity:0;transform:translate(-50%,-140%) scale(1.6)}}
+        @keyframes shapePulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+        @keyframes burstFly{0%{opacity:1;transform:translate(-50%,-50%) scale(.4)}70%{opacity:1}100%{opacity:0;transform:translate(calc(-50% + var(--dx)),calc(-50% + var(--dy))) scale(1.25)}}
+      `}</style>
     </div>
   )
 }

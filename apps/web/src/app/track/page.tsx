@@ -244,11 +244,11 @@ export default function TrackPage() {
     setEventResult({ status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 })
   }
   // 互動小遊戲時間到 → 用收集到的 evidence 送後端分級發獎
-  function handleInteractionDone(ev: { taps: number; held_ms: number; swipe_px: number; swipes: number; shape_score: number }) {
+  function handleInteractionDone(ev: { taps: number; held_ms: number; swipe_px: number; swipes: number; shape_pts: [number, number][] }) {
     const ae = activeEventRef.current
     if (!ae) return
     const windowS = Math.max(0, (ae.deadline - ae.readyUntil) / 1000)
-    completeEvent(ae, 0, windowS, { taps: ev.taps, held_ms: ev.held_ms, swipe_px: ev.swipe_px, swipes: ev.swipes, shape_score: ev.shape_score })
+    completeEvent(ae, 0, windowS, { taps: ev.taps, held_ms: ev.held_ms, swipe_px: ev.swipe_px, swipes: ev.swipes, shape_pts: ev.shape_pts })
   }
   // Phase B：連 WS（綁第一場「進行中且已報名」賽事）＋ 監聽多人事件邀請
   async function connectRaceWS() {

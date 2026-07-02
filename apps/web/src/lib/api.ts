@@ -330,7 +330,7 @@ export interface CompleteEvidence {
   held_ms?: number // hold_press：累積按住毫秒
   swipe_px?: number // swipe_charge：累積滑動距離
   swipes?: number // dodge_swipe：滑動段數
-  shape_score?: number // draw_shape：0..1（依成功嘗試次序）
+  shape_pts?: [number, number][] // draw_shape：實際筆跡點（伺服器重算辨識）
 }
 
 export interface EventDef {

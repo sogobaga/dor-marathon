@@ -541,9 +541,9 @@ type completeReq struct {
 	SecondHalfM float64 `json:"second_half_m"` // negative_split：後半段移動
 	Taps        int     `json:"taps"`          // tap_burst：點擊次數
 	HeldMs      float64 `json:"held_ms"`       // hold_press：累積按住毫秒
-	SwipePx     float64 `json:"swipe_px"`      // swipe_charge：累積滑動距離
-	Swipes      int     `json:"swipes"`        // dodge_swipe：滑動段數
-	ShapeScore  float64 `json:"shape_score"`   // draw_shape：0..1（依成功嘗試次序給分）
+	SwipePx     float64      `json:"swipe_px"`  // swipe_charge：累積滑動距離
+	Swipes      int          `json:"swipes"`    // dodge_swipe：滑動段數
+	ShapePts    [][2]float64 `json:"shape_pts"` // draw_shape：實際筆跡點（伺服器重算辨識，防前端刷分）
 }
 
 // --- 互動型完成（觸控小遊戲）：依完成度分級發獎 ---
@@ -607,8 +607,8 @@ func interactionDegree(ctype string, params map[string]float64, ev completeReq) 
 		}
 		return clamp01(float64(ev.Swipes) / tgt)
 	case "draw_shape":
-		// 前端做圖形辨識，回傳 0..1（依第幾次成功給分：1st=1.0/2nd=0.6/3rd=0.3、失敗=0）
-		return clamp01(ev.ShapeScore)
+		// 伺服器用實際筆跡重算辨識（品質距離 + margin），非信任前端分數
+		return shapeDegree(ev.ShapePts, int(params["shape"]))
 	}
 	return 0
 }
