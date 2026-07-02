@@ -613,7 +613,7 @@ export default function TrackPage() {
         </div>
       )}
       {status === 'tracking' && activeEvent && isInteractionType(activeEvent.def.completion_type) && (
-        <EventInteraction active={activeEvent} onDone={handleInteractionDone} />
+        <EventInteraction active={activeEvent} onDone={handleInteractionDone} paused={isLandscape} />
       )}
       {confirmEnd && activeEvent && (() => {
         const ev = activeEvent

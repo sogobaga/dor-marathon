@@ -9,7 +9,7 @@ const Base = "0.1"
 
 // Serial 流水小版號（= 推送當下 git commit 累計數 `git rev-list --count HEAD`）。
 // 每次推送遞增；與前端 next.config.mjs 的 VERSION_SERIAL 同步。
-const Serial = "150"
+const Serial = "151"
 
 // Commit 取得目前部署的 git commit 短碼（Railway 於 runtime 注入 RAILWAY_GIT_COMMIT_SHA）。
 func Commit() string {

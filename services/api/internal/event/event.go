@@ -451,15 +451,20 @@ func clamp01(x float64) float64 {
 	return x
 }
 
-// interactionDegree 回傳 0..1 完成度（含基本防弊上限）
+// interactionDegree 回傳 0..1 完成度。防弊上限一律用「伺服器權威視窗」params["limit_s"]，
+// 不用 client 可控的 window_s（否則送 window_s<=0 可繞過上限刷滿）。
 func interactionDegree(ctype string, params map[string]float64, ev completeReq) float64 {
+	lim := params["limit_s"]
+	if lim <= 0 {
+		return 0
+	}
 	switch ctype {
 	case "tap_burst":
 		tgt := params["target_taps"]
 		if tgt <= 0 {
 			return 0
 		}
-		if ev.WindowS > 0 && float64(ev.Taps) > ev.WindowS*15+5 { // 每秒最多約 15 下
+		if float64(ev.Taps) > lim*15+5 { // 每秒最多約 15 下
 			return 0
 		}
 		return clamp01(float64(ev.Taps) / tgt)
@@ -468,7 +473,7 @@ func interactionDegree(ctype string, params map[string]float64, ev completeReq) 
 		if need <= 0 {
 			return 0
 		}
-		if ev.HeldMs < 0 || ev.HeldMs > (ev.WindowS+2)*1000 { // 按住不可超過視窗
+		if ev.HeldMs < 0 || ev.HeldMs > (lim+2)*1000 { // 按住不可超過視窗
 			return 0
 		}
 		return clamp01(ev.HeldMs / need)

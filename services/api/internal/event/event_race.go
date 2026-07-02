@@ -546,10 +546,18 @@ func (h *Handler) RaceComplete(w http.ResponseWriter, r *http.Request) {
 		giveExp, giveDp, stars = rexp, rdp, 3
 	}
 
-	// 每人每日上限：達上限則完成但不發獎
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	// 每人每日上限：交易內先鎖 (user,def)、再計數，避免並發同 def 不同 instance 超發（TOCTOU）
 	if cap > 0 {
+		_, _ = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1||$2))`, uid, defID)
 		var todayCnt int
-		_ = h.db.QueryRow(ctx, `
+		_ = tx.QueryRow(ctx, `
 			SELECT count(*) FROM event_race_participants p JOIN event_race_instances i ON i.id=p.instance_id
 			WHERE p.user_id=$1 AND i.def_id=$2 AND p.awarded AND p.completed_at::date = CURRENT_DATE`,
 			uid, defID).Scan(&todayCnt)
@@ -558,12 +566,6 @@ func (h *Handler) RaceComplete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tx, err := h.db.Begin(ctx)
-	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed")
-		return
-	}
-	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `
 		UPDATE event_race_participants SET status='completed', completed_at=NOW(), awarded=TRUE,
 			moved_m=$2, reward_exp=$3, reward_dp=$4
