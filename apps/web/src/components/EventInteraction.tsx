@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { pickTimeImage, type ActiveEvent } from './EventTaskModal'
 import { playTapHit, playDefend, vibrate } from '@/lib/sfx'
-import { shapeAccepts, recognizeShape, shapeSvgPoints, shapeName, type Pt } from '@/lib/shapes'
+import { shapeAccepts, recognizeShape, shapeSvgPoints, shapeName, guideScaleFor, type Pt } from '@/lib/shapes'
 
 // 互動小遊戲全屏層：點擊攻擊 / 按住防禦 / 滑動蓄力(魔法) / 滑動閃避 / 畫圖形(魔法陣)。
 // 依完成度計分，時間到（或按「放棄」）回傳 evidence 給 /track 送後端分級發獎。
@@ -126,6 +126,7 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
 
   // 進入互動、底圖載入後 → 顯示導引虛線
   const shapeBg = isShape ? (assets?.[`interaction.shape.bg${shape}`] || '') : ''
+  const guideScale = guideScaleFor(shape, assets) // 導引虛線縮放（後台可覆寫，否則用量測預設）
   const nowMs = now
   const inDraw = isShape && nowMs >= active.readyUntil + pausedMsRef.current - skipMsRef.current
   useEffect(() => {
@@ -286,7 +287,7 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
               {shapeBg && <img src={shapeBg} alt="" draggable={false} onLoad={() => setBgLoaded(true)} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: shapeOk ? 1 : 0.55, filter: shapeOk ? `drop-shadow(0 0 22px ${accent}) drop-shadow(0 0 10px ${accent})` : undefined, transition: 'all .2s', pointerEvents: 'none' }} />}
               {(guidePhase === 'blink' || guidePhase === 'shown' || (shapeOk && !shapeBg)) && (
                 <svg width="264" height="264" style={{ position: 'absolute', inset: 0 }}>
-                  <polyline points={shapeSvgPoints(shape, 264)} fill="none"
+                  <polyline points={shapeSvgPoints(shape, 264, guideScale)} fill="none"
                     stroke={shapeOk ? accent : shapeBg ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.26)'} strokeWidth={shapeOk ? 8 : 3}
                     strokeLinecap="round" strokeLinejoin="round" strokeDasharray={shapeOk ? undefined : '9 9'}
                     style={{ filter: shapeOk ? `drop-shadow(0 0 22px ${accent}) drop-shadow(0 0 10px ${accent})` : undefined, transition: 'all .2s', animation: guidePhase === 'blink' && !shapeOk ? 'guideBlink 1.15s ease-in-out forwards' : undefined }} />

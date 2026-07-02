@@ -26,16 +26,29 @@ export function shapePath(shape: number): Pt[] {
   return v
 }
 
-// 導引虛線的外頂點半徑（占框半徑比例）。量測自後台三張魔法陣底圖的實際線條位置，
+// 導引虛線的「預設」外頂點半徑（占框半徑比例）。量測自後台三張魔法陣底圖的實際線條位置，
 // 讓虛線貼齊底圖（否則虛線畫得比底圖大，會誤導成「畫在外圈才對」但其實要畫在裡面）。
-// 底圖若日後在後台換成不同比例的圖，這三個數值需一併微調。
+// 後台可用「效果管理 → 導引縮放」逐一覆寫（見 guideScaleFor）。
 export const SHAPE_GUIDE_SCALE: Record<number, number> = { 3: 0.56, 4: 0.58, 5: 0.59 }
 
-// SVG 底圖用：把圖形頂點縮放到 size 方框。預設半徑貼齊底圖（SHAPE_GUIDE_SCALE）；
-// 若明確指定 pad，則以 pad 決定半徑（保留舊行為）。
-export function shapeSvgPoints(shape: number, size: number, pad?: number): string {
+// 取本次圖形的導引縮放：優先讀後台覆寫（effect_assets slug `interaction.shape.scale{3|4|5}`，
+// 值存百分比字串如 "59"），否則回退預設。解析：>1.5 視為百分比（/100）、否則視為比例；夾在 [0.2, 1.0]。
+export function guideScaleFor(shape: number, assets?: Record<string, string>): number {
+  const raw = assets?.[`interaction.shape.scale${shape}`]
+  if (raw != null && String(raw).trim() !== '') {
+    let n = parseFloat(String(raw))
+    if (isFinite(n) && n > 0) {
+      if (n > 1.5) n /= 100
+      return Math.min(1, Math.max(0.2, n))
+    }
+  }
+  return SHAPE_GUIDE_SCALE[shape] ?? 0.59
+}
+
+// SVG 底圖用：把圖形頂點縮放到 size 方框。scale＝外頂點半徑占框半徑比例（未給則用 SHAPE_GUIDE_SCALE 預設）。
+export function shapeSvgPoints(shape: number, size: number, scale?: number): string {
   const c = size / 2
-  const r = pad != null ? c - pad : c * (SHAPE_GUIDE_SCALE[shape] ?? 0.59)
+  const r = c * (scale ?? SHAPE_GUIDE_SCALE[shape] ?? 0.59)
   return shapePath(shape).map((p) => `${(c + p.x * r).toFixed(1)},${(c + p.y * r).toFixed(1)}`).join(' ')
 }
 

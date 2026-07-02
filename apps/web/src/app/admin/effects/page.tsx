@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { adminEffectsApi, adminImagesApi } from '@/lib/api'
 import { EFFECT_SPECS, type EffectSpec } from '@/lib/effects'
@@ -15,6 +15,21 @@ const SYNTH: Record<string, () => void> = {
   'sound.ding': playDing,
 }
 
+// 圖形魔法「導引虛線縮放」：預設百分比 = lib/shapes.ts SHAPE_GUIDE_SCALE ×100，量測自現行底圖
+const SHAPE_SCALE_ROWS = [
+  { k: 3, label: '△ 三角形', def: 56 },
+  { k: 4, label: '◇ 四角形', def: 58 },
+  { k: 5, label: '✦ 五芒星', def: 59 },
+]
+// 把儲存值（百分比或比例字串）正規化為整數百分比顯示；無效/未設回傳 null
+function storedPct(raw?: string): number | null {
+  if (!raw || !raw.trim()) return null
+  let n = parseFloat(raw)
+  if (!isFinite(n) || n <= 0) return null
+  if (n <= 1.5) n *= 100
+  return Math.round(n)
+}
+
 export default function AdminEffectsPage() {
   const router = useRouter()
   const [token, setToken] = useState<string | null>(null)
@@ -22,6 +37,24 @@ export default function AdminEffectsPage() {
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
+  const [scaleEdit, setScaleEdit] = useState<Record<number, string>>({ 3: '', 4: '', 5: '' })
+  const scaleSeeded = useRef(false)
+
+  // 只在「首次載入到 assets」時用伺服器值填入輸入框；之後不再因 assets 變動而覆寫，
+  // 以免其他操作（上傳圖片/音效、儲存另一列）觸發 setAssets 時洗掉使用者正在輸入但未儲存的值。
+  // 各列自己儲存/還原後，由該列處理常式單獨同步（見 saveScale/clearScale）。
+  useEffect(() => {
+    if (scaleSeeded.current || Object.keys(assets).length === 0) return
+    scaleSeeded.current = true
+    setScaleEdit((prev) => {
+      const next = { ...prev }
+      for (const row of SHAPE_SCALE_ROWS) {
+        const p = storedPct(assets[`interaction.shape.scale${row.k}`])
+        next[row.k] = p == null ? '' : String(p)
+      }
+      return next
+    })
+  }, [assets])
 
   const load = useCallback(() => {
     const t = getToken()
@@ -48,6 +81,27 @@ export default function AdminEffectsPage() {
     if (!token) return
     setBusy(spec.slug); setErr('')
     try { const r = await adminEffectsApi.clear(token, spec.slug); setAssets(r.assets || {}); setMsg(`已還原「${spec.label}」為暫代`) }
+    catch (e: any) { setErr(e?.message || '還原失敗') } finally { setBusy('') }
+  }
+  async function saveScale(k: number, def: number) {
+    if (!token) return
+    const slug = `interaction.shape.scale${k}`
+    const raw = (scaleEdit[k] ?? '').trim()
+    setBusy(slug); setErr(''); setMsg('')
+    try {
+      if (raw === '') {
+        const r = await adminEffectsApi.clear(token, slug); setAssets(r.assets || {}); setScaleEdit((s) => ({ ...s, [k]: '' })); setMsg(`已還原導引縮放為預設 ${def}%`)
+      } else {
+        const n = Math.min(100, Math.max(20, Math.round(parseFloat(raw) || def)))
+        const r = await adminEffectsApi.set(token, slug, String(n)); setAssets(r.assets || {}); setScaleEdit((s) => ({ ...s, [k]: String(n) })); setMsg(`✓ 導引縮放已設為 ${n}%`)
+      }
+    } catch (e: any) { setErr(e?.message || '更新失敗') } finally { setBusy('') }
+  }
+  async function clearScale(k: number, def: number) {
+    if (!token) return
+    const slug = `interaction.shape.scale${k}`
+    setBusy(slug); setErr(''); setMsg('')
+    try { const r = await adminEffectsApi.clear(token, slug); setAssets(r.assets || {}); setScaleEdit((s) => ({ ...s, [k]: '' })); setMsg(`已還原導引縮放為預設 ${def}%`) }
     catch (e: any) { setErr(e?.message || '還原失敗') } finally { setBusy('') }
   }
   function playSynth(slug: string) { unlockAudio(); SYNTH[slug]?.() }
@@ -119,6 +173,36 @@ export default function AdminEffectsPage() {
           </div>
         </div>
       ))}
+
+      {/* 圖形魔法・導引縮放 */}
+      <div style={{ marginTop: 22 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)', letterSpacing: '.05em', marginBottom: 8 }}>圖形魔法・導引縮放</div>
+        <div style={card}>
+          <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', lineHeight: 1.7, marginBottom: 4 }}>
+            「畫圖形」時導引虛線的大小（外頂點占畫布半徑的比例）。若換了魔法陣底圖後，虛線比底圖線條偏大或偏小，
+            在這裡微調到<b>剛好貼齊底圖線條</b>即可（玩家沿虛線描 = 描在底圖上 = 容易滿分）。
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', lineHeight: 1.6, marginBottom: 6 }}>
+            留空＝用內建預設（△56 / ◇58 / ✦59 %，量測自目前底圖）。範圍 20–100%。圖形辨識為大小無關，調整只影響導引外觀、不影響評分。
+          </div>
+          {SHAPE_SCALE_ROWS.map((row) => {
+            const slug = `interaction.shape.scale${row.k}`
+            const cur = storedPct(assets[slug])
+            return (
+              <div key={row.k} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderTop: '1px solid var(--line)', flexWrap: 'wrap' }}>
+                <span style={{ width: 84, fontWeight: 700, fontSize: 14 }}>{row.label}</span>
+                <input type="number" min={20} max={100} value={scaleEdit[row.k] ?? ''} placeholder={`預設 ${row.def}`}
+                  onChange={(e) => setScaleEdit((s) => ({ ...s, [row.k]: e.target.value }))}
+                  style={{ ...inputStyle, width: 88 }} />
+                <span style={{ color: 'var(--tx-faint)', fontSize: 12 }}>%</span>
+                <button onClick={() => saveScale(row.k, row.def)} disabled={busy === slug} style={{ ...primaryBtn, opacity: busy === slug ? 0.5 : 1 }}>儲存</button>
+                {cur != null && <button onClick={() => clearScale(row.k, row.def)} disabled={busy === slug} style={{ ...ghostBtn, color: 'var(--hunt)' }}>還原預設</button>}
+                <span style={{ fontSize: 11.5, color: cur != null ? 'var(--gold)' : 'var(--tx-faint)' }}>{cur != null ? `目前 ${cur}%（自訂）` : `使用預設 ${row.def}%`}</span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
     </div>
   )
 }
@@ -126,3 +210,4 @@ export default function AdminEffectsPage() {
 const card: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: 14 }
 const primaryBtn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 9, padding: '7px 12px', cursor: 'pointer', fontSize: 12.5, display: 'inline-block' }
 const ghostBtn: React.CSSProperties = { background: 'rgba(255,255,255,.05)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '7px 12px', cursor: 'pointer', fontSize: 12.5 }
+const inputStyle: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '7px 10px', color: 'var(--tx)', fontSize: 13.5, fontFamily: 'inherit' }
