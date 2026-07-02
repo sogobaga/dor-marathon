@@ -100,7 +100,7 @@ export function EventInteraction({ active, onDone, paused }: { active: ActiveEve
       onPointerDown={onDown}
       onPointerUp={isTap ? undefined : onUpHold}
       onPointerCancel={isTap ? undefined : onUpHold}
-      style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'radial-gradient(circle at 50% 40%, rgba(20,26,34,.96), rgba(6,8,11,.98))', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '20px 18px', touchAction: 'none', userSelect: 'none', overflow: 'hidden' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'radial-gradient(circle at 50% 40%, rgba(20,26,34,.96), rgba(6,8,11,.98))', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '20px 18px', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', overflow: 'hidden' }}
     >
       {/* 略過（放棄任務、以目前完成度計）→ 讓跑者隨時可退出、回去按結束 */}
       <button
@@ -121,18 +121,18 @@ export function EventInteraction({ active, onDone, paused }: { active: ActiveEve
           <div style={{ fontSize: 26, fontWeight: 900, color: accent }}>{isTap ? '準備連續點擊！' : '準備按住防禦！'}</div>
         ) : (
           <>
+            {/* 圈內只放圖示（手指按住時本來就會蓋住），數字資訊移到圈外 */}
             <div style={{ position: 'relative', width: 190, height: 190, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg width="190" height="190" style={{ position: 'absolute', transform: 'rotate(-90deg)' }}>
                 <circle cx="95" cy="95" r="84" fill="none" stroke="rgba(255,255,255,.1)" strokeWidth="10" />
                 <circle cx="95" cy="95" r="84" fill="none" stroke={accent} strokeWidth="10" strokeLinecap="round"
                   strokeDasharray={2 * Math.PI * 84} strokeDashoffset={2 * Math.PI * 84 * (1 - progress)} style={{ transition: 'stroke-dashoffset .12s' }} />
               </svg>
-              <div style={{ textAlign: 'center', transform: holding ? 'scale(1.12)' : 'scale(1)', transition: 'transform .1s' }}>
-                <div style={{ fontSize: 52 }}>{isTap ? '👊' : holding ? '🛡️' : '✋'}</div>
-                <div style={{ fontSize: 26, fontWeight: 900, color: accent, fontVariantNumeric: 'tabular-nums' }}>
-                  {isTap ? `${taps}/${targetTaps}` : `${(heldMs / 1000).toFixed(1)}/${(needMs / 1000).toFixed(0)}s`}
-                </div>
-              </div>
+              <div style={{ fontSize: 60, transform: holding ? 'scale(1.12)' : 'scale(1)', transition: 'transform .1s' }}>{isTap ? '👊' : holding ? '🛡️' : '✋'}</div>
+            </div>
+            {/* 圈外：大數字進度（不被手指遮住、也不會被選取） */}
+            <div style={{ fontSize: 34, fontWeight: 900, color: accent, fontVariantNumeric: 'tabular-nums' }}>
+              {isTap ? `${taps} / ${targetTaps} 次` : `${(heldMs / 1000).toFixed(1)} / ${(needMs / 1000).toFixed(0)} 秒`}
             </div>
             <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--tx)' }}>{isTap ? '連續點擊！💥' : (holding ? '穩住！繼續按住 🛡️' : '按住螢幕不放！')}</div>
             <div style={{ fontSize: 12.5, color: 'var(--tx-faint)' }}>完成度 {pct}%（星等依完成度計）</div>
