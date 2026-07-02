@@ -39,6 +39,9 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const [attemptsLeft, setAttemptsLeft] = useState(attempts)
   const [shapeMsg, setShapeMsg] = useState('')
   const [burst, setBurst] = useState<{ id: number; dx: number; dy: number; e: string }[]>([]) // 成功噴發粒子
+  const [bgLoaded, setBgLoaded] = useState(false) // 底圖載入完成
+  // 導引虛線階段：hidden→(底圖先出現)→blink(閃兩下)→gone(有底圖時消失)/shown(無底圖時保留)
+  const [guidePhase, setGuidePhase] = useState<'hidden' | 'blink' | 'shown' | 'gone'>('hidden')
 
   const tapsRef = useRef(0)
   const heldRef = useRef(0)
@@ -110,6 +113,22 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
     if (finishTimerRef.current) clearTimeout(finishTimerRef.current)
     if (clearStrokeTimerRef.current) clearTimeout(clearStrokeTimerRef.current)
   }, [])
+
+  // 進入互動、底圖載入後 → 顯示導引虛線
+  const shapeBg = isShape ? (assets?.[`interaction.shape.bg${shape}`] || '') : ''
+  const nowMs = now
+  const inDraw = isShape && nowMs >= active.readyUntil + pausedMsRef.current - skipMsRef.current
+  useEffect(() => {
+    if (guidePhase !== 'hidden' || !inDraw) return
+    if (shapeBg && !bgLoaded) return // 先等底圖出現
+    const t = setTimeout(() => setGuidePhase('blink'), 200)
+    return () => clearTimeout(t)
+  }, [guidePhase, inDraw, shapeBg, bgLoaded])
+  useEffect(() => {
+    if (guidePhase !== 'blink') return
+    const t = setTimeout(() => setGuidePhase(shapeBg ? 'gone' : 'shown'), 1150) // 閃兩下後：有底圖→消失、無底圖→保留
+    return () => clearTimeout(t)
+  }, [guidePhase, shapeBg])
 
   const effReady = active.readyUntil + pausedMsRef.current - skipMsRef.current
   const effDeadline = active.deadline + pausedMsRef.current - skipMsRef.current
@@ -219,7 +238,6 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const iconUrl = (isTap ? assets?.['interaction.tap.icon'] : isHold ? (holding ? assets?.['interaction.defend.icon'] : assets?.['interaction.idle.icon']) : isCharge ? assets?.['interaction.swipe.icon'] : assets?.['interaction.dodge.icon']) || ''
   const fxUrl = assets?.['interaction.tap.fx'] || ''
   const trailUrl = assets?.['interaction.swipe.trail'] || ''
-  const shapeBgUrl = assets?.[`interaction.shape.bg${shape}`] || '' // 圖形魔法陣底圖（可在效果管理上傳）
   const emoji = isTap ? '👊' : isHold ? (holding ? '🛡️' : '✋') : isCharge ? '🌀' : '💨'
   const readout = isTap ? `${taps} / ${targetTaps} 次` : isHold ? `${(heldMs / 1000).toFixed(1)} / ${(needMs / 1000).toFixed(0)} 秒` : isCharge ? `${Math.round(travel)} / ${targetPx}` : `${swipes} / ${targetSwipes} 次`
   const readyMsg = isTap ? '準備連續點擊！' : isHold ? '準備按住防禦！' : isCharge ? '準備滑動蓄力！' : isDodge ? '準備滑動閃避！' : '請跟隨身體的能量流動，畫出圖形。'
@@ -253,15 +271,17 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
           <div style={{ fontSize: 26, fontWeight: 900, color: accent }}>{readyMsg}</div>
         ) : isShape ? (
           <>
-            {/* 底圖：優先用上傳的魔法陣圖（可在效果管理擴充/調整），其上疊描繪判定用的幾何導引線；成功時發光＋脈動 */}
+            {/* 底圖先出現 → 導引虛線閃兩下（有底圖則閃完消失，無底圖則保留）；成功時發光＋脈動 */}
             <div style={{ position: 'relative', width: 264, height: 264, animation: shapeOk ? 'shapePulse .8s ease-in-out infinite' : undefined }}>
-              {shapeBgUrl && <img src={shapeBgUrl} alt="" draggable={false} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: shapeOk ? 1 : 0.5, filter: shapeOk ? `drop-shadow(0 0 20px ${accent})` : undefined, transition: 'all .2s', pointerEvents: 'none' }} />}
-              <svg width="264" height="264" style={{ position: 'absolute', inset: 0 }}>
-                <polyline points={shapeSvgPoints(shape, 264)} fill="none"
-                  stroke={shapeOk ? accent : shapeBgUrl ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.26)'} strokeWidth={shapeOk ? 8 : 3}
-                  strokeLinecap="round" strokeLinejoin="round" strokeDasharray={shapeOk ? undefined : '9 9'}
-                  style={{ filter: shapeOk ? `drop-shadow(0 0 22px ${accent}) drop-shadow(0 0 10px ${accent})` : undefined, transition: 'all .2s' }} />
-              </svg>
+              {shapeBg && <img src={shapeBg} alt="" draggable={false} onLoad={() => setBgLoaded(true)} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', opacity: shapeOk ? 1 : 0.55, filter: shapeOk ? `drop-shadow(0 0 22px ${accent}) drop-shadow(0 0 10px ${accent})` : undefined, transition: 'all .2s', pointerEvents: 'none' }} />}
+              {(guidePhase === 'blink' || guidePhase === 'shown' || (shapeOk && !shapeBg)) && (
+                <svg width="264" height="264" style={{ position: 'absolute', inset: 0 }}>
+                  <polyline points={shapeSvgPoints(shape, 264)} fill="none"
+                    stroke={shapeOk ? accent : shapeBg ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.26)'} strokeWidth={shapeOk ? 8 : 3}
+                    strokeLinecap="round" strokeLinejoin="round" strokeDasharray={shapeOk ? undefined : '9 9'}
+                    style={{ filter: shapeOk ? `drop-shadow(0 0 22px ${accent}) drop-shadow(0 0 10px ${accent})` : undefined, transition: 'all .2s', animation: guidePhase === 'blink' && !shapeOk ? 'guideBlink 1.15s ease-in-out forwards' : undefined }} />
+                </svg>
+              )}
             </div>
             <div style={{ fontSize: 20, fontWeight: 900, color: accent }}>{shapeOk ? '✦ 施法成功！' : `描出 ${shapeName(shape)}`}</div>
             {!shapeOk && <div style={{ fontSize: 13.5, color: 'var(--tx)' }}>一筆畫完成・剩 {attemptsLeft} 次機會</div>}
@@ -313,6 +333,7 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
       <style>{`
         @keyframes fxPop{0%{opacity:1;transform:translate(-50%,-50%) scale(.5)}100%{opacity:0;transform:translate(-50%,-140%) scale(1.6)}}
         @keyframes shapePulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+        @keyframes guideBlink{0%{opacity:1}20%{opacity:.08}40%{opacity:1}60%{opacity:.08}80%{opacity:1}100%{opacity:1}}
         @keyframes burstFly{0%{opacity:1;transform:translate(-50%,-50%) scale(.4)}70%{opacity:1}100%{opacity:0;transform:translate(calc(-50% + var(--dx)),calc(-50% + var(--dy))) scale(1.25)}}
       `}</style>
     </div>
