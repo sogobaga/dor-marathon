@@ -26,6 +26,38 @@
   --glow-gold: 0 0 20px rgba(255,194,75,.25);
 }
 
+/* Skin: warm（溫暖貓狗風 — Pawrathon）— 奶油淺色、暖棕字、柔和多彩點綴，適合寵物主題、親和女性 */
+[data-skin="warm"] {
+  --bg:       #FBF4E9;
+  --bg-1:     #FFFDF8;
+  --bg-2:     #F4E9D7;
+  --line:     rgba(90,71,55,.15);
+  --line-2:   rgba(90,71,55,.26);
+  --tx:       #5A4737;
+  --tx-dim:   rgba(90,71,55,.62);
+  --tx-faint: rgba(90,71,55,.40);
+
+  --fug:    #4E9E63;   /* 綠（自然葉綠） */
+  --hunt:   #DB5A52;   /* 紅（暖珊瑚紅） */
+  --gold:   #C4881E;   /* 金（琥珀，於淺底可讀） */
+  --violet: #B26FAB;   /* 紫（柔和梅紫） */
+  --dim:    rgba(90,71,55,.18);
+
+  --glow-fug:  0 0 20px rgba(78,158,99,.22);
+  --glow-hunt: 0 0 20px rgba(219,90,82,.22);
+  --glow-gold: 0 0 22px rgba(196,136,30,.26);
+}
+[data-skin="warm"] body,
+[data-skin="warm"] .phone-frame { background: var(--bg); }
+[data-skin="warm"] .phone-shell {
+  background: var(--bg-1);
+  border: 1px solid rgba(90,71,55,.16);
+  box-shadow:
+    0 0 0 10px #ECE0CB,
+    0 0 0 11px rgba(90,71,55,.10),
+    0 30px 80px rgba(120,90,60,.28);
+}
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {

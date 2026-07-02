@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { adminAppSettingsApi } from '@/lib/api'
-import { SETTINGS_SPECS } from '@/lib/appSettings'
+import { SETTINGS_SPECS, type SettingSpec } from '@/lib/appSettings'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
 export default function AdminSystemPage() {
@@ -39,14 +39,21 @@ export default function AdminSystemPage() {
   }, [router])
   useEffect(() => { load() }, [load])
 
-  async function save(key: string, min: number, max: number, def: number) {
+  async function save(spec: SettingSpec) {
     if (!token) return
+    const key = spec.key
     const raw = (edit[key] ?? '').trim()
-    const n = raw === '' ? def : Math.min(max, Math.max(min, Math.round(parseFloat(raw) || def)))
+    let val: string
+    if (spec.type === 'number') {
+      const min = spec.min ?? 0, max = spec.max ?? 999999, def = parseFloat(spec.def) || 0
+      val = raw === '' ? String(def) : String(Math.min(max, Math.max(min, Math.round(parseFloat(raw) || def))))
+    } else {
+      val = raw || spec.def
+    }
     setBusy(key); setErr(''); setMsg('')
     try {
-      const r = await adminAppSettingsApi.set(token, key, String(n))
-      setValues(r.settings || {}); setEdit((s) => ({ ...s, [key]: String(n) })); setMsg(`✓ 已儲存「${key}」＝ ${n}`)
+      const r = await adminAppSettingsApi.set(token, key, val)
+      setValues(r.settings || {}); setEdit((s) => ({ ...s, [key]: val })); setMsg(`✓ 已儲存「${spec.label}」`)
     } catch (e: any) { setErr(e?.message || '儲存失敗') } finally { setBusy('') }
   }
 
@@ -68,19 +75,30 @@ export default function AdminSystemPage() {
             {SETTINGS_SPECS.filter((s) => s.group === g).map((s) => {
               const cur = values[s.key]
               const hasCur = cur != null && cur !== ''
+              const curLabel = s.type === 'select'
+                ? (s.options?.find((o) => o.value === (hasCur ? cur : s.def))?.label ?? (hasCur ? cur : s.def))
+                : `${hasCur ? cur : s.def} ${s.unit ?? ''}`
               return (
                 <div key={s.key} style={card}>
                   <div style={{ fontWeight: 800, fontSize: 15 }}>{s.label}</div>
                   <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.7 }}>{s.help}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
-                    <input type="number" min={s.min} max={s.max} value={edit[s.key] ?? ''} placeholder={`預設 ${s.def}`}
-                      onChange={(e) => setEdit((st) => ({ ...st, [s.key]: e.target.value }))} style={inp} />
-                    <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>{s.unit}</span>
-                    <button onClick={() => save(s.key, s.min, s.max, s.def)} disabled={busy === s.key} style={{ ...primaryBtn, opacity: busy === s.key ? 0.5 : 1 }}>儲存</button>
+                    {s.type === 'select' ? (
+                      <select value={edit[s.key] || s.def} onChange={(e) => setEdit((st) => ({ ...st, [s.key]: e.target.value }))} style={{ ...inp, width: 260 }}>
+                        {s.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    ) : (
+                      <>
+                        <input type="number" min={s.min} max={s.max} value={edit[s.key] ?? ''} placeholder={`預設 ${s.def}`}
+                          onChange={(e) => setEdit((st) => ({ ...st, [s.key]: e.target.value }))} style={inp} />
+                        <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>{s.unit}</span>
+                      </>
+                    )}
+                    <button onClick={() => save(s)} disabled={busy === s.key} style={{ ...primaryBtn, opacity: busy === s.key ? 0.5 : 1 }}>儲存</button>
                     <span style={{ fontSize: 11.5, color: hasCur ? 'var(--gold)' : 'var(--tx-faint)' }}>
-                      {hasCur ? `目前 ${cur} ${s.unit}` : `使用預設 ${s.def} ${s.unit}`}
+                      {hasCur ? `目前：${curLabel}` : `使用預設：${curLabel}`}
                     </span>
-                    <span style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>範圍 {s.min}–{s.max}</span>
+                    {s.type === 'number' && <span style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>範圍 {s.min}–{s.max}</span>}
                   </div>
                 </div>
               )

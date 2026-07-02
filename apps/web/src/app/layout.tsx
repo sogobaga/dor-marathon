@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import SkinProvider from '@/components/SkinProvider'
 
 export const metadata: Metadata = {
   title: 'DOR 雲端馬拉松',
@@ -28,10 +29,17 @@ export const viewport: Viewport = {
   themeColor: '#09090f',
 }
 
+// 進畫面前先套用快取的 skin（避免暗→亮閃一下）；後台維持預設。
+const SKIN_INIT = `try{var s=localStorage.getItem('dor_skin');if(s&&s!=='default'&&location.pathname.indexOf('/admin')!==0){document.documentElement.setAttribute('data-skin',s)}}catch(e){}`
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-TW">
-      <body>{children}</body>
+      <body>
+        <script dangerouslySetInnerHTML={{ __html: SKIN_INIT }} />
+        <SkinProvider />
+        {children}
+      </body>
     </html>
   )
 }

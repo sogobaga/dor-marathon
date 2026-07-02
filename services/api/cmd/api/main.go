@@ -187,6 +187,9 @@ func main() {
 		// 全站外觀設定（公開讀取，前台會員面板底圖等）
 		r.Get("/settings", profileHandler.GetSettings)
 
+		// 通用系統設定的公開白名單（前台外觀，如 active_skin）
+		r.Get("/app-settings/public", appSettingsHandler.Public)
+
 		// Strava 整合（callback/webhook 公開；connect/status/disconnect 由 router 內自帶登入）
 		r.Mount("/integrations/strava", stravaHandler.Router())
 

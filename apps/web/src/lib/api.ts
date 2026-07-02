@@ -392,6 +392,10 @@ export const adminAppSettingsApi = {
   list: (token: string) => request<{ settings: Record<string, string> }>('/admin/app-settings', { headers: withAuth(token) }),
   set: (token: string, key: string, value: string) => request<{ settings: Record<string, string> }>(`/admin/app-settings/${key}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ value }) }),
 }
+// 公開系統設定（前台外觀，如 active_skin；免登入）
+export const publicSettingsApi = {
+  get: () => request<{ settings: Record<string, string> }>('/app-settings/public'),
+}
 
 // --- 賽事多人連動事件（Phase B）---
 export interface RelOption { key: string; label: string }

@@ -1,12 +1,11 @@
 // Package appsettings 通用系統設定（key-value 單表），供後台「系統設定」頁調教。
-// 值一律以字串儲存；讀取端用 GetInt 等 typed helper 解析並帶預設值。
+// 值一律以字串儲存；讀取端用 GetInt/GetString 等 typed helper 解析並帶預設值。
 package appsettings
 
 import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -14,7 +13,23 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var keyRe = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+// specs 登記所有合法設定 key 及其值驗證器（後端權威；新增設定時在此加一列）。
+var specs = map[string]func(string) bool{
+	"event_wait_min_sec": isNonNegInt,
+	"event_wait_max_sec": isNonNegInt,
+	"active_skin":        func(v string) bool { return v == "" || v == "default" || v == "warm" },
+}
+
+// publicKeys 允許未登入前台讀取的 key（皆為非敏感外觀設定）。
+var publicKeys = map[string]bool{"active_skin": true}
+
+func isNonNegInt(v string) bool {
+	if v == "" {
+		return true
+	}
+	n, err := strconv.Atoi(v)
+	return err == nil && n >= 0
+}
 
 type Handler struct{ db *pgxpool.Pool }
 
@@ -28,29 +43,36 @@ func (h *Handler) AdminRouter() http.Handler {
 	return r
 }
 
-func (h *Handler) respond(w http.ResponseWriter, ctx context.Context) {
+func (h *Handler) queryAll(ctx context.Context, publicOnly bool) map[string]string {
+	m := map[string]string{}
 	rows, err := h.db.Query(ctx, `SELECT key, value FROM app_settings`)
 	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed")
-		return
+		return m
 	}
 	defer rows.Close()
-	m := map[string]string{}
 	for rows.Next() {
 		var k, v string
-		if rows.Scan(&k, &v) == nil {
+		if rows.Scan(&k, &v) == nil && (!publicOnly || publicKeys[k]) {
 			m[k] = v
 		}
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"settings": m})
+	return m
 }
 
-func (h *Handler) List(w http.ResponseWriter, r *http.Request) { h.respond(w, r.Context()) }
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, map[string]any{"settings": h.queryAll(r.Context(), false)})
+}
+
+// Public 前台（可未登入）讀取白名單設定，如 active_skin。
+func (h *Handler) Public(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, map[string]any{"settings": h.queryAll(r.Context(), true)})
+}
 
 func (h *Handler) Set(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
-	if !keyRe.MatchString(key) {
-		respondErr(w, http.StatusBadRequest, "invalid key")
+	validate, known := specs[key]
+	if !known {
+		respondErr(w, http.StatusBadRequest, "unknown setting")
 		return
 	}
 	var b struct {
@@ -58,12 +80,9 @@ func (h *Handler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&b)
 	val := strings.TrimSpace(b.Value)
-	// 目前所有設定皆為數值；非空必須可解析為數字，避免存了卻被 GetInt 靜默忽略（存了等於沒設）
-	if val != "" {
-		if _, err := strconv.ParseFloat(val, 64); err != nil {
-			respondErr(w, http.StatusBadRequest, "value must be numeric")
-			return
-		}
+	if !validate(val) {
+		respondErr(w, http.StatusBadRequest, "invalid value")
+		return
 	}
 	if _, err := h.db.Exec(r.Context(),
 		`INSERT INTO app_settings (key, value, updated_at) VALUES ($1,$2,NOW())
@@ -72,7 +91,7 @@ func (h *Handler) Set(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	h.respond(w, r.Context())
+	respondJSON(w, http.StatusOK, map[string]any{"settings": h.queryAll(r.Context(), false)})
 }
 
 // GetInt 讀整數設定；查無/解析失敗回 def。
@@ -86,6 +105,18 @@ func GetInt(ctx context.Context, db *pgxpool.Pool, key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// GetString 讀字串設定；查無/空值回 def。
+func GetString(ctx context.Context, db *pgxpool.Pool, key, def string) string {
+	var v string
+	if err := db.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&v); err != nil {
+		return def
+	}
+	if v = strings.TrimSpace(v); v == "" {
+		return def
+	}
+	return v
 }
 
 func respondJSON(w http.ResponseWriter, code int, v any) {
