@@ -6,6 +6,7 @@ import { adminEventRacesApi, adminRacesApi, type RaceEventDef, type EventTypeSpe
 import { getToken, clearToken } from '@/lib/adminAuth'
 import DpCoin from '@/components/DpCoin'
 import EventImageSlots from '@/components/EventImageSlots'
+import ShapeCompletionEditor from '@/components/ShapeCompletionEditor'
 
 function emptyDef(cCat: EventTypeSpec[]): RaceEventDef {
   return {
@@ -121,14 +122,17 @@ export default function AdminEventRacesPage() {
 
           <div style={sect}>
             <div style={sectTitle}>完成條件</div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: edit.completion_type === 'draw_shape' ? 12 : 0 }}>
               <Field label="類型"><select style={{ ...inp, width: 200 }} value={edit.completion_type} onChange={(e) => setEdit({ ...edit, completion_type: e.target.value, completion_params: {} })}>{cCat.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</select></Field>
-              {(cSpec?.params ?? []).map((p) => (
+              {edit.completion_type !== 'draw_shape' && (cSpec?.params ?? []).map((p) => (
                 <Field key={p.key} label={`${p.label}（${p.unit}）`}>
                   <input style={{ ...inp, width: 120 }} type="number" value={edit.completion_params[p.key] ?? ''} onChange={(e) => setEdit({ ...edit, completion_params: { ...edit.completion_params, [p.key]: parseFloat(e.target.value) || 0 } })} />
                 </Field>
               ))}
             </div>
+            {edit.completion_type === 'draw_shape' && (
+              <ShapeCompletionEditor value={edit.completion_params} onChange={(patch) => setEdit({ ...edit, completion_params: { ...edit.completion_params, ...patch } })} />
+            )}
           </div>
 
           <div style={{ marginTop: 12 }}>

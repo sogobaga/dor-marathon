@@ -90,18 +90,14 @@ var CompletionCatalog = []TypeSpec{
 		{"limit_s", "時限", "秒"},
 		{"attempts", "可嘗試次數", "次"},
 		{"w3", "三角 出現權重", ""},
+		{"x3_exp", "三角 加碼 EXP", "點"},
+		{"x3_dp", "三角 加碼 DP", "點"},
 		{"w4", "四角 出現權重", ""},
+		{"x4_exp", "四角 加碼 EXP", "點"},
+		{"x4_dp", "四角 加碼 DP", "點"},
 		{"w5", "五芒星 出現權重", ""},
-		{"x4_exp", "四角 完成加碼 EXP", "點"},
-		{"x4_dp", "四角 完成加碼 DP", "點"},
-		{"x5_exp", "五芒星 完成加碼 EXP", "點"},
-		{"x5_dp", "五芒星 完成加碼 DP", "點"},
-		{"b3_exp", "三角 完美BONUS EXP", "點"},
-		{"b3_dp", "三角 完美BONUS DP", "點"},
-		{"b4_exp", "四角 完美BONUS EXP", "點"},
-		{"b4_dp", "四角 完美BONUS DP", "點"},
-		{"b5_exp", "五芒星 完美BONUS EXP", "點"},
-		{"b5_dp", "五芒星 完美BONUS DP", "點"},
+		{"x5_exp", "五芒星 加碼 EXP", "點"},
+		{"x5_dp", "五芒星 加碼 DP", "點"},
 	}},
 }
 
@@ -661,16 +657,11 @@ func gradeInteraction(ctype string, params map[string]float64, ev completeReq, r
 	stars = starsFor(interactionDegree(ctype, params, ev))
 	f := rewardFactor(stars)
 	if ctype == "draw_shape" {
-		// 基礎（共用）+ 該圖形完成加碼（依星等分級）；完美(3★) 再加該圖形 BONUS
+		// 基礎（共用）+ 該圖形加碼，依畫得準的星等分級
 		s := ev.Shape
 		baseExp := rexp + int(params[fmt.Sprintf("x%d_exp", s)])
 		baseDp := rdp + int(params[fmt.Sprintf("x%d_dp", s)])
 		giveExp, giveDp = roundReward(baseExp, f), roundReward(baseDp, f)
-		if stars == 3 {
-			bonusExp, bonusDp = int(params[fmt.Sprintf("b%d_exp", s)]), int(params[fmt.Sprintf("b%d_dp", s)])
-			giveExp += bonusExp
-			giveDp += bonusDp
-		}
 		return
 	}
 	giveExp, giveDp = roundReward(rexp, f), roundReward(rdp, f)
