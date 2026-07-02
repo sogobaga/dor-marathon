@@ -77,6 +77,14 @@ var CompletionCatalog = []TypeSpec{
 		{"limit_s", "時限", "秒"},
 		{"hold_s", "需按住時間", "秒"},
 	}},
+	{"swipe_charge", "連續滑動蓄力（魔法攻擊）", []ParamSpec{
+		{"limit_s", "時限", "秒"},
+		{"target_px", "累積滑動距離（建議 3000–8000）", "px"},
+	}},
+	{"dodge_swipe", "連續滑動閃避", []ParamSpec{
+		{"limit_s", "時限", "秒"},
+		{"target_swipes", "閃避次數（滑動段數）", "次"},
+	}},
 }
 
 func validTrigger(k string) bool {
@@ -526,11 +534,15 @@ type completeReq struct {
 	SecondHalfM float64 `json:"second_half_m"` // negative_split：後半段移動
 	Taps        int     `json:"taps"`          // tap_burst：點擊次數
 	HeldMs      float64 `json:"held_ms"`       // hold_press：累積按住毫秒
+	SwipePx     float64 `json:"swipe_px"`      // swipe_charge：累積滑動距離
+	Swipes      int     `json:"swipes"`        // dodge_swipe：滑動段數
 }
 
 // --- 互動型完成（觸控小遊戲）：依完成度分級發獎 ---
 
-func isInteraction(ct string) bool { return ct == "tap_burst" || ct == "hold_press" }
+func isInteraction(ct string) bool {
+	return ct == "tap_burst" || ct == "hold_press" || ct == "swipe_charge" || ct == "dodge_swipe"
+}
 
 func clamp01(x float64) float64 {
 	if x < 0 {
@@ -568,6 +580,24 @@ func interactionDegree(ctype string, params map[string]float64, ev completeReq) 
 			return 0
 		}
 		return clamp01(ev.HeldMs / need)
+	case "swipe_charge":
+		tgt := params["target_px"]
+		if tgt <= 0 {
+			return 0
+		}
+		if ev.SwipePx < 0 || ev.SwipePx > lim*8000+500 { // 每秒最多約 8000px
+			return 0
+		}
+		return clamp01(ev.SwipePx / tgt)
+	case "dodge_swipe":
+		tgt := params["target_swipes"]
+		if tgt <= 0 {
+			return 0
+		}
+		if float64(ev.Swipes) > lim*8+3 { // 每秒最多約 8 段
+			return 0
+		}
+		return clamp01(float64(ev.Swipes) / tgt)
 	}
 	return 0
 }

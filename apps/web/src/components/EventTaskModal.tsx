@@ -7,7 +7,7 @@ import DpCoin from './DpCoin'
 export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string }
 export type EventResult = { status: 'completed' | 'failed'; def: EventDef; reward_exp: number; reward_dp: number; stars?: number; pending?: boolean }
 
-export function isInteractionType(ct: string): boolean { return ct === 'tap_burst' || ct === 'hold_press' }
+export function isInteractionType(ct: string): boolean { return ct === 'tap_burst' || ct === 'hold_press' || ct === 'swipe_charge' || ct === 'dodge_swipe' }
 
 // 依跑者當下時間挑時段插圖：白天 06–17、黃昏 17–19、晚上 19–06；未設定該時段回退預設圖。
 // 事件任務 / 多人事件邀請共用（欄位名一致）。
@@ -29,6 +29,8 @@ function goalText(def: EventDef): string {
     case 'negative_split': return `${r('limit_s')} 秒內後段加速：後半移動 ≥ 前半的 ${r('ratio_pct')}%`
     case 'tap_burst': return `${r('limit_s')} 秒內連續點擊 ${r('target_taps')} 次（物理攻擊）`
     case 'hold_press': return `按住螢幕 ${r('hold_s')} 秒（物理防禦）`
+    case 'swipe_charge': return `${r('limit_s')} 秒內連續滑動蓄力（魔法攻擊）`
+    case 'dodge_swipe': return `${r('limit_s')} 秒內連續滑動 ${r('target_swipes')} 次閃避`
   }
   return ''
 }

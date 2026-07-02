@@ -22,6 +22,9 @@ export const EFFECT_SPECS: EffectSpec[] = [
   { slug: 'interaction.defend.icon', category: '互動小遊戲', label: '防禦 圖示（按住中）', where: '「按住防禦」小遊戲，按住時的中央圖示', type: 'image', placeholder: '🛡️', size: '512 × 512 px（正方）', format: 'PNG（去背透明）', maxKB: 120 },
   { slug: 'interaction.idle.icon', category: '互動小遊戲', label: '待命 圖示（未按住）', where: '「按住防禦」小遊戲，尚未按住時的中央圖示', type: 'image', placeholder: '✋', size: '512 × 512 px（正方）', format: 'PNG（去背透明）', maxKB: 120 },
   { slug: 'interaction.tap.fx', category: '互動小遊戲', label: '點擊噴濺特效', where: '連續點擊時，手指位置彈出的粒子特效', type: 'image', placeholder: '💥 💧 ⭐ 🪨', size: '256 × 256 px（正方）', format: 'PNG（去背透明）', maxKB: 80, note: '目前為 4 種 emoji 輪替；上傳單張透明 PNG 取代（之後可擴充序列圖）' },
+  { slug: 'interaction.swipe.icon', category: '互動小遊戲', label: '滑動蓄力 圖示', where: '「滑動蓄力（魔法）」小遊戲的中央圖示', type: 'image', placeholder: '🌀', size: '512 × 512 px（正方）', format: 'PNG（去背透明）', maxKB: 120 },
+  { slug: 'interaction.dodge.icon', category: '互動小遊戲', label: '滑動閃避 圖示', where: '「滑動閃避」小遊戲的中央圖示', type: 'image', placeholder: '💨', size: '512 × 512 px（正方）', format: 'PNG（去背透明）', maxKB: 120 },
+  { slug: 'interaction.swipe.trail', category: '互動小遊戲', label: '滑動拖尾', where: '滑動時手指軌跡的拖尾點', type: 'image', placeholder: '（發光圓點）', size: '64 × 64 px（正方）', format: 'PNG（去背透明）', maxKB: 30, note: '目前為程式生成的發光圓點；上傳小圖可換成星塵/魔法粒子' },
   // --- 音效 ---
   { slug: 'sound.event_alert', category: '音效', label: '事件來了 提示音', where: '事件任務／多人事件邀請「跳出」時', type: 'audio', placeholder: '合成音（beep-beep-BOOP）', size: '約 0.4–0.6 秒', format: 'MP3 或 OGG（單聲道即可）', maxKB: 40 },
   { slug: 'sound.event_complete', category: '音效', label: '事件完成 成功音', where: '事件任務完成結算時', type: 'audio', placeholder: '合成音（上行琶音）', size: '約 0.5–0.8 秒', format: 'MP3 或 OGG', maxKB: 40 },

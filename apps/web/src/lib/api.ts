@@ -328,6 +328,8 @@ export interface CompleteEvidence {
   second_half_m?: number
   taps?: number // tap_burst：點擊次數
   held_ms?: number // hold_press：累積按住毫秒
+  swipe_px?: number // swipe_charge：累積滑動距離
+  swipes?: number // dodge_swipe：滑動段數
 }
 
 export interface EventDef {
