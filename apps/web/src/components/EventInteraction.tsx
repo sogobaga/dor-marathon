@@ -28,6 +28,7 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
   const onDoneRef = useRef(onDone); onDoneRef.current = onDone
   const pausedRef = useRef(false); pausedRef.current = !!paused
   const pausedMsRef = useRef(0) // 橫向遮罩等暫停累計，據以延後時限
+  const skipMsRef = useRef(0) // 略過準備：把倒數提前結束的位移量（同時提前 ready 與 deadline，維持限時長度）
   const lastTickRef = useRef(Date.now())
 
   function finish() {
@@ -35,6 +36,12 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
     doneRef.current = true
     if (holdStartRef.current != null) { heldRef.current += Date.now() - holdStartRef.current; holdStartRef.current = null }
     onDoneRef.current({ taps: tapsRef.current, held_ms: heldRef.current })
+  }
+  // 略過準備：把剩餘的「321」倒數扣掉（ready 與 deadline 一起提前，限時長度不變）→ 直接開始
+  function skipPrep() {
+    const n = Date.now()
+    const curEffReady = active.readyUntil + pausedMsRef.current - skipMsRef.current
+    if (n < curEffReady) { skipMsRef.current += curEffReady - n; setNow(Date.now()) }
   }
 
   // 計時器只建一次（onDone 用 ref、時限用 active.deadline）
@@ -51,14 +58,14 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
       }
       if (holdStartRef.current != null) { heldRef.current += n - holdStartRef.current; holdStartRef.current = n; setHeldMs(heldRef.current) }
       setNow(n)
-      if (n >= active.deadline + pausedMsRef.current) finish()
+      if (n >= active.deadline + pausedMsRef.current - skipMsRef.current) finish()
     }, 100)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active.deadline])
 
-  const effReady = active.readyUntil + pausedMsRef.current
-  const effDeadline = active.deadline + pausedMsRef.current
+  const effReady = active.readyUntil + pausedMsRef.current - skipMsRef.current
+  const effDeadline = active.deadline + pausedMsRef.current - skipMsRef.current
   const ready = now < effReady
   const readyRemain = Math.max(0, Math.ceil((effReady - now) / 1000))
   const remain = Math.max(0, Math.ceil((effDeadline - now) / 1000))
@@ -104,12 +111,12 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
       onPointerCancel={isTap ? undefined : onUpHold}
       style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'radial-gradient(circle at 50% 40%, rgba(20,26,34,.96), rgba(6,8,11,.98))', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '20px 18px', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none', overflow: 'hidden' }}
     >
-      {/* 略過（放棄任務、以目前完成度計）→ 讓跑者隨時可退出、回去按結束 */}
+      {/* 準備期：略過 321 直接開始；進行中：放棄（以目前完成度計，讓跑者可退出去按結束） */}
       <button
-        onClick={finish}
+        onClick={ready ? skipPrep : finish}
         onPointerDown={(e) => e.stopPropagation()}
         style={{ position: 'absolute', top: 14, right: 14, zIndex: 2001, background: 'rgba(255,255,255,.1)', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 999, padding: '5px 12px', fontSize: 12.5, cursor: 'pointer' }}
-      >✕ 略過</button>
+      >{ready ? '⏭ 略過準備' : '✕ 放棄'}</button>
 
       <div style={{ width: '100%', maxWidth: 420, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingRight: 70 }}>
         <span style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--gold)', fontWeight: 800 }}>⚡ 事件任務</span>
