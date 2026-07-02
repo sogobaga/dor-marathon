@@ -149,7 +149,98 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Put("/{id}", h.Update)
 	r.Delete("/{id}", h.Delete)
 	r.Post("/{id}/push", h.PushToUser) // 測試：手動觸發此事件給指定帳號
+	// 每個管理者專屬的「測試觸發」常用名單（非全站共用）
+	r.Get("/test-targets", h.ListTestTargets)
+	r.Post("/test-targets", h.AddTestTarget)
+	r.Delete("/test-targets", h.RemoveTestTarget)
+	r.Patch("/test-targets/default", h.SetDefaultTestTarget)
 	return r
+}
+
+type testTarget struct {
+	Email     string `json:"email"`
+	IsDefault bool   `json:"is_default"`
+}
+
+// respondTestTargets 回傳目前管理者的常用名單（預設值排最前）
+func (h *Handler) respondTestTargets(w http.ResponseWriter, ctx context.Context, adminID string) {
+	rows, err := h.db.Query(ctx, `SELECT email, is_default FROM admin_test_targets WHERE admin_user_id=$1 ORDER BY is_default DESC, created_at`, adminID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer rows.Close()
+	out := []testTarget{}
+	for rows.Next() {
+		var t testTarget
+		if rows.Scan(&t.Email, &t.IsDefault) == nil {
+			out = append(out, t)
+		}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"targets": out})
+}
+
+func adminID(r *http.Request) string {
+	id, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	return id
+}
+
+func (h *Handler) ListTestTargets(w http.ResponseWriter, r *http.Request) {
+	h.respondTestTargets(w, r.Context(), adminID(r))
+}
+
+func (h *Handler) AddTestTarget(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Email       string `json:"email"`
+		MakeDefault bool   `json:"make_default"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.Email) == "" {
+		respondErr(w, http.StatusBadRequest, "請提供 email")
+		return
+	}
+	uid, email := adminID(r), strings.TrimSpace(b.Email)
+	if _, err := h.db.Exec(r.Context(), `INSERT INTO admin_test_targets (admin_user_id, email) VALUES ($1,$2) ON CONFLICT DO NOTHING`, uid, email); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if b.MakeDefault {
+		h.setDefaultTarget(r.Context(), uid, email)
+	}
+	h.respondTestTargets(w, r.Context(), uid)
+}
+
+func (h *Handler) RemoveTestTarget(w http.ResponseWriter, r *http.Request) {
+	uid := adminID(r)
+	email := strings.TrimSpace(r.URL.Query().Get("email"))
+	if email == "" {
+		respondErr(w, http.StatusBadRequest, "請提供 email")
+		return
+	}
+	_, _ = h.db.Exec(r.Context(), `DELETE FROM admin_test_targets WHERE admin_user_id=$1 AND email=$2`, uid, email)
+	h.respondTestTargets(w, r.Context(), uid)
+}
+
+func (h *Handler) SetDefaultTestTarget(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Email string `json:"email"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&b)
+	uid := adminID(r)
+	h.setDefaultTarget(r.Context(), uid, strings.TrimSpace(b.Email)) // email 空＝清除預設
+	h.respondTestTargets(w, r.Context(), uid)
+}
+
+func (h *Handler) setDefaultTarget(ctx context.Context, uid, email string) {
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	_, _ = tx.Exec(ctx, `UPDATE admin_test_targets SET is_default=FALSE WHERE admin_user_id=$1`, uid)
+	if email != "" {
+		_, _ = tx.Exec(ctx, `UPDATE admin_test_targets SET is_default=TRUE WHERE admin_user_id=$1 AND email=$2`, uid, email)
+	}
+	_ = tx.Commit(ctx)
 }
 
 // POST /admin/events/{id}/push  {email} — 手動觸發事件給指定帳號（測試用）。

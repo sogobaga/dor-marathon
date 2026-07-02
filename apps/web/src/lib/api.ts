@@ -364,7 +364,13 @@ export const adminEventsApi = {
   update: (token: string, id: string, body: EventDef) => request<{ def: EventDef }>(`/admin/events/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
   remove: (token: string, id: string) => request<void>(`/admin/events/${id}`, { method: 'DELETE', headers: withAuth(token) }),
   push: (token: string, id: string, email: string) => request<{ ok: boolean; target: string }>(`/admin/events/${id}/push`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ email }) }),
+  // 每個管理者專屬的「測試觸發」常用名單
+  testTargets: (token: string) => request<{ targets: TestTarget[] }>('/admin/events/test-targets', { headers: withAuth(token) }),
+  addTestTarget: (token: string, email: string, makeDefault = false) => request<{ targets: TestTarget[] }>('/admin/events/test-targets', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ email, make_default: makeDefault }) }),
+  removeTestTarget: (token: string, email: string) => request<{ targets: TestTarget[] }>(`/admin/events/test-targets?email=${encodeURIComponent(email)}`, { method: 'DELETE', headers: withAuth(token) }),
+  setDefaultTestTarget: (token: string, email: string) => request<{ targets: TestTarget[] }>('/admin/events/test-targets/default', { method: 'PATCH', headers: withAuth(token), body: JSON.stringify({ email }) }),
 }
+export interface TestTarget { email: string; is_default: boolean }
 
 // --- 賽事多人連動事件（Phase B）---
 export interface RelOption { key: string; label: string }

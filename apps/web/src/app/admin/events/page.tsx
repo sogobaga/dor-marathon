@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminEventsApi, type EventDef, type EventTypeSpec } from '@/lib/api'
+import { adminEventsApi, type EventDef, type EventTypeSpec, type TestTarget } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import DpCoin from '@/components/DpCoin'
 import EventImageSlots from '@/components/EventImageSlots'
@@ -30,6 +30,26 @@ export default function AdminEventsPage() {
   const [pushFor, setPushFor] = useState<string | null>(null)
   const [pushEmail, setPushEmail] = useState('')
   const [pushBusy, setPushBusy] = useState(false)
+  const [targets, setTargets] = useState<TestTarget[]>([])
+
+  async function addCurrentTarget() {
+    if (!token || !pushEmail.trim()) return
+    try { const r = await adminEventsApi.addTestTarget(token, pushEmail.trim()); setTargets(r.targets) } catch (e: any) { setErr(e?.message || '加入失敗') }
+  }
+  async function removeTarget(email: string) {
+    if (!token) return
+    try { const r = await adminEventsApi.removeTestTarget(token, email); setTargets(r.targets) } catch (e: any) { setErr(e?.message || '移除失敗') }
+  }
+  async function toggleDefaultTarget(email: string) {
+    if (!token) return
+    const cur = targets.find((t) => t.email === email)
+    try { const r = await adminEventsApi.setDefaultTestTarget(token, cur?.is_default ? '' : email); setTargets(r.targets) } catch (e: any) { setErr(e?.message || '設定失敗') }
+  }
+  function openPush(id: string) {
+    const opening = pushFor !== id
+    setPushFor(opening ? id : null)
+    setPushEmail(opening ? (targets.find((t) => t.is_default)?.email ?? '') : '')
+  }
 
   async function doPush(d: EventDef) {
     if (!token || !d.id || !pushEmail.trim()) return
@@ -46,6 +66,7 @@ export default function AdminEventsPage() {
     const t = getToken()
     if (!t) { router.replace('/admin/login'); return }
     setToken(t)
+    adminEventsApi.testTargets(t).then((r) => setTargets(r.targets)).catch(() => {})
     adminEventsApi.list(t).then((r) => { setDefs(r.defs); setTCat(r.trigger_catalog); setCCat(r.completion_catalog) })
       .catch((e) => {
         if (e?.status === 401) { clearToken(); router.replace('/admin/login') }
@@ -185,18 +206,33 @@ export default function AdminEventsPage() {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
-                <button onClick={() => { setPushFor(pushFor === d.id ? null : d.id!); setPushEmail('') }} style={{ ...ghostBtn, color: 'var(--gold)', borderColor: 'rgba(255,194,75,.4)' }}>🧪 測試觸發</button>
+                <button onClick={() => openPush(d.id!)} style={{ ...ghostBtn, color: 'var(--gold)', borderColor: 'rgba(255,194,75,.4)' }}>🧪 測試觸發</button>
                 <button onClick={() => startEdit(d)} style={ghostBtn}>編輯</button>
                 <button onClick={() => duplicate(d)} style={ghostBtn}>複製</button>
                 <button onClick={() => remove(d)} style={{ ...ghostBtn, color: 'var(--hunt)' }}>刪除</button>
               </div>
             </div>
             {pushFor === d.id && (
-              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 12.5, color: 'var(--tx-dim)' }}>觸發給帳號：</span>
-                <input style={{ ...inp, width: 240 }} type="email" value={pushEmail} onChange={(e) => setPushEmail(e.target.value)} placeholder="對方登入 email（需正在開始跑步）" onKeyDown={(e) => { if (e.key === 'Enter') doPush(d) }} />
-                <button onClick={() => doPush(d)} disabled={pushBusy || !pushEmail.trim()} style={{ ...primaryBtn, opacity: pushBusy || !pushEmail.trim() ? 0.5 : 1 }}>{pushBusy ? '觸發中…' : '送出觸發'}</button>
-                <button onClick={() => { setPushFor(null); setPushEmail('') }} style={ghostBtn}>取消</button>
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12.5, color: 'var(--tx-dim)' }}>觸發給帳號：</span>
+                  <input style={{ ...inp, width: 240 }} type="email" value={pushEmail} onChange={(e) => setPushEmail(e.target.value)} placeholder="對方登入 email（需正在開始跑步）" onKeyDown={(e) => { if (e.key === 'Enter') doPush(d) }} />
+                  <button onClick={() => doPush(d)} disabled={pushBusy || !pushEmail.trim()} style={{ ...primaryBtn, opacity: pushBusy || !pushEmail.trim() ? 0.5 : 1 }}>{pushBusy ? '觸發中…' : '送出觸發'}</button>
+                  {pushEmail.trim() && !targets.some((t) => t.email === pushEmail.trim()) && <button onClick={addCurrentTarget} style={ghostBtn}>＋ 加入常用</button>}
+                  <button onClick={() => { setPushFor(null); setPushEmail('') }} style={ghostBtn}>取消</button>
+                </div>
+                {targets.length > 0 && (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+                    <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>常用名單：</span>
+                    {targets.map((t) => (
+                      <span key={t.email} style={{ display: 'inline-flex', alignItems: 'center', gap: 2, background: 'var(--bg-2)', border: `1px solid ${t.email === pushEmail.trim() ? 'var(--fug)' : 'var(--line-2)'}`, borderRadius: 999, padding: '2px 4px 2px 4px', fontSize: 12 }}>
+                        <button onClick={() => toggleDefaultTarget(t.email)} title={t.is_default ? '取消預設' : '設為預設（開啟時自動帶入）'} style={starBtn}>{t.is_default ? '⭐' : '☆'}</button>
+                        <button onClick={() => setPushEmail(t.email)} title="填入" style={{ background: 'none', border: 'none', color: 'var(--tx)', cursor: 'pointer', fontSize: 12, padding: '2px 2px' }}>{t.email}</button>
+                        <button onClick={() => removeTarget(t.email)} title="移除" style={{ ...starBtn, color: 'var(--hunt)' }}>✕</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -219,6 +255,7 @@ const card: React.CSSProperties = { background: 'var(--bg-1)', border: '1px soli
 const inp: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '8px 10px', color: 'var(--tx)', fontSize: 13.5, fontFamily: 'inherit', width: '100%' }
 const primaryBtn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 10, padding: '9px 16px', cursor: 'pointer', fontSize: 13.5 }
 const ghostBtn: React.CSSProperties = { background: 'rgba(255,255,255,.05)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '8px 14px', cursor: 'pointer', fontSize: 13 }
+const starBtn: React.CSSProperties = { background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: '2px 3px', color: 'var(--tx-dim)' }
 const sect: React.CSSProperties = { marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }
 const sectTitle: React.CSSProperties = { fontSize: 13, fontWeight: 700, marginBottom: 8, color: 'var(--tx)' }
 const badge: React.CSSProperties = { marginLeft: 8, fontSize: 10.5, fontWeight: 700, border: '1px solid', borderRadius: 999, padding: '2px 8px', verticalAlign: 'middle' }
