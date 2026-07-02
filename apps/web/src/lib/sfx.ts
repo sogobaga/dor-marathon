@@ -71,6 +71,57 @@ export function stopFill() {
   fillGain = null
 }
 
+// 觸覺回饋（震動）。Android Chrome 支援；iOS Safari/Chrome 不支援 → 靜默略過。
+export function vibrate(pattern: number | number[]) {
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') navigator.vibrate(pattern)
+  } catch { /* 不支援就忽略 */ }
+}
+
+// 事件任務「來了」的提示音：beep-beep-BOOP（上揚、有警示感）
+export function playEventAlert() {
+  if (muted) return
+  const c = ac()
+  if (!c) return
+  const now = c.currentTime
+  const notes: [number, number][] = [[880, 0], [880, 0.13], [1318.51, 0.26]] // A5, A5, E6
+  for (const [freq, t] of notes) {
+    const o = c.createOscillator()
+    const g = c.createGain()
+    o.type = 'triangle'
+    o.frequency.value = freq
+    const s = now + t
+    g.gain.setValueAtTime(0.0001, s)
+    g.gain.exponentialRampToValueAtTime(0.2, s + 0.012)
+    g.gain.exponentialRampToValueAtTime(0.0001, s + 0.12)
+    o.connect(g).connect(c.destination)
+    o.start(s)
+    o.stop(s + 0.14)
+  }
+}
+
+// 事件完成的成功音：C6→E6→G6 上行琶音
+export function playEventComplete() {
+  if (muted) return
+  const c = ac()
+  if (!c) return
+  const now = c.currentTime
+  const notes: [number, number][] = [[523.25, 0], [659.25, 0.1], [783.99, 0.2]] // C6 E6 G6
+  for (const [freq, t] of notes) {
+    const o = c.createOscillator()
+    const g = c.createGain()
+    o.type = 'triangle'
+    o.frequency.value = freq
+    const s = now + t
+    g.gain.setValueAtTime(0.0001, s)
+    g.gain.exponentialRampToValueAtTime(0.22, s + 0.01)
+    g.gain.exponentialRampToValueAtTime(0.0001, s + 0.28)
+    o.connect(g).connect(c.destination)
+    o.start(s)
+    o.stop(s + 0.3)
+  }
+}
+
 // 升級到 100% 的「噹」——鐘聲（多諧波 + 快速衰減）
 export function playDing() {
   if (muted) return

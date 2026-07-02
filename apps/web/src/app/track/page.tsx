@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { activitiesApi, checkpointApi, eventApi, eventRaceApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
+import { unlockAudio, playEventAlert, playEventComplete, vibrate, setMuted as sfxSetMuted, isMuted } from '@/lib/sfx'
 import GoogleAuthProvider from '@/components/GoogleAuthProvider'
 import { LoginModal } from '@/components/UserAuthBar'
 import PhoneFrame from '@/components/PhoneFrame'
@@ -62,6 +63,7 @@ export default function TrackPage() {
   const [inviteNow, setInviteNow] = useState(0) // 驅動邀請倒數重繪
   const [isLandscape, setIsLandscape] = useState(false) // 橫向時顯示「轉回直立」提示
   const [confirmEnd, setConfirmEnd] = useState(false) // 事件進行中按「結束」→ 先跳確認（損失規避）
+  const [muted, setMuted] = useState(false) // 事件音效靜音（震動不受影響）
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -199,11 +201,13 @@ export default function TrackPage() {
     activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
     try {
       const occ = await eventApi.createOccurrence(token, { def_id: def.id, trigger_dist_m: triggerD, trigger_elapsed_s: Math.floor((triggerT - startRef.current) / 1000) })
-      if (!occ.id) { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) }; return } // 被全域閘門擋下（冷卻中）
+      // 被全域閘門擋下（冷卻中）：退回並設冷卻，避免每秒重試又閃橫幅/重複提示
+      if (!occ.id) { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) }; lastEventEndRef.current = Date.now(); return }
       // 若在 createOccurrence 飛行期間使用者已放棄/結束（ref 被清）→ 補送 fail，避免留下 active 孤兒列
       if (activeEventRef.current !== ae) { eventApi.fail(token, occ.id).catch(() => {}); return }
       const armed = { ...ae, occId: occ.id }
       activeEventRef.current = armed; setActiveEvent(armed)
+      playEventAlert(); vibrate([200, 100, 200]) // 事件來了：音效 + 震動
     } catch { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) } }
   }
   async function completeEvent(ae: ActiveEvent, moved: number, windowS: number) {
@@ -211,6 +215,7 @@ export default function TrackPage() {
     completingRef.current = true
     // 樂觀顯示「任務完成」：與 modal/EventBanner 收起同一批渲染出現，避免等 API 往返的空窗（獎勵數字回來再補）
     setEventResult({ status: 'completed', def: ae.def, reward_exp: 0, reward_dp: 0 })
+    playEventComplete(); vibrate([90, 50, 90]) // 事件完成：成功音 + 短震動
     const token = getUserToken()
     try {
       const res = token
@@ -252,6 +257,7 @@ export default function TrackPage() {
           if (activeEventRef.current || raceInviteRef.current) return // 一次一任務
           if (Date.now() > p.join_deadline) return
           setRaceInvite(p)
+          playEventAlert(); vibrate([200, 100, 200]) // 多人事件邀請來了：音效 + 震動
         } catch { /* ignore */ }
       }
       ws.onclose = () => { if (wsRef.current === ws) wsRef.current = null }
@@ -289,6 +295,7 @@ export default function TrackPage() {
       const readyUntil = triggerT + EVENT_GRACE_MS
       const ae: ActiveEvent = { def, occId: res.occ_id || '', triggerD: distRef.current, triggerT, readyUntil, deadline: readyUntil + limitS * 1000 }
       activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
+      playEventAlert(); vibrate([200, 100, 200]) // 事件來了：音效 + 震動
     } catch { /* ignore */ }
   }
 
@@ -350,6 +357,7 @@ export default function TrackPage() {
     setRaceInvite(null); raceIdRef.current = ''; lastTriggerRef.current = 0; lastClaimRef.current = 0
     startRef.current = Date.now()
     setStatus('tracking')
+    unlockAudio() // 在使用者手勢內解鎖音訊（iOS 必須）
     connectRaceWS() // 連 WS 監聽多人事件（不 await；失敗不影響跑步）
     // ⚠️ iOS：定位權限提示必須在使用者手勢「同步」流程內直接請求，不能先 await 任何東西
     //（否則會失去使用者手勢 → Safari 直接判定拒絕，code 1）。故先請求定位，wake lock 之後再背景取得。
@@ -404,6 +412,9 @@ export default function TrackPage() {
 
   // 確認視窗開啟時若事件已結束（完成/失敗）→ 強制關閉，讓「事件完成/結果」通知顯示
   useEffect(() => { if (confirmEnd && !activeEvent) setConfirmEnd(false) }, [confirmEnd, activeEvent])
+
+  useEffect(() => { setMuted(isMuted()) }, [])
+  function toggleMute() { const next = !isMuted(); sfxSetMuted(next); setMuted(next); if (!next) unlockAudio() }
 
   async function finish() {
     cleanup()
@@ -568,9 +579,10 @@ export default function TrackPage() {
           ? <span style={{ color: 'var(--hunt)', fontSize: 13, fontWeight: 700 }}>● 跑步中</span>
           : <a href="/" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 返回</a>}
         <strong style={{ fontSize: 16 }}>GPS 跑步追蹤</strong>
-        {status === 'tracking'
-          ? <span style={{ width: 32 }} />
-          : <a href="/track/history" style={{ color: 'var(--fug)', fontSize: 13, textDecoration: 'none' }}>歷史</a>}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <button onClick={toggleMute} title={muted ? '事件音效：關' : '事件音效：開'} aria-label="事件音效開關" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0, color: 'var(--tx-dim)' }}>{muted ? '🔇' : '🔊'}</button>
+          {status !== 'tracking' && <a href="/track/history" style={{ color: 'var(--fug)', fontSize: 13, textDecoration: 'none' }}>歷史</a>}
+        </div>
       </header>
 
       {/* 地圖（事件橫幅直接疊在地圖上方，任務結束才收起；地圖與數據不位移） */}
