@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { cache } from 'react'
 import './globals.css'
+import InAppBrowserNotice from '@/components/InAppBrowserNotice'
 
 export const metadata: Metadata = {
   title: 'DOR 雲端馬拉松',
@@ -56,7 +57,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const skin = await getActiveSkin()
   return (
     <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined}>
-      <body>{children}</body>
+      <body><InAppBrowserNotice />{children}</body>
     </html>
   )
 }
