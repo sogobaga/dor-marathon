@@ -100,6 +100,43 @@ export function playEventAlert() {
   }
 }
 
+// 點擊攻擊：短促打擊聲（每次點擊）
+export function playTapHit() {
+  if (muted) return
+  const c = ac()
+  if (!c) return
+  const now = c.currentTime
+  const o = c.createOscillator()
+  const g = c.createGain()
+  o.type = 'square'
+  o.frequency.setValueAtTime(600, now)
+  o.frequency.exponentialRampToValueAtTime(180, now + 0.09)
+  g.gain.setValueAtTime(0.16, now)
+  g.gain.exponentialRampToValueAtTime(0.0001, now + 0.1)
+  o.connect(g).connect(c.destination)
+  o.start(now)
+  o.stop(now + 0.11)
+}
+
+// 按住防禦：低沉的「起盾」聲
+export function playDefend() {
+  if (muted) return
+  const c = ac()
+  if (!c) return
+  const now = c.currentTime
+  const o = c.createOscillator()
+  const g = c.createGain()
+  o.type = 'sawtooth'
+  o.frequency.setValueAtTime(140, now)
+  o.frequency.exponentialRampToValueAtTime(320, now + 0.18)
+  g.gain.setValueAtTime(0.0001, now)
+  g.gain.exponentialRampToValueAtTime(0.14, now + 0.03)
+  g.gain.exponentialRampToValueAtTime(0.0001, now + 0.25)
+  o.connect(g).connect(c.destination)
+  o.start(now)
+  o.stop(now + 0.27)
+}
+
 // 事件完成的成功音：C6→E6→G6 上行琶音
 export function playEventComplete() {
   if (muted) return

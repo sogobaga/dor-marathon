@@ -69,6 +69,14 @@ var CompletionCatalog = []TypeSpec{
 		{"limit_s", "時限", "秒"},
 		{"ratio_pct", "後半需為前半的", "%"},
 	}},
+	{"tap_burst", "連續點擊（物理攻擊）", []ParamSpec{
+		{"limit_s", "時限", "秒"},
+		{"target_taps", "目標點擊次數", "次"},
+	}},
+	{"hold_press", "按住螢幕（物理防禦）", []ParamSpec{
+		{"limit_s", "時限", "秒"},
+		{"hold_s", "需按住時間", "秒"},
+	}},
 }
 
 func validTrigger(k string) bool {
@@ -425,7 +433,72 @@ type completeReq struct {
 	MaxSegM     float64 `json:"max_seg_m"`     // sprint：最佳爆發區間的移動量
 	FirstHalfM  float64 `json:"first_half_m"`  // negative_split：前半段移動
 	SecondHalfM float64 `json:"second_half_m"` // negative_split：後半段移動
+	Taps        int     `json:"taps"`          // tap_burst：點擊次數
+	HeldMs      float64 `json:"held_ms"`       // hold_press：累積按住毫秒
 }
+
+// --- 互動型完成（觸控小遊戲）：依完成度分級發獎 ---
+
+func isInteraction(ct string) bool { return ct == "tap_burst" || ct == "hold_press" }
+
+func clamp01(x float64) float64 {
+	if x < 0 {
+		return 0
+	}
+	if x > 1 {
+		return 1
+	}
+	return x
+}
+
+// interactionDegree 回傳 0..1 完成度（含基本防弊上限）
+func interactionDegree(ctype string, params map[string]float64, ev completeReq) float64 {
+	switch ctype {
+	case "tap_burst":
+		tgt := params["target_taps"]
+		if tgt <= 0 {
+			return 0
+		}
+		if ev.WindowS > 0 && float64(ev.Taps) > ev.WindowS*15+5 { // 每秒最多約 15 下
+			return 0
+		}
+		return clamp01(float64(ev.Taps) / tgt)
+	case "hold_press":
+		need := params["hold_s"] * 1000
+		if need <= 0 {
+			return 0
+		}
+		if ev.HeldMs < 0 || ev.HeldMs > (ev.WindowS+2)*1000 { // 按住不可超過視窗
+			return 0
+		}
+		return clamp01(ev.HeldMs / need)
+	}
+	return 0
+}
+
+func starsFor(d float64) int {
+	switch {
+	case d >= 0.9:
+		return 3
+	case d >= 0.6:
+		return 2
+	case d >= 0.3:
+		return 1
+	}
+	return 0
+}
+func rewardFactor(stars int) float64 {
+	switch stars {
+	case 3:
+		return 1.0
+	case 2:
+		return 0.6
+	case 1:
+		return 0.3
+	}
+	return 0
+}
+func roundReward(full int, f float64) int { return int(float64(full)*f + 0.5) }
 
 // validateCompletion 依完成模組驗證 evidence（含瞬移防弊）
 func validateCompletion(ctype string, params map[string]float64, ev completeReq) bool {
@@ -489,9 +562,19 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 	var params map[string]float64
 	_ = json.Unmarshal(cpRaw, &params)
-	if !validateCompletion(ctype, params, req) {
-		respondJSON(w, http.StatusOK, map[string]any{"completed": false, "message": "尚未達成完成條件"})
-		return
+
+	// 互動型：依完成度分級發獎（可能 0★）；其餘：pass/fail 全額
+	var giveExp, giveDp, stars int
+	if isInteraction(ctype) {
+		stars = starsFor(interactionDegree(ctype, params, req))
+		f := rewardFactor(stars)
+		giveExp, giveDp = roundReward(rexp, f), roundReward(rdp, f)
+	} else {
+		if !validateCompletion(ctype, params, req) {
+			respondJSON(w, http.StatusOK, map[string]any{"completed": false, "message": "尚未達成完成條件"})
+			return
+		}
+		giveExp, giveDp, stars = rexp, rdp, 3
 	}
 
 	tx, err := h.db.Begin(r.Context())
@@ -501,14 +584,14 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	tag, err := tx.Exec(r.Context(), `
-		UPDATE event_task_occurrences SET status='completed', completed_at=NOW(), awarded=TRUE
-		WHERE id=$1 AND NOT awarded`, id)
+		UPDATE event_task_occurrences SET status='completed', completed_at=NOW(), awarded=TRUE, reward_exp=$2, reward_dp=$3
+		WHERE id=$1 AND NOT awarded`, id, giveExp, giveDp)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	if tag.RowsAffected() == 1 && (rexp > 0 || rdp > 0) {
-		if _, err := tx.Exec(r.Context(), `UPDATE users SET exp=exp+$1, dp=dp+$2 WHERE id=$3`, rexp, rdp, uid); err != nil {
+	if tag.RowsAffected() == 1 && (giveExp > 0 || giveDp > 0) {
+		if _, err := tx.Exec(r.Context(), `UPDATE users SET exp=exp+$1, dp=dp+$2 WHERE id=$3`, giveExp, giveDp, uid); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
 		}
@@ -517,7 +600,7 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"completed": true, "reward_exp": rexp, "reward_dp": rdp})
+	respondJSON(w, http.StatusOK, map[string]any{"completed": true, "reward_exp": giveExp, "reward_dp": giveDp, "stars": stars})
 }
 
 // POST /events/occurrences/{id}/fail — 逾時/放棄

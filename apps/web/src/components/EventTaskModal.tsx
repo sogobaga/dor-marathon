@@ -5,7 +5,9 @@ import type { EventDef } from '@/lib/api'
 import DpCoin from './DpCoin'
 
 export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string }
-export type EventResult = { status: 'completed' | 'failed'; def: EventDef; reward_exp: number; reward_dp: number }
+export type EventResult = { status: 'completed' | 'failed'; def: EventDef; reward_exp: number; reward_dp: number; stars?: number; pending?: boolean }
+
+export function isInteractionType(ct: string): boolean { return ct === 'tap_burst' || ct === 'hold_press' }
 
 // 依跑者當下時間挑時段插圖：白天 06–17、黃昏 17–19、晚上 19–06；未設定該時段回退預設圖。
 // 事件任務 / 多人事件邀請共用（欄位名一致）。
@@ -25,6 +27,8 @@ function goalText(def: EventDef): string {
     case 'hold_pace': return `維持 ${r('limit_s')} 秒不停下（每 ${r('check_s')} 秒至少移動 ${r('min_m')}m）`
     case 'sprint': return `${r('limit_s')} 秒內衝刺：任一 ${r('burst_s')} 秒移動 ≥ ${r('burst_m')}m`
     case 'negative_split': return `${r('limit_s')} 秒內後段加速：後半移動 ≥ 前半的 ${r('ratio_pct')}%`
+    case 'tap_burst': return `${r('limit_s')} 秒內連續點擊 ${r('target_taps')} 次（物理攻擊）`
+    case 'hold_press': return `按住螢幕 ${r('hold_s')} 秒（物理防禦）`
   }
   return ''
 }
@@ -96,9 +100,13 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
 
 // 完成/失敗結果：同樣以「內嵌橫幅」呈現（不是彈窗），需按「收下」或約 12 秒後才收起
 export function EventResultBanner({ result, onClose }: { result: EventResult; onClose: () => void }) {
-  useEffect(() => { const t = setTimeout(onClose, 12000); return () => clearTimeout(t) }, [onClose])
-  const ok = result.status === 'completed'
+  useEffect(() => { if (result.pending) return; const t = setTimeout(onClose, 12000); return () => clearTimeout(t) }, [onClose, result.pending])
+  const isInter = isInteractionType(result.def.completion_type)
+  const stars = result.stars ?? 0
+  const weak = result.status === 'completed' && isInter && stars === 0 // 互動 0★＝差一點
+  const ok = result.status === 'completed' && !weak
   const hasReward = result.reward_exp > 0 || result.reward_dp > 0
+  const title = result.pending ? '🎉 任務完成！' : ok ? '🎉 任務完成！' : weak ? '🐾 差一點…' : '🐾 任務失敗'
   return (
     <div style={{
       ...banner,
@@ -106,17 +114,24 @@ export function EventResultBanner({ result, onClose }: { result: EventResult; on
       background: ok ? 'linear-gradient(180deg, rgba(70,227,160,.20), rgba(9,12,16,.95))' : 'linear-gradient(180deg, rgba(255,90,90,.18), rgba(9,12,16,.95))',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 16, fontWeight: 900, color: ok ? 'var(--fug)' : 'var(--hunt)' }}>{ok ? '🎉 任務完成！' : '🐾 任務失敗'}</span>
-        <button onClick={onClose} style={{ background: 'rgba(255,255,255,.08)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 14px', color: 'var(--tx)', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>收下</button>
+        <span style={{ fontSize: 16, fontWeight: 900, color: ok ? 'var(--fug)' : 'var(--hunt)' }}>{title}</span>
+        {!result.pending && <button onClick={onClose} style={{ background: 'rgba(255,255,255,.08)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 14px', color: 'var(--tx)', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>收下</button>}
       </div>
       <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 3 }}>{result.def.name}</div>
-      {ok && hasReward && (
+      {isInter && result.status === 'completed' && !result.pending && (
+        <div style={{ fontSize: 22, letterSpacing: 4, marginTop: 6 }}>
+          {[0, 1, 2].map((i) => <span key={i} style={{ color: i < stars ? '#FFD24D' : 'rgba(255,255,255,.18)' }}>★</span>)}
+          <span style={{ fontSize: 12, color: 'var(--tx-faint)', marginLeft: 8 }}>完成度 {stars * 33 + (stars === 3 ? 1 : 0)}%+</span>
+        </div>
+      )}
+      {result.pending && <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 4 }}>結算中…</div>}
+      {ok && hasReward && !result.pending && (
         <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 8 }}>
           {result.reward_exp > 0 && <span style={{ fontSize: 18, fontWeight: 900, color: 'var(--gold)' }}>+{result.reward_exp} EXP</span>}
           {result.reward_dp > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 18, fontWeight: 900, color: '#FFD24D' }}><DpCoin size={18} />+{result.reward_dp}</span>}
         </div>
       )}
-      {!ok && <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 4 }}>沒關係，下次加油！</div>}
+      {!ok && !result.pending && <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 4 }}>沒關係，下次加油！</div>}
     </div>
   )
 }

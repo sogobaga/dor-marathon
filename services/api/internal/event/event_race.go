@@ -531,13 +531,22 @@ func (h *Handler) RaceComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	var params map[string]float64
 	_ = json.Unmarshal(cpRaw, &params)
-	if !validateCompletion(ctype, params, req) {
-		respondJSON(w, http.StatusOK, map[string]any{"completed": false, "message": "尚未達成完成條件"})
-		return
+
+	// 互動型：依完成度分級（可能 0★）；其餘：pass/fail 全額
+	var giveExp, giveDp, stars int
+	if isInteraction(ctype) {
+		stars = starsFor(interactionDegree(ctype, params, req))
+		f := rewardFactor(stars)
+		giveExp, giveDp = roundReward(rexp, f), roundReward(rdp, f)
+	} else {
+		if !validateCompletion(ctype, params, req) {
+			respondJSON(w, http.StatusOK, map[string]any{"completed": false, "message": "尚未達成完成條件"})
+			return
+		}
+		giveExp, giveDp, stars = rexp, rdp, 3
 	}
 
 	// 每人每日上限：達上限則完成但不發獎
-	giveExp, giveDp := rexp, rdp
 	if cap > 0 {
 		var todayCnt int
 		_ = h.db.QueryRow(ctx, `
@@ -573,7 +582,7 @@ func (h *Handler) RaceComplete(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"completed": true, "reward_exp": giveExp, "reward_dp": giveDp, "capped": giveExp == 0 && rexp > 0})
+	respondJSON(w, http.StatusOK, map[string]any{"completed": true, "reward_exp": giveExp, "reward_dp": giveDp, "stars": stars, "capped": giveExp == 0 && rexp > 0})
 }
 
 // POST /events/race/instances/{id}/fail — 逾時/放棄

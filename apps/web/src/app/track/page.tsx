@@ -9,7 +9,8 @@ import GoogleAuthProvider from '@/components/GoogleAuthProvider'
 import { LoginModal } from '@/components/UserAuthBar'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
-import { EventBanner, EventResultBanner, pickTimeImage, type ActiveEvent, type EventResult } from '@/components/EventTaskModal'
+import { EventBanner, EventResultBanner, pickTimeImage, isInteractionType, type ActiveEvent, type EventResult } from '@/components/EventTaskModal'
+import { EventInteraction } from '@/components/EventInteraction'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -213,8 +214,9 @@ export default function TrackPage() {
   async function completeEvent(ae: ActiveEvent, moved: number, windowS: number, extra: Partial<CompleteEvidence> = {}) {
     activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now()
     completingRef.current = true
-    // 樂觀顯示「任務完成」：與 modal/EventBanner 收起同一批渲染出現，避免等 API 往返的空窗（獎勵數字回來再補）
-    setEventResult({ status: 'completed', def: ae.def, reward_exp: 0, reward_dp: 0 })
+    const inter = isInteractionType(ae.def.completion_type)
+    // 樂觀顯示：非互動直接「完成」；互動先「結算中」（星等要等後端算完成度）
+    setEventResult({ status: 'completed', def: ae.def, reward_exp: 0, reward_dp: 0, pending: inter })
     playEventComplete(); vibrate([90, 50, 90]) // 事件完成：成功音 + 短震動
     const token = getUserToken()
     const body: CompleteEvidence = { moved_m: moved, window_s: windowS, ...extra }
@@ -225,7 +227,7 @@ export default function TrackPage() {
           : await eventApi.complete(token, ae.occId, body))
         : { completed: false }
       setEventResult(res.completed
-        ? { status: 'completed', def: ae.def, reward_exp: res.reward_exp ?? 0, reward_dp: res.reward_dp ?? 0 }
+        ? { status: 'completed', def: ae.def, reward_exp: res.reward_exp ?? 0, reward_dp: res.reward_dp ?? 0, stars: (res as any).stars }
         : { status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 })
     } catch { setEventResult({ status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 }) }
     finally { completingRef.current = false }
@@ -238,6 +240,13 @@ export default function TrackPage() {
       else if (ae.occId) eventApi.fail(token, ae.occId).catch(() => {})
     }
     setEventResult({ status: 'failed', def: ae.def, reward_exp: 0, reward_dp: 0 })
+  }
+  // 互動小遊戲時間到 → 用收集到的 evidence 送後端分級發獎
+  function handleInteractionDone(ev: { taps: number; held_ms: number }) {
+    const ae = activeEventRef.current
+    if (!ae) return
+    const windowS = Math.max(0, (ae.deadline - ae.readyUntil) / 1000)
+    completeEvent(ae, 0, windowS, { taps: ev.taps, held_ms: ev.held_ms })
   }
   // Phase B：連 WS（綁第一場「進行中且已報名」賽事）＋ 監聽多人事件邀請
   async function connectRaceWS() {
@@ -602,6 +611,9 @@ export default function TrackPage() {
             建議把手機「自動旋轉」關閉，或將本站「加入主畫面」以固定直屏。
           </div>
         </div>
+      )}
+      {status === 'tracking' && activeEvent && isInteractionType(activeEvent.def.completion_type) && (
+        <EventInteraction active={activeEvent} onDone={handleInteractionDone} />
       )}
       {confirmEnd && activeEvent && (() => {
         const ev = activeEvent
