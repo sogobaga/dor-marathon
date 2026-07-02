@@ -26,9 +26,16 @@ export function shapePath(shape: number): Pt[] {
   return v
 }
 
-// SVG 底圖用：把圖形頂點縮放到 size 方框
-export function shapeSvgPoints(shape: number, size: number, pad = 24): string {
-  const r = size / 2 - pad, c = size / 2
+// 導引虛線的外頂點半徑（占框半徑比例）。量測自後台三張魔法陣底圖的實際線條位置，
+// 讓虛線貼齊底圖（否則虛線畫得比底圖大，會誤導成「畫在外圈才對」但其實要畫在裡面）。
+// 底圖若日後在後台換成不同比例的圖，這三個數值需一併微調。
+export const SHAPE_GUIDE_SCALE: Record<number, number> = { 3: 0.56, 4: 0.58, 5: 0.59 }
+
+// SVG 底圖用：把圖形頂點縮放到 size 方框。預設半徑貼齊底圖（SHAPE_GUIDE_SCALE）；
+// 若明確指定 pad，則以 pad 決定半徑（保留舊行為）。
+export function shapeSvgPoints(shape: number, size: number, pad?: number): string {
+  const c = size / 2
+  const r = pad != null ? c - pad : c * (SHAPE_GUIDE_SCALE[shape] ?? 0.59)
   return shapePath(shape).map((p) => `${(c + p.x * r).toFixed(1)},${(c + p.y * r).toFixed(1)}`).join(' ')
 }
 
