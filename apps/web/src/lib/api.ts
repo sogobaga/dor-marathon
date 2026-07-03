@@ -218,7 +218,13 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+// 401 自動回復：由 adminAuth 註冊（用 refresh 換新 token 後重試一次），以回呼註冊避免 api.ts↔adminAuth 循環依賴。
+// 回傳新 token 才重試；回 null（非後台 token / 續期失敗）則照常拋 401，交給呼叫端處理。
+type AuthRecovery = (failedToken: string) => Promise<string | null>
+let authRecovery: AuthRecovery | null = null
+export function setAuthRecovery(fn: AuthRecovery | null) { authRecovery = fn }
+
+async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
   const res = await fetch(BASE + path, {
     ...init,
     headers: {
@@ -226,6 +232,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   })
+  // 401 且尚未重試：若這次帶的是後台 token → 續期後用新 token 重試一次（避免 token 剛過期就被登出）
+  if (res.status === 401 && !retried && authRecovery) {
+    const h = init?.headers as Record<string, string> | undefined
+    const auth = h?.Authorization // 所有呼叫都用 withAuth（大寫 Authorization），重試時原樣覆寫、不會產生重複 header
+    const token = typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : ''
+    if (token) {
+      const nt = await authRecovery(token)
+      if (nt) return request<T>(path, { ...init, headers: { ...init?.headers, Authorization: `Bearer ${nt}` } }, true)
+    }
+  }
   // 204 No Content 或空 body（如 DELETE / logout）不解析 JSON，避免 "Unexpected end of JSON input"
   const text = await res.text()
   let data: any = null

@@ -2,10 +2,18 @@
 // 「保持登入」勾選 → access + refresh 存 localStorage（跨重啟、可自動續期，30 天內免再登入）。
 // 不勾選 → access 只存 sessionStorage（關閉分頁即失效），不存 refresh。
 // 存的是「token」而非密碼：不是明碼、且可在伺服器端撤銷（refresh denylist）；access TTL 60 分、refresh 30 天滑動。
-import { authApi } from './api'
+import { authApi, setAuthRecovery } from './api'
 
 const ACCESS_KEY = 'dor_admin_token'    // keep 模式在 localStorage；session 模式在 sessionStorage
 const REFRESH_KEY = 'dor_admin_refresh' // 只有「保持登入」才存（localStorage）
+
+// 近期後台 access token（現行＋剛輪替掉的）。用來讓 401 自動回復「只作用在後台 token」，不誤動會員請求。
+const recent = new Set<string>()
+function remember(access: string) {
+  if (!access) return
+  recent.add(access)
+  if (recent.size > 4) recent.delete(recent.values().next().value as string)
+}
 
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null
@@ -27,11 +35,13 @@ export function setSession(access: string, refresh: string, keep: boolean) {
     localStorage.removeItem(ACCESS_KEY)
     localStorage.removeItem(REFRESH_KEY)
   }
+  remember(access)
 }
 // 相容舊呼叫：把新 access 寫回「目前所在」的儲存
 export function setToken(access: string) {
   if (localStorage.getItem(REFRESH_KEY)) localStorage.setItem(ACCESS_KEY, access)
   else sessionStorage.setItem(ACCESS_KEY, access)
+  remember(access)
 }
 export function clearToken() {
   if (typeof window === 'undefined') return
@@ -83,3 +93,14 @@ export async function ensureValidToken(): Promise<void> {
   if (t && !isExpiringSoon(t)) return
   if (getRefresh()) await refreshSession()
 }
+
+// 註冊給 api.ts 的 request：任一後台請求收到 401 時自動續期並用新 token 重試一次。
+// 只作用在「近期後台 token」→ 不會誤動會員請求；並行 401 也能用現行 token 重試。
+setAuthRecovery(async (failedToken: string) => {
+  // 只作用在後台 token：近期用過的（recent）或「目前儲存的後台 token」（重整/新分頁時 recent 為空也能回復）。
+  // 會員 token 一定不等於 getToken()（未登入後台時為 null），故不會誤動會員請求。
+  if (!recent.has(failedToken) && failedToken !== getToken()) return null
+  const cur = getToken()
+  if (cur && cur !== failedToken) return cur   // 已被並行請求刷新 → 直接用現行 token 重試
+  return await refreshSession()                 // 這就是現行 token → 續期後重試（失敗回 null → 照常 401）
+})
