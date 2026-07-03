@@ -372,7 +372,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
             <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 4 }}>
               {done.paid ? '已使用優惠序號 0 元完成，無需付款' : `應繳金額：${ntd(done.payable)}（後續繳費）`}
             </div>
-            <button onClick={onBack} style={{ ...primaryBtn, marginTop: 14 }}>回賽事列表</button>
+            <button onClick={onBack} style={{ ...primaryBtn, marginTop: 14 }}>回活動列表</button>
           </div>
         )}
 

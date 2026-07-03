@@ -118,7 +118,7 @@ export default function AdminLevelsPage() {
       <div style={panel}>
         <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>會員資訊面板底圖</h2>
         <p style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 0 }}>
-          套用於前台賽事列表頂部的會員資訊面板背景（全站共用）。建議橫式、深色或會壓暗以保文字可讀。
+          套用於前台活動列表頂部的會員資訊面板背景（全站共用）。建議橫式、深色或會壓暗以保文字可讀。
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
           <div style={{ width: 200, height: 96, borderRadius: 12, border: '1px solid var(--line-2)', overflow: 'hidden', background: 'var(--bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
