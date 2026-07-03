@@ -1,16 +1,23 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { authApi } from '@/lib/api'
 import { setToken } from '@/lib/adminAuth'
+import { loadCreds, saveCreds, clearCreds } from '@/lib/adminRemember'
 
 export default function AdminLogin() {
   const router = useRouter()
   const [email, setEmail] = useState('admin')
-  const [password, setPassword] = useState('1234qwer')
+  const [password, setPassword] = useState('')
+  const [remember, setRemember] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+
+  // 若之前勾過「記住密碼」，載入時解密還原帳密並自動勾選
+  useEffect(() => {
+    loadCreds().then((c) => { if (c) { setEmail(c.email || 'admin'); setPassword(c.password); setRemember(true) } })
+  }, [])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -18,6 +25,7 @@ export default function AdminLogin() {
     setBusy(true)
     try {
       const res = await authApi.login({ email, password })
+      if (remember) await saveCreds(email, password); else clearCreds() // 只有勾選才加密暫存；取消勾選則清除
       setToken(res.tokens.access_token)
       router.push('/admin/races')
     } catch (e: any) {
@@ -53,8 +61,13 @@ export default function AdminLogin() {
           <input value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} type="text" autoComplete="username" />
         </Field>
         <Field label="密碼">
-          <input value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} type="password" />
+          <input value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} type="password" autoComplete="current-password" />
         </Field>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tx-dim)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={remember} onChange={(e) => { setRemember(e.target.checked); if (!e.target.checked) clearCreds() }} style={{ width: 16, height: 16 }} />
+          記住密碼（僅存於本機、加密保存）
+        </label>
 
         {err && <div style={{ color: 'var(--hunt)', fontSize: 13 }}>{err}</div>}
 
