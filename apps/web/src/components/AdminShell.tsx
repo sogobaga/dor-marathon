@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { clearToken, getToken } from '@/lib/adminAuth'
-import { adminMeApi, type AdminAccount } from '@/lib/api'
+import { clearToken, getToken, getRefresh } from '@/lib/adminAuth'
+import { adminMeApi, authApi, type AdminAccount } from '@/lib/api'
 import VersionBadge from './VersionBadge'
 
 type View = 'pc' | 'mobile'
@@ -82,6 +82,9 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   }
 
   function logout() {
+    // 先請伺服器把 refresh token 加入 denylist（撤銷），再清本機；不阻塞登出流程
+    const at = getToken(), rt = getRefresh()
+    if (at && rt) authApi.logout(at, rt).catch(() => {})
     clearToken()
     router.replace('/admin/login')
   }
