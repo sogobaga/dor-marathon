@@ -19,10 +19,11 @@ var specs = map[string]func(string) bool{
 	"event_wait_max_sec":   isNonNegInt,
 	"active_skin":          func(v string) bool { return v == "" || v == "default" || v == "warm" },
 	"interstitial_enabled": func(v string) bool { return v == "" || v == "0" || v == "1" }, // 蓋板廣告總開關
+	"favicon_url":          func(v string) bool { return v == "" || (len(v) <= 512 && (strings.HasPrefix(v, "/") || strings.HasPrefix(v, "http"))) },
 }
 
 // publicKeys 允許未登入前台讀取的 key（皆為非敏感外觀設定）。
-var publicKeys = map[string]bool{"active_skin": true}
+var publicKeys = map[string]bool{"active_skin": true, "favicon_url": true}
 
 func isNonNegInt(v string) bool {
 	if v == "" {
