@@ -35,7 +35,9 @@ type TypeSpec struct {
 	Params []ParamSpec `json:"params"`
 }
 
-// TriggerCatalog 觸發條件模組（切片先做兩種，之後可擴充 pace 類）
+// TriggerCatalog 觸發條件模組（距離類 + 配速類；由前端跑步引擎即時評估，非賽事，無伺服器端防弊需求——
+// 觸發只是「讓事件跳出來」，獎勵仍靠完成條件的伺服器驗證，故偽造觸發無利可圖）。
+// 配速單位一律「秒/公里」（值越大＝跑越慢，例：420=7:00/km、360=6:00/km、300=5:00/km）。
 var TriggerCatalog = []TypeSpec{
 	{"distance_below", "近期幾乎沒移動（原地）", []ParamSpec{
 		{"window_s", "觀察時間", "秒"},
@@ -44,6 +46,20 @@ var TriggerCatalog = []TypeSpec{
 	{"distance_above", "近期移動很多", []ParamSpec{
 		{"window_s", "觀察時間", "秒"},
 		{"min_move_m", "此時間內移動大於", "公尺"},
+	}},
+	{"pace_slow", "配速偏慢（跑太慢時）", []ParamSpec{
+		{"window_s", "觀察時間", "秒"},
+		{"min_move_m", "此時間內至少移動（排除原地）", "公尺"},
+		{"slower_than_spk", "配速慢於", "秒/公里"},
+	}},
+	{"pace_fast", "配速偏快（跑很快時）", []ParamSpec{
+		{"window_s", "觀察時間", "秒"},
+		{"faster_than_spk", "配速快於", "秒/公里"},
+	}},
+	{"pace_drop", "越跑越慢（配速明顯下滑）", []ParamSpec{
+		{"window_s", "觀察時間", "秒"},
+		{"min_move_m", "此時間內至少移動（排除原地）", "公尺"},
+		{"drop_spk", "後半配速比前半慢超過", "秒/公里"},
 	}},
 }
 

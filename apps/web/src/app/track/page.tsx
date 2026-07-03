@@ -215,10 +215,27 @@ export default function TrackPage() {
   }
   function triggerEligible(def: EventDef): boolean {
     const p = def.trigger_params
-    const moved = movedInWindow((p.window_s ?? 0) * 1000)
-    if (moved == null) return false
-    if (def.trigger_type === 'distance_below') return moved < (p.max_move_m ?? 0)
-    if (def.trigger_type === 'distance_above') return moved > (p.min_move_m ?? 0)
+    const windowSec = p.window_s ?? 0
+    const moved = movedInWindow(windowSec * 1000)
+    if (moved == null) return false // 歷史不足（跑步時間短於觀察視窗）
+    switch (def.trigger_type) {
+      case 'distance_below': return moved < (p.max_move_m ?? 0)
+      case 'distance_above': return moved > (p.min_move_m ?? 0)
+      case 'pace_slow': // 跑太慢：這段有實際移動、且配速（秒/公里）慢於門檻
+        if (moved < (p.min_move_m ?? 0) || moved <= 0) return false
+        return (windowSec * 1000) / moved > (p.slower_than_spk ?? 0)
+      case 'pace_fast': // 跑很快：配速快於門檻（需有移動，否則配速為無限大不會成立）
+        if (moved <= 0) return false
+        return (windowSec * 1000) / moved < (p.faster_than_spk ?? 0)
+      case 'pace_drop': { // 越跑越慢：後半配速比前半慢 drop 以上（兩段都要有移動）
+        if (moved < (p.min_move_m ?? 0)) return false
+        const now = Date.now()
+        const first = distAt(now - windowSec * 500) - distAt(now - windowSec * 1000)
+        const second = distAt(now) - distAt(now - windowSec * 500)
+        if (first <= 0 || second <= 0) return false
+        return (windowSec * 500) / second - (windowSec * 500) / first > (p.drop_spk ?? 0)
+      }
+    }
     return false
   }
   function pickWeighted(list: EventDef[]): EventDef {
