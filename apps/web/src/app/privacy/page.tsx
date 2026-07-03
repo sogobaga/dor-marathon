@@ -15,7 +15,7 @@ export default function PrivacyPage() {
       <ScrollArea>
       <div style={body}>
         <p style={{ ...p, color: 'var(--tx-faint)' }}>最後更新：2026 年 6 月</p>
-        <p style={p}>DOR 雲端馬拉松（dor.hero-mi.com，以下簡稱「本平台」）重視你的隱私。本政策說明我們蒐集哪些資料、如何使用，以及你的權利。</p>
+        <p style={p}>DOR 城市探索（dor.hero-mi.com，以下簡稱「本平台」）重視你的隱私。本政策說明我們蒐集哪些資料、如何使用，以及你的權利。</p>
 
         <H>1. 我們蒐集的資料</H>
         <ul style={ul}>
@@ -54,7 +54,7 @@ export default function PrivacyPage() {
         <p style={p}>隱私相關問題請來信：<a href="mailto:info@hero-mi.com" style={link}>info@hero-mi.com</a></p>
 
         <div style={{ textAlign: 'center', marginTop: 28, fontSize: 12, color: 'var(--tx-faint)' }}>
-          DOR · 雲端馬拉松　·　<a href="/terms" style={link}>服務條款</a>　·　<a href="/support" style={link}>支援與聯絡</a>
+          DOR · 城市探索　·　<a href="/terms" style={link}>服務條款</a>　·　<a href="/support" style={link}>支援與聯絡</a>
         </div>
       </div>
       </ScrollArea>

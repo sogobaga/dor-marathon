@@ -20,14 +20,14 @@ export default function TermsPage() {
         <div style={notice}>
           <div style={{ fontWeight: 800, color: 'var(--gold)', marginBottom: 6 }}>⚠️ 重要：退款與鑑賞期</div>
           <div style={{ fontSize: 13, color: 'var(--tx)', lineHeight: 1.75 }}>
-            本平台之雲端馬拉松為「特定期間提供之線上活動／數位服務」，<b>一經報名繳費完成即開通參賽資格，恕不退款</b>；
+            本平台之城市探索為「特定期間提供之線上活動／數位服務」，<b>一經報名繳費完成即開通參賽資格，恕不退款</b>；
             並依《消費者保護法》及《通訊交易解除權合理例外情事適用準則》，本服務<b>不適用七天鑑賞期</b>（七日內無條件解除權）。
           </div>
         </div>
 
         <H>退款政策</H>
         <ul style={ul}>
-          <li>雲端馬拉松賽事屬<b>線上活動／數位服務</b>，於特定期間提供，報名繳費完成即開通參賽資格。</li>
+          <li>城市探索賽事屬<b>線上活動／數位服務</b>，於特定期間提供，報名繳費完成即開通參賽資格。</li>
           <li><b>報名繳費完成後恕不退款</b>（含已開通但未實際參賽者）。</li>
           <li>本服務屬「特定日期或期間提供之活動」「一經提供即難以回復之數位內容／線上服務」，依法<b>不適用七天鑑賞期</b>。</li>
           <li><b>例外</b>：若賽事因<b>主辦方因素</b>取消或延期，將另行公告退費、順延或其他處理方式。</li>
@@ -36,7 +36,7 @@ export default function TermsPage() {
 
         <H>服務條款</H>
         <ol style={ol}>
-          <li><b>服務內容</b>：DOR 雲端馬拉松（dor.hero-mi.com）為線上路跑／挑戰賽事的報名與運動數據追蹤平台，提供賽事報名、運動數據連接（如 Strava）、任務、排行榜與等級系統。</li>
+          <li><b>服務內容</b>：DOR 城市探索（dor.hero-mi.com）為線上路跑／挑戰賽事的報名與運動數據追蹤平台，提供賽事報名、運動數據連接（如 Strava）、任務、排行榜與等級系統。</li>
           <li><b>帳號</b>：你應提供正確資料並妥善保管帳號，不得冒用他人身分。</li>
           <li><b>報名與付款</b>：報名須依各賽事規定填寫並完成付款；報名成功即視為同意該賽事規則與本條款。</li>
           <li><b>使用規範</b>：不得以不正當方式（如偽造定位、竄改數據、重複上傳）取得成績或獎勵。本平台得對異常數據進行標記、不予計入或取消資格。</li>
@@ -51,7 +51,7 @@ export default function TermsPage() {
         <p style={p}><a href="mailto:info@hero-mi.com" style={link}>info@hero-mi.com</a></p>
 
         <div style={{ textAlign: 'center', marginTop: 28, fontSize: 12, color: 'var(--tx-faint)' }}>
-          DOR · 雲端馬拉松　·　<a href="/privacy" style={link}>隱私權政策</a>　·　<a href="/support" style={link}>支援與聯絡</a>
+          DOR · 城市探索　·　<a href="/privacy" style={link}>隱私權政策</a>　·　<a href="/support" style={link}>支援與聯絡</a>
         </div>
       </div>
       </ScrollArea>

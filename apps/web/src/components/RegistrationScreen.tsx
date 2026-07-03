@@ -599,7 +599,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
             </button>
             <div style={{ fontSize: 11, color: 'var(--tx-faint)', textAlign: 'center', lineHeight: 1.6 }}>
               送出即保留名額，狀態為「待繳費」。<br />
-              雲端馬拉松為線上活動，<b style={{ color: 'var(--tx-dim)' }}>報名繳費後恕不退款、不適用七天鑑賞期</b>。送出即表示同意 <a href="/terms" target="_blank" rel="noreferrer" style={{ color: 'var(--fug)' }}>服務條款</a>。
+              城市探索為線上活動，<b style={{ color: 'var(--tx-dim)' }}>報名繳費後恕不退款、不適用七天鑑賞期</b>。送出即表示同意 <a href="/terms" target="_blank" rel="noreferrer" style={{ color: 'var(--fug)' }}>服務條款</a>。
             </div>
           </div>
         )}

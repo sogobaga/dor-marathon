@@ -488,7 +488,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             連接 Strava：到上方「運動數據」分頁點官方「Connect with Strava」即可；要中斷請按「中斷」。我們僅匯入你連接之後的活動，並可隨時中斷。
           </div>
           <div style={{ fontSize: 12, color: 'var(--tx-faint)', lineHeight: 1.7 }}>
-            退款：雲端馬拉松為線上活動，報名繳費後恕不退款、不適用七天鑑賞期。
+            退款：城市探索為線上活動，報名繳費後恕不退款、不適用七天鑑賞期。
           </div>
           <div style={{ fontSize: 12.5, marginTop: 2, display: 'flex', flexWrap: 'wrap', gap: '4px 8px' }}>
             <a href="/support" style={{ color: 'var(--fug)', textDecoration: 'underline' }}>支援說明</a>
