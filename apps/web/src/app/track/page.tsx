@@ -65,7 +65,10 @@ export default function TrackPage() {
   // 賽事多人連動事件（Phase B）
   const [raceInvite, setRaceInvite] = useState<RaceEventInvite | null>(null)
   const [inviteNow, setInviteNow] = useState(0) // 驅動邀請倒數重繪
-  const isLandscape = useIsPhone() && useIsLandscape() // 手機橫向：暫停互動小遊戲（「請轉直」提示改由全域 LandscapeNotice 顯示）
+  // 兩個 hook 必須各自「無條件」呼叫再合併——不可寫成 useIsPhone() && useIsLandscape()（&& 短路會讓某些 render 少呼叫一個 hook → 崩潰）
+  const isPhone = useIsPhone()
+  const inLandscape = useIsLandscape()
+  const isLandscape = isPhone && inLandscape // 手機橫向：暫停互動小遊戲（「請轉直」提示由全域 LandscapeNotice 顯示）
   const [fxAssets, setFxAssets] = useState<Record<string, string>>({}) // 效果覆寫（正式圖片/音檔）
   const [confirmEnd, setConfirmEnd] = useState(false) // 事件進行中按「結束」→ 先跳確認（損失規避）
   const [muted, setMuted] = useState(false) // 事件音效靜音（震動不受影響）
