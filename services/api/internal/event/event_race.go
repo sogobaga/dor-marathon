@@ -257,6 +257,23 @@ func (h *Handler) RaceContext(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"races": out})
 }
 
+// RunExpiryLoop 背景清理：每分鐘把「逾時仍未完成」的多人事件參與者標為 expired。
+// 冪等（WHERE status='joined'）→ 多實例同時跑也安全；不發獎（逾時＝未完成）。ctx 取消即結束。
+func (h *Handler) RunExpiryLoop(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			_, _ = h.db.Exec(cctx, `UPDATE event_race_participants SET status='expired' WHERE status='joined' AND deadline < NOW()`)
+			cancel()
+		}
+	}
+}
+
 type raceTriggerReq struct {
 	RaceID   string  `json:"race_id"`
 	MovedM   float64 `json:"moved_m"`

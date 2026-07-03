@@ -101,8 +101,8 @@ export default function TrackPage() {
   const completingRef = useRef(false) // 完成/失敗結算中：避免 evalTick 在空窗期又 arm 新事件蓋掉結果
   eventDefsRef.current = eventDefs
   // Phase B 用
-  const wsRef = useRef<WebSocket | null>(null)
-  const raceIdRef = useRef('') // 綁定的賽事（供回報里程/接收邀請）
+  const wssRef = useRef<WebSocket[]>([]) // 綁定所有進行中賽事的 WS（多人事件邀請）
+  const raceIdsRef = useRef<string[]>([]) // 進行中且已報名的賽事 id（供回報里程/接收邀請）
   const lastTriggerRef = useRef(0) // 里程回報節流
   const lastClaimRef = useRef(0) // 認領後台手動觸發事件的節流
   const raceInviteRef = useRef<RaceEventInvite | null>(null)
@@ -302,29 +302,33 @@ export default function TrackPage() {
     const windowS = Math.max(0, (ae.deadline - ae.readyUntil) / 1000)
     completeEvent(ae, 0, windowS, { taps: ev.taps, held_ms: ev.held_ms, swipe_px: ev.swipe_px, swipes: ev.swipes, shape_pts: ev.shape_pts, shape: ev.shape })
   }
-  // Phase B：連 WS（綁第一場「進行中且已報名」賽事）＋ 監聽多人事件邀請
+  // 收到多人事件邀請（任一綁定賽事的 WS 都走這裡）
+  function onRaceMsg(ev: MessageEvent) {
+    try {
+      const msg = JSON.parse(ev.data)
+      if (msg.type !== 'event_race_invite') return
+      const p = msg.payload as RaceEventInvite
+      if (!user?.id || !p.target_user_ids?.includes(user.id)) return
+      if (activeEventRef.current || raceInviteRef.current) return // 一次一任務
+      if (Date.now() > p.join_deadline) return
+      setRaceInvite(p)
+      playEventAlert(); vibrate([200, 100, 200]) // 多人事件邀請來了：音效 + 震動
+    } catch { /* ignore */ }
+  }
+  // Phase B：對「所有進行中且已報名」的賽事各連一條 WS，任一場來邀請都收得到
   async function connectRaceWS() {
     const token = getUserToken()
-    if (!token || wsRef.current) return
+    if (!token || wssRef.current.length) return
     try {
       const { races } = await eventRaceApi.context(token)
       if (!races.length) return
-      raceIdRef.current = races[0].id
-      const ws = createRaceSocket(raceIdRef.current, token)
-      wsRef.current = ws
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data)
-          if (msg.type !== 'event_race_invite') return
-          const p = msg.payload as RaceEventInvite
-          if (!user?.id || !p.target_user_ids?.includes(user.id)) return
-          if (activeEventRef.current || raceInviteRef.current) return // 一次一任務
-          if (Date.now() > p.join_deadline) return
-          setRaceInvite(p)
-          playEventAlert(); vibrate([200, 100, 200]) // 多人事件邀請來了：音效 + 震動
-        } catch { /* ignore */ }
+      raceIdsRef.current = races.map((r) => r.id)
+      for (const rid of raceIdsRef.current) {
+        const ws = createRaceSocket(rid, token)
+        ws.onmessage = onRaceMsg
+        ws.onclose = () => { wssRef.current = wssRef.current.filter((w) => w !== ws) }
+        wssRef.current.push(ws)
       }
-      ws.onclose = () => { if (wsRef.current === ws) wsRef.current = null }
     } catch { /* ignore */ }
   }
   // 加入多人事件 → 轉為一般 activeEvent，交給既有引擎評估完成
@@ -409,10 +413,13 @@ export default function TrackPage() {
       claimManualEvent()
     }
     // Phase B：節流回報里程給後端（由後端依定義門檻/冷卻決定是否觸發多人事件）
-    if (raceIdRef.current && distRef.current > 0 && now - lastTriggerRef.current > 20000) {
+    if (raceIdsRef.current.length && distRef.current > 0 && now - lastTriggerRef.current > 20000) {
       lastTriggerRef.current = now
       const token = getUserToken()
-      if (token) eventRaceApi.trigger(token, { race_id: raceIdRef.current, moved_m: distRef.current, elapsed_s: Math.floor((now - startRef.current) / 1000) }).catch(() => {})
+      if (token) {
+        const moved = distRef.current, elapsed = Math.floor((now - startRef.current) / 1000)
+        for (const rid of raceIdsRef.current) eventRaceApi.trigger(token, { race_id: rid, moved_m: moved, elapsed_s: elapsed }).catch(() => {})
+      }
     }
     // 邀請倒數重繪＋逾時自動關閉
     if (raceInviteRef.current) {
@@ -497,7 +504,7 @@ export default function TrackPage() {
     rollNextEvent() // 開始跑步：取第一段隨機等待時間
     setActiveEvent(null); setEventResult(null); setEventMoved(0)
     // Phase B 重置
-    setRaceInvite(null); raceIdRef.current = ''; lastTriggerRef.current = 0; lastClaimRef.current = 0
+    setRaceInvite(null); raceIdsRef.current = []; lastTriggerRef.current = 0; lastClaimRef.current = 0
     startRef.current = Date.now()
     setStatus('tracking')
     unlockAudio() // 在使用者手勢內解鎖音訊（iOS 必須）
@@ -525,8 +532,8 @@ export default function TrackPage() {
     watchRef.current = null
     clearInterval(timerRef.current)
     clearInterval(evalTimerRef.current)
-    try { wsRef.current?.close() } catch { /* ignore */ }
-    wsRef.current = null; raceIdRef.current = ''
+    for (const w of wssRef.current) { try { w.close() } catch { /* ignore */ } }
+    wssRef.current = []; raceIdsRef.current = []
     try { wakeRef.current?.release() } catch { /* ignore */ }
     wakeRef.current = null
     try { (screen.orientation as any)?.unlock?.() } catch { /* ignore */ }

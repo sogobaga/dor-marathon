@@ -292,6 +292,10 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
+	// 背景：定期清理逾時未完成的多人事件參與者（Phase B auto-expire）
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	go eventHandler.RunExpiryLoop(bgCtx)
+
 	go func() {
 		log.Info().Str("port", cfg.Port).Msg("DOR API server starting")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -303,6 +307,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
+	bgCancel() // 停止背景清理
 
 	log.Info().Msg("shutting down server...")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
