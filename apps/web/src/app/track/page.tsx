@@ -78,6 +78,7 @@ export default function TrackPage() {
   const splitMarkRef = useRef<number[]>([]) // 每跨整公里時的 elapsed 秒
   const startRef = useRef(0)
   const watchRef = useRef<number | null>(null)
+  const warmWatchRef = useRef<number | null>(null) // 進頁面時的 GPS 預熱偵測（顯示精度/定位地圖，不記錄）
   const wakeRef = useRef<any>(null)
   const timerRef = useRef<any>(null)
   const mapRef = useRef<any>(null)
@@ -123,6 +124,10 @@ export default function TrackPage() {
     const p: GpsPoint = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: pos.timestamp, acc: pos.coords.accuracy ?? 0 }
     setCurPos({ lat: p.lat, lng: p.lng, acc: p.acc })
     ensureMap(p.lat, p.lng)
+    // 標記與地圖永遠跟著「目前」位置（即時感），即使該點未被採納為距離
+    if (markRef.current) markRef.current.setLatLng([p.lat, p.lng])
+    if (mapRef.current) mapRef.current.panTo([p.lat, p.lng])
+    if (statusRef.current !== 'tracking') return // 預熱階段（未開始跑步）：只顯示 GPS 精度＋地圖位置，不累積距離、不警告
     const goodAcc = p.acc === 0 || p.acc <= MAX_ACC
     if (!goodAcc) {
       setWarn(`GPS 訊號較弱（±${Math.round(p.acc)}m），移動可能未被記錄，請到較空曠處`)
@@ -165,14 +170,26 @@ export default function TrackPage() {
         }
       }
     }
-    // 標記點與地圖永遠跟著「目前」位置（即時感），即使該點未被採納為距離
-    if (markRef.current) markRef.current.setLatLng([p.lat, p.lng])
-    if (mapRef.current) mapRef.current.panTo([p.lat, p.lng])
     // 事件進行中：更新即時位移（進度條）
     if (activeEventRef.current) setEventMoved(distRef.current - activeEventRef.current.triggerD)
     // 防當掉：暫存採納後的軌跡
     localStorage.setItem(LS_KEY, JSON.stringify({ start: startRef.current, points: pointsRef.current.slice(-2000) }))
   }, [ensureMap])
+  const onPosRef = useRef(onPos); onPosRef.current = onPos
+
+  // 進入頁面（idle）就先啟動 GPS「預熱」偵測：立即顯示精度、定位地圖，但不記錄距離。
+  // 開始跑步時 start() 會同步關掉它、換成正式追蹤；離開 idle / 卸載時自動關閉（用 onPosRef 避免每次 render 重訂閱）。
+  useEffect(() => {
+    if (status !== 'idle') return
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return
+    const id = navigator.geolocation.watchPosition(
+      (pos) => onPosRef.current(pos),
+      () => { /* 預熱失敗忽略（權限未給/逾時）；開始跑步時會在使用者手勢內再要求 */ },
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 },
+    )
+    warmWatchRef.current = id
+    return () => { try { navigator.geolocation.clearWatch(id) } catch { /* ignore */ } warmWatchRef.current = null }
+  }, [status])
 
   async function acquireWake() {
     try { wakeRef.current = await (navigator as any).wakeLock?.request('screen') } catch { /* ignore */ }
@@ -453,6 +470,8 @@ export default function TrackPage() {
   function start() {
     setErr('')
     if (!navigator.geolocation) { setErr('此裝置/瀏覽器不支援定位'); return }
+    // 關掉進頁面的 GPS 預熱偵測，避免與正式追蹤重複回報
+    if (warmWatchRef.current != null) { try { navigator.geolocation.clearWatch(warmWatchRef.current) } catch { /* ignore */ } warmWatchRef.current = null }
     pointsRef.current = []; distRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null)
     if (lineRef.current) lineRef.current.setLatLngs([]) // 清掉上一趟的軌跡線（避免地圖殘留）
@@ -706,10 +725,16 @@ export default function TrackPage() {
       </div>
 
       <ScrollArea padding="16">
-        {status === 'tracking' && curPos && (
-          <div style={{ fontSize: 11.5, marginBottom: 10, color: curPos.acc > MAX_ACC ? 'var(--hunt)' : 'var(--tx-faint)' }}>
-            📶 GPS 精度 ±{Math.round(curPos.acc)}m{curPos.acc > MAX_ACC ? '（訊號弱，移動可能未計入 → 請到空曠處）' : '（正常）'}
-          </div>
+        {(status === 'idle' || status === 'tracking') && (
+          curPos ? (
+            <div style={{ fontSize: 11.5, marginBottom: 10, color: curPos.acc > MAX_ACC ? 'var(--hunt)' : 'var(--tx-faint)' }}>
+              📶 GPS 精度 ±{Math.round(curPos.acc)}m{curPos.acc > MAX_ACC
+                ? (status === 'tracking' ? '（訊號弱，移動可能未計入 → 請到空曠處）' : '（訊號弱，建議到空曠處再開始）')
+                : '（正常）'}
+            </div>
+          ) : status === 'idle' ? (
+            <div style={{ fontSize: 11.5, marginBottom: 10, color: 'var(--tx-faint)' }}>📶 GPS 偵測中…（首次進入請允許定位權限）</div>
+          ) : null
         )}
         {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, wordBreak: 'break-word' }}>⚠️ {warn}</div>}
         {err && <div style={{ color: 'var(--hunt)', fontSize: 13, marginBottom: 12 }}>{err}</div>}
