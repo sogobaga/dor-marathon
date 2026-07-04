@@ -90,7 +90,7 @@ export default function RaceDetailScreen({
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <header style={{ padding: 'var(--app-top) 22px 10px', flexShrink: 0 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
-        <h1 style={{ margin: '10px 0 0', fontSize: 22, fontWeight: 800, color: 'var(--tx)' }}>{race.title}</h1>
+        <h1 style={{ margin: '10px 0 0', fontSize: 22, fontWeight: 800, color: 'var(--tx)', wordBreak: 'keep-all', overflowWrap: 'break-word' }}>{race.title}</h1>
       </header>
 
       <ScrollArea padding="4px 18px 30px">
@@ -272,7 +272,7 @@ function TaskRow({ t, onClick }: { t: TaskProgress; onClick?: () => void }) {
     const cps = t.checkpoints ?? []
     const collected = cps.filter((c) => c.collected).length
     return (
-      <div onClick={onClick} style={{ background: 'var(--bg-1)', border: `1px solid ${t.done ? 'var(--fug)' : 'var(--line)'}`, borderRadius: 12, padding: '11px 13px', ...clickStyle }}>
+      <div onClick={onClick} style={{ background: 'var(--bg-1)', border: `1px solid ${t.done ? 'var(--fug)' : 'var(--line)'}`, borderRadius: 'var(--radius-md, 12px)', padding: '11px 13px', ...clickStyle }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
           <span style={{ fontSize: 13.5, fontWeight: 700 }}>{t.done ? '✓ ' : ''}{t.title || m?.label}</span>
           <span style={{ fontSize: 12, color: t.done ? 'var(--fug)' : 'var(--tx-dim)', whiteSpace: 'nowrap' }}>集章 {collected}/{cps.length}</span>
@@ -339,7 +339,7 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
   const c: TaskContributors | undefined = data?.contributors
   const meInTop = c?.top.some((x) => x.is_me)
   const row = (x: TaskContributors['top'][number], showRank = true) => (
-    <div key={x.user_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 9, background: x.is_me ? 'rgba(255,194,75,.14)' : 'var(--bg-2)', border: x.is_me ? '1px solid var(--gold)' : '1px solid transparent' }}>
+    <div key={x.user_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 'var(--radius-md, 9px)', background: x.is_me ? 'rgba(255,194,75,.14)' : 'var(--bg-2)', border: x.is_me ? '1px solid var(--gold)' : '1px solid transparent' }}>
       <span style={{ width: 30, textAlign: 'center', fontWeight: 900, fontSize: 13, color: x.rank <= 3 ? 'var(--gold)' : 'var(--tx-dim)' }}>{showRank ? x.rank : '·'}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{x.name}{x.is_me ? '（我）' : ''}</div>
@@ -384,7 +384,7 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ flex: 1, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px', textAlign: 'center' }}>
+    <div style={{ flex: 1, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 12px)', padding: '10px 12px', textAlign: 'center' }}>
       <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--tx)' }}>{value}</div>
       <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 2 }}>{label}</div>
     </div>
@@ -403,12 +403,12 @@ function Hint({ children, color = 'var(--tx-dim)' }: { children: React.ReactNode
 }
 
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0 }
-const dashCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: 16 }
+const dashCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 16, boxShadow: 'var(--card-shadow, none)' }
 const statusBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: 'var(--fug)', background: 'rgba(45,212,150,.1)', border: '1px solid var(--fug)', borderRadius: 999, padding: '2px 10px' }
-const registerBtn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none', borderRadius: 12, padding: '12px 20px', cursor: 'pointer', fontSize: 15, width: '100%' }
-const registeredBox: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '11px 16px', textAlign: 'center', fontSize: 14, fontWeight: 700, color: 'var(--fug)' }
-const certBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#1a1200', fontWeight: 800, border: 'none', borderRadius: 12, padding: '12px 20px', cursor: 'pointer', fontSize: 15 }
-const expBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'rgba(70,227,160,.1)', color: 'var(--fug)', fontWeight: 800, border: '1px solid rgba(70,227,160,.35)', borderRadius: 12, padding: '11px 20px', cursor: 'pointer', fontSize: 14 }
+const registerBtn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '12px 20px', cursor: 'pointer', fontSize: 15, width: '100%' }
+const registeredBox: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 'var(--radius-md, 12px)', padding: '11px 16px', textAlign: 'center', fontSize: 14, fontWeight: 700, color: 'var(--fug)' }
+const certBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#1a1200', fontWeight: 800, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '12px 20px', cursor: 'pointer', fontSize: 15 }
+const expBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'rgba(70,227,160,.1)', color: 'var(--fug)', fontWeight: 800, border: '1px solid rgba(70,227,160,.35)', borderRadius: 'var(--radius-btn, 12px)', padding: '11px 20px', cursor: 'pointer', fontSize: 14 }
 const lightbox: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,.88)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 16 }
 const lightboxDl: React.CSSProperties = { background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#1a1200', fontWeight: 800, border: 'none', borderRadius: 10, padding: '11px 22px', cursor: 'pointer', fontSize: 15 }
-const notStartedHint: React.CSSProperties = { background: 'rgba(255,210,90,.08)', border: '1px solid var(--line)', borderRadius: 12, padding: '12px 14px', fontSize: 13, color: 'var(--gold)', marginBottom: 14, textAlign: 'center' }
+const notStartedHint: React.CSSProperties = { background: 'rgba(255,210,90,.08)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 12px)', padding: '12px 14px', fontSize: 13, color: 'var(--gold)', marginBottom: 14, textAlign: 'center' }

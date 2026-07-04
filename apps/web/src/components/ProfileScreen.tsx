@@ -458,7 +458,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
                 <div key={r.registration_id} style={recCard}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: 15 }}>{r.race_title}</div>
+                      <div style={{ fontWeight: 700, fontSize: 15, wordBreak: 'keep-all', overflowWrap: 'break-word' }}>{r.race_title}</div>
                       <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 2 }}>
                         {r.group_revealed ? (r.group_name || '—') : '分組賽事當天公布'}
                       </div>
@@ -554,7 +554,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0 }
 const inp: React.CSSProperties = {
-  background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 10,
+  background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 'var(--radius-md, 10px)',
   padding: '11px 12px', color: 'var(--tx)', fontSize: 14, width: '100%', boxSizing: 'border-box', fontFamily: 'inherit',
 }
 // iOS 原生日期框：去除原生外觀以吃滿寬度、文字靠左
@@ -563,14 +563,14 @@ const dateInp: React.CSSProperties = {
 }
 const primaryBtn: React.CSSProperties = {
   background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
-  borderRadius: 10, padding: '12px 20px', cursor: 'pointer', fontSize: 14, marginTop: 4,
+  borderRadius: 'var(--radius-btn, 10px)', padding: '12px 20px', cursor: 'pointer', fontSize: 14, marginTop: 4,
 }
-const recCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: 14 }
+const recCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 14px)', padding: 14 }
 const ghostBtn: React.CSSProperties = {
   background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)',
   borderRadius: 10, padding: '9px 14px', cursor: 'pointer', fontSize: 13, fontFamily: 'inherit',
 }
-const dashCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: 16 }
+const dashCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 16, boxShadow: 'var(--card-shadow, none)' }
 const avatarWrap: React.CSSProperties = {
   position: 'relative', width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
   background: 'var(--bg-2)', border: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
@@ -582,7 +582,7 @@ const expBarOuter: React.CSSProperties = { height: 7, background: 'var(--bg-2)',
 const expBarInner: React.CSSProperties = { height: '100%', background: 'var(--fug)', borderRadius: 999, transition: 'width .3s' }
 const payBtn: React.CSSProperties = {
   background: 'var(--gold)', color: '#1a1200', fontWeight: 700, border: 'none',
-  borderRadius: 9, padding: '7px 14px', cursor: 'pointer', fontSize: 13,
+  borderRadius: 'var(--radius-btn, 9px)', padding: '7px 14px', cursor: 'pointer', fontSize: 13,
 }
 const overlay: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 20 }
 const panel: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: 20, width: '100%', maxWidth: 420 }
