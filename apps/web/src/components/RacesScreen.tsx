@@ -92,6 +92,7 @@ export default function RacesScreen({
             ))}
           </div>
         )}
+        <div className="skin-footer-deco" aria-hidden />
         </div>
       </div>
     </div>

@@ -160,6 +160,18 @@
 [data-skin="warm2"] .skin-btn-start { aspect-ratio: 793 / 146; background-image: url(/ui/buttons/crop_start_run_button_full.png) !important; }
 [data-skin="warm2"] .skin-btn-end   { aspect-ratio: 765 / 117; background-image: url(/ui/buttons/crop_end_upload_button_full.png) !important; }
 
+/* warm2 頁尾裝飾條：只此 skin 顯示（其他 skin display:none、不進版面），置於捲動內容最底、不擋互動 */
+.skin-footer-deco { display: none; }
+[data-skin="warm2"] .skin-footer-deco {
+  display: block; width: 100%; aspect-ratio: 1024 / 220;
+  margin-top: 14px; pointer-events: none;
+  background: url(/ui/bg/bg_grass_footer_1024x220.png) center bottom / contain no-repeat;
+}
+[data-skin="warm2"] .skin-footer-deco.city {
+  aspect-ratio: 1024 / 240;
+  background-image: url(/ui/bg/bg_city_silhouette_landscape_1024x240.png);
+}
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {
