@@ -299,6 +299,8 @@ export const activitiesApi = {
     request<{ result: GpsRunResult }>('/activities/gps', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   gpsHistory: (token: string) => request<{ runs: GpsRunHistory[] }>('/activities/gps/history', { headers: withAuth(token) }),
   gpsDetail: (token: string, id: string) => request<{ run: GpsRunHistory }>(`/activities/gps/${id}`, { headers: withAuth(token) }),
+  // 跑步中心跳（後台「目前在跑名單」用）；失敗可忽略
+  trackPing: (token: string) => request<void>('/track/ping', { method: 'POST', headers: withAuth(token) }),
 }
 
 // --- 打卡點任務（geofence check-in）---
@@ -825,6 +827,26 @@ export interface TaskContributors {
   contributed: number
   top: Contributor[]
   me?: Contributor | null
+}
+
+// --- Admin: 數據總覽 ---
+export interface OverviewRace {
+  id: string
+  title: string
+  display_status: string
+  start_date: string
+  end_date: string
+  registrations: number
+  tracking_count: number
+  tracking_names: string[]
+}
+export interface AdminOverview {
+  races: OverviewRace[]
+  tracking_total: number
+  generated_at: string
+}
+export const adminOverviewApi = {
+  get: (token: string) => request<AdminOverview>('/admin/overview', { headers: withAuth(token) }),
 }
 
 // --- Admin: Races ---

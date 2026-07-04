@@ -81,6 +81,7 @@ export default function TrackPage() {
   const warmWatchRef = useRef<number | null>(null) // 進頁面時的 GPS 預熱偵測（顯示精度/定位地圖，不記錄）
   const wakeRef = useRef<any>(null)
   const timerRef = useRef<any>(null)
+  const pingTimerRef = useRef<any>(null) // 跑步中心跳（後台「目前在跑名單」）
   const mapRef = useRef<any>(null)
   const lineRef = useRef<any>(null)
   const markRef = useRef<any>(null)
@@ -571,6 +572,10 @@ export default function TrackPage() {
     )
     timerRef.current = setInterval(() => setElapsed((Date.now() - startRef.current) / 1000), 250)
     evalTimerRef.current = setInterval(evalTick, 1000) // 事件引擎每秒評估
+    // 心跳：立即 + 每 30 秒回報「目前在跑」（供後台總覽名單；失敗忽略）
+    const ping = () => { const t = getUserToken(); if (t) activitiesApi.trackPing(t).catch(() => {}) }
+    ping()
+    pingTimerRef.current = setInterval(ping, 30000)
     acquireWake() // 不 await：wake lock 失敗或延遲都不影響定位
     // 盡力鎖直屏（Android/PWA 全螢幕有效；iOS Safari 不支援 → 靠下方「轉回直立」提示保底）
     try { (screen.orientation as any)?.lock?.('portrait').catch(() => {}) } catch { /* 不支援就忽略 */ }
@@ -581,6 +586,7 @@ export default function TrackPage() {
     watchRef.current = null
     clearInterval(timerRef.current)
     clearInterval(evalTimerRef.current)
+    clearInterval(pingTimerRef.current)
     for (const w of wssRef.current) { try { w.close() } catch { /* ignore */ } }
     wssRef.current = []; raceIdsRef.current = []
     try { wakeRef.current?.release() } catch { /* ignore */ }

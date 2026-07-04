@@ -209,6 +209,9 @@ func main() {
 			// 活動上傳
 			r.Mount("/activities", actHandler.Router())
 
+			// 跑步中心跳（後台總覽的「目前在跑名單」用）
+			r.Post("/track/ping", raceHandler.Ping)
+
 			// 打卡點任務（geofence check-in）
 			r.Mount("/checkpoints", raceHandler.CheckpointRouter())
 
@@ -244,6 +247,8 @@ func main() {
 			perm := adminAcctHandler.RequirePerm
 			// 自己的身分與權限（任何 admin 皆可讀，前台用來決定選單）
 			r.Get("/admin/me", adminAcctHandler.Me)
+			// 數據總覽（任何 admin 皆可讀）
+			r.Get("/admin/overview", raceHandler.AdminOverview)
 			// 管理者管理 + 操作紀錄（僅超級管理員）
 			r.With(adminAcctHandler.RequireSuper).Mount("/admin/admins", adminAcctHandler.Router())
 			r.With(adminAcctHandler.RequireSuper).Get("/admin/audit", adminAcctHandler.AuditList)

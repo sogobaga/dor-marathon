@@ -16,7 +16,7 @@ const NAV: { grp: string; items: NavItem[] }[] = [
   {
     grp: '營運',
     items: [
-      { k: 'dash', t: '數據總覽' },
+      { k: 'dash', t: '數據總覽', href: '/admin/overview' },
       { k: 'races', t: '賽事管理', href: '/admin/races', perm: 'races' },
       { k: 'members', t: '會員管理', href: '/admin/members', perm: 'members' },
       { k: 'signups', t: '報名管理', href: '/admin/signups', perm: 'signups' },
