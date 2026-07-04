@@ -144,6 +144,22 @@
 [data-skin="warm2"] .skin-ico[data-ico="heart"]    { background-image: url(/ui/icons/icon_heart_rate_green.png); }
 [data-skin="warm2"] .skin-ico[data-ico="stopwatch"]{ background-image: url(/ui/icons/icon_stopwatch_orange.png); }
 
+/* warm2 整顆按鈕素材：只此 skin 用 background-image 換整顆按鈕（含角色/文字），藏掉原本文字。
+   用 !important 覆蓋元件 inline 樣式；aspect-ratio＝素材比例；透明 PNG 邊緣不影響淺底。 */
+[data-skin="warm2"] .skin-btn-start, [data-skin="warm2"] .skin-btn-end {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+  background-size: contain !important;
+  text-indent: -9999px; overflow: hidden; white-space: nowrap;
+}
+[data-skin="warm2"] .skin-btn-start { aspect-ratio: 793 / 146; background-image: url(/ui/buttons/crop_start_run_button_full.png) !important; }
+[data-skin="warm2"] .skin-btn-end   { aspect-ratio: 765 / 117; background-image: url(/ui/buttons/crop_end_upload_button_full.png) !important; }
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {

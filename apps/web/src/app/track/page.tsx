@@ -915,10 +915,10 @@ export default function TrackPage() {
       <div style={{ padding: '16px 16px calc(16px + var(--cta-safe, 0px))', borderTop: '1px solid var(--line)', position: 'sticky', bottom: 0, background: 'var(--bg)' }}>
         {status === 'idle' && (
           user
-            ? <button onClick={start} style={btn}>▶ 開始跑步</button>
+            ? <button onClick={start} className="skin-btn-start" style={btn}>▶ 開始跑步</button>
             : <button onClick={() => setShowLogin(true)} style={btn}>請先登入</button>
         )}
-        {status === 'tracking' && <button onClick={requestFinish} style={{ ...btn, background: 'var(--hunt)', color: '#fff' }}>■ 結束並上傳</button>}
+        {status === 'tracking' && <button onClick={requestFinish} className="skin-btn-end" style={{ ...btn, background: 'var(--hunt)', color: '#fff' }}>■ 結束並上傳</button>}
         {status === 'done' && <button onClick={() => { setStatus('idle'); setElapsed(0); setDistance(0); setSplits([]); setAnomalies(0) }} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)' }}>再跑一次</button>}
         {status === 'tracking' && <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>追蹤中請保持本頁在前景、螢幕勿關（背景追蹤瀏覽器不支援）{uploading ? ' · 上傳中…' : ''}</div>}
       </div>
