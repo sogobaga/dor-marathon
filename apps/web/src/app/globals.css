@@ -172,6 +172,15 @@
   background-image: url(/ui/bg/bg_city_silhouette_landscape_1024x240.png);
 }
 
+/* warm2 角色小圖：其他 skin display:none；只 warm2 於區塊標題旁顯示跑者插圖 */
+.skin-char { display: none; }
+[data-skin="warm2"] .skin-char {
+  display: inline-block; width: 46px; height: 46px; flex-shrink: 0;
+  background-size: contain; background-repeat: no-repeat; background-position: bottom center;
+}
+[data-skin="warm2"] .skin-char[data-char="blue"] { background-image: url(/ui/chars/character_blue_runner_from_task_page.png); }
+[data-skin="warm2"] .skin-char[data-char="pink"] { background-image: url(/ui/chars/character_red_pm_runner_from_task_page.png); }
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {
