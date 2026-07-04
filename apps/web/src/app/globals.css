@@ -112,6 +112,7 @@
   --card-shadow: 0 4px 14px rgba(83,66,54,.06);        /* 卡片柔和陰影 */
   --card-pad: 20px;                                    /* 卡片內距 */
   --progress-fill: linear-gradient(90deg,#F7D67A,#C58B1D); /* 任務進度＝金色 */
+  --cta-safe: env(safe-area-inset-bottom);             /* 底部固定 CTA 讓開 iOS 底欄 */
 }
 [data-skin="warm2"] body,
 [data-skin="warm2"] .phone-frame { background: var(--bg); }

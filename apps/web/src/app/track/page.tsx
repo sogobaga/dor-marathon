@@ -849,7 +849,7 @@ export default function TrackPage() {
                 const busy = cpBusy === cp.id
                 const blocked = busy || (curPos != null && !inRange)
                 return (
-                  <div key={cp.id} style={{ background: 'var(--bg-2)', borderRadius: 10, padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                  <div key={cp.id} style={{ background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cp.title || '打卡點'}</div>
                       <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -891,7 +891,7 @@ export default function TrackPage() {
 
         {/* 結果 */}
         {status === 'done' && result && (
-          <div style={{ marginTop: 16, background: 'var(--bg-1)', border: `1px solid ${result.flagged ? 'rgba(255,90,90,.4)' : 'var(--line-2)'}`, borderRadius: 12, padding: 14, wordBreak: 'break-word' }}>
+          <div style={{ marginTop: 16, background: 'var(--bg-1)', border: `1px solid ${result.flagged ? 'rgba(255,90,90,.4)' : 'var(--line-2)'}`, borderRadius: 'var(--radius-lg, 12px)', padding: 14, boxShadow: 'var(--card-shadow, none)', wordBreak: 'break-word' }}>
             <div style={{ fontWeight: 800, marginBottom: 8 }}>
               {result.too_short ? 'ℹ️ 移動距離不足，無法計算' : result.flagged ? '⚠️ 數據異常，已標記待審' : '✓ 已記錄'}
             </div>
@@ -912,7 +912,7 @@ export default function TrackPage() {
       </ScrollArea>
 
       {/* 操作 */}
-      <div style={{ padding: 16, borderTop: '1px solid var(--line)', position: 'sticky', bottom: 0, background: 'var(--bg)' }}>
+      <div style={{ padding: '16px 16px calc(16px + var(--cta-safe, 0px))', borderTop: '1px solid var(--line)', position: 'sticky', bottom: 0, background: 'var(--bg)' }}>
         {status === 'idle' && (
           user
             ? <button onClick={start} style={btn}>▶ 開始跑步</button>
@@ -929,7 +929,7 @@ export default function TrackPage() {
 
 function Big({ label, value, unit, warn }: { label: string; value: string; unit: string; warn?: boolean }) {
   return (
-    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '12px 14px' }}>
+    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 12px)', padding: '12px 14px', boxShadow: 'var(--card-shadow, none)' }}>
       <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{label}</div>
       <div style={{ fontSize: 26, fontWeight: 900, color: warn ? 'var(--hunt)' : 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>
         {value}<span style={{ fontSize: 13, marginLeft: 3, color: 'var(--tx-dim)' }}>{unit}</span>
@@ -938,4 +938,4 @@ function Big({ label, value, unit, warn }: { label: string; value: string; unit:
   )
 }
 
-const btn: React.CSSProperties = { width: '100%', background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 12, padding: '15px 20px', fontSize: 16, cursor: 'pointer' }
+const btn: React.CSSProperties = { width: '100%', background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, cursor: 'pointer' }
