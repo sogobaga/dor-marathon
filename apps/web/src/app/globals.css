@@ -124,6 +124,26 @@
 /* 按下回饋（只此 skin；輕微縮放） */
 [data-skin="warm2"] button:active, [data-skin="warm2"] a:active { transform: scale(.985); }
 
+/* warm2 主題 icon：emoji 包在 .skin-ico[data-ico] 內作 fallback；只有 warm2 用 source/ui 素材替換
+   （SSR 的 data-skin 已在 <html>，故首繪即正確、無閃、不影響 default/warm）。emoji 用 text-indent 藏掉。 */
+[data-skin="warm2"] .skin-ico {
+  display: inline-block; width: 1.15em; height: 1.15em;
+  text-indent: -9999px; overflow: hidden; white-space: nowrap;
+  background-size: contain; background-repeat: no-repeat; background-position: center;
+  vertical-align: -0.22em;
+}
+[data-skin="warm2"] .skin-ico[data-ico="run"]      { background-image: url(/ui/icons/icon_runner_orange.png); }
+[data-skin="warm2"] .skin-ico[data-ico="gps"]      { background-image: url(/ui/icons/icon_satellite_blue.png); }
+[data-skin="warm2"] .skin-ico[data-ico="pin"]      { background-image: url(/ui/icons/icon_map_pin_gold.png); }
+[data-skin="warm2"] .skin-ico[data-ico="star"]     { background-image: url(/ui/icons/icon_star_gold.png); }
+[data-skin="warm2"] .skin-ico[data-ico="trophy"]   { background-image: url(/ui/icons/icon_trophy_gold.png); }
+[data-skin="warm2"] .skin-ico[data-ico="calendar"] { background-image: url(/ui/icons/icon_calendar_gold.png); }
+[data-skin="warm2"] .skin-ico[data-ico="flag"]     { background-image: url(/ui/icons/icon_flag_red.png); }
+[data-skin="warm2"] .skin-ico[data-ico="shoe"]     { background-image: url(/ui/icons/icon_shoe_gold.png); }
+[data-skin="warm2"] .skin-ico[data-ico="mountain"] { background-image: url(/ui/icons/icon_mountain_green.png); }
+[data-skin="warm2"] .skin-ico[data-ico="heart"]    { background-image: url(/ui/icons/icon_heart_rate_green.png); }
+[data-skin="warm2"] .skin-ico[data-ico="stopwatch"]{ background-image: url(/ui/icons/icon_stopwatch_orange.png); }
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {

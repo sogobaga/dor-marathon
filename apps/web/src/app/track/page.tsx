@@ -817,12 +817,12 @@ export default function TrackPage() {
         {(status === 'idle' || status === 'tracking') && (
           curPos ? (
             <div style={{ fontSize: 11.5, marginBottom: 10, color: curPos.acc > MAX_ACC ? 'var(--hunt)' : 'var(--tx-faint)' }}>
-              📶 GPS 精度 ±{Math.round(curPos.acc)}m{curPos.acc > MAX_ACC
+              <span className="skin-ico" data-ico="gps" aria-hidden>📶</span> GPS 精度 ±{Math.round(curPos.acc)}m{curPos.acc > MAX_ACC
                 ? (status === 'tracking' ? '（訊號弱，移動可能未計入 → 請到空曠處）' : '（訊號弱，建議到空曠處再開始）')
                 : '（正常）'}
             </div>
           ) : status === 'idle' ? (
-            <div style={{ fontSize: 11.5, marginBottom: 10, color: 'var(--tx-faint)' }}>📶 GPS 偵測中…（首次進入請允許定位權限）</div>
+            <div style={{ fontSize: 11.5, marginBottom: 10, color: 'var(--tx-faint)' }}><span className="skin-ico" data-ico="gps" aria-hidden>📶</span> GPS 偵測中…（首次進入請允許定位權限）</div>
           ) : null
         )}
         {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, wordBreak: 'break-word' }}>⚠️ {warn}</div>}
@@ -839,7 +839,7 @@ export default function TrackPage() {
         {/* 打卡點任務 */}
         {checkpoints.length > 0 && (
           <div style={{ marginTop: 16 }}>
-            <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}>📍 打卡點任務</div>
+            <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}><span className="skin-ico" data-ico="pin" aria-hidden>📍</span> 打卡點任務</div>
             {cpMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginBottom: 8, wordBreak: 'break-word' }}>{cpMsg}</div>}
             {status !== 'tracking' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>建議按「開始跑步」邊跑邊打卡（有軌跡佐證，免審核）。</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

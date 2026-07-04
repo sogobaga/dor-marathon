@@ -107,9 +107,9 @@ export function ExploreBody({ race }: { race: Race }) {
       )}
 
       {/* 打卡請到「開始跑步」邊跑邊進行（有 GPS 軌跡佐證＝免審核；且中途離開會中斷追蹤） */}
-      <a href="/track" style={{ display: 'block', textAlign: 'center', background: 'rgba(70,227,160,.1)', border: '1px solid rgba(70,227,160,.4)', color: 'var(--fug)', fontWeight: 800, borderRadius: 12, padding: '12px', fontSize: 14, textDecoration: 'none' }}>🏃 到「開始跑步」邊跑邊打卡</a>
+      <a href="/track" style={{ display: 'block', textAlign: 'center', background: 'rgba(70,227,160,.1)', border: '1px solid rgba(70,227,160,.4)', color: 'var(--fug)', fontWeight: 800, borderRadius: 12, padding: '12px', fontSize: 14, textDecoration: 'none' }}><span className="skin-ico" data-ico="run" aria-hidden>🏃</span> 到「開始跑步」邊跑邊打卡</a>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button onClick={locate} disabled={locating} style={locBtn}>{locating ? '定位中…' : '📍 更新我的位置（看距離）'}</button>
+        <button onClick={locate} disabled={locating} style={locBtn}>{locating ? '定位中…' : <><span className="skin-ico" data-ico="pin" aria-hidden>📍</span> 更新我的位置（看距離）</>}</button>
         <span style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>在此打卡沒有軌跡佐證，需主辦審核</span>
       </div>
       {msg && <div style={{ fontSize: 12.5, color: 'var(--fug)', wordBreak: 'break-word' }}>{msg}</div>}

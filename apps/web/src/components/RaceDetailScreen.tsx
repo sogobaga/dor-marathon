@@ -167,7 +167,7 @@ export default function RaceDetailScreen({
                   <button
                     onClick={() => downloadDataURL(certImg, `完賽證明_${cert.race_title}.png`)}
                     style={certBtn}
-                  >🏅 下載完賽證明</button>
+                  ><span className="skin-ico" data-ico="star" aria-hidden>🏅</span> 下載完賽證明</button>
                 </>
               ) : (
                 <div style={{ fontSize: 12, color: 'var(--tx-faint)', padding: '8px 0' }}>產生證明中…</div>
@@ -210,7 +210,7 @@ export default function RaceDetailScreen({
         <div onClick={() => setCertZoom(false)} style={lightbox}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={certImg} alt="完賽證明" style={{ maxWidth: '96%', maxHeight: '82%', borderRadius: 8, boxShadow: '0 8px 40px rgba(0,0,0,.6)' }} />
-          <button onClick={(e) => { e.stopPropagation(); downloadDataURL(certImg, `完賽證明_${cert.race_title}.png`) }} style={lightboxDl}>🏅 下載完賽證明</button>
+          <button onClick={(e) => { e.stopPropagation(); downloadDataURL(certImg, `完賽證明_${cert.race_title}.png`) }} style={lightboxDl}><span className="skin-ico" data-ico="star" aria-hidden>🏅</span> 下載完賽證明</button>
           <div onClick={() => setCertZoom(false)} style={{ position: 'absolute', top: 14, right: 20, color: '#fff', fontSize: 30, cursor: 'pointer', lineHeight: 1 }}>✕</div>
         </div>
       )}
