@@ -82,6 +82,47 @@
     0 30px 80px rgba(120,90,60,.28);
 }
 
+/* Skin: warm2（城市探索・精緻版）— 依 UI Guideline 的 design tokens。色盤與 warm 接近，
+   重點是「結構化 tokens」(圓角/陰影/內距/金色進度/標題不亂斷)：這些 token 只在本 skin 定義，
+   元件以 var(--token, 現值) 讀取 → default/warm 未定義即回退現值（完全不受影響），本 skin 才升級。 */
+[data-skin="warm2"] {
+  --bg:       #FBF5EA;
+  --bg-1:     #FFFDF8;
+  --bg-2:     #F4EAD9;
+  --line:     #E5DACE;
+  --line-2:   #D6C8B8;
+  --tx:       #534236;
+  --tx-dim:   rgba(83,66,54,.66);
+  --tx-faint: #A79D92;
+
+  --fug:    #4FA76A;   /* Primary green */
+  --hunt:   #DD5A55;   /* Danger / running */
+  --gold:   #C58B1D;   /* Reward / progress */
+  --violet: #B26FAB;
+  --dim:    rgba(83,66,54,.18);
+
+  --glow-fug:  0 0 20px rgba(79,167,106,.22);
+  --glow-hunt: 0 0 20px rgba(221,90,85,.22);
+  --glow-gold: 0 0 22px rgba(197,139,29,.26);
+
+  /* --- 結構化 design tokens（只此 skin 有；其餘 skin 靠元件 fallback＝現值）--- */
+  --radius-lg: 22px;                                   /* 大卡片 */
+  --radius-md: 16px;                                   /* 小卡片/輸入框 */
+  --radius-btn: 18px;                                  /* 按鈕 */
+  --card-shadow: 0 4px 14px rgba(83,66,54,.06);        /* 卡片柔和陰影 */
+  --card-pad: 20px;                                    /* 卡片內距 */
+  --progress-fill: linear-gradient(90deg,#F7D67A,#C58B1D); /* 任務進度＝金色 */
+}
+[data-skin="warm2"] body,
+[data-skin="warm2"] .phone-frame { background: var(--bg); }
+[data-skin="warm2"] .phone-shell {
+  background: var(--bg-1);
+  border: 1px solid #E5DACE;
+  box-shadow: 0 0 0 10px #ECE0CB, 0 0 0 11px rgba(90,71,55,.10), 0 30px 80px rgba(120,90,60,.28);
+}
+/* 按下回饋（只此 skin；輕微縮放） */
+[data-skin="warm2"] button:active, [data-skin="warm2"] a:active { transform: scale(.985); }
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {

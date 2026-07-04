@@ -104,14 +104,14 @@ export default function MemberPanel({ onOpenProfile, onReady }: { onOpenProfile?
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ flex: 1, background: 'var(--bg-2)', borderRadius: 10, padding: '8px 4px', textAlign: 'center' }}>
+    <div style={{ flex: 1, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: '8px 4px', textAlign: 'center' }}>
       <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--tx)' }}>{value}</div>
       <div style={{ fontSize: 10, color: 'var(--tx-faint)', marginTop: 2 }}>{label}</div>
     </div>
   )
 }
 
-const card: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: 16 }
+const card: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 'var(--card-pad, 16px)', boxShadow: 'var(--card-shadow, none)' }
 const avatarWrap: React.CSSProperties = {
   width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
   background: 'var(--bg-2)', border: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center',

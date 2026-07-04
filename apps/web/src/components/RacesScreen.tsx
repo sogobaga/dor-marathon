@@ -78,7 +78,7 @@ export default function RacesScreen({
         <MemberPanel onOpenProfile={onOpenProfile} onReady={() => setPanelReady(true)} />
 
         {/* GPS 跑步追蹤：面板定版後才淡入，避免面板晚出現時誤點到面板（切到個人資訊頁） */}
-        <a href="/track" style={{ display: 'block', marginTop: 12, textDecoration: 'none', textAlign: 'center', background: 'rgba(70,227,160,.1)', border: '1px solid rgba(70,227,160,.35)', color: 'var(--fug)', fontWeight: 800, borderRadius: 12, padding: '12px 16px', fontSize: 14, opacity: panelReady ? 1 : 0, pointerEvents: panelReady ? 'auto' : 'none', transition: 'opacity .25s ease', visibility: panelReady ? 'visible' : 'hidden' }}>🏃 開始跑步</a>
+        <a href="/track" style={{ display: 'block', marginTop: 12, textDecoration: 'none', textAlign: 'center', background: 'rgba(70,227,160,.1)', border: '1px solid rgba(70,227,160,.35)', color: 'var(--fug)', fontWeight: 800, borderRadius: 'var(--radius-btn, 12px)', padding: '12px 16px', fontSize: 14, opacity: panelReady ? 1 : 0, pointerEvents: panelReady ? 'auto' : 'none', transition: 'opacity .25s ease', visibility: panelReady ? 'visible' : 'hidden' }}>🏃 開始跑步</a>
 
         <h1 style={{ margin: '22px 0 12px', fontSize: 20, fontWeight: 800, color: 'var(--tx)' }}>活動列表</h1>
         {isLoading && <Hint>載入中…</Hint>}
@@ -123,8 +123,9 @@ function RaceCard({
       style={{
         background: 'var(--bg-1)',
         border: '1px solid var(--line)',
-        borderRadius: 18,
-        padding: 18,
+        borderRadius: 'var(--radius-lg, 18px)',
+        padding: 'var(--card-pad, 18px)',
+        boxShadow: 'var(--card-shadow, none)',
         display: 'flex',
         flexDirection: 'column',
         gap: 10,
@@ -133,7 +134,7 @@ function RaceCard({
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
         <div>
-          <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--tx)' }}>{race.title}</div>
+          <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--tx)', lineHeight: 1.3, wordBreak: 'keep-all', overflowWrap: 'break-word' }}>{race.title}</div>
           <div style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-dim)', marginTop: 2 }}>
             {race.subtitle}
           </div>

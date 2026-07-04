@@ -20,6 +20,7 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     options: [
       { value: 'default', label: '預設（暗黑電影風）' },
       { value: 'warm', label: '溫暖貓狗風（奶油淺色・Pawrathon）' },
+      { value: 'warm2', label: '城市探索・精緻版（溫暖 2.0）' },
     ],
   },
   {

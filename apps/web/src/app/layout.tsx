@@ -6,7 +6,7 @@ import InterstitialAd from '@/components/InterstitialAd'
 import LandscapeNotice from '@/components/LandscapeNotice'
 
 // 各 skin 的瀏覽器 chrome（狀態列）色；新增 skin 時在此與 globals.css/appSettings/後端 specs 一併加。
-const SKIN_THEME_COLOR: Record<string, string> = { default: '#09090f', warm: '#FBF4E9' }
+const SKIN_THEME_COLOR: Record<string, string> = { default: '#09090f', warm: '#FBF4E9', warm2: '#FBF5EA' }
 
 // 伺服器端讀取前台公開系統設定（skin、favicon…）：直接寫進 SSR，第一次繪製就正確、不靠 localStorage。
 // React cache：同一請求只查一次；fetch 快取 30 秒（改設定約 30 秒內於「下次載入」生效）。逾時/失敗回空 → 用預設。

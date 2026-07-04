@@ -20,7 +20,7 @@ var specs = map[string]func(string) bool{
 	"event_first_wait_run1_sec": isNonNegInt, // 新手加速：第 1/2/3 趟跑步「第一個事件」的等待秒數
 	"event_first_wait_run2_sec": isNonNegInt,
 	"event_first_wait_run3_sec": isNonNegInt,
-	"active_skin":               func(v string) bool { return v == "" || v == "default" || v == "warm" },
+	"active_skin":               func(v string) bool { return v == "" || v == "default" || v == "warm" || v == "warm2" },
 	"interstitial_enabled": func(v string) bool { return v == "" || v == "0" || v == "1" }, // 蓋板廣告總開關
 	"favicon_url":          func(v string) bool { return v == "" || (len(v) <= 512 && (strings.HasPrefix(v, "/") || strings.HasPrefix(v, "http"))) },
 }
