@@ -193,6 +193,33 @@ export function playEventComplete() {
   }
 }
 
+// 事件觸發警報：EVA 使徒來襲式「噹、噹、噹」——三聲低沉鐘聲（比 playDing 更暗、帶不安感）。
+// 對齊全螢幕紅閃 3 下；於 t≈0/0.5/1.0 各敲一聲。可被 sound.event_alarm 上傳覆蓋。
+export function playEventAlarm() {
+  if (muted) return
+  if (playOverride('sound.event_alarm')) return
+  const c = ac()
+  if (!c) return
+  const base = c.currentTime
+  // 較低的基頻 + 一個微失諧分音製造「警報」的緊張感
+  const gong = (start: number) => {
+    const harmonics: [number, number][] = [[220, 0.22], [329.63, 0.14], [523.25, 0.09], [784, 0.05], [233, 0.05]]
+    for (const [freq, vol] of harmonics) {
+      const o = c.createOscillator()
+      const g = c.createGain()
+      o.type = 'sine'
+      o.frequency.value = freq
+      g.gain.setValueAtTime(0.0001, start)
+      g.gain.exponentialRampToValueAtTime(vol, start + 0.01)
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.46)
+      o.connect(g).connect(c.destination)
+      o.start(start)
+      o.stop(start + 0.5)
+    }
+  }
+  for (const t of [0, 0.5, 1.0]) gong(base + t)
+}
+
 // 升級到 100% 的「噹」——鐘聲（多諧波 + 快速衰減）
 export function playDing() {
   if (muted) return

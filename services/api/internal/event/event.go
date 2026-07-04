@@ -188,6 +188,36 @@ func (h *Handler) eventWaitBounds(ctx context.Context) (minSec, maxSec int) {
 	return
 }
 
+// stagedFirstWait 新手加速：依帳號「已完成上傳跑步筆數」回傳本趟「第一個事件」的等待秒數，
+// 讓新玩家更快遇到事件。runCount 0/1/2 → 第 1/2/3 趟（較短，預設 45/90/180 秒，後台可調）；
+// ≥3 → 回 0（前端改用正常隨機區間）。gps_runs 只在跑步完成上傳時新增，故計數＝已完成趟數。
+func (h *Handler) stagedFirstWait(ctx context.Context, uid string) int {
+	if uid == "" {
+		return 0
+	}
+	var runCount int
+	if err := h.db.QueryRow(ctx, `SELECT count(*) FROM gps_runs WHERE user_id=$1`, uid).Scan(&runCount); err != nil {
+		return 0
+	}
+	var key string
+	var def int
+	switch runCount {
+	case 0:
+		key, def = "event_first_wait_run1_sec", 45
+	case 1:
+		key, def = "event_first_wait_run2_sec", 90
+	case 2:
+		key, def = "event_first_wait_run3_sec", 180
+	default:
+		return 0
+	}
+	v := appsettings.GetInt(ctx, h.db, key, def)
+	if v < 5 {
+		return 0 // 明確設得過小 → 視為關閉（用正常區間）
+	}
+	return v
+}
+
 // taskGateOpen 全域任務閘門：一個跑者同時只有一個進行中任務、任務間至少 min 等待（防濫用地板）。
 // 只要近 min 秒內有任何 Phase A 觸發或 Phase B 加入紀錄 → 閘門關閉（不再觸發/不可加入）。
 // 實際節奏由前端在 [min,max] 隨機等待決定；此處僅擋「比 min 還快」的重複觸發。
@@ -541,13 +571,16 @@ func (h *Handler) Active(w http.ResponseWriter, r *http.Request) {
 		defs = append(defs, d)
 	}
 	minSec, maxSec := h.eventWaitBounds(r.Context())
-	respondJSON(w, http.StatusOK, map[string]any{"defs": defs, "wait_min_sec": minSec, "wait_max_sec": maxSec})
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	firstWait := h.stagedFirstWait(r.Context(), uid)
+	respondJSON(w, http.StatusOK, map[string]any{"defs": defs, "wait_min_sec": minSec, "wait_max_sec": maxSec, "first_event_wait_sec": firstWait})
 }
 
 type occReq struct {
 	DefID           string  `json:"def_id"`
 	TriggerDistM    float64 `json:"trigger_dist_m"`
 	TriggerElapsedS int     `json:"trigger_elapsed_s"`
+	FirstOfRun      bool    `json:"first_of_run"` // 新手加速：本趟第一個事件（前 3 趟）→ 放寬閘門，只擋「真的還有進行中任務」
 }
 
 // POST /events/occurrences — 觸發時建立實例（快照獎勵）
@@ -558,8 +591,22 @@ func (h *Handler) CreateOccurrence(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	// 全域閘門：一次一任務 + 15 分冷卻（跨 Phase A/B）
-	if open, err := h.taskGateOpen(r.Context(), uid); err == nil && !open {
+	// 全域閘門：一次一任務 + 隨機等待地板（跨 Phase A/B）。
+	// 但「新手加速」的本趟第一個事件（前 3 趟）不能被上一趟的間隔地板擋掉（地板＝event_wait_min_sec，預設 300 秒，
+	// 遠大於 45/90/180 的加速等待）；此時只擋「真的還有進行中任務」，仍守住一次一任務。
+	blocked := false
+	if req.FirstOfRun {
+		var active bool
+		if err := h.db.QueryRow(r.Context(), `SELECT EXISTS(
+			SELECT 1 FROM event_task_occurrences WHERE user_id=$1 AND status='active'
+			UNION ALL
+			SELECT 1 FROM event_race_participants WHERE user_id=$1 AND status='joined')`, uid).Scan(&active); err == nil && active {
+			blocked = true
+		}
+	} else if open, err := h.taskGateOpen(r.Context(), uid); err == nil && !open {
+		blocked = true
+	}
+	if blocked {
 		respondJSON(w, http.StatusOK, map[string]any{"blocked": true, "message": "任務冷卻中"})
 		return
 	}

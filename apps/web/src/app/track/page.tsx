@@ -4,13 +4,13 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { activitiesApi, checkpointApi, eventApi, eventRaceApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
-import { unlockAudio, playEventAlert, playEventComplete, vibrate, setMuted as sfxSetMuted, isMuted } from '@/lib/sfx'
+import { unlockAudio, playEventAlarm, playEventComplete, vibrate, setMuted as sfxSetMuted, isMuted } from '@/lib/sfx'
 import { loadEffectAssets } from '@/lib/effects'
 import GoogleAuthProvider from '@/components/GoogleAuthProvider'
 import { LoginModal } from '@/components/UserAuthBar'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
-import { EventBanner, EventResultBanner, pickTimeImage, isInteractionType, type ActiveEvent, type EventResult } from '@/components/EventTaskModal'
+import { EventBanner, EventResultBanner, EventTriggerFlash, Countdown321, EventOfferPanel, pickTimeImage, isInteractionType, type ActiveEvent, type EventResult } from '@/components/EventTaskModal'
 import { EventInteraction } from '@/components/EventInteraction'
 import { useIsPhone } from '@/lib/useIsMobile'
 import { useIsLandscape } from '@/lib/useIsLandscape'
@@ -21,7 +21,6 @@ const LS_KEY = 'dor_gps_run'
 const MAX_ACC = 65 // 精度差於此（公尺）的點不採計距離（城市/大樓旁訊號較差，放寬以免整趟記不到）
 const MAX_SPEED = 1000 / 120 // 8.33 m/s（2:00/km）人類極限上限
 const JITTER_MIN = 6 // 公尺：距上一個採納點移動不足此值視為原地抖動，不計距離
-const EVENT_GRACE_MS = 3000 // 事件觸發後的「準備期」：吸收偵測+反應+延遲，倒數結束才開始計算
 const PACE_MIN_KM = 0.005 // 累積達此距離（5m，約顯示 0.01km 時）即顯示平均配速
 
 function haversineM(a: GpsPoint, b: GpsPoint) {
@@ -72,6 +71,7 @@ export default function TrackPage() {
   const [fxAssets, setFxAssets] = useState<Record<string, string>>({}) // 效果覆寫（正式圖片/音檔）
   const [confirmEnd, setConfirmEnd] = useState(false) // 事件進行中按「結束」→ 先跳確認（損失規避）
   const [muted, setMuted] = useState(false) // 事件音效靜音（震動不受影響）
+  const [showFlash, setShowFlash] = useState(false) // Step1：全螢幕「事件觸發」紅閃警報（Phase A/B 共用）
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -96,7 +96,11 @@ export default function TrackPage() {
   const lastEventEndRef = useRef(0) // 上次事件結束時間（per-def cooldown 用）
   const waitMinRef = useRef(300) // 事件隨機等待區間（秒），由系統設定帶入
   const waitMaxRef = useRef(900)
+  const firstWaitRef = useRef(0) // 本趟「第一個事件」的等待秒數（前幾趟較短，伺服器依帳號帶入）；0=用正常區間
   const nextEventAtRef = useRef(0) // 下一個事件最早可觸發的時間（開始跑步/每次事件結束後隨機重取）
+  const armSeqRef = useRef(0) // 事件流水序號：辨識非同步 createOccurrence 回來時該事件是否仍是「當前這一個」
+  const armIdRef = useRef(0) // 當前進行中事件的流水序號（0=無）
+  const armingRef = useRef(false) // armEvent 建立 occurrence 進行中（尚未提交事件）：擋 evalTick 重複 arm / 邀請插隊
   const evalTimerRef = useRef<any>(null)
   const completingRef = useRef(false) // 完成/失敗結算中：避免 evalTick 在空窗期又 arm 新事件蓋掉結果
   eventDefsRef.current = eventDefs
@@ -170,8 +174,8 @@ export default function TrackPage() {
         }
       }
     }
-    // 事件進行中：更新即時位移（進度條）
-    if (activeEventRef.current) setEventMoved(distRef.current - activeEventRef.current.triggerD)
+    // 事件正式進行中（非演出階段）才更新即時位移（進度條）
+    if (activeEventRef.current?.phase === 'active') setEventMoved(distRef.current - activeEventRef.current.triggerD)
     // 防當掉：暫存採納後的軌跡
     localStorage.setItem(LS_KEY, JSON.stringify({ start: startRef.current, points: pointsRef.current.slice(-2000) }))
   }, [ensureMap])
@@ -198,10 +202,22 @@ export default function TrackPage() {
   // --- 事件任務引擎 ---
   // 事件隨機等待：開始跑步 / 每次事件結束後，重取一個落在 [min,max] 的等待時間，
   // 決定「下一個事件最早何時可觸發」（時間到、且符合觸發條件時才真的出現）。取代原本寫死的 15 分鐘冷卻。
-  function rollNextEvent() {
+  // firstOfRun：本趟第一個事件——若伺服器帶來「前幾趟較短等待」(firstWaitRef>0) 則用它（±10% 抖動），讓新玩家更快遇到。
+  function rollNextEvent(firstOfRun = false) {
+    const now = Date.now()
+    if (firstOfRun && firstWaitRef.current > 0) {
+      nextEventAtRef.current = now + firstWaitRef.current * (0.9 + Math.random() * 0.2) * 1000
+      return
+    }
     const min = Math.max(1, waitMinRef.current)
     const max = Math.max(min, waitMaxRef.current)
-    nextEventAtRef.current = Date.now() + (min + Math.random() * (max - min)) * 1000
+    nextEventAtRef.current = now + (min + Math.random() * (max - min)) * 1000
+  }
+  // 清空目前進行中事件（含演出階段）：統一收尾，讓所有清除路徑一致（放棄/完成/失敗/結束跑步）。
+  function clearEvent() {
+    activeEventRef.current = null
+    armIdRef.current = 0
+    setActiveEvent(null); setEventMoved(0); setShowFlash(false)
   }
   // 近 windowMs 的位移（公尺）；歷史不足回 null
   function movedInWindow(windowMs: number): number | null {
@@ -250,23 +266,52 @@ export default function TrackPage() {
     const elapsedS = Math.floor((triggerT - startRef.current) / 1000)
     const baseSpk = baselineSpk(triggerD, elapsedS)
     if (def.completion_type === 'pace_shift' && baseSpk <= 0) return // 變速跑需配速基準；里程/時間不足時不觸發（避免必敗任務）
-    const limitS = def.completion_params.limit_s || 60
-    const readyUntil = triggerT + EVENT_GRACE_MS // 準備期結束才開始計算完成
-    const ae: ActiveEvent = { def, occId: '', triggerD, triggerT, readyUntil, deadline: readyUntil + limitS * 1000, baseSpk }
-    activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
+    // 先建立 occurrence（伺服器閘門確認）→ 確認後才提交事件 + 放煙火。與舊版「確認後才響」一致：
+    // 被閘門擋下時完全靜默（不誤放警報/紅閃），且晚回來的失敗永遠不會拆掉使用者已進行中的任務。
+    // 前 3 趟的「本趟第一個事件」(lastEventEndRef=0 且有加速等待) 帶 first_of_run，讓後端放寬間隔地板。
+    const firstOfRun = lastEventEndRef.current === 0 && firstWaitRef.current > 0
+    const myArm = ++armSeqRef.current; armIdRef.current = myArm; armingRef.current = true
     try {
-      const occ = await eventApi.createOccurrence(token, { def_id: def.id, trigger_dist_m: triggerD, trigger_elapsed_s: elapsedS })
-      // 被全域閘門擋下（冷卻中）：退回並設冷卻，避免每秒重試又閃橫幅/重複提示
-      if (!occ.id) { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) }; lastEventEndRef.current = Date.now(); rollNextEvent(); return }
-      // 若在 createOccurrence 飛行期間使用者已放棄/結束（ref 被清）→ 補送 fail，避免留下 active 孤兒列
-      if (activeEventRef.current !== ae) { eventApi.fail(token, occ.id).catch(() => {}); return }
-      const armed = { ...ae, occId: occ.id }
-      activeEventRef.current = armed; setActiveEvent(armed)
-      playEventAlert(); vibrate([200, 100, 200]) // 事件來了：音效 + 震動
-    } catch { if (activeEventRef.current === ae) { activeEventRef.current = null; setActiveEvent(null) } }
+      const occ = await eventApi.createOccurrence(token, { def_id: def.id, trigger_dist_m: triggerD, trigger_elapsed_s: elapsedS, first_of_run: firstOfRun })
+      if (!occ.id) { if (armIdRef.current === myArm) armIdRef.current = 0; lastEventEndRef.current = Date.now(); rollNextEvent(); return } // 閘門擋下：靜默退回 + reroll
+      if (armIdRef.current !== myArm) { eventApi.fail(token, occ.id).catch(() => {}); return } // 飛行期間已 reset/start（序號變動）→ 收掉孤兒
+      // Step1 宣告：deadline/readyUntil 先不算（等接受 → 321 結束才起算）。基準 baseSpk 取觸發當下。
+      const ae: ActiveEvent = { def, occId: occ.id, triggerD, triggerT, readyUntil: 0, deadline: 0, baseSpk, phase: 'announce' }
+      activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
+      setShowFlash(true); playEventAlarm(); vibrate([120, 80, 120, 80, 120]) // 事件觸發：全螢幕紅閃 + 噹噹噹 + 震動
+    } catch { if (armIdRef.current === myArm) armIdRef.current = 0 }
+    finally { armingRef.current = false }
+  }
+  // Step1 紅閃結束（約 1.6s）→ 進入 Step2 任務目標面板（等接受/放棄）。Phase B 邀請的閃光則無事件可推進。
+  function onFlashDone() {
+    setShowFlash(false)
+    const ae = activeEventRef.current
+    if (ae && ae.phase === 'announce') { const next = { ...ae, phase: 'offer' as const }; activeEventRef.current = next; setActiveEvent(next) }
+  }
+  // Step2 接受 → Step3 置中 321 倒數
+  function acceptEvent() {
+    const ae = activeEventRef.current; if (!ae) return
+    const next = { ...ae, phase: 'countdown' as const }; activeEventRef.current = next; setActiveEvent(next)
+  }
+  // Step2 放棄 → 靜默收掉（伺服器標 failed 釋放閘門），不顯示失敗結果橫幅
+  function declineEvent() {
+    const ae = activeEventRef.current
+    clearEvent(); lastEventEndRef.current = Date.now(); rollNextEvent()
+    if (ae) {
+      const token = getUserToken()
+      if (token) { if (ae.raceInstanceId) eventRaceApi.fail(token, ae.raceInstanceId).catch(() => {}); else if (ae.occId) eventApi.fail(token, ae.occId).catch(() => {}) }
+    }
+  }
+  // Step3 321 數完 → Step4 事件正式開始：此刻才捕捉完成基準與 deadline（跑者讀面板站著不吃虧、更公平）
+  function startActivePhase() {
+    const ae = activeEventRef.current; if (!ae) return
+    const now = Date.now()
+    const limitS = ae.def.completion_params.limit_s || 60
+    const next: ActiveEvent = { ...ae, phase: 'active', triggerD: distRef.current, triggerT: now, readyUntil: now, deadline: now + limitS * 1000 }
+    activeEventRef.current = next; setActiveEvent(next); setEventMoved(0)
   }
   async function completeEvent(ae: ActiveEvent, moved: number, windowS: number, extra: Partial<CompleteEvidence> = {}) {
-    activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now(); rollNextEvent()
+    clearEvent(); lastEventEndRef.current = Date.now(); rollNextEvent()
     completingRef.current = true
     const inter = isInteractionType(ae.def.completion_type)
     // 樂觀顯示：非互動直接「完成」；互動先「結算中」（星等要等後端算完成度）
@@ -287,7 +332,7 @@ export default function TrackPage() {
     finally { completingRef.current = false }
   }
   function failEvent(ae: ActiveEvent) {
-    activeEventRef.current = null; setActiveEvent(null); lastEventEndRef.current = Date.now(); rollNextEvent()
+    clearEvent(); lastEventEndRef.current = Date.now(); rollNextEvent()
     const token = getUserToken()
     if (token) {
       if (ae.raceInstanceId) eventRaceApi.fail(token, ae.raceInstanceId).catch(() => {})
@@ -309,10 +354,10 @@ export default function TrackPage() {
       if (msg.type !== 'event_race_invite') return
       const p = msg.payload as RaceEventInvite
       if (!user?.id || !p.target_user_ids?.includes(user.id)) return
-      if (activeEventRef.current || raceInviteRef.current) return // 一次一任務
+      if (activeEventRef.current || raceInviteRef.current || armingRef.current) return // 一次一任務（含 Phase A 建立中）
       if (Date.now() > p.join_deadline) return
       setRaceInvite(p)
-      playEventAlert(); vibrate([200, 100, 200]) // 多人事件邀請來了：音效 + 震動
+      setShowFlash(true); playEventAlarm(); vibrate([120, 80, 120, 80, 120]) // 多人邀請：同樣全螢幕紅閃 + 噹噹噹（引注意），仍走加入/略過流程
     } catch { /* ignore */ }
   }
   // Phase B：對「所有進行中且已報名」的賽事各連一條 WS，任一場來邀請都收得到
@@ -349,8 +394,10 @@ export default function TrackPage() {
         reward_exp: res.reward_exp ?? inv.reward_exp, reward_dp: res.reward_dp ?? inv.reward_dp,
       }
       const deadline = res.deadline || (now + (def.completion_params.limit_s || 180) * 1000)
-      const ae: ActiveEvent = { def, occId: '', raceInstanceId: inv.instance_id, triggerD: distRef.current, triggerT: now, readyUntil: now, deadline, baseSpk }
-      activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
+      // Phase B：加入即開始（保留多人同步節奏，不插 321）→ 直接 active 交既有引擎
+      armIdRef.current = ++armSeqRef.current
+      const ae: ActiveEvent = { def, occId: '', raceInstanceId: inv.instance_id, triggerD: distRef.current, triggerT: now, readyUntil: now, deadline, baseSpk, phase: 'active' }
+      activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null); setShowFlash(false)
     } catch { setCpMsg('加入失敗，請重試') }
   }
 
@@ -362,11 +409,11 @@ export default function TrackPage() {
       if (!res.armed || !res.def || activeEventRef.current) return
       const def = res.def
       const triggerT = Date.now()
-      const limitS = def.completion_params.limit_s || 60
-      const readyUntil = triggerT + EVENT_GRACE_MS
-      const ae: ActiveEvent = { def, occId: res.occ_id || '', triggerD: distRef.current, triggerT, readyUntil, deadline: readyUntil + limitS * 1000, baseSpk: baselineSpk(distRef.current, Math.floor((triggerT - startRef.current) / 1000)) }
+      // 手動觸發（測試）也走完整四步驟演出：宣告 → 任務目標 → 321 → 開始
+      armIdRef.current = ++armSeqRef.current
+      const ae: ActiveEvent = { def, occId: res.occ_id || '', triggerD: distRef.current, triggerT, readyUntil: 0, deadline: 0, baseSpk: baselineSpk(distRef.current, Math.floor((triggerT - startRef.current) / 1000)), phase: 'announce' }
       activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null)
-      playEventAlert(); vibrate([200, 100, 200]) // 事件來了：音效 + 震動
+      setShowFlash(true); playEventAlarm(); vibrate([120, 80, 120, 80, 120]) // 事件觸發：全螢幕紅閃 + 噹噹噹 + 震動
     } catch { /* ignore */ }
   }
 
@@ -428,8 +475,8 @@ export default function TrackPage() {
     }
     const ae = activeEventRef.current
     if (ae) {
-      // 準備期：基準線持續對齊「目前位置」，完成計算尚未起算（吸收偵測/反應/延遲誤差）
-      if (now < ae.readyUntil) { ae.triggerD = distRef.current; setEventMoved(0); return }
+      if (ae.phase !== 'active') return // 演出中（announce/offer/countdown）：完成計算尚未起算（基準於 321 結束時捕捉）
+      if (!ae.occId && !ae.raceInstanceId) return // 無 occurrence/賽事實例 → 不送完成（避免打空 id）
       const moved = distRef.current - ae.triggerD
       setEventMoved(moved)
       const cp = ae.def.completion_params
@@ -484,8 +531,8 @@ export default function TrackPage() {
       }
       return
     }
-    // 無進行中事件 → 等隨機等待時間到 + 符合觸發條件才挑選（結算中不 arm，避免蓋掉剛完成的結果通知）
-    if (completingRef.current || now < nextEventAtRef.current) return
+    // 無進行中事件 → 等隨機等待時間到 + 符合觸發條件才挑選（結算中 / 建立 occurrence 中不 arm，避免重複觸發或蓋掉剛完成的結果）
+    if (completingRef.current || armingRef.current || now < nextEventAtRef.current) return
     const eligible = eventDefsRef.current.filter((d) =>
       now - lastEventEndRef.current >= (d.cooldown_sec || 0) * 1000 && triggerEligible(d))
     if (eligible.length > 0) armEvent(pickWeighted(eligible))
@@ -500,9 +547,11 @@ export default function TrackPage() {
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null)
     if (lineRef.current) lineRef.current.setLatLngs([]) // 清掉上一趟的軌跡線（避免地圖殘留）
     // 事件引擎重置
-    distSamplesRef.current = []; activeEventRef.current = null; lastEventEndRef.current = 0
-    rollNextEvent() // 開始跑步：取第一段隨機等待時間
-    setActiveEvent(null); setEventResult(null); setEventMoved(0)
+    distSamplesRef.current = []; activeEventRef.current = null; armIdRef.current = 0; lastEventEndRef.current = 0
+    rollNextEvent(true) // 開始跑步：第一個事件用「前幾趟較短」的等待（若伺服器有帶）
+    setActiveEvent(null); setEventResult(null); setEventMoved(0); setShowFlash(false)
+    // 重新抓一次（含最新 run_count 對應的 first_event_wait_sec）：同一 session 連跑時，mount 時的值可能已過期
+    fetchEventDefs().then(() => { if (statusRef.current === 'tracking' && !activeEventRef.current && lastEventEndRef.current === 0) rollNextEvent(true) })
     // Phase B 重置
     setRaceInvite(null); raceIdsRef.current = []; lastTriggerRef.current = 0; lastClaimRef.current = 0
     startRef.current = Date.now()
@@ -539,9 +588,11 @@ export default function TrackPage() {
     try { (screen.orientation as any)?.unlock?.() } catch { /* ignore */ }
   }, [])
 
-  // 按「結束並上傳」：事件任務進行中 → 先跳確認（損失規避）；否則直接結束
+  // 按「結束並上傳」：只有「正式進行中」事件才跳確認（損失規避）；演出中（未接受）則靜默放棄後直接結束
   function requestFinish() {
-    if (activeEventRef.current) { setConfirmEnd(true); return }
+    const ae = activeEventRef.current
+    if (ae && ae.phase === 'active') { setConfirmEnd(true); return }
+    if (ae) declineEvent()
     finish()
   }
   // 確認放棄事件並結束：伺服器端標記事件失敗（釋放 occurrence/閘門），再結束上傳
@@ -549,8 +600,7 @@ export default function TrackPage() {
     setConfirmEnd(false)
     const ae = activeEventRef.current
     if (ae) {
-      activeEventRef.current = null; setActiveEvent(null); setEventMoved(0)
-      lastEventEndRef.current = Date.now()
+      clearEvent(); lastEventEndRef.current = Date.now()
       const token = getUserToken()
       if (token) {
         if (ae.raceInstanceId) eventRaceApi.fail(token, ae.raceInstanceId).catch(() => {})
@@ -618,6 +668,7 @@ export default function TrackPage() {
       setEventDefs(r.defs)
       if (r.wait_min_sec && r.wait_min_sec > 0) waitMinRef.current = r.wait_min_sec
       if (r.wait_max_sec && r.wait_max_sec > 0) waitMaxRef.current = Math.max(waitMinRef.current, r.wait_max_sec)
+      firstWaitRef.current = r.first_event_wait_sec && r.first_event_wait_sec > 0 ? r.first_event_wait_sec : 0 // 前幾趟較短等待；0=用正常區間
     } catch { /* ignore */ }
   }, [])
   useEffect(() => { fetchEventDefs() }, [fetchEventDefs, user?.id])
@@ -672,7 +723,15 @@ export default function TrackPage() {
    <GoogleAuthProvider>
     <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
-      {status === 'tracking' && activeEvent && isInteractionType(activeEvent.def.completion_type) && (
+      {/* 觸發演出：Step1 全螢幕紅閃警報（Phase A/B 共用） */}
+      {showFlash && <EventTriggerFlash onDone={onFlashDone} />}
+      {/* Step2 任務目標面板（等接受/放棄，不自動消失） */}
+      {status === 'tracking' && activeEvent?.phase === 'offer' && (
+        <EventOfferPanel active={activeEvent} onAccept={acceptEvent} onDecline={declineEvent} />
+      )}
+      {/* Step3 置中 321，數完進 Step4 正式開始 */}
+      {status === 'tracking' && activeEvent?.phase === 'countdown' && <Countdown321 onDone={startActivePhase} />}
+      {status === 'tracking' && activeEvent?.phase === 'active' && isInteractionType(activeEvent.def.completion_type) && (
         <EventInteraction active={activeEvent} onDone={handleInteractionDone} paused={isLandscape} assets={fxAssets} />
       )}
       {confirmEnd && activeEvent && (() => {
@@ -713,7 +772,7 @@ export default function TrackPage() {
       {/* 地圖（事件橫幅直接疊在地圖上方，任務結束才收起；地圖與數據不位移） */}
       <div style={{ position: 'relative' }}>
         <div id="gps-map" style={{ width: '100%', height: 280, background: 'var(--bg-2)' }} />
-        {activeEvent && (
+        {activeEvent?.phase === 'active' && (
           <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1000, pointerEvents: 'none' }}>
             <EventBanner active={activeEvent} moved={eventMoved} />
           </div>
@@ -726,7 +785,7 @@ export default function TrackPage() {
         {!activeEvent && raceInvite && (() => {
           const remain = Math.max(0, Math.ceil((raceInvite.join_deadline - (inviteNow || Date.now())) / 1000))
           return (
-            <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1001, margin: '10px 12px 0', background: 'rgba(9,12,16,.96)', border: '1px solid rgba(255,194,75,.6)', borderRadius: 12, padding: '12px 14px', boxShadow: '0 6px 24px rgba(0,0,0,.55)' }}>
+            <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1001, margin: '10px 12px 0', background: '#0b0e13', border: '1px solid rgba(255,194,75,.6)', borderRadius: 12, padding: '12px 14px', boxShadow: '0 6px 24px rgba(0,0,0,.55)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
                 <span style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--gold)', fontWeight: 800 }}>⚡ 多人事件邀請</span>
                 <span style={{ fontSize: 18, fontWeight: 900, color: remain <= 10 ? 'var(--hunt)' : 'var(--gold)', fontVariantNumeric: 'tabular-nums' }}>{remain}s</span>

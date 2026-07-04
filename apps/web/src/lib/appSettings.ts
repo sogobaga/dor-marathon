@@ -32,4 +32,19 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '隨機等待「上限」。與下限一起決定事件出現的隨機節奏（例：300–900 秒＝約 5–15 分鐘一次）。',
     min: 60, max: 3600, def: '900',
   },
+  {
+    key: 'event_first_wait_run1_sec', group: '事件任務節奏', label: '新手加速・第 1 趟等待', type: 'number', unit: '秒',
+    help: '玩家「第 1 趟」跑步時，第一個事件的等待時間（比正常短很多，讓新玩家一開始就遇得到事件）。依帳號的已完成跑步筆數判定。',
+    min: 5, max: 3600, def: '45',
+  },
+  {
+    key: 'event_first_wait_run2_sec', group: '事件任務節奏', label: '新手加速・第 2 趟等待', type: 'number', unit: '秒',
+    help: '玩家「第 2 趟」跑步時，第一個事件的等待時間。',
+    min: 5, max: 3600, def: '90',
+  },
+  {
+    key: 'event_first_wait_run3_sec', group: '事件任務節奏', label: '新手加速・第 3 趟等待', type: 'number', unit: '秒',
+    help: '玩家「第 3 趟」跑步時，第一個事件的等待時間。第 4 趟起回到正常的隨機區間。',
+    min: 5, max: 3600, def: '180',
+  },
 ]

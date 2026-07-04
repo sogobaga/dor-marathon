@@ -29,7 +29,8 @@ export const EFFECT_SPECS: EffectSpec[] = [
   { slug: 'interaction.shape.bg4', category: '圖形魔法陣底圖', label: '四角形 魔法陣底圖', where: '畫「四角形」時的底圖', type: 'image', placeholder: '（幾何虛線）', size: '512 × 512 px（正方）', format: 'PNG（去背透明）', maxKB: 200, note: '圖中正方形「軸對齊（上下左右邊水平垂直）、置中」；虛線大小用下方「導引縮放」對齊' },
   { slug: 'interaction.shape.bg5', category: '圖形魔法陣底圖', label: '五芒星 魔法陣底圖', where: '畫「五芒星」時的底圖', type: 'image', placeholder: '（幾何虛線）', size: '512 × 512 px（正方）', format: 'PNG（去背透明）', maxKB: 200, note: '圖中五芒星「一角朝上、置中」；虛線大小用下方「導引縮放」對齊底圖線條' },
   // --- 音效 ---
-  { slug: 'sound.event_alert', category: '音效', label: '事件來了 提示音', where: '事件任務／多人事件邀請「跳出」時', type: 'audio', placeholder: '合成音（beep-beep-BOOP）', size: '約 0.4–0.6 秒', format: 'MP3 或 OGG（單聲道即可）', maxKB: 40 },
+  { slug: 'sound.event_alarm', category: '音效', label: '事件觸發 警報聲', where: '事件任務／多人邀請觸發時的全螢幕紅閃警報', type: 'audio', placeholder: '合成音（噹、噹、噹 三聲低沉鐘）', size: '約 1.2–1.6 秒', format: 'MP3 或 OGG（單聲道即可）', maxKB: 80, note: '建議 EVA 使徒來襲式的三聲警報；會對齊畫面紅閃 3 下' },
+  { slug: 'sound.event_alert', category: '音效', label: '事件來了 提示音（舊）', where: '（保留）事件提示音備用', type: 'audio', placeholder: '合成音（beep-beep-BOOP）', size: '約 0.4–0.6 秒', format: 'MP3 或 OGG（單聲道即可）', maxKB: 40 },
   { slug: 'sound.event_complete', category: '音效', label: '事件完成 成功音', where: '事件任務完成結算時', type: 'audio', placeholder: '合成音（上行琶音）', size: '約 0.5–0.8 秒', format: 'MP3 或 OGG', maxKB: 40 },
   { slug: 'sound.tap_hit', category: '音效', label: '點擊打擊音', where: '連續點擊小遊戲，每次點擊', type: 'audio', placeholder: '合成音（打擊）', size: '約 0.08–0.15 秒（會連續快速播放，務必短）', format: 'MP3 或 OGG', maxKB: 15 },
   { slug: 'sound.defend', category: '音效', label: '按住防禦音', where: '按住防禦小遊戲，開始按住時', type: 'audio', placeholder: '合成音（起盾）', size: '約 0.2–0.4 秒', format: 'MP3 或 OGG', maxKB: 25 },

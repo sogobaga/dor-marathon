@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation'
 import { adminEffectsApi, adminImagesApi } from '@/lib/api'
 import { EFFECT_SPECS, type EffectSpec } from '@/lib/effects'
 import { getToken, clearToken } from '@/lib/adminAuth'
-import { unlockAudio, playEventAlert, playEventComplete, playTapHit, playDefend, playDing } from '@/lib/sfx'
+import { unlockAudio, playEventAlert, playEventAlarm, playEventComplete, playTapHit, playDefend, playDing } from '@/lib/sfx'
 
 const SYNTH: Record<string, () => void> = {
+  'sound.event_alarm': playEventAlarm,
   'sound.event_alert': playEventAlert,
   'sound.event_complete': playEventComplete,
   'sound.tap_hit': playTapHit,

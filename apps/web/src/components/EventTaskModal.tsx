@@ -1,10 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { EventDef } from '@/lib/api'
 import DpCoin from './DpCoin'
 
-export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string; baseSpk?: number }
+// 觸發演出階段：announce=全螢幕紅閃警報 / offer=任務目標面板(等接受) / countdown=321 / active=正式進行中
+export type EventPhase = 'announce' | 'offer' | 'countdown' | 'active'
+export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string; baseSpk?: number; phase?: EventPhase }
 
 // 配速（秒/公里）格式化為 M:SS/km；無效回 '—'
 export function fmtPace(spk: number): string {
@@ -80,7 +82,7 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
       {pickEventImage(def) && <img src={pickEventImage(def)} alt="" style={{ width: '100%', height: 120, objectFit: 'cover', borderRadius: 8, margin: '8px 0 2px', display: 'block' }} />}
       <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>{def.message || def.name}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 5 }}>
-        <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>目標：{goalText(def)}</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)' }}>目標：{goalText(def)}</span>
         {(def.reward_exp > 0 || def.reward_dp > 0) && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(255,210,77,.12)', border: '1px solid rgba(255,210,77,.35)', borderRadius: 999, padding: '3px 10px' }}>
             <span style={{ fontSize: 10, letterSpacing: '.1em', color: 'var(--tx-faint)', fontWeight: 700 }}>獎勵</span>
@@ -137,7 +139,9 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
 
 // 完成/失敗結果：同樣以「內嵌橫幅」呈現（不是彈窗），需按「收下」或約 12 秒後才收起
 export function EventResultBanner({ result, onClose }: { result: EventResult; onClose: () => void }) {
-  useEffect(() => { if (result.pending) return; const t = setTimeout(onClose, 12000); return () => clearTimeout(t) }, [onClose, result.pending])
+  // onClose 用 ref：父層每 250ms 重繪會換掉 onClose 識別，若放進 deps 會每次重設 12 秒計時而永遠不自動收起。
+  const closeRef = useRef(onClose); closeRef.current = onClose
+  useEffect(() => { if (result.pending) return; const t = setTimeout(() => closeRef.current(), 12000); return () => clearTimeout(t) }, [result.pending])
   const isInter = isInteractionType(result.def.completion_type)
   const stars = result.stars ?? 0
   const pending = !!result.pending // 結算中：中性樣式，避免先閃紅（失敗）再變綠（完成）
@@ -146,9 +150,9 @@ export function EventResultBanner({ result, onClose }: { result: EventResult; on
   const hasReward = result.reward_exp > 0 || result.reward_dp > 0
   const title = pending ? '🎉 任務完成！' : ok ? '🎉 任務完成！' : weak ? '🐾 差一點…' : '🐾 任務失敗'
   const borderColor = pending ? 'rgba(255,194,75,.5)' : ok ? 'rgba(70,227,160,.5)' : 'rgba(255,90,90,.4)'
-  const bg = pending ? 'linear-gradient(180deg, rgba(255,194,75,.14), rgba(9,12,16,.95))'
-    : ok ? 'linear-gradient(180deg, rgba(70,227,160,.20), rgba(9,12,16,.95))'
-      : 'linear-gradient(180deg, rgba(255,90,90,.18), rgba(9,12,16,.95))'
+  const bg = pending ? 'linear-gradient(180deg, #2b2a1e, #0b0e13)'
+    : ok ? 'linear-gradient(180deg, #12241c, #0b0e13)'
+      : 'linear-gradient(180deg, #241315, #0b0e13)'
   const titleColor = pending ? 'var(--gold)' : ok ? 'var(--fug)' : 'var(--hunt)'
   return (
     <div style={{ ...banner, borderColor, background: bg }}>
@@ -182,6 +186,83 @@ export function EventResultBanner({ result, onClose }: { result: EventResult; on
   )
 }
 
-const banner: React.CSSProperties = { margin: '10px 12px 0', background: 'rgba(9,12,16,.94)', border: '1px solid rgba(255,194,75,.45)', borderRadius: 12, padding: '12px 14px', boxShadow: '0 6px 24px rgba(0,0,0,.5)', backdropFilter: 'blur(3px)' }
+// 底色改「完全不透明」：跑動中地圖文字不再透出、事件文字清楚可讀（實測 6km 問題修正）
+const banner: React.CSSProperties = { margin: '10px 12px 0', background: '#0b0e13', border: '1px solid rgba(255,194,75,.45)', borderRadius: 12, padding: '12px 14px', boxShadow: '0 6px 24px rgba(0,0,0,.5)' }
 const barOuter: React.CSSProperties = { height: 8, borderRadius: 999, background: 'rgba(255,255,255,.08)', overflow: 'hidden', marginTop: 8 }
 const barInner: React.CSSProperties = { height: '100%', borderRadius: 999, background: 'linear-gradient(90deg,#FFD24D,#FFC24B)', transition: 'width .3s' }
+
+// ───────── 觸發演出：Step1 全螢幕紅閃 / Step2 任務目標面板 / Step3 置中 321 ─────────
+
+// Step1：全螢幕「事件觸發」紅字閃 3 下 + 四邊紅光，約 1.6s 後 onDone → 進入任務目標面板。
+// onDone 用 ref 保存：父層每 250ms（計時）重繪會換掉 onDone 識別，若放進 deps 會每次重設 timer 而永遠不觸發。
+export function EventTriggerFlash({ onDone }: { onDone: () => void }) {
+  const doneRef = useRef(onDone); doneRef.current = onDone
+  useEffect(() => { const t = setTimeout(() => doneRef.current(), 1600); return () => clearTimeout(t) }, [])
+  return (
+    <div className="evt-flash" aria-hidden>
+      <div className="evt-flash-text">事件觸發</div>
+    </div>
+  )
+}
+
+// Step3：接受後的置中 3-2-1 倒數（佔九宮格中央格），數到 0 後 onDone → 事件正式開始。
+// 掛載時起單一 interval、onDone 用 ref——避免父層頻繁重繪換掉 onDone 而每 tick 重置倒數。
+export function Countdown321({ onDone }: { onDone: () => void }) {
+  const [n, setN] = useState(3)
+  const doneRef = useRef(onDone); doneRef.current = onDone
+  useEffect(() => {
+    let cur = 3
+    const t = setInterval(() => {
+      cur -= 1
+      if (cur <= 0) { clearInterval(t); setN(0); doneRef.current() }
+      else setN(cur)
+    }, 1000)
+    return () => clearInterval(t)
+  }, [])
+  if (n <= 0) return null
+  return (
+    <div className="evt-countdown" aria-hidden>
+      <div key={n} className="evt-countdown-num">{n}</div>
+    </div>
+  )
+}
+
+// Step2：任務目標面板——不自動消失，等跑者按「接受/放棄」。大字目標、遊戲感外框、附圖、獎勵。
+export function EventOfferPanel({ active, onAccept, onDecline }: { active: ActiveEvent; onAccept: () => void; onDecline: () => void }) {
+  const def = active.def
+  const img = pickEventImage(def)
+  return (
+    <div style={offerBackdrop}>
+      <div style={offerCard}>
+        <span style={{ ...corner, top: 6, left: 6, borderRight: 'none', borderBottom: 'none' }} />
+        <span style={{ ...corner, top: 6, right: 6, borderLeft: 'none', borderBottom: 'none' }} />
+        <span style={{ ...corner, bottom: 6, left: 6, borderRight: 'none', borderTop: 'none' }} />
+        <span style={{ ...corner, bottom: 6, right: 6, borderLeft: 'none', borderTop: 'none' }} />
+        <div style={{ fontSize: 12, letterSpacing: '.3em', color: 'var(--gold)', fontWeight: 800, textAlign: 'center' }}>⚡ 事件任務 ⚡</div>
+        {img && <img src={img} alt="" style={{ width: '100%', height: 150, objectFit: 'cover', borderRadius: 10, margin: '10px 0', display: 'block' }} />}
+        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--tx)', lineHeight: 1.5, textAlign: 'center', marginTop: img ? 0 : 10 }}>{def.message || def.name}</div>
+        <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: 'rgba(255,194,75,.08)', border: '1px solid rgba(255,194,75,.3)', textAlign: 'center' }}>
+          <div style={{ fontSize: 12, letterSpacing: '.2em', color: 'var(--gold)', fontWeight: 800 }}>任務目標</div>
+          <div style={{ fontSize: 23, fontWeight: 900, color: '#fff', marginTop: 4, lineHeight: 1.3 }}>{goalText(def)}</div>
+        </div>
+        {(def.reward_exp > 0 || def.reward_dp > 0) && (
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 14, alignItems: 'center', marginTop: 12 }}>
+            <span style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-faint)', fontWeight: 700 }}>獎勵</span>
+            {def.reward_exp > 0 && <span style={{ fontSize: 17, fontWeight: 900, color: 'var(--gold)' }}>+{def.reward_exp} EXP</span>}
+            {def.reward_dp > 0 && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 17, fontWeight: 900, color: '#FFD24D' }}><DpCoin size={17} />+{def.reward_dp}</span>}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+          <button onClick={onDecline} style={declineBtn}>放棄</button>
+          <button onClick={onAccept} style={acceptBtn}>接受</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const offerBackdrop: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 2100, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }
+const offerCard: React.CSSProperties = { position: 'relative', width: '100%', maxWidth: 360, maxHeight: '90vh', overflowY: 'auto', background: '#0b0e13', border: '2px solid rgba(255,194,75,.55)', borderRadius: 16, padding: '20px 18px', boxShadow: '0 0 0 1px rgba(255,194,75,.15), 0 20px 60px rgba(0,0,0,.7), inset 0 0 40px rgba(255,194,75,.05)' }
+const corner: React.CSSProperties = { position: 'absolute', width: 16, height: 16, border: '2px solid var(--gold)', pointerEvents: 'none' }
+const acceptBtn: React.CSSProperties = { flex: 1.5, padding: '13px 0', borderRadius: 12, border: 'none', background: 'linear-gradient(180deg,#38d17f,#2fbf71)', color: '#04120a', fontSize: 17, fontWeight: 900, cursor: 'pointer', boxShadow: '0 4px 16px rgba(47,191,113,.4)' }
+const declineBtn: React.CSSProperties = { flex: 1, padding: '13px 0', borderRadius: 12, border: '1px solid rgba(185,166,138,.4)', background: 'rgba(185,166,138,.08)', color: '#b9a68a', fontSize: 15, fontWeight: 700, cursor: 'pointer' }

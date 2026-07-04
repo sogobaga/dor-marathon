@@ -135,6 +135,46 @@ html, body {
   .landscape-lock { display: flex; }
 }
 
+/* --- 事件任務觸發演出 --- */
+/* Step1：全螢幕「事件觸發」紅字閃 3 下 + 四邊紅色 inset 光暈同步閃 3 下（EVA 使徒來襲式）。 */
+@keyframes eventFlashPulse {
+  0%, 100% { opacity: 0; transform: scale(.9); }
+  28%, 72% { opacity: 1; transform: scale(1); }
+}
+@keyframes eventEdgeGlow {
+  0%, 100% { box-shadow: inset 0 0 0 0 rgba(255,40,60,0); }
+  50%      { box-shadow: inset 0 0 90px 14px rgba(255,40,60,.85); }
+}
+.evt-flash {
+  position: fixed; inset: 0; z-index: 2200; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  animation: eventEdgeGlow .5s ease-in-out 3;
+}
+.evt-flash-text {
+  font-weight: 900; color: #ff2d40; letter-spacing: .06em;
+  white-space: nowrap; font-size: clamp(38px, 20vw, 168px);
+  text-shadow: 0 0 26px rgba(255,40,60,.9), 0 0 8px rgba(255,40,60,1);
+  animation: eventFlashPulse .5s ease-in-out 3;
+}
+/* Step3：置中 321 大數字，佔九宮格中央格；每秒換一次數字（keyed 重播動畫）。 */
+@keyframes count321Pop {
+  0%   { opacity: 0; transform: scale(1.65); }
+  22%  { opacity: 1; transform: scale(1); }
+  78%  { opacity: 1; transform: scale(1); }
+  100% { opacity: .08; transform: scale(.82); }
+}
+.evt-countdown {
+  position: fixed; inset: 0; z-index: 2200; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.evt-countdown-num {
+  font-weight: 900; color: #fff; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  font-size: min(33vw, 40vh);
+  text-shadow: 0 0 44px rgba(255,194,75,.85), 0 0 14px rgba(255,255,255,.6);
+  animation: count321Pop 1s ease-out both;
+}
+
 /* iOS 模擬外框 */
 .phone-shell {
   width: 390px;
