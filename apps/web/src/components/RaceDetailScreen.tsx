@@ -335,7 +335,7 @@ function TaskRow({ t, onClick }: { t: TaskProgress; onClick?: () => void }) {
 // 任務貢獻明細彈窗：前 20 名里程貢獻 + 自己（即使在 20 名外）
 function TaskContributorsModal({ race, task, onClose }: { race: Race; task: TaskProgress; onClose: () => void }) {
   const token = getUserToken() || undefined
-  const { data, isLoading } = useSWR(['contrib', race.id, task.id], () => racesApi.taskContributors(race.id, task.id!, token))
+  const { data, isLoading, error } = useSWR(['contrib', race.id, task.id], () => racesApi.taskContributors(race.id, task.id!, token))
   const c: TaskContributors | undefined = data?.contributors
   const meInTop = c?.top.some((x) => x.is_me)
   const row = (x: TaskContributors['top'][number], showRank = true) => (
@@ -364,7 +364,7 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
           </div>
         </div>
         <ScrollArea padding="14">
-          {isLoading || !c ? <Hint>載入中…</Hint> : (
+          {error ? <Hint>載入失敗，請稍後再試</Hint> : isLoading || !c ? <Hint>載入中…</Hint> : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {c.top.length === 0 && <Hint>目前還沒有人貢獻里程</Hint>}
               {c.top.map((x) => row(x))}

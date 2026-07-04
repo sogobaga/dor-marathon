@@ -60,7 +60,7 @@ func (r *Repository) LoadTaskContributors(ctx context.Context, raceID, groupID s
 		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 		                       AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
 		WHERE rc.id = $1 AND ($2 = '' OR reg.group_id::text = $2)
-		GROUP BY reg.user_id, name, group_name
+		GROUP BY reg.user_id, p.nickname, u.handle, g.name
 		ORDER BY dist DESC, acts DESC`, raceID, groupID)
 	if err != nil {
 		return nil, err
