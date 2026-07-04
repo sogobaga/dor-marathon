@@ -154,6 +154,7 @@ type EventDef struct {
 	CompletionType   string             `json:"completion_type"`
 	CompletionParams map[string]float64 `json:"completion_params"`
 	Message          string             `json:"message"`
+	GoalText         string             `json:"goal_text"`       // 自訂任務目標說明（留空＝用 goalText() 自動產生）
 	ImageURL         string             `json:"image_url"`       // 預設圖（時段未設定時回退）
 	ImageDayURL      string             `json:"image_day_url"`   // 白天 06:00–17:00
 	ImageDuskURL     string             `json:"image_dusk_url"`  // 黃昏 17:00–19:00
@@ -381,7 +382,7 @@ func scanDef(row pgx.Row) (EventDef, error) {
 	var desc *string
 	err := row.Scan(&d.ID, &d.Name, &desc, &d.Enabled, &d.Weight, &d.CooldownSec,
 		&d.TriggerType, &tp, &d.CompletionType, &cp, &d.Message, &d.ImageURL,
-		&d.ImageDayURL, &d.ImageDuskURL, &d.ImageNightURL, &d.RewardExp, &d.RewardDp)
+		&d.ImageDayURL, &d.ImageDuskURL, &d.ImageNightURL, &d.RewardExp, &d.RewardDp, &d.GoalText)
 	if err != nil {
 		return d, err
 	}
@@ -399,7 +400,7 @@ func scanDef(row pgx.Row) (EventDef, error) {
 	return d, nil
 }
 
-const defCols = `id, name, description, enabled, weight, cooldown_sec, trigger_type, trigger_params, completion_type, completion_params, message, image_url, image_day_url, image_dusk_url, image_night_url, reward_exp, reward_dp`
+const defCols = `id, name, description, enabled, weight, cooldown_sec, trigger_type, trigger_params, completion_type, completion_params, message, image_url, image_day_url, image_dusk_url, image_night_url, reward_exp, reward_dp, goal_text`
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(), `SELECT `+defCols+` FROM event_task_defs ORDER BY created_at DESC`)
@@ -459,12 +460,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	out, err := scanDef(h.db.QueryRow(r.Context(), `
 		INSERT INTO event_task_defs (name, description, enabled, weight, cooldown_sec,
 			trigger_type, trigger_params, completion_type, completion_params, message, image_url,
-			image_day_url, image_dusk_url, image_night_url, reward_exp, reward_dp)
-		VALUES ($1,NULLIF($2,''),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			image_day_url, image_dusk_url, image_night_url, reward_exp, reward_dp, goal_text)
+		VALUES ($1,NULLIF($2,''),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		RETURNING `+defCols,
 		d.Name, d.Description, d.Enabled, d.Weight, d.CooldownSec,
 		d.TriggerType, tp, d.CompletionType, cp, d.Message, d.ImageURL,
-		d.ImageDayURL, d.ImageDuskURL, d.ImageNightURL, d.RewardExp, d.RewardDp))
+		d.ImageDayURL, d.ImageDuskURL, d.ImageNightURL, d.RewardExp, d.RewardDp, d.GoalText))
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "建立失敗")
 		return
@@ -484,11 +485,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		UPDATE event_task_defs SET name=$2, description=NULLIF($3,''), enabled=$4, weight=$5, cooldown_sec=$6,
 			trigger_type=$7, trigger_params=$8, completion_type=$9, completion_params=$10,
 			message=$11, image_url=$12, image_day_url=$13, image_dusk_url=$14, image_night_url=$15,
-			reward_exp=$16, reward_dp=$17, updated_at=NOW()
+			reward_exp=$16, reward_dp=$17, goal_text=$18, updated_at=NOW()
 		WHERE id=$1 RETURNING `+defCols,
 		id, d.Name, d.Description, d.Enabled, d.Weight, d.CooldownSec,
 		d.TriggerType, tp, d.CompletionType, cp, d.Message, d.ImageURL,
-		d.ImageDayURL, d.ImageDuskURL, d.ImageNightURL, d.RewardExp, d.RewardDp))
+		d.ImageDayURL, d.ImageDuskURL, d.ImageNightURL, d.RewardExp, d.RewardDp, d.GoalText))
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "更新失敗")
 		return

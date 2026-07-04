@@ -28,6 +28,7 @@ export function pickTimeImage(imgs: { image_url?: string; image_day_url?: string
 export function pickEventImage(def: EventDef): string { return pickTimeImage(def) }
 
 function goalText(def: EventDef): string {
+  if (def.goal_text?.trim()) return def.goal_text.trim() // 後台自訂優先；留空才用下方依完成條件自動產生（防呆）
   const p = def.completion_params
   const r = (k: string) => Math.round(p[k] ?? 0)
   switch (def.completion_type) {

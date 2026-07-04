@@ -363,6 +363,7 @@ export interface EventDef {
   completion_type: string
   completion_params: Record<string, number>
   message: string
+  goal_text?: string // 自訂任務目標說明（留空＝用系統依完成條件自動產生）
   image_url?: string // 預設圖（時段未設定時回退）
   image_day_url?: string // 白天 06:00–17:00
   image_dusk_url?: string // 黃昏 17:00–19:00

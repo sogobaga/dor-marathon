@@ -14,7 +14,7 @@ function emptyDef(tCat: EventTypeSpec[], cCat: EventTypeSpec[]): EventDef {
     name: '', description: '', enabled: true, weight: 100, cooldown_sec: 300,
     trigger_type: tCat[0]?.key ?? '', trigger_params: {},
     completion_type: cCat[0]?.key ?? '', completion_params: {},
-    message: '', image_url: '', reward_exp: 0, reward_dp: 0,
+    message: '', goal_text: '', image_url: '', reward_exp: 0, reward_dp: 0,
   }
 }
 
@@ -175,6 +175,12 @@ export default function AdminEventsPage() {
           <div style={{ marginTop: 12 }}>
             <Field label="觸發文案（跑者看到的劇情）" grow>
               <textarea style={{ ...inp, minHeight: 60, resize: 'vertical' }} value={edit.message} onChange={(e) => setEdit({ ...edit, message: e.target.value })} placeholder="後方有三隻狗往你衝過來，請趕快跑起來！" />
+            </Field>
+          </div>
+
+          <div style={{ marginTop: 12 }}>
+            <Field label="任務目標說明（自訂，留空＝用系統依完成條件自動產生）" grow>
+              <input style={inp} value={edit.goal_text ?? ''} onChange={(e) => setEdit({ ...edit, goal_text: e.target.value })} placeholder="例：10 秒內衝刺 50 公尺！（留空則自動顯示如「10 秒內再移動 50 公尺」）" />
             </Field>
           </div>
 
