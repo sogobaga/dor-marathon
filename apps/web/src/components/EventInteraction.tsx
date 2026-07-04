@@ -256,6 +256,7 @@ export function EventInteraction({ active, onDone, paused, assets }: { active: A
 
   return (
     <div
+      data-skin="default"
       onPointerDown={onDown}
       onPointerMove={(isSwipe || isShape) ? onMove : undefined}
       onPointerUp={onUp}

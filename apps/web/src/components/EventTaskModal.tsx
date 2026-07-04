@@ -72,7 +72,8 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
     : 'linear-gradient(90deg,#FFD24D,#46E3A0)'
 
   return (
-    <div style={{ ...banner, borderColor: 'rgba(255,194,75,.55)' }}>
+    // data-skin="default"：面板底色固定深色，強制內部文字用暗色主題（亮色）token，避免暖色 skin 下暗字看不見
+    <div data-skin="default" style={{ ...banner, borderColor: 'rgba(255,194,75,.55)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
         <span style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--gold)', fontWeight: 800 }}>⚡ 事件任務</span>
         <span style={{ fontSize: 20, fontWeight: 900, color: ready ? 'var(--fug)' : remain <= 10 ? 'var(--hunt)' : 'var(--gold)', fontVariantNumeric: 'tabular-nums' }}>
@@ -155,7 +156,7 @@ export function EventResultBanner({ result, onClose }: { result: EventResult; on
       : 'linear-gradient(180deg, #241315, #0b0e13)'
   const titleColor = pending ? 'var(--gold)' : ok ? 'var(--fug)' : 'var(--hunt)'
   return (
-    <div style={{ ...banner, borderColor, background: bg }}>
+    <div data-skin="default" style={{ ...banner, borderColor, background: bg }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
         <span style={{ fontSize: 16, fontWeight: 900, color: titleColor }}>{title}</span>
         {!result.pending && <button onClick={onClose} style={{ background: 'rgba(255,255,255,.08)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 14px', color: 'var(--tx)', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>收下</button>}
@@ -232,7 +233,7 @@ export function EventOfferPanel({ active, onAccept, onDecline }: { active: Activ
   const def = active.def
   const img = pickEventImage(def)
   return (
-    <div style={offerBackdrop}>
+    <div data-skin="default" style={offerBackdrop}>
       <div style={offerCard}>
         <span style={{ ...corner, top: 6, left: 6, borderRight: 'none', borderBottom: 'none' }} />
         <span style={{ ...corner, top: 6, right: 6, borderLeft: 'none', borderBottom: 'none' }} />
