@@ -148,13 +148,13 @@ html, body {
 .evt-flash {
   position: fixed; inset: 0; z-index: 2200; pointer-events: none;
   display: flex; align-items: center; justify-content: center;
-  animation: eventEdgeGlow .5s ease-in-out 3;
+  animation: eventEdgeGlow .7s ease-in-out 3;
 }
 .evt-flash-text {
   font-weight: 900; color: #ff2d40; letter-spacing: .06em;
   white-space: nowrap; font-size: clamp(38px, 20vw, 168px);
   text-shadow: 0 0 26px rgba(255,40,60,.9), 0 0 8px rgba(255,40,60,1);
-  animation: eventFlashPulse .5s ease-in-out 3;
+  animation: eventFlashPulse .7s ease-in-out 3;
 }
 /* Step3：置中 321 大數字，佔九宮格中央格；每秒換一次數字（keyed 重播動畫）。 */
 @keyframes count321Pop {
@@ -166,16 +166,16 @@ html, body {
 .evt-countdown {
   position: fixed; inset: 0; z-index: 2200; pointer-events: none;
   display: flex; align-items: center; justify-content: center;
-  /* 中央柔和暗色聚光：保證白色數字在任何 skin（含奶油暖色淺底）都有對比 */
-  background: radial-gradient(circle at 50% 50%, rgba(0,0,0,.5) 0%, rgba(0,0,0,.34) 16%, rgba(0,0,0,0) 42%);
+  /* 中央柔和「暗紅」聚光（非黑）：仍保證白色數字在任何 skin（含奶油暖色淺底）都有對比 */
+  background: radial-gradient(circle at 50% 50%, rgba(60,0,10,.44) 0%, rgba(60,0,10,.28) 16%, rgba(60,0,10,0) 42%);
 }
 .evt-countdown-num {
   font-weight: 900; color: #fff; line-height: 1;
   font-variant-numeric: tabular-nums;
   font-size: min(33vw, 40vh);
-  -webkit-text-stroke: 2px rgba(0,0,0,.45);
-  /* 深色光暈作外框（淺底可讀）+ 暖色外發光（增添張力） */
-  text-shadow: 0 0 16px rgba(0,0,0,.9), 0 0 34px rgba(0,0,0,.75), 0 6px 22px rgba(0,0,0,.7), 0 0 50px rgba(255,150,70,.6);
+  -webkit-text-stroke: 2px rgba(190,25,40,.62);
+  /* 紅色外光暈作外框（取代黑色）：淺底靠紅邊分離、暗底更有張力 */
+  text-shadow: 0 0 16px rgba(255,45,60,.95), 0 0 40px rgba(255,45,60,.7), 0 0 66px rgba(255,90,60,.5);
   animation: count321Pop 1s ease-out both;
 }
 

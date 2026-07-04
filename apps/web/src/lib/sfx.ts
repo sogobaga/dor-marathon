@@ -217,7 +217,7 @@ export function playEventAlarm() {
       o.stop(start + 0.5)
     }
   }
-  for (const t of [0, 0.5, 1.0]) gong(base + t)
+  for (const t of [0, 0.7, 1.4]) gong(base + t) // 對齊全螢幕紅閃 3 下（每下 0.7s）
 }
 
 // 升級到 100% 的「噹」——鐘聲（多諧波 + 快速衰減）

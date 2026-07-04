@@ -199,7 +199,7 @@ const barInner: React.CSSProperties = { height: '100%', borderRadius: 999, backg
 // onDone 用 ref 保存：父層每 250ms（計時）重繪會換掉 onDone 識別，若放進 deps 會每次重設 timer 而永遠不觸發。
 export function EventTriggerFlash({ onDone }: { onDone: () => void }) {
   const doneRef = useRef(onDone); doneRef.current = onDone
-  useEffect(() => { const t = setTimeout(() => doneRef.current(), 1600); return () => clearTimeout(t) }, [])
+  useEffect(() => { const t = setTimeout(() => doneRef.current(), 2200); return () => clearTimeout(t) }, []) // 3 下 × 0.7s ≈ 2.1s + 緩衝
   return (
     <div className="evt-flash" aria-hidden>
       <div className="evt-flash-text">事件觸發</div>
