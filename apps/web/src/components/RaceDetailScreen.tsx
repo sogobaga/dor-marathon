@@ -2,7 +2,7 @@
 
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
-import { racesApi, METRIC_BY_KEY, type Race, type TaskProgress } from '@/lib/api'
+import { racesApi, METRIC_BY_KEY, type Race, type TaskProgress, type TaskContributors } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { renderCertificate, downloadDataURL } from '@/lib/certificate'
 import ExpSettlementModal from './ExpSettlementModal'
@@ -226,6 +226,7 @@ export default function RaceDetailScreen({
 function ProgressBody({ race }: { race: Race }) {
   const token = getUserToken() || undefined
   const { data, isLoading } = useSWR(['progress', race.id], () => racesApi.progress(race.id, token), { refreshInterval: 30000 })
+  const [detailTask, setDetailTask] = useState<TaskProgress | null>(null)
   const prog = data?.progress
   if (isLoading || !prog) return <Hint>載入中…</Hint>
 
@@ -252,21 +253,26 @@ function ProgressBody({ race }: { race: Race }) {
         <div key={g.label}>
           <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)', marginBottom: 8 }}>{g.label}任務</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {g.tasks.map((t, i) => <TaskRow key={t.id ?? i} t={t} />)}
+            {g.tasks.map((t, i) => <TaskRow key={t.id ?? i} t={t} onClick={t.id ? () => setDetailTask(t) : undefined} />)}
           </div>
         </div>
       ))}
+
+      {detailTask && <TaskContributorsModal race={race} task={detailTask} onClose={() => setDetailTask(null)} />}
     </div>
   )
 }
 
-function TaskRow({ t }: { t: TaskProgress }) {
+function TaskRow({ t, onClick }: { t: TaskProgress; onClick?: () => void }) {
+  const clickable = !!onClick
+  const clickStyle = clickable ? { cursor: 'pointer' as const } : {}
+  const hint = clickable ? <div style={{ fontSize: 11, color: 'var(--gold)', marginTop: 8, textAlign: 'right' }}>查看里程貢獻榜 ›</div> : null
   const m = METRIC_BY_KEY[t.metric_type]
   if (m?.kind === 'checkpoint') {
     const cps = t.checkpoints ?? []
     const collected = cps.filter((c) => c.collected).length
     return (
-      <div style={{ background: 'var(--bg-1)', border: `1px solid ${t.done ? 'var(--fug)' : 'var(--line)'}`, borderRadius: 12, padding: '11px 13px' }}>
+      <div onClick={onClick} style={{ background: 'var(--bg-1)', border: `1px solid ${t.done ? 'var(--fug)' : 'var(--line)'}`, borderRadius: 12, padding: '11px 13px', ...clickStyle }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
           <span style={{ fontSize: 13.5, fontWeight: 700 }}>{t.done ? '✓ ' : ''}{t.title || m?.label}</span>
           <span style={{ fontSize: 12, color: t.done ? 'var(--fug)' : 'var(--tx-dim)', whiteSpace: 'nowrap' }}>集章 {collected}/{cps.length}</span>
@@ -285,6 +291,7 @@ function TaskRow({ t }: { t: TaskProgress }) {
           </div>
         )}
         <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>到各點半徑內以「開始跑步」打卡，集滿即完成</div>
+        {hint}
       </div>
     )
   }
@@ -300,7 +307,7 @@ function TaskRow({ t }: { t: TaskProgress }) {
     pct = target > 0 ? Math.min(100, (t.current / target) * 100) : 0
   }
   return (
-    <div style={{ background: 'var(--bg-1)', border: `1px solid ${t.done ? 'var(--fug)' : 'var(--line)'}`, borderRadius: 12, padding: '11px 13px' }}>
+    <div onClick={onClick} style={{ background: 'var(--bg-1)', border: `1px solid ${t.done ? 'var(--fug)' : 'var(--line)'}`, borderRadius: 12, padding: '11px 13px', ...clickStyle }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
         <span style={{ fontSize: 13.5, fontWeight: 700 }}>{t.done ? '✓ ' : ''}{t.title || m?.label}</span>
         <span style={{ fontSize: 12, color: t.done ? 'var(--fug)' : 'var(--tx-dim)', whiteSpace: 'nowrap' }}>{targetText}</span>
@@ -320,6 +327,57 @@ function TaskRow({ t }: { t: TaskProgress }) {
           </div>
         </>
       )}
+      {hint}
+    </div>
+  )
+}
+
+// 任務貢獻明細彈窗：前 20 名里程貢獻 + 自己（即使在 20 名外）
+function TaskContributorsModal({ race, task, onClose }: { race: Race; task: TaskProgress; onClose: () => void }) {
+  const token = getUserToken() || undefined
+  const { data, isLoading } = useSWR(['contrib', race.id, task.id], () => racesApi.taskContributors(race.id, task.id!, token))
+  const c: TaskContributors | undefined = data?.contributors
+  const meInTop = c?.top.some((x) => x.is_me)
+  const row = (x: TaskContributors['top'][number], showRank = true) => (
+    <div key={x.user_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 9, background: x.is_me ? 'rgba(255,194,75,.14)' : 'var(--bg-2)', border: x.is_me ? '1px solid var(--gold)' : '1px solid transparent' }}>
+      <span style={{ width: 30, textAlign: 'center', fontWeight: 900, fontSize: 13, color: x.rank <= 3 ? 'var(--gold)' : 'var(--tx-dim)' }}>{showRank ? x.rank : '·'}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{x.name}{x.is_me ? '（我）' : ''}</div>
+        {x.group_name && <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{x.group_name}</div>}
+      </div>
+      <div style={{ textAlign: 'right' }}>
+        <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--fug)', fontVariantNumeric: 'tabular-nums' }}>{x.distance_km.toFixed(1)} <span style={{ fontSize: 11, color: 'var(--tx-dim)' }}>km</span></div>
+        <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>{x.activities} 筆</div>
+      </div>
+    </div>
+  )
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '82vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', borderRadius: '18px 18px 0 0', border: '1px solid var(--line-2)', borderBottom: 'none' }}>
+        <div style={{ padding: '16px 18px 10px', borderBottom: '1px solid var(--line)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)' }}>{task.title || '任務'} · 里程貢獻榜</div>
+              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3 }}>{c ? `${c.pool_label} · ${c.contributed}/${c.total} 人已貢獻` : '　'}</div>
+            </div>
+            <button onClick={onClose} style={{ background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 12px', color: 'var(--tx)', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>關閉</button>
+          </div>
+        </div>
+        <ScrollArea padding="14">
+          {isLoading || !c ? <Hint>載入中…</Hint> : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {c.top.length === 0 && <Hint>目前還沒有人貢獻里程</Hint>}
+              {c.top.map((x) => row(x))}
+              {c.me && !meInTop && (
+                <>
+                  <div style={{ textAlign: 'center', color: 'var(--tx-faint)', fontSize: 14, padding: '2px 0' }}>⋯</div>
+                  {row(c.me)}
+                </>
+              )}
+            </div>
+          )}
+        </ScrollArea>
+      </div>
     </div>
   )
 }

@@ -778,6 +778,9 @@ export const racesApi = {
   // 賽事進度（任務達成度 + 個人統計；帶 token 則含個人）
   progress: (raceID: string, token?: string) =>
     request<{ progress: RaceProgress }>(`/races/${raceID}/progress`, token ? { headers: withAuth(token) } : undefined),
+  // 某任務的里程貢獻榜（前 20 名 + 自己；帶 token 則含自己排名）
+  taskContributors: (raceID: string, taskID: string, token?: string) =>
+    request<{ contributors: TaskContributors }>(`/races/${raceID}/tasks/${taskID}/contributors`, token ? { headers: withAuth(token) } : undefined),
   // 一般模式個人完成排名（帶 token 則含追蹤狀態）
   leaderboard: (raceID: string, token?: string) =>
     request<{ leaderboard: Leaderboard }>(`/races/${raceID}/leaderboard`, token ? { headers: withAuth(token) } : undefined),
@@ -803,6 +806,25 @@ export interface RaceProgress {
   started: boolean
   registered?: boolean
   tasks: TaskProgress[]
+}
+export interface Contributor {
+  rank: number
+  user_id: string
+  name: string
+  group_name?: string
+  distance_km: number
+  activities: number
+  is_me: boolean
+}
+export interface TaskContributors {
+  task_id: string
+  task_title: string
+  scope: string
+  pool_label: string // 全體參賽者 / 本組：XXX
+  total: number
+  contributed: number
+  top: Contributor[]
+  me?: Contributor | null
 }
 
 // --- Admin: Races ---
