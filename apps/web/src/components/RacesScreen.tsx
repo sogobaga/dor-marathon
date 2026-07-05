@@ -21,19 +21,10 @@ function fmtFee(cents: number) {
   return 'NT$ ' + Math.round(cents / 100).toLocaleString('zh-TW')
 }
 
-function fmtDate(iso: string) {
-  const d = new Date(iso)
-  return `${d.getMonth() + 1}/${d.getDate()}`
-}
 function fmtDateTime(iso: string) {
   const d = new Date(iso)
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`
-}
-function periodText(start?: string | null, end?: string | null, withTime?: boolean) {
-  const f = withTime ? fmtDateTime : fmtDate
-  if (!start && !end) return '未設定'
-  return `${start ? f(start) : '—'} – ${end ? f(end) : '—'}`
 }
 
 export default function RacesScreen({
@@ -182,33 +173,28 @@ function RaceCard({
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
             <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, color: s.color, border: `1px solid ${s.color}`, background: 'rgba(255,255,255,.03)', whiteSpace: 'nowrap' }}>● {s.label}</span>
-            {reg?.status === 'paid' && (
-              <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, color: 'var(--fug)', border: '1px solid var(--fug)', background: 'rgba(70,227,160,.08)', whiteSpace: 'nowrap' }}>報名完成</span>
-            )}
+            <span style={{ fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 999, color: 'var(--gold)', border: '1px solid var(--gold)', whiteSpace: 'nowrap' }}>{fmtFee(race.entry_fee)}</span>
           </div>
         </div>
 
         {/* 報名期間 / 賽事期間：兩並排資訊卡（各帶 icon） */}
         <div style={{ display: 'flex', gap: 8 }}>
-          <PeriodBox icon="/source/ui/01_icons/icon_calendar_orange.png" label="報名期間" value={periodText(race.registration_start, race.registration_end, true)} />
-          <PeriodBox icon="/source/ui/01_icons/icon_runner_green.png" label="賽事期間" value={periodText(race.start_date, race.end_date, true)} />
+          <PeriodBox icon="/source/ui/01_icons/icon_calendar_orange.png" label="報名期間" start={dt(race.registration_start)} end={dt(race.registration_end)} />
+          <PeriodBox icon="/source/ui/01_icons/icon_runner_green.png" label="活動期間" start={dt(race.start_date)} end={dt(race.end_date)} />
         </div>
 
-        {/* 底列：費用 + 排行榜／報名／前往繳費 */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12.5, color: 'var(--tx-dim)' }}>
-          <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{fmtFee(race.entry_fee)}</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {isCompetition && onOpenRanking && (
-              <button onClick={(e) => { stop(e); onOpenRanking(race) }} style={linkBtnStyle}>排行榜 ›</button>
-            )}
-            {reg
-              ? (reg.status !== 'paid' && (
-                  <button onClick={(e) => { stop(e); onPay?.(race) }} style={payBtnStyle}>前往繳費</button>
-                ))
-              : canRegister && onRegister && (
-                  <button onClick={(e) => { stop(e); onRegister(race) }} style={registerBtnStyle}>報名</button>
-                )}
-          </div>
+        {/* 底列：排行榜（左）＋ 立即報名／報名完成／前往繳費（右） */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13 }}>
+          {isCompetition && onOpenRanking
+            ? <button onClick={(e) => { stop(e); onOpenRanking(race) }} style={linkBtnStyle}>排行榜</button>
+            : <span />}
+          {reg
+            ? (reg.status === 'paid'
+                ? <span style={{ ...ctaLink, cursor: 'default' }}>報名完成 ›</span>
+                : <button onClick={(e) => { stop(e); onPay?.(race) }} style={ctaLink}>前往繳費 ›</button>)
+            : (canRegister && onRegister
+                ? <button onClick={(e) => { stop(e); onRegister(race) }} style={ctaLink}>立即報名 ›</button>
+                : <span style={{ color: 'var(--tx-faint)', fontSize: 12.5 }}>{s.label}</span>)}
         </div>
       </div>
     </div>
@@ -221,16 +207,26 @@ function Hint({ children, color = 'var(--tx-dim)' }: { children: React.ReactNode
   )
 }
 
-// 活動面板的「報名期間／賽事期間」資訊卡（帶 icon）
-function PeriodBox({ icon, label, value }: { icon: string; label: string; value: string }) {
+// 期間 iso → 「M/D HH:MM」；空值顯示「未設定」
+function dt(iso?: string | null) { return iso ? fmtDateTime(iso) : '未設定' }
+
+// 活動面板的「報名期間／活動期間」資訊卡（帶 icon；開始/結束分兩行，好讀、不用 – 連接）
+function PeriodBox({ icon, label, start, end }: { icon: string; label: string; start: string; end: string }) {
   return (
-    <div style={{ flex: 1, minWidth: 0, background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 'var(--radius-md, 12px)', padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <div style={{ flex: 1, minWidth: 0, background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 'var(--radius-md, 12px)', padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: 5 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={icon} alt="" width={16} height={16} style={{ display: 'block', flexShrink: 0 }} />
         <span style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>{label}</span>
       </div>
-      <div style={{ fontSize: 12, color: 'var(--tx)', fontWeight: 600 }}>{value}</div>
+      <div style={{ display: 'flex', gap: 6, fontSize: 12 }}>
+        <span style={{ color: 'var(--tx-faint)', flexShrink: 0 }}>開始</span>
+        <span style={{ color: 'var(--tx)', fontWeight: 600 }}>{start}</span>
+      </div>
+      <div style={{ display: 'flex', gap: 6, fontSize: 12 }}>
+        <span style={{ color: 'var(--tx-faint)', flexShrink: 0 }}>結束</span>
+        <span style={{ color: 'var(--tx)', fontWeight: 600 }}>{end}</span>
+      </div>
     </div>
   )
 }
@@ -238,11 +234,7 @@ function PeriodBox({ icon, label, value }: { icon: string; label: string; value:
 const linkBtnStyle: React.CSSProperties = {
   background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 12.5, padding: 0,
 }
-const registerBtnStyle: React.CSSProperties = {
-  background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
-  borderRadius: 9, padding: '6px 14px', cursor: 'pointer', fontSize: 13,
-}
-const payBtnStyle: React.CSSProperties = {
-  background: 'var(--gold)', color: '#1a1200', fontWeight: 700, border: 'none',
-  borderRadius: 9, padding: '6px 14px', cursor: 'pointer', fontSize: 13,
+const ctaLink: React.CSSProperties = {
+  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+  color: 'var(--fug)', fontWeight: 700, fontSize: 13.5,
 }
