@@ -91,6 +91,31 @@ export default function TrackHistoryPage() {
             <Stat label="時間" v={fmtTime(sel.duration_s)} />
             <Stat label="平均配速" v={`${fmtPace(sel.avg_pace_s)}/km`} />
           </div>
+          {sel.km_paces && sel.km_paces.length > 0 ? (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}>每公里分段配速</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {(() => {
+                  const paces = sel.km_paces!
+                  const mx = Math.max(...paces), mn = Math.min(...paces)
+                  return paces.map((p, i) => {
+                    const pct = mx > mn ? 100 - ((p - mn) / (mx - mn)) * 62 : 100 // 越快(秒少)條越長
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                        <span style={{ width: 46, color: 'var(--tx-dim)', flexShrink: 0 }}>第 {i + 1} km</span>
+                        <div style={{ flex: 1, height: 8, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#FFD24D,#46E3A0)', borderRadius: 999 }} />
+                        </div>
+                        <span style={{ width: 58, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtPace(p)}/km</span>
+                      </div>
+                    )
+                  })
+                })()}
+              </div>
+            </div>
+          ) : (
+            <div style={{ marginTop: 12, fontSize: 11.5, color: 'var(--tx-faint)' }}>（此筆沒有每公里分段資料；v0.1.205 之後的新 GPS 跑步才會記錄）</div>
+          )}
           {sel.flagged && <div style={{ marginTop: 10, fontSize: 12, color: '#ff8a8a' }}>⚠️ 此筆標記{sel.review_action === 'rejected' ? '（已駁回，不計）' : sel.review_action === 'approved' ? '（已核准計入）' : '待審'}：{sel.flag_reason}</div>}
         </div>
       )}

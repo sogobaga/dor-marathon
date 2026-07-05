@@ -37,10 +37,10 @@ func (r *Repository) GetUserGPSRun(ctx context.Context, userID, id string) (*GPS
 	var s GPSRunSummary
 	err := r.db.QueryRow(ctx, `
 		SELECT id::text, distance_km, duration_s, avg_pace_s, point_count,
-		       flagged, COALESCE(flag_reason,''), COALESCE(review_action,''), started_at, ended_at, COALESCE(polyline,'')
+		       flagged, COALESCE(flag_reason,''), COALESCE(review_action,''), started_at, ended_at, COALESCE(polyline,''), COALESCE(km_paces,'{}')
 		FROM gps_runs WHERE id=$1 AND user_id=$2`, id, userID).
 		Scan(&s.ID, &s.DistanceKm, &s.DurationS, &s.AvgPaceS, &s.PointCount,
-			&s.Flagged, &s.FlagReason, &s.ReviewAction, &s.StartedAt, &s.EndedAt, &s.Polyline)
+			&s.Flagged, &s.FlagReason, &s.ReviewAction, &s.StartedAt, &s.EndedAt, &s.Polyline, &s.KmPaces)
 	if err != nil {
 		return nil, err
 	}

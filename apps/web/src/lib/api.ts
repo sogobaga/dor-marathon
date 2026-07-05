@@ -293,6 +293,7 @@ export interface GpsRunHistory {
   started_at: string
   ended_at: string
   polyline?: string
+  km_paces?: number[] // 每公里分段配速(秒/km)；僅詳情回傳、v0.1.205 後的新跑步才有
 }
 export const activitiesApi = {
   uploadGps: (token: string, body: { race_id?: string; started_at: string; ended_at: string; points: GpsPoint[] }) =>

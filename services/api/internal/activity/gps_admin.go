@@ -27,7 +27,8 @@ type GPSRunSummary struct {
 	ReviewAction string    `json:"review_action,omitempty"`
 	StartedAt    time.Time `json:"started_at"`
 	EndedAt      time.Time `json:"ended_at"`
-	Polyline     string    `json:"polyline,omitempty"` // 僅詳情回傳（壓縮軌跡）
+	Polyline     string    `json:"polyline,omitempty"`  // 僅詳情回傳（壓縮軌跡）
+	KmPaces      []int     `json:"km_paces,omitempty"` // 僅詳情回傳：每公里分段配速(秒/km)
 }
 
 func (r *Repository) ListPendingGPS(ctx context.Context) ([]GPSRunSummary, error) {

@@ -145,7 +145,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 	}
 	polyline := encodePolyline(simplifyPath(latlng, 5))
 	if err := s.repo.InsertGPSRun(ctx, userID, req.RaceID, started, ended,
-		round2(distanceKm), durationS, avgPaceS, flagged, flagReason, len(req.Points), polyline); err != nil {
+		round2(distanceKm), durationS, avgPaceS, flagged, flagReason, len(req.Points), polyline, kmSplits); err != nil {
 		return nil, err
 	}
 
@@ -183,16 +183,16 @@ func (r *Repository) HistAvgPace(ctx context.Context, userID string) int {
 
 // InsertGPSRun 寫入 GPS 軌跡（壓縮 polyline）+ 防弊結果
 func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, started, ended time.Time,
-	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, polyline string) error {
+	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, polyline string, kmPaces []int) error {
 	var rid interface{}
 	if raceID != "" {
 		rid = raceID
 	}
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO gps_runs (user_id, race_id, started_at, ended_at, distance_km, duration_s,
-		                      avg_pace_s, flagged, flag_reason, point_count, polyline)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11)`,
-		userID, rid, started, ended, distanceKm, durationS, avgPaceS, flagged, flagReason, pointCount, polyline)
+		                      avg_pace_s, flagged, flag_reason, point_count, polyline, km_paces)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12)`,
+		userID, rid, started, ended, distanceKm, durationS, avgPaceS, flagged, flagReason, pointCount, polyline, kmPaces)
 	return err
 }
 
