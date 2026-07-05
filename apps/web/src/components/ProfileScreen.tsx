@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { profileApi, paymentsApi, integrationsApi, followApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type DashboardInfo, type FollowRow } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import DpCoin from './DpCoin'
-import ScrollArea from './ScrollArea'
+import { useDraggableSheet } from '@/lib/useDraggableSheet'
 
 // 動態建立 hidden 表單並 POST 到綠界（瀏覽器導去付款頁）
 function submitEcpayForm(actionURL: string, params: Record<string, string>) {
@@ -79,6 +79,8 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
   const [follows, setFollows] = useState<FollowRow[] | null>(null)
+  // COROS 式 UX：會員資訊面板固定最上方，分頁內容做成可上下拖曳面板（收合看完整會員面板／半展看分頁／全展看整份內容）
+  const sheet = useDraggableSheet('half')
 
   function loadDashboard() {
     withUserAuth((t) => profileApi.dashboard(t)).then((r) => setDash(r.dashboard)).catch(() => {})
@@ -248,8 +250,12 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
         <button onClick={onBack} style={backBtn}>← 返回</button>
       </header>
 
-      <ScrollArea padding="4px 18px 28px">
-        {err && <div style={{ color: 'var(--hunt)', padding: 16, fontSize: 13 }}>{err}</div>}
+      {/* 會員資訊面板固定最上方 + 可拖曳（個人資料/運動數據/報名紀錄/追蹤）面板 */}
+      <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {/* 背景層：會員資訊面板（收合時完整顯示，可自行捲動） */}
+        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 0' }}>
+        {err && <div style={{ color: 'var(--hunt)', padding: '8px 2px', fontSize: 13 }}>{err}</div>}
+        {!dash && !err && <div style={{ color: 'var(--tx-dim)', padding: 16, fontSize: 13 }}>載入中…</div>}
 
         {/* Dashboard */}
         {dash && (
@@ -304,18 +310,38 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             </div>
           </div>
         )}
+        </div>{/* /背景層：會員資訊面板 */}
 
-        {/* 頁籤 */}
-        <div style={{ display: 'flex', gap: 6, margin: '18px 0 14px', borderBottom: '1px solid var(--line)' }}>
-          {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄'], ['follows', '追蹤']] as const).map(([v, label]) => (
-            <button key={v} onClick={() => setTab(v)} style={{
-              padding: '8px 9px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap',
-              color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 700 : 400,
-              borderBottom: tab === v ? '2px solid var(--fug)' : '2px solid transparent',
-            }}>{label}</button>
-          ))}
-        </div>
+        {/* 可拖曳面板：分頁（個人資料/運動數據/報名紀錄/追蹤）+ 內容 */}
+        <div style={{
+          position: 'absolute', left: 0, right: 0, top: 0, height: '100%',
+          transform: `translateY(${sheet.curY}px)`,
+          transition: !sheet.dragging && sheet.ready ? 'transform .28s cubic-bezier(.22,.61,.36,1)' : 'none',
+          opacity: sheet.ready ? 1 : 0,
+          display: 'flex', flexDirection: 'column',
+          background: 'var(--bg)', color: 'var(--tx)',
+          borderTopLeftRadius: 18, borderTopRightRadius: 18,
+          borderTop: '1px solid var(--line)', boxShadow: '0 -10px 30px rgba(0,0,0,.22)',
+          zIndex: 500, userSelect: 'none', WebkitUserSelect: 'none',
+        }}>
+          {/* 把手（僅此區可拖曳）+ 分頁列（可點，收合時仍看得到、可切換） */}
+          <div ref={sheet.peekRef} style={{ flexShrink: 0 }}>
+            <div {...sheet.handlers} style={{ touchAction: 'none', cursor: 'grab', padding: '8px 0 6px' }}>
+              <div style={{ width: 40, height: 5, borderRadius: 3, background: 'var(--line-2)', margin: '0 auto' }} />
+            </div>
+            <div style={{ display: 'flex', gap: 6, padding: '2px 14px 0', borderBottom: '1px solid var(--line)' }}>
+              {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄'], ['follows', '追蹤']] as const).map(([v, label]) => (
+                <button key={v} onClick={() => setTab(v)} style={{
+                  padding: '8px 9px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap',
+                  color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 700 : 400,
+                  borderBottom: tab === v ? '2px solid var(--fug)' : '2px solid transparent',
+                }}>{label}</button>
+              ))}
+            </div>
+          </div>
 
+          {/* 分頁內容（可捲動） */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '14px 18px calc(20px + var(--cta-safe, 0px))' }}>
         {!p && !err && <div style={{ color: 'var(--tx-dim)', padding: 16 }}>載入中…</div>}
 
         {/* 頁籤①個人資料 */}
@@ -518,7 +544,9 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             <a href="/privacy" style={{ color: 'var(--fug)', textDecoration: 'underline' }}>隱私權政策</a>
           </div>
         </div>
-      </ScrollArea>
+          </div>{/* /分頁內容 */}
+        </div>{/* /可拖曳面板 */}
+      </div>{/* /容器 */}
 
       {/* 繳費頁面 */}
       {payOrder && (
@@ -604,5 +632,6 @@ const payBtn: React.CSSProperties = {
   background: 'var(--gold)', color: '#1a1200', fontWeight: 700, border: 'none',
   borderRadius: 'var(--radius-btn, 9px)', padding: '7px 14px', cursor: 'pointer', fontSize: 13,
 }
-const overlay: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 20 }
+// zIndex 需高於本頁的可拖曳資訊面板(500)，否則從「報名紀錄」開的繳費視窗會被面板蓋住（見 [[frontend-draggable-sheet]] 疊層慣例）
+const overlay: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: 20 }
 const panel: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: 20, width: '100%', maxWidth: 420 }
