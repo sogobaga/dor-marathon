@@ -71,6 +71,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
   const [dash, setDash] = useState<DashboardInfo | null>(null)
   const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>('info')
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [codeCopied, setCodeCopied] = useState(false)
   const [follows, setFollows] = useState<FollowRow[] | null>(null)
   // COROS 式 UX：會員資訊面板固定最上方，分頁內容做成可上下拖曳面板（收合看完整會員面板／半展看分頁／全展看整份內容）
   const sheet = useDraggableSheet('half')
@@ -282,6 +283,20 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
         {/* 頁籤①個人資料 */}
         {tab === 'info' && p && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {/* 帳號資訊：從會員資訊面板移來（僅本人可見），避免面板被截圖時外流帳號編碼 */}
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <Field label="帳號編碼（給朋友加入用）">
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input style={{ ...inp, fontFamily: 'monospace', width: 150 }} value={dash?.account_code ? `#${dash.account_code}` : '…'} readOnly />
+                  <button type="button" onClick={() => { if (dash?.account_code) navigator.clipboard?.writeText(dash.account_code).then(() => { setCodeCopied(true); setTimeout(() => setCodeCopied(false), 1500) }).catch(() => {}) }} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>{codeCopied ? '已複製' : '複製'}</button>
+                </div>
+              </Field>
+              <Field label="會員身分">
+                <div style={{ ...inp, minWidth: 130, display: 'flex', alignItems: 'center', color: dash?.is_vip ? 'var(--gold)' : 'var(--tx)', fontWeight: dash?.is_vip ? 700 : 400 }}>
+                  {dash?.is_vip ? `VIP${dash.vip_expires_at ? ` · 至 ${fmtDate(dash.vip_expires_at).slice(0, 10)}` : ''}` : '一般會員'}
+                </div>
+              </Field>
+            </div>
             <Field label="顯示名稱"><input style={inp} value={p.name} onChange={(e) => set('name', e.target.value)} /></Field>
             <Field label="Email（Google 帳號）"><input style={{ ...inp, opacity: 0.6 }} value={p.email} disabled /></Field>
             <Field label="真實姓名"><input style={inp} value={p.real_name} onChange={(e) => set('real_name', e.target.value)} /></Field>

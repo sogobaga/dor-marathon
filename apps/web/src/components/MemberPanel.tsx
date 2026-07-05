@@ -30,7 +30,6 @@ export default function MemberPanel({
   const [selfDash, setSelfDash] = useState<DashboardInfo | null>(null)
   const [ready, setReady] = useState(false)
   const [showLogin, setShowLogin] = useState(false)
-  const [copied, setCopied] = useState(false)
   const { data: settings } = useSWR('site-settings', () => settingsApi.get())
   const bgUrl = settings?.settings.member_panel_bg_url
   const dash = controlled ? dashProp ?? null : selfDash
@@ -57,12 +56,6 @@ export default function MemberPanel({
     dash && dash.next_level_exp != null && dash.next_level_exp > dash.level_floor
       ? Math.max(0, Math.min(100, ((dash.exp - dash.level_floor) / (dash.next_level_exp - dash.level_floor)) * 100))
       : 100
-
-  function copyCode(e: React.MouseEvent) {
-    e.stopPropagation()
-    if (!dash?.account_code) return
-    navigator.clipboard?.writeText(dash.account_code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {})
-  }
 
   const clickable = !!user && !!onOpenProfile
 
@@ -94,26 +87,20 @@ export default function MemberPanel({
             {user ? (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dash?.name || user.name}</span>
-                  {dash?.is_vip && <span style={vipBadge}>VIP</span>}
+                  <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{dash?.name || user.name}</span>
+                  {dash?.is_vip && <span style={{ ...vipBadge, flexShrink: 0 }}>VIP</span>}
                 </div>
                 {dash?.nickname && <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dash.nickname}</div>}
-                <button onClick={copyCode} style={codeChip} title="複製帳號編碼">#{dash?.account_code ?? '…'} {copied ? '已複製' : '⧉'}</button>
+                {/* 帳號編碼已移至「個人資料」分頁，避免面板截圖外流 */}
               </>
             ) : (
               <button onClick={(e) => { e.stopPropagation(); setShowLogin(true) }} style={loginBtn}>註冊 / 登入</button>
             )}
           </div>
           {user && dash && (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5, flexShrink: 0 }}>
-              {/* 會員身分（移到右上角）：VIP 顯示到期日，否則「一般會員」 */}
-              <span style={{ fontSize: 10.5, fontWeight: dash.is_vip ? 800 : 500, color: dash.is_vip ? 'var(--gold)' : 'var(--tx-faint)', whiteSpace: 'nowrap' }}>
-                {dash.is_vip ? `VIP${dash.vip_expires_at ? ` · 至 ${fmtDate10(dash.vip_expires_at)}` : ' 會員'}` : '一般會員'}
-              </span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums' }} title="DP 幣">
-                <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
-              </span>
-            </div>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }} title="DP 幣">
+              <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
+            </span>
           )}
         </div>
 
@@ -164,14 +151,6 @@ function Stat({ label, value }: { label: string; value: string }) {
   )
 }
 
-function fmtDate10(iso?: string | null) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return ''
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`
-}
-
 const card: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 'var(--card-pad, 16px)', boxShadow: 'var(--card-shadow, none)' }
 const avatarWrap: React.CSSProperties = {
   position: 'relative', width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
@@ -179,7 +158,6 @@ const avatarWrap: React.CSSProperties = {
 }
 const avatarEdit: React.CSSProperties = { position: 'absolute', bottom: 0, left: 0, right: 0, fontSize: 10, textAlign: 'center', background: 'rgba(0,0,0,.55)', color: '#fff', padding: '1px 0' }
 const vipBadge: React.CSSProperties = { fontSize: 10, fontWeight: 800, color: '#1a1200', background: 'var(--gold)', borderRadius: 6, padding: '1px 7px', letterSpacing: '.05em' }
-const codeChip: React.CSSProperties = { marginTop: 4, fontSize: 11, color: 'var(--tx-dim)', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '2px 10px', cursor: 'pointer', fontFamily: 'monospace' }
 const barOuter: React.CSSProperties = { height: 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden', marginTop: 5 }
 const barInner: React.CSSProperties = { height: '100%', background: 'var(--fug)', borderRadius: 999, transition: 'width .3s' }
 const loginBtn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none', borderRadius: 10, padding: '9px 18px', cursor: 'pointer', fontSize: 14 }
