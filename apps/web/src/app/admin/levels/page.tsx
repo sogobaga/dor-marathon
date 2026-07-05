@@ -87,6 +87,54 @@ export default function AdminLevelsPage() {
       setLevels(r.levels); setMsg('✓ 等級門檻已儲存')
     } catch (e: any) { setErr(e?.message || '儲存失敗') } finally { setSaving(false) }
   }
+
+  // 匯出目前等級門檻表為 .xlsx（含欄位標題，可延續整張表的結構繼續填寫）。xlsx 動態載入，僅此頁載入。
+  async function exportLevels() {
+    setErr(''); setMsg('')
+    try {
+      const XLSX = await import('xlsx')
+      const rows: (string | number)[][] = [['等級', '名稱', '所需累積EXP'], ...(levels ?? []).map((l) => [Number(l.level), l.title ?? '', Number(l.exp_required)])]
+      const ws = XLSX.utils.aoa_to_sheet(rows)
+      ws['!cols'] = [{ wch: 8 }, { wch: 18 }, { wch: 16 }]
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, '等級門檻')
+      XLSX.writeFile(wb, '等級門檻.xlsx')
+      setMsg('✓ 已匯出等級門檻 .xlsx')
+    } catch (e: any) { setErr(e?.message || '匯出失敗') }
+  }
+
+  // 從 .xlsx 匯入，直接取代整張等級表（載入到編輯區，確認後仍需按「儲存等級門檻」才寫入）。
+  // 依標題找欄位（等級 / 名稱 / 所需累積EXP），找不到標題就用前三欄，方便手工填寫的檔案也能匯入。
+  async function importLevels(file: File) {
+    setErr(''); setMsg('')
+    try {
+      const XLSX = await import('xlsx')
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      if (!ws) throw new Error('檔案內沒有工作表')
+      const aoa = XLSX.utils.sheet_to_json<(string | number)[]>(ws, { header: 1, blankrows: false })
+      if (aoa.length === 0) throw new Error('檔案是空的')
+      const header = (aoa[0] ?? []).map((h) => String(h ?? '').trim())
+      const hasHeader = header.some((h) => /等級|level|名稱|title|exp|經驗|所需|門檻/i.test(h))
+      const find = (re: RegExp, fb: number) => { const i = header.findIndex((h) => re.test(h)); return i >= 0 ? i : fb }
+      const iLevel = hasHeader ? find(/等級|level/i, 0) : 0
+      const iTitle = hasHeader ? find(/名稱|名称|title|稱號/i, 1) : 1
+      const iExp = hasHeader ? find(/exp|經驗|所需|門檻/i, 2) : 2
+      const toInt = (v: unknown) => parseInt(String(v ?? '').replace(/[^\d.-]/g, ''), 10)
+      const parsed: LevelConfig[] = []
+      for (const row of hasHeader ? aoa.slice(1) : aoa) {
+        if (!row) continue
+        const lv = toInt(row[iLevel]); const exp = toInt(row[iExp])
+        if (!Number.isFinite(lv) && !Number.isFinite(exp)) continue // 整列空白
+        if (!Number.isFinite(lv)) continue
+        parsed.push({ level: lv, title: String(row[iTitle] ?? '').trim(), exp_required: Number.isFinite(exp) ? exp : 0 })
+      }
+      if (parsed.length === 0) throw new Error('沒有讀到有效資料（請確認欄位：等級 / 名稱 / 所需累積EXP）')
+      parsed.sort((a, b) => a.level - b.level)
+      setLevels(parsed)
+      setMsg(`✓ 已匯入 ${parsed.length} 筆等級（尚未寫入）— 請確認後按「儲存等級門檻」`)
+    } catch (e: any) { setErr(e?.message || '匯入失敗，請確認是 .xlsx 檔且欄位正確') }
+  }
   async function saveRules() {
     if (!token || !rules) return
     setSaving(true); setErr(''); setMsg('')
@@ -187,7 +235,17 @@ export default function AdminLevelsPage() {
 
       {/* 等級門檻 */}
       <div style={{ ...panel, marginTop: 16 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 12px' }}>等級門檻（累積 EXP）</h2>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', margin: '0 0 12px' }}>
+          <h2 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>等級門檻（累積 EXP）</h2>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={exportLevels} style={ghostBtn} title="匯出目前的等級表為 Excel（含欄位標題，可延續整張表的結構繼續填寫）">⤓ 匯出 .xlsx</button>
+            <label style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }} title="從 Excel 匯入，直接取代整張等級表（匯入後請按「儲存等級門檻」才生效）">
+              ⤒ 匯入 .xlsx
+              <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style={{ display: 'none' }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) importLevels(f); e.target.value = '' }} />
+            </label>
+          </div>
+        </div>
         {!levels && <div style={{ color: 'var(--tx-dim)' }}>載入中…</div>}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {levels?.map((l, i) => (
@@ -203,7 +261,10 @@ export default function AdminLevelsPage() {
           <button onClick={addLevel} style={ghostBtn}>＋ 新增等級</button>
           <button onClick={saveLevels} disabled={saving} style={primaryBtn}>{saving ? '儲存中…' : '儲存等級門檻'}</button>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>提示：Level 1 的所需 EXP 應為 0；門檻需隨等級遞增。</div>
+        <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.7 }}>
+          提示：Level 1 的所需 EXP 應為 0；門檻需隨等級遞增。<br />
+          匯出／匯入使用 .xlsx（欄位：等級 / 名稱 / 所需累積EXP）。<strong>匯入會取代整張表</strong>，載入後請確認再按「儲存等級門檻」才寫入。
+        </div>
       </div>
 
       {/* 選手分級（報名推薦評分用；前台不顯示標籤） */}
