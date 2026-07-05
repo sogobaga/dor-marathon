@@ -405,6 +405,26 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             )}
           </div>
 
+          {/* 里程優先來源（有 2 個來源時可設定；跨來源去重用） */}
+          {strava?.connected && (
+            <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>里程優先來源</div>
+              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>你同時有「GPS 跑步追蹤」與「Strava」兩個來源。若同一趟被記成兩筆，將以此來源為準、另一筆不計入賽事。</div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                {(['gps', 'strava'] as const).map((src) => {
+                  const on = (p?.preferred_data_source ?? 'gps') === src
+                  return (
+                    <button key={src} disabled={on}
+                      onClick={async () => { setP((c) => c ? { ...c, preferred_data_source: src } : c); try { await withUserAuth((t) => profileApi.setDataSource(t, src)) } catch { /* ignore */ } }}
+                      style={{ flex: 1, padding: '9px 0', borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: on ? 'default' : 'pointer', background: on ? 'var(--fug)' : 'transparent', color: on ? '#05140e' : 'var(--tx-dim)', border: `1px solid ${on ? 'var(--fug)' : 'var(--line-2)'}` }}>
+                      {src === 'gps' ? 'GPS 跑步追蹤' : 'Strava'}{on ? ' ✓' : ''}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* 已同步活動 */}
           {strava?.connected && (
             <div style={{ marginTop: 12 }}>

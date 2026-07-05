@@ -911,7 +911,11 @@ export interface Profile {
   address: string
   birthday: string // YYYY-MM-DD
   gender: '' | 'male' | 'female' | 'other'
+  preferred_data_source?: 'gps' | 'strava' // 跨來源去重偏好
 }
+
+export interface DedupSide { source: 'gps' | 'strava'; distance_km: number; duration_s: number; recorded_at: string }
+export interface DedupNotice { gps: DedupSide; strava: DedupSide; current_preference: 'gps' | 'strava' }
 
 export interface DashboardInfo {
   name: string
@@ -1046,6 +1050,13 @@ export const profileApi = {
     }),
   dashboard: (token: string) =>
     request<{ dashboard: DashboardInfo }>('/profile/dashboard', { headers: withAuth(token) }),
+  // 跨來源去重：偏好來源、首次彈窗
+  setDataSource: (token: string, source: 'gps' | 'strava') =>
+    request<{ ok: boolean; preferred_data_source: string }>('/profile/data-source', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ source }) }),
+  dedupNotice: (token: string) =>
+    request<{ notice: DedupNotice | null }>('/profile/dedup-notice', { headers: withAuth(token) }),
+  dedupResolve: (token: string, choice: 'gps' | 'strava', remember: boolean) =>
+    request<{ ok: boolean }>('/profile/dedup-resolve', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ choice, remember }) }),
   uploadAvatar: async (token: string, file: File): Promise<{ id: string; url: string }> => {
     const fd = new FormData()
     fd.append('file', file)

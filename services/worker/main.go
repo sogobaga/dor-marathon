@@ -98,14 +98,47 @@ func (w *Worker) standingsLoop(ctx context.Context) {
 	ticker := time.NewTicker(standingsInterval)
 	defer ticker.Stop()
 
-	w.aggregateStandings(ctx) // 啟動時先算一次
+	w.resolveCrossSourceDups(ctx) // 先去重（跨來源），再算成績
+	w.aggregateStandings(ctx)     // 啟動時先算一次
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			w.resolveCrossSourceDups(ctx)
 			w.aggregateStandings(ctx)
 		}
+	}
+}
+
+// resolveCrossSourceDups 跨來源去重：同一趟跑步同時有 App GPS（source IS NULL）與 Strava（source='strava'）
+// 兩筆、且時間重疊時（GPS 存結束時間、Strava 存開始時間，故用各自區間判重疊），依使用者偏好來源
+// （user_profiles.preferred_data_source，預設 gps）保留一筆、另一筆標 flagged=cross_source_duplicate、
+// dup_of 指向保留的那筆 → 賽事排名/完賽 SUM(NOT flagged) 只算一筆。只處理「雙方都尚未 flagged」的新配對。
+func (w *Worker) resolveCrossSourceDups(ctx context.Context) {
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	tag, err := w.db.Exec(cctx, `
+		WITH pref AS (SELECT user_id, COALESCE(preferred_data_source,'gps') AS src FROM user_profiles),
+		pairs AS (
+			SELECT g.id AS gps_id, s.id AS strava_id, COALESCE(p.src,'gps') AS src
+			FROM activities g
+			JOIN activities s ON s.user_id = g.user_id AND s.source = 'strava' AND NOT s.flagged
+			LEFT JOIN pref p ON p.user_id = g.user_id
+			WHERE g.source IS NULL AND NOT g.flagged AND g.duration_s > 0 AND s.duration_s > 0
+			  AND (g.recorded_at - make_interval(secs => g.duration_s)) < (s.recorded_at + make_interval(secs => s.duration_s))
+			  AND s.recorded_at < g.recorded_at
+		)
+		UPDATE activities a SET flagged = TRUE, flag_reason = 'cross_source_duplicate',
+			dup_of = CASE WHEN pairs.src = 'gps' THEN pairs.gps_id ELSE pairs.strava_id END
+		FROM pairs
+		WHERE (pairs.src = 'gps' AND a.id = pairs.strava_id) OR (pairs.src = 'strava' AND a.id = pairs.gps_id)`)
+	if err != nil {
+		log.Error().Err(err).Msg("resolveCrossSourceDups failed")
+		return
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		log.Info().Int64("flagged", n).Msg("cross-source duplicates resolved")
 	}
 }
 

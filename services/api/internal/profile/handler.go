@@ -35,6 +35,9 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/recommendations/{raceID}", h.RaceRecommendations)
 	r.Get("/mileage-exp", h.GetMileageExp)
 	r.Post("/mileage-exp/seen", h.MarkMileageSeen)
+	r.Post("/data-source", h.SetDataSource)   // 偏好資料來源（跨來源去重）
+	r.Get("/dedup-notice", h.DedupNotice)     // 首次去重彈窗
+	r.Post("/dedup-resolve", h.DedupResolve)
 	r.Get("/records", h.Records)
 	r.Get("/stats", h.Stats)
 	r.Get("/registrations", h.Registrations)
@@ -77,6 +80,7 @@ type Profile struct {
 	Address   string `json:"address"`
 	Birthday  string `json:"birthday"` // YYYY-MM-DD，空=未填
 	Gender    string `json:"gender"`   // male|female|other|空
+	PreferredDataSource string `json:"preferred_data_source"` // gps|strava（跨來源去重偏好；預設 gps）
 }
 
 // GET /api/v1/profile — 取得自己的個人資訊（無資料則回空白可編輯結構）
@@ -138,15 +142,15 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) fetchProfile(ctx context.Context, userID string) (*Profile, error) {
-	p := &Profile{UserID: userID}
+	p := &Profile{UserID: userID, PreferredDataSource: "gps"}
 	var birthday *time.Time
 	err := h.db.QueryRow(ctx, `
 		SELECT u.email, u.name, COALESCE(u.avatar_url,''),
 		       COALESCE(p.real_name,''), COALESCE(p.nickname,''), COALESCE(p.phone,''),
-		       COALESCE(p.address,''), p.birthday, COALESCE(p.gender,'')
+		       COALESCE(p.address,''), p.birthday, COALESCE(p.gender,''), COALESCE(p.preferred_data_source,'gps')
 		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
 		WHERE u.id = $1`, userID).
-		Scan(&p.Email, &p.Name, &p.AvatarURL, &p.RealName, &p.Nickname, &p.Phone, &p.Address, &birthday, &p.Gender)
+		Scan(&p.Email, &p.Name, &p.AvatarURL, &p.RealName, &p.Nickname, &p.Phone, &p.Address, &birthday, &p.Gender, &p.PreferredDataSource)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, nil
 	}

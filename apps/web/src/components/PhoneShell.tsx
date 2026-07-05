@@ -9,6 +9,7 @@ import RaceDetailScreen from './RaceDetailScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
 import VersionBadge from './VersionBadge'
 import MileageExpGate from './MileageExpGate'
+import DedupNoticeGate from './DedupNoticeGate'
 import { validateSession } from '@/lib/userAuth'
 import type { Race } from '@/lib/api'
 
@@ -74,6 +75,8 @@ export default function PhoneShell() {
 
       {/* 日常里程 EXP 結算彈窗（全域） */}
       <MileageExpGate />
+      {/* 跨來源（GPS/Strava）重複數據首次提示彈窗（全域） */}
+      <DedupNoticeGate />
     </div>
     </GoogleAuthProvider>
   )
