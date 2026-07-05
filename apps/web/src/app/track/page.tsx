@@ -724,6 +724,7 @@ export default function TrackPage() {
 
   const distKm = distance / 1000
   const avgPace = distKm >= PACE_MIN_KM ? elapsed / distKm : 0 // 未達門檻先顯示 --:--，避免爆數字
+  const lastSplit = splits.length > 0 ? splits[splits.length - 1] : 0 // 最新完成的整公里配速（秒）；未滿 1km 顯示 --:--
 
   return (
    <GoogleAuthProvider>
@@ -828,13 +829,17 @@ export default function TrackPage() {
         {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, wordBreak: 'break-word' }}>⚠️ {warn}</div>}
         {err && <div style={{ color: 'var(--hunt)', fontSize: 13, marginBottom: 12 }}>{err}</div>}
 
-        {/* 即時數據 */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          <Big label="距離" value={distKm.toFixed(2)} unit="km" />
-          <Big label="時間" value={fmtTime(elapsed)} unit="" />
-          <Big label="平均配速" value={fmtPace(avgPace)} unit="/km" />
-          <Big label="濾除跳點" value={String(anomalies)} unit="個" />
+        {/* 即時數據：距離／時間／平均配速／最新分段（並排一列） */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+          <Big compact label="距離" value={distKm.toFixed(2)} unit="km" />
+          <Big compact label="時間" value={fmtTime(elapsed)} unit="" />
+          <Big compact label="平均配速" value={fmtPace(avgPace)} unit="/km" />
+          <Big compact label="最新分段" value={fmtPace(lastSplit)} unit="/km" />
         </div>
+        {/* 濾除跳點：只在真的有跳點時才提示（不常駐佔一格） */}
+        {anomalies > 0 && (
+          <div style={{ fontSize: 11.5, marginTop: 8, color: 'var(--tx-faint)' }}>⚠ 已濾除 {anomalies} 個 GPS 跳點（未計入距離）</div>
+        )}
 
         {/* 打卡點任務 */}
         {checkpoints.length > 0 && (
@@ -927,12 +932,12 @@ export default function TrackPage() {
   )
 }
 
-function Big({ label, value, unit, warn }: { label: string; value: string; unit: string; warn?: boolean }) {
+function Big({ label, value, unit, warn, compact }: { label: string; value: string; unit: string; warn?: boolean; compact?: boolean }) {
   return (
-    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 12px)', padding: '12px 14px', boxShadow: 'var(--card-shadow, none)' }}>
-      <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 900, color: warn ? 'var(--hunt)' : 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>
-        {value}<span style={{ fontSize: 13, marginLeft: 3, color: 'var(--tx-dim)' }}>{unit}</span>
+    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 12px)', padding: compact ? '9px 6px' : '12px 14px', boxShadow: 'var(--card-shadow, none)', minWidth: 0 }}>
+      <div style={{ fontSize: compact ? 10 : 11, color: 'var(--tx-faint)', whiteSpace: 'nowrap' }}>{label}</div>
+      <div style={{ fontSize: compact ? 16 : 26, fontWeight: 900, color: warn ? 'var(--hunt)' : 'var(--tx)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {value}<span style={{ fontSize: compact ? 10 : 13, marginLeft: compact ? 2 : 3, color: 'var(--tx-dim)' }}>{unit}</span>
       </div>
     </div>
   )
