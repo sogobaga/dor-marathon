@@ -157,94 +157,58 @@ function RaceCard({
         background: 'var(--bg-1)',
         border: '1px solid var(--line)',
         borderRadius: 'var(--radius-lg, 18px)',
-        padding: 'var(--card-pad, 18px)',
         boxShadow: 'var(--card-shadow, none)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 10,
+        overflow: 'hidden',
         cursor: onOpenBrochure ? 'pointer' : 'default',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-        <div>
-          <div style={{ fontSize: 19, fontWeight: 800, color: 'var(--tx)', lineHeight: 1.3, wordBreak: 'keep-all', overflowWrap: 'break-word' }}>{race.title}</div>
-          <div style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-dim)', marginTop: 2 }}>
-            {race.subtitle}
-          </div>
-        </div>
-        <span
-          style={{
-            flexShrink: 0,
-            fontSize: 11,
-            padding: '4px 10px',
-            borderRadius: 999,
-            color: s.color,
-            border: `1px solid ${s.color}`,
-            background: 'rgba(255,255,255,.03)',
-          }}
-        >
-          ● {s.label}
-        </span>
-      </div>
-
-      {race.world && (
-        <div style={{ fontSize: 12.5, color: 'var(--tx-dim)' }}>{race.world}</div>
+      {/* 頂部 Banner：與「活動說明頁」頂部同一張 hero_image_url */}
+      {race.hero_image_url && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={race.hero_image_url} alt="" style={{ width: '100%', display: 'block' }} />
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {race.distances.map((d) => (
-          <span
-            key={d}
-            style={{
-              fontSize: 11.5,
-              padding: '3px 9px',
-              borderRadius: 8,
-              background: 'var(--bg-2)',
-              border: '1px solid var(--line-2)',
-              color: 'var(--tx)',
-            }}
-          >
-            {d}K
-          </span>
-        ))}
-      </div>
-
-      <div style={{ marginTop: 4, paddingTop: 12, borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div style={{ display: 'flex', gap: 8, fontSize: 12.5 }}>
-          <span style={{ color: 'var(--tx-faint)', width: 56, flexShrink: 0 }}>報名期間</span>
-          <span style={{ color: 'var(--tx)' }}>{periodText(race.registration_start, race.registration_end, true)}</span>
+      <div style={{ padding: 'var(--card-pad, 18px)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {/* 標題 + 距離 chip；右上角狀態／報名徽章直排 */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', lineHeight: 1.3, wordBreak: 'keep-all', overflowWrap: 'break-word' }}>{race.title}</span>
+              {race.distances.map((d) => (
+                <span key={d} style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 8, background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0 }}>{d}K</span>
+              ))}
+            </div>
+            {race.subtitle && <div style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-dim)', marginTop: 3 }}>{race.subtitle}</div>}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+            <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, color: s.color, border: `1px solid ${s.color}`, background: 'rgba(255,255,255,.03)', whiteSpace: 'nowrap' }}>● {s.label}</span>
+            {reg?.status === 'paid' && (
+              <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, color: 'var(--fug)', border: '1px solid var(--fug)', background: 'rgba(70,227,160,.08)', whiteSpace: 'nowrap' }}>報名完成</span>
+            )}
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, fontSize: 12.5 }}>
-          <span style={{ color: 'var(--tx-faint)', width: 56, flexShrink: 0 }}>賽事期間</span>
-          <span style={{ color: 'var(--tx)' }}>{periodText(race.start_date, race.end_date, true)}</span>
-        </div>
-      </div>
 
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          fontSize: 12.5,
-          color: 'var(--tx-dim)',
-        }}
-      >
-        <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{fmtFee(race.entry_fee)}</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {isCompetition && onOpenRanking && (
-            <button onClick={(e) => { stop(e); onOpenRanking(race) }} style={linkBtnStyle}>排行榜</button>
-          )}
-          {reg ? (
-            reg.status === 'paid' ? (
-              <span style={{ color: 'var(--fug)', fontWeight: 700, fontSize: 13 }}>報名完成</span>
-            ) : (
-              <button onClick={(e) => { stop(e); onPay?.(race) }} style={payBtnStyle}>已報名，前往繳費</button>
-            )
-          ) : canRegister && onRegister ? (
-            <button onClick={(e) => { stop(e); onRegister(race) }} style={registerBtnStyle}>報名</button>
-          ) : (
-            <span style={{ color: 'var(--tx-faint)', fontSize: 12.5 }}>{s.label}</span>
-          )}
+        {/* 報名期間 / 賽事期間：兩並排資訊卡（各帶 icon） */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <PeriodBox icon="/source/ui/01_icons/icon_calendar_orange.png" label="報名期間" value={periodText(race.registration_start, race.registration_end, true)} />
+          <PeriodBox icon="/source/ui/01_icons/icon_runner_green.png" label="賽事期間" value={periodText(race.start_date, race.end_date, true)} />
+        </div>
+
+        {/* 底列：費用 + 排行榜／報名／前往繳費 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12.5, color: 'var(--tx-dim)' }}>
+          <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{fmtFee(race.entry_fee)}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {isCompetition && onOpenRanking && (
+              <button onClick={(e) => { stop(e); onOpenRanking(race) }} style={linkBtnStyle}>排行榜 ›</button>
+            )}
+            {reg
+              ? (reg.status !== 'paid' && (
+                  <button onClick={(e) => { stop(e); onPay?.(race) }} style={payBtnStyle}>前往繳費</button>
+                ))
+              : canRegister && onRegister && (
+                  <button onClick={(e) => { stop(e); onRegister(race) }} style={registerBtnStyle}>報名</button>
+                )}
+          </div>
         </div>
       </div>
     </div>
@@ -254,6 +218,20 @@ function RaceCard({
 function Hint({ children, color = 'var(--tx-dim)' }: { children: React.ReactNode; color?: string }) {
   return (
     <div style={{ textAlign: 'center', padding: '60px 20px', fontSize: 13.5, color }}>{children}</div>
+  )
+}
+
+// 活動面板的「報名期間／賽事期間」資訊卡（帶 icon）
+function PeriodBox({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <div style={{ flex: 1, minWidth: 0, background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 'var(--radius-md, 12px)', padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={icon} alt="" width={16} height={16} style={{ display: 'block', flexShrink: 0 }} />
+        <span style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>{label}</span>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--tx)', fontWeight: 600 }}>{value}</div>
+    </div>
   )
 }
 
