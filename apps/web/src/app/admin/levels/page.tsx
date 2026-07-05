@@ -36,17 +36,21 @@ export default function AdminLevelsPage() {
     })
     adminLevelsApi.expRules(t).then((r) => setRules(r.exp_rules)).catch(() => {})
     adminLevelsApi.athleteConfig(t).then((r) => { setAMetrics(r.metrics); setALevels(r.levels) }).catch(() => {})
-    settingsApi.get().then((r) => setSettings(r.settings)).catch(() => {})
+    settingsApi.get().then((r) => setSettings(r.settings)).catch(() => setErr('外觀設定載入失敗，請重新整理'))
   }, [router])
 
-  // 一律送完整 settings（合併 patch），避免只送單一欄位把其他外觀設定清空
+  // 一律送完整 settings（合併 patch），避免只送單一欄位把其他外觀設定清空。
+  // settings 尚未載入時「丟錯」而非默默略過，讓呼叫端 catch 顯示錯誤（不會假成功）。
   async function saveSettings(patch: Partial<SiteSettings>): Promise<void> {
-    if (!token || !settings) return
+    if (!token) throw new Error('未登入')
+    if (!settings) throw new Error('外觀設定尚未載入，請重新整理後再試')
     const r = await adminSettingsApi.set(token, { ...settings, ...patch })
     setSettings(r.settings)
   }
+  // imgBusy!=='' 期間所有上傳/移除控制項皆停用（見 ImgSlot / 底圖區的 disabled），
+  // 避免兩個存檔以過期的 settings 快照互相覆蓋對方欄位。
   async function uploadImage(key: keyof SiteSettings, file: File, okMsg: string) {
-    if (!token) return
+    if (!token || imgBusy) return
     setImgBusy(key); setErr(''); setMsg('')
     try {
       const { url } = await adminImagesApi.upload(token, file)
@@ -55,9 +59,10 @@ export default function AdminLevelsPage() {
     } catch (e: any) { setErr(e?.message || '上傳失敗') } finally { setImgBusy('') }
   }
   async function removeImage(key: keyof SiteSettings, okMsg: string) {
-    setErr(''); setMsg('')
+    if (imgBusy) return
+    setImgBusy(key); setErr(''); setMsg('')
     try { await saveSettings({ [key]: '' }); setMsg(okMsg) }
-    catch (e: any) { setErr(e?.message || '移除失敗') }
+    catch (e: any) { setErr(e?.message || '移除失敗') } finally { setImgBusy('') }
   }
 
   async function saveAthlete() {
@@ -179,11 +184,11 @@ export default function AdminLevelsPage() {
               : <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>無底圖（預設）</span>}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <label style={{ ...primaryBtn, display: 'inline-block', cursor: 'pointer', opacity: imgBusy === 'member_panel_bg_url' ? 0.6 : 1 }}>
+            <label style={{ ...primaryBtn, display: 'inline-block', cursor: imgBusy ? 'default' : 'pointer', opacity: imgBusy ? 0.6 : 1, pointerEvents: imgBusy ? 'none' : 'auto' }}>
               {imgBusy === 'member_panel_bg_url' ? '上傳中…' : '上傳底圖'}
-              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage('member_panel_bg_url', f, '✓ 會員面板底圖已更新'); e.target.value = '' }} />
+              <input type="file" accept="image/*" disabled={imgBusy !== ''} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage('member_panel_bg_url', f, '✓ 會員面板底圖已更新'); e.target.value = '' }} />
             </label>
-            {settings?.member_panel_bg_url && <button onClick={() => removeImage('member_panel_bg_url', '✓ 已移除會員面板底圖')} style={{ ...primaryBtn, background: 'var(--bg-2)', color: 'var(--hunt)', border: '1px solid var(--line-2)' }}>移除</button>}
+            {settings?.member_panel_bg_url && <button onClick={() => removeImage('member_panel_bg_url', '✓ 已移除會員面板底圖')} disabled={imgBusy !== ''} style={{ ...primaryBtn, background: 'var(--bg-2)', color: 'var(--hunt)', border: '1px solid var(--line-2)', opacity: imgBusy ? 0.6 : 1 }}>移除</button>}
           </div>
         </div>
       </div>
@@ -200,6 +205,7 @@ export default function AdminLevelsPage() {
           url={settings?.strava_powered_dark_url ?? ''}
           dark
           busy={imgBusy === 'strava_powered_dark_url'}
+          disabled={imgBusy !== ''}
           onUpload={(f) => uploadImage('strava_powered_dark_url', f, '✓ 已更新（深色 skin 用）')}
           onRemove={() => removeImage('strava_powered_dark_url', '✓ 已移除（深色 skin 用）')}
         />
@@ -209,6 +215,7 @@ export default function AdminLevelsPage() {
           url={settings?.strava_powered_light_url ?? ''}
           dark={false}
           busy={imgBusy === 'strava_powered_light_url'}
+          disabled={imgBusy !== ''}
           onUpload={(f) => uploadImage('strava_powered_light_url', f, '✓ 已更新（淺色 skin 用）')}
           onRemove={() => removeImage('strava_powered_light_url', '✓ 已移除（淺色 skin 用）')}
         />
@@ -341,9 +348,10 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-// 單張圖片上傳槽（預覽底色可切深/淺，方便看白字或深字標章）
-function ImgSlot({ title, hint, url, dark, busy, onUpload, onRemove }: {
-  title: string; hint: string; url: string; dark: boolean; busy: boolean;
+// 單張圖片上傳槽（預覽底色可切深/淺，方便看白字或深字標章）。
+// disabled：有任何存檔進行中時停用所有槽，避免併發存檔以過期快照互相覆蓋。
+function ImgSlot({ title, hint, url, dark, busy, disabled, onUpload, onRemove }: {
+  title: string; hint: string; url: string; dark: boolean; busy: boolean; disabled: boolean;
   onUpload: (f: File) => void; onRemove: () => void
 }) {
   return (
@@ -358,11 +366,11 @@ function ImgSlot({ title, hint, url, dark, busy, onUpload, onRemove }: {
             : <span style={{ fontSize: 11, color: dark ? 'rgba(255,255,255,.5)' : 'rgba(0,0,0,.4)' }}>未設定</span>}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <label style={{ ...primaryBtn, display: 'inline-block', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+          <label style={{ ...primaryBtn, display: 'inline-block', cursor: disabled ? 'default' : 'pointer', opacity: busy || disabled ? 0.6 : 1, pointerEvents: disabled ? 'none' : 'auto' }}>
             {busy ? '上傳中…' : url ? '更換' : '上傳'}
-            <input type="file" accept="image/*,.svg" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = '' }} />
+            <input type="file" accept="image/*,.svg" disabled={disabled} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = '' }} />
           </label>
-          {url && <button onClick={onRemove} style={{ ...primaryBtn, background: 'var(--bg-2)', color: 'var(--hunt)', border: '1px solid var(--line-2)' }}>移除</button>}
+          {url && <button onClick={onRemove} disabled={disabled} style={{ ...primaryBtn, background: 'var(--bg-2)', color: 'var(--hunt)', border: '1px solid var(--line-2)', opacity: disabled ? 0.6 : 1 }}>移除</button>}
         </div>
       </div>
     </div>
