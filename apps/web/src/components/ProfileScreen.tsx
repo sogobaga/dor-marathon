@@ -250,9 +250,8 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
 
         {/* 可拖曳面板：分頁（個人資料/運動數據/報名紀錄/追蹤）+ 內容 */}
         <div style={{
-          position: 'absolute', left: 0, right: 0, top: 0, height: '100%',
-          transform: `translateY(${sheet.curY}px)`,
-          transition: !sheet.dragging && sheet.ready ? 'transform .28s cubic-bezier(.22,.61,.36,1)' : 'none',
+          position: 'absolute', left: 0, right: 0, top: sheet.curY, bottom: 0,
+          transition: !sheet.dragging && sheet.ready ? 'top .28s cubic-bezier(.22,.61,.36,1)' : 'none',
           opacity: sheet.ready ? 1 : 0,
           display: 'flex', flexDirection: 'column',
           background: 'var(--bg)', color: 'var(--tx)',
@@ -260,9 +259,9 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
           borderTop: '1px solid var(--line)', boxShadow: '0 -10px 30px rgba(0,0,0,.22)',
           zIndex: 500, userSelect: 'none', WebkitUserSelect: 'none',
         }}>
-          {/* 把手（僅此區可拖曳）+ 分頁列（可點，收合時仍看得到、可切換） */}
-          <div ref={sheet.peekRef} style={{ flexShrink: 0 }}>
-            <div {...sheet.handlers} style={{ touchAction: 'none', cursor: 'grab', padding: '8px 0 6px' }}>
+          {/* 把手 + 分頁列：整個頂部皆可拖曳（移動超過門檻才拖曳，故分頁仍可點切換） */}
+          <div ref={sheet.peekRef} {...sheet.handlers} style={{ flexShrink: 0, touchAction: 'none', cursor: 'grab' }}>
+            <div style={{ padding: '8px 0 6px' }}>
               <div style={{ width: 40, height: 5, borderRadius: 3, background: 'var(--line-2)', margin: '0 auto' }} />
             </div>
             <div style={{ display: 'flex', gap: 6, padding: '2px 14px 0', borderBottom: '1px solid var(--line)' }}>

@@ -105,9 +105,15 @@ export default function MemberPanel({
             )}
           </div>
           {user && dash && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }} title="DP 幣">
-              <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
-            </span>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5, flexShrink: 0 }}>
+              {/* 會員身分（移到右上角）：VIP 顯示到期日，否則「一般會員」 */}
+              <span style={{ fontSize: 10.5, fontWeight: dash.is_vip ? 800 : 500, color: dash.is_vip ? 'var(--gold)' : 'var(--tx-faint)', whiteSpace: 'nowrap' }}>
+                {dash.is_vip ? `VIP${dash.vip_expires_at ? ` · 至 ${fmtDate10(dash.vip_expires_at)}` : ' 會員'}` : '一般會員'}
+              </span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums' }} title="DP 幣">
+                <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
+              </span>
+            </div>
           )}
         </div>
 
@@ -135,12 +141,6 @@ export default function MemberPanel({
           <Stat label="粉絲" value={user && dash ? `${dash.follower_count}` : '--'} />
         </div>
 
-        {/* 會員身分 */}
-        {user && dash && (
-          <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--tx-faint)' }}>
-            {dash.is_vip ? `VIP 會員${dash.vip_expires_at ? ` · 至 ${fmtDate10(dash.vip_expires_at)}` : ''}` : '一般會員'}
-          </div>
-        )}
       </div>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
     </>

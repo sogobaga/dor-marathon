@@ -840,9 +840,8 @@ export default function TrackPage() {
 
         {/* 資訊面板（可拖曳）：收合只露出把手＋四格數據，上拉展開看更多（打卡/分段/結果），下拉看更多地圖 */}
         <div style={{
-          position: 'absolute', left: 0, right: 0, top: 0, height: '100%',
-          transform: `translateY(${sheet.curY}px)`,
-          transition: !sheet.dragging && sheet.ready ? 'transform .28s cubic-bezier(.22,.61,.36,1)' : 'none',
+          position: 'absolute', left: 0, right: 0, top: sheet.curY, bottom: 0,
+          transition: !sheet.dragging && sheet.ready ? 'top .28s cubic-bezier(.22,.61,.36,1)' : 'none',
           opacity: sheet.ready ? 1 : 0,
           display: 'flex', flexDirection: 'column',
           background: 'var(--bg)', color: 'var(--tx)',

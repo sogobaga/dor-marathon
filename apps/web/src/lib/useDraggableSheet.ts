@@ -32,7 +32,7 @@ export function useDraggableSheet(initial: SheetSnap = 'half') {
   const [peekH, setPeekH] = useState(120) // 收合露出高度（把手＋頂部標題，量測而得）
   const wrapRef = useRef<HTMLDivElement>(null)
   const peekRef = useRef<HTMLDivElement>(null)
-  const dragRef = useRef<{ y: number; off: number } | null>(null)
+  const dragRef = useRef<{ startY: number; off: number; pointerId: number; active: boolean; cur: number; el: HTMLElement } | null>(null)
 
   // 量測容器與收合露出區高度；旋轉/尺寸變動即時更新
   useIsoLayoutEffect(() => {
@@ -53,19 +53,29 @@ export function useDraggableSheet(initial: SheetSnap = 'half') {
   }
   const curY = dragY ?? offsetFor(snap)
 
+  // 移動超過門檻才視為「拖曳」，否則當成「點擊」——這樣整個面板頂部（含分頁/按鈕）都能當拖曳把手，
+  // 但點分頁時不會被拖曳吃掉（不 setPointerCapture、不吸附、放行 onClick）。
+  const DRAG_THRESHOLD = 6
   function onPointerDown(e: PointerEvent<HTMLElement>) {
-    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* ignore */ }
-    dragRef.current = { y: e.clientY, off: offsetFor(snap) }
-    setDragY(offsetFor(snap))
+    // 先不 capture、不進拖曳；等移動超過門檻才開始
+    dragRef.current = { startY: e.clientY, off: offsetFor(snap), pointerId: e.pointerId, active: false, cur: offsetFor(snap), el: e.currentTarget as HTMLElement }
   }
   function onPointerMove(e: PointerEvent<HTMLElement>) {
     const st = dragRef.current; if (!st) return
-    const raw = st.off + (e.clientY - st.y)
-    setDragY(Math.min(Math.max(raw, 0), offsetFor('peek'))) // 夾在 [全展, 收合] 之間
+    const dy = e.clientY - st.startY
+    if (!st.active) {
+      if (Math.abs(dy) < DRAG_THRESHOLD) return // 仍可能是點擊
+      st.active = true
+      try { st.el.setPointerCapture(st.pointerId) } catch { /* ignore */ }
+    }
+    const y = Math.min(Math.max(st.off + dy, 0), offsetFor('peek')) // 夾在 [全展, 收合] 之間
+    st.cur = y
+    setDragY(y)
   }
   function onPointerUp() {
-    const y = dragY; dragRef.current = null
-    if (y == null) return
+    const st = dragRef.current; dragRef.current = null
+    if (!st || !st.active) { setDragY(null); return } // 沒真的拖曳（點擊）→ 不吸附、放行點擊
+    const y = st.cur
     let best: SheetSnap = 'half', bd = Infinity
     for (const s of ['full', 'half', 'peek'] as const) { const d = Math.abs(offsetFor(s) - y); if (d < bd) { bd = d; best = s } }
     setSnap(best); setDragY(null) // 吸附到最近的停靠點
