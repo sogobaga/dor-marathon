@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import { activitiesApi, checkpointApi, eventApi, eventRaceApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
@@ -9,13 +9,15 @@ import { loadEffectAssets } from '@/lib/effects'
 import GoogleAuthProvider from '@/components/GoogleAuthProvider'
 import { LoginModal } from '@/components/UserAuthBar'
 import PhoneFrame from '@/components/PhoneFrame'
-import ScrollArea from '@/components/ScrollArea'
 import { EventBanner, EventResultBanner, EventTriggerFlash, Countdown321, EventOfferPanel, pickTimeImage, isInteractionType, type ActiveEvent, type EventResult } from '@/components/EventTaskModal'
 import { EventInteraction } from '@/components/EventInteraction'
 import { useIsPhone } from '@/lib/useIsMobile'
 import { useIsLandscape } from '@/lib/useIsLandscape'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+// SSR 安全的 layout effect：客戶端用 useLayoutEffect（量測在繪製前完成，面板不會載入時滑一下），伺服器退回 useEffect（避免警告）
+const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 const LS_KEY = 'dor_gps_run'
 const MAX_ACC = 65 // 精度差於此（公尺）的點不採計距離（城市/大樓旁訊號較差，放寬以免整趟記不到）
@@ -72,6 +74,16 @@ export default function TrackPage() {
   const [confirmEnd, setConfirmEnd] = useState(false) // 事件進行中按「結束」→ 先跳確認（損失規避）
   const [muted, setMuted] = useState(false) // 事件音效靜音（震動不受影響）
   const [showFlash, setShowFlash] = useState(false) // Step1：全螢幕「事件觸發」紅閃警報（Phase A/B 共用）
+  // COROS 式 UX：可上下拖曳的資訊面板疊在放大的地圖上，露出更多/更少資訊（配色與顯示的資訊都不變，只改操作體驗）
+  const [sheetSnap, setSheetSnap] = useState<'peek' | 'half' | 'full'>('half') // 面板停靠：收合/半展/全展
+  const [sheetDragY, setSheetDragY] = useState<number | null>(null) // 拖曳中的即時位移(px)；null=非拖曳（吸附到停靠點）
+  const [sheetH, setSheetH] = useState(0) // 面板容器（地圖區）高度
+  const [peekH, setPeekH] = useState(120) // 收合時露出的高度（把手＋四格數據，量測而得）
+  const sheetWrapRef = useRef<HTMLDivElement>(null)
+  const peekRef = useRef<HTMLDivElement>(null)
+  const sheetDragRef = useRef<{ y: number; off: number } | null>(null)
+  const followRef = useRef(true) // 地圖是否自動跟隨目前位置；使用者拖曳/縮放地圖後暫停，按「回到目前位置」恢復
+  const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -121,6 +133,8 @@ export default function TrackPage() {
     lineRef.current = L.polyline([], { color: '#46E3A0', weight: 5 }).addTo(map)
     cpLayerRef.current = L.layerGroup().addTo(map)
     markRef.current = L.circleMarker([lat, lng], { radius: 7, color: '#fff', fillColor: '#46E3A0', fillOpacity: 1, weight: 2 }).addTo(map)
+    // 使用者手動拖曳/縮放地圖 → 暫停自動跟隨（否則每次 GPS 更新都會把畫面拉回目前位置，無法看前方路線）
+    map.on('dragstart zoomstart', () => { if (followRef.current) { followRef.current = false; setFollowing(false) } })
     mapRef.current = map
     setMapReady(true)
   }, [])
@@ -131,7 +145,7 @@ export default function TrackPage() {
     ensureMap(p.lat, p.lng)
     // 標記與地圖永遠跟著「目前」位置（即時感），即使該點未被採納為距離
     if (markRef.current) markRef.current.setLatLng([p.lat, p.lng])
-    if (mapRef.current) mapRef.current.panTo([p.lat, p.lng])
+    if (mapRef.current && followRef.current) mapRef.current.panTo([p.lat, p.lng]) // 僅在「跟隨中」才回中；使用者手動看地圖時不打斷
     if (statusRef.current !== 'tracking') return // 預熱階段（未開始跑步）：只顯示 GPS 精度＋地圖位置，不累積距離、不警告
     const goodAcc = p.acc === 0 || p.acc <= MAX_ACC
     if (!goodAcc) {
@@ -546,6 +560,7 @@ export default function TrackPage() {
     if (warmWatchRef.current != null) { try { navigator.geolocation.clearWatch(warmWatchRef.current) } catch { /* ignore */ } warmWatchRef.current = null }
     pointsRef.current = []; distRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null)
+    followRef.current = true; setFollowing(true) // 每趟開始都恢復自動跟隨（即使 idle 時曾手動看地圖）
     if (lineRef.current) lineRef.current.setLatLngs([]) // 清掉上一趟的軌跡線（避免地圖殘留）
     // 事件引擎重置
     distSamplesRef.current = []; activeEventRef.current = null; armIdRef.current = 0; lastEventEndRef.current = 0
@@ -620,6 +635,20 @@ export default function TrackPage() {
   useEffect(() => { if (confirmEnd && !activeEvent) setConfirmEnd(false) }, [confirmEnd, activeEvent])
 
   useEffect(() => { setMuted(isMuted()) }, [])
+  // 量測面板容器（地圖區）與「收合露出區（把手＋數據）」高度，供拖曳位移計算；旋轉/尺寸變動即時更新。
+  // 用 layout effect：首次量測在繪製前完成，面板一開始就落在正確位置，不會載入時從「蓋住地圖」滑下來。
+  useIsoLayoutEffect(() => {
+    const wrap = sheetWrapRef.current, peek = peekRef.current
+    const update = () => { if (wrap) setSheetH(wrap.clientHeight); if (peek) setPeekH(peek.offsetHeight) }
+    update()
+    let ro: ResizeObserver | null = null
+    try { ro = new ResizeObserver(update); if (wrap) ro.observe(wrap); if (peek) ro.observe(peek) } catch { /* ignore */ }
+    return () => { try { ro?.disconnect() } catch { /* ignore */ } }
+  }, [])
+  // 依狀態預設面板停靠：完成全展（看結果）、其餘半展（同時看得到地圖與數據/警告/打卡，可再上拉看更多或下拉看更多地圖）
+  useEffect(() => { setSheetSnap(status === 'done' ? 'full' : 'half') }, [status])
+  // 面板高度變動 → 讓 Leaflet 重算尺寸（避免地圖灰塊/破圖）
+  useEffect(() => { if (mapReady && mapRef.current) { try { mapRef.current.invalidateSize() } catch { /* ignore */ } } }, [mapReady, sheetH])
   // 載入效果覆寫（正式圖片/音檔）：圖片給互動層、音效交給 sfx 解碼
   useEffect(() => { const t = getUserToken(); if (t) loadEffectAssets(t).then(setFxAssets) }, [user?.id])
   function toggleMute() { const next = !isMuted(); sfxSetMuted(next); setMuted(next); if (!next) unlockAudio() }
@@ -726,6 +755,32 @@ export default function TrackPage() {
   const avgPace = distKm >= PACE_MIN_KM ? elapsed / distKm : 0 // 未達門檻先顯示 --:--，避免爆數字
   const lastSplit = splits.length > 0 ? splits[splits.length - 1] : 0 // 最新完成的整公里配速（秒）；未滿 1km 顯示 --:--
 
+  // 資訊面板拖曳：停靠點對應的下移量(px)。full=不下移(蓋住地圖)、half=下移一半、peek=只露出把手＋數據
+  const sheetOffsetFor = (s: 'peek' | 'half' | 'full') => {
+    if (sheetH <= 0) return 0
+    if (s === 'full') return 0
+    if (s === 'half') return Math.round(sheetH * 0.5)
+    return Math.max(0, sheetH - Math.max(90, peekH)) // peek：露出把手＋四格數據
+  }
+  const curSheetY = sheetDragY ?? sheetOffsetFor(sheetSnap)
+  function onSheetDown(e: React.PointerEvent) {
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* ignore */ }
+    sheetDragRef.current = { y: e.clientY, off: sheetOffsetFor(sheetSnap) }
+    setSheetDragY(sheetOffsetFor(sheetSnap))
+  }
+  function onSheetMove(e: React.PointerEvent) {
+    const st = sheetDragRef.current; if (!st) return
+    const raw = st.off + (e.clientY - st.y)
+    setSheetDragY(Math.min(Math.max(raw, 0), sheetOffsetFor('peek'))) // 夾在 [全展, 收合] 之間
+  }
+  function onSheetUp() {
+    const y = sheetDragY; sheetDragRef.current = null
+    if (y == null) return
+    let best: 'peek' | 'half' | 'full' = 'half', bd = Infinity
+    for (const s of ['full', 'half', 'peek'] as const) { const d = Math.abs(sheetOffsetFor(s) - y); if (d < bd) { bd = d; best = s } }
+    setSheetSnap(best); setSheetDragY(null) // 吸附到最近的停靠點
+  }
+
   return (
    <GoogleAuthProvider>
     <PhoneFrame>
@@ -764,7 +819,7 @@ export default function TrackPage() {
           </div>
         )
       })()}
-      <header style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
+      <header style={{ padding: 'var(--app-top, 16px) 18px 12px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         {/* 跑步期間隱藏「返回/歷史」，避免誤離開而中斷；只能按「結束並上傳」正常結束 */}
         {status === 'tracking'
           ? <span style={{ color: 'var(--hunt)', fontSize: 13, fontWeight: 700 }}>● 跑步中</span>
@@ -776,9 +831,23 @@ export default function TrackPage() {
         </div>
       </header>
 
-      {/* 地圖（事件橫幅直接疊在地圖上方，任務結束才收起；地圖與數據不位移） */}
-      <div style={{ position: 'relative' }}>
-        <div id="gps-map" style={{ width: '100%', height: 280, background: 'var(--bg-2)' }} />
+      {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗） */}
+      <div ref={sheetWrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)' }} />
+        {/* 回到目前位置：使用者手動看地圖後（暫停跟隨）才出現，點了恢復自動置中 */}
+        {!following && curPos && status !== 'done' && (
+          <button
+            onClick={() => { followRef.current = true; setFollowing(true); if (mapRef.current && curPos) mapRef.current.panTo([curPos.lat, curPos.lng]) }}
+            style={{ position: 'absolute', top: 12, right: 12, zIndex: 550, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '8px 13px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 3px 12px rgba(0,0,0,.28)' }}
+          >◎ 回到目前位置</button>
+        )}
+        {/* GPS 弱訊號警告 / 錯誤：浮在面板之上，任何停靠狀態都看得到（不隨面板收合而被藏起來） */}
+        {(warn || err) && (
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 900, padding: '10px 12px 0', pointerEvents: 'none' }}>
+            {warn && <div style={{ background: '#b42020', color: '#fff', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 8, wordBreak: 'break-word', boxShadow: '0 4px 16px rgba(0,0,0,.4)', pointerEvents: 'auto' }}>⚠️ {warn}</div>}
+            {err && <div style={{ background: '#b42020', color: '#fff', borderRadius: 10, padding: '10px 12px', fontSize: 13, wordBreak: 'break-word', boxShadow: '0 4px 16px rgba(0,0,0,.4)', pointerEvents: 'auto' }}>{err}</div>}
+          </div>
+        )}
         {activeEvent?.phase === 'active' && (
           <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1000, pointerEvents: 'none' }}>
             <EventBanner active={activeEvent} moved={eventMoved} />
@@ -812,34 +881,47 @@ export default function TrackPage() {
             </div>
           )
         })()}
-      </div>
 
-      <ScrollArea padding="16">
-        {(status === 'idle' || status === 'tracking') && (
-          curPos ? (
-            <div style={{ fontSize: 11.5, marginBottom: 10, color: curPos.acc > MAX_ACC ? 'var(--hunt)' : 'var(--tx-faint)' }}>
-              <span className="skin-ico" data-ico="gps" aria-hidden>📶</span> GPS 精度 ±{Math.round(curPos.acc)}m{curPos.acc > MAX_ACC
-                ? (status === 'tracking' ? '（訊號弱，移動可能未計入 → 請到空曠處）' : '（訊號弱，建議到空曠處再開始）')
-                : '（正常）'}
+        {/* 資訊面板（可拖曳）：收合只露出把手＋四格數據，上拉展開看更多（打卡/分段/結果），下拉看更多地圖 */}
+        <div style={{
+          position: 'absolute', left: 0, right: 0, top: 0, height: '100%',
+          transform: `translateY(${curSheetY}px)`,
+          transition: sheetDragY == null && sheetH > 0 ? 'transform .28s cubic-bezier(.22,.61,.36,1)' : 'none',
+          opacity: sheetH > 0 ? 1 : 0,
+          display: 'flex', flexDirection: 'column',
+          background: 'var(--bg)', color: 'var(--tx)',
+          borderTopLeftRadius: 18, borderTopRightRadius: 18,
+          borderTop: '1px solid var(--line)', boxShadow: '0 -10px 30px rgba(0,0,0,.22)',
+          zIndex: 500, userSelect: 'none', WebkitUserSelect: 'none',
+        }}>
+          {/* 把手 + 四格數據（收合時可見；此整區皆可拖曳） */}
+          <div ref={peekRef} onPointerDown={onSheetDown} onPointerMove={onSheetMove} onPointerUp={onSheetUp} onPointerCancel={onSheetUp}
+               style={{ flexShrink: 0, padding: '8px 16px 12px', cursor: 'grab', touchAction: 'none' }}>
+            <div style={{ width: 40, height: 5, borderRadius: 3, background: 'var(--line-2)', margin: '0 auto 12px' }} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+              <Big compact label="距離" value={distKm.toFixed(2)} unit="km" />
+              <Big compact label="時間" value={fmtTime(elapsed)} unit="" />
+              <Big compact label="平均配速" value={fmtPace(avgPace)} unit="/km" />
+              <Big compact label="最新分段" value={fmtPace(lastSplit)} unit="/km" />
             </div>
-          ) : status === 'idle' ? (
-            <div style={{ fontSize: 11.5, marginBottom: 10, color: 'var(--tx-faint)' }}><span className="skin-ico" data-ico="gps" aria-hidden>📶</span> GPS 偵測中…（首次進入請允許定位權限）</div>
-          ) : null
-        )}
-        {warn && <div style={{ background: 'rgba(255,90,90,.12)', border: '1px solid rgba(255,90,90,.4)', color: '#ff8a8a', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 12, wordBreak: 'break-word' }}>⚠️ {warn}</div>}
-        {err && <div style={{ color: 'var(--hunt)', fontSize: 13, marginBottom: 12 }}>{err}</div>}
-
-        {/* 即時數據：距離／時間／平均配速／最新分段（並排一列） */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-          <Big compact label="距離" value={distKm.toFixed(2)} unit="km" />
-          <Big compact label="時間" value={fmtTime(elapsed)} unit="" />
-          <Big compact label="平均配速" value={fmtPace(avgPace)} unit="/km" />
-          <Big compact label="最新分段" value={fmtPace(lastSplit)} unit="/km" />
-        </div>
-        {/* 濾除跳點：只在真的有跳點時才提示（不常駐佔一格） */}
-        {anomalies > 0 && (
-          <div style={{ fontSize: 11.5, marginTop: 8, color: 'var(--tx-faint)' }}>⚠ 已濾除 {anomalies} 個 GPS 跳點（未計入距離）</div>
-        )}
+          </div>
+          {/* 可捲動內容（展開時顯示） */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '2px 16px calc(20px + var(--cta-safe, 0px))' }}>
+            {(status === 'idle' || status === 'tracking') && (
+              curPos ? (
+                <div style={{ fontSize: 11.5, marginBottom: 10, color: curPos.acc > MAX_ACC ? 'var(--hunt)' : 'var(--tx-faint)' }}>
+                  <span className="skin-ico" data-ico="gps" aria-hidden>📶</span> GPS 精度 ±{Math.round(curPos.acc)}m{curPos.acc > MAX_ACC
+                    ? (status === 'tracking' ? '（訊號弱，移動可能未計入 → 請到空曠處）' : '（訊號弱，建議到空曠處再開始）')
+                    : '（正常）'}
+                </div>
+              ) : status === 'idle' ? (
+                <div style={{ fontSize: 11.5, marginBottom: 10, color: 'var(--tx-faint)' }}><span className="skin-ico" data-ico="gps" aria-hidden>📶</span> GPS 偵測中…（首次進入請允許定位權限）</div>
+              ) : null
+            )}
+            {anomalies > 0 && (
+              <div style={{ fontSize: 11.5, marginBottom: 10, color: 'var(--tx-faint)' }}>⚠ 已濾除 {anomalies} 個 GPS 跳點（未計入距離）</div>
+            )}
+            {/* warn / err 已改為浮在面板上方的常駐提示（見地圖區），此處不再重複顯示 */}
 
         {/* 打卡點任務 */}
         {checkpoints.length > 0 && (
@@ -914,10 +996,12 @@ export default function TrackPage() {
             </div>
           </div>
         )}
-      </ScrollArea>
+          </div>
+        </div>
+      </div>
 
       {/* 操作 */}
-      <div style={{ padding: '16px 16px calc(16px + var(--cta-safe, 0px))', borderTop: '1px solid var(--line)', position: 'sticky', bottom: 0, background: 'var(--bg)' }}>
+      <div style={{ padding: '16px 16px calc(16px + var(--cta-safe, 0px))', flexShrink: 0, borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
         {status === 'idle' && (
           user
             ? <button onClick={start} className="skin-btn-start" style={btn}>▶ 開始跑步</button>
