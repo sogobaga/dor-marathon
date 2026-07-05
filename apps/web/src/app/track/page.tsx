@@ -540,8 +540,10 @@ export default function TrackPage() {
     }
     // 無進行中事件 → 等隨機等待時間到 + 符合觸發條件才挑選（結算中 / 建立 occurrence 中不 arm，避免重複觸發或蓋掉剛完成的結果）
     if (completingRef.current || armingRef.current || now < nextEventAtRef.current) return
-    const eligible = eventDefsRef.current.filter((d) =>
-      now - lastEventEndRef.current >= (d.cooldown_sec || 0) * 1000 && triggerEligible(d))
+    // 事件間距＝「隨機等待 nextEventAtRef([最短,最長])」＋伺服器防濫用地板(taskGateOpen)決定。
+    // 舊的 per-def cooldown_sec 是「寫死 15 分鐘冷卻」的殘留：第一個事件時 lastEventEndRef=0 剛好不擋，
+    // 但事件結束後 lastEventEndRef 變成真時間，會把「所有」def 擋掉整趟（cooldown 越大擋越久）→ 第二個事件永遠不觸發。移除之。
+    const eligible = eventDefsRef.current.filter((d) => triggerEligible(d))
     if (eligible.length > 0) armEvent(pickWeighted(eligible))
   }
 
