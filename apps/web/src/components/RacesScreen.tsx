@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import useSWR from 'swr'
 import { racesApi, type Race, type MyRegLite } from '@/lib/api'
 import { getUserToken, useUser, clearUserSession } from '@/lib/userAuth'
@@ -16,6 +17,20 @@ const DISPLAY_STATUS: Record<string, { label: string; color: string }> = {
   paused: { label: '暫停報名', color: 'var(--hunt)' },
   suspended: { label: '賽事中止', color: 'var(--hunt)' },
 }
+
+// 搜尋標籤分類：把 display_status 歸到 報名中/進行中/已結束
+type FilterKey = 'all' | 'reg' | 'racing' | 'ended'
+const CATEGORY: Record<string, Exclude<FilterKey, 'all'>> = {
+  upcoming_reg: 'reg', registering: 'reg', paused: 'reg',
+  reg_closed: 'racing', starting_soon: 'racing', racing: 'racing',
+  ended: 'ended', suspended: 'ended',
+}
+const FILTER_TABS: { key: FilterKey; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'reg', label: '報名中' },
+  { key: 'racing', label: '進行中' },
+  { key: 'ended', label: '已結束' },
+]
 
 function fmtFee(cents: number) {
   return 'NT$ ' + Math.round(cents / 100).toLocaleString('zh-TW')
@@ -46,6 +61,9 @@ export default function RacesScreen({
   const regs = data?.registrations || {}
   // COROS 式 UX：會員面板固定最上方，活動列表做成可上下拖曳的面板（收合看完整會員面板／半展看列表／全展看整份列表）
   const sheet = useDraggableSheet('half')
+  const [filter, setFilter] = useState<FilterKey>('all')
+  const races = data?.races ?? []
+  const filtered = filter === 'all' ? races : races.filter((r) => CATEGORY[r.display_status] === filter)
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
@@ -84,20 +102,35 @@ export default function RacesScreen({
           <div ref={sheet.peekRef} {...sheet.handlers}
                style={{ flexShrink: 0, padding: '8px 18px 10px', cursor: 'grab', touchAction: 'none' }}>
             <div style={{ width: 40, height: 5, borderRadius: 3, background: 'var(--line-2)', margin: '0 auto 10px' }} />
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--tx)' }}>活動列表</h1>
-              {data && data.races.length > 0 && <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>{data.races.length} 場</span>}
+              {/* 搜尋標籤（置右）：全部/報名中/進行中/已結束 */}
+              <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {FILTER_TABS.map(({ key, label }) => {
+                  const on = filter === key
+                  return (
+                    <button key={key} onClick={() => setFilter(key)} style={{
+                      fontSize: 12, padding: '4px 11px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
+                      background: on ? 'var(--fug)' : 'transparent',
+                      color: on ? '#05140e' : 'var(--tx-dim)',
+                      border: `1px solid ${on ? 'var(--fug)' : 'var(--line-2)'}`,
+                      fontWeight: on ? 700 : 500,
+                    }}>{label}</button>
+                  )
+                })}
+              </div>
             </div>
           </div>
           {/* 可捲動活動列表 */}
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '4px 18px calc(16px + var(--cta-safe, 0px))' }}>
             {isLoading && <Hint>載入中…</Hint>}
             {error && <Hint color="var(--hunt)">無法載入賽事：{String(error.message || error)}</Hint>}
-            {data && data.races.length === 0 && <Hint>目前沒有賽事</Hint>}
+            {data && races.length === 0 && <Hint>目前沒有賽事</Hint>}
+            {data && races.length > 0 && filtered.length === 0 && <Hint>此分類目前沒有活動</Hint>}
 
-            {data && (
+            {filtered.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {data.races.map((r) => (
+                {filtered.map((r) => (
                   <RaceCard key={r.id} race={r} reg={regs[r.id]} onOpenRanking={onOpenRanking} onRegister={onRegister} onPay={onPay} onOpenBrochure={onOpenBrochure} />
                 ))}
               </div>
