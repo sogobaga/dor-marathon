@@ -72,6 +72,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     const saved = (typeof window !== 'undefined' && localStorage.getItem(VIEW_KEY)) as View | null
     if (saved === 'pc' || saved === 'mobile') setViewState(saved)
+    else if (typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches) setViewState('mobile') // 手機未選過 → 預設行動版，避免側欄擠壓 topbar 把「登出」切掉
     const token = getToken()
     if (token) adminMeApi.get(token).then((r) => setMe(r.admin)).catch(() => {})
   }, [])
@@ -92,12 +93,13 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   const topbar = (
     <header
       style={{
-        height: 56,
+        minHeight: 56,
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
         gap: 12,
-        padding: '0 18px',
+        // 讓開 iOS 瀏海/動態島（safe-area-top）＋橫向右側 inset，避免頂列「登出」被切到
+        padding: 'env(safe-area-inset-top, 0px) max(18px, env(safe-area-inset-right, 0px)) 0 max(18px, env(safe-area-inset-left, 0px))',
         borderBottom: '1px solid var(--line)',
         background: 'var(--bg-1)',
       }}
