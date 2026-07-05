@@ -2,7 +2,7 @@
 
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
-import { racesApi, METRIC_BY_KEY, type Race, type TaskProgress, type TaskContributors } from '@/lib/api'
+import { racesApi, METRIC_BY_KEY, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { renderCertificate, downloadDataURL } from '@/lib/certificate'
 import ExpSettlementModal from './ExpSettlementModal'
@@ -227,6 +227,7 @@ function ProgressBody({ race }: { race: Race }) {
   const token = getUserToken() || undefined
   const { data, isLoading } = useSWR(['progress', race.id], () => racesApi.progress(race.id, token), { refreshInterval: 30000 })
   const [detailTask, setDetailTask] = useState<TaskProgress | null>(null)
+  const [rangeTask, setRangeTask] = useState<TaskProgress | null>(null)
   const prog = data?.progress
   if (isLoading || !prog) return <Hint>載入中…</Hint>
 
@@ -256,12 +257,13 @@ function ProgressBody({ race }: { race: Race }) {
             <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)' }}>{g.label}任務</div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {g.tasks.map((t, i) => <TaskRow key={t.id ?? i} t={t} onClick={t.id ? () => setDetailTask(t) : undefined} />)}
+            {g.tasks.map((t, i) => <TaskRow key={t.id ?? i} t={t} onClick={t.id ? () => (METRIC_BY_KEY[t.metric_type]?.kind === 'range' ? setRangeTask(t) : setDetailTask(t)) : undefined} />)}
           </div>
         </div>
       ))}
 
       {detailTask && <TaskContributorsModal race={race} task={detailTask} onClose={() => setDetailTask(null)} />}
+      {rangeTask && <RangeDetailModal race={race} task={rangeTask} onClose={() => setRangeTask(null)} />}
     </div>
   )
 }
@@ -269,7 +271,7 @@ function ProgressBody({ race }: { race: Race }) {
 function TaskRow({ t, onClick }: { t: TaskProgress; onClick?: () => void }) {
   const clickable = !!onClick
   const clickStyle = clickable ? { cursor: 'pointer' as const } : {}
-  const hint = clickable ? <div style={{ fontSize: 11, color: 'var(--gold)', marginTop: 8, textAlign: 'right' }}>查看里程貢獻榜 ›</div> : null
+  const hint = clickable ? <div style={{ fontSize: 11, color: 'var(--gold)', marginTop: 8, textAlign: 'right' }}>{METRIC_BY_KEY[t.metric_type]?.kind === 'range' ? '查看哪幾公里達標' : '查看里程貢獻榜'} ›</div> : null
   const m = METRIC_BY_KEY[t.metric_type]
   if (m?.kind === 'checkpoint') {
     const cps = t.checkpoints ?? []
@@ -377,6 +379,54 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
                   {row(c.me)}
                 </>
               )}
+            </div>
+          )}
+        </ScrollArea>
+      </div>
+    </div>
+  )
+}
+
+// 區間任務達標明細：點進去看自己哪幾公里/哪幾筆落在配速（或心率）區間
+function RangeDetailModal({ race, task, onClose }: { race: Race; task: TaskProgress; onClose: () => void }) {
+  const token = getUserToken() || undefined
+  const { data, isLoading, error } = useSWR(['rangedetail', race.id, task.id], () => racesApi.taskRangeDetail(race.id, task.id!, token))
+  const d: TaskRangeDetail | undefined = data?.detail
+  const isPace = task.metric_type === 'avg_pace_range'
+  const rangeText = d ? (isPace ? `${paceFmt(d.range_lo)}–${paceFmt(d.range_hi)} /km` : `${d.range_lo}–${d.range_hi}`) : ''
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '82vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', borderRadius: '18px 18px 0 0', border: '1px solid var(--line-2)', borderBottom: 'none' }}>
+        <div style={{ padding: '16px 18px 10px', borderBottom: '1px solid var(--line)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)' }}>{task.title || '任務'} · 達標明細</div>
+              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3 }}>{isPace ? `配速落在 ${rangeText} 的公里就算達標` : `平均心率落在 ${rangeText} 就算達標`}</div>
+            </div>
+            <button onClick={onClose} style={{ background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 12px', color: 'var(--tx)', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>關閉</button>
+          </div>
+        </div>
+        <ScrollArea padding="14">
+          {error ? <Hint>載入失敗，請稍後再試</Hint> : isLoading || !d ? <Hint>載入中…</Hint> : d.activities.length === 0 ? <Hint>此賽事期間還沒有你的跑步紀錄</Hint> : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {d.activities.map((a, i) => (
+                <div key={i} style={{ background: 'var(--bg-2)', borderRadius: 10, padding: '10px 12px', border: a.qualified ? '1px solid var(--fug)' : '1px solid transparent' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--tx)' }}>{fmt(a.recorded_at)}</span>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: a.qualified ? 'var(--fug)' : 'var(--tx-faint)' }}>{a.qualified ? '✓ 有達標' : '未達標'}</span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 2 }}>{a.distance_km.toFixed(2)} km · 均速 {paceFmt(a.avg_pace_s)}/km{isPace ? '' : ` · 均心率 ${a.avg_hr || '—'}`}</div>
+                  {isPace && a.km_paces.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
+                      {a.km_paces.map((p, k) => {
+                        const on = a.qualify_kms.includes(k + 1)
+                        return <span key={k} style={{ fontSize: 11, padding: '2px 7px', borderRadius: 999, background: on ? 'rgba(70,227,160,.15)' : 'var(--bg-1)', border: `1px solid ${on ? 'var(--fug)' : 'var(--line-2)'}`, color: on ? 'var(--fug)' : 'var(--tx-faint)', fontWeight: on ? 700 : 400 }}>{k + 1}k {paceFmt(p)}{on ? ' ✓' : ''}</span>
+                      })}
+                    </div>
+                  )}
+                  {isPace && a.km_paces.length === 0 && <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>（此筆無每公里分段，以整段均速判定）</div>}
+                </div>
+              ))}
             </div>
           )}
         </ScrollArea>

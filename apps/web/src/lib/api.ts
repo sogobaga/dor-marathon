@@ -784,6 +784,9 @@ export const racesApi = {
   // 某任務的里程貢獻榜（前 20 名 + 自己；帶 token 則含自己排名）
   taskContributors: (raceID: string, taskID: string, token?: string) =>
     request<{ contributors: TaskContributors }>(`/races/${raceID}/tasks/${taskID}/contributors`, token ? { headers: withAuth(token) } : undefined),
+  // 區間任務（平均配速/心率區間）的個人達標明細（哪幾公里達標；需登入）
+  taskRangeDetail: (raceID: string, taskID: string, token?: string) =>
+    request<{ detail: TaskRangeDetail }>(`/races/${raceID}/tasks/${taskID}/range-detail`, token ? { headers: withAuth(token) } : undefined),
   // 一般模式個人完成排名（帶 token 則含追蹤狀態）
   leaderboard: (raceID: string, token?: string) =>
     request<{ leaderboard: Leaderboard }>(`/races/${raceID}/leaderboard`, token ? { headers: withAuth(token) } : undefined),
@@ -828,6 +831,23 @@ export interface TaskContributors {
   contributed: number
   top: Contributor[]
   me?: Contributor | null
+}
+export interface RangeActivity {
+  recorded_at: string
+  distance_km: number
+  avg_pace_s: number
+  avg_hr: number
+  km_paces: number[]
+  qualify_kms: number[] // 1-based：落在配速區間的公里
+  qualified: boolean
+}
+export interface TaskRangeDetail {
+  task_id: string
+  task_title: string
+  metric: string // avg_pace_range | avg_hr_range
+  range_lo: number
+  range_hi: number
+  activities: RangeActivity[]
 }
 
 // --- Admin: 數據總覽 ---

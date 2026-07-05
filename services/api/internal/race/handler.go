@@ -31,6 +31,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/{raceID}/standings", h.Standings)
 	r.Get("/{raceID}/progress", h.Progress)
 	r.Get("/{raceID}/tasks/{taskID}/contributors", h.TaskContributors)
+	r.Get("/{raceID}/tasks/{taskID}/range-detail", h.TaskRangeDetail)
 	r.Get("/{raceID}/leaderboard", h.Leaderboard)
 	r.Get("/{raceID}/certificate", h.Certificate)
 	r.Get("/{raceID}/exp-breakdown", h.ExpBreakdown)
