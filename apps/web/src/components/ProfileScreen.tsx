@@ -283,18 +283,21 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
         {/* 頁籤①個人資料 */}
         {tab === 'info' && p && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* 帳號資訊：從會員資訊面板移來（僅本人可見），避免面板被截圖時外流帳號編碼。各佔一整列避免擠壓重疊 */}
-            <Field label="帳號編碼（給朋友加入用）">
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input style={{ ...inp, fontFamily: 'monospace', flex: 1, minWidth: 0 }} value={dash?.account_code ? `#${dash.account_code}` : '…'} readOnly />
-                <button type="button" onClick={() => { if (dash?.account_code) navigator.clipboard?.writeText(dash.account_code).then(() => { setCodeCopied(true); setTimeout(() => setCodeCopied(false), 1500) }).catch(() => {}) }} style={{ ...ghostBtn, whiteSpace: 'nowrap', flexShrink: 0 }}>{codeCopied ? '已複製' : '複製'}</button>
+            {/* 帳號資訊（唯讀，純文字呈現；非可編輯項目，不用輸入框樣式。帳號編碼保留一鍵複製） */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 9, fontSize: 14, paddingBottom: 12, borderBottom: '1px solid var(--line)' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ color: 'var(--tx-faint)' }}>帳號：</span>
+                <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--tx)' }}>{dash?.account_code ? `#${dash.account_code}` : '…'}</span>
+                <button type="button" onClick={() => { if (dash?.account_code) navigator.clipboard?.writeText(dash.account_code).then(() => { setCodeCopied(true); setTimeout(() => setCodeCopied(false), 1500) }).catch(() => {}) }}
+                  style={{ marginLeft: 2, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: codeCopied ? 'var(--fug)' : 'var(--tx-dim)', textDecoration: 'underline' }}>{codeCopied ? '已複製' : '複製'}</button>
               </div>
-            </Field>
-            <Field label="會員身分">
-              <div style={{ ...inp, display: 'flex', alignItems: 'center', color: dash?.is_vip ? 'var(--gold)' : 'var(--tx)', fontWeight: dash?.is_vip ? 700 : 400 }}>
-                {dash?.is_vip ? `VIP${dash.vip_expires_at ? ` · 至 ${fmtDate(dash.vip_expires_at).slice(0, 10)}` : ''}` : '一般會員'}
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <span style={{ color: 'var(--tx-faint)' }}>會員身分：</span>
+                <span style={{ fontWeight: dash?.is_vip ? 700 : 500, color: dash?.is_vip ? 'var(--gold)' : 'var(--tx)' }}>
+                  {dash?.is_vip ? `VIP${dash.vip_expires_at ? ` (至 ${fmtDate(dash.vip_expires_at).slice(0, 10)})` : ''}` : '一般'}
+                </span>
               </div>
-            </Field>
+            </div>
             <Field label="顯示名稱"><input style={inp} value={p.name} onChange={(e) => set('name', e.target.value)} /></Field>
             <Field label="Email（Google 帳號）"><input style={{ ...inp, opacity: 0.6 }} value={p.email} disabled /></Field>
             <Field label="真實姓名"><input style={inp} value={p.real_name} onChange={(e) => set('real_name', e.target.value)} /></Field>
