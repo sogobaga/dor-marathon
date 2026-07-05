@@ -99,8 +99,10 @@ const loginBtn: React.CSSProperties = {
   borderRadius: 9, padding: '7px 16px', cursor: 'pointer', fontSize: 13,
 }
 const overlay: React.CSSProperties = {
+  // zIndex 需高於首頁/追蹤頁的可拖曳資訊面板(500)與地圖橫幅(1001)，否則登入視窗會被面板蓋住而點不到；
+  // 仍低於事件演出(2000+)與系統級提示(InAppBrowser 3000 / Dedup 3200)。
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)',
-  display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 80, padding: 20,
+  display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: 20,
 }
 const panel: React.CSSProperties = {
   background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16,
