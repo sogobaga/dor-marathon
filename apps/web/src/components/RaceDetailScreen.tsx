@@ -104,7 +104,7 @@ export default function RaceDetailScreen({
           />
         )}
         {/* 賽事資訊 Dashboard */}
-        <div style={dashCard}>
+        <div className="skin-frame" style={dashCard}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={statusBadge}>{STATUS_LABEL[race.display_status] ?? race.display_status}</span>
             <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>

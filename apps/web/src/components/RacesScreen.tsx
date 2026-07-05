@@ -120,6 +120,7 @@ function RaceCard({
   const stop = (e: React.MouseEvent) => e.stopPropagation()
   return (
     <div
+      className="skin-frame"
       onClick={() => onOpenBrochure?.(race)}
       style={{
         background: 'var(--bg-1)',

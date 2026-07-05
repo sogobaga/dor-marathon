@@ -181,6 +181,19 @@
 [data-skin="warm2"] .skin-char[data-char="blue"] { background-image: url(/ui/chars/character_blue_runner_from_task_page.png); }
 [data-skin="warm2"] .skin-char[data-char="pink"] { background-image: url(/ui/chars/character_red_pm_runner_from_task_page.png); }
 
+/* warm2 卡框（9-slice 金色框）：只此 skin。保留卡片原本奶油底（框圖萬一沒載到也不會破版），
+   用 ::before + border-image 只把「金色外框」疊在卡片邊緣（不 fill、不改盒模型、不位移內容）。 */
+[data-skin="warm2"] .skin-frame {
+  position: relative;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+[data-skin="warm2"] .skin-frame::before {
+  content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  border: 18px solid transparent;
+  border-image: url(/ui/frames/frame_task_card_gold.png) 36 / 18px stretch;
+}
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {
