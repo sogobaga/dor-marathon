@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { profileApi, paymentsApi, integrationsApi, followApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type DashboardInfo, type FollowRow } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
-import DpCoin from './DpCoin'
+import MemberPanel from './MemberPanel'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 
 // 動態建立 hidden 表單並 POST 到綠界（瀏覽器導去付款頁）
@@ -54,12 +54,6 @@ function paceStr(sec: number) {
   if (!sec || sec <= 0) return '—'
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
 }
-function expPct(d: { exp: number; level_floor: number; next_level_exp: number | null }) {
-  if (d.next_level_exp == null) return 100
-  const span = d.next_level_exp - d.level_floor
-  if (span <= 0) return 100
-  return Math.max(0, Math.min(100, ((d.exp - d.level_floor) / span) * 100))
-}
 
 export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => void; focusRaceID?: string }) {
   const [p, setP] = useState<Profile | null>(null)
@@ -77,7 +71,6 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
   const [dash, setDash] = useState<DashboardInfo | null>(null)
   const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>('info')
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
-  const [codeCopied, setCodeCopied] = useState(false)
   const [follows, setFollows] = useState<FollowRow[] | null>(null)
   // COROS 式 UX：會員資訊面板固定最上方，分頁內容做成可上下拖曳面板（收合看完整會員面板／半展看分頁／全展看整份內容）
   const sheet = useDraggableSheet('half')
@@ -111,10 +104,6 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
     } finally {
       setUploadingAvatar(false)
     }
-  }
-  function copyCode() {
-    if (!dash?.account_code) return
-    navigator.clipboard?.writeText(dash.account_code).then(() => { setCodeCopied(true); setTimeout(() => setCodeCopied(false), 1500) }).catch(() => {})
   }
 
   function loadStrava() {
@@ -255,61 +244,8 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
         {/* 背景層：會員資訊面板（收合時完整顯示，可自行捲動） */}
         <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 0' }}>
         {err && <div style={{ color: 'var(--hunt)', padding: '8px 2px', fontSize: 13 }}>{err}</div>}
-        {!dash && !err && <div style={{ color: 'var(--tx-dim)', padding: 16, fontSize: 13 }}>載入中…</div>}
-
-        {/* Dashboard */}
-        {dash && (
-          <div style={dashCard}>
-            <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
-              <label style={avatarWrap} title="更換頭像">
-                {dash.avatar_url
-                  // eslint-disable-next-line @next/next/no-img-element
-                  ? <img src={dash.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  : <span style={{ fontSize: 24, fontWeight: 800, color: 'var(--tx-dim)' }}>{(dash.name || '?').slice(0, 1)}</span>}
-                <span style={avatarEdit}>{uploadingAvatar ? '…' : '✎'}</span>
-                <input type="file" accept="image/*" style={{ display: 'none' }}
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) onAvatar(f); e.target.value = '' }} />
-              </label>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)' }}>{dash.name || '未命名'}</span>
-                  {dash.is_vip && <span style={vipBadge}>VIP</span>}
-                </div>
-                {dash.nickname && <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>{dash.nickname}</div>}
-                <button onClick={copyCode} style={codeChip} title="複製帳號編碼">
-                  #{dash.account_code} {codeCopied ? '已複製' : '⧉'}
-                </button>
-              </div>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }} title="DP 幣">
-                <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
-              </span>
-            </div>
-
-            {/* 等級 + EXP */}
-            <div style={{ marginTop: 14 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 12 }}>
-                <span style={{ fontWeight: 800, color: 'var(--fug)' }}>Lv.{dash.level}{dash.level_title ? ` ${dash.level_title}` : ''}</span>
-                <span style={{ color: 'var(--tx-dim)' }}>{dash.exp} EXP</span>
-              </div>
-              <div style={expBarOuter}>
-                <div style={{ ...expBarInner, width: `${expPct(dash)}%` }} />
-              </div>
-              <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 4, textAlign: 'right' }}>
-                {dash.next_level_exp == null ? '已達最高等級'
-                  : `距 Lv.${dash.level + 1} 還需 ${dash.next_level_exp - dash.exp} EXP`}
-              </div>
-            </div>
-
-
-            <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 11.5, color: 'var(--tx-dim)', flexWrap: 'wrap' }}>
-              <span>累積 {dash.total_km.toFixed(1)} K</span>
-              <span>報名 {dash.race_count} 場</span>
-              <span>追蹤 <b style={{ color: 'var(--tx)' }}>{dash.following_count}</b></span>
-              <span>粉絲 <b style={{ color: 'var(--tx)' }}>{dash.follower_count}</b></span>
-              <span>{dash.is_vip ? `VIP 至 ${dash.vip_expires_at ? fmtDate(dash.vip_expires_at).slice(0, 10) : ''}` : '一般會員'}</span>
-            </div>
-          </div>
-        )}
+        {/* 會員資訊面板：與首頁共用同一元件、內容一致（此頁頭像可上傳） */}
+        <MemberPanel dash={dash} onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} />
         </div>{/* /背景層：會員資訊面板 */}
 
         {/* 可拖曳面板：分頁（個人資料/運動數據/報名紀錄/追蹤）+ 內容 */}
@@ -340,8 +276,8 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             </div>
           </div>
 
-          {/* 分頁內容（可捲動） */}
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '14px 18px calc(20px + var(--cta-safe, 0px))' }}>
+          {/* 分頁內容（可捲動）：userSelect 還原成 text，避免面板的 userSelect:none 讓「個人資料」輸入框在 iOS 無法聚焦/編輯 */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', userSelect: 'text', WebkitUserSelect: 'text', padding: '14px 18px calc(20px + var(--cta-safe, 0px))' }}>
         {!p && !err && <div style={{ color: 'var(--tx-dim)', padding: 16 }}>載入中…</div>}
 
         {/* 頁籤①個人資料 */}
@@ -618,20 +554,11 @@ const ghostBtn: React.CSSProperties = {
   background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)',
   borderRadius: 10, padding: '9px 14px', cursor: 'pointer', fontSize: 13, fontFamily: 'inherit',
 }
-const dashCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 16, boxShadow: 'var(--card-shadow, none)' }
-const avatarWrap: React.CSSProperties = {
-  position: 'relative', width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
-  background: 'var(--bg-2)', border: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-}
-const avatarEdit: React.CSSProperties = { position: 'absolute', bottom: 0, left: 0, right: 0, fontSize: 10, textAlign: 'center', background: 'rgba(0,0,0,.55)', color: '#fff', padding: '1px 0' }
-const vipBadge: React.CSSProperties = { fontSize: 10, fontWeight: 800, color: '#1a1200', background: 'var(--gold)', borderRadius: 6, padding: '1px 7px', letterSpacing: '.05em' }
-const codeChip: React.CSSProperties = { marginTop: 4, fontSize: 11, color: 'var(--tx-dim)', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '2px 10px', cursor: 'pointer', fontFamily: 'monospace' }
-const expBarOuter: React.CSSProperties = { height: 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden', marginTop: 5 }
-const expBarInner: React.CSSProperties = { height: '100%', background: 'var(--fug)', borderRadius: 999, transition: 'width .3s' }
 const payBtn: React.CSSProperties = {
   background: 'var(--gold)', color: '#1a1200', fontWeight: 700, border: 'none',
   borderRadius: 'var(--radius-btn, 9px)', padding: '7px 14px', cursor: 'pointer', fontSize: 13,
 }
 // zIndex 需高於本頁的可拖曳資訊面板(500)，否則從「報名紀錄」開的繳費視窗會被面板蓋住（見 [[frontend-draggable-sheet]] 疊層慣例）
 const overlay: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: 20 }
-const panel: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: 20, width: '100%', maxWidth: 420 }
+// maxHeight + overflowY：長訂單（多項加購）在小螢幕不會把「前往綠界付款/關閉」擠到畫面外而點不到
+const panel: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: 20, width: '100%', maxWidth: 420, maxHeight: '90dvh', overflowY: 'auto' }
