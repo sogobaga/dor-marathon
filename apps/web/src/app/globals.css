@@ -188,6 +188,17 @@
   box-shadow: 0 4px 14px rgba(83,66,54,.05) !important;
 }
 
+/* Strava「Powered by Strava」標章：一個檔案無法同時適用深/淺 skin。
+   深色 skin（預設，<html> 無 data-skin）顯示白字版；淺色 skin 顯示深字版。
+   由 CSS 依 <html data-skin> 決定，避免 client 判斷造成 SSR 不一致。
+   新增淺色 skin 時，把該 skin 名加進下面兩條選擇器即可。 */
+.strava-badge-darkskin { display: block; }
+.strava-badge-lightskin { display: none; }
+[data-skin="warm"] .strava-badge-darkskin,
+[data-skin="warm2"] .strava-badge-darkskin { display: none; }
+[data-skin="warm"] .strava-badge-lightskin,
+[data-skin="warm2"] .strava-badge-lightskin { display: block; }
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {

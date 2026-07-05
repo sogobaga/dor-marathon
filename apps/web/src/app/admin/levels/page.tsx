@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminLevelsApi, settingsApi, adminSettingsApi, adminImagesApi, type LevelConfig, type ExpRules, type AthleteMetricConfig, type AthleteLevel } from '@/lib/api'
+import { adminLevelsApi, settingsApi, adminSettingsApi, adminImagesApi, type LevelConfig, type ExpRules, type AthleteMetricConfig, type AthleteLevel, type SiteSettings } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import DpCoin from '@/components/DpCoin'
 
@@ -21,8 +21,8 @@ export default function AdminLevelsPage() {
   const [rules, setRules] = useState<ExpRules | null>(null)
   const [aMetrics, setAMetrics] = useState<AthleteMetricConfig[] | null>(null)
   const [aLevels, setALevels] = useState<AthleteLevel[] | null>(null)
-  const [panelBg, setPanelBg] = useState('')
-  const [panelBgUploading, setPanelBgUploading] = useState(false)
+  const [settings, setSettings] = useState<SiteSettings | null>(null)
+  const [imgBusy, setImgBusy] = useState('') // 上傳中的欄位 key（''=無）
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [saving, setSaving] = useState(false)
@@ -36,25 +36,28 @@ export default function AdminLevelsPage() {
     })
     adminLevelsApi.expRules(t).then((r) => setRules(r.exp_rules)).catch(() => {})
     adminLevelsApi.athleteConfig(t).then((r) => { setAMetrics(r.metrics); setALevels(r.levels) }).catch(() => {})
-    settingsApi.get().then((r) => setPanelBg(r.settings.member_panel_bg_url)).catch(() => {})
+    settingsApi.get().then((r) => setSettings(r.settings)).catch(() => {})
   }, [router])
 
-  async function uploadPanelBg(file: File) {
+  // 一律送完整 settings（合併 patch），避免只送單一欄位把其他外觀設定清空
+  async function saveSettings(patch: Partial<SiteSettings>): Promise<void> {
+    if (!token || !settings) return
+    const r = await adminSettingsApi.set(token, { ...settings, ...patch })
+    setSettings(r.settings)
+  }
+  async function uploadImage(key: keyof SiteSettings, file: File, okMsg: string) {
     if (!token) return
-    setPanelBgUploading(true); setErr(''); setMsg('')
+    setImgBusy(key); setErr(''); setMsg('')
     try {
       const { url } = await adminImagesApi.upload(token, file)
-      const r = await adminSettingsApi.set(token, { member_panel_bg_url: url })
-      setPanelBg(r.settings.member_panel_bg_url); setMsg('✓ 會員面板底圖已更新')
-    } catch (e: any) { setErr(e?.message || '上傳失敗') } finally { setPanelBgUploading(false) }
+      await saveSettings({ [key]: url })
+      setMsg(okMsg)
+    } catch (e: any) { setErr(e?.message || '上傳失敗') } finally { setImgBusy('') }
   }
-  async function removePanelBg() {
-    if (!token) return
-    setSaving(true); setErr(''); setMsg('')
-    try {
-      const r = await adminSettingsApi.set(token, { member_panel_bg_url: '' })
-      setPanelBg(r.settings.member_panel_bg_url); setMsg('✓ 已移除會員面板底圖')
-    } catch (e: any) { setErr(e?.message || '移除失敗') } finally { setSaving(false) }
+  async function removeImage(key: keyof SiteSettings, okMsg: string) {
+    setErr(''); setMsg('')
+    try { await saveSettings({ [key]: '' }); setMsg(okMsg) }
+    catch (e: any) { setErr(e?.message || '移除失敗') }
   }
 
   async function saveAthlete() {
@@ -170,19 +173,45 @@ export default function AdminLevelsPage() {
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
           <div style={{ width: 200, height: 96, borderRadius: 12, border: '1px solid var(--line-2)', overflow: 'hidden', background: 'var(--bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {panelBg
+            {settings?.member_panel_bg_url
               // eslint-disable-next-line @next/next/no-img-element
-              ? <img src={panelBg} alt="底圖" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ? <img src={settings.member_panel_bg_url} alt="底圖" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               : <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>無底圖（預設）</span>}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <label style={{ ...primaryBtn, display: 'inline-block', cursor: 'pointer', opacity: panelBgUploading ? 0.6 : 1 }}>
-              {panelBgUploading ? '上傳中…' : '上傳底圖'}
-              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadPanelBg(f); e.target.value = '' }} />
+            <label style={{ ...primaryBtn, display: 'inline-block', cursor: 'pointer', opacity: imgBusy === 'member_panel_bg_url' ? 0.6 : 1 }}>
+              {imgBusy === 'member_panel_bg_url' ? '上傳中…' : '上傳底圖'}
+              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage('member_panel_bg_url', f, '✓ 會員面板底圖已更新'); e.target.value = '' }} />
             </label>
-            {panelBg && <button onClick={removePanelBg} disabled={saving} style={{ ...primaryBtn, background: 'var(--bg-2)', color: 'var(--hunt)', border: '1px solid var(--line-2)' }}>移除</button>}
+            {settings?.member_panel_bg_url && <button onClick={() => removeImage('member_panel_bg_url', '✓ 已移除會員面板底圖')} style={{ ...primaryBtn, background: 'var(--bg-2)', color: 'var(--hunt)', border: '1px solid var(--line-2)' }}>移除</button>}
           </div>
         </div>
+      </div>
+
+      {/* 外觀：Strava「Powered by Strava」標章（雙版本，前台依 skin 深淺自動顯示對應版本） */}
+      <div style={{ ...panel, marginTop: 16 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>Strava 標章（Powered by Strava）</h2>
+        <p style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 0, lineHeight: 1.7 }}>
+          顯示在「會員資訊頁 → 運動數據」底部。一個檔案無法同時適用深/淺色 skin，故分兩版；前台會依目前 skin 自動顯示對應版本。請上傳 Strava 官方資產（.svg 或 .png），未上傳則用內建佔位圖。
+        </p>
+        <ImgSlot
+          title="深色 skin 用（白字版）"
+          hint="套用於預設深色主題。請上傳白色文字的版本（深底才看得清）。"
+          url={settings?.strava_powered_dark_url ?? ''}
+          dark
+          busy={imgBusy === 'strava_powered_dark_url'}
+          onUpload={(f) => uploadImage('strava_powered_dark_url', f, '✓ 已更新（深色 skin 用）')}
+          onRemove={() => removeImage('strava_powered_dark_url', '✓ 已移除（深色 skin 用）')}
+        />
+        <ImgSlot
+          title="淺色 skin 用（深字版）"
+          hint="套用於暖色/淺色主題（warm、warm2…）。請上傳深色文字的版本（淺底才看得清）。"
+          url={settings?.strava_powered_light_url ?? ''}
+          dark={false}
+          busy={imgBusy === 'strava_powered_light_url'}
+          onUpload={(f) => uploadImage('strava_powered_light_url', f, '✓ 已更新（淺色 skin 用）')}
+          onRemove={() => removeImage('strava_powered_light_url', '✓ 已移除（淺色 skin 用）')}
+        />
       </div>
 
       {/* EXP 規則 */}
@@ -309,6 +338,34 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{label}</span>
       {children}
     </label>
+  )
+}
+
+// 單張圖片上傳槽（預覽底色可切深/淺，方便看白字或深字標章）
+function ImgSlot({ title, hint, url, dark, busy, onUpload, onRemove }: {
+  title: string; hint: string; url: string; dark: boolean; busy: boolean;
+  onUpload: (f: File) => void; onRemove: () => void
+}) {
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 700 }}>{title}</div>
+      <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', margin: '2px 0 8px', lineHeight: 1.6 }}>{hint}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        <div style={{ width: 200, height: 56, borderRadius: 10, border: '1px solid var(--line-2)', overflow: 'hidden', background: dark ? '#0b0e13' : '#f3eee2', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 8 }}>
+          {url
+            // eslint-disable-next-line @next/next/no-img-element
+            ? <img src={url} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+            : <span style={{ fontSize: 11, color: dark ? 'rgba(255,255,255,.5)' : 'rgba(0,0,0,.4)' }}>未設定</span>}
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <label style={{ ...primaryBtn, display: 'inline-block', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            {busy ? '上傳中…' : url ? '更換' : '上傳'}
+            <input type="file" accept="image/*,.svg" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = '' }} />
+          </label>
+          {url && <button onClick={onRemove} style={{ ...primaryBtn, background: 'var(--bg-2)', color: 'var(--hunt)', border: '1px solid var(--line-2)' }}>移除</button>}
+        </div>
+      </div>
+    </div>
   )
 }
 

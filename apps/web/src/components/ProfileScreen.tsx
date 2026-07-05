@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, followApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type DashboardInfo, type FollowRow } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type DashboardInfo, type FollowRow, type SiteSettings } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import MemberPanel from './MemberPanel'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
@@ -73,6 +73,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
   const [follows, setFollows] = useState<FollowRow[] | null>(null)
+  const [site, setSite] = useState<SiteSettings | null>(null) // 全站外觀設定（含 Strava 標章雙版本 URL）
   // COROS 式 UX：會員資訊面板固定最上方，分頁內容做成可上下拖曳面板（收合看完整會員面板／半展看分頁／全展看整份內容）
   const sheet = useDraggableSheet('half')
 
@@ -135,6 +136,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
       return
     }
     loadStrava()
+    settingsApi.get().then((r) => setSite(r.settings)).catch(() => {}) // Strava 標章雙版本 URL
     // 處理 Strava OAuth 導回參數
     if (typeof window !== 'undefined') {
       const sp = new URLSearchParams(window.location.search)
@@ -433,11 +435,14 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
             </div>
           )}
 
-          {/* Strava 資料來源歸屬（品牌合規） */}
+          {/* Strava 資料來源歸屬（品牌合規）：依 skin 深淺顯示白/深字版；後台可上傳，未設定則用內建佔位圖。
+              兩張都渲染、由 CSS 依 <html data-skin> 決定顯示哪一張（避免 client 判斷造成 SSR 不一致）。 */}
           <div style={{ marginTop: 16, display: 'flex', justifyContent: 'center' }}>
             <a href="https://www.strava.com" target="_blank" rel="noreferrer" aria-label="Powered by Strava">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/strava/powered_by_strava.svg" alt="Powered by Strava" style={{ height: 18, display: 'block', opacity: 0.85 }} />
+              <img className="strava-badge-darkskin" src={site?.strava_powered_dark_url || '/strava/powered_by_strava.svg'} alt="Powered by Strava" style={{ height: 18 }} />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className="strava-badge-lightskin" src={site?.strava_powered_light_url || '/strava/powered_by_strava.svg'} alt="Powered by Strava" style={{ height: 18 }} />
             </a>
           </div>
         </div>

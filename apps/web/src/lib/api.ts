@@ -264,6 +264,8 @@ function withAuth(token: string): HeadersInit {
 
 export interface SiteSettings {
   member_panel_bg_url: string
+  strava_powered_dark_url: string  // 深色 skin 用（白字版）
+  strava_powered_light_url: string // 淺色 skin 用（深字版）
 }
 
 export const settingsApi = {
