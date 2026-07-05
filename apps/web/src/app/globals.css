@@ -181,17 +181,11 @@
 [data-skin="warm2"] .skin-char[data-char="blue"] { background-image: url(/ui/chars/character_blue_runner_from_task_page.png); }
 [data-skin="warm2"] .skin-char[data-char="pink"] { background-image: url(/ui/chars/character_red_pm_runner_from_task_page.png); }
 
-/* warm2 卡框（9-slice 金色框）：只此 skin。保留卡片原本奶油底（框圖萬一沒載到也不會破版），
-   用 ::before + border-image 只把「金色外框」疊在卡片邊緣（不 fill、不改盒模型、不位移內容）。 */
+/* warm2 卡框：改用「乾淨的金色細框」——隨卡片圓角完美貼合、無接縫。
+   （原本 9-slice border-image 在圓角處框線與卡片圓角對不齊，會出現一條多餘邊線。） */
 [data-skin="warm2"] .skin-frame {
-  position: relative;
-  border-color: transparent !important;
-  box-shadow: none !important;
-}
-[data-skin="warm2"] .skin-frame::before {
-  content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
-  border: 18px solid transparent;
-  border-image: url(/ui/frames/frame_task_card_gold.png) 36 / 18px stretch;
+  border: 1.5px solid #E8C879 !important;
+  box-shadow: 0 4px 14px rgba(83,66,54,.05) !important;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -227,7 +221,7 @@ html, body {
 /* 真手機（窄視窗，或觸控裝置且非平板）：直接全屏、去除模擬外框與假動態島，頁首頂距縮小。
    完全無瀏覽器介面的沉浸體驗＝將本站「加入主畫面」以 PWA standalone 啟動。 */
 @media (max-width: 500px), (pointer: coarse) and (max-width: 600px) {
-  :root { --app-top: 16px; } /* 真手機沒有假動態島，頁首只留少量呼吸空間（真瀏海由 safe-area 處理） */
+  :root { --app-top: 22px; } /* 真手機頁首呼吸空間（真瀏海由 PhoneShell 的 safe-area 另外處理，故此值不含 safe-area） */
   .phone-frame { display: block; padding: 0; height: 100dvh; min-height: 0; overflow: hidden; }
   .phone-shell { width: 100% !important; height: 100dvh !important; max-height: none !important; border-radius: 0 !important; border: none !important; box-shadow: none !important; }
   .fake-notch { display: none !important; }
