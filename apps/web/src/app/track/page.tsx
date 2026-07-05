@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { activitiesApi, checkpointApi, eventApi, eventRaceApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
@@ -13,11 +13,9 @@ import { EventBanner, EventResultBanner, EventTriggerFlash, Countdown321, EventO
 import { EventInteraction } from '@/components/EventInteraction'
 import { useIsPhone } from '@/lib/useIsMobile'
 import { useIsLandscape } from '@/lib/useIsLandscape'
+import { useDraggableSheet } from '@/lib/useDraggableSheet'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
-// SSR 安全的 layout effect：客戶端用 useLayoutEffect（量測在繪製前完成，面板不會載入時滑一下），伺服器退回 useEffect（避免警告）
-const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 const LS_KEY = 'dor_gps_run'
 const MAX_ACC = 65 // 精度差於此（公尺）的點不採計距離（城市/大樓旁訊號較差，放寬以免整趟記不到）
@@ -74,14 +72,8 @@ export default function TrackPage() {
   const [confirmEnd, setConfirmEnd] = useState(false) // 事件進行中按「結束」→ 先跳確認（損失規避）
   const [muted, setMuted] = useState(false) // 事件音效靜音（震動不受影響）
   const [showFlash, setShowFlash] = useState(false) // Step1：全螢幕「事件觸發」紅閃警報（Phase A/B 共用）
-  // COROS 式 UX：可上下拖曳的資訊面板疊在放大的地圖上，露出更多/更少資訊（配色與顯示的資訊都不變，只改操作體驗）
-  const [sheetSnap, setSheetSnap] = useState<'peek' | 'half' | 'full'>('half') // 面板停靠：收合/半展/全展
-  const [sheetDragY, setSheetDragY] = useState<number | null>(null) // 拖曳中的即時位移(px)；null=非拖曳（吸附到停靠點）
-  const [sheetH, setSheetH] = useState(0) // 面板容器（地圖區）高度
-  const [peekH, setPeekH] = useState(120) // 收合時露出的高度（把手＋四格數據，量測而得）
-  const sheetWrapRef = useRef<HTMLDivElement>(null)
-  const peekRef = useRef<HTMLDivElement>(null)
-  const sheetDragRef = useRef<{ y: number; off: number } | null>(null)
+  // COROS 式 UX：可上下拖曳的資訊面板疊在放大的地圖上（配色與顯示的資訊都不變，只改操作體驗）
+  const sheet = useDraggableSheet('half')
   const followRef = useRef(true) // 地圖是否自動跟隨目前位置；使用者拖曳/縮放地圖後暫停，按「回到目前位置」恢復
   const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
 
@@ -635,20 +627,10 @@ export default function TrackPage() {
   useEffect(() => { if (confirmEnd && !activeEvent) setConfirmEnd(false) }, [confirmEnd, activeEvent])
 
   useEffect(() => { setMuted(isMuted()) }, [])
-  // 量測面板容器（地圖區）與「收合露出區（把手＋數據）」高度，供拖曳位移計算；旋轉/尺寸變動即時更新。
-  // 用 layout effect：首次量測在繪製前完成，面板一開始就落在正確位置，不會載入時從「蓋住地圖」滑下來。
-  useIsoLayoutEffect(() => {
-    const wrap = sheetWrapRef.current, peek = peekRef.current
-    const update = () => { if (wrap) setSheetH(wrap.clientHeight); if (peek) setPeekH(peek.offsetHeight) }
-    update()
-    let ro: ResizeObserver | null = null
-    try { ro = new ResizeObserver(update); if (wrap) ro.observe(wrap); if (peek) ro.observe(peek) } catch { /* ignore */ }
-    return () => { try { ro?.disconnect() } catch { /* ignore */ } }
-  }, [])
   // 依狀態預設面板停靠：完成全展（看結果）、其餘半展（同時看得到地圖與數據/警告/打卡，可再上拉看更多或下拉看更多地圖）
-  useEffect(() => { setSheetSnap(status === 'done' ? 'full' : 'half') }, [status])
+  useEffect(() => { sheet.setSnap(status === 'done' ? 'full' : 'half') }, [status]) // eslint-disable-line react-hooks/exhaustive-deps
   // 面板高度變動 → 讓 Leaflet 重算尺寸（避免地圖灰塊/破圖）
-  useEffect(() => { if (mapReady && mapRef.current) { try { mapRef.current.invalidateSize() } catch { /* ignore */ } } }, [mapReady, sheetH])
+  useEffect(() => { if (mapReady && mapRef.current) { try { mapRef.current.invalidateSize() } catch { /* ignore */ } } }, [mapReady, sheet.H])
   // 載入效果覆寫（正式圖片/音檔）：圖片給互動層、音效交給 sfx 解碼
   useEffect(() => { const t = getUserToken(); if (t) loadEffectAssets(t).then(setFxAssets) }, [user?.id])
   function toggleMute() { const next = !isMuted(); sfxSetMuted(next); setMuted(next); if (!next) unlockAudio() }
@@ -755,32 +737,6 @@ export default function TrackPage() {
   const avgPace = distKm >= PACE_MIN_KM ? elapsed / distKm : 0 // 未達門檻先顯示 --:--，避免爆數字
   const lastSplit = splits.length > 0 ? splits[splits.length - 1] : 0 // 最新完成的整公里配速（秒）；未滿 1km 顯示 --:--
 
-  // 資訊面板拖曳：停靠點對應的下移量(px)。full=不下移(蓋住地圖)、half=下移一半、peek=只露出把手＋數據
-  const sheetOffsetFor = (s: 'peek' | 'half' | 'full') => {
-    if (sheetH <= 0) return 0
-    if (s === 'full') return 0
-    if (s === 'half') return Math.round(sheetH * 0.5)
-    return Math.max(0, sheetH - Math.max(90, peekH)) // peek：露出把手＋四格數據
-  }
-  const curSheetY = sheetDragY ?? sheetOffsetFor(sheetSnap)
-  function onSheetDown(e: React.PointerEvent) {
-    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* ignore */ }
-    sheetDragRef.current = { y: e.clientY, off: sheetOffsetFor(sheetSnap) }
-    setSheetDragY(sheetOffsetFor(sheetSnap))
-  }
-  function onSheetMove(e: React.PointerEvent) {
-    const st = sheetDragRef.current; if (!st) return
-    const raw = st.off + (e.clientY - st.y)
-    setSheetDragY(Math.min(Math.max(raw, 0), sheetOffsetFor('peek'))) // 夾在 [全展, 收合] 之間
-  }
-  function onSheetUp() {
-    const y = sheetDragY; sheetDragRef.current = null
-    if (y == null) return
-    let best: 'peek' | 'half' | 'full' = 'half', bd = Infinity
-    for (const s of ['full', 'half', 'peek'] as const) { const d = Math.abs(sheetOffsetFor(s) - y); if (d < bd) { bd = d; best = s } }
-    setSheetSnap(best); setSheetDragY(null) // 吸附到最近的停靠點
-  }
-
   return (
    <GoogleAuthProvider>
     <PhoneFrame>
@@ -832,7 +788,7 @@ export default function TrackPage() {
       </header>
 
       {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗） */}
-      <div ref={sheetWrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)' }} />
         {/* 回到目前位置：使用者手動看地圖後（暫停跟隨）才出現，點了恢復自動置中 */}
         {!following && curPos && status !== 'done' && (
@@ -885,9 +841,9 @@ export default function TrackPage() {
         {/* 資訊面板（可拖曳）：收合只露出把手＋四格數據，上拉展開看更多（打卡/分段/結果），下拉看更多地圖 */}
         <div style={{
           position: 'absolute', left: 0, right: 0, top: 0, height: '100%',
-          transform: `translateY(${curSheetY}px)`,
-          transition: sheetDragY == null && sheetH > 0 ? 'transform .28s cubic-bezier(.22,.61,.36,1)' : 'none',
-          opacity: sheetH > 0 ? 1 : 0,
+          transform: `translateY(${sheet.curY}px)`,
+          transition: !sheet.dragging && sheet.ready ? 'transform .28s cubic-bezier(.22,.61,.36,1)' : 'none',
+          opacity: sheet.ready ? 1 : 0,
           display: 'flex', flexDirection: 'column',
           background: 'var(--bg)', color: 'var(--tx)',
           borderTopLeftRadius: 18, borderTopRightRadius: 18,
@@ -895,7 +851,7 @@ export default function TrackPage() {
           zIndex: 500, userSelect: 'none', WebkitUserSelect: 'none',
         }}>
           {/* 把手 + 四格數據（收合時可見；此整區皆可拖曳） */}
-          <div ref={peekRef} onPointerDown={onSheetDown} onPointerMove={onSheetMove} onPointerUp={onSheetUp} onPointerCancel={onSheetUp}
+          <div ref={sheet.peekRef} {...sheet.handlers}
                style={{ flexShrink: 0, padding: '8px 16px 12px', cursor: 'grab', touchAction: 'none' }}>
             <div style={{ width: 40, height: 5, borderRadius: 3, background: 'var(--line-2)', margin: '0 auto 12px' }} />
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>

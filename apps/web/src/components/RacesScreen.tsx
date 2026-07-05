@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
 import useSWR from 'swr'
 import { racesApi, type Race, type MyRegLite } from '@/lib/api'
 import { getUserToken, useUser, clearUserSession } from '@/lib/userAuth'
+import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import MemberPanel from './MemberPanel'
 
 const DISPLAY_STATUS: Record<string, { label: string; color: string }> = {
@@ -51,9 +51,10 @@ export default function RacesScreen({
 }) {
   const user = useUser() // 登入狀態變動時重新渲染 → 用最新 token 重抓報名狀態
   const token = getUserToken() || undefined
-  const [panelReady, setPanelReady] = useState(false) // 會員面板定版後才顯示「開始跑步」，避免面板晚出現造成誤點
   const { data, error, isLoading } = useSWR(['races', user?.id ?? null, token], () => racesApi.list(token))
   const regs = data?.registrations || {}
+  // COROS 式 UX：會員面板固定最上方，活動列表做成可上下拖曳的面板（收合看完整會員面板／半展看列表／全展看整份列表）
+  const sheet = useDraggableSheet('half')
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
@@ -70,33 +71,64 @@ export default function RacesScreen({
         )}
       </header>
 
-      {/* Body */}
-      <div style={{ flex: 1, overflowY: 'scroll', WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'auto' }}>
-        {/* minHeight 比容器高 1px → 內容沒滿版時也可滑動，保留 iOS 回彈手感 */}
-        <div style={{ minHeight: 'calc(100% + 1px)', padding: '4px 18px 28px' }}>
-        {/* 會員資訊面板 */}
-        <MemberPanel onOpenProfile={onOpenProfile} onReady={() => setPanelReady(true)} />
-
-        {/* GPS 跑步追蹤：面板定版後才淡入，避免面板晚出現時誤點到面板（切到個人資訊頁） */}
-        <a href="/track" className="skin-btn-start" style={{ display: 'block', marginTop: 12, textDecoration: 'none', textAlign: 'center', background: 'rgba(70,227,160,.1)', border: '1px solid rgba(70,227,160,.35)', color: 'var(--fug)', fontWeight: 800, borderRadius: 'var(--radius-btn, 12px)', padding: '12px 16px', fontSize: 14, opacity: panelReady ? 1 : 0, pointerEvents: panelReady ? 'auto' : 'none', transition: 'opacity .25s ease', visibility: panelReady ? 'visible' : 'hidden' }}><span className="skin-ico" data-ico="run" aria-hidden>🏃</span> 開始跑步</a>
-
-        <h1 style={{ margin: '22px 0 12px', fontSize: 20, fontWeight: 800, color: 'var(--tx)' }}>活動列表</h1>
-        {isLoading && <Hint>載入中…</Hint>}
-        {error && <Hint color="var(--hunt)">無法載入賽事：{String(error.message || error)}</Hint>}
-        {data && data.races.length === 0 && <Hint>目前沒有賽事</Hint>}
-
-        {data && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {data.races.map((r) => (
-              <RaceCard key={r.id} race={r} reg={regs[r.id]} onOpenRanking={onOpenRanking} onRegister={onRegister} onPay={onPay} onOpenBrochure={onOpenBrochure} />
-            ))}
-          </div>
-        )}
-        <div className="skin-footer-deco" aria-hidden />
+      {/* 會員面板（固定最上方，背景層）+ 可拖曳活動列表面板 */}
+      <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {/* 會員資訊面板：固定最上方；面板收合時完整顯示，可自行捲動 */}
+        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 0' }}>
+          <MemberPanel onOpenProfile={onOpenProfile} />
         </div>
+
+        {/* 可拖曳活動列表面板 */}
+        <div style={{
+          position: 'absolute', left: 0, right: 0, top: 0, height: '100%',
+          transform: `translateY(${sheet.curY}px)`,
+          transition: !sheet.dragging && sheet.ready ? 'transform .28s cubic-bezier(.22,.61,.36,1)' : 'none',
+          opacity: sheet.ready ? 1 : 0,
+          display: 'flex', flexDirection: 'column',
+          background: 'var(--bg)', color: 'var(--tx)',
+          borderTopLeftRadius: 18, borderTopRightRadius: 18,
+          borderTop: '1px solid var(--line)', boxShadow: '0 -10px 30px rgba(0,0,0,.22)',
+          zIndex: 500, userSelect: 'none', WebkitUserSelect: 'none',
+        }}>
+          {/* 把手 + 標題（收合時僅露這區；此整區皆可拖曳） */}
+          <div ref={sheet.peekRef} {...sheet.handlers}
+               style={{ flexShrink: 0, padding: '8px 18px 10px', cursor: 'grab', touchAction: 'none' }}>
+            <div style={{ width: 40, height: 5, borderRadius: 3, background: 'var(--line-2)', margin: '0 auto 10px' }} />
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+              <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--tx)' }}>活動列表</h1>
+              {data && data.races.length > 0 && <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>{data.races.length} 場</span>}
+            </div>
+          </div>
+          {/* 可捲動活動列表 */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '4px 18px calc(16px + var(--cta-safe, 0px))' }}>
+            {isLoading && <Hint>載入中…</Hint>}
+            {error && <Hint color="var(--hunt)">無法載入賽事：{String(error.message || error)}</Hint>}
+            {data && data.races.length === 0 && <Hint>目前沒有賽事</Hint>}
+
+            {data && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {data.races.map((r) => (
+                  <RaceCard key={r.id} race={r} reg={regs[r.id]} onOpenRanking={onOpenRanking} onRegister={onRegister} onPay={onPay} onOpenBrochure={onOpenBrochure} />
+                ))}
+              </div>
+            )}
+            <div className="skin-footer-deco" aria-hidden />
+          </div>
+        </div>
+      </div>
+
+      {/* 開始跑步（比照 GPS 跑步追蹤頁：置底整排綠色 CTA） */}
+      <div style={{ padding: '14px 16px calc(20px + var(--cta-safe, 0px))', flexShrink: 0, borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
+        <a href="/track" className="skin-btn-start" style={startBtn}>▶ 開始跑步</a>
       </div>
     </div>
   )
+}
+
+const startBtn: React.CSSProperties = {
+  display: 'block', width: '100%', boxSizing: 'border-box', textAlign: 'center', textDecoration: 'none',
+  background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none',
+  borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, cursor: 'pointer',
 }
 
 function RaceCard({
