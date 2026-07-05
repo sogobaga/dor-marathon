@@ -57,4 +57,5 @@ type ActivityEvent struct {
 	DurationS  int     `json:"duration_s"`
 	AvgPaceS   int     `json:"avg_pace_s"`
 	RecordedAt string  `json:"recorded_at"`
+	KmPaces    []int   `json:"km_paces,omitempty"` // 每公里分段配速(秒/km)；GPS 追蹤才有，Strava/手動為空
 }

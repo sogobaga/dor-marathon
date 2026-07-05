@@ -19,6 +19,7 @@ type progAct struct {
 	HR      int
 	PaceS   int
 	At      time.Time
+	KmPaces []int // 每公里分段配速(秒/km)；供 avg_pace_range 分段判定
 }
 
 // TaskProgress 單一任務 + 達成度
@@ -54,7 +55,8 @@ func (r *Repository) LoadRaceActivities(ctx context.Context, raceID string) ([]p
 	// 不再看 activity.race_id（同一筆可同時計入多場賽事/挑戰）。
 	rows, err := r.db.Query(ctx, `
 		SELECT a.user_id::text, COALESCE(reg.group_id::text,''),
-		       a.distance_km, COALESCE(a.ascent_m,0), COALESCE(a.avg_hr,0), a.avg_pace_s, a.recorded_at
+		       a.distance_km, COALESCE(a.ascent_m,0), COALESCE(a.avg_hr,0), a.avg_pace_s, a.recorded_at,
+		       COALESCE(a.km_paces, '{}')
 		FROM races rc
 		JOIN registrations reg ON reg.race_id = rc.id AND reg.status <> 'cancelled'
 		JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
@@ -67,7 +69,7 @@ func (r *Repository) LoadRaceActivities(ctx context.Context, raceID string) ([]p
 	out := []progAct{}
 	for rows.Next() {
 		var a progAct
-		if err := rows.Scan(&a.UserID, &a.GroupID, &a.Dist, &a.Ascent, &a.HR, &a.PaceS, &a.At); err != nil {
+		if err := rows.Scan(&a.UserID, &a.GroupID, &a.Dist, &a.Ascent, &a.HR, &a.PaceS, &a.At, &a.KmPaces); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -163,17 +165,26 @@ func longestStreak(acts []progAct) float64 {
 	return float64(best)
 }
 
-// rangeQualify 計算落在區間內的活動筆數（配速/心率區間）
+// rangeQualify 計算落在區間內的活動筆數（配速/心率區間）。
+// 配速：優先用「每公里分段」——任一公里落在區間即算（比整段均配速好達成）；無分段(Strava/手動/舊資料)退回整段均配速。
 func rangeQualify(acts []progAct, metric string, lo, hi float64) int {
+	inRange := func(v float64) bool { return v > 0 && v >= lo && v <= hi }
 	n := 0
 	for _, a := range acts {
-		var v float64
 		if metric == "avg_pace_range" {
-			v = float64(a.PaceS)
-		} else { // avg_hr_range
-			v = float64(a.HR)
+			if len(a.KmPaces) > 0 {
+				for _, ps := range a.KmPaces {
+					if inRange(float64(ps)) {
+						n++
+						break // 任一公里符合即算這筆
+					}
+				}
+			} else if inRange(float64(a.PaceS)) {
+				n++
+			}
+			continue
 		}
-		if v > 0 && v >= lo && v <= hi {
+		if inRange(float64(a.HR)) { // avg_hr_range
 			n++
 		}
 	}

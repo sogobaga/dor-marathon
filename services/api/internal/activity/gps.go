@@ -68,6 +68,11 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 	var distM, fastDistM float64
 	var anomalies int
 	var prev *gpsPoint
+	// 每公里分段配速（秒/km）：距離每跨一整公里記一段，供「平均配速區間」任務改用「任一公里落在區間即算」判定
+	//（比整段均配速好達成）。伺服器端由軌跡重算 → 可信、不易偽造。
+	var kmSplits []int
+	kmTarget := 1000.0
+	lastKmT := req.Points[0].T
 	for i := range req.Points {
 		p := &req.Points[i]
 		if p.Acc > 0 && p.Acc > gpsMaxAccuracyM {
@@ -84,6 +89,13 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 					fastDistM += seg    // 累計超速距離（判斷是否「持續」超速 → 載具）
 				}
 				distM += seg
+				for distM >= kmTarget { // 跨過整公里 → 記這一段配速
+					if splitS := int(float64(p.T-lastKmT) / 1000.0); splitS > 0 {
+						kmSplits = append(kmSplits, splitS)
+					}
+					lastKmT = p.T
+					kmTarget += 1000
+				}
 			}
 		}
 		prev = p
@@ -146,6 +158,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 			DurationS:  durationS,
 			AvgPaceS:   avgPaceS,
 			RecordedAt: ended.Format(time.RFC3339),
+			KmPaces:    kmSplits,
 		}
 		b, _ := json.Marshal(evt)
 		s.rdb.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{"data": string(b)}})

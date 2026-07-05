@@ -34,6 +34,7 @@ type ActivityEvent struct {
 	DurationS  int     `json:"duration_s"`
 	AvgPaceS   int     `json:"avg_pace_s"`
 	RecordedAt string  `json:"recorded_at"`
+	KmPaces    []int   `json:"km_paces,omitempty"` // 每公里分段配速(秒/km)
 }
 
 func main() {
@@ -233,8 +234,8 @@ func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) error {
 	// 寫入 PostgreSQL（RETURNING 偵測是否真的新插入，避免重複事件灌爆里程）
 	var newID string
 	err := w.db.QueryRow(ctx, `
-		INSERT INTO activities (user_id, race_id, mission_day, distance_km, duration_s, avg_pace_s, recorded_at, processed)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
+		INSERT INTO activities (user_id, race_id, mission_day, distance_km, duration_s, avg_pace_s, recorded_at, km_paces, processed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
 		ON CONFLICT DO NOTHING
 		RETURNING id
 	`,
@@ -245,6 +246,7 @@ func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) error {
 		evt.DurationS,
 		evt.AvgPaceS,
 		evt.RecordedAt,
+		evt.KmPaces,
 	).Scan(&newID)
 	if err == pgx.ErrNoRows {
 		return nil // 重複活動，略過（不再累加里程）
