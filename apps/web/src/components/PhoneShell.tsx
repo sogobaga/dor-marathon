@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useIsMobile } from '@/lib/useIsMobile'
 import RacesScreen from './RacesScreen'
 import RegistrationScreen from './RegistrationScreen'
@@ -12,6 +12,7 @@ import VersionBadge from './VersionBadge'
 import MileageExpGate from './MileageExpGate'
 import DedupNoticeGate from './DedupNoticeGate'
 import { validateSession } from '@/lib/userAuth'
+import { pageview } from '@/lib/analytics'
 import type { Race } from '@/lib/api'
 
 export default function PhoneShell() {
@@ -31,6 +32,18 @@ export default function PhoneShell() {
       setShowProfile(true)
     }
   }, [])
+
+  // GA4：SPA 換畫面（狀態切換、非 URL 變動）也送一次 page_view。初始首頁由 initGA 的 config 送出，故略過首次。
+  const firstView = useRef(true)
+  useEffect(() => {
+    if (firstView.current) { firstView.current = false; return }
+    let path = '/', title = '首頁'
+    if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
+    else if (showProfile || payRace) { path = '/profile'; title = '會員資訊' }
+    else if (registerRace) { path = `/register/${registerRace.slug}`; title = `報名 - ${registerRace.title}` }
+    else if (detailRace) { path = `/race/${detailRace.slug}`; title = detailRace.title }
+    pageview(path, title)
+  }, [showPersonalTasks, showProfile, payRace, registerRace, detailRace])
 
   return (
     <GoogleAuthProvider>

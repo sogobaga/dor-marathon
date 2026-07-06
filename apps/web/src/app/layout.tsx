@@ -4,6 +4,7 @@ import './globals.css'
 import InAppBrowserNotice from '@/components/InAppBrowserNotice'
 import InterstitialAd from '@/components/InterstitialAd'
 import LandscapeNotice from '@/components/LandscapeNotice'
+import Analytics from '@/components/Analytics'
 
 // 各 skin 的瀏覽器 chrome（狀態列）色；新增 skin 時在此與 globals.css/appSettings/後端 specs 一併加。
 const SKIN_THEME_COLOR: Record<string, string> = { default: '#09090f', warm: '#FBF4E9', warm2: '#FBF5EA' }
@@ -61,7 +62,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const skin = skinOf(await getPublicSettings())
   return (
     <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined}>
-      <body><InAppBrowserNotice /><InterstitialAd /><LandscapeNotice />{children}</body>
+      <body><Analytics /><InAppBrowserNotice /><InterstitialAd /><LandscapeNotice />{children}</body>
     </html>
   )
 }

@@ -16,6 +16,7 @@ import {
 } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError, useUser } from '@/lib/userAuth'
 import { submitEcpayForm } from '@/lib/ecpay'
+import { track } from '@/lib/analytics'
 import ScrollArea from './ScrollArea'
 
 const FIELD_LABEL: Record<ParticipantField, string> = {
@@ -295,6 +296,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         })
       )
       setDone({ group: res.assigned_group, revealed: res.group_revealed, paid: res.paid, payable: res.payable_cents, orderId: res.order.id })
+      track('register_complete', { race_id: race.id, race_title: race.title, value: res.payable_cents / 100, currency: 'TWD', paid: res.paid })
     } catch (e: any) {
       setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '報名失敗')
     } finally {
@@ -305,6 +307,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   // 報名完成頁「前往繳費」：直接用該筆訂單向綠界結帳（帶自身 origin，付款後回本網域）
   async function goPay(orderId: string) {
     setErr(''); setPaying(true)
+    track('begin_checkout', { race_id: race.id, value: (done?.payable ?? 0) / 100, currency: 'TWD' })
     try {
       const { action_url, params } = await withUserAuth((t) => paymentsApi.ecpayCheckout(t, orderId))
       submitEcpayForm(action_url, params) // 導去綠界，不會 return
