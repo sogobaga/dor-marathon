@@ -34,6 +34,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/follows", h.Follows)
 	r.Get("/recommendations/{raceID}", h.RaceRecommendations)
 	r.Get("/mileage-exp", h.GetMileageExp)
+	r.Get("/mileage-config", h.MileageConfig)
 	r.Post("/mileage-exp/seen", h.MarkMileageSeen)
 	r.Post("/data-source", h.SetDataSource)   // 偏好資料來源（跨來源去重）
 	r.Get("/dedup-notice", h.DedupNotice)     // 首次去重彈窗

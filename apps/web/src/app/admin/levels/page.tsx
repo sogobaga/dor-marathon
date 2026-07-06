@@ -156,6 +156,8 @@ export default function AdminLevelsPage() {
         dp_per_group_task: Number(rules.dp_per_group_task),
         dp_per_individual_task: Number(rules.dp_per_individual_task),
         dp_per_km: Number(rules.dp_per_km),
+        mileage_cap_km: Number(rules.mileage_cap_km),
+        mileage_min_pace_s: Number(rules.mileage_min_pace_s),
       })
       setRules(r.exp_rules); setMsg('✓ EXP / DP 規則已儲存')
     } catch (e: any) { setErr(e?.message || '儲存失敗') } finally { setSaving(false) }
@@ -261,6 +263,20 @@ export default function AdminLevelsPage() {
                   <input style={{ ...inp, width: 110 }} type="number" value={rules.dp_per_km} onChange={(e) => setRules({ ...rules, dp_per_km: parseInt(e.target.value || '0', 10) })} />
                 </Field>
               </div>
+            </div>
+            <div style={{ marginTop: 16, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>里程獎勵風控</div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <Field label="單趟里程獎勵上限（km）">
+                  <input style={{ ...inp, width: 110 }} type="number" value={rules.mileage_cap_km} onChange={(e) => setRules({ ...rules, mileage_cap_km: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+                <Field label="防造假最快配速（秒/km）">
+                  <input style={{ ...inp, width: 130 }} type="number" value={rules.mileage_min_pace_s} onChange={(e) => setRules({ ...rules, mileage_min_pace_s: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+              </div>
+              <p style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 6, lineHeight: 1.7 }}>
+                單趟每滿 1km 發一份；單趟最多發「上限」份。防造假：此趟時間內以最快合理配速最多能跑「時間÷配速」公里，超過部分不發（擋短時間灌大距離）。120 秒/km＝2:00/km，與前台 GPS 追蹤的人體極限一致。
+              </p>
             </div>
             <div style={{ marginTop: 12 }}>
               <button onClick={saveRules} disabled={saving} style={primaryBtn}>儲存規則</button>

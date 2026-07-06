@@ -355,6 +355,9 @@ type ExpRules struct {
 	DpPerGroupTask      int `json:"dp_per_group_task"`
 	DpPerIndividualTask int `json:"dp_per_individual_task"`
 	DpPerKm             int `json:"dp_per_km"`
+	// 里程獎勵風控：單趟上限（整公里）＋防造假最快合理配速（秒/公里）
+	MileageCapKm    int `json:"mileage_cap_km"`
+	MileageMinPaceS int `json:"mileage_min_pace_s"`
 }
 
 // GET /api/v1/admin/membership/exp-rules
@@ -362,10 +365,12 @@ func (h *Handler) GetExpRules(w http.ResponseWriter, r *http.Request) {
 	var e ExpRules
 	if err := h.db.QueryRow(r.Context(),
 		`SELECT per_collective_task, per_group_task, per_individual_task, per_km,
-		        dp_per_collective_task, dp_per_group_task, dp_per_individual_task, dp_per_km
+		        dp_per_collective_task, dp_per_group_task, dp_per_individual_task, dp_per_km,
+		        mileage_cap_km, mileage_min_pace_s
 		 FROM exp_rules WHERE id=TRUE`).
 		Scan(&e.PerCollectiveTask, &e.PerGroupTask, &e.PerIndividualTask, &e.PerKm,
-			&e.DpPerCollectiveTask, &e.DpPerGroupTask, &e.DpPerIndividualTask, &e.DpPerKm); err != nil {
+			&e.DpPerCollectiveTask, &e.DpPerGroupTask, &e.DpPerIndividualTask, &e.DpPerKm,
+			&e.MileageCapKm, &e.MileageMinPaceS); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
@@ -381,9 +386,11 @@ func (h *Handler) PutExpRules(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.db.Exec(r.Context(),
 		`UPDATE exp_rules SET per_collective_task=$1, per_group_task=$2, per_individual_task=$3, per_km=$4,
-		        dp_per_collective_task=$5, dp_per_group_task=$6, dp_per_individual_task=$7, dp_per_km=$8 WHERE id=TRUE`,
+		        dp_per_collective_task=$5, dp_per_group_task=$6, dp_per_individual_task=$7, dp_per_km=$8,
+		        mileage_cap_km=$9, mileage_min_pace_s=$10 WHERE id=TRUE`,
 		e.PerCollectiveTask, e.PerGroupTask, e.PerIndividualTask, e.PerKm,
-		e.DpPerCollectiveTask, e.DpPerGroupTask, e.DpPerIndividualTask, e.DpPerKm); err != nil {
+		e.DpPerCollectiveTask, e.DpPerGroupTask, e.DpPerIndividualTask, e.DpPerKm,
+		e.MileageCapKm, e.MileageMinPaceS); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}

@@ -262,43 +262,58 @@ func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) error {
 		return fmt.Errorf("update total_km: %w", err)
 	}
 
-	// 日常里程 EXP：每跨一整公里 × per_km，並記事件供前台彈窗
-	w.awardMileageExp(ctx, evt.UserID, evt.DistanceKm, evt.RecordedAt)
+	// 日常里程 EXP：單趟每滿一整公里 × per_km（含上限與配速防造假），並記事件供前台彈窗
+	w.awardMileageExp(ctx, evt.UserID, evt.DistanceKm, evt.DurationS, evt.RecordedAt)
 
 	return nil
 }
 
-// awardMileageExp 依使用者累積里程的「整公里跨越」發 EXP（idempotent：只發 exp_rewarded_km 之後的差額）
-func (w *Worker) awardMileageExp(ctx context.Context, userID string, distanceKm float64, recordedAt string) {
+// awardMileageExp 單趟里程獎勵：這一趟跑步每滿一整公里發一份（floor(單趟距離)），並套用：
+//   ① 單趟上限 mileage_cap_km（避免一趟灌爆）
+//   ② 防造假配速下限 mileage_min_pace_s：此趟時間內、以最快合理配速最多能跑 duration/min_pace 公里，
+//      超過的距離不列入發獎（擋「短時間灌大距離」的假 GPS）。
+// 每個 activity 只處理一次（HandleActivity 於重複時已提早 return）→ 天然冪等，不需累積計數器。
+func (w *Worker) awardMileageExp(ctx context.Context, userID string, distanceKm float64, durationS int, recordedAt string) {
+	if distanceKm < 1 || durationS <= 0 {
+		return // 不足 1km 或無時間 → 不發
+	}
+	var perKm, dpPerKm, capKm, minPaceS int
+	if err := w.db.QueryRow(ctx, `
+		SELECT COALESCE(per_km,0), COALESCE(dp_per_km,0),
+		       COALESCE(mileage_cap_km,21), COALESCE(mileage_min_pace_s,120)
+		FROM exp_rules WHERE id=TRUE`).Scan(&perKm, &dpPerKm, &capKm, &minPaceS); err != nil {
+		return
+	}
+	if perKm <= 0 && dpPerKm <= 0 {
+		return
+	}
+	rewardKm := int(distanceKm) // 單趟整公里數（floor）
+	if capKm > 0 && rewardKm > capKm {
+		rewardKm = capKm // ① 單趟上限
+	}
+	if minPaceS > 0 {
+		if maxByTime := durationS / minPaceS; rewardKm > maxByTime { // ② 配速防造假（整數除＝floor）
+			rewardKm = maxByTime
+		}
+	}
+	if rewardKm <= 0 {
+		return
+	}
+	expAmt := rewardKm * perKm
+	dpAmt := rewardKm * dpPerKm
+
 	tx, err := w.db.Begin(ctx)
 	if err != nil {
 		return
 	}
 	defer tx.Rollback(ctx)
-
-	var oldKm, newKm, perKm, dpPerKm int
-	if err := tx.QueryRow(ctx, `
-		SELECT exp_rewarded_km, floor(total_km)::int,
-		       COALESCE((SELECT per_km FROM exp_rules WHERE id=TRUE),0),
-		       COALESCE((SELECT dp_per_km FROM exp_rules WHERE id=TRUE),0)
-		FROM users WHERE id=$1`, userID).Scan(&oldKm, &newKm, &perKm, &dpPerKm); err != nil {
-		return
-	}
-	delta := newKm - oldKm
-	if delta <= 0 || (perKm <= 0 && dpPerKm <= 0) {
-		return
-	}
-	expAmt := delta * perKm
-	dpAmt := delta * dpPerKm
-	// 同一 km 跨越同時發 EXP 與 DP，共用 exp_rewarded_km 計數器（冪等守門）
 	if _, err := tx.Exec(ctx,
-		`UPDATE users SET exp = exp + $1, dp = dp + $2, exp_rewarded_km = $3 WHERE id=$4 AND exp_rewarded_km = $5`,
-		expAmt, dpAmt, newKm, userID, oldKm); err != nil {
+		`UPDATE users SET exp = exp + $1, dp = dp + $2 WHERE id=$3`, expAmt, dpAmt, userID); err != nil {
 		return
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO mileage_exp_events (user_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
-		 VALUES ($1,$2,$3,$4,$5,$6)`, userID, expAmt, dpAmt, delta, distanceKm, recordedAt); err != nil {
+		 VALUES ($1,$2,$3,$4,$5,$6)`, userID, expAmt, dpAmt, rewardKm, distanceKm, recordedAt); err != nil {
 		return
 	}
 	tx.Commit(ctx)

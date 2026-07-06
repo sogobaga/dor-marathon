@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, eventApi, eventRaceApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence } from '@/lib/api'
+import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence, type MileageConfig } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
 import { unlockAudio, playEventAlarm, playEventComplete, vibrate, setMuted as sfxSetMuted, isMuted } from '@/lib/sfx'
@@ -76,6 +76,7 @@ export default function TrackPage() {
   const sheet = useDraggableSheet('half')
   const followRef = useRef(true) // 地圖是否自動跟隨目前位置；使用者拖曳/縮放地圖後暫停，按「回到目前位置」恢復
   const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
+  const [mileageCfg, setMileageCfg] = useState<MileageConfig | null>(null) // 里程獎勵設定（進度條/預覽）
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -187,6 +188,12 @@ export default function TrackPage() {
     localStorage.setItem(LS_KEY, JSON.stringify({ start: startRef.current, points: pointsRef.current.slice(-2000) }))
   }, [ensureMap])
   const onPosRef = useRef(onPos); onPosRef.current = onPos
+
+  // 里程獎勵設定（進度條/預覽用）：進頁抓一次
+  useEffect(() => {
+    if (!getUserToken()) return
+    withUserAuth((t) => mileageExpApi.config(t)).then(setMileageCfg).catch(() => {})
+  }, [])
 
   // 進入頁面（idle）就先啟動 GPS「預熱」偵測：立即顯示精度、定位地圖，但不記錄距離。
   // 開始跑步時 start() 會同步關掉它、換成正式追蹤；離開 idle / 卸載時自動關閉（用 onPosRef 避免每次 render 重訂閱）。
@@ -738,6 +745,11 @@ export default function TrackPage() {
   const distKm = distance / 1000
   const avgPace = distKm >= PACE_MIN_KM ? elapsed / distKm : 0 // 未達門檻先顯示 --:--，避免爆數字
   const lastSplit = splits.length > 0 ? splits[splits.length - 1] : 0 // 最新完成的整公里配速（秒）；未滿 1km 顯示 --:--
+  // 里程獎勵進度（本趟）：每滿 1km 一份、受單趟上限
+  const mCap = mileageCfg?.cap_km ?? 0
+  const mEarned = mCap > 0 ? Math.min(Math.floor(distKm), mCap) : Math.floor(distKm)
+  const mAtCap = mCap > 0 && mEarned >= mCap
+  const mFrac = mAtCap ? 1 : distKm - Math.floor(distKm) // 距下一份的進度 0..1
 
   return (
    <GoogleAuthProvider>
@@ -861,6 +873,21 @@ export default function TrackPage() {
               <Big compact label="平均配速" value={fmtPace(avgPace)} unit="/km" />
               <Big compact label="最新分段" value={fmtPace(lastSplit)} unit="/km" />
             </div>
+            {/* 里程獎勵進度：每滿 1km 一份（本趟上限），即時看到距下一份還差多少 → 誘因持續跑 */}
+            {mileageCfg && mileageCfg.per_km > 0 && (
+              <div style={{ marginTop: 10, background: 'var(--bg-2)', borderRadius: 10, padding: '8px 11px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 11.5, marginBottom: 5 }}>
+                  <span style={{ color: 'var(--tx-dim)' }}>里程獎勵 · 每滿 1km +{mileageCfg.per_km} EXP{mileageCfg.dp_per_km > 0 ? ` +${mileageCfg.dp_per_km} DP` : ''}</span>
+                  <span style={{ fontWeight: 800, color: 'var(--fug)', fontVariantNumeric: 'tabular-nums' }}>本趟 {mEarned} 份</span>
+                </div>
+                <div style={{ height: 8, background: 'var(--line-2)', borderRadius: 999, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.round(mFrac * 100)}%`, background: mAtCap ? 'var(--gold)' : 'var(--fug)', borderRadius: 999, transition: 'width .3s' }} />
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--tx-faint)', marginTop: 4 }}>
+                  {mAtCap ? `已達本趟上限 ${mCap} km` : `距下一份還要 ${(1 - mFrac).toFixed(2)} km${mCap > 0 ? `（本趟上限 ${mCap} km）` : ''}`}
+                </div>
+              </div>
+            )}
           </div>
           {/* 可捲動內容（展開時顯示） */}
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '2px 16px calc(20px + var(--cta-safe, 0px))' }}>

@@ -526,6 +526,7 @@ export const adminGpsApi = {
 
 export const mileageExpApi = {
   get: (token: string) => request<{ breakdown: ExpBreakdown }>('/profile/mileage-exp', { headers: withAuth(token) }),
+  config: (token: string) => request<MileageConfig>('/profile/mileage-config', { headers: withAuth(token) }),
   markSeen: (token: string) => request<void>('/profile/mileage-exp/seen', { method: 'POST', headers: withAuth(token) }),
 }
 
@@ -1001,6 +1002,14 @@ export interface ExpRules {
   dp_per_group_task: number
   dp_per_individual_task: number
   dp_per_km: number
+  mileage_cap_km: number     // 單趟里程獎勵上限（整公里）
+  mileage_min_pace_s: number // 防造假：最快合理配速（秒/公里）
+}
+
+export interface MileageConfig {
+  per_km: number
+  dp_per_km: number
+  cap_km: number
 }
 
 export interface AthleteStats {

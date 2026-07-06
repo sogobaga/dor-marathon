@@ -79,6 +79,15 @@ func (h *Handler) GetMileageExp(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"breakdown": bd})
 }
 
+// GET /api/v1/profile/mileage-config — 前台 /track 讀里程獎勵設定（畫即時進度條、預覽獎勵用）
+func (h *Handler) MileageConfig(w http.ResponseWriter, r *http.Request) {
+	var perKm, dpPerKm, capKm int
+	_ = h.db.QueryRow(r.Context(),
+		`SELECT COALESCE(per_km,0), COALESCE(dp_per_km,0), COALESCE(mileage_cap_km,21) FROM exp_rules WHERE id=TRUE`).
+		Scan(&perKm, &dpPerKm, &capKm)
+	respondJSON(w, http.StatusOK, map[string]any{"per_km": perKm, "dp_per_km": dpPerKm, "cap_km": capKm})
+}
+
 // POST /api/v1/profile/mileage-exp/seen — 標記已顯示
 func (h *Handler) MarkMileageSeen(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
