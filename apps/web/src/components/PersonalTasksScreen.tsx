@@ -245,7 +245,8 @@ function ChipRow({ title, opts, value, onPick }: { title: string; opts: { v: num
   )
 }
 
-const backBtn: React.CSSProperties = { background: 'rgba(255,255,255,.05)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontSize: 12.5, flexShrink: 0 }
+// 統一為前台各頁一致的「無框」返回樣式（與會員資料頁/賽事頁相同）
+const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0, flexShrink: 0 }
 const planCard: React.CSSProperties = { display: 'block', width: '100%', textAlign: 'left', background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: 14, cursor: 'pointer', fontFamily: 'inherit', color: 'inherit' }
 const stageChip: React.CSSProperties = { fontSize: 10.5, fontWeight: 800, color: 'var(--fug)', background: 'rgba(46,196,138,.14)', borderRadius: 6, padding: '2px 7px', flexShrink: 0 }
 const srcChip: React.CSSProperties = { fontSize: 10.5, fontWeight: 600, color: 'var(--tx-dim)', background: 'var(--bg-2)', borderRadius: 6, padding: '2px 8px' }
