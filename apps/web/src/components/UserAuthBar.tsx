@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { GoogleLogin } from '@react-oauth/google'
 import { authApi } from '@/lib/api'
 import { setUserSession, clearUserSession, useUser } from '@/lib/userAuth'
@@ -46,7 +47,7 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
 
-  return (
+  const content = (
     <div style={overlay} onClick={onClose}>
       <div style={panel} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -84,6 +85,10 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
       </div>
     </div>
   )
+  // 用 portal 掛到 document.body：跳出「可拖曳面板背景層」的 -webkit-overflow-scrolling 捲動容器，
+  // 否則 iOS Safari 會把 position:fixed 困在該容器內、被面板(z500)蓋住。SSR 時 document 不存在 → 先不渲染。
+  if (typeof document === 'undefined') return content
+  return createPortal(content, document.body)
 }
 
 const avatar: React.CSSProperties = {
@@ -99,10 +104,10 @@ const loginBtn: React.CSSProperties = {
   borderRadius: 9, padding: '7px 16px', cursor: 'pointer', fontSize: 13,
 }
 const overlay: React.CSSProperties = {
-  // zIndex 需高於首頁/追蹤頁的可拖曳資訊面板(500)與地圖橫幅(1001)，否則登入視窗會被面板蓋住而點不到；
-  // 仍低於事件演出(2000+)與系統級提示(InAppBrowser 3000 / Dedup 3200)。
+  // 已 portal 到 document.body（跳出捲動容器）；zIndex 拉到系統級提示之上，確保登入視窗永遠在最上層、
+  // 不被可拖曳面板(500)、事件演出(2000+)或其他覆蓋層蓋住。
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)',
-  display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: 20,
+  display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3300, padding: 20,
 }
 const panel: React.CSSProperties = {
   background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16,
