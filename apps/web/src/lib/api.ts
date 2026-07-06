@@ -362,7 +362,6 @@ export interface EventDef {
   description?: string
   enabled: boolean
   weight: number
-  cooldown_sec: number
   trigger_type: string
   trigger_params: Record<string, number>
   completion_type: string

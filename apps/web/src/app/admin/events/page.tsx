@@ -11,7 +11,7 @@ import PaceShiftCompletionEditor from '@/components/PaceShiftCompletionEditor'
 
 function emptyDef(tCat: EventTypeSpec[], cCat: EventTypeSpec[]): EventDef {
   return {
-    name: '', description: '', enabled: true, weight: 100, cooldown_sec: 300,
+    name: '', description: '', enabled: true, weight: 100,
     trigger_type: tCat[0]?.key ?? '', trigger_params: {},
     completion_type: cCat[0]?.key ?? '', completion_params: {},
     message: '', goal_text: '', image_url: '', reward_exp: 0, reward_dp: 0,
@@ -136,7 +136,6 @@ export default function AdminEventsPage() {
             <Field label="名稱" grow><input style={inp} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} placeholder="如：狗追來了" /></Field>
             <Field label="啟用"><select style={{ ...inp, width: 90 }} value={edit.enabled ? '1' : '0'} onChange={(e) => setEdit({ ...edit, enabled: e.target.value === '1' })}><option value="1">啟用</option><option value="0">停用</option></select></Field>
             <Field label="隨機權重"><input style={{ ...inp, width: 90 }} type="number" value={edit.weight} onChange={(e) => setEdit({ ...edit, weight: parseInt(e.target.value || '0', 10) })} /></Field>
-            <Field label="冷卻(秒)"><input style={{ ...inp, width: 90 }} type="number" value={edit.cooldown_sec} onChange={(e) => setEdit({ ...edit, cooldown_sec: parseInt(e.target.value || '0', 10) })} /></Field>
           </div>
 
           {/* 觸發 */}
@@ -216,7 +215,7 @@ export default function AdminEventsPage() {
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, marginTop: 6, fontSize: 12.5 }}>
                   <span style={{ color: 'var(--gold)', fontWeight: 700 }}>+{d.reward_exp} EXP</span>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#FFD24D', fontWeight: 700 }}><DpCoin size={13} />+{d.reward_dp}</span>
-                  <span style={{ color: 'var(--tx-faint)' }}>權重 {d.weight}・冷卻 {d.cooldown_sec}s</span>
+                  <span style={{ color: 'var(--tx-faint)' }}>權重 {d.weight}</span>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>

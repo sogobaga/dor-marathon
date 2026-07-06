@@ -394,7 +394,7 @@ export default function TrackPage() {
       if (!res.joined) { setCpMsg(res.message || '無法加入此事件'); return }
       const now = Date.now()
       const def: EventDef = {
-        name: res.name || inv.name, description: '', enabled: true, weight: 100, cooldown_sec: 0,
+        name: res.name || inv.name, description: '', enabled: true, weight: 100,
         trigger_type: '', trigger_params: {}, completion_type: res.completion_type || inv.completion_type,
         completion_params: res.completion_params || inv.completion_params, message: res.message || inv.message,
         image_url: inv.image_url, image_day_url: inv.image_day_url, image_dusk_url: inv.image_dusk_url, image_night_url: inv.image_night_url,
