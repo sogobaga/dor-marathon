@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { authApi, type User } from './api'
+import { clearSwrCache } from './swrCache'
 
 const TOKEN_KEY = 'dor_user_token'
 const REFRESH_KEY = 'dor_user_refresh'
@@ -40,6 +41,7 @@ export function clearUserSession() {
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(REFRESH_KEY)
   localStorage.removeItem(USER_KEY)
+  clearSwrCache() // 清持久化快取：避免同裝置下一位使用者刷新後看到上一位的資料
   emitAuthChange()
 }
 

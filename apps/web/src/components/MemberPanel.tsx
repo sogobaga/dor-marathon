@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import useSWR from 'swr'
-import { profileApi, settingsApi, type DashboardInfo } from '@/lib/api'
-import { useUser, getUserToken, withUserAuth } from '@/lib/userAuth'
+import { settingsApi, type DashboardInfo } from '@/lib/api'
+import { useDashboard } from '@/lib/useDashboard'
 import { LoginModal } from './UserAuthBar'
 import DpCoin from './DpCoin'
 
@@ -27,32 +27,15 @@ export default function MemberPanel({
   uploadingAvatar?: boolean
   onReady?: () => void
 }) {
-  const controlled = dashProp !== undefined // 有傳 dash（含 null）＝受控；未傳＝自行抓取
-  const user = useUser()
-  const [selfDash, setSelfDash] = useState<DashboardInfo | null>(null)
-  const [ready, setReady] = useState(false)
+  const controlled = dashProp !== undefined // 有傳 dash（含 null）＝受控；未傳＝用共用快取
+  const { dash: hookDash, loading, user } = useDashboard() // 共用快取：與會員資訊頁同一份、切頁不再 loading
   const [showLogin, setShowLogin] = useState(false)
   const { data: settings } = useSWR('site-settings', () => settingsApi.get())
   const bgUrl = settings?.settings.member_panel_bg_url
-  const dash = controlled ? dashProp ?? null : selfDash
+  const dash = controlled ? dashProp ?? null : hookDash
 
-  useEffect(() => {
-    if (controlled) return
-    let cancelled = false
-    if (user && getUserToken()) {
-      withUserAuth((t) => profileApi.dashboard(t))
-        .then((r) => { if (!cancelled) setSelfDash(r.dashboard) })
-        .catch(() => {})
-        .finally(() => { if (!cancelled) setReady(true) }) // 儀表板到齊（成功/失敗都算就緒）
-    } else {
-      setSelfDash(null)
-      if (!getUserToken()) setReady(true) // 確定未登入 → 面板已定版
-    }
-    return () => { cancelled = true } // 登出後別讓還在飛的請求把舊資料寫回（頭像殘留）
-  }, [user, controlled])
-  // 安全網：最多等 2.5 秒，避免帳號資料異常時 onReady 永不觸發
-  useEffect(() => { if (controlled) return; const t = setTimeout(() => setReady(true), 2500); return () => clearTimeout(t) }, [controlled])
-  useEffect(() => { if (ready) onReady?.() }, [ready, onReady])
+  // 資料就緒（有快取即時顯示、或載完、或未登入）→ 通知父層（拖曳面板量測用）
+  useEffect(() => { if (!controlled && !loading) onReady?.() }, [controlled, loading, onReady])
 
   const expPct =
     dash && dash.next_level_exp != null && dash.next_level_exp > dash.level_floor

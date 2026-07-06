@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type DashboardInfo, type FollowRow, type SiteSettings } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type FollowRow, type SiteSettings } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
+import { useDashboard } from '@/lib/useDashboard'
 import MemberPanel from './MemberPanel'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import { submitEcpayForm } from '@/lib/ecpay'
@@ -52,7 +53,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
   const [stravaMsg, setStravaMsg] = useState('')
   const [activities, setActivities] = useState<SyncedActivity[] | null>(null)
   const [syncing, setSyncing] = useState(false)
-  const [dash, setDash] = useState<DashboardInfo | null>(null)
+  const { dash, revalidate: loadDashboard } = useDashboard() // 共用會員儀表板快取（與首頁會員卡同一份）
   const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>('info')
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
@@ -61,9 +62,6 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
   // COROS 式 UX：會員資訊面板固定最上方，分頁內容做成可上下拖曳面板（收合看完整會員面板／半展看分頁／全展看整份內容）
   const sheet = useDraggableSheet('half')
 
-  function loadDashboard() {
-    withUserAuth((t) => profileApi.dashboard(t)).then((r) => setDash(r.dashboard)).catch(() => {})
-  }
   function loadFollows() {
     withUserAuth((t) => profileApi.follows(t)).then((r) => setFollows(r.following)).catch(() => {})
   }
@@ -232,7 +230,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
         <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 0' }}>
         {err && <div style={{ color: 'var(--hunt)', padding: '8px 2px', fontSize: 13 }}>{err}</div>}
         {/* 會員資訊面板：與首頁共用同一元件、內容一致（此頁頭像可上傳） */}
-        <MemberPanel dash={dash} onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} onOpenPersonalTasks={onOpenPersonalTasks} />
+        <MemberPanel onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} onOpenPersonalTasks={onOpenPersonalTasks} />
         </div>{/* /背景層：會員資訊面板 */}
 
         {/* 可拖曳面板：分頁（個人資料/運動數據/報名紀錄/追蹤）+ 內容 */}

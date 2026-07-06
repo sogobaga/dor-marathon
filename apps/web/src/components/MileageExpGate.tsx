@@ -4,6 +4,7 @@ import useSWR from 'swr'
 import { useEffect, useState } from 'react'
 import { mileageExpApi } from '@/lib/api'
 import { useUser, getUserToken, withUserAuth } from '@/lib/userAuth'
+import { refreshDashboard } from '@/lib/useDashboard'
 import ExpSettlementModal from './ExpSettlementModal'
 
 // 全域：偵測未顯示的日常里程 EXP，彈出結算演出（與完賽結算同風格）
@@ -17,7 +18,8 @@ export default function MileageExpGate() {
   )
   const bd = data?.breakdown
   const [open, setOpen] = useState(false)
-  useEffect(() => { if (bd && bd.gained > 0) setOpen(true) }, [bd])
+  // 有里程獎勵 → 彈窗 + 讓首頁會員卡的 EXP/里程 一起更新
+  useEffect(() => { if (bd && bd.gained > 0) { setOpen(true); refreshDashboard() } }, [bd])
 
   if (!open || !bd || bd.gained <= 0) return null
 

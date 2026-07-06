@@ -1,15 +1,24 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import useSWR from 'swr'
 import { personalTasksApi, type PersonalPlan, type PersonalTask, type PersonalCurrent } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
+import { refreshDashboard } from '@/lib/useDashboard'
 
 // 個人任務頁：跑者生命週期 10 計畫，每計畫 100 天鏈式任務（完成前一個才開下一個）。
 // Phase 1：選計畫 → 看進度 → 手動回報完成。Phase 2：自動里程結算（依 data_source 比對 target_km + 星星）。
 export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) {
   const user = useUser()
-  const [plans, setPlans] = useState<PersonalPlan[] | null>(null)
+  const uid = user?.id ?? null
+  // 計畫列表用共用快取：切回本頁直接顯示暫存、不再 loading（背景默默重抓）
+  const { data: plansData, error: plansErr, mutate: mutatePlans } = useSWR(
+    uid && getUserToken() ? ['personal-plans', uid] : null,
+    () => withUserAuth((t) => personalTasksApi.listPlans(t)).then((r) => r.plans),
+  )
+  const plans = (plansData ?? null) as PersonalPlan[] | null
   const [err, setErr] = useState('')
+  useEffect(() => { if (plansErr && !plansData) setErr('計畫載入失敗，請稍後再試') }, [plansErr, plansData])
   const [sel, setSel] = useState<PersonalPlan | null>(null) // 選中的計畫
   const [tasks, setTasks] = useState<PersonalTask[] | null>(null)
   const [current, setCurrent] = useState<PersonalCurrent | null>(null) // 目前任務的里程進度（自動結算）
@@ -26,19 +35,14 @@ export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) 
         const s = r.settled[r.settled.length - 1]
         const extra = r.settled.length > 1 ? `（共 ${r.settled.length} 項）` : ''
         setToast(`自動結算：Day ${s.day} 完成 ${'★'.repeat(s.stars)}${s.reward_exp ? ` +${s.reward_exp}EXP` : ''}${s.reward_dp ? ` +${s.reward_dp}DP` : ''}${extra}`)
+        refreshDashboard() // EXP/DP/里程 變了 → 首頁會員卡也更新
       }
       return r.settled.length > 0
     } catch { /* 結算失敗不擋畫面 */ }
   }, [])
 
-  const loadPlans = useCallback(() => {
-    if (!getUserToken()) { setPlans([]); return }
-    withUserAuth((t) => personalTasksApi.listPlans(t))
-      .then((r) => setPlans(r.plans))
-      .catch((e) => setErr(e?.message || '載入失敗'))
-  }, [])
-  // 進頁：先自動結算，再載入計畫列表（列表即反映最新完成數）
-  useEffect(() => { (async () => { await settle(); loadPlans() })() }, [settle, loadPlans, user])
+  // 進頁：先自動結算，再重抓計畫列表（列表即反映最新完成數）
+  useEffect(() => { (async () => { await settle(); mutatePlans() })() }, [settle, mutatePlans, user])
 
   const loadDetail = useCallback((code: string) => {
     setTasks(null)
@@ -51,8 +55,9 @@ export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) 
   const openPlan = useCallback(async (p: PersonalPlan) => {
     setSel(p); setTasks(null)
     await settle()
+    mutatePlans()
     loadDetail(p.code)
-  }, [settle, loadDetail])
+  }, [settle, mutatePlans, loadDetail])
 
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(''), 3000); return () => clearTimeout(t) } }, [toast])
 
@@ -63,6 +68,8 @@ export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) 
       const r = await withUserAuth((t) => personalTasksApi.complete(t, task.id, opts))
       setToast(r.already ? '已完成過了' : `完成！${'★'.repeat(r.stars)}${r.reward_exp ? ` +${r.reward_exp}EXP` : ''}${r.reward_dp ? ` +${r.reward_dp}DP` : ''}`)
       await settle()          // 完成後再結算一次（可能連帶推進下一個里程任務）
+      mutatePlans()           // 更新計畫列表完成數
+      refreshDashboard()      // 完成任務可能發 EXP/DP → 首頁會員卡更新
       loadDetail(sel.code)    // 重抓進度（done/stars）
     } catch (e: any) {
       setErr(e?.message || '完成失敗')
