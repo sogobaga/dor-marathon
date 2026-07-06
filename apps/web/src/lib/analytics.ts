@@ -1,5 +1,5 @@
 // GA4（Google Analytics）串接。Measurement ID 非機密（本就出現在網頁），直接常數即可。
-export const GA_ID = 'G-LQE4Y71SB1'
+export const GA_ID = 'G-8FCCLZ6K88'
 
 // 只在「正式站」送資料：www.dor.tw / dor.tw。UAT(dor.hero-mi.com) 與 localhost 不送 → 統計乾淨。
 const PROD_HOSTS = ['www.dor.tw', 'dor.tw']
