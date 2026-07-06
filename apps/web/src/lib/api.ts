@@ -1213,12 +1213,16 @@ export interface EcpayCheckout {
 }
 
 export const paymentsApi = {
-  // 取得綠界結帳表單參數（前端據此 POST 表單導去綠界）
+  // 取得綠界結帳表單參數（前端據此 POST 表單導去綠界）。
+  // 帶自身 origin → 付款後回到「原本所在網域」（支援 www.dor.tw / dor.hero-mi.com 雙網域）。
   ecpayCheckout: (token: string, orderID: string) =>
     request<EcpayCheckout>('/payments/ecpay/checkout', {
       method: 'POST',
       headers: withAuth(token),
-      body: JSON.stringify({ order_id: orderID }),
+      body: JSON.stringify({
+        order_id: orderID,
+        client_back_url: typeof window !== 'undefined' ? window.location.origin : '',
+      }),
     }),
 }
 

@@ -39,7 +39,7 @@ func TestCheckMacValueDeterministic(t *testing.T) {
 func TestBuildVerifyRoundTrip(t *testing.T) {
 	c := testCfg()
 	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
-	params := c.BuildCheckout("DOR1700000000ABCDEF", 500, "DOR 賽事報名 - 測試賽事", "DOR 賽事報名", now)
+	params := c.BuildCheckout("DOR1700000000ABCDEF", 500, "DOR 賽事報名 - 測試賽事", "DOR 賽事報名", now, "")
 	if params["CheckMacValue"] == "" {
 		t.Fatal("missing CheckMacValue")
 	}

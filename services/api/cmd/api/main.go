@@ -93,6 +93,7 @@ func main() {
 		Env:           cfg.ECPayEnv,
 		ReturnURL:     cfg.ECPayReturnURL,
 		ClientBackURL: cfg.ECPayClientBackURL,
+		AllowedBacks:  cfg.CORSOrigins, // 付款返回網址白名單＝允許的前台來源（含 www.dor.tw / dor.hero-mi.com）
 	}
 	paymentHandler := payment.NewHandler(payCfg, payment.NewRepository(pool), raceSvc)
 

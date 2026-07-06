@@ -33,7 +33,8 @@ type Config struct {
 	HashIV        string
 	Env           string // stage | prod
 	ReturnURL     string
-	ClientBackURL string
+	ClientBackURL string   // 預設付款後返回網址（前端未帶或不在白名單時的 fallback）
+	AllowedBacks  []string // 允許的返回來源（origin 白名單，支援 www.dor.tw / dor.hero-mi.com 雙網域）
 }
 
 // ActionURL 結帳表單要 POST 的綠界端點
@@ -88,8 +89,11 @@ func dotNetURLEncode(s string) string {
 }
 
 // BuildCheckout 產生送綠界的 AIO 參數（含 CheckMacValue）。
-// amountNTD 為整數新台幣；itemName/tradeDesc 為顯示文字。
-func (c *Config) BuildCheckout(tradeNo string, amountNTD int, itemName, tradeDesc string, now time.Time) map[string]string {
+// amountNTD 為整數新台幣；itemName/tradeDesc 為顯示文字；clientBack 為付款後返回網址（空→用預設）。
+func (c *Config) BuildCheckout(tradeNo string, amountNTD int, itemName, tradeDesc string, now time.Time, clientBack string) map[string]string {
+	if clientBack == "" {
+		clientBack = c.ClientBackURL
+	}
 	params := map[string]string{
 		"MerchantID":        c.MerchantID,
 		"MerchantTradeNo":   tradeNo,
@@ -99,12 +103,37 @@ func (c *Config) BuildCheckout(tradeNo string, amountNTD int, itemName, tradeDes
 		"TradeDesc":         tradeDesc,
 		"ItemName":          itemName,
 		"ReturnURL":         c.ReturnURL,
-		"ClientBackURL":     c.ClientBackURL,
+		"ClientBackURL":     clientBack,
 		"ChoosePayment":     "ALL",
 		"EncryptType":       "1",
 	}
 	params["CheckMacValue"] = c.CheckMacValue(params)
 	return params
+}
+
+// resolveClientBack 驗證前端帶來的返回網址：origin 在白名單內就用它（讓玩家付款後回到「原本網域」，
+// 支援雙網域），否則用預設 ClientBackURL。避免開放式轉址（任意 URL 注入）。
+func (c *Config) resolveClientBack(candidate string) string {
+	candidate = strings.TrimRight(strings.TrimSpace(candidate), "/")
+	co := originOf(candidate)
+	if co == "" {
+		return c.ClientBackURL
+	}
+	for _, a := range append([]string{c.ClientBackURL}, c.AllowedBacks...) {
+		if o := originOf(a); o != "" && strings.EqualFold(o, co) {
+			return candidate
+		}
+	}
+	return c.ClientBackURL
+}
+
+// originOf 取 scheme://host（小寫），用於 origin 白名單比對。
+func originOf(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
 }
 
 // VerifyCallback 重算 CheckMacValue 與回傳的比對。
@@ -194,7 +223,8 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		OrderID string `json:"order_id"`
+		OrderID       string `json:"order_id"`
+		ClientBackURL string `json:"client_back_url"` // 前端帶自身 origin，付款後回到原網域（雙網域用）
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OrderID == "" {
 		respondErr(w, http.StatusBadRequest, "order_id is required")
@@ -226,7 +256,8 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	itemName := truncate("DOR Race Registration", 100)
-	params := h.cfg.BuildCheckout(tradeNo, order.TotalCents/100, itemName, "DOR Registration", time.Now())
+	clientBack := h.cfg.resolveClientBack(req.ClientBackURL)
+	params := h.cfg.BuildCheckout(tradeNo, order.TotalCents/100, itemName, "DOR Registration", time.Now(), clientBack)
 	respondJSON(w, http.StatusOK, map[string]any{
 		"action_url": h.cfg.ActionURL(),
 		"params":     params,
