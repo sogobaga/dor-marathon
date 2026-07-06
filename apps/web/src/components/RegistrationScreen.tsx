@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   racesApi,
   profileApi,
+  paymentsApi,
   METRIC_BY_KEY,
   type Race,
   type RaceDetail,
@@ -14,6 +15,7 @@ import {
   type RecommendRow,
 } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError, useUser } from '@/lib/userAuth'
+import { submitEcpayForm } from '@/lib/ecpay'
 import ScrollArea from './ScrollArea'
 
 const FIELD_LABEL: Record<ParticipantField, string> = {
@@ -98,7 +100,8 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     real_name: '', nickname: '', phone: '', address: '', birthday: '', gender: '',
   })
   const [submitting, setSubmitting] = useState(false)
-  const [done, setDone] = useState<{ group: string; revealed: boolean; paid: boolean; payable: number } | null>(null)
+  const [done, setDone] = useState<{ group: string; revealed: boolean; paid: boolean; payable: number; orderId: string } | null>(null)
+  const [paying, setPaying] = useState(false)
 
   const [promoCode, setPromoCode] = useState('')
   const [promoQuote, setPromoQuote] = useState<import('@/lib/api').PromoQuote | null>(null)
@@ -291,11 +294,23 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
           promo_code: promoCode.trim() || undefined,
         })
       )
-      setDone({ group: res.assigned_group, revealed: res.group_revealed, paid: res.paid, payable: res.payable_cents })
+      setDone({ group: res.assigned_group, revealed: res.group_revealed, paid: res.paid, payable: res.payable_cents, orderId: res.order.id })
     } catch (e: any) {
       setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '報名失敗')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  // 報名完成頁「前往繳費」：直接用該筆訂單向綠界結帳（帶自身 origin，付款後回本網域）
+  async function goPay(orderId: string) {
+    setErr(''); setPaying(true)
+    try {
+      const { action_url, params } = await withUserAuth((t) => paymentsApi.ecpayCheckout(t, orderId))
+      submitEcpayForm(action_url, params) // 導去綠界，不會 return
+    } catch (e: any) {
+      setErr(e instanceof SessionExpiredError ? '登入已過期，請重新登入' : e?.message || '無法前往付款')
+      setPaying(false)
     }
   }
 
@@ -370,9 +385,14 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               {done.revealed ? `分組：${done.group}` : '已隨機分組，賽事當天公布所屬分組'}
             </div>
             <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 4 }}>
-              {done.paid ? '已使用優惠序號 0 元完成，無需付款' : `應繳金額：${ntd(done.payable)}（後續繳費）`}
+              {done.paid ? '已使用優惠序號 0 元完成，無需付款' : `應繳金額：${ntd(done.payable)}`}
             </div>
-            <button onClick={onBack} style={{ ...primaryBtn, marginTop: 14 }}>回活動列表</button>
+            {!done.paid && done.payable > 0 && (
+              <button onClick={() => goPay(done.orderId)} disabled={paying} style={{ ...primaryBtn, marginTop: 14, background: 'var(--gold)', color: '#1a1200' }}>
+                {paying ? '前往綠界…' : '前往繳費'}
+              </button>
+            )}
+            <button onClick={onBack} style={{ ...primaryBtn, marginTop: 10, background: 'rgba(255,255,255,.06)', color: 'var(--tx)' }}>回活動列表</button>
           </div>
         )}
 

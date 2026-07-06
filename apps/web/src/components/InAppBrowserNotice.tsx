@@ -37,7 +37,7 @@ export default function InAppBrowserNotice() {
   if (!app || dismissed || pathname?.startsWith('/admin')) return null
 
   const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
-  const host = typeof window !== 'undefined' ? window.location.host : 'dor.hero-mi.com'
+  const host = typeof window !== 'undefined' ? window.location.host : 'www.dor.tw'
 
   const copy = async () => {
     try {
