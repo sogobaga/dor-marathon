@@ -238,7 +238,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <header style={{ padding: 'var(--app-top) 22px 8px', flexShrink: 0 }}>
+      <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
       </header>
 
