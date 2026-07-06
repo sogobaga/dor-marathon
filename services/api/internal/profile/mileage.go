@@ -38,8 +38,10 @@ func (h *Handler) GetMileageExp(w http.ResponseWriter, r *http.Request) {
 	}
 	bd := MileageBreakdown{Items: []mileageItem{}, Levels: []mileageLevelRow{}}
 
+	// 顯示「實際發獎的整公里數」km_added（跨越幾個整公里就發幾份），
+	// 不用單趟 distance_km（避免出現「里程 0.2 km 卻發獎」的誤導——獎勵其實是跨過整公里才給）。
 	rows, err := h.db.Query(r.Context(),
-		`SELECT exp_amount, dp_amount, distance_km FROM mileage_exp_events
+		`SELECT exp_amount, dp_amount, km_added FROM mileage_exp_events
 		 WHERE user_id=$1 AND seen_at IS NULL ORDER BY created_at`, userID)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
@@ -47,13 +49,12 @@ func (h *Handler) GetMileageExp(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var amt, dp int
-		var dist float64
-		if err := rows.Scan(&amt, &dp, &dist); err != nil {
+		var amt, dp, kmAdded int
+		if err := rows.Scan(&amt, &dp, &kmAdded); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
 		}
-		bd.Items = append(bd.Items, mileageItem{Label: fmt.Sprintf("里程 %.1f km", dist), Amount: amt, Dp: dp, Kind: "mileage"})
+		bd.Items = append(bd.Items, mileageItem{Label: fmt.Sprintf("里程達成 %d km", kmAdded), Amount: amt, Dp: dp, Kind: "mileage"})
 		bd.Gained += amt
 		bd.DpGained += dp
 	}

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ExpBreakdown, ExpLevelRow } from '@/lib/api'
 import * as sfx from '@/lib/sfx'
 import DpCoin from './DpCoin'
@@ -134,7 +135,7 @@ export default function ExpSettlementModal({ breakdown, title = '成績結算', 
   const step = steps[stepIdx]
   const finalLevel = levels.length ? [...levels].sort((a, b) => a.exp_required - b.exp_required).filter((l) => exp_after >= l.exp_required).pop() : undefined
 
-  return (
+  const content = (
     <div style={overlay} onPointerDown={() => sfx.unlockAudio()}>
       <style>{KEYFRAMES}</style>
       <div style={glow} />
@@ -243,9 +244,11 @@ export default function ExpSettlementModal({ breakdown, title = '成績結算', 
       </div>
     </div>
   )
+  // portal 到 body：跳出可拖曳面板等捲動容器/堆疊環境，確保結算演出永遠在最上層（不被面板蓋住）
+  return typeof document === 'undefined' ? content : createPortal(content, document.body)
 }
 
-const overlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 120, background: 'radial-gradient(120% 90% at 50% 30%, #11201b 0%, #070a09 70%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, overflow: 'hidden' }
+const overlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 3300, background: 'radial-gradient(120% 90% at 50% 30%, #11201b 0%, #070a09 70%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, overflow: 'hidden' }
 const glow: React.CSSProperties = { position: 'absolute', top: '18%', left: '50%', width: 420, height: 420, transform: 'translateX(-50%)', background: 'radial-gradient(circle, rgba(229,196,107,.16), transparent 60%)', pointerEvents: 'none', animation: 'glowPulse 3s ease-in-out infinite' }
 const panel: React.CSSProperties = { position: 'relative', width: '100%', maxWidth: 380, background: 'rgba(10,14,12,.82)', border: '1px solid rgba(229,196,107,.35)', borderRadius: 18, padding: '24px 22px 20px', boxShadow: '0 20px 80px rgba(0,0,0,.6)', backdropFilter: 'blur(4px)' }
 const rowItem: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '8px 12px' }
