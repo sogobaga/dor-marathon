@@ -176,8 +176,8 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	// 星星：取「回報里程」與「窗口內符合來源的累積里程」的大者評（手動覆蓋未達標=1★）
 	dist := req.ActualKm
 	if targetKm > 0 {
-		if since, err := h.windowStart(r.Context(), uid); err == nil {
-			if acc, err := h.accDistance(r.Context(), uid, since, dataSource); err == nil && acc > dist {
+		if since, err := windowStart(r.Context(), h.db, uid); err == nil {
+			if acc, err := accDistance(r.Context(), h.db, uid, since, dataSource); err == nil && acc > dist {
 				dist = acc
 			}
 		}
@@ -257,16 +257,16 @@ func starsFor(target, dist float64) int {
 }
 
 // windowStart 計入活動的起點：最近一次任務完成時間；若尚無完成 → 旅程起點（第一次呼叫寫入 NOW()）。
-func (h *Handler) windowStart(ctx context.Context, uid string) (time.Time, error) {
+func windowStart(ctx context.Context, db *pgxpool.Pool, uid string) (time.Time, error) {
 	var last *time.Time
-	if err := h.db.QueryRow(ctx, `SELECT MAX(completed_at) FROM personal_task_progress WHERE user_id=$1`, uid).Scan(&last); err != nil {
+	if err := db.QueryRow(ctx, `SELECT MAX(completed_at) FROM personal_task_progress WHERE user_id=$1`, uid).Scan(&last); err != nil {
 		return time.Time{}, err
 	}
 	if last != nil {
 		return *last, nil
 	}
 	var started time.Time
-	if err := h.db.QueryRow(ctx, `
+	if err := db.QueryRow(ctx, `
 		INSERT INTO personal_journey (user_id) VALUES ($1)
 		ON CONFLICT (user_id) DO UPDATE SET user_id=EXCLUDED.user_id
 		RETURNING started_at`, uid).Scan(&started); err != nil {
@@ -277,9 +277,9 @@ func (h *Handler) windowStart(ctx context.Context, uid string) (time.Time, error
 
 // accDistance 窗口內、符合 data_source 的未 flagged 活動累積里程。
 // 來源分流：strava 任務計 source='strava'；其餘（gps）計 App GPS 活動（source IS NULL）。
-func (h *Handler) accDistance(ctx context.Context, uid string, since time.Time, dataSource string) (float64, error) {
+func accDistance(ctx context.Context, db *pgxpool.Pool, uid string, since time.Time, dataSource string) (float64, error) {
 	var acc float64
-	err := h.db.QueryRow(ctx, `
+	err := db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(distance_km),0) FROM activities
 		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2
 		  AND ( ($3='strava' AND source='strava') OR ($3<>'strava' AND source IS NULL) )`,
@@ -287,17 +287,18 @@ func (h *Handler) accDistance(ctx context.Context, uid string, since time.Time, 
 	return acc, err
 }
 
-// settleUser 自動結算：從全域順序（stage_order, code, day）的目前任務起，若窗口內符合來源的
+// SettleUser 自動結算：從全域順序（stage_order, code, day）的目前任務起，若窗口內符合來源的
 // 累積里程達 target_km 就完成、發獎、給星星；完成後下一個任務的窗口起點即為「剛剛完成時間」，
 // 故通常一次只會結算一個任務（一趟跑步推進一天）。回傳已結算清單 + 目前任務進度。
-func (h *Handler) settleUser(ctx context.Context, uid string) ([]Settled, *CurrentProgress, error) {
+// 設計成 package 函式（吃 db），讓 profile.Dashboard 也能在開首頁時順手結算（免另開頁）。
+func SettleUser(ctx context.Context, db *pgxpool.Pool, uid string) ([]Settled, *CurrentProgress, error) {
 	settled := []Settled{}
 	for i := 0; i < 5; i++ { // 上限防呆（正常至多完成 1 個就停）
 		var taskID, planCode, title, dataSource string
 		var day int
 		var targetKm float64
 		var rExp, rDp int
-		err := h.db.QueryRow(ctx, `
+		err := db.QueryRow(ctx, `
 			SELECT t.id, pl.code, t.title, t.data_source, t.day, t.target_km, t.reward_exp, t.reward_dp
 			FROM personal_tasks t JOIN personal_plans pl ON pl.id = t.plan_id
 			WHERE t.enabled AND pl.enabled
@@ -310,15 +311,15 @@ func (h *Handler) settleUser(ctx context.Context, uid string) ([]Settled, *Curre
 			}
 			return settled, nil, err
 		}
-		since, err := h.windowStart(ctx, uid)
+		since, err := windowStart(ctx, db, uid)
 		if err != nil {
 			return settled, nil, err
 		}
 		cur := &CurrentProgress{TaskID: taskID, PlanCode: planCode, Day: day, TargetKm: targetKm, DataSource: dataSource}
 		if targetKm <= 0 {
-			return settled, cur, nil // 休息/時間型（無目標里程）無法自動判定 → 留給手動
+			return settled, cur, nil // 休息/肌力（無目標里程）無法自動判定 → 留給手動回報
 		}
-		acc, err := h.accDistance(ctx, uid, since, dataSource)
+		acc, err := accDistance(ctx, db, uid, since, dataSource)
 		if err != nil {
 			return settled, nil, err
 		}
@@ -329,7 +330,7 @@ func (h *Handler) settleUser(ctx context.Context, uid string) ([]Settled, *Curre
 		// 達標 → 完成 + 發獎（冪等）
 		stars := starsFor(targetKm, acc)
 		evidence, _ := json.Marshal(map[string]any{"auto": true, "acc_km": acc, "source": dataSource})
-		tx, err := h.db.Begin(ctx)
+		tx, err := db.Begin(ctx)
 		if err != nil {
 			return settled, nil, err
 		}
@@ -366,7 +367,7 @@ func (h *Handler) Settle(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusUnauthorized, "login required")
 		return
 	}
-	settled, cur, err := h.settleUser(r.Context(), uid)
+	settled, cur, err := SettleUser(r.Context(), h.db, uid)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return

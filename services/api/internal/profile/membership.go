@@ -10,6 +10,7 @@ import (
 
 	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/personaltask"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -131,6 +132,9 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	// 開首頁順手做個人任務自動里程結算（跑步後回到首頁即反映進度/EXP/DP，免另開個人任務頁）。
+	// best-effort：失敗不影響儀表板。
+	_, _, _ = personaltask.SettleUser(r.Context(), h.db, userID)
 	var d DashboardInfo
 	d.AccountCode = code
 	var email string
