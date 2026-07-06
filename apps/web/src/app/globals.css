@@ -15,6 +15,7 @@
 
   /* Accent colors */
   --fug:    #2DE59A;   /* 逃亡者 — 綠 */
+  --fug-ink: #05140e;  /* 綠底按鈕/分頁上的字色（此 skin 綠亮 → 用深字，白字會看不清） */
   --hunt:   #FF4B5C;   /* 獵人 — 紅 */
   --gold:   #FFC24B;   /* 里程金 */
   --violet: #9D8CFF;   /* 紫 */
@@ -41,6 +42,7 @@
   --tx-dim:   rgba(255,255,255,.55);
   --tx-faint: rgba(255,255,255,.28);
   --fug:    #2DE59A;
+  --fug-ink: #05140e;
   --hunt:   #FF4B5C;
   --gold:   #FFC24B;
   --violet: #9D8CFF;
@@ -62,6 +64,7 @@
   --tx-faint: rgba(90,71,55,.40);
 
   --fug:    #4E9E63;   /* 綠（自然葉綠） */
+  --fug-ink: #FFFFFF;  /* 綠偏深 → 綠底按鈕/分頁用白字 */
   --hunt:   #DB5A52;   /* 紅（暖珊瑚紅） */
   --gold:   #C4881E;   /* 金（琥珀，於淺底可讀） */
   --violet: #B26FAB;   /* 紫（柔和梅紫） */
@@ -96,6 +99,7 @@
   --tx-faint: #A79D92;
 
   --fug:    #4FA76A;   /* Primary green */
+  --fug-ink: #FFFFFF;  /* 綠偏深 → 綠底按鈕/分頁用白字 */
   --hunt:   #DD5A55;   /* Danger / running */
   --gold:   #C58B1D;   /* Reward / progress */
   --violet: #B26FAB;

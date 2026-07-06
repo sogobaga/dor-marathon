@@ -117,5 +117,5 @@ export default function AdminAuditPage() {
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderBottom: '1px solid var(--line)', fontSize: 13 }
 const headRow: React.CSSProperties = { background: 'var(--bg-2)', color: 'var(--tx-faint)', fontSize: 11, letterSpacing: '.05em', fontWeight: 700 }
 const chip: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '5px 12px', fontSize: 12.5, cursor: 'pointer', color: 'var(--tx-dim)' }
-const chipOn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: '1px solid var(--fug)' }
+const chipOn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: '1px solid var(--fug)' }
 const pgBtn: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '7px 14px', fontSize: 13, cursor: 'pointer', color: 'var(--tx)' }

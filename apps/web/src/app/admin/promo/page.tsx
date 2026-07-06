@@ -305,7 +305,7 @@ function EditPromoModal({
         {err && <div style={{ color: 'var(--hunt)', fontSize: 13, marginTop: 8 }}>{err}</div>}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 14 }}>
           <button onClick={onClose} style={inactiveBtn}>取消</button>
-          <button onClick={save} disabled={saving} style={{ background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none', borderRadius: 10, padding: '8px 18px', cursor: 'pointer', fontSize: 14 }}>
+          <button onClick={save} disabled={saving} style={{ background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 10, padding: '8px 18px', cursor: 'pointer', fontSize: 14 }}>
             {saving ? '儲存中…' : '儲存'}
           </button>
         </div>
@@ -348,7 +348,7 @@ const inp: React.CSSProperties = {
   padding: '9px 11px', color: 'var(--tx)', fontSize: 14, width: '100%', fontFamily: 'inherit',
 }
 const primaryBtn: React.CSSProperties = {
-  background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
+  background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none',
   borderRadius: 10, padding: '10px 18px', cursor: 'pointer', fontSize: 14,
 }
 const linkBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--fug)', cursor: 'pointer', fontSize: 14, padding: 0 }

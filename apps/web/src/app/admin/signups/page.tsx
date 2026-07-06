@@ -163,7 +163,7 @@ const inp: React.CSSProperties = {
   padding: '10px 12px', color: 'var(--tx)', fontSize: 14, width: '100%', fontFamily: 'inherit',
 }
 const primaryBtn: React.CSSProperties = {
-  background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
+  background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none',
   borderRadius: 10, padding: '10px 16px', cursor: 'pointer', fontSize: 14,
 }
 const payBtn: React.CSSProperties = {

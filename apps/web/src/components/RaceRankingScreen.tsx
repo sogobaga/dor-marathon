@@ -280,7 +280,7 @@ const myBanner: React.CSSProperties = {
   background: 'var(--bg-1)', border: '1px solid var(--fug)', borderRadius: 16, padding: 16,
 }
 const followBtn: React.CSSProperties = {
-  flexShrink: 0, background: 'var(--fug)', color: '#05140e', border: 'none', borderRadius: 999,
+  flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 999,
   padding: '5px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
 }
 const followingBtn: React.CSSProperties = {

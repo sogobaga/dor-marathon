@@ -174,7 +174,7 @@ const inp: React.CSSProperties = {
   padding: '9px 11px', color: 'var(--tx)', fontSize: 14, fontFamily: 'inherit', width: '100%',
 }
 const primaryBtn: React.CSSProperties = {
-  background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
+  background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none',
   borderRadius: 10, padding: '10px 18px', cursor: 'pointer', fontSize: 14,
 }
 const ghostBtn: React.CSSProperties = {

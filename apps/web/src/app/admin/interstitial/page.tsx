@@ -161,6 +161,6 @@ const card: React.CSSProperties = { background: 'var(--bg-1)', border: '1px soli
 const polaroid: React.CSSProperties = { width: 150, background: '#fff', borderRadius: 8, padding: 8, boxShadow: '0 6px 18px rgba(0,0,0,.35)' }
 const polaroidImg: React.CSSProperties = { width: '100%', aspectRatio: '4 / 5', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundSize: 'cover', backgroundPosition: 'center' }
 const inp: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '8px 10px', color: 'var(--tx)', fontSize: 13.5, fontFamily: 'inherit', width: '100%' }
-const primaryBtn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', cursor: 'pointer', fontSize: 12.5, display: 'inline-block' }
+const primaryBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', cursor: 'pointer', fontSize: 12.5, display: 'inline-block' }
 const ghostBtn: React.CSSProperties = { background: 'rgba(255,255,255,.05)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '8px 14px', cursor: 'pointer', fontSize: 12.5 }
 const chip: React.CSSProperties = { background: 'var(--bg-2)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '5px 10px', cursor: 'pointer', fontSize: 12 }

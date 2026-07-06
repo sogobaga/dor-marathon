@@ -296,7 +296,7 @@ function Hint({ children, color = 'var(--tx-dim)' }: { children: React.ReactNode
 
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0 }
 const registerBtn: React.CSSProperties = {
-  background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
+  background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none',
   borderRadius: 12, padding: '13px 20px', cursor: 'pointer', fontSize: 15, width: '100%', marginTop: 24,
 }
 const lightboxStyle: React.CSSProperties = {

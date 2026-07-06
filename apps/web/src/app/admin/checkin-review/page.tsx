@@ -160,7 +160,7 @@ const inp: React.CSSProperties = {
   padding: '10px 12px', color: 'var(--tx)', fontSize: 14, width: '100%', fontFamily: 'inherit',
 }
 const approveBtn: React.CSSProperties = {
-  background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none',
+  background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none',
   borderRadius: 9, padding: '7px 16px', cursor: 'pointer', fontSize: 13,
 }
 const rejectBtn: React.CSSProperties = {

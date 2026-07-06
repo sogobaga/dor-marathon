@@ -100,7 +100,7 @@ const logoutBtn: React.CSSProperties = {
   borderRadius: 8, padding: '4px 10px', cursor: 'pointer', fontSize: 12,
 }
 const loginBtn: React.CSSProperties = {
-  background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
+  background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none',
   borderRadius: 9, padding: '7px 16px', cursor: 'pointer', fontSize: 13,
 }
 const overlay: React.CSSProperties = {

@@ -71,7 +71,7 @@ export default function DedupNoticeGate() {
           <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} style={{ width: 16, height: 16 }} />
           以後都以此來源為優先（可到「個人資料 → 運動數據」再變更）
         </label>
-        <button onClick={submit} disabled={busy} style={{ width: '100%', marginTop: 16, background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 12, padding: '12px', fontSize: 15, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>
+        <button onClick={submit} disabled={busy} style={{ width: '100%', marginTop: 16, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 12, padding: '12px', fontSize: 15, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>
           {busy ? '處理中…' : `以「${pick === 'strava' ? 'Strava' : 'GPS 跑步追蹤'}」為準`}
         </button>
       </div>

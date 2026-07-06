@@ -154,7 +154,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#05140e',
+              color: 'var(--fug-ink)',
               fontWeight: 800,
               fontSize: 16,
             }}
@@ -282,7 +282,7 @@ function ViewToggle({ view, onChange }: { view: View; onChange: (v: View) => voi
         padding: '6px 12px',
         borderRadius: 8,
         background: view === v ? 'var(--fug)' : 'transparent',
-        color: view === v ? '#05140e' : 'var(--tx-dim)',
+        color: view === v ? 'var(--fug-ink)' : 'var(--tx-dim)',
         fontWeight: view === v ? 700 : 400,
       }}
     >

@@ -124,7 +124,7 @@ export default function AdminMemberDetailPage() {
             flexShrink: 0, borderRadius: 999, cursor: savingPerm ? 'default' : 'pointer',
             padding: '8px 16px', fontSize: 13, fontWeight: 700,
             background: m.can_create_team_group ? 'var(--fug)' : 'var(--bg-2)',
-            color: m.can_create_team_group ? '#05140e' : 'var(--tx-dim)',
+            color: m.can_create_team_group ? 'var(--fug-ink)' : 'var(--tx-dim)',
             border: m.can_create_team_group ? '1px solid var(--fug)' : '1px solid var(--line-2)',
             opacity: savingPerm ? 0.6 : 1,
           }}
@@ -194,7 +194,7 @@ export default function AdminMemberDetailPage() {
 
 const ctrlCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: 16 }
 const ctrlInp: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '7px 10px', color: 'var(--tx)', fontSize: 13.5, fontFamily: 'inherit', width: 150 }
-const primaryBtnSm: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', fontSize: 13 }
+const primaryBtnSm: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', fontSize: 13 }
 const ghostBtnSm: React.CSSProperties = { background: 'transparent', color: 'var(--hunt)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontSize: 13 }
 
 function Info({ label, value }: { label: string; value: string }) {

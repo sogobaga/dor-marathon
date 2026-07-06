@@ -146,6 +146,6 @@ function Stat({ label, v }: { label: string; v: string }) {
 }
 
 const card: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: 14, width: '100%' }
-const primary: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 10, padding: '11px 16px', cursor: 'pointer', fontSize: 14 }
+const primary: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '11px 16px', cursor: 'pointer', fontSize: 14 }
 const danger: React.CSSProperties = { background: 'rgba(255,80,80,.1)', color: 'var(--hunt)', fontWeight: 800, border: '1px solid rgba(255,80,80,.3)', borderRadius: 10, padding: '11px 16px', cursor: 'pointer', fontSize: 14 }
 const ghost: React.CSSProperties = { background: 'var(--bg-2)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13 }

@@ -97,7 +97,7 @@ export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) 
       </div>
 
       {toast && (
-        <div style={{ position: 'absolute', left: '50%', bottom: 'calc(env(safe-area-inset-bottom, 0px) + 28px)', transform: 'translateX(-50%)', background: 'var(--fug)', color: '#05140e', fontWeight: 800, fontSize: 13, padding: '9px 18px', borderRadius: 999, boxShadow: '0 6px 20px rgba(0,0,0,.3)', zIndex: 600, maxWidth: '86%', textAlign: 'center' }}>
+        <div style={{ position: 'absolute', left: '50%', bottom: 'calc(env(safe-area-inset-bottom, 0px) + 28px)', transform: 'translateX(-50%)', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, fontSize: 13, padding: '9px 18px', borderRadius: 999, boxShadow: '0 6px 20px rgba(0,0,0,.3)', zIndex: 600, maxWidth: '86%', textAlign: 'center' }}>
           {toast}
         </div>
       )}
@@ -125,7 +125,7 @@ function PlanList({ plans, onOpen }: { plans: PersonalPlan[] | null; onOpen: (p:
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={stageChip}>階段 {p.stage_order || i + 1}</span>
               <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
-              {done && <span style={{ ...srcChip, background: 'var(--fug)', color: '#05140e' }}>已完成</span>}
+              {done && <span style={{ ...srcChip, background: 'var(--fug)', color: 'var(--fug-ink)' }}>已完成</span>}
             </div>
             <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
               {p.lifecycle && <span style={srcChip}>{p.lifecycle}</span>}
@@ -254,7 +254,7 @@ const barFull: React.CSSProperties = { height: 7, background: 'var(--bg-2)', bor
 const barInner: React.CSSProperties = { height: '100%', background: 'var(--fug)', borderRadius: 999, transition: 'width .3s' }
 const taskCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '11px 13px' }
 const metaChip: React.CSSProperties = { fontSize: 10.5, fontWeight: 600, color: 'var(--tx-dim)', background: 'var(--bg-2)', borderRadius: 6, padding: '2px 8px' }
-const doneBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px 0', cursor: 'pointer', fontSize: 13.5, fontFamily: 'inherit' }
+const doneBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px 0', cursor: 'pointer', fontSize: 13.5, fontFamily: 'inherit' }
 const cancelBtn: React.CSSProperties = { background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '9px 16px', cursor: 'pointer', fontSize: 13, fontFamily: 'inherit', flexShrink: 0 }
 const chipBtn: React.CSSProperties = { background: 'var(--bg-1)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '5px 12px', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }
-const chipBtnOn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', borderColor: 'var(--fug)', fontWeight: 700 }
+const chipBtnOn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', borderColor: 'var(--fug)', fontWeight: 700 }

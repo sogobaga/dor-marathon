@@ -267,5 +267,5 @@ function Stat({ label, value }: { label: string; value: number | string }) {
 const card: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: 16 }
 const planRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', background: 'var(--bg-0, #0d0f14)', borderRadius: 8 }
 const chip: React.CSSProperties = { fontSize: 11, fontWeight: 800, color: 'var(--fug)', background: 'rgba(46,196,138,.14)', borderRadius: 6, padding: '2px 8px', flexShrink: 0 }
-const primaryBtn: React.CSSProperties = { background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 16px', cursor: 'pointer', fontSize: 13 }
+const primaryBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 16px', cursor: 'pointer', fontSize: 13 }
 const ghostBtn: React.CSSProperties = { background: 'rgba(255,255,255,.05)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '8px 16px', cursor: 'pointer', fontSize: 13 }

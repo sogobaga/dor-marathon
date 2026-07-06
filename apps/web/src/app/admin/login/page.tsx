@@ -95,7 +95,7 @@ const inputStyle: React.CSSProperties = {
 
 const btnStyle: React.CSSProperties = {
   background: 'var(--fug)',
-  color: '#05140e',
+  color: 'var(--fug-ink)',
   fontWeight: 700,
   border: 'none',
   borderRadius: 10,

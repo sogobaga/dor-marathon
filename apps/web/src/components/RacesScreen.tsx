@@ -114,7 +114,7 @@ export default function RacesScreen({
                     <button key={key} onClick={() => setFilter(key)} style={{
                       fontSize: 12, padding: '4px 11px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
                       background: on ? 'var(--fug)' : 'transparent',
-                      color: on ? '#05140e' : 'var(--tx-dim)',
+                      color: on ? 'var(--fug-ink)' : 'var(--tx-dim)',
                       border: `1px solid ${on ? 'var(--fug)' : 'var(--line-2)'}`,
                       fontWeight: on ? 700 : 500,
                     }}>{label}</button>
@@ -152,7 +152,7 @@ export default function RacesScreen({
 
 const startBtn: React.CSSProperties = {
   display: 'block', width: '100%', boxSizing: 'border-box', textAlign: 'center', textDecoration: 'none',
-  background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none',
+  background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none',
   borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, cursor: 'pointer',
 }
 
@@ -198,12 +198,15 @@ function RaceCard({
         {/* 標題 + 距離 chip；右上角狀態／報名徽章直排 */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', lineHeight: 1.3, wordBreak: 'keep-all', overflowWrap: 'break-word' }}>{race.title}</span>
-              {race.distances.map((d) => (
-                <span key={d} style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 8, background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0 }}>{d}K</span>
-              ))}
-            </div>
+            <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', lineHeight: 1.3, wordBreak: 'keep-all', overflowWrap: 'break-word', display: 'block' }}>{race.title}</span>
+            {/* 距離 chip 換行至標題下方（不接在名稱後面） */}
+            {race.distances.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                {race.distances.map((d) => (
+                  <span key={d} style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 8, background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0 }}>{d}K</span>
+                ))}
+              </div>
+            )}
             {race.subtitle && <div style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-dim)', marginTop: 3 }}>{race.subtitle}</div>}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>

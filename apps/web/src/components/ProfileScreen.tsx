@@ -377,7 +377,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
                   return (
                     <button key={src} disabled={on}
                       onClick={async () => { setP((c) => c ? { ...c, preferred_data_source: src } : c); try { await withUserAuth((t) => profileApi.setDataSource(t, src)) } catch { /* ignore */ } }}
-                      style={{ flex: 1, padding: '9px 0', borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: on ? 'default' : 'pointer', background: on ? 'var(--fug)' : 'transparent', color: on ? '#05140e' : 'var(--tx-dim)', border: `1px solid ${on ? 'var(--fug)' : 'var(--line-2)'}` }}>
+                      style={{ flex: 1, padding: '9px 0', borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: on ? 'default' : 'pointer', background: on ? 'var(--fug)' : 'transparent', color: on ? 'var(--fug-ink)' : 'var(--tx-dim)', border: `1px solid ${on ? 'var(--fug)' : 'var(--line-2)'}` }}>
                       {src === 'gps' ? 'GPS 跑步追蹤' : 'Strava'}{on ? ' ✓' : ''}
                     </button>
                   )
@@ -548,7 +548,7 @@ const dateInp: React.CSSProperties = {
   ...inp, WebkitAppearance: 'none', appearance: 'none', textAlign: 'left', minWidth: 0, maxWidth: '100%',
 }
 const primaryBtn: React.CSSProperties = {
-  background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none',
+  background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none',
   borderRadius: 'var(--radius-btn, 10px)', padding: '12px 20px', cursor: 'pointer', fontSize: 14, marginTop: 4,
 }
 const recCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 14px)', padding: 14 }

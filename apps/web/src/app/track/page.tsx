@@ -770,7 +770,7 @@ export default function TrackPage() {
                 。確定要結束嗎？
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-                <button onClick={() => setConfirmEnd(false)} style={{ background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 10, padding: '11px', fontSize: 14.5, cursor: 'pointer' }}>再撐一下、完成任務</button>
+                <button onClick={() => setConfirmEnd(false)} style={{ background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '11px', fontSize: 14.5, cursor: 'pointer' }}>再撐一下、完成任務</button>
                 <button onClick={endWithForfeit} style={{ background: 'transparent', color: 'var(--hunt)', fontWeight: 700, border: '1px solid rgba(255,75,92,.5)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer' }}>放棄獎勵、仍要結束</button>
               </div>
             </div>
@@ -833,7 +833,7 @@ export default function TrackPage() {
                 {raceInvite.reward_dp > 0 && <span style={{ fontSize: 13, fontWeight: 900, color: '#FFD24D' }}>🪙 +{raceInvite.reward_dp}</span>}
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                <button onClick={() => joinRace(raceInvite)} style={{ flex: 1, background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px', fontSize: 14, cursor: 'pointer' }}>加入一起跑</button>
+                <button onClick={() => joinRace(raceInvite)} style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px', fontSize: 14, cursor: 'pointer' }}>加入一起跑</button>
                 <button onClick={() => setRaceInvite(null)} style={{ background: 'transparent', color: 'var(--tx-faint)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '9px 14px', fontSize: 13, cursor: 'pointer' }}>略過</button>
               </div>
             </div>
@@ -907,7 +907,7 @@ export default function TrackPage() {
                       <span style={{ color: 'var(--gold)', fontSize: 12.5, flexShrink: 0 }}>審核中</span>
                     ) : (
                       <button onClick={() => doCheckin(cp)} disabled={blocked}
-                        style={{ flexShrink: 0, background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: blocked ? 'default' : 'pointer', opacity: blocked ? 0.45 : 1 }}>
+                        style={{ flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: blocked ? 'default' : 'pointer', opacity: blocked ? 0.45 : 1 }}>
                         {busy ? '打卡中…' : curPos != null && !inRange ? '未到範圍' : '打卡'}
                       </button>
                     )}
@@ -984,4 +984,4 @@ function Big({ label, value, unit, warn, compact }: { label: string; value: stri
   )
 }
 
-const btn: React.CSSProperties = { width: '100%', background: 'var(--fug)', color: '#05140e', fontWeight: 800, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, cursor: 'pointer' }
+const btn: React.CSSProperties = { width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, cursor: 'pointer' }

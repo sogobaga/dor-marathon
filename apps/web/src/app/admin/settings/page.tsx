@@ -53,7 +53,7 @@ export default function AdminSettingsPage() {
           onKeyDown={(e) => { if (e.key === 'Enter') add() }}
           style={{ flex: 1, maxWidth: 340, background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px 12px', color: 'var(--tx)', fontSize: 14, fontFamily: 'inherit' }}
         />
-        <button onClick={add} style={{ background: 'var(--fug)', color: '#05140e', fontWeight: 700, border: 'none', borderRadius: 10, padding: '10px 18px', cursor: 'pointer', fontSize: 14 }}>＋ 加入</button>
+        <button onClick={add} style={{ background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 10, padding: '10px 18px', cursor: 'pointer', fontSize: 14 }}>＋ 加入</button>
       </div>
 
       {err && <div style={{ color: 'var(--hunt)', fontSize: 13, marginBottom: 12 }}>{err}</div>}
