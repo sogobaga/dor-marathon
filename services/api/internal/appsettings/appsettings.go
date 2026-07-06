@@ -23,6 +23,9 @@ var specs = map[string]func(string) bool{
 	"active_skin":               func(v string) bool { return v == "" || v == "default" || v == "warm" || v == "warm2" },
 	"interstitial_enabled": func(v string) bool { return v == "" || v == "0" || v == "1" }, // 蓋板廣告總開關
 	"favicon_url":          func(v string) bool { return v == "" || (len(v) <= 512 && (strings.HasPrefix(v, "/") || strings.HasPrefix(v, "http"))) },
+	// 個人任務入口可見性：hidden 前台隱藏 / locked 顯示但不能按 / whitelist 顯示且指定帳號可按 / open 顯示且全部開放
+	"personal_entry_state":     func(v string) bool { return v == "" || v == "hidden" || v == "locked" || v == "whitelist" || v == "open" },
+	"personal_entry_whitelist": func(v string) bool { return len(v) <= 20000 }, // 換行/逗號分隔的帳號編碼或 email
 }
 
 // publicKeys 允許未登入前台讀取的 key（皆為非敏感外觀設定）。

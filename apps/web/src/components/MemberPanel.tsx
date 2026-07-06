@@ -15,12 +15,14 @@ import DpCoin from './DpCoin'
 export default function MemberPanel({
   dash: dashProp,
   onOpenProfile,
+  onOpenPersonalTasks,
   onUploadAvatar,
   uploadingAvatar,
   onReady,
 }: {
   dash?: DashboardInfo | null
   onOpenProfile?: () => void
+  onOpenPersonalTasks?: () => void
   onUploadAvatar?: (file: File) => void
   uploadingAvatar?: boolean
   onReady?: () => void
@@ -118,15 +120,38 @@ export default function MemberPanel({
           </div>
         )}
 
-        {/* 戰績（6 格）：完成 / 報名 / 進行中 / 完成里程 / 追蹤 / 粉絲 */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 12 }}>
-          <Stat label="完成" value={user && dash ? `${dash.completed_count}` : '--'} />
-          <Stat label="報名" value={user && dash ? `${dash.race_count}` : '--'} />
-          <Stat label="進行中" value={user && dash ? `${dash.ongoing_count}` : '--'} />
-          <Stat label="完成里程" value={user && dash ? `${dash.total_km.toFixed(1)}K` : '--'} />
-          <Stat label="追蹤" value={user && dash ? `${dash.following_count}` : '--'} />
-          <Stat label="粉絲" value={user && dash ? `${dash.follower_count}` : '--'} />
-        </div>
+        {/* 累計完成里程（重點）+ 個人任務入口（後台可控可見性） */}
+        {user && dash && (
+          <div style={{ display: 'flex', gap: 10, marginTop: 14, alignItems: 'stretch' }}>
+            <div style={{ ...mileageBox, flex: dash.personal_entry === 'hidden' ? 1 : '0 0 auto' }}>
+              <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--fug)', fontVariantNumeric: 'tabular-nums', lineHeight: 1.05 }}>
+                {dash.total_km.toFixed(1)}<span style={{ fontSize: 13, marginLeft: 2 }}>K</span>
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 3, whiteSpace: 'nowrap' }}>累計完成里程</div>
+            </div>
+            {dash.personal_entry !== 'hidden' && (
+              <button
+                disabled={dash.personal_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.personal_entry === 'shown') onOpenPersonalTasks?.() }}
+                style={{ ...taskBtn, cursor: dash.personal_entry === 'shown' ? 'pointer' : 'default', opacity: dash.personal_entry === 'shown' ? 1 : 0.62 }}
+              >
+                <span style={{ fontSize: 15, fontWeight: 900 }}>個人任務</span>
+                <span style={{ fontSize: 11, fontWeight: 700 }}>{dash.personal_entry === 'locked' ? '即將開放 ›' : '開始你的訓練旅程 ›'}</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* 次要戰績（一行小字，不搶重點） */}
+        {user && dash && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginTop: 12, fontSize: 11.5 }}>
+            <MiniStat label="完成" value={dash.completed_count} />
+            <MiniStat label="報名" value={dash.race_count} />
+            <MiniStat label="進行中" value={dash.ongoing_count} />
+            <MiniStat label="追蹤" value={dash.following_count} />
+            <MiniStat label="粉絲" value={dash.follower_count} />
+          </div>
+        )}
 
       </div>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
@@ -142,16 +167,18 @@ function Avatar({ user, dash }: { user: boolean; dash: DashboardInfo | null }) {
   return <span style={{ fontSize: 22, fontWeight: 800, color: 'var(--tx-dim)' }}>{user ? (dash?.name || '?').slice(0, 1) : '？'}</span>
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function MiniStat({ label, value }: { label: string; value: number }) {
   return (
-    <div style={{ background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: '8px 4px', textAlign: 'center' }}>
-      <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>{value}</div>
-      <div style={{ fontSize: 10, color: 'var(--tx-faint)', marginTop: 2 }}>{label}</div>
-    </div>
+    <span>
+      <b style={{ color: 'var(--tx)', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{value}</b>
+      <span style={{ color: 'var(--tx-dim)', marginLeft: 4 }}>{label}</span>
+    </span>
   )
 }
 
 const card: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 'var(--card-pad, 16px)', boxShadow: 'var(--card-shadow, none)' }
+const mileageBox: React.CSSProperties = { minWidth: 96, background: 'var(--bg-2)', borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }
+const taskBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 3, textAlign: 'left', border: 'none', borderRadius: 12, padding: '10px 14px', background: 'var(--fug)', color: '#05140e', fontFamily: 'inherit' }
 const avatarWrap: React.CSSProperties = {
   position: 'relative', width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
   background: 'var(--bg-2)', border: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center',

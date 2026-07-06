@@ -5,6 +5,7 @@ import { useIsMobile } from '@/lib/useIsMobile'
 import RacesScreen from './RacesScreen'
 import RegistrationScreen from './RegistrationScreen'
 import ProfileScreen from './ProfileScreen'
+import PersonalTasksScreen from './PersonalTasksScreen'
 import RaceDetailScreen from './RaceDetailScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
 import VersionBadge from './VersionBadge'
@@ -19,6 +20,7 @@ export default function PhoneShell() {
   const [detailTab, setDetailTab] = useState<'brochure' | 'progress' | 'rank' | undefined>(undefined)
   const [registerRace, setRegisterRace] = useState<Race | null>(null)
   const [showProfile, setShowProfile] = useState(false)
+  const [showPersonalTasks, setShowPersonalTasks] = useState(false)
   const [payRace, setPayRace] = useState<Race | null>(null)
 
   useEffect(() => {
@@ -44,11 +46,14 @@ export default function PhoneShell() {
         paddingBottom: isMobile ? 'env(safe-area-inset-bottom)' : 0,
         overflow: 'hidden',
       }}>
-        {/* 賽事列表 / 賽事資訊(簡章·進度·排名) / 報名 / 個人資訊 — 串接 Go API 真實資料 */}
-        {showProfile || payRace ? (
+        {/* 賽事列表 / 賽事資訊(簡章·進度·排名) / 報名 / 個人資訊 / 個人任務 — 串接 Go API 真實資料 */}
+        {showPersonalTasks ? (
+          <PersonalTasksScreen onBack={() => setShowPersonalTasks(false)} />
+        ) : showProfile || payRace ? (
           <ProfileScreen
             focusRaceID={payRace?.id}
             onBack={() => { setShowProfile(false); setPayRace(null) }}
+            onOpenPersonalTasks={() => setShowPersonalTasks(true)}
           />
         ) : registerRace ? (
           <RegistrationScreen race={registerRace} onBack={() => setRegisterRace(null)} />
@@ -65,6 +70,7 @@ export default function PhoneShell() {
             onRegister={setRegisterRace}
             onPay={setPayRace}
             onOpenProfile={() => setShowProfile(true)}
+            onOpenPersonalTasks={() => setShowPersonalTasks(true)}
             onOpenBrochure={(r) => { setDetailTab(undefined); setDetailRace(r) }}
           />
         )}

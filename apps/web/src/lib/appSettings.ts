@@ -5,12 +5,14 @@ export interface SettingSpec {
   group: string
   label: string
   help: string
-  type: 'number' | 'select'
+  type: 'number' | 'select' | 'text'
   unit?: string
   min?: number
   max?: number
   def: string // 預設值（統一字串化）
   options?: { value: string; label: string }[]
+  placeholder?: string // type='text' 多行輸入框的提示
+  rows?: number        // type='text' 多行輸入框行數
 }
 
 export const SETTINGS_SPECS: SettingSpec[] = [
@@ -47,5 +49,20 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     key: 'event_first_wait_run3_sec', group: '事件任務節奏', label: '新手加速・第 3 趟等待', type: 'number', unit: '秒',
     help: '玩家「第 3 趟」跑步時，第一個事件的等待時間。第 4 趟起回到正常的隨機區間。',
     min: 5, max: 3600, def: '180',
+  },
+  {
+    key: 'personal_entry_state', group: '個人任務入口', label: '入口顯示狀態', type: 'select', def: 'hidden',
+    help: '控制「會員面板上的個人任務按鈕」對前台玩家的可見性。初期建議先「隱藏」或「僅指定帳號」，內容備妥後再「全部開放」。',
+    options: [
+      { value: 'hidden', label: '前台隱藏（都看不到）' },
+      { value: 'locked', label: '顯示但不能按（即將開放）' },
+      { value: 'whitelist', label: '顯示且指定帳號可按（下方白名單）' },
+      { value: 'open', label: '顯示且全部開放（正式開放）' },
+    ],
+  },
+  {
+    key: 'personal_entry_whitelist', group: '個人任務入口', label: '指定帳號白名單', type: 'text', def: '',
+    help: '僅在上方選「指定帳號可按」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email，大小寫不拘。名單外的玩家看不到入口。',
+    placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
 ]

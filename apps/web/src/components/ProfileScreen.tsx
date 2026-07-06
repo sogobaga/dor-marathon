@@ -55,7 +55,7 @@ function paceStr(sec: number) {
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
 }
 
-export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => void; focusRaceID?: string }) {
+export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks }: { onBack: () => void; focusRaceID?: string; onOpenPersonalTasks?: () => void }) {
   const [p, setP] = useState<Profile | null>(null)
   const [regs, setRegs] = useState<MyRegistration[] | null>(null)
   const [payOrder, setPayOrder] = useState<MyOrder | null>(null)
@@ -248,7 +248,7 @@ export default function ProfileScreen({ onBack, focusRaceID }: { onBack: () => v
         <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 0' }}>
         {err && <div style={{ color: 'var(--hunt)', padding: '8px 2px', fontSize: 13 }}>{err}</div>}
         {/* 會員資訊面板：與首頁共用同一元件、內容一致（此頁頭像可上傳） */}
-        <MemberPanel dash={dash} onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} />
+        <MemberPanel dash={dash} onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} onOpenPersonalTasks={onOpenPersonalTasks} />
         </div>{/* /背景層：會員資訊面板 */}
 
         {/* 可拖曳面板：分頁（個人資料/運動數據/報名紀錄/追蹤）+ 內容 */}

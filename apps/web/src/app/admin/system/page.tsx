@@ -47,6 +47,8 @@ export default function AdminSystemPage() {
     if (spec.type === 'number') {
       const min = spec.min ?? 0, max = spec.max ?? 999999, def = parseFloat(spec.def) || 0
       val = raw === '' ? String(def) : String(Math.min(max, Math.max(min, Math.round(parseFloat(raw) || def))))
+    } else if (spec.type === 'text') {
+      val = raw // 多行文字：允許清空（存空字串）
     } else {
       val = raw || spec.def
     }
@@ -94,6 +96,8 @@ export default function AdminSystemPage() {
               const hasCur = cur != null && cur !== ''
               const curLabel = s.type === 'select'
                 ? (s.options?.find((o) => o.value === (hasCur ? cur : s.def))?.label ?? (hasCur ? cur : s.def))
+                : s.type === 'text'
+                ? (hasCur ? `已設定（${cur.split(/[\n,;\s]+/).filter(Boolean).length} 筆）` : '未設定')
                 : `${hasCur ? cur : s.def} ${s.unit ?? ''}`
               return (
                 <div key={s.key} style={card}>
@@ -104,6 +108,10 @@ export default function AdminSystemPage() {
                       <select value={edit[s.key] || s.def} onChange={(e) => setEdit((st) => ({ ...st, [s.key]: e.target.value }))} style={{ ...inp, width: 260 }}>
                         {s.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
+                    ) : s.type === 'text' ? (
+                      <textarea value={edit[s.key] ?? ''} placeholder={s.placeholder} rows={s.rows ?? 3}
+                        onChange={(e) => setEdit((st) => ({ ...st, [s.key]: e.target.value }))}
+                        style={{ ...inp, width: '100%', resize: 'vertical', lineHeight: 1.6 }} />
                     ) : (
                       <>
                         <input type="number" min={s.min} max={s.max} value={edit[s.key] ?? ''} placeholder={`預設 ${s.def}`}

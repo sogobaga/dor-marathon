@@ -47,12 +47,14 @@ export default function RacesScreen({
   onRegister,
   onPay,
   onOpenProfile,
+  onOpenPersonalTasks,
   onOpenBrochure,
 }: {
   onOpenRanking?: (race: Race) => void
   onRegister?: (race: Race) => void
   onPay?: (race: Race) => void
   onOpenProfile?: () => void
+  onOpenPersonalTasks?: () => void
   onOpenBrochure?: (race: Race) => void
 }) {
   const user = useUser() // 登入狀態變動時重新渲染 → 用最新 token 重抓報名狀態
@@ -84,7 +86,7 @@ export default function RacesScreen({
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {/* 會員資訊面板：固定最上方；面板收合時完整顯示，可自行捲動 */}
         <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 0' }}>
-          <MemberPanel onOpenProfile={onOpenProfile} />
+          <MemberPanel onOpenProfile={onOpenProfile} onOpenPersonalTasks={onOpenPersonalTasks} />
         </div>
 
         {/* 可拖曳活動列表面板 */}

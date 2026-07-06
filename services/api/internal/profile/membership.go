@@ -5,10 +5,13 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // --- 帳號專屬編碼 ---
@@ -111,6 +114,9 @@ type DashboardInfo struct {
 	CompletedCount int        `json:"completed_count"` // 已完成場數
 	FollowingCount int        `json:"following_count"`
 	FollowerCount  int        `json:"follower_count"`
+	// PersonalEntry 個人任務入口的可見性（後端依系統設定 + 白名單解析後給前端）：
+	// hidden 不顯示 / locked 顯示但不能按 / shown 顯示且可按。
+	PersonalEntry string `json:"personal_entry"`
 }
 
 // GET /api/v1/profile/dashboard
@@ -127,17 +133,20 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	var d DashboardInfo
 	d.AccountCode = code
+	var email string
 	if err := h.db.QueryRow(r.Context(), `
 		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.dp, u.vip_expires_at,
 		       COALESCE((SELECT SUM(distance_km) FROM activities WHERE user_id=u.id AND NOT flagged),0),
 		       COALESCE(p.nickname,''),
-		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id AND rg.status<>'cancelled')
+		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id AND rg.status<>'cancelled'),
+		       COALESCE(u.email,'')
 		FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
 		WHERE u.id=$1`, userID).
-		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.VIPExpiresAt, &d.TotalKm, &d.Nickname, &d.RaceCount); err != nil {
+		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.VIPExpiresAt, &d.TotalKm, &d.Nickname, &d.RaceCount, &email); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load dashboard")
 		return
 	}
+	d.PersonalEntry = resolvePersonalEntry(r.Context(), h.db, email, code)
 	levels, err := h.levelConfigList(r.Context())
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
@@ -165,6 +174,42 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 			HAVING COALESCE(SUM(a.distance_km),0) >= g.target_distance_km
 		) t`, userID).Scan(&d.CompletedCount)
 	respondJSON(w, http.StatusOK, map[string]any{"dashboard": d})
+}
+
+// resolvePersonalEntry 依系統設定 personal_entry_state（+ 白名單）解析出「這個使用者」該看到的個人任務入口狀態。
+// 回 hidden / locked / shown。白名單留在後端解析，避免整包帳號送到前端外流。
+func resolvePersonalEntry(ctx context.Context, db *pgxpool.Pool, email, code string) string {
+	switch appsettings.GetString(ctx, db, "personal_entry_state", "hidden") {
+	case "open":
+		return "shown"
+	case "locked":
+		return "locked"
+	case "whitelist":
+		if personalWhitelisted(appsettings.GetString(ctx, db, "personal_entry_whitelist", ""), email, code) {
+			return "shown"
+		}
+		return "hidden"
+	default: // hidden 或未設定
+		return "hidden"
+	}
+}
+
+// personalWhitelisted 白名單以換行/逗號/分號/空白分隔，可填帳號編碼（#可省）或 email，大小寫不敏感。
+func personalWhitelisted(list, email, code string) bool {
+	email = strings.ToLower(strings.TrimSpace(email))
+	code = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(code), "#"))
+	for _, tok := range strings.FieldsFunc(list, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ';' || r == ' ' || r == '\t'
+	}) {
+		t := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(tok), "#"))
+		if t == "" {
+			continue
+		}
+		if (email != "" && t == email) || (code != "" && t == code) {
+			return true
+		}
+	}
+	return false
 }
 
 // --- 追蹤系統 ---

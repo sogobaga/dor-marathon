@@ -960,6 +960,7 @@ export interface DashboardInfo {
   completed_count: number
   following_count: number
   follower_count: number
+  personal_entry: 'hidden' | 'locked' | 'shown' // 個人任務入口可見性（後端解析）
 }
 
 export interface FollowRow {
@@ -1104,6 +1105,70 @@ export const followApi = {
     request<{ following: boolean }>('/profile/follow', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ user_id: userId }) }),
   unfollow: (token: string, userId: string) =>
     request<null>(`/profile/follow/${userId}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
+// --- 個人任務（跑者生命週期 10 計畫 × 每 100 天鏈式任務）---
+
+export interface PersonalPlan {
+  id: string
+  code: string
+  name: string
+  lifecycle: string
+  stage_order: number
+  target_km: number
+  target_time: string
+  entry_note: string
+  data_source: string // gps | strava
+  banner_url: string
+  enabled: boolean
+  total: number     // 任務總數
+  completed: number // 我完成數
+}
+
+export interface PersonalTask {
+  id: string
+  plan_id: string
+  plan_code: string
+  day: number
+  week: number
+  title: string
+  story: string
+  workout: string
+  workout_type: string
+  target_km: number
+  target_min: number
+  intensity: string
+  complete_cond: string
+  completion_type: string
+  reward_exp: number
+  reward_dp: number
+  icon_url: string
+  data_source: string
+  safety_note: string
+  enabled: boolean
+  done: boolean
+  stars: number
+}
+
+export const personalTasksApi = {
+  listPlans: (token: string) =>
+    request<{ plans: PersonalPlan[] }>('/personal-tasks', { headers: withAuth(token) }),
+  planDetail: (token: string, code: string) =>
+    request<{ plan: PersonalPlan; tasks: PersonalTask[] }>(`/personal-tasks/plans/${code}`, { headers: withAuth(token) }),
+  complete: (token: string, taskId: string, body?: { actual_km?: number; pain?: number; rpe?: number }) =>
+    request<{ completed: boolean; stars: number; reward_exp: number; reward_dp: number; already: boolean }>(
+      `/personal-tasks/tasks/${taskId}/complete`,
+      { method: 'POST', headers: withAuth(token), body: JSON.stringify(body || {}) },
+    ),
+}
+
+export const adminPersonalTasksApi = {
+  list: (token: string) =>
+    request<{ plans: PersonalPlan[]; tasks: PersonalTask[] }>('/admin/personal-tasks', { headers: withAuth(token) }),
+  import: (token: string, body: { plans: unknown[]; tasks: unknown[] }) =>
+    request<{ plans: number; tasks: number }>('/admin/personal-tasks/import', {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify(body),
+    }),
 }
 
 export const adminLevelsApi = {
