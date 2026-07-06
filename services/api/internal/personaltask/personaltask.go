@@ -6,9 +6,12 @@ package personaltask
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/auth"
@@ -70,6 +73,7 @@ func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.ListPlans)                    // GET /personal-tasks — 10 計畫摘要 + 我的完成數
 	r.Get("/plans/{code}", h.PlanDetail)       // GET /personal-tasks/plans/P01 — 計畫 + 100 任務 + 我的進度
+	r.Post("/settle", h.Settle)                // POST 自動里程結算（依 data_source 比對 target_km）
 	r.Post("/tasks/{id}/complete", h.Complete) // POST 手動完成（可帶 actual_km/pain/rpe）
 	return r
 }
@@ -135,38 +139,51 @@ type completeReq struct {
 
 func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
 	taskID := chi.URLParam(r, "id")
 	var req completeReq
 	_ = json.NewDecoder(r.Body).Decode(&req) // 允許空 body（純手動完成）
 
-	// 取任務目標 + 獎勵（同時擋前置未完成）
+	// 取任務目標 + 獎勵 + 資料來源
 	var targetKm float64
 	var rExp, rDp int
-	var prereq *string
+	var dataSource string
 	if err := h.db.QueryRow(r.Context(),
-		`SELECT target_km, reward_exp, reward_dp, prereq_task_id FROM personal_tasks WHERE id=$1 AND enabled`, taskID).
-		Scan(&targetKm, &rExp, &rDp, &prereq); err != nil {
+		`SELECT target_km, reward_exp, reward_dp, data_source FROM personal_tasks WHERE id=$1 AND enabled`, taskID).
+		Scan(&targetKm, &rExp, &rDp, &dataSource); err != nil {
 		respondErr(w, http.StatusNotFound, "任務不存在")
 		return
 	}
-	// 前置任務未完成 → 擋（完成前一個才能開下一個）
-	if prereq != nil {
-		var done bool
-		_ = h.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM personal_task_progress WHERE user_id=$1 AND task_id=$2)`, uid, *prereq).Scan(&done)
-		if !done {
-			respondErr(w, http.StatusConflict, "請先完成前一個任務")
-			return
+	// 全域順序鏈：前面（stage_order, code, day 較小）還有未完成任務 → 擋（完成前面才能開這個）。
+	// 用 JOIN 取目標任務的排序鍵，兩側皆為 row-constructor 比較（避免對子查詢做 row 比較的相容性問題）。
+	var priorLeft int
+	_ = h.db.QueryRow(r.Context(), `
+		SELECT COUNT(*)
+		FROM personal_tasks t JOIN personal_plans pl ON pl.id=t.plan_id
+		JOIN personal_tasks tt ON tt.id=$2
+		JOIN personal_plans pp ON pp.id=tt.plan_id
+		WHERE t.enabled AND pl.enabled
+		  AND (pl.stage_order, pl.code, t.day) < (pp.stage_order, pp.code, tt.day)
+		  AND NOT EXISTS (SELECT 1 FROM personal_task_progress pr WHERE pr.user_id=$1 AND pr.task_id=t.id)`,
+		uid, taskID).Scan(&priorLeft)
+	if priorLeft > 0 {
+		respondErr(w, http.StatusConflict, "請先完成前面的任務")
+		return
+	}
+	// 星星：取「回報里程」與「窗口內符合來源的累積里程」的大者評（手動覆蓋未達標=1★）
+	dist := req.ActualKm
+	if targetKm > 0 {
+		if since, err := h.windowStart(r.Context(), uid); err == nil {
+			if acc, err := h.accDistance(r.Context(), uid, since, dataSource); err == nil && acc > dist {
+				dist = acc
+			}
 		}
 	}
-	// 星星（簡版）：完成=1★；實際里程≥目標=2★；≥目標×1.15=3★（無目標里程者=1★）
-	stars := 1
-	if targetKm > 0 && req.ActualKm >= targetKm {
-		stars = 2
-	}
-	if targetKm > 0 && req.ActualKm >= targetKm*1.15 {
-		stars = 3
-	}
-	evidence, _ := json.Marshal(map[string]any{"actual_km": req.ActualKm, "pain": req.Pain, "rpe": req.Rpe})
+	stars := starsFor(targetKm, dist)
+	evidence, _ := json.Marshal(map[string]any{"actual_km": req.ActualKm, "acc_km": dist, "pain": req.Pain, "rpe": req.Rpe, "manual": true})
 
 	tx, err := h.db.Begin(r.Context())
 	if err != nil {
@@ -199,6 +216,162 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 		"reward_exp": ternInt(firstTime, rExp, 0), "reward_dp": ternInt(firstTime, rDp, 0),
 		"already": !firstTime,
 	})
+}
+
+// --- 自動里程結算（Phase 2）---
+
+// Settled 本次自動結算完成的任務（給前台慶祝提示）。
+type Settled struct {
+	TaskID    string  `json:"task_id"`
+	PlanCode  string  `json:"plan_code"`
+	Day       int     `json:"day"`
+	Title     string  `json:"title"`
+	Stars     int     `json:"stars"`
+	RewardExp int     `json:"reward_exp"`
+	RewardDp  int     `json:"reward_dp"`
+	AccKm     float64 `json:"acc_km"`
+}
+
+// CurrentProgress 目前任務（尚未達標者）的里程進度，給前台顯示「X.X / Y K 自動結算」。
+type CurrentProgress struct {
+	TaskID     string  `json:"task_id"`
+	PlanCode   string  `json:"plan_code"`
+	Day        int     `json:"day"`
+	TargetKm   float64 `json:"target_km"`
+	AccKm      float64 `json:"acc_km"`
+	DataSource string  `json:"data_source"`
+}
+
+// starsFor 星星：無目標里程=1★；達標=2★；達標×1.15=3★；未達標=1★（手動覆蓋用）。
+func starsFor(target, dist float64) int {
+	if target <= 0 {
+		return 1
+	}
+	if dist >= target*1.15 {
+		return 3
+	}
+	if dist >= target {
+		return 2
+	}
+	return 1
+}
+
+// windowStart 計入活動的起點：最近一次任務完成時間；若尚無完成 → 旅程起點（第一次呼叫寫入 NOW()）。
+func (h *Handler) windowStart(ctx context.Context, uid string) (time.Time, error) {
+	var last *time.Time
+	if err := h.db.QueryRow(ctx, `SELECT MAX(completed_at) FROM personal_task_progress WHERE user_id=$1`, uid).Scan(&last); err != nil {
+		return time.Time{}, err
+	}
+	if last != nil {
+		return *last, nil
+	}
+	var started time.Time
+	if err := h.db.QueryRow(ctx, `
+		INSERT INTO personal_journey (user_id) VALUES ($1)
+		ON CONFLICT (user_id) DO UPDATE SET user_id=EXCLUDED.user_id
+		RETURNING started_at`, uid).Scan(&started); err != nil {
+		return time.Time{}, err
+	}
+	return started, nil
+}
+
+// accDistance 窗口內、符合 data_source 的未 flagged 活動累積里程。
+// 來源分流：strava 任務計 source='strava'；其餘（gps）計 App GPS 活動（source IS NULL）。
+func (h *Handler) accDistance(ctx context.Context, uid string, since time.Time, dataSource string) (float64, error) {
+	var acc float64
+	err := h.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(distance_km),0) FROM activities
+		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2
+		  AND ( ($3='strava' AND source='strava') OR ($3<>'strava' AND source IS NULL) )`,
+		uid, since, dataSource).Scan(&acc)
+	return acc, err
+}
+
+// settleUser 自動結算：從全域順序（stage_order, code, day）的目前任務起，若窗口內符合來源的
+// 累積里程達 target_km 就完成、發獎、給星星；完成後下一個任務的窗口起點即為「剛剛完成時間」，
+// 故通常一次只會結算一個任務（一趟跑步推進一天）。回傳已結算清單 + 目前任務進度。
+func (h *Handler) settleUser(ctx context.Context, uid string) ([]Settled, *CurrentProgress, error) {
+	settled := []Settled{}
+	for i := 0; i < 5; i++ { // 上限防呆（正常至多完成 1 個就停）
+		var taskID, planCode, title, dataSource string
+		var day int
+		var targetKm float64
+		var rExp, rDp int
+		err := h.db.QueryRow(ctx, `
+			SELECT t.id, pl.code, t.title, t.data_source, t.day, t.target_km, t.reward_exp, t.reward_dp
+			FROM personal_tasks t JOIN personal_plans pl ON pl.id = t.plan_id
+			WHERE t.enabled AND pl.enabled
+			  AND NOT EXISTS (SELECT 1 FROM personal_task_progress pr WHERE pr.user_id=$1 AND pr.task_id=t.id)
+			ORDER BY pl.stage_order, pl.code, t.day
+			LIMIT 1`, uid).Scan(&taskID, &planCode, &title, &dataSource, &day, &targetKm, &rExp, &rDp)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return settled, nil, nil // 全部完成
+			}
+			return settled, nil, err
+		}
+		since, err := h.windowStart(ctx, uid)
+		if err != nil {
+			return settled, nil, err
+		}
+		cur := &CurrentProgress{TaskID: taskID, PlanCode: planCode, Day: day, TargetKm: targetKm, DataSource: dataSource}
+		if targetKm <= 0 {
+			return settled, cur, nil // 休息/時間型（無目標里程）無法自動判定 → 留給手動
+		}
+		acc, err := h.accDistance(ctx, uid, since, dataSource)
+		if err != nil {
+			return settled, nil, err
+		}
+		cur.AccKm = acc
+		if acc < targetKm {
+			return settled, cur, nil // 尚未達標 → 回報進度、停
+		}
+		// 達標 → 完成 + 發獎（冪等）
+		stars := starsFor(targetKm, acc)
+		evidence, _ := json.Marshal(map[string]any{"auto": true, "acc_km": acc, "source": dataSource})
+		tx, err := h.db.Begin(ctx)
+		if err != nil {
+			return settled, nil, err
+		}
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO personal_task_progress (user_id, task_id, status, stars, evidence, awarded, completed_at)
+			VALUES ($1,$2,'completed',$3,$4,TRUE,NOW()) ON CONFLICT (user_id, task_id) DO NOTHING`,
+			uid, taskID, stars, evidence)
+		if err != nil {
+			tx.Rollback(ctx)
+			return settled, nil, err
+		}
+		if tag.RowsAffected() != 1 { // 已被別的請求搶先完成 → 避免重複發獎/無限迴圈
+			tx.Rollback(ctx)
+			return settled, nil, nil
+		}
+		if rExp > 0 || rDp > 0 {
+			if _, err := tx.Exec(ctx, `UPDATE users SET exp = exp + $2, dp = dp + $3 WHERE id=$1`, uid, rExp, rDp); err != nil {
+				tx.Rollback(ctx)
+				return settled, nil, err
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return settled, nil, err
+		}
+		settled = append(settled, Settled{TaskID: taskID, PlanCode: planCode, Day: day, Title: title, Stars: stars, RewardExp: rExp, RewardDp: rDp, AccKm: acc})
+	}
+	return settled, nil, nil
+}
+
+// Settle POST /personal-tasks/settle — 觸發自動里程結算（開頁時、跑步結束後呼叫）。
+func (h *Handler) Settle(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	settled, cur, err := h.settleUser(r.Context(), uid)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"settled": settled, "current": cur})
 }
 
 // --- 後台 handlers ---

@@ -1150,11 +1150,24 @@ export interface PersonalTask {
   stars: number
 }
 
+// 自動里程結算（Phase 2）
+export interface PersonalSettled {
+  task_id: string; plan_code: string; day: number; title: string
+  stars: number; reward_exp: number; reward_dp: number; acc_km: number
+}
+export interface PersonalCurrent {
+  task_id: string; plan_code: string; day: number
+  target_km: number; acc_km: number; data_source: string // gps | strava
+}
+
 export const personalTasksApi = {
   listPlans: (token: string) =>
     request<{ plans: PersonalPlan[] }>('/personal-tasks', { headers: withAuth(token) }),
   planDetail: (token: string, code: string) =>
     request<{ plan: PersonalPlan; tasks: PersonalTask[] }>(`/personal-tasks/plans/${code}`, { headers: withAuth(token) }),
+  // 自動里程結算：依 data_source 比對 target_km，達標自動完成 + 星星。開頁/跑步後呼叫。
+  settle: (token: string) =>
+    request<{ settled: PersonalSettled[]; current: PersonalCurrent | null }>('/personal-tasks/settle', { method: 'POST', headers: withAuth(token) }),
   complete: (token: string, taskId: string, body?: { actual_km?: number; pain?: number; rpe?: number }) =>
     request<{ completed: boolean; stars: number; reward_exp: number; reward_dp: number; already: boolean }>(
       `/personal-tasks/tasks/${taskId}/complete`,
