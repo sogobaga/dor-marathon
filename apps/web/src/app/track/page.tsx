@@ -386,7 +386,7 @@ export default function TrackPage() {
       if (msg.type !== 'event_race_invite') return
       const p = msg.payload as RaceEventInvite
       if (!user?.id || !p.target_user_ids?.includes(user.id)) return
-      if (activeEventRef.current || raceInviteRef.current || armingRef.current) return // 一次一任務（含 Phase A 建立中）
+      if (activeEventRef.current || raceInviteRef.current || armingRef.current || woActiveRef.current) return // 一次一任務（課表進行中也不插隊）
       if (Date.now() > p.join_deadline) return
       setRaceInvite(p)
       setShowFlash(true); playEventAlarm(); vibrate([120, 80, 120, 80, 120]) // 多人邀請：同樣全螢幕紅閃 + 噹噹噹（引注意），仍走加入/略過流程
@@ -739,6 +739,7 @@ export default function TrackPage() {
     woResultsRef.current = { inBand: 0, total: 0, detail: [] }
     woStepIdxRef.current = 0
     setWoStepIdx(0); setWoHits({}); setWoResult(null)
+    woActiveRef.current = true // 從一開始（含 321 倒數）就暫停隨機事件，整趟課表都不被打擾
     start() // 既有 GPS 追蹤啟動（含定位權限請求，須在使用者手勢內）
     setWoPhase('countdown')
   }

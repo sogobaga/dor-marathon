@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { personalTasksApi, type PersonalPlan, type PersonalTask, type PersonalChallenge, type WorkoutSegment } from '@/lib/api'
+import { totalKm, estMinutes, fmtDuration } from '@/lib/workout'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { refreshDashboard, useDashboard } from '@/lib/useDashboard'
 
@@ -166,7 +167,7 @@ function PlanList({ plans, onOpen }: { plans: PersonalPlan[] | null; onOpen: (p:
 
 // 課表型別中文標籤
 const WORKOUT_LABELS: Record<string, string> = {
-  interval: '間歇', aerobic: '有氧', tempo: '節奏', easy: '輕鬆', recovery: '恢復',
+  interval: '間歇', aerobic: '有氧', tempo: '節奏', easy: '輕鬆', recovery: '恢復', long: '長距離 LSD',
   progression: '漸速', fartlek: '法特雷克', pyramid: '金字塔', norwegian4x4: '挪威4×4', variable: '變速',
 }
 // 任務類型標籤
@@ -259,6 +260,7 @@ function TaskCard({ t, kind, locked, ch, challengeAt, vipLocked, busy, onChallen
       {kind.kind === 'workout' && (
         <>
           {segSummary(t.segments) && <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.6, padding: '7px 10px', background: 'var(--bg-2)', borderRadius: 8 }}>📋 {segSummary(t.segments)}</div>}
+          <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 5, fontVariantNumeric: 'tabular-nums' }}>總距離 {totalKm(t.segments)} K · 預估 {fmtDuration(estMinutes(t.segments))}</div>
           {active ? (
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
               <button onClick={() => onAbandon(t)} disabled={busy} style={{ ...abandonBtn, opacity: busy ? 0.5 : 1 }}>放棄</button>

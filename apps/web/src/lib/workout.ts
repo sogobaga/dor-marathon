@@ -66,12 +66,41 @@ export function paceInBand(avgPaceS: number, step: WoStep): boolean {
   return avgPaceS > 0 && avgPaceS <= step.paceSlow * 1.05
 }
 
-// 分段課表摘要：「暖身 2K → 400m 間歇 ×6 → 緩和 2K」
+// 分段課表摘要：「暖身 2K → 間歇 400m ×6 → 緩和 2K」
 export function segSummary(segs?: WorkoutSegment[] | null): string {
   if (!segs || !segs.length) return ''
   return segs.map((s) => {
     const d = s.target_type === 'distance' ? (s.target >= 1000 ? `${s.target / 1000}K` : `${s.target}m`) : `${Math.round(s.target / 60) || Math.round(s.target)}${s.target >= 60 ? '分' : '秒'}`
     const reps = s.reps && s.reps > 1 ? ` ×${s.reps}` : ''
-    return `${s.label || s.kind} ${d}${reps}`
+    return `${s.label || kindLabel(s.kind)} ${d}${reps}`
   }).join(' → ')
+}
+
+// 總距離（公里）：所有距離型分段 × 組數加總
+export function totalKm(segs?: WorkoutSegment[] | null): number {
+  if (!segs) return 0
+  let m = 0
+  for (const s of segs) { const reps = s.reps && s.reps > 1 ? s.reps : 1; if (s.target_type === 'distance') m += s.target * reps }
+  return Math.round(m / 100) / 10
+}
+// 預估完成時間（分）：距離段用配速中位數估、時間段直接計，加組間休。
+export function estMinutes(segs?: WorkoutSegment[] | null): number {
+  if (!segs) return 0
+  let total = 0
+  for (const s of segs) {
+    const reps = s.reps && s.reps > 1 ? s.reps : 1
+    if (s.target_type === 'distance') {
+      const p = s.pace_fast_s && s.pace_slow_s ? (s.pace_fast_s + s.pace_slow_s) / 2 : 420
+      total += (s.target / 1000) * p * reps
+    } else {
+      total += s.target * reps
+    }
+    if (reps > 1 && s.rest_s) total += s.rest_s * (reps - 1)
+  }
+  return Math.round(total / 60)
+}
+export function fmtDuration(min: number): string {
+  if (min <= 0) return '—'
+  if (min < 60) return `${min} 分`
+  return `${Math.floor(min / 60)} 時 ${min % 60} 分`
 }

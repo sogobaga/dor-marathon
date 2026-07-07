@@ -175,7 +175,7 @@ func aerobicRun(z Zones, km float64) WO {
 	return WO{fmt.Sprintf("有氧跑 %.1fK", km), "有氧", "aerobic", []Seg{{Kind: "steady", Label: "有氧跑", TargetType: "distance", Target: int(km * 1000), PaceFast: z.E.F, PaceSlow: z.E.S, Reps: 1}}, 40}
 }
 func longRun(z Zones, km float64) WO {
-	return WO{fmt.Sprintf("長跑 %.1fK", km), "長跑", "long", []Seg{{Kind: "steady", Label: "長跑", TargetType: "distance", Target: int(km * 1000), PaceFast: z.E.F, PaceSlow: z.E.S, Reps: 1}}, 85}
+	return WO{fmt.Sprintf("長距離 LSD %.1fK", km), "長距離", "long", []Seg{{Kind: "steady", Label: "長距離 LSD", TargetType: "distance", Target: int(km * 1000), PaceFast: z.E.F, PaceSlow: z.E.S, Reps: 1}}, 85}
 }
 func tempoRun(z Zones, tempoKm float64) WO {
 	segs := []Seg{warm(z, 1500), {Kind: "work", Label: "節奏跑", TargetType: "distance", Target: int(tempoKm * 1000), PaceFast: z.T.F, PaceSlow: z.T.S, Reps: 1}, cool(z, 1000)}
@@ -186,7 +186,7 @@ func intervalRun(z Zones, distM, reps, restS int) WO {
 	if distM <= 600 {
 		band = z.R
 	}
-	segs := []Seg{warm(z, 2000), {Kind: "work", Label: fmt.Sprintf("%dm 間歇", distM), TargetType: "distance", Target: distM, PaceFast: band.F, PaceSlow: band.S, Reps: reps, RestS: restS}, cool(z, 1500)}
+	segs := []Seg{warm(z, 2000), {Kind: "work", Label: "間歇", TargetType: "distance", Target: distM, PaceFast: band.F, PaceSlow: band.S, Reps: reps, RestS: restS}, cool(z, 1500)}
 	return WO{fmt.Sprintf("%dm 間歇 ×%d", distM, reps), "間歇", "interval", segs, 70}
 }
 func progressionRun(z Zones, km float64) WO {
@@ -200,8 +200,8 @@ func progressionRun(z Zones, km float64) WO {
 func fartlek(z Zones, surges int) WO {
 	segs := []Seg{warm(z, 1500)}
 	for i := 0; i < surges; i++ {
-		segs = append(segs, Seg{Kind: "surge", Label: "加速 1 分", TargetType: "time", Target: 60, PaceFast: z.I.F, PaceSlow: z.I.S, Reps: 1})
-		segs = append(segs, Seg{Kind: "recovery", Label: "緩跑 1 分", TargetType: "time", Target: 60, PaceFast: z.E.F, PaceSlow: z.E.S, Reps: 1})
+		segs = append(segs, Seg{Kind: "surge", Label: "加速", TargetType: "time", Target: 60, PaceFast: z.I.F, PaceSlow: z.I.S, Reps: 1})
+		segs = append(segs, Seg{Kind: "recovery", Label: "緩跑", TargetType: "time", Target: 60, PaceFast: z.E.F, PaceSlow: z.E.S, Reps: 1})
 	}
 	segs = append(segs, cool(z, 1000))
 	return WO{fmt.Sprintf("法特雷克變速 ×%d", surges), "變速", "fartlek", segs, 65}
@@ -209,8 +209,8 @@ func fartlek(z Zones, surges int) WO {
 func variableRun(z Zones, reps int) WO {
 	segs := []Seg{warm(z, 1500)}
 	for i := 0; i < reps; i++ {
-		segs = append(segs, Seg{Kind: "surge", Label: "目標配速 400m", TargetType: "distance", Target: 400, PaceFast: z.T.F, PaceSlow: z.T.S, Reps: 1})
-		segs = append(segs, Seg{Kind: "recovery", Label: "放慢 200m", TargetType: "distance", Target: 200, PaceFast: z.RC.F, PaceSlow: z.RC.S, Reps: 1})
+		segs = append(segs, Seg{Kind: "surge", Label: "目標配速", TargetType: "distance", Target: 400, PaceFast: z.T.F, PaceSlow: z.T.S, Reps: 1})
+		segs = append(segs, Seg{Kind: "recovery", Label: "放慢", TargetType: "distance", Target: 200, PaceFast: z.RC.F, PaceSlow: z.RC.S, Reps: 1})
 	}
 	segs = append(segs, cool(z, 1000))
 	return WO{fmt.Sprintf("變速跑 ×%d", reps), "變速", "variable", segs, 65}
@@ -223,7 +223,7 @@ func pyramid(z Zones) WO {
 		if d <= 400 {
 			band = z.R
 		}
-		segs = append(segs, Seg{Kind: "work", Label: fmt.Sprintf("%dm", d), TargetType: "distance", Target: d, PaceFast: band.F, PaceSlow: band.S, Reps: 1})
+		segs = append(segs, Seg{Kind: "work", Label: "衝刺", TargetType: "distance", Target: d, PaceFast: band.F, PaceSlow: band.S, Reps: 1})
 		if i < len(ladder)-1 {
 			segs = append(segs, Seg{Kind: "rest", Label: "組間休息", TargetType: "time", Target: 90, Reps: 1})
 		}
@@ -232,7 +232,7 @@ func pyramid(z Zones) WO {
 	return WO{"金字塔間歇 200→800→200", "金字塔", "pyramid", segs, 75}
 }
 func norwegian(z Zones) WO {
-	segs := []Seg{warm(z, 1500), {Kind: "work", Label: "4 分快", TargetType: "time", Target: 240, PaceFast: z.I.F, PaceSlow: z.I.S, Reps: 4, RestS: 180}, cool(z, 1500)}
+	segs := []Seg{warm(z, 1500), {Kind: "work", Label: "快跑", TargetType: "time", Target: 240, PaceFast: z.I.F, PaceSlow: z.I.S, Reps: 4, RestS: 180}, cool(z, 1500)}
 	return WO{"挪威 4×4（4 分快／3 分緩）", "挪威4x4", "norwegian4x4", segs, 75}
 }
 
