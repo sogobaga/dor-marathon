@@ -725,6 +725,14 @@ export default function TrackPage() {
     } catch (e: any) { setErr(e?.message || '挑戰失敗') }
     finally { setPanelBusy('') }
   }
+  // 放棄承接中的課表（已花的 DP 不退還）→ 解鎖面板、可改挑其他課表
+  async function abandonActive(taskId: string) {
+    setPanelBusy(taskId)
+    try { await withUserAuth((t) => personalTasksApi.abandon(t, taskId)) } catch (e: any) { setErr(e?.message || '放棄失敗') }
+    setWorkout(null); setWoPhase('idle')
+    await loadPanel()
+    setPanelBusy('')
+  }
 
   function startWorkout() {
     if (!workout) return
@@ -1023,7 +1031,7 @@ export default function TrackPage() {
             {status === 'idle' && woPhase === 'idle' && panel && (() => {
               const ac = panel.active_card
               const list = ac && !panel.cards.some((c) => c.task_id === ac.task_id) ? [ac, ...panel.cards] : panel.cards
-              return <TrackTaskPanel cards={list} activeTaskId={workout?.taskId ?? ac?.task_id ?? null} busy={panelBusy} onChallenge={challengeCard} />
+              return <TrackTaskPanel cards={list} activeTaskId={workout?.taskId ?? ac?.task_id ?? null} busy={panelBusy} onChallenge={challengeCard} onAbandon={abandonActive} />
             })()}
             {(woPhase === 'running' || woPhase === 'done') && workout && (() => {
               const stepDist = Math.max(0, distRef.current - woStepStartRef.current.dist)
