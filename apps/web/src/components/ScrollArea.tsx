@@ -20,7 +20,8 @@ export default function ScrollArea({
         minHeight: 0,
         overflowY: 'scroll',
         WebkitOverflowScrolling: 'touch',
-        overscrollBehaviorY: 'auto',
+        overscrollBehavior: 'contain', // 防捲動外溢：在 modal 內滑動不會帶到背景頁（元素內回彈仍保留）
+        touchAction: 'pan-y',
         ...style,
       }}
     >

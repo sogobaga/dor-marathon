@@ -359,7 +359,7 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '82dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', borderRadius: '18px 18px 0 0', border: '1px solid var(--line-2)', borderBottom: 'none' }}>
-        <div style={{ padding: '16px 18px 10px', borderBottom: '1px solid var(--line)' }}>
+        <div style={{ padding: '16px 18px 10px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)' }}>{task.title || '任務'} · 里程貢獻榜</div>
@@ -397,7 +397,7 @@ function RangeDetailModal({ race, task, onClose }: { race: Race; task: TaskProgr
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '82dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', borderRadius: '18px 18px 0 0', border: '1px solid var(--line-2)', borderBottom: 'none' }}>
-        <div style={{ padding: '16px 18px 10px', borderBottom: '1px solid var(--line)' }}>
+        <div style={{ padding: '16px 18px 10px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)' }}>{task.title || '任務'} · 達標明細</div>
