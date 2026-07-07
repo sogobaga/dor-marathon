@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom'
 import { racesApi, METRIC_BY_KEY, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { useScrollLock } from '@/lib/useScrollLock'
+import { useSheetDismiss } from '@/lib/useSheetDismiss'
 import { renderCertificate, downloadDataURL } from '@/lib/certificate'
 import ExpSettlementModal from './ExpSettlementModal'
 import { BrochureBody } from './BrochureScreen'
@@ -342,6 +343,7 @@ function TaskRow({ t, onClick }: { t: TaskProgress; onClick?: () => void }) {
 // 任務貢獻明細彈窗：前 20 名里程貢獻 + 自己（即使在 20 名外）
 function TaskContributorsModal({ race, task, onClose }: { race: Race; task: TaskProgress; onClose: () => void }) {
   useScrollLock() // 開啟時鎖背景捲動 → 只滑得動本彈窗清單
+  const { panelRef, dy } = useSheetDismiss(onClose) // 下滑關閉 → 短清單也有反應
   const token = getUserToken() || undefined
   const { data, isLoading, error } = useSWR(['contrib', race.id, task.id], () => racesApi.taskContributors(race.id, task.id!, token))
   const c: TaskContributors | undefined = data?.contributors
@@ -361,8 +363,9 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
   )
   const content = (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '82dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', borderRadius: '18px 18px 0 0', border: '1px solid var(--line-2)', borderBottom: 'none' }}>
-        <div style={{ padding: '16px 18px 10px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
+      <div ref={panelRef} onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '82dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', borderRadius: '18px 18px 0 0', border: '1px solid var(--line-2)', borderBottom: 'none', transform: dy ? `translateY(${dy}px)` : undefined, transition: dy ? 'none' : 'transform .22s ease', willChange: 'transform' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0 2px', flexShrink: 0 }}><div style={{ width: 38, height: 4, borderRadius: 999, background: 'var(--line-2)' }} /></div>
+        <div style={{ padding: '4px 18px 10px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)' }}>{task.title || '任務'} · 里程貢獻榜</div>
@@ -394,6 +397,7 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
 // 區間任務達標明細：點進去看自己哪幾公里/哪幾筆落在配速（或心率）區間
 function RangeDetailModal({ race, task, onClose }: { race: Race; task: TaskProgress; onClose: () => void }) {
   useScrollLock() // 開啟時鎖背景捲動 → 只滑得動本彈窗清單
+  const { panelRef, dy } = useSheetDismiss(onClose) // 下滑關閉 → 短清單也有反應
   const token = getUserToken() || undefined
   const { data, isLoading, error } = useSWR(['rangedetail', race.id, task.id], () => racesApi.taskRangeDetail(race.id, task.id!, token))
   const d: TaskRangeDetail | undefined = data?.detail
@@ -401,8 +405,9 @@ function RangeDetailModal({ race, task, onClose }: { race: Race; task: TaskProgr
   const rangeText = d ? (isPace ? `${paceFmt(d.range_lo)}–${paceFmt(d.range_hi)} /km` : `${d.range_lo}–${d.range_hi}`) : ''
   const content = (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '82dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', borderRadius: '18px 18px 0 0', border: '1px solid var(--line-2)', borderBottom: 'none' }}>
-        <div style={{ padding: '16px 18px 10px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
+      <div ref={panelRef} onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '82dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', borderRadius: '18px 18px 0 0', border: '1px solid var(--line-2)', borderBottom: 'none', transform: dy ? `translateY(${dy}px)` : undefined, transition: dy ? 'none' : 'transform .22s ease', willChange: 'transform' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0 2px', flexShrink: 0 }}><div style={{ width: 38, height: 4, borderRadius: 999, background: 'var(--line-2)' }} /></div>
+        <div style={{ padding: '4px 18px 10px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)' }}>{task.title || '任務'} · 達標明細</div>
