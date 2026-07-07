@@ -51,6 +51,7 @@ export default function TrackPage() {
   const [anomalies, setAnomalies] = useState(0)
   const [warn, setWarn] = useState('')
   const [err, setErr] = useState('')
+  const [errFade, setErrFade] = useState(false) // 提示訊息淡出中
   const [result, setResult] = useState<GpsRunResult | null>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -108,6 +109,7 @@ export default function TrackPage() {
   const markRef = useRef<any>(null)
   const cpLayerRef = useRef<any>(null) // 地圖上的打卡點圖層
   const warnTimer = useRef<any>(null)
+  const errTimerRef = useRef<any>(null) // 「軌跡太短」等暫時訊息的自動淡出計時
   const statusRef = useRef(status)
   statusRef.current = status
   const lastAccRef = useRef<GpsPoint | null>(null) // 上一個「採納」的點（過濾原地抖動用）
@@ -572,7 +574,7 @@ export default function TrackPage() {
   }
 
   function start() {
-    setErr('')
+    setErr(''); clearTimeout(errTimerRef.current); setErrFade(false)
     if (!navigator.geolocation) { setErr('此裝置/瀏覽器不支援定位'); return }
     // 關掉進頁面的 GPS 預熱偵測，避免與正式追蹤重複回報
     if (warmWatchRef.current != null) { try { navigator.geolocation.clearWatch(warmWatchRef.current) } catch { /* ignore */ } warmWatchRef.current = null }
@@ -620,6 +622,7 @@ export default function TrackPage() {
     clearInterval(timerRef.current)
     clearInterval(evalTimerRef.current)
     clearInterval(pingTimerRef.current)
+    clearTimeout(errTimerRef.current)
     for (const w of wssRef.current) { try { w.close() } catch { /* ignore */ } }
     wssRef.current = []; raceIdsRef.current = []
     try { wakeRef.current?.release() } catch { /* ignore */ }
@@ -628,6 +631,18 @@ export default function TrackPage() {
   }, [])
 
   // 按「結束並上傳」：只有「正式進行中」事件才跳確認（損失規避）；演出中（未接受）則靜默放棄後直接結束
+  // 提示訊息：X 手動關閉；「軌跡太短」等暫時訊息顯示約 1 秒後自動淡出（避免擋住下方面板操作）
+  function dismissWarn() { clearTimeout(warnTimer.current); setWarn('') }
+  function dismissErr() { clearTimeout(errTimerRef.current); setErrFade(false); setErr('') }
+  function flashErr(msg: string) {
+    clearTimeout(errTimerRef.current)
+    setErrFade(false); setErr(msg)
+    errTimerRef.current = setTimeout(() => {
+      setErrFade(true) // 開始淡出
+      errTimerRef.current = setTimeout(() => { setErr(''); setErrFade(false) }, 550)
+    }, 1000)
+  }
+
   function requestFinish() {
     if (woActiveRef.current) { woActiveRef.current = false; setWoPhase('idle') } // 課表中途結束：停止逐段驅動（挑戰仍保留，可再進來續挑）
     const ae = activeEventRef.current
@@ -666,7 +681,7 @@ export default function TrackPage() {
     cleanup()
     setStatus('done')
     const pts = pointsRef.current
-    if (pts.length < 2) { setErr('軌跡太短，未上傳'); localStorage.removeItem(LS_KEY); return }
+    if (pts.length < 2) { flashErr('軌跡太短，未上傳'); localStorage.removeItem(LS_KEY); return }
     const token = getUserToken()
     if (!token) { setErr('未登入，無法上傳'); return }
     setUploading(true)
@@ -917,8 +932,18 @@ export default function TrackPage() {
         {/* GPS 弱訊號警告 / 錯誤：浮在面板之上，任何停靠狀態都看得到（不隨面板收合而被藏起來） */}
         {(warn || err) && (
           <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 900, padding: '10px 12px 0', pointerEvents: 'none' }}>
-            {warn && <div style={{ background: '#b42020', color: '#fff', borderRadius: 10, padding: '10px 12px', fontSize: 13, marginBottom: 8, wordBreak: 'break-word', boxShadow: '0 4px 16px rgba(0,0,0,.4)', pointerEvents: 'auto' }}>⚠️ {warn}</div>}
-            {err && <div style={{ background: '#b42020', color: '#fff', borderRadius: 10, padding: '10px 12px', fontSize: 13, wordBreak: 'break-word', boxShadow: '0 4px 16px rgba(0,0,0,.4)', pointerEvents: 'auto' }}>{err}</div>}
+            {warn && (
+              <div style={{ background: '#b42020', color: '#fff', borderRadius: 10, padding: '9px 8px 9px 12px', fontSize: 13, marginBottom: 8, boxShadow: '0 4px 16px rgba(0,0,0,.4)', pointerEvents: 'auto', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>⚠️ {warn}</span>
+                <button onClick={dismissWarn} aria-label="關閉" style={dismissBtn}>✕</button>
+              </div>
+            )}
+            {err && (
+              <div style={{ background: '#b42020', color: '#fff', borderRadius: 10, padding: '9px 8px 9px 12px', fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,.4)', pointerEvents: 'auto', display: 'flex', alignItems: 'flex-start', gap: 8, opacity: errFade ? 0 : 1, transition: 'opacity .5s ease' }}>
+                <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{err}</span>
+                <button onClick={dismissErr} aria-label="關閉" style={dismissBtn}>✕</button>
+              </div>
+            )}
           </div>
         )}
         {activeEvent?.phase === 'active' && (
@@ -1134,3 +1159,4 @@ function Big({ label, value, unit, warn, compact }: { label: string; value: stri
 }
 
 const btn: React.CSSProperties = { width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, cursor: 'pointer' }
+const dismissBtn: React.CSSProperties = { background: 'rgba(255,255,255,.18)', border: 'none', color: '#fff', fontSize: 14, lineHeight: 1, cursor: 'pointer', padding: '4px 9px', borderRadius: 8, flexShrink: 0, fontWeight: 700 }
