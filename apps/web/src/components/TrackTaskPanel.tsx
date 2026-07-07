@@ -57,7 +57,8 @@ export default function TrackTaskPanel({ cards, activeTaskId, busy, onChallenge,
                   confirmAbandon ? (
                     <div style={{ marginTop: 10 }}>
                       <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', lineHeight: 1.6, marginBottom: 8 }}>
-                        放棄將結束此挑戰、可改挑其他課表。{dpSpent && <span style={{ color: 'var(--hunt)', fontWeight: 800 }}>已花費的 {c.retry_dp_cost} DP 不退還。</span>}
+                        放棄將結束此挑戰、可改挑其他課表。
+                        {dpSpent && <div style={{ color: 'var(--hunt)', fontWeight: 800, marginTop: 4 }}>已花費的 {c.retry_dp_cost} DP 不退還。</div>}
                       </div>
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button onClick={() => onAbandon(c.task_id)} disabled={busy === c.task_id} style={{ ...solidBtn, background: 'var(--hunt)', color: '#fff', flex: 1, opacity: busy === c.task_id ? 0.6 : 1 }}>{busy === c.task_id ? '放棄中…' : '確定放棄'}</button>

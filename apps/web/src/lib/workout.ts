@@ -12,8 +12,10 @@ export type WoStep = {
 }
 
 const KIND_LABEL: Record<string, string> = {
-  warmup: '暖身', work: '主課', rest: '組間休息', recovery: '恢復', cooldown: '緩和', steady: '穩定跑',
+  warmup: '暖身', work: '主課', rest: '組間休息', recovery: '恢復', cooldown: '緩和', steady: '穩定跑', surge: '加速',
 }
+// 列入配速評星的分段類型（有配速區間才評）：主課/穩定跑/加速；暖身/緩和/組間休/恢復不評。
+const GRADED_KINDS = new Set(['work', 'steady', 'surge'])
 
 export function kindLabel(kind: string): string { return KIND_LABEL[kind] || kind }
 
@@ -31,7 +33,7 @@ export function expandSegments(segs: WorkoutSegment[] | null | undefined): WoSte
         target: s.target,
         paceFast: s.pace_fast_s,
         paceSlow: s.pace_slow_s,
-        graded: s.kind === 'work',
+        graded: GRADED_KINDS.has(s.kind) && !!s.pace_slow_s,
       })
       if (s.rest_s && s.rest_s > 0 && i < reps) {
         out.push({ kind: 'rest', label: '組間休息', targetType: 'time', target: s.rest_s, graded: false })
