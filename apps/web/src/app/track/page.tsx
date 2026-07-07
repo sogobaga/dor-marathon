@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence, type MileageConfig } from '@/lib/api'
+import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence, type MileageConfig, type PanelCard } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
+import TrackTaskPanel from '@/components/TrackTaskPanel'
 import { expandSegments, paceInBand, type WoStep } from '@/lib/workout'
 import { loadLeaflet } from '@/lib/leaflet'
 import { unlockAudio, playEventAlarm, playEventComplete, vibrate, setMuted as sfxSetMuted, isMuted } from '@/lib/sfx'
@@ -90,6 +91,8 @@ export default function TrackPage() {
   const woStepStartRef = useRef<{ dist: number; time: number }>({ dist: 0, time: 0 }) // 目前分段起點（距離 m / 時間 ms）
   const woResultsRef = useRef<{ inBand: number; total: number; detail: any[] }>({ inBand: 0, total: 0, detail: [] })
   const woActiveRef = useRef(false) // 課表執行中：跑步引擎暫停隨機事件
+  const [panel, setPanel] = useState<{ cards: PanelCard[]; active_card: PanelCard | null } | null>(null) // 任務面板（各階段可挑戰課表）
+  const [panelBusy, setPanelBusy] = useState('') // 面板挑戰處理中的 task_id
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -680,17 +683,33 @@ export default function TrackPage() {
     } finally { setUploading(false) }
   }
 
-  // ── 個人任務「結構化課表」：載入 / 開始 / 逐段驅動 / 完成 ──
-  // 進頁抓一次：若有進行中的「課表(workout)」挑戰，載入分段序列，進入就緒狀態（按鈕變「開始課表挑戰」）
-  useEffect(() => {
+  // ── 個人任務「結構化課表」：面板載入 / 挑戰 / 開始 / 逐段驅動 / 完成 ──
+  // 載入任務面板（各階段前沿課表卡 + 進行中挑戰卡）。有進行中挑戰 → 載入分段序列進入就緒。
+  const loadPanel = useCallback(async () => {
     if (!getUserToken()) return
-    withUserAuth((t) => personalTasksApi.status(t)).then((r) => {
-      const ch = r.challenge
-      if (ch && ch.kind === 'workout' && ch.segments && ch.segments.length) {
-        setWorkout({ taskId: ch.task_id, title: ch.title || '課表挑戰', steps: expandSegments(ch.segments) })
+    try {
+      const r = await withUserAuth((t) => personalTasksApi.trackPanel(t))
+      setPanel(r)
+      const ac = r.active_card
+      if (ac && ac.segments && ac.segments.length) {
+        setWorkout({ taskId: ac.task_id, title: ac.title || '課表挑戰', steps: expandSegments(ac.segments) })
+      } else if (!woActiveRef.current) {
+        setWorkout(null)
       }
-    }).catch(() => { /* ignore */ })
+    } catch { /* ignore */ }
   }, [])
+  useEffect(() => { loadPanel() }, [loadPanel])
+
+  // 面板上挑戰某課表卡 → 挑戰(第一次免費/重挑扣DP) → 直接用卡片 segments 進就緒(鎖定該卡)
+  async function challengeCard(c: PanelCard) {
+    setPanelBusy(c.task_id); setErr('')
+    try {
+      await withUserAuth((t) => personalTasksApi.challenge(t, c.task_id))
+      setWorkout({ taskId: c.task_id, title: c.title, steps: expandSegments(c.segments) })
+      await loadPanel()
+    } catch (e: any) { setErr(e?.message || '挑戰失敗') }
+    finally { setPanelBusy('') }
+  }
 
   function startWorkout() {
     if (!workout) return
@@ -936,14 +955,12 @@ export default function TrackPage() {
           )
         })()}
 
-        {/* 課表就緒（未開始）：提示按「開始課表挑戰」 */}
-        {status === 'idle' && workout && woPhase === 'idle' && (
-          <div data-skin="default" style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1050, margin: '10px 12px 0', background: '#0b0e13', border: '1px solid var(--fug)', borderRadius: 12, padding: '12px 14px', boxShadow: '0 6px 24px rgba(0,0,0,.5)' }}>
-            <div style={{ fontSize: 11, letterSpacing: '.15em', color: 'var(--fug)', fontWeight: 800 }}>課表已就緒</div>
-            <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)', marginTop: 3 }}>{workout.title}</div>
-            <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 5, lineHeight: 1.6 }}>共 {workout.steps.length} 段 · 按下方「開始課表挑戰」→ 321 倒數後開始，追蹤頁會顯示每段目標與進度。</div>
-          </div>
-        )}
+        {/* 個人任務面板：各階段可挑戰課表，左右滑動切換 + ●○○；挑戰中鎖定該卡（重挑的過去任務卡置頂） */}
+        {status === 'idle' && woPhase === 'idle' && panel && (() => {
+          const ac = panel.active_card
+          const list = ac && !panel.cards.some((c) => c.task_id === ac.task_id) ? [ac, ...panel.cards] : panel.cards
+          return <TrackTaskPanel cards={list} activeTaskId={workout?.taskId ?? ac?.task_id ?? null} busy={panelBusy} onChallenge={challengeCard} />
+        })()}
         {/* 課表執行 HUD（進行中 / 完成） */}
         {(woPhase === 'running' || woPhase === 'done') && workout && (() => {
           const stepDist = Math.max(0, distRef.current - woStepStartRef.current.dist)
@@ -953,7 +970,7 @@ export default function TrackPage() {
             <WorkoutHud title={workout.title} steps={workout.steps} stepIdx={woStepIdx}
               stepDist={stepDist} stepTime={stepTime} livePaceS={livePace} hits={woHits}
               phase={woPhase === 'done' ? 'done' : 'running'} result={woResult}
-              onClose={() => { setWoPhase('idle'); setWorkout(null) }} />
+              onClose={() => { setWoPhase('idle'); loadPanel() }} />
           )
         })()}
 

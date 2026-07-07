@@ -63,3 +63,13 @@ export function paceInBand(avgPaceS: number, step: WoStep): boolean {
   if (!step.paceSlow) return true
   return avgPaceS > 0 && avgPaceS <= step.paceSlow * 1.05
 }
+
+// 分段課表摘要：「暖身 2K → 400m 間歇 ×6 → 緩和 2K」
+export function segSummary(segs?: WorkoutSegment[] | null): string {
+  if (!segs || !segs.length) return ''
+  return segs.map((s) => {
+    const d = s.target_type === 'distance' ? (s.target >= 1000 ? `${s.target / 1000}K` : `${s.target}m`) : `${Math.round(s.target / 60) || Math.round(s.target)}${s.target >= 60 ? '分' : '秒'}`
+    const reps = s.reps && s.reps > 1 ? ` ×${s.reps}` : ''
+    return `${s.label || s.kind} ${d}${reps}`
+  }).join(' → ')
+}

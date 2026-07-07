@@ -152,6 +152,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/", h.ListPlans)                      // GET /personal-tasks — 計畫摘要 + 我的完成數
 	r.Get("/plans/{code}", h.PlanDetail)         // GET /personal-tasks/plans/P01 — 計畫 + 任務 + 我的進度/挑戰狀態
 	r.Post("/status", h.Status)                  // POST 進行中挑戰的即時狀態（開頁/輪詢/跑步後呼叫）
+	r.Post("/track-panel", h.TrackPanel)         // POST /track 任務面板：各計畫前沿 workout 卡 + 進行中挑戰卡
 	r.Post("/tasks/{id}/challenge", h.Challenge) // POST 開始挑戰（第一次免費、之後扣 DP）
 	r.Post("/tasks/{id}/abandon", h.Abandon)     // POST 放棄 → 判失敗、可重挑
 	r.Post("/tasks/{id}/complete", h.Complete)   // POST 完成（僅達標可完成；發星 + 獎勵）
@@ -211,20 +212,93 @@ func (h *Handler) PlanDetail(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"plan": p, "tasks": tasks})
 }
 
-// isFrontierLocked 全域順序鏈：若目標任務尚未完成(stars=0)且前面（stage_order, code, day 較小）還有未完成任務 → 鎖住。
-// 已完成過的任務（stars>0，重挑爬星）不受鏈限制。
+// isFrontierLocked 每計畫獨立鏈：若目標任務尚未完成(stars=0)且「同計畫」前面幾天還有未完成任務 → 鎖住。
+// 計畫之間彼此獨立（可同時進行不同階段任務，於 /track 面板左右滑動切換）；已完成過的任務(stars>0，重挑爬星)不受限。
 func (h *Handler) isFrontierLocked(ctx context.Context, uid, taskID string) (bool, error) {
 	var priorLeft int
 	err := h.db.QueryRow(ctx, `
 		SELECT COUNT(*)
-		FROM personal_tasks t JOIN personal_plans pl ON pl.id=t.plan_id
-		JOIN personal_tasks tt ON tt.id=$2
-		JOIN personal_plans pp ON pp.id=tt.plan_id
-		WHERE t.enabled AND pl.enabled
-		  AND (pl.stage_order, pl.code, t.day) < (pp.stage_order, pp.code, tt.day)
+		FROM personal_tasks t
+		JOIN personal_tasks tt ON tt.id=$2 AND tt.plan_id = t.plan_id
+		WHERE t.enabled AND t.day < tt.day
 		  AND NOT EXISTS (SELECT 1 FROM personal_task_progress pr WHERE pr.user_id=$1 AND pr.task_id=t.id AND pr.stars>0)`,
 		uid, taskID).Scan(&priorLeft)
 	return priorLeft > 0, err
+}
+
+// PanelCard /track 任務面板的一張卡：某計畫「目前可挑戰的結構化課表任務」。
+type PanelCard struct {
+	PlanCode    string          `json:"plan_code"`
+	PlanName    string          `json:"plan_name"`
+	StageOrder  int             `json:"stage_order"`
+	TaskID      string          `json:"task_id"`
+	Day         int             `json:"day"`
+	Title       string          `json:"title"`
+	WorkoutKind string          `json:"workout_kind"`
+	Segments    json.RawMessage `json:"segments"`
+	Stars       int             `json:"stars"`
+	Attempts    int             `json:"attempts"`
+	RetryDpCost int             `json:"retry_dp_cost"`
+	Active      bool            `json:"active"`
+}
+
+const panelCols = `pl.code, pl.name, pl.stage_order, t.id, t.day, t.title, t.workout_kind, t.segments,
+	COALESCE(pr.stars,0), COALESCE(pr.attempts,0), t.retry_dp_cost`
+
+func scanPanelCard(row interface{ Scan(...any) error }, active bool) (PanelCard, error) {
+	var c PanelCard
+	err := row.Scan(&c.PlanCode, &c.PlanName, &c.StageOrder, &c.TaskID, &c.Day, &c.Title, &c.WorkoutKind, &c.Segments, &c.Stars, &c.Attempts, &c.RetryDpCost)
+	c.Active = active
+	return c, err
+}
+
+// TrackPanel POST /personal-tasks/track-panel — /track 面板資料：各計畫的「前沿 workout 任務」+ 進行中挑戰卡。
+func (h *Handler) TrackPanel(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	// 各計畫第一個未完成日(stars=0)，且該任務為結構化課表(workout_kind<>'')→ 一張卡
+	rows, err := h.db.Query(r.Context(), `
+		WITH frontier AS (
+			SELECT t.plan_id, MIN(t.day) AS day
+			FROM personal_tasks t
+			LEFT JOIN personal_task_progress pr ON pr.task_id=t.id AND pr.user_id=$1
+			WHERE t.enabled AND COALESCE(pr.stars,0)=0
+			GROUP BY t.plan_id
+		)
+		SELECT `+panelCols+`
+		FROM frontier f
+		JOIN personal_tasks t ON t.plan_id=f.plan_id AND t.day=f.day AND t.enabled
+		JOIN personal_plans pl ON pl.id=t.plan_id
+		LEFT JOIN personal_task_progress pr ON pr.task_id=t.id AND pr.user_id=$1
+		WHERE pl.enabled AND t.workout_kind<>''
+		ORDER BY pl.stage_order, pl.code`, uid)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer rows.Close()
+	cards := []PanelCard{}
+	for rows.Next() {
+		if c, err := scanPanelCard(rows, false); err == nil {
+			cards = append(cards, c)
+		}
+	}
+	rows.Close()
+	// 進行中挑戰的 workout 任務（可能是重挑已完成的過去任務，不在 frontier 內）→ 面板置頂鎖定
+	var active *PanelCard
+	if c, err := scanPanelCard(h.db.QueryRow(r.Context(), `
+		SELECT `+panelCols+`
+		FROM personal_task_progress pr
+		JOIN personal_tasks t ON t.id=pr.task_id
+		JOIN personal_plans pl ON pl.id=t.plan_id
+		WHERE pr.user_id=$1 AND pr.active AND t.workout_kind<>''
+		LIMIT 1`, uid), true); err == nil {
+		active = &c
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"cards": cards, "active_card": active})
 }
 
 // Challenge POST /personal-tasks/tasks/{id}/challenge — 開始挑戰。

@@ -1189,9 +1189,20 @@ export interface PersonalChallenge {
   segments: WorkoutSegment[] | null // workout：分段課表（給 /track 驅動）
 }
 
+// /track 任務面板卡：某計畫「目前可挑戰的結構化課表任務」
+export interface PanelCard {
+  plan_code: string; plan_name: string; stage_order: number
+  task_id: string; day: number; title: string; workout_kind: string
+  segments: WorkoutSegment[] | null
+  stars: number; attempts: number; retry_dp_cost: number; active: boolean
+}
+
 export const personalTasksApi = {
   listPlans: (token: string) =>
     request<{ plans: PersonalPlan[] }>('/personal-tasks', { headers: withAuth(token) }),
+  // /track 面板：各計畫前沿 workout 卡 + 進行中挑戰卡（可左右滑動切換階段）
+  trackPanel: (token: string) =>
+    request<{ cards: PanelCard[]; active_card: PanelCard | null }>('/personal-tasks/track-panel', { method: 'POST', headers: withAuth(token) }),
   planDetail: (token: string, code: string) =>
     request<{ plan: PersonalPlan; tasks: PersonalTask[] }>(`/personal-tasks/plans/${code}`, { headers: withAuth(token) }),
   // 進行中挑戰的即時狀態（開頁/輪詢/跑步後呼叫）
