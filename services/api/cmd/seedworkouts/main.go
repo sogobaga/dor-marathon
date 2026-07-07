@@ -363,8 +363,8 @@ func main() {
 			if rDp < 1 {
 				rDp = 1
 			}
-			title := fmt.Sprintf("Day %d · %s", day, wo.Title)
-			batch.Queue(taskSQL, planID, day, (day+6)/7, title, wo.Title, wo.WType, estKm(wo.Segs), estMin(wo.Segs),
+			// title 不含「Day N ·」——前台面板/卡片已自帶 Day {day}，避免顯示兩次
+			batch.Queue(taskSQL, planID, day, (day+6)/7, wo.Title, wo.Title, wo.WType, estKm(wo.Segs), estMin(wo.Segs),
 				intensityByKind[wo.Kind], "完成整份課表；主課配速達成度決定星數", rExp, rDp, wo.Kind, segJSON)
 			nTasks++
 		}
