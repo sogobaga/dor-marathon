@@ -655,7 +655,7 @@ export default function TrackPage() {
 
   useEffect(() => { setMuted(isMuted()) }, [])
   // 依狀態預設面板停靠：完成全展（看結果）、其餘半展（同時看得到地圖與數據/警告/打卡，可再上拉看更多或下拉看更多地圖）
-  useEffect(() => { sheet.setSnap(status === 'done' ? 'full' : 'half') }, [status]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { sheet.setSnap(status === 'done' || woPhase === 'running' || woPhase === 'done' ? 'full' : 'half') }, [status, woPhase]) // eslint-disable-line react-hooks/exhaustive-deps
   // 面板高度變動 → 讓 Leaflet 重算尺寸（避免地圖灰塊/破圖）
   useEffect(() => { if (mapReady && mapRef.current) { try { mapRef.current.invalidateSize() } catch { /* ignore */ } } }, [mapReady, sheet.H])
   // 載入效果覆寫（正式圖片/音檔）：圖片給互動層、音效交給 sfx 解碼
@@ -955,25 +955,6 @@ export default function TrackPage() {
           )
         })()}
 
-        {/* 個人任務面板：各階段可挑戰課表，左右滑動切換 + ●○○；挑戰中鎖定該卡（重挑的過去任務卡置頂） */}
-        {status === 'idle' && woPhase === 'idle' && panel && (() => {
-          const ac = panel.active_card
-          const list = ac && !panel.cards.some((c) => c.task_id === ac.task_id) ? [ac, ...panel.cards] : panel.cards
-          return <TrackTaskPanel cards={list} activeTaskId={workout?.taskId ?? ac?.task_id ?? null} busy={panelBusy} onChallenge={challengeCard} />
-        })()}
-        {/* 課表執行 HUD（進行中 / 完成） */}
-        {(woPhase === 'running' || woPhase === 'done') && workout && (() => {
-          const stepDist = Math.max(0, distRef.current - woStepStartRef.current.dist)
-          const stepTime = Math.max(0, (Date.now() - woStepStartRef.current.time) / 1000)
-          const livePace = stepDist > 5 ? stepTime / (stepDist / 1000) : 0
-          return (
-            <WorkoutHud title={workout.title} steps={workout.steps} stepIdx={woStepIdx}
-              stepDist={stepDist} stepTime={stepTime} livePaceS={livePace} hits={woHits}
-              phase={woPhase === 'done' ? 'done' : 'running'} result={woResult}
-              onClose={() => { setWoPhase('idle'); loadPanel() }} />
-          )
-        })()}
-
         {/* 資訊面板（可拖曳）：收合只露出把手＋四格數據，上拉展開看更多（打卡/分段/結果），下拉看更多地圖 */}
         <div style={{
           position: 'absolute', left: 0, right: 0, top: sheet.curY, bottom: 0,
@@ -1013,6 +994,23 @@ export default function TrackPage() {
           </div>
           {/* 可捲動內容（展開時顯示） */}
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '2px 16px calc(20px + var(--cta-safe, 0px))' }}>
+            {/* 個人任務課表（在滑動面板內，不蓋地圖）：閒置＝選課表(左右滑動輪播+●○○)；進行中/完成＝分段執行 HUD */}
+            {status === 'idle' && woPhase === 'idle' && panel && (() => {
+              const ac = panel.active_card
+              const list = ac && !panel.cards.some((c) => c.task_id === ac.task_id) ? [ac, ...panel.cards] : panel.cards
+              return <TrackTaskPanel cards={list} activeTaskId={workout?.taskId ?? ac?.task_id ?? null} busy={panelBusy} onChallenge={challengeCard} />
+            })()}
+            {(woPhase === 'running' || woPhase === 'done') && workout && (() => {
+              const stepDist = Math.max(0, distRef.current - woStepStartRef.current.dist)
+              const stepTime = Math.max(0, (Date.now() - woStepStartRef.current.time) / 1000)
+              const livePace = stepDist > 5 ? stepTime / (stepDist / 1000) : 0
+              return (
+                <WorkoutHud title={workout.title} steps={workout.steps} stepIdx={woStepIdx}
+                  stepDist={stepDist} stepTime={stepTime} livePaceS={livePace} hits={woHits}
+                  phase={woPhase === 'done' ? 'done' : 'running'} result={woResult}
+                  onClose={() => { setWoPhase('idle'); loadPanel() }} />
+              )
+            })()}
             {(status === 'idle' || status === 'tracking') && (
               curPos ? (
                 <div style={{ fontSize: 11.5, marginBottom: 10, color: curPos.acc > MAX_ACC ? 'var(--hunt)' : 'var(--tx-faint)' }}>

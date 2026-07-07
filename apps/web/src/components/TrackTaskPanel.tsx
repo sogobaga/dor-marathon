@@ -30,7 +30,8 @@ export default function TrackTaskPanel({ cards, activeTaskId, busy, onChallenge 
   if (!cards.length) return null
 
   return (
-    <div data-skin="default" style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1050, padding: '10px 12px 0' }}>
+    <div style={{ margin: '4px 0 12px' }}>
+      <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontWeight: 700, marginBottom: 7 }}>個人任務 · 課表挑戰{cards.length > 1 ? '（左右滑動切換階段）' : ''}</div>
       <div ref={scrollRef} onScroll={onScroll}
         style={{ display: 'flex', overflowX: locked ? 'hidden' : 'auto', scrollSnapType: 'x mandatory', WebkitOverflowScrolling: 'touch', touchAction: locked ? 'none' : 'pan-x', scrollbarWidth: 'none' }}>
         {cards.map((c) => {
@@ -38,7 +39,7 @@ export default function TrackTaskPanel({ cards, activeTaskId, busy, onChallenge 
           const dim = locked && !isActive
           return (
             <div key={c.task_id} style={{ flex: '0 0 100%', scrollSnapAlign: 'center', boxSizing: 'border-box', padding: '0 2px' }}>
-              <div style={{ background: '#0b0e13', border: `1px solid ${isActive ? 'var(--fug)' : 'var(--line-2)'}`, borderRadius: 14, padding: '12px 14px', boxShadow: '0 6px 24px rgba(0,0,0,.5)', opacity: dim ? 0.45 : 1, transition: 'opacity .2s' }}>
+              <div style={{ background: 'var(--bg-2)', border: `1px solid ${isActive ? 'var(--fug)' : 'var(--line-2)'}`, borderRadius: 14, padding: '12px 14px', opacity: dim ? 0.45 : 1, transition: 'opacity .2s' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
                   <span style={{ fontSize: 10.5, letterSpacing: '.12em', color: 'var(--fug)', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>階段 {c.stage_order} · {c.plan_name}</span>
                   <span style={{ fontSize: 11, color: c.stars > 0 ? 'var(--gold)' : 'var(--tx-faint)', letterSpacing: 1, flexShrink: 0 }}>{stars3(c.stars)}</span>
@@ -62,7 +63,7 @@ export default function TrackTaskPanel({ cards, activeTaskId, busy, onChallenge 
       {cards.length > 1 && (
         <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: 8 }}>
           {cards.map((c, i) => (
-            <span key={c.task_id} style={{ width: i === idx ? 18 : 7, height: 7, borderRadius: 999, background: i === idx ? 'var(--fug)' : 'rgba(255,255,255,.3)', transition: 'width .2s, background .2s' }} />
+            <span key={c.task_id} style={{ width: i === idx ? 18 : 7, height: 7, borderRadius: 999, background: i === idx ? 'var(--fug)' : 'var(--line-2)', transition: 'width .2s, background .2s' }} />
           ))}
         </div>
       )}

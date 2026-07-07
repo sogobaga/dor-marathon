@@ -23,7 +23,7 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
 
   if (phase === 'done') {
     return (
-      <div data-skin="default" style={wrap}>
+      <div style={wrap}>
         <div style={{ ...card, borderColor: 'var(--fug)' }}>
           <div style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--fug)', fontWeight: 800 }}>課表完成</div>
           <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--tx)', margin: '4px 0 8px' }}>{title}</div>
@@ -59,7 +59,7 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
   const accent = step.kind === 'work' ? 'var(--fug)' : step.kind === 'rest' ? 'var(--gold)' : 'var(--tx-dim)'
 
   return (
-    <div data-skin="default" style={wrap}>
+    <div style={wrap}>
       <div style={card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
           <span style={{ fontSize: 10.5, letterSpacing: '.15em', color: 'var(--tx-faint)', fontWeight: 800 }}>課表挑戰 · {title}</span>
@@ -72,7 +72,7 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
           {step.paceSlow ? <span style={{ fontSize: 12, color: 'var(--tx-faint)', marginLeft: 'auto' }}>目標 {paceBand(step.paceFast, step.paceSlow)}</span> : null}
         </div>
         {/* 分段進度 */}
-        <div style={{ height: 9, background: 'rgba(255,255,255,.12)', borderRadius: 999, overflow: 'hidden', marginTop: 8 }}>
+        <div style={{ height: 9, background: 'var(--line-2)', borderRadius: 999, overflow: 'hidden', marginTop: 8 }}>
           <div style={{ height: '100%', width: `${pct}%`, background: accent, borderRadius: 999, transition: 'width .35s' }} />
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginTop: 5, fontVariantNumeric: 'tabular-nums' }}>
@@ -84,7 +84,7 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
         {/* 全段進度點：work 已評分顯示達標(綠)/未達(紅)，其餘灰；目前段亮 */}
         <div style={{ display: 'flex', gap: 4, marginTop: 10, flexWrap: 'wrap' }}>
           {steps.map((s, i) => {
-            let bg = 'rgba(255,255,255,.16)'
+            let bg = 'var(--line-2)'
             if (i < stepIdx) bg = s.graded ? (hits[i] ? 'var(--fug)' : 'var(--hunt)') : 'rgba(255,255,255,.35)'
             else if (i === stepIdx) bg = accent
             return <span key={i} title={s.label} style={{ flex: s.kind === 'rest' ? '0 0 8px' : 1, height: 5, minWidth: 8, borderRadius: 999, background: bg, opacity: i === stepIdx ? 1 : 0.9 }} />
@@ -96,5 +96,5 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
   )
 }
 
-const wrap: React.CSSProperties = { position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1100, padding: '10px 12px 0' }
-const card: React.CSSProperties = { background: '#0b0e13', border: '1px solid var(--line-2)', borderRadius: 14, padding: '12px 14px', boxShadow: '0 8px 28px rgba(0,0,0,.5)', color: 'var(--tx)' }
+const wrap: React.CSSProperties = { margin: '4px 0 12px' }
+const card: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 14, padding: '12px 14px', color: 'var(--tx)' }
