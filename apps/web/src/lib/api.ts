@@ -1161,16 +1161,32 @@ export interface PersonalTask {
   challenge_tier: number      // 進行中挑戰的星級
   challenge_target_km: number // 進行中挑戰的縮放目標
   retry_dp_cost: number       // 重挑 DP 花費
+  workout_kind: string        // 非空＝結構化課表（帶到 GPS 追蹤跑）
+  segments: WorkoutSegment[]  // 分段課表
+}
+
+// 結構化課表的一個分段
+export interface WorkoutSegment {
+  kind: 'warmup' | 'work' | 'rest' | 'recovery' | 'cooldown' | 'steady'
+  label?: string
+  target_type: 'distance' | 'time'
+  target: number        // 距離(公尺) 或 時間(秒)
+  pace_fast_s?: number  // 較快界（秒/公里，較小）
+  pace_slow_s?: number  // 較慢界
+  reps?: number         // 組數（如 400m×6）
+  rest_s?: number       // 組間休息秒數
 }
 
 // 挑戰制：進行中挑戰的即時狀態
 export interface PersonalChallenge {
-  task_id: string; plan_code: string; day: number
-  kind: 'mileage' | 'rest' | 'manual'
+  task_id: string; plan_code: string; day: number; title: string
+  kind: 'mileage' | 'rest' | 'manual' | 'workout'
   tier: number
   target_km: number; acc_km: number; data_source: string // gps | strava
   rest_window_s: number; elapsed_s: number
   met: boolean; failed: boolean
+  workout_kind: string
+  segments: WorkoutSegment[] | null // workout：分段課表（給 /track 驅動）
 }
 
 export const personalTasksApi = {
@@ -1188,8 +1204,8 @@ export const personalTasksApi = {
   // 放棄（判失敗、可重挑）
   abandon: (token: string, taskId: string) =>
     request<{ ok: boolean }>(`/personal-tasks/tasks/${taskId}/abandon`, { method: 'POST', headers: withAuth(token) }),
-  // 完成（僅達標可完成；發星 + 獎勵）
-  complete: (token: string, taskId: string, body?: { pain?: number; rpe?: number }) =>
+  // 完成（僅達標可完成；發星 + 獎勵）。workout 課表由 /track 送 finished/work_in_band/work_total。
+  complete: (token: string, taskId: string, body?: { pain?: number; rpe?: number; finished?: boolean; work_in_band?: number; work_total?: number; evidence?: unknown }) =>
     request<{ completed: boolean; stars: number; tier: number; reward_exp: number; reward_dp: number }>(
       `/personal-tasks/tasks/${taskId}/complete`,
       { method: 'POST', headers: withAuth(token), body: JSON.stringify(body || {}) },

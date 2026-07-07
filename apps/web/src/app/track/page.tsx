@@ -1,8 +1,10 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence, type MileageConfig } from '@/lib/api'
+import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence, type MileageConfig } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
+import WorkoutHud from '@/components/WorkoutHud'
+import { expandSegments, paceInBand, type WoStep } from '@/lib/workout'
 import { loadLeaflet } from '@/lib/leaflet'
 import { unlockAudio, playEventAlarm, playEventComplete, vibrate, setMuted as sfxSetMuted, isMuted } from '@/lib/sfx'
 import { loadEffectAssets } from '@/lib/effects'
@@ -77,6 +79,17 @@ export default function TrackPage() {
   const followRef = useRef(true) // 地圖是否自動跟隨目前位置；使用者拖曳/縮放地圖後暫停，按「回到目前位置」恢復
   const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
   const [mileageCfg, setMileageCfg] = useState<MileageConfig | null>(null) // 里程獎勵設定（進度條/預覽）
+  // 個人任務「結構化課表」執行（挑戰後帶到本頁跑）
+  const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[] } | null>(null)
+  const [woPhase, setWoPhase] = useState<'idle' | 'countdown' | 'running' | 'done'>('idle')
+  const [woStepIdx, setWoStepIdx] = useState(0)
+  const [woHits, setWoHits] = useState<Record<number, boolean>>({}) // work 段 index → 是否達配速
+  const [woResult, setWoResult] = useState<{ stars: number; reward_exp: number; reward_dp: number } | null>(null)
+  const [, setWoNow] = useState(0) // 驅動 HUD 每 0.5s 重繪
+  const woStepIdxRef = useRef(0)
+  const woStepStartRef = useRef<{ dist: number; time: number }>({ dist: 0, time: 0 }) // 目前分段起點（距離 m / 時間 ms）
+  const woResultsRef = useRef<{ inBand: number; total: number; detail: any[] }>({ inBand: 0, total: 0, detail: [] })
+  const woActiveRef = useRef(false) // 課表執行中：跑步引擎暫停隨機事件
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)
@@ -468,6 +481,7 @@ export default function TrackPage() {
     const now = Date.now()
     distSamplesRef.current.push({ t: now, d: distRef.current })
     if (distSamplesRef.current.length > 1600) distSamplesRef.current.splice(0, 400) // 上限 ~25 分鐘
+    if (woActiveRef.current) return // 課表挑戰進行中：暫停隨機事件/多人邀請，專心跑課表
     // 測試：跑步中、無進行中事件時輪詢認領後台手動觸發（每 5 秒；結算中不認領）
     if (!activeEventRef.current && !completingRef.current && now - lastClaimRef.current > 5000) {
       lastClaimRef.current = now
@@ -612,6 +626,7 @@ export default function TrackPage() {
 
   // 按「結束並上傳」：只有「正式進行中」事件才跳確認（損失規避）；演出中（未接受）則靜默放棄後直接結束
   function requestFinish() {
+    if (woActiveRef.current) { woActiveRef.current = false; setWoPhase('idle') } // 課表中途結束：停止逐段驅動（挑戰仍保留，可再進來續挑）
     const ae = activeEventRef.current
     if (ae && ae.phase === 'active') { setConfirmEnd(true); return }
     if (ae) declineEvent()
@@ -664,6 +679,73 @@ export default function TrackPage() {
       setErr(e?.message || '上傳失敗')
     } finally { setUploading(false) }
   }
+
+  // ── 個人任務「結構化課表」：載入 / 開始 / 逐段驅動 / 完成 ──
+  // 進頁抓一次：若有進行中的「課表(workout)」挑戰，載入分段序列，進入就緒狀態（按鈕變「開始課表挑戰」）
+  useEffect(() => {
+    if (!getUserToken()) return
+    withUserAuth((t) => personalTasksApi.status(t)).then((r) => {
+      const ch = r.challenge
+      if (ch && ch.kind === 'workout' && ch.segments && ch.segments.length) {
+        setWorkout({ taskId: ch.task_id, title: ch.title || '課表挑戰', steps: expandSegments(ch.segments) })
+      }
+    }).catch(() => { /* ignore */ })
+  }, [])
+
+  function startWorkout() {
+    if (!workout) return
+    woResultsRef.current = { inBand: 0, total: 0, detail: [] }
+    woStepIdxRef.current = 0
+    setWoStepIdx(0); setWoHits({}); setWoResult(null)
+    start() // 既有 GPS 追蹤啟動（含定位權限請求，須在使用者手勢內）
+    setWoPhase('countdown')
+  }
+  function woCountdownDone() {
+    woStepStartRef.current = { dist: distRef.current, time: Date.now() }
+    woActiveRef.current = true
+    setWoPhase('running')
+  }
+  async function finishWorkout() {
+    woActiveRef.current = false
+    setWoPhase('done')
+    const res = woResultsRef.current
+    const token = getUserToken()
+    try {
+      if (token && workout) {
+        const r = await withUserAuth((t) => personalTasksApi.complete(t, workout.taskId, { finished: true, work_in_band: res.inBand, work_total: res.total, evidence: res.detail }))
+        setWoResult({ stars: r.stars, reward_exp: r.reward_exp, reward_dp: r.reward_dp })
+      }
+    } catch { /* 結算失敗不擋畫面 */ }
+    finish() // 上傳 GPS 活動（跑步照樣記錄、發里程 EXP）
+  }
+  // 逐段驅動：每 0.5s 讀 distRef/時間，分段達標即（對 work 段）評配速並前進；跑完整份課表 → 完成
+  useEffect(() => {
+    if (woPhase !== 'running' || !workout) return
+    const id = setInterval(() => {
+      if (statusRef.current !== 'tracking') return
+      const idx = woStepIdxRef.current
+      const step = workout.steps[idx]
+      if (!step) return
+      const stepDist = distRef.current - woStepStartRef.current.dist
+      const stepTime = (Date.now() - woStepStartRef.current.time) / 1000
+      setWoNow(Date.now())
+      const done = step.targetType === 'distance' ? stepDist >= step.target : stepTime >= step.target
+      if (!done) return
+      if (step.graded) {
+        const avgPace = stepDist > 5 ? stepTime / (stepDist / 1000) : 9999
+        const inBand = paceInBand(avgPace, step)
+        woResultsRef.current.total += 1
+        if (inBand) woResultsRef.current.inBand += 1
+        woResultsRef.current.detail.push({ label: step.label, avg_pace_s: Math.round(avgPace), in_band: inBand, dist_m: Math.round(stepDist), time_s: Math.round(stepTime) })
+        setWoHits((h) => ({ ...h, [idx]: inBand }))
+      }
+      const next = idx + 1
+      woStepIdxRef.current = next
+      if (next >= workout.steps.length) finishWorkout()
+      else { woStepStartRef.current = { dist: distRef.current, time: Date.now() }; setWoStepIdx(next) }
+    }, 500)
+    return () => clearInterval(id)
+  }, [woPhase, workout]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 螢幕回到前景時重新取得 wake lock
   // 只在掛載/卸載執行：status 變動不可觸發 cleanup（否則會清掉 start 剛建立的計時器與定位）
@@ -763,6 +845,8 @@ export default function TrackPage() {
       )}
       {/* Step3 置中 321，數完進 Step4 正式開始 */}
       {status === 'tracking' && activeEvent?.phase === 'countdown' && <Countdown321 onDone={startActivePhase} />}
+      {/* 課表挑戰：321 倒數後開始逐段驅動 */}
+      {status === 'tracking' && woPhase === 'countdown' && <Countdown321 onDone={woCountdownDone} />}
       {status === 'tracking' && activeEvent?.phase === 'active' && isInteractionType(activeEvent.def.completion_type) && (
         <EventInteraction active={activeEvent} onDone={handleInteractionDone} paused={isLandscape} assets={fxAssets} />
       )}
@@ -849,6 +933,27 @@ export default function TrackPage() {
                 <button onClick={() => setRaceInvite(null)} style={{ background: 'transparent', color: 'var(--tx-faint)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '9px 14px', fontSize: 13, cursor: 'pointer' }}>略過</button>
               </div>
             </div>
+          )
+        })()}
+
+        {/* 課表就緒（未開始）：提示按「開始課表挑戰」 */}
+        {status === 'idle' && workout && woPhase === 'idle' && (
+          <div data-skin="default" style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1050, margin: '10px 12px 0', background: '#0b0e13', border: '1px solid var(--fug)', borderRadius: 12, padding: '12px 14px', boxShadow: '0 6px 24px rgba(0,0,0,.5)' }}>
+            <div style={{ fontSize: 11, letterSpacing: '.15em', color: 'var(--fug)', fontWeight: 800 }}>課表已就緒</div>
+            <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)', marginTop: 3 }}>{workout.title}</div>
+            <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 5, lineHeight: 1.6 }}>共 {workout.steps.length} 段 · 按下方「開始課表挑戰」→ 321 倒數後開始，追蹤頁會顯示每段目標與進度。</div>
+          </div>
+        )}
+        {/* 課表執行 HUD（進行中 / 完成） */}
+        {(woPhase === 'running' || woPhase === 'done') && workout && (() => {
+          const stepDist = Math.max(0, distRef.current - woStepStartRef.current.dist)
+          const stepTime = Math.max(0, (Date.now() - woStepStartRef.current.time) / 1000)
+          const livePace = stepDist > 5 ? stepTime / (stepDist / 1000) : 0
+          return (
+            <WorkoutHud title={workout.title} steps={workout.steps} stepIdx={woStepIdx}
+              stepDist={stepDist} stepTime={stepTime} livePaceS={livePace} hits={woHits}
+              phase={woPhase === 'done' ? 'done' : 'running'} result={woResult}
+              onClose={() => { setWoPhase('idle'); setWorkout(null) }} />
           )
         })()}
 
@@ -988,7 +1093,9 @@ export default function TrackPage() {
       <div style={{ padding: '16px 16px calc(16px + var(--cta-safe, 0px))', flexShrink: 0, borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
         {status === 'idle' && (
           user
-            ? <button onClick={start} className="skin-btn-start" style={btn}>▶ 開始跑步</button>
+            ? (workout
+                ? <button onClick={startWorkout} className="skin-btn-start" style={btn}>▶ 開始課表挑戰</button>
+                : <button onClick={start} className="skin-btn-start" style={btn}>▶ 開始跑步</button>)
             : <button onClick={() => setShowLogin(true)} style={btn}>請先登入</button>
         )}
         {status === 'tracking' && <button onClick={requestFinish} className="skin-btn-end" style={{ ...btn, background: 'var(--hunt)', color: '#fff' }}>■ 結束並上傳</button>}

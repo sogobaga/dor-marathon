@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useSWR from 'swr'
-import { personalTasksApi, type PersonalPlan, type PersonalTask, type PersonalChallenge } from '@/lib/api'
+import { personalTasksApi, type PersonalPlan, type PersonalTask, type PersonalChallenge, type WorkoutSegment } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { refreshDashboard } from '@/lib/useDashboard'
 
@@ -25,6 +25,7 @@ export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) 
   const challengeAt = useRef(0) // 取得挑戰狀態的當下時間（給休息倒數本地補間）
   const [busy, setBusy] = useState('') // 進行中的動作 taskId
   const [toast, setToast] = useState('')
+  const [navigating, setNavigating] = useState(false) // 帶往 GPS 追蹤的淡出轉場
 
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(''), 3200); return () => clearTimeout(t) } }, [toast])
 
@@ -54,15 +55,25 @@ export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) 
     return () => clearInterval(id)
   }, [sel, hasActive, fetchStatus])
 
+  // 結構化課表 → 帶到「GPS 跑步追蹤」：簡單淡出轉場後導頁（/track 開頁偵測進行中挑戰、321 倒數開始）
+  function goToTrack() {
+    setNavigating(true)
+    setTimeout(() => { window.location.href = '/track' }, 380)
+  }
   async function doChallenge(t: PersonalTask) {
     if (!sel) return
     setBusy(t.id); setErr('')
     try {
       const r = await withUserAuth((tk) => personalTasksApi.challenge(tk, t.id))
+      if (t.workout_kind) { // 結構化課表：挑戰後帶到 GPS 追蹤跑
+        if (r.charged_dp) refreshDashboard()
+        goToTrack()
+        return
+      }
       if (r.charged_dp) { setToast(`挑戰開始 ★${r.tier}，扣 ${r.charged_dp} DP`); refreshDashboard() }
       else setToast(`挑戰開始 · 目標 ★${r.tier}`)
-      loadDetail(sel.code); mutatePlans()
-    } catch (e: any) { setErr(e?.message || '挑戰失敗') } finally { setBusy('') }
+      loadDetail(sel.code); mutatePlans(); setBusy('')
+    } catch (e: any) { setErr(e?.message || '挑戰失敗'); setBusy('') }
   }
   async function doAbandon(t: PersonalTask) {
     if (!sel) return
@@ -93,9 +104,17 @@ export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) 
           <PlanList plans={plans} onOpen={openPlan} />
         ) : (
           <TaskList plan={sel} tasks={tasks} challenge={challenge} challengeAt={challengeAt.current}
-            busy={busy} onChallenge={doChallenge} onAbandon={doAbandon} onComplete={doComplete} onTick={fetchStatus} />
+            busy={busy} onChallenge={doChallenge} onAbandon={doAbandon} onComplete={doComplete} onTick={fetchStatus} onGoTrack={goToTrack} />
         )}
       </div>
+
+      {navigating && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 3400, background: 'var(--bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, animation: 'fadeIn .3s ease' }}>
+          <div style={{ fontSize: 30 }}>🏃‍♂️</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)' }}>前往 GPS 跑步追蹤…</div>
+          <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>準備開始課表挑戰</div>
+        </div>
+      )}
 
       {toast && (
         <div style={{ position: 'absolute', left: '50%', bottom: 'calc(env(safe-area-inset-bottom, 0px) + 28px)', transform: 'translateX(-50%)', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, fontSize: 13, padding: '9px 18px', borderRadius: 999, boxShadow: '0 6px 20px rgba(0,0,0,.3)', zIndex: 600, maxWidth: '86%', textAlign: 'center' }}>
@@ -144,23 +163,37 @@ function PlanList({ plans, onOpen }: { plans: PersonalPlan[] | null; onOpen: (p:
   )
 }
 
+// 課表型別中文標籤
+const WORKOUT_LABELS: Record<string, string> = {
+  interval: '間歇', aerobic: '有氧', tempo: '節奏', easy: '輕鬆', recovery: '恢復',
+  progression: '漸速', fartlek: '法特雷克', pyramid: '金字塔', norwegian4x4: '挪威4×4', variable: '變速',
+}
 // 任務類型標籤
-function taskKind(t: PersonalTask): { label: string; color: string; kind: 'mileage' | 'rest' | 'manual' } {
+function taskKind(t: PersonalTask): { label: string; color: string; kind: 'mileage' | 'rest' | 'manual' | 'workout' } {
+  if (t.workout_kind) return { label: WORKOUT_LABELS[t.workout_kind] || '課表', color: 'var(--fug)', kind: 'workout' }
   if (t.target_km > 0) return { label: '里程', color: 'var(--fug)', kind: 'mileage' }
   if (/休息/.test(t.workout_type || '')) return { label: '休息日', color: 'var(--violet)', kind: 'rest' }
-  if (/肌力|ST/.test(t.workout_type || '')) return { label: '肌力', color: 'var(--gold)', kind: 'manual' }
   if (/恢復|交叉|XT|走/.test(t.workout_type || '')) return { label: '恢復/交叉', color: 'var(--tx-dim)', kind: 'manual' }
   return { label: '課表', color: 'var(--tx-dim)', kind: 'manual' }
+}
+// 分段課表摘要：「暖身 2K → 400m ×6 → 緩和 2K」
+function segSummary(segs?: WorkoutSegment[] | null): string {
+  if (!segs || !segs.length) return ''
+  return segs.map((s) => {
+    const d = s.target_type === 'distance' ? (s.target >= 1000 ? `${s.target / 1000}K` : `${s.target}m`) : `${Math.round(s.target / 60)}分`
+    const reps = s.reps && s.reps > 1 ? ` ×${s.reps}` : ''
+    return `${s.label || s.kind} ${d}${reps}`
+  }).join(' → ')
 }
 
 const RPE_OPTS = [{ v: 2, l: '很輕鬆' }, { v: 4, l: '輕鬆' }, { v: 6, l: '適中' }, { v: 8, l: '偏累' }, { v: 10, l: '很累' }]
 const PAIN_OPTS = [{ v: 0, l: '無' }, { v: 1, l: '輕微' }, { v: 2, l: '中等' }, { v: 3, l: '明顯' }]
 const stars3 = (n: number) => '★'.repeat(Math.max(0, n)) + '☆'.repeat(Math.max(0, 3 - n))
 
-function TaskList({ plan, tasks, challenge, challengeAt, busy, onChallenge, onAbandon, onComplete, onTick }: {
+function TaskList({ plan, tasks, challenge, challengeAt, busy, onChallenge, onAbandon, onComplete, onTick, onGoTrack }: {
   plan: PersonalPlan; tasks: PersonalTask[] | null; challenge: PersonalChallenge | null; challengeAt: number
   busy: string; onChallenge: (t: PersonalTask) => void; onAbandon: (t: PersonalTask) => void
-  onComplete: (t: PersonalTask, opts?: { pain?: number; rpe?: number }) => void; onTick: () => void
+  onComplete: (t: PersonalTask, opts?: { pain?: number; rpe?: number }) => void; onTick: () => void; onGoTrack: () => void
 }) {
   if (tasks === null) return <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
   if (tasks.length === 0) return <div style={{ color: 'var(--tx-dim)', fontSize: 13, padding: '24px 2px', textAlign: 'center' }}>此計畫尚無任務內容</div>
@@ -174,17 +207,17 @@ function TaskList({ plan, tasks, challenge, challengeAt, busy, onChallenge, onAb
         const ch = challenge && challenge.task_id === t.id ? challenge : null
         return (
           <TaskCard key={t.id} t={t} kind={kind} locked={locked} ch={ch} challengeAt={challengeAt}
-            busy={busy === t.id} onChallenge={onChallenge} onAbandon={onAbandon} onComplete={onComplete} onTick={onTick} />
+            busy={busy === t.id} onChallenge={onChallenge} onAbandon={onAbandon} onComplete={onComplete} onTick={onTick} onGoTrack={onGoTrack} />
         )
       })}
     </div>
   )
 }
 
-function TaskCard({ t, kind, locked, ch, challengeAt, busy, onChallenge, onAbandon, onComplete, onTick }: {
+function TaskCard({ t, kind, locked, ch, challengeAt, busy, onChallenge, onAbandon, onComplete, onTick, onGoTrack }: {
   t: PersonalTask; kind: ReturnType<typeof taskKind>; locked: boolean; ch: PersonalChallenge | null; challengeAt: number
   busy: boolean; onChallenge: (t: PersonalTask) => void; onAbandon: (t: PersonalTask) => void
-  onComplete: (t: PersonalTask, opts?: { pain?: number; rpe?: number }) => void; onTick: () => void
+  onComplete: (t: PersonalTask, opts?: { pain?: number; rpe?: number }) => void; onTick: () => void; onGoTrack: () => void
 }) {
   const [reporting, setReporting] = useState(false)
   const [rpe, setRpe] = useState<number | null>(null)
@@ -220,8 +253,27 @@ function TaskCard({ t, kind, locked, ch, challengeAt, busy, onChallenge, onAband
         <div style={{ fontSize: 12, color: 'var(--tx)', marginTop: 8, padding: '6px 9px', background: 'var(--bg-2)', borderRadius: 8 }}>完成條件：{t.complete_cond}</div>
       )}
 
-      {/* ── 進行中挑戰 ── */}
-      {active && (
+      {/* ── workout：結構化課表（在 GPS 追蹤頁執行）── */}
+      {kind.kind === 'workout' && (
+        <>
+          {segSummary(t.segments) && <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.6, padding: '7px 10px', background: 'var(--bg-2)', borderRadius: 8 }}>📋 {segSummary(t.segments)}</div>}
+          {active ? (
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <button onClick={() => onAbandon(t)} disabled={busy} style={{ ...abandonBtn, opacity: busy ? 0.5 : 1 }}>放棄</button>
+              <button onClick={onGoTrack} disabled={busy} style={{ ...doneBtn, marginTop: 0, flex: 1, opacity: busy ? 0.6 : 1 }}>▶ 前往 GPS 追蹤（進行中）</button>
+            </div>
+          ) : canChallenge ? (
+            <button onClick={() => onChallenge(t)} disabled={busy} style={{ ...doneBtn, opacity: busy ? 0.5 : 1 }}>
+              {busy ? '前往中…' : t.done ? `再挑戰課表 ★${t.stars + 1}　·　DP ${t.retry_dp_cost}` : cost > 0 ? `重新挑戰課表　·　DP ${cost}` : '▶ 前往 GPS 追蹤挑戰'}
+            </button>
+          ) : maxed ? (
+            <div style={{ marginTop: 9, textAlign: 'center', fontSize: 12, color: 'var(--gold)', fontWeight: 700 }}>★★★ 已達最高星</div>
+          ) : null}
+        </>
+      )}
+
+      {/* ── 進行中挑戰（mileage / rest / manual）── */}
+      {kind.kind !== 'workout' && active && (
         <div style={{ marginTop: 10 }}>
           {!ch ? (
             <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>讀取挑戰狀態…</div>
@@ -263,15 +315,15 @@ function TaskCard({ t, kind, locked, ch, challengeAt, busy, onChallenge, onAband
         </div>
       )}
 
-      {/* ── 挑戰／重挑按鈕 ── */}
-      {canChallenge && (
+      {/* ── 挑戰／重挑按鈕（mileage / rest / manual）── */}
+      {kind.kind !== 'workout' && canChallenge && (
         <button onClick={() => onChallenge(t)} disabled={busy} style={{ ...doneBtn, opacity: busy ? 0.5 : 1 }}>
           {busy ? '處理中…'
             : t.done ? `挑戰 ★${t.stars + 1}　·　DP ${t.retry_dp_cost}`
               : cost > 0 ? `重新挑戰　·　DP ${cost}` : '開始挑戰'}
         </button>
       )}
-      {maxed && !active && <div style={{ marginTop: 9, textAlign: 'center', fontSize: 12, color: 'var(--gold)', fontWeight: 700 }}>★★★ 已達最高星</div>}
+      {kind.kind !== 'workout' && maxed && !active && <div style={{ marginTop: 9, textAlign: 'center', fontSize: 12, color: 'var(--gold)', fontWeight: 700 }}>★★★ 已達最高星</div>}
     </div>
   )
 }

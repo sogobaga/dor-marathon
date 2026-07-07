@@ -42,8 +42,12 @@ func mult(tier int) float64 {
 	return 1.0
 }
 
-// kindOf 任務型別：有目標里程=mileage；工作表類型含「休息」=rest；其餘（肌力/恢復/課表無里程）=manual。
-func kindOf(targetKm float64, workoutType string) string {
+// kindOf 任務型別：有分段課表(workout_kind)=workout（帶到 GPS 追蹤跑）；否則有目標里程=mileage；
+// 工作表類型含「休息」=rest；其餘=manual。
+func kindOf(targetKm float64, workoutKind, workoutType string) string {
+	if workoutKind != "" {
+		return "workout"
+	}
 	if targetKm > 0 {
 		return "mileage"
 	}
@@ -51,6 +55,22 @@ func kindOf(targetKm float64, workoutType string) string {
 		return "rest"
 	}
 	return "manual"
+}
+
+// workoutStars 結構化課表星數：需完成整份課表(finished)；work 段全在配速區間=3★、部分=2★、只完成=1★。
+func workoutStars(finished bool, workInBand, workTotal int) int {
+	if !finished {
+		return 0
+	}
+	if workTotal > 0 {
+		if workInBand >= workTotal {
+			return 3
+		}
+		if workInBand > 0 {
+			return 2
+		}
+	}
+	return 1
 }
 
 // --- JSON 型別 ---
@@ -93,6 +113,8 @@ type Task struct {
 	DataSource       string          `json:"data_source"`
 	SafetyNote       string          `json:"safety_note"`
 	Enabled          bool            `json:"enabled"`
+	WorkoutKind      string          `json:"workout_kind"` // 非空＝結構化課表（帶到 GPS 追蹤跑）
+	Segments         json.RawMessage `json:"segments"`      // 分段課表
 	// 我的進度 + 挑戰制狀態（前台按鈕流用）
 	Done              bool    `json:"done"`                // 已完成至少 1★
 	Stars             int     `json:"stars"`               // 最高星數 0..3
@@ -105,18 +127,21 @@ type Task struct {
 
 // ChallengeState 進行中挑戰的即時狀態（前台顯示進度/可否完成/是否失敗）。
 type ChallengeState struct {
-	TaskID      string  `json:"task_id"`
-	PlanCode    string  `json:"plan_code"`
-	Day         int     `json:"day"`
-	Kind        string  `json:"kind"` // mileage | rest | manual
-	Tier        int     `json:"tier"`
-	TargetKm    float64 `json:"target_km"`     // 縮放後目標（mileage）
-	AccKm       float64 `json:"acc_km"`        // 累積里程（mileage）／窗口內偵測到的里程（rest）
-	DataSource  string  `json:"data_source"`   // gps | strava
-	RestWindowS int     `json:"rest_window_s"` // 休息窗口秒數（rest）
-	ElapsedS    int     `json:"elapsed_s"`     // 已過秒數（rest）
-	Met         bool    `json:"met"`           // 條件達成 → 完成可按
-	Failed      bool    `json:"failed"`        // 休息窗口內偵測到里程 → 需重挑
+	TaskID      string          `json:"task_id"`
+	PlanCode    string          `json:"plan_code"`
+	Day         int             `json:"day"`
+	Title       string          `json:"title"`
+	Kind        string          `json:"kind"` // mileage | rest | manual | workout
+	Tier        int             `json:"tier"`
+	TargetKm    float64         `json:"target_km"`     // 縮放後目標（mileage）
+	AccKm       float64         `json:"acc_km"`        // 累積里程（mileage）／窗口內偵測到的里程（rest）
+	DataSource  string          `json:"data_source"`   // gps | strava
+	RestWindowS int             `json:"rest_window_s"` // 休息窗口秒數（rest）
+	ElapsedS    int             `json:"elapsed_s"`     // 已過秒數（rest）
+	Met         bool            `json:"met"`           // 條件達成 → 完成可按
+	Failed      bool            `json:"failed"`        // 休息窗口內偵測到里程 → 需重挑
+	WorkoutKind string          `json:"workout_kind"`  // workout：課表型別
+	Segments    json.RawMessage `json:"segments"`      // workout：分段課表（給 /track 驅動）
 }
 
 // --- 路由 ---
@@ -213,10 +238,10 @@ func (h *Handler) Challenge(w http.ResponseWriter, r *http.Request) {
 
 	var baseTarget float64
 	var retryDp int
-	var dataSource, workoutType string
+	var dataSource, workoutType, workoutKind string
 	if err := h.db.QueryRow(r.Context(),
-		`SELECT target_km, retry_dp_cost, data_source, workout_type FROM personal_tasks WHERE id=$1 AND enabled`, taskID).
-		Scan(&baseTarget, &retryDp, &dataSource, &workoutType); err != nil {
+		`SELECT target_km, retry_dp_cost, data_source, workout_type, workout_kind FROM personal_tasks WHERE id=$1 AND enabled`, taskID).
+		Scan(&baseTarget, &retryDp, &dataSource, &workoutType, &workoutKind); err != nil {
 		respondErr(w, http.StatusNotFound, "任務不存在")
 		return
 	}
@@ -250,8 +275,12 @@ func (h *Handler) Challenge(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	kind := kindOf(baseTarget, workoutKind, workoutType)
 	tier := bestStars + 1
-	scaled := round1(baseTarget * mult(tier))
+	scaled := 0.0
+	if kind == "mileage" {
+		scaled = round1(baseTarget * mult(tier)) // 只有里程任務才縮放目標；workout/rest 不用
+	}
 	cost := 0
 	if attempts > 0 { // 非第一次挑戰 → 付費重挑
 		cost = retryDp
@@ -288,7 +317,6 @@ func (h *Handler) Challenge(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	kind := kindOf(baseTarget, workoutType)
 	respondJSON(w, http.StatusOK, map[string]any{
 		"challenging": true, "tier": tier, "kind": kind, "target_km": scaled,
 		"charged_dp": cost, "rest_window_s": int(math.Round(float64(restWindowMin*60) * mult(tier))),
@@ -317,6 +345,11 @@ func (h *Handler) Abandon(w http.ResponseWriter, r *http.Request) {
 type completeReq struct {
 	Pain int `json:"pain"`
 	Rpe  int `json:"rpe"`
+	// workout（結構化課表）完成回報：由 /track 分段引擎送
+	Finished   bool            `json:"finished"`     // 是否完成整份課表（距離/時間）
+	WorkInBand int             `json:"work_in_band"` // work 段落在配速區間的數量
+	WorkTotal  int             `json:"work_total"`   // work 段總數
+	Evidence   json.RawMessage `json:"evidence"`     // 逐段明細（存證）
 }
 
 // Complete POST /personal-tasks/tasks/{id}/complete — 完成（僅在挑戰達標時可完成）。
@@ -349,16 +382,17 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	// 任務資料
 	var baseTarget float64
 	var rExp, rDp int
-	var dataSource, workoutType string
+	var dataSource, workoutType, workoutKind string
 	if err := h.db.QueryRow(r.Context(),
-		`SELECT target_km, reward_exp, reward_dp, data_source, workout_type FROM personal_tasks WHERE id=$1 AND enabled`, taskID).
-		Scan(&baseTarget, &rExp, &rDp, &dataSource, &workoutType); err != nil {
+		`SELECT target_km, reward_exp, reward_dp, data_source, workout_type, workout_kind FROM personal_tasks WHERE id=$1 AND enabled`, taskID).
+		Scan(&baseTarget, &rExp, &rDp, &dataSource, &workoutType, &workoutKind); err != nil {
 		respondErr(w, http.StatusNotFound, "任務不存在")
 		return
 	}
-	kind := kindOf(baseTarget, workoutType)
+	kind := kindOf(baseTarget, workoutKind, workoutType)
 	acc := 0.0
 	now := time.Now()
+	cStars := tier // 本次挑戰達成的星數（依 kind 決定）
 	switch kind {
 	case "mileage":
 		a, err := accDistance(r.Context(), h.db, uid, startedAt, dataSource)
@@ -371,6 +405,7 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 			respondErr(w, http.StatusConflict, fmt.Sprintf("尚未達標（%.1f/%.1f K）", acc, chalTarget))
 			return
 		}
+		cStars = tier
 	case "rest":
 		windowS := int(math.Round(float64(restWindowMin*60) * mult(tier)))
 		end := startedAt.Add(time.Duration(windowS) * time.Second)
@@ -393,14 +428,21 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 			respondErr(w, http.StatusConflict, fmt.Sprintf("休息窗口尚未結束，還要 %d 分", left))
 			return
 		}
+		cStars = 3 // 休息日完成＝直接 3★（無 1/2/3 成長）
+	case "workout":
+		cStars = workoutStars(req.Finished, req.WorkInBand, req.WorkTotal)
+		if cStars == 0 {
+			respondErr(w, http.StatusConflict, "尚未完成整份課表")
+			return
+		}
 	}
-	// 達標 → 完成該星
+	// 完成 → 取「本次達成」與「歷史最高」的大者
 	newStars := bestStars
-	if tier > newStars {
-		newStars = tier
+	if cStars > newStars {
+		newStars = cStars
 	}
-	grant := tier > awardedStars // 每爬一顆「新星」發一次基準獎勵（冪等）
-	evidence, _ := json.Marshal(map[string]any{"tier": tier, "kind": kind, "acc_km": acc, "pain": req.Pain, "rpe": req.Rpe})
+	grant := newStars > awardedStars // 爬到「新的最高星」才發一次基準獎勵（冪等）
+	evidence, _ := json.Marshal(map[string]any{"tier": tier, "kind": kind, "stars": cStars, "acc_km": acc, "pain": req.Pain, "rpe": req.Rpe, "work_in_band": req.WorkInBand, "work_total": req.WorkTotal})
 
 	tx, err := h.db.Begin(r.Context())
 	if err != nil {
@@ -409,8 +451,8 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	newAwarded := awardedStars
-	if grant && tier > newAwarded {
-		newAwarded = tier
+	if grant && newStars > newAwarded {
+		newAwarded = newStars
 	}
 	if _, err := tx.Exec(r.Context(), `
 		UPDATE personal_task_progress
@@ -440,28 +482,33 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 
 // ChallengeStatusUser 回傳使用者「進行中挑戰」的即時狀態（無則 nil）。package 函式便於他處（如首頁）呼叫。
 func ChallengeStatusUser(ctx context.Context, db *pgxpool.Pool, uid string) (*ChallengeState, error) {
-	var taskID, planCode, dataSource, workoutType string
+	var taskID, planCode, title, dataSource, workoutType, workoutKind string
 	var day, tier int
 	var baseTarget, chalTarget float64
 	var startedAt time.Time
+	var segments json.RawMessage
 	err := db.QueryRow(ctx, `
-		SELECT t.id, pl.code, t.day, t.target_km, t.data_source, t.workout_type,
+		SELECT t.id, pl.code, t.day, t.title, t.target_km, t.data_source, t.workout_type, t.workout_kind, t.segments,
 		       COALESCE(pr.challenge_tier,0), COALESCE(pr.challenge_target_km,0), pr.challenge_started_at
 		FROM personal_task_progress pr
 		JOIN personal_tasks t ON t.id = pr.task_id
 		JOIN personal_plans pl ON pl.id = t.plan_id
 		WHERE pr.user_id=$1 AND pr.active
-		LIMIT 1`, uid).Scan(&taskID, &planCode, &day, &baseTarget, &dataSource, &workoutType, &tier, &chalTarget, &startedAt)
+		LIMIT 1`, uid).Scan(&taskID, &planCode, &day, &title, &baseTarget, &dataSource, &workoutType, &workoutKind, &segments, &tier, &chalTarget, &startedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	kind := kindOf(baseTarget, workoutType)
-	st := &ChallengeState{TaskID: taskID, PlanCode: planCode, Day: day, Kind: kind, Tier: tier, DataSource: dataSource}
+	kind := kindOf(baseTarget, workoutKind, workoutType)
+	st := &ChallengeState{TaskID: taskID, PlanCode: planCode, Day: day, Title: title, Kind: kind, Tier: tier, DataSource: dataSource}
 	now := time.Now()
 	switch kind {
+	case "workout":
+		st.WorkoutKind = workoutKind
+		st.Segments = segments
+		// 完成與否由 /track 分段引擎判定並回報 complete；status 只回課表與「進行中」旗標
 	case "mileage":
 		acc, err := accDistance(ctx, db, uid, startedAt, dataSource)
 		if err != nil {
@@ -674,6 +721,7 @@ func (h *Handler) queryTasks(ctx context.Context, whereOrder string, uid string,
 	}
 	q := `SELECT t.id, t.plan_id, pl.code, t.day, t.week, t.title, t.story, t.workout, t.workout_type, t.target_km, t.target_min,
 	             t.intensity, t.complete_cond, t.completion_type, t.completion_params, t.reward_exp, t.reward_dp, t.icon_url, t.data_source, t.safety_note, t.enabled, t.retry_dp_cost,
+	             t.workout_kind, t.segments,
 	             (COALESCE(pr.stars,0) > 0) AS done, COALESCE(pr.stars,0) AS stars,
 	             COALESCE(pr.attempts,0) AS attempts, COALESCE(pr.active,FALSE) AS active,
 	             COALESCE(pr.challenge_tier,0) AS challenge_tier, COALESCE(pr.challenge_target_km,0) AS challenge_target_km
@@ -690,6 +738,7 @@ func (h *Handler) queryTasks(ctx context.Context, whereOrder string, uid string,
 		var t Task
 		if err := rows.Scan(&t.ID, &t.PlanID, &t.PlanCode, &t.Day, &t.Week, &t.Title, &t.Story, &t.Workout, &t.WorkoutType, &t.TargetKm, &t.TargetMin,
 			&t.Intensity, &t.CompleteCond, &t.CompletionType, &t.CompletionParams, &t.RewardExp, &t.RewardDp, &t.IconURL, &t.DataSource, &t.SafetyNote, &t.Enabled, &t.RetryDpCost,
+			&t.WorkoutKind, &t.Segments,
 			&t.Done, &t.Stars, &t.Attempts, &t.Active, &t.ChallengeTier, &t.ChallengeTargetKm); err != nil {
 			continue
 		}
