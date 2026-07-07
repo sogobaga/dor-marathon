@@ -7,14 +7,17 @@ export default function ScrollArea({
   padding,
   style,
   innerStyle,
+  lockPass,
 }: {
   children: ReactNode
   padding?: string
   style?: CSSProperties
   innerStyle?: CSSProperties
+  lockPass?: boolean // 搭配 useScrollLock：標記此區為「modal 內允許捲動」的容器
 }) {
   return (
     <div
+      data-scroll-lock-pass={lockPass ? '' : undefined}
       style={{
         flex: 1,
         minHeight: 0,

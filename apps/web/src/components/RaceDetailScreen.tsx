@@ -4,6 +4,7 @@ import useSWR from 'swr'
 import { useState, useEffect } from 'react'
 import { racesApi, METRIC_BY_KEY, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
+import { useScrollLock } from '@/lib/useScrollLock'
 import { renderCertificate, downloadDataURL } from '@/lib/certificate'
 import ExpSettlementModal from './ExpSettlementModal'
 import { BrochureBody } from './BrochureScreen'
@@ -339,6 +340,7 @@ function TaskRow({ t, onClick }: { t: TaskProgress; onClick?: () => void }) {
 
 // 任務貢獻明細彈窗：前 20 名里程貢獻 + 自己（即使在 20 名外）
 function TaskContributorsModal({ race, task, onClose }: { race: Race; task: TaskProgress; onClose: () => void }) {
+  useScrollLock() // 開啟時鎖背景捲動 → 只滑得動本彈窗清單
   const token = getUserToken() || undefined
   const { data, isLoading, error } = useSWR(['contrib', race.id, task.id], () => racesApi.taskContributors(race.id, task.id!, token))
   const c: TaskContributors | undefined = data?.contributors
@@ -368,7 +370,7 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
             <button onClick={onClose} style={{ background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 12px', color: 'var(--tx)', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>關閉</button>
           </div>
         </div>
-        <ScrollArea padding="14">
+        <ScrollArea padding="14" lockPass>
           {error ? <Hint>載入失敗，請稍後再試</Hint> : isLoading || !c ? <Hint>載入中…</Hint> : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {c.top.length === 0 && <Hint>目前還沒有人貢獻里程</Hint>}
@@ -389,6 +391,7 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
 
 // 區間任務達標明細：點進去看自己哪幾公里/哪幾筆落在配速（或心率）區間
 function RangeDetailModal({ race, task, onClose }: { race: Race; task: TaskProgress; onClose: () => void }) {
+  useScrollLock() // 開啟時鎖背景捲動 → 只滑得動本彈窗清單
   const token = getUserToken() || undefined
   const { data, isLoading, error } = useSWR(['rangedetail', race.id, task.id], () => racesApi.taskRangeDetail(race.id, task.id!, token))
   const d: TaskRangeDetail | undefined = data?.detail
@@ -406,7 +409,7 @@ function RangeDetailModal({ race, task, onClose }: { race: Race; task: TaskProgr
             <button onClick={onClose} style={{ background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 12px', color: 'var(--tx)', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>關閉</button>
           </div>
         </div>
-        <ScrollArea padding="14">
+        <ScrollArea padding="14" lockPass>
           {error ? <Hint>載入失敗，請稍後再試</Hint> : isLoading || !d ? <Hint>載入中…</Hint> : d.activities.length === 0 ? <Hint>此賽事期間還沒有你的跑步紀錄</Hint> : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {d.activities.map((a, i) => (
