@@ -4,13 +4,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { personalTasksApi, type PersonalPlan, type PersonalTask, type PersonalChallenge, type WorkoutSegment } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
-import { refreshDashboard } from '@/lib/useDashboard'
+import { refreshDashboard, useDashboard } from '@/lib/useDashboard'
 
 // 個人任務頁（挑戰制）：選計畫 → 任務鏈。每個任務要先「挑戰」才開始計算；里程從挑戰起累積、
 // 達標後「完成」才可按；「放棄」判失敗可重挑。可重複挑戰爬星 1→3★，難度遞增；休息日＝挑戰後
 // 窗口內不能有任何里程。第一次挑戰免費，之後重挑扣 DP。
 export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) {
   const user = useUser()
+  const { dash } = useDashboard()
   const uid = user?.id ?? null
   const { data: plansData, error: plansErr, mutate: mutatePlans } = useSWR(
     uid && getUserToken() ? ['personal-plans', uid] : null,
@@ -103,7 +104,7 @@ export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) 
         {!sel ? (
           <PlanList plans={plans} onOpen={openPlan} />
         ) : (
-          <TaskList plan={sel} tasks={tasks} challenge={challenge} challengeAt={challengeAt.current}
+          <TaskList plan={sel} tasks={tasks} challenge={challenge} challengeAt={challengeAt.current} isVip={!!dash?.is_vip}
             busy={busy} onChallenge={doChallenge} onAbandon={doAbandon} onComplete={doComplete} onTick={fetchStatus} onGoTrack={goToTrack} />
         )}
       </div>
@@ -190,13 +191,14 @@ const RPE_OPTS = [{ v: 2, l: '很輕鬆' }, { v: 4, l: '輕鬆' }, { v: 6, l: '�
 const PAIN_OPTS = [{ v: 0, l: '無' }, { v: 1, l: '輕微' }, { v: 2, l: '中等' }, { v: 3, l: '明顯' }]
 const stars3 = (n: number) => '★'.repeat(Math.max(0, n)) + '☆'.repeat(Math.max(0, 3 - n))
 
-function TaskList({ plan, tasks, challenge, challengeAt, busy, onChallenge, onAbandon, onComplete, onTick, onGoTrack }: {
-  plan: PersonalPlan; tasks: PersonalTask[] | null; challenge: PersonalChallenge | null; challengeAt: number
+function TaskList({ plan, tasks, challenge, challengeAt, isVip, busy, onChallenge, onAbandon, onComplete, onTick, onGoTrack }: {
+  plan: PersonalPlan; tasks: PersonalTask[] | null; challenge: PersonalChallenge | null; challengeAt: number; isVip: boolean
   busy: string; onChallenge: (t: PersonalTask) => void; onAbandon: (t: PersonalTask) => void
   onComplete: (t: PersonalTask, opts?: { pain?: number; rpe?: number }) => void; onTick: () => void; onGoTrack: () => void
 }) {
   if (tasks === null) return <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
   if (tasks.length === 0) return <div style={{ color: 'var(--tx-dim)', fontSize: 13, padding: '24px 2px', textAlign: 'center' }}>此計畫尚無任務內容</div>
+  const vipLocked = plan.stage_order >= 4 && !isVip // 階段 4+ 且非 VIP → 課表鎖住
   const firstOpen = tasks.findIndex((t) => !t.done) // 第一個未完成＝目前前沿
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -206,7 +208,7 @@ function TaskList({ plan, tasks, challenge, challengeAt, busy, onChallenge, onAb
         const locked = !t.done && firstOpen !== -1 && i !== firstOpen
         const ch = challenge && challenge.task_id === t.id ? challenge : null
         return (
-          <TaskCard key={t.id} t={t} kind={kind} locked={locked} ch={ch} challengeAt={challengeAt}
+          <TaskCard key={t.id} t={t} kind={kind} locked={locked} ch={ch} challengeAt={challengeAt} vipLocked={vipLocked}
             busy={busy === t.id} onChallenge={onChallenge} onAbandon={onAbandon} onComplete={onComplete} onTick={onTick} onGoTrack={onGoTrack} />
         )
       })}
@@ -214,8 +216,8 @@ function TaskList({ plan, tasks, challenge, challengeAt, busy, onChallenge, onAb
   )
 }
 
-function TaskCard({ t, kind, locked, ch, challengeAt, busy, onChallenge, onAbandon, onComplete, onTick, onGoTrack }: {
-  t: PersonalTask; kind: ReturnType<typeof taskKind>; locked: boolean; ch: PersonalChallenge | null; challengeAt: number
+function TaskCard({ t, kind, locked, ch, challengeAt, vipLocked, busy, onChallenge, onAbandon, onComplete, onTick, onGoTrack }: {
+  t: PersonalTask; kind: ReturnType<typeof taskKind>; locked: boolean; ch: PersonalChallenge | null; challengeAt: number; vipLocked: boolean
   busy: boolean; onChallenge: (t: PersonalTask) => void; onAbandon: (t: PersonalTask) => void
   onComplete: (t: PersonalTask, opts?: { pain?: number; rpe?: number }) => void; onTick: () => void; onGoTrack: () => void
 }) {
@@ -262,6 +264,8 @@ function TaskCard({ t, kind, locked, ch, challengeAt, busy, onChallenge, onAband
               <button onClick={() => onAbandon(t)} disabled={busy} style={{ ...abandonBtn, opacity: busy ? 0.5 : 1 }}>放棄</button>
               <button onClick={onGoTrack} disabled={busy} style={{ ...doneBtn, marginTop: 0, flex: 1, opacity: busy ? 0.6 : 1 }}>▶ 前往 GPS 追蹤（進行中）</button>
             </div>
+          ) : vipLocked ? (
+            <button disabled style={{ marginTop: 10, width: '100%', background: 'rgba(255,194,75,.14)', color: 'var(--gold)', border: '1px solid var(--gold)', borderRadius: 9, padding: '9px 0', fontSize: 13.5, fontWeight: 800, cursor: 'not-allowed', fontFamily: 'inherit' }}>🔒 VIP 解鎖挑戰任務</button>
           ) : canChallenge ? (
             <button onClick={() => onChallenge(t)} disabled={busy} style={{ ...doneBtn, opacity: busy ? 0.5 : 1 }}>
               {busy ? '前往中…' : t.done ? `再挑戰課表 ★${t.stars + 1}　·　DP ${t.retry_dp_cost}` : cost > 0 ? `重新挑戰課表　·　DP ${cost}` : '▶ 前往 GPS 追蹤挑戰'}

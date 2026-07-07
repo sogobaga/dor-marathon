@@ -240,6 +240,7 @@ type PanelCard struct {
 	Attempts    int             `json:"attempts"`
 	RetryDpCost int             `json:"retry_dp_cost"`
 	Active      bool            `json:"active"`
+	VipLocked   bool            `json:"vip_locked"` // 階段 4+ 且非 VIP → 鎖住
 }
 
 const panelCols = `pl.code, pl.name, pl.stage_order, t.id, t.day, t.title, t.workout_kind, t.segments,
@@ -259,6 +260,8 @@ func (h *Handler) TrackPanel(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusUnauthorized, "login required")
 		return
 	}
+	var isVip bool
+	_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(vip_expires_at > NOW(), FALSE) FROM users WHERE id=$1`, uid).Scan(&isVip)
 	// 各計畫第一個未完成日(stars=0)，且該任務為結構化課表(workout_kind<>'')→ 一張卡
 	rows, err := h.db.Query(r.Context(), `
 		WITH frontier AS (
@@ -283,6 +286,7 @@ func (h *Handler) TrackPanel(w http.ResponseWriter, r *http.Request) {
 	cards := []PanelCard{}
 	for rows.Next() {
 		if c, err := scanPanelCard(rows, false); err == nil {
+			c.VipLocked = c.StageOrder >= 4 && !isVip
 			cards = append(cards, c)
 		}
 	}
@@ -296,6 +300,7 @@ func (h *Handler) TrackPanel(w http.ResponseWriter, r *http.Request) {
 		JOIN personal_plans pl ON pl.id=t.plan_id
 		WHERE pr.user_id=$1 AND pr.active AND t.workout_kind<>''
 		LIMIT 1`, uid), true); err == nil {
+		c.VipLocked = c.StageOrder >= 4 && !isVip
 		active = &c
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"cards": cards, "active_card": active})
@@ -311,13 +316,23 @@ func (h *Handler) Challenge(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 
 	var baseTarget float64
-	var retryDp int
+	var retryDp, stageOrder int
 	var dataSource, workoutType, workoutKind string
 	if err := h.db.QueryRow(r.Context(),
-		`SELECT target_km, retry_dp_cost, data_source, workout_type, workout_kind FROM personal_tasks WHERE id=$1 AND enabled`, taskID).
-		Scan(&baseTarget, &retryDp, &dataSource, &workoutType, &workoutKind); err != nil {
+		`SELECT t.target_km, t.retry_dp_cost, t.data_source, t.workout_type, t.workout_kind, pl.stage_order
+		 FROM personal_tasks t JOIN personal_plans pl ON pl.id=t.plan_id WHERE t.id=$1 AND t.enabled`, taskID).
+		Scan(&baseTarget, &retryDp, &dataSource, &workoutType, &workoutKind, &stageOrder); err != nil {
 		respondErr(w, http.StatusNotFound, "任務不存在")
 		return
+	}
+	// 階段 4 以上（stage_order>=4）僅 VIP 會員可挑戰
+	if stageOrder >= 4 {
+		var isVip bool
+		_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(vip_expires_at > NOW(), FALSE) FROM users WHERE id=$1`, uid).Scan(&isVip)
+		if !isVip {
+			respondErr(w, http.StatusForbidden, "此階段任務需 VIP 會員才可解鎖挑戰")
+			return
+		}
 	}
 	// 我對此任務的進度
 	var bestStars, attempts int

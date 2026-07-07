@@ -71,6 +71,8 @@ export default function TrackTaskPanel({ cards, activeTaskId, busy, onChallenge,
                       <button onClick={() => setConfirmAbandon(true)} style={{ ...outlineBtn }}>放棄挑戰</button>
                     </div>
                   )
+                ) : c.vip_locked ? (
+                  <button disabled style={vipLockedBtn}>🔒 VIP 解鎖挑戰任務</button>
                 ) : (
                   <button onClick={() => onChallenge(c)} disabled={!!busy || locked}
                     style={{ ...solidBtn, marginTop: 10, width: '100%', opacity: (busy === c.task_id || locked) ? 0.5 : 1, cursor: locked ? 'not-allowed' : 'pointer' }}>
@@ -97,3 +99,4 @@ export default function TrackTaskPanel({ cards, activeTaskId, busy, onChallenge,
 const solidBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }
 const outlineBtn: React.CSSProperties = { width: '100%', background: 'transparent', color: 'var(--hunt)', border: '1px solid var(--hunt)', borderRadius: 10, padding: '9px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
 const ghostBtn: React.CSSProperties = { background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '9px 16px', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }
+const vipLockedBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'rgba(255,194,75,.14)', color: 'var(--gold)', border: '1px solid var(--gold)', borderRadius: 10, padding: '10px', fontSize: 14, fontWeight: 800, cursor: 'not-allowed', fontFamily: 'inherit' }

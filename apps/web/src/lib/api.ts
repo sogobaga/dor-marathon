@@ -1195,6 +1195,7 @@ export interface PanelCard {
   task_id: string; day: number; title: string; workout_kind: string
   segments: WorkoutSegment[] | null
   stars: number; attempts: number; retry_dp_cost: number; active: boolean
+  vip_locked: boolean // 階段 4+ 且非 VIP → 鎖住
 }
 
 export const personalTasksApi = {
