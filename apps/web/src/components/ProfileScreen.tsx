@@ -246,8 +246,16 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
         }}>
           {/* 把手 + 分頁列：整個頂部皆可拖曳（移動超過門檻才拖曳，故分頁仍可點切換） */}
           <div ref={sheet.peekRef} {...sheet.handlers} style={{ flexShrink: 0, touchAction: 'none', cursor: 'grab' }}>
-            <div style={{ padding: '8px 0 6px' }}>
+            <div style={{ padding: '8px 0 4px' }}>
               <div style={{ width: 40, height: 5, borderRadius: 3, background: 'var(--line-2)', margin: '0 auto' }} />
+            </div>
+            {/* 加入 LINE 社群：面板上方右側 */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 14px 8px' }}>
+              <a href="https://line.me/ti/g2/aWgkU9OMGvCDJy6pTCejNRzgaPB6yosiMXKkew?utm_source=invitation&utm_medium=link_copy&utm_campaign=default"
+                target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#06C755', color: '#fff', fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 999, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                <span aria-hidden>👥</span>加入社群認識更多跑友
+              </a>
             </div>
             <div style={{ display: 'flex', gap: 6, padding: '2px 14px 0', borderBottom: '1px solid var(--line)' }}>
               {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄'], ['follows', '追蹤']] as const).map(([v, label]) => (
