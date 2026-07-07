@@ -1,13 +1,19 @@
 // Package personaltask 個人任務系統（跑者生命週期 10 計畫 × 每 100 天鏈式任務）。
 // 有別於①活動內任務②跑步隨機事件任務，此為第三套：個人化、每日一個、完成前一個才開下一個。
-// Phase 0：資料模型 + 後台匯入（bulk upsert）+ 前台讀取/手動完成。自動里程結算列 Phase 2。
+//
+// 挑戰制（v0.1.248+）：每個任務要先按「挑戰」才開始計算；里程從挑戰起累積、達標後「完成」才可按；
+// 「放棄」判失敗可重挑。可重複挑戰爬星 1→3★，每爬一星目標變硬（tierMult）；休息日＝挑戰後窗口內
+// 不能有任何里程，安靜度過才算成功。第一次挑戰免費，之後每次重挑扣該任務 retry_dp_cost（預設 10）。
 package personaltask
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -20,6 +26,32 @@ import (
 type Handler struct{ db *pgxpool.Pool }
 
 func NewHandler(db *pgxpool.Pool) *Handler { return &Handler{db: db} }
+
+// 挑戰制參數（未來可移到後台設定）
+const restWindowMin = 10 // 休息日「不能有里程」的基準窗口（分鐘）；測試短窗
+
+// tierMult 星級目標倍率：1★×1.00、2★×1.15、3★×1.30（index = tier 1..3）。
+var tierMult = [4]float64{0, 1.00, 1.15, 1.30}
+
+func round1(x float64) float64 { return math.Round(x*10) / 10 }
+
+func mult(tier int) float64 {
+	if tier >= 1 && tier <= 3 {
+		return tierMult[tier]
+	}
+	return 1.0
+}
+
+// kindOf 任務型別：有目標里程=mileage；工作表類型含「休息」=rest；其餘（肌力/恢復/課表無里程）=manual。
+func kindOf(targetKm float64, workoutType string) string {
+	if targetKm > 0 {
+		return "mileage"
+	}
+	if strings.Contains(workoutType, "休息") {
+		return "rest"
+	}
+	return "manual"
+}
 
 // --- JSON 型別 ---
 
@@ -61,9 +93,30 @@ type Task struct {
 	DataSource       string          `json:"data_source"`
 	SafetyNote       string          `json:"safety_note"`
 	Enabled          bool            `json:"enabled"`
-	// 我的進度（前台計畫詳情用）
-	Done  bool `json:"done"`
-	Stars int  `json:"stars"`
+	// 我的進度 + 挑戰制狀態（前台按鈕流用）
+	Done              bool    `json:"done"`                // 已完成至少 1★
+	Stars             int     `json:"stars"`               // 最高星數 0..3
+	Attempts          int     `json:"attempts"`            // 已開始挑戰次數（>0 → 下次挑戰要付 DP）
+	Active            bool    `json:"active"`              // 有進行中的挑戰
+	ChallengeTier     int     `json:"challenge_tier"`      // 進行中挑戰的星級
+	ChallengeTargetKm float64 `json:"challenge_target_km"` // 進行中挑戰的縮放目標
+	RetryDpCost       int     `json:"retry_dp_cost"`       // 重挑 DP 花費
+}
+
+// ChallengeState 進行中挑戰的即時狀態（前台顯示進度/可否完成/是否失敗）。
+type ChallengeState struct {
+	TaskID      string  `json:"task_id"`
+	PlanCode    string  `json:"plan_code"`
+	Day         int     `json:"day"`
+	Kind        string  `json:"kind"` // mileage | rest | manual
+	Tier        int     `json:"tier"`
+	TargetKm    float64 `json:"target_km"`     // 縮放後目標（mileage）
+	AccKm       float64 `json:"acc_km"`        // 累積里程（mileage）／窗口內偵測到的里程（rest）
+	DataSource  string  `json:"data_source"`   // gps | strava
+	RestWindowS int     `json:"rest_window_s"` // 休息窗口秒數（rest）
+	ElapsedS    int     `json:"elapsed_s"`     // 已過秒數（rest）
+	Met         bool    `json:"met"`           // 條件達成 → 完成可按
+	Failed      bool    `json:"failed"`        // 休息窗口內偵測到里程 → 需重挑
 }
 
 // --- 路由 ---
@@ -71,10 +124,12 @@ type Task struct {
 // Router 前台（需登入）
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Get("/", h.ListPlans)                    // GET /personal-tasks — 10 計畫摘要 + 我的完成數
-	r.Get("/plans/{code}", h.PlanDetail)       // GET /personal-tasks/plans/P01 — 計畫 + 100 任務 + 我的進度
-	r.Post("/settle", h.Settle)                // POST 自動里程結算（依 data_source 比對 target_km）
-	r.Post("/tasks/{id}/complete", h.Complete) // POST 手動完成（可帶 actual_km/pain/rpe）
+	r.Get("/", h.ListPlans)                      // GET /personal-tasks — 計畫摘要 + 我的完成數
+	r.Get("/plans/{code}", h.PlanDetail)         // GET /personal-tasks/plans/P01 — 計畫 + 任務 + 我的進度/挑戰狀態
+	r.Post("/status", h.Status)                  // POST 進行中挑戰的即時狀態（開頁/輪詢/跑步後呼叫）
+	r.Post("/tasks/{id}/challenge", h.Challenge) // POST 開始挑戰（第一次免費、之後扣 DP）
+	r.Post("/tasks/{id}/abandon", h.Abandon)     // POST 放棄 → 判失敗、可重挑
+	r.Post("/tasks/{id}/complete", h.Complete)   // POST 完成（僅達標可完成；發星 + 獎勵）
 	return r
 }
 
@@ -94,7 +149,7 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 		SELECT p.id, p.code, p.name, p.lifecycle, p.stage_order, p.target_km, p.target_time, p.entry_note, p.data_source, p.banner_url, p.enabled,
 		       (SELECT count(*) FROM personal_tasks t WHERE t.plan_id=p.id AND t.enabled) AS total,
 		       (SELECT count(*) FROM personal_task_progress pr JOIN personal_tasks t ON t.id=pr.task_id
-		         WHERE t.plan_id=p.id AND pr.user_id=$1) AS completed
+		         WHERE t.plan_id=p.id AND pr.user_id=$1 AND pr.stars>0) AS completed
 		FROM personal_plans p WHERE p.enabled ORDER BY p.stage_order, p.code`, uid)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
@@ -131,12 +186,140 @@ func (h *Handler) PlanDetail(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"plan": p, "tasks": tasks})
 }
 
-type completeReq struct {
-	ActualKm float64 `json:"actual_km"`
-	Pain     int     `json:"pain"`
-	Rpe      int     `json:"rpe"`
+// isFrontierLocked 全域順序鏈：若目標任務尚未完成(stars=0)且前面（stage_order, code, day 較小）還有未完成任務 → 鎖住。
+// 已完成過的任務（stars>0，重挑爬星）不受鏈限制。
+func (h *Handler) isFrontierLocked(ctx context.Context, uid, taskID string) (bool, error) {
+	var priorLeft int
+	err := h.db.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM personal_tasks t JOIN personal_plans pl ON pl.id=t.plan_id
+		JOIN personal_tasks tt ON tt.id=$2
+		JOIN personal_plans pp ON pp.id=tt.plan_id
+		WHERE t.enabled AND pl.enabled
+		  AND (pl.stage_order, pl.code, t.day) < (pp.stage_order, pp.code, tt.day)
+		  AND NOT EXISTS (SELECT 1 FROM personal_task_progress pr WHERE pr.user_id=$1 AND pr.task_id=t.id AND pr.stars>0)`,
+		uid, taskID).Scan(&priorLeft)
+	return priorLeft > 0, err
 }
 
+// Challenge POST /personal-tasks/tasks/{id}/challenge — 開始挑戰。
+func (h *Handler) Challenge(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	taskID := chi.URLParam(r, "id")
+
+	var baseTarget float64
+	var retryDp int
+	var dataSource, workoutType string
+	if err := h.db.QueryRow(r.Context(),
+		`SELECT target_km, retry_dp_cost, data_source, workout_type FROM personal_tasks WHERE id=$1 AND enabled`, taskID).
+		Scan(&baseTarget, &retryDp, &dataSource, &workoutType); err != nil {
+		respondErr(w, http.StatusNotFound, "任務不存在")
+		return
+	}
+	// 我對此任務的進度
+	var bestStars, attempts int
+	var active bool
+	_ = h.db.QueryRow(r.Context(),
+		`SELECT COALESCE(stars,0), COALESCE(attempts,0), COALESCE(active,FALSE) FROM personal_task_progress WHERE user_id=$1 AND task_id=$2`,
+		uid, taskID).Scan(&bestStars, &attempts, &active)
+	if active { // 已在挑戰中 → 冪等，直接回目前狀態
+		st, _ := ChallengeStatusUser(r.Context(), h.db, uid)
+		respondJSON(w, http.StatusOK, map[string]any{"already": true, "challenge": st})
+		return
+	}
+	if bestStars >= 3 {
+		respondErr(w, http.StatusConflict, "已達 3★ 上限，無需再挑戰")
+		return
+	}
+	// 只允許同時一個進行中的挑戰
+	var other int
+	_ = h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM personal_task_progress WHERE user_id=$1 AND active`, uid).Scan(&other)
+	if other > 0 {
+		respondErr(w, http.StatusConflict, "你有其他進行中的挑戰，請先完成或放棄")
+		return
+	}
+	// 全域順序鏈：未完成任務要照順序
+	if bestStars == 0 {
+		locked, err := h.isFrontierLocked(r.Context(), uid, taskID)
+		if err == nil && locked {
+			respondErr(w, http.StatusConflict, "請先完成前面的任務")
+			return
+		}
+	}
+	tier := bestStars + 1
+	scaled := round1(baseTarget * mult(tier))
+	cost := 0
+	if attempts > 0 { // 非第一次挑戰 → 付費重挑
+		cost = retryDp
+	}
+
+	tx, err := h.db.Begin(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if cost > 0 {
+		tag, err := tx.Exec(r.Context(), `UPDATE users SET dp = dp - $2 WHERE id=$1 AND dp >= $2`, uid, cost)
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		if tag.RowsAffected() != 1 {
+			respondErr(w, http.StatusConflict, fmt.Sprintf("DP 不足，重新挑戰需 %d DP", cost))
+			return
+		}
+	}
+	if _, err := tx.Exec(r.Context(), `
+		INSERT INTO personal_task_progress (user_id, task_id, status, stars, attempts, active, challenge_tier, challenge_target_km, challenge_started_at, awarded_stars)
+		VALUES ($1,$2,'challenging',0,1,TRUE,$3,$4,NOW(),0)
+		ON CONFLICT (user_id, task_id) DO UPDATE SET
+		  status='challenging', active=TRUE, challenge_tier=$3, challenge_target_km=$4, challenge_started_at=NOW(),
+		  attempts = personal_task_progress.attempts + 1`,
+		uid, taskID, tier, scaled); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	kind := kindOf(baseTarget, workoutType)
+	respondJSON(w, http.StatusOK, map[string]any{
+		"challenging": true, "tier": tier, "kind": kind, "target_km": scaled,
+		"charged_dp": cost, "rest_window_s": int(math.Round(float64(restWindowMin*60) * mult(tier))),
+	})
+}
+
+// Abandon POST /personal-tasks/tasks/{id}/abandon — 放棄（判失敗，可重挑；已付的 DP 不退）。
+func (h *Handler) Abandon(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.db.Exec(r.Context(), `
+		UPDATE personal_task_progress
+		SET active=FALSE, challenge_tier=0, challenge_target_km=0, challenge_started_at=NULL,
+		    status = CASE WHEN stars>0 THEN 'completed' ELSE 'available' END
+		WHERE user_id=$1 AND task_id=$2`, uid, taskID); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+type completeReq struct {
+	Pain int `json:"pain"`
+	Rpe  int `json:"rpe"`
+}
+
+// Complete POST /personal-tasks/tasks/{id}/complete — 完成（僅在挑戰達標時可完成）。
 func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	if uid == "" {
@@ -145,45 +328,79 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 	taskID := chi.URLParam(r, "id")
 	var req completeReq
-	_ = json.NewDecoder(r.Body).Decode(&req) // 允許空 body（純手動完成）
+	_ = json.NewDecoder(r.Body).Decode(&req) // 允許空 body
 
-	// 取任務目標 + 獎勵 + 資料來源
-	var targetKm float64
-	var rExp, rDp int
-	var dataSource string
+	// 進度（必須有進行中的挑戰）
+	var bestStars, awardedStars, tier int
+	var active bool
+	var chalTarget float64
+	var startedAt time.Time
 	if err := h.db.QueryRow(r.Context(),
-		`SELECT target_km, reward_exp, reward_dp, data_source FROM personal_tasks WHERE id=$1 AND enabled`, taskID).
-		Scan(&targetKm, &rExp, &rDp, &dataSource); err != nil {
+		`SELECT COALESCE(stars,0), COALESCE(awarded_stars,0), COALESCE(active,FALSE), COALESCE(challenge_tier,0), COALESCE(challenge_target_km,0), challenge_started_at
+		 FROM personal_task_progress WHERE user_id=$1 AND task_id=$2`, uid, taskID).
+		Scan(&bestStars, &awardedStars, &active, &tier, &chalTarget, &startedAt); err != nil {
+		respondErr(w, http.StatusConflict, "尚未開始挑戰")
+		return
+	}
+	if !active {
+		respondErr(w, http.StatusConflict, "尚未開始挑戰")
+		return
+	}
+	// 任務資料
+	var baseTarget float64
+	var rExp, rDp int
+	var dataSource, workoutType string
+	if err := h.db.QueryRow(r.Context(),
+		`SELECT target_km, reward_exp, reward_dp, data_source, workout_type FROM personal_tasks WHERE id=$1 AND enabled`, taskID).
+		Scan(&baseTarget, &rExp, &rDp, &dataSource, &workoutType); err != nil {
 		respondErr(w, http.StatusNotFound, "任務不存在")
 		return
 	}
-	// 全域順序鏈：前面（stage_order, code, day 較小）還有未完成任務 → 擋（完成前面才能開這個）。
-	// 用 JOIN 取目標任務的排序鍵，兩側皆為 row-constructor 比較（避免對子查詢做 row 比較的相容性問題）。
-	var priorLeft int
-	_ = h.db.QueryRow(r.Context(), `
-		SELECT COUNT(*)
-		FROM personal_tasks t JOIN personal_plans pl ON pl.id=t.plan_id
-		JOIN personal_tasks tt ON tt.id=$2
-		JOIN personal_plans pp ON pp.id=tt.plan_id
-		WHERE t.enabled AND pl.enabled
-		  AND (pl.stage_order, pl.code, t.day) < (pp.stage_order, pp.code, tt.day)
-		  AND NOT EXISTS (SELECT 1 FROM personal_task_progress pr WHERE pr.user_id=$1 AND pr.task_id=t.id)`,
-		uid, taskID).Scan(&priorLeft)
-	if priorLeft > 0 {
-		respondErr(w, http.StatusConflict, "請先完成前面的任務")
-		return
-	}
-	// 星星：取「回報里程」與「窗口內符合來源的累積里程」的大者評（手動覆蓋未達標=1★）
-	dist := req.ActualKm
-	if targetKm > 0 {
-		if since, err := windowStart(r.Context(), h.db, uid); err == nil {
-			if acc, err := accDistance(r.Context(), h.db, uid, since, dataSource); err == nil && acc > dist {
-				dist = acc
-			}
+	kind := kindOf(baseTarget, workoutType)
+	acc := 0.0
+	now := time.Now()
+	switch kind {
+	case "mileage":
+		a, err := accDistance(r.Context(), h.db, uid, startedAt, dataSource)
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		acc = a
+		if acc < chalTarget {
+			respondErr(w, http.StatusConflict, fmt.Sprintf("尚未達標（%.1f/%.1f K）", acc, chalTarget))
+			return
+		}
+	case "rest":
+		windowS := int(math.Round(float64(restWindowMin*60) * mult(tier)))
+		end := startedAt.Add(time.Duration(windowS) * time.Second)
+		to := now
+		if to.After(end) {
+			to = end
+		}
+		a, err := accAnyDistance(r.Context(), h.db, uid, startedAt, to)
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		if a > 0 { // 窗口內出現里程 → 失敗，標記需重挑
+			_, _ = h.db.Exec(r.Context(), `UPDATE personal_task_progress SET active=FALSE, status=CASE WHEN stars>0 THEN 'completed' ELSE 'available' END, challenge_started_at=NULL WHERE user_id=$1 AND task_id=$2`, uid, taskID)
+			respondErr(w, http.StatusConflict, "挑戰失敗：休息窗口內偵測到里程，請重新挑戰")
+			return
+		}
+		if now.Before(end) {
+			left := int(math.Ceil(end.Sub(now).Minutes()))
+			respondErr(w, http.StatusConflict, fmt.Sprintf("休息窗口尚未結束，還要 %d 分", left))
+			return
 		}
 	}
-	stars := starsFor(targetKm, dist)
-	evidence, _ := json.Marshal(map[string]any{"actual_km": req.ActualKm, "acc_km": dist, "pain": req.Pain, "rpe": req.Rpe, "manual": true})
+	// 達標 → 完成該星
+	newStars := bestStars
+	if tier > newStars {
+		newStars = tier
+	}
+	grant := tier > awardedStars // 每爬一顆「新星」發一次基準獎勵（冪等）
+	evidence, _ := json.Marshal(map[string]any{"tier": tier, "kind": kind, "acc_km": acc, "pain": req.Pain, "rpe": req.Rpe})
 
 	tx, err := h.db.Begin(r.Context())
 	if err != nil {
@@ -191,17 +408,19 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	tag, err := tx.Exec(r.Context(),
-		`INSERT INTO personal_task_progress (user_id, task_id, status, stars, evidence, awarded, completed_at)
-		 VALUES ($1,$2,'completed',$3,$4,TRUE,NOW()) ON CONFLICT (user_id, task_id) DO NOTHING`,
-		uid, taskID, stars, evidence)
-	if err != nil {
+	newAwarded := awardedStars
+	if grant && tier > newAwarded {
+		newAwarded = tier
+	}
+	if _, err := tx.Exec(r.Context(), `
+		UPDATE personal_task_progress
+		SET status='completed', active=FALSE, stars=$3, awarded_stars=$4, evidence=$5, awarded=TRUE, completed_at=NOW(),
+		    challenge_tier=0, challenge_target_km=0, challenge_started_at=NULL
+		WHERE user_id=$1 AND task_id=$2`, uid, taskID, newStars, newAwarded, evidence); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	firstTime := tag.RowsAffected() == 1
-	if firstTime && (rExp > 0 || rDp > 0) {
-		// 首次完成才發獎（冪等）；比照日常里程/事件直接加 users.exp/dp
+	if grant && (rExp > 0 || rDp > 0) {
 		if _, err := tx.Exec(r.Context(), `UPDATE users SET exp = exp + $2, dp = dp + $3 WHERE id=$1`, uid, rExp, rDp); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
@@ -212,71 +431,73 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
-		"completed": true, "stars": stars,
-		"reward_exp": ternInt(firstTime, rExp, 0), "reward_dp": ternInt(firstTime, rDp, 0),
-		"already": !firstTime,
+		"completed": true, "stars": newStars, "tier": tier,
+		"reward_exp": ternInt(grant, rExp, 0), "reward_dp": ternInt(grant, rDp, 0),
 	})
 }
 
-// --- 自動里程結算（Phase 2）---
+// --- 挑戰即時狀態 ---
 
-// Settled 本次自動結算完成的任務（給前台慶祝提示）。
-type Settled struct {
-	TaskID    string  `json:"task_id"`
-	PlanCode  string  `json:"plan_code"`
-	Day       int     `json:"day"`
-	Title     string  `json:"title"`
-	Stars     int     `json:"stars"`
-	RewardExp int     `json:"reward_exp"`
-	RewardDp  int     `json:"reward_dp"`
-	AccKm     float64 `json:"acc_km"`
+// ChallengeStatusUser 回傳使用者「進行中挑戰」的即時狀態（無則 nil）。package 函式便於他處（如首頁）呼叫。
+func ChallengeStatusUser(ctx context.Context, db *pgxpool.Pool, uid string) (*ChallengeState, error) {
+	var taskID, planCode, dataSource, workoutType string
+	var day, tier int
+	var baseTarget, chalTarget float64
+	var startedAt time.Time
+	err := db.QueryRow(ctx, `
+		SELECT t.id, pl.code, t.day, t.target_km, t.data_source, t.workout_type,
+		       COALESCE(pr.challenge_tier,0), COALESCE(pr.challenge_target_km,0), pr.challenge_started_at
+		FROM personal_task_progress pr
+		JOIN personal_tasks t ON t.id = pr.task_id
+		JOIN personal_plans pl ON pl.id = t.plan_id
+		WHERE pr.user_id=$1 AND pr.active
+		LIMIT 1`, uid).Scan(&taskID, &planCode, &day, &baseTarget, &dataSource, &workoutType, &tier, &chalTarget, &startedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	kind := kindOf(baseTarget, workoutType)
+	st := &ChallengeState{TaskID: taskID, PlanCode: planCode, Day: day, Kind: kind, Tier: tier, DataSource: dataSource}
+	now := time.Now()
+	switch kind {
+	case "mileage":
+		acc, err := accDistance(ctx, db, uid, startedAt, dataSource)
+		if err != nil {
+			return nil, err
+		}
+		st.TargetKm = chalTarget
+		st.AccKm = acc
+		st.Met = acc >= chalTarget
+	case "rest":
+		windowS := int(math.Round(float64(restWindowMin*60) * mult(tier)))
+		end := startedAt.Add(time.Duration(windowS) * time.Second)
+		to := now
+		if to.After(end) {
+			to = end
+		}
+		acc, err := accAnyDistance(ctx, db, uid, startedAt, to)
+		if err != nil {
+			return nil, err
+		}
+		st.RestWindowS = windowS
+		if el := int(now.Sub(startedAt).Seconds()); el > 0 {
+			st.ElapsedS = el
+		}
+		st.AccKm = acc
+		if acc > 0 {
+			st.Failed = true
+		} else {
+			st.Met = !now.Before(end)
+		}
+	default: // manual
+		st.Met = true
+	}
+	return st, nil
 }
 
-// CurrentProgress 目前任務（尚未達標者）的里程進度，給前台顯示「X.X / Y K 自動結算」。
-type CurrentProgress struct {
-	TaskID     string  `json:"task_id"`
-	PlanCode   string  `json:"plan_code"`
-	Day        int     `json:"day"`
-	TargetKm   float64 `json:"target_km"`
-	AccKm      float64 `json:"acc_km"`
-	DataSource string  `json:"data_source"`
-}
-
-// starsFor 星星：無目標里程=1★；達標=2★；達標×1.15=3★；未達標=1★（手動覆蓋用）。
-func starsFor(target, dist float64) int {
-	if target <= 0 {
-		return 1
-	}
-	if dist >= target*1.15 {
-		return 3
-	}
-	if dist >= target {
-		return 2
-	}
-	return 1
-}
-
-// windowStart 計入活動的起點：最近一次任務完成時間；若尚無完成 → 旅程起點（第一次呼叫寫入 NOW()）。
-func windowStart(ctx context.Context, db *pgxpool.Pool, uid string) (time.Time, error) {
-	var last *time.Time
-	if err := db.QueryRow(ctx, `SELECT MAX(completed_at) FROM personal_task_progress WHERE user_id=$1`, uid).Scan(&last); err != nil {
-		return time.Time{}, err
-	}
-	if last != nil {
-		return *last, nil
-	}
-	var started time.Time
-	if err := db.QueryRow(ctx, `
-		INSERT INTO personal_journey (user_id) VALUES ($1)
-		ON CONFLICT (user_id) DO UPDATE SET user_id=EXCLUDED.user_id
-		RETURNING started_at`, uid).Scan(&started); err != nil {
-		return time.Time{}, err
-	}
-	return started, nil
-}
-
-// accDistance 窗口內、符合 data_source 的未 flagged 活動累積里程。
-// 來源分流：strava 任務計 source='strava'；其餘（gps）計 App GPS 活動（source IS NULL）。
+// accDistance 從 since 起、符合 data_source 的未 flagged 活動累積里程（strava 任務計 source='strava'；gps 計 source IS NULL）。
 func accDistance(ctx context.Context, db *pgxpool.Pool, uid string, since time.Time, dataSource string) (float64, error) {
 	var acc float64
 	err := db.QueryRow(ctx, `
@@ -287,92 +508,29 @@ func accDistance(ctx context.Context, db *pgxpool.Pool, uid string, since time.T
 	return acc, err
 }
 
-// SettleUser 自動結算：從全域順序（stage_order, code, day）的目前任務起，若窗口內符合來源的
-// 累積里程達 target_km 就完成、發獎、給星星；完成後下一個任務的窗口起點即為「剛剛完成時間」，
-// 故通常一次只會結算一個任務（一趟跑步推進一天）。回傳已結算清單 + 目前任務進度。
-// 設計成 package 函式（吃 db），讓 profile.Dashboard 也能在開首頁時順手結算（免另開頁）。
-func SettleUser(ctx context.Context, db *pgxpool.Pool, uid string) ([]Settled, *CurrentProgress, error) {
-	settled := []Settled{}
-	for i := 0; i < 5; i++ { // 上限防呆（正常至多完成 1 個就停）
-		var taskID, planCode, title, dataSource string
-		var day int
-		var targetKm float64
-		var rExp, rDp int
-		err := db.QueryRow(ctx, `
-			SELECT t.id, pl.code, t.title, t.data_source, t.day, t.target_km, t.reward_exp, t.reward_dp
-			FROM personal_tasks t JOIN personal_plans pl ON pl.id = t.plan_id
-			WHERE t.enabled AND pl.enabled
-			  AND NOT EXISTS (SELECT 1 FROM personal_task_progress pr WHERE pr.user_id=$1 AND pr.task_id=t.id)
-			ORDER BY pl.stage_order, pl.code, t.day
-			LIMIT 1`, uid).Scan(&taskID, &planCode, &title, &dataSource, &day, &targetKm, &rExp, &rDp)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return settled, nil, nil // 全部完成
-			}
-			return settled, nil, err
-		}
-		since, err := windowStart(ctx, db, uid)
-		if err != nil {
-			return settled, nil, err
-		}
-		cur := &CurrentProgress{TaskID: taskID, PlanCode: planCode, Day: day, TargetKm: targetKm, DataSource: dataSource}
-		if targetKm <= 0 {
-			return settled, cur, nil // 休息/肌力（無目標里程）無法自動判定 → 留給手動回報
-		}
-		acc, err := accDistance(ctx, db, uid, since, dataSource)
-		if err != nil {
-			return settled, nil, err
-		}
-		cur.AccKm = acc
-		if acc < targetKm {
-			return settled, cur, nil // 尚未達標 → 回報進度、停
-		}
-		// 達標 → 完成 + 發獎（冪等）
-		stars := starsFor(targetKm, acc)
-		evidence, _ := json.Marshal(map[string]any{"auto": true, "acc_km": acc, "source": dataSource})
-		tx, err := db.Begin(ctx)
-		if err != nil {
-			return settled, nil, err
-		}
-		tag, err := tx.Exec(ctx, `
-			INSERT INTO personal_task_progress (user_id, task_id, status, stars, evidence, awarded, completed_at)
-			VALUES ($1,$2,'completed',$3,$4,TRUE,NOW()) ON CONFLICT (user_id, task_id) DO NOTHING`,
-			uid, taskID, stars, evidence)
-		if err != nil {
-			tx.Rollback(ctx)
-			return settled, nil, err
-		}
-		if tag.RowsAffected() != 1 { // 已被別的請求搶先完成 → 避免重複發獎/無限迴圈
-			tx.Rollback(ctx)
-			return settled, nil, nil
-		}
-		if rExp > 0 || rDp > 0 {
-			if _, err := tx.Exec(ctx, `UPDATE users SET exp = exp + $2, dp = dp + $3 WHERE id=$1`, uid, rExp, rDp); err != nil {
-				tx.Rollback(ctx)
-				return settled, nil, err
-			}
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return settled, nil, err
-		}
-		settled = append(settled, Settled{TaskID: taskID, PlanCode: planCode, Day: day, Title: title, Stars: stars, RewardExp: rExp, RewardDp: rDp, AccKm: acc})
-	}
-	return settled, nil, nil
+// accAnyDistance 區間 [from, to) 內任何來源的未 flagged 里程總和（休息日判定：一有里程就失敗）。
+func accAnyDistance(ctx context.Context, db *pgxpool.Pool, uid string, from, to time.Time) (float64, error) {
+	var acc float64
+	err := db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(distance_km),0) FROM activities
+		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND recorded_at < $3`,
+		uid, from, to).Scan(&acc)
+	return acc, err
 }
 
-// Settle POST /personal-tasks/settle — 觸發自動里程結算（開頁時、跑步結束後呼叫）。
-func (h *Handler) Settle(w http.ResponseWriter, r *http.Request) {
+// Status POST /personal-tasks/status — 回傳進行中挑戰的即時狀態。
+func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	if uid == "" {
 		respondErr(w, http.StatusUnauthorized, "login required")
 		return
 	}
-	settled, cur, err := SettleUser(r.Context(), h.db, uid)
+	st, err := ChallengeStatusUser(r.Context(), h.db, uid)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"settled": settled, "current": cur})
+	respondJSON(w, http.StatusOK, map[string]any{"challenge": st})
 }
 
 // --- 後台 handlers ---
@@ -508,15 +666,17 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 
 // --- 共用 ---
 
-// queryTasks 依 where/args 撈任務 + 我的進度。uid 固定為 $1；where 內的參數請從 $2 起算。
+// queryTasks 依 where/args 撈任務 + 我的進度/挑戰狀態。uid 固定為 $1；where 內的參數請從 $2 起算。
 // uid 空字串＝後台不看進度（用零值 UUID，永不命中任何使用者進度）。
 func (h *Handler) queryTasks(ctx context.Context, whereOrder string, uid string, args ...any) ([]Task, error) {
 	if uid == "" {
 		uid = "00000000-0000-0000-0000-000000000000"
 	}
 	q := `SELECT t.id, t.plan_id, pl.code, t.day, t.week, t.title, t.story, t.workout, t.workout_type, t.target_km, t.target_min,
-	             t.intensity, t.complete_cond, t.completion_type, t.completion_params, t.reward_exp, t.reward_dp, t.icon_url, t.data_source, t.safety_note, t.enabled,
-	             (pr.user_id IS NOT NULL) AS done, COALESCE(pr.stars,0) AS stars
+	             t.intensity, t.complete_cond, t.completion_type, t.completion_params, t.reward_exp, t.reward_dp, t.icon_url, t.data_source, t.safety_note, t.enabled, t.retry_dp_cost,
+	             (COALESCE(pr.stars,0) > 0) AS done, COALESCE(pr.stars,0) AS stars,
+	             COALESCE(pr.attempts,0) AS attempts, COALESCE(pr.active,FALSE) AS active,
+	             COALESCE(pr.challenge_tier,0) AS challenge_tier, COALESCE(pr.challenge_target_km,0) AS challenge_target_km
 	      FROM personal_tasks t JOIN personal_plans pl ON pl.id = t.plan_id
 	      LEFT JOIN personal_task_progress pr ON pr.task_id = t.id AND pr.user_id = $1 ` + whereOrder
 	fullArgs := append([]any{uid}, args...)
@@ -529,8 +689,8 @@ func (h *Handler) queryTasks(ctx context.Context, whereOrder string, uid string,
 	for rows.Next() {
 		var t Task
 		if err := rows.Scan(&t.ID, &t.PlanID, &t.PlanCode, &t.Day, &t.Week, &t.Title, &t.Story, &t.Workout, &t.WorkoutType, &t.TargetKm, &t.TargetMin,
-			&t.Intensity, &t.CompleteCond, &t.CompletionType, &t.CompletionParams, &t.RewardExp, &t.RewardDp, &t.IconURL, &t.DataSource, &t.SafetyNote, &t.Enabled,
-			&t.Done, &t.Stars); err != nil {
+			&t.Intensity, &t.CompleteCond, &t.CompletionType, &t.CompletionParams, &t.RewardExp, &t.RewardDp, &t.IconURL, &t.DataSource, &t.SafetyNote, &t.Enabled, &t.RetryDpCost,
+			&t.Done, &t.Stars, &t.Attempts, &t.Active, &t.ChallengeTier, &t.ChallengeTargetKm); err != nil {
 			continue
 		}
 		out = append(out, t)

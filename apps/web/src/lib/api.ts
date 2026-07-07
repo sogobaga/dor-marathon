@@ -1154,18 +1154,23 @@ export interface PersonalTask {
   data_source: string
   safety_note: string
   enabled: boolean
-  done: boolean
-  stars: number
+  done: boolean               // 已完成至少 1★
+  stars: number               // 最高星數 0..3
+  attempts: number            // 已挑戰次數（>0 → 下次挑戰要付 DP）
+  active: boolean             // 有進行中的挑戰
+  challenge_tier: number      // 進行中挑戰的星級
+  challenge_target_km: number // 進行中挑戰的縮放目標
+  retry_dp_cost: number       // 重挑 DP 花費
 }
 
-// 自動里程結算（Phase 2）
-export interface PersonalSettled {
-  task_id: string; plan_code: string; day: number; title: string
-  stars: number; reward_exp: number; reward_dp: number; acc_km: number
-}
-export interface PersonalCurrent {
+// 挑戰制：進行中挑戰的即時狀態
+export interface PersonalChallenge {
   task_id: string; plan_code: string; day: number
+  kind: 'mileage' | 'rest' | 'manual'
+  tier: number
   target_km: number; acc_km: number; data_source: string // gps | strava
+  rest_window_s: number; elapsed_s: number
+  met: boolean; failed: boolean
 }
 
 export const personalTasksApi = {
@@ -1173,11 +1178,19 @@ export const personalTasksApi = {
     request<{ plans: PersonalPlan[] }>('/personal-tasks', { headers: withAuth(token) }),
   planDetail: (token: string, code: string) =>
     request<{ plan: PersonalPlan; tasks: PersonalTask[] }>(`/personal-tasks/plans/${code}`, { headers: withAuth(token) }),
-  // 自動里程結算：依 data_source 比對 target_km，達標自動完成 + 星星。開頁/跑步後呼叫。
-  settle: (token: string) =>
-    request<{ settled: PersonalSettled[]; current: PersonalCurrent | null }>('/personal-tasks/settle', { method: 'POST', headers: withAuth(token) }),
-  complete: (token: string, taskId: string, body?: { actual_km?: number; pain?: number; rpe?: number }) =>
-    request<{ completed: boolean; stars: number; reward_exp: number; reward_dp: number; already: boolean }>(
+  // 進行中挑戰的即時狀態（開頁/輪詢/跑步後呼叫）
+  status: (token: string) =>
+    request<{ challenge: PersonalChallenge | null }>('/personal-tasks/status', { method: 'POST', headers: withAuth(token) }),
+  // 開始挑戰（第一次免費、之後扣 DP）
+  challenge: (token: string, taskId: string) =>
+    request<{ challenging?: boolean; already?: boolean; tier: number; kind?: string; target_km?: number; charged_dp?: number; rest_window_s?: number }>(
+      `/personal-tasks/tasks/${taskId}/challenge`, { method: 'POST', headers: withAuth(token) }),
+  // 放棄（判失敗、可重挑）
+  abandon: (token: string, taskId: string) =>
+    request<{ ok: boolean }>(`/personal-tasks/tasks/${taskId}/abandon`, { method: 'POST', headers: withAuth(token) }),
+  // 完成（僅達標可完成；發星 + 獎勵）
+  complete: (token: string, taskId: string, body?: { pain?: number; rpe?: number }) =>
+    request<{ completed: boolean; stars: number; tier: number; reward_exp: number; reward_dp: number }>(
       `/personal-tasks/tasks/${taskId}/complete`,
       { method: 'POST', headers: withAuth(token), body: JSON.stringify(body || {}) },
     ),
