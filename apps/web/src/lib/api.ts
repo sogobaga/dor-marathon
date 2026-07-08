@@ -961,6 +961,8 @@ export interface DashboardInfo {
   following_count: number
   follower_count: number
   personal_entry: 'hidden' | 'locked' | 'shown' // 個人任務入口可見性（後端解析）
+  explore_entry: 'hidden' | 'locked' | 'shown'  // 城市探索入口可見性
+  gallery_entry: 'hidden' | 'locked' | 'shown'  // 卡片圖鑑入口可見性
 }
 
 export interface FollowRow {
@@ -1231,6 +1233,33 @@ export const adminPersonalTasksApi = {
     request<{ plans: number; tasks: number }>('/admin/personal-tasks/import', {
       method: 'POST', headers: withAuth(token), body: JSON.stringify(body),
     }),
+}
+
+// 城市探索：打卡點關主
+export interface ExploreBoss {
+  id: string; code: string; name: string; title: string; region: string; place: string
+  gender: string; age: number; workout_label: string; difficulty_stars: number
+  quote: string; skill_name: string; skill_desc: string; dialogue_intro: string; dialogue_start: string
+  scene_image_url: string; card_image_url: string
+  lat: number; lng: number; radius_m: number
+  reward_exp: number; reward_dp: number; retry_dp_cost: number
+  workout_kind: string; segments: WorkoutSegment[] | null; data_source: string
+  display_order: number; enabled: boolean
+  // 玩家進度（前台列表）
+  stars?: number; card_obtained?: boolean; active?: boolean; attempts?: number
+}
+
+export const adminExploreApi = {
+  list: (token: string) => request<{ bosses: ExploreBoss[] }>('/admin/explore', { headers: withAuth(token) }),
+  save: (token: string, boss: Partial<ExploreBoss>) =>
+    request<{ id: string }>('/admin/explore', { method: 'POST', headers: withAuth(token), body: JSON.stringify(boss) }),
+  del: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/explore/${id}/delete`, { method: 'POST', headers: withAuth(token) }),
+}
+
+// 城市探索（前台）：啟用中的關主 + 我的進度
+export const exploreApi = {
+  list: (token: string) => request<{ bosses: ExploreBoss[] }>('/explore', { headers: withAuth(token) }),
 }
 
 export const adminLevelsApi = {

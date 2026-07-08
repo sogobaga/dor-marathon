@@ -34,6 +34,7 @@ const NAV: { grp: string; items: NavItem[] }[] = [
       { k: 'event-races', t: '多人事件', href: '/admin/event-races', perm: 'event_tasks' },
       { k: 'effects', t: '效果管理', href: '/admin/effects', perm: 'event_tasks' },
       { k: 'personal-tasks', t: '個人任務', href: '/admin/personal-tasks', perm: 'event_tasks' },
+      { k: 'explore', t: '城市探索', href: '/admin/explore', perm: 'event_tasks' },
       { k: 'interstitial', t: '蓋板廣告', href: '/admin/interstitial', perm: 'settings' },
       { k: 'stores', t: '打卡門市' },
       { k: 'mileage', t: '里程規則' },

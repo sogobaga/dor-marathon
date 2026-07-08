@@ -24,6 +24,7 @@ import (
 	"github.com/dor/api/internal/config"
 	"github.com/dor/api/internal/db"
 	"github.com/dor/api/internal/event"
+	"github.com/dor/api/internal/explore"
 	"github.com/dor/api/internal/personaltask"
 	"github.com/dor/api/internal/image"
 	"github.com/dor/api/internal/integration"
@@ -122,6 +123,7 @@ func main() {
 	eventHandler := event.NewHandler(pool, wsManager)
 	// 個人任務（跑者生命週期 10 計畫 × 100 天鏈式任務）
 	personalHandler := personaltask.NewHandler(pool)
+	exploreHandler := explore.NewHandler(pool)
 	appSettingsHandler := appsettings.NewHandler(pool)
 
 	// Image（圖片上傳，存 Postgres）
@@ -228,6 +230,7 @@ func main() {
 
 			// 個人任務（跑者生命週期計畫）— 讀計畫/任務 + 手動完成
 			r.Mount("/personal-tasks", personalHandler.Router())
+			r.Mount("/explore", exploreHandler.Router())
 
 			// 獎勵系統（轉盤 + 集點卡）
 			r.Mount("/rewards", rewardHandler.Router())
@@ -267,6 +270,7 @@ func main() {
 			r.With(perm("event_tasks")).Mount("/admin/event-races", eventHandler.RaceAdminRouter())
 			r.With(perm("event_tasks")).Mount("/admin/effect-assets", eventHandler.EffectAssetsRouter())
 			r.With(perm("event_tasks")).Mount("/admin/personal-tasks", personalHandler.AdminRouter())
+			r.With(perm("event_tasks")).Mount("/admin/explore", exploreHandler.AdminRouter())
 			r.With(perm("settings")).Mount("/admin/app-settings", appSettingsHandler.AdminRouter())
 			r.With(perm("settings")).Mount("/admin/interstitial", appSettingsHandler.InterstitialAdminRouter())
 			r.With(perm("settings")).Mount("/admin/test-whitelist", raceHandler.TestWhitelistRouter())

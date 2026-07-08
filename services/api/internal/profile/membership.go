@@ -117,6 +117,8 @@ type DashboardInfo struct {
 	// PersonalEntry 個人任務入口的可見性（後端依系統設定 + 白名單解析後給前端）：
 	// hidden 不顯示 / locked 顯示但不能按 / shown 顯示且可按。
 	PersonalEntry string `json:"personal_entry"`
+	ExploreEntry  string `json:"explore_entry"` // 城市探索入口可見性（同上）
+	GalleryEntry  string `json:"gallery_entry"` // 卡片圖鑑入口可見性（同上）
 }
 
 // GET /api/v1/profile/dashboard
@@ -147,6 +149,8 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.PersonalEntry = resolvePersonalEntry(r.Context(), h.db, email, code)
+	d.ExploreEntry = resolveEntry(r.Context(), h.db, "explore_entry_state", "explore_entry_whitelist", email, code)
+	d.GalleryEntry = resolveEntry(r.Context(), h.db, "gallery_entry_state", "gallery_entry_whitelist", email, code)
 	levels, err := h.levelConfigList(r.Context())
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
@@ -176,22 +180,27 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"dashboard": d})
 }
 
-// resolvePersonalEntry 依系統設定 personal_entry_state（+ 白名單）解析出「這個使用者」該看到的個人任務入口狀態。
-// 回 hidden / locked / shown。白名單留在後端解析，避免整包帳號送到前端外流。
-func resolvePersonalEntry(ctx context.Context, db *pgxpool.Pool, email, code string) string {
-	switch appsettings.GetString(ctx, db, "personal_entry_state", "hidden") {
+// resolveEntry 依系統設定 <stateKey>（+ <wlKey> 白名單）解析出「這個使用者」該看到的入口狀態。
+// 回 hidden 不顯示 / locked 顯示但不能按 / shown 顯示且可按。白名單留在後端解析，避免整包帳號外流。
+func resolveEntry(ctx context.Context, db *pgxpool.Pool, stateKey, wlKey, email, code string) string {
+	switch appsettings.GetString(ctx, db, stateKey, "hidden") {
 	case "open":
 		return "shown"
 	case "locked":
 		return "locked"
 	case "whitelist":
-		if personalWhitelisted(appsettings.GetString(ctx, db, "personal_entry_whitelist", ""), email, code) {
+		if personalWhitelisted(appsettings.GetString(ctx, db, wlKey, ""), email, code) {
 			return "shown"
 		}
 		return "hidden"
 	default: // hidden 或未設定
 		return "hidden"
 	}
+}
+
+// resolvePersonalEntry 個人任務入口可見性（沿用共用 resolveEntry）。
+func resolvePersonalEntry(ctx context.Context, db *pgxpool.Pool, email, code string) string {
+	return resolveEntry(ctx, db, "personal_entry_state", "personal_entry_whitelist", email, code)
 }
 
 // personalWhitelisted 白名單以換行/逗號/分號/空白分隔，可填帳號編碼（#可省）或 email，大小寫不敏感。
