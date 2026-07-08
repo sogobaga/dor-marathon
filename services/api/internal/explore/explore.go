@@ -51,6 +51,7 @@ type Boss struct {
 	CardObtained bool `json:"card_obtained"`
 	Active       bool `json:"active"`
 	Attempts     int  `json:"attempts"`
+	Discovered   bool `json:"discovered"` // 已打卡揭露關主（未揭露則前台只顯示地點、其餘欄位遮蔽）
 }
 
 const bossCols = `id, code, name, title, region, place, gender, age, workout_label, difficulty_stars,
@@ -83,6 +84,15 @@ func (h *Handler) AdminRouter() http.Handler {
 	return r
 }
 
+// maskBoss 未揭露(未打卡)→ 只保留地點(place/region/lat/lng/radius)與進度，遮蔽關主身分/圖/難度/課表/對話。
+func maskBoss(b *Boss) {
+	b.Code, b.Name, b.Title, b.Gender, b.WorkoutLabel = "", "", "", "", ""
+	b.Age, b.DifficultyStars, b.RewardExp, b.RewardDp, b.RetryDpCost = 0, 0, 0, 0, 0
+	b.Quote, b.SkillName, b.SkillDesc, b.DialogueIntro, b.DialogueStart = "", "", "", "", ""
+	b.SceneImageURL, b.CardImageURL, b.WorkoutKind = "", "", ""
+	b.Segments = json.RawMessage("[]")
+}
+
 // --- 前台 handlers ---
 
 // List GET /explore — 啟用中的關主（含我的進度：星數/是否已取得卡片/進行中）。
@@ -93,7 +103,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.db.Query(r.Context(), `
 		SELECT `+bossCols+`,
-		       COALESCE(pr.stars,0), COALESCE(pr.card_obtained,FALSE), COALESCE(pr.active,FALSE), COALESCE(pr.attempts,0)
+		       COALESCE(pr.stars,0), COALESCE(pr.card_obtained,FALSE), COALESCE(pr.active,FALSE), COALESCE(pr.attempts,0), COALESCE(pr.discovered,FALSE)
 		FROM explore_bosses b
 		LEFT JOIN explore_progress pr ON pr.boss_id=b.id AND pr.user_id=$1
 		WHERE b.enabled
@@ -106,11 +116,17 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	out := []Boss{}
 	for rows.Next() {
 		var b Boss
+		var disc bool
 		if err := rows.Scan(&b.ID, &b.Code, &b.Name, &b.Title, &b.Region, &b.Place, &b.Gender, &b.Age, &b.WorkoutLabel, &b.DifficultyStars,
 			&b.Quote, &b.SkillName, &b.SkillDesc, &b.DialogueIntro, &b.DialogueStart, &b.SceneImageURL, &b.CardImageURL,
 			&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled,
-			&b.Stars, &b.CardObtained, &b.Active, &b.Attempts); err != nil {
+			&b.Stars, &b.CardObtained, &b.Active, &b.Attempts, &disc); err != nil {
 			continue
+		}
+		// 已揭露＝已打卡(discovered) 或 已挑戰(stars>0) 或 已取得卡片。未揭露→只留地點、遮蔽關主資料(伺服器端，devtools 也看不到)。
+		b.Discovered = disc || b.CardObtained || b.Stars > 0
+		if !b.Discovered {
+			maskBoss(&b)
 		}
 		out = append(out, b)
 	}

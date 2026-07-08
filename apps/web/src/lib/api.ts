@@ -1247,6 +1247,7 @@ export interface ExploreBoss {
   display_order: number; enabled: boolean
   // 玩家進度（前台列表）
   stars?: number; card_obtained?: boolean; active?: boolean; attempts?: number
+  discovered?: boolean // 已打卡揭露關主（未揭露則 name/scene/難度等欄位被伺服器遮蔽）
 }
 
 export const adminExploreApi = {
