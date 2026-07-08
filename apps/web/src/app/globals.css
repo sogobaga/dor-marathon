@@ -284,6 +284,9 @@ html, body {
   78%  { opacity: 1; transform: scale(1); }
   100% { opacity: .08; transform: scale(.82); }
 }
+/* 跑步追蹤中「請勿離開視窗」閃爍提醒 */
+@keyframes trackBlink { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+.track-blink { animation: trackBlink 1.1s ease-in-out infinite; }
 .evt-countdown {
   position: fixed; inset: 0; z-index: 2200; pointer-events: none;
   display: flex; align-items: center; justify-content: center;

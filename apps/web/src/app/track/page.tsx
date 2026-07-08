@@ -53,6 +53,7 @@ export default function TrackPage() {
   const [err, setErr] = useState('')
   const [errFade, setErrFade] = useState(false) // 提示訊息淡出中
   const [vehicleWarn, setVehicleWarn] = useState(false) // 即時偵測到疑似搭車速度
+  const [recover, setRecover] = useState<{ start: number; points: GpsPoint[]; km: number; mins: number } | null>(null) // 上次未上傳的跑步（可恢復上傳）
   const [result, setResult] = useState<GpsRunResult | null>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -713,6 +714,48 @@ export default function TrackPage() {
     } finally { setUploading(false) }
   }
 
+  // 進頁偵測「上次未上傳的跑步」（LS_KEY 備份）→ 提示可恢復上傳，避免忘記上傳整趟白跑
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY)
+      if (!raw) return
+      const data = JSON.parse(raw)
+      const pts: GpsPoint[] = data?.points
+      if (!Array.isArray(pts) || pts.length < 2 || !data.start) { localStorage.removeItem(LS_KEY); return }
+      const lastT = pts[pts.length - 1].t
+      if (Date.now() - lastT > 24 * 3600 * 1000) { localStorage.removeItem(LS_KEY); return } // 太舊(>24h)不提示
+      let m = 0
+      for (let i = 1; i < pts.length; i++) m += haversineM(pts[i - 1], pts[i])
+      setRecover({ start: data.start, points: pts, km: Math.round(m / 10) / 100, mins: Math.round((lastT - data.start) / 60000) })
+    } catch { localStorage.removeItem(LS_KEY) }
+  }, [])
+
+  async function uploadRecovered() {
+    if (!recover) return
+    const token = getUserToken()
+    if (!token) { setShowLogin(true); return }
+    const pts = recover.points
+    setUploading(true)
+    try {
+      const { result } = await withUserAuth((t) => activitiesApi.uploadGps(t, {
+        started_at: new Date(recover.start).toISOString(),
+        ended_at: new Date(pts[pts.length - 1].t).toISOString(),
+        points: pts,
+      }))
+      setResult(result); setStatus('done'); localStorage.removeItem(LS_KEY); setRecover(null)
+    } catch (e: any) { setErr(e?.message || '上傳失敗') }
+    finally { setUploading(false) }
+  }
+  function discardRecovered() { localStorage.removeItem(LS_KEY); setRecover(null) }
+
+  // 跑步進行中若嘗試離開/關閉視窗 → native 攔截提示，避免誤觸中斷整趟
+  useEffect(() => {
+    if (status !== 'tracking') return
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', h)
+    return () => window.removeEventListener('beforeunload', h)
+  }, [status])
+
   // ── 個人任務「結構化課表」：面板載入 / 挑戰 / 開始 / 逐段驅動 / 完成 ──
   // 載入任務面板（各階段前沿課表卡 + 進行中挑戰卡）。有進行中挑戰 → 載入分段序列進入就緒。
   const loadPanel = useCallback(async () => {
@@ -897,6 +940,21 @@ export default function TrackPage() {
    <GoogleAuthProvider>
     <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
+      {/* 上次未上傳的跑步 → 可恢復上傳 */}
+      {recover && status !== 'tracking' && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 3300, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 16, padding: '20px 18px', maxWidth: 340, width: '100%', boxShadow: '0 12px 40px rgba(0,0,0,.6)' }}>
+            <div style={{ fontSize: 17, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>🏃 有一趟未上傳的跑步</div>
+            <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
+              偵測到上次離開時尚未上傳的跑步紀錄（約 <strong style={{ color: 'var(--fug)' }}>{recover.km} km</strong>、<strong style={{ color: 'var(--tx)' }}>{recover.mins} 分鐘</strong>）。要現在上傳嗎？
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+              <button onClick={uploadRecovered} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>{uploading ? '上傳中…' : '上傳這趟'}</button>
+              <button onClick={discardRecovered} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>捨棄</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* 觸發演出：Step1 全螢幕紅閃警報（Phase A/B 共用） */}
       {showFlash && <EventTriggerFlash onDone={onFlashDone} />}
       {/* Step2 任務目標面板（等接受/放棄，不自動消失） */}
@@ -936,7 +994,7 @@ export default function TrackPage() {
       <header style={{ padding: 'var(--app-top, 16px) 18px 12px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         {/* 跑步期間隱藏「返回/歷史」，避免誤離開而中斷；只能按「結束並上傳」正常結束 */}
         {status === 'tracking'
-          ? <span style={{ color: 'var(--hunt)', fontSize: 13, fontWeight: 700 }}>● 跑步中</span>
+          ? <span className="track-blink" style={{ color: 'var(--hunt)', fontSize: 13, fontWeight: 800 }}>● 數據偵測中</span>
           : <a href="/" style={{ color: 'var(--tx-dim)', fontSize: 14, textDecoration: 'none' }}>← 返回</a>}
         <strong style={{ fontSize: 16 }}>GPS 跑步追蹤</strong>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
@@ -1174,7 +1232,7 @@ export default function TrackPage() {
         )}
         {status === 'tracking' && <button onClick={requestFinish} className="skin-btn-end" style={{ ...btn, background: 'var(--hunt)', color: '#fff' }}>■ 結束並上傳</button>}
         {status === 'done' && <button onClick={() => { setStatus('idle'); setElapsed(0); setDistance(0); setSplits([]); setAnomalies(0) }} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)' }}>再跑一次</button>}
-        {status === 'tracking' && <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>追蹤中請保持本頁在前景、螢幕勿關（背景追蹤瀏覽器不支援）{uploading ? ' · 上傳中…' : ''}</div>}
+        {status === 'tracking' && <div className="track-blink" style={{ textAlign: 'center', fontSize: 12.5, fontWeight: 800, color: 'var(--hunt)', marginTop: 8, lineHeight: 1.5 }}>⚠️ 數據偵測中，請勿離開或關閉視窗！跑完請按「結束並上傳」{uploading ? '（上傳中…）' : ''}</div>}
       </div>
     </PhoneFrame>
    </GoogleAuthProvider>
