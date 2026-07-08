@@ -1261,6 +1261,17 @@ export const adminExploreApi = {
 // 城市探索（前台）：啟用中的關主 + 我的進度
 export const exploreApi = {
   list: (token: string) => request<{ bosses: ExploreBoss[] }>('/explore', { headers: withAuth(token) }),
+  // 到打卡點打卡 → 揭露關主（回完整關主資料）
+  checkin: (token: string, id: string, body: { lat: number; lng: number; acc: number }) =>
+    request<{ ok: boolean; status: string; distance_m?: number; message?: string; boss?: ExploreBoss }>(
+      `/explore/${id}/checkin`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  // 接受挑戰（扣 DP=難度×10）→ 帶到課表挑戰
+  accept: (token: string, id: string) =>
+    request<{ ok: boolean; tier: number; charged_dp: number }>(`/explore/${id}/accept`, { method: 'POST', headers: withAuth(token) }),
+  // 完成挑戰（由 /track 分段引擎回報）→ 得星、3★ 取得卡片
+  complete: (token: string, id: string, body: { finished: boolean; work_in_band: number; work_total: number }) =>
+    request<{ completed: boolean; stars: number; card_obtained: boolean; reward_exp: number; reward_dp: number }>(
+      `/explore/${id}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
 }
 
 export const adminLevelsApi = {

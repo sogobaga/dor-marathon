@@ -13,7 +13,7 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
   livePaceS: number    // 即時配速（秒/公里）
   hits: Record<number, boolean> // 已評分的 work 段：index → 是否達配速
   phase: 'running' | 'done'
-  result: { stars: number; reward_exp: number; reward_dp: number; flagged?: boolean } | null
+  result: { stars: number; reward_exp: number; reward_dp: number; flagged?: boolean; card_obtained?: boolean } | null
   onClose: () => void
 }) {
   const step = steps[stepIdx]
@@ -45,9 +45,14 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
             <>
               <div style={{ fontSize: 30, letterSpacing: 3, color: 'var(--gold)', textAlign: 'center' }}>{'★'.repeat(result.stars)}{'☆'.repeat(3 - result.stars)}</div>
               <div style={{ textAlign: 'center', fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 4 }}>
-                400m 配速達成 {workHit}/{workTotal}
+                配速達成 {workHit}/{workTotal}
                 {(result.reward_exp > 0 || result.reward_dp > 0) && <>　·　<span style={{ color: 'var(--gold)', fontWeight: 800 }}>{result.reward_exp > 0 ? `+${result.reward_exp} EXP` : ''}{result.reward_exp > 0 && result.reward_dp > 0 ? ' ' : ''}{result.reward_dp > 0 ? `+${result.reward_dp} DP` : ''}</span></>}
               </div>
+              {result.card_obtained && (
+                <div style={{ marginTop: 10, textAlign: 'center', fontSize: 14, fontWeight: 900, color: 'var(--gold)', background: 'rgba(231,184,75,.12)', border: '1px solid rgba(231,184,75,.4)', borderRadius: 10, padding: '9px' }}>
+                  🎴 收服成功！已取得關主卡片，可到「卡片圖鑑」查看
+                </div>
+              )}
             </>
           ) : (
             <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--tx-dim)' }}>結算中…</div>

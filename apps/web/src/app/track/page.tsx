@@ -1,9 +1,10 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence, type MileageConfig, type PanelCard } from '@/lib/api'
+import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
+import BossChallengePanel from '@/components/BossChallengePanel'
 import TrackTaskPanel from '@/components/TrackTaskPanel'
 import { expandSegments, paceInBand, type WoStep } from '@/lib/workout'
 import { loadLeaflet } from '@/lib/leaflet'
@@ -84,11 +85,14 @@ export default function TrackPage() {
   const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
   const [mileageCfg, setMileageCfg] = useState<MileageConfig | null>(null) // 里程獎勵設定（進度條/預覽）
   // 個人任務「結構化課表」執行（挑戰後帶到本頁跑）
-  const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[] } | null>(null)
+  const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' } | null>(null)
+  const [exploreCps, setExploreCps] = useState<ExploreBoss[]>([]) // 城市探索打卡點（含座標）
+  const [bossPanel, setBossPanel] = useState<{ boss: ExploreBoss; phase: 'intro' | 'start'; dpCost: number } | null>(null) // 打卡後跳出的關主挑戰面板
+  const [exploreBusy, setExploreBusy] = useState(false)
   const [woPhase, setWoPhase] = useState<'idle' | 'countdown' | 'running' | 'done'>('idle')
   const [woStepIdx, setWoStepIdx] = useState(0)
   const [woHits, setWoHits] = useState<Record<number, boolean>>({}) // work 段 index → 是否達配速
-  const [woResult, setWoResult] = useState<{ stars: number; reward_exp: number; reward_dp: number; flagged?: boolean } | null>(null)
+  const [woResult, setWoResult] = useState<{ stars: number; reward_exp: number; reward_dp: number; flagged?: boolean; card_obtained?: boolean } | null>(null)
   const [, setWoNow] = useState(0) // 驅動 HUD 每 0.5s 重繪
   const woStepIdxRef = useRef(0)
   const woStepStartRef = useRef<{ dist: number; time: number }>({ dist: 0, time: 0 }) // 目前分段起點（距離 m / 時間 ms）
@@ -765,7 +769,7 @@ export default function TrackPage() {
       setPanel(r)
       const ac = r.active_card
       if (ac && ac.segments && ac.segments.length) {
-        setWorkout({ taskId: ac.task_id, title: ac.title || '課表挑戰', steps: expandSegments(ac.segments) })
+        setWorkout({ taskId: ac.task_id, title: ac.title || '課表挑戰', steps: expandSegments(ac.segments), kind: 'personal' })
       } else if (!woActiveRef.current) {
         setWorkout(null)
       }
@@ -778,7 +782,7 @@ export default function TrackPage() {
     setPanelBusy(c.task_id); setErr('')
     try {
       await withUserAuth((t) => personalTasksApi.challenge(t, c.task_id))
-      setWorkout({ taskId: c.task_id, title: c.title, steps: expandSegments(c.segments) })
+      setWorkout({ taskId: c.task_id, title: c.title, steps: expandSegments(c.segments), kind: 'personal' })
       await loadPanel()
     } catch (e: any) { setErr(e?.message || '挑戰失敗') }
     finally { setPanelBusy('') }
@@ -794,6 +798,11 @@ export default function TrackPage() {
 
   function startWorkout() {
     if (!workout) return
+    beginWorkout(workout)
+  }
+  // 啟動一份課表（個人任務或關主挑戰共用）。須在使用者手勢內呼叫（start() 會請求定位權限）
+  function beginWorkout(wo: { taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' }) {
+    setWorkout(wo)
     woResultsRef.current = { inBand: 0, total: 0, detail: [] }
     woStepIdxRef.current = 0
     setWoStepIdx(0); setWoHits({}); setWoResult(null)
@@ -816,8 +825,15 @@ export default function TrackPage() {
     const token = getUserToken()
     try {
       if (token && workout) {
-        const r = await withUserAuth((t) => personalTasksApi.complete(t, workout.taskId, { finished: true, work_in_band: res.inBand, work_total: res.total, evidence: res.detail }))
-        setWoResult({ stars: r.stars, reward_exp: r.reward_exp, reward_dp: r.reward_dp })
+        if (workout.kind === 'explore') {
+          // 關主挑戰：回報 → 得星、3★ 取得卡片；刷新探索列表（收服狀態）
+          const r = await withUserAuth((t) => exploreApi.complete(t, workout.taskId, { finished: true, work_in_band: res.inBand, work_total: res.total }))
+          setWoResult({ stars: r.stars, reward_exp: r.reward_exp, reward_dp: r.reward_dp, card_obtained: r.card_obtained })
+          fetchExplore()
+        } else {
+          const r = await withUserAuth((t) => personalTasksApi.complete(t, workout.taskId, { finished: true, work_in_band: res.inBand, work_total: res.total, evidence: res.detail }))
+          setWoResult({ stars: r.stars, reward_exp: r.reward_exp, reward_dp: r.reward_dp })
+        }
       }
     } catch { /* 結算失敗不擋畫面 */ }
   }
@@ -896,8 +912,15 @@ export default function TrackPage() {
         L.circle([cp.lat, cp.lng], { radius: cp.radius_m || 20, color, weight: 1.5, fillOpacity: 0.1 }).addTo(layer)
         L.circleMarker([cp.lat, cp.lng], { radius: 6, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(layer).bindTooltip(cp.title || '打卡點')
       })
+      // 城市探索打卡點：畫在最上層、較醒目（紫=未探索神秘/金=已揭露/綠=已收服）
+      exploreCps.forEach((b) => {
+        const color = b.card_obtained ? '#46E3A0' : b.discovered ? '#E7B84B' : '#C77DFF'
+        L.circle([b.lat, b.lng], { radius: b.radius_m || 40, color, weight: 1.5, fillOpacity: 0.12, dashArray: '4 4' }).addTo(layer)
+        L.circleMarker([b.lat, b.lng], { radius: 9, color: '#fff', weight: 2.5, fillColor: color, fillOpacity: 1 }).addTo(layer)
+          .bindTooltip((b.discovered ? b.name : (b.place || '神秘打卡點')) + ' ⚔')
+      })
     })
-  }, [checkpoints, mapReady])
+  }, [checkpoints, exploreCps, mapReady])
 
   async function doCheckin(cp: ActiveCheckpoint) {
     setCpMsg('')
@@ -926,6 +949,69 @@ export default function TrackPage() {
 
   const cpDist = (cp: ActiveCheckpoint): number | null =>
     curPos ? haversineM({ lat: curPos.lat, lng: curPos.lng, t: 0, acc: 0 }, { lat: cp.lat, lng: cp.lng, t: 0, acc: 0 }) : null
+
+  // ── 城市探索打卡點：表面上是打卡任務，打卡後才揭露關主挑戰事件 ──
+  const fetchExplore = useCallback(async () => {
+    const token = getUserToken()
+    if (!token) { setExploreCps([]); return }
+    try {
+      const { bosses } = await exploreApi.list(token)
+      setExploreCps(bosses.filter((b) => b.lat && b.lng))
+    } catch { /* ignore */ }
+  }, [])
+  useEffect(() => { fetchExplore() }, [fetchExplore, user?.id])
+
+  const exDist = (b: ExploreBoss): number | null =>
+    curPos ? haversineM({ lat: curPos.lat, lng: curPos.lng, t: 0, acc: 0 }, { lat: b.lat, lng: b.lng, t: 0, acc: 0 }) : null
+  const exDpCost = (b: ExploreBoss): number =>
+    (b.attempts && b.attempts > 0 && b.retry_dp_cost > 0) ? b.retry_dp_cost : Math.max(0, b.difficulty_stars) * 10
+
+  // 打卡 → 地理驗證通過即揭露關主 → 跳出關主挑戰面板（表面打卡，實為事件觸發）
+  async function doExploreCheckin(b: ExploreBoss) {
+    setCpMsg('')
+    const token = getUserToken()
+    if (!token) { setShowLogin(true); return }
+    setCpBusy('ex:' + b.id)
+    try {
+      let lat = curPos?.lat, lng = curPos?.lng, acc = curPos?.acc ?? 0
+      if (status !== 'tracking' || lat == null) {
+        const pos = await new Promise<GeolocationPosition>((res, rej) =>
+          navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }))
+        lat = pos.coords.latitude; lng = pos.coords.longitude; acc = pos.coords.accuracy ?? 0
+      }
+      const r = await exploreApi.checkin(token, b.id, { lat: lat!, lng: lng!, acc })
+      if (r.ok && r.boss) {
+        await fetchExplore()
+        setBossPanel({ boss: r.boss, phase: 'intro', dpCost: exDpCost(r.boss) })
+      } else {
+        setCpMsg(r.message || (r.status === 'out_of_range' ? '尚未到達打卡點' : r.status === 'low_accuracy' ? '定位精準度不足，請到空曠處再試' : '打卡失敗'))
+      }
+    } catch (e: any) {
+      setCpMsg(e?.code === 1 ? '需要定位權限才能打卡' : (e?.message || '打卡失敗，請重試'))
+    } finally { setCpBusy('') }
+  }
+
+  // 接受關主挑戰（扣 DP）→ 面板切到「開始」階段（關主開場對話）
+  async function acceptBoss() {
+    if (!bossPanel) return
+    const token = getUserToken()
+    if (!token) { setShowLogin(true); return }
+    setExploreBusy(true); setCpMsg('')
+    try {
+      await withUserAuth((t) => exploreApi.accept(t, bossPanel.boss.id))
+      setBossPanel({ ...bossPanel, phase: 'start' })
+    } catch (e: any) { setCpMsg(e?.message || '接受挑戰失敗') }
+    finally { setExploreBusy(false) }
+  }
+  // 「開始挑戰」（使用者手勢）→ 關閉面板 + 用關主 segments 啟動課表引擎（kind=explore）
+  function startBossWorkout() {
+    if (!bossPanel) return
+    const b = bossPanel.boss
+    const steps = expandSegments(b.segments || [])
+    if (!steps.length) { setCpMsg('此關主尚未設定挑戰課表'); setBossPanel(null); return }
+    setBossPanel(null)
+    beginWorkout({ taskId: b.id, title: b.name, steps, kind: 'explore' })
+  }
 
   const distKm = distance / 1000
   const avgPace = distKm >= PACE_MIN_KM ? elapsed / distKm : 0 // 未達門檻先顯示 --:--，避免爆數字
@@ -1145,12 +1231,46 @@ export default function TrackPage() {
             {/* warn / err 已改為浮在面板上方的常駐提示（見地圖區），此處不再重複顯示 */}
 
         {/* 打卡點任務 */}
-        {checkpoints.length > 0 && (
+        {(checkpoints.length > 0 || exploreCps.length > 0) && (
           <div style={{ marginTop: 16 }}>
             <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}><span className="skin-ico" data-ico="pin" aria-hidden>📍</span> 打卡點任務</div>
             {cpMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginBottom: 8, wordBreak: 'break-word' }}>{cpMsg}</div>}
             {status !== 'tracking' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>建議按「開始跑步」邊跑邊打卡（有軌跡佐證，免審核）。</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* 城市探索打卡點：表面是打卡任務，打卡後揭露關主挑戰 */}
+              {exploreCps.map((b) => {
+                const d = exDist(b)
+                const inRange = d != null && d <= (b.radius_m || 40)
+                const busy = cpBusy === 'ex:' + b.id
+                const title = b.discovered ? b.name : (b.place || '神秘打卡點')
+                return (
+                  <div key={'ex:' + b.id} style={{ background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, border: b.discovered ? '1px solid rgba(231,184,75,.45)' : '1px solid transparent' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {b.discovered ? '⚔ ' : '📍 '}{title}
+                        {b.discovered && b.difficulty_stars > 0 && <span style={{ color: 'var(--gold)', fontSize: 11, marginLeft: 6 }}>{'★'.repeat(b.difficulty_stars)}</span>}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        城市探索{b.region ? ` · ${b.region}` : ''}
+                        {d != null && !b.card_obtained && <> · {d < 1000 ? `還有 ${Math.round(d)}m` : `${(d / 1000).toFixed(1)}km`}</>}
+                      </div>
+                    </div>
+                    {b.card_obtained ? (
+                      <span style={{ color: 'var(--fug)', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>✓ 已收服</span>
+                    ) : b.discovered ? (
+                      <button onClick={() => setBossPanel({ boss: b, phase: b.active ? 'start' : 'intro', dpCost: exDpCost(b) })}
+                        style={{ flexShrink: 0, background: 'var(--gold)', color: '#1a1206', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: 'pointer' }}>
+                        {b.active ? '▶ 繼續挑戰' : '⚔ 挑戰'}
+                      </button>
+                    ) : (
+                      <button onClick={() => doExploreCheckin(b)} disabled={busy || (curPos != null && !inRange)}
+                        style={{ flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: (busy || (curPos != null && !inRange)) ? 'default' : 'pointer', opacity: (busy || (curPos != null && !inRange)) ? 0.45 : 1 }}>
+                        {busy ? '打卡中…' : curPos != null && !inRange ? '未到範圍' : '打卡'}
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
               {checkpoints.map((cp) => {
                 const d = cpDist(cp)
                 const inRange = d != null && d <= cp.radius_m
@@ -1234,6 +1354,20 @@ export default function TrackPage() {
         {status === 'done' && <button onClick={() => { setStatus('idle'); setElapsed(0); setDistance(0); setSplits([]); setAnomalies(0) }} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)' }}>再跑一次</button>}
         {status === 'tracking' && <div className="track-blink" style={{ textAlign: 'center', fontSize: 12.5, fontWeight: 800, color: 'var(--hunt)', marginTop: 8, lineHeight: 1.5 }}>⚠️ 數據偵測中，請勿離開或關閉視窗！跑完請按「結束並上傳」{uploading ? '（上傳中…）' : ''}</div>}
       </div>
+
+      {/* 關主挑戰面板（打卡揭露後跳出）*/}
+      {bossPanel && (
+        <BossChallengePanel
+          boss={bossPanel.boss}
+          phase={bossPanel.phase}
+          busy={exploreBusy}
+          dpCost={bossPanel.dpCost}
+          note={status === 'tracking' ? '⚠ 請先結束目前的跑步，再開始關主挑戰（挑戰為獨立的追蹤紀錄）' : undefined}
+          onAccept={acceptBoss}
+          onDecline={() => setBossPanel(null)}
+          onStart={startBossWorkout}
+        />
+      )}
     </PhoneFrame>
    </GoogleAuthProvider>
   )

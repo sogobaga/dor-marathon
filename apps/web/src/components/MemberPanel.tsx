@@ -151,7 +151,7 @@ export default function MemberPanel({
               style={{ ...entryBtn, opacity: dash.explore_entry === 'shown' ? 1 : 0.6, cursor: dash.explore_entry === 'shown' ? 'pointer' : 'default' }}>
               <span style={{ fontSize: 20, lineHeight: 1 }}>🗺️</span>
               <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>城市探索</span>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.explore_entry === 'locked' ? '即將開放 ›' : '尋找關主打卡 ›'}</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.explore_entry === 'locked' ? '即將開放 ›' : '發現城市美好 ›'}</span>
             </button>
           )}
           {dash.gallery_entry !== 'hidden' && (
@@ -160,7 +160,7 @@ export default function MemberPanel({
               style={{ ...entryBtn, opacity: dash.gallery_entry === 'shown' ? 1 : 0.6, cursor: dash.gallery_entry === 'shown' ? 'pointer' : 'default' }}>
               <span style={{ fontSize: 20, lineHeight: 1 }}>🎴</span>
               <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>卡片圖鑑</span>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.gallery_entry === 'locked' ? '即將開放 ›' : '收集關主卡片 ›'}</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.gallery_entry === 'locked' ? '即將開放 ›' : '挑戰各方好手 ›'}</span>
             </button>
           )}
         </div>

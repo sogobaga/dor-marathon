@@ -5,6 +5,8 @@ package explore
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -12,6 +14,15 @@ import (
 
 	"github.com/dor/api/internal/auth"
 )
+
+func haversineM(lat1, lng1, lat2, lng2 float64) float64 {
+	const R = 6371000.0
+	rad := math.Pi / 180
+	dLat := (lat2 - lat1) * rad
+	dLng := (lng2 - lng1) * rad
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1*rad)*math.Cos(lat2*rad)*math.Sin(dLng/2)*math.Sin(dLng/2)
+	return R * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}
 
 type Handler struct{ db *pgxpool.Pool }
 
@@ -72,6 +83,9 @@ func scanBoss(row interface{ Scan(...any) error }) (Boss, error) {
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.List)
+	r.Post("/{id}/checkin", h.Checkin)   // 到打卡點打卡 → 揭露關主
+	r.Post("/{id}/accept", h.Accept)     // 接受挑戰（扣 DP=難度×10）
+	r.Post("/{id}/complete", h.Complete) // 完成挑戰（得星、3★ 取卡）
 	return r
 }
 
@@ -131,6 +145,219 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		out = append(out, b)
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"bosses": out})
+}
+
+type checkinReq struct {
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
+	Acc float64 `json:"acc"`
+}
+
+// Checkin POST /explore/{id}/checkin — 到打卡點打卡：驗地理圍欄 → 設 discovered(揭露關主) → 回關主完整資料。
+func (h *Handler) Checkin(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	bossID := chi.URLParam(r, "id")
+	var req checkinReq
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	b, err := scanBoss(h.db.QueryRow(r.Context(), `SELECT `+bossCols+` FROM explore_bosses WHERE id=$1 AND enabled`, bossID))
+	if err != nil {
+		respondErr(w, http.StatusNotFound, "打卡點不存在")
+		return
+	}
+	if req.Acc > 65 {
+		respondJSON(w, http.StatusOK, map[string]any{"ok": false, "status": "low_accuracy", "message": "GPS 精度不足，請到較空曠處再試"})
+		return
+	}
+	dist := haversineM(req.Lat, req.Lng, b.Lat, b.Lng)
+	radius := b.RadiusM
+	if radius <= 0 {
+		radius = 40
+	}
+	if dist > float64(radius)+req.Acc {
+		respondJSON(w, http.StatusOK, map[string]any{"ok": false, "status": "out_of_range", "distance_m": dist, "message": fmt.Sprintf("還沒到打卡點（距離約 %d 公尺）", int(dist))})
+		return
+	}
+	// 打卡成功 → 揭露關主（discovered=TRUE）
+	if _, err := h.db.Exec(r.Context(), `
+		INSERT INTO explore_progress (user_id, boss_id, discovered) VALUES ($1,$2,TRUE)
+		ON CONFLICT (user_id, boss_id) DO UPDATE SET discovered=TRUE`, uid, bossID); err != nil {
+		respondErr(w, http.StatusInternalServerError, "打卡失敗")
+		return
+	}
+	b.Discovered = true
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "verified", "distance_m": dist, "boss": b})
+}
+
+// workoutStars 課表星數：需完成整份(finished)；work 段全在配速區間=3★、部分=2★、只完成=1★。
+func workoutStars(finished bool, workInBand, workTotal int) int {
+	if !finished {
+		return 0
+	}
+	if workTotal > 0 {
+		if workInBand >= workTotal {
+			return 3
+		}
+		if workInBand > 0 {
+			return 2
+		}
+	}
+	return 1
+}
+
+// Accept POST /explore/{id}/accept — 接受挑戰：需已打卡揭露、扣 DP(難度×10 或 retry_dp_cost)、設 active。
+func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	bossID := chi.URLParam(r, "id")
+	var difficulty, retryDp int
+	var enabled bool
+	if err := h.db.QueryRow(r.Context(), `SELECT difficulty_stars, retry_dp_cost, enabled FROM explore_bosses WHERE id=$1`, bossID).Scan(&difficulty, &retryDp, &enabled); err != nil || !enabled {
+		respondErr(w, http.StatusNotFound, "關主不存在")
+		return
+	}
+	var discovered, cardObtained, alreadyActive bool
+	var best int
+	_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(discovered,FALSE), COALESCE(card_obtained,FALSE), COALESCE(active,FALSE), COALESCE(stars,0) FROM explore_progress WHERE user_id=$1 AND boss_id=$2`, uid, bossID).Scan(&discovered, &cardObtained, &alreadyActive, &best)
+	if !discovered {
+		respondErr(w, http.StatusConflict, "請先到打卡點打卡")
+		return
+	}
+	if cardObtained {
+		respondErr(w, http.StatusConflict, "已收服此關主，卡片已收藏")
+		return
+	}
+	// 冪等：已接受且進行中（尚未完成）→ 不重複扣 DP，直接放行去挑戰
+	if alreadyActive {
+		respondJSON(w, http.StatusOK, map[string]any{"ok": true, "tier": best + 1, "charged_dp": 0, "resumed": true})
+		return
+	}
+	cost := difficulty * 10
+	if retryDp > 0 {
+		cost = retryDp
+	}
+	tx, err := h.db.Begin(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if cost > 0 {
+		tag, err := tx.Exec(r.Context(), `UPDATE users SET dp=dp-$2 WHERE id=$1 AND dp>=$2`, uid, cost)
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			respondErr(w, http.StatusConflict, fmt.Sprintf("DP 不足（需 %d）", cost))
+			return
+		}
+	}
+	if _, err := tx.Exec(r.Context(), `
+		INSERT INTO explore_progress (user_id, boss_id, active, challenge_started_at, attempts, discovered)
+		VALUES ($1,$2,TRUE,NOW(),1,TRUE)
+		ON CONFLICT (user_id, boss_id) DO UPDATE SET active=TRUE, challenge_started_at=NOW(), attempts=explore_progress.attempts+1, discovered=TRUE`, uid, bossID); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "tier": best + 1, "charged_dp": cost})
+}
+
+type completeReq struct {
+	Finished   bool `json:"finished"`
+	WorkInBand int  `json:"work_in_band"`
+	WorkTotal  int  `json:"work_total"`
+}
+
+// Complete POST /explore/{id}/complete — 完成挑戰：得星、3★ 取卡、發獎(冪等)。疑似載具不計。
+func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	bossID := chi.URLParam(r, "id")
+	var req completeReq
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	var active bool
+	var best, awarded, rExp, rDp int
+	if err := h.db.QueryRow(r.Context(), `
+		SELECT COALESCE(pr.active,FALSE), COALESCE(pr.stars,0), COALESCE(pr.awarded_stars,0), b.reward_exp, b.reward_dp
+		FROM explore_bosses b LEFT JOIN explore_progress pr ON pr.boss_id=b.id AND pr.user_id=$1
+		WHERE b.id=$2`, uid, bossID).Scan(&active, &best, &awarded, &rExp, &rDp); err != nil {
+		respondErr(w, http.StatusNotFound, "關主不存在")
+		return
+	}
+	if !active {
+		respondErr(w, http.StatusConflict, "尚未開始挑戰")
+		return
+	}
+	// 反作弊：本趟若被判定疑似載具 → 不計成績（與里程/個人任務一致）
+	var vehFlag bool
+	_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(flagged,FALSE) FROM gps_runs WHERE user_id=$1 AND ended_at > NOW()-INTERVAL '20 minutes' ORDER BY ended_at DESC LIMIT 1`, uid).Scan(&vehFlag)
+	if vehFlag {
+		respondErr(w, http.StatusConflict, "本趟疑似使用交通工具，挑戰成績不計")
+		return
+	}
+	cStars := workoutStars(req.Finished, req.WorkInBand, req.WorkTotal)
+	if cStars == 0 {
+		respondErr(w, http.StatusConflict, "尚未完成整份課表")
+		return
+	}
+	newStars := best
+	if cStars > newStars {
+		newStars = cStars
+	}
+	cardObtained := newStars >= 3
+	grant := newStars > awarded
+	newAwarded := awarded
+	if grant && newStars > newAwarded {
+		newAwarded = newStars
+	}
+	tx, err := h.db.Begin(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if _, err := tx.Exec(r.Context(), `
+		UPDATE explore_progress SET active=FALSE, stars=$3, awarded_stars=$4, card_obtained=$5, completed_at=NOW(),
+			card_obtained_at=CASE WHEN $5 AND card_obtained_at IS NULL THEN NOW() ELSE card_obtained_at END
+		WHERE user_id=$1 AND boss_id=$2`, uid, bossID, newStars, newAwarded, cardObtained); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if grant && (rExp > 0 || rDp > 0) {
+		if _, err := tx.Exec(r.Context(), `UPDATE users SET exp=exp+$2, dp=dp+$3 WHERE id=$1`, uid, rExp, rDp); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"completed": true, "stars": newStars, "card_obtained": cardObtained,
+		"reward_exp": ternInt(grant, rExp, 0), "reward_dp": ternInt(grant, rDp, 0),
+	})
+}
+
+func ternInt(c bool, a, b int) int {
+	if c {
+		return a
+	}
+	return b
 }
 
 // --- 後台 handlers ---
