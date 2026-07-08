@@ -519,6 +519,14 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 		}
 		cStars = 3 // 休息日完成＝直接 3★（無 1/2/3 成長）
 	case "workout":
+		// 反作弊：本趟若被判定疑似載具（gps_runs.flagged）→ 不計課表成績（與里程一致）。
+		// /track 完成流程已改為「先上傳 GPS（伺服器重算+防弊）再回報完成」，故此時最新一筆即本趟。
+		var vehFlag bool
+		_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(flagged,FALSE) FROM gps_runs WHERE user_id=$1 AND ended_at > NOW() - INTERVAL '20 minutes' ORDER BY ended_at DESC LIMIT 1`, uid).Scan(&vehFlag)
+		if vehFlag {
+			respondErr(w, http.StatusConflict, "本趟疑似使用交通工具，課表成績不計")
+			return
+		}
 		cStars = workoutStars(req.Finished, req.WorkInBand, req.WorkTotal)
 		if cStars == 0 {
 			respondErr(w, http.StatusConflict, "尚未完成整份課表")

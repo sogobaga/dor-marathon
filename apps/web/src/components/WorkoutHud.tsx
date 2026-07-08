@@ -13,7 +13,7 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
   livePaceS: number    // 即時配速（秒/公里）
   hits: Record<number, boolean> // 已評分的 work 段：index → 是否達配速
   phase: 'running' | 'done'
-  result: { stars: number; reward_exp: number; reward_dp: number } | null
+  result: { stars: number; reward_exp: number; reward_dp: number; flagged?: boolean } | null
   onClose: () => void
 }) {
   const step = steps[stepIdx]
@@ -22,6 +22,20 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
   const workHit = Object.values(hits).filter(Boolean).length
 
   if (phase === 'done') {
+    if (result?.flagged) {
+      return (
+        <div style={wrap}>
+          <div style={{ ...card, borderColor: 'var(--hunt)' }}>
+            <div style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--hunt)', fontWeight: 800 }}>課表未計成績</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--tx)', margin: '4px 0 8px' }}>{title}</div>
+            <div style={{ fontSize: 13, color: 'var(--tx-dim)', lineHeight: 1.6, textAlign: 'center' }}>
+              🚗 本趟偵測到疑似使用交通工具的速度，<br />為維護公平性，<strong style={{ color: 'var(--hunt)' }}>不計星數與獎勵</strong>。請實際跑步完成課表。
+            </div>
+            <button onClick={onClose} style={{ marginTop: 12, width: '100%', background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 800, border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>看跑步結果</button>
+          </div>
+        </div>
+      )
+    }
     return (
       <div style={wrap}>
         <div style={{ ...card, borderColor: 'var(--fug)' }}>

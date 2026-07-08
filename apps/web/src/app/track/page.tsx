@@ -87,7 +87,7 @@ export default function TrackPage() {
   const [woPhase, setWoPhase] = useState<'idle' | 'countdown' | 'running' | 'done'>('idle')
   const [woStepIdx, setWoStepIdx] = useState(0)
   const [woHits, setWoHits] = useState<Record<number, boolean>>({}) // work 段 index → 是否達配速
-  const [woResult, setWoResult] = useState<{ stars: number; reward_exp: number; reward_dp: number } | null>(null)
+  const [woResult, setWoResult] = useState<{ stars: number; reward_exp: number; reward_dp: number; flagged?: boolean } | null>(null)
   const [, setWoNow] = useState(0) // 驅動 HUD 每 0.5s 重繪
   const woStepIdxRef = useRef(0)
   const woStepStartRef = useRef<{ dist: number; time: number }>({ dist: 0, time: 0 }) // 目前分段起點（距離 m / 時間 ms）
@@ -98,7 +98,8 @@ export default function TrackPage() {
   const [panelBusy, setPanelBusy] = useState('') // 面板挑戰處理中的 task_id
 
   const pointsRef = useRef<GpsPoint[]>([])
-  const distRef = useRef(0)
+  const distRef = useRef(0)      // 有效距離（排除超速段）：顯示/里程/課表進度用
+  const rawDistRef = useRef(0)   // 原始距離（含超速夾限）：僅供疑似搭車偵測，避免排除有效距離後偵測失效
   const splitMarkRef = useRef<number[]>([]) // 每跨整公里時的 elapsed 秒
   const startRef = useRef(0)
   const watchRef = useRef<number | null>(null)
@@ -179,24 +180,25 @@ export default function TrackPage() {
         const d = haversineM(lastAcc, p)
         const dt = (p.t - lastAcc.t) / 1000
         if (d >= JITTER_MIN && dt > 0) {
-          // 超過人體極限的段落 → 視為 GPS 跳點（城市多路徑常見）：距離只計到「極限值」上限
-          //（不灌爆里程/害配速失真），但仍前進採納點、仍累積距離 → 移動不會整段消失。
-          let seg = d
-          if (d / dt > MAX_SPEED) {
-            seg = MAX_SPEED * dt
+          const over = d / dt > MAX_SPEED // 超過人體極限（疑似載具/GPS 跳點）
+          const seg = over ? MAX_SPEED * dt : d
+          rawDistRef.current += seg // 原始距離（含超速夾限）→ 供疑似搭車偵測（不因排除有效距離而失效）
+          if (over) {
             setAnomalies((n) => n + 1)
+            // 超速段完全不計入有效距離：不刷里程、不推進課表分段（與伺服器一致）
+          } else {
+            distRef.current += seg
+            setDistance(distRef.current)
+            // 每公里分段（只在有效距離上前進）
+            const km = Math.floor(distRef.current / 1000)
+            const el = (p.t - startRef.current) / 1000
+            while (splitMarkRef.current.length < km) {
+              const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
+              splitMarkRef.current.push(el)
+              setSplits((s) => [...s, el - prevEl])
+            }
           }
-          distRef.current += seg
-          setDistance(distRef.current)
-          // 每公里分段
-          const km = Math.floor(distRef.current / 1000)
-          const el = (p.t - startRef.current) / 1000
-          while (splitMarkRef.current.length < km) {
-            const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
-            splitMarkRef.current.push(el)
-            setSplits((s) => [...s, el - prevEl])
-          }
-          lastAccRef.current = p
+          lastAccRef.current = p // 仍前進採納點（避免搭車結束後算出巨大跳段）
           pointsRef.current.push(p)
           if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
         }
@@ -263,7 +265,7 @@ export default function TrackPage() {
     let past: { t: number; d: number } | null = null
     for (let i = s.length - 1; i >= 0; i--) { if (s[i].t <= target) { past = s[i]; break } }
     if (!past) return null // 尚無足夠歷史（跑步時間短於觀察視窗）
-    return distRef.current - past.d
+    return rawDistRef.current - past.d
   }
   function triggerEligible(def: EventDef): boolean {
     const p = def.trigger_params
@@ -488,7 +490,7 @@ export default function TrackPage() {
   function evalTick() {
     if (statusRef.current !== 'tracking') return
     const now = Date.now()
-    distSamplesRef.current.push({ t: now, d: distRef.current })
+    distSamplesRef.current.push({ t: now, d: rawDistRef.current })
     if (distSamplesRef.current.length > 1600) distSamplesRef.current.splice(0, 400) // 上限 ~25 分鐘
     // 疑似搭車（即時偵測）：近 45 秒配速快於 2:20/km（遠超人體極限）→ 即時提醒＋暫停事件（避免搭車刷任務）
     const veh45 = movedInWindow(45000)
@@ -588,7 +590,7 @@ export default function TrackPage() {
     if (!navigator.geolocation) { setErr('此裝置/瀏覽器不支援定位'); return }
     // 關掉進頁面的 GPS 預熱偵測，避免與正式追蹤重複回報
     if (warmWatchRef.current != null) { try { navigator.geolocation.clearWatch(warmWatchRef.current) } catch { /* ignore */ } warmWatchRef.current = null }
-    pointsRef.current = []; distRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null
+    pointsRef.current = []; distRef.current = 0; rawDistRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null)
     vehicleLikeRef.current = false; setVehicleWarn(false)
     followRef.current = true; setFollowing(true) // 每趟開始都恢復自動跟隨（即使 idle 時曾手動看地圖）
@@ -688,13 +690,13 @@ export default function TrackPage() {
   useEffect(() => { const t = getUserToken(); if (t) loadEffectAssets(t).then(setFxAssets) }, [user?.id])
   function toggleMute() { const next = !isMuted(); sfxSetMuted(next); setMuted(next); if (!next) unlockAudio() }
 
-  async function finish() {
+  async function finish(): Promise<GpsRunResult | null> {
     cleanup()
     setStatus('done')
     const pts = pointsRef.current
-    if (pts.length < 2) { flashErr('軌跡太短，未上傳'); localStorage.removeItem(LS_KEY); return }
+    if (pts.length < 2) { flashErr('軌跡太短，未上傳'); localStorage.removeItem(LS_KEY); return null }
     const token = getUserToken()
-    if (!token) { setErr('未登入，無法上傳'); return }
+    if (!token) { setErr('未登入，無法上傳'); return null }
     setUploading(true)
     try {
       const { result } = await withUserAuth((t) => activitiesApi.uploadGps(t, {
@@ -704,8 +706,10 @@ export default function TrackPage() {
       }))
       setResult(result)
       localStorage.removeItem(LS_KEY)
+      return result
     } catch (e: any) {
       setErr(e?.message || '上傳失敗')
+      return null
     } finally { setUploading(false) }
   }
 
@@ -762,6 +766,9 @@ export default function TrackPage() {
   async function finishWorkout() {
     woActiveRef.current = false
     setWoPhase('done')
+    // 先上傳 GPS（伺服器重算+防弊）→ 拿到是否標記；被標記疑似載具就不回報課表完成（成績不計）
+    const upload = await finish()
+    if (upload?.flagged) { setWoResult({ stars: 0, reward_exp: 0, reward_dp: 0, flagged: true }); return }
     const res = woResultsRef.current
     const token = getUserToken()
     try {
@@ -770,7 +777,6 @@ export default function TrackPage() {
         setWoResult({ stars: r.stars, reward_exp: r.reward_exp, reward_dp: r.reward_dp })
       }
     } catch { /* 結算失敗不擋畫面 */ }
-    finish() // 上傳 GPS 活動（跑步照樣記錄、發里程 EXP）
   }
   // 逐段驅動：每 0.5s 讀 distRef/時間，分段達標即（對 work 段）評配速並前進；跑完整份課表 → 完成
   useEffect(() => {
@@ -970,7 +976,7 @@ export default function TrackPage() {
         {vehicleWarn && status === 'tracking' && (
           <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 950, padding: '10px 12px 0', pointerEvents: 'none' }}>
             <div style={{ background: '#b46a00', color: '#fff', borderRadius: 10, padding: '10px 12px', fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,.4)', lineHeight: 1.5 }}>
-              🚗 偵測到疑似搭乘車輛的速度（超過人體極限）——此段不會觸發事件；整趟若過快將標記待審、不發里程獎勵
+              🚗 偵測到疑似搭乘車輛的速度（超過人體極限）——這段不列入有效里程與課表進度、也不觸發事件；整趟過快將標記待審、不發獎勵
             </div>
           </div>
         )}
