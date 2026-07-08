@@ -23,10 +23,19 @@ var specs = map[string]func(string) bool{
 	"active_skin":               func(v string) bool { return v == "" || v == "default" || v == "warm" || v == "warm2" },
 	"interstitial_enabled": func(v string) bool { return v == "" || v == "0" || v == "1" }, // 蓋板廣告總開關
 	"favicon_url":          func(v string) bool { return v == "" || (len(v) <= 512 && (strings.HasPrefix(v, "/") || strings.HasPrefix(v, "http"))) },
-	// 個人任務入口可見性：hidden 前台隱藏 / locked 顯示但不能按 / whitelist 顯示且指定帳號可按 / open 顯示且全部開放
-	"personal_entry_state":     func(v string) bool { return v == "" || v == "hidden" || v == "locked" || v == "whitelist" || v == "open" },
-	"personal_entry_whitelist": func(v string) bool { return len(v) <= 20000 }, // 換行/逗號分隔的帳號編碼或 email
+	// 入口可見性：hidden 前台隱藏 / locked 顯示但不能按 / whitelist 顯示且指定帳號可按 / open 顯示且全部開放
+	"personal_entry_state":     isEntryState,
+	"personal_entry_whitelist": isWhitelist, // 換行/逗號分隔的帳號編碼或 email
+	"explore_entry_state":      isEntryState, // 城市探索入口
+	"explore_entry_whitelist":  isWhitelist,
+	"gallery_entry_state":      isEntryState, // 卡片圖鑑入口
+	"gallery_entry_whitelist":  isWhitelist,
 }
+
+func isEntryState(v string) bool {
+	return v == "" || v == "hidden" || v == "locked" || v == "whitelist" || v == "open"
+}
+func isWhitelist(v string) bool { return len(v) <= 20000 }
 
 // publicKeys 允許未登入前台讀取的 key（皆為非敏感外觀設定）。
 var publicKeys = map[string]bool{"active_skin": true, "favicon_url": true}
