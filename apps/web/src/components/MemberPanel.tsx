@@ -21,6 +21,7 @@ export default function MemberPanel({
   onUploadAvatar,
   uploadingAvatar,
   onReady,
+  showEntries = true,
 }: {
   dash?: DashboardInfo | null
   onOpenProfile?: () => void
@@ -30,6 +31,7 @@ export default function MemberPanel({
   onUploadAvatar?: (file: File) => void
   uploadingAvatar?: boolean
   onReady?: () => void
+  showEntries?: boolean // 城市探索/卡片圖鑑入口：首頁隱藏(小尺寸會被遮)、僅會員資料頁顯示
 }) {
   const controlled = dashProp !== undefined // 有傳 dash（含 null）＝受控；未傳＝用共用快取
   const { dash: hookDash, loading, user } = useDashboard() // 共用快取：與會員資訊頁同一份、切頁不再 loading
@@ -142,8 +144,8 @@ export default function MemberPanel({
 
       </div>
 
-      {/* 城市探索 / 卡片圖鑑 入口：面板正下方、面板外、並排（後台可控可見性） */}
-      {user && dash && (dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden') && (
+      {/* 城市探索 / 卡片圖鑑 入口：面板正下方、面板外、並排（後台可控可見性）；首頁不顯示 */}
+      {showEntries && user && dash && (dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden') && (
         <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
           {dash.explore_entry !== 'hidden' && (
             <button disabled={dash.explore_entry === 'locked'}
