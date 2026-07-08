@@ -52,6 +52,7 @@ export default function TrackPage() {
   const [warn, setWarn] = useState('')
   const [err, setErr] = useState('')
   const [errFade, setErrFade] = useState(false) // 提示訊息淡出中
+  const [vehicleWarn, setVehicleWarn] = useState(false) // 即時偵測到疑似搭車速度
   const [result, setResult] = useState<GpsRunResult | null>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -92,6 +93,7 @@ export default function TrackPage() {
   const woStepStartRef = useRef<{ dist: number; time: number }>({ dist: 0, time: 0 }) // 目前分段起點（距離 m / 時間 ms）
   const woResultsRef = useRef<{ inBand: number; total: number; detail: any[] }>({ inBand: 0, total: 0, detail: [] })
   const woActiveRef = useRef(false) // 課表執行中：跑步引擎暫停隨機事件
+  const vehicleLikeRef = useRef(false) // 即時偵測：近 45 秒配速快於人體極限（疑似搭車）
   const [panel, setPanel] = useState<{ cards: PanelCard[]; active_card: PanelCard | null } | null>(null) // 任務面板（各階段可挑戰課表）
   const [panelBusy, setPanelBusy] = useState('') // 面板挑戰處理中的 task_id
 
@@ -235,7 +237,9 @@ export default function TrackPage() {
   // 事件隨機等待：開始跑步 / 每次事件結束後，重取一個落在 [min,max] 的等待時間，
   // 決定「下一個事件最早何時可觸發」（時間到、且符合觸發條件時才真的出現）。取代原本寫死的 15 分鐘冷卻。
   // firstOfRun：本趟第一個事件——若伺服器帶來「前幾趟較短等待」(firstWaitRef>0) 則用它（±10% 抖動），讓新玩家更快遇到。
-  function rollNextEvent(firstOfRun = false) {
+  // factor：本次等待倍率。計時到但當下沒有事件符合條件時，用 0.5（一半等待）較快重試，
+  // 避免「先短暫達標、計時卻落在達標窗口之外」而整趟錯過。
+  function rollNextEvent(firstOfRun = false, factor = 1) {
     const now = Date.now()
     if (firstOfRun && firstWaitRef.current > 0) {
       nextEventAtRef.current = now + firstWaitRef.current * (0.9 + Math.random() * 0.2) * 1000
@@ -243,7 +247,7 @@ export default function TrackPage() {
     }
     const min = Math.max(1, waitMinRef.current)
     const max = Math.max(min, waitMaxRef.current)
-    nextEventAtRef.current = now + (min + Math.random() * (max - min)) * 1000
+    nextEventAtRef.current = now + (min + Math.random() * (max - min)) * 1000 * factor
   }
   // 清空目前進行中事件（含演出階段）：統一收尾，讓所有清除路徑一致（放棄/完成/失敗/結束跑步）。
   function clearEvent() {
@@ -486,7 +490,12 @@ export default function TrackPage() {
     const now = Date.now()
     distSamplesRef.current.push({ t: now, d: distRef.current })
     if (distSamplesRef.current.length > 1600) distSamplesRef.current.splice(0, 400) // 上限 ~25 分鐘
-    if (woActiveRef.current) return // 課表挑戰進行中：暫停隨機事件/多人邀請，專心跑課表
+    // 疑似搭車（即時偵測）：近 45 秒配速快於 2:20/km（遠超人體極限）→ 即時提醒＋暫停事件（避免搭車刷任務）
+    const veh45 = movedInWindow(45000)
+    const vehLike = veh45 != null && veh45 > 150 && 45000 / veh45 < 140
+    vehicleLikeRef.current = vehLike
+    setVehicleWarn(vehLike)
+    if (woActiveRef.current || vehLike) return // 課表挑戰中 / 疑似搭車：暫停隨機事件/多人邀請
     // 測試：跑步中、無進行中事件時輪詢認領後台手動觸發（每 5 秒；結算中不認領）
     if (!activeEventRef.current && !completingRef.current && now - lastClaimRef.current > 5000) {
       lastClaimRef.current = now
@@ -571,6 +580,7 @@ export default function TrackPage() {
     // 但事件結束後 lastEventEndRef 變成真時間，會把「所有」def 擋掉整趟（cooldown 越大擋越久）→ 第二個事件永遠不觸發。移除之。
     const eligible = eventDefsRef.current.filter((d) => triggerEligible(d))
     if (eligible.length > 0) armEvent(pickWeighted(eligible))
+    else rollNextEvent(false, 0.5) // 計時到但此刻無事件符合條件 → 用一半等待較快重試（不整趟卡死、也不每秒狂試）
   }
 
   function start() {
@@ -580,6 +590,7 @@ export default function TrackPage() {
     if (warmWatchRef.current != null) { try { navigator.geolocation.clearWatch(warmWatchRef.current) } catch { /* ignore */ } warmWatchRef.current = null }
     pointsRef.current = []; distRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null)
+    vehicleLikeRef.current = false; setVehicleWarn(false)
     followRef.current = true; setFollowing(true) // 每趟開始都恢復自動跟隨（即使 idle 時曾手動看地圖）
     if (lineRef.current) lineRef.current.setLatLngs([]) // 清掉上一趟的軌跡線（避免地圖殘留）
     // 事件引擎重置
@@ -953,6 +964,14 @@ export default function TrackPage() {
                 <button onClick={dismissErr} aria-label="關閉" style={dismissBtn}>✕</button>
               </div>
             )}
+          </div>
+        )}
+        {/* 疑似搭車即時提醒 */}
+        {vehicleWarn && status === 'tracking' && (
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 950, padding: '10px 12px 0', pointerEvents: 'none' }}>
+            <div style={{ background: '#b46a00', color: '#fff', borderRadius: 10, padding: '10px 12px', fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,.4)', lineHeight: 1.5 }}>
+              🚗 偵測到疑似搭乘車輛的速度（超過人體極限）——此段不會觸發事件；整趟若過快將標記待審、不發里程獎勵
+            </div>
           </div>
         )}
         {activeEvent?.phase === 'active' && (
