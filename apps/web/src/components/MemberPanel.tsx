@@ -16,6 +16,8 @@ export default function MemberPanel({
   dash: dashProp,
   onOpenProfile,
   onOpenPersonalTasks,
+  onOpenExplore,
+  onOpenGallery,
   onUploadAvatar,
   uploadingAvatar,
   onReady,
@@ -23,6 +25,8 @@ export default function MemberPanel({
   dash?: DashboardInfo | null
   onOpenProfile?: () => void
   onOpenPersonalTasks?: () => void
+  onOpenExplore?: () => void
+  onOpenGallery?: () => void
   onUploadAvatar?: (file: File) => void
   uploadingAvatar?: boolean
   onReady?: () => void
@@ -137,6 +141,30 @@ export default function MemberPanel({
         )}
 
       </div>
+
+      {/* 城市探索 / 卡片圖鑑 入口：面板正下方、面板外、並排（後台可控可見性） */}
+      {user && dash && (dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden') && (
+        <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+          {dash.explore_entry !== 'hidden' && (
+            <button disabled={dash.explore_entry === 'locked'}
+              onClick={(e) => { e.stopPropagation(); if (dash.explore_entry === 'shown') onOpenExplore?.() }}
+              style={{ ...entryBtn, opacity: dash.explore_entry === 'shown' ? 1 : 0.6, cursor: dash.explore_entry === 'shown' ? 'pointer' : 'default' }}>
+              <span style={{ fontSize: 20, lineHeight: 1 }}>🗺️</span>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>城市探索</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.explore_entry === 'locked' ? '即將開放 ›' : '尋找關主打卡 ›'}</span>
+            </button>
+          )}
+          {dash.gallery_entry !== 'hidden' && (
+            <button disabled={dash.gallery_entry === 'locked'}
+              onClick={(e) => { e.stopPropagation(); if (dash.gallery_entry === 'shown') onOpenGallery?.() }}
+              style={{ ...entryBtn, opacity: dash.gallery_entry === 'shown' ? 1 : 0.6, cursor: dash.gallery_entry === 'shown' ? 'pointer' : 'default' }}>
+              <span style={{ fontSize: 20, lineHeight: 1 }}>🎴</span>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>卡片圖鑑</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.gallery_entry === 'locked' ? '即將開放 ›' : '收集關主卡片 ›'}</span>
+            </button>
+          )}
+        </div>
+      )}
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
     </>
   )
@@ -162,6 +190,7 @@ function MiniStat({ label, value }: { label: string; value: number }) {
 const card: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 'var(--card-pad, 16px)', boxShadow: 'var(--card-shadow, none)' }
 const mileageBox: React.CSSProperties = { minWidth: 96, background: 'var(--bg-2)', borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }
 const taskBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 3, textAlign: 'left', border: 'none', borderRadius: 12, padding: '10px 14px', background: 'var(--fug)', color: 'var(--fug-ink)', fontFamily: 'inherit' }
+const entryBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3, textAlign: 'left', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 14px)', padding: '12px 14px', background: 'var(--bg-1)', fontFamily: 'inherit', boxShadow: 'var(--card-shadow, none)' }
 const avatarWrap: React.CSSProperties = {
   position: 'relative', width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
   background: 'var(--bg-2)', border: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center',

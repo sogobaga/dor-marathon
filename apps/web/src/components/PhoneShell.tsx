@@ -6,6 +6,8 @@ import RacesScreen from './RacesScreen'
 import RegistrationScreen from './RegistrationScreen'
 import ProfileScreen from './ProfileScreen'
 import PersonalTasksScreen from './PersonalTasksScreen'
+import ExploreScreen from './ExploreScreen'
+import CardGalleryScreen from './CardGalleryScreen'
 import RaceDetailScreen from './RaceDetailScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
 import VersionBadge from './VersionBadge'
@@ -22,6 +24,8 @@ export default function PhoneShell() {
   const [registerRace, setRegisterRace] = useState<Race | null>(null)
   const [showProfile, setShowProfile] = useState(false)
   const [showPersonalTasks, setShowPersonalTasks] = useState(false)
+  const [showExplore, setShowExplore] = useState(false)
+  const [showGallery, setShowGallery] = useState(false)
   const [payRace, setPayRace] = useState<Race | null>(null)
 
   useEffect(() => {
@@ -38,12 +42,14 @@ export default function PhoneShell() {
   useEffect(() => {
     if (firstView.current) { firstView.current = false; return }
     let path = '/', title = '首頁'
-    if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
+    if (showGallery) { path = '/gallery'; title = '卡片圖鑑' }
+    else if (showExplore) { path = '/explore'; title = '城市探索' }
+    else if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
     else if (showProfile || payRace) { path = '/profile'; title = '會員資訊' }
     else if (registerRace) { path = `/register/${registerRace.slug}`; title = `報名 - ${registerRace.title}` }
     else if (detailRace) { path = `/race/${detailRace.slug}`; title = detailRace.title }
     pageview(path, title)
-  }, [showPersonalTasks, showProfile, payRace, registerRace, detailRace])
+  }, [showGallery, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
 
   return (
     <GoogleAuthProvider>
@@ -60,13 +66,19 @@ export default function PhoneShell() {
         overflow: 'hidden',
       }}>
         {/* 賽事列表 / 賽事資訊(簡章·進度·排名) / 報名 / 個人資訊 / 個人任務 — 串接 Go API 真實資料 */}
-        {showPersonalTasks ? (
+        {showGallery ? (
+          <CardGalleryScreen onBack={() => setShowGallery(false)} />
+        ) : showExplore ? (
+          <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={() => { window.location.href = '/track' }} />
+        ) : showPersonalTasks ? (
           <PersonalTasksScreen onBack={() => setShowPersonalTasks(false)} />
         ) : showProfile || payRace ? (
           <ProfileScreen
             focusRaceID={payRace?.id}
             onBack={() => { setShowProfile(false); setPayRace(null) }}
             onOpenPersonalTasks={() => setShowPersonalTasks(true)}
+            onOpenExplore={() => setShowExplore(true)}
+            onOpenGallery={() => setShowGallery(true)}
           />
         ) : registerRace ? (
           <RegistrationScreen race={registerRace} onBack={() => setRegisterRace(null)} />
@@ -84,6 +96,8 @@ export default function PhoneShell() {
             onPay={setPayRace}
             onOpenProfile={() => setShowProfile(true)}
             onOpenPersonalTasks={() => setShowPersonalTasks(true)}
+            onOpenExplore={() => setShowExplore(true)}
+            onOpenGallery={() => setShowGallery(true)}
             onOpenBrochure={(r) => { setDetailTab(undefined); setDetailRace(r) }}
           />
         )}
