@@ -135,6 +135,10 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	// 活動優惠券每月補券（VIP 專屬，lazy）：本月尚未補齊 → 補滿 3 張（與報名扣券端一致）
+	_, _ = h.db.Exec(r.Context(), `
+		UPDATE users SET activity_coupon_balance=3, activity_coupon_month=to_char(NOW(),'YYYY-MM')
+		WHERE id=$1 AND vip_expires_at > NOW() AND COALESCE(activity_coupon_month,'') <> to_char(NOW(),'YYYY-MM')`, userID)
 	var d DashboardInfo
 	d.AccountCode = code
 	var email string

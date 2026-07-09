@@ -236,6 +236,7 @@ export default function RaceForm({
   const [bannerUploading, setBannerUploading] = useState(false)
   const [showDistanceRank, setShowDistanceRank] = useState(initial?.show_distance_rank ?? true)
   const [showTimeRank, setShowTimeRank] = useState(initial?.show_time_rank ?? true)
+  const [vipOnly, setVipOnly] = useState<boolean>(initial?.vip_only ?? false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -397,6 +398,7 @@ export default function RaceForm({
       control_status: controlStatus as CreateRacePayload['control_status'],
       starting_soon_days: parseInt(startingSoonDays || '5', 10) || 5,
       allow_team_groups: mode === 'competition' ? allowTeamGroups : false,
+      vip_only: vipOnly,
       test_whitelist: testWhitelist,
       brochure_title: brochureTitle.trim(),
       brochure: brochure
@@ -676,6 +678,16 @@ export default function RaceForm({
                   顯示「完成時間榜」（時間／配速；非配速賽可關閉）
                 </label>
               </div>
+            </Field>
+
+            <Field label="VIP 限定">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--tx)', paddingTop: 2 }}>
+                <input type="checkbox" checked={vipOnly} onChange={(e) => setVipOnly(e.target.checked)} />
+                只提供給 VIP 會員（非 VIP 看不到、也不能報名）
+              </label>
+              <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
+                預設關閉。勾選後此賽事僅 VIP 帳號可見與報名。
+              </span>
             </Field>
 
             <Field label="賽事 Banner（選填，顯示於賽事資訊頁頂部）">

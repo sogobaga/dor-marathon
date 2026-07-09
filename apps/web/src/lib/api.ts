@@ -51,6 +51,7 @@ export interface Race {
   certificate_bg_url?: string
   show_distance_rank?: boolean
   show_time_rank?: boolean
+  vip_only?: boolean // VIP 限定賽事（只提供給 VIP 帳號）
   created_at: string
 }
 
@@ -664,6 +665,7 @@ export interface RegisterPayload {
   addons?: { addon_id: string; qty: number }[]
   participant: Partial<Record<ParticipantField, string>>
   promo_code?: string
+  use_coupon?: boolean // 使用 VIP 活動優惠券($100)；與 promo_code 擇一
 }
 
 export interface CreateTeamGroupPayload {

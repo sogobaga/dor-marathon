@@ -41,6 +41,9 @@ var (
 	ErrTeamGroupNotAllowed  = errors.New("您的帳號未開放建立跑團分組")
 	ErrTaskModuleName       = errors.New("請輸入任務模組名稱")
 	ErrTaskModuleNotFound   = errors.New("task module not found")
+	ErrVIPOnly              = errors.New("此賽事僅限 VIP 會員報名")
+	ErrNoCoupon             = errors.New("沒有可用的活動優惠券")
+	ErrCouponPromoConflict  = errors.New("優惠券與優惠序號不可同時使用")
 )
 
 type Service struct {
@@ -73,9 +76,14 @@ func (s *Service) ListPublic(ctx context.Context, userID string) ([]*Race, error
 		return nil, err
 	}
 	email, _ := s.repo.GetUserEmail(ctx, userID)
+	isVIP := s.repo.IsUserVIP(ctx, userID)
 	now := time.Now()
 	out := []*Race{}
 	for _, r := range races {
+		// VIP 限定：非 VIP 一律看不到（只提供給 VIP 帳號）
+		if r.VipOnly && !isVIP {
+			continue
+		}
 		switch r.ControlStatus {
 		case "closed", "hidden":
 			continue
@@ -160,6 +168,10 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 		if !ok {
 			return nil, nil, ErrRaceNotFound
 		}
+	}
+	// VIP 限定：非 VIP 直接連結也擋（隱藏，比照 closed）
+	if detail.VipOnly && !s.repo.IsUserVIP(ctx, userID) {
+		return nil, nil, ErrRaceNotFound
 	}
 	detail.FillDisplay(time.Now())
 
@@ -276,6 +288,14 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 			return nil, ErrRaceNotFound
 		}
 	}
+	// VIP 限定：非 VIP 不可報名
+	if race.VipOnly && !s.repo.IsUserVIP(ctx, req.UserID) {
+		return nil, ErrVIPOnly
+	}
+	// 優惠券與序號擇一
+	if req.UseCoupon && strings.TrimSpace(req.PromoCode) != "" {
+		return nil, ErrCouponPromoConflict
+	}
 	// 時間規則：非「報名中」不可報名
 	if _, canReg := race.ComputeDisplay(time.Now()); !canReg {
 		return nil, ErrRegistrationClosed
@@ -342,6 +362,7 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		Addons:        req.Addons,
 		Participant:   req.Participant,
 		PromoCode:     strings.TrimSpace(req.PromoCode),
+		UseCoupon:     req.UseCoupon,
 	})
 }
 

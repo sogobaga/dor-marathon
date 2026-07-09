@@ -40,6 +40,7 @@ type Race struct {
 	CertificateBgURL string     `json:"certificate_bg_url"` // 完賽證明底圖（空=預設設計）
 	ShowDistanceRank bool       `json:"show_distance_rank"` // 顯示累積里程榜（預設 true）
 	ShowTimeRank     bool       `json:"show_time_rank"`     // 顯示完成時間榜（預設 true）
+	VipOnly          bool       `json:"vip_only"`           // VIP 限定賽事（預設 false）：只提供給 VIP 帳號
 	CreatedAt        time.Time  `json:"created_at"`
 }
 
@@ -404,6 +405,7 @@ type RegisterRequest struct {
 	Addons      []AddonSelection `json:"addons"`
 	Participant ParticipantInfo  `json:"participant"`
 	PromoCode   string           `json:"promo_code,omitempty"`
+	UseCoupon   bool             `json:"use_coupon,omitempty"` // 使用 VIP 活動優惠券($100)；與 promo_code 擇一
 }
 
 // PromoQuote 優惠序號折抵預覽（報名前即時試算）

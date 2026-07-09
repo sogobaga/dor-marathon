@@ -37,6 +37,7 @@ const selectCols = `
 	       COALESCE(review_note,'') as review_note,
 	       COALESCE(certificate_bg_url,'') as certificate_bg_url,
 	       COALESCE(show_distance_rank,TRUE), COALESCE(show_time_rank,TRUE),
+	       COALESCE(vip_only,FALSE),
 	       created_at
 	FROM races`
 
@@ -116,13 +117,13 @@ func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
-			updated_at=NOW()
-		WHERE id=$20`,
+			vip_only=$20, updated_at=NOW()
+		WHERE id=$21`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
-		race.ID,
+		race.VipOnly, race.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -179,14 +180,14 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		                   status, event_mode, goal_type, distances, group_type, group_mode,
 		                   slots_total, entry_fee, registration_start, registration_end,
 		                   start_date, end_date, config, created_by, review_status, required_fields,
-		                   control_status, starting_soon_days, brochure_title, allow_team_groups)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+		                   control_status, starting_soon_days, brochure_title, allow_team_groups, vip_only)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.RegStart, race.RegEnd,
 		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus, requiredFields,
-		controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups,
+		controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
 	).Scan(&raceID)
 	if err != nil {
 		return nil, fmt.Errorf("insert race: %w", err)
@@ -314,13 +315,13 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
 			required_fields=$20, control_status=$21, starting_soon_days=$22, brochure_title=$23,
-			allow_team_groups=$24, updated_at=NOW()
-		WHERE id=$25`,
+			allow_team_groups=$24, vip_only=$25, updated_at=NOW()
+		WHERE id=$26`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
-		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, raceID,
+		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly, raceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -852,6 +853,22 @@ func (r *Repository) GetUserEmail(ctx context.Context, userID string) (string, e
 	return email, err
 }
 
+// IsUserVIP 使用者目前是否為 VIP（vip_expires_at 在未來）。
+func (r *Repository) IsUserVIP(ctx context.Context, userID string) bool {
+	if userID == "" {
+		return false
+	}
+	var v bool
+	_ = r.db.QueryRow(ctx, `SELECT COALESCE(vip_expires_at > NOW(), FALSE) FROM users WHERE id=$1`, userID).Scan(&v)
+	return v
+}
+
+// 活動優惠券（VIP 專屬）：每月補券張數、每張折抵金額（分）。
+const (
+	couponPerMonth   = 3
+	couponValueCents = 10000 // NT$100
+)
+
 func (r *Repository) ListDefaultWhitelist(ctx context.Context) ([]string, error) {
 	rows, err := r.db.Query(ctx, `SELECT email FROM default_test_whitelist ORDER BY email`)
 	if err != nil {
@@ -1202,6 +1219,7 @@ type RegisterTxInput struct {
 	Addons        []AddonSelection
 	Participant   ParticipantInfo
 	PromoCode     string
+	UseCoupon     bool // 使用 VIP 活動優惠券($100)；與 PromoCode 擇一
 }
 
 // RegisterWithOrder 在單一交易內完成報名：分組名額 row-lock 防超賣、加購庫存、
@@ -1295,6 +1313,34 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		discount = promo.DiscountCents(ap, in.EntryFee)
 	}
 
+	// 2c. VIP 活動優惠券（$100 折抵，只折報名費，與序號擇一）：lazy 每月補券 → 上鎖扣券
+	//     報名費為 0 時不扣券（避免浪費在免費賽事）
+	couponUsed := false
+	if in.UseCoupon && in.PromoCode == "" && in.EntryFee > 0 {
+		// 每月補券：VIP 且本月尚未補 → 補滿（與 Dashboard 讀取端一致，冪等）
+		_, _ = tx.Exec(ctx, `
+			UPDATE users SET activity_coupon_balance=$2, activity_coupon_month=to_char(NOW(),'YYYY-MM')
+			WHERE id=$1 AND vip_expires_at > NOW() AND COALESCE(activity_coupon_month,'') <> to_char(NOW(),'YYYY-MM')`,
+			in.UserID, couponPerMonth)
+		var bal int
+		e := tx.QueryRow(ctx, `
+			UPDATE users SET activity_coupon_balance=activity_coupon_balance-1
+			WHERE id=$1 AND activity_coupon_balance > 0 AND vip_expires_at > NOW()
+			RETURNING activity_coupon_balance`, in.UserID).Scan(&bal)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return nil, ErrNoCoupon
+		}
+		if e != nil {
+			return nil, fmt.Errorf("use coupon: %w", e)
+		}
+		cd := couponValueCents
+		if cd > in.EntryFee {
+			cd = in.EntryFee
+		}
+		discount = cd
+		couponUsed = true
+	}
+
 	// 應付 = max(0, 報名費-折抵) + 加購；不足 0.5 元（<50 分）視為 0、直接完成不跳金流
 	payable := in.EntryFee - discount
 	if payable < 0 {
@@ -1308,6 +1354,8 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		regStatus = "paid"
 		if appliedPromo != nil {
 			paymentRef = "PROMO:" + appliedPromo.Code
+		} else if couponUsed {
+			paymentRef = "COUPON"
 		}
 	}
 
@@ -1722,6 +1770,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CertificateBgURL,
 		&race.ShowDistanceRank, &race.ShowTimeRank,
+		&race.VipOnly,
 		&race.CreatedAt,
 	)
 	if err != nil {
@@ -1752,6 +1801,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&race.CreatedBy, &race.ReviewStatus, &race.ReviewNote,
 		&race.CertificateBgURL,
 		&race.ShowDistanceRank, &race.ShowTimeRank,
+		&race.VipOnly,
 		&race.CreatedAt,
 	)
 	if err != nil {

@@ -463,6 +463,12 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusConflict, "您已報名此賽事")
 	case errors.Is(err, ErrRegistrationPaused):
 		respondErr(w, http.StatusConflict, "此賽事目前暫停報名")
+	case errors.Is(err, ErrVIPOnly):
+		respondErr(w, http.StatusForbidden, "此賽事僅限 VIP 會員報名")
+	case errors.Is(err, ErrNoCoupon):
+		respondErr(w, http.StatusConflict, "沒有可用的活動優惠券")
+	case errors.Is(err, ErrCouponPromoConflict):
+		respondErr(w, http.StatusBadRequest, "優惠券與優惠序號不可同時使用")
 	case errors.Is(err, ErrGroupFull):
 		respondErr(w, http.StatusConflict, "該分組名額已滿")
 	case errors.Is(err, ErrGroupKeyWrong):
