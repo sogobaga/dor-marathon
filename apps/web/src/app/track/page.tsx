@@ -1262,7 +1262,7 @@ export default function TrackPage() {
                       <span style={{ color: 'var(--fug)', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>✓ 已收服</span>
                     ) : b.discovered ? (
                       <button onClick={() => setBossPanel({ boss: b, phase: b.active ? 'start' : 'intro', dpCost: exDpCost(b) })}
-                        style={{ flexShrink: 0, background: 'var(--gold)', color: '#1a1206', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: 'pointer' }}>
+                        style={{ flexShrink: 0, background: 'var(--gold)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: 'pointer' }}>
                         {b.active ? '▶ 繼續挑戰' : '⚔ 挑戰'}
                       </button>
                     ) : (

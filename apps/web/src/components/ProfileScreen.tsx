@@ -518,7 +518,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
               <div style={{ color: 'var(--fug)', fontSize: 14, fontWeight: 700 }}>✓ 已完成繳費</div>
             ) : (
               <>
-                <button onClick={goEcpay} disabled={paying} style={{ ...primaryBtn, width: '100%', background: 'var(--gold)', color: '#1a1200' }}>
+                <button onClick={goEcpay} disabled={paying} style={{ ...primaryBtn, width: '100%', background: 'var(--gold)', color: '#fff' }}>
                   {paying ? '前往綠界…' : '前往綠界付款'}
                 </button>
                 <div style={{ marginTop: 10, fontSize: 11, color: 'var(--tx-faint)', lineHeight: 1.6 }}>
@@ -563,7 +563,7 @@ const ghostBtn: React.CSSProperties = {
   borderRadius: 10, padding: '9px 14px', cursor: 'pointer', fontSize: 13, fontFamily: 'inherit',
 }
 const payBtn: React.CSSProperties = {
-  background: 'var(--gold)', color: '#1a1200', fontWeight: 700, border: 'none',
+  background: 'var(--gold)', color: '#fff', fontWeight: 700, border: 'none',
   borderRadius: 'var(--radius-btn, 9px)', padding: '7px 14px', cursor: 'pointer', fontSize: 13,
 }
 // zIndex 需高於本頁的可拖曳資訊面板(500)，否則從「報名紀錄」開的繳費視窗會被面板蓋住（見 [[frontend-draggable-sheet]] 疊層慣例）

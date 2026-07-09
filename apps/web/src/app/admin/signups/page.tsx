@@ -167,6 +167,6 @@ const primaryBtn: React.CSSProperties = {
   borderRadius: 10, padding: '10px 16px', cursor: 'pointer', fontSize: 14,
 }
 const payBtn: React.CSSProperties = {
-  background: 'var(--gold)', color: '#1a1200', fontWeight: 700, border: 'none',
+  background: 'var(--gold)', color: '#fff', fontWeight: 700, border: 'none',
   borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13,
 }

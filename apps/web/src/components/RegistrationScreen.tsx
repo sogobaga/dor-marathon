@@ -391,7 +391,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               {done.paid ? '已使用優惠序號 0 元完成，無需付款' : `應繳金額：${ntd(done.payable)}`}
             </div>
             {!done.paid && done.payable > 0 && (
-              <button onClick={() => goPay(done.orderId)} disabled={paying} style={{ ...primaryBtn, marginTop: 14, background: 'var(--gold)', color: '#1a1200' }}>
+              <button onClick={() => goPay(done.orderId)} disabled={paying} style={{ ...primaryBtn, marginTop: 14, background: 'var(--gold)', color: '#fff' }}>
                 {paying ? '前往綠界…' : '前往繳費'}
               </button>
             )}

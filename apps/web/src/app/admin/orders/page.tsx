@@ -154,7 +154,7 @@ const inp: React.CSSProperties = {
   padding: '10px 12px', color: 'var(--tx)', fontSize: 14, width: '100%', fontFamily: 'inherit',
 }
 const payBtn: React.CSSProperties = {
-  background: 'var(--gold)', color: '#1a1200', fontWeight: 700, border: 'none',
+  background: 'var(--gold)', color: '#fff', fontWeight: 700, border: 'none',
   borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13,
 }
 const linkBtn: React.CSSProperties = {

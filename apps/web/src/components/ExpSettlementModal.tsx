@@ -256,7 +256,7 @@ const barOuter: React.CSSProperties = { height: 16, borderRadius: 999, backgroun
 const barInner: React.CSSProperties = { height: '100%', borderRadius: 999, background: 'linear-gradient(90deg,#2ad18f,#46E3A0,#9bffd2)', boxShadow: '0 0 16px rgba(70,227,160,.7)', position: 'relative', overflow: 'hidden' }
 const shine: React.CSSProperties = { position: 'absolute', inset: 0, background: 'linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent)', animation: 'shine 1.1s linear infinite' }
 const levelUpBurst: React.CSSProperties = { position: 'absolute', left: 0, right: 0, top: -2, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }
-const closeBtn: React.CSSProperties = { marginTop: 22, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#1a1200', fontWeight: 800, border: 'none', borderRadius: 12, padding: '13px 20px', fontSize: 15 }
+const closeBtn: React.CSSProperties = { marginTop: 22, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 12, padding: '13px 20px', fontSize: 15 }
 const muteBtn: React.CSSProperties = { position: 'absolute', top: 16, right: 18, zIndex: 2, background: 'rgba(255,255,255,.08)', border: '1px solid var(--line-2)', borderRadius: 999, width: 38, height: 38, fontSize: 16, cursor: 'pointer', color: '#fff' }
 
 const KEYFRAMES = `
