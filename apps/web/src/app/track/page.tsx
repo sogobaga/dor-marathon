@@ -6,6 +6,7 @@ import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
 import BossRankingPanel from '@/components/BossRankingPanel'
+import CardUnlockCelebration from '@/components/CardUnlockCelebration'
 import TrackTaskPanel from '@/components/TrackTaskPanel'
 import { expandSegments, paceInBand, type WoStep } from '@/lib/workout'
 import { loadLeaflet } from '@/lib/leaflet'
@@ -86,10 +87,11 @@ export default function TrackPage() {
   const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
   const [mileageCfg, setMileageCfg] = useState<MileageConfig | null>(null) // 里程獎勵設定（進度條/預覽）
   // 個人任務「結構化課表」執行（挑戰後帶到本頁跑）
-  const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' } | null>(null)
+  const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore'; cardUrl?: string } | null>(null)
   const [exploreCps, setExploreCps] = useState<ExploreBoss[]>([]) // 城市探索打卡點（含座標）
   const [bossPanel, setBossPanel] = useState<{ boss: ExploreBoss; phase: 'intro' | 'start'; dpCost: number } | null>(null) // 打卡後跳出的關主挑戰面板
   const [rankingBoss, setRankingBoss] = useState<{ id: string; name: string } | null>(null) // 挑戰者成績排行覆蓋層
+  const [celebrateCard, setCelebrateCard] = useState<{ bossId: string; name: string; cardUrl?: string } | null>(null) // 3★取卡恭喜彈窗
   const [exploreBusy, setExploreBusy] = useState(false)
   const [woPhase, setWoPhase] = useState<'idle' | 'countdown' | 'running' | 'done'>('idle')
   const [woStepIdx, setWoStepIdx] = useState(0)
@@ -803,7 +805,7 @@ export default function TrackPage() {
     beginWorkout(workout)
   }
   // 啟動一份課表（個人任務或關主挑戰共用）。須在使用者手勢內呼叫（start() 會請求定位權限）
-  function beginWorkout(wo: { taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' }) {
+  function beginWorkout(wo: { taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore'; cardUrl?: string }) {
     setWorkout(wo)
     woResultsRef.current = { inBand: 0, total: 0, detail: [] }
     woStepIdxRef.current = 0
@@ -831,6 +833,7 @@ export default function TrackPage() {
           // 關主挑戰：回報 → 得星、3★ 取得卡片；刷新探索列表（收服狀態）
           const r = await withUserAuth((t) => exploreApi.complete(t, workout.taskId, { finished: true, work_in_band: res.inBand, work_total: res.total }))
           setWoResult({ stars: r.stars, reward_exp: r.reward_exp, reward_dp: r.reward_dp, card_obtained: r.card_obtained })
+          if (r.card_obtained) setCelebrateCard({ bossId: workout.taskId, name: workout.title, cardUrl: workout.cardUrl }) // 3★ 取卡 → 恭喜彈窗
           fetchExplore()
         } else {
           const r = await withUserAuth((t) => personalTasksApi.complete(t, workout.taskId, { finished: true, work_in_band: res.inBand, work_total: res.total, evidence: res.detail }))
@@ -1012,7 +1015,7 @@ export default function TrackPage() {
     const steps = expandSegments(b.segments || [])
     if (!steps.length) { setCpMsg('此關主尚未設定挑戰課表'); setBossPanel(null); return }
     setBossPanel(null)
-    beginWorkout({ taskId: b.id, title: b.name, steps, kind: 'explore' })
+    beginWorkout({ taskId: b.id, title: b.name, steps, kind: 'explore', cardUrl: b.card_image_url })
   }
 
   const distKm = distance / 1000
@@ -1375,6 +1378,16 @@ export default function TrackPage() {
       {/* 挑戰者成績排行覆蓋層 */}
       {rankingBoss && (
         <BossRankingPanel bossId={rankingBoss.id} bossName={rankingBoss.name} onClose={() => setRankingBoss(null)} />
+      )}
+
+      {/* 3★ 取卡恭喜彈窗 → 前往卡片圖鑑（帶 ?unlock 播翻轉解鎖特效）*/}
+      {celebrateCard && (
+        <CardUnlockCelebration
+          name={celebrateCard.name}
+          cardUrl={celebrateCard.cardUrl}
+          onGallery={() => { window.location.href = '/?unlock=' + encodeURIComponent(celebrateCard.bossId) }}
+          onClose={() => setCelebrateCard(null)}
+        />
       )}
     </PhoneFrame>
    </GoogleAuthProvider>

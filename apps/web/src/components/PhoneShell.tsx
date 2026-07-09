@@ -26,14 +26,23 @@ export default function PhoneShell() {
   const [showPersonalTasks, setShowPersonalTasks] = useState(false)
   const [showExplore, setShowExplore] = useState(false)
   const [showGallery, setShowGallery] = useState(false)
+  const [unlockCardId, setUnlockCardId] = useState<string | undefined>(undefined)
   const [payRace, setPayRace] = useState<Race | null>(null)
 
   useEffect(() => {
     // 開啟 app 即驗證/換發 token：避免「顯示已登入但實際過期」的不一致
     validateSession()
+    const params = new URLSearchParams(window.location.search)
     // Strava 授權導回（?strava=...）→ 直接開個人資訊頁顯示結果
-    if (new URLSearchParams(window.location.search).has('strava')) {
+    if (params.has('strava')) {
       setShowProfile(true)
+    }
+    // 關主挑戰取卡導回（?unlock=<bossId>）→ 開卡片圖鑑並跳到該卡、播翻轉解鎖特效
+    const unlock = params.get('unlock')
+    if (unlock) {
+      setShowGallery(true)
+      setUnlockCardId(unlock)
+      window.history.replaceState({}, '', '/') // 清掉參數，避免重整重播
     }
   }, [])
 
@@ -67,7 +76,7 @@ export default function PhoneShell() {
       }}>
         {/* 賽事列表 / 賽事資訊(簡章·進度·排名) / 報名 / 個人資訊 / 個人任務 — 串接 Go API 真實資料 */}
         {showGallery ? (
-          <CardGalleryScreen onBack={() => setShowGallery(false)} />
+          <CardGalleryScreen onBack={() => setShowGallery(false)} focusCardId={unlockCardId} />
         ) : showExplore ? (
           <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={() => { window.location.href = '/track' }} />
         ) : showPersonalTasks ? (
