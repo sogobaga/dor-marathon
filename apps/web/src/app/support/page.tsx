@@ -38,7 +38,7 @@ export default function SupportPage() {
         </Section>
 
         <Section title="報名與退款">
-          <p style={p}>城市探索為線上活動／數位服務，<b>報名繳費完成後恕不退款</b>，且<b>不適用七天鑑賞期</b>。詳見 <a href="/terms" style={link}>服務條款與退款政策</a>。</p>
+          <p style={p}>城市探索為線上活動／數位服務，<b>報名繳費完成後恕不退款</b>，且<b>不適用七天鑑賞期</b>。詳見 <a href="/terms" style={link}>服務條款與退換貨政策</a>。</p>
         </Section>
 
         <Section title="隱私與資料">

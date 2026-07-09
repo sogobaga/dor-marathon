@@ -970,6 +970,27 @@ export interface DashboardInfo {
   gallery_entry: 'hidden' | 'locked' | 'shown'  // 卡片圖鑑入口可見性
 }
 
+// VIP 訂閱優惠檔期（後台管理）。pay_pct=實付%（70=付七成、即打七折）
+export interface VipPromo {
+  id: string
+  name: string
+  plan: 'monthly' | 'annual' | 'both'
+  pay_pct: number
+  starts_at?: string | null
+  ends_at?: string | null
+  active: boolean
+  created_at?: string
+}
+
+export const adminVipPromosApi = {
+  list: (token: string) =>
+    request<{ promos: VipPromo[] }>('/admin/vip-promos', { headers: withAuth(token) }),
+  save: (token: string, p: Partial<VipPromo>) =>
+    request<{ id: string }>('/admin/vip-promos', { method: 'POST', headers: withAuth(token), body: JSON.stringify(p) }),
+  del: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/vip-promos/${id}/delete`, { method: 'POST', headers: withAuth(token) }),
+}
+
 // VIP 方案定價（元）。price=折後、save=現省、promo=是否套用折扣
 export interface VipPlanPrice { original: number; price: number; save: number; promo: boolean }
 export interface VipPricing {
@@ -1105,6 +1126,8 @@ export const profileApi = {
   // VIP 訂閱：方案定價（依此帳號促銷資格）、標記試用到期彈窗已顯示
   vipPricing: (token: string) =>
     request<VipPricing>('/profile/vip/pricing', { headers: withAuth(token) }),
+  vipCancel: (token: string) =>
+    request<{ ok: boolean; vip_expires_at?: string }>('/profile/vip/cancel', { method: 'POST', headers: withAuth(token) }),
   markTrialNoticeShown: (token: string) =>
     request<{ ok: boolean }>('/profile/trial-notice-shown', { method: 'POST', headers: withAuth(token) }),
   // 跨來源去重：偏好來源、首次彈窗

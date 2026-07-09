@@ -1,14 +1,19 @@
 'use client'
 
+import { useState } from 'react'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
+import CancelSubscriptionModal from '@/components/CancelSubscriptionModal'
+import { useDashboard } from '@/lib/useDashboard'
 
 export default function TermsPage() {
+  const { dash } = useDashboard()
+  const [showCancel, setShowCancel] = useState(false)
   return (
     <PhoneFrame>
       <header style={header}>
         <a href="/" style={back}>← 返回</a>
-        <strong style={{ fontSize: 16 }}>服務條款與退款政策</strong>
+        <strong style={{ fontSize: 16 }}>服務條款與退換貨政策</strong>
         <span style={{ width: 36 }} />
       </header>
 
@@ -47,6 +52,19 @@ export default function TermsPage() {
           <li><b>準據法</b>：以中華民國法律為準據法。</li>
         </ol>
 
+        <H>訂閱服務（VIP 會員）</H>
+        <ul style={ul}>
+          <li>VIP 訂閱採綠界「定期定額」<b>自動續扣</b>，方案分月繳、年繳。</li>
+          <li>新註冊帳號享 14 天 VIP 試用；試用到期後可續訂，享首購促銷價，超過促銷窗即恢復原價。</li>
+          <li><b>可隨時取消訂閱</b>：取消後不再自動續扣，VIP 權益維持至<b>當期到期日</b>，到期即自動降為一般會員（VIP 限定功能重新上鎖）。</li>
+          <li>本服務為數位服務，<b>恕不退費</b>（已扣款期數不退，VIP 時間到期為止）；不適用七天鑑賞期。</li>
+        </ul>
+        <button onClick={() => { if (dash?.is_vip) setShowCancel(true) }} disabled={!dash?.is_vip}
+          style={{ marginTop: 2, background: dash?.is_vip ? 'var(--hunt)' : 'var(--bg-2)', color: dash?.is_vip ? '#fff' : 'var(--tx-faint)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '9px 18px', fontSize: 13.5, fontWeight: 700, cursor: dash?.is_vip ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}>
+          取消訂閱
+        </button>
+        {!dash?.is_vip && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 6 }}>（僅 VIP 會員可取消訂閱）</div>}
+
         <H>聯絡我們</H>
         <p style={p}><a href="mailto:info@unityprosper.com" style={link}>info@unityprosper.com</a></p>
         <ul style={ul}>
@@ -60,6 +78,7 @@ export default function TermsPage() {
         </div>
       </div>
       </ScrollArea>
+      {showCancel && <CancelSubscriptionModal vipExpiresAt={dash?.vip_expires_at} onClose={() => setShowCancel(false)} />}
     </PhoneFrame>
   )
 }

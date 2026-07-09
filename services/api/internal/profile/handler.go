@@ -44,6 +44,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/registrations", h.Registrations)
 	r.Get("/orders/{orderID}", h.OrderDetail)
 	r.Get("/vip/pricing", h.VipPricing)              // VIP 方案定價（依促銷資格）
+	r.Post("/vip/cancel", h.CancelVipSub)            // 取消訂閱（不再續扣，權益至到期日）
 	r.Post("/trial-notice-shown", h.MarkTrialNoticeShown) // 標記試用到期彈窗已顯示（只跳一次）
 	return r
 }

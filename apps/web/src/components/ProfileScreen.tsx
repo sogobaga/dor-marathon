@@ -5,6 +5,7 @@ import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, type 
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import MemberPanel from './MemberPanel'
+import UpgradeVipModal from './UpgradeVipModal'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import { submitEcpayForm } from '@/lib/ecpay'
 
@@ -57,6 +58,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
   const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>('info')
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
+  const [showUpgrade, setShowUpgrade] = useState(false)
   const [follows, setFollows] = useState<FollowRow[] | null>(null)
   const [site, setSite] = useState<SiteSettings | null>(null) // 全站外觀設定（含 Strava 標章雙版本 URL）
   // COROS 式 UX：會員資訊面板固定最上方，分頁內容做成可上下拖曳面板（收合看完整會員面板／半展看分頁／全展看整份內容）
@@ -281,11 +283,15 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
                 <button type="button" onClick={() => { if (dash?.account_code) navigator.clipboard?.writeText(dash.account_code).then(() => { setCodeCopied(true); setTimeout(() => setCodeCopied(false), 1500) }).catch(() => {}) }}
                   style={{ marginLeft: 2, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, color: codeCopied ? 'var(--fug)' : 'var(--tx-dim)', textDecoration: 'underline' }}>{codeCopied ? '已複製' : '複製'}</button>
               </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ color: 'var(--tx-faint)' }}>會員身分：</span>
                 <span style={{ fontWeight: dash?.is_vip ? 700 : 500, color: dash?.is_vip ? 'var(--gold)' : 'var(--tx)' }}>
-                  {dash?.is_vip ? `VIP${dash.vip_expires_at ? ` (至 ${fmtDate(dash.vip_expires_at).slice(0, 10)})` : ''}` : '一般'}
+                  {dash?.is_vip ? `VIP${dash.vip_expires_at ? ` (至 ${fmtDate(dash.vip_expires_at).slice(0, 10)})` : ''}` : '一般會員'}
                 </span>
+                {dash && !dash.is_vip && (
+                  <button type="button" onClick={() => setShowUpgrade(true)}
+                    style={{ background: 'var(--gold)', color: '#fff', border: 'none', borderRadius: 7, padding: '3px 10px', cursor: 'pointer', fontSize: 11.5, fontWeight: 800 }}>✦ 升級VIP</button>
+                )}
               </div>
               {dash?.is_vip && (
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
@@ -540,6 +546,8 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
           </div>
         </div>
       )}
+
+      {showUpgrade && <UpgradeVipModal onClose={() => setShowUpgrade(false)} />}
     </div>
   )
 }

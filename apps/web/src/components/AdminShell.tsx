@@ -47,6 +47,7 @@ const NAV: { grp: string; items: NavItem[] }[] = [
     items: [
       { k: 'orders', t: '訂單管理', href: '/admin/orders', perm: 'orders' },
       { k: 'promo', t: '序號管理', href: '/admin/promo', perm: 'promo' },
+      { k: 'vip-promos', t: '訂閱優惠管理', href: '/admin/vip-promos', perm: 'settings' },
       { k: 'gps-review', t: 'GPS 審核', href: '/admin/gps-review', perm: 'gps_review' },
       { k: 'checkin-review', t: '打卡審核', href: '/admin/checkin-review', perm: 'gps_review' },
       { k: 'whitelist', t: '測試白名單', href: '/admin/settings', perm: 'settings' },

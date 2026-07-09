@@ -4,6 +4,7 @@ import { useState } from 'react'
 import useSWR from 'swr'
 import { racesApi, type Race, type MyRegLite } from '@/lib/api'
 import { getUserToken, useUser, clearUserSession } from '@/lib/userAuth'
+import { useDashboard } from '@/lib/useDashboard'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import MemberPanel from './MemberPanel'
 import UpgradeVipModal from './UpgradeVipModal'
@@ -70,6 +71,7 @@ export default function RacesScreen({
   const sheet = useDraggableSheet('half')
   const [filter, setFilter] = useState<FilterKey>('all')
   const [showUpgrade, setShowUpgrade] = useState(false)
+  const { dash } = useDashboard()
   const races = data?.races ?? []
   const filtered = filter === 'all' ? races : races.filter((r) => CATEGORY[r.display_status] === filter)
 
@@ -82,10 +84,12 @@ export default function RacesScreen({
         </div>
         {user && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-            <button
-              onClick={() => setShowUpgrade(true)}
-              style={{ background: 'var(--gold)', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontSize: 12, fontWeight: 800 }}
-            >✦ 升級VIP</button>
+            {!dash?.is_vip && (
+              <button
+                onClick={() => setShowUpgrade(true)}
+                style={{ background: 'var(--gold)', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontSize: 12, fontWeight: 800 }}
+              >✦ 升級VIP</button>
+            )}
             <button
               onClick={() => clearUserSession()}
               style={{ background: 'rgba(255,255,255,.05)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontSize: 12 }}

@@ -280,6 +280,7 @@ func main() {
 			r.With(perm("promo")).Mount("/admin/promo-codes", promoHandler.Router())
 			r.With(perm("members")).Mount("/admin/members", profileHandler.AdminMembersRouter())
 			r.With(perm("settings")).Mount("/admin/membership", profileHandler.MembershipAdminRouter())
+			r.With(perm("settings")).Mount("/admin/vip-promos", profileHandler.VipPromoAdminRouter())
 			r.With(perm("organizer")).Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 			r.With(perm("settings")).Put("/admin/settings", profileHandler.PutSettings)
 			r.With(perm("gps_review")).Post("/admin/activities/add-mileage", actHandler.AdminAddMileage)
