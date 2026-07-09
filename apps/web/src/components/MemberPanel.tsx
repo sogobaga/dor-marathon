@@ -109,14 +109,6 @@ export default function MemberPanel({
           </div>
         )}
 
-        {/* 活動優惠券（VIP 專屬，$100 折抵活動報名） */}
-        {user && dash && dash.is_vip && (dash.activity_coupon_balance ?? 0) > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 10, fontSize: 12, color: 'var(--gold)', fontWeight: 800 }}>
-            🎟️ 活動優惠券 x{dash.activity_coupon_balance}
-            <span style={{ fontSize: 10.5, color: 'var(--tx-faint)', fontWeight: 600 }}>（報名折 $100・每月補 3 張）</span>
-          </div>
-        )}
-
         {/* 累計完成里程（重點）+ 個人任務入口（後台可控可見性） */}
         {user && dash && (
           <div style={{ display: 'flex', gap: 10, marginTop: 14, alignItems: 'stretch' }}>

@@ -120,4 +120,9 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '訂閱「年度方案」的實付百分比（55 = 付五五、即打 5.5 折）。原價 4788 × 55% = 2633。',
     min: 1, max: 100, def: '55',
   },
+  {
+    key: 'vip_first_promo_days', group: 'VIP 訂閱制', label: '首購促銷窗天數', type: 'number', unit: '天',
+    help: '試用到期後幾天內續訂可享上面的首購促銷價；超過此天數即恢復原價（「14 天後恢復原價」）。之後可另在促銷檔期設定其他優惠。',
+    min: 0, max: 365, def: '14',
+  },
 ]

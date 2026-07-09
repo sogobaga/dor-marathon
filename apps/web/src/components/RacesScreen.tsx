@@ -6,6 +6,7 @@ import { racesApi, type Race, type MyRegLite } from '@/lib/api'
 import { getUserToken, useUser, clearUserSession } from '@/lib/userAuth'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import MemberPanel from './MemberPanel'
+import UpgradeVipModal from './UpgradeVipModal'
 
 const DISPLAY_STATUS: Record<string, { label: string; color: string }> = {
   upcoming_reg: { label: '即將報名', color: 'var(--violet)' },
@@ -68,6 +69,7 @@ export default function RacesScreen({
   // COROS 式 UX：會員面板固定最上方，活動列表做成可上下拖曳的面板（收合看完整會員面板／半展看列表／全展看整份列表）
   const sheet = useDraggableSheet('half')
   const [filter, setFilter] = useState<FilterKey>('all')
+  const [showUpgrade, setShowUpgrade] = useState(false)
   const races = data?.races ?? []
   const filtered = filter === 'all' ? races : races.filter((r) => CATEGORY[r.display_status] === filter)
 
@@ -79,12 +81,20 @@ export default function RacesScreen({
           DOR · 城市探索
         </div>
         {user && (
-          <button
-            onClick={() => clearUserSession()}
-            style={{ flexShrink: 0, background: 'rgba(255,255,255,.05)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontSize: 12 }}
-          >登出</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+            <button
+              onClick={() => setShowUpgrade(true)}
+              style={{ background: 'var(--gold)', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontSize: 12, fontWeight: 800 }}
+            >✦ 升級VIP</button>
+            <button
+              onClick={() => clearUserSession()}
+              style={{ background: 'rgba(255,255,255,.05)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontSize: 12 }}
+            >登出</button>
+          </div>
         )}
       </header>
+
+      {showUpgrade && <UpgradeVipModal onClose={() => setShowUpgrade(false)} />}
 
       {/* 會員面板（固定最上方，背景層）+ 可拖曳活動列表面板 */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>

@@ -958,6 +958,7 @@ export interface DashboardInfo {
   vip_expires_at?: string
   vip_plan: '' | 'trial' | 'monthly' | 'annual' // 訂閱方案（''=無）
   activity_coupon_balance: number               // 活動優惠券($100)剩餘張數
+  show_trial_expiry_notice: boolean             // 試用到期 + 尚未提示過 → 前台跳一次升級彈窗
   total_km: number
   race_count: number
   ongoing_count: number
@@ -967,6 +968,19 @@ export interface DashboardInfo {
   personal_entry: 'hidden' | 'locked' | 'shown' // 個人任務入口可見性（後端解析）
   explore_entry: 'hidden' | 'locked' | 'shown'  // 城市探索入口可見性
   gallery_entry: 'hidden' | 'locked' | 'shown'  // 卡片圖鑑入口可見性
+}
+
+// VIP 方案定價（元）。price=折後、save=現省、promo=是否套用折扣
+export interface VipPlanPrice { original: number; price: number; save: number; promo: boolean }
+export interface VipPricing {
+  monthly: VipPlanPrice
+  annual: VipPlanPrice
+  in_promo_window: boolean
+  promo_ends_at?: string
+  trial_days: number
+  is_vip: boolean
+  vip_plan: '' | 'trial' | 'monthly' | 'annual'
+  vip_expires_at?: string
 }
 
 export interface FollowRow {
@@ -1088,6 +1102,11 @@ export const profileApi = {
     }),
   dashboard: (token: string) =>
     request<{ dashboard: DashboardInfo }>('/profile/dashboard', { headers: withAuth(token) }),
+  // VIP 訂閱：方案定價（依此帳號促銷資格）、標記試用到期彈窗已顯示
+  vipPricing: (token: string) =>
+    request<VipPricing>('/profile/vip/pricing', { headers: withAuth(token) }),
+  markTrialNoticeShown: (token: string) =>
+    request<{ ok: boolean }>('/profile/trial-notice-shown', { method: 'POST', headers: withAuth(token) }),
   // 跨來源去重：偏好來源、首次彈窗
   setDataSource: (token: string, source: 'gps' | 'strava') =>
     request<{ ok: boolean; preferred_data_source: string }>('/profile/data-source', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ source }) }),

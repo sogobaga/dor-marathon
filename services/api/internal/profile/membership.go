@@ -110,6 +110,7 @@ type DashboardInfo struct {
 	VIPExpiresAt   *time.Time `json:"vip_expires_at,omitempty"`
 	VipPlan               string `json:"vip_plan"`                // ''=無 / trial / monthly / annual
 	ActivityCouponBalance int    `json:"activity_coupon_balance"` // 活動優惠券($100)剩餘張數
+	ShowTrialExpiryNotice bool   `json:"show_trial_expiry_notice"` // 試用到期 + 尚未提示過 → 前台跳一次升級彈窗
 	TotalKm        float64    `json:"total_km"`
 	RaceCount      int        `json:"race_count"`      // 報名場數（未取消）
 	OngoingCount   int        `json:"ongoing_count"`   // 進行中場數
@@ -142,16 +143,17 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	var d DashboardInfo
 	d.AccountCode = code
 	var email string
+	var trialShown bool
 	if err := h.db.QueryRow(r.Context(), `
 		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.dp, u.vip_expires_at,
-		       COALESCE(u.vip_plan,''), COALESCE(u.activity_coupon_balance,0),
+		       COALESCE(u.vip_plan,''), COALESCE(u.activity_coupon_balance,0), COALESCE(u.trial_notice_shown,FALSE),
 		       COALESCE((SELECT SUM(distance_km) FROM activities WHERE user_id=u.id AND NOT flagged),0),
 		       COALESCE(p.nickname,''),
 		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id AND rg.status<>'cancelled'),
 		       COALESCE(u.email,'')
 		FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
 		WHERE u.id=$1`, userID).
-		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &d.TotalKm, &d.Nickname, &d.RaceCount, &email); err != nil {
+		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &trialShown, &d.TotalKm, &d.Nickname, &d.RaceCount, &email); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load dashboard")
 		return
 	}
@@ -165,6 +167,8 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	d.Level, d.LevelTitle, d.LevelFloor, d.NextLevelExp = computeLevel(d.Exp, levels)
 	d.IsVIP = d.VIPExpiresAt != nil && d.VIPExpiresAt.After(time.Now())
+	// 試用到期(含未曾設到期日) 且尚未提示過 → 前台跳一次升級彈窗
+	d.ShowTrialExpiryNotice = d.VipPlan == "trial" && !trialShown && (d.VIPExpiresAt == nil || d.VIPExpiresAt.Before(time.Now()))
 	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE follower_id=$1`, userID).Scan(&d.FollowingCount)
 	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE followee_id=$1`, userID).Scan(&d.FollowerCount)
 	// 進行中（賽事期間內）

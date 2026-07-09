@@ -13,9 +13,11 @@ import GoogleAuthProvider from './GoogleAuthProvider'
 import VersionBadge from './VersionBadge'
 import MileageExpGate from './MileageExpGate'
 import DedupNoticeGate from './DedupNoticeGate'
-import { validateSession } from '@/lib/userAuth'
+import { validateSession, getUserToken } from '@/lib/userAuth'
+import { useDashboard } from '@/lib/useDashboard'
 import { pageview } from '@/lib/analytics'
-import type { Race } from '@/lib/api'
+import { profileApi, type Race } from '@/lib/api'
+import UpgradeVipModal from './UpgradeVipModal'
 
 export default function PhoneShell() {
   const isMobile = useIsMobile()
@@ -28,6 +30,19 @@ export default function PhoneShell() {
   const [showGallery, setShowGallery] = useState(false)
   const [unlockCardId, setUnlockCardId] = useState<string | undefined>(undefined)
   const [payRace, setPayRace] = useState<Race | null>(null)
+  const [trialModal, setTrialModal] = useState(false)
+  const trialHandled = useRef(false)
+
+  // 試用到期且尚未提示過 → 自動跳一次升級彈窗（標記已顯示，之後不再跳，改由「升級VIP」鈕）
+  const { dash } = useDashboard()
+  useEffect(() => {
+    if (dash?.show_trial_expiry_notice && !trialHandled.current) {
+      trialHandled.current = true
+      setTrialModal(true)
+      const t = getUserToken()
+      if (t) profileApi.markTrialNoticeShown(t).catch(() => {})
+    }
+  }, [dash?.show_trial_expiry_notice])
 
   useEffect(() => {
     // 開啟 app 即驗證/換發 token：避免「顯示已登入但實際過期」的不一致
@@ -119,6 +134,8 @@ export default function PhoneShell() {
       <MileageExpGate />
       {/* 跨來源（GPS/Strava）重複數據首次提示彈窗（全域） */}
       <DedupNoticeGate />
+      {/* VIP 試用到期升級彈窗（只跳一次） */}
+      {trialModal && <UpgradeVipModal expired onClose={() => setTrialModal(false)} />}
     </div>
     </GoogleAuthProvider>
   )

@@ -36,6 +36,7 @@ var specs = map[string]func(string) bool{
 	"vip_price_annual":            isNonNegInt, // 年繳原價（元）
 	"vip_first_promo_monthly_pct": isPct,       // 首購促銷・月繳實付%（70=付七成）
 	"vip_first_promo_annual_pct":  isPct,        // 首購促銷・年繳實付%（55=付五五）
+	"vip_first_promo_days":        isNonNegInt, // 首購促銷窗天數（試用到期後幾天內續訂享優惠）
 }
 
 func isEntryState(v string) bool {

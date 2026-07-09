@@ -287,6 +287,12 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
                   {dash?.is_vip ? `VIP${dash.vip_expires_at ? ` (至 ${fmtDate(dash.vip_expires_at).slice(0, 10)})` : ''}` : '一般'}
                 </span>
               </div>
+              {dash?.is_vip && (
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ color: 'var(--tx-faint)' }}>100元活動優惠券：</span>
+                  <span style={{ fontWeight: 700, color: 'var(--gold)' }}>{dash.activity_coupon_balance ?? 0} 張</span>
+                </div>
+              )}
             </div>
             <Field label="顯示名稱"><input style={inp} value={p.name} onChange={(e) => set('name', e.target.value)} /></Field>
             <Field label="Email（Google 帳號）"><input style={{ ...inp, opacity: 0.6 }} value={p.email} disabled /></Field>
