@@ -108,6 +108,8 @@ type DashboardInfo struct {
 	NextLevelExp   *int       `json:"next_level_exp"` // 下一級門檻（null=已頂級）
 	IsVIP          bool       `json:"is_vip"`
 	VIPExpiresAt   *time.Time `json:"vip_expires_at,omitempty"`
+	VipPlan               string `json:"vip_plan"`                // ''=無 / trial / monthly / annual
+	ActivityCouponBalance int    `json:"activity_coupon_balance"` // 活動優惠券($100)剩餘張數
 	TotalKm        float64    `json:"total_km"`
 	RaceCount      int        `json:"race_count"`      // 報名場數（未取消）
 	OngoingCount   int        `json:"ongoing_count"`   // 進行中場數
@@ -138,13 +140,14 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	var email string
 	if err := h.db.QueryRow(r.Context(), `
 		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.dp, u.vip_expires_at,
+		       COALESCE(u.vip_plan,''), COALESCE(u.activity_coupon_balance,0),
 		       COALESCE((SELECT SUM(distance_km) FROM activities WHERE user_id=u.id AND NOT flagged),0),
 		       COALESCE(p.nickname,''),
 		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id AND rg.status<>'cancelled'),
 		       COALESCE(u.email,'')
 		FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
 		WHERE u.id=$1`, userID).
-		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.VIPExpiresAt, &d.TotalKm, &d.Nickname, &d.RaceCount, &email); err != nil {
+		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &d.TotalKm, &d.Nickname, &d.RaceCount, &email); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load dashboard")
 		return
 	}

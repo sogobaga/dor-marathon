@@ -95,4 +95,29 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '僅在上方選「指定帳號可按」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email。',
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
+  {
+    key: 'vip_trial_days', group: 'VIP 訂閱制', label: '新註冊試用天數', type: 'number', unit: '天',
+    help: '玩家「新註冊完成」後自動獲得 VIP 的天數。試用到期後首次開啟 App 會跳一次「是否續訂」彈窗，之後降為一般會員（VIP 限定功能重新上鎖）。',
+    min: 0, max: 365, def: '14',
+  },
+  {
+    key: 'vip_price_monthly', group: 'VIP 訂閱制', label: '月繳原價', type: 'number', unit: '元',
+    help: '月繳方案的每月原價（未折扣）。',
+    min: 0, max: 100000, def: '399',
+  },
+  {
+    key: 'vip_price_annual', group: 'VIP 訂閱制', label: '年繳原價', type: 'number', unit: '元',
+    help: '年繳方案的每年原價（未折扣）。',
+    min: 0, max: 1000000, def: '4788',
+  },
+  {
+    key: 'vip_first_promo_monthly_pct', group: 'VIP 訂閱制', label: '首購促銷・月繳實付%', type: 'number', unit: '%',
+    help: '試用到期後 14 天內續訂的「月繳」實付百分比（70 = 付七成、即打七折）。原價 399 × 70% = 279。',
+    min: 1, max: 100, def: '70',
+  },
+  {
+    key: 'vip_first_promo_annual_pct', group: 'VIP 訂閱制', label: '首購促銷・年繳實付%', type: 'number', unit: '%',
+    help: '訂閱「年度方案」的實付百分比（55 = 付五五、即打 5.5 折）。原價 4788 × 55% = 2633。',
+    min: 1, max: 100, def: '55',
+  },
 ]

@@ -31,8 +31,10 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 func (r *Repository) Create(ctx context.Context, email, handle, name, hash, role string) (*User, error) {
 	u := &User{}
 	err := r.db.QueryRow(ctx, `
-		INSERT INTO users (email, handle, name, password_hash, role)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO users (email, handle, name, password_hash, role, vip_expires_at, vip_plan, vip_since)
+		VALUES ($1, $2, $3, $4, $5,
+		        NOW() + (COALESCE(NULLIF((SELECT value FROM app_settings WHERE key='vip_trial_days'),''),'14') || ' days')::interval,
+		        'trial', NOW())
 		RETURNING id, email, handle, name, password_hash,
 		          COALESCE(avatar_url, '') as avatar_url, total_km, role
 	`, email, handle, name, hash, role).Scan(
@@ -111,8 +113,10 @@ func (r *Repository) CreateGoogleUser(ctx context.Context, email, handle, name, 
 
 	u := &User{}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO users (email, handle, name, password_hash, avatar_url, role)
-		VALUES ($1, $2, $3, NULL, NULLIF($4,''), 'user')
+		INSERT INTO users (email, handle, name, password_hash, avatar_url, role, vip_expires_at, vip_plan, vip_since)
+		VALUES ($1, $2, $3, NULL, NULLIF($4,''), 'user',
+		        NOW() + (COALESCE(NULLIF((SELECT value FROM app_settings WHERE key='vip_trial_days'),''),'14') || ' days')::interval,
+		        'trial', NOW())
 		RETURNING id, email, handle, name, COALESCE(password_hash,'') as password_hash,
 		          COALESCE(avatar_url, '') as avatar_url, total_km, role
 	`, email, handle, name, avatarURL).Scan(

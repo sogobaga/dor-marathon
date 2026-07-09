@@ -954,6 +954,8 @@ export interface DashboardInfo {
   next_level_exp: number | null
   is_vip: boolean
   vip_expires_at?: string
+  vip_plan: '' | 'trial' | 'monthly' | 'annual' // 訂閱方案（''=無）
+  activity_coupon_balance: number               // 活動優惠券($100)剩餘張數
   total_km: number
   race_count: number
   ongoing_count: number

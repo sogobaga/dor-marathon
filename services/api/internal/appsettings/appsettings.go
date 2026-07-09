@@ -30,12 +30,27 @@ var specs = map[string]func(string) bool{
 	"explore_entry_whitelist":  isWhitelist,
 	"gallery_entry_state":      isEntryState, // 卡片圖鑑入口
 	"gallery_entry_whitelist":  isWhitelist,
+	// VIP 訂閱制（後台可調數值）
+	"vip_trial_days":              isNonNegInt, // 新註冊自動 VIP 試用天數
+	"vip_price_monthly":           isNonNegInt, // 月繳原價（元）
+	"vip_price_annual":            isNonNegInt, // 年繳原價（元）
+	"vip_first_promo_monthly_pct": isPct,       // 首購促銷・月繳實付%（70=付七成）
+	"vip_first_promo_annual_pct":  isPct,        // 首購促銷・年繳實付%（55=付五五）
 }
 
 func isEntryState(v string) bool {
 	return v == "" || v == "hidden" || v == "locked" || v == "whitelist" || v == "open"
 }
 func isWhitelist(v string) bool { return len(v) <= 20000 }
+
+// isPct 促銷實付百分比：空(用預設) 或 1..100。
+func isPct(v string) bool {
+	if v == "" {
+		return true
+	}
+	n, err := strconv.Atoi(v)
+	return err == nil && n >= 1 && n <= 100
+}
 
 // publicKeys 允許未登入前台讀取的 key（皆為非敏感外觀設定）。
 var publicKeys = map[string]bool{"active_skin": true, "favicon_url": true}
