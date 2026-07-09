@@ -16,7 +16,12 @@ export default function SupportPage() {
       <div style={body}>
         <Section title="聯絡我們">
           <p style={p}>有任何問題、帳號或資料相關需求，歡迎來信：</p>
-          <a href="mailto:info@hero-mi.com" style={mail}>info@hero-mi.com</a>
+          <a href="mailto:info@unityprosper.com" style={mail}>info@unityprosper.com</a>
+          <div style={{ marginTop: 12, fontSize: 13.5, color: 'var(--tx)', lineHeight: 1.95 }}>
+            <div>地址：新北市八里區四維街 13 號 2 樓</div>
+            <div>電話：<a href="tel:0933951586" style={link}>0933-951586</a></div>
+            <div>統一編號：83005678</div>
+          </div>
         </Section>
 
         <Section title="連接 / 中斷 Strava">

@@ -31,7 +31,7 @@ export default function TermsPage() {
           <li><b>報名繳費完成後恕不退款</b>（含已開通但未實際參賽者）。</li>
           <li>本服務屬「特定日期或期間提供之活動」「一經提供即難以回復之數位內容／線上服務」，依法<b>不適用七天鑑賞期</b>。</li>
           <li><b>例外</b>：若賽事因<b>主辦方因素</b>取消或延期，將另行公告退費、順延或其他處理方式。</li>
-          <li>報名相關問題請聯絡 <a href="mailto:info@hero-mi.com" style={link}>info@hero-mi.com</a>。</li>
+          <li>報名相關問題請聯絡 <a href="mailto:info@unityprosper.com" style={link}>info@unityprosper.com</a>。</li>
         </ul>
 
         <H>服務條款</H>
@@ -48,7 +48,12 @@ export default function TermsPage() {
         </ol>
 
         <H>聯絡我們</H>
-        <p style={p}><a href="mailto:info@hero-mi.com" style={link}>info@hero-mi.com</a></p>
+        <p style={p}><a href="mailto:info@unityprosper.com" style={link}>info@unityprosper.com</a></p>
+        <ul style={ul}>
+          <li>地址：新北市八里區四維街 13 號 2 樓</li>
+          <li>電話：<a href="tel:0933951586" style={link}>0933-951586</a></li>
+          <li>統一編號：83005678</li>
+        </ul>
 
         <div style={{ textAlign: 'center', marginTop: 28, fontSize: 12, color: 'var(--tx-faint)' }}>
           DOR · 城市探索　·　<a href="/privacy" style={link}>隱私權政策</a>　·　<a href="/support" style={link}>支援與聯絡</a>
