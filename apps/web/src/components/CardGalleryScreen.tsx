@@ -39,7 +39,7 @@ export default function CardGalleryScreen({ onBack }: { onBack: () => void }) {
         ) : (
           <>
             <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '2px 2px 12px', lineHeight: 1.7 }}>
-              到城市探索的打卡點挑戰關主，3★ 完成即可取得該關主卡片。卡片會持續擴充，一起收集吧！
+              到城市探索中進行打卡任務，可以收集意想不到的卡片唷～。
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
               {slots.map((b, i) => (

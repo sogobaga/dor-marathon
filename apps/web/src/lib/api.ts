@@ -1272,6 +1272,21 @@ export const exploreApi = {
   complete: (token: string, id: string, body: { finished: boolean; work_in_band: number; work_total: number }) =>
     request<{ completed: boolean; stars: number; card_obtained: boolean; reward_exp: number; reward_dp: number }>(
       `/explore/${id}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  // 挑戰者成績排行（星數榜，前 100）+ 我是否追蹤 + 我的名次
+  ranking: (token: string, id: string) =>
+    request<{ ranking: ExploreRankRow[]; my_rank: number }>(`/explore/${id}/ranking`, { headers: withAuth(token) }),
+}
+
+// 城市探索：某關主的挑戰者成績排行列
+export interface ExploreRankRow {
+  rank: number
+  user_id: string
+  nickname: string
+  avatar_url: string
+  stars: number
+  completed_at?: string
+  is_following: boolean
+  is_me: boolean
 }
 
 export const adminLevelsApi = {

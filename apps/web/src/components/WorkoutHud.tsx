@@ -4,7 +4,7 @@ import { type WoStep, fmtPaceS, paceBand, targetText } from '@/lib/workout'
 
 // GPS 追蹤頁的「結構化課表」執行面板：目前分段目標 + 進度 + 即時配速回饋 + 全段進度點。
 // 純顯示：即時數據由 /track 從 GPS 計算後傳入。
-export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, livePaceS, hits, phase, result, onClose }: {
+export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, livePaceS, hits, phase, result, onClose, onRanking }: {
   title: string
   steps: WoStep[]
   stepIdx: number
@@ -15,6 +15,7 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
   phase: 'running' | 'done'
   result: { stars: number; reward_exp: number; reward_dp: number; flagged?: boolean; card_obtained?: boolean } | null
   onClose: () => void
+  onRanking?: () => void // 城市探索關主挑戰：完成後看挑戰者排行
 }) {
   const step = steps[stepIdx]
   const workTotal = steps.filter((s) => s.graded).length
@@ -57,7 +58,12 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
           ) : (
             <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--tx-dim)' }}>結算中…</div>
           )}
-          <button onClick={onClose} style={{ marginTop: 12, width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>看跑步結果</button>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            {onRanking && (
+              <button onClick={onRanking} style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--gold)', fontWeight: 800, border: '1px solid var(--gold)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer' }}>🏆 挑戰者排行</button>
+            )}
+            <button onClick={onClose} style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>看跑步結果</button>
+          </div>
         </div>
       </div>
     )

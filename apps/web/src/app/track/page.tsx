@@ -5,6 +5,7 @@ import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, pe
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
+import BossRankingPanel from '@/components/BossRankingPanel'
 import TrackTaskPanel from '@/components/TrackTaskPanel'
 import { expandSegments, paceInBand, type WoStep } from '@/lib/workout'
 import { loadLeaflet } from '@/lib/leaflet'
@@ -88,6 +89,7 @@ export default function TrackPage() {
   const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' } | null>(null)
   const [exploreCps, setExploreCps] = useState<ExploreBoss[]>([]) // 城市探索打卡點（含座標）
   const [bossPanel, setBossPanel] = useState<{ boss: ExploreBoss; phase: 'intro' | 'start'; dpCost: number } | null>(null) // 打卡後跳出的關主挑戰面板
+  const [rankingBoss, setRankingBoss] = useState<{ id: string; name: string } | null>(null) // 挑戰者成績排行覆蓋層
   const [exploreBusy, setExploreBusy] = useState(false)
   const [woPhase, setWoPhase] = useState<'idle' | 'countdown' | 'running' | 'done'>('idle')
   const [woStepIdx, setWoStepIdx] = useState(0)
@@ -1211,6 +1213,7 @@ export default function TrackPage() {
                 <WorkoutHud title={workout.title} steps={workout.steps} stepIdx={woStepIdx}
                   stepDist={stepDist} stepTime={stepTime} livePaceS={livePace} hits={woHits}
                   phase={woPhase === 'done' ? 'done' : 'running'} result={woResult}
+                  onRanking={workout.kind === 'explore' && !woResult?.flagged ? () => setRankingBoss({ id: workout.taskId, name: workout.title }) : undefined}
                   onClose={() => { setWoPhase('idle'); loadPanel() }} />
               )
             })()}
@@ -1367,6 +1370,11 @@ export default function TrackPage() {
           onDecline={() => setBossPanel(null)}
           onStart={startBossWorkout}
         />
+      )}
+
+      {/* 挑戰者成績排行覆蓋層 */}
+      {rankingBoss && (
+        <BossRankingPanel bossId={rankingBoss.id} bossName={rankingBoss.name} onClose={() => setRankingBoss(null)} />
       )}
     </PhoneFrame>
    </GoogleAuthProvider>

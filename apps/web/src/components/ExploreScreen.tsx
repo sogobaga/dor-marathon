@@ -1,8 +1,10 @@
 'use client'
 
+import { useState } from 'react'
 import useSWR from 'swr'
 import { exploreApi, type ExploreBoss } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
+import BossRankingPanel from '@/components/BossRankingPanel'
 
 // 城市探索：找打卡點。未打卡前只顯示「地點」(神秘，保留收集/交換樂趣)；到現場用 GPS 追蹤打卡後才揭露背後關主
 // (Scene 圖 + 名稱)，「打卡」按鈕切換成「挑戰」。關主資料由伺服器對未揭露者遮蔽(devtools 也看不到)。
@@ -14,6 +16,7 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
     () => withUserAuth((t) => exploreApi.list(t)).then((r) => r.bosses),
   )
   const bosses = (data ?? null) as ExploreBoss[] | null
+  const [rankingBoss, setRankingBoss] = useState<{ id: string; name: string } | null>(null)
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
@@ -34,7 +37,7 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {bosses.map((b) => b.discovered ? (
               // 已打卡揭露：Scene banner + 關主資訊 + 挑戰
-              <RevealCard key={b.id} b={b} onChallenge={onOpenTrack} />
+              <RevealCard key={b.id} b={b} onChallenge={onOpenTrack} onRanking={() => setRankingBoss({ id: b.id, name: b.name })} />
             ) : (
               // 未打卡：只顯示地點（神秘）
               <div key={b.id} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: '14px' }}>
@@ -53,11 +56,15 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
           </div>
         )}
       </div>
+
+      {rankingBoss && (
+        <BossRankingPanel bossId={rankingBoss.id} bossName={rankingBoss.name} onClose={() => setRankingBoss(null)} />
+      )}
     </div>
   )
 }
 
-function RevealCard({ b, onChallenge }: { b: ExploreBoss; onChallenge?: () => void }) {
+function RevealCard({ b, onChallenge, onRanking }: { b: ExploreBoss; onChallenge?: () => void; onRanking?: () => void }) {
   const st = b.stars ?? 0
   const status = b.card_obtained ? { t: '✓ 已取得卡片', c: 'var(--fug)' }
     : st > 0 ? { t: `已挑戰 ${st}★（3★ 得卡）`, c: 'var(--gold)' }
@@ -80,6 +87,7 @@ function RevealCard({ b, onChallenge }: { b: ExploreBoss; onChallenge?: () => vo
         </div>
         {!b.card_obtained && onChallenge && <button onClick={onChallenge} style={{ ...ghostFullBtn, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', fontWeight: 800 }}>▶ 前往挑戰（到「{b.place}」打卡點）</button>}
         {b.card_obtained && <div style={{ fontSize: 11.5, color: 'var(--fug)', marginTop: 10, textAlign: 'center', fontWeight: 700 }}>已收服此關主 · 卡片已收藏</div>}
+        {onRanking && <button onClick={onRanking} style={{ ...ghostFullBtn, marginTop: 8 }}>🏆 挑戰者排行</button>}
       </div>
     </div>
   )

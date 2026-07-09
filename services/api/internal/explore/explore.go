@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -86,6 +87,7 @@ func (h *Handler) Router() http.Handler {
 	r.Post("/{id}/checkin", h.Checkin)   // 到打卡點打卡 → 揭露關主
 	r.Post("/{id}/accept", h.Accept)     // 接受挑戰（扣 DP=難度×10）
 	r.Post("/{id}/complete", h.Complete) // 完成挑戰（得星、3★ 取卡）
+	r.Get("/{id}/ranking", h.Ranking)    // 挑戰者成績排行（前 100）+ 我是否追蹤
 	return r
 }
 
@@ -358,6 +360,66 @@ func ternInt(c bool, a, b int) int {
 		return a
 	}
 	return b
+}
+
+type rankRow struct {
+	Rank        int        `json:"rank"`
+	UserID      string     `json:"user_id"`
+	Nickname    string     `json:"nickname"`
+	AvatarURL   string     `json:"avatar_url"`
+	Stars       int        `json:"stars"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	IsFollowing bool       `json:"is_following"`
+	IsMe        bool       `json:"is_me"`
+}
+
+// Ranking GET /explore/{id}/ranking — 挑戰者成績排行（星數榜，前 100）＋ 我是否已追蹤。
+// 同星數以先完成者名次高（completed_at 早）。my_rank 為自己名次（即使在前 100 之外；未完成=0）。
+func (h *Handler) Ranking(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	bossID := chi.URLParam(r, "id")
+	rows, err := h.db.Query(r.Context(), `
+		SELECT pr.user_id::text,
+		       COALESCE(NULLIF(p.nickname,''), u.handle),
+		       COALESCE(u.avatar_url,''),
+		       pr.stars, pr.completed_at,
+		       ($1 <> '' AND EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = NULLIF($1,'')::uuid AND f.followee_id = pr.user_id))
+		FROM explore_progress pr
+		JOIN users u ON u.id = pr.user_id
+		LEFT JOIN user_profiles p ON p.user_id = pr.user_id
+		WHERE pr.boss_id=$2 AND pr.completed_at IS NOT NULL AND pr.stars > 0
+		ORDER BY pr.stars DESC, pr.completed_at ASC
+		LIMIT 100`, uid, bossID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer rows.Close()
+	out := []rankRow{}
+	rank := 0
+	for rows.Next() {
+		var rr rankRow
+		if err := rows.Scan(&rr.UserID, &rr.Nickname, &rr.AvatarURL, &rr.Stars, &rr.CompletedAt, &rr.IsFollowing); err != nil {
+			respondErr(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		rank++
+		rr.Rank = rank
+		rr.IsMe = rr.UserID == uid
+		out = append(out, rr)
+	}
+	// 我的名次（排在我前面的人數+1；未完成則 0）
+	myRank := 0
+	if uid != "" {
+		_ = h.db.QueryRow(r.Context(), `
+			SELECT CASE WHEN me.completed_at IS NULL OR me.stars <= 0 THEN 0 ELSE (
+				SELECT COUNT(*)+1 FROM explore_progress o
+				WHERE o.boss_id=$2 AND o.completed_at IS NOT NULL AND o.stars > 0
+				  AND (o.stars > me.stars OR (o.stars = me.stars AND o.completed_at < me.completed_at))
+			) END
+			FROM explore_progress me WHERE me.user_id = NULLIF($1,'')::uuid AND me.boss_id=$2`, uid, bossID).Scan(&myRank)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ranking": out, "my_rank": myRank})
 }
 
 // --- 後台 handlers ---
