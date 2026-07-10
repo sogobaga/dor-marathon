@@ -66,6 +66,24 @@ export function paceInBand(avgPaceS: number, step: WoStep): boolean {
   return avgPaceS > 0 && avgPaceS <= step.paceSlow * 1.05
 }
 
+// 目標配速區間：該課表的「目標效率配速」——優先取評分段(work/steady/surge)的配速範圍；
+// 若無評分段(純輕鬆/長跑/恢復)則取所有有配速的段。回「5:30–6:00 /km」，無配速回 ''。
+export function targetPaceBand(segs?: WorkoutSegment[] | null): string {
+  if (!segs || !segs.length) return ''
+  const paced = segs.filter((s) => s.pace_slow_s && s.pace_slow_s > 0)
+  const graded = paced.filter((s) => GRADED_KINDS.has(s.kind))
+  const pool = graded.length ? graded : paced
+  if (!pool.length) return ''
+  let fast = Infinity
+  let slow = 0
+  for (const s of pool) {
+    if (s.pace_fast_s && s.pace_fast_s < fast) fast = s.pace_fast_s
+    if (s.pace_slow_s && s.pace_slow_s > slow) slow = s.pace_slow_s
+  }
+  if (!isFinite(fast)) fast = slow
+  return paceBand(fast, slow)
+}
+
 // 分段課表摘要：「暖身 2K → 間歇 400m ×6 → 緩和 2K」
 export function segSummary(segs?: WorkoutSegment[] | null): string {
   if (!segs || !segs.length) return ''

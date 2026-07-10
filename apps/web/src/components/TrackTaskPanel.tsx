@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { type PanelCard } from '@/lib/api'
-import { segSummary, totalKm, estMinutes, fmtDuration } from '@/lib/workout'
+import { segSummary, totalKm, estMinutes, fmtDuration, targetPaceBand } from '@/lib/workout'
 
 const stars3 = (n: number) => '★'.repeat(Math.max(0, n)) + '☆'.repeat(Math.max(0, 3 - n))
 
@@ -52,6 +52,7 @@ export default function TrackTaskPanel({ cards, activeTaskId, busy, onChallenge,
                 </div>
                 <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)', marginTop: 3 }}>Day {c.day} · {c.title}</div>
                 {segSummary(c.segments) && <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 5, lineHeight: 1.6 }}>📋 {segSummary(c.segments)}</div>}
+                {targetPaceBand(c.segments) && <div style={{ fontSize: 11.5, color: 'var(--fug)', fontWeight: 700, marginTop: 5, fontVariantNumeric: 'tabular-nums' }}>🎯 目標配速 {targetPaceBand(c.segments)}</div>}
                 <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>總距離 {totalKm(c.segments)} K · 預估 {fmtDuration(estMinutes(c.segments))}</div>
 
                 {isActive ? (

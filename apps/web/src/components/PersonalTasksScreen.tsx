@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { personalTasksApi, type PersonalPlan, type PersonalTask, type PersonalChallenge, type WorkoutSegment } from '@/lib/api'
-import { totalKm, estMinutes, fmtDuration } from '@/lib/workout'
+import { totalKm, estMinutes, fmtDuration, targetPaceBand } from '@/lib/workout'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { refreshDashboard, useDashboard } from '@/lib/useDashboard'
 
@@ -260,6 +260,7 @@ function TaskCard({ t, kind, locked, ch, challengeAt, vipLocked, busy, onChallen
       {kind.kind === 'workout' && (
         <>
           {segSummary(t.segments) && <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.6, padding: '7px 10px', background: 'var(--bg-2)', borderRadius: 8 }}>📋 {segSummary(t.segments)}</div>}
+          {targetPaceBand(t.segments) && <div style={{ fontSize: 12, color: 'var(--fug)', fontWeight: 700, marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>🎯 目標配速 {targetPaceBand(t.segments)}</div>}
           <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 5, fontVariantNumeric: 'tabular-nums' }}>總距離 {totalKm(t.segments)} K · 預估 {fmtDuration(estMinutes(t.segments))}</div>
           {active ? (
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
