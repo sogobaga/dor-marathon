@@ -65,14 +65,7 @@ export default function MemberPanel({
         }}
         onClick={clickable ? onOpenProfile : undefined}
       >
-        {/* 站內信 icon：面板右上角（僅會員資料頁顯示；首頁小尺寸不顯示避免擁擠） */}
-        {showMail && user && (
-          <div style={{ position: 'absolute', top: 14, right: 14 }} onClick={(e) => e.stopPropagation()}>
-            <MailPanel />
-          </div>
-        )}
-
-        {/* 頭像 + 名稱/暱稱/編碼 + DP（showMail 時 DP 移到下一行、讓出右上角給信件 icon） */}
+        {/* 頭像 + 名稱/暱稱/編碼 + DP（showMail 時信件 icon 與 DP 併入名稱那一行右端，與首頁同高度） */}
         <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
           {onUploadAvatar ? (
             <label style={{ ...avatarWrap, cursor: 'pointer' }} title="更換頭像" onClick={(e) => e.stopPropagation()}>
@@ -88,8 +81,14 @@ export default function MemberPanel({
             {user ? (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{dash?.name || user.name}</span>
+                  <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{dash?.name || user.name}</span>
                   {dash?.is_vip && <span style={{ ...vipBadge, flexShrink: 0 }}>VIP</span>}
+                  {showMail && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                      <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex' }}><MailPanel /></span>
+                      {dash && <span style={dpBadge} title="DP 幣"><DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}</span>}
+                    </span>
+                  )}
                 </div>
                 {dash?.nickname && <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dash.nickname}</div>}
                 {/* 帳號編碼已移至「個人資料」分頁，避免面板截圖外流 */}
@@ -104,15 +103,6 @@ export default function MemberPanel({
             </span>
           )}
         </div>
-
-        {/* showMail：DP 移到頭像列下方、靠右對齊（右上角已讓給信件 icon，兩者垂直不重疊） */}
-        {user && dash && showMail && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-            <span style={dpBadge} title="DP 幣">
-              <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
-            </span>
-          </div>
-        )}
 
         {/* 等級 + EXP */}
         {user && dash && (
