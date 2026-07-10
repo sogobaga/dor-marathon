@@ -1020,7 +1020,11 @@ export default function TrackPage() {
 
   const distKm = distance / 1000
   const avgPace = distKm >= PACE_MIN_KM ? elapsed / distKm : 0 // 未達門檻先顯示 --:--，避免爆數字
-  const lastSplit = splits.length > 0 ? splits[splits.length - 1] : 0 // 最新完成的整公里配速（秒）；未滿 1km 顯示 --:--
+  // 分段即時配速：當下（進行中）這一公里的即時配速（秒/公里）。跨過整公里即歸零重算；不足 30m 先顯示 --:--
+  const segKmDone = splitMarkRef.current.length
+  const segStartT = segKmDone > 0 ? splitMarkRef.current[segKmDone - 1] : 0
+  const segDistM = Math.max(0, distance - segKmDone * 1000)
+  const segLivePace = segDistM >= 30 ? (elapsed - segStartT) / (segDistM / 1000) : 0
   // 里程獎勵進度（本趟）：每滿 1km 一份、受單趟上限
   const mCap = mileageCfg?.cap_km ?? 0
   const mEarned = mCap > 0 ? Math.min(Math.floor(distKm), mCap) : Math.floor(distKm)
@@ -1182,7 +1186,7 @@ export default function TrackPage() {
               <Big compact label="距離" value={distKm.toFixed(2)} unit="km" />
               <Big compact label="時間" value={fmtTime(elapsed)} unit="" />
               <Big compact label="平均配速" value={fmtPace(avgPace)} unit="/km" />
-              <Big compact label="最新分段" value={fmtPace(lastSplit)} unit="/km" />
+              <Big compact label="分段即時配速" value={fmtPace(segLivePace)} unit="/km" />
             </div>
             {/* 里程獎勵進度：每滿 1km 一份（本趟上限），即時看到距下一份還差多少 → 誘因持續跑 */}
             {mileageCfg && mileageCfg.per_km > 0 && (
