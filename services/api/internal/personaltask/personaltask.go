@@ -641,12 +641,15 @@ func ChallengeStatusUser(ctx context.Context, db *pgxpool.Pool, uid string) (*Ch
 	return st, nil
 }
 
-// accDistance 從 since 起、符合 data_source 的未 flagged 活動累積里程（strava 任務計 source='strava'；gps 計 source IS NULL）。
+// accDistance 從 since 起、符合 data_source 的活動累積里程（strava 任務計 source='strava'；gps 計 source IS NULL）。
+// 排除真正的異常標記（載具/重複/跨帳號），但「cross_source_duplicate」是跨來源同一趟的非偏好副本、非作弊——
+// 對「指定來源」的任務仍應計入該來源那筆，否則玩家偏好與任務來源不一致時里程會被吃掉。
 func accDistance(ctx context.Context, db *pgxpool.Pool, uid string, since time.Time, dataSource string) (float64, error) {
 	var acc float64
 	err := db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(distance_km),0) FROM activities
-		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2
+		WHERE user_id=$1 AND recorded_at >= $2
+		  AND (NOT flagged OR flag_reason='cross_source_duplicate')
 		  AND ( ($3='strava' AND source='strava') OR ($3<>'strava' AND source IS NULL) )`,
 		uid, since, dataSource).Scan(&acc)
 	return acc, err

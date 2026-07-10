@@ -35,6 +35,7 @@ export default function PrivacyPage() {
         <H>3. 第三方服務</H>
         <ul style={ul}>
           <li><b>Strava</b>：運動數據來源，依其 <a href="https://www.strava.com/legal/privacy" target="_blank" rel="noreferrer" style={link}>Strava 隱私政策</a> 處理。</li>
+          <li><b>Terra（tryterra.co）</b>：運動穿戴資料整合商。當你選擇「直接連手錶（Garmin／COROS 等）」時，我們透過 Terra 取得你的<b>跑步活動資料</b>（距離、時間、配速、心率、爬升、路線）。此屬<b>跨境傳輸</b>（資料經 Terra 於境外處理），僅在你<b>明確授權連接後</b>才啟用；你可隨時中斷，中斷即停止取得新資料。詳見 <a href="https://tryterra.co/privacy-policy" target="_blank" rel="noreferrer" style={link}>Terra 隱私政策</a>。</li>
           <li><b>Google</b>：第三方登入。</li>
           <li><b>綠界 ECPay</b>：金流付款處理。</li>
         </ul>

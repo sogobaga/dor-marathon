@@ -143,6 +143,18 @@ func main() {
 		middleware.RequireAuth(authSvc),
 	)
 
+	// Terra 聚合器（Phase 0 骨架）：一條 webhook 收 Garmin/COROS/Strava 正規化活動。
+	// 未設定 TERRA_SIGNING_SECRET → enabled()=false，webhook 只 ack 不處理。
+	terraHandler := integration.NewTerraHandler(
+		integration.NewRepository(pool),
+		integration.TerraConfig{
+			DevID:         os.Getenv("TERRA_DEV_ID"),
+			APIKey:        os.Getenv("TERRA_API_KEY"),
+			SigningSecret: os.Getenv("TERRA_SIGNING_SECRET"),
+		},
+		middleware.RequireAuth(authSvc),
+	)
+
 	// --- 路由 ---
 	r := chi.NewRouter()
 
@@ -201,6 +213,7 @@ func main() {
 
 		// Strava 整合（callback/webhook 公開；connect/status/disconnect 由 router 內自帶登入）
 		r.Mount("/integrations/strava", stravaHandler.Router())
+		r.Mount("/integrations/terra", terraHandler.Router())
 
 		// 綠界付款結果通知（公開，server 對 server，自帶 CheckMacValue 驗章）
 		r.Post("/payments/ecpay/notify", paymentHandler.Notify)
@@ -281,6 +294,7 @@ func main() {
 			r.With(perm("members")).Mount("/admin/members", profileHandler.AdminMembersRouter())
 			r.With(perm("settings")).Mount("/admin/membership", profileHandler.MembershipAdminRouter())
 			r.With(perm("settings")).Mount("/admin/vip-promos", profileHandler.VipPromoAdminRouter())
+			r.With(perm("settings")).Get("/admin/data-source-metrics", profileHandler.AdminDataSourceMetrics)
 			r.With(perm("organizer")).Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 			r.With(perm("settings")).Put("/admin/settings", profileHandler.PutSettings)
 			r.With(perm("gps_review")).Post("/admin/activities/add-mileage", actHandler.AdminAddMileage)

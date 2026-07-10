@@ -119,21 +119,36 @@ func (w *Worker) standingsLoop(ctx context.Context) {
 func (w *Worker) resolveCrossSourceDups(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
+	// N 來源優先序去重：每筆算出「優先序 rank」（使用者偏好來源=0，其餘 garmin>coros>strava>gps）；
+	// 對每筆活動，若有時間重疊、且優先序更高（rank 更小）的另一筆存在 → 標記為 cross_source_duplicate、
+	// dup_of 指向重疊中優先序最高那筆。每個時間叢集只保留優先序最高的一筆。
+	// 起始時間統一：GPS(source NULL) 存結束時間 → 起=recorded_at-dur；其餘來源存起始時間 → 起=recorded_at。
 	tag, err := w.db.Exec(cctx, `
 		WITH pref AS (SELECT user_id, COALESCE(preferred_data_source,'gps') AS src FROM user_profiles),
-		pairs AS (
-			SELECT g.id AS gps_id, s.id AS strava_id, COALESCE(p.src,'gps') AS src
-			FROM activities g
-			JOIN activities s ON s.user_id = g.user_id AND s.source = 'strava' AND NOT s.flagged
-			LEFT JOIN pref p ON p.user_id = g.user_id
-			WHERE g.source IS NULL AND NOT g.flagged AND g.duration_s > 0 AND s.duration_s > 0
-			  AND (g.recorded_at - make_interval(secs => g.duration_s)) < (s.recorded_at + make_interval(secs => s.duration_s))
-			  AND s.recorded_at < g.recorded_at
+		ranked AS (
+			SELECT a.id, a.user_id, a.duration_s AS dur,
+				CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END AS st,
+				CASE
+					WHEN COALESCE(a.source,'gps') = COALESCE(p.src,'gps') THEN 0
+					WHEN COALESCE(a.source,'gps') = 'garmin' THEN 1
+					WHEN COALESCE(a.source,'gps') = 'coros'  THEN 2
+					WHEN COALESCE(a.source,'gps') = 'strava' THEN 3
+					WHEN COALESCE(a.source,'gps') = 'gps'    THEN 4
+					ELSE 5 END AS rk
+			FROM activities a
+			LEFT JOIN pref p ON p.user_id = a.user_id
+			WHERE a.duration_s > 0 AND NOT a.flagged
 		)
-		UPDATE activities a SET flagged = TRUE, flag_reason = 'cross_source_duplicate',
-			dup_of = CASE WHEN pairs.src = 'gps' THEN pairs.gps_id ELSE pairs.strava_id END
-		FROM pairs
-		WHERE (pairs.src = 'gps' AND a.id = pairs.strava_id) OR (pairs.src = 'strava' AND a.id = pairs.gps_id)`)
+		UPDATE activities a SET flagged = TRUE, flag_reason = 'cross_source_duplicate', dup_of = w.id
+		FROM ranked lo
+		CROSS JOIN LATERAL (
+			SELECT hi.id FROM ranked hi
+			WHERE hi.user_id = lo.user_id AND hi.id <> lo.id AND hi.rk < lo.rk
+			  AND lo.st < hi.st + make_interval(secs=>hi.dur)
+			  AND hi.st < lo.st + make_interval(secs=>lo.dur)
+			ORDER BY hi.rk, hi.st DESC LIMIT 1
+		) w
+		WHERE a.id = lo.id AND NOT a.flagged`)
 	if err != nil {
 		log.Error().Err(err).Msg("resolveCrossSourceDups failed")
 		return

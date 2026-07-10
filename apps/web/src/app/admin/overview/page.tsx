@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminOverviewApi, type AdminOverview } from '@/lib/api'
+import { adminOverviewApi, adminMetricsApi, type AdminOverview, type DataSourceMetrics } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
 const STATUS: Record<string, { label: string; color: string }> = {
@@ -24,6 +24,7 @@ function fmtDate(iso: string) {
 export default function AdminOverviewPage() {
   const router = useRouter()
   const [data, setData] = useState<AdminOverview | null>(null)
+  const [src, setSrc] = useState<DataSourceMetrics | null>(null)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState<Record<string, boolean>>({})
 
@@ -34,6 +35,7 @@ export default function AdminOverviewPage() {
       if (e?.status === 401) { clearToken(); router.replace('/admin/login') }
       else setErr(e?.message || '載入失敗')
     })
+    adminMetricsApi.dataSource(t).then(setSrc).catch(() => {})
   }, [router])
   useEffect(() => { load(); const id = setInterval(load, 20000); return () => clearInterval(id) }, [load])
 
@@ -51,6 +53,29 @@ export default function AdminOverviewPage() {
         <div style={{ flex: 1, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '14px 16px' }}>
           <div style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>📅 近半年賽事</div>
           <div style={{ fontSize: 30, fontWeight: 900, color: 'var(--tx)' }}>{data?.races.length ?? '—'} <span style={{ fontSize: 14, color: 'var(--tx-dim)' }}>場</span></div>
+        </div>
+      </div>
+
+      {/* 運動資料來源分布（評估直連手錶 / Terra 成本） */}
+      <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '14px 16px', marginBottom: 18 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)', marginBottom: 2 }}>⌚ 運動資料來源</div>
+        <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 12, lineHeight: 1.6 }}>
+          「需直連手錶」＝有 Garmin/COROS 活動、但完全沒有 Strava 的用戶（＝ Strava 覆蓋不到、真正需要 Terra 直連的人數）。用來評估是否值得直連手錶／Terra 成本。
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+          {[
+            ['需直連手錶', src?.need_direct_watch, 'var(--hunt)'],
+            ['手錶(G/C)用戶', src?.watch_users, 'var(--gold)'],
+            ['Garmin', src?.garmin_users, 'var(--tx)'],
+            ['COROS', src?.coros_users, 'var(--tx)'],
+            ['Strava', src?.strava_users, '#fc4c02'],
+            ['App GPS', src?.gps_users, 'var(--fug)'],
+          ].map(([label, val, color]) => (
+            <div key={label as string} style={{ flex: '1 1 90px', minWidth: 90, background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px' }}>
+              <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', whiteSpace: 'nowrap' }}>{label as string}</div>
+              <div style={{ fontSize: 22, fontWeight: 900, color: color as string }}>{(val as number | undefined) ?? '—'}</div>
+            </div>
+          ))}
         </div>
       </div>
 

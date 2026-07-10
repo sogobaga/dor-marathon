@@ -348,7 +348,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
           <div style={recCard}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, color: '#fc4c02' }}>Strava</div>
+                <div style={{ fontWeight: 700, color: '#fc4c02' }}>Strava<span style={{ fontSize: 10.5, color: 'var(--fug)', fontWeight: 800, marginLeft: 5 }}>· 推薦</span></div>
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
                   {strava?.connected
                     ? `已連接${strava.athlete_name ? `：${strava.athlete_name}` : ''} · 活動自動同步`
@@ -382,6 +382,22 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
                 ，再「中斷」後重新連接（連接的是你瀏覽器當下登入的 Strava 帳號）。
               </div>
             )}
+          </div>
+
+          {/* 手錶直連（Garmin / COROS）— 次要來源，Phase 1 接 Terra 後開放 */}
+          <div style={{ ...recCard, marginTop: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, color: 'var(--tx)' }}>⌚ 直接連手錶（Garmin / COROS）</div>
+                <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3, lineHeight: 1.6 }}>
+                  沒有用 Strava？之後可直接連你的 Garmin / COROS 帳號同步跑步。多數手錶用戶其實已透過上方 Strava 自動同步，<b>建議優先用 Strava</b>。
+                </div>
+              </div>
+              <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: 'var(--tx-faint)', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '6px 10px' }}>即將開放</span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
+              連接即表示你同意透過整合商 <b>Terra</b> 取得你的跑步活動資料（跨境處理），並同意本平台 <a href="/privacy" target="_blank" rel="noreferrer" style={{ color: 'var(--fug)' }}>隱私權政策</a>。
+            </div>
           </div>
 
           {/* 里程優先來源（有 2 個來源時可設定；跨來源去重用） */}

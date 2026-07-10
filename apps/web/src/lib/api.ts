@@ -982,6 +982,20 @@ export interface VipPromo {
   created_at?: string
 }
 
+export interface DataSourceMetrics {
+  need_direct_watch: number
+  watch_users: number
+  garmin_users: number
+  coros_users: number
+  strava_users: number
+  gps_users: number
+}
+
+export const adminMetricsApi = {
+  dataSource: (token: string) =>
+    request<DataSourceMetrics>('/admin/data-source-metrics', { headers: withAuth(token) }),
+}
+
 export const adminVipPromosApi = {
   list: (token: string) =>
     request<{ promos: VipPromo[] }>('/admin/vip-promos', { headers: withAuth(token) }),

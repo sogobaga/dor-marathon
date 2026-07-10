@@ -14,10 +14,14 @@ import (
 // 跨來源（App GPS / Strava）重複活動去重的「使用者互動」層：偏好來源設定、首次彈窗提示/確認。
 // 實際週期性去重由 worker resolveCrossSourceDups 執行；此處提供「立即重解」與 UI 端點。
 
+// validSources 可作為偏好資料來源的合法值。
+var validSources = map[string]bool{"gps": true, "strava": true, "garmin": true, "coros": true}
+
 // reResolveUser 立即重解某使用者的跨來源重複：先解除他既有的 cross_source_duplicate 標記，
-// 再依 source（gps|strava）重新配對、flag 非該來源那筆。用於玩家手動選擇/切換偏好時（免等 worker）。
+// 再以 source 為「最高優先」重新依 N 來源優先序去重（flag 每個時間叢集裡非最高優先的那些）。
+// 用於玩家手動選擇/切換偏好時（免等 worker）。source 作為本次生效偏好（可與 user_profiles 不同，供「不記住」情境）。
 func reResolveUser(ctx context.Context, db *pgxpool.Pool, userID, source string) {
-	if source != "gps" && source != "strava" {
+	if !validSources[source] {
 		return
 	}
 	tx, err := db.Begin(ctx)
@@ -30,18 +34,29 @@ func reResolveUser(ctx context.Context, db *pgxpool.Pool, userID, source string)
 		return
 	}
 	if _, err := tx.Exec(ctx, `
-		WITH pairs AS (
-			SELECT g.id AS gps_id, s.id AS strava_id
-			FROM activities g
-			JOIN activities s ON s.user_id=g.user_id AND s.source='strava' AND NOT s.flagged
-			WHERE g.user_id=$1 AND g.source IS NULL AND NOT g.flagged AND g.duration_s>0 AND s.duration_s>0
-			  AND (g.recorded_at - make_interval(secs=>g.duration_s)) < (s.recorded_at + make_interval(secs=>s.duration_s))
-			  AND s.recorded_at < g.recorded_at
+		WITH ranked AS (
+			SELECT a.id, a.duration_s AS dur,
+				CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END AS st,
+				CASE
+					WHEN COALESCE(a.source,'gps') = $2 THEN 0
+					WHEN COALESCE(a.source,'gps') = 'garmin' THEN 1
+					WHEN COALESCE(a.source,'gps') = 'coros'  THEN 2
+					WHEN COALESCE(a.source,'gps') = 'strava' THEN 3
+					WHEN COALESCE(a.source,'gps') = 'gps'    THEN 4
+					ELSE 5 END AS rk
+			FROM activities a
+			WHERE a.user_id=$1 AND a.duration_s>0 AND NOT a.flagged
 		)
-		UPDATE activities a SET flagged=TRUE, flag_reason='cross_source_duplicate',
-			dup_of = CASE WHEN $2='gps' THEN pairs.gps_id ELSE pairs.strava_id END
-		FROM pairs
-		WHERE ($2='gps' AND a.id=pairs.strava_id) OR ($2='strava' AND a.id=pairs.gps_id)`, userID, source); err != nil {
+		UPDATE activities a SET flagged=TRUE, flag_reason='cross_source_duplicate', dup_of=w.id
+		FROM ranked lo
+		CROSS JOIN LATERAL (
+			SELECT hi.id FROM ranked hi
+			WHERE hi.id <> lo.id AND hi.rk < lo.rk
+			  AND lo.st < hi.st + make_interval(secs=>hi.dur)
+			  AND hi.st < lo.st + make_interval(secs=>lo.dur)
+			ORDER BY hi.rk, hi.st DESC LIMIT 1
+		) w
+		WHERE a.id = lo.id`, userID, source); err != nil {
 		return
 	}
 	_ = tx.Commit(ctx)
@@ -57,8 +72,8 @@ func (h *Handler) SetDataSource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Source string `json:"source"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || (req.Source != "gps" && req.Source != "strava") {
-		respondErr(w, http.StatusBadRequest, "source 需為 gps 或 strava")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !validSources[req.Source] {
+		respondErr(w, http.StatusBadRequest, "source 需為 gps / strava / garmin / coros")
 		return
 	}
 	if _, err := h.db.Exec(r.Context(), `
@@ -133,8 +148,8 @@ func (h *Handler) DedupResolve(w http.ResponseWriter, r *http.Request) {
 		Choice   string `json:"choice"`
 		Remember bool   `json:"remember"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || (req.Choice != "gps" && req.Choice != "strava") {
-		respondErr(w, http.StatusBadRequest, "choice 需為 gps 或 strava")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !validSources[req.Choice] {
+		respondErr(w, http.StatusBadRequest, "choice 需為 gps / strava / garmin / coros")
 		return
 	}
 	// remember＝把選擇設為偏好（未來新配對自動照此）；不論如何都標「已提示」（彈窗一次性）
