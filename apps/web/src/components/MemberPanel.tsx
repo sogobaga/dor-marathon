@@ -63,9 +63,9 @@ export default function MemberPanel({
         }}
         onClick={clickable ? onOpenProfile : undefined}
       >
-        {/* 頭像 + 右側資訊（首頁與會員頁一致）：
-            上排＝VIP(左)＋信件icon(右) 同一水平；名稱排＝名稱(左)＋DP(右，位置維持)；其下暱稱。 */}
-        <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+        {/* 頭像 + 名稱排（單排、壓低面板高度、首頁與會員頁一致）：
+            VIP＋名稱（左，VIP 固定在名稱之前、名稱不隨 VIP 有無上下移動）… 信件icon＋DP（右，緊湊）；其下暱稱。 */}
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
           {onUploadAvatar ? (
             <label style={{ ...avatarWrap, cursor: 'pointer' }} title="更換頭像" onClick={(e) => e.stopPropagation()}>
               <Avatar user={!!user} dash={dash} />
@@ -78,16 +78,14 @@ export default function MemberPanel({
           )}
           {user ? (
             <div style={{ flex: 1, minWidth: 0 }}>
-              {/* 上排：VIP（左）＋ 信件 icon（右），水平同高 */}
+              {/* 名稱排：VIP＋名稱（左）… 信件icon＋DP（右） */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {dash?.is_vip && <span style={{ ...vipBadge, flexShrink: 0 }}>VIP</span>}
-                <span style={{ flex: 1 }} />
-                <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', flexShrink: 0 }}><MailPanel /></span>
-              </div>
-              {/* 名稱排：名稱（左）＋ DP（右，位置維持不變） */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
                 <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{dash?.name || user.name}</span>
-                {dash && <span style={dpBadge} title="DP 幣"><DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}</span>}
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex' }}><MailPanel /></span>
+                  {dash && <span style={dpBadge} title="DP 幣"><DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}</span>}
+                </span>
               </div>
               {dash?.nickname && <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dash.nickname}</div>}
               {/* 帳號編碼已移至「個人資料」分頁，避免面板截圖外流 */}
