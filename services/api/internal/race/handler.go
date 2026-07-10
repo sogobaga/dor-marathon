@@ -10,14 +10,16 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/promo"
+	"github.com/dor/api/internal/realtime"
 )
 
 type Handler struct {
 	svc *Service
+	rt  *realtime.Manager
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, rt *realtime.Manager) *Handler {
+	return &Handler{svc: svc, rt: rt}
 }
 
 // Router 回傳賽事相關路由（掛載在 /api/v1/races）
@@ -661,6 +663,7 @@ func (h *Handler) AdminCreateRace(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.rt.PublishData(r.Context(), "races", nil)
 	respondJSON(w, http.StatusCreated, map[string]any{"race": detail})
 }
 
@@ -705,6 +708,7 @@ func (h *Handler) AdminUpdateRace(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.rt.PublishData(r.Context(), "races", nil)
 	respondJSON(w, http.StatusOK, map[string]any{"race": detail})
 }
 
@@ -724,6 +728,7 @@ func (h *Handler) AdminDeleteRace(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to delete race")
 		return
 	}
+	h.rt.PublishData(r.Context(), "races", nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -746,6 +751,7 @@ func (h *Handler) AdminUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to update status")
 		return
 	}
+	h.rt.PublishData(r.Context(), "races", nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -766,6 +772,8 @@ func (h *Handler) AdminSettleEXP(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "settle failed")
 		return
 	}
+	// 結算 EXP 影響眾多完賽者的 dashboard 顯示，廣播全體
+	h.rt.PublishData(r.Context(), "dashboard", nil)
 	respondJSON(w, http.StatusOK, map[string]any{"result": res})
 }
 

@@ -264,6 +264,7 @@ func (h *Handler) PutAthleteConfig(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	h.rt.PublishData(r.Context(), "dashboard", nil)
 	h.GetAthleteConfig(w, r)
 }
 

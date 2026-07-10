@@ -11,6 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dor/api/internal/realtime"
 )
 
 // specs 登記所有合法設定 key 及其值驗證器（後端權威；新增設定時在此加一列）。
@@ -64,9 +66,12 @@ func isNonNegInt(v string) bool {
 	return err == nil && n >= 0
 }
 
-type Handler struct{ db *pgxpool.Pool }
+type Handler struct {
+	db *pgxpool.Pool
+	rt *realtime.Manager
+}
 
-func NewHandler(db *pgxpool.Pool) *Handler { return &Handler{db: db} }
+func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler { return &Handler{db: db, rt: rt} }
 
 // AdminRouter 掛 /admin/app-settings（需 settings 權限）
 func (h *Handler) AdminRouter() http.Handler {
@@ -124,6 +129,7 @@ func (h *Handler) Set(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	h.rt.PublishData(r.Context(), "settings", nil)
 	respondJSON(w, http.StatusOK, map[string]any{"settings": h.queryAll(r.Context(), false)})
 }
 

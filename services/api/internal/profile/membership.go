@@ -356,6 +356,7 @@ func (h *Handler) PutLevelConfig(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	h.rt.PublishData(r.Context(), "dashboard", nil)
 	h.GetLevelConfig(w, r)
 }
 
@@ -410,6 +411,7 @@ func (h *Handler) PutExpRules(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	h.rt.PublishData(r.Context(), "dashboard", nil)
 	respondJSON(w, http.StatusOK, map[string]any{"exp_rules": e})
 }
 
@@ -435,6 +437,7 @@ func (h *Handler) AdminSetVIP(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusNotFound, "member not found")
 		return
 	}
+	h.rt.PublishData(r.Context(), "dashboard", []string{userID})
 	respondJSON(w, http.StatusOK, map[string]any{"vip_expires_at": body.VIPExpiresAt})
 }
 
@@ -468,5 +471,6 @@ func (h *Handler) AdminSetExp(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusNotFound, "member not found")
 		return
 	}
+	h.rt.PublishData(r.Context(), "dashboard", []string{userID})
 	respondJSON(w, http.StatusOK, map[string]any{"exp": newExp})
 }

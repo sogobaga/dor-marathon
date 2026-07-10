@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/realtime"
 )
 
 func haversineM(lat1, lng1, lat2, lng2 float64) float64 {
@@ -25,9 +26,12 @@ func haversineM(lat1, lng1, lat2, lng2 float64) float64 {
 	return R * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }
 
-type Handler struct{ db *pgxpool.Pool }
+type Handler struct {
+	db *pgxpool.Pool
+	rt *realtime.Manager
+}
 
-func NewHandler(db *pgxpool.Pool) *Handler { return &Handler{db: db} }
+func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler { return &Handler{db: db, rt: rt} }
 
 type Boss struct {
 	ID              string          `json:"id"`
@@ -474,6 +478,7 @@ func (h *Handler) Save(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "儲存失敗")
 		return
 	}
+	h.rt.PublishData(r.Context(), "explore", nil)
 	respondJSON(w, http.StatusOK, map[string]any{"id": id})
 }
 
@@ -484,6 +489,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "刪除失敗")
 		return
 	}
+	h.rt.PublishData(r.Context(), "explore", nil)
 	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

@@ -21,11 +21,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/realtime"
 )
 
-type Handler struct{ db *pgxpool.Pool }
+type Handler struct {
+	db *pgxpool.Pool
+	rt *realtime.Manager
+}
 
-func NewHandler(db *pgxpool.Pool) *Handler { return &Handler{db: db} }
+func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler { return &Handler{db: db, rt: rt} }
 
 // 挑戰制參數（未來可移到後台設定）
 const restWindowMin = 10 // 休息日「不能有里程」的基準窗口（分鐘）；測試短窗
@@ -808,6 +812,7 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "commit failed")
 		return
 	}
+	h.rt.PublishData(r.Context(), "personal_tasks", nil)
 	respondJSON(w, http.StatusOK, map[string]any{"plans": len(req.Plans), "tasks": nTasks})
 }
 

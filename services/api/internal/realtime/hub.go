@@ -30,6 +30,10 @@ var upgrader = websocket.Upgrader{
 type Message struct {
 	Type    string `json:"type"`
 	Payload any    `json:"payload,omitempty"`
+
+	// data_updated 專用欄位（全站快取失效推播）。
+	Topic         string   `json:"topic,omitempty"`
+	TargetUserIDs []string `json:"target_user_ids,omitempty"`
 }
 
 // ClientConfig stores the user's real-time preferences.
@@ -168,6 +172,21 @@ func (h *Hub) Publish(ctx context.Context, msg *Message) error {
 		return err
 	}
 	return h.rdb.Publish(ctx, "pubsub:race:"+h.raceID, string(b)).Err()
+}
+
+// PublishData 廣播「資料已更新」通知（全站頻道，raceID 固定為 "global"）。
+// topic：races | dashboard | personal_tasks | explore | settings。
+// targetUserIDs 為 nil/空＝全體廣播；非空＝前端依 target_user_ids 過濾只處理自己的。
+// Fire-and-forget：錯誤僅記錄，不回傳、不中斷呼叫端流程。
+func (m *Manager) PublishData(ctx context.Context, topic string, targetUserIDs []string) {
+	hub := m.GetOrCreateHub("global")
+	if err := hub.Publish(ctx, &Message{
+		Type:          "data_updated",
+		Topic:         topic,
+		TargetUserIDs: targetUserIDs,
+	}); err != nil {
+		log.Error().Err(err).Str("topic", topic).Msg("publish data_updated failed")
+	}
 }
 
 // ClientCount returns the number of connected clients.

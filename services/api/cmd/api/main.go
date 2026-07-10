@@ -84,7 +84,7 @@ func main() {
 	// Race
 	raceRepo := race.NewRepository(pool)
 	raceSvc := race.NewService(raceRepo, rdb, promoSvc)
-	raceHandler := race.NewHandler(raceSvc)
+	raceHandler := race.NewHandler(raceSvc, wsManager)
 
 	// Payment（綠界 ECPay）
 	payCfg := &payment.Config{
@@ -114,7 +114,7 @@ func main() {
 	rewardHandler := reward.NewHandler(rewardSvc)
 
 	// Profile（完賽紀錄 + 個人統計）
-	profileHandler := profile.NewHandler(pool)
+	profileHandler := profile.NewHandler(pool, wsManager)
 
 	// Admin 帳號管理 + 各模組權限
 	adminAcctHandler := adminacct.NewHandler(pool)
@@ -122,9 +122,9 @@ func main() {
 	// 事件任務（日常隨機事件）
 	eventHandler := event.NewHandler(pool, wsManager)
 	// 個人任務（跑者生命週期 10 計畫 × 100 天鏈式任務）
-	personalHandler := personaltask.NewHandler(pool)
-	exploreHandler := explore.NewHandler(pool)
-	appSettingsHandler := appsettings.NewHandler(pool)
+	personalHandler := personaltask.NewHandler(pool, wsManager)
+	exploreHandler := explore.NewHandler(pool, wsManager)
+	appSettingsHandler := appsettings.NewHandler(pool, wsManager)
 
 	// Image（圖片上傳，存 Postgres）
 	imageHandler := image.NewHandler(image.NewRepository(pool))
@@ -313,6 +313,22 @@ func main() {
 			}
 		}
 		wsManager.ServeWS(w, r, raceID, userID)
+	})
+
+	// 全站推播端點（data_updated 快取失效通知）：raceID 固定為 "global"，複用既有 Hub 機制。
+	// 與 /ws/race 不同：這裡要擋匿名連線，無效/缺 token 一律 401，不 upgrade。
+	r.Get("/ws/site", func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		claims, err := authSvc.ValidateAccessToken(r.Context(), token)
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		wsManager.ServeWS(w, r, "global", claims.UserID)
 	})
 
 	// 啟動伺服器

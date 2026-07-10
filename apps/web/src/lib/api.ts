@@ -1757,3 +1757,11 @@ export function createRaceSocket(raceID: string, accessToken: string): WebSocket
   const url = `${protocol}//${host}/ws/race/${raceID}?token=${accessToken}`
   return new WebSocket(url)
 }
+
+// 全站資料異動推播（data_updated）：登入後於全站掛載一條連線（見 SiteRealtime.tsx）
+export function createSiteSocket(accessToken: string): WebSocket {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const host = window.location.host
+  const url = `${protocol}//${host}/ws/site?token=${accessToken}`
+  return new WebSocket(url)
+}

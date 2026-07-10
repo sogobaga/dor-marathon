@@ -2,6 +2,7 @@
 
 import { SWRConfig } from 'swr'
 import { swrLocalStorageProvider } from '@/lib/swrCache'
+import SiteRealtime from './SiteRealtime'
 
 // 全站 SWR 設定（快取地基）。掛在 root layout，所有 useSWR 共用。
 // stale-while-revalidate：切頁面立刻顯示暫存、背景默默重抓 → 感覺不到 loading；
@@ -19,6 +20,7 @@ export default function AppProviders({ children }: { children: React.ReactNode }
       }}
     >
       {children}
+      <SiteRealtime />
     </SWRConfig>
   )
 }

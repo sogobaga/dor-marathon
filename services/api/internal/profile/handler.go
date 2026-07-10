@@ -13,14 +13,16 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/realtime"
 )
 
 type Handler struct {
 	db *pgxpool.Pool
+	rt *realtime.Manager
 }
 
-func NewHandler(db *pgxpool.Pool) *Handler {
-	return &Handler{db: db}
+func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler {
+	return &Handler{db: db, rt: rt}
 }
 
 // Router 個人資料路由（掛載在 /api/v1/profile，需登入）
