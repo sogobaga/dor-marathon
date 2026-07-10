@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/dor/api/internal/personaltask"
 	"github.com/dor/api/internal/image"
 	"github.com/dor/api/internal/integration"
+	"github.com/dor/api/internal/mailer"
 	"github.com/dor/api/internal/middleware"
 	"github.com/dor/api/internal/organizer"
 	"github.com/dor/api/internal/payment"
@@ -156,12 +158,22 @@ func main() {
 		middleware.RequireAuth(authSvc),
 	)
 
+	// SMTP Email（推播擴充的 email 頻道用）：未設 SMTP_HOST/SMTP_FROM 時 enabled=false，發送 no-op。
+	smtpPort, _ := strconv.Atoi(os.Getenv("SMTP_PORT"))
+	mailerInst := mailer.NewMailer(mailer.Config{
+		Host: os.Getenv("SMTP_HOST"),
+		Port: smtpPort,
+		User: os.Getenv("SMTP_USER"),
+		Pass: os.Getenv("SMTP_PASS"),
+		From: os.Getenv("SMTP_FROM"),
+	})
+
 	// Web Push（VAPID）：未設齊 VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY/VAPID_SUBJECT 時 enabled=false，發送 no-op。
 	pushHandler := push.NewHandler(pool, push.Config{
 		PublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
 		PrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),
 		Subject:    os.Getenv("VAPID_SUBJECT"),
-	})
+	}, mailerInst)
 
 	// --- 路由 ---
 	r := chi.NewRouter()
@@ -313,6 +325,7 @@ func main() {
 			r.With(perm("gps_review")).Mount("/admin/gps-runs", actHandler.AdminRouter())
 			r.With(perm("gps_review")).Mount("/admin/checkin-review", raceHandler.CheckinReviewRouter())
 			r.With(perm("settings")).Mount("/admin/push", pushHandler.AdminRouter())
+			r.With(perm("settings")).Mount("/admin/push-groups", pushHandler.GroupAdminRouter())
 		})
 	})
 

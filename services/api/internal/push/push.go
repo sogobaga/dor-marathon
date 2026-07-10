@@ -9,7 +9,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"html"
 	"net/http"
+	"slices"
 	"strings"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
@@ -18,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/mailer"
 )
 
 // Config VAPID 設定，全來自環境變數（由 cmd/api/main.go 傳入）。
@@ -48,15 +52,17 @@ type PushMessage struct {
 	Icon  string `json:"icon,omitempty"`
 }
 
-// Handler 掛載 /push（需登入）與 /admin/push（需 settings 權限）路由。
+// Handler 掛載 /push（需登入）、/admin/push（需 settings 權限）與
+// /admin/push-groups（帳號群組 CRUD，見 groups.go）路由。
 type Handler struct {
-	db  *pgxpool.Pool
-	cfg Config
+	db     *pgxpool.Pool
+	cfg    Config
+	mailer *mailer.Mailer
 }
 
-// NewHandler 建立 push Handler。
-func NewHandler(db *pgxpool.Pool, cfg Config) *Handler {
-	return &Handler{db: db, cfg: cfg}
+// NewHandler 建立 push Handler。mailerInst 未設 SMTP env 時內部自動 no-op。
+func NewHandler(db *pgxpool.Pool, cfg Config, mailerInst *mailer.Mailer) *Handler {
+	return &Handler{db: db, cfg: cfg, mailer: mailerInst}
 }
 
 // Router 需登入子路由：掛在 /api/v1/push。
@@ -143,22 +149,45 @@ func (h *Handler) Unsubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/v1/admin/push/broadcast
+// body: { title, body, url?, channels:["push","email"], target_type:"all|user|race|group",
+//         identifier?, race_id?, group_id? }
 func (h *Handler) Broadcast(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title         string   `json:"title"`
-		Body          string   `json:"body"`
-		URL           string   `json:"url,omitempty"`
-		TargetUserIDs []string `json:"target_user_ids,omitempty"`
+		Title      string   `json:"title"`
+		Body       string   `json:"body"`
+		URL        string   `json:"url,omitempty"`
+		Channels   []string `json:"channels"`
+		TargetType string   `json:"target_type"`
+		Identifier string   `json:"identifier,omitempty"`
+		RaceID     string   `json:"race_id,omitempty"`
+		GroupID    string   `json:"group_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
 
-	sent, failed := 0, 0
+	userIDs, isAll, err := h.resolveBroadcastTargets(r.Context(), body.TargetType, body.Identifier, body.RaceID, body.GroupID)
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-	if h.cfg.enabled() {
-		subs, err := h.listSubscriptions(r.Context(), body.TargetUserIDs)
+	recipients := len(userIDs)
+	if isAll {
+		if err := h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM users`).Scan(&recipients); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to count recipients")
+			return
+		}
+	}
+
+	pushSent, pushFailed := 0, 0
+	if slices.Contains(body.Channels, "push") && h.cfg.enabled() {
+		targetIDs := userIDs
+		if isAll {
+			targetIDs = nil // listSubscriptions 空陣列＝全部
+		}
+		subs, err := h.listSubscriptions(r.Context(), targetIDs)
 		if err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed to load subscriptions")
 			return
@@ -173,14 +202,150 @@ func (h *Handler) Broadcast(w http.ResponseWriter, r *http.Request) {
 
 		for _, s := range subs {
 			if err := h.send(r.Context(), s, payload); err != nil {
-				failed++
+				pushFailed++
 			} else {
-				sent++
+				pushSent++
 			}
 		}
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{"sent": sent, "failed": failed})
+	emailSent, emailFailed := 0, 0
+	if slices.Contains(body.Channels, "email") {
+		emails, err := h.listEmails(r.Context(), userIDs, isAll)
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to load emails")
+			return
+		}
+		htmlBody := buildBroadcastEmailHTML(body.Title, body.Body, body.URL)
+		emailSent, emailFailed = h.mailer.Send(r.Context(), emails, body.Title, htmlBody)
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"recipients":   recipients,
+		"push_sent":    pushSent,
+		"push_failed":  pushFailed,
+		"email_sent":   emailSent,
+		"email_failed": emailFailed,
+	})
+}
+
+// resolveBroadcastTargets 依 target_type 解析出目標 user_id 清單。
+// target_type=all 時 userIDs 恆為空、isAll=true（呼叫端各自決定「空＝全部」的查法）。
+// 目標無效或必填參數缺漏回 error（呼叫端轉 400）。
+func (h *Handler) resolveBroadcastTargets(ctx context.Context, targetType, identifier, raceID, groupID string) (userIDs []string, isAll bool, err error) {
+	switch targetType {
+	case "all":
+		return nil, true, nil
+
+	case "user":
+		if strings.TrimSpace(identifier) == "" {
+			return nil, false, errors.New("identifier required")
+		}
+		userID, found, err := h.resolveIdentifier(ctx, identifier)
+		if err != nil {
+			return nil, false, err
+		}
+		if !found {
+			return nil, false, errors.New("user not found")
+		}
+		return []string{userID}, false, nil
+
+	case "race":
+		if strings.TrimSpace(raceID) == "" {
+			return nil, false, errors.New("race_id required")
+		}
+		rows, err := h.db.Query(ctx, `
+			SELECT DISTINCT user_id::text FROM registrations
+			WHERE race_id = $1 AND status <> 'cancelled'
+		`, raceID)
+		if err != nil {
+			return nil, false, err
+		}
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, false, err
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, false, err
+		}
+		return ids, false, nil
+
+	case "group":
+		if strings.TrimSpace(groupID) == "" {
+			return nil, false, errors.New("group_id required")
+		}
+		rows, err := h.db.Query(ctx, `SELECT user_id::text FROM account_group_members WHERE group_id = $1`, groupID)
+		if err != nil {
+			return nil, false, err
+		}
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, false, err
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, false, err
+		}
+		return ids, false, nil
+
+	default:
+		return nil, false, errors.New("invalid target_type")
+	}
+}
+
+// listEmails 撈目標對象的 email（非空者）。isAll=true 時查全部 users。
+func (h *Handler) listEmails(ctx context.Context, userIDs []string, isAll bool) ([]string, error) {
+	var rows pgx.Rows
+	var err error
+	if isAll {
+		rows, err = h.db.Query(ctx, `SELECT email FROM users WHERE COALESCE(email,'') <> ''`)
+	} else {
+		if len(userIDs) == 0 {
+			return nil, nil
+		}
+		rows, err = h.db.Query(ctx, `SELECT email FROM users WHERE id = ANY($1) AND COALESCE(email,'') <> ''`, userIDs)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var emails []string
+	for rows.Next() {
+		var e string
+		if err := rows.Scan(&e); err != nil {
+			return nil, err
+		}
+		emails = append(emails, e)
+	}
+	return emails, rows.Err()
+}
+
+// buildBroadcastEmailHTML 組簡單 HTML 郵件內容（品牌 + 標題 + 內文 + 選填連結按鈕）。
+func buildBroadcastEmailHTML(title, bodyText, url string) string {
+	var linkHTML string
+	if url != "" {
+		linkHTML = fmt.Sprintf(
+			`<p style="margin-top:24px;"><a href="%s" style="display:inline-block;padding:10px 20px;background:#c9a227;color:#fff;text-decoration:none;border-radius:6px;">查看詳情</a></p>`,
+			html.EscapeString(url),
+		)
+	}
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html><body style="font-family:sans-serif;color:#222;">
+<p style="color:#888;font-size:12px;letter-spacing:1px;">DOR 城市探索</p>
+<h2 style="margin:8px 0;">%s</h2>
+<p style="white-space:pre-wrap;line-height:1.6;">%s</p>
+%s
+</body></html>`, html.EscapeString(title), html.EscapeString(bodyText), linkHTML)
 }
 
 // storedSubscription 內部查詢結果（含 id/user_id 供刪除失效訂閱用）。

@@ -1785,16 +1785,63 @@ export interface AdminPushBroadcastBody {
   title: string
   body: string
   url?: string
-  target_user_ids?: string[]
+  channels: ('push' | 'email')[]
+  target_type: 'all' | 'user' | 'race' | 'group'
+  identifier?: string
+  race_id?: string
+  group_id?: string
 }
 export interface AdminPushBroadcastResult {
-  sent: number
-  failed: number
+  recipients: number
+  push_sent: number
+  push_failed: number
+  email_sent: number
+  email_failed: number
 }
 
 export const adminPushApi = {
   broadcast: (token: string, body: AdminPushBroadcastBody) =>
     request<AdminPushBroadcastResult>('/admin/push/broadcast', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+}
+
+// --- Admin: Push Groups（帳號群組管理） ---
+
+export interface PushGroup {
+  id: string
+  name: string
+  member_count: number
+}
+export interface PushGroupMember {
+  user_id: string
+  account_code: string
+  name: string
+  email: string
+}
+export interface PushGroupDetail {
+  id: string
+  name: string
+  members: PushGroupMember[]
+}
+export interface GroupAddResult {
+  added: number
+  not_found: string[]
+}
+
+export const adminPushGroupsApi = {
+  list: (token: string) =>
+    request<{ groups: PushGroup[] }>('/admin/push-groups', { headers: withAuth(token) }),
+  create: (token: string, name: string) =>
+    request<{ id: string }>('/admin/push-groups', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ name }) }),
+  rename: (token: string, id: string, name: string) =>
+    request<void>(`/admin/push-groups/${id}/rename`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ name }) }),
+  del: (token: string, id: string) =>
+    request<void>(`/admin/push-groups/${id}/delete`, { method: 'POST', headers: withAuth(token) }),
+  get: (token: string, id: string) =>
+    request<PushGroupDetail>(`/admin/push-groups/${id}`, { headers: withAuth(token) }),
+  addMembers: (token: string, id: string, identifiers: string[]) =>
+    request<GroupAddResult>(`/admin/push-groups/${id}/members/add`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ identifiers }) }),
+  removeMember: (token: string, id: string, user_id: string) =>
+    request<void>(`/admin/push-groups/${id}/members/remove`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ user_id }) }),
 }
 
 // --- WebSocket helper ---
