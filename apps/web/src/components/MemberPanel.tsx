@@ -23,7 +23,6 @@ export default function MemberPanel({
   uploadingAvatar,
   onReady,
   showEntries = true,
-  showMail = false,
 }: {
   dash?: DashboardInfo | null
   onOpenProfile?: () => void
@@ -34,7 +33,6 @@ export default function MemberPanel({
   uploadingAvatar?: boolean
   onReady?: () => void
   showEntries?: boolean // 城市探索/卡片圖鑑入口：首頁隱藏(小尺寸會被遮)、僅會員資料頁顯示
-  showMail?: boolean // 站內信 icon（面板右上角）：首頁隱藏(小尺寸會被遮)、僅會員資料頁顯示；顯示時 DP 移至頭像列下方避免重疊
 }) {
   const controlled = dashProp !== undefined // 有傳 dash（含 null）＝受控；未傳＝用共用快取
   const { dash: hookDash, loading, user } = useDashboard() // 共用快取：與會員資訊頁同一份、切頁不再 loading
@@ -65,8 +63,9 @@ export default function MemberPanel({
         }}
         onClick={clickable ? onOpenProfile : undefined}
       >
-        {/* 頭像 + 名稱/暱稱/編碼 + DP（showMail 時信件 icon 與 DP 併入名稱那一行右端，與首頁同高度） */}
-        <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+        {/* 頭像 + 右側資訊（首頁與會員頁一致）：
+            上排＝VIP(左)＋信件icon(右) 同一水平；名稱排＝名稱(左)＋DP(右，位置維持)；其下暱稱。 */}
+        <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
           {onUploadAvatar ? (
             <label style={{ ...avatarWrap, cursor: 'pointer' }} title="更換頭像" onClick={(e) => e.stopPropagation()}>
               <Avatar user={!!user} dash={dash} />
@@ -77,30 +76,26 @@ export default function MemberPanel({
           ) : (
             <div style={avatarWrap}><Avatar user={!!user} dash={dash} /></div>
           )}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {user ? (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{dash?.name || user.name}</span>
-                  {dash?.is_vip && <span style={{ ...vipBadge, flexShrink: 0 }}>VIP</span>}
-                  {showMail && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                      <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex' }}><MailPanel /></span>
-                      {dash && <span style={dpBadge} title="DP 幣"><DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}</span>}
-                    </span>
-                  )}
-                </div>
-                {dash?.nickname && <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dash.nickname}</div>}
-                {/* 帳號編碼已移至「個人資料」分頁，避免面板截圖外流 */}
-              </>
-            ) : (
+          {user ? (
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {/* 上排：VIP（左）＋ 信件 icon（右），水平同高 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {dash?.is_vip && <span style={{ ...vipBadge, flexShrink: 0 }}>VIP</span>}
+                <span style={{ flex: 1 }} />
+                <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', flexShrink: 0 }}><MailPanel /></span>
+              </div>
+              {/* 名稱排：名稱（左）＋ DP（右，位置維持不變） */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{dash?.name || user.name}</span>
+                {dash && <span style={dpBadge} title="DP 幣"><DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}</span>}
+              </div>
+              {dash?.nickname && <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dash.nickname}</div>}
+              {/* 帳號編碼已移至「個人資料」分頁，避免面板截圖外流 */}
+            </div>
+          ) : (
+            <div style={{ flex: 1, minWidth: 0 }}>
               <button onClick={(e) => { e.stopPropagation(); setShowLogin(true) }} style={loginBtn}>註冊 / 登入</button>
-            )}
-          </div>
-          {user && dash && !showMail && (
-            <span style={dpBadge} title="DP 幣">
-              <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
-            </span>
+            </div>
           )}
         </div>
 

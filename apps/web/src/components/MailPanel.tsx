@@ -3,6 +3,7 @@
 // 站內信（訊息中心）——信封 icon 按鈕 + 未讀紅點徽章 + 訊息列表覆蓋層。
 // 自足元件：自行取 user token（withUserAuth）、自行管理開關/清單/已讀狀態，對外無 props。
 import { useCallback, useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { mailApi, type MailItem } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
 
@@ -137,7 +138,7 @@ export default function MailPanel() {
         {unread > 0 && <span style={badge}>!</span>}
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div onClick={(e) => { e.stopPropagation(); setOpen(false) }} style={overlay}>
           <div onClick={(e) => e.stopPropagation()} style={panel}>
             <div style={header}>
@@ -192,7 +193,8 @@ export default function MailPanel() {
               ))}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   )
