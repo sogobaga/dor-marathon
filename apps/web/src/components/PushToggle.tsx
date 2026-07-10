@@ -65,7 +65,10 @@ export default function PushToggle() {
       const perm = await Notification.requestPermission()
       setPermission(perm)
       if (perm !== 'granted') return
-      const reg = await navigator.serviceWorker.register('/sw.js')
+      await navigator.serviceWorker.register('/sw.js')
+      // 等 SW 真正 active 再訂閱：register() resolve 時 SW 可能還在 installing，
+      // 直接 subscribe 會報「no active Service Worker」。navigator.serviceWorker.ready 有 active worker 才 resolve。
+      const reg = await navigator.serviceWorker.ready
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(vapid.public_key),
