@@ -1781,11 +1781,31 @@ export const pushApi = {
     request<{ ok: boolean }>('/push/unsubscribe', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ endpoint }) }),
 }
 
+// --- 站內信（遊戲內訊息） ---
+
+export interface MailItem {
+  id: string
+  level: 'normal' | 'important' | 'urgent'
+  title: string
+  body: string
+  url: string
+  read: boolean
+  created_at: string
+}
+
+export const mailApi = {
+  list: (token: string) => request<{ mail: MailItem[]; unread_count: number }>('/mail', { headers: withAuth(token) }),
+  unreadCount: (token: string) => request<{ unread_count: number }>('/mail/unread-count', { headers: withAuth(token) }),
+  markRead: (token: string, body: { ids?: string[]; all?: boolean }) =>
+    request<{ ok: boolean; marked: number }>('/mail/read', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+}
+
 export interface AdminPushBroadcastBody {
   title: string
   body: string
   url?: string
-  channels: ('push' | 'email')[]
+  channels: ('push' | 'email' | 'mail')[]
+  level?: 'normal' | 'important' | 'urgent' // 站內信重要程度（勾選 mail 頻道時適用）
   target_type: 'all' | 'user' | 'race' | 'group'
   identifier?: string
   race_id?: string
@@ -1797,6 +1817,7 @@ export interface AdminPushBroadcastResult {
   push_failed: number
   email_sent: number
   email_failed: number
+  mail_sent: number
 }
 
 export const adminPushApi = {

@@ -6,6 +6,7 @@ import { settingsApi, type DashboardInfo } from '@/lib/api'
 import { useDashboard } from '@/lib/useDashboard'
 import { LoginModal } from './UserAuthBar'
 import DpCoin from './DpCoin'
+import MailPanel from './MailPanel'
 
 // 會員資訊面板（首頁與「會員資訊頁」共用，內容一致）。
 // - 未帶 dash：自行抓取（首頁用法），並在資料就緒時呼叫 onReady。
@@ -22,6 +23,7 @@ export default function MemberPanel({
   uploadingAvatar,
   onReady,
   showEntries = true,
+  showMail = false,
 }: {
   dash?: DashboardInfo | null
   onOpenProfile?: () => void
@@ -32,6 +34,7 @@ export default function MemberPanel({
   uploadingAvatar?: boolean
   onReady?: () => void
   showEntries?: boolean // 城市探索/卡片圖鑑入口：首頁隱藏(小尺寸會被遮)、僅會員資料頁顯示
+  showMail?: boolean // 站內信 icon（面板右上角）：首頁隱藏(小尺寸會被遮)、僅會員資料頁顯示；顯示時 DP 移至頭像列下方避免重疊
 }) {
   const controlled = dashProp !== undefined // 有傳 dash（含 null）＝受控；未傳＝用共用快取
   const { dash: hookDash, loading, user } = useDashboard() // 共用快取：與會員資訊頁同一份、切頁不再 loading
@@ -62,7 +65,14 @@ export default function MemberPanel({
         }}
         onClick={clickable ? onOpenProfile : undefined}
       >
-        {/* 頭像 + 名稱/暱稱/編碼 + DP */}
+        {/* 站內信 icon：面板右上角（僅會員資料頁顯示；首頁小尺寸不顯示避免擁擠） */}
+        {showMail && user && (
+          <div style={{ position: 'absolute', top: 14, right: 14 }} onClick={(e) => e.stopPropagation()}>
+            <MailPanel />
+          </div>
+        )}
+
+        {/* 頭像 + 名稱/暱稱/編碼 + DP（showMail 時 DP 移到下一行、讓出右上角給信件 icon） */}
         <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
           {onUploadAvatar ? (
             <label style={{ ...avatarWrap, cursor: 'pointer' }} title="更換頭像" onClick={(e) => e.stopPropagation()}>
@@ -88,12 +98,21 @@ export default function MemberPanel({
               <button onClick={(e) => { e.stopPropagation(); setShowLogin(true) }} style={loginBtn}>註冊 / 登入</button>
             )}
           </div>
-          {user && dash && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }} title="DP 幣">
+          {user && dash && !showMail && (
+            <span style={dpBadge} title="DP 幣">
               <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
             </span>
           )}
         </div>
+
+        {/* showMail：DP 移到頭像列下方、靠右對齊（右上角已讓給信件 icon，兩者垂直不重疊） */}
+        {user && dash && showMail && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
+            <span style={dpBadge} title="DP 幣">
+              <DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}
+            </span>
+          </div>
+        )}
 
         {/* 等級 + EXP */}
         {user && dash && (
@@ -189,7 +208,8 @@ function MiniStat({ label, value }: { label: string; value: number }) {
   )
 }
 
-const card: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 'var(--card-pad, 16px)', boxShadow: 'var(--card-shadow, none)' }
+const card: React.CSSProperties = { position: 'relative', background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 'var(--card-pad, 16px)', boxShadow: 'var(--card-shadow, none)' }
+const dpBadge: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }
 const mileageBox: React.CSSProperties = { minWidth: 96, background: 'var(--bg-2)', borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }
 const taskBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 3, textAlign: 'left', border: 'none', borderRadius: 12, padding: '10px 14px', background: 'var(--fug)', color: 'var(--fug-ink)', fontFamily: 'inherit' }
 const entryBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3, textAlign: 'left', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 14px)', padding: '12px 14px', background: 'var(--bg-1)', fontFamily: 'inherit', boxShadow: 'var(--card-shadow, none)' }

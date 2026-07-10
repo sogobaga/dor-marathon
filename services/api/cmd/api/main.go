@@ -29,6 +29,7 @@ import (
 	"github.com/dor/api/internal/personaltask"
 	"github.com/dor/api/internal/image"
 	"github.com/dor/api/internal/integration"
+	"github.com/dor/api/internal/mail"
 	"github.com/dor/api/internal/mailer"
 	"github.com/dor/api/internal/middleware"
 	"github.com/dor/api/internal/organizer"
@@ -168,12 +169,15 @@ func main() {
 		From: os.Getenv("SMTP_FROM"),
 	})
 
+	// 站內信（in-app mail）：供前台鈴鐺列表 + 後台廣播 mail 頻道寫入。
+	mailHandler := mail.NewHandler(pool)
+
 	// Web Push（VAPID）：未設齊 VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY/VAPID_SUBJECT 時 enabled=false，發送 no-op。
 	pushHandler := push.NewHandler(pool, push.Config{
 		PublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
 		PrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),
 		Subject:    os.Getenv("VAPID_SUBJECT"),
-	}, mailerInst)
+	}, mailerInst, mailHandler)
 
 	// --- 路由 ---
 	r := chi.NewRouter()
@@ -276,6 +280,9 @@ func main() {
 
 			// Web Push 訂閱（VAPID 金鑰 + subscribe/unsubscribe）
 			r.Mount("/push", pushHandler.Router())
+
+			// 站內信（鈴鐺列表 + 未讀數 + 標記已讀）
+			r.Mount("/mail", mailHandler.Router())
 		})
 
 		// --- 合作方端點（需 organizer 或 admin role）---

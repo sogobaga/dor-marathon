@@ -52,17 +52,25 @@ type PushMessage struct {
 	Icon  string `json:"icon,omitempty"`
 }
 
+// MailInserter 站內信寫入介面（由 internal/mail.Handler 實作）。
+// 用小介面而非直接 import internal/mail，避免 push ↔ mail 循環相依。
+type MailInserter interface {
+	InsertForUsers(ctx context.Context, userIDs []string, level, title, body, url string) (int, error)
+}
+
 // Handler 掛載 /push（需登入）、/admin/push（需 settings 權限）與
 // /admin/push-groups（帳號群組 CRUD，見 groups.go）路由。
 type Handler struct {
 	db     *pgxpool.Pool
 	cfg    Config
 	mailer *mailer.Mailer
+	mail   MailInserter
 }
 
 // NewHandler 建立 push Handler。mailerInst 未設 SMTP env 時內部自動 no-op。
-func NewHandler(db *pgxpool.Pool, cfg Config, mailerInst *mailer.Mailer) *Handler {
-	return &Handler{db: db, cfg: cfg, mailer: mailerInst}
+// mailInserter 可為 nil（此時 broadcast 的 mail 頻道略過，MailSent=0）。
+func NewHandler(db *pgxpool.Pool, cfg Config, mailerInst *mailer.Mailer, mailInserter MailInserter) *Handler {
+	return &Handler{db: db, cfg: cfg, mailer: mailerInst, mail: mailInserter}
 }
 
 // Router 需登入子路由：掛在 /api/v1/push。
@@ -149,8 +157,8 @@ func (h *Handler) Unsubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/v1/admin/push/broadcast
-// body: { title, body, url?, channels:["push","email"], target_type:"all|user|race|group",
-//         identifier?, race_id?, group_id? }
+// body: { title, body, url?, channels:["push","email","mail"], target_type:"all|user|race|group",
+//         identifier?, race_id?, group_id?, level?(mail only) }
 func (h *Handler) Broadcast(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Title      string   `json:"title"`
@@ -161,6 +169,7 @@ func (h *Handler) Broadcast(w http.ResponseWriter, r *http.Request) {
 		Identifier string   `json:"identifier,omitempty"`
 		RaceID     string   `json:"race_id,omitempty"`
 		GroupID    string   `json:"group_id,omitempty"`
+		Level      string   `json:"level"` // 僅 mail 頻道用：normal(預設)/important/urgent
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid body")
@@ -220,13 +229,50 @@ func (h *Handler) Broadcast(w http.ResponseWriter, r *http.Request) {
 		emailSent, emailFailed = h.mailer.Send(r.Context(), emails, body.Title, htmlBody)
 	}
 
+	mailSent := 0
+	if slices.Contains(body.Channels, "mail") && h.mail != nil {
+		ids, err := h.listUserIDs(r.Context(), userIDs, isAll)
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to load recipients")
+			return
+		}
+		n, err := h.mail.InsertForUsers(r.Context(), ids, body.Level, body.Title, body.Body, body.URL)
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to send mail")
+			return
+		}
+		mailSent = n
+	}
+
 	respondJSON(w, http.StatusOK, map[string]any{
 		"recipients":   recipients,
 		"push_sent":    pushSent,
 		"push_failed":  pushFailed,
 		"email_sent":   emailSent,
 		"email_failed": emailFailed,
+		"mail_sent":    mailSent,
 	})
+}
+
+// listUserIDs 目標對象的去重 user_id 清單。isAll=true 時查全部 users。
+func (h *Handler) listUserIDs(ctx context.Context, userIDs []string, isAll bool) ([]string, error) {
+	if !isAll {
+		return userIDs, nil
+	}
+	rows, err := h.db.Query(ctx, `SELECT id::text FROM users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // resolveBroadcastTargets 依 target_type 解析出目標 user_id 清單。
