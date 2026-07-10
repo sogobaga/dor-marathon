@@ -718,6 +718,7 @@ export interface SyncedActivity {
   race_title?: string
   flagged: boolean
   flag_reason?: string
+  external_id?: string // provider 活動 id（Strava→「View on Strava」回連）
 }
 
 export interface SyncResult {

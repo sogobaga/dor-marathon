@@ -209,6 +209,7 @@ type ActivityRow struct {
 	RaceTitle  string    `json:"race_title,omitempty"`
 	Flagged    bool      `json:"flagged"`
 	FlagReason string    `json:"flag_reason,omitempty"`
+	ExternalID string    `json:"external_id,omitempty"` // provider 活動 id（Strava→「View on Strava」回連）
 }
 
 // ListActivities 取得使用者活動（最新 N 筆，含賽事名稱與 flagged 狀態）
@@ -218,7 +219,8 @@ func (r *Repository) ListActivities(ctx context.Context, userID string, limit in
 	}
 	rows, err := r.db.Query(ctx, `
 		SELECT a.id::text, COALESCE(a.source,'manual'), a.distance_km, a.duration_s, a.avg_pace_s,
-		       a.ascent_m, a.avg_hr, a.recorded_at, COALESCE(r.title,''), a.flagged, COALESCE(a.flag_reason,'')
+		       a.ascent_m, a.avg_hr, a.recorded_at, COALESCE(r.title,''), a.flagged, COALESCE(a.flag_reason,''),
+		       COALESCE(a.external_id,'')
 		FROM activities a LEFT JOIN races r ON r.id = a.race_id
 		WHERE a.user_id=$1
 		ORDER BY a.recorded_at DESC
@@ -231,7 +233,7 @@ func (r *Repository) ListActivities(ctx context.Context, userID string, limit in
 	for rows.Next() {
 		var a ActivityRow
 		if err := rows.Scan(&a.ID, &a.Source, &a.DistanceKm, &a.DurationS, &a.AvgPaceS,
-			&a.AscentM, &a.AvgHR, &a.RecordedAt, &a.RaceTitle, &a.Flagged, &a.FlagReason); err != nil {
+			&a.AscentM, &a.AvgHR, &a.RecordedAt, &a.RaceTitle, &a.Flagged, &a.FlagReason, &a.ExternalID); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

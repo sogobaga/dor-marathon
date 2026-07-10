@@ -445,6 +445,12 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
                           ? <span style={{ color: 'var(--fug)' }}>計入：{a.race_title}</span>
                           : <span style={{ color: 'var(--tx-faint)' }}>未對應賽事</span>}
                     </div>
+                    {a.source === 'strava' && a.external_id && (
+                      <a href={`https://www.strava.com/activities/${a.external_id}`} target="_blank" rel="noreferrer"
+                        style={{ display: 'inline-block', marginTop: 5, fontSize: 11, fontWeight: 700, color: '#fc4c02', textDecoration: 'none' }}>
+                        View on Strava ↗
+                      </a>
+                    )}
                   </div>
                 ))}
               </div>

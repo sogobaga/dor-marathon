@@ -145,11 +145,33 @@ func (h *StravaHandler) Activities(w http.ResponseWriter, r *http.Request) {
 // DELETE /disconnect
 func (h *StravaHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	// Strava API 條款：中斷連接時須向 Strava「撤銷授權」(deauthorize)，而非只刪本地 token。
+	if conn, err := h.repo.GetByUser(r.Context(), userID, providerStrava); err == nil && conn != nil {
+		if access, err := h.tokenForUser(r.Context(), conn); err == nil && access != "" {
+			h.deauthorize(r.Context(), access)
+		}
+	}
 	if err := h.repo.Delete(r.Context(), userID, providerStrava); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deauthorize 向 Strava 撤銷該存取權杖（POST /oauth/deauthorize）。失敗只記錄、不擋本地中斷。
+func (h *StravaHandler) deauthorize(ctx context.Context, accessToken string) {
+	form := url.Values{"access_token": {accessToken}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://www.strava.com/oauth/deauthorize", strings.NewReader(form.Encode()))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := h.hc.Do(req)
+	if err != nil {
+		log.Warn().Err(err).Msg("strava deauthorize failed")
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 // --- 公開端點 ---
