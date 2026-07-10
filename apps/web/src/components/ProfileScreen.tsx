@@ -6,6 +6,7 @@ import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import MemberPanel from './MemberPanel'
 import UpgradeVipModal from './UpgradeVipModal'
+import PushToggle from './PushToggle'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import { submitEcpayForm } from '@/lib/ecpay'
 
@@ -382,6 +383,11 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
                 ，再「中斷」後重新連接（連接的是你瀏覽器當下登入的 Strava 帳號）。
               </div>
             )}
+          </div>
+
+          {/* 推播通知開關 */}
+          <div style={{ marginTop: 12 }}>
+            <PushToggle />
           </div>
 
           {/* 手錶直連（Garmin / COROS）— 次要來源，Phase 1 接 Terra 後開放 */}

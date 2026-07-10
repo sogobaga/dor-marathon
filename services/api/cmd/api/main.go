@@ -33,6 +33,7 @@ import (
 	"github.com/dor/api/internal/payment"
 	"github.com/dor/api/internal/profile"
 	"github.com/dor/api/internal/promo"
+	"github.com/dor/api/internal/push"
 	"github.com/dor/api/internal/race"
 	"github.com/dor/api/internal/realtime"
 	"github.com/dor/api/internal/reward"
@@ -155,6 +156,13 @@ func main() {
 		middleware.RequireAuth(authSvc),
 	)
 
+	// Web Push（VAPID）：未設齊 VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY/VAPID_SUBJECT 時 enabled=false，發送 no-op。
+	pushHandler := push.NewHandler(pool, push.Config{
+		PublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
+		PrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),
+		Subject:    os.Getenv("VAPID_SUBJECT"),
+	})
+
 	// --- 路由 ---
 	r := chi.NewRouter()
 
@@ -253,6 +261,9 @@ func main() {
 
 			// 頭像上傳（重用圖片上傳，登入即可）
 			r.Post("/profile/avatar", imageHandler.Upload)
+
+			// Web Push 訂閱（VAPID 金鑰 + subscribe/unsubscribe）
+			r.Mount("/push", pushHandler.Router())
 		})
 
 		// --- 合作方端點（需 organizer 或 admin role）---
@@ -301,6 +312,7 @@ func main() {
 			r.With(perm("gps_review")).Post("/admin/activities/add-mileage", actHandler.AdminAddMileage)
 			r.With(perm("gps_review")).Mount("/admin/gps-runs", actHandler.AdminRouter())
 			r.With(perm("gps_review")).Mount("/admin/checkin-review", raceHandler.CheckinReviewRouter())
+			r.With(perm("settings")).Mount("/admin/push", pushHandler.AdminRouter())
 		})
 	})
 

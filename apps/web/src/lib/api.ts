@@ -1762,6 +1762,41 @@ export const adminPresetsApi = {
     }),
 }
 
+// --- Web Push（背景推播） ---
+
+export interface PushVapid {
+  public_key: string
+  enabled: boolean
+}
+export interface PushSubscribeBody {
+  endpoint: string
+  keys: { p256dh: string; auth: string }
+}
+
+export const pushApi = {
+  vapidKey: (token: string) => request<PushVapid>('/push/vapid', { headers: withAuth(token) }),
+  subscribe: (token: string, sub: PushSubscribeBody) =>
+    request<{ ok: boolean }>('/push/subscribe', { method: 'POST', headers: withAuth(token), body: JSON.stringify(sub) }),
+  unsubscribe: (token: string, endpoint: string) =>
+    request<{ ok: boolean }>('/push/unsubscribe', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ endpoint }) }),
+}
+
+export interface AdminPushBroadcastBody {
+  title: string
+  body: string
+  url?: string
+  target_user_ids?: string[]
+}
+export interface AdminPushBroadcastResult {
+  sent: number
+  failed: number
+}
+
+export const adminPushApi = {
+  broadcast: (token: string, body: AdminPushBroadcastBody) =>
+    request<AdminPushBroadcastResult>('/admin/push/broadcast', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+}
+
 // --- WebSocket helper ---
 
 export function createRaceSocket(raceID: string, accessToken: string): WebSocket {
