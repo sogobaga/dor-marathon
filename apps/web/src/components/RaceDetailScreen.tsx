@@ -253,12 +253,9 @@ function ProgressBody({ race }: { race: Race }) {
 
       {tasks.length === 0 && <Hint>此賽事尚未設定任務目標</Hint>}
 
-      {groupsBy.map((g, gi) => (
+      {groupsBy.map((g) => (
         <div key={g.label}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span className="skin-char" data-char={gi % 2 ? 'pink' : 'blue'} aria-hidden />
-            <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)' }}>{g.label}任務</div>
-          </div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)', marginBottom: 8 }}>{g.label}任務</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {g.tasks.map((t, i) => <TaskRow key={t.id ?? i} t={t} onClick={t.id ? () => (METRIC_BY_KEY[t.metric_type]?.kind === 'range' ? setRangeTask(t) : setDetailTask(t)) : undefined} />)}
           </div>
