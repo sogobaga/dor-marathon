@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminOverviewApi, adminMetricsApi, type AdminOverview, type DataSourceMetrics } from '@/lib/api'
+import { adminOverviewApi, adminMetricsApi, type AdminOverview, type DataSourceMetrics, type VipAnalytics } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
 const STATUS: Record<string, { label: string; color: string }> = {
@@ -25,6 +25,7 @@ export default function AdminOverviewPage() {
   const router = useRouter()
   const [data, setData] = useState<AdminOverview | null>(null)
   const [src, setSrc] = useState<DataSourceMetrics | null>(null)
+  const [va, setVa] = useState<VipAnalytics | null>(null)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState<Record<string, boolean>>({})
 
@@ -36,6 +37,7 @@ export default function AdminOverviewPage() {
       else setErr(e?.message || '載入失敗')
     })
     adminMetricsApi.dataSource(t).then(setSrc).catch(() => {})
+    adminMetricsApi.vipAnalytics(t).then(setVa).catch(() => {})
   }, [router])
   useEffect(() => { load(); const id = setInterval(load, 20000); return () => clearInterval(id) }, [load])
 
@@ -79,6 +81,76 @@ export default function AdminOverviewPage() {
         </div>
       </div>
 
+      {/* VIP 訂閱分析 */}
+      <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '14px 16px', marginBottom: 18 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)', marginBottom: 12 }}>👑 VIP 訂閱分析</div>
+
+        {/* 一般 vs VIP */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+          <div style={{ flex: '1 1 140px', minWidth: 140, background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px' }}>
+            <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>VIP 會員</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--gold)' }}>
+              {va?.vip ?? '—'} <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
+                ({va && va.total > 0 ? Math.round((va.vip / va.total) * 100) : 0}%)
+              </span>
+            </div>
+          </div>
+          <div style={{ flex: '1 1 140px', minWidth: 140, background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px' }}>
+            <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>一般會員</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--tx)' }}>
+              {va?.general ?? '—'} <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
+                ({va && va.total > 0 ? Math.round((va.general / va.total) * 100) : 0}%)
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* VIP 方案分布 */}
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 6 }}>VIP 方案分布</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+          {[
+            ['試用', va?.vip_by_plan.trial],
+            ['月繳', va?.vip_by_plan.monthly],
+            ['年繳', va?.vip_by_plan.annual],
+          ].map(([plabel, pval]) => {
+            const v = (pval as number | undefined) ?? 0
+            const vipTotal = va?.vip ?? 0
+            const pct = vipTotal > 0 ? Math.round((v / vipTotal) * 100) : 0
+            return (
+              <div key={plabel as string} style={{ flex: '1 1 100px', minWidth: 100, background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px' }}>
+                <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>{plabel as string}</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--tx)' }}>
+                  {va ? v : '—'} <span style={{ fontSize: 11, color: 'var(--tx-dim)' }}>{va ? `(${pct}%)` : ''}</span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* 上月未續訂名單 */}
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 6 }}>上月未續訂名單</div>
+        {!va && <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 14 }}>載入中…</div>}
+        {va && va.last_month_non_renewers.length === 0 && (
+          <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 14 }}>上月無未續訂</div>
+        )}
+        {va && va.last_month_non_renewers.length > 0 && (
+          <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 10, marginBottom: 14 }}>
+            {va.last_month_non_renewers.map((r) => (
+              <div key={r.user_id} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid var(--line)', fontSize: 12.5 }}>
+                <div style={{ flex: '1 1 100px', fontWeight: 700, color: 'var(--tx)' }}>{r.name || '—'}</div>
+                <div style={{ flex: '2 1 160px', color: 'var(--tx-dim)', wordBreak: 'break-all' }}>{r.email}</div>
+                <div style={{ flex: '0 1 60px', color: 'var(--gold)' }}>{r.plan}</div>
+                <div style={{ flex: '0 1 90px', color: 'var(--tx-faint)' }}>{fmtDate(r.expired_at)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 成長 / 未續訂趨勢 */}
+        <TrendChart data={va?.growth ?? []} color="var(--fug)" label="會員成長趨勢（近 12 月）" />
+        <TrendChart data={va?.churn ?? []} color="var(--hunt)" label="每月未續訂趨勢（近 12 月）" />
+      </div>
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {data && data.races.length === 0 && <div style={{ color: 'var(--tx-faint)', fontSize: 13 }}>近半年沒有即將／進行中的賽事</div>}
         {data?.races.map((r) => {
@@ -110,6 +182,52 @@ export default function AdminOverviewPage() {
           )
         })}
       </div>
+    </div>
+  )
+}
+
+// 手刻長條趨勢圖（無圖表庫依賴）：x=月份、y=數值，標月份與數值，全 0 時不除以 0。
+function TrendChart({ data, color, label }: { data: { month: string; count: number }[]; color: string; label: string }) {
+  const w = 640
+  const h = 150
+  const padL = 8
+  const padR = 8
+  const padT = 18
+  const padB = 26
+  const innerW = w - padL - padR
+  const innerH = h - padT - padB
+  const n = data.length
+  const max = Math.max(1, ...data.map((d) => d.count))
+  const barW = n > 0 ? innerW / n : innerW
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 6 }}>{label}</div>
+      {n === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>無資料</div>
+      ) : (
+        <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} style={{ display: 'block', overflow: 'visible' }}>
+          <line x1={padL} y1={h - padB} x2={w - padR} y2={h - padB} stroke="var(--line)" strokeWidth={1} />
+          {data.map((d, i) => {
+            const barH = (d.count / max) * innerH
+            const x = padL + i * barW + barW * 0.18
+            const bw = Math.max(1, barW * 0.64)
+            const y = h - padB - barH
+            const monthLabel = d.month.length >= 7 ? d.month.slice(5, 7) : d.month
+            return (
+              <g key={`${d.month}-${i}`}>
+                <rect x={x} y={y} width={bw} height={barH} fill={color} rx={2} opacity={0.85}>
+                  <title>{d.month}: {d.count}</title>
+                </rect>
+                {d.count > 0 && (
+                  <text x={x + bw / 2} y={y - 4} textAnchor="middle" fontSize="9" fill="var(--tx-dim)">{d.count}</text>
+                )}
+                <text x={x + bw / 2} y={h - padB + 13} textAnchor="middle" fontSize="8.5" fill="var(--tx-faint)">{monthLabel}</text>
+              </g>
+            )
+          })}
+        </svg>
+      )}
     </div>
   )
 }

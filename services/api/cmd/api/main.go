@@ -292,6 +292,7 @@ func main() {
 			r.With(perm("orders")).Mount("/admin/orders", raceHandler.OrderRouter())
 			r.With(perm("promo")).Mount("/admin/promo-codes", promoHandler.Router())
 			r.With(perm("members")).Mount("/admin/members", profileHandler.AdminMembersRouter())
+			r.With(perm("members")).Get("/admin/vip-analytics", profileHandler.AdminVipAnalytics)
 			r.With(perm("settings")).Mount("/admin/membership", profileHandler.MembershipAdminRouter())
 			r.With(perm("settings")).Mount("/admin/vip-promos", profileHandler.VipPromoAdminRouter())
 			r.With(perm("settings")).Get("/admin/data-source-metrics", profileHandler.AdminDataSourceMetrics)

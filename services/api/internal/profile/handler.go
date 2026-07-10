@@ -297,6 +297,9 @@ type MemberSummary struct {
 	TotalKm   float64   `json:"total_km"`
 	CanCreateTeamGroup bool `json:"can_create_team_group"`
 	CreatedAt time.Time `json:"created_at"`
+	IsVIP        bool       `json:"is_vip"`
+	VIPExpiresAt *time.Time `json:"vip_expires_at,omitempty"`
+	VipPlan      string     `json:"vip_plan"`
 }
 
 // MemberDetail 後台會員詳情（含完整個資與報名數）
@@ -329,7 +332,8 @@ func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 	like := "%" + q + "%"
 	rows, err := h.db.Query(r.Context(), `
 		SELECT u.id, u.email, u.handle, u.name, u.role, u.total_km, u.created_at,
-		       COALESCE(p.real_name,''), COALESCE(p.phone,''), COALESCE(p.gender,''), u.can_create_team_group
+		       COALESCE(p.real_name,''), COALESCE(p.phone,''), COALESCE(p.gender,''), u.can_create_team_group,
+		       u.vip_expires_at, COALESCE(u.vip_plan,'')
 		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
 		WHERE ($1 = '' OR u.email ILIKE $2 OR u.name ILIKE $2
 		       OR COALESCE(p.real_name,'') ILIKE $2 OR COALESCE(p.phone,'') ILIKE $2)
@@ -345,10 +349,12 @@ func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var m MemberSummary
 		if err := rows.Scan(&m.ID, &m.Email, &m.Handle, &m.Name, &m.Role, &m.TotalKm, &m.CreatedAt,
-			&m.RealName, &m.Phone, &m.Gender, &m.CanCreateTeamGroup); err != nil {
+			&m.RealName, &m.Phone, &m.Gender, &m.CanCreateTeamGroup,
+			&m.VIPExpiresAt, &m.VipPlan); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
+		m.IsVIP = m.VIPExpiresAt != nil && m.VIPExpiresAt.After(time.Now())
 		members = append(members, m)
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"members": members, "count": len(members)})

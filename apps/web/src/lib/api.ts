@@ -992,9 +992,21 @@ export interface DataSourceMetrics {
   gps_users: number
 }
 
+export interface VipAnalytics {
+  total: number
+  vip: number
+  general: number
+  vip_by_plan: { trial: number; monthly: number; annual: number }
+  last_month_non_renewers: { user_id: string; name: string; email: string; plan: string; expired_at: string }[]
+  growth: { month: string; count: number }[]
+  churn: { month: string; count: number }[]
+}
+
 export const adminMetricsApi = {
   dataSource: (token: string) =>
     request<DataSourceMetrics>('/admin/data-source-metrics', { headers: withAuth(token) }),
+  vipAnalytics: (token: string) =>
+    request<VipAnalytics>('/admin/vip-analytics', { headers: withAuth(token) }),
 }
 
 export const adminVipPromosApi = {
@@ -1406,6 +1418,9 @@ export interface MemberSummary {
   total_km: number
   can_create_team_group: boolean
   created_at: string
+  is_vip: boolean
+  vip_expires_at?: string
+  vip_plan: string
 }
 
 export interface MemberDetail extends MemberSummary {
@@ -1416,8 +1431,6 @@ export interface MemberDetail extends MemberSummary {
   exp: number
   level: number
   level_title: string
-  is_vip: boolean
-  vip_expires_at?: string
   athlete: AthleteStats
 }
 
