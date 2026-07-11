@@ -98,6 +98,8 @@ export default function TrackPage() {
   const [celebrateCard, setCelebrateCard] = useState<{ bossId: string; name: string; cardUrl?: string } | null>(null) // 3★取卡恭喜彈窗
   const [exploreBusy, setExploreBusy] = useState(false)
   const [exCounty, setExCounty] = useState('') // 城市探索地圖/清單依縣市篩選（空＝全部）
+  const [focusBoss, setFocusBoss] = useState<string | null>(null) // 「前往打卡」帶來的目標關主 id → 地圖定位到該打卡點
+  const focusDoneRef = useRef(false)
   const [woPhase, setWoPhase] = useState<'idle' | 'countdown' | 'running' | 'done'>('idle')
   const [woStepIdx, setWoStepIdx] = useState(0)
   const [woHits, setWoHits] = useState<Record<number, boolean>>({}) // work 段 index → 是否達配速
@@ -922,15 +924,16 @@ export default function TrackPage() {
         L.circle([cp.lat, cp.lng], { radius: cp.radius_m || 20, color, weight: 1.5, fillOpacity: 0.1 }).addTo(layer)
         L.circleMarker([cp.lat, cp.lng], { radius: 6, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(layer).bindTooltip(cp.title || '打卡點')
       })
-      // 城市探索打卡點：畫在最上層、較醒目（紫=未探索神秘/金=已揭露/綠=已收服）；依縣市篩選
+      // 城市探索打卡點：畫在最上層、較醒目（紫=未探索神秘/金=已揭露/綠=已收服）；依縣市篩選；目標關主放大+常駐標籤
       exploreCps.filter((b) => !exCounty || exCountyOf(b.region) === exCounty).forEach((b) => {
         const color = b.card_obtained ? '#46E3A0' : b.discovered ? '#E7B84B' : '#C77DFF'
-        L.circle([b.lat, b.lng], { radius: b.radius_m || 40, color, weight: 1.5, fillOpacity: 0.12, dashArray: '4 4' }).addTo(layer)
-        L.circleMarker([b.lat, b.lng], { radius: 9, color: '#fff', weight: 2.5, fillColor: color, fillOpacity: 1 }).addTo(layer)
-          .bindTooltip((b.discovered ? b.name : (b.place || '神秘打卡點')) + ' ⚔')
+        const isFocus = b.id === focusBoss
+        L.circle([b.lat, b.lng], { radius: b.radius_m || 40, color, weight: isFocus ? 3 : 1.5, fillOpacity: isFocus ? 0.25 : 0.12, dashArray: '4 4' }).addTo(layer)
+        L.circleMarker([b.lat, b.lng], { radius: isFocus ? 13 : 9, color: '#fff', weight: 2.5, fillColor: color, fillOpacity: 1 }).addTo(layer)
+          .bindTooltip((b.discovered ? b.name : (b.place || '神秘打卡點')) + ' ⚔', { permanent: isFocus })
       })
     })
-  }, [checkpoints, exploreCps, mapReady, exCounty])
+  }, [checkpoints, exploreCps, mapReady, exCounty, focusBoss])
 
   async function doCheckin(cp: ActiveCheckpoint) {
     setCpMsg('')
@@ -981,6 +984,21 @@ export default function TrackPage() {
     .filter((b) => !exCounty || exCountyOf(b.region) === exCounty)
     .slice()
     .sort((a, b) => (exDist(a) ?? Infinity) - (exDist(b) ?? Infinity))
+
+  // 「前往打卡」：讀取目標關主 id，地圖定位到該打卡點並放大（只做一次；停止 GPS 自動跟隨、篩到該縣市讓清單也顯示）
+  useEffect(() => {
+    const p = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('focus') : null
+    if (p) setFocusBoss(p)
+  }, [])
+  useEffect(() => {
+    if (focusDoneRef.current || !mapReady || !mapRef.current || !focusBoss) return
+    const b = exploreCps.find((x) => x.id === focusBoss)
+    if (!b || (!b.lat && !b.lng)) return
+    focusDoneRef.current = true
+    followRef.current = false; setFollowing(false)
+    setExCounty(exCountyOf(b.region))
+    mapRef.current.setView([b.lat, b.lng], 16)
+  }, [mapReady, exploreCps, focusBoss])
 
   // 打卡 → 地理驗證通過即揭露關主 → 跳出關主挑戰面板（表面打卡，實為事件觸發）
   async function doExploreCheckin(b: ExploreBoss) {

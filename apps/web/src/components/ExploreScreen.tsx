@@ -19,7 +19,7 @@ const fmtDist = (m: number) => (m < 1000 ? `${Math.round(m)}m` : `${(m / 1000).t
 
 // 城市探索：找打卡點。未打卡前只顯示「地點」(神秘，保留收集/交換樂趣)；到現場用 GPS 追蹤打卡後才揭露背後關主
 // (Scene 圖 + 名稱)，「打卡」按鈕切換成「挑戰」。關主資料由伺服器對未揭露者遮蔽(devtools 也看不到)。
-export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => void; onOpenTrack?: () => void }) {
+export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => void; onOpenTrack?: (bossId?: string) => void }) {
   const user = useUser()
   const uid = user?.id ?? null
   const { data } = useSWR(
@@ -85,7 +85,7 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
               const dm = pos ? havM(pos.lat, pos.lng, b.lat, b.lng) : null
               return b.discovered ? (
                 // 已打卡揭露：Scene banner + 關主資訊 + 挑戰
-                <RevealCard key={b.id} b={b} dist={dm} onChallenge={onOpenTrack} onRanking={() => setRankingBoss({ id: b.id, name: b.name })} />
+                <RevealCard key={b.id} b={b} dist={dm} onChallenge={() => onOpenTrack?.(b.id)} onRanking={() => setRankingBoss({ id: b.id, name: b.name })} />
               ) : (
                 // 未打卡：只顯示地點（神秘）
                 <div key={b.id} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: '14px' }}>
@@ -98,7 +98,7 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
                     <span style={{ fontSize: 11.5, color: 'var(--tx-faint)', flexShrink: 0 }}>未探索</span>
                   </div>
                   <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>到「{b.place || '此地'}」附近，於 GPS 追蹤頁打卡揭曉。</div>
-                  {onOpenTrack && <button onClick={onOpenTrack} style={ghostFullBtn}>前往打卡</button>}
+                  {onOpenTrack && <button onClick={() => onOpenTrack(b.id)} style={ghostFullBtn}>前往打卡</button>}
                 </div>
               )
             })}

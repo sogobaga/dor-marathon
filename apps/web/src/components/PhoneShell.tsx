@@ -93,7 +93,7 @@ export default function PhoneShell() {
         {showGallery ? (
           <CardGalleryScreen onBack={() => setShowGallery(false)} focusCardId={unlockCardId} />
         ) : showExplore ? (
-          <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={() => { window.location.href = '/track' }} />
+          <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={(bossId) => { window.location.href = bossId ? '/track?focus=' + encodeURIComponent(bossId) : '/track' }} />
         ) : showPersonalTasks ? (
           <PersonalTasksScreen onBack={() => setShowPersonalTasks(false)} />
         ) : showProfile || payRace ? (
