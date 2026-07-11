@@ -28,6 +28,10 @@ const MAX_ACC = 65 // 精度差於此（公尺）的點不採計距離（城市/
 const MAX_SPEED = 1000 / 120 // 8.33 m/s（2:00/km）人類極限上限
 const JITTER_MIN = 6 // 公尺：距上一個採納點移動不足此值視為原地抖動，不計距離
 const PACE_MIN_KM = 0.005 // 累積達此距離（5m，約顯示 0.01km 時）即顯示平均配速
+const exCountyOf = (r: string) => (r || '').split('·')[0] // 城市探索 region「臺北市·大安區」→ 縣市
+function countyChip(active: boolean): React.CSSProperties {
+  return { flexShrink: 0, border: '1px solid ' + (active ? 'var(--fug)' : 'var(--line-2)'), background: active ? 'var(--fug)' : 'var(--bg-2)', color: active ? 'var(--fug-ink)' : 'var(--tx-dim)', borderRadius: 999, padding: '5px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }
+}
 
 function haversineM(a: GpsPoint, b: GpsPoint) {
   const R = 6371000, rad = Math.PI / 180
@@ -93,6 +97,7 @@ export default function TrackPage() {
   const [rankingBoss, setRankingBoss] = useState<{ id: string; name: string } | null>(null) // 挑戰者成績排行覆蓋層
   const [celebrateCard, setCelebrateCard] = useState<{ bossId: string; name: string; cardUrl?: string } | null>(null) // 3★取卡恭喜彈窗
   const [exploreBusy, setExploreBusy] = useState(false)
+  const [exCounty, setExCounty] = useState('') // 城市探索地圖/清單依縣市篩選（空＝全部）
   const [woPhase, setWoPhase] = useState<'idle' | 'countdown' | 'running' | 'done'>('idle')
   const [woStepIdx, setWoStepIdx] = useState(0)
   const [woHits, setWoHits] = useState<Record<number, boolean>>({}) // work 段 index → 是否達配速
@@ -917,15 +922,15 @@ export default function TrackPage() {
         L.circle([cp.lat, cp.lng], { radius: cp.radius_m || 20, color, weight: 1.5, fillOpacity: 0.1 }).addTo(layer)
         L.circleMarker([cp.lat, cp.lng], { radius: 6, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(layer).bindTooltip(cp.title || '打卡點')
       })
-      // 城市探索打卡點：畫在最上層、較醒目（紫=未探索神秘/金=已揭露/綠=已收服）
-      exploreCps.forEach((b) => {
+      // 城市探索打卡點：畫在最上層、較醒目（紫=未探索神秘/金=已揭露/綠=已收服）；依縣市篩選
+      exploreCps.filter((b) => !exCounty || exCountyOf(b.region) === exCounty).forEach((b) => {
         const color = b.card_obtained ? '#46E3A0' : b.discovered ? '#E7B84B' : '#C77DFF'
         L.circle([b.lat, b.lng], { radius: b.radius_m || 40, color, weight: 1.5, fillOpacity: 0.12, dashArray: '4 4' }).addTo(layer)
         L.circleMarker([b.lat, b.lng], { radius: 9, color: '#fff', weight: 2.5, fillColor: color, fillOpacity: 1 }).addTo(layer)
           .bindTooltip((b.discovered ? b.name : (b.place || '神秘打卡點')) + ' ⚔')
       })
     })
-  }, [checkpoints, exploreCps, mapReady])
+  }, [checkpoints, exploreCps, mapReady, exCounty])
 
   async function doCheckin(cp: ActiveCheckpoint) {
     setCpMsg('')
@@ -970,6 +975,12 @@ export default function TrackPage() {
     curPos ? haversineM({ lat: curPos.lat, lng: curPos.lng, t: 0, acc: 0 }, { lat: b.lat, lng: b.lng, t: 0, acc: 0 }) : null
   const exDpCost = (b: ExploreBoss): number =>
     (b.attempts && b.attempts > 0 && b.retry_dp_cost > 0) ? b.retry_dp_cost : Math.max(0, b.difficulty_stars) * 10
+  // 城市探索清單：依縣市篩選 + 依距離排序（最近在最上，未定位則維持原順序）
+  const exCounties = Array.from(new Set(exploreCps.map((b) => exCountyOf(b.region)).filter(Boolean))).sort()
+  const exSorted = exploreCps
+    .filter((b) => !exCounty || exCountyOf(b.region) === exCounty)
+    .slice()
+    .sort((a, b) => (exDist(a) ?? Infinity) - (exDist(b) ?? Infinity))
 
   // 打卡 → 地理驗證通過即揭露關主 → 跳出關主挑戰面板（表面打卡，實為事件觸發）
   async function doExploreCheckin(b: ExploreBoss) {
@@ -1244,11 +1255,17 @@ export default function TrackPage() {
         {(checkpoints.length > 0 || exploreCps.length > 0) && (
           <div style={{ marginTop: 16 }}>
             <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}><span className="skin-ico" data-ico="pin" aria-hidden>📍</span> 打卡點任務</div>
+            {exCounties.length > 1 && (
+              <div style={{ display: 'flex', gap: 6, overflowX: 'auto', padding: '0 0 8px', WebkitOverflowScrolling: 'touch' }}>
+                <button onClick={() => setExCounty('')} style={countyChip(exCounty === '')}>全部</button>
+                {exCounties.map((c) => <button key={c} onClick={() => setExCounty(c)} style={countyChip(exCounty === c)}>{c}</button>)}
+              </div>
+            )}
             {cpMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginBottom: 8, wordBreak: 'break-word' }}>{cpMsg}</div>}
             {status !== 'tracking' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>建議按「開始跑步」邊跑邊打卡（有軌跡佐證，免審核）。</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {/* 城市探索打卡點：表面是打卡任務，打卡後揭露關主挑戰 */}
-              {exploreCps.map((b) => {
+              {/* 城市探索打卡點：表面是打卡任務，打卡後揭露關主挑戰（依縣市篩選＋距離排序） */}
+              {exSorted.map((b) => {
                 const d = exDist(b)
                 const inRange = d != null && d <= (b.radius_m || 40)
                 const busy = cpBusy === 'ex:' + b.id
