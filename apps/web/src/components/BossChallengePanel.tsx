@@ -52,6 +52,11 @@ export default function BossChallengePanel({ boss, phase, busy, dpCost, note, on
                 {segSummary(boss.segments) && <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 5, lineHeight: 1.6 }}>📋 {segSummary(boss.segments)}</div>}
                 <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 5 }}>總距離 {totalKm(boss.segments)} K · 預估 {fmtDuration(estMinutes(boss.segments))} · 3★ 完成即可收服，取得關主卡片</div>
               </div>
+              {boss.access_note && (
+                <div style={{ marginTop: 10, fontSize: 12, color: 'var(--tx-dim)', background: 'rgba(255,255,255,.04)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '8px 11px', lineHeight: 1.6 }}>
+                  📍 開放資訊：{boss.access_note}
+                </div>
+              )}
               {note && <div style={{ marginTop: 12, fontSize: 12.5, color: '#ffcf6b', background: 'rgba(231,184,75,.12)', border: '1px solid rgba(231,184,75,.35)', borderRadius: 10, padding: '8px 11px', lineHeight: 1.5 }}>{note}</div>}
               <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
                 <button onClick={onDecline} disabled={busy} style={declineBtn}>放棄</button>

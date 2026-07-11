@@ -16,7 +16,7 @@ const EMPTY: Form = {
   difficulty_stars: 3, quote: '', skill_name: '', skill_desc: '', dialogue_intro: '', dialogue_start: '',
   scene_image_url: '', card_image_url: '', lat: 25.0296, lng: 121.5357, radius_m: 40,
   reward_exp: 100, reward_dp: 20, retry_dp_cost: 0, workout_kind: 'mixed', data_source: 'gps',
-  display_order: 0, enabled: true, _segText: '[]',
+  display_order: 0, enabled: true, access_note: '', _segText: '[]',
 }
 
 export default function AdminExplorePage() {
@@ -125,6 +125,7 @@ export default function AdminExplorePage() {
             <F label="卡片標語 quote"><input style={inp} value={form.quote || ''} onChange={(e) => setF('quote', e.target.value)} /></F>
           </div>
           <F label="技能說明"><textarea style={ta} rows={2} value={form.skill_desc || ''} onChange={(e) => setF('skill_desc', e.target.value)} /></F>
+          <F label="開放資訊（開放時段/場地備註，來自官方開放場地資料；顯示於前台提醒玩家）"><textarea style={ta} rows={2} value={form.access_note || ''} onChange={(e) => setF('access_note', e.target.value)} placeholder="例：平日 17:00 後及例假日全天開放" /></F>
           <F label="打卡後對話（挑戰前，關主說的話；<br> 換行）"><textarea style={ta} rows={2} value={form.dialogue_intro || ''} onChange={(e) => setF('dialogue_intro', e.target.value)} /></F>
           <F label="接受後對話（挑戰開始前；<br> 換行）"><textarea style={ta} rows={2} value={form.dialogue_start || ''} onChange={(e) => setF('dialogue_start', e.target.value)} /></F>
 

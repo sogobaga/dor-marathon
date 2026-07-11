@@ -1318,6 +1318,7 @@ export interface ExploreBoss {
   reward_exp: number; reward_dp: number; retry_dp_cost: number
   workout_kind: string; segments: WorkoutSegment[] | null; data_source: string
   display_order: number; enabled: boolean
+  access_note: string
   // 玩家進度（前台列表）
   stars?: number; card_obtained?: boolean; active?: boolean; attempts?: number
   discovered?: boolean // 已打卡揭露關主（未揭露則 name/scene/難度等欄位被伺服器遮蔽）
