@@ -21,12 +21,17 @@ const TOPIC_MATCHERS: Record<DataTopic, (key: unknown) => boolean> = {
 interface SiteRealtimeState {
   pendingTopics: Set<DataTopic>
   addTopic: (topic: DataTopic) => void
+  // 站內信到達計數：收到 topic=mail 就 +1；MailPanel 訂閱此值→自動重抓未讀數（不經 refresh badge、紅點立即更新）
+  mailTick: number
+  bumpMail: () => void
   // 對每個待更新 topic 失效對應 SWR keys，然後清空集合。絕不自動呼叫——只能由使用者點擊 Badge 觸發。
   refreshAndClear: () => void
 }
 
 export const useSiteRealtimeStore = create<SiteRealtimeState>((set, get) => ({
   pendingTopics: new Set<DataTopic>(),
+  mailTick: 0,
+  bumpMail: () => set((s) => ({ mailTick: s.mailTick + 1 })),
   addTopic: (topic) =>
     set((s) => {
       if (s.pendingTopics.has(topic)) return s // 已在集合中，避免不必要的重渲染

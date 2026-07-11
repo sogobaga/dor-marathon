@@ -12,13 +12,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/realtime"
 )
 
 type Handler struct {
 	db *pgxpool.Pool
+	rt *realtime.Manager
 }
 
-func NewHandler(db *pgxpool.Pool) *Handler { return &Handler{db: db} }
+func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler { return &Handler{db: db, rt: rt} }
 
 // Router 需登入子路由：掛在 /api/v1/mail。
 func (h *Handler) Router() chi.Router {
@@ -143,6 +145,10 @@ func (h *Handler) InsertForUsers(ctx context.Context, userIDs []string, level, t
 		SELECT unnest($1::uuid[]), $2, $3, $4, $5`, userIDs, level, title, body, url)
 	if err != nil {
 		return 0, err
+	}
+	// 即時通知收件人：前台未讀紅點/清單立刻更新（走全站 data_updated，topic=mail，僅推給收件人）
+	if h.rt != nil {
+		h.rt.PublishData(ctx, "mail", userIDs)
 	}
 	return int(tag.RowsAffected()), nil
 }

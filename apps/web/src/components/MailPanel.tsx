@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { mailApi, type MailItem } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
+import { useSiteRealtimeStore } from '@/lib/siteRealtimeStore'
 
 function fmtDate(iso: string) {
   const d = new Date(iso)
@@ -54,6 +55,7 @@ export default function MailPanel() {
   const [err, setErr] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const mailTick = useSiteRealtimeStore((s) => s.mailTick) // WS 站內信到達計數：變動→即時重抓未讀數（紅點立即出現）
 
   const loadUnread = useCallback(() => {
     if (!getUserToken()) return
@@ -70,7 +72,7 @@ export default function MailPanel() {
       window.removeEventListener('focus', loadUnread)
       document.removeEventListener('visibilitychange', onVis)
     }
-  }, [loadUnread])
+  }, [loadUnread, mailTick])
 
   function openPanel() {
     setOpen(true)

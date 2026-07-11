@@ -21,6 +21,7 @@ export default function SiteRealtime() {
   const user = useUser()
   const userId = user?.id ?? null
   const addTopic = useSiteRealtimeStore((s) => s.addTopic)
+  const bumpMail = useSiteRealtimeStore((s) => s.bumpMail)
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -65,6 +66,7 @@ export default function SiteRealtime() {
         const targets = msg.target_user_ids
         const relevant = !targets || targets.length === 0 || (userIdRef.current != null && targets.includes(userIdRef.current))
         if (!relevant) return
+        if (msg.topic === 'mail') { bumpMail(); return } // 站內信：自動即時更新未讀紅點（不進 refresh badge）
         if ((DATA_TOPICS as readonly string[]).includes(msg.topic)) addTopic(msg.topic as DataTopic)
       }
       ws.onclose = () => {
@@ -98,7 +100,7 @@ export default function SiteRealtime() {
       wsRef.current?.close()
       wsRef.current = null
     }
-  }, [userId, addTopic])
+  }, [userId, addTopic, bumpMail])
 
   return <RefreshBadge />
 }

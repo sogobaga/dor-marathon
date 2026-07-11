@@ -170,7 +170,7 @@ func main() {
 	})
 
 	// 站內信（in-app mail）：供前台鈴鐺列表 + 後台廣播 mail 頻道寫入。
-	mailHandler := mail.NewHandler(pool)
+	mailHandler := mail.NewHandler(pool, wsManager)
 
 	// Web Push（VAPID）：未設齊 VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY/VAPID_SUBJECT 時 enabled=false，發送 no-op。
 	pushHandler := push.NewHandler(pool, push.Config{
