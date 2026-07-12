@@ -271,10 +271,9 @@ func (h *Handler) PutAthleteConfig(w http.ResponseWriter, r *http.Request) {
 // --- 報名頁推薦 ---
 
 type RecommendRow struct {
-	UserID      string `json:"user_id"`
-	Nickname    string `json:"nickname"`
-	AvatarURL   string `json:"avatar_url"`
-	AccountCode string `json:"account_code"`
+	UserID    string `json:"user_id"`
+	Nickname  string `json:"nickname"`
+	AvatarURL string `json:"avatar_url"`
 }
 
 // GET /api/v1/profile/recommendations/{raceID}
@@ -294,7 +293,7 @@ func (h *Handler) RaceRecommendations(w http.ResponseWriter, r *http.Request) {
 	// 追蹤者中報名此賽事者
 	rows, err := h.db.Query(r.Context(), `
 		SELECT u.id::text, COALESCE(NULLIF(u.name,''), u.handle), COALESCE(u.avatar_url,''),
-		       COALESCE(u.account_code,''), COALESCE(p.gender,'')
+		       COALESCE(p.gender,'')
 		FROM follows f
 		JOIN registrations reg ON reg.user_id = f.followee_id AND reg.race_id = $2 AND reg.status <> 'cancelled'
 		JOIN users u ON u.id = f.followee_id
@@ -313,7 +312,7 @@ func (h *Handler) RaceRecommendations(w http.ResponseWriter, r *http.Request) {
 	ids := []string{userID}
 	for rows.Next() {
 		var c cand
-		if err := rows.Scan(&c.row.UserID, &c.row.Nickname, &c.row.AvatarURL, &c.row.AccountCode, &c.gender); err != nil {
+		if err := rows.Scan(&c.row.UserID, &c.row.Nickname, &c.row.AvatarURL, &c.gender); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}

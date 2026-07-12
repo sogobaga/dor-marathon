@@ -1104,7 +1104,6 @@ export interface VipPricing {
 export interface FollowRow {
   user_id: string
   nickname: string
-  account_code: string
   avatar_url: string
 }
 
@@ -1176,7 +1175,6 @@ export interface RecommendRow {
   user_id: string
   nickname: string
   avatar_url: string
-  account_code: string
 }
 
 export interface MyRegistration {

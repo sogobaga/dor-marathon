@@ -295,17 +295,16 @@ func (h *Handler) Unfollow(w http.ResponseWriter, r *http.Request) {
 }
 
 type FollowRow struct {
-	UserID      string `json:"user_id"`
-	Nickname    string `json:"nickname"`
-	AccountCode string `json:"account_code"`
-	AvatarURL   string `json:"avatar_url"`
+	UserID    string `json:"user_id"`
+	Nickname  string `json:"nickname"`
+	AvatarURL string `json:"avatar_url"`
 }
 
 // GET /api/v1/profile/follows
 func (h *Handler) Follows(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	rows, err := h.db.Query(r.Context(), `
-		SELECT u.id::text, COALESCE(NULLIF(u.name,''), u.handle), COALESCE(u.account_code,''), COALESCE(u.avatar_url,'')
+		SELECT u.id::text, COALESCE(NULLIF(u.name,''), u.handle), COALESCE(u.avatar_url,'')
 		FROM follows f
 		JOIN users u ON u.id = f.followee_id
 		LEFT JOIN user_profiles p ON p.user_id = u.id
@@ -319,7 +318,7 @@ func (h *Handler) Follows(w http.ResponseWriter, r *http.Request) {
 	out := []FollowRow{}
 	for rows.Next() {
 		var fr FollowRow
-		if err := rows.Scan(&fr.UserID, &fr.Nickname, &fr.AccountCode, &fr.AvatarURL); err != nil {
+		if err := rows.Scan(&fr.UserID, &fr.Nickname, &fr.AvatarURL); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}

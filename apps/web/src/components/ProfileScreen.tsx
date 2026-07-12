@@ -333,7 +333,6 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.nickname}</div>
-                    {f.account_code && <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontFamily: 'monospace' }}>#{f.account_code}</div>}
                   </div>
                   <button onClick={() => unfollow(f.user_id)} style={{ ...ghostBtn, padding: '6px 12px', fontSize: 12, flexShrink: 0 }}>解除追蹤</button>
                 </div>
