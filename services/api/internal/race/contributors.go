@@ -168,3 +168,50 @@ func (h *Handler) TaskContributors(w http.ResponseWriter, r *http.Request) {
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"contributors": c})
 }
+
+// GetGroupMembers 某分組的成員排名（依賽事期間累積里程；重用 LoadTaskContributors，含稱號/追蹤旗標）。
+func (s *Service) GetGroupMembers(ctx context.Context, raceID, groupID, userID string) ([]Contributor, error) {
+	race, err := s.repo.GetByID(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	if race == nil || race.ReviewStatus != "approved" {
+		return nil, ErrRaceNotFound
+	}
+	rows, err := s.repo.LoadTaskContributors(ctx, raceID, groupID)
+	if err != nil {
+		return nil, err
+	}
+	following, err := s.repo.FollowingSet(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := []Contributor{}
+	for i, c := range rows {
+		isMe := userID != "" && c.UserID == userID
+		out = append(out, Contributor{
+			Rank: i + 1, UserID: c.UserID, Name: c.Name, Title: c.Title, GroupName: c.GroupName,
+			DistanceKm: math.Round(c.Dist*100) / 100, Activities: c.Acts,
+			IsMe:        isMe,
+			IsFollowing: !isMe && following[c.UserID],
+		})
+	}
+	return out, nil
+}
+
+// GET /api/v1/races/:raceID/groups/:groupID/members — 某分組的成員里程排名（公開，登入後含自己/追蹤旗標）
+func (h *Handler) GroupMembers(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	groupID := chi.URLParam(r, "groupID")
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	members, err := h.svc.GetGroupMembers(r.Context(), raceID, groupID, userID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get members")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"members": members})
+}

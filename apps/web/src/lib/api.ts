@@ -783,6 +783,9 @@ export const racesApi = {
   // 競賽排行榜（公開；帶 token 則附自己分組名次）
   standings: (raceID: string, token?: string) =>
     request<CompetitionRanking>(`/races/${raceID}/standings`, token ? { headers: withAuth(token) } : undefined),
+  // 某分組的成員排名（依累積里程；帶 token 則含自己/追蹤旗標）
+  groupMembers: (raceID: string, groupID: string, token?: string) =>
+    request<{ members: Contributor[] }>(`/races/${raceID}/groups/${groupID}/members`, token ? { headers: withAuth(token) } : undefined),
   // 賽事進度（任務達成度 + 個人統計；帶 token 則含個人）
   progress: (raceID: string, token?: string) =>
     request<{ progress: RaceProgress }>(`/races/${raceID}/progress`, token ? { headers: withAuth(token) } : undefined),
