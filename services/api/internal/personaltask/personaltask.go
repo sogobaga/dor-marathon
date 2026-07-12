@@ -225,6 +225,7 @@ func (h *Handler) isFrontierLocked(ctx context.Context, uid, taskID string) (boo
 		FROM personal_tasks t
 		JOIN personal_tasks tt ON tt.id=$2 AND tt.plan_id = t.plan_id
 		WHERE t.enabled AND t.day < tt.day
+		  AND (t.workout_kind <> '' OR COALESCE(t.target_km,0) > 0)
 		  AND NOT EXISTS (SELECT 1 FROM personal_task_progress pr WHERE pr.user_id=$1 AND pr.task_id=t.id AND pr.stars>0)`,
 		uid, taskID).Scan(&priorLeft)
 	return priorLeft > 0, err
@@ -273,6 +274,7 @@ func (h *Handler) TrackPanel(w http.ResponseWriter, r *http.Request) {
 			FROM personal_tasks t
 			LEFT JOIN personal_task_progress pr ON pr.task_id=t.id AND pr.user_id=$1
 			WHERE t.enabled AND COALESCE(pr.stars,0)=0
+			  AND (t.workout_kind <> '' OR COALESCE(t.target_km,0) > 0)
 			GROUP BY t.plan_id
 		)
 		SELECT `+panelCols+`

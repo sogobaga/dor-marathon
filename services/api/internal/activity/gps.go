@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/stamina"
 )
 
 // 防弊參數
@@ -164,6 +165,8 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		}
 		b, _ := json.Marshal(evt)
 		s.rdb.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{"data": string(b)}})
+		// 體力值 SP：跑步完成後扣血（依距離×強度；扣到 0 凍結 6 小時；僅未標記才扣）
+		stamina.ChargeSP(ctx, s.repo.db, userID, round2(distanceKm), avgPaceS)
 	}
 
 	return &gpsRunResult{

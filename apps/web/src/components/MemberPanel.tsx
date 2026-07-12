@@ -53,6 +53,11 @@ export default function MemberPanel({
       ? Math.max(0, Math.min(100, ((dash.exp - dash.level_floor) / (dash.next_level_exp - dash.level_floor)) * 100))
       : 100
 
+  // 體力值 SP
+  const spMax = dash?.sp_max ?? 0
+  const spPct = spMax > 0 ? Math.max(0, Math.min(100, ((dash?.sp ?? 0) / spMax) * 100)) : 0
+  const spFrozen = !!dash?.sp_freeze_until && new Date(dash.sp_freeze_until).getTime() > Date.now()
+
   const clickable = !!user && !!onOpenProfile
 
   return (
@@ -115,6 +120,28 @@ export default function MemberPanel({
             <div style={barOuter}><div style={{ ...barInner, width: `${expPct}%` }} /></div>
             <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 4, textAlign: 'right' }}>
               {dash.next_level_exp == null ? '已達最高等級' : `距 Lv.${dash.level + 1} 還需 ${dash.next_level_exp - dash.exp} EXP`}
+            </div>
+          </div>
+        )}
+
+        {/* 體力值 SP（跑步扣、依時間恢復；扣到 0 凍結 6 小時） */}
+        {user && dash && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 12 }}>
+              <span style={{ fontWeight: 800, color: spFrozen ? 'var(--tx-dim)' : '#2fbf71' }}>
+                體力 SP{spFrozen ? ' · 凍結中' : ''}
+              </span>
+              <span style={{ color: 'var(--tx-dim)', fontVariantNumeric: 'tabular-nums' }}>{dash.sp} / {dash.sp_max}</span>
+            </div>
+            <div style={barOuter}>
+              <div style={{ ...barInner, width: `${spPct}%`, background: spFrozen ? 'var(--line-2)' : 'linear-gradient(90deg,#2fbf71,#57d98a)' }} />
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 4, textAlign: 'right' }}>
+              {spFrozen
+                ? `過度訓練 · 約 ${fmtSpDur(Math.round((new Date(dash.sp_freeze_until!).getTime() - Date.now()) / 1000))}後恢復`
+                : dash.sp >= dash.sp_max
+                  ? '體力充沛'
+                  : `約 ${fmtSpDur(dash.sp_next_recover_sec)}後 +1 點`}
             </div>
           </div>
         )}
@@ -232,6 +259,12 @@ const avatarWrap: React.CSSProperties = {
 }
 const avatarEdit: React.CSSProperties = { position: 'absolute', bottom: 0, left: 0, right: 0, fontSize: 10, textAlign: 'center', background: 'rgba(0,0,0,.55)', color: '#fff', padding: '1px 0' }
 const vipBadge: React.CSSProperties = { fontSize: 10, fontWeight: 800, color: '#fff', background: 'var(--gold)', borderRadius: 6, padding: '1px 7px', letterSpacing: '.05em' }
+// 秒 → 「X 小時 Y 分」/「Y 分」（SP 恢復/凍結倒數用；最小顯示 1 分）
+function fmtSpDur(sec: number): string {
+  if (sec <= 0) return '0 分'
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60)
+  return h > 0 ? `${h} 小時 ${m} 分` : `${Math.max(1, m)} 分`
+}
 const barOuter: React.CSSProperties = { height: 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden', marginTop: 5 }
 const barInner: React.CSSProperties = { height: '100%', background: 'var(--fug)', borderRadius: 999, transition: 'width .3s' }
 const loginBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 10, padding: '9px 18px', cursor: 'pointer', fontSize: 14 }

@@ -972,6 +972,13 @@ export interface DashboardInfo {
   title_entry: 'hidden' | 'locked' | 'shown'       // 稱號系統(PB探索)入口可見性
   achievement_entry: 'hidden' | 'locked' | 'shown' // 成就統計(成就探索)入口可見性
   new_titles?: { code: string; name: string; tier: number; category: string }[] // 新解鎖稱號（前台跳彈窗用，跳完呼叫 /titles/seen）
+  // 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；扣到 0 凍結 6 小時）
+  sp: number
+  sp_max: number
+  sp_recover_min: number       // 每恢復 1 點所需分鐘
+  sp_next_recover_sec: number  // 距下一點恢復秒數（0=已滿）
+  sp_freeze_until: string | null // 過度訓練凍結到此時間（null=無）
+  fitness: number              // 跑步水準 0-100
 }
 
 // --- 稱號系統 (PB探索) ---

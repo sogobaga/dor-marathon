@@ -10,6 +10,7 @@ import (
 
 	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/stamina"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -125,6 +126,13 @@ type DashboardInfo struct {
 	TitleEntry       string         `json:"title_entry"`          // 稱號系統入口可見性（同上）
 	AchievementEntry string         `json:"achievement_entry"`    // 成就統計入口可見性（同上）
 	NewTitles        []AwardedTitle `json:"new_titles,omitempty"` // 本次 dashboard 新解鎖（未看過）稱號
+	// 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；見 internal/stamina）
+	Sp               int        `json:"sp"`
+	SpMax            int        `json:"sp_max"`
+	SpRecoverMin     int        `json:"sp_recover_min"`      // 每恢復 1 點所需分鐘
+	SpNextRecoverSec int        `json:"sp_next_recover_sec"` // 距下一點恢復秒數（0=已滿）
+	SpFreezeUntil    *time.Time `json:"sp_freeze_until"`     // 過度訓練凍結到此時間（null=無）
+	Fitness          int        `json:"fitness"`            // 跑步水準 0-100
 }
 
 // GET /api/v1/profile/dashboard
@@ -172,6 +180,9 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.Level, d.LevelTitle, d.LevelFloor, d.NextLevelExp = computeLevel(d.Exp, levels)
+	if st, e := stamina.ReadSP(r.Context(), h.db, userID, d.Level); e == nil {
+		d.Sp, d.SpMax, d.SpRecoverMin, d.SpNextRecoverSec, d.SpFreezeUntil, d.Fitness = st.SP, st.SPMax, st.RecoverMin, st.NextRecoverSec, st.FreezeUntil, st.Fitness
+	}
 	d.IsVIP = d.VIPExpiresAt != nil && d.VIPExpiresAt.After(time.Now())
 	// 試用到期(含未曾設到期日) 且尚未提示過 → 前台跳一次升級彈窗
 	d.ShowTrialExpiryNotice = d.VipPlan == "trial" && !trialShown && (d.VIPExpiresAt == nil || d.VIPExpiresAt.Before(time.Now()))

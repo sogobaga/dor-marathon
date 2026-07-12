@@ -18,6 +18,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/stamina"
 )
 
 const (
@@ -466,6 +467,10 @@ func (h *StravaHandler) importOne(ctx context.Context, userID string, regAt time
 	if err != nil {
 		log.Error().Err(err).Msg("strava import activity failed")
 		return ImportResult{Status: "error"}
+	}
+	// 體力值 SP：僅「新匯入」的活動扣血（已存在/重複不扣）
+	if res.Status == "inserted" && na.DistanceKm > 0 {
+		stamina.ChargeSP(ctx, h.repo.db, na.UserID, na.DistanceKm, na.AvgPaceS)
 	}
 	return res
 }
