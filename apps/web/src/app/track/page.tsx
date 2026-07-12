@@ -977,11 +977,18 @@ export default function TrackPage() {
   const exSorted = exploreCps
     .slice()
     .sort((a, b) => (exDist(a) ?? Infinity) - (exDist(b) ?? Infinity))
-  // 清單只列：已揭露待挑戰的（少數，讓揭曉後可從此開挑戰）＋「最近 10 筆未打卡」（避免 572 點全列；打卡改到城市探索頁一鍵進行）
-  const exList = [
-    ...exSorted.filter((b) => b.discovered && !b.card_obtained),
-    ...exSorted.filter((b) => !b.discovered).slice(0, 10),
-  ]
+  // 清單列：已揭露待挑戰 ＋ 最近 10 筆未打卡（避免 572 點全列）＋ 從城市探索「前往打卡」聚焦帶來的目標點（確保清單裡有它可打卡）
+  const exList = (() => {
+    const base = [
+      ...exSorted.filter((b) => b.discovered && !b.card_obtained),
+      ...exSorted.filter((b) => !b.discovered).slice(0, 10),
+    ]
+    if (focusBoss && !base.some((b) => b.id === focusBoss)) {
+      const fb = exSorted.find((b) => b.id === focusBoss)
+      if (fb) return [fb, ...base]
+    }
+    return base
+  })()
 
   // 「前往打卡」：讀取目標關主 id，地圖定位到該打卡點並放大（只做一次；停止 GPS 自動跟隨、篩到該縣市讓清單也顯示）
   useEffect(() => {
