@@ -822,10 +822,12 @@ export interface Contributor {
   rank: number
   user_id: string
   name: string
+  title?: string // 展示中稱號名稱
   group_name?: string
   distance_km: number
   activities: number
   is_me: boolean
+  is_following: boolean // 目前使用者是否已追蹤此人（自己恆 false）
 }
 export interface TaskContributors {
   task_id: string

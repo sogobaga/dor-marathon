@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { racesApi, METRIC_BY_KEY, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
+import { racesApi, followApi, METRIC_BY_KEY, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { useScrollLock } from '@/lib/useScrollLock'
 import { useSheetDismiss } from '@/lib/useSheetDismiss'
@@ -338,6 +338,9 @@ function TaskRow({ t, onClick }: { t: TaskProgress; onClick?: () => void }) {
 }
 
 // 任務貢獻明細彈窗：前 20 名里程貢獻 + 自己（即使在 20 名外）
+const followBtnC: React.CSSProperties = { flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 999, padding: '5px 11px', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
+const followingBtnC: React.CSSProperties = { flexShrink: 0, background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '5px 11px', fontSize: 11.5, cursor: 'pointer', fontFamily: 'inherit' }
+
 function TaskContributorsModal({ race, task, onClose }: { race: Race; task: TaskProgress; onClose: () => void }) {
   useScrollLock() // 開啟時鎖背景捲動 → 只滑得動本彈窗清單
   const { panelRef, dy } = useSheetDismiss(onClose) // 下滑關閉 → 短清單也有反應
@@ -345,17 +348,37 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
   const { data, isLoading, error } = useSWR(['contrib', race.id, task.id], () => racesApi.taskContributors(race.id, task.id!, token))
   const c: TaskContributors | undefined = data?.contributors
   const meInTop = c?.top.some((x) => x.is_me)
+  // 追蹤（樂觀更新）：先切換本地狀態、再打 API，失敗回滾
+  const [followOverride, setFollowOverride] = useState<Record<string, boolean>>({})
+  const isFollowing = (x: TaskContributors['top'][number]) => followOverride[x.user_id] ?? x.is_following
+  async function toggleFollow(x: TaskContributors['top'][number]) {
+    const t = getUserToken()
+    if (!t) return
+    const cur = isFollowing(x)
+    setFollowOverride((o) => ({ ...o, [x.user_id]: !cur }))
+    try {
+      if (cur) await followApi.unfollow(t, x.user_id)
+      else await followApi.follow(t, x.user_id)
+    } catch {
+      setFollowOverride((o) => ({ ...o, [x.user_id]: cur }))
+    }
+  }
   const row = (x: TaskContributors['top'][number], showRank = true) => (
     <div key={x.user_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 'var(--radius-md, 9px)', background: x.is_me ? 'rgba(255,194,75,.14)' : 'var(--bg-2)', border: x.is_me ? '1px solid var(--gold)' : '1px solid transparent' }}>
       <span style={{ width: 30, textAlign: 'center', fontWeight: 900, fontSize: 13, color: x.rank <= 3 ? 'var(--gold)' : 'var(--tx-dim)' }}>{showRank ? x.rank : '·'}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{x.name}{x.is_me ? '（我）' : ''}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {x.title && <span style={{ color: 'var(--gold)', fontWeight: 800, marginRight: 5 }}>{x.title}</span>}{x.name}{x.is_me ? '（我）' : ''}
+        </div>
         {x.group_name && <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{x.group_name}</div>}
       </div>
       <div style={{ textAlign: 'right' }}>
         <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--fug)', fontVariantNumeric: 'tabular-nums' }}>{x.distance_km.toFixed(1)} <span style={{ fontSize: 11, color: 'var(--tx-dim)' }}>km</span></div>
         <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>{x.activities} 筆</div>
       </div>
+      {token && !x.is_me && (
+        <button onClick={() => toggleFollow(x)} style={isFollowing(x) ? followingBtnC : followBtnC}>{isFollowing(x) ? '追蹤中' : '＋追蹤'}</button>
+      )}
     </div>
   )
   const content = (

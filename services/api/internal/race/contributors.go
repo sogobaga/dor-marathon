@@ -15,13 +15,15 @@ import (
 
 // Contributor 單一成員的里程貢獻
 type Contributor struct {
-	Rank       int     `json:"rank"`
-	UserID     string  `json:"user_id"`
-	Name       string  `json:"name"`
-	GroupName  string  `json:"group_name,omitempty"`
-	DistanceKm float64 `json:"distance_km"`
-	Activities int     `json:"activities"`
-	IsMe       bool    `json:"is_me"`
+	Rank        int     `json:"rank"`
+	UserID      string  `json:"user_id"`
+	Name        string  `json:"name"`
+	Title       string  `json:"title,omitempty"` // 展示中稱號名稱
+	GroupName   string  `json:"group_name,omitempty"`
+	DistanceKm  float64 `json:"distance_km"`
+	Activities  int     `json:"activities"`
+	IsMe        bool    `json:"is_me"`
+	IsFollowing bool    `json:"is_following"` // 目前使用者是否已追蹤此人（自己恆 false）
 }
 
 // TaskContributors 某任務的貢獻榜
@@ -39,6 +41,7 @@ type TaskContributors struct {
 type contribRow struct {
 	UserID    string
 	Name      string
+	Title     string
 	GroupName string
 	Dist      float64
 	Acts      int
@@ -49,6 +52,7 @@ func (r *Repository) LoadTaskContributors(ctx context.Context, raceID, groupID s
 	rows, err := r.db.Query(ctx, `
 		SELECT reg.user_id::text,
 		       COALESCE(NULLIF(u.name,''), u.handle, '跑者') AS name,
+		       COALESCE(td.name,'') AS title,
 		       COALESCE(g.name,'') AS group_name,
 		       COALESCE(SUM(a.distance_km),0)::float8 AS dist,
 		       COUNT(a.id) AS acts
@@ -56,11 +60,12 @@ func (r *Repository) LoadTaskContributors(ctx context.Context, raceID, groupID s
 		JOIN registrations reg ON reg.race_id = rc.id AND reg.status <> 'cancelled'
 		JOIN users u ON u.id = reg.user_id
 		LEFT JOIN user_profiles p ON p.user_id = reg.user_id
+		LEFT JOIN title_defs td ON td.code = u.displayed_title
 		LEFT JOIN race_groups g ON g.id = reg.group_id
 		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 		                       AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
 		WHERE rc.id = $1 AND ($2 = '' OR reg.group_id::text = $2)
-		GROUP BY reg.user_id, u.name, u.handle, g.name
+		GROUP BY reg.user_id, u.name, u.handle, td.name, g.name
 		ORDER BY dist DESC, acts DESC`, raceID, groupID)
 	if err != nil {
 		return nil, err
@@ -69,7 +74,7 @@ func (r *Repository) LoadTaskContributors(ctx context.Context, raceID, groupID s
 	out := []contribRow{}
 	for rows.Next() {
 		var c contribRow
-		if err := rows.Scan(&c.UserID, &c.Name, &c.GroupName, &c.Dist, &c.Acts); err != nil {
+		if err := rows.Scan(&c.UserID, &c.Name, &c.Title, &c.GroupName, &c.Dist, &c.Acts); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -116,6 +121,10 @@ func (s *Service) GetTaskContributors(ctx context.Context, raceID, taskID, userI
 	if err != nil {
 		return nil, err
 	}
+	following, err := s.repo.FollowingSet(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 
 	res := &TaskContributors{TaskID: task.ID, TaskTitle: task.Title, Scope: task.Scope, Total: len(rows), PoolLabel: "全體參賽者", Top: []Contributor{}}
 	for i, c := range rows {
@@ -125,10 +134,12 @@ func (s *Service) GetTaskContributors(ctx context.Context, raceID, taskID, userI
 		if poolGroup != "" && c.GroupName != "" {
 			res.PoolLabel = "本組：" + c.GroupName
 		}
+		isMe := userID != "" && c.UserID == userID
 		row := Contributor{
-			Rank: i + 1, UserID: c.UserID, Name: c.Name, GroupName: c.GroupName,
+			Rank: i + 1, UserID: c.UserID, Name: c.Name, Title: c.Title, GroupName: c.GroupName,
 			DistanceKm: math.Round(c.Dist*100) / 100, Activities: c.Acts,
-			IsMe: userID != "" && c.UserID == userID,
+			IsMe:        isMe,
+			IsFollowing: !isMe && following[c.UserID],
 		}
 		if i < 20 {
 			res.Top = append(res.Top, row)
