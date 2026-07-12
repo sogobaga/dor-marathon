@@ -3,12 +3,14 @@ package race
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/dor/api/internal/auth"
 )
@@ -16,6 +18,10 @@ import (
 // 打卡防弊參數
 const (
 	checkinMaxAccuracyM = 40.0 // 定位精度差於此 → 不接受打卡
+	// 速度合理性：兩打卡點中心的直線距離÷時間 隱含的移動速度上限 ≈7.7m/s（100m 至少需 13 秒）。
+	// 快於此（例：相隔 100m 卻只差 1 秒）視為異常 → 待審核，不無腦通過。
+	checkinMinSecPerMeter = 13.0 / 100.0
+	checkinMinMoveM       = 50.0 // 兩打卡點中心距離小於此 → 太近、不做速度判定（避免叢集打卡點誤判）
 )
 
 func haversineMeters(lat1, lng1, lat2, lng2 float64) float64 {
@@ -135,6 +141,35 @@ func (r *Repository) insertCheckin(ctx context.Context, userID, cpID, raceID str
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// prevCheckin 取該會員在「同一賽事」最近一次打卡的『打卡點中心座標』與『距今秒數』（皆用 DB 時鐘，供速度稽核）。
+// 用打卡點中心而非使用者回報座標→避免 GPS 抖動誤判；限同賽事→跨賽事的前次打卡不干擾。
+// found=false：同賽事尚無前次打卡（正常放行）。err!=nil：查詢異常，呼叫端應保守處理（勿逕自放行）。
+func (r *Repository) prevCheckin(ctx context.Context, userID, raceID string) (lat, lng, gapS float64, found bool, err error) {
+	err = r.db.QueryRow(ctx, `
+		SELECT tc.lat, tc.lng, EXTRACT(EPOCH FROM (NOW() - ci.checked_at))
+		FROM checkpoint_checkins ci
+		JOIN task_checkpoints tc ON tc.id = ci.checkpoint_id
+		WHERE ci.user_id=$1 AND ci.race_id=$2
+		ORDER BY ci.checked_at DESC LIMIT 1`, userID, raceID).
+		Scan(&lat, &lng, &gapS)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, 0, 0, false, nil
+	}
+	if err != nil {
+		return 0, 0, 0, false, err
+	}
+	return lat, lng, gapS, true, nil
+}
+
+// checkinFlagged 查某會員某打卡點現有打卡是否仍為待審(flagged)；exists=false 表示尚無該筆。
+func (r *Repository) checkinFlagged(ctx context.Context, userID, cpID string) (flagged, exists bool) {
+	if err := r.db.QueryRow(ctx,
+		`SELECT flagged FROM checkpoint_checkins WHERE user_id=$1 AND checkpoint_id=$2`, userID, cpID).Scan(&flagged); err != nil {
+		return false, false
+	}
+	return flagged, true
 }
 
 // taskCheckinCounts 該會員在某 checkpoint 任務的已集點數（未標記）與總點數
@@ -308,7 +343,7 @@ func (r *Repository) rejectCheckin(ctx context.Context, checkinID string) (bool,
 
 // --- Service ---
 
-// CheckIn 會員對某打卡點打卡：伺服器重算距離 + 精度 + 時間窗 + 軌跡佐證
+// CheckIn 會員對某打卡點打卡：伺服器重算距離 + 精度 + 時間窗 + 速度合理性稽核（免審核，異常才待審）
 func (s *Service) CheckIn(ctx context.Context, userID, cpID string, req checkinReq) (*CheckinResult, error) {
 	cp, err := s.repo.checkpointForCheckin(ctx, cpID)
 	if err != nil {
@@ -338,8 +373,20 @@ func (s *Service) CheckIn(ctx context.Context, userID, cpID string, req checkinR
 		}, nil
 	}
 
-	// 在範圍內即成功、一律免審核（與城市探索打卡一致，不再要求移動軌跡佐證）
-	inserted, err := s.repo.insertCheckin(ctx, userID, cpID, cp.RaceID, req.Lat, req.Lng, req.Acc, distM, false, "")
+	// 速度合理性稽核：與同帳號「同賽事上一次打卡」的『打卡點中心』比對——直線距離÷時間隱含的
+	// 移動速度過快（例：相隔 100m 卻只差 1 秒）→ 判為異常、待主辦審核；正常則在範圍內即免審核成功。
+	flagged, flagReason := false, ""
+	if pLat, pLng, gapS, hasPrev, perr := s.repo.prevCheckin(ctx, userID, cp.RaceID); perr != nil {
+		flagged, flagReason = true, "打卡稽核查詢異常，暫轉人工審核" // 查詢異常 → 保守起見不放行
+	} else if hasPrev {
+		moveM := haversineMeters(pLat, pLng, cp.Lat, cp.Lng)
+		if moveM >= checkinMinMoveM && gapS >= 0 && gapS < moveM*checkinMinSecPerMeter {
+			flagged = true
+			flagReason = fmt.Sprintf("距同賽事上次打卡 %.0f 秒、直線 %.0f 公尺，移動速度異常", gapS, moveM)
+		}
+	}
+
+	inserted, err := s.repo.insertCheckin(ctx, userID, cpID, cp.RaceID, req.Lat, req.Lng, req.Acc, distM, flagged, flagReason)
 	if err != nil {
 		return nil, err
 	}
@@ -353,8 +400,17 @@ func (s *Service) CheckIn(ctx context.Context, userID, cpID string, req checkinR
 	}
 	switch {
 	case !inserted:
-		res.Status = "already"
-		res.Message = "你已在此打卡點打過卡"
+		// 已有此打卡點的紀錄：仍待審則如實回報 pending（勿誤稱「已打卡」讓玩家以為已計入）
+		if wasFlagged, _ := s.repo.checkinFlagged(ctx, userID, cpID); wasFlagged {
+			res.Status = "pending"
+			res.Message = "此打卡點仍在審核中，通過後才計入"
+		} else {
+			res.Status = "already"
+			res.Message = "你已在此打卡點打過卡"
+		}
+	case flagged:
+		res.Status = "pending"
+		res.Message = "打卡成功，但移動速度異常（疑似定位偽造），將由主辦審核後計入"
 	default:
 		res.Status = "verified"
 		res.Message = "打卡成功！"
