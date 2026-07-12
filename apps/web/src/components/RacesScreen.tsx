@@ -72,7 +72,7 @@ export default function RacesScreen({
   const { data, error, isLoading } = useSWR(['races', user?.id ?? null, token], () => racesApi.list(token))
   const regs = data?.registrations || {}
   // COROS 式 UX：會員面板固定最上方，活動列表做成可上下拖曳的面板（收合看完整會員面板／半展看列表／全展看整份列表）
-  const sheet = useDraggableSheet('peek') // 與個資頁一致：預設收合到底（露把手＋「活動列表」標題/篩選），會員面板完整顯示，上拉看列表
+  const sheet = useDraggableSheet('half') // 首頁預設半展先露活動列表（活動頁）；面板底部留白使其仍可完整捲動，與個資頁「可滑動」手感一致
   const [filter, setFilter] = useState<FilterKey>('all')
   const [showUpgrade, setShowUpgrade] = useState(false)
   const { dash } = useDashboard()
