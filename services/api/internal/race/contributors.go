@@ -48,7 +48,7 @@ type contribRow struct {
 func (r *Repository) LoadTaskContributors(ctx context.Context, raceID, groupID string) ([]contribRow, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT reg.user_id::text,
-		       COALESCE(NULLIF(p.nickname,''), u.handle, '跑者') AS name,
+		       COALESCE(NULLIF(u.name,''), u.handle, '跑者') AS name,
 		       COALESCE(g.name,'') AS group_name,
 		       COALESCE(SUM(a.distance_km),0)::float8 AS dist,
 		       COUNT(a.id) AS acts
@@ -60,7 +60,7 @@ func (r *Repository) LoadTaskContributors(ctx context.Context, raceID, groupID s
 		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 		                       AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
 		WHERE rc.id = $1 AND ($2 = '' OR reg.group_id::text = $2)
-		GROUP BY reg.user_id, p.nickname, u.handle, g.name
+		GROUP BY reg.user_id, u.name, u.handle, g.name
 		ORDER BY dist DESC, acts DESC`, raceID, groupID)
 	if err != nil {
 		return nil, err

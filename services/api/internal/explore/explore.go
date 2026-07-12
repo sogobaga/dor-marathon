@@ -386,7 +386,7 @@ func (h *Handler) Ranking(w http.ResponseWriter, r *http.Request) {
 	bossID := chi.URLParam(r, "id")
 	rows, err := h.db.Query(r.Context(), `
 		SELECT pr.user_id::text,
-		       COALESCE(NULLIF(p.nickname,''), u.handle),
+		       COALESCE(NULLIF(u.name,''), u.handle),
 		       COALESCE(td.name,''),
 		       COALESCE(u.avatar_url,''),
 		       pr.stars, pr.completed_at,

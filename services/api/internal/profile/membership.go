@@ -98,6 +98,7 @@ func computeLevel(exp int, levels []LevelConfig) (level int, title string, floor
 type DashboardInfo struct {
 	Name                  string     `json:"name"`
 	Nickname              string     `json:"nickname"`
+	DisplayedTitle        string     `json:"displayed_title"` // 展示中稱號名稱（空=未設定，面板顯示於顯示名稱下方）
 	Handle                string     `json:"handle"`
 	AvatarURL             string     `json:"avatar_url"`
 	AccountCode           string     `json:"account_code"`
@@ -161,10 +162,13 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		       COALESCE((SELECT SUM(distance_km) FROM activities WHERE user_id=u.id AND NOT flagged),0),
 		       COALESCE(p.nickname,''),
 		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id AND rg.status<>'cancelled'),
-		       COALESCE(u.email,'')
-		FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
+		       COALESCE(u.email,''),
+		       COALESCE(td.name,'')
+		FROM users u
+		LEFT JOIN user_profiles p ON p.user_id=u.id
+		LEFT JOIN title_defs td ON td.code = u.displayed_title
 		WHERE u.id=$1`, userID).
-		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &trialShown, &d.TotalKm, &d.Nickname, &d.RaceCount, &email); err != nil {
+		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &trialShown, &d.TotalKm, &d.Nickname, &d.RaceCount, &email, &d.DisplayedTitle); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load dashboard")
 		return
 	}
@@ -301,7 +305,7 @@ type FollowRow struct {
 func (h *Handler) Follows(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	rows, err := h.db.Query(r.Context(), `
-		SELECT u.id::text, COALESCE(NULLIF(p.nickname,''), u.handle), COALESCE(u.account_code,''), COALESCE(u.avatar_url,'')
+		SELECT u.id::text, COALESCE(NULLIF(u.name,''), u.handle), COALESCE(u.account_code,''), COALESCE(u.avatar_url,'')
 		FROM follows f
 		JOIN users u ON u.id = f.followee_id
 		LEFT JOIN user_profiles p ON p.user_id = u.id

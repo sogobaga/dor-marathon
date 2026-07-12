@@ -43,7 +43,7 @@ type finisher struct {
 func (r *Repository) computeFinishers(ctx context.Context, raceID string) ([]finisher, int, error) {
 	// 跨賽事歸戶：依「報名中 + recorded_at 落在賽事期間」計入，不看 activity.race_id
 	rows, err := r.db.Query(ctx, `
-		SELECT a.user_id::text, COALESCE(NULLIF(p.nickname,''), u.handle), COALESCE(td.name,''), COALESCE(g.name,''),
+		SELECT a.user_id::text, COALESCE(NULLIF(u.name,''), u.handle), COALESCE(td.name,''), COALESCE(g.name,''),
 		       COALESCE(g.target_distance_km, 0), a.distance_km, a.duration_s, a.recorded_at
 		FROM races rc
 		JOIN registrations reg ON reg.race_id = rc.id AND reg.status <> 'cancelled'

@@ -293,7 +293,7 @@ func (h *Handler) RaceRecommendations(w http.ResponseWriter, r *http.Request) {
 
 	// 追蹤者中報名此賽事者
 	rows, err := h.db.Query(r.Context(), `
-		SELECT u.id::text, COALESCE(NULLIF(p.nickname,''), u.handle), COALESCE(u.avatar_url,''),
+		SELECT u.id::text, COALESCE(NULLIF(u.name,''), u.handle), COALESCE(u.avatar_url,''),
 		       COALESCE(u.account_code,''), COALESCE(p.gender,'')
 		FROM follows f
 		JOIN registrations reg ON reg.user_id = f.followee_id AND reg.race_id = $2 AND reg.status <> 'cancelled'

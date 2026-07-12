@@ -104,7 +104,7 @@ func (r *Repository) trackingByRace(ctx context.Context, raceIDs []string) (map[
 		return m, nil
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT reg.race_id::text, COALESCE(NULLIF(p.nickname,''), u.handle, '跑者')
+		SELECT reg.race_id::text, COALESCE(NULLIF(u.name,''), u.handle, '跑者')
 		FROM live_tracking lt
 		JOIN registrations reg ON reg.user_id = lt.user_id AND reg.status <> 'cancelled' AND reg.race_id::text = ANY($1)
 		JOIN users u ON u.id = lt.user_id

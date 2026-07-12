@@ -946,6 +946,7 @@ export interface DedupNotice { gps: DedupSide; strava: DedupSide; current_prefer
 export interface DashboardInfo {
   name: string
   nickname: string
+  displayed_title: string // 展示中稱號名稱（空=未設定，面板顯示於顯示名稱下方）
   handle: string
   avatar_url: string
   account_code: string

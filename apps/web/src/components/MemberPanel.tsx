@@ -83,7 +83,7 @@ export default function MemberPanel({
       >
         {/* 頭像 + 右側兩排（面板高度不變，仍由頭像高度決定）：
             名稱排＝VIP＋名稱（左）… 信件icon（右，靠右對齊、獨佔右上，不受 DP 增長排擠）；
-            暱稱排＝暱稱（左）… DP（右，與暱稱同高；DP 變長只壓縮左側暱稱、不影響信件）。 */}
+            稱號排＝稱號（左）… DP（右，與稱號同高；DP 變長只壓縮左側稱號、不影響信件）。 */}
         <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
           {onUploadAvatar ? (
             <label style={{ ...avatarWrap, cursor: 'pointer' }} title="更換頭像" onClick={(e) => e.stopPropagation()}>
@@ -103,10 +103,10 @@ export default function MemberPanel({
                 <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{dash?.name || user.name}</span>
                 <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', flexShrink: 0 }}><MailPanel /></span>
               </div>
-              {/* 暱稱排：暱稱（左）… DP（右，與暱稱同高） */}
+              {/* 稱號排：展示中稱號（左，金色）… DP（右，同高） */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                {dash?.nickname
-                  ? <span style={{ fontSize: 12, color: 'var(--tx-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{dash.nickname}</span>
+                {dash?.displayed_title
+                  ? <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--gold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{dash.displayed_title}</span>
                   : <span style={{ flex: 1 }} />}
                 {dash && <span style={dpBadge} title="DP 幣"><DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}</span>}
               </div>
