@@ -72,7 +72,7 @@ export default function RacesScreen({
   const { data, error, isLoading } = useSWR(['races', user?.id ?? null, token], () => racesApi.list(token))
   const regs = data?.registrations || {}
   // COROS 式 UX：會員面板固定最上方，活動列表做成可上下拖曳的面板（收合看完整會員面板／半展看列表／全展看整份列表）
-  const sheet = useDraggableSheet('half')
+  const sheet = useDraggableSheet('peek') // 與個資頁一致：預設收合到底（露把手＋「活動列表」標題/篩選），會員面板完整顯示，上拉看列表
   const [filter, setFilter] = useState<FilterKey>('all')
   const [showUpgrade, setShowUpgrade] = useState(false)
   const { dash } = useDashboard()
@@ -106,8 +106,8 @@ export default function RacesScreen({
 
       {/* 會員面板（固定最上方，背景層）+ 可拖曳活動列表面板 */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        {/* 會員資訊面板：固定最上方；面板收合時完整顯示，可自行捲動 */}
-        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 0' }}>
+        {/* 會員資訊面板：固定最上方；面板收合時完整顯示，可自行捲動（底部留白略大於收合面板高度，與個資頁一致） */}
+        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 160px' }}>
           <MemberPanel onOpenProfile={onOpenProfile} onOpenPersonalTasks={onOpenPersonalTasks} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} showEntries={false} />
         </div>
 
@@ -133,7 +133,7 @@ export default function RacesScreen({
                 {FILTER_TABS.map(({ key, label }) => {
                   const on = filter === key
                   return (
-                    <button key={key} onClick={() => setFilter(key)} style={{
+                    <button key={key} onClick={() => { setFilter(key); if (sheet.snap === 'peek') sheet.setSnap('half') }} style={{
                       fontSize: 12, padding: '4px 11px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
                       background: on ? 'var(--fug)' : 'transparent',
                       color: on ? 'var(--fug-ink)' : 'var(--tx-dim)',
