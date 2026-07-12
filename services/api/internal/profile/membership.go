@@ -95,33 +95,36 @@ func computeLevel(exp int, levels []LevelConfig) (level int, title string, floor
 // --- Dashboard ---
 
 type DashboardInfo struct {
-	Name           string     `json:"name"`
-	Nickname       string     `json:"nickname"`
-	Handle         string     `json:"handle"`
-	AvatarURL      string     `json:"avatar_url"`
-	AccountCode    string     `json:"account_code"`
-	Exp            int        `json:"exp"`
-	Dp             int        `json:"dp"` // DP 幣餘額
-	Level          int        `json:"level"`
-	LevelTitle     string     `json:"level_title"`
-	LevelFloor     int        `json:"level_floor"`    // 本級門檻 EXP
-	NextLevelExp   *int       `json:"next_level_exp"` // 下一級門檻（null=已頂級）
-	IsVIP          bool       `json:"is_vip"`
-	VIPExpiresAt   *time.Time `json:"vip_expires_at,omitempty"`
-	VipPlan               string `json:"vip_plan"`                // ''=無 / trial / monthly / annual
-	ActivityCouponBalance int    `json:"activity_coupon_balance"` // 活動優惠券($100)剩餘張數
-	ShowTrialExpiryNotice bool   `json:"show_trial_expiry_notice"` // 試用到期 + 尚未提示過 → 前台跳一次升級彈窗
-	TotalKm        float64    `json:"total_km"`
-	RaceCount      int        `json:"race_count"`      // 報名場數（未取消）
-	OngoingCount   int        `json:"ongoing_count"`   // 進行中場數
-	CompletedCount int        `json:"completed_count"` // 已完成場數
-	FollowingCount int        `json:"following_count"`
-	FollowerCount  int        `json:"follower_count"`
+	Name                  string     `json:"name"`
+	Nickname              string     `json:"nickname"`
+	Handle                string     `json:"handle"`
+	AvatarURL             string     `json:"avatar_url"`
+	AccountCode           string     `json:"account_code"`
+	Exp                   int        `json:"exp"`
+	Dp                    int        `json:"dp"` // DP 幣餘額
+	Level                 int        `json:"level"`
+	LevelTitle            string     `json:"level_title"`
+	LevelFloor            int        `json:"level_floor"`    // 本級門檻 EXP
+	NextLevelExp          *int       `json:"next_level_exp"` // 下一級門檻（null=已頂級）
+	IsVIP                 bool       `json:"is_vip"`
+	VIPExpiresAt          *time.Time `json:"vip_expires_at,omitempty"`
+	VipPlan               string     `json:"vip_plan"`                 // ''=無 / trial / monthly / annual
+	ActivityCouponBalance int        `json:"activity_coupon_balance"`  // 活動優惠券($100)剩餘張數
+	ShowTrialExpiryNotice bool       `json:"show_trial_expiry_notice"` // 試用到期 + 尚未提示過 → 前台跳一次升級彈窗
+	TotalKm               float64    `json:"total_km"`
+	RaceCount             int        `json:"race_count"`      // 報名場數（未取消）
+	OngoingCount          int        `json:"ongoing_count"`   // 進行中場數
+	CompletedCount        int        `json:"completed_count"` // 已完成場數
+	FollowingCount        int        `json:"following_count"`
+	FollowerCount         int        `json:"follower_count"`
 	// PersonalEntry 個人任務入口的可見性（後端依系統設定 + 白名單解析後給前端）：
 	// hidden 不顯示 / locked 顯示但不能按 / shown 顯示且可按。
-	PersonalEntry string `json:"personal_entry"`
-	ExploreEntry  string `json:"explore_entry"` // 城市探索入口可見性（同上）
-	GalleryEntry  string `json:"gallery_entry"` // 卡片圖鑑入口可見性（同上）
+	PersonalEntry    string         `json:"personal_entry"`
+	ExploreEntry     string         `json:"explore_entry"`        // 城市探索入口可見性（同上）
+	GalleryEntry     string         `json:"gallery_entry"`        // 卡片圖鑑入口可見性（同上）
+	TitleEntry       string         `json:"title_entry"`          // 稱號系統入口可見性（同上）
+	AchievementEntry string         `json:"achievement_entry"`    // 成就統計入口可見性（同上）
+	NewTitles        []AwardedTitle `json:"new_titles,omitempty"` // 本次 dashboard 新解鎖（未看過）稱號
 }
 
 // GET /api/v1/profile/dashboard
@@ -160,6 +163,9 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	d.PersonalEntry = resolvePersonalEntry(r.Context(), h.db, email, code)
 	d.ExploreEntry = resolveEntry(r.Context(), h.db, "explore_entry_state", "explore_entry_whitelist", email, code)
 	d.GalleryEntry = resolveEntry(r.Context(), h.db, "gallery_entry_state", "gallery_entry_whitelist", email, code)
+	d.TitleEntry = resolveEntry(r.Context(), h.db, "title_entry_state", "title_entry_whitelist", email, code)
+	d.AchievementEntry = resolveEntry(r.Context(), h.db, "achievement_entry_state", "achievement_entry_whitelist", email, code)
+	d.NewTitles = h.checkAndAwardTitles(r.Context(), userID)
 	levels, err := h.levelConfigList(r.Context())
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")

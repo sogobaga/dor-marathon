@@ -198,7 +198,7 @@ function LbList({
               <div style={{ width: 24, textAlign: 'center', fontWeight: 800, color: r.rank <= 3 ? 'var(--gold)' : 'var(--tx-dim)' }}>{r.rank}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {r.nickname}{r.is_me ? '（我）' : ''}
+                  {r.title && <span style={{ color: 'var(--gold)', fontWeight: 800, marginRight: 5 }}>{r.title}</span>}{r.nickname}{r.is_me ? '（我）' : ''}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{r.group_name || ''} · {r.distance_km.toFixed(1)}K</div>
               </div>

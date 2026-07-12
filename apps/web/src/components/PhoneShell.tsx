@@ -8,6 +8,9 @@ import ProfileScreen from './ProfileScreen'
 import PersonalTasksScreen from './PersonalTasksScreen'
 import ExploreScreen from './ExploreScreen'
 import CardGalleryScreen from './CardGalleryScreen'
+import TitleScreen from './TitleScreen'
+import AchievementScreen from './AchievementScreen'
+import TitleUnlockModal from './TitleUnlockModal'
 import RaceDetailScreen from './RaceDetailScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
 import VersionBadge from './VersionBadge'
@@ -16,7 +19,7 @@ import DedupNoticeGate from './DedupNoticeGate'
 import { validateSession, getUserToken } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { pageview } from '@/lib/analytics'
-import { profileApi, type Race } from '@/lib/api'
+import { profileApi, titleApi, type Race } from '@/lib/api'
 import UpgradeVipModal from './UpgradeVipModal'
 
 export default function PhoneShell() {
@@ -28,6 +31,10 @@ export default function PhoneShell() {
   const [showPersonalTasks, setShowPersonalTasks] = useState(false)
   const [showExplore, setShowExplore] = useState(false)
   const [showGallery, setShowGallery] = useState(false)
+  const [showTitle, setShowTitle] = useState(false)
+  const [showAchievement, setShowAchievement] = useState(false)
+  const [titlesModal, setTitlesModal] = useState<{ code: string; name: string; tier: number; category: string }[]>([])
+  const titlesHandled = useRef(false)
   const [unlockCardId, setUnlockCardId] = useState<string | undefined>(undefined)
   const [payRace, setPayRace] = useState<Race | null>(null)
   const [trialModal, setTrialModal] = useState(false)
@@ -43,6 +50,15 @@ export default function PhoneShell() {
       if (t) profileApi.markTrialNoticeShown(t).catch(() => {})
     }
   }, [dash?.show_trial_expiry_notice])
+
+  // 新解鎖稱號 → 華麗彈窗（dashboard 驅動、只跳一次；關閉時標記 seen）
+  useEffect(() => {
+    const nt = dash?.new_titles
+    if (nt && nt.length && !titlesHandled.current) {
+      titlesHandled.current = true
+      setTitlesModal(nt)
+    }
+  }, [dash?.new_titles])
 
   useEffect(() => {
     // 開啟 app 即驗證/換發 token：避免「顯示已登入但實際過期」的不一致
@@ -67,13 +83,15 @@ export default function PhoneShell() {
     if (firstView.current) { firstView.current = false; return }
     let path = '/', title = '首頁'
     if (showGallery) { path = '/gallery'; title = '卡片圖鑑' }
+    else if (showTitle) { path = '/titles'; title = 'PB探索' }
+    else if (showAchievement) { path = '/achievements'; title = '成就探索' }
     else if (showExplore) { path = '/explore'; title = '城市探索' }
     else if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
     else if (showProfile || payRace) { path = '/profile'; title = '會員資訊' }
     else if (registerRace) { path = `/register/${registerRace.slug}`; title = `報名 - ${registerRace.title}` }
     else if (detailRace) { path = `/race/${detailRace.slug}`; title = detailRace.title }
     pageview(path, title)
-  }, [showGallery, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
+  }, [showGallery, showTitle, showAchievement, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
 
   return (
     <GoogleAuthProvider>
@@ -92,6 +110,10 @@ export default function PhoneShell() {
         {/* 賽事列表 / 賽事資訊(簡章·進度·排名) / 報名 / 個人資訊 / 個人任務 — 串接 Go API 真實資料 */}
         {showGallery ? (
           <CardGalleryScreen onBack={() => setShowGallery(false)} focusCardId={unlockCardId} />
+        ) : showTitle ? (
+          <TitleScreen onBack={() => setShowTitle(false)} />
+        ) : showAchievement ? (
+          <AchievementScreen onBack={() => setShowAchievement(false)} />
         ) : showExplore ? (
           <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={(bossId) => { window.location.href = bossId ? '/track?focus=' + encodeURIComponent(bossId) : '/track' }} />
         ) : showPersonalTasks ? (
@@ -103,6 +125,8 @@ export default function PhoneShell() {
             onOpenPersonalTasks={() => setShowPersonalTasks(true)}
             onOpenExplore={() => setShowExplore(true)}
             onOpenGallery={() => setShowGallery(true)}
+            onOpenTitle={() => setShowTitle(true)}
+            onOpenAchievement={() => setShowAchievement(true)}
           />
         ) : registerRace ? (
           <RegistrationScreen race={registerRace} onBack={() => setRegisterRace(null)} />
@@ -122,6 +146,8 @@ export default function PhoneShell() {
             onOpenPersonalTasks={() => setShowPersonalTasks(true)}
             onOpenExplore={() => setShowExplore(true)}
             onOpenGallery={() => setShowGallery(true)}
+            onOpenTitle={() => setShowTitle(true)}
+            onOpenAchievement={() => setShowAchievement(true)}
             onOpenBrochure={(r) => { setDetailTab(undefined); setDetailRace(r) }}
           />
         )}
@@ -136,6 +162,15 @@ export default function PhoneShell() {
       <DedupNoticeGate />
       {/* VIP 試用到期升級彈窗（只跳一次） */}
       {trialModal && <UpgradeVipModal expired onClose={() => setTrialModal(false)} />}
+      {/* 稱號解鎖彈窗（dashboard 驅動、只跳一次；關閉標記 seen） */}
+      {titlesModal.length > 0 && (
+        <TitleUnlockModal titles={titlesModal} onClose={() => {
+          const codes = titlesModal.map((t) => t.code)
+          setTitlesModal([])
+          const tk = getUserToken()
+          if (tk) titleApi.seen(tk, codes).catch(() => {})
+        }} />
+      )}
     </div>
     </GoogleAuthProvider>
   )

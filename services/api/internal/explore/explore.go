@@ -371,6 +371,7 @@ type rankRow struct {
 	Rank        int        `json:"rank"`
 	UserID      string     `json:"user_id"`
 	Nickname    string     `json:"nickname"`
+	Title       string     `json:"title"`
 	AvatarURL   string     `json:"avatar_url"`
 	Stars       int        `json:"stars"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
@@ -386,12 +387,14 @@ func (h *Handler) Ranking(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(), `
 		SELECT pr.user_id::text,
 		       COALESCE(NULLIF(p.nickname,''), u.handle),
+		       COALESCE(td.name,''),
 		       COALESCE(u.avatar_url,''),
 		       pr.stars, pr.completed_at,
 		       ($1 <> '' AND EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = NULLIF($1,'')::uuid AND f.followee_id = pr.user_id))
 		FROM explore_progress pr
 		JOIN users u ON u.id = pr.user_id
 		LEFT JOIN user_profiles p ON p.user_id = pr.user_id
+		LEFT JOIN title_defs td ON td.code = u.displayed_title
 		WHERE pr.boss_id=$2 AND pr.completed_at IS NOT NULL AND pr.stars > 0
 		ORDER BY pr.stars DESC, pr.completed_at ASC
 		LIMIT 100`, uid, bossID)
@@ -404,7 +407,7 @@ func (h *Handler) Ranking(w http.ResponseWriter, r *http.Request) {
 	rank := 0
 	for rows.Next() {
 		var rr rankRow
-		if err := rows.Scan(&rr.UserID, &rr.Nickname, &rr.AvatarURL, &rr.Stars, &rr.CompletedAt, &rr.IsFollowing); err != nil {
+		if err := rows.Scan(&rr.UserID, &rr.Nickname, &rr.Title, &rr.AvatarURL, &rr.Stars, &rr.CompletedAt, &rr.IsFollowing); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}

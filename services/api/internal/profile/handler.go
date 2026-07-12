@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/realtime"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/dor/api/internal/auth"
-	"github.com/dor/api/internal/realtime"
 )
 
 type Handler struct {
@@ -38,16 +38,21 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/mileage-exp", h.GetMileageExp)
 	r.Get("/mileage-config", h.MileageConfig)
 	r.Post("/mileage-exp/seen", h.MarkMileageSeen)
-	r.Post("/data-source", h.SetDataSource)   // 偏好資料來源（跨來源去重）
-	r.Get("/dedup-notice", h.DedupNotice)     // 首次去重彈窗
+	r.Post("/data-source", h.SetDataSource) // 偏好資料來源（跨來源去重）
+	r.Get("/dedup-notice", h.DedupNotice)   // 首次去重彈窗
 	r.Post("/dedup-resolve", h.DedupResolve)
 	r.Get("/records", h.Records)
 	r.Get("/stats", h.Stats)
 	r.Get("/registrations", h.Registrations)
 	r.Get("/orders/{orderID}", h.OrderDetail)
-	r.Get("/vip/pricing", h.VipPricing)              // VIP 方案定價（依促銷資格）
-	r.Post("/vip/cancel", h.CancelVipSub)            // 取消訂閱（不再續扣，權益至到期日）
-	r.Post("/trial-notice-shown", h.MarkTrialNoticeShown) // 標記試用到期彈窗已顯示（只跳一次）
+	r.Get("/vip/pricing", h.VipPricing)                     // VIP 方案定價（依促銷資格）
+	r.Post("/vip/cancel", h.CancelVipSub)                   // 取消訂閱（不再續扣，權益至到期日）
+	r.Post("/trial-notice-shown", h.MarkTrialNoticeShown)   // 標記試用到期彈窗已顯示（只跳一次）
+	r.Get("/titles", h.Titles)                              // 稱號圖鑑
+	r.Post("/titles/display", h.SetDisplayedTitle)          // 設定展示中稱號
+	r.Post("/titles/seen", h.MarkTitlesSeen)                // 標記新解鎖稱號已看過
+	r.Get("/achievements", h.GetAchievements)               // 成就總覽
+	r.Get("/achievements/calendar", h.AchievementsCalendar) // 月曆里程
 	return r
 }
 
@@ -76,16 +81,16 @@ func (h *Handler) MembershipAdminRouter() http.Handler {
 
 // Profile 個人資訊（user_profiles + users.email）
 type Profile struct {
-	UserID    string `json:"user_id"`
-	Email     string `json:"email"`
-	Name      string `json:"name"`       // 顯示名稱（users.name）
-	AvatarURL string `json:"avatar_url"` // users.avatar_url
-	RealName  string `json:"real_name"`
-	Nickname  string `json:"nickname"`
-	Phone     string `json:"phone"`
-	Address   string `json:"address"`
-	Birthday  string `json:"birthday"` // YYYY-MM-DD，空=未填
-	Gender    string `json:"gender"`   // male|female|other|空
+	UserID              string `json:"user_id"`
+	Email               string `json:"email"`
+	Name                string `json:"name"`       // 顯示名稱（users.name）
+	AvatarURL           string `json:"avatar_url"` // users.avatar_url
+	RealName            string `json:"real_name"`
+	Nickname            string `json:"nickname"`
+	Phone               string `json:"phone"`
+	Address             string `json:"address"`
+	Birthday            string `json:"birthday"`              // YYYY-MM-DD，空=未填
+	Gender              string `json:"gender"`                // male|female|other|空
 	PreferredDataSource string `json:"preferred_data_source"` // gps|strava（跨來源去重偏好；預設 gps）
 }
 
@@ -286,32 +291,32 @@ func (h *Handler) OrderDetail(w http.ResponseWriter, r *http.Request) {
 
 // MemberSummary 後台會員列表單筆
 type MemberSummary struct {
-	ID        string    `json:"id"`
-	Email     string    `json:"email"`
-	Handle    string    `json:"handle"`
-	Name      string    `json:"name"`
-	Role      string    `json:"role"`
-	RealName  string    `json:"real_name"`
-	Phone     string    `json:"phone"`
-	Gender    string    `json:"gender"`
-	TotalKm   float64   `json:"total_km"`
-	CanCreateTeamGroup bool `json:"can_create_team_group"`
-	CreatedAt time.Time `json:"created_at"`
-	IsVIP        bool       `json:"is_vip"`
-	VIPExpiresAt *time.Time `json:"vip_expires_at,omitempty"`
-	VipPlan      string     `json:"vip_plan"`
+	ID                 string     `json:"id"`
+	Email              string     `json:"email"`
+	Handle             string     `json:"handle"`
+	Name               string     `json:"name"`
+	Role               string     `json:"role"`
+	RealName           string     `json:"real_name"`
+	Phone              string     `json:"phone"`
+	Gender             string     `json:"gender"`
+	TotalKm            float64    `json:"total_km"`
+	CanCreateTeamGroup bool       `json:"can_create_team_group"`
+	CreatedAt          time.Time  `json:"created_at"`
+	IsVIP              bool       `json:"is_vip"`
+	VIPExpiresAt       *time.Time `json:"vip_expires_at,omitempty"`
+	VipPlan            string     `json:"vip_plan"`
 }
 
 // MemberDetail 後台會員詳情（含完整個資與報名數）
 type MemberDetail struct {
 	MemberSummary
-	Nickname     string     `json:"nickname"`
-	Address      string     `json:"address"`
-	Birthday     string     `json:"birthday"`
-	RaceCount    int        `json:"race_count"`
-	Exp          int        `json:"exp"`
-	Level        int        `json:"level"`
-	LevelTitle   string     `json:"level_title"`
+	Nickname     string       `json:"nickname"`
+	Address      string       `json:"address"`
+	Birthday     string       `json:"birthday"`
+	RaceCount    int          `json:"race_count"`
+	Exp          int          `json:"exp"`
+	Level        int          `json:"level"`
+	LevelTitle   string       `json:"level_title"`
 	IsVIP        bool         `json:"is_vip"`
 	VIPExpiresAt *time.Time   `json:"vip_expires_at,omitempty"`
 	Athlete      AthleteStats `json:"athlete"` // 選手分級（後台限定顯示）
@@ -425,8 +430,8 @@ type RaceRecord struct {
 	RaceID    string    `json:"race_id"`
 	Slug      string    `json:"slug"`
 	Title     string    `json:"title"`
-	Distance  int       `json:"distance"`   // 報名組別
-	TotalKm   float64   `json:"total_km"`   // 實際完成里程
+	Distance  int       `json:"distance"` // 報名組別
+	TotalKm   float64   `json:"total_km"` // 實際完成里程
 	StartDate time.Time `json:"start_date"`
 	EndDate   time.Time `json:"end_date"`
 	Faction   string    `json:"faction"`

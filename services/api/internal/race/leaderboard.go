@@ -13,6 +13,7 @@ type LeaderRow struct {
 	Rank         int        `json:"rank"`
 	UserID       string     `json:"user_id"`
 	Nickname     string     `json:"nickname"`
+	Title        string     `json:"title"`
 	GroupName    string     `json:"group_name,omitempty"`
 	CompletionAt *time.Time `json:"completion_at,omitempty"`
 	TotalTimeS   int        `json:"total_time_s"`
@@ -31,6 +32,7 @@ type Leaderboard struct {
 type finisher struct {
 	userID       string
 	nickname     string
+	title        string
 	groupName    string
 	completionAt time.Time
 	totalTimeS   int
@@ -41,7 +43,7 @@ type finisher struct {
 func (r *Repository) computeFinishers(ctx context.Context, raceID string) ([]finisher, int, error) {
 	// 跨賽事歸戶：依「報名中 + recorded_at 落在賽事期間」計入，不看 activity.race_id
 	rows, err := r.db.Query(ctx, `
-		SELECT a.user_id::text, COALESCE(NULLIF(p.nickname,''), u.handle), COALESCE(g.name,''),
+		SELECT a.user_id::text, COALESCE(NULLIF(p.nickname,''), u.handle), COALESCE(td.name,''), COALESCE(g.name,''),
 		       COALESCE(g.target_distance_km, 0), a.distance_km, a.duration_s, a.recorded_at
 		FROM races rc
 		JOIN registrations reg ON reg.race_id = rc.id AND reg.status <> 'cancelled'
@@ -50,6 +52,7 @@ func (r *Repository) computeFinishers(ctx context.Context, raceID string) ([]fin
 		LEFT JOIN race_groups g ON g.id = reg.group_id
 		JOIN users u ON u.id = reg.user_id
 		LEFT JOIN user_profiles p ON p.user_id = reg.user_id
+		LEFT JOIN title_defs td ON td.code = u.displayed_title
 		WHERE rc.id = $1
 		ORDER BY a.user_id, a.recorded_at`, raceID)
 	if err != nil {
@@ -61,19 +64,19 @@ func (r *Repository) computeFinishers(ctx context.Context, raceID string) ([]fin
 	var cur string
 	var accDist, target float64
 	var accTime int
-	var nickname, groupName string
+	var nickname, title, groupName string
 	var done bool
 
 	for rows.Next() {
-		var uid, nick, gname string
+		var uid, nick, ttl, gname string
 		var tgt, dist float64
 		var dur int
 		var at time.Time
-		if err := rows.Scan(&uid, &nick, &gname, &tgt, &dist, &dur, &at); err != nil {
+		if err := rows.Scan(&uid, &nick, &ttl, &gname, &tgt, &dist, &dur, &at); err != nil {
 			return nil, 0, err
 		}
 		if uid != cur {
-			cur, accDist, accTime, target, nickname, groupName, done = uid, 0, 0, tgt, nick, gname, false
+			cur, accDist, accTime, target, nickname, title, groupName, done = uid, 0, 0, tgt, nick, ttl, gname, false
 		}
 		if done {
 			continue
@@ -82,7 +85,7 @@ func (r *Repository) computeFinishers(ctx context.Context, raceID string) ([]fin
 		accTime += dur
 		if target > 0 && accDist >= target {
 			finishers = append(finishers, finisher{
-				userID: uid, nickname: nickname, groupName: groupName,
+				userID: uid, nickname: nickname, title: title, groupName: groupName,
 				completionAt: at, totalTimeS: accTime, distanceKm: accDist,
 			})
 			done = true
@@ -142,7 +145,7 @@ func (s *Service) GetLeaderboard(ctx context.Context, raceID, userID string) (*L
 	toRow := func(f finisher) LeaderRow {
 		c := f.completionAt
 		return LeaderRow{
-			UserID: f.userID, Nickname: f.nickname, GroupName: f.groupName,
+			UserID: f.userID, Nickname: f.nickname, Title: f.title, GroupName: f.groupName,
 			CompletionAt: &c, TotalTimeS: f.totalTimeS, DistanceKm: round2(f.distanceKm),
 			IsFollowing: following[f.userID], IsMe: f.userID == userID,
 		}

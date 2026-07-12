@@ -52,6 +52,8 @@ export default function RacesScreen({
   onOpenPersonalTasks,
   onOpenExplore,
   onOpenGallery,
+  onOpenTitle,
+  onOpenAchievement,
   onOpenBrochure,
 }: {
   onOpenRanking?: (race: Race) => void
@@ -61,6 +63,8 @@ export default function RacesScreen({
   onOpenPersonalTasks?: () => void
   onOpenExplore?: () => void
   onOpenGallery?: () => void
+  onOpenTitle?: () => void
+  onOpenAchievement?: () => void
   onOpenBrochure?: (race: Race) => void
 }) {
   const user = useUser() // 登入狀態變動時重新渲染 → 用最新 token 重抓報名狀態
@@ -104,7 +108,7 @@ export default function RacesScreen({
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {/* 會員資訊面板：固定最上方；面板收合時完整顯示，可自行捲動 */}
         <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 0' }}>
-          <MemberPanel onOpenProfile={onOpenProfile} onOpenPersonalTasks={onOpenPersonalTasks} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} showEntries={false} />
+          <MemberPanel onOpenProfile={onOpenProfile} onOpenPersonalTasks={onOpenPersonalTasks} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} showEntries={false} />
         </div>
 
         {/* 可拖曳活動列表面板 */}

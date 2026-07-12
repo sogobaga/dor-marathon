@@ -23,21 +23,27 @@ var specs = map[string]func(string) bool{
 	"event_first_wait_run2_sec": isNonNegInt,
 	"event_first_wait_run3_sec": isNonNegInt,
 	"active_skin":               func(v string) bool { return v == "" || v == "default" || v == "warm" || v == "warm2" },
-	"interstitial_enabled": func(v string) bool { return v == "" || v == "0" || v == "1" }, // 蓋板廣告總開關
-	"favicon_url":          func(v string) bool { return v == "" || (len(v) <= 512 && (strings.HasPrefix(v, "/") || strings.HasPrefix(v, "http"))) },
+	"interstitial_enabled":      func(v string) bool { return v == "" || v == "0" || v == "1" }, // 蓋板廣告總開關
+	"favicon_url": func(v string) bool {
+		return v == "" || (len(v) <= 512 && (strings.HasPrefix(v, "/") || strings.HasPrefix(v, "http")))
+	},
 	// 入口可見性：hidden 前台隱藏 / locked 顯示但不能按 / whitelist 顯示且指定帳號可按 / open 顯示且全部開放
-	"personal_entry_state":     isEntryState,
-	"personal_entry_whitelist": isWhitelist, // 換行/逗號分隔的帳號編碼或 email
-	"explore_entry_state":      isEntryState, // 城市探索入口
-	"explore_entry_whitelist":  isWhitelist,
-	"gallery_entry_state":      isEntryState, // 卡片圖鑑入口
-	"gallery_entry_whitelist":  isWhitelist,
+	"personal_entry_state":        isEntryState,
+	"personal_entry_whitelist":    isWhitelist,  // 換行/逗號分隔的帳號編碼或 email
+	"explore_entry_state":         isEntryState, // 城市探索入口
+	"explore_entry_whitelist":     isWhitelist,
+	"gallery_entry_state":         isEntryState, // 卡片圖鑑入口
+	"gallery_entry_whitelist":     isWhitelist,
+	"title_entry_state":           isEntryState, // 稱號系統入口
+	"title_entry_whitelist":       isWhitelist,
+	"achievement_entry_state":     isEntryState, // 成就統計入口
+	"achievement_entry_whitelist": isWhitelist,
 	// VIP 訂閱制（後台可調數值）
 	"vip_trial_days":              isNonNegInt, // 新註冊自動 VIP 試用天數
 	"vip_price_monthly":           isNonNegInt, // 月繳原價（元）
 	"vip_price_annual":            isNonNegInt, // 年繳原價（元）
 	"vip_first_promo_monthly_pct": isPct,       // 首購促銷・月繳實付%（70=付七成）
-	"vip_first_promo_annual_pct":  isPct,        // 首購促銷・年繳實付%（55=付五五）
+	"vip_first_promo_annual_pct":  isPct,       // 首購促銷・年繳實付%（55=付五五）
 	"vip_first_promo_days":        isNonNegInt, // 首購促銷窗天數（試用到期後幾天內續訂享優惠）
 }
 

@@ -969,6 +969,66 @@ export interface DashboardInfo {
   personal_entry: 'hidden' | 'locked' | 'shown' // 個人任務入口可見性（後端解析）
   explore_entry: 'hidden' | 'locked' | 'shown'  // 城市探索入口可見性
   gallery_entry: 'hidden' | 'locked' | 'shown'  // 卡片圖鑑入口可見性
+  title_entry: 'hidden' | 'locked' | 'shown'       // 稱號系統(PB探索)入口可見性
+  achievement_entry: 'hidden' | 'locked' | 'shown' // 成就統計(成就探索)入口可見性
+  new_titles?: { code: string; name: string; tier: number; category: string }[] // 新解鎖稱號（前台跳彈窗用，跳完呼叫 /titles/seen）
+}
+
+// --- 稱號系統 (PB探索) ---
+
+export interface TitleCat { key: string; label: string }
+export interface TitleItem {
+  code: string
+  category: string
+  name: string // 未解鎖時已被伺服器遮成「？？？？？？？？」
+  tier: number // 1~6，越高越華麗
+  threshold: number
+  unit: string
+  earned: boolean
+  earned_at?: string
+}
+
+export const titleApi = {
+  list: (token: string) =>
+    request<{ categories: TitleCat[]; titles: TitleItem[]; displayed: string }>('/profile/titles', { headers: withAuth(token) }),
+  // code='' 取消展示
+  display: (token: string, code: string) =>
+    request<{ ok: boolean }>('/profile/titles/display', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ code }) }),
+  seen: (token: string, codes: string[]) =>
+    request<{ ok: boolean }>('/profile/titles/seen', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ codes }) }),
+}
+
+// --- 成就統計 (成就探索) ---
+
+export interface AchievementStats {
+  single_max_km: number
+  cum_km: number
+  single_max_sec: number
+  cum_sec: number
+  activity_count: number
+  streak_days: number
+  checkin_count: number
+  boss_count: number
+  boss_s1: number
+  boss_s2: number
+  boss_s3: number
+  personal_count: number
+  level: number
+  level_title: string
+  card_count: number
+  following: number
+  followers: number
+  dp: number
+  race_count: number
+}
+
+export interface AchievementCalendarDay { date: string; km: number }
+export interface AchievementCalendar { month: string; total_km: number; days: AchievementCalendarDay[] }
+
+export const achievementApi = {
+  stats: (token: string) => request<AchievementStats>('/profile/achievements', { headers: withAuth(token) }),
+  calendar: (token: string, month: string) =>
+    request<AchievementCalendar>(`/profile/achievements/calendar?month=${encodeURIComponent(month)}`, { headers: withAuth(token) }),
 }
 
 // VIP 訂閱優惠檔期（後台管理）。pay_pct=實付%（70=付七成、即打七折）
@@ -1042,6 +1102,7 @@ export interface LeaderboardRow {
   rank: number
   user_id: string
   nickname: string
+  title: string // 目前展示中的稱號（無則空字串）
   group_name?: string
   completion_at?: string
   total_time_s: number
@@ -1356,6 +1417,7 @@ export interface ExploreRankRow {
   rank: number
   user_id: string
   nickname: string
+  title: string // 目前展示中的稱號（無則空字串）
   avatar_url: string
   stars: number
   completed_at?: string

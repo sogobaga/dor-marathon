@@ -74,7 +74,7 @@ export default function BossRankingPanel({ bossId, bossName, onClose }: {
                   <Avatar url={r.avatar_url} name={r.nickname} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {r.nickname}{r.is_me ? '（我）' : ''}
+                      {r.title && <span style={{ color: 'var(--gold)', fontWeight: 800, marginRight: 5 }}>{r.title}</span>}{r.nickname}{r.is_me ? '（我）' : ''}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{fmtDate(r.completed_at)}</div>
                   </div>
