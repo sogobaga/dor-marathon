@@ -63,7 +63,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
   const [follows, setFollows] = useState<FollowRow[] | null>(null)
   const [site, setSite] = useState<SiteSettings | null>(null) // 全站外觀設定（含 Strava 標章雙版本 URL）
   // COROS 式 UX：會員資訊面板固定最上方，分頁內容做成可上下拖曳面板（收合看完整會員面板／半展看分頁／全展看整份內容）
-  const sheet = useDraggableSheet('half')
+  const sheet = useDraggableSheet('peek') // 預設收合到底部（只露把手＋分頁列）→ 會員面板四個入口(含 PB/成就探索)一進頁就完整顯示
 
   function loadFollows() {
     withUserAuth((t) => profileApi.follows(t)).then((r) => setFollows(r.following)).catch(() => {})
@@ -235,8 +235,8 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
 
       {/* 會員資訊面板固定最上方 + 可拖曳（個人資料/運動數據/報名紀錄/追蹤）面板 */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        {/* 背景層：會員資訊面板（可自行捲動）。底部留白 ≥ 半展面板高度，讓最下方入口(PB/成就探索)能捲到可拖曳面板上方、不被遮住 */}
-        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px calc(50vh + 40px)' }}>
+        {/* 背景層：會員資訊面板（可自行捲動）。底部留白略大於收合面板高度，讓最下方入口(PB/成就探索)必要時能捲到把手上方 */}
+        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 160px' }}>
         {err && <div style={{ color: 'var(--hunt)', padding: '8px 2px', fontSize: 13 }}>{err}</div>}
         {/* 會員資訊面板：與首頁共用同一元件、內容一致（此頁頭像可上傳） */}
         <MemberPanel onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} onOpenPersonalTasks={onOpenPersonalTasks} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} />
@@ -260,7 +260,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
             </div>
             <div style={{ display: 'flex', gap: 6, padding: '2px 14px 0', borderBottom: '1px solid var(--line)' }}>
               {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄'], ['follows', '追蹤']] as const).map(([v, label]) => (
-                <button key={v} onClick={() => setTab(v)} style={{
+                <button key={v} onClick={() => { setTab(v); if (sheet.snap === 'peek') sheet.setSnap('half') }} style={{
                   padding: '8px 9px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap',
                   color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 700 : 400,
                   borderBottom: tab === v ? '2px solid var(--fug)' : '2px solid transparent',
