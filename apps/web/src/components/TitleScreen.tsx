@@ -51,7 +51,16 @@ export default function TitleScreen({ onBack }: { onBack: () => void }) {
 
   const earnedCount = titles.filter((t) => t.earned).length
   const displayedName = titles.find((t) => t.code === displayed && t.earned)?.name || ''
-  const ordered = titles.slice().sort((a, b) => scramble(a.code) - scramble(b.code))
+  // 已解鎖的稱號排最上方（方便玩家選用）；同為已解鎖則華麗(tier)高者在前、再依取得時間新者在前。
+  // 未解鎖者維持打亂排序在下方，隱藏取得規律。
+  const ordered = titles.slice().sort((a, b) => {
+    if (a.earned !== b.earned) return a.earned ? -1 : 1
+    if (a.earned) {
+      if (b.tier !== a.tier) return b.tier - a.tier
+      return (b.earned_at || '').localeCompare(a.earned_at || '')
+    }
+    return scramble(a.code) - scramble(b.code)
+  })
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
@@ -73,7 +82,7 @@ export default function TitleScreen({ onBack }: { onBack: () => void }) {
         {err && <div style={{ color: 'var(--hunt)', fontSize: 13, padding: '10px 2px' }}>{err}</div>}
         {!loaded && !err && <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>}
 
-        {/* 全部稱號：打亂成一面牆，不分類、不顯示數量 */}
+        {/* 全部稱號：已解鎖排最上方(方便選用)，未解鎖打亂在下(隱藏取得規律)；不分類、不顯示數量 */}
         {loaded && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
             {ordered.map((t) => {
