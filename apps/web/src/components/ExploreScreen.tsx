@@ -22,7 +22,7 @@ const fmtDist = (m: number) => (m < 1000 ? `${Math.round(m)}m` : `${(m / 1000).t
 export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => void; onOpenTrack?: (bossId?: string) => void }) {
   const user = useUser()
   const uid = user?.id ?? null
-  const { data } = useSWR(
+  const { data, mutate } = useSWR(
     uid && getUserToken() ? ['explore-list', uid] : null,
     () => withUserAuth((t) => exploreApi.list(t)).then((r) => r.bosses),
   )
@@ -30,6 +30,27 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
   const [rankingBoss, setRankingBoss] = useState<{ id: string; name: string } | null>(null)
   const [pos, setPos] = useState<{ lat: number; lng: number } | null>(null)
   const [county, setCounty] = useState('') // 縣市篩選（空＝全部）
+  const [busyId, setBusyId] = useState('') // 正在打卡定位中的關主 id
+  const [msg, setMsg] = useState<{ id: string; text: string; ok: boolean } | null>(null)
+
+  // 一鍵打卡：取當下位置 → 在範圍內即成功揭曉（不需先開始跑步；伺服器仍驗精度與距離）
+  function doCheckin(b: ExploreBoss) {
+    if (busyId) return
+    if (typeof navigator === 'undefined' || !navigator.geolocation) { setMsg({ id: b.id, text: '此裝置不支援定位', ok: false }); return }
+    setBusyId(b.id); setMsg(null)
+    navigator.geolocation.getCurrentPosition(
+      async (p) => {
+        try {
+          const r = await withUserAuth((t) => exploreApi.checkin(t, b.id, { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy ?? 0 }))
+          if (r.ok && r.boss) { setMsg({ id: b.id, text: `🎉 打卡成功！揭曉了「${r.boss.name}」`, ok: true }); mutate() }
+          else setMsg({ id: b.id, text: r.message || '還沒到打卡點，再靠近一點再試', ok: false })
+        } catch { setMsg({ id: b.id, text: '打卡失敗，請稍後再試', ok: false }) }
+        finally { setBusyId('') }
+      },
+      (e) => { setMsg({ id: b.id, text: e.code === 1 ? '需要定位權限才能打卡' : '定位失敗，請再試一次', ok: false }); setBusyId('') },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+    )
+  }
 
   // 取一次目前位置（用於「越近排越上」；拒絕/失敗則維持原順序）
   useEffect(() => {
@@ -61,7 +82,7 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
         <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '2px 2px 12px', lineHeight: 1.7 }}>
-          全台各地藏著一個個打卡點。到現場、在「GPS 跑步追蹤」頁打卡，看看會遇見什麼——打卡後才會揭曉。
+          全台各地藏著一個個打卡點。到現場後按「打卡」即可揭曉——只要在範圍內就算成功，不用邊跑邊打卡。
           {pos ? '（已依你的位置由近到遠排序）' : ''}
         </p>
 
@@ -97,9 +118,12 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
                     </div>
                     <span style={{ fontSize: 11.5, color: 'var(--tx-faint)', flexShrink: 0 }}>未探索</span>
                   </div>
-                  <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>到「{b.place || '此地'}」附近，於 GPS 追蹤頁打卡揭曉。</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>到「{b.place || '此地'}」附近，按下打卡即可揭曉（在範圍內就算成功）。</div>
                   {b.access_note && <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4, lineHeight: 1.6 }}>📍 開放：{b.access_note}</div>}
-                  {onOpenTrack && <button onClick={() => onOpenTrack(b.id)} style={ghostFullBtn}>前往打卡</button>}
+                  <button onClick={() => doCheckin(b)} disabled={busyId === b.id} style={{ ...checkinBtn, opacity: busyId === b.id ? 0.6 : 1 }}>
+                    {busyId === b.id ? '定位中…' : '📍 打卡'}
+                  </button>
+                  {msg && msg.id === b.id && <div style={{ fontSize: 12, marginTop: 8, color: msg.ok ? 'var(--fug)' : 'var(--hunt)', lineHeight: 1.5, wordBreak: 'break-word' }}>{msg.text}</div>}
                 </div>
               )
             })}
@@ -149,6 +173,7 @@ const backBtn: React.CSSProperties = { background: 'none', border: 'none', color
 const chip: React.CSSProperties = { fontSize: 10.5, fontWeight: 600, color: 'var(--tx-dim)', background: 'var(--bg-2)', borderRadius: 6, padding: '2px 8px' }
 const mysteryIcon: React.CSSProperties = { width: 48, height: 48, borderRadius: 10, background: 'var(--bg-2)', border: '1px dashed var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 900, color: 'var(--tx-faint)', flexShrink: 0 }
 const ghostFullBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'var(--bg-2)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
+const checkinBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 10, padding: '11px', fontSize: 14, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }
 function countyChip(active: boolean): React.CSSProperties {
   return { flexShrink: 0, border: '1px solid ' + (active ? 'var(--fug)' : 'var(--line-2)'), background: active ? 'var(--fug)' : 'var(--bg-2)', color: active ? 'var(--fug-ink)' : 'var(--tx-dim)', borderRadius: 999, padding: '5px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }
 }
