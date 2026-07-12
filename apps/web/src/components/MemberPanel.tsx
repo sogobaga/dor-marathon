@@ -171,7 +171,7 @@ export default function MemberPanel({
                 <button disabled={dash.gallery_entry === 'locked'}
                   onClick={(e) => { e.stopPropagation(); if (dash.gallery_entry === 'shown') onOpenGallery?.() }}
                   style={{ ...entryBtn, opacity: dash.gallery_entry === 'shown' ? 1 : 0.6, cursor: dash.gallery_entry === 'shown' ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>卡片圖鑑</span>
+                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>卡片探索</span>
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.gallery_entry === 'locked' ? '即將開放 ›' : '挑戰各方好手 ›'}</span>
                 </button>
               )}

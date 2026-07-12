@@ -49,7 +49,7 @@ export default function CardGalleryScreen({ onBack, focusCardId }: { onBack: () 
       `}</style>
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
-        <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>卡片圖鑑</span>
+        <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>卡片探索</span>
         <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 800, color: 'var(--gold)' }}>已收集 {collected} 張</span>
       </header>
 

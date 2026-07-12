@@ -82,7 +82,7 @@ export default function PhoneShell() {
   useEffect(() => {
     if (firstView.current) { firstView.current = false; return }
     let path = '/', title = '首頁'
-    if (showGallery) { path = '/gallery'; title = '卡片圖鑑' }
+    if (showGallery) { path = '/gallery'; title = '卡片探索' }
     else if (showTitle) { path = '/titles'; title = 'PB探索' }
     else if (showAchievement) { path = '/achievements'; title = '成就探索' }
     else if (showExplore) { path = '/explore'; title = '城市探索' }

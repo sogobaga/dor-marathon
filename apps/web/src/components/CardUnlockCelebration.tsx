@@ -20,7 +20,7 @@ export default function CardUnlockCelebration({ name, cardUrl, onGallery, onClos
           </div>
         )}
         <div style={{ fontSize: 14, color: 'var(--tx)', marginTop: 16, fontWeight: 700 }}>「{name}」的專屬卡片已加入圖鑑</div>
-        <button onClick={onGallery} style={{ marginTop: 18, width: '100%', background: 'var(--gold)', color: '#fff', fontWeight: 900, border: 'none', borderRadius: 12, padding: '13px', fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>前往卡片圖鑑 ›</button>
+        <button onClick={onGallery} style={{ marginTop: 18, width: '100%', background: 'var(--gold)', color: '#fff', fontWeight: 900, border: 'none', borderRadius: 12, padding: '13px', fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>前往卡片探索 ›</button>
         <button onClick={onClose} style={{ marginTop: 10, width: '100%', background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '11px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>稍後再看</button>
       </div>
     </div>

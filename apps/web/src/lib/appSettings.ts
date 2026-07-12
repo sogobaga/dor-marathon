@@ -81,8 +81,8 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
   {
-    key: 'gallery_entry_state', group: '卡片圖鑑入口', label: '入口顯示狀態', type: 'select', def: 'hidden',
-    help: '控制「會員面板下方的卡片圖鑑按鈕」對前台玩家的可見性。',
+    key: 'gallery_entry_state', group: '卡片探索入口', label: '入口顯示狀態', type: 'select', def: 'hidden',
+    help: '控制「會員面板下方的卡片探索按鈕」對前台玩家的可見性。',
     options: [
       { value: 'hidden', label: '前台隱藏（都看不到）' },
       { value: 'locked', label: '顯示但不能按（即將開放）' },
@@ -91,7 +91,7 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     ],
   },
   {
-    key: 'gallery_entry_whitelist', group: '卡片圖鑑入口', label: '指定帳號白名單', type: 'text', def: '',
+    key: 'gallery_entry_whitelist', group: '卡片探索入口', label: '指定帳號白名單', type: 'text', def: '',
     help: '僅在上方選「指定帳號可按」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email。',
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },

@@ -51,7 +51,7 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
               </div>
               {result.card_obtained && (
                 <div style={{ marginTop: 10, textAlign: 'center', fontSize: 14, fontWeight: 900, color: 'var(--gold)', background: 'rgba(231,184,75,.12)', border: '1px solid rgba(231,184,75,.4)', borderRadius: 10, padding: '9px' }}>
-                  🎴 收服成功！已取得關主卡片，可到「卡片圖鑑」查看
+                  🎴 收服成功！已取得關主卡片，可到「卡片探索」查看
                 </div>
               )}
             </>
