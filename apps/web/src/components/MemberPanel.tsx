@@ -53,11 +53,19 @@ export default function MemberPanel({
       ? Math.max(0, Math.min(100, ((dash.exp - dash.level_floor) / (dash.next_level_exp - dash.level_floor)) * 100))
       : 100
 
-  // 體力值 SP
+  // 體力值 SP（凍結倒數需隨時間更新 → nowMs 每 30 秒 tick，僅凍結期間運作）
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const spMax = dash?.sp_max ?? 0
   const spPct = spMax > 0 ? Math.max(0, Math.min(100, ((dash?.sp ?? 0) / spMax) * 100)) : 0
-  const spFrozen = !!dash?.sp_freeze_until && new Date(dash.sp_freeze_until).getTime() > Date.now()
+  const spFreezeMs = dash?.sp_freeze_until ? new Date(dash.sp_freeze_until).getTime() : 0
+  const spFrozen = spFreezeMs > nowMs
+  const spFreezeLeftS = Math.max(0, Math.round((spFreezeMs - nowMs) / 1000))
   const spLow = !spFrozen && spMax > 0 && (dash?.sp ?? 0) < spMax * 0.25 // 剩餘 SP < 上限 25% → 橘紅警示
+  useEffect(() => {
+    if (!spFrozen) return
+    const id = setInterval(() => setNowMs(Date.now()), 30000)
+    return () => clearInterval(id)
+  }, [spFrozen])
 
   const clickable = !!user && !!onOpenProfile
 
@@ -129,9 +137,9 @@ export default function MemberPanel({
               <span style={{ fontWeight: 800, color: spFrozen ? 'var(--tx-dim)' : spLow ? '#f4623a' : '#2fbf71', flexShrink: 0 }}>
                 體力 SP{spFrozen ? ' · 凍結中' : ''}
               </span>
-              {/* SP 過低警示：置於「體力 SP」與數值中間 */}
-              <span style={{ flex: 1, minWidth: 0, textAlign: 'center', fontSize: 10.5, fontWeight: 700, color: '#f4623a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {spLow ? 'SP 0 時，將有 6 小時強制休息' : ''}
+              {/* 中間資訊：凍結中→剩餘恢復時間；SP 過低→強制休息警示 */}
+              <span style={{ flex: 1, minWidth: 0, textAlign: 'center', fontSize: 10.5, fontWeight: 700, color: spFrozen ? 'var(--tx-dim)' : '#f4623a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {spFrozen ? fmtFreezeLeft(spFreezeLeftS) : spLow ? 'SP 0 時，將有 6 小時強制休息' : ''}
               </span>
               <span style={{ color: spLow ? '#f4623a' : 'var(--tx-dim)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{dash.sp} / {dash.sp_max}</span>
             </div>
@@ -254,6 +262,11 @@ const avatarWrap: React.CSSProperties = {
 }
 const avatarEdit: React.CSSProperties = { position: 'absolute', bottom: 0, left: 0, right: 0, fontSize: 10, textAlign: 'center', background: 'rgba(0,0,0,.55)', color: '#fff', padding: '1px 0' }
 const vipBadge: React.CSSProperties = { fontSize: 10, fontWeight: 800, color: '#fff', background: 'var(--gold)', borderRadius: 6, padding: '1px 7px', letterSpacing: '.05em' }
+// 凍結剩餘秒數 → 「約 X 小時 Y 分後恢復」（體力凍結倒數；不足 1 分顯示「約 1 分後恢復」）
+function fmtFreezeLeft(sec: number): string {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60)
+  return h > 0 ? `約 ${h} 小時 ${m} 分後恢復` : `約 ${Math.max(1, m)} 分後恢復`
+}
 const barOuter: React.CSSProperties = { height: 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden', marginTop: 5 }
 const barInner: React.CSSProperties = { height: '100%', background: 'var(--fug)', borderRadius: 999, transition: 'width .3s' }
 const loginBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 10, padding: '9px 18px', cursor: 'pointer', fontSize: 14 }
