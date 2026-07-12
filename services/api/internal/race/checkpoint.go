@@ -16,7 +16,6 @@ import (
 // 打卡防弊參數
 const (
 	checkinMaxAccuracyM = 40.0 // 定位精度差於此 → 不接受打卡
-	checkinMinTrackM    = 25.0 // 近期軌跡移動需達此長度才算「有移動佐證」，否則待審
 )
 
 func haversineMeters(lat1, lng1, lat2, lng2 float64) float64 {
@@ -339,15 +338,8 @@ func (s *Service) CheckIn(ctx context.Context, userID, cpID string, req checkinR
 		}, nil
 	}
 
-	// 軌跡佐證：近期前景軌跡需呈現實際移動（避免單點偽造）
-	trackLen := trackLength(req.Points)
-	flagged := trackLen < checkinMinTrackM
-	flagReason := ""
-	if flagged {
-		flagReason = "缺 GPS 軌跡佐證，待審核"
-	}
-
-	inserted, err := s.repo.insertCheckin(ctx, userID, cpID, cp.RaceID, req.Lat, req.Lng, req.Acc, distM, flagged, flagReason)
+	// 在範圍內即成功、一律免審核（與城市探索打卡一致，不再要求移動軌跡佐證）
+	inserted, err := s.repo.insertCheckin(ctx, userID, cpID, cp.RaceID, req.Lat, req.Lng, req.Acc, distM, false, "")
 	if err != nil {
 		return nil, err
 	}
@@ -363,9 +355,6 @@ func (s *Service) CheckIn(ctx context.Context, userID, cpID string, req checkinR
 	case !inserted:
 		res.Status = "already"
 		res.Message = "你已在此打卡點打過卡"
-	case flagged:
-		res.Status = "pending"
-		res.Message = "打卡成功，但缺移動軌跡佐證，將由主辦審核後計入"
 	default:
 		res.Status = "verified"
 		res.Message = "打卡成功！"
@@ -374,15 +363,6 @@ func (s *Service) CheckIn(ctx context.Context, userID, cpID string, req checkinR
 		}
 	}
 	return res, nil
-}
-
-// trackLength 近期軌跡的總移動長度（公尺）
-func trackLength(pts []llPoint) float64 {
-	total := 0.0
-	for i := 1; i < len(pts); i++ {
-		total += haversineMeters(pts[i-1].Lat, pts[i-1].Lng, pts[i].Lat, pts[i].Lng)
-	}
-	return total
 }
 
 // ActiveCheckpoints 會員當前可打卡的點清單
