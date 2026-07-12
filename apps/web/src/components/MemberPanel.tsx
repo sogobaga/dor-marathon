@@ -252,7 +252,7 @@ function MiniStat({ label, value }: { label: string; value: number }) {
 }
 
 const card: React.CSSProperties = { position: 'relative', background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 'var(--card-pad, 16px)', boxShadow: 'var(--card-shadow, none)' }
-const dpBadge: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 4, color: '#FFD24D', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }
+const dpBadge: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--gold)', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }
 const mileageBox: React.CSSProperties = { minWidth: 96, background: 'var(--bg-2)', borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }
 const taskBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 3, textAlign: 'left', border: 'none', borderRadius: 12, padding: '10px 14px', background: 'var(--fug)', color: 'var(--fug-ink)', fontFamily: 'inherit' }
 const entryBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3, textAlign: 'left', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 14px)', padding: '12px 14px', background: 'var(--bg-1)', fontFamily: 'inherit', boxShadow: 'var(--card-shadow, none)' }

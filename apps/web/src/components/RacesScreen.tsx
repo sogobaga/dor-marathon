@@ -88,7 +88,7 @@ export default function RacesScreen({
         </div>
         {user && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-            {!dash?.is_vip && (
+            {dash && !dash.is_vip && (
               <button
                 onClick={() => setShowUpgrade(true)}
                 style={{ background: 'var(--gold)', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontSize: 12, fontWeight: 800 }}

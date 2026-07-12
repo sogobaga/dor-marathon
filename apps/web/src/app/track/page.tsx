@@ -1278,7 +1278,7 @@ export default function TrackPage() {
           <div style={{ marginTop: 16 }}>
             <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}><span className="skin-ico" data-ico="pin" aria-hidden>📍</span> 打卡點任務</div>
             {cpMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginBottom: 8, wordBreak: 'break-word' }}>{cpMsg}</div>}
-            {status !== 'tracking' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>建議按「開始跑步」邊跑邊打卡（有軌跡佐證，免審核）。</div>}
+            {status !== 'tracking' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>走到打卡點附近，在範圍內按「打卡」即可（不需邊跑邊打卡）。{checkpoints.length > 0 && '（賽事打卡點若邊跑邊打卡有 GPS 軌跡佐證可免審核）'}</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {/* 城市探索打卡點：清單只列 已揭露待挑戰 + 最近 10 筆未打卡（依縣市篩選＋距離排序） */}
               {exList.map((b) => {
