@@ -984,6 +984,11 @@ export default function TrackPage() {
     .filter((b) => !exCounty || exCountyOf(b.region) === exCounty)
     .slice()
     .sort((a, b) => (exDist(a) ?? Infinity) - (exDist(b) ?? Infinity))
+  // 清單只列：已揭露待挑戰的（少數，讓揭曉後可從此開挑戰）＋「最近 10 筆未打卡」（避免 572 點全列；打卡改到城市探索頁一鍵進行）
+  const exList = [
+    ...exSorted.filter((b) => b.discovered && !b.card_obtained),
+    ...exSorted.filter((b) => !b.discovered).slice(0, 10),
+  ]
 
   // 「前往打卡」：讀取目標關主 id，地圖定位到該打卡點並放大（只做一次；停止 GPS 自動跟隨、篩到該縣市讓清單也顯示）
   useEffect(() => {
@@ -1282,8 +1287,8 @@ export default function TrackPage() {
             {cpMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginBottom: 8, wordBreak: 'break-word' }}>{cpMsg}</div>}
             {status !== 'tracking' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>建議按「開始跑步」邊跑邊打卡（有軌跡佐證，免審核）。</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {/* 城市探索打卡點：表面是打卡任務，打卡後揭露關主挑戰（依縣市篩選＋距離排序） */}
-              {exSorted.map((b) => {
+              {/* 城市探索打卡點：清單只列 已揭露待挑戰 + 最近 10 筆未打卡（依縣市篩選＋距離排序） */}
+              {exList.map((b) => {
                 const d = exDist(b)
                 const inRange = d != null && d <= (b.radius_m || 40)
                 const busy = cpBusy === 'ex:' + b.id
