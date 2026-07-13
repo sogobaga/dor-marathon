@@ -1,0 +1,35 @@
+name: Railway usage monitor
+
+# 每 6 小時檢查 Railway 各服務(api/worker/web/Redis)的 CPU/記憶體與網路流出量；
+# 記憶體/CPU 持續偏高或網路流出接近免費額度就發 Telegram。只讀 Railway API + 發 Telegram。
+# 需在 repo Secrets 設定：RAILWAY_API_TOKEN（TELEGRAM_* 已與 Neon 監控共用）。
+# PROJECT_ID / ENVIRONMENT_ID 非機密，直接寫在下方 env。
+
+on:
+  schedule:
+    - cron: '30 */6 * * *' # 每 6 小時（與 Neon 監控錯開 30 分）
+  workflow_dispatch:
+    inputs:
+      force_notify:
+        description: '強制發一則 Telegram（測試用）'
+        type: boolean
+        default: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Railway usage monitor
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          RAILWAY_PROJECT_ID: '29e3059c-247b-4a3e-aa32-ab385ab408f7'
+          RAILWAY_ENVIRONMENT_ID: 'ea55710a-b3f7-4f7a-a020-643877cc9939'
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MEM_ALERT_GB: '0.5' # 單一服務記憶體超過就警示（現在各服務 ~0.02GB）
+          CPU_ALERT_VCPU: '0.6' # 單一服務 CPU 持續超過就警示
+          NET_TX_ALERT_GB: '400' # 網路流出接近免費 500GB 時警示
+          FORCE_NOTIFY: ${{ github.event.inputs.force_notify }}
+        run: python3 scripts/railway_usage_monitor.py
