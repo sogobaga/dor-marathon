@@ -30,6 +30,7 @@ TG_TOKEN = env("TELEGRAM_BOT_TOKEN")
 TG_CHAT = env("TELEGRAM_CHAT_ID")
 BUDGET = float(env("BUDGET_CU_HR", "80"))
 WARN = float(env("WARN_PCT", "0.75"))
+STORAGE_ALERT_GB = float(env("STORAGE_ALERT_GB", "5"))
 USD_PER_CU_HR = float(env("USD_PER_CU_HR", "0.106"))
 USD_TWD = float(env("USD_TWD", "32"))
 FORCE = str(env("FORCE_NOTIFY", "false")).lower() in ("1", "true", "yes")
@@ -55,8 +56,16 @@ def tg_send(text):
                      headers={"Content-Type": "application/x-www-form-urlencoded"})
 
 
-proj = http_json("https://console.neon.tech/api/v2/projects/%s" % NEON_PROJECT_ID,
-                 headers={"Authorization": "Bearer %s" % NEON_API_KEY, "Accept": "application/json"}).get("project", {})
+HDR = {"Authorization": "Bearer %s" % NEON_API_KEY, "Accept": "application/json"}
+proj = http_json("https://console.neon.tech/api/v2/projects/%s" % NEON_PROJECT_ID, headers=HDR).get("project", {})
+
+# storage：各分支 logical_size 加總（走 Neon API、不喚醒 DB compute）
+storage_gb = None
+try:
+    br = http_json("https://console.neon.tech/api/v2/projects/%s/branches" % NEON_PROJECT_ID, headers=HDR)
+    storage_gb = sum((b.get("logical_size") or 0) for b in br.get("branches", [])) / 1e9
+except Exception:
+    pass
 
 used = (proj.get("compute_time_seconds") or 0) / 3600.0
 start = parse_iso(proj["consumption_period_start"]) if proj.get("consumption_period_start") else None
@@ -81,7 +90,8 @@ def twd(cu):
 reliable = frac >= 0.05  # 週期至少過 ~5%(約1天)才信任「推估月底」，避免週期初期爆量誤報
 over_budget = (BUDGET > 0) and ((used >= BUDGET * WARN) or (reliable and projected > BUDGET))
 never_sleeps = (elapsed_s > 2 * 3600) and (awake_ratio > 0.85)  # 疑似 24/7 背景迴圈回歸/異常流量
-breach = over_budget or never_sleeps
+over_storage = (storage_gb is not None) and (storage_gb > STORAGE_ALERT_GB)
+breach = over_budget or never_sleeps or over_storage
 
 icon = "⚠️" if breach else "✅"  # ⚠️ / ✅
 period = ("%s~%s" % (start.date(), end.date())) if start and end else "?"
@@ -91,10 +101,13 @@ lines = [
     "本月已用: <b>%.1f</b> / %.0f CU-hr (%.0f%%, ~NT$%.0f)" % (used, BUDGET, pct, twd(used)),
     "推估月底: %s" % proj_txt,
     "compute 醒著佔比: %.0f%%" % (awake_ratio * 100),
+    "storage: %s" % (("%.2f GB" % storage_gb) if storage_gb is not None else "?"),
     "週期已過 %.0f%% (%s)" % (frac * 100, period),
 ]
 if never_sleeps:
     lines.append("⚠️ compute 幾乎不休眠 → 疑似背景迴圈回歸或異常流量，請查！")
+if over_storage:
+    lines.append("⚠️ storage %.2fGB 超門檻(%.0f)" % (storage_gb, STORAGE_ALERT_GB))
 msg = "\n".join(lines)
 
 print(msg.replace("<b>", "").replace("</b>", ""))

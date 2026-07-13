@@ -29,6 +29,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BUDGET_CU_HR: '80' # ← 月預算(CU-hr)。軟上線抓 ~50-80；1000 會員時調到 ~200。
           WARN_PCT: '0.75' # 已用達預算 75% 就警示
+          STORAGE_ALERT_GB: '5' # DB 容量超過就警示（現在 ~0.21GB）
           USD_TWD: '32' # 匯率(估費用用)
           FORCE_NOTIFY: ${{ github.event.inputs.force_notify }}
         run: python3 scripts/neon_usage_monitor.py
