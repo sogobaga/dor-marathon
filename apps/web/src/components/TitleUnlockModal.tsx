@@ -5,7 +5,7 @@ import { useState } from 'react'
 
 const CAT_LABEL: Record<string, string> = {
   single_dist: '單次距離', cum_dist: '累積距離', cum_time: '累積時間', checkin: '打卡地點',
-  boss: '關主挑戰', personal: '個人任務', level: '玩家等級', card: '卡片收藏',
+  boss: '關主挑戰', personal: '個人任務', level: '玩家等級', card: '卡片收藏', streak: '連續步伐',
 }
 function tierColor(tier: number) {
   return ['#9fb0c3', '#63a9ff', '#2de59a', '#c77dff', '#ffb24d', '#ffd24d'][Math.max(0, Math.min(5, tier - 1))]

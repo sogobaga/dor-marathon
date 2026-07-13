@@ -62,25 +62,26 @@ type Boss struct {
 	DataSource      string          `json:"data_source"`
 	DisplayOrder    int             `json:"display_order"`
 	Enabled         bool            `json:"enabled"`
-	AccessNote      string          `json:"access_note"` // 開放資訊（開放時段/場地備註，來自官方開放場地資料；供玩家判斷可否前往）
+	AccessNote      string          `json:"access_note"`  // 開放資訊（開放時段/場地備註，來自官方開放場地資料；供玩家判斷可否前往）
+	CheckinOnly     bool            `json:"checkin_only"` // 純打卡點：無關主/挑戰，範圍內打卡即完成、不揭露、不可 Accept
 	// 玩家進度（前台）
 	Stars        int  `json:"stars"`
 	CardObtained bool `json:"card_obtained"`
 	Active       bool `json:"active"`
 	Attempts     int  `json:"attempts"`
-	Discovered   bool `json:"discovered"` // 已打卡揭露關主（未揭露則前台只顯示地點、其餘欄位遮蔽）
+	Discovered   bool `json:"discovered"`  // 已打卡揭露關主（未揭露則前台只顯示地點、其餘欄位遮蔽）
 	BestTimeS    int  `json:"best_time_s"` // 自己最短一次完成挑戰的秒數（0=尚無）
 }
 
 const bossCols = `id, code, name, title, region, place, gender, age, workout_label, difficulty_stars,
 	quote, skill_name, skill_desc, dialogue_intro, dialogue_start, scene_image_url, card_image_url,
-	lat, lng, radius_m, reward_exp, reward_dp, retry_dp_cost, workout_kind, segments, data_source, display_order, enabled, access_note`
+	lat, lng, radius_m, reward_exp, reward_dp, retry_dp_cost, workout_kind, segments, data_source, display_order, enabled, access_note, checkin_only`
 
 func scanBoss(row interface{ Scan(...any) error }) (Boss, error) {
 	var b Boss
 	err := row.Scan(&b.ID, &b.Code, &b.Name, &b.Title, &b.Region, &b.Place, &b.Gender, &b.Age, &b.WorkoutLabel, &b.DifficultyStars,
 		&b.Quote, &b.SkillName, &b.SkillDesc, &b.DialogueIntro, &b.DialogueStart, &b.SceneImageURL, &b.CardImageURL,
-		&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote)
+		&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote, &b.CheckinOnly)
 	return b, err
 }
 
@@ -141,7 +142,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		var disc bool
 		if err := rows.Scan(&b.ID, &b.Code, &b.Name, &b.Title, &b.Region, &b.Place, &b.Gender, &b.Age, &b.WorkoutLabel, &b.DifficultyStars,
 			&b.Quote, &b.SkillName, &b.SkillDesc, &b.DialogueIntro, &b.DialogueStart, &b.SceneImageURL, &b.CardImageURL,
-			&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote,
+			&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote, &b.CheckinOnly,
 			&b.Stars, &b.CardObtained, &b.Active, &b.Attempts, &disc, &b.BestTimeS); err != nil {
 			continue
 		}
@@ -161,7 +162,9 @@ type checkinReq struct {
 	Acc float64 `json:"acc"`
 }
 
-// Checkin POST /explore/{id}/checkin — 到打卡點打卡：驗地理圍欄 → 設 discovered(揭露關主) → 回關主完整資料。
+// Checkin POST /explore/{id}/checkin — 到打卡點打卡：驗地理圍欄 → 設 discovered。
+// 一般關主點(checkin_only=false)：揭露關主 → 回完整 boss 資料（行為不變）。
+// 純打卡點(checkin_only=true)：不揭露關主內容，只回 {ok,checkin_only,place,already}。
 func (h *Handler) Checkin(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	if uid == "" {
@@ -189,11 +192,18 @@ func (h *Handler) Checkin(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusOK, map[string]any{"ok": false, "status": "out_of_range", "distance_m": dist, "message": fmt.Sprintf("還沒到打卡點（距離約 %d 公尺）", int(dist))})
 		return
 	}
-	// 打卡成功 → 揭露關主（discovered=TRUE）
+	// 打卡前先查是否本次之前已打卡過（already；純打卡點回應要用，一般點不受影響）。
+	var already bool
+	_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(discovered,FALSE) FROM explore_progress WHERE user_id=$1 AND boss_id=$2`, uid, bossID).Scan(&already)
+	// 打卡成功 → 揭露/計入（discovered=TRUE；純打卡點也算入「打卡數」稱號統計）
 	if _, err := h.db.Exec(r.Context(), `
 		INSERT INTO explore_progress (user_id, boss_id, discovered) VALUES ($1,$2,TRUE)
 		ON CONFLICT (user_id, boss_id) DO UPDATE SET discovered=TRUE`, uid, bossID); err != nil {
 		respondErr(w, http.StatusInternalServerError, "打卡失敗")
+		return
+	}
+	if b.CheckinOnly {
+		respondJSON(w, http.StatusOK, map[string]any{"ok": true, "checkin_only": true, "place": b.Place, "already": already})
 		return
 	}
 	b.Discovered = true
@@ -225,9 +235,13 @@ func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
 	}
 	bossID := chi.URLParam(r, "id")
 	var difficulty, retryDp int
-	var enabled bool
-	if err := h.db.QueryRow(r.Context(), `SELECT difficulty_stars, retry_dp_cost, enabled FROM explore_bosses WHERE id=$1`, bossID).Scan(&difficulty, &retryDp, &enabled); err != nil || !enabled {
+	var enabled, checkinOnly bool
+	if err := h.db.QueryRow(r.Context(), `SELECT difficulty_stars, retry_dp_cost, enabled, checkin_only FROM explore_bosses WHERE id=$1`, bossID).Scan(&difficulty, &retryDp, &enabled, &checkinOnly); err != nil || !enabled {
 		respondErr(w, http.StatusNotFound, "關主不存在")
+		return
+	}
+	if checkinOnly {
+		respondErr(w, http.StatusBadRequest, "checkin_only_no_challenge")
 		return
 	}
 	var discovered, cardObtained, alreadyActive bool
@@ -471,15 +485,15 @@ func (h *Handler) Save(w http.ResponseWriter, r *http.Request) {
 	err := h.db.QueryRow(r.Context(), `
 		INSERT INTO explore_bosses (code, name, title, region, place, gender, age, workout_label, difficulty_stars,
 			quote, skill_name, skill_desc, dialogue_intro, dialogue_start, scene_image_url, card_image_url,
-			lat, lng, radius_m, reward_exp, reward_dp, retry_dp_cost, workout_kind, segments, data_source, display_order, enabled, access_note)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+			lat, lng, radius_m, reward_exp, reward_dp, retry_dp_cost, workout_kind, segments, data_source, display_order, enabled, access_note, checkin_only)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
 		ON CONFLICT (code) DO UPDATE SET name=$2, title=$3, region=$4, place=$5, gender=$6, age=$7, workout_label=$8, difficulty_stars=$9,
 			quote=$10, skill_name=$11, skill_desc=$12, dialogue_intro=$13, dialogue_start=$14, scene_image_url=$15, card_image_url=$16,
-			lat=$17, lng=$18, radius_m=$19, reward_exp=$20, reward_dp=$21, retry_dp_cost=$22, workout_kind=$23, segments=$24, data_source=$25, display_order=$26, enabled=$27, access_note=$28
+			lat=$17, lng=$18, radius_m=$19, reward_exp=$20, reward_dp=$21, retry_dp_cost=$22, workout_kind=$23, segments=$24, data_source=$25, display_order=$26, enabled=$27, access_note=$28, checkin_only=$29
 		RETURNING id`,
 		b.Code, b.Name, b.Title, b.Region, b.Place, b.Gender, b.Age, b.WorkoutLabel, b.DifficultyStars,
 		b.Quote, b.SkillName, b.SkillDesc, b.DialogueIntro, b.DialogueStart, b.SceneImageURL, b.CardImageURL,
-		b.Lat, b.Lng, b.RadiusM, b.RewardExp, b.RewardDp, b.RetryDpCost, b.WorkoutKind, b.Segments, b.DataSource, b.DisplayOrder, b.Enabled, b.AccessNote).Scan(&id)
+		b.Lat, b.Lng, b.RadiusM, b.RewardExp, b.RewardDp, b.RetryDpCost, b.WorkoutKind, b.Segments, b.DataSource, b.DisplayOrder, b.Enabled, b.AccessNote, b.CheckinOnly).Scan(&id)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "儲存失敗")
 		return

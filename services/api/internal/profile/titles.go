@@ -77,7 +77,59 @@ func (h *Handler) titleCategoryStats(ctx context.Context, uid string) (map[strin
 	level, _, _, _ := computeLevel(exp, levels)
 	stats["level"] = float64(level)
 
+	streak, err := h.computeCurrentStreak(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	stats["streak"] = float64(streak)
+
 	return stats, nil
+}
+
+// computeCurrentStreak 目前「連續跑步」天數（未中斷才算，中斷即歸零；非歷史最長）。
+// 日曆日採 Asia/Taipei（台灣無夏令時，固定 UTC+8）；轉換在 SQL 端做（AT TIME ZONE，Postgres 自帶時區資料，
+// 不依賴執行環境的 tzdata——production 用 distroless 映像沒有 tzdata，Go 端故意不用 time.LoadLocation）。
+func (h *Handler) computeCurrentStreak(ctx context.Context, uid string) (int, error) {
+	rows, err := h.db.Query(ctx, `
+		SELECT DISTINCT (recorded_at AT TIME ZONE 'Asia/Taipei')::date AS day
+		FROM activities
+		WHERE user_id=$1 AND NOT flagged
+		ORDER BY day DESC`, uid)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var days []time.Time
+	for rows.Next() {
+		var d time.Time
+		if err := rows.Scan(&d); err != nil {
+			return 0, err
+		}
+		days = append(days, d)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(days) == 0 {
+		return 0, nil
+	}
+	// 台灣「今天」：UTC 時刻 +8 小時取日期（固定位移，不查 tzdata）。
+	nowTaipei := time.Now().UTC().Add(8 * time.Hour)
+	today := time.Date(nowTaipei.Year(), nowTaipei.Month(), nowTaipei.Day(), 0, 0, 0, 0, time.UTC)
+	latest := time.Date(days[0].Year(), days[0].Month(), days[0].Day(), 0, 0, 0, 0, time.UTC)
+	if today.Sub(latest) > 24*time.Hour {
+		return 0, nil // 最新一筆早於「昨天」→ 已中斷
+	}
+	streak := 1
+	for i := 1; i < len(days); i++ {
+		cur := time.Date(days[i-1].Year(), days[i-1].Month(), days[i-1].Day(), 0, 0, 0, 0, time.UTC)
+		prev := time.Date(days[i].Year(), days[i].Month(), days[i].Day(), 0, 0, 0, 0, time.UTC)
+		if cur.Sub(prev) != 24*time.Hour {
+			break
+		}
+		streak++
+	}
+	return streak, nil
 }
 
 // checkAndAwardTitles best-effort：算統計值→依門檻發放未解鎖稱號→回傳「未看過」清單。
@@ -158,6 +210,7 @@ var titleCategoryLabels = []struct{ Key, Label string }{
 	{"personal", "個人任務"},
 	{"level", "玩家等級"},
 	{"card", "卡片收藏"},
+	{"streak", "連續步伐"},
 }
 
 // TitleRow 稱號圖鑑單筆（未解鎖時 Name 遮蔽為問號）。

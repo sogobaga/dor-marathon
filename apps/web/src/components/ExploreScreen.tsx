@@ -83,7 +83,19 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {shown.map((b) => {
               const dm = pos ? havM(pos.lat, pos.lng, b.lat, b.lng) : null
-              return b.discovered ? (
+              return b.discovered && b.checkin_only ? (
+                // 純打卡點：已打卡完成，無關主內容可揭露
+                <div key={b.id} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ ...mysteryIcon, color: 'var(--fug)', border: '1px solid var(--line-2)' }}>✓</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15.5, fontWeight: 900, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.place || '打卡點'}</div>
+                      <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2 }}>📍 {b.region || '未知地區'}{dm != null && dm !== Infinity ? ` · ${fmtDist(dm)}` : ''}</div>
+                    </div>
+                    <span style={{ fontSize: 11.5, color: 'var(--fug)', fontWeight: 700, flexShrink: 0 }}>✓ 已打卡完成</span>
+                  </div>
+                </div>
+              ) : b.discovered ? (
                 // 已打卡揭露：Scene banner + 關主資訊 + 挑戰
                 <RevealCard key={b.id} b={b} dist={dm} onChallenge={() => onOpenTrack?.(b.id)} onRanking={() => setRankingBoss({ id: b.id, name: b.name })} />
               ) : (

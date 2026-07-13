@@ -1080,7 +1080,11 @@ export default function TrackPage() {
         lat = pos.coords.latitude; lng = pos.coords.longitude; acc = pos.coords.accuracy ?? 0
       }
       const r = await exploreApi.checkin(token, b.id, { lat: lat!, lng: lng!, acc })
-      if (r.ok && r.boss) {
+      if (r.ok && r.checkin_only) {
+        // 純打卡點：不揭露關主，僅行內訊息提示 + 刷新清單狀態
+        await fetchExplore()
+        setCpMsg(r.already ? '✓ 已打卡過：' + r.place : '✓ 打卡完成！' + r.place)
+      } else if (r.ok && r.boss) {
         await fetchExplore()
         setBossPanel({ boss: r.boss, phase: 'intro', dpCost: exDpCost(r.boss) })
       } else {

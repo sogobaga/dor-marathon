@@ -1417,6 +1417,7 @@ export interface ExploreBoss {
   workout_kind: string; segments: WorkoutSegment[] | null; data_source: string
   display_order: number; enabled: boolean
   access_note: string
+  checkin_only?: boolean // 純打卡點：無關主內容，其餘關主欄位留空
   // 玩家進度（前台列表）
   stars?: number; card_obtained?: boolean; active?: boolean; attempts?: number; best_time_s?: number
   discovered?: boolean // 已打卡揭露關主（未揭露則 name/scene/難度等欄位被伺服器遮蔽）
@@ -1433,9 +1434,9 @@ export const adminExploreApi = {
 // 城市探索（前台）：啟用中的關主 + 我的進度
 export const exploreApi = {
   list: (token: string) => request<{ bosses: ExploreBoss[] }>('/explore', { headers: withAuth(token) }),
-  // 到打卡點打卡 → 揭露關主（回完整關主資料）
+  // 到打卡點打卡 → 揭露關主（回完整關主資料）；純打卡點則不揭露，僅回 checkin_only/place/already
   checkin: (token: string, id: string, body: { lat: number; lng: number; acc: number }) =>
-    request<{ ok: boolean; status: string; distance_m?: number; message?: string; boss?: ExploreBoss }>(
+    request<{ ok: boolean; status: string; distance_m?: number; message?: string; boss?: ExploreBoss; checkin_only?: boolean; place?: string; already?: boolean }>(
       `/explore/${id}/checkin`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   // 接受挑戰（扣 DP=難度×10）→ 帶到課表挑戰
   accept: (token: string, id: string) =>
