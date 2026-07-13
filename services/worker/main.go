@@ -20,9 +20,8 @@ import (
 const (
 	streamKey         = "activity_queue"
 	consumerGroup     = "activity_workers"
-	batchSize         = 100
-	batchInterval     = 5 * time.Second
-	standingsInterval = 30 * time.Second // 競賽分組成績重算間隔
+	batchSize     = 100
+	batchInterval = 5 * time.Second
 )
 
 // ActivityEvent is the message pushed to Redis Streams when a user uploads a run.
@@ -69,7 +68,7 @@ func main() {
 	log.Info().Str("consumer", consumerName).Msg("DOR Activity Worker started")
 
 	w := &Worker{db: pool, rdb: rdb, consumerName: consumerName}
-	go w.standingsLoop(ctx) // 背景定期重算競賽分組成績
+	w.recomputeStandings(ctx) // 啟動時先算一次(補齊停機期間累積)；之後改「有新活動才重算」，閒置不打 DB → 讓 Neon 休眠
 	w.run(ctx)
 }
 
@@ -89,27 +88,18 @@ func (w *Worker) run(ctx context.Context) {
 			log.Info().Msg("worker shutting down")
 			return
 		case <-ticker.C:
-			w.processBatch(ctx)
+			if w.processBatch(ctx) > 0 {
+				w.recomputeStandings(ctx) // 有新活動才重算成績(事件驅動)；閒置(Redis 阻塞)時完全不打 DB
+			}
 		}
 	}
 }
 
-// standingsLoop 背景定期重算競賽分組成績（與 activity stream 分開，避免被 XReadGroup 阻塞）
-func (w *Worker) standingsLoop(ctx context.Context) {
-	ticker := time.NewTicker(standingsInterval)
-	defer ticker.Stop()
-
-	w.resolveCrossSourceDups(ctx) // 先去重（跨來源），再算成績
-	w.aggregateStandings(ctx)     // 啟動時先算一次
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			w.resolveCrossSourceDups(ctx)
-			w.aggregateStandings(ctx)
-		}
-	}
+// recomputeStandings 跨來源去重 + 重算競賽分組成績。只在「剛處理完新活動」或啟動時呼叫，
+// 閒置時完全不打 DB → 讓 Neon compute 休眠(scale-to-zero)。
+func (w *Worker) recomputeStandings(ctx context.Context) {
+	w.resolveCrossSourceDups(ctx) // 先跨來源去重，再算成績
+	w.aggregateStandings(ctx)
 }
 
 // resolveCrossSourceDups 跨來源去重：同一趟跑步同時有 App GPS（source IS NULL）與 Strava（source='strava'）
@@ -199,7 +189,8 @@ func (w *Worker) aggregateStandings(ctx context.Context) {
 	}
 }
 
-func (w *Worker) processBatch(ctx context.Context) {
+// processBatch 讀取並處理一批活動訊息；回傳成功處理的筆數（供 run 決定是否重算成績）。
+func (w *Worker) processBatch(ctx context.Context) int {
 	// 讀取 Redis Streams pending + new messages
 	streams, err := w.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    consumerGroup,
@@ -209,12 +200,12 @@ func (w *Worker) processBatch(ctx context.Context) {
 		Block:    0,
 	}).Result()
 	if err != nil || len(streams) == 0 {
-		return
+		return 0
 	}
 
 	msgs := streams[0].Messages
 	if len(msgs) == 0 {
-		return
+		return 0
 	}
 
 	log.Debug().Int("count", len(msgs)).Msg("processing activity batch")
@@ -233,6 +224,7 @@ func (w *Worker) processBatch(ctx context.Context) {
 	if len(ids) > 0 {
 		w.rdb.XAck(ctx, streamKey, consumerGroup, ids...)
 	}
+	return len(ids)
 }
 
 func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) error {

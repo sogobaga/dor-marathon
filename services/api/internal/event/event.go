@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -166,6 +167,9 @@ type EventDef struct {
 type Handler struct {
 	db *pgxpool.Pool
 	rt *realtime.Manager
+	// raceActiveUntil：多人賽局參與者最晚可能需被 expiry 的 unix 秒；RaceJoin 時更新。
+	// RunExpiryLoop 只在 now < raceActiveUntil 才打 DB → 平時(無人加入)不碰 Neon，讓 compute 休眠。
+	raceActiveUntil atomic.Int64
 }
 
 func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler {

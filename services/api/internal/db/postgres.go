@@ -15,7 +15,8 @@ func Connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 
 	// 連線池設定：配合 PgBouncer transaction mode
 	cfg.MaxConns = 10
-	cfg.MinConns = 2
+	// MinConns=0：閒置時不保留熱連線 → Neon compute 可完全休眠(scale-to-zero)，有請求再懶惰重連。
+	cfg.MinConns = 0
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

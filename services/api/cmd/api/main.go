@@ -193,8 +193,11 @@ func main() {
 		AllowCredentials: true,
 	}))
 
-	// Health check
+	// Health check：不碰 DB（避免外部監控/部署探針每次喚醒 Neon compute）。DB 就緒檢查改走 /health/db。
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, `{"status":"ok"}`)
+	})
+	r.Get("/health/db", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {
 			http.Error(w, `{"status":"db_down"}`, http.StatusServiceUnavailable)
 			return

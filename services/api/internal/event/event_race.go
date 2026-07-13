@@ -260,6 +260,12 @@ func (h *Handler) RaceContext(w http.ResponseWriter, r *http.Request) {
 // RunExpiryLoop 背景清理：每分鐘把「逾時仍未完成」的多人事件參與者標為 expired。
 // 冪等（WHERE status='joined'）→ 多實例同時跑也安全；不發獎（逾時＝未完成）。ctx 取消即結束。
 func (h *Handler) RunExpiryLoop(ctx context.Context) {
+	expire := func() {
+		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_, _ = h.db.Exec(cctx, `UPDATE event_race_participants SET status='expired' WHERE status='joined' AND deadline < NOW()`)
+		cancel()
+	}
+	expire() // 啟動時清一次(補停機期間逾時者)；之後只在近期有人加入多人賽局時才打 DB → 平時讓 Neon 休眠
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
@@ -267,9 +273,10 @@ func (h *Handler) RunExpiryLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			_, _ = h.db.Exec(cctx, `UPDATE event_race_participants SET status='expired' WHERE status='joined' AND deadline < NOW()`)
-			cancel()
+			if time.Now().Unix() > h.raceActiveUntil.Load() {
+				continue // 近期無人加入 → 不碰 DB
+			}
+			expire()
 		}
 	}
 }
@@ -501,6 +508,8 @@ func (h *Handler) RaceJoin(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	// 近期有人加入多人賽局 → 這段期間 RunExpiryLoop 才需打 DB 清死線；平時不碰 Neon、讓 compute 休眠。
+	h.raceActiveUntil.Store(time.Now().Add(15 * time.Minute).Unix())
 	respondJSON(w, http.StatusOK, map[string]any{
 		"joined": true, "name": name, "message": message,
 		"completion_type": ctype, "completion_params": params,
