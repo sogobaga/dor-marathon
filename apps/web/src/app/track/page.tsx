@@ -98,7 +98,7 @@ export default function TrackPage() {
   const [woPhase, setWoPhase] = useState<'idle' | 'countdown' | 'running' | 'done'>('idle')
   const [woStepIdx, setWoStepIdx] = useState(0)
   const [woHits, setWoHits] = useState<Record<number, boolean>>({}) // work 段 index → 是否達配速
-  const [woResult, setWoResult] = useState<{ stars: number; reward_exp: number; reward_dp: number; flagged?: boolean; card_obtained?: boolean } | null>(null)
+  const [woResult, setWoResult] = useState<{ stars: number; reward_exp: number; reward_dp: number; flagged?: boolean; card_obtained?: boolean; time_s?: number } | null>(null)
   const [, setWoNow] = useState(0) // 驅動 HUD 每 0.5s 重繪
   const woStepIdxRef = useRef(0)
   const woStepStartRef = useRef<{ dist: number; time: number }>({ dist: 0, time: 0 }) // 目前分段起點（距離 m / 時間 ms）
@@ -834,7 +834,7 @@ export default function TrackPage() {
         if (workout.kind === 'explore') {
           // 關主挑戰：回報 → 得星、3★ 取得卡片；刷新探索列表（收服狀態）
           const r = await withUserAuth((t) => exploreApi.complete(t, workout.taskId, { finished: true, work_in_band: res.inBand, work_total: res.total }))
-          setWoResult({ stars: r.stars, reward_exp: r.reward_exp, reward_dp: r.reward_dp, card_obtained: r.card_obtained })
+          setWoResult({ stars: r.stars, reward_exp: r.reward_exp, reward_dp: r.reward_dp, card_obtained: r.card_obtained, time_s: r.time_s })
           if (r.card_obtained) setCelebrateCard({ bossId: workout.taskId, name: workout.title, cardUrl: workout.cardUrl }) // 3★ 取卡 → 恭喜彈窗
           fetchExplore()
         } else {
@@ -1278,7 +1278,7 @@ export default function TrackPage() {
           <div style={{ marginTop: 16 }}>
             <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}><span className="skin-ico" data-ico="pin" aria-hidden>📍</span> 打卡點任務</div>
             {cpMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginBottom: 8, wordBreak: 'break-word' }}>{cpMsg}</div>}
-            {status !== 'tracking' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>走到打卡點附近，在範圍內按「打卡」即可（不需邊跑邊打卡、免審核）。</div>}
+            {status !== 'tracking' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>走到打卡點附近，在範圍內按「打卡」即可（不需邊跑邊打卡）。</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {/* 城市探索打卡點：清單只列 已揭露待挑戰 + 最近 10 筆未打卡（依縣市篩選＋距離排序） */}
               {exList.map((b) => {
@@ -1295,15 +1295,14 @@ export default function TrackPage() {
                       </div>
                       <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         城市探索{b.region ? ` · ${b.region}` : ''}
+                        {b.card_obtained && <> · ✓已收服{b.best_time_s ? ` · 最佳 ${fmtTime(b.best_time_s)}` : ''}</>}
                         {d != null && !b.card_obtained && <> · {d < 1000 ? `還有 ${Math.round(d)}m` : `${(d / 1000).toFixed(1)}km`}</>}
                       </div>
                     </div>
-                    {b.card_obtained ? (
-                      <span style={{ color: 'var(--fug)', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>✓ 已收服</span>
-                    ) : b.discovered ? (
+                    {b.discovered ? (
                       <button onClick={() => setBossPanel({ boss: b, phase: b.active ? 'start' : 'intro', dpCost: exDpCost(b) })}
                         style={{ flexShrink: 0, background: 'var(--gold)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: 'pointer' }}>
-                        {b.active ? '▶ 繼續挑戰' : '⚔ 挑戰'}
+                        {b.active ? '▶ 繼續挑戰' : b.card_obtained ? '自由挑戰' : '⚔ 挑戰'}
                       </button>
                     ) : (
                       <button onClick={() => doExploreCheckin(b)} disabled={busy || (curPos != null && !inRange)}

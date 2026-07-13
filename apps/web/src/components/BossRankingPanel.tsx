@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { exploreApi, followApi, type ExploreRankRow } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
 
-// 關主挑戰者成績排行覆蓋層：星數榜（前 100）+ 追蹤。可在 /track 或探索頁上開啟。
+// 關主挑戰者排行覆蓋層：時間榜（最短完成時間，前 100）+ 追蹤。可在 /track 或探索頁上開啟。
 export default function BossRankingPanel({ bossId, bossName, onClose }: {
   bossId: string
   bossName: string
@@ -46,7 +46,7 @@ export default function BossRankingPanel({ bossId, bossName, onClose }: {
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 16, fontWeight: 900, color: '#fff' }}>🏆 挑戰者排行</div>
-              <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2 }}>{bossName} · 最多顯示前 100 名</div>
+              <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2 }}>{bossName} · 最短完成時間 · 前 100 名</div>
             </div>
             <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--tx-dim)', fontSize: 22, lineHeight: 1, cursor: 'pointer', padding: 0, flexShrink: 0 }}>×</button>
           </div>
@@ -76,9 +76,9 @@ export default function BossRankingPanel({ bossId, bossName, onClose }: {
                     <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {r.title && <span style={{ color: 'var(--gold)', fontWeight: 800, marginRight: 5 }}>{r.title}</span>}{r.nickname}{r.is_me ? '（我）' : ''}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{fmtDate(r.completed_at)}</div>
+                    <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{r.stars > 0 ? <span style={{ color: 'var(--gold)', letterSpacing: 1 }}>{'★'.repeat(r.stars)}</span> : null} {fmtDate(r.completed_at)}</div>
                   </div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--gold)', letterSpacing: 1, whiteSpace: 'nowrap' }}>{'★'.repeat(Math.max(0, r.stars))}</div>
+                  <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--gold)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{fmtT(r.best_time_s)}</div>
                   {!r.is_me && (
                     <button onClick={() => toggle(r)} style={following(r) ? followingBtn : followBtn}>
                       {following(r) ? '追蹤中' : '＋追蹤'}
@@ -109,6 +109,12 @@ function fmtDate(iso?: string) {
   if (isNaN(d.getTime())) return ''
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} 完成`
+}
+
+function fmtT(s: number) {
+  if (!s) return '—'
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60)
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`
 }
 
 function Hint({ children }: { children: React.ReactNode }) {

@@ -2,6 +2,12 @@
 
 import { type WoStep, fmtPaceS, paceBand, targetText } from '@/lib/workout'
 
+// 秒 → 完成時間 M:SS（≥1 小時顯示 H:MM:SS）
+function fmtHudTime(s: number) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60)
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`
+}
+
 // GPS 追蹤頁的「結構化課表」執行面板：目前分段目標 + 進度 + 即時配速回饋 + 全段進度點。
 // 純顯示：即時數據由 /track 從 GPS 計算後傳入。
 export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, livePaceS, hits, phase, result, onClose, onRanking }: {
@@ -13,7 +19,7 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
   livePaceS: number    // 即時配速（秒/公里）
   hits: Record<number, boolean> // 已評分的 work 段：index → 是否達配速
   phase: 'running' | 'done'
-  result: { stars: number; reward_exp: number; reward_dp: number; flagged?: boolean; card_obtained?: boolean } | null
+  result: { stars: number; reward_exp: number; reward_dp: number; flagged?: boolean; card_obtained?: boolean; time_s?: number } | null
   onClose: () => void
   onRanking?: () => void // 城市探索關主挑戰：完成後看挑戰者排行
 }) {
@@ -45,6 +51,7 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
           {result ? (
             <>
               <div style={{ fontSize: 30, letterSpacing: 3, color: 'var(--gold)', textAlign: 'center' }}>{'★'.repeat(result.stars)}{'☆'.repeat(3 - result.stars)}</div>
+              {result.time_s ? <div style={{ textAlign: 'center', fontSize: 15, fontWeight: 900, color: 'var(--tx)', marginTop: 6 }}>完成時間 <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtHudTime(result.time_s)}</span></div> : null}
               <div style={{ textAlign: 'center', fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 4 }}>
                 配速達成 {workHit}/{workTotal}
                 {(result.reward_exp > 0 || result.reward_dp > 0) && <>　·　<span style={{ color: 'var(--gold)', fontWeight: 800 }}>{result.reward_exp > 0 ? `+${result.reward_exp} EXP` : ''}{result.reward_exp > 0 && result.reward_dp > 0 ? ' ' : ''}{result.reward_dp > 0 ? `+${result.reward_dp} DP` : ''}</span></>}

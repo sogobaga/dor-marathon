@@ -69,6 +69,7 @@ type Boss struct {
 	Active       bool `json:"active"`
 	Attempts     int  `json:"attempts"`
 	Discovered   bool `json:"discovered"` // 已打卡揭露關主（未揭露則前台只顯示地點、其餘欄位遮蔽）
+	BestTimeS    int  `json:"best_time_s"` // 自己最短一次完成挑戰的秒數（0=尚無）
 }
 
 const bossCols = `id, code, name, title, region, place, gender, age, workout_label, difficulty_stars,
@@ -124,7 +125,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.db.Query(r.Context(), `
 		SELECT `+bossCols+`,
-		       COALESCE(pr.stars,0), COALESCE(pr.card_obtained,FALSE), COALESCE(pr.active,FALSE), COALESCE(pr.attempts,0), COALESCE(pr.discovered,FALSE)
+		       COALESCE(pr.stars,0), COALESCE(pr.card_obtained,FALSE), COALESCE(pr.active,FALSE), COALESCE(pr.attempts,0), COALESCE(pr.discovered,FALSE), COALESCE(pr.best_time_s,0)
 		FROM explore_bosses b
 		LEFT JOIN explore_progress pr ON pr.boss_id=b.id AND pr.user_id=$1
 		WHERE b.enabled
@@ -141,7 +142,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&b.ID, &b.Code, &b.Name, &b.Title, &b.Region, &b.Place, &b.Gender, &b.Age, &b.WorkoutLabel, &b.DifficultyStars,
 			&b.Quote, &b.SkillName, &b.SkillDesc, &b.DialogueIntro, &b.DialogueStart, &b.SceneImageURL, &b.CardImageURL,
 			&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote,
-			&b.Stars, &b.CardObtained, &b.Active, &b.Attempts, &disc); err != nil {
+			&b.Stars, &b.CardObtained, &b.Active, &b.Attempts, &disc, &b.BestTimeS); err != nil {
 			continue
 		}
 		// 已揭露＝已打卡(discovered) 或 已挑戰(stars>0) 或 已取得卡片。未揭露→只留地點、遮蔽關主資料(伺服器端，devtools 也看不到)。
@@ -236,10 +237,7 @@ func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusConflict, "請先到打卡點打卡")
 		return
 	}
-	if cardObtained {
-		respondErr(w, http.StatusConflict, "已收服此關主，卡片已收藏")
-		return
-	}
+	// 已收服(card_obtained)仍可「自由挑戰」——不再擋，每次照常扣 DP 去刷更短完成時間。
 	// 冪等：已接受且進行中（尚未完成）→ 不重複扣 DP，直接放行去挑戰
 	if alreadyActive {
 		respondJSON(w, http.StatusOK, map[string]any{"ok": true, "tier": best + 1, "charged_dp": 0, "resumed": true})
@@ -311,7 +309,8 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 	// 反作弊：本趟若被判定疑似載具 → 不計成績（與里程/個人任務一致）
 	var vehFlag bool
-	_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(flagged,FALSE) FROM gps_runs WHERE user_id=$1 AND ended_at > NOW()-INTERVAL '20 minutes' ORDER BY ended_at DESC LIMIT 1`, uid).Scan(&vehFlag)
+	var durS int // 本趟 GPS 跑步時長（伺服器紀錄，非前端宣稱）＝完成挑戰的時間
+	_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(flagged,FALSE), COALESCE(duration_s,0) FROM gps_runs WHERE user_id=$1 AND ended_at > NOW()-INTERVAL '20 minutes' ORDER BY ended_at DESC LIMIT 1`, uid).Scan(&vehFlag, &durS)
 	if vehFlag {
 		respondErr(w, http.StatusConflict, "本趟疑似使用交通工具，挑戰成績不計")
 		return
@@ -339,8 +338,9 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	if _, err := tx.Exec(r.Context(), `
 		UPDATE explore_progress SET active=FALSE, stars=$3, awarded_stars=$4, card_obtained=$5, completed_at=NOW(),
-			card_obtained_at=CASE WHEN $5 AND card_obtained_at IS NULL THEN NOW() ELSE card_obtained_at END
-		WHERE user_id=$1 AND boss_id=$2`, uid, bossID, newStars, newAwarded, cardObtained); err != nil {
+			card_obtained_at=CASE WHEN $5 AND card_obtained_at IS NULL THEN NOW() ELSE card_obtained_at END,
+			best_time_s=CASE WHEN $6 > 0 THEN LEAST(COALESCE(best_time_s,$6),$6) ELSE best_time_s END
+		WHERE user_id=$1 AND boss_id=$2`, uid, bossID, newStars, newAwarded, cardObtained, durS); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
@@ -357,6 +357,7 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{
 		"completed": true, "stars": newStars, "card_obtained": cardObtained,
 		"reward_exp": ternInt(grant, rExp, 0), "reward_dp": ternInt(grant, rDp, 0),
+		"time_s": durS,
 	})
 }
 
@@ -374,13 +375,14 @@ type rankRow struct {
 	Title       string     `json:"title"`
 	AvatarURL   string     `json:"avatar_url"`
 	Stars       int        `json:"stars"`
+	BestTimeS   int        `json:"best_time_s"` // 最短一次完成挑戰的秒數（時間榜排序值）
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	IsFollowing bool       `json:"is_following"`
 	IsMe        bool       `json:"is_me"`
 }
 
-// Ranking GET /explore/{id}/ranking — 挑戰者成績排行（星數榜，前 100）＋ 我是否已追蹤。
-// 同星數以先完成者名次高（completed_at 早）。my_rank 為自己名次（即使在前 100 之外；未完成=0）。
+// Ranking GET /explore/{id}/ranking — 挑戰者時間榜（最短完成時間，前 100）＋ 我是否已追蹤。
+// 依 best_time_s 升冪（越短越前），同時間以先達成者名次高。my_rank 為自己名次（在前 100 外也算；無有效完成=0）。
 func (h *Handler) Ranking(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	bossID := chi.URLParam(r, "id")
@@ -389,14 +391,14 @@ func (h *Handler) Ranking(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(NULLIF(u.name,''), u.handle),
 		       COALESCE(td.name,''),
 		       COALESCE(u.avatar_url,''),
-		       pr.stars, pr.completed_at,
+		       pr.stars, COALESCE(pr.best_time_s,0), pr.completed_at,
 		       ($1 <> '' AND EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = NULLIF($1,'')::uuid AND f.followee_id = pr.user_id))
 		FROM explore_progress pr
 		JOIN users u ON u.id = pr.user_id
 		LEFT JOIN user_profiles p ON p.user_id = pr.user_id
 		LEFT JOIN title_defs td ON td.code = u.displayed_title
-		WHERE pr.boss_id=$2 AND pr.completed_at IS NOT NULL AND pr.stars > 0
-		ORDER BY pr.stars DESC, pr.completed_at ASC
+		WHERE pr.boss_id=$2 AND pr.best_time_s IS NOT NULL
+		ORDER BY pr.best_time_s ASC, pr.completed_at ASC
 		LIMIT 100`, uid, bossID)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
@@ -407,7 +409,7 @@ func (h *Handler) Ranking(w http.ResponseWriter, r *http.Request) {
 	rank := 0
 	for rows.Next() {
 		var rr rankRow
-		if err := rows.Scan(&rr.UserID, &rr.Nickname, &rr.Title, &rr.AvatarURL, &rr.Stars, &rr.CompletedAt, &rr.IsFollowing); err != nil {
+		if err := rows.Scan(&rr.UserID, &rr.Nickname, &rr.Title, &rr.AvatarURL, &rr.Stars, &rr.BestTimeS, &rr.CompletedAt, &rr.IsFollowing); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -420,10 +422,10 @@ func (h *Handler) Ranking(w http.ResponseWriter, r *http.Request) {
 	myRank := 0
 	if uid != "" {
 		_ = h.db.QueryRow(r.Context(), `
-			SELECT CASE WHEN me.completed_at IS NULL OR me.stars <= 0 THEN 0 ELSE (
+			SELECT CASE WHEN me.best_time_s IS NULL THEN 0 ELSE (
 				SELECT COUNT(*)+1 FROM explore_progress o
-				WHERE o.boss_id=$2 AND o.completed_at IS NOT NULL AND o.stars > 0
-				  AND (o.stars > me.stars OR (o.stars = me.stars AND o.completed_at < me.completed_at))
+				WHERE o.boss_id=$2 AND o.best_time_s IS NOT NULL
+				  AND (o.best_time_s < me.best_time_s OR (o.best_time_s = me.best_time_s AND o.completed_at < me.completed_at))
 			) END
 			FROM explore_progress me WHERE me.user_id = NULLIF($1,'')::uuid AND me.boss_id=$2`, uid, bossID).Scan(&myRank)
 	}

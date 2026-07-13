@@ -137,7 +137,7 @@ function RevealCard({ b, dist, onChallenge, onRanking }: { b: ExploreBoss; dist?
           <span style={{ ...chip, color: 'var(--gold)' }}>挑戰 {b.difficulty_stars * 10} DP</span>
         </div>
         {b.access_note && <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6, lineHeight: 1.6 }}>📍 開放：{b.access_note}</div>}
-        {!b.card_obtained && onChallenge && <button onClick={onChallenge} style={{ ...ghostFullBtn, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', fontWeight: 800 }}>▶ 前往挑戰（到「{b.place}」打卡點）</button>}
+        {onChallenge && <button onClick={onChallenge} style={{ ...ghostFullBtn, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', fontWeight: 800 }}>{b.card_obtained ? `自由挑戰（到「${b.place}」打卡點）` : `▶ 前往挑戰（到「${b.place}」打卡點）`}</button>}
         {b.card_obtained && <div style={{ fontSize: 11.5, color: 'var(--fug)', marginTop: 10, textAlign: 'center', fontWeight: 700 }}>已收服此關主 · 卡片已收藏</div>}
         {onRanking && <button onClick={onRanking} style={{ ...ghostFullBtn, marginTop: 8 }}>🏆 挑戰者排行</button>}
       </div>

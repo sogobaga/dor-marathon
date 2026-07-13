@@ -1392,7 +1392,7 @@ export interface ExploreBoss {
   display_order: number; enabled: boolean
   access_note: string
   // 玩家進度（前台列表）
-  stars?: number; card_obtained?: boolean; active?: boolean; attempts?: number
+  stars?: number; card_obtained?: boolean; active?: boolean; attempts?: number; best_time_s?: number
   discovered?: boolean // 已打卡揭露關主（未揭露則 name/scene/難度等欄位被伺服器遮蔽）
 }
 
@@ -1414,11 +1414,11 @@ export const exploreApi = {
   // 接受挑戰（扣 DP=難度×10）→ 帶到課表挑戰
   accept: (token: string, id: string) =>
     request<{ ok: boolean; tier: number; charged_dp: number }>(`/explore/${id}/accept`, { method: 'POST', headers: withAuth(token) }),
-  // 完成挑戰（由 /track 分段引擎回報）→ 得星、3★ 取得卡片
+  // 完成挑戰（由 /track 分段引擎回報）→ 得星、3★ 取得卡片、回傳本趟完成時間(秒)
   complete: (token: string, id: string, body: { finished: boolean; work_in_band: number; work_total: number }) =>
-    request<{ completed: boolean; stars: number; card_obtained: boolean; reward_exp: number; reward_dp: number }>(
+    request<{ completed: boolean; stars: number; card_obtained: boolean; reward_exp: number; reward_dp: number; time_s: number }>(
       `/explore/${id}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
-  // 挑戰者成績排行（星數榜，前 100）+ 我是否追蹤 + 我的名次
+  // 挑戰者時間榜（最短完成時間，前 100）+ 我是否追蹤 + 我的名次
   ranking: (token: string, id: string) =>
     request<{ ranking: ExploreRankRow[]; my_rank: number }>(`/explore/${id}/ranking`, { headers: withAuth(token) }),
 }
@@ -1431,6 +1431,7 @@ export interface ExploreRankRow {
   title: string // 目前展示中的稱號（無則空字串）
   avatar_url: string
   stars: number
+  best_time_s: number // 最短一次完成挑戰的秒數（時間榜排序值）
   completed_at?: string
   is_following: boolean
   is_me: boolean
