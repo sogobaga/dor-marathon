@@ -473,10 +473,17 @@ export default function TrackPage() {
       // Phase B：加入即開始（保留多人同步節奏，不插 321）→ 直接 active 交既有引擎
       armIdRef.current = ++armSeqRef.current
       const ae: ActiveEvent = { def, occId: '', raceInstanceId: inv.instance_id, raceMode, triggerD: distRef.current, triggerT: now, readyUntil: now, deadline, baseSpk, phase: 'active' }
-      activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null); setShowFlash(false); setRaceGroupProgress(null)
+      activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null); setShowFlash(false)
       // collective：貢獻節流基準點對齊加入當下的距離，避免把「加入前」的移動也算進貢獻
       lastContributedDistRef.current = distRef.current
       lastContributeAtRef.current = 0
+      // collective：加入當下就把共享進度條顯示出來(current/target)，讓玩家立刻看到目標與現況，
+      // 不必等第一次成功貢獻（GPS 需累積≥1m）才出現；之後由 contribute 回應/WS 廣播即時更新人數與進度。
+      if (raceMode === 'collective') {
+        setRaceGroupProgress({ instanceId: inv.instance_id, current: res.current ?? 0, target: res.goal_target ?? 0, participants: 1 })
+      } else {
+        setRaceGroupProgress(null)
+      }
     } catch { setCpMsg('加入失敗，請重試') }
   }
 
