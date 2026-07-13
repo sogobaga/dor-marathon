@@ -466,6 +466,10 @@ export interface RaceEventDef {
   reward_exp: number
   reward_dp: number
   per_user_daily_cap: number
+  mode?: 'individual' | 'collective' // 省略/'individual' 視為個人賽（既有行為）
+  goal_metric?: string // collective 用；B1 僅實作 distance_m
+  goal_target?: number // collective 用；共享目標總量（公尺）
+  goal_window_s?: number // collective 用；達標時限秒數
 }
 
 // WS 邀請 payload
@@ -475,6 +479,8 @@ export interface RaceEventInvite {
   initiator_name: string
   name: string
   message: string
+  mode?: 'individual' | 'collective' // Phase B2：省略/'individual' 視為個人賽（既有行為）
+  goal_target?: number // collective 專用：共享累積目標（公尺）
   completion_type: string
   completion_params: Record<string, number>
   join_window_s: number
@@ -487,15 +493,32 @@ export interface RaceEventInvite {
   join_deadline: number // epoch ms
 }
 
+// Phase B2：WS 廣播的共享進度／達標訊息（collective 模式）
+export interface GroupGoalProgressMsg {
+  instance_id: string
+  current: number
+  target: number
+  participants: number
+  reached: boolean
+}
+export interface GroupGoalReachedMsg {
+  instance_id: string
+  reward_exp: number
+  reward_dp: number
+}
+
 export const eventRaceApi = {
   context: (token: string) => request<{ races: { id: string; title: string }[] }>('/events/race/context', { headers: withAuth(token) }),
   trigger: (token: string, body: { race_id: string; moved_m: number; elapsed_s: number }) =>
     request<{ triggered: boolean; instance_id?: string; targets?: number }>('/events/race/trigger', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   join: (token: string, instID: string) =>
-    request<{ joined: boolean; message?: string; name?: string; completion_type?: string; completion_params?: Record<string, number>; reward_exp?: number; reward_dp?: number; deadline?: number }>(`/events/race/instances/${instID}/join`, { method: 'POST', headers: withAuth(token) }),
+    request<{ joined: boolean; message?: string; name?: string; completion_type?: string; completion_params?: Record<string, number>; reward_exp?: number; reward_dp?: number; deadline?: number; mode?: 'individual' | 'collective'; instance_id?: string; goal_target?: number; current?: number }>(`/events/race/instances/${instID}/join`, { method: 'POST', headers: withAuth(token) }),
   complete: (token: string, instID: string, body: CompleteEvidence) =>
     request<{ completed: boolean; reward_exp?: number; reward_dp?: number; stars?: number; bonus_exp?: number; bonus_dp?: number; message?: string; capped?: boolean }>(`/events/race/instances/${instID}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   fail: (token: string, instID: string) => request<void>(`/events/race/instances/${instID}/fail`, { method: 'POST', headers: withAuth(token) }),
+  // Phase B2：collective 模式回報移動量貢獻共享目標
+  contribute: (token: string, instID: string, deltaM: number) =>
+    request<{ current: number; target: number; reached: boolean; participants: number }>(`/events/race/instances/${instID}/contribute`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ delta_m: deltaM }) }),
 }
 
 export const adminEventRacesApi = {
@@ -503,6 +526,9 @@ export const adminEventRacesApi = {
   create: (token: string, body: RaceEventDef) => request<{ def: RaceEventDef }>('/admin/event-races', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   update: (token: string, id: string, body: RaceEventDef) => request<{ def: RaceEventDef }>(`/admin/event-races/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
   remove: (token: string, id: string) => request<void>(`/admin/event-races/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+  // Phase B3：管理員立即發起一次 collective 事件（測試/人工介入）
+  fire: (token: string, defID: string, raceID: string) =>
+    request<{ instance_id?: string; invited: number; message?: string }>(`/admin/event-races/${defID}/fire`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ race_id: raceID }) }),
 }
 
 export interface GpsRunSummary {

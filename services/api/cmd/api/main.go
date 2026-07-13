@@ -123,8 +123,10 @@ func main() {
 	// Admin 帳號管理 + 各模組權限
 	adminAcctHandler := adminacct.NewHandler(pool)
 
-	// 事件任務（日常隨機事件）
+	// 事件任務（日常隨機事件 + Phase B 賽事多人連動）
 	eventHandler := event.NewHandler(pool, wsManager)
+	// Phase B3：/track/ping 心跳 → 推進排程主動觸發的活躍視窗（race 不 import event，改用注入 callback）
+	raceHandler.SetOnActivity(eventHandler.NoteScheduleActivity)
 	// 個人任務（跑者生命週期 10 計畫 × 100 天鏈式任務）
 	personalHandler := personaltask.NewHandler(pool, wsManager)
 	exploreHandler := explore.NewHandler(pool, wsManager)
@@ -379,6 +381,8 @@ func main() {
 	// 背景：定期清理逾時未完成的多人事件參與者（Phase B auto-expire）
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	go eventHandler.RunExpiryLoop(bgCtx)
+	// 背景：Phase B3 排程主動觸發（到點且有人在跑才建立 collective 事件實例）
+	go eventHandler.RunScheduleLoop(bgCtx)
 
 	go func() {
 		log.Info().Str("port", cfg.Port).Msg("DOR API server starting")

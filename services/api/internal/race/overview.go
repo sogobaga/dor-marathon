@@ -29,6 +29,9 @@ func (h *Handler) Ping(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	if h.onActivity != nil {
+		h.onActivity() // Phase B3：最可靠的「有人在跑」心跳，推進排程主動觸發的活躍視窗
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

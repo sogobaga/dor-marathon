@@ -6,7 +6,9 @@ import DpCoin from './DpCoin'
 
 // 觸發演出階段：announce=全螢幕紅閃警報 / offer=任務目標面板(等接受) / countdown=321 / active=正式進行中
 export type EventPhase = 'announce' | 'offer' | 'countdown' | 'active'
-export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string; baseSpk?: number; phase?: EventPhase }
+// raceMode：僅 Phase B 多人事件才有意義；'collective'＝共享累積目標（需跑貢獻迴圈+渲染群體進度條），
+// 未設定/'individual' 為既有個人賽（含 Phase A 日常事件）行為，完全不變。
+export type ActiveEvent = { def: EventDef; occId: string; triggerD: number; triggerT: number; readyUntil: number; deadline: number; raceInstanceId?: string; raceMode?: 'individual' | 'collective'; baseSpk?: number; phase?: EventPhase }
 
 // 配速（秒/公里）格式化為 M:SS/km；無效回 '—'
 export function fmtPace(spk: number): string {
@@ -50,7 +52,8 @@ function goalText(def: EventDef): string {
 }
 
 // 進行中事件：夾在地圖與數據之間、常駐可見的橫幅（不擋畫面、不能被隨手關掉）
-export function EventBanner({ active, moved }: { active: ActiveEvent; moved: number }) {
+// groupProgress：Phase B2 collective 專用——有值才多渲染一條「群體共享進度條」；individual 事件不傳、UI 完全不變。
+export function EventBanner({ active, moved, groupProgress }: { active: ActiveEvent; moved: number; groupProgress?: { current: number; target: number; participants: number } }) {
   const [now, setNow] = useState(Date.now())
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t) }, [])
   const ready = now < active.readyUntil
@@ -111,6 +114,20 @@ export function EventBanner({ active, moved }: { active: ActiveEvent; moved: num
           </div>
         </>
       )}
+      {groupProgress && (() => {
+        const gPct = groupProgress.target > 0 ? Math.max(0, Math.min(100, (groupProgress.current / groupProgress.target) * 100)) : 0
+        return (
+          <div style={{ marginTop: 10 }}>
+            <div style={barOuter}><div style={{ ...barInner, width: `${gPct}%`, background: 'linear-gradient(90deg,#46E3A0,#2fbf9e)' }} /></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 3 }}>
+              <span style={{ color: 'var(--tx-faint)' }}>👥 {groupProgress.participants} 人一起</span>
+              <span style={{ color: 'var(--tx)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                {Math.round(groupProgress.current)}/{Math.round(groupProgress.target)} m
+              </span>
+            </div>
+          </div>
+        )
+      })()}
       {!ready && ct === 'pace_shift' && (() => {
         const base = active.baseSpk ?? 0
         const delta = p.delta_spk ?? 0

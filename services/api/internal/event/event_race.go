@@ -64,12 +64,16 @@ type RaceEventDef struct {
 	RewardExp            int                `json:"reward_exp"`
 	RewardDp             int                `json:"reward_dp"`
 	PerUserDailyCap      int                `json:"per_user_daily_cap"`
+	Mode                 string             `json:"mode"`          // individual（預設）| collective（B1 共享累積目標）
+	GoalMetric           string             `json:"goal_metric"`   // collective 用；B1 僅實作 distance_m
+	GoalTarget           float64            `json:"goal_target"`   // collective 用；共享目標總量
+	GoalWindowS          int                `json:"goal_window_s"` // collective 用；達標時限秒數
 }
 
 const raceDefCols = `id, name, description, enabled, COALESCE(race_id::text,''), weight, trigger_min_m,
 	initiator_cooldown_sec, target_count, group_rel, follow_rel, gender_rel, join_window_s,
 	completion_type, completion_params, message, image_url, image_day_url, image_dusk_url, image_night_url,
-	reward_exp, reward_dp, per_user_daily_cap`
+	reward_exp, reward_dp, per_user_daily_cap, mode, COALESCE(goal_metric,''), COALESCE(goal_target,0), COALESCE(goal_window_s,0)`
 
 func scanRaceDef(row pgx.Row) (RaceEventDef, error) {
 	var d RaceEventDef
@@ -78,7 +82,7 @@ func scanRaceDef(row pgx.Row) (RaceEventDef, error) {
 	err := row.Scan(&d.ID, &d.Name, &desc, &d.Enabled, &d.RaceID, &d.Weight, &d.TriggerMinM,
 		&d.InitiatorCooldownSec, &d.TargetCount, &d.GroupRel, &d.FollowRel, &d.GenderRel, &d.JoinWindowS,
 		&d.CompletionType, &cp, &d.Message, &d.ImageURL, &d.ImageDayURL, &d.ImageDuskURL, &d.ImageNightURL,
-		&d.RewardExp, &d.RewardDp, &d.PerUserDailyCap)
+		&d.RewardExp, &d.RewardDp, &d.PerUserDailyCap, &d.Mode, &d.GoalMetric, &d.GoalTarget, &d.GoalWindowS)
 	if err != nil {
 		return d, err
 	}
@@ -100,6 +104,7 @@ func (h *Handler) RaceAdminRouter() http.Handler {
 	r.Post("/", h.RaceDefCreate)
 	r.Put("/{id}", h.RaceDefUpdate)
 	r.Delete("/{id}", h.RaceDefDelete)
+	r.Post("/{id}/fire", h.RaceFireNow) // Phase B3：管理員立即發起一次 collective 事件（測試/人工介入）
 	return r
 }
 
@@ -157,6 +162,30 @@ func (h *Handler) parseRaceDef(w http.ResponseWriter, r *http.Request) (*RaceEve
 	if d.CompletionParams == nil {
 		d.CompletionParams = map[string]float64{}
 	}
+	if d.Mode == "" {
+		d.Mode = "individual"
+	}
+	if d.Mode != "individual" && d.Mode != "collective" {
+		respondErr(w, http.StatusBadRequest, "mode 需為 individual 或 collective")
+		return nil, false
+	}
+	if d.Mode == "collective" {
+		if d.GoalTarget <= 0 {
+			respondErr(w, http.StatusBadRequest, "共享目標模式需設定 goal_target(>0)")
+			return nil, false
+		}
+		if d.GoalMetric == "" {
+			d.GoalMetric = "distance_m"
+		}
+		if d.GoalWindowS <= 0 {
+			d.GoalWindowS = 600
+		}
+	} else {
+		// individual：清掉表單殘留的共享目標欄位，避免死資料（讀取端都先檢查 mode=='collective'，此處保持 DB 乾淨）
+		d.GoalMetric = ""
+		d.GoalTarget = 0
+		d.GoalWindowS = 0
+	}
 	return &d, true
 }
 
@@ -170,13 +199,13 @@ func (h *Handler) RaceDefCreate(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO event_race_defs (name, description, enabled, race_id, weight, trigger_min_m,
 			initiator_cooldown_sec, target_count, group_rel, follow_rel, gender_rel, join_window_s,
 			completion_type, completion_params, message, image_url, image_day_url, image_dusk_url, image_night_url,
-			reward_exp, reward_dp, per_user_daily_cap)
-		VALUES ($1,NULLIF($2,''),$3,NULLIF($4,'')::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+			reward_exp, reward_dp, per_user_daily_cap, mode, goal_metric, goal_target, goal_window_s)
+		VALUES ($1,NULLIF($2,''),$3,NULLIF($4,'')::uuid,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,NULLIF($24,''),NULLIF($25,0),NULLIF($26,0))
 		RETURNING `+raceDefCols,
 		d.Name, d.Description, d.Enabled, d.RaceID, d.Weight, d.TriggerMinM,
 		d.InitiatorCooldownSec, d.TargetCount, d.GroupRel, d.FollowRel, d.GenderRel, d.JoinWindowS,
 		d.CompletionType, cp, d.Message, d.ImageURL, d.ImageDayURL, d.ImageDuskURL, d.ImageNightURL,
-		d.RewardExp, d.RewardDp, d.PerUserDailyCap))
+		d.RewardExp, d.RewardDp, d.PerUserDailyCap, d.Mode, d.GoalMetric, d.GoalTarget, d.GoalWindowS))
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "建立失敗")
 		return
@@ -197,12 +226,13 @@ func (h *Handler) RaceDefUpdate(w http.ResponseWriter, r *http.Request) {
 			group_rel=$10, follow_rel=$11, gender_rel=$12, join_window_s=$13,
 			completion_type=$14, completion_params=$15, message=$16,
 			image_url=$17, image_day_url=$18, image_dusk_url=$19, image_night_url=$20,
-			reward_exp=$21, reward_dp=$22, per_user_daily_cap=$23, updated_at=NOW()
+			reward_exp=$21, reward_dp=$22, per_user_daily_cap=$23, mode=$24,
+			goal_metric=NULLIF($25,''), goal_target=NULLIF($26,0), goal_window_s=NULLIF($27,0), updated_at=NOW()
 		WHERE id=$1 RETURNING `+raceDefCols,
 		id, d.Name, d.Description, d.Enabled, d.RaceID, d.Weight, d.TriggerMinM,
 		d.InitiatorCooldownSec, d.TargetCount, d.GroupRel, d.FollowRel, d.GenderRel, d.JoinWindowS,
 		d.CompletionType, cp, d.Message, d.ImageURL, d.ImageDayURL, d.ImageDuskURL, d.ImageNightURL,
-		d.RewardExp, d.RewardDp, d.PerUserDailyCap))
+		d.RewardExp, d.RewardDp, d.PerUserDailyCap, d.Mode, d.GoalMetric, d.GoalTarget, d.GoalWindowS))
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "更新失敗")
 		return
@@ -228,12 +258,14 @@ func (h *Handler) RaceRouter() http.Handler {
 	r.Post("/instances/{id}/join", h.RaceJoin)
 	r.Post("/instances/{id}/complete", h.RaceComplete)
 	r.Post("/instances/{id}/fail", h.RaceFail)
+	r.Post("/instances/{id}/contribute", h.RaceContribute)
 	return r
 }
 
 // GET /events/race/context — 目前登入者「進行中且已報名」的賽事（供 /track 綁定 WS 與回報里程）
 func (h *Handler) RaceContext(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	h.NoteScheduleActivity() // 保底訊號（主要訊號來自 /track/ping）
 	rows, err := h.db.Query(r.Context(), `
 		SELECT rc.id::text, rc.title FROM registrations reg JOIN races rc ON rc.id = reg.race_id
 		WHERE reg.user_id=$1 AND reg.status<>'cancelled' AND NOW() BETWEEN rc.start_date AND rc.end_date
@@ -343,7 +375,20 @@ func (h *Handler) RaceTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 建實例
+	// collective（共享累積目標）分流：def 已含 mode/goal_*（raceDefCols/scanRaceDef 已選出），符合則整段
+	// 建立(實例+進度列+廣播)，委由 fireCollective 處理（B3 起與管理員/排程共用同一支）。
+	// goal_target<=0 守門：collective 但沒設有效目標會產生永遠達不成的 instance，因此退化為一般 individual。
+	if def.Mode == "collective" && def.GoalTarget > 0 {
+		instID, err := h.fireCollective(ctx, def, req.RaceID, def.GoalTarget, def.GoalWindowS, targets, &uid)
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		respondJSON(w, http.StatusOK, map[string]any{"triggered": true, "instance_id": instID, "targets": len(targets)})
+		return
+	}
+
+	// individual（預設）：建實例
 	joinDeadline := time.Now().Add(time.Duration(def.JoinWindowS) * time.Second)
 	var instID string
 	if err := h.db.QueryRow(ctx, `
@@ -367,6 +412,8 @@ func (h *Handler) RaceTrigger(w http.ResponseWriter, r *http.Request) {
 			"initiator_name":    initiatorName,
 			"name":              def.Name,
 			"message":           def.Message,
+			"mode":              "individual",
+			"goal_target":       def.GoalTarget,
 			"completion_type":   def.CompletionType,
 			"completion_params": def.CompletionParams,
 			"join_window_s":     def.JoinWindowS,
@@ -457,19 +504,24 @@ func (h *Handler) RaceJoin(w http.ResponseWriter, r *http.Request) {
 	instID := chi.URLParam(r, "id")
 	ctx := r.Context()
 
-	// 讀實例 + 定義（驗證名單、時窗）
-	var defID string
+	// 讀實例 + 定義（驗證名單、時窗）＋ collective 進度（LEFT JOIN：individual 時 progCurrent 為 nil）
+	var defID, mode string
 	var joinDeadline time.Time
+	var goalDeadline *time.Time
 	var targets []string
 	var ctype string
 	var cpRaw []byte
 	var rexp, rdp int
 	var name, message string
+	var goalTarget float64
+	var progCurrent *float64
 	err := h.db.QueryRow(ctx, `
-		SELECT i.def_id::text, i.join_deadline, i.target_user_ids,
-		       d.completion_type, d.completion_params, d.reward_exp, d.reward_dp, d.name, d.message
+		SELECT i.def_id::text, i.join_deadline, i.target_user_ids, i.mode, i.goal_deadline,
+		       d.completion_type, d.completion_params, d.reward_exp, d.reward_dp, d.name, d.message,
+		       COALESCE(d.goal_target,0), p.current
 		FROM event_race_instances i JOIN event_race_defs d ON d.id=i.def_id
-		WHERE i.id=$1`, instID).Scan(&defID, &joinDeadline, &targets, &ctype, &cpRaw, &rexp, &rdp, &name, &message)
+		LEFT JOIN event_race_progress p ON p.instance_id=i.id AND p.faction=''
+		WHERE i.id=$1`, instID).Scan(&defID, &joinDeadline, &targets, &mode, &goalDeadline, &ctype, &cpRaw, &rexp, &rdp, &name, &message, &goalTarget, &progCurrent)
 	if errors.Is(err, pgx.ErrNoRows) {
 		respondErr(w, http.StatusNotFound, "事件不存在")
 		return
@@ -493,11 +545,18 @@ func (h *Handler) RaceJoin(w http.ResponseWriter, r *http.Request) {
 
 	var params map[string]float64
 	_ = json.Unmarshal(cpRaw, &params)
-	limitS := params["limit_s"]
-	if limitS <= 0 {
-		limitS = 180
+	var deadline time.Time
+	if mode == "collective" && goalDeadline != nil {
+		// collective：所有參與者的死線對齊共享目標視窗（goal_deadline），
+		// 否則 RunExpiryLoop 會在共享窗關閉前就把人標成 expired，導致 /contribute 誤判 not_joined。
+		deadline = *goalDeadline
+	} else {
+		limitS := params["limit_s"]
+		if limitS <= 0 {
+			limitS = 180
+		}
+		deadline = time.Now().Add(time.Duration(limitS) * time.Second)
 	}
-	deadline := time.Now().Add(time.Duration(limitS) * time.Second)
 
 	// 建立參與（每人每實例唯一）
 	_, err = h.db.Exec(ctx, `
@@ -510,11 +569,24 @@ func (h *Handler) RaceJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	// 近期有人加入多人賽局 → 這段期間 RunExpiryLoop 才需打 DB 清死線；平時不碰 Neon、讓 compute 休眠。
 	h.raceActiveUntil.Store(time.Now().Add(15 * time.Minute).Unix())
-	respondJSON(w, http.StatusOK, map[string]any{
+	h.NoteScheduleActivity() // 保底訊號（主要訊號來自 /track/ping）
+	resp := map[string]any{
 		"joined": true, "name": name, "message": message,
 		"completion_type": ctype, "completion_params": params,
 		"reward_exp": rexp, "reward_dp": rdp, "deadline": deadline.UnixMilli(),
-	})
+		"mode": mode, "instance_id": instID,
+	}
+	// collective：附上目標與加入當下的累積量，讓前端加入後立即知道要跑貢獻迴圈、渲染共享進度條。
+	// individual（預設）不受影響：goal_target/current 省略。
+	if mode == "collective" {
+		resp["goal_target"] = goalTarget
+		if progCurrent != nil {
+			resp["current"] = *progCurrent
+		} else {
+			resp["current"] = 0
+		}
+	}
+	respondJSON(w, http.StatusOK, resp)
 }
 
 // POST /events/race/instances/{id}/complete — 驗證完成 + 發獎（冪等、每人每日上限）
@@ -528,24 +600,30 @@ func (h *Handler) RaceComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	var partID, status, ctype, defID string
+	var partID, status, ctype, defID, mode string
 	var awarded bool
 	var rexp, rdp, cap int
 	var cpRaw []byte
 	err := h.db.QueryRow(ctx, `
 		SELECT p.id::text, p.status, p.awarded, p.reward_exp, p.reward_dp,
-		       d.completion_type, d.completion_params, d.id::text, d.per_user_daily_cap
+		       d.completion_type, d.completion_params, d.id::text, d.per_user_daily_cap, i.mode
 		FROM event_race_participants p
 		JOIN event_race_instances i ON i.id=p.instance_id
 		JOIN event_race_defs d ON d.id=i.def_id
 		WHERE p.instance_id=$1 AND p.user_id=$2`, instID, uid).
-		Scan(&partID, &status, &awarded, &rexp, &rdp, &ctype, &cpRaw, &defID, &cap)
+		Scan(&partID, &status, &awarded, &rexp, &rdp, &ctype, &cpRaw, &defID, &cap, &mode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		respondErr(w, http.StatusNotFound, "你未加入此事件")
 		return
 	}
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	// collective 分流守門：共享目標事件只能透過 /contribute 達標發獎，不可用個人 complete 端點繞過共享目標自行結算。
+	// individual（預設）行為完全不變。
+	if mode == "collective" {
+		respondErr(w, http.StatusBadRequest, "use_collective_contribute")
 		return
 	}
 	if awarded {

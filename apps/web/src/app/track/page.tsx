@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss } from '@/lib/api'
+import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
@@ -73,6 +73,8 @@ export default function TrackPage() {
   // 賽事多人連動事件（Phase B）
   const [raceInvite, setRaceInvite] = useState<RaceEventInvite | null>(null)
   const [inviteNow, setInviteNow] = useState(0) // 驅動邀請倒數重繪
+  // Phase B2：共享累積目標（collective）進行中時的即時進度（供 EventBanner 渲染群體進度條）
+  const [raceGroupProgress, setRaceGroupProgress] = useState<{ instanceId: string; current: number; target: number; participants: number } | null>(null)
   // 兩個 hook 必須各自「無條件」呼叫再合併——不可寫成 useIsPhone() && useIsLandscape()（&& 短路會讓某些 render 少呼叫一個 hook → 崩潰）
   const isPhone = useIsPhone()
   const inLandscape = useIsLandscape()
@@ -149,6 +151,11 @@ export default function TrackPage() {
   const lastClaimRef = useRef(0) // 認領後台手動觸發事件的節流
   const raceInviteRef = useRef<RaceEventInvite | null>(null)
   raceInviteRef.current = raceInvite
+  // Phase B2：collective 貢獻節流——lastContributedDistRef 是「上次成功回報」時的 distRef 快照，
+  // 每次只送出兩者差值（delta）；僅在請求成功時前移，失敗則保留待下次連同新位移一起重送（不遺漏、不重複）。
+  const lastContributedDistRef = useRef(0)
+  const lastContributeAtRef = useRef(0) // 節流：至少間隔 6 秒才送一次
+  const contributeBusyRef = useRef(false) // 避免同一時間疊加送出多個請求
 
   const ensureMap = useCallback(async (lat: number, lng: number) => {
     const L = await loadLeaflet()
@@ -266,7 +273,7 @@ export default function TrackPage() {
   function clearEvent() {
     activeEventRef.current = null
     armIdRef.current = 0
-    setActiveEvent(null); setEventMoved(0); setShowFlash(false)
+    setActiveEvent(null); setEventMoved(0); setShowFlash(false); setRaceGroupProgress(null)
   }
   // 近 windowMs 的位移（公尺）；歷史不足回 null
   function movedInWindow(windowMs: number): number | null {
@@ -396,17 +403,35 @@ export default function TrackPage() {
     const windowS = Math.max(0, (ae.deadline - ae.readyUntil) / 1000)
     completeEvent(ae, 0, windowS, { taps: ev.taps, held_ms: ev.held_ms, swipe_px: ev.swipe_px, swipes: ev.swipes, shape_pts: ev.shape_pts, shape: ev.shape })
   }
-  // 收到多人事件邀請（任一綁定賽事的 WS 都走這裡）
+  // 收到多人事件邀請 / 共享進度更新 / 達標結算（任一綁定賽事的 WS 都走這裡）
   function onRaceMsg(ev: MessageEvent) {
     try {
       const msg = JSON.parse(ev.data)
-      if (msg.type !== 'event_race_invite') return
-      const p = msg.payload as RaceEventInvite
-      if (!user?.id || !p.target_user_ids?.includes(user.id)) return
-      if (activeEventRef.current || raceInviteRef.current || armingRef.current || woActiveRef.current) return // 一次一任務（課表進行中也不插隊）
-      if (Date.now() > p.join_deadline) return
-      setRaceInvite(p)
-      setShowFlash(true); playEventAlarm(); vibrate([120, 80, 120, 80, 120]) // 多人邀請：同樣全螢幕紅閃 + 噹噹噹（引注意），仍走加入/略過流程
+      if (msg.type === 'event_race_invite') {
+        const p = msg.payload as RaceEventInvite
+        if (!user?.id || !p.target_user_ids?.includes(user.id)) return
+        if (activeEventRef.current || raceInviteRef.current || armingRef.current || woActiveRef.current) return // 一次一任務（課表進行中也不插隊）
+        if (Date.now() > p.join_deadline) return
+        setRaceInvite(p)
+        setShowFlash(true); playEventAlarm(); vibrate([120, 80, 120, 80, 120]) // 多人邀請：同樣全螢幕紅閃 + 噹噹噹（引注意），仍走加入/略過流程
+        return
+      }
+      // Phase B2：以下兩則只在「我目前正參加的就是這個共享事件」時才處理（依 instance_id 對應 activeEvent，避免處理到無關賽局的廣播）
+      if (msg.type === 'group_goal_progress') {
+        const p = msg.payload as GroupGoalProgressMsg
+        const ae = activeEventRef.current
+        if (!ae || ae.raceInstanceId !== p.instance_id) return
+        setRaceGroupProgress({ instanceId: p.instance_id, current: p.current, target: p.target, participants: p.participants })
+        return
+      }
+      if (msg.type === 'group_goal_reached') {
+        const p = msg.payload as GroupGoalReachedMsg
+        const ae = activeEventRef.current
+        if (!ae || ae.raceInstanceId !== p.instance_id) return // 我沒加入這個共享事件（或已離開/逾時）：與我無關，忽略
+        clearEvent(); lastEventEndRef.current = Date.now(); rollNextEvent() // 清掉貢獻迴圈（下個 evalTick 見 ae=null 即不再回報）
+        playEventComplete(); vibrate([90, 50, 90])
+        setEventResult({ status: 'completed', def: ae.def, reward_exp: p.reward_exp, reward_dp: p.reward_dp })
+      }
     } catch { /* ignore */ }
   }
   // Phase B：對「所有進行中且已報名」的賽事各連一條 WS，任一場來邀請都收得到
@@ -443,10 +468,15 @@ export default function TrackPage() {
         reward_exp: res.reward_exp ?? inv.reward_exp, reward_dp: res.reward_dp ?? inv.reward_dp,
       }
       const deadline = res.deadline || (now + (def.completion_params.limit_s || 180) * 1000)
+      // mode 以 join 回應為準（伺服器可能因 goal_target 未設定而把 collective 退化為 individual）；inv.mode 僅供回應缺欄位時保底
+      const raceMode: 'individual' | 'collective' = (res.mode ?? inv.mode) === 'collective' ? 'collective' : 'individual'
       // Phase B：加入即開始（保留多人同步節奏，不插 321）→ 直接 active 交既有引擎
       armIdRef.current = ++armSeqRef.current
-      const ae: ActiveEvent = { def, occId: '', raceInstanceId: inv.instance_id, triggerD: distRef.current, triggerT: now, readyUntil: now, deadline, baseSpk, phase: 'active' }
-      activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null); setShowFlash(false)
+      const ae: ActiveEvent = { def, occId: '', raceInstanceId: inv.instance_id, raceMode, triggerD: distRef.current, triggerT: now, readyUntil: now, deadline, baseSpk, phase: 'active' }
+      activeEventRef.current = ae; setActiveEvent(ae); setEventMoved(0); setEventResult(null); setShowFlash(false); setRaceGroupProgress(null)
+      // collective：貢獻節流基準點對齊加入當下的距離，避免把「加入前」的移動也算進貢獻
+      lastContributedDistRef.current = distRef.current
+      lastContributeAtRef.current = 0
     } catch { setCpMsg('加入失敗，請重試') }
   }
 
@@ -534,6 +564,29 @@ export default function TrackPage() {
       if (!ae.occId && !ae.raceInstanceId) return // 無 occurrence/賽事實例 → 不送完成（避免打空 id）
       const moved = distRef.current - ae.triggerD
       setEventMoved(moved)
+      if (ae.raceMode === 'collective' && ae.raceInstanceId) {
+        // Phase B2：collective 完成完全由後端 contribute+settle 驅動（RaceComplete 會拒絕 collective 實例，
+        // 見 event_race.go "use_collective_contribute"），這裡只節流回報位移量，不跑下方 individual 的判定分支。
+        if (now >= ae.deadline) { failEvent(ae); return } // 共享視窗已過仍未達標：比照 individual 逾時失敗（達標則已由 WS group_goal_reached 先行收尾）
+        const delta = distRef.current - lastContributedDistRef.current
+        if (delta >= 1 && !contributeBusyRef.current && now - lastContributeAtRef.current >= 6000) {
+          lastContributeAtRef.current = now
+          contributeBusyRef.current = true
+          const token = getUserToken()
+          const instId = ae.raceInstanceId
+          const sendDelta = delta
+          if (token) {
+            eventRaceApi.contribute(token, instId, sendDelta)
+              .then((r) => {
+                lastContributedDistRef.current += sendDelta // 只在成功時前移基準點，失敗保留待下次連同新位移一起重送
+                setRaceGroupProgress({ instanceId: instId, current: r.current, target: r.target, participants: r.participants })
+              })
+              .catch(() => { /* 忽略：下次 tick 用累積中的更大 delta 重試；already_reached/window_closed 等終態由 WS 收尾 */ })
+              .finally(() => { contributeBusyRef.current = false })
+          } else contributeBusyRef.current = false
+        }
+        return
+      }
       const cp = ae.def.completion_params
       const windowS = (now - ae.readyUntil) / 1000 // 計時從準備結束起算
       if (ae.def.completion_type === 'move_more') {
@@ -614,6 +667,8 @@ export default function TrackPage() {
     fetchEventDefs().then(() => { if (statusRef.current === 'tracking' && !activeEventRef.current && lastEventEndRef.current === 0) rollNextEvent(true) })
     // Phase B 重置
     setRaceInvite(null); raceIdsRef.current = []; lastTriggerRef.current = 0; lastClaimRef.current = 0
+    // Phase B2 重置（collective 貢獻節流）
+    setRaceGroupProgress(null); lastContributedDistRef.current = 0; lastContributeAtRef.current = 0; contributeBusyRef.current = false
     startRef.current = Date.now()
     setStatus('tracking')
     unlockAudio() // 在使用者手勢內解鎖音訊（iOS 必須）
@@ -1168,7 +1223,11 @@ export default function TrackPage() {
         )}
         {activeEvent?.phase === 'active' && (
           <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1000, pointerEvents: 'none' }}>
-            <EventBanner active={activeEvent} moved={eventMoved} />
+            <EventBanner
+              active={activeEvent}
+              moved={eventMoved}
+              groupProgress={raceGroupProgress && raceGroupProgress.instanceId === activeEvent.raceInstanceId ? raceGroupProgress : undefined}
+            />
           </div>
         )}
         {!activeEvent && eventResult && (

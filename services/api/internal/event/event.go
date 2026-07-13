@@ -170,6 +170,10 @@ type Handler struct {
 	// raceActiveUntil：多人賽局參與者最晚可能需被 expiry 的 unix 秒；RaceJoin 時更新。
 	// RunExpiryLoop 只在 now < raceActiveUntil 才打 DB → 平時(無人加入)不碰 Neon，讓 compute 休眠。
 	raceActiveUntil atomic.Int64
+	// scheduleActiveUntil：Phase B3 排程主動觸發的活躍視窗 unix 秒；NoteScheduleActivity 更新
+	// （/track/ping 每次心跳、RaceContext、RaceJoin 皆會呼叫）。RunScheduleLoop 只在視窗內才查
+	// event_race_schedules → 平時(無人在跑)不碰 Neon，讓 compute 休眠。
+	scheduleActiveUntil atomic.Int64
 }
 
 func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler {

@@ -16,10 +16,19 @@ import (
 type Handler struct {
 	svc *Service
 	rt  *realtime.Manager
+	// onActivity：可選的「有人在跑」活躍訊號 callback，由 /track/ping 每次心跳呼叫。
+	// 注入自 event.Handler.NoteScheduleActivity（見 main.go SetOnActivity），避免 race 套件
+	// import event 造成循環依賴。未設定時為 no-op。
+	onActivity func()
 }
 
 func NewHandler(svc *Service, rt *realtime.Manager) *Handler {
 	return &Handler{svc: svc, rt: rt}
+}
+
+// SetOnActivity 注入 Phase B3 排程活躍訊號 callback（見上方 onActivity 註解）。
+func (h *Handler) SetOnActivity(fn func()) {
+	h.onActivity = fn
 }
 
 // Router 回傳賽事相關路由（掛載在 /api/v1/races）

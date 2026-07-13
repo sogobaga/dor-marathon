@@ -16,6 +16,7 @@ function emptyDef(cCat: EventTypeSpec[]): RaceEventDef {
     group_rel: 'any', follow_rel: 'any', gender_rel: 'any', join_window_s: 60,
     completion_type: cCat[0]?.key ?? '', completion_params: {},
     message: '', reward_exp: 0, reward_dp: 0, per_user_daily_cap: 0,
+    mode: 'individual', goal_metric: 'distance_m', goal_target: 0, goal_window_s: 600,
   }
 }
 
@@ -33,6 +34,9 @@ export default function AdminEventRacesPage() {
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  const [fireRaceSel, setFireRaceSel] = useState<Record<string, string>>({}) // defId → 選擇的賽事（僅未綁定賽事的 def 需要）
+  const [fireBusy, setFireBusy] = useState<string | null>(null) // 進行中的 defId
+  const [fireResult, setFireResult] = useState<Record<string, string>>({}) // defId → 上次發起結果訊息
 
   const load = useCallback(() => {
     const t = getToken()
@@ -71,6 +75,19 @@ export default function AdminEventRacesPage() {
     try { await adminEventRacesApi.remove(token, d.id); setMsg('✓ 已刪除'); load() }
     catch (e: any) { setErr(e?.message || '刪除失敗') } finally { setBusy(false) }
   }
+  async function fireNow(d: RaceEventDef) {
+    if (!token || !d.id) return
+    const raceID = d.race_id || fireRaceSel[d.id] || ''
+    if (!raceID) { setFireResult((m) => ({ ...m, [d.id!]: '請先選擇賽事' })); return }
+    setFireBusy(d.id); setFireResult((m) => ({ ...m, [d.id!]: '' }))
+    try {
+      const r = await adminEventRacesApi.fire(token, d.id, raceID)
+      const text = r.instance_id ? `✓ 已發起，邀請 ${r.invited} 人` : (r.message || `邀請 ${r.invited} 人`)
+      setFireResult((m) => ({ ...m, [d.id!]: text }))
+    } catch (e: any) {
+      setFireResult((m) => ({ ...m, [d.id!]: e?.message || '發起失敗' }))
+    } finally { setFireBusy(null) }
+  }
 
   const cSpec = cCat.find((c) => c.key === edit?.completion_type)
   const relLabel = (opts: RelOption[], k: string) => opts.find((o) => o.key === k)?.label ?? k
@@ -100,7 +117,24 @@ export default function AdminEventRacesPage() {
             <Field label="套用賽事"><select style={{ ...inp, width: 200 }} value={edit.race_id ?? ''} onChange={(e) => setEdit({ ...edit, race_id: e.target.value })}><option value="">所有賽事</option>{races.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}</select></Field>
             <Field label="啟用"><select style={{ ...inp, width: 90 }} value={edit.enabled ? '1' : '0'} onChange={(e) => setEdit({ ...edit, enabled: e.target.value === '1' })}><option value="1">啟用</option><option value="0">停用</option></select></Field>
             <Field label="隨機權重"><input style={{ ...inp, width: 90 }} type="number" value={edit.weight} onChange={(e) => setEdit({ ...edit, weight: parseInt(e.target.value || '0', 10) })} /></Field>
+            <Field label="模式">
+              <select style={{ ...inp, width: 160 }} value={edit.mode ?? 'individual'} onChange={(e) => setEdit({ ...edit, mode: e.target.value as 'individual' | 'collective' })}>
+                <option value="individual">一般（各自達標）</option>
+                <option value="collective">共享目標（全員累積）</option>
+              </select>
+            </Field>
           </div>
+
+          {edit.mode === 'collective' && (
+            <div style={sect}>
+              <div style={sectTitle}>共享目標（全體受邀者共同累積，任一人達標即全員結算發獎）</div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <Field label="目標總量（公尺）"><input style={{ ...inp, width: 150 }} type="number" value={edit.goal_target ?? 0} onChange={(e) => setEdit({ ...edit, goal_target: parseFloat(e.target.value) || 0 })} /></Field>
+                <Field label="達標時限（秒）"><input style={{ ...inp, width: 140 }} type="number" value={edit.goal_window_s ?? 600} onChange={(e) => setEdit({ ...edit, goal_window_s: parseInt(e.target.value || '0', 10) })} /></Field>
+                <Field label="目標指標"><input style={{ ...inp, width: 140 }} value="distance_m" disabled /></Field>
+              </div>
+            </div>
+          )}
 
           <div style={sect}>
             <div style={sectTitle}>觸發（由觸發者跑步里程驅動）</div>
@@ -175,11 +209,17 @@ export default function AdminEventRacesPage() {
                     {d.name}
                     {!d.enabled && <span style={{ ...badge, color: 'var(--tx-dim)', borderColor: 'var(--line-2)' }}>停用</span>}
                     <span style={{ ...badge, color: 'var(--fug)', borderColor: 'rgba(70,227,160,.4)' }}>{raceLabel(d.race_id)}</span>
+                    {d.mode === 'collective' && <span style={{ ...badge, color: 'var(--gold)', borderColor: 'rgba(255,210,77,.4)' }}>共享目標</span>}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4 }}>
                     觸發：移動達 {d.trigger_min_m}m → 對象：{relLabel(groupRel, d.group_rel)}／{relLabel(followRel, d.follow_rel)}／{relLabel(genderRel, d.gender_rel)}
                     {d.target_count > 0 ? `（隨機 ${d.target_count} 人）` : ''} → 完成：{c?.label ?? d.completion_type}（{goal}）
                   </div>
+                  {d.mode === 'collective' && (
+                    <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2 }}>
+                      共享目標：{d.goal_target ?? 0}m・時限 {d.goal_window_s ?? 600}s
+                    </div>
+                  )}
                   {d.message && <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 4, fontStyle: 'italic' }}>「{d.message}」</div>}
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, marginTop: 6, fontSize: 12.5, flexWrap: 'wrap' }}>
                     <span style={{ color: 'var(--gold)', fontWeight: 700 }}>+{d.reward_exp} EXP</span>
@@ -193,6 +233,18 @@ export default function AdminEventRacesPage() {
                   <button onClick={() => remove(d)} style={{ ...ghostBtn, color: 'var(--hunt)' }}>刪除</button>
                 </div>
               </div>
+              {d.mode === 'collective' && d.id && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)', flexWrap: 'wrap' }}>
+                  {!d.race_id && (
+                    <select style={{ ...inp, width: 200 }} value={fireRaceSel[d.id] ?? ''} onChange={(e) => setFireRaceSel({ ...fireRaceSel, [d.id!]: e.target.value })}>
+                      <option value="">選擇賽事…</option>
+                      {races.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
+                    </select>
+                  )}
+                  <button onClick={() => fireNow(d)} disabled={fireBusy === d.id} style={ghostBtn}>⚡ 立即發起</button>
+                  {fireResult[d.id] && <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>{fireResult[d.id]}</span>}
+                </div>
+              )}
             </div>
           )
         })}
