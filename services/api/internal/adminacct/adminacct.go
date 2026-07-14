@@ -40,6 +40,7 @@ var Scopes = []Scope{
 	{"event_tasks", "事件任務"},
 	{"settings", "等級／系統設定"},
 	{"organizer", "主辦審核"},
+	{"titles", "稱號管理"},
 }
 
 func validScope(k string) bool {

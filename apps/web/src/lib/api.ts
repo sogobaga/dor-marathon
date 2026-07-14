@@ -1485,6 +1485,38 @@ export const adminLevelsApi = {
     }),
 }
 
+// --- 稱號管理（title_defs；9 個固定 category，checkAndAwardTitles 依此計算解鎖） ---
+export type TitleCategory =
+  | 'single_dist' | 'cum_dist' | 'cum_time' | 'checkin' | 'boss' | 'personal' | 'level' | 'card' | 'streak'
+
+export interface AdminTitle {
+  code: string
+  category: TitleCategory
+  threshold: number
+  unit: string
+  name: string
+  tier: number // 1-6
+  sort_order: number
+  enabled: boolean
+  earned_count: number // 已有多少玩家取得此稱號
+}
+export interface TitleCategoryMeta { key: string; label: string }
+
+export const adminTitlesApi = {
+  list: (token: string) =>
+    request<{ titles: AdminTitle[]; categories: TitleCategoryMeta[] }>('/admin/titles', { headers: withAuth(token) }),
+  create: (token: string, body: Omit<AdminTitle, 'earned_count'>) =>
+    request<{ title: AdminTitle }>('/admin/titles', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, code: string, body: Omit<AdminTitle, 'code' | 'earned_count'>) =>
+    request<{ title: AdminTitle }>(`/admin/titles/${encodeURIComponent(code)}`, {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  remove: (token: string, code: string) =>
+    request<{ deleted: boolean; revoked_from: number }>(`/admin/titles/${encodeURIComponent(code)}`, {
+      method: 'DELETE', headers: withAuth(token),
+    }),
+}
+
 // --- 金流（綠界 ECPay）---
 
 export interface EcpayCheckout {
