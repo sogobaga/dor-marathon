@@ -158,6 +158,9 @@ export default function AdminLevelsPage() {
         dp_per_km: Number(rules.dp_per_km),
         mileage_cap_km: Number(rules.mileage_cap_km),
         mileage_min_pace_s: Number(rules.mileage_min_pace_s),
+        vip_days_collective_task: Number(rules.vip_days_collective_task),
+        vip_days_group_task: Number(rules.vip_days_group_task),
+        vip_days_individual_task: Number(rules.vip_days_individual_task),
       })
       setRules(r.exp_rules); setMsg('✓ EXP / DP 規則已儲存')
     } catch (e: any) { setErr(e?.message || '儲存失敗') } finally { setSaving(false) }
@@ -263,6 +266,23 @@ export default function AdminLevelsPage() {
                   <input style={{ ...inp, width: 110 }} type="number" value={rules.dp_per_km} onChange={(e) => setRules({ ...rules, dp_per_km: parseInt(e.target.value || '0', 10) })} />
                 </Field>
               </div>
+            </div>
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>VIP 天數獎勵（來源同 EXP，獨立設定）</div>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <Field label="完成「全體」任務 VIP 天數">
+                  <input style={{ ...inp, width: 110 }} type="number" min={0} value={rules.vip_days_collective_task} onChange={(e) => setRules({ ...rules, vip_days_collective_task: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+                <Field label="完成「分組」任務 VIP 天數">
+                  <input style={{ ...inp, width: 110 }} type="number" min={0} value={rules.vip_days_group_task} onChange={(e) => setRules({ ...rules, vip_days_group_task: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+                <Field label="完成「個人」任務 VIP 天數">
+                  <input style={{ ...inp, width: 110 }} type="number" min={0} value={rules.vip_days_individual_task} onChange={(e) => setRules({ ...rules, vip_days_individual_task: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+              </div>
+              <p style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 6, lineHeight: 1.7 }}>
+                VIP 天數＝活動達成該層目標時延長玩家 VIP 會員資格的天數（0＝不發）。
+              </p>
             </div>
             <div style={{ marginTop: 16, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>里程獎勵風控</div>

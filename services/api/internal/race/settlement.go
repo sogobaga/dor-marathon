@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/dor/api/internal/vip"
 )
 
 // ErrRaceNotEnded 賽事尚未結束、不能（非強制）結算
@@ -17,6 +19,7 @@ type SettleResult struct {
 	AwardedUsers   int    `json:"awarded_users"`
 	TotalExp       int    `json:"total_exp"`
 	TotalDp        int    `json:"total_dp"`
+	TotalVipDays   int    `json:"total_vip_days"`
 	AlreadySettled bool   `json:"already_settled"`
 }
 
@@ -30,6 +33,10 @@ type expRulesVals struct {
 	dpGroup      int
 	dpIndividual int
 	dpPerKm      int
+	// VIP 天數（僅任務完成三種 scope，里程無 VIP 天數）
+	vipCollective int
+	vipGroup      int
+	vipIndividual int
 }
 
 type participant struct {
@@ -37,10 +44,11 @@ type participant struct {
 	groupID string
 }
 
-// award 單一來源同時記 EXP 與 DP
+// award 單一來源同時記 EXP、DP 與 VIP 天數
 type award struct {
-	exp int
-	dp  int
+	exp     int
+	dp      int
+	vipDays int
 }
 
 // SettleRaceEXP 結算某賽事的 EXP（idempotent；force=true 可提前/重跑補發）
@@ -82,10 +90,12 @@ func (r *Repository) expRules(ctx context.Context) (expRulesVals, error) {
 	var v expRulesVals
 	err := r.db.QueryRow(ctx,
 		`SELECT per_collective_task, per_group_task, per_individual_task, per_km,
-		        dp_per_collective_task, dp_per_group_task, dp_per_individual_task, dp_per_km
+		        dp_per_collective_task, dp_per_group_task, dp_per_individual_task, dp_per_km,
+		        vip_days_collective_task, vip_days_group_task, vip_days_individual_task
 		 FROM exp_rules WHERE id=TRUE`).
 		Scan(&v.collective, &v.group, &v.individual, &v.perKm,
-			&v.dpCollective, &v.dpGroup, &v.dpIndividual, &v.dpPerKm)
+			&v.dpCollective, &v.dpGroup, &v.dpIndividual, &v.dpPerKm,
+			&v.vipCollective, &v.vipGroup, &v.vipIndividual)
 	return v, err
 }
 
@@ -168,16 +178,16 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 		groupDpReward[groups[i].ID] = groups[i].DpReward
 	}
 
-	// awards[userID][source] = {exp, dp}（同一 source 同列記 EXP 與 DP）
+	// awards[userID][source] = {exp, dp, vipDays}（同一 source 同列記 EXP、DP 與 VIP 天數）
 	awards := map[string]map[string]award{}
-	add := func(uid, source string, exp, dp int) {
-		if exp <= 0 && dp <= 0 {
+	add := func(uid, source string, exp, dp, vipDays int) {
+		if exp <= 0 && dp <= 0 && vipDays <= 0 {
 			return
 		}
 		if awards[uid] == nil {
 			awards[uid] = map[string]award{}
 		}
-		awards[uid][source] = award{exp: exp, dp: dp}
+		awards[uid][source] = award{exp: exp, dp: dp, vipDays: vipDays}
 	}
 
 	// 完成任務 EXP（依層級）
@@ -185,19 +195,19 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 		t := tasks[ti]
 		// 打卡點任務：依集滿與否、依 scope 給對應額度（集滿全部點才發）
 		if t.MetricType == MetricCheckpoint {
-			exp, dp := rules.individual, rules.dpIndividual
+			exp, dp, vipDays := rules.individual, rules.dpIndividual, rules.vipIndividual
 			switch t.Scope {
 			case ScopeRaceCollective:
-				exp, dp = rules.collective, rules.dpCollective
+				exp, dp, vipDays = rules.collective, rules.dpCollective, rules.vipCollective
 			case ScopeGroupTeam:
-				exp, dp = rules.group, rules.dpGroup
+				exp, dp, vipDays = rules.group, rules.dpGroup, rules.vipGroup
 			}
 			for _, p := range parts {
 				if t.Scope != ScopeRaceCollective && t.GroupID != "" && t.GroupID != p.groupID {
 					continue
 				}
 				if cpDone[t.ID][p.userID] {
-					add(p.userID, "task:"+t.ID, exp, dp)
+					add(p.userID, "task:"+t.ID, exp, dp, vipDays)
 				}
 			}
 			continue
@@ -206,7 +216,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 		case ScopeRaceCollective:
 			if taskDone(acts, t) {
 				for _, p := range parts {
-					add(p.userID, "task:"+t.ID, rules.collective, rules.dpCollective)
+					add(p.userID, "task:"+t.ID, rules.collective, rules.dpCollective, rules.vipCollective)
 				}
 			}
 		case ScopeGroupTeam:
@@ -218,7 +228,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 				if taskDone(byGroup[g.ID], t) {
 					for _, p := range parts {
 						if p.groupID == g.ID {
-							add(p.userID, "task:"+t.ID, rules.group, rules.dpGroup)
+							add(p.userID, "task:"+t.ID, rules.group, rules.dpGroup, rules.vipGroup)
 						}
 					}
 				}
@@ -229,20 +239,21 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 					continue
 				}
 				if taskDone(byUser[p.userID], t) {
-					add(p.userID, "task:"+t.ID, rules.individual, rules.dpIndividual)
+					add(p.userID, "task:"+t.ID, rules.individual, rules.dpIndividual, rules.vipIndividual)
 				}
 			}
 		}
 	}
 
-	// 完成賽事 EXP（達分組目標里程）。里程 EXP 改為日常發放（worker），不在此結算。
+	// 完成賽事 EXP（達分組目標里程）。里程 EXP 改為日常發放（worker），不在此結算；
+	// 分組完賽獎勵（race_groups.exp_reward/dp_reward）不發 VIP 天數，僅「任務」三種 scope 才發。
 	for _, p := range parts {
 		totalKm := 0.0
 		for _, a := range byUser[p.userID] {
 			totalKm += a.Dist
 		}
 		if tgt := groupTarget[p.groupID]; tgt > 0 && totalKm >= tgt {
-			add(p.userID, "completion", groupReward[p.groupID], groupDpReward[p.groupID])
+			add(p.userID, "completion", groupReward[p.groupID], groupDpReward[p.groupID], 0)
 		}
 	}
 
@@ -270,7 +281,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 
 	res := &SettleResult{RaceID: race.ID, Participants: len(parts)}
 	for uid, sources := range awards {
-		expDelta, dpDelta := 0, 0
+		expDelta, dpDelta, vipDelta := 0, 0, 0
 		for source, a := range sources {
 			tag, err := tx.Exec(ctx,
 				`INSERT INTO exp_ledger (user_id, race_id, source, amount, dp_amount) VALUES ($1,$2,$3,$4,$5)
@@ -281,6 +292,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 			if tag.RowsAffected() == 1 {
 				expDelta += a.exp
 				dpDelta += a.dp
+				vipDelta += a.vipDays
 			}
 		}
 		if expDelta > 0 || dpDelta > 0 {
@@ -289,6 +301,15 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 			}
 			res.TotalExp += expDelta
 			res.TotalDp += dpDelta
+		}
+		if vipDelta > 0 {
+			// 只對本次新寫入 exp_ledger 的 source 累加天數，故重跑結算不會重複延長 VIP。
+			if err := vip.Extend(ctx, tx, uid, vipDelta); err != nil {
+				return nil, err
+			}
+			res.TotalVipDays += vipDelta
+		}
+		if expDelta > 0 || dpDelta > 0 || vipDelta > 0 {
 			res.AwardedUsers++
 		}
 	}

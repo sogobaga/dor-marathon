@@ -1171,6 +1171,10 @@ export interface ExpRules {
   dp_per_km: number
   mileage_cap_km: number     // 單趟里程獎勵上限（整公里）
   mileage_min_pace_s: number // 防造假：最快合理配速（秒/公里）
+  // VIP 天數平行費率（取得來源同 EXP／DP，達標時延長玩家 VIP 會員資格；0＝不發）
+  vip_days_collective_task: number
+  vip_days_group_task: number
+  vip_days_individual_task: number
 }
 
 export interface MileageConfig {
