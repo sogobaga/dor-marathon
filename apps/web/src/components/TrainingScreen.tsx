@@ -206,6 +206,8 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   }
 
   // 日課表 modal（點某日開啟；null=關閉）——列出當日所有已排課表(可多份)，可個別開始/移除，下方可加新課表
+  // 點日期只「選中」（下方列出當天已排課表）；要變更/加入才由「編輯／加入」鈕開 pickerDate modal
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [pickerDate, setPickerDate] = useState<string | null>(null)
   const [pickerLevelId, setPickerLevelId] = useState<number | null>(null)
   const [pickerBusy, setPickerBusy] = useState(false)
@@ -445,12 +447,30 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
             </div>
 
             {/* 本月總覽（加總全部來源；下方月曆僅顯示目前選中來源） */}
-            <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 14px', marginBottom: 14, fontSize: 12, color: 'var(--tx-dim)', lineHeight: 1.9 }}>
-              {calErr ? '本月資料載入失敗，請稍後再試' : !cal ? '載入中…' : (
+            <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px', marginBottom: 14 }}>
+              {calErr ? <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>本月資料載入失敗，請稍後再試</div> : !cal ? <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>載入中…</div> : (
                 <>
-                  本月 預計 <b style={{ color: 'var(--tx)' }}>{cal.planned.days}</b> 天 · <b style={{ color: 'var(--tx)' }}>{cal.planned.km.toFixed(1)}</b> K · <b style={{ color: 'var(--tx)' }}>{cal.planned.min}</b> 分
-                  ／ 實際 <b style={{ color: 'var(--fug)' }}>{cal.actual.days}</b> 天 · <b style={{ color: 'var(--fug)' }}>{cal.actual.km.toFixed(1)}</b> K · <b style={{ color: 'var(--fug)' }}>{cal.actual.min}</b> 分
-                  <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 3 }}>（加總全部來源，不受下方顯示來源篩選影響）</div>
+                  {/* 同一項目（天數/里程/時間）預計 vs 實際並列同一列 + 完成% */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 4, fontSize: 10.5, color: 'var(--tx-faint)', fontWeight: 800, paddingBottom: 6, borderBottom: '1px solid var(--line)' }}>
+                    <span>本月</span><span style={{ textAlign: 'right' }}>預計</span><span style={{ textAlign: 'right' }}>實際</span><span style={{ textAlign: 'right' }}>完成</span>
+                  </div>
+                  {([
+                    { k: '天數', p: cal.planned.days, a: cal.actual.days, u: '天' },
+                    { k: '里程', p: cal.planned.km, a: cal.actual.km, u: 'K' },
+                    { k: '時間', p: cal.planned.min, a: cal.actual.min, u: '分' },
+                  ] as const).map((r) => {
+                    const pct = r.p > 0 ? Math.round((r.a / r.p) * 100) : null
+                    const fmt = (n: number) => (r.u === 'K' ? n.toFixed(1) : String(n))
+                    return (
+                      <div key={r.k} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 4, fontSize: 12.5, padding: '6px 0', fontVariantNumeric: 'tabular-nums', alignItems: 'baseline' }}>
+                        <span style={{ color: 'var(--tx-dim)', fontWeight: 700 }}>{r.k}</span>
+                        <span style={{ textAlign: 'right', color: 'var(--tx)', fontWeight: 800 }}>{fmt(r.p)}<span style={{ fontSize: 10, color: 'var(--tx-faint)', fontWeight: 600 }}> {r.u}</span></span>
+                        <span style={{ textAlign: 'right', color: 'var(--fug)', fontWeight: 800 }}>{fmt(r.a)}<span style={{ fontSize: 10, color: 'var(--tx-faint)', fontWeight: 600 }}> {r.u}</span></span>
+                        <span style={{ textAlign: 'right', fontWeight: 800, color: pct == null ? 'var(--tx-faint)' : pct >= 100 ? 'var(--fug)' : 'var(--gold)' }}>{pct == null ? '—' : `${pct}%`}</span>
+                      </div>
+                    )
+                  })}
+                  <div style={{ fontSize: 10, color: 'var(--tx-faint)', marginTop: 4 }}>（加總全部來源，不受下方顯示來源篩選影響）</div>
                 </>
               )}
             </div>
@@ -479,9 +499,9 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   // ≤2 份逐一顯示各自的分類色徽章；>2 份收成一顆「+N」徽章（避免格子塞爆；同來源理論上最多 1 份，此為防禦）
                   const badges = sched.length <= 2 ? sched : []
                   return (
-                    <button key={day} onClick={() => openPicker(dateStr)} style={{
-                      aspectRatio: '1', borderRadius: 8, background: 'var(--bg-2)',
-                      border: isToday ? '1.5px solid var(--fug)' : '1px solid var(--line)',
+                    <button key={day} onClick={() => setSelectedDate(dateStr)} style={{
+                      aspectRatio: '1', borderRadius: 8, background: dateStr === selectedDate ? 'rgba(70,227,160,.14)' : 'var(--bg-2)',
+                      border: dateStr === selectedDate ? '2px solid var(--fug)' : isToday ? '1.5px solid var(--fug)' : '1px solid var(--line)',
                       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1,
                       padding: 2, cursor: 'pointer', position: 'relative', fontFamily: 'inherit',
                     }}>
@@ -503,7 +523,59 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 })}
               </div>
             </div>
-            <div style={{ textAlign: 'center', fontSize: 10.5, color: 'var(--tx-faint)', margin: '8px 0 4px' }}>左右滑動或按 ‹ › 切換月份 · 點日期排定/查看課表</div>
+            <div style={{ textAlign: 'center', fontSize: 10.5, color: 'var(--tx-faint)', margin: '8px 0 4px' }}>左右滑動或按 ‹ › 切換月份 · 點日期查看當天課表</div>
+
+            {/* 當天課表：點日期後在此列出（不直接進編輯介面）；要變更/加入按「編輯／加入」開 modal */}
+            <div style={{ marginTop: 12, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '12px 14px' }}>
+              {!selectedDate ? (
+                <div style={{ fontSize: 12, color: 'var(--tx-faint)', textAlign: 'center', padding: '6px 0' }}>👆 點上方日期，查看當天已排的課表</div>
+              ) : (() => {
+                const day = dayMap[selectedDate]
+                const list = day?.scheduled ?? []
+                return (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+                      <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--tx)', minWidth: 0 }}>
+                        {selectedDate}
+                        <span style={{ fontSize: 11, color: 'var(--tx-faint)', fontWeight: 700 }}> · 已排 {list.length} 份{day?.has_activity ? ' · ✓ 當天有跑' : ''}</span>
+                      </div>
+                      <button onClick={() => openPicker(selectedDate)} style={{ flexShrink: 0, background: 'var(--bg-2)', border: '1px solid var(--fug)', color: 'var(--fug)', fontWeight: 800, borderRadius: 9, padding: '7px 12px', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}>✏️ 編輯／加入</button>
+                    </div>
+                    {list.length === 0 ? (
+                      <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>這天還沒排課表——按「編輯／加入」挑一份。</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {list.map((s) => {
+                          const sTpl = (data?.templates ?? []).find((x) => x.code === s.template_code)
+                          const sMeta = sTpl ? adjustMeta(sTpl) : null
+                          const sAdjLabel = sTpl && sMeta && sMeta.type !== 'none'
+                            ? (sMeta.type === 'distance' ? `${adjustedValue(sTpl, s.adjust)}K` : sMeta.type === 'reps' ? `×${adjustedValue(sTpl, s.adjust)}` : `峰${adjustedValue(sTpl, s.adjust)}m`)
+                            : ''
+                          return (
+                            <div key={s.id} style={{ background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px 12px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                <div style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--tx)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {s.name}{sAdjLabel && <span style={{ color: 'var(--fug)', fontWeight: 700 }}> · {sAdjLabel}</span>}
+                                </div>
+                                <span style={{ fontSize: 9.5, fontWeight: 800, padding: '2px 6px', borderRadius: 6, background: s.plan_id ? 'rgba(199,88,255,.18)' : 'var(--line)', color: s.plan_id ? '#a05ad0' : 'var(--tx-dim)', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                                  {s.plan_id ? `📋 ${s.plan_name || '計畫'}` : '手動'}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 6 }}>
+                                <span style={{ fontSize: 11.5, color: 'var(--tx-dim)', fontVariantNumeric: 'tabular-nums' }}>
+                                  {CATEGORY_LABELS[s.category] || s.category} · {s.planned_km.toFixed(1)} K · {fmtDuration(s.planned_min)}
+                                </span>
+                                <button onClick={() => { const lvl = levels.find((l) => l.id === s.pace_level) ?? null; startWorkout(s.template_code, lvl, s.adjust) }} style={{ flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>▶ 開始</button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
 
             {/* 我的訓練計畫（P3，≤3 個） */}
             <div ref={plansRef} style={{ marginTop: 20 }}>
