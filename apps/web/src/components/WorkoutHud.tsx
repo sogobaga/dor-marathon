@@ -10,8 +10,9 @@ function fmtHudTime(s: number) {
 
 // GPS 追蹤頁的「結構化課表」執行面板：目前分段目標 + 進度 + 即時配速回饋 + 全段進度點。
 // 純顯示：即時數據由 /track 從 GPS 計算後傳入。
-export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, livePaceS, hits, phase, result, onClose, onRanking }: {
+export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, stepTime, livePaceS, hits, phase, result, onClose, onRanking }: {
   title: string
+  kind?: 'personal' | 'explore' | 'freetrain' // freetrain（自主訓練）完成畫面不顯示星星/獎勵
   steps: WoStep[]
   stepIdx: number
   stepDist: number     // 目前分段已跑公尺
@@ -39,6 +40,21 @@ export default function WorkoutHud({ title, steps, stepIdx, stepDist, stepTime, 
               🚗 本趟偵測到疑似使用交通工具的速度，<br />為維護公平性，<strong style={{ color: 'var(--hunt)' }}>不計星數與獎勵</strong>。請實際跑步完成課表。
             </div>
             <button onClick={onClose} style={{ marginTop: 12, width: '100%', background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 800, border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>看跑步結果</button>
+          </div>
+        </div>
+      )
+    }
+    // 自主訓練：不評星、不發課表獎勵（里程 EXP 由 GPS 上傳照常自動發）——只顯示完成 + 用時。
+    if (kind === 'freetrain') {
+      return (
+        <div style={wrap}>
+          <div style={{ ...card, borderColor: 'var(--fug)' }}>
+            <div style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--fug)', fontWeight: 800 }}>自主訓練</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--tx)', margin: '4px 0 8px' }}>{title}</div>
+            <div style={{ textAlign: 'center', fontSize: 17, fontWeight: 900, color: 'var(--tx)', padding: '8px 0' }}>
+              ✓ 訓練完成{result?.time_s ? ` · 用時 ${fmtHudTime(result.time_s)}` : ''}
+            </div>
+            <button onClick={onClose} style={{ marginTop: 12, width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>看跑步結果</button>
           </div>
         </div>
       )

@@ -1003,6 +1003,7 @@ export interface DashboardInfo {
   gallery_entry: 'hidden' | 'locked' | 'shown'  // 卡片圖鑑入口可見性
   title_entry: 'hidden' | 'locked' | 'shown'       // 稱號系統(PB探索)入口可見性
   achievement_entry: 'hidden' | 'locked' | 'shown' // 成就統計(成就探索)入口可見性
+  training_entry: 'hidden' | 'locked' | 'shown'    // 自主訓練入口可見性
   new_titles?: { code: string; name: string; tier: number; category: string }[] // 新解鎖稱號（前台跳彈窗用，跳完呼叫 /titles/seen）
   // 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；扣到 0 凍結 6 小時）
   sp: number
@@ -1354,6 +1355,40 @@ export interface WorkoutSegment {
   rest_s?: number       // 組間休息秒數
 }
 
+// 自主訓練（P1）：課表庫的一個分段——以「效度 effort」表達強度，前端選定配速等級後解析成 WorkoutSegment。
+export interface TemplateSegment {
+  kind: 'warmup' | 'work' | 'rest' | 'recovery' | 'cooldown'
+  label?: string
+  effort?: 'easy' | 'marathon' | 'threshold' | 'interval' | 'rep'
+  target_type: 'distance' | 'time'
+  target: number
+  reps?: number
+  rest_s?: number
+}
+
+// 自主訓練：課表庫的一份課表（system seed，非玩家挑戰制——跑步照常走 GPS 上傳自動發里程 EXP）。
+export interface WorkoutTemplate {
+  code: string
+  name: string
+  category: string
+  description: string
+  segments: TemplateSegment[]
+  sort_order: number
+}
+
+// 自主訓練：配速等級（玩家自選，決定 TemplateSegment.effort 對應的實際配速秒/公里）。
+export interface PaceLevel {
+  id: number
+  label: string
+  paces: {
+    easy: { fast: number; slow: number }
+    marathon: { fast: number; slow: number }
+    threshold: { fast: number; slow: number }
+    interval: { fast: number; slow: number }
+    rep: { fast: number; slow: number }
+  }
+}
+
 // 挑戰制：進行中挑戰的即時狀態
 export interface PersonalChallenge {
   task_id: string; plan_code: string; day: number; title: string
@@ -1399,6 +1434,13 @@ export const personalTasksApi = {
       `/personal-tasks/tasks/${taskId}/complete`,
       { method: 'POST', headers: withAuth(token), body: JSON.stringify(body || {}) },
     ),
+}
+
+// 自主訓練（P1）：課表庫 + 配速等級表。VIP 限定——非 VIP 呼叫回 403 {error:"vip_only"}
+// （呼叫端請用 catch (e:any) { if (e?.status === 403 && e?.message === 'vip_only') ... } 辨識）。
+export const trainingApi = {
+  templates: (token: string) =>
+    request<{ templates: WorkoutTemplate[]; pace_levels: PaceLevel[] }>('/training/templates', { headers: withAuth(token) }),
 }
 
 export const adminPersonalTasksApi = {

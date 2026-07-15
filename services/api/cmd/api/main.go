@@ -26,7 +26,6 @@ import (
 	"github.com/dor/api/internal/db"
 	"github.com/dor/api/internal/event"
 	"github.com/dor/api/internal/explore"
-	"github.com/dor/api/internal/personaltask"
 	"github.com/dor/api/internal/image"
 	"github.com/dor/api/internal/integration"
 	"github.com/dor/api/internal/mail"
@@ -34,12 +33,14 @@ import (
 	"github.com/dor/api/internal/middleware"
 	"github.com/dor/api/internal/organizer"
 	"github.com/dor/api/internal/payment"
+	"github.com/dor/api/internal/personaltask"
 	"github.com/dor/api/internal/profile"
 	"github.com/dor/api/internal/promo"
 	"github.com/dor/api/internal/push"
 	"github.com/dor/api/internal/race"
 	"github.com/dor/api/internal/realtime"
 	"github.com/dor/api/internal/reward"
+	"github.com/dor/api/internal/training"
 	"github.com/dor/api/internal/version"
 )
 
@@ -130,6 +131,8 @@ func main() {
 	// 個人任務（跑者生命週期 10 計畫 × 100 天鏈式任務）
 	personalHandler := personaltask.NewHandler(pool, wsManager)
 	exploreHandler := explore.NewHandler(pool, wsManager)
+	// 自主訓練（P1）：課表庫 + 配速等級表，VIP 限定
+	trainingHandler := training.NewHandler(pool)
 	appSettingsHandler := appsettings.NewHandler(pool, wsManager)
 
 	// Image（圖片上傳，存 Postgres）
@@ -273,6 +276,8 @@ func main() {
 			// 個人任務（跑者生命週期計畫）— 讀計畫/任務 + 手動完成
 			r.Mount("/personal-tasks", personalHandler.Router())
 			r.Mount("/explore", exploreHandler.Router())
+			// 自主訓練（P1）：課表庫 + 配速等級表（VIP 限定，handler 內判定）
+			r.Mount("/training", trainingHandler.Router())
 
 			// 獎勵系統（轉盤 + 集點卡）
 			r.Mount("/rewards", rewardHandler.Router())

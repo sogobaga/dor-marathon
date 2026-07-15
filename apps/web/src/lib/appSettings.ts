@@ -126,6 +126,21 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
   {
+    key: 'training_entry_state', group: '自主訓練入口', label: '入口顯示狀態', type: 'select', def: 'whitelist',
+    help: '控制「會員面板的自主訓練按鈕」對前台玩家的可見性（VIP 限定功能）。測試中，建議先「僅指定帳號」。',
+    options: [
+      { value: 'hidden', label: '前台隱藏（都看不到）' },
+      { value: 'locked', label: '顯示但不能按（即將開放）' },
+      { value: 'whitelist', label: '顯示且指定帳號可按（下方白名單）' },
+      { value: 'open', label: '顯示且全部開放（正式開放）' },
+    ],
+  },
+  {
+    key: 'training_entry_whitelist', group: '自主訓練入口', label: '指定帳號白名單', type: 'text', def: '',
+    help: '僅在上方選「指定帳號可按」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email。',
+    placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
+  },
+  {
     key: 'vip_trial_days', group: 'VIP 訂閱制', label: '新註冊試用天數', type: 'number', unit: '天',
     help: '玩家「新註冊完成」後自動獲得 VIP 的天數。試用到期後首次開啟 App 會跳一次「是否續訂」彈窗，之後降為一般會員（VIP 限定功能重新上鎖）。',
     min: 0, max: 365, def: '14',

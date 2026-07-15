@@ -10,6 +10,7 @@ import ExploreScreen from './ExploreScreen'
 import CardGalleryScreen from './CardGalleryScreen'
 import TitleScreen from './TitleScreen'
 import AchievementScreen from './AchievementScreen'
+import TrainingScreen from './TrainingScreen'
 import TitleUnlockModal from './TitleUnlockModal'
 import RaceDetailScreen from './RaceDetailScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
@@ -33,6 +34,7 @@ export default function PhoneShell() {
   const [showGallery, setShowGallery] = useState(false)
   const [showTitle, setShowTitle] = useState(false)
   const [showAchievement, setShowAchievement] = useState(false)
+  const [showTraining, setShowTraining] = useState(false)
   const [titlesModal, setTitlesModal] = useState<{ code: string; name: string; tier: number; category: string }[]>([])
   const titlesHandled = useRef(false)
   const [unlockCardId, setUnlockCardId] = useState<string | undefined>(undefined)
@@ -85,13 +87,14 @@ export default function PhoneShell() {
     if (showGallery) { path = '/gallery'; title = '卡片探索' }
     else if (showTitle) { path = '/titles'; title = 'PB探索' }
     else if (showAchievement) { path = '/achievements'; title = '成就探索' }
+    else if (showTraining) { path = '/training'; title = '自主訓練' }
     else if (showExplore) { path = '/explore'; title = '城市探索' }
     else if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
     else if (showProfile || payRace) { path = '/profile'; title = '會員資訊' }
     else if (registerRace) { path = `/register/${registerRace.slug}`; title = `報名 - ${registerRace.title}` }
     else if (detailRace) { path = `/race/${detailRace.slug}`; title = detailRace.title }
     pageview(path, title)
-  }, [showGallery, showTitle, showAchievement, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
+  }, [showGallery, showTitle, showAchievement, showTraining, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
 
   return (
     <GoogleAuthProvider>
@@ -114,6 +117,8 @@ export default function PhoneShell() {
           <TitleScreen onBack={() => setShowTitle(false)} />
         ) : showAchievement ? (
           <AchievementScreen onBack={() => setShowAchievement(false)} />
+        ) : showTraining ? (
+          <TrainingScreen onBack={() => setShowTraining(false)} />
         ) : showExplore ? (
           <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={(bossId) => { window.location.href = bossId ? '/track?focus=' + encodeURIComponent(bossId) : '/track' }} />
         ) : showPersonalTasks ? (
@@ -127,6 +132,7 @@ export default function PhoneShell() {
             onOpenGallery={() => setShowGallery(true)}
             onOpenTitle={() => setShowTitle(true)}
             onOpenAchievement={() => setShowAchievement(true)}
+            onOpenTraining={() => setShowTraining(true)}
           />
         ) : registerRace ? (
           <RegistrationScreen race={registerRace} onBack={() => setRegisterRace(null)} />

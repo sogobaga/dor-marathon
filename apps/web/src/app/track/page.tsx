@@ -8,7 +8,7 @@ import BossChallengePanel from '@/components/BossChallengePanel'
 import BossRankingPanel from '@/components/BossRankingPanel'
 import CardUnlockCelebration from '@/components/CardUnlockCelebration'
 import TrackTaskPanel from '@/components/TrackTaskPanel'
-import { expandSegments, paceInBand, type WoStep } from '@/lib/workout'
+import { expandSegments, paceInBand, takeFreetrainWorkout, type WoStep } from '@/lib/workout'
 import { loadLeaflet } from '@/lib/leaflet'
 import { unlockAudio, playEventAlarm, playEventComplete, vibrate, setMuted as sfxSetMuted, isMuted } from '@/lib/sfx'
 import { loadEffectAssets } from '@/lib/effects'
@@ -89,7 +89,8 @@ export default function TrackPage() {
   const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
   const [mileageCfg, setMileageCfg] = useState<MileageConfig | null>(null) // 里程獎勵設定（進度條/預覽）
   // 個人任務「結構化課表」執行（挑戰後帶到本頁跑）
-  const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore'; cardUrl?: string } | null>(null)
+  const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' | 'freetrain'; cardUrl?: string } | null>(null)
+  const freetrainRef = useRef(false) // 自主訓練：workout 已由 TrainingScreen 橋接載入、尚未開跑/結束——保護不被 loadPanel() 的「無進行中挑戰→清空」誤清掉
   const [exploreCps, setExploreCps] = useState<ExploreBoss[]>([]) // 城市探索打卡點（含座標）
   const [bossPanel, setBossPanel] = useState<{ boss: ExploreBoss; phase: 'intro' | 'start'; dpCost: number } | null>(null) // 打卡後跳出的關主挑戰面板
   const [rankingBoss, setRankingBoss] = useState<{ id: string; name: string } | null>(null) // 挑戰者成績排行覆蓋層
@@ -730,7 +731,7 @@ export default function TrackPage() {
   }
 
   function requestFinish() {
-    if (woActiveRef.current) { woActiveRef.current = false; setWoPhase('idle') } // 課表中途結束：停止逐段驅動（挑戰仍保留，可再進來續挑）
+    if (woActiveRef.current) { woActiveRef.current = false; freetrainRef.current = false; setWoPhase('idle') } // 課表中途結束：停止逐段驅動（挑戰仍保留，可再進來續挑）
     const ae = activeEventRef.current
     if (ae && ae.phase === 'active') { setConfirmEnd(true); return }
     if (ae) declineEvent()
@@ -838,12 +839,20 @@ export default function TrackPage() {
       const ac = r.active_card
       if (ac && ac.segments && ac.segments.length) {
         setWorkout({ taskId: ac.task_id, title: ac.title || '課表挑戰', steps: expandSegments(ac.segments), kind: 'personal' })
-      } else if (!woActiveRef.current) {
+      } else if (!woActiveRef.current && !freetrainRef.current) {
         setWorkout(null)
       }
     } catch { /* ignore */ }
   }, [])
   useEffect(() => { loadPanel() }, [loadPanel])
+
+  // 自主訓練：進頁偵測 TrainingScreen 橋接帶來的一次性課表（sessionStorage）→ 進就緒，等使用者按「開始」
+  useEffect(() => {
+    const wo = takeFreetrainWorkout()
+    if (!wo) return
+    freetrainRef.current = true
+    setWorkout({ taskId: wo.code || 'freetrain', title: wo.name || '自主訓練', steps: expandSegments(wo.segments), kind: 'freetrain' })
+  }, [])
 
   // 面板上挑戰某課表卡 → 挑戰(第一次免費/重挑扣DP) → 直接用卡片 segments 進就緒(鎖定該卡)
   async function challengeCard(c: PanelCard) {
@@ -868,8 +877,8 @@ export default function TrackPage() {
     if (!workout) return
     beginWorkout(workout)
   }
-  // 啟動一份課表（個人任務或關主挑戰共用）。須在使用者手勢內呼叫（start() 會請求定位權限）
-  function beginWorkout(wo: { taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore'; cardUrl?: string }) {
+  // 啟動一份課表（個人任務／關主挑戰／自主訓練共用）。須在使用者手勢內呼叫（start() 會請求定位權限）
+  function beginWorkout(wo: { taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' | 'freetrain'; cardUrl?: string }) {
     setWorkout(wo)
     woResultsRef.current = { inBand: 0, total: 0, detail: [] }
     woStepIdxRef.current = 0
@@ -885,10 +894,13 @@ export default function TrackPage() {
   }
   async function finishWorkout() {
     woActiveRef.current = false
+    freetrainRef.current = false
     setWoPhase('done')
     // 先上傳 GPS（伺服器重算+防弊）→ 拿到是否標記；被標記疑似載具就不回報課表完成（成績不計）
     const upload = await finish()
     if (upload?.flagged) { setWoResult({ stars: 0, reward_exp: 0, reward_dp: 0, flagged: true }); return }
+    // 自主訓練：不發任何額外獎勵/星數——GPS finish() 已存跑步紀錄（里程 EXP 由既有 activity_queue 自動發）。
+    if (workout?.kind === 'freetrain') { setWoResult({ stars: 0, reward_exp: 0, reward_dp: 0, time_s: upload?.duration_s }); return }
     const res = woResultsRef.current
     const token = getUserToken()
     try {
@@ -1320,7 +1332,7 @@ export default function TrackPage() {
               const stepTime = Math.max(0, (Date.now() - woStepStartRef.current.time) / 1000)
               const livePace = stepDist > 5 ? stepTime / (stepDist / 1000) : 0
               return (
-                <WorkoutHud title={workout.title} steps={workout.steps} stepIdx={woStepIdx}
+                <WorkoutHud title={workout.title} kind={workout.kind} steps={workout.steps} stepIdx={woStepIdx}
                   stepDist={stepDist} stepTime={stepTime} livePaceS={livePace} hits={woHits}
                   phase={woPhase === 'done' ? 'done' : 'running'} result={woResult}
                   onRanking={workout.kind === 'explore' && !woResult?.flagged ? () => setRankingBoss({ id: workout.taskId, name: workout.title }) : undefined}
@@ -1458,7 +1470,7 @@ export default function TrackPage() {
         {status === 'idle' && (
           user
             ? (workout
-                ? <button onClick={startWorkout} className="skin-btn-start" style={btn}>▶ 開始課表挑戰</button>
+                ? <button onClick={startWorkout} className="skin-btn-start" style={btn}>{workout.kind === 'freetrain' ? '▶ 開始訓練' : '▶ 開始課表挑戰'}</button>
                 : <button onClick={start} className="skin-btn-start" style={btn}>▶ 開始跑步</button>)
             : <button onClick={() => setShowLogin(true)} style={btn}>請先登入</button>
         )}

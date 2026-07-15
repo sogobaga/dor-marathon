@@ -1,4 +1,4 @@
-import type { WorkoutSegment } from './api'
+import type { WorkoutSegment, TemplateSegment, PaceLevel } from './api'
 
 // 結構化課表：把 segments（含 reps）展開成「一步一步」的執行序列，供 GPS 追蹤逐段驅動。
 export type WoStep = {
@@ -121,4 +121,42 @@ export function fmtDuration(min: number): string {
   if (min <= 0) return '—'
   if (min < 60) return `${min} 分`
   return `${Math.floor(min / 60)} 時 ${min % 60} 分`
+}
+
+// ── 自主訓練（P1）：課表庫「效度分段」→ 既有 WorkoutSegment ──
+const EASY_DEFAULT_KINDS = new Set(['warmup', 'cooldown', 'recovery']) // 沒標 effort 的暖身/緩和/恢復段一律用輕鬆配速
+// 依玩家選定的配速等級，把課表庫的 TemplateSegment[]（effort 表達強度）解析成既有 WorkoutSegment[]（實際配速秒/公里）。
+export function resolveTemplate(segments?: TemplateSegment[] | null, level?: PaceLevel | null): WorkoutSegment[] {
+  if (!segments || !level) return []
+  return segments.map((s) => {
+    const effort = s.effort || (EASY_DEFAULT_KINDS.has(s.kind) ? 'easy' : undefined)
+    const p = effort ? level.paces[effort] : undefined
+    return {
+      kind: s.kind,
+      label: s.label,
+      target_type: s.target_type,
+      target: s.target,
+      reps: s.reps,
+      rest_s: s.rest_s,
+      pace_fast_s: p?.fast,
+      pace_slow_s: p?.slow,
+    }
+  })
+}
+
+// ── 自主訓練：TrainingScreen → /track 的橋接（無伺服器端「進行中挑戰」狀態，靠 sessionStorage 帶一次）──
+const FREETRAIN_LS_KEY = 'dor_freetrain_wo'
+export function saveFreetrainWorkout(code: string, name: string, segments: WorkoutSegment[]) {
+  try { sessionStorage.setItem(FREETRAIN_LS_KEY, JSON.stringify({ code, name, segments })) } catch { /* ignore */ }
+}
+// 取出並清除（只消費一次，避免重新整理 /track 又重新帶入一份舊課表）
+export function takeFreetrainWorkout(): { code: string; name: string; segments: WorkoutSegment[] } | null {
+  try {
+    const raw = sessionStorage.getItem(FREETRAIN_LS_KEY)
+    if (!raw) return null
+    sessionStorage.removeItem(FREETRAIN_LS_KEY)
+    const data = JSON.parse(raw)
+    if (!data?.segments?.length) return null
+    return data
+  } catch { return null }
 }

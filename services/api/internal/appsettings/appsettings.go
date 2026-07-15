@@ -38,6 +38,8 @@ var specs = map[string]func(string) bool{
 	"title_entry_whitelist":       isWhitelist,
 	"achievement_entry_state":     isEntryState, // 成就統計入口
 	"achievement_entry_whitelist": isWhitelist,
+	"training_entry_state":        isEntryState, // 自主訓練入口
+	"training_entry_whitelist":    isWhitelist,
 	// VIP 訂閱制（後台可調數值）
 	"vip_trial_days":              isNonNegInt, // 新註冊自動 VIP 試用天數
 	"vip_price_monthly":           isNonNegInt, // 月繳原價（元）

@@ -126,6 +126,7 @@ type DashboardInfo struct {
 	GalleryEntry     string         `json:"gallery_entry"`        // 卡片圖鑑入口可見性（同上）
 	TitleEntry       string         `json:"title_entry"`          // 稱號系統入口可見性（同上）
 	AchievementEntry string         `json:"achievement_entry"`    // 成就統計入口可見性（同上）
+	TrainingEntry    string         `json:"training_entry"`       // 自主訓練入口可見性（同上）
 	NewTitles        []AwardedTitle `json:"new_titles,omitempty"` // 本次 dashboard 新解鎖（未看過）稱號
 	// 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；見 internal/stamina）
 	Sp               int        `json:"sp"`
@@ -133,7 +134,7 @@ type DashboardInfo struct {
 	SpRecoverMin     int        `json:"sp_recover_min"`      // 每恢復 1 點所需分鐘
 	SpNextRecoverSec int        `json:"sp_next_recover_sec"` // 距下一點恢復秒數（0=已滿）
 	SpFreezeUntil    *time.Time `json:"sp_freeze_until"`     // 過度訓練凍結到此時間（null=無）
-	Fitness          int        `json:"fitness"`            // 跑步水準 0-100
+	Fitness          int        `json:"fitness"`             // 跑步水準 0-100
 }
 
 // GET /api/v1/profile/dashboard
@@ -177,6 +178,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	d.GalleryEntry = resolveEntry(r.Context(), h.db, "gallery_entry_state", "gallery_entry_whitelist", email, code)
 	d.TitleEntry = resolveEntry(r.Context(), h.db, "title_entry_state", "title_entry_whitelist", email, code)
 	d.AchievementEntry = resolveEntry(r.Context(), h.db, "achievement_entry_state", "achievement_entry_whitelist", email, code)
+	d.TrainingEntry = resolveEntry(r.Context(), h.db, "training_entry_state", "training_entry_whitelist", email, code)
 	d.NewTitles = h.checkAndAwardTitles(r.Context(), userID)
 	levels, err := h.levelConfigList(r.Context())
 	if err != nil {
