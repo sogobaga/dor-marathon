@@ -110,7 +110,7 @@ export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, step
     <div style={wrap}>
       <div style={card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-          <span style={{ fontSize: 10.5, letterSpacing: '.15em', color: 'var(--tx-faint)', fontWeight: 800 }}>課表挑戰 · {title}</span>
+          <span style={{ fontSize: 10.5, letterSpacing: '.15em', color: kind === 'freetrain' ? 'var(--fug)' : 'var(--tx-faint)', fontWeight: 800 }}>{kind === 'freetrain' ? '🏃 自主訓練' : '課表挑戰'} · {title}</span>
           <span style={{ fontSize: 11, color: 'var(--tx-faint)', fontVariantNumeric: 'tabular-nums' }}>第 {stepIdx + 1}/{steps.length} 段</span>
         </div>
         {/* 目前分段 */}
@@ -138,7 +138,7 @@ export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, step
             return <span key={i} title={s.label} style={{ flex: s.kind === 'rest' ? '0 0 8px' : 1, height: 5, minWidth: 8, borderRadius: 999, background: bg, opacity: i === stepIdx ? 1 : 0.9 }} />
           })}
         </div>
-        <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 6 }}>完成整份課表即結算；400m 段配速達成度決定星數（全達 3★／部分 2★／完成 1★）。</div>
+        <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 6 }}>{kind === 'freetrain' ? '依各段目標配速跑；完成不計星數與獎勵，日常里程 EXP 照常累積。' : '完成整份課表即結算；400m 段配速達成度決定星數（全達 3★／部分 2★／完成 1★）。'}</div>
       </div>
     </div>
   )

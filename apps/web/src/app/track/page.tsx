@@ -8,6 +8,7 @@ import BossChallengePanel from '@/components/BossChallengePanel'
 import BossRankingPanel from '@/components/BossRankingPanel'
 import CardUnlockCelebration from '@/components/CardUnlockCelebration'
 import TrackTaskPanel from '@/components/TrackTaskPanel'
+import FreetrainIntroPanel from '@/components/FreetrainIntroPanel'
 import { expandSegments, paceInBand, takeFreetrainWorkout, type WoStep } from '@/lib/workout'
 import { loadLeaflet } from '@/lib/leaflet'
 import { unlockAudio, playEventAlarm, playEventComplete, vibrate, setMuted as sfxSetMuted, isMuted } from '@/lib/sfx'
@@ -1322,7 +1323,10 @@ export default function TrackPage() {
           {/* 可捲動內容（展開時顯示） */}
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '2px 16px calc(20px + var(--cta-safe, 0px))' }}>
             {/* 個人任務課表（在滑動面板內，不蓋地圖）：閒置＝選課表(左右滑動輪播+●○○)；進行中/完成＝分段執行 HUD */}
-            {status === 'idle' && woPhase === 'idle' && panel && (() => {
+            {status === 'idle' && woPhase === 'idle' && workout?.kind === 'freetrain' && (
+              <FreetrainIntroPanel title={workout.title} steps={workout.steps} />
+            )}
+            {status === 'idle' && woPhase === 'idle' && workout?.kind !== 'freetrain' && panel && (() => {
               const ac = panel.active_card
               const list = ac && !panel.cards.some((c) => c.task_id === ac.task_id) ? [ac, ...panel.cards] : panel.cards
               return <TrackTaskPanel cards={list} activeTaskId={workout?.taskId ?? ac?.task_id ?? null} busy={panelBusy} onChallenge={challengeCard} onAbandon={abandonActive} />
