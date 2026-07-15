@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
 import { trainingApi, type WorkoutTemplate, type PaceLevel } from '@/lib/api'
 import { resolveTemplate, saveFreetrainWorkout, totalKm, estMinutes, fmtDuration, segSummary, targetPaceBand } from '@/lib/workout'
@@ -27,14 +27,16 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   const loadFailed = !!error && !vipLocked
 
   const [levelId, setLevelId] = useState<number | null>(null)
+  // 記住上次選的配速等級（切頁/重整後維持不變，不再每次回到預設）
+  useEffect(() => { const v = window.localStorage.getItem('dor_training_pace_level'); if (v) setLevelId(Number(v)) }, [])
   const [navigating, setNavigating] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
 
   const levels = useMemo(() => data?.pace_levels ?? [], [data])
   const level: PaceLevel | null = useMemo(() => {
     if (!levels.length) return null
-    if (levelId != null) return levels.find((l) => l.id === levelId) ?? null
-    return levels.find((l) => l.id === 5) ?? levels[Math.floor(levels.length / 2)]
+    const byId = levelId != null ? levels.find((l) => l.id === levelId) : undefined
+    return byId ?? levels.find((l) => l.id === 5) ?? levels[Math.floor(levels.length / 2)]
   }, [levels, levelId])
 
   // 依 category 分組，保留課表庫原本的 sort_order
@@ -91,7 +93,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
               <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)', flexShrink: 0 }}>配速等級</span>
               <select
                 value={level?.id ?? ''}
-                onChange={(e) => setLevelId(Number(e.target.value))}
+                onChange={(e) => { const id = Number(e.target.value); setLevelId(id); window.localStorage.setItem('dor_training_pace_level', String(id)) }}
                 style={levelSelect}
               >
                 {levels.map((l) => <option key={l.id} value={l.id}>Lv.{l.id} · {l.label}</option>)}
