@@ -1377,6 +1377,9 @@ export interface WorkoutTemplate {
   // P3：false＝距離變體（產生器排課用，如 lsd_20/easy_8），不進「課表庫」清單／選課表 modal；
   // 但仍可用 template_code 解析分段（開跑用）。缺省視為 true（相容舊回應）。
   library_visible?: boolean
+  // 課表可微調（migration 085）：distance(調總距離)/reps(調趟數)/pyramid(調峰值±400m)/none。
+  // 決定「開始訓練」卡片與選課表 modal 是否顯示 −/＋ 微調列及其步階單位，見 lib/workout.ts adjustMeta。
+  adjust_type?: string
 }
 
 // 自主訓練：配速等級（玩家自選，決定 TemplateSegment.effort 對應的實際配速秒/公里）。
@@ -1452,6 +1455,7 @@ export interface ScheduledWorkout {
   pace_level: number
   planned_km: number
   planned_min: number
+  adjust: number // 微調量（migration 085；0＝課表預設，距離型±km/間歇型±趟/金字塔±400m峰值階）
 }
 // 自主訓練：月曆單日——已排課表（P3 改陣列，一天可多份） + 當日實際跑量（GPS/Strava 等未被 flag 的活動，依台北時區分桶）
 export interface TrainingDay {
@@ -1507,7 +1511,7 @@ export const trainingApi = {
   calendar: (token: string, month: string) =>
     request<TrainingCalendar>(`/training/calendar?month=${encodeURIComponent(month)}`, { headers: withAuth(token) }),
   // 排課（手動，plan_id 固定 NULL）：P3 改 INSERT 一筆（不再 upsert-by-date，一天可多份），回含 id 的新列
-  schedule: (token: string, body: { date: string; template_code: string; pace_level: number; planned_km: number; planned_min: number }) =>
+  schedule: (token: string, body: { date: string; template_code: string; pace_level: number; planned_km: number; planned_min: number; adjust?: number }) =>
     request<ScheduledWorkout & { date: string }>('/training/schedule', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   // 移除單筆排課（依 id；來自計畫的課表也可單筆移除，不影響同計畫其餘課表／不刪計畫本身）
   unschedule: (token: string, id: string) =>

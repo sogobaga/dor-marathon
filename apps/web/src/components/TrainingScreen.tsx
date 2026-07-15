@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { trainingApi, type WorkoutTemplate, type PaceLevel, type TrainingCalendar, type TrainingDay, type TrainingPlan, type AutoPlanRequest } from '@/lib/api'
-import { resolveTemplate, saveFreetrainWorkout, totalKm, estMinutes, fmtDuration, segSummary, targetPaceBand } from '@/lib/workout'
+import { resolveTemplate, saveFreetrainWorkout, totalKm, estMinutes, fmtDuration, segSummary, targetPaceBand, adjustMeta, adjustedValue, currentValue, pyramidPeak } from '@/lib/workout'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import UpgradeVipModal from './UpgradeVipModal'
 
@@ -118,16 +118,22 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     return Array.from(map.entries())
   }, [data])
 
-  // 依 template_code + 指定配速等級解析並橋接給 /track（課表庫「開始訓練」與月曆「開始此課表」共用）
-  function startWorkout(code: string, useLevel: PaceLevel | null) {
+  // 依 template_code + 指定配速等級解析並橋接給 /track（課表庫「開始訓練」與月曆「開始此課表」共用）。
+  // adjust（migration 085）：微調量，課表庫卡片帶目前微調、月曆已排課表帶該筆 scheduled.adjust；
+  // adjust_type 直接從查到的 t 取得（不需呼叫端另傳）。
+  function startWorkout(code: string, useLevel: PaceLevel | null, adjust = 0) {
     const t = (data?.templates ?? []).find((x) => x.code === code)
     if (!t || !useLevel) return
-    const segments = resolveTemplate(t.segments, useLevel)
+    const segments = resolveTemplate(t.segments, useLevel, t.adjust_type, adjust)
     saveFreetrainWorkout(t.code, t.name, segments)
     setNavigating(true)
     setTimeout(() => { window.location.href = '/track' }, 380)
   }
-  function startTemplate(t: WorkoutTemplate) { startWorkout(t.code, level) }
+  function startTemplate(t: WorkoutTemplate) { startWorkout(t.code, level, libAdjust[t.code] ?? 0) }
+
+  // ── 課表微調（migration 085）：課表庫卡片各自記一份 delta（Record<code,number>，預設 0）──
+  const [libAdjust, setLibAdjust] = useState<Record<string, number>>({})
+  function bumpLib(code: string, delta: number) { setLibAdjust((prev) => ({ ...prev, [code]: (prev[code] ?? 0) + delta })) }
 
   // ── 訓練月曆（P2）+ 每日多份/一鍵訓練計畫（P3）──
   const [month, setMonth] = useState(() => ym(new Date()))
@@ -207,10 +213,14 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   const [removingId, setRemovingId] = useState<string | null>(null)
   const pickerDay: TrainingDay | undefined = useMemo(() => cal?.days.find((d) => d.date === pickerDate), [cal, pickerDate])
   const pickerLevel: PaceLevel | null = useMemo(() => levels.find((l) => l.id === pickerLevelId) ?? level, [levels, pickerLevelId, level])
+  // 選課表 modal 內各課表的微調 delta（開啟新的一天時重置，避免上一天的微調殘留）
+  const [pickerAdjust, setPickerAdjust] = useState<Record<string, number>>({})
+  function bumpPicker(code: string, delta: number) { setPickerAdjust((prev) => ({ ...prev, [code]: (prev[code] ?? 0) + delta })) }
 
   function openPicker(date: string) {
     setPickerDate(date)
     setPickerLevelId(levelId ?? level?.id ?? null) // 一天可能有多份、配速各異，新增一律沿用全域上次選的等級
+    setPickerAdjust({})
     setPickerErr('')
   }
   function closePicker() { setPickerDate(null); setPickerErr('') }
@@ -218,14 +228,15 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   // 新增一筆課表到當日（手動排定，plan_id 固定 NULL）；加入後保留 modal 開啟，方便一次排多份
   async function saveSchedule(t: WorkoutTemplate) {
     if (!pickerDate || !pickerLevel) return
-    const resolved = resolveTemplate(t.segments, pickerLevel)
+    const adj = pickerAdjust[t.code] ?? 0
+    const resolved = resolveTemplate(t.segments, pickerLevel, t.adjust_type, adj)
     const token = getUserToken()
     if (!token) return
     setPickerBusy(true); setPickerErr('')
     try {
       await withUserAuth((tok) => trainingApi.schedule(tok, {
         date: pickerDate, template_code: t.code, pace_level: pickerLevel.id,
-        planned_km: totalKm(resolved), planned_min: estMinutes(resolved),
+        planned_km: totalKm(resolved), planned_min: estMinutes(resolved), adjust: adj,
       }))
       loadCalendar(month)
     } catch {
@@ -383,14 +394,30 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--fug)', marginBottom: 8, letterSpacing: '.05em' }}>{CATEGORY_LABELS[cat] || cat}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {templates.map((t) => {
-                      const resolved = level ? resolveTemplate(t.segments, level) : []
+                      const adj = libAdjust[t.code] ?? 0
+                      const meta = adjustMeta(t)
+                      const resolved = level ? resolveTemplate(t.segments, level, t.adjust_type, adj) : []
+                      // 金字塔段數多，segSummary 會很長；改精簡呈現「金字塔 400→800→…→{peak}→…→400」
+                      const summaryText = t.adjust_type === 'pyramid' ? `金字塔 400→800→…→${pyramidPeak(t.segments, adj)}m→…→400` : segSummary(resolved)
                       return (
                         <div key={t.code} style={tplCard}>
                           <div style={{ fontSize: 14.5, fontWeight: 800, color: 'var(--tx)' }}>{t.name}</div>
                           {t.description && <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.6 }}>{t.description}</div>}
-                          {segSummary(resolved) && <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.6, padding: '7px 10px', background: 'var(--bg-2)', borderRadius: 8 }}>📋 {segSummary(resolved)}</div>}
+                          {summaryText && <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.6, padding: '7px 10px', background: 'var(--bg-2)', borderRadius: 8 }}>📋 {summaryText}</div>}
                           {targetPaceBand(resolved) && <div style={{ fontSize: 12, color: 'var(--fug)', fontWeight: 700, marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>🎯 目標配速 {targetPaceBand(resolved)}</div>}
                           <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 5, fontVariantNumeric: 'tabular-nums' }}>總距離 {totalKm(resolved)} K · 預估 {fmtDuration(estMinutes(resolved))}</div>
+                          {meta.type !== 'none' && (() => {
+                            const val = adjustedValue(t, adj)
+                            const atMin = val <= meta.min
+                            const atMax = val >= meta.max
+                            return (
+                              <div style={adjustRow}>
+                                <button type="button" onClick={() => bumpLib(t.code, -1)} disabled={atMin} style={{ ...adjustBtn, opacity: atMin ? 0.4 : 1 }}>−</button>
+                                <span style={adjustVal}>{currentValue(t, adj)}</span>
+                                <button type="button" onClick={() => bumpLib(t.code, 1)} disabled={atMax} style={{ ...adjustBtn, opacity: atMax ? 0.4 : 1 }}>＋</button>
+                              </div>
+                            )
+                          })()}
                           <button onClick={() => startTemplate(t)} disabled={!level} style={{ ...startBtn, opacity: level ? 1 : 0.5 }}>▶ 開始訓練</button>
                         </div>
                       )
@@ -537,27 +564,35 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
             {!!pickerDay?.scheduled.length && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '10px 0' }}>
                 <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontWeight: 800 }}>當日已排（{pickerDay.scheduled.length}）</div>
-                {pickerDay.scheduled.map((s) => (
-                  <div key={s.id} style={{ background: 'rgba(255,255,255,.04)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '11px 13px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>{s.name}</div>
-                      <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 6, background: s.plan_id ? 'rgba(199,88,255,.20)' : 'rgba(255,255,255,.08)', color: s.plan_id ? '#d9a8ff' : 'var(--tx-dim)', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                        {s.plan_id ? `📋 ${s.plan_name || '訓練計畫'}` : '手動'}
-                      </span>
+                {pickerDay.scheduled.map((s) => {
+                  // 顯示該筆已排課表目前的微調值（如「6K」/「×8」/「峰1600m」）；type='none' 或找不到課表原型不顯示
+                  const sTpl = (data?.templates ?? []).find((x) => x.code === s.template_code)
+                  const sMeta = sTpl ? adjustMeta(sTpl) : null
+                  const sAdjLabel = sTpl && sMeta && sMeta.type !== 'none'
+                    ? (sMeta.type === 'distance' ? `${adjustedValue(sTpl, s.adjust)}K` : sMeta.type === 'reps' ? `×${adjustedValue(sTpl, s.adjust)}` : `峰${adjustedValue(sTpl, s.adjust)}m`)
+                    : ''
+                  return (
+                    <div key={s.id} style={{ background: 'rgba(255,255,255,.04)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '11px 13px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>{s.name}{sAdjLabel && <span style={{ color: 'var(--fug)', fontWeight: 700 }}> · {sAdjLabel}</span>}</div>
+                        <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 6, background: s.plan_id ? 'rgba(199,88,255,.20)' : 'rgba(255,255,255,.08)', color: s.plan_id ? '#d9a8ff' : 'var(--tx-dim)', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                          {s.plan_id ? `📋 ${s.plan_name || '訓練計畫'}` : '手動'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>
+                        {CATEGORY_LABELS[s.category] || s.category} · {s.planned_km.toFixed(1)} K · {fmtDuration(s.planned_min)}
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <button
+                          disabled={pickerBusy || removingId === s.id}
+                          onClick={() => { const code = s.template_code; const lvl = levels.find((l) => l.id === s.pace_level) ?? null; const adj = s.adjust; closePicker(); startWorkout(code, lvl, adj) }}
+                          style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px 0', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}
+                        >▶ 開始此課表</button>
+                        <button disabled={pickerBusy || removingId === s.id} onClick={() => removeSchedule(s.id)} style={{ background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 9, padding: '9px 14px', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}>🗑 移除</button>
+                      </div>
                     </div>
-                    <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>
-                      {CATEGORY_LABELS[s.category] || s.category} · {s.planned_km.toFixed(1)} K · {fmtDuration(s.planned_min)}
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                      <button
-                        disabled={pickerBusy || removingId === s.id}
-                        onClick={() => { const code = s.template_code; const lvl = levels.find((l) => l.id === s.pace_level) ?? null; closePicker(); startWorkout(code, lvl) }}
-                        style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px 0', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}
-                      >▶ 開始此課表</button>
-                      <button disabled={pickerBusy || removingId === s.id} onClick={() => removeSchedule(s.id)} style={{ background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 9, padding: '9px 14px', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}>🗑 移除</button>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
 
@@ -580,7 +615,9 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--tx-faint)', marginBottom: 6, letterSpacing: '.05em' }}>{CATEGORY_LABELS[cat] || cat}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {templates.map((t) => {
-                      const resolved = pickerLevel ? resolveTemplate(t.segments, pickerLevel) : []
+                      const adj = pickerAdjust[t.code] ?? 0
+                      const meta = adjustMeta(t)
+                      const resolved = pickerLevel ? resolveTemplate(t.segments, pickerLevel, t.adjust_type, adj) : []
                       const alreadyIn = !!pickerDay?.scheduled.some((s) => s.template_code === t.code)
                       return (
                         <div key={t.code} style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line-2)', borderRadius: 11, padding: '9px 12px' }}>
@@ -589,6 +626,18 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                             <button disabled={pickerBusy || !pickerLevel} onClick={() => saveSchedule(t)} style={{ flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>+ 加入</button>
                           </div>
                           <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>總距離 {totalKm(resolved)} K · 預估 {fmtDuration(estMinutes(resolved))}</div>
+                          {meta.type !== 'none' && (() => {
+                            const val = adjustedValue(t, adj)
+                            const atMin = val <= meta.min
+                            const atMax = val >= meta.max
+                            return (
+                              <div style={adjustRowSmall}>
+                                <button type="button" onClick={() => bumpPicker(t.code, -1)} disabled={atMin} style={{ ...adjustBtnSmall, opacity: atMin ? 0.4 : 1 }}>−</button>
+                                <span style={adjustValSmall}>{currentValue(t, adj)}</span>
+                                <button type="button" onClick={() => bumpPicker(t.code, 1)} disabled={atMax} style={{ ...adjustBtnSmall, opacity: atMax ? 0.4 : 1 }}>＋</button>
+                              </div>
+                            )
+                          })()}
                         </div>
                       )
                     })}
@@ -694,6 +743,13 @@ const emptyBox: React.CSSProperties = { color: 'var(--tx-dim)', fontSize: 13.5, 
 const levelSelect: React.CSSProperties = { flex: 1, minWidth: 0, background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '8px 10px', color: 'var(--tx)', fontSize: 13, fontFamily: 'inherit' }
 const tplCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '11px 13px' }
 const startBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px 0', cursor: 'pointer', fontSize: 13.5, fontFamily: 'inherit' }
+// 課表微調（migration 085）「− 值 ＋」列：課表庫卡片版與選課表 modal 精簡版
+const adjustRow: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: 10, background: 'var(--bg-2)', borderRadius: 9, padding: '6px 10px' }
+const adjustBtn: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line-2)', color: 'var(--tx)', borderRadius: 7, width: 28, height: 28, fontSize: 15, fontWeight: 800, cursor: 'pointer', lineHeight: 1, fontFamily: 'inherit' }
+const adjustVal: React.CSSProperties = { fontSize: 12, fontWeight: 800, color: 'var(--tx)', minWidth: 76, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }
+const adjustRowSmall: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 8, background: 'rgba(255,255,255,.04)', borderRadius: 8, padding: '5px 8px' }
+const adjustBtnSmall: React.CSSProperties = { background: 'rgba(255,255,255,.06)', border: '1px solid var(--line-2)', color: '#fff', borderRadius: 6, width: 24, height: 24, fontSize: 13, fontWeight: 800, cursor: 'pointer', lineHeight: 1, fontFamily: 'inherit' }
+const adjustValSmall: React.CSSProperties = { fontSize: 11, fontWeight: 800, color: '#fff', minWidth: 70, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }
 const navBtn: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx)', borderRadius: 10, width: 34, height: 34, fontSize: 20, cursor: 'pointer', flexShrink: 0, lineHeight: 1 }
 const autoPlanBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '8px 14px', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit', whiteSpace: 'nowrap' }
 const apField: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5 }

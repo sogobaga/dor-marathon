@@ -49,6 +49,8 @@ func (h *Handler) requireVIP(w http.ResponseWriter, r *http.Request) string {
 // --- JSON 型別（契約見 apps/web/src/lib/api.ts）---
 
 // WorkoutTemplate 課表庫的一份課表；segments 直接回傳 workout_templates.segments 原始 jsonb。
+// AdjustType（migration 085）：distance(調總距離)/reps(調趟數)/pyramid(調峰值±400m)/none，前端課表卡
+// 據此決定是否顯示微調 UI 及其步階單位。
 type WorkoutTemplate struct {
 	Code        string          `json:"code"`
 	Name        string          `json:"name"`
@@ -56,6 +58,7 @@ type WorkoutTemplate struct {
 	Description string          `json:"description"`
 	Segments    json.RawMessage `json:"segments"`
 	SortOrder   int             `json:"sort_order"`
+	AdjustType  string          `json:"adjust_type"`
 }
 
 // PaceLevel 配速等級；paces 直接回傳 pace_levels.paces 原始 jsonb
@@ -88,7 +91,7 @@ func (h *Handler) Templates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tRows, err := h.db.Query(r.Context(), `
-		SELECT code, name, category, description, segments, sort_order
+		SELECT code, name, category, description, segments, sort_order, adjust_type
 		FROM workout_templates WHERE enabled AND library_visible ORDER BY sort_order`)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
@@ -98,7 +101,7 @@ func (h *Handler) Templates(w http.ResponseWriter, r *http.Request) {
 	templates := []WorkoutTemplate{}
 	for tRows.Next() {
 		var t WorkoutTemplate
-		if err := tRows.Scan(&t.Code, &t.Name, &t.Category, &t.Description, &t.Segments, &t.SortOrder); err != nil {
+		if err := tRows.Scan(&t.Code, &t.Name, &t.Category, &t.Description, &t.Segments, &t.SortOrder, &t.AdjustType); err != nil {
 			continue
 		}
 		templates = append(templates, t)
@@ -139,6 +142,7 @@ type ScheduledWorkout struct {
 	PaceLevel    int     `json:"pace_level"`
 	PlannedKm    float64 `json:"planned_km"`
 	PlannedMin   int     `json:"planned_min"`
+	Adjust       int     `json:"adjust"`
 }
 
 // ScheduleRow POST /training/schedule 回存好的一筆（含日期）。
@@ -206,7 +210,7 @@ func (h *Handler) Calendar(w http.ResponseWriter, r *http.Request) {
 
 	// 排定：該月 user_training_schedule 所有 rows（一天可多份）。
 	schedRows, err := h.db.Query(ctx, `
-		SELECT s.id, s.plan_id, p.name, s.scheduled_date, s.template_code, s.pace_level, s.name, s.category, s.planned_km, s.planned_min
+		SELECT s.id, s.plan_id, p.name, s.scheduled_date, s.template_code, s.pace_level, s.name, s.category, s.planned_km, s.planned_min, s.adjust
 		FROM user_training_schedule s
 		LEFT JOIN training_plans p ON p.id = s.plan_id
 		WHERE s.user_id=$1 AND s.scheduled_date >= $2::date AND s.scheduled_date < ($2::date + INTERVAL '1 month')
@@ -224,7 +228,7 @@ func (h *Handler) Calendar(w http.ResponseWriter, r *http.Request) {
 		var planID *string
 		var planName *string
 		var sw ScheduledWorkout
-		if err := schedRows.Scan(&sw.ID, &planID, &planName, &d, &sw.TemplateCode, &sw.PaceLevel, &sw.Name, &sw.Category, &sw.PlannedKm, &sw.PlannedMin); err != nil {
+		if err := schedRows.Scan(&sw.ID, &planID, &planName, &d, &sw.TemplateCode, &sw.PaceLevel, &sw.Name, &sw.Category, &sw.PlannedKm, &sw.PlannedMin, &sw.Adjust); err != nil {
 			schedRows.Close()
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
@@ -310,13 +314,15 @@ func (h *Handler) Calendar(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// scheduleRequest POST /training/schedule 請求體。
+// scheduleRequest POST /training/schedule 請求體。Adjust（migration 085）＝微調量 delta：距離型±公里、
+// 間歇型±趟、金字塔±(400m 峰值階)；純存放，實際套用在前端 resolveTemplate，後端不校驗其範圍。
 type scheduleRequest struct {
 	Date         string  `json:"date"`
 	TemplateCode string  `json:"template_code"`
 	PaceLevel    int     `json:"pace_level"`
 	PlannedKm    float64 `json:"planned_km"`
 	PlannedMin   int     `json:"planned_min"`
+	Adjust       int     `json:"adjust"`
 }
 
 // CreateSchedule POST /training/schedule — VIP 專屬：新增一筆手動排程（plan_id=NULL）。
@@ -363,11 +369,11 @@ func (h *Handler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 	var d time.Time
 	row := ScheduleRow{}
 	if err := h.db.QueryRow(ctx, `
-		INSERT INTO user_training_schedule (user_id, scheduled_date, template_code, pace_level, name, category, planned_km, planned_min)
-		VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8)
-		RETURNING id, scheduled_date, template_code, pace_level, name, category, planned_km, planned_min`,
-		uid, req.Date, req.TemplateCode, req.PaceLevel, name, category, req.PlannedKm, req.PlannedMin).
-		Scan(&row.ID, &d, &row.TemplateCode, &row.PaceLevel, &row.Name, &row.Category, &row.PlannedKm, &row.PlannedMin); err != nil {
+		INSERT INTO user_training_schedule (user_id, scheduled_date, template_code, pace_level, name, category, planned_km, planned_min, adjust)
+		VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, scheduled_date, template_code, pace_level, name, category, planned_km, planned_min, adjust`,
+		uid, req.Date, req.TemplateCode, req.PaceLevel, name, category, req.PlannedKm, req.PlannedMin, req.Adjust).
+		Scan(&row.ID, &d, &row.TemplateCode, &row.PaceLevel, &row.Name, &row.Category, &row.PlannedKm, &row.PlannedMin, &row.Adjust); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
@@ -1041,8 +1047,8 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		plannedKm := segTotalKm(t.Segments)
 		plannedMin := segEstMinutes(t.Segments, pm)
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO user_training_schedule (user_id, plan_id, scheduled_date, template_code, pace_level, name, category, planned_km, planned_min)
-			VALUES ($1,$2,$3::date,$4,$5,$6,$7,$8,$9)`,
+			INSERT INTO user_training_schedule (user_id, plan_id, scheduled_date, template_code, pace_level, name, category, planned_km, planned_min, adjust)
+			VALUES ($1,$2,$3::date,$4,$5,$6,$7,$8,$9,0)`,
 			uid, planID, pw.Date, pw.TemplateCode, selectedLevel, t.Name, t.Category, plannedKm, plannedMin); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return

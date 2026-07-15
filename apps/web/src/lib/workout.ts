@@ -1,4 +1,4 @@
-import type { WorkoutSegment, TemplateSegment, PaceLevel } from './api'
+import type { WorkoutSegment, TemplateSegment, PaceLevel, WorkoutTemplate } from './api'
 
 // 結構化課表：把 segments（含 reps）展開成「一步一步」的執行序列，供 GPS 追蹤逐段驅動。
 export type WoStep = {
@@ -85,12 +85,16 @@ export function targetPaceBand(segs?: WorkoutSegment[] | null): string {
 }
 
 // 分段課表摘要：「暖身 2K → 間歇 400m ×6 → 緩和 2K」
+// 若 label 本身已等於或以距離字串 d 開頭（如金字塔 work 段 label 直接就是 '400m'/'800m'…），不再另接 d，
+// 避免「400m 400m」重複；label 為一般描述（如「輕鬆跑」）時仍照舊接上 d。
 export function segSummary(segs?: WorkoutSegment[] | null): string {
   if (!segs || !segs.length) return ''
   return segs.map((s) => {
     const d = s.target_type === 'distance' ? (s.target >= 1000 ? `${s.target / 1000}K` : `${s.target}m`) : `${Math.round(s.target / 60) || Math.round(s.target)}${s.target >= 60 ? '分' : '秒'}`
+    const label = s.label || kindLabel(s.kind)
     const reps = s.reps && s.reps > 1 ? ` ×${s.reps}` : ''
-    return `${s.label || kindLabel(s.kind)} ${d}${reps}`
+    const dupD = label === d || label.startsWith(d)
+    return dupD ? `${label}${reps}` : `${label} ${d}${reps}`
   }).join(' → ')
 }
 
@@ -125,10 +129,72 @@ export function fmtDuration(min: number): string {
 
 // ── 自主訓練（P1）：課表庫「效度分段」→ 既有 WorkoutSegment ──
 const EASY_DEFAULT_KINDS = new Set(['warmup', 'cooldown', 'recovery']) // 沒標 effort 的暖身/緩和/恢復段一律用輕鬆配速
+
+function clamp(v: number, lo: number, hi: number): number { return Math.min(hi, Math.max(lo, v)) }
+
+// 課表可微調（migration 085）：金字塔 work 段的距離級距。
+const PYRAMID_STEP_M = 400
+
+// 金字塔峰值(m)：該 pyramid 課表 work 段目前最大距離（預設 1600）+ adjust 階（每階 400m），夾 [800,2400]。
+// 課表庫卡片的精簡摘要與微調 bounds 檢查共用。
+export function pyramidPeak(segments?: TemplateSegment[] | null, adjust = 0): number {
+  const work = (segments || []).filter((s) => s.kind === 'work')
+  const basePeak = work.length ? Math.max(...work.map((s) => s.target)) : 1600
+  return clamp(basePeak + (adjust || 0) * PYRAMID_STEP_M, 800, 2400)
+}
+
+// 微調（migration 085）：解析配速「之前」先依 adjust_type 調整 TemplateSegment[]。
+// adjust=0（或未帶 adjustType）原樣不動 → P1/P2/P3 既有行為不回歸。
+// distance：delta(km) 平均分攤到所有 work 距離段(kind==='work' && target_type==='distance')，各段夾 ≥1000m
+//           （單一 work 段就整份加；progression 多段均分）。
+// reps：主間歇 work 段（reps>1 者優先，否則第一個 work 段）reps += delta，夾 [1,20]。
+// pyramid：以新峰值（pyramidPeak）重建中段 400m 級距 work+recovery（work 之間插組間恢復，沿用原 rest_s
+//          或預設 150s），保留原 warmup/cooldown 段。
+export function applyAdjust(segments?: TemplateSegment[] | null, adjustType?: string, adjust?: number): TemplateSegment[] {
+  const segs = segments || []
+  const delta = adjust || 0
+  if (!delta || !adjustType || adjustType === 'none') return segs
+
+  if (adjustType === 'distance') {
+    const idx = segs.reduce<number[]>((acc, s, i) => { if (s.kind === 'work' && s.target_type === 'distance') acc.push(i); return acc }, [])
+    if (!idx.length) return segs
+    const share = (delta * 1000) / idx.length
+    return segs.map((s, i) => (idx.includes(i) ? { ...s, target: Math.max(1000, s.target + share) } : s))
+  }
+
+  if (adjustType === 'reps') {
+    let mainIdx = segs.findIndex((s) => s.kind === 'work' && (s.reps || 1) > 1)
+    if (mainIdx < 0) mainIdx = segs.findIndex((s) => s.kind === 'work')
+    if (mainIdx < 0) return segs
+    return segs.map((s, i) => (i === mainIdx ? { ...s, reps: clamp((s.reps || 1) + delta, 1, 20) } : s))
+  }
+
+  if (adjustType === 'pyramid') {
+    const warmup = segs.filter((s) => s.kind === 'warmup')
+    const cooldown = segs.filter((s) => s.kind === 'cooldown')
+    const work = segs.filter((s) => s.kind === 'work')
+    const restS = work.find((s) => s.rest_s)?.rest_s || 150
+    const peak = pyramidPeak(segs, delta)
+    const up: number[] = []
+    for (let d = PYRAMID_STEP_M; d <= peak; d += PYRAMID_STEP_M) up.push(d)
+    const ladder = [...up, ...up.slice(0, -1).reverse()]
+    const middle: TemplateSegment[] = []
+    ladder.forEach((d, i) => {
+      middle.push({ kind: 'work', label: `${d}m`, effort: 'interval', target_type: 'distance', target: d })
+      if (i < ladder.length - 1) middle.push({ kind: 'recovery', label: '組間恢復', effort: 'easy', target_type: 'time', target: restS })
+    })
+    return [...warmup, ...middle, ...cooldown]
+  }
+
+  return segs
+}
+
 // 依玩家選定的配速等級，把課表庫的 TemplateSegment[]（effort 表達強度）解析成既有 WorkoutSegment[]（實際配速秒/公里）。
-export function resolveTemplate(segments?: TemplateSegment[] | null, level?: PaceLevel | null): WorkoutSegment[] {
+// adjustType/adjust（migration 085）：解析配速前先套用微調（見 applyAdjust）；未帶或 adjust=0 時行為與現況相同。
+export function resolveTemplate(segments?: TemplateSegment[] | null, level?: PaceLevel | null, adjustType?: string, adjust?: number): WorkoutSegment[] {
   if (!segments || !level) return []
-  return segments.map((s) => {
+  const adjusted = applyAdjust(segments, adjustType, adjust)
+  return adjusted.map((s) => {
     const effort = s.effort || (EASY_DEFAULT_KINDS.has(s.kind) ? 'easy' : undefined)
     const p = effort ? level.paces[effort] : undefined
     return {
@@ -142,6 +208,40 @@ export function resolveTemplate(segments?: TemplateSegment[] | null, level?: Pac
       pace_slow_s: p?.slow,
     }
   })
+}
+
+// 微調 UI 中繼資料：依 template.adjust_type 決定單位/步階/上下界（課表庫卡片、選課表 modal 的 −/＋ 共用）。
+export interface AdjustMeta { type: string; unit: string; step: number; min: number; max: number }
+export function adjustMeta(template: Pick<WorkoutTemplate, 'adjust_type' | 'segments'>): AdjustMeta {
+  switch (template.adjust_type) {
+    case 'distance': return { type: 'distance', unit: 'km', step: 1, min: totalKm(applyAdjust(template.segments, 'distance', -999)), max: 40 }
+    case 'reps': return { type: 'reps', unit: '趟', step: 1, min: 1, max: 20 }
+    case 'pyramid': return { type: 'pyramid', unit: 'm', step: 400, min: 800, max: 2400 }
+    default: return { type: 'none', unit: '', step: 0, min: 0, max: 0 }
+  }
+}
+// 微調後的目前數值（距離型＝套用 adjust 後的總距離 km；間歇型＝主課 reps；金字塔＝峰值 m）；
+// 供顯示文字（currentValue）與 UI bounds 檢查（disable −/＋）共用，避免各自重算一次。
+export function adjustedValue(template: Pick<WorkoutTemplate, 'adjust_type' | 'segments'>, adjust: number): number {
+  const meta = adjustMeta(template)
+  if (meta.type === 'distance') return totalKm(applyAdjust(template.segments, 'distance', adjust))
+  if (meta.type === 'reps') {
+    const segs = applyAdjust(template.segments, 'reps', adjust)
+    let idx = segs.findIndex((s) => s.kind === 'work' && (s.reps || 1) > 1)
+    if (idx < 0) idx = segs.findIndex((s) => s.kind === 'work')
+    return idx >= 0 ? (segs[idx].reps || 1) : 1
+  }
+  if (meta.type === 'pyramid') return pyramidPeak(template.segments, adjust)
+  return 0
+}
+// 微調目前值顯示文字：距離型「總距離 6 K」、間歇型「8 趟」、金字塔「峰值 1600m」。
+export function currentValue(template: Pick<WorkoutTemplate, 'adjust_type' | 'segments'>, adjust: number): string {
+  const meta = adjustMeta(template)
+  const n = adjustedValue(template, adjust)
+  if (meta.type === 'distance') return `總距離 ${n} K`
+  if (meta.type === 'reps') return `${n} 趟`
+  if (meta.type === 'pyramid') return `峰值 ${n}m`
+  return ''
 }
 
 // ── 自主訓練：TrainingScreen → /track 的橋接（無伺服器端「進行中挑戰」狀態，靠 sessionStorage 帶一次）──
