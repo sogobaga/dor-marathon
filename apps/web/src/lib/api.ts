@@ -1494,7 +1494,8 @@ export interface AutoPlanRequest {
   race_date?: string
   race_distance?: '5k' | '10k' | 'half' | 'full'
   weeks?: number       // has_race=false：1|4|8|12|16
-  days_per_week: number // 3-6
+  rest_days: number[]  // 預定休息的星期索引，0=週一..6=週日（前端 checkbox 一..日）；其餘星期皆為訓練日，
+                        // 全 7 天皆休（無訓練日）後端回 400 {error:"need_training_day"}
 }
 
 // 自主訓練（P1+P2+P3）：課表庫 + 配速等級表、月曆排程 CRUD、一鍵訓練計畫。VIP 限定——非 VIP 呼叫回 403

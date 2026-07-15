@@ -43,19 +43,22 @@ const CATEGORY_COLOR: Record<string, { bg: string; fg: string }> = {
 }
 function catColor(cat: string) { return CATEGORY_COLOR[cat] || { bg: 'var(--bg-2)', fg: 'var(--tx-dim)' } }
 
-// 一鍵安排課表：跑齡分級（決定每週天數預設值）與賽事距離選項
-const RUNNING_AGE_OPTIONS: { id: AutoPlanRequest['running_age']; label: string; defaultDays: number }[] = [
-  { id: 'new', label: '不到 1 年', defaultDays: 3 },
-  { id: 'novice', label: '1–3 年', defaultDays: 4 },
-  { id: 'experienced', label: '3–5 年', defaultDays: 5 },
-  { id: 'veteran', label: '5 年以上', defaultDays: 6 },
+// 一鍵安排課表：跑齡分級（決定預勾的休息日）與賽事距離選項
+// defaultRestDays 索引比照 checkbox 一..日＝0(週一)..6(週日)：new 休 4 天(一三五六)、novice 休 3 天(一三五)、
+// experienced/veteran 休 2 天(三五)——可自行改，但送出前至少要留 1 天非休息。
+const RUNNING_AGE_OPTIONS: { id: AutoPlanRequest['running_age']; label: string; defaultRestDays: number[] }[] = [
+  { id: 'new', label: '不到 1 年', defaultRestDays: [0, 2, 4, 5] },
+  { id: 'novice', label: '1–3 年', defaultRestDays: [0, 2, 4] },
+  { id: 'experienced', label: '3–5 年', defaultRestDays: [2, 4] },
+  { id: 'veteran', label: '5 年以上', defaultRestDays: [2, 4] },
 ]
 const RACE_DISTANCE_OPTIONS: { id: NonNullable<AutoPlanRequest['race_distance']>; label: string }[] = [
   { id: '5k', label: '5K' }, { id: '10k', label: '10K' }, { id: 'half', label: '半程馬拉松' }, { id: 'full', label: '全程馬拉松' },
 ]
 const RACE_DISTANCE_LABEL: Record<string, string> = { '5k': '5K', '10k': '10K', half: '半程馬拉松', full: '全程馬拉松' }
 const WEEKS_OPTIONS = [1, 4, 8, 12, 16]
-const DAYS_PER_WEEK_OPTIONS = [3, 4, 5, 6]
+// 休息日 checkbox 星期標籤，索引 0(週一)..6(週日)——與月曆格用的 WK（0=週日起算）刻意不同慣例，各自對應用途。
+const WEEKDAY_MON_FIRST = ['一', '二', '三', '四', '五', '六', '日']
 
 // 1km 最佳成績輸入：接受「mm:ss」或純秒數
 function parseBest1km(raw: string): number | null {
@@ -168,6 +171,18 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, unlocked])
 
+  // 月曆「顯示來源」：避免同日多份課表塞爆格子，改成一次只看一個來源——'manual'＝手動排定，
+  // 其餘為某 training_plans.id（依 scheduled[].plan_id 過濾）。預設選最新的計畫，無計畫則手動排；
+  // 使用者選定某計畫後只要該計畫還在就不覆蓋，計畫被刪除才回退預設。
+  const [calSource, setCalSource] = useState<string>('')
+  useEffect(() => {
+    if (!plans) return
+    if (calSource === 'manual') return
+    if (calSource && plans.some((p) => p.id === calSource)) return
+    setCalSource(plans.length > 0 ? plans[plans.length - 1].id : 'manual')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plans])
+
   async function removePlan(id: string) {
     if (!window.confirm('清除此訓練計畫？將一併移除已排定但尚未完成的課表。')) return
     const token = getUserToken()
@@ -245,7 +260,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   const [apRaceDate, setApRaceDate] = useState('')
   const [apRaceDistance, setApRaceDistance] = useState<NonNullable<AutoPlanRequest['race_distance']>>('10k')
   const [apWeeks, setApWeeks] = useState(8)
-  const [apDaysPerWeek, setApDaysPerWeek] = useState(4)
+  const [apRestDays, setApRestDays] = useState<number[]>(() => RUNNING_AGE_OPTIONS.find((o) => o.id === 'novice')!.defaultRestDays)
   const [apBusy, setApBusy] = useState(false)
   const [apErr, setApErr] = useState('')
 
@@ -256,7 +271,10 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   function onRunningAgeChange(id: AutoPlanRequest['running_age']) {
     setApRunningAge(id)
     const opt = RUNNING_AGE_OPTIONS.find((o) => o.id === id)
-    if (opt) setApDaysPerWeek(opt.defaultDays) // 依跑齡帶預設每週天數（送出前仍可自行改 3/4/5/6）
+    if (opt) setApRestDays(opt.defaultRestDays) // 依跑齡帶預設休息日（送出前仍可自行改）
+  }
+  function toggleRestDay(idx: number) {
+    setApRestDays((prev) => (prev.includes(idx) ? prev.filter((d) => d !== idx) : [...prev, idx].sort((a, b) => a - b)))
   }
 
   async function submitAutoPlan() {
@@ -267,15 +285,17 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     const longestMin = Number(apLongestMin)
     if (!best1kmS || !(longestKm > 0) || !(longestMin > 0)) { setApErr('請完整填寫跑力資料'); return }
     if (apHasRace && !apRaceDate) { setApErr('請選擇賽事日期'); return }
+    if (apRestDays.length >= 7) { setApErr('至少需保留 1 天非休息日才能排課'); return }
     setApBusy(true); setApErr('')
     try {
       const body: AutoPlanRequest = {
         running_age: apRunningAge, best_1km_s: best1kmS, longest_km: longestKm, longest_min: longestMin,
-        has_race: apHasRace, days_per_week: apDaysPerWeek,
+        has_race: apHasRace, rest_days: apRestDays,
         ...(apHasRace ? { race_date: apRaceDate, race_distance: apRaceDistance } : { weeks: apWeeks }),
       }
-      await withUserAuth((tok) => trainingApi.autoPlan(tok, body))
+      const res = await withUserAuth((tok) => trainingApi.autoPlan(tok, body))
       setShowAutoPlan(false)
+      setCalSource(res.plan.id) // 剛產生的計畫直接切為月曆顯示來源，馬上看得到排好的課表
       loadPlans()
       loadCalendar(month)
     } catch (e: any) {
@@ -283,6 +303,8 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         setShowAutoPlan(false)
         setPlanLimitMsg('已達 3 個訓練計畫上限，請先清除一個')
         setTimeout(() => plansRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+      } else if (e?.status === 400 && e?.message === 'need_training_day') {
+        setApErr('至少需保留 1 天非休息日才能排課')
       } else {
         setApErr('產生失敗，請稍後再試')
       }
@@ -386,12 +408,22 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
               <button onClick={openAutoPlan} style={autoPlanBtn}>⚡ 一鍵安排課表</button>
             </div>
 
-            {/* 本月總覽 */}
+            {/* 顯示來源：切換月曆日格要看哪個來源的課表（手動排 or 某訓練計畫），避免多份塞爆格子 */}
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontWeight: 800, margin: '2px 2px 6px' }}>顯示來源</div>
+            <div style={{ display: 'flex', gap: 6, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 2, marginBottom: 12 }}>
+              <button type="button" onClick={() => setCalSource('manual')} style={{ ...sourceChip, ...(calSource === 'manual' ? sourceChipActive : {}) }}>手動排</button>
+              {(plans ?? []).map((p) => (
+                <button key={p.id} type="button" onClick={() => setCalSource(p.id)} style={{ ...sourceChip, ...(calSource === p.id ? sourceChipActive : {}) }}>{p.name}</button>
+              ))}
+            </div>
+
+            {/* 本月總覽（加總全部來源；下方月曆僅顯示目前選中來源） */}
             <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 14px', marginBottom: 14, fontSize: 12, color: 'var(--tx-dim)', lineHeight: 1.9 }}>
               {calErr ? '本月資料載入失敗，請稍後再試' : !cal ? '載入中…' : (
                 <>
                   本月 預計 <b style={{ color: 'var(--tx)' }}>{cal.planned.days}</b> 天 · <b style={{ color: 'var(--tx)' }}>{cal.planned.km.toFixed(1)}</b> K · <b style={{ color: 'var(--tx)' }}>{cal.planned.min}</b> 分
                   ／ 實際 <b style={{ color: 'var(--fug)' }}>{cal.actual.days}</b> 天 · <b style={{ color: 'var(--fug)' }}>{cal.actual.km.toFixed(1)}</b> K · <b style={{ color: 'var(--fug)' }}>{cal.actual.min}</b> 分
+                  <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 3 }}>（加總全部來源，不受下方顯示來源篩選影響）</div>
                 </>
               )}
             </div>
@@ -414,9 +446,10 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   if (day == null) return <div key={`b${i}`} />
                   const dateStr = `${month}-${pad2(day)}`
                   const info = dayMap[dateStr]
-                  const sched = info?.scheduled ?? []
+                  // 只顯示目前選中來源的課表（'manual'＝plan_id null，否則比對 plan_id）——每日最多顯示 1 份，避免跑版
+                  const sched = (info?.scheduled ?? []).filter((s) => (calSource === 'manual' ? s.plan_id === null : s.plan_id === calSource))
                   const isToday = dateStr === todayStr
-                  // ≤2 份逐一顯示各自的分類色徽章；>2 份收成一顆「+N」徽章（避免格子塞爆）
+                  // ≤2 份逐一顯示各自的分類色徽章；>2 份收成一顆「+N」徽章（避免格子塞爆；同來源理論上最多 1 份，此為防禦）
                   const badges = sched.length <= 2 ? sched : []
                   return (
                     <button key={day} onClick={() => openPicker(dateStr)} style={{
@@ -610,12 +643,13 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
               </div>
 
               {apHasRace ? (
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <label style={{ ...apField, flex: 1 }}>
+                // 手機直向堆疊，避免 date input 與 select 在窄螢幕同列擠壓重疊
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <label style={apField}>
                     <span style={apLabel}>賽事日期</span>
                     <input type="date" value={apRaceDate} onChange={(e) => setApRaceDate(e.target.value)} style={apInput} />
                   </label>
-                  <label style={{ ...apField, flex: 1 }}>
+                  <label style={apField}>
                     <span style={apLabel}>賽事距離</span>
                     <select value={apRaceDistance} onChange={(e) => setApRaceDistance(e.target.value as NonNullable<AutoPlanRequest['race_distance']>)} style={levelSelect}>
                       {RACE_DISTANCE_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
@@ -631,12 +665,18 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 </label>
               )}
 
-              <label style={apField}>
-                <span style={apLabel}>每週訓練天數</span>
-                <select value={apDaysPerWeek} onChange={(e) => setApDaysPerWeek(Number(e.target.value))} style={levelSelect}>
-                  {DAYS_PER_WEEK_OPTIONS.map((d) => <option key={d} value={d}>每週 {d} 天</option>)}
-                </select>
-              </label>
+              <div style={apField}>
+                <span style={apLabel}>預定休息日（其餘為訓練日，至少留 1 天）</span>
+                <div style={{ display: 'flex', gap: 5 }}>
+                  {WEEKDAY_MON_FIRST.map((w, idx) => {
+                    const active = apRestDays.includes(idx)
+                    return (
+                      <button key={idx} type="button" onClick={() => toggleRestDay(idx)} style={{ ...toggleBtn, flex: 1, padding: '8px 0', fontSize: 12, ...(active ? toggleBtnActive : {}) }}>{w}</button>
+                    )
+                  })}
+                </div>
+                <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>已選休息 {apRestDays.length} 天・訓練 {7 - apRestDays.length} 天</div>
+              </div>
             </div>
 
             {apErr && <div style={{ fontSize: 12, color: '#ff6b6b', textAlign: 'center', margin: '12px 0 0' }}>{apErr}</div>}
@@ -661,3 +701,5 @@ const apLabel: React.CSSProperties = { fontSize: 11.5, fontWeight: 800, color: '
 const apInput: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '8px 10px', color: 'var(--tx)', fontSize: 13, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
 const toggleBtn: React.CSSProperties = { flex: 1, background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 9, padding: '8px 0', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit' }
 const toggleBtnActive: React.CSSProperties = { background: 'var(--fug)', borderColor: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800 }
+const sourceChip: React.CSSProperties = { flexShrink: 0, background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 20, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: 'inherit' }
+const sourceChipActive: React.CSSProperties = { background: 'var(--fug)', borderColor: 'var(--fug)', color: 'var(--fug-ink)' }

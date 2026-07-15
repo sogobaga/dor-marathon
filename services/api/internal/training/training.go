@@ -470,7 +470,7 @@ func (h *Handler) DeletePlan(w http.ResponseWriter, r *http.Request) {
 
 // autoPlanRequest 一鍵產生器請求體（欄位需與前端 apps/web/src/lib/api.ts AutoPlanRequest 一一對齊）。
 type autoPlanRequest struct {
-	RunningAge   string  `json:"running_age"` // 跑齡等級：new|novice|experienced|veteran（無 days_per_week 時用來推預設）
+	RunningAge   string  `json:"running_age"` // 跑齡等級：new|novice|experienced|veteran（quality 日數上限：new→最多 1 天）
 	Best1kmS     int     `json:"best_1km_s"`
 	LongestKm    float64 `json:"longest_km"`
 	LongestMin   int     `json:"longest_min"`
@@ -478,7 +478,7 @@ type autoPlanRequest struct {
 	RaceDate     string  `json:"race_date"`
 	RaceDistance string  `json:"race_distance"`
 	Weeks        int     `json:"weeks"`
-	DaysPerWeek  int     `json:"days_per_week"`
+	RestDays     []int   `json:"rest_days"` // 預定休息的星期索引，0=週一..6=週日（前端 checkbox 一..日）；其餘星期皆為訓練日
 }
 
 // raceDistanceLabel race_distance → 計畫命名用中文/簡稱；也做為合法值白名單。
@@ -598,23 +598,113 @@ func longRunCap(raceDistance string, longestKm float64) float64 {
 	}
 }
 
-// weekdayRoles 每週固定星期→角色樣式（長跑固定週日；quality 依 daysPerWeek 給 1 或 2 天，彼此不相鄰、
-// 不緊鄰長跑；其餘訓練日 easy）。daysPerWeek clamp 在 2..7，故只需處理這 6 種。
-func weekdayRoles(daysPerWeek int) map[time.Weekday]string {
-	switch daysPerWeek {
-	case 2:
-		return map[time.Weekday]string{time.Sunday: "long", time.Thursday: "quality"}
-	case 3:
-		return map[time.Weekday]string{time.Sunday: "long", time.Tuesday: "easy", time.Thursday: "quality"}
-	case 4:
-		return map[time.Weekday]string{time.Sunday: "long", time.Tuesday: "easy", time.Thursday: "quality", time.Saturday: "easy"}
-	case 5:
-		return map[time.Weekday]string{time.Sunday: "long", time.Monday: "easy", time.Tuesday: "quality", time.Thursday: "quality", time.Saturday: "easy"}
-	case 6:
-		return map[time.Weekday]string{time.Sunday: "long", time.Monday: "easy", time.Tuesday: "quality", time.Wednesday: "easy", time.Thursday: "quality", time.Saturday: "easy"}
-	default: // 7
-		return map[time.Weekday]string{time.Sunday: "long", time.Monday: "easy", time.Tuesday: "quality", time.Wednesday: "easy", time.Thursday: "quality", time.Friday: "easy", time.Saturday: "easy"}
+// abs 絕對值（int）。
+func abs(n int) int {
+	if n < 0 {
+		return -n
 	}
+	return n
+}
+
+// pickQualityDays 從候選日（呼叫端已排除長跑日與緊鄰長跑日者）中，依 count(0/1/2) 確定性地選出 quality 日：
+// count=1 取候選清單中段者；count=2 取最早者＋另一個與最早者不相鄰的候選（優先從中段往後找，找不到再往回找），
+// 真找不到第二個合格日則退化成只排 1 天。
+func pickQualityDays(candidates []int, count int) []int {
+	if count <= 0 || len(candidates) == 0 {
+		return nil
+	}
+	if count == 1 {
+		return []int{candidates[len(candidates)/2]}
+	}
+	first := candidates[0]
+	mid := len(candidates) / 2
+	second := -1
+	for i := mid; i < len(candidates); i++ {
+		if candidates[i] != first && abs(candidates[i]-first) > 1 {
+			second = candidates[i]
+			break
+		}
+	}
+	if second == -1 {
+		for i := mid - 1; i >= 0; i-- {
+			if candidates[i] != first && abs(candidates[i]-first) > 1 {
+				second = candidates[i]
+				break
+			}
+		}
+	}
+	if second == -1 {
+		return []int{first}
+	}
+	return []int{first, second}
+}
+
+// weekdayRoleAssignment 依 restDays（0=週一..6=週日，超出範圍的值忽略）指派星期→角色（long/quality/easy）。
+// trainingWeekdays＝0..6 扣掉 restDays；ok=false 代表沒有任何訓練日（呼叫端應回 400 need_training_day）。
+// 長跑日：非休息日中優先週日(6)，否則週六(5)，否則最晚的非休息日。
+// quality 日：從非休息訓練日（排除長跑日、且排除緊鄰長跑日者）中選 1-2 天，數量＝trainingDays>=5→2、
+// trainingDays>=3→1、否則 0，再受 running_age 上限（new→最多 1）。其餘訓練日 easy。
+// 回傳：星期索引→角色、訓練天數(daysPerWeek 顯示用)、是否成功。
+func weekdayRoleAssignment(restDays []int, runningAge string) (map[int]string, int, bool) {
+	restSet := map[int]bool{}
+	for _, d := range restDays {
+		if d >= 0 && d <= 6 {
+			restSet[d] = true
+		}
+	}
+	var trainingWeekdays []int
+	for d := 0; d < 7; d++ {
+		if !restSet[d] {
+			trainingWeekdays = append(trainingWeekdays, d)
+		}
+	}
+	trainingDays := len(trainingWeekdays)
+	if trainingDays == 0 {
+		return nil, 0, false
+	}
+
+	longDay := trainingWeekdays[trainingDays-1] // fallback：最晚的非休息日
+	switch {
+	case !restSet[6]:
+		longDay = 6
+	case !restSet[5]:
+		longDay = 5
+	}
+
+	var candidates []int
+	for _, d := range trainingWeekdays {
+		diff := abs(d - longDay)
+		if d == longDay || diff == 1 || diff == 6 { // 環狀相鄰：週日(6)↔週一(0) 也算緊鄰長跑日，不排 quality
+			continue
+		}
+		candidates = append(candidates, d)
+	}
+
+	qualityCount := 0
+	switch {
+	case trainingDays >= 5:
+		qualityCount = 2
+	case trainingDays >= 3:
+		qualityCount = 1
+	}
+	if runningAge == "new" && qualityCount > 1 {
+		qualityCount = 1
+	}
+	if qualityCount > len(candidates) {
+		qualityCount = len(candidates)
+	}
+
+	roles := map[int]string{longDay: "long"}
+	for _, d := range pickQualityDays(candidates, qualityCount) {
+		roles[d] = "quality"
+	}
+	for _, d := range trainingWeekdays {
+		if _, ok := roles[d]; !ok {
+			roles[d] = "easy"
+		}
+	}
+
+	return roles, trainingDays, true
 }
 
 // phaseFor 該 weekIndex（從 start_date 算的滾動 7 天區塊，非日曆週）所屬分期。
@@ -750,20 +840,10 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		end = start.AddDate(0, 0, weeks*7-1)
 	}
 
-	daysPerWeek := 0
-	if req.DaysPerWeek != 0 {
-		daysPerWeek = min(7, max(2, req.DaysPerWeek))
-	} else {
-		switch req.RunningAge {
-		case "new":
-			daysPerWeek = 3
-		case "novice":
-			daysPerWeek = 4
-		case "experienced", "veteran":
-			daysPerWeek = 5
-		default:
-			daysPerWeek = 4
-		}
+	roles, daysPerWeek, ok := weekdayRoleAssignment(req.RestDays, req.RunningAge)
+	if !ok {
+		respondErr(w, http.StatusBadRequest, "need_training_day")
+		return
 	}
 
 	taperWeeks := 0
@@ -860,7 +940,6 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	startLong = min(capKm, max(4, startLong))
 	rampWeeks := weeks - taperWeeks
 
-	roles := weekdayRoles(daysPerWeek)
 	qualityCounter := 0
 	easyCounter := 0
 	var plan []plannedWorkout
@@ -869,8 +948,8 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		if req.RaceDate != "" && !d.Before(raceDateTime) {
 			continue // 賽事當日不排課表（那天是比賽，且迴圈不會超過 raceDateTime=end）
 		}
-		role, ok := roles[d.Weekday()]
-		if !ok {
+		role, hasRole := roles[(int(d.Weekday())+6)%7]
+		if !hasRole {
 			continue
 		}
 		weekIndex := int(d.Sub(start).Hours()/24) / 7
