@@ -1436,11 +1436,44 @@ export const personalTasksApi = {
     ),
 }
 
-// 自主訓練（P1）：課表庫 + 配速等級表。VIP 限定——非 VIP 呼叫回 403 {error:"vip_only"}
+// 自主訓練（P2）：某日已排的課表（快照：template_code/name/category/pace_level + 算好的 planned_km/planned_min）
+export interface ScheduledWorkout {
+  template_code: string
+  name: string
+  category: string
+  pace_level: number
+  planned_km: number
+  planned_min: number
+}
+// 自主訓練（P2）：月曆單日——已排課表（可能無） + 當日實際跑量（GPS/Strava 等未被 flag 的活動，依台北時區分桶）
+export interface TrainingDay {
+  date: string // YYYY-MM-DD
+  scheduled: ScheduledWorkout | null
+  actual_km: number
+  has_activity: boolean
+}
+// 自主訓練（P2）：月曆整月資料——當月排定/實際的天數、里程、時間總計 + 每日明細
+export interface TrainingCalendar {
+  month: string // YYYY-MM
+  planned: { days: number; km: number; min: number }
+  actual: { days: number; km: number; min: number }
+  days: TrainingDay[]
+}
+
+// 自主訓練（P1+P2）：課表庫 + 配速等級表、月曆排程 CRUD。VIP 限定——非 VIP 呼叫回 403 {error:"vip_only"}
 // （呼叫端請用 catch (e:any) { if (e?.status === 403 && e?.message === 'vip_only') ... } 辨識）。
 export const trainingApi = {
   templates: (token: string) =>
     request<{ templates: WorkoutTemplate[]; pace_levels: PaceLevel[] }>('/training/templates', { headers: withAuth(token) }),
+  // 月曆：指定月份的排程 + 實際跑量彙總
+  calendar: (token: string, month: string) =>
+    request<TrainingCalendar>(`/training/calendar?month=${encodeURIComponent(month)}`, { headers: withAuth(token) }),
+  // 排課／換課（upsert，PK=user+date）：後端依 template_code 權威覆寫 name/category
+  schedule: (token: string, body: { date: string; template_code: string; pace_level: number; planned_km: number; planned_min: number }) =>
+    request<ScheduledWorkout & { date: string }>('/training/schedule', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  // 刪除某日排課
+  unschedule: (token: string, date: string) =>
+    request<{ ok: boolean }>(`/training/schedule?date=${encodeURIComponent(date)}`, { method: 'DELETE', headers: withAuth(token) }),
 }
 
 export const adminPersonalTasksApi = {
