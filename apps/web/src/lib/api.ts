@@ -1374,6 +1374,9 @@ export interface WorkoutTemplate {
   description: string
   segments: TemplateSegment[]
   sort_order: number
+  // P3：false＝距離變體（產生器排課用，如 lsd_20/easy_8），不進「課表庫」清單／選課表 modal；
+  // 但仍可用 template_code 解析分段（開跑用）。缺省視為 true（相容舊回應）。
+  library_visible?: boolean
 }
 
 // 自主訓練：配速等級（玩家自選，決定 TemplateSegment.effort 對應的實際配速秒/公里）。
@@ -1436,8 +1439,13 @@ export const personalTasksApi = {
     ),
 }
 
-// 自主訓練（P2）：某日已排的課表（快照：template_code/name/category/pace_level + 算好的 planned_km/planned_min）
+// 自主訓練：某日已排的課表（快照：template_code/name/category/pace_level + 算好的 planned_km/planned_min）；
+// P3 一天可多份——id 供單筆刪除/操作定位；plan_id 非 null＝來自某訓練計畫（plan_name 為該計畫名稱快照），
+// null＝手動排定。
 export interface ScheduledWorkout {
+  id: string
+  plan_id: string | null
+  plan_name?: string
   template_code: string
   name: string
   category: string
@@ -1445,14 +1453,15 @@ export interface ScheduledWorkout {
   planned_km: number
   planned_min: number
 }
-// 自主訓練（P2）：月曆單日——已排課表（可能無） + 當日實際跑量（GPS/Strava 等未被 flag 的活動，依台北時區分桶）
+// 自主訓練：月曆單日——已排課表（P3 改陣列，一天可多份） + 當日實際跑量（GPS/Strava 等未被 flag 的活動，依台北時區分桶）
 export interface TrainingDay {
   date: string // YYYY-MM-DD
-  scheduled: ScheduledWorkout | null
+  scheduled: ScheduledWorkout[]
   actual_km: number
   has_activity: boolean
 }
-// 自主訓練（P2）：月曆整月資料——當月排定/實際的天數、里程、時間總計 + 每日明細
+// 自主訓練：月曆整月資料——當月排定/實際的天數、里程、時間總計 + 每日明細
+// planned.days＝有排課的 distinct 日數；planned.km/min＝當月所有 scheduled 加總（同日多份會加總）
 export interface TrainingCalendar {
   month: string // YYYY-MM
   planned: { days: number; km: number; min: number }
@@ -1460,20 +1469,57 @@ export interface TrainingCalendar {
   days: TrainingDay[]
 }
 
-// 自主訓練（P1+P2）：課表庫 + 配速等級表、月曆排程 CRUD。VIP 限定——非 VIP 呼叫回 403 {error:"vip_only"}
-// （呼叫端請用 catch (e:any) { if (e?.status === 403 && e?.message === 'vip_only') ... } 辨識）。
+// 自主訓練（P3）：一鍵產生的訓練計畫——依跑齡/最佳配速/最長跑量 + 目標賽事(或週數)自動排一組課表，
+// 每帳號最多 3 個（後端把關，見 trainingApi.plans 的 limit）。
+export interface TrainingPlan {
+  id: string
+  name: string
+  race_date: string | null
+  race_distance: string // '5k' | '10k' | 'half' | 'full' | ''
+  weeks: number
+  days_per_week: number
+  pace_level: number
+  start_date: string
+  end_date: string
+  workout_count: number
+}
+// 自主訓練（P3）：POST /training/auto-plan 請求體——「一鍵安排課表」表單送出的內容。
+// has_race=true 時帶 race_date/race_distance（依賽事日回推排課），false 時帶 weeks（依週數排課）。
+export interface AutoPlanRequest {
+  running_age: 'new' | 'novice' | 'experienced' | 'veteran' // 跑齡：不到1年／1-3年／3-5年／5年以上
+  best_1km_s: number  // 1km 最快（秒）
+  longest_km: number  // 最長距離（km）
+  longest_min: number // 最長時間（分）
+  has_race: boolean
+  race_date?: string
+  race_distance?: '5k' | '10k' | 'half' | 'full'
+  weeks?: number       // has_race=false：1|4|8|12|16
+  days_per_week: number // 3-6
+}
+
+// 自主訓練（P1+P2+P3）：課表庫 + 配速等級表、月曆排程 CRUD、一鍵訓練計畫。VIP 限定——非 VIP 呼叫回 403
+// {error:"vip_only"}（呼叫端請用 catch (e:any) { if (e?.status === 403 && e?.message === 'vip_only') ... } 辨識）。
 export const trainingApi = {
   templates: (token: string) =>
     request<{ templates: WorkoutTemplate[]; pace_levels: PaceLevel[] }>('/training/templates', { headers: withAuth(token) }),
-  // 月曆：指定月份的排程 + 實際跑量彙總
+  // 月曆：指定月份的排程（每日可多份） + 實際跑量彙總
   calendar: (token: string, month: string) =>
     request<TrainingCalendar>(`/training/calendar?month=${encodeURIComponent(month)}`, { headers: withAuth(token) }),
-  // 排課／換課（upsert，PK=user+date）：後端依 template_code 權威覆寫 name/category
+  // 排課（手動，plan_id 固定 NULL）：P3 改 INSERT 一筆（不再 upsert-by-date，一天可多份），回含 id 的新列
   schedule: (token: string, body: { date: string; template_code: string; pace_level: number; planned_km: number; planned_min: number }) =>
     request<ScheduledWorkout & { date: string }>('/training/schedule', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
-  // 刪除某日排課
-  unschedule: (token: string, date: string) =>
-    request<{ ok: boolean }>(`/training/schedule?date=${encodeURIComponent(date)}`, { method: 'DELETE', headers: withAuth(token) }),
+  // 移除單筆排課（依 id；來自計畫的課表也可單筆移除，不影響同計畫其餘課表／不刪計畫本身）
+  unschedule: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/training/schedule/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+  // 我的訓練計畫（≤3）
+  plans: (token: string) =>
+    request<{ plans: TrainingPlan[]; limit: number }>('/training/plans', { headers: withAuth(token) }),
+  // 一鍵產生訓練計畫；已有 3 個回 409 {error:"plan_limit"}（呼叫端用 e.status===409 && e.message==='plan_limit' 辨識）
+  autoPlan: (token: string, body: AutoPlanRequest) =>
+    request<{ plan: TrainingPlan }>('/training/auto-plan', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  // 刪除訓練計畫（其排程 CASCADE 一併刪除）
+  deletePlan: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/training/plans/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
 }
 
 export const adminPersonalTasksApi = {

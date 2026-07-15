@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
-import { trainingApi, type WorkoutTemplate, type PaceLevel, type TrainingCalendar, type TrainingDay } from '@/lib/api'
+import { trainingApi, type WorkoutTemplate, type PaceLevel, type TrainingCalendar, type TrainingDay, type TrainingPlan, type AutoPlanRequest } from '@/lib/api'
 import { resolveTemplate, saveFreetrainWorkout, totalKm, estMinutes, fmtDuration, segSummary, targetPaceBand } from '@/lib/workout'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import UpgradeVipModal from './UpgradeVipModal'
@@ -10,9 +10,11 @@ import UpgradeVipModal from './UpgradeVipModal'
 // 自主訓練（VIP 專屬）：
 // P1「📚 課表庫」——依分類列出，選配速等級後即時解析出總距離/預估時間；「開始訓練」把解析後的分段
 // 橋接給 /track（sessionStorage，見 lib/workout.ts saveFreetrainWorkout）→ 帶到 GPS 追蹤跑。
-// P2「🗓️ 訓練月曆」——比照成就月曆的月曆殼（換月/滑動/格子），每日可排定一份課表（upsert，
-// user_training_schedule PK=user+date）；格內顯示 category 色徽章 + 是否已有實跑；點日期開「選課表」
-// modal 排定/更換/取消，已排的日可直接「開始此課表」。都不是挑戰制：跑步照常走 GPS 上傳自動發里程 EXP。
+// P2「🗓️ 訓練月曆」——比照成就月曆的月曆殼（換月/滑動/格子），每日顯示已排課表 + 是否已有實跑。
+// P3：每日改「可多份」（user_training_schedule 加 id 主鍵，一天多筆）；新增「⚡ 一鍵安排課表」依跑齡/
+// 最佳配速/目標賽事(或週數)自動產生一組訓練計畫（training_plans，每帳號 ≤3），計畫的課表用
+// library_visible=false 的距離變體（lsd_6..32/easy_4/8/10，不進課表庫清單，但仍可解析開跑）。
+// 都不是挑戰制：跑步照常走 GPS 上傳自動發里程 EXP，排程只是對照顯示。
 const CATEGORY_LABELS: Record<string, string> = {
   recovery: '恢復', easy: '輕鬆', lsd: '長距離 LSD', tempo: '節奏', threshold: '閾值',
   progression: '漸速', interval: '間歇', fartlek: '法特雷克', pyramid: '金字塔',
@@ -40,6 +42,33 @@ const CATEGORY_COLOR: Record<string, { bg: string; fg: string }> = {
   rep: { bg: 'rgba(199,88,255,.26)', fg: '#2a0a3a' },
 }
 function catColor(cat: string) { return CATEGORY_COLOR[cat] || { bg: 'var(--bg-2)', fg: 'var(--tx-dim)' } }
+
+// 一鍵安排課表：跑齡分級（決定每週天數預設值）與賽事距離選項
+const RUNNING_AGE_OPTIONS: { id: AutoPlanRequest['running_age']; label: string; defaultDays: number }[] = [
+  { id: 'new', label: '不到 1 年', defaultDays: 3 },
+  { id: 'novice', label: '1–3 年', defaultDays: 4 },
+  { id: 'experienced', label: '3–5 年', defaultDays: 5 },
+  { id: 'veteran', label: '5 年以上', defaultDays: 6 },
+]
+const RACE_DISTANCE_OPTIONS: { id: NonNullable<AutoPlanRequest['race_distance']>; label: string }[] = [
+  { id: '5k', label: '5K' }, { id: '10k', label: '10K' }, { id: 'half', label: '半程馬拉松' }, { id: 'full', label: '全程馬拉松' },
+]
+const RACE_DISTANCE_LABEL: Record<string, string> = { '5k': '5K', '10k': '10K', half: '半程馬拉松', full: '全程馬拉松' }
+const WEEKS_OPTIONS = [1, 4, 8, 12, 16]
+const DAYS_PER_WEEK_OPTIONS = [3, 4, 5, 6]
+
+// 1km 最佳成績輸入：接受「mm:ss」或純秒數
+function parseBest1km(raw: string): number | null {
+  const s = raw.trim()
+  if (!s) return null
+  if (s.includes(':')) {
+    const [m, sec] = s.split(':').map(Number)
+    if (!isFinite(m) || !isFinite(sec)) return null
+    return m * 60 + sec
+  }
+  const n = Number(s)
+  return isFinite(n) && n > 0 ? n : null
+}
 
 const WK = ['日', '一', '二', '三', '四', '五', '六']
 function ym(d: Date) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
@@ -72,10 +101,13 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     return byId ?? levels.find((l) => l.id === 5) ?? levels[Math.floor(levels.length / 2)]
   }, [levels, levelId])
 
-  // 依 category 分組，保留課表庫原本的 sort_order（課表庫分頁 + 月曆選課表 modal 共用）
+  // 依 category 分組，保留課表庫原本的 sort_order（課表庫分頁 + 月曆選課表 modal 共用）。
+  // 只列 library_visible!==false 者——產生器用的距離變體（lsd_6..32/easy_4/8/10）不進清單，
+  // 但仍在 data.templates 完整清單中，供 startWorkout()/月曆已排課表用 template_code 解析分段。
   const groups = useMemo(() => {
     const map = new Map<string, WorkoutTemplate[]>()
     for (const t of data?.templates ?? []) {
+      if (t.library_visible === false) continue
       const arr = map.get(t.category)
       if (arr) arr.push(t)
       else map.set(t.category, [t])
@@ -94,7 +126,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   }
   function startTemplate(t: WorkoutTemplate) { startWorkout(t.code, level) }
 
-  // ── 訓練月曆（P2）──
+  // ── 訓練月曆（P2）+ 每日多份/一鍵訓練計畫（P3）──
   const [month, setMonth] = useState(() => ym(new Date()))
   const [cal, setCal] = useState<TrainingCalendar | null>(null)
   const [calErr, setCalErr] = useState(false)
@@ -120,22 +152,55 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     else if (dx < -45) go(1)   // 左滑 → 下個月（未來月不鎖，可排課）
   }
 
-  // 選課表 modal（點某日開啟；null=關閉）
+  // 我的訓練計畫（P3，≤3 個；一鍵安排課表產生，計畫刪除連帶刪其排程）
+  const [plans, setPlans] = useState<TrainingPlan[] | null>(null)
+  const [plansErr, setPlansErr] = useState(false)
+  const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null)
+  const plansRef = useRef<HTMLDivElement | null>(null)
+  const [planLimitMsg, setPlanLimitMsg] = useState('')
+  function loadPlans() {
+    if (!getUserToken()) return
+    withUserAuth((t) => trainingApi.plans(t)).then((r) => { setPlans(r.plans); setPlansErr(false) }).catch(() => setPlansErr(true))
+  }
+  useEffect(() => {
+    if (tab !== 'calendar' || !unlocked) return
+    loadPlans()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, unlocked])
+
+  async function removePlan(id: string) {
+    if (!window.confirm('清除此訓練計畫？將一併移除已排定但尚未完成的課表。')) return
+    const token = getUserToken()
+    if (!token) return
+    setDeletingPlanId(id)
+    try {
+      await withUserAuth((t) => trainingApi.deletePlan(t, id))
+      loadPlans()
+      loadCalendar(month) // 計畫的排程已 CASCADE 刪除，月曆需一併刷新
+    } catch {
+      /* 靜默失敗，計畫清單維持原狀，使用者可重試 */
+    } finally {
+      setDeletingPlanId(null)
+    }
+  }
+
+  // 日課表 modal（點某日開啟；null=關閉）——列出當日所有已排課表(可多份)，可個別開始/移除，下方可加新課表
   const [pickerDate, setPickerDate] = useState<string | null>(null)
   const [pickerLevelId, setPickerLevelId] = useState<number | null>(null)
   const [pickerBusy, setPickerBusy] = useState(false)
   const [pickerErr, setPickerErr] = useState('')
+  const [removingId, setRemovingId] = useState<string | null>(null)
   const pickerDay: TrainingDay | undefined = useMemo(() => cal?.days.find((d) => d.date === pickerDate), [cal, pickerDate])
   const pickerLevel: PaceLevel | null = useMemo(() => levels.find((l) => l.id === pickerLevelId) ?? level, [levels, pickerLevelId, level])
 
   function openPicker(date: string) {
-    const existing = cal?.days.find((d) => d.date === date)?.scheduled ?? null
     setPickerDate(date)
-    setPickerLevelId(existing?.pace_level ?? levelId ?? level?.id ?? null)
+    setPickerLevelId(levelId ?? level?.id ?? null) // 一天可能有多份、配速各異，新增一律沿用全域上次選的等級
     setPickerErr('')
   }
   function closePicker() { setPickerDate(null); setPickerErr('') }
 
+  // 新增一筆課表到當日（手動排定，plan_id 固定 NULL）；加入後保留 modal 開啟，方便一次排多份
   async function saveSchedule(t: WorkoutTemplate) {
     if (!pickerDate || !pickerLevel) return
     const resolved = resolveTemplate(t.segments, pickerLevel)
@@ -147,7 +212,6 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         date: pickerDate, template_code: t.code, pace_level: pickerLevel.id,
         planned_km: totalKm(resolved), planned_min: estMinutes(resolved),
       }))
-      closePicker()
       loadCalendar(month)
     } catch {
       setPickerErr('排定失敗，請稍後再試')
@@ -156,19 +220,74 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     }
   }
 
-  async function removeSchedule() {
-    if (!pickerDate) return
+  // 移除當日某一筆已排課表（依 id；來自計畫的課表也只刪這一筆，不影響同計畫其餘課表）
+  async function removeSchedule(id: string) {
     const token = getUserToken()
     if (!token) return
-    setPickerBusy(true); setPickerErr('')
+    setRemovingId(id); setPickerErr('')
     try {
-      await withUserAuth((tok) => trainingApi.unschedule(tok, pickerDate))
-      closePicker()
+      await withUserAuth((tok) => trainingApi.unschedule(tok, id))
       loadCalendar(month)
     } catch {
       setPickerErr('刪除失敗，請稍後再試')
     } finally {
-      setPickerBusy(false)
+      setRemovingId(null)
+    }
+  }
+
+  // ── 一鍵安排課表（P3）：跑齡/最佳配速/最長跑量 + 目標賽事(或週數) → 自動產生一個訓練計畫 ──
+  const [showAutoPlan, setShowAutoPlan] = useState(false)
+  const [apRunningAge, setApRunningAge] = useState<AutoPlanRequest['running_age']>('novice')
+  const [apBest1km, setApBest1km] = useState('')
+  const [apLongestKm, setApLongestKm] = useState('')
+  const [apLongestMin, setApLongestMin] = useState('')
+  const [apHasRace, setApHasRace] = useState(true)
+  const [apRaceDate, setApRaceDate] = useState('')
+  const [apRaceDistance, setApRaceDistance] = useState<NonNullable<AutoPlanRequest['race_distance']>>('10k')
+  const [apWeeks, setApWeeks] = useState(8)
+  const [apDaysPerWeek, setApDaysPerWeek] = useState(4)
+  const [apBusy, setApBusy] = useState(false)
+  const [apErr, setApErr] = useState('')
+
+  function openAutoPlan() {
+    setApErr('')
+    setShowAutoPlan(true)
+  }
+  function onRunningAgeChange(id: AutoPlanRequest['running_age']) {
+    setApRunningAge(id)
+    const opt = RUNNING_AGE_OPTIONS.find((o) => o.id === id)
+    if (opt) setApDaysPerWeek(opt.defaultDays) // 依跑齡帶預設每週天數（送出前仍可自行改 3/4/5/6）
+  }
+
+  async function submitAutoPlan() {
+    const token = getUserToken()
+    if (!token) return
+    const best1kmS = parseBest1km(apBest1km)
+    const longestKm = Number(apLongestKm)
+    const longestMin = Number(apLongestMin)
+    if (!best1kmS || !(longestKm > 0) || !(longestMin > 0)) { setApErr('請完整填寫跑力資料'); return }
+    if (apHasRace && !apRaceDate) { setApErr('請選擇賽事日期'); return }
+    setApBusy(true); setApErr('')
+    try {
+      const body: AutoPlanRequest = {
+        running_age: apRunningAge, best_1km_s: best1kmS, longest_km: longestKm, longest_min: longestMin,
+        has_race: apHasRace, days_per_week: apDaysPerWeek,
+        ...(apHasRace ? { race_date: apRaceDate, race_distance: apRaceDistance } : { weeks: apWeeks }),
+      }
+      await withUserAuth((tok) => trainingApi.autoPlan(tok, body))
+      setShowAutoPlan(false)
+      loadPlans()
+      loadCalendar(month)
+    } catch (e: any) {
+      if (e?.status === 409 && e?.message === 'plan_limit') {
+        setShowAutoPlan(false)
+        setPlanLimitMsg('已達 3 個訓練計畫上限，請先清除一個')
+        setTimeout(() => plansRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+      } else {
+        setApErr('產生失敗，請稍後再試')
+      }
+    } finally {
+      setApBusy(false)
     }
   }
 
@@ -261,6 +380,12 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
           </>
         ) : (
           <>
+            {/* 一鍵安排課表 */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>訓練計畫 {plans ? plans.length : '…'}/3</span>
+              <button onClick={openAutoPlan} style={autoPlanBtn}>⚡ 一鍵安排課表</button>
+            </div>
+
             {/* 本月總覽 */}
             <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 14px', marginBottom: 14, fontSize: 12, color: 'var(--tx-dim)', lineHeight: 1.9 }}>
               {calErr ? '本月資料載入失敗，請稍後再試' : !cal ? '載入中…' : (
@@ -289,21 +414,28 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   if (day == null) return <div key={`b${i}`} />
                   const dateStr = `${month}-${pad2(day)}`
                   const info = dayMap[dateStr]
-                  const sched = info?.scheduled
+                  const sched = info?.scheduled ?? []
                   const isToday = dateStr === todayStr
-                  const col = catColor(sched?.category || '')
+                  // ≤2 份逐一顯示各自的分類色徽章；>2 份收成一顆「+N」徽章（避免格子塞爆）
+                  const badges = sched.length <= 2 ? sched : []
                   return (
                     <button key={day} onClick={() => openPicker(dateStr)} style={{
                       aspectRatio: '1', borderRadius: 8, background: 'var(--bg-2)',
                       border: isToday ? '1.5px solid var(--fug)' : '1px solid var(--line)',
-                      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1,
                       padding: 2, cursor: 'pointer', position: 'relative', fontFamily: 'inherit',
                     }}>
                       <span style={{ fontSize: 10, color: 'var(--tx-faint)', fontWeight: 700 }}>{day}</span>
-                      {sched && (
-                        <span style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: col.bg, color: col.fg, maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {CATEGORY_SHORT[sched.category] || sched.category}
-                        </span>
+                      {badges.map((s) => {
+                        const col = catColor(s.category)
+                        return (
+                          <span key={s.id} style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: col.bg, color: col.fg, maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {CATEGORY_SHORT[s.category] || s.category}
+                          </span>
+                        )
+                      })}
+                      {sched.length > 2 && (
+                        <span style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: 'var(--bg-3, var(--line))', color: 'var(--tx-dim)' }}>+{sched.length}</span>
                       )}
                       {info?.has_activity && <span style={{ position: 'absolute', top: 2, right: 3, fontSize: 9, color: 'var(--fug)', fontWeight: 900 }}>✓</span>}
                     </button>
@@ -311,7 +443,41 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 })}
               </div>
             </div>
-            <div style={{ textAlign: 'center', fontSize: 10.5, color: 'var(--tx-faint)', margin: '8px 0 4px' }}>左右滑動或按 ‹ › 切換月份 · 點日期排定/更換課表</div>
+            <div style={{ textAlign: 'center', fontSize: 10.5, color: 'var(--tx-faint)', margin: '8px 0 4px' }}>左右滑動或按 ‹ › 切換月份 · 點日期排定/查看課表</div>
+
+            {/* 我的訓練計畫（P3，≤3 個） */}
+            <div ref={plansRef} style={{ marginTop: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--fug)', marginBottom: 8, letterSpacing: '.05em' }}>我的訓練計畫</div>
+              {planLimitMsg && (
+                <div style={{ fontSize: 12, color: '#ff9f43', fontWeight: 700, background: 'rgba(255,159,67,.12)', border: '1px solid rgba(255,159,67,.3)', borderRadius: 10, padding: '9px 12px', marginBottom: 10 }}>
+                  ⚠ {planLimitMsg}
+                </div>
+              )}
+              {plansErr ? (
+                <div style={{ ...emptyBox, padding: '16px 4px' }}>訓練計畫載入失敗</div>
+              ) : !plans ? (
+                <div style={{ ...emptyBox, padding: '16px 4px' }}>載入中…</div>
+              ) : plans.length === 0 ? (
+                <div style={{ ...emptyBox, padding: '16px 4px' }}>尚無訓練計畫，點上方「⚡ 一鍵安排課表」建立一個</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {plans.map((p) => (
+                    <div key={p.id} style={tplCard}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)' }}>{p.name}</div>
+                          <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 5, lineHeight: 1.8 }}>
+                            {p.race_distance ? `🏁 ${RACE_DISTANCE_LABEL[p.race_distance] || p.race_distance}${p.race_date ? ` · ${p.race_date}` : ''}` : `${p.weeks} 週計畫`} · 每週 {p.days_per_week} 天
+                            <br />{p.start_date} ~ {p.end_date} · 共 {p.workout_count} 份課表
+                          </div>
+                        </div>
+                        <button disabled={deletingPlanId === p.id} onClick={() => removePlan(p.id)} style={{ flexShrink: 0, background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>🗑 清除計畫</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>
@@ -335,27 +501,36 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
               <button onClick={closePicker} style={{ background: 'none', border: 'none', color: 'var(--tx-dim)', fontSize: 20, cursor: 'pointer', lineHeight: 1, padding: 4 }}>×</button>
             </div>
 
-            {pickerDay?.scheduled && (
-              <div style={{ background: 'rgba(255,255,255,.04)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '11px 13px', margin: '10px 0' }}>
-                <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontWeight: 800 }}>目前排定</div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: '#fff', marginTop: 4 }}>{pickerDay.scheduled.name}</div>
-                <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>
-                  {CATEGORY_LABELS[pickerDay.scheduled.category] || pickerDay.scheduled.category} · {pickerDay.scheduled.planned_km.toFixed(1)} K · {fmtDuration(pickerDay.scheduled.planned_min)}
-                </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                  <button
-                    disabled={pickerBusy}
-                    onClick={() => { const code = pickerDay.scheduled!.template_code; const lvl = levels.find((l) => l.id === pickerDay.scheduled!.pace_level) ?? null; closePicker(); startWorkout(code, lvl) }}
-                    style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px 0', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}
-                  >▶ 開始此課表</button>
-                  <button disabled={pickerBusy} onClick={removeSchedule} style={{ background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 9, padding: '9px 14px', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}>🗑 取消排課</button>
-                </div>
+            {!!pickerDay?.scheduled.length && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '10px 0' }}>
+                <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontWeight: 800 }}>當日已排（{pickerDay.scheduled.length}）</div>
+                {pickerDay.scheduled.map((s) => (
+                  <div key={s.id} style={{ background: 'rgba(255,255,255,.04)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '11px 13px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: '#fff' }}>{s.name}</div>
+                      <span style={{ fontSize: 10, fontWeight: 800, padding: '2px 7px', borderRadius: 6, background: s.plan_id ? 'rgba(199,88,255,.20)' : 'rgba(255,255,255,.08)', color: s.plan_id ? '#d9a8ff' : 'var(--tx-dim)', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                        {s.plan_id ? `📋 ${s.plan_name || '訓練計畫'}` : '手動'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>
+                      {CATEGORY_LABELS[s.category] || s.category} · {s.planned_km.toFixed(1)} K · {fmtDuration(s.planned_min)}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      <button
+                        disabled={pickerBusy || removingId === s.id}
+                        onClick={() => { const code = s.template_code; const lvl = levels.find((l) => l.id === s.pace_level) ?? null; closePicker(); startWorkout(code, lvl) }}
+                        style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px 0', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}
+                      >▶ 開始此課表</button>
+                      <button disabled={pickerBusy || removingId === s.id} onClick={() => removeSchedule(s.id)} style={{ background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 9, padding: '9px 14px', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}>🗑 移除</button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 
-            <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontWeight: 800, margin: '12px 2px 8px' }}>{pickerDay?.scheduled ? '更換課表' : '選擇課表'}</div>
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontWeight: 800, margin: '12px 2px 8px' }}>+ 加課表</div>
 
-            {/* 配速等級（預設沿用上次選的等級／該日原本的等級） */}
+            {/* 配速等級（預設沿用上次選的等級） */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '9px 13px', marginBottom: 12 }}>
               <span style={{ fontSize: 12, fontWeight: 800, color: '#fff', flexShrink: 0 }}>配速等級</span>
               <select value={pickerLevelId ?? ''} onChange={(e) => setPickerLevelId(Number(e.target.value))} style={levelSelect}>
@@ -373,12 +548,12 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {templates.map((t) => {
                       const resolved = pickerLevel ? resolveTemplate(t.segments, pickerLevel) : []
-                      const active = pickerDay?.scheduled?.template_code === t.code
+                      const alreadyIn = !!pickerDay?.scheduled.some((s) => s.template_code === t.code)
                       return (
-                        <div key={t.code} style={{ background: active ? 'rgba(45,229,154,.10)' : 'rgba(255,255,255,.03)', border: `1px solid ${active ? 'var(--fug)' : 'var(--line-2)'}`, borderRadius: 11, padding: '9px 12px' }}>
+                        <div key={t.code} style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line-2)', borderRadius: 11, padding: '9px 12px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                            <div style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{t.name}</div>
-                            <button disabled={pickerBusy || !pickerLevel} onClick={() => saveSchedule(t)} style={{ flexShrink: 0, background: active ? 'var(--line-2)' : 'var(--fug)', color: active ? 'var(--tx-dim)' : 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>{active ? '已排定' : '排定'}</button>
+                            <div style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{t.name}{alreadyIn && <span style={{ color: 'var(--fug)', fontWeight: 700 }}> ✓</span>}</div>
+                            <button disabled={pickerBusy || !pickerLevel} onClick={() => saveSchedule(t)} style={{ flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>+ 加入</button>
                           </div>
                           <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>總距離 {totalKm(resolved)} K · 預估 {fmtDuration(estMinutes(resolved))}</div>
                         </div>
@@ -388,6 +563,85 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 一鍵安排課表 modal（P3）：填跑力資料 + 目標賽事(或週數) → 自動產生一組訓練計畫 */}
+      {showAutoPlan && (
+        <div data-skin="default" onClick={() => !apBusy && setShowAutoPlan(false)} style={{ position: 'fixed', inset: 0, zIndex: 3600, background: 'rgba(4,8,6,.82)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 440, maxHeight: '86dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--line-2)', borderTopLeftRadius: 18, borderTopRightRadius: 18, boxShadow: '0 -12px 40px rgba(0,0,0,.6)', padding: '16px 18px 22px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ fontSize: 15, fontWeight: 900, color: '#fff' }}>⚡ 一鍵安排課表</div>
+              <button disabled={apBusy} onClick={() => setShowAutoPlan(false)} style={{ background: 'none', border: 'none', color: 'var(--tx-dim)', fontSize: 20, cursor: 'pointer', lineHeight: 1, padding: 4 }}>×</button>
+            </div>
+            <p style={{ fontSize: 11.5, color: 'var(--tx-dim)', margin: '8px 2px 14px', lineHeight: 1.7 }}>填一下你的跑力資料，系統會依目標賽事（或指定週數）自動排一組課表到訓練月曆。</p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <label style={apField}>
+                <span style={apLabel}>跑齡</span>
+                <select value={apRunningAge} onChange={(e) => onRunningAgeChange(e.target.value as AutoPlanRequest['running_age'])} style={levelSelect}>
+                  {RUNNING_AGE_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+              </label>
+
+              <label style={apField}>
+                <span style={apLabel}>1km 最快</span>
+                <input value={apBest1km} onChange={(e) => setApBest1km(e.target.value)} placeholder="例如 4:30 或 270（秒）" style={apInput} />
+              </label>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <label style={{ ...apField, flex: 1 }}>
+                  <span style={apLabel}>最長距離（km）</span>
+                  <input type="number" min={0} step={0.1} value={apLongestKm} onChange={(e) => setApLongestKm(e.target.value)} style={apInput} />
+                </label>
+                <label style={{ ...apField, flex: 1 }}>
+                  <span style={apLabel}>最長時間（分）</span>
+                  <input type="number" min={0} step={1} value={apLongestMin} onChange={(e) => setApLongestMin(e.target.value)} style={apInput} />
+                </label>
+              </div>
+
+              <div style={apField}>
+                <span style={apLabel}>目標賽事</span>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" onClick={() => setApHasRace(true)} style={{ ...toggleBtn, ...(apHasRace ? toggleBtnActive : {}) }}>有目標賽事</button>
+                  <button type="button" onClick={() => setApHasRace(false)} style={{ ...toggleBtn, ...(!apHasRace ? toggleBtnActive : {}) }}>先練體能</button>
+                </div>
+              </div>
+
+              {apHasRace ? (
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <label style={{ ...apField, flex: 1 }}>
+                    <span style={apLabel}>賽事日期</span>
+                    <input type="date" value={apRaceDate} onChange={(e) => setApRaceDate(e.target.value)} style={apInput} />
+                  </label>
+                  <label style={{ ...apField, flex: 1 }}>
+                    <span style={apLabel}>賽事距離</span>
+                    <select value={apRaceDistance} onChange={(e) => setApRaceDistance(e.target.value as NonNullable<AutoPlanRequest['race_distance']>)} style={levelSelect}>
+                      {RACE_DISTANCE_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                  </label>
+                </div>
+              ) : (
+                <label style={apField}>
+                  <span style={apLabel}>計畫週數</span>
+                  <select value={apWeeks} onChange={(e) => setApWeeks(Number(e.target.value))} style={levelSelect}>
+                    {WEEKS_OPTIONS.map((w) => <option key={w} value={w}>{w} 週</option>)}
+                  </select>
+                </label>
+              )}
+
+              <label style={apField}>
+                <span style={apLabel}>每週訓練天數</span>
+                <select value={apDaysPerWeek} onChange={(e) => setApDaysPerWeek(Number(e.target.value))} style={levelSelect}>
+                  {DAYS_PER_WEEK_OPTIONS.map((d) => <option key={d} value={d}>每週 {d} 天</option>)}
+                </select>
+              </label>
+            </div>
+
+            {apErr && <div style={{ fontSize: 12, color: '#ff6b6b', textAlign: 'center', margin: '12px 0 0' }}>{apErr}</div>}
+
+            <button disabled={apBusy} onClick={submitAutoPlan} style={{ ...startBtn, marginTop: 16, opacity: apBusy ? 0.6 : 1 }}>{apBusy ? '產生中…' : '產生訓練計畫'}</button>
           </div>
         </div>
       )}
@@ -401,3 +655,9 @@ const levelSelect: React.CSSProperties = { flex: 1, minWidth: 0, background: 'va
 const tplCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '11px 13px' }
 const startBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px 0', cursor: 'pointer', fontSize: 13.5, fontFamily: 'inherit' }
 const navBtn: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx)', borderRadius: 10, width: 34, height: 34, fontSize: 20, cursor: 'pointer', flexShrink: 0, lineHeight: 1 }
+const autoPlanBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '8px 14px', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit', whiteSpace: 'nowrap' }
+const apField: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5 }
+const apLabel: React.CSSProperties = { fontSize: 11.5, fontWeight: 800, color: 'var(--tx-dim)' }
+const apInput: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '8px 10px', color: 'var(--tx)', fontSize: 13, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
+const toggleBtn: React.CSSProperties = { flex: 1, background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 9, padding: '8px 0', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit' }
+const toggleBtnActive: React.CSSProperties = { background: 'var(--fug)', borderColor: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800 }
