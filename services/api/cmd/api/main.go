@@ -336,6 +336,7 @@ func main() {
 			r.With(perm("settings")).Mount("/admin/membership", profileHandler.MembershipAdminRouter())
 			r.With(perm("settings")).Mount("/admin/vip-promos", profileHandler.VipPromoAdminRouter())
 			r.With(perm("titles")).Mount("/admin/titles", profileHandler.TitleAdminRouter())
+			r.With(perm("training")).Mount("/admin/training", trainingHandler.AdminRouter())
 			r.With(perm("settings")).Get("/admin/data-source-metrics", profileHandler.AdminDataSourceMetrics)
 			r.With(perm("organizer")).Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 			r.With(perm("settings")).Put("/admin/settings", profileHandler.PutSettings)

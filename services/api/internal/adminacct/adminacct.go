@@ -41,6 +41,7 @@ var Scopes = []Scope{
 	{"settings", "等級／系統設定"},
 	{"organizer", "主辦審核"},
 	{"titles", "稱號管理"},
+	{"training", "自主訓練課表"},
 }
 
 func validScope(k string) bool {

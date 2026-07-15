@@ -1647,6 +1647,59 @@ export const adminTitlesApi = {
     }),
 }
 
+// --- 自主訓練後台管理（workout_templates 課表庫 + pace_levels 配速等級表）---
+// segments/paces 為任意形狀 jsonb，後台以 JSON textarea 直接編輯字串再 JSON.parse，故型別留 unknown。
+
+export interface AdminWorkoutTemplate {
+  code: string
+  name: string
+  category: string
+  description: string
+  segments: unknown // 陣列；每段 {kind,label,effort?,target_type,target,reps?,rest_s?}
+  sort_order: number
+  enabled: boolean
+  library_visible: boolean
+  adjust_type: 'distance' | 'reps' | 'pyramid' | 'none'
+}
+
+export interface AdminPaceLevel {
+  id: number
+  label: string
+  paces: unknown // {easy,marathon,threshold,interval,rep} 各 {fast,slow}（秒/公里）
+  enabled: boolean
+}
+
+export const adminTrainingApi = {
+  data: (token: string) =>
+    request<{ templates: AdminWorkoutTemplate[]; pace_levels: AdminPaceLevel[] }>('/admin/training/data', {
+      headers: withAuth(token),
+    }),
+  createTemplate: (token: string, body: AdminWorkoutTemplate) =>
+    request<{ template: AdminWorkoutTemplate }>('/admin/training/templates', {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  updateTemplate: (token: string, code: string, body: Omit<AdminWorkoutTemplate, 'code'>) =>
+    request<{ template: AdminWorkoutTemplate }>(`/admin/training/templates/${encodeURIComponent(code)}`, {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  deleteTemplate: (token: string, code: string) =>
+    request<{ deleted: boolean }>(`/admin/training/templates/${encodeURIComponent(code)}`, {
+      method: 'DELETE', headers: withAuth(token),
+    }),
+  createPaceLevel: (token: string, body: AdminPaceLevel) =>
+    request<{ pace_level: AdminPaceLevel }>('/admin/training/pace-levels', {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  updatePaceLevel: (token: string, id: number, body: Omit<AdminPaceLevel, 'id'>) =>
+    request<{ pace_level: AdminPaceLevel }>(`/admin/training/pace-levels/${id}`, {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  deletePaceLevel: (token: string, id: number) =>
+    request<{ deleted: boolean }>(`/admin/training/pace-levels/${id}`, {
+      method: 'DELETE', headers: withAuth(token),
+    }),
+}
+
 // --- 金流（綠界 ECPay）---
 
 export interface EcpayCheckout {
