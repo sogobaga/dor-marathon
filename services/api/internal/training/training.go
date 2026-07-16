@@ -859,8 +859,18 @@ type templateInfo struct {
 	Segments []templateSeg
 }
 
-// segTotalKm 距離段加總（公里，與配速等級無關）；比照前端 workout.ts totalKm。
-func segTotalKm(segs []templateSeg) float64 {
+// nonTrainingKinds 恢復/休息用的段落 kind——即使是 time 型也不算訓練里程（比照前端 workout.ts
+// NON_TRAINING_KINDS）：金字塔等課表把組間恢復拆成獨立 recovery 段，若當主課換算會隨配速等級膨脹總距離。
+var nonTrainingKinds = map[string]bool{"recovery": true, "rest": true}
+
+// segTotalKm 分段距離加總（公里）；比照前端 workout.ts totalKm，但額外處理時間型分段（原版只加總
+// distance 型，時間型主課如節奏跑/乳酸閾值跑/法特萊克完全不算入總距離，曾導致總距離顯示嚴重偏低）：
+// 距離型分段：加總 s.Target（公尺）*reps，單位不變。
+// 時間型「主課」分段（target_type!="distance" 且非 recovery/rest）：用該分段效度 pm.mid(effort) 的配速
+// 中位數（秒/公里）換算成公里再乘 reps，換算後累加進同一顆公尺累加器（*1000）供最後統一 /1000 轉公里。
+// 時間型恢復/休息段與 RestS 組間休息皆不算進距離（是恢復不是訓練里程）。加了 pm 參數，故所有呼叫點都
+// 要能提供對應的配速等級（見 AutoPlan 呼叫點）。
+func segTotalKm(segs []templateSeg, pm paceMap) float64 {
 	var m float64
 	for _, s := range segs {
 		reps := s.Reps
@@ -869,6 +879,8 @@ func segTotalKm(segs []templateSeg) float64 {
 		}
 		if s.TargetType == "distance" {
 			m += s.Target * float64(reps)
+		} else if !nonTrainingKinds[s.Kind] {
+			m += (s.Target / pm.mid(s.Effort)) * 1000 * float64(reps)
 		}
 	}
 	return math.Round(m/100) / 10
@@ -912,9 +924,12 @@ func adjustTypeForCategory(category string) string {
 // applyAdjustSegs 依 category 對應的 adjust_type 套用微調（比照前端 workout.ts applyAdjust）；
 // 只實作 AutoPlan 賽前降量會用到的 distance/reps 兩種，pyramid/none 原樣不動——賽前週會被降量的
 // quality 課表清單（qualityTemplates）不會選到 pyramid 課表。delta=0 或找不到可調整的段落時原樣回傳。
-// distance：delta(km) 平均分攤到所有 work 距離段，各段夾下限 1000m。
-// reps：主間歇 work 段（reps>1 者優先，否則第一個 work 段）reps += delta，夾 [1,20]。
-func applyAdjustSegs(segs []templateSeg, category string, delta int) []templateSeg {
+// distance：delta(km) 平均分攤到所有 work 段（含距離型與時間型，兩者都可能出現在 adjustTypeForCategory
+// =="distance" 的類別，如節奏跑/乳酸閾值跑改用時間型主課時）：距離型段直接加減公尺、夾下限 1000m；
+// 時間型段用 pm 依該段效度把「分攤到的公里數」換算成秒數增減（維持強度、只調時間長短），夾下限 60 秒。
+// reps：主間歇 work 段（reps>1 者優先，否則第一個 work 段）reps += delta，夾 [1,20]（時間型/距離型皆適用，
+// 不受影響——這支分支本就只調 Reps 欄位）。
+func applyAdjustSegs(segs []templateSeg, category string, delta int, pm paceMap) []templateSeg {
 	if delta == 0 {
 		return segs
 	}
@@ -924,16 +939,21 @@ func applyAdjustSegs(segs []templateSeg, category string, delta int) []templateS
 	case "distance":
 		var idx []int
 		for i, s := range out {
-			if s.Kind == "work" && s.TargetType == "distance" {
+			if s.Kind == "work" {
 				idx = append(idx, i)
 			}
 		}
 		if len(idx) == 0 {
 			return segs
 		}
-		share := float64(delta*1000) / float64(len(idx))
+		share := float64(delta*1000) / float64(len(idx)) // 公尺；平均分攤到每個 work 段
 		for _, i := range idx {
-			out[i].Target = max(1000, out[i].Target+share)
+			if out[i].TargetType == "distance" {
+				out[i].Target = max(1000, out[i].Target+share)
+			} else {
+				deltaS := (share / 1000) * pm.mid(out[i].Effort) // 公里→秒（該段效度配速）
+				out[i].Target = max(60, out[i].Target+deltaS)
+			}
 		}
 		return out
 	case "reps":
@@ -969,9 +989,13 @@ func applyAdjustSegs(segs []templateSeg, category string, delta int) []templateS
 // qualityTaperDelta 概算「打對折」的降量 adjust 值，供 aggressive 模式賽前 2~7 天的 quality 課表
 // 使用——與 role=="long" 的 longKm/2 用同一套「打對折」邏輯，讓賽前週真的「維持強度但降距離」
 // （migration 089 / TrainingScreen.tsx 的承諾），而不是原封不動排入全份課表。
-// reps 型：主課趟數的一半（無條件捨去，至少降 1 趟）。distance 型：work 距離段加總的一半（公里，
-// 四捨五入，至少降 1K）。找不到可調整的段落時回傳 0（不調整，等同原行為）。
-func qualityTaperDelta(category string, segs []templateSeg) int {
+// reps 型：主課趟數的一半（無條件捨去，至少降 1 趟）。distance 型：work 段（含距離型與時間型，時間型
+// 用 pm 依效度換算成公里等量——不換算的話，主課是時間型的節奏跑/乳酸閾值跑會被判定成「無可調整段落」
+// 而完全不降量，賽前週違反「維持強度但降距離」的承諾）加總的一半（公里，四捨五入，至少降 1K），這個
+// 公里數會在 applyAdjustSegs 平均分攤回各 work 段時，時間型段再依同一顆 pm 換算回秒數扣減——兩邊用
+// 同一個 pm、同一套換算公式，才不會讓 planned_km 與實際套用結果漂移。找不到可調整的段落時回傳 0（不
+// 調整，等同原行為）。
+func qualityTaperDelta(category string, segs []templateSeg, pm paceMap) int {
 	switch adjustTypeForCategory(category) {
 	case "reps":
 		mainReps := 0
@@ -992,8 +1016,17 @@ func qualityTaperDelta(category string, segs []templateSeg) int {
 	case "distance":
 		workKm := 0.0
 		for _, s := range segs {
-			if s.Kind == "work" && s.TargetType == "distance" {
+			if s.Kind != "work" {
+				continue
+			}
+			if s.TargetType == "distance" {
 				workKm += s.Target / 1000
+			} else {
+				reps := s.Reps
+				if reps < 1 {
+					reps = 1
+				}
+				workKm += (s.Target / pm.mid(s.Effort)) * float64(reps)
 			}
 		}
 		if workKm <= 0 {
@@ -1441,6 +1474,10 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	selectedLevel = min(maxLevelID, max(1, selectedLevel))
 	easyPaceMid := levelPaces[selectedLevel].mid("easy")
+	// pm：選定配速等級的完整效度→配速對照。提前到這裡宣告（原本只在 INSERT 迴圈前），因為下面
+	// 賽前一週覆蓋區塊（qualityTaperDelta）跟 INSERT 迴圈（segTotalKm/applyAdjustSegs）都要用同一份，
+	// 兩處必須吃到同一顆 pm 才不會讓 planned_km 與實際套用的降量算式漂移（見各自 docstring）。
+	pm := levelPaces[selectedLevel]
 
 	// 課表詳情（含 library_visible=FALSE 的距離變體，產生器要用）。
 	tRows, err := h.db.Query(ctx, `SELECT code, name, category, segments FROM workout_templates WHERE enabled`)
@@ -1489,12 +1526,12 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	// 比例」重新框住長跑距離，取代（縮小）純看距離推出的 capKm/startLong。
 	if req.MonthlyKm > 0 {
 		weeklyBase := float64(req.MonthlyKm) / 4 // 月跑量→週跑量基準，例：150K/月 → 37.5K/週
-		// pct：每週跑量增幅上限。conservative（保守，降強度、多一層保護）8%；aggressive（積極，維持
-		// 現況）10%——這是任務3唯一要調整的三個旋鈕之一，其餘常數（40%長跑佔比、4週恢復週、×0.65、
-		// taper 週數等）不動。
+		// pct：每週跑量增幅上限。conservative（保守，降強度、多一層保護）6%；aggressive（積極，維持
+		// 現況）10%——conservative 8%→6% 是本次調整（任務4）唯一改動的旋鈕，其餘常數（40%長跑佔比、
+		// 4週恢復週、×0.65、taper 週數、growthCap 等）不動。
 		pct := 0.10
 		if planMode == "conservative" {
-			pct = 0.08
+			pct = 0.06
 		}
 		// growthCap：growth 倍率的上限。conservative 1.5、aggressive 維持 1.8（任務3的第二個旋鈕）；
 		// 下限 1.15 兩模式共用，避免 rampWeeks 極短時倍數失控。
@@ -1518,7 +1555,7 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		capKm = min(capKm, weeklyPeak*0.40)                 // 長跑上限＝峰值週量的 40%（常見經驗值，避免單次長跑吃掉過高比例的週跑量）
 		startLong = max(4, min(startLong, weeklyBase*0.40)) // 起始長跑＝目前週量的 40%，且不超過「已經跑過的最長距離」（不可無中生有推高起點）
 		if rampWeeks > 1 {
-			// pct 規則：每週跑量增幅不可超過前一週的 pct（conservative 8%／aggressive 10%），避免練
+			// pct 規則：每週跑量增幅不可超過前一週的 pct（conservative 6%／aggressive 10%），避免練
 			// 太快造成傷害。真正逐週漸增的是下面 nominal := startLong + (capKm-startLong)*t 這條線性
 			// 曲線，不是 weeklyBase→weeklyPeak。線性 ramp 下相鄰兩週的增量固定 =
 			// (capKm-startLong)/(rampWeeks-1)，其占「起點」startLong 的百分比在起點（基數最小）最大、
@@ -1645,7 +1682,7 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 						code = nearestLsdCode(longKm / 2)
 					} else if role == "quality" {
 						if t, ok := templates[code]; ok {
-							adjust = qualityTaperDelta(t.Category, t.Segments)
+							adjust = qualityTaperDelta(t.Category, t.Segments, pm)
 						}
 					}
 				}
@@ -1692,19 +1729,33 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pm := levelPaces[selectedLevel]
 	for _, pw := range plan {
 		t := templates[pw.TemplateCode]
 		segs := t.Segments
 		if pw.Adjust != 0 {
-			segs = applyAdjustSegs(t.Segments, t.Category, pw.Adjust) // aggressive 賽前週 quality 降量（見 qualityTaperDelta）
+			segs = applyAdjustSegs(t.Segments, t.Category, pw.Adjust, pm) // aggressive 賽前週 quality 降量（見 qualityTaperDelta）
 		}
-		plannedKm := segTotalKm(segs)
+		plannedKm := segTotalKm(segs, pm)
 		plannedMin := segEstMinutes(segs, pm)
+		// name 快照：連續跑類別（lsd/easy/recovery）覆蓋成「數字＝總距離」（含熱身+主課+緩和），
+		// 對齊使用者實際要跑的量——課表庫原名/084 距離變體名的數字只是主課距離，會跟 planned_km
+		// 對不起來（如 lsd_16「LSD 16K 長距離」總距離其實 18K）。覆蓋一律用 adjust 套用後、taper
+		// 降量後的最終 plannedKm，不能用未調整的 t.Segments 算。間歇/節奏/閾值/法特萊克/亞索/金字塔/
+		// 挪威/漸進/重複等其餘類別維持 t.Name 不變——它們的名稱是結構描述（如「間歇 400×8」），不是
+		// 總距離宣稱，總距離已由 planned_km 另外呈現，不該被覆蓋成一個數字。
+		name := t.Name
+		switch t.Category {
+		case "lsd":
+			name = fmt.Sprintf("LSD %.0fK 長距離", plannedKm)
+		case "easy":
+			name = fmt.Sprintf("輕鬆跑 %.0fK", plannedKm)
+		case "recovery":
+			name = fmt.Sprintf("恢復跑 %.0fK", plannedKm)
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO user_training_schedule (user_id, plan_id, scheduled_date, template_code, pace_level, name, category, planned_km, planned_min, adjust)
 			VALUES ($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10)`,
-			uid, planID, pw.Date, pw.TemplateCode, selectedLevel, t.Name, t.Category, plannedKm, plannedMin, pw.Adjust); err != nil {
+			uid, planID, pw.Date, pw.TemplateCode, selectedLevel, name, t.Category, plannedKm, plannedMin, pw.Adjust); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
 		}

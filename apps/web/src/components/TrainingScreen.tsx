@@ -753,7 +753,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {templates.map((t) => {
                       const adj = libAdjust[t.code] ?? 0
-                      const meta = adjustMeta(t)
+                      const meta = adjustMeta(t, level)
                       const resolved = level ? resolveTemplate(t.segments, level, t.adjust_type, adj) : []
                       // 金字塔段數多，segSummary 會很長；改精簡呈現「金字塔 400→800→…→{peak}→…→400」
                       const summaryText = t.adjust_type === 'pyramid' ? `金字塔 400→800→…→${pyramidPeak(t.segments, adj)}m→…→400` : segSummary(resolved)
@@ -765,13 +765,13 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                           {targetPaceBand(resolved) && <div style={{ fontSize: 12, color: 'var(--fug)', fontWeight: 700, marginTop: 6, fontVariantNumeric: 'tabular-nums' }}>🎯 目標配速 {targetPaceBand(resolved)}</div>}
                           <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 5, fontVariantNumeric: 'tabular-nums' }}>總距離 {totalKm(resolved)} K · 預估 {fmtDuration(estMinutes(resolved))}</div>
                           {meta.type !== 'none' && (() => {
-                            const val = adjustedValue(t, adj)
+                            const val = adjustedValue(t, adj, level)
                             const atMin = val <= meta.min
                             const atMax = val >= meta.max
                             return (
                               <div style={adjustRow}>
                                 <button type="button" onClick={() => bumpLib(t.code, -1)} disabled={atMin} style={{ ...adjustBtn, opacity: atMin ? 0.4 : 1 }}>−</button>
-                                <span style={adjustVal}>{currentValue(t, adj)}</span>
+                                <span style={adjustVal}>{currentValue(t, adj, level)}</span>
                                 <button type="button" onClick={() => bumpLib(t.code, 1)} disabled={atMax} style={{ ...adjustBtn, opacity: atMax ? 0.4 : 1 }}>＋</button>
                               </div>
                             )
@@ -951,9 +951,10 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                         {list.map((s) => {
                           const sTpl = (data?.templates ?? []).find((x) => x.code === s.template_code)
-                          const sMeta = sTpl ? adjustMeta(sTpl) : null
+                          const sLevel = levels.find((l) => l.id === s.pace_level) ?? null
+                          const sMeta = sTpl ? adjustMeta(sTpl, sLevel) : null
                           const sAdjLabel = sTpl && sMeta && sMeta.type !== 'none'
-                            ? (sMeta.type === 'distance' ? `${adjustedValue(sTpl, s.adjust)}K` : sMeta.type === 'reps' ? `×${adjustedValue(sTpl, s.adjust)}` : `峰${adjustedValue(sTpl, s.adjust)}m`)
+                            ? (sMeta.type === 'distance' ? `${adjustedValue(sTpl, s.adjust, sLevel)}K` : sMeta.type === 'reps' ? `×${adjustedValue(sTpl, s.adjust, sLevel)}` : `峰${adjustedValue(sTpl, s.adjust, sLevel)}m`)
                             : ''
                           return (
                             <div key={s.id} style={{ background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px 12px' }}>
@@ -1094,9 +1095,10 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 {pickerDay.scheduled.map((s) => {
                   // 顯示該筆已排課表目前的微調值（如「6K」/「×8」/「峰1600m」）；type='none' 或找不到課表原型不顯示
                   const sTpl = (data?.templates ?? []).find((x) => x.code === s.template_code)
-                  const sMeta = sTpl ? adjustMeta(sTpl) : null
+                  const sLevel = levels.find((l) => l.id === s.pace_level) ?? null
+                  const sMeta = sTpl ? adjustMeta(sTpl, sLevel) : null
                   const sAdjLabel = sTpl && sMeta && sMeta.type !== 'none'
-                    ? (sMeta.type === 'distance' ? `${adjustedValue(sTpl, s.adjust)}K` : sMeta.type === 'reps' ? `×${adjustedValue(sTpl, s.adjust)}` : `峰${adjustedValue(sTpl, s.adjust)}m`)
+                    ? (sMeta.type === 'distance' ? `${adjustedValue(sTpl, s.adjust, sLevel)}K` : sMeta.type === 'reps' ? `×${adjustedValue(sTpl, s.adjust, sLevel)}` : `峰${adjustedValue(sTpl, s.adjust, sLevel)}m`)
                     : ''
                   return (
                     <div key={s.id} style={{ background: 'rgba(255,255,255,.04)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '11px 13px' }}>
@@ -1143,7 +1145,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {templates.map((t) => {
                       const adj = pickerAdjust[t.code] ?? 0
-                      const meta = adjustMeta(t)
+                      const meta = adjustMeta(t, pickerLevel)
                       const resolved = pickerLevel ? resolveTemplate(t.segments, pickerLevel, t.adjust_type, adj) : []
                       const alreadyIn = !!pickerDay?.scheduled.some((s) => s.template_code === t.code)
                       return (
@@ -1154,13 +1156,13 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                           </div>
                           <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>總距離 {totalKm(resolved)} K · 預估 {fmtDuration(estMinutes(resolved))}</div>
                           {meta.type !== 'none' && (() => {
-                            const val = adjustedValue(t, adj)
+                            const val = adjustedValue(t, adj, pickerLevel)
                             const atMin = val <= meta.min
                             const atMax = val >= meta.max
                             return (
                               <div style={adjustRowSmall}>
                                 <button type="button" onClick={() => bumpPicker(t.code, -1)} disabled={atMin} style={{ ...adjustBtnSmall, opacity: atMin ? 0.4 : 1 }}>−</button>
-                                <span style={adjustValSmall}>{currentValue(t, adj)}</span>
+                                <span style={adjustValSmall}>{currentValue(t, adj, pickerLevel)}</span>
                                 <button type="button" onClick={() => bumpPicker(t.code, 1)} disabled={atMax} style={{ ...adjustBtnSmall, opacity: atMax ? 0.4 : 1 }}>＋</button>
                               </div>
                             )

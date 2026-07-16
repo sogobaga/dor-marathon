@@ -98,11 +98,27 @@ export function segSummary(segs?: WorkoutSegment[] | null): string {
   }).join(' → ')
 }
 
-// 總距離（公里）：所有距離型分段 × 組數加總
+// 總距離（公里）：距離型分段 × 組數直接加總；時間型「主課」分段（節奏跑/乳酸閾值跑/法特萊克等「跑 X 秒」）
+// 換算成距離再加總：公里 = 秒數 ÷ 配速(秒/公里) → 配速取該段已解析的中位數 (pace_fast_s+pace_slow_s)/2
+// （與後端 training.go pm.mid(effort) 同語意）；段上還沒解析配速（僅有 effort，尚未套配速等級）則落回
+// 420 秒/km，比照後端 pm.mid 的 fallback、也與本檔 estMinutes 既有的距離型 fallback 一致。
+// 組間休息不計入距離：reps 展開的組間休息走 rest_s 欄位（本函式本就不加總），但金字塔這類把組間恢復
+// 拆成獨立 recovery/rest 段（time 型）的課表，也要排除，否則恢復段會被誤當主課換算成距離、隨配速等級
+// 膨脹總距離——與後端 segTotalKm 的加總公式一致，避免課表庫（前端算）與月曆（後端存 planned_km）顯示
+// 不同總距離。
+const NON_TRAINING_KINDS = new Set(['recovery', 'rest'])
 export function totalKm(segs?: WorkoutSegment[] | null): number {
   if (!segs) return 0
   let m = 0
-  for (const s of segs) { const reps = s.reps && s.reps > 1 ? s.reps : 1; if (s.target_type === 'distance') m += s.target * reps }
+  for (const s of segs) {
+    const reps = s.reps && s.reps > 1 ? s.reps : 1
+    if (s.target_type === 'distance') {
+      m += s.target * reps
+    } else if (!NON_TRAINING_KINDS.has(s.kind)) {
+      const pace = s.pace_fast_s && s.pace_slow_s ? (s.pace_fast_s + s.pace_slow_s) / 2 : 420
+      m += (s.target / pace) * 1000 * reps
+    }
+  }
   return Math.round(m / 100) / 10
 }
 // 預估完成時間（分）：距離段用配速中位數估、時間段直接計，加組間休。
@@ -211,10 +227,12 @@ export function resolveTemplate(segments?: TemplateSegment[] | null, level?: Pac
 }
 
 // 微調 UI 中繼資料：依 template.adjust_type 決定單位/步階/上下界（課表庫卡片、選課表 modal 的 −/＋ 共用）。
+// level：distance 型 min 需要換算時間型分段的實際距離（見 totalKm），沒帶（理論上只在資料尚未載入時發生）
+// 則落回未解析的 TemplateSegment[]，totalKm 內部會用 420 秒/km 的 fallback，行為與過去一致。
 export interface AdjustMeta { type: string; unit: string; step: number; min: number; max: number }
-export function adjustMeta(template: Pick<WorkoutTemplate, 'adjust_type' | 'segments'>): AdjustMeta {
+export function adjustMeta(template: Pick<WorkoutTemplate, 'adjust_type' | 'segments'>, level?: PaceLevel | null): AdjustMeta {
   switch (template.adjust_type) {
-    case 'distance': return { type: 'distance', unit: 'km', step: 1, min: totalKm(applyAdjust(template.segments, 'distance', -999)), max: 40 }
+    case 'distance': return { type: 'distance', unit: 'km', step: 1, min: totalKm(level ? resolveTemplate(template.segments, level, 'distance', -999) : applyAdjust(template.segments, 'distance', -999)), max: 40 }
     case 'reps': return { type: 'reps', unit: '趟', step: 1, min: 1, max: 20 }
     case 'pyramid': return { type: 'pyramid', unit: 'm', step: 400, min: 800, max: 2400 }
     default: return { type: 'none', unit: '', step: 0, min: 0, max: 0 }
@@ -222,9 +240,9 @@ export function adjustMeta(template: Pick<WorkoutTemplate, 'adjust_type' | 'segm
 }
 // 微調後的目前數值（距離型＝套用 adjust 後的總距離 km；間歇型＝主課 reps；金字塔＝峰值 m）；
 // 供顯示文字（currentValue）與 UI bounds 檢查（disable −/＋）共用，避免各自重算一次。
-export function adjustedValue(template: Pick<WorkoutTemplate, 'adjust_type' | 'segments'>, adjust: number): number {
-  const meta = adjustMeta(template)
-  if (meta.type === 'distance') return totalKm(applyAdjust(template.segments, 'distance', adjust))
+export function adjustedValue(template: Pick<WorkoutTemplate, 'adjust_type' | 'segments'>, adjust: number, level?: PaceLevel | null): number {
+  const meta = adjustMeta(template, level)
+  if (meta.type === 'distance') return totalKm(level ? resolveTemplate(template.segments, level, 'distance', adjust) : applyAdjust(template.segments, 'distance', adjust))
   if (meta.type === 'reps') {
     const segs = applyAdjust(template.segments, 'reps', adjust)
     let idx = segs.findIndex((s) => s.kind === 'work' && (s.reps || 1) > 1)
@@ -235,9 +253,9 @@ export function adjustedValue(template: Pick<WorkoutTemplate, 'adjust_type' | 's
   return 0
 }
 // 微調目前值顯示文字：距離型「總距離 6 K」、間歇型「8 趟」、金字塔「峰值 1600m」。
-export function currentValue(template: Pick<WorkoutTemplate, 'adjust_type' | 'segments'>, adjust: number): string {
-  const meta = adjustMeta(template)
-  const n = adjustedValue(template, adjust)
+export function currentValue(template: Pick<WorkoutTemplate, 'adjust_type' | 'segments'>, adjust: number, level?: PaceLevel | null): string {
+  const meta = adjustMeta(template, level)
+  const n = adjustedValue(template, adjust, level)
   if (meta.type === 'distance') return `總距離 ${n} K`
   if (meta.type === 'reps') return `${n} 趟`
   if (meta.type === 'pyramid') return `峰值 ${n}m`
