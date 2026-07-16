@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -585,30 +586,52 @@ func (h *Handler) MoveSchedule(w http.ResponseWriter, r *http.Request) {
 // --- P3 訓練計畫（training_plans）---
 
 // TrainingPlan 一個「一鍵產生」的訓練計畫；workout_count 為該計畫底下的排程筆數（非 distinct 日數）。
+// RaceName（migration 086）為使用者自填的目標賽事名稱，顯示優先序 race_name > name（自動命名，如
+// 「23週·全馬」）；後端不做這個 fallback，由前端決定顯示哪個。Stats 見 PlanStats（僅 ListPlans 填入，
+// AutoPlan 回傳當下維持零值，避免多打額外查詢）。
 type TrainingPlan struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	RaceDate     *string `json:"race_date"`
-	RaceDistance string  `json:"race_distance"`
-	Weeks        int     `json:"weeks"`
-	DaysPerWeek  int     `json:"days_per_week"`
-	PaceLevel    int     `json:"pace_level"`
-	StartDate    string  `json:"start_date"`
-	EndDate      string  `json:"end_date"`
-	WorkoutCount int     `json:"workout_count"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	RaceName     string    `json:"race_name"`
+	RaceDate     *string   `json:"race_date"`
+	RaceDistance string    `json:"race_distance"`
+	Weeks        int       `json:"weeks"`
+	DaysPerWeek  int       `json:"days_per_week"`
+	PaceLevel    int       `json:"pace_level"`
+	StartDate    string    `json:"start_date"`
+	EndDate      string    `json:"end_date"`
+	WorkoutCount int       `json:"workout_count"`
+	Stats        PlanStats `json:"stats"`
+}
+
+// PlanStats 單一訓練計畫的統計，取代舊版「以月為單位」（Calendar handler 的整月 planned/actual）在
+// 前端拼湊計畫進度的作法，改成直接以「計畫期間」（start_date~end_date）為單位。Planned 統計該計畫底下
+// 排定了什麼；Actual 統計期間內該使用者實際跑了什麼（與是否屬於這個計畫的排程無關，只看日期落點）。
+// 若計畫尚無任何排程/活動，Planned/Actual 各欄位為零值（TrainingTotals 零值），不會缺欄位。
+type PlanStats struct {
+	Planned       TrainingTotals `json:"planned"`
+	Actual        TrainingTotals `json:"actual"`
+	TotalDays     int            `json:"total_days"`     // end_date - start_date + 1
+	ElapsedDays   int            `json:"elapsed_days"`   // clamp(today - start_date + 1, 0, TotalDays)，today 用 Asia/Taipei
+	RemainingDays int            `json:"remaining_days"` // TotalDays - ElapsedDays
 }
 
 // planLimit 每帳號最多同時保留的訓練計畫數（POST /training/auto-plan 超過即 409 plan_limit）。
 const planLimit = 3
 
-// ListPlans GET /training/plans — VIP 專屬：該帳號的訓練計畫清單。
+// ListPlans GET /training/plans — VIP 專屬：該帳號的訓練計畫清單，含 race_name 與每個計畫的統計
+// （PlanStats，以「計畫期間」為單位）。計畫最多 3 個，但無論幾個都固定發 3 次查詢（計畫本身 + planned
+// 統計 + actual 統計），皆以 user_id 為條件一次撈完全部計畫、GROUP BY 分組，避免依計畫數逐一查詢
+// （N+1）；PlanStats 在 Go 端用 map 對回各計畫，無資料的計畫維持 TrainingTotals 零值。
 func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 	uid := h.requireVIP(w, r)
 	if uid == "" {
 		return
 	}
-	rows, err := h.db.Query(r.Context(), `
-		SELECT p.id, p.name, p.race_date, p.race_distance, p.weeks, p.days_per_week, p.pace_level, p.start_date, p.end_date,
+	ctx := r.Context()
+
+	rows, err := h.db.Query(ctx, `
+		SELECT p.id, p.name, p.race_name, p.race_date, p.race_distance, p.weeks, p.days_per_week, p.pace_level, p.start_date, p.end_date,
 		       (SELECT COUNT(*) FROM user_training_schedule s WHERE s.plan_id = p.id) AS workout_count
 		FROM training_plans p
 		WHERE p.user_id=$1
@@ -617,13 +640,18 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	defer rows.Close()
-	plans := []TrainingPlan{}
+	type planRow struct {
+		plan      TrainingPlan
+		startDate time.Time
+		endDate   time.Time
+	}
+	var planRows []planRow
 	for rows.Next() {
 		var p TrainingPlan
 		var raceDate *time.Time
 		var startDate, endDate time.Time
-		if err := rows.Scan(&p.ID, &p.Name, &raceDate, &p.RaceDistance, &p.Weeks, &p.DaysPerWeek, &p.PaceLevel, &startDate, &endDate, &p.WorkoutCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.RaceName, &raceDate, &p.RaceDistance, &p.Weeks, &p.DaysPerWeek, &p.PaceLevel, &startDate, &endDate, &p.WorkoutCount); err != nil {
+			rows.Close()
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
 		}
@@ -633,12 +661,101 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 		}
 		p.StartDate = startDate.Format("2006-01-02")
 		p.EndDate = endDate.Format("2006-01-02")
-		plans = append(plans, p)
+		planRows = append(planRows, planRow{plan: p, startDate: startDate, endDate: endDate})
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+
+	// planned：該帳號所有計畫的排程統計一次撈完（GROUP BY plan_id）。Days＝COUNT(DISTINCT
+	// scheduled_date)，因一天可多份課表，不能用 COUNT(*)。
+	plannedMap := map[string]TrainingTotals{}
+	prows, err := h.db.Query(ctx, `
+		SELECT s.plan_id, COUNT(DISTINCT s.scheduled_date), COALESCE(SUM(s.planned_km),0), COALESCE(SUM(s.planned_min),0)
+		FROM user_training_schedule s
+		WHERE s.plan_id IN (SELECT id FROM training_plans WHERE user_id=$1)
+		GROUP BY s.plan_id`, uid)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	for prows.Next() {
+		var pid string
+		var days, minutes int
+		var km float64
+		if err := prows.Scan(&pid, &days, &km, &minutes); err != nil {
+			prows.Close()
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		plannedMap[pid] = TrainingTotals{Days: days, Km: round2(km), Min: minutes}
+	}
+	prows.Close()
+	if err := prows.Err(); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+
+	// actual：每個計畫「期間內」（start_date~end_date）該使用者實際跑了什麼，一次撈完（JOIN
+	// training_plans 依台北日期落點分組），比照 Calendar handler 的 NOT flagged 與
+	// AT TIME ZONE 'Asia/Taipei' 分桶邏輯。
+	actualMap := map[string]TrainingTotals{}
+	arows, err := h.db.Query(ctx, `
+		SELECT p.id, COUNT(DISTINCT (a.recorded_at AT TIME ZONE 'Asia/Taipei')::date), COALESCE(SUM(a.distance_km),0), COALESCE(SUM(a.duration_s),0)
+		FROM training_plans p
+		JOIN activities a ON a.user_id = p.user_id AND NOT a.flagged
+		  AND (a.recorded_at AT TIME ZONE 'Asia/Taipei')::date BETWEEN p.start_date AND p.end_date
+		WHERE p.user_id=$1
+		GROUP BY p.id`, uid)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	for arows.Next() {
+		var pid string
+		var days, sec int
+		var km float64
+		if err := arows.Scan(&pid, &days, &km, &sec); err != nil {
+			arows.Close()
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		actualMap[pid] = TrainingTotals{Days: days, Km: round2(km), Min: int(math.Round(float64(sec) / 60))}
+	}
+	arows.Close()
+	if err := arows.Err(); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+
+	// today 固定用 Asia/Taipei（UTC+8 位移），比照檔案內既有慣例（distroless production 無 tzdata，
+	// 不可用 time.LoadLocation）。
+	nowTaipei := time.Now().UTC().Add(8 * time.Hour)
+	today := time.Date(nowTaipei.Year(), nowTaipei.Month(), nowTaipei.Day(), 0, 0, 0, 0, time.UTC)
+
+	plans := make([]TrainingPlan, 0, len(planRows))
+	for _, pr := range planRows {
+		p := pr.plan
+		totalDays := int(pr.endDate.Sub(pr.startDate).Hours()/24) + 1
+		elapsed := int(today.Sub(pr.startDate).Hours()/24) + 1
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		if elapsed > totalDays {
+			elapsed = totalDays
+		}
+		p.Stats = PlanStats{
+			Planned:       plannedMap[p.ID],
+			Actual:        actualMap[p.ID],
+			TotalDays:     totalDays,
+			ElapsedDays:   elapsed,
+			RemainingDays: totalDays - elapsed,
+		}
+		plans = append(plans, p)
+	}
+
 	respondJSON(w, http.StatusOK, map[string]any{"plans": plans, "limit": planLimit})
 }
 
@@ -666,6 +783,7 @@ type autoPlanRequest struct {
 	LongestMin   int     `json:"longest_min"`
 	HasRace      bool    `json:"has_race"`
 	RaceDate     string  `json:"race_date"`
+	RaceName     string  `json:"race_name"` // 使用者自填的目標賽事名稱（migration 086）；只有有 race_date 才有意義，但沒 race_date 也照存
 	RaceDistance string  `json:"race_distance"`
 	Weeks        int     `json:"weeks"`
 	RestDays     []int   `json:"rest_days"` // 預定休息的星期索引，0=週一..6=週日（前端 checkbox 一..日）；其餘星期皆為訓練日
@@ -971,6 +1089,11 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	// race_name：TrimSpace + 用 []rune 截斷（絕不可用 byte 切，會切壞 UTF-8 中文）。
+	raceName := strings.TrimSpace(req.RaceName)
+	if rn := []rune(raceName); len(rn) > 40 {
+		raceName = string(rn[:40])
+	}
 
 	var planCount int
 	if err := h.db.QueryRow(ctx, `SELECT COUNT(*) FROM training_plans WHERE user_id=$1`, uid).Scan(&planCount); err != nil {
@@ -1229,10 +1352,10 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	var planID string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO training_plans (user_id, name, race_date, race_distance, weeks, days_per_week, pace_level, start_date, end_date)
-		VALUES ($1,$2,$3::date,$4,$5,$6,$7,$8::date,$9::date)
+		INSERT INTO training_plans (user_id, name, race_name, race_date, race_distance, weeks, days_per_week, pace_level, start_date, end_date)
+		VALUES ($1,$2,$3,$4::date,$5,$6,$7,$8,$9::date,$10::date)
 		RETURNING id`,
-		uid, name, raceDateParam, req.RaceDistance, weeks, daysPerWeek, selectedLevel,
+		uid, name, raceName, raceDateParam, req.RaceDistance, weeks, daysPerWeek, selectedLevel,
 		start.Format("2006-01-02"), end.Format("2006-01-02")).Scan(&planID); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
@@ -1258,7 +1381,7 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := TrainingPlan{
-		ID: planID, Name: name, RaceDistance: req.RaceDistance, Weeks: weeks, DaysPerWeek: daysPerWeek,
+		ID: planID, Name: name, RaceName: raceName, RaceDistance: req.RaceDistance, Weeks: weeks, DaysPerWeek: daysPerWeek,
 		PaceLevel: selectedLevel, StartDate: start.Format("2006-01-02"), EndDate: end.Format("2006-01-02"),
 		WorkoutCount: len(plan),
 	}

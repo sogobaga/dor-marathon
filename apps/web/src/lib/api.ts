@@ -1478,6 +1478,7 @@ export interface TrainingCalendar {
 export interface TrainingPlan {
   id: string
   name: string
+  race_name: string // 使用者自填的賽事名稱，可能為空字串 → 顯示時一律 race_name || name
   race_date: string | null
   race_distance: string // '5k' | '10k' | 'half' | 'full' | ''
   weeks: number
@@ -1486,6 +1487,14 @@ export interface TrainingPlan {
   start_date: string
   end_date: string
   workout_count: number
+  // 該計畫的進度與執行狀況（取代舊版「本月總覽」，改成以計畫為單位呈現）
+  stats: {
+    planned: { days: number; km: number; min: number }
+    actual: { days: number; km: number; min: number }
+    total_days: number
+    elapsed_days: number
+    remaining_days: number
+  }
 }
 // 自主訓練（P3）：POST /training/auto-plan 請求體——「一鍵安排課表」表單送出的內容。
 // has_race=true 時帶 race_date/race_distance（依賽事日回推排課），false 時帶 weeks（依週數排課）。
@@ -1495,6 +1504,7 @@ export interface AutoPlanRequest {
   longest_km: number  // 最長距離（km）
   longest_min: number // 最長時間（分）
   has_race: boolean
+  race_name?: string // 使用者自填賽事名稱，選填
   race_date?: string
   race_distance?: '5k' | '10k' | 'half' | 'full'
   weeks?: number       // has_race=false：1|4|8|12|16

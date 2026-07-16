@@ -79,6 +79,17 @@ function shiftMonth(key: string, delta: number) { const [y, m] = key.split('-').
 function pad2(n: number) { return String(n).padStart(2, '0') }
 function ymd(d: Date) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` }
 
+// 賽事倒數（P3 重構）：以台北時區的「日期」比較，不看時分，避免使用者裝置在其他時區時算錯天數
+function taipeiTodayStr() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date()) }
+function daysBetween(dateStr: string, fromStr: string) {
+  const [y1, m1, d1] = dateStr.split('-').map(Number)
+  const [y2, m2, d2] = fromStr.split('-').map(Number)
+  return Math.round((Date.UTC(y1, m1 - 1, d1) - Date.UTC(y2, m2 - 1, d2)) / 86400000)
+}
+// race_distance → 月曆賽事日徽章短標籤
+const RACE_DAY_BADGE: Record<string, string> = { '5k': '5K', '10k': '10K', half: '21K', full: '42K' }
+function raceDayLabel(dist: string | null | undefined) { return dist && RACE_DAY_BADGE[dist] ? `🏁 ${RACE_DAY_BADGE[dist]}` : '🏁 賽事日' }
+
 export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   const user = useUser()
   const uid = user?.id ?? null
@@ -318,6 +329,8 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     setCalSource(plans.length > 0 ? plans[plans.length - 1].id : 'manual')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plans])
+  // 目前顯示來源對應的計畫（'manual' 或計畫已被刪除時為 null）——賽事倒數列 + 月曆賽事日標註都依此
+  const currentPlan = useMemo(() => (calSource !== 'manual' ? (plans ?? []).find((p) => p.id === calSource) ?? null : null), [calSource, plans])
 
   async function removePlan(id: string) {
     if (!window.confirm('清除此訓練計畫？將一併移除已排定但尚未完成的課表。')) return
@@ -400,6 +413,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   const [apLongestKm, setApLongestKm] = useState('')
   const [apLongestMin, setApLongestMin] = useState('')
   const [apHasRace, setApHasRace] = useState(true)
+  const [apRaceName, setApRaceName] = useState('')
   const [apRaceDate, setApRaceDate] = useState('')
   const [apRaceDistance, setApRaceDistance] = useState<NonNullable<AutoPlanRequest['race_distance']>>('10k')
   const [apWeeks, setApWeeks] = useState(8)
@@ -434,7 +448,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
       const body: AutoPlanRequest = {
         running_age: apRunningAge, best_1km_s: best1kmS, longest_km: longestKm, longest_min: longestMin,
         has_race: apHasRace, rest_days: apRestDays,
-        ...(apHasRace ? { race_date: apRaceDate, race_distance: apRaceDistance } : { weeks: apWeeks }),
+        ...(apHasRace ? { race_name: apRaceName.trim(), race_date: apRaceDate, race_distance: apRaceDistance } : { weeks: apWeeks }),
       }
       const res = await withUserAuth((tok) => trainingApi.autoPlan(tok, body))
       setShowAutoPlan(false)
@@ -561,49 +575,31 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
           </>
         ) : (
           <>
-            {/* 一鍵安排課表 */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-              <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>訓練計畫 {plans ? plans.length : '…'}/3</span>
-              <button onClick={openAutoPlan} style={autoPlanBtn}>⚡ 一鍵安排課表</button>
-            </div>
-
             {/* 顯示來源：切換月曆日格要看哪個來源的課表（手動排 or 某訓練計畫），避免多份塞爆格子 */}
             <div style={{ fontSize: 11, color: 'var(--tx-faint)', fontWeight: 800, margin: '2px 2px 6px' }}>顯示來源</div>
             <div style={{ display: 'flex', gap: 6, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 2, marginBottom: 12 }}>
               <button type="button" onClick={() => setCalSource('manual')} style={{ ...sourceChip, ...(calSource === 'manual' ? sourceChipActive : {}) }}>手動排</button>
               {(plans ?? []).map((p) => (
-                <button key={p.id} type="button" onClick={() => setCalSource(p.id)} style={{ ...sourceChip, ...(calSource === p.id ? sourceChipActive : {}) }}>{p.name}</button>
+                <button key={p.id} type="button" onClick={() => setCalSource(p.id)} style={{ ...sourceChip, ...(calSource === p.id ? sourceChipActive : {}) }}>{p.race_name || p.name}</button>
               ))}
             </div>
 
-            {/* 本月總覽（加總全部來源；下方月曆僅顯示目前選中來源） */}
-            <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px', marginBottom: 14 }}>
-              {calErr ? <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>本月資料載入失敗，請稍後再試</div> : !cal ? <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>載入中…</div> : (
-                <>
-                  {/* 同一項目（天數/里程/時間）預計 vs 實際並列同一列 + 完成% */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 4, fontSize: 10.5, color: 'var(--tx-faint)', fontWeight: 800, paddingBottom: 6, borderBottom: '1px solid var(--line)' }}>
-                    <span>本月</span><span style={{ textAlign: 'right' }}>預計</span><span style={{ textAlign: 'right' }}>實際</span><span style={{ textAlign: 'right' }}>完成</span>
-                  </div>
-                  {([
-                    { k: '天數', p: cal.planned.days, a: cal.actual.days, u: '天' },
-                    { k: '里程', p: cal.planned.km, a: cal.actual.km, u: 'K' },
-                    { k: '時間', p: cal.planned.min, a: cal.actual.min, u: '分' },
-                  ] as const).map((r) => {
-                    const pct = r.p > 0 ? Math.round((r.a / r.p) * 100) : null
-                    const fmt = (n: number) => (r.u === 'K' ? n.toFixed(1) : String(n))
-                    return (
-                      <div key={r.k} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 4, fontSize: 12.5, padding: '6px 0', fontVariantNumeric: 'tabular-nums', alignItems: 'baseline' }}>
-                        <span style={{ color: 'var(--tx-dim)', fontWeight: 700 }}>{r.k}</span>
-                        <span style={{ textAlign: 'right', color: 'var(--tx)', fontWeight: 800 }}>{fmt(r.p)}<span style={{ fontSize: 10, color: 'var(--tx-faint)', fontWeight: 600 }}> {r.u}</span></span>
-                        <span style={{ textAlign: 'right', color: 'var(--fug)', fontWeight: 800 }}>{fmt(r.a)}<span style={{ fontSize: 10, color: 'var(--tx-faint)', fontWeight: 600 }}> {r.u}</span></span>
-                        <span style={{ textAlign: 'right', fontWeight: 800, color: pct == null ? 'var(--tx-faint)' : pct >= 100 ? 'var(--fug)' : 'var(--gold)' }}>{pct == null ? '—' : `${pct}%`}</span>
-                      </div>
-                    )
-                  })}
-                  <div style={{ fontSize: 10, color: 'var(--tx-faint)', marginTop: 4 }}>（加總全部來源，不受下方顯示來源篩選影響）</div>
-                </>
-              )}
-            </div>
+            {/* 賽事倒數列：目前顯示來源對應的計畫若設有目標賽事日才顯示（手動排 / 無賽事日則不顯示） */}
+            {currentPlan?.race_date && (() => {
+              const d = daysBetween(currentPlan.race_date, taipeiTodayStr())
+              const countdown = d === 0 ? '就是今天！' : d < 0 ? '賽事日已過' : `剩 ${d} 天（約 ${Math.ceil(d / 7)} 週）`
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', background: 'rgba(255,194,75,.12)', border: '1px solid rgba(255,194,75,.4)', borderRadius: 10, padding: '9px 12px', marginBottom: 14, fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>
+                  <span>🏁 {currentPlan.race_name || currentPlan.name}</span>
+                  <span style={{ color: 'var(--tx-faint)', fontWeight: 600 }}>·</span>
+                  <span style={{ fontVariantNumeric: 'tabular-nums' }}>{currentPlan.race_date}</span>
+                  <span style={{ color: 'var(--tx-faint)', fontWeight: 600 }}>·</span>
+                  <span style={{ color: 'var(--gold)' }}>{countdown}</span>
+                </div>
+              )
+            })()}
+
+            {calErr && <div style={{ fontSize: 12, color: '#ff6b6b', fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>月曆資料載入失敗，請稍後再試</div>}
 
             {/* 月曆殼（比照成就月曆：換月/滑動/格子；未來月不鎖，可預先排課） */}
             <div
@@ -630,6 +626,8 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   const badges = sched.length <= 2 ? sched : []
                   const isDragSource = dragging?.fromDate === dateStr
                   const isDragOver = !!dragging && dragOverDate === dateStr
+                  // 賽事日標註：目前顯示來源計畫的 race_date 落在這一格（賽事當日產生器本就不排課，格子通常沒有課表徽章）
+                  const isRaceDay = !!currentPlan?.race_date && currentPlan.race_date === dateStr
                   return (
                     <button
                       key={day}
@@ -641,8 +639,8 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                       onPointerCancel={cellPointerCancel}
                       style={{
                         aspectRatio: '1', borderRadius: 8, background: dateStr === selectedDate ? 'rgba(70,227,160,.14)' : 'var(--bg-2)',
-                        border: isDragOver ? '2px solid var(--fug)' : dateStr === selectedDate ? '2px solid var(--fug)' : isToday ? '1.5px solid var(--fug)' : '1px solid var(--line)',
-                        boxShadow: isDragOver ? '0 0 0 3px rgba(70,227,160,.22)' : undefined,
+                        border: isDragOver ? '2px solid var(--fug)' : isRaceDay ? '2px solid var(--gold)' : dateStr === selectedDate ? '2px solid var(--fug)' : isToday ? '1.5px solid var(--fug)' : '1px solid var(--line)',
+                        boxShadow: isDragOver ? '0 0 0 3px rgba(70,227,160,.22)' : isRaceDay ? '0 0 8px rgba(255,194,75,.55)' : undefined,
                         opacity: isDragSource ? 0.45 : 1,
                         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1,
                         padding: 2, cursor: 'pointer', position: 'relative', fontFamily: 'inherit',
@@ -659,6 +657,11 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                       })}
                       {sched.length > 2 && (
                         <span style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: 'var(--bg-3, var(--line))', color: 'var(--tx-dim)' }}>+{sched.length}</span>
+                      )}
+                      {isRaceDay && (
+                        <span style={{ fontSize: 7.5, fontWeight: 900, padding: '1px 4px', borderRadius: 5, background: 'var(--gold)', color: '#fff', maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {raceDayLabel(currentPlan?.race_distance)}
+                        </span>
                       )}
                       {info?.has_activity && <span style={{ position: 'absolute', top: 2, right: 3, fontSize: 9, color: 'var(--fug)', fontWeight: 900 }}>✓</span>}
                     </button>
@@ -753,8 +756,14 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
               })()}
             </div>
 
-            {/* 我的訓練計畫（P3，≤3 個） */}
-            <div ref={plansRef} style={{ marginTop: 20 }}>
+            {/* 一鍵安排課表：緊接在「我的訓練計畫」之上，產生的計畫直接併入下方清單 */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, margin: '20px 0 10px' }}>
+              <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>訓練計畫 {plans ? plans.length : '…'}/3</span>
+              <button onClick={openAutoPlan} style={autoPlanBtn}>⚡ 一鍵安排課表</button>
+            </div>
+
+            {/* 我的訓練計畫（P3，≤3 個；重構後以計畫為單位顯示期間、進度與預計/實際執行狀況） */}
+            <div ref={plansRef}>
               <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--fug)', marginBottom: 8, letterSpacing: '.05em' }}>我的訓練計畫</div>
               {planLimitMsg && (
                 <div style={{ fontSize: 12, color: '#ff9f43', fontWeight: 700, background: 'rgba(255,159,67,.12)', border: '1px solid rgba(255,159,67,.3)', borderRadius: 10, padding: '9px 12px', marginBottom: 10 }}>
@@ -769,20 +778,53 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 <div style={{ ...emptyBox, padding: '16px 4px' }}>尚無訓練計畫，點上方「⚡ 一鍵安排課表」建立一個</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {plans.map((p) => (
-                    <div key={p.id} style={tplCard}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)' }}>{p.name}</div>
-                          <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 5, lineHeight: 1.8 }}>
-                            {p.race_distance ? `🏁 ${RACE_DISTANCE_LABEL[p.race_distance] || p.race_distance}${p.race_date ? ` · ${p.race_date}` : ''}` : `${p.weeks} 週計畫`} · 每週 {p.days_per_week} 天
-                            <br />{p.start_date} ~ {p.end_date} · 共 {p.workout_count} 份課表
+                  {plans.map((p) => {
+                    const progressPct = p.stats.total_days > 0 ? Math.max(0, Math.min(100, Math.round((p.stats.elapsed_days / p.stats.total_days) * 100))) : 0
+                    return (
+                      <div key={p.id} style={tplCard}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)' }}>{p.race_name || p.name}</div>
+                            <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 5, lineHeight: 1.8 }}>
+                              {p.race_distance ? `🏁 ${RACE_DISTANCE_LABEL[p.race_distance] || p.race_distance}${p.race_date ? ` · ${p.race_date}` : ''}` : `${p.weeks} 週計畫`} · 每週 {p.days_per_week} 天 · 共 {p.workout_count} 份課表
+                            </div>
                           </div>
+                          <button disabled={deletingPlanId === p.id} onClick={() => removePlan(p.id)} style={{ flexShrink: 0, background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>🗑 清除計畫</button>
                         </div>
-                        <button disabled={deletingPlanId === p.id} onClick={() => removePlan(p.id)} style={{ flexShrink: 0, background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>🗑 清除計畫</button>
+
+                        {/* 期間 + 進度條 */}
+                        <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--tx-dim)', fontVariantNumeric: 'tabular-nums' }}>
+                          {p.start_date} ~ {p.end_date} · 第 {p.stats.elapsed_days} / {p.stats.total_days} 天
+                        </div>
+                        <div style={{ marginTop: 6, height: 6, borderRadius: 4, background: 'var(--bg-2)', overflow: 'hidden' }}>
+                          <div style={{ width: `${progressPct}%`, height: '100%', background: 'var(--fug)', borderRadius: 4 }} />
+                        </div>
+
+                        {/* 預計 vs 實際對照表：同一項目同一列，並列出完成% */}
+                        <div style={{ marginTop: 10, background: 'var(--bg-2)', borderRadius: 10, padding: '8px 10px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 4, fontSize: 10, color: 'var(--tx-faint)', fontWeight: 800, paddingBottom: 5, borderBottom: '1px solid var(--line)' }}>
+                            <span>項目</span><span style={{ textAlign: 'right' }}>預計</span><span style={{ textAlign: 'right' }}>實際</span><span style={{ textAlign: 'right' }}>完成</span>
+                          </div>
+                          {([
+                            { k: '天數', p: p.stats.planned.days, a: p.stats.actual.days, u: '天' },
+                            { k: '里程', p: p.stats.planned.km, a: p.stats.actual.km, u: 'K' },
+                            { k: '時間', p: p.stats.planned.min, a: p.stats.actual.min, u: '分' },
+                          ] as const).map((r) => {
+                            const pct = r.p > 0 ? Math.round((r.a / r.p) * 100) : null
+                            const fmt = (n: number) => (r.u === 'K' ? n.toFixed(1) : String(n))
+                            return (
+                              <div key={r.k} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 4, fontSize: 12, padding: '5px 0', fontVariantNumeric: 'tabular-nums', alignItems: 'baseline' }}>
+                                <span style={{ color: 'var(--tx-dim)', fontWeight: 700 }}>{r.k}</span>
+                                <span style={{ textAlign: 'right', color: 'var(--tx)', fontWeight: 800 }}>{fmt(r.p)}<span style={{ fontSize: 9.5, color: 'var(--tx-faint)', fontWeight: 600 }}> {r.u}</span></span>
+                                <span style={{ textAlign: 'right', color: 'var(--fug)', fontWeight: 800 }}>{fmt(r.a)}<span style={{ fontSize: 9.5, color: 'var(--tx-faint)', fontWeight: 600 }}> {r.u}</span></span>
+                                <span style={{ textAlign: 'right', fontWeight: 800, color: pct == null ? 'var(--tx-faint)' : pct >= 100 ? 'var(--fug)' : 'var(--gold)' }}>{pct == null ? '—' : `${pct}%`}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -942,6 +984,10 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
               {apHasRace ? (
                 // 手機直向堆疊，避免 date input 與 select 在窄螢幕同列擠壓重疊
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <label style={apField}>
+                    <span style={apLabel}>賽事名稱（選填）</span>
+                    <input value={apRaceName} onChange={(e) => setApRaceName(e.target.value)} maxLength={40} placeholder="例：台北馬拉松" style={apInput} />
+                  </label>
                   <label style={apField}>
                     <span style={apLabel}>賽事日期</span>
                     <input type="date" value={apRaceDate} onChange={(e) => setApRaceDate(e.target.value)} style={apInput} />
