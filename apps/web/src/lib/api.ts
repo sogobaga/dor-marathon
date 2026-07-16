@@ -1610,7 +1610,7 @@ export interface ExploreRankRow {
   title: string // 目前展示中的稱號（無則空字串）
   avatar_url: string
   stars: number
-  best_time_s: number // 最短一次完成挑戰的秒數（時間榜排序值）
+  best_time_s: number | null // 最短一次完成挑戰的秒數（時間榜排序值）；室內跑等無 GPS 時間者為 null
   completed_at?: string
   is_following: boolean
   is_me: boolean

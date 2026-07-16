@@ -396,23 +396,27 @@ type rankRow struct {
 }
 
 // Ranking GET /explore/{id}/ranking — 挑戰者時間榜（最短完成時間，前 100）＋ 我是否已追蹤。
-// 依 best_time_s 升冪（越短越前），同時間以先達成者名次高。my_rank 為自己名次（在前 100 外也算；無有效完成=0）。
+// 依 best_time_s 升冪 NULLS LAST（有時間者在前，室內跑等無時間之完成者接續在後），
+// 同層級以 stars 高者優先、再以 completed_at 早者優先。my_rank 為自己名次（在前 100 外也算；未完成或無星等=0）。
 func (h *Handler) Ranking(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	bossID := chi.URLParam(r, "id")
+	// 排名鍵：時間榜優先（有時間者在前），無時間（室內跑等 GPS 未寫入）之完成者接續在後；
+	// 星等/完成時間為同層級 tie-break。ranking 清單與 my_rank 共用同一組 ROW_NUMBER，避免名次漂移。
 	rows, err := h.db.Query(r.Context(), `
 		SELECT pr.user_id::text,
 		       COALESCE(NULLIF(u.name,''), u.handle),
 		       COALESCE(td.name,''),
 		       COALESCE(u.avatar_url,''),
 		       pr.stars, COALESCE(pr.best_time_s,0), pr.completed_at,
-		       ($1 <> '' AND EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = NULLIF($1,'')::uuid AND f.followee_id = pr.user_id))
+		       ($1 <> '' AND EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = NULLIF($1,'')::uuid AND f.followee_id = pr.user_id)),
+		       ROW_NUMBER() OVER (ORDER BY pr.best_time_s ASC NULLS LAST, pr.stars DESC, pr.completed_at ASC) AS rnk
 		FROM explore_progress pr
 		JOIN users u ON u.id = pr.user_id
 		LEFT JOIN user_profiles p ON p.user_id = pr.user_id
 		LEFT JOIN title_defs td ON td.code = u.displayed_title
-		WHERE pr.boss_id=$2 AND pr.best_time_s IS NOT NULL
-		ORDER BY pr.best_time_s ASC, pr.completed_at ASC
+		WHERE pr.boss_id=$2 AND pr.completed_at IS NOT NULL AND pr.stars > 0
+		ORDER BY rnk
 		LIMIT 100`, uid, bossID)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
@@ -420,28 +424,27 @@ func (h *Handler) Ranking(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	out := []rankRow{}
-	rank := 0
 	for rows.Next() {
 		var rr rankRow
-		if err := rows.Scan(&rr.UserID, &rr.Nickname, &rr.Title, &rr.AvatarURL, &rr.Stars, &rr.BestTimeS, &rr.CompletedAt, &rr.IsFollowing); err != nil {
+		if err := rows.Scan(&rr.UserID, &rr.Nickname, &rr.Title, &rr.AvatarURL, &rr.Stars, &rr.BestTimeS, &rr.CompletedAt, &rr.IsFollowing, &rr.Rank); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		rank++
-		rr.Rank = rank
 		rr.IsMe = rr.UserID == uid
 		out = append(out, rr)
 	}
-	// 我的名次（排在我前面的人數+1；未完成則 0）
+	// 我的名次：與上面清單同一套 ROW_NUMBER 排序鍵；查無（未完成/無星等）則 0。
 	myRank := 0
 	if uid != "" {
 		_ = h.db.QueryRow(r.Context(), `
-			SELECT CASE WHEN me.best_time_s IS NULL THEN 0 ELSE (
-				SELECT COUNT(*)+1 FROM explore_progress o
-				WHERE o.boss_id=$2 AND o.best_time_s IS NOT NULL
-				  AND (o.best_time_s < me.best_time_s OR (o.best_time_s = me.best_time_s AND o.completed_at < me.completed_at))
-			) END
-			FROM explore_progress me WHERE me.user_id = NULLIF($1,'')::uuid AND me.boss_id=$2`, uid, bossID).Scan(&myRank)
+			SELECT COALESCE((
+				SELECT t.rnk FROM (
+					SELECT o.user_id,
+					       ROW_NUMBER() OVER (ORDER BY o.best_time_s ASC NULLS LAST, o.stars DESC, o.completed_at ASC) AS rnk
+					FROM explore_progress o
+					WHERE o.boss_id=$2 AND o.completed_at IS NOT NULL AND o.stars > 0
+				) t WHERE t.user_id = NULLIF($1,'')::uuid
+			), 0)`, uid, bossID).Scan(&myRank)
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"ranking": out, "my_rank": myRank})
 }
