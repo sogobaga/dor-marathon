@@ -168,7 +168,7 @@ function PlanList({ plans, onOpen }: { plans: PersonalPlan[] | null; onOpen: (p:
 // 課表型別中文標籤
 const WORKOUT_LABELS: Record<string, string> = {
   interval: '間歇', aerobic: '有氧', tempo: '節奏', easy: '輕鬆', recovery: '恢復', long: '長距離 LSD',
-  progression: '漸速', fartlek: '法特雷克', pyramid: '金字塔', norwegian4x4: '挪威4×4', variable: '變速',
+  progression: '漸速', fartlek: '法特萊克', pyramid: '金字塔', norwegian4x4: '挪威4×4', variable: '變速',
 }
 // 任務類型標籤
 function taskKind(t: PersonalTask): { label: string; color: string; kind: 'mileage' | 'rest' | 'manual' | 'workout' } {

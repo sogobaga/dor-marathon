@@ -47,7 +47,7 @@ var planMeta = []struct{ Code, Name, Life, Note string }{
 	{"P03", "區域探勘 · 探勘者", "L3 探勘者", "拓展探勘範圍：加入間歇與漸速跑。"},
 	{"P04", "街區進擊 · 街區跑者", "L4 街區跑者", "深入街區：間歇拉長、節奏跑加量。"},
 	{"P05", "耐力養成 · 耐力者", "L5 耐力者", "耐力養成：長跑加長、多樣間歇。"},
-	{"P06", "半馬長征 · 長征者", "L6 長征者", "半馬長征：法特雷克變速、長跑推進。"},
+	{"P06", "半馬長征 · 長征者", "L6 長征者", "半馬長征：法特萊克變速、長跑推進。"},
 	{"P07", "配速掌控 · 配速者", "L7 配速者", "配速掌控：節奏與間歇並重。"},
 	{"P08", "全馬築基 · 築基者", "L8 築基者", "全馬築基：長跑加量、變速跑。"},
 	{"P09", "全馬遠征 · 遠征者", "L9 遠征者", "全馬遠征：超長距離、金字塔間歇。"},
@@ -204,7 +204,7 @@ func fartlek(z Zones, surges int) WO {
 		segs = append(segs, Seg{Kind: "recovery", Label: "緩跑", TargetType: "time", Target: 60, PaceFast: z.E.F, PaceSlow: z.E.S, Reps: 1})
 	}
 	segs = append(segs, cool(z, 1000))
-	return WO{fmt.Sprintf("法特雷克變速 ×%d", surges), "變速", "fartlek", segs, 65}
+	return WO{fmt.Sprintf("法特萊克變速 ×%d", surges), "變速", "fartlek", segs, 65}
 }
 func variableRun(z Zones, reps int) WO {
 	segs := []Seg{warm(z, 1500)}

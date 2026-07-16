@@ -17,7 +17,7 @@ import UpgradeVipModal from './UpgradeVipModal'
 // 都不是挑戰制：跑步照常走 GPS 上傳自動發里程 EXP，排程只是對照顯示。
 const CATEGORY_LABELS: Record<string, string> = {
   recovery: '恢復', easy: '輕鬆', lsd: '長距離 LSD', tempo: '節奏', threshold: '閾值',
-  progression: '漸速', interval: '間歇', fartlek: '法特雷克', pyramid: '金字塔',
+  progression: '漸速', interval: '間歇', fartlek: '法特萊克', pyramid: '金字塔',
   norwegian: '挪威 4×4', yasso: '亞索 800', rep: '重複跑',
 }
 // 月曆日格徽章的短標籤（空間小，全名裝不下)
@@ -89,6 +89,63 @@ function daysBetween(dateStr: string, fromStr: string) {
 // race_distance → 月曆賽事日徽章短標籤
 const RACE_DAY_BADGE: Record<string, string> = { '5k': '5K', '10k': '10K', half: '21K', full: '42K' }
 function raceDayLabel(dist: string | null | undefined) { return dist && RACE_DAY_BADGE[dist] ? `🏁 ${RACE_DAY_BADGE[dist]}` : '🏁 賽事日' }
+
+// 一鍵安排課表：記住上次「成功產生」時填的資料，下次打開表單自動帶入；按「清空」才清除。
+// key 依使用者隔離（同裝置換帳號登入不可帶出前一位的資料）+ schema 版號（欄位改版時舊資料整包失效，不必寫遷移）。
+const AUTOPLAN_FORM_KEY_PREFIX = 'dor_training_autoplan_v1_'
+function autoPlanFormKey(uid: string) { return `${AUTOPLAN_FORM_KEY_PREFIX}${uid}` }
+type AutoPlanFormSaved = {
+  running_age: AutoPlanRequest['running_age']
+  best_1km: string
+  longest_km: string
+  longest_min: string
+  has_race: boolean
+  race_name: string
+  race_date: string
+  race_distance: NonNullable<AutoPlanRequest['race_distance']>
+  weeks: number
+  rest_days: number[]
+}
+// 表單預設值（沒存過資料、或「清空」後都回到這組——需與各 useState 初始值保持一致）
+const AUTOPLAN_FORM_DEFAULTS: AutoPlanFormSaved = {
+  running_age: 'novice', best_1km: '', longest_km: '', longest_min: '',
+  has_race: true, race_name: '', race_date: '', race_distance: '10k', weeks: 8,
+  rest_days: RUNNING_AGE_OPTIONS.find((o) => o.id === 'novice')!.defaultRestDays,
+}
+function isFiniteNumStr(s: string) { return s === '' || Number.isFinite(Number(s)) }
+function saveAutoPlanForm(uid: string, v: AutoPlanFormSaved) {
+  // 寫入失敗（無痕模式/配額滿會 throw）不可影響「產生課表」這個主流程，靜默忽略即可
+  try { window.localStorage.setItem(autoPlanFormKey(uid), JSON.stringify(v)) } catch { /* ignore */ }
+}
+// localStorage 內容是使用者可竄改、也可能是舊版格式的不可信輸入，逐欄位驗證型別/範圍後才套用，
+// 不可把 JSON.parse 結果整包 spread 進 state——任一欄位壞掉時只讓那一欄退回預設值，不波及整份表單
+function loadAutoPlanForm(uid: string): Partial<AutoPlanFormSaved> | null {
+  try {
+    const raw = window.localStorage.getItem(autoPlanFormKey(uid))
+    if (!raw) return null
+    const data = JSON.parse(raw)
+    if (!data || typeof data !== 'object') return null
+    const out: Partial<AutoPlanFormSaved> = {}
+    if (RUNNING_AGE_OPTIONS.some((o) => o.id === data.running_age)) out.running_age = data.running_age
+    if (typeof data.best_1km === 'string' && (data.best_1km === '' || parseBest1km(data.best_1km) != null)) out.best_1km = data.best_1km
+    if (typeof data.longest_km === 'string' && isFiniteNumStr(data.longest_km)) out.longest_km = data.longest_km
+    if (typeof data.longest_min === 'string' && isFiniteNumStr(data.longest_min)) out.longest_min = data.longest_min
+    if (typeof data.has_race === 'boolean') out.has_race = data.has_race
+    if (typeof data.race_name === 'string') out.race_name = data.race_name.slice(0, 40)
+    if (typeof data.race_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.race_date) && data.race_date > taipeiTodayStr()) {
+      // 過期/當天賽事日期（以台北時區「今天」判斷，不看瀏覽器時區）不帶入——後端要求嚴格晚於今天，
+      // 帶入今天會直接被 400 擋下，避免拿過期日期直接產生出爛計畫；其餘欄位照常帶入
+      out.race_date = data.race_date
+    }
+    if (RACE_DISTANCE_OPTIONS.some((o) => o.id === data.race_distance)) out.race_distance = data.race_distance
+    if (WEEKS_OPTIONS.includes(data.weeks)) out.weeks = data.weeks
+    if (Array.isArray(data.rest_days) && data.rest_days.length <= 7 && data.rest_days.every((d: any) => Number.isInteger(d) && d >= 0 && d <= 6)) {
+      const restDays = data.rest_days as number[]
+      out.rest_days = Array.from(new Set(restDays)).sort((a, b) => a - b)
+    }
+    return out
+  } catch { return null }
+}
 
 export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   const user = useUser()
@@ -423,7 +480,38 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
 
   function openAutoPlan() {
     setApErr('')
+    // 帶入上次成功產生時存的資料（沒存過、或使用者按過「清空」就維持目前的預設值，行為與過去一致）
+    if (uid != null) {
+      const saved = loadAutoPlanForm(uid)
+      if (saved) {
+        if (saved.running_age !== undefined) setApRunningAge(saved.running_age)
+        if (saved.best_1km !== undefined) setApBest1km(saved.best_1km)
+        if (saved.longest_km !== undefined) setApLongestKm(saved.longest_km)
+        if (saved.longest_min !== undefined) setApLongestMin(saved.longest_min)
+        if (saved.has_race !== undefined) setApHasRace(saved.has_race)
+        if (saved.race_name !== undefined) setApRaceName(saved.race_name)
+        if (saved.race_date !== undefined) setApRaceDate(saved.race_date)
+        if (saved.race_distance !== undefined) setApRaceDistance(saved.race_distance)
+        if (saved.weeks !== undefined) setApWeeks(saved.weeks)
+        if (saved.rest_days !== undefined) setApRestDays(saved.rest_days)
+      }
+    }
     setShowAutoPlan(true)
+  }
+  // 「清空」：清掉存下來的資料，並把表單所有欄位還原成預設值（僅使用者主動按下才會清）
+  function clearAutoPlan() {
+    if (uid != null) { try { window.localStorage.removeItem(autoPlanFormKey(uid)) } catch { /* ignore */ } }
+    setApRunningAge(AUTOPLAN_FORM_DEFAULTS.running_age)
+    setApBest1km(AUTOPLAN_FORM_DEFAULTS.best_1km)
+    setApLongestKm(AUTOPLAN_FORM_DEFAULTS.longest_km)
+    setApLongestMin(AUTOPLAN_FORM_DEFAULTS.longest_min)
+    setApHasRace(AUTOPLAN_FORM_DEFAULTS.has_race)
+    setApRaceName(AUTOPLAN_FORM_DEFAULTS.race_name)
+    setApRaceDate(AUTOPLAN_FORM_DEFAULTS.race_date)
+    setApRaceDistance(AUTOPLAN_FORM_DEFAULTS.race_distance)
+    setApWeeks(AUTOPLAN_FORM_DEFAULTS.weeks)
+    setApRestDays(AUTOPLAN_FORM_DEFAULTS.rest_days)
+    setApErr('')
   }
   function onRunningAgeChange(id: AutoPlanRequest['running_age']) {
     setApRunningAge(id)
@@ -452,6 +540,14 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
       }
       const res = await withUserAuth((tok) => trainingApi.autoPlan(tok, body))
       setShowAutoPlan(false)
+      // 只有「成功產生」才記住這次填的值，失敗/驗證擋下都不可寫入，避免下次帶入一份沒排出計畫的髒資料
+      if (uid != null) {
+        saveAutoPlanForm(uid, {
+          running_age: apRunningAge, best_1km: apBest1km, longest_km: apLongestKm, longest_min: apLongestMin,
+          has_race: apHasRace, race_name: apRaceName, race_date: apRaceDate, race_distance: apRaceDistance,
+          weeks: apWeeks, rest_days: apRestDays,
+        })
+      }
       setCalSource(res.plan.id) // 剛產生的計畫直接切為月曆顯示來源，馬上看得到排好的課表
       loadPlans()
       loadCalendar(month)
@@ -462,6 +558,8 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         setTimeout(() => plansRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
       } else if (e?.status === 400 && e?.message === 'need_training_day') {
         setApErr('至少需保留 1 天非休息日才能排課')
+      } else if (e?.status === 400 && e?.message === 'invalid race_date') {
+        setApErr('賽事日期需晚於今天，請重新選擇')
       } else {
         setApErr('產生失敗，請稍後再試')
       }
@@ -990,7 +1088,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   </label>
                   <label style={apField}>
                     <span style={apLabel}>賽事日期</span>
-                    <input type="date" value={apRaceDate} onChange={(e) => setApRaceDate(e.target.value)} style={apInput} />
+                    <input type="date" value={apRaceDate} min={taipeiTodayStr()} onChange={(e) => setApRaceDate(e.target.value)} style={apInput} />
                   </label>
                   <label style={apField}>
                     <span style={apLabel}>賽事距離</span>
@@ -1024,7 +1122,10 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
 
             {apErr && <div style={{ fontSize: 12, color: '#ff6b6b', textAlign: 'center', margin: '12px 0 0' }}>{apErr}</div>}
 
-            <button disabled={apBusy} onClick={submitAutoPlan} style={{ ...startBtn, marginTop: 16, opacity: apBusy ? 0.6 : 1 }}>{apBusy ? '產生中…' : '產生訓練計畫'}</button>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button type="button" disabled={apBusy} onClick={clearAutoPlan} style={{ ...toggleBtn, flex: '0 0 auto', padding: '9px 16px' }}>清空</button>
+              <button disabled={apBusy} onClick={submitAutoPlan} style={{ ...startBtn, flex: 1, width: 'auto', marginTop: 0, opacity: apBusy ? 0.6 : 1 }}>{apBusy ? '產生中…' : '產生訓練計畫'}</button>
+            </div>
           </div>
         </div>
       )}
