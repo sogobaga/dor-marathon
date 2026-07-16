@@ -1192,6 +1192,19 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 			}
 			easyCounter++
 		}
+		// 賽前 3 天一律短輕鬆跑(shakeout)：維持神經刺激但不累積疲勞，避免賽前一天還排長跑/強度課表
+		// （例如長跑固定排週日、但週日被使用者勾為休息日時會落到週六；賽事在週日即賽前一天在跑長跑；
+		// 賽事若在週中，賽前一天也可能落在 quality 強度日）。覆蓋 role 判斷之後選出的 code，
+		// 不論原本是 long/quality/easy 一律短輕鬆跑，新手最安全；資深跑者可再用課表微調 ±距離/趟數自行加減。
+		// d/raceDateTime 皆為 UTC 午夜 DATE 值（Go time.Date 於 UTC 無 DST），Sub().Hours()/24 恆為整數，
+		// 賽事當日已於迴圈開頭 continue 跳過，故 d 必早於 raceDateTime、daysToRace 恆 >=1。
+		if req.RaceDate != "" {
+			daysToRace := int(raceDateTime.Sub(d).Hours() / 24)
+			if daysToRace >= 1 && daysToRace <= 3 {
+				code = "easy_4" // 覆蓋 long/quality/easy 的原選擇；easy_4 = 熱身1K+輕鬆4K+緩和1K ≈ 6K shakeout
+			}
+		}
+
 		if _, ok := templates[code]; !ok {
 			continue // 防禦：理論上不會發生（所有 code 皆來自固定清單，且都在 seed migration 建立）
 		}
