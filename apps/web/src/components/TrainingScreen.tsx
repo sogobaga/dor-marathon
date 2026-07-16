@@ -661,15 +661,25 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 })}
               </div>
             </div>
-            {/* 拖曳中跟著手指/游標的小浮動徽章（顯示被拖動的課表短名）；pointerEvents:none 避免擋到 elementFromPoint 命中測試 */}
+            {/* 拖曳中跟著手指/游標的「對話框泡泡」（顯示被拖動的課表）：整個往上抬 30px 讓手指擋不到，
+                底部箭頭朝下指回目前所在的日期格。pointerEvents:none 避免擋到 elementFromPoint 命中測試。 */}
             {dragging && (
               <div
                 ref={(el) => { dragBadgeRef.current = el; if (el) { el.style.left = `${lastPointerRef.current.x}px`; el.style.top = `${lastPointerRef.current.y}px` } }}
                 style={{
-                  position: 'fixed', left: 0, top: 0, transform: 'translate(-50%, -140%)', pointerEvents: 'none', zIndex: 4500,
-                  background: 'var(--fug)', color: 'var(--fug-ink)', fontSize: 11, fontWeight: 800, padding: '5px 10px', borderRadius: 8,
-                  whiteSpace: 'nowrap', boxShadow: '0 4px 14px rgba(0,0,0,.35)',
+                  position: 'fixed', left: 0, top: 0, transform: 'translate(-50%, calc(-100% - 30px))',
+                  pointerEvents: 'none', zIndex: 4500,
+                }}>
+                <div style={{
+                  background: 'var(--fug)', color: 'var(--fug-ink)', fontSize: 15, fontWeight: 900, padding: '10px 16px',
+                  borderRadius: 13, whiteSpace: 'nowrap', boxShadow: '0 8px 22px rgba(0,0,0,.5)', letterSpacing: '.02em',
                 }}>{dragging.label}</div>
+                {/* 向下箭頭：指向目前拖曳到的課表/日期 */}
+                <div style={{
+                  position: 'absolute', left: '50%', bottom: -8, transform: 'translateX(-50%)', width: 0, height: 0,
+                  borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderTop: '9px solid var(--fug)',
+                }} />
+              </div>
             )}
             <div style={{ textAlign: 'center', fontSize: 10.5, color: 'var(--tx-faint)', margin: '8px 0 4px', lineHeight: 1.7 }}>
               左右滑動或按 ‹ › 切換月份 · 點日期查看當天課表<br />長按課表可拖曳改日期（會自動推擠同計畫的其他課表）
