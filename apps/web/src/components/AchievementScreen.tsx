@@ -17,7 +17,7 @@ export default function AchievementScreen({ onBack }: { onBack: () => void }) {
   const [month, setMonth] = useState(nowMonth)
   const [cal, setCal] = useState<AchievementCalendar | null>(null)
   const [bounce, setBounce] = useState(0) // 右滑到當月的橡皮筋回饋
-  const touchX = useRef<number | null>(null)
+  const touchPt = useRef<{ x: number; y: number } | null>(null)
 
   useEffect(() => { if (getUserToken()) withUserAuth((t) => achievementApi.stats(t)).then(setStats).catch(() => {}) }, [])
   useEffect(() => {
@@ -31,13 +31,17 @@ export default function AchievementScreen({ onBack }: { onBack: () => void }) {
     if (delta > 0 && !canNext) { setBounce(1); setTimeout(() => setBounce(0), 240); return } // 到當月，回彈不換
     setMonth((m) => shiftMonth(m, delta))
   }
-  function onTouchStart(e: React.TouchEvent) { touchX.current = e.touches[0].clientX }
+  function onTouchStart(e: React.TouchEvent) { touchPt.current = { x: e.touches[0].clientX, y: e.touches[0].clientY } }
   function onTouchEnd(e: React.TouchEvent) {
-    if (touchX.current == null) return
-    const dx = e.changedTouches[0].clientX - touchX.current
-    touchX.current = null
-    if (dx > 45) go(-1)        // 右滑 → 上個月
-    else if (dx < -45) go(1)   // 左滑 → 下個月
+    const st = touchPt.current
+    if (!st) return
+    touchPt.current = null
+    const dx = e.changedTouches[0].clientX - st.x
+    const dy = e.changedTouches[0].clientY - st.y
+    // 垂直捲動優先：水平位移要夠大、且明顯大於垂直位移，才算「換月滑動」（避免上下捲頁誤切月份）
+    if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy) * 1.5) return
+    if (dx > 0) go(-1)         // 右滑 → 上個月
+    else go(1)                 // 左滑 → 下個月
   }
 
   // 月曆格

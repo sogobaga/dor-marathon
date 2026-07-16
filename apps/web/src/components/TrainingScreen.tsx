@@ -150,15 +150,20 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month, tab, unlocked])
 
-  const touchX = useRef<number | null>(null)
+  const touchPt = useRef<{ x: number; y: number } | null>(null)
   function go(delta: number) { setMonth((m) => shiftMonth(m, delta)) }
-  function onTouchStart(e: React.TouchEvent) { touchX.current = e.touches[0].clientX }
+  function onTouchStart(e: React.TouchEvent) { touchPt.current = { x: e.touches[0].clientX, y: e.touches[0].clientY } }
   function onTouchEnd(e: React.TouchEvent) {
-    if (touchX.current == null) return
-    const dx = e.changedTouches[0].clientX - touchX.current
-    touchX.current = null
-    if (dx > 45) go(-1)        // 右滑 → 上個月
-    else if (dx < -45) go(1)   // 左滑 → 下個月（未來月不鎖，可排課）
+    const st = touchPt.current
+    if (!st) return
+    touchPt.current = null
+    const dx = e.changedTouches[0].clientX - st.x
+    const dy = e.changedTouches[0].clientY - st.y
+    // 垂直捲動優先：水平位移要夠大、且明顯大於垂直位移，才算「換月滑動」——否則上下捲頁時
+    // 只要帶一點水平漂移就會誤切月份（只看 dx 會誤判）。
+    if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy) * 1.5) return
+    if (dx > 0) go(-1)   // 右滑 → 上個月
+    else go(1)           // 左滑 → 下個月（未來月不鎖，可排課）
   }
 
   // 我的訓練計畫（P3，≤3 個；一鍵安排課表產生，計畫刪除連帶刪其排程）
