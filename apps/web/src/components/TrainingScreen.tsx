@@ -154,7 +154,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   function go(delta: number) { setMonth((m) => shiftMonth(m, delta)) }
   function onTouchStart(e: React.TouchEvent) { touchPt.current = { x: e.touches[0].clientX, y: e.touches[0].clientY } }
   function onTouchEnd(e: React.TouchEvent) {
-    if (dragging) { touchPt.current = null; return } // 拖曳中停用換月滑動，避免放開時誤觸切月
+    if (dragRef.current) { touchPt.current = null; return } // 拖曳中停用換月滑動（用 ref，state 可能還沒更新）
     const st = touchPt.current
     if (!st) return
     touchPt.current = null
@@ -193,6 +193,9 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   function beginDrag(id: string, fromDate: string, label: string) {
     pressOriginRef.current = null
     hadLongPressRef.current = true
+    // 關鍵：把這次觸控的「換月滑動起點」清掉。pointerup 早於 touchend，拖曳結束時 dragRef/state 已被
+    // teardownDrag 清空，onTouchEnd 便會把整段拖曳的水平位移誤判成換月滑動；起點沒了就算不出位移。
+    touchPt.current = null
     dragRef.current = { id, fromDate, label }
     dragOverRef.current = fromDate
     setDragging({ id, fromDate, label })
