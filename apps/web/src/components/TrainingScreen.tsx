@@ -1181,7 +1181,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
       {/* 一鍵安排課表 modal（P3）：填跑力資料 + 目標賽事(或週數) → 自動產生一組訓練計畫 */}
       {showAutoPlan && (
         <div data-skin="default" onClick={() => !apBusy && setShowAutoPlan(false)} style={{ position: 'fixed', inset: 0, zIndex: 3600, background: 'rgba(4,8,6,.82)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 440, maxHeight: '86dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--line-2)', borderTopLeftRadius: 18, borderTopRightRadius: 18, boxShadow: '0 -12px 40px rgba(0,0,0,.6)', padding: '16px 18px 22px' }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 440, maxHeight: '86dvh', overflowY: 'auto', overflowX: 'hidden', touchAction: 'pan-y', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--line-2)', borderTopLeftRadius: 18, borderTopRightRadius: 18, boxShadow: '0 -12px 40px rgba(0,0,0,.6)', padding: '16px 18px 22px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ fontSize: 15, fontWeight: 900, color: '#fff' }}>⚡ 一鍵安排課表</div>
               <button disabled={apBusy} onClick={() => setShowAutoPlan(false)} style={{ background: 'none', border: 'none', color: 'var(--tx-dim)', fontSize: 20, cursor: 'pointer', lineHeight: 1, padding: 4 }}>×</button>
@@ -1218,7 +1218,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 <div style={{ display: 'flex', gap: 8 }}>
                   {PLAN_MODE_OPTIONS.map((o) => (
                     <div key={o.id} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <button type="button" onClick={() => setApPlanMode(o.id)} style={{ ...toggleBtn, width: '100%', boxSizing: 'border-box', ...(apPlanMode === o.id ? toggleBtnActive : {}) }}>{o.label}</button>
+                      <button type="button" onClick={() => setApPlanMode(o.id)} style={{ ...toggleBtn, flex: 'none', width: '100%', boxSizing: 'border-box', ...(apPlanMode === o.id ? toggleBtnActive : {}) }}>{o.label}</button>
                       <span style={{ fontSize: 10, color: 'var(--tx-faint)', lineHeight: 1.5 }}>{o.desc}</span>
                     </div>
                   ))}
@@ -1259,7 +1259,9 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   </label>
                   <label style={apField}>
                     <span style={apLabel}>賽事日期</span>
-                    <input type="date" value={apRaceDate} min={taipeiTodayStr()} onChange={(e) => setApRaceDate(e.target.value)} style={apInput} />
+                    {/* type=date 在 WebKit/iOS 有固有最小寬度、會無視 width:100% 撐破容器（也是頁面能水平滑動的來源之一）；
+                        WebkitAppearance:none + minWidth:0 + maxWidth:100% 把它壓回容器內。 */}
+                    <input type="date" value={apRaceDate} min={taipeiTodayStr()} onChange={(e) => setApRaceDate(e.target.value)} style={{ ...apInput, WebkitAppearance: 'none', appearance: 'none', minWidth: 0, maxWidth: '100%' }} />
                   </label>
                   <label style={apField}>
                     <span style={apLabel}>賽事距離</span>
