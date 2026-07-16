@@ -601,6 +601,9 @@ type TrainingPlan struct {
 	StartDate    string    `json:"start_date"`
 	EndDate      string    `json:"end_date"`
 	WorkoutCount int       `json:"workout_count"`
+	MonthlyKm    int       `json:"monthly_km"`  // 產生當下填寫的月跑量(km)，0=未填；純記錄，不隨時間更新。
+	GoalTimeS    int       `json:"goal_time_s"` // 目標完賽秒數，0=未設定。
+	GoalPaceS    int       `json:"goal_pace_s"` // 衍生值＝goal_time_s÷賽事距離，非 DB 欄位；ListPlans 用 goalPaceSecPerKm 算出填入。
 	Stats        PlanStats `json:"stats"`
 }
 
@@ -632,6 +635,7 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.db.Query(ctx, `
 		SELECT p.id, p.name, p.race_name, p.race_date, p.race_distance, p.weeks, p.days_per_week, p.pace_level, p.start_date, p.end_date,
+		       p.monthly_km, p.goal_time_s,
 		       (SELECT COUNT(*) FROM user_training_schedule s WHERE s.plan_id = p.id) AS workout_count
 		FROM training_plans p
 		WHERE p.user_id=$1
@@ -650,7 +654,8 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 		var p TrainingPlan
 		var raceDate *time.Time
 		var startDate, endDate time.Time
-		if err := rows.Scan(&p.ID, &p.Name, &p.RaceName, &raceDate, &p.RaceDistance, &p.Weeks, &p.DaysPerWeek, &p.PaceLevel, &startDate, &endDate, &p.WorkoutCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.RaceName, &raceDate, &p.RaceDistance, &p.Weeks, &p.DaysPerWeek, &p.PaceLevel, &startDate, &endDate,
+			&p.MonthlyKm, &p.GoalTimeS, &p.WorkoutCount); err != nil {
 			rows.Close()
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
@@ -661,6 +666,7 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 		}
 		p.StartDate = startDate.Format("2006-01-02")
 		p.EndDate = endDate.Format("2006-01-02")
+		p.GoalPaceS = goalPaceSecPerKm(p.GoalTimeS, p.RaceDistance)
 		planRows = append(planRows, planRow{plan: p, startDate: startDate, endDate: endDate})
 	}
 	rows.Close()
@@ -786,11 +792,19 @@ type autoPlanRequest struct {
 	RaceName     string  `json:"race_name"` // 使用者自填的目標賽事名稱（migration 086）；只有有 race_date 才有意義，但沒 race_date 也照存
 	RaceDistance string  `json:"race_distance"`
 	Weeks        int     `json:"weeks"`
-	RestDays     []int   `json:"rest_days"` // 預定休息的星期索引，0=週一..6=週日（前端 checkbox 一..日）；其餘星期皆為訓練日
+	RestDays     []int   `json:"rest_days"`   // 預定休息的星期索引，0=週一..6=週日（前端 checkbox 一..日）；其餘星期皆為訓練日
+	MonthlyKm    int     `json:"monthly_km"`  // 目前月跑量(km)，選填。0=未填→行為與加此欄位前完全一致（只依賽事距離定 LSD 上限）。
+	GoalTimeS    int     `json:"goal_time_s"` // 目標完賽秒數(如全馬4:30:00=16200)，選填。0=未設定；只影響「目標配速/可行性提示」，絕不拿來拉快訓練配速。
 }
 
 // raceDistanceLabel race_distance → 計畫命名用中文/簡稱；也做為合法值白名單。
 var raceDistanceLabel = map[string]string{"5k": "5K", "10k": "10K", "half": "半馬", "full": "全馬"}
+
+// recommendedMonthlyKm race_distance → volume_note 提示用的建議起訓月跑量下限(km)。僅用於文字提示，
+// 不影響排程。取值涵蓋 AutoPlan 內 growth 全區間(1.15~1.8 倍，見下方跑量驅動 LSD 約束段落)下「長跑上限
+// 可跨過 7K 量化門檻」所需月跑量的安全上緣，是常見教練經驗法則(週跑量約落在賽事距離的 4~5 倍)取整，
+// 非精算值。
+var recommendedMonthlyKm = map[string]int{"5k": 20, "10k": 30, "half": 50, "full": 80}
 
 // allowedFreeWeeks 無 race_date 時，body.weeks 的合法值。
 var allowedFreeWeeks = map[int]bool{1: true, 4: true, 8: true, 12: true, 16: true}
@@ -904,6 +918,56 @@ func longRunCap(raceDistance string, longestKm float64) float64 {
 	default:
 		return min(24, max(12, longestKm*1.6))
 	}
+}
+
+// raceDistanceKm 賽事距離代碼→公里；未知/未設定（含 race_distance==""）回 0。
+func raceDistanceKm(d string) float64 {
+	switch d {
+	case "5k":
+		return 5
+	case "10k":
+		return 10
+	case "half":
+		return 21.0975
+	case "full":
+		return 42.195
+	default:
+		return 0
+	}
+}
+
+// riegelPredictS Riegel 公式：T2 = T1*(D2/D1)^k，從 1K 最佳成績推估 raceKm 距離的完賽秒數。
+// 標準 k=1.06 是拿「同量級耐力賽事」互推（如 10K 推半馬）才準；本專案唯一有的成績是 1K PB——
+// 距離極短、幾乎全無氧，直接套標準 k 值去推全馬會嚴重樂觀（低估長距離所需的有氧耐力衰減）。
+// 故刻意採更保守的 k=1.10：寧可讓可行性提示低估、多提醒幾次，也不要用一個對新手過度樂觀的模型
+// 去慫恿他們照著一個實際上到不了的配速硬練受傷。
+func riegelPredictS(fastest1kmS, raceKm float64) float64 {
+	if fastest1kmS <= 0 || raceKm <= 0 {
+		return 0
+	}
+	const k = 1.10
+	return fastest1kmS * math.Pow(raceKm, k)
+}
+
+// formatHMS 秒數→"H:MM:SS"（給目標時間/預估完賽時間顯示用，如 16200 → "4:30:00"）。
+func formatHMS(totalS int) string {
+	if totalS < 0 {
+		totalS = 0
+	}
+	h := totalS / 3600
+	m := (totalS % 3600) / 60
+	s := totalS % 60
+	return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+}
+
+// goalPaceSecPerKm 目標配速（秒/公里）＝ goal_time_s ÷ 賽事距離(km)，四捨五入到秒；缺賽事距離
+// 或未設目標時回 0。AutoPlan（產生當下）與 ListPlans（事後查詢）共用，避免同一算式寫兩份。
+func goalPaceSecPerKm(goalTimeS int, raceDistance string) int {
+	km := raceDistanceKm(raceDistance)
+	if goalTimeS <= 0 || km <= 0 {
+		return 0
+	}
+	return int(math.Round(float64(goalTimeS) / km))
 }
 
 // abs 絕對值（int）。
@@ -1089,6 +1153,14 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	// monthly_km/goal_time_s 皆選填，超出合理範圍一律視為「未填」（歸零）而非拒絕請求——兩者只是
+	// 錦上添花的輸入，不該讓一個離譜數字擋掉整個產生器；歸零後續行為就等同沒填這兩個欄位（回歸底線）。
+	if req.MonthlyKm < 0 || req.MonthlyKm > 2000 {
+		req.MonthlyKm = 0
+	}
+	if req.GoalTimeS != 0 && (req.GoalTimeS < 600 || req.GoalTimeS > 172800) {
+		req.GoalTimeS = 0
+	}
 	// race_name：TrimSpace + 用 []rune 截斷（絕不可用 byte 切，會切壞 UTF-8 中文）。
 	raceName := strings.TrimSpace(req.RaceName)
 	if rn := []rune(raceName); len(rn) > 40 {
@@ -1113,6 +1185,18 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		if _, ok := raceDistanceLabel[req.RaceDistance]; !ok {
 			respondErr(w, http.StatusBadRequest, "invalid race_distance")
 			return
+		}
+	}
+
+	// 目標配速 + Riegel 可行性提示：只用來「顯示」與「提醒」，絕不回頭影響下面的訓練配速
+	// （訓練配速一律仍依 pace_level／目前體能），也絕不擋 AutoPlan 繼續產生計畫。
+	raceKm := raceDistanceKm(req.RaceDistance)
+	goalPaceS := goalPaceSecPerKm(req.GoalTimeS, req.RaceDistance)
+	goalNote := ""
+	if req.GoalTimeS > 0 && raceKm > 0 {
+		if pred := riegelPredictS(float64(req.Best1kmS), raceKm); pred > 0 && float64(req.GoalTimeS) < pred*0.95 {
+			goalNote = fmt.Sprintf("以目前 1K 最佳成績推估，%s約 %s；%s 目標偏積極。計畫仍依目前體能安排，請以完賽為優先。",
+				raceDistanceLabel[req.RaceDistance], formatHMS(int(math.Round(pred))), formatHMS(req.GoalTimeS))
 		}
 	}
 
@@ -1253,6 +1337,59 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	startLong = min(capKm, max(4, startLong))
 	rampWeeks := weeks - taperWeeks
 
+	// volumeNote：跑量驅動 LSD 約束的附帶說明，只顯示、不影響排程（沿用 goalNote 的模式）。宣告在
+	// `if req.MonthlyKm > 0` 區塊外，否則區塊結束後變數就離開作用域，下面 respondJSON 讀不到。
+	volumeNote := ""
+
+	// 跑量驅動的 LSD 約束（monthly_km>0 時才套用；=0 時完全不動上面算出的 capKm/startLong，
+	// 是回歸底線）。動機：單次跑過 21K 不代表「每週都能吃 21K」——後者靠的是月跑量長期堆出來的
+	// 耐受度，前者只證明身體某一天撐得住一次。longRunCap 只看賽事距離/最長跑過距離，完全不看
+	// 月跑量，會把月跑量僅 150K 的人一路推到 32K 長跑，等同主動叫他受傷。故改用「當週跑量的固定
+	// 比例」重新框住長跑距離，取代（縮小）純看距離推出的 capKm/startLong。
+	if req.MonthlyKm > 0 {
+		weeklyBase := float64(req.MonthlyKm) / 4 // 月跑量→週跑量基準，例：150K/月 → 37.5K/週
+		// growth：隨 rampWeeks（真正可以逐週漸增的週數）拉長，逐步放大「週跑量峰值」相對基準的倍數；
+		// 週數越多代表有越長時間可以安全地把量堆上去。1.15/1.8 是防呆下限/上限，避免 rampWeeks 極端
+		// 值（很短或很長）時倍數失控。
+		growth := min(1.8, max(1.15, 1+0.035*float64(rampWeeks)))
+		weeklyPeak := weeklyBase * growth
+		if rampWeeks > 1 {
+			// 峰值週量粗上限：不超過用 10% 從 weeklyBase 疊 rampWeeks-1 次所能到達的量。這只是「量體」
+			// 的防呆上限，不等於下面長跑曲線本身合規——長跑漸增走的是 startLong→capKm 這條線，基數跟
+			// weeklyBase→weeklyPeak 不同；真正保證長跑曲線每週增幅 <=10% 的判斷在下面對 capKm 的處理。
+			weeklyPeak = min(weeklyPeak, weeklyBase*(1+0.10*float64(rampWeeks-1)))
+		} else {
+			weeklyPeak = weeklyBase
+		}
+		capKm = min(capKm, weeklyPeak*0.40)                 // 長跑上限＝峰值週量的 40%（常見經驗值，避免單次長跑吃掉過高比例的週跑量）
+		startLong = max(4, min(startLong, weeklyBase*0.40)) // 起始長跑＝目前週量的 40%，且不超過「已經跑過的最長距離」（不可無中生有推高起點）
+		if rampWeeks > 1 {
+			// 10% 規則：每週跑量增幅不可超過前一週的 10%，避免練太快造成傷害。真正逐週漸增的是下面
+			// nominal := startLong + (capKm-startLong)*t 這條線性曲線，不是 weeklyBase→weeklyPeak。
+			// 線性 ramp 下相鄰兩週的增量固定 = (capKm-startLong)/(rampWeeks-1)，其占「起點」startLong
+			// 的百分比在起點（基數最小）最大、越往後基數變大增幅自動遞減；因此只要
+			// capKm <= startLong*(1+0.10*(rampWeeks-1))，增幅最大的第一週就不超過 10%，中段每一週的
+			// 實際增幅必然更小，全程自動合規，不需逐週檢查。
+			// 恢復週（每 4 週回彈到 nominal*0.65，見下方 isRecovery）刻意不受此限：10% 規則管的是
+			// 「訓練量趨勢線」的長期爬升速度，恢復週是刻意的短期回落、事後會再回升到趨勢線上，並非
+			// 趨勢線本身；若也套 10% 上限，會反過來逼恢復週不夠低、讓恢復週失去恢復的意義。
+			capKm = min(capKm, startLong*(1+0.10*float64(rampWeeks-1)))
+		}
+		capKm = max(startLong, capKm) // 防呆：避免 cap 被壓得比 start 還低，造成長跑曲線倒退
+
+		// 月跑量很低時 capKm 會被壓到很小（例：月跑量 40K + 全馬 + 23 週 → capKm≈6.94）。這裡刻意
+		// 不加 capKm 下限去「救」這個數字——月跑量低就是該跑少，是刻意的保護（新手要優先考慮休息/
+		// 恢復/避免受傷，不是把長跑硬撐上去）。但 capKm<7 時會撞上 nearestLsdCode 的量化死角：目前
+		// 最小長跑課表是 lsd_6，次小 lsd_8，兩者判定中點剛好在 7.0，所以只要整條 startLong→capKm 的
+		// ramp 都落在 7 以下，每一週都會被 nearestLsdCode 量化成同一個 lsd_6，使用者會看到全程（例中
+		// 23 週）長跑距離完全沒有漸增、卻沒有任何解釋。問題出在「靜默」，不在數字小，所以在這裡把原因
+		// 講清楚——沿用 goalNote「只顯示、不影響排程」的作法，用 volume_note 說明現況並給出後續建議。
+		if capKm < 7 && req.RaceDistance != "" {
+			volumeNote = fmt.Sprintf("目前月跑量 %dK 偏低，長跑距離已依跑量下修至 %dK 上下；要安全完成%s，建議先把月跑量堆到 %dK 以上再重排計畫。",
+				req.MonthlyKm, int(math.Round(capKm)), raceDistanceLabel[req.RaceDistance], recommendedMonthlyKm[req.RaceDistance])
+		}
+	}
+
 	qualityCounter := 0
 	easyCounter := 0
 	var plan []plannedWorkout
@@ -1352,11 +1489,11 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	var planID string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO training_plans (user_id, name, race_name, race_date, race_distance, weeks, days_per_week, pace_level, start_date, end_date)
-		VALUES ($1,$2,$3,$4::date,$5,$6,$7,$8,$9::date,$10::date)
+		INSERT INTO training_plans (user_id, name, race_name, race_date, race_distance, weeks, days_per_week, pace_level, start_date, end_date, monthly_km, goal_time_s)
+		VALUES ($1,$2,$3,$4::date,$5,$6,$7,$8,$9::date,$10::date,$11,$12)
 		RETURNING id`,
 		uid, name, raceName, raceDateParam, req.RaceDistance, weeks, daysPerWeek, selectedLevel,
-		start.Format("2006-01-02"), end.Format("2006-01-02")).Scan(&planID); err != nil {
+		start.Format("2006-01-02"), end.Format("2006-01-02"), req.MonthlyKm, req.GoalTimeS).Scan(&planID); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
@@ -1383,13 +1520,13 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	result := TrainingPlan{
 		ID: planID, Name: name, RaceName: raceName, RaceDistance: req.RaceDistance, Weeks: weeks, DaysPerWeek: daysPerWeek,
 		PaceLevel: selectedLevel, StartDate: start.Format("2006-01-02"), EndDate: end.Format("2006-01-02"),
-		WorkoutCount: len(plan),
+		WorkoutCount: len(plan), MonthlyKm: req.MonthlyKm, GoalTimeS: req.GoalTimeS, GoalPaceS: goalPaceS,
 	}
 	if req.RaceDate != "" {
 		rd := req.RaceDate
 		result.RaceDate = &rd
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"plan": result})
+	respondJSON(w, http.StatusOK, map[string]any{"plan": result, "goal_note": goalNote, "volume_note": volumeNote})
 }
 
 // --- 共用 ---

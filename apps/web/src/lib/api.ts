@@ -1487,6 +1487,9 @@ export interface TrainingPlan {
   start_date: string
   end_date: string
   workout_count: number
+  monthly_km: number   // 使用者填寫的目前月跑量(km)；0=未填
+  goal_time_s: number  // 目標完賽秒數；0=未設定
+  goal_pace_s: number  // 目標配速(秒/km)；0=無（需 goal_time_s 與賽事距離皆有值才會算）
   // 該計畫的進度與執行狀況（取代舊版「本月總覽」，改成以計畫為單位呈現）
   stats: {
     planned: { days: number; km: number; min: number }
@@ -1510,6 +1513,8 @@ export interface AutoPlanRequest {
   weeks?: number       // has_race=false：1|4|8|12|16
   rest_days: number[]  // 預定休息的星期索引，0=週一..6=週日（前端 checkbox 一..日）；其餘星期皆為訓練日，
                         // 全 7 天皆休（無訓練日）後端回 400 {error:"need_training_day"}
+  monthly_km?: number  // 目前月跑量(km)，選填；0/未填=不套用跑量模型(沿用舊行為)
+  goal_time_s?: number // 目標完賽秒數，選填（全馬 4:30:00 = 16200）；0/未填=未設定
 }
 
 // 自主訓練（P1+P2+P3）：課表庫 + 配速等級表、月曆排程 CRUD、一鍵訓練計畫。VIP 限定——非 VIP 呼叫回 403
@@ -1534,8 +1539,9 @@ export const trainingApi = {
   plans: (token: string) =>
     request<{ plans: TrainingPlan[]; limit: number }>('/training/plans', { headers: withAuth(token) }),
   // 一鍵產生訓練計畫；已有 3 個回 409 {error:"plan_limit"}（呼叫端用 e.status===409 && e.message==='plan_limit' 辨識）
+  // goal_note/volume_note：目標偏積極/月跑量偏低的可行性提示，可能為空字串；提示不代表失敗，計畫仍會產生
   autoPlan: (token: string, body: AutoPlanRequest) =>
-    request<{ plan: TrainingPlan }>('/training/auto-plan', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+    request<{ plan: TrainingPlan; goal_note: string; volume_note: string }>('/training/auto-plan', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   // 刪除訓練計畫（其排程 CASCADE 一併刪除）
   deletePlan: (token: string, id: string) =>
     request<{ ok: boolean }>(`/training/plans/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),

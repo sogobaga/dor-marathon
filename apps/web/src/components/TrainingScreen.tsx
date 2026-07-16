@@ -56,6 +56,8 @@ const RACE_DISTANCE_OPTIONS: { id: NonNullable<AutoPlanRequest['race_distance']>
   { id: '5k', label: '5K' }, { id: '10k', label: '10K' }, { id: 'half', label: '半程馬拉松' }, { id: 'full', label: '全程馬拉松' },
 ]
 const RACE_DISTANCE_LABEL: Record<string, string> = { '5k': '5K', '10k': '10K', half: '半程馬拉松', full: '全程馬拉松' }
+// 賽事距離對照 km（算目標配速用；與後端一致，僅供前端零風險推算，不重算 LSD 排課邏輯）
+const RACE_DISTANCE_KM: Record<string, number> = { '5k': 5, '10k': 10, half: 21.0975, full: 42.195 }
 const WEEKS_OPTIONS = [1, 4, 8, 12, 16]
 // 休息日 checkbox 星期標籤，索引 0(週一)..6(週日)——與月曆格用的 WK（0=週日起算）刻意不同慣例，各自對應用途。
 const WEEKDAY_MON_FIRST = ['一', '二', '三', '四', '五', '六', '日']
@@ -71,6 +73,38 @@ function parseBest1km(raw: string): number | null {
   }
   const n = Number(s)
   return isFinite(n) && n > 0 ? n : null
+}
+
+// 目前月跑量：空字串/非正數一律回 0（=不套用跑量模型，與後端「0/未填」約定一致）
+// 後端 MonthlyKm 是 Go int，四捨五入取整才能送出，否則帶小數的 JSON number 會讓 decoder 直接拒收整包 body（400 invalid body）。
+function computeMonthlyKm(raw: string): number {
+  if (raw === '') return 0
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0
+}
+// 目標完賽時間：兩格都空回 0；任一格有值但非有限數也回 0（防呆，不可送出 NaN）
+// 後端 GoalTimeS 同樣是 int，四捨五入取整避免同上的 400。
+function computeGoalTimeS(h: string, m: string): number {
+  if (h === '' && m === '') return 0
+  const hn = h === '' ? 0 : Number(h)
+  const mn = m === '' ? 0 : Number(m)
+  if (!Number.isFinite(hn) || !Number.isFinite(mn) || hn < 0 || mn < 0) return 0
+  return Math.round(hn * 3600 + mn * 60)
+}
+// 秒/km → "m:ss"（配速顯示）；先四捨五入到整秒再切分，與後端 goalPaceSecPerKm 的算法一致，
+// 避免先切分再各自四捨五入導致秒數進位到 60（如 "5:60"）。
+function fmtPace(paceS: number) {
+  const t = Math.round(paceS)
+  const m = Math.floor(t / 60)
+  const s = t % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+// 秒 → "h:mm:ss"（目標完賽時間顯示，如 4:30:00）
+function fmtGoalTime(s: number) {
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = Math.floor(s % 60)
+  return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
 }
 
 const WK = ['日', '一', '二', '三', '四', '五', '六']
@@ -105,12 +139,16 @@ type AutoPlanFormSaved = {
   race_distance: NonNullable<AutoPlanRequest['race_distance']>
   weeks: number
   rest_days: number[]
+  monthly_km: string // 目前月跑量(km)，選填；影響跑量模型與 LSD 排課（與是否有賽事無關）
+  goal_h: string      // 目標完賽時間·時，選填（僅 has_race 時有意義）
+  goal_m: string      // 目標完賽時間·分，選填
 }
 // 表單預設值（沒存過資料、或「清空」後都回到這組——需與各 useState 初始值保持一致）
 const AUTOPLAN_FORM_DEFAULTS: AutoPlanFormSaved = {
   running_age: 'novice', best_1km: '', longest_km: '', longest_min: '',
   has_race: true, race_name: '', race_date: '', race_distance: '10k', weeks: 8,
   rest_days: RUNNING_AGE_OPTIONS.find((o) => o.id === 'novice')!.defaultRestDays,
+  monthly_km: '', goal_h: '', goal_m: '',
 }
 function isFiniteNumStr(s: string) { return s === '' || Number.isFinite(Number(s)) }
 function saveAutoPlanForm(uid: string, v: AutoPlanFormSaved) {
@@ -142,6 +180,22 @@ function loadAutoPlanForm(uid: string): Partial<AutoPlanFormSaved> | null {
     if (Array.isArray(data.rest_days) && data.rest_days.length <= 7 && data.rest_days.every((d: any) => Number.isInteger(d) && d >= 0 && d <= 6)) {
       const restDays = data.rest_days as number[]
       out.rest_days = Array.from(new Set(restDays)).sort((a, b) => a - b)
+    }
+    // 月跑量：須為有限數且落在合理範圍（0~2000km/月），逐欄驗證失敗只丟該欄，不影響其餘欄位
+    if (typeof data.monthly_km === 'string' && isFiniteNumStr(data.monthly_km) &&
+      (data.monthly_km === '' || (Number(data.monthly_km) >= 0 && Number(data.monthly_km) <= 2000))) {
+      out.monthly_km = data.monthly_km
+    }
+    // 目標完賽時間：時 0~24、分 0~59
+    // 上限對齊後端 GoalTimeS 的合法範圍 [600,172800]＝最多 48 小時；驗證比後端嚴會造成
+    // 「送得出去卻還原不回來」的靜默丟失（存檔端已正規化成 時+0~59 分）。
+    if (typeof data.goal_h === 'string' && isFiniteNumStr(data.goal_h) &&
+      (data.goal_h === '' || (Number(data.goal_h) >= 0 && Number(data.goal_h) <= 48))) {
+      out.goal_h = data.goal_h
+    }
+    if (typeof data.goal_m === 'string' && isFiniteNumStr(data.goal_m) &&
+      (data.goal_m === '' || (Number(data.goal_m) >= 0 && Number(data.goal_m) <= 59))) {
+      out.goal_m = data.goal_m
     }
     return out
   } catch { return null }
@@ -475,8 +529,23 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   const [apRaceDistance, setApRaceDistance] = useState<NonNullable<AutoPlanRequest['race_distance']>>('10k')
   const [apWeeks, setApWeeks] = useState(8)
   const [apRestDays, setApRestDays] = useState<number[]>(() => RUNNING_AGE_OPTIONS.find((o) => o.id === 'novice')!.defaultRestDays)
+  // 目前月跑量(km，不論有無賽事都顯示) + 目標完賽時間(時/分，僅有賽事時顯示)——皆選填，影響跑量模型/LSD 排課
+  const [apMonthlyKm, setApMonthlyKm] = useState('')
+  const [apGoalH, setApGoalH] = useState('')
+  const [apGoalM, setApGoalM] = useState('')
   const [apBusy, setApBusy] = useState(false)
   const [apErr, setApErr] = useState('')
+  // 產生成功後的可行性提示（目標偏積極/月跑量偏低），modal 關閉後移到月曆上方以橫幅呈現；可個別關閉
+  const [planNotice, setPlanNotice] = useState<{ goal: string; volume: string } | null>(null)
+
+  // 即時推算預覽（僅零風險換算，不重算 LSD 起始/上限）：週跑量 ≈ 月跑量/4；目標配速 = 目標時間/賽事距離
+  const apWeeklyKmPreview = (() => { const km = computeMonthlyKm(apMonthlyKm); return km > 0 ? km / 4 : null })()
+  const apGoalPacePreview = (() => {
+    if (!apHasRace) return null
+    const goalS = computeGoalTimeS(apGoalH, apGoalM)
+    const distKm = RACE_DISTANCE_KM[apRaceDistance] || 0
+    return goalS > 0 && distKm > 0 ? goalS / distKm : null
+  })()
 
   function openAutoPlan() {
     setApErr('')
@@ -494,6 +563,9 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         if (saved.race_distance !== undefined) setApRaceDistance(saved.race_distance)
         if (saved.weeks !== undefined) setApWeeks(saved.weeks)
         if (saved.rest_days !== undefined) setApRestDays(saved.rest_days)
+        if (saved.monthly_km !== undefined) setApMonthlyKm(saved.monthly_km)
+        if (saved.goal_h !== undefined) setApGoalH(saved.goal_h)
+        if (saved.goal_m !== undefined) setApGoalM(saved.goal_m)
       }
     }
     setShowAutoPlan(true)
@@ -511,6 +583,9 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     setApRaceDistance(AUTOPLAN_FORM_DEFAULTS.race_distance)
     setApWeeks(AUTOPLAN_FORM_DEFAULTS.weeks)
     setApRestDays(AUTOPLAN_FORM_DEFAULTS.rest_days)
+    setApMonthlyKm(AUTOPLAN_FORM_DEFAULTS.monthly_km)
+    setApGoalH(AUTOPLAN_FORM_DEFAULTS.goal_h)
+    setApGoalM(AUTOPLAN_FORM_DEFAULTS.goal_m)
     setApErr('')
   }
   function onRunningAgeChange(id: AutoPlanRequest['running_age']) {
@@ -531,6 +606,12 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     if (!best1kmS || !(longestKm > 0) || !(longestMin > 0)) { setApErr('請完整填寫跑力資料'); return }
     if (apHasRace && !apRaceDate) { setApErr('請選擇賽事日期'); return }
     if (apRestDays.length >= 7) { setApErr('至少需保留 1 天非休息日才能排課'); return }
+    // 後端對月跑量的合法範圍是 [0,2000]，超出會被「靜默歸零」＝整個跑量模型不套用、也不會有任何提示。
+    // 使用者卻剛看過「週跑量約 3750K」的預覽，只會以為有生效 → 這裡擋下並講清楚，不要讓它默默失效。
+    if (computeMonthlyKm(apMonthlyKm) > 2000) { setApErr('月跑量請填 0～2000 之間'); return }
+    // 目標完賽時間同理：後端合法範圍是 [600,172800] 秒（10 分鐘～48 小時），超出一樣靜默歸零。
+    const apGoalS = apHasRace ? computeGoalTimeS(apGoalH, apGoalM) : 0
+    if (apGoalS > 0 && (apGoalS < 600 || apGoalS > 172800)) { setApErr('目標完賽時間請填 10 分鐘～48 小時之間'); return }
     setApBusy(true); setApErr('')
     try {
       const body: AutoPlanRequest = {
@@ -538,19 +619,32 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         has_race: apHasRace, rest_days: apRestDays,
         ...(apHasRace ? { race_name: apRaceName.trim(), race_date: apRaceDate, race_distance: apRaceDistance } : { weeks: apWeeks }),
       }
+      // 兩個新欄位皆選填：算出來是 0 就不帶，維持「沒填＝與現行行為一致」的回歸底線
+      const monthlyKm = computeMonthlyKm(apMonthlyKm)
+      if (monthlyKm > 0) body.monthly_km = monthlyKm
+      const goalTimeS = apHasRace ? computeGoalTimeS(apGoalH, apGoalM) : 0
+      if (goalTimeS > 0) body.goal_time_s = goalTimeS
       const res = await withUserAuth((tok) => trainingApi.autoPlan(tok, body))
       setShowAutoPlan(false)
       // 只有「成功產生」才記住這次填的值，失敗/驗證擋下都不可寫入，避免下次帶入一份沒排出計畫的髒資料
       if (uid != null) {
+        // 時/分存檔前先正規化：使用者可以直接在「分」打 270（＝4:30），送出完全正確，但還原時的
+        // 驗證上限是 59 → 存得進去卻還原不回來，該欄會無聲消失。改存由 goal_time_s 反推的時/分。
+        const nGoalH = goalTimeS > 0 ? String(Math.floor(goalTimeS / 3600)) : ''
+        const nGoalM = goalTimeS > 0 ? String(Math.floor((goalTimeS % 3600) / 60)) : ''
         saveAutoPlanForm(uid, {
           running_age: apRunningAge, best_1km: apBest1km, longest_km: apLongestKm, longest_min: apLongestMin,
           has_race: apHasRace, race_name: apRaceName, race_date: apRaceDate, race_distance: apRaceDistance,
-          weeks: apWeeks, rest_days: apRestDays,
+          weeks: apWeeks, rest_days: apRestDays, monthly_km: apMonthlyKm, goal_h: nGoalH, goal_m: nGoalM,
         })
       }
       setCalSource(res.plan.id) // 剛產生的計畫直接切為月曆顯示來源，馬上看得到排好的課表
       loadPlans()
       loadCalendar(month)
+      // 提示但照樣產生（非錯誤）：目標偏積極/月跑量偏低的可行性說明，兩者皆可能為空字串
+      const goalNote = (res.goal_note || '').trim()
+      const volumeNote = (res.volume_note || '').trim()
+      setPlanNotice(goalNote || volumeNote ? { goal: goalNote, volume: volumeNote } : null)
     } catch (e: any) {
       if (e?.status === 409 && e?.message === 'plan_limit') {
         setShowAutoPlan(false)
@@ -698,6 +792,19 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
             })()}
 
             {calErr && <div style={{ fontSize: 12, color: '#ff6b6b', fontWeight: 700, textAlign: 'center', margin: '0 0 10px' }}>月曆資料載入失敗，請稍後再試</div>}
+
+            {/* 一鍵安排課表產生成功後的可行性提示（目標偏積極/月跑量偏低）：提示不是錯誤，計畫仍照樣產生，
+                中性資訊樣式；可個別關閉，兩則 note 皆非空時同時顯示 */}
+            {planNotice && (planNotice.goal || planNotice.volume) && (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '10px 12px', marginBottom: 14 }}>
+                <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1.5 }}>💡</span>
+                <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
+                  {planNotice.goal && <div>{planNotice.goal}</div>}
+                  {planNotice.volume && <div>{planNotice.volume}</div>}
+                </div>
+                <button onClick={() => setPlanNotice(null)} style={{ flexShrink: 0, background: 'none', border: 'none', color: 'var(--tx-faint)', fontSize: 17, cursor: 'pointer', lineHeight: 1, padding: 0 }}>×</button>
+              </div>
+            )}
 
             {/* 月曆殼（比照成就月曆：換月/滑動/格子；未來月不鎖，可預先排課） */}
             <div
@@ -886,6 +993,13 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                             <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 5, lineHeight: 1.8 }}>
                               {p.race_distance ? `🏁 ${RACE_DISTANCE_LABEL[p.race_distance] || p.race_distance}${p.race_date ? ` · ${p.race_date}` : ''}` : `${p.weeks} 週計畫`} · 每週 {p.days_per_week} 天 · 共 {p.workout_count} 份課表
                             </div>
+                            {(p.goal_time_s > 0 || p.monthly_km > 0) && (
+                              <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.8, fontVariantNumeric: 'tabular-nums' }}>
+                                {p.goal_time_s > 0 && <span>🎯 目標 {fmtGoalTime(p.goal_time_s)}{p.goal_pace_s > 0 ? ` · 目標配速 ${fmtPace(p.goal_pace_s)}/km` : ''}</span>}
+                                {p.goal_time_s > 0 && p.monthly_km > 0 && <span> · </span>}
+                                {p.monthly_km > 0 && <span>📅 月跑量 {Math.round(p.monthly_km)}K</span>}
+                              </div>
+                            )}
                           </div>
                           <button disabled={deletingPlanId === p.id} onClick={() => removePlan(p.id)} style={{ flexShrink: 0, background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>🗑 清除計畫</button>
                         </div>
@@ -1071,6 +1185,23 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 </label>
               </div>
 
+              {/* 目前月跑量：不論有無賽事都顯示（跑量模型與賽事無關），影響 LSD 長距離的自動安排 */}
+              <label style={apField}>
+                <span style={apLabel}>目前月跑量（選填，km）</span>
+                <input type="number" min={0} step={1} inputMode="decimal" value={apMonthlyKm} onChange={(e) => setApMonthlyKm(e.target.value)} placeholder="例：150" style={apInput} />
+                {apWeeklyKmPreview != null && (
+                  <div style={{ fontSize: 11, color: 'var(--fug)', fontWeight: 700, marginTop: 2, lineHeight: 1.6 }}>
+                    週跑量約 {apWeeklyKmPreview.toFixed(0)}K
+                    <span style={{ color: 'var(--tx-faint)', fontWeight: 500 }}>・長跑距離會依跑量自動安排</span>
+                  </div>
+                )}
+                {apGoalPacePreview != null && (
+                  <div style={{ fontSize: 11, color: 'var(--fug)', fontWeight: 700, marginTop: apWeeklyKmPreview != null ? 1 : 2, lineHeight: 1.6 }}>
+                    目標配速 {fmtPace(apGoalPacePreview)}/km
+                  </div>
+                )}
+              </label>
+
               <div style={apField}>
                 <span style={apLabel}>目標賽事</span>
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -1096,6 +1227,21 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                       {RACE_DISTANCE_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
                     </select>
                   </label>
+                  {/* 目標完賽時間：拆成時/分兩個小數字框，避免單一 h:mm 文字輸入的語意歧義（25:00 是分還是時）；
+                      手機上也能直接跳數字鍵盤。兩格皆選填、皆空則不影響送出。 */}
+                  <div style={apField}>
+                    <span style={apLabel}>目標完賽時間（選填）</span>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input type="number" min={0} max={24} step={1} inputMode="numeric" value={apGoalH} onChange={(e) => setApGoalH(e.target.value)} placeholder="4" style={apInput} />
+                        <span style={{ fontSize: 11.5, color: 'var(--tx-dim)', flexShrink: 0 }}>時</span>
+                      </div>
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input type="number" min={0} max={59} step={1} inputMode="numeric" value={apGoalM} onChange={(e) => setApGoalM(e.target.value)} placeholder="30" style={apInput} />
+                        <span style={{ fontSize: 11.5, color: 'var(--tx-dim)', flexShrink: 0 }}>分</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <label style={apField}>
