@@ -139,9 +139,10 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   const [month, setMonth] = useState(() => ym(new Date()))
   const [cal, setCal] = useState<TrainingCalendar | null>(null)
   const [calErr, setCalErr] = useState(false)
+  // 回傳 promise：拖曳改期後要 await 它，讓「更新中」提示涵蓋到月曆真的刷新完為止
   function loadCalendar(m: string) {
-    if (!getUserToken()) return
-    withUserAuth((t) => trainingApi.calendar(t, m)).then((c) => { setCal(c); setCalErr(false) }).catch(() => setCalErr(true))
+    if (!getUserToken()) return Promise.resolve()
+    return withUserAuth((t) => trainingApi.calendar(t, m)).then((c) => { setCal(c); setCalErr(false) }).catch(() => setCalErr(true))
   }
   useEffect(() => {
     if (tab !== 'calendar' || !unlocked) return
@@ -176,6 +177,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   const [dragging, setDragging] = useState<{ id: string; fromDate: string; label: string } | null>(null)
   const [dragOverDate, setDragOverDate] = useState<string | null>(null)
   const [dragErr, setDragErr] = useState('')
+  const [moving, setMoving] = useState(false) // 拖曳改期送出中（API + 月曆重載）→ 顯示「更新中」轉圈，避免像卡住
   const pressOriginRef = useRef<{ x: number; y: number; id: string; date: string; label: string } | null>(null)
   const pressTimerRef = useRef<number | null>(null)
   const dragRef = useRef<{ id: string; fromDate: string; label: string } | null>(null)
@@ -232,12 +234,15 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     if (!targetDate || targetDate === drag.fromDate) return
     const token = getUserToken()
     if (!token) return
+    setMoving(true) // 送出到月曆刷新完之間會有空窗，顯示「更新中」避免看起來像卡住/失敗
     try {
       await withUserAuth((t) => trainingApi.moveSchedule(t, drag.id, targetDate))
-      loadCalendar(month)
+      await loadCalendar(month)
     } catch (e: any) {
       setDragErr(e?.status === 409 && e?.message === 'no_free_day' ? '找不到可放的空日' : '搬移失敗，請稍後再試')
       setTimeout(() => setDragErr(''), 3200)
+    } finally {
+      setMoving(false)
     }
   }
 
@@ -679,6 +684,16 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   position: 'absolute', left: '50%', bottom: -8, transform: 'translateX(-50%)', width: 0, height: 0,
                   borderLeft: '9px solid transparent', borderRight: '9px solid transparent', borderTop: '9px solid var(--fug)',
                 }} />
+              </div>
+            )}
+            {/* 拖曳改期送出中：轉圈提示（搬移 API + 月曆重載期間），避免使用者以為畫面卡住或失敗 */}
+            {moving && (
+              <div data-skin="default" style={{
+                position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', zIndex: 4600, pointerEvents: 'none',
+                display: 'flex', alignItems: 'center', gap: 9, background: 'rgba(11,14,19,.94)', border: '1px solid var(--fug)',
+                color: '#fff', fontSize: 13.5, fontWeight: 800, padding: '11px 18px', borderRadius: 12, boxShadow: '0 8px 26px rgba(0,0,0,.55)',
+              }}>
+                <span className="dor-spin" style={{ fontSize: 15, color: 'var(--fug)' }}>↻</span> 更新中…
               </div>
             )}
             <div style={{ textAlign: 'center', fontSize: 10.5, color: 'var(--tx-faint)', margin: '8px 0 4px', lineHeight: 1.7 }}>
