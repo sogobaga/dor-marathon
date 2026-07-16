@@ -72,13 +72,14 @@ type PaceLevel struct {
 // Router 前台（需登入）
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Get("/templates", h.Templates)             // GET /training/templates — 課表庫 + 配速等級表（VIP 限定）
-	r.Get("/calendar", h.Calendar)               // GET /training/calendar?month=YYYY-MM — 月曆排程 vs 實際（VIP 限定）
-	r.Post("/schedule", h.CreateSchedule)        // POST /training/schedule — 新增一筆手動排程（VIP 限定，一天可多份）
-	r.Delete("/schedule/{id}", h.DeleteSchedule) // DELETE /training/schedule/{id} — 取消單筆排程（VIP 限定）
-	r.Get("/plans", h.ListPlans)                 // GET /training/plans — 訓練計畫清單（VIP 限定，上限 3）
-	r.Post("/auto-plan", h.AutoPlan)             // POST /training/auto-plan — 一鍵產生訓練計畫（VIP 限定）
-	r.Delete("/plans/{id}", h.DeletePlan)        // DELETE /training/plans/{id} — 刪除計畫＋其排程（CASCADE）
+	r.Get("/templates", h.Templates)              // GET /training/templates — 課表庫 + 配速等級表（VIP 限定）
+	r.Get("/calendar", h.Calendar)                // GET /training/calendar?month=YYYY-MM — 月曆排程 vs 實際（VIP 限定）
+	r.Post("/schedule", h.CreateSchedule)         // POST /training/schedule — 新增一筆手動排程（VIP 限定，一天可多份）
+	r.Delete("/schedule/{id}", h.DeleteSchedule)  // DELETE /training/schedule/{id} — 取消單筆排程（VIP 限定）
+	r.Post("/schedule/{id}/move", h.MoveSchedule) // POST /training/schedule/{id}/move — 拖曳改期＋同來源連鎖推擠（VIP 限定）
+	r.Get("/plans", h.ListPlans)                  // GET /training/plans — 訓練計畫清單（VIP 限定，上限 3）
+	r.Post("/auto-plan", h.AutoPlan)              // POST /training/auto-plan — 一鍵產生訓練計畫（VIP 限定）
+	r.Delete("/plans/{id}", h.DeletePlan)         // DELETE /training/plans/{id} — 刪除計畫＋其排程（CASCADE）
 	return r
 }
 
@@ -396,6 +397,189 @@ func (h *Handler) DeleteSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// moveRequest POST /training/schedule/{id}/move 請求體。
+type moveRequest struct {
+	Date string `json:"date"`
+}
+
+// scheduleMove 套用階段要執行的單一 UPDATE（某筆排程 id → 新日期）。
+type scheduleMove struct {
+	ID   string
+	Date string // "2006-01-02"
+}
+
+// maxChainScanDays 連鎖推擠往後尋找空日的掃描上限（天）；超過視為找不到空位（409 no_free_day）。
+const maxChainScanDays = 400
+
+// MoveSchedule POST /training/schedule/{id}/move — VIP 專屬：拖曳把某筆排程 X 改到新日期 T，僅在
+// 「同來源」（plan_id 相同，或兩者皆 NULL＝手動排）範圍內連鎖推擠，其他來源/其他使用者完全不受影響。
+// 「一天可多份」（手動排 plan_id 皆 NULL，同日常見 ≥2 筆）：佔用以「該日同來源的整組 id」為單位判斷/位移，
+// 空日定義為該日同來源 id 數為 0，而非「原本只有 X 一筆、X 離開後就算空」：
+//   - T 空 → X 直接搬過去。
+//   - T 已有課表（一或多筆，視為「整組」）→ 優先把整組塞去 T-1 或 T+1 的空位；兩者皆滿則整段
+//     （[T+1, F-1]，F 為往後第一個空日）以「日」為單位、每日整組一起往後順延一天（由後往前套用
+//     避免互相覆蓋），騰出 T+1 給 T 的整組，最後 X→T。
+//
+// 全部在單一交易內完成；user_training_schedule 無 (user,date) 唯一約束，故套用順序不影響 DB
+// 正確性，只影響「同一輪次內」位移計算是否正確（見上）。取得 X 現況的初始 SELECT 與同來源列讀取
+// 皆鎖 FOR UPDATE：前者確保 origDate 是鎖定後的最新值（避免併發移動同一筆時讀到 stale 值、清錯原位），
+// 後者避免同來源兩個併發搬移互相踩到彼此算好的空位表。
+func (h *Handler) MoveSchedule(w http.ResponseWriter, r *http.Request) {
+	uid := h.requireVIP(w, r)
+	if uid == "" {
+		return
+	}
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+
+	var req moveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var origDate time.Time
+	var planID *string
+	err = tx.QueryRow(ctx, `SELECT scheduled_date, plan_id FROM user_training_schedule WHERE id=$1 AND user_id=$2 FOR UPDATE`, id, uid).
+		Scan(&origDate, &planID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+
+	target, err := time.Parse("2006-01-02", req.Date)
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid date")
+		return
+	}
+	targetStr := target.Format("2006-01-02")
+	origStr := origDate.Format("2006-01-02")
+
+	if targetStr == origStr {
+		// 目標日＝現在日期，no-op（仍在交易內，直接 commit 即可，反正沒有異動）。
+		if err := tx.Commit(ctx); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		respondJSON(w, http.StatusOK, map[string]any{"ok": true, "moved": 0})
+		return
+	}
+
+	// 同來源（plan_id 相同，或 $2 與 plan_id 皆 NULL）所有列，鎖 FOR UPDATE。
+	rows, err := tx.Query(ctx, `
+		SELECT id, scheduled_date FROM user_training_schedule
+		WHERE user_id=$1 AND (plan_id = $2 OR ($2 IS NULL AND plan_id IS NULL))
+		FOR UPDATE`,
+		uid, planID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	byDate := map[string][]string{} // 日期 → 該日同來源「所有」排程 id（一天可多份；X 此時仍在其中，佔著 origStr 那份）
+	for rows.Next() {
+		var rowID string
+		var d time.Time
+		if err := rows.Scan(&rowID, &d); err != nil {
+			rows.Close()
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		ds := d.Format("2006-01-02")
+		byDate[ds] = append(byDate[ds], rowID) // 不可覆蓋：同日同來源可能已有其他筆
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	isFree := func(d string) bool { return len(byDate[d]) == 0 } // 空日＝該日同來源 id 數為 0（非「key 不存在」）
+
+	// X 要離開原位：只從原位清單移除「自己」這一筆 id，同日若還有其他同來源課表則留在原地、
+	// 原位是否算空取決於移除後清單是否為空（絕不可整日 delete）。
+	orig := byDate[origStr]
+	for i, rid := range orig {
+		if rid == id {
+			orig = append(orig[:i], orig[i+1:]...)
+			break
+		}
+	}
+	byDate[origStr] = orig
+
+	var moves []scheduleMove
+	if !isFree(targetStr) {
+		group := append([]string(nil), byDate[targetStr]...) // T 當日「整組」同來源 id（一或多筆），要整組一起位移
+		before := target.AddDate(0, 0, -1).Format("2006-01-02")
+		after := target.AddDate(0, 0, 1).Format("2006-01-02")
+		switch {
+		case isFree(before):
+			for _, gid := range group {
+				moves = append(moves, scheduleMove{ID: gid, Date: before})
+			}
+		case isFree(after):
+			for _, gid := range group {
+				moves = append(moves, scheduleMove{ID: gid, Date: after})
+			}
+		default:
+			// 前後皆滿 → 找最小的 F > T 且空；[T+1, F-1] 全部視定義必是滿的，每日整組各 +1 天，
+			// 由後往前（F-1 遞減到 T+1）處理，確保每一步騰出的位子是下一步要搬進去的位子。
+			var free time.Time
+			found := false
+			for i := 1; i <= maxChainScanDays; i++ {
+				cand := target.AddDate(0, 0, i)
+				if isFree(cand.Format("2006-01-02")) {
+					free = cand
+					found = true
+					break
+				}
+			}
+			if !found {
+				respondErr(w, http.StatusConflict, "no_free_day")
+				return
+			}
+			lowerBound := target.AddDate(0, 0, 1)
+			for d := free.AddDate(0, 0, -1); !d.Before(lowerBound); d = d.AddDate(0, 0, -1) {
+				occGroup := byDate[d.Format("2006-01-02")]
+				if len(occGroup) == 0 {
+					continue // 理論上不會發生：[T+1, F-1] 依 F 的最小性定義必全滿
+				}
+				newDate := d.AddDate(0, 0, 1).Format("2006-01-02")
+				for _, occID := range occGroup {
+					moves = append(moves, scheduleMove{ID: occID, Date: newDate})
+				}
+			}
+			for _, gid := range group {
+				moves = append(moves, scheduleMove{ID: gid, Date: after})
+			}
+		}
+	}
+	moves = append(moves, scheduleMove{ID: id, Date: targetStr}) // X → T，最後套用
+
+	for _, mv := range moves {
+		if _, err := tx.Exec(ctx, `UPDATE user_training_schedule SET scheduled_date=$1::date WHERE id=$2 AND user_id=$3`,
+			mv.Date, mv.ID, uid); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "moved": len(moves)})
 }
 
 // --- P3 訓練計畫（training_plans）---

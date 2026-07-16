@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
-import { trainingApi, type WorkoutTemplate, type PaceLevel, type TrainingCalendar, type TrainingDay, type TrainingPlan, type AutoPlanRequest } from '@/lib/api'
+import { trainingApi, type WorkoutTemplate, type PaceLevel, type TrainingCalendar, type TrainingDay, type TrainingPlan, type AutoPlanRequest, type ScheduledWorkout } from '@/lib/api'
 import { resolveTemplate, saveFreetrainWorkout, totalKm, estMinutes, fmtDuration, segSummary, targetPaceBand, adjustMeta, adjustedValue, currentValue, pyramidPeak } from '@/lib/workout'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import UpgradeVipModal from './UpgradeVipModal'
@@ -154,6 +154,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   function go(delta: number) { setMonth((m) => shiftMonth(m, delta)) }
   function onTouchStart(e: React.TouchEvent) { touchPt.current = { x: e.touches[0].clientX, y: e.touches[0].clientY } }
   function onTouchEnd(e: React.TouchEvent) {
+    if (dragging) { touchPt.current = null; return } // 拖曳中停用換月滑動，避免放開時誤觸切月
     const st = touchPt.current
     if (!st) return
     touchPt.current = null
@@ -164,6 +165,122 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy) * 1.5) return
     if (dx > 0) go(-1)   // 右滑 → 上個月
     else go(1)           // 左滑 → 下個月（未來月不鎖，可排課）
+  }
+
+  // ── 月曆長按拖曳改期：Pointer Events 統一手機/桌機。流程：pointerdown 在「有目前來源課表」的
+  // 格子上啟動 450ms 長按計時器（同時記起點，供計時器觸發前判斷位移>10px 取消，保留原本滑動/換月手勢）
+  // → 觸發後 setPointerCapture 讓後續 move/up 都固定回這顆格子（不管手指移到哪）→ pointermove 期間用
+  // elementFromPoint 找目前懸停的 [data-date] 格子 → pointerup 若懸停格 != 起點格則呼叫 moveSchedule。
+  // dragRef/dragOverRef 為即時狀態鏡射（避免 React state 批次更新造成事件處理器讀到過期值），
+  // dragging/dragOverDate state 純供畫面高亮用。
+  const [dragging, setDragging] = useState<{ id: string; fromDate: string; label: string } | null>(null)
+  const [dragOverDate, setDragOverDate] = useState<string | null>(null)
+  const [dragErr, setDragErr] = useState('')
+  const pressOriginRef = useRef<{ x: number; y: number; id: string; date: string; label: string } | null>(null)
+  const pressTimerRef = useRef<number | null>(null)
+  const dragRef = useRef<{ id: string; fromDate: string; label: string } | null>(null)
+  const dragOverRef = useRef<string | null>(null)
+  const scrollBlockRef = useRef<((e: TouchEvent) => void) | null>(null)
+  const hadLongPressRef = useRef(false) // 長按已觸發拖曳 → 吞掉隨後的 onClick，避免誤選日期
+  const dragBadgeRef = useRef<HTMLDivElement | null>(null)
+  const lastPointerRef = useRef({ x: 0, y: 0 }) // 供浮動徽章掛載當下（dragging 變 true 後才渲染）立即定位，避免先閃在 (0,0)
+
+  function cancelPressTimer() {
+    if (pressTimerRef.current != null) { window.clearTimeout(pressTimerRef.current); pressTimerRef.current = null }
+  }
+  function cancelPress() { cancelPressTimer(); pressOriginRef.current = null }
+
+  function beginDrag(id: string, fromDate: string, label: string) {
+    pressOriginRef.current = null
+    hadLongPressRef.current = true
+    dragRef.current = { id, fromDate, label }
+    dragOverRef.current = fromDate
+    setDragging({ id, fromDate, label })
+    setDragOverDate(fromDate)
+    setDragErr('')
+    navigator.vibrate?.(30)
+    // 只在拖曳期間掛 document 層級 touchmove + preventDefault 擋頁面捲動；結束即移除
+    const block = (ev: TouchEvent) => ev.preventDefault()
+    scrollBlockRef.current = block
+    document.addEventListener('touchmove', block, { passive: false })
+  }
+
+  function updateDragOver(x: number, y: number) {
+    const el = document.elementFromPoint(x, y) as HTMLElement | null
+    const cell = el?.closest('[data-date]') as HTMLElement | null
+    const d = cell?.getAttribute('data-date') || null // 補空格無 data-date，跨月格自然被排除
+    if (d !== dragOverRef.current) { dragOverRef.current = d; setDragOverDate(d) }
+  }
+  function positionBadge(x: number, y: number) {
+    const el = dragBadgeRef.current
+    if (el) { el.style.left = `${x}px`; el.style.top = `${y}px` }
+  }
+
+  function teardownDrag() {
+    dragRef.current = null
+    dragOverRef.current = null
+    setDragging(null)
+    setDragOverDate(null)
+    if (scrollBlockRef.current) { document.removeEventListener('touchmove', scrollBlockRef.current); scrollBlockRef.current = null }
+  }
+
+  async function finishDrag(drag: { id: string; fromDate: string; label: string }, targetDate: string | null) {
+    teardownDrag()
+    if (!targetDate || targetDate === drag.fromDate) return
+    const token = getUserToken()
+    if (!token) return
+    try {
+      await withUserAuth((t) => trainingApi.moveSchedule(t, drag.id, targetDate))
+      loadCalendar(month)
+    } catch (e: any) {
+      setDragErr(e?.status === 409 && e?.message === 'no_free_day' ? '找不到可放的空日' : '搬移失敗，請稍後再試')
+      setTimeout(() => setDragErr(''), 3200)
+    }
+  }
+
+  function cellPointerDown(e: React.PointerEvent<HTMLButtonElement>, dateStr: string, sched: ScheduledWorkout[]) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    if (dragRef.current || !sched.length) return
+    hadLongPressRef.current = false
+    lastPointerRef.current = { x: e.clientX, y: e.clientY }
+    const first = sched[0]
+    pressOriginRef.current = { x: e.clientX, y: e.clientY, id: first.id, date: dateStr, label: `${CATEGORY_SHORT[first.category] || first.category} ${first.planned_km.toFixed(1)}K` }
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* 部分瀏覽器對特定 pointerId 會丟例外，忽略即可 */ }
+    cancelPressTimer()
+    pressTimerRef.current = window.setTimeout(() => {
+      if (dragRef.current) return // 已有另一指觸發的拖曳在進行中，避免雙指同時長按互相覆蓋拖曳狀態
+      const o = pressOriginRef.current
+      if (!o) return
+      beginDrag(o.id, o.date, o.label)
+    }, 450)
+  }
+  function cellPointerMove(e: React.PointerEvent<HTMLButtonElement>) {
+    if (dragRef.current) {
+      lastPointerRef.current = { x: e.clientX, y: e.clientY }
+      updateDragOver(e.clientX, e.clientY)
+      positionBadge(e.clientX, e.clientY)
+      return
+    }
+    const origin = pressOriginRef.current
+    if (!origin) return
+    // 長按計時器觸發前，位移超過 10px 視為在滑動/換月，取消長按（保留原生捲動與 onTouchEnd 換月手勢）
+    if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > 10) cancelPress()
+  }
+  function cellPointerUp(e: React.PointerEvent<HTMLButtonElement>) {
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* 已釋放或無效 pointerId，忽略 */ }
+    cancelPress()
+    const drag = dragRef.current
+    if (!drag) return
+    void finishDrag(drag, dragOverRef.current)
+  }
+  function cellPointerCancel(e: React.PointerEvent<HTMLButtonElement>) {
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* 已釋放或無效 pointerId，忽略 */ }
+    cancelPress()
+    if (dragRef.current) teardownDrag()
+  }
+  function cellClick(dateStr: string) {
+    if (hadLongPressRef.current) { hadLongPressRef.current = false; return } // 剛完成一次長按拖曳，吞掉這次 click
+    setSelectedDate(dateStr)
   }
 
   // 我的訓練計畫（P3，≤3 個；一鍵安排課表產生，計畫刪除連帶刪其排程）
@@ -503,13 +620,26 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   const isToday = dateStr === todayStr
                   // ≤2 份逐一顯示各自的分類色徽章；>2 份收成一顆「+N」徽章（避免格子塞爆；同來源理論上最多 1 份，此為防禦）
                   const badges = sched.length <= 2 ? sched : []
+                  const isDragSource = dragging?.fromDate === dateStr
+                  const isDragOver = !!dragging && dragOverDate === dateStr
                   return (
-                    <button key={day} onClick={() => setSelectedDate(dateStr)} style={{
-                      aspectRatio: '1', borderRadius: 8, background: dateStr === selectedDate ? 'rgba(70,227,160,.14)' : 'var(--bg-2)',
-                      border: dateStr === selectedDate ? '2px solid var(--fug)' : isToday ? '1.5px solid var(--fug)' : '1px solid var(--line)',
-                      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1,
-                      padding: 2, cursor: 'pointer', position: 'relative', fontFamily: 'inherit',
-                    }}>
+                    <button
+                      key={day}
+                      data-date={dateStr}
+                      onClick={() => cellClick(dateStr)}
+                      onPointerDown={(e) => cellPointerDown(e, dateStr, sched)}
+                      onPointerMove={cellPointerMove}
+                      onPointerUp={cellPointerUp}
+                      onPointerCancel={cellPointerCancel}
+                      style={{
+                        aspectRatio: '1', borderRadius: 8, background: dateStr === selectedDate ? 'rgba(70,227,160,.14)' : 'var(--bg-2)',
+                        border: isDragOver ? '2px solid var(--fug)' : dateStr === selectedDate ? '2px solid var(--fug)' : isToday ? '1.5px solid var(--fug)' : '1px solid var(--line)',
+                        boxShadow: isDragOver ? '0 0 0 3px rgba(70,227,160,.22)' : undefined,
+                        opacity: isDragSource ? 0.45 : 1,
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1,
+                        padding: 2, cursor: 'pointer', position: 'relative', fontFamily: 'inherit',
+                        touchAction: 'pan-y', WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none',
+                      }}>
                       <span style={{ fontSize: 10, color: 'var(--tx-faint)', fontWeight: 700 }}>{day}</span>
                       {badges.map((s) => {
                         const col = catColor(s.category)
@@ -528,7 +658,20 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 })}
               </div>
             </div>
-            <div style={{ textAlign: 'center', fontSize: 10.5, color: 'var(--tx-faint)', margin: '8px 0 4px' }}>左右滑動或按 ‹ › 切換月份 · 點日期查看當天課表</div>
+            {/* 拖曳中跟著手指/游標的小浮動徽章（顯示被拖動的課表短名）；pointerEvents:none 避免擋到 elementFromPoint 命中測試 */}
+            {dragging && (
+              <div
+                ref={(el) => { dragBadgeRef.current = el; if (el) { el.style.left = `${lastPointerRef.current.x}px`; el.style.top = `${lastPointerRef.current.y}px` } }}
+                style={{
+                  position: 'fixed', left: 0, top: 0, transform: 'translate(-50%, -140%)', pointerEvents: 'none', zIndex: 4500,
+                  background: 'var(--fug)', color: 'var(--fug-ink)', fontSize: 11, fontWeight: 800, padding: '5px 10px', borderRadius: 8,
+                  whiteSpace: 'nowrap', boxShadow: '0 4px 14px rgba(0,0,0,.35)',
+                }}>{dragging.label}</div>
+            )}
+            <div style={{ textAlign: 'center', fontSize: 10.5, color: 'var(--tx-faint)', margin: '8px 0 4px', lineHeight: 1.7 }}>
+              左右滑動或按 ‹ › 切換月份 · 點日期查看當天課表<br />長按課表可拖曳改日期（會自動推擠同計畫的其他課表）
+            </div>
+            {dragErr && <div style={{ textAlign: 'center', fontSize: 11.5, color: '#ff6b6b', fontWeight: 700, margin: '2px 0 4px' }}>{dragErr}</div>}
 
             {/* 當天課表：點日期後在此列出（不直接進編輯介面）；要變更/加入按「編輯／加入」開 modal */}
             <div style={{ marginTop: 12, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '12px 14px' }}>

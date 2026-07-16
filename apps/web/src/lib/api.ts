@@ -1516,6 +1516,10 @@ export const trainingApi = {
   // 移除單筆排課（依 id；來自計畫的課表也可單筆移除，不影響同計畫其餘課表／不刪計畫本身）
   unschedule: (token: string, id: string) =>
     request<{ ok: boolean }>(`/training/schedule/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+  // 搬移單筆排課到另一天（月曆長按拖曳）：同來源(plan_id 相同或皆 NULL)若目標日已有課表，後端會自動
+  // 往後推擠找空日；完全找不到空日回 409 {error:"no_free_day"}（呼叫端用 e.status===409 && e.message==='no_free_day' 辨識）
+  moveSchedule: (token: string, id: string, date: string) =>
+    request<{ ok: boolean; moved: number }>(`/training/schedule/${encodeURIComponent(id)}/move`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ date }) }),
   // 我的訓練計畫（≤3）
   plans: (token: string) =>
     request<{ plans: TrainingPlan[]; limit: number }>('/training/plans', { headers: withAuth(token) }),
