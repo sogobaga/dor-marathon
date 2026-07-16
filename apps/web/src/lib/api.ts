@@ -1490,6 +1490,7 @@ export interface TrainingPlan {
   monthly_km: number   // 使用者填寫的目前月跑量(km)；0=未填
   goal_time_s: number  // 目標完賽秒數；0=未設定
   goal_pace_s: number  // 目標配速(秒/km)；0=無（需 goal_time_s 與賽事距離皆有值才會算）
+  plan_mode: string    // 課表強度：'conservative'（保守）｜'aggressive'（積極）
   // 該計畫的進度與執行狀況（取代舊版「本月總覽」，改成以計畫為單位呈現）
   stats: {
     planned: { days: number; km: number; min: number }
@@ -1515,6 +1516,7 @@ export interface AutoPlanRequest {
                         // 全 7 天皆休（無訓練日）後端回 400 {error:"need_training_day"}
   monthly_km?: number  // 目前月跑量(km)，選填；0/未填=不套用跑量模型(沿用舊行為)
   goal_time_s?: number // 目標完賽秒數，選填（全馬 4:30:00 = 16200）；0/未填=未設定
+  plan_mode?: 'conservative' | 'aggressive' // 課表強度：不填/非法值後端一律當 'conservative'
 }
 
 // 自主訓練（P1+P2+P3）：課表庫 + 配速等級表、月曆排程 CRUD、一鍵訓練計畫。VIP 限定——非 VIP 呼叫回 403

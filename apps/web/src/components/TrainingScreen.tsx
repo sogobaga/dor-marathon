@@ -56,6 +56,15 @@ const RACE_DISTANCE_OPTIONS: { id: NonNullable<AutoPlanRequest['race_distance']>
   { id: '5k', label: '5K' }, { id: '10k', label: '10K' }, { id: 'half', label: '半程馬拉松' }, { id: 'full', label: '全程馬拉松' },
 ]
 const RACE_DISTANCE_LABEL: Record<string, string> = { '5k': '5K', '10k': '10K', half: '半程馬拉松', full: '全程馬拉松' }
+// 一鍵安排課表：課表強度二選一，預設保守（能自行微調課表的是資深跑者，會主動選積極；
+// 不會微調的是新手，預設就該把保護做滿）。差異不只在賽前——保守整份計畫都會少一天強度課、
+// 跑量爬得更慢（成長上限 1.5 而非 1.8、每週增幅上限 8% 而非 10%），desc 要把這點講出來，
+// 否則沒設賽事（週數模式）的使用者會以為兩個選項毫無差別。
+const PLAN_MODE_OPTIONS: { id: NonNullable<AutoPlanRequest['plan_mode']>; label: string; desc: string }[] = [
+  { id: 'conservative', label: '保守', desc: '每週少一天強度課、跑量爬升更慢（每週最多 +8%）。有賽事時：賽前一週不排強度課，賽前一天休息。仍是有機會達標的安排。' },
+  { id: 'aggressive', label: '積極', desc: '維持強度課天數、跑量爬升較快（每週最多 +10%）。有賽事時：賽前一週維持強度但距離減半，賽前一天輕鬆跑維持跑感。衝成績用，需要自己拿捏身體狀況。' },
+]
+const PLAN_MODE_LABEL: Record<string, string> = { conservative: '保守', aggressive: '積極' }
 // 賽事距離對照 km（算目標配速用；與後端一致，僅供前端零風險推算，不重算 LSD 排課邏輯）
 const RACE_DISTANCE_KM: Record<string, number> = { '5k': 5, '10k': 10, half: 21.0975, full: 42.195 }
 const WEEKS_OPTIONS = [1, 4, 8, 12, 16]
@@ -142,13 +151,14 @@ type AutoPlanFormSaved = {
   monthly_km: string // 目前月跑量(km)，選填；影響跑量模型與 LSD 排課（與是否有賽事無關）
   goal_h: string      // 目標完賽時間·時，選填（僅 has_race 時有意義）
   goal_m: string      // 目標完賽時間·分，選填
+  plan_mode: NonNullable<AutoPlanRequest['plan_mode']> // 課表強度：保守／積極，預設保守
 }
 // 表單預設值（沒存過資料、或「清空」後都回到這組——需與各 useState 初始值保持一致）
 const AUTOPLAN_FORM_DEFAULTS: AutoPlanFormSaved = {
   running_age: 'novice', best_1km: '', longest_km: '', longest_min: '',
   has_race: true, race_name: '', race_date: '', race_distance: '10k', weeks: 8,
   rest_days: RUNNING_AGE_OPTIONS.find((o) => o.id === 'novice')!.defaultRestDays,
-  monthly_km: '', goal_h: '', goal_m: '',
+  monthly_km: '', goal_h: '', goal_m: '', plan_mode: 'conservative',
 }
 function isFiniteNumStr(s: string) { return s === '' || Number.isFinite(Number(s)) }
 function saveAutoPlanForm(uid: string, v: AutoPlanFormSaved) {
@@ -197,6 +207,8 @@ function loadAutoPlanForm(uid: string): Partial<AutoPlanFormSaved> | null {
       (data.goal_m === '' || (Number(data.goal_m) >= 0 && Number(data.goal_m) <= 59))) {
       out.goal_m = data.goal_m
     }
+    // 課表強度：只接受 'conservative'/'aggressive'，其他值（含舊版沒有這欄的資料）一律跳過、留給預設值
+    if (PLAN_MODE_OPTIONS.some((o) => o.id === data.plan_mode)) out.plan_mode = data.plan_mode
     return out
   } catch { return null }
 }
@@ -523,6 +535,8 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   const [apBest1km, setApBest1km] = useState('')
   const [apLongestKm, setApLongestKm] = useState('')
   const [apLongestMin, setApLongestMin] = useState('')
+  // 課表強度二選一（保守／積極），預設保守；影響賽前收操排法，詳見 PLAN_MODE_OPTIONS 的 desc
+  const [apPlanMode, setApPlanMode] = useState<NonNullable<AutoPlanRequest['plan_mode']>>('conservative')
   const [apHasRace, setApHasRace] = useState(true)
   const [apRaceName, setApRaceName] = useState('')
   const [apRaceDate, setApRaceDate] = useState('')
@@ -557,6 +571,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         if (saved.best_1km !== undefined) setApBest1km(saved.best_1km)
         if (saved.longest_km !== undefined) setApLongestKm(saved.longest_km)
         if (saved.longest_min !== undefined) setApLongestMin(saved.longest_min)
+        if (saved.plan_mode !== undefined) setApPlanMode(saved.plan_mode)
         if (saved.has_race !== undefined) setApHasRace(saved.has_race)
         if (saved.race_name !== undefined) setApRaceName(saved.race_name)
         if (saved.race_date !== undefined) setApRaceDate(saved.race_date)
@@ -577,6 +592,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     setApBest1km(AUTOPLAN_FORM_DEFAULTS.best_1km)
     setApLongestKm(AUTOPLAN_FORM_DEFAULTS.longest_km)
     setApLongestMin(AUTOPLAN_FORM_DEFAULTS.longest_min)
+    setApPlanMode(AUTOPLAN_FORM_DEFAULTS.plan_mode)
     setApHasRace(AUTOPLAN_FORM_DEFAULTS.has_race)
     setApRaceName(AUTOPLAN_FORM_DEFAULTS.race_name)
     setApRaceDate(AUTOPLAN_FORM_DEFAULTS.race_date)
@@ -616,7 +632,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     try {
       const body: AutoPlanRequest = {
         running_age: apRunningAge, best_1km_s: best1kmS, longest_km: longestKm, longest_min: longestMin,
-        has_race: apHasRace, rest_days: apRestDays,
+        has_race: apHasRace, rest_days: apRestDays, plan_mode: apPlanMode,
         ...(apHasRace ? { race_name: apRaceName.trim(), race_date: apRaceDate, race_distance: apRaceDistance } : { weeks: apWeeks }),
       }
       // 兩個新欄位皆選填：算出來是 0 就不帶，維持「沒填＝與現行行為一致」的回歸底線
@@ -636,6 +652,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
           running_age: apRunningAge, best_1km: apBest1km, longest_km: apLongestKm, longest_min: apLongestMin,
           has_race: apHasRace, race_name: apRaceName, race_date: apRaceDate, race_distance: apRaceDistance,
           weeks: apWeeks, rest_days: apRestDays, monthly_km: apMonthlyKm, goal_h: nGoalH, goal_m: nGoalM,
+          plan_mode: apPlanMode,
         })
       }
       setCalSource(res.plan.id) // 剛產生的計畫直接切為月曆顯示來源，馬上看得到排好的課表
@@ -654,6 +671,9 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         setApErr('至少需保留 1 天非休息日才能排課')
       } else if (e?.status === 400 && e?.message === 'invalid race_date') {
         setApErr('賽事日期需晚於今天，請重新選擇')
+      } else if (e?.status === 400 && e?.message === 'no_workout_scheduled') {
+        // 保守模式下賽事若在明天，唯一能排的那天正好是「賽前一天休息」→ 一份課表都排不出來
+        setApErr('這個區間排不出任何課表（賽事太近或休息日設定過多），請調整賽事日期、休息日或改用積極模式')
       } else {
         setApErr('產生失敗，請稍後再試')
       }
@@ -989,7 +1009,12 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                       <div key={p.id} style={tplCard}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)' }}>{p.race_name || p.name}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)' }}>{p.race_name || p.name}</div>
+                              <span style={{ fontSize: 9.5, fontWeight: 800, padding: '2px 6px', borderRadius: 6, background: p.plan_mode === 'aggressive' ? 'rgba(255,107,107,.18)' : 'rgba(45,229,154,.18)', color: p.plan_mode === 'aggressive' ? '#ff6b6b' : 'var(--fug)', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                                {PLAN_MODE_LABEL[p.plan_mode] || p.plan_mode}
+                              </span>
+                            </div>
                             <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 5, lineHeight: 1.8 }}>
                               {p.race_distance ? `🏁 ${RACE_DISTANCE_LABEL[p.race_distance] || p.race_distance}${p.race_date ? ` · ${p.race_date}` : ''}` : `${p.weeks} 週計畫`} · 每週 {p.days_per_week} 天 · 共 {p.workout_count} 份課表
                             </div>
@@ -1183,6 +1208,19 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   <span style={apLabel}>最長時間（分）</span>
                   <input type="number" min={0} step={1} value={apLongestMin} onChange={(e) => setApLongestMin(e.target.value)} style={apInput} />
                 </label>
+              </div>
+
+              {/* 課表強度二選一：預設保守，主要影響賽前收操排法（詳見各自說明） */}
+              <div style={apField}>
+                <span style={apLabel}>課表強度</span>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {PLAN_MODE_OPTIONS.map((o) => (
+                    <div key={o.id} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <button type="button" onClick={() => setApPlanMode(o.id)} style={{ ...toggleBtn, width: '100%', boxSizing: 'border-box', ...(apPlanMode === o.id ? toggleBtnActive : {}) }}>{o.label}</button>
+                      <span style={{ fontSize: 10, color: 'var(--tx-faint)', lineHeight: 1.5 }}>{o.desc}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* 目前月跑量：不論有無賽事都顯示（跑量模型與賽事無關），影響 LSD 長距離的自動安排 */}

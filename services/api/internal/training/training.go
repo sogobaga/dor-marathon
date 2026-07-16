@@ -604,6 +604,7 @@ type TrainingPlan struct {
 	MonthlyKm    int       `json:"monthly_km"`  // 產生當下填寫的月跑量(km)，0=未填；純記錄，不隨時間更新。
 	GoalTimeS    int       `json:"goal_time_s"` // 目標完賽秒數，0=未設定。
 	GoalPaceS    int       `json:"goal_pace_s"` // 衍生值＝goal_time_s÷賽事距離，非 DB 欄位；ListPlans 用 goalPaceSecPerKm 算出填入。
+	PlanMode     string    `json:"plan_mode"`   // 保守/積極（migration 089）：conservative|aggressive。
 	Stats        PlanStats `json:"stats"`
 }
 
@@ -635,7 +636,7 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.db.Query(ctx, `
 		SELECT p.id, p.name, p.race_name, p.race_date, p.race_distance, p.weeks, p.days_per_week, p.pace_level, p.start_date, p.end_date,
-		       p.monthly_km, p.goal_time_s,
+		       p.monthly_km, p.goal_time_s, p.plan_mode,
 		       (SELECT COUNT(*) FROM user_training_schedule s WHERE s.plan_id = p.id) AS workout_count
 		FROM training_plans p
 		WHERE p.user_id=$1
@@ -655,7 +656,7 @@ func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
 		var raceDate *time.Time
 		var startDate, endDate time.Time
 		if err := rows.Scan(&p.ID, &p.Name, &p.RaceName, &raceDate, &p.RaceDistance, &p.Weeks, &p.DaysPerWeek, &p.PaceLevel, &startDate, &endDate,
-			&p.MonthlyKm, &p.GoalTimeS, &p.WorkoutCount); err != nil {
+			&p.MonthlyKm, &p.GoalTimeS, &p.PlanMode, &p.WorkoutCount); err != nil {
 			rows.Close()
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
@@ -795,6 +796,18 @@ type autoPlanRequest struct {
 	RestDays     []int   `json:"rest_days"`   // 預定休息的星期索引，0=週一..6=週日（前端 checkbox 一..日）；其餘星期皆為訓練日
 	MonthlyKm    int     `json:"monthly_km"`  // 目前月跑量(km)，選填。0=未填→行為與加此欄位前完全一致（只依賽事距離定 LSD 上限）。
 	GoalTimeS    int     `json:"goal_time_s"` // 目標完賽秒數(如全馬4:30:00=16200)，選填。0=未設定；只影響「目標配速/可行性提示」，絕不拿來拉快訓練配速。
+	PlanMode     string  `json:"plan_mode"`   // 保守/積極（migration 089）：conservative|aggressive；正規化見 normalizePlanMode。
+}
+
+// normalizePlanMode 正規化 plan_mode：只接受 "conservative"/"aggressive"，其餘（含空字串）一律視為
+// "conservative"。預設保守的理由：會主動使用課表微調（adjust）把強度/量調回自己想要的樣子的，多半是
+// 已經有經驗、清楚自己身體狀況的資深跑者——他們本就該自己選 aggressive；不會微調、也還不清楚怎麼
+// 拿捏強度的多半是新手，預設就該把保護機制做滿，而不是預設塞給他們一份沒特別要求就比較激進的課表。
+func normalizePlanMode(raw string) string {
+	if raw == "aggressive" {
+		return "aggressive"
+	}
+	return "conservative"
 }
 
 // raceDistanceLabel race_distance → 計畫命名用中文/簡稱；也做為合法值白名單。
@@ -879,6 +892,121 @@ func segEstMinutes(segs []templateSeg, pm paceMap) int {
 		}
 	}
 	return int(math.Round(total / 60))
+}
+
+// adjustTypeForCategory 比照 migration 085 的 category→adjust_type 映射（見該檔 UPDATE 語句）。
+// AutoPlan 產生器已經查到 category，直接用它推算，不必為此再多查一次 adjust_type 欄位。
+func adjustTypeForCategory(category string) string {
+	switch category {
+	case "recovery", "easy", "lsd", "tempo", "threshold", "progression":
+		return "distance"
+	case "interval", "fartlek", "norwegian", "yasso", "rep":
+		return "reps"
+	case "pyramid":
+		return "pyramid"
+	default:
+		return "none"
+	}
+}
+
+// applyAdjustSegs 依 category 對應的 adjust_type 套用微調（比照前端 workout.ts applyAdjust）；
+// 只實作 AutoPlan 賽前降量會用到的 distance/reps 兩種，pyramid/none 原樣不動——賽前週會被降量的
+// quality 課表清單（qualityTemplates）不會選到 pyramid 課表。delta=0 或找不到可調整的段落時原樣回傳。
+// distance：delta(km) 平均分攤到所有 work 距離段，各段夾下限 1000m。
+// reps：主間歇 work 段（reps>1 者優先，否則第一個 work 段）reps += delta，夾 [1,20]。
+func applyAdjustSegs(segs []templateSeg, category string, delta int) []templateSeg {
+	if delta == 0 {
+		return segs
+	}
+	out := make([]templateSeg, len(segs))
+	copy(out, segs)
+	switch adjustTypeForCategory(category) {
+	case "distance":
+		var idx []int
+		for i, s := range out {
+			if s.Kind == "work" && s.TargetType == "distance" {
+				idx = append(idx, i)
+			}
+		}
+		if len(idx) == 0 {
+			return segs
+		}
+		share := float64(delta*1000) / float64(len(idx))
+		for _, i := range idx {
+			out[i].Target = max(1000, out[i].Target+share)
+		}
+		return out
+	case "reps":
+		mainIdx := -1
+		for i, s := range out {
+			if s.Kind == "work" && s.Reps > 1 {
+				mainIdx = i
+				break
+			}
+		}
+		if mainIdx < 0 {
+			for i, s := range out {
+				if s.Kind == "work" {
+					mainIdx = i
+					break
+				}
+			}
+		}
+		if mainIdx < 0 {
+			return segs
+		}
+		r := out[mainIdx].Reps
+		if r < 1 {
+			r = 1
+		}
+		out[mainIdx].Reps = min(20, max(1, r+delta))
+		return out
+	default:
+		return segs
+	}
+}
+
+// qualityTaperDelta 概算「打對折」的降量 adjust 值，供 aggressive 模式賽前 2~7 天的 quality 課表
+// 使用——與 role=="long" 的 longKm/2 用同一套「打對折」邏輯，讓賽前週真的「維持強度但降距離」
+// （migration 089 / TrainingScreen.tsx 的承諾），而不是原封不動排入全份課表。
+// reps 型：主課趟數的一半（無條件捨去，至少降 1 趟）。distance 型：work 距離段加總的一半（公里，
+// 四捨五入，至少降 1K）。找不到可調整的段落時回傳 0（不調整，等同原行為）。
+func qualityTaperDelta(category string, segs []templateSeg) int {
+	switch adjustTypeForCategory(category) {
+	case "reps":
+		mainReps := 0
+		for _, s := range segs {
+			if s.Kind == "work" && s.Reps > 1 {
+				mainReps = s.Reps
+				break
+			}
+		}
+		if mainReps == 0 {
+			return 0
+		}
+		cut := mainReps / 2
+		if cut < 1 {
+			cut = 1
+		}
+		return -cut
+	case "distance":
+		workKm := 0.0
+		for _, s := range segs {
+			if s.Kind == "work" && s.TargetType == "distance" {
+				workKm += s.Target / 1000
+			}
+		}
+		if workKm <= 0 {
+			return 0
+		}
+		cut := math.Round(workKm / 2)
+		if cut < 1 {
+			cut = 1
+		}
+		return -int(cut)
+	default:
+		return 0
+	}
 }
 
 // lsdCandidate 產生器可選的長跑距離變體（含 16K 用既有 'lsd'，其餘為 migration 084 新增變體）。
@@ -1015,9 +1143,12 @@ func pickQualityDays(candidates []int, count int) []int {
 // trainingWeekdays＝0..6 扣掉 restDays；ok=false 代表沒有任何訓練日（呼叫端應回 400 need_training_day）。
 // 長跑日：非休息日中優先週日(6)，否則週六(5)，否則最晚的非休息日。
 // quality 日：從非休息訓練日（排除長跑日、且排除緊鄰長跑日者）中選 1-2 天，數量＝trainingDays>=5→2、
-// trainingDays>=3→1、否則 0，再受 running_age 上限（new→最多 1）。其餘訓練日 easy。
+// trainingDays>=3→1、否則 0，再受 running_age 上限（new→最多 1），最後受 planMode 上限：
+// conservative 在原本數量 >0 時再少 1 天，但下限 1（不可變成 0——保守只是降強度/降頻率，仍要保留
+// 「有機會完成目標」的最低限度；原本就是 0 天的情況不受影響，不會憑空生出一天 quality）；
+// aggressive 完全不受此步驟影響（維持現況）。
 // 回傳：星期索引→角色、訓練天數(daysPerWeek 顯示用)、是否成功。
-func weekdayRoleAssignment(restDays []int, runningAge string) (map[int]string, int, bool) {
+func weekdayRoleAssignment(restDays []int, runningAge string, planMode string) (map[int]string, int, bool) {
 	restSet := map[int]bool{}
 	for _, d := range restDays {
 		if d >= 0 && d <= 6 {
@@ -1061,6 +1192,12 @@ func weekdayRoleAssignment(restDays []int, runningAge string) (map[int]string, i
 	}
 	if runningAge == "new" && qualityCount > 1 {
 		qualityCount = 1
+	}
+	if planMode == "conservative" && qualityCount > 0 {
+		qualityCount--
+		if qualityCount < 1 {
+			qualityCount = 1
+		}
 	}
 	if qualityCount > len(candidates) {
 		qualityCount = len(candidates)
@@ -1135,9 +1272,12 @@ func qualityTemplates(phase, raceDistance string) []string {
 }
 
 // plannedWorkout 一天要排的一筆課表（產生器內部用，尚未查 template 詳情）。
+// Adjust：aggressive 賽前週降量用（見 qualityTaperDelta），預設 0＝不調整，與 CreateSchedule 手動
+// 排程沿用同一顆 user_training_schedule.adjust 欄位（migration 085）。
 type plannedWorkout struct {
 	Date         string
 	TemplateCode string
+	Adjust       int
 }
 
 // AutoPlan POST /training/auto-plan — VIP 專屬：依跑者能力/賽事目標一鍵產生一份訓練計畫（每帳號最多 3 個）。
@@ -1153,6 +1293,7 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	planMode := normalizePlanMode(req.PlanMode)
 	// monthly_km/goal_time_s 皆選填，超出合理範圍一律視為「未填」（歸零）而非拒絕請求——兩者只是
 	// 錦上添花的輸入，不該讓一個離譜數字擋掉整個產生器；歸零後續行為就等同沒填這兩個欄位（回歸底線）。
 	if req.MonthlyKm < 0 || req.MonthlyKm > 2000 {
@@ -1237,7 +1378,7 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		end = start.AddDate(0, 0, weeks*7-1)
 	}
 
-	roles, daysPerWeek, ok := weekdayRoleAssignment(req.RestDays, req.RunningAge)
+	roles, daysPerWeek, ok := weekdayRoleAssignment(req.RestDays, req.RunningAge, planMode)
 	if !ok {
 		respondErr(w, http.StatusBadRequest, "need_training_day")
 		return
@@ -1348,32 +1489,49 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	// 比例」重新框住長跑距離，取代（縮小）純看距離推出的 capKm/startLong。
 	if req.MonthlyKm > 0 {
 		weeklyBase := float64(req.MonthlyKm) / 4 // 月跑量→週跑量基準，例：150K/月 → 37.5K/週
+		// pct：每週跑量增幅上限。conservative（保守，降強度、多一層保護）8%；aggressive（積極，維持
+		// 現況）10%——這是任務3唯一要調整的三個旋鈕之一，其餘常數（40%長跑佔比、4週恢復週、×0.65、
+		// taper 週數等）不動。
+		pct := 0.10
+		if planMode == "conservative" {
+			pct = 0.08
+		}
+		// growthCap：growth 倍率的上限。conservative 1.5、aggressive 維持 1.8（任務3的第二個旋鈕）；
+		// 下限 1.15 兩模式共用，避免 rampWeeks 極短時倍數失控。
+		growthCap := 1.8
+		if planMode == "conservative" {
+			growthCap = 1.5
+		}
 		// growth：隨 rampWeeks（真正可以逐週漸增的週數）拉長，逐步放大「週跑量峰值」相對基準的倍數；
-		// 週數越多代表有越長時間可以安全地把量堆上去。1.15/1.8 是防呆下限/上限，避免 rampWeeks 極端
-		// 值（很短或很長）時倍數失控。
-		growth := min(1.8, max(1.15, 1+0.035*float64(rampWeeks)))
+		// 週數越多代表有越長時間可以安全地把量堆上去。1.15/growthCap 是防呆下限/上限，避免 rampWeeks
+		// 極端值（很短或很長）時倍數失控。
+		growth := min(growthCap, max(1.15, 1+0.035*float64(rampWeeks)))
 		weeklyPeak := weeklyBase * growth
 		if rampWeeks > 1 {
-			// 峰值週量粗上限：不超過用 10% 從 weeklyBase 疊 rampWeeks-1 次所能到達的量。這只是「量體」
+			// 峰值週量粗上限：不超過用 pct 從 weeklyBase 疊 rampWeeks-1 次所能到達的量。這只是「量體」
 			// 的防呆上限，不等於下面長跑曲線本身合規——長跑漸增走的是 startLong→capKm 這條線，基數跟
-			// weeklyBase→weeklyPeak 不同；真正保證長跑曲線每週增幅 <=10% 的判斷在下面對 capKm 的處理。
-			weeklyPeak = min(weeklyPeak, weeklyBase*(1+0.10*float64(rampWeeks-1)))
+			// weeklyBase→weeklyPeak 不同；真正保證長跑曲線每週增幅 <=pct 的判斷在下面對 capKm 的處理。
+			weeklyPeak = min(weeklyPeak, weeklyBase*(1+pct*float64(rampWeeks-1)))
 		} else {
 			weeklyPeak = weeklyBase
 		}
 		capKm = min(capKm, weeklyPeak*0.40)                 // 長跑上限＝峰值週量的 40%（常見經驗值，避免單次長跑吃掉過高比例的週跑量）
 		startLong = max(4, min(startLong, weeklyBase*0.40)) // 起始長跑＝目前週量的 40%，且不超過「已經跑過的最長距離」（不可無中生有推高起點）
 		if rampWeeks > 1 {
-			// 10% 規則：每週跑量增幅不可超過前一週的 10%，避免練太快造成傷害。真正逐週漸增的是下面
-			// nominal := startLong + (capKm-startLong)*t 這條線性曲線，不是 weeklyBase→weeklyPeak。
-			// 線性 ramp 下相鄰兩週的增量固定 = (capKm-startLong)/(rampWeeks-1)，其占「起點」startLong
-			// 的百分比在起點（基數最小）最大、越往後基數變大增幅自動遞減；因此只要
-			// capKm <= startLong*(1+0.10*(rampWeeks-1))，增幅最大的第一週就不超過 10%，中段每一週的
-			// 實際增幅必然更小，全程自動合規，不需逐週檢查。
-			// 恢復週（每 4 週回彈到 nominal*0.65，見下方 isRecovery）刻意不受此限：10% 規則管的是
+			// pct 規則：每週跑量增幅不可超過前一週的 pct（conservative 8%／aggressive 10%），避免練
+			// 太快造成傷害。真正逐週漸增的是下面 nominal := startLong + (capKm-startLong)*t 這條線性
+			// 曲線，不是 weeklyBase→weeklyPeak。線性 ramp 下相鄰兩週的增量固定 =
+			// (capKm-startLong)/(rampWeeks-1)，其占「起點」startLong 的百分比在起點（基數最小）最大、
+			// 越往後基數變大增幅自動遞減；因此只要 capKm <= startLong*(1+pct*(rampWeeks-1))，增幅最大
+			// 的第一週就不超過 pct，中段每一週的實際增幅必然更小，全程自動合規，不需逐週檢查。
+			// 恢復週（每 4 週回彈到 nominal*0.65，見下方 isRecovery）刻意不受此限：pct 規則管的是
 			// 「訓練量趨勢線」的長期爬升速度，恢復週是刻意的短期回落、事後會再回升到趨勢線上，並非
-			// 趨勢線本身；若也套 10% 上限，會反過來逼恢復週不夠低、讓恢復週失去恢復的意義。
-			capKm = min(capKm, startLong*(1+0.10*float64(rampWeeks-1)))
+			// 趨勢線本身；若也套 pct 上限，會反過來逼恢復週不夠低、讓恢復週失去恢復的意義。
+			//
+			// ⚠️ 此約束式必須套在 startLong 定案之後（startLong 已經過 min(capKm, max(4, ...)) 確定），
+			// 不可誤套在 weeklyPeak/weeklyBase 上——那是不同的基數，套錯會導致 longest_km 較小時第一週
+			// 增幅可達 +70%（曾發生過的迴歸）。
+			capKm = min(capKm, startLong*(1+pct*float64(rampWeeks-1)))
 		}
 		capKm = max(startLong, capKm) // 防呆：避免 cap 被壓得比 start 還低，造成長跑曲線倒退
 
@@ -1407,6 +1565,8 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		isRecovery := weekIndex%4 == 3 && phase != "taper"
 
 		var code string
+		var longKm float64 // role=="long" 時記錄最終選 code 用的公里數；aggressive 賽前一週降距離要用（見下方覆蓋區塊）
+		var adjust int     // aggressive 賽前一週 quality 降量用（見 qualityTaperDelta）；0＝不調整
 		switch role {
 		case "long":
 			var km float64
@@ -1431,6 +1591,7 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 				km = min(km, float64(req.LongestMin)*60/easyPaceMid)
 			}
 			km = max(3, km)
+			longKm = km
 			code = nearestLsdCode(km)
 		case "quality":
 			list := qualityTemplates(phase, req.RaceDistance)
@@ -1452,28 +1613,61 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 			}
 			easyCounter++
 		}
-		// 賽前 3 天一律短輕鬆跑(shakeout)：維持神經刺激但不累積疲勞，避免賽前一天還排長跑/強度課表
-		// （例如長跑固定排週日、但週日被使用者勾為休息日時會落到週六；賽事在週日即賽前一天在跑長跑；
-		// 賽事若在週中，賽前一天也可能落在 quality 強度日）。覆蓋 role 判斷之後選出的 code，
-		// 不論原本是 long/quality/easy 一律短輕鬆跑，新手最安全；資深跑者可再用課表微調 ±距離/趟數自行加減。
-		// d/raceDateTime 皆為 UTC 午夜 DATE 值（Go time.Date 於 UTC 無 DST），Sub().Hours()/24 恆為整數，
-		// 賽事當日已於迴圈開頭 continue 跳過，故 d 必早於 raceDateTime、daysToRace 恆 >=1。
+		// 賽前一週規則（依 plan_mode 分流；migration 089）。位置維持在原本 shakeout 覆蓋的地方——
+		// role→code 選完之後、templates 存在性檢查之前，覆蓋 role 判斷選出的 code。d/raceDateTime
+		// 皆為 UTC 午夜 DATE 值（Go time.Date 於 UTC 無 DST），Sub().Hours()/24 恆為整數，賽事當日已於
+		// 迴圈開頭 continue 跳過，故 d 必早於 raceDateTime、daysToRace 恆 >=1。無 race_date（weeks 模式）
+		// 時 req.RaceDate=="" ，整段規則完全不套用，不受 plan_mode 影響。
 		if req.RaceDate != "" {
 			daysToRace := int(raceDateTime.Sub(d).Hours() / 24)
-			if daysToRace >= 1 && daysToRace <= 3 {
-				code = "easy_4" // 覆蓋 long/quality/easy 的原選擇；easy_4 = 熱身1K+輕鬆4K+緩和1K ≈ 6K shakeout
+			switch planMode {
+			case "conservative":
+				// 保守：賽前一天完全不排課（休息日）——用 continue 跳過，不留一份空課表；
+				// 賽前 2~7 天一律不得有強度課或長跑，強制覆蓋成維持跑感的輕鬆跑。
+				if daysToRace == 1 {
+					continue
+				}
+				if daysToRace >= 2 && daysToRace <= 7 {
+					code = "easy_4" // 覆蓋 long/quality/easy 的原選擇；easy_4 = 熱身1K+輕鬆4K+緩和1K ≈ 6K，維持跑感
+				}
+			case "aggressive":
+				// 積極：賽前一天維持跑感的輕鬆跑；賽前 2~7 天保留原本 role 選出的課表（含強度），但降量。
+				if daysToRace == 1 {
+					code = "easy_4"
+				} else if daysToRace >= 2 && daysToRace <= 7 {
+					// long：距離減半，沿用既有 nearestLsdCode 換算成最接近的較短長跑變體。
+					// quality：課表不變（強度/配速維持原樣），改用 adjust（既有 migration 085 欄位，
+					// CreateSchedule 手動排程也是存這欄）把主課趟數/距離打對折——qualityTaperDelta 與
+					// long 的 longKm/2 是同一套「打對折」邏輯，plannedKm/plannedMin 會在下方 INSERT
+					// 迴圈依 adjust 重新計算，真正做到「維持強度但降距離」，不是空口承諾。
+					// easy：本已是低量課表，同樣維持原 code、不調整。
+					if role == "long" {
+						code = nearestLsdCode(longKm / 2)
+					} else if role == "quality" {
+						if t, ok := templates[code]; ok {
+							adjust = qualityTaperDelta(t.Category, t.Segments)
+						}
+					}
+				}
 			}
 		}
 
 		if _, ok := templates[code]; !ok {
 			continue // 防禦：理論上不會發生（所有 code 皆來自固定清單，且都在 seed migration 建立）
 		}
-		plan = append(plan, plannedWorkout{Date: d.Format("2006-01-02"), TemplateCode: code})
+		plan = append(plan, plannedWorkout{Date: d.Format("2006-01-02"), TemplateCode: code, Adjust: adjust})
 	}
 
 	name := fmt.Sprintf("%d週訓練", weeks)
 	if req.RaceDistance != "" {
 		name = fmt.Sprintf("%d週·%s", weeks, raceDistanceLabel[req.RaceDistance])
+	}
+
+	// 一份課表都排不出來就不要建計畫：conservative 模式下「賽事就在明天」會讓唯一可排的那天
+	// 落進「賽前一天休息」而被跳過 → 產生零課表的空計畫，還白白佔掉 3 個計畫額度中的一個。
+	if len(plan) == 0 {
+		respondErr(w, http.StatusBadRequest, "no_workout_scheduled")
+		return
 	}
 
 	tx, err := h.db.Begin(ctx)
@@ -1489,11 +1683,11 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	var planID string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO training_plans (user_id, name, race_name, race_date, race_distance, weeks, days_per_week, pace_level, start_date, end_date, monthly_km, goal_time_s)
-		VALUES ($1,$2,$3,$4::date,$5,$6,$7,$8,$9::date,$10::date,$11,$12)
+		INSERT INTO training_plans (user_id, name, race_name, race_date, race_distance, weeks, days_per_week, pace_level, start_date, end_date, monthly_km, goal_time_s, plan_mode)
+		VALUES ($1,$2,$3,$4::date,$5,$6,$7,$8,$9::date,$10::date,$11,$12,$13)
 		RETURNING id`,
 		uid, name, raceName, raceDateParam, req.RaceDistance, weeks, daysPerWeek, selectedLevel,
-		start.Format("2006-01-02"), end.Format("2006-01-02"), req.MonthlyKm, req.GoalTimeS).Scan(&planID); err != nil {
+		start.Format("2006-01-02"), end.Format("2006-01-02"), req.MonthlyKm, req.GoalTimeS, planMode).Scan(&planID); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
@@ -1501,12 +1695,16 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	pm := levelPaces[selectedLevel]
 	for _, pw := range plan {
 		t := templates[pw.TemplateCode]
-		plannedKm := segTotalKm(t.Segments)
-		plannedMin := segEstMinutes(t.Segments, pm)
+		segs := t.Segments
+		if pw.Adjust != 0 {
+			segs = applyAdjustSegs(t.Segments, t.Category, pw.Adjust) // aggressive 賽前週 quality 降量（見 qualityTaperDelta）
+		}
+		plannedKm := segTotalKm(segs)
+		plannedMin := segEstMinutes(segs, pm)
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO user_training_schedule (user_id, plan_id, scheduled_date, template_code, pace_level, name, category, planned_km, planned_min, adjust)
-			VALUES ($1,$2,$3::date,$4,$5,$6,$7,$8,$9,0)`,
-			uid, planID, pw.Date, pw.TemplateCode, selectedLevel, t.Name, t.Category, plannedKm, plannedMin); err != nil {
+			VALUES ($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10)`,
+			uid, planID, pw.Date, pw.TemplateCode, selectedLevel, t.Name, t.Category, plannedKm, plannedMin, pw.Adjust); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
 		}
@@ -1520,7 +1718,7 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	result := TrainingPlan{
 		ID: planID, Name: name, RaceName: raceName, RaceDistance: req.RaceDistance, Weeks: weeks, DaysPerWeek: daysPerWeek,
 		PaceLevel: selectedLevel, StartDate: start.Format("2006-01-02"), EndDate: end.Format("2006-01-02"),
-		WorkoutCount: len(plan), MonthlyKm: req.MonthlyKm, GoalTimeS: req.GoalTimeS, GoalPaceS: goalPaceS,
+		WorkoutCount: len(plan), MonthlyKm: req.MonthlyKm, GoalTimeS: req.GoalTimeS, GoalPaceS: goalPaceS, PlanMode: planMode,
 	}
 	if req.RaceDate != "" {
 		rd := req.RaceDate
