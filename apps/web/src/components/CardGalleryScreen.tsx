@@ -16,7 +16,8 @@ export default function CardGalleryScreen({ onBack, focusCardId }: { onBack: () 
     uid && getUserToken() ? ['explore-gallery', uid] : null,
     () => withUserAuth((t) => exploreApi.list(t)).then((r) => r.bosses),
   )
-  const bosses = (data ?? null) as ExploreBoss[] | null
+  // 卡片圖鑑只呈現真關主，純打卡點（checkin_only）沒有卡片可收集，排除在卡格/總數之外。
+  const bosses = data ? (data as ExploreBoss[]).filter((b) => !b.checkin_only) : null
   const [page, setPage] = useState(0)
   const [zoom, setZoom] = useState<ExploreBoss | null>(null)
   const [unlockingId, setUnlockingId] = useState<string | null>(null)
