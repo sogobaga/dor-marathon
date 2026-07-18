@@ -435,7 +435,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
                   <div key={a.id} style={{ ...recCard, padding: 12, opacity: a.flagged ? 0.6 : 1 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
                       <span style={{ fontWeight: 700, fontSize: 14 }}>{a.distance_km.toFixed(2)} K</span>
-                      <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{fmtDate(a.recorded_at)}</span>
+                      <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{fmtDate(a.started_at || a.recorded_at)}</span>
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 3 }}>
                       配速 {paceStr(a.avg_pace_s)}/km · {Math.round(a.duration_s / 60)} 分

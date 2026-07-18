@@ -741,6 +741,7 @@ export interface SyncedActivity {
   ascent_m?: number
   avg_hr?: number
   recorded_at: string
+  started_at: string
   race_title?: string
   flagged: boolean
   flag_reason?: string
