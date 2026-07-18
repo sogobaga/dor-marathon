@@ -1,22 +1,30 @@
 'use client'
 
-import { type ExploreBoss } from '@/lib/api'
+import { type ExploreBoss, type User } from '@/lib/api'
 import { segSummary, totalKm, estMinutes, fmtDuration } from '@/lib/workout'
 
 // 關主挑戰面板（打卡後跳出）：比事件任務面板更精緻。兩階段——
-// intro：Scene 圖 + 關主對話(dialogue_intro) + 挑戰資訊 + 接受(扣DP)/放棄；
-// start：接受後關主對話(dialogue_start) + 「開始挑戰」→ 帶到 GPS 追蹤課表。
-export default function BossChallengePanel({ boss, phase, busy, dpCost, note, onAccept, onDecline, onStart }: {
+// intro：Scene 圖 + 關主對話(dialogue_intro，含 <user_nickname> 需替換) + 挑戰資訊 + 接受(扣DP)/放棄；
+// start：接受後關主對話改用 boss.quote（單層引號金句，dialogue_start 資料是雙層引號+外層又包一層，
+// 不適合直接渲染）+ 「開始挑戰」→ 帶到 GPS 追蹤課表。
+export default function BossChallengePanel({ boss, phase, busy, dpCost, note, user, onAccept, onDecline, onStart }: {
   boss: ExploreBoss
   phase: 'intro' | 'start'
   busy: boolean
   dpCost: number
   note?: string
+  user?: User | null
   onAccept: () => void
   onDecline: () => void
   onStart: () => void
 }) {
-  const dialogue = phase === 'intro' ? boss.dialogue_intro : boss.dialogue_start
+  const displayName = user?.name || user?.handle || '跑者'
+  // intro 階段文字內含 <user_nickname> 佔位符（且 dialogue_intro 本身已含「名字：「台詞」」格式，不需外層再包引號/前綴）；
+  // start 階段改用乾淨的單層引號金句 boss.quote，不用 dialogue_start（該欄位是「名字：「「金句」」」雙層引號資料）。
+  const dialogue = phase === 'intro' ? boss.dialogue_intro?.replace(/<user_nickname>/g, displayName) : boss.quote
+  // dialogue_intro 常以 <br> 結尾，split 後尾端會多一個空字串（渲染成多餘空行）——逐一濾掉結尾的空行。
+  const lines = dialogue ? dialogue.split(/<br\s*\/?>/i).map((ln) => ln.trim()) : []
+  while (lines.length && lines[lines.length - 1] === '') lines.pop()
   return (
     <div data-skin="default" style={{ position: 'fixed', inset: 0, zIndex: 3200, background: 'rgba(4,8,6,.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }}>
       <div style={{ width: '100%', maxWidth: 380, maxHeight: '92dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--gold)', borderRadius: 18, boxShadow: '0 16px 50px rgba(0,0,0,.7)' }}>
@@ -36,11 +44,12 @@ export default function BossChallengePanel({ boss, phase, busy, dpCost, note, on
         )}
 
         <div style={{ padding: '14px 16px 16px' }}>
-          {/* 關主對話 */}
-          {dialogue && (
+          {/* 關主對話：start 階段是單句金句(boss.quote)，前面加「{name}：」前綴；
+              intro 階段是多句台詞(dialogue_intro)，文字內已自帶「名字：「台詞」」格式，不加前綴、不外包引號。 */}
+          {lines.length > 0 && (
             <div style={{ background: 'rgba(255,255,255,.05)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '11px 13px', fontSize: 14, lineHeight: 1.7, color: 'var(--tx)' }}>
-              <span style={{ color: 'var(--gold)', fontWeight: 800 }}>{boss.name}：</span>
-              「{dialogue.split(/<br\s*\/?>/i).map((ln, i) => <span key={i}>{i > 0 && <br />}{ln}</span>)}」
+              {phase === 'start' && <span style={{ color: 'var(--gold)', fontWeight: 800 }}>{boss.name}：</span>}
+              {lines.map((ln, i) => <span key={i}>{i > 0 && <br />}{ln}</span>)}
             </div>
           )}
 

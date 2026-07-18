@@ -90,11 +90,21 @@ export function targetPaceBand(segs?: WorkoutSegment[] | null): string {
 export function segSummary(segs?: WorkoutSegment[] | null): string {
   if (!segs || !segs.length) return ''
   return segs.map((s) => {
-    const d = s.target_type === 'distance' ? (s.target >= 1000 ? `${s.target / 1000}K` : `${s.target}m`) : `${Math.round(s.target / 60) || Math.round(s.target)}${s.target >= 60 ? '分' : '秒'}`
+    const isKm = s.target_type === 'distance' && s.target >= 1000
+    const d = s.target_type === 'distance' ? (isKm ? `${s.target / 1000}K` : `${s.target}m`) : `${Math.round(s.target / 60) || Math.round(s.target)}${s.target >= 60 ? '分' : '秒'}`
     const label = s.label || kindLabel(s.kind)
     const reps = s.reps && s.reps > 1 ? ` ×${s.reps}` : ''
     const dupD = label === d || label.startsWith(d)
-    return dupD ? `${label}${reps}` : `${label} ${d}${reps}`
+    if (dupD) return `${label}${reps}`
+    // 距離 ≥1000m 時 d 換成 K 制（如 target=2000 → d="2K"），但部份課表 label 仍用 m 制自帶距離前綴
+    // （如關主課表 label="2000m 間歇"），字面對不上上面的 K 制比對、才會漏接成「2000m 間歇 2K」這種
+    // 同一距離講兩次。這裡另外比對 m 制寫法，命中就剝掉重複的距離前綴，只留描述文字再接 d（K 制）。
+    const mForm = isKm ? `${s.target}m` : null
+    if (mForm && (label === mForm || label.startsWith(mForm))) {
+      const core = label.slice(mForm.length).trim()
+      return core ? `${core} ${d}${reps}` : `${d}${reps}`
+    }
+    return `${label} ${d}${reps}`
   }).join(' → ')
 }
 

@@ -1490,6 +1490,7 @@ export default function TrackPage() {
           phase={bossPanel.phase}
           busy={exploreBusy}
           dpCost={bossPanel.dpCost}
+          user={user}
           note={status === 'tracking' ? '⚠ 請先結束目前的跑步，再開始關主挑戰（挑戰為獨立的追蹤紀錄）' : undefined}
           onAccept={acceptBoss}
           onDecline={() => setBossPanel(null)}
