@@ -33,12 +33,13 @@ type Achievements struct {
 	RaceCount     int     `json:"race_count"`
 }
 
-// computeStreak 最長連續打卡（有活動記錄）天數，依 activities.recorded_at::date（UTC 日曆日）。
+// computeStreak 最長連續打卡（有活動記錄）天數，依 activities.recorded_at 台北日曆日
+// （AT TIME ZONE 'Asia/Taipei'，比照 titles.go computeCurrentStreak；只算歷史最長連續段，無「今天」錨點）。
 func (h *Handler) computeStreak(ctx context.Context, uid string) (int, error) {
 	rows, err := h.db.Query(ctx, `
-		SELECT DISTINCT recorded_at::date FROM activities
+		SELECT DISTINCT (recorded_at AT TIME ZONE 'Asia/Taipei')::date FROM activities
 		WHERE user_id=$1 AND NOT flagged
-		ORDER BY recorded_at::date`, uid)
+		ORDER BY (recorded_at AT TIME ZONE 'Asia/Taipei')::date`, uid)
 	if err != nil {
 		return 0, err
 	}
@@ -174,12 +175,13 @@ func (h *Handler) AchievementsCalendar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.Query(r.Context(), `
-		SELECT recorded_at::date, SUM(distance_km)
+		SELECT (recorded_at AT TIME ZONE 'Asia/Taipei')::date, SUM(distance_km)
 		FROM activities
 		WHERE user_id=$1 AND NOT flagged
-		  AND recorded_at >= $2::date AND recorded_at < ($2::date + INTERVAL '1 month')
-		GROUP BY recorded_at::date
-		ORDER BY recorded_at::date`, uid, monthStart.Format("2006-01-02"))
+		  AND (recorded_at AT TIME ZONE 'Asia/Taipei')::date >= $2::date
+		  AND (recorded_at AT TIME ZONE 'Asia/Taipei')::date < ($2::date + INTERVAL '1 month')
+		GROUP BY (recorded_at AT TIME ZONE 'Asia/Taipei')::date
+		ORDER BY (recorded_at AT TIME ZONE 'Asia/Taipei')::date`, uid, monthStart.Format("2006-01-02"))
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
