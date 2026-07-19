@@ -841,17 +841,19 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
             {/* 月曆殼（比照成就月曆：換月/滑動/格子；未來月不鎖，可預先排課） */}
             <div
               onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
-              style={{ background: 'linear-gradient(160deg, var(--bg-1), var(--bg-2))', border: '1px solid var(--line)', borderRadius: 18, padding: '16px 16px 14px' }}
+              style={{ background: 'linear-gradient(160deg, var(--bg-1), var(--bg-2))', border: '1px solid var(--line)', borderRadius: 18, padding: '16px 16px 14px', maxWidth: '100%', boxSizing: 'border-box', overflowX: 'hidden' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <button onClick={() => go(-1)} style={navBtn}>‹</button>
                 <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)' }}>{yy} 年 {mm} 月</div>
                 <button onClick={() => go(1)} style={navBtn}>›</button>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 4, marginBottom: 4 }}>
+              {/* minmax(0,1fr)＝關鍵：grid 欄預設 min-width:auto，格內長內容（課表徽章/賽事標記）會把欄撐大、
+                  整條月曆超出容器寬度；minmax(0,1fr) 讓欄可縮到 0，內容一律靠格內 overflow 裁切，不撐版 */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4, marginBottom: 4 }}>
                 {WK.map((w) => <div key={w} style={{ textAlign: 'center', fontSize: 10, color: 'var(--tx-faint)' }}>{w}</div>)}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 4 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4 }}>
                 {cells.map((day, i) => {
                   if (day == null) return <div key={`b${i}`} />
                   const dateStr = `${month}-${pad2(day)}`
@@ -882,21 +884,22 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1,
                         padding: 2, cursor: 'pointer', position: 'relative', fontFamily: 'inherit',
                         touchAction: 'pan-y', WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none',
+                        minWidth: 0, width: '100%', maxWidth: '100%', overflow: 'hidden', boxSizing: 'border-box',
                       }}>
                       <span style={{ fontSize: 10, color: 'var(--tx-faint)', fontWeight: 700 }}>{day}</span>
                       {badges.map((s) => {
                         const col = catColor(s.category)
                         return (
-                          <span key={s.id} style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: col.bg, color: col.fg, maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span key={s.id} style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: col.bg, color: col.fg, maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', boxSizing: 'border-box' }}>
                             {CATEGORY_SHORT[s.category] || s.category}
                           </span>
                         )
                       })}
                       {sched.length > 2 && (
-                        <span style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: 'var(--bg-3, var(--line))', color: 'var(--tx-dim)' }}>+{sched.length}</span>
+                        <span style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: 'var(--bg-3, var(--line))', color: 'var(--tx-dim)', maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', boxSizing: 'border-box' }}>+{sched.length}</span>
                       )}
                       {isRaceDay && (
-                        <span style={{ fontSize: 7.5, fontWeight: 900, padding: '1px 4px', borderRadius: 5, background: 'var(--gold)', color: '#fff', maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span style={{ fontSize: 7.5, fontWeight: 900, padding: '1px 4px', borderRadius: 5, background: 'var(--gold)', color: '#fff', maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', boxSizing: 'border-box' }}>
                           {raceDayLabel(currentPlan?.race_distance)}
                         </span>
                       )}
