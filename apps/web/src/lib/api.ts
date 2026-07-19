@@ -1518,6 +1518,7 @@ export interface AutoPlanRequest {
   monthly_km?: number  // 目前月跑量(km)，選填；0/未填=不套用跑量模型(沿用舊行為)
   goal_time_s?: number // 目標完賽秒數，選填（全馬 4:30:00 = 16200）；0/未填=未設定
   plan_mode?: 'conservative' | 'aggressive' // 課表強度：不填/非法值後端一律當 'conservative'
+  start_long_km?: number // 期望起始長距離(km)，選填；0/未填=依近三週實際最長跑步/自報最長距離自動判斷
 }
 
 // 自主訓練（P1+P2+P3）：課表庫 + 配速等級表、月曆排程 CRUD、一鍵訓練計畫。VIP 限定——非 VIP 呼叫回 403

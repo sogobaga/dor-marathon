@@ -152,13 +152,14 @@ type AutoPlanFormSaved = {
   goal_h: string      // 目標完賽時間·時，選填（僅 has_race 時有意義）
   goal_m: string      // 目標完賽時間·分，選填
   plan_mode: NonNullable<AutoPlanRequest['plan_mode']> // 課表強度：保守／積極，預設保守
+  start_long_km: string // 期望起始長距離(km)，選填；留空則後端依近三週實際最長跑步自動判斷
 }
 // 表單預設值（沒存過資料、或「清空」後都回到這組——需與各 useState 初始值保持一致）
 const AUTOPLAN_FORM_DEFAULTS: AutoPlanFormSaved = {
   running_age: 'novice', best_1km: '', longest_km: '', longest_min: '',
   has_race: true, race_name: '', race_date: '', race_distance: '10k', weeks: 8,
   rest_days: RUNNING_AGE_OPTIONS.find((o) => o.id === 'novice')!.defaultRestDays,
-  monthly_km: '', goal_h: '', goal_m: '', plan_mode: 'conservative',
+  monthly_km: '', goal_h: '', goal_m: '', plan_mode: 'conservative', start_long_km: '',
 }
 function isFiniteNumStr(s: string) { return s === '' || Number.isFinite(Number(s)) }
 function saveAutoPlanForm(uid: string, v: AutoPlanFormSaved) {
@@ -209,6 +210,11 @@ function loadAutoPlanForm(uid: string): Partial<AutoPlanFormSaved> | null {
     }
     // 課表強度：只接受 'conservative'/'aggressive'，其他值（含舊版沒有這欄的資料）一律跳過、留給預設值
     if (PLAN_MODE_OPTIONS.some((o) => o.id === data.plan_mode)) out.plan_mode = data.plan_mode
+    // 期望起始長距離：須為有限數且落在合理範圍（0~100km），驗證失敗只丟該欄，不影響其餘欄位
+    if (typeof data.start_long_km === 'string' && isFiniteNumStr(data.start_long_km) &&
+      (data.start_long_km === '' || (Number(data.start_long_km) >= 0 && Number(data.start_long_km) <= 100))) {
+      out.start_long_km = data.start_long_km
+    }
     return out
   } catch { return null }
 }
@@ -535,6 +541,8 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   const [apBest1km, setApBest1km] = useState('')
   const [apLongestKm, setApLongestKm] = useState('')
   const [apLongestMin, setApLongestMin] = useState('')
+  // 期望起始長距離（選填）：留空由後端依近三週實際最長跑步自動判斷（見後端 AutoPlan 起始長跑優先序）
+  const [apStartLong, setApStartLong] = useState('')
   // 課表強度二選一（保守／積極），預設保守；影響賽前收操排法，詳見 PLAN_MODE_OPTIONS 的 desc
   const [apPlanMode, setApPlanMode] = useState<NonNullable<AutoPlanRequest['plan_mode']>>('conservative')
   const [apHasRace, setApHasRace] = useState(true)
@@ -571,6 +579,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         if (saved.best_1km !== undefined) setApBest1km(saved.best_1km)
         if (saved.longest_km !== undefined) setApLongestKm(saved.longest_km)
         if (saved.longest_min !== undefined) setApLongestMin(saved.longest_min)
+        if (saved.start_long_km !== undefined) setApStartLong(saved.start_long_km)
         if (saved.plan_mode !== undefined) setApPlanMode(saved.plan_mode)
         if (saved.has_race !== undefined) setApHasRace(saved.has_race)
         if (saved.race_name !== undefined) setApRaceName(saved.race_name)
@@ -592,6 +601,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     setApBest1km(AUTOPLAN_FORM_DEFAULTS.best_1km)
     setApLongestKm(AUTOPLAN_FORM_DEFAULTS.longest_km)
     setApLongestMin(AUTOPLAN_FORM_DEFAULTS.longest_min)
+    setApStartLong(AUTOPLAN_FORM_DEFAULTS.start_long_km)
     setApPlanMode(AUTOPLAN_FORM_DEFAULTS.plan_mode)
     setApHasRace(AUTOPLAN_FORM_DEFAULTS.has_race)
     setApRaceName(AUTOPLAN_FORM_DEFAULTS.race_name)
@@ -635,11 +645,13 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         has_race: apHasRace, rest_days: apRestDays, plan_mode: apPlanMode,
         ...(apHasRace ? { race_name: apRaceName.trim(), race_date: apRaceDate, race_distance: apRaceDistance } : { weeks: apWeeks }),
       }
-      // 兩個新欄位皆選填：算出來是 0 就不帶，維持「沒填＝與現行行為一致」的回歸底線
+      // 三個新欄位皆選填：算出來是 0（或非正數）就不帶，維持「沒填＝與現行行為一致」的回歸底線
       const monthlyKm = computeMonthlyKm(apMonthlyKm)
       if (monthlyKm > 0) body.monthly_km = monthlyKm
       const goalTimeS = apHasRace ? computeGoalTimeS(apGoalH, apGoalM) : 0
       if (goalTimeS > 0) body.goal_time_s = goalTimeS
+      const sl = Number(apStartLong)
+      if (sl > 0) body.start_long_km = sl
       const res = await withUserAuth((tok) => trainingApi.autoPlan(tok, body))
       setShowAutoPlan(false)
       // 只有「成功產生」才記住這次填的值，失敗/驗證擋下都不可寫入，避免下次帶入一份沒排出計畫的髒資料
@@ -652,7 +664,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
           running_age: apRunningAge, best_1km: apBest1km, longest_km: apLongestKm, longest_min: apLongestMin,
           has_race: apHasRace, race_name: apRaceName, race_date: apRaceDate, race_distance: apRaceDistance,
           weeks: apWeeks, rest_days: apRestDays, monthly_km: apMonthlyKm, goal_h: nGoalH, goal_m: nGoalM,
-          plan_mode: apPlanMode,
+          plan_mode: apPlanMode, start_long_km: apStartLong,
         })
       }
       setCalSource(res.plan.id) // 剛產生的計畫直接切為月曆顯示來源，馬上看得到排好的課表
@@ -1211,6 +1223,16 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                   <input type="number" min={0} step={1} value={apLongestMin} onChange={(e) => setApLongestMin(e.target.value)} style={apInput} />
                 </label>
               </div>
+
+              {/* 期望起始長距離：選填，留空由後端依近三週實際最長跑步自動判斷起點（避免自報最長距離
+                  與目前體能脫節時，第一週長跑直接排到賽事上限） */}
+              <label style={apField}>
+                <span style={apLabel}>期望起始長距離（選填，km）</span>
+                <input type="number" min={0} step={0.1} inputMode="decimal" value={apStartLong} onChange={(e) => setApStartLong(e.target.value)} style={apInput} />
+                <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 2, lineHeight: 1.6 }}>
+                  留空將依你近三週最長跑步自動判斷
+                </div>
+              </label>
 
               {/* 課表強度二選一：預設保守，主要影響賽前收操排法（詳見各自說明） */}
               <div style={apField}>

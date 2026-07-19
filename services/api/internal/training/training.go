@@ -793,10 +793,11 @@ type autoPlanRequest struct {
 	RaceName     string  `json:"race_name"` // 使用者自填的目標賽事名稱（migration 086）；只有有 race_date 才有意義，但沒 race_date 也照存
 	RaceDistance string  `json:"race_distance"`
 	Weeks        int     `json:"weeks"`
-	RestDays     []int   `json:"rest_days"`   // 預定休息的星期索引，0=週一..6=週日（前端 checkbox 一..日）；其餘星期皆為訓練日
-	MonthlyKm    int     `json:"monthly_km"`  // 目前月跑量(km)，選填。0=未填→行為與加此欄位前完全一致（只依賽事距離定 LSD 上限）。
-	GoalTimeS    int     `json:"goal_time_s"` // 目標完賽秒數(如全馬4:30:00=16200)，選填。0=未設定；只影響「目標配速/可行性提示」，絕不拿來拉快訓練配速。
-	PlanMode     string  `json:"plan_mode"`   // 保守/積極（migration 089）：conservative|aggressive；正規化見 normalizePlanMode。
+	RestDays     []int   `json:"rest_days"`     // 預定休息的星期索引，0=週一..6=週日（前端 checkbox 一..日）；其餘星期皆為訓練日
+	MonthlyKm    int     `json:"monthly_km"`    // 目前月跑量(km)，選填。0=未填→行為與加此欄位前完全一致（只依賽事距離定 LSD 上限）。
+	GoalTimeS    int     `json:"goal_time_s"`   // 目標完賽秒數(如全馬4:30:00=16200)，選填。0=未設定；只影響「目標配速/可行性提示」，絕不拿來拉快訓練配速。
+	PlanMode     string  `json:"plan_mode"`     // 保守/積極（migration 089）：conservative|aggressive；正規化見 normalizePlanMode。
+	StartLongKm  float64 `json:"start_long_km"` // 期望起始長距離(km)，選填。0=未填→依近三週實際最長跑步/自報最長距離自動判斷（見 AutoPlan 起始長跑優先序）。
 }
 
 // normalizePlanMode 正規化 plan_mode：只接受 "conservative"/"aggressive"，其餘（含空字串）一律視為
@@ -1335,6 +1336,9 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 	if req.GoalTimeS != 0 && (req.GoalTimeS < 600 || req.GoalTimeS > 172800) {
 		req.GoalTimeS = 0
 	}
+	if req.StartLongKm < 0 || req.StartLongKm > 100 {
+		req.StartLongKm = 0
+	}
 	// race_name：TrimSpace + 用 []rune 截斷（絕不可用 byte 切，會切壞 UTF-8 中文）。
 	raceName := strings.TrimSpace(req.RaceName)
 	if rn := []rune(raceName); len(rn) > 40 {
@@ -1508,37 +1512,56 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 
 	// 長跑距離：capKm + 起始值 + 逐週漸增/recovery/taper 調整。
 	capKm := longRunCap(req.RaceDistance, req.LongestKm)
-	startLong := req.LongestKm
-	if startLong <= 0 {
-		startLong = 5
-	}
-	startLong = min(capKm, max(4, startLong))
 	rampWeeks := weeks - taperWeeks
 
-	// volumeNote：跑量驅動 LSD 約束的附帶說明，只顯示、不影響排程（沿用 goalNote 的模式）。宣告在
-	// `if req.MonthlyKm > 0` 區塊外，否則區塊結束後變數就離開作用域，下面 respondJSON 讀不到。
+	// 近三週實際跑過的最長單次距離：起始長跑優先序（見下方 startBasis）的核心依據。查詢失敗就當
+	// 0，不中斷產生流程——這只是起點眾多候選來源之一，不是必要輸入。
+	var recentLongKm float64
+	if err := h.db.QueryRow(ctx, `SELECT COALESCE(MAX(distance_km),0) FROM activities WHERE user_id=$1 AND NOT flagged AND recorded_at >= NOW() - INTERVAL '21 days'`, uid).Scan(&recentLongKm); err != nil {
+		recentLongKm = 0
+	}
+
+	// pct/growthCap：長跑/週跑量逐週增幅上限與 growth 倍率上限，依 plan_mode 決定。原本只在
+	// `req.MonthlyKm > 0` 區塊內宣告，因為只有那個區塊用得到 growthCap；但 pct 定義的「逐週增幅
+	// 安全上限」不論有無月跑量都要套用（見下方 rampWeeks>1 區塊），故拉到區塊外先算好，兩處共用同
+	// 一個值。conservative（保守，降強度、多一層保護）pct=6%/growthCap=1.5；aggressive（積極，維持
+	// 現況）pct=10%/growthCap=1.8。
+	pct := 0.10
+	growthCap := 1.8
+	if planMode == "conservative" {
+		pct = 0.06
+		growthCap = 1.5
+	}
+
+	// 起始長跑優先序：期望起始長距離(使用者填 start_long_km) > 近三週實際最長跑步 > 自報最長距離
+	// (longest_km) > 5（完全沒資料時的保底）。近三週優先於自報最長的理由：同樣是 40K/週的量，天天
+	// 跑 10K 跟週末衝一趟 20K，適合的長跑起點差很多；自報「最長」也可能是多年前跑的、早就與目前
+	// 體能脫節。用近期實際跑過的距離當起點，才不會把只跑過 10K 的人一開局就排到 32K/34K 這種天花板
+	// （曾發生過的 bug：monthly_km 未填時 capKm 直接吃 longRunCap 天花板、又拿自報 longest_km 當
+	// 起點，若 longest_km 已經 ≥ capKm，起點=天花板，整條長跑 ramp 直接變水平線）。
+	startBasis := req.LongestKm
+	if recentLongKm > 0 {
+		startBasis = recentLongKm
+	}
+	if req.StartLongKm > 0 {
+		startBasis = req.StartLongKm
+	}
+	if startBasis <= 0 {
+		startBasis = 5
+	}
+	startLong := min(capKm, max(4, startBasis))
+
+	// volumeNote：跑量/長跑距離驅動 LSD 約束的附帶說明，只顯示、不影響排程（沿用 goalNote 的模式）。
+	// 宣告在 `if req.MonthlyKm > 0` 區塊外，否則區塊結束後變數就離開作用域，下面 respondJSON 讀不到。
 	volumeNote := ""
 
 	// 跑量驅動的 LSD 約束（monthly_km>0 時才套用；=0 時完全不動上面算出的 capKm/startLong，
 	// 是回歸底線）。動機：單次跑過 21K 不代表「每週都能吃 21K」——後者靠的是月跑量長期堆出來的
 	// 耐受度，前者只證明身體某一天撐得住一次。longRunCap 只看賽事距離/最長跑過距離，完全不看
 	// 月跑量，會把月跑量僅 150K 的人一路推到 32K 長跑，等同主動叫他受傷。故改用「當週跑量的固定
-	// 比例」重新框住長跑距離，取代（縮小）純看距離推出的 capKm/startLong。
+	// 比例」重新框住長跑距離，取代（縮小）純看距離推出的 capKm。
 	if req.MonthlyKm > 0 {
 		weeklyBase := float64(req.MonthlyKm) / 4 // 月跑量→週跑量基準，例：150K/月 → 37.5K/週
-		// pct：每週跑量增幅上限。conservative（保守，降強度、多一層保護）6%；aggressive（積極，維持
-		// 現況）10%——conservative 8%→6% 是本次調整（任務4）唯一改動的旋鈕，其餘常數（40%長跑佔比、
-		// 4週恢復週、×0.65、taper 週數、growthCap 等）不動。
-		pct := 0.10
-		if planMode == "conservative" {
-			pct = 0.06
-		}
-		// growthCap：growth 倍率的上限。conservative 1.5、aggressive 維持 1.8（任務3的第二個旋鈕）；
-		// 下限 1.15 兩模式共用，避免 rampWeeks 極短時倍數失控。
-		growthCap := 1.8
-		if planMode == "conservative" {
-			growthCap = 1.5
-		}
 		// growth：隨 rampWeeks（真正可以逐週漸增的週數）拉長，逐步放大「週跑量峰值」相對基準的倍數；
 		// 週數越多代表有越長時間可以安全地把量堆上去。1.15/growthCap 是防呆下限/上限，避免 rampWeeks
 		// 極端值（很短或很長）時倍數失控。
@@ -1552,24 +1575,11 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 		} else {
 			weeklyPeak = weeklyBase
 		}
-		capKm = min(capKm, weeklyPeak*0.40)                 // 長跑上限＝峰值週量的 40%（常見經驗值，避免單次長跑吃掉過高比例的週跑量）
-		startLong = max(4, min(startLong, weeklyBase*0.40)) // 起始長跑＝目前週量的 40%，且不超過「已經跑過的最長距離」（不可無中生有推高起點）
-		if rampWeeks > 1 {
-			// pct 規則：每週跑量增幅不可超過前一週的 pct（conservative 6%／aggressive 10%），避免練
-			// 太快造成傷害。真正逐週漸增的是下面 nominal := startLong + (capKm-startLong)*t 這條線性
-			// 曲線，不是 weeklyBase→weeklyPeak。線性 ramp 下相鄰兩週的增量固定 =
-			// (capKm-startLong)/(rampWeeks-1)，其占「起點」startLong 的百分比在起點（基數最小）最大、
-			// 越往後基數變大增幅自動遞減；因此只要 capKm <= startLong*(1+pct*(rampWeeks-1))，增幅最大
-			// 的第一週就不超過 pct，中段每一週的實際增幅必然更小，全程自動合規，不需逐週檢查。
-			// 恢復週（每 4 週回彈到 nominal*0.65，見下方 isRecovery）刻意不受此限：pct 規則管的是
-			// 「訓練量趨勢線」的長期爬升速度，恢復週是刻意的短期回落、事後會再回升到趨勢線上，並非
-			// 趨勢線本身；若也套 pct 上限，會反過來逼恢復週不夠低、讓恢復週失去恢復的意義。
-			//
-			// ⚠️ 此約束式必須套在 startLong 定案之後（startLong 已經過 min(capKm, max(4, ...)) 確定），
-			// 不可誤套在 weeklyPeak/weeklyBase 上——那是不同的基數，套錯會導致 longest_km 較小時第一週
-			// 增幅可達 +70%（曾發生過的迴歸）。
-			capKm = min(capKm, startLong*(1+pct*float64(rampWeeks-1)))
-		}
+		capKm = min(capKm, weeklyPeak*0.40) // 長跑上限＝峰值週量的 40%（常見經驗值，避免單次長跑吃掉過高比例的週跑量）
+		// 起始長跑不再用 weeklyBase*0.40 覆蓋——那是只看「自報最長距離」年代的算法；現在起點已經改
+		// 用近三週實際跑過的距離／使用者期望值（見上方 startBasis），更貼近目前體能。這裡只保留「不
+		// 超過目前週跑量」的防呆，避免月跑量填得很低卻拿到偏高的起點這種極端輸入。
+		startLong = min(startLong, max(4, weeklyBase*0.40))
 		capKm = max(startLong, capKm) // 防呆：避免 cap 被壓得比 start 還低，造成長跑曲線倒退
 
 		// 月跑量很低時 capKm 會被壓到很小（例：月跑量 40K + 全馬 + 23 週 → capKm≈6.94）。這裡刻意
@@ -1583,6 +1593,31 @@ func (h *Handler) AutoPlan(w http.ResponseWriter, r *http.Request) {
 			volumeNote = fmt.Sprintf("目前月跑量 %dK 偏低，長跑距離已依跑量下修至 %dK 上下；要安全完成%s，建議先把月跑量堆到 %dK 以上再重排計畫。",
 				req.MonthlyKm, int(math.Round(capKm)), raceDistanceLabel[req.RaceDistance], recommendedMonthlyKm[req.RaceDistance])
 		}
+	}
+
+	// 進度安全上限：不論有無月跑量都套用（monthly_km=0 時原本完全不受限，是本次修正的核心）。線性
+	// ramp 下相鄰兩週的增量固定 = (capKm-startLong)/(rampWeeks-1)，其占「起點」startLong 的百分比
+	// 在起點（基數最小）最大、越往後基數變大增幅自動遞減；因此只要 capKm <= startLong*(1+pct*
+	// (rampWeeks-1))，增幅最大的第一週就不超過 pct，中段每一週的實際增幅必然更小，全程自動合規，
+	// 不需逐週檢查。恢復週（每 4 週回彈到 nominal*0.65，見下方 isRecovery）刻意不受此限：pct 規則
+	// 管的是「訓練量趨勢線」的長期爬升速度，恢復週是刻意的短期回落、事後會再回升到趨勢線上，並非
+	// 趨勢線本身；若也套 pct 上限，會反過來逼恢復週不夠低、讓恢復週失去恢復的意義。
+	//
+	// ⚠️ 此約束式必須套在 startLong 定案之後（startLong 已經過上面 min(capKm, max(4, ...)) 確定），
+	// 不可誤套在 weeklyPeak/weeklyBase 上——那是不同的基數，套錯會導致 longest_km 較小時第一週增幅
+	// 可達 +70%（曾發生過的迴歸）。同時也是「起點=天花板→整條 ramp 變水平線」的核心保護：若沒有
+	// monthly_km 時完全跳過這段，capKm 會維持在 longRunCap 天花板，startLong 若也頂到同一個天花板
+	// （自報 longest_km 很大時），ramp 就會整段水平、看不出漸增。
+	if rampWeeks > 1 {
+		capKm = min(capKm, startLong*(1+pct*float64(rampWeeks-1)))
+	}
+	capKm = max(startLong, capKm) // 防呆：避免 cap 被壓得比 start 還低，造成長跑曲線倒退
+
+	// 可行性提示：近期長跑基礎明顯不足以支撐賽事距離時提示，但仍照樣產生計畫（不擋、只顯示）。與
+	// 上面月跑量過低那條 volumeNote 二擇一，避免同時顯示產生矛盾訊息。
+	if volumeNote == "" && ((req.RaceDistance == "full" && startLong < 16) || (req.RaceDistance == "half" && startLong < 10)) {
+		volumeNote = fmt.Sprintf("以近期最長 %.0fK 推算，%d 週內保守可安全累積到約 %.0fK 長跑；對%s偏保守，若要更充分準備建議延長準備週數或先提升近期長跑距離。",
+			startLong, weeks, capKm+2, raceDistanceLabel[req.RaceDistance])
 	}
 
 	qualityCounter := 0
