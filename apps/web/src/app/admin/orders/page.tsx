@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminRacesApi, adminOrdersApi, adminPaymentsApi, type Race, type OrderRow, type OrderDetail, type RefundRow } from '@/lib/api'
+import { adminRacesApi, adminOrdersApi, adminPaymentsApi, type Race, type OrderRow, type OrderDetail, type RefundRow, type EcpayEnvCheck } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
 const REFUND_STATUS_LABEL: Record<string, { t: string; c: string }> = {
@@ -36,6 +36,8 @@ export default function AdminOrdersPage() {
   const [expanded, setExpanded] = useState<Record<string, OrderDetail | null>>({})
   const [refunds, setRefunds] = useState<Record<string, RefundRow[]>>({})
   const [busy, setBusy] = useState<string>('') // 進行中的 orderID/refundID，避免重複點擊
+  const [envCheck, setEnvCheck] = useState<EcpayEnvCheck | null>(null)
+  const [envCheckErr, setEnvCheckErr] = useState('')
 
   useEffect(() => {
     const t = getToken()
@@ -44,6 +46,7 @@ export default function AdminOrdersPage() {
     adminRacesApi.list(t).then((r) => setRaces(r.races)).catch((e) => {
       if (e?.status === 401) { clearToken(); router.replace('/admin/login') } else setErr(e?.message || '載入失敗')
     })
+    adminPaymentsApi.envCheck(t).then(setEnvCheck).catch((e) => setEnvCheckErr(e?.message || '金流環境診斷載入失敗'))
   }, [router])
 
   const load = useCallback((rid: string, st: string) => {
@@ -143,6 +146,39 @@ export default function AdminOrdersPage() {
   return (
     <div>
       <h1 style={{ margin: '0 0 18px', fontSize: 24, fontWeight: 800 }}>訂單管理</h1>
+
+      {envCheckErr && <div style={{ color: 'var(--hunt)', padding: 12, marginBottom: 14 }}>金流環境診斷載入失敗：{envCheckErr}</div>}
+      {envCheck && (
+        <div style={{
+          border: `1px solid ${envCheck.would_charge_real_money ? 'var(--hunt)' : 'var(--line)'}`,
+          borderRadius: 14, padding: 16, marginBottom: 18, background: 'var(--bg-1)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', color: 'var(--tx-faint)', textTransform: 'uppercase' }}>金流環境診斷</span>
+            <span style={{
+              background: envCheck.would_charge_real_money ? 'var(--hunt)' : 'var(--fug)',
+              color: '#fff', fontWeight: 800, fontSize: 12, padding: '3px 10px', borderRadius: 999,
+            }}>
+              {envCheck.would_charge_real_money ? '⚠ 正式特店（會收真錢）' : '測試特店（不會收真錢）'}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '4px 20px', fontSize: 13, color: 'var(--tx-dim)' }}>
+            <div>結帳網址：<span style={{ color: 'var(--tx)' }}>{envCheck.resolved_action_url}</span></div>
+            <div>特店編號：<span style={{ color: 'var(--tx)' }}>{envCheck.resolved_merchant_id || '（空）'}</span></div>
+            <div>全域 ECPAY_ENV：<span style={{ color: 'var(--tx)' }}>{envCheck.global_ecpay_env}</span></div>
+            <div>正式網域白名單：<span style={{ color: 'var(--tx)' }}>{envCheck.prod_hosts.join('、') || '（空）'}</span></div>
+            <div>Host：<span style={{ color: 'var(--tx)' }}>{envCheck.seen.host || '（空）'}</span></div>
+            <div>X-Forwarded-Host：<span style={{ color: 'var(--tx)' }}>{envCheck.seen.x_forwarded_host || '（空）'}</span></div>
+            <div>解析採用 Host：<span style={{ color: 'var(--tx)' }}>{envCheck.seen.resolved_host || '（空）'}</span></div>
+            <div>
+              正式三寶已設定：{' '}
+              <span style={{ color: envCheck.prod_credentials_configured.merchant_id ? 'var(--fug)' : 'var(--hunt)' }}>MerchantID {envCheck.prod_credentials_configured.merchant_id ? '✓' : '✗'}</span>{' '}
+              <span style={{ color: envCheck.prod_credentials_configured.hash_key ? 'var(--fug)' : 'var(--hunt)' }}>HashKey {envCheck.prod_credentials_configured.hash_key ? '✓' : '✗'}</span>{' '}
+              <span style={{ color: envCheck.prod_credentials_configured.hash_iv ? 'var(--fug)' : 'var(--hunt)' }}>HashIV {envCheck.prod_credentials_configured.hash_iv ? '✓' : '✗'}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
         <select value={raceID} onChange={(e) => setRaceID(e.target.value)} style={{ ...inp, maxWidth: 260 }}>

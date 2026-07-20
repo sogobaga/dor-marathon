@@ -290,10 +290,77 @@ func inEcpayDailyCloseBlackout(now time.Time) bool {
 // AdminRouter 後台退款路由（掛載在 /api/v1/admin/payments，沿用既有 orders 權限，見 main.go）。
 func (h *Handler) AdminRouter() http.Handler {
 	r := chi.NewRouter()
+	r.Get("/env-check", h.AdminEnvCheck)
 	r.Post("/refunds", h.AdminCreateRefund)
 	r.Get("/refunds", h.AdminListRefunds)
 	r.Patch("/refunds/{refundID}/manual-done", h.AdminMarkRefundManualDone)
 	return r
+}
+
+// EnvCheckSeen 診斷端點看到的原始請求資訊，供除錯反向代理／Next.js rewrites 有沒有把
+// X-Forwarded-Host 帶到 API。
+type EnvCheckSeen struct {
+	Host           string `json:"host"`             // r.Host 原值
+	XForwardedHost string `json:"x_forwarded_host"` // X-Forwarded-Host header 原值（可能為空）
+	ResolvedHost   string `json:"resolved_host"`    // requestHost(r) 的結果——Checkout 實際餵給 ResolveByHost 的值
+}
+
+// EnvCheckCredentialsConfigured 正式特店三寶是否已設定。刻意只回布林，絕不回傳值本身
+// （即便是遮罩片段），避免診斷端點變成金鑰外洩管道。
+type EnvCheckCredentialsConfigured struct {
+	MerchantID bool `json:"merchant_id"`
+	HashKey    bool `json:"hash_key"`
+	HashIV     bool `json:"hash_iv"`
+}
+
+// EnvCheckResponse GET /api/v1/admin/payments/env-check 回應。
+type EnvCheckResponse struct {
+	GlobalEcpayEnv            string                        `json:"global_ecpay_env"`
+	ProdHosts                 []string                      `json:"prod_hosts"`
+	Seen                      EnvCheckSeen                  `json:"seen"`
+	ResolvedEnv               string                        `json:"resolved_env"`
+	ResolvedMerchantID        string                        `json:"resolved_merchant_id"`
+	ResolvedActionURL         string                        `json:"resolved_action_url"`
+	WouldChargeRealMoney      bool                          `json:"would_charge_real_money"`
+	ProdCredentialsConfigured EnvCheckCredentialsConfigured `json:"prod_credentials_configured"`
+}
+
+// AdminEnvCheck GET /api/v1/admin/payments/env-check
+// 讓管理員在真的刷卡之前，確認「從這個網域打過來，Checkout 會解析成哪一組特店」。
+// 刻意呼叫與 Checkout（見 payment.go Handler.Checkout）完全相同的
+// h.multi.ResolveByHost(requestHost(r)) 這段邏輯，不自行複製一份判斷——避免診斷結果與實際
+// 結帳行為漂移，讓這個端點失去意義。
+//
+// 安全：絕不在回應中輸出 HashKey/HashIV 的值（連遮罩片段也不要），正式三寶是否已設定只回布林。
+// MerchantID 本身會出現在送綠界的結帳表單中、非機密，可直接顯示。
+func (h *Handler) AdminEnvCheck(w http.ResponseWriter, r *http.Request) {
+	resolvedHost := requestHost(r)
+	env, cfg := h.multi.ResolveByHost(resolvedHost)
+
+	resp := EnvCheckResponse{
+		GlobalEcpayEnv: h.multi.GlobalEnv,
+		ProdHosts:      h.multi.ProdHosts,
+		Seen: EnvCheckSeen{
+			Host:           r.Host,
+			XForwardedHost: r.Header.Get("X-Forwarded-Host"),
+			ResolvedHost:   resolvedHost,
+		},
+		ResolvedEnv:          env,
+		WouldChargeRealMoney: env == "prod",
+	}
+	if cfg != nil {
+		resp.ResolvedMerchantID = cfg.MerchantID
+		resp.ResolvedActionURL = cfg.ActionURL()
+	}
+	if h.multi.Prod != nil {
+		resp.ProdCredentialsConfigured = EnvCheckCredentialsConfigured{
+			MerchantID: h.multi.Prod.MerchantID != "",
+			HashKey:    h.multi.Prod.HashKey != "",
+			HashIV:     h.multi.Prod.HashIV != "",
+		}
+	}
+
+	respondJSON(w, http.StatusOK, resp)
 }
 
 // AdminCreateRefund POST /api/v1/admin/payments/refunds  {order_id, amount_cents?, reason}

@@ -1994,7 +1994,20 @@ export const adminOrdersApi = {
     }),
 }
 
+export interface EcpayEnvCheck {
+  global_ecpay_env: string
+  prod_hosts: string[]
+  seen: { host: string; x_forwarded_host: string; resolved_host: string }
+  resolved_env: string
+  resolved_merchant_id: string
+  resolved_action_url: string
+  would_charge_real_money: boolean
+  prod_credentials_configured: { merchant_id: boolean; hash_key: boolean; hash_iv: boolean }
+}
+
 export const adminPaymentsApi = {
+  envCheck: (token: string) =>
+    request<EcpayEnvCheck>(`/admin/payments/env-check`, { headers: withAuth(token) }),
   listRefunds: (token: string, orderID: string) =>
     request<{ refunds: RefundRow[]; count: number }>(`/admin/payments/refunds?order_id=${encodeURIComponent(orderID)}`, {
       headers: withAuth(token),
