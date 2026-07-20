@@ -2206,6 +2206,71 @@ export const adminPushGroupsApi = {
     request<void>(`/admin/push-groups/${id}/members/remove`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ user_id }) }),
 }
 
+// --- 跑者充電站 / 特約商店 (Partner Shops) ---
+
+export interface PartnerShop {          // 列表用
+  id: string
+  name: string
+  summary: string
+  banner_url: string
+  cta_url: string
+  cta_label: string
+  display_order: number
+  is_favorited: boolean
+}
+
+export interface PartnerShopDetail extends PartnerShop {   // 詳細用
+  detail_html: string      // 已由後端消毒過的安全 HTML
+  photo_urls: string[]     // 多圖
+  video_url: string        // YouTube 原始連結（前端用 ytId() 解析成 embed）
+}
+
+// 後台清單/回應用：PartnerShop 欄位（不含 is_favorited）+ 詳細欄位 + enabled（含下架）
+export type AdminPartnerShop = Omit<PartnerShop, 'is_favorited'> & {
+  detail_html: string
+  photo_urls: string[]
+  video_url: string
+  enabled: boolean
+}
+
+// 後台新增/更新送出的 body
+export interface PartnerShopWriteBody {
+  name: string
+  summary: string
+  banner_url: string
+  detail_html: string
+  photo_urls: string[]
+  video_url: string
+  cta_url: string
+  cta_label: string
+  display_order: number
+  enabled: boolean
+}
+
+// 前台（OptionalAuth：未登入也能看，登入才有 is_favorited）
+export const partnersApi = {
+  list: (token?: string) =>
+    request<{ shops: PartnerShop[] }>('/partner-shops', token ? { headers: withAuth(token) } : undefined),
+  get: (token: string | undefined, id: string) =>
+    request<{ shop: PartnerShopDetail }>(`/partner-shops/${id}`, token ? { headers: withAuth(token) } : undefined),
+  favorite: (token: string, shopId: string) =>
+    request<{ ok: boolean }>('/profile/partner-favorites', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ shop_id: shopId }) }),
+  unfavorite: (token: string, shopId: string) =>
+    request<{ ok: boolean }>(`/profile/partner-favorites/${shopId}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
+// 後台（RequireAuth + RequireAdmin + RequirePerm("partners")）
+export const adminPartnersApi = {
+  list: (token: string) =>
+    request<{ shops: AdminPartnerShop[] }>('/admin/partner-shops', { headers: withAuth(token) }),
+  create: (token: string, body: PartnerShopWriteBody) =>
+    request<{ shop: AdminPartnerShop }>('/admin/partner-shops', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, id: string, body: PartnerShopWriteBody) =>
+    request<{ shop: AdminPartnerShop }>(`/admin/partner-shops/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  remove: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/partner-shops/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
 // --- WebSocket helper ---
 
 export function createRaceSocket(raceID: string, accessToken: string): WebSocket {

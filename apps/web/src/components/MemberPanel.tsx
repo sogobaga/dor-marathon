@@ -22,6 +22,7 @@ export default function MemberPanel({
   onOpenTitle,
   onOpenAchievement,
   onOpenTraining,
+  onOpenPerks,
   onUploadAvatar,
   uploadingAvatar,
   onReady,
@@ -35,6 +36,7 @@ export default function MemberPanel({
   onOpenTitle?: () => void
   onOpenAchievement?: () => void
   onOpenTraining?: () => void
+  onOpenPerks?: () => void
   onUploadAvatar?: (file: File) => void
   uploadingAvatar?: boolean
   onReady?: () => void
@@ -186,8 +188,9 @@ export default function MemberPanel({
 
       </div>
 
-      {/* 探索入口（面板下方、後台可控可見性；首頁不顯示）：上排 城市探索|卡片圖鑑、下排 PB探索|成就探索、末排 自主訓練 */}
-      {showEntries && user && dash && (dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden' || dash.title_entry !== 'hidden' || dash.achievement_entry !== 'hidden' || dash.training_entry !== 'hidden') && (
+      {/* 探索入口（面板下方、後台可控可見性；首頁不顯示）：上排 城市探索|卡片圖鑑、下排 PB探索|成就探索、末排 自主訓練|跑者充電站
+          跑者充電站開放全體會員（非 VIP 限定），故末排恆顯示，不受 training_entry 影響 */}
+      {showEntries && user && dash && (dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden' || dash.title_entry !== 'hidden' || dash.achievement_entry !== 'hidden' || dash.training_entry !== 'hidden' || true) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
           {(dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden') && (
             <div style={{ display: 'flex', gap: 10 }}>
@@ -229,16 +232,23 @@ export default function MemberPanel({
               )}
             </div>
           )}
-          {dash.training_entry !== 'hidden' && (
-            <div style={{ display: 'flex', gap: 10 }}>
+          {/* 自主訓練（VIP 限定，後台可控可見性）與跑者充電站（全體會員開放，恆顯示）並排 */}
+          <div style={{ display: 'flex', gap: 10 }}>
+            {dash.training_entry !== 'hidden' && (
               <button disabled={dash.training_entry === 'locked'}
                 onClick={(e) => { e.stopPropagation(); if (dash.training_entry === 'shown') onOpenTraining?.() }}
                 style={{ ...entryBtn, opacity: dash.training_entry === 'shown' ? 1 : 0.6, cursor: dash.training_entry === 'shown' ? 'pointer' : 'default' }}>
                 <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏃 自主訓練</span>
                 <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.training_entry === 'locked' ? '即將開放 ›' : '打造你的專屬課表 ›'}</span>
               </button>
-            </div>
-          )}
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onOpenPerks?.() }}
+              style={entryBtn}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🔋 跑者充電站</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>優惠好康都在這 ›</span>
+            </button>
+          </div>
         </div>
       )}
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}

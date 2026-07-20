@@ -42,6 +42,7 @@ var Scopes = []Scope{
 	{"organizer", "主辦審核"},
 	{"titles", "稱號管理"},
 	{"training", "自主訓練課表"},
+	{"partners", "跑者充電站管理"},
 }
 
 func validScope(k string) bool {
@@ -364,6 +365,7 @@ var auditResourceLabel = map[string]string{
 	"orders": "訂單", "signups": "報名", "task-modules": "賽事任務", "membership": "等級設定",
 	"settings": "系統設定", "group-presets": "分組範本", "test-whitelist": "測試白名單",
 	"gps-runs": "GPS 軌跡", "images": "圖片", "organizer": "主辦", "activities": "活動",
+	"partner-shops": "跑者充電站",
 }
 var auditVerb = map[string]string{"POST": "新增", "PUT": "更新", "PATCH": "更新", "DELETE": "刪除"}
 

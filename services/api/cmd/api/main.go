@@ -32,6 +32,7 @@ import (
 	"github.com/dor/api/internal/mailer"
 	"github.com/dor/api/internal/middleware"
 	"github.com/dor/api/internal/organizer"
+	"github.com/dor/api/internal/partner"
 	"github.com/dor/api/internal/payment"
 	"github.com/dor/api/internal/personaltask"
 	"github.com/dor/api/internal/profile"
@@ -112,6 +113,11 @@ func main() {
 	orgRepo := organizer.NewRepository(pool)
 	orgSvc := organizer.NewService(orgRepo, raceSvc)
 	orgHandler := organizer.NewHandler(orgSvc)
+
+	// Partner（跑者充電站：合作商家目錄）
+	partnerRepo := partner.NewRepository(pool)
+	partnerSvc := partner.NewService(partnerRepo)
+	partnerHandler := partner.NewHandler(partnerSvc)
 
 	// Reward（轉盤 + 集點卡）
 	rewardRepo := reward.NewRepository(pool)
@@ -231,6 +237,9 @@ func main() {
 		// 賽事列表和詳情（公開，登入後附帶報名狀態）
 		r.With(middleware.OptionalAuth(authSvc)).Mount("/races", raceHandler.Router())
 
+		// 跑者充電站（合作商家目錄，公開，登入後附帶收藏狀態）
+		r.With(middleware.OptionalAuth(authSvc)).Mount("/partner-shops", partnerHandler.PublicRouter())
+
 		// 圖片取用（公開）
 		r.Mount("/images", imageHandler.PublicRouter())
 
@@ -288,6 +297,9 @@ func main() {
 			// 頭像上傳（重用圖片上傳，登入即可）
 			r.Post("/profile/avatar", imageHandler.Upload)
 
+			// 跑者充電站收藏（比照 follow）
+			r.Mount("/profile/partner-favorites", partnerHandler.FavoriteRouter())
+
 			// Web Push 訂閱（VAPID 金鑰 + subscribe/unsubscribe）
 			r.Mount("/push", pushHandler.Router())
 
@@ -339,6 +351,7 @@ func main() {
 			r.With(perm("training")).Mount("/admin/training", trainingHandler.AdminRouter())
 			r.With(perm("settings")).Get("/admin/data-source-metrics", profileHandler.AdminDataSourceMetrics)
 			r.With(perm("organizer")).Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
+			r.With(perm("partners")).Mount("/admin/partner-shops", partnerHandler.AdminRouter())
 			r.With(perm("settings")).Put("/admin/settings", profileHandler.PutSettings)
 			r.With(perm("gps_review")).Post("/admin/activities/add-mileage", actHandler.AdminAddMileage)
 			r.With(perm("gps_review")).Mount("/admin/gps-runs", actHandler.AdminRouter())
