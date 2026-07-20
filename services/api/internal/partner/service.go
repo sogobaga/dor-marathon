@@ -11,7 +11,9 @@ import (
 var (
 	ErrNameRequired = errors.New("name is required")
 	ErrInvalidURL   = errors.New("url must be http or https")
-	ErrTooLong      = errors.New("field exceeds maximum length")
+	// 圖片欄位另給一則訊息：它同時接受站內相對路徑，沿用上面那句會誤導後台使用者。
+	ErrInvalidImageURL = errors.New("image url must be a site path (/...) or http/https")
+	ErrTooLong         = errors.New("field exceeds maximum length")
 )
 
 // DB VARCHAR 上限（migrations/091_partner_shops.sql）：超過就在寫入前擋掉，
@@ -95,22 +97,40 @@ func normalizeAndValidate(req *AdminPartnerShopRequest) error {
 	if !validHTTPURL(req.VideoURL) {
 		return fmt.Errorf("video_url: %w", ErrInvalidURL)
 	}
-	if !validHTTPURL(req.BannerURL) {
-		return fmt.Errorf("banner_url: %w", ErrInvalidURL)
+	if !validImageURL(req.BannerURL) {
+		return fmt.Errorf("banner_url: %w", ErrInvalidImageURL)
 	}
 	if req.PhotoURLs == nil {
 		req.PhotoURLs = []string{}
 	}
 	for i, u := range req.PhotoURLs {
-		if !validHTTPURL(u) {
-			return fmt.Errorf("photo_urls[%d]: %w", i, ErrInvalidURL)
+		if !validImageURL(u) {
+			return fmt.Errorf("photo_urls[%d]: %w", i, ErrInvalidImageURL)
 		}
 	}
 	req.DetailHTML = SanitizeDetailHTML(req.DetailHTML)
 	return nil
 }
 
-// validHTTPURL 空字串允許；非空時須為 http/https 且有 host。
+// validImageURL 圖片欄位（banner_url／photo_urls）專用。除了 http/https 絕對網址外，**也允許站內
+// 相對路徑**——後台圖片上傳（POST /admin/images）回傳的正是 `/api/v1/images/{id}` 這種相對路徑，
+// 若比照 cta_url 只收 http/https，自家上傳的圖片會全部被擋（曾發生：banner_url: url must be http or https）。
+// 刻意排除 `//` 開頭的 protocol-relative 網址：它看似相對路徑、實際指向外部主機，會繞過「相對路徑＝
+// 站內資源」的信任前提。
+func validImageURL(raw string) bool {
+	if raw == "" {
+		return true
+	}
+	if strings.HasPrefix(raw, "//") {
+		return false
+	}
+	if strings.HasPrefix(raw, "/") {
+		return true
+	}
+	return validHTTPURL(raw)
+}
+
+// validHTTPURL 空字串允許；非空時須為 http/https 且有 host。外部連結（cta_url／video_url）用。
 func validHTTPURL(raw string) bool {
 	if raw == "" {
 		return true
