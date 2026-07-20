@@ -146,7 +146,13 @@ function ShopCard({
         )}
         {loggedIn && (
           <button onClick={onToggleFav} aria-label={isFav ? '取消收藏' : '收藏'} style={heartBtn}>
-            <span style={{ color: isFav ? 'var(--hunt)' : '#fff' }}>{isFav ? '♥' : '♡'}</span>
+            {/* 用 SVG 而非 ♥ 字符：字符的實際圖形高度只有字級約 7 成、且各平台字型渲染不一，
+                無法精準控制「愛心佔圓圈 65%」；SVG 尺寸可直接寫死 = heartBtnSize × 0.65。 */}
+            <svg viewBox="0 0 24 24" width={heartGlyphSize} height={heartGlyphSize} aria-hidden="true"
+              fill={isFav ? 'var(--hunt)' : 'none'} stroke={isFav ? 'var(--hunt)' : '#8a9099'}
+              strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+            </svg>
           </button>
         )}
       </div>
@@ -247,4 +253,8 @@ const ghostFullBtn: React.CSSProperties = { background: 'var(--bg-2)', color: 'v
 const primaryFullBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 10, padding: '10px 0', fontSize: 13.5, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }
 const filterChip: React.CSSProperties = { border: '1px solid var(--line-2)', background: 'var(--bg-2)', color: 'var(--tx-dim)', borderRadius: 999, padding: '6px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
 const filterChipActive: React.CSSProperties = { border: '1px solid var(--hunt)', background: 'var(--hunt)', color: '#fff', borderRadius: 999, padding: '6px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
-const heartBtn: React.CSSProperties = { position: 'absolute', top: 8, right: 8, width: 32, height: 32, borderRadius: 999, border: 'none', background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17, cursor: 'pointer', lineHeight: 1 }
+// 收藏愛心：白底圓鈕，圓圈大小不變（32px），愛心圖形佔圓圈 65%。白底疊在淺色 banner 上會糊掉，
+// 故補一道淡陰影做出邊界。
+const heartBtnSize = 32
+const heartGlyphSize = Math.round(heartBtnSize * 0.65) // 21px
+const heartBtn: React.CSSProperties = { position: 'absolute', top: 8, right: 8, width: heartBtnSize, height: heartBtnSize, borderRadius: 999, border: 'none', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', lineHeight: 1, padding: 0, boxShadow: '0 1px 4px rgba(0,0,0,.28)' }
