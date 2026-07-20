@@ -16,21 +16,21 @@ import (
 )
 
 var (
-	ErrRaceNotFound     = errors.New("race not found")
-	ErrAlreadyRegistered = errors.New("already registered for this race")
-	ErrRegistrationClosed = errors.New("registration is not open")
-	ErrSoldOut          = errors.New("race is sold out")
-	ErrInvalidDistance  = errors.New("invalid distance for this race")
+	ErrRaceNotFound         = errors.New("race not found")
+	ErrAlreadyRegistered    = errors.New("already registered for this race")
+	ErrRegistrationClosed   = errors.New("registration is not open")
+	ErrSoldOut              = errors.New("race is sold out")
+	ErrInvalidDistance      = errors.New("invalid distance for this race")
 	ErrRaceHasRegistrations = errors.New("race has registrations and cannot be deleted")
-	ErrGroupNotFound       = errors.New("group not found in this race")
-	ErrGroupFull           = errors.New("group is full")
-	ErrGroupRequired       = errors.New("group selection is required")
+	ErrGroupNotFound        = errors.New("group not found in this race")
+	ErrGroupFull            = errors.New("group is full")
+	ErrGroupRequired        = errors.New("group selection is required")
 	ErrMissingRequiredField = errors.New("missing required participant field")
-	ErrGroupRestriction    = errors.New("participant does not meet group restriction")
-	ErrNoGroups            = errors.New("race has no groups")
-	ErrAddonNotFound       = errors.New("addon not found")
-	ErrAddonLimit          = errors.New("addon quantity exceeds per-user limit")
-	ErrAddonSoldOut        = errors.New("addon sold out")
+	ErrGroupRestriction     = errors.New("participant does not meet group restriction")
+	ErrNoGroups             = errors.New("race has no groups")
+	ErrAddonNotFound        = errors.New("addon not found")
+	ErrAddonLimit           = errors.New("addon quantity exceeds per-user limit")
+	ErrAddonSoldOut         = errors.New("addon sold out")
 	ErrOrderNotFound        = errors.New("order not found")
 	ErrRegistrationNotFound = errors.New("registration not found")
 	ErrCheckinNotFound      = errors.New("checkin not found or already reviewed")
@@ -44,6 +44,12 @@ var (
 	ErrVIPOnly              = errors.New("此賽事僅限 VIP 會員報名")
 	ErrNoCoupon             = errors.New("沒有可用的活動優惠券")
 	ErrCouponPromoConflict  = errors.New("優惠券與優惠序號不可同時使用")
+	// ErrOrderNotPending 訂單存在，但目前狀態不是 pending 也不是已付款(paid)——例如 refunded/cancelled。
+	// 用於區分「已付款的冪等重複通知」（安靜成功）與「錢已收到但訂單處於異常狀態，需要人工核對」（要告警）。
+	ErrOrderNotPending = errors.New("order exists but is not pending")
+	// ErrRegistrationNotPending 報名存在，但目前狀態不是 pending，不可再標記為已付款
+	// （避免已取消/已退款的報名被後台「標記已付」按鈕復活）。
+	ErrRegistrationNotPending = errors.New("registration exists but is not pending")
 )
 
 type Service struct {
@@ -301,10 +307,11 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		return nil, ErrRegistrationClosed
 	}
 
-	// 重複報名先擋（交易內 UNIQUE 仍是最終保證）
+	// 重複報名先擋（交易內的 partial unique index WHERE status<>'cancelled' 仍是最終保證）。
+	// 已取消（含退款後取消）的舊報名不算數，允許重新報名同一賽事（見 migration 093）。
 	if existing, err := s.repo.GetRegistration(ctx, req.UserID, req.RaceID); err != nil {
 		return nil, err
-	} else if existing != nil {
+	} else if existing != nil && existing.Status != "cancelled" {
 		return nil, ErrAlreadyRegistered
 	}
 
@@ -1074,6 +1081,11 @@ func (s *Service) GetOrderDetail(ctx context.Context, orderID string) (*OrderDet
 
 func (s *Service) MarkOrderPaid(ctx context.Context, orderID, paymentRef string) error {
 	return s.repo.MarkOrderPaid(ctx, orderID, paymentRef)
+}
+
+// MarkOrderRefunded 標記訂單已退款（供 payment.OrderMarker 介面使用）
+func (s *Service) MarkOrderRefunded(ctx context.Context, orderID string) error {
+	return s.repo.MarkOrderRefunded(ctx, orderID)
 }
 
 func (s *Service) MarkRegistrationPaid(ctx context.Context, regID string) error {

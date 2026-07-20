@@ -1920,6 +1920,21 @@ export interface OrderDetail extends OrderRow {
   items: OrderItemRow[]
 }
 
+export interface RefundRow {
+  id: string
+  transaction_id: string
+  order_id: string
+  amount_cents: number
+  status: string // pending|success|failed|manual_required|manual_done
+  method: string // api|manual
+  reason?: string
+  operator_admin_id?: string
+  ecpay_rtn_code?: string
+  ecpay_rtn_msg?: string
+  created_at: string
+  updated_at: string
+}
+
 export const adminSignupsApi = {
   list: (token: string, params: { race_id: string; q?: string }) => {
     const qs = new URLSearchParams({ race_id: params.race_id })
@@ -1976,6 +1991,24 @@ export const adminOrdersApi = {
       method: 'PATCH',
       headers: withAuth(token),
       body: JSON.stringify({ payment_ref: payment_ref ?? '' }),
+    }),
+}
+
+export const adminPaymentsApi = {
+  listRefunds: (token: string, orderID: string) =>
+    request<{ refunds: RefundRow[]; count: number }>(`/admin/payments/refunds?order_id=${encodeURIComponent(orderID)}`, {
+      headers: withAuth(token),
+    }),
+  createRefund: (token: string, params: { order_id: string; amount_cents?: number; reason: string }) =>
+    request<{ refund_id: string; status: string; method?: string; note?: string; message?: string }>(`/admin/payments/refunds`, {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify(params),
+    }),
+  markRefundManualDone: (token: string, refundID: string) =>
+    request<void>(`/admin/payments/refunds/${refundID}/manual-done`, {
+      method: 'PATCH',
+      headers: withAuth(token),
     }),
 }
 

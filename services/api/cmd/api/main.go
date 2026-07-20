@@ -92,15 +92,36 @@ func main() {
 	raceSvc := race.NewService(raceRepo, rdb, promoSvc)
 	raceHandler := race.NewHandler(raceSvc, wsManager)
 
-	// Payment（綠界 ECPay）
-	payCfg := &payment.Config{
-		MerchantID:    cfg.ECPayMerchantID,
-		HashKey:       cfg.ECPayHashKey,
-		HashIV:        cfg.ECPayHashIV,
-		Env:           cfg.ECPayEnv,
+	// Payment（綠界 ECPay）—— 正式／測試雙特店，依請求來源網域故障安全切換（見 payment.MultiConfig）
+	// 啟動檢查：宣告要跑正式環境（ECPAY_ENV=prod）卻沒有配齊正式特店憑證，寧可直接拒絕啟動，
+	// 也不要讓服務帶著空字串 MerchantID/HashKey/HashIV 悄悄跑起來（那樣所有正式結帳都會失敗，
+	// 或更糟——萬一日後有人把測試金鑰誤填進 PROD_* 變數，此檢查至少能擋下「完全空白」的最壞情況）。
+	if cfg.ECPayEnv == "prod" && (cfg.ECPayProdMerchantID == "" || cfg.ECPayProdHashKey == "" || cfg.ECPayProdHashIV == "") {
+		log.Fatal().Msg("ECPAY_ENV=prod 但 ECPAY_PROD_MERCHANT_ID/HASH_KEY/HASH_IV 未配置完整，拒絕啟動")
+	}
+	ecpayStageCfg := &payment.Config{
+		MerchantID:    cfg.ECPayStageMerchantID,
+		HashKey:       cfg.ECPayStageHashKey,
+		HashIV:        cfg.ECPayStageHashIV,
+		Env:           "stage",
 		ReturnURL:     cfg.ECPayReturnURL,
 		ClientBackURL: cfg.ECPayClientBackURL,
 		AllowedBacks:  cfg.CORSOrigins, // 付款返回網址白名單＝允許的前台來源（含 www.dor.tw / dor.hero-mi.com）
+	}
+	ecpayProdCfg := &payment.Config{
+		MerchantID:    cfg.ECPayProdMerchantID,
+		HashKey:       cfg.ECPayProdHashKey,
+		HashIV:        cfg.ECPayProdHashIV,
+		Env:           "prod",
+		ReturnURL:     cfg.ECPayReturnURL,
+		ClientBackURL: cfg.ECPayClientBackURL,
+		AllowedBacks:  cfg.CORSOrigins,
+	}
+	payCfg := &payment.MultiConfig{
+		Prod:      ecpayProdCfg,
+		Stage:     ecpayStageCfg,
+		GlobalEnv: cfg.ECPayEnv,
+		ProdHosts: cfg.ECPayProdHosts,
 	}
 	paymentHandler := payment.NewHandler(payCfg, payment.NewRepository(pool), raceSvc)
 
@@ -342,6 +363,7 @@ func main() {
 			r.Mount("/admin/images", imageHandler.AdminRouter()) // 共用工具，任何 admin 可上傳
 			r.With(perm("signups")).Mount("/admin/signups", raceHandler.SignupRouter())
 			r.With(perm("orders")).Mount("/admin/orders", raceHandler.OrderRouter())
+			r.With(perm("orders")).Mount("/admin/payments", paymentHandler.AdminRouter()) // 退款（沿用 orders 權限）
 			r.With(perm("promo")).Mount("/admin/promo-codes", promoHandler.Router())
 			r.With(perm("members")).Mount("/admin/members", profileHandler.AdminMembersRouter())
 			r.With(perm("members")).Get("/admin/vip-analytics", profileHandler.AdminVipAnalytics)

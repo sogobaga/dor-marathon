@@ -131,7 +131,7 @@ export default function AdminSignupsPage() {
                 <C w={1}><span style={{ color: st.c }}>{st.t}</span></C>
                 <C w={1}>{s.order_id ? `${ntd(s.order_total_cents)}` : '—'}</C>
                 <C w={1}>
-                  {s.status !== 'paid'
+                  {s.status === 'pending'
                     ? <button onClick={() => markPaid(s)} style={payBtn}>標記已付</button>
                     : <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>—</span>}
                 </C>

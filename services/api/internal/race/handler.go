@@ -184,6 +184,10 @@ func (h *Handler) AdminMarkRegistrationPaid(w http.ResponseWriter, r *http.Reque
 		respondErr(w, http.StatusNotFound, "registration not found")
 		return
 	}
+	if errors.Is(err, ErrRegistrationNotPending) {
+		respondErr(w, http.StatusConflict, "此報名目前非「待付款」狀態，無法標記已付（可能已付款/已取消/已退款）")
+		return
+	}
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to mark paid")
 		return

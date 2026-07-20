@@ -1020,11 +1020,13 @@ func (r *Repository) GetUserRegistrations(ctx context.Context, userID string) (m
 	return m, rows.Err()
 }
 
-// GetUserGroupID 取得使用者在某賽事報名的分組 id（無報名或未分組回空字串）
+// GetUserGroupID 取得使用者在某賽事「未取消」報名的分組 id（無報名/未分組/報名已取消回空字串）。
+// 退款/取消後可重新報名同一賽事（migration 093），同一組 (user_id, race_id) 可能有多筆歷史紀錄，
+// 排除 cancelled 避免抓到舊的、已作廢的分組。
 func (r *Repository) GetUserGroupID(ctx context.Context, userID, raceID string) (string, error) {
 	var gid *string
 	err := r.db.QueryRow(ctx,
-		`SELECT group_id::text FROM registrations WHERE user_id=$1 AND race_id=$2`,
+		`SELECT group_id::text FROM registrations WHERE user_id=$1 AND race_id=$2 AND status <> 'cancelled'`,
 		userID, raceID).Scan(&gid)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
@@ -1168,7 +1170,9 @@ func (r *Repository) Delete(ctx context.Context, raceID string) error {
 
 // --- Registration ---
 
-// GetRegistration 查詢使用者在某賽事的報名
+// GetRegistration 查詢使用者在某賽事的報名。退款/取消後玩家可重新報名同一賽事（見 migration 093），
+// 因此同一組 (user_id, race_id) 理論上可能存在多筆歷史紀錄（至多一筆非 cancelled）；一律優先回傳
+// 「未取消」的那筆，沒有的話才回傳最近一筆已取消的（供顯示歷史狀態用）。
 func (r *Repository) GetRegistration(ctx context.Context, userID, raceID string) (*Registration, error) {
 	reg := &Registration{}
 	err := r.db.QueryRow(ctx, `
@@ -1178,6 +1182,8 @@ func (r *Repository) GetRegistration(ctx context.Context, userID, raceID string)
 		FROM registrations reg
 		LEFT JOIN race_groups g ON g.id = reg.group_id
 		WHERE reg.user_id=$1 AND reg.race_id=$2
+		ORDER BY (reg.status <> 'cancelled') DESC, reg.created_at DESC
+		LIMIT 1
 	`, userID, raceID).Scan(
 		&reg.ID, &reg.UserID, &reg.RaceID, &reg.Distance, &reg.Faction,
 		&reg.GroupID, &reg.GroupRevealed,
@@ -1658,7 +1664,12 @@ func (r *Repository) GetOrderDetail(ctx context.Context, orderID string) (*Order
 	return detail, rows.Err()
 }
 
-// MarkOrderPaid 標記訂單已付，並連動其對應 registration（交易）
+// MarkOrderPaid 標記訂單已付，並連動其對應 registration（交易）。
+// 原子 CAS（WHERE status='pending'）：只有訂單目前確實是 pending 才會被改成 paid，杜絕併發/重放重複入帳，
+// 也避免已退款(refunded)或已取消(cancelled)的訂單被晚到的付款通知誤覆寫回 paid。
+// 訂單不存在 → ErrOrderNotFound；訂單已是 paid（重送/重放的冪等重複通知）→ 安靜回傳成功；
+// 訂單存在但是其他非 pending 狀態（refunded/cancelled）→ 回傳 ErrOrderNotPending，代表「錢已收到但無法入帳」，
+// 呼叫端（Notify handler）應該把這個情況記成告警，而不是當作成功悄悄吞掉。
 func (r *Repository) MarkOrderPaid(ctx context.Context, orderID, paymentRef string) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -1669,22 +1680,90 @@ func (r *Repository) MarkOrderPaid(ctx context.Context, orderID, paymentRef stri
 	var regID *string
 	err = tx.QueryRow(ctx, `
 		UPDATE orders SET status='paid', paid_at=NOW(), payment_ref=NULLIF($2,'')
-		WHERE id=$1 RETURNING registration_id`, orderID, paymentRef).Scan(&regID)
+		WHERE id=$1 AND status='pending'
+		RETURNING registration_id`, orderID, paymentRef).Scan(&regID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrOrderNotFound
+		var curStatus string
+		checkErr := tx.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, orderID).Scan(&curStatus)
+		if errors.Is(checkErr, pgx.ErrNoRows) {
+			return ErrOrderNotFound
+		}
+		if checkErr != nil {
+			return fmt.Errorf("check order status: %w", checkErr)
+		}
+		if curStatus == "paid" {
+			return tx.Commit(ctx) // 冪等：已經是 paid（重送/重放的重複通知），安靜成功
+		}
+		// 訂單存在但處於 refunded/cancelled 等非 pending 狀態：不覆寫，但要讓呼叫端知道這不是單純的冪等成功。
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			return commitErr
+		}
+		return fmt.Errorf("%w: order %s status=%s", ErrOrderNotPending, orderID, curStatus)
 	}
 	if err != nil {
 		return fmt.Errorf("mark order paid: %w", err)
 	}
 	if regID != nil {
-		if _, err = tx.Exec(ctx, `UPDATE registrations SET status='paid', paid_at=NOW() WHERE id=$1`, *regID); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE registrations SET status='paid', paid_at=NOW() WHERE id=$1 AND status='pending'`, *regID); err != nil {
 			return fmt.Errorf("mark reg paid: %w", err)
 		}
 	}
 	return tx.Commit(ctx)
 }
 
-// MarkRegistrationPaid 標記報名已付，並連動其對應 order（交易）
+// MarkOrderRefunded 標記訂單已退款，並連動取消其對應 registration + 釋放分組名額
+// （反向於 MarkOrderPaid：比照付款成功時的連動邏輯反向處理）。
+// 原子 CAS（WHERE status='paid'）：只有訂單目前確實是 paid 才會被改成 refunded，同一筆訂單重複呼叫是冪等的。
+func (r *Repository) MarkOrderRefunded(ctx context.Context, orderID string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var regID *string
+	err = tx.QueryRow(ctx, `
+		UPDATE orders SET status='refunded'
+		WHERE id=$1 AND status='paid'
+		RETURNING registration_id`, orderID).Scan(&regID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var exists bool
+		checkErr := tx.QueryRow(ctx, `SELECT true FROM orders WHERE id=$1`, orderID).Scan(&exists)
+		if errors.Is(checkErr, pgx.ErrNoRows) {
+			return ErrOrderNotFound
+		}
+		if checkErr != nil {
+			return fmt.Errorf("check order exists: %w", checkErr)
+		}
+		return tx.Commit(ctx) // 冪等：訂單存在但非 paid（已是 refunded 或本來就不是付款狀態），不覆寫
+	}
+	if err != nil {
+		return fmt.Errorf("mark order refunded: %w", err)
+	}
+	if regID != nil {
+		var groupID string
+		err = tx.QueryRow(ctx, `
+			UPDATE registrations SET status='cancelled'
+			WHERE id=$1 AND status='paid'
+			RETURNING COALESCE(group_id::text,'')`, *regID).Scan(&groupID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("cancel registration: %w", err)
+		}
+		if groupID != "" {
+			if _, err = tx.Exec(ctx, `UPDATE race_groups SET slots_taken = GREATEST(slots_taken-1,0) WHERE id=$1`, groupID); err != nil {
+				return fmt.Errorf("release group slot: %w", err)
+			}
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// MarkRegistrationPaid 標記報名已付（後台「標記已付」手動操作，用於 ATM/超商等未走 API 通知的付款方式），
+// 並連動其對應 order（交易）。
+// 原子 CAS：報名與訂單都只在目前確實是 pending 時才會被改成 paid——避免已取消(cancelled，例如已退款)
+// 的報名/訂單被這個手動按鈕「復活」成 paid（復活不會補回已釋放的分組名額，等於免費超賣一個名額，
+// 且原本已退的錢也不會被追回）。
+// 報名不存在 → ErrRegistrationNotFound；報名存在但非 pending → ErrRegistrationNotPending。
 func (r *Repository) MarkRegistrationPaid(ctx context.Context, regID string) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -1692,14 +1771,25 @@ func (r *Repository) MarkRegistrationPaid(ctx context.Context, regID string) err
 	}
 	defer tx.Rollback(ctx)
 
-	ct, err := tx.Exec(ctx, `UPDATE registrations SET status='paid', paid_at=NOW() WHERE id=$1`, regID)
+	var curStatus string
+	err = tx.QueryRow(ctx, `
+		UPDATE registrations SET status='paid', paid_at=NOW()
+		WHERE id=$1 AND status='pending'
+		RETURNING status`, regID).Scan(&curStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		checkErr := tx.QueryRow(ctx, `SELECT status FROM registrations WHERE id=$1`, regID).Scan(&curStatus)
+		if errors.Is(checkErr, pgx.ErrNoRows) {
+			return ErrRegistrationNotFound
+		}
+		if checkErr != nil {
+			return fmt.Errorf("check registration status: %w", checkErr)
+		}
+		return fmt.Errorf("%w: registration %s status=%s", ErrRegistrationNotPending, regID, curStatus)
+	}
 	if err != nil {
 		return fmt.Errorf("mark reg paid: %w", err)
 	}
-	if ct.RowsAffected() == 0 {
-		return ErrRegistrationNotFound
-	}
-	if _, err = tx.Exec(ctx, `UPDATE orders SET status='paid', paid_at=NOW() WHERE registration_id=$1 AND status<>'paid'`, regID); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE orders SET status='paid', paid_at=NOW() WHERE registration_id=$1 AND status='pending'`, regID); err != nil {
 		return fmt.Errorf("mark order paid: %w", err)
 	}
 	return tx.Commit(ctx)
@@ -1727,11 +1817,11 @@ func (r *Repository) GetUserHandles(ctx context.Context, userIDs []string) (map[
 	return result, rows.Err()
 }
 
-// GetFactionByUser 查詢使用者在某賽事的陣營
+// GetFactionByUser 查詢使用者在某賽事「未取消」報名的陣營（同上，排除 cancelled 避免抓到舊紀錄）
 func (r *Repository) GetFactionByUser(ctx context.Context, userID, raceID string) (string, error) {
 	var faction string
 	err := r.db.QueryRow(ctx, `
-		SELECT COALESCE(faction,'') FROM registrations WHERE user_id=$1 AND race_id=$2
+		SELECT COALESCE(faction,'') FROM registrations WHERE user_id=$1 AND race_id=$2 AND status <> 'cancelled'
 	`, userID, raceID).Scan(&faction)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil

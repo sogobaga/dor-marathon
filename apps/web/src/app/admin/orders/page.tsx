@@ -2,8 +2,16 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminRacesApi, adminOrdersApi, type Race, type OrderRow, type OrderDetail } from '@/lib/api'
+import { adminRacesApi, adminOrdersApi, adminPaymentsApi, type Race, type OrderRow, type OrderDetail, type RefundRow } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
+
+const REFUND_STATUS_LABEL: Record<string, { t: string; c: string }> = {
+  pending: { t: '處理中', c: 'var(--gold)' },
+  success: { t: '已退款（API）', c: 'var(--fug)' },
+  failed: { t: '失敗', c: 'var(--hunt)' },
+  manual_required: { t: '待人工處理', c: 'var(--gold)' },
+  manual_done: { t: '已人工退款', c: 'var(--fug)' },
+}
 
 const STATUS_LABEL: Record<string, { t: string; c: string }> = {
   paid: { t: '已付款', c: 'var(--fug)' },
@@ -26,6 +34,8 @@ export default function AdminOrdersPage() {
   const [err, setErr] = useState('')
   const [token, setTok] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Record<string, OrderDetail | null>>({})
+  const [refunds, setRefunds] = useState<Record<string, RefundRow[]>>({})
+  const [busy, setBusy] = useState<string>('') // 進行中的 orderID/refundID，避免重複點擊
 
   useEffect(() => {
     const t = getToken()
@@ -56,8 +66,17 @@ export default function AdminOrdersPage() {
     try {
       const { order } = await adminOrdersApi.get(token, o.id)
       setExpanded((e) => ({ ...e, [o.id]: order }))
+      loadRefunds(o.id)
     } catch (e: any) { setErr(e?.message || '載入明細失敗') }
   }
+
+  const loadRefunds = useCallback((orderID: string) => {
+    const t = getToken()
+    if (!t) return
+    adminPaymentsApi.listRefunds(t, orderID)
+      .then((r) => setRefunds((rs) => ({ ...rs, [orderID]: r.refunds })))
+      .catch(() => {})
+  }, [])
 
   async function markPaid(o: OrderRow) {
     if (!token) return
@@ -67,6 +86,58 @@ export default function AdminOrdersPage() {
       await adminOrdersApi.markPaid(token, o.id, ref || undefined)
       setRows((rs) => rs?.map((x) => x.id === o.id ? { ...x, status: 'paid', payment_ref: ref || x.payment_ref } : x) ?? rs)
     } catch (e: any) { setErr(e?.message || '操作失敗') }
+  }
+
+  async function refundOrder(o: OrderRow) {
+    if (!token || busy) return
+    const amountStr = window.prompt(
+      `退款金額（新台幣整數，NT$ ${Math.round(o.total_cents / 100).toLocaleString('zh-TW')} 為訂單總額）。\n留空＝退還剩餘可退全額：`,
+      ''
+    )
+    if (amountStr === null) return
+    const reason = window.prompt('退款原因（必填）：', '')
+    if (reason === null) return
+    if (!reason.trim()) { setErr('退款原因為必填'); return }
+    let amountCents: number | undefined
+    if (amountStr.trim()) {
+      const n = Number(amountStr.trim())
+      if (!Number.isFinite(n) || n <= 0) { setErr('退款金額格式錯誤'); return }
+      amountCents = Math.round(n * 100)
+    }
+    if (!window.confirm(`確定要對此訂單退款嗎？\n金額：${amountCents ? 'NT$ ' + Math.round(amountCents / 100).toLocaleString('zh-TW') : '剩餘可退全額'}\n原因：${reason}`)) return
+
+    setBusy(o.id)
+    try {
+      const res = await adminPaymentsApi.createRefund(token, { order_id: o.id, amount_cents: amountCents, reason: reason.trim() })
+      if (res.status === 'manual_required') {
+        window.alert(`已建立人工退款紀錄，請完成銀行匯款後回來標記「已完成」。\n${res.note || ''}`)
+      }
+      const { order } = await adminOrdersApi.get(token, o.id)
+      setExpanded((e) => ({ ...e, [o.id]: order }))
+      setRows((rs) => rs?.map((x) => x.id === o.id ? { ...x, status: order.status } : x) ?? rs)
+      loadRefunds(o.id)
+    } catch (e: any) {
+      setErr(e?.message || '退款操作失敗')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function manualDone(orderID: string, refundID: string) {
+    if (!token || busy) return
+    if (!window.confirm('確認已完成人工匯款，標記此筆退款為「已完成」？')) return
+    setBusy(refundID)
+    try {
+      await adminPaymentsApi.markRefundManualDone(token, refundID)
+      const { order } = await adminOrdersApi.get(token, orderID)
+      setExpanded((e) => ({ ...e, [orderID]: order }))
+      setRows((rs) => rs?.map((x) => x.id === orderID ? { ...x, status: order.status } : x) ?? rs)
+      loadRefunds(orderID)
+    } catch (e: any) {
+      setErr(e?.message || '操作失敗')
+    } finally {
+      setBusy('')
+    }
   }
 
   return (
@@ -110,9 +181,11 @@ export default function AdminOrdersPage() {
                   <C w={1}>{ntd(o.total_cents)}</C>
                   <C w={1}><span style={{ color: st.c }}>{st.t}</span></C>
                   <C w={1}>
-                    {o.status !== 'paid'
+                    {o.status === 'pending'
                       ? <button onClick={() => markPaid(o)} style={payBtn}>標記已付</button>
-                      : <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{o.payment_ref || '—'}</span>}
+                      : o.status === 'paid'
+                        ? <button onClick={() => refundOrder(o)} disabled={busy === o.id} style={refundBtn}>{busy === o.id ? '處理中…' : '退款'}</button>
+                        : <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{o.payment_ref || '—'}</span>}
                   </C>
                 </Row>
                 {det && (
@@ -124,6 +197,29 @@ export default function AdminOrdersPage() {
                       </div>
                     ))}
                     {det.paid_at && <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>付款時間：{new Date(det.paid_at).toLocaleString('zh-TW')}{det.payment_ref ? ` · 金流號 ${det.payment_ref}` : ''}</div>}
+                    {(refunds[o.id]?.length ?? 0) > 0 && (
+                      <div style={{ marginTop: 10, borderTop: '1px solid var(--line)', paddingTop: 8 }}>
+                        <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 4, letterSpacing: '.05em', textTransform: 'uppercase' }}>退款紀錄</div>
+                        {refunds[o.id]!.map((rf) => {
+                          const rst = REFUND_STATUS_LABEL[rf.status] ?? { t: rf.status, c: 'var(--tx-dim)' }
+                          return (
+                            <div key={rf.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, fontSize: 12, color: 'var(--tx-dim)', padding: '4px 0' }}>
+                              <span>
+                                {ntd(rf.amount_cents)} · {rf.method === 'api' ? '信用卡 API' : '人工'} ·{' '}
+                                <span style={{ color: rst.c }}>{rst.t}</span>
+                                {rf.reason ? ` · ${rf.reason}` : ''}
+                                {rf.ecpay_rtn_msg ? ` · ${rf.ecpay_rtn_msg}` : ''}
+                              </span>
+                              {rf.status === 'manual_required' && (
+                                <button onClick={() => manualDone(o.id, rf.id)} disabled={busy === rf.id} style={smallBtn}>
+                                  {busy === rf.id ? '處理中…' : '標記已完成'}
+                                </button>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -156,6 +252,14 @@ const inp: React.CSSProperties = {
 const payBtn: React.CSSProperties = {
   background: 'var(--gold)', color: '#fff', fontWeight: 700, border: 'none',
   borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+}
+const refundBtn: React.CSSProperties = {
+  background: 'var(--hunt)', color: '#fff', fontWeight: 700, border: 'none',
+  borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+}
+const smallBtn: React.CSSProperties = {
+  background: 'var(--bg-2)', color: 'var(--tx)', fontWeight: 600, border: '1px solid var(--line-2)',
+  borderRadius: 6, padding: '3px 8px', cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap',
 }
 const linkBtn: React.CSSProperties = {
   background: 'none', border: 'none', color: 'var(--tx)', cursor: 'pointer', fontSize: 14, fontWeight: 600, padding: 0,
