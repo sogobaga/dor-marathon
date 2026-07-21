@@ -297,12 +297,14 @@ func (h *Handler) AdminRouter() http.Handler {
 	return r
 }
 
-// EnvCheckSeen 診斷端點看到的原始請求資訊，供除錯反向代理／Next.js rewrites 有沒有把
-// X-Forwarded-Host 帶到 API。
-type EnvCheckSeen struct {
-	Host           string `json:"host"`             // r.Host 原值
-	XForwardedHost string `json:"x_forwarded_host"` // X-Forwarded-Host header 原值（可能為空）
-	ResolvedHost   string `json:"resolved_host"`    // requestHost(r) 的結果——Checkout 實際餵給 ResolveByHost 的值
+// EnvCheckLegacyHostHeaders 舊版 host-based 解析看到的原始請求 header，僅供除錯／確認反向代理
+// （Railway／Next.js rewrites）有沒有把 X-Forwarded-Host 帶到 API 參考用。這兩個值已【不再】用於
+// 決定要用哪組特店——前台是 Next.js 伺服器端代理，瀏覽器打 www.dor.tw 之後，Next.js 伺服器再對 API
+// 發一個新請求，這兩個 header 在代理這一跳都會被換成 API 自己的 Railway 網域，反映不出瀏覽器實際來源
+// （已用本端點證實）。現改用 ResolveByOrigin，見 EnvCheckResponse.ReceivedOrigin/ResolveOK。
+type EnvCheckLegacyHostHeaders struct {
+	Host           string `json:"host"`             // r.Host 原值（不用於解析特店）
+	XForwardedHost string `json:"x_forwarded_host"` // X-Forwarded-Host header 原值（不用於解析特店，可能為空）
 }
 
 // EnvCheckCredentialsConfigured 正式特店三寶是否已設定。刻意只回布林，絕不回傳值本身
@@ -316,41 +318,45 @@ type EnvCheckCredentialsConfigured struct {
 // EnvCheckResponse GET /api/v1/admin/payments/env-check 回應。
 type EnvCheckResponse struct {
 	GlobalEcpayEnv            string                        `json:"global_ecpay_env"`
-	ProdHosts                 []string                      `json:"prod_hosts"`
-	Seen                      EnvCheckSeen                  `json:"seen"`
-	ResolvedEnv               string                        `json:"resolved_env"`
+	ProdOrigins               []string                      `json:"prod_origins"`        // 設定值：ECPAY_PROD_ORIGINS
+	ReceivedOrigin            string                        `json:"received_origin"`     // 呼叫時帶的 ?origin= 查詢參數原值
+	ResolveOK                 bool                          `json:"resolve_ok"`          // ResolveByOrigin 的 ok；false＝這個 origin 結帳會被 Checkout 擋下（fail closed）
+	LegacyHostHeaders         EnvCheckLegacyHostHeaders     `json:"legacy_host_headers"` // 除錯參考，不用於決定特店（見上方型別註解）
+	ResolvedEnv               string                        `json:"resolved_env"`        // ResolveOK=false 時為空字串
 	ResolvedMerchantID        string                        `json:"resolved_merchant_id"`
 	ResolvedActionURL         string                        `json:"resolved_action_url"`
 	WouldChargeRealMoney      bool                          `json:"would_charge_real_money"`
 	ProdCredentialsConfigured EnvCheckCredentialsConfigured `json:"prod_credentials_configured"`
 }
 
-// AdminEnvCheck GET /api/v1/admin/payments/env-check
-// 讓管理員在真的刷卡之前，確認「從這個網域打過來，Checkout 會解析成哪一組特店」。
-// 刻意呼叫與 Checkout（見 payment.go Handler.Checkout）完全相同的
-// h.multi.ResolveByHost(requestHost(r)) 這段邏輯，不自行複製一份判斷——避免診斷結果與實際
-// 結帳行為漂移，讓這個端點失去意義。
+// AdminEnvCheck GET /api/v1/admin/payments/env-check?origin=https://www.dor.tw
+// 讓管理員在真的刷卡之前，確認「從這個 origin 結帳，Checkout 會解析成哪一組特店、會不會被擋下」。
+// 刻意呼叫與 Checkout（見 payment.go Handler.Checkout）完全相同的 h.multi.ResolveByOrigin(origin)，
+// 不自行複製一份判斷——避免診斷結果與實際結帳行為漂移，讓這個端點失去意義。
 //
 // 安全：絕不在回應中輸出 HashKey/HashIV 的值（連遮罩片段也不要），正式三寶是否已設定只回布林。
 // MerchantID 本身會出現在送綠界的結帳表單中、非機密，可直接顯示。
 func (h *Handler) AdminEnvCheck(w http.ResponseWriter, r *http.Request) {
-	resolvedHost := requestHost(r)
-	env, cfg := h.multi.ResolveByHost(resolvedHost)
+	origin := r.URL.Query().Get("origin")
+	env, cfg, ok := h.multi.ResolveByOrigin(origin)
 
 	resp := EnvCheckResponse{
 		GlobalEcpayEnv: h.multi.GlobalEnv,
-		ProdHosts:      h.multi.ProdHosts,
-		Seen: EnvCheckSeen{
+		ProdOrigins:    h.multi.ProdOrigins,
+		ReceivedOrigin: origin,
+		ResolveOK:      ok,
+		LegacyHostHeaders: EnvCheckLegacyHostHeaders{
 			Host:           r.Host,
 			XForwardedHost: r.Header.Get("X-Forwarded-Host"),
-			ResolvedHost:   resolvedHost,
 		},
-		ResolvedEnv:          env,
-		WouldChargeRealMoney: env == "prod",
 	}
-	if cfg != nil {
-		resp.ResolvedMerchantID = cfg.MerchantID
-		resp.ResolvedActionURL = cfg.ActionURL()
+	if ok {
+		resp.ResolvedEnv = env
+		resp.WouldChargeRealMoney = env == "prod"
+		if cfg != nil {
+			resp.ResolvedMerchantID = cfg.MerchantID
+			resp.ResolvedActionURL = cfg.ActionURL()
+		}
 	}
 	if h.multi.Prod != nil {
 		resp.ProdCredentialsConfigured = EnvCheckCredentialsConfigured{

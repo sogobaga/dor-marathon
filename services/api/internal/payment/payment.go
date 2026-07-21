@@ -147,37 +147,73 @@ func (c *Config) VerifyCallback(params map[string]string) bool {
 	return strings.EqualFold(got, c.CheckMacValue(params))
 }
 
-// MultiConfig 依請求來源網域在正式／測試特店間切換。
+// MultiConfig 依「結帳來源 origin」在正式／測試特店間切換。
+//
+// 為什麼不能用 HTTP Host／X-Forwarded-Host：前台是 Next.js 伺服器端代理，瀏覽器打 www.dor.tw 之後，
+// 是 Next.js 伺服器再對 API 服務發一個「新的」請求，這兩個 header 在代理這一跳都會被換成 API 自己的
+// Railway 網域（dor-marathon-production.up.railway.app），原始瀏覽器網域在代理這一跳就遺失了——
+// 用 host-based 解析在正式站永遠解析不到 www.dor.tw（已用線上診斷端點證實）。改用前端結帳時
+// request body 帶來的 client_back_url（window.location.origin）：這個值不經過代理，就是瀏覽器
+// 真實網域；即便前端可偽造，偽造也無利可圖——偽造成 stage 會讓自己的訂單卡在 Notify 入帳守門
+// （GlobalEnv=prod 但 tx.EcpayEnv!=prod 一律拒絕入帳）不入帳，偽造成 prod 就是去刷真的特店，
+// 本來就該如此。
 //
 // 故障安全設計：UAT(dor.hero-mi.com) 與正式(www.dor.tw) 目前共用同一後端 process、同一組全域設定，
-// 只有「全域 ECPayEnv=prod」且「來源網域明確列在 ProdHosts」同時成立，才會使用正式特店；
-// 其他任何情況（UAT、localhost、未知網域、ECPayEnv≠prod）一律回退測試特店——寧可誤用測試也不可誤刷真錢。
+// 只有「全域 ECPayEnv=prod」且「origin 明確列在 ProdOrigins」同時成立，才會使用正式特店；
+// origin 不在正式清單但在既有返回網址白名單內（UAT 等已知網域）一律回退測試特店；
+// origin 為空或不在任何白名單內，一律 fail closed（ok=false，呼叫端必須直接回錯誤，不可靜默
+// 選一組特店——靜默用 stage 會讓使用者在測試環境「付款」卻永遠不入帳，比直接擋下更糟）。
 type MultiConfig struct {
-	Prod      *Config
-	Stage     *Config
-	GlobalEnv string   // 全域 ECPAY_ENV（config.Config.ECPayEnv）
-	ProdHosts []string // 允許使用正式特店的網域（已切好，比對忽略大小寫與 port）
+	Prod        *Config
+	Stage       *Config
+	GlobalEnv   string   // 全域 ECPAY_ENV（config.Config.ECPayEnv）
+	ProdOrigins []string // 允許使用正式特店的完整 origin（scheme+host，比對忽略大小寫與結尾斜線）
 }
 
-// ResolveByHost 依請求來源網域決定這筆交易要用哪組特店，回傳環境代號（連同 Config 一併存進
-// payment_transactions.ecpay_env，供 Notify 驗章／退款時查回同一組憑證）。
-func (m *MultiConfig) ResolveByHost(host string) (env string, cfg *Config) {
-	h := normalizeHost(host)
-	if m.GlobalEnv == "prod" && h != "" {
-		for _, ph := range m.ProdHosts {
-			if strings.EqualFold(strings.TrimSpace(ph), h) {
-				return "prod", m.Prod
-			}
+// ResolveByOrigin 依結帳來源 origin 決定這筆交易要用哪組特店，回傳環境代號（連同 Config 一併存進
+// payment_transactions.ecpay_env，供 Notify 驗章／退款時查回同一組憑證）與 ok（是否成功解析）。
+//
+// ok=false 時呼叫端必須直接回錯誤（fail closed），絕不可忽略 ok 逕自使用回傳的 env/cfg
+// （GlobalEnv!=prod 時 ok 恆為 true，不會影響切正式前的既有結帳流程）。
+func (m *MultiConfig) ResolveByOrigin(origin string) (env string, cfg *Config, ok bool) {
+	if m.GlobalEnv != "prod" {
+		return "stage", m.Stage, true
+	}
+	o := originOf(origin)
+	if o == "" {
+		log.Warn().Str("received_origin", origin).
+			Msg("ecpay: prod env but client_back_url origin is empty/invalid, refusing (fail-closed)")
+		return "", nil, false
+	}
+	for _, po := range m.ProdOrigins {
+		if pOrigin := originOf(po); pOrigin != "" && strings.EqualFold(pOrigin, o) {
+			return "prod", m.Prod, true
 		}
 	}
-	if m.GlobalEnv == "prod" {
-		// 正式環境卻解析不到正式網域：這是故障安全的預期後備路徑（見上方 struct 註解），但也可能代表
-		// 反向代理沒有正確帶 X-Forwarded-Host、或有人直接打 API 網域略過前端代理。記一筆 log 供上線後稽核，
-		// 不改變「一律退回測試特店」的行為。
-		log.Warn().Str("resolved_host", h).Strs("prod_hosts", m.ProdHosts).
-			Msg("ecpay: prod env but host did not match ProdHosts, falling back to stage (fail-safe)")
+	if m.isKnownBackOrigin(o) {
+		// 不在正式清單，但是既有返回網址白名單內的已知網域（如 UAT dor.hero-mi.com）：沿用既有測試流程。
+		return "stage", m.Stage, true
 	}
-	return "stage", m.Stage
+	log.Warn().Str("received_origin", o).Strs("prod_origins", m.ProdOrigins).
+		Msg("ecpay: prod env but origin not in ProdOrigins or any known back-url whitelist, refusing (fail-closed)")
+	return "", nil, false
+}
+
+// isKnownBackOrigin 檢查 origin 是否落在既有的返回網址白名單內（ClientBackURL + AllowedBacks，
+// Stage/Prod 兩組設定分別檢查——目前兩者共用同一份 CORSOrigins，但未來可能分歧）。
+func (m *MultiConfig) isKnownBackOrigin(o string) bool {
+	check := func(cfg *Config) bool {
+		if cfg == nil {
+			return false
+		}
+		for _, a := range append([]string{cfg.ClientBackURL}, cfg.AllowedBacks...) {
+			if ao := originOf(a); ao != "" && strings.EqualFold(ao, o) {
+				return true
+			}
+		}
+		return false
+	}
+	return check(m.Stage) || check(m.Prod)
 }
 
 // ByEnv 依已存的環境代號（payment_transactions.ecpay_env）取回對應憑證，Notify 驗章／退款用。
@@ -187,27 +223,6 @@ func (m *MultiConfig) ByEnv(env string) *Config {
 		return m.Prod
 	}
 	return m.Stage
-}
-
-func normalizeHost(raw string) string {
-	h := strings.ToLower(strings.TrimSpace(raw))
-	if i := strings.IndexByte(h, ':'); i >= 0 {
-		h = h[:i]
-	}
-	return h
-}
-
-// requestHost 取請求來源網域：優先 X-Forwarded-Host（前端經反向代理/Next.js rewrites 轉送 API 請求時，
-// 這是唯一能反映瀏覽器實際網域的欄位；本專案的 API 對外只有單一 Host，r.Host 無法區分 UAT/正式），
-// 沒有才退回 r.Host。
-func requestHost(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
-		if i := strings.IndexByte(fwd, ','); i >= 0 {
-			fwd = fwd[:i]
-		}
-		return strings.TrimSpace(fwd)
-	}
-	return r.Host
 }
 
 // --- Repository ---
@@ -365,7 +380,14 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	env, cfg := h.multi.ResolveByHost(requestHost(r))
+	// 用前端結帳時帶來的 origin（client_back_url＝window.location.origin，不受 Next.js 伺服器端代理
+	// 影響）解析要用哪組特店，而不是 HTTP Host（見 MultiConfig.ResolveByOrigin 上方註解）。
+	// ok=false 必須直接回錯誤、fail closed——絕不可靜默選一組特店讓使用者付款卻永遠不入帳。
+	env, cfg, ok := h.multi.ResolveByOrigin(req.ClientBackURL)
+	if !ok {
+		respondErr(w, http.StatusBadRequest, "付款來源網域未授權，請聯繫客服")
+		return
+	}
 
 	tradeNo := genTradeNo()
 	if err := h.repo.CreateTx(r.Context(), req.OrderID, tradeNo, env, cfg.MerchantID, order.TotalCents); err != nil {
@@ -406,11 +428,12 @@ func (h *Handler) Notify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 正式環境硬性拒絕「測試特店」交易入帳：測試特店（stage）的 HashKey/HashIV 是綠界官方公開的沙箱憑證，
-	// 任何人都能自行算出合法的 CheckMacValue。ResolveByHost 對「網域不明」的故障安全預設是退回 stage
-	// （見 MultiConfig 註解），這在 Checkout 端是刻意的（寧可誤用測試特店也不可誤刷真錢）；但若放任 stage
-	// 交易在正式環境也能把訂單標為 paid，等於任何人都能繞過付款、用公開金鑰偽造 Notify 完成免費報名。
+	// 任何人都能自行算出合法的 CheckMacValue。ResolveByOrigin 對「origin 不在正式清單但在已知白名單」
+	// 的設計是退回 stage（見 MultiConfig 註解），這在 Checkout 端是刻意的（UAT 等既有測試流程）；但若放任
+	// stage 交易在正式環境也能把訂單標為 paid，等於任何人都能繞過付款、用公開金鑰偽造 Notify 完成免費報名。
 	// 因此：只要全域環境是 prod，就只接受 ecpay_env='prod' 的交易入帳，stage 交易一律拒絕（不影響
-	// GlobalEnv != prod 時的既有測試/UAT 流程）。
+	// GlobalEnv != prod 時的既有測試/UAT 流程）。這道守門與 origin 是否可被偽造無關，是安全底線，不受
+	// 本次改動影響。
 	if h.multi.GlobalEnv == "prod" && tx.EcpayEnv != "prod" {
 		log.Warn().
 			Str("merchant_trade_no", tradeNo).

@@ -52,7 +52,8 @@ export default function AdminOrdersPage() {
     adminRacesApi.list(t).then((r) => setRaces(r.races)).catch((e) => {
       if (e?.status === 401) { clearToken(); router.replace('/admin/login') } else setErr(e?.message || '載入失敗')
     })
-    adminPaymentsApi.envCheck(t).then(setEnvCheck).catch((e) => setEnvCheckErr(e?.message || '金流環境診斷載入失敗'))
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    adminPaymentsApi.envCheck(t, origin).then(setEnvCheck).catch((e) => setEnvCheckErr(e?.message || '金流環境診斷載入失敗'))
   }, [router])
 
   const load = useCallback((rid: string, st: string) => {
@@ -156,32 +157,42 @@ export default function AdminOrdersPage() {
       {envCheckErr && <div style={{ color: 'var(--hunt)', padding: 12, marginBottom: 14 }}>金流環境診斷載入失敗：{envCheckErr}</div>}
       {envCheck && (
         <div style={{
-          border: `1px solid ${envCheck.would_charge_real_money ? 'var(--hunt)' : 'var(--line)'}`,
+          border: `1px solid ${!envCheck.resolve_ok ? 'var(--hunt)' : envCheck.would_charge_real_money ? 'var(--hunt)' : 'var(--line)'}`,
           borderRadius: 14, padding: 16, marginBottom: 18, background: 'var(--bg-1)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', color: 'var(--tx-faint)', textTransform: 'uppercase' }}>金流環境診斷</span>
-            <span style={{
-              background: envCheck.would_charge_real_money ? 'var(--hunt)' : 'var(--fug)',
-              color: '#fff', fontWeight: 800, fontSize: 12, padding: '3px 10px', borderRadius: 999,
-            }}>
-              {envCheck.would_charge_real_money ? '⚠ 正式特店（會收真錢）' : '測試特店（不會收真錢）'}
-            </span>
+            {envCheck.resolve_ok ? (
+              <span style={{
+                background: envCheck.would_charge_real_money ? 'var(--hunt)' : 'var(--fug)',
+                color: '#fff', fontWeight: 800, fontSize: 12, padding: '3px 10px', borderRadius: 999,
+              }}>
+                {envCheck.would_charge_real_money ? '⚠ 正式特店（會收真錢）' : '測試特店（不會收真錢）'}
+              </span>
+            ) : (
+              <span style={{
+                background: 'var(--hunt)', color: '#fff', fontWeight: 800, fontSize: 12, padding: '3px 10px', borderRadius: 999,
+              }}>
+                ⚠ 此網域未授權，切正式後結帳會被擋下
+              </span>
+            )}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '4px 20px', fontSize: 13, color: 'var(--tx-dim)' }}>
-            <div>結帳網址：<span style={{ color: 'var(--tx)' }}>{envCheck.resolved_action_url}</span></div>
+            <div>結帳來源 origin：<span style={{ color: 'var(--tx)' }}>{envCheck.received_origin || '（空）'}</span></div>
+            <div>解析結果：<span style={{ color: envCheck.resolve_ok ? 'var(--tx)' : 'var(--hunt)' }}>{envCheck.resolve_ok ? '可解析' : '未授權（fail closed）'}</span></div>
+            <div>結帳網址：<span style={{ color: 'var(--tx)' }}>{envCheck.resolved_action_url || '（不適用）'}</span></div>
             <div>特店編號：<span style={{ color: 'var(--tx)' }}>{envCheck.resolved_merchant_id || '（空）'}</span></div>
             <div>全域 ECPAY_ENV：<span style={{ color: 'var(--tx)' }}>{envCheck.global_ecpay_env}</span></div>
-            <div>正式網域白名單：<span style={{ color: 'var(--tx)' }}>{envCheck.prod_hosts.join('、') || '（空）'}</span></div>
-            <div>Host：<span style={{ color: 'var(--tx)' }}>{envCheck.seen.host || '（空）'}</span></div>
-            <div>X-Forwarded-Host：<span style={{ color: 'var(--tx)' }}>{envCheck.seen.x_forwarded_host || '（空）'}</span></div>
-            <div>解析採用 Host：<span style={{ color: 'var(--tx)' }}>{envCheck.seen.resolved_host || '（空）'}</span></div>
+            <div>正式來源白名單：<span style={{ color: 'var(--tx)' }}>{envCheck.prod_origins.join('、') || '（空）'}</span></div>
             <div>
               正式三寶已設定：{' '}
               <span style={{ color: envCheck.prod_credentials_configured.merchant_id ? 'var(--fug)' : 'var(--hunt)' }}>MerchantID {envCheck.prod_credentials_configured.merchant_id ? '✓' : '✗'}</span>{' '}
               <span style={{ color: envCheck.prod_credentials_configured.hash_key ? 'var(--fug)' : 'var(--hunt)' }}>HashKey {envCheck.prod_credentials_configured.hash_key ? '✓' : '✗'}</span>{' '}
               <span style={{ color: envCheck.prod_credentials_configured.hash_iv ? 'var(--fug)' : 'var(--hunt)' }}>HashIV {envCheck.prod_credentials_configured.hash_iv ? '✓' : '✗'}</span>
             </div>
+          </div>
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)', fontSize: 11, color: 'var(--tx-faint)' }}>
+            除錯參考（已不用於決定特店）：Host＝{envCheck.legacy_host_headers.host || '（空）'}，X-Forwarded-Host＝{envCheck.legacy_host_headers.x_forwarded_host || '（空）'}
           </div>
         </div>
       )}

@@ -2010,8 +2010,12 @@ export const adminOrdersApi = {
 
 export interface EcpayEnvCheck {
   global_ecpay_env: string
-  prod_hosts: string[]
-  seen: { host: string; x_forwarded_host: string; resolved_host: string }
+  prod_origins: string[]
+  received_origin: string
+  resolve_ok: boolean
+  // 除錯參考用，已不再用於決定要用哪組特店（前台是 Next.js 伺服器端代理，這兩個 header 反映不出
+  // 瀏覽器真實網域）——實際解析一律以 received_origin/resolve_ok 為準。
+  legacy_host_headers: { host: string; x_forwarded_host: string }
   resolved_env: string
   resolved_merchant_id: string
   resolved_action_url: string
@@ -2020,8 +2024,10 @@ export interface EcpayEnvCheck {
 }
 
 export const adminPaymentsApi = {
-  envCheck: (token: string) =>
-    request<EcpayEnvCheck>(`/admin/payments/env-check`, { headers: withAuth(token) }),
+  // 帶自身 origin → 與結帳（paymentsApi.ecpayCheckout 的 client_back_url）用同一個值，
+  // 診斷結果才能反映「這個網域真的結帳會發生什麼事」。
+  envCheck: (token: string, origin: string) =>
+    request<EcpayEnvCheck>(`/admin/payments/env-check?origin=${encodeURIComponent(origin)}`, { headers: withAuth(token) }),
   listRefunds: (token: string, orderID: string) =>
     request<{ refunds: RefundRow[]; count: number }>(`/admin/payments/refunds?order_id=${encodeURIComponent(orderID)}`, {
       headers: withAuth(token),

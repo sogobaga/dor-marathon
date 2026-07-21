@@ -92,7 +92,7 @@ func main() {
 	raceSvc := race.NewService(raceRepo, rdb, promoSvc)
 	raceHandler := race.NewHandler(raceSvc, wsManager)
 
-	// Payment（綠界 ECPay）—— 正式／測試雙特店，依請求來源網域故障安全切換（見 payment.MultiConfig）
+	// Payment（綠界 ECPay）—— 正式／測試雙特店，依結帳來源 origin 故障安全切換（見 payment.MultiConfig）
 	// 啟動檢查：宣告要跑正式環境（ECPAY_ENV=prod）卻沒有配齊正式特店憑證，寧可直接拒絕啟動，
 	// 也不要讓服務帶著空字串 MerchantID/HashKey/HashIV 悄悄跑起來（那樣所有正式結帳都會失敗，
 	// 或更糟——萬一日後有人把測試金鑰誤填進 PROD_* 變數，此檢查至少能擋下「完全空白」的最壞情況）。
@@ -118,10 +118,10 @@ func main() {
 		AllowedBacks:  cfg.CORSOrigins,
 	}
 	payCfg := &payment.MultiConfig{
-		Prod:      ecpayProdCfg,
-		Stage:     ecpayStageCfg,
-		GlobalEnv: cfg.ECPayEnv,
-		ProdHosts: cfg.ECPayProdHosts,
+		Prod:        ecpayProdCfg,
+		Stage:       ecpayStageCfg,
+		GlobalEnv:   cfg.ECPayEnv,
+		ProdOrigins: cfg.ECPayProdOrigins,
 	}
 	paymentHandler := payment.NewHandler(payCfg, payment.NewRepository(pool), raceSvc)
 
