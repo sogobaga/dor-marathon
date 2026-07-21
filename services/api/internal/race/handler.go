@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/promo"
 	"github.com/dor/api/internal/realtime"
+	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
@@ -496,7 +496,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrGroupRequired), errors.Is(err, ErrGroupNotFound),
 		errors.Is(err, ErrNoGroups), errors.Is(err, ErrMissingRequiredField),
 		errors.Is(err, ErrGroupRestriction), errors.Is(err, ErrAddonNotFound),
-		errors.Is(err, ErrAddonLimit),
+		errors.Is(err, ErrAddonLimit), errors.Is(err, ErrInvalidInvoice),
 		errors.Is(err, promo.ErrNotFound), errors.Is(err, promo.ErrInactive),
 		errors.Is(err, promo.ErrNotStarted), errors.Is(err, promo.ErrExpired),
 		errors.Is(err, promo.ErrWrongRace), errors.Is(err, promo.ErrWrongUser):

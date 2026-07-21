@@ -685,11 +685,23 @@ export interface RegistrationState {
   amount: number
 }
 
+export type InvoiceBuyerType = 'personal' | 'company' | 'donation'
+
+export interface InvoiceInfo {
+  buyer_type: InvoiceBuyerType
+  tax_id: string               // company 專用，8 碼統編
+  title: string                // company 專用，發票抬頭
+  carrier_type: '' | 'mobile'  // personal 專用
+  carrier_id: string           // personal 專用，手機條碼載具
+  love_code: string            // donation 專用，愛心碼
+}
+
 export interface RegisterPayload {
   group_id?: string
   group_key?: string // 加入需鑰匙的分組時帶入
   addons?: { addon_id: string; qty: number }[]
   participant: Partial<Record<ParticipantField, string>>
+  invoice?: InvoiceInfo // 電子發票資訊（選填）
   promo_code?: string
   use_coupon?: boolean // 使用 VIP 活動優惠券($100)；與 promo_code 擇一
 }
@@ -970,6 +982,7 @@ export interface Profile {
   birthday: string // YYYY-MM-DD
   gender: '' | 'male' | 'female' | 'other'
   preferred_data_source?: 'gps' | 'strava' // 跨來源去重偏好
+  invoice: InvoiceInfo // 發票資訊（上次填的，供報名表單預填）
 }
 
 export interface DedupSide { source: 'gps' | 'strava'; distance_km: number; duration_s: number; recorded_at: string }
@@ -1914,6 +1927,7 @@ export interface OrderRow {
   paid_at?: string | null
   created_at: string
   registration_id?: string
+  invoice: InvoiceInfo | null // 發票資訊（過渡期人工開立用）；舊訂單沒有資料則為 null
 }
 
 export interface OrderDetail extends OrderRow {

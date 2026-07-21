@@ -44,6 +44,7 @@ var (
 	ErrVIPOnly              = errors.New("此賽事僅限 VIP 會員報名")
 	ErrNoCoupon             = errors.New("沒有可用的活動優惠券")
 	ErrCouponPromoConflict  = errors.New("優惠券與優惠序號不可同時使用")
+	ErrInvalidInvoice       = errors.New("invoice 資料有誤")
 	// ErrOrderNotPending 訂單存在，但目前狀態不是 pending 也不是已付款(paid)——例如 refunded/cancelled。
 	// 用於區分「已付款的冪等重複通知」（安靜成功）與「錢已收到但訂單處於異常狀態，需要人工核對」（要告警）。
 	ErrOrderNotPending = errors.New("order exists but is not pending")
@@ -352,6 +353,12 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 	if err := validateGroupRestriction(chosen, req.Participant); err != nil {
 		return nil, err
 	}
+	// 發票資訊：未帶 invoice 物件時正規化為 personal 且全空（雲端發票存證），不影響報名成功；
+	// 有帶則驗證三種買受人類型互斥、統編檢查碼、手機條碼載具格式、愛心碼格式（見 invoice.go）。
+	invoice, err := ValidateInvoice(req.Invoice)
+	if err != nil {
+		return nil, err
+	}
 
 	distance := 0
 	if chosen.TargetDistanceKm != nil {
@@ -370,6 +377,10 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		Participant:   req.Participant,
 		PromoCode:     strings.TrimSpace(req.PromoCode),
 		UseCoupon:     req.UseCoupon,
+		Invoice:       invoice,
+		// 只有本次報名真的帶了 invoice 物件才覆寫 user_profiles 的發票預填欄位；完全沒帶（例如舊版
+		// 前端）時維持既有預填不變，避免被正規化出來的空白值誤蓋掉使用者之前填過的統編/載具。
+		SaveInvoiceToProfile: req.Invoice != nil,
 	})
 }
 

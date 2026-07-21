@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/race"
 	"github.com/dor/api/internal/realtime"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -81,17 +82,18 @@ func (h *Handler) MembershipAdminRouter() http.Handler {
 
 // Profile 個人資訊（user_profiles + users.email）
 type Profile struct {
-	UserID              string `json:"user_id"`
-	Email               string `json:"email"`
-	Name                string `json:"name"`       // 顯示名稱（users.name）
-	AvatarURL           string `json:"avatar_url"` // users.avatar_url
-	RealName            string `json:"real_name"`
-	Nickname            string `json:"nickname"`
-	Phone               string `json:"phone"`
-	Address             string `json:"address"`
-	Birthday            string `json:"birthday"`              // YYYY-MM-DD，空=未填
-	Gender              string `json:"gender"`                // male|female|other|空
-	PreferredDataSource string `json:"preferred_data_source"` // gps|strava（跨來源去重偏好；預設 gps）
+	UserID              string           `json:"user_id"`
+	Email               string           `json:"email"`
+	Name                string           `json:"name"`       // 顯示名稱（users.name）
+	AvatarURL           string           `json:"avatar_url"` // users.avatar_url
+	RealName            string           `json:"real_name"`
+	Nickname            string           `json:"nickname"`
+	Phone               string           `json:"phone"`
+	Address             string           `json:"address"`
+	Birthday            string           `json:"birthday"`              // YYYY-MM-DD，空=未填
+	Gender              string           `json:"gender"`                // male|female|other|空
+	PreferredDataSource string           `json:"preferred_data_source"` // gps|strava（跨來源去重偏好；預設 gps）
+	Invoice             race.InvoiceInfo `json:"invoice"`               // 上次報名填的發票資訊，供前端預填；從未報名過則全空
 }
 
 // GET /api/v1/profile — 取得自己的個人資訊（無資料則回空白可編輯結構）
@@ -158,10 +160,13 @@ func (h *Handler) fetchProfile(ctx context.Context, userID string) (*Profile, er
 	err := h.db.QueryRow(ctx, `
 		SELECT u.email, u.name, COALESCE(u.avatar_url,''),
 		       COALESCE(p.real_name,''), COALESCE(p.nickname,''), COALESCE(p.phone,''),
-		       COALESCE(p.address,''), p.birthday, COALESCE(p.gender,''), COALESCE(p.preferred_data_source,'gps')
+		       COALESCE(p.address,''), p.birthday, COALESCE(p.gender,''), COALESCE(p.preferred_data_source,'gps'),
+		       COALESCE(p.inv_buyer_type,''), COALESCE(p.inv_tax_id,''), COALESCE(p.inv_title,''),
+		       COALESCE(p.inv_carrier_type,''), COALESCE(p.inv_carrier_id,''), COALESCE(p.inv_love_code,'')
 		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
 		WHERE u.id = $1`, userID).
-		Scan(&p.Email, &p.Name, &p.AvatarURL, &p.RealName, &p.Nickname, &p.Phone, &p.Address, &birthday, &p.Gender, &p.PreferredDataSource)
+		Scan(&p.Email, &p.Name, &p.AvatarURL, &p.RealName, &p.Nickname, &p.Phone, &p.Address, &birthday, &p.Gender, &p.PreferredDataSource,
+			&p.Invoice.BuyerType, &p.Invoice.TaxID, &p.Invoice.Title, &p.Invoice.CarrierType, &p.Invoice.CarrierID, &p.Invoice.LoveCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, nil
 	}

@@ -1226,6 +1226,13 @@ type RegisterTxInput struct {
 	Participant   ParticipantInfo
 	PromoCode     string
 	UseCoupon     bool // 使用 VIP 活動優惠券($100)；與 PromoCode 擇一
+
+	// Invoice 已由 service.ValidateInvoice 驗證/正規化過的發票資訊（一定有值，未帶時已預設為 personal 全空）。
+	Invoice InvoiceInfo
+	// SaveInvoiceToProfile：本次報名是否要把 Invoice 覆寫進 user_profiles 的 inv_* 預填欄位——
+	// 只有使用者這次報名真的帶了 invoice 物件才覆寫，避免舊版前端沒帶 invoice 時，被正規化出來的空白值
+	// 誤蓋掉使用者之前填過的統編/載具（inv_* 語意上每次都覆寫成最新值，不是像 real_name 只補空欄位）。
+	SaveInvoiceToProfile bool
 }
 
 // RegisterWithOrder 在單一交易內完成報名：分組名額 row-lock 防超賣、加購庫存、
@@ -1426,6 +1433,17 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		}
 	}
 
+	// 4c. 發票資訊（一張訂單一筆）。開立相關欄位（invoice_number/invoice_status/issued_at/invoice_raw）
+	// 現在一律不寫，維持 DB 預設（pending/空字串），等日後串接綠界發票 API 的開立流程再回填。
+	inv := in.Invoice
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO order_invoices (order_id, buyer_type, tax_id, title, carrier_type, carrier_id, love_code)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		order.ID, inv.BuyerType, inv.TaxID, inv.Title, inv.CarrierType, inv.CarrierID, inv.LoveCode,
+	); err != nil {
+		return nil, fmt.Errorf("insert order_invoices: %w", err)
+	}
+
 	// 5. 個資回填：只補目前為空的欄位
 	p := in.Participant
 	if _, err = tx.Exec(ctx, `
@@ -1442,6 +1460,26 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		in.UserID, p.RealName, p.Nickname, p.Phone, p.Address, p.Birthday, p.Gender,
 	); err != nil {
 		return nil, fmt.Errorf("upsert profile: %w", err)
+	}
+
+	// 5b. 發票預填回填：語意與上面的個資回填不同——inv_* 每次都覆寫成最新值（不是只補空欄位），
+	// 因為使用者可能換統編/換載具。只有本次報名真的帶了 invoice 物件時才覆寫（見 SaveInvoiceToProfile 註解）。
+	if in.SaveInvoiceToProfile {
+		if _, err = tx.Exec(ctx, `
+			INSERT INTO user_profiles (user_id, inv_buyer_type, inv_tax_id, inv_title, inv_carrier_type, inv_carrier_id, inv_love_code, updated_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+			ON CONFLICT (user_id) DO UPDATE SET
+				inv_buyer_type   = EXCLUDED.inv_buyer_type,
+				inv_tax_id       = EXCLUDED.inv_tax_id,
+				inv_title        = EXCLUDED.inv_title,
+				inv_carrier_type = EXCLUDED.inv_carrier_type,
+				inv_carrier_id   = EXCLUDED.inv_carrier_id,
+				inv_love_code    = EXCLUDED.inv_love_code,
+				updated_at = NOW()`,
+			in.UserID, inv.BuyerType, inv.TaxID, inv.Title, inv.CarrierType, inv.CarrierID, inv.LoveCode,
+		); err != nil {
+			return nil, fmt.Errorf("upsert invoice profile: %w", err)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -1598,14 +1636,32 @@ func (r *Repository) ChangeSignupGroup(ctx context.Context, regID, newGroupID st
 	return tx.Commit(ctx)
 }
 
+// invoiceColsSQL order_invoices 的 LEFT JOIN 欄位（COALESCE 成空字串：LEFT JOIN 不到時 buyer_type 是空字串，
+// 代表「這張訂單沒有發票資料」——舊訂單、或本功能上線前建立的訂單）。
+const invoiceColsSQL = `COALESCE(inv.buyer_type,''), COALESCE(inv.tax_id,''), COALESCE(inv.title,''),
+	       COALESCE(inv.carrier_type,''), COALESCE(inv.carrier_id,''), COALESCE(inv.love_code,'')`
+
+// scanInvoicePtr 依 buyer_type 是否為空字串決定要不要組出 *InvoiceInfo（空字串＝LEFT JOIN 不到，回 nil）
+func scanInvoicePtr(buyerType, taxID, title, carrierType, carrierID, loveCode string) *InvoiceInfo {
+	if buyerType == "" {
+		return nil
+	}
+	return &InvoiceInfo{
+		BuyerType: buyerType, TaxID: taxID, Title: title,
+		CarrierType: carrierType, CarrierID: carrierID, LoveCode: loveCode,
+	}
+}
+
 // ListOrders 列出訂單（race_id/status 可選過濾）
 func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limit, offset int) ([]OrderRow, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT o.id, u.name, u.email, rc.title, o.total_cents, o.status,
-		       COALESCE(o.payment_ref,''), o.paid_at, o.created_at, COALESCE(o.registration_id::text,'')
+		       COALESCE(o.payment_ref,''), o.paid_at, o.created_at, COALESCE(o.registration_id::text,''),
+		       `+invoiceColsSQL+`
 		FROM orders o
 		JOIN users u ON u.id = o.user_id
 		JOIN races rc ON rc.id = o.race_id
+		LEFT JOIN order_invoices inv ON inv.order_id = o.id
 		WHERE ($1='' OR o.race_id = $1::uuid)
 		  AND ($2='' OR o.status = $2)
 		ORDER BY o.created_at DESC
@@ -1618,10 +1674,13 @@ func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limi
 	out := []OrderRow{}
 	for rows.Next() {
 		var o OrderRow
+		var invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode string
 		if err := rows.Scan(&o.ID, &o.UserName, &o.UserEmail, &o.RaceTitle, &o.TotalCents,
-			&o.Status, &o.PaymentRef, &o.PaidAt, &o.CreatedAt, &o.RegistrationID); err != nil {
+			&o.Status, &o.PaymentRef, &o.PaidAt, &o.CreatedAt, &o.RegistrationID,
+			&invBuyerType, &invTaxID, &invTitle, &invCarrierType, &invCarrierID, &invLoveCode); err != nil {
 			return nil, err
 		}
+		o.Invoice = scanInvoicePtr(invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode)
 		out = append(out, o)
 	}
 	return out, rows.Err()
@@ -1630,19 +1689,24 @@ func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limi
 // GetOrderDetail 取得訂單 + 明細
 func (r *Repository) GetOrderDetail(ctx context.Context, orderID string) (*OrderDetail, error) {
 	var o OrderRow
+	var invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode string
 	err := r.db.QueryRow(ctx, `
 		SELECT o.id, u.name, u.email, rc.title, o.total_cents, o.status,
-		       COALESCE(o.payment_ref,''), o.paid_at, o.created_at, COALESCE(o.registration_id::text,'')
+		       COALESCE(o.payment_ref,''), o.paid_at, o.created_at, COALESCE(o.registration_id::text,''),
+		       `+invoiceColsSQL+`
 		FROM orders o JOIN users u ON u.id=o.user_id JOIN races rc ON rc.id=o.race_id
+		LEFT JOIN order_invoices inv ON inv.order_id = o.id
 		WHERE o.id=$1`, orderID).Scan(
 		&o.ID, &o.UserName, &o.UserEmail, &o.RaceTitle, &o.TotalCents, &o.Status,
-		&o.PaymentRef, &o.PaidAt, &o.CreatedAt, &o.RegistrationID)
+		&o.PaymentRef, &o.PaidAt, &o.CreatedAt, &o.RegistrationID,
+		&invBuyerType, &invTaxID, &invTitle, &invCarrierType, &invCarrierID, &invLoveCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get order: %w", err)
 	}
+	o.Invoice = scanInvoicePtr(invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode)
 
 	rows, err := r.db.Query(ctx, `
 		SELECT oi.item_type, COALESCE(a.name,''), oi.qty, oi.unit_price_cents, oi.subtotal_cents

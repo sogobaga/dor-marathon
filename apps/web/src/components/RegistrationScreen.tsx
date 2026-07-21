@@ -13,6 +13,7 @@ import {
   type RegistrationState,
   type ParticipantField,
   type RecommendRow,
+  type InvoiceInfo,
 } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError, useUser } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
@@ -25,6 +26,23 @@ const FIELD_LABEL: Record<ParticipantField, string> = {
   address: '地址', birthday: '生日', gender: '性別',
 }
 const GENDER_OPTS = [{ v: '', t: '請選擇' }, { v: 'male', t: '男' }, { v: 'female', t: '女' }, { v: 'other', t: '其他' }]
+
+// 統一編號檢查碼驗證
+function isValidTwTaxId(id: string): boolean {
+  if (!/^\d{8}$/.test(id)) return false
+  const weights = [1, 2, 1, 2, 1, 2, 4, 1]
+  const digits = id.split('').map(Number)
+  let sum = 0
+  for (let i = 0; i < 8; i++) {
+    const product = digits[i] * weights[i]
+    sum += Math.floor(product / 10) + (product % 10)
+  }
+  if (sum % 5 === 0) return true
+  if (digits[6] === 7 && (sum + 1) % 5 === 0) return true
+  return false
+}
+const CARRIER_ID_RE = /^\/[0-9A-Z.+-]{7}$/
+const LOVE_CODE_RE = /^[0-9]{3,7}$/
 
 function ntd(cents: number) {
   return 'NT$ ' + Math.round(cents / 100).toLocaleString('zh-TW')
@@ -101,6 +119,9 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [participant, setParticipant] = useState<Record<ParticipantField, string>>({
     real_name: '', nickname: '', phone: '', address: '', birthday: '', gender: '',
   })
+  const [invoice, setInvoice] = useState<InvoiceInfo>({
+    buyer_type: 'personal', tax_id: '', title: '', carrier_type: '', carrier_id: '', love_code: '',
+  })
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState<{ group: string; revealed: boolean; paid: boolean; payable: number; orderId: string } | null>(null)
   const [paying, setPaying] = useState(false)
@@ -142,6 +163,10 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
           birthday: r.profile.birthday || '',
           gender: r.profile.gender || '',
         }))
+        const inv = r.profile.invoice
+        if (inv && (inv.buyer_type === 'company' || inv.buyer_type === 'donation' || inv.buyer_type === 'personal')) {
+          setInvoice(inv)
+        }
       }).catch(() => {})
       withUserAuth((t) => profileApi.recommendations(t, race.id)).then((r) => setRecommends(r.recommendations)).catch(() => {})
     }
@@ -292,6 +317,26 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         return
       }
     }
+    if (invoice.buyer_type === 'company') {
+      if (!invoice.tax_id.trim() || !isValidTwTaxId(invoice.tax_id.trim())) {
+        setErr('統一編號有誤，請確認')
+        return
+      }
+      if (!invoice.title.trim()) {
+        setErr('請填寫「發票抬頭」')
+        return
+      }
+    } else if (invoice.buyer_type === 'donation') {
+      if (!LOVE_CODE_RE.test(invoice.love_code.trim())) {
+        setErr('愛心碼格式有誤，請輸入 3-7 位數字')
+        return
+      }
+    } else if (invoice.buyer_type === 'personal') {
+      if (invoice.carrier_type === 'mobile' && !CARRIER_ID_RE.test(invoice.carrier_id.trim())) {
+        setErr('手機條碼載具格式有誤，請確認（例如 /ABC1234）')
+        return
+      }
+    }
     setSubmitting(true)
     try {
       const addons = Object.entries(qty)
@@ -303,6 +348,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
           group_key: !isBattle && selectedGroup?.requires_key ? groupKey.trim() : undefined,
           addons,
           participant,
+          invoice,
           promo_code: useCoupon ? undefined : (promoCode.trim() || undefined),
           use_coupon: useCoupon || undefined,
         })
@@ -592,6 +638,91 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                   )}
                 </label>
               ))}
+            </Section>
+
+            {/* 電子發票 */}
+            <Section title="電子發票">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginBottom: 12 }}>
+                {([
+                  { v: 'personal', t: '個人（二聯式）' },
+                  { v: 'company', t: '公司（三聯式，可報帳）' },
+                  { v: 'donation', t: '捐贈發票' },
+                ] as const).map((o) => (
+                  <button
+                    key={o.v}
+                    type="button"
+                    onClick={() => setInvoice({ buyer_type: o.v, tax_id: '', title: '', carrier_type: '', carrier_id: '', love_code: '' })}
+                    style={{
+                      ...ghostBtn, textAlign: 'center',
+                      border: invoice.buyer_type === o.v ? '1.5px solid var(--fug)' : '1px dashed var(--line-2)',
+                      background: invoice.buyer_type === o.v ? 'rgba(45,212,150,.1)' : 'transparent',
+                      color: invoice.buyer_type === o.v ? 'var(--fug)' : 'var(--tx)',
+                    }}
+                  >
+                    {o.t}
+                  </button>
+                ))}
+              </div>
+
+              {invoice.buyer_type === 'personal' && (
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
+                  <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>手機條碼載具</span>
+                  <input
+                    style={inp} type="text" value={invoice.carrier_id}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setInvoice((p) => ({ ...p, carrier_id: v, carrier_type: v.trim() ? 'mobile' : '' }))
+                    }}
+                    placeholder="例如 /ABC1234"
+                  />
+                  {invoice.carrier_id.trim() === '' ? (
+                    <span style={hint}>未填寫將開立雲端發票存證</span>
+                  ) : !CARRIER_ID_RE.test(invoice.carrier_id.trim()) ? (
+                    <span style={{ fontSize: 12, color: 'var(--hunt)' }}>手機條碼載具格式有誤，請確認（例如 /ABC1234）</span>
+                  ) : null}
+                </label>
+              )}
+
+              {invoice.buyer_type === 'company' && (
+                <>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
+                    <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+                      統一編號<span style={{ color: 'var(--hunt)' }}> *</span>
+                    </span>
+                    <input
+                      style={inp} type="text" value={invoice.tax_id}
+                      onChange={(e) => setInvoice((p) => ({ ...p, tax_id: e.target.value }))}
+                    />
+                    {invoice.tax_id.trim() !== '' && !isValidTwTaxId(invoice.tax_id.trim()) && (
+                      <span style={{ fontSize: 12, color: 'var(--hunt)' }}>統一編號有誤，請確認</span>
+                    )}
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
+                    <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+                      發票抬頭<span style={{ color: 'var(--hunt)' }}> *</span>
+                    </span>
+                    <input
+                      style={inp} type="text" value={invoice.title}
+                      onChange={(e) => setInvoice((p) => ({ ...p, title: e.target.value }))}
+                    />
+                  </label>
+                </>
+              )}
+
+              {invoice.buyer_type === 'donation' && (
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
+                  <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+                    愛心碼<span style={{ color: 'var(--hunt)' }}> *</span>
+                  </span>
+                  <input
+                    style={inp} type="text" value={invoice.love_code}
+                    onChange={(e) => setInvoice((p) => ({ ...p, love_code: e.target.value }))}
+                  />
+                  {invoice.love_code.trim() !== '' && !LOVE_CODE_RE.test(invoice.love_code.trim()) && (
+                    <span style={{ fontSize: 12, color: 'var(--hunt)' }}>愛心碼格式有誤，請輸入 3-7 位數字</span>
+                  )}
+                </label>
+              )}
             </Section>
 
             {/* 優惠序號 */}

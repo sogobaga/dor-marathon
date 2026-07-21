@@ -21,6 +21,12 @@ const STATUS_LABEL: Record<string, { t: string; c: string }> = {
 }
 const ITEM_LABEL: Record<string, string> = { entry: '報名費', addon: '加購' }
 
+const INVOICE_BUYER_LABEL: Record<string, string> = {
+  personal: '二聯式（個人）',
+  company: '三聯式（公司，可報帳）',
+  donation: '捐贈發票',
+}
+
 function ntd(c: number) {
   return 'NT$ ' + Math.round(c / 100).toLocaleString('zh-TW')
 }
@@ -233,6 +239,17 @@ export default function AdminOrdersPage() {
                       </div>
                     ))}
                     {det.paid_at && <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>付款時間：{new Date(det.paid_at).toLocaleString('zh-TW')}{det.payment_ref ? ` · 金流號 ${det.payment_ref}` : ''}</div>}
+                    <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>
+                      發票資訊：
+                      {det.invoice ? (
+                        <>
+                          {INVOICE_BUYER_LABEL[det.invoice.buyer_type] ?? det.invoice.buyer_type}
+                          {det.invoice.buyer_type === 'company' && ` · 統編 ${det.invoice.tax_id || '—'} · 抬頭 ${det.invoice.title || '—'}`}
+                          {det.invoice.buyer_type === 'personal' && ` · 載具 ${det.invoice.carrier_type === 'mobile' && det.invoice.carrier_id ? det.invoice.carrier_id : '雲端發票存證'}`}
+                          {det.invoice.buyer_type === 'donation' && ` · 愛心碼 ${det.invoice.love_code || '—'}`}
+                        </>
+                      ) : '無發票資料'}
+                    </div>
                     {(refunds[o.id]?.length ?? 0) > 0 && (
                       <div style={{ marginTop: 10, borderTop: '1px solid var(--line)', paddingTop: 8 }}>
                         <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 4, letterSpacing: '.05em', textTransform: 'uppercase' }}>退款紀錄</div>

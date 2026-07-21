@@ -396,6 +396,17 @@ type AddonSelection struct {
 	Qty     int    `json:"qty"`
 }
 
+// InvoiceInfo 電子發票資料（personal 二聯式／company 三聯式／donation 捐贈，三擇一）。
+// 本輪只收集儲存，不觸發實際開立——欄位名為前後台共用合約，不可更動。
+type InvoiceInfo struct {
+	BuyerType   string `json:"buyer_type"`   // personal|company|donation
+	TaxID       string `json:"tax_id"`       // company 專用：統一編號（8碼數字，含檢查碼）
+	Title       string `json:"title"`        // company 專用：發票抬頭
+	CarrierType string `json:"carrier_type"` // personal 專用：""(雲端發票存證)｜mobile
+	CarrierID   string `json:"carrier_id"`   // personal 專用：手機條碼載具號碼
+	LoveCode    string `json:"love_code"`    // donation 專用：愛心碼
+}
+
 // RegisterRequest 前台報名 payload
 type RegisterRequest struct {
 	RaceID      string           `json:"-"`
@@ -406,6 +417,7 @@ type RegisterRequest struct {
 	Participant ParticipantInfo  `json:"participant"`
 	PromoCode   string           `json:"promo_code,omitempty"`
 	UseCoupon   bool             `json:"use_coupon,omitempty"` // 使用 VIP 活動優惠券($100)；與 promo_code 擇一
+	Invoice     *InvoiceInfo     `json:"invoice,omitempty"`    // 發票資訊；未帶=預設 personal 且全空（雲端發票存證），不影響報名成功
 }
 
 // PromoQuote 優惠序號折抵預覽（報名前即時試算）
@@ -437,16 +449,17 @@ type SignupRow struct {
 
 // OrderRow 後台訂單管理列表單筆
 type OrderRow struct {
-	ID             string     `json:"id"`
-	UserName       string     `json:"user_name"`
-	UserEmail      string     `json:"user_email"`
-	RaceTitle      string     `json:"race_title"`
-	TotalCents     int        `json:"total_cents"`
-	Status         string     `json:"status"`
-	PaymentRef     string     `json:"payment_ref,omitempty"`
-	PaidAt         *time.Time `json:"paid_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	RegistrationID string     `json:"registration_id,omitempty"`
+	ID             string       `json:"id"`
+	UserName       string       `json:"user_name"`
+	UserEmail      string       `json:"user_email"`
+	RaceTitle      string       `json:"race_title"`
+	TotalCents     int          `json:"total_cents"`
+	Status         string       `json:"status"`
+	PaymentRef     string       `json:"payment_ref,omitempty"`
+	PaidAt         *time.Time   `json:"paid_at,omitempty"`
+	CreatedAt      time.Time    `json:"created_at"`
+	RegistrationID string       `json:"registration_id,omitempty"`
+	Invoice        *InvoiceInfo `json:"invoice"` // 發票資訊（過渡期人工開立用）；舊訂單沒有資料則為 null
 }
 
 // OrderItemRow 訂單明細單筆
