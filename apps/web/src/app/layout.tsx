@@ -41,7 +41,10 @@ export async function generateMetadata(): Promise<Metadata> {
         { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
         { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
       ],
-      apple: fav || '/apple-touch-icon.png', // iOS 加入主畫面的圖示
+      // iOS「加入主畫面」的圖示：**固定用 /apple-touch-icon.png，刻意不吃後台的 favicon_url**。
+      // favicon 通常是 16~48px 的分頁小圖，拿去當主畫面 App 圖示會糊掉/變形（曾實際發生）；
+      // 兩者用途不同，不該共用同一個設定。要換 App 圖示請替換 public/apple-touch-icon.png。
+      apple: '/apple-touch-icon.png',
     },
     appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'DOR' },
   }
