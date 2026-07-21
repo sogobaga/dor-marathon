@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dor/api/internal/htmlsafe"
 	"github.com/dor/api/internal/promo"
 )
 
@@ -509,17 +510,23 @@ func (r *Repository) GetDetail(ctx context.Context, raceID string) (*RaceDetail,
 	return &RaceDetail{Race: *race, Groups: groups, Addons: addons, Supplies: supplies, TestWhitelist: whitelist, Brochure: brochure, Tasks: tasks}, nil
 }
 
-// insertBrochure 依陣列順序寫入簡章區塊（交易內，呼叫前須先清空舊區塊）
+// insertBrochure 依陣列順序寫入簡章區塊（交易內，呼叫前須先清空舊區塊）。
+// 僅 block_type=text 的 content 是 HTML，寫入前消毒（image/video 的 content 是圖片URL／
+// YouTube 連結，消毒會破壞內容，不可處理）。
 func insertBrochure(ctx context.Context, tx pgx.Tx, raceID string, blocks []BrochureBlock) error {
 	for i := range blocks {
 		b := &blocks[i]
 		if b.BlockType == "" || b.Content == "" {
 			continue
 		}
+		content := b.Content
+		if b.BlockType == "text" {
+			content = htmlsafe.Sanitize(content)
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO race_brochure_blocks (race_id, block_type, content, caption, display_order)
 			VALUES ($1,$2,$3,NULLIF($4,''),$5)`,
-			raceID, b.BlockType, b.Content, b.Caption, i); err != nil {
+			raceID, b.BlockType, content, b.Caption, i); err != nil {
 			return fmt.Errorf("insert brochure block %d: %w", i, err)
 		}
 	}
@@ -786,7 +793,8 @@ func (r *Repository) DeleteTaskModule(ctx context.Context, id string) (bool, err
 	return ct.RowsAffected() > 0, nil
 }
 
-// GetBrochure 取得賽事簡章區塊（依顯示順序）
+// GetBrochure 取得賽事簡章區塊（依顯示順序）。text 區塊輸出前二度消毒（第二道防線，避免
+// 有人繞過 API 直接改 DB）；image/video 的 content 是圖片URL／YouTube 連結，不可消毒。
 func (r *Repository) GetBrochure(ctx context.Context, raceID string) ([]BrochureBlock, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, block_type, content, COALESCE(caption,''), display_order
@@ -800,6 +808,9 @@ func (r *Repository) GetBrochure(ctx context.Context, raceID string) ([]Brochure
 		var b BrochureBlock
 		if err := rows.Scan(&b.ID, &b.BlockType, &b.Content, &b.Caption, &b.DisplayOrder); err != nil {
 			return nil, err
+		}
+		if b.BlockType == "text" {
+			b.Content = htmlsafe.Sanitize(b.Content)
 		}
 		out = append(out, b)
 	}
