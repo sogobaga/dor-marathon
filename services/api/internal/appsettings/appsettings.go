@@ -47,6 +47,9 @@ var specs = map[string]func(string) bool{
 	"vip_first_promo_monthly_pct": isPct,       // 首購促銷・月繳實付%（70=付七成）
 	"vip_first_promo_annual_pct":  isPct,       // 首購促銷・年繳實付%（55=付五五）
 	"vip_first_promo_days":        isNonNegInt, // 首購促銷窗天數（試用到期後幾天內續訂享優惠）
+	// 取消退費政策系統預設（見 race.CancellationPolicy／race.ResolveCancellationPolicy）；
+	// 值為整包政策的 JSON 字串，個別賽事可在 races.config.cancellation_policy 覆寫。
+	"cancellation_policy": isCancellationPolicyJSON,
 }
 
 func isEntryState(v string) bool {
@@ -61,6 +64,34 @@ func isPct(v string) bool {
 	}
 	n, err := strconv.Atoi(v)
 	return err == nil && n >= 1 && n <= 100
+}
+
+// isCancellationPolicyJSON 驗證取消退費政策 JSON（空字串＝清空、退回程式內建預設）。
+// 不引用 race 套件的 CancellationPolicy 型別——race 套件已 import 本套件（appsettings.GetString），
+// 若這裡回頭 import race 會形成循環依賴，因此用同形狀的匿名結構體獨立驗證。
+func isCancellationPolicyJSON(v string) bool {
+	if v == "" {
+		return true
+	}
+	var p struct {
+		DeadlineDays int `json:"deadline_days"`
+		Tiers        []struct {
+			DaysBefore int `json:"days_before"`
+			Ratio      int `json:"ratio"`
+		} `json:"tiers"`
+	}
+	if err := json.Unmarshal([]byte(v), &p); err != nil {
+		return false
+	}
+	if p.DeadlineDays < 0 {
+		return false
+	}
+	for _, t := range p.Tiers {
+		if t.DaysBefore < 0 || t.Ratio < 0 || t.Ratio > 100 {
+			return false
+		}
+	}
+	return true
 }
 
 // publicKeys 允許未登入前台讀取的 key（皆為非敏感外觀設定）。

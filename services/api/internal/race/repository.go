@@ -1407,11 +1407,14 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 	}
 
 	// 4. order + order_items
+	// coupon_used 不論這筆訂單當下是否已付清都要記（不能只在 paid 時靠 payment_ref='COUPON' 推斷——
+	// 券面額通常不足以覆蓋整筆報名費+加購，多數用券訂單其實是 pending 走金流，payment_ref 那時是 NULL），
+	// 否則取消核准時無從得知該不該回補 users.activity_coupon_balance（見 Repository.SettleCancellation）。
 	order := &Order{TotalCents: payable, Status: regStatus}
 	if err = tx.QueryRow(ctx, `
-		INSERT INTO orders (user_id, race_id, registration_id, total_cents, status, payment_ref, paid_at)
-		VALUES ($1,$2,$3,$4,$5,$6,CASE WHEN $7 THEN NOW() ELSE NULL END) RETURNING id`,
-		in.UserID, in.RaceID, reg.ID, payable, regStatus, paymentRef, paid).Scan(&order.ID); err != nil {
+		INSERT INTO orders (user_id, race_id, registration_id, total_cents, status, payment_ref, paid_at, coupon_used)
+		VALUES ($1,$2,$3,$4,$5,$6,CASE WHEN $7 THEN NOW() ELSE NULL END,$8) RETURNING id`,
+		in.UserID, in.RaceID, reg.ID, payable, regStatus, paymentRef, paid, couponUsed).Scan(&order.ID); err != nil {
 		return nil, fmt.Errorf("insert order: %w", err)
 	}
 	if in.EntryFee > 0 {
@@ -1786,51 +1789,152 @@ func (r *Repository) MarkOrderPaid(ctx context.Context, orderID, paymentRef stri
 	return tx.Commit(ctx)
 }
 
-// MarkOrderRefunded 標記訂單已退款，並連動取消其對應 registration + 釋放分組名額
-// （反向於 MarkOrderPaid：比照付款成功時的連動邏輯反向處理）。
-// 原子 CAS（WHERE status='paid'）：只有訂單目前確實是 paid 才會被改成 refunded，同一筆訂單重複呼叫是冪等的。
+// MarkOrderRefunded 標記訂單已退款，並連動取消其對應 registration + 完整取消結算（釋放分組名額、
+// 加購庫存、優惠序號、VIP 活動券——見 SettleCancellation）。供 payment.OrderMarker 介面使用：
+// 既有「累計退款達全額才觸發」流程（payment.finalizeIfFullyRefunded）呼叫的就是這個函式。
+//
+// 薄包裝：查出這筆訂單對應的 registration_id 後，交給 SettleCancellation 做真正的 CAS 保護結算
+// （閘門是 registrations.status，不是 orders.status——理由與冪等保證見 SettleCancellation 上方註解）。
+// 訂單不存在 → ErrOrderNotFound（保留原本對外行為）；訂單存在但目前非 paid/pending（已結算過，
+// 或本來就不是付款狀態）→ SettleCancellation 的閘門不會打開，安靜冪等成功。
 func (r *Repository) MarkOrderRefunded(ctx context.Context, orderID string) error {
+	var regID *string
+	err := r.db.QueryRow(ctx, `SELECT registration_id FROM orders WHERE id=$1`, orderID).Scan(&regID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrOrderNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load order: %w", err)
+	}
+	if regID == nil {
+		// 理論上不會發生（本系統的訂單一律綁報名）：退化成只轉訂單狀態，CAS 退回用 orders.status='paid'。
+		_, err := r.db.Exec(ctx, `UPDATE orders SET status='refunded' WHERE id=$1 AND status='paid'`, orderID)
+		return err
+	}
+	_, err = r.SettleCancellation(ctx, *regID, "refunded")
+	return err
+}
+
+// SettleCancellation 取消結算：不論退款金額多寡（含 0 元、或未付款訂單本來就沒有錢可退），在單一交易內
+// 完成 registrations.status→cancelled、（若有對應訂單）orders.status→targetOrderStatus（"refunded"｜
+// "cancelled"）、race_groups.slots_taken 回補、race_addons.sold_count 回補、promo_code_usages 作廢
+// ＋promo_codes.used_count 回補、users.activity_coupon_balance 回補。
+//
+// 冪等保證（本函式的核心設計）：以 registrations.status 的 CAS
+// （UPDATE registrations SET status='cancelled' WHERE id=$1 AND status IN ('paid','pending')）
+// 作為【唯一】執行閘門。executed=false 代表這筆報名先前已經結算過（不論是被「取消審核核准」流程呼叫過，
+// 還是被既有「累計退款達全額才觸發」的 MarkOrderRefunded/finalizeIfFullyRefunded 呼叫過），此時直接
+// commit、不做任何回補——兩條路徑現在共用同一個閘門與同一份回補邏輯，不論呼叫順序為何、或兩者都被
+// 呼叫，回補都保證只發生一次。
+func (r *Repository) SettleCancellation(ctx context.Context, registrationID, targetOrderStatus string) (executed bool, err error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
 
-	var regID *string
-	err = tx.QueryRow(ctx, `
-		UPDATE orders SET status='refunded'
-		WHERE id=$1 AND status='paid'
-		RETURNING registration_id`, orderID).Scan(&regID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		var exists bool
-		checkErr := tx.QueryRow(ctx, `SELECT true FROM orders WHERE id=$1`, orderID).Scan(&exists)
-		if errors.Is(checkErr, pgx.ErrNoRows) {
-			return ErrOrderNotFound
-		}
-		if checkErr != nil {
-			return fmt.Errorf("check order exists: %w", checkErr)
-		}
-		return tx.Commit(ctx) // 冪等：訂單存在但非 paid（已是 refunded 或本來就不是付款狀態），不覆寫
+	var groupID string
+	cErr := tx.QueryRow(ctx, `
+		UPDATE registrations SET status='cancelled'
+		WHERE id=$1 AND status IN ('paid','pending')
+		RETURNING COALESCE(group_id::text,'')`, registrationID).Scan(&groupID)
+	if errors.Is(cErr, pgx.ErrNoRows) {
+		return false, tx.Commit(ctx) // 閘門沒開：已結算過，或報名不存在/狀態不符，安靜冪等成功
 	}
-	if err != nil {
-		return fmt.Errorf("mark order refunded: %w", err)
+	if cErr != nil {
+		return false, fmt.Errorf("cancel registration: %w", cErr)
 	}
-	if regID != nil {
-		var groupID string
-		err = tx.QueryRow(ctx, `
-			UPDATE registrations SET status='cancelled'
-			WHERE id=$1 AND status='paid'
-			RETURNING COALESCE(group_id::text,'')`, *regID).Scan(&groupID)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("cancel registration: %w", err)
+
+	// 閘門已開：以下只會執行一次。
+	if groupID != "" {
+		if _, err = tx.Exec(ctx, `UPDATE race_groups SET slots_taken = GREATEST(slots_taken-1,0) WHERE id=$1`, groupID); err != nil {
+			return false, fmt.Errorf("release group slot: %w", err)
 		}
-		if groupID != "" {
-			if _, err = tx.Exec(ctx, `UPDATE race_groups SET slots_taken = GREATEST(slots_taken-1,0) WHERE id=$1`, groupID); err != nil {
-				return fmt.Errorf("release group slot: %w", err)
+	}
+
+	var orderID string
+	var couponUsed bool
+	findErr := tx.QueryRow(ctx, `SELECT id::text, coupon_used FROM orders WHERE registration_id=$1`, registrationID).Scan(&orderID, &couponUsed)
+	if findErr != nil && !errors.Is(findErr, pgx.ErrNoRows) {
+		return false, fmt.Errorf("load order: %w", findErr)
+	}
+
+	if orderID != "" {
+		if _, err = tx.Exec(ctx, `UPDATE orders SET status=$2 WHERE id=$1 AND status IN ('paid','pending')`, orderID, targetOrderStatus); err != nil {
+			return false, fmt.Errorf("update order status: %w", err)
+		}
+
+		// 加購庫存回補
+		addonRows, qErr := tx.Query(ctx, `
+			SELECT addon_id, qty FROM order_items
+			WHERE order_id=$1 AND item_type='addon' AND addon_id IS NOT NULL`, orderID)
+		if qErr != nil {
+			return false, fmt.Errorf("load addon items: %w", qErr)
+		}
+		type addonQty struct {
+			id  string
+			qty int
+		}
+		var addons []addonQty
+		for addonRows.Next() {
+			var a addonQty
+			if sErr := addonRows.Scan(&a.id, &a.qty); sErr != nil {
+				addonRows.Close()
+				return false, fmt.Errorf("scan addon item: %w", sErr)
+			}
+			addons = append(addons, a)
+		}
+		addonRows.Close()
+		if iErr := addonRows.Err(); iErr != nil {
+			return false, fmt.Errorf("iterate addon items: %w", iErr)
+		}
+		for _, a := range addons {
+			if _, err = tx.Exec(ctx, `UPDATE race_addons SET sold_count = GREATEST(sold_count-$1,0) WHERE id=$2`, a.qty, a.id); err != nil {
+				return false, fmt.Errorf("release addon stock: %w", err)
+			}
+		}
+
+		// 優惠序號回補：作廢尚有效（voided_at IS NULL）的使用紀錄 + used_count-1
+		promoRows, pErr := tx.Query(ctx, `
+			SELECT id, promo_code_id FROM promo_code_usages
+			WHERE order_id=$1 AND voided_at IS NULL`, orderID)
+		if pErr != nil {
+			return false, fmt.Errorf("load promo usages: %w", pErr)
+		}
+		type usageRow struct{ usageID, promoID string }
+		var usages []usageRow
+		for promoRows.Next() {
+			var u usageRow
+			if sErr := promoRows.Scan(&u.usageID, &u.promoID); sErr != nil {
+				promoRows.Close()
+				return false, fmt.Errorf("scan promo usage: %w", sErr)
+			}
+			usages = append(usages, u)
+		}
+		promoRows.Close()
+		if iErr := promoRows.Err(); iErr != nil {
+			return false, fmt.Errorf("iterate promo usages: %w", iErr)
+		}
+		for _, u := range usages {
+			if _, err = tx.Exec(ctx, `UPDATE promo_codes SET used_count = GREATEST(used_count-1,0) WHERE id=$1`, u.promoID); err != nil {
+				return false, fmt.Errorf("release promo used_count: %w", err)
+			}
+			if _, err = tx.Exec(ctx, `UPDATE promo_code_usages SET voided_at=NOW() WHERE id=$1`, u.usageID); err != nil {
+				return false, fmt.Errorf("void promo usage: %w", err)
+			}
+		}
+
+		// VIP 活動優惠券回補
+		if couponUsed {
+			if _, err = tx.Exec(ctx, `
+				UPDATE users SET activity_coupon_balance = activity_coupon_balance + 1
+				WHERE id = (SELECT user_id FROM orders WHERE id=$1)`, orderID); err != nil {
+				return false, fmt.Errorf("refund coupon: %w", err)
 			}
 		}
 	}
-	return tx.Commit(ctx)
+
+	return true, tx.Commit(ctx)
 }
 
 // MarkRegistrationPaid 標記報名已付（後台「標記已付」手動操作，用於 ATM/超商等未走 API 通知的付款方式），

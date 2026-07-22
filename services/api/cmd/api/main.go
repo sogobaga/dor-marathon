@@ -124,6 +124,9 @@ func main() {
 		ProdOrigins: cfg.ECPayProdOrigins,
 	}
 	paymentHandler := payment.NewHandler(payCfg, payment.NewRepository(pool), raceSvc)
+	// 取消報名審核核准時複用退款核心（見 race.Service.ApproveCancelRequest）；晚繫結注入——
+	// payment.NewHandler 建構時需要 raceSvc 當 OrderMarker，兩者互相依賴，只能等這裡都建構好再接起來。
+	raceHandler.SetRefundCreator(paymentHandler.CreateRefund)
 
 	// Activity
 	actRepo := activity.NewRepository(pool)
@@ -318,6 +321,10 @@ func main() {
 			// 頭像上傳（重用圖片上傳，登入即可）
 			r.Post("/profile/avatar", imageHandler.Upload)
 
+			// 取消報名申請/撤回（審核由後台 /admin/cancel-requests 進行）
+			r.Post("/profile/registrations/{registrationID}/cancel-request", raceHandler.CreateCancelRequest)
+			r.Delete("/profile/registrations/{registrationID}/cancel-request", raceHandler.WithdrawCancelRequest)
+
 			// 跑者充電站收藏（比照 follow）
 			r.Mount("/profile/partner-favorites", partnerHandler.FavoriteRouter())
 
@@ -363,7 +370,8 @@ func main() {
 			r.Mount("/admin/images", imageHandler.AdminRouter()) // 共用工具，任何 admin 可上傳
 			r.With(perm("signups")).Mount("/admin/signups", raceHandler.SignupRouter())
 			r.With(perm("orders")).Mount("/admin/orders", raceHandler.OrderRouter())
-			r.With(perm("orders")).Mount("/admin/payments", paymentHandler.AdminRouter()) // 退款（沿用 orders 權限）
+			r.With(perm("orders")).Mount("/admin/payments", paymentHandler.AdminRouter())                  // 退款（沿用 orders 權限）
+			r.With(perm("orders")).Mount("/admin/cancel-requests", raceHandler.CancelRequestAdminRouter()) // 取消報名審核（沿用 orders 權限）
 			r.With(perm("promo")).Mount("/admin/promo-codes", promoHandler.Router())
 			r.With(perm("members")).Mount("/admin/members", profileHandler.AdminMembersRouter())
 			r.With(perm("members")).Get("/admin/vip-analytics", profileHandler.AdminVipAnalytics)

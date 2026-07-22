@@ -6,6 +6,7 @@ import {
   adminPresetsApi,
   adminImagesApi,
   adminTaskModulesApi,
+  adminAppSettingsApi,
   METRIC_BY_KEY,
   type CreateRacePayload,
   type EventMode,
@@ -18,8 +19,10 @@ import {
   type RaceTask,
   type TaskScope,
   type TaskModule,
+  type CancellationPolicy,
 } from '@/lib/api'
 import { TaskItemEditor, type TaskFields } from '../TaskItemEditor'
+import { CancellationPolicyFields, DEFAULT_CANCELLATION_POLICY, sortTiers, validateCancellationPolicy } from '../CancelPolicyEditor'
 
 // 物資編輯用的中介型別：scope 用「-1=共用」或分組索引表示
 interface SupplyDraft {
@@ -132,7 +135,7 @@ export default function RaceForm({
 }) {
   const isEdit = !!initial?.id
 
-  const [tab, setTab] = useState<'basic' | 'groups' | 'addons' | 'supplies' | 'brochure' | 'tasks'>('basic')
+  const [tab, setTab] = useState<'basic' | 'groups' | 'addons' | 'supplies' | 'brochure' | 'tasks' | 'cancel'>('basic')
   const [mode, setMode] = useState<EventMode>(initial?.event_mode ?? 'general')
   const [goalType, setGoalType] = useState<GoalType>(initial?.goal_type ?? 'distance')
   const [controlStatus, setControlStatus] = useState<string>(initial?.control_status ?? 'active')
@@ -240,6 +243,14 @@ export default function RaceForm({
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
+  // 取消退費規則：預設「跟隨系統預設」；此賽事已有覆寫（config.cancellation_policy 非 null）才預設開啟自訂。
+  const [cancelFollowDefault, setCancelFollowDefault] = useState<boolean>(!initial?.config?.cancellation_policy)
+  const [cancelPolicy, setCancelPolicy] = useState<CancellationPolicy>(
+    initial?.config?.cancellation_policy ?? DEFAULT_CANCELLATION_POLICY
+  )
+  // 目前系統預設值（唯讀參考顯示 + 使用者切換開啟自訂時的起始值）；載入前用內建預設暫代。
+  const [systemDefaultPolicy, setSystemDefaultPolicy] = useState<CancellationPolicy>(DEFAULT_CANCELLATION_POLICY)
+
   async function uploadCertBg(file: File) {
     setCertBgUploading(true); setErr('')
     try {
@@ -267,6 +278,19 @@ export default function RaceForm({
   useEffect(() => {
     adminPresetsApi.list(token).then((r) => setPresets(r.presets)).catch(() => {})
     adminTaskModulesApi.list(token).then((r) => setTaskModules(r.modules)).catch(() => {})
+    adminAppSettingsApi.list(token).then((r) => {
+      const raw = r.settings?.['cancellation_policy']
+      if (!raw) return
+      try {
+        const parsed = JSON.parse(raw)
+        setSystemDefaultPolicy(parsed)
+        // 此賽事尚無覆寫時，把編輯器起始值帶成目前系統預設，使用者一旦切到「此賽事自訂」看到的是合理起點而非內建預設。
+        if (!initial?.config?.cancellation_policy) setCancelPolicy(parsed)
+      } catch {
+        /* 壞資料時維持內建預設，不擋表單載入 */
+      }
+    }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
   useEffect(() => {
@@ -399,6 +423,14 @@ export default function RaceForm({
       starting_soon_days: parseInt(startingSoonDays || '5', 10) || 5,
       allow_team_groups: mode === 'competition' ? allowTeamGroups : false,
       vip_only: vipOnly,
+      // config 是整包 JSONB struct marshal（非合併寫入）：務必以既有 config 為底、只覆寫 cancellation_policy，
+      // 否則會把 factions/clubs/missions 等既有欄位一併清空（見後端 configToBytes/bytesToConfig 註解）。
+      config: {
+        ...(initial?.config ?? {}),
+        cancellation_policy: cancelFollowDefault
+          ? null
+          : { deadline_days: cancelPolicy.deadline_days, tiers: sortTiers(cancelPolicy.tiers ?? []) },
+      },
       test_whitelist: testWhitelist,
       brochure_title: brochureTitle.trim(),
       brochure: brochure
@@ -461,6 +493,14 @@ export default function RaceForm({
       setTab('tasks')
       return
     }
+    if (!cancelFollowDefault) {
+      const cancelErr = validateCancellationPolicy(cancelPolicy)
+      if (cancelErr) {
+        setErr(cancelErr)
+        setTab('cancel')
+        return
+      }
+    }
     setSaving(true)
     try {
       const payload = buildPayload()
@@ -514,6 +554,7 @@ export default function RaceForm({
           ['supplies', `物資 (${supplies.filter((s) => s.name.trim()).length})`],
           ['brochure', `簡章 (${brochure.filter(blockHasContent).length})`],
           ['tasks', `任務 (${tasks.filter(taskComplete).length})`],
+          ['cancel', `取消退費${cancelFollowDefault ? '' : ' ・自訂'}`],
         ].map(([v, label]) => (
           <button
             key={v}
@@ -997,6 +1038,45 @@ export default function RaceForm({
             ))}
             {groups.filter((g) => g.name.trim()).length === 0 && (
               <div style={{ fontSize: 12.5, color: 'var(--tx-faint)' }}>請先到「分組」分頁建立分組，才能設定分組專屬任務。</div>
+            )}
+          </div>
+        )}
+
+        {tab === 'cancel' && (
+          <div style={col}>
+            <div style={hint}>
+              使用者申請取消報名時，依此政策計算可退費比例（詳見「系統設定」頁的說明）。預設跟隨系統預設值；
+              如此賽事需要不同的退費規則（例如報名費不可退、或截止天數不同），可在此開啟自訂。
+            </div>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--tx)', fontWeight: 600 }}>
+              <input
+                type="checkbox"
+                checked={!cancelFollowDefault}
+                onChange={(e) => setCancelFollowDefault(!e.target.checked)}
+              />
+              此賽事自訂取消退費規則（不勾選＝跟隨系統預設）
+            </label>
+
+            {cancelFollowDefault ? (
+              <div style={{ ...card, background: 'var(--bg-2)' }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5 }}>目前系統預設值（唯讀）</div>
+                <div style={{ ...hint, marginTop: 6 }}>
+                  {systemDefaultPolicy.tiers.length
+                    ? systemDefaultPolicy.tiers
+                        .slice()
+                        .sort((a, b) => b.days_before - a.days_before)
+                        .map((t) => `距賽事 ≥${t.days_before} 天退 ${t.ratio}%`)
+                        .join('、')
+                    : '未設定任何退費級距（一律不退費）'}
+                  ；賽事開始前 {systemDefaultPolicy.deadline_days} 天內不可申請取消。
+                </div>
+                <div style={{ ...hint, marginTop: 6 }}>如需調整系統預設值，請到「系統設定」頁的「退費政策預設值」修改。</div>
+              </div>
+            ) : (
+              <div style={card}>
+                <CancellationPolicyFields policy={cancelPolicy} onChange={setCancelPolicy} />
+              </div>
             )}
           </div>
         )}

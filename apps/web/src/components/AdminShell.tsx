@@ -50,6 +50,7 @@ const NAV: { grp: string; items: NavItem[] }[] = [
     grp: '系統管理',
     items: [
       { k: 'orders', t: '訂單管理', href: '/admin/orders', perm: 'orders' },
+      { k: 'cancel-requests', t: '取消申請', href: '/admin/cancel-requests', perm: 'orders' },
       { k: 'promo', t: '序號管理', href: '/admin/promo', perm: 'promo' },
       { k: 'vip-promos', t: '訂閱優惠管理', href: '/admin/vip-promos', perm: 'settings' },
       { k: 'gps-review', t: 'GPS 審核', href: '/admin/gps-review', perm: 'gps_review' },

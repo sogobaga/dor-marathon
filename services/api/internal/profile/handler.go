@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/race"
 	"github.com/dor/api/internal/realtime"
@@ -192,6 +193,14 @@ type MyRegistration struct {
 	OrderID        string    `json:"order_id,omitempty"`
 	OrderTotal     int       `json:"order_total_cents"`
 	OrderStatus    string    `json:"order_status,omitempty"`
+
+	// 取消報名（見 race 套件 ComputeCancellation/ResolveCancellationPolicy）
+	CanCancel            bool   `json:"can_cancel"`
+	CancelBlockedReason  string `json:"cancel_blocked_reason"`
+	RefundRatio          int    `json:"refund_ratio"`
+	EstimatedRefundCents int    `json:"estimated_refund_cents"`
+	CancelRequestStatus  string `json:"cancel_request_status"` // 無申請時為空字串；否則 pending|processing|approved|rejected
+	// （processing 是後台核准流程中的短暫過渡狀態，正常情況幾乎看不到——見 race.beginCancelRequestProcessing）
 }
 
 // GET /api/v1/profile/registrations — 我的報名紀錄
@@ -204,11 +213,17 @@ func (h *Handler) Registrations(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(), `
 		SELECT reg.id, reg.race_id, rc.title, rc.slug, COALESCE(g.name,''),
 		       reg.group_revealed, reg.status, reg.created_at,
-		       COALESCE(o.id::text,''), COALESCE(o.total_cents,0), COALESCE(o.status,'')
+		       COALESCE(o.id::text,''), COALESCE(o.total_cents,0), COALESCE(o.status,''),
+		       rc.start_date, rc.config, COALESCE(cr.status,'')
 		FROM registrations reg
 		JOIN races rc ON rc.id = reg.race_id
 		LEFT JOIN race_groups g ON g.id = reg.group_id
 		LEFT JOIN orders o ON o.registration_id = reg.id
+		LEFT JOIN LATERAL (
+			SELECT status FROM registration_cancel_requests
+			WHERE registration_id = reg.id
+			ORDER BY created_at DESC LIMIT 1
+		) cr ON true
 		WHERE reg.user_id = $1
 		ORDER BY reg.created_at DESC`, userID)
 	if err != nil {
@@ -217,14 +232,54 @@ func (h *Handler) Registrations(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
+	// 系統預設取消政策只需查一次（不因每筆報名重查），個別賽事覆寫在迴圈內從各自的 config 解析。
+	sysDefaultPolicy := appsettings.GetString(r.Context(), h.db, "cancellation_policy", "")
+
 	out := []MyRegistration{}
 	for rows.Next() {
 		var m MyRegistration
+		var startDate time.Time
+		var configBytes []byte
+		var crStatus string
 		if err := rows.Scan(&m.RegistrationID, &m.RaceID, &m.RaceTitle, &m.RaceSlug, &m.GroupName,
-			&m.GroupRevealed, &m.Status, &m.CreatedAt, &m.OrderID, &m.OrderTotal, &m.OrderStatus); err != nil {
+			&m.GroupRevealed, &m.Status, &m.CreatedAt, &m.OrderID, &m.OrderTotal, &m.OrderStatus,
+			&startDate, &configBytes, &crStatus); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
+		m.CancelRequestStatus = crStatus
+
+		var cfg race.RaceConfig
+		_ = json.Unmarshal(configBytes, &cfg) // 壞掉的 config 視同沒有覆寫
+		policy := race.ResolveCancellationPolicy(cfg.CancellationPolicy, sysDefaultPolicy)
+
+		// 未付款訂單沒有錢可退：即使政策算出 ratio>0，估算退費金額也要是 0（與 CreateCancelRequest 一致）。
+		effectiveAmount := 0
+		if m.OrderStatus == "paid" {
+			effectiveAmount = m.OrderTotal
+		}
+		calc := race.ComputeCancellation(startDate, time.Now(), effectiveAmount, policy)
+		m.RefundRatio = calc.Ratio
+		m.EstimatedRefundCents = calc.RefundAmountCents
+
+		switch {
+		case m.Status != "paid" && m.Status != "pending":
+			m.CanCancel = false
+			m.CancelBlockedReason = "此報名狀態無法申請取消"
+		case crStatus == "pending" || crStatus == "processing":
+			// processing 是後台核准流程的短暫過渡狀態（見 race.beginCancelRequestProcessing），與
+			// pending 一樣視為「已有申請正在處理中」——這裡的判斷要跟 getRegistrationForCancel 的
+			// HasPending 查詢及 DB 層 uq_cancel_requests_pending_per_registration 保持一致，
+			// 否則前台會顯示「可以再次申請取消」，但實際送出時會被 DB 擋下（ErrCancelRequestPending）。
+			m.CanCancel = false
+			m.CancelBlockedReason = "已有取消申請正在審核中"
+		case !calc.CanCancel:
+			m.CanCancel = false
+			m.CancelBlockedReason = calc.BlockedReason
+		default:
+			m.CanCancel = true
+		}
+
 		out = append(out, m)
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"registrations": out, "count": len(out)})

@@ -369,66 +369,75 @@ func (h *Handler) AdminEnvCheck(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, resp)
 }
 
-// AdminCreateRefund POST /api/v1/admin/payments/refunds  {order_id, amount_cents?, reason}
-// amount_cents 省略或 0 = 對剩餘可退餘額全額退款。信用卡走綠界退刷 API；其餘付款方式（ATM/超商等）
-// 建立 manual_required 紀錄，待後台人工匯款後呼叫 manual-done 完成。
-func (h *Handler) AdminCreateRefund(w http.ResponseWriter, r *http.Request) {
-	adminID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
-	var req struct {
-		OrderID     string `json:"order_id"`
-		AmountCents int    `json:"amount_cents"`
-		Reason      string `json:"reason"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OrderID == "" {
-		respondErr(w, http.StatusBadRequest, "order_id is required")
-		return
-	}
-	if strings.TrimSpace(req.Reason) == "" {
-		respondErr(w, http.StatusBadRequest, "退款原因為必填")
-		return
+// --- 退款核心（不綁 HTTP）---
+
+// 這幾個 sentinel 錯誤代表「連退款紀錄都沒能建立」——CreateRefund 尚未呼叫 CreatePendingRefund 就
+// 提前返回，DB 裡不會留下任何 payment_refunds 列。呼叫端（例如取消審核核准流程）可以安全地把這些
+// 錯誤視為「這次沒建成退款」，不必因此讓呼叫端自己的整個操作失敗——見 CreateRefundResult 註解。
+var (
+	ErrRefundReasonRequired = errors.New("退款原因為必填")
+	ErrRefundOrderNotFound  = errors.New("order not found")
+	ErrRefundOrderNotPaid   = errors.New("訂單目前非「已付款」狀態，無法退款")
+	ErrRefundNoPaidTx       = errors.New("查無已付款的金流交易紀錄，無法退款")
+	ErrRefundFullyRefunded  = errors.New("此訂單已全額退款")
+	ErrRefundAmountExceeds  = errors.New("退款金額超過可退餘額")
+	ErrRefundBlackout       = errors.New("綠界每日 20:15–20:30 自動關帳時段無法呼叫退刷 API，請稍後再試")
+)
+
+// CreateRefundResult CreateRefund 的執行結果。
+type CreateRefundResult struct {
+	RefundID string `json:"refund_id"`
+	Status   string `json:"status"` // success|manual_required|failed|unknown
+	Method   string `json:"method"` // api|manual
+	Note     string `json:"note,omitempty"`
+}
+
+// CreateRefund 退款核心邏輯（不綁 HTTP），供 AdminCreateRefund handler 與取消申請審核核准流程
+// （race.Service.ApproveCancelRequest，經 race.Handler.SetRefundCreator 注入）共用——不重寫打綠界那段。
+//
+// amountCents 必須是呼叫端已經決定好的精確金額；<=0 時比照原行為視為「對剩餘可退餘額全額退款」。
+//
+// 回傳的 CreateRefundResult 只要退款紀錄成功建立就一定帶著 RefundID，即使後續呼叫綠界的結果是
+// unknown/failed 也一樣（err 為 nil）——呼叫端需要不論結果如何都能追蹤到這筆退款紀錄。
+// err 非 nil 只代表上面列的 sentinel 錯誤之一：連退款紀錄都沒能建立（訂單非 paid、找不到已付款交易、
+// 金額超過可退餘額、綠界關帳時段…），這種情況下呼叫端可以安全地略過退款，只完成自己那邊的結算。
+func (h *Handler) CreateRefund(ctx context.Context, orderID string, amountCents int, reason, operatorAdminID string) (CreateRefundResult, error) {
+	if strings.TrimSpace(reason) == "" {
+		return CreateRefundResult{}, ErrRefundReasonRequired
 	}
 
-	order, err := h.repo.GetOrderForRefund(r.Context(), req.OrderID)
+	order, err := h.repo.GetOrderForRefund(ctx, orderID)
 	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to load order")
-		return
+		return CreateRefundResult{}, fmt.Errorf("failed to load order: %w", err)
 	}
 	if order == nil {
-		respondErr(w, http.StatusNotFound, "order not found")
-		return
+		return CreateRefundResult{}, ErrRefundOrderNotFound
 	}
 	if order.Status != "paid" {
-		respondErr(w, http.StatusConflict, "訂單目前非「已付款」狀態，無法退款")
-		return
+		return CreateRefundResult{}, ErrRefundOrderNotPaid
 	}
 
-	tx, err := h.repo.GetPaidTxForOrder(r.Context(), req.OrderID)
+	tx, err := h.repo.GetPaidTxForOrder(ctx, orderID)
 	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to load payment transaction")
-		return
+		return CreateRefundResult{}, fmt.Errorf("failed to load payment transaction: %w", err)
 	}
 	if tx == nil {
-		respondErr(w, http.StatusConflict, "查無已付款的金流交易紀錄，無法退款")
-		return
+		return CreateRefundResult{}, ErrRefundNoPaidTx
 	}
 
-	already, err := h.repo.SumReservedForOrder(r.Context(), req.OrderID)
+	already, err := h.repo.SumReservedForOrder(ctx, orderID)
 	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to load refund history")
-		return
+		return CreateRefundResult{}, fmt.Errorf("failed to load refund history: %w", err)
 	}
 	remaining := order.TotalCents - already
 	if remaining <= 0 {
-		respondErr(w, http.StatusConflict, "此訂單已全額退款")
-		return
+		return CreateRefundResult{}, ErrRefundFullyRefunded
 	}
-	amountCents := req.AmountCents
 	if amountCents <= 0 {
 		amountCents = remaining
 	}
 	if amountCents > remaining {
-		respondErr(w, http.StatusBadRequest, fmt.Sprintf("退款金額超過可退餘額（剩餘可退 NT$ %d）", remaining/100))
-		return
+		return CreateRefundResult{}, fmt.Errorf("%w（剩餘可退 NT$ %d）", ErrRefundAmountExceeds, remaining/100)
 	}
 
 	// 依付款方式分流：僅信用卡支援 API 退款，其餘（ATM/超商代碼/條碼等）一律人工退款。
@@ -447,35 +456,28 @@ func (h *Handler) AdminCreateRefund(w http.ResponseWriter, r *http.Request) {
 	case time.Since(*tx.PaidAt) < refundMinAgeAfterPaid:
 		manualNote = "訂單付款未滿 24 小時（可能尚未關帳），請隔日 06:00 後再試，或改人工處理"
 	case inEcpayDailyCloseBlackout(time.Now()):
-		respondErr(w, http.StatusConflict, "綠界每日 20:15–20:30 自動關帳時段無法呼叫退刷 API，請稍後再試")
-		return
+		return CreateRefundResult{}, ErrRefundBlackout
 	default:
 		method = "api"
 	}
-	reason := req.Reason
+	fullReason := reason
 	if method == "manual" && manualNote != "" {
-		reason = reason + "（系統判斷：" + manualNote + "）"
+		fullReason = reason + "（系統判斷：" + manualNote + "）"
 	}
 
-	refundID, err := h.repo.CreatePendingRefund(r.Context(), tx.ID, req.OrderID, amountCents, method, reason, adminID)
+	refundID, err := h.repo.CreatePendingRefund(ctx, tx.ID, orderID, amountCents, method, fullReason, operatorAdminID)
 	if errors.Is(err, ErrRefundInProgress) {
-		respondErr(w, http.StatusConflict, "此交易已有退款處理中，請稍候")
-		return
+		return CreateRefundResult{}, ErrRefundInProgress
 	}
 	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to create refund record")
-		return
+		return CreateRefundResult{}, fmt.Errorf("failed to create refund record: %w", err)
 	}
 
 	if method == "manual" {
-		if err := h.repo.MarkRefundResult(r.Context(), refundID, "manual_required", "", "", nil); err != nil {
-			respondErr(w, http.StatusInternalServerError, "failed to update refund record")
-			return
+		if err := h.repo.MarkRefundResult(ctx, refundID, "manual_required", "", "", nil); err != nil {
+			return CreateRefundResult{RefundID: refundID}, fmt.Errorf("failed to update refund record: %w", err)
 		}
-		respondJSON(w, http.StatusOK, map[string]any{
-			"refund_id": refundID, "status": "manual_required", "method": "manual", "note": manualNote,
-		})
-		return
+		return CreateRefundResult{RefundID: refundID, Status: "manual_required", Method: "manual", Note: manualNote}, nil
 	}
 
 	// method == "api"：呼叫綠界信用卡退刷（Action=R）
@@ -486,9 +488,9 @@ func (h *Handler) AdminCreateRefund(w http.ResponseWriter, r *http.Request) {
 		// 網路逾時/連線失敗：無法確認綠界是否已受理退刷（可能已經退了，只是回應沒送達）。
 		// 不可標成 'failed'——那會釋放這筆額度讓下一次請求以為還沒退過，導致重複退款、真金重複流出。
 		// 標成 'unknown'，讓它繼續佔用可退餘額並擋住後續請求，待人工到綠界後台核對後才手動處理。
-		h.repo.MarkRefundResult(r.Context(), refundID, "unknown", "", "呼叫綠界退刷服務逾時或連線失敗，結果不明", nil)
-		respondErr(w, http.StatusBadGateway, "退款結果不明（逾時/連線失敗），請務必先至綠界後台核對是否已退款成功，切勿直接重試")
-		return
+		h.repo.MarkRefundResult(ctx, refundID, "unknown", "", "呼叫綠界退刷服務逾時或連線失敗，結果不明", nil)
+		return CreateRefundResult{RefundID: refundID, Status: "unknown", Method: "api",
+			Note: "退款結果不明（逾時/連線失敗），請務必先至綠界後台核對是否已退款成功，切勿直接重試"}, nil
 	}
 	rawJSON, _ := json.Marshal(result.Raw)
 
@@ -496,25 +498,77 @@ func (h *Handler) AdminCreateRefund(w http.ResponseWriter, r *http.Request) {
 		if result.RtnCode == "" {
 			// 綠界回應不是預期的 querystring 格式（例如中間閘道器回傳的 HTML 錯誤頁），同樣無法確認
 			// 退刷是否已被受理，比照連線失敗處理，不可視為確定失敗。
-			h.repo.MarkRefundResult(r.Context(), refundID, "unknown", result.RtnCode, "退刷回應格式非預期，結果不明", rawJSON)
-			respondErr(w, http.StatusBadGateway, "退款結果不明（回應格式異常），請務必先至綠界後台核對是否已退款成功，切勿直接重試")
-			return
+			h.repo.MarkRefundResult(ctx, refundID, "unknown", result.RtnCode, "退刷回應格式非預期，結果不明", rawJSON)
+			return CreateRefundResult{RefundID: refundID, Status: "unknown", Method: "api",
+				Note: "退款結果不明（回應格式異常），請務必先至綠界後台核對是否已退款成功，切勿直接重試"}, nil
 		}
-		h.repo.MarkRefundResult(r.Context(), refundID, "failed", result.RtnCode, result.RtnMsg, rawJSON)
-		respondErr(w, http.StatusBadGateway, "退款失敗："+result.RtnMsg)
+		h.repo.MarkRefundResult(ctx, refundID, "failed", result.RtnCode, result.RtnMsg, rawJSON)
+		return CreateRefundResult{RefundID: refundID, Status: "failed", Method: "api",
+			Note: "退款失敗：" + result.RtnMsg}, nil
+	}
+
+	if err := h.repo.MarkRefundResult(ctx, refundID, "success", result.RtnCode, result.RtnMsg, rawJSON); err != nil {
+		return CreateRefundResult{RefundID: refundID, Status: "success", Method: "api"},
+			fmt.Errorf("退款已成功但記錄寫入失敗，請人工核對: %w", err)
+	}
+	if err := h.finalizeIfFullyRefunded(ctx, orderID, tx.ID, order.TotalCents); err != nil {
+		return CreateRefundResult{RefundID: refundID, Status: "success", Method: "api"},
+			fmt.Errorf("退款已成功但訂單狀態更新失敗，請人工核對: %w", err)
+	}
+
+	return CreateRefundResult{RefundID: refundID, Status: "success", Method: "api"}, nil
+}
+
+// refundErrStatus 把 CreateRefund 回傳的 sentinel 錯誤映射成 HTTP 狀態碼（AdminCreateRefund 專用）。
+func refundErrStatus(err error) int {
+	switch {
+	case errors.Is(err, ErrRefundOrderNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrRefundReasonRequired), errors.Is(err, ErrRefundAmountExceeds):
+		return http.StatusBadRequest
+	case errors.Is(err, ErrRefundOrderNotPaid), errors.Is(err, ErrRefundNoPaidTx),
+		errors.Is(err, ErrRefundFullyRefunded), errors.Is(err, ErrRefundBlackout),
+		errors.Is(err, ErrRefundInProgress):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// --- Handler：退款相關 ---
+
+// AdminCreateRefund POST /api/v1/admin/payments/refunds  {order_id, amount_cents?, reason}
+// amount_cents 省略或 0 = 對剩餘可退餘額全額退款。信用卡走綠界退刷 API；其餘付款方式（ATM/超商等）
+// 建立 manual_required 紀錄，待後台人工匯款後呼叫 manual-done 完成。
+// 薄 HTTP 包裝：實際邏輯在 CreateRefund（見上方），這裡只做 JSON 解碼與錯誤/回應碼映射。
+func (h *Handler) AdminCreateRefund(w http.ResponseWriter, r *http.Request) {
+	adminID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	var req struct {
+		OrderID     string `json:"order_id"`
+		AmountCents int    `json:"amount_cents"`
+		Reason      string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.OrderID == "" {
+		respondErr(w, http.StatusBadRequest, "order_id is required")
 		return
 	}
 
-	if err := h.repo.MarkRefundResult(r.Context(), refundID, "success", result.RtnCode, result.RtnMsg, rawJSON); err != nil {
-		respondErr(w, http.StatusInternalServerError, "退款已成功但記錄寫入失敗，請人工核對")
-		return
-	}
-	if err := h.finalizeIfFullyRefunded(r.Context(), req.OrderID, tx.ID, order.TotalCents); err != nil {
-		respondErr(w, http.StatusInternalServerError, "退款已成功但訂單狀態更新失敗，請人工核對")
+	result, err := h.CreateRefund(r.Context(), req.OrderID, req.AmountCents, req.Reason, adminID)
+	if err != nil {
+		respondErr(w, refundErrStatus(err), err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{"refund_id": refundID, "status": "success"})
+	switch result.Status {
+	case "manual_required":
+		respondJSON(w, http.StatusOK, map[string]any{
+			"refund_id": result.RefundID, "status": result.Status, "method": result.Method, "note": result.Note,
+		})
+	case "unknown", "failed":
+		respondErr(w, http.StatusBadGateway, result.Note)
+	default: // success
+		respondJSON(w, http.StatusOK, map[string]any{"refund_id": result.RefundID, "status": "success"})
+	}
 }
 
 // finalizeIfFullyRefunded 累計退款達訂單全額時，才把交易/訂單標為 refunded 並連動取消報名。

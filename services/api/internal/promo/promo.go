@@ -323,8 +323,10 @@ func LockAndValidateTx(ctx context.Context, tx pgx.Tx, code, raceID, userID stri
 	}
 	userUsed := false
 	if p.PerUserOnce {
+		// voided_at IS NULL：取消報名核准後會把該筆使用紀錄標記作廢（見 race.Repository.SettleCancellation），
+		// 作廢的紀錄不算「已使用過」，否則使用者取消後永遠無法再用同一張 per_user_once 序號。
 		if err := tx.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM promo_code_usages WHERE promo_code_id=$1 AND user_id=$2)`,
+			`SELECT EXISTS(SELECT 1 FROM promo_code_usages WHERE promo_code_id=$1 AND user_id=$2 AND voided_at IS NULL)`,
 			p.ID, userID).Scan(&userUsed); err != nil {
 			return nil, err
 		}

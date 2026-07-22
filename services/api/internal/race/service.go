@@ -51,16 +51,32 @@ var (
 	// ErrRegistrationNotPending 報名存在，但目前狀態不是 pending，不可再標記為已付款
 	// （避免已取消/已退款的報名被後台「標記已付」按鈕復活）。
 	ErrRegistrationNotPending = errors.New("registration exists but is not pending")
+
+	// --- 取消報名申請 ---
+	ErrCancelRequestNotFound   = errors.New("cancel request not found")
+	ErrCancelRequestPending    = errors.New("已有取消申請正在審核中")
+	ErrCancelRegistrationState = errors.New("此報名狀態無法申請取消")
+	ErrCancelDeadlinePassed    = errors.New("已超過可取消期限")
 )
 
 type Service struct {
 	repo  *Repository
 	rdb   *redis.Client
 	promo *promo.Service
+	// refundCreator：取消申請核准時複用綠界退款核心邏輯（不重寫打綠界那段）。
+	// 注入自 payment.Handler.CreateRefund（見 main.go 的 raceHandler.SetRefundCreator），晚於本
+	// Service 建構——payment.NewHandler 需要 raceSvc 當 OrderMarker，兩者互相依賴，只能用 setter
+	// 晚繫結解開。未設定時 ApproveCancelRequest 會略過自動建立退款，留言請人工處理。
+	refundCreator RefundCreatorFunc
 }
 
 func NewService(repo *Repository, rdb *redis.Client, promoSvc *promo.Service) *Service {
 	return &Service{repo: repo, rdb: rdb, promo: promoSvc}
+}
+
+// SetRefundCreator 見上方欄位註解。
+func (s *Service) SetRefundCreator(fn RefundCreatorFunc) {
+	s.refundCreator = fn
 }
 
 // List 回傳賽事列表（admin 用，含全部 control_status，填入 display_status）

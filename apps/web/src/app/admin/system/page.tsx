@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminAppSettingsApi, adminImagesApi } from '@/lib/api'
+import { adminAppSettingsApi, adminImagesApi, type CancellationPolicy } from '@/lib/api'
 import { SETTINGS_SPECS, type SettingSpec } from '@/lib/appSettings'
 import { getToken, clearToken } from '@/lib/adminAuth'
+import { CancellationPolicyFields, DEFAULT_CANCELLATION_POLICY, sortTiers, validateCancellationPolicy } from '../CancelPolicyEditor'
 
 export default function AdminSystemPage() {
   const router = useRouter()
@@ -15,6 +16,13 @@ export default function AdminSystemPage() {
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const seeded = useRef(false)
+
+  // 取消退費政策系統預設（複雜巢狀結構，不走 SETTINGS_SPECS 的通用 number/select/text 渲染，獨立一塊）
+  const [cancelPolicy, setCancelPolicy] = useState<CancellationPolicy>(DEFAULT_CANCELLATION_POLICY)
+  const [cancelPolicyBusy, setCancelPolicyBusy] = useState(false)
+  const [cancelPolicyErr, setCancelPolicyErr] = useState('')
+  const [cancelPolicyMsg, setCancelPolicyMsg] = useState('')
+  const cancelPolicySeeded = useRef(false)
 
   const load = useCallback(() => {
     const t = getToken()
@@ -31,6 +39,13 @@ export default function AdminSystemPage() {
         for (const spec of SETTINGS_SPECS) next[spec.key] = s[spec.key] ?? ''
         setEdit(next)
       }
+      if (!cancelPolicySeeded.current) {
+        cancelPolicySeeded.current = true
+        const raw = s['cancellation_policy']
+        if (raw) {
+          try { setCancelPolicy(JSON.parse(raw)) } catch { /* 壞資料時維持內建預設，不擋頁面載入 */ }
+        }
+      }
     }).catch((e) => {
       if (e?.status === 401) { clearToken(); router.replace('/admin/login') }
       else if (e?.status === 403) setErr('無「系統設定」權限')
@@ -38,6 +53,24 @@ export default function AdminSystemPage() {
     })
   }, [router])
   useEffect(() => { load() }, [load])
+
+  async function saveCancelPolicy() {
+    if (!token) return
+    const normalized: CancellationPolicy = { deadline_days: cancelPolicy.deadline_days, tiers: sortTiers(cancelPolicy.tiers ?? []) }
+    const vErr = validateCancellationPolicy(normalized)
+    if (vErr) { setCancelPolicyErr(vErr); setCancelPolicyMsg(''); return }
+    setCancelPolicyBusy(true); setCancelPolicyErr(''); setCancelPolicyMsg('')
+    try {
+      const r = await adminAppSettingsApi.set(token, 'cancellation_policy', JSON.stringify(normalized))
+      setValues(r.settings || {})
+      setCancelPolicy(normalized)
+      setCancelPolicyMsg('✓ 已儲存退費政策預設值')
+    } catch (e: any) {
+      setCancelPolicyErr(e?.message || '儲存失敗')
+    } finally {
+      setCancelPolicyBusy(false)
+    }
+  }
 
   async function save(spec: SettingSpec) {
     if (!token) return
@@ -131,6 +164,28 @@ export default function AdminSystemPage() {
           </div>
         </div>
       ))}
+
+      {/* 取消退費政策（系統預設；個別賽事可在賽事表單覆寫） */}
+      <div style={{ marginTop: 18 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: '.05em', marginBottom: 8 }}>退費政策預設值</div>
+        <div style={card}>
+          <div style={{ fontWeight: 800, fontSize: 15 }}>取消報名退費政策（系統預設）</div>
+          <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.7 }}>
+            使用者申請取消報名時，依此政策計算可退費比例。個別賽事若無另外設定，一律套用此系統預設；
+            個別賽事的覆寫請到「賽事管理 → 編輯賽事 → 取消退費」分頁設定。
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <CancellationPolicyFields policy={cancelPolicy} onChange={setCancelPolicy} />
+          </div>
+          {cancelPolicyErr && <div style={{ color: 'var(--hunt)', fontSize: 12.5, marginTop: 8 }}>{cancelPolicyErr}</div>}
+          {cancelPolicyMsg && <div style={{ color: 'var(--fug)', fontSize: 12.5, marginTop: 8 }}>{cancelPolicyMsg}</div>}
+          <div style={{ marginTop: 10 }}>
+            <button onClick={saveCancelPolicy} disabled={cancelPolicyBusy} style={{ ...primaryBtn, opacity: cancelPolicyBusy ? 0.5 : 1 }}>
+              {cancelPolicyBusy ? '儲存中…' : '儲存退費政策'}
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* 品牌圖示（favicon） */}
       <div style={{ marginTop: 22 }}>

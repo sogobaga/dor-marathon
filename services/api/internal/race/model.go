@@ -340,6 +340,10 @@ type RaceConfig struct {
 	Factions []FactionDef `json:"factions,omitempty"`
 	Clubs    []ClubDef    `json:"clubs,omitempty"`
 	Missions []MissionDef `json:"missions,omitempty"`
+	// CancellationPolicy 本賽事的取消退費政策覆寫；nil＝繼承系統預設（見 ResolveCancellationPolicy）。
+	// 必須放在 RaceConfig 這個型別內（而非另外存表）——後台編輯賽事時整包 config 會經 Go struct 序列化
+	// 往返（見 configToBytes/bytesToConfig），不在此型別內的欄位會在下次編輯賽事時被覆寫掉。
+	CancellationPolicy *CancellationPolicy `json:"cancellation_policy,omitempty"`
 }
 
 type FactionDef struct {

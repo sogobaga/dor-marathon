@@ -52,7 +52,25 @@ export interface Race {
   show_distance_rank?: boolean
   show_time_rank?: boolean
   vip_only?: boolean // VIP 限定賽事（只提供給 VIP 帳號）
+  config?: RaceConfig // 後端一律回傳（非 omitempty）；此處選填僅為前端防禦
   created_at: string
+}
+
+// --- 取消退費政策（見後端 race.CancellationPolicy／race.ResolveCancellationPolicy）---
+export interface CancellationTier {
+  days_before: number // 距賽事開始 >= 此天數
+  ratio: number        // 退費百分比 0–100
+}
+export interface CancellationPolicy {
+  deadline_days: number // 賽事開始前幾天截止申請取消
+  tiers: CancellationTier[] // 依 days_before 由大到小比對，取第一個符合的 ratio
+}
+// 賽事 JSONB config：目前前端僅提供 cancellation_policy 的編輯 UI；factions/clubs/missions
+// 尚無編輯介面，用索引簽章原樣保留這些既有欄位，往返送出時不誤刪（見後端 configToBytes/bytesToConfig
+// 是整個 struct marshal，任何未帶到的欄位都會被清空）。
+export interface RaceConfig {
+  cancellation_policy?: CancellationPolicy | null // null／不覆寫＝繼承系統預設
+  [key: string]: unknown
 }
 
 export type ControlStatus = 'active' | 'paused' | 'suspended' | 'closed' | 'hidden' | 'testing'
@@ -1237,6 +1255,12 @@ export interface MyRegistration {
   order_id?: string
   order_total_cents: number
   order_status?: string
+  // 取消報名 / 分級退費
+  can_cancel: boolean
+  cancel_blocked_reason: string
+  refund_ratio: number
+  estimated_refund_cents: number
+  cancel_request_status: string // ''|'pending'|'processing'|'approved'|'rejected'
 }
 
 export interface MyOrderItem {
@@ -1292,6 +1316,18 @@ export const profileApi = {
   },
   registrations: (token: string) =>
     request<{ registrations: MyRegistration[]; count: number }>('/profile/registrations', { headers: withAuth(token) }),
+  // 取消報名申請：建立 / 撤回（僅本人待審中的申請可撤回）
+  cancelRequest: (token: string, registrationID: string, reason: string) =>
+    request<{ ok: boolean }>(`/profile/registrations/${registrationID}/cancel-request`, {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify({ reason }),
+    }),
+  withdrawCancelRequest: (token: string, registrationID: string) =>
+    request<{ ok: boolean }>(`/profile/registrations/${registrationID}/cancel-request`, {
+      method: 'DELETE',
+      headers: withAuth(token),
+    }),
   order: (token: string, orderID: string) =>
     request<{ order: MyOrder }>(`/profile/orders/${orderID}`, { headers: withAuth(token) }),
   follows: (token: string) =>
@@ -2005,6 +2041,52 @@ export const adminOrdersApi = {
       method: 'PATCH',
       headers: withAuth(token),
       body: JSON.stringify({ payment_ref: payment_ref ?? '' }),
+    }),
+}
+
+// --- 取消報名審核（後台） ---
+
+export interface AdminCancelRequest {
+  id: string
+  registration_id: string
+  order_id?: string
+  user_id: string
+  user_name?: string
+  user_email?: string
+  race_title?: string
+  status: string // pending|processing|approved|rejected
+  reason: string
+  days_before_race: number
+  refund_ratio: number
+  refund_amount_cents: number
+  order_total_cents: number
+  reviewed_by?: string
+  reviewed_at?: string
+  review_note?: string
+  refund_id?: string
+  created_at: string
+}
+
+export interface CancelApproveResult {
+  order_status: string // refunded|cancelled|""
+  refund_id?: string
+  refund_note?: string
+}
+
+export const adminCancelRequestsApi = {
+  list: (token: string, status?: string) => {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : ''
+    return request<{ cancel_requests: AdminCancelRequest[]; count: number }>(`/admin/cancel-requests${qs}`, {
+      headers: withAuth(token),
+    })
+  },
+  approve: (token: string, id: string) =>
+    request<CancelApproveResult>(`/admin/cancel-requests/${id}/approve`, { method: 'PATCH', headers: withAuth(token) }),
+  reject: (token: string, id: string, note: string) =>
+    request<void>(`/admin/cancel-requests/${id}/reject`, {
+      method: 'PATCH',
+      headers: withAuth(token),
+      body: JSON.stringify({ note }),
     }),
 }
 

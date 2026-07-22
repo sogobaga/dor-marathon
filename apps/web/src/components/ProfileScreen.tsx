@@ -62,6 +62,13 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
   const [showUpgrade, setShowUpgrade] = useState(false)
   const [follows, setFollows] = useState<FollowRow[] | null>(null)
   const [site, setSite] = useState<SiteSettings | null>(null) // 全站外觀設定（含 Strava 標章雙版本 URL）
+  // 取消報名 / 分級退費
+  const [cancelTarget, setCancelTarget] = useState<MyRegistration | null>(null) // 開啟「申請取消報名」對話框的那筆報名
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelSubmitting, setCancelSubmitting] = useState(false)
+  const [cancelErr, setCancelErr] = useState('')
+  const [recMsg, setRecMsg] = useState('') // 報名紀錄頁籤操作成功提示（申請取消／撤回）
+  const [withdrawBusy, setWithdrawBusy] = useState<string | null>(null) // 撤回中的 registration_id
   // COROS 式 UX：會員資訊面板固定最上方，分頁內容做成可上下拖曳面板（收合看完整會員面板／半展看分頁／全展看整份內容）
   const sheet = useDraggableSheet('peek') // 預設收合到底部（只露把手＋分頁列）→ 會員面板四個入口(含 PB/成就探索)一進頁就完整顯示
 
@@ -141,6 +148,10 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
       .then((r) => setP(r.profile))
       .catch((e) => setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '載入失敗'))
 
+    loadRegs()
+  }, [focusRaceID])
+
+  function loadRegs() {
     withUserAuth((t) => profileApi.registrations(t))
       .then((r) => {
         setRegs(r.registrations)
@@ -151,7 +162,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
         }
       })
       .catch(() => {})
-  }, [focusRaceID])
+  }
 
   async function openPay(orderID: string) {
     try {
@@ -159,6 +170,46 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
       setPayOrder(order)
     } catch (e: any) {
       setErr(e?.message || '載入繳費資訊失敗')
+    }
+  }
+
+  function openCancelModal(r: MyRegistration) {
+    setCancelTarget(r)
+    setCancelReason('')
+    setCancelErr('')
+  }
+
+  async function submitCancelRequest() {
+    if (!cancelTarget) return
+    const reason = cancelReason.trim()
+    if (!reason) { setCancelErr('請填寫取消原因'); return }
+    setCancelSubmitting(true)
+    setCancelErr('')
+    try {
+      await withUserAuth((t) => profileApi.cancelRequest(t, cancelTarget.registration_id, reason))
+      setCancelTarget(null)
+      setCancelReason('')
+      setRecMsg('已送出取消申請，我們將盡快審核')
+      loadRegs()
+    } catch (e: any) {
+      setCancelErr(e instanceof SessionExpiredError ? '登入已過期，請重新登入' : e?.message || '送出失敗，請稍後再試')
+    } finally {
+      setCancelSubmitting(false)
+    }
+  }
+
+  async function withdrawCancel(r: MyRegistration) {
+    if (!window.confirm('確定要撤回這筆取消申請嗎？')) return
+    setWithdrawBusy(r.registration_id)
+    setRecMsg('')
+    try {
+      await withUserAuth((t) => profileApi.withdrawCancelRequest(t, r.registration_id))
+      setRecMsg('已撤回取消申請')
+      loadRegs()
+    } catch (e: any) {
+      setErr(e instanceof SessionExpiredError ? '登入已過期，請重新登入' : e?.message || '撤回失敗，請稍後再試')
+    } finally {
+      setWithdrawBusy(null)
     }
   }
 
@@ -479,9 +530,11 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
         <div>
           {!regs && <div style={{ color: 'var(--tx-dim)', fontSize: 13 }}>載入中…</div>}
           {regs && regs.length === 0 && <div style={{ color: 'var(--tx-dim)', fontSize: 13 }}>尚無報名紀錄</div>}
+          {recMsg && <div style={{ color: 'var(--fug)', fontSize: 13, marginBottom: 10 }}>✓ {recMsg}</div>}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {regs?.map((r) => {
               const st = REG_STATUS[r.status] ?? { t: r.status, c: 'var(--tx-dim)' }
+              const cancelling = r.cancel_request_status === 'pending' || r.cancel_request_status === 'processing'
               return (
                 <div key={r.registration_id} style={recCard}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
@@ -498,6 +551,37 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
                     {r.status === 'pending' && r.order_id && (
                       <button onClick={() => openPay(r.order_id!)} style={payBtn}>前往繳費</button>
                     )}
+                  </div>
+
+                  {/* 取消報名 / 分級退費申請狀態 */}
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+                    {cancelling ? (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 700 }}>⏳ 取消申請審核中</span>
+                        <button
+                          onClick={() => withdrawCancel(r)}
+                          disabled={withdrawBusy === r.registration_id}
+                          style={{ ...ghostBtn, opacity: withdrawBusy === r.registration_id ? 0.6 : 1 }}
+                        >
+                          {withdrawBusy === r.registration_id ? '撤回中…' : '撤回申請'}
+                        </button>
+                      </div>
+                    ) : r.cancel_request_status === 'approved' ? (
+                      <span style={{ fontSize: 12, color: 'var(--tx-dim)', fontWeight: 700 }}>已取消（已核准）</span>
+                    ) : r.cancel_request_status === 'rejected' ? (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12, color: 'var(--hunt)', fontWeight: 700 }}>取消申請未通過</span>
+                        {r.can_cancel && (
+                          <button onClick={() => openCancelModal(r)} style={ghostBtn}>重新申請取消</button>
+                        )}
+                      </div>
+                    ) : r.can_cancel ? (
+                      <button onClick={() => openCancelModal(r)} style={{ ...ghostBtn, color: 'var(--hunt)', borderColor: 'var(--hunt)' }}>
+                        申請取消報名
+                      </button>
+                    ) : r.cancel_blocked_reason ? (
+                      <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{r.cancel_blocked_reason}</span>
+                    ) : null}
                   </div>
                 </div>
               )
@@ -519,7 +603,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
             連接 Strava：到上方「運動數據」分頁點官方「Connect with Strava」即可；要中斷請按「中斷」。我們僅匯入你連接之後的活動，並可隨時中斷。
           </div>
           <div style={{ fontSize: 12, color: 'var(--tx-faint)', lineHeight: 1.7 }}>
-            退款：城市探索為線上活動，報名繳費後恕不退款、不適用七天鑑賞期。
+            取消與退費：可於賽事開始前，至「報名紀錄」申請取消，退費金額依申請時距賽事天數分級計算，詳見各賽事簡章規定；線上活動不適用七天鑑賞期。
           </div>
           <div style={{ fontSize: 12.5, marginTop: 2, display: 'flex', flexWrap: 'wrap', gap: '4px 8px' }}>
             <a href="/support" style={{ color: 'var(--fug)', textDecoration: 'underline' }}>支援說明</a>
@@ -569,6 +653,56 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
               </>
             )}
             <button onClick={() => setPayOrder(null)} style={{ ...primaryBtn, width: '100%', marginTop: 12, background: 'rgba(255,255,255,.06)', color: 'var(--tx)' }}>關閉</button>
+          </div>
+        </div>
+      )}
+
+      {/* 申請取消報名（顯示分級退費比例／預估退款、必填取消原因） */}
+      {cancelTarget && (
+        <div style={overlay} onClick={() => { if (!cancelSubmitting) setCancelTarget(null) }}>
+          <div style={panel} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <strong style={{ fontSize: 17 }}>申請取消報名</strong>
+              <button onClick={() => setCancelTarget(null)} disabled={cancelSubmitting} style={backBtn}>✕</button>
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>{cancelTarget.race_title}</div>
+
+            <div style={{ border: '1px solid var(--line-2)', borderRadius: 12, padding: 14, marginBottom: 14, fontSize: 13, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
+              {(cancelTarget.refund_ratio || 0) > 0 ? (
+                <>依目前距賽事天數，退費比例 <strong style={{ color: 'var(--tx)' }}>{cancelTarget.refund_ratio}%</strong>，預估可退 <strong style={{ color: 'var(--gold)' }}>{ntd(cancelTarget.estimated_refund_cents || 0)}</strong>。</>
+              ) : (
+                <span style={{ color: 'var(--hunt)', fontWeight: 700 }}>本次取消不退費，但仍會釋出你的報名名額。</span>
+              )}
+            </div>
+
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 11, letterSpacing: '.08em', color: 'var(--tx-faint)' }}>取消原因（必填）</span>
+              <textarea
+                value={cancelReason}
+                onChange={(e) => { const v = e.target.value; if ([...v].length <= 200) setCancelReason(v) }}
+                rows={3}
+                placeholder="請簡述取消原因"
+                style={{ ...inp, resize: 'vertical', minHeight: 72 }}
+              />
+            </label>
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', textAlign: 'right', marginTop: 4 }}>{[...cancelReason].length}/200</div>
+
+            {cancelErr && <div style={{ color: 'var(--hunt)', fontSize: 13, marginTop: 6 }}>{cancelErr}</div>}
+
+            <button
+              onClick={submitCancelRequest}
+              disabled={cancelSubmitting || !cancelReason.trim()}
+              style={{ ...primaryBtn, width: '100%', marginTop: 14, background: 'var(--hunt)', color: '#fff', opacity: cancelSubmitting || !cancelReason.trim() ? 0.6 : 1 }}
+            >
+              {cancelSubmitting ? '送出中…' : '確認送出取消申請'}
+            </button>
+            <button
+              onClick={() => setCancelTarget(null)}
+              disabled={cancelSubmitting}
+              style={{ ...primaryBtn, width: '100%', marginTop: 10, background: 'rgba(255,255,255,.06)', color: 'var(--tx)' }}
+            >
+              先不取消
+            </button>
           </div>
         </div>
       )}
