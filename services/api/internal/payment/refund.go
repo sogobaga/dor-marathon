@@ -38,6 +38,14 @@ func (c *Config) RefundActionURL() string {
 
 // BuildRefundRequest 產生信用卡退刷（Action=R）請求參數（含 CheckMacValue）。
 // merchantTradeNo/ecpayTradeNo 為原授權交易的商店訂單編號／綠界交易編號（兩者皆必填）；amountCents 為要退的金額（分）。
+//
+// 刻意【不】帶 EncryptType：CreditDetail/DoAction（信用卡請退款功能）的官方參數規格只有
+// MerchantID/MerchantTradeNo/TradeNo/Action/TotalAmount/CheckMacValue（+ 選填 PlatformID），
+// 不包含 EncryptType——那是 AioCheckOut（見 payment.go BuildCheckout）結帳頁流程專屬的欄位。
+// 沿用結帳的參數組法多帶了它，正是綠界回 RtnCode=10100050／「EncryptType Not In Spec」的根因；
+// 拿掉即可，CheckMacValue 一樣沿用 SHA256（c.CheckMacValue 對所有 ECPay API 通用，未變動）。
+// 官方來源：https://developers.ecpay.com.tw/2885/（請求參數表未列 EncryptType）、
+// https://developers.ecpay.com.tw/2902/（檢查碼一律 SHA256）。
 func (c *Config) BuildRefundRequest(merchantTradeNo, ecpayTradeNo string, amountCents int) map[string]string {
 	params := map[string]string{
 		"MerchantID":      c.MerchantID,
@@ -45,7 +53,6 @@ func (c *Config) BuildRefundRequest(merchantTradeNo, ecpayTradeNo string, amount
 		"TradeNo":         ecpayTradeNo,
 		"Action":          "R",
 		"TotalAmount":     fmt.Sprintf("%d", amountCents/100),
-		"EncryptType":     "1",
 	}
 	params["CheckMacValue"] = c.CheckMacValue(params)
 	return params

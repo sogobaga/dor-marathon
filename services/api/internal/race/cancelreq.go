@@ -417,16 +417,20 @@ func (s *Service) ApproveCancelRequest(ctx context.Context, id, adminID, note st
 
 	refundID := ""
 	refundNote := ""
+	// targetOrderStatus 預設 cancelled（含「退 0 元、無需退款」）。只有在退款「真正成功」
+	// （success；manual_done 是後續人工結案才會出現的狀態，本函式此處拿不到）時才改標 refunded——
+	// 錢還沒真的退成功時（failed/manual_required/unknown，或系統未設定退款服務）維持 cancelled，
+	// 讓帳上狀態誠實反映「已取消但退款尚未完成」，可被後續人工追蹤/重試，不會假裝已退款。
 	targetOrderStatus := "cancelled"
 	if cr.RefundAmountCents > 0 && cr.OrderID != "" {
-		targetOrderStatus = "refunded"
 		switch {
 		case cr.RefundID != "":
 			// 第二道保險：理論上不會發生（剛從 pending CAS 搶到 processing 鎖，pending 狀態下
 			// refund_id 不該已經有值），但若真的發生，寧可信任既有的 refund_id、跳過重新建立退款，
-			// 也不要冒重複退款的風險。
+			// 也不要冒重複退款的風險。這裡沒有重新查詢該筆既有退款紀錄的實際結果，保守維持
+			// targetOrderStatus=cancelled，避免在不確定退款是否成功時就標成 refunded。
 			refundID = cr.RefundID
-			refundNote = "偵測到此申請先前已建立過退款紀錄，略過重新建立退款"
+			refundNote = "偵測到此申請先前已建立過退款紀錄，略過重新建立退款（請人工核對該筆退款實際結果）"
 		case s.refundCreator == nil:
 			refundNote = "系統未設定退款服務，請人工建立退款"
 		default:
@@ -441,6 +445,9 @@ func (s *Service) ApproveCancelRequest(ctx context.Context, id, adminID, note st
 				refundNote = "退款狀態：" + res.Status
 				if res.Note != "" {
 					refundNote += "（" + res.Note + "）"
+				}
+				if res.Status == "success" || res.Status == "manual_done" {
+					targetOrderStatus = "refunded"
 				}
 			}
 		}
