@@ -1209,6 +1209,10 @@ export interface ExpRules {
   vip_days_collective_task: number
   vip_days_group_task: number
   vip_days_individual_task: number
+  // GP（環台大富翁貨幣）平行費率，範圍同 VIP 天數：僅任務完成三種 scope，里程無 GP；0＝不發
+  gp_per_collective_task: number
+  gp_per_group_task: number
+  gp_per_individual_task: number
 }
 
 export interface MileageConfig {
@@ -1618,6 +1622,11 @@ export interface ExploreBoss {
   scene_image_url: string; card_image_url: string
   lat: number; lng: number; radius_m: number
   reward_exp: number; reward_dp: number; retry_dp_cost: number
+  // 打卡（每次成功打卡皆可能觸發，含重複打卡）DP/GP 隨機發放區間；完成挑戰依機率額外發放的 GP 區間，
+  // 皆後台每點可設、預設 0（不發）——見 migration 098。
+  checkin_reward_dp_min?: number; checkin_reward_dp_max?: number
+  checkin_reward_gp_min?: number; checkin_reward_gp_max?: number
+  complete_reward_gp_min?: number; complete_reward_gp_max?: number; complete_reward_gp_chance?: number
   workout_kind: string; segments: WorkoutSegment[] | null; data_source: string
   display_order: number; enabled: boolean
   access_note: string
@@ -1635,19 +1644,25 @@ export const adminExploreApi = {
     request<{ ok: boolean }>(`/admin/explore/${id}/delete`, { method: 'POST', headers: withAuth(token) }),
 }
 
-// 城市探索（前台）：啟用中的關主 + 我的進度
+// 城市探索（前台）：啟用中的關主 + 我的進度 + 今日打卡剩餘次數（跨所有點加總）
 export const exploreApi = {
-  list: (token: string) => request<{ bosses: ExploreBoss[] }>('/explore', { headers: withAuth(token) }),
-  // 到打卡點打卡 → 揭露關主（回完整關主資料）；純打卡點則不揭露，僅回 checkin_only/place/already
+  list: (token: string) => request<{ bosses: ExploreBoss[]; checkin_daily_cap: number; checkin_daily_remaining: number }>('/explore', { headers: withAuth(token) }),
+  // 到打卡點打卡（可重複，同點 24h 冷卻、每日全站上限一般3/VIP5次）→ 通過才隨機發 DP/GP。
+  // 揭露關主：一般點(checkin_only=false)回完整關主資料；純打卡點(checkin_only=true)不揭露、只回地點。
+  // already=true 代表此點先前已揭露過（前端不應再自動彈出挑戰面板）；can_challenge 供「打卡/挑戰」二選一 UI；
+  // 冷卻中/達每日上限時 ok=false、不發獎，訊息與剩餘秒數/次數見 message/cooldown_remaining_s/daily_remaining。
   checkin: (token: string, id: string, body: { lat: number; lng: number; acc: number }) =>
-    request<{ ok: boolean; status: string; distance_m?: number; message?: string; boss?: ExploreBoss; checkin_only?: boolean; place?: string; already?: boolean }>(
-      `/explore/${id}/checkin`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+    request<{
+      ok: boolean; status: string; distance_m?: number; message?: string; boss?: ExploreBoss
+      checkin_only?: boolean; place?: string; already?: boolean; active?: boolean; can_challenge?: boolean
+      dp_awarded?: number; gp_awarded?: number; daily_remaining?: number; cooldown_remaining_s?: number
+    }>(`/explore/${id}/checkin`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   // 接受挑戰（扣 DP=難度×10）→ 帶到課表挑戰
   accept: (token: string, id: string) =>
     request<{ ok: boolean; tier: number; charged_dp: number }>(`/explore/${id}/accept`, { method: 'POST', headers: withAuth(token) }),
-  // 完成挑戰（由 /track 分段引擎回報）→ 得星、3★ 取得卡片、回傳本趟完成時間(秒)
+  // 完成挑戰（由 /track 分段引擎回報）→ 得星、3★ 取得卡片、回傳本趟完成時間(秒)；bonus_gp=依機率額外發放的 GP
   complete: (token: string, id: string, body: { finished: boolean; work_in_band: number; work_total: number }) =>
-    request<{ completed: boolean; stars: number; card_obtained: boolean; reward_exp: number; reward_dp: number; time_s: number }>(
+    request<{ completed: boolean; stars: number; card_obtained: boolean; reward_exp: number; reward_dp: number; bonus_gp?: number; time_s: number }>(
       `/explore/${id}/complete`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   // 挑戰者時間榜（最短完成時間，前 100）+ 我是否追蹤 + 我的名次
   ranking: (token: string, id: string) =>

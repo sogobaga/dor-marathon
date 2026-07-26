@@ -4,17 +4,21 @@
 package explore
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/rand"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/realtime"
+	"github.com/dor/api/internal/wallet"
 )
 
 func haversineM(lat1, lng1, lat2, lng2 float64) float64 {
@@ -33,37 +37,83 @@ type Handler struct {
 
 func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler { return &Handler{db: db, rt: rt} }
 
+// --- 打卡獎勵設定（後台可調，見 internal/appsettings；程式端皆有預設值，未設定時沿用）---
+
+const (
+	defaultCheckinDailyCapNormal = 3  // 一般會員每日打卡上限（跨所有點加總）
+	defaultCheckinDailyCapVip    = 5  // VIP 每日打卡上限
+	defaultCheckinCooldownHours  = 24 // 同一打卡點再次打卡需等待的小時數
+)
+
+// isVIP 查詢會員是否為 VIP（比照 internal/training.requireVIP 的查法）。
+func (h *Handler) isVIP(ctx context.Context, uid string) bool {
+	var vip bool
+	_ = h.db.QueryRow(ctx, `SELECT COALESCE(vip_expires_at > NOW(), FALSE) FROM users WHERE id=$1`, uid).Scan(&vip)
+	return vip
+}
+
+// checkinDailyCap 依會員身分回傳今日打卡次數上限（後台可調：explore_checkin_daily_cap_normal/_vip）。
+func (h *Handler) checkinDailyCap(ctx context.Context, uid string) int {
+	if h.isVIP(ctx, uid) {
+		return appsettings.GetInt(ctx, h.db, "explore_checkin_daily_cap_vip", defaultCheckinDailyCapVip)
+	}
+	return appsettings.GetInt(ctx, h.db, "explore_checkin_daily_cap_normal", defaultCheckinDailyCapNormal)
+}
+
+// randRange 回傳 [min,max] 之間的隨機整數（含端點）；max<min 視為 min；上限<=0 代表不發，回 0。
+func randRange(min, max int) int {
+	if min < 0 {
+		min = 0
+	}
+	if max < min {
+		max = min
+	}
+	if max <= 0 {
+		return 0
+	}
+	return min + rand.Intn(max-min+1)
+}
+
 type Boss struct {
-	ID              string          `json:"id"`
-	Code            string          `json:"code"`
-	Name            string          `json:"name"`
-	Title           string          `json:"title"`
-	Region          string          `json:"region"`
-	Place           string          `json:"place"`
-	Gender          string          `json:"gender"`
-	Age             int             `json:"age"`
-	WorkoutLabel    string          `json:"workout_label"`
-	DifficultyStars int             `json:"difficulty_stars"`
-	Quote           string          `json:"quote"`
-	SkillName       string          `json:"skill_name"`
-	SkillDesc       string          `json:"skill_desc"`
-	DialogueIntro   string          `json:"dialogue_intro"`
-	DialogueStart   string          `json:"dialogue_start"`
-	SceneImageURL   string          `json:"scene_image_url"`
-	CardImageURL    string          `json:"card_image_url"`
-	Lat             float64         `json:"lat"`
-	Lng             float64         `json:"lng"`
-	RadiusM         int             `json:"radius_m"`
-	RewardExp       int             `json:"reward_exp"`
-	RewardDp        int             `json:"reward_dp"`
-	RetryDpCost     int             `json:"retry_dp_cost"`
-	WorkoutKind     string          `json:"workout_kind"`
-	Segments        json.RawMessage `json:"segments"`
-	DataSource      string          `json:"data_source"`
-	DisplayOrder    int             `json:"display_order"`
-	Enabled         bool            `json:"enabled"`
-	AccessNote      string          `json:"access_note"`  // 開放資訊（開放時段/場地備註，來自官方開放場地資料；供玩家判斷可否前往）
-	CheckinOnly     bool            `json:"checkin_only"` // 純打卡點：無關主/挑戰，範圍內打卡即完成、不揭露、不可 Accept
+	ID              string  `json:"id"`
+	Code            string  `json:"code"`
+	Name            string  `json:"name"`
+	Title           string  `json:"title"`
+	Region          string  `json:"region"`
+	Place           string  `json:"place"`
+	Gender          string  `json:"gender"`
+	Age             int     `json:"age"`
+	WorkoutLabel    string  `json:"workout_label"`
+	DifficultyStars int     `json:"difficulty_stars"`
+	Quote           string  `json:"quote"`
+	SkillName       string  `json:"skill_name"`
+	SkillDesc       string  `json:"skill_desc"`
+	DialogueIntro   string  `json:"dialogue_intro"`
+	DialogueStart   string  `json:"dialogue_start"`
+	SceneImageURL   string  `json:"scene_image_url"`
+	CardImageURL    string  `json:"card_image_url"`
+	Lat             float64 `json:"lat"`
+	Lng             float64 `json:"lng"`
+	RadiusM         int     `json:"radius_m"`
+	RewardExp       int     `json:"reward_exp"`
+	RewardDp        int     `json:"reward_dp"`
+	RetryDpCost     int     `json:"retry_dp_cost"`
+	// 打卡（每次成功打卡，含重複打卡）隨機發放區間；完成挑戰時依機率額外發放的 GP 區間。
+	// 皆預設 0（後台未設定＝不發），Phase 0b 新增，見 migration 098。
+	CheckinRewardDpMin     int             `json:"checkin_reward_dp_min"`
+	CheckinRewardDpMax     int             `json:"checkin_reward_dp_max"`
+	CheckinRewardGpMin     int             `json:"checkin_reward_gp_min"`
+	CheckinRewardGpMax     int             `json:"checkin_reward_gp_max"`
+	CompleteRewardGpMin    int             `json:"complete_reward_gp_min"`
+	CompleteRewardGpMax    int             `json:"complete_reward_gp_max"`
+	CompleteRewardGpChance int             `json:"complete_reward_gp_chance"` // 0-100，完成挑戰時額外發 GP 的機率(%)
+	WorkoutKind            string          `json:"workout_kind"`
+	Segments               json.RawMessage `json:"segments"`
+	DataSource             string          `json:"data_source"`
+	DisplayOrder           int             `json:"display_order"`
+	Enabled                bool            `json:"enabled"`
+	AccessNote             string          `json:"access_note"`  // 開放資訊（開放時段/場地備註，來自官方開放場地資料；供玩家判斷可否前往）
+	CheckinOnly            bool            `json:"checkin_only"` // 純打卡點：無關主/挑戰，範圍內打卡即完成、不揭露、不可 Accept
 	// 玩家進度（前台）
 	Stars        int  `json:"stars"`
 	CardObtained bool `json:"card_obtained"`
@@ -75,13 +125,17 @@ type Boss struct {
 
 const bossCols = `id, code, name, title, region, place, gender, age, workout_label, difficulty_stars,
 	quote, skill_name, skill_desc, dialogue_intro, dialogue_start, scene_image_url, card_image_url,
-	lat, lng, radius_m, reward_exp, reward_dp, retry_dp_cost, workout_kind, segments, data_source, display_order, enabled, access_note, checkin_only`
+	lat, lng, radius_m, reward_exp, reward_dp, retry_dp_cost, workout_kind, segments, data_source, display_order, enabled, access_note, checkin_only,
+	checkin_reward_dp_min, checkin_reward_dp_max, checkin_reward_gp_min, checkin_reward_gp_max,
+	complete_reward_gp_min, complete_reward_gp_max, complete_reward_gp_chance`
 
 func scanBoss(row interface{ Scan(...any) error }) (Boss, error) {
 	var b Boss
 	err := row.Scan(&b.ID, &b.Code, &b.Name, &b.Title, &b.Region, &b.Place, &b.Gender, &b.Age, &b.WorkoutLabel, &b.DifficultyStars,
 		&b.Quote, &b.SkillName, &b.SkillDesc, &b.DialogueIntro, &b.DialogueStart, &b.SceneImageURL, &b.CardImageURL,
-		&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote, &b.CheckinOnly)
+		&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote, &b.CheckinOnly,
+		&b.CheckinRewardDpMin, &b.CheckinRewardDpMax, &b.CheckinRewardGpMin, &b.CheckinRewardGpMax,
+		&b.CompleteRewardGpMin, &b.CompleteRewardGpMax, &b.CompleteRewardGpChance)
 	return b, err
 }
 
@@ -108,11 +162,14 @@ func (h *Handler) AdminRouter() http.Handler {
 }
 
 // maskBoss 未揭露(未打卡)→ 只保留地點(place/region/lat/lng/radius)與進度，遮蔽關主身分/圖/難度/課表/對話。
+// 打卡/完成的獎勵區間也一併遮蔽（未打卡前不預告數值），揭露後才透過 checkin/list 回傳。
 func maskBoss(b *Boss) {
 	b.Code, b.Name, b.Title, b.Gender, b.WorkoutLabel = "", "", "", "", ""
 	b.Age, b.DifficultyStars, b.RewardExp, b.RewardDp, b.RetryDpCost = 0, 0, 0, 0, 0
 	b.Quote, b.SkillName, b.SkillDesc, b.DialogueIntro, b.DialogueStart = "", "", "", "", ""
 	b.SceneImageURL, b.CardImageURL, b.WorkoutKind = "", "", ""
+	b.CheckinRewardDpMin, b.CheckinRewardDpMax, b.CheckinRewardGpMin, b.CheckinRewardGpMax = 0, 0, 0, 0
+	b.CompleteRewardGpMin, b.CompleteRewardGpMax, b.CompleteRewardGpChance = 0, 0, 0
 	b.Segments = json.RawMessage("[]")
 }
 
@@ -143,6 +200,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&b.ID, &b.Code, &b.Name, &b.Title, &b.Region, &b.Place, &b.Gender, &b.Age, &b.WorkoutLabel, &b.DifficultyStars,
 			&b.Quote, &b.SkillName, &b.SkillDesc, &b.DialogueIntro, &b.DialogueStart, &b.SceneImageURL, &b.CardImageURL,
 			&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote, &b.CheckinOnly,
+			&b.CheckinRewardDpMin, &b.CheckinRewardDpMax, &b.CheckinRewardGpMin, &b.CheckinRewardGpMax,
+			&b.CompleteRewardGpMin, &b.CompleteRewardGpMax, &b.CompleteRewardGpChance,
 			&b.Stars, &b.CardObtained, &b.Active, &b.Attempts, &disc, &b.BestTimeS); err != nil {
 			continue
 		}
@@ -153,7 +212,16 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, b)
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"bosses": out})
+	// 今日打卡剩餘次數（跨所有點加總，供前台預告；未登入者以一般會員上限計）。
+	dailyCap, dailyDone := h.checkinDailyCap(r.Context(), uid), 0
+	_ = h.db.QueryRow(r.Context(), `
+		SELECT COUNT(*) FROM explore_checkins
+		WHERE user_id=$1 AND (checked_in_at AT TIME ZONE 'Asia/Taipei')::date = (NOW() AT TIME ZONE 'Asia/Taipei')::date`, uid).Scan(&dailyDone)
+	dailyRemaining := dailyCap - dailyDone
+	if dailyRemaining < 0 {
+		dailyRemaining = 0
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"bosses": out, "checkin_daily_cap": dailyCap, "checkin_daily_remaining": dailyRemaining})
 }
 
 type checkinReq struct {
@@ -162,11 +230,20 @@ type checkinReq struct {
 	Acc float64 `json:"acc"`
 }
 
-// Checkin POST /explore/{id}/checkin — 到打卡點打卡：驗地理圍欄 → 設 discovered。
-// 一般關主點(checkin_only=false)：揭露關主 → 回完整 boss 資料（行為不變）。
-// 純打卡點(checkin_only=true)：不揭露關主內容，只回 {ok,checkin_only,place,already}。
+// Checkin POST /explore/{id}/checkin — 到打卡點打卡：驗地理圍欄 → 設 discovered（永久旗標，只會設定不會取消）。
+//
+// Phase 0b 改版：打卡可重複——同一點過 24h 冷卻可再打卡；每日全站上限一般 3 次／VIP 5 次（見
+// checkinDailyCap／explore_checkin_cooldown_hours，皆後台可調）；每次成功打卡隨機發 DP+GP（見
+// explore_bosses.checkin_reward_*，範圍後台每點可設，皆 0 則不發）。「查次數＋查冷卻＋發獎＋寫入」在單一
+// 交易內完成，並用 pg_advisory_xact_lock(hashtext(uid)) 序列化同一使用者的打卡（跨所有點），避免併發連點
+// 在檢查與寫入之間出現 TOCTOU 而超發。
+//
+// 關主點(checkin_only=false)：回完整 boss 資料 + can_challenge（!active，供前端「打卡/挑戰」二選一；
+// already=true 代表先前已揭露過，前端不應再自動彈出挑戰面板——active=true 的點再打卡只挑戰不會被觸發，
+// 但仍走同一套獎勵/冷卻/上限）。純打卡點(checkin_only=true)：不揭露關主內容，只回地點與獎勵資訊。
 func (h *Handler) Checkin(w http.ResponseWriter, r *http.Request) {
-	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	ctx := r.Context()
+	uid, _ := ctx.Value(auth.CtxKeyUserID).(string)
 	if uid == "" {
 		respondErr(w, http.StatusUnauthorized, "login required")
 		return
@@ -174,7 +251,7 @@ func (h *Handler) Checkin(w http.ResponseWriter, r *http.Request) {
 	bossID := chi.URLParam(r, "id")
 	var req checkinReq
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	b, err := scanBoss(h.db.QueryRow(r.Context(), `SELECT `+bossCols+` FROM explore_bosses WHERE id=$1 AND enabled`, bossID))
+	b, err := scanBoss(h.db.QueryRow(ctx, `SELECT `+bossCols+` FROM explore_bosses WHERE id=$1 AND enabled`, bossID))
 	if err != nil {
 		respondErr(w, http.StatusNotFound, "打卡點不存在")
 		return
@@ -192,22 +269,104 @@ func (h *Handler) Checkin(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusOK, map[string]any{"ok": false, "status": "out_of_range", "distance_m": dist, "message": fmt.Sprintf("還沒到打卡點（距離約 %d 公尺）", int(dist))})
 		return
 	}
-	// 打卡前先查是否本次之前已打卡過（already；純打卡點回應要用，一般點不受影響）。
-	var already bool
-	_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(discovered,FALSE) FROM explore_progress WHERE user_id=$1 AND boss_id=$2`, uid, bossID).Scan(&already)
-	// 打卡成功 → 揭露/計入（discovered=TRUE；純打卡點也算入「打卡數」稱號統計）
-	if _, err := h.db.Exec(r.Context(), `
+
+	dailyCap := h.checkinDailyCap(ctx, uid)
+	cooldownHours := appsettings.GetInt(ctx, h.db, "explore_checkin_cooldown_hours", defaultCheckinCooldownHours)
+
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer tx.Rollback(ctx)
+	// 序列化同一使用者的打卡（跨所有打卡點，鎖鍵只含 uid）：確保下面「查今日次數/查冷卻」與「發獎/寫入」
+	// 對同一使用者不會被併發請求交錯，是本次併發安全的關鍵。
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, uid); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+
+	var already, active bool
+	_ = tx.QueryRow(ctx, `SELECT COALESCE(discovered,FALSE), COALESCE(active,FALSE) FROM explore_progress WHERE user_id=$1 AND boss_id=$2`, uid, bossID).Scan(&already, &active)
+	canChallenge := !b.CheckinOnly && !active
+
+	var todayCount int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*) FROM explore_checkins
+		WHERE user_id=$1 AND (checked_in_at AT TIME ZONE 'Asia/Taipei')::date = (NOW() AT TIME ZONE 'Asia/Taipei')::date`, uid).Scan(&todayCount); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if todayCount >= dailyCap {
+		respondJSON(w, http.StatusOK, map[string]any{
+			"ok": false, "status": "daily_cap", "message": fmt.Sprintf("今日打卡次數已達上限（%d 次），請明天再來", dailyCap),
+			"daily_remaining": 0, "already": already, "active": active, "checkin_only": b.CheckinOnly, "can_challenge": canChallenge,
+		})
+		return
+	}
+
+	var lastCheckin *time.Time
+	if err := tx.QueryRow(ctx, `SELECT MAX(checked_in_at) FROM explore_checkins WHERE user_id=$1 AND boss_id=$2`, uid, bossID).Scan(&lastCheckin); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if lastCheckin != nil {
+		remainS := cooldownHours*3600 - int(time.Since(*lastCheckin).Seconds())
+		if remainS > 0 {
+			respondJSON(w, http.StatusOK, map[string]any{
+				"ok": false, "status": "cooldown", "message": fmt.Sprintf("此點還在冷卻中，約 %d 分鐘後可再次打卡", (remainS+59)/60),
+				"cooldown_remaining_s": remainS, "daily_remaining": dailyCap - todayCount, "already": already, "active": active, "checkin_only": b.CheckinOnly, "can_challenge": canChallenge,
+			})
+			return
+		}
+	}
+
+	dp := randRange(b.CheckinRewardDpMin, b.CheckinRewardDpMax)
+	gp := randRange(b.CheckinRewardGpMin, b.CheckinRewardGpMax)
+	if _, err := tx.Exec(ctx, `INSERT INTO explore_checkins (user_id, boss_id, dp_awarded, gp_awarded) VALUES ($1,$2,$3,$4)`, uid, bossID, dp, gp); err != nil {
+		respondErr(w, http.StatusInternalServerError, "打卡失敗")
+		return
+	}
+	if dp > 0 {
+		if _, err := tx.Exec(ctx, `UPDATE users SET dp = dp + $2 WHERE id=$1`, uid, dp); err != nil {
+			respondErr(w, http.StatusInternalServerError, "打卡失敗")
+			return
+		}
+	}
+	if gp > 0 {
+		if err := wallet.AwardGP(ctx, tx, uid, gp, "explore_checkin", "explore_boss", &bossID); err != nil {
+			respondErr(w, http.StatusInternalServerError, "打卡失敗")
+			return
+		}
+	}
+	// 打卡成功 → 揭露/計入（discovered=TRUE，永久旗標；純打卡點也算入「打卡數」稱號統計，行為不變）
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO explore_progress (user_id, boss_id, discovered) VALUES ($1,$2,TRUE)
 		ON CONFLICT (user_id, boss_id) DO UPDATE SET discovered=TRUE`, uid, bossID); err != nil {
 		respondErr(w, http.StatusInternalServerError, "打卡失敗")
 		return
 	}
+	if err := tx.Commit(ctx); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+
+	dailyRemaining := dailyCap - todayCount - 1
+	if dailyRemaining < 0 {
+		dailyRemaining = 0
+	}
 	if b.CheckinOnly {
-		respondJSON(w, http.StatusOK, map[string]any{"ok": true, "checkin_only": true, "place": b.Place, "already": already})
+		respondJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "checkin_only": true, "place": b.Place, "already": already,
+			"dp_awarded": dp, "gp_awarded": gp, "daily_remaining": dailyRemaining, "can_challenge": false,
+		})
 		return
 	}
 	b.Discovered = true
-	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "status": "verified", "distance_m": dist, "boss": b})
+	respondJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "status": "verified", "distance_m": dist, "boss": b, "already": already, "active": active, "checkin_only": false,
+		"dp_awarded": dp, "gp_awarded": gp, "daily_remaining": dailyRemaining, "can_challenge": canChallenge,
+	})
 }
 
 // workoutStars 課表星數：需完成整份(finished)；work 段全在配速區間=3★、部分=2★、只完成=1★。
@@ -310,10 +469,12 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	var active bool
 	var best, awarded, rExp, rDp int
+	var bonusGpMin, bonusGpMax, bonusGpChance int
 	if err := h.db.QueryRow(r.Context(), `
-		SELECT COALESCE(pr.active,FALSE), COALESCE(pr.stars,0), COALESCE(pr.awarded_stars,0), b.reward_exp, b.reward_dp
+		SELECT COALESCE(pr.active,FALSE), COALESCE(pr.stars,0), COALESCE(pr.awarded_stars,0), b.reward_exp, b.reward_dp,
+		       b.complete_reward_gp_min, b.complete_reward_gp_max, b.complete_reward_gp_chance
 		FROM explore_bosses b LEFT JOIN explore_progress pr ON pr.boss_id=b.id AND pr.user_id=$1
-		WHERE b.id=$2`, uid, bossID).Scan(&active, &best, &awarded, &rExp, &rDp); err != nil {
+		WHERE b.id=$2`, uid, bossID).Scan(&active, &best, &awarded, &rExp, &rDp, &bonusGpMin, &bonusGpMax, &bonusGpChance); err != nil {
 		respondErr(w, http.StatusNotFound, "關主不存在")
 		return
 	}
@@ -364,6 +525,18 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// 完成挑戰的額外 GP 機率獎勵：每次成功完成（含重複挑戰）都擲一次，與上面 grant(首次達到該星等) 無關，
+	// 讓已收服關主的「自由挑戰」也有持續價值。機率/區間皆後台可設，0 則不擲。
+	bonusGP := 0
+	if bonusGpChance > 0 && rand.Intn(100) < bonusGpChance {
+		bonusGP = randRange(bonusGpMin, bonusGpMax)
+		if bonusGP > 0 {
+			if err := wallet.AwardGP(r.Context(), tx, uid, bonusGP, "explore_complete_bonus", "explore_boss", &bossID); err != nil {
+				respondErr(w, http.StatusInternalServerError, "failed")
+				return
+			}
+		}
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
@@ -371,7 +544,8 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{
 		"completed": true, "stars": newStars, "card_obtained": cardObtained,
 		"reward_exp": ternInt(grant, rExp, 0), "reward_dp": ternInt(grant, rDp, 0),
-		"time_s": durS,
+		"bonus_gp": bonusGP,
+		"time_s":   durS,
 	})
 }
 
@@ -488,15 +662,21 @@ func (h *Handler) Save(w http.ResponseWriter, r *http.Request) {
 	err := h.db.QueryRow(r.Context(), `
 		INSERT INTO explore_bosses (code, name, title, region, place, gender, age, workout_label, difficulty_stars,
 			quote, skill_name, skill_desc, dialogue_intro, dialogue_start, scene_image_url, card_image_url,
-			lat, lng, radius_m, reward_exp, reward_dp, retry_dp_cost, workout_kind, segments, data_source, display_order, enabled, access_note, checkin_only)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+			lat, lng, radius_m, reward_exp, reward_dp, retry_dp_cost, workout_kind, segments, data_source, display_order, enabled, access_note, checkin_only,
+			checkin_reward_dp_min, checkin_reward_dp_max, checkin_reward_gp_min, checkin_reward_gp_max,
+			complete_reward_gp_min, complete_reward_gp_max, complete_reward_gp_chance)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
 		ON CONFLICT (code) DO UPDATE SET name=$2, title=$3, region=$4, place=$5, gender=$6, age=$7, workout_label=$8, difficulty_stars=$9,
 			quote=$10, skill_name=$11, skill_desc=$12, dialogue_intro=$13, dialogue_start=$14, scene_image_url=$15, card_image_url=$16,
-			lat=$17, lng=$18, radius_m=$19, reward_exp=$20, reward_dp=$21, retry_dp_cost=$22, workout_kind=$23, segments=$24, data_source=$25, display_order=$26, enabled=$27, access_note=$28, checkin_only=$29
+			lat=$17, lng=$18, radius_m=$19, reward_exp=$20, reward_dp=$21, retry_dp_cost=$22, workout_kind=$23, segments=$24, data_source=$25, display_order=$26, enabled=$27, access_note=$28, checkin_only=$29,
+			checkin_reward_dp_min=$30, checkin_reward_dp_max=$31, checkin_reward_gp_min=$32, checkin_reward_gp_max=$33,
+			complete_reward_gp_min=$34, complete_reward_gp_max=$35, complete_reward_gp_chance=$36
 		RETURNING id`,
 		b.Code, b.Name, b.Title, b.Region, b.Place, b.Gender, b.Age, b.WorkoutLabel, b.DifficultyStars,
 		b.Quote, b.SkillName, b.SkillDesc, b.DialogueIntro, b.DialogueStart, b.SceneImageURL, b.CardImageURL,
-		b.Lat, b.Lng, b.RadiusM, b.RewardExp, b.RewardDp, b.RetryDpCost, b.WorkoutKind, b.Segments, b.DataSource, b.DisplayOrder, b.Enabled, b.AccessNote, b.CheckinOnly).Scan(&id)
+		b.Lat, b.Lng, b.RadiusM, b.RewardExp, b.RewardDp, b.RetryDpCost, b.WorkoutKind, b.Segments, b.DataSource, b.DisplayOrder, b.Enabled, b.AccessNote, b.CheckinOnly,
+		b.CheckinRewardDpMin, b.CheckinRewardDpMax, b.CheckinRewardGpMin, b.CheckinRewardGpMax,
+		b.CompleteRewardGpMin, b.CompleteRewardGpMax, b.CompleteRewardGpChance).Scan(&id)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "儲存失敗")
 		return

@@ -17,6 +17,8 @@ const EMPTY: Form = {
   scene_image_url: '', card_image_url: '', lat: 25.0296, lng: 121.5357, radius_m: 40,
   reward_exp: 100, reward_dp: 20, retry_dp_cost: 0, workout_kind: 'mixed', data_source: 'gps',
   display_order: 0, enabled: true, access_note: '', _segText: '[]',
+  checkin_reward_dp_min: 0, checkin_reward_dp_max: 0, checkin_reward_gp_min: 0, checkin_reward_gp_max: 0,
+  complete_reward_gp_min: 0, complete_reward_gp_max: 0, complete_reward_gp_chance: 0,
 }
 
 export default function AdminExplorePage() {
@@ -143,6 +145,22 @@ export default function AdminExplorePage() {
             <F label="重挑 DP (0=難度×10)"><input style={inp} type="number" value={form.retry_dp_cost ?? 0} onChange={(e) => setF('retry_dp_cost', +e.target.value)} /></F>
             <F label="排序"><input style={inp} type="number" value={form.display_order ?? 0} onChange={(e) => setF('display_order', +e.target.value)} /></F>
             <F label="啟用"><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, paddingTop: 8 }}><input type="checkbox" checked={!!form.enabled} onChange={(e) => setF('enabled', e.target.checked)} />顯示於前台</label></F>
+          </div>
+
+          <div style={{ marginTop: 10, borderTop: '1px solid var(--line)', paddingTop: 10 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx)' }}>打卡獎勵（每次成功打卡，含重複打卡；24h 冷卻／每日上限見系統設定）</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 10, marginTop: 6 }}>
+              <F label="打卡 DP 下限"><input style={inp} type="number" value={form.checkin_reward_dp_min ?? 0} onChange={(e) => setF('checkin_reward_dp_min', +e.target.value)} /></F>
+              <F label="打卡 DP 上限"><input style={inp} type="number" value={form.checkin_reward_dp_max ?? 0} onChange={(e) => setF('checkin_reward_dp_max', +e.target.value)} /></F>
+              <F label="打卡 GP 下限"><input style={inp} type="number" value={form.checkin_reward_gp_min ?? 0} onChange={(e) => setF('checkin_reward_gp_min', +e.target.value)} /></F>
+              <F label="打卡 GP 上限"><input style={inp} type="number" value={form.checkin_reward_gp_max ?? 0} onChange={(e) => setF('checkin_reward_gp_max', +e.target.value)} /></F>
+            </div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx)', marginTop: 10 }}>完成挑戰額外 GP（依機率，checkin_only 點無挑戰不適用）</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginTop: 6 }}>
+              <F label="額外 GP 下限"><input style={inp} type="number" value={form.complete_reward_gp_min ?? 0} onChange={(e) => setF('complete_reward_gp_min', +e.target.value)} /></F>
+              <F label="額外 GP 上限"><input style={inp} type="number" value={form.complete_reward_gp_max ?? 0} onChange={(e) => setF('complete_reward_gp_max', +e.target.value)} /></F>
+              <F label="發放機率 % (0-100)"><input style={inp} type="number" min={0} max={100} value={form.complete_reward_gp_chance ?? 0} onChange={(e) => setF('complete_reward_gp_chance', +e.target.value)} /></F>
+            </div>
           </div>
 
           <F label="分段課表 segments (JSON；比照個人任務課表)">

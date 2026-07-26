@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dor/api/internal/vip"
+	"github.com/dor/api/internal/wallet"
 )
 
 // ErrRaceNotEnded 賽事尚未結束、不能（非強制）結算
@@ -20,6 +21,7 @@ type SettleResult struct {
 	TotalExp       int    `json:"total_exp"`
 	TotalDp        int    `json:"total_dp"`
 	TotalVipDays   int    `json:"total_vip_days"`
+	TotalGp        int    `json:"total_gp"`
 	AlreadySettled bool   `json:"already_settled"`
 }
 
@@ -37,6 +39,10 @@ type expRulesVals struct {
 	vipCollective int
 	vipGroup      int
 	vipIndividual int
+	// GP（環台大富翁貨幣，僅任務完成三種 scope，範圍同 VIP 天數：里程與「完成賽事」分組獎勵不發）
+	gpCollective int
+	gpGroup      int
+	gpIndividual int
 }
 
 type participant struct {
@@ -44,11 +50,12 @@ type participant struct {
 	groupID string
 }
 
-// award 單一來源同時記 EXP、DP 與 VIP 天數
+// award 單一來源同時記 EXP、DP、VIP 天數與 GP
 type award struct {
 	exp     int
 	dp      int
 	vipDays int
+	gp      int
 }
 
 // SettleRaceEXP 結算某賽事的 EXP（idempotent；force=true 可提前/重跑補發）
@@ -91,11 +98,13 @@ func (r *Repository) expRules(ctx context.Context) (expRulesVals, error) {
 	err := r.db.QueryRow(ctx,
 		`SELECT per_collective_task, per_group_task, per_individual_task, per_km,
 		        dp_per_collective_task, dp_per_group_task, dp_per_individual_task, dp_per_km,
-		        vip_days_collective_task, vip_days_group_task, vip_days_individual_task
+		        vip_days_collective_task, vip_days_group_task, vip_days_individual_task,
+		        gp_per_collective_task, gp_per_group_task, gp_per_individual_task
 		 FROM exp_rules WHERE id=TRUE`).
 		Scan(&v.collective, &v.group, &v.individual, &v.perKm,
 			&v.dpCollective, &v.dpGroup, &v.dpIndividual, &v.dpPerKm,
-			&v.vipCollective, &v.vipGroup, &v.vipIndividual)
+			&v.vipCollective, &v.vipGroup, &v.vipIndividual,
+			&v.gpCollective, &v.gpGroup, &v.gpIndividual)
 	return v, err
 }
 
@@ -178,16 +187,16 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 		groupDpReward[groups[i].ID] = groups[i].DpReward
 	}
 
-	// awards[userID][source] = {exp, dp, vipDays}（同一 source 同列記 EXP、DP 與 VIP 天數）
+	// awards[userID][source] = {exp, dp, vipDays, gp}（同一 source 同列記 EXP、DP、VIP 天數與 GP）
 	awards := map[string]map[string]award{}
-	add := func(uid, source string, exp, dp, vipDays int) {
-		if exp <= 0 && dp <= 0 && vipDays <= 0 {
+	add := func(uid, source string, exp, dp, vipDays, gp int) {
+		if exp <= 0 && dp <= 0 && vipDays <= 0 && gp <= 0 {
 			return
 		}
 		if awards[uid] == nil {
 			awards[uid] = map[string]award{}
 		}
-		awards[uid][source] = award{exp: exp, dp: dp, vipDays: vipDays}
+		awards[uid][source] = award{exp: exp, dp: dp, vipDays: vipDays, gp: gp}
 	}
 
 	// 完成任務 EXP（依層級）
@@ -195,19 +204,19 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 		t := tasks[ti]
 		// 打卡點任務：依集滿與否、依 scope 給對應額度（集滿全部點才發）
 		if t.MetricType == MetricCheckpoint {
-			exp, dp, vipDays := rules.individual, rules.dpIndividual, rules.vipIndividual
+			exp, dp, vipDays, gp := rules.individual, rules.dpIndividual, rules.vipIndividual, rules.gpIndividual
 			switch t.Scope {
 			case ScopeRaceCollective:
-				exp, dp, vipDays = rules.collective, rules.dpCollective, rules.vipCollective
+				exp, dp, vipDays, gp = rules.collective, rules.dpCollective, rules.vipCollective, rules.gpCollective
 			case ScopeGroupTeam:
-				exp, dp, vipDays = rules.group, rules.dpGroup, rules.vipGroup
+				exp, dp, vipDays, gp = rules.group, rules.dpGroup, rules.vipGroup, rules.gpGroup
 			}
 			for _, p := range parts {
 				if t.Scope != ScopeRaceCollective && t.GroupID != "" && t.GroupID != p.groupID {
 					continue
 				}
 				if cpDone[t.ID][p.userID] {
-					add(p.userID, "task:"+t.ID, exp, dp, vipDays)
+					add(p.userID, "task:"+t.ID, exp, dp, vipDays, gp)
 				}
 			}
 			continue
@@ -216,7 +225,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 		case ScopeRaceCollective:
 			if taskDone(acts, t) {
 				for _, p := range parts {
-					add(p.userID, "task:"+t.ID, rules.collective, rules.dpCollective, rules.vipCollective)
+					add(p.userID, "task:"+t.ID, rules.collective, rules.dpCollective, rules.vipCollective, rules.gpCollective)
 				}
 			}
 		case ScopeGroupTeam:
@@ -228,7 +237,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 				if taskDone(byGroup[g.ID], t) {
 					for _, p := range parts {
 						if p.groupID == g.ID {
-							add(p.userID, "task:"+t.ID, rules.group, rules.dpGroup, rules.vipGroup)
+							add(p.userID, "task:"+t.ID, rules.group, rules.dpGroup, rules.vipGroup, rules.gpGroup)
 						}
 					}
 				}
@@ -239,21 +248,21 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 					continue
 				}
 				if taskDone(byUser[p.userID], t) {
-					add(p.userID, "task:"+t.ID, rules.individual, rules.dpIndividual, rules.vipIndividual)
+					add(p.userID, "task:"+t.ID, rules.individual, rules.dpIndividual, rules.vipIndividual, rules.gpIndividual)
 				}
 			}
 		}
 	}
 
 	// 完成賽事 EXP（達分組目標里程）。里程 EXP 改為日常發放（worker），不在此結算；
-	// 分組完賽獎勵（race_groups.exp_reward/dp_reward）不發 VIP 天數，僅「任務」三種 scope 才發。
+	// 分組完賽獎勵（race_groups.exp_reward/dp_reward）不發 VIP 天數與 GP，僅「任務」三種 scope 才發。
 	for _, p := range parts {
 		totalKm := 0.0
 		for _, a := range byUser[p.userID] {
 			totalKm += a.Dist
 		}
 		if tgt := groupTarget[p.groupID]; tgt > 0 && totalKm >= tgt {
-			add(p.userID, "completion", groupReward[p.groupID], groupDpReward[p.groupID], 0)
+			add(p.userID, "completion", groupReward[p.groupID], groupDpReward[p.groupID], 0, 0)
 		}
 	}
 
@@ -281,11 +290,14 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 
 	res := &SettleResult{RaceID: race.ID, Participants: len(parts)}
 	for uid, sources := range awards {
-		expDelta, dpDelta, vipDelta := 0, 0, 0
+		expDelta, dpDelta, vipDelta, gpDelta := 0, 0, 0, 0
 		for source, a := range sources {
+			// GP 與 EXP/DP 共用同一筆 INSERT ... ON CONFLICT DO NOTHING：同一 source 只會
+			// 成功插入一次（冪等閘門），RowsAffected==1 時 EXP/DP/VIP天數/GP 才會一起累加，
+			// 不會出現「EXP 冪等但 GP 重發」的各自為政。
 			tag, err := tx.Exec(ctx,
-				`INSERT INTO exp_ledger (user_id, race_id, source, amount, dp_amount) VALUES ($1,$2,$3,$4,$5)
-				 ON CONFLICT (user_id, race_id, source) DO NOTHING`, uid, race.ID, source, a.exp, a.dp)
+				`INSERT INTO exp_ledger (user_id, race_id, source, amount, dp_amount, gp_amount) VALUES ($1,$2,$3,$4,$5,$6)
+				 ON CONFLICT (user_id, race_id, source) DO NOTHING`, uid, race.ID, source, a.exp, a.dp, a.gp)
 			if err != nil {
 				return nil, err
 			}
@@ -293,6 +305,7 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 				expDelta += a.exp
 				dpDelta += a.dp
 				vipDelta += a.vipDays
+				gpDelta += a.gp
 			}
 		}
 		if expDelta > 0 || dpDelta > 0 {
@@ -309,7 +322,16 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 			}
 			res.TotalVipDays += vipDelta
 		}
-		if expDelta > 0 || dpDelta > 0 || vipDelta > 0 {
+		if gpDelta > 0 {
+			// 同樣只對本次新寫入 exp_ledger 的 source 累加 GP，在同一結算交易內用 AwardGP
+			// 原子加值（tx 已在交易中，AwardGP 內部會退化成 SAVEPOINT，仍與本交易同進退）。
+			raceID := race.ID
+			if err := wallet.AwardGP(ctx, tx, uid, gpDelta, "race_settlement", "race", &raceID); err != nil {
+				return nil, err
+			}
+			res.TotalGp += gpDelta
+		}
+		if expDelta > 0 || dpDelta > 0 || vipDelta > 0 || gpDelta > 0 {
 			res.AwardedUsers++
 		}
 	}

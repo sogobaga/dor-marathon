@@ -170,4 +170,19 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '試用到期後幾天內續訂可享上面的首購促銷價；超過此天數即恢復原價（「14 天後恢復原價」）。之後可另在促銷檔期設定其他優惠。',
     min: 0, max: 365, def: '14',
   },
+  {
+    key: 'explore_checkin_daily_cap_normal', group: '城市探索・打卡', label: '每日打卡上限（一般會員）', type: 'number', unit: '次',
+    help: '一般會員每日可打卡次數上限（跨所有打卡點加總，以台北時區計日）。',
+    min: 1, max: 50, def: '3',
+  },
+  {
+    key: 'explore_checkin_daily_cap_vip', group: '城市探索・打卡', label: '每日打卡上限（VIP）', type: 'number', unit: '次',
+    help: 'VIP 會員每日可打卡次數上限（跨所有打卡點加總，以台北時區計日）。',
+    min: 1, max: 50, def: '5',
+  },
+  {
+    key: 'explore_checkin_cooldown_hours', group: '城市探索・打卡', label: '同點打卡冷卻', type: 'number', unit: '小時',
+    help: '同一個打卡點打卡成功後，需等待多久才能對「同一點」再次打卡拿獎勵。',
+    min: 1, max: 720, def: '24',
+  },
 ]

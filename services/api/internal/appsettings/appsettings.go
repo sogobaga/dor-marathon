@@ -50,6 +50,10 @@ var specs = map[string]func(string) bool{
 	// 取消退費政策系統預設（見 race.CancellationPolicy／race.ResolveCancellationPolicy）；
 	// 值為整包政策的 JSON 字串，個別賽事可在 races.config.cancellation_policy 覆寫。
 	"cancellation_policy": isCancellationPolicyJSON,
+	// 城市探索「打卡」每日上限與同點冷卻時數（見 internal/explore.Checkin）；程式讀取皆有預設值。
+	"explore_checkin_daily_cap_normal": isPosIntMax(50),  // 一般會員每日打卡上限（預設 3）
+	"explore_checkin_daily_cap_vip":    isPosIntMax(50),  // VIP 每日打卡上限（預設 5）
+	"explore_checkin_cooldown_hours":   isPosIntMax(720), // 同一打卡點再次打卡需等待的小時數（預設 24）
 }
 
 func isEntryState(v string) bool {
@@ -64,6 +68,18 @@ func isPct(v string) bool {
 	}
 	n, err := strconv.Atoi(v)
 	return err == nil && n >= 1 && n <= 100
+}
+
+// isPosIntMax 回傳一個驗證器：空字串(用程式內建預設)或 1..max 的整數。用於後台可調的數值型設定
+// （如城市探索每日打卡上限、冷卻小時數），避免誤填 0 或負數把功能鎖死。
+func isPosIntMax(max int) func(string) bool {
+	return func(v string) bool {
+		if v == "" {
+			return true
+		}
+		n, err := strconv.Atoi(v)
+		return err == nil && n >= 1 && n <= max
+	}
 }
 
 // isCancellationPolicyJSON 驗證取消退費政策 JSON（空字串＝清空、退回程式內建預設）。

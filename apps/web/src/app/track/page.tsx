@@ -93,6 +93,7 @@ export default function TrackPage() {
   const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' | 'freetrain'; cardUrl?: string } | null>(null)
   const freetrainRef = useRef(false) // 自主訓練：workout 已由 TrainingScreen 橋接載入、尚未開跑/結束——保護不被 loadPanel() 的「無進行中挑戰→清空」誤清掉
   const [exploreCps, setExploreCps] = useState<ExploreBoss[]>([]) // 城市探索打卡點（含座標）
+  const [exDailyRemaining, setExDailyRemaining] = useState<number | null>(null) // 今日打卡剩餘次數（跨所有點）
   const [bossPanel, setBossPanel] = useState<{ boss: ExploreBoss; phase: 'intro' | 'start'; dpCost: number } | null>(null) // 打卡後跳出的關主挑戰面板
   const [rankingBoss, setRankingBoss] = useState<{ id: string; name: string } | null>(null) // 挑戰者成績排行覆蓋層
   const [celebrateCard, setCelebrateCard] = useState<{ bossId: string; name: string; cardUrl?: string } | null>(null) // 3★取卡恭喜彈窗
@@ -1038,8 +1039,9 @@ export default function TrackPage() {
     const token = getUserToken()
     if (!token) { setExploreCps([]); return }
     try {
-      const { bosses } = await exploreApi.list(token)
+      const { bosses, checkin_daily_remaining } = await exploreApi.list(token)
       setExploreCps(bosses.filter((b) => b.lat && b.lng))
+      setExDailyRemaining(checkin_daily_remaining)
     } catch { /* ignore */ }
   }, [])
   useEffect(() => { fetchExplore() }, [fetchExplore, user?.id])
@@ -1093,15 +1095,26 @@ export default function TrackPage() {
         lat = pos.coords.latitude; lng = pos.coords.longitude; acc = pos.coords.accuracy ?? 0
       }
       const r = await exploreApi.checkin(token, b.id, { lat: lat!, lng: lng!, acc })
-      if (r.ok && r.checkin_only) {
-        // 純打卡點：不揭露關主，僅行內訊息提示 + 刷新清單狀態
-        await fetchExplore()
-        setCpMsg(r.already ? '✓ 已打卡過：' + r.place : '✓ 打卡完成！' + r.place)
-      } else if (r.ok && r.boss) {
-        await fetchExplore()
-        setBossPanel({ boss: r.boss, phase: 'intro', dpCost: exDpCost(r.boss) })
-      } else {
+      if (!r.ok) {
+        // 冷卻中 / 今日已達上限 / 未到範圍 / 精度不足：不發獎，顯示伺服器訊息
         setCpMsg(r.message || (r.status === 'out_of_range' ? '尚未到達打卡點' : r.status === 'low_accuracy' ? '定位精準度不足，請到空曠處再試' : '打卡失敗'))
+        if (typeof r.daily_remaining === 'number') setExDailyRemaining(r.daily_remaining)
+        return
+      }
+      await fetchExplore()
+      const rewardMsg = (r.dp_awarded || r.gp_awarded) ? `　獲得 DP+${r.dp_awarded ?? 0} GP+${r.gp_awarded ?? 0}（今日打卡剩餘 ${r.daily_remaining ?? 0} 次）` : ''
+      if (r.checkin_only) {
+        // 純打卡點：不揭露關主，僅行內訊息提示（可重複打卡刷 DP/GP，過冷卻即可再打）
+        setCpMsg((r.already ? '✓ 打卡完成：' : '✓ 打卡完成！') + r.place + rewardMsg)
+      } else if (r.boss) {
+        if (!r.already) {
+          // 第一次揭露此關主 → 自動跳出挑戰面板（既有行為不變）
+          setBossPanel({ boss: r.boss, phase: 'intro', dpCost: exDpCost(r.boss) })
+        } else {
+          // 已揭露過的重複打卡（含 active=true 的點）：只拿獎勵，不再自動彈出挑戰面板——
+          // 要挑戰請按旁邊的「⚔ 挑戰／繼續挑戰」按鈕。
+          setCpMsg('✓ 打卡完成！' + rewardMsg)
+        }
       }
     } catch (e: any) {
       setCpMsg(e?.code === 1 ? '需要定位權限才能打卡' : (e?.message || '打卡失敗，請重試'))
@@ -1362,9 +1375,9 @@ export default function TrackPage() {
         {/* 打卡點任務 */}
         {(checkpoints.length > 0 || exploreCps.length > 0) && (
           <div style={{ marginTop: 16 }}>
-            <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}><span className="skin-ico" data-ico="pin" aria-hidden>📍</span> 打卡點任務</div>
+            <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}><span className="skin-ico" data-ico="pin" aria-hidden>📍</span> 打卡點任務{exploreCps.length > 0 && exDailyRemaining != null && <span style={{ color: 'var(--tx-dim)' }}>（今日打卡剩餘 {exDailyRemaining} 次）</span>}</div>
             {cpMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginBottom: 8, wordBreak: 'break-word' }}>{cpMsg}</div>}
-            {status !== 'tracking' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>走到打卡點附近，在範圍內按「打卡」即可（不需邊跑邊打卡）。</div>}
+            {status !== 'tracking' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>走到打卡點附近，在範圍內按「打卡」即可（不需邊跑邊打卡）。打卡點過 24h 冷卻可再次打卡拿獎勵。</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {/* 城市探索打卡點：清單只列 已揭露待挑戰 + 最近 10 筆未打卡（依縣市篩選＋距離排序） */}
               {exList.map((b) => {
@@ -1385,17 +1398,28 @@ export default function TrackPage() {
                         {d != null && !b.card_obtained && <> · {d < 1000 ? `還有 ${Math.round(d)}m` : `${(d / 1000).toFixed(1)}km`}</>}
                       </div>
                     </div>
-                    {b.discovered ? (
-                      <button onClick={() => setBossPanel({ boss: b, phase: b.active ? 'start' : 'intro', dpCost: exDpCost(b) })}
-                        style={{ flexShrink: 0, background: 'var(--gold)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: 'pointer' }}>
-                        {b.active ? '▶ 繼續挑戰' : b.card_obtained ? '自由挑戰' : '⚔ 挑戰'}
-                      </button>
-                    ) : (
-                      <button onClick={() => doExploreCheckin(b)} disabled={busy || (curPos != null && !inRange)}
-                        style={{ flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: (busy || (curPos != null && !inRange)) ? 'default' : 'pointer', opacity: (busy || (curPos != null && !inRange)) ? 0.45 : 1 }}>
-                        {busy ? '打卡中…' : curPos != null && !inRange ? '未到範圍' : '打卡'}
-                      </button>
-                    )}
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      {/* 打卡：純打卡點固定顯示；一般關主點在已揭露後仍可重複按（拿 DP/GP，24h 冷卻+每日上限），
+                          不會再次觸發挑戰面板（active 短路，只擋自動彈窗，不擋打卡本身）*/}
+                      {(b.checkin_only || b.discovered) && (
+                        <button onClick={() => doExploreCheckin(b)} disabled={busy || (curPos != null && !inRange)}
+                          style={{ background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 12px', fontSize: 13, cursor: (busy || (curPos != null && !inRange)) ? 'default' : 'pointer', opacity: (busy || (curPos != null && !inRange)) ? 0.45 : 1 }}>
+                          {busy ? '打卡中…' : curPos != null && !inRange ? '未到範圍' : '打卡'}
+                        </button>
+                      )}
+                      {!b.checkin_only && b.discovered && (
+                        <button onClick={() => setBossPanel({ boss: b, phase: b.active ? 'start' : 'intro', dpCost: exDpCost(b) })}
+                          style={{ background: 'var(--gold)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 12px', fontSize: 13, cursor: 'pointer' }}>
+                          {b.active ? '▶ 繼續挑戰' : b.card_obtained ? '自由挑戰' : '⚔ 挑戰'}
+                        </button>
+                      )}
+                      {!b.checkin_only && !b.discovered && (
+                        <button onClick={() => doExploreCheckin(b)} disabled={busy || (curPos != null && !inRange)}
+                          style={{ background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: (busy || (curPos != null && !inRange)) ? 'default' : 'pointer', opacity: (busy || (curPos != null && !inRange)) ? 0.45 : 1 }}>
+                          {busy ? '打卡中…' : curPos != null && !inRange ? '未到範圍' : '打卡'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )
               })}

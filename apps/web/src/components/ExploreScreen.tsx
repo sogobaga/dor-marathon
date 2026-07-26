@@ -16,6 +16,8 @@ function havM(aLat: number, aLng: number, bLat: number, bLng: number) {
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
 }
 const fmtDist = (m: number) => (m < 1000 ? `${Math.round(m)}m` : `${(m / 1000).toFixed(1)}km`)
+// 打卡獎勵區間顯示：min===max 顯示單一數字，否則顯示 "min-max"（後台未設定/皆 0 時呼叫端不顯示）
+const fmtRange = (min: number, max: number) => (min === max ? `${min}` : `${min}-${max}`)
 
 // 城市探索：找打卡點。未打卡前只顯示「地點」(神秘，保留收集/交換樂趣)；到現場用 GPS 追蹤打卡後才揭露背後關主
 // (Scene 圖 + 名稱)，「打卡」按鈕切換成「挑戰」。關主資料由伺服器對未揭露者遮蔽(devtools 也看不到)。
@@ -24,9 +26,10 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
   const uid = user?.id ?? null
   const { data } = useSWR(
     uid && getUserToken() ? ['explore-list', uid] : null,
-    () => withUserAuth((t) => exploreApi.list(t)).then((r) => r.bosses),
+    () => withUserAuth((t) => exploreApi.list(t)),
   )
-  const bosses = (data ?? null) as ExploreBoss[] | null
+  const bosses = (data?.bosses ?? null) as ExploreBoss[] | null
+  const dailyRemaining = data?.checkin_daily_remaining ?? null // 今日打卡剩餘次數（跨所有點加總）
   const [rankingBoss, setRankingBoss] = useState<{ id: string; name: string } | null>(null)
   const [pos, setPos] = useState<{ lat: number; lng: number } | null>(null)
   const [county, setCounty] = useState('') // 縣市篩選（空＝全部）
@@ -61,8 +64,9 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
         <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '2px 2px 12px', lineHeight: 1.7 }}>
-          全台各地藏著一個個打卡點。點「前往打卡」到 GPS 地圖，走到現場、在範圍內即可打卡揭曉（不必邊跑邊打卡）。
+          全台各地藏著一個個打卡點。點「前往打卡」到 GPS 地圖，走到現場、在範圍內即可打卡揭曉（不必邊跑邊打卡），每次打卡隨機獲得 DP+GP，同一點過 24h 冷卻可再打卡。
           {pos ? '（已依你的位置由近到遠排序）' : ''}
+          {dailyRemaining != null && <span style={{ color: 'var(--gold)', fontWeight: 700 }}>　今日打卡剩餘 {dailyRemaining} 次</span>}
         </p>
 
         {/* 縣市篩選 */}
@@ -94,10 +98,19 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
                     </div>
                     <span style={{ fontSize: 11.5, color: 'var(--fug)', fontWeight: 700, flexShrink: 0 }}>✓ 已打卡完成</span>
                   </div>
+                  {((b.checkin_reward_dp_max ?? 0) > 0 || (b.checkin_reward_gp_max ?? 0) > 0) && (
+                    <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
+                      過 24h 冷卻可再次打卡，可得
+                      {(b.checkin_reward_dp_max ?? 0) > 0 && ` DP+${fmtRange(b.checkin_reward_dp_min ?? 0, b.checkin_reward_dp_max ?? 0)}`}
+                      {(b.checkin_reward_gp_max ?? 0) > 0 && ` GP+${fmtRange(b.checkin_reward_gp_min ?? 0, b.checkin_reward_gp_max ?? 0)}`}
+                      {dailyRemaining != null && `（今日剩餘 ${dailyRemaining} 次）`}
+                    </div>
+                  )}
+                  {onOpenTrack && <button onClick={() => onOpenTrack(b.id)} style={ghostFullBtn}>再次前往打卡</button>}
                 </div>
               ) : b.discovered ? (
                 // 已打卡揭露：Scene banner + 關主資訊 + 挑戰
-                <RevealCard key={b.id} b={b} dist={dm} onChallenge={() => onOpenTrack?.(b.id)} onRanking={() => setRankingBoss({ id: b.id, name: b.name })} />
+                <RevealCard key={b.id} b={b} dist={dm} dailyRemaining={dailyRemaining} onChallenge={() => onOpenTrack?.(b.id)} onRanking={() => setRankingBoss({ id: b.id, name: b.name })} />
               ) : (
                 // 未打卡：只顯示地點（神秘）
                 <div key={b.id} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: '14px' }}>
@@ -126,11 +139,14 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
   )
 }
 
-function RevealCard({ b, dist, onChallenge, onRanking }: { b: ExploreBoss; dist?: number | null; onChallenge?: () => void; onRanking?: () => void }) {
+function RevealCard({ b, dist, dailyRemaining, onChallenge, onRanking }: { b: ExploreBoss; dist?: number | null; dailyRemaining?: number | null; onChallenge?: () => void; onRanking?: () => void }) {
   const st = b.stars ?? 0
   const status = b.card_obtained ? { t: '✓ 已取得卡片', c: 'var(--fug)' }
     : st > 0 ? { t: `已挑戰 ${st}★（3★ 得卡）`, c: 'var(--gold)' }
       : { t: '待挑戰', c: 'var(--tx-dim)' }
+  // 打卡（在 /track GPS 地圖上，範圍內即可、24h 冷卻可重複）可得 DP/GP 區間；後台未設定(皆0)則不顯示。
+  const ckDp = (b.checkin_reward_dp_max ?? 0) > 0
+  const ckGp = (b.checkin_reward_gp_max ?? 0) > 0
   return (
     <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
       {b.scene_image_url && <img src={b.scene_image_url} alt="" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block' }} />}
@@ -147,7 +163,13 @@ function RevealCard({ b, dist, onChallenge, onRanking }: { b: ExploreBoss; dist?
           <span style={chip}>{b.place}</span>
           {b.workout_label && <span style={chip}>{b.workout_label}</span>}
           <span style={{ ...chip, color: 'var(--gold)' }}>挑戰 {b.difficulty_stars * 10} DP</span>
+          {(ckDp || ckGp) && (
+            <span style={{ ...chip, color: 'var(--fug)' }}>
+              打卡可得{ckDp && ` DP+${fmtRange(b.checkin_reward_dp_min ?? 0, b.checkin_reward_dp_max ?? 0)}`}{ckGp && ` GP+${fmtRange(b.checkin_reward_gp_min ?? 0, b.checkin_reward_gp_max ?? 0)}`}
+            </span>
+          )}
         </div>
+        {dailyRemaining != null && <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>今日打卡剩餘 {dailyRemaining} 次</div>}
         {b.access_note && <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6, lineHeight: 1.6 }}>📍 開放：{b.access_note}</div>}
         {onChallenge && <button onClick={onChallenge} style={{ ...ghostFullBtn, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', fontWeight: 800 }}>{b.card_obtained ? `自由挑戰（到「${b.place}」打卡點）` : `▶ 前往挑戰（到「${b.place}」打卡點）`}</button>}
         {b.card_obtained && <div style={{ fontSize: 11.5, color: 'var(--fug)', marginTop: 10, textAlign: 'center', fontWeight: 700 }}>已收服此關主 · 卡片已收藏</div>}

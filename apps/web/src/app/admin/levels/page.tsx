@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { adminLevelsApi, settingsApi, adminSettingsApi, adminImagesApi, type LevelConfig, type ExpRules, type AthleteMetricConfig, type AthleteLevel, type SiteSettings } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import DpCoin from '@/components/DpCoin'
+import GpCoin from '@/components/GpCoin'
 
 const METRIC_LABEL: Record<string, { t: string; u: string }> = {
   volume: { t: '跑量', u: '累積 km' },
@@ -161,6 +162,9 @@ export default function AdminLevelsPage() {
         vip_days_collective_task: Number(rules.vip_days_collective_task),
         vip_days_group_task: Number(rules.vip_days_group_task),
         vip_days_individual_task: Number(rules.vip_days_individual_task),
+        gp_per_collective_task: Number(rules.gp_per_collective_task),
+        gp_per_group_task: Number(rules.gp_per_group_task),
+        gp_per_individual_task: Number(rules.gp_per_individual_task),
       })
       setRules(r.exp_rules); setMsg('✓ EXP / DP 規則已儲存')
     } catch (e: any) { setErr(e?.message || '儲存失敗') } finally { setSaving(false) }
@@ -282,6 +286,25 @@ export default function AdminLevelsPage() {
               </div>
               <p style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 6, lineHeight: 1.7 }}>
                 VIP 天數＝活動達成該層目標時延長玩家 VIP 會員資格的天數（0＝不發）。
+              </p>
+            </div>
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <GpCoin size={16} /> GP 幣取得規則（環台大富翁；範圍同 VIP 天數，里程不發）
+              </div>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <Field label="完成「全體」任務 GP">
+                  <input style={{ ...inp, width: 110 }} type="number" min={0} value={rules.gp_per_collective_task} onChange={(e) => setRules({ ...rules, gp_per_collective_task: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+                <Field label="完成「分組」任務 GP">
+                  <input style={{ ...inp, width: 110 }} type="number" min={0} value={rules.gp_per_group_task} onChange={(e) => setRules({ ...rules, gp_per_group_task: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+                <Field label="完成「個人」任務 GP">
+                  <input style={{ ...inp, width: 110 }} type="number" min={0} value={rules.gp_per_individual_task} onChange={(e) => setRules({ ...rules, gp_per_individual_task: parseInt(e.target.value || '0', 10) })} />
+                </Field>
+              </div>
+              <p style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 6, lineHeight: 1.7 }}>
+                GP＝環台大富翁貨幣，僅完成任務時發放（0＝不發），日常里程與「完成賽事」分組獎勵不發 GP。
               </p>
             </div>
             <div style={{ marginTop: 16, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
