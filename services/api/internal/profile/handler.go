@@ -66,6 +66,7 @@ func (h *Handler) AdminMembersRouter() http.Handler {
 	r.Put("/{userID}/team-group-permission", h.AdminSetTeamGroupPermission)
 	r.Put("/{userID}/vip", h.AdminSetVIP)
 	r.Put("/{userID}/exp", h.AdminSetExp)
+	r.Put("/{userID}/gp", h.AdminSetGp)
 	return r
 }
 
@@ -375,6 +376,7 @@ type MemberDetail struct {
 	Birthday     string       `json:"birthday"`
 	RaceCount    int          `json:"race_count"`
 	Exp          int          `json:"exp"`
+	Gp           int          `json:"gp"` // GP 幣餘額（環台大富翁）
 	Level        int          `json:"level"`
 	LevelTitle   string       `json:"level_title"`
 	IsVIP        bool         `json:"is_vip"`
@@ -435,12 +437,12 @@ func (h *Handler) AdminGetMember(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(p.real_name,''), COALESCE(p.nickname,''), COALESCE(p.phone,''),
 		       COALESCE(p.address,''), p.birthday, COALESCE(p.gender,''),
 		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id = u.id),
-		       u.exp, u.vip_expires_at
+		       u.exp, u.gp, u.vip_expires_at
 		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
 		WHERE u.id = $1`, userID).
 		Scan(&m.ID, &m.Email, &m.Handle, &m.Name, &m.Role, &m.TotalKm, &m.CreatedAt, &m.CanCreateTeamGroup,
 			&m.RealName, &m.Nickname, &m.Phone, &m.Address, &birthday, &m.Gender, &m.RaceCount,
-			&m.Exp, &m.VIPExpiresAt)
+			&m.Exp, &m.Gp, &m.VIPExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		respondErr(w, http.StatusNotFound, "member not found")
 		return

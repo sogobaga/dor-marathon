@@ -104,6 +104,7 @@ type DashboardInfo struct {
 	AccountCode           string     `json:"account_code"`
 	Exp                   int        `json:"exp"`
 	Dp                    int        `json:"dp"` // DP 幣餘額
+	Gp                    int        `json:"gp"` // GP 幣餘額（環台大富翁）
 	Level                 int        `json:"level"`
 	LevelTitle            string     `json:"level_title"`
 	LevelFloor            int        `json:"level_floor"`    // 本級門檻 EXP
@@ -158,7 +159,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	var email string
 	var trialShown bool
 	if err := h.db.QueryRow(r.Context(), `
-		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.dp, u.vip_expires_at,
+		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.dp, u.gp, u.vip_expires_at,
 		       COALESCE(u.vip_plan,''), COALESCE(u.activity_coupon_balance,0), COALESCE(u.trial_notice_shown,FALSE),
 		       COALESCE((SELECT SUM(distance_km) FROM activities WHERE user_id=u.id AND NOT flagged),0),
 		       COALESCE(p.nickname,''),
@@ -169,7 +170,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN user_profiles p ON p.user_id=u.id
 		LEFT JOIN title_defs td ON td.code = u.displayed_title
 		WHERE u.id=$1`, userID).
-		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &trialShown, &d.TotalKm, &d.Nickname, &d.RaceCount, &email, &d.DisplayedTitle); err != nil {
+		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.Gp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &trialShown, &d.TotalKm, &d.Nickname, &d.RaceCount, &email, &d.DisplayedTitle); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load dashboard")
 		return
 	}
@@ -503,4 +504,68 @@ func (h *Handler) AdminSetExp(w http.ResponseWriter, r *http.Request) {
 	}
 	h.rt.PublishData(r.Context(), "dashboard", []string{userID})
 	respondJSON(w, http.StatusOK, map[string]any{"exp": newExp})
+}
+
+// PUT /api/v1/admin/members/{userID}/gp  body: {"set":300} 或 {"delta":50}
+// 比照 AdminSetExp 的 set/delta 語意（delta 可正可負、結果夾在 0 以上），但額外把每次異動寫進
+// gp_events 留痕供客服對帳（reason='admin_adjust'，ref_type='admin'/ref_id=操作的管理員 user id）。
+// 管理員調整刻意不透過 wallet.SpendGP 的「餘額不足即失敗」CAS 語意——後台本來就該能無條件把
+// 餘額改到任意非負值（例如訂正客服申訴），而非被使用者當下餘額卡住。
+func (h *Handler) AdminSetGp(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userID")
+	adminID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	var body struct {
+		Set   *int `json:"set"`
+		Delta *int `json:"delta"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if body.Set == nil && body.Delta == nil {
+		respondErr(w, http.StatusBadRequest, "需提供 set 或 delta")
+		return
+	}
+	tx, err := h.db.Begin(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var oldGp int
+	if err := tx.QueryRow(r.Context(), `SELECT gp FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&oldGp); err != nil {
+		respondErr(w, http.StatusNotFound, "member not found")
+		return
+	}
+	newGp := oldGp
+	if body.Set != nil {
+		newGp = *body.Set
+	} else {
+		newGp = oldGp + *body.Delta
+	}
+	if newGp < 0 {
+		newGp = 0
+	}
+	if _, err := tx.Exec(r.Context(), `UPDATE users SET gp=$1 WHERE id=$2`, newGp, userID); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if delta := newGp - oldGp; delta != 0 {
+		var adminRef *string
+		if adminID != "" {
+			adminRef = &adminID
+		}
+		if _, err := tx.Exec(r.Context(), `
+			INSERT INTO gp_events (user_id, delta, reason, ref_type, ref_id)
+			VALUES ($1, $2, 'admin_adjust', 'admin', $3)`, userID, delta, adminRef); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	h.rt.PublishData(r.Context(), "dashboard", []string{userID})
+	respondJSON(w, http.StatusOK, map[string]any{"gp": newGp})
 }

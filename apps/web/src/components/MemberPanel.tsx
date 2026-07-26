@@ -6,6 +6,7 @@ import { settingsApi, type DashboardInfo } from '@/lib/api'
 import { useDashboard } from '@/lib/useDashboard'
 import { LoginModal } from './UserAuthBar'
 import DpCoin from './DpCoin'
+import GpCoin from './GpCoin'
 import MailPanel from './MailPanel'
 
 // 會員資訊面板（首頁與「會員資訊頁」共用，內容一致）。
@@ -107,12 +108,17 @@ export default function MemberPanel({
                 <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{dash?.name || user.name}</span>
                 <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', flexShrink: 0 }}><MailPanel /></span>
               </div>
-              {/* 稱號排：展示中稱號（左，金色）… DP（右，同高） */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+              {/* 稱號排：展示中稱號（左，金色）… DP／GP（右，同高，窄螢幕整組換行避免破版） */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap', rowGap: 4 }}>
                 {dash?.displayed_title
                   ? <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--gold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{dash.displayed_title}</span>
                   : <span style={{ flex: 1 }} />}
-                {dash && <span style={dpBadge} title="DP 幣"><DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}</span>}
+                {dash && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <span style={dpBadge} title="DP 幣"><DpCoin size={16} />{(dash.dp ?? 0).toLocaleString()}</span>
+                    <span style={gpBadge} title="GP 幣"><GpCoin size={16} />{(dash.gp ?? 0).toLocaleString()}</span>
+                  </span>
+                )}
               </div>
               {/* 帳號編碼已移至「個人資料」分頁，避免面板截圖外流 */}
             </div>
@@ -275,6 +281,7 @@ function MiniStat({ label, value }: { label: string; value: number }) {
 
 const card: React.CSSProperties = { position: 'relative', background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 'var(--card-pad, 16px)', boxShadow: 'var(--card-shadow, none)' }
 const dpBadge: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--gold)', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }
+const gpBadge: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--violet)', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }
 const mileageBox: React.CSSProperties = { minWidth: 96, background: 'var(--bg-2)', borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }
 const taskBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 3, textAlign: 'left', border: 'none', borderRadius: 12, padding: '10px 14px', background: 'var(--fug)', color: 'var(--fug-ink)', fontFamily: 'inherit' }
 const entryBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3, textAlign: 'left', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 14px)', padding: '12px 14px', background: 'var(--bg-1)', fontFamily: 'inherit', boxShadow: 'var(--card-shadow, none)' }

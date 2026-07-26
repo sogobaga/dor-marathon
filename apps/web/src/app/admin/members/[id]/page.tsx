@@ -17,6 +17,7 @@ export default function AdminMemberDetailPage() {
   const [err, setErr] = useState('')
   const [savingPerm, setSavingPerm] = useState(false)
   const [expInput, setExpInput] = useState('')
+  const [gpInput, setGpInput] = useState('')
   const [vipInput, setVipInput] = useState('')
   const [kmInput, setKmInput] = useState('5')
   const [kmMsg, setKmMsg] = useState('')
@@ -39,7 +40,7 @@ export default function AdminMemberDetailPage() {
     const token = getToken()
     if (!token) { router.replace('/admin/login'); return }
     adminMembersApi.get(token, id)
-      .then((res) => { setM(res.member); setExpInput(String(res.member.exp)); setVipInput(res.member.vip_expires_at ? res.member.vip_expires_at.slice(0, 10) : '') })
+      .then((res) => { setM(res.member); setExpInput(String(res.member.exp)); setGpInput(String(res.member.gp)); setVipInput(res.member.vip_expires_at ? res.member.vip_expires_at.slice(0, 10) : '') })
       .catch((e) => {
         if (e?.status === 401) { clearToken(); router.replace('/admin/login') }
         else setErr(e?.message || '載入失敗')
@@ -54,6 +55,15 @@ export default function AdminMemberDetailPage() {
     if (isNaN(v)) return
     setBusy(true); setErr('')
     try { await adminMembersApi.setExp(token, id, { set: v }); reload() }
+    catch (e: any) { setErr(e?.message || '更新失敗') } finally { setBusy(false) }
+  }
+  async function saveGp() {
+    const token = getToken()
+    if (!token) return
+    const v = parseInt(gpInput, 10)
+    if (isNaN(v)) return
+    setBusy(true); setErr('')
+    try { await adminMembersApi.setGp(token, id, { set: v }); reload() }
     catch (e: any) { setErr(e?.message || '更新失敗') } finally { setBusy(false) }
   }
   async function saveVip(clear = false) {
@@ -143,6 +153,18 @@ export default function AdminMemberDetailPage() {
           <button onClick={saveExp} disabled={busy} style={primaryBtnSm}>儲存</button>
         </div>
         <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>（EXP 之後會由賽事結算自動累加，這裡供測試/營運手動調整）</div>
+      </div>
+
+      {/* GP（環台大富翁貨幣） */}
+      <h2 style={{ margin: '20px 0 10px', fontSize: 16, fontWeight: 800 }}>GP（環台大富翁）</h2>
+      <div style={ctrlCard}>
+        <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginBottom: 8 }}>目前 {m.gp} GP</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>設定 GP</span>
+          <input style={ctrlInp} type="number" value={gpInput} onChange={(e) => setGpInput(e.target.value)} />
+          <button onClick={saveGp} disabled={busy} style={primaryBtnSm}>儲存</button>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>（每次調整都會寫入 gp_events 留痕，供客服對帳）</div>
       </div>
 
       {/* 加里程（測試） */}

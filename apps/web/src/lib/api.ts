@@ -1015,6 +1015,7 @@ export interface DashboardInfo {
   account_code: string
   exp: number
   dp: number
+  gp: number // GP 幣餘額（環台大富翁）
   level: number
   level_title: string
   level_floor: number
@@ -1819,6 +1820,7 @@ export interface MemberDetail extends MemberSummary {
   birthday: string
   race_count: number
   exp: number
+  gp: number // GP 幣餘額（環台大富翁）
   level: number
   level_title: string
   athlete: AthleteStats
@@ -1898,6 +1900,10 @@ export const adminMembersApi = {
     }),
   setExp: (token: string, id: string, body: { set?: number; delta?: number }) =>
     request<{ exp: number }>(`/admin/members/${id}/exp`, {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  setGp: (token: string, id: string, body: { set?: number; delta?: number }) =>
+    request<{ gp: number }>(`/admin/members/${id}/gp`, {
       method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
     }),
   // 模擬加里程（測試用）：推一筆活動 → worker 寫入並發日常里程 EXP
