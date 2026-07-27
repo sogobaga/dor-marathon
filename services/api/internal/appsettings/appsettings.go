@@ -56,6 +56,15 @@ var specs = map[string]func(string) bool{
 	"explore_checkin_daily_cap_normal": isPosIntMax(50),  // 一般會員每日打卡上限（預設 3）
 	"explore_checkin_daily_cap_vip":    isPosIntMax(50),  // VIP 每日打卡上限（預設 5）
 	"explore_checkin_cooldown_hours":   isPosIntMax(720), // 同一打卡點再次打卡需等待的小時數（預設 24）
+	// 城市探索「打卡/完成獎勵」系統級預設（見 internal/explore.go effectiveCheckinRange/effectiveCompleteRange）；
+	// explore_bosses 每點的 checkin_reward_*/complete_reward_* 非 0 時覆蓋這裡的預設，皆 0 時吃這裡。
+	"explore_checkin_dp_min":     isNonNegInt, // 每次打卡 DP 下限（預設 1）
+	"explore_checkin_dp_max":     isNonNegInt, // 每次打卡 DP 上限（預設 3）
+	"explore_checkin_gp_min":     isNonNegInt, // 每次打卡 GP 下限（預設 1）
+	"explore_checkin_gp_max":     isNonNegInt, // 每次打卡 GP 上限（預設 2）
+	"explore_complete_gp_min":    isNonNegInt, // 關主完成 GP 下限（預設 5）
+	"explore_complete_gp_max":    isNonNegInt, // 關主完成 GP 上限（預設 10）
+	"explore_complete_gp_chance": isPct0to100, // 關主完成給 GP 的機率(%)（預設 30）；0 合法＝不擲
 	// 環台大富翁（見 internal/monopoly）：擲骰 GP 成本（預設 3）、繞圈獎勵 GP（預設 0＝不給）
 	"monopoly_dice_gp_cost":  isNonNegInt,
 	"monopoly_lap_reward_gp": isNonNegInt,
@@ -73,6 +82,15 @@ func isPct(v string) bool {
 	}
 	n, err := strconv.Atoi(v)
 	return err == nil && n >= 1 && n <= 100
+}
+
+// isPct0to100 機率設定：空(用預設) 或 0..100（與 isPct 不同，0 是合法值＝該機率事件永不發生）。
+func isPct0to100(v string) bool {
+	if v == "" {
+		return true
+	}
+	n, err := strconv.Atoi(v)
+	return err == nil && n >= 0 && n <= 100
 }
 
 // isPosIntMax 回傳一個驗證器：空字串(用程式內建預設)或 1..max 的整數。用於後台可調的數值型設定

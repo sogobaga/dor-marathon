@@ -200,4 +200,39 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '同一個打卡點打卡成功後，需等待多久才能對「同一點」再次打卡拿獎勵。',
     min: 1, max: 720, def: '24',
   },
+  {
+    key: 'explore_checkin_dp_min', group: '城市探索・打卡', label: '打卡 DP 下限', type: 'number', unit: 'DP',
+    help: '每次打卡成功隨機發放的 DP 下限（系統級預設）。打卡點若在「城市探索關主編輯」個別設了非 0 的打卡 DP 區間，該點優先用自己的設定，不吃這裡。',
+    min: 0, max: 9999, def: '1',
+  },
+  {
+    key: 'explore_checkin_dp_max', group: '城市探索・打卡', label: '打卡 DP 上限', type: 'number', unit: 'DP',
+    help: '每次打卡成功隨機發放的 DP 上限（系統級預設）。打卡點若個別設了非 0 的打卡 DP 區間，該點優先用自己的設定。',
+    min: 0, max: 9999, def: '3',
+  },
+  {
+    key: 'explore_checkin_gp_min', group: '城市探索・打卡', label: '打卡 GP 下限', type: 'number', unit: 'GP',
+    help: '每次打卡成功隨機發放的 GP 下限（系統級預設）。打卡點若個別設了非 0 的打卡 GP 區間，該點優先用自己的設定。',
+    min: 0, max: 9999, def: '1',
+  },
+  {
+    key: 'explore_checkin_gp_max', group: '城市探索・打卡', label: '打卡 GP 上限', type: 'number', unit: 'GP',
+    help: '每次打卡成功隨機發放的 GP 上限（系統級預設）。打卡點若個別設了非 0 的打卡 GP 區間，該點優先用自己的設定。',
+    min: 0, max: 9999, def: '2',
+  },
+  {
+    key: 'explore_complete_gp_min', group: '城市探索・打卡', label: '關主完成 GP 下限', type: 'number', unit: 'GP',
+    help: '完成關主挑戰時，依機率額外發放的 GP 下限（系統級預設）。打卡點若個別設了非 0 的完成 GP 上限或機率，該點優先用自己的設定（三個值一起）。',
+    min: 0, max: 9999, def: '5',
+  },
+  {
+    key: 'explore_complete_gp_max', group: '城市探索・打卡', label: '關主完成 GP 上限', type: 'number', unit: 'GP',
+    help: '完成關主挑戰時，依機率額外發放的 GP 上限（系統級預設）。打卡點若個別設了非 0 的完成 GP 上限或機率，該點優先用自己的設定（三個值一起）。',
+    min: 0, max: 9999, def: '10',
+  },
+  {
+    key: 'explore_complete_gp_chance', group: '城市探索・打卡', label: '關主完成給 GP 機率(%)', type: 'number', unit: '%',
+    help: '完成關主挑戰時額外發放 GP 的機率（系統級預設，0=不發）。打卡點若個別設了非 0 的完成 GP 上限或機率，該點優先用自己的設定（三個值一起）。',
+    min: 0, max: 100, def: '30',
+  },
 ]

@@ -45,6 +45,50 @@ const (
 	defaultCheckinCooldownHours  = 24 // 同一打卡點再次打卡需等待的小時數
 )
 
+// 打卡/完成獎勵的系統級預設（Phase 0b-2 新增，見 migration 101 + internal/appsettings 對應 key）。
+// explore_bosses 每點的 checkin_reward_*/complete_reward_* 欄位非 0 時視為管理者已針對該點客製、覆寫這裡；
+// 皆為 0（1058 個既有點的預設值）時吃這裡，讓「後台一次設定、套用所有點」成立。
+const (
+	defaultCheckinDpMin     = 1  // 每次打卡 DP 下限
+	defaultCheckinDpMax     = 3  // 每次打卡 DP 上限
+	defaultCheckinGpMin     = 1  // 每次打卡 GP 下限
+	defaultCheckinGpMax     = 2  // 每次打卡 GP 上限
+	defaultCompleteGpMin    = 5  // 關主完成 GP 下限
+	defaultCompleteGpMax    = 10 // 關主完成 GP 上限
+	defaultCompleteGpChance = 30 // 關主完成給 GP 的機率(%)
+)
+
+// effectiveCheckinRange 回傳打卡的有效 DP/GP 發放區間：該點欄位 max>0 視為管理者已客製、用該點的
+// min/max；否則吃系統預設（後台「系統設定」的 explore_checkin_dp_min/max、explore_checkin_gp_min/max）。
+// DP 與 GP 各自獨立判斷（可能一個客製、一個吃預設）。app_settings 是低頻設定，交易外讀取即可。
+func (h *Handler) effectiveCheckinRange(ctx context.Context, b Boss) (dpMin, dpMax, gpMin, gpMax int) {
+	if b.CheckinRewardDpMax > 0 {
+		dpMin, dpMax = b.CheckinRewardDpMin, b.CheckinRewardDpMax
+	} else {
+		dpMin = appsettings.GetInt(ctx, h.db, "explore_checkin_dp_min", defaultCheckinDpMin)
+		dpMax = appsettings.GetInt(ctx, h.db, "explore_checkin_dp_max", defaultCheckinDpMax)
+	}
+	if b.CheckinRewardGpMax > 0 {
+		gpMin, gpMax = b.CheckinRewardGpMin, b.CheckinRewardGpMax
+	} else {
+		gpMin = appsettings.GetInt(ctx, h.db, "explore_checkin_gp_min", defaultCheckinGpMin)
+		gpMax = appsettings.GetInt(ctx, h.db, "explore_checkin_gp_max", defaultCheckinGpMax)
+	}
+	return
+}
+
+// effectiveCompleteReward 回傳完成挑戰的有效 GP 機率獎勵設定：該點 max>0 或 chance>0（其一即代表管理者已
+// 針對此點客製）→ 三個值（min/max/chance）整組用該點的，避免「點的機率」誤配「系統的區間」之類的錯配；
+// 否則整組吃系統預設（explore_complete_gp_min/max/chance）。
+func (h *Handler) effectiveCompleteReward(ctx context.Context, pointMin, pointMax, pointChance int) (gpMin, gpMax, chance int) {
+	if pointMax > 0 || pointChance > 0 {
+		return pointMin, pointMax, pointChance
+	}
+	return appsettings.GetInt(ctx, h.db, "explore_complete_gp_min", defaultCompleteGpMin),
+		appsettings.GetInt(ctx, h.db, "explore_complete_gp_max", defaultCompleteGpMax),
+		appsettings.GetInt(ctx, h.db, "explore_complete_gp_chance", defaultCompleteGpChance)
+}
+
 // isVIP 查詢會員是否為 VIP（比照 internal/training.requireVIP 的查法）。
 func (h *Handler) isVIP(ctx context.Context, uid string) bool {
 	var vip bool
@@ -321,8 +365,9 @@ func (h *Handler) Checkin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	dp := randRange(b.CheckinRewardDpMin, b.CheckinRewardDpMax)
-	gp := randRange(b.CheckinRewardGpMin, b.CheckinRewardGpMax)
+	dpMin, dpMax, gpMin, gpMax := h.effectiveCheckinRange(ctx, b)
+	dp := randRange(dpMin, dpMax)
+	gp := randRange(gpMin, gpMax)
 	if _, err := tx.Exec(ctx, `INSERT INTO explore_checkins (user_id, boss_id, dp_awarded, gp_awarded) VALUES ($1,$2,$3,$4)`, uid, bossID, dp, gp); err != nil {
 		respondErr(w, http.StatusInternalServerError, "打卡失敗")
 		return
@@ -526,7 +571,9 @@ func (h *Handler) Complete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// 完成挑戰的額外 GP 機率獎勵：每次成功完成（含重複挑戰）都擲一次，與上面 grant(首次達到該星等) 無關，
-	// 讓已收服關主的「自由挑戰」也有持續價值。機率/區間皆後台可設，0 則不擲。
+	// 讓已收服關主的「自由挑戰」也有持續價值。該點 max>0 或 chance>0 則用該點客製值，否則吃系統預設
+	// （explore_complete_gp_min/max/chance，見 migration 101）。
+	bonusGpMin, bonusGpMax, bonusGpChance = h.effectiveCompleteReward(r.Context(), bonusGpMin, bonusGpMax, bonusGpChance)
 	bonusGP := 0
 	if bonusGpChance > 0 && rand.Intn(100) < bonusGpChance {
 		bonusGP = randRange(bonusGpMin, bonusGpMax)
