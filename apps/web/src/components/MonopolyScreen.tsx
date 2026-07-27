@@ -23,7 +23,7 @@ const RUNNER_IMG = '/source/ui/02_BG/DOR_RUNNER.png'
 // 角色圖 DOR_RUNNER.png 站立點（前腳鞋底/身體重心）在圖片上的 [xPct, yPct]，
 // 用來把「站立點」對齊格子中心，而非用圖片幾何中心對齊（否則棋子會比格子低半個身體）。
 // 之後美術微調角色圖，只需調整這兩個數字。
-const RUNNER_ANCHOR: [number, number] = [53, 86]
+const RUNNER_ANCHOR: [number, number] = [50, 86]
 // 六面骰字符（Unicode 骰子），滾動動畫期間快速切換，最終停在後端回傳的點數
 const DIE_GLYPH = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
 // 機會/命運格位置（僅用於校準模式標記上色，玩法判定仍完全由後端決定）
