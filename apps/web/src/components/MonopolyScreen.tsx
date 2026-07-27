@@ -20,6 +20,10 @@ const BOARD_COORDS: [number, number][] = [
 ]
 const BOARD_IMG = '/source/ui/02_BG/DOR_TAW_RUNNER_START_1to45.png'
 const RUNNER_IMG = '/source/ui/02_BG/DOR_RUNNER.png'
+// 角色圖 DOR_RUNNER.png 站立點（前腳鞋底/身體重心）在圖片上的 [xPct, yPct]，
+// 用來把「站立點」對齊格子中心，而非用圖片幾何中心對齊（否則棋子會比格子低半個身體）。
+// 之後美術微調角色圖，只需調整這兩個數字。
+const RUNNER_ANCHOR: [number, number] = [46, 86]
 // 六面骰字符（Unicode 骰子），滾動動畫期間快速切換，最終停在後端回傳的點數
 const DIE_GLYPH = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
 // 機會/命運格位置（僅用於校準模式標記上色，玩法判定仍完全由後端決定）
@@ -308,15 +312,17 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
                 }} />
               )}
 
-              {/* 棋子 */}
+              {/* 棋子：外層負責「定位」（站立點對齊格子中心）+ 移動 transition；
+                  內層負責「走路跳動」動畫。兩層 transform 分開，避免 hop 動畫覆蓋定位位移。 */}
               <div style={{
-                position: 'absolute', left: `${x}%`, top: `${y}%`, width: '19%',
-                transform: 'translate(-50%,-50%)', transition: 'left .22s linear, top .22s linear',
+                position: 'absolute', left: `${x}%`, top: `${y}%`, width: '19%', aspectRatio: '1/1',
+                transform: `translate(-${RUNNER_ANCHOR[0]}%, -${RUNNER_ANCHOR[1]}%)`,
+                transition: 'left .22s linear, top .22s linear',
                 pointerEvents: 'none', zIndex: 5,
               }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={RUNNER_IMG} alt="" style={{
-                  width: '100%', display: 'block',
+                  width: '100%', height: '100%', display: 'block',
                   animation: phase === 'moving' ? 'monoRunnerHop .25s ease-in-out infinite' : 'none',
                   filter: phase === 'moving' ? 'drop-shadow(0 4px 6px rgba(0,0,0,.35))' : 'none',
                 }} />
