@@ -1,6 +1,6 @@
 'use client'
 
-// PB探索（稱號系統）：所有稱號打亂成一面牆（不分類、不顯示數量/取得數，隱藏取得規律）。
+// 成就探索（稱號系統）：所有稱號打亂成一面牆（不分類、不顯示數量/取得數，隱藏取得規律）。
 // 未解鎖顯示「？？？？？？？？」；已解鎖依 tier 由樸素到金光；可選一個展示（再點取消），會出現在各排行榜名字前。
 import { useEffect, useState } from 'react'
 import { titleApi, type TitleItem } from '@/lib/api'
@@ -66,7 +66,7 @@ export default function TitleScreen({ onBack }: { onBack: () => void }) {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
-        <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>PB探索</span>
+        <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>成就探索</span>
       </header>
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>

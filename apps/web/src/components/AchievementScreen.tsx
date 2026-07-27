@@ -1,6 +1,6 @@
 'use client'
 
-// 成就探索：頂部月曆里程熱力圖（可左右滑月、頁點指示，適合截圖分享）＋ 下方所有累積數值牆（多巴胺）。
+// 數據探索：頂部月曆里程熱力圖（可左右滑月、頁點指示，適合截圖分享）＋ 下方所有累積數值牆（多巴胺）。
 import { useEffect, useRef, useState } from 'react'
 import { achievementApi, type AchievementStats, type AchievementCalendar } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
@@ -59,7 +59,7 @@ export default function AchievementScreen({ onBack }: { onBack: () => void }) {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
-        <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>成就探索</span>
+        <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>數據探索</span>
       </header>
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 16px 28px' }}>

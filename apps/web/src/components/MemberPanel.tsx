@@ -196,8 +196,8 @@ export default function MemberPanel({
 
       </div>
 
-      {/* 探索入口（面板下方、後台可控可見性；首頁不顯示）：上排 城市探索|卡片圖鑑、下排 PB探索|成就探索、末排 自主訓練|跑者充電站
-          跑者充電站開放全體會員（非 VIP 限定），故末排恆顯示，不受 training_entry 影響 */}
+      {/* 探索入口（面板下方、後台可控可見性；首頁不顯示）：第一排 城市探索|卡片圖鑑、第二排 成就探索|數據探索、第三排 環台大富翁|知識探索、末排 自主訓練|跑者充電站
+          跑者充電站開放全體會員（非 VIP 限定），故末排恆顯示，不受 training_entry 影響；知識探索目前為靜態「即將開放」佔位，尚無對應畫面 */}
       {showEntries && user && dash && (dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden' || dash.title_entry !== 'hidden' || dash.achievement_entry !== 'hidden' || dash.training_entry !== 'hidden' || true) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
           {(dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden') && (
@@ -226,7 +226,7 @@ export default function MemberPanel({
                 <button disabled={dash.title_entry === 'locked'}
                   onClick={(e) => { e.stopPropagation(); if (dash.title_entry === 'shown') onOpenTitle?.() }}
                   style={{ ...entryBtn, opacity: dash.title_entry === 'shown' ? 1 : 0.6, cursor: dash.title_entry === 'shown' ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>PB探索</span>
+                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>成就探索</span>
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.title_entry === 'locked' ? '即將開放 ›' : '解鎖你的稱號 ›'}</span>
                 </button>
               )}
@@ -234,12 +234,29 @@ export default function MemberPanel({
                 <button disabled={dash.achievement_entry === 'locked'}
                   onClick={(e) => { e.stopPropagation(); if (dash.achievement_entry === 'shown') onOpenAchievement?.() }}
                   style={{ ...entryBtn, opacity: dash.achievement_entry === 'shown' ? 1 : 0.6, cursor: dash.achievement_entry === 'shown' ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>成就探索</span>
+                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>數據探索</span>
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.achievement_entry === 'locked' ? '即將開放 ›' : '你的數據成就 ›'}</span>
                 </button>
               )}
             </div>
           )}
+          {/* 環台大富翁（測試期間受 monopoly_entry 入口設定控管；Phase 1 盤面遊戲）與知識探索（尚未開放，靜態佔位）並排 */}
+          <div style={{ display: 'flex', gap: 10 }}>
+            {dash.monopoly_entry !== 'hidden' && (
+              <button disabled={dash.monopoly_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.monopoly_entry === 'shown') onOpenMonopoly?.() }}
+                style={{ ...entryBtn, opacity: dash.monopoly_entry === 'shown' ? 1 : 0.6, cursor: dash.monopoly_entry === 'shown' ? 'pointer' : 'default' }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎲 環台大富翁</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.monopoly_entry === 'locked' ? '即將開放 ›' : '擲骰前進，好運等你 ›'}</span>
+              </button>
+            )}
+            <button
+              disabled
+              style={{ ...entryBtn, opacity: 0.6, cursor: 'default' }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>📚 知識探索</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>即將開放 ›</span>
+            </button>
+          </div>
           {/* 自主訓練（VIP 限定，後台可控可見性）與跑者充電站（全體會員開放，恆顯示）並排 */}
           <div style={{ display: 'flex', gap: 10 }}>
             {dash.training_entry !== 'hidden' && (
@@ -257,15 +274,6 @@ export default function MemberPanel({
               <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>優惠好康都在這 ›</span>
             </button>
           </div>
-          {/* 環台大富翁（測試期間受 monopoly_entry 入口設定控管；Phase 1 盤面遊戲） */}
-          {dash.monopoly_entry !== 'hidden' && (
-            <button disabled={dash.monopoly_entry === 'locked'}
-              onClick={(e) => { e.stopPropagation(); if (dash.monopoly_entry === 'shown') onOpenMonopoly?.() }}
-              style={{ ...entryBtn, opacity: dash.monopoly_entry === 'shown' ? 1 : 0.6, cursor: dash.monopoly_entry === 'shown' ? 'pointer' : 'default' }}>
-              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎲 環台大富翁</span>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.monopoly_entry === 'locked' ? '即將開放 ›' : '擲骰前進，好運等你 ›'}</span>
-            </button>
-          )}
         </div>
       )}
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}

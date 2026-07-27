@@ -12,11 +12,11 @@ import GpCoin from './GpCoin'
 // 真正抽卡是 Phase 3；判定完全交給後端回傳的 landed_on + draw_pending，前端不重複判斷。
 const BOARD_SIZE = 46
 const BOARD_COORDS: [number, number][] = [
-  [28, 82], [34, 82], [40, 82], [46, 81], [51, 80], [54, 77], [56, 73], [57, 69], [58, 65], [61, 61],
-  [66, 58], [68, 55], [70, 51], [71, 47], [72, 43], [74, 39], [73, 35], [75, 32], [81, 28], [79, 25],
-  [80, 21], [79, 17], [77, 14], [72, 12], [66, 11], [60, 11], [54, 12], [49, 14], [45, 17], [41, 21],
-  [36, 23], [35, 27], [33, 31], [33, 35], [31, 38], [20, 41], [22, 45], [22, 48], [22, 52], [17, 56],
-  [20, 60], [22, 64], [24, 67], [25, 70], [25, 73], [24, 76],
+  [28, 82], [34, 81], [40, 81], [46, 80], [51, 78], [54, 75], [56, 71], [57, 67], [58, 63], [63, 60],
+  [67, 58], [68, 54], [70, 50], [71, 46], [72, 42], [75, 39], [73, 35], [75, 31], [81, 27], [78, 24],
+  [79, 20], [78, 17], [76, 13], [72, 12], [66, 11], [60, 11], [54, 12], [49, 14], [45, 17], [41, 21],
+  [36, 23], [35, 27], [34, 31], [33, 35], [31, 38], [21, 41], [22, 45], [22, 48], [22, 52], [18, 56],
+  [21, 60], [22, 63], [24, 67], [25, 70], [25, 74], [24, 77],
 ]
 const BOARD_IMG = '/source/ui/02_BG/DOR_TAW_RUNNER_START_1to45.png'
 const RUNNER_IMG = '/source/ui/02_BG/DOR_RUNNER.png'
@@ -44,6 +44,7 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
   const [drawModal, setDrawModal] = useState<'chance' | 'destiny' | null>(null)
   const [lapCelebration, setLapCelebration] = useState<{ laps: number; gp: number } | null>(null)
   const [startFlash, setStartFlash] = useState(false)
+  const [showGpInfo, setShowGpInfo] = useState(false)
 
   const dieIntervalRef = useRef<number | null>(null)
 
@@ -146,11 +147,8 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
           <div style={{ color: 'var(--hunt)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>載入失敗，請稍後再試</div>
         ) : (
           <>
-            {/* 狀態列：GP 餘額 + 目前圈數 */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 15, fontWeight: 900, color: 'var(--violet)' }}>
-                <GpCoin size={18} />{(gpBalance ?? 0).toLocaleString()}
-              </span>
+            {/* 狀態列：目前圈數 */}
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--tx-dim)' }}>第 {laps} 圈</span>
             </div>
 
@@ -171,7 +169,7 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
 
               {/* 棋子 */}
               <div style={{
-                position: 'absolute', left: `${x}%`, top: `${y}%`, width: '10%',
+                position: 'absolute', left: `${x}%`, top: `${y}%`, width: '19%',
                 transform: 'translate(-50%,-50%)', transition: 'left .22s linear, top .22s linear',
                 pointerEvents: 'none', zIndex: 5,
               }}>
@@ -186,6 +184,19 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
 
             {/* 擲骰區 */}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, marginTop: 22 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 15, fontWeight: 900, color: 'var(--violet)' }}>
+                <GpCoin size={18} />{(gpBalance ?? 0).toLocaleString()}
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowGpInfo((v) => !v) }}
+                  aria-label="如何取得 GP"
+                  style={{
+                    width: 18, height: 18, borderRadius: '50%', border: '1px solid var(--line)',
+                    background: 'none', color: 'var(--tx-dim)', fontSize: 11, fontWeight: 900,
+                    lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    padding: 0, cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >！</button>
+              </span>
               {phase === 'dice' && (
                 <div style={{ fontSize: 56, lineHeight: 1, animation: 'monoDiceShake .09s linear infinite' }} aria-hidden="true">
                   {DIE_GLYPH[dieFace]}
@@ -200,7 +211,7 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
                   cursor: busy || !canAfford ? 'default' : 'pointer',
                 }}
               >
-                {phase === 'dice' ? '擲骰中…' : phase === 'moving' ? '前進中…' : `擲骰（−${diceCost} GP）`}
+                {phase === 'dice' ? '擲骰中…' : phase === 'moving' ? '前進中…' : `擲骰 ${diceCost} GP`}
               </button>
               {!canAfford && phase === 'idle' && (
                 <div style={{ fontSize: 12, color: 'var(--hunt)', fontWeight: 700 }}>GP 不足，無法擲骰</div>
@@ -212,6 +223,19 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
           </>
         )}
       </div>
+
+      {/* GP 取得說明 */}
+      {showGpInfo && (
+        <div style={overlayStyle} onClick={() => setShowGpInfo(false)}>
+          <div style={cardStyle} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--tx)' }}>如何取得 GP</div>
+            <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.7 }}>
+              進行城市探索打卡、以及參與活動（賽事）都可以隨機獲得 GP。
+            </div>
+            <button onClick={() => setShowGpInfo(false)} style={{ ...rollBtn, marginTop: 16, padding: '9px 28px', fontSize: 13.5 }}>知道了</button>
+          </div>
+        </div>
+      )}
 
       {/* 機會/命運 placeholder */}
       {drawModal && (

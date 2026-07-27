@@ -96,8 +96,8 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
   {
-    key: 'title_entry_state', group: 'PB探索（稱號）入口', label: '入口顯示狀態', type: 'select', def: 'whitelist',
-    help: '控制「會員面板的 PB探索（稱號系統）按鈕」對前台玩家的可見性。測試中，建議先「僅指定帳號」。',
+    key: 'title_entry_state', group: '成就探索（稱號）入口', label: '入口顯示狀態', type: 'select', def: 'whitelist',
+    help: '控制「會員面板的 成就探索（稱號系統）按鈕」對前台玩家的可見性。測試中，建議先「僅指定帳號」。',
     options: [
       { value: 'hidden', label: '前台隱藏（都看不到）' },
       { value: 'locked', label: '顯示但不能按（即將開放）' },
@@ -106,13 +106,13 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     ],
   },
   {
-    key: 'title_entry_whitelist', group: 'PB探索（稱號）入口', label: '指定帳號白名單', type: 'text', def: '',
+    key: 'title_entry_whitelist', group: '成就探索（稱號）入口', label: '指定帳號白名單', type: 'text', def: '',
     help: '僅在上方選「指定帳號可按」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email。',
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
   {
-    key: 'achievement_entry_state', group: '成就探索入口', label: '入口顯示狀態', type: 'select', def: 'whitelist',
-    help: '控制「會員面板的成就探索按鈕」對前台玩家的可見性。測試中，建議先「僅指定帳號」。',
+    key: 'achievement_entry_state', group: '數據探索入口', label: '入口顯示狀態', type: 'select', def: 'whitelist',
+    help: '控制「會員面板的數據探索按鈕」對前台玩家的可見性。測試中，建議先「僅指定帳號」。',
     options: [
       { value: 'hidden', label: '前台隱藏（都看不到）' },
       { value: 'locked', label: '顯示但不能按（即將開放）' },
@@ -121,7 +121,7 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     ],
   },
   {
-    key: 'achievement_entry_whitelist', group: '成就探索入口', label: '指定帳號白名單', type: 'text', def: '',
+    key: 'achievement_entry_whitelist', group: '數據探索入口', label: '指定帳號白名單', type: 'text', def: '',
     help: '僅在上方選「指定帳號可按」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email。',
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },

@@ -89,8 +89,8 @@ export default function PhoneShell() {
     if (firstView.current) { firstView.current = false; return }
     let path = '/', title = '首頁'
     if (showGallery) { path = '/gallery'; title = '卡片探索' }
-    else if (showTitle) { path = '/titles'; title = 'PB探索' }
-    else if (showAchievement) { path = '/achievements'; title = '成就探索' }
+    else if (showTitle) { path = '/titles'; title = '成就探索' }
+    else if (showAchievement) { path = '/achievements'; title = '數據探索' }
     else if (showTraining) { path = '/training'; title = '自主訓練' }
     else if (showPerks) { path = '/perks'; title = '跑者充電站' }
     else if (showMonopoly) { path = '/monopoly'; title = '環台大富翁' }
