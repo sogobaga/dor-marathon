@@ -1037,6 +1037,7 @@ export interface DashboardInfo {
   title_entry: 'hidden' | 'locked' | 'shown'       // 稱號系統(PB探索)入口可見性
   achievement_entry: 'hidden' | 'locked' | 'shown' // 成就統計(成就探索)入口可見性
   training_entry: 'hidden' | 'locked' | 'shown'    // 自主訓練入口可見性
+  monopoly_entry: 'hidden' | 'locked' | 'shown'    // 環台大富翁入口可見性
   new_titles?: { code: string; name: string; tier: number; category: string }[] // 新解鎖稱號（前台跳彈窗用，跳完呼叫 /titles/seen）
   // 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；扣到 0 凍結 6 小時）
   sp: number
@@ -2438,6 +2439,29 @@ export const adminPartnersApi = {
     request<{ shop: AdminPartnerShop }>(`/admin/partner-shops/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
   remove: (token: string, id: string) =>
     request<{ ok: boolean }>(`/admin/partner-shops/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
+// 環台大富翁（Phase 1：盤面遊戲）
+export interface MonopolyState {
+  position: number
+  laps_completed: number
+  gp_balance: number
+  dice_gp_cost: number
+}
+export interface MonopolyRollResult {
+  roll: number           // 伺服器決定的點數 1..6（前端動畫必須停在這個值，前端無法自行決定）
+  from: number
+  to: number
+  laps_gained: number
+  landed_on: 'normal' | 'chance' | 'destiny'
+  lap_reward_gp: number
+  gp_balance: number
+  draw_pending: boolean  // true=停在機會/命運格，抽卡功能 Phase 3 才開放
+}
+export const monopolyApi = {
+  state: (token: string) => request<MonopolyState>('/monopoly/state', { headers: withAuth(token) }),
+  // GP 不足回 409 {error:"GP 不足"}（呼叫端用 e.status===409 辨識，不必比對訊息文字）
+  roll: (token: string) => request<MonopolyRollResult>('/monopoly/roll', { method: 'POST', headers: withAuth(token) }),
 }
 
 // --- WebSocket helper ---

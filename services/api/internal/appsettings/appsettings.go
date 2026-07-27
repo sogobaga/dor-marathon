@@ -40,6 +40,8 @@ var specs = map[string]func(string) bool{
 	"achievement_entry_whitelist": isWhitelist,
 	"training_entry_state":        isEntryState, // 自主訓練入口
 	"training_entry_whitelist":    isWhitelist,
+	"monopoly_entry_state":        isEntryState, // 環台大富翁入口
+	"monopoly_entry_whitelist":    isWhitelist,
 	// VIP 訂閱制（後台可調數值）
 	"vip_trial_days":              isNonNegInt, // 新註冊自動 VIP 試用天數
 	"vip_price_monthly":           isNonNegInt, // 月繳原價（元）
@@ -54,6 +56,9 @@ var specs = map[string]func(string) bool{
 	"explore_checkin_daily_cap_normal": isPosIntMax(50),  // 一般會員每日打卡上限（預設 3）
 	"explore_checkin_daily_cap_vip":    isPosIntMax(50),  // VIP 每日打卡上限（預設 5）
 	"explore_checkin_cooldown_hours":   isPosIntMax(720), // 同一打卡點再次打卡需等待的小時數（預設 24）
+	// 環台大富翁（見 internal/monopoly）：擲骰 GP 成本（預設 3）、繞圈獎勵 GP（預設 0＝不給）
+	"monopoly_dice_gp_cost":  isNonNegInt,
+	"monopoly_lap_reward_gp": isNonNegInt,
 }
 
 func isEntryState(v string) bool {

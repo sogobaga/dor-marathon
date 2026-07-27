@@ -128,6 +128,7 @@ type DashboardInfo struct {
 	TitleEntry       string         `json:"title_entry"`          // 稱號系統入口可見性（同上）
 	AchievementEntry string         `json:"achievement_entry"`    // 成就統計入口可見性（同上）
 	TrainingEntry    string         `json:"training_entry"`       // 自主訓練入口可見性（同上）
+	MonopolyEntry    string         `json:"monopoly_entry"`       // 環台大富翁入口可見性（同上）
 	NewTitles        []AwardedTitle `json:"new_titles,omitempty"` // 本次 dashboard 新解鎖（未看過）稱號
 	// 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；見 internal/stamina）
 	Sp               int        `json:"sp"`
@@ -157,6 +158,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	var d DashboardInfo
 	d.AccountCode = code
 	var email string
+	var isSuperAdmin bool
 	var trialShown bool
 	if err := h.db.QueryRow(r.Context(), `
 		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.dp, u.gp, u.vip_expires_at,
@@ -165,21 +167,23 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(p.nickname,''),
 		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id AND rg.status<>'cancelled'),
 		       COALESCE(u.email,''),
-		       COALESCE(td.name,'')
+		       COALESCE(td.name,''),
+		       u.is_super_admin
 		FROM users u
 		LEFT JOIN user_profiles p ON p.user_id=u.id
 		LEFT JOIN title_defs td ON td.code = u.displayed_title
 		WHERE u.id=$1`, userID).
-		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.Gp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &trialShown, &d.TotalKm, &d.Nickname, &d.RaceCount, &email, &d.DisplayedTitle); err != nil {
+		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.Gp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &trialShown, &d.TotalKm, &d.Nickname, &d.RaceCount, &email, &d.DisplayedTitle, &isSuperAdmin); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load dashboard")
 		return
 	}
-	d.PersonalEntry = resolvePersonalEntry(r.Context(), h.db, email, code)
-	d.ExploreEntry = resolveEntry(r.Context(), h.db, "explore_entry_state", "explore_entry_whitelist", email, code)
-	d.GalleryEntry = resolveEntry(r.Context(), h.db, "gallery_entry_state", "gallery_entry_whitelist", email, code)
-	d.TitleEntry = resolveEntry(r.Context(), h.db, "title_entry_state", "title_entry_whitelist", email, code)
-	d.AchievementEntry = resolveEntry(r.Context(), h.db, "achievement_entry_state", "achievement_entry_whitelist", email, code)
-	d.TrainingEntry = resolveEntry(r.Context(), h.db, "training_entry_state", "training_entry_whitelist", email, code)
+	d.PersonalEntry = resolvePersonalEntry(r.Context(), h.db, email, code, isSuperAdmin)
+	d.ExploreEntry = resolveEntry(r.Context(), h.db, "explore_entry_state", "explore_entry_whitelist", email, code, isSuperAdmin)
+	d.GalleryEntry = resolveEntry(r.Context(), h.db, "gallery_entry_state", "gallery_entry_whitelist", email, code, isSuperAdmin)
+	d.TitleEntry = resolveEntry(r.Context(), h.db, "title_entry_state", "title_entry_whitelist", email, code, isSuperAdmin)
+	d.AchievementEntry = resolveEntry(r.Context(), h.db, "achievement_entry_state", "achievement_entry_whitelist", email, code, isSuperAdmin)
+	d.TrainingEntry = resolveEntry(r.Context(), h.db, "training_entry_state", "training_entry_whitelist", email, code, isSuperAdmin)
+	d.MonopolyEntry = resolveEntry(r.Context(), h.db, "monopoly_entry_state", "monopoly_entry_whitelist", email, code, isSuperAdmin)
 	d.NewTitles = h.checkAndAwardTitles(r.Context(), userID)
 	levels, err := h.levelConfigList(r.Context())
 	if err != nil {
@@ -217,7 +221,10 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 
 // resolveEntry 依系統設定 <stateKey>（+ <wlKey> 白名單）解析出「這個使用者」該看到的入口狀態。
 // 回 hidden 不顯示 / locked 顯示但不能按 / shown 顯示且可按。白名單留在後端解析，避免整包帳號外流。
-func resolveEntry(ctx context.Context, db *pgxpool.Pool, stateKey, wlKey, email, code string) string {
+func resolveEntry(ctx context.Context, db *pgxpool.Pool, stateKey, wlKey, email, code string, isSuperAdmin bool) string {
+	if isSuperAdmin {
+		return "shown"
+	}
 	switch appsettings.GetString(ctx, db, stateKey, "hidden") {
 	case "open":
 		return "shown"
@@ -234,8 +241,8 @@ func resolveEntry(ctx context.Context, db *pgxpool.Pool, stateKey, wlKey, email,
 }
 
 // resolvePersonalEntry 個人任務入口可見性（沿用共用 resolveEntry）。
-func resolvePersonalEntry(ctx context.Context, db *pgxpool.Pool, email, code string) string {
-	return resolveEntry(ctx, db, "personal_entry_state", "personal_entry_whitelist", email, code)
+func resolvePersonalEntry(ctx context.Context, db *pgxpool.Pool, email, code string, isSuperAdmin bool) string {
+	return resolveEntry(ctx, db, "personal_entry_state", "personal_entry_whitelist", email, code, isSuperAdmin)
 }
 
 // personalWhitelisted 白名單以換行/逗號/分號/空白分隔，可填帳號編碼（#可省）或 email，大小寫不敏感。

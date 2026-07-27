@@ -126,6 +126,21 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
   {
+    key: 'monopoly_entry_state', group: '環台大富翁入口', label: '入口顯示狀態', type: 'select', def: 'whitelist',
+    help: '控制「會員面板的環台大富翁按鈕」對前台玩家的可見性。測試中，建議先「僅指定帳號」。',
+    options: [
+      { value: 'hidden', label: '前台隱藏（都看不到）' },
+      { value: 'locked', label: '顯示但不能按（即將開放）' },
+      { value: 'whitelist', label: '顯示且指定帳號可按（下方白名單）' },
+      { value: 'open', label: '顯示且全部開放（正式開放）' },
+    ],
+  },
+  {
+    key: 'monopoly_entry_whitelist', group: '環台大富翁入口', label: '指定帳號白名單', type: 'text', def: '',
+    help: '僅在上方選「指定帳號可按」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email。',
+    placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
+  },
+  {
     key: 'training_entry_state', group: '自主訓練入口', label: '入口顯示狀態', type: 'select', def: 'whitelist',
     help: '控制「會員面板的自主訓練按鈕」對前台玩家的可見性（VIP 限定功能）。測試中，建議先「僅指定帳號」。',
     options: [

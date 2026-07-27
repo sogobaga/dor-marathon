@@ -31,6 +31,7 @@ import (
 	"github.com/dor/api/internal/mail"
 	"github.com/dor/api/internal/mailer"
 	"github.com/dor/api/internal/middleware"
+	"github.com/dor/api/internal/monopoly"
 	"github.com/dor/api/internal/organizer"
 	"github.com/dor/api/internal/partner"
 	"github.com/dor/api/internal/payment"
@@ -147,6 +148,11 @@ func main() {
 	rewardRepo := reward.NewRepository(pool)
 	rewardSvc := reward.NewService(rewardRepo)
 	rewardHandler := reward.NewHandler(rewardSvc)
+
+	// 環台大富翁（Phase 1：盤面遊戲，扣 GP 擲骰前進）
+	monopolyRepo := monopoly.NewRepository(pool)
+	monopolySvc := monopoly.NewService(monopolyRepo)
+	monopolyHandler := monopoly.NewHandler(monopolySvc)
 
 	// Profile（完賽紀錄 + 個人統計）
 	profileHandler := profile.NewHandler(pool, wsManager)
@@ -327,6 +333,9 @@ func main() {
 
 			// 跑者充電站收藏（比照 follow）
 			r.Mount("/profile/partner-favorites", partnerHandler.FavoriteRouter())
+
+			// 環台大富翁（Phase 1：盤面遊戲）
+			r.Mount("/monopoly", monopolyHandler.Router())
 
 			// Web Push 訂閱（VAPID 金鑰 + subscribe/unsubscribe）
 			r.Mount("/push", pushHandler.Router())

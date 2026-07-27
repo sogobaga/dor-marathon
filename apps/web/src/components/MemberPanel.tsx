@@ -24,6 +24,7 @@ export default function MemberPanel({
   onOpenAchievement,
   onOpenTraining,
   onOpenPerks,
+  onOpenMonopoly,
   onUploadAvatar,
   uploadingAvatar,
   onReady,
@@ -38,6 +39,7 @@ export default function MemberPanel({
   onOpenAchievement?: () => void
   onOpenTraining?: () => void
   onOpenPerks?: () => void
+  onOpenMonopoly?: () => void
   onUploadAvatar?: (file: File) => void
   uploadingAvatar?: boolean
   onReady?: () => void
@@ -255,6 +257,15 @@ export default function MemberPanel({
               <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>優惠好康都在這 ›</span>
             </button>
           </div>
+          {/* 環台大富翁（測試期間受 monopoly_entry 入口設定控管；Phase 1 盤面遊戲） */}
+          {dash.monopoly_entry !== 'hidden' && (
+            <button disabled={dash.monopoly_entry === 'locked'}
+              onClick={(e) => { e.stopPropagation(); if (dash.monopoly_entry === 'shown') onOpenMonopoly?.() }}
+              style={{ ...entryBtn, opacity: dash.monopoly_entry === 'shown' ? 1 : 0.6, cursor: dash.monopoly_entry === 'shown' ? 'pointer' : 'default' }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎲 環台大富翁</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.monopoly_entry === 'locked' ? '即將開放 ›' : '擲骰前進，好運等你 ›'}</span>
+            </button>
+          )}
         </div>
       )}
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}

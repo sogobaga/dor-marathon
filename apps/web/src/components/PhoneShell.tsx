@@ -12,6 +12,7 @@ import TitleScreen from './TitleScreen'
 import AchievementScreen from './AchievementScreen'
 import TrainingScreen from './TrainingScreen'
 import PartnerPerksScreen from './PartnerPerksScreen'
+import MonopolyScreen from './MonopolyScreen'
 import TitleUnlockModal from './TitleUnlockModal'
 import RaceDetailScreen from './RaceDetailScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
@@ -37,6 +38,7 @@ export default function PhoneShell() {
   const [showAchievement, setShowAchievement] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [showPerks, setShowPerks] = useState(false)
+  const [showMonopoly, setShowMonopoly] = useState(false)
   const [titlesModal, setTitlesModal] = useState<{ code: string; name: string; tier: number; category: string }[]>([])
   const titlesHandled = useRef(false)
   const [unlockCardId, setUnlockCardId] = useState<string | undefined>(undefined)
@@ -91,13 +93,14 @@ export default function PhoneShell() {
     else if (showAchievement) { path = '/achievements'; title = '成就探索' }
     else if (showTraining) { path = '/training'; title = '自主訓練' }
     else if (showPerks) { path = '/perks'; title = '跑者充電站' }
+    else if (showMonopoly) { path = '/monopoly'; title = '環台大富翁' }
     else if (showExplore) { path = '/explore'; title = '城市探索' }
     else if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
     else if (showProfile || payRace) { path = '/profile'; title = '會員資訊' }
     else if (registerRace) { path = `/register/${registerRace.slug}`; title = `報名 - ${registerRace.title}` }
     else if (detailRace) { path = `/race/${detailRace.slug}`; title = detailRace.title }
     pageview(path, title)
-  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
+  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showMonopoly, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
 
   return (
     <GoogleAuthProvider>
@@ -124,6 +127,8 @@ export default function PhoneShell() {
           <TrainingScreen onBack={() => setShowTraining(false)} />
         ) : showPerks ? (
           <PartnerPerksScreen onBack={() => setShowPerks(false)} />
+        ) : showMonopoly ? (
+          <MonopolyScreen onBack={() => setShowMonopoly(false)} />
         ) : showExplore ? (
           <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={(bossId) => { window.location.href = bossId ? '/track?focus=' + encodeURIComponent(bossId) : '/track' }} />
         ) : showPersonalTasks ? (
@@ -139,6 +144,7 @@ export default function PhoneShell() {
             onOpenAchievement={() => setShowAchievement(true)}
             onOpenTraining={() => setShowTraining(true)}
             onOpenPerks={() => setShowPerks(true)}
+            onOpenMonopoly={() => setShowMonopoly(true)}
           />
         ) : registerRace ? (
           <RegistrationScreen race={registerRace} onBack={() => setRegisterRace(null)} />
