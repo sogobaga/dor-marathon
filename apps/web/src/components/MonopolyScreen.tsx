@@ -22,9 +22,22 @@ const BOARD_IMG = '/source/ui/02_BG/DOR_TAW_RUNNER_START_1to45.png'
 const RUNNER_IMG = '/source/ui/02_BG/DOR_RUNNER.png'
 // 六面骰字符（Unicode 骰子），滾動動畫期間快速切換，最終停在後端回傳的點數
 const DIE_GLYPH = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
+// 機會/命運格位置（僅用於校準模式標記上色，玩法判定仍完全由後端決定）
+const CHANCE_POS = [6, 15, 25, 35]
+const DESTINY_POS = [10, 18, 30, 39]
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, ms))
+}
+
+// 校準模式用：把目前 46 格座標序列化成與 BOARD_COORDS 同格式的字串，方便直接複製取代
+function formatCoords(coords: [number, number][]): string {
+  const rows: string[] = []
+  for (let i = 0; i < coords.length; i += 10) {
+    const chunk = coords.slice(i, i + 10).map(([px, py]) => `[${px}, ${py}]`).join(', ')
+    rows.push('  ' + chunk + ',')
+  }
+  return '[\n' + rows.join('\n') + '\n]'
 }
 
 type Phase = 'idle' | 'dice' | 'moving'
@@ -45,6 +58,21 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
   const [lapCelebration, setLapCelebration] = useState<{ laps: number; gp: number } | null>(null)
   const [startFlash, setStartFlash] = useState(false)
   const [showGpInfo, setShowGpInfo] = useState(false)
+
+  // 骰子顯示狀態：獨立於 phase，涵蓋「停格→移動→事件彈窗」整段期間，直到全部結束才淡出消失
+  const [dieState, setDieState] = useState<'hidden' | 'visible' | 'hiding'>('hidden')
+  const dieHideTimerRef = useRef<number | null>(null)
+
+  // 校準模式（?cal=1）：開發用，拖曳 46 格標記校正座標；一般玩家完全不受影響
+  const [calMode] = useState<boolean>(
+    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('cal') === '1'
+  )
+  const [calCoords, setCalCoords] = useState<[number, number][]>(
+    () => BOARD_COORDS.map(([px, py]) => [px, py] as [number, number])
+  )
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
+  const [copied, setCopied] = useState(false)
+  const boardWrapRef = useRef<HTMLDivElement | null>(null)
 
   const dieIntervalRef = useRef<number | null>(null)
 
@@ -71,7 +99,20 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
 
   useEffect(() => () => {
     if (dieIntervalRef.current != null) window.clearInterval(dieIntervalRef.current)
+    if (dieHideTimerRef.current != null) window.clearTimeout(dieHideTimerRef.current)
   }, [])
+
+  // 整個流程（移動 + 事件彈窗）全部結束、回到 idle 之後，骰子才淡出消失
+  useEffect(() => {
+    const flowIdle = phase === 'idle' && !drawModal && !lapCelebration
+    if (flowIdle && dieState === 'visible') {
+      setDieState('hiding')
+      dieHideTimerRef.current = window.setTimeout(() => {
+        setDieState('hidden')
+        dieHideTimerRef.current = null
+      }, 300)
+    }
+  }, [phase, drawModal, lapCelebration, dieState])
 
   const busy = phase !== 'idle'
   const canAfford = gpBalance != null && gpBalance >= diceCost
@@ -103,6 +144,8 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
   async function handleRoll() {
     if (busy || !canAfford) return
     setRollErr('')
+    if (dieHideTimerRef.current != null) { window.clearTimeout(dieHideTimerRef.current); dieHideTimerRef.current = null }
+    setDieState('visible')
     setPhase('dice')
     setDieFace(1 + Math.floor(Math.random() * 6))
     dieIntervalRef.current = window.setInterval(() => {
@@ -126,6 +169,104 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
     setDieFace(res.roll) // 動畫收尾＝後端回傳的點數，前端絕不自行決定結果
     await sleep(280) // 停頓看清骰面，再開始走格子
     await movePiece(res)
+  }
+
+  // ---- 校準模式：拖曳標記、複製座標（不影響一般玩家流程） ----
+  function handleMarkerDown(idx: number, e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setDraggingIndex(idx)
+  }
+  function handleMarkerMove(idx: number, e: React.PointerEvent<HTMLDivElement>) {
+    if (draggingIndex !== idx || !boardWrapRef.current) return
+    const rect = boardWrapRef.current.getBoundingClientRect()
+    const rawX = ((e.clientX - rect.left) / rect.width) * 100
+    const rawY = ((e.clientY - rect.top) / rect.height) * 100
+    const px = Math.max(0, Math.min(100, Math.round(rawX * 10) / 10))
+    const py = Math.max(0, Math.min(100, Math.round(rawY * 10) / 10))
+    setCalCoords((prev) => {
+      const next = prev.slice() as [number, number][]
+      next[idx] = [px, py]
+      return next
+    })
+  }
+  function handleMarkerUp(idx: number) {
+    if (draggingIndex === idx) setDraggingIndex(null)
+  }
+  async function handleCopyCoords() {
+    const text = formatCoords(calCoords)
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      // 剪貼簿權限被拒或不可用時，使用者仍可從下方文字區手動選取複製
+    }
+  }
+
+  if (calMode) {
+    return (
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)', position: 'relative' }}>
+        <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button onClick={onBack} style={backBtn}>← 返回</button>
+          <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>🛠️ 座標校準模式</span>
+        </header>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
+          <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginBottom: 10, lineHeight: 1.6 }}>
+            拖曳每個編號標記到底圖對應格子中心（藍=機會、紫=命運、金=START），完成後按「複製座標」貼回給開發者。
+          </div>
+          <div
+            ref={boardWrapRef}
+            style={{ position: 'relative', width: '100%', maxWidth: 480, margin: '0 auto', touchAction: 'none' }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={BOARD_IMG} alt="環台盤面" draggable={false}
+              style={{ width: '100%', display: 'block', borderRadius: 12, userSelect: 'none', pointerEvents: 'none' }}
+            />
+            {calCoords.map(([px, py], idx) => {
+              const isChance = CHANCE_POS.includes(idx)
+              const isDestiny = DESTINY_POS.includes(idx)
+              const bg = idx === 0 ? '#e7b84b' : isChance ? '#3f8fe0' : isDestiny ? '#9a5be0' : 'rgba(20,20,20,.78)'
+              return (
+                <div
+                  key={idx}
+                  onPointerDown={(e) => handleMarkerDown(idx, e)}
+                  onPointerMove={(e) => handleMarkerMove(idx, e)}
+                  onPointerUp={() => handleMarkerUp(idx)}
+                  onPointerCancel={() => handleMarkerUp(idx)}
+                  style={{
+                    position: 'absolute', left: `${px}%`, top: `${py}%`, transform: 'translate(-50%,-50%)',
+                    width: 24, height: 24, borderRadius: '50%', background: bg, color: '#fff',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 10, fontWeight: 900, border: '2px solid #fff', boxShadow: '0 2px 6px rgba(0,0,0,.4)',
+                    cursor: 'grab', touchAction: 'none', userSelect: 'none',
+                    zIndex: draggingIndex === idx ? 20 : 10,
+                  }}
+                >
+                  {idx}
+                </div>
+              )
+            })}
+          </div>
+
+          <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+            <button onClick={handleCopyCoords} style={rollBtn}>複製座標</button>
+            {copied && <div style={{ fontSize: 12.5, color: 'var(--violet)', fontWeight: 700 }}>已複製</div>}
+            <textarea
+              readOnly
+              value={formatCoords(calCoords)}
+              onFocus={(e) => e.currentTarget.select()}
+              style={{
+                width: '100%', maxWidth: 480, height: 180, fontSize: 11, fontFamily: 'monospace',
+                color: 'var(--tx-dim)', background: 'var(--bg-1)', border: '1px solid var(--line)',
+                borderRadius: 8, padding: 8, boxSizing: 'border-box',
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    )
   }
 
   const [x, y] = BOARD_COORDS[position]
@@ -197,8 +338,13 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
                   }}
                 >！</button>
               </span>
-              {phase === 'dice' && (
-                <div style={{ fontSize: 56, lineHeight: 1, animation: 'monoDiceShake .09s linear infinite' }} aria-hidden="true">
+              {dieState !== 'hidden' && (
+                <div style={{
+                  fontSize: 56, lineHeight: 1,
+                  opacity: dieState === 'hiding' ? 0 : 1,
+                  transition: 'opacity .3s ease',
+                  animation: phase === 'dice' ? 'monoDiceShake .09s linear infinite' : 'none',
+                }} aria-hidden="true">
                   {DIE_GLYPH[dieFace]}
                 </div>
               )}
