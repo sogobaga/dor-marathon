@@ -1038,6 +1038,7 @@ export interface DashboardInfo {
   achievement_entry: 'hidden' | 'locked' | 'shown' // 成就統計(成就探索)入口可見性
   training_entry: 'hidden' | 'locked' | 'shown'    // 自主訓練入口可見性
   monopoly_entry: 'hidden' | 'locked' | 'shown'    // 環台大富翁入口可見性
+  knowledge_entry: 'hidden' | 'locked' | 'shown'   // 知識探索(知識卡圖鑑)入口可見性
   new_titles?: { code: string; name: string; tier: number; category: string }[] // 新解鎖稱號（前台跳彈窗用，跳完呼叫 /titles/seen）
   // 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；扣到 0 凍結 6 小時）
   sp: number
@@ -2457,11 +2458,68 @@ export interface MonopolyRollResult {
   lap_reward_gp: number
   gp_balance: number
   draw_pending: boolean  // true=停在機會/命運格，抽卡功能 Phase 3 才開放
+  draw_result?: DrawResult // 本次實際抽到的獎勵（draw_pending=true 時才有）
 }
+
+// 機會/命運抽卡結果（A2）。只有 type 保證存在，其餘欄位依 type 條件性出現，一律視為 optional。
+export interface DrawResult {
+  type: 'gp' | 'dp' | 'vip_days' | 'knowledge_card' | 'sticker' | 'redemption_code'
+  title?: string
+  body?: string           // 知識卡正文 / 兌換碼說明
+  image_url?: string
+  rarity?: 'common' | 'rare'
+  amount?: number         // gp/dp/vip_days 的數量
+  is_duplicate?: boolean
+  converted_gp?: number   // 重複卡/兌換碼耗盡 fallback 轉發的 GP
+  code?: string           // 兌換碼
+  kind?: 'line_point' | 'coupon' // 兌換碼種類
+  is_fallback?: boolean   // true=兌換碼庫存耗盡，已改發 converted_gp
+  main_category?: string
+  subtopic?: string
+  player_action?: string
+  risk_note?: string
+  source_org?: string
+  source_url?: string
+}
+
+// 知識卡圖鑑（GET /monopoly/knowledge）。防劇透：未擁有(owned=false)時只有前 5 個欄位，展示用欄位全省略。
+export interface KnowledgeCard {
+  id: string
+  theme: 'training' | 'care'
+  main_category: string
+  rarity: 'common' | 'rare'
+  owned: boolean
+  obtained_count: number
+  code?: string
+  subtopic?: string
+  title?: string
+  body?: string
+  player_action?: string
+  timing?: string
+  importance?: string
+  handling_level?: string
+  game_effect_hint?: string
+  risk_note?: string
+  source_org?: string
+  source_doc?: string
+  source_url?: string
+  image_url?: string
+}
+export interface KnowledgeGallery {
+  counts: {
+    training_total: number
+    training_owned: number
+    care_total: number
+    care_owned: number
+  }
+  cards: KnowledgeCard[]
+}
+
 export const monopolyApi = {
   state: (token: string) => request<MonopolyState>('/monopoly/state', { headers: withAuth(token) }),
   // GP 不足回 409 {error:"GP 不足"}（呼叫端用 e.status===409 辨識，不必比對訊息文字）
   roll: (token: string) => request<MonopolyRollResult>('/monopoly/roll', { method: 'POST', headers: withAuth(token) }),
+  knowledge: (token: string) => request<KnowledgeGallery>('/monopoly/knowledge', { headers: withAuth(token) }),
 }
 
 // --- WebSocket helper ---

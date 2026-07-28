@@ -47,7 +47,9 @@ func (r *Repository) GetState(ctx context.Context, userID string) (*PlayerState,
 //  2. 伺服器決定點數（crypto/rand，前端無法影響——防作弊關鍵）。
 //  3. 鎖列讀出目前位置（SELECT ... FOR UPDATE，序列化同一使用者的併發擲骰請求，不會互相覆蓋）。
 //  4. 計算新位置/圈數並寫回；繞圈才發 lap 獎勵；寫入 monopoly_rolls 流水。
-func (r *Repository) Roll(ctx context.Context, userID string, diceCost, lapRewardGP int) (*RollResult, error) {
+//  5. 停在機會/命運格 → resolveDraw 在同一交易內完成加權抽獎與獎勵發放（A2；見 draw.go）。靠第 3
+//     步已鎖住的 player_state 列序列化同一使用者的請求，這裡不需、也不可另開交易或事後補抽。
+func (r *Repository) Roll(ctx context.Context, userID string, diceCost, lapRewardGP int, dupGP map[string]int, redeemFallbackGP int) (*RollResult, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -109,6 +111,14 @@ func (r *Repository) Roll(ctx context.Context, userID string, diceCost, lapRewar
 		return nil, fmt.Errorf("insert roll record: %w", err)
 	}
 
+	var drawResult *DrawResult
+	if landedOn == "chance" || landedOn == "destiny" {
+		drawResult, err = r.resolveDraw(ctx, tx, userID, landedOn, dupGP, redeemFallbackGP)
+		if err != nil {
+			return nil, fmt.Errorf("resolve draw: %w", err)
+		}
+	}
+
 	var gpBalance int
 	if err := tx.QueryRow(ctx, `SELECT gp FROM users WHERE id=$1`, userID).Scan(&gpBalance); err != nil {
 		return nil, fmt.Errorf("read gp balance: %w", err)
@@ -121,7 +131,8 @@ func (r *Repository) Roll(ctx context.Context, userID string, diceCost, lapRewar
 	return &RollResult{
 		Roll: roll, From: from, To: to, LapsGained: lapsGained, LandedOn: landedOn,
 		LapRewardGP: lapRewardTotal, GPBalance: gpBalance,
-		DrawPending: landedOn == "chance" || landedOn == "destiny",
+		DrawPending: drawResult != nil,
+		DrawResult:  drawResult,
 	}, nil
 }
 

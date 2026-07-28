@@ -23,6 +23,7 @@ func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/state", h.State)
 	r.Post("/roll", h.Roll)
+	r.Get("/knowledge", h.Knowledge)
 	return r
 }
 
@@ -58,6 +59,22 @@ func (h *Handler) Roll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, res)
+}
+
+// GET /api/v1/monopoly/knowledge —— 知識卡圖鑑（供 Phase 2a 圖鑑頁）；防劇透邏輯見
+// Repository.GetKnowledgeCards：未擁有的卡片只回 id/theme/main_category/rarity/owned/obtained_count。
+func (h *Handler) Knowledge(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	gallery, err := h.svc.GetKnowledgeCards(r.Context(), uid)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get knowledge cards")
+		return
+	}
+	respondJSON(w, http.StatusOK, gallery)
 }
 
 func respondJSON(w http.ResponseWriter, status int, data any) {

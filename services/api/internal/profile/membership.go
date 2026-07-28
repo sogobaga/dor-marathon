@@ -129,6 +129,7 @@ type DashboardInfo struct {
 	AchievementEntry string         `json:"achievement_entry"`    // 成就統計入口可見性（同上）
 	TrainingEntry    string         `json:"training_entry"`       // 自主訓練入口可見性（同上）
 	MonopolyEntry    string         `json:"monopoly_entry"`       // 環台大富翁入口可見性（同上）
+	KnowledgeEntry   string         `json:"knowledge_entry"`      // 知識探索入口可見性（同上）
 	NewTitles        []AwardedTitle `json:"new_titles,omitempty"` // 本次 dashboard 新解鎖（未看過）稱號
 	// 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；見 internal/stamina）
 	Sp               int        `json:"sp"`
@@ -184,6 +185,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	d.AchievementEntry = resolveEntry(r.Context(), h.db, "achievement_entry_state", "achievement_entry_whitelist", email, code, isSuperAdmin)
 	d.TrainingEntry = resolveEntry(r.Context(), h.db, "training_entry_state", "training_entry_whitelist", email, code, isSuperAdmin)
 	d.MonopolyEntry = resolveEntry(r.Context(), h.db, "monopoly_entry_state", "monopoly_entry_whitelist", email, code, isSuperAdmin)
+	d.KnowledgeEntry = resolveEntry(r.Context(), h.db, "knowledge_entry_state", "knowledge_entry_whitelist", email, code, isSuperAdmin)
 	d.NewTitles = h.checkAndAwardTitles(r.Context(), userID)
 	levels, err := h.levelConfigList(r.Context())
 	if err != nil {

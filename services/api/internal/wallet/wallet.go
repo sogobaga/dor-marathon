@@ -64,6 +64,21 @@ func AwardGP(ctx context.Context, db Execer, userID string, delta int, reason, r
 	})
 }
 
+// AwardDP 原子加值 DP，簽名與 AwardGP 對稱（供新程式呼叫時兩種貨幣寫法一致）。delta 應 > 0，<=0 為
+// no-op。refID 目前保留給未來若新增 DP 流水表時使用，本函式暫不寫入任何流水：DP 至今沒有獨立的
+// ledger 表（gp 有 gp_events，dp 沒有對應的 dp_events），既有呼叫端（internal/explore、
+// internal/personaltask、internal/event、internal/race 等）一律用內聯 `UPDATE users SET dp = dp + $n`
+// 直接改 users.dp，此處刻意維持相同行為、不為此新增流水表，避免「同一種貨幣有兩套加值路徑各自記帳」
+// 的不一致。reason/refType/refID 暫時不落地，僅保留參數以維持與 AwardGP 對稱的呼叫介面，方便未來若要
+// 補流水表時只需改本函式內部、不必動呼叫端。
+func AwardDP(ctx context.Context, db Execer, userID string, delta int, reason, refType string, refID *string) error {
+	if delta <= 0 {
+		return nil
+	}
+	_, err := db.Exec(ctx, `UPDATE users SET dp = dp + $1 WHERE id = $2`, delta, userID)
+	return err
+}
+
 // SpendGP CAS 原子扣值：UPDATE ... WHERE gp >= amount，RowsAffected=0 代表餘額不足 → ok=false，
 // 餘額完全不變（絕不可讓 gp 變負）。成功才寫入 gp_events（delta 為負）。amount 應 > 0，<=0 視為
 // 無需扣款、直接回 ok=true。refID 可為 nil。「改餘額」與「寫 gp_events」保證同進退（見 withTx）：

@@ -8,6 +8,7 @@ import { LoginModal } from './UserAuthBar'
 import DpCoin from './DpCoin'
 import GpCoin from './GpCoin'
 import MailPanel from './MailPanel'
+import KnowledgeGalleryScreen from './KnowledgeGalleryScreen'
 
 // 會員資訊面板（首頁與「會員資訊頁」共用，內容一致）。
 // - 未帶 dash：自行抓取（首頁用法），並在資料就緒時呼叫 onReady。
@@ -48,6 +49,7 @@ export default function MemberPanel({
   const controlled = dashProp !== undefined // 有傳 dash（含 null）＝受控；未傳＝用共用快取
   const { dash: hookDash, loading, user } = useDashboard() // 共用快取：與會員資訊頁同一份、切頁不再 loading
   const [showLogin, setShowLogin] = useState(false)
+  const [showKnowledge, setShowKnowledge] = useState(false) // 知識探索：本檔自管開關 + 直接渲染全螢幕頁（比照 showLogin/LoginModal）
   const { data: settings } = useSWR('site-settings', () => settingsApi.get())
   const bgUrl = settings?.settings.member_panel_bg_url
   const dash = controlled ? dashProp ?? null : hookDash
@@ -197,7 +199,7 @@ export default function MemberPanel({
       </div>
 
       {/* 探索入口（面板下方、後台可控可見性；首頁不顯示）：第一排 城市探索|卡片圖鑑、第二排 成就探索|數據探索、第三排 環台大富翁|知識探索、末排 自主訓練|跑者充電站
-          跑者充電站開放全體會員（非 VIP 限定），故末排恆顯示，不受 training_entry 影響；知識探索目前為靜態「即將開放」佔位，尚無對應畫面 */}
+          跑者充電站開放全體會員（非 VIP 限定），故末排恆顯示，不受 training_entry 影響；知識探索由 knowledge_entry 三態控管，可點時本檔自開 KnowledgeGalleryScreen 全螢幕頁 */}
       {showEntries && user && dash && (dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden' || dash.title_entry !== 'hidden' || dash.achievement_entry !== 'hidden' || dash.training_entry !== 'hidden' || true) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
           {(dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden') && (
@@ -250,12 +252,14 @@ export default function MemberPanel({
                 <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.monopoly_entry === 'locked' ? '即將開放 ›' : '擲骰前進，好運等你 ›'}</span>
               </button>
             )}
-            <button
-              disabled
-              style={{ ...entryBtn, opacity: 0.6, cursor: 'default' }}>
-              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>📚 知識探索</span>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>即將開放 ›</span>
-            </button>
+            {dash.knowledge_entry !== 'hidden' && (
+              <button disabled={dash.knowledge_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.knowledge_entry === 'shown') setShowKnowledge(true) }}
+                style={{ ...entryBtn, opacity: dash.knowledge_entry === 'shown' ? 1 : 0.6, cursor: dash.knowledge_entry === 'shown' ? 'pointer' : 'default' }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>📚 知識探索</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.knowledge_entry === 'locked' ? '即將開放 ›' : '收集跑者實用知識 ›'}</span>
+              </button>
+            )}
           </div>
           {/* 自主訓練（VIP 限定，後台可控可見性）與跑者充電站（全體會員開放，恆顯示）並排 */}
           <div style={{ display: 'flex', gap: 10 }}>
@@ -277,6 +281,7 @@ export default function MemberPanel({
         </div>
       )}
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
+      {showKnowledge && <KnowledgeGalleryScreen onClose={() => setShowKnowledge(false)} />}
     </>
   )
 }

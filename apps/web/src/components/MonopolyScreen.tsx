@@ -2,14 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
-import { monopolyApi, type MonopolyRollResult } from '@/lib/api'
+import { monopolyApi, type MonopolyRollResult, type DrawResult } from '@/lib/api'
 import GpCoin from './GpCoin'
+import DpCoin from './DpCoin'
 
 // 環台大富翁 Phase 1：盤面遊戲。
 // 盤面固定 46 格（position 0=START，1..45 為格子，繞一圈=46 格），座標由底圖量出、寫死成常數
 // （之後美術要微調座標，直接改這個陣列即可，不需要動任何邏輯）。
-// 機會格(6,15,25,35)／命運格(10,18,30,39)：Phase 1 只顯示「抽卡功能即將開放」placeholder，
-// 真正抽卡是 Phase 3；判定完全交給後端回傳的 landed_on + draw_pending，前端不重複判斷。
+// 機會格(6,15,25,35)／命運格(10,18,30,39)：停格後由後端在 Roll 交易內抽卡（Phase 3），
+// 前端只依 landed_on + draw_result 演出翻卡揭曉，判定完全交給後端、前端不重複判斷。
 const BOARD_SIZE = 46
 const BOARD_COORDS: [number, number][] = [
   [28, 82], [34, 81], [39.7, 80.2], [45.5, 78.4], [50.6, 75.9], [54.2, 73.1], [56.4, 69.3], [58.3, 65], [60.9, 61.9], [64.1, 58.5],
@@ -58,7 +59,8 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [dieFace, setDieFace] = useState(1)
   const [rollErr, setRollErr] = useState('')
-  const [drawModal, setDrawModal] = useState<'chance' | 'destiny' | null>(null)
+  const [drawModal, setDrawModal] = useState<{ landedOn: 'chance' | 'destiny'; result: DrawResult } | null>(null)
+  const [codeCopied, setCodeCopied] = useState(false)
   const [lapCelebration, setLapCelebration] = useState<{ laps: number; gp: number } | null>(null)
   const [startFlash, setStartFlash] = useState(false)
   const [showGpInfo, setShowGpInfo] = useState(false)
@@ -136,8 +138,8 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
       await sleep(250)
     }
     setGpBalance(res.gp_balance)
-    if (res.draw_pending) {
-      setDrawModal(res.landed_on as 'chance' | 'destiny')
+    if (res.draw_pending && res.draw_result) {
+      setDrawModal({ landedOn: res.landed_on as 'chance' | 'destiny', result: res.draw_result })
     } else if (res.laps_gained > 0) {
       setLapCelebration({ laps: laps + res.laps_gained, gp: res.lap_reward_gp })
     }
@@ -173,6 +175,17 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
     setDieFace(res.roll) // 動畫收尾＝後端回傳的點數，前端絕不自行決定結果
     await sleep(280) // 停頓看清骰面，再開始走格子
     await movePiece(res)
+  }
+
+  // 兌換碼複製（機會/命運 · redemption_code 結果用）
+  async function handleCopyCode(code: string) {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCodeCopied(true)
+      window.setTimeout(() => setCodeCopied(false), 1600)
+    } catch {
+      // 剪貼簿權限被拒或不可用時忽略，玩家仍可長按手動選取複製
+    }
   }
 
   // ---- 校準模式：拖曳標記、複製座標（不影響一般玩家流程） ----
@@ -389,18 +402,30 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {/* 機會/命運 placeholder */}
+      {/* 機會/命運 揭曉彈窗（擲骰→移動動畫結束後、停在機會/命運格且實際抽到獎勵才顯示） */}
       {drawModal && (
-        <div style={overlayStyle} onClick={() => setDrawModal(null)}>
-          <div style={cardStyle} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>{drawModal === 'chance' ? '🎁' : '📜'}</div>
-            <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--tx)' }}>
-              {drawModal === 'chance' ? '機會' : '命運'} · 抽卡功能即將開放
+        <div style={overlayStyle} onClick={() => { setDrawModal(null); setCodeCopied(false) }}>
+          <div
+            style={{ ...cardStyle, padding: 0, overflow: 'hidden', animation: 'monoDrawReveal .38s cubic-bezier(.22,.9,.32,1.18)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{
+              padding: '20px 22px 16px',
+              background: drawModal.landedOn === 'chance'
+                ? 'linear-gradient(135deg, #f4a636, #d9691d)'
+                : 'linear-gradient(135deg, #2ec4b6, #1c7f8c)',
+              color: '#fff',
+            }}>
+              <div style={{ fontSize: 30, lineHeight: 1 }}>{drawModal.landedOn === 'chance' ? '🎁' : '📜'}</div>
+              <div style={{ fontSize: 17, fontWeight: 900, marginTop: 4 }}>{drawModal.landedOn === 'chance' ? '機會' : '命運'}</div>
             </div>
-            <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.7 }}>
-              停在了{drawModal === 'chance' ? '機會' : '命運'}格！這裡的抽卡玩法還在準備中，敬請期待。
+            <div style={{ padding: '18px 22px 22px', textAlign: 'center' }}>
+              <DrawResultBody result={drawModal.result} codeCopied={codeCopied} onCopyCode={handleCopyCode} />
+              <button
+                onClick={() => { setDrawModal(null); setCodeCopied(false) }}
+                style={{ ...rollBtn, marginTop: 18, padding: '9px 28px', fontSize: 13.5, width: '100%' }}
+              >知道了</button>
             </div>
-            <button onClick={() => setDrawModal(null)} style={{ ...rollBtn, marginTop: 16, padding: '9px 28px', fontSize: 13.5 }}>知道了</button>
           </div>
         </div>
       )}
@@ -429,9 +454,103 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
         @keyframes monoDiceShake { 0%{transform:rotate(-6deg) scale(1)} 50%{transform:rotate(6deg) scale(1.06)} 100%{transform:rotate(-6deg) scale(1)} }
         @keyframes monoRunnerHop { 0%,100%{transform:translateY(0) scale(1)} 50%{transform:translateY(-14%) scale(1.06)} }
         @keyframes monoStartFlash { 0%{opacity:0;transform:translate(-50%,-50%) scale(.6)} 40%{opacity:1} 100%{opacity:0;transform:translate(-50%,-50%) scale(1.3)} }
+        @keyframes monoDrawReveal { 0%{opacity:0;transform:scale(.8)} 60%{opacity:1;transform:scale(1.04)} 100%{opacity:1;transform:scale(1)} }
       `}</style>
     </div>
   )
+}
+
+// 機會/命運揭曉彈窗內容：依 draw_result.type 分派展示樣式。
+function DrawResultBody({ result, codeCopied, onCopyCode }: { result: DrawResult; codeCopied: boolean; onCopyCode: (code: string) => void }) {
+  switch (result.type) {
+    case 'knowledge_card':
+      return (
+        <div style={{ textAlign: 'left' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+            {result.main_category && <span style={tagStyle}>{result.main_category}</span>}
+            {result.rarity === 'rare' && <span style={rareBadge}>★ 稀有</span>}
+          </div>
+          {result.image_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={result.image_url} alt="" style={{ width: '100%', maxHeight: 160, objectFit: 'cover', borderRadius: 10, marginBottom: 10 }} />
+          )}
+          <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--tx)' }}>{result.title}</div>
+          {result.body && <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.7 }}>{result.body}</div>}
+          {result.player_action && (
+            <div style={{ marginTop: 10, background: 'var(--bg-2)', borderRadius: 10, padding: '8px 12px' }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--fug)' }}>玩家行動</div>
+              <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3, lineHeight: 1.6 }}>{result.player_action}</div>
+            </div>
+          )}
+          {result.is_duplicate && (
+            <div style={{ marginTop: 10, display: 'inline-block', background: 'var(--gold)', color: '#fff', fontWeight: 800, fontSize: 12, borderRadius: 999, padding: '6px 14px' }}>
+              重複卡，已轉 {result.converted_gp ?? 0} GP
+            </div>
+          )}
+          {result.risk_note && (
+            <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 10, lineHeight: 1.6 }}>{result.risk_note}</div>
+          )}
+        </div>
+      )
+    case 'gp':
+    case 'dp':
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)' }}>獲得 {result.type.toUpperCase()}</div>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 26, fontWeight: 900, color: result.type === 'gp' ? 'var(--violet)' : 'var(--gold)' }}>
+            {result.type === 'gp' ? <GpCoin size={28} /> : <DpCoin size={28} />}
+            +{result.amount ?? 0}
+          </div>
+        </div>
+      )
+    case 'vip_days':
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)' }}>獲得 VIP 天數</div>
+          <div style={{ fontSize: 26, fontWeight: 900, color: 'var(--gold)' }}>+{result.amount ?? 0} 天</div>
+        </div>
+      )
+    case 'redemption_code': {
+      const code = result.code
+      return (
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)' }}>{result.title || '兌換碼'}</div>
+          {result.kind && (
+            <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 4 }}>{result.kind === 'line_point' ? 'LINE POINT' : '優惠券'}</div>
+          )}
+          {result.is_fallback ? (
+            <div style={{ marginTop: 12, display: 'inline-block', background: 'var(--gold)', color: '#fff', fontWeight: 800, fontSize: 12, borderRadius: 999, padding: '6px 14px' }}>
+              庫存已滿，改發 {result.converted_gp ?? 0} GP
+            </div>
+          ) : code ? (
+            <button
+              onClick={() => onCopyCode(code)}
+              style={{
+                marginTop: 12, width: '100%', border: '1px dashed var(--line-2)', borderRadius: 10,
+                background: 'var(--bg-2)', color: 'var(--tx)', fontFamily: 'monospace', fontSize: 15,
+                fontWeight: 800, padding: '10px 12px', cursor: 'pointer', letterSpacing: 1,
+              }}
+            >
+              {code}{codeCopied ? '（已複製）' : '（點擊複製）'}
+            </button>
+          ) : null}
+          {result.body && <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 10, lineHeight: 1.6 }}>{result.body}</div>}
+        </div>
+      )
+    }
+    default:
+      // sticker（貼紙）等其餘類型：通用展示 fallback
+      return (
+        <div>
+          {result.image_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={result.image_url} alt="" style={{ width: '100%', maxHeight: 160, objectFit: 'cover', borderRadius: 10, marginBottom: 10 }} />
+          )}
+          <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)' }}>{result.title || '獲得獎勵'}</div>
+          {result.body && <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.7 }}>{result.body}</div>}
+        </div>
+      )
+  }
 }
 
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0, flexShrink: 0 }
@@ -447,3 +566,5 @@ const cardStyle: React.CSSProperties = {
   background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: '24px 22px',
   maxWidth: 320, width: '100%', textAlign: 'center', boxShadow: '0 12px 40px rgba(0,0,0,.35)',
 }
+const tagStyle: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)', background: 'var(--bg-2)', borderRadius: 999, padding: '3px 10px' }
+const rareBadge: React.CSSProperties = { fontSize: 10.5, fontWeight: 800, color: '#fff', background: 'var(--gold)', borderRadius: 999, padding: '3px 10px' }
