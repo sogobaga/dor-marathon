@@ -348,29 +348,18 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
                 />
               </div>
 
-              {/* 底部擲骰按鈕列：常駐，位於盤面南端一帶，GP 整合進按鈕內文；「！」說明鈕獨立於按鈕右側避免點擊衝突 */}
+              {/* 底部擲骰按鈕列：常駐。右下角「遊戲規則」框約從盤面 x60% 起，故用「右緣錨定」——
+                  left:56%+translateX(-100%) 讓整列右緣固定落在盤面 56%（不論按鈕寬度/手機寬度都不碰規則框），
+                  整列往左展開（落在底部墾丁/海域一帶，位在 START 下方不重疊）。「！」在按鈕左側。 */}
               <div style={{
-                position: 'absolute', left: '50%', bottom: '4%', transform: 'translateX(-50%)',
-                zIndex: 9, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                position: 'absolute', left: '56%', bottom: '4%', transform: 'translateX(-100%)',
+                zIndex: 9, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4,
               }}>
                 {/* GP不足／rollErr 訊息：固定高度，避免有無訊息造成位移 */}
                 <div style={{ height: 13, fontSize: 10.5, color: 'var(--hunt)', fontWeight: 700, textAlign: 'center', lineHeight: 1 }}>
                   {!canAfford && phase === 'idle' ? 'GP 不足，無法擲骰' : rollErr}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <button
-                    onClick={handleRoll}
-                    disabled={busy || !canAfford}
-                    style={{
-                      ...rollBtn,
-                      display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
-                      padding: '10px 22px', fontSize: 13.5,
-                      opacity: busy || !canAfford ? 0.55 : 1,
-                      cursor: busy || !canAfford ? 'default' : 'pointer',
-                    }}
-                  >
-                    <GpCoin size={16} />{(gpBalance ?? 0).toLocaleString()} · {phase === 'dice' ? '擲骰中…' : phase === 'moving' ? '前進中…' : `擲骰 ${diceCost} GP`}
-                  </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <button
                     onClick={(e) => { e.stopPropagation(); setShowGpInfo((v) => !v) }}
                     aria-label="如何取得 GP"
@@ -382,6 +371,19 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
                       boxShadow: '0 2px 6px rgba(0,0,0,.25)',
                     }}
                   >！</button>
+                  <button
+                    onClick={handleRoll}
+                    disabled={busy || !canAfford}
+                    style={{
+                      ...rollBtn,
+                      display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap',
+                      padding: '8px 18px', fontSize: 13,
+                      opacity: busy || !canAfford ? 0.55 : 1,
+                      cursor: busy || !canAfford ? 'default' : 'pointer',
+                    }}
+                  >
+                    <GpCoin size={14} />{(gpBalance ?? 0).toLocaleString()} · {phase === 'dice' ? '擲骰中…' : phase === 'moving' ? '前進中…' : `擲骰 ${diceCost} GP`}
+                  </button>
                 </div>
               </div>
             </div>
