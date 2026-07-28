@@ -281,6 +281,23 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>🎲 環台大富翁</span>
+        {/* GP＋「！」說明鈕：靠右對齊，與標題同一層；未登入時不顯示（避免顯示無意義的 0 GP） */}
+        {user && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginLeft: 'auto', flexShrink: 0 }}>
+            <GpCoin size={16} />
+            <span style={{ fontSize: 13.5, fontWeight: 900, color: 'var(--violet)' }}>{(gpBalance ?? 0).toLocaleString()}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowGpInfo((v) => !v) }}
+              aria-label="如何取得 GP"
+              style={{
+                width: 17, height: 17, borderRadius: '50%', border: '1px solid var(--line)',
+                background: 'none', color: 'var(--tx-dim)', fontSize: 10.5, fontWeight: 900,
+                lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                padding: 0, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
+              }}
+            >！</button>
+          </span>
+        )}
       </header>
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
@@ -348,8 +365,7 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
                 />
               </div>
 
-              {/* 底部擲骰按鈕列：常駐、置中，直向三段（訊息／GP+說明／擲骰按鈕）讓整組變窄，
-                  最寬的擲骰按鈕置中後右緣落在盤面約60%以內，不碰右下規則框；左緣同理不壓到左下 START */}
+              {/* 底部擲骰按鈕列：常駐、置中，只留訊息列＋精簡擲骰按鈕（GP＋！已搬到頂部 header 右側） */}
               <div style={{
                 position: 'absolute', left: '50%', bottom: '4%', transform: 'translateX(-50%)',
                 zIndex: 9, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
@@ -357,21 +373,6 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
                 {/* a. GP不足／rollErr 訊息：固定高度，避免有無訊息造成位移 */}
                 <div style={{ height: 13, fontSize: 10.5, color: 'var(--hunt)', fontWeight: 700, textAlign: 'center', lineHeight: 1 }}>
                   {!canAfford && phase === 'idle' ? 'GP 不足，無法擲骰' : rollErr}
-                </div>
-                {/* b. GP＋「！」小行 */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <GpCoin size={14} />
-                  <span style={{ fontSize: 12, fontWeight: 900, color: 'var(--violet)' }}>{(gpBalance ?? 0).toLocaleString()}</span>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setShowGpInfo((v) => !v) }}
-                    aria-label="如何取得 GP"
-                    style={{
-                      width: 16, height: 16, borderRadius: '50%', border: '1px solid var(--line)',
-                      background: 'var(--bg-1)', color: 'var(--tx-dim)', fontSize: 10, fontWeight: 900,
-                      lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                      padding: 0, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
-                    }}
-                  >！</button>
                 </div>
                 {/* c. 擲骰按鈕：精簡、只放動作文字（不再含 GP），窄一點確保置中後不碰規則框 */}
                 <button
