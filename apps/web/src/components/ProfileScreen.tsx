@@ -287,7 +287,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
       {/* 會員資訊面板固定最上方 + 可拖曳（個人資料/運動數據/報名紀錄/追蹤）面板 */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {/* 背景層：會員資訊面板（可自行捲動）。底部留白略大於收合面板高度，讓最下方入口(PB/成就探索)必要時能捲到把手上方 */}
-        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 160px' }}>
+        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '4px 18px 160px' }}>
         {err && <div style={{ color: 'var(--hunt)', padding: '8px 2px', fontSize: 13 }}>{err}</div>}
         {/* 會員資訊面板：與首頁共用同一元件、內容一致（此頁頭像可上傳） */}
         <MemberPanel onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} onOpenPersonalTasks={onOpenPersonalTasks} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} onOpenTraining={onOpenTraining} onOpenPerks={onOpenPerks} onOpenMonopoly={onOpenMonopoly} />
@@ -321,7 +321,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
           </div>
 
           {/* 分頁內容（可捲動）：userSelect 還原成 text，避免面板的 userSelect:none 讓「個人資料」輸入框在 iOS 無法聚焦/編輯 */}
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', userSelect: 'text', WebkitUserSelect: 'text', padding: '14px 18px calc(20px + var(--cta-safe, 0px))' }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', userSelect: 'text', WebkitUserSelect: 'text', padding: '14px 18px calc(20px + var(--cta-safe, 0px))' }}>
         {!p && !err && <div style={{ color: 'var(--tx-dim)', padding: 16 }}>載入中…</div>}
 
         {/* 頁籤①個人資料 */}
@@ -746,4 +746,4 @@ const payBtn: React.CSSProperties = {
 // zIndex 需高於本頁的可拖曳資訊面板(500)，否則從「報名紀錄」開的繳費視窗會被面板蓋住（見 [[frontend-draggable-sheet]] 疊層慣例）
 const overlay: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: 20 }
 // maxHeight + overflowY：長訂單（多項加購）在小螢幕不會把「前往綠界付款/關閉」擠到畫面外而點不到
-const panel: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: 20, width: '100%', maxWidth: 420, maxHeight: '90dvh', overflowY: 'auto' }
+const panel: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: 20, width: '100%', maxWidth: 420, maxHeight: '90dvh', overflowY: 'auto', overscrollBehavior: 'contain' }

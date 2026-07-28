@@ -62,7 +62,7 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>城市探索</span>
       </header>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
         <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '2px 2px 12px', lineHeight: 1.7 }}>
           全台各地藏著一個個打卡點。點「前往打卡」到 GPS 地圖，走到現場、在範圍內即可打卡揭曉（不必邊跑邊打卡），每次打卡隨機獲得 DP+GP，同一點過 24h 冷卻可再打卡。
           {pos ? '（已依你的位置由近到遠排序）' : ''}

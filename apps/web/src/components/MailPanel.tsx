@@ -159,7 +159,7 @@ export default function MailPanel() {
               </div>
             )}
 
-            <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' }}>
               {loading && <div style={emptyMsg}>載入中…</div>}
               {!loading && err && <div style={{ ...emptyMsg, color: 'var(--hunt)' }}>{err}</div>}
               {!loading && !err && mail && mail.length === 0 && <div style={emptyMsg}>目前沒有訊息</div>}

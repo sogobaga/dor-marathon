@@ -69,7 +69,7 @@ export default function TitleScreen({ onBack }: { onBack: () => void }) {
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>成就探索</span>
       </header>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
         {/* 展示中 */}
         <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: '12px 14px', marginBottom: 14 }}>
           <div style={{ fontSize: 11, color: 'var(--tx-faint)', letterSpacing: '.1em' }}>目前展示中的稱號</div>

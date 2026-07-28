@@ -80,7 +80,7 @@ function PartnerShopListView({
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>⚡ 跑者充電站</span>
       </header>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
         <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '2px 2px 12px', lineHeight: 1.7 }}>
           精選特約商店與跑者優惠，點卡片看詳細介紹。
         </p>
@@ -190,7 +190,7 @@ function PartnerShopDetailView({ id, onBack }: { id: string; onBack: () => void 
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>特約商店</span>
       </header>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
         {isLoading ? (
           <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
         ) : error || !shop ? (

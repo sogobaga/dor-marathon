@@ -214,6 +214,7 @@ html, body {
   -webkit-font-smoothing: antialiased;
   height: 100%;
   overflow: hidden;
+  overscroll-behavior: none; /* App 化鎖版：body 本身永不捲動/回彈，捲動一律發生在內部 overflow:auto 容器 */
 }
 
 /* 手機模擬框容器 */

@@ -55,7 +55,7 @@ export default function BossRankingPanel({ bossId, bossName, onClose }: {
           )}
         </div>
 
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '12px 14px 16px' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '12px 14px 16px' }}>
           {err ? (
             <Hint>無法載入排行</Hint>
           ) : !data ? (

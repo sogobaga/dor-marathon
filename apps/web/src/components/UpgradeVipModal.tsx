@@ -31,7 +31,7 @@ export default function UpgradeVipModal({ expired, onClose, onSubscribe }: {
 
   return (
     <div data-skin="default" onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 3500, background: 'rgba(4,8,6,.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 400, maxHeight: '94dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--gold)', borderRadius: 18, boxShadow: '0 16px 50px rgba(0,0,0,.7)', padding: '20px 18px 18px' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 400, maxHeight: '94dvh', overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--gold)', borderRadius: 18, boxShadow: '0 16px 50px rgba(0,0,0,.7)', padding: '20px 18px 18px' }}>
         {/* 標題 */}
         <div style={{ textAlign: 'center', marginBottom: 6 }}>
           <div style={{ fontSize: 12, letterSpacing: '.3em', color: 'var(--gold)', fontWeight: 800 }}>✦ DOR VIP ✦</div>

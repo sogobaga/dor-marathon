@@ -107,7 +107,7 @@ export default function RacesScreen({
       {/* 會員面板（固定最上方，背景層）+ 可拖曳活動列表面板 */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {/* 會員資訊面板：固定最上方；面板收合時完整顯示，可自行捲動（底部留白略大於收合面板高度，與個資頁一致） */}
-        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 18px 160px' }}>
+        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '4px 18px 160px' }}>
           <MemberPanel onOpenProfile={onOpenProfile} onOpenPersonalTasks={onOpenPersonalTasks} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} showEntries={false} />
         </div>
 
@@ -146,7 +146,7 @@ export default function RacesScreen({
             </div>
           </div>
           {/* 可捲動活動列表 */}
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '4px 18px calc(16px + var(--cta-safe, 0px))' }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '4px 18px calc(16px + var(--cta-safe, 0px))' }}>
             {isLoading && <Hint>載入中…</Hint>}
             {error && <Hint color="var(--hunt)">無法載入賽事：{String(error.message || error)}</Hint>}
             {data && races.length === 0 && <Hint>目前沒有賽事</Hint>}

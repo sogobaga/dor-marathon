@@ -1334,7 +1334,7 @@ export default function TrackPage() {
             )}
           </div>
           {/* 可捲動內容（展開時顯示） */}
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '2px 16px calc(20px + var(--cta-safe, 0px))' }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '2px 16px calc(20px + var(--cta-safe, 0px))' }}>
             {/* 個人任務課表（在滑動面板內，不蓋地圖）：閒置＝選課表(左右滑動輪播+●○○)；進行中/完成＝分段執行 HUD */}
             {status === 'idle' && woPhase === 'idle' && workout?.kind === 'freetrain' && (
               <FreetrainIntroPanel title={workout.title} steps={workout.steps} />

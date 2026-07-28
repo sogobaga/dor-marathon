@@ -44,7 +44,7 @@ export default function BrochureScreen({
         <button onClick={onBack} style={backBtn}>← 返回</button>
       </header>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 20px 32px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', padding: '4px 20px 32px' }}>
         {isLoading && <Hint>載入中…</Hint>}
         {error && <Hint color="var(--hunt)">無法載入簡章</Hint>}
 

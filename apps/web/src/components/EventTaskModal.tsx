@@ -281,7 +281,7 @@ export function EventOfferPanel({ active, onAccept, onDecline }: { active: Activ
 }
 
 const offerBackdrop: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 2100, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }
-const offerCard: React.CSSProperties = { position: 'relative', width: '100%', maxWidth: 360, maxHeight: '90vh', overflowY: 'auto', background: '#0b0e13', border: '2px solid rgba(255,194,75,.55)', borderRadius: 16, padding: '20px 18px', boxShadow: '0 0 0 1px rgba(255,194,75,.15), 0 20px 60px rgba(0,0,0,.7), inset 0 0 40px rgba(255,194,75,.05)' }
+const offerCard: React.CSSProperties = { position: 'relative', width: '100%', maxWidth: 360, maxHeight: '90vh', overflowY: 'auto', overscrollBehavior: 'contain', background: '#0b0e13', border: '2px solid rgba(255,194,75,.55)', borderRadius: 16, padding: '20px 18px', boxShadow: '0 0 0 1px rgba(255,194,75,.15), 0 20px 60px rgba(0,0,0,.7), inset 0 0 40px rgba(255,194,75,.05)' }
 const corner: React.CSSProperties = { position: 'absolute', width: 16, height: 16, border: '2px solid var(--gold)', pointerEvents: 'none' }
 const acceptBtn: React.CSSProperties = { flex: 1.5, padding: '13px 0', borderRadius: 12, border: 'none', background: 'linear-gradient(180deg,#38d17f,#2fbf71)', color: '#04120a', fontSize: 17, fontWeight: 900, cursor: 'pointer', boxShadow: '0 4px 16px rgba(47,191,113,.4)' }
 const declineBtn: React.CSSProperties = { flex: 1, padding: '13px 0', borderRadius: 12, border: '1px solid rgba(185,166,138,.4)', background: 'rgba(185,166,138,.08)', color: '#b9a68a', fontSize: 15, fontWeight: 700, cursor: 'pointer' }

@@ -62,7 +62,7 @@ export default function AchievementScreen({ onBack }: { onBack: () => void }) {
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>數據探索</span>
       </header>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 16px 28px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 16px 28px' }}>
         {/* 月曆里程熱力圖 */}
         <div
           onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}

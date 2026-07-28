@@ -100,7 +100,7 @@ export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) 
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>{sel ? sel.name : '個人任務'}</span>
       </header>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '6px 18px 28px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '6px 18px 28px' }}>
         {err && <div style={{ color: 'var(--hunt)', padding: '8px 2px', fontSize: 13 }}>{err}</div>}
         {!sel ? (
           <PlanList plans={plans} onOpen={openPlan} />

@@ -815,7 +815,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               </div>
             )}
             <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 6 }}>點分組可展開查看該組專屬任務，再「選用此分組」。</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', overscrollBehavior: 'contain' }}>
               {detail.groups.map((g) => (
                 <div key={g.id}>
                   {groupCard(g, () => setPreviewId(previewId === g.id ? null : g.id!), groupHasDetail(g.id!) ? previewId === g.id : undefined)}

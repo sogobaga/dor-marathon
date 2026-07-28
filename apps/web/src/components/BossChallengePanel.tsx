@@ -27,7 +27,7 @@ export default function BossChallengePanel({ boss, phase, busy, dpCost, note, us
   while (lines.length && lines[lines.length - 1] === '') lines.pop()
   return (
     <div data-skin="default" style={{ position: 'fixed', inset: 0, zIndex: 3200, background: 'rgba(4,8,6,.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }}>
-      <div style={{ width: '100%', maxWidth: 380, maxHeight: '92dvh', overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--gold)', borderRadius: 18, boxShadow: '0 16px 50px rgba(0,0,0,.7)' }}>
+      <div style={{ width: '100%', maxWidth: 380, maxHeight: '92dvh', overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--gold)', borderRadius: 18, boxShadow: '0 16px 50px rgba(0,0,0,.7)' }}>
         {/* Scene 圖 */}
         {boss.scene_image_url && (
           <div style={{ position: 'relative' }}>

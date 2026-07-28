@@ -54,7 +54,7 @@ export default function CardGalleryScreen({ onBack, focusCardId }: { onBack: () 
         <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 800, color: 'var(--gold)' }}>已收集 {collected} 張</span>
       </header>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
         {bosses === null ? (
           <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
         ) : (

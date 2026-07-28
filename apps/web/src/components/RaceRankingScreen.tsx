@@ -42,7 +42,7 @@ export default function RaceRankingScreen({ race, onBack }: { race: Race; onBack
         <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>分組排行榜</div>
       </header>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 18px 28px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', padding: '4px 18px 28px' }}>
         {!isCompetition && (
           <Hint>此賽事為「{race.event_mode === 'faction_battle' ? '分組對抗' : '一般'}」模式，無分組成績排行。</Hint>
         )}
@@ -310,7 +310,7 @@ function GroupMembersModal({ race, group, onClose }: { race: Race; group: Standi
           </div>
           <button onClick={onClose} style={{ background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 12px', color: 'var(--tx)', fontSize: 12.5, cursor: 'pointer', flexShrink: 0 }}>關閉</button>
         </div>
-        <div style={{ overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
           {error ? <Hint color="var(--hunt)">載入失敗，請稍後再試</Hint> : isLoading || !members ? <Hint>載入中…</Hint> : members.length === 0 ? <Hint>此分組尚無成員</Hint> : members.map((m) => (
             <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 10, background: m.is_me ? 'rgba(45,212,150,.1)' : 'var(--bg-2)', border: m.is_me ? '1px solid var(--fug)' : '1px solid transparent' }}>
               <span style={{ width: 28, textAlign: 'center', fontWeight: 900, fontSize: 13, color: m.rank <= 3 ? 'var(--gold)' : 'var(--tx-dim)' }}>{m.rank}</span>

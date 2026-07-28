@@ -215,7 +215,7 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
           <button onClick={onBack} style={backBtn}>← 返回</button>
           <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>🛠️ 座標校準模式</span>
         </header>
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
           <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginBottom: 10, lineHeight: 1.6 }}>
             拖曳每個編號標記到底圖對應格子中心（藍=機會、紫=命運、金=START），完成後按「複製座標」貼回給開發者。
           </div>
@@ -283,7 +283,7 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>🎲 環台大富翁</span>
       </header>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
         {!user ? (
           <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>請先登入才能遊玩</div>
         ) : loading ? (

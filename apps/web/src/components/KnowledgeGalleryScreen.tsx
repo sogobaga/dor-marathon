@@ -105,7 +105,7 @@ export default function KnowledgeGalleryScreen({ onClose }: { onClose: () => voi
         </div>
       )}
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 32px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 32px' }}>
         {!user ? (
           <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>請先登入才能查看知識圖鑑</div>
         ) : data === undefined ? (
@@ -312,7 +312,7 @@ function DetailModal({ card, onClose }: { card: KnowledgeCard; onClose: () => vo
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, maxWidth: 380, width: '100%', maxHeight: '84vh', overflowY: 'auto', boxShadow: '0 12px 40px rgba(0,0,0,.4)' }}
+        style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, maxWidth: 380, width: '100%', maxHeight: '84vh', overflowY: 'auto', overscrollBehavior: 'contain', boxShadow: '0 12px 40px rgba(0,0,0,.4)' }}
       >
         {card.image_url ? (
           // eslint-disable-next-line @next/next/no-img-element
