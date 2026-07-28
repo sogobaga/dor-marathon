@@ -331,11 +331,11 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
               {/* 常駐擲骰托盤：疊在盤面正中央，GP／骰子／擲骰按鈕全收在裡面，骰子永遠顯示、畫面不再位移 */}
               <div style={{
                 position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
-                width: '56%', zIndex: 8,
-                background: 'url(/ui/bg/bg_roll_the_dice.png) center / 100% 100% no-repeat',
-                borderRadius: 18, boxShadow: '0 6px 20px rgba(0,0,0,.28)',
+                width: '44%', zIndex: 8,
+                background: 'url(/ui/bg/bg_roll_the_dice_tray.png) center / 100% 100% no-repeat',
+                borderRadius: 14, boxShadow: '0 6px 20px rgba(0,0,0,.28)',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                gap: 6, padding: '14% 12%', boxSizing: 'border-box',
+                gap: 6, padding: '8% 8%', boxSizing: 'border-box',
               }}>
                 {/* GP 列 */}
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 900, color: 'var(--violet)' }}>
@@ -357,7 +357,7 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
                 <img
                   src={`/ui/bg/DOR-Dice-${dieFace}.png`} alt=""
                   style={{
-                    width: '48%', aspectRatio: '1/1', display: 'block', margin: '0 auto',
+                    width: '54%', height: 'auto', objectFit: 'contain', display: 'block', flexShrink: 0, margin: '0 auto',
                     animation: phase === 'dice' ? 'monoDiceShake .09s linear infinite' : 'none',
                   }}
                 />
