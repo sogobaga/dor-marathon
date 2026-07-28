@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import useSWR from 'swr'
 import { monopolyApi, type KnowledgeCard } from '@/lib/api'
@@ -35,6 +35,8 @@ export default function KnowledgeGalleryScreen({ onClose }: { onClose: () => voi
   )
   const [detail, setDetail] = useState<KnowledgeCard | null>(null)
   const [tab, setTab] = useState<'training' | 'care'>('training')
+  const [query, setQuery] = useState('')
+  const trimmedQuery = query.trim()
 
   const trainingCards = data ? data.cards.filter((c) => c.theme === 'training') : null
   const careCards = data ? data.cards.filter((c) => c.theme === 'care') : null
@@ -42,14 +44,47 @@ export default function KnowledgeGalleryScreen({ onClose }: { onClose: () => voi
   const activeOwned = data ? (tab === 'training' ? data.counts.training_owned : data.counts.care_owned) : 0
   const activeTotal = data ? (tab === 'training' ? data.counts.training_total : data.counts.care_total) : 0
 
+  // 搜尋：只找已擁有卡片（owned=false 的卡沒有正文可搜），涵蓋 body/title/main_category/subtopic/player_action，
+  // 大小寫不敏感子字串比對，前端 useMemo 過濾（cards 已在前端，不必打後端）。
+  const searchResults = useMemo(() => {
+    if (!data || !trimmedQuery) return []
+    const qLower = trimmedQuery.toLowerCase()
+    return data.cards.filter((c) => c.owned && cardMatchesQuery(c, qLower))
+  }, [data, trimmedQuery])
+
   const body = (
     <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
-      <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
+      <header style={{ padding: 'var(--app-top) 22px 10px', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', rowGap: 8, gap: 12 }}>
         <button onClick={onClose} style={backBtn}>← 返回</button>
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>📚 知識探索</span>
+        {user && (
+          <div style={{ marginLeft: 'auto', position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <span style={{ position: 'absolute', left: 9, fontSize: 12, color: 'var(--tx-faint)', pointerEvents: 'none' }}>🔍</span>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜尋已收集的知識卡"
+              style={{
+                width: 'clamp(140px, 42vw, 220px)', fontSize: 12.5, padding: '7px 26px 7px 26px', borderRadius: 999,
+                border: '1px solid var(--line)', background: 'var(--bg-2)', color: 'var(--tx)', fontFamily: 'inherit', outline: 'none',
+              }}
+            />
+            {query && (
+              <button
+                onClick={() => setQuery('')}
+                aria-label="清除搜尋"
+                style={{
+                  position: 'absolute', right: 6, width: 18, height: 18, borderRadius: 999, border: 'none',
+                  background: 'var(--bg-3, rgba(127,127,127,.25))', color: 'var(--tx-dim)', fontSize: 12, lineHeight: '18px',
+                  padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >×</button>
+            )}
+          </div>
+        )}
       </header>
 
-      {user && (
+      {user && !trimmedQuery && (
         <div style={{ display: 'flex', gap: 4, padding: '0 18px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
           {(['training', 'care'] as const).map((t) => {
             const info = THEME_INFO[t]
@@ -75,6 +110,8 @@ export default function KnowledgeGalleryScreen({ onClose }: { onClose: () => voi
           <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>請先登入才能查看知識圖鑑</div>
         ) : data === undefined ? (
           <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
+        ) : trimmedQuery ? (
+          <SearchResultsList results={searchResults} query={trimmedQuery} onSelect={setDetail} />
         ) : (
           <>
             <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '2px 2px 16px', lineHeight: 1.7 }}>
@@ -165,6 +202,106 @@ function KnowledgeCardTile({ card, theme, onSelect }: { card: KnowledgeCard; the
   )
 }
 
+// 搜尋比對：涵蓋 body（正文，主要）、title、main_category、subtopic、player_action，大小寫不敏感子字串比對。
+// qLower 需已是 .toLowerCase() 過的字串。
+function cardMatchesQuery(card: KnowledgeCard, qLower: string): boolean {
+  const fields = [card.body, card.title, card.main_category, card.subtopic, card.player_action]
+  return fields.some((f) => !!f && f.toLowerCase().includes(qLower))
+}
+
+type Snippet = { label?: string; pre: string; match: string; post: string }
+
+function findMatchIndex(text: string | undefined, qLower: string): number {
+  if (!text) return -1
+  return text.toLowerCase().indexOf(qLower)
+}
+
+// 從命中關鍵字前後約 40 字節錄，太長的頭尾加「…」。
+function excerptAround(text: string, idx: number, matchLen: number, context = 40): { pre: string; match: string; post: string } {
+  const start = Math.max(0, idx - context)
+  const end = Math.min(text.length, idx + matchLen + context)
+  return {
+    pre: (start > 0 ? '…' : '') + text.slice(start, idx),
+    match: text.slice(idx, idx + matchLen),
+    post: text.slice(idx + matchLen, end) + (end < text.length ? '…' : ''),
+  }
+}
+
+// 節錄片段：優先從 body 取命中上下文；若關鍵字只出現在其他欄位（玩家行動/子主題/分類），改從該欄位節錄並標註欄位名；
+// 若關鍵字只命中標題（body 完全沒有），退回顯示 body 開頭作預覽（無標色，僅供上下文參考）。
+function getSnippet(card: KnowledgeCard, qLower: string, matchLen: number): Snippet | null {
+  const bodyIdx = findMatchIndex(card.body, qLower)
+  if (bodyIdx >= 0 && card.body) return excerptAround(card.body, bodyIdx, matchLen)
+
+  const fallbackFields: Array<[string, string | undefined]> = [
+    ['玩家行動', card.player_action],
+    ['子主題', card.subtopic],
+    ['分類', card.main_category],
+  ]
+  for (const [label, value] of fallbackFields) {
+    const idx = findMatchIndex(value, qLower)
+    if (idx >= 0 && value) return { label, ...excerptAround(value, idx, matchLen) }
+  }
+  if (card.body) {
+    const preview = card.body.length > 70 ? card.body.slice(0, 70) + '…' : card.body
+    return { pre: preview, match: '', post: '' }
+  }
+  return null
+}
+
+function SearchResultsList({ results, query, onSelect }: { results: KnowledgeCard[]; query: string; onSelect: (c: KnowledgeCard) => void }) {
+  if (results.length === 0) {
+    return (
+      <div style={{ textAlign: 'center', padding: '40px 10px' }}>
+        <div style={{ fontSize: 13, color: 'var(--tx-dim)', fontWeight: 700, marginBottom: 6 }}>找不到符合的已收集卡片</div>
+        <div style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>只會搜尋你已經收集到的知識卡</div>
+      </div>
+    )
+  }
+  const qLower = query.toLowerCase()
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginBottom: 10 }}>
+        找到 <b style={{ color: 'var(--tx)', fontWeight: 800 }}>{results.length}</b> 張已收集卡片
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {results.map((c) => (
+          <SearchResultRow key={c.id} card={c} qLower={qLower} matchLen={query.length} onSelect={onSelect} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SearchResultRow({ card, qLower, matchLen, onSelect }: { card: KnowledgeCard; qLower: string; matchLen: number; onSelect: (c: KnowledgeCard) => void }) {
+  const info = THEME_INFO[card.theme]
+  const snippet = getSnippet(card, qLower, matchLen)
+  return (
+    <button
+      onClick={() => onSelect(card)}
+      style={{
+        display: 'flex', flexDirection: 'column', gap: 4, width: '100%', textAlign: 'left', padding: '10px 12px',
+        borderRadius: 10, border: '1px solid var(--line)', background: 'var(--bg-1)', cursor: 'pointer', fontFamily: 'inherit',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ width: 7, height: 7, borderRadius: 999, background: info.accent, flexShrink: 0 }} />
+        <span style={{ fontSize: 10, fontWeight: 700, color: info.accent, flexShrink: 0 }}>{info.emoji} {info.label}</span>
+        {card.rarity === 'rare' && <span style={{ ...rareBadge, fontSize: 9, padding: '1px 6px' }}>★</span>}
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>{card.title}</span>
+      </div>
+      {snippet && (
+        <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', lineHeight: 1.6 }}>
+          {snippet.label && <b style={{ color: 'var(--tx-faint)', fontWeight: 700 }}>[{snippet.label}] </b>}
+          {snippet.pre}
+          {snippet.match && <mark style={markStyle}>{snippet.match}</mark>}
+          {snippet.post}
+        </div>
+      )}
+    </button>
+  )
+}
+
 function DetailModal({ card, onClose }: { card: KnowledgeCard; onClose: () => void }) {
   const theme = card.theme
   const info = THEME_INFO[theme]
@@ -242,6 +379,8 @@ function MiniTag({ label, value }: { label: string; value: string }) {
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0, flexShrink: 0 }
 const tagStyle: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)', background: 'var(--bg-2)', borderRadius: 999, padding: '3px 10px' }
 const rareBadge: React.CSSProperties = { fontSize: 10.5, fontWeight: 800, color: '#fff', background: 'var(--gold)', borderRadius: 999, padding: '3px 10px' }
+// 半透明金色淡底：搜尋命中關鍵字標色，非實心金底，沿用一般文字色即可（不觸發金底白字規則）。
+const markStyle: React.CSSProperties = { background: 'rgba(255, 196, 0, .35)', color: 'inherit', borderRadius: 3, padding: '0 2px', fontWeight: 800 }
 const closeBtn: React.CSSProperties = {
   width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 999,
   padding: '10px 0', fontSize: 13.5, fontWeight: 900, fontFamily: 'inherit', cursor: 'pointer',
