@@ -25,8 +25,6 @@ const RUNNER_IMG = '/source/ui/02_BG/DOR_RUNNER.png'
 // 用來把「站立點」對齊格子中心，而非用圖片幾何中心對齊（否則棋子會比格子低半個身體）。
 // 之後美術微調角色圖，只需調整這兩個數字。
 const RUNNER_ANCHOR: [number, number] = [50, 80]
-// 六面骰字符（Unicode 骰子），滾動動畫期間快速切換，最終停在後端回傳的點數
-const DIE_GLYPH = ['', '⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
 // 機會/命運格位置（僅用於校準模式標記上色，玩法判定仍完全由後端決定）
 const CHANCE_POS = [6, 15, 25, 35]
 const DESTINY_POS = [10, 18, 30, 39]
@@ -65,10 +63,6 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
   const [startFlash, setStartFlash] = useState(false)
   const [showGpInfo, setShowGpInfo] = useState(false)
 
-  // 骰子顯示狀態：獨立於 phase，涵蓋「停格→移動→事件彈窗」整段期間，直到全部結束才淡出消失
-  const [dieState, setDieState] = useState<'hidden' | 'visible' | 'hiding'>('hidden')
-  const dieHideTimerRef = useRef<number | null>(null)
-
   // 校準模式（?cal=1）：開發用，拖曳 46 格標記校正座標；一般玩家完全不受影響
   const [calMode] = useState<boolean>(
     () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('cal') === '1'
@@ -105,20 +99,15 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
 
   useEffect(() => () => {
     if (dieIntervalRef.current != null) window.clearInterval(dieIntervalRef.current)
-    if (dieHideTimerRef.current != null) window.clearTimeout(dieHideTimerRef.current)
   }, [])
 
-  // 整個流程（移動 + 事件彈窗）全部結束、回到 idle 之後，骰子才淡出消失
+  // 預載 6 張骰面圖，避免第一次滾動動畫時才載入造成閃爍
   useEffect(() => {
-    const flowIdle = phase === 'idle' && !drawModal && !lapCelebration
-    if (flowIdle && dieState === 'visible') {
-      setDieState('hiding')
-      dieHideTimerRef.current = window.setTimeout(() => {
-        setDieState('hidden')
-        dieHideTimerRef.current = null
-      }, 300)
+    for (let i = 1; i <= 6; i++) {
+      const img = new Image()
+      img.src = `/ui/bg/DOR-Dice-${i}.png`
     }
-  }, [phase, drawModal, lapCelebration, dieState])
+  }, [])
 
   const busy = phase !== 'idle'
   const canAfford = gpBalance != null && gpBalance >= diceCost
@@ -150,8 +139,6 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
   async function handleRoll() {
     if (busy || !canAfford) return
     setRollErr('')
-    if (dieHideTimerRef.current != null) { window.clearTimeout(dieHideTimerRef.current); dieHideTimerRef.current = null }
-    setDieState('visible')
     setPhase('dice')
     setDieFace(1 + Math.floor(Math.random() * 6))
     dieIntervalRef.current = window.setInterval(() => {
@@ -340,50 +327,60 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
                   filter: phase === 'moving' ? 'drop-shadow(0 4px 6px rgba(0,0,0,.35))' : 'none',
                 }} />
               </div>
-            </div>
 
-            {/* 擲骰區 */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, marginTop: 22 }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 15, fontWeight: 900, color: 'var(--violet)' }}>
-                <GpCoin size={18} />{(gpBalance ?? 0).toLocaleString()}
-                <button
-                  onClick={(e) => { e.stopPropagation(); setShowGpInfo((v) => !v) }}
-                  aria-label="如何取得 GP"
+              {/* 常駐擲骰托盤：疊在盤面正中央，GP／骰子／擲骰按鈕全收在裡面，骰子永遠顯示、畫面不再位移 */}
+              <div style={{
+                position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
+                width: '56%', zIndex: 8,
+                background: 'url(/ui/bg/bg_roll_the_dice.png) center / 100% 100% no-repeat',
+                borderRadius: 18, boxShadow: '0 6px 20px rgba(0,0,0,.28)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                gap: 6, padding: '14% 12%', boxSizing: 'border-box',
+              }}>
+                {/* GP 列 */}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 900, color: 'var(--violet)' }}>
+                  <GpCoin size={15} />{(gpBalance ?? 0).toLocaleString()}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowGpInfo((v) => !v) }}
+                    aria-label="如何取得 GP"
+                    style={{
+                      width: 15, height: 15, borderRadius: '50%', border: '1px solid var(--violet)',
+                      background: 'none', color: 'var(--violet)', fontSize: 9, fontWeight: 900,
+                      lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      padding: 0, cursor: 'pointer', fontFamily: 'inherit',
+                    }}
+                  >！</button>
+                </span>
+
+                {/* 骰子：常駐顯示，擲骰中晃動、停骰後靜止在後端回傳的點數 */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/ui/bg/DOR-Dice-${dieFace}.png`} alt=""
                   style={{
-                    width: 18, height: 18, borderRadius: '50%', border: '1px solid var(--line)',
-                    background: 'none', color: 'var(--tx-dim)', fontSize: 11, fontWeight: 900,
-                    lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    padding: 0, cursor: 'pointer', fontFamily: 'inherit',
+                    width: '48%', aspectRatio: '1/1', display: 'block', margin: '0 auto',
+                    animation: phase === 'dice' ? 'monoDiceShake .09s linear infinite' : 'none',
                   }}
-                >！</button>
-              </span>
-              {dieState !== 'hidden' && (
-                <div style={{
-                  fontSize: 56, lineHeight: 1,
-                  opacity: dieState === 'hiding' ? 0 : 1,
-                  transition: 'opacity .3s ease',
-                  animation: phase === 'dice' ? 'monoDiceShake .09s linear infinite' : 'none',
-                }} aria-hidden="true">
-                  {DIE_GLYPH[dieFace]}
+                />
+
+                {/* 擲骰按鈕 */}
+                <button
+                  onClick={handleRoll}
+                  disabled={busy || !canAfford}
+                  style={{
+                    ...rollBtn,
+                    padding: '9px 20px', fontSize: 13,
+                    opacity: busy || !canAfford ? 0.55 : 1,
+                    cursor: busy || !canAfford ? 'default' : 'pointer',
+                  }}
+                >
+                  {phase === 'dice' ? '擲骰中…' : phase === 'moving' ? '前進中…' : `擲骰 ${diceCost} GP`}
+                </button>
+
+                {/* 訊息區：固定高度，避免有無訊息造成托盤高度位移 */}
+                <div style={{ height: 13, fontSize: 10.5, color: 'var(--hunt)', fontWeight: 700, textAlign: 'center', lineHeight: 1 }}>
+                  {!canAfford && phase === 'idle' ? 'GP 不足，無法擲骰' : rollErr}
                 </div>
-              )}
-              <button
-                onClick={handleRoll}
-                disabled={busy || !canAfford}
-                style={{
-                  ...rollBtn,
-                  opacity: busy || !canAfford ? 0.55 : 1,
-                  cursor: busy || !canAfford ? 'default' : 'pointer',
-                }}
-              >
-                {phase === 'dice' ? '擲骰中…' : phase === 'moving' ? '前進中…' : `擲骰 ${diceCost} GP`}
-              </button>
-              {!canAfford && phase === 'idle' && (
-                <div style={{ fontSize: 12, color: 'var(--hunt)', fontWeight: 700 }}>GP 不足，無法擲骰</div>
-              )}
-              {rollErr && (
-                <div style={{ fontSize: 12, color: 'var(--hunt)', fontWeight: 700 }}>{rollErr}</div>
-              )}
+              </div>
             </div>
           </>
         )}
