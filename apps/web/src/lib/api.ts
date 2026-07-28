@@ -2522,6 +2522,92 @@ export const monopolyApi = {
   knowledge: (token: string) => request<KnowledgeGallery>('/monopoly/knowledge', { headers: withAuth(token) }),
 }
 
+// --- Admin: 環台大富翁（C1 後端 /admin/monopoly；見 internal/monopoly/admin.go・admin_repo.go） ---
+
+export type MonopolyPool = 'chance' | 'destiny'
+export type MonopolyRewardType = 'gp' | 'dp' | 'vip_days' | 'knowledge_card' | 'sticker' | 'redemption_code'
+
+// POST/PATCH /admin/monopoly/pool 的請求 body 形狀（PATCH 為全量更新，非欄位級部分更新）。
+// 後端驗證：gp/dp/vip_days → amount 必須 >0；redemption_code → redemption_batch_key 必填；
+// knowledge_card/sticker → amount 與 redemption_batch_key 一律被後端清空（即使送了也無效）。
+export interface PoolEntryInput {
+  pool: MonopolyPool
+  reward_type: MonopolyRewardType
+  weight: number
+  amount: number
+  redemption_batch_key: string
+  note: string
+  is_active: boolean
+  sort_order: number
+}
+export interface PoolEntry extends PoolEntryInput {
+  id: string
+}
+
+// GET /admin/monopoly/redeem/batches 依 batch_key 匯總列。
+export interface RedeemBatch {
+  batch_key: string
+  kind: 'line_point' | 'coupon'
+  label: string
+  total: number
+  used: number
+  remaining: number
+}
+// GET /admin/monopoly/redeem/batch/{key} 單筆碼（不含 used_by）。
+export interface RedeemCode {
+  code: string
+  is_used: boolean
+  used_at?: string | null
+}
+
+// GET /admin/monopoly/cards 單張知識卡（後台管理用，不做前台防劇透）。
+export interface AdminKnowledgeCard {
+  id: string
+  code: string
+  theme: 'training' | 'care'
+  main_category: string
+  subtopic: string
+  title: string
+  rarity: 'common' | 'rare'
+  image_url: string
+  is_active: boolean
+}
+
+// GET/PUT /admin/monopoly/settings；dup_gp 目前固定 {common, rare} 兩把，用索引簽章保留彈性。
+export interface MonopolySettings {
+  dup_gp: Record<string, number>
+  redeem_fallback_gp: number
+}
+
+export const adminMonopolyApi = {
+  // 獎勵池
+  poolList: (token: string) => request<{ entries: PoolEntry[] }>('/admin/monopoly/pool', { headers: withAuth(token) }),
+  poolCreate: (token: string, body: PoolEntryInput) =>
+    request<PoolEntry>('/admin/monopoly/pool', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  poolUpdate: (token: string, id: string, body: PoolEntryInput) =>
+    request<PoolEntry>(`/admin/monopoly/pool/${id}`, { method: 'PATCH', headers: withAuth(token), body: JSON.stringify(body) }),
+  poolDelete: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/monopoly/pool/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+
+  // 兌換碼批次
+  redeemBatches: (token: string) => request<{ batches: RedeemBatch[] }>('/admin/monopoly/redeem/batches', { headers: withAuth(token) }),
+  redeemCreateBatch: (token: string, body: { batch_key: string; kind: 'line_point' | 'coupon'; label: string; codes_text: string }) =>
+    request<{ inserted: number; skipped: number }>('/admin/monopoly/redeem/batch', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  redeemBatchCodes: (token: string, key: string) =>
+    request<{ codes: RedeemCode[] }>(`/admin/monopoly/redeem/batch/${encodeURIComponent(key)}`, { headers: withAuth(token) }),
+
+  // 知識卡（主要用途＝補圖／調稀有度／上下架）
+  cards: (token: string, theme?: 'training' | 'care') =>
+    request<{ cards: AdminKnowledgeCard[] }>(`/admin/monopoly/cards${theme ? `?theme=${theme}` : ''}`, { headers: withAuth(token) }),
+  updateCard: (token: string, id: string, body: { image_url?: string; rarity?: 'common' | 'rare'; is_active?: boolean; title?: string; body?: string }) =>
+    request<AdminKnowledgeCard>(`/admin/monopoly/cards/${id}`, { method: 'PATCH', headers: withAuth(token), body: JSON.stringify(body) }),
+
+  // 抽卡設定
+  settings: (token: string) => request<MonopolySettings>('/admin/monopoly/settings', { headers: withAuth(token) }),
+  setSettings: (token: string, body: MonopolySettings) =>
+    request<MonopolySettings>('/admin/monopoly/settings', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+}
+
 // --- WebSocket helper ---
 
 export function createRaceSocket(raceID: string, accessToken: string): WebSocket {
