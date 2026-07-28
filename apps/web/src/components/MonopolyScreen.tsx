@@ -411,10 +411,11 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
           >
             <div style={{
               padding: '20px 22px 16px',
+              // 主題色與知識探索圖鑑一致：機會（跑者訓練）＝綠 --fug，命運（跑者照護）＝金 --gold（金底一律白字）。
               background: drawModal.landedOn === 'chance'
-                ? 'linear-gradient(135deg, #f4a636, #d9691d)'
-                : 'linear-gradient(135deg, #2ec4b6, #1c7f8c)',
-              color: '#fff',
+                ? 'linear-gradient(135deg, rgba(255,255,255,.2), rgba(255,255,255,0) 55%), var(--fug)'
+                : 'linear-gradient(135deg, rgba(255,255,255,.2), rgba(255,255,255,0) 55%), var(--gold)',
+              color: drawModal.landedOn === 'chance' ? 'var(--fug-ink)' : '#fff',
             }}>
               <div style={{ fontSize: 30, lineHeight: 1 }}>{drawModal.landedOn === 'chance' ? '🎁' : '📜'}</div>
               <div style={{ fontSize: 17, fontWeight: 900, marginTop: 4 }}>{drawModal.landedOn === 'chance' ? '機會' : '命運'}</div>

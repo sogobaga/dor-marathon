@@ -10,9 +10,20 @@ import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 // 不受呼叫端（MemberPanel）目前所在頁面版位影響。防劇透規則完全交給後端：未擁有的卡片後端只回
 // id/theme/main_category/rarity/owned/obtained_count，展示欄位（title/body/...）一律不存在，
 // 前端顯示「？」卡背即可，main_category/rarity 可當朦朧提示但不需額外遮蔽。
-const THEME_INFO: Record<'training' | 'care', { label: string; grad: string; emoji: string }> = {
-  training: { label: '機會 · 跑者訓練', grad: 'linear-gradient(135deg, #f4a636, #d9691d)', emoji: '🎁' },
-  care: { label: '命運 · 跑者照護', grad: 'linear-gradient(135deg, #2ec4b6, #1c7f8c)', emoji: '📜' },
+// 主題色：跑者訓練＝綠（沿用全站 --fug／--fug-ink），跑者照護＝金（沿用全站 --gold，金底一律白字）。
+const THEME_INFO: Record<'training' | 'care', { label: string; emoji: string; accent: string; headerBg: string }> = {
+  training: {
+    label: '跑者訓練',
+    emoji: '🎁',
+    accent: 'var(--fug)',
+    headerBg: 'linear-gradient(135deg, rgba(255,255,255,.2), rgba(255,255,255,0) 55%), var(--fug)',
+  },
+  care: {
+    label: '跑者照護',
+    emoji: '📜',
+    accent: 'var(--gold)',
+    headerBg: 'linear-gradient(135deg, rgba(255,255,255,.2), rgba(255,255,255,0) 55%), var(--gold)',
+  },
 }
 
 export default function KnowledgeGalleryScreen({ onClose }: { onClose: () => void }) {
@@ -23,9 +34,13 @@ export default function KnowledgeGalleryScreen({ onClose }: { onClose: () => voi
     () => withUserAuth((t) => monopolyApi.knowledge(t)),
   )
   const [detail, setDetail] = useState<KnowledgeCard | null>(null)
+  const [tab, setTab] = useState<'training' | 'care'>('training')
 
   const trainingCards = data ? data.cards.filter((c) => c.theme === 'training') : null
   const careCards = data ? data.cards.filter((c) => c.theme === 'care') : null
+  const activeCards = tab === 'training' ? trainingCards : careCards
+  const activeOwned = data ? (tab === 'training' ? data.counts.training_owned : data.counts.care_owned) : 0
+  const activeTotal = data ? (tab === 'training' ? data.counts.training_total : data.counts.care_total) : 0
 
   const body = (
     <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
@@ -34,19 +49,38 @@ export default function KnowledgeGalleryScreen({ onClose }: { onClose: () => voi
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>📚 知識探索</span>
       </header>
 
+      {user && (
+        <div style={{ display: 'flex', gap: 4, padding: '0 18px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
+          {(['training', 'care'] as const).map((t) => {
+            const info = THEME_INFO[t]
+            const active = tab === t
+            return (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                style={{
+                  flex: 1, padding: '10px 6px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13.5,
+                  whiteSpace: 'nowrap', fontFamily: 'inherit',
+                  color: active ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: active ? 800 : 500,
+                  borderBottom: active ? `2px solid ${info.accent}` : '2px solid transparent',
+                }}
+              >{info.emoji} {info.label}</button>
+            )
+          })}
+        </div>
+      )}
+
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '10px 18px 32px' }}>
         {!user ? (
-          <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>請先登入才能查看</div>
+          <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>請先登入才能查看知識圖鑑</div>
         ) : data === undefined ? (
           <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
         ) : (
           <>
             <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '2px 2px 16px', lineHeight: 1.7 }}>
-              擲骰停在機會/命運格即可抽到知識卡，收集跑者訓練與照護的實用知識。
+              擲骰停在機會或命運格，有機會抽到知識卡，收集跑者訓練與照護的實用知識。
             </p>
-            <ThemeSection theme="training" cards={trainingCards} owned={data.counts.training_owned} total={data.counts.training_total} onSelect={setDetail} />
-            <div style={{ height: 22 }} />
-            <ThemeSection theme="care" cards={careCards} owned={data.counts.care_owned} total={data.counts.care_total} onSelect={setDetail} />
+            <ThemeSection theme={tab} cards={activeCards} owned={activeOwned} total={activeTotal} onSelect={setDetail} />
           </>
         )}
       </div>
@@ -71,9 +105,8 @@ function ThemeSection({
   const info = THEME_INFO[theme]
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
-        <span style={{ fontSize: 13.5, fontWeight: 900, color: 'var(--tx)' }}>{info.emoji} {info.label}</span>
-        <span style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 800, color: 'var(--gold)' }}>{owned} / {total}</span>
+      <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginBottom: 10 }}>
+        已收集 <b style={{ color: info.accent, fontWeight: 800 }}>{owned}</b> / {total} 張
       </div>
       {cards === null || cards.length === 0 ? (
         <div style={{ color: 'var(--tx-faint)', fontSize: 12.5, padding: '10px 2px' }}>{cards === null ? '載入中…' : '尚無卡片'}</div>
@@ -91,10 +124,11 @@ function ThemeSection({
 function KnowledgeCardTile({ card, theme, onSelect }: { card: KnowledgeCard; theme: 'training' | 'care'; onSelect: (c: KnowledgeCard) => void }) {
   const info = THEME_INFO[theme]
   if (!card.owned) {
+    // 未取得卡片統一無實線外框（不依稀有度上色），視覺一致，避免透露稀有度以外的線索。
     return (
       <div style={{
         aspectRatio: '3 / 4', borderRadius: 10, position: 'relative', overflow: 'hidden',
-        border: card.rarity === 'rare' ? '1px solid var(--gold)' : '1px solid var(--line)',
+        border: '1px solid transparent',
         background: 'var(--bg-2)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6,
       }}>
         <span style={{ fontSize: 30, fontWeight: 900, color: 'var(--tx-faint)' }}>？</span>
@@ -115,7 +149,7 @@ function KnowledgeCardTile({ card, theme, onSelect }: { card: KnowledgeCard; the
         // eslint-disable-next-line @next/next/no-img-element
         <img src={card.image_url} alt={card.title} style={{ width: '100%', flex: 1, minHeight: 0, objectFit: 'cover' }} />
       ) : (
-        <div style={{ width: '100%', flex: 1, minHeight: 0, background: info.grad, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>{info.emoji}</div>
+        <div style={{ width: '100%', flex: 1, minHeight: 0, background: info.headerBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>{info.emoji}</div>
       )}
       <div style={{ padding: '5px 6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
         <span style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.title}</span>
@@ -147,7 +181,7 @@ function DetailModal({ card, onClose }: { card: KnowledgeCard; onClose: () => vo
           // eslint-disable-next-line @next/next/no-img-element
           <img src={card.image_url} alt={card.title} style={{ width: '100%', maxHeight: 180, objectFit: 'cover', display: 'block' }} />
         ) : (
-          <div style={{ width: '100%', height: 90, background: info.grad, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 34 }}>{info.emoji}</div>
+          <div style={{ width: '100%', height: 90, background: info.headerBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 34 }}>{info.emoji}</div>
         )}
         <div style={{ padding: '18px 20px 20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
@@ -163,13 +197,10 @@ function DetailModal({ card, onClose }: { card: KnowledgeCard; onClose: () => vo
             <DetailBlock label="玩家行動" value={card.player_action} accent="var(--fug)" />
           )}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-            {card.timing && <MiniTag label="時機" value={card.timing} />}
-            {card.importance && <MiniTag label="重要性" value={card.importance} />}
-            {card.handling_level && <MiniTag label="處理層級" value={card.handling_level} />}
+            {card.timing && <MiniTag label="適用時機" value={card.timing} />}
+            {card.importance && <MiniTag label="重要程度" value={card.importance} />}
+            {card.handling_level && <MiniTag label="處置層級" value={card.handling_level} />}
           </div>
-          {card.game_effect_hint && (
-            <DetailBlock label="遊戲效果提示" value={card.game_effect_hint} accent="var(--violet)" />
-          )}
           {card.risk_note && (
             <div style={{ fontSize: 11, color: 'var(--hunt)', marginTop: 10, lineHeight: 1.6 }}>⚠ {card.risk_note}</div>
           )}
