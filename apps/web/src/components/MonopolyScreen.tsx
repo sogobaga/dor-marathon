@@ -348,43 +348,45 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
                 />
               </div>
 
-              {/* 底部擲骰按鈕列：常駐。右下角「遊戲規則」框約從盤面 x60% 起，故用「右緣錨定」——
-                  left:56%+translateX(-100%) 讓整列右緣固定落在盤面 56%（不論按鈕寬度/手機寬度都不碰規則框），
-                  整列往左展開（落在底部墾丁/海域一帶，位在 START 下方不重疊）。「！」在按鈕左側。 */}
+              {/* 底部擲骰按鈕列：常駐、置中，直向三段（訊息／GP+說明／擲骰按鈕）讓整組變窄，
+                  最寬的擲骰按鈕置中後右緣落在盤面約60%以內，不碰右下規則框；左緣同理不壓到左下 START */}
               <div style={{
-                position: 'absolute', left: '56%', bottom: '4%', transform: 'translateX(-100%)',
-                zIndex: 9, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4,
+                position: 'absolute', left: '50%', bottom: '4%', transform: 'translateX(-50%)',
+                zIndex: 9, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
               }}>
-                {/* GP不足／rollErr 訊息：固定高度，避免有無訊息造成位移 */}
+                {/* a. GP不足／rollErr 訊息：固定高度，避免有無訊息造成位移 */}
                 <div style={{ height: 13, fontSize: 10.5, color: 'var(--hunt)', fontWeight: 700, textAlign: 'center', lineHeight: 1 }}>
                   {!canAfford && phase === 'idle' ? 'GP 不足，無法擲骰' : rollErr}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {/* b. GP＋「！」小行 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <GpCoin size={14} />
+                  <span style={{ fontSize: 12, fontWeight: 900, color: 'var(--violet)' }}>{(gpBalance ?? 0).toLocaleString()}</span>
                   <button
                     onClick={(e) => { e.stopPropagation(); setShowGpInfo((v) => !v) }}
                     aria-label="如何取得 GP"
                     style={{
-                      width: 22, height: 22, borderRadius: '50%', border: '1px solid var(--line)',
-                      background: 'var(--bg-1)', color: 'var(--tx-dim)', fontSize: 12, fontWeight: 900,
+                      width: 16, height: 16, borderRadius: '50%', border: '1px solid var(--line)',
+                      background: 'var(--bg-1)', color: 'var(--tx-dim)', fontSize: 10, fontWeight: 900,
                       lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                       padding: 0, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0,
-                      boxShadow: '0 2px 6px rgba(0,0,0,.25)',
                     }}
                   >！</button>
-                  <button
-                    onClick={handleRoll}
-                    disabled={busy || !canAfford}
-                    style={{
-                      ...rollBtn,
-                      display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap',
-                      padding: '8px 18px', fontSize: 13,
-                      opacity: busy || !canAfford ? 0.55 : 1,
-                      cursor: busy || !canAfford ? 'default' : 'pointer',
-                    }}
-                  >
-                    <GpCoin size={14} />{(gpBalance ?? 0).toLocaleString()} · {phase === 'dice' ? '擲骰中…' : phase === 'moving' ? '前進中…' : `擲骰 ${diceCost} GP`}
-                  </button>
                 </div>
+                {/* c. 擲骰按鈕：精簡、只放動作文字（不再含 GP），窄一點確保置中後不碰規則框 */}
+                <button
+                  onClick={handleRoll}
+                  disabled={busy || !canAfford}
+                  style={{
+                    ...rollBtn,
+                    whiteSpace: 'nowrap',
+                    padding: '8px 12px', fontSize: 13,
+                    opacity: busy || !canAfford ? 0.55 : 1,
+                    cursor: busy || !canAfford ? 'default' : 'pointer',
+                  }}
+                >
+                  {phase === 'dice' ? '擲骰中…' : phase === 'moving' ? '前進中…' : `擲骰 ${diceCost} GP`}
+                </button>
               </div>
             </div>
           </>
