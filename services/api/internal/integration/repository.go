@@ -104,6 +104,7 @@ type NormalizedActivity struct {
 type ImportResult struct {
 	Status string // inserted | exists | duplicate
 	Reason string // flagged 原因（duplicate 時）
+	ID     string // 新插入活動的 activities.id（inserted/duplicate 時才有值；供去重感知里程 EXP/DP 發放用）
 }
 
 // FindRegisteredRace 找出 recordedAt 落在賽事期間、且該使用者有報名的賽事（取最近一場）
@@ -176,24 +177,26 @@ func (r *Repository) ImportActivity(ctx context.Context, a *NormalizedActivity) 
 		}
 	}
 
-	tag, err := r.db.Exec(ctx, `
+	var newID string
+	err := r.db.QueryRow(ctx, `
 		INSERT INTO activities
 			(user_id, race_id, distance_km, duration_s, avg_pace_s, ascent_m, avg_hr, recorded_at,
 			 processed, source, external_id, fingerprint, flagged, flag_reason, dup_of)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10,$11,$12,$13,$14)
-		ON CONFLICT (source, external_id) DO NOTHING`,
+		ON CONFLICT (source, external_id) DO NOTHING
+		RETURNING id::text`,
 		a.UserID, raceArg, a.DistanceKm, a.DurationS, a.AvgPaceS, a.AscentM, a.AvgHR, a.RecordedAt,
-		a.Source, a.ExternalID, a.Fingerprint, flagged, reasonArg, dupArg)
+		a.Source, a.ExternalID, a.Fingerprint, flagged, reasonArg, dupArg).Scan(&newID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ImportResult{Status: "exists"}, nil
+	}
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("insert activity: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ImportResult{Status: "exists"}, nil
-	}
 	if flagged {
-		return ImportResult{Status: "duplicate", Reason: reason}, nil
+		return ImportResult{Status: "duplicate", Reason: reason, ID: newID}, nil
 	}
-	return ImportResult{Status: "inserted"}, nil
+	return ImportResult{Status: "inserted", ID: newID}, nil
 }
 
 // ActivityRow 個人活動清單單筆

@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	streamKey         = "activity_queue"
-	consumerGroup     = "activity_workers"
+	streamKey     = "activity_queue"
+	consumerGroup = "activity_workers"
 	batchSize     = 100
 	batchInterval = 5 * time.Second
 )
@@ -95,11 +95,63 @@ func (w *Worker) run(ctx context.Context) {
 	}
 }
 
-// recomputeStandings 跨來源去重 + 重算競賽分組成績。只在「剛處理完新活動」或啟動時呼叫，
-// 閒置時完全不打 DB → 讓 Neon compute 休眠(scale-to-zero)。
+// recomputeStandings 跨來源去重 + 里程 EXP/DP 對帳補發 + 重算競賽分組成績。只在「剛處理完新活動」
+// 或啟動時呼叫，閒置時完全不打 DB → 讓 Neon compute 休眠(scale-to-zero)。
 func (w *Worker) recomputeStandings(ctx context.Context) {
 	w.resolveCrossSourceDups(ctx) // 先跨來源去重，再算成績
+	w.reconcileMileageExp(ctx)    // 對帳補發：抓漏發的里程 EXP/DP（inline 發放失敗的補救網）
 	w.aggregateStandings(ctx)
+}
+
+// reconcileMileageExp 對帳補發：inline 發放（本 worker processOne / api 端 Strava·Terra 匯入）
+// 若因暫時性錯誤（DB 抖動、連線問題等）失敗，該筆活動會停在 exp_awarded=false 永久漏發
+// （worker 目前讀 Redis Stream 只讀 ">"（新訊息），不會重讀 PEL 裡的 pending 訊息；api 端失敗則只有 log，
+// 完全沒有重試）。這裡定期掃描「已寫入一段時間、卻仍未標記 exp_awarded」的活動，逐筆重新呼叫
+// awardMileageDedup —— 該函式本身冪等 + 去重安全：真正已被別的來源計過的會再次被正確跳過，
+// 純粹漏發的則會補上，三來源（GPS/Strava/Terra）皆涵蓋。
+//
+// 時間視窗：> 2 分鐘給 inline 發放先跑完（避免跟 inline 搶著發同一筆造成不必要的 lock 等待）；
+// < 24 小時避免無限期重掃太舊的資料（真正的重複活動早已被跳過，不需要一直重查）。
+func (w *Worker) reconcileMileageExp(ctx context.Context) {
+	rows, err := w.db.Query(ctx, `
+		SELECT id::text, user_id::text FROM activities
+		WHERE exp_awarded = false
+		  AND created_at < NOW() - INTERVAL '2 minutes'
+		  AND created_at > NOW() - INTERVAL '24 hours'
+		ORDER BY created_at
+		LIMIT 500`)
+	if err != nil {
+		log.Error().Err(err).Msg("reconcileMileageExp: query pending failed")
+		return
+	}
+	type pendingActivity struct{ id, userID string }
+	var pending []pendingActivity
+	for rows.Next() {
+		var p pendingActivity
+		if err := rows.Scan(&p.id, &p.userID); err != nil {
+			rows.Close()
+			log.Error().Err(err).Msg("reconcileMileageExp: scan failed")
+			return
+		}
+		pending = append(pending, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Msg("reconcileMileageExp: rows iteration failed")
+		return
+	}
+
+	swept := 0
+	for _, p := range pending {
+		if err := w.awardMileageDedup(ctx, p.id, p.userID); err != nil {
+			log.Error().Err(err).Str("activity", p.id).Msg("reconcileMileageExp: award failed")
+			continue
+		}
+		swept++
+	}
+	if swept > 0 {
+		log.Info().Int("count", swept).Msg("mileage exp reconciliation swept")
+	}
 }
 
 // resolveCrossSourceDups 跨來源去重：同一趟跑步同時有 App GPS（source IS NULL）與 Strava（source='strava'）
@@ -262,68 +314,134 @@ func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) error {
 		return fmt.Errorf("insert activity: %w", err)
 	}
 
-	// 更新使用者累積里程
-	if _, err := w.db.Exec(ctx, `
-		UPDATE users SET total_km = total_km + $1, updated_at = NOW() WHERE id = $2
-	`, evt.DistanceKm, evt.UserID); err != nil {
-		return fmt.Errorf("update total_km: %w", err)
+	// 去重感知、冪等地發放里程 EXP/DP/total_km（取代舊的「無條件 UPDATE total_km」+ awardMileageExp）：
+	// 若同一使用者存在時間重疊、已由其他來源（Strava/Terra）發放過的活動，這裡就不重發，
+	// 避免同一趟跑步被 GPS 與第三方來源各發一次。
+	if err := w.awardMileageDedup(ctx, newID, evt.UserID); err != nil {
+		return fmt.Errorf("award mileage dedup: %w", err)
 	}
-
-	// 日常里程 EXP：單趟每滿一整公里 × per_km（含上限與配速防造假），並記事件供前台彈窗
-	w.awardMileageExp(ctx, evt.UserID, evt.DistanceKm, evt.DurationS, evt.RecordedAt)
 
 	return nil
 }
 
-// awardMileageExp 單趟里程獎勵：這一趟跑步每滿一整公里發一份（floor(單趟距離)），並套用：
-//   ① 單趟上限 mileage_cap_km（避免一趟灌爆）
-//   ② 防造假配速下限 mileage_min_pace_s：此趟時間內、以最快合理配速最多能跑 duration/min_pace 公里，
-//      超過的距離不列入發獎（擋「短時間灌大距離」的假 GPS）。
-// 每個 activity 只處理一次（HandleActivity 於重複時已提早 return）→ 天然冪等，不需累積計數器。
-func (w *Worker) awardMileageExp(ctx context.Context, userID string, distanceKm float64, durationS int, recordedAt string) {
-	if distanceKm < 1 || durationS <= 0 {
-		return // 不足 1km 或無時間 → 不發
+// awardMileageDedup 去重感知、冪等地發放里程 EXP/DP/total_km。GPS 活動寫入 activities 後呼叫，
+// activityID 為剛插入的 activities.id。
+//
+// ⚠️ 與 services/api/internal/integration/mileage_exp.go 的 Repository.AwardMileageExp 是同一語意
+// 的獨立實作——worker 是獨立的 Go module、不能 import api 的 internal package，故兩邊「各自維護一份」。
+// 修改本函式的判斷邏輯（去重規則／exp_rules 算法／交易語意）時，請同步修改另一份，保持完全一致的行為。
+//
+// 語意：
+//  1. per-user 序列化：SELECT pg_advisory_xact_lock(hashtext(userID))（交易內），避免本 worker
+//     與 Strava/Terra（api）同時對同一使用者發放而雙發。
+//  2. 冪等：FOR UPDATE 鎖定該筆 activity 並讀出 exp_awarded；已為 true 代表發過了，直接 return。
+//  3. 去重：查該使用者是否存在「時間重疊且已發放(exp_awarded=true)」的其他活動（比照
+//     resolveCrossSourceDups 的重疊判定——⚠️ GPS(source IS NULL) 的 recorded_at 存的是「結束時間」，
+//     Strava/Terra(source 非 NULL) 存的是「開始時間」，兩者語意不同，比對前都要正規化成 [start,end)
+//     區間再判重疊，否則會誤判/漏判）。若存在 → 這趟已被別的來源計過 → 本筆不發
+//     EXP/DP/total_km，且刻意保留 exp_awarded=false（不標記，避免誤判為「已處理」）。
+//  4. 發放（無重疊）：讀 exp_rules（per_km/dp_per_km/mileage_cap_km/mileage_min_pace_s：
+//     floor(distance) → ①單趟上限 mileage_cap_km ②配速防造假 mileage_min_pace_s）→
+//     UPDATE users.total_km/exp/dp → INSERT mileage_exp_events → UPDATE activities.exp_awarded=true。
+//     全部在同一交易內；total_km 也只在「無重疊」時加，確保一趟只加一次。
+func (w *Worker) awardMileageDedup(ctx context.Context, activityID, userID string) error {
+	tx, err := w.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
 	}
+	defer tx.Rollback(ctx) // 已 Commit 後為 no-op
+
+	// ① per-user 序列化
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, userID); err != nil {
+		return fmt.Errorf("advisory lock: %w", err)
+	}
+
+	// ② 冪等：鎖定本筆活動；一併撈 source 才能正規化本筆的 [start,end) 區間
+	var awarded bool
+	var distanceKm float64
+	var durationS int
+	var recordedAt time.Time
+	var source *string
+	if err := tx.QueryRow(ctx, `
+		SELECT exp_awarded, distance_km, duration_s, recorded_at, source
+		FROM activities WHERE id=$1 AND user_id=$2 FOR UPDATE`, activityID, userID).
+		Scan(&awarded, &distanceKm, &durationS, &recordedAt, &source); err != nil {
+		return fmt.Errorf("load activity: %w", err)
+	}
+	if awarded {
+		return nil // 已發過，不重發
+	}
+
+	// 正規化本筆時間為 [thisStart, thisEnd)：GPS(source IS NULL) 的 recorded_at 是結束時間，
+	// 其餘來源(strava/garmin/coros)的 recorded_at 是開始時間（比照 resolveCrossSourceDups）。
+	thisStart := recordedAt
+	if source == nil {
+		thisStart = recordedAt.Add(-time.Duration(durationS) * time.Second)
+	}
+	thisEnd := thisStart.Add(time.Duration(durationS) * time.Second)
+
+	// ③ 去重：是否已有時間重疊、且已發放的其他活動（任何來源）。候選列同樣依 source 正規化成
+	// [candStart, candEnd) 再判重疊（candStart < thisEnd AND candEnd > thisStart）。
+	var dup bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM activities a
+			WHERE a.user_id=$1 AND a.exp_awarded=true AND a.id<>$2
+			  AND (CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END) < $3
+			  AND (CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END)
+			      + make_interval(secs=>a.duration_s) > $4
+		)`, userID, activityID, thisEnd, thisStart).Scan(&dup); err != nil {
+		return fmt.Errorf("overlap check: %w", err)
+	}
+	if dup {
+		// 這趟已被時間重疊的另一筆活動計過（不論來源）；本筆不發，exp_awarded 維持 false。
+		return tx.Commit(ctx)
+	}
+
+	// ④ 發放：讀 exp_rules
 	var perKm, dpPerKm, capKm, minPaceS int
-	if err := w.db.QueryRow(ctx, `
+	if err := tx.QueryRow(ctx, `
 		SELECT COALESCE(per_km,0), COALESCE(dp_per_km,0),
 		       COALESCE(mileage_cap_km,21), COALESCE(mileage_min_pace_s,120)
 		FROM exp_rules WHERE id=TRUE`).Scan(&perKm, &dpPerKm, &capKm, &minPaceS); err != nil {
-		return
+		return fmt.Errorf("load exp_rules: %w", err)
 	}
-	if perKm <= 0 && dpPerKm <= 0 {
-		return
-	}
-	rewardKm := int(distanceKm) // 單趟整公里數（floor）
-	if capKm > 0 && rewardKm > capKm {
-		rewardKm = capKm // ① 單趟上限
-	}
-	if minPaceS > 0 {
-		if maxByTime := durationS / minPaceS; rewardKm > maxByTime { // ② 配速防造假（整數除＝floor）
-			rewardKm = maxByTime
+
+	rewardKm := 0
+	if distanceKm >= 1 && durationS > 0 && (perKm > 0 || dpPerKm > 0) {
+		rewardKm = int(distanceKm) // floor(單趟距離)
+		if capKm > 0 && rewardKm > capKm {
+			rewardKm = capKm
 		}
-	}
-	if rewardKm <= 0 {
-		return
+		if minPaceS > 0 {
+			if maxByTime := durationS / minPaceS; rewardKm > maxByTime {
+				rewardKm = maxByTime
+			}
+		}
+		if rewardKm < 0 {
+			rewardKm = 0
+		}
 	}
 	expAmt := rewardKm * perKm
 	dpAmt := rewardKm * dpPerKm
 
-	tx, err := w.db.Begin(ctx)
-	if err != nil {
-		return
-	}
-	defer tx.Rollback(ctx)
+	// total_km 一趟只加一次（走到這裡即代表本趟首次被計入，不論最終 rewardKm 是否 > 0）
 	if _, err := tx.Exec(ctx,
-		`UPDATE users SET exp = exp + $1, dp = dp + $2 WHERE id=$3`, expAmt, dpAmt, userID); err != nil {
-		return
+		`UPDATE users SET total_km = total_km + $1, exp = exp + $2, dp = dp + $3, updated_at = NOW() WHERE id=$4`,
+		distanceKm, expAmt, dpAmt, userID); err != nil {
+		return fmt.Errorf("update user: %w", err)
 	}
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO mileage_exp_events (user_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
-		 VALUES ($1,$2,$3,$4,$5,$6)`, userID, expAmt, dpAmt, rewardKm, distanceKm, recordedAt); err != nil {
-		return
+	if rewardKm > 0 {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO mileage_exp_events (user_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
+			 VALUES ($1,$2,$3,$4,$5,$6)`, userID, expAmt, dpAmt, rewardKm, distanceKm, recordedAt); err != nil {
+			return fmt.Errorf("insert event: %w", err)
+		}
 	}
-	tx.Commit(ctx)
+	if _, err := tx.Exec(ctx, `UPDATE activities SET exp_awarded = TRUE WHERE id=$1`, activityID); err != nil {
+		return fmt.Errorf("mark awarded: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 func nullableString(s string) interface{} {

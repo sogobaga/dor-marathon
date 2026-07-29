@@ -55,16 +55,16 @@ func (h *StravaHandler) enabled() bool { return h.cfg.ClientID != "" && h.cfg.Cl
 // Router 掛在 /api/v1/integrations/strava（自行處理需登入的子路由）
 func (h *StravaHandler) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Get("/callback", h.Callback)    // Strava OAuth 導回（公開）
+	r.Get("/callback", h.Callback)     // Strava OAuth 導回（公開）
 	r.Get("/webhook", h.WebhookVerify) // Strava webhook 驗證（公開）
 	r.Post("/webhook", h.WebhookEvent) // Strava webhook 事件（公開）
 	r.Group(func(r chi.Router) {
 		r.Use(h.requireAuth)
-		r.Get("/connect", h.Connect)        // 取得授權 URL
-		r.Get("/status", h.Status)          // 連線狀態
+		r.Get("/connect", h.Connect) // 取得授權 URL
+		r.Get("/status", h.Status)   // 連線狀態
 		r.Delete("/disconnect", h.Disconnect)
-		r.Post("/sync", h.Sync)             // 手動匯入近期活動
-		r.Get("/activities", h.Activities)  // 已同步活動清單
+		r.Post("/sync", h.Sync)            // 手動匯入近期活動
+		r.Get("/activities", h.Activities) // 已同步活動清單
 	})
 	return r
 }
@@ -468,9 +468,12 @@ func (h *StravaHandler) importOne(ctx context.Context, userID string, regAt time
 		log.Error().Err(err).Msg("strava import activity failed")
 		return ImportResult{Status: "error"}
 	}
-	// 體力值 SP：僅「新匯入」的活動扣血（已存在/重複不扣）
+	// 僅「新匯入、未被 flag」的活動才扣血 + 發里程 EXP/DP（已存在/重複/跨帳號重複不算）
 	if res.Status == "inserted" && na.DistanceKm > 0 {
 		stamina.ChargeSP(ctx, h.repo.db, na.UserID, na.DistanceKm, na.AvgPaceS)
+		if err := h.repo.AwardMileageExp(ctx, res.ID, na.UserID); err != nil {
+			log.Error().Err(err).Str("activity", res.ID).Msg("strava award mileage exp failed")
+		}
 	}
 	return res
 }

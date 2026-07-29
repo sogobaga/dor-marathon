@@ -14,6 +14,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
+
+	"github.com/dor/api/internal/stamina"
 )
 
 // Terra 聚合器接入（Phase 0 骨架）：一條 webhook 收 Garmin / COROS / Strava… 正規化後的活動。
@@ -172,8 +174,18 @@ func (h *TerraHandler) importTerra(r *http.Request, userID, source string, a *te
 		v := int(math.Round(*hr))
 		na.AvgHR = &v
 	}
-	if _, err := h.repo.ImportActivity(r.Context(), na); err != nil {
+	res, err := h.repo.ImportActivity(r.Context(), na)
+	if err != nil {
 		log.Error().Err(err).Str("source", source).Msg("terra import activity failed")
+		return
+	}
+	// 僅「新匯入、未被 flag」的活動才扣血 + 發里程 EXP/DP（已存在/重複/跨帳號重複不算）。
+	// 比照 strava.go importOne：Terra 匯入原本完全沒有呼叫 ChargeSP，導致穿戴裝置直連使用者不消耗體力值。
+	if res.Status == "inserted" && na.DistanceKm > 0 {
+		stamina.ChargeSP(r.Context(), h.repo.db, na.UserID, na.DistanceKm, na.AvgPaceS)
+		if err := h.repo.AwardMileageExp(r.Context(), res.ID, na.UserID); err != nil {
+			log.Error().Err(err).Str("activity", res.ID).Msg("terra award mileage exp failed")
+		}
 	}
 }
 
