@@ -43,6 +43,7 @@ func (h *Handler) AdminRouter() chi.Router {
 
 	r.Get("/redemptions", h.AdminListFigureRedemptions)
 	r.Patch("/redemptions/{id}", h.AdminUpdateFigureRedemption)
+	r.Post("/redemptions/{id}/reset", h.AdminResetFigureRedemption)
 
 	r.Get("/settings", h.AdminGetSettings)
 	r.Put("/settings", h.AdminPutSettings)
@@ -438,6 +439,26 @@ func (h *Handler) AdminUpdateFigureRedemption(w http.ResponseWriter, r *http.Req
 		return
 	}
 	respondJSON(w, http.StatusOK, item)
+}
+
+// AdminResetFigureRedemption POST /admin/monopoly/redemptions/{id}/reset：後台「釋放／重置為新一輪」，
+// 清空該使用者已收集的完賽貼紙碎片並刪除這筆兌換申請，讓使用者可重新收集、重新申請下一輪兌換；
+// 找不到該筆回 404。
+func (h *Handler) AdminResetFigureRedemption(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !isValidUUID(id) {
+		respondErr(w, http.StatusNotFound, "redemption not found")
+		return
+	}
+	if _, err := h.svc.repo.AdminResetFigureRedemption(r.Context(), id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			respondErr(w, http.StatusNotFound, "redemption not found")
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to reset figure redemption")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // --- 抽卡設定 ---

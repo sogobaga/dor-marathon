@@ -108,6 +108,33 @@ func (r *Repository) resolveDraw(ctx context.Context, tx pgx.Tx, userID, pool st
 	if err != nil {
 		return nil, err
 	}
+
+	// 若候選池含 sticker 項，且使用者已集滿完賽貼紙（finisher 全片皆已擁有），濾掉所有 sticker 項──
+	// 等同該獎項權重歸零，改讓其餘獎項參與加權。避免「抽到 sticker 卻因 drawSticker 找不到未擁有片
+	// 而空手而回」：集滿後就不該再讓玩家停到機會/命運格卻抽不到東西。
+	hasSticker := false
+	for _, e := range entries {
+		if e.RewardType == "sticker" {
+			hasSticker = true
+			break
+		}
+	}
+	if hasSticker {
+		complete, err := r.stickerSetComplete(ctx, tx, userID, "finisher")
+		if err != nil {
+			return nil, err
+		}
+		if complete {
+			filtered := make([]poolEntry, 0, len(entries))
+			for _, e := range entries {
+				if e.RewardType != "sticker" {
+					filtered = append(filtered, e)
+				}
+			}
+			entries = filtered
+		}
+	}
+
 	entry, err := pickWeighted(entries, func(e poolEntry) int { return e.Weight })
 	if err != nil {
 		return nil, err
@@ -283,10 +310,36 @@ func (r *Repository) drawKnowledgeCard(ctx context.Context, tx pgx.Tx, userID, d
 	return picked, nil
 }
 
-// drawSticker 完賽公仔九宮格拼圖抽獎，邏輯與 drawKnowledgeCard 對稱（先支援、預設池目前沒有此
-// reward_type，但要能跑）：不分主題，從所有 active sticker_pieces 依稀有度加權挑一片。
+// stickerSetComplete 回傳 userID 是否已集滿 setKey 該組全部 active 貼紙片（已擁有數 >= 總片數）。
+// 供 resolveDraw 在加權挑獎項前濾除 sticker 候選用（見該函式）。total=0（該組目前沒有 active 片）
+// 時 owned(0) >= total(0) 視為「集滿」，同樣濾掉 sticker──反正 drawSticker 此時也抽不出東西。
+func (r *Repository) stickerSetComplete(ctx context.Context, tx pgx.Tx, userID, setKey string) (bool, error) {
+	var owned, total int
+	err := tx.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE u.piece_id IS NOT NULL), count(*)
+		FROM sticker_pieces p
+		LEFT JOIN monopoly_user_stickers u ON u.piece_id = p.id AND u.user_id = $2
+		WHERE p.set_key = $1 AND p.is_active = true`,
+		setKey, userID,
+	).Scan(&owned, &total)
+	if err != nil {
+		return false, fmt.Errorf("check sticker set complete: %w", err)
+	}
+	return owned >= total, nil
+}
+
+// drawSticker 完賽公仔九宮格拼圖抽獎：只從使用者「尚未擁有」的 finisher active 片依稀有度加權挑一片，
+// 確保每次抽到 sticker 必為新片、不會重複（NOT EXISTS 排除 monopoly_user_stickers 已有列）。resolveDraw
+// 在停到 sticker 獎項前已先擋掉「已集滿」的情況（見該函式），理論上不會發生「候選為空」，但仍保底回
+// nil, nil 視為未抽到，不 panic、不補償。下方重複→轉GP 分支因此實務上不會再觸發，保留只是防禦。
 func (r *Repository) drawSticker(ctx context.Context, tx pgx.Tx, userID, drawID string, dupGP map[string]int) (*collectibleResult, error) {
-	rows, err := tx.Query(ctx, `SELECT id, title, image_url, rarity FROM sticker_pieces WHERE is_active=true`)
+	rows, err := tx.Query(ctx, `
+		SELECT p.id, p.title, p.image_url, p.rarity
+		FROM sticker_pieces p
+		WHERE p.set_key='finisher' AND p.is_active=true
+		  AND NOT EXISTS (
+		    SELECT 1 FROM monopoly_user_stickers u WHERE u.piece_id=p.id AND u.user_id=$1
+		  )`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("load sticker pieces: %w", err)
 	}

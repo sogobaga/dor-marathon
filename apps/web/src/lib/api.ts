@@ -2668,6 +2668,9 @@ export const adminMonopolyApi = {
   redemptions: (token: string) => request<{ redemptions: FigureRedemption[] }>('/admin/monopoly/redemptions', { headers: withAuth(token) }),
   updateRedemption: (token: string, id: string, patch: { status: FigureRedemptionStatus; note?: string }) =>
     request<FigureRedemption>(`/admin/monopoly/redemptions/${id}`, { method: 'PATCH', headers: withAuth(token), body: JSON.stringify(patch) }),
+  // 重置為新一輪：清空該玩家公仔碎片＋刪除此兌換紀錄，玩家可重新收集
+  resetRedemption: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/monopoly/redemptions/${id}/reset`, { method: 'POST', headers: withAuth(token) }),
 
   // 抽卡設定
   settings: (token: string) => request<MonopolySettings>('/admin/monopoly/settings', { headers: withAuth(token) }),

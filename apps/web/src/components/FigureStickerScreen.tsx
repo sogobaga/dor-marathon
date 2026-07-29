@@ -72,6 +72,10 @@ export default function FigureStickerScreen({ onClose }: { onClose: () => void }
               ))}
             </div>
 
+            <p style={{ fontSize: 11, color: 'var(--tx-faint)', margin: '12px 4px 0', lineHeight: 1.6, textAlign: 'center' }}>
+              ※完賽公仔圖片顯示僅為產品範例參考，實際製作將以兌換時提供時的照片進行設計。
+            </p>
+
             {complete && (
               <div style={{ marginTop: 20, textAlign: 'center' }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}

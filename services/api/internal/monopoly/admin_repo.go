@@ -392,6 +392,43 @@ func (r *Repository) AdminUpdateFigureRedemption(ctx context.Context, id, status
 
 // AdminGetSettings 讀 monopoly_dup_gp（JSON）/ monopoly_redeem_fallback_gp（int），查無/格式錯誤一律
 // 回退硬編碼預設值，與 service.go 的 monopolyDupGP/diceGPCost 讀取邏輯一致（避免單一壞設定卡死抽卡流程）。
+// AdminResetFigureRedemption 後台「釋放／重置為新一輪」：單一交易內鎖定並讀出該筆申請的 user_id
+// （查無回 ErrNotFound），接著清空該使用者的完賽貼紙碎片（monopoly_user_stickers 裡 set_key='finisher'
+// 的部分）並刪除這筆兌換申請（monopoly_figure_redemptions）。刪除後 GetFigureRedemptionStatus 查無列
+// 會回空字串，等同「尚未申請」，讓使用者可重新收集、重新申請下一輪。
+func (r *Repository) AdminResetFigureRedemption(ctx context.Context, id string) (userID string, err error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) // Commit 後為 no-op
+
+	err = tx.QueryRow(ctx, `SELECT user_id FROM monopoly_figure_redemptions WHERE id=$1 FOR UPDATE`, id).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup figure redemption: %w", err)
+	}
+
+	if _, err = tx.Exec(ctx, `
+		DELETE FROM monopoly_user_stickers
+		WHERE user_id=$1 AND piece_id IN (SELECT id FROM sticker_pieces WHERE set_key='finisher')`,
+		userID,
+	); err != nil {
+		return "", fmt.Errorf("clear user stickers: %w", err)
+	}
+
+	if _, err = tx.Exec(ctx, `DELETE FROM monopoly_figure_redemptions WHERE id=$1`, id); err != nil {
+		return "", fmt.Errorf("delete figure redemption: %w", err)
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit tx: %w", err)
+	}
+	return userID, nil
+}
+
 func (r *Repository) AdminGetSettings(ctx context.Context) (dupGP map[string]int, fallbackGP int) {
 	fallbackGP = appsettings.GetInt(ctx, r.db, "monopoly_redeem_fallback_gp", 10)
 	dupGP = map[string]int{"common": 5, "rare": 20}

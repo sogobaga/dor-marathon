@@ -149,6 +149,7 @@ export default function AdminMonopolyPage() {
           token={token}
           redemptions={redemptions}
           onUpdated={(r) => setRedemptions((rs) => rs?.map((x) => (x.id === r.id ? r : x)) ?? rs)}
+          reload={load}
           onErr={setErr}
           flash={flash}
         />
@@ -763,10 +764,11 @@ function StickerPieceRow({ token, piece, onUpdated, onErr }: {
 
 // ============================== 分頁 e：公仔兌換 ==============================
 
-function RedemptionsTab({ token, redemptions, onUpdated, onErr, flash }: {
+function RedemptionsTab({ token, redemptions, onUpdated, reload, onErr, flash }: {
   token: string
   redemptions: FigureRedemption[] | null
   onUpdated: (r: FigureRedemption) => void
+  reload: () => void
   onErr: (m: string) => void
   flash: (m: string) => void
 }) {
@@ -775,14 +777,14 @@ function RedemptionsTab({ token, redemptions, onUpdated, onErr, flash }: {
     <div style={panel}>
       <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>完賽公仔兌換申請</h2>
       <p style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 0, marginBottom: 14, lineHeight: 1.7 }}>
-        玩家集滿 9 片拼圖後送出兌換申請，於此確認寄送狀態；狀態異動即時儲存。
+        玩家集滿 9 片拼圖後送出兌換申請，於此確認寄送狀態；狀態異動即時儲存。寄出後可按「重置為新一輪」釋放，讓玩家重新收集。
       </p>
       {redemptions.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--tx-dim)' }}>目前沒有兌換申請</div>}
       {redemptions.length > 0 && (
         <div style={{ border: '1px solid var(--line)', borderRadius: 10, overflow: 'hidden' }}>
-          <Row head><C w={2}>帳號編碼</C><C w={2}>顯示名</C><C w={3}>Email</C><C w={2}>申請時間</C><C w={2}>狀態</C><C w={3}>備註</C></Row>
+          <Row head><C w={2}>帳號編碼</C><C w={2}>顯示名</C><C w={3}>Email</C><C w={2}>申請時間</C><C w={2}>狀態</C><C w={3}>備註</C><div style={{ width: 110, flexShrink: 0 }} /></Row>
           {redemptions.map((r) => (
-            <RedemptionRow key={r.id} token={token} redemption={r} onUpdated={onUpdated} onErr={onErr} flash={flash} />
+            <RedemptionRow key={r.id} token={token} redemption={r} onUpdated={onUpdated} reload={reload} onErr={onErr} flash={flash} />
           ))}
         </div>
       )}
@@ -790,15 +792,17 @@ function RedemptionsTab({ token, redemptions, onUpdated, onErr, flash }: {
   )
 }
 
-function RedemptionRow({ token, redemption, onUpdated, onErr, flash }: {
+function RedemptionRow({ token, redemption, onUpdated, reload, onErr, flash }: {
   token: string
   redemption: FigureRedemption
   onUpdated: (r: FigureRedemption) => void
+  reload: () => void
   onErr: (m: string) => void
   flash: (m: string) => void
 }) {
   const [note, setNote] = useState(redemption.note)
   const [saving, setSaving] = useState(false)
+  const [resetting, setResetting] = useState(false)
   useEffect(() => { setNote(redemption.note) }, [redemption.note])
 
   async function patch(status: FigureRedemptionStatus, noteValue: string) {
@@ -808,6 +812,16 @@ function RedemptionRow({ token, redemption, onUpdated, onErr, flash }: {
       onUpdated(updated)
       flash('✓ 已更新')
     } catch (e: any) { onErr(e?.message || '更新失敗') } finally { setSaving(false) }
+  }
+
+  async function handleReset() {
+    if (!window.confirm('確定要重置這位玩家的公仔收集嗎？將清空其已收集的碎片並刪除此兌換申請，玩家可重新收集。此動作無法復原。')) return
+    setResetting(true)
+    try {
+      await adminMonopolyApi.resetRedemption(token, redemption.id)
+      flash('✓ 已重置，玩家可重新開始收集')
+      reload()
+    } catch (e: any) { onErr(e?.message || '重置失敗') } finally { setResetting(false) }
   }
 
   return (
@@ -820,7 +834,7 @@ function RedemptionRow({ token, redemption, onUpdated, onErr, flash }: {
         <select
           style={{ ...inp, width: '100%', padding: '6px 8px', fontSize: 12.5 }}
           value={redemption.status}
-          disabled={saving}
+          disabled={saving || resetting}
           onChange={(e) => patch(e.target.value as FigureRedemptionStatus, note)}
         >
           {REDEMPTION_STATUSES.map((s) => <option key={s} value={s}>{REDEMPTION_STATUS_LABEL[s]}</option>)}
@@ -834,6 +848,15 @@ function RedemptionRow({ token, redemption, onUpdated, onErr, flash }: {
           onChange={(e) => setNote(e.target.value)}
           onBlur={() => { if (note !== redemption.note) patch(redemption.status, note) }}
         />
+      </div>
+      <div style={{ width: 110, flexShrink: 0 }}>
+        <button
+          onClick={handleReset}
+          disabled={saving || resetting}
+          style={{ ...ghostBtn, color: 'var(--hunt)', width: '100%', padding: '6px 8px', fontSize: 11.5, opacity: resetting ? 0.6 : 1 }}
+        >
+          {resetting ? '重置中…' : '重置為新一輪'}
+        </button>
       </div>
     </Row>
   )
