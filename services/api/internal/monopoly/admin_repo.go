@@ -258,6 +258,72 @@ func (r *Repository) AdminUpdateKnowledgeCard(ctx context.Context, id string, im
 	return c, nil
 }
 
+// --- 完賽公仔貼紙管理（主要＝補圖／換彩圖，Phase 2b C） ---
+
+// AdminStickerPiece GET /admin/monopoly/stickers 單片（set_key 固定 'finisher'，後台不需要顯示）。
+type AdminStickerPiece struct {
+	ID       string `json:"id"`
+	Position int    `json:"position"`
+	Title    string `json:"title"`
+	ImageURL string `json:"image_url"`
+	Rarity   string `json:"rarity"`
+	IsActive bool   `json:"is_active"`
+}
+
+// AdminListStickerPieces set_key='finisher' 全部 9 片（含 is_active=false，後台要看得到全貌），依 position 排序。
+func (r *Repository) AdminListStickerPieces(ctx context.Context) ([]*AdminStickerPiece, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, position, title, image_url, rarity, is_active
+		FROM sticker_pieces
+		WHERE set_key = 'finisher'
+		ORDER BY position`)
+	if err != nil {
+		return nil, fmt.Errorf("list sticker pieces: %w", err)
+	}
+	defer rows.Close()
+	out := []*AdminStickerPiece{}
+	for rows.Next() {
+		p := &AdminStickerPiece{}
+		if err := rows.Scan(&p.ID, &p.Position, &p.Title, &p.ImageURL, &p.Rarity, &p.IsActive); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// AdminUpdateStickerPiece 部分更新：nil 的欄位保留原值（COALESCE），比照 AdminUpdateKnowledgeCard。
+func (r *Repository) AdminUpdateStickerPiece(ctx context.Context, id string, imageURL, title, rarity *string, isActive *bool) (*AdminStickerPiece, error) {
+	row := r.db.QueryRow(ctx, `
+		UPDATE sticker_pieces SET
+			image_url = COALESCE($2, image_url),
+			title = COALESCE($3, title),
+			rarity = COALESCE($4, rarity),
+			is_active = COALESCE($5, is_active),
+			updated_at = NOW()
+		WHERE id=$1
+		RETURNING id, position, title, image_url, rarity, is_active`,
+		id, imageURL, title, rarity, isActive,
+	)
+	p := &AdminStickerPiece{}
+	err := row.Scan(&p.ID, &p.Position, &p.Title, &p.ImageURL, &p.Rarity, &p.IsActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// AdminGetFigureSettings 讀 monopoly_figure_color_url / monopoly_figure_title，查無時回退與
+// service.go GetStickerGallery 相同的硬編碼預設值（避免單一壞設定卡死收集頁彩圖展示）。
+func (r *Repository) AdminGetFigureSettings(ctx context.Context) (figureColorURL, figureTitle string) {
+	figureTitle = appsettings.GetString(ctx, r.db, "monopoly_figure_title", "完賽跑者公仔")
+	figureColorURL = appsettings.GetString(ctx, r.db, "monopoly_figure_color_url", "/source/ui/03_figure/runner_figure_color.png")
+	return figureColorURL, figureTitle
+}
+
 // --- 抽卡設定 ---
 
 // AdminGetSettings 讀 monopoly_dup_gp（JSON）/ monopoly_redeem_fallback_gp（int），查無/格式錯誤一律

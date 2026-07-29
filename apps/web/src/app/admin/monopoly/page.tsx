@@ -6,6 +6,7 @@ import {
   adminMonopolyApi, adminImagesApi,
   type PoolEntry, type PoolEntryInput, type MonopolyPool, type MonopolyRewardType,
   type RedeemBatch, type RedeemCode, type AdminKnowledgeCard, type MonopolySettings,
+  type AdminStickerGallery, type AdminStickerPiece,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import GpCoin from '@/components/GpCoin'
@@ -24,7 +25,7 @@ const REWARD_TYPE_LABEL: Record<MonopolyRewardType, string> = {
 const REWARD_TYPES: MonopolyRewardType[] = ['gp', 'dp', 'vip_days', 'knowledge_card', 'sticker', 'redemption_code']
 const POOL_LABEL: Record<MonopolyPool, string> = { chance: '機會', destiny: '命運' }
 
-type Tab = 'pool' | 'redeem' | 'cards' | 'settings'
+type Tab = 'pool' | 'redeem' | 'cards' | 'stickers' | 'settings'
 
 export default function AdminMonopolyPage() {
   const router = useRouter()
@@ -36,6 +37,7 @@ export default function AdminMonopolyPage() {
   const [entries, setEntries] = useState<PoolEntry[] | null>(null)
   const [batches, setBatches] = useState<RedeemBatch[] | null>(null)
   const [cards, setCards] = useState<AdminKnowledgeCard[] | null>(null)
+  const [stickers, setStickers] = useState<AdminStickerGallery | null>(null)
   const [settings, setSettings] = useState<MonopolySettings | null>(null)
 
   const load = useCallback(() => {
@@ -50,6 +52,7 @@ export default function AdminMonopolyPage() {
     adminMonopolyApi.poolList(t).then((r) => setEntries(r.entries)).catch(onErr)
     adminMonopolyApi.redeemBatches(t).then((r) => setBatches(r.batches)).catch(onErr)
     adminMonopolyApi.cards(t).then((r) => setCards(r.cards)).catch(onErr)
+    adminMonopolyApi.stickers(t).then((r) => setStickers(r)).catch(onErr)
     adminMonopolyApi.settings(t).then((r) => setSettings(r)).catch(onErr)
   }, [router])
   useEffect(() => { load() }, [load])
@@ -71,6 +74,7 @@ export default function AdminMonopolyPage() {
           ['pool', `獎勵池 (${entries?.length ?? '—'})`],
           ['redeem', `兌換碼 (${batches?.length ?? '—'})`],
           ['cards', `知識卡 (${cards?.length ?? '—'})`],
+          ['stickers', `公仔貼紙 (${stickers?.pieces.length ?? '—'})`],
           ['settings', '設定'],
         ] as [Tab, string][]).map(([v, label]) => (
           <button
@@ -117,6 +121,19 @@ export default function AdminMonopolyPage() {
           onErr={setErr}
         />
       )}
+      {tab === 'stickers' && token && stickers && (
+        <StickersTab
+          token={token}
+          gallery={stickers}
+          onFigureSaved={(s) => {
+            setStickers((g) => (g ? { ...g, figure_color_url: s.figure_color_url, figure_title: s.figure_title } : g))
+            flash('✓ 彩圖設定已儲存')
+          }}
+          onPieceUpdated={(p) => setStickers((g) => (g ? { ...g, pieces: g.pieces.map((x) => (x.id === p.id ? p : x)) } : g))}
+          onErr={setErr}
+        />
+      )}
+      {tab === 'stickers' && !stickers && <div style={{ color: 'var(--tx-dim)' }}>載入中…</div>}
       {tab === 'settings' && token && settings && (
         <SettingsTab
           token={token}
@@ -568,7 +585,149 @@ function CardRow({ token, card, onUpdated, onErr }: {
   )
 }
 
-// ============================== 分頁 d：設定 ==============================
+// ============================== 分頁 d：公仔貼紙 ==============================
+
+function StickersTab({ token, gallery, onFigureSaved, onPieceUpdated, onErr }: {
+  token: string
+  gallery: AdminStickerGallery
+  onFigureSaved: (s: { figure_color_url: string; figure_title: string }) => void
+  onPieceUpdated: (p: AdminStickerPiece) => void
+  onErr: (m: string) => void
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <FigureSettingsPanel
+        token={token}
+        figureColorUrl={gallery.figure_color_url}
+        figureTitle={gallery.figure_title}
+        onSaved={onFigureSaved}
+        onErr={onErr}
+      />
+      <div style={panel}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>九宮格拼圖（灰階片）</h2>
+        <p style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 0, lineHeight: 1.7 }}>
+          玩家透過機會／命運抽卡逐片收集，集滿 9 片即解鎖上方彩色完整公仔。
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+          {gallery.pieces.map((p) => (
+            <StickerPieceRow key={p.id} token={token} piece={p} onUpdated={onPieceUpdated} onErr={onErr} />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function FigureSettingsPanel({ token, figureColorUrl, figureTitle, onSaved, onErr }: {
+  token: string
+  figureColorUrl: string
+  figureTitle: string
+  onSaved: (s: { figure_color_url: string; figure_title: string }) => void
+  onErr: (m: string) => void
+}) {
+  const [url, setUrl] = useState(figureColorUrl)
+  const [title, setTitle] = useState(figureTitle)
+  const [uploading, setUploading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setUrl(figureColorUrl); setTitle(figureTitle) }, [figureColorUrl, figureTitle])
+
+  async function uploadFigure(file: File) {
+    setUploading(true)
+    try {
+      const { url: newUrl } = await adminImagesApi.upload(token, file)
+      setUrl(newUrl)
+    } catch (e: any) { onErr(e?.message || '上傳失敗') } finally { setUploading(false) }
+  }
+  async function save() {
+    if (!url.trim()) { onErr('請先上傳彩圖'); return }
+    if (!title.trim()) { onErr('請填標題'); return }
+    setSaving(true)
+    try {
+      const r = await adminMonopolyApi.setFigureSettings(token, { figure_color_url: url.trim(), figure_title: title.trim() })
+      onSaved(r)
+    } catch (e: any) { onErr(e?.message || '儲存失敗') } finally { setSaving(false) }
+  }
+
+  return (
+    <div style={panel}>
+      <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 10px' }}>完整彩圖</h2>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <div style={{ width: 120, height: 120, borderRadius: 10, overflow: 'hidden', background: 'var(--bg-2)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {url ? <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>無圖</span>}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minWidth: 220 }}>
+          <label style={{ ...ghostBtn, display: 'inline-block', textAlign: 'center', cursor: uploading ? 'default' : 'pointer', opacity: uploading ? 0.6 : 1, width: 'fit-content' }}>
+            {uploading ? '上傳中…' : '更換彩圖'}
+            <input type="file" accept="image/*" disabled={uploading} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFigure(f); e.target.value = '' }} />
+          </label>
+          <F label="標題">
+            <input style={{ ...inp, width: 260 }} value={title} onChange={(e) => setTitle(e.target.value)} />
+          </F>
+          <button onClick={save} disabled={saving} style={{ ...primaryBtn, width: 'fit-content' }}>{saving ? '儲存中…' : '儲存彩圖設定'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StickerPieceRow({ token, piece, onUpdated, onErr }: {
+  token: string
+  piece: AdminStickerPiece
+  onUpdated: (p: AdminStickerPiece) => void
+  onErr: (m: string) => void
+}) {
+  const [imgBusy, setImgBusy] = useState(false)
+  const [savingRarity, setSavingRarity] = useState(false)
+  const [savingActive, setSavingActive] = useState(false)
+
+  async function uploadImage(file: File) {
+    setImgBusy(true)
+    try {
+      const { url } = await adminImagesApi.upload(token, file)
+      const updated = await adminMonopolyApi.updateSticker(token, piece.id, { image_url: url })
+      onUpdated(updated)
+    } catch (e: any) { onErr(e?.message || '上傳失敗') } finally { setImgBusy(false) }
+  }
+  async function setRarity(rarity: 'common' | 'rare') {
+    setSavingRarity(true)
+    try { const updated = await adminMonopolyApi.updateSticker(token, piece.id, { rarity }); onUpdated(updated) }
+    catch (e: any) { onErr(e?.message || '儲存失敗') } finally { setSavingRarity(false) }
+  }
+  async function setActive(is_active: boolean) {
+    setSavingActive(true)
+    try { const updated = await adminMonopolyApi.updateSticker(token, piece.id, { is_active }); onUpdated(updated) }
+    catch (e: any) { onErr(e?.message || '儲存失敗') } finally { setSavingActive(false) }
+  }
+
+  return (
+    <div style={{ background: 'var(--bg-0, #0d0f14)', border: '1px solid var(--line-2)', borderRadius: 10, padding: 10, opacity: piece.is_active ? 1 : 0.6 }}>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ width: 52, height: 52, borderRadius: 6, overflow: 'hidden', background: 'var(--bg-2)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {piece.image_url ? <img src={piece.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 9, color: 'var(--tx-faint)' }}>無圖</span>}
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700 }}>第 {piece.position} 片</div>
+          <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{piece.title || '（未命名）'}</div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+        <select style={{ ...inp, width: 78, padding: '5px 6px', fontSize: 11.5 }} value={piece.rarity} disabled={savingRarity} onChange={(e) => setRarity(e.target.value as 'common' | 'rare')}>
+          <option value="common">common</option>
+          <option value="rare">rare</option>
+        </select>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
+          <input type="checkbox" checked={piece.is_active} disabled={savingActive} onChange={(e) => setActive(e.target.checked)} /> 啟用
+        </label>
+      </div>
+      <label style={{ ...ghostBtn, display: 'block', textAlign: 'center', marginTop: 8, cursor: imgBusy ? 'default' : 'pointer', opacity: imgBusy ? 0.6 : 1, fontSize: 11.5, padding: '6px 8px' }}>
+        {imgBusy ? '上傳中…' : piece.image_url ? '更換圖片' : '上傳圖片'}
+        <input type="file" accept="image/*" disabled={imgBusy} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage(f); e.target.value = '' }} />
+      </label>
+    </div>
+  )
+}
+
+// ============================== 分頁 e：設定 ==============================
 
 function SettingsTab({ token, settings, onSaved, onErr }: {
   token: string

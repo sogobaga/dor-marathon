@@ -2598,6 +2598,22 @@ export interface MonopolySettings {
   redeem_fallback_gp: number
 }
 
+// GET /admin/monopoly/stickers 單片（set_key 固定 'finisher'，後台不需要顯示）。
+export interface AdminStickerPiece {
+  id: string
+  position: number
+  title: string
+  image_url: string
+  rarity: 'common' | 'rare'
+  is_active: boolean
+}
+// GET /admin/monopoly/stickers 回應：9 片灰階拼圖 ＋ 彩圖 URL／標題。
+export interface AdminStickerGallery {
+  figure_color_url: string
+  figure_title: string
+  pieces: AdminStickerPiece[]
+}
+
 export const adminMonopolyApi = {
   // 獎勵池
   poolList: (token: string) => request<{ entries: PoolEntry[] }>('/admin/monopoly/pool', { headers: withAuth(token) }),
@@ -2620,6 +2636,13 @@ export const adminMonopolyApi = {
     request<{ cards: AdminKnowledgeCard[] }>(`/admin/monopoly/cards${theme ? `?theme=${theme}` : ''}`, { headers: withAuth(token) }),
   updateCard: (token: string, id: string, body: { image_url?: string; rarity?: 'common' | 'rare'; is_active?: boolean; title?: string; body?: string }) =>
     request<AdminKnowledgeCard>(`/admin/monopoly/cards/${id}`, { method: 'PATCH', headers: withAuth(token), body: JSON.stringify(body) }),
+
+  // 公仔貼紙（主要用途＝補圖／換彩圖／上下架）
+  stickers: (token: string) => request<AdminStickerGallery>('/admin/monopoly/stickers', { headers: withAuth(token) }),
+  updateSticker: (token: string, id: string, body: { image_url?: string; title?: string; rarity?: 'common' | 'rare'; is_active?: boolean }) =>
+    request<AdminStickerPiece>(`/admin/monopoly/stickers/${id}`, { method: 'PATCH', headers: withAuth(token), body: JSON.stringify(body) }),
+  setFigureSettings: (token: string, body: { figure_color_url: string; figure_title: string }) =>
+    request<{ figure_color_url: string; figure_title: string }>('/admin/monopoly/figure-settings', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
 
   // 抽卡設定
   settings: (token: string) => request<MonopolySettings>('/admin/monopoly/settings', { headers: withAuth(token) }),

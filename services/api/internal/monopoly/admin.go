@@ -37,6 +37,10 @@ func (h *Handler) AdminRouter() chi.Router {
 	r.Get("/cards", h.AdminListCards)
 	r.Patch("/cards/{id}", h.AdminUpdateCard)
 
+	r.Get("/stickers", h.AdminListStickers)
+	r.Patch("/stickers/{id}", h.AdminUpdateSticker)
+	r.Put("/figure-settings", h.AdminPutFigureSettings)
+
 	r.Get("/settings", h.AdminGetSettings)
 	r.Put("/settings", h.AdminPutSettings)
 
@@ -277,6 +281,91 @@ func (h *Handler) AdminUpdateCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, card)
+}
+
+// --- 完賽公仔貼紙管理（主要＝補圖／換彩圖，Phase 2b C） ---
+
+// AdminListStickers GET /admin/monopoly/stickers：9 片灰階拼圖（set_key='finisher'，依 position 排序）
+// ＋彩圖 URL／標題（來自 app_settings，見 AdminGetFigureSettings）。
+func (h *Handler) AdminListStickers(w http.ResponseWriter, r *http.Request) {
+	pieces, err := h.svc.repo.AdminListStickerPieces(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list sticker pieces")
+		return
+	}
+	figureColorURL, figureTitle := h.svc.repo.AdminGetFigureSettings(r.Context())
+	respondJSON(w, http.StatusOK, map[string]any{
+		"figure_color_url": figureColorURL,
+		"figure_title":     figureTitle,
+		"pieces":           pieces,
+	})
+}
+
+// AdminUpdateSticker PATCH 部分更新：image_url/title/rarity/is_active 皆選填，未帶的欄位（nil）在
+// repo 層用 COALESCE 保留原值（比照 AdminUpdateCard）。
+func (h *Handler) AdminUpdateSticker(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !isValidUUID(id) {
+		respondErr(w, http.StatusNotFound, "sticker piece not found")
+		return
+	}
+	var req struct {
+		ImageURL *string `json:"image_url"`
+		Title    *string `json:"title"`
+		Rarity   *string `json:"rarity"`
+		IsActive *bool   `json:"is_active"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Rarity != nil && *req.Rarity != "common" && *req.Rarity != "rare" {
+		respondErr(w, http.StatusBadRequest, "rarity must be common or rare")
+		return
+	}
+	piece, err := h.svc.repo.AdminUpdateStickerPiece(r.Context(), id, req.ImageURL, req.Title, req.Rarity, req.IsActive)
+	if errors.Is(err, ErrNotFound) {
+		respondErr(w, http.StatusNotFound, "sticker piece not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to update sticker piece")
+		return
+	}
+	respondJSON(w, http.StatusOK, piece)
+}
+
+// AdminPutFigureSettings PUT /admin/monopoly/figure-settings：完整覆寫彩圖 URL＋標題（兩者皆必填，
+// 比照 AdminPutSettings 的全量寫入風格，不是欄位級部分更新）。
+func (h *Handler) AdminPutFigureSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FigureColorURL string `json:"figure_color_url"`
+		FigureTitle    string `json:"figure_title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.FigureColorURL = strings.TrimSpace(req.FigureColorURL)
+	req.FigureTitle = strings.TrimSpace(req.FigureTitle)
+	if req.FigureColorURL == "" {
+		respondErr(w, http.StatusBadRequest, "figure_color_url is required")
+		return
+	}
+	if req.FigureTitle == "" {
+		respondErr(w, http.StatusBadRequest, "figure_title is required")
+		return
+	}
+	if err := h.svc.repo.AdminSetSetting(r.Context(), "monopoly_figure_color_url", req.FigureColorURL); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to save settings")
+		return
+	}
+	if err := h.svc.repo.AdminSetSetting(r.Context(), "monopoly_figure_title", req.FigureTitle); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to save settings")
+		return
+	}
+	figureColorURL, figureTitle := h.svc.repo.AdminGetFigureSettings(r.Context())
+	respondJSON(w, http.StatusOK, map[string]any{"figure_color_url": figureColorURL, "figure_title": figureTitle})
 }
 
 // --- 抽卡設定 ---
