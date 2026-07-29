@@ -10,14 +10,15 @@ import (
 )
 
 // GetStickerPieces 回傳 set_key='finisher' 全部 active 貼紙片（依 position 排序），附使用者收集狀態
-// （LEFT JOIN user_stickers：查無列即 owned=false, obtained_count=0）。
+// （LEFT JOIN monopoly_user_stickers：查無列即 owned=false, obtained_count=0）。
+// 注意用 monopoly_user_stickers 而非 user_stickers——後者是 001_init 的完賽貼紙舊表（sticker_no/race_id）。
 func (r *Repository) GetStickerPieces(ctx context.Context, userID string) ([]StickerPieceEntry, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT p.position, p.title, p.rarity, p.image_url,
 		       (u.piece_id IS NOT NULL) AS owned,
 		       COALESCE(u.obtained_count, 0) AS obtained_count
 		FROM sticker_pieces p
-		LEFT JOIN user_stickers u ON u.piece_id = p.id AND u.user_id = $1
+		LEFT JOIN monopoly_user_stickers u ON u.piece_id = p.id AND u.user_id = $1
 		WHERE p.set_key = 'finisher' AND p.is_active = true
 		ORDER BY p.position`, userID)
 	if err != nil {

@@ -316,7 +316,7 @@ func (r *Repository) drawSticker(ctx context.Context, tx pgx.Tx, userID, drawID 
 	}
 
 	tag, err := tx.Exec(ctx, `
-		INSERT INTO user_stickers (user_id, piece_id) VALUES ($1,$2)
+		INSERT INTO monopoly_user_stickers (user_id, piece_id) VALUES ($1,$2)
 		ON CONFLICT (user_id, piece_id) DO NOTHING`, userID, picked.id)
 	if err != nil {
 		return nil, fmt.Errorf("insert user sticker: %w", err)
@@ -324,7 +324,7 @@ func (r *Repository) drawSticker(ctx context.Context, tx pgx.Tx, userID, drawID 
 	picked.isDuplicate = tag.RowsAffected() == 0
 	if picked.isDuplicate {
 		if _, err := tx.Exec(ctx, `
-			UPDATE user_stickers SET obtained_count=obtained_count+1, last_obtained_at=NOW()
+			UPDATE monopoly_user_stickers SET obtained_count=obtained_count+1, last_obtained_at=NOW()
 			WHERE user_id=$1 AND piece_id=$2`, userID, picked.id); err != nil {
 			return nil, fmt.Errorf("bump user sticker: %w", err)
 		}

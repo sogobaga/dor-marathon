@@ -13,7 +13,7 @@ import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 export default function FigureStickerScreen({ onClose }: { onClose: () => void }) {
   const user = useUser()
   const uid = user?.id ?? null
-  const { data } = useSWR(
+  const { data, error } = useSWR(
     uid && getUserToken() ? ['monopoly-stickers', uid] : null,
     () => withUserAuth((t) => monopolyApi.stickers(t)),
   )
@@ -30,6 +30,8 @@ export default function FigureStickerScreen({ onClose }: { onClose: () => void }
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 32px' }}>
         {!user ? (
           <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>請先登入才能查看公仔收集</div>
+        ) : error ? (
+          <div style={{ color: 'var(--hunt)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>載入失敗，請稍後再試</div>
         ) : data === undefined ? (
           <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
         ) : (
