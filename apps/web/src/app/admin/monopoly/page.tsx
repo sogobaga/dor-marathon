@@ -6,7 +6,7 @@ import {
   adminMonopolyApi, adminImagesApi,
   type PoolEntry, type PoolEntryInput, type MonopolyPool, type MonopolyRewardType,
   type RedeemBatch, type RedeemCode, type AdminKnowledgeCard, type MonopolySettings,
-  type AdminStickerGallery, type AdminStickerPiece,
+  type AdminStickerGallery, type AdminStickerPiece, type FigureRedemption, type FigureRedemptionStatus,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import GpCoin from '@/components/GpCoin'
@@ -25,7 +25,14 @@ const REWARD_TYPE_LABEL: Record<MonopolyRewardType, string> = {
 const REWARD_TYPES: MonopolyRewardType[] = ['gp', 'dp', 'vip_days', 'knowledge_card', 'sticker', 'redemption_code']
 const POOL_LABEL: Record<MonopolyPool, string> = { chance: '機會', destiny: '命運' }
 
-type Tab = 'pool' | 'redeem' | 'cards' | 'stickers' | 'settings'
+type Tab = 'pool' | 'redeem' | 'cards' | 'stickers' | 'redemptions' | 'settings'
+
+const REDEMPTION_STATUS_LABEL: Record<FigureRedemptionStatus, string> = {
+  pending: '待處理',
+  fulfilled: '已寄出',
+  rejected: '已拒絕',
+}
+const REDEMPTION_STATUSES: FigureRedemptionStatus[] = ['pending', 'fulfilled', 'rejected']
 
 export default function AdminMonopolyPage() {
   const router = useRouter()
@@ -38,6 +45,7 @@ export default function AdminMonopolyPage() {
   const [batches, setBatches] = useState<RedeemBatch[] | null>(null)
   const [cards, setCards] = useState<AdminKnowledgeCard[] | null>(null)
   const [stickers, setStickers] = useState<AdminStickerGallery | null>(null)
+  const [redemptions, setRedemptions] = useState<FigureRedemption[] | null>(null)
   const [settings, setSettings] = useState<MonopolySettings | null>(null)
 
   const load = useCallback(() => {
@@ -53,6 +61,7 @@ export default function AdminMonopolyPage() {
     adminMonopolyApi.redeemBatches(t).then((r) => setBatches(r.batches)).catch(onErr)
     adminMonopolyApi.cards(t).then((r) => setCards(r.cards)).catch(onErr)
     adminMonopolyApi.stickers(t).then((r) => setStickers(r)).catch(onErr)
+    adminMonopolyApi.redemptions(t).then((r) => setRedemptions(r.redemptions)).catch(onErr)
     adminMonopolyApi.settings(t).then((r) => setSettings(r)).catch(onErr)
   }, [router])
   useEffect(() => { load() }, [load])
@@ -75,6 +84,7 @@ export default function AdminMonopolyPage() {
           ['redeem', `兌換碼 (${batches?.length ?? '—'})`],
           ['cards', `知識卡 (${cards?.length ?? '—'})`],
           ['stickers', `公仔貼紙 (${stickers?.pieces.length ?? '—'})`],
+          ['redemptions', `公仔兌換 (${redemptions?.length ?? '—'})`],
           ['settings', '設定'],
         ] as [Tab, string][]).map(([v, label]) => (
           <button
@@ -126,7 +136,7 @@ export default function AdminMonopolyPage() {
           token={token}
           gallery={stickers}
           onFigureSaved={(s) => {
-            setStickers((g) => (g ? { ...g, figure_color_url: s.figure_color_url, figure_title: s.figure_title } : g))
+            setStickers((g) => (g ? { ...g, figure_color_url: s.figure_color_url, figure_title: s.figure_title, line_oa: s.line_oa, landing_url: s.landing_url } : g))
             flash('✓ 彩圖設定已儲存')
           }}
           onPieceUpdated={(p) => setStickers((g) => (g ? { ...g, pieces: g.pieces.map((x) => (x.id === p.id ? p : x)) } : g))}
@@ -134,6 +144,15 @@ export default function AdminMonopolyPage() {
         />
       )}
       {tab === 'stickers' && !stickers && <div style={{ color: 'var(--tx-dim)' }}>載入中…</div>}
+      {tab === 'redemptions' && token && (
+        <RedemptionsTab
+          token={token}
+          redemptions={redemptions}
+          onUpdated={(r) => setRedemptions((rs) => rs?.map((x) => (x.id === r.id ? r : x)) ?? rs)}
+          onErr={setErr}
+          flash={flash}
+        />
+      )}
       {tab === 'settings' && token && settings && (
         <SettingsTab
           token={token}
@@ -590,7 +609,7 @@ function CardRow({ token, card, onUpdated, onErr }: {
 function StickersTab({ token, gallery, onFigureSaved, onPieceUpdated, onErr }: {
   token: string
   gallery: AdminStickerGallery
-  onFigureSaved: (s: { figure_color_url: string; figure_title: string }) => void
+  onFigureSaved: (s: { figure_color_url: string; figure_title: string; line_oa: string; landing_url: string }) => void
   onPieceUpdated: (p: AdminStickerPiece) => void
   onErr: (m: string) => void
 }) {
@@ -600,6 +619,8 @@ function StickersTab({ token, gallery, onFigureSaved, onPieceUpdated, onErr }: {
         token={token}
         figureColorUrl={gallery.figure_color_url}
         figureTitle={gallery.figure_title}
+        lineOA={gallery.line_oa}
+        landingUrl={gallery.landing_url}
         onSaved={onFigureSaved}
         onErr={onErr}
       />
@@ -618,18 +639,22 @@ function StickersTab({ token, gallery, onFigureSaved, onPieceUpdated, onErr }: {
   )
 }
 
-function FigureSettingsPanel({ token, figureColorUrl, figureTitle, onSaved, onErr }: {
+function FigureSettingsPanel({ token, figureColorUrl, figureTitle, lineOA, landingUrl, onSaved, onErr }: {
   token: string
   figureColorUrl: string
   figureTitle: string
-  onSaved: (s: { figure_color_url: string; figure_title: string }) => void
+  lineOA: string
+  landingUrl: string
+  onSaved: (s: { figure_color_url: string; figure_title: string; line_oa: string; landing_url: string }) => void
   onErr: (m: string) => void
 }) {
   const [url, setUrl] = useState(figureColorUrl)
   const [title, setTitle] = useState(figureTitle)
+  const [lineOAValue, setLineOAValue] = useState(lineOA)
+  const [landingUrlValue, setLandingUrlValue] = useState(landingUrl)
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
-  useEffect(() => { setUrl(figureColorUrl); setTitle(figureTitle) }, [figureColorUrl, figureTitle])
+  useEffect(() => { setUrl(figureColorUrl); setTitle(figureTitle); setLineOAValue(lineOA); setLandingUrlValue(landingUrl) }, [figureColorUrl, figureTitle, lineOA, landingUrl])
 
   async function uploadFigure(file: File) {
     setUploading(true)
@@ -643,7 +668,10 @@ function FigureSettingsPanel({ token, figureColorUrl, figureTitle, onSaved, onEr
     if (!title.trim()) { onErr('請填標題'); return }
     setSaving(true)
     try {
-      const r = await adminMonopolyApi.setFigureSettings(token, { figure_color_url: url.trim(), figure_title: title.trim() })
+      const r = await adminMonopolyApi.setFigureSettings(token, {
+        figure_color_url: url.trim(), figure_title: title.trim(),
+        line_oa: lineOAValue.trim(), landing_url: landingUrlValue.trim(),
+      })
       onSaved(r)
     } catch (e: any) { onErr(e?.message || '儲存失敗') } finally { setSaving(false) }
   }
@@ -662,6 +690,12 @@ function FigureSettingsPanel({ token, figureColorUrl, figureTitle, onSaved, onEr
           </label>
           <F label="標題">
             <input style={{ ...inp, width: 260 }} value={title} onChange={(e) => setTitle(e.target.value)} />
+          </F>
+          <F label="LINE OA">
+            <input style={{ ...inp, width: 260 }} value={lineOAValue} onChange={(e) => setLineOAValue(e.target.value)} placeholder="如 @855xfwqe" />
+          </F>
+          <F label="完賽公仔 Landing URL">
+            <input style={{ ...inp, width: 260 }} value={landingUrlValue} onChange={(e) => setLandingUrlValue(e.target.value)} placeholder="https://runner-figure.bravelog.tw/" />
           </F>
           <button onClick={save} disabled={saving} style={{ ...primaryBtn, width: 'fit-content' }}>{saving ? '儲存中…' : '儲存彩圖設定'}</button>
         </div>
@@ -727,7 +761,85 @@ function StickerPieceRow({ token, piece, onUpdated, onErr }: {
   )
 }
 
-// ============================== 分頁 e：設定 ==============================
+// ============================== 分頁 e：公仔兌換 ==============================
+
+function RedemptionsTab({ token, redemptions, onUpdated, onErr, flash }: {
+  token: string
+  redemptions: FigureRedemption[] | null
+  onUpdated: (r: FigureRedemption) => void
+  onErr: (m: string) => void
+  flash: (m: string) => void
+}) {
+  if (!redemptions) return <div style={{ color: 'var(--tx-dim)' }}>載入中…</div>
+  return (
+    <div style={panel}>
+      <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>完賽公仔兌換申請</h2>
+      <p style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 0, marginBottom: 14, lineHeight: 1.7 }}>
+        玩家集滿 9 片拼圖後送出兌換申請，於此確認寄送狀態；狀態異動即時儲存。
+      </p>
+      {redemptions.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--tx-dim)' }}>目前沒有兌換申請</div>}
+      {redemptions.length > 0 && (
+        <div style={{ border: '1px solid var(--line)', borderRadius: 10, overflow: 'hidden' }}>
+          <Row head><C w={2}>帳號編碼</C><C w={2}>顯示名</C><C w={3}>Email</C><C w={2}>申請時間</C><C w={2}>狀態</C><C w={3}>備註</C></Row>
+          {redemptions.map((r) => (
+            <RedemptionRow key={r.id} token={token} redemption={r} onUpdated={onUpdated} onErr={onErr} flash={flash} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RedemptionRow({ token, redemption, onUpdated, onErr, flash }: {
+  token: string
+  redemption: FigureRedemption
+  onUpdated: (r: FigureRedemption) => void
+  onErr: (m: string) => void
+  flash: (m: string) => void
+}) {
+  const [note, setNote] = useState(redemption.note)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setNote(redemption.note) }, [redemption.note])
+
+  async function patch(status: FigureRedemptionStatus, noteValue: string) {
+    setSaving(true)
+    try {
+      const updated = await adminMonopolyApi.updateRedemption(token, redemption.id, { status, note: noteValue })
+      onUpdated(updated)
+      flash('✓ 已更新')
+    } catch (e: any) { onErr(e?.message || '更新失敗') } finally { setSaving(false) }
+  }
+
+  return (
+    <Row>
+      <C w={2} mono>{redemption.account_code}</C>
+      <C w={2}>{redemption.nickname}</C>
+      <C w={3} dim>{redemption.email}</C>
+      <C w={2} dim>{new Date(redemption.created_at).toLocaleString('zh-TW')}</C>
+      <div style={{ flex: 2, minWidth: 0 }}>
+        <select
+          style={{ ...inp, width: '100%', padding: '6px 8px', fontSize: 12.5 }}
+          value={redemption.status}
+          disabled={saving}
+          onChange={(e) => patch(e.target.value as FigureRedemptionStatus, note)}
+        >
+          {REDEMPTION_STATUSES.map((s) => <option key={s} value={s}>{REDEMPTION_STATUS_LABEL[s]}</option>)}
+        </select>
+      </div>
+      <div style={{ flex: 3, minWidth: 0, display: 'flex', gap: 6 }}>
+        <input
+          style={{ ...inp, flex: 1, minWidth: 0, padding: '6px 8px', fontSize: 12.5 }}
+          value={note}
+          placeholder="備註（選填）"
+          onChange={(e) => setNote(e.target.value)}
+          onBlur={() => { if (note !== redemption.note) patch(redemption.status, note) }}
+        />
+      </div>
+    </Row>
+  )
+}
+
+// ============================== 分頁 f：設定 ==============================
 
 function SettingsTab({ token, settings, onSaved, onErr }: {
   token: string

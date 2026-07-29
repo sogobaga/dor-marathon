@@ -2612,11 +2612,26 @@ export interface AdminStickerPiece {
   rarity: 'common' | 'rare'
   is_active: boolean
 }
-// GET /admin/monopoly/stickers 回應：9 片灰階拼圖 ＋ 彩圖 URL／標題。
+// GET /admin/monopoly/stickers 回應：9 片灰階拼圖 ＋ 彩圖 URL／標題／LINE OA／完賽公仔 Landing URL。
 export interface AdminStickerGallery {
   figure_color_url: string
   figure_title: string
+  line_oa: string
+  landing_url: string
   pieces: AdminStickerPiece[]
+}
+
+// GET /admin/monopoly/redemptions 單列／PATCH 回應：完賽公仔兌換申請（JOIN users/user_profiles）。
+export type FigureRedemptionStatus = 'pending' | 'fulfilled' | 'rejected'
+export interface FigureRedemption {
+  id: string
+  user_id: string
+  account_code: string
+  nickname: string
+  email: string
+  status: FigureRedemptionStatus
+  note: string
+  created_at: string
 }
 
 export const adminMonopolyApi = {
@@ -2646,8 +2661,13 @@ export const adminMonopolyApi = {
   stickers: (token: string) => request<AdminStickerGallery>('/admin/monopoly/stickers', { headers: withAuth(token) }),
   updateSticker: (token: string, id: string, body: { image_url?: string; title?: string; rarity?: 'common' | 'rare'; is_active?: boolean }) =>
     request<AdminStickerPiece>(`/admin/monopoly/stickers/${id}`, { method: 'PATCH', headers: withAuth(token), body: JSON.stringify(body) }),
-  setFigureSettings: (token: string, body: { figure_color_url: string; figure_title: string }) =>
-    request<{ figure_color_url: string; figure_title: string }>('/admin/monopoly/figure-settings', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  setFigureSettings: (token: string, body: { figure_color_url: string; figure_title: string; line_oa?: string; landing_url?: string }) =>
+    request<{ figure_color_url: string; figure_title: string; line_oa: string; landing_url: string }>('/admin/monopoly/figure-settings', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+
+  // 完賽公仔兌換申請（審核）；PATCH 為全量覆寫（非欄位級部分更新），status 必填限三種，note 未帶視同空字串。
+  redemptions: (token: string) => request<{ redemptions: FigureRedemption[] }>('/admin/monopoly/redemptions', { headers: withAuth(token) }),
+  updateRedemption: (token: string, id: string, patch: { status: FigureRedemptionStatus; note?: string }) =>
+    request<FigureRedemption>(`/admin/monopoly/redemptions/${id}`, { method: 'PATCH', headers: withAuth(token), body: JSON.stringify(patch) }),
 
   // 抽卡設定
   settings: (token: string) => request<MonopolySettings>('/admin/monopoly/settings', { headers: withAuth(token) }),
