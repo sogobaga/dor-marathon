@@ -38,8 +38,9 @@ func (s *Service) GetKnowledgeCards(ctx context.Context, userID string) (*Knowle
 }
 
 // GetStickers 完賽公仔九宮格收集狀態（供 Phase 2b 收集頁）。pieces 由 repo 純讀取組裝；
-// title/figure_url 讀 app_settings，查無設定時退回與 105_finisher_figure_stickers.sql 種子值一致的
-// 硬編碼預設，避免設定被誤刪時頁面整個壞掉。
+// title/figure_url/line_oa/landing_url 讀 app_settings，查無設定時退回與
+// 105_finisher_figure_stickers.sql／107_monopoly_figure_redeem.sql 種子值一致的硬編碼預設，避免設定
+// 被誤刪時頁面整個壞掉。redemption_status 為該使用者目前兌換申請狀態（見 GetFigureRedemptionStatus）。
 func (s *Service) GetStickers(ctx context.Context, userID string) (*StickerGallery, error) {
 	pieces, err := s.repo.GetStickerPieces(ctx, userID)
 	if err != nil {
@@ -53,13 +54,41 @@ func (s *Service) GetStickers(ctx context.Context, userID string) (*StickerGalle
 	}
 	title := appsettings.GetString(ctx, s.repo.db, "monopoly_figure_title", "完賽跑者公仔")
 	figureURL := appsettings.GetString(ctx, s.repo.db, "monopoly_figure_color_url", "/source/ui/03_figure/runner_figure_color.png")
+	lineOA := appsettings.GetString(ctx, s.repo.db, "monopoly_figure_line_oa", "@855xfwqe")
+	landingURL := appsettings.GetString(ctx, s.repo.db, "monopoly_figure_landing_url", "https://runner-figure.bravelog.tw/")
+	redemptionStatus, err := s.repo.GetFigureRedemptionStatus(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	return &StickerGallery{
-		Title:     title,
-		FigureURL: figureURL,
-		Total:     len(pieces),
-		Owned:     owned,
-		Pieces:    pieces,
+		Title:            title,
+		FigureURL:        figureURL,
+		Total:            len(pieces),
+		Owned:            owned,
+		Pieces:           pieces,
+		LineOA:           lineOA,
+		LandingURL:       landingURL,
+		RedemptionStatus: redemptionStatus,
 	}, nil
+}
+
+// RedeemFigure 完賽公仔兌換申請（A）：伺服器驗證使用者已集滿全部九宮格貼紙才可申請（未滿回
+// ErrStickersIncomplete）；已申請過則冪等回現況，不重複建立、不報錯（見 Repository.EnsureFigureRedemption）。
+func (s *Service) RedeemFigure(ctx context.Context, userID string) (string, error) {
+	pieces, err := s.repo.GetStickerPieces(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	owned := 0
+	for _, p := range pieces {
+		if p.Owned {
+			owned++
+		}
+	}
+	if len(pieces) == 0 || owned < len(pieces) {
+		return "", ErrStickersIncomplete
+	}
+	return s.repo.EnsureFigureRedemption(ctx, userID)
 }
 
 // diceGPCost 讀後台可調的擲骰成本（預設 3 GP），與 race package 存取 s.repo.db 的慣例一致

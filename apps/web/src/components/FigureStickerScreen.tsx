@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import useSWR from 'swr'
 import { createPortal } from 'react-dom'
 import { monopolyApi, type StickerPiece } from '@/lib/api'
@@ -13,12 +14,19 @@ import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 export default function FigureStickerScreen({ onClose }: { onClose: () => void }) {
   const user = useUser()
   const uid = user?.id ?? null
-  const { data, error } = useSWR(
+  const { data, error, mutate } = useSWR(
     uid && getUserToken() ? ['monopoly-stickers', uid] : null,
     () => withUserAuth((t) => monopolyApi.stickers(t)),
   )
+  const [showRedeem, setShowRedeem] = useState(false)
 
   const complete = !!data && data.total > 0 && data.owned >= data.total
+
+  async function handleRedeemFigure() {
+    const res = await withUserAuth((t) => monopolyApi.redeemFigure(t))
+    // 直接把新狀態寫回 SWR 快取（不重打 API），彈窗會因 data 變動同步更新按鈕文字
+    mutate((prev) => (prev ? { ...prev, redemption_status: res.status as typeof prev.redemption_status } : prev), { revalidate: false })
+  }
 
   const body = (
     <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
@@ -74,14 +82,90 @@ export default function FigureStickerScreen({ onClose }: { onClose: () => void }
                 />
               </div>
             )}
+
+            {/* 兌換公仔入口：未集滿時顯示暗色提示按鈕（不可點），集滿才亮起可點開兌換彈窗 */}
+            <div style={{ marginTop: 20, textAlign: 'center' }}>
+              <button
+                onClick={() => complete && setShowRedeem(true)}
+                disabled={!complete}
+                style={complete ? redeemBtnActive : redeemBtnDisabled}
+              >
+                {complete ? '🎁 兌換公仔' : '集滿九宮格即可兌換'}
+              </button>
+            </div>
           </>
         )}
       </div>
+
+      {showRedeem && data && (
+        <FigureRedeemModal
+          lineOA={data.line_oa}
+          landingUrl={data.landing_url}
+          redemptionStatus={data.redemption_status}
+          onClose={() => setShowRedeem(false)}
+          onRedeem={handleRedeemFigure}
+        />
+      )}
     </div>
   )
 
   if (typeof document === 'undefined') return null
   return createPortal(body, document.body)
+}
+
+// 兌換公仔彈窗：三顆直向按鈕——我要兌換／聯繫官方 LINE OA／完賽公仔。點外（overlay）關閉。
+// redemptionStatus 由父層 SWR data 傳入，送出兌換申請後父層會更新快取，此處隨 props 同步刷新文字，
+// 不另外持有一份狀態，避免兩處狀態不同步。
+function FigureRedeemModal({
+  lineOA, landingUrl, redemptionStatus, onClose, onRedeem,
+}: {
+  lineOA: string
+  landingUrl: string
+  redemptionStatus: string
+  onClose: () => void
+  onRedeem: () => Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+
+  async function handleRedeem() {
+    if (redemptionStatus !== '' || busy) return
+    setBusy(true)
+    try {
+      await onRedeem()
+    } catch {
+      // 送出失敗：保留原狀態（''），按鈕維持可點，玩家可重試
+    }
+    setBusy(false)
+  }
+
+  const label =
+    redemptionStatus === 'pending' ? '兌換公仔申請中' :
+    redemptionStatus === 'fulfilled' ? '已兌換' :
+    redemptionStatus === 'rejected' ? '申請未通過，請聯繫官方' :
+    busy ? '送出中…' : '我要兌換'
+  const disabled = redemptionStatus !== '' || busy
+
+  return (
+    <div data-skin="default" onClick={onClose} style={modalOverlay}>
+      <div onClick={(e) => e.stopPropagation()} style={modalCard}>
+        <div style={{ fontSize: 18, fontWeight: 900, color: '#fff', textAlign: 'center' }}>兌換公仔</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
+          <button onClick={handleRedeem} disabled={disabled} style={{ ...modalBtnPrimary, opacity: disabled ? 0.6 : 1 }}>
+            {label}
+          </button>
+          <button
+            onClick={() => window.open(`https://line.me/R/ti/p/${encodeURIComponent(lineOA)}`, '_blank', 'noopener')}
+            style={modalBtnGhost}
+          >
+            聯繫官方 LINE OA（{lineOA}）
+          </button>
+          <button onClick={() => window.open(landingUrl, '_blank', 'noopener')} style={modalBtnGhost}>
+            完賽公仔
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // 單一九宮格格子。position 1..9 依 3×3 row-major 換算成 col/row(0..2)：
@@ -122,3 +206,20 @@ function StickerCell({ piece, figureUrl }: { piece: StickerPiece; figureUrl: str
 }
 
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0, flexShrink: 0 }
+
+// 兌換入口按鈕：集滿(complete)才亮起可點；未集滿顯示暗色提示，讓玩家知道目標。金底一律白字。
+const redeemBtnActive: React.CSSProperties = {
+  width: '100%', maxWidth: 300, background: 'var(--gold)', color: '#fff', fontWeight: 900,
+  border: 'none', borderRadius: 12, padding: '13px 16px', fontSize: 14.5, cursor: 'pointer', fontFamily: 'inherit',
+  boxShadow: '0 6px 18px rgba(231,184,75,.35)',
+}
+const redeemBtnDisabled: React.CSSProperties = {
+  width: '100%', maxWidth: 300, background: 'var(--bg-2)', color: 'var(--tx-faint)', fontWeight: 700,
+  border: '1px solid var(--line-2)', borderRadius: 12, padding: '13px 16px', fontSize: 13.5, cursor: 'not-allowed', fontFamily: 'inherit',
+}
+
+// 兌換彈窗樣式（比照 CancelSubscriptionModal 的 overlay/卡片慣例）；zIndex 須高於本頁 portal 的 2000
+const modalOverlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 2600, background: 'rgba(4,8,6,.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }
+const modalCard: React.CSSProperties = { width: '100%', maxWidth: 340, background: '#0b0e13', border: '1px solid var(--line-2)', borderRadius: 16, padding: '18px 16px', boxShadow: '0 16px 50px rgba(0,0,0,.7)' }
+const modalBtnPrimary: React.CSSProperties = { width: '100%', background: 'var(--gold)', color: '#fff', fontWeight: 900, border: 'none', borderRadius: 11, padding: '12px', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }
+const modalBtnGhost: React.CSSProperties = { width: '100%', background: 'transparent', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 11, padding: '12px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }

@@ -25,6 +25,7 @@ func (h *Handler) Router() http.Handler {
 	r.Post("/roll", h.Roll)
 	r.Get("/knowledge", h.Knowledge)
 	r.Get("/stickers", h.Stickers)
+	r.Post("/figure/redeem", h.RedeemFigure)
 	return r
 }
 
@@ -92,6 +93,26 @@ func (h *Handler) Stickers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, gallery)
+}
+
+// POST /api/v1/monopoly/figure/redeem —— 完賽公仔兌換申請（A）：伺服器驗證已集滿全部九宮格貼紙才
+// 可申請，未集滿回 400。已申請過則冪等回現況（見 Service.RedeemFigure / Repository.EnsureFigureRedemption）。
+func (h *Handler) RedeemFigure(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	status, err := h.svc.RedeemFigure(r.Context(), uid)
+	if errors.Is(err, ErrStickersIncomplete) {
+		respondErr(w, http.StatusBadRequest, "尚未集滿")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to submit redemption")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": status})
 }
 
 func respondJSON(w http.ResponseWriter, status int, data any) {

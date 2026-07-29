@@ -2531,6 +2531,9 @@ export interface StickerGallery {
   total: number       // 恆為 9
   owned: number        // 已收集片數
   pieces: StickerPiece[] // 依 position 排序
+  line_oa: string    // 官方 LINE OA id（如 '@855xfwqe'），兌換彈窗用來組 LINE 加好友連結
+  landing_url: string // 完賽公仔 Landing Page URL
+  redemption_status: '' | 'pending' | 'fulfilled' | 'rejected' // 該使用者兌換申請狀態；''=未申請
 }
 
 export const monopolyApi = {
@@ -2539,6 +2542,8 @@ export const monopolyApi = {
   roll: (token: string) => request<MonopolyRollResult>('/monopoly/roll', { method: 'POST', headers: withAuth(token) }),
   knowledge: (token: string) => request<KnowledgeGallery>('/monopoly/knowledge', { headers: withAuth(token) }),
   stickers: (token: string) => request<StickerGallery>('/monopoly/stickers', { headers: withAuth(token) }),
+  // 完賽公仔兌換申請：伺服器驗證已集滿九宮格才受理、冪等（已申請過就回現況）；未集滿回 400
+  redeemFigure: (token: string) => request<{ status: string }>('/monopoly/figure/redeem', { method: 'POST', headers: withAuth(token) }),
 }
 
 // --- Admin: 環台大富翁（C1 後端 /admin/monopoly；見 internal/monopoly/admin.go・admin_repo.go） ---

@@ -41,6 +41,9 @@ func (h *Handler) AdminRouter() chi.Router {
 	r.Patch("/stickers/{id}", h.AdminUpdateSticker)
 	r.Put("/figure-settings", h.AdminPutFigureSettings)
 
+	r.Get("/redemptions", h.AdminListFigureRedemptions)
+	r.Patch("/redemptions/{id}", h.AdminUpdateFigureRedemption)
+
 	r.Get("/settings", h.AdminGetSettings)
 	r.Put("/settings", h.AdminPutSettings)
 
@@ -293,10 +296,12 @@ func (h *Handler) AdminListStickers(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to list sticker pieces")
 		return
 	}
-	figureColorURL, figureTitle := h.svc.repo.AdminGetFigureSettings(r.Context())
+	figureColorURL, figureTitle, lineOA, landingURL := h.svc.repo.AdminGetFigureSettings(r.Context())
 	respondJSON(w, http.StatusOK, map[string]any{
 		"figure_color_url": figureColorURL,
 		"figure_title":     figureTitle,
+		"line_oa":          lineOA,
+		"landing_url":      landingURL,
 		"pieces":           pieces,
 	})
 }
@@ -336,11 +341,15 @@ func (h *Handler) AdminUpdateSticker(w http.ResponseWriter, r *http.Request) {
 }
 
 // AdminPutFigureSettings PUT /admin/monopoly/figure-settings：完整覆寫彩圖 URL＋標題（兩者皆必填，
-// 比照 AdminPutSettings 的全量寫入風格，不是欄位級部分更新）。
+// 比照 AdminPutSettings 的全量寫入風格，不是欄位級部分更新）。line_oa/landing_url 為選填指標欄位
+// （比照 AdminUpdateSticker 的 COALESCE 部分更新風格）：未帶（nil）＝維持原設定不動，方便舊前端呼叫
+// 不受影響；帶了（含空字串）＝直接覆寫，允許管理者刻意清空。
 func (h *Handler) AdminPutFigureSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		FigureColorURL string `json:"figure_color_url"`
-		FigureTitle    string `json:"figure_title"`
+		FigureColorURL string  `json:"figure_color_url"`
+		FigureTitle    string  `json:"figure_title"`
+		LineOA         *string `json:"line_oa"`
+		LandingURL     *string `json:"landing_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid json")
@@ -364,8 +373,71 @@ func (h *Handler) AdminPutFigureSettings(w http.ResponseWriter, r *http.Request)
 		respondErr(w, http.StatusInternalServerError, "failed to save settings")
 		return
 	}
-	figureColorURL, figureTitle := h.svc.repo.AdminGetFigureSettings(r.Context())
-	respondJSON(w, http.StatusOK, map[string]any{"figure_color_url": figureColorURL, "figure_title": figureTitle})
+	if req.LineOA != nil {
+		if err := h.svc.repo.AdminSetSetting(r.Context(), "monopoly_figure_line_oa", strings.TrimSpace(*req.LineOA)); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to save settings")
+			return
+		}
+	}
+	if req.LandingURL != nil {
+		if err := h.svc.repo.AdminSetSetting(r.Context(), "monopoly_figure_landing_url", strings.TrimSpace(*req.LandingURL)); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to save settings")
+			return
+		}
+	}
+	figureColorURL, figureTitle, lineOA, landingURL := h.svc.repo.AdminGetFigureSettings(r.Context())
+	respondJSON(w, http.StatusOK, map[string]any{
+		"figure_color_url": figureColorURL,
+		"figure_title":     figureTitle,
+		"line_oa":          lineOA,
+		"landing_url":      landingURL,
+	})
+}
+
+// --- 完賽公仔兌換管理（A 後端） ---
+
+var validFigureRedemptionStatuses = map[string]bool{"pending": true, "fulfilled": true, "rejected": true}
+
+// AdminListFigureRedemptions GET /admin/monopoly/redemptions：全部兌換申請，依 created_at DESC。
+func (h *Handler) AdminListFigureRedemptions(w http.ResponseWriter, r *http.Request) {
+	list, err := h.svc.repo.AdminListFigureRedemptions(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list figure redemptions")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"redemptions": list})
+}
+
+// AdminUpdateFigureRedemption PATCH /admin/monopoly/redemptions/{id}：更新狀態＋備註，status 限
+// pending/fulfilled/rejected；找不到該筆回 404。
+func (h *Handler) AdminUpdateFigureRedemption(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !isValidUUID(id) {
+		respondErr(w, http.StatusNotFound, "redemption not found")
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+		Note   string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if !validFigureRedemptionStatuses[req.Status] {
+		respondErr(w, http.StatusBadRequest, "status must be pending, fulfilled, or rejected")
+		return
+	}
+	item, err := h.svc.repo.AdminUpdateFigureRedemption(r.Context(), id, req.Status, req.Note)
+	if errors.Is(err, ErrNotFound) {
+		respondErr(w, http.StatusNotFound, "redemption not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to update figure redemption")
+		return
+	}
+	respondJSON(w, http.StatusOK, item)
 }
 
 // --- 抽卡設定 ---

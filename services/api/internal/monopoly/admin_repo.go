@@ -316,12 +316,76 @@ func (r *Repository) AdminUpdateStickerPiece(ctx context.Context, id string, ima
 	return p, nil
 }
 
-// AdminGetFigureSettings 讀 monopoly_figure_color_url / monopoly_figure_title，查無時回退與
-// service.go GetStickerGallery 相同的硬編碼預設值（避免單一壞設定卡死收集頁彩圖展示）。
-func (r *Repository) AdminGetFigureSettings(ctx context.Context) (figureColorURL, figureTitle string) {
+// AdminGetFigureSettings 讀 monopoly_figure_color_url / monopoly_figure_title / monopoly_figure_line_oa /
+// monopoly_figure_landing_url，查無時回退與 service.go GetStickers、107_monopoly_figure_redeem.sql
+// 種子值一致的硬編碼預設（避免單一壞設定卡死收集頁彩圖展示／兌換引導）。
+func (r *Repository) AdminGetFigureSettings(ctx context.Context) (figureColorURL, figureTitle, lineOA, landingURL string) {
 	figureTitle = appsettings.GetString(ctx, r.db, "monopoly_figure_title", "完賽跑者公仔")
 	figureColorURL = appsettings.GetString(ctx, r.db, "monopoly_figure_color_url", "/source/ui/03_figure/runner_figure_color.png")
-	return figureColorURL, figureTitle
+	lineOA = appsettings.GetString(ctx, r.db, "monopoly_figure_line_oa", "@855xfwqe")
+	landingURL = appsettings.GetString(ctx, r.db, "monopoly_figure_landing_url", "https://runner-figure.bravelog.tw/")
+	return figureColorURL, figureTitle, lineOA, landingURL
+}
+
+// --- 完賽公仔兌換管理（A 後端） ---
+
+// AdminFigureRedemption GET /admin/monopoly/redemptions 單列／PATCH 回應，JOIN users/user_profiles
+// 取顯示名／帳號編碼／email（帳號編碼屬隱私例外，後台管理頁可顯示，見任務背景）。
+type AdminFigureRedemption struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	AccountCode string    `json:"account_code"`
+	Nickname    string    `json:"nickname"`
+	Email       string    `json:"email"`
+	Status      string    `json:"status"`
+	Note        string    `json:"note"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// AdminListFigureRedemptions 全部兌換申請，依 created_at DESC（後台要看得到全貌，不篩選 status）。
+func (r *Repository) AdminListFigureRedemptions(ctx context.Context) ([]*AdminFigureRedemption, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT fr.id, fr.user_id, COALESCE(u.account_code,''),
+		       COALESCE(NULLIF(p.nickname,''), u.handle), u.email, fr.status, fr.note, fr.created_at
+		FROM monopoly_figure_redemptions fr
+		JOIN users u ON u.id = fr.user_id
+		LEFT JOIN user_profiles p ON p.user_id = u.id
+		ORDER BY fr.created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list figure redemptions: %w", err)
+	}
+	defer rows.Close()
+	out := []*AdminFigureRedemption{}
+	for rows.Next() {
+		e := &AdminFigureRedemption{}
+		if err := rows.Scan(&e.ID, &e.UserID, &e.AccountCode, &e.Nickname, &e.Email, &e.Status, &e.Note, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// AdminUpdateFigureRedemption 更新狀態＋備註（status 由 admin.go 驗證限 pending/fulfilled/rejected）；
+// 找不到該筆回 ErrNotFound。
+func (r *Repository) AdminUpdateFigureRedemption(ctx context.Context, id, status, note string) (*AdminFigureRedemption, error) {
+	row := r.db.QueryRow(ctx, `
+		UPDATE monopoly_figure_redemptions fr SET status=$2, note=$3, updated_at=NOW()
+		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
+		WHERE fr.id=$1 AND u.id = fr.user_id
+		RETURNING fr.id, fr.user_id, COALESCE(u.account_code,''),
+		          COALESCE(NULLIF(p.nickname,''), u.handle), u.email, fr.status, fr.note, fr.created_at`,
+		id, status, note,
+	)
+	e := &AdminFigureRedemption{}
+	err := row.Scan(&e.ID, &e.UserID, &e.AccountCode, &e.Nickname, &e.Email, &e.Status, &e.Note, &e.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 // --- 抽卡設定 ---

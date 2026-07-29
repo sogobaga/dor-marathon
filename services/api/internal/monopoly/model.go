@@ -117,10 +117,16 @@ type StickerPieceEntry struct {
 
 // StickerGallery GET /monopoly/stickers 回應：完賽公仔九宮格收集狀態。Title/FigureURL 來自
 // app_settings（monopoly_figure_title/monopoly_figure_color_url，見 105_finisher_figure_stickers.sql）。
+// LineOA/LandingURL 為集滿後的兌換引導（monopoly_figure_line_oa/monopoly_figure_landing_url，見
+// 107_monopoly_figure_redeem.sql）；RedemptionStatus 為該使用者目前兌換申請狀態
+// （空字串=尚未申請｜pending｜fulfilled｜rejected，見 Repository.GetFigureRedemptionStatus）。
 type StickerGallery struct {
-	Title     string              `json:"title"`
-	FigureURL string              `json:"figure_url"`
-	Total     int                 `json:"total"`
-	Owned     int                 `json:"owned"`
-	Pieces    []StickerPieceEntry `json:"pieces"`
+	Title            string              `json:"title"`
+	FigureURL        string              `json:"figure_url"`
+	Total            int                 `json:"total"`
+	Owned            int                 `json:"owned"`
+	Pieces           []StickerPieceEntry `json:"pieces"`
+	LineOA           string              `json:"line_oa"`
+	LandingURL       string              `json:"landing_url"`
+	RedemptionStatus string              `json:"redemption_status"`
 }
