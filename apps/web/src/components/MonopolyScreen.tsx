@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { mutate } from 'swr'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { monopolyApi, type MonopolyRollResult, type DrawResult } from '@/lib/api'
 import GpCoin from './GpCoin'
@@ -104,15 +105,15 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
     if (dieIntervalRef.current != null) window.clearInterval(dieIntervalRef.current)
   }, [])
 
-  // 公仔收集入口按鈕的 X/9 徽章：獨立於棋盤狀態載入，失敗就靜默留白（按鈕退回不帶數字顯示）。
-  useEffect(() => {
-    let cancelled = false
+  // 公仔收集入口按鈕的 X/9 徽章：進頁載入 + 每次抽到貼紙後重抓（見 movePiece）。失敗靜默留白。
+  const refreshStickerCount = useCallback(async () => {
     if (!getUserToken()) return
-    withUserAuth((t) => monopolyApi.stickers(t))
-      .then((gallery) => { if (!cancelled) setStickerCount({ owned: gallery.owned, total: gallery.total }) })
-      .catch(() => {})
-    return () => { cancelled = true }
+    try {
+      const gallery = await withUserAuth((t) => monopolyApi.stickers(t))
+      setStickerCount({ owned: gallery.owned, total: gallery.total })
+    } catch { /* 靜默：按鈕退回不帶數字顯示 */ }
   }, [])
+  useEffect(() => { refreshStickerCount() }, [refreshStickerCount])
 
   // 預載 6 張骰面圖，避免第一次滾動動畫時才載入造成閃爍
   useEffect(() => {
@@ -142,6 +143,11 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
     setGpBalance(res.gp_balance)
     if (res.draw_pending && res.draw_result) {
       setDrawModal({ landedOn: res.landed_on as 'chance' | 'destiny', result: res.draw_result })
+      // 抽到公仔碎片 → 更新入口徽章 X/9，並讓收集頁的 SWR 快取失效（下次開頁即最新）
+      if (res.draw_result.type === 'sticker') {
+        refreshStickerCount()
+        mutate(['monopoly-stickers', user?.id])
+      }
     } else if (res.laps_gained > 0) {
       setLapCelebration({ laps: laps + res.laps_gained, gp: res.lap_reward_gp })
     }
