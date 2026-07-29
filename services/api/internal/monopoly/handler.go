@@ -24,6 +24,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/state", h.State)
 	r.Post("/roll", h.Roll)
 	r.Get("/knowledge", h.Knowledge)
+	r.Get("/stickers", h.Stickers)
 	return r
 }
 
@@ -72,6 +73,22 @@ func (h *Handler) Knowledge(w http.ResponseWriter, r *http.Request) {
 	gallery, err := h.svc.GetKnowledgeCards(r.Context(), uid)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to get knowledge cards")
+		return
+	}
+	respondJSON(w, http.StatusOK, gallery)
+}
+
+// GET /api/v1/monopoly/stickers —— 完賽公仔九宮格收集狀態（Phase 2b）；貼紙不需防劇透，見
+// Repository.GetStickerPieces：全部 pieces 一律回 gray_url，owned 只影響收集狀態顯示。
+func (h *Handler) Stickers(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	gallery, err := h.svc.GetStickers(r.Context(), uid)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get stickers")
 		return
 	}
 	respondJSON(w, http.StatusOK, gallery)

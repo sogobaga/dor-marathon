@@ -5,6 +5,7 @@ import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { monopolyApi, type MonopolyRollResult, type DrawResult } from '@/lib/api'
 import GpCoin from './GpCoin'
 import DpCoin from './DpCoin'
+import FigureStickerScreen from './FigureStickerScreen'
 
 // 環台大富翁 Phase 1：盤面遊戲。
 // 盤面固定 46 格（position 0=START，1..45 為格子，繞一圈=46 格），座標由底圖量出、寫死成常數
@@ -62,6 +63,8 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
   const [lapCelebration, setLapCelebration] = useState<{ laps: number; gp: number } | null>(null)
   const [startFlash, setStartFlash] = useState(false)
   const [showGpInfo, setShowGpInfo] = useState(false)
+  const [showFigure, setShowFigure] = useState(false) // 公仔收集：本檔自管開關 + 直接渲染全螢幕頁（比照 MemberPanel 的 showKnowledge）
+  const [stickerCount, setStickerCount] = useState<{ owned: number; total: number } | null>(null)
 
   // 校準模式（?cal=1）：開發用，拖曳 46 格標記校正座標；一般玩家完全不受影響
   const [calMode] = useState<boolean>(
@@ -99,6 +102,16 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
 
   useEffect(() => () => {
     if (dieIntervalRef.current != null) window.clearInterval(dieIntervalRef.current)
+  }, [])
+
+  // 公仔收集入口按鈕的 X/9 徽章：獨立於棋盤狀態載入，失敗就靜默留白（按鈕退回不帶數字顯示）。
+  useEffect(() => {
+    let cancelled = false
+    if (!getUserToken()) return
+    withUserAuth((t) => monopolyApi.stickers(t))
+      .then((gallery) => { if (!cancelled) setStickerCount({ owned: gallery.owned, total: gallery.total }) })
+      .catch(() => {})
+    return () => { cancelled = true }
   }, [])
 
   // 預載 6 張骰面圖，避免第一次滾動動畫時才載入造成閃爍
@@ -309,9 +322,20 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
           <div style={{ color: 'var(--hunt)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>載入失敗，請稍後再試</div>
         ) : (
           <>
-            {/* 狀態列：目前圈數 */}
+            {/* 狀態列：目前圈數 + 公仔收集入口（靠右） */}
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--tx-dim)' }}>第 {laps} 圈</span>
+              <button
+                onClick={() => setShowFigure(true)}
+                style={{
+                  marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5,
+                  border: '1px solid var(--line)', background: 'var(--bg-2)', color: 'var(--tx-dim)',
+                  borderRadius: 999, padding: '5px 12px', fontSize: 12, fontWeight: 700,
+                  fontFamily: 'inherit', cursor: 'pointer',
+                }}
+              >
+                🧩 公仔收集{stickerCount ? ` ${stickerCount.owned}/${stickerCount.total}` : ''} ›
+              </button>
             </div>
 
             {/* 盤面 */}
@@ -455,6 +479,8 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
           </div>
         </div>
       )}
+
+      {showFigure && <FigureStickerScreen onClose={() => setShowFigure(false)} />}
 
       <style>{`
         @keyframes monoDiceShake { 0%{transform:rotate(-6deg) scale(1)} 50%{transform:rotate(6deg) scale(1.06)} 100%{transform:rotate(-6deg) scale(1)} }

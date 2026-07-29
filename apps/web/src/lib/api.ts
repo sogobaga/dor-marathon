@@ -2515,11 +2515,30 @@ export interface KnowledgeGallery {
   cards: KnowledgeCard[]
 }
 
+// 完賽公仔九宮格貼紙（GET /monopoly/stickers）。與知識卡不同，貼紙不做防劇透——灰階片本來就要讓
+// 玩家看到缺哪片，所以每片一律回 gray_url，不因 owned=false 而省略欄位。
+export interface StickerPiece {
+  position: number // 1..9，3×3 row-major：1=左上 2=上中 3=右上 4=中左 5=中央 6=中右 7=左下 8=下中 9=右下
+  title: string
+  rarity: 'common' | 'rare'
+  gray_url: string
+  owned: boolean
+  obtained_count: number
+}
+export interface StickerGallery {
+  title: string      // 公仔名稱（例如「完賽跑者公仔」）
+  figure_url: string // 完整彩圖 1254×1254，已收集的格子用此圖裁 1/9 顯示
+  total: number       // 恆為 9
+  owned: number        // 已收集片數
+  pieces: StickerPiece[] // 依 position 排序
+}
+
 export const monopolyApi = {
   state: (token: string) => request<MonopolyState>('/monopoly/state', { headers: withAuth(token) }),
   // GP 不足回 409 {error:"GP 不足"}（呼叫端用 e.status===409 辨識，不必比對訊息文字）
   roll: (token: string) => request<MonopolyRollResult>('/monopoly/roll', { method: 'POST', headers: withAuth(token) }),
   knowledge: (token: string) => request<KnowledgeGallery>('/monopoly/knowledge', { headers: withAuth(token) }),
+  stickers: (token: string) => request<StickerGallery>('/monopoly/stickers', { headers: withAuth(token) }),
 }
 
 // --- Admin: 環台大富翁（C1 後端 /admin/monopoly；見 internal/monopoly/admin.go・admin_repo.go） ---

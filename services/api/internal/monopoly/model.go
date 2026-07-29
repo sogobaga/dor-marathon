@@ -103,3 +103,24 @@ type KnowledgeGallery struct {
 	Counts KnowledgeCounts      `json:"counts"`
 	Cards  []KnowledgeCardEntry `json:"cards"`
 }
+
+// StickerPieceEntry GET /monopoly/stickers 九宮格單片。與知識卡不同，貼紙不需防劇透——灰階片本來就
+// 要顯示讓玩家看到缺哪片，所以一律回 gray_url，不因 Owned=false 而隱藏欄位。
+type StickerPieceEntry struct {
+	Position      int    `json:"position"`
+	Title         string `json:"title"`
+	Rarity        string `json:"rarity"`
+	GrayURL       string `json:"gray_url"`
+	Owned         bool   `json:"owned"`
+	ObtainedCount int    `json:"obtained_count"`
+}
+
+// StickerGallery GET /monopoly/stickers 回應：完賽公仔九宮格收集狀態。Title/FigureURL 來自
+// app_settings（monopoly_figure_title/monopoly_figure_color_url，見 105_finisher_figure_stickers.sql）。
+type StickerGallery struct {
+	Title     string              `json:"title"`
+	FigureURL string              `json:"figure_url"`
+	Total     int                 `json:"total"`
+	Owned     int                 `json:"owned"`
+	Pieces    []StickerPieceEntry `json:"pieces"`
+}

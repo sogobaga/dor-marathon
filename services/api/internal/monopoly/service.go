@@ -37,6 +37,31 @@ func (s *Service) GetKnowledgeCards(ctx context.Context, userID string) (*Knowle
 	return s.repo.GetKnowledgeCards(ctx, userID)
 }
 
+// GetStickers 完賽公仔九宮格收集狀態（供 Phase 2b 收集頁）。pieces 由 repo 純讀取組裝；
+// title/figure_url 讀 app_settings，查無設定時退回與 105_finisher_figure_stickers.sql 種子值一致的
+// 硬編碼預設，避免設定被誤刪時頁面整個壞掉。
+func (s *Service) GetStickers(ctx context.Context, userID string) (*StickerGallery, error) {
+	pieces, err := s.repo.GetStickerPieces(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	owned := 0
+	for _, p := range pieces {
+		if p.Owned {
+			owned++
+		}
+	}
+	title := appsettings.GetString(ctx, s.repo.db, "monopoly_figure_title", "完賽跑者公仔")
+	figureURL := appsettings.GetString(ctx, s.repo.db, "monopoly_figure_color_url", "/source/ui/03_figure/runner_figure_color.png")
+	return &StickerGallery{
+		Title:     title,
+		FigureURL: figureURL,
+		Total:     len(pieces),
+		Owned:     owned,
+		Pieces:    pieces,
+	}, nil
+}
+
 // diceGPCost 讀後台可調的擲骰成本（預設 3 GP），與 race package 存取 s.repo.db 的慣例一致
 // （appsettings.GetInt 只吃 *pgxpool.Pool，同套件內直接讀 repo 的 db 欄位，不需另外分層）。
 func diceGPCost(ctx context.Context, s *Service) int {
