@@ -11,16 +11,18 @@ import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 // id/theme/main_category/rarity/owned/obtained_count，展示欄位（title/body/...）一律不存在，
 // 前端顯示「？」卡背即可，main_category/rarity 可當朦朧提示但不需額外遮蔽。
 // 主題色：跑者訓練＝綠（沿用全站 --fug／--fug-ink），跑者照護＝金（沿用全站 --gold，金底一律白字）。
-const THEME_INFO: Record<'training' | 'care', { label: string; emoji: string; accent: string; headerBg: string }> = {
+const THEME_INFO: Record<'training' | 'care', { label: string; emoji: string; icon: string; accent: string; headerBg: string }> = {
   training: {
     label: '跑者訓練',
     emoji: '🎁',
+    icon: '/source/ui/01_icons/DOR-Runner-Training-Icon.png',
     accent: 'var(--fug)',
     headerBg: 'linear-gradient(135deg, rgba(255,255,255,.2), rgba(255,255,255,0) 55%), var(--fug)',
   },
   care: {
     label: '跑者照護',
     emoji: '📜',
+    icon: '/source/ui/01_icons/DOR-Runner-Care-Icon.png',
     accent: 'var(--gold)',
     headerBg: 'linear-gradient(135deg, rgba(255,255,255,.2), rgba(255,255,255,0) 55%), var(--gold)',
   },
@@ -99,7 +101,13 @@ export default function KnowledgeGalleryScreen({ onClose }: { onClose: () => voi
                   color: active ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: active ? 800 : 500,
                   borderBottom: active ? `2px solid ${info.accent}` : '2px solid transparent',
                 }}
-              >{info.emoji} {info.label}</button>
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={info.icon} alt="" style={{ width: 20, height: 20, objectFit: 'contain', display: 'block' }} />
+                  {info.label}
+                </span>
+              </button>
             )
           })}
         </div>
