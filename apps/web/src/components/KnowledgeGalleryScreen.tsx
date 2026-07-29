@@ -104,7 +104,7 @@ export default function KnowledgeGalleryScreen({ onClose }: { onClose: () => voi
               >
                 <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={info.icon} alt="" style={{ width: 20, height: 20, objectFit: 'contain', display: 'block' }} />
+                  <img src={info.icon} alt="" style={{ width: 30, height: 30, objectFit: 'contain', display: 'block' }} />
                   {info.label}
                 </span>
               </button>
@@ -194,7 +194,9 @@ function KnowledgeCardTile({ card, theme, onSelect }: { card: KnowledgeCard; the
         // eslint-disable-next-line @next/next/no-img-element
         <img src={card.image_url} alt={card.title} style={{ width: '100%', flex: 1, minHeight: 0, objectFit: 'cover' }} />
       ) : (
-        <div style={{ width: '100%', flex: 1, minHeight: 0, background: info.headerBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>{info.emoji}</div>
+        <div style={{ width: '100%', flex: 1, minHeight: 0, background: info.headerBg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 10px', boxSizing: 'border-box' }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', lineHeight: 1.5, textAlign: 'center', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' }}>{card.player_action}</span>
+        </div>
       )}
       <div style={{ padding: '5px 6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
         <span style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.title}</span>
