@@ -32,3 +32,6 @@ services/worker/worker.exe
 
 # 上線前安全稽核報告（含未修補漏洞細節，勿進版控）
 PRE-LAUNCH-REVIEW.md
+
+# Cloudflare 設定指引（內部 ops 文件）
+CLOUDFLARE-SETUP.md
