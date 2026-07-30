@@ -252,13 +252,66 @@ func (r *Repository) GetPayableOrder(ctx context.Context, orderID, userID string
 	return o, err
 }
 
-// CreateTx 建立一筆待付款交易，記下這筆交易當下用的是哪組特店（ecpayEnv/ecpayMerchantID），
-// 之後 Notify 驗章與退款都要用同一組憑證，不可事後改用全域設定推斷。
-func (r *Repository) CreateTx(ctx context.Context, orderID, tradeNo, ecpayEnv, ecpayMerchantID string, amountCents int) error {
-	_, err := r.db.Exec(ctx, `
+// ErrPendingTxExists 建立新 pending 交易時撞到 uq_paytx_pending_per_order 部分唯一索引
+// （migration 111）。CheckoutCreateTx 已用 SELECT ... FOR UPDATE 鎖住 order 列並在同一交易內先
+// supersede 舊 pending 再 insert，正常路徑不會觸發；保留此錯誤只是防禦性處理（DB 唯一索引是最後
+// 一道防線），呼叫端應視為「請重新整理再試」而非把使用者導向付款頁。
+var ErrPendingTxExists = errors.New("payment: pending transaction already exists for this order")
+
+// CheckoutCreateTx 在單一交易內完成「鎖定 order 列 → 作廢該訂單既有 pending 舊交易 → 建立新 pending
+// 交易」，取代原本各自 autocommit、無鎖的 SupersedePendingTx + CreateTx 兩步（TOCTOU 競態修補
+// SEC-M6 續補）。
+//
+// 舊版問題：SupersedePendingTx 與 CreateTx 是兩條獨立敘述，中間沒有交易也沒有鎖，併發兩次 Checkout
+// （雙擊/兩分頁，都在既有 10/min 限流內）可能交錯成：
+//
+//	A supersede(無事) → B supersede(無事) → A insert tx1(pending) → B insert tx2(pending)
+//
+// 兩筆 pending 各自都能被 MarkTxPaid 的 CAS（WHERE status IN ('pending','failed')）標成 paid，
+// 若剛好兩筆都真的完成付款，就是真實雙扣款。
+//
+// 修法：用 SELECT ... FOR UPDATE 鎖住 orders 該列，讓併發的第二個 Checkout 請求在第一個 COMMIT
+// 前必須等待鎖；第一個 COMMIT 後，第二個才會繼續執行 supersede+insert，此時第一筆已經是
+// superseded，兩者不再交錯，任何時刻同一訂單只會有一筆 pending。migration 111 的部分唯一索引
+// （payment_transactions(order_id) WHERE status='pending'）是 DB 層最後一道防線：即使鎖失效
+// （例如未來改連線池、或新增繞過本方法的寫入路徑），INSERT 也會直接違反唯一約束而失敗
+// （回傳 ErrPendingTxExists），不會靜默留下第二筆 pending。
+//
+// 舊 tx 被作廢後即使晚到 Notify 也不會再被標 paid/failed，僅停留在 superseded，不影響退款流程
+// （退款只認 status='paid' 的交易，見 refund.go GetPaidTxForOrder）。
+func (r *Repository) CheckoutCreateTx(ctx context.Context, orderID, tradeNo, ecpayEnv, ecpayMerchantID string, amountCents int) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("checkout: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// 鎖住 order 列：同一訂單的併發 Checkout 會在此序列化執行，避免下面的 supersede+insert 交錯。
+	var locked string
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM orders WHERE id=$1 FOR UPDATE`, orderID).Scan(&locked); err != nil {
+		return fmt.Errorf("checkout: lock order: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE payment_transactions
+		SET status='superseded'
+		WHERE order_id=$1 AND status='pending'`, orderID); err != nil {
+		return fmt.Errorf("checkout: supersede pending tx: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO payment_transactions (order_id, merchant_trade_no, amount_cents, ecpay_env, ecpay_merchant_id)
-		VALUES ($1, $2, $3, $4, NULLIF($5,''))`, orderID, tradeNo, amountCents, ecpayEnv, ecpayMerchantID)
-	return err
+		VALUES ($1, $2, $3, $4, NULLIF($5,''))`, orderID, tradeNo, amountCents, ecpayEnv, ecpayMerchantID); err != nil {
+		if isUniqueViolation(err) {
+			return ErrPendingTxExists
+		}
+		return fmt.Errorf("checkout: insert pending tx: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("checkout: commit: %w", err)
+	}
+	return nil
 }
 
 // TxForNotify Notify 處理需要的交易資訊
@@ -389,8 +442,16 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 在單一交易內鎖住 order 列、作廢該訂單既有的 pending 舊交易、建立新 pending 交易，確保接下來
+	// 新建的這筆是唯一能被 Notify 標 paid 的有效 pending 交易（見 CheckoutCreateTx 註解——修補
+	// 舊版 supersede+create 兩條各自 autocommit 敘述之間的 TOCTOU 競態，防重複結帳造成兩筆各自
+	// 入帳的真實雙扣款）。
 	tradeNo := genTradeNo()
-	if err := h.repo.CreateTx(r.Context(), req.OrderID, tradeNo, env, cfg.MerchantID, order.TotalCents); err != nil {
+	if err := h.repo.CheckoutCreateTx(r.Context(), req.OrderID, tradeNo, env, cfg.MerchantID, order.TotalCents); err != nil {
+		if errors.Is(err, ErrPendingTxExists) {
+			respondErr(w, http.StatusConflict, "已有付款請求處理中，請稍後重試")
+			return
+		}
 		respondErr(w, http.StatusInternalServerError, "failed to create transaction")
 		return
 	}
@@ -476,9 +537,26 @@ func (h *Handler) Notify(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, err := h.repo.MarkTxPaid(r.Context(), tradeNo, rtnCode, rtnMsg, params["TradeNo"], params["PaymentType"], tradeAmtNTD*100, raw); err != nil {
+		applied, err := h.repo.MarkTxPaid(r.Context(), tradeNo, rtnCode, rtnMsg, params["TradeNo"], params["PaymentType"], tradeAmtNTD*100, raw)
+		if err != nil {
 			w.Write([]byte("0|MarkTxPaidFailed"))
 			return
+		}
+		if !applied && tx.Status != "paid" {
+			// MarkTxPaid 的 CAS（WHERE status IN ('pending','failed')）沒有命中：這筆 tx 目前是
+			// superseded 或 refunded（tx.Status=='paid' 是 ECPay 對同一筆交易重送 Notify 的正常重放，
+			// 上面已排除、不需要告警）。代表綠界真的回報這筆交易付款成功，但 payment_transactions
+			// 沒有任何 row 被標成 paid 來記錄這筆真實入帳——尤其是 superseded 的情況：使用者對「已被
+			// 更新一筆結帳取代」的舊付款頁完成付款（如中途返回又重新結帳一次，卻回到舊分頁按下付款），
+			// 錢是真的被收走了，但這筆 tx 停在 superseded；之後對帳/退款只認 status='paid'
+			// （見 refund.go GetPaidTxForOrder）會找不到這筆交易，需要人工介入登記，故在此留下告警痕跡。
+			// 不因此擋下訂單入帳：下面仍會呼叫 MarkOrderPaid（其本身是 CAS，冪等），避免使用者已經
+			// 真實付款卻因為這筆 tx 沒被標到而拿不到報名資格——那會比「多一筆需要人工對帳的告警」更糟。
+			log.Warn().
+				Str("merchant_trade_no", tradeNo).
+				Str("order_id", tx.OrderID).
+				Str("tx_status", tx.Status).
+				Msg("ecpay notify: payment confirmed but MarkTxPaid CAS did not update this tx row (status not pending/failed) — needs manual reconciliation")
 		}
 		// 無論這次是否真的觸發了 tx 從 pending 轉成 paid（applied），都要呼叫 MarkOrderPaid：
 		// 它本身是 CAS（WHERE status='pending'），對重送/重放天生冪等。若只在 applied=true 時才呼叫，

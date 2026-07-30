@@ -2,7 +2,11 @@
 // 用法（本機，連 postgres:5432）：
 //
 //	DATABASE_URL=postgres://dor:dor_dev_secret@localhost:5432/dor_db \
-//	  ADMIN_LOGIN=admin ADMIN_PASS=1234qwer go run ./cmd/createadmin
+//	  ADMIN_LOGIN=<自訂帳號> ADMIN_PASS=<自訂強密碼> go run ./cmd/createadmin
+//
+// ADMIN_LOGIN / ADMIN_PASS 必須明確指定（不再有預設值）：本指令對既有帳號是
+// ON CONFLICT DO UPDATE 靜默覆寫密碼＋強制 is_super_admin=TRUE，若沿用固定預設弱密碼，
+// 誤對正式庫執行等同開後門／覆寫掉正式 super_admin 密碼。未設任一變數會直接拒絕執行。
 //
 // 登入帳號存於 users.email 欄位（系統以 email 為登入識別），可為純帳號字串。
 package main
@@ -26,8 +30,8 @@ func main() {
 	if dsn == "" {
 		log.Fatal().Msg("DATABASE_URL not set")
 	}
-	login := getenv("ADMIN_LOGIN", "admin")
-	pass := getenv("ADMIN_PASS", "1234qwer")
+	login := mustEnv("ADMIN_LOGIN")
+	pass := mustEnv("ADMIN_PASS")
 	name := getenv("ADMIN_NAME", "管理員")
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost)
@@ -64,4 +68,14 @@ func getenv(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// mustEnv 強制要求環境變數必須明確設定，未設即印警告並拒絕執行（log.Fatal 會 os.Exit(1)）——
+// 避免任何人省略 ADMIN_LOGIN/ADMIN_PASS 誤用固定預設值，對正式庫建立或覆寫成弱密碼 super_admin。
+func mustEnv(k string) string {
+	v := os.Getenv(k)
+	if v == "" {
+		log.Fatal().Msgf("%s not set — refusing to run with a default admin credential; set %s explicitly", k, k)
+	}
+	return v
 }

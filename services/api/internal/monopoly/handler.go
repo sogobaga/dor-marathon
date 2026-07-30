@@ -1,12 +1,16 @@
 package monopoly
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
 )
 
@@ -18,15 +22,81 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
-// Router 掛 /monopoly（需登入，由呼叫端的 RequireAuth 群組保證）。
+// Router 掛 /monopoly（需登入，由呼叫端的 RequireAuth 群組保證）。另掛 requireEntry：
+// 修 SEC-H5——先前入口白名單只有前端 MemberPanel 擋 UI，非白名單會員直接打 API 仍可繞過
+// （含免費刷 GP 擲骰、申請兌換實體公仔）。requireEntry 在後端把「入口狀態」複查一次，
+// 非 shown（且非 super_admin）一律 403，語意對齊 profile/membership.go 的 resolveEntry。
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
+	r.Use(h.requireEntry)
 	r.Get("/state", h.State)
 	r.Post("/roll", h.Roll)
 	r.Get("/knowledge", h.Knowledge)
 	r.Get("/stickers", h.Stickers)
 	r.Post("/figure/redeem", h.RedeemFigure)
 	return r
+}
+
+// requireEntry 後端強制 monopoly 入口白名單（SEC-H5）。獨立實作於 monopoly 套件內（而非
+// import profile 的未匯出 resolveEntry），語意保持一致：讀 app_settings
+// monopoly_entry_state/monopoly_entry_whitelist + 該使用者 email/account_code/is_super_admin，
+// super_admin 一律放行；state=open 放行；state=whitelist 命中白名單放行；其餘
+// （含 hidden/locked/未設定）一律 403 ——「locked」在前端是顯示但不可按，對應到後端一樣不放行。
+func (h *Handler) requireEntry(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+		if uid == "" {
+			respondErr(w, http.StatusUnauthorized, "login required")
+			return
+		}
+		var email, code string
+		var isSuperAdmin bool
+		if err := h.svc.repo.db.QueryRow(r.Context(), `
+			SELECT COALESCE(email,''), COALESCE(account_code,''), is_super_admin
+			FROM users WHERE id=$1`, uid).Scan(&email, &code, &isSuperAdmin); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to resolve access")
+			return
+		}
+		if !monopolyEntryAllowed(r.Context(), h.svc.repo.db, email, code, isSuperAdmin) {
+			respondErr(w, http.StatusForbidden, "monopoly not available")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// monopolyEntryAllowed 判定該使用者是否為「shown」狀態，可存取 monopoly API。
+func monopolyEntryAllowed(ctx context.Context, db *pgxpool.Pool, email, code string, isSuperAdmin bool) bool {
+	if isSuperAdmin {
+		return true
+	}
+	switch appsettings.GetString(ctx, db, "monopoly_entry_state", "hidden") {
+	case "open":
+		return true
+	case "whitelist":
+		return monopolyWhitelisted(appsettings.GetString(ctx, db, "monopoly_entry_whitelist", ""), email, code)
+	default: // hidden 或 locked 或未設定 → 不放行
+		return false
+	}
+}
+
+// monopolyWhitelisted 與 profile/membership.go 的 personalWhitelisted 同語意：白名單以
+// 換行/逗號/分號/空白分隔，可填帳號編碼（#可省）或 email，大小寫不敏感。
+func monopolyWhitelisted(list, email, code string) bool {
+	email = strings.ToLower(strings.TrimSpace(email))
+	code = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(code), "#"))
+	for _, tok := range strings.FieldsFunc(list, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ';' || r == ' ' || r == '\t'
+	}) {
+		t := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(tok), "#"))
+		if t == "" {
+			continue
+		}
+		if (email != "" && t == email) || (code != "" && t == code) {
+			return true
+		}
+	}
+	return false
 }
 
 // GET /api/v1/monopoly/state

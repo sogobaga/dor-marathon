@@ -73,6 +73,10 @@ func (h *Handler) PromoCheck(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusNotFound, "race not found")
 		return
 	}
+	if errors.Is(err, ErrAddonQtyInvalid) {
+		respondErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to check promo")
 		return
@@ -496,7 +500,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrGroupRequired), errors.Is(err, ErrGroupNotFound),
 		errors.Is(err, ErrNoGroups), errors.Is(err, ErrMissingRequiredField),
 		errors.Is(err, ErrGroupRestriction), errors.Is(err, ErrAddonNotFound),
-		errors.Is(err, ErrAddonLimit), errors.Is(err, ErrInvalidInvoice),
+		errors.Is(err, ErrAddonLimit), errors.Is(err, ErrAddonQtyInvalid),
+		errors.Is(err, ErrInvalidInvoice),
 		errors.Is(err, promo.ErrNotFound), errors.Is(err, promo.ErrInactive),
 		errors.Is(err, promo.ErrNotStarted), errors.Is(err, promo.ErrExpired),
 		errors.Is(err, promo.ErrWrongRace), errors.Is(err, promo.ErrWrongUser):

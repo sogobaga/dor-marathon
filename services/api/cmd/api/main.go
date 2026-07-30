@@ -186,6 +186,7 @@ func main() {
 			JWTSecret:          cfg.JWTSecret,
 		},
 		middleware.RequireAuth(authSvc),
+		rdb,
 	)
 
 	// Terra 聚合器（Phase 0 骨架）：一條 webhook 收 Garmin/COROS/Strava 正規化活動。
@@ -233,6 +234,14 @@ func main() {
 		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-ID"},
 		AllowCredentials: true,
 	}))
+	// PERF-M3：Go 層應用層 gzip/br 壓縮（不假設 Railway edge 有補），涵蓋 JSON/HTML/文字等預設類型。
+	r.Use(chimiddleware.Compress(5))
+	// SEC-M4：全域 request body 大小上限（1MB），避免超大 JSON payload 撐爆記憶體。
+	// 圖片/音檔上傳端點各自已有自己的 5MB MaxBytesReader，排除在外（見 bodylimit.go 註解）。
+	r.Use(middleware.MaxBodyBytes(1<<20,
+		"/api/v1/admin/images", "/api/v1/profile/avatar",
+		"/api/v1/admin/personal-tasks/import", // xlsx 轉 JSON 整包匯入，見 middleware.MaxBodyBytes 註解
+	))
 
 	// Health check：不碰 DB（避免外部監控/部署探針每次喚醒 Neon compute）。DB 就緒檢查改走 /health/db。
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -255,11 +264,29 @@ func main() {
 		})
 
 		// --- 公開端點 ---
+		// SEC-H1：登入/註冊/refresh/Google 皆為公開端點、無帳號可綁，以 IP 維度節流
+		// （各自獨立 10/min，防暴破/憑證填充/refresh 濫用）——但 IP 維度依賴 chi RealIP，
+		// 可被客戶端偽造的 X-Forwarded-For/X-Real-IP/True-Client-IP 繞過（SEC-M8，
+		// Cloudflare 上線前無法根治，見 middleware.ClientIP 註解）。
+		// 因此 login/register/google 再疊加「帳號維度」限流（10 次/5min，見
+		// middleware.AccountField/GoogleIDTokenAccount）：以 body 內的 email/id_token
+		// 帳號當 key，不可被 header 偽造繞過，即使攻擊者每次都換 IP/偽造標頭，
+		// 對同一目標帳號（尤其 admin，/auth/login 與一般會員共用、無帳號級鎖定）的
+		// 暴力破解仍會被擋下。refresh 的憑證是不可猜測的 token 本身，不需要帳號維度。
 		r.Route("/auth", func(r chi.Router) {
-			r.Post("/register", authHandler.Register)
-			r.Post("/login", authHandler.Login)
-			r.Post("/google", authHandler.Google)
-			r.Post("/refresh", authHandler.Refresh)
+			r.With(
+				middleware.RateLimit(rdb, "auth_register", 10, time.Minute, middleware.ClientIP),
+				middleware.RateLimit(rdb, "auth_register_acct", 10, 5*time.Minute, middleware.AccountField("email")),
+			).Post("/register", authHandler.Register)
+			r.With(
+				middleware.RateLimit(rdb, "auth_login", 10, time.Minute, middleware.ClientIP),
+				middleware.RateLimit(rdb, "auth_login_acct", 10, 5*time.Minute, middleware.AccountField("email")),
+			).Post("/login", authHandler.Login)
+			r.With(
+				middleware.RateLimit(rdb, "auth_google", 10, time.Minute, middleware.ClientIP),
+				middleware.RateLimit(rdb, "auth_google_acct", 10, 5*time.Minute, middleware.GoogleIDTokenAccount),
+			).Post("/google", authHandler.Google)
+			r.With(middleware.RateLimit(rdb, "auth_refresh", 10, time.Minute, middleware.ClientIP)).Post("/refresh", authHandler.Refresh)
 			r.With(middleware.RequireAuth(authSvc)).Delete("/logout", authHandler.Logout)
 			r.With(middleware.RequireAuth(authSvc)).Get("/me", authHandler.Me)
 		})
@@ -283,6 +310,9 @@ func main() {
 		r.Get("/interstitial", appSettingsHandler.PublicInterstitial)
 
 		// Strava 整合（callback/webhook 公開；connect/status/disconnect 由 router 內自帶登入）
+		// SEC-H1/H4：webhook（per-owner）與 /sync（per-user）節流已在 StravaHandler 內部用注入的
+		// rdb 做（見 internal/integration/strava.go allowRate），此處不再疊加粗粒度 mount 級節流，
+		// 避免連坐節流到同掛載下呼叫頻率高的 /status、/connect。
 		r.Mount("/integrations/strava", stravaHandler.Router())
 		r.Mount("/integrations/terra", terraHandler.Router())
 
@@ -293,17 +323,20 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireAuth(authSvc))
 
-			// 綠界結帳（產生付款表單參數）
-			r.Post("/payments/ecpay/checkout", paymentHandler.Checkout)
+			// 綠界結帳（產生付款表單參數）— SEC-H1：防灌單/重複觸發金流
+			r.With(middleware.RateLimit(rdb, "payment_checkout", 10, time.Minute, middleware.UserOrIP)).
+				Post("/payments/ecpay/checkout", paymentHandler.Checkout)
 
-			// 活動上傳
-			r.Mount("/activities", actHandler.Router())
+			// 活動上傳 — SEC-H1：整個掛載子路由共用一組節流（含讀取），數字放寬避免誤擋正常瀏覽
+			r.With(middleware.RateLimit(rdb, "activities", 60, time.Minute, middleware.UserOrIP)).
+				Mount("/activities", actHandler.Router())
 
 			// 跑步中心跳（後台總覽的「目前在跑名單」用）
 			r.Post("/track/ping", raceHandler.Ping)
 
-			// 打卡點任務（geofence check-in）
-			r.Mount("/checkpoints", raceHandler.CheckpointRouter())
+			// 打卡點任務（geofence check-in）— SEC-H1
+			r.With(middleware.RateLimit(rdb, "checkpoints", 30, time.Minute, middleware.UserOrIP)).
+				Mount("/checkpoints", raceHandler.CheckpointRouter())
 
 			// 事件任務（日常隨機事件）— 跑步引擎用
 			r.Mount("/events", eventHandler.Router())
@@ -334,8 +367,9 @@ func main() {
 			// 跑者充電站收藏（比照 follow）
 			r.Mount("/profile/partner-favorites", partnerHandler.FavoriteRouter())
 
-			// 環台大富翁（Phase 1：盤面遊戲）
-			r.Mount("/monopoly", monopolyHandler.Router())
+			// 環台大富翁（Phase 1：盤面遊戲）— SEC-H1：扣 GP 擲骰是主要濫用面，整個子路由共用節流
+			r.With(middleware.RateLimit(rdb, "monopoly", 30, time.Minute, middleware.UserOrIP)).
+				Mount("/monopoly", monopolyHandler.Router())
 
 			// Web Push 訂閱（VAPID 金鑰 + subscribe/unsubscribe）
 			r.Mount("/push", pushHandler.Router())

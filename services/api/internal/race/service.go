@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -14,6 +15,39 @@ import (
 
 	"github.com/dor/api/internal/promo"
 )
+
+const (
+	// maxAddonQtyPerLine 加購單品項每筆數量上限。業務上不可能真的單筆買到這麼多份，
+	// 主要用於擋整數溢位攻擊（見 SEC-C1：超大 qty 讓 price*qty 溢位成負數，繞過金流）。
+	maxAddonQtyPerLine = 999
+	// maxAddonLineCents 加購單品項金額上限（分）＝新台幣 1000 萬，超出視為異常資料一律拒絕。
+	maxAddonLineCents = 1_000_000_000
+)
+
+// safeAddonLineTotal 計算加購單品項金額 price_cents*qty（分），並防整數溢位。
+// qty 必須先通過 checkAddonQty 的上限檢查；price_cents 理論上來自後台設定（受信任），
+// 仍加上除法防溢位檢查以防禦異常資料。回傳 ok=false 時代表溢位或超過合理上限，呼叫端應拒絕整筆請求。
+func safeAddonLineTotal(priceCents, qty int) (int, bool) {
+	if qty <= 0 || qty > maxAddonQtyPerLine || priceCents < 0 {
+		return 0, false
+	}
+	if priceCents != 0 && qty > math.MaxInt64/priceCents {
+		return 0, false // 相乘會溢位
+	}
+	total := priceCents * qty
+	if total > maxAddonLineCents {
+		return 0, false
+	}
+	return total, true
+}
+
+// checkAddonQty 驗證加購數量在合理範圍內（Qty<=0 由呼叫端略過該筆，不經過此函式）。
+func checkAddonQty(qty int) error {
+	if qty > maxAddonQtyPerLine {
+		return ErrAddonQtyInvalid
+	}
+	return nil
+}
 
 var (
 	ErrRaceNotFound         = errors.New("race not found")
@@ -31,6 +65,8 @@ var (
 	ErrAddonNotFound        = errors.New("addon not found")
 	ErrAddonLimit           = errors.New("addon quantity exceeds per-user limit")
 	ErrAddonSoldOut         = errors.New("addon sold out")
+	// ErrAddonQtyInvalid 加購單品項數量超出允許上限（防整數溢位、異常大量下單）。
+	ErrAddonQtyInvalid      = errors.New("addon quantity exceeds allowed limit")
 	ErrOrderNotFound        = errors.New("order not found")
 	ErrRegistrationNotFound = errors.New("registration not found")
 	ErrCheckinNotFound      = errors.New("checkin not found or already reviewed")
@@ -319,6 +355,12 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 	if req.UseCoupon && strings.TrimSpace(req.PromoCode) != "" {
 		return nil, ErrCouponPromoConflict
 	}
+	// 加購數量上限（防整數溢位攻擊，見 SEC-C1）：在進交易前先擋，避免無謂鎖表
+	for _, a := range req.Addons {
+		if err := checkAddonQty(a.Qty); err != nil {
+			return nil, err
+		}
+	}
 	// 時間規則：非「報名中」不可報名
 	if _, canReg := race.ComputeDisplay(time.Now()); !canReg {
 		return nil, ErrRegistrationClosed
@@ -425,6 +467,9 @@ func (s *Service) QuotePromo(ctx context.Context, raceID, userID, code string, a
 		payable = 0
 	}
 	payable += addonsTotal
+	if payable < 0 { // 防禦性夾限：理論上 addonsTotal 已不可能為負，仍與 repository.go 的實際扣款邏輯保持一致
+		payable = 0
+	}
 	return &PromoQuote{
 		Valid:         true,
 		Code:          p.Code,
@@ -449,9 +494,17 @@ func (s *Service) addonsTotal(ctx context.Context, raceID string, sel []AddonSel
 	}
 	total := 0
 	for _, a := range sel {
-		if a.Qty > 0 {
-			total += priceByID[a.AddonID] * a.Qty
+		if a.Qty <= 0 {
+			continue
 		}
+		if err := checkAddonQty(a.Qty); err != nil {
+			return 0, err
+		}
+		lineTotal, ok := safeAddonLineTotal(priceByID[a.AddonID], a.Qty)
+		if !ok {
+			return 0, ErrAddonQtyInvalid
+		}
+		total += lineTotal
 	}
 	return total, nil
 }

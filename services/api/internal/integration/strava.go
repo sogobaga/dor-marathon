@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/auth"
@@ -44,10 +45,28 @@ type StravaHandler struct {
 	cfg         StravaConfig
 	requireAuth func(http.Handler) http.Handler
 	hc          *http.Client
+	rdb         *redis.Client // 節流用；nil 時 allowRate 一律放行（fail-open，不因 Redis 未注入而擋正常流量）
 }
 
-func NewStravaHandler(repo *Repository, cfg StravaConfig, requireAuth func(http.Handler) http.Handler) *StravaHandler {
-	return &StravaHandler{repo: repo, cfg: cfg, requireAuth: requireAuth, hc: &http.Client{Timeout: 15 * time.Second}}
+func NewStravaHandler(repo *Repository, cfg StravaConfig, requireAuth func(http.Handler) http.Handler, rdb *redis.Client) *StravaHandler {
+	return &StravaHandler{repo: repo, cfg: cfg, requireAuth: requireAuth, hc: &http.Client{Timeout: 15 * time.Second}, rdb: rdb}
+}
+
+// allowRate 簡單固定窗口節流（Redis INCR + 首次 SET EXPIRE）。
+// SEC-H4：公開 webhook 與 /sync 皆可能被重複打來耗盡全站共用 Strava API 額度，先擋在這裡。
+// Redis 不可用或出錯 → fail-open（放行），避免節流機制本身變成單點故障擋掉正常同步。
+func (h *StravaHandler) allowRate(ctx context.Context, key string, limit int, window time.Duration) bool {
+	if h.rdb == nil {
+		return true
+	}
+	n, err := h.rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return true
+	}
+	if n == 1 {
+		h.rdb.Expire(ctx, key, window)
+	}
+	return n <= int64(limit)
 }
 
 func (h *StravaHandler) enabled() bool { return h.cfg.ClientID != "" && h.cfg.ClientSecret != "" }
@@ -115,6 +134,10 @@ func (h *StravaHandler) Status(w http.ResponseWriter, r *http.Request) {
 // POST /sync — 手動匯入近期活動
 func (h *StravaHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if !h.allowRate(r.Context(), "strava:sync:"+userID, 5, 5*time.Minute) {
+		respondErr(w, http.StatusTooManyRequests, "同步太頻繁，請稍後再試")
+		return
+	}
 	conn, err := h.repo.GetByUser(r.Context(), userID, providerStrava)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
@@ -244,11 +267,28 @@ func (h *StravaHandler) WebhookEvent(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// SEC-H4：/webhook 是公開端點，POST 完全不驗來源（Strava webhook 不支援 payload 簽章）——
+// 任何人都能偽造事件 POST 任意 owner_id/object_id。防線分三層：
+//  1. per-owner 節流：同一 owner_id 短時間灌大量事件視為異常，先擋住、避免耗盡全站共用 Strava API 額度。
+//  2. 核對事件宣稱的 owner_id 確實對應到一條真實連線（GetByProviderUser 已用該值查詢，這裡再顯式核對一次防呆）。
+//  3. 抓回活動後再核對「活動實際擁有者」＝該連線的 athlete id——防止攻擊者用自己合法連線的 token，
+//     偽造事件指向他人的（公開）活動 object_id，把不屬於自己的里程灌進自己帳號刷 EXP/DP。
 func (h *StravaHandler) handleActivityEvent(ownerID, activityID int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	conn, err := h.repo.GetByProviderUser(ctx, providerStrava, strconv.FormatInt(ownerID, 10))
+
+	ownerIDStr := strconv.FormatInt(ownerID, 10)
+	if !h.allowRate(ctx, "strava:webhook:"+ownerIDStr, 20, 5*time.Minute) {
+		log.Warn().Str("owner", ownerIDStr).Msg("strava webhook event rate limited")
+		return
+	}
+
+	conn, err := h.repo.GetByProviderUser(ctx, providerStrava, ownerIDStr)
 	if err != nil || conn == nil {
+		return
+	}
+	if conn.ProviderUserID != ownerIDStr {
+		// 理論上 GetByProviderUser 已用 ownerIDStr 查詢不會發生，防呆保留、不匯入。
 		return
 	}
 	access, err := h.tokenForUser(ctx, conn)
@@ -259,6 +299,11 @@ func (h *StravaHandler) handleActivityEvent(ownerID, activityID int64) {
 	act, err := h.getActivity(ctx, access, activityID)
 	if err != nil {
 		log.Error().Err(err).Int64("activity", activityID).Msg("strava get activity failed")
+		return
+	}
+	if strconv.FormatInt(act.Athlete.ID, 10) != conn.ProviderUserID {
+		log.Warn().Str("owner", ownerIDStr).Int64("activity", activityID).Int64("actual_athlete", act.Athlete.ID).
+			Msg("strava activity athlete mismatch, refusing import")
 		return
 	}
 	regAt, _ := h.repo.UserCreatedAt(ctx, conn.UserID)
@@ -324,7 +369,10 @@ func (h *StravaHandler) tokenForUser(ctx context.Context, conn *Connection) (str
 }
 
 type stravaActivity struct {
-	ID                 int64   `json:"id"`
+	ID      int64 `json:"id"`
+	Athlete struct {
+		ID int64 `json:"id"` // SEC-H4：用於核對抓回的活動確實屬於連線中的 athlete，防「以自己 token 抓他人公開活動」
+	} `json:"athlete"`
 	Distance           float64 `json:"distance"`             // 公尺
 	MovingTime         int     `json:"moving_time"`          // 秒
 	TotalElevationGain float64 `json:"total_elevation_gain"` // 公尺

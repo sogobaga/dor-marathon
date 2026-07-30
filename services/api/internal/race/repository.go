@@ -1299,6 +1299,11 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		if a.Qty <= 0 {
 			continue
 		}
+		// 加購數量上限（防整數溢位攻擊，見 SEC-C1）：service.Register 已先擋一次，
+		// 這裡再擋一次做為交易層防線（例如未來新增其他呼叫路徑時仍受保護）。
+		if err := checkAddonQty(a.Qty); err != nil {
+			return nil, err
+		}
 		var price int
 		var totalStock, perUserLimit *int
 		var soldCount int
@@ -1318,10 +1323,14 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		if totalStock != nil && soldCount+a.Qty > *totalStock {
 			return nil, ErrAddonSoldOut
 		}
+		lineTotal, ok := safeAddonLineTotal(price, a.Qty)
+		if !ok {
+			return nil, ErrAddonQtyInvalid
+		}
 		if _, err = tx.Exec(ctx, `UPDATE race_addons SET sold_count = sold_count + $1 WHERE id=$2`, a.Qty, a.AddonID); err != nil {
 			return nil, fmt.Errorf("bump sold_count: %w", err)
 		}
-		addonsTotal += price * a.Qty
+		addonsTotal += lineTotal
 		items = append(items, lineItem{a.AddonID, a.Qty, price})
 	}
 
@@ -1371,6 +1380,9 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		payable = 0
 	}
 	payable += addonsTotal
+	if payable < 0 { // 防禦性夾限：addonsTotal 現已溢位安全不可能為負，仍保留作最後一道防線
+		payable = 0
+	}
 	paid := payable < 50
 	regStatus := "pending"
 	var paymentRef interface{}

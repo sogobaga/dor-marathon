@@ -219,8 +219,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Login = strings.TrimSpace(req.Login)
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Login == "" || len(req.Password) < 4 {
-		respondErr(w, http.StatusBadRequest, "帳號必填、密碼至少 4 碼")
+	if req.Login == "" || len(req.Password) < 12 {
+		respondErr(w, http.StatusBadRequest, "帳號必填、密碼至少 12 碼")
 		return
 	}
 	if req.Name == "" {
@@ -285,8 +285,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(req.Name)
 
 	if strings.TrimSpace(req.Password) != "" {
-		if len(req.Password) < 4 {
-			respondErr(w, http.StatusBadRequest, "密碼至少 4 碼")
+		if len(req.Password) < 12 {
+			respondErr(w, http.StatusBadRequest, "密碼至少 12 碼")
 			return
 		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)

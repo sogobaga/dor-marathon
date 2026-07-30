@@ -29,3 +29,6 @@ Thumbs.db
 # build artifacts
 services/worker/worker.exe
 *.exe
+
+# 上線前安全稽核報告（含未修補漏洞細節，勿進版控）
+PRE-LAUNCH-REVIEW.md
