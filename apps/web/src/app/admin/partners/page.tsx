@@ -8,21 +8,26 @@ import { getToken, clearToken } from '@/lib/adminAuth'
 // 跑者充電站後台：特約商店（Partner Shops）CRUD——基本資訊、Banner/多圖、詳細內文(HTML)、YouTube 影片、前往連結、排序、上下架。
 
 type Form = Partial<AdminPartnerShop>
+type Audience = 'all' | 'vip_featured'
 
 const EMPTY: Form = {
   name: '', summary: '', banner_url: '', detail_html: '', photo_urls: [], video_url: '',
-  cta_url: '', cta_label: '', display_order: 0, enabled: true,
+  cta_url: '', cta_label: '', display_order: 0, enabled: true, audience: 'all',
 }
 
 export default function AdminPartnersPage() {
   const router = useRouter()
   const [token, setToken] = useState<string | null>(null)
   const [shops, setShops] = useState<AdminPartnerShop[] | null>(null)
+  const [tab, setTab] = useState<Audience>('all')
   const [form, setForm] = useState<Form>(EMPTY)
   const [busy, setBusy] = useState(false)
   const [imgBusy, setImgBusy] = useState('') // '' | 'banner' | 'photo'
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
+  const [minKm, setMinKm] = useState<number | null>(null)
+  const [minKmBusy, setMinKmBusy] = useState(false)
+  const [minKmMsg, setMinKmMsg] = useState('')
 
   const load = useCallback(() => {
     const t = getToken()
@@ -35,8 +40,22 @@ export default function AdminPartnersPage() {
         else if (e?.status === 403) setErr('無「跑者充電站」權限')
         else setErr(e?.message || '載入失敗')
       })
+    adminPartnersApi.getVipFeaturedMinKm(t)
+      .then((r) => setMinKm(r.min_km))
+      .catch(() => {})
   }, [router])
   useEffect(() => { load() }, [load])
+
+  const shopsAll = shops?.filter((s) => (s.audience || 'all') === 'all') ?? null
+  const shopsVip = shops?.filter((s) => s.audience === 'vip_featured') ?? null
+  const shownShops = tab === 'all' ? shopsAll : shopsVip
+
+  async function saveMinKm() {
+    if (!token || minKm == null) return
+    setMinKmBusy(true); setMinKmMsg(''); setErr('')
+    try { await adminPartnersApi.setVipFeaturedMinKm(token, minKm); setMinKmMsg('✓ 已儲存門檻') }
+    catch (e: any) { setErr(e?.message || '門檻儲存失敗') } finally { setMinKmBusy(false) }
+  }
 
   function edit(s: AdminPartnerShop) { setForm({ ...s }); setMsg(''); setErr('') }
   function fresh() { setForm({ ...EMPTY, photo_urls: [] }); setMsg(''); setErr('') }
@@ -84,6 +103,7 @@ export default function AdminPartnersPage() {
         cta_label: form.cta_label || '',
         display_order: form.display_order ?? 0,
         enabled: !!form.enabled,
+        audience: form.audience === 'vip_featured' ? 'vip_featured' : 'all',
       }
       if (form.id) {
         await adminPartnersApi.update(token, form.id, body)
@@ -110,15 +130,45 @@ export default function AdminPartnersPage() {
       {err && <div style={{ color: 'var(--hunt)', padding: '8px 0', fontSize: 13 }}>{err}</div>}
       {msg && <div style={{ color: 'var(--fug)', padding: '8px 0', fontSize: 13 }}>{msg}</div>}
 
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <button onClick={() => setTab('all')} style={tab === 'all' ? tabBtnActive : tabBtn}>全部會員（{shopsAll?.length ?? '—'}）</button>
+        <button onClick={() => setTab('vip_featured')} style={tab === 'vip_featured' ? tabBtnActive : tabBtn}>VIP精選（{shopsVip?.length ?? '—'}）</button>
+      </div>
+
+      {tab === 'vip_featured' && (
+        <div style={{ ...card, marginBottom: 14 }}>
+          <b style={{ fontSize: 14 }}>VIP 精選解鎖門檻</b>
+          <p style={{ color: 'var(--tx-dim)', fontSize: 12, margin: '4px 0 8px', lineHeight: 1.6 }}>
+            VIP 會員且累積里程達此值才能看到 VIP 精選商家。
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              style={{ ...inp, width: 140 }}
+              type="number"
+              min={0}
+              step={1}
+              value={minKm ?? ''}
+              onChange={(e) => setMinKm(e.target.value === '' ? 0 : Math.max(0, Math.round(+e.target.value)))}
+              placeholder="累積里程 KM"
+            />
+            <span style={{ fontSize: 12.5, color: 'var(--tx-dim)' }}>KM</span>
+            <button onClick={saveMinKm} disabled={minKmBusy || minKm == null} style={{ ...primaryBtn, opacity: minKmBusy ? 0.5 : 1 }}>
+              {minKmBusy ? '儲存中…' : '儲存門檻'}
+            </button>
+            {minKmMsg && <span style={{ color: 'var(--fug)', fontSize: 12.5 }}>{minKmMsg}</span>}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,280px) minmax(0,1fr)', gap: 16, alignItems: 'start' }}>
         {/* 商店列表 */}
         <div style={card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <b style={{ fontSize: 14 }}>商店（{shops?.length ?? '—'}）</b>
+            <b style={{ fontSize: 14 }}>商店（{shownShops?.length ?? '—'}）</b>
             <button onClick={fresh} style={primaryBtn}>＋ 新增</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {shops?.map((s) => (
+            {shownShops?.map((s) => (
               <div key={s.id} style={{ ...rowCard, borderColor: form.id === s.id ? 'var(--fug)' : 'var(--line)', opacity: s.enabled ? 1 : 0.55 }}>
                 <div onClick={() => edit(s)} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', minWidth: 0 }}>
                   <img src={s.banner_url || undefined} alt="" style={{ width: 46, height: 30, objectFit: 'cover', borderRadius: 5, background: 'var(--bg-2)', flexShrink: 0 }} />
@@ -137,7 +187,7 @@ export default function AdminPartnersPage() {
                 </div>
               </div>
             ))}
-            {shops && shops.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--tx-dim)' }}>尚無商店，按「新增」建立。</div>}
+            {shownShops && shownShops.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--tx-dim)' }}>尚無商店，按「新增」建立。</div>}
           </div>
         </div>
 
@@ -199,7 +249,15 @@ export default function AdminPartnersPage() {
             <F label="按鈕文字 cta_label"><input style={inp} value={form.cta_label || ''} onChange={(e) => setF('cta_label', e.target.value)} placeholder="立即前往" /></F>
           </div>
 
-          <F label="上下架"><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, paddingTop: 8 }}><input type="checkbox" checked={!!form.enabled} onChange={(e) => setF('enabled', e.target.checked)} />啟用（上架，顯示於前台）</label></F>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 4 }}>
+            <F label="顯示對象 audience">
+              <select style={inp} value={form.audience || 'all'} onChange={(e) => setF('audience', e.target.value as Audience)}>
+                <option value="all">全部會員</option>
+                <option value="vip_featured">VIP精選</option>
+              </select>
+            </F>
+            <F label="上下架"><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, paddingTop: 8 }}><input type="checkbox" checked={!!form.enabled} onChange={(e) => setF('enabled', e.target.checked)} />啟用（上架，顯示於前台）</label></F>
+          </div>
 
           <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
             <button onClick={save} disabled={busy} style={{ ...primaryBtn, padding: '9px 20px', opacity: busy ? 0.5 : 1 }}>{busy ? '儲存中…' : '儲存'}</button>
@@ -224,3 +282,5 @@ const dangerBtn: React.CSSProperties = { background: 'transparent', color: 'var(
 const rowCard: React.CSSProperties = { background: 'var(--bg-0, #0d0f14)', border: '1px solid var(--line)', borderRadius: 8, padding: 8, width: '100%', color: 'inherit', fontFamily: 'inherit' }
 const linkBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--fug)', cursor: 'pointer', fontSize: 12, padding: 0, fontFamily: 'inherit' }
 const tinyBtn: React.CSSProperties = { background: 'rgba(255,255,255,.05)', border: '1px solid var(--line-2)', borderRadius: 5, color: 'var(--tx)', cursor: 'pointer', fontSize: 11, padding: '2px 6px', fontFamily: 'inherit' }
+const tabBtn: React.CSSProperties = { background: 'var(--bg-1)', color: 'var(--tx-dim)', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'inherit' }
+const tabBtnActive: React.CSSProperties = { ...tabBtn, background: 'var(--fug)', color: 'var(--fug-ink)', borderColor: 'var(--fug)' }

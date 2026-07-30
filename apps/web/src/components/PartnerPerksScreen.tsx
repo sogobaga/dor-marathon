@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
-import { partnersApi, type PartnerShop } from '@/lib/api'
+import { partnersApi, type PartnerShop, type PartnerListMeta } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { MediaCarousel, Lightbox, YouTubeEmbed, ytId } from './shared/MediaCarousel'
 
@@ -46,6 +46,7 @@ function PartnerShopListView({
     () => partnersApi.list(getUserToken() ?? undefined),
   )
   const shops = data?.shops ?? null
+  const meta = data?.meta ?? null
 
   const [onlyFav, setOnlyFav] = useState(false)
   const [favErr, setFavErr] = useState('')
@@ -73,6 +74,12 @@ function PartnerShopListView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shops, onlyFav, user, override])
 
+  // 分兩區：全體會員的「精選商家」 vs 合格者才看得到內容的「VIP 精選」（不合格者 shops 陣列本就不含
+  // vip_featured 商家，這裡純粹依 audience 分組顯示）。「只看最愛」時鎖定卡不是使用者的收藏內容，故隱藏。
+  const shownAll = useMemo(() => shown.filter((s) => s.audience !== 'vip_featured'), [shown])
+  const shownVip = useMemo(() => shown.filter((s) => s.audience === 'vip_featured'), [shown])
+  const showVipSection = !onlyFav && !!meta && meta.vip_featured_count > 0
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)', position: 'relative' }}>
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -97,23 +104,56 @@ function PartnerShopListView({
           <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
         ) : error ? (
           <div style={{ color: 'var(--hunt)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>載入失敗，請稍後再試</div>
-        ) : !shops || shops.length === 0 ? (
+        ) : !shops || !meta ? (
           <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>目前尚無特約商店</div>
-        ) : shown.length === 0 ? (
-          <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>尚未收藏任何商店</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {shown.map((s) => (
-              <ShopCard
-                key={s.id}
-                shop={s}
-                loggedIn={!!user}
-                isFav={favorited(s)}
-                onToggleFav={() => toggleFav(s)}
-                onDetail={() => onOpenDetail(s.id)}
-              />
-            ))}
+        ) : shownAll.length === 0 && !showVipSection ? (
+          <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>
+            {onlyFav ? '尚未收藏任何商店' : '目前尚無特約商店'}
           </div>
+        ) : (
+          <>
+            {shownAll.length > 0 && (
+              <div style={{ marginBottom: showVipSection ? 26 : 0 }}>
+                {showVipSection && <div style={sectionHeading}>精選商家</div>}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {shownAll.map((s) => (
+                    <ShopCard
+                      key={s.id}
+                      shop={s}
+                      loggedIn={!!user}
+                      isFav={favorited(s)}
+                      onToggleFav={() => toggleFav(s)}
+                      onDetail={() => onOpenDetail(s.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {showVipSection && meta && (
+              <div>
+                {meta.qualifies && <div style={sectionHeadingGold}>✦ VIP 精選</div>}
+                {meta.qualifies ? (
+                  shownVip.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {shownVip.map((s) => (
+                        <ShopCard
+                          key={s.id}
+                          shop={s}
+                          loggedIn={!!user}
+                          isFav={favorited(s)}
+                          onToggleFav={() => toggleFav(s)}
+                          onDetail={() => onOpenDetail(s.id)}
+                        />
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  <VipLockedCard meta={meta} />
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -157,6 +197,7 @@ function ShopCard({
         )}
       </div>
       <div style={{ padding: '12px 14px' }}>
+        {shop.audience === 'vip_featured' && <span style={vipBadge}>✦ VIP 精選</span>}
         <div style={{ fontSize: 15.5, fontWeight: 900, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shop.name}</div>
         {shop.summary && (
           <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.6, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>
@@ -169,6 +210,41 @@ function ShopCard({
             <button onClick={() => window.open(shop.cta_url, '_blank', 'noopener,noreferrer')} style={primaryFullBtn}>前往</button>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// VIP 精選鎖定卡：不合格者看不到 vip_featured 商家內容（後端本就不回傳），這裡只顯示解鎖條件與進度，
+// 鼓勵繼續累積里程／升級 VIP。is_vip 但里程不足 vs 尚非 VIP 的鼓勵文案略有不同。
+function VipLockedCard({ meta }: { meta: PartnerListMeta }) {
+  const remainKm = Math.max(0, meta.min_km - meta.user_km)
+  const pct = meta.min_km > 0 ? Math.min(100, Math.round((meta.user_km / meta.min_km) * 100)) : 100
+  const encourage =
+    !meta.is_vip
+      ? (meta.user_km >= meta.min_km ? '里程已達標！升級 VIP 即可立即解鎖 🎉' : `升級 VIP、再累積 ${remainKm.toFixed(1)} KM，就能解鎖專屬優惠！`)
+      : `再跑 ${remainKm.toFixed(1)} KM 就能解鎖，加油！`
+
+  return (
+    <div style={vipLockCard}>
+      <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--gold)' }}>🔒 VIP 精選</div>
+      <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 4, fontWeight: 700 }}>
+        {meta.vip_featured_count} 家精選商家等你解鎖
+      </div>
+
+      <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 14, lineHeight: 1.7 }}>
+        解鎖條件：<span style={{ color: 'var(--tx)', fontWeight: 800 }}>VIP 會員</span>{' '}且累積里程 ≥{' '}
+        <span style={{ color: 'var(--tx)', fontWeight: 800 }}>{meta.min_km} KM</span>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, fontSize: 12, fontWeight: 800 }}>
+        <span style={{ color: meta.is_vip ? 'var(--fug)' : 'var(--tx-faint)' }}>{meta.is_vip ? '✓ VIP 有效' : '尚非 VIP'}</span>
+        <span style={{ color: 'var(--tx-dim)', fontVariantNumeric: 'tabular-nums' }}>{meta.user_km.toFixed(1)} / {meta.min_km} KM</span>
+      </div>
+      <div style={barOuter}><div style={{ ...barInner, width: `${pct}%` }} /></div>
+
+      <div style={{ fontSize: 12.5, color: 'var(--gold)', fontWeight: 800, marginTop: 12, textAlign: 'center', lineHeight: 1.6 }}>
+        {encourage}
       </div>
     </div>
   )
@@ -248,6 +324,13 @@ function PartnerShopDetailView({ id, onBack }: { id: string; onBack: () => void 
   )
 }
 
+const sectionHeading: React.CSSProperties = { fontSize: 13, fontWeight: 800, color: 'var(--tx-dim)', margin: '2px 2px 10px', letterSpacing: 0.3 }
+const sectionHeadingGold: React.CSSProperties = { fontSize: 13, fontWeight: 900, color: 'var(--gold)', margin: '2px 2px 10px', letterSpacing: 0.3 }
+// VIP 精選商家卡片上的金底白字小徽章（金底白字慣例：金色實心底一律用 #fff 文字）
+const vipBadge: React.CSSProperties = { display: 'inline-block', fontSize: 10.5, fontWeight: 800, color: '#fff', background: 'var(--gold)', borderRadius: 999, padding: '2px 8px', marginBottom: 6 }
+const vipLockCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 14, padding: '18px 16px' }
+const barOuter: React.CSSProperties = { height: 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden', marginTop: 6 }
+const barInner: React.CSSProperties = { height: '100%', background: 'var(--gold)', borderRadius: 999, transition: 'width .3s' }
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0, flexShrink: 0 }
 const ghostFullBtn: React.CSSProperties = { background: 'var(--bg-2)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px 0', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
 const primaryFullBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 10, padding: '10px 0', fontSize: 13.5, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }

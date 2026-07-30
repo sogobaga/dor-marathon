@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 )
@@ -14,6 +15,8 @@ var (
 	// 圖片欄位另給一則訊息：它同時接受站內相對路徑，沿用上面那句會誤導後台使用者。
 	ErrInvalidImageURL = errors.New("image url must be a site path (/...) or http/https")
 	ErrTooLong         = errors.New("field exceeds maximum length")
+	ErrInvalidAudience = errors.New("audience must be all or vip_featured")
+	ErrInvalidMinKm    = errors.New("min_km must be a non-negative integer")
 )
 
 // DB VARCHAR 上限（migrations/091_partner_shops.sql）：超過就在寫入前擋掉，
@@ -34,22 +37,79 @@ func NewService(repo *Repository) *Service {
 
 // --- 前台 ---
 
-func (s *Service) ListEnabled(ctx context.Context, uid string) ([]*PartnerShop, error) {
-	return s.repo.ListEnabled(ctx, uid)
+// vipFeaturedEligibility 判定使用者是否符合 VIP 精選資格：VIP 身分（vip_expires_at > now）
+// 且累積里程（users.total_km）達後台門檻（partner_vip_featured_min_km，預設 10km）。
+// uid 空字串（未登入）一律不合格。
+func (s *Service) vipFeaturedEligibility(ctx context.Context, uid string) (isVIP bool, km float64, minKm int, qualifies bool, err error) {
+	isVIP, km, err = s.repo.UserVIPKm(ctx, uid)
+	if err != nil {
+		return false, 0, 0, false, err
+	}
+	minKm = s.repo.MinVIPFeaturedKm(ctx)
+	qualifies = isVIP && km >= float64(minKm)
+	return isVIP, km, minKm, qualifies, nil
 }
 
+// ListEnabled 回傳前台商家列表 + 資格 meta。不合格者拿不到任何 audience='vip_featured' 商家的
+// 內容，只透過 meta.vip_featured_count 讓前端顯示「N 家等你解鎖」的鎖定提示。
+func (s *Service) ListEnabled(ctx context.Context, uid string) ([]*PartnerShop, *PartnerListMeta, error) {
+	isVIP, km, minKm, qualifies, err := s.vipFeaturedEligibility(ctx, uid)
+	if err != nil {
+		return nil, nil, err
+	}
+	shops, err := s.repo.ListEnabled(ctx, uid, qualifies)
+	if err != nil {
+		return nil, nil, err
+	}
+	vipCount, err := s.repo.CountEnabledByAudience(ctx, "vip_featured")
+	if err != nil {
+		return nil, nil, err
+	}
+	meta := &PartnerListMeta{
+		IsVIP:            isVIP,
+		UserKm:           math.Round(km*100) / 100,
+		MinKm:            minKm,
+		Qualifies:        qualifies,
+		VIPFeaturedCount: vipCount,
+	}
+	return shops, meta, nil
+}
+
+// GetDetail 前台詳細；不合格者對 vip_featured 商家一律回 ErrNotFound（見 Repository.GetDetail）。
 func (s *Service) GetDetail(ctx context.Context, id, uid string) (*PartnerShopDetail, error) {
-	return s.repo.GetDetail(ctx, id, uid)
+	_, _, _, qualifies, err := s.vipFeaturedEligibility(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.GetDetail(ctx, id, uid, qualifies)
 }
 
 // --- 收藏 ---
 
+// AddFavorite 比照 GetDetail：不合格者對 vip_featured 商家收藏一律回 ErrNotFound。
 func (s *Service) AddFavorite(ctx context.Context, userID, shopID string) error {
-	return s.repo.AddFavorite(ctx, userID, shopID)
+	_, _, _, qualifies, err := s.vipFeaturedEligibility(ctx, userID)
+	if err != nil {
+		return err
+	}
+	return s.repo.AddFavorite(ctx, userID, shopID, qualifies)
 }
 
 func (s *Service) RemoveFavorite(ctx context.Context, userID, shopID string) error {
 	return s.repo.RemoveFavorite(ctx, userID, shopID)
+}
+
+// --- VIP 精選門檻（後台） ---
+
+func (s *Service) MinVIPFeaturedKm(ctx context.Context) int {
+	return s.repo.MinVIPFeaturedKm(ctx)
+}
+
+func (s *Service) SetMinVIPFeaturedKm(ctx context.Context, km int) error {
+	if km < 0 {
+		return ErrInvalidMinKm
+	}
+	return s.repo.SetMinVIPFeaturedKm(ctx, km)
 }
 
 // --- 後台 ---
@@ -99,6 +159,14 @@ func normalizeAndValidate(req *AdminPartnerShopRequest) error {
 	}
 	if !validImageURL(req.BannerURL) {
 		return fmt.Errorf("banner_url: %w", ErrInvalidImageURL)
+	}
+	// audience 空字串正規化為 all（既有前端/呼叫端尚未帶這個新欄位時，行為等同過去的全體會員商家）。
+	req.Audience = strings.TrimSpace(req.Audience)
+	if req.Audience == "" {
+		req.Audience = "all"
+	}
+	if req.Audience != "all" && req.Audience != "vip_featured" {
+		return ErrInvalidAudience
 	}
 	if req.PhotoURLs == nil {
 		req.PhotoURLs = []string{}

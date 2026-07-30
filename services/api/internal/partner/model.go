@@ -3,7 +3,8 @@ package partner
 
 import "time"
 
-// PartnerShop 前台列表用（僅 enabled=true 的商家會被回傳）。
+// PartnerShop 前台列表用（僅 enabled=true 的商家會被回傳；vip_featured 商家還需使用者符合資格，
+// 見 Repository.ListEnabled 的 includeVIPFeatured 篩選）。
 type PartnerShop struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -12,7 +13,18 @@ type PartnerShop struct {
 	CTAURL       string `json:"cta_url"`
 	CTALabel     string `json:"cta_label"`
 	DisplayOrder int    `json:"display_order"`
+	Audience     string `json:"audience"` // all | vip_featured
 	IsFavorited  bool   `json:"is_favorited"`
+}
+
+// PartnerListMeta 隨列表一併回傳的 VIP 精選資格資訊，供前端顯示鎖定提示卡；
+// 刻意不在使用者不合格時多回傳任何 vip_featured 商家內容，只給數量。
+type PartnerListMeta struct {
+	IsVIP            bool    `json:"is_vip"`
+	UserKm           float64 `json:"user_km"`
+	MinKm            int     `json:"min_km"`
+	Qualifies        bool    `json:"qualifies"`
+	VIPFeaturedCount int     `json:"vip_featured_count"` // 全站 enabled 的 vip_featured 商家總數（不論本次是否回傳其內容）
 }
 
 // PartnerShopDetail 前台詳細頁用；DetailHTML 已由後端消毒過（寫入 + 輸出皆消毒）。
@@ -32,6 +44,7 @@ type AdminPartnerShop struct {
 	CTAURL       string    `json:"cta_url"`
 	CTALabel     string    `json:"cta_label"`
 	DisplayOrder int       `json:"display_order"`
+	Audience     string    `json:"audience"` // all | vip_featured
 	DetailHTML   string    `json:"detail_html"`
 	PhotoURLs    []string  `json:"photo_urls"`
 	VideoURL     string    `json:"video_url"`
@@ -51,5 +64,6 @@ type AdminPartnerShopRequest struct {
 	CTAURL       string   `json:"cta_url"`
 	CTALabel     string   `json:"cta_label"`
 	DisplayOrder int      `json:"display_order"`
+	Audience     string   `json:"audience"` // all | vip_featured；空字串正規化為 all（見 normalizeAndValidate）
 	Enabled      bool     `json:"enabled"`
 }

@@ -2387,7 +2387,17 @@ export interface PartnerShop {          // 列表用
   cta_url: string
   cta_label: string
   display_order: number
+  audience: 'all' | 'vip_featured' // all=全體會員；vip_featured=VIP精選（不合格者的 shops 陣列不含此類）
   is_favorited: boolean
+}
+
+// 列表隨附的 VIP 精選資格資訊；後端刻意不在不合格時多回傳 vip_featured 商家內容，只給數量。
+export interface PartnerListMeta {
+  is_vip: boolean
+  user_km: number
+  min_km: number
+  qualifies: boolean
+  vip_featured_count: number // 全站 enabled 的 vip_featured 商家總數（不論本次是否回傳其內容）
 }
 
 export interface PartnerShopDetail extends PartnerShop {   // 詳細用
@@ -2416,12 +2426,13 @@ export interface PartnerShopWriteBody {
   cta_label: string
   display_order: number
   enabled: boolean
+  audience?: 'all' | 'vip_featured' // 空預設 all
 }
 
 // 前台（OptionalAuth：未登入也能看，登入才有 is_favorited）
 export const partnersApi = {
   list: (token?: string) =>
-    request<{ shops: PartnerShop[] }>('/partner-shops', token ? { headers: withAuth(token) } : undefined),
+    request<{ shops: PartnerShop[]; meta: PartnerListMeta }>('/partner-shops', token ? { headers: withAuth(token) } : undefined),
   get: (token: string | undefined, id: string) =>
     request<{ shop: PartnerShopDetail }>(`/partner-shops/${id}`, token ? { headers: withAuth(token) } : undefined),
   favorite: (token: string, shopId: string) =>
@@ -2440,6 +2451,10 @@ export const adminPartnersApi = {
     request<{ shop: AdminPartnerShop }>(`/admin/partner-shops/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
   remove: (token: string, id: string) =>
     request<{ ok: boolean }>(`/admin/partner-shops/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+  getVipFeaturedMinKm: (token: string) =>
+    request<{ min_km: number }>('/admin/partner-shops/vip-featured-min-km', { headers: withAuth(token) }),
+  setVipFeaturedMinKm: (token: string, minKm: number) =>
+    request<{ min_km: number }>('/admin/partner-shops/vip-featured-min-km', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ min_km: minKm }) }),
 }
 
 // 環台大富翁（Phase 1：盤面遊戲）

@@ -52,6 +52,9 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Post("/", h.AdminCreate)
 	r.Put("/{id}", h.AdminUpdate)
 	r.Delete("/{id}", h.AdminDelete)
+	// VIP 精選解鎖門檻（累積里程 km）；靜態路徑，chi 依 radix tree 比對，不會被上面的 {id} 攔截。
+	r.Get("/vip-featured-min-km", h.AdminGetMinKm)
+	r.Put("/vip-featured-min-km", h.AdminSetMinKm)
 	return r
 }
 
@@ -60,12 +63,12 @@ func (h *Handler) AdminRouter() http.Handler {
 // GET /api/v1/partner-shops
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
-	shops, err := h.svc.ListEnabled(r.Context(), uid)
+	shops, meta, err := h.svc.ListEnabled(r.Context(), uid)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to list partner shops")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"shops": shops})
+	respondJSON(w, http.StatusOK, map[string]any{"shops": shops, "meta": meta})
 }
 
 // GET /api/v1/partner-shops/{id}
@@ -109,6 +112,10 @@ func (h *Handler) AddFavorite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.AddFavorite(r.Context(), userID, body.ShopID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			respondErr(w, http.StatusNotFound, "partner shop not found")
+			return
+		}
 		respondErr(w, http.StatusBadRequest, "收藏失敗（商家不存在？）")
 		return
 	}
@@ -154,7 +161,7 @@ func (h *Handler) AdminCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	shop, err := h.svc.AdminCreate(r.Context(), &req)
-	if errors.Is(err, ErrNameRequired) || errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrTooLong) {
+	if errors.Is(err, ErrNameRequired) || errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrTooLong) || errors.Is(err, ErrInvalidAudience) {
 		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -178,7 +185,7 @@ func (h *Handler) AdminUpdate(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusNotFound, "partner shop not found")
 		return
 	}
-	if errors.Is(err, ErrNameRequired) || errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrTooLong) {
+	if errors.Is(err, ErrNameRequired) || errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrTooLong) || errors.Is(err, ErrInvalidAudience) {
 		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -187,6 +194,27 @@ func (h *Handler) AdminUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"shop": shop})
+}
+
+// GET /api/v1/admin/partner-shops/vip-featured-min-km
+func (h *Handler) AdminGetMinKm(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, map[string]any{"min_km": h.svc.MinVIPFeaturedKm(r.Context())})
+}
+
+// PUT /api/v1/admin/partner-shops/vip-featured-min-km  body {"min_km": 10}
+func (h *Handler) AdminSetMinKm(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		MinKm int `json:"min_km"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := h.svc.SetMinVIPFeaturedKm(r.Context(), body.MinKm); err != nil {
+		respondErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"min_km": body.MinKm})
 }
 
 // DELETE /api/v1/admin/partner-shops/{id}
