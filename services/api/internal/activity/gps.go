@@ -3,12 +3,14 @@ package activity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/dor/api/internal/auth"
@@ -47,6 +49,7 @@ type gpsRunResult struct {
 	AnomalySegs int     `json:"anomaly_segments"`
 	ExpAwarded  bool    `json:"exp_awarded"` // 未標記才進活動管線發里程 EXP
 	TooShort    bool    `json:"too_short"`   // 移動距離不足，無法計算（非異常）
+	Duplicate   bool    `json:"duplicate,omitempty"` // 這一趟已上傳過（同 user+起跑時間）→ 冪等 no-op，未重複記錄/發獎
 }
 
 func haversineM(lat1, lon1, lat2, lon2 float64) float64 {
@@ -147,9 +150,18 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		}
 	}
 	polyline := encodePolyline(simplifyPath(latlng, 5))
-	if err := s.repo.InsertGPSRun(ctx, userID, req.RaceID, started, ended,
-		round2(distanceKm), durationS, avgPaceS, flagged, flagReason, len(req.Points), polyline, kmSplits); err != nil {
+	inserted, err := s.repo.InsertGPSRun(ctx, userID, req.RaceID, started, ended,
+		round2(distanceKm), durationS, avgPaceS, flagged, flagReason, len(req.Points), polyline, kmSplits)
+	if err != nil {
 		return nil, err
+	}
+	if !inserted {
+		// 這一趟已上傳過（同 user + 起跑時間）——冪等：不重複記錄、不重複發里程 EXP/扣 SP，直接回結果。
+		// 防「手機跳掉切回 → 出現『有一趟未上傳的跑步』提示 → 再上傳同一份快取軌跡」造成兩筆重複活動。
+		return &gpsRunResult{
+			DistanceKm: round2(distanceKm), DurationS: durationS, AvgPaceS: avgPaceS,
+			Flagged: flagged, FlagReason: flagReason, AnomalySegs: anomalies, ExpAwarded: false, Duplicate: true,
+		}, nil
 	}
 
 	// 未標記 → 進既有活動管線（記錄活動 + 日常里程 EXP）
@@ -186,19 +198,30 @@ func (r *Repository) HistAvgPace(ctx context.Context, userID string) int {
 	return int(v)
 }
 
-// InsertGPSRun 寫入 GPS 軌跡（壓縮 polyline）+ 防弊結果
+// InsertGPSRun 寫入 GPS 軌跡（壓縮 polyline）+ 防弊結果。
+// 冪等：靠 uq_gps_runs_user_start(user_id, started_at) 唯一索引 + ON CONFLICT DO NOTHING——
+// 同一 user 的同一起跑時間已存在時不再插入、回 inserted=false，呼叫端據此不重複進活動管線/發獎。
 func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, started, ended time.Time,
-	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, polyline string, kmPaces []int) error {
+	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, polyline string, kmPaces []int) (bool, error) {
 	var rid interface{}
 	if raceID != "" {
 		rid = raceID
 	}
-	_, err := r.db.Exec(ctx, `
+	var id string
+	err := r.db.QueryRow(ctx, `
 		INSERT INTO gps_runs (user_id, race_id, started_at, ended_at, distance_km, duration_s,
 		                      avg_pace_s, flagged, flag_reason, point_count, polyline, km_paces)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12)`,
-		userID, rid, started, ended, distanceKm, durationS, avgPaceS, flagged, flagReason, pointCount, polyline, kmPaces)
-	return err
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12)
+		ON CONFLICT (user_id, started_at) DO NOTHING
+		RETURNING id`,
+		userID, rid, started, ended, distanceKm, durationS, avgPaceS, flagged, flagReason, pointCount, polyline, kmPaces).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil // 同一趟已上傳過 → 冪等 no-op
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // POST /api/v1/activities/gps — 上傳網頁 GPS 跑步軌跡
