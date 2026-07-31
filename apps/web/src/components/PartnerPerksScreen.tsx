@@ -80,6 +80,7 @@ function PartnerShopListView({
   const meta = data?.meta ?? null
 
   const [onlyFav, setOnlyFav] = useState(false)
+  const [tab, setTab] = useState<'all' | 'vip_featured'>('all')
   const [favErr, setFavErr] = useState('')
   useEffect(() => { if (favErr) { const t = setTimeout(() => setFavErr(''), 3200); return () => clearTimeout(t) } }, [favErr])
 
@@ -105,12 +106,20 @@ function PartnerShopListView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shops, onlyFav, user, override])
 
-  // 分兩區：全體會員的「精選商家」 vs 全體玩家都看得到卡片的「VIP 精選」——不合格者一樣看得到商家內容，
-  // 差別只在卡片上「前往」按鈕會被鎖住（見 ShopCard／onCta）。這裡純粹依 audience 分組顯示。
-  // 「只看最愛」時門檻橫幅不是使用者的收藏內容，故隱藏。
+  // 依 audience 分組。VIP 精選商家全體玩家都看得到卡片內容，差別只在卡片「前往」按鈕會被鎖住
+  // （見 ShopCard／onCta）。一般商家與 VIP 精選「不同列表」，用頁籤切換（見下方 tab）。
   const shownAll = useMemo(() => shown.filter((s) => s.audience !== 'vip_featured'), [shown])
   const shownVip = useMemo(() => shown.filter((s) => s.audience === 'vip_featured'), [shown])
-  const showVipSection = !onlyFav && !!meta && meta.vip_featured_count > 0
+  // 有 VIP 精選商家時才顯示「一般商家 / VIP 精選」頁籤；沒有(現在商家少/後台未設)就只出單一列表，
+  // 避免空頁籤。未來商家變多再細分更多類型（現在細分只會顯得每一類的商家很少）。
+  const hasVip = !!meta && meta.vip_featured_count > 0
+  const curTab: 'all' | 'vip_featured' = hasVip ? tab : 'all'
+  const tabShops = curTab === 'vip_featured' ? shownVip : shownAll
+
+  const tabBarStyle: React.CSSProperties = { display: 'flex', gap: 8, padding: '2px 0 12px' }
+  const tabBase: React.CSSProperties = { flex: 1, padding: '9px 0', borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: 'pointer', border: '1px solid var(--line)', background: 'var(--bg-1)', color: 'var(--tx-dim)' }
+  const tabActive: React.CSSProperties = { ...tabBase, background: 'var(--tx)', color: 'var(--bg)', borderColor: 'var(--tx)' }
+  const tabActiveGold: React.CSSProperties = { ...tabBase, background: 'var(--gold)', color: '#fff', borderColor: 'var(--gold)' }
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)', position: 'relative' }}>
@@ -123,6 +132,13 @@ function PartnerShopListView({
         <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '2px 2px 12px', lineHeight: 1.7 }}>
           精選特約商店與跑者優惠，點卡片看詳細介紹。
         </p>
+
+        {hasVip && (
+          <div style={tabBarStyle}>
+            <button onClick={() => setTab('all')} style={curTab === 'all' ? tabActive : tabBase}>一般商家</button>
+            <button onClick={() => setTab('vip_featured')} style={curTab === 'vip_featured' ? tabActiveGold : tabBase}>✦ VIP 精選</button>
+          </div>
+        )}
 
         {user && shops && shops.length > 0 && (
           <div style={{ display: 'flex', padding: '0 0 12px' }}>
@@ -138,53 +154,28 @@ function PartnerShopListView({
           <div style={{ color: 'var(--hunt)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>載入失敗，請稍後再試</div>
         ) : !shops || !meta ? (
           <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>目前尚無特約商店</div>
-        ) : shownAll.length === 0 && !showVipSection ? (
-          <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>
-            {onlyFav ? '尚未收藏任何商店' : '目前尚無特約商店'}
-          </div>
         ) : (
           <>
-            {shownAll.length > 0 && (
-              <div style={{ marginBottom: showVipSection ? 26 : 0 }}>
-                {showVipSection && <div style={sectionHeading}>精選商家</div>}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {shownAll.map((s) => (
-                    <ShopCard
-                      key={s.id}
-                      shop={s}
-                      loggedIn={!!user}
-                      isFav={favorited(s)}
-                      onToggleFav={() => toggleFav(s)}
-                      onDetail={() => onOpenDetail(s.id)}
-                      onCta={onCta}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* VIP 精選頁籤：不合格者頂端顯示門檻橫幅（合格者卡片本身即可前往，不需橫幅）。 */}
+            {curTab === 'vip_featured' && meta && !meta.qualifies && <VipThresholdBanner meta={meta} />}
 
-            {showVipSection && meta && (
-              <div>
-                {meta.qualifies ? (
-                  <div style={sectionHeadingGold}>✦ VIP 精選</div>
-                ) : (
-                  <VipThresholdBanner meta={meta} />
-                )}
-                {shownVip.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {shownVip.map((s) => (
-                      <ShopCard
-                        key={s.id}
-                        shop={s}
-                        loggedIn={!!user}
-                        isFav={favorited(s)}
-                        onToggleFav={() => toggleFav(s)}
-                        onDetail={() => onOpenDetail(s.id)}
-                        onCta={onCta}
-                      />
-                    ))}
-                  </div>
-                )}
+            {tabShops.length === 0 ? (
+              <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>
+                {onlyFav ? '尚未收藏任何商店' : hasVip ? '此分類目前尚無商店' : '目前尚無特約商店'}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {tabShops.map((s) => (
+                  <ShopCard
+                    key={s.id}
+                    shop={s}
+                    loggedIn={!!user}
+                    isFav={favorited(s)}
+                    onToggleFav={() => toggleFav(s)}
+                    onDetail={() => onOpenDetail(s.id)}
+                    onCta={onCta}
+                  />
+                ))}
               </div>
             )}
           </>
@@ -371,8 +362,6 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
   )
 }
 
-const sectionHeading: React.CSSProperties = { fontSize: 13, fontWeight: 800, color: 'var(--tx-dim)', margin: '2px 2px 10px', letterSpacing: 0.3 }
-const sectionHeadingGold: React.CSSProperties = { fontSize: 13, fontWeight: 900, color: 'var(--gold)', margin: '2px 2px 10px', letterSpacing: 0.3 }
 // VIP 精選商家卡片上的金底白字小徽章（金底白字慣例：金色實心底一律用 #fff 文字）
 const vipBadge: React.CSSProperties = { display: 'inline-block', fontSize: 10.5, fontWeight: 800, color: '#fff', background: 'var(--gold)', borderRadius: 999, padding: '2px 8px', marginBottom: 6 }
 // VIP 精選門檻橫幅（不合格者，放卡片列表上方）
