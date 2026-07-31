@@ -1054,12 +1054,14 @@ export default function TrackPage() {
   const exSorted = exploreCps
     .slice()
     .sort((a, b) => (exDist(a) ?? Infinity) - (exDist(b) ?? Infinity))
-  // 清單列：已揭露待挑戰 ＋ 最近 10 筆未打卡（避免 572 點全列）＋ 從城市探索「前往打卡」聚焦帶來的目標點（確保清單裡有它可打卡）
+  // 清單列：關主挑戰＝一種打卡點，只顯示「走進打卡範圍內（d ≤ 半徑）」的城市探索點；未定位（無 GPS）時不顯示。
+  // 例外：從城市探索「前往打卡」聚焦帶來的目標點無條件保留（使用者正要前往，尚未到範圍也要能看到/追蹤）。
   const exList = (() => {
+    const inCheckinRange = (b: ExploreBoss) => { const d = exDist(b); return d != null && d <= (b.radius_m || 40) }
     const base = [
       ...exSorted.filter((b) => b.discovered && !b.card_obtained),
       ...exSorted.filter((b) => !b.discovered).slice(0, 10),
-    ]
+    ].filter(inCheckinRange)
     if (focusBoss && !base.some((b) => b.id === focusBoss)) {
       const fb = exSorted.find((b) => b.id === focusBoss)
       if (fb) return [fb, ...base]
@@ -1384,7 +1386,7 @@ export default function TrackPage() {
                 const d = exDist(b)
                 const inRange = d != null && d <= (b.radius_m || 40)
                 const busy = cpBusy === 'ex:' + b.id
-                const title = b.discovered ? b.name : (b.place || '神秘打卡點')
+                const title = b.discovered ? ([b.name, b.place].filter(Boolean).join(' ｜ ') || '關主挑戰') : (b.place || '神秘打卡點')
                 return (
                   <div key={'ex:' + b.id} style={{ background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, border: b.discovered ? '1px solid rgba(231,184,75,.45)' : '1px solid transparent' }}>
                     <div style={{ minWidth: 0 }}>
