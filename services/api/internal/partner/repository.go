@@ -54,9 +54,9 @@ func unmarshalPhotoURLs(b []byte) ([]string, error) {
 
 // ListEnabled 前台列表：僅 enabled=true，依 display_order/created_at 排序。
 // uid 為空字串（未登入）時 is_favorited 一律 false，且不可讓 SQL 出錯。
-// includeVIPFeatured=false 時 audience='vip_featured' 的商家直接不回傳內容（連列表都拿不到），
-// 由 Service.ListEnabled 依 VIP+里程資格算出後傳入。
-func (r *Repository) ListEnabled(ctx context.Context, uid string, includeVIPFeatured bool) ([]*PartnerShop, error) {
+// audience='vip_featured' 商家現在對所有人可見（不再於此過濾）；「不合格」改由
+// Service.ListEnabled 事後對每個 shop 蓋上 CtaLocked/CtaLockReason 並清空 CTAURL。
+func (r *Repository) ListEnabled(ctx context.Context, uid string) ([]*PartnerShop, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT ps.id, ps.name, ps.summary, ps.banner_url, ps.cta_url, ps.cta_label, ps.display_order, ps.audience,
 		       ($1 <> '' AND EXISTS(
@@ -64,9 +64,9 @@ func (r *Repository) ListEnabled(ctx context.Context, uid string, includeVIPFeat
 		           WHERE f.user_id = NULLIF($1,'')::uuid AND f.shop_id = ps.id
 		       ))
 		FROM partner_shops ps
-		WHERE ps.enabled AND (ps.audience <> 'vip_featured' OR $2)
+		WHERE ps.enabled
 		ORDER BY ps.display_order, ps.created_at
-	`, uid, includeVIPFeatured)
+	`, uid)
 	if err != nil {
 		return nil, fmt.Errorf("list partner shops: %w", err)
 	}
@@ -120,10 +120,10 @@ func (r *Repository) SetMinVIPFeaturedKm(ctx context.Context, km int) error {
 	return err
 }
 
-// GetDetail 前台詳細：enabled=false 回 ErrNotFound（不外洩下架商家內容）；
-// includeVIPFeatured=false 時 audience='vip_featured' 的商家同樣視為 ErrNotFound
-// （不用 403，避免向不合格使用者洩漏「這家店存在，只是你看不到」）。
-func (r *Repository) GetDetail(ctx context.Context, id, uid string, includeVIPFeatured bool) (*PartnerShopDetail, error) {
+// GetDetail 前台詳細：enabled=false 回 ErrNotFound（不外洩下架商家內容）。
+// audience='vip_featured' 商家現在對所有人可見（不再視資格擋成 ErrNotFound）；
+// 「不合格」改由 Service.GetDetail 事後蓋上 CtaLocked/CtaLockReason 並清空 CTAURL。
+func (r *Repository) GetDetail(ctx context.Context, id, uid string) (*PartnerShopDetail, error) {
 	d := &PartnerShopDetail{}
 	var photoBytes []byte
 	err := r.db.QueryRow(ctx, `
@@ -134,8 +134,8 @@ func (r *Repository) GetDetail(ctx context.Context, id, uid string, includeVIPFe
 		       )),
 		       ps.detail_html, ps.photo_urls, ps.video_url
 		FROM partner_shops ps
-		WHERE ps.id = $1 AND ps.enabled AND (ps.audience <> 'vip_featured' OR $3)
-	`, id, uid, includeVIPFeatured).Scan(
+		WHERE ps.id = $1 AND ps.enabled
+	`, id, uid).Scan(
 		&d.ID, &d.Name, &d.Summary, &d.BannerURL, &d.CTAURL, &d.CTALabel, &d.DisplayOrder, &d.Audience, &d.IsFavorited,
 		&d.DetailHTML, &photoBytes, &d.VideoURL,
 	)
@@ -155,10 +155,9 @@ func (r *Repository) GetDetail(ctx context.Context, id, uid string, includeVIPFe
 
 // --- 收藏 ---
 
-// AddFavorite 冪等新增收藏。先查商家是否存在/enabled/是否為使用者無權限的 vip_featured
-// （includeVIPFeatured=false 時擋下），存在性與權限都過了才寫入收藏表；shop_id 不存在或被擋一律回
-// ErrNotFound（不用 403，理由同 GetDetail：不外洩「這家店存在只是你看不到」）。
-func (r *Repository) AddFavorite(ctx context.Context, userID, shopID string, includeVIPFeatured bool) error {
+// AddFavorite 冪等新增收藏。只要商家存在且 enabled 即可收藏（audience='vip_featured' 商家現在
+// 對所有人可見/可收藏，不再要求資格）；shop_id 不存在一律回 ErrNotFound。
+func (r *Repository) AddFavorite(ctx context.Context, userID, shopID string) error {
 	var audience string
 	err := r.db.QueryRow(ctx, `SELECT audience FROM partner_shops WHERE id=$1 AND enabled`, shopID).Scan(&audience)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -166,9 +165,6 @@ func (r *Repository) AddFavorite(ctx context.Context, userID, shopID string, inc
 	}
 	if err != nil {
 		return err
-	}
-	if audience == "vip_featured" && !includeVIPFeatured {
-		return ErrNotFound
 	}
 	_, err = r.db.Exec(ctx, `
 		INSERT INTO partner_shop_favorites (user_id, shop_id) VALUES ($1, $2)

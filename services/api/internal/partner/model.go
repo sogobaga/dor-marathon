@@ -3,18 +3,20 @@ package partner
 
 import "time"
 
-// PartnerShop 前台列表用（僅 enabled=true 的商家會被回傳；vip_featured 商家還需使用者符合資格，
-// 見 Repository.ListEnabled 的 includeVIPFeatured 篩選）。
+// PartnerShop 前台列表用（僅 enabled=true 的商家會被回傳；audience='vip_featured' 商家現在對所有人
+// 可見，「不合格」改成鎖在 CTA 動作上——見 CtaLocked/CtaLockReason，以及 Service.applyCtaGate）。
 type PartnerShop struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Summary      string `json:"summary"`
-	BannerURL    string `json:"banner_url"`
-	CTAURL       string `json:"cta_url"`
-	CTALabel     string `json:"cta_label"`
-	DisplayOrder int    `json:"display_order"`
-	Audience     string `json:"audience"` // all | vip_featured
-	IsFavorited  bool   `json:"is_favorited"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Summary       string `json:"summary"`
+	BannerURL     string `json:"banner_url"`
+	CTAURL        string `json:"cta_url"`
+	CTALabel      string `json:"cta_label"`
+	DisplayOrder  int    `json:"display_order"`
+	Audience      string `json:"audience"` // all | vip_featured
+	IsFavorited   bool   `json:"is_favorited"`
+	CtaLocked     bool   `json:"cta_locked"`      // true：audience=='vip_featured' 且使用者不合格；此時 CTAURL 已被清空
+	CtaLockReason string `json:"cta_lock_reason"` // CtaLocked=true 時的鎖定原因說明；否則空字串
 }
 
 // PartnerListMeta 隨列表一併回傳的 VIP 精選資格資訊，供前端顯示鎖定提示卡；

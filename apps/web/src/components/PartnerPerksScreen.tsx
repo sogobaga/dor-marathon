@@ -12,33 +12,64 @@ import { MediaCarousel, Lightbox, YouTubeEmbed, ytId } from './shared/MediaCarou
 //   不做「顯示但點下去才處理」的分支，直接避免任何未登入的點擊路徑）。
 // - 詳細頁：Banner → 名稱/summary → 多圖(共用 MediaCarousel+Lightbox) → 消毒後 HTML 內文 → YouTube → 底部 CTA。
 // OptionalAuth：未登入也能瀏覽兩頁，只是拿不到 is_favorited/收藏功能。
+//
+// VIP 精選 gate：audience='vip_featured' 商家現在全體玩家都看得到卡片本身，真正的門檻擋在「前往」這顆
+// CTA 上——後端算出 cta_locked/cta_lock_reason（不合格時 cta_url 也會被清空），前端點擊時只要看
+// cta_locked 就好，不需要自己重算資格。
 export default function PartnerPerksScreen({ onBack }: { onBack: () => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // 收藏樂觀更新 override 提升到這層：PartnerPerksScreen 本身在「列表 ⇄ 詳細」切換時不會被卸載
   // （卸載的只有子元件 PartnerShopListView/PartnerShopDetailView），所以 override 放這裡才能在
   // 「收藏 → 進詳細 → 返回」之後存活，不會被 SWR 的舊快取值蓋回。
   const [favOverride, setFavOverride] = useState<Record<string, boolean>>({})
+  // VIP 精選鎖定原因彈窗：同樣提升到這層，理由與 favOverride 一致——列表／詳細任一邊點到鎖定的
+  // 「前往」都可能觸發，彈窗狀態不能放進會被卸載的子元件，否則「開彈窗 → 剛好被返回卸載」會憑空消失。
+  const [lockedShop, setLockedShop] = useState<PartnerShop | null>(null)
 
-  if (selectedId) {
-    return <PartnerShopDetailView id={selectedId} onBack={() => setSelectedId(null)} />
+  const user = useUser()
+  // 與 PartnerShopListView 用同一個 SWR key：只是為了讓 meta（is_vip/user_km/min_km）在詳細頁的鎖定
+  // 彈窗也能用到，兩邊會共用同一份快取／同一次請求，不會多打一次 API。
+  const { data: metaData } = useSWR(
+    ['partner-shops', user?.id ?? 'guest'],
+    () => partnersApi.list(getUserToken() ?? undefined),
+  )
+  const meta = metaData?.meta ?? null
+
+  // 前往 CTA 的統一處理：鎖定就開原因彈窗，否則才開新分頁。
+  function handleCta(shop: PartnerShop) {
+    if (shop.cta_locked) {
+      setLockedShop(shop)
+    } else if (shop.cta_url) {
+      window.open(shop.cta_url, '_blank', 'noopener,noreferrer')
+    }
   }
+
   return (
-    <PartnerShopListView
-      onBack={onBack}
-      onOpenDetail={(id) => setSelectedId(id)}
-      override={favOverride}
-      setOverride={setFavOverride}
-    />
+    <>
+      {selectedId ? (
+        <PartnerShopDetailView id={selectedId} onBack={() => setSelectedId(null)} onCta={handleCta} />
+      ) : (
+        <PartnerShopListView
+          onBack={onBack}
+          onOpenDetail={(id) => setSelectedId(id)}
+          override={favOverride}
+          setOverride={setFavOverride}
+          onCta={handleCta}
+        />
+      )}
+      {lockedShop && <VipLockedModal shop={lockedShop} meta={meta} onClose={() => setLockedShop(null)} />}
+    </>
   )
 }
 
 function PartnerShopListView({
-  onBack, onOpenDetail, override, setOverride,
+  onBack, onOpenDetail, override, setOverride, onCta,
 }: {
   onBack: () => void
   onOpenDetail: (id: string) => void
   override: Record<string, boolean>
   setOverride: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
+  onCta: (shop: PartnerShop) => void
 }) {
   const user = useUser()
   const { data, error, isLoading } = useSWR(
@@ -74,8 +105,9 @@ function PartnerShopListView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shops, onlyFav, user, override])
 
-  // 分兩區：全體會員的「精選商家」 vs 合格者才看得到內容的「VIP 精選」（不合格者 shops 陣列本就不含
-  // vip_featured 商家，這裡純粹依 audience 分組顯示）。「只看最愛」時鎖定卡不是使用者的收藏內容，故隱藏。
+  // 分兩區：全體會員的「精選商家」 vs 全體玩家都看得到卡片的「VIP 精選」——不合格者一樣看得到商家內容，
+  // 差別只在卡片上「前往」按鈕會被鎖住（見 ShopCard／onCta）。這裡純粹依 audience 分組顯示。
+  // 「只看最愛」時門檻橫幅不是使用者的收藏內容，故隱藏。
   const shownAll = useMemo(() => shown.filter((s) => s.audience !== 'vip_featured'), [shown])
   const shownVip = useMemo(() => shown.filter((s) => s.audience === 'vip_featured'), [shown])
   const showVipSection = !onlyFav && !!meta && meta.vip_featured_count > 0
@@ -124,6 +156,7 @@ function PartnerShopListView({
                       isFav={favorited(s)}
                       onToggleFav={() => toggleFav(s)}
                       onDetail={() => onOpenDetail(s.id)}
+                      onCta={onCta}
                     />
                   ))}
                 </div>
@@ -132,24 +165,25 @@ function PartnerShopListView({
 
             {showVipSection && meta && (
               <div>
-                {meta.qualifies && <div style={sectionHeadingGold}>✦ VIP 精選</div>}
                 {meta.qualifies ? (
-                  shownVip.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                      {shownVip.map((s) => (
-                        <ShopCard
-                          key={s.id}
-                          shop={s}
-                          loggedIn={!!user}
-                          isFav={favorited(s)}
-                          onToggleFav={() => toggleFav(s)}
-                          onDetail={() => onOpenDetail(s.id)}
-                        />
-                      ))}
-                    </div>
-                  )
+                  <div style={sectionHeadingGold}>✦ VIP 精選</div>
                 ) : (
-                  <VipLockedCard meta={meta} />
+                  <VipThresholdBanner meta={meta} />
+                )}
+                {shownVip.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {shownVip.map((s) => (
+                      <ShopCard
+                        key={s.id}
+                        shop={s}
+                        loggedIn={!!user}
+                        isFav={favorited(s)}
+                        onToggleFav={() => toggleFav(s)}
+                        onDetail={() => onOpenDetail(s.id)}
+                        onCta={onCta}
+                      />
+                    ))}
+                  </div>
                 )}
               </div>
             )}
@@ -167,14 +201,17 @@ function PartnerShopListView({
 }
 
 function ShopCard({
-  shop, loggedIn, isFav, onToggleFav, onDetail,
+  shop, loggedIn, isFav, onToggleFav, onDetail, onCta,
 }: {
   shop: PartnerShop
   loggedIn: boolean
   isFav: boolean
   onToggleFav: () => void
   onDetail: () => void
+  onCta: (shop: PartnerShop) => void
 }) {
+  // 鎖定的商家後端會把 cta_url 清空，所以按鈕是否顯示不能只看 cta_url，鎖定時也要顯示（點下去開原因彈窗）。
+  const showCta = !!shop.cta_url || !!shop.cta_locked
   return (
     <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
       <div style={{ position: 'relative' }}>
@@ -204,10 +241,10 @@ function ShopCard({
             {shop.summary}
           </div>
         )}
-        <div style={{ display: 'grid', gridTemplateColumns: shop.cta_url ? 'minmax(0,1fr) minmax(0,1fr)' : 'minmax(0,1fr)', gap: 8, marginTop: 10 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: showCta ? 'minmax(0,1fr) minmax(0,1fr)' : 'minmax(0,1fr)', gap: 8, marginTop: 10 }}>
           <button onClick={onDetail} style={ghostFullBtn}>詳細</button>
-          {shop.cta_url && (
-            <button onClick={() => window.open(shop.cta_url, '_blank', 'noopener,noreferrer')} style={primaryFullBtn}>前往</button>
+          {showCta && (
+            <button onClick={() => onCta(shop)} style={primaryFullBtn}>{shop.cta_locked ? '🔒 前往' : '前往'}</button>
           )}
         </div>
       </div>
@@ -215,42 +252,50 @@ function ShopCard({
   )
 }
 
-// VIP 精選鎖定卡：不合格者看不到 vip_featured 商家內容（後端本就不回傳），這裡只顯示解鎖條件與進度，
-// 鼓勵繼續累積里程／升級 VIP。is_vip 但里程不足 vs 尚非 VIP 的鼓勵文案略有不同。
-function VipLockedCard({ meta }: { meta: PartnerListMeta }) {
-  const remainKm = Math.max(0, meta.min_km - meta.user_km)
+// VIP 精選門檻橫幅：VIP 精選商家現在全體玩家都看得到卡片內容，不合格者只是「前往」按鈕被鎖住
+// （見 ShopCard／handleCta），這裡改成放在卡片列表「上方」的精簡說明，取代原本整卡取代的鎖定卡。
+// 合格者不顯示這條橫幅，直接用原本的金色「✦ VIP 精選」標題（見呼叫端）。
+function VipThresholdBanner({ meta }: { meta: PartnerListMeta }) {
   const pct = meta.min_km > 0 ? Math.min(100, Math.round((meta.user_km / meta.min_km) * 100)) : 100
-  const encourage =
-    !meta.is_vip
-      ? (meta.user_km >= meta.min_km ? '里程已達標！升級 VIP 即可立即解鎖 🎉' : `升級 VIP、再累積 ${remainKm.toFixed(1)} KM，就能解鎖專屬優惠！`)
-      : `再跑 ${remainKm.toFixed(1)} KM 就能解鎖，加油！`
-
   return (
-    <div style={vipLockCard}>
-      <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--gold)' }}>🔒 VIP 精選</div>
-      <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 4, fontWeight: 700 }}>
-        {meta.vip_featured_count} 家精選商家等你解鎖
+    <div style={vipBannerCard}>
+      <div style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--gold)', lineHeight: 1.6 }}>
+        ✦ VIP 精選 · 需 VIP 會員且累積里程 ≥ {meta.min_km}KM 才能前往
       </div>
-
-      <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 14, lineHeight: 1.7 }}>
-        解鎖條件：<span style={{ color: 'var(--tx)', fontWeight: 800 }}>VIP 會員</span>{' '}且累積里程 ≥{' '}
-        <span style={{ color: 'var(--tx)', fontWeight: 800 }}>{meta.min_km} KM</span>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, fontSize: 12, fontWeight: 800 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, fontSize: 12, fontWeight: 800 }}>
         <span style={{ color: meta.is_vip ? 'var(--fug)' : 'var(--tx-faint)' }}>{meta.is_vip ? '✓ VIP 有效' : '尚非 VIP'}</span>
         <span style={{ color: 'var(--tx-dim)', fontVariantNumeric: 'tabular-nums' }}>{meta.user_km.toFixed(1)} / {meta.min_km} KM</span>
       </div>
       <div style={barOuter}><div style={{ ...barInner, width: `${pct}%` }} /></div>
+    </div>
+  )
+}
 
-      <div style={{ fontSize: 12.5, color: 'var(--gold)', fontWeight: 800, marginTop: 12, textAlign: 'center', lineHeight: 1.6 }}>
-        {encourage}
+// VIP 精選「前往」鎖定原因彈窗：點到 cta_locked 的商家時開啟。內文優先用後端算好的
+// shop.cta_lock_reason；理論上 cta_locked=true 時後端一定會給，這裡的 meta 組字串只是防禦性 fallback
+// （例如 meta 還沒載完就先點到，理論上不會發生，但型別上 cta_lock_reason 是 optional）。
+function VipLockedModal({ shop, meta, onClose }: { shop: PartnerShop; meta: PartnerListMeta | null; onClose: () => void }) {
+  const reason = shop.cta_lock_reason
+    || (meta ? `欲前往須滿足 VIP 會員身分，及累積跑步里程至少 ${meta.min_km}KM` : '欲前往須滿足 VIP 會員身分，及累積跑步里程門檻')
+
+  return (
+    <div data-skin="default" onClick={onClose} style={modalOverlay}>
+      <div onClick={(e) => e.stopPropagation()} style={modalCard}>
+        <div style={{ fontSize: 16, fontWeight: 900, color: '#fff', textAlign: 'center' }}>此為 VIP 精選商家</div>
+        <div style={{ fontSize: 13.5, color: 'var(--tx)', lineHeight: 1.8, marginTop: 12 }}>{reason}</div>
+        {meta && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, fontSize: 12.5, fontWeight: 800, background: 'var(--bg-2)', borderRadius: 10, padding: '10px 12px' }}>
+            <span style={{ color: meta.is_vip ? 'var(--fug)' : 'var(--tx-faint)' }}>VIP：{meta.is_vip ? '有效' : '尚非會員'}</span>
+            <span style={{ color: 'var(--tx-dim)', fontVariantNumeric: 'tabular-nums' }}>目前 {meta.user_km.toFixed(1)}KM ／ 需 {meta.min_km}KM</span>
+          </div>
+        )}
+        <button onClick={onClose} style={modalPrimaryBtn}>我知道了</button>
       </div>
     </div>
   )
 }
 
-function PartnerShopDetailView({ id, onBack }: { id: string; onBack: () => void }) {
+function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () => void; onCta: (shop: PartnerShop) => void }) {
   const user = useUser()
   const { data, error, isLoading } = useSWR(
     ['partner-shop-detail', id, user?.id ?? 'guest'],
@@ -258,6 +303,8 @@ function PartnerShopDetailView({ id, onBack }: { id: string; onBack: () => void 
   )
   const shop = data?.shop ?? null
   const [zoom, setZoom] = useState<{ images: string[]; index: number } | null>(null)
+  // 同 ShopCard：鎖定的商家 cta_url 會被後端清空，按鈕顯示與否要看 cta_locked，不能只看 cta_url。
+  const showCta = !!shop && (!!shop.cta_url || !!shop.cta_locked)
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
@@ -303,18 +350,18 @@ function PartnerShopDetailView({ id, onBack }: { id: string; onBack: () => void 
             )}
 
             {/* 底部 CTA 前預留空間，避免內容被固定底列遮住 */}
-            {shop.cta_url && <div style={{ height: 8 }} />}
+            {showCta && <div style={{ height: 8 }} />}
           </>
         )}
       </div>
 
-      {shop && shop.cta_url && (
+      {shop && showCta && (
         <div style={{ flexShrink: 0, padding: '12px 18px calc(env(safe-area-inset-bottom, 0px) + 14px)', borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
           <button
-            onClick={() => window.open(shop.cta_url, '_blank', 'noopener,noreferrer')}
+            onClick={() => onCta(shop)}
             style={{ ...primaryFullBtn, width: '100%', padding: '12px 0', fontSize: 14.5 }}
           >
-            {shop.cta_label || '立即前往'}
+            {shop.cta_locked ? '🔒 ' : ''}{shop.cta_label || '立即前往'}
           </button>
         </div>
       )}
@@ -328,9 +375,15 @@ const sectionHeading: React.CSSProperties = { fontSize: 13, fontWeight: 800, col
 const sectionHeadingGold: React.CSSProperties = { fontSize: 13, fontWeight: 900, color: 'var(--gold)', margin: '2px 2px 10px', letterSpacing: 0.3 }
 // VIP 精選商家卡片上的金底白字小徽章（金底白字慣例：金色實心底一律用 #fff 文字）
 const vipBadge: React.CSSProperties = { display: 'inline-block', fontSize: 10.5, fontWeight: 800, color: '#fff', background: 'var(--gold)', borderRadius: 999, padding: '2px 8px', marginBottom: 6 }
-const vipLockCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 14, padding: '18px 16px' }
+// VIP 精選門檻橫幅（不合格者，放卡片列表上方）
+const vipBannerCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '12px 14px', marginBottom: 12 }
 const barOuter: React.CSSProperties = { height: 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden', marginTop: 6 }
 const barInner: React.CSSProperties = { height: '100%', background: 'var(--gold)', borderRadius: 999, transition: 'width .3s' }
+// VIP 精選鎖定原因彈窗：比照 CancelSubscriptionModal 的深色置中卡片風格。z-index 比可拖曳資訊面板（500）
+// 高很多，避免被蓋住（見 frontend-draggable-sheet 慣例：新增 overlay 要蓋過面板必須 >500）。
+const modalOverlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 3500, background: 'rgba(4,8,6,.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }
+const modalCard: React.CSSProperties = { width: '100%', maxWidth: 360, background: '#0b0e13', border: '1px solid var(--line-2)', borderRadius: 16, padding: '18px 16px', boxShadow: '0 16px 50px rgba(0,0,0,.7)' }
+const modalPrimaryBtn: React.CSSProperties = { marginTop: 16, width: '100%', background: 'var(--gold)', color: '#fff', fontWeight: 900, border: 'none', borderRadius: 11, padding: '12px', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0, flexShrink: 0 }
 const ghostFullBtn: React.CSSProperties = { background: 'var(--bg-2)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px 0', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
 const primaryFullBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 10, padding: '10px 0', fontSize: 13.5, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }

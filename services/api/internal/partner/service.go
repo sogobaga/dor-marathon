@@ -50,16 +50,38 @@ func (s *Service) vipFeaturedEligibility(ctx context.Context, uid string) (isVIP
 	return isVIP, km, minKm, qualifies, nil
 }
 
-// ListEnabled 回傳前台商家列表 + 資格 meta。不合格者拿不到任何 audience='vip_featured' 商家的
-// 內容，只透過 meta.vip_featured_count 讓前端顯示「N 家等你解鎖」的鎖定提示。
+// ctaLockReason 組出 CtaLocked=true 時的鎖定原因說明；minKm 來自 app_settings，不可寫死。
+func ctaLockReason(minKm int) string {
+	return fmt.Sprintf("欲前往須滿足 VIP 會員身分，及累積跑步里程至少 %dKM", minKm)
+}
+
+// applyCtaGate 把「是否合格」套用到單一 shop 的 CTA 動作上：audience='vip_featured' 且不合格時，
+// 鎖住前往按鈕（CtaLocked=true + 原因文案）並清空 CTAURL（防前端被繞過直接讀連結）；
+// 商家本身內容（名稱/簡介/圖片/detail_html）一律對所有人可見，不受此影響。
+func applyCtaGate(shop *PartnerShop, qualifies bool, minKm int) {
+	if shop.Audience == "vip_featured" && !qualifies {
+		shop.CtaLocked = true
+		shop.CtaLockReason = ctaLockReason(minKm)
+		shop.CTAURL = ""
+		return
+	}
+	shop.CtaLocked = false
+	shop.CtaLockReason = ""
+}
+
+// ListEnabled 回傳前台商家列表 + 資格 meta。現在所有 audience='vip_featured' 商家內容對所有人可見；
+// 不合格者只在該商家的「前往」動作上被鎖住（見 applyCtaGate），meta 仍用於區塊頂端門檻說明。
 func (s *Service) ListEnabled(ctx context.Context, uid string) ([]*PartnerShop, *PartnerListMeta, error) {
 	isVIP, km, minKm, qualifies, err := s.vipFeaturedEligibility(ctx, uid)
 	if err != nil {
 		return nil, nil, err
 	}
-	shops, err := s.repo.ListEnabled(ctx, uid, qualifies)
+	shops, err := s.repo.ListEnabled(ctx, uid)
 	if err != nil {
 		return nil, nil, err
+	}
+	for _, shop := range shops {
+		applyCtaGate(shop, qualifies, minKm)
 	}
 	vipCount, err := s.repo.CountEnabledByAudience(ctx, "vip_featured")
 	if err != nil {
@@ -75,24 +97,26 @@ func (s *Service) ListEnabled(ctx context.Context, uid string) ([]*PartnerShop, 
 	return shops, meta, nil
 }
 
-// GetDetail 前台詳細；不合格者對 vip_featured 商家一律回 ErrNotFound（見 Repository.GetDetail）。
+// GetDetail 前台詳細；vip_featured 商家內容現在對所有人可見，不合格者只在 CTA 動作上被鎖住
+// （見 applyCtaGate）。
 func (s *Service) GetDetail(ctx context.Context, id, uid string) (*PartnerShopDetail, error) {
-	_, _, _, qualifies, err := s.vipFeaturedEligibility(ctx, uid)
+	_, _, minKm, qualifies, err := s.vipFeaturedEligibility(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.GetDetail(ctx, id, uid, qualifies)
+	detail, err := s.repo.GetDetail(ctx, id, uid)
+	if err != nil {
+		return nil, err
+	}
+	applyCtaGate(&detail.PartnerShop, qualifies, minKm)
+	return detail, nil
 }
 
 // --- 收藏 ---
 
-// AddFavorite 比照 GetDetail：不合格者對 vip_featured 商家收藏一律回 ErrNotFound。
+// AddFavorite 收藏不受 VIP 精選資格限制，所有人皆可收藏任何 enabled 商家。
 func (s *Service) AddFavorite(ctx context.Context, userID, shopID string) error {
-	_, _, _, qualifies, err := s.vipFeaturedEligibility(ctx, userID)
-	if err != nil {
-		return err
-	}
-	return s.repo.AddFavorite(ctx, userID, shopID, qualifies)
+	return s.repo.AddFavorite(ctx, userID, shopID)
 }
 
 func (s *Service) RemoveFavorite(ctx context.Context, userID, shopID string) error {

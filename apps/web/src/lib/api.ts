@@ -2387,8 +2387,10 @@ export interface PartnerShop {          // 列表用
   cta_url: string
   cta_label: string
   display_order: number
-  audience: 'all' | 'vip_featured' // all=全體會員；vip_featured=VIP精選（不合格者的 shops 陣列不含此類）
+  audience: 'all' | 'vip_featured' // all=全體會員；vip_featured=VIP精選（全體玩家皆可見，gate 改放在「前往」CTA）
   is_favorited: boolean
+  cta_locked?: boolean       // true＝audience='vip_featured' 且該使用者不合格；此時 cta_url 已被後端清空
+  cta_lock_reason?: string   // cta_locked=true 時的原因文案；false 時為空字串
 }
 
 // 列表隨附的 VIP 精選資格資訊；後端刻意不在不合格時多回傳 vip_featured 商家內容，只給數量。
