@@ -31,6 +31,7 @@ export default function PhoneShell() {
   const [detailTab, setDetailTab] = useState<'brochure' | 'progress' | 'rank' | undefined>(undefined)
   const [registerRace, setRegisterRace] = useState<Race | null>(null)
   const [showProfile, setShowProfile] = useState(false)
+  const [profileInitialTab, setProfileInitialTab] = useState<'info' | 'sports' | 'records' | 'follows' | undefined>(undefined)
   const [showPersonalTasks, setShowPersonalTasks] = useState(false)
   const [showExplore, setShowExplore] = useState(false)
   const [showGallery, setShowGallery] = useState(false)
@@ -73,6 +74,13 @@ export default function PhoneShell() {
     // Strava 授權導回（?strava=...）→ 直接開個人資訊頁顯示結果
     if (params.has('strava')) {
       setShowProfile(true)
+    }
+    // 深連結指定個人資訊頁分頁（?profile=sports，如：track 頁「有待上傳的 GPS，前往確認數據」）→ 開個人資訊頁並跳到指定分頁
+    const profileParam = params.get('profile')
+    if (profileParam) {
+      setShowProfile(true)
+      if (profileParam === 'sports') setProfileInitialTab('sports')
+      window.history.replaceState({}, '', '/') // 清掉參數，避免重整重播
     }
     // 關主挑戰取卡導回（?unlock=<bossId>）→ 開卡片圖鑑並跳到該卡、播翻轉解鎖特效
     const unlock = params.get('unlock')
@@ -136,6 +144,7 @@ export default function PhoneShell() {
         ) : showProfile || payRace ? (
           <ProfileScreen
             focusRaceID={payRace?.id}
+            initialTab={profileInitialTab}
             onBack={() => { setShowProfile(false); setPayRace(null) }}
             onOpenPersonalTasks={() => setShowPersonalTasks(true)}
             onOpenExplore={() => setShowExplore(true)}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss } from '@/lib/api'
+import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
@@ -59,6 +59,8 @@ export default function TrackPage() {
   const [vehicleWarn, setVehicleWarn] = useState(false) // 即時偵測到疑似搭車速度
   const [recover, setRecover] = useState<{ start: number; points: GpsPoint[]; km: number; mins: number } | null>(null) // 上次未上傳的跑步（可恢復上傳）
   const [result, setResult] = useState<GpsRunResult | null>(null)
+  const [stravaPriority, setStravaPriority] = useState(false) // 里程優先來源＝Strava 且已連接：GPS 結束不自動上傳，先讓使用者選
+  const [confirmStravaHold, setConfirmStravaHold] = useState<null | { km: number; mins: number; paceS: number }>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [checkpoints, setCheckpoints] = useState<ActiveCheckpoint[]>([])
@@ -237,6 +239,17 @@ export default function TrackPage() {
     if (!getUserToken()) return
     withUserAuth((t) => mileageExpApi.config(t)).then(setMileageCfg).catch(() => {})
   }, [])
+
+  // 里程優先來源＝Strava 且已連接 → GPS 結束不自動上傳，改為讓使用者選擇（避免與 Strava 同步重複而輸掉去重）
+  useEffect(() => {
+    const token = getUserToken(); if (!token) return
+    Promise.all([
+      profileApi.getMe(token).catch(() => null),
+      integrationsApi.stravaStatus(token).catch(() => null),
+    ]).then(([me, st]) => {
+      setStravaPriority(me?.profile?.preferred_data_source === 'strava' && !!st?.connected)
+    })
+  }, [user?.id])
 
   // 進入頁面（idle）就先啟動 GPS「預熱」偵測：立即顯示精度、定位地圖，但不記錄距離。
   // 開始跑步時 start() 會同步關掉它、換成正式追蹤；離開 idle / 卸載時自動關閉（用 onPosRef 避免每次 render 重訂閱）。
@@ -766,13 +779,7 @@ export default function TrackPage() {
   useEffect(() => { const t = getUserToken(); if (t) loadEffectAssets(t).then(setFxAssets) }, [user?.id])
   function toggleMute() { const next = !isMuted(); sfxSetMuted(next); setMuted(next); if (!next) unlockAudio() }
 
-  async function finish(): Promise<GpsRunResult | null> {
-    cleanup()
-    setStatus('done')
-    const pts = pointsRef.current
-    if (pts.length < 2) { flashErr('軌跡太短，未上傳'); localStorage.removeItem(LS_KEY); return null }
-    const token = getUserToken()
-    if (!token) { setErr('未登入，無法上傳'); return null }
+  async function doUploadGps(pts: GpsPoint[]): Promise<GpsRunResult | null> {
     setUploading(true)
     try {
       const { result } = await withUserAuth((t) => activitiesApi.uploadGps(t, {
@@ -787,6 +794,26 @@ export default function TrackPage() {
       setErr(e?.message || '上傳失敗')
       return null
     } finally { setUploading(false) }
+  }
+
+  // allowStravaHold：僅「自由跑結束」允許偏好 Strava 時暫緩上傳讓使用者選；
+  // 課表挑戰（finishWorkout）必須直接上傳——課表成績要靠 GPS 防弊/best_time，且不可讓 Strava 彈窗蓋掉 WorkoutHud 收服演出。
+  async function finish(allowStravaHold = true): Promise<GpsRunResult | null> {
+    cleanup()
+    setStatus('done')
+    const pts = pointsRef.current
+    if (pts.length < 2) { flashErr('軌跡太短，未上傳'); localStorage.removeItem(LS_KEY); return null }
+    const token = getUserToken()
+    if (!token) { setErr('未登入，無法上傳'); return null }
+    if (allowStravaHold && stravaPriority) {
+      // 偏好 Strava：不自動上傳，先讓使用者選（保留 LS_KEY 作為 pending，供運動數據頁接手）
+      let m = 0; for (let i = 1; i < pts.length; i++) m += haversineM(pts[i - 1], pts[i])
+      const km = Math.round(m / 10) / 100
+      const durS = Math.max(1, Math.round((pts[pts.length - 1].t - startRef.current) / 1000))
+      setConfirmStravaHold({ km, mins: Math.round(durS / 60), paceS: km > 0 ? Math.round(durS / km) : 0 })
+      return null
+    }
+    return doUploadGps(pts)
   }
 
   // 進頁偵測「上次未上傳的跑步」（LS_KEY 備份）→ 提示可恢復上傳，避免忘記上傳整趟白跑
@@ -898,8 +925,9 @@ export default function TrackPage() {
     woActiveRef.current = false
     freetrainRef.current = false
     setWoPhase('done')
-    // 先上傳 GPS（伺服器重算+防弊）→ 拿到是否標記；被標記疑似載具就不回報課表完成（成績不計）
-    const upload = await finish()
+    // 先上傳 GPS（伺服器重算+防弊）→ 拿到是否標記；被標記疑似載具就不回報課表完成（成績不計）。
+    // 課表挑戰一律直接上傳（allowStravaHold=false）：成績要靠 GPS、且不可讓 Strava 暫緩彈窗打斷收服演出。
+    const upload = await finish(false)
     if (upload?.flagged) { setWoResult({ stars: 0, reward_exp: 0, reward_dp: 0, flagged: true }); return }
     // 自主訓練：不發任何額外獎勵/星數——GPS finish() 已存跑步紀錄（里程 EXP 由既有 activity_queue 自動發）。
     if (workout?.kind === 'freetrain') { setWoResult({ stars: 0, reward_exp: 0, reward_dp: 0, time_s: upload?.duration_s }); return }
@@ -1173,6 +1201,29 @@ export default function TrackPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
               <button onClick={uploadRecovered} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>{uploading ? '上傳中…' : '上傳這趟'}</button>
               <button onClick={discardRecovered} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>捨棄</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 里程優先來源＝Strava：GPS 結束不自動上傳，先讓使用者選 */}
+      {confirmStravaHold && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 3300, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 16, padding: '20px 18px', maxWidth: 340, width: '100%', boxShadow: '0 12px 40px rgba(0,0,0,.6)' }}>
+            <div style={{ fontSize: 17, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>您已開啟 STRAVA 數據同步</div>
+            <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
+              是否優先確認 STRAVA 數據，或是直接使用本次數據？
+            </div>
+            <div style={{ fontSize: 13.5, color: 'var(--tx)', marginTop: 10 }}>
+              本次跑步 · {confirmStravaHold.km} km · {confirmStravaHold.mins} 分
+              {confirmStravaHold.paceS > 0 ? ` · 配速 ${Math.floor(confirmStravaHold.paceS / 60)}:${String(confirmStravaHold.paceS % 60).padStart(2, '0')}/km` : ''}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+              <button onClick={() => { setConfirmStravaHold(null); doUploadGps(pointsRef.current) }} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>
+                {uploading ? '上傳中…' : '直接使用本次數據'}
+              </button>
+              <button onClick={() => { window.location.href = '/?profile=sports' }} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>
+                前往確認數據
+              </button>
             </div>
           </div>
         </div>

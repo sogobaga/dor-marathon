@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type FollowRow, type SiteSettings } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type FollowRow, type SiteSettings } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
+import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendingGps'
 import { useDashboard } from '@/lib/useDashboard'
 import MemberPanel from './MemberPanel'
 import UpgradeVipModal from './UpgradeVipModal'
@@ -42,7 +43,7 @@ function paceStr(sec: number) {
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
 }
 
-export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks, onOpenExplore, onOpenGallery, onOpenTitle, onOpenAchievement, onOpenTraining, onOpenPerks, onOpenMonopoly }: { onBack: () => void; focusRaceID?: string; onOpenPersonalTasks?: () => void; onOpenExplore?: () => void; onOpenGallery?: () => void; onOpenTitle?: () => void; onOpenAchievement?: () => void; onOpenTraining?: () => void; onOpenPerks?: () => void; onOpenMonopoly?: () => void }) {
+export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenPersonalTasks, onOpenExplore, onOpenGallery, onOpenTitle, onOpenAchievement, onOpenTraining, onOpenPerks, onOpenMonopoly }: { onBack: () => void; focusRaceID?: string; initialTab?: 'info' | 'sports' | 'records' | 'follows'; onOpenPersonalTasks?: () => void; onOpenExplore?: () => void; onOpenGallery?: () => void; onOpenTitle?: () => void; onOpenAchievement?: () => void; onOpenTraining?: () => void; onOpenPerks?: () => void; onOpenMonopoly?: () => void }) {
   const [p, setP] = useState<Profile | null>(null)
   const [regs, setRegs] = useState<MyRegistration[] | null>(null)
   const [payOrder, setPayOrder] = useState<MyOrder | null>(null)
@@ -56,7 +57,12 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
   const [activities, setActivities] = useState<SyncedActivity[] | null>(null)
   const [syncing, setSyncing] = useState(false)
   const { dash, revalidate: loadDashboard } = useDashboard() // 共用會員儀表板快取（與首頁會員卡同一份）
-  const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>('info')
+  const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>(initialTab ?? 'info')
+  // 本機尚未上傳的 GPS（里程優先來源=Strava 時，track 頁結束不自動上傳，留給這裡決定）
+  const [pending, setPending] = useState<PendingGpsRun | null>(null)
+  const [pendingAsk, setPendingAsk] = useState(false) // 「是否等待 Strava 同步」二次確認彈窗
+  const [pendingBusy, setPendingBusy] = useState(false)
+  const [pendingErr, setPendingErr] = useState('')
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
@@ -120,6 +126,25 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
     } finally {
       setSyncing(false)
     }
+  }
+
+  // 本機尚未上傳的 GPS（不管是否連 Strava，都可能有——里程優先來源=Strava 時 track 頁結束會保留在本機）
+  useEffect(() => { setPending(readPendingGps()) }, [])
+
+  async function uploadPending() {
+    if (!pending) return
+    const token = getUserToken(); if (!token) return
+    setPendingBusy(true); setPendingErr('')
+    try {
+      await withUserAuth((t) => activitiesApi.uploadGps(t, {
+        started_at: new Date(pending.start).toISOString(),
+        ended_at: new Date(pending.endedAt).toISOString(),
+        points: pending.points,
+      }))
+      clearPendingGps(); setPending(null); setPendingAsk(false)
+      loadActivities() // 刷新已同步活動（該清單含 GPS 來源）
+    } catch (e: any) { setPendingErr(e?.message || '上傳失敗，請稍後再試') }
+    finally { setPendingBusy(false) }
   }
 
   useEffect(() => {
@@ -273,6 +298,7 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
   }
 
   return (
+    <>
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
@@ -472,6 +498,21 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
                   )
                 })}
               </div>
+            </div>
+          )}
+
+          {/* 本機尚未上傳的 GPS（里程優先來源=Strava 時，track 頁結束不自動上傳）——不限於已連 Strava，故不包在 strava?.connected 內 */}
+          {pending && (
+            <div style={{ marginTop: 12, background: 'var(--bg-2)', border: '1px solid var(--fug)', borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>🏃 本機尚未上傳的跑步</div>
+              <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.6 }}>
+                約 {pending.km} km · {pending.mins} 分。你的優先來源是 Strava，可等 Strava 同步後以 Strava 為準，或直接上傳這趟 GPS 數據。
+              </div>
+              {pendingErr && <div style={{ fontSize: 11.5, color: 'var(--hunt)', marginTop: 6 }}>{pendingErr}</div>}
+              <button onClick={() => setPendingAsk(true)} disabled={pendingBusy}
+                style={{ marginTop: 10, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer', opacity: pendingBusy ? 0.6 : 1 }}>
+                {pendingBusy ? '上傳中…' : '上傳數據'}
+              </button>
             </div>
           )}
 
@@ -709,6 +750,29 @@ export default function ProfileScreen({ onBack, focusRaceID, onOpenPersonalTasks
 
       {showUpgrade && <UpgradeVipModal onClose={() => setShowUpgrade(false)} />}
     </div>
+
+    {/* 本機待上傳 GPS：是否等待 Strava 同步 二次確認 */}
+    {pendingAsk && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 3600, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 16, padding: '20px 18px', maxWidth: 340, width: '100%' }}>
+          <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>是否要等待 STRAVA 數據同步？</div>
+          <div style={{ fontSize: 13, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
+            你的優先來源是 Strava。若等 Strava 同步完成，將以 Strava 數據為準；若直接上傳，這趟會以 GPS 數據計入。
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+            <button onClick={uploadPending} disabled={pendingBusy}
+              style={{ background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 10, padding: '11px', fontSize: 14, fontWeight: 800, cursor: 'pointer', opacity: pendingBusy ? 0.6 : 1 }}>
+              {pendingBusy ? '上傳中…' : '否，直接上傳'}
+            </button>
+            <button onClick={() => setPendingAsk(false)} disabled={pendingBusy}
+              style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>
+              好，要等待
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }
 
