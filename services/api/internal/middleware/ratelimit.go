@@ -68,13 +68,19 @@ func RateLimit(rdb *redis.Client, action string, limit int, window time.Duration
 	}
 }
 
-// ClientIP 取得限流用 client IP：依賴 chi RealIP middleware 已處理過的 r.RemoteAddr。
-// SEC-M8：目前信任 X-Forwarded-For/X-Real-IP/True-Client-IP，攻擊者可在請求自帶這些標頭、
-// 每次換一個值就換一個限流 bucket，完全繞過此維度（Railway edge 目前不會清客戶端自帶的標頭）；
-// 先照現有 RealIP 做，之後接 Cloudflare 邊緣層、改認只信任 CF-Connecting-IP 才算修復 SEC-M8。
-// 因此這個維度只能當縱深防禦，帳號類端點（/auth/login 等）務必疊加 AccountField 這種
-// 不可被 client 偽造的維度，不能只靠這個擋暴力破解。
+// ClientIP 取得限流用 client IP。
+// SEC-M8 修復（v0.1.417，站台已置於 Cloudflare 之後）：優先信任 Cloudflare 的 CF-Connecting-IP。
+// Cloudflare 代理（www.dor.tw 橘雲）會把「真實客戶端 IP」寫入 CF-Connecting-IP，並清除客戶端自帶的
+// 同名標頭 → 不可偽造；API 流量走 www.dor.tw/api/*（Next.js rewrites 反向代理），此標頭會一路帶到後端。
+// 沒有 CF-Connecting-IP 時（本地開發、或尚未經過 Cloudflare 的路徑）退回 chi RealIP 處理過的 RemoteAddr，
+// 不影響現況、無回歸。
+// ⚠️ 殘餘風險：若有人繞過 Cloudflare 直打 Railway 源站並自帶假 CF-Connecting-IP，仍可偽造此維度——
+// 要完全封死需在 Cloudflare 加「共享密鑰標頭」且後端只信任帶對密鑰的請求（origin verify），為後續加固項。
+// 因此帳號類端點（/auth/login 等）務必仍疊加 AccountField 這種不可偽造維度當主防線，不能只靠 IP。
 func ClientIP(r *http.Request) string {
+	if cf := r.Header.Get("CF-Connecting-IP"); cf != "" {
+		return cf
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
