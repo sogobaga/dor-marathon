@@ -245,6 +245,11 @@ export default function TrackPage() {
     localStorage.setItem(LS_KEY, JSON.stringify({ start: startRef.current, points: pointsRef.current.slice(-2000) }))
   }, [ensureMap])
   const onPosRef = useRef(onPos); onPosRef.current = onPos
+  // 進頁面即初始化地圖（不等 GPS）：GPS 權限未授權時「預熱定位」不會啟動（見下方 permissions.query 判斷），
+  // 而地圖過去只由 onPos→ensureMap 觸發 → 未授權/未定位時「地圖整個不顯示」（v0.1.423 後的回歸）。
+  // 這裡在掛載時先用預設中心把地圖畫出來（不請求 GPS，保留不主動跳權限的行為）；GPS 一有位置
+  //（onPos→ensureMap 為 no-op）會自動把畫面/標記移到實際位置。
+  useEffect(() => { ensureMap(25.0330, 121.5654) }, [ensureMap]) // 預設台北，避免無 GPS 時空白
 
   // 里程獎勵設定（進度條/預覽用）：進頁抓一次
   useEffect(() => {
