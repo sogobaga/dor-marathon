@@ -251,18 +251,29 @@ export default function TrackPage() {
     })
   }, [user?.id])
 
-  // 進入頁面（idle）就先啟動 GPS「預熱」偵測：立即顯示精度、定位地圖，但不記錄距離。
-  // 開始跑步時 start() 會同步關掉它、換成正式追蹤；離開 idle / 卸載時自動關閉（用 onPosRef 避免每次 render 重訂閱）。
+  // 進入頁面（idle）的 GPS「預熱」偵測：立即顯示精度、定位地圖，但不記錄距離。
+  // ⚠️ 只有「已授權（granted）」才預熱——granted 呼叫定位不會跳原生提示；若權限狀態是 prompt/denied，
+  // 或瀏覽器不支援 permissions.query（如 Safari），就「不」預熱、不打擾，等使用者按「開始跑步」時才在
+  // 使用者手勢內請求權限。這樣就不會每次一進頁面都被要求允許 GPS 一次。
+  // 開始跑步時 start() 會同步關掉預熱、換成正式追蹤；離開 idle / 卸載時自動關閉（用 onPosRef 避免每次 render 重訂閱）。
   useEffect(() => {
     if (status !== 'idle') return
     if (typeof navigator === 'undefined' || !navigator.geolocation) return
-    const id = navigator.geolocation.watchPosition(
-      (pos) => onPosRef.current(pos),
-      () => { /* 預熱失敗忽略（權限未給/逾時）；開始跑步時會在使用者手勢內再要求 */ },
-      { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 },
-    )
-    warmWatchRef.current = id
-    return () => { try { navigator.geolocation.clearWatch(id) } catch { /* ignore */ } warmWatchRef.current = null }
+    let cancelled = false
+    let watchId: number | null = null
+    ;(async () => {
+      let perm: { state: string } | null = null
+      try { perm = (await (navigator.permissions as any)?.query?.({ name: 'geolocation' })) ?? null } catch { perm = null }
+      if (cancelled || statusRef.current !== 'idle') return
+      if (!perm || perm.state !== 'granted') return // 未授權 / 查不到 → 進頁面不預熱、不跳提示
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => onPosRef.current(pos),
+        () => { /* 預熱失敗忽略；開始跑步時會在使用者手勢內再要求 */ },
+        { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 },
+      )
+      warmWatchRef.current = watchId
+    })()
+    return () => { cancelled = true; if (watchId != null) { try { navigator.geolocation.clearWatch(watchId) } catch { /* ignore */ } } warmWatchRef.current = null }
   }, [status])
 
   async function acquireWake() {
