@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss } from '@/lib/api'
+import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
@@ -65,6 +65,10 @@ export default function TrackPage() {
   const [uploading, setUploading] = useState(false)
   const [checkpoints, setCheckpoints] = useState<ActiveCheckpoint[]>([])
   const [curPos, setCurPos] = useState<{ lat: number; lng: number; acc: number } | null>(null)
+  const curPosRef = useRef<{ lat: number; lng: number; acc: number } | null>(null); curPosRef.current = curPos // 供 marker click 等閉包讀最新位置（避免 stale）
+  const [routePlan, setRoutePlan] = useState<{ toName: string; km: number; etaMin: number } | null>(null) // 建議跑步路線資訊條
+  const [routeBusy, setRouteBusy] = useState(false)
+  const routeLineRef = useRef<any>(null) // 建議路線 polyline（虛線橘）
   const [cpBusy, setCpBusy] = useState('') // 正在打卡的 checkpoint id
   const [cpMsg, setCpMsg] = useState('')
   // 事件任務（日常隨機）
@@ -168,6 +172,7 @@ export default function TrackPage() {
     const map = L.map('gps-map', { zoomControl: true }).setView([lat, lng], 16)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map)
     lineRef.current = L.polyline([], { color: '#46E3A0', weight: 5 }).addTo(map)
+    routeLineRef.current = L.polyline([], { color: '#FF8A3D', weight: 4, dashArray: '6 8', opacity: 0.9 }).addTo(map) // 建議路線（虛線橘）
     cpLayerRef.current = L.layerGroup().addTo(map)
     markRef.current = L.circleMarker([lat, lng], { radius: 7, color: '#fff', fillColor: '#46E3A0', fillOpacity: 1, weight: 2 }).addTo(map)
     // 使用者手動拖曳/縮放地圖 → 暫停自動跟隨（否則每次 GPS 更新都會把畫面拉回目前位置，無法看前方路線）
@@ -1056,6 +1061,7 @@ export default function TrackPage() {
         const color = cp.checked ? '#46E3A0' : cp.pending ? '#FFC24B' : '#9aa0a6'
         L.circle([cp.lat, cp.lng], { radius: cp.radius_m || 20, color, weight: 1.5, fillOpacity: 0.1 }).addTo(layer)
         L.circleMarker([cp.lat, cp.lng], { radius: 6, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(layer).bindTooltip(cp.title || '打卡點')
+          .on('click', () => planRoute(cp.lat, cp.lng, cp.title || '打卡點')) // 點打卡點 → 規劃建議路線
       })
       // 城市探索打卡點：畫在最上層、較醒目（紫=未探索神秘/金=已揭露/綠=已收服）；目標關主放大+常駐標籤
       exploreCps.forEach((b) => {
@@ -1064,9 +1070,34 @@ export default function TrackPage() {
         L.circle([b.lat, b.lng], { radius: b.radius_m || 40, color, weight: isFocus ? 3 : 1.5, fillOpacity: isFocus ? 0.25 : 0.12, dashArray: '4 4' }).addTo(layer)
         L.circleMarker([b.lat, b.lng], { radius: isFocus ? 13 : 9, color: '#fff', weight: 2.5, fillColor: color, fillOpacity: 1 }).addTo(layer)
           .bindTooltip((b.discovered ? b.name : (b.place || '神秘打卡點')) + ' ⚔', { permanent: isFocus })
+          .on('click', () => planRoute(b.lat, b.lng, b.discovered ? b.name : (b.place || '神秘打卡點'))) // 點關主打卡點 → 規劃建議路線
       })
     })
   }, [checkpoints, exploreCps, mapReady, focusBoss])
+
+  // 建議跑步路線：從「目前位置」規劃一條跑者友善（避開車道/高速）的 foot-walking 路線到該打卡點。
+  // 讀 curPosRef（非 curPos 閉包）避免 marker click 的 stale 位置。
+  async function planRoute(toLat: number, toLng: number, toName: string) {
+    const from = curPosRef.current
+    if (!from) { setCpMsg('尚未取得目前位置，請到較空曠處或稍候再試'); return }
+    const token = getUserToken()
+    if (!token) { setShowLogin(true); return }
+    setRouteBusy(true)
+    try {
+      const { distance_m, duration_s, coords } = await withUserAuth((t) => routeApi.plan(t, from.lat, from.lng, toLat, toLng))
+      const latlngs: [number, number][] = [[from.lat, from.lng], ...coords] // 從目前位置接到 ORS 路線
+      routeLineRef.current?.setLatLngs(latlngs)
+      // 看整條路線：暫停自動跟隨並縮放到路線範圍
+      if (mapRef.current && latlngs.length > 1) {
+        followRef.current = false; setFollowing(false)
+        try { mapRef.current.fitBounds(latlngs, { padding: [40, 40] }) } catch { /* ignore */ }
+      }
+      setRoutePlan({ toName, km: Math.round(distance_m / 10) / 100, etaMin: Math.max(1, Math.round(duration_s / 60)) })
+    } catch (e: any) {
+      setCpMsg(e?.message || '無法規劃路線，請稍後再試')
+    } finally { setRouteBusy(false) }
+  }
+  function clearRoute() { routeLineRef.current?.setLatLngs([]); setRoutePlan(null) }
 
   async function doCheckin(cp: ActiveCheckpoint) {
     setCpMsg('')
@@ -1343,6 +1374,22 @@ export default function TrackPage() {
                 <button onClick={dismissErr} aria-label="關閉" style={dismissBtn}>✕</button>
               </div>
             )}
+          </div>
+        )}
+        {/* 建議跑步路線資訊條（點地圖打卡點規劃後顯示） */}
+        {(routeBusy || routePlan) && (
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 920, padding: '10px 12px 0', pointerEvents: 'none' }}>
+            <div style={{ background: 'var(--bg-1)', color: 'var(--tx)', border: '1px solid #FF8A3D', borderRadius: 10, padding: '9px 10px 9px 12px', fontSize: 12.5, boxShadow: '0 4px 16px rgba(0,0,0,.35)', pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+              {routeBusy ? (
+                <span style={{ flex: 1 }}>🧭 規劃建議路線中…</span>
+              ) : routePlan ? (
+                <span style={{ flex: 1, minWidth: 0, lineHeight: 1.5 }}>
+                  🧭 建議路線 · 約 <strong style={{ color: '#FF8A3D' }}>{routePlan.km} km</strong> · 預估 {routePlan.etaMin} 分 → {routePlan.toName}
+                  <span style={{ display: 'block', fontSize: 10.5, color: 'var(--tx-faint)' }}>跑者友善（已避開車道/高速）· 僅供參考</span>
+                </span>
+              ) : null}
+              {routePlan && <button onClick={clearRoute} style={{ flexShrink: 0, background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 9px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>清除</button>}
+            </div>
           </div>
         )}
         {/* 疑似搭車即時提醒 */}

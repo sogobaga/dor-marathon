@@ -355,6 +355,16 @@ export const checkpointApi = {
     request<{ result: CheckinResult }>(`/checkpoints/${id}/checkin`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
 }
 
+// 跑步路線建議（後端 ORS foot-walking 代理）：目前位置 → 打卡點的跑者友善建議路線。
+// coords 為 [lat,lng] 序列，直接給 Leaflet polyline。
+export const routeApi = {
+  plan: (token: string, fromLat: number, fromLng: number, toLat: number, toLng: number) =>
+    request<{ distance_m: number; duration_s: number; coords: [number, number][] }>(
+      `/route?from=${fromLat},${fromLng}&to=${toLat},${toLng}`,
+      { headers: withAuth(token) },
+    ),
+}
+
 // --- 事件任務（日常隨機事件）---
 export interface EventParamSpec { key: string; label: string; unit: string }
 export interface EventTypeSpec { key: string; label: string; params: EventParamSpec[] }

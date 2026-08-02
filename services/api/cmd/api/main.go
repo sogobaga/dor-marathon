@@ -42,6 +42,7 @@ import (
 	"github.com/dor/api/internal/race"
 	"github.com/dor/api/internal/realtime"
 	"github.com/dor/api/internal/reward"
+	"github.com/dor/api/internal/routing"
 	"github.com/dor/api/internal/training"
 	"github.com/dor/api/internal/version"
 )
@@ -170,6 +171,8 @@ func main() {
 	// 自主訓練（P1）：課表庫 + 配速等級表，VIP 限定
 	trainingHandler := training.NewHandler(pool)
 	appSettingsHandler := appsettings.NewHandler(pool, wsManager)
+	// 跑步路線建議（ORS foot-walking 代理；未設 ORS_API_KEY 時端點回 503，前端優雅隱藏）
+	routingHandler := routing.NewHandler(os.Getenv("ORS_API_KEY"))
 
 	// Image（圖片上傳，存 Postgres）
 	imageHandler := image.NewHandler(image.NewRepository(pool))
@@ -350,6 +353,7 @@ func main() {
 			r.Mount("/explore", exploreHandler.Router())
 			// 自主訓練（P1）：課表庫 + 配速等級表（VIP 限定，handler 內判定）
 			r.Mount("/training", trainingHandler.Router())
+			r.Mount("/route", routingHandler.Router()) // 跑步路線建議（ORS foot-walking 代理）
 
 			// 獎勵系統（轉盤 + 集點卡）
 			r.Mount("/rewards", rewardHandler.Router())
