@@ -276,6 +276,22 @@ export default function TrackPage() {
     return () => { cancelled = true; if (watchId != null) { try { navigator.geolocation.clearWatch(watchId) } catch { /* ignore */ } } warmWatchRef.current = null }
   }, [status])
 
+  // 建立/重建正式追蹤的 geolocation watch（start() 與「回前景重接」共用）。先清舊 watch 再建新，
+  // 避免切背景被系統暫停後留下已死的 watch（#6：切背景/切 App 不強制結束、回前景自動重新接上 GPS）。
+  function acquireWatch() {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return
+    if (watchRef.current != null) { try { navigator.geolocation.clearWatch(watchRef.current) } catch { /* ignore */ } }
+    watchRef.current = navigator.geolocation.watchPosition(
+      (pos) => onPosRef.current(pos),
+      (e) => {
+        if (e.code === 1) setErr('定位權限被拒：Safari 跳出詢問時請按「允許」；若沒跳出，到 設定 → Apps → Safari → 位置 設為「詢問」或「允許」後重試。')
+        else if (e.code === 3) setErr('定位逾時，請到較空曠處再試（室內 GPS 收訊較差）。')
+        else setErr('定位失敗：' + (e.message || '請確認已開啟定位'))
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
+    )
+  }
+
   async function acquireWake() {
     try { wakeRef.current = await (navigator as any).wakeLock?.request('screen') } catch { /* ignore */ }
   }
@@ -708,16 +724,8 @@ export default function TrackPage() {
     unlockAudio() // 在使用者手勢內解鎖音訊（iOS 必須）
     connectRaceWS() // 連 WS 監聽多人事件（不 await；失敗不影響跑步）
     // ⚠️ iOS：定位權限提示必須在使用者手勢「同步」流程內直接請求，不能先 await 任何東西
-    //（否則會失去使用者手勢 → Safari 直接判定拒絕，code 1）。故先請求定位，wake lock 之後再背景取得。
-    watchRef.current = navigator.geolocation.watchPosition(
-      onPos,
-      (e) => {
-        if (e.code === 1) setErr('定位權限被拒：Safari 跳出詢問時請按「允許」；若沒跳出，到 設定 → Apps → Safari → 位置 設為「詢問」或「允許」後重試。')
-        else if (e.code === 3) setErr('定位逾時，請到較空曠處再試（室內 GPS 收訊較差）。')
-        else setErr('定位失敗：' + (e.message || '請確認已開啟定位'))
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
-    )
+    //（否則會失去使用者手勢 → Safari 直接判定拒絕，code 1）。acquireWatch() 為同步呼叫，符合此要求。
+    acquireWatch()
     timerRef.current = setInterval(() => setElapsed((Date.now() - startRef.current) / 1000), 250)
     evalTimerRef.current = setInterval(evalTick, 1000) // 事件引擎每秒評估
     // 心跳：立即 + 每 30 秒回報「目前在跑」（供後台總覽名單；失敗忽略）
@@ -941,12 +949,12 @@ export default function TrackPage() {
     woActiveRef.current = false
     freetrainRef.current = false
     setWoPhase('done')
-    // 先上傳 GPS（伺服器重算+防弊）→ 拿到是否標記；被標記疑似載具就不回報課表完成（成績不計）。
-    // 課表挑戰一律直接上傳（allowStravaHold=false）：成績要靠 GPS、且不可讓 Strava 暫緩彈窗打斷收服演出。
-    const upload = await finish(false)
-    if (upload?.flagged) { setWoResult({ stars: 0, reward_exp: 0, reward_dp: 0, flagged: true }); return }
-    // 自主訓練：不發任何額外獎勵/星數——GPS finish() 已存跑步紀錄（里程 EXP 由既有 activity_queue 自動發）。
-    if (workout?.kind === 'freetrain') { setWoResult({ stars: 0, reward_exp: 0, reward_dp: 0, time_s: upload?.duration_s }); return }
+    // 課表達標即結算成績、顯示收服演出——但「不結束整趟 GPS」：不呼叫 finish()（不 cleanup、不 setStatus('done')、
+    // 不上傳），status 保持 'tracking'、GPS 繼續累積里程，讓使用者可續跑；要結束整趟(上傳)按底部「結束並上傳」即可。
+    // 防弊改由「配速達標(work_in_band)」本身把關（載具配速不對拿不到星）；原本綁在 GPS upload 的 flagged 閘門與
+    // 關主 best_time 在此脫鉤（使用者拍板 A 方案：達標即結算、可續跑）。
+    // 自主訓練：不發任何額外獎勵/星數（里程 EXP 由整趟上傳後的 activity_queue 自動發）。
+    if (workout?.kind === 'freetrain') { setWoResult({ stars: 0, reward_exp: 0, reward_dp: 0 }); return }
     const res = woResultsRef.current
     const token = getUserToken()
     try {
@@ -996,7 +1004,10 @@ export default function TrackPage() {
   // 螢幕回到前景時重新取得 wake lock
   // 只在掛載/卸載執行：status 變動不可觸發 cleanup（否則會清掉 start 剛建立的計時器與定位）
   useEffect(() => {
-    const onVis = () => { if (document.visibilityState === 'visible' && statusRef.current === 'tracking') acquireWake() }
+    const onVis = () => {
+      // 回前景且仍在跑：重取 wake lock + 重新接上 GPS watch（背景時可能已被系統暫停）。切背景不做任何結束動作。
+      if (document.visibilityState === 'visible' && statusRef.current === 'tracking') { acquireWake(); acquireWatch() }
+    }
     document.addEventListener('visibilitychange', onVis)
     return () => { document.removeEventListener('visibilitychange', onVis); cleanup() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1426,6 +1437,7 @@ export default function TrackPage() {
                   stepDist={stepDist} stepTime={stepTime} livePaceS={livePace} hits={woHits}
                   phase={woPhase === 'done' ? 'done' : 'running'} result={woResult}
                   onRanking={workout.kind === 'explore' && !woResult?.flagged ? () => setRankingBoss({ id: workout.taskId, name: workout.title }) : undefined}
+                  continuing={status === 'tracking'}
                   onClose={() => { setWoPhase('idle'); loadPanel() }} />
               )
             })()}

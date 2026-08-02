@@ -10,7 +10,7 @@ function fmtHudTime(s: number) {
 
 // GPS 追蹤頁的「結構化課表」執行面板：目前分段目標 + 進度 + 即時配速回饋 + 全段進度點。
 // 純顯示：即時數據由 /track 從 GPS 計算後傳入。
-export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, stepTime, livePaceS, hits, phase, result, onClose, onRanking }: {
+export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, stepTime, livePaceS, hits, phase, result, onClose, onRanking, continuing }: {
   title: string
   kind?: 'personal' | 'explore' | 'freetrain' // freetrain（自主訓練）完成畫面不顯示星星/獎勵
   steps: WoStep[]
@@ -22,6 +22,7 @@ export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, step
   phase: 'running' | 'done'
   result: { stars: number; reward_exp: number; reward_dp: number; flagged?: boolean; card_obtained?: boolean; time_s?: number } | null
   onClose: () => void
+  continuing?: boolean // 課表達標後 GPS 仍在跑（未結束整趟）→ 收尾鈕顯示「繼續跑步」而非「看跑步結果」
   onRanking?: () => void // 城市探索關主挑戰：完成後看挑戰者排行
 }) {
   const step = steps[stepIdx]
@@ -39,7 +40,7 @@ export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, step
             <div style={{ fontSize: 13, color: 'var(--tx-dim)', lineHeight: 1.6, textAlign: 'center' }}>
               🚗 本趟偵測到疑似使用交通工具的速度，<br />為維護公平性，<strong style={{ color: 'var(--hunt)' }}>不計星數與獎勵</strong>。請實際跑步完成課表。
             </div>
-            <button onClick={onClose} style={{ marginTop: 12, width: '100%', background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 800, border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>看跑步結果</button>
+            <button onClick={onClose} style={{ marginTop: 12, width: '100%', background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 800, border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>{continuing ? '▶ 繼續跑步' : '看跑步結果'}</button>
           </div>
         </div>
       )
@@ -54,7 +55,7 @@ export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, step
             <div style={{ textAlign: 'center', fontSize: 17, fontWeight: 900, color: 'var(--tx)', padding: '8px 0' }}>
               ✓ 訓練完成{result?.time_s ? ` · 用時 ${fmtHudTime(result.time_s)}` : ''}
             </div>
-            <button onClick={onClose} style={{ marginTop: 12, width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>看跑步結果</button>
+            <button onClick={onClose} style={{ marginTop: 12, width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>{continuing ? '▶ 繼續跑步' : '看跑步結果'}</button>
           </div>
         </div>
       )
@@ -85,7 +86,7 @@ export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, step
             {onRanking && (
               <button onClick={onRanking} style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--gold)', fontWeight: 800, border: '1px solid var(--gold)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer' }}>🏆 挑戰者排行</button>
             )}
-            <button onClick={onClose} style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>看跑步結果</button>
+            <button onClick={onClose} style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>{continuing ? '▶ 繼續跑步' : '看跑步結果'}</button>
           </div>
         </div>
       </div>
