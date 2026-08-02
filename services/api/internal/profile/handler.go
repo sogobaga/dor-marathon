@@ -55,6 +55,7 @@ func (h *Handler) Router() http.Handler {
 	r.Post("/titles/seen", h.MarkTitlesSeen)                // 標記新解鎖稱號已看過
 	r.Get("/achievements", h.GetAchievements)               // 成就總覽
 	r.Get("/achievements/calendar", h.AchievementsCalendar) // 月曆里程
+	r.Get("/achievements/day", h.AchievementsDay)           // 單日明細
 	return r
 }
 

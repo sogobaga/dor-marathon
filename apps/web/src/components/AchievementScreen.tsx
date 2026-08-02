@@ -2,7 +2,7 @@
 
 // 數據探索：頂部月曆里程熱力圖（可左右滑月、頁點指示，適合截圖分享）＋ 下方所有累積數值牆（多巴胺）。
 import { useEffect, useRef, useState } from 'react'
-import { achievementApi, type AchievementStats, type AchievementCalendar } from '@/lib/api'
+import { achievementApi, type AchievementStats, type AchievementCalendar, type AchievementDayActivity } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
 
 const WK = ['日', '一', '二', '三', '四', '五', '六']
@@ -10,6 +10,19 @@ function ym(d: Date) { return `${d.getFullYear()}-${String(d.getMonth() + 1).pad
 function shiftMonth(key: string, delta: number) { const [y, m] = key.split('-').map(Number); return ym(new Date(y, m - 1 + delta, 1)) }
 function monthsDiff(a: string, b: string) { const [ay, am] = a.split('-').map(Number); const [by, bm] = b.split('-').map(Number); return (by - ay) * 12 + (bm - am) }
 function fmtHM(sec: number) { const h = Math.floor(sec / 3600); const m = Math.round((sec % 3600) / 60); return h > 0 ? `${h}時${m}分` : `${m}分` }
+function paceStr(sec: number) {
+  if (!sec || sec <= 0) return '—'
+  return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
+}
+const FLAG_LABEL: Record<string, string> = {
+  multi_device_duplicate: '多裝置重複',
+  cross_account_duplicate: '跨帳號重複',
+  duplicate: '重複資料',
+}
+const SOURCE_LABEL: Record<string, { t: string; c: string }> = {
+  strava: { t: 'Strava', c: '#fc4c02' },
+  gps: { t: 'GPS 跑步追蹤', c: 'var(--fug)' },
+}
 
 export default function AchievementScreen({ onBack }: { onBack: () => void }) {
   const nowMonth = ym(new Date())
@@ -18,6 +31,9 @@ export default function AchievementScreen({ onBack }: { onBack: () => void }) {
   const [cal, setCal] = useState<AchievementCalendar | null>(null)
   const [bounce, setBounce] = useState(0) // 右滑到當月的橡皮筋回饋
   const touchPt = useRef<{ x: number; y: number } | null>(null)
+  const [dayDetail, setDayDetail] = useState<{ date: string; activities: AchievementDayActivity[] } | null>(null)
+  const [dayLoading, setDayLoading] = useState(false)
+  const [dayErr, setDayErr] = useState('')
 
   useEffect(() => { if (getUserToken()) withUserAuth((t) => achievementApi.stats(t)).then(setStats).catch(() => {}) }, [])
   useEffect(() => {
@@ -55,6 +71,18 @@ export default function AchievementScreen({ onBack }: { onBack: () => void }) {
 
   const offset = Math.max(0, Math.min(11, monthsDiff(month, nowMonth))) // 0=當月
 
+  function openDay(day: number) {
+    if (!getUserToken()) return
+    const dateStr = `${month}-${String(day).padStart(2, '0')}`
+    setDayDetail(null)
+    setDayErr('')
+    setDayLoading(true)
+    withUserAuth((t) => achievementApi.day(t, dateStr))
+      .then(setDayDetail)
+      .catch(() => setDayErr('載入失敗，請稍後再試'))
+      .finally(() => setDayLoading(false))
+  }
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -89,7 +117,7 @@ export default function AchievementScreen({ onBack }: { onBack: () => void }) {
               const km = kmByDay[day] || 0
               const intensity = maxKm > 0 && km > 0 ? 0.18 + 0.82 * (km / maxKm) : 0
               return (
-                <div key={day} style={{ aspectRatio: '1', borderRadius: 8, background: km > 0 ? `rgba(45,229,154,${intensity.toFixed(2)})` : 'var(--bg-2)', border: '1px solid var(--line)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+                <div key={day} onClick={() => km > 0 && openDay(day)} style={{ aspectRatio: '1', borderRadius: 8, background: km > 0 ? `rgba(45,229,154,${intensity.toFixed(2)})` : 'var(--bg-2)', border: '1px solid var(--line)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1, cursor: km > 0 ? 'pointer' : 'default' }}>
                   <span style={{ fontSize: 10, color: km > 0 && intensity > 0.5 ? '#06281c' : 'var(--tx-faint)', fontWeight: 700 }}>{day}</span>
                   {km > 0 && <span style={{ fontSize: 8.5, color: intensity > 0.5 ? '#06281c' : 'var(--tx-dim)', fontWeight: 800 }}>{km.toFixed(1)}</span>}
                 </div>
@@ -126,6 +154,73 @@ export default function AchievementScreen({ onBack }: { onBack: () => void }) {
           </div>
         )}
       </div>
+
+      {/* 單日明細面板：點月曆某天 → 列出當日各來源活動 */}
+      {(dayLoading || dayErr || dayDetail) && (
+        <DayDetailModal
+          date={dayDetail?.date ?? ''}
+          activities={dayDetail?.activities ?? null}
+          loading={dayLoading}
+          err={dayErr}
+          onClose={() => { setDayDetail(null); setDayErr('') }}
+        />
+      )}
+    </div>
+  )
+}
+
+function DayDetailModal({ date, activities, loading, err, onClose }: { date: string; activities: AchievementDayActivity[] | null; loading: boolean; err: string; onClose: () => void }) {
+  const validKm = (activities ?? []).filter((a) => !a.flagged).reduce((s, a) => s + a.distance_km, 0)
+  return (
+    <div data-skin="default" onClick={onClose} style={dayOverlay}>
+      <div onClick={(e) => e.stopPropagation()} style={dayCard}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 16, fontWeight: 900, color: '#fff' }}>{date || '當日明細'}</span>
+          <button onClick={onClose} style={closeBtn}>✕</button>
+        </div>
+
+        {loading && <div style={{ fontSize: 12.5, color: 'var(--tx-faint)', textAlign: 'center', padding: '24px 0' }}>載入中…</div>}
+        {!loading && err && <div style={{ fontSize: 12.5, color: 'var(--hunt)', textAlign: 'center', padding: '24px 0' }}>{err}</div>}
+        {!loading && !err && activities && activities.length === 0 && (
+          <div style={{ fontSize: 12.5, color: 'var(--tx-faint)', textAlign: 'center', padding: '24px 0' }}>這天沒有活動紀錄</div>
+        )}
+
+        {!loading && !err && activities && activities.length > 0 && (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14, maxHeight: '52vh', overflowY: 'auto' }}>
+              {activities.map((a) => {
+                const src = SOURCE_LABEL[a.source] ?? { t: a.source, c: 'var(--tx-dim)' }
+                return (
+                  <div key={a.id} style={{ background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 12, padding: 12, opacity: a.flagged ? 0.7 : 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: src.c }}>{src.t}</span>
+                      <span style={{ fontWeight: 800, fontSize: 14, color: 'var(--tx)' }}>{a.distance_km.toFixed(2)} K</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 4 }}>
+                      {Math.round(a.duration_s / 60)} 分 · 配速 {paceStr(a.avg_pace_s)}/km
+                    </div>
+                    <div style={{ fontSize: 11, marginTop: 4 }}>
+                      {a.flagged
+                        ? <span style={{ color: 'var(--hunt)' }}>⚠ 不計入（{FLAG_LABEL[a.flag_reason ?? ''] ?? '重複'}）</span>
+                        : <span style={{ color: 'var(--fug)' }}>計入</span>}
+                    </div>
+                    {a.source === 'strava' && a.external_id && (
+                      <a href={`https://www.strava.com/activities/${a.external_id}`} target="_blank" rel="noreferrer"
+                        style={{ display: 'inline-block', marginTop: 5, fontSize: 11, fontWeight: 700, color: '#fc4c02', textDecoration: 'none' }}>
+                        View on Strava ↗
+                      </a>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--line-2)', display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>計入合計</span>
+              <span style={{ fontSize: 17, fontWeight: 900, color: 'var(--fug)' }}>{validKm.toFixed(2)} K</span>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -142,3 +237,7 @@ function Stat({ icon, label, value, sub }: { icon: string; label: string; value:
 
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0, flexShrink: 0 }
 const navBtn: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx)', borderRadius: 10, width: 34, height: 34, fontSize: 20, cursor: 'pointer', flexShrink: 0, lineHeight: 1 }
+
+const dayOverlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 3500, background: 'rgba(4,8,6,.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }
+const dayCard: React.CSSProperties = { width: '100%', maxWidth: 400, background: '#0b0e13', border: '1px solid var(--line-2)', borderRadius: 16, padding: '18px 16px', boxShadow: '0 16px 50px rgba(0,0,0,.7)' }
+const closeBtn: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 8, width: 28, height: 28, fontSize: 13, cursor: 'pointer', lineHeight: 1, flexShrink: 0 }

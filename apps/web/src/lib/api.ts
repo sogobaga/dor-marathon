@@ -1099,11 +1099,14 @@ export interface AchievementStats {
 
 export interface AchievementCalendarDay { date: string; km: number }
 export interface AchievementCalendar { month: string; total_km: number; days: AchievementCalendarDay[] }
+export interface AchievementDayActivity { id: string; source: string; distance_km: number; duration_s: number; avg_pace_s: number; flagged: boolean; flag_reason?: string; recorded_at: string; external_id?: string }
 
 export const achievementApi = {
   stats: (token: string) => request<AchievementStats>('/profile/achievements', { headers: withAuth(token) }),
   calendar: (token: string, month: string) =>
     request<AchievementCalendar>(`/profile/achievements/calendar?month=${encodeURIComponent(month)}`, { headers: withAuth(token) }),
+  day: (token: string, date: string) =>
+    request<{ date: string; activities: AchievementDayActivity[] }>(`/profile/achievements/day?date=${date}`, { headers: withAuth(token) }),
 }
 
 // VIP 訂閱優惠檔期（後台管理）。pay_pct=實付%（70=付七成、即打七折）

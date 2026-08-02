@@ -211,3 +211,63 @@ func (h *Handler) AchievementsCalendar(w http.ResponseWriter, r *http.Request) {
 		"days":     days,
 	})
 }
+
+// DayActivity 單日明細：某來源的一筆活動（含被排除的 flagged 資料，供玩家自查）。
+type DayActivity struct {
+	ID         string  `json:"id"`
+	Source     string  `json:"source"`
+	DistanceKm float64 `json:"distance_km"`
+	DurationS  int     `json:"duration_s"`
+	AvgPaceS   int     `json:"avg_pace_s"`
+	Flagged    bool    `json:"flagged"`
+	FlagReason string  `json:"flag_reason"`
+	RecordedAt string  `json:"recorded_at"`
+	ExternalID string  `json:"external_id"`
+}
+
+// GET /api/v1/profile/achievements/day?date=YYYY-MM-DD
+func (h *Handler) AchievementsDay(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	date := r.URL.Query().Get("date")
+	if _, err := time.Parse("2006-01-02", date); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid date")
+		return
+	}
+
+	rows, err := h.db.Query(r.Context(), `
+		SELECT id::text, COALESCE(source,'gps'), distance_km, duration_s, avg_pace_s,
+		       flagged, COALESCE(flag_reason,''), recorded_at, COALESCE(external_id,'')
+		FROM activities
+		WHERE user_id=$1 AND (recorded_at AT TIME ZONE 'Asia/Taipei')::date = $2::date
+		ORDER BY recorded_at`, uid, date)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer rows.Close()
+	activities := []DayActivity{}
+	for rows.Next() {
+		var a DayActivity
+		var recordedAt time.Time
+		if err := rows.Scan(&a.ID, &a.Source, &a.DistanceKm, &a.DurationS, &a.AvgPaceS,
+			&a.Flagged, &a.FlagReason, &recordedAt, &a.ExternalID); err != nil {
+			respondErr(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		a.RecordedAt = recordedAt.Format(time.RFC3339)
+		activities = append(activities, a)
+	}
+	if err := rows.Err(); err != nil {
+		respondErr(w, http.StatusInternalServerError, "scan failed")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"date":       date,
+		"activities": activities,
+	})
+}
