@@ -799,20 +799,22 @@ export default function TrackPage() {
   // allowStravaHold：僅「自由跑結束」允許偏好 Strava 時暫緩上傳讓使用者選；
   // 課表挑戰（finishWorkout）必須直接上傳——課表成績要靠 GPS 防弊/best_time，且不可讓 Strava 彈窗蓋掉 WorkoutHud 收服演出。
   async function finish(allowStravaHold = true): Promise<GpsRunResult | null> {
-    cleanup()
-    setStatus('done')
     const pts = pointsRef.current
-    if (pts.length < 2) { flashErr('軌跡太短，未上傳'); localStorage.removeItem(LS_KEY); return null }
-    const token = getUserToken()
-    if (!token) { setErr('未登入，無法上傳'); return null }
-    if (allowStravaHold && stravaPriority) {
-      // 偏好 Strava：不自動上傳，先讓使用者選（保留 LS_KEY 作為 pending，供運動數據頁接手）
+    // 偏好 Strava 的自由跑：先「不」cleanup、「不」setStatus('done')——GPS 保持追蹤，只跳彈窗讓使用者三選一
+    // （直接使用本次數據／前往確認數據／繼續進行跑步）。這樣「繼續進行跑步」才能真的接續，不會被結束掉；
+    // 收尾（cleanup+setStatus+上傳/導頁）由彈窗各按鈕決定。軌跡太短/未登入則落到下面一般流程。
+    if (allowStravaHold && stravaPriority && pts.length >= 2 && getUserToken()) {
       let m = 0; for (let i = 1; i < pts.length; i++) m += haversineM(pts[i - 1], pts[i])
       const km = Math.round(m / 10) / 100
       const durS = Math.max(1, Math.round((pts[pts.length - 1].t - startRef.current) / 1000))
       setConfirmStravaHold({ km, mins: Math.round(durS / 60), paceS: km > 0 ? Math.round(durS / km) : 0 })
       return null
     }
+    cleanup()
+    setStatus('done')
+    if (pts.length < 2) { flashErr('軌跡太短，未上傳'); localStorage.removeItem(LS_KEY); return null }
+    const token = getUserToken()
+    if (!token) { setErr('未登入，無法上傳'); return null }
     return doUploadGps(pts)
   }
 
@@ -850,10 +852,13 @@ export default function TrackPage() {
   }
   function discardRecovered() { localStorage.removeItem(LS_KEY); setRecover(null) }
 
+  // 使用者「主動」導頁（如彈窗按「前往確認數據」，此時 GPS 仍在 tracking）時抑制 beforeunload 警告；
+  // 只有跑步中的「意外」離開/關窗才攔截。
+  const leavingRef = useRef(false)
   // 跑步進行中若嘗試離開/關閉視窗 → native 攔截提示，避免誤觸中斷整趟
   useEffect(() => {
     if (status !== 'tracking') return
-    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    const h = (e: BeforeUnloadEvent) => { if (leavingRef.current) return; e.preventDefault(); e.returnValue = '' }
     window.addEventListener('beforeunload', h)
     return () => window.removeEventListener('beforeunload', h)
   }, [status])
@@ -1218,11 +1223,15 @@ export default function TrackPage() {
               {confirmStravaHold.paceS > 0 ? ` · 配速 ${Math.floor(confirmStravaHold.paceS / 60)}:${String(confirmStravaHold.paceS % 60).padStart(2, '0')}/km` : ''}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-              <button onClick={() => { setConfirmStravaHold(null); doUploadGps(pointsRef.current) }} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>
+              <button onClick={() => { setConfirmStravaHold(null); cleanup(); setStatus('done'); doUploadGps(pointsRef.current) }} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>
                 {uploading ? '上傳中…' : '直接使用本次數據'}
               </button>
-              <button onClick={() => { window.location.href = '/?profile=sports' }} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>
+              <button onClick={() => { leavingRef.current = true; cleanup(); setStatus('done'); window.location.href = '/?profile=sports' }} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>
                 前往確認數據
+              </button>
+              {/* 反悔/暫不決定：關彈窗、GPS 繼續追蹤續跑（此路徑從未 cleanup/未 setStatus，故直接接續）。 */}
+              <button onClick={() => setConfirmStravaHold(null)} disabled={uploading} style={{ background: 'transparent', color: 'var(--fug)', border: 'none', padding: '8px', fontSize: 13.5, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>
+                ▶ 繼續進行跑步
               </button>
             </div>
           </div>
