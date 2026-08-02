@@ -176,6 +176,10 @@ export default function TrackPage() {
     setMapReady(true)
   }, [])
 
+  // #4 移動時間（排除靜止/抖動/超速的「實際移動」時間）＋依它算的移動配速
+  const movingSecRef = useRef(0)
+  const [movingS, setMovingS] = useState(0)
+  const movingSplitMarkRef = useRef<number[]>([]) // 跨每公里當下的移動時間（與 splitMarkRef 同步，供移動分段配速）
   const onPos = useCallback((pos: GeolocationPosition) => {
     const p: GpsPoint = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: pos.timestamp, acc: pos.coords.accuracy ?? 0 }
     setCurPos({ lat: p.lat, lng: p.lng, acc: p.acc })
@@ -212,6 +216,8 @@ export default function TrackPage() {
           } else {
             distRef.current += seg
             setDistance(distRef.current)
+            movingSecRef.current += dt // #4 移動時間：只累積「有效移動段」的時間（排除靜止/抖動/超速）
+            setMovingS(movingSecRef.current)
             // 每公里分段（只在有效距離上前進）
             const km = Math.floor(distRef.current / 1000)
             const el = (p.t - startRef.current) / 1000
@@ -219,6 +225,7 @@ export default function TrackPage() {
               const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
               splitMarkRef.current.push(el)
               setSplits((s) => [...s, el - prevEl])
+              movingSplitMarkRef.current.push(movingSecRef.current) // #4 跨每公里當下的移動時間 → 供移動分段配速
             }
           }
           lastAccRef.current = p // 仍前進採納點（避免搭車結束後算出巨大跳段）
@@ -704,8 +711,8 @@ export default function TrackPage() {
     if (!navigator.geolocation) { setErr('此裝置/瀏覽器不支援定位'); return }
     // 關掉進頁面的 GPS 預熱偵測，避免與正式追蹤重複回報
     if (warmWatchRef.current != null) { try { navigator.geolocation.clearWatch(warmWatchRef.current) } catch { /* ignore */ } warmWatchRef.current = null }
-    pointsRef.current = []; distRef.current = 0; rawDistRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null
-    setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null)
+    pointsRef.current = []; distRef.current = 0; rawDistRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null; movingSecRef.current = 0; movingSplitMarkRef.current = []
+    setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null); setMovingS(0)
     vehicleLikeRef.current = false; setVehicleWarn(false)
     followRef.current = true; setFollowing(true) // 每趟開始都恢復自動跟隨（即使 idle 時曾手動看地圖）
     if (lineRef.current) lineRef.current.setLatLngs([]) // 清掉上一趟的軌跡線（避免地圖殘留）
@@ -1207,6 +1214,10 @@ export default function TrackPage() {
   const segStartT = segKmDone > 0 ? splitMarkRef.current[segKmDone - 1] : 0
   const segDistM = Math.max(0, distance - segKmDone * 1000)
   const segLivePace = segDistM >= 30 ? (elapsed - segStartT) / (segDistM / 1000) : 0
+  // #4 依「移動時間」（排除靜止/停等）計的平均配速與分段即時配速
+  const movingAvgPace = distKm >= PACE_MIN_KM ? movingS / distKm : 0
+  const movingSegStartT = segKmDone > 0 && movingSplitMarkRef.current.length >= segKmDone ? movingSplitMarkRef.current[segKmDone - 1] : 0
+  const movingSegLivePace = segDistM >= 30 ? (movingS - movingSegStartT) / (segDistM / 1000) : 0
   // 里程獎勵進度（本趟）：每滿 1km 一份、受單趟上限
   const mCap = mileageCfg?.cap_km ?? 0
   const mEarned = mCap > 0 ? Math.min(Math.floor(distKm), mCap) : Math.floor(distKm)
@@ -1400,6 +1411,10 @@ export default function TrackPage() {
               <Big compact label="時間" value={fmtTime(elapsed)} unit="" />
               <Big compact label="平均配速" value={fmtPace(avgPace)} unit="/km" />
               <Big compact label="分段即時配速" value={fmtPace(segLivePace)} unit="/km" />
+            </div>
+            {/* #4 依「GPS 有移動時的實際時間」（排除靜止/停等）計的移動時間與配速 */}
+            <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--tx-dim)', textAlign: 'center', letterSpacing: 0.2 }}>
+              移動時間 {fmtTime(movingS)} · 移動配速 {fmtPace(movingAvgPace)}/km · 分段 {fmtPace(movingSegLivePace)}/km
             </div>
             {/* 里程獎勵進度：每滿 1km 一份（本趟上限），即時看到距下一份還差多少 → 誘因持續跑 */}
             {mileageCfg && mileageCfg.per_km > 0 && (
