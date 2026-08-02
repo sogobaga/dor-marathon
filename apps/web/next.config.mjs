@@ -1,7 +1,7 @@
 // 版號：v<VERSION_BASE>.<VERSION_SERIAL>.<commit8>。進大版號改 VERSION_BASE；每次推送遞增 VERSION_SERIAL
 //（= git commit 累計數 `git rev-list --count HEAD`）。兩者皆需與後端 internal/version 同步。
 const VERSION_BASE = '0.1'
-const VERSION_SERIAL = '418'
+const VERSION_SERIAL = '419'
 const COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || 'dev').slice(0, 8)
 
 /** @type {import('next').NextConfig} */
@@ -36,16 +36,20 @@ const nextConfig = {
     // - connect-src wss:／ws:：createRaceSocket/createSiteSocket（lib/api.ts）皆為 same-origin WebSocket
     // - form-action payment.ecpay.com.tw／payment-stage.ecpay.com.tw：submitEcpayForm（lib/ecpay.ts）導轉綠界結帳
     // - script-src/connect-src www.googletagmanager.com + *.google-analytics.com：GA4 gtag.js 與 beacon（lib/analytics.ts）
-    // v0.1.418 起改為正式 enforce（Content-Security-Policy）：經全站外部資源盤點確認涵蓋齊全
-    // （GSI 全走 accounts.google.com、地圖圖磚/商家圖靠 img-src https:、Next.js 水合靠 'unsafe-inline'）。
+    // v0.1.418 起改為正式 enforce（Content-Security-Policy）；v0.1.419 依實跑 console 補三處：
+    // - style-src accounts.google.com：Google 登入按鈕載入 accounts.google.com/gsi/style（GSI 樣式）
+    // - script-src/connect-src static.cloudflareinsights.com/cloudflareinsights.com：Cloudflare 自動注入的 RUM beacon
+    //   （程式碼裡沒有、只有站台在 Cloudflare 後面才會出現，靜態盤點抓不到，靠實跑才發現）
+    // - connect-src unpkg.com：Leaflet sourcemap（僅 DevTools 開啟時抓，不影響真實使用者，順手補齊）
+    // 其餘：GSI 走 accounts.google.com、地圖圖磚/商家圖靠 img-src https:、Next.js 水合靠 'unsafe-inline'。
     // ⚠️ 日後若新增外部資源，務必同步加對應 directive，否則 enforce 會直接擋下。
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://apis.google.com https://www.googletagmanager.com",
-      "style-src 'self' 'unsafe-inline' https://unpkg.com",
+      "script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://apis.google.com https://www.googletagmanager.com https://static.cloudflareinsights.com",
+      "style-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
-      "connect-src 'self' wss: ws: https://accounts.google.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com",
+      "connect-src 'self' wss: ws: https://accounts.google.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://cloudflareinsights.com https://unpkg.com",
       "frame-src https://www.youtube-nocookie.com https://accounts.google.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
