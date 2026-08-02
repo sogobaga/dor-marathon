@@ -1065,17 +1065,15 @@ export default function TrackPage() {
       checkpoints.forEach((cp) => {
         const color = cp.checked ? '#46E3A0' : cp.pending ? '#FFC24B' : '#9aa0a6'
         L.circle([cp.lat, cp.lng], { radius: cp.radius_m || 20, color, weight: 1.5, fillOpacity: 0.1 }).addTo(layer)
-        L.circleMarker([cp.lat, cp.lng], { radius: 6, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(layer).bindTooltip(cp.title || '打卡點')
-          .on('click', () => planRoute(cp.lat, cp.lng, cp.title || '打卡點')) // 點打卡點 → 規劃建議路線
+        bindRoutePopup(L, L.circleMarker([cp.lat, cp.lng], { radius: 6, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(layer).bindTooltip(cp.title || '打卡點'), cp.lat, cp.lng, cp.title || '打卡點') // 點打卡點 → 彈出「路線規劃」按鈕
       })
       // 城市探索打卡點：畫在最上層、較醒目（紫=未探索神秘/金=已揭露/綠=已收服）；目標關主放大+常駐標籤
       exploreCps.forEach((b) => {
         const color = b.card_obtained ? '#46E3A0' : b.discovered ? '#E7B84B' : '#C77DFF'
         const isFocus = b.id === focusBoss
         L.circle([b.lat, b.lng], { radius: b.radius_m || 40, color, weight: isFocus ? 3 : 1.5, fillOpacity: isFocus ? 0.25 : 0.12, dashArray: '4 4' }).addTo(layer)
-        L.circleMarker([b.lat, b.lng], { radius: isFocus ? 13 : 9, color: '#fff', weight: 2.5, fillColor: color, fillOpacity: 1 }).addTo(layer)
-          .bindTooltip((b.discovered ? b.name : (b.place || '神秘打卡點')) + ' ⚔', { permanent: isFocus })
-          .on('click', () => planRoute(b.lat, b.lng, b.discovered ? b.name : (b.place || '神秘打卡點'))) // 點關主打卡點 → 規劃建議路線
+        bindRoutePopup(L, L.circleMarker([b.lat, b.lng], { radius: isFocus ? 13 : 9, color: '#fff', weight: 2.5, fillColor: color, fillOpacity: 1 }).addTo(layer)
+          .bindTooltip((b.discovered ? b.name : (b.place || '神秘打卡點')) + ' ⚔', { permanent: isFocus }), b.lat, b.lng, b.discovered ? b.name : (b.place || '神秘打卡點')) // 點關主打卡點 → 彈出「路線規劃」按鈕
       })
     })
   }, [checkpoints, exploreCps, mapReady, focusBoss])
@@ -1103,6 +1101,20 @@ export default function TrackPage() {
     } finally { setRouteBusy(false) }
   }
   function clearRoute() { routeLineRef.current?.setLatLngs([]); setRoutePlan(null) }
+  // 點地圖打卡點 → 彈出小卡（名稱 + 「路線規劃」按鈕）；按了按鈕「才」真的規劃、畫線。
+  // 改用「彈窗按鈕」而非「點 marker 直接畫線」→ 降低誤觸、動作更明確。
+  function bindRoutePopup(L: any, marker: any, lat: number, lng: number, name: string) {
+    const box = L.DomUtil.create('div')
+    box.style.cssText = 'min-width:134px;font-family:inherit'
+    const title = L.DomUtil.create('div', '', box)
+    title.textContent = name
+    title.style.cssText = 'font-weight:800;font-size:13px;margin-bottom:7px;color:#1a1a1a;word-break:break-word;line-height:1.35'
+    const btn = L.DomUtil.create('button', '', box)
+    btn.textContent = '🧭 路線規劃'
+    btn.style.cssText = 'width:100%;background:#FF8A3D;color:#fff;border:none;border-radius:8px;padding:8px 10px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit'
+    L.DomEvent.on(btn, 'click', (e: any) => { L.DomEvent.stop(e); mapRef.current?.closePopup(); planRoute(lat, lng, name) })
+    marker.bindPopup(box, { autoPan: true })
+  }
 
   async function doCheckin(cp: ActiveCheckpoint) {
     setCpMsg('')
