@@ -1,7 +1,7 @@
 // 版號：v<VERSION_BASE>.<VERSION_SERIAL>.<commit8>。進大版號改 VERSION_BASE；每次推送遞增 VERSION_SERIAL
 //（= git commit 累計數 `git rev-list --count HEAD`）。兩者皆需與後端 internal/version 同步。
 const VERSION_BASE = '0.1'
-const VERSION_SERIAL = '417'
+const VERSION_SERIAL = '418'
 const COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || 'dev').slice(0, 8)
 
 /** @type {import('next').NextConfig} */
@@ -35,16 +35,17 @@ const nextConfig = {
     //   另有 /api/v1/images 站內圖與 data:/blob: 預覽
     // - connect-src wss:／ws:：createRaceSocket/createSiteSocket（lib/api.ts）皆為 same-origin WebSocket
     // - form-action payment.ecpay.com.tw／payment-stage.ecpay.com.tw：submitEcpayForm（lib/ecpay.ts）導轉綠界結帳
-    // 目前用 Content-Security-Policy-Report-Only（只回報、不阻擋）：先觀察一段時間、確認未誤傷正常功能
-    // （尤其 Next.js 水合所需的 inline script/style、上述各外部資源）後，再改成正式 enforce 的
-    // Content-Security-Policy 標頭。
+    // - script-src/connect-src www.googletagmanager.com + *.google-analytics.com：GA4 gtag.js 與 beacon（lib/analytics.ts）
+    // v0.1.418 起改為正式 enforce（Content-Security-Policy）：經全站外部資源盤點確認涵蓋齊全
+    // （GSI 全走 accounts.google.com、地圖圖磚/商家圖靠 img-src https:、Next.js 水合靠 'unsafe-inline'）。
+    // ⚠️ 日後若新增外部資源，務必同步加對應 directive，否則 enforce 會直接擋下。
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://apis.google.com",
+      "script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://apis.google.com https://www.googletagmanager.com",
       "style-src 'self' 'unsafe-inline' https://unpkg.com",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
-      "connect-src 'self' wss: ws: https://accounts.google.com",
+      "connect-src 'self' wss: ws: https://accounts.google.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com",
       "frame-src https://www.youtube-nocookie.com https://accounts.google.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
@@ -58,7 +59,7 @@ const nextConfig = {
       { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
       { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
       { key: 'X-Permitted-Cross-Domain-Policies', value: 'none' },
-      { key: 'Content-Security-Policy-Report-Only', value: csp },
+      { key: 'Content-Security-Policy', value: csp },
     ]
 
     return [

@@ -2,11 +2,13 @@ package middleware
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -68,17 +70,31 @@ func RateLimit(rdb *redis.Client, action string, limit int, window time.Duration
 	}
 }
 
+// originVerifySecret（env ORIGIN_VERIFY_SECRET，D-2 加固）：Cloudflare Transform Rule 對每個「經過
+// Cloudflare」的請求注入 X-Origin-Verify=<此密鑰>；後端只在標頭帶對密鑰時才採信 CF-Connecting-IP，
+// 藉此封死「繞過 Cloudflare 直打 Railway 源站 + 自帶假 CF-Connecting-IP」的偽造。
+// 未設密鑰時 originVerified 一律回 true＝維持 v0.1.417 現況（信任 CF-Connecting-IP）、零回歸，
+// 故程式可先部署，之後再上 Cloudflare 規則 + Railway env。
+// ⚠️ 佈署順序：務必「先設 Cloudflare Transform Rule（讓合法流量帶標頭）再設 Railway env」，
+// 反過來會有一小段合法流量少了標頭 → 退回 RemoteAddr（API 前有 Next.js 代理，RemoteAddr 對所有人相同）
+// → 全部擠同一 bucket 而被誤擋。
+var originVerifySecret = os.Getenv("ORIGIN_VERIFY_SECRET")
+
+func originVerified(r *http.Request) bool {
+	if originVerifySecret == "" {
+		return true // 未設密鑰：不強制（零回歸）
+	}
+	return subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Origin-Verify")), []byte(originVerifySecret)) == 1
+}
+
 // ClientIP 取得限流用 client IP。
-// SEC-M8 修復（v0.1.417，站台已置於 Cloudflare 之後）：優先信任 Cloudflare 的 CF-Connecting-IP。
-// Cloudflare 代理（www.dor.tw 橘雲）會把「真實客戶端 IP」寫入 CF-Connecting-IP，並清除客戶端自帶的
-// 同名標頭 → 不可偽造；API 流量走 www.dor.tw/api/*（Next.js rewrites 反向代理），此標頭會一路帶到後端。
-// 沒有 CF-Connecting-IP 時（本地開發、或尚未經過 Cloudflare 的路徑）退回 chi RealIP 處理過的 RemoteAddr，
-// 不影響現況、無回歸。
-// ⚠️ 殘餘風險：若有人繞過 Cloudflare 直打 Railway 源站並自帶假 CF-Connecting-IP，仍可偽造此維度——
-// 要完全封死需在 Cloudflare 加「共享密鑰標頭」且後端只信任帶對密鑰的請求（origin verify），為後續加固項。
-// 因此帳號類端點（/auth/login 等）務必仍疊加 AccountField 這種不可偽造維度當主防線，不能只靠 IP。
+// SEC-M8：站台已置於 Cloudflare 之後，優先信任 Cloudflare 的 CF-Connecting-IP（Cloudflare 設定並清除
+// 客戶端自帶同名標頭＝不可偽造）；API 流量走 www.dor.tw/api/*（Next.js rewrites 反向代理），標頭一路帶到後端。
+// D-2：僅在 originVerified（帶對共享密鑰）時才採信 CF-Connecting-IP——沒帶對就退回 RemoteAddr，
+// 使「繞過 Cloudflare 直打源站 + 自帶假 CF-Connecting-IP」無法偽造此維度。未設密鑰時 originVerified=true、
+// 行為同 v0.1.417、零回歸。帳號類端點（/auth/login 等）仍須疊加不可偽造的 AccountField 當主防線。
 func ClientIP(r *http.Request) string {
-	if cf := r.Header.Get("CF-Connecting-IP"); cf != "" {
+	if cf := r.Header.Get("CF-Connecting-IP"); cf != "" && originVerified(r) {
 		return cf
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
