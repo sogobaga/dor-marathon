@@ -135,6 +135,7 @@ export default function TrackPage() {
   const mapRef = useRef<any>(null)
   const lineRef = useRef<any>(null)
   const markRef = useRef<any>(null)
+  const markShownRef = useRef(false) // 目前位置綠點是否已「加到地圖上」——只在拿到真實 GPS 定位後才顯示（避免預設中心=信義區冒出假定位點）
   const cpLayerRef = useRef<any>(null) // 地圖上的打卡點圖層
   const warnTimer = useRef<any>(null)
   const errTimerRef = useRef<any>(null) // 「軌跡太短」等暫時訊息的自動淡出計時
@@ -177,7 +178,8 @@ export default function TrackPage() {
     lineRef.current = L.polyline([], { color: '#46E3A0', weight: 5 }).addTo(map)
     routeLineRef.current = L.polyline([], { color: '#FF8A3D', weight: 4, dashArray: '6 8', opacity: 0.9 }).addTo(map) // 建議路線（虛線橘）
     cpLayerRef.current = L.layerGroup().addTo(map)
-    markRef.current = L.circleMarker([lat, lng], { radius: 7, color: '#fff', fillColor: '#46E3A0', fillOpacity: 1, weight: 2 }).addTo(map)
+    // 目前位置綠點：先建立但「不」加到地圖——在真正拿到 GPS 定位（onPos）時才 addTo，避免預設中心(信義區)冒出假定位點
+    markRef.current = L.circleMarker([lat, lng], { radius: 7, color: '#fff', fillColor: '#46E3A0', fillOpacity: 1, weight: 2 })
     // 使用者手動拖曳/縮放地圖 → 暫停自動跟隨（否則每次 GPS 更新都會把畫面拉回目前位置，無法看前方路線）
     map.on('dragstart zoomstart', () => { if (followRef.current) { followRef.current = false; setFollowing(false) } })
     mapRef.current = map
@@ -207,7 +209,7 @@ export default function TrackPage() {
     try { localStorage.setItem('dor:gps-authorized', '1') } catch { /* ignore */ } // 曾成功定位＝已授權；供 Safari(無 permissions.query) 回訪時判斷可否預熱定位
     ensureMap(p.lat, p.lng)
     // 標記與地圖永遠跟著「目前」位置（即時感），即使該點未被採納為距離
-    if (markRef.current) markRef.current.setLatLng([p.lat, p.lng])
+    if (markRef.current) { if (!markShownRef.current && mapRef.current) { try { markRef.current.addTo(mapRef.current); markShownRef.current = true } catch { /* ignore */ } } markRef.current.setLatLng([p.lat, p.lng]) }
     if (mapRef.current && followRef.current) centerMap([p.lat, p.lng]) // 僅在「跟隨中」才回中（置中到可視地圖區、避開面板遮蔽）；使用者手動看地圖時不打斷
     if (statusRef.current !== 'tracking') return // 預熱階段（未開始跑步）：只顯示 GPS 精度＋地圖位置，不累積距離、不警告
     const goodAcc = p.acc === 0 || p.acc <= MAX_ACC
@@ -285,33 +287,48 @@ export default function TrackPage() {
     })
   }, [user?.id])
 
-  // 進入頁面（idle）的 GPS「預熱」偵測：立即顯示精度、定位地圖，但不記錄距離。
-  // ⚠️ 只有「已授權（granted）」才預熱——granted 呼叫定位不會跳原生提示；若權限狀態是 prompt/denied，
-  // 或瀏覽器不支援 permissions.query（如 Safari），就「不」預熱、不打擾，等使用者按「開始跑步」時才在
-  // 使用者手勢內請求權限。這樣就不會每次一進頁面都被要求允許 GPS 一次。
+  // 進入頁面（idle）的 GPS「預熱」定位：立即把地圖/綠點移到目前位置，但不記錄距離。策略分兩種瀏覽器：
+  // ● 支援 permissions.query（Chrome/Android）：只在 state==='granted' 時做 watch 預熱（不會跳提示）；
+  //   prompt/denied → 不預熱、不打擾（維持 #5：不在進頁面就跳權限），使用者按「開始跑步」或「定位到我」時才在手勢內請求。
+  // ● 不支援 permissions.query（iOS Safari，perm=null，偵測不到授權狀態→過去一律不預熱、地圖卡在預設中心信義區不動）：
+  //   改為進頁面做「一次」getCurrentPosition 定位嘗試——iOS 設「允許」者靜默成功、自動定位；設「詢問」者最多跳一次，
+  //   若明確拒絕(code 1)就記 'dor:gps-declined' 不再自動問（仍維持 #5 不重複騷擾）。曾成功定位過(旗標)則升級為 watch 持續預熱。
   // 開始跑步時 start() 會同步關掉預熱、換成正式追蹤；離開 idle / 卸載時自動關閉（用 onPosRef 避免每次 render 重訂閱）。
   useEffect(() => {
     if (status !== 'idle') return
     if (typeof navigator === 'undefined' || !navigator.geolocation) return
     let cancelled = false
     let watchId: number | null = null
+    const geoOpts = { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 }
+    const startWatch = () => {
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => onPosRef.current(pos),
+        () => { /* 預熱失敗忽略；開始跑步時會在使用者手勢內再要求 */ },
+        geoOpts,
+      )
+      warmWatchRef.current = watchId
+    }
     ;(async () => {
       let perm: { state: string } | null = null
       try { perm = (await (navigator.permissions as any)?.query?.({ name: 'geolocation' })) ?? null } catch { perm = null }
       if (cancelled || statusRef.current !== 'idle') return
-      // 已授權才預熱（此時呼叫定位不會跳原生提示）。Safari 不支援 permissions.query（perm=null）→
-      // 改用「曾成功定位過」旗標：授權過的回訪者照樣預熱定位（修好「地圖固定在預設中心不定位」），
-      // 第一次來的人（無旗標）仍不打擾、不主動跳權限（維持 #5）。
-      let grantedBefore = false
+      let grantedBefore = false, declinedBefore = false
       try { grantedBefore = localStorage.getItem('dor:gps-authorized') === '1' } catch { /* ignore */ }
-      const mayPreheat = perm ? perm.state === 'granted' : grantedBefore
-      if (!mayPreheat) return
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => onPosRef.current(pos),
-        () => { /* 預熱失敗忽略；開始跑步時會在使用者手勢內再要求 */ },
-        { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 },
+      try { declinedBefore = localStorage.getItem('dor:gps-declined') === '1' } catch { /* ignore */ }
+      if (perm) {
+        // Chrome/Android：狀態可偵測 → 只在 granted 才自動預熱；prompt/denied 不主動跳（維持 #5）
+        if (perm.state === 'granted') startWatch()
+        return
+      }
+      // Safari：偵測不到權限狀態
+      if (grantedBefore) { startWatch(); return }          // 曾成功定位過＝已授權 → 持續預熱定位
+      if (declinedBefore) return                            // 曾明確拒絕 → 不再自動問
+      // 首次：做一次定位嘗試（「允許」者靜默成功自動定位；「詢問」者最多跳一次）
+      navigator.geolocation.getCurrentPosition(
+        (pos) => { if (!cancelled) onPosRef.current(pos) }, // 成功 → onPos 會設 'dor:gps-authorized'，下次進來走 watch 預熱
+        (e) => { if (e?.code === 1) { try { localStorage.setItem('dor:gps-declined', '1') } catch { /* ignore */ } } },
+        geoOpts,
       )
-      warmWatchRef.current = watchId
     })()
     return () => { cancelled = true; if (watchId != null) { try { navigator.geolocation.clearWatch(watchId) } catch { /* ignore */ } } warmWatchRef.current = null }
   }, [status])
