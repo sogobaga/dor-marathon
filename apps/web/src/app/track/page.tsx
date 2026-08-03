@@ -92,6 +92,9 @@ export default function TrackPage() {
   const [showFlash, setShowFlash] = useState(false) // Step1：全螢幕「事件觸發」紅閃警報（Phase A/B 共用）
   // COROS 式 UX：可上下拖曳的資訊面板疊在放大的地圖上（配色與顯示的資訊都不變，只改操作體驗）
   const sheet = useDraggableSheet('half')
+  // 面板從 top:curY 蓋到底 → 可視地圖區＝上方 [0, curY]；用 ref 讓 onPos/recenter 等閉包讀最新值（避免 stale）
+  const sheetHRef = useRef(0); sheetHRef.current = sheet.H     // 地圖容器總高
+  const sheetYRef = useRef(0); sheetYRef.current = sheet.curY  // 面板頂端 y（＝可視地圖區高度）
   const followRef = useRef(true) // 地圖是否自動跟隨目前位置；使用者拖曳/縮放地圖後暫停，按「回到目前位置」恢復
   const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
   const [mileageCfg, setMileageCfg] = useState<MileageConfig | null>(null) // 里程獎勵設定（進度條/預覽）
@@ -181,6 +184,19 @@ export default function TrackPage() {
     setMapReady(true)
   }, [])
 
+  // 把某座標置中到「可視地圖區」的中心（＝扣掉底部資訊面板遮住的部分後、實際看得到的區域中心），
+  // 而非整個地圖容器的幾何中心（那會被面板遮住、看起來偏下）。作法：面板頂端在 y=curY，可視區為 [0,curY]，
+  // 其中心在 y=curY/2＝比容器中心(H/2)高 (H-curY)/2 px → 把投影點往下推 (H-curY)/2 再置中，定位點就落在可視中心。
+  // 只讀 ref → 即使是舊閉包也拿到最新面板高度；面板幾乎蓋滿(可視區<80px)時退回一般置中避免把點推出畫面。
+  function centerMap(latlng: [number, number], zoom?: number) {
+    const map = mapRef.current; if (!map) return
+    const H = sheetHRef.current, visH = sheetYRef.current, z = zoom ?? map.getZoom()
+    if (H <= 0 || visH < 80) { if (zoom != null) map.setView(latlng, z); else map.panTo(latlng); return }
+    const pt = map.project(latlng, z); pt.y += (H - visH) / 2
+    const c = map.unproject(pt, z)
+    if (zoom != null) map.setView(c, z); else map.panTo(c)
+  }
+
   // #4 移動時間（排除靜止/抖動/超速的「實際移動」時間）＋依它算的移動配速
   const movingSecRef = useRef(0)
   const [movingS, setMovingS] = useState(0)
@@ -192,7 +208,7 @@ export default function TrackPage() {
     ensureMap(p.lat, p.lng)
     // 標記與地圖永遠跟著「目前」位置（即時感），即使該點未被採納為距離
     if (markRef.current) markRef.current.setLatLng([p.lat, p.lng])
-    if (mapRef.current && followRef.current) mapRef.current.panTo([p.lat, p.lng]) // 僅在「跟隨中」才回中；使用者手動看地圖時不打斷
+    if (mapRef.current && followRef.current) centerMap([p.lat, p.lng]) // 僅在「跟隨中」才回中（置中到可視地圖區、避開面板遮蔽）；使用者手動看地圖時不打斷
     if (statusRef.current !== 'tracking') return // 預熱階段（未開始跑步）：只顯示 GPS 精度＋地圖位置，不累積距離、不警告
     const goodAcc = p.acc === 0 || p.acc <= MAX_ACC
     if (!goodAcc) {
@@ -325,7 +341,7 @@ export default function TrackPage() {
   function recenterMap() {
     followRef.current = true; setFollowing(true)
     const cp = curPosRef.current
-    if (cp && mapRef.current) { mapRef.current.panTo([cp.lat, cp.lng]); return }
+    if (cp && mapRef.current) { centerMap([cp.lat, cp.lng]); return }
     if (typeof navigator === 'undefined' || !navigator.geolocation) return
     navigator.geolocation.getCurrentPosition(
       (pos) => onPosRef.current(pos),
@@ -832,6 +848,8 @@ export default function TrackPage() {
   useEffect(() => { sheet.setSnap(status === 'done' || woPhase === 'running' || woPhase === 'done' ? 'full' : 'half') }, [status, woPhase]) // eslint-disable-line react-hooks/exhaustive-deps
   // 面板高度變動 → 讓 Leaflet 重算尺寸（避免地圖灰塊/破圖）
   useEffect(() => { if (mapReady && mapRef.current) { try { mapRef.current.invalidateSize() } catch { /* ignore */ } } }, [mapReady, sheet.H])
+  // 面板停靠點改變（半展/全展/收合）→ 可視地圖區高度變了 → 若正在跟隨且已定位，立即把定位點重新置中到新的可視中心
+  useEffect(() => { if (mapReady && followRef.current) { const cp = curPosRef.current; if (cp) centerMap([cp.lat, cp.lng]) } }, [sheet.snap, mapReady]) // eslint-disable-line react-hooks/exhaustive-deps
   // 載入效果覆寫（正式圖片/音檔）：圖片給互動層、音效交給 sfx 解碼
   useEffect(() => { const t = getUserToken(); if (t) loadEffectAssets(t).then(setFxAssets) }, [user?.id])
   function toggleMute() { const next = !isMuted(); sfxSetMuted(next); setMuted(next); if (!next) unlockAudio() }
@@ -1211,7 +1229,7 @@ export default function TrackPage() {
     if (!b || (!b.lat && !b.lng)) return
     focusDoneRef.current = true
     followRef.current = false; setFollowing(false)
-    mapRef.current.setView([b.lat, b.lng], 16)
+    centerMap([b.lat, b.lng], 16) // 置中到可視地圖區（避開面板遮蔽）
   }, [mapReady, exploreCps, focusBoss])
 
   // 打卡 → 地理驗證通過即揭露關主 → 跳出關主挑戰面板（表面打卡，實為事件觸發）
