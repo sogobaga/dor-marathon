@@ -188,6 +188,7 @@ export default function TrackPage() {
   const onPos = useCallback((pos: GeolocationPosition) => {
     const p: GpsPoint = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: pos.timestamp, acc: pos.coords.accuracy ?? 0 }
     setCurPos({ lat: p.lat, lng: p.lng, acc: p.acc })
+    try { localStorage.setItem('dor:gps-authorized', '1') } catch { /* ignore */ } // 曾成功定位＝已授權；供 Safari(無 permissions.query) 回訪時判斷可否預熱定位
     ensureMap(p.lat, p.lng)
     // 標記與地圖永遠跟著「目前」位置（即時感），即使該點未被採納為距離
     if (markRef.current) markRef.current.setLatLng([p.lat, p.lng])
@@ -282,7 +283,13 @@ export default function TrackPage() {
       let perm: { state: string } | null = null
       try { perm = (await (navigator.permissions as any)?.query?.({ name: 'geolocation' })) ?? null } catch { perm = null }
       if (cancelled || statusRef.current !== 'idle') return
-      if (!perm || perm.state !== 'granted') return // 未授權 / 查不到 → 進頁面不預熱、不跳提示
+      // 已授權才預熱（此時呼叫定位不會跳原生提示）。Safari 不支援 permissions.query（perm=null）→
+      // 改用「曾成功定位過」旗標：授權過的回訪者照樣預熱定位（修好「地圖固定在預設中心不定位」），
+      // 第一次來的人（無旗標）仍不打擾、不主動跳權限（維持 #5）。
+      let grantedBefore = false
+      try { grantedBefore = localStorage.getItem('dor:gps-authorized') === '1' } catch { /* ignore */ }
+      const mayPreheat = perm ? perm.state === 'granted' : grantedBefore
+      if (!mayPreheat) return
       watchId = navigator.geolocation.watchPosition(
         (pos) => onPosRef.current(pos),
         () => { /* 預熱失敗忽略；開始跑步時會在使用者手勢內再要求 */ },
@@ -311,6 +318,20 @@ export default function TrackPage() {
 
   async function acquireWake() {
     try { wakeRef.current = await (navigator as any).wakeLock?.request('screen') } catch { /* ignore */ }
+  }
+
+  // 「回到目前位置」：恢復自動跟隨並置中。若尚無定位（idle 未預熱／Safari／權限未知）→ 在使用者手勢內
+  // 請求一次定位（此時可跳原生權限提示，屬使用者主動點擊、不違反「不主動跳權限」）。onPos 會 setCurPos＋置中＋記旗標。
+  function recenterMap() {
+    followRef.current = true; setFollowing(true)
+    const cp = curPosRef.current
+    if (cp && mapRef.current) { mapRef.current.panTo([cp.lat, cp.lng]); return }
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return
+    navigator.geolocation.getCurrentPosition(
+      (pos) => onPosRef.current(pos),
+      (e) => { setErr(e?.code === 1 ? '需要定位權限才能定位到你的位置，請允許後再試。' : '無法取得目前位置，請到較空曠處再試。') },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 3000 },
+    )
   }
 
   // --- 事件任務引擎 ---
@@ -1369,12 +1390,13 @@ export default function TrackPage() {
       {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗） */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)' }} />
-        {/* 回到目前位置：使用者手動看地圖後（暫停跟隨）才出現，點了恢復自動置中 */}
-        {!following && curPos && status !== 'done' && (
+        {/* 回到目前位置：手動看地圖後（暫停跟隨）→ 恢復置中；idle 尚未定位 → 點了在使用者手勢內請求一次定位。
+            顯示時機：非 done 且（已暫停跟隨 或 尚無定位）；正在自動跟隨且已有定位時地圖本就置中、不需此鈕故隱藏。 */}
+        {status !== 'done' && (!following || !curPos) && (
           <button
-            onClick={() => { followRef.current = true; setFollowing(true); if (mapRef.current && curPos) mapRef.current.panTo([curPos.lat, curPos.lng]) }}
+            onClick={recenterMap}
             style={{ position: 'absolute', top: 12, right: 12, zIndex: 550, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '8px 13px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 3px 12px rgba(0,0,0,.28)' }}
-          >◎ 回到目前位置</button>
+          >◎ {curPos ? '回到目前位置' : '定位到我'}</button>
         )}
         {/* GPS 弱訊號警告 / 錯誤：浮在面板之上，任何停靠狀態都看得到（不隨面板收合而被藏起來） */}
         {(warn || err) && (
