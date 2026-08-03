@@ -136,6 +136,7 @@ type Boss struct {
 	DialogueStart   string  `json:"dialogue_start"`
 	SceneImageURL   string  `json:"scene_image_url"`
 	CardImageURL    string  `json:"card_image_url"`
+	MasterImageURL  string  `json:"master_image_url"` // 關主角色圖（AVG 立繪，疊在場景圖上顯示上半身）
 	Lat             float64 `json:"lat"`
 	Lng             float64 `json:"lng"`
 	RadiusM         int     `json:"radius_m"`
@@ -168,7 +169,7 @@ type Boss struct {
 }
 
 const bossCols = `id, code, name, title, region, place, gender, age, workout_label, difficulty_stars,
-	quote, skill_name, skill_desc, dialogue_intro, dialogue_start, scene_image_url, card_image_url,
+	quote, skill_name, skill_desc, dialogue_intro, dialogue_start, scene_image_url, card_image_url, master_image_url,
 	lat, lng, radius_m, reward_exp, reward_dp, retry_dp_cost, workout_kind, segments, data_source, display_order, enabled, access_note, checkin_only,
 	checkin_reward_dp_min, checkin_reward_dp_max, checkin_reward_gp_min, checkin_reward_gp_max,
 	complete_reward_gp_min, complete_reward_gp_max, complete_reward_gp_chance`
@@ -176,7 +177,7 @@ const bossCols = `id, code, name, title, region, place, gender, age, workout_lab
 func scanBoss(row interface{ Scan(...any) error }) (Boss, error) {
 	var b Boss
 	err := row.Scan(&b.ID, &b.Code, &b.Name, &b.Title, &b.Region, &b.Place, &b.Gender, &b.Age, &b.WorkoutLabel, &b.DifficultyStars,
-		&b.Quote, &b.SkillName, &b.SkillDesc, &b.DialogueIntro, &b.DialogueStart, &b.SceneImageURL, &b.CardImageURL,
+		&b.Quote, &b.SkillName, &b.SkillDesc, &b.DialogueIntro, &b.DialogueStart, &b.SceneImageURL, &b.CardImageURL, &b.MasterImageURL,
 		&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote, &b.CheckinOnly,
 		&b.CheckinRewardDpMin, &b.CheckinRewardDpMax, &b.CheckinRewardGpMin, &b.CheckinRewardGpMax,
 		&b.CompleteRewardGpMin, &b.CompleteRewardGpMax, &b.CompleteRewardGpChance)
@@ -211,7 +212,7 @@ func maskBoss(b *Boss) {
 	b.Code, b.Name, b.Title, b.Gender, b.WorkoutLabel = "", "", "", "", ""
 	b.Age, b.DifficultyStars, b.RewardExp, b.RewardDp, b.RetryDpCost = 0, 0, 0, 0, 0
 	b.Quote, b.SkillName, b.SkillDesc, b.DialogueIntro, b.DialogueStart = "", "", "", "", ""
-	b.SceneImageURL, b.CardImageURL, b.WorkoutKind = "", "", ""
+	b.SceneImageURL, b.CardImageURL, b.MasterImageURL, b.WorkoutKind = "", "", "", ""
 	b.CheckinRewardDpMin, b.CheckinRewardDpMax, b.CheckinRewardGpMin, b.CheckinRewardGpMax = 0, 0, 0, 0
 	b.CompleteRewardGpMin, b.CompleteRewardGpMax, b.CompleteRewardGpChance = 0, 0, 0
 	b.Segments = json.RawMessage("[]")
@@ -242,7 +243,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		var b Boss
 		var disc bool
 		if err := rows.Scan(&b.ID, &b.Code, &b.Name, &b.Title, &b.Region, &b.Place, &b.Gender, &b.Age, &b.WorkoutLabel, &b.DifficultyStars,
-			&b.Quote, &b.SkillName, &b.SkillDesc, &b.DialogueIntro, &b.DialogueStart, &b.SceneImageURL, &b.CardImageURL,
+			&b.Quote, &b.SkillName, &b.SkillDesc, &b.DialogueIntro, &b.DialogueStart, &b.SceneImageURL, &b.CardImageURL, &b.MasterImageURL,
 			&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote, &b.CheckinOnly,
 			&b.CheckinRewardDpMin, &b.CheckinRewardDpMax, &b.CheckinRewardGpMin, &b.CheckinRewardGpMax,
 			&b.CompleteRewardGpMin, &b.CompleteRewardGpMax, &b.CompleteRewardGpChance,
@@ -711,19 +712,19 @@ func (h *Handler) Save(w http.ResponseWriter, r *http.Request) {
 			quote, skill_name, skill_desc, dialogue_intro, dialogue_start, scene_image_url, card_image_url,
 			lat, lng, radius_m, reward_exp, reward_dp, retry_dp_cost, workout_kind, segments, data_source, display_order, enabled, access_note, checkin_only,
 			checkin_reward_dp_min, checkin_reward_dp_max, checkin_reward_gp_min, checkin_reward_gp_max,
-			complete_reward_gp_min, complete_reward_gp_max, complete_reward_gp_chance)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
+			complete_reward_gp_min, complete_reward_gp_max, complete_reward_gp_chance, master_image_url)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
 		ON CONFLICT (code) DO UPDATE SET name=$2, title=$3, region=$4, place=$5, gender=$6, age=$7, workout_label=$8, difficulty_stars=$9,
 			quote=$10, skill_name=$11, skill_desc=$12, dialogue_intro=$13, dialogue_start=$14, scene_image_url=$15, card_image_url=$16,
 			lat=$17, lng=$18, radius_m=$19, reward_exp=$20, reward_dp=$21, retry_dp_cost=$22, workout_kind=$23, segments=$24, data_source=$25, display_order=$26, enabled=$27, access_note=$28, checkin_only=$29,
 			checkin_reward_dp_min=$30, checkin_reward_dp_max=$31, checkin_reward_gp_min=$32, checkin_reward_gp_max=$33,
-			complete_reward_gp_min=$34, complete_reward_gp_max=$35, complete_reward_gp_chance=$36
+			complete_reward_gp_min=$34, complete_reward_gp_max=$35, complete_reward_gp_chance=$36, master_image_url=$37
 		RETURNING id`,
 		b.Code, b.Name, b.Title, b.Region, b.Place, b.Gender, b.Age, b.WorkoutLabel, b.DifficultyStars,
 		b.Quote, b.SkillName, b.SkillDesc, b.DialogueIntro, b.DialogueStart, b.SceneImageURL, b.CardImageURL,
 		b.Lat, b.Lng, b.RadiusM, b.RewardExp, b.RewardDp, b.RetryDpCost, b.WorkoutKind, b.Segments, b.DataSource, b.DisplayOrder, b.Enabled, b.AccessNote, b.CheckinOnly,
 		b.CheckinRewardDpMin, b.CheckinRewardDpMax, b.CheckinRewardGpMin, b.CheckinRewardGpMax,
-		b.CompleteRewardGpMin, b.CompleteRewardGpMax, b.CompleteRewardGpChance).Scan(&id)
+		b.CompleteRewardGpMin, b.CompleteRewardGpMax, b.CompleteRewardGpChance, b.MasterImageURL).Scan(&id)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "儲存失敗")
 		return

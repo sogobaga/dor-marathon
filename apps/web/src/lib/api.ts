@@ -1634,7 +1634,7 @@ export interface ExploreBoss {
   id: string; code: string; name: string; title: string; region: string; place: string
   gender: string; age: number; workout_label: string; difficulty_stars: number
   quote: string; skill_name: string; skill_desc: string; dialogue_intro: string; dialogue_start: string
-  scene_image_url: string; card_image_url: string
+  scene_image_url: string; card_image_url: string; master_image_url: string
   lat: number; lng: number; radius_m: number
   reward_exp: number; reward_dp: number; retry_dp_cost: number
   // 打卡（每次成功打卡皆可能觸發，含重複打卡）DP/GP 隨機發放區間；完成挑戰依機率額外發放的 GP 區間，

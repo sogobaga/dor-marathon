@@ -28,10 +28,16 @@ export default function BossChallengePanel({ boss, phase, busy, dpCost, note, us
   return (
     <div data-skin="default" style={{ position: 'fixed', inset: 0, zIndex: 3200, background: 'rgba(4,8,6,.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }}>
       <div style={{ width: '100%', maxWidth: 380, maxHeight: '92dvh', overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--gold)', borderRadius: 18, boxShadow: '0 16px 50px rgba(0,0,0,.7)' }}>
-        {/* Scene 圖 */}
-        {boss.scene_image_url && (
-          <div style={{ position: 'relative' }}>
-            <img src={boss.scene_image_url} alt={boss.name} style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block', borderRadius: '18px 18px 0 0' }} />
+        {/* Scene 圖（AVG 疊圖）：場景圖當背景 + 關主角色立繪疊上、只露上半身 */}
+        {(boss.scene_image_url || boss.master_image_url) && (
+          <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', overflow: 'hidden', borderRadius: '18px 18px 0 0', background: '#0b0e13' }}>
+            {boss.scene_image_url && (
+              <img src={boss.scene_image_url} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+            )}
+            {boss.master_image_url && (
+              // 立繪為直式全身圖：height 放大到容器 155% + 底部對齊 + objectPosition top → 容器只露出上半身（下半身被裁）
+              <img src={boss.master_image_url} alt={boss.name} style={{ position: 'absolute', left: '50%', bottom: 0, transform: 'translateX(-50%)', height: '155%', width: 'auto', maxWidth: 'none', objectFit: 'contain', objectPosition: 'top', pointerEvents: 'none' }} />
+            )}
             <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '24px 16px 10px', background: 'linear-gradient(transparent, rgba(4,8,6,.92))' }}>
               <div style={{ fontSize: 11, letterSpacing: '.25em', color: 'var(--gold)', fontWeight: 800 }}>⚔️ 關主挑戰</div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 2 }}>

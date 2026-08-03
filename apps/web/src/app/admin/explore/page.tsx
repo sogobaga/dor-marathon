@@ -14,7 +14,7 @@ type Form = Partial<ExploreBoss> & { _segText?: string }
 const EMPTY: Form = {
   code: '', name: '', title: '', region: '', place: '', gender: '女', age: 0, workout_label: '',
   difficulty_stars: 3, quote: '', skill_name: '', skill_desc: '', dialogue_intro: '', dialogue_start: '',
-  scene_image_url: '', card_image_url: '', lat: 25.0296, lng: 121.5357, radius_m: 40,
+  scene_image_url: '', card_image_url: '', master_image_url: '', lat: 25.0296, lng: 121.5357, radius_m: 40,
   reward_exp: 100, reward_dp: 20, retry_dp_cost: 0, workout_kind: 'mixed', data_source: 'gps',
   display_order: 0, enabled: true, access_note: '', _segText: '[]',
   checkin_reward_dp_min: 0, checkin_reward_dp_max: 0, checkin_reward_gp_min: 0, checkin_reward_gp_max: 0,
@@ -52,7 +52,7 @@ export default function AdminExplorePage() {
   function fresh() { setForm({ ...EMPTY }); setMsg(''); setErr('') }
   function setF<K extends keyof Form>(k: K, v: Form[K]) { setForm((f) => ({ ...f, [k]: v })) }
 
-  async function uploadImg(field: 'scene_image_url' | 'card_image_url', file: File) {
+  async function uploadImg(field: 'scene_image_url' | 'card_image_url' | 'master_image_url', file: File) {
     if (!token) return
     setImgBusy(field); setErr('')
     try { const { url } = await adminImagesApi.upload(token, file); setF(field, url); setMsg('✓ 圖片已上傳') }
@@ -131,8 +131,9 @@ export default function AdminExplorePage() {
           <F label="打卡後對話（挑戰前，關主說的話；<br> 換行）"><textarea style={ta} rows={2} value={form.dialogue_intro || ''} onChange={(e) => setF('dialogue_intro', e.target.value)} /></F>
           <F label="接受後對話（挑戰開始前；<br> 換行）"><textarea style={ta} rows={2} value={form.dialogue_start || ''} onChange={(e) => setF('dialogue_start', e.target.value)} /></F>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 4 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 4 }}>
             <ImgField label="挑戰場景圖 (Scene)" url={form.scene_image_url || ''} busy={imgBusy === 'scene_image_url'} onUpload={(f) => uploadImg('scene_image_url', f)} onClear={() => setF('scene_image_url', '')} ratio="16 / 9" />
+            <ImgField label="關主角色圖 (Master)" url={form.master_image_url || ''} busy={imgBusy === 'master_image_url'} onUpload={(f) => uploadImg('master_image_url', f)} onClear={() => setF('master_image_url', '')} ratio="3 / 4" />
             <ImgField label="卡片圖 (Card)" url={form.card_image_url || ''} busy={imgBusy === 'card_image_url'} onUpload={(f) => uploadImg('card_image_url', f)} onClear={() => setF('card_image_url', '')} ratio="3 / 4" />
           </div>
 

@@ -35,3 +35,6 @@ PRE-LAUNCH-REVIEW.md
 
 # Cloudflare 設定指引（內部 ops 文件）
 CLOUDFLARE-SETUP.md
+
+# 關主場景/角色原圖 + 優化輸出（2.4GB，走 R2 不進 repo）
+source/data/pictures/
