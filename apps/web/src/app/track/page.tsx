@@ -287,12 +287,13 @@ export default function TrackPage() {
     })
   }, [user?.id])
 
-  // 進入頁面（idle）的 GPS「預熱」定位：立即把地圖/綠點移到目前位置，但不記錄距離。策略分兩種瀏覽器：
-  // ● 支援 permissions.query（Chrome/Android）：只在 state==='granted' 時做 watch 預熱（不會跳提示）；
-  //   prompt/denied → 不預熱、不打擾（維持 #5：不在進頁面就跳權限），使用者按「開始跑步」或「定位到我」時才在手勢內請求。
-  // ● 不支援 permissions.query（iOS Safari，perm=null，偵測不到授權狀態→過去一律不預熱、地圖卡在預設中心信義區不動）：
-  //   改為進頁面做「一次」getCurrentPosition 定位嘗試——iOS 設「允許」者靜默成功、自動定位；設「詢問」者最多跳一次，
-  //   若明確拒絕(code 1)就記 'dor:gps-declined' 不再自動問（仍維持 #5 不重複騷擾）。曾成功定位過(旗標)則升級為 watch 持續預熱。
+  // 進入頁面（idle）的 GPS「預熱」定位：立即把地圖/綠點移到目前位置，但不記錄距離。
+  // ⚠️ iOS 上「所有」瀏覽器(含 Chrome/Edge/Firefox)底層都是 WebKit，permissions.query 對 geolocation
+  //   「不可靠」——常回傳 state:'prompt'(不是拋錯、也不是 null)即使已設「允許」。所以不能單靠 perm.state 判斷。
+  // 策略：① 明確 granted 或「曾成功定位過」旗標 → watch 持續預熱(不跳提示)；② 明確 denied 或「曾拒絕」旗標 → 不打擾；
+  //   ③ 其餘未確定(perm=null 或 perm.state==='prompt')：非 iOS 且 perm 可靠偵測到「未授權」→ 尊重 #5 不主動跳(等按鈕/開始跑步)；
+  //   iOS(perm 不可靠) → 進頁面做「一次」getCurrentPosition：設「允許」者靜默成功自動定位、設「詢問」者最多跳一次、
+  //   明確拒絕(code1)記 'dor:gps-declined' 不再自動問(維持 #5 不重複騷擾)。成功一次後靠旗標升級為 watch 預熱。
   // 開始跑步時 start() 會同步關掉預熱、換成正式追蹤；離開 idle / 卸載時自動關閉（用 onPosRef 避免每次 render 重訂閱）。
   useEffect(() => {
     if (status !== 'idle') return
@@ -315,15 +316,13 @@ export default function TrackPage() {
       let grantedBefore = false, declinedBefore = false
       try { grantedBefore = localStorage.getItem('dor:gps-authorized') === '1' } catch { /* ignore */ }
       try { declinedBefore = localStorage.getItem('dor:gps-declined') === '1' } catch { /* ignore */ }
-      if (perm) {
-        // Chrome/Android：狀態可偵測 → 只在 granted 才自動預熱；prompt/denied 不主動跳（維持 #5）
-        if (perm.state === 'granted') startWatch()
-        return
-      }
-      // Safari：偵測不到權限狀態
-      if (grantedBefore) { startWatch(); return }          // 曾成功定位過＝已授權 → 持續預熱定位
-      if (declinedBefore) return                            // 曾明確拒絕 → 不再自動問
-      // 首次：做一次定位嘗試（「允許」者靜默成功自動定位；「詢問」者最多跳一次）
+      const ua = navigator.userAgent || ''
+      const isIOS = /iP(hone|od|ad)/.test(ua) || ((navigator as any).platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1) // iPad iOS13+ 會偽裝成 Mac
+      if ((perm && perm.state === 'granted') || grantedBefore) { startWatch(); return } // ① 明確已授權 / 曾成功定位 → 持續預熱
+      if ((perm && perm.state === 'denied') || declinedBefore) return                    // ② 明確拒絕 / 曾拒絕 → 不打擾
+      // ③ 未確定（perm=null 或 perm.state==='prompt'）：
+      if (!isIOS && perm) return // 非 iOS 且 perm 可靠偵測到「未授權」→ 維持 #5：進頁面不主動跳，等使用者按「定位到我」/「開始跑步」
+      // iOS（permissions.query 不可靠）或完全偵測不到 → 進頁面做「一次」定位嘗試：允許者靜默成功自動定位、詢問者最多跳一次
       navigator.geolocation.getCurrentPosition(
         (pos) => { if (!cancelled) onPosRef.current(pos) }, // 成功 → onPos 會設 'dor:gps-authorized'，下次進來走 watch 預熱
         (e) => { if (e?.code === 1) { try { localStorage.setItem('dor:gps-declined', '1') } catch { /* ignore */ } } },
