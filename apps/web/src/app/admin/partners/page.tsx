@@ -239,8 +239,8 @@ export default function AdminPartnersPage() {
           <F label="簡短資訊 summary"><input style={inp} value={form.summary || ''} onChange={(e) => setF('summary', e.target.value)} placeholder="一行簡介" /></F>
 
           <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 3 }}>Banner 圖</div>
-            <div style={{ aspectRatio: '16 / 9', maxWidth: 360, background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 3 }}>Banner 圖（建議 800×400，比例 2:1）</div>
+            <div style={{ aspectRatio: '2 / 1', maxWidth: 360, background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {form.banner_url ? <img src={form.banner_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>未上傳</span>}
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>

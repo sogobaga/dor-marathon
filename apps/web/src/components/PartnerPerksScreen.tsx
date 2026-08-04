@@ -210,9 +210,9 @@ function ShopCard({
       <div style={{ position: 'relative' }}>
         {shop.banner_url ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={shop.banner_url} alt="" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block' }} />
+          <img src={shop.banner_url} alt="" style={{ width: '100%', aspectRatio: '2 / 1', objectFit: 'cover', display: 'block' }} />
         ) : (
-          <div style={{ width: '100%', aspectRatio: '16 / 9', background: 'var(--bg-2)' }} />
+          <div style={{ width: '100%', aspectRatio: '2 / 1', background: 'var(--bg-2)' }} />
         )}
         {loggedIn && (
           <button onClick={(e) => { e.stopPropagation(); onToggleFav() }} aria-label={isFav ? '取消收藏' : '收藏'} style={heartBtn}>
@@ -319,7 +319,7 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
               <img
                 src={shop.banner_url} alt=""
                 onClick={() => shop.banner_url && setZoom({ images: [shop.banner_url], index: 0 })}
-                style={{ width: '100%', maxWidth: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block', borderRadius: 14, cursor: shop.banner_url ? 'zoom-in' : 'default' }}
+                style={{ width: '100%', maxWidth: '100%', aspectRatio: '2 / 1', objectFit: 'cover', display: 'block', borderRadius: 14, cursor: shop.banner_url ? 'zoom-in' : 'default' }}
               />
             )}
 
