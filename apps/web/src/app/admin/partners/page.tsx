@@ -151,14 +151,14 @@ export default function AdminPartnersPage() {
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         <button onClick={() => setTab('all')} style={tab === 'all' ? tabBtnActive : tabBtn}>全部會員（{shopsAll?.length ?? '—'}）</button>
-        <button onClick={() => setTab('vip_featured')} style={tab === 'vip_featured' ? tabBtnActive : tabBtn}>VIP精選（{shopsVip?.length ?? '—'}）</button>
+        <button onClick={() => setTab('vip_featured')} style={tab === 'vip_featured' ? tabBtnActive : tabBtn}>VIP特選商家（{shopsVip?.length ?? '—'}）</button>
       </div>
 
       {tab === 'vip_featured' && (
         <div style={{ ...card, marginBottom: 14 }}>
-          <b style={{ fontSize: 14 }}>VIP 精選解鎖門檻</b>
+          <b style={{ fontSize: 14 }}>VIP特選商家解鎖門檻</b>
           <p style={{ color: 'var(--tx-dim)', fontSize: 12, margin: '4px 0 8px', lineHeight: 1.6 }}>
-            VIP 會員且累積里程達此值才能看到 VIP 精選商家。
+            VIP 會員且累積里程達此值才能看到 VIP特選商家。
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input
@@ -291,7 +291,7 @@ export default function AdminPartnersPage() {
             <F label="顯示對象 audience">
               <select style={inp} value={form.audience || 'all'} onChange={(e) => setF('audience', e.target.value as Audience)}>
                 <option value="all">全部會員</option>
-                <option value="vip_featured">VIP精選</option>
+                <option value="vip_featured">VIP特選商家</option>
               </select>
             </F>
             <F label="上下架"><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, paddingTop: 8 }}><input type="checkbox" checked={!!form.enabled} onChange={(e) => setF('enabled', e.target.checked)} />啟用（上架，顯示於前台）</label></F>

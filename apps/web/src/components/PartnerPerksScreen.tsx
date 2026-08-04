@@ -135,8 +135,8 @@ function PartnerShopListView({
 
         {hasVip && (
           <div style={tabBarStyle}>
-            <button onClick={() => setTab('all')} style={curTab === 'all' ? tabActive : tabBase}>一般商家</button>
-            <button onClick={() => setTab('vip_featured')} style={curTab === 'vip_featured' ? tabActiveGold : tabBase}>✦ VIP 精選</button>
+            <button onClick={() => setTab('all')} style={curTab === 'all' ? tabActive : tabBase}>精選商家</button>
+            <button onClick={() => setTab('vip_featured')} style={curTab === 'vip_featured' ? tabActiveGold : tabBase}>✦ VIP特選商家</button>
           </div>
         )}
 
@@ -225,7 +225,7 @@ function ShopCard({
         )}
       </div>
       <div style={{ padding: '12px 14px' }}>
-        {shop.audience === 'vip_featured' && <span style={vipBadge}>✦ VIP 精選</span>}
+        {shop.audience === 'vip_featured' && <span style={vipBadge}>✦ VIP特選商家</span>}
         <div style={{ fontSize: 15.5, fontWeight: 900, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shop.name}</div>
         {shop.summary && (
           <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.6, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>
@@ -245,13 +245,13 @@ function ShopCard({
 
 // VIP 精選門檻橫幅：VIP 精選商家現在全體玩家都看得到卡片內容，不合格者只是「前往」按鈕被鎖住
 // （見 ShopCard／handleCta），這裡改成放在卡片列表「上方」的精簡說明，取代原本整卡取代的鎖定卡。
-// 合格者不顯示這條橫幅，直接用原本的金色「✦ VIP 精選」標題（見呼叫端）。
+// 合格者不顯示這條橫幅，直接用原本的金色「✦ VIP特選商家」標題（見呼叫端）。
 function VipThresholdBanner({ meta }: { meta: PartnerListMeta }) {
   const pct = meta.min_km > 0 ? Math.min(100, Math.round((meta.user_km / meta.min_km) * 100)) : 100
   return (
     <div style={vipBannerCard}>
       <div style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--gold)', lineHeight: 1.6 }}>
-        ✦ VIP 精選 · 需 VIP 會員且累積里程 ≥ {meta.min_km}KM 才能前往
+        ✦ VIP特選商家 · 需 VIP 會員且累積里程 ≥ {meta.min_km}KM 才能前往
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, fontSize: 12, fontWeight: 800 }}>
         <span style={{ color: meta.is_vip ? 'var(--fug)' : 'var(--tx-faint)' }}>{meta.is_vip ? '✓ VIP 有效' : '尚非 VIP'}</span>
@@ -272,7 +272,7 @@ function VipLockedModal({ shop, meta, onClose }: { shop: PartnerShop; meta: Part
   return (
     <div data-skin="default" onClick={onClose} style={modalOverlay}>
       <div onClick={(e) => e.stopPropagation()} style={modalCard}>
-        <div style={{ fontSize: 16, fontWeight: 900, color: '#fff', textAlign: 'center' }}>此為 VIP 精選商家</div>
+        <div style={{ fontSize: 16, fontWeight: 900, color: '#fff', textAlign: 'center' }}>此為 VIP特選商家</div>
         <div style={{ fontSize: 13.5, color: 'var(--tx)', lineHeight: 1.8, marginTop: 12 }}>{reason}</div>
         {meta && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, fontSize: 12.5, fontWeight: 800, background: 'var(--bg-2)', borderRadius: 10, padding: '10px 12px' }}>
