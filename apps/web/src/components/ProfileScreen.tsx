@@ -519,7 +519,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             <PushToggle />
           </div>
 
-          {/* 手錶直連（Garmin / COROS）— 次要來源，Phase 1 接 Terra 後開放 */}
+          {/* 手錶直連（Garmin / COROS）+ Terra 同意文案 — 先隱藏（尚未實際串接）；未來要接 Terra/直連時把
+              下面的 false 改回顯示條件（或 Phase 1 開放旗標）即可。整段保留不刪。 */}
+          {false && (
           <div style={{ ...recCard, marginTop: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
@@ -534,6 +536,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               連接即表示你同意透過整合商 <b>Terra</b> 取得你的跑步活動資料（跨境處理），並同意本平台 <a href="/privacy" target="_blank" rel="noreferrer" style={{ color: 'var(--fug)' }}>隱私權政策</a>。
             </div>
           </div>
+          )}
 
           {/* 里程優先來源（有 2 個來源時可設定；跨來源去重用） */}
           {strava?.connected && (
