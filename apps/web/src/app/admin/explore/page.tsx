@@ -81,7 +81,10 @@ export default function AdminExplorePage() {
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto' }}>
-      <h1 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px' }}>城市探索 · 關主管理</h1>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px' }}>城市探索 · 關主管理</h1>
+        <Link href="/admin/explore/preview" style={{ color: 'var(--fug)', fontSize: 13 }}>🖼️ 全部合成預覽（QA）</Link>
+      </div>
       <p style={{ color: 'var(--tx-dim)', fontSize: 13, margin: '0 0 14px', lineHeight: 1.7 }}>
         每個打卡點＝一位關主，玩家到點打卡→接受挑戰（結構化課表）→完成得 1-3★，3★ 取得關主卡片。難度星數決定挑戰消耗 DP（難度×10）。
         入口顯示與白名單請到 <Link href="/admin/system" style={{ color: 'var(--fug)' }}>系統設定</Link> 控制（城市探索入口 / 卡片探索入口）。

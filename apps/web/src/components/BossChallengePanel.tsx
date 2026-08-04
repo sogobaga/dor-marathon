@@ -2,6 +2,7 @@
 
 import { type ExploreBoss, type User } from '@/lib/api'
 import { segSummary, totalKm, estMinutes, fmtDuration } from '@/lib/workout'
+import BossAvgPreview from './BossAvgPreview'
 
 // 關主挑戰面板（打卡後跳出）：比事件任務面板更精緻。兩階段——
 // intro：Scene 圖 + 關主對話(dialogue_intro，含 <user_nickname> 需替換) + 挑戰資訊 + 接受(扣DP)/放棄；
@@ -28,26 +29,9 @@ export default function BossChallengePanel({ boss, phase, busy, dpCost, note, us
   return (
     <div data-skin="default" style={{ position: 'fixed', inset: 0, zIndex: 3200, background: 'rgba(4,8,6,.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }}>
       <div style={{ width: '100%', maxWidth: 380, maxHeight: '92dvh', overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--gold)', borderRadius: 18, boxShadow: '0 16px 50px rgba(0,0,0,.7)' }}>
-        {/* Scene 圖（AVG 疊圖）：場景圖當背景 + 關主角色立繪疊上、只露上半身 */}
+        {/* Scene 圖（AVG 疊圖）：場景圖當背景 + 關主角色立繪疊上、只露上半身（合成邏輯抽到共用元件 BossAvgPreview，後台預覽牆共用） */}
         {(boss.scene_image_url || boss.master_image_url) && (
-          <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', overflow: 'hidden', borderRadius: '18px 18px 0 0', background: '#0b0e13' }}>
-            {boss.scene_image_url && (
-              <img src={boss.scene_image_url} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
-            )}
-            {boss.master_image_url && (
-              // 立繪為直式全身圖（頭在頂、腳在底）：頭部對齊容器上緣（top:0）＋ height 放大到容器 210%
-              // → 容器只露出「頭～腰」的上半身，腿往下被容器 overflow:hidden 裁掉；角色像前景站在鏡頭前、場景在後方。
-              <img src={boss.master_image_url} alt={boss.name} style={{ position: 'absolute', left: '50%', top: 0, transform: 'translateX(-50%)', height: '210%', width: 'auto', maxWidth: 'none', objectFit: 'contain', objectPosition: 'top', pointerEvents: 'none' }} />
-            )}
-            <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '24px 16px 10px', background: 'linear-gradient(transparent, rgba(4,8,6,.92))' }}>
-              <div style={{ fontSize: 11, letterSpacing: '.25em', color: 'var(--gold)', fontWeight: 800 }}>⚔️ 關主挑戰</div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
-                <span style={{ fontSize: 20, fontWeight: 900, color: '#fff' }}>{boss.name}</span>
-                <span style={{ fontSize: 12, color: 'var(--gold)', letterSpacing: 1 }}>{'★'.repeat(Math.max(0, boss.difficulty_stars))}</span>
-              </div>
-              {boss.title && <div style={{ fontSize: 12, color: 'rgba(255,255,255,.75)', marginTop: 1 }}>{boss.title}</div>}
-            </div>
-          </div>
+          <BossAvgPreview scene={boss.scene_image_url} master={boss.master_image_url} name={boss.name} stars={boss.difficulty_stars} title={boss.title} radius="18px 18px 0 0" />
         )}
 
         <div style={{ padding: '14px 16px 16px' }}>
