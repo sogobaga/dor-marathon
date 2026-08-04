@@ -18,7 +18,7 @@ export default function FreetrainIntroPanel({ title, steps, freerunMin }: { titl
         <div style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--fug)', fontWeight: 800 }}>🏃 自主訓練模式</div>
         <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--tx)', margin: '6px 0 8px' }}>🏃 Free Run · {freerunMin} 分鐘</div>
         <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.5 }}>
-          按下方「▶ 開始訓練」開始；按開始後倒數（時:分），時間到可繼續累積里程。
+          按下方「▶ 開始訓練」開始；按開始後倒數（時:分:秒），時間到可繼續累積里程。
         </div>
       </div>
     )

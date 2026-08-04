@@ -126,10 +126,10 @@ export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, step
           <div style={{ height: '100%', width: `${pct}%`, background: accent, borderRadius: 999, transition: 'width .35s' }} />
         </div>
         {freerun ? (
-          // Free Run：不顯示配速回饋/全段進度點/配速說明——改醒目大字「時:分」倒數 + 一行簡潔說明
+          // Free Run：不顯示配速回饋/全段進度點/配速說明——改醒目大字「時:分:秒」倒數 + 一行簡潔說明
           <div style={{ textAlign: 'center', marginTop: 8 }}>
-            <div style={{ fontSize: 40, fontWeight: 900, color: accent, fontVariantNumeric: 'tabular-nums', letterSpacing: '.02em' }}>
-              {(() => { const m = Math.max(0, Math.ceil(remain / 60)); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}` })()}
+            <div style={{ fontSize: 38, fontWeight: 900, color: accent, fontVariantNumeric: 'tabular-nums', letterSpacing: '.02em' }}>
+              {(() => { const s = Math.max(0, Math.ceil(remain)); return `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` })()}
             </div>
             <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 4 }}>時間到可繼續累積里程</div>
           </div>
