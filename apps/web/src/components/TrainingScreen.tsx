@@ -121,6 +121,11 @@ function ym(d: Date) { return `${d.getFullYear()}-${String(d.getMonth() + 1).pad
 function shiftMonth(key: string, delta: number) { const [y, m] = key.split('-').map(Number); return ym(new Date(y, m - 1 + delta, 1)) }
 function pad2(n: number) { return String(n).padStart(2, '0') }
 function ymd(d: Date) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` }
+// 連續週列月曆：某月最後一天的 'YYYY-MM-DD'。用數字建構 Date（非解析字串）取本地年月日，不涉時區位移風險。
+function monthLastDayStr(m: string) {
+  const [y, mo] = m.split('-').map(Number)
+  return `${y}-${pad2(mo)}-${pad2(new Date(y, mo, 0).getDate())}`
+}
 
 // 賽事倒數（P3 重構）：以台北時區的「日期」比較，不看時分，避免使用者裝置在其他時區時算錯天數
 function taipeiTodayStr() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(new Date()) }
@@ -276,37 +281,10 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   function bumpLib(code: string, delta: number) { setLibAdjust((prev) => ({ ...prev, [code]: (prev[code] ?? 0) + delta })) }
 
   // ── 訓練月曆（P2）+ 每日多份/一鍵訓練計畫（P3）──
-  const [month, setMonth] = useState(() => ym(new Date()))
+  // cal 資料結構沿用 TrainingCalendar（見下方 reloadCalendar：改逐月抓回來後合併成一份，
+  // planned/actual 兩個彙總欄位畫面沒用到，固定填 0 即可，只有 days 是實際要用的）。
   const [cal, setCal] = useState<TrainingCalendar | null>(null)
   const [calErr, setCalErr] = useState(false)
-  // 回傳 promise：拖曳改期後要 await 它，讓「更新中」提示涵蓋到月曆真的刷新完為止
-  function loadCalendar(m: string) {
-    if (!getUserToken()) return Promise.resolve()
-    return withUserAuth((t) => trainingApi.calendar(t, m)).then((c) => { setCal(c); setCalErr(false) }).catch(() => setCalErr(true))
-  }
-  useEffect(() => {
-    if (tab !== 'calendar' || !unlocked) return
-    setCal(null)
-    loadCalendar(month)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, tab, unlocked])
-
-  const touchPt = useRef<{ x: number; y: number } | null>(null)
-  function go(delta: number) { setMonth((m) => shiftMonth(m, delta)) }
-  function onTouchStart(e: React.TouchEvent) { touchPt.current = { x: e.touches[0].clientX, y: e.touches[0].clientY } }
-  function onTouchEnd(e: React.TouchEvent) {
-    if (dragRef.current) { touchPt.current = null; return } // 拖曳中停用換月滑動（用 ref，state 可能還沒更新）
-    const st = touchPt.current
-    if (!st) return
-    touchPt.current = null
-    const dx = e.changedTouches[0].clientX - st.x
-    const dy = e.changedTouches[0].clientY - st.y
-    // 垂直捲動優先：水平位移要夠大、且明顯大於垂直位移，才算「換月滑動」——否則上下捲頁時
-    // 只要帶一點水平漂移就會誤切月份（只看 dx 會誤判）。
-    if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy) * 1.5) return
-    if (dx > 0) go(-1)   // 右滑 → 上個月
-    else go(1)           // 左滑 → 下個月（未來月不鎖，可排課）
-  }
 
   // ── 月曆長按拖曳改期：Pointer Events 統一手機/桌機。流程：pointerdown 在「有目前來源課表」的
   // 格子上啟動 450ms 長按計時器（同時記起點，供計時器觸發前判斷位移>10px 取消，保留原本滑動/換月手勢）
@@ -335,9 +313,6 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   function beginDrag(id: string, fromDate: string, label: string) {
     pressOriginRef.current = null
     hadLongPressRef.current = true
-    // 關鍵：把這次觸控的「換月滑動起點」清掉。pointerup 早於 touchend，拖曳結束時 dragRef/state 已被
-    // teardownDrag 清空，onTouchEnd 便會把整段拖曳的水平位移誤判成換月滑動；起點沒了就算不出位移。
-    touchPt.current = null
     dragRef.current = { id, fromDate, label }
     dragOverRef.current = fromDate
     setDragging({ id, fromDate, label })
@@ -377,7 +352,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     setMoving(true) // 送出到月曆刷新完之間會有空窗，顯示「更新中」避免看起來像卡住/失敗
     try {
       await withUserAuth((t) => trainingApi.moveSchedule(t, drag.id, targetDate))
-      await loadCalendar(month)
+      await reloadCalendar()
     } catch (e: any) {
       setDragErr(e?.status === 409 && e?.message === 'no_free_day' ? '找不到可放的空日' : '搬移失敗，請稍後再試')
       setTimeout(() => setDragErr(''), 3200)
@@ -411,7 +386,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     }
     const origin = pressOriginRef.current
     if (!origin) return
-    // 長按計時器觸發前，位移超過 10px 視為在滑動/換月，取消長按（保留原生捲動與 onTouchEnd 換月手勢）
+    // 長按計時器觸發前，位移超過 10px 視為在（上下）捲動，取消長按，保留原生捲動手勢
     if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > 10) cancelPress()
   }
   function cellPointerUp(e: React.PointerEvent<HTMLButtonElement>) {
@@ -461,6 +436,87 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   // 目前顯示來源對應的計畫（'manual' 或計畫已被刪除時為 null）——賽事倒數列 + 月曆賽事日標註都依此
   const currentPlan = useMemo(() => (calSource !== 'manual' ? (plans ?? []).find((p) => p.id === calSource) ?? null : null), [calSource, plans])
 
+  // ── 月曆顯示範圍（連續週列，取代逐月分頁）──────────────────────────────────────
+  // 有計畫：從計畫起始月排到目標月（賽事日優先、無賽事日退回計畫結束月）；手動排：本月起 3 個月
+  // （留跨月拖曳空間）。months 上限夾到 18 個月，防呆計畫日期異常（如壞資料撐出超長清單）。
+  const calRange = useMemo(() => {
+    const manualStartMonth = ym(new Date())
+    const manualMonths = [manualStartMonth, shiftMonth(manualStartMonth, 1), shiftMonth(manualStartMonth, 2)]
+    const manual = { months: manualMonths, startYmd: `${manualStartMonth}-01`, endYmd: monthLastDayStr(manualMonths[2]) }
+    if (calSource === 'manual' || !currentPlan) return manual
+
+    const startStr = currentPlan.start_date
+    const endStr = currentPlan.race_date || currentPlan.end_date
+    const validDate = (s: string | null | undefined): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s)
+    if (!validDate(startStr) || !validDate(endStr)) return manual // 防呆：計畫日期缺失/格式異常 → 退回手動範圍
+
+    const startMonth = startStr.slice(0, 7)
+    const endMonth = endStr.slice(0, 7) < startMonth ? startMonth : endStr.slice(0, 7) // 防呆：結束月早於起始月
+    const months: string[] = [startMonth]
+    let cur = startMonth
+    while (cur !== endMonth && months.length < 18) { cur = shiftMonth(cur, 1); months.push(cur) }
+
+    return { months, startYmd: `${startMonth}-01`, endYmd: monthLastDayStr(months[months.length - 1]) }
+  }, [calSource, currentPlan])
+
+  // 逐月抓 + 合併：cal.days 依日期去重後 concat 成一份，沿用既有 TrainingCalendar 結構，
+  // 讓 dayMap/pickerDay/格子渲染完全不用改（planned/actual 彙總畫面沒用到，固定填 0）。
+  // 回傳 promise：拖曳改期後要 await 它，讓「更新中」提示涵蓋到月曆真的刷新完為止。
+  function reloadCalendar() {
+    if (!getUserToken()) return Promise.resolve()
+    const months = calRange.months
+    return Promise.all(months.map((m) => withUserAuth((t) => trainingApi.calendar(t, m))))
+      .then((results) => {
+        const seen = new Set<string>()
+        const merged: TrainingDay[] = []
+        for (const c of results) {
+          for (const d of c.days) {
+            if (seen.has(d.date)) continue
+            seen.add(d.date)
+            merged.push(d)
+          }
+        }
+        setCal({ month: months[0], planned: { days: 0, km: 0, min: 0 }, actual: { days: 0, km: 0, min: 0 }, days: merged })
+        setCalErr(false)
+      })
+      .catch(() => setCalErr(true))
+  }
+  useEffect(() => {
+    if (tab !== 'calendar' || !unlocked) return
+    setCal(null)
+    reloadCalendar()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calRange.startYmd, calRange.endYmd, calRange.months.join('|'), tab, unlocked])
+
+  // 連續週列：把 [startYmd, endYmd] 往外撐到「所在週的週日～週六」，逐日展開後每 7 天分一列，
+  // 列與列直接相接（無月份分頁），格線只需跟著頁面上下捲動即可看完整段計畫期間。
+  const weeks = useMemo(() => {
+    const [sy, sm, sd] = calRange.startYmd.split('-').map(Number)
+    const [ey, em, ed] = calRange.endYmd.split('-').map(Number)
+    const cursor = new Date(sy, sm - 1, sd)
+    cursor.setDate(cursor.getDate() - cursor.getDay()) // 往前撐到週日
+    const end = new Date(ey, em - 1, ed)
+    end.setDate(end.getDate() + (6 - end.getDay())) // 往後撐到週六
+    const days: Date[] = []
+    while (cursor <= end) { days.push(new Date(cursor)); cursor.setDate(cursor.getDate() + 1) }
+    const out: Date[][] = []
+    for (let i = 0; i < days.length; i += 7) out.push(days.slice(i, i + 7))
+    return out
+  }, [calRange.startYmd, calRange.endYmd])
+
+  // 進頁/範圍變更後自動把「今天」捲進可視範圍；今天不在範圍內則捲到起始週，避免長計畫一開要滑很久
+  const todayCellRef = useRef<HTMLButtonElement | null>(null)
+  const startWeekRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (tab !== 'calendar' || !unlocked) return
+    const raf = requestAnimationFrame(() => {
+      if (todayCellRef.current) todayCellRef.current.scrollIntoView({ block: 'center' })
+      else startWeekRef.current?.scrollIntoView({ block: 'start' })
+    })
+    return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calRange.startYmd, calRange.endYmd, calRange.months.join('|'), tab, unlocked])
+
   async function removePlan(id: string) {
     if (!window.confirm('清除此訓練計畫？將一併移除已排定但尚未完成的課表。')) return
     const token = getUserToken()
@@ -469,7 +525,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     try {
       await withUserAuth((t) => trainingApi.deletePlan(t, id))
       loadPlans()
-      loadCalendar(month) // 計畫的排程已 CASCADE 刪除，月曆需一併刷新
+      reloadCalendar() // 計畫的排程已 CASCADE 刪除，月曆需一併刷新
     } catch {
       /* 靜默失敗，計畫清單維持原狀，使用者可重試 */
     } finally {
@@ -512,7 +568,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         date: pickerDate, template_code: t.code, pace_level: pickerLevel.id,
         planned_km: totalKm(resolved), planned_min: estMinutes(resolved), adjust: adj,
       }))
-      loadCalendar(month)
+      reloadCalendar()
     } catch {
       setPickerErr('排定失敗，請稍後再試')
     } finally {
@@ -527,7 +583,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     setRemovingId(id); setPickerErr('')
     try {
       await withUserAuth((tok) => trainingApi.unschedule(tok, id))
-      loadCalendar(month)
+      reloadCalendar()
     } catch {
       setPickerErr('刪除失敗，請稍後再試')
     } finally {
@@ -667,9 +723,9 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
           plan_mode: apPlanMode, start_long_km: apStartLong,
         })
       }
-      setCalSource(res.plan.id) // 剛產生的計畫直接切為月曆顯示來源，馬上看得到排好的課表
-      loadPlans()
-      loadCalendar(month)
+      setCalSource(res.plan.id) // 剛產生的計畫直接切為月曆顯示來源，馬上看得到排好的課表；
+      loadPlans()               // calSource 一變，calRange 會跟著算出新計畫的範圍，觸發下面的 reloadCalendar
+      reloadCalendar()
       // 提示但照樣產生（非錯誤）：目標偏積極/月跑量偏低的可行性說明，兩者皆可能為空字串
       const goalNote = (res.goal_note || '').trim()
       const volumeNote = (res.volume_note || '').trim()
@@ -695,10 +751,6 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   }
 
   // 月曆格
-  const [yy, mm] = month.split('-').map(Number)
-  const first = new Date(yy, mm - 1, 1).getDay()
-  const daysIn = new Date(yy, mm, 0).getDate()
-  const cells: (number | null)[] = [...Array(first).fill(null), ...Array.from({ length: daysIn }, (_, i) => i + 1)]
   const dayMap: Record<string, TrainingDay> = {}
   ;(cal?.days ?? []).forEach((d) => { dayMap[d.date] = d })
   const todayStr = ymd(new Date())
@@ -838,76 +890,93 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
               </div>
             )}
 
-            {/* 月曆殼（比照成就月曆：換月/滑動/格子；未來月不鎖，可預先排課） */}
-            <div
-              onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
-              style={{ background: 'linear-gradient(160deg, var(--bg-1), var(--bg-2))', border: '1px solid var(--line)', borderRadius: 18, padding: '16px 16px 14px', maxWidth: '100%', boxSizing: 'border-box', overflowX: 'hidden' }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <button onClick={() => go(-1)} style={navBtn}>‹</button>
-                <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)' }}>{yy} 年 {mm} 月</div>
-                <button onClick={() => go(1)} style={navBtn}>›</button>
-              </div>
+            {/* 月曆殼（連續週列：從計畫起始月排到目標月，垂直捲動即可看完整段期間；
+                跨月的那一週不再斷開，月底剛好落在週六時也能正常拖曳到下個月） */}
+            <div style={{ background: 'linear-gradient(160deg, var(--bg-1), var(--bg-2))', border: '1px solid var(--line)', borderRadius: 18, padding: '16px 16px 14px', maxWidth: '100%', boxSizing: 'border-box', overflowX: 'hidden' }}>
               {/* minmax(0,1fr)＝關鍵：grid 欄預設 min-width:auto，格內長內容（課表徽章/賽事標記）會把欄撐大、
                   整條月曆超出容器寬度；minmax(0,1fr) 讓欄可縮到 0，內容一律靠格內 overflow 裁切，不撐版 */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4, marginBottom: 4 }}>
                 {WK.map((w) => <div key={w} style={{ textAlign: 'center', fontSize: 10, color: 'var(--tx-faint)' }}>{w}</div>)}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4 }}>
-                {cells.map((day, i) => {
-                  if (day == null) return <div key={`b${i}`} />
-                  const dateStr = `${month}-${pad2(day)}`
-                  const info = dayMap[dateStr]
-                  // 只顯示目前選中來源的課表（'manual'＝plan_id null，否則比對 plan_id）——每日最多顯示 1 份，避免跑版
-                  const sched = (info?.scheduled ?? []).filter((s) => (calSource === 'manual' ? s.plan_id === null : s.plan_id === calSource))
-                  const isToday = dateStr === todayStr
-                  // ≤2 份逐一顯示各自的分類色徽章；>2 份收成一顆「+N」徽章（避免格子塞爆；同來源理論上最多 1 份，此為防禦）
-                  const badges = sched.length <= 2 ? sched : []
-                  const isDragSource = dragging?.fromDate === dateStr
-                  const isDragOver = !!dragging && dragOverDate === dateStr
-                  // 賽事日標註：目前顯示來源計畫的 race_date 落在這一格（賽事當日產生器本就不排課，格子通常沒有課表徽章）
-                  const isRaceDay = !!currentPlan?.race_date && currentPlan.race_date === dateStr
-                  return (
-                    <button
-                      key={day}
-                      data-date={dateStr}
-                      onClick={() => cellClick(dateStr)}
-                      onPointerDown={(e) => cellPointerDown(e, dateStr, sched)}
-                      onPointerMove={cellPointerMove}
-                      onPointerUp={cellPointerUp}
-                      onPointerCancel={cellPointerCancel}
-                      style={{
-                        aspectRatio: '1', borderRadius: 8, background: dateStr === selectedDate ? 'rgba(70,227,160,.14)' : 'var(--bg-2)',
-                        border: isDragOver ? '2px solid var(--fug)' : isRaceDay ? '2px solid var(--gold)' : dateStr === selectedDate ? '2px solid var(--fug)' : isToday ? '1.5px solid var(--fug)' : '1px solid var(--line)',
-                        boxShadow: isDragOver ? '0 0 0 3px rgba(70,227,160,.22)' : isRaceDay ? '0 0 8px rgba(255,194,75,.55)' : undefined,
-                        opacity: isDragSource ? 0.45 : 1,
-                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1,
-                        padding: 2, cursor: 'pointer', position: 'relative', fontFamily: 'inherit',
-                        touchAction: 'pan-y', WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none',
-                        minWidth: 0, width: '100%', maxWidth: '100%', overflow: 'hidden', boxSizing: 'border-box',
-                      }}>
-                      <span style={{ fontSize: 10, color: 'var(--tx-faint)', fontWeight: 700 }}>{day}</span>
-                      {badges.map((s) => {
-                        const col = catColor(s.category)
+              {weeks.map((week, wi) => {
+                // 每個月第一週前插一次月份標題（一週最多橫跨兩個月，7 天內不可能出現兩個「1 號」）；
+                // 週列本身不因跨月而重置或斷開，只是在上方多顯示一行標籤方便辨認目前捲到哪個月。
+                const monthStartDay = week.find((d) => d.getDate() === 1)
+                return (
+                  <div key={ymd(week[0])} ref={wi === 0 ? startWeekRef : undefined}>
+                    {monthStartDay && (
+                      <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--tx-faint)', margin: wi === 0 ? '0 2px 6px' : '14px 2px 6px' }}>
+                        {monthStartDay.getFullYear()} 年 {monthStartDay.getMonth() + 1} 月
+                      </div>
+                    )}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4, marginBottom: 4 }}>
+                      {week.map((d) => {
+                        const dateStr = ymd(d)
+                        const within = dateStr >= calRange.startYmd && dateStr <= calRange.endYmd
+                        if (!within) {
+                          // 範圍外的鄰月補格（只出現在第一週/最後一週）：只為對齊週欄位，淡色、不掛 data-date
+                          // ——比照原本補空格的作法，讓它不可拖放、不可點。
+                          return (
+                            <div key={dateStr} style={{ aspectRatio: '1', borderRadius: 8, background: 'var(--bg-2)', opacity: 0.35, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <span style={{ fontSize: 10, color: 'var(--tx-faint)' }}>{d.getDate()}</span>
+                            </div>
+                          )
+                        }
+                        const info = dayMap[dateStr]
+                        // 只顯示目前選中來源的課表（'manual'＝plan_id null，否則比對 plan_id）——每日最多顯示 1 份，避免跑版
+                        const sched = (info?.scheduled ?? []).filter((s) => (calSource === 'manual' ? s.plan_id === null : s.plan_id === calSource))
+                        const isToday = dateStr === todayStr
+                        // ≤2 份逐一顯示各自的分類色徽章；>2 份收成一顆「+N」徽章（避免格子塞爆；同來源理論上最多 1 份，此為防禦）
+                        const badges = sched.length <= 2 ? sched : []
+                        const isDragSource = dragging?.fromDate === dateStr
+                        const isDragOver = !!dragging && dragOverDate === dateStr
+                        // 賽事日標註：目前顯示來源計畫的 race_date 落在這一格（賽事當日產生器本就不排課，格子通常沒有課表徽章）
+                        const isRaceDay = !!currentPlan?.race_date && currentPlan.race_date === dateStr
                         return (
-                          <span key={s.id} style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: col.bg, color: col.fg, maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', boxSizing: 'border-box' }}>
-                            {CATEGORY_SHORT[s.category] || s.category}
-                          </span>
+                          <button
+                            key={dateStr}
+                            ref={(el) => { if (dateStr === todayStr) todayCellRef.current = el }}
+                            data-date={dateStr}
+                            onClick={() => cellClick(dateStr)}
+                            onPointerDown={(e) => cellPointerDown(e, dateStr, sched)}
+                            onPointerMove={cellPointerMove}
+                            onPointerUp={cellPointerUp}
+                            onPointerCancel={cellPointerCancel}
+                            style={{
+                              aspectRatio: '1', borderRadius: 8, background: dateStr === selectedDate ? 'rgba(70,227,160,.14)' : 'var(--bg-2)',
+                              border: isDragOver ? '2px solid var(--fug)' : isRaceDay ? '2px solid var(--gold)' : dateStr === selectedDate ? '2px solid var(--fug)' : isToday ? '1.5px solid var(--fug)' : '1px solid var(--line)',
+                              boxShadow: isDragOver ? '0 0 0 3px rgba(70,227,160,.22)' : isRaceDay ? '0 0 8px rgba(255,194,75,.55)' : undefined,
+                              opacity: isDragSource ? 0.45 : 1,
+                              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1,
+                              padding: 2, cursor: 'pointer', position: 'relative', fontFamily: 'inherit',
+                              touchAction: 'pan-y', WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none',
+                              minWidth: 0, width: '100%', maxWidth: '100%', overflow: 'hidden', boxSizing: 'border-box',
+                            }}>
+                            <span style={{ fontSize: 10, color: 'var(--tx-faint)', fontWeight: 700 }}>{d.getDate()}</span>
+                            {badges.map((s) => {
+                              const col = catColor(s.category)
+                              return (
+                                <span key={s.id} style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: col.bg, color: col.fg, maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', boxSizing: 'border-box' }}>
+                                  {CATEGORY_SHORT[s.category] || s.category}
+                                </span>
+                              )
+                            })}
+                            {sched.length > 2 && (
+                              <span style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: 'var(--bg-3, var(--line))', color: 'var(--tx-dim)', maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', boxSizing: 'border-box' }}>+{sched.length}</span>
+                            )}
+                            {isRaceDay && (
+                              <span style={{ fontSize: 7.5, fontWeight: 900, padding: '1px 4px', borderRadius: 5, background: 'var(--gold)', color: '#fff', maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', boxSizing: 'border-box' }}>
+                                {raceDayLabel(currentPlan?.race_distance)}
+                              </span>
+                            )}
+                            {info?.has_activity && <span style={{ position: 'absolute', top: 2, right: 3, fontSize: 9, color: 'var(--fug)', fontWeight: 900 }}>✓</span>}
+                          </button>
                         )
                       })}
-                      {sched.length > 2 && (
-                        <span style={{ fontSize: 7.5, fontWeight: 800, padding: '1px 4px', borderRadius: 5, background: 'var(--bg-3, var(--line))', color: 'var(--tx-dim)', maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', boxSizing: 'border-box' }}>+{sched.length}</span>
-                      )}
-                      {isRaceDay && (
-                        <span style={{ fontSize: 7.5, fontWeight: 900, padding: '1px 4px', borderRadius: 5, background: 'var(--gold)', color: '#fff', maxWidth: '94%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', boxSizing: 'border-box' }}>
-                          {raceDayLabel(currentPlan?.race_distance)}
-                        </span>
-                      )}
-                      {info?.has_activity && <span style={{ position: 'absolute', top: 2, right: 3, fontSize: 9, color: 'var(--fug)', fontWeight: 900 }}>✓</span>}
-                    </button>
-                  )
-                })}
-              </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
             {/* 拖曳中跟著手指/游標的「對話框泡泡」（顯示被拖動的課表）：整個往上抬 30px 讓手指擋不到，
                 底部箭頭朝下指回目前所在的日期格。pointerEvents:none 避免擋到 elementFromPoint 命中測試。 */}
@@ -940,7 +1009,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
               </div>
             )}
             <div style={{ textAlign: 'center', fontSize: 10.5, color: 'var(--tx-faint)', margin: '8px 0 4px', lineHeight: 1.7 }}>
-              左右滑動或按 ‹ › 切換月份 · 點日期查看當天課表<br />長按課表可拖曳改日期（會自動推擠同計畫的其他課表）
+              上下捲動查看整個計畫期間 · 點日期查看當天課表<br />長按課表可拖曳改日期（會自動推擠同計畫的其他課表）
             </div>
             {dragErr && <div style={{ textAlign: 'center', fontSize: 11.5, color: '#ff6b6b', fontWeight: 700, margin: '2px 0 4px' }}>{dragErr}</div>}
 
@@ -1358,7 +1427,6 @@ const adjustVal: React.CSSProperties = { fontSize: 12, fontWeight: 800, color: '
 const adjustRowSmall: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 8, background: 'rgba(255,255,255,.04)', borderRadius: 8, padding: '5px 8px' }
 const adjustBtnSmall: React.CSSProperties = { background: 'rgba(255,255,255,.06)', border: '1px solid var(--line-2)', color: '#fff', borderRadius: 6, width: 24, height: 24, fontSize: 13, fontWeight: 800, cursor: 'pointer', lineHeight: 1, fontFamily: 'inherit' }
 const adjustValSmall: React.CSSProperties = { fontSize: 11, fontWeight: 800, color: '#fff', minWidth: 70, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }
-const navBtn: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx)', borderRadius: 10, width: 34, height: 34, fontSize: 20, cursor: 'pointer', flexShrink: 0, lineHeight: 1 }
 const autoPlanBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '8px 14px', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit', whiteSpace: 'nowrap' }
 const apField: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5 }
 const apLabel: React.CSSProperties = { fontSize: 11.5, fontWeight: 800, color: 'var(--tx-dim)' }
