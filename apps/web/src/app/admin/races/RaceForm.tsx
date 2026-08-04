@@ -585,6 +585,12 @@ export default function RaceForm({
                 <input style={inp} value={subtitle} onChange={(e) => setSubtitle(e.target.value)} />
               </Field>
             </Row>
+            {/* 廣告投放網址：依目前 slug 即時組出，方便直接複製貼給投放渠道（見 /event/{slug} 落地頁） */}
+            {slug ? (
+              <div style={hint}>廣告投放網址：https://www.dor.tw/event/{slug}</div>
+            ) : (
+              <div style={hint}>填入 slug 後會產生投放網址</div>
+            )}
             <Field label="賽事說明">
               <textarea style={{ ...inp, minHeight: 70, resize: 'vertical' }} value={blurb} onChange={(e) => setBlurb(e.target.value)} />
             </Field>

@@ -22,10 +22,11 @@ import DedupNoticeGate from './DedupNoticeGate'
 import { validateSession, getUserToken } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { pageview } from '@/lib/analytics'
-import { profileApi, titleApi, type Race } from '@/lib/api'
+import { profileApi, titleApi, racesApi, type Race } from '@/lib/api'
 import UpgradeVipModal from './UpgradeVipModal'
 
-export default function PhoneShell() {
+// openEventSlug：廣告落地頁 /event/{slug} 傳入，開頁即直接顯示該活動簡章（見 app/event/[slug]/EventLanding.tsx）。
+export default function PhoneShell({ openEventSlug }: { openEventSlug?: string } = {}) {
   const isMobile = useIsMobile()
   const [detailRace, setDetailRace] = useState<Race | null>(null)
   const [detailTab, setDetailTab] = useState<'brochure' | 'progress' | 'rank' | undefined>(undefined)
@@ -67,6 +68,15 @@ export default function PhoneShell() {
     }
   }, [dash?.new_titles])
 
+  // 開啟指定活動簡章（廣告落地頁 /event/{slug} 或 ?event= 深連結共用）。
+  // 失敗（查無此活動/連線異常）靜默不動即可——不存在的 slug 由伺服器端落地頁擋掉，這裡只是保險。
+  const openEventBrochure = (slug: string) => {
+    racesApi.detail(slug).then((res) => {
+      setDetailRace(res.race)
+      setDetailTab('brochure')
+    }).catch(() => {})
+  }
+
   useEffect(() => {
     // 開啟 app 即驗證/換發 token：避免「顯示已登入但實際過期」的不一致
     validateSession()
@@ -89,6 +99,18 @@ export default function PhoneShell() {
       setUnlockCardId(unlock)
       window.history.replaceState({}, '', '/') // 清掉參數，避免重整重播
     }
+    // 活動簡章深連結：優先吃 openEventSlug prop（來自 /event/{slug} 路由，網址已經是漂亮的、不清參數）；
+    // 否則吃 ?event= query（例如外部連結手動帶參數），清掉參數避免重整重播。
+    if (openEventSlug) {
+      openEventBrochure(openEventSlug)
+    } else {
+      const eventParam = params.get('event')
+      if (eventParam) {
+        openEventBrochure(eventParam)
+        window.history.replaceState({}, '', '/') // 清掉參數，避免重整重播
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // GA4：SPA 換畫面（狀態切換、非 URL 變動）也送一次 page_view。初始首頁由 initGA 的 config 送出，故略過首次。

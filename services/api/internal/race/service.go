@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,9 @@ import (
 
 	"github.com/dor/api/internal/promo"
 )
+
+// uuidRe 判斷字串是否為標準 UUID 格式，用於區分 raceID 路徑參數是 UUID 還是 slug。
+var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 const (
 	// maxAddonQtyPerLine 加購單品項每筆數量上限。業務上不可能真的單筆買到這麼多份，
@@ -203,7 +207,18 @@ func (s *Service) GetDetail(ctx context.Context, raceID, userID string) (*Race, 
 }
 
 // GetPublicDetail 取得公開賽事詳情（含分組/加購/物資）+ 使用者報名狀態。
+// raceID 可為 UUID 或 slug（廣告落地頁 /event/{slug} 深連結用）：非 UUID 格式時先以 slug 查出真正的 ID。
 func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*RaceDetail, *Registration, error) {
+	if !uuidRe.MatchString(raceID) {
+		bySlug, err := s.repo.GetBySlug(ctx, raceID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if bySlug == nil {
+			return nil, nil, ErrRaceNotFound
+		}
+		raceID = bySlug.ID
+	}
 	detail, err := s.repo.GetDetail(ctx, raceID)
 	if err != nil {
 		return nil, nil, err
