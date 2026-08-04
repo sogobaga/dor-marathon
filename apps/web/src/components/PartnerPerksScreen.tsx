@@ -16,8 +16,9 @@ import { MediaCarousel, Lightbox, YouTubeEmbed, ytId } from './shared/MediaCarou
 // VIP 精選 gate：audience='vip_featured' 商家現在全體玩家都看得到卡片本身，真正的門檻擋在「前往」這顆
 // CTA 上——後端算出 cta_locked/cta_lock_reason（不合格時 cta_url 也會被清空），前端點擊時只要看
 // cta_locked 就好，不需要自己重算資格。
-export default function PartnerPerksScreen({ onBack }: { onBack: () => void }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+// initialShopId：合作商家專屬連結 /shop/{id}（或 PhoneShell 的 ?shop= 深連結）帶入，進頁即直接顯示該商家詳細頁。
+export default function PartnerPerksScreen({ onBack, initialShopId }: { onBack: () => void; initialShopId?: string }) {
+  const [selectedId, setSelectedId] = useState<string | null>(() => initialShopId ?? null)
   // 收藏樂觀更新 override 提升到這層：PartnerPerksScreen 本身在「列表 ⇄ 詳細」切換時不會被卸載
   // （卸載的只有子元件 PartnerShopListView/PartnerShopDetailView），所以 override 放這裡才能在
   // 「收藏 → 進詳細 → 返回」之後存活，不會被 SWR 的舊快取值蓋回。

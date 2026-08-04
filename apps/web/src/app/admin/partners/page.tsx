@@ -25,6 +25,7 @@ export default function AdminPartnersPage() {
   const [imgBusy, setImgBusy] = useState('') // '' | 'banner' | 'photo'
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
+  const [linkCopied, setLinkCopied] = useState(false)
   const [minKm, setMinKm] = useState<number | null>(null)
   const [minKmBusy, setMinKmBusy] = useState(false)
   const [minKmMsg, setMinKmMsg] = useState('')
@@ -134,6 +135,12 @@ export default function AdminPartnersPage() {
       load()
     } catch (e: any) { setErr(e?.message || '儲存失敗') } finally { setBusy(false) }
   }
+  function copyShopLink() {
+    if (!form.id) return
+    navigator.clipboard.writeText(`https://www.dor.tw/shop/${form.id}`)
+      .then(() => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1800) })
+      .catch(() => {})
+  }
   async function del(s: AdminPartnerShop) {
     if (!token || !confirm(`確定刪除商家「${s.name}」？`)) return
     try { await adminPartnersApi.remove(token, s.id); setMsg('已刪除'); if (form.id === s.id) fresh(); load() }
@@ -216,6 +223,19 @@ export default function AdminPartnersPage() {
             <F label="名稱（必填）"><input style={inp} value={form.name || ''} onChange={(e) => setF('name', e.target.value)} placeholder="商家名稱" /></F>
             <F label="排序 display_order"><input style={inp} type="number" value={form.display_order ?? 0} onChange={(e) => setF('display_order', +e.target.value)} /></F>
           </div>
+          {/* 專屬公開連結：貼進蓋台廣告 cta_url 可直接開該商家詳細頁（完全比照 /event/{slug} 活動落地頁做法）。
+              新增未存檔（無 id）時顯示灰字提示；已有 id（編輯既有商家）才顯示可複製的連結。 */}
+          <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 8 }}>
+            {form.id ? (
+              <>
+                專屬連結：<span style={{ userSelect: 'all', wordBreak: 'break-all' }}>{`https://www.dor.tw/shop/${form.id}`}</span>
+                <button onClick={copyShopLink} style={{ ...tinyBtn, marginLeft: 8 }}>{linkCopied ? '已複製' : '複製'}</button>
+              </>
+            ) : (
+              <span style={{ color: 'var(--tx-faint)' }}>商家建立後會產生專屬連結</span>
+            )}
+          </div>
+
           <F label="簡短資訊 summary"><input style={inp} value={form.summary || ''} onChange={(e) => setF('summary', e.target.value)} placeholder="一行簡介" /></F>
 
           <div style={{ marginTop: 8 }}>

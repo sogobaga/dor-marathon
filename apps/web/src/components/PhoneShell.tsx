@@ -26,7 +26,8 @@ import { profileApi, titleApi, racesApi, type Race } from '@/lib/api'
 import UpgradeVipModal from './UpgradeVipModal'
 
 // openEventSlug：廣告落地頁 /event/{slug} 傳入，開頁即直接顯示該活動簡章（見 app/event/[slug]/EventLanding.tsx）。
-export default function PhoneShell({ openEventSlug }: { openEventSlug?: string } = {}) {
+// openShopId：合作商家專屬連結 /shop/{id} 傳入，開頁即直接顯示該商家詳細頁（見 app/shop/[id]/ShopLanding.tsx）。
+export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlug?: string; openShopId?: string } = {}) {
   const isMobile = useIsMobile()
   const [detailRace, setDetailRace] = useState<Race | null>(null)
   const [detailTab, setDetailTab] = useState<'brochure' | 'progress' | 'rank' | undefined>(undefined)
@@ -40,6 +41,7 @@ export default function PhoneShell({ openEventSlug }: { openEventSlug?: string }
   const [showAchievement, setShowAchievement] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [showPerks, setShowPerks] = useState(false)
+  const [perksInitialShop, setPerksInitialShop] = useState<string | undefined>(undefined)
   const [showMonopoly, setShowMonopoly] = useState(false)
   const [titlesModal, setTitlesModal] = useState<{ code: string; name: string; tier: number; category: string }[]>([])
   const titlesHandled = useRef(false)
@@ -116,6 +118,19 @@ export default function PhoneShell({ openEventSlug }: { openEventSlug?: string }
         window.history.replaceState({}, '', '/') // 清掉參數，避免重整重播
       }
     }
+    // 合作商家詳細頁深連結：優先吃 openShopId prop（來自 /shop/{id} 路由，網址已經是漂亮的、不清參數）；
+    // 否則吃 ?shop= query（例如外部連結手動帶參數），清掉參數避免重整重播。做法比照上面的活動簡章深連結。
+    if (openShopId) {
+      setShowPerks(true)
+      setPerksInitialShop(openShopId)
+    } else {
+      const shopParam = params.get('shop')
+      if (shopParam) {
+        setShowPerks(true)
+        setPerksInitialShop(shopParam)
+        window.history.replaceState({}, '', '/') // 清掉參數，避免重整重播
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -162,7 +177,7 @@ export default function PhoneShell({ openEventSlug }: { openEventSlug?: string }
         ) : showTraining ? (
           <TrainingScreen onBack={() => setShowTraining(false)} />
         ) : showPerks ? (
-          <PartnerPerksScreen onBack={() => setShowPerks(false)} />
+          <PartnerPerksScreen onBack={() => setShowPerks(false)} initialShopId={perksInitialShop} />
         ) : showMonopoly ? (
           <MonopolyScreen onBack={() => setShowMonopoly(false)} />
         ) : showExplore ? (
