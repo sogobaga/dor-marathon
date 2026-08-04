@@ -81,6 +81,12 @@ export default function PhoneShell({ openEventSlug }: { openEventSlug?: string }
     // 開啟 app 即驗證/換發 token：避免「顯示已登入但實際過期」的不一致
     validateSession()
     const params = new URLSearchParams(window.location.search)
+    // 推廣連結（?ref=<code>）→ 記到 localStorage，留到登入/註冊成功時才帶給後端綁定。
+    // 刻意不清 query、不清 localStorage：使用者可能先逛一逛才登入，要撐到那時候還在。
+    const refCode = params.get('ref')
+    if (refCode) {
+      localStorage.setItem('dor:ref_code', refCode)
+    }
     // Strava 授權導回（?strava=...）→ 直接開個人資訊頁顯示結果
     if (params.has('strava')) {
       setShowProfile(true)

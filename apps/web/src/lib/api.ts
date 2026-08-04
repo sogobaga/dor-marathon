@@ -597,10 +597,11 @@ export const adminSettingsApi = {
 // --- Auth ---
 
 export const authApi = {
-  register: (body: { email: string; handle: string; name: string; password: string }) =>
+  // refCode：推廣連結帶入的推薦碼（optional，僅新帳號註冊時由後端綁定）
+  register: (body: { email: string; handle: string; name: string; password: string }, refCode?: string) =>
     request<{ user: User; tokens: TokenPair }>('/auth/register', {
       method: 'POST',
-      body: JSON.stringify(body),
+      body: JSON.stringify(refCode ? { ...body, ref_code: refCode } : body),
     }),
 
   login: (body: { email: string; password: string }) =>
@@ -609,11 +610,11 @@ export const authApi = {
       body: JSON.stringify(body),
     }),
 
-  // Google 登入（GIS ID-token）
-  google: (id_token: string) =>
+  // Google 登入（GIS ID-token）；refCode：推廣連結帶入的推薦碼（optional，僅新帳號註冊時由後端綁定）
+  google: (id_token: string, refCode?: string) =>
     request<{ user: User; tokens: TokenPair }>('/auth/google', {
       method: 'POST',
-      body: JSON.stringify({ id_token }),
+      body: JSON.stringify(refCode ? { id_token, ref_code: refCode } : { id_token }),
     }),
 
   refresh: (refresh_token: string) =>
@@ -1354,6 +1355,22 @@ export const profileApi = {
     request<{ following: FollowRow[]; following_count: number; follower_count: number }>('/profile/follows', { headers: withAuth(token) }),
   recommendations: (token: string, raceID: string) =>
     request<{ recommendations: RecommendRow[] }>(`/profile/recommendations/${raceID}`, { headers: withAuth(token) }),
+}
+
+// --- 推廣連結（累積 10km 才可產生；朋友註冊+達標雙方各得 VIP 天數）---
+
+export interface ReferralInfo {
+  referral_code: string
+  referred_count: number
+  rewarded_count: number
+  reward_days_referrer: number
+  reward_days_referred: number
+}
+
+export const referralApi = {
+  // 產生（或取得既有）本人的推廣碼；累積里程未達 10km 會回 403
+  generate: (token: string) =>
+    request<ReferralInfo>('/profile/referral', { method: 'POST', headers: withAuth(token) }),
 }
 
 export const followApi = {

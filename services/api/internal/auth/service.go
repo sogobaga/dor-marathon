@@ -57,8 +57,9 @@ func NewService(repo *Repository, rdb *redis.Client, jwtSecret string, accessTTL
 	}
 }
 
-// Register 建立新使用者（role 由呼叫方指定：user 或 organizer）
-func (s *Service) Register(ctx context.Context, email, handle, name, password, role string) (*User, *TokenPair, error) {
+// Register 建立新使用者（role 由呼叫方指定：user 或 organizer）。refCode 為可選的推薦碼
+// （?ref=<code> 連結帶入），交給 repo.Create 綁定推薦關係（見 internal/referral.BindReferrer）。
+func (s *Service) Register(ctx context.Context, email, handle, name, password, role, refCode string) (*User, *TokenPair, error) {
 	if role == "" {
 		role = "user"
 	}
@@ -79,7 +80,7 @@ func (s *Service) Register(ctx context.Context, email, handle, name, password, r
 		return nil, nil, fmt.Errorf("hash password: %w", err)
 	}
 
-	user, err := s.repo.Create(ctx, email, handle, name, string(hash), role)
+	user, err := s.repo.Create(ctx, email, handle, name, string(hash), role, refCode)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -115,7 +116,9 @@ func (s *Service) Login(ctx context.Context, email, password string) (*User, *To
 
 // LoginWithGoogle 用 Google ID token 登入/註冊（GIS ID-token 流程）。
 // 驗證 token → 依 sub 找帳號；無則用 email 連結既有帳號；再無則建立新會員。
-func (s *Service) LoginWithGoogle(ctx context.Context, idToken string) (*User, *TokenPair, error) {
+// refCode 為可選的推薦碼（?ref=<code> 連結帶入），只在「全新會員」分支才會被用到——
+// 既有帳號（已用 Google 登入過 / email 連結）完全不碰推薦綁定。
+func (s *Service) LoginWithGoogle(ctx context.Context, idToken, refCode string) (*User, *TokenPair, error) {
 	if s.googleClientID == "" {
 		return nil, nil, ErrGoogleNotConfigured
 	}
@@ -166,7 +169,7 @@ func (s *Service) LoginWithGoogle(ctx context.Context, idToken string) (*User, *
 		if err != nil {
 			return nil, nil, err
 		}
-		user, err = s.repo.CreateGoogleUser(ctx, email, handle, name, picture, sub)
+		user, err = s.repo.CreateGoogleUser(ctx, email, handle, name, picture, sub, refCode)
 		if err != nil {
 			return nil, nil, err
 		}

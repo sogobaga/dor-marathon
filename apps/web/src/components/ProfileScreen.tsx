@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type FollowRow, type SiteSettings } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendingGps'
 import { useDashboard } from '@/lib/useDashboard'
@@ -66,6 +66,11 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
+  // 推廣連結：累積里程 ≥10km 才能產生；成功後存推薦碼/統計，供組連結與複製
+  const [referral, setReferral] = useState<ReferralInfo | null>(null)
+  const [referralBusy, setReferralBusy] = useState(false)
+  const [referralErr, setReferralErr] = useState('')
+  const [referralCopied, setReferralCopied] = useState(false)
   const [follows, setFollows] = useState<FollowRow[] | null>(null)
   const [site, setSite] = useState<SiteSettings | null>(null) // 全站外觀設定（含 Strava 標章雙版本 URL）
   // 取消報名 / 分級退費
@@ -87,6 +92,18 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       setFollows((f) => (f ? f.filter((x) => x.user_id !== userId) : f))
       loadDashboard()
     } catch { /* ignore */ }
+  }
+  // 產生（或取得既有）本人的推廣連結；未達 10km 資格時前端已 gate 不顯示按鈕，這裡仍防禦性接住 403
+  async function generateReferral() {
+    setReferralBusy(true); setReferralErr('')
+    try {
+      const res = await withUserAuth((t) => referralApi.generate(t))
+      setReferral(res)
+    } catch (e: any) {
+      setReferralErr(e?.status === 403 ? '需累積完成 10 公里' : (e?.message || '產生失敗，請稍後再試'))
+    } finally {
+      setReferralBusy(false)
+    }
   }
   function profilePayload(x: Profile): Partial<Profile> {
     return { name: x.name, avatar_url: x.avatar_url, real_name: x.real_name, nickname: x.nickname, phone: x.phone, address: x.address, birthday: x.birthday, gender: x.gender }
@@ -377,6 +394,43 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                   <span style={{ fontWeight: 700, color: 'var(--gold)' }}>{dash.activity_coupon_balance ?? 0} 張</span>
                 </div>
               )}
+              {/* 推廣連結：累積里程 ≥10km 才能產生專屬連結，朋友註冊+跑滿 10km 後雙方各得 VIP 天數 */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 2 }}>
+                <span style={{ color: 'var(--tx-faint)' }}>推廣連結：</span>
+                {dash && dash.total_km < 10 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>
+                      累積完成 10 公里即可產生專屬推廣連結（目前 {dash.total_km.toFixed(1)} / 10 km）
+                    </span>
+                    <button type="button" disabled style={{ ...ghostBtn, opacity: 0.5, cursor: 'default', alignSelf: 'flex-start' }}>產生我的推廣連結</button>
+                  </div>
+                )}
+                {dash && dash.total_km >= 10 && !referral && (
+                  <button type="button" onClick={generateReferral} disabled={referralBusy} style={{ ...ghostBtn, alignSelf: 'flex-start', opacity: referralBusy ? 0.6 : 1 }}>
+                    {referralBusy ? '產生中…' : '產生我的推廣連結'}
+                  </button>
+                )}
+                {referralErr && <span style={{ fontSize: 12, color: 'var(--hunt)' }}>{referralErr}</span>}
+                {referral && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input readOnly value={`${window.location.origin}/?ref=${referral.referral_code}`}
+                        style={{ ...inp, fontSize: 12.5, padding: '8px 10px' }}
+                        onFocus={(e) => e.target.select()} />
+                      <button type="button" onClick={() => {
+                        navigator.clipboard?.writeText(`${window.location.origin}/?ref=${referral.referral_code}`)
+                          .then(() => { setReferralCopied(true); setTimeout(() => setReferralCopied(false), 1500) }).catch(() => {})
+                      }} style={{ ...ghostBtn, flexShrink: 0, padding: '8px 12px' }}>{referralCopied ? '已複製' : '複製連結'}</button>
+                    </div>
+                    <span style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>
+                      朋友透過此連結註冊，完成累積 10 公里後，你 +{referral.reward_days_referrer} 天、朋友 +{referral.reward_days_referred} 天 VIP
+                    </span>
+                    <span style={{ fontSize: 11.5, color: 'var(--tx-dim)' }}>
+                      已成功推薦 {referral.rewarded_count} 人（{referral.referred_count} 人已註冊）
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
             <Field label="顯示名稱"><input style={inp} value={p.name} onChange={(e) => set('name', e.target.value)} /></Field>
             <Field label="Email（Google 帳號）"><input style={{ ...inp, opacity: 0.6 }} value={p.email} disabled /></Field>

@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dor/api/internal/referral"
 )
 
 type User struct {
@@ -28,7 +30,7 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) Create(ctx context.Context, email, handle, name, hash, role string) (*User, error) {
+func (r *Repository) Create(ctx context.Context, email, handle, name, hash, role, refCode string) (*User, error) {
 	u := &User{}
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO users (email, handle, name, password_hash, role, vip_expires_at, vip_plan, vip_since)
@@ -42,6 +44,11 @@ func (r *Repository) Create(ctx context.Context, email, handle, name, hash, role
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert user: %w", err)
+	}
+	// 綁定推薦關係（見 internal/referral.BindReferrer）：本函式本身無交易，直接用 pool 呼叫亦安全——
+	// BindReferrer 自帶 ON CONFLICT(referred_user_id) DO NOTHING 冪等；refCode 空/查無/自我推薦皆靜默忽略，不擋註冊。
+	if err := referral.BindReferrer(ctx, r.db, u.ID, refCode); err != nil {
+		return nil, fmt.Errorf("bind referrer: %w", err)
 	}
 	return u, nil
 }
@@ -104,7 +111,7 @@ func (r *Repository) FindByGoogleSub(ctx context.Context, sub string) (*User, er
 }
 
 // CreateGoogleUser 建立 Google 登入會員（無密碼）並寫入 user_identities，於單一交易內完成
-func (r *Repository) CreateGoogleUser(ctx context.Context, email, handle, name, avatarURL, sub string) (*User, error) {
+func (r *Repository) CreateGoogleUser(ctx context.Context, email, handle, name, avatarURL, sub, refCode string) (*User, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -131,6 +138,12 @@ func (r *Repository) CreateGoogleUser(ctx context.Context, email, handle, name, 
 		VALUES ($1, 'google', $2, $3)
 	`, u.ID, sub, email); err != nil {
 		return nil, fmt.Errorf("insert identity: %w", err)
+	}
+
+	// 綁定推薦關係（見 internal/referral.BindReferrer），與建帳號同一交易保持原子；
+	// refCode 空/查無/自我推薦皆靜默忽略，不擋註冊。
+	if err := referral.BindReferrer(ctx, tx, u.ID, refCode); err != nil {
+		return nil, fmt.Errorf("bind referrer: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

@@ -1,15 +1,22 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { GoogleLogin } from '@react-oauth/google'
 import { authApi } from '@/lib/api'
 import { setUserSession, clearUserSession, useUser } from '@/lib/userAuth'
 import { googleConfigured } from './GoogleAuthProvider'
 
+const REF_CODE_KEY = 'dor:ref_code'
+
 export default function UserAuthBar({ onProfile }: { onProfile?: () => void }) {
   const user = useUser()
   const [showLogin, setShowLogin] = useState(false)
+  // 受邀歡迎提示：有暫存的推廣碼、且尚未登入 → 顯示一行小提示（掛載後才讀 localStorage，避免 SSR 不一致）
+  const [hasRefCode, setHasRefCode] = useState(false)
+  useEffect(() => {
+    setHasRefCode(!!localStorage.getItem(REF_CODE_KEY))
+  }, [])
 
   function logout() {
     clearUserSession() // 觸發 useUser 更新
@@ -33,9 +40,12 @@ export default function UserAuthBar({ onProfile }: { onProfile?: () => void }) {
     )
   }
 
-  // 未登入：顯示「登入」按鈕，點擊跳出登入視窗
+  // 未登入：顯示「登入」按鈕，點擊跳出登入視窗；若帶有推廣連結的推薦碼，順帶顯示歡迎提示
   return (
     <>
+      {hasRefCode && (
+        <span style={refHint}>🎁 你受邀加入 DOR！註冊並完成累積 10 公里，你和朋友都能獲得 VIP 天數</span>
+      )}
       <button onClick={() => setShowLogin(true)} style={loginBtn}>登入</button>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
     </>
@@ -46,6 +56,12 @@ export default function UserAuthBar({ onProfile }: { onProfile?: () => void }) {
 export function LoginModal({ onClose }: { onClose: () => void }) {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  // 受邀歡迎提示：有暫存的推廣碼（尚未登入才會看到這個彈窗）→ 顯示一行小提示
+  // 掛載後才讀 localStorage，避免 SSR 不一致
+  const [hasRefCode, setHasRefCode] = useState(false)
+  useEffect(() => {
+    setHasRefCode(!!localStorage.getItem(REF_CODE_KEY))
+  }, [])
 
   const content = (
     <div style={overlay} onClick={onClose}>
@@ -55,6 +71,9 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 18 }}>✕</button>
         </div>
         <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '0 0 18px' }}>選擇登入方式以報名賽事</p>
+        {hasRefCode && (
+          <p style={refHint}>🎁 你受邀加入 DOR！註冊並完成累積 10 公里，你和朋友都能獲得 VIP 天數</p>
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, opacity: busy ? 0.5 : 1, pointerEvents: busy ? 'none' : 'auto' }}>
           {googleConfigured ? (
@@ -63,8 +82,11 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
                 if (!cred.credential) { setErr('未取得 Google 憑證'); return }
                 setErr(''); setBusy(true)
                 try {
-                  const res = await authApi.google(cred.credential)
+                  // 若之前透過推廣連結進站，帶上暫存的推薦碼（後端只在「新帳號」分支綁定，舊帳號會忽略）
+                  const refCode = localStorage.getItem(REF_CODE_KEY) || undefined
+                  const res = await authApi.google(cred.credential, refCode)
                   setUserSession(res.tokens.access_token, res.tokens.refresh_token, res.user) // 觸發 useUser 更新
+                  localStorage.removeItem(REF_CODE_KEY) // 不論新舊帳號都清，避免下次登入又誤帶
                   onClose()
                 } catch (e: any) {
                   setErr(e?.message || '登入失敗')
@@ -102,6 +124,10 @@ const logoutBtn: React.CSSProperties = {
 const loginBtn: React.CSSProperties = {
   background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none',
   borderRadius: 9, padding: '7px 16px', cursor: 'pointer', fontSize: 13,
+}
+// 受邀歡迎提示（推廣連結 ?ref= 帶入、尚未登入時顯示）：輕量小字，不搶版面
+const refHint: React.CSSProperties = {
+  fontSize: 12, color: 'var(--fug)', margin: '0 0 14px', lineHeight: 1.5,
 }
 const overlay: React.CSSProperties = {
   // 已 portal 到 document.body（跳出捲動容器）；zIndex 拉到系統級提示之上，確保登入視窗永遠在最上層、

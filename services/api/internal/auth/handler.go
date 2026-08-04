@@ -25,7 +25,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		Handle   string `json:"handle"   validate:"required,min=3,max=30,alphanum"`
 		Name     string `json:"name"     validate:"required,min=1,max=50"`
 		Password string `json:"password" validate:"required,min=8"`
-		Role     string `json:"role"`    // 可選：留空 = "user"，填 "organizer" = 合作方申請
+		Role     string `json:"role"`     // 可選：留空 = "user"，填 "organizer" = 合作方申請
+		RefCode  string `json:"ref_code"` // 可選：?ref=<code> 推廣連結帶入的推薦碼
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -37,7 +38,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, pair, err := h.svc.Register(r.Context(), req.Email, req.Handle, req.Name, req.Password, req.Role)
+	user, pair, err := h.svc.Register(r.Context(), req.Email, req.Handle, req.Name, req.Password, req.Role, req.RefCode)
 	if errors.Is(err, ErrEmailTaken) {
 		respondErr(w, http.StatusConflict, "email already registered")
 		return
@@ -94,6 +95,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Google(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		IDToken string `json:"id_token" validate:"required"`
+		RefCode string `json:"ref_code"` // 可選：?ref=<code> 推廣連結帶入的推薦碼（只在新帳號分支使用）
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid json")
@@ -104,7 +106,7 @@ func (h *Handler) Google(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, pair, err := h.svc.LoginWithGoogle(r.Context(), req.IDToken)
+	user, pair, err := h.svc.LoginWithGoogle(r.Context(), req.IDToken, req.RefCode)
 	if errors.Is(err, ErrGoogleNotConfigured) {
 		respondErr(w, http.StatusServiceUnavailable, "google login not configured")
 		return

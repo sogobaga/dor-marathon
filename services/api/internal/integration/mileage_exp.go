@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/dor/api/internal/referral"
 )
 
 // AwardMileageExp 去重感知、冪等地發放里程 EXP/DP/total_km。供 Strava/Terra 匯入成功
@@ -109,10 +111,18 @@ func (r *Repository) AwardMileageExp(ctx context.Context, activityID, userID str
 	dpAmt := rewardKm * dpPerKm
 
 	// total_km 一趟只加一次（走到這裡即代表本趟首次被計入，不論最終 rewardKm 是否 > 0）
-	if _, err := tx.Exec(ctx,
-		`UPDATE users SET total_km = total_km + $1, exp = exp + $2, dp = dp + $3, updated_at = NOW() WHERE id=$4`,
-		distanceKm, expAmt, dpAmt, userID); err != nil {
+	// RETURNING 新 total_km，供下面推薦達標判斷（referral.Reward 只在 >=10km 時才可能發獎）用，
+	// 不需另外查一次。
+	var newTotalKm float64
+	if err := tx.QueryRow(ctx,
+		`UPDATE users SET total_km = total_km + $1, exp = exp + $2, dp = dp + $3, updated_at = NOW() WHERE id=$4 RETURNING total_km`,
+		distanceKm, expAmt, dpAmt, userID).Scan(&newTotalKm); err != nil {
 		return fmt.Errorf("award mileage exp: update user: %w", err)
+	}
+	// 推薦/推廣連結系統：同一交易內判斷這位使用者是否因此跨過 10km 門檻，若是且他是被推薦來的
+	// 新朋友、且尚未發過獎 → 對推薦人/被推薦人雙向 +VIP 天數（見 internal/referral.Reward，一次性冪等）。
+	if err := referral.Reward(ctx, tx, userID, newTotalKm); err != nil {
+		return fmt.Errorf("award mileage exp: referral reward: %w", err)
 	}
 	if rewardKm > 0 {
 		if _, err := tx.Exec(ctx,

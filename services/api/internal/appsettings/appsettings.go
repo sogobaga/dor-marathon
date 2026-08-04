@@ -68,6 +68,9 @@ var specs = map[string]func(string) bool{
 	// 環台大富翁（見 internal/monopoly）：擲骰 GP 成本（預設 3）、繞圈獎勵 GP（預設 0＝不給）
 	"monopoly_dice_gp_cost":  isNonNegInt,
 	"monopoly_lap_reward_gp": isNonNegInt,
+	// 推薦/推廣連結系統（見 internal/referral）：達標（雙方 total_km 皆 >=10）時雙向 VIP 天數獎勵
+	"referral_reward_referrer_days": isNonNegInt, // 推薦人（老朋友）獎勵天數，預設 1
+	"referral_reward_referred_days": isNonNegInt, // 被推薦人（新朋友）獎勵天數，預設 3
 }
 
 func isEntryState(v string) bool {

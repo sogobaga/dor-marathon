@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -426,10 +429,20 @@ func (w *Worker) awardMileageDedup(ctx context.Context, activityID, userID strin
 	dpAmt := rewardKm * dpPerKm
 
 	// total_km 一趟只加一次（走到這裡即代表本趟首次被計入，不論最終 rewardKm 是否 > 0）
-	if _, err := tx.Exec(ctx,
-		`UPDATE users SET total_km = total_km + $1, exp = exp + $2, dp = dp + $3, updated_at = NOW() WHERE id=$4`,
-		distanceKm, expAmt, dpAmt, userID); err != nil {
+	// RETURNING 新 total_km，供下面推薦達標判斷（awardReferralReward 只在 >=10km 時才可能發獎）用。
+	var newTotalKm float64
+	if err := tx.QueryRow(ctx,
+		`UPDATE users SET total_km = total_km + $1, exp = exp + $2, dp = dp + $3, updated_at = NOW() WHERE id=$4 RETURNING total_km`,
+		distanceKm, expAmt, dpAmt, userID).Scan(&newTotalKm); err != nil {
 		return fmt.Errorf("update user: %w", err)
+	}
+	// 推薦/推廣連結系統：同一交易內判斷這位使用者是否因此跨過 10km 門檻，若是且他是被推薦來的
+	// 新朋友、且尚未發過獎 → 對推薦人/被推薦人雙向 +VIP 天數。
+	// ⚠️ 此段為 internal/referral.Reward + internal/vip.Extend 的 worker 複製版（worker 是獨立 Go
+	// module、不能 import services/api 的 internal package，故整段內聯複製一份）——改動需與
+	// services/api/internal/{vip,referral} 同步，見下方 awardReferralReward。
+	if err := awardReferralReward(ctx, tx, userID, newTotalKm); err != nil {
+		return fmt.Errorf("referral reward: %w", err)
 	}
 	if rewardKm > 0 {
 		if _, err := tx.Exec(ctx,
@@ -442,6 +455,70 @@ func (w *Worker) awardMileageDedup(ctx context.Context, activityID, userID strin
 		return fmt.Errorf("mark awarded: %w", err)
 	}
 	return tx.Commit(ctx)
+}
+
+// awardReferralReward —— 此段為 services/api/internal/referral.Reward + internal/vip.Extend 的
+// worker 複製版（worker 是獨立 Go module、不能 import services/api 的 internal package，故整段
+// 內聯複製一份）。改動需與 services/api/internal/{vip,referral} 同步，保持完全一致的行為。
+//
+// 語意（與 referral.Reward 完全一致）：只在 newTotalKm >= 10 時才可能發獎。CAS 鎖定 referrals
+// 該筆（rewarded_at IS NULL → 設值並 RETURNING referrer_user_id）：拿得到 row 才代表「這是本筆
+// 推薦關係第一次達標」，據此對推薦人／被推薦人各自疊加 VIP 天數（extendVIP，SQL 逐字抄自
+// internal/vip.Extend）。非推薦來的人（referrals 無此筆）或已發過獎（rewarded_at 已非 NULL）
+// → CAS 拿不到 row（pgx.ErrNoRows），直接結束（no-op），確保一次性、冪等。
+func awardReferralReward(ctx context.Context, tx pgx.Tx, userID string, newTotalKm float64) error {
+	if newTotalKm < 10 {
+		return nil
+	}
+	var referrerID string
+	err := tx.QueryRow(ctx, `
+		UPDATE referrals SET rewarded_at = now()
+		WHERE referred_user_id = $1 AND rewarded_at IS NULL
+		RETURNING referrer_user_id`, userID).Scan(&referrerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // 非推薦來的人，或這筆推薦關係已經發過獎
+	}
+	if err != nil {
+		return fmt.Errorf("cas referrals: %w", err)
+	}
+	referrerDays := getAppSettingInt(ctx, tx, "referral_reward_referrer_days", 1)
+	referredDays := getAppSettingInt(ctx, tx, "referral_reward_referred_days", 3)
+	if err := extendVIP(ctx, tx, referrerID, referrerDays); err != nil {
+		return fmt.Errorf("extend referrer vip: %w", err)
+	}
+	if err := extendVIP(ctx, tx, userID, referredDays); err != nil {
+		return fmt.Errorf("extend referred vip: %w", err)
+	}
+	return nil
+}
+
+// getAppSettingInt —— 複製自 internal/appsettings.GetInt 的最小邏輯：查無/解析失敗回 def。
+func getAppSettingInt(ctx context.Context, tx pgx.Tx, key string, def int) int {
+	var v string
+	if err := tx.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&v); err != nil {
+		return def
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+// extendVIP —— 逐字抄自 internal/vip.Extend 的 UPDATE SQL：延長使用者 VIP 到期日 days 天
+// （從 max(現有到期, now()) 起算，不縮短既有 VIP）。days<=0 為 no-op。付費會員的 vip_plan 不覆蓋；
+// 只有從未當過 VIP（空字串）才標記為 'bonus'。
+func extendVIP(ctx context.Context, tx pgx.Tx, userID string, days int) error {
+	if days <= 0 {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE users SET
+		  vip_expires_at = GREATEST(COALESCE(vip_expires_at, now()), now()) + make_interval(days => $2),
+		  vip_since      = COALESCE(vip_since, now()),
+		  vip_plan       = CASE WHEN COALESCE(vip_plan,'')='' THEN 'bonus' ELSE vip_plan END
+		WHERE id = $1`, userID, days)
+	return err
 }
 
 func nullableString(s string) interface{} {
