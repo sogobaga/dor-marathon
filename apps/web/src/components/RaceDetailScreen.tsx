@@ -7,6 +7,7 @@ import { racesApi, followApi, METRIC_BY_KEY, type Race, type TaskProgress, type 
 import { getUserToken } from '@/lib/userAuth'
 import { useScrollLock } from '@/lib/useScrollLock'
 import { useSheetDismiss } from '@/lib/useSheetDismiss'
+import { overlayMount } from '@/lib/overlayMount'
 import { renderCertificate, downloadDataURL } from '@/lib/certificate'
 import ExpSettlementModal from './ExpSettlementModal'
 import { BrochureBody } from './BrochureScreen'
@@ -381,8 +382,10 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
       )}
     </div>
   )
+  // 掛載點：手機模擬框內→portal 進框(桌機不鋪滿視窗)；獨立路由(無手機框)→退回 document.body(視窗)
+  const om = overlayMount()
   const content = (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+    <div onClick={onClose} style={{ position: om.position, inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
       <div ref={panelRef} onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '82dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', borderRadius: '18px 18px 0 0', border: '1px solid var(--line-2)', borderBottom: 'none', transform: dy ? `translateY(${dy}px)` : undefined, transition: dy ? 'none' : 'transform .22s ease', willChange: 'transform' }}>
         <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0 2px', flexShrink: 0 }}><div style={{ width: 38, height: 4, borderRadius: 999, background: 'var(--line-2)' }} /></div>
         <div style={{ padding: '4px 18px 10px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
@@ -411,7 +414,7 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
       </div>
     </div>
   )
-  return typeof document === 'undefined' ? content : createPortal(content, document.body)
+  return om.node ? createPortal(content, om.node) : content
 }
 
 // 區間任務達標明細：點進去看自己哪幾公里/哪幾筆落在配速（或心率）區間
@@ -423,8 +426,10 @@ function RangeDetailModal({ race, task, onClose }: { race: Race; task: TaskProgr
   const d: TaskRangeDetail | undefined = data?.detail
   const isPace = task.metric_type === 'avg_pace_range'
   const rangeText = d ? (isPace ? `${paceFmt(d.range_lo)}–${paceFmt(d.range_hi)} /km` : `${d.range_lo}–${d.range_hi}`) : ''
+  // 掛載點：手機模擬框內→portal 進框(桌機不鋪滿視窗)；獨立路由(無手機框)→退回 document.body(視窗)
+  const om = overlayMount()
   const content = (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+    <div onClick={onClose} style={{ position: om.position, inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
       <div ref={panelRef} onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '82dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', borderRadius: '18px 18px 0 0', border: '1px solid var(--line-2)', borderBottom: 'none', transform: dy ? `translateY(${dy}px)` : undefined, transition: dy ? 'none' : 'transform .22s ease', willChange: 'transform' }}>
         <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0 2px', flexShrink: 0 }}><div style={{ width: 38, height: 4, borderRadius: 999, background: 'var(--line-2)' }} /></div>
         <div style={{ padding: '4px 18px 10px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
@@ -463,7 +468,7 @@ function RangeDetailModal({ race, task, onClose }: { race: Race; task: TaskProgr
       </div>
     </div>
   )
-  return typeof document === 'undefined' ? content : createPortal(content, document.body)
+  return om.node ? createPortal(content, om.node) : content
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

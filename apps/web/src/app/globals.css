@@ -318,6 +318,11 @@ html, body {
   border: 1px solid rgba(255,255,255,.10);
   overflow: hidden;
   position: relative;
+  /* 桌機模擬框：讓框成為「所有 position:fixed 後代」的 containing block，使全螢幕覆蓋層/彈窗都被框在
+     手機框內、不再鋪滿整個桌面視窗（.phone-shell 只在桌機套用，故手機不受影響）。translateZ(0) 是最可靠、
+     跨瀏覽器一致的作法。⚠️ 唯一需配合：以 clientX/clientY(視窗座標)定位 fixed 元素者(目前僅 TrainingScreen
+     拖曳徽章)須扣掉本框在視窗中的偏移(見 TrainingScreen shellOffset)。 */
+  transform: translateZ(0);
   box-shadow:
     0 0 0 10px #1a1a1f,
     0 0 0 11px rgba(255,255,255,.06),

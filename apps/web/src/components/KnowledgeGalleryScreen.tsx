@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import useSWR from 'swr'
 import { monopolyApi, type KnowledgeCard } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
+import { overlayMount } from '@/lib/overlayMount'
 
 // 知識卡圖鑑：擲骰停在機會/命運格抽到的知識卡收集頁。全螢幕覆蓋層（createPortal 到 body），
 // 不受呼叫端（MemberPanel）目前所在頁面版位影響。防劇透規則完全交給後端：未擁有的卡片後端只回
@@ -54,8 +55,11 @@ export default function KnowledgeGalleryScreen({ onClose }: { onClose: () => voi
     return data.cards.filter((c) => c.owned && cardMatchesQuery(c, qLower))
   }, [data, trimmedQuery])
 
+  // 掛載點：手機模擬框內→portal 進框(桌機不鋪滿視窗)；獨立路由(無手機框)→退回 document.body(視窗)
+  const om = overlayMount()
+
   const body = (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ position: om.position, inset: 0, zIndex: 2000, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
       <header style={{ padding: 'var(--app-top) 22px 10px', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', rowGap: 8, gap: 12 }}>
         <button onClick={onClose} style={backBtn}>← 返回</button>
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>📚 知識探索</span>
@@ -134,8 +138,7 @@ export default function KnowledgeGalleryScreen({ onClose }: { onClose: () => voi
     </div>
   )
 
-  if (typeof document === 'undefined') return null
-  return createPortal(body, document.body)
+  return om.node ? createPortal(body, om.node) : body
 }
 
 function ThemeSection({

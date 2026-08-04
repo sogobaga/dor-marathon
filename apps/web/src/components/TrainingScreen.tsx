@@ -370,9 +370,15 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     const d = cell?.getAttribute('data-date') || null // 補空格無 data-date，跨月格自然被排除
     if (d !== dragOverRef.current) { dragOverRef.current = d; setDragOverDate(d) }
   }
+  // 桌機手機模擬框(.phone-shell)有 transform → 內部 position:fixed 元素改「相對框」定位。拖曳徽章是用
+  // clientX/clientY(視窗座標)定位的 fixed，需扣掉框在視窗中的偏移；手機/獨立情境框滿版(偏移 0)不受影響。
+  function shellOffset() {
+    const r = typeof document !== 'undefined' ? document.getElementById('app-shell')?.getBoundingClientRect() : null
+    return { x: r?.left ?? 0, y: r?.top ?? 0 }
+  }
   function positionBadge(x: number, y: number) {
     const el = dragBadgeRef.current
-    if (el) { el.style.left = `${x}px`; el.style.top = `${y}px` }
+    if (el) { const o = shellOffset(); el.style.left = `${x - o.x}px`; el.style.top = `${y - o.y}px` }
   }
 
   function teardownDrag() {
@@ -1045,7 +1051,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 底部箭頭朝下指回目前所在的日期格。pointerEvents:none 避免擋到 elementFromPoint 命中測試。 */}
             {dragging && (
               <div
-                ref={(el) => { dragBadgeRef.current = el; if (el) { el.style.left = `${lastPointerRef.current.x}px`; el.style.top = `${lastPointerRef.current.y}px` } }}
+                ref={(el) => { dragBadgeRef.current = el; if (el) { const o = shellOffset(); el.style.left = `${lastPointerRef.current.x - o.x}px`; el.style.top = `${lastPointerRef.current.y - o.y}px` } }}
                 style={{
                   position: 'fixed', left: 0, top: 0, transform: 'translate(-50%, calc(-100% - 30px))',
                   pointerEvents: 'none', zIndex: 4500,

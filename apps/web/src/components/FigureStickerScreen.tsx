@@ -5,6 +5,7 @@ import useSWR from 'swr'
 import { createPortal } from 'react-dom'
 import { monopolyApi, type StickerPiece } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
+import { overlayMount } from '@/lib/overlayMount'
 
 // 完賽公仔九宮格貼紙：擲骰停在機會/命運格有機會抽到公仔碎片，收集滿 9 片可拼出完整彩色公仔。
 // 全螢幕覆蓋層作法比照 KnowledgeGalleryScreen（createPortal 到 body，不受呼叫端目前頁面版位影響）。
@@ -28,8 +29,11 @@ export default function FigureStickerScreen({ onClose }: { onClose: () => void }
     mutate((prev) => (prev ? { ...prev, redemption_status: res.status as typeof prev.redemption_status } : prev), { revalidate: false })
   }
 
+  // 掛載點：手機模擬框內→portal 進框(桌機不鋪滿視窗)；獨立路由(無手機框)→退回 document.body(視窗)
+  const om = overlayMount()
+
   const body = (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ position: om.position, inset: 0, zIndex: 2000, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
       <header style={{ padding: 'var(--app-top) 22px 10px', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={onClose} style={backBtn}>← 返回</button>
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>🧩 {data?.title ?? '公仔收集'}</span>
@@ -113,8 +117,7 @@ export default function FigureStickerScreen({ onClose }: { onClose: () => void }
     </div>
   )
 
-  if (typeof document === 'undefined') return null
-  return createPortal(body, document.body)
+  return om.node ? createPortal(body, om.node) : body
 }
 
 // 兌換公仔彈窗：三顆直向按鈕——我要兌換／聯繫官方 LINE OA／完賽公仔。點外（overlay）關閉。

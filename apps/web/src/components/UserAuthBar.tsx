@@ -6,6 +6,7 @@ import { GoogleLogin } from '@react-oauth/google'
 import { authApi } from '@/lib/api'
 import { setUserSession, clearUserSession, useUser } from '@/lib/userAuth'
 import { googleConfigured } from './GoogleAuthProvider'
+import { overlayMount } from '@/lib/overlayMount'
 
 const REF_CODE_KEY = 'dor:ref_code'
 
@@ -63,8 +64,10 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
     setHasRefCode(!!localStorage.getItem(REF_CODE_KEY))
   }, [])
 
+  // 掛載點：手機模擬框內→portal 進框(桌機不鋪滿視窗)；獨立路由(無手機框)→退回 document.body(視窗)
+  const om = overlayMount()
   const content = (
-    <div style={overlay} onClick={onClose}>
+    <div style={{ ...overlay, position: om.position }} onClick={onClose}>
       <div style={panel} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
           <strong style={{ fontSize: 18 }}>登入 DOR</strong>
@@ -107,10 +110,9 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
       </div>
     </div>
   )
-  // 用 portal 掛到 document.body：跳出「可拖曳面板背景層」的 -webkit-overflow-scrolling 捲動容器，
-  // 否則 iOS Safari 會把 position:fixed 困在該容器內、被面板(z500)蓋住。SSR 時 document 不存在 → 先不渲染。
-  if (typeof document === 'undefined') return content
-  return createPortal(content, document.body)
+  // 用 portal 掛到手機模擬框(#app-shell)或 document.body：跳出「可拖曳面板背景層」的 -webkit-overflow-scrolling 捲動容器，
+  // 否則 iOS Safari 會把 position:fixed 困在該容器內、被面板(z500)蓋住。SSR 時 om.node 為 null → 先不 portal。
+  return om.node ? createPortal(content, om.node) : content
 }
 
 const avatar: React.CSSProperties = {
@@ -130,7 +132,8 @@ const refHint: React.CSSProperties = {
   fontSize: 12, color: 'var(--fug)', margin: '0 0 14px', lineHeight: 1.5,
 }
 const overlay: React.CSSProperties = {
-  // 已 portal 到 document.body（跳出捲動容器）；zIndex 拉到系統級提示之上，確保登入視窗永遠在最上層、
+  // 已 portal 到手機模擬框(#app-shell)或 document.body（跳出捲動容器）；position 由 om.position 動態覆蓋
+  // （框內用 absolute 被裁切、獨立路由用 fixed 佔滿視窗）；zIndex 拉到系統級提示之上，確保登入視窗永遠在最上層、
   // 不被可拖曳面板(500)、事件演出(2000+)或其他覆蓋層蓋住。
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)',
   display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3300, padding: 20,

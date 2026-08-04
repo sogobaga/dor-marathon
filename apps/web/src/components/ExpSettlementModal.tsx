@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import type { ExpBreakdown, ExpLevelRow } from '@/lib/api'
 import * as sfx from '@/lib/sfx'
 import DpCoin from './DpCoin'
+import { overlayMount } from '@/lib/overlayMount'
 
 type Step = {
   level: number
@@ -135,8 +136,10 @@ export default function ExpSettlementModal({ breakdown, title = '成績結算', 
   const step = steps[stepIdx]
   const finalLevel = levels.length ? [...levels].sort((a, b) => a.exp_required - b.exp_required).filter((l) => exp_after >= l.exp_required).pop() : undefined
 
+  // 掛載點：手機模擬框內→portal 進框(桌機不鋪滿視窗)；獨立路由(無手機框)→退回 document.body(視窗)
+  const om = overlayMount()
   const content = (
-    <div style={overlay} onPointerDown={() => sfx.unlockAudio()}>
+    <div style={{ ...overlay, position: om.position }} onPointerDown={() => sfx.unlockAudio()}>
       <style>{KEYFRAMES}</style>
       <div style={glow} />
       <button
@@ -244,8 +247,8 @@ export default function ExpSettlementModal({ breakdown, title = '成績結算', 
       </div>
     </div>
   )
-  // portal 到 body：跳出可拖曳面板等捲動容器/堆疊環境，確保結算演出永遠在最上層（不被面板蓋住）
-  return typeof document === 'undefined' ? content : createPortal(content, document.body)
+  // portal 到手機框(#app-shell)或 body：跳出可拖曳面板等捲動容器/堆疊環境，確保結算演出永遠在最上層（不被面板蓋住）
+  return om.node ? createPortal(content, om.node) : content
 }
 
 const overlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 3300, background: 'radial-gradient(120% 90% at 50% 30%, #11201b 0%, #070a09 70%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, overflow: 'hidden' }

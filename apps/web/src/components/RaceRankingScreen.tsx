@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { racesApi, followApi, type Race, type StandingRank, type LeaderboardRow, type Contributor } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
+import { overlayMount } from '@/lib/overlayMount'
 
 function fmtPace(s: number) {
   if (!s) return '—'
@@ -300,8 +301,10 @@ function GroupMembersModal({ race, group, onClose }: { race: Race; group: Standi
       setOverride((o) => ({ ...o, [m.user_id]: cur }))
     }
   }
+  // 掛載點：手機模擬框內→portal 進框(桌機不鋪滿視窗)；獨立路由(無手機框)→退回 document.body(視窗)
+  const om = overlayMount()
   const content = (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+    <div onClick={onClose} style={{ position: om.position, inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '82dvh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', borderRadius: '18px 18px 0 0', border: '1px solid var(--line-2)', borderBottom: 'none' }}>
         <div style={{ padding: '12px 18px 10px', borderBottom: '1px solid var(--line)', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
           <div style={{ minWidth: 0 }}>
@@ -330,7 +333,7 @@ function GroupMembersModal({ race, group, onClose }: { race: Race; group: Standi
       </div>
     </div>
   )
-  return typeof document === 'undefined' ? content : createPortal(content, document.body)
+  return om.node ? createPortal(content, om.node) : content
 }
 
 function Hint({ children, color = 'var(--tx-dim)' }: { children: React.ReactNode; color?: string }) {
