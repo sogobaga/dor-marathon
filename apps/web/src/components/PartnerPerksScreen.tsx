@@ -205,7 +205,8 @@ function ShopCard({
   // 鎖定的商家後端會把 cta_url 清空，所以按鈕是否顯示不能只看 cta_url，鎖定時也要顯示（點下去開原因彈窗）。
   const showCta = !!shop.cta_url || !!shop.cta_locked
   return (
-    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
+    // 整張卡片可點 → 進詳細頁；內部的愛心／前往／詳細按鈕各自 stopPropagation，避免點它們也觸發進詳細。
+    <div onClick={onDetail} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden', cursor: 'pointer' }}>
       <div style={{ position: 'relative' }}>
         {shop.banner_url ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -214,7 +215,7 @@ function ShopCard({
           <div style={{ width: '100%', aspectRatio: '16 / 9', background: 'var(--bg-2)' }} />
         )}
         {loggedIn && (
-          <button onClick={onToggleFav} aria-label={isFav ? '取消收藏' : '收藏'} style={heartBtn}>
+          <button onClick={(e) => { e.stopPropagation(); onToggleFav() }} aria-label={isFav ? '取消收藏' : '收藏'} style={heartBtn}>
             {/* 用 SVG 而非 ♥ 字符：字符的實際圖形高度只有字級約 7 成、且各平台字型渲染不一，
                 無法精準控制「愛心佔圓圈 65%」；SVG 尺寸可直接寫死 = heartBtnSize × 0.65。 */}
             <svg viewBox="0 0 24 24" width={heartGlyphSize} height={heartGlyphSize} aria-hidden="true"
@@ -234,9 +235,9 @@ function ShopCard({
           </div>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: showCta ? 'minmax(0,1fr) minmax(0,1fr)' : 'minmax(0,1fr)', gap: 8, marginTop: 10 }}>
-          <button onClick={onDetail} style={ghostFullBtn}>詳細</button>
+          <button onClick={(e) => { e.stopPropagation(); onDetail() }} style={ghostFullBtn}>詳細</button>
           {showCta && (
-            <button onClick={() => onCta(shop)} style={primaryFullBtn}>{shop.cta_locked ? '🔒 前往' : '前往'}</button>
+            <button onClick={(e) => { e.stopPropagation(); onCta(shop) }} style={primaryFullBtn}>{shop.cta_locked ? '🔒 前往' : '前往'}</button>
           )}
         </div>
       </div>
