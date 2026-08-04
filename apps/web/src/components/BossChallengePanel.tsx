@@ -35,8 +35,9 @@ export default function BossChallengePanel({ boss, phase, busy, dpCost, note, us
               <img src={boss.scene_image_url} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
             )}
             {boss.master_image_url && (
-              // 立繪為直式全身圖：height 放大到容器 155% + 底部對齊 + objectPosition top → 容器只露出上半身（下半身被裁）
-              <img src={boss.master_image_url} alt={boss.name} style={{ position: 'absolute', left: '50%', bottom: 0, transform: 'translateX(-50%)', height: '155%', width: 'auto', maxWidth: 'none', objectFit: 'contain', objectPosition: 'top', pointerEvents: 'none' }} />
+              // 立繪為直式全身圖（頭在頂、腳在底）：頭部對齊容器上緣（top:0）＋ height 放大到容器 210%
+              // → 容器只露出「頭～腰」的上半身，腿往下被容器 overflow:hidden 裁掉；角色像前景站在鏡頭前、場景在後方。
+              <img src={boss.master_image_url} alt={boss.name} style={{ position: 'absolute', left: '50%', top: 0, transform: 'translateX(-50%)', height: '210%', width: 'auto', maxWidth: 'none', objectFit: 'contain', objectPosition: 'top', pointerEvents: 'none' }} />
             )}
             <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '24px 16px 10px', background: 'linear-gradient(transparent, rgba(4,8,6,.92))' }}>
               <div style={{ fontSize: 11, letterSpacing: '.25em', color: 'var(--gold)', fontWeight: 800 }}>⚔️ 關主挑戰</div>
