@@ -34,7 +34,8 @@ type PartnerShopDetail struct {
 	PartnerShop
 	DetailHTML string   `json:"detail_html"`
 	PhotoURLs  []string `json:"photo_urls"`
-	VideoURL   string   `json:"video_url"`
+	VideoURL   string   `json:"video_url"` // 保留（back-compat），新版請用 VideoURLs
+	VideoURLs  []string `json:"video_urls"`
 }
 
 // AdminPartnerShop 後台管理用：PartnerShop 欄位（不含 is_favorited）+ 詳細欄位 + enabled。
@@ -49,7 +50,8 @@ type AdminPartnerShop struct {
 	Audience     string    `json:"audience"` // all | vip_featured
 	DetailHTML   string    `json:"detail_html"`
 	PhotoURLs    []string  `json:"photo_urls"`
-	VideoURL     string    `json:"video_url"`
+	VideoURL     string    `json:"video_url"` // 保留（back-compat），新版請用 VideoURLs
+	VideoURLs    []string  `json:"video_urls"`
 	Enabled      bool      `json:"enabled"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -62,7 +64,8 @@ type AdminPartnerShopRequest struct {
 	BannerURL    string   `json:"banner_url"`
 	DetailHTML   string   `json:"detail_html"`
 	PhotoURLs    []string `json:"photo_urls"`
-	VideoURL     string   `json:"video_url"`
+	VideoURL     string   `json:"video_url"` // 保留（back-compat），新版請用 VideoURLs
+	VideoURLs    []string `json:"video_urls"`
 	CTAURL       string   `json:"cta_url"`
 	CTALabel     string   `json:"cta_label"`
 	DisplayOrder int      `json:"display_order"`

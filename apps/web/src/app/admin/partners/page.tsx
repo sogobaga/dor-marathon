@@ -11,7 +11,7 @@ type Form = Partial<AdminPartnerShop>
 type Audience = 'all' | 'vip_featured'
 
 const EMPTY: Form = {
-  name: '', summary: '', banner_url: '', detail_html: '', photo_urls: [], video_url: '',
+  name: '', summary: '', banner_url: '', detail_html: '', photo_urls: [], video_url: '', video_urls: [],
   cta_url: '', cta_label: '', display_order: 0, enabled: true, audience: 'all',
 }
 
@@ -57,8 +57,12 @@ export default function AdminPartnersPage() {
     catch (e: any) { setErr(e?.message || '門檻儲存失敗') } finally { setMinKmBusy(false) }
   }
 
-  function edit(s: AdminPartnerShop) { setForm({ ...s }); setMsg(''); setErr('') }
-  function fresh() { setForm({ ...EMPTY, photo_urls: [] }); setMsg(''); setErr('') }
+  function edit(s: AdminPartnerShop) {
+    // 既有資料若只有舊的單支 video_url、還沒有 video_urls（後端資料尚未補齊），fallback 成單一元素陣列。
+    const video_urls = s.video_urls && s.video_urls.length ? s.video_urls : (s.video_url ? [s.video_url] : [])
+    setForm({ ...s, video_urls }); setMsg(''); setErr('')
+  }
+  function fresh() { setForm({ ...EMPTY, photo_urls: [], video_urls: [] }); setMsg(''); setErr('') }
   function setF<K extends keyof Form>(k: K, v: Form[K]) { setForm((f) => ({ ...f, [k]: v })) }
 
   async function uploadBanner(file: File) {
@@ -87,6 +91,19 @@ export default function AdminPartnersPage() {
     setF('photo_urls', arr)
   }
 
+  // 多筆 YouTube 影片連結：純文字 input 逐筆編輯（不像 photo_urls 需要上傳），增刪列 UI 風格比照 photo_urls。
+  function addVideoUrl() {
+    setF('video_urls', [...(form.video_urls || []), ''])
+  }
+  function setVideoUrl(idx: number, v: string) {
+    const arr = [...(form.video_urls || [])]
+    arr[idx] = v
+    setF('video_urls', arr)
+  }
+  function removeVideoUrl(idx: number) {
+    setF('video_urls', (form.video_urls || []).filter((_, i) => i !== idx))
+  }
+
   async function save() {
     if (!token) return
     if (!form.name?.trim()) { setErr('請填名稱'); return }
@@ -98,7 +115,9 @@ export default function AdminPartnersPage() {
         banner_url: form.banner_url || '',
         detail_html: form.detail_html || '',
         photo_urls: form.photo_urls || [],
-        video_url: form.video_url || '',
+        // video_urls 為主來源；video_url 附帶第一支做 back-compat（舊欄位仍在，但前台已不再以它為主）。
+        video_url: (form.video_urls && form.video_urls[0]) || form.video_url || '',
+        video_urls: form.video_urls || [],
         cta_url: form.cta_url || '',
         cta_label: form.cta_label || '',
         display_order: form.display_order ?? 0,
@@ -242,7 +261,26 @@ export default function AdminPartnersPage() {
             支援排版標籤（粗體/斜體/清單/連結/換行等）；為安全起見 script、iframe、事件屬性等會被自動移除。
           </div>
 
-          <F label="YouTube 影片連結 video_url"><input style={inp} value={form.video_url || ''} onChange={(e) => setF('video_url', e.target.value)} placeholder="https://www.youtube.com/watch?v=..." /></F>
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 3 }}>YouTube 影片連結 video_urls（可多筆）</div>
+            {form.video_urls && form.video_urls.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                {form.video_urls.map((url, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      style={inp} value={url}
+                      onChange={(e) => setVideoUrl(i, e.target.value)}
+                      placeholder="https://www.youtube.com/watch?v=..."
+                    />
+                    <button onClick={() => removeVideoUrl(i)} style={{ ...tinyBtn, color: 'var(--hunt)', flexShrink: 0 }}>刪除</button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 8 }}>尚無影片連結</div>
+            )}
+            <button onClick={addVideoUrl} style={ghostBtn}>＋ 新增影片連結</button>
+          </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 4 }}>
             <F label="前往連結 cta_url"><input style={inp} value={form.cta_url || ''} onChange={(e) => setF('cta_url', e.target.value)} placeholder="https://..." /></F>

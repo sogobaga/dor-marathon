@@ -125,19 +125,19 @@ func (r *Repository) SetMinVIPFeaturedKm(ctx context.Context, km int) error {
 // 「不合格」改由 Service.GetDetail 事後蓋上 CtaLocked/CtaLockReason 並清空 CTAURL。
 func (r *Repository) GetDetail(ctx context.Context, id, uid string) (*PartnerShopDetail, error) {
 	d := &PartnerShopDetail{}
-	var photoBytes []byte
+	var photoBytes, videoBytes []byte
 	err := r.db.QueryRow(ctx, `
 		SELECT ps.id, ps.name, ps.summary, ps.banner_url, ps.cta_url, ps.cta_label, ps.display_order, ps.audience,
 		       ($2 <> '' AND EXISTS(
 		           SELECT 1 FROM partner_shop_favorites f
 		           WHERE f.user_id = NULLIF($2,'')::uuid AND f.shop_id = ps.id
 		       )),
-		       ps.detail_html, ps.photo_urls, ps.video_url
+		       ps.detail_html, ps.photo_urls, ps.video_url, ps.video_urls
 		FROM partner_shops ps
 		WHERE ps.id = $1 AND ps.enabled
 	`, id, uid).Scan(
 		&d.ID, &d.Name, &d.Summary, &d.BannerURL, &d.CTAURL, &d.CTALabel, &d.DisplayOrder, &d.Audience, &d.IsFavorited,
-		&d.DetailHTML, &photoBytes, &d.VideoURL,
+		&d.DetailHTML, &photoBytes, &d.VideoURL, &videoBytes,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -146,6 +146,10 @@ func (r *Repository) GetDetail(ctx context.Context, id, uid string) (*PartnerSho
 		return nil, err
 	}
 	d.PhotoURLs, err = unmarshalPhotoURLs(photoBytes)
+	if err != nil {
+		return nil, err
+	}
+	d.VideoURLs, err = unmarshalPhotoURLs(videoBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -181,14 +185,14 @@ func (r *Repository) RemoveFavorite(ctx context.Context, userID, shopID string) 
 // --- 後台 ---
 
 const adminSelectCols = `id, name, summary, banner_url, cta_url, cta_label, display_order, audience,
-	detail_html, photo_urls, video_url, enabled, created_at, updated_at`
+	detail_html, photo_urls, video_url, video_urls, enabled, created_at, updated_at`
 
 // scanAdminRow 同時吃 pgx.Rows（Query）與 pgx.Row（QueryRow）——兩者皆滿足 Scan(dest ...any) error。
 func scanAdminRow(row pgx.Row) (*AdminPartnerShop, error) {
 	a := &AdminPartnerShop{}
-	var photoBytes []byte
+	var photoBytes, videoBytes []byte
 	if err := row.Scan(&a.ID, &a.Name, &a.Summary, &a.BannerURL, &a.CTAURL, &a.CTALabel, &a.DisplayOrder, &a.Audience,
-		&a.DetailHTML, &photoBytes, &a.VideoURL, &a.Enabled, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		&a.DetailHTML, &photoBytes, &a.VideoURL, &videoBytes, &a.Enabled, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		return nil, err
 	}
 	urls, err := unmarshalPhotoURLs(photoBytes)
@@ -196,6 +200,11 @@ func scanAdminRow(row pgx.Row) (*AdminPartnerShop, error) {
 		return nil, err
 	}
 	a.PhotoURLs = urls
+	videoURLs, err := unmarshalPhotoURLs(videoBytes)
+	if err != nil {
+		return nil, err
+	}
+	a.VideoURLs = videoURLs
 	a.DetailHTML = SanitizeDetailHTML(a.DetailHTML) // 輸出前二度消毒
 	return a, nil
 }
@@ -225,12 +234,16 @@ func (r *Repository) AdminCreate(ctx context.Context, req *AdminPartnerShopReque
 	if err != nil {
 		return nil, fmt.Errorf("marshal photo_urls: %w", err)
 	}
+	videoBytes, err := marshalPhotoURLs(req.VideoURLs)
+	if err != nil {
+		return nil, fmt.Errorf("marshal video_urls: %w", err)
+	}
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO partner_shops
-		    (name, summary, banner_url, detail_html, photo_urls, video_url, cta_url, cta_label, display_order, enabled, audience)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		    (name, summary, banner_url, detail_html, photo_urls, video_url, video_urls, cta_url, cta_label, display_order, enabled, audience)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		RETURNING `+adminSelectCols,
-		req.Name, req.Summary, req.BannerURL, req.DetailHTML, photoBytes, req.VideoURL,
+		req.Name, req.Summary, req.BannerURL, req.DetailHTML, photoBytes, req.VideoURL, videoBytes,
 		req.CTAURL, req.CTALabel, req.DisplayOrder, req.Enabled, req.Audience,
 	)
 	return scanAdminRow(row)
@@ -242,13 +255,17 @@ func (r *Repository) AdminUpdate(ctx context.Context, id string, req *AdminPartn
 	if err != nil {
 		return nil, fmt.Errorf("marshal photo_urls: %w", err)
 	}
+	videoBytes, err := marshalPhotoURLs(req.VideoURLs)
+	if err != nil {
+		return nil, fmt.Errorf("marshal video_urls: %w", err)
+	}
 	row := r.db.QueryRow(ctx, `
 		UPDATE partner_shops SET
-		    name=$1, summary=$2, banner_url=$3, detail_html=$4, photo_urls=$5, video_url=$6,
-		    cta_url=$7, cta_label=$8, display_order=$9, enabled=$10, audience=$11, updated_at=NOW()
-		WHERE id=$12
+		    name=$1, summary=$2, banner_url=$3, detail_html=$4, photo_urls=$5, video_url=$6, video_urls=$7,
+		    cta_url=$8, cta_label=$9, display_order=$10, enabled=$11, audience=$12, updated_at=NOW()
+		WHERE id=$13
 		RETURNING `+adminSelectCols,
-		req.Name, req.Summary, req.BannerURL, req.DetailHTML, photoBytes, req.VideoURL,
+		req.Name, req.Summary, req.BannerURL, req.DetailHTML, photoBytes, req.VideoURL, videoBytes,
 		req.CTAURL, req.CTALabel, req.DisplayOrder, req.Enabled, req.Audience, id,
 	)
 	a, err := scanAdminRow(row)

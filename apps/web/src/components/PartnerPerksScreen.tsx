@@ -313,7 +313,12 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
           <>
             {shop.banner_url && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={shop.banner_url} alt="" style={{ width: '100%', maxWidth: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block', borderRadius: 14 }} />
+              // 點擊 banner 開全螢幕 Lightbox（複用下方已存在的 zoom state / <Lightbox>）。
+              <img
+                src={shop.banner_url} alt=""
+                onClick={() => shop.banner_url && setZoom({ images: [shop.banner_url], index: 0 })}
+                style={{ width: '100%', maxWidth: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block', borderRadius: 14, cursor: shop.banner_url ? 'zoom-in' : 'default' }}
+              />
             )}
 
             <div style={{ marginTop: 14 }}>
@@ -334,11 +339,20 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
               />
             )}
 
-            {ytId(shop.video_url) && (
-              <div style={{ marginTop: 18 }}>
-                <YouTubeEmbed url={shop.video_url} title={shop.name} />
-              </div>
-            )}
+            {(() => {
+              // video_urls 為新主來源；空陣列時過渡期 fallback 舊單支 video_url。
+              const vids = shop.video_urls && shop.video_urls.length ? shop.video_urls : (shop.video_url ? [shop.video_url] : [])
+              const validVids = vids.filter((u) => ytId(u))
+              return validVids.length > 0 && (
+                <div style={{ marginTop: 18 }}>
+                  {validVids.map((u, i) => (
+                    <div key={i} style={i > 0 ? { marginTop: 14 } : undefined}>
+                      <YouTubeEmbed url={u} title={shop.name} />
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
 
             {/* 底部 CTA 前預留空間，避免內容被固定底列遮住 */}
             {showCta && <div style={{ height: 8 }} />}

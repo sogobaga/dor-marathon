@@ -120,16 +120,18 @@ export function MediaCarousel({ images, onZoom }: { images: string[]; onZoom: (i
         ref={ref}
         onScroll={onScroll}
         style={{
-          display: 'flex', overflowX: 'auto', scrollSnapType: 'x mandatory',
+          display: 'flex', overflowX: 'auto', scrollSnapType: 'x mandatory', alignItems: 'center',
           borderRadius: 12, WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none',
         }}
       >
         {images.map((src, i) => (
           // eslint-disable-next-line @next/next/no-img-element
+          // 整張照片依顯示寬度縮放、不裁切不變形：height:auto + maxHeight 上限，objectFit 改 contain。
+          // alignItems:'center'（見外層容器）避免 flex 預設 stretch 把矮的圖片撐成最高那張的高度。
           <img
             key={i} src={src} alt=""
             onClick={() => onZoom(images, i)}
-            style={{ flex: '0 0 100%', width: '100%', scrollSnapAlign: 'center', cursor: 'zoom-in', display: 'block', objectFit: 'cover' }}
+            style={{ flex: '0 0 100%', width: '100%', height: 'auto', maxHeight: '65vh', scrollSnapAlign: 'center', cursor: 'zoom-in', display: 'block', objectFit: 'contain' }}
           />
         ))}
       </div>

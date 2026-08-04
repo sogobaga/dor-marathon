@@ -181,6 +181,14 @@ func normalizeAndValidate(req *AdminPartnerShopRequest) error {
 	if !validHTTPURL(req.VideoURL) {
 		return fmt.Errorf("video_url: %w", ErrInvalidURL)
 	}
+	if req.VideoURLs == nil {
+		req.VideoURLs = []string{}
+	}
+	for i, u := range req.VideoURLs {
+		if !validHTTPURL(u) {
+			return fmt.Errorf("video_urls[%d]: %w", i, ErrInvalidURL)
+		}
+	}
 	if !validImageURL(req.BannerURL) {
 		return fmt.Errorf("banner_url: %w", ErrInvalidImageURL)
 	}
