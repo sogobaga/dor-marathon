@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
-import { trainingApi, type WorkoutTemplate, type PaceLevel, type TrainingCalendar, type TrainingDay, type TrainingPlan, type AutoPlanRequest, type ScheduledWorkout } from '@/lib/api'
+import { trainingApi, type WorkoutTemplate, type PaceLevel, type TrainingCalendar, type TrainingDay, type TrainingPlan, type AutoPlanRequest, type ScheduledWorkout, type WorkoutSegment } from '@/lib/api'
 import { resolveTemplate, saveFreetrainWorkout, totalKm, estMinutes, fmtDuration, segSummary, targetPaceBand, adjustMeta, adjustedValue, currentValue, pyramidPeak } from '@/lib/workout'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import UpgradeVipModal from './UpgradeVipModal'
@@ -241,6 +241,45 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   useEffect(() => { const v = window.localStorage.getItem('dor_training_pace_level'); if (v) setLevelId(Number(v)) }, [])
   const [navigating, setNavigating] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
+
+  // ── Free Run（課表庫獨立卡）：不控配速/距離，只設時間(分鐘)倒數；預設 30、範圍 [10,240]、step 10 ──
+  const FREE_RUN_LS_KEY = 'dor_training_freerun_min'
+  const [freeRunMin, setFreeRunMin] = useState(30)
+  // 記住上次設定的分鐘數（切頁/重整後維持不變，比照配速等級的持久化寫法）
+  useEffect(() => {
+    try {
+      const v = window.localStorage.getItem(FREE_RUN_LS_KEY)
+      if (v) { const n = Number(v); if (Number.isFinite(n)) setFreeRunMin(Math.min(240, Math.max(10, Math.round(n / 10) * 10))) }
+    } catch { /* ignore */ }
+  }, [])
+  function persistFreeRunMin(v: number) {
+    try { window.localStorage.setItem(FREE_RUN_LS_KEY, String(v)) } catch { /* ignore */ }
+  }
+  function bumpFreeRun(delta: number) {
+    setFreeRunMin((v) => {
+      const nv = Math.min(240, Math.max(10, v + delta))
+      persistFreeRunMin(nv)
+      return nv
+    })
+  }
+  // 數字可直接輸入：點擊數字切成 <input>，失焦/Enter 才 clamp 到 [10,240] 並吸附到 10 的倍數
+  const [freeRunEditing, setFreeRunEditing] = useState(false)
+  const [freeRunInput, setFreeRunInput] = useState('')
+  function commitFreeRunInput() {
+    const n = Number(freeRunInput)
+    const nv = Number.isFinite(n) ? Math.min(240, Math.max(10, Math.round(n / 10) * 10)) : freeRunMin
+    setFreeRunMin(nv)
+    persistFreeRunMin(nv)
+    setFreeRunEditing(false)
+  }
+  // 開始 Free Run：組單一 steady/time 段（不帶配速）→ 沿用既有 freetrain 橋接與 /track 逐段驅動引擎，
+  // 不走 resolveTemplate（那需要 PaceLevel，Free Run 無配速概念）。
+  function startFreeRun() {
+    const segs: WorkoutSegment[] = [{ kind: 'steady', label: 'Free Run', target_type: 'time', target: freeRunMin * 60 }]
+    saveFreetrainWorkout('freerun', 'Free Run', segs, { freerun: true, freerunSec: freeRunMin * 60 })
+    setNavigating(true)
+    setTimeout(() => { window.location.href = '/track' }, 380)
+  }
 
   const levels = useMemo(() => data?.pace_levels ?? [], [data])
   const level: PaceLevel | null = useMemo(() => {
@@ -806,6 +845,30 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
               >
                 {levels.map((l) => <option key={l.id} value={l.id}>Lv.{l.id} · {l.label}</option>)}
               </select>
+            </div>
+
+            {/* Free Run：獨立卡片，不需配速等級，只設時間(分鐘)倒數 */}
+            <div style={{ ...tplCard, marginBottom: 16 }}>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: 'var(--tx)' }}>🏃 Free Run</div>
+              <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.6 }}>自由跑 · 只設時間、不控配速與距離</div>
+              <div style={adjustRow}>
+                <button type="button" onClick={() => bumpFreeRun(-10)} disabled={freeRunMin <= 10} style={{ ...adjustBtn, opacity: freeRunMin <= 10 ? 0.4 : 1 }}>−</button>
+                {freeRunEditing ? (
+                  <input
+                    type="number" min={10} max={240} step={10} autoFocus
+                    value={freeRunInput}
+                    onChange={(e) => setFreeRunInput(e.target.value)}
+                    onBlur={commitFreeRunInput}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                    style={{ ...adjustVal, width: 60, background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 7, color: 'var(--tx)', fontFamily: 'inherit', padding: '2px 4px' }}
+                  />
+                ) : (
+                  <span style={{ ...adjustVal, cursor: 'pointer' }} onClick={() => { setFreeRunInput(String(freeRunMin)); setFreeRunEditing(true) }}>{freeRunMin} 分鐘</span>
+                )}
+                <button type="button" onClick={() => bumpFreeRun(10)} disabled={freeRunMin >= 240} style={{ ...adjustBtn, opacity: freeRunMin >= 240 ? 0.4 : 1 }}>＋</button>
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 6 }}>時間到會提示，並可繼續累積里程</div>
+              <button onClick={startFreeRun} style={startBtn}>▶ 開始訓練</button>
             </div>
 
             {groups.length === 0 && <div style={emptyBox}>目前尚無課表庫內容</div>}

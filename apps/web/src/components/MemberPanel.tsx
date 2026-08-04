@@ -166,11 +166,15 @@ export default function MemberPanel({
         {/* 累計完成里程（重點）+ 個人任務入口（後台可控可見性） */}
         {user && dash && (
           <div style={{ display: 'flex', gap: 10, marginTop: 14, alignItems: 'stretch' }}>
-            <div style={{ ...mileageBox, flex: dash.personal_entry === 'hidden' ? 1 : '0 0 auto' }}>
+            <div
+              style={{ ...mileageBox, flex: dash.personal_entry === 'hidden' ? 1 : '0 0 auto', cursor: dash.achievement_entry === 'shown' ? 'pointer' : 'default' }}
+              onClick={(e) => { e.stopPropagation(); if (dash.achievement_entry === 'shown') onOpenAchievement?.() }}
+            >
               <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--fug)', fontVariantNumeric: 'tabular-nums', lineHeight: 1.05 }}>
                 {dash.total_km.toFixed(1)}<span style={{ fontSize: 13, marginLeft: 2 }}>K</span>
               </div>
-              <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 3, whiteSpace: 'nowrap' }}>累計完成里程</div>
+              {/* 可點提示：僅 achievement_entry='shown' 時顯示小箭頭，暗示可點開「數據探索」 */}
+              <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 3, whiteSpace: 'nowrap' }}>累計完成里程{dash.achievement_entry === 'shown' ? ' ›' : ''}</div>
             </div>
             {dash.personal_entry !== 'hidden' && (
               <button

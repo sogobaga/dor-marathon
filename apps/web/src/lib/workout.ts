@@ -274,11 +274,13 @@ export function currentValue(template: Pick<WorkoutTemplate, 'adjust_type' | 'se
 
 // ── 自主訓練：TrainingScreen → /track 的橋接（無伺服器端「進行中挑戰」狀態，靠 sessionStorage 帶一次）──
 const FREETRAIN_LS_KEY = 'dor_freetrain_wo'
-export function saveFreetrainWorkout(code: string, name: string, segments: WorkoutSegment[]) {
-  try { sessionStorage.setItem(FREETRAIN_LS_KEY, JSON.stringify({ code, name, segments })) } catch { /* ignore */ }
+// opts.freerun/freerunSec：Free Run（只設時間、不控配速/距離）旗標；用 explicit 旗標而非擴充 segment kind，
+// 課表本身仍是一般 WorkoutSegment（單一 steady/time 段），照舊沿用逐段驅動引擎，/track 端只需另外讀這兩欄做倒數顯示。
+export function saveFreetrainWorkout(code: string, name: string, segments: WorkoutSegment[], opts?: { freerun?: boolean; freerunSec?: number }) {
+  try { sessionStorage.setItem(FREETRAIN_LS_KEY, JSON.stringify({ code, name, segments, ...(opts || {}) })) } catch { /* ignore */ }
 }
 // 取出並清除（只消費一次，避免重新整理 /track 又重新帶入一份舊課表）
-export function takeFreetrainWorkout(): { code: string; name: string; segments: WorkoutSegment[] } | null {
+export function takeFreetrainWorkout(): { code: string; name: string; segments: WorkoutSegment[]; freerun?: boolean; freerunSec?: number } | null {
   try {
     const raw = sessionStorage.getItem(FREETRAIN_LS_KEY)
     if (!raw) return null

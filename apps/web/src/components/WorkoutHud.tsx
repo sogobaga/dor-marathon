@@ -10,7 +10,7 @@ function fmtHudTime(s: number) {
 
 // GPS 追蹤頁的「結構化課表」執行面板：目前分段目標 + 進度 + 即時配速回饋 + 全段進度點。
 // 純顯示：即時數據由 /track 從 GPS 計算後傳入。
-export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, stepTime, livePaceS, hits, phase, result, onClose, onRanking, continuing }: {
+export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, stepTime, livePaceS, hits, phase, result, onClose, onRanking, continuing, freerun }: {
   title: string
   kind?: 'personal' | 'explore' | 'freetrain' // freetrain（自主訓練）完成畫面不顯示星星/獎勵
   steps: WoStep[]
@@ -24,6 +24,7 @@ export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, step
   onClose: () => void
   continuing?: boolean // 課表達標後 GPS 仍在跑（未結束整趟）→ 收尾鈕顯示「繼續跑步」而非「看跑步結果」
   onRanking?: () => void // 城市探索關主挑戰：完成後看挑戰者排行
+  freerun?: boolean // Free Run：running phase 改用「時:分」大字倒數、隱藏配速回饋/進度點
 }) {
   const step = steps[stepIdx]
   const workTotal = steps.filter((s) => s.graded).length
@@ -53,7 +54,7 @@ export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, step
             <div style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--fug)', fontWeight: 800 }}>自主訓練</div>
             <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--tx)', margin: '4px 0 8px' }}>{title}</div>
             <div style={{ textAlign: 'center', fontSize: 17, fontWeight: 900, color: 'var(--tx)', padding: '8px 0' }}>
-              ✓ 訓練完成{result?.time_s ? ` · 用時 ${fmtHudTime(result.time_s)}` : ''}
+              {freerun ? 'Free Run 完成 · 時間到，可繼續跑' : `✓ 訓練完成${result?.time_s ? ` · 用時 ${fmtHudTime(result.time_s)}` : ''}`}
             </div>
             <button onClick={onClose} style={{ marginTop: 12, width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px', fontSize: 14, cursor: 'pointer' }}>{continuing ? '▶ 繼續跑步' : '看跑步結果'}</button>
           </div>
@@ -124,22 +125,34 @@ export default function WorkoutHud({ title, kind, steps, stepIdx, stepDist, step
         <div style={{ height: 9, background: 'var(--line-2)', borderRadius: 999, overflow: 'hidden', marginTop: 8 }}>
           <div style={{ height: '100%', width: `${pct}%`, background: accent, borderRadius: 999, transition: 'width .35s' }} />
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginTop: 5, fontVariantNumeric: 'tabular-nums' }}>
-          <span style={{ color: 'var(--tx-dim)' }}>
-            {isTime ? `剩 ${Math.ceil(remain)} 秒` : `${Math.round(cur)} / ${step.target} m`}
-          </span>
-          {step.kind !== 'rest' && <span style={{ color: paceColor, fontWeight: 800 }}>{fmtPaceS(livePaceS)}/km{paceHint ? ` · ${paceHint}` : ''}</span>}
-        </div>
-        {/* 全段進度點：work 已評分顯示達標(綠)/未達(紅)，其餘灰；目前段亮 */}
-        <div style={{ display: 'flex', gap: 4, marginTop: 10, flexWrap: 'wrap' }}>
-          {steps.map((s, i) => {
-            let bg = 'var(--line-2)'
-            if (i < stepIdx) bg = s.graded ? (hits[i] ? 'var(--fug)' : 'var(--hunt)') : 'rgba(255,255,255,.35)'
-            else if (i === stepIdx) bg = accent
-            return <span key={i} title={s.label} style={{ flex: s.kind === 'rest' ? '0 0 8px' : 1, height: 5, minWidth: 8, borderRadius: 999, background: bg, opacity: i === stepIdx ? 1 : 0.9 }} />
-          })}
-        </div>
-        <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 6 }}>{kind === 'freetrain' ? '依各段目標配速跑；完成不計星數與獎勵，日常里程 EXP 照常累積。' : '完成整份課表即結算；400m 段配速達成度決定星數（全達 3★／部分 2★／完成 1★）。'}</div>
+        {freerun ? (
+          // Free Run：不顯示配速回饋/全段進度點/配速說明——改醒目大字「時:分」倒數 + 一行簡潔說明
+          <div style={{ textAlign: 'center', marginTop: 8 }}>
+            <div style={{ fontSize: 40, fontWeight: 900, color: accent, fontVariantNumeric: 'tabular-nums', letterSpacing: '.02em' }}>
+              {(() => { const m = Math.max(0, Math.ceil(remain / 60)); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}` })()}
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 4 }}>時間到可繼續累積里程</div>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginTop: 5, fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ color: 'var(--tx-dim)' }}>
+                {isTime ? `剩 ${Math.ceil(remain)} 秒` : `${Math.round(cur)} / ${step.target} m`}
+              </span>
+              {step.kind !== 'rest' && <span style={{ color: paceColor, fontWeight: 800 }}>{fmtPaceS(livePaceS)}/km{paceHint ? ` · ${paceHint}` : ''}</span>}
+            </div>
+            {/* 全段進度點：work 已評分顯示達標(綠)/未達(紅)，其餘灰；目前段亮 */}
+            <div style={{ display: 'flex', gap: 4, marginTop: 10, flexWrap: 'wrap' }}>
+              {steps.map((s, i) => {
+                let bg = 'var(--line-2)'
+                if (i < stepIdx) bg = s.graded ? (hits[i] ? 'var(--fug)' : 'var(--hunt)') : 'rgba(255,255,255,.35)'
+                else if (i === stepIdx) bg = accent
+                return <span key={i} title={s.label} style={{ flex: s.kind === 'rest' ? '0 0 8px' : 1, height: 5, minWidth: 8, borderRadius: 999, background: bg, opacity: i === stepIdx ? 1 : 0.9 }} />
+              })}
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 6 }}>{kind === 'freetrain' ? '依各段目標配速跑；完成不計星數與獎勵，日常里程 EXP 照常累積。' : '完成整份課表即結算；400m 段配速達成度決定星數（全達 3★／部分 2★／完成 1★）。'}</div>
+          </>
+        )}
       </div>
     </div>
   )

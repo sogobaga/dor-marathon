@@ -99,7 +99,7 @@ export default function TrackPage() {
   const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
   const [mileageCfg, setMileageCfg] = useState<MileageConfig | null>(null) // 里程獎勵設定（進度條/預覽）
   // 個人任務「結構化課表」執行（挑戰後帶到本頁跑）
-  const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' | 'freetrain'; cardUrl?: string } | null>(null)
+  const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' | 'freetrain'; cardUrl?: string; freerunSec?: number } | null>(null)
   const freetrainRef = useRef(false) // 自主訓練：workout 已由 TrainingScreen 橋接載入、尚未開跑/結束——保護不被 loadPanel() 的「無進行中挑戰→清空」誤清掉
   const [exploreCps, setExploreCps] = useState<ExploreBoss[]>([]) // 城市探索打卡點（含座標）
   const [exDailyRemaining, setExDailyRemaining] = useState<number | null>(null) // 今日打卡剩餘次數（跨所有點）
@@ -976,7 +976,9 @@ export default function TrackPage() {
     const wo = takeFreetrainWorkout()
     if (!wo) return
     freetrainRef.current = true
-    setWorkout({ taskId: wo.code || 'freetrain', title: wo.name || '自主訓練', steps: expandSegments(wo.segments), kind: 'freetrain' })
+    // Free Run（freerun 旗標）：steps 仍由 expandSegments 產生單一 time 段，沿用既有逐段驅動引擎；
+    // freerunSec 只多帶給 HUD/介紹面板做「時:分」倒數顯示用，不影響狀態機。
+    setWorkout({ taskId: wo.code || 'freetrain', title: wo.name || '自主訓練', steps: expandSegments(wo.segments), kind: 'freetrain', freerunSec: wo.freerun ? wo.freerunSec : undefined })
   }, [])
 
   // 面板上挑戰某課表卡 → 挑戰(第一次免費/重挑扣DP) → 直接用卡片 segments 進就緒(鎖定該卡)
@@ -1003,7 +1005,7 @@ export default function TrackPage() {
     beginWorkout(workout)
   }
   // 啟動一份課表（個人任務／關主挑戰／自主訓練共用）。須在使用者手勢內呼叫（start() 會請求定位權限）
-  function beginWorkout(wo: { taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' | 'freetrain'; cardUrl?: string }) {
+  function beginWorkout(wo: { taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' | 'freetrain'; cardUrl?: string; freerunSec?: number }) {
     setWorkout(wo)
     woResultsRef.current = { inBand: 0, total: 0, detail: [] }
     woStepIdxRef.current = 0
@@ -1026,7 +1028,11 @@ export default function TrackPage() {
     // 防弊改由「配速達標(work_in_band)」本身把關（載具配速不對拿不到星）；原本綁在 GPS upload 的 flagged 閘門與
     // 關主 best_time 在此脫鉤（使用者拍板 A 方案：達標即結算、可續跑）。
     // 自主訓練：不發任何額外獎勵/星數（里程 EXP 由整趟上傳後的 activity_queue 自動發）。
-    if (workout?.kind === 'freetrain') { setWoResult({ stars: 0, reward_exp: 0, reward_dp: 0 }); return }
+    if (workout?.kind === 'freetrain') {
+      // Free Run 歸零回饋：輕震動 + 完成音，只對 Free Run（有 freerunSec）觸發，不影響一般結構化課表。
+      if (workout.freerunSec) { vibrate([90, 50, 90]); playEventComplete() }
+      setWoResult({ stars: 0, reward_exp: 0, reward_dp: 0 }); return
+    }
     const res = woResultsRef.current
     const token = getUserToken()
     try {
@@ -1556,7 +1562,7 @@ export default function TrackPage() {
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', padding: '2px 16px calc(20px + var(--cta-safe, 0px))' }}>
             {/* 個人任務課表（在滑動面板內，不蓋地圖）：閒置＝選課表(左右滑動輪播+●○○)；進行中/完成＝分段執行 HUD */}
             {status === 'idle' && woPhase === 'idle' && workout?.kind === 'freetrain' && (
-              <FreetrainIntroPanel title={workout.title} steps={workout.steps} />
+              <FreetrainIntroPanel title={workout.title} steps={workout.steps} freerunMin={workout.freerunSec ? Math.round(workout.freerunSec / 60) : undefined} />
             )}
             {status === 'idle' && woPhase === 'idle' && workout?.kind !== 'freetrain' && panel && (() => {
               const ac = panel.active_card
@@ -1571,6 +1577,7 @@ export default function TrackPage() {
                 <WorkoutHud title={workout.title} kind={workout.kind} steps={workout.steps} stepIdx={woStepIdx}
                   stepDist={stepDist} stepTime={stepTime} livePaceS={livePace} hits={woHits}
                   phase={woPhase === 'done' ? 'done' : 'running'} result={woResult}
+                  freerun={!!workout.freerunSec}
                   onRanking={workout.kind === 'explore' && !woResult?.flagged ? () => setRankingBoss({ id: workout.taskId, name: workout.title }) : undefined}
                   continuing={status === 'tracking'}
                   onClose={() => { setWoPhase('idle'); loadPanel() }} />

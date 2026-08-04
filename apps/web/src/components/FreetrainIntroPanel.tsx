@@ -10,7 +10,19 @@ function fmtMin(sec: number) {
 
 // 自主訓練「開跑前」提示面板：清楚告知目前是自主訓練模式 + 是哪份課表 + 總距離/預估時間/段數。
 // 進 GPS 追蹤頁但尚未按「開始訓練」時顯示（woPhase==='idle' 且 workout.kind==='freetrain'）。
-export default function FreetrainIntroPanel({ title, steps }: { title: string; steps: WoStep[] }) {
+// freerunMin：有值＝Free Run（只設時間，不控配速/距離）→ 取代原本「總距離/預估/共N段」的通用文案。
+export default function FreetrainIntroPanel({ title, steps, freerunMin }: { title: string; steps: WoStep[]; freerunMin?: number }) {
+  if (freerunMin) {
+    return (
+      <div style={{ background: 'var(--bg-2)', border: '1px solid var(--fug)', borderRadius: 14, padding: '14px 16px', marginBottom: 12 }}>
+        <div style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--fug)', fontWeight: 800 }}>🏃 自主訓練模式</div>
+        <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--tx)', margin: '6px 0 8px' }}>🏃 Free Run · {freerunMin} 分鐘</div>
+        <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.5 }}>
+          按下方「▶ 開始訓練」開始；按開始後倒數（時:分），時間到可繼續累積里程。
+        </div>
+      </div>
+    )
+  }
   const totalM = steps.reduce((a, s) => a + (s.targetType === 'distance' ? s.target : 0), 0)
   const estSec = steps.reduce((a, s) => a + (s.targetType === 'time'
     ? s.target
