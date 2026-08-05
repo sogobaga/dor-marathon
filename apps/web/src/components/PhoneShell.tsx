@@ -50,14 +50,16 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
   const [trialModal, setTrialModal] = useState(false)
   const trialHandled = useRef(false)
 
-  // 試用到期且尚未提示過 → 自動跳一次升級彈窗（標記已顯示，之後不再跳，改由「升級VIP」鈕）
+  // 試用到期且尚未提示過 → 自動跳一次升級彈窗（標記已顯示，之後不再跳，改由「升級VIP」鈕）。
+  // ⚠️ 必須「已登入(有 token)」才自動跳——未登入/未註冊者一進頁面就被強制跳付費彈窗很傷體驗，一律不跳。
+  //（且未登入無法 markTrialNoticeShown → 否則每次進頁面都會重跳。）
   const { dash } = useDashboard()
   useEffect(() => {
-    if (dash?.show_trial_expiry_notice && !trialHandled.current) {
+    const t = getUserToken()
+    if (t && dash?.show_trial_expiry_notice && !trialHandled.current) {
       trialHandled.current = true
       setTrialModal(true)
-      const t = getUserToken()
-      if (t) profileApi.markTrialNoticeShown(t).catch(() => {})
+      profileApi.markTrialNoticeShown(t).catch(() => {})
     }
   }, [dash?.show_trial_expiry_notice])
 
