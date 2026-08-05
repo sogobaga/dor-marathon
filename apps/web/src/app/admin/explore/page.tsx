@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { adminExploreApi, adminImagesApi, type ExploreBoss } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
+import * as XLSX from 'xlsx'
 
 // 城市探索後台：關主（打卡點）CRUD——基本資料、難度、地點座標、對話、Scene/Card 圖、結構化課表。
 // 綁玩家個人、與賽事無關的獨立管理頁（非賽事設定內）。
@@ -79,11 +80,52 @@ export default function AdminExplorePage() {
     catch (e: any) { setErr(e?.message || '刪除失敗') }
   }
 
+  // 匯出全部關主的「完整資料」成 Excel（.xlsx）：比對常用欄位(場地ID/地區/地名/關主名稱/稱號/經緯度/Scene圖URL)
+  // 排在前面，課表分段以 JSON 塞一格；缺值一律留空、座標(0,0)視為未設留空。資料來自已載入的 bosses（adminExploreApi.list）。
+  function exportExcel() {
+    if (!bosses || bosses.length === 0) return
+    const s = (v: unknown) => (v === undefined || v === null ? '' : (v as string | number)) // 缺值留空
+    const rows = [...bosses]
+      .sort((a, b) => (a.region || '').localeCompare(b.region || '') || (a.display_order - b.display_order) || (a.code || '').localeCompare(b.code || ''))
+      .map((b) => {
+        const hasCoord = b.lat !== 0 || b.lng !== 0
+        return {
+          '場地ID': s(b.code), '地區': s(b.region), '地名': s(b.place),
+          '關主名稱': s(b.name), '稱號': s(b.title),
+          '緯度': hasCoord ? b.lat : '', '經度': hasCoord ? b.lng : '', '打卡半徑(m)': s(b.radius_m),
+          '純打卡點': b.checkin_only ? 'Y' : '', '難度星數': s(b.difficulty_stars),
+          'Scene圖URL': s(b.scene_image_url), '立繪(Master)URL': s(b.master_image_url), '卡片圖URL': s(b.card_image_url),
+          '性別': s(b.gender), '年齡': b.age ? b.age : '', '課表標籤': s(b.workout_label),
+          '課表類型': s(b.workout_kind), '資料來源': s(b.data_source),
+          '金句': s(b.quote), '技能名稱': s(b.skill_name), '技能說明': s(b.skill_desc),
+          '對話(挑戰前)': s(b.dialogue_intro), '對話(開始)': s(b.dialogue_start), '開放資訊': s(b.access_note),
+          '獎勵EXP': s(b.reward_exp), '獎勵DP': s(b.reward_dp), '重試DP': s(b.retry_dp_cost),
+          '打卡DP下限': s(b.checkin_reward_dp_min), '打卡DP上限': s(b.checkin_reward_dp_max),
+          '打卡GP下限': s(b.checkin_reward_gp_min), '打卡GP上限': s(b.checkin_reward_gp_max),
+          '完成GP下限': s(b.complete_reward_gp_min), '完成GP上限': s(b.complete_reward_gp_max), '完成GP機率': s(b.complete_reward_gp_chance),
+          '排序': s(b.display_order), '啟用': b.enabled ? 'Y' : '',
+          '課表分段(JSON)': b.segments ? JSON.stringify(b.segments) : '', '內部ID': s(b.id),
+        }
+      })
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '關主完整資料')
+    const d = new Date()
+    const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+    XLSX.writeFile(wb, `城市探索_關主完整資料_${stamp}.xlsx`)
+  }
+
   return (
     <div style={{ maxWidth: 900, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
         <h1 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px' }}>城市探索 · 關主管理</h1>
-        <Link href="/admin/explore/preview" style={{ color: 'var(--fug)', fontSize: 13 }}>🖼️ 全部合成預覽（QA）</Link>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button onClick={exportExcel} disabled={!bosses?.length}
+            style={{ background: 'none', border: '1px solid var(--fug)', color: 'var(--fug)', borderRadius: 8, padding: '5px 12px', fontSize: 13, fontWeight: 700, fontFamily: 'inherit', cursor: bosses?.length ? 'pointer' : 'default', opacity: bosses?.length ? 1 : 0.5 }}>
+            ⬇️ 匯出 Excel（{bosses?.length ?? 0} 筆）
+          </button>
+          <Link href="/admin/explore/preview" style={{ color: 'var(--fug)', fontSize: 13 }}>🖼️ 全部合成預覽（QA）</Link>
+        </div>
       </div>
       <p style={{ color: 'var(--tx-dim)', fontSize: 13, margin: '0 0 14px', lineHeight: 1.7 }}>
         每個打卡點＝一位關主，玩家到點打卡→接受挑戰（結構化課表）→完成得 1-3★，3★ 取得關主卡片。難度星數決定挑戰消耗 DP（難度×10）。
