@@ -6,16 +6,33 @@ import (
 	"net/http"
 
 	"github.com/go-playground/validator/v10"
+
+	"github.com/dor/api/internal/realtime"
 )
 
 var validate = validator.New()
 
 type Handler struct {
-	svc *Service
+	svc      *Service
+	realtime *realtime.Manager // 單一登入：登入成功後推 session_revoked 踢舊裝置；main.go 用 SetRealtime 注入（見下）
 }
 
 func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
+}
+
+// SetRealtime 注入 WebSocket 管理器。main.go 因初始化順序（authHandler 建於 wsManager 之前）
+// 無法在 NewHandler 建構時就傳入，故另開此 setter；未呼叫時 h.realtime 維持 nil，
+// 登入推播會安全略過（見 pushSessionRevoked），不影響測試或未接線場景。
+func (h *Handler) SetRealtime(m *realtime.Manager) {
+	h.realtime = m
+}
+
+// pushSessionRevoked 登入成功後推播單一登入踢除通知；h.realtime 為 nil 時靜默略過。
+func (h *Handler) pushSessionRevoked(r *http.Request, userID string, epoch int) {
+	if h.realtime != nil {
+		h.realtime.PublishSessionRevoked(r.Context(), userID, epoch)
+	}
 }
 
 // POST /api/v1/auth/register
@@ -52,9 +69,11 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.pushSessionRevoked(r, user.ID, pair.SessionEpoch)
 	respondJSON(w, http.StatusCreated, map[string]any{
-		"user":   toPublicUser(user),
-		"tokens": pair,
+		"user":          toPublicUser(user),
+		"tokens":        pair,
+		"session_epoch": pair.SessionEpoch,
 	})
 }
 
@@ -85,9 +104,11 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.pushSessionRevoked(r, user.ID, pair.SessionEpoch)
 	respondJSON(w, http.StatusOK, map[string]any{
-		"user":   toPublicUser(user),
-		"tokens": pair,
+		"user":          toPublicUser(user),
+		"tokens":        pair,
+		"session_epoch": pair.SessionEpoch,
 	})
 }
 
@@ -120,9 +141,11 @@ func (h *Handler) Google(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.pushSessionRevoked(r, user.ID, pair.SessionEpoch)
 	respondJSON(w, http.StatusOK, map[string]any{
-		"user":   toPublicUser(user),
-		"tokens": pair,
+		"user":          toPublicUser(user),
+		"tokens":        pair,
+		"session_epoch": pair.SessionEpoch,
 	})
 }
 
@@ -140,6 +163,11 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	pair, err := h.svc.Refresh(r.Context(), req.RefreshToken)
 	if errors.Is(err, ErrTokenInvalid) {
 		respondErr(w, http.StatusUnauthorized, "invalid or expired token")
+		return
+	}
+	// 單一登入：session 已被別的登入取代（epoch 不符）→ 401，前端走既有登出流程。
+	if errors.Is(err, ErrSessionSuperseded) {
+		respondErr(w, http.StatusUnauthorized, "session superseded by a newer login")
 		return
 	}
 	if err != nil {
@@ -184,6 +212,10 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 type ContextKey string
 
 const CtxKeyUserID ContextKey = "userID"
+
+// CtxKeySessionEpoch is the context key for the authenticated token's session epoch (單一登入用).
+// Exported so middleware can set it and downstream handlers（如 GPS 上傳）可比對是否為 stale session。
+const CtxKeySessionEpoch ContextKey = "sessionEpoch"
 
 func toPublicUser(u *User) map[string]any {
 	return map[string]any{

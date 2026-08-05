@@ -28,6 +28,9 @@ func RequireAuth(authSvc *auth.Service) func(http.Handler) http.Handler {
 
 			ctx := context.WithValue(r.Context(), auth.CtxKeyUserID, claims.UserID)
 			ctx = context.WithValue(ctx, roleKey{}, claims.Role)
+			// 單一登入：把 token 的 session epoch 也帶進 context，供下游（如 GPS 上傳）
+			// 比對是否已被更新的登入取代（stale session）。
+			ctx = context.WithValue(ctx, auth.CtxKeySessionEpoch, claims.SessionEpoch)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -43,6 +46,7 @@ func OptionalAuth(authSvc *auth.Service) func(http.Handler) http.Handler {
 				if claims, err := authSvc.ValidateAccessToken(r.Context(), tokenStr); err == nil {
 					ctx := context.WithValue(r.Context(), auth.CtxKeyUserID, claims.UserID)
 					ctx = context.WithValue(ctx, roleKey{}, claims.Role)
+					ctx = context.WithValue(ctx, auth.CtxKeySessionEpoch, claims.SessionEpoch)
 					r = r.WithContext(ctx)
 				}
 			}

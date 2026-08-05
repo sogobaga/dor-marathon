@@ -83,6 +83,9 @@ func main() {
 
 	// WebSocket Manager（各模組共用）
 	wsManager := realtime.NewManager(rdb)
+	// 單一登入：authHandler 建立時 wsManager 尚未就緒，故用 setter 補注入，
+	// 讓登入成功後可推播 session_revoked 踢除舊裝置連線。
+	authHandler.SetRealtime(wsManager)
 
 	// Promo（優惠序號）
 	promoRepo := promo.NewRepository(pool)

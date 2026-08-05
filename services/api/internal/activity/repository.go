@@ -16,6 +16,17 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
+// CurrentSessionEpoch 查詢使用者目前的 session_epoch（單一登入 Layer 2 用：GPS 上傳時
+// 拿來跟 access token 的 sev claim 比對，擋掉已被新登入取代的 stale session）。
+func (r *Repository) CurrentSessionEpoch(ctx context.Context, userID string) (int, error) {
+	var epoch int
+	err := r.db.QueryRow(ctx, `SELECT session_epoch FROM users WHERE id = $1`, userID).Scan(&epoch)
+	if err != nil {
+		return 0, fmt.Errorf("current session epoch: %w", err)
+	}
+	return epoch, nil
+}
+
 // ListByUser 取得使用者的活動記錄（最新 N 筆）
 func (r *Repository) ListByUser(ctx context.Context, userID string, limit int) ([]*Activity, error) {
 	if limit <= 0 || limit > 100 {

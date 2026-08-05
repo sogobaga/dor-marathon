@@ -88,7 +88,7 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
                   // 若之前透過推廣連結進站，帶上暫存的推薦碼（後端只在「新帳號」分支綁定，舊帳號會忽略）
                   const refCode = localStorage.getItem(REF_CODE_KEY) || undefined
                   const res = await authApi.google(cred.credential, refCode)
-                  setUserSession(res.tokens.access_token, res.tokens.refresh_token, res.user) // 觸發 useUser 更新
+                  setUserSession(res.tokens.access_token, res.tokens.refresh_token, res.user, res.tokens.session_epoch) // 觸發 useUser 更新；session_epoch 供單一登入判定
                   localStorage.removeItem(REF_CODE_KEY) // 不論新舊帳號都清，避免下次登入又誤帶
                   onClose()
                 } catch (e: any) {

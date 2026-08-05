@@ -7,6 +7,7 @@ import { clearSwrCache } from './swrCache'
 const TOKEN_KEY = 'dor_user_token'
 const REFRESH_KEY = 'dor_user_refresh'
 const USER_KEY = 'dor_user'
+const SEV_KEY = 'dor_user_sev' // session_epoch：單一登入判定用，每次登入/refresh 後端都會遞增/帶回
 const AUTH_EVENT = 'dor-auth-changed'
 
 // 通知所有訂閱者登入狀態變了（登入/登出/session 過期清除）
@@ -30,10 +31,11 @@ export function getUser(): User | null {
   }
 }
 
-export function setUserSession(accessToken: string, refreshToken: string, user: User) {
+export function setUserSession(accessToken: string, refreshToken: string, user: User, sessionEpoch: number) {
   localStorage.setItem(TOKEN_KEY, accessToken)
   localStorage.setItem(REFRESH_KEY, refreshToken)
   localStorage.setItem(USER_KEY, JSON.stringify(user))
+  localStorage.setItem(SEV_KEY, String(sessionEpoch)) // 單一登入：記下這次登入的 session_epoch
   emitAuthChange()
 }
 
@@ -41,8 +43,17 @@ export function clearUserSession() {
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(REFRESH_KEY)
   localStorage.removeItem(USER_KEY)
+  localStorage.removeItem(SEV_KEY)
   clearSwrCache() // 清持久化快取：避免同裝置下一位使用者刷新後看到上一位的資料
   emitAuthChange()
+}
+
+// 讀取目前這台裝置記錄的 session_epoch（單一登入判定用；未登入或讀不到 = 0）
+export function getSessionEpoch(): number {
+  if (typeof window === 'undefined') return 0
+  const raw = localStorage.getItem(SEV_KEY)
+  const n = raw ? Number(raw) : 0
+  return Number.isFinite(n) ? n : 0
 }
 
 // 用 refresh token 換發新 access token。後端 refresh 是「一次性輪替」，
@@ -59,6 +70,7 @@ export function refreshUserToken(): Promise<string | null> {
       const pair = await authApi.refresh(rt)
       localStorage.setItem(TOKEN_KEY, pair.access_token)
       localStorage.setItem(REFRESH_KEY, pair.refresh_token)
+      localStorage.setItem(SEV_KEY, String(pair.session_epoch)) // refresh 回應也帶 session_epoch，一併更新
       return pair.access_token
     } catch (e: any) {
       // 只有「明確的無效 token」(401/400) 才視為 session 已死（回傳 null → 登出）。

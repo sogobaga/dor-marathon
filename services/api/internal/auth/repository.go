@@ -19,7 +19,8 @@ type User struct {
 	PasswordHash string  `db:"password_hash"`
 	AvatarURL    string  `db:"avatar_url"`
 	TotalKm      float64 `db:"total_km"`
-	Role         string  `db:"role"` // user | organizer | admin
+	Role         string  `db:"role"`          // user | organizer | admin
+	SessionEpoch int     `db:"session_epoch"` // 單一登入：目前有效的 session epoch（見 BumpSessionEpoch）
 }
 
 type Repository struct {
@@ -75,10 +76,10 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*User, error) {
 	u := &User{}
 	err := r.db.QueryRow(ctx, `
 		SELECT id, email, handle, name, COALESCE(password_hash,'') as password_hash,
-		       COALESCE(avatar_url, '') as avatar_url, total_km, role
+		       COALESCE(avatar_url, '') as avatar_url, total_km, role, session_epoch
 		FROM users WHERE id = $1
 	`, id).Scan(
-		&u.ID, &u.Email, &u.Handle, &u.Name, &u.PasswordHash, &u.AvatarURL, &u.TotalKm, &u.Role,
+		&u.ID, &u.Email, &u.Handle, &u.Name, &u.PasswordHash, &u.AvatarURL, &u.TotalKm, &u.Role, &u.SessionEpoch,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -87,6 +88,21 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*User, error) {
 		return nil, fmt.Errorf("find user by id: %w", err)
 	}
 	return u, nil
+}
+
+// BumpSessionEpoch 遞增使用者的 session_epoch（單一登入強制用）：每次「登入」
+// （Register/Login/LoginWithGoogle）成功都呼叫，回傳遞增後的新 epoch，寫進新簽發的
+// token（sev claim）；帳號目前 epoch 與舊 token 的 sev 不符 → 舊 token（含 refresh）全數失效。
+func (r *Repository) BumpSessionEpoch(ctx context.Context, userID string) (int, error) {
+	var epoch int
+	err := r.db.QueryRow(ctx, `
+		UPDATE users SET session_epoch = session_epoch + 1 WHERE id = $1
+		RETURNING session_epoch
+	`, userID).Scan(&epoch)
+	if err != nil {
+		return 0, fmt.Errorf("bump session epoch: %w", err)
+	}
+	return epoch, nil
 }
 
 // FindByGoogleSub 透過 Google sub（user_identities）找使用者

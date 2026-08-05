@@ -6,6 +6,7 @@ export interface TokenPair {
   access_token: string
   refresh_token: string
   expires_in: number
+  session_epoch: number // 單一登入：這次登入/refresh 的 session 版本號，後端每次登入會遞增並用 WS session_revoked 通知舊 session
 }
 
 export interface User {

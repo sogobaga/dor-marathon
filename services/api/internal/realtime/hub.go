@@ -189,6 +189,20 @@ func (m *Manager) PublishData(ctx context.Context, topic string, targetUserIDs [
 	}
 }
 
+// PublishSessionRevoked 廣播「單一登入」踢除通知：某帳號有新登入發生，通知該帳號其餘
+// 連線（舊裝置）session 已被取代。前端收到後應主動登出（refresh 也會因 epoch 不符而 401）。
+// Fire-and-forget：錯誤僅記錄，不回傳、不中斷呼叫端（登入）流程。
+func (m *Manager) PublishSessionRevoked(ctx context.Context, userID string, epoch int) {
+	hub := m.GetOrCreateHub("global")
+	if err := hub.Publish(ctx, &Message{
+		Type:          "session_revoked",
+		Payload:       map[string]any{"epoch": epoch},
+		TargetUserIDs: []string{userID},
+	}); err != nil {
+		log.Error().Err(err).Str("user", userID).Msg("publish session_revoked failed")
+	}
+}
+
 // ClientCount returns the number of connected clients.
 func (h *Hub) ClientCount() int {
 	h.mu.RLock()

@@ -23,17 +23,24 @@ var (
 	ErrTokenInvalid       = errors.New("token invalid or expired")
 	ErrGoogleNotConfigured = errors.New("google login not configured")
 	ErrGoogleTokenInvalid  = errors.New("invalid google id token")
+	// ErrSessionSuperseded：refresh token 的 session epoch 與帳號目前 epoch 不符——
+	// 代表帳號已在別處重新登入（單一登入強制踢舊裝置），這顆 refresh token 已失效。
+	ErrSessionSuperseded = errors.New("session superseded by a newer login")
 )
 
 type TokenPair struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"` // 秒
+	ExpiresIn    int    `json:"expires_in"`    // 秒
+	SessionEpoch int    `json:"session_epoch"` // 單一登入：本組 token 所屬的 session_epoch
 }
 
 type Claims struct {
 	UserID string `json:"uid"`
 	Role   string `json:"role"` // user | organizer | admin
+	// SessionEpoch 單一登入強制用：舊 token（簽發時沒有此欄位）JSON 解析後為零值 0，
+	// 與帳號 session_epoch 預設值 0 相容（legacy token 在帳號從未被新登入踢過的情況下仍可用）。
+	SessionEpoch int `json:"sev"`
 	jwt.RegisteredClaims
 }
 
@@ -85,7 +92,13 @@ func (s *Service) Register(ctx context.Context, email, handle, name, password, r
 		return nil, nil, err
 	}
 
-	pair, err := s.issueTokens(ctx, user.ID, user.Role)
+	// 單一登入：每次「登入」(註冊視為首次登入) 遞增 session_epoch，讓舊 token 全數失效。
+	epoch, err := s.repo.BumpSessionEpoch(ctx, user.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pair, err := s.issueTokens(ctx, user.ID, user.Role, epoch)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -106,7 +119,13 @@ func (s *Service) Login(ctx context.Context, email, password string) (*User, *To
 		return nil, nil, ErrInvalidCredentials
 	}
 
-	pair, err := s.issueTokens(ctx, user.ID, user.Role)
+	// 單一登入：每次登入遞增 session_epoch（踢掉所有舊 token；refresh 不會呼叫這裡，不影響自己續命）。
+	epoch, err := s.repo.BumpSessionEpoch(ctx, user.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pair, err := s.issueTokens(ctx, user.ID, user.Role, epoch)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -175,7 +194,13 @@ func (s *Service) LoginWithGoogle(ctx context.Context, idToken, refCode string) 
 		}
 	}
 
-	pair, err := s.issueTokens(ctx, user.ID, user.Role)
+	// 單一登入：每次登入遞增 session_epoch（不論走既有帳號或全新會員分支）。
+	epoch, err := s.repo.BumpSessionEpoch(ctx, user.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pair, err := s.issueTokens(ctx, user.ID, user.Role, epoch)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -257,13 +282,21 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 		return nil, ErrTokenInvalid
 	}
 
+	// 單一登入：refresh token 的 session epoch 若與帳號目前 epoch 不符，代表帳號已在
+	// 別處重新登入（epoch 已被遞增）、這顆 refresh token 已被取代 → 拒絕（明確語意，
+	// 讓 handler 回 401，前端走既有「refresh 失敗→登出」流程）。
+	if claims.SessionEpoch != user.SessionEpoch {
+		return nil, ErrSessionSuperseded
+	}
+
 	// 一次性輪替：把用掉的舊 refresh token 加入撤銷名單（剩餘效期內）
 	if claims.ExpiresAt != nil {
 		if ttl := time.Until(claims.ExpiresAt.Time); ttl > 0 {
 			s.rdb.Set(ctx, revokeKey(claims.UserID, refreshToken), 1, ttl)
 		}
 	}
-	return s.issueTokens(ctx, user.ID, user.Role)
+	// refresh 不遞增 epoch（不踢自己）——沿用原 claims 的 epoch 續命。
+	return s.issueTokens(ctx, user.ID, user.Role, claims.SessionEpoch)
 }
 
 func (s *Service) Logout(ctx context.Context, userID, refreshToken string) error {
@@ -285,13 +318,17 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenStr string) (*Cl
 	return s.parseToken(tokenStr)
 }
 
-func (s *Service) issueTokens(ctx context.Context, userID, role string) (*TokenPair, error) {
+// issueTokens 簽發 access+refresh token 對。sessionEpoch 會寫進兩顆 token 的 sev claim：
+// - 登入入口（Register/Login/LoginWithGoogle）傳入「剛遞增過」的新 epoch → 舊 token 全數失效。
+// - Refresh 傳入「原 claims 的 epoch」→ 續命、不影響自己也不踢自己。
+func (s *Service) issueTokens(ctx context.Context, userID, role string, sessionEpoch int) (*TokenPair, error) {
 	now := time.Now()
 
 	// Access Token（短效，含 role）
 	accessClaims := &Claims{
-		UserID: userID,
-		Role:   role,
+		UserID:       userID,
+		Role:         role,
+		SessionEpoch: sessionEpoch,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -304,8 +341,9 @@ func (s *Service) issueTokens(ctx context.Context, userID, role string) (*TokenP
 
 	// Refresh Token（長效，也帶 role 方便 refresh 時判斷）
 	refreshClaims := &Claims{
-		UserID: userID,
-		Role:   role,
+		UserID:       userID,
+		Role:         role,
+		SessionEpoch: sessionEpoch,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.refreshTTL)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -323,6 +361,7 @@ func (s *Service) issueTokens(ctx context.Context, userID, role string) (*TokenP
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresIn:    int(s.accessTTL.Seconds()),
+		SessionEpoch: sessionEpoch,
 	}, nil
 }
 

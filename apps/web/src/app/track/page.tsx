@@ -821,6 +821,26 @@ export default function TrackPage() {
     try { (screen.orientation as any)?.unlock?.() } catch { /* ignore */ }
   }, [])
 
+  // 單一登入：被踢下線／refresh 失敗／手動登出都會經 clearUserSession() emit 這個事件。
+  // 若當下正在跑步且已無 token（已登出）→ 停跑但「保留」軌跡待上傳：只 cleanup + 收掉可能殘留的覆蓋層，
+  // 絕不呼叫 finish()/doUploadGps()/清 LS_KEY——每個 GPS 點已即時寫入 localStorage(:264)，
+  // 下次登入回來由 ProfileScreen/本頁的「上次未上傳的跑步」偵測（:912-925）撿回上傳。
+  useEffect(() => {
+    const onAuthChanged = () => {
+      if (statusRef.current !== 'tracking') return // 只處理「跑步中」被登出的情況
+      if (getUserToken()) return // 還有 token：不是登出（例如剛登入/refresh 成功），略過
+      cleanup()
+      setStatus('done')
+      setConfirmStravaHold(null) // 收掉可能殘留的 Strava 三選一彈窗
+      clearEvent() // 收掉進行中的事件演出/旗幟（含 setShowFlash(false)）
+      setConfirmEnd(false) // 收掉「結束前確認」彈窗
+      if (woActiveRef.current) { woActiveRef.current = false; freetrainRef.current = false; setWoPhase('idle') } // 收掉課表 HUD，避免殘留蓋在「已結束」畫面上
+      setErr('已在其他裝置登入，本次跑步已保留，請重新登入後於運動數據頁上傳')
+    }
+    window.addEventListener('dor-auth-changed', onAuthChanged)
+    return () => window.removeEventListener('dor-auth-changed', onAuthChanged)
+  }, [cleanup]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // 按「結束並上傳」：只有「正式進行中」事件才跳確認（損失規避）；演出中（未接受）則靜默放棄後直接結束
   // 提示訊息：X 手動關閉；「軌跡太短」等暫時訊息顯示約 1 秒後自動淡出（避免擋住下方面板操作）
   function dismissWarn() { clearTimeout(warnTimer.current); setWarn('') }

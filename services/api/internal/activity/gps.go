@@ -231,6 +231,17 @@ func (h *Handler) UploadGPS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"login required"}`, http.StatusUnauthorized)
 		return
 	}
+
+	// 單一登入 Layer 2：access token 短效但仍可能在有效期內被 stale 裝置拿來上傳，
+	// 直接查帳號目前 session_epoch 比對 token 的 sev claim；不符 → 已被更新的登入取代，
+	// 回 401（讓前端走既有 401→refresh(也會 401)→登出 流程），不進 SaveGPSRun。
+	// 查詢失敗（DB 暫時性錯誤）則不因此擋上傳，沿用既有「查無/查失敗＝放行」的防呆原則。
+	sev, _ := r.Context().Value(auth.CtxKeySessionEpoch).(int)
+	if cur, err := h.svc.repo.CurrentSessionEpoch(r.Context(), userID); err == nil && sev != cur {
+		http.Error(w, `{"error":"session superseded"}`, http.StatusUnauthorized)
+		return
+	}
+
 	var req gpsRunReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
