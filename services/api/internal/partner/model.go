@@ -7,6 +7,7 @@ import "time"
 // 可見，「不合格」改成鎖在 CTA 動作上——見 CtaLocked/CtaLockReason，以及 Service.applyCtaGate）。
 type PartnerShop struct {
 	ID            string `json:"id"`
+	Slug          string `json:"slug"` // 自訂連結代碼（選填）；有值時 /shop/{slug} 可取代 /shop/{id}，見 Repository.GetDetail
 	Name          string `json:"name"`
 	Summary       string `json:"summary"`
 	BannerURL     string `json:"banner_url"`
@@ -41,6 +42,7 @@ type PartnerShopDetail struct {
 // AdminPartnerShop 後台管理用：PartnerShop 欄位（不含 is_favorited）+ 詳細欄位 + enabled。
 type AdminPartnerShop struct {
 	ID           string    `json:"id"`
+	Slug         string    `json:"slug"` // 自訂連結代碼（選填）；空字串＝未設定
 	Name         string    `json:"name"`
 	Summary      string    `json:"summary"`
 	BannerURL    string    `json:"banner_url"`
@@ -59,6 +61,7 @@ type AdminPartnerShop struct {
 
 // AdminPartnerShopRequest 後台新增/更新請求 body。
 type AdminPartnerShopRequest struct {
+	Slug         string   `json:"slug"` // 自訂連結代碼（選填）；空字串正規化為 NULL（見 Repository.AdminCreate/AdminUpdate）
 	Name         string   `json:"name"`
 	Summary      string   `json:"summary"`
 	BannerURL    string   `json:"banner_url"`

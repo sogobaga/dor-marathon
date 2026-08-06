@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -17,7 +18,16 @@ var (
 	ErrTooLong         = errors.New("field exceeds maximum length")
 	ErrInvalidAudience = errors.New("audience must be all or vip_featured")
 	ErrInvalidMinKm    = errors.New("min_km must be a non-negative integer")
+	ErrInvalidSlug     = errors.New("slug 僅能用小寫英數與連字號，長度 2-64 字且開頭結尾須為英數字")
 )
+
+// slugRe 自訂連結代碼格式：小寫英數與連字號、開頭結尾須為英數字、長度 2-64
+// （比照活動 slug／internal/race 的 /event/{slug} 慣例）。
+var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$`)
+
+// uuidLikeRe 粗擋 UUID 格式的 slug：GetDetail 用同一個路徑參數雙查 id/slug
+// （見 Repository.GetDetail 的 `ps.id::text = $1 OR ps.slug = $1`），slug 若長得像 UUID 會混淆兩者。
+var uuidLikeRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // DB VARCHAR 上限（migrations/091_partner_shops.sql）：超過就在寫入前擋掉，
 // 不要讓 Postgres 丟出無意義的 500。用 []rune 算字數，避免用 byte 切壞 UTF-8 中文。
@@ -165,6 +175,12 @@ func normalizeAndValidate(req *AdminPartnerShopRequest) error {
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
 		return ErrNameRequired
+	}
+	// slug（自訂連結代碼）：空字串＝不設定，允許；非空時需符合格式且不得長得像 UUID
+	// （避免與 GetDetail 的 id/slug 雙查混淆，見 uuidLikeRe 註解）。
+	req.Slug = strings.ToLower(strings.TrimSpace(req.Slug))
+	if req.Slug != "" && (uuidLikeRe.MatchString(req.Slug) || !slugRe.MatchString(req.Slug)) {
+		return ErrInvalidSlug
 	}
 	if n := len([]rune(req.Name)); n > maxNameLen {
 		return fmt.Errorf("name: %w（上限 %d 字，目前 %d 字）", ErrTooLong, maxNameLen, n)

@@ -11,7 +11,7 @@ type Form = Partial<AdminPartnerShop>
 type Audience = 'all' | 'vip_featured'
 
 const EMPTY: Form = {
-  name: '', summary: '', banner_url: '', detail_html: '', photo_urls: [], video_url: '', video_urls: [],
+  slug: '', name: '', summary: '', banner_url: '', detail_html: '', photo_urls: [], video_url: '', video_urls: [],
   cta_url: '', cta_label: '', display_order: 0, enabled: true, audience: 'all',
 }
 
@@ -111,6 +111,7 @@ export default function AdminPartnersPage() {
     setBusy(true); setErr(''); setMsg('')
     try {
       const body: PartnerShopWriteBody = {
+        slug: form.slug || '',
         name: form.name.trim(),
         summary: form.summary || '',
         banner_url: form.banner_url || '',
@@ -137,7 +138,9 @@ export default function AdminPartnersPage() {
   }
   function copyShopLink() {
     if (!form.id) return
-    navigator.clipboard.writeText(`https://www.dor.tw/shop/${form.id}`)
+    // slug 有值就用漂亮版連結，否則退回 uuid（比照下方連結顯示邏輯）。
+    const shopPath = form.slug || form.id
+    navigator.clipboard.writeText(`https://www.dor.tw/shop/${shopPath}`)
       .then(() => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1800) })
       .catch(() => {})
   }
@@ -223,12 +226,19 @@ export default function AdminPartnersPage() {
             <F label="名稱（必填）"><input style={inp} value={form.name || ''} onChange={(e) => setF('name', e.target.value)} placeholder="商家名稱" /></F>
             <F label="排序 display_order"><input style={inp} type="number" value={form.display_order ?? 0} onChange={(e) => setF('display_order', +e.target.value)} /></F>
           </div>
+          <F label="自訂連結代碼 slug（選填）">
+            <input style={inp} value={form.slug || ''} onChange={(e) => setF('slug', e.target.value)} placeholder="jolly-health" />
+          </F>
+          <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 2 }}>
+            僅小寫英數與連字號；設定後可用 dor.tw/shop/{form.slug || '{slug}'}
+          </div>
           {/* 專屬公開連結：貼進蓋台廣告 cta_url 可直接開該商家詳細頁（完全比照 /event/{slug} 活動落地頁做法）。
-              新增未存檔（無 id）時顯示灰字提示；已有 id（編輯既有商家）才顯示可複製的連結。 */}
+              新增未存檔（無 id）時顯示灰字提示；已有 id（編輯既有商家）才顯示可複製的連結。
+              slug 有值就顯示漂亮版（/shop/{slug}），否則退回 uuid（/shop/{id}）。 */}
           <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 8 }}>
             {form.id ? (
               <>
-                專屬連結：<span style={{ userSelect: 'all', wordBreak: 'break-all' }}>{`https://www.dor.tw/shop/${form.id}`}</span>
+                專屬連結：<span style={{ userSelect: 'all', wordBreak: 'break-all' }}>{`https://www.dor.tw/shop/${form.slug || form.id}`}</span>
                 <button onClick={copyShopLink} style={{ ...tinyBtn, marginLeft: 8 }}>{linkCopied ? '已複製' : '複製'}</button>
               </>
             ) : (

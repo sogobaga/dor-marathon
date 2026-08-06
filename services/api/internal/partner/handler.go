@@ -72,13 +72,12 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/v1/partner-shops/{id}
+// id 可為 UUID 或自訂 slug（/shop/{slug} 專屬連結深連結用，比照 /event/{slug}）；
+// 不預先檢查格式，交給 Service.GetDetail → Repository.GetDetail 的 id/slug 雙查處理，
+// 查無結果一律回 404（不外洩「id 格式不對」與「查無此商家」的差異）。
 func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	id := chi.URLParam(r, "id")
-	if !isValidUUID(id) {
-		respondErr(w, http.StatusNotFound, "partner shop not found")
-		return
-	}
 	shop, err := h.svc.GetDetail(r.Context(), id, uid)
 	if errors.Is(err, ErrNotFound) {
 		respondErr(w, http.StatusNotFound, "partner shop not found")
@@ -161,7 +160,8 @@ func (h *Handler) AdminCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	shop, err := h.svc.AdminCreate(r.Context(), &req)
-	if errors.Is(err, ErrNameRequired) || errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrTooLong) || errors.Is(err, ErrInvalidAudience) {
+	if errors.Is(err, ErrNameRequired) || errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrTooLong) ||
+		errors.Is(err, ErrInvalidAudience) || errors.Is(err, ErrInvalidSlug) || errors.Is(err, ErrSlugTaken) {
 		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -185,7 +185,8 @@ func (h *Handler) AdminUpdate(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusNotFound, "partner shop not found")
 		return
 	}
-	if errors.Is(err, ErrNameRequired) || errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrTooLong) || errors.Is(err, ErrInvalidAudience) {
+	if errors.Is(err, ErrNameRequired) || errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrTooLong) ||
+		errors.Is(err, ErrInvalidAudience) || errors.Is(err, ErrInvalidSlug) || errors.Is(err, ErrSlugTaken) {
 		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/appsettings"
@@ -23,6 +24,16 @@ const (
 
 // ErrNotFound 找不到商家（或 enabled=false 視同不存在，前台不外洩下架資料）。
 var ErrNotFound = errors.New("partner shop not found")
+
+// ErrSlugTaken 自訂連結代碼撞到 partner_shops.slug 的 UNIQUE 限制（見 migrations/121）。
+var ErrSlugTaken = errors.New("此連結代碼已被其他商家使用")
+
+// isSlugUniqueViolation 判斷是否為 slug 欄位的 unique violation（Postgres 錯誤碼 23505）。
+// partner_shops 目前僅 slug 有 UNIQUE 限制，命中 23505 即視為 slug 衝突。
+func isSlugUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
 
 type Repository struct {
 	db *pgxpool.Pool
@@ -123,20 +134,22 @@ func (r *Repository) SetMinVIPFeaturedKm(ctx context.Context, km int) error {
 // GetDetail 前台詳細：enabled=false 回 ErrNotFound（不外洩下架商家內容）。
 // audience='vip_featured' 商家現在對所有人可見（不再視資格擋成 ErrNotFound）；
 // 「不合格」改由 Service.GetDetail 事後蓋上 CtaLocked/CtaLockReason 並清空 CTAURL。
+// id 參數可為 UUID 或自訂 slug（比照 /event/{slug} 深連結）：雙查 ps.id::text = $1 OR ps.slug = $1，
+// 用 ::text 轉字串比對避免傳入 slug 時 uuid 型別轉換錯；slug 為 NULL 時 NULL=$1 不成立，只會 id 命中。
 func (r *Repository) GetDetail(ctx context.Context, id, uid string) (*PartnerShopDetail, error) {
 	d := &PartnerShopDetail{}
 	var photoBytes, videoBytes []byte
 	err := r.db.QueryRow(ctx, `
-		SELECT ps.id, ps.name, ps.summary, ps.banner_url, ps.cta_url, ps.cta_label, ps.display_order, ps.audience,
+		SELECT ps.id, COALESCE(ps.slug,''), ps.name, ps.summary, ps.banner_url, ps.cta_url, ps.cta_label, ps.display_order, ps.audience,
 		       ($2 <> '' AND EXISTS(
 		           SELECT 1 FROM partner_shop_favorites f
 		           WHERE f.user_id = NULLIF($2,'')::uuid AND f.shop_id = ps.id
 		       )),
 		       ps.detail_html, ps.photo_urls, ps.video_url, ps.video_urls
 		FROM partner_shops ps
-		WHERE ps.id = $1 AND ps.enabled
+		WHERE (ps.id::text = $1 OR ps.slug = $1) AND ps.enabled
 	`, id, uid).Scan(
-		&d.ID, &d.Name, &d.Summary, &d.BannerURL, &d.CTAURL, &d.CTALabel, &d.DisplayOrder, &d.Audience, &d.IsFavorited,
+		&d.ID, &d.Slug, &d.Name, &d.Summary, &d.BannerURL, &d.CTAURL, &d.CTALabel, &d.DisplayOrder, &d.Audience, &d.IsFavorited,
 		&d.DetailHTML, &photoBytes, &d.VideoURL, &videoBytes,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -184,14 +197,14 @@ func (r *Repository) RemoveFavorite(ctx context.Context, userID, shopID string) 
 
 // --- 後台 ---
 
-const adminSelectCols = `id, name, summary, banner_url, cta_url, cta_label, display_order, audience,
+const adminSelectCols = `id, COALESCE(slug,'') as slug, name, summary, banner_url, cta_url, cta_label, display_order, audience,
 	detail_html, photo_urls, video_url, video_urls, enabled, created_at, updated_at`
 
 // scanAdminRow 同時吃 pgx.Rows（Query）與 pgx.Row（QueryRow）——兩者皆滿足 Scan(dest ...any) error。
 func scanAdminRow(row pgx.Row) (*AdminPartnerShop, error) {
 	a := &AdminPartnerShop{}
 	var photoBytes, videoBytes []byte
-	if err := row.Scan(&a.ID, &a.Name, &a.Summary, &a.BannerURL, &a.CTAURL, &a.CTALabel, &a.DisplayOrder, &a.Audience,
+	if err := row.Scan(&a.ID, &a.Slug, &a.Name, &a.Summary, &a.BannerURL, &a.CTAURL, &a.CTALabel, &a.DisplayOrder, &a.Audience,
 		&a.DetailHTML, &photoBytes, &a.VideoURL, &videoBytes, &a.Enabled, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -228,7 +241,16 @@ func (r *Repository) AdminList(ctx context.Context) ([]*AdminPartnerShop, error)
 	return out, rows.Err()
 }
 
-// AdminCreate 新增商家（detail_html 需由呼叫端先消毒過）。
+// slugParam 空字串轉存 NULL（避免多個商家的空 slug 一起撞 UNIQUE），呼叫端須先確保 req.Slug
+// 已由 Service.normalizeAndValidate 正規化（小寫/去空白）過。
+func slugParam(slug string) any {
+	if slug == "" {
+		return nil
+	}
+	return slug
+}
+
+// AdminCreate 新增商家（detail_html 需由呼叫端先消毒過）。slug 撞 UNIQUE 時回 ErrSlugTaken。
 func (r *Repository) AdminCreate(ctx context.Context, req *AdminPartnerShopRequest) (*AdminPartnerShop, error) {
 	photoBytes, err := marshalPhotoURLs(req.PhotoURLs)
 	if err != nil {
@@ -240,16 +262,23 @@ func (r *Repository) AdminCreate(ctx context.Context, req *AdminPartnerShopReque
 	}
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO partner_shops
-		    (name, summary, banner_url, detail_html, photo_urls, video_url, video_urls, cta_url, cta_label, display_order, enabled, audience)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		    (name, summary, banner_url, detail_html, photo_urls, video_url, video_urls, cta_url, cta_label, display_order, enabled, audience, slug)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING `+adminSelectCols,
 		req.Name, req.Summary, req.BannerURL, req.DetailHTML, photoBytes, req.VideoURL, videoBytes,
-		req.CTAURL, req.CTALabel, req.DisplayOrder, req.Enabled, req.Audience,
+		req.CTAURL, req.CTALabel, req.DisplayOrder, req.Enabled, req.Audience, slugParam(req.Slug),
 	)
-	return scanAdminRow(row)
+	a, err := scanAdminRow(row)
+	if isSlugUniqueViolation(err) {
+		return nil, ErrSlugTaken
+	}
+	if err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
-// AdminUpdate 更新商家（含上下架 enabled；detail_html 需由呼叫端先消毒過）。
+// AdminUpdate 更新商家（含上下架 enabled；detail_html 需由呼叫端先消毒過）。slug 撞 UNIQUE 時回 ErrSlugTaken。
 func (r *Repository) AdminUpdate(ctx context.Context, id string, req *AdminPartnerShopRequest) (*AdminPartnerShop, error) {
 	photoBytes, err := marshalPhotoURLs(req.PhotoURLs)
 	if err != nil {
@@ -262,13 +291,16 @@ func (r *Repository) AdminUpdate(ctx context.Context, id string, req *AdminPartn
 	row := r.db.QueryRow(ctx, `
 		UPDATE partner_shops SET
 		    name=$1, summary=$2, banner_url=$3, detail_html=$4, photo_urls=$5, video_url=$6, video_urls=$7,
-		    cta_url=$8, cta_label=$9, display_order=$10, enabled=$11, audience=$12, updated_at=NOW()
-		WHERE id=$13
+		    cta_url=$8, cta_label=$9, display_order=$10, enabled=$11, audience=$12, slug=$13, updated_at=NOW()
+		WHERE id=$14
 		RETURNING `+adminSelectCols,
 		req.Name, req.Summary, req.BannerURL, req.DetailHTML, photoBytes, req.VideoURL, videoBytes,
-		req.CTAURL, req.CTALabel, req.DisplayOrder, req.Enabled, req.Audience, id,
+		req.CTAURL, req.CTALabel, req.DisplayOrder, req.Enabled, req.Audience, slugParam(req.Slug), id,
 	)
 	a, err := scanAdminRow(row)
+	if isSlugUniqueViolation(err) {
+		return nil, ErrSlugTaken
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

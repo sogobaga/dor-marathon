@@ -2412,6 +2412,7 @@ export const adminPushGroupsApi = {
 
 export interface PartnerShop {          // 列表用
   id: string
+  slug: string             // 自訂連結代碼（選填，空字串＝未設定）；有值時 /shop/{slug} 可取代 /shop/{id}
   name: string
   summary: string
   banner_url: string
@@ -2451,6 +2452,7 @@ export type AdminPartnerShop = Omit<PartnerShop, 'is_favorited'> & {
 
 // 後台新增/更新送出的 body
 export interface PartnerShopWriteBody {
+  slug: string             // 自訂連結代碼（選填）；空字串＝不設定
   name: string
   summary: string
   banner_url: string
