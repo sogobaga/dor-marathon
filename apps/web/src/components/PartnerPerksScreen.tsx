@@ -130,10 +130,6 @@ function PartnerShopListView({
       </header>
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
-        <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '2px 2px 12px', lineHeight: 1.7 }}>
-          精選特約商店與跑者優惠，點卡片看詳細介紹。
-        </p>
-
         {hasVip && (
           <div style={tabBarStyle}>
             <button onClick={() => setTab('all')} style={curTab === 'all' ? tabActive : tabBase}>精選商家</button>
@@ -141,12 +137,12 @@ function PartnerShopListView({
           </div>
         )}
 
-        {/* VIP 好物分享專區的介紹文案（切到該分頁才顯示） */}
-        {curTab === 'vip_featured' && (
-          <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '0 2px 12px', lineHeight: 1.7 }}>
-            VIP好物分享專區的產品，為 DOR 真心推薦，點卡片看詳細內容。
-          </p>
-        )}
+        {/* 描述文案：隨頁籤切換顯示對應一句（兩句不同時出現） */}
+        <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '0 2px 12px', lineHeight: 1.7 }}>
+          {curTab === 'vip_featured'
+            ? 'VIP好物分享專區的產品，為 DOR 真心推薦，點卡片看詳細內容。'
+            : '精選特約商店與跑者優惠，點卡片看詳細介紹。'}
+        </p>
 
         {user && shops && shops.length > 0 && (
           <div style={{ display: 'flex', padding: '0 0 12px' }}>
