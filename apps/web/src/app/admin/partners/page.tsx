@@ -12,6 +12,7 @@ type Audience = 'all' | 'vip_featured'
 
 const EMPTY: Form = {
   slug: '', name: '', summary: '', banner_url: '', detail_html: '', photo_urls: [], video_url: '', video_urls: [],
+  content_images: [],
   cta_url: '', cta_label: '', display_order: 0, enabled: true, audience: 'all',
 }
 
@@ -22,7 +23,7 @@ export default function AdminPartnersPage() {
   const [tab, setTab] = useState<Audience>('all')
   const [form, setForm] = useState<Form>(EMPTY)
   const [busy, setBusy] = useState(false)
-  const [imgBusy, setImgBusy] = useState('') // '' | 'banner' | 'photo'
+  const [imgBusy, setImgBusy] = useState('') // '' | 'banner' | 'photo' | 'content'
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [linkCopied, setLinkCopied] = useState(false)
@@ -63,7 +64,7 @@ export default function AdminPartnersPage() {
     const video_urls = s.video_urls && s.video_urls.length ? s.video_urls : (s.video_url ? [s.video_url] : [])
     setForm({ ...s, video_urls }); setMsg(''); setErr('')
   }
-  function fresh() { setForm({ ...EMPTY, photo_urls: [], video_urls: [] }); setMsg(''); setErr('') }
+  function fresh() { setForm({ ...EMPTY, photo_urls: [], video_urls: [], content_images: [] }); setMsg(''); setErr('') }
   function setF<K extends keyof Form>(k: K, v: Form[K]) { setForm((f) => ({ ...f, [k]: v })) }
 
   async function uploadBanner(file: File) {
@@ -90,6 +91,27 @@ export default function AdminPartnersPage() {
     if (j < 0 || j >= arr.length) return
     ;[arr[idx], arr[j]] = [arr[j], arr[idx]]
     setF('photo_urls', arr)
+  }
+
+  // 滿版長圖 content_images：增刪/上傳/移動邏輯完全比照 photo_urls，差別只在詳細頁渲染方式（滿版直列，不進輪播）。
+  async function addContentImg(file: File) {
+    if (!token) return
+    setImgBusy('content'); setErr('')
+    try {
+      const { url } = await adminImagesApi.upload(token, file)
+      setF('content_images', [...(form.content_images || []), url])
+      setMsg('✓ 長圖已新增')
+    } catch (e: any) { setErr(e?.message || '上傳失敗') } finally { setImgBusy('') }
+  }
+  function removeContentImg(idx: number) {
+    setF('content_images', (form.content_images || []).filter((_, i) => i !== idx))
+  }
+  function moveContentImg(idx: number, dir: -1 | 1) {
+    const arr = [...(form.content_images || [])]
+    const j = idx + dir
+    if (j < 0 || j >= arr.length) return
+    ;[arr[idx], arr[j]] = [arr[j], arr[idx]]
+    setF('content_images', arr)
   }
 
   // 多筆 YouTube 影片連結：純文字 input 逐筆編輯（不像 photo_urls 需要上傳），增刪列 UI 風格比照 photo_urls。
@@ -120,6 +142,7 @@ export default function AdminPartnersPage() {
         // video_urls 為主來源；video_url 附帶第一支做 back-compat（舊欄位仍在，但前台已不再以它為主）。
         video_url: (form.video_urls && form.video_urls[0]) || form.video_url || '',
         video_urls: form.video_urls || [],
+        content_images: form.content_images || [],
         cta_url: form.cta_url || '',
         cta_label: form.cta_label || '',
         display_order: form.display_order ?? 0,
@@ -281,6 +304,30 @@ export default function AdminPartnersPage() {
             <label style={{ ...ghostBtn, cursor: 'pointer', opacity: imgBusy === 'photo' ? 0.5 : 1, display: 'inline-block' }}>
               {imgBusy === 'photo' ? '上傳中…' : '＋ 新增圖片'}
               <input type="file" accept="image/*" disabled={imgBusy === 'photo'} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) addPhoto(f); e.target.value = '' }} />
+            </label>
+          </div>
+
+          {/* 滿版長圖 content_images：與上方 photo_urls 輪播相簿分開，詳細頁滿版直列顯示（填滿寬、依原比例、不限高），
+              適合放產品 DM／長圖資訊圖。增刪/上傳/移動邏輯完全比照 photo_urls。 */}
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 3 }}>滿版長圖（產品 DM／長圖，詳細頁滿版直列顯示）</div>
+            {!!(form.content_images && form.content_images.length) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 8 }}>
+                {form.content_images.map((url, i) => (
+                  <div key={i} style={{ width: 100 }}>
+                    <img src={url} alt="" style={{ width: 100, height: 70, objectFit: 'cover', borderRadius: 6, background: 'var(--bg-2)', border: '1px solid var(--line)' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, gap: 4 }}>
+                      <button onClick={() => moveContentImg(i, -1)} disabled={i === 0} style={{ ...tinyBtn, opacity: i === 0 ? 0.35 : 1 }}>↑</button>
+                      <button onClick={() => moveContentImg(i, 1)} disabled={i === form.content_images!.length - 1} style={{ ...tinyBtn, opacity: i === form.content_images!.length - 1 ? 0.35 : 1 }}>↓</button>
+                      <button onClick={() => removeContentImg(i)} style={{ ...tinyBtn, color: 'var(--hunt)' }}>刪除</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label style={{ ...ghostBtn, cursor: 'pointer', opacity: imgBusy === 'content' ? 0.5 : 1, display: 'inline-block' }}>
+              {imgBusy === 'content' ? '上傳中…' : '＋ 新增長圖'}
+              <input type="file" accept="image/*" disabled={imgBusy === 'content'} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) addContentImg(f); e.target.value = '' }} />
             </label>
           </div>
 

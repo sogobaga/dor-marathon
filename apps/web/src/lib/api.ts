@@ -2436,9 +2436,10 @@ export interface PartnerListMeta {
 
 export interface PartnerShopDetail extends PartnerShop {   // 詳細用
   detail_html: string      // 已由後端消毒過的安全 HTML
-  photo_urls: string[]     // 多圖
+  photo_urls: string[]     // 多圖（輪播相簿）
   video_url: string        // 舊：單支 YouTube 原始連結（保留相容，不再是主來源）
   video_urls: string[]     // 新：多支 YouTube 原始連結（前端用 ytId() 逐支解析成 embed）
+  content_images: string[] // 滿版長圖（產品 DM／長圖）；詳細頁滿版直列顯示，與 photo_urls 輪播分開
 }
 
 // 後台清單/回應用：PartnerShop 欄位（不含 is_favorited）+ 詳細欄位 + enabled（含下架）
@@ -2447,6 +2448,7 @@ export type AdminPartnerShop = Omit<PartnerShop, 'is_favorited'> & {
   photo_urls: string[]
   video_url: string
   video_urls: string[]
+  content_images: string[] // 滿版長圖（產品 DM／長圖）；詳細頁滿版直列顯示，與 photo_urls 輪播分開
   enabled: boolean
 }
 
@@ -2460,6 +2462,7 @@ export interface PartnerShopWriteBody {
   photo_urls: string[]
   video_url: string
   video_urls: string[]
+  content_images: string[] // 滿版長圖（產品 DM／長圖）；詳細頁滿版直列顯示，與 photo_urls 輪播分開
   cta_url: string
   cta_label: string
   display_order: number

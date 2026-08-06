@@ -344,6 +344,18 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
               />
             )}
 
+            {/* 滿版長圖 content_images：與上方 photo_urls 輪播相簿分開，適合放產品 DM／長圖資訊圖。
+                滿版(width:100%)、依原比例(height:auto)、不限高，靠詳細頁本身上下捲動達成長圖瀏覽；
+                不進 MediaCarousel、不加 maxHeight、不需 Lightbox。 */}
+            {shop.content_images && shop.content_images.length > 0 && (
+              <div style={{ marginTop: 18 }}>
+                {shop.content_images.map((url, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={i} src={url} alt="" style={{ width: '100%', height: 'auto', display: 'block', borderRadius: 8, marginTop: i === 0 ? 0 : 8 }} />
+                ))}
+              </div>
+            )}
+
             {(() => {
               // video_urls 為新主來源；空陣列時過渡期 fallback 舊單支 video_url。
               const vids = shop.video_urls && shop.video_urls.length ? shop.video_urls : (shop.video_url ? [shop.video_url] : [])

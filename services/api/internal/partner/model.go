@@ -33,45 +33,48 @@ type PartnerListMeta struct {
 // PartnerShopDetail 前台詳細頁用；DetailHTML 已由後端消毒過（寫入 + 輸出皆消毒）。
 type PartnerShopDetail struct {
 	PartnerShop
-	DetailHTML string   `json:"detail_html"`
-	PhotoURLs  []string `json:"photo_urls"`
-	VideoURL   string   `json:"video_url"` // 保留（back-compat），新版請用 VideoURLs
-	VideoURLs  []string `json:"video_urls"`
+	DetailHTML    string   `json:"detail_html"`
+	PhotoURLs     []string `json:"photo_urls"`
+	VideoURL      string   `json:"video_url"` // 保留（back-compat），新版請用 VideoURLs
+	VideoURLs     []string `json:"video_urls"`
+	ContentImages []string `json:"content_images"` // 滿版長圖（產品 DM／長圖）；詳細頁滿版直列顯示，與 PhotoURLs 輪播分開
 }
 
 // AdminPartnerShop 後台管理用：PartnerShop 欄位（不含 is_favorited）+ 詳細欄位 + enabled。
 type AdminPartnerShop struct {
-	ID           string    `json:"id"`
-	Slug         string    `json:"slug"` // 自訂連結代碼（選填）；空字串＝未設定
-	Name         string    `json:"name"`
-	Summary      string    `json:"summary"`
-	BannerURL    string    `json:"banner_url"`
-	CTAURL       string    `json:"cta_url"`
-	CTALabel     string    `json:"cta_label"`
-	DisplayOrder int       `json:"display_order"`
-	Audience     string    `json:"audience"` // all | vip_featured
-	DetailHTML   string    `json:"detail_html"`
-	PhotoURLs    []string  `json:"photo_urls"`
-	VideoURL     string    `json:"video_url"` // 保留（back-compat），新版請用 VideoURLs
-	VideoURLs    []string  `json:"video_urls"`
-	Enabled      bool      `json:"enabled"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	Slug          string    `json:"slug"` // 自訂連結代碼（選填）；空字串＝未設定
+	Name          string    `json:"name"`
+	Summary       string    `json:"summary"`
+	BannerURL     string    `json:"banner_url"`
+	CTAURL        string    `json:"cta_url"`
+	CTALabel      string    `json:"cta_label"`
+	DisplayOrder  int       `json:"display_order"`
+	Audience      string    `json:"audience"` // all | vip_featured
+	DetailHTML    string    `json:"detail_html"`
+	PhotoURLs     []string  `json:"photo_urls"`
+	VideoURL      string    `json:"video_url"` // 保留（back-compat），新版請用 VideoURLs
+	VideoURLs     []string  `json:"video_urls"`
+	ContentImages []string  `json:"content_images"` // 滿版長圖（產品 DM／長圖）；詳細頁滿版直列顯示，與 PhotoURLs 輪播分開
+	Enabled       bool      `json:"enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // AdminPartnerShopRequest 後台新增/更新請求 body。
 type AdminPartnerShopRequest struct {
-	Slug         string   `json:"slug"` // 自訂連結代碼（選填）；空字串正規化為 NULL（見 Repository.AdminCreate/AdminUpdate）
-	Name         string   `json:"name"`
-	Summary      string   `json:"summary"`
-	BannerURL    string   `json:"banner_url"`
-	DetailHTML   string   `json:"detail_html"`
-	PhotoURLs    []string `json:"photo_urls"`
-	VideoURL     string   `json:"video_url"` // 保留（back-compat），新版請用 VideoURLs
-	VideoURLs    []string `json:"video_urls"`
-	CTAURL       string   `json:"cta_url"`
-	CTALabel     string   `json:"cta_label"`
-	DisplayOrder int      `json:"display_order"`
-	Audience     string   `json:"audience"` // all | vip_featured；空字串正規化為 all（見 normalizeAndValidate）
-	Enabled      bool     `json:"enabled"`
+	Slug          string   `json:"slug"` // 自訂連結代碼（選填）；空字串正規化為 NULL（見 Repository.AdminCreate/AdminUpdate）
+	Name          string   `json:"name"`
+	Summary       string   `json:"summary"`
+	BannerURL     string   `json:"banner_url"`
+	DetailHTML    string   `json:"detail_html"`
+	PhotoURLs     []string `json:"photo_urls"`
+	VideoURL      string   `json:"video_url"` // 保留（back-compat），新版請用 VideoURLs
+	VideoURLs     []string `json:"video_urls"`
+	ContentImages []string `json:"content_images"` // 滿版長圖（產品 DM／長圖）；詳細頁滿版直列顯示，與 PhotoURLs 輪播分開
+	CTAURL        string   `json:"cta_url"`
+	CTALabel      string   `json:"cta_label"`
+	DisplayOrder  int      `json:"display_order"`
+	Audience      string   `json:"audience"` // all | vip_featured；空字串正規化為 all（見 normalizeAndValidate）
+	Enabled       bool     `json:"enabled"`
 }
