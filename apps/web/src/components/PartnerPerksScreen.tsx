@@ -378,7 +378,7 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
       </div>
 
       {shop && showCta && (
-        <div style={{ flexShrink: 0, padding: '12px 18px calc(env(safe-area-inset-bottom, 0px) + 14px)', borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
+        <div style={{ flexShrink: 0, padding: '12px 18px calc(env(safe-area-inset-bottom, 0px) + 28px)', borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
           <button
             onClick={() => onCta(shop)}
             style={{ ...primaryFullBtn, width: '100%', padding: '12px 0', fontSize: 14.5 }}
