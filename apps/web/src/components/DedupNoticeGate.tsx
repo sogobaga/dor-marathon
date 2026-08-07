@@ -21,7 +21,7 @@ export default function DedupNoticeGate() {
   const { data, mutate } = useSWR(
     user && token ? ['dedup-notice', user.id] : null,
     () => profileApi.dedupNotice(token!),
-    { refreshInterval: 25000 },
+    { refreshInterval: 60000 },
   )
   const notice = data?.notice || null
   const [choice, setChoice] = useState<'gps' | 'strava' | null>(null)

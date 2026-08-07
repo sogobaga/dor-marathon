@@ -39,12 +39,22 @@ export default function AdminOverviewPage() {
     adminMetricsApi.dataSource(t).then(setSrc).catch(() => {})
     adminMetricsApi.vipAnalytics(t).then(setVa).catch(() => {})
   }, [router])
-  useEffect(() => { load(); const id = setInterval(load, 20000); return () => clearInterval(id) }, [load])
+  // 分頁隱藏時暫停輪詢（避免長開後台分頁一直喚醒 Neon compute）；切回可見時立即補一次。
+  useEffect(() => {
+    load()
+    const id = setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      load()
+    }, 60000)
+    const onVisible = () => { if (document.visibilityState === 'visible') load() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
+  }, [load])
 
   return (
     <div style={{ padding: 20, maxWidth: 900, margin: '0 auto' }}>
       <h1 style={{ fontSize: 20, fontWeight: 900, color: 'var(--tx)', marginBottom: 4 }}>數據總覽</h1>
-      <div style={{ fontSize: 12.5, color: 'var(--tx-faint)', marginBottom: 16 }}>近半年的賽事狀態與即時在跑名單（每 20 秒自動更新）</div>
+      <div style={{ fontSize: 12.5, color: 'var(--tx-faint)', marginBottom: 16 }}>近半年的賽事狀態與即時在跑名單（每 60 秒自動更新，切到背景分頁時暫停）</div>
       {err && <div style={{ color: 'var(--hunt)', marginBottom: 12, fontSize: 13 }}>{err}</div>}
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 18 }}>

@@ -14,7 +14,7 @@ export default function MileageExpGate() {
   const { data, mutate } = useSWR(
     user && token ? 'mileage-exp' : null,
     () => withUserAuth((t) => mileageExpApi.get(t)),
-    { refreshInterval: 20000, revalidateOnFocus: true },
+    { refreshInterval: 60000, revalidateOnFocus: true },
   )
   const bd = data?.breakdown
   const [open, setOpen] = useState(false)
