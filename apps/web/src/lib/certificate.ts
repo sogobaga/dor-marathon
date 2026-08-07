@@ -144,7 +144,7 @@ export async function renderCertificate(cert: Certificate): Promise<CertificateR
   ctx.shadowBlur = 0
 
   // ① 成績資訊卡（白色半透明圓角卡）+ 兩條垂直分隔線
-  roundRectPath(ctx, 198, 618, 844, 128, 20)
+  roundRectPath(ctx, 198, 573, 844, 128, 20)
   ctx.fillStyle = 'rgba(255,255,255,0.72)'
   ctx.fill()
   ctx.strokeStyle = 'rgba(17,44,87,0.08)'
@@ -155,20 +155,20 @@ export async function renderCertificate(cert: Certificate): Promise<CertificateR
   ctx.lineWidth = 1.5
   for (const dividerX of [478, 762]) {
     ctx.beginPath()
-    ctx.moveTo(dividerX, 644)
-    ctx.lineTo(dividerX, 722)
+    ctx.moveTo(dividerX, 599)
+    ctx.lineTo(dividerX, 677)
     ctx.stroke()
   }
 
   // ② 日期膠囊底（先用日期字串量寬決定膠囊寬度）
   const dateText = `完成日期｜${fmtDate(cert.completion_at)}`
-  ctx.font = `700 22px ${FONT}`
+  ctx.font = `700 26px ${FONT}`
   const dateTextW = ctx.measureText(dateText).width
-  const pillW = Math.max(280, dateTextW + 64)
-  const pillH = 50
+  const pillW = Math.max(300, dateTextW + 70)
+  const pillH = 54
   const pillX = 617 - pillW / 2
-  const pillY = 764
-  roundRectPath(ctx, pillX, pillY, pillW, pillH, 25)
+  const pillY = 719
+  roundRectPath(ctx, pillX, pillY, pillW, pillH, 27)
   ctx.fillStyle = 'rgba(255,255,255,0.72)'
   ctx.fill()
   ctx.strokeStyle = 'rgba(17,44,87,0.08)'
@@ -178,73 +178,73 @@ export async function renderCertificate(cert: Certificate): Promise<CertificateR
   // ③ 所有文字欄位（含姓名金線）
   // 標題
   ctx.fillStyle = MUTED
-  ctx.font = `400 24px ${FONT}`
+  ctx.font = `400 28px ${FONT}`
   ctx.letterSpacing = '6px'
-  ctx.fillText('完賽證明', 620, 352)
+  ctx.fillText('完賽證明', 620, 307)
   ctx.letterSpacing = '0px'
 
   // 姓名 + 金色底線
   const nameText = cert.name || '跑者'
-  let size = fitFontSize(ctx, nameText, 700, 65, 42, 620)
+  let size = fitFontSize(ctx, nameText, 700, 76, 50, 620)
   ctx.font = `700 ${size}px ${FONT}`
   ctx.fillStyle = NAVY
-  ctx.fillText(nameText, 620, 445)
+  ctx.fillText(nameText, 620, 400)
   const nameW = ctx.measureText(nameText).width
-  const barW = Math.min(260, Math.max(90, nameW * 0.72))
-  roundRectPath(ctx, 620 - barW / 2, 470, barW, 5, 2.5)
+  const barW = Math.min(280, Math.max(100, nameW * 0.72))
+  roundRectPath(ctx, 620 - barW / 2, 425, barW, 6, 3)
   ctx.fillStyle = GOLD_ACCENT
   ctx.fill()
 
   // 完成賽事
   const raceText = `完成「${cert.race_title}」`
-  size = fitFontSize(ctx, raceText, 700, 29, 23, 850)
+  size = fitFontSize(ctx, raceText, 700, 34, 27, 850)
   ctx.font = `700 ${size}px ${FONT}`
   ctx.fillStyle = NAVY
-  ctx.fillText(raceText, 620, 535)
+  ctx.fillText(raceText, 620, 490)
 
   // 賽事細項（分組行；無分組資料則略過此欄）
   if (cert.group_name) {
-    size = fitFontSize(ctx, cert.group_name, 400, 23, 19, 760)
+    size = fitFontSize(ctx, cert.group_name, 400, 27, 22, 760)
     ctx.font = `400 ${size}px ${FONT}`
     ctx.fillStyle = MUTED
-    ctx.fillText(cert.group_name, 620, 578)
+    ctx.fillText(cert.group_name, 620, 533)
   }
 
   // 完成里程
   ctx.fillStyle = MUTED
-  ctx.font = `400 17px ${FONT}`
-  ctx.fillText('完成里程', 337, 646)
+  ctx.font = `400 20px ${FONT}`
+  ctx.fillText('完成里程', 337, 601)
   const kmText = `${cert.completed_km.toFixed(1)} K`
-  size = fitFontSize(ctx, kmText, 700, 38, 30, 230)
+  size = fitFontSize(ctx, kmText, 700, 45, 36, 230)
   ctx.font = `700 ${size}px ${FONT}`
   ctx.fillStyle = RED
-  ctx.fillText(kmText, 337, 700)
+  ctx.fillText(kmText, 337, 655)
 
   // 完成時間
   ctx.fillStyle = MUTED
-  ctx.font = `400 17px ${FONT}`
-  ctx.fillText('完成時間', 620, 646)
+  ctx.font = `400 20px ${FONT}`
+  ctx.fillText('完成時間', 620, 601)
   const timeText = fmtDuration(cert.total_time_s)
-  size = fitFontSize(ctx, timeText, 700, 31, 25, 250)
+  size = fitFontSize(ctx, timeText, 700, 37, 30, 250)
   ctx.font = `700 ${size}px ${FONT}`
   ctx.fillStyle = BLUE
-  ctx.fillText(timeText, 620, 700)
+  ctx.fillText(timeText, 620, 655)
 
   // 完成名次（無名次資料時顯示 —，不整欄消失）
   ctx.fillStyle = MUTED
-  ctx.font = `400 17px ${FONT}`
-  ctx.fillText('完成名次', 903, 646)
+  ctx.font = `400 20px ${FONT}`
+  ctx.fillText('完成名次', 903, 601)
   const rankText = cert.finish_rank > 0 ? `第 ${cert.finish_rank} 名` : '—'
-  size = fitFontSize(ctx, rankText, 700, 38, 30, 230)
+  size = fitFontSize(ctx, rankText, 700, 45, 36, 230)
   ctx.font = `700 ${size}px ${FONT}`
   ctx.fillStyle = GOLD_ACCENT
-  ctx.fillText(rankText, 903, 700)
+  ctx.fillText(rankText, 903, 655)
 
   // 完成日期（文字疊在②的膠囊底上）
-  size = fitFontSize(ctx, dateText, 700, 22, 18, 390)
+  size = fitFontSize(ctx, dateText, 700, 26, 21, 390)
   ctx.font = `700 ${size}px ${FONT}`
   ctx.fillStyle = NAVY
-  ctx.fillText(dateText, 617, 789)
+  ctx.fillText(dateText, 617, 744)
 
   const dataUrl = canvas.toDataURL('image/png')
   const blob = await new Promise<Blob | null>((resolve) => {
