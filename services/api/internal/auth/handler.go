@@ -1,13 +1,18 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 
 	"github.com/dor/api/internal/realtime"
+	"github.com/dor/api/internal/reqip"
 )
 
 var validate = validator.New()
@@ -33,6 +38,20 @@ func (h *Handler) pushSessionRevoked(r *http.Request, userID string, epoch int) 
 	if h.realtime != nil {
 		h.realtime.PublishSessionRevoked(r.Context(), userID, epoch)
 	}
+}
+
+// recordLogin fire-and-forget 寫入登入紀錄（user_login_logs + users.last_login_at）。
+// 用獨立 context（3 秒逾時，不綁定原本 request context——handler 回應後 r.Context() 就會被
+// net/http 取消）+ 獨立 goroutine，絕不可拖慢或阻斷登入回應；失敗只記 log，不影響已回應的登入結果。
+// method 只會是 password/google/register，呼叫端刻意不含 refresh（見各呼叫點註解）。
+func (h *Handler) recordLogin(userID, method, ip string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := h.svc.RecordLogin(ctx, userID, method, ip); err != nil {
+			log.Printf("auth.recordLogin: user=%s method=%s err=%v", userID, method, err)
+		}
+	}()
 }
 
 // POST /api/v1/auth/register
@@ -70,6 +89,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.pushSessionRevoked(r, user.ID, pair.SessionEpoch)
+	h.recordLogin(user.ID, "register", reqip.ClientIP(r))
 	respondJSON(w, http.StatusCreated, map[string]any{
 		"user":          toPublicUser(user),
 		"tokens":        pair,
@@ -105,6 +125,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.pushSessionRevoked(r, user.ID, pair.SessionEpoch)
+	h.recordLogin(user.ID, "password", reqip.ClientIP(r))
 	respondJSON(w, http.StatusOK, map[string]any{
 		"user":          toPublicUser(user),
 		"tokens":        pair,
@@ -142,6 +163,7 @@ func (h *Handler) Google(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.pushSessionRevoked(r, user.ID, pair.SessionEpoch)
+	h.recordLogin(user.ID, "google", reqip.ClientIP(r))
 	respondJSON(w, http.StatusOK, map[string]any{
 		"user":          toPublicUser(user),
 		"tokens":        pair,
@@ -192,6 +214,28 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// GET /admin/login-logs?q=&limit=&offset=（perm: members）— 後台查最近登入流水，
+// 供檢查「有沒有人天天登入」；JOIN users 帶 email，依 created_at DESC 分頁。
+// q 為選填的 email 模糊篩選。刻意不含 refresh（高頻自動行為，見 recordLogin 註解）。
+func (h *Handler) AdminLoginLogs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+
+	logs, total, err := h.svc.ListLoginLogs(r.Context(), q, limit, offset)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list login logs")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"logs": logs, "count": total})
 }
 
 // GET /api/v1/auth/me

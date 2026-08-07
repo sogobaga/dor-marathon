@@ -425,6 +425,7 @@ func main() {
 			r.With(perm("promo")).Mount("/admin/promo-codes", promoHandler.Router())
 			r.With(perm("members")).Mount("/admin/members", profileHandler.AdminMembersRouter())
 			r.With(perm("members")).Get("/admin/vip-analytics", profileHandler.AdminVipAnalytics)
+			r.With(perm("members")).Get("/admin/login-logs", authHandler.AdminLoginLogs) // 用戶登入紀錄（沿用 members 權限）
 			r.With(perm("settings")).Mount("/admin/membership", profileHandler.MembershipAdminRouter())
 			r.With(perm("settings")).Mount("/admin/vip-promos", profileHandler.VipPromoAdminRouter())
 			r.With(perm("titles")).Mount("/admin/titles", profileHandler.TitleAdminRouter())

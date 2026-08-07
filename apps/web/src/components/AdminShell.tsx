@@ -19,6 +19,7 @@ const NAV: { grp: string; items: NavItem[] }[] = [
       { k: 'dash', t: '數據總覽', href: '/admin/overview' },
       { k: 'races', t: '賽事管理', href: '/admin/races', perm: 'races' },
       { k: 'members', t: '會員管理', href: '/admin/members', perm: 'members' },
+      { k: 'login-logs', t: '登入紀錄', href: '/admin/login-logs', perm: 'members' },
       { k: 'signups', t: '報名管理', href: '/admin/signups', perm: 'signups' },
       { k: 'teams', t: '跑團管理' },
       { k: 'notifications', t: '推播通知', href: '/admin/push', perm: 'settings' },

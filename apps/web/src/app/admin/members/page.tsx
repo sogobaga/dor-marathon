@@ -24,6 +24,13 @@ function fmtVipExpiry(iso?: string) {
   return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`
 }
 
+function fmtLastLogin(iso?: string) {
+  const d = iso ? new Date(iso) : null
+  if (!d || isNaN(d.getTime())) return '—'
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
 export default function AdminMembersList() {
   const router = useRouter()
   const [members, setMembers] = useState<MemberSummary[] | null>(null)
@@ -103,6 +110,7 @@ export default function AdminMembersList() {
             <div style={{ width: 70, textAlign: 'right' }}>里程</div>
             <div style={{ width: 54 }}>身分</div>
             <div style={{ width: 130 }}>VIP到期(剩餘)</div>
+            <div style={{ width: 110 }}>上次登入</div>
           </div>
           {members.map((m) => {
             const days = m.is_vip ? vipDaysLeft(m.vip_expires_at) : null
@@ -137,6 +145,7 @@ export default function AdminMembersList() {
                     </>
                   ) : '—'}
                 </div>
+                <div style={{ width: 110, fontSize: 12, color: 'var(--tx-dim)' }}>{fmtLastLogin(m.last_login_at)}</div>
               </Link>
             )
           })}

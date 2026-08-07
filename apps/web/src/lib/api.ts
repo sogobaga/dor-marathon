@@ -1860,6 +1860,7 @@ export interface MemberSummary {
   is_vip: boolean
   vip_expires_at?: string
   vip_plan: string
+  last_login_at?: string
 }
 
 export interface MemberDetail extends MemberSummary {
@@ -1910,6 +1911,25 @@ export const auditApi = {
     if (params?.resource) qs.set('resource', params.resource)
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     return request<{ logs: AuditLog[]; count: number }>(`/admin/audit${suffix}`, { headers: withAuth(token) })
+  },
+}
+
+// --- Admin: 用戶登入紀錄（user_login_logs；與 auditApi 的後台操作紀錄分開） ---
+export interface LoginLog {
+  created_at: string
+  user_id: string
+  email: string
+  method: string // password | google | register
+  ip: string
+}
+export const adminLoginLogsApi = {
+  list: (token: string, params?: { q?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.q) qs.set('q', params.q)
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.offset) qs.set('offset', String(params.offset))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ logs: LoginLog[]; count: number }>(`/admin/login-logs${suffix}`, { headers: withAuth(token) })
   },
 }
 

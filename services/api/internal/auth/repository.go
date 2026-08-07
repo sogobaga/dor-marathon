@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -179,6 +180,67 @@ func (r *Repository) LinkIdentity(ctx context.Context, userID, sub, email string
 		return fmt.Errorf("link identity: %w", err)
 	}
 	return nil
+}
+
+// LoginLog 一筆登入紀錄（後台查詢用，JOIN users 帶 email）。
+type LoginLog struct {
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	UserID    string    `db:"user_id"    json:"user_id"`
+	Email     string    `db:"email"      json:"email"`
+	Method    string    `db:"method"     json:"method"` // password | google | register
+	IP        string    `db:"ip"         json:"ip"`
+}
+
+// InsertLoginLog 寫入一筆登入紀錄並同步更新 users.last_login_at（單一 CTE 陳述式、單次往返）。
+// 呼叫端（handler）以獨立 context + goroutine fire-and-forget 呼叫（見 Handler.recordLogin），
+// 失敗不影響登入本身，故這裡不需要交易；method 不含 "refresh"（高頻自動行為，刻意不記）。
+func (r *Repository) InsertLoginLog(ctx context.Context, userID, method, ip string) error {
+	_, err := r.db.Exec(ctx, `
+		WITH ins AS (
+			INSERT INTO user_login_logs (user_id, method, ip) VALUES ($1, $2, NULLIF($3, ''))
+		)
+		UPDATE users SET last_login_at = NOW() WHERE id = $1
+	`, userID, method, ip)
+	if err != nil {
+		return fmt.Errorf("insert login log: %w", err)
+	}
+	return nil
+}
+
+// ListLoginLogs 後台查詢登入紀錄流水（GET /admin/login-logs），依 created_at DESC 分頁；
+// q 為選填 email 模糊篩選（比照 AdminListMembers 的 ILIKE 寫法）。
+func (r *Repository) ListLoginLogs(ctx context.Context, q string, limit, offset int) ([]LoginLog, int, error) {
+	like := "%" + q + "%"
+
+	var total int
+	if err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM user_login_logs l JOIN users u ON u.id = l.user_id
+		WHERE ($1 = '' OR u.email ILIKE $2)
+	`, q, like).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count login logs: %w", err)
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT l.created_at, l.user_id, u.email, l.method, COALESCE(l.ip, '')
+		FROM user_login_logs l JOIN users u ON u.id = l.user_id
+		WHERE ($1 = '' OR u.email ILIKE $2)
+		ORDER BY l.created_at DESC
+		LIMIT $3 OFFSET $4
+	`, q, like, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list login logs: %w", err)
+	}
+	defer rows.Close()
+
+	logs := []LoginLog{}
+	for rows.Next() {
+		var l LoginLog
+		if err := rows.Scan(&l.CreatedAt, &l.UserID, &l.Email, &l.Method, &l.IP); err != nil {
+			return nil, 0, fmt.Errorf("scan login log: %w", err)
+		}
+		logs = append(logs, l)
+	}
+	return logs, total, nil
 }
 
 func (r *Repository) EmailExists(ctx context.Context, email string) (bool, error) {

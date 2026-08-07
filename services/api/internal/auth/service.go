@@ -314,6 +314,18 @@ func (s *Service) GetUserByID(ctx context.Context, id string) (*User, error) {
 	return s.repo.FindByID(ctx, id)
 }
 
+// RecordLogin 寫入登入紀錄（user_login_logs）+ 更新 users.last_login_at，供後台檢查
+// 「有沒有人天天登入」。呼叫端（handler）用獨立 context + goroutine fire-and-forget 呼叫，
+// 失敗不影響登入回應本身；method 只會是 password/google/register，刻意不含 refresh。
+func (s *Service) RecordLogin(ctx context.Context, userID, method, ip string) error {
+	return s.repo.InsertLoginLog(ctx, userID, method, ip)
+}
+
+// ListLoginLogs 後台查詢登入紀錄流水（供 AdminLoginLogs 呼叫）。
+func (s *Service) ListLoginLogs(ctx context.Context, q string, limit, offset int) ([]LoginLog, int, error) {
+	return s.repo.ListLoginLogs(ctx, q, limit, offset)
+}
+
 func (s *Service) ValidateAccessToken(ctx context.Context, tokenStr string) (*Claims, error) {
 	return s.parseToken(tokenStr)
 }
