@@ -8,7 +8,7 @@ import { getUserToken } from '@/lib/userAuth'
 import { useScrollLock } from '@/lib/useScrollLock'
 import { useSheetDismiss } from '@/lib/useSheetDismiss'
 import { overlayMount } from '@/lib/overlayMount'
-import { renderCertificate, downloadDataURL } from '@/lib/certificate'
+import { renderCertificate, downloadCertificate, type CertificateRender } from '@/lib/certificate'
 import ExpSettlementModal from './ExpSettlementModal'
 import { BrochureBody } from './BrochureScreen'
 import { RankingBody } from './RaceRankingScreen'
@@ -59,11 +59,32 @@ export default function RaceDetailScreen({
   )
   const cert = certData?.certificate
   const [certImg, setCertImg] = useState('')
+  const [certRender, setCertRender] = useState<CertificateRender | null>(null)
+  const [certErr, setCertErr] = useState(false)
+  const [certRetry, setCertRetry] = useState(0) // 手動觸發重試
   const [certZoom, setCertZoom] = useState(false)
   useEffect(() => {
-    if (cert?.completed) renderCertificate(cert).then(setCertImg).catch(() => {})
-    else setCertImg('')
-  }, [cert])
+    if (!cert?.completed) {
+      setCertImg('')
+      setCertRender(null)
+      setCertErr(false)
+      return
+    }
+    let cancelled = false
+    setCertErr(false)
+    renderCertificate(cert)
+      .then((r) => {
+        if (cancelled) return
+        setCertImg(r.dataUrl)
+        setCertRender(r)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        console.error('[certificate] renderCertificate failed', e)
+        setCertErr(true)
+      })
+    return () => { cancelled = true }
+  }, [cert, certRetry])
 
   // 本場 EXP 結算明細（賽事結束 + 已報名）
   const { data: bdData } = useSWR(
@@ -169,10 +190,12 @@ export default function RaceDetailScreen({
                     style={{ width: '100%', borderRadius: 12, border: '1px solid var(--line-2)', cursor: 'zoom-in', display: 'block' }}
                   />
                   <button
-                    onClick={() => downloadDataURL(certImg, `完賽證明_${cert.race_title}.png`)}
+                    onClick={() => certRender && downloadCertificate(certRender, `完賽證明_${cert.race_title}.png`)}
                     style={certBtn}
                   ><span className="skin-ico" data-ico="star" aria-hidden>🏅</span> 下載完賽證明</button>
                 </>
+              ) : certErr ? (
+                <button onClick={() => setCertRetry((n) => n + 1)} style={certRetryBtn}>證明產生失敗，請重試</button>
               ) : (
                 <div style={{ fontSize: 12, color: 'var(--tx-faint)', padding: '8px 0' }}>產生證明中…</div>
               )}
@@ -214,7 +237,7 @@ export default function RaceDetailScreen({
         <div onClick={() => setCertZoom(false)} style={lightbox}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={certImg} alt="完賽證明" style={{ maxWidth: '96%', maxHeight: '82%', borderRadius: 8, boxShadow: '0 8px 40px rgba(0,0,0,.6)' }} />
-          <button onClick={(e) => { e.stopPropagation(); downloadDataURL(certImg, `完賽證明_${cert.race_title}.png`) }} style={lightboxDl}><span className="skin-ico" data-ico="star" aria-hidden>🏅</span> 下載完賽證明</button>
+          <button onClick={(e) => { e.stopPropagation(); certRender && downloadCertificate(certRender, `完賽證明_${cert.race_title}.png`) }} style={lightboxDl}><span className="skin-ico" data-ico="star" aria-hidden>🏅</span> 下載完賽證明</button>
           <div onClick={() => setCertZoom(false)} style={{ position: 'absolute', top: 14, right: 20, color: '#fff', fontSize: 30, cursor: 'pointer', lineHeight: 1 }}>✕</div>
         </div>
       )}
@@ -497,6 +520,7 @@ const statusBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color:
 const registerBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '12px 20px', cursor: 'pointer', fontSize: 15, width: '100%' }
 const registeredBox: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 'var(--radius-md, 12px)', padding: '11px 16px', textAlign: 'center', fontSize: 14, fontWeight: 700, color: 'var(--fug)' }
 const certBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '12px 20px', cursor: 'pointer', fontSize: 15 }
+const certRetryBtn: React.CSSProperties = { width: '100%', background: 'var(--bg-2)', color: 'var(--tx-dim)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 'var(--radius-btn, 12px)', padding: '10px 20px', cursor: 'pointer', fontSize: 13 }
 const expBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'rgba(70,227,160,.1)', color: 'var(--fug)', fontWeight: 800, border: '1px solid rgba(70,227,160,.35)', borderRadius: 'var(--radius-btn, 12px)', padding: '11px 20px', cursor: 'pointer', fontSize: 14 }
 const lightbox: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,.88)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 16 }
 const lightboxDl: React.CSSProperties = { background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 10, padding: '11px 22px', cursor: 'pointer', fontSize: 15 }

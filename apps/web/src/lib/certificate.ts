@@ -22,8 +22,29 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     const img = new Image()
     img.onload = () => resolve(img)
     img.onerror = reject
-    img.src = src // 同源 /api/v1/images/* → 不會污染 canvas
+    // 目前底圖同源 /api/v1/images/* 加這行無害；預留將來底圖搬到 img.dor.tw(R2)
+    // → R2 需回 Access-Control-Allow-Origin，否則跨來源底圖會載入失敗且污染 canvas
+    img.crossOrigin = 'anonymous'
+    img.src = src
   })
+}
+
+// 依可用寬度動態縮小字級，避免長姓名/賽事名/分組溢出畫布（會就地設定 ctx.font）
+function fitFontSize(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  weight: number,
+  maxSize: number,
+  minSize: number,
+  maxWidth: number,
+): number {
+  let size = maxSize
+  for (; size > minSize; size -= 2) {
+    ctx.font = `${weight} ${size}px ${CJK}`
+    if (ctx.measureText(text).width <= maxWidth) break
+  }
+  ctx.font = `${weight} ${size}px ${CJK}`
+  return size
 }
 
 // 預設底圖設計（無自訂底圖時用）：深色金框 + 品牌 + 標題
@@ -60,8 +81,13 @@ function drawDefaultBackground(ctx: CanvasRenderingContext2D, W: number, H: numb
   ctx.stroke()
 }
 
-// 繪製完賽證明為 PNG dataURL（有自訂底圖則疊在底圖上）
-export async function renderCertificate(cert: Certificate): Promise<string> {
+export interface CertificateRender {
+  dataUrl: string // 給 <img> 預覽用
+  blob: Blob | null // 給下載用；toBlob 失敗時為 null（下載會退回 dataUrl）
+}
+
+// 繪製完賽證明（有自訂底圖則疊在底圖上）；同時回傳預覽用 dataURL 與下載用 Blob
+export async function renderCertificate(cert: Certificate): Promise<CertificateRender> {
   const W = 1240
   const H = 877
   const cx = W / 2
@@ -69,7 +95,7 @@ export async function renderCertificate(cert: Certificate): Promise<string> {
   canvas.width = W
   canvas.height = H
   const ctx = canvas.getContext('2d')
-  if (!ctx) return ''
+  if (!ctx) return { dataUrl: '', blob: null }
 
   const custom = !!cert.bg_url
   if (custom) {
@@ -87,29 +113,42 @@ export async function renderCertificate(cert: Certificate): Promise<string> {
     drawDefaultBackground(ctx, W, H, cx)
   }
 
-  // 文字疊加區（自訂底圖時加半透明底襯提升可讀性）
+  // 文字疊加區（自訂底圖時加柔和垂直漸層底襯提升可讀性，不完全壓暗底圖）
   ctx.textAlign = 'center'
+  const maskY = 345
+  const maskH = 490
   if (custom) {
-    ctx.fillStyle = 'rgba(0,0,0,.32)'
-    ctx.fillRect(0, 360, W, 430)
+    const grad = ctx.createLinearGradient(0, maskY, 0, maskY + maskH)
+    grad.addColorStop(0, 'rgba(0,0,0,0)')
+    grad.addColorStop(0.15, 'rgba(0,0,0,.14)')
+    grad.addColorStop(0.85, 'rgba(0,0,0,.14)')
+    grad.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = grad
+    ctx.fillRect(0, maskY, W, maskH)
   }
   ctx.shadowColor = 'rgba(0,0,0,.45)'
   ctx.shadowBlur = custom ? 8 : 0
 
+  const maxTextW = W * 0.86 // shrink-to-fit 可用寬度上限
+
   ctx.fillStyle = custom ? 'rgba(255,255,255,.8)' : 'rgba(255,255,255,.65)'
-  ctx.font = `400 24px ${CJK}`
-  ctx.fillText('茲證明', cx, 410)
+  ctx.font = `400 36px ${CJK}`
+  ctx.fillText('茲證明', cx, 395)
+
   ctx.fillStyle = GOLD
-  ctx.font = `800 64px ${CJK}`
-  ctx.fillText(cert.name || '跑者', cx, 482)
+  const nameText = cert.name || '跑者'
+  fitFontSize(ctx, nameText, 800, 100, 40, maxTextW)
+  ctx.fillText(nameText, cx, 505)
 
   ctx.fillStyle = 'rgba(255,255,255,.9)'
-  ctx.font = `500 30px ${CJK}`
-  ctx.fillText(`完成「${cert.race_title}」`, cx, 550)
+  const raceText = `完成「${cert.race_title}」`
+  fitFontSize(ctx, raceText, 500, 46, 24, maxTextW)
+  ctx.fillText(raceText, cx, 585)
+
   if (cert.group_name) {
     ctx.fillStyle = 'rgba(255,255,255,.65)'
-    ctx.font = `400 22px ${CJK}`
-    ctx.fillText(cert.group_name, cx, 588)
+    fitFontSize(ctx, cert.group_name, 400, 32, 20, maxTextW)
+    ctx.fillText(cert.group_name, cx, 635)
   }
 
   const stats: [string, string][] = [
@@ -118,30 +157,62 @@ export async function renderCertificate(cert: Certificate): Promise<string> {
     ['完成名次', cert.finish_rank > 0 ? `第 ${cert.finish_rank} 名` : '—'],
   ]
   const colW = (W - 200) / 3
-  const baseY = 668
+  const baseY = 705
   stats.forEach(([label, value], i) => {
     const x = 100 + colW * i + colW / 2
     ctx.fillStyle = GREEN
-    ctx.font = `800 36px ${CJK}`
+    fitFontSize(ctx, value, 800, 56, 28, colW * 0.92)
     ctx.fillText(value, x, baseY)
     ctx.fillStyle = 'rgba(255,255,255,.6)'
-    ctx.font = `400 18px ${CJK}`
-    ctx.fillText(label, x, baseY + 34)
+    ctx.font = `400 26px ${CJK}`
+    ctx.fillText(label, x, baseY + 45)
   })
 
   ctx.fillStyle = 'rgba(255,255,255,.78)'
-  ctx.font = `400 22px ${CJK}`
-  ctx.fillText(`完成日期　${fmtDate(cert.completion_at)}`, cx, 770)
+  ctx.font = `400 32px ${CJK}`
+  ctx.fillText(`完成日期　${fmtDate(cert.completion_at)}`, cx, 805)
   ctx.shadowBlur = 0
 
-  return canvas.toDataURL('image/png')
+  const dataUrl = canvas.toDataURL('image/png')
+  const blob = await new Promise<Blob | null>((resolve) => {
+    try {
+      canvas.toBlob((b) => resolve(b), 'image/png')
+    } catch {
+      resolve(null)
+    }
+  })
+  return { dataUrl, blob }
 }
 
-// 觸發下載
-export function downloadDataURL(dataURL: string, filename: string) {
+function sanitizeFilename(name: string): string {
+  // 過濾檔名非法字元，避免部分系統存檔失敗
+  return name.replace(/[\\/:*?"<>|]/g, '_')
+}
+
+// 觸發下載：優先用 Blob URL（data: URL 的 <a download> 在手機/WebView 常失效）
+// 若瀏覽器不支援 <a>.download（常見於 iOS Safari/WebView）→ 改開新分頁，讓使用者長按存檔
+export function downloadCertificate(render: CertificateRender, filename: string) {
+  const safeName = sanitizeFilename(filename)
+  if (render.blob) {
+    const url = URL.createObjectURL(render.blob)
+    const a = document.createElement('a')
+    if ('download' in a) {
+      a.href = url
+      a.download = safeName
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 4000)
+    } else {
+      window.open(url, '_blank')
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+    }
+    return
+  }
+  // 後備：toBlob 失敗（極少見）時退回 data URL 舊方式
   const a = document.createElement('a')
-  a.href = dataURL
-  a.download = filename
+  a.href = render.dataUrl
+  a.download = safeName
   document.body.appendChild(a)
   a.click()
   a.remove()
