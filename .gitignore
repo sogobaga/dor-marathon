@@ -38,3 +38,12 @@ CLOUDFLARE-SETUP.md
 
 # 關主場景/角色原圖 + 優化輸出（2.4GB，走 R2 不進 repo）
 source/data/pictures/
+
+# 工作用 Excel 來源/測試資料留本機，不進 repo（既有已追蹤的範本檔不受影響；要新增版控用 git add -f）
+source/data/files/*.xlsx
+
+# Office 開檔暫存鎖定檔（~$ 開頭），純垃圾檔絕不進 repo
+~$*
+
+# 暫停中的 favicon（另一專案項目，非 DOR）；日後要正式加 DOR favicon.ico 時移除此行
+apps/web/public/ui/icons/favicon.ico
