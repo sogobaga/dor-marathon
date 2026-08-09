@@ -213,7 +213,7 @@ function RaceCard({
       {/* 頂部 Banner：與「活動說明頁」頂部同一張 hero_image_url */}
       {race.hero_image_url && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={race.hero_image_url} alt="" style={{ width: '100%', display: 'block' }} />
+        <img src={race.hero_image_url} alt="" loading="lazy" style={{ width: '100%', display: 'block' }} />
       )}
 
       <div style={{ padding: 'var(--card-pad, 18px)', display: 'flex', flexDirection: 'column', gap: 12 }}>

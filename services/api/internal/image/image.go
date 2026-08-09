@@ -93,6 +93,11 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 自動壓縮：只對可安全處理的 JPEG/PNG 生效，其餘（含 GIF/SVG/ICO/webp/音檔或解碼失敗）原樣保留
+	if compressed, compressedMime, changed := CompressImage(data, mime); changed {
+		data, mime = compressed, compressedMime
+	}
+
 	id, err := h.repo.Insert(r.Context(), mime, data)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "儲存圖片失敗")

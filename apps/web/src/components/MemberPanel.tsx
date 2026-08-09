@@ -293,7 +293,7 @@ export default function MemberPanel({
 function Avatar({ user, dash }: { user: boolean; dash: DashboardInfo | null }) {
   if (user && dash?.avatar_url) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={dash.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+    return <img src={dash.avatar_url} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
   }
   return <span style={{ fontSize: 22, fontWeight: 800, color: 'var(--tx-dim)' }}>{user ? (dash?.name || '?').slice(0, 1) : '？'}</span>
 }
