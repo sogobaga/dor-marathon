@@ -212,7 +212,7 @@ export default function MemberPanel({
                 <button disabled={dash.explore_entry === 'locked'}
                   onClick={(e) => { e.stopPropagation(); if (dash.explore_entry === 'shown') onOpenExplore?.() }}
                   style={{ ...entryBtn, opacity: dash.explore_entry === 'shown' ? 1 : 0.6, cursor: dash.explore_entry === 'shown' ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>城市探索</span>
+                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🗺️ 城市探索</span>
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.explore_entry === 'locked' ? '即將開放 ›' : '發現城市美好 ›'}</span>
                 </button>
               )}
@@ -220,7 +220,7 @@ export default function MemberPanel({
                 <button disabled={dash.gallery_entry === 'locked'}
                   onClick={(e) => { e.stopPropagation(); if (dash.gallery_entry === 'shown') onOpenGallery?.() }}
                   style={{ ...entryBtn, opacity: dash.gallery_entry === 'shown' ? 1 : 0.6, cursor: dash.gallery_entry === 'shown' ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>卡片探索</span>
+                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🃏 卡片探索</span>
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.gallery_entry === 'locked' ? '即將開放 ›' : '挑戰各方好手 ›'}</span>
                 </button>
               )}
@@ -232,7 +232,7 @@ export default function MemberPanel({
                 <button disabled={dash.title_entry === 'locked'}
                   onClick={(e) => { e.stopPropagation(); if (dash.title_entry === 'shown') onOpenTitle?.() }}
                   style={{ ...entryBtn, opacity: dash.title_entry === 'shown' ? 1 : 0.6, cursor: dash.title_entry === 'shown' ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>成就探索</span>
+                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏆 成就探索</span>
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.title_entry === 'locked' ? '即將開放 ›' : '解鎖你的稱號 ›'}</span>
                 </button>
               )}
@@ -240,7 +240,7 @@ export default function MemberPanel({
                 <button disabled={dash.achievement_entry === 'locked'}
                   onClick={(e) => { e.stopPropagation(); if (dash.achievement_entry === 'shown') onOpenAchievement?.() }}
                   style={{ ...entryBtn, opacity: dash.achievement_entry === 'shown' ? 1 : 0.6, cursor: dash.achievement_entry === 'shown' ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>數據探索</span>
+                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>📊 數據探索</span>
                   <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.achievement_entry === 'locked' ? '即將開放 ›' : '你的數據成就 ›'}</span>
                 </button>
               )}
