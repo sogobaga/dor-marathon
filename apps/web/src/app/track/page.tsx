@@ -96,6 +96,7 @@ export default function TrackPage() {
   const sheetHRef = useRef(0); sheetHRef.current = sheet.H     // 地圖容器總高
   const sheetYRef = useRef(0); sheetYRef.current = sheet.curY  // 面板頂端 y（＝可視地圖區高度）
   const followRef = useRef(true) // 地圖是否自動跟隨目前位置；使用者拖曳/縮放地圖後暫停，按「回到目前位置」恢復
+  const zoomedToFixRef = useRef(false) // 第一次取得定位時要放大到本地 zoom（初始是全台俯視 zoom 7）；之後跟隨只平移、保留使用者縮放
   const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
   const [autoLocating, setAutoLocating] = useState(false) // 進頁面「預熱」正在自動嘗試定位中（尚未拿到第一個座標/尚未逾時失敗）：期間顯示「定位中…」遮罩、隱藏「定位到我」CTA，避免使用者誤以為要手動按
   const [mileageCfg, setMileageCfg] = useState<MileageConfig | null>(null) // 里程獎勵設定（進度條/預覽）
@@ -211,7 +212,12 @@ export default function TrackPage() {
     ensureMap(p.lat, p.lng)
     // 標記與地圖永遠跟著「目前」位置（即時感），即使該點未被採納為距離
     if (markRef.current) { if (!markShownRef.current && mapRef.current) { try { markRef.current.addTo(mapRef.current); markShownRef.current = true } catch { /* ignore */ } } markRef.current.setLatLng([p.lat, p.lng]) }
-    if (mapRef.current && followRef.current) centerMap([p.lat, p.lng]) // 僅在「跟隨中」才回中（置中到可視地圖區、避開面板遮蔽）；使用者手動看地圖時不打斷
+    // 僅在「跟隨中」才回中（置中到可視地圖區、避開面板遮蔽）；使用者手動看地圖時不打斷
+    if (mapRef.current && followRef.current) {
+      // 第一次取得定位：放大到本地 zoom（初始是全台俯視 zoom 7，只平移會停在 7、看起來像「全台灣」）；之後跟隨只平移、保留使用者縮放
+      if (!zoomedToFixRef.current) { zoomedToFixRef.current = true; centerMap([p.lat, p.lng], 16) }
+      else centerMap([p.lat, p.lng])
+    }
     if (statusRef.current !== 'tracking') return // 預熱階段（未開始跑步）：只顯示 GPS 精度＋地圖位置，不累積距離、不警告
     const goodAcc = p.acc === 0 || p.acc <= MAX_ACC
     if (!goodAcc) {
