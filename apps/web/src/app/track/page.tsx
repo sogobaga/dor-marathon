@@ -1330,6 +1330,24 @@ export default function TrackPage() {
     } finally { setCpBusy('') }
   }
 
+  // 開啟關主挑戰面板（清單上按「⚔ 挑戰／繼續挑戰／自由挑戰」）：exList 的 boss 物件來自精簡版 /explore
+  // 列表（不含 segments/對話/金句/技能/card_image_url/master_image_url，見 api.ts ExploreBoss 註解），
+  // 面板要顯示的立繪/對話/課表都在這些欄位裡 → 開面板前先打 exploreApi.detail() 抓單一關主完整資料，
+  // 抓到什麼就用什麼渲染，不會有「面板打開時欄位是 undefined」的破圖情況。
+  // （剛打卡揭露、由 doExploreCheckin 直接開面板的路徑不會走這裡——那裡的 r.boss 已是 Checkin 回應的完整資料。）
+  async function openBossPanel(b: ExploreBoss) {
+    setCpMsg('')
+    const token = getUserToken()
+    if (!token) { setShowLogin(true); return }
+    setCpBusy('exd:' + b.id)
+    try {
+      const { boss } = await withUserAuth((t) => exploreApi.detail(t, b.id))
+      setBossPanel({ boss, phase: boss.active ? 'start' : 'intro', dpCost: exDpCost(boss) })
+    } catch (e: any) {
+      setCpMsg(e?.message || '讀取關主資料失敗，請重試')
+    } finally { setCpBusy('') }
+  }
+
   // 接受關主挑戰（扣 DP）→ 面板切到「開始」階段（關主開場對話）
   async function acceptBoss() {
     if (!bossPanel) return
@@ -1680,12 +1698,15 @@ export default function TrackPage() {
                           {checked ? '已打卡' : busy ? '打卡中…' : curPos != null && !inRange ? '未到範圍' : '打卡'}
                         </button>
                       )}
-                      {!b.checkin_only && b.discovered && (
-                        <button onClick={() => setBossPanel({ boss: b, phase: b.active ? 'start' : 'intro', dpCost: exDpCost(b) })}
-                          style={{ background: 'var(--gold)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 12px', fontSize: 13, cursor: 'pointer' }}>
-                          {b.active ? '▶ 繼續挑戰' : b.card_obtained ? '自由挑戰' : '⚔ 挑戰'}
-                        </button>
-                      )}
+                      {!b.checkin_only && b.discovered && (() => {
+                        const loadingDetail = cpBusy === 'exd:' + b.id
+                        return (
+                          <button onClick={() => openBossPanel(b)} disabled={loadingDetail}
+                            style={{ background: 'var(--gold)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 12px', fontSize: 13, cursor: loadingDetail ? 'default' : 'pointer', opacity: loadingDetail ? 0.6 : 1 }}>
+                            {loadingDetail ? '載入中…' : b.active ? '▶ 繼續挑戰' : b.card_obtained ? '自由挑戰' : '⚔ 挑戰'}
+                          </button>
+                        )
+                      })()}
                       {!b.checkin_only && !b.discovered && (
                         <button onClick={() => doExploreCheckin(b)} disabled={busy || checked || (curPos != null && !inRange)}
                           style={{ background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: (checked || busy || (curPos != null && !inRange)) ? 'default' : 'pointer', opacity: (checked || busy || (curPos != null && !inRange)) ? 0.45 : 1 }}>

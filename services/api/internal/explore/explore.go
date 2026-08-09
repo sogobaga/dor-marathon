@@ -174,6 +174,68 @@ const bossCols = `id, code, name, title, region, place, gender, age, workout_lab
 	checkin_reward_dp_min, checkin_reward_dp_max, checkin_reward_gp_min, checkin_reward_gp_max,
 	complete_reward_gp_min, complete_reward_gp_max, complete_reward_gp_chance`
 
+// listCols List(GET /explore) 專用精簡欄位：地圖標點/清單顯示/打卡/挑戰入口判斷即可，拿掉「只有點開挑戰
+// 面板才用得到」的重欄位（segments 課表 JSON、quote/skill_name/skill_desc、dialogue_intro/dialogue_start、
+// card_image_url、master_image_url）——這些重欄位改由 Detail(GET /explore/{id}) 或 Checkin 回應提供
+// （挑戰面板開啟時才抓，見 BossChallengePanel 開啟處）。scene_image_url 例外保留：ExploreScreen 的已揭露
+// 卡片(RevealCard)會直接在清單顯示此圖，非挑戰限定，拿掉會讓清單本身破圖。
+const listCols = `id, code, name, title, region, place, gender, age, workout_label, difficulty_stars,
+	scene_image_url, lat, lng, radius_m, reward_exp, reward_dp, retry_dp_cost, workout_kind, data_source, display_order, enabled, access_note, checkin_only,
+	checkin_reward_dp_min, checkin_reward_dp_max, checkin_reward_gp_min, checkin_reward_gp_max,
+	complete_reward_gp_min, complete_reward_gp_max, complete_reward_gp_chance`
+
+// BossListItem List 回應的精簡型別（欄位對應 listCols + 玩家進度）。與 Boss 分開宣告，讓「List 不含重欄位」
+// 在編譯期就是保證（而非只是欄位剛好留空），也讓其他前台程式碼不會誤用不存在的欄位。
+type BossListItem struct {
+	ID                     string  `json:"id"`
+	Code                   string  `json:"code"`
+	Name                   string  `json:"name"`
+	Title                  string  `json:"title"`
+	Region                 string  `json:"region"`
+	Place                  string  `json:"place"`
+	Gender                 string  `json:"gender"`
+	Age                    int     `json:"age"`
+	WorkoutLabel           string  `json:"workout_label"`
+	DifficultyStars        int     `json:"difficulty_stars"`
+	SceneImageURL          string  `json:"scene_image_url"`
+	Lat                    float64 `json:"lat"`
+	Lng                    float64 `json:"lng"`
+	RadiusM                int     `json:"radius_m"`
+	RewardExp              int     `json:"reward_exp"`
+	RewardDp               int     `json:"reward_dp"`
+	RetryDpCost            int     `json:"retry_dp_cost"`
+	CheckinRewardDpMin     int     `json:"checkin_reward_dp_min"`
+	CheckinRewardDpMax     int     `json:"checkin_reward_dp_max"`
+	CheckinRewardGpMin     int     `json:"checkin_reward_gp_min"`
+	CheckinRewardGpMax     int     `json:"checkin_reward_gp_max"`
+	CompleteRewardGpMin    int     `json:"complete_reward_gp_min"`
+	CompleteRewardGpMax    int     `json:"complete_reward_gp_max"`
+	CompleteRewardGpChance int     `json:"complete_reward_gp_chance"`
+	WorkoutKind            string  `json:"workout_kind"`
+	DataSource             string  `json:"data_source"`
+	DisplayOrder           int     `json:"display_order"`
+	Enabled                bool    `json:"enabled"`
+	AccessNote             string  `json:"access_note"`
+	CheckinOnly            bool    `json:"checkin_only"`
+	// 玩家進度（前台）
+	Stars        int  `json:"stars"`
+	CardObtained bool `json:"card_obtained"`
+	Active       bool `json:"active"`
+	Attempts     int  `json:"attempts"`
+	Discovered   bool `json:"discovered"`
+	BestTimeS    int  `json:"best_time_s"`
+}
+
+// maskBossListItem 未揭露(未打卡)→ 遮蔽關主身分/圖/難度等，只留地點與進度；比照 maskBoss 的遮蔽規則
+// （少了 quote/skill/dialogue/segments/card/master，因為 BossListItem 根本不含這些欄位）。
+func maskBossListItem(b *BossListItem) {
+	b.Code, b.Name, b.Title, b.Gender, b.WorkoutLabel = "", "", "", "", ""
+	b.Age, b.DifficultyStars, b.RewardExp, b.RewardDp, b.RetryDpCost = 0, 0, 0, 0, 0
+	b.SceneImageURL, b.WorkoutKind = "", ""
+	b.CheckinRewardDpMin, b.CheckinRewardDpMax, b.CheckinRewardGpMin, b.CheckinRewardGpMax = 0, 0, 0, 0
+	b.CompleteRewardGpMin, b.CompleteRewardGpMax, b.CompleteRewardGpChance = 0, 0, 0
+}
+
 func scanBoss(row interface{ Scan(...any) error }) (Boss, error) {
 	var b Boss
 	err := row.Scan(&b.ID, &b.Code, &b.Name, &b.Title, &b.Region, &b.Place, &b.Gender, &b.Age, &b.WorkoutLabel, &b.DifficultyStars,
@@ -191,6 +253,7 @@ func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.List)
 	r.Get("/gallery", h.Gallery)         // 卡片圖鑑輕量端點（只回圖鑑用到的欄位，見 Gallery）
+	r.Get("/{id}", h.Detail)             // 單一關主完整 detail（含 List 拿掉的重欄位），點開挑戰面板時抓
 	r.Post("/{id}/checkin", h.Checkin)   // 到打卡點打卡 → 揭露關主
 	r.Post("/{id}/accept", h.Accept)     // 接受挑戰（扣 DP=難度×10）
 	r.Post("/{id}/complete", h.Complete) // 完成挑戰（得星、3★ 取卡）
@@ -221,14 +284,16 @@ func maskBoss(b *Boss) {
 
 // --- 前台 handlers ---
 
-// List GET /explore — 啟用中的關主（含我的進度：星數/是否已取得卡片/進行中）。
+// List GET /explore — 啟用中的關主精簡列表（含我的進度：星數/是否已取得卡片/進行中）。只回地圖/清單/打卡/
+// 挑戰入口判斷需要的欄位（見 listCols）；挑戰面板專用的重欄位(segments/對話/金句/技能/card_image_url/
+// master_image_url)改由 Detail(GET /explore/{id}) 或 Checkin 回應提供，見 BossChallengePanel 開啟處。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	if uid == "" {
 		uid = "00000000-0000-0000-0000-000000000000"
 	}
 	rows, err := h.db.Query(r.Context(), `
-		SELECT `+bossCols+`,
+		SELECT `+listCols+`,
 		       COALESCE(pr.stars,0), COALESCE(pr.card_obtained,FALSE), COALESCE(pr.active,FALSE), COALESCE(pr.attempts,0), COALESCE(pr.discovered,FALSE), COALESCE(pr.best_time_s,0)
 		FROM explore_bosses b
 		LEFT JOIN explore_progress pr ON pr.boss_id=b.id AND pr.user_id=$1
@@ -239,13 +304,12 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	out := []Boss{}
+	out := []BossListItem{}
 	for rows.Next() {
-		var b Boss
+		var b BossListItem
 		var disc bool
 		if err := rows.Scan(&b.ID, &b.Code, &b.Name, &b.Title, &b.Region, &b.Place, &b.Gender, &b.Age, &b.WorkoutLabel, &b.DifficultyStars,
-			&b.Quote, &b.SkillName, &b.SkillDesc, &b.DialogueIntro, &b.DialogueStart, &b.SceneImageURL, &b.CardImageURL, &b.MasterImageURL,
-			&b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.Segments, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote, &b.CheckinOnly,
+			&b.SceneImageURL, &b.Lat, &b.Lng, &b.RadiusM, &b.RewardExp, &b.RewardDp, &b.RetryDpCost, &b.WorkoutKind, &b.DataSource, &b.DisplayOrder, &b.Enabled, &b.AccessNote, &b.CheckinOnly,
 			&b.CheckinRewardDpMin, &b.CheckinRewardDpMax, &b.CheckinRewardGpMin, &b.CheckinRewardGpMax,
 			&b.CompleteRewardGpMin, &b.CompleteRewardGpMax, &b.CompleteRewardGpChance,
 			&b.Stars, &b.CardObtained, &b.Active, &b.Attempts, &disc, &b.BestTimeS); err != nil {
@@ -254,7 +318,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		// 已揭露＝已打卡(discovered) 或 已挑戰(stars>0) 或 已取得卡片。未揭露→只留地點、遮蔽關主資料(伺服器端，devtools 也看不到)。
 		b.Discovered = disc || b.CardObtained || b.Stars > 0
 		if !b.Discovered {
-			maskBoss(&b)
+			maskBossListItem(&b)
 		}
 		out = append(out, b)
 	}
@@ -268,6 +332,32 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		dailyRemaining = 0
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"bosses": out, "checkin_daily_cap": dailyCap, "checkin_daily_remaining": dailyRemaining})
+}
+
+// Detail GET /explore/{id} — 單一關主完整資料（List 拿掉的重欄位：segments/對話/金句/技能/card_image_url/
+// master_image_url 皆在此），供前端「點開挑戰面板」時才抓。沿用 List 同一套每人揭露遮蔽規則：未揭露
+// (discovered=false，且非 card_obtained/stars>0) → 遮蔽關主身分等欄位(maskBoss)，與 List/Checkin 一致，
+// 避免登入玩家繞過清單直接打 id 偷看尚未揭露關主的完整劇情/課表。
+func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		uid = "00000000-0000-0000-0000-000000000000"
+	}
+	bossID := chi.URLParam(r, "id")
+	b, err := scanBoss(h.db.QueryRow(r.Context(), `SELECT `+bossCols+` FROM explore_bosses WHERE id=$1 AND enabled`, bossID))
+	if err != nil {
+		respondErr(w, http.StatusNotFound, "打卡點不存在")
+		return
+	}
+	var disc bool
+	_ = h.db.QueryRow(r.Context(), `
+		SELECT COALESCE(stars,0), COALESCE(card_obtained,FALSE), COALESCE(active,FALSE), COALESCE(attempts,0), COALESCE(discovered,FALSE), COALESCE(best_time_s,0)
+		FROM explore_progress WHERE user_id=$1 AND boss_id=$2`, uid, bossID).Scan(&b.Stars, &b.CardObtained, &b.Active, &b.Attempts, &disc, &b.BestTimeS)
+	b.Discovered = disc || b.CardObtained || b.Stars > 0
+	if !b.Discovered {
+		maskBoss(&b)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"boss": b})
 }
 
 // GalleryCard 卡片圖鑑輕量回應：只含圖鑑實際會用到的欄位（見 CardGalleryScreen.tsx）。

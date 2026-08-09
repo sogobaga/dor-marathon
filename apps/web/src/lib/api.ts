@@ -1647,12 +1647,17 @@ export const adminPersonalTasksApi = {
     }),
 }
 
-// 城市探索：打卡點關主
+// 城市探索：打卡點關主。
+// P1.5 縮小 List payload：GET /explore（列表）不再回傳挑戰面板專用的重欄位（quote/skill_name/skill_desc/
+// dialogue_intro/dialogue_start/segments/card_image_url/master_image_url，見後端 explore.go listCols）——
+// 這些欄位在此型別改為 optional，列表來源(ExploreScreen/track 的 exList)不會有值；點開挑戰面板時改用
+// exploreApi.detail() 或 Checkin 回應（皆回完整資料，此型別同時也代表那兩者的回應形狀）。
+// scene_image_url 例外：清單(ExploreScreen RevealCard)直接顯示此圖，仍是必填、清單就有值。
 export interface ExploreBoss {
   id: string; code: string; name: string; title: string; region: string; place: string
   gender: string; age: number; workout_label: string; difficulty_stars: number
-  quote: string; skill_name: string; skill_desc: string; dialogue_intro: string; dialogue_start: string
-  scene_image_url: string; card_image_url: string; master_image_url: string
+  quote?: string; skill_name?: string; skill_desc?: string; dialogue_intro?: string; dialogue_start?: string
+  scene_image_url: string; card_image_url?: string; master_image_url?: string
   lat: number; lng: number; radius_m: number
   reward_exp: number; reward_dp: number; retry_dp_cost: number
   // 打卡（每次成功打卡皆可能觸發，含重複打卡）DP/GP 隨機發放區間；完成挑戰依機率額外發放的 GP 區間，
@@ -1660,7 +1665,7 @@ export interface ExploreBoss {
   checkin_reward_dp_min?: number; checkin_reward_dp_max?: number
   checkin_reward_gp_min?: number; checkin_reward_gp_max?: number
   complete_reward_gp_min?: number; complete_reward_gp_max?: number; complete_reward_gp_chance?: number
-  workout_kind: string; segments: WorkoutSegment[] | null; data_source: string
+  workout_kind: string; segments?: WorkoutSegment[] | null; data_source: string
   display_order: number; enabled: boolean
   access_note: string
   checkin_only?: boolean // 純打卡點：無關主內容，其餘關主欄位留空
@@ -1693,6 +1698,9 @@ export const exploreApi = {
   list: (token: string) => request<{ bosses: ExploreBoss[]; checkin_daily_cap: number; checkin_daily_remaining: number }>('/explore', { headers: withAuth(token) }),
   // 卡片圖鑑專用輕量端點：只回圖鑑用到的 7 欄位、已排除純打卡點，取代原本打 /explore 全量列表（1.2MB→數十KB）。
   gallery: (token: string) => request<{ bosses: ExploreGalleryCard[] }>('/explore/gallery', { headers: withAuth(token) }),
+  // 單一關主完整 detail（含 List 拿掉的重欄位：segments/對話/金句/技能/card_image_url/master_image_url）。
+  // 點開挑戰面板（非剛打卡揭露、Checkin 回應已內含完整資料的情況）時呼叫，見 track/page.tsx openBossPanel。
+  detail: (token: string, id: string) => request<{ boss: ExploreBoss }>(`/explore/${id}`, { headers: withAuth(token) }),
   // 到打卡點打卡（可重複，同點 24h 冷卻、每日全站上限一般3/VIP5次）→ 通過才隨機發 DP/GP。
   // 揭露關主：一般點(checkin_only=false)回完整關主資料；純打卡點(checkin_only=true)不揭露、只回地點。
   // already=true 代表此點先前已揭露過（前端不應再自動彈出挑戰面板）；can_challenge 供「打卡/挑戰」二選一 UI；
