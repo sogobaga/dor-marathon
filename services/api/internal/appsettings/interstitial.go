@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -30,25 +32,67 @@ func scanAd(row interface {
 	return a, err
 }
 
+// interstitialCache 極短 TTL 的記憶體快取：蓋板廣告是全站共用、非個人化設定（不含使用者資料），
+// 快取安全。避免每次開 App 都對 Neon 兩段串行查詢（GetInt + SELECT），也順帶擋 Neon 冷啟動延遲被放大。
+const interstitialCacheTTL = 45 * time.Second
+
+var interstitialCache struct {
+	mu     sync.RWMutex
+	ads    []InterstitialAd
+	loadAt time.Time
+}
+
+// getCachedInterstitialAds 命中且未過期才回傳；未命中回傳 ok=false 由呼叫端查 DB 後回填。
+func getCachedInterstitialAds() ([]InterstitialAd, bool) {
+	interstitialCache.mu.RLock()
+	defer interstitialCache.mu.RUnlock()
+	if interstitialCache.loadAt.IsZero() || time.Since(interstitialCache.loadAt) >= interstitialCacheTTL {
+		return nil, false
+	}
+	return interstitialCache.ads, true
+}
+
+func setCachedInterstitialAds(ads []InterstitialAd) {
+	interstitialCache.mu.Lock()
+	interstitialCache.ads = ads
+	interstitialCache.loadAt = time.Now()
+	interstitialCache.mu.Unlock()
+}
+
+// invalidateInterstitialCache 後台改廣告後主動清快取，讓變更立即生效（不必等 TTL 到期）。
+func invalidateInterstitialCache() {
+	interstitialCache.mu.Lock()
+	interstitialCache.loadAt = time.Time{}
+	interstitialCache.mu.Unlock()
+}
+
 // PublicInterstitial 前台開啟時讀取要顯示的蓋板廣告（總開關開啟 + 該卡啟用 + 有圖）。
 func (h *Handler) PublicInterstitial(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=60") // 短 TTL：讓瀏覽器/CDN 也能省一趟往返
+	if ads, ok := getCachedInterstitialAds(); ok {
+		respondJSON(w, http.StatusOK, map[string]any{"ads": ads})
+		return
+	}
+
 	ctx := r.Context()
-	if GetInt(ctx, h.db, "interstitial_enabled", 0) != 1 {
-		respondJSON(w, http.StatusOK, map[string]any{"ads": []InterstitialAd{}})
-		return
-	}
-	rows, err := h.db.Query(ctx,
-		`SELECT `+adCols+` FROM interstitial_ads WHERE enabled AND image_url<>'' ORDER BY sort_order, created_at`)
-	if err != nil {
-		respondJSON(w, http.StatusOK, map[string]any{"ads": []InterstitialAd{}})
-		return
-	}
-	defer rows.Close()
 	ads := []InterstitialAd{}
-	for rows.Next() {
-		if a, err := scanAd(rows); err == nil {
-			ads = append(ads, a)
+	queryOK := true
+	if GetInt(ctx, h.db, "interstitial_enabled", 0) == 1 {
+		rows, err := h.db.Query(ctx,
+			`SELECT `+adCols+` FROM interstitial_ads WHERE enabled AND image_url<>'' ORDER BY sort_order, created_at`)
+		if err != nil {
+			queryOK = false // DB 暫時失敗：這次不快取，下次請求再試，避免把錯誤結果凍結 45 秒
+		} else {
+			defer rows.Close()
+			for rows.Next() {
+				if a, err := scanAd(rows); err == nil {
+					ads = append(ads, a)
+				}
+			}
 		}
+	}
+	if queryOK {
+		setCachedInterstitialAds(ads)
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"ads": ads})
 }
@@ -93,6 +137,7 @@ func (h *Handler) AdCreate(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	invalidateInterstitialCache()
 	respondJSON(w, http.StatusOK, map[string]any{"id": id})
 }
 
@@ -114,6 +159,7 @@ func (h *Handler) AdUpdate(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusNotFound, "not found")
 		return
 	}
+	invalidateInterstitialCache()
 	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -123,6 +169,7 @@ func (h *Handler) AdDelete(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	invalidateInterstitialCache()
 	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

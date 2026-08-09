@@ -18,6 +18,7 @@ export default function InterstitialAd() {
   const startXRef = useRef<number | null>(null)
   const draggingRef = useRef(false)
   const flyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const preloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const indexRef = useRef(0); indexRef.current = index
   const dontShowRef = useRef(false); dontShowRef.current = dontShow
 
@@ -33,9 +34,24 @@ export default function InterstitialAd() {
       try { sessionStorage.setItem(INTERSTITIAL_SEEN_KEY, '1') } catch { /* ignore */ } // 查過就標記，避免每次導航重打（含無廣告時）
       const list = (r.ads || []).filter((a) => a.image_url)
       if (!list.length) return
-      setAds(list); setOpen(true)
+      setAds(list)
+      // 先預載第一張圖再開遮罩，避免「遮罩先出現、圖片還在下載」時攤在使用者眼前的全黑空等。
+      // 保底：圖太慢或載入失敗最多等 1.5s 還是要開，不讓廣告卡住不出現。
+      const reveal = () => {
+        if (!alive) return
+        if (preloadTimerRef.current) { clearTimeout(preloadTimerRef.current); preloadTimerRef.current = null }
+        setOpen(true)
+      }
+      const pre = new Image()
+      pre.onload = reveal
+      pre.onerror = reveal
+      pre.src = list[0].image_url
+      preloadTimerRef.current = setTimeout(reveal, 1500)
     }).catch(() => { /* 取不到就不彈；下次導航再試 */ })
-    return () => { alive = false }
+    return () => {
+      alive = false
+      if (preloadTimerRef.current) { clearTimeout(preloadTimerRef.current); preloadTimerRef.current = null }
+    }
   }, [pathname])
 
   useEffect(() => () => { if (flyTimerRef.current) clearTimeout(flyTimerRef.current) }, [])
@@ -91,7 +107,15 @@ export default function InterstitialAd() {
           return (
             <div key={a.id || pos} style={{ ...cardWrap, zIndex: 10 - pos, transform, transition }} onPointerDown={isTop ? onDown : undefined}>
               <div style={polaroid}>
-                <div style={{ ...img, backgroundImage: `url("${a.image_url}")` }} draggable={false} />
+                <img
+                  src={a.image_url}
+                  alt={a.headline || ''}
+                  draggable={false}
+                  fetchPriority={isTop ? 'high' : 'auto'}
+                  decoding="async"
+                  style={img}
+                  onLoad={(e) => { e.currentTarget.style.opacity = '1' }}
+                />
                 <div style={caption}>
                   {a.headline && <div style={{ fontSize: 16, fontWeight: 900, color: '#2b2b2b', lineHeight: 1.35 }}>{a.headline}</div>}
                   {a.description && <div style={{ fontSize: 12, color: '#7a7a7a', marginTop: 3 }}>{a.description}</div>}
@@ -129,6 +153,6 @@ const overlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 2500
 const closeBtn: React.CSSProperties = { position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 14px)', right: 16, width: 38, height: 38, borderRadius: 999, border: '1px solid rgba(255,255,255,.28)', background: 'rgba(0,0,0,.35)', color: '#fff', fontSize: 16, cursor: 'pointer', zIndex: 20 }
 const cardWrap: React.CSSProperties = { position: 'absolute', inset: 0, willChange: 'transform' }
 const polaroid: React.CSSProperties = { width: '100%', height: '100%', background: '#fff', borderRadius: 14, padding: '12px 12px 0', boxShadow: '0 18px 50px rgba(0,0,0,.45)', display: 'flex', flexDirection: 'column' }
-const img: React.CSSProperties = { width: '100%', flex: 1, borderRadius: 7, backgroundColor: '#000', backgroundSize: 'cover', backgroundPosition: 'center', minHeight: 0 }
+const img: React.CSSProperties = { display: 'block', width: '100%', flex: 1, borderRadius: 7, backgroundColor: 'var(--bg-2)', objectFit: 'cover', objectPosition: 'center', minHeight: 0, opacity: 0, transition: 'opacity .25s ease' }
 const caption: React.CSSProperties = { padding: '14px 8px 18px', textAlign: 'center', flexShrink: 0 }
 const ctaBtn: React.CSSProperties = { marginTop: 8, background: 'none', border: 'none', color: '#3f6fb0', fontWeight: 800, fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }
