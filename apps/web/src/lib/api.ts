@@ -1677,9 +1677,22 @@ export const adminExploreApi = {
     request<{ ok: boolean }>(`/admin/explore/${id}/delete`, { method: 'POST', headers: withAuth(token) }),
 }
 
+// 卡片圖鑑輕量卡片（GET /explore/gallery）：只含 CardGalleryScreen 實際用到的欄位。已排除純打卡點；
+// 未取得卡 card_image_url 一律為空字串（前端本就只在 card_obtained 時渲染圖片）。
+export interface ExploreGalleryCard {
+  id: string
+  name: string
+  place: string
+  difficulty_stars: number
+  card_image_url: string
+  card_obtained: boolean
+}
+
 // 城市探索（前台）：啟用中的關主 + 我的進度 + 今日打卡剩餘次數（跨所有點加總）
 export const exploreApi = {
   list: (token: string) => request<{ bosses: ExploreBoss[]; checkin_daily_cap: number; checkin_daily_remaining: number }>('/explore', { headers: withAuth(token) }),
+  // 卡片圖鑑專用輕量端點：只回圖鑑用到的 7 欄位、已排除純打卡點，取代原本打 /explore 全量列表（1.2MB→數十KB）。
+  gallery: (token: string) => request<{ bosses: ExploreGalleryCard[] }>('/explore/gallery', { headers: withAuth(token) }),
   // 到打卡點打卡（可重複，同點 24h 冷卻、每日全站上限一般3/VIP5次）→ 通過才隨機發 DP/GP。
   // 揭露關主：一般點(checkin_only=false)回完整關主資料；純打卡點(checkin_only=true)不揭露、只回地點。
   // already=true 代表此點先前已揭露過（前端不應再自動彈出挑戰面板）；can_challenge 供「打卡/挑戰」二選一 UI；

@@ -190,6 +190,7 @@ func scanBoss(row interface{ Scan(...any) error }) (Boss, error) {
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.List)
+	r.Get("/gallery", h.Gallery)         // 卡片圖鑑輕量端點（只回圖鑑用到的欄位，見 Gallery）
 	r.Post("/{id}/checkin", h.Checkin)   // 到打卡點打卡 → 揭露關主
 	r.Post("/{id}/accept", h.Accept)     // 接受挑戰（扣 DP=難度×10）
 	r.Post("/{id}/complete", h.Complete) // 完成挑戰（得星、3★ 取卡）
@@ -267,6 +268,56 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		dailyRemaining = 0
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"bosses": out, "checkin_daily_cap": dailyCap, "checkin_daily_remaining": dailyRemaining})
+}
+
+// GalleryCard 卡片圖鑑輕量回應：只含圖鑑實際會用到的欄位（見 CardGalleryScreen.tsx）。
+type GalleryCard struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Place           string `json:"place"`
+	DifficultyStars int    `json:"difficulty_stars"`
+	CardImageURL    string `json:"card_image_url"`
+	CardObtained    bool   `json:"card_obtained"`
+}
+
+// Gallery GET /explore/gallery — 卡片圖鑑專用輕量端點：只 SELECT 圖鑑用到的欄位（id/name/place/
+// difficulty_stars/card_image_url/card_obtained），並在 SQL 排除純打卡點(checkin_only，無卡可收集，
+// 比照 CardGalleryScreen 原本的前端 filter)。沿用 List／maskBoss 的遮蔽規則：未揭露(discovered=false)
+// → name/difficulty_stars 遮蔽（place 維持顯示，與 /explore 一致）；card_image_url 更嚴格＝只有
+// card_obtained 才回傳（未取得卡一律顯示「？」佔位、前端本就不會拿圖網址，572 張卡的 URL 因此完全不佔傳輸）。
+func (h *Handler) Gallery(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		uid = "00000000-0000-0000-0000-000000000000"
+	}
+	rows, err := h.db.Query(r.Context(), `
+		SELECT b.id, b.name, b.place, b.difficulty_stars,
+		       CASE WHEN COALESCE(pr.card_obtained,FALSE) THEN b.card_image_url ELSE '' END,
+		       COALESCE(pr.card_obtained,FALSE), COALESCE(pr.discovered,FALSE), COALESCE(pr.stars,0)
+		FROM explore_bosses b
+		LEFT JOIN explore_progress pr ON pr.boss_id=b.id AND pr.user_id=$1
+		WHERE b.enabled AND NOT b.checkin_only
+		ORDER BY b.display_order, b.code`, uid)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer rows.Close()
+	out := []GalleryCard{}
+	for rows.Next() {
+		var c GalleryCard
+		var disc bool
+		var stars int
+		if err := rows.Scan(&c.ID, &c.Name, &c.Place, &c.DifficultyStars, &c.CardImageURL, &c.CardObtained, &disc, &stars); err != nil {
+			continue
+		}
+		// 已揭露＝已打卡(discovered) 或 已挑戰(stars>0) 或 已取得卡片；未揭露→遮蔽名稱/難度（比照 maskBoss）。
+		if !(disc || c.CardObtained || stars > 0) {
+			c.Name, c.DifficultyStars = "", 0
+		}
+		out = append(out, c)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"bosses": out})
 }
 
 type checkinReq struct {

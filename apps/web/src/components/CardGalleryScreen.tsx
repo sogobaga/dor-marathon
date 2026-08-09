@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
-import { exploreApi, type ExploreBoss } from '@/lib/api'
+import { exploreApi, type ExploreGalleryCard } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 
 // 卡片圖鑑：收集到的關主卡片。9 張/頁，未收集顯示灰底「？」，右上顯示已收集數（不給總數，卡片持續擴充）。
@@ -14,12 +14,12 @@ export default function CardGalleryScreen({ onBack, focusCardId }: { onBack: () 
   const uid = user?.id ?? null
   const { data } = useSWR(
     uid && getUserToken() ? ['explore-gallery', uid] : null,
-    () => withUserAuth((t) => exploreApi.list(t)).then((r) => r.bosses),
+    () => withUserAuth((t) => exploreApi.gallery(t)).then((r) => r.bosses),
   )
-  // 卡片圖鑑只呈現真關主，純打卡點（checkin_only）沒有卡片可收集，排除在卡格/總數之外。
-  const bosses = data ? (data as ExploreBoss[]).filter((b) => !b.checkin_only) : null
+  // 純打卡點（checkin_only）沒有卡片可收集，已在後端 /explore/gallery 排除，不需前端再篩一次。
+  const bosses = data ?? null
   const [page, setPage] = useState(0)
-  const [zoom, setZoom] = useState<ExploreBoss | null>(null)
+  const [zoom, setZoom] = useState<ExploreGalleryCard | null>(null)
   const [unlockingId, setUnlockingId] = useState<string | null>(null)
   const didFocus = useRef(false)
 
@@ -38,7 +38,7 @@ export default function CardGalleryScreen({ onBack, focusCardId }: { onBack: () 
   const collected = bosses ? bosses.filter((b) => b.card_obtained).length : 0
   const pages = bosses ? Math.max(1, Math.ceil(bosses.length / PER_PAGE)) : 1
   const cur = page >= pages ? 0 : page
-  const slots: (ExploreBoss | null)[] = bosses ? bosses.slice(cur * PER_PAGE, cur * PER_PAGE + PER_PAGE) : []
+  const slots: (ExploreGalleryCard | null)[] = bosses ? bosses.slice(cur * PER_PAGE, cur * PER_PAGE + PER_PAGE) : []
   while (slots.length < PER_PAGE) slots.push(null) // 補滿 3×3
 
   return (
@@ -79,7 +79,7 @@ export default function CardGalleryScreen({ onBack, focusCardId }: { onBack: () 
                             <div style={{ position: 'relative', width: '100%', height: '100%', transformStyle: 'preserve-3d', animation: 'cardReveal .85s ease-out' }}>
                               <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden', transform: 'rotateY(180deg)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-2)', fontSize: 34, fontWeight: 900, color: 'var(--tx-faint)' }}>？</div>
                               <div style={{ position: 'absolute', inset: 0, backfaceVisibility: 'hidden' }}>
-                                <img src={b.card_image_url || undefined} alt={b.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                <img src={b.card_image_url || undefined} alt={b.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                               </div>
                             </div>
                           </div>
@@ -87,7 +87,7 @@ export default function CardGalleryScreen({ onBack, focusCardId }: { onBack: () 
                         </>
                       ) : (
                         <button onClick={() => setZoom(b)} style={{ display: 'block', width: '100%', height: '100%', padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}>
-                          <img src={b.card_image_url || undefined} alt={b.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          <img src={b.card_image_url || undefined} alt={b.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         </button>
                       )
                     ) : b ? (
