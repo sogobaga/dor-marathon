@@ -97,6 +97,7 @@ export default function TrackPage() {
   const sheetYRef = useRef(0); sheetYRef.current = sheet.curY  // 面板頂端 y（＝可視地圖區高度）
   const followRef = useRef(true) // 地圖是否自動跟隨目前位置；使用者拖曳/縮放地圖後暫停，按「回到目前位置」恢復
   const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
+  const [autoLocating, setAutoLocating] = useState(false) // 進頁面「預熱」正在自動嘗試定位中（尚未拿到第一個座標/尚未逾時失敗）：期間顯示「定位中…」遮罩、隱藏「定位到我」CTA，避免使用者誤以為要手動按
   const [mileageCfg, setMileageCfg] = useState<MileageConfig | null>(null) // 里程獎勵設定（進度條/預覽）
   // 個人任務「結構化課表」執行（挑戰後帶到本頁跑）
   const [workout, setWorkout] = useState<{ taskId: string; title: string; steps: WoStep[]; kind: 'personal' | 'explore' | 'freetrain'; cardUrl?: string; freerunSec?: number } | null>(null)
@@ -170,10 +171,10 @@ export default function TrackPage() {
   const lastContributeAtRef = useRef(0) // 節流：至少間隔 6 秒才送一次
   const contributeBusyRef = useRef(false) // 避免同一時間疊加送出多個請求
 
-  const ensureMap = useCallback(async (lat: number, lng: number) => {
+  const ensureMap = useCallback(async (lat: number, lng: number, zoom = 16) => {
     const L = await loadLeaflet()
     if (mapRef.current) return
-    const map = L.map('gps-map', { zoomControl: true }).setView([lat, lng], 16)
+    const map = L.map('gps-map', { zoomControl: true }).setView([lat, lng], zoom)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map)
     lineRef.current = L.polyline([], { color: '#46E3A0', weight: 5 }).addTo(map)
     routeLineRef.current = L.polyline([], { color: '#FF8A3D', weight: 4, dashArray: '6 8', opacity: 0.9 }).addTo(map) // 建議路線（虛線橘）
@@ -268,7 +269,7 @@ export default function TrackPage() {
   // 而地圖過去只由 onPos→ensureMap 觸發 → 未授權/未定位時「地圖整個不顯示」（v0.1.423 後的回歸）。
   // 這裡在掛載時先用預設中心把地圖畫出來（不請求 GPS，保留不主動跳權限的行為）；GPS 一有位置
   //（onPos→ensureMap 為 no-op）會自動把畫面/標記移到實際位置。
-  useEffect(() => { ensureMap(25.0330, 121.5654) }, [ensureMap]) // 預設台北，避免無 GPS 時空白
+  useEffect(() => { ensureMap(23.8, 121.0, 7) }, [ensureMap]) // 中性視圖（台灣全島俯視、低 zoom）：避免無 GPS 時空白，也避免顯示看起來像真實定位的假地點（原本市政府座標會讓使用者誤以為已定位）；有 GPS 後 onPos→ensureMap 為 no-op，實際置中靠 onPos 內的 centerMap
 
   // 里程獎勵設定（進度條/預覽用）：進頁抓一次
   useEffect(() => {
@@ -301,10 +302,15 @@ export default function TrackPage() {
     let cancelled = false
     let watchId: number | null = null
     const geoOpts = { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 }
+    // 快取優先：接受最多 60 秒內的快取位置，能瞬間把地圖移到大致位置；隨後高精度 watch/一次性定位再收斂到精確點。
+    // 錯誤一律忽略（不彈錯、不影響後續 watch/正式定位）。
+    const quickOpts = { enableHighAccuracy: false, maximumAge: 60000, timeout: 8000 }
     const startWatch = () => {
+      setAutoLocating(true)
+      navigator.geolocation.getCurrentPosition((pos) => onPosRef.current(pos), () => { /* ignore：靠後面的 watch 收斂 */ }, quickOpts)
       watchId = navigator.geolocation.watchPosition(
-        (pos) => onPosRef.current(pos),
-        () => { /* 預熱失敗忽略；開始跑步時會在使用者手勢內再要求 */ },
+        (pos) => { onPosRef.current(pos); setAutoLocating(false) },
+        () => { setAutoLocating(false) /* 預熱失敗忽略；開始跑步時會在使用者手勢內再要求 */ },
         geoOpts,
       )
       warmWatchRef.current = watchId
@@ -323,13 +329,15 @@ export default function TrackPage() {
       // ③ 未確定（perm=null 或 perm.state==='prompt'）：
       if (!isIOS && perm) return // 非 iOS 且 perm 可靠偵測到「未授權」→ 維持 #5：進頁面不主動跳，等使用者按「定位到我」/「開始跑步」
       // iOS（permissions.query 不可靠）或完全偵測不到 → 進頁面做「一次」定位嘗試：允許者靜默成功自動定位、詢問者最多跳一次
+      // geoOpts 換成快取優先參數，讓它盡快回、靜默成功（成功一樣經 onPos 設 'dor:gps-authorized'）
+      setAutoLocating(true)
       navigator.geolocation.getCurrentPosition(
-        (pos) => { if (!cancelled) onPosRef.current(pos) }, // 成功 → onPos 會設 'dor:gps-authorized'，下次進來走 watch 預熱
-        (e) => { if (e?.code === 1) { try { localStorage.setItem('dor:gps-declined', '1') } catch { /* ignore */ } } },
-        geoOpts,
+        (pos) => { if (!cancelled) { onPosRef.current(pos); setAutoLocating(false) } },
+        (e) => { if (e?.code === 1) { try { localStorage.setItem('dor:gps-declined', '1') } catch { /* ignore */ } } setAutoLocating(false) },
+        quickOpts,
       )
     })()
-    return () => { cancelled = true; if (watchId != null) { try { navigator.geolocation.clearWatch(watchId) } catch { /* ignore */ } } warmWatchRef.current = null }
+    return () => { cancelled = true; if (watchId != null) { try { navigator.geolocation.clearWatch(watchId) } catch { /* ignore */ } } warmWatchRef.current = null; setAutoLocating(false) }
   }, [status])
 
   // 建立/重建正式追蹤的 geolocation watch（start() 與「回前景重接」共用）。先清舊 watch 再建新，
@@ -1450,9 +1458,18 @@ export default function TrackPage() {
       {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗） */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)' }} />
+        {/* 「定位中…」遮罩：進頁自動預熱定位期間（還沒拿到第一個座標）顯示，取代看起來像真實地點的假中心；
+            拿到 curPos 或逾時/失敗（autoLocating 轉 false）即消失。不擋操作。 */}
+        {status === 'idle' && !curPos && autoLocating && (
+          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 400, background: 'rgba(0,0,0,.55)', color: '#fff', padding: '8px 16px', borderRadius: 999, fontSize: 13, fontWeight: 700, pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: 6, boxShadow: '0 3px 12px rgba(0,0,0,.28)' }}>
+            定位中…
+          </div>
+        )}
         {/* 回到目前位置：手動看地圖後（暫停跟隨）→ 恢復置中；idle 尚未定位 → 點了在使用者手勢內請求一次定位。
-            顯示時機：非 done 且（已暫停跟隨 或 尚無定位）；正在自動跟隨且已有定位時地圖本就置中、不需此鈕故隱藏。 */}
-        {status !== 'done' && (!following || !curPos) && (
+            顯示時機：非 done 且（已暫停跟隨 或 尚無定位）；正在自動跟隨且已有定位時地圖本就置中、不需此鈕故隱藏。
+            另外：正在自動預熱定位中（autoLocating，上方遮罩已表達狀態）時不顯示這顆 CTA，避免使用者誤以為要手動按才會定位；
+            自動定位失敗/逾時/被拒/非 iOS 未授權需手勢等情況 autoLocating 為 false，仍會顯示讓使用者手動觸發。 */}
+        {status !== 'done' && (!following || !curPos) && !(status === 'idle' && !curPos && autoLocating) && (
           <button
             onClick={recenterMap}
             style={{ position: 'absolute', top: 12, right: 12, zIndex: 550, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '8px 13px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 3px 12px rgba(0,0,0,.28)' }}
