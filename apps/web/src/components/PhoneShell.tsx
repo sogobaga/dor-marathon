@@ -1,20 +1,11 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { useIsMobile } from '@/lib/useIsMobile'
 import RacesScreen from './RacesScreen'
-import RegistrationScreen from './RegistrationScreen'
 import ProfileScreen from './ProfileScreen'
-import PersonalTasksScreen from './PersonalTasksScreen'
-import ExploreScreen from './ExploreScreen'
-import CardGalleryScreen from './CardGalleryScreen'
-import TitleScreen from './TitleScreen'
-import AchievementScreen from './AchievementScreen'
-import TrainingScreen from './TrainingScreen'
-import PartnerPerksScreen from './PartnerPerksScreen'
-import MonopolyScreen from './MonopolyScreen'
 import TitleUnlockModal from './TitleUnlockModal'
-import RaceDetailScreen from './RaceDetailScreen'
 import GoogleAuthProvider from './GoogleAuthProvider'
 import VersionBadge from './VersionBadge'
 import MileageExpGate from './MileageExpGate'
@@ -24,6 +15,19 @@ import { useDashboard } from '@/lib/useDashboard'
 import { pageview } from '@/lib/analytics'
 import { profileApi, titleApi, racesApi, type Race } from '@/lib/api'
 import UpgradeVipModal from './UpgradeVipModal'
+
+// 非首屏必用的畫面 → code-split，減少首開 bundle（點了才載入對應 chunk）。
+// RacesScreen（首屏必用）與 ProfileScreen（登入後高機率立即用）保留靜態 import。
+const RegistrationScreen = dynamic(() => import('./RegistrationScreen'), { ssr: false })
+const PersonalTasksScreen = dynamic(() => import('./PersonalTasksScreen'), { ssr: false })
+const ExploreScreen = dynamic(() => import('./ExploreScreen'), { ssr: false })
+const CardGalleryScreen = dynamic(() => import('./CardGalleryScreen'), { ssr: false })
+const TitleScreen = dynamic(() => import('./TitleScreen'), { ssr: false })
+const AchievementScreen = dynamic(() => import('./AchievementScreen'), { ssr: false })
+const TrainingScreen = dynamic(() => import('./TrainingScreen'), { ssr: false })
+const PartnerPerksScreen = dynamic(() => import('./PartnerPerksScreen'), { ssr: false })
+const MonopolyScreen = dynamic(() => import('./MonopolyScreen'), { ssr: false })
+const RaceDetailScreen = dynamic(() => import('./RaceDetailScreen'), { ssr: false })
 
 // openEventSlug：廣告落地頁 /event/{slug} 傳入，開頁即直接顯示該活動簡章（見 app/event/[slug]/EventLanding.tsx）。
 // openShopId：合作商家專屬連結 /shop/{id} 傳入，開頁即直接顯示該商家詳細頁（見 app/shop/[id]/ShopLanding.tsx）。

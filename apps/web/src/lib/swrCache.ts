@@ -7,6 +7,7 @@ import type { Cache } from 'swr'
 const VER = process.env.NEXT_PUBLIC_APP_VERSION || 'dev'
 const KEY = 'dor:swr:v1'
 const VKEY = 'dor:swr:ver'
+const MAX_ENTRY = 100 * 1024 // 單一 entry 上限（bytes，以 JSON.stringify 後長度估算）
 
 type Entry = { data?: unknown }
 
@@ -28,7 +29,19 @@ export function swrLocalStorageProvider(): Cache {
   const save = () => {
     try {
       const entries: [string, Entry][] = []
-      map.forEach((v, k) => { if (v && v.data !== undefined) entries.push([k, { data: v.data }]) })
+      map.forEach((v, k) => {
+        if (!v || v.data === undefined) return
+        const json = JSON.stringify(v.data)
+        // 單一 entry 過大（例如某支 API 回傳整包大清單）就不持久化它，避免拖累 setItem 導致整包 all-or-nothing 失敗、
+        // 連小而高頻的 key（dashboard/races/site-settings）也跟著沒存成。該 key 只留記憶體快取，本次 session 內仍可用。
+        if (json.length > MAX_ENTRY) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn(`[swrCache] skip persisting oversized entry "${k}" (${json.length} bytes > ${MAX_ENTRY})`)
+          }
+          return
+        }
+        entries.push([k, { data: v.data }])
+      })
       localStorage.setItem(KEY, JSON.stringify(entries))
       localStorage.setItem(VKEY, VER)
     } catch { /* 空間滿 / 無痕 → 略過持久化，記憶體快取照常運作 */ }

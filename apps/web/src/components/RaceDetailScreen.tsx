@@ -107,9 +107,9 @@ export default function RaceDetailScreen({
   const battleMode = race.event_mode === 'competition' || race.event_mode === 'faction_battle'
   const defaultTab: Tab = race.display_status === 'racing' ? 'progress' : race.display_status === 'ended' ? 'rank' : 'brochure'
   const [tab, setTab] = useState<Tab>(initialTab ?? defaultTab)
-  // 是否有打卡點任務 → 決定是否顯示「探索」頁籤（與 ProgressBody 共用同一 SWR key，去重）
-  const { data: progData } = useSWR(['progress', race.id], () => racesApi.progress(race.id, token))
-  const hasCheckpoints = (progData?.progress.tasks ?? []).some((t) => t.metric_type === 'checkpoint')
+  // 是否有打卡點任務 → 決定是否顯示「探索」頁籤。改由已載入的 detail.tasks 算，不再額外打一支只為此用途的 progress 查詢
+  // （後端 progress 會掃全體報名者活動、未聚合，很重；進度分頁本身的資料由下方 ProgressBody 內建的 SWR 負責，未受影響）。
+  const hasCheckpoints = (detail?.tasks ?? []).some((t) => t.metric_type === 'checkpoint')
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
