@@ -71,6 +71,7 @@ export default function TrackPage() {
   const routeLineRef = useRef<any>(null) // 建議路線 polyline（虛線橘）
   const [cpBusy, setCpBusy] = useState('') // 正在打卡的 checkpoint id
   const [cpMsg, setCpMsg] = useState('')
+  const [exChecked, setExChecked] = useState<Set<string>>(new Set()) // 本 session 已成功打卡的城市探索點 id（重進頁/重抓列表後回復，冷卻後仍能再打）
   // 事件任務（日常隨機）
   const [eventDefs, setEventDefs] = useState<EventDef[]>([])
   const [activeEvent, setActiveEvent] = useState<ActiveEvent | null>(null)
@@ -1309,6 +1310,7 @@ export default function TrackPage() {
         return
       }
       await fetchExplore()
+      setExChecked(prev => { const n = new Set(prev); n.add(b.id); return n }) // 走到這裡代表 r.ok===true（早退的失敗已在上面 return），本 session 標記已打卡
       const rewardMsg = (r.dp_awarded || r.gp_awarded) ? `　獲得 DP+${r.dp_awarded ?? 0} GP+${r.gp_awarded ?? 0}（今日打卡剩餘 ${r.daily_remaining ?? 0} 次）` : ''
       if (r.checkin_only) {
         // 純打卡點：不揭露關主，僅行內訊息提示（可重複打卡刷 DP/GP，過冷卻即可再打）
@@ -1654,6 +1656,7 @@ export default function TrackPage() {
                 const d = exDist(b)
                 const inRange = d != null && d <= (b.radius_m || 40)
                 const busy = cpBusy === 'ex:' + b.id
+                const checked = exChecked.has(b.id) // 本 session 已成功打卡（反灰＋顯示「已打卡」；冷卻後重進頁可再打）
                 const title = b.discovered ? ([b.name, b.place].filter(Boolean).join(' ｜ ') || '關主挑戰') : (b.place || '神秘打卡點')
                 return (
                   <div key={'ex:' + b.id} style={{ background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: '10px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, border: b.discovered ? '1px solid rgba(231,184,75,.45)' : '1px solid transparent' }}>
@@ -1672,9 +1675,9 @@ export default function TrackPage() {
                       {/* 打卡：純打卡點固定顯示；一般關主點在已揭露後仍可重複按（拿 DP/GP，24h 冷卻+每日上限），
                           不會再次觸發挑戰面板（active 短路，只擋自動彈窗，不擋打卡本身）*/}
                       {(b.checkin_only || b.discovered) && (
-                        <button onClick={() => doExploreCheckin(b)} disabled={busy || (curPos != null && !inRange)}
-                          style={{ background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 12px', fontSize: 13, cursor: (busy || (curPos != null && !inRange)) ? 'default' : 'pointer', opacity: (busy || (curPos != null && !inRange)) ? 0.45 : 1 }}>
-                          {busy ? '打卡中…' : curPos != null && !inRange ? '未到範圍' : '打卡'}
+                        <button onClick={() => doExploreCheckin(b)} disabled={busy || checked || (curPos != null && !inRange)}
+                          style={{ background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 12px', fontSize: 13, cursor: (checked || busy || (curPos != null && !inRange)) ? 'default' : 'pointer', opacity: (checked || busy || (curPos != null && !inRange)) ? 0.45 : 1 }}>
+                          {checked ? '已打卡' : busy ? '打卡中…' : curPos != null && !inRange ? '未到範圍' : '打卡'}
                         </button>
                       )}
                       {!b.checkin_only && b.discovered && (
@@ -1684,9 +1687,9 @@ export default function TrackPage() {
                         </button>
                       )}
                       {!b.checkin_only && !b.discovered && (
-                        <button onClick={() => doExploreCheckin(b)} disabled={busy || (curPos != null && !inRange)}
-                          style={{ background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: (busy || (curPos != null && !inRange)) ? 'default' : 'pointer', opacity: (busy || (curPos != null && !inRange)) ? 0.45 : 1 }}>
-                          {busy ? '打卡中…' : curPos != null && !inRange ? '未到範圍' : '打卡'}
+                        <button onClick={() => doExploreCheckin(b)} disabled={busy || checked || (curPos != null && !inRange)}
+                          style={{ background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: (checked || busy || (curPos != null && !inRange)) ? 'default' : 'pointer', opacity: (checked || busy || (curPos != null && !inRange)) ? 0.45 : 1 }}>
+                          {checked ? '已打卡' : busy ? '打卡中…' : curPos != null && !inRange ? '未到範圍' : '打卡'}
                         </button>
                       )}
                     </div>
