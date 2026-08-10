@@ -1071,13 +1071,18 @@ func (r *Repository) GetStandings(ctx context.Context, raceID string) ([]GroupSt
 	return standings, rows.Err()
 }
 
-// GetUserRegistrations 取得使用者所有報名的精簡狀態（race_id → 狀態），供賽事列表附帶
+// GetUserRegistrations 取得使用者所有報名的精簡狀態（race_id → 狀態），供賽事列表附帶。
+// 個人挑戰模式(personal)可重複報名再挑戰，同一 (user_id,race_id) 可能有多筆歷史 attempt；
+// 用 DISTINCT ON 每場賽事只取一筆：優先「進行中」(pending/paid)，沒有進行中則取最近一筆
+// （completed/expired/cancelled 皆可），與 GetRegistration 的排序邏輯一致。非 personal 賽事
+// 本來就至多一筆進行中報名，此排序等價於原本行為。
 func (r *Repository) GetUserRegistrations(ctx context.Context, userID string) (map[string]MyRegLite, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT reg.race_id, reg.status, reg.group_revealed, COALESCE(g.name,'')
+		`SELECT DISTINCT ON (reg.race_id) reg.race_id, reg.status, reg.group_revealed, COALESCE(g.name,'')
 		 FROM registrations reg
 		 LEFT JOIN race_groups g ON g.id = reg.group_id
-		 WHERE reg.user_id=$1`, userID)
+		 WHERE reg.user_id=$1
+		 ORDER BY reg.race_id, (reg.status IN ('pending','paid')) DESC, reg.created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get user registrations: %w", err)
 	}
@@ -1097,11 +1102,16 @@ func (r *Repository) GetUserRegistrations(ctx context.Context, userID string) (m
 
 // GetUserGroupID 取得使用者在某賽事「未取消」報名的分組 id（無報名/未分組/報名已取消回空字串）。
 // 退款/取消後可重新報名同一賽事（migration 093），同一組 (user_id, race_id) 可能有多筆歷史紀錄，
-// 排除 cancelled 避免抓到舊的、已作廢的分組。
+// 排除 cancelled 避免抓到舊的、已作廢的分組。個人挑戰模式(personal)還可能累積多筆 completed/expired
+// 歷史 attempt，用 ORDER BY 取「進行中優先、否則最近一筆」，避免 QueryRow 在多列結果下拿到不確定的列
+// （非 personal 賽事至多一筆非 cancelled 列，此排序不改變既有行為）。
 func (r *Repository) GetUserGroupID(ctx context.Context, userID, raceID string) (string, error) {
 	var gid *string
 	err := r.db.QueryRow(ctx,
-		`SELECT group_id::text FROM registrations WHERE user_id=$1 AND race_id=$2 AND status <> 'cancelled'`,
+		`SELECT group_id::text FROM registrations
+		 WHERE user_id=$1 AND race_id=$2 AND status <> 'cancelled'
+		 ORDER BY (status IN ('pending','paid')) DESC, created_at DESC
+		 LIMIT 1`,
 		userID, raceID).Scan(&gid)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
@@ -1273,6 +1283,33 @@ func (r *Repository) GetRegistration(ctx context.Context, userID, raceID string)
 	return reg, nil
 }
 
+// HasActiveRegistration 是否存在「進行中」(pending/paid未完成) 的報名——個人挑戰模式(personal)的
+// 重複報名閘門用。與 GetRegistration 不同：completed/expired/cancelled 都不算進行中，不會擋下再報名
+// （個人挑戰模式可重複報名再挑戰，見 migration 124）。
+func (r *Repository) HasActiveRegistration(ctx context.Context, userID, raceID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM registrations WHERE user_id=$1 AND race_id=$2 AND status IN ('pending','paid'))`,
+		userID, raceID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("has active registration: %w", err)
+	}
+	return exists, nil
+}
+
+// NextAttemptNo 取得使用者在此賽事的下一次挑戰次數（個人挑戰模式(personal)用；首次挑戰回 1）。
+// 呼叫端須先以 HasActiveRegistration 確認沒有進行中的 attempt，否則交易層唯一索引仍會擋下重複報名。
+func (r *Repository) NextAttemptNo(ctx context.Context, userID, raceID string) (int, error) {
+	var next int
+	err := r.db.QueryRow(ctx,
+		`SELECT COALESCE(MAX(attempt_no),0)+1 FROM registrations WHERE user_id=$1 AND race_id=$2`,
+		userID, raceID).Scan(&next)
+	if err != nil {
+		return 0, fmt.Errorf("next attempt no: %w", err)
+	}
+	return next, nil
+}
+
 // CreateRegistration 新增報名記錄
 func (r *Repository) CreateRegistration(ctx context.Context, reg *Registration) (*Registration, error) {
 	var id string
@@ -1290,8 +1327,14 @@ func (r *Repository) CreateRegistration(ctx context.Context, reg *Registration) 
 
 // RegisterTxInput 報名交易輸入（service 已完成登入/必填/性別年齡驗證）
 type RegisterTxInput struct {
-	UserID        string
-	RaceID        string
+	UserID string
+	RaceID string
+	// EventMode：race.EventMode 原樣傳入，供本函式判斷唯一鍵衝突時要 map 成哪種友善錯誤
+	// （personal→ErrChallengeInProgress，其餘→ErrAlreadyRegistered），以及是否要在 0 元自動 paid
+	// 時順便設 challenge_started_at。
+	EventMode string
+	// AttemptNo 這是使用者在此賽事的第幾次挑戰（personal 由 service.NextAttemptNo 算出；非 personal 恆 1）。
+	AttemptNo     int
 	GroupID       string
 	GroupKey      string
 	EntryFee      int
@@ -1465,18 +1508,30 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		Distance: in.Distance, GroupRevealed: in.GroupRevealed,
 		Status: regStatus, Amount: payable,
 	}
+	// personalPaidNow：個人挑戰模式 0 元自動 paid 的報名，起算挑戰時間戳（付款完成當下＝報名當下）。
+	// 一般走金流的個人挑戰報名此刻仍是 pending，challenge_started_at 留 NULL，改由 MarkOrderPaid 在
+	// 付款成功那刻補上（見該函式註解）。
+	personalPaidNow := in.EventMode == "personal" && paid
 	err = tx.QueryRow(ctx, `
 		INSERT INTO registrations
 			(user_id, race_id, group_id, distance, status, amount,
-			 group_revealed, snap_real_name, snap_phone, snap_address, paid_at)
+			 group_revealed, snap_real_name, snap_phone, snap_address, paid_at,
+			 attempt_no, challenge_started_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),NULLIF($9,''),NULLIF($10,''),
-		        CASE WHEN $11 THEN NOW() ELSE NULL END)
+		        CASE WHEN $11 THEN NOW() ELSE NULL END,
+		        $12, CASE WHEN $13 THEN NOW() ELSE NULL END)
 		RETURNING id`,
 		in.UserID, in.RaceID, in.GroupID, in.Distance, regStatus, payable, in.GroupRevealed,
 		in.Participant.RealName, in.Participant.Phone, in.Participant.Address, paid,
+		in.AttemptNo, personalPaidNow,
 	).Scan(&reg.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
+			// 交易層最後防線（uq_registrations_active_user_race）：與 service.Register 的 app 層閘門
+			// 對應同一組錯誤語意——personal 是「有進行中挑戰」，其餘是「已報名」。
+			if in.EventMode == "personal" {
+				return nil, ErrChallengeInProgress
+			}
 			return nil, ErrAlreadyRegistered
 		}
 		return nil, fmt.Errorf("insert registration: %w", err)
@@ -1858,7 +1913,17 @@ func (r *Repository) MarkOrderPaid(ctx context.Context, orderID, paymentRef stri
 		return fmt.Errorf("mark order paid: %w", err)
 	}
 	if regID != nil {
-		if _, err = tx.Exec(ctx, `UPDATE registrations SET status='paid', paid_at=NOW() WHERE id=$1 AND status='pending'`, *regID); err != nil {
+		// 個人挑戰模式(personal)：付款成功＝挑戰起算點，順便設 challenge_started_at（若尚未設，冪等）。
+		// CAS 閘門仍是 reg.status='pending'（與原本行為一致），JOIN races 只用來判斷 event_mode，
+		// 不影響這條 UPDATE 的原子性/重放安全性。
+		if _, err = tx.Exec(ctx, `
+			UPDATE registrations reg SET status='paid', paid_at=NOW(),
+				challenge_started_at = CASE
+					WHEN r.event_mode='personal' AND reg.challenge_started_at IS NULL THEN NOW()
+					ELSE reg.challenge_started_at
+				END
+			FROM races r
+			WHERE reg.id=$1 AND reg.status='pending' AND r.id = reg.race_id`, *regID); err != nil {
 			return fmt.Errorf("mark reg paid: %w", err)
 		}
 	}

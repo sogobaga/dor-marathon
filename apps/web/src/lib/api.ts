@@ -32,6 +32,23 @@ export interface ChallengeRule {
   single_km?: number      // window_cumulative：至少一趟里程(km，選填)／single_distance：單趟里程(km，必填)
 }
 
+// formatChallengeRule 把個人挑戰規則組成人看得懂的一句話（報名頁/賽事詳情頁共用）。
+export function formatChallengeRule(rule?: ChallengeRule | null): string {
+  if (!rule) return ''
+  switch (rule.completion_type) {
+    case 'streak_days':
+      return `連續 ${rule.days ?? 0} 天，每天累積跑步里程 ≥ ${rule.min_km_per_day ?? 0} km`
+    case 'window_cumulative': {
+      const base = `${rule.window_days ?? 0} 天內累積跑步里程 ≥ ${rule.cum_km ?? 0} km`
+      return rule.single_km && rule.single_km > 0 ? `${base}，且其中至少一趟單次里程 ≥ ${rule.single_km} km` : base
+    }
+    case 'single_distance':
+      return `單次跑步里程 ≥ ${rule.single_km ?? 0} km`
+    default:
+      return ''
+  }
+}
+
 export interface Race {
   id: string
   slug: string

@@ -481,6 +481,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusConflict, "報名未開放")
 	case errors.Is(err, ErrAlreadyRegistered):
 		respondErr(w, http.StatusConflict, "您已報名此賽事")
+	case errors.Is(err, ErrChallengeInProgress):
+		respondErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrRegistrationPaused):
 		respondErr(w, http.StatusConflict, "此賽事目前暫停報名")
 	case errors.Is(err, ErrVIPOnly):

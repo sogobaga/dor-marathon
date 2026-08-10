@@ -6,6 +6,7 @@ import {
   profileApi,
   paymentsApi,
   METRIC_BY_KEY,
+  formatChallengeRule,
   type Race,
   type RaceDetail,
   type RaceGroup,
@@ -138,6 +139,10 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
 
   const loggedIn = !!useUser()
   const isBattle = race.event_mode === 'faction_battle'
+  const isPersonal = race.event_mode === 'personal'
+  // 個人挑戰模式可重複報名再挑戰：只有「進行中」(pending/paid未完成) 的舊 attempt 才視為擋下再報名；
+  // completed/expired/cancelled 的歷史報名不算，仍應顯示報名表單（見後端 service.Register 對稱邏輯）。
+  const inProgress = !!existing && (existing.status === 'pending' || existing.status === 'paid')
 
   useEffect(() => {
     const hasToken = !!getUserToken()
@@ -303,11 +308,11 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
 
   async function submit() {
     setErr('')
-    if (!isBattle && !groupId) {
+    if (!isBattle && !isPersonal && !groupId) {
       setErr('請選擇分組')
       return
     }
-    if (!isBattle && selectedGroup?.requires_key && !groupKey.trim()) {
+    if (!isBattle && !isPersonal && selectedGroup?.requires_key && !groupKey.trim()) {
       setErr('此分組需要「跑團鑰匙」才能報名')
       return
     }
@@ -344,8 +349,8 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         .map(([addon_id, q]) => ({ addon_id, qty: q }))
       const res = await withUserAuth((token) =>
         racesApi.register(race.id, token, {
-          group_id: isBattle ? undefined : groupId,
-          group_key: !isBattle && selectedGroup?.requires_key ? groupKey.trim() : undefined,
+          group_id: isBattle || isPersonal ? undefined : groupId,
+          group_key: !isBattle && !isPersonal && selectedGroup?.requires_key ? groupKey.trim() : undefined,
           addons,
           participant,
           invoice,
@@ -359,6 +364,8 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
       // 防線：即使前端 gate 被繞過（如直連），後端 403 {error:"vip_only"} 一樣擋下並顯示同一提示
       if (e instanceof SessionExpiredError) setErr('登入已過期，請回上一頁重新登入')
       else if (e?.status === 403 && e?.message === 'vip_only') setErr('VIP專屬活動。')
+      // 個人挑戰模式：有進行中的舊 attempt 才會擋（後端 409 ErrChallengeInProgress）
+      else if (e?.status === 409 && e?.message === '你有進行中的挑戰，完成後才能再報名') setErr('你有進行中的挑戰，完成後才能再報名')
       else setErr(e?.message || '報名失敗')
     } finally {
       setSubmitting(false)
@@ -443,11 +450,18 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         {!loading && loggedIn && done && (
           <div style={card}>
             <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--fug)' }}>
-              ✓ 報名完成{done.paid ? '' : ' · 待繳費'}
+              ✓ {isPersonal ? '挑戰已建立' : '報名完成'}{done.paid ? '' : ' · 待繳費'}
             </div>
-            <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 8 }}>
-              {done.revealed ? `分組：${done.group}` : '已隨機分組，賽事當天公布所屬分組'}
-            </div>
+            {!isPersonal && (
+              <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 8 }}>
+                {done.revealed ? `分組：${done.group}` : '已隨機分組，賽事當天公布所屬分組'}
+              </div>
+            )}
+            {isPersonal && (
+              <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 8 }}>
+                {done.paid ? '挑戰即刻起算' : '完成繳費後開始起算挑戰'}
+              </div>
+            )}
             <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 4 }}>
               {done.paid ? '已使用優惠序號 0 元完成，無需付款' : `應繳金額：${ntd(done.payable)}`}
             </div>
@@ -460,17 +474,22 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
           </div>
         )}
 
-        {!loading && loggedIn && !done && existing && (
+        {!loading && loggedIn && !done && inProgress && existing && (
           <div style={card}>
-            <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--tx)' }}>您已報名此賽事</div>
-            <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 8 }}>
-              狀態：{existing.status === 'paid' ? '已完成' : '待繳費'}
-              {existing.group_revealed === false ? '（分組賽事當天公布）' : ''}
+            <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--tx)' }}>
+              {isPersonal ? '你有進行中的挑戰' : '您已報名此賽事'}
             </div>
+            <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 8 }}>
+              狀態：{existing.status === 'paid' ? (isPersonal ? '挑戰中' : '已完成') : '待繳費'}
+              {!isPersonal && existing.group_revealed === false ? '（分組賽事當天公布）' : ''}
+            </div>
+            {isPersonal && (
+              <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 6 }}>完成這次挑戰後才能再次報名挑戰。</div>
+            )}
           </div>
         )}
 
-        {!loading && loggedIn && !done && !existing && detail && (
+        {!loading && loggedIn && !done && !inProgress && detail && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             {/* 追蹤的跑者也報名了 */}
             {recommends.length > 0 && (
@@ -492,7 +511,18 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               </div>
             )}
 
+            {/* 個人挑戰模式：沒有「選分組」的概念，改顯示挑戰規則（後端自動指派隱藏預設分組） */}
+            {isPersonal && (
+              <Section title="挑戰規則">
+                <div style={{ ...groupRow, cursor: 'default', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)' }}>{formatChallengeRule(detail.challenge_rule)}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>報名成功並完成繳費後即開始起算挑戰；達成規則即完成一次，完成後可再次報名挑戰。</div>
+                </div>
+              </Section>
+            )}
+
             {/* 分組（分組選擇置頂） */}
+            {!isPersonal && (
             <Section title="選擇分組">
               {isBattle ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -586,6 +616,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                 </div>
               )}
             </Section>
+            )}
 
             {/* 賽事集體任務（全體參賽者）+ 所有分組共同任務（移到集體任務下方） */}
             {(collectiveTasks.length > 0 || hasAllGroupsTasks) && (
@@ -790,7 +821,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
 
             {err && <div style={{ color: 'var(--hunt)', fontSize: 13 }}>{err}</div>}
             <button onClick={submit} disabled={submitting} style={primaryBtn}>
-              {submitting ? '送出中…' : isBattle ? '立即報名 – 隨機分組' : '確認報名'}
+              {submitting ? '送出中…' : isPersonal ? '報名挑戰' : isBattle ? '立即報名 – 隨機分組' : '確認報名'}
             </button>
             <div style={{ fontSize: 11, color: 'var(--tx-faint)', textAlign: 'center', lineHeight: 1.6 }}>
               送出即保留名額，狀態為「待繳費」。<br />

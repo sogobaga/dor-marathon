@@ -54,8 +54,12 @@ func checkAddonQty(qty int) error {
 }
 
 var (
-	ErrRaceNotFound         = errors.New("race not found")
-	ErrAlreadyRegistered    = errors.New("already registered for this race")
+	ErrRaceNotFound      = errors.New("race not found")
+	ErrAlreadyRegistered = errors.New("already registered for this race")
+	// ErrChallengeInProgress 個人挑戰模式(event_mode=personal)專用：使用者已有一筆進行中(pending/paid未完成)
+	// 的挑戰 attempt，需完成或到期後才能再次報名同一賽事。與 ErrAlreadyRegistered 不同之處在於
+	// completed/expired/cancelled 的舊 attempt 不會擋下新報名（見 Register 的 personal 分支）。
+	ErrChallengeInProgress  = errors.New("你有進行中的挑戰，完成後才能再報名")
 	ErrRegistrationClosed   = errors.New("registration is not open")
 	ErrSoldOut              = errors.New("race is sold out")
 	ErrInvalidDistance      = errors.New("invalid distance for this race")
@@ -372,12 +376,31 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		return nil, ErrRegistrationClosed
 	}
 
-	// 重複報名先擋（交易內的 partial unique index WHERE status<>'cancelled' 仍是最終保證）。
-	// 已取消（含退款後取消）的舊報名不算數，允許重新報名同一賽事（見 migration 093）。
-	if existing, err := s.repo.GetRegistration(ctx, req.UserID, req.RaceID); err != nil {
-		return nil, err
-	} else if existing != nil && existing.Status != "cancelled" {
-		return nil, ErrAlreadyRegistered
+	// 重複報名 / 再挑戰閘門（交易內的 partial unique index uq_registrations_active_user_race 仍是最終保證，
+	// 見 RegisterWithOrder 對 23505 衝突的 mapping）。依賽事模式行為不同：
+	attemptNo := 1
+	if race.EventMode == "personal" {
+		// 個人挑戰模式：可重複報名再挑戰，只有「進行中」(pending/paid未完成) 的 attempt 才擋下新報名；
+		// completed/expired/cancelled 的舊 attempt 都不算數（見 migration 124 唯一索引已放寬）。
+		active, err := s.repo.HasActiveRegistration(ctx, req.UserID, req.RaceID)
+		if err != nil {
+			return nil, err
+		}
+		if active {
+			return nil, ErrChallengeInProgress
+		}
+		attemptNo, err = s.repo.NextAttemptNo(ctx, req.UserID, req.RaceID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// 非 personal：維持原邏輯不變——已取消（含退款後取消）的舊報名不算數，允許重新報名同一賽事
+		// （見 migration 093）；其餘（pending/paid）狀態一律擋下。
+		if existing, err := s.repo.GetRegistration(ctx, req.UserID, req.RaceID); err != nil {
+			return nil, err
+		} else if existing != nil && existing.Status != "cancelled" {
+			return nil, ErrAlreadyRegistered
+		}
 	}
 
 	groups, err := s.repo.GetGroups(ctx, req.RaceID)
@@ -391,10 +414,15 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 	// 決定分組
 	var chosen *RaceGroup
 	revealed := true
-	if race.EventMode == "faction_battle" {
+	switch race.EventMode {
+	case "faction_battle":
 		chosen = pickBalancedGroup(groups) // 隨機/平衡指派
 		revealed = false                   // 賽事當天才公布
-	} else {
+	case "personal":
+		// 個人挑戰模式沒有「選分組」的概念：P1 建賽事(ensurePersonalDefaultGroup)時已自動補一筆
+		// 隱藏預設分組（唯一分組），所有挑戰者實質上共用它，前端不顯示分組選擇 UI，這裡直接取第一筆。
+		chosen = &groups[0]
+	default:
 		if req.GroupID == "" {
 			return nil, ErrGroupRequired
 		}
@@ -432,6 +460,8 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 	return s.repo.RegisterWithOrder(ctx, RegisterTxInput{
 		UserID:        req.UserID,
 		RaceID:        req.RaceID,
+		EventMode:     race.EventMode,
+		AttemptNo:     attemptNo,
 		GroupID:       chosen.ID,
 		GroupKey:      strings.TrimSpace(req.GroupKey),
 		EntryFee:      race.EntryFee,

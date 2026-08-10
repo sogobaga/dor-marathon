@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { racesApi, followApi, METRIC_BY_KEY, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
+import { racesApi, followApi, METRIC_BY_KEY, formatChallengeRule, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useScrollLock } from '@/lib/useScrollLock'
@@ -109,6 +109,10 @@ export default function RaceDetailScreen({
   const started = race.display_status === 'racing' || race.display_status === 'ended'
   // 競賽/分組對抗才有「當天揭曉分組＋分組戰報」；一般模式分組直接顯示
   const battleMode = race.event_mode === 'competition' || race.event_mode === 'faction_battle'
+  const isPersonal = race.event_mode === 'personal'
+  // 個人挑戰模式可重複報名再挑戰：只有「進行中」(pending/paid未完成) 的 attempt 才算擋下再報名；
+  // completed/expired/cancelled 的歷史報名應可再次顯示「報名挑戰」按鈕（與 RegistrationScreen 對稱）。
+  const inProgress = !!registration && (registration.status === 'pending' || registration.status === 'paid')
   const defaultTab: Tab = race.display_status === 'racing' ? 'progress' : race.display_status === 'ended' ? 'rank' : 'brochure'
   const [tab, setTab] = useState<Tab>(initialTab ?? defaultTab)
   // 是否有打卡點任務 → 決定是否顯示「探索」頁籤。改由已載入的 detail.tasks 算，不再額外打一支只為此用途的 progress 查詢
@@ -146,7 +150,7 @@ export default function RaceDetailScreen({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={statusBadge}>{STATUS_LABEL[race.display_status] ?? race.display_status}</span>
             <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
-              {race.event_mode === 'competition' ? '競賽' : race.event_mode === 'faction_battle' ? '分組對抗' : '一般'}
+              {race.event_mode === 'competition' ? '競賽' : race.event_mode === 'faction_battle' ? '分組對抗' : isPersonal ? '個人挑戰' : '一般'}
             </span>
             {race.vip_only && <span style={vipBadge}>✦ VIP專屬</span>}
           </div>
@@ -155,8 +159,18 @@ export default function RaceDetailScreen({
             <Row k="賽事期間" v={`${fmt(race.start_date)} – ${fmt(race.end_date)}`} />
           </div>
 
-          {/* 我的分組（競賽/分組對抗：當天揭曉＋戰報；一般：直接顯示分組） */}
-          {registration && (battleMode || registration.group_name) && (
+          {/* 個人挑戰模式：挑戰內容（組人話規則說明） */}
+          {isPersonal && (detail?.challenge_rule || race.challenge_rule) && (
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+              <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>挑戰內容</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>
+                {formatChallengeRule(detail?.challenge_rule ?? race.challenge_rule)}
+              </div>
+            </div>
+          )}
+
+          {/* 我的分組（競賽/分組對抗：當天揭曉＋戰報；一般：直接顯示分組；個人挑戰無分組概念，不顯示） */}
+          {!isPersonal && registration && (battleMode || registration.group_name) && (
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
               <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>我的分組</div>
               {battleMode ? (
@@ -182,11 +196,17 @@ export default function RaceDetailScreen({
           )}
 
           {/* 報名按鈕 / 已報名（修正：不再多一層） */}
+          {/* 個人挑戰模式：只有「進行中」的 attempt 才顯示「挑戰進行中」，completed/expired/cancelled 的
+              舊 attempt 都應回到可再報名的按鈕（見 inProgress 計算）。 */}
           <div style={{ marginTop: 14 }}>
-            {registration ? (
-              <div style={registeredBox}>✓ 你已報名此賽事{registration.status === 'pending' ? '（待繳費）' : registration.status === 'paid' ? '（已完成）' : ''}</div>
+            {inProgress && registration ? (
+              <div style={registeredBox}>
+                {isPersonal
+                  ? `挑戰進行中${registration.status === 'pending' ? '（待繳費）' : ''}`
+                  : `✓ 你已報名此賽事${registration.status === 'pending' ? '（待繳費）' : registration.status === 'paid' ? '（已完成）' : ''}`}
+              </div>
             ) : detail?.can_register && onRegister ? (
-              <button onClick={handleRegisterClick} style={registerBtn}>立即報名</button>
+              <button onClick={handleRegisterClick} style={registerBtn}>{isPersonal ? '報名挑戰' : '立即報名'}</button>
             ) : null}
           </div>
 
