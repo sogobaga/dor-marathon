@@ -17,7 +17,7 @@ const DISPLAY_LABEL: Record<string, string> = {
   paused: '暫停報名', suspended: '賽事中止',
 }
 const MODE_LABEL: Record<string, string> = {
-  general: '一般', competition: '競賽', faction_battle: '分組對抗',
+  general: '一般', competition: '競賽', faction_battle: '分組對抗', personal: '個人挑戰',
 }
 
 function fmtDate(s?: string | null) {

@@ -18,8 +18,19 @@ export interface User {
   total_km: number
 }
 
-export type EventMode = 'general' | 'competition' | 'faction_battle'
+export type EventMode = 'general' | 'competition' | 'faction_battle' | 'personal'
 export type GoalType = 'cumulative' | 'distance'
+
+// --- 個人挑戰模式（event_mode=personal）規則（見後端 race.ChallengeRule） ---
+export type CompletionType = 'streak_days' | 'window_cumulative' | 'single_distance'
+export interface ChallengeRule {
+  completion_type: CompletionType
+  days?: number           // streak_days：連續天數
+  min_km_per_day?: number // streak_days：每天最低里程 (km)
+  window_days?: number    // window_cumulative：視窗天數
+  cum_km?: number         // window_cumulative：視窗內累積里程 (km)
+  single_km?: number      // window_cumulative：至少一趟里程(km，選填)／single_distance：單趟里程(km，必填)
+}
 
 export interface Race {
   id: string
@@ -54,6 +65,7 @@ export interface Race {
   show_time_rank?: boolean
   vip_only?: boolean // VIP 限定賽事（只提供給 VIP 帳號）
   config?: RaceConfig // 後端一律回傳（非 omitempty）；此處選填僅為前端防禦
+  challenge_rule?: ChallengeRule | null // 個人挑戰模式(event_mode=personal)專用規則；其餘模式為 null
   created_at: string
 }
 

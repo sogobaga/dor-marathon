@@ -39,6 +39,7 @@ const selectCols = `
 	       COALESCE(certificate_bg_url,'') as certificate_bg_url,
 	       COALESCE(show_distance_rank,TRUE), COALESCE(show_time_rank,TRUE),
 	       COALESCE(vip_only,FALSE),
+	       challenge_rule,
 	       created_at
 	FROM races`
 
@@ -106,6 +107,14 @@ func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal config: %w", err)
 	}
+	challengeRuleBytes, err := challengeRuleToBytes(race.ChallengeRule)
+	if err != nil {
+		return nil, fmt.Errorf("marshal challenge_rule: %w", err)
+	}
+	var challengeRuleArg interface{}
+	if challengeRuleBytes != nil {
+		challengeRuleArg = challengeRuleBytes
+	}
 
 	dist32 := make([]int32, len(race.Distances))
 	for i, d := range race.Distances {
@@ -118,13 +127,13 @@ func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
-			vip_only=$20, updated_at=NOW()
-		WHERE id=$21`,
+			vip_only=$20, challenge_rule=$21, updated_at=NOW()
+		WHERE id=$22`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
-		race.VipOnly, race.ID,
+		race.VipOnly, challengeRuleArg, race.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -140,6 +149,14 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 	cfgBytes, err := configToBytes(race.Config)
 	if err != nil {
 		return nil, fmt.Errorf("marshal config: %w", err)
+	}
+	challengeRuleBytes, err := challengeRuleToBytes(race.ChallengeRule)
+	if err != nil {
+		return nil, fmt.Errorf("marshal challenge_rule: %w", err)
+	}
+	var challengeRuleArg interface{}
+	if challengeRuleBytes != nil {
+		challengeRuleArg = challengeRuleBytes
 	}
 	dist32 := make([]int32, len(race.Distances))
 	for i, d := range race.Distances {
@@ -181,14 +198,16 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		                   status, event_mode, goal_type, distances, group_type, group_mode,
 		                   slots_total, entry_fee, registration_start, registration_end,
 		                   start_date, end_date, config, created_by, review_status, required_fields,
-		                   control_status, starting_soon_days, brochure_title, allow_team_groups, vip_only)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+		                   control_status, starting_soon_days, brochure_title, allow_team_groups, vip_only,
+		                   challenge_rule)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.RegStart, race.RegEnd,
 		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus, requiredFields,
 		controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
+		challengeRuleArg,
 	).Scan(&raceID)
 	if err != nil {
 		return nil, fmt.Errorf("insert race: %w", err)
@@ -283,6 +302,14 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 	if err != nil {
 		return nil, fmt.Errorf("marshal config: %w", err)
 	}
+	challengeRuleBytes, err := challengeRuleToBytes(race.ChallengeRule)
+	if err != nil {
+		return nil, fmt.Errorf("marshal challenge_rule: %w", err)
+	}
+	var challengeRuleArg interface{}
+	if challengeRuleBytes != nil {
+		challengeRuleArg = challengeRuleBytes
+	}
 	dist32 := make([]int32, len(race.Distances))
 	for i, d := range race.Distances {
 		dist32[i] = int32(d)
@@ -316,13 +343,14 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
 			required_fields=$20, control_status=$21, starting_soon_days=$22, brochure_title=$23,
-			allow_team_groups=$24, vip_only=$25, updated_at=NOW()
-		WHERE id=$26`,
+			allow_team_groups=$24, vip_only=$25, challenge_rule=$26, updated_at=NOW()
+		WHERE id=$27`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
-		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly, raceID,
+		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
+		challengeRuleArg, raceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -349,49 +377,85 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 	}
 
 	// 2. 同步分組（upsert by id，記錄最終 id 供物資對應），刪除已移除的
-	finalGroupIDs := make([]string, len(req.Groups))
-	keptGroups := make([]string, 0, len(req.Groups))
-	for i := range req.Groups {
-		g := &req.Groups[i]
-		if g.ID != "" {
-			_, err = tx.Exec(ctx, `
-				UPDATE race_groups SET name=$1, description=$2, display_order=$3,
-				    slot_limit=$4, gender_limit=$5, age_min=$6, age_max=$7, target_distance_km=$8,
-				    requires_key=$9, group_key=$10, exp_reward=$11, dp_reward=$12
-				WHERE id=$13 AND race_id=$14`,
-				g.Name, nullStr(g.Description), g.DisplayOrder,
-				g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
-				g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward, g.ID, raceID,
-			)
-			if err != nil {
-				return nil, fmt.Errorf("update group %d: %w", i, err)
-			}
-			finalGroupIDs[i] = g.ID
-		} else {
-			var gid string
-			err = tx.QueryRow(ctx, `
-				INSERT INTO race_groups (race_id, name, description, display_order,
-				                         slot_limit, gender_limit, age_min, age_max, target_distance_km,
-				                         requires_key, group_key, exp_reward, dp_reward)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
-				raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
-				g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
-				g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward,
-			).Scan(&gid)
-			if err != nil {
-				return nil, fmt.Errorf("insert group %d: %w", i, err)
-			}
-			finalGroupIDs[i] = gid
+	var finalGroupIDs []string
+	if race.EventMode == "personal" && len(req.Groups) == 0 {
+		// 個人挑戰模式：分組由後端自動維護（隱藏預設分組，見 ensurePersonalDefaultGroup／建立時寫入）。
+		// 正常編輯流程下 RaceForm 會把 initial.groups（含既有隱藏分組）原樣帶回 payload，req.Groups
+		// 不會是空的，走下面 else 分支的 upsert-by-id 正常保留。這裡防禦的是邊界情況：req.Groups 真的
+		// 是空陣列時，若走一般的 upsert+delete-not-kept 邏輯，keptGroups 會是空陣列，把既有分組全刪
+		// （之後 P2 報名會撞上 ErrNoGroups）。因此完全略過同步/刪除，只在「目前一個分組都沒有」
+		// （例如舊資料轉成 personal、或手動改過 DB）時比照建立時補一筆，其餘情況維持既有分組不動。
+		rows, err := tx.Query(ctx, `SELECT id FROM race_groups WHERE race_id=$1`, raceID)
+		if err != nil {
+			return nil, fmt.Errorf("list existing groups: %w", err)
 		}
-		keptGroups = append(keptGroups, finalGroupIDs[i])
-	}
-	// 刪除 payload 中不存在的「官方」分組；前台自建分組(created_by 非空)永不被後台儲存誤刪。
-	// （若該分組已有報名，FK RESTRICT 會讓交易失敗 → 正確阻擋）
-	if _, err = tx.Exec(ctx,
-		`DELETE FROM race_groups WHERE race_id=$1 AND created_by IS NULL AND NOT (id = ANY($2::uuid[]))`,
-		raceID, keptGroups,
-	); err != nil {
-		return nil, fmt.Errorf("delete removed groups: %w", err)
+		for rows.Next() {
+			var gid string
+			if err := rows.Scan(&gid); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan existing group: %w", err)
+			}
+			finalGroupIDs = append(finalGroupIDs, gid)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("list existing groups: %w", err)
+		}
+		if len(finalGroupIDs) == 0 {
+			var gid string
+			if err := tx.QueryRow(ctx,
+				`INSERT INTO race_groups (race_id, name, gender_limit) VALUES ($1,$2,'any') RETURNING id`,
+				raceID, personalDefaultGroupName,
+			).Scan(&gid); err != nil {
+				return nil, fmt.Errorf("insert default personal group: %w", err)
+			}
+			finalGroupIDs = append(finalGroupIDs, gid)
+		}
+	} else {
+		finalGroupIDs = make([]string, len(req.Groups))
+		keptGroups := make([]string, 0, len(req.Groups))
+		for i := range req.Groups {
+			g := &req.Groups[i]
+			if g.ID != "" {
+				_, err = tx.Exec(ctx, `
+					UPDATE race_groups SET name=$1, description=$2, display_order=$3,
+					    slot_limit=$4, gender_limit=$5, age_min=$6, age_max=$7, target_distance_km=$8,
+					    requires_key=$9, group_key=$10, exp_reward=$11, dp_reward=$12
+					WHERE id=$13 AND race_id=$14`,
+					g.Name, nullStr(g.Description), g.DisplayOrder,
+					g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
+					g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward, g.ID, raceID,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("update group %d: %w", i, err)
+				}
+				finalGroupIDs[i] = g.ID
+			} else {
+				var gid string
+				err = tx.QueryRow(ctx, `
+					INSERT INTO race_groups (race_id, name, description, display_order,
+					                         slot_limit, gender_limit, age_min, age_max, target_distance_km,
+					                         requires_key, group_key, exp_reward, dp_reward)
+					VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+					raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
+					g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
+					g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward,
+				).Scan(&gid)
+				if err != nil {
+					return nil, fmt.Errorf("insert group %d: %w", i, err)
+				}
+				finalGroupIDs[i] = gid
+			}
+			keptGroups = append(keptGroups, finalGroupIDs[i])
+		}
+		// 刪除 payload 中不存在的「官方」分組；前台自建分組(created_by 非空)永不被後台儲存誤刪。
+		// （若該分組已有報名，FK RESTRICT 會讓交易失敗 → 正確阻擋）
+		if _, err = tx.Exec(ctx,
+			`DELETE FROM race_groups WHERE race_id=$1 AND created_by IS NULL AND NOT (id = ANY($2::uuid[]))`,
+			raceID, keptGroups,
+		); err != nil {
+			return nil, fmt.Errorf("delete removed groups: %w", err)
+		}
 	}
 
 	// 3. 同步加購（upsert by id，保留 sold_count），刪除已移除的
@@ -2039,6 +2103,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 	race := &Race{}
 	var dist32 []int32
 	var cfgBytes []byte
+	var challengeRuleBytes []byte
 	err := row.Scan(
 		&race.ID, &race.Slug, &race.Title, &race.Subtitle,
 		&race.World, &race.Blurb, &race.HeroImageURL,
@@ -2052,6 +2117,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&race.CertificateBgURL,
 		&race.ShowDistanceRank, &race.ShowTimeRank,
 		&race.VipOnly,
+		&challengeRuleBytes,
 		&race.CreatedAt,
 	)
 	if err != nil {
@@ -2062,6 +2128,10 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		race.Distances[i] = int(d)
 	}
 	race.Config, err = bytesToConfig(cfgBytes)
+	if err != nil {
+		return nil, err
+	}
+	race.ChallengeRule, err = bytesToChallengeRule(challengeRuleBytes)
 	return race, err
 }
 
@@ -2070,6 +2140,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 	race := &Race{}
 	var dist32 []int32
 	var cfgBytes []byte
+	var challengeRuleBytes []byte
 	err := rows.Scan(
 		&race.ID, &race.Slug, &race.Title, &race.Subtitle,
 		&race.World, &race.Blurb, &race.HeroImageURL,
@@ -2083,6 +2154,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&race.CertificateBgURL,
 		&race.ShowDistanceRank, &race.ShowTimeRank,
 		&race.VipOnly,
+		&challengeRuleBytes,
 		&race.CreatedAt,
 	)
 	if err != nil {
@@ -2093,5 +2165,9 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		race.Distances[i] = int(d)
 	}
 	race.Config, err = bytesToConfig(cfgBytes)
+	if err != nil {
+		return nil, err
+	}
+	race.ChallengeRule, err = bytesToChallengeRule(challengeRuleBytes)
 	return race, err
 }

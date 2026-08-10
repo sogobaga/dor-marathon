@@ -20,6 +20,8 @@ import {
   type TaskScope,
   type TaskModule,
   type CancellationPolicy,
+  type ChallengeRule,
+  type CompletionType,
 } from '@/lib/api'
 import { TaskItemEditor, type TaskFields } from '../TaskItemEditor'
 import { CancellationPolicyFields, DEFAULT_CANCELLATION_POLICY, sortTiers, validateCancellationPolicy } from '../CancelPolicyEditor'
@@ -37,6 +39,13 @@ const MODES: { v: EventMode; t: string; desc: string }[] = [
   { v: 'general', t: '一般模式', desc: '個人參賽，報名時自選分組' },
   { v: 'competition', t: '競賽模式', desc: '一般模式 + 分組成績統計與排名' },
   { v: 'faction_battle', t: '分組對抗模式', desc: '隨機分組，賽前不公開所屬分組' },
+  { v: 'personal', t: '個人挑戰模式', desc: '可重複報名挑戰，依完成次數排名' },
+]
+
+const COMPLETION_TYPES: { v: CompletionType; t: string }[] = [
+  { v: 'streak_days', t: '連續天數（連續 N 天每天達標）' },
+  { v: 'window_cumulative', t: '區間累積（M 天內累積達標）' },
+  { v: 'single_distance', t: '單趟距離（單次跑步達標）' },
 ]
 
 const CONTROL_STATUSES: { v: string; t: string; d: string }[] = [
@@ -138,6 +147,15 @@ export default function RaceForm({
   const [tab, setTab] = useState<'basic' | 'groups' | 'addons' | 'supplies' | 'brochure' | 'tasks' | 'cancel'>('basic')
   const [mode, setMode] = useState<EventMode>(initial?.event_mode ?? 'general')
   const [goalType, setGoalType] = useState<GoalType>(initial?.goal_type ?? 'distance')
+  // 個人挑戰模式（event_mode=personal）挑戰規則；輸入用字串狀態（空字串＝未填），送出時才轉數字。
+  const [completionType, setCompletionType] = useState<CompletionType>(
+    initial?.challenge_rule?.completion_type ?? 'streak_days'
+  )
+  const [chDays, setChDays] = useState(String(initial?.challenge_rule?.days ?? ''))
+  const [chMinKmPerDay, setChMinKmPerDay] = useState(String(initial?.challenge_rule?.min_km_per_day ?? ''))
+  const [chWindowDays, setChWindowDays] = useState(String(initial?.challenge_rule?.window_days ?? ''))
+  const [chCumKm, setChCumKm] = useState(String(initial?.challenge_rule?.cum_km ?? ''))
+  const [chSingleKm, setChSingleKm] = useState(String(initial?.challenge_rule?.single_km ?? ''))
   const [controlStatus, setControlStatus] = useState<string>(initial?.control_status ?? 'active')
   const [startingSoonDays, setStartingSoonDays] = useState<string>(String(initial?.starting_soon_days ?? 5))
   const [allowTeamGroups, setAllowTeamGroups] = useState<boolean>(initial?.allow_team_groups ?? false)
@@ -297,6 +315,11 @@ export default function RaceForm({
     if (!slugTouched) setSlug(slugify(title))
   }, [title, slugTouched])
 
+  // 個人挑戰模式無分組頁籤（後端自動維護隱藏預設分組）；切到此模式時若還停在分組頁籤，跳回基本頁籤。
+  useEffect(() => {
+    if (mode === 'personal' && tab === 'groups') setTab('basic')
+  }, [mode, tab])
+
   const isRandom = mode === 'faction_battle'
 
   function updateGroup(i: number, patch: Partial<RaceGroup>) {
@@ -405,6 +428,29 @@ export default function RaceForm({
     )
   }
 
+  // 挑戰規則是否已完整填妥（依 completion_type 決定必填欄位；與後端 ChallengeRule.Validate 對齊）
+  function challengeRuleValid(): boolean {
+    const num = (s: string) => parseFloat(s || '0') || 0
+    if (completionType === 'streak_days') return num(chDays) > 0 && num(chMinKmPerDay) > 0
+    if (completionType === 'window_cumulative') return num(chWindowDays) > 0 && num(chCumKm) > 0
+    if (completionType === 'single_distance') return num(chSingleKm) > 0
+    return false
+  }
+  function buildChallengeRule(): ChallengeRule {
+    const num = (s: string) => parseFloat(s || '0') || 0
+    return {
+      completion_type: completionType,
+      days: completionType === 'streak_days' ? Math.round(num(chDays)) : undefined,
+      min_km_per_day: completionType === 'streak_days' ? num(chMinKmPerDay) : undefined,
+      window_days: completionType === 'window_cumulative' ? Math.round(num(chWindowDays)) : undefined,
+      cum_km: completionType === 'window_cumulative' ? num(chCumKm) : undefined,
+      single_km:
+        completionType === 'window_cumulative' || completionType === 'single_distance'
+          ? num(chSingleKm)
+          : undefined,
+    }
+  }
+
   function buildPayload(): CreateRacePayload {
     const cleanGroups: RaceGroup[] = groups
       .filter((g) => g.name.trim())
@@ -423,6 +469,7 @@ export default function RaceForm({
       starting_soon_days: parseInt(startingSoonDays || '5', 10) || 5,
       allow_team_groups: mode === 'competition' ? allowTeamGroups : false,
       vip_only: vipOnly,
+      challenge_rule: mode === 'personal' ? buildChallengeRule() : null,
       // config 是整包 JSONB struct marshal（非合併寫入）：務必以既有 config 為底、只覆寫 cancellation_policy，
       // 否則會把 factions/clubs/missions 等既有欄位一併清空（見後端 configToBytes/bytesToConfig 註解）。
       config: {
@@ -501,6 +548,11 @@ export default function RaceForm({
         return
       }
     }
+    if (mode === 'personal' && !challengeRuleValid()) {
+      setErr('請完整填寫個人挑戰規則參數')
+      setTab('basic')
+      return
+    }
     setSaving(true)
     try {
       const payload = buildPayload()
@@ -549,7 +601,7 @@ export default function RaceForm({
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, borderBottom: '1px solid var(--line)' }}>
         {[
           ['basic', '基本'],
-          ['groups', `分組 (${groups.filter((g) => g.name.trim()).length})`],
+          ...(mode === 'personal' ? [] : [['groups', `分組 (${groups.filter((g) => g.name.trim()).length})`]]),
           ['addons', `加購 (${addons.filter((a) => a.name.trim()).length})`],
           ['supplies', `物資 (${supplies.filter((s) => s.name.trim()).length})`],
           ['brochure', `簡章 (${brochure.filter(blockHasContent).length})`],
@@ -640,6 +692,52 @@ export default function RaceForm({
                 　顯示狀態（報名中/賽事進行中…）由系統依時間自動推導。
               </span>
             </Field>
+
+            {mode === 'personal' && (
+              <div style={{ ...card, background: 'var(--bg-2)' }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5 }}>挑戰規則</div>
+                <div style={hint}>
+                  個人挑戰模式：玩家可重複報名挑戰（每次各收一次報名費），符合以下規則即完成一次、可再報名再挑戰。
+                </div>
+                <Field label="完成條件類型">
+                  <select style={inp} value={completionType} onChange={(e) => setCompletionType(e.target.value as CompletionType)}>
+                    {COMPLETION_TYPES.map((c) => (
+                      <option key={c.v} value={c.v}>{c.t}</option>
+                    ))}
+                  </select>
+                </Field>
+                {completionType === 'streak_days' && (
+                  <Row>
+                    <Field label="連續天數 (天)">
+                      <input style={inp} type="number" min={1} value={chDays} onChange={(e) => setChDays(e.target.value)} />
+                    </Field>
+                    <Field label="每天最低里程 (km)">
+                      <input style={inp} type="number" min={0} step="0.1" value={chMinKmPerDay} onChange={(e) => setChMinKmPerDay(e.target.value)} />
+                    </Field>
+                  </Row>
+                )}
+                {completionType === 'window_cumulative' && (
+                  <>
+                    <Row>
+                      <Field label="視窗天數 (天)">
+                        <input style={inp} type="number" min={1} value={chWindowDays} onChange={(e) => setChWindowDays(e.target.value)} />
+                      </Field>
+                      <Field label="視窗內累積里程 (km)">
+                        <input style={inp} type="number" min={0} step="0.1" value={chCumKm} onChange={(e) => setChCumKm(e.target.value)} />
+                      </Field>
+                    </Row>
+                    <Field label="至少一趟里程 (km，選填，留空或 0＝不限)">
+                      <input style={inp} type="number" min={0} step="0.1" value={chSingleKm} onChange={(e) => setChSingleKm(e.target.value)} />
+                    </Field>
+                  </>
+                )}
+                {completionType === 'single_distance' && (
+                  <Field label="單趟里程 (km)">
+                    <input style={inp} type="number" min={0} step="0.1" value={chSingleKm} onChange={(e) => setChSingleKm(e.target.value)} />
+                  </Field>
+                )}
+              </div>
+            )}
 
             {(
               <Field label="此賽事測試白名單（email）">

@@ -722,7 +722,7 @@ func (s *Service) CreateRace(ctx context.Context, race *Race) (*Race, error) {
 }
 
 var (
-	validEventModes  = map[string]bool{"general": true, "competition": true, "faction_battle": true}
+	validEventModes  = map[string]bool{"general": true, "competition": true, "faction_battle": true, "personal": true}
 	validGoalTypes   = map[string]bool{"cumulative": true, "distance": true}
 	validGenderLimit = map[string]bool{"any": true, "male": true, "female": true}
 	validSupplyKinds = map[string]bool{"race_pack": true, "finisher": true}
@@ -781,6 +781,15 @@ func normalizeRequest(req *CreateRaceRequest) error {
 	} else {
 		req.GoalType = "distance"
 	}
+	// 個人挑戰規則：僅 personal 模式使用且必填（沒有規則的個人挑戰賽不合理）；其餘模式一律清空，
+	// 避免殘留舊資料或非預期輸入（比照上面 goal_type 的做法）。
+	if req.EventMode == "personal" {
+		if err := req.ChallengeRule.Validate(); err != nil {
+			return fmt.Errorf("challenge_rule: %w", err)
+		}
+	} else {
+		req.ChallengeRule = nil
+	}
 
 	for i := range req.Groups {
 		g := &req.Groups[i]
@@ -838,11 +847,24 @@ func normalizeRequest(req *CreateRaceRequest) error {
 	return nil
 }
 
+// personalDefaultGroupName 個人挑戰模式自動補的隱藏預設分組名稱（管理員不需自己設分組）。
+const personalDefaultGroupName = "個人挑戰"
+
+// ensurePersonalDefaultGroup 個人挑戰模式若未帶任何分組，補一筆隱藏預設分組，
+// 繞過 Register()（P2 用）的 ErrNoGroups——個人挑戰模式沒有「選分組」的概念，
+// 所有挑戰者實質上共用同一個內部分組。僅在完全沒有分組時補；已有分組（例如舊資料）則不動。
+func ensurePersonalDefaultGroup(req *CreateRaceRequest) {
+	if req.EventMode == "personal" && len(req.Groups) == 0 {
+		req.Groups = append(req.Groups, RaceGroup{Name: personalDefaultGroupName, GenderLimit: "any"})
+	}
+}
+
 // CreateRaceFull 建立含巢狀分組/加購/物資的賽事（後台新增賽事用）。
 func (s *Service) CreateRaceFull(ctx context.Context, req *CreateRaceRequest) (*RaceDetail, error) {
 	if err := normalizeRequest(req); err != nil {
 		return nil, err
 	}
+	ensurePersonalDefaultGroup(req)
 	req.ReviewStatus = "approved"
 	return s.repo.CreateWithChildren(ctx, req)
 }
