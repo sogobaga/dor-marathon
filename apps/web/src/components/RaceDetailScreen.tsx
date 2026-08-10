@@ -106,7 +106,10 @@ export default function RaceDetailScreen({
     }
   }, [breakdown, race.id])
 
+  // 個人挑戰模式「隨報隨進行」：活動中的 display_status 是 'registering'(可報名)而非 'racing'，
+  // 故 started 對 personal 改用「活動開始日已過(now >= start_date)」判斷，否則排名/進度分頁會誤顯示「尚未開始」。
   const started = race.display_status === 'racing' || race.display_status === 'ended'
+    || (race.event_mode === 'personal' && !!race.start_date && Date.now() >= new Date(race.start_date).getTime())
   // 競賽/分組對抗才有「當天揭曉分組＋分組戰報」；一般模式分組直接顯示
   const battleMode = race.event_mode === 'competition' || race.event_mode === 'faction_battle'
   const isPersonal = race.event_mode === 'personal'
