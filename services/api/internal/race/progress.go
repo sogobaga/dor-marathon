@@ -53,14 +53,22 @@ type RaceProgress struct {
 func (r *Repository) LoadRaceActivities(ctx context.Context, raceID string) ([]progAct, error) {
 	// 跨賽事歸戶：一筆跑步計入「該會員所有報名中、且 recorded_at 落在賽事期間內」的賽事，
 	// 不再看 activity.race_id（同一筆可同時計入多場賽事/挑戰）。
+	// 個人挑戰模式(personal)「隨報隨進行」：里程只算「該報名者付款起算(challenge_started_at)之後」的活動，
+	// 不像一般賽事從 rc.start_date 起算（否則報名前產生的跑步會被算進活動進度）。personal 只認進行中(paid)
+	// 的 attempt（唯一約束保證同時最多一筆，避免多次 attempt 重複計）；非 personal 維持原本 status<>cancelled
+	// ＋賽事期間 [start_date, end_date] 窗（用 CASE/條件式一條查詢分流，一般賽事行為完全不變）。
 	rows, err := r.db.Query(ctx, `
 		SELECT a.user_id::text, COALESCE(reg.group_id::text,''),
 		       a.distance_km, COALESCE(a.ascent_m,0), COALESCE(a.avg_hr,0), a.avg_pace_s, a.recorded_at,
 		       COALESCE(a.km_paces, '{}')
 		FROM races rc
-		JOIN registrations reg ON reg.race_id = rc.id AND reg.status <> 'cancelled'
+		JOIN registrations reg ON reg.race_id = rc.id
+		     AND ( (rc.event_mode <> 'personal' AND reg.status <> 'cancelled')
+		        OR (rc.event_mode = 'personal' AND reg.status = 'paid' AND reg.challenge_started_at IS NOT NULL) )
 		JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
-		                  AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
+		                  AND a.recorded_at <= rc.end_date
+		                  AND a.recorded_at >= CASE WHEN rc.event_mode = 'personal'
+		                                            THEN reg.challenge_started_at ELSE rc.start_date END
 		WHERE rc.id = $1`, raceID)
 	if err != nil {
 		return nil, fmt.Errorf("load race activities: %w", err)
