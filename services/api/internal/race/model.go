@@ -113,6 +113,24 @@ func (r *Race) ComputeDisplay(now time.Time) (string, bool) {
 	regOpen := (r.RegStart == nil || !now.Before(*r.RegStart)) &&
 		(r.RegEnd == nil || !now.After(*r.RegEnd))
 
+	// 個人挑戰模式「隨報隨進行」：報名期與活動期高度重疊，活動進行中(now < EndDate)仍可報名，
+	// 不像一般賽事在 StartDate(活動開始)就關報名；報名窗仍受選填的 RegStart/RegEnd 約束（可設「最後一個月停止報名」）。
+	if r.EventMode == "personal" {
+		ctrlOK := r.ControlStatus == "active" || r.ControlStatus == "testing" || r.ControlStatus == "hidden"
+		switch {
+		case now.After(r.EndDate) || now.Equal(r.EndDate):
+			return "ended", false
+		case regOpen:
+			return "registering", ctrlOK
+		case r.RegEnd != nil && now.After(*r.RegEnd):
+			return "reg_closed", false
+		case r.RegStart != nil && now.Before(*r.RegStart):
+			return "upcoming_reg", false
+		default:
+			return "registering", ctrlOK
+		}
+	}
+
 	var display string
 	switch {
 	case now.After(r.EndDate) || now.Equal(r.EndDate):
