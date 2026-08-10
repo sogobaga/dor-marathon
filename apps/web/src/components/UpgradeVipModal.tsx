@@ -6,9 +6,11 @@ import { getUserToken, withUserAuth } from '@/lib/userAuth'
 
 // 升級 VIP 視窗：權益 + 月/年方案(原價刪除線 + 綠色優惠價 + 現省) + 促銷期限 + 取消訂閱/退款條款 + 公司資訊。
 // expired=true：因試用到期自動跳出（標題改為「VIP 試用已到期」）。
+// reason：其他觸發原因的提示文字（例如非 VIP 點擊 VIP 專屬賽事報名 →「VIP專屬活動。」），顯示於標題下方；優先於 expired 的預設文字。
 // onSubscribe 未提供時，訂閱鈕顯示「金流整合中」佔位（綠界定期定額於 Phase 4 接上）。
-export default function UpgradeVipModal({ expired, onClose, onSubscribe }: {
+export default function UpgradeVipModal({ expired, reason, onClose, onSubscribe }: {
   expired?: boolean
+  reason?: string
   onClose: () => void
   onSubscribe?: (plan: 'monthly' | 'annual') => void
 }) {
@@ -36,7 +38,11 @@ export default function UpgradeVipModal({ expired, onClose, onSubscribe }: {
         <div style={{ textAlign: 'center', marginBottom: 6 }}>
           <div style={{ fontSize: 12, letterSpacing: '.3em', color: 'var(--gold)', fontWeight: 800 }}>✦ DOR VIP ✦</div>
           <div style={{ fontSize: 20, fontWeight: 900, color: '#fff', marginTop: 4 }}>{expired ? 'VIP 試用已到期' : '升級 VIP 會員'}</div>
-          {expired && <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 4 }}>是否繼續享有 VIP 專屬權益？</div>}
+          {reason ? (
+            <div style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 700, marginTop: 4 }}>{reason}</div>
+          ) : expired ? (
+            <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 4 }}>是否繼續享有 VIP 專屬權益？</div>
+          ) : null}
         </div>
 
         {/* 權益 */}

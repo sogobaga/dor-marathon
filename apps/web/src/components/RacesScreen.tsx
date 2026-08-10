@@ -75,9 +75,20 @@ export default function RacesScreen({
   const sheet = useDraggableSheet('half') // 首頁預設半展先露活動列表（活動頁）；面板底部留白使其仍可完整捲動，與個資頁「可滑動」手感一致
   const [filter, setFilter] = useState<FilterKey>('all')
   const [showUpgrade, setShowUpgrade] = useState(false)
+  const [vipGateReason, setVipGateReason] = useState<string | undefined>()
   const { dash } = useDashboard()
   const races = data?.races ?? []
   const filtered = filter === 'all' ? races : races.filter((r) => CATEGORY[r.display_status] === filter)
+
+  // VIP 專屬賽事：非 VIP 點「報名」→ 擋下並跳出提示（不進報名表單）；VIP／非 vip_only 賽事照舊
+  function handleRegisterClick(race: Race) {
+    if (race.vip_only && !dash?.is_vip) {
+      setVipGateReason('VIP專屬活動。')
+      setShowUpgrade(true)
+      return
+    }
+    onRegister?.(race)
+  }
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
@@ -102,7 +113,7 @@ export default function RacesScreen({
         )}
       </header>
 
-      {showUpgrade && <UpgradeVipModal onClose={() => setShowUpgrade(false)} />}
+      {showUpgrade && <UpgradeVipModal reason={vipGateReason} onClose={() => { setShowUpgrade(false); setVipGateReason(undefined) }} />}
 
       {/* 會員面板（固定最上方，背景層）+ 可拖曳活動列表面板 */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
@@ -155,7 +166,7 @@ export default function RacesScreen({
             {filtered.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 {filtered.map((r) => (
-                  <RaceCard key={r.id} race={r} reg={regs[r.id]} onOpenRanking={onOpenRanking} onRegister={onRegister} onPay={onPay} onOpenBrochure={onOpenBrochure} />
+                  <RaceCard key={r.id} race={r} reg={regs[r.id]} onOpenRanking={onOpenRanking} onRegister={handleRegisterClick} onPay={onPay} onOpenBrochure={onOpenBrochure} />
                 ))}
               </div>
             )}
@@ -232,6 +243,7 @@ function RaceCard({
             {race.subtitle && <div style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-dim)', marginTop: 3 }}>{race.subtitle}</div>}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+            {race.vip_only && <span style={vipBadge}>✦ VIP專屬</span>}
             <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, color: s.color, border: `1px solid ${s.color}`, background: 'rgba(255,255,255,.03)', whiteSpace: 'nowrap' }}>● {s.label}</span>
             <span style={{ fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 999, color: 'var(--gold)', border: '1px solid var(--gold)', whiteSpace: 'nowrap' }}>{fmtFee(race.entry_fee)}</span>
           </div>
@@ -297,4 +309,9 @@ const linkBtnStyle: React.CSSProperties = {
 const ctaLink: React.CSSProperties = {
   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
   color: 'var(--fug)', fontWeight: 700, fontSize: 13.5,
+}
+// VIP 專屬徽章：金底白字（金黃色實心底框上的文字一律用白色）
+const vipBadge: React.CSSProperties = {
+  fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 999,
+  background: 'var(--gold)', color: '#fff', whiteSpace: 'nowrap',
 }

@@ -5,11 +5,13 @@ import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { racesApi, followApi, METRIC_BY_KEY, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
+import { useDashboard } from '@/lib/useDashboard'
 import { useScrollLock } from '@/lib/useScrollLock'
 import { useSheetDismiss } from '@/lib/useSheetDismiss'
 import { overlayMount } from '@/lib/overlayMount'
 import { renderCertificate, downloadCertificate, type CertificateRender } from '@/lib/certificate'
 import ExpSettlementModal from './ExpSettlementModal'
+import UpgradeVipModal from './UpgradeVipModal'
 import { BrochureBody } from './BrochureScreen'
 import { RankingBody } from './RaceRankingScreen'
 import { ExploreBody } from './ExploreBody'
@@ -43,6 +45,8 @@ export default function RaceDetailScreen({
   initialTab?: Tab
 }) {
   const token = getUserToken() || undefined
+  const { dash } = useDashboard()
+  const [showUpgrade, setShowUpgrade] = useState(false)
   const { data: detailData } = useSWR(['detail', race.id], () => racesApi.detail(race.id, token))
   const { data: standings } = useSWR(
     race.event_mode === 'competition' ? ['standings', race.id] : null,
@@ -111,6 +115,15 @@ export default function RaceDetailScreen({
   // （後端 progress 會掃全體報名者活動、未聚合，很重；進度分頁本身的資料由下方 ProgressBody 內建的 SWR 負責，未受影響）。
   const hasCheckpoints = (detail?.tasks ?? []).some((t) => t.metric_type === 'checkpoint')
 
+  // VIP 專屬賽事：非 VIP 點「立即報名」→ 擋下並跳出提示（不進報名表單）；VIP／非 vip_only 賽事照舊
+  function handleRegisterClick() {
+    if (race.vip_only && !dash?.is_vip) {
+      setShowUpgrade(true)
+      return
+    }
+    onRegister?.(race)
+  }
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <header style={{ padding: 'var(--app-top) 22px 10px', flexShrink: 0 }}>
@@ -135,6 +148,7 @@ export default function RaceDetailScreen({
             <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
               {race.event_mode === 'competition' ? '競賽' : race.event_mode === 'faction_battle' ? '分組對抗' : '一般'}
             </span>
+            {race.vip_only && <span style={vipBadge}>✦ VIP專屬</span>}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 4, marginTop: 10, fontSize: 12 }}>
             <Row k="報名期間" v={`${fmt(race.registration_start)} – ${fmt(race.registration_end)}`} />
@@ -172,7 +186,7 @@ export default function RaceDetailScreen({
             {registration ? (
               <div style={registeredBox}>✓ 你已報名此賽事{registration.status === 'pending' ? '（待繳費）' : registration.status === 'paid' ? '（已完成）' : ''}</div>
             ) : detail?.can_register && onRegister ? (
-              <button onClick={() => onRegister(race)} style={registerBtn}>立即報名</button>
+              <button onClick={handleRegisterClick} style={registerBtn}>立即報名</button>
             ) : null}
           </div>
 
@@ -246,6 +260,9 @@ export default function RaceDetailScreen({
       {showExp && breakdown && breakdown.gained > 0 && (
         <ExpSettlementModal breakdown={breakdown} subtitle={race.title} onClose={() => setShowExp(false)} />
       )}
+
+      {/* 非 VIP 點「立即報名」VIP 專屬賽事 → 提示 + 升級 CTA */}
+      {showUpgrade && <UpgradeVipModal reason="VIP專屬活動。" onClose={() => setShowUpgrade(false)} />}
     </div>
   )
 }
@@ -517,6 +534,8 @@ function Hint({ children, color = 'var(--tx-dim)' }: { children: React.ReactNode
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0 }
 const dashCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 16, boxShadow: 'var(--card-shadow, none)' }
 const statusBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: 'var(--fug)', background: 'rgba(45,212,150,.1)', border: '1px solid var(--fug)', borderRadius: 999, padding: '2px 10px' }
+// VIP 專屬徽章：金底白字（金黃色實心底框上的文字一律用白色）
+const vipBadge: React.CSSProperties = { fontSize: 11, fontWeight: 800, color: '#fff', background: 'var(--gold)', borderRadius: 999, padding: '2px 10px', whiteSpace: 'nowrap' }
 const registerBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '12px 20px', cursor: 'pointer', fontSize: 15, width: '100%' }
 const registeredBox: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 'var(--radius-md, 12px)', padding: '11px 16px', textAlign: 'center', fontSize: 14, fontWeight: 700, color: 'var(--fug)' }
 const certBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '12px 20px', cursor: 'pointer', fontSize: 15 }

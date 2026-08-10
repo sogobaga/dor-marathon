@@ -828,10 +828,10 @@ export default function RaceForm({
             <Field label="VIP 限定">
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--tx)', paddingTop: 2 }}>
                 <input type="checkbox" checked={vipOnly} onChange={(e) => setVipOnly(e.target.checked)} />
-                只提供給 VIP 會員（非 VIP 看不到、也不能報名）
+                VIP 專屬活動（所有人可見；非 VIP 報名時顯示提示、不可報名）
               </label>
               <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
-                預設關閉。勾選後此賽事僅 VIP 帳號可見與報名。
+                預設關閉。勾選後此賽事所有人皆可見，但非 VIP 帳號點選報名會顯示「VIP專屬活動。」提示、無法完成報名；VIP 期間報名成功者即使日後 VIP 過期也不受影響。
               </span>
             </Field>
 

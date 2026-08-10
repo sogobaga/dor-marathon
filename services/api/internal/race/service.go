@@ -139,14 +139,9 @@ func (s *Service) ListPublic(ctx context.Context, userID string) ([]*Race, error
 		return nil, err
 	}
 	email, _ := s.repo.GetUserEmail(ctx, userID)
-	isVIP := s.repo.IsUserVIP(ctx, userID)
 	now := time.Now()
 	out := []*Race{}
 	for _, r := range races {
-		// VIP 限定：非 VIP 一律看不到（只提供給 VIP 帳號）
-		if r.VipOnly && !isVIP {
-			continue
-		}
 		switch r.ControlStatus {
 		case "closed", "hidden":
 			continue
@@ -242,10 +237,6 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 		if !ok {
 			return nil, nil, ErrRaceNotFound
 		}
-	}
-	// VIP 限定：非 VIP 直接連結也擋（隱藏，比照 closed）
-	if detail.VipOnly && !s.repo.IsUserVIP(ctx, userID) {
-		return nil, nil, ErrRaceNotFound
 	}
 	detail.FillDisplay(time.Now())
 

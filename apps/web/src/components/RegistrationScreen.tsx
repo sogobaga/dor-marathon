@@ -356,7 +356,10 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
       setDone({ group: res.assigned_group, revealed: res.group_revealed, paid: res.paid, payable: res.payable_cents, orderId: res.order.id })
       track('register_complete', { race_id: race.id, race_title: race.title, value: res.payable_cents / 100, currency: 'TWD', paid: res.paid })
     } catch (e: any) {
-      setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '報名失敗')
+      // 防線：即使前端 gate 被繞過（如直連），後端 403 {error:"vip_only"} 一樣擋下並顯示同一提示
+      if (e instanceof SessionExpiredError) setErr('登入已過期，請回上一頁重新登入')
+      else if (e?.status === 403 && e?.message === 'vip_only') setErr('VIP專屬活動。')
+      else setErr(e?.message || '報名失敗')
     } finally {
       setSubmitting(false)
     }

@@ -484,7 +484,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrRegistrationPaused):
 		respondErr(w, http.StatusConflict, "此賽事目前暫停報名")
 	case errors.Is(err, ErrVIPOnly):
-		respondErr(w, http.StatusForbidden, "此賽事僅限 VIP 會員報名")
+		// 403 {error:"vip_only"}：比照 training 慣例，前端用 e?.status===403 && e?.message==='vip_only' 辨識
+		respondErr(w, http.StatusForbidden, "vip_only")
 	case errors.Is(err, ErrNoCoupon):
 		respondErr(w, http.StatusConflict, "沒有可用的活動優惠券")
 	case errors.Is(err, ErrCouponPromoConflict):
