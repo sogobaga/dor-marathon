@@ -26,7 +26,15 @@ const TitleScreen = dynamic(() => import('./TitleScreen'), { ssr: false })
 const AchievementScreen = dynamic(() => import('./AchievementScreen'), { ssr: false })
 const TrainingScreen = dynamic(() => import('./TrainingScreen'), { ssr: false })
 const PartnerPerksScreen = dynamic(() => import('./PartnerPerksScreen'), { ssr: false })
-const MonopolyScreen = dynamic(() => import('./MonopolyScreen'), { ssr: false })
+const MonopolyScreen = dynamic(() => import('./MonopolyScreen'), {
+  ssr: false,
+  // 環台大富翁 chunk 較大（盤面等圖已轉 WebP，但仍需下載時間）→ 加極簡置中骨架，避免下載期間全空白。
+  loading: () => (
+    <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', color: 'var(--tx-dim)', fontSize: 13, fontWeight: 700 }}>
+      載入中…
+    </div>
+  ),
+})
 const RaceDetailScreen = dynamic(() => import('./RaceDetailScreen'), { ssr: false })
 
 // openEventSlug：廣告落地頁 /event/{slug} 傳入，開頁即直接顯示該活動簡章（見 app/event/[slug]/EventLanding.tsx）。

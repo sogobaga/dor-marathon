@@ -21,9 +21,9 @@ const BOARD_COORDS: [number, number][] = [
   [36, 23.7], [34, 27.7], [32, 31.1], [29.3, 34.4], [24.9, 37.7], [21.7, 40.8], [19.4, 44.6], [18.4, 47.9], [18, 51.8], [17.1, 55.9],
   [16.9, 59.8], [17.8, 63.3], [20, 66.6], [22.3, 69.6], [24.9, 73], [27.6, 75.9],
 ]
-const BOARD_IMG = '/source/ui/02_BG/DOR_TAW_RUNNER_START_1to45.png'
-const RUNNER_IMG = '/source/ui/02_BG/DOR_RUNNER.png'
-// 角色圖 DOR_RUNNER.png 站立點（前腳鞋底/身體重心）在圖片上的 [xPct, yPct]，
+const BOARD_IMG = '/source/ui/02_BG/DOR_TAW_RUNNER_START_1to45.webp'
+const RUNNER_IMG = '/source/ui/02_BG/DOR_RUNNER.webp'
+// 角色圖 DOR_RUNNER.webp 站立點（前腳鞋底/身體重心）在圖片上的 [xPct, yPct]，
 // 用來把「站立點」對齊格子中心，而非用圖片幾何中心對齊（否則棋子會比格子低半個身體）。
 // 之後美術微調角色圖，只需調整這兩個數字。
 const RUNNER_ANCHOR: [number, number] = [50, 80]
@@ -115,13 +115,40 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
   }, [])
   useEffect(() => { refreshStickerCount() }, [refreshStickerCount])
 
-  // 預載 6 張骰面圖，避免第一次滾動動畫時才載入造成閃爍
+  // 預載 6 張骰面圖，避免第一次滾動動畫時才載入造成閃爍。
+  // 骰面圖已轉 WebP 壓到 ~8KB/張，即使沒預載到也很快；但仍延遲到「開頁後閒置」才做，
+  // 避免跟開頁首屏（盤面/棋子等）搶頻寬。優先用 requestIdleCallback，不支援則退化 setTimeout。
+  // 只在 state 載入成功（loading 結束且沒有錯誤）後才排程；元件卸載要取消，避免記憶體洩漏或報錯。
   useEffect(() => {
-    for (let i = 1; i <= 6; i++) {
-      const img = new Image()
-      img.src = `/ui/bg/DOR-Dice-${i}.png`
+    if (loading || loadErr) return
+    let cancelled = false
+    let idleHandle: number | null = null
+    let timeoutHandle: number | null = null
+
+    const preload = () => {
+      if (cancelled) return
+      for (let i = 1; i <= 6; i++) {
+        const img = new Image()
+        img.src = `/ui/bg/DOR-Dice-${i}.webp`
+      }
     }
-  }, [])
+
+    const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback
+    if (typeof ric === 'function') {
+      idleHandle = ric(preload, { timeout: 1500 })
+    } else {
+      timeoutHandle = window.setTimeout(preload, 1500)
+    }
+
+    return () => {
+      cancelled = true
+      if (idleHandle != null) {
+        const cic = (window as unknown as { cancelIdleCallback?: (handle: number) => void }).cancelIdleCallback
+        if (typeof cic === 'function') cic(idleHandle)
+      }
+      if (timeoutHandle != null) window.clearTimeout(timeoutHandle)
+    }
+  }, [loading, loadErr])
 
   const busy = phase !== 'idle'
   const canAfford = gpBalance != null && gpBalance >= diceCost
@@ -379,7 +406,7 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
               <div style={{
                 position: 'absolute', left: '50%', top: '48%', transform: 'translate(-50%,-50%)',
                 width: '40%', zIndex: 8,
-                background: 'url(/ui/bg/bg_roll_the_dice_tray.png) center / 100% 100% no-repeat',
+                background: 'url(/ui/bg/bg_roll_the_dice_tray.webp) center / 100% 100% no-repeat',
                 borderRadius: 14, boxShadow: '0 6px 20px rgba(0,0,0,.28)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 padding: '9%', boxSizing: 'border-box',
@@ -387,7 +414,7 @@ export default function MonopolyScreen({ onBack }: { onBack: () => void }) {
               }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={`/ui/bg/DOR-Dice-${dieFace}.png`} alt=""
+                  src={`/ui/bg/DOR-Dice-${dieFace}.webp`} alt=""
                   style={{
                     width: '62%', height: 'auto', objectFit: 'contain', display: 'block', flexShrink: 0, margin: '0 auto',
                     animation: phase === 'dice' ? 'monoDiceShake .09s linear infinite' : 'none',
