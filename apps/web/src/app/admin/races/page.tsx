@@ -26,6 +26,8 @@ type EventStatus = 'upcoming' | 'ongoing' | 'ended'
 type RegStatus = 'open' | 'closed'
 const ALL_EVENT_STATUSES: EventStatus[] = ['upcoming', 'ongoing', 'ended']
 const ALL_REG_STATUSES: RegStatus[] = ['open', 'closed']
+// 控制狀態（管理控制維，值＝control_status；標籤用 CONTROL_LABEL）
+const ALL_CONTROL_STATUSES: string[] = ['active', 'paused', 'suspended', 'closed', 'hidden', 'testing']
 const EVENT_STATUS_LABEL: Record<EventStatus, string> = { upcoming: '尚未開始', ongoing: '進行中', ended: '已結束' }
 const REG_STATUS_LABEL: Record<RegStatus, string> = { open: '報名中', closed: '未開放' }
 
@@ -92,6 +94,7 @@ export default function AdminRacesList() {
   // 勾選篩選：預設全勾＝全部顯示；純 client 端 filter，不打 API
   const [eventStatusFilter, setEventStatusFilter] = useState<Set<EventStatus>>(new Set(ALL_EVENT_STATUSES))
   const [regStatusFilter, setRegStatusFilter] = useState<Set<RegStatus>>(new Set(ALL_REG_STATUSES))
+  const [controlStatusFilter, setControlStatusFilter] = useState<Set<string>>(new Set(ALL_CONTROL_STATUSES))
 
   function toggleEventStatus(s: EventStatus) {
     setEventStatusFilter((prev) => {
@@ -103,6 +106,14 @@ export default function AdminRacesList() {
   }
   function toggleRegStatus(s: RegStatus) {
     setRegStatusFilter((prev) => {
+      const next = new Set(prev)
+      if (next.has(s)) next.delete(s)
+      else next.add(s)
+      return next
+    })
+  }
+  function toggleControlStatus(s: string) {
+    setControlStatusFilter((prev) => {
       const next = new Set(prev)
       if (next.has(s)) next.delete(s)
       else next.add(s)
@@ -233,11 +244,22 @@ export default function AdminRacesList() {
                 </label>
               ))}
             </div>
+            <div style={{ width: 1, height: 18, background: 'var(--line)' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--tx-dim)', fontSize: 12, fontWeight: 700 }}>控制狀態</span>
+              {ALL_CONTROL_STATUSES.map((s) => (
+                <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: 'var(--tx)' }}>
+                  <input type="checkbox" checked={controlStatusFilter.has(s)} onChange={() => toggleControlStatus(s)} />
+                  {CONTROL_LABEL[s] ?? s}
+                </label>
+              ))}
+            </div>
             <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
               <button
                 onClick={() => {
                   setEventStatusFilter(new Set(ALL_EVENT_STATUSES))
                   setRegStatusFilter(new Set(ALL_REG_STATUSES))
+                  setControlStatusFilter(new Set(ALL_CONTROL_STATUSES))
                 }}
                 style={{
                   background: 'none', border: '1px solid var(--line)', borderRadius: 8,
@@ -250,6 +272,7 @@ export default function AdminRacesList() {
                 onClick={() => {
                   setEventStatusFilter(new Set())
                   setRegStatusFilter(new Set())
+                  setControlStatusFilter(new Set())
                 }}
                 style={{
                   background: 'none', border: '1px solid var(--line)', borderRadius: 8,
@@ -262,7 +285,7 @@ export default function AdminRacesList() {
           </div>
 
           {races
-            .filter((r) => eventStatusFilter.has(eventStatusOf(r)) && regStatusFilter.has(regStatusOf(r)))
+            .filter((r) => eventStatusFilter.has(eventStatusOf(r)) && regStatusFilter.has(regStatusOf(r)) && controlStatusFilter.has(r.control_status))
             .map((r) => (
             <Link
               key={r.id}
