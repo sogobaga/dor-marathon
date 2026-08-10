@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { racesApi, followApi, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
+import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useScrollLock } from '@/lib/useScrollLock'
@@ -132,6 +132,15 @@ export default function RaceDetailScreen({
   // （後端 progress 會掃全體報名者活動、未聚合，很重；進度分頁本身的資料由下方 ProgressBody 內建的 SWR 負責，未受影響）。
   const hasCheckpoints = (detail?.tasks ?? []).some((t) => t.metric_type === 'checkpoint')
 
+  // 狀態徽章：「進行中」與「報名中」解耦為獨立可並存條件，與 RacesScreen 的 RaceCard 徽章邏輯一致
+  // （見 raceStatusFlags）；賽事結束一律只顯示「已結束」；三者皆不成立（賽前/暫停等）才 fallback 回
+  // 原本互斥的 STATUS_LABEL[display_status]。用 periodEnded 命名避免和上面既有的 ended（cert/exp 用途）撞名。
+  const { ended: periodEnded, ongoing: periodOngoing, regOpen: periodRegOpen } = raceStatusFlags(race)
+  const statusLabels: string[] = periodEnded
+    ? [STATUS_LABEL.ended]
+    : [...(periodOngoing ? [STATUS_LABEL.racing] : []), ...(periodRegOpen ? [STATUS_LABEL.registering] : [])]
+  if (statusLabels.length === 0) statusLabels.push(STATUS_LABEL[race.display_status] ?? race.display_status)
+
   // VIP 專屬賽事：非 VIP 點「立即報名」→ 擋下並跳出提示（不進報名表單）；VIP／非 vip_only 賽事照舊
   function handleRegisterClick() {
     if (race.vip_only && !dash?.is_vip) {
@@ -161,7 +170,9 @@ export default function RaceDetailScreen({
         {/* 賽事資訊 Dashboard */}
         <div className="skin-frame" style={dashCard}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={statusBadge}>{STATUS_LABEL[race.display_status] ?? race.display_status}</span>
+            {statusLabels.map((label) => (
+              <span key={label} style={statusBadge}>{label}</span>
+            ))}
             <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
               {race.event_mode === 'competition' ? '競賽' : race.event_mode === 'faction_battle' ? '分組對抗' : isPersonal ? '個人挑戰' : '一般'}
             </span>

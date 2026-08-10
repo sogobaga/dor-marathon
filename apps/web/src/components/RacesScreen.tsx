@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import useSWR from 'swr'
-import { racesApi, type Race, type MyRegLite } from '@/lib/api'
+import { racesApi, raceStatusFlags, type Race, type MyRegLite } from '@/lib/api'
 import { getUserToken, useUser, clearUserSession } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
@@ -78,7 +78,17 @@ export default function RacesScreen({
   const [vipGateReason, setVipGateReason] = useState<string | undefined>()
   const { dash } = useDashboard()
   const races = data?.races ?? []
-  const filtered = filter === 'all' ? races : races.filter((r) => CATEGORY[r.display_status] === filter)
+  // 「報名中」與「進行中」解耦為獨立、可同時成立的條件（見 raceStatusFlags）：
+  // 一場賽事可同時符合多個篩選（例：個人挑戰活動中 ongoing && regOpen → 同時落入 報名中/進行中）。
+  // 各分類額外保留 CATEGORY 既有的 fallback 判斷（即將報名/暫停/報名結束/賽事中止/報名截止後賽前準備期），
+  // 確保一般賽事在每個 display_status 下仍會落入與改版前相同的分類，不因改採日期判斷而漏篩。
+  const filtered = races.filter((r) => {
+    if (filter === 'all') return true
+    const { ended, ongoing, regOpen } = raceStatusFlags(r)
+    if (filter === 'reg') return regOpen || CATEGORY[r.display_status] === 'reg'
+    if (filter === 'racing') return ongoing || CATEGORY[r.display_status] === 'racing'
+    return ended || CATEGORY[r.display_status] === 'ended' // filter === 'ended'
+  })
 
   // VIP 專屬賽事：非 VIP 點「報名」→ 擋下並跳出提示（不進報名表單）；VIP／非 vip_only 賽事照舊
   function handleRegisterClick(race: Race) {
@@ -205,6 +215,14 @@ function RaceCard({
   onOpenBrochure?: (race: Race) => void
 }) {
   const s = DISPLAY_STATUS[race.display_status] ?? { label: race.display_status, color: 'var(--tx-faint)' }
+  // 徽章：「報名中」與「進行中」解耦為獨立、可同時成立的條件，故可能同時顯示兩顆
+  // （例：個人挑戰模式活動期間可報名）；賽事結束一律只顯示「賽事結束」；
+  // 三者皆不成立（賽前/暫停等）才 fallback 回原本互斥的 display_status 標籤。
+  const { ended: raceEnded, ongoing, regOpen } = raceStatusFlags(race)
+  const badges: { label: string; color: string }[] = raceEnded
+    ? [DISPLAY_STATUS.ended]
+    : [...(ongoing ? [DISPLAY_STATUS.racing] : []), ...(regOpen ? [DISPLAY_STATUS.registering] : [])]
+  if (badges.length === 0) badges.push(s)
   const isCompetition = race.event_mode === 'competition'
   // 排行榜入口：競賽模式(分組榜) + 個人挑戰模式(完成次數榜，見 RankingBody personal 分支)；一般/分組對抗無此入口
   const hasRankingEntry = isCompetition || race.event_mode === 'personal'
@@ -246,7 +264,9 @@ function RaceCard({
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
             {race.vip_only && <span style={vipBadge}>✦ VIP專屬</span>}
-            <span style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, color: s.color, border: `1px solid ${s.color}`, background: 'rgba(255,255,255,.03)', whiteSpace: 'nowrap' }}>● {s.label}</span>
+            {badges.map((b) => (
+              <span key={b.label} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, color: b.color, border: `1px solid ${b.color}`, background: 'rgba(255,255,255,.03)', whiteSpace: 'nowrap' }}>● {b.label}</span>
+            ))}
             <span style={{ fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 999, color: 'var(--gold)', border: '1px solid var(--gold)', whiteSpace: 'nowrap' }}>{fmtFee(race.entry_fee)}</span>
           </div>
         </div>
