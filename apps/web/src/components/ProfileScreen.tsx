@@ -186,6 +186,10 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
     }
     loadDashboard()
     loadFollows()
+    // 回顯既有推廣連結：只查現況、不產生，避免重掛載後（例如切分頁再回來）誤退回「產生」按鈕
+    withUserAuth((t) => referralApi.get(t))
+      .then((r) => { if (r.referral_code) setReferral(r) })
+      .catch(() => {})
     withUserAuth((t) => profileApi.getMe(t))
       .then((r) => setP(r.profile))
       .catch((e) => setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '載入失敗'))

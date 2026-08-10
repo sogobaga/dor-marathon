@@ -1372,6 +1372,9 @@ export const referralApi = {
   // 產生（或取得既有）本人的推廣碼；累積里程未達 10km 會回 403
   generate: (token: string) =>
     request<ReferralInfo>('/profile/referral', { method: 'POST', headers: withAuth(token) }),
+  // 只查現況、不產生；沒產生過會回空 referral_code（供頁面 mount 時回顯既有連結，不會誤觸發 403）
+  get: (token: string) =>
+    request<ReferralInfo>('/profile/referral', { headers: withAuth(token) }),
 }
 
 export const followApi = {
