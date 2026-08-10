@@ -49,6 +49,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/{raceID}/exp-breakdown", h.ExpBreakdown)
 	r.Get("/{raceID}/status", h.LiveStatus)
 	r.Post("/{raceID}/promo/check", h.PromoCheck)
+	r.Get("/{raceID}/personal-progress", h.PersonalProgress)
 	return r
 }
 
@@ -618,6 +619,27 @@ func (h *Handler) ExpBreakdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"breakdown": bd})
+}
+
+// GET /api/v1/races/:raceID/personal-progress — 個人挑戰模式(personal)完成判定引擎觸發點（需登入）。
+// 查/評估/CAS 標記登入者在此賽事「進行中」的挑戰 attempt；非 personal 賽事回 404（見 GetPersonalProgress）。
+func (h *Handler) PersonalProgress(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	prog, err := h.svc.GetPersonalProgress(r.Context(), raceID, userID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get personal progress")
+		return
+	}
+	respondJSON(w, http.StatusOK, prog)
 }
 
 // GET /api/v1/races/:raceID/ranking?limit=100

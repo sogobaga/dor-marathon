@@ -49,6 +49,44 @@ export function formatChallengeRule(rule?: ChallengeRule | null): string {
   }
 }
 
+// --- 個人挑戰模式 P3：完成判定引擎（見後端 race.GetPersonalProgress） ---
+export interface ChallengeProgress {
+  completion_type: CompletionType
+  streak_days?: number      // streak_days：目前最長連續達標天數
+  target_days?: number
+  cum_km?: number            // window_cumulative：累積里程
+  target_cum_km?: number
+  best_single_km?: number    // window_cumulative/single_distance：目前最長單趟
+  target_single_km?: number
+  window_ends_at?: string
+}
+export interface PersonalProgress {
+  has_attempt: boolean
+  status?: string // pending|paid|completed|expired（has_attempt=true 才有意義）
+  rule?: ChallengeRule
+  progress?: ChallengeProgress
+  completed_count: number
+}
+
+// formatChallengeProgress 把個人挑戰進行中的即時進度組成人看得懂的一句話（賽事詳情頁用）。
+export function formatChallengeProgress(p?: ChallengeProgress | null): string {
+  if (!p) return ''
+  switch (p.completion_type) {
+    case 'streak_days':
+      return `連續 ${p.streak_days ?? 0} / ${p.target_days ?? 0} 天`
+    case 'window_cumulative': {
+      const base = `累積 ${(p.cum_km ?? 0).toFixed(1)} / ${(p.target_cum_km ?? 0).toFixed(1)} km`
+      return p.target_single_km && p.target_single_km > 0
+        ? `${base}・最長單趟 ${(p.best_single_km ?? 0).toFixed(1)} / ${p.target_single_km.toFixed(1)} km`
+        : base
+    }
+    case 'single_distance':
+      return `目前最佳單趟 ${(p.best_single_km ?? 0).toFixed(1)} / ${(p.target_single_km ?? 0).toFixed(1)} km`
+    default:
+      return ''
+  }
+}
+
 export interface Race {
   id: string
   slug: string
@@ -902,6 +940,10 @@ export const racesApi = {
 
   expBreakdown: (raceID: string, token: string) =>
     request<{ breakdown: ExpBreakdown }>(`/races/${raceID}/exp-breakdown`, { headers: withAuth(token) }),
+
+  // 個人挑戰模式(personal)完成判定引擎觸發點：開個人賽事詳情頁即打，即時評估規則＋CAS 標記完成/逾期（需登入）
+  personalProgress: (raceID: string, token: string) =>
+    request<PersonalProgress>(`/races/${raceID}/personal-progress`, { headers: withAuth(token) }),
 }
 
 export interface TaskProgress extends RaceTask {

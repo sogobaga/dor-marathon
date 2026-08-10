@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { racesApi, followApi, METRIC_BY_KEY, formatChallengeRule, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
+import { racesApi, followApi, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useScrollLock } from '@/lib/useScrollLock'
@@ -110,9 +110,19 @@ export default function RaceDetailScreen({
   // 競賽/分組對抗才有「當天揭曉分組＋分組戰報」；一般模式分組直接顯示
   const battleMode = race.event_mode === 'competition' || race.event_mode === 'faction_battle'
   const isPersonal = race.event_mode === 'personal'
+  // 個人挑戰模式完成判定引擎觸發點：開頁即打，即時評估規則＋CAS 標記完成/逾期（見後端 GetPersonalProgress）。
+  // revalidateOnFocus 全域預設 true（AppProviders.tsx）：跑步結束回前景時會自動重打，不用額外接 hook。
+  const { data: pp } = useSWR(
+    isPersonal && token ? ['personal-progress', race.id] : null,
+    () => racesApi.personalProgress(race.id, token!),
+  )
   // 個人挑戰模式可重複報名再挑戰：只有「進行中」(pending/paid未完成) 的 attempt 才算擋下再報名；
   // completed/expired/cancelled 的歷史報名應可再次顯示「報名挑戰」按鈕（與 RegistrationScreen 對稱）。
-  const inProgress = !!registration && (registration.status === 'pending' || registration.status === 'paid')
+  // personal 用 pp（即時 CAS 判定結果）為準，而非 registration 快照——開頁評估可能剛把 attempt
+  // 標記完成/逾期，registration 是 racesApi.detail 當下的舊快照，不會反映這次評估的結果。
+  const inProgress = isPersonal
+    ? !!pp?.has_attempt && (pp.status === 'pending' || pp.status === 'paid')
+    : !!registration && (registration.status === 'pending' || registration.status === 'paid')
   const defaultTab: Tab = race.display_status === 'racing' ? 'progress' : race.display_status === 'ended' ? 'rank' : 'brochure'
   const [tab, setTab] = useState<Tab>(initialTab ?? defaultTab)
   // 是否有打卡點任務 → 決定是否顯示「探索」頁籤。改由已載入的 detail.tasks 算，不再額外打一支只為此用途的 progress 查詢
@@ -159,13 +169,28 @@ export default function RaceDetailScreen({
             <Row k="賽事期間" v={`${fmt(race.start_date)} – ${fmt(race.end_date)}`} />
           </div>
 
-          {/* 個人挑戰模式：挑戰內容（組人話規則說明） */}
+          {/* 個人挑戰模式：挑戰內容（組人話規則說明）＋當前進度（來自完成判定引擎 /personal-progress） */}
           {isPersonal && (detail?.challenge_rule || race.challenge_rule) && (
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
               <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>挑戰內容</div>
               <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)', marginTop: 4, lineHeight: 1.5 }}>
                 {formatChallengeRule(detail?.challenge_rule ?? race.challenge_rule)}
               </div>
+              {pp?.has_attempt && pp.status === 'completed' && (
+                <div style={{ marginTop: 8, fontSize: 15, fontWeight: 800, color: 'var(--fug)' }}>🎉 挑戰完成！</div>
+              )}
+              {pp?.has_attempt && pp.status === 'expired' && (
+                <div style={{ marginTop: 8, fontSize: 13, color: 'var(--tx-faint)' }}>已逾期，可重新報名再挑戰</div>
+              )}
+              {pp?.has_attempt && pp.status === 'pending' && (
+                <div style={{ marginTop: 8, fontSize: 13, color: 'var(--tx-faint)' }}>完成付款後開始計算挑戰進度</div>
+              )}
+              {pp?.has_attempt && pp.status === 'paid' && pp.progress && (
+                <div style={{ marginTop: 8, fontSize: 13, color: 'var(--tx-dim)' }}>{formatChallengeProgress(pp.progress)}</div>
+              )}
+              {pp && (
+                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--tx-faint)' }}>已完成 {pp.completed_count} 次</div>
+              )}
             </div>
           )}
 
@@ -197,13 +222,13 @@ export default function RaceDetailScreen({
 
           {/* 報名按鈕 / 已報名（修正：不再多一層） */}
           {/* 個人挑戰模式：只有「進行中」的 attempt 才顯示「挑戰進行中」，completed/expired/cancelled 的
-              舊 attempt 都應回到可再報名的按鈕（見 inProgress 計算）。 */}
+              舊 attempt 都應回到可再報名的按鈕（見 inProgress 計算；personal 以 pp 為準，見上方註解）。 */}
           <div style={{ marginTop: 14 }}>
-            {inProgress && registration ? (
+            {inProgress ? (
               <div style={registeredBox}>
                 {isPersonal
-                  ? `挑戰進行中${registration.status === 'pending' ? '（待繳費）' : ''}`
-                  : `✓ 你已報名此賽事${registration.status === 'pending' ? '（待繳費）' : registration.status === 'paid' ? '（已完成）' : ''}`}
+                  ? `挑戰進行中${pp?.status === 'pending' ? '（待繳費）' : ''}`
+                  : `✓ 你已報名此賽事${registration?.status === 'pending' ? '（待繳費）' : registration?.status === 'paid' ? '（已完成）' : ''}`}
               </div>
             ) : detail?.can_register && onRegister ? (
               <button onClick={handleRegisterClick} style={registerBtn}>{isPersonal ? '報名挑戰' : '立即報名'}</button>
