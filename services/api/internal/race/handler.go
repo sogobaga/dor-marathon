@@ -116,6 +116,8 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Put("/{raceID}/rank-display", h.AdminSetRankDisplay)
 	r.Post("/{raceID}/settle-exp", h.AdminSettleEXP)
 	r.Get("/{raceID}/signups", h.AdminListSignups)
+	r.Get("/{raceID}/reward-completions", h.AdminListRewardCompletions)  // 個人挑戰模式 P5
+	r.Post("/{raceID}/reward-draw", h.AdminDrawRewardWinners)            // 個人挑戰模式 P5
 	return r
 }
 
@@ -883,6 +885,92 @@ func (h *Handler) AdminListSignups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"registrations": regs, "count": len(regs)})
+}
+
+// GET /api/v1/admin/races/:raceID/reward-completions?reward_status=&limit=&offset=
+// 個人挑戰模式 P5：列出該賽事「已完成」的挑戰紀錄（依 completed_at ASC），供後台抽獎/發放追蹤。
+// reward_status 篩選：all（預設，不篩／未帶參數同義）｜''（待處理）｜won｜fulfilled。
+func (h *Handler) AdminListRewardCompletions(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	rewardStatus := "all"
+	if vals, ok := r.URL.Query()["reward_status"]; ok && len(vals) > 0 {
+		rewardStatus = vals[0]
+	}
+	limit := 100
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 500 {
+		limit = v
+	}
+	offset := 0
+	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v >= 0 {
+		offset = v
+	}
+
+	res, err := h.svc.ListRewardCompletions(r.Context(), raceID, rewardStatus, limit, offset)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list reward completions")
+		return
+	}
+	respondJSON(w, http.StatusOK, res)
+}
+
+// PUT /api/v1/admin/reward-completions/:regID  {reward_status, reward_note}
+// 個人挑戰模式 P5：設定單筆完成紀錄的中獎/發放狀態＋備註。僅能作用於 status='completed' 的報名。
+func (h *Handler) AdminUpdateRewardCompletion(w http.ResponseWriter, r *http.Request) {
+	regID := chi.URLParam(r, "regID")
+	var req struct {
+		RewardStatus string `json:"reward_status"`
+		RewardNote   string `json:"reward_note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	validStatuses := map[string]bool{"": true, "won": true, "fulfilled": true}
+	if !validStatuses[req.RewardStatus] {
+		respondErr(w, http.StatusBadRequest, "invalid reward_status")
+		return
+	}
+	err := h.svc.UpdateRewardCompletion(r.Context(), regID, req.RewardStatus, req.RewardNote)
+	if errors.Is(err, ErrRewardCompletionNotFound) {
+		respondErr(w, http.StatusNotFound, "找不到符合條件的完成紀錄（須為已完成報名）")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to update reward completion")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /api/v1/admin/races/:raceID/reward-draw  {n}
+// 個人挑戰模式 P5：從尚未處理(reward_status='')的完成紀錄中隨機抽 n 筆設為中獎(won)。原子操作。
+func (h *Handler) AdminDrawRewardWinners(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	var req struct {
+		N int `json:"n"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.N <= 0 {
+		respondErr(w, http.StatusBadRequest, "n must be positive")
+		return
+	}
+	winners, err := h.svc.DrawRewardWinners(r.Context(), raceID, req.N)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to draw reward winners")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"winners": winners, "count": len(winners)})
 }
 
 // ---

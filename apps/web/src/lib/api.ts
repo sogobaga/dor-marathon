@@ -1090,6 +1090,56 @@ export const adminRacesApi = {
     ),
 }
 
+// --- Admin: 個人挑戰模式（event_mode=personal）P5 獎勵管理 ---
+// 獎勵＝「完成者中抽獎/限額」，LINE Point 由後台人工發放；系統只管「資格＋發放狀態」。
+// 以「每一筆完成」為單位（同一人完成多次＝多筆完成＝多個抽獎資格，對應每次挑戰皆付費 299 的經濟）。
+
+export interface RewardCompletionRow {
+  registration_id: string
+  user_id: string
+  user_name: string
+  user_email: string
+  completed_at: string
+  attempt_no: number
+  reward_status: '' | 'won' | 'fulfilled'
+  reward_note?: string
+  reward_fulfilled_at?: string | null
+}
+export interface RewardCompletionSummary {
+  total: number
+  pending: number
+  won: number
+  fulfilled: number
+}
+export interface RewardCompletionsResponse {
+  completions: RewardCompletionRow[]
+  count: number
+  summary: RewardCompletionSummary
+}
+
+export const adminRewardsApi = {
+  list: (token: string, raceId: string, params?: { reward_status?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.reward_status !== undefined) qs.set('reward_status', params.reward_status) // ''（待處理）需明確帶出，與「未帶=all」區分
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.offset) qs.set('offset', String(params.offset))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<RewardCompletionsResponse>(`/admin/races/${raceId}/reward-completions${suffix}`, { headers: withAuth(token) })
+  },
+  update: (token: string, regId: string, body: { reward_status: '' | 'won' | 'fulfilled'; reward_note: string }) =>
+    request<void>(`/admin/reward-completions/${regId}`, {
+      method: 'PUT',
+      headers: withAuth(token),
+      body: JSON.stringify(body),
+    }),
+  draw: (token: string, raceId: string, n: number) =>
+    request<{ winners: RewardCompletionRow[]; count: number }>(`/admin/races/${raceId}/reward-draw`, {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify({ n }),
+    }),
+}
+
 // --- 個人資訊 (Profile) ---
 
 export interface Profile {
