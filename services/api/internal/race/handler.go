@@ -50,6 +50,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/{raceID}/status", h.LiveStatus)
 	r.Post("/{raceID}/promo/check", h.PromoCheck)
 	r.Get("/{raceID}/personal-progress", h.PersonalProgress)
+	r.Get("/{raceID}/personal-leaderboard", h.PersonalLeaderboard)
 	return r
 }
 
@@ -640,6 +641,23 @@ func (h *Handler) PersonalProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, prog)
+}
+
+// GET /api/v1/races/:raceID/personal-leaderboard — 個人挑戰模式(personal)完成次數排行榜（公開，登入 optional；
+// 登入後含 is_me/is_following/my_rank）。非 personal 賽事回 404，見 GetPersonalLeaderboard。
+func (h *Handler) PersonalLeaderboard(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	lb, err := h.svc.GetPersonalLeaderboard(r.Context(), raceID, userID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get personal leaderboard")
+		return
+	}
+	respondJSON(w, http.StatusOK, lb)
 }
 
 // GET /api/v1/races/:raceID/ranking?limit=100

@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { racesApi, followApi, type Race, type StandingRank, type LeaderboardRow, type Contributor } from '@/lib/api'
+import { racesApi, followApi, type Race, type StandingRank, type LeaderboardRow, type Contributor, type PersonalLeaderRow } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { overlayMount } from '@/lib/overlayMount'
 
@@ -25,6 +25,13 @@ function fmtDateTime(iso?: string) {
   if (isNaN(d.getTime())) return '—'
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+function fmtDate(iso?: string) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`
 }
 
 export default function RaceRankingScreen({ race, onBack }: { race: Race; onBack: () => void }) {
@@ -92,10 +99,11 @@ export default function RaceRankingScreen({ race, onBack }: { race: Race; onBack
 }
 
 // RankingBody 排名內容，供賽事資訊頁「排名」頁籤重用。
-// 競賽模式：分組榜；其他（一般）模式：個人完成排名。
+// 競賽模式：分組榜；個人挑戰模式：完成次數排行榜；其他（一般）模式：個人完成排名。
 export function RankingBody({ race }: { race: Race }) {
-  if (race.event_mode !== 'competition') return <GeneralLeaderboard race={race} />
-  return <CompetitionStandings race={race} />
+  if (race.event_mode === 'competition') return <CompetitionStandings race={race} />
+  if (race.event_mode === 'personal') return <PersonalChallengeLeaderboard race={race} />
+  return <GeneralLeaderboard race={race} />
 }
 
 function CompetitionStandings({ race }: { race: Race }) {
@@ -220,6 +228,89 @@ function LbList({
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// PersonalChallengeLeaderboard 個人挑戰模式(personal)完成次數排行榜：依完成次數 desc、同次數最早完成時間 asc；
+// 登入 optional（未登入時不顯示追蹤鈕，is_me 恆 false）。登入者若在榜外，底部顯示自己的名次/次數。
+function PersonalChallengeLeaderboard({ race }: { race: Race }) {
+  const token = getUserToken() || undefined
+  const { data, isLoading } = useSWR(['personal-leaderboard', race.id], () => racesApi.personalLeaderboard(race.id, token), { refreshInterval: 30000 })
+  const [override, setOverride] = useState<Record<string, boolean>>({})
+  if (isLoading || !data) return <Hint>載入排名…</Hint>
+
+  const rows = data.leaderboard
+  const following = (r: PersonalLeaderRow) => override[r.user_id] ?? r.is_following
+  async function toggle(r: PersonalLeaderRow) {
+    const t = getUserToken()
+    if (!t) return
+    const cur = following(r)
+    setOverride((o) => ({ ...o, [r.user_id]: !cur }))
+    try {
+      if (cur) await followApi.unfollow(t, r.user_id)
+      else await followApi.follow(t, r.user_id)
+    } catch {
+      setOverride((o) => ({ ...o, [r.user_id]: cur }))
+    }
+  }
+
+  const onBoard = rows.some((r) => r.is_me)
+  const offBoard = !onBoard && data.my_rank > 0
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>🏆 挑戰排行 · {race.title}</div>
+        <div style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>依完成次數排序，同次數比誰先完成</div>
+      </div>
+      {rows.length === 0 ? (
+        <Hint>尚無人完成，成為第一個！</Hint>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {rows.map((r) => (
+            <div key={r.user_id} style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 12,
+              background: r.is_me ? 'rgba(45,212,150,.1)' : 'var(--bg-1)',
+              border: r.is_me ? '1px solid var(--fug)' : '1px solid var(--line)',
+            }}>
+              <div style={{ width: 24, textAlign: 'center', fontWeight: 800, color: r.rank <= 3 ? 'var(--gold)' : 'var(--tx-dim)' }}>{r.rank}</div>
+              <Avatar url={r.avatar} name={r.name} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {r.name}{r.is_me ? '（我）' : ''}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>最早完成 {fmtDate(r.first_completed_at)}</div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fug)', whiteSpace: 'nowrap' }}>完成 {r.completed_count} 次</div>
+              {token && !r.is_me && (
+                <button onClick={() => toggle(r)} style={following(r) ? followingBtn : followBtn}>
+                  {following(r) ? '追蹤中' : '＋追蹤'}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {offBoard && (
+        <div style={{ ...myBanner, borderColor: 'var(--fug)' }}>
+          <div style={{ fontSize: 11, letterSpacing: '.12em', color: 'var(--fug)' }}>我的名次</div>
+          <div style={{ display: 'flex', gap: 18, marginTop: 8, fontSize: 13, color: 'var(--tx-dim)' }}>
+            <span>第 <b style={{ color: 'var(--tx)' }}>{data.my_rank}</b> 名</span>
+            <span>完成 <b style={{ color: 'var(--tx)' }}>{data.my_count}</b> 次</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Avatar 小頭像；無圖時以名稱首字當佔位（比照 BossRankingPanel 慣例）
+function Avatar({ url, name }: { url: string; name: string }) {
+  if (url) return <img src={url} alt={name} style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+  return (
+    <div style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0, background: 'var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800, color: 'var(--tx-dim)' }}>
+      {(name || '?').slice(0, 1)}
     </div>
   )
 }

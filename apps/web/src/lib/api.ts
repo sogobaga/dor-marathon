@@ -68,6 +68,23 @@ export interface PersonalProgress {
   completed_count: number
 }
 
+// --- 個人挑戰模式 P4：排行榜（依完成次數 desc、最早完成時間 asc；見後端 race.GetPersonalLeaderboard） ---
+export interface PersonalLeaderRow {
+  rank: number
+  user_id: string
+  name: string
+  avatar: string
+  completed_count: number
+  first_completed_at: string
+  is_following: boolean
+  is_me: boolean
+}
+export interface PersonalLeaderboard {
+  leaderboard: PersonalLeaderRow[]
+  my_rank: number  // 登入者在榜上的名次；未完成過或未登入 = 0
+  my_count: number
+}
+
 // formatChallengeProgress 把個人挑戰進行中的即時進度組成人看得懂的一句話（賽事詳情頁用）。
 export function formatChallengeProgress(p?: ChallengeProgress | null): string {
   if (!p) return ''
@@ -944,6 +961,10 @@ export const racesApi = {
   // 個人挑戰模式(personal)完成判定引擎觸發點：開個人賽事詳情頁即打，即時評估規則＋CAS 標記完成/逾期（需登入）
   personalProgress: (raceID: string, token: string) =>
     request<PersonalProgress>(`/races/${raceID}/personal-progress`, { headers: withAuth(token) }),
+
+  // 個人挑戰模式(personal)排行榜：依完成次數 desc、最早完成時間 asc（公開；帶 token 則含 is_me/is_following/my_rank）
+  personalLeaderboard: (raceID: string, token?: string) =>
+    request<PersonalLeaderboard>(`/races/${raceID}/personal-leaderboard`, token ? { headers: withAuth(token) } : undefined),
 }
 
 export interface TaskProgress extends RaceTask {

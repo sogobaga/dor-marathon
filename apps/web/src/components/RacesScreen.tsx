@@ -206,6 +206,8 @@ function RaceCard({
 }) {
   const s = DISPLAY_STATUS[race.display_status] ?? { label: race.display_status, color: 'var(--tx-faint)' }
   const isCompetition = race.event_mode === 'competition'
+  // 排行榜入口：競賽模式(分組榜) + 個人挑戰模式(完成次數榜，見 RankingBody personal 分支)；一般/分組對抗無此入口
+  const hasRankingEntry = isCompetition || race.event_mode === 'personal'
   const canRegister = race.can_register
   const stop = (e: React.MouseEvent) => e.stopPropagation()
   return (
@@ -257,7 +259,7 @@ function RaceCard({
 
         {/* 底列：排行榜（左）＋ 立即報名／報名完成／前往繳費（右） */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13 }}>
-          {isCompetition && onOpenRanking
+          {hasRankingEntry && onOpenRanking
             ? <button onClick={(e) => { stop(e); onOpenRanking(race) }} style={linkBtnStyle}>排行榜</button>
             : <span />}
           {reg
