@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { adminRacesApi, type Race } from '@/lib/api'
+import { adminRacesApi, raceStatusFlags, type Race } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import NewRaceModal from './NewRaceModal'
 
@@ -18,6 +18,47 @@ const DISPLAY_LABEL: Record<string, string> = {
 }
 const MODE_LABEL: Record<string, string> = {
   general: '一般', competition: '競賽', faction_battle: '分組對抗', personal: '個人挑戰',
+}
+
+// 賽事狀態（活動期間，3 值）／報名狀態（可否報名，2 值）：用 raceStatusFlags 解耦計算，
+// 供卡片醒目標籤 + 篩選列共用。個人挑戰模式活動中會同時是「進行中」+「報名中」，兩維各自獨立勾選。
+type EventStatus = 'upcoming' | 'ongoing' | 'ended'
+type RegStatus = 'open' | 'closed'
+const ALL_EVENT_STATUSES: EventStatus[] = ['upcoming', 'ongoing', 'ended']
+const ALL_REG_STATUSES: RegStatus[] = ['open', 'closed']
+const EVENT_STATUS_LABEL: Record<EventStatus, string> = { upcoming: '尚未開始', ongoing: '進行中', ended: '已結束' }
+const REG_STATUS_LABEL: Record<RegStatus, string> = { open: '報名中', closed: '未開放' }
+
+function eventStatusOf(r: Race): EventStatus {
+  const { ended, ongoing } = raceStatusFlags(r)
+  return ended ? 'ended' : ongoing ? 'ongoing' : 'upcoming'
+}
+function regStatusOf(r: Race): RegStatus {
+  return raceStatusFlags(r).regOpen ? 'open' : 'closed'
+}
+
+type BadgeTone = 'fug' | 'gold' | 'violet' | 'gray'
+const BADGE_STYLE: Record<BadgeTone, React.CSSProperties> = {
+  fug: { background: 'rgba(45,212,150,.12)', color: 'var(--fug)', border: '1px solid rgba(45,212,150,.3)' },
+  gold: { background: 'rgba(255,196,0,.12)', color: 'var(--gold)', border: '1px solid rgba(255,196,0,.3)' },
+  violet: { background: 'rgba(157,140,255,.12)', color: 'var(--violet)', border: '1px solid rgba(157,140,255,.3)' },
+  gray: { background: 'var(--bg-2)', color: 'var(--tx-dim)', border: '1px solid var(--line)' },
+}
+const EVENT_STATUS_TONE: Record<EventStatus, BadgeTone> = { upcoming: 'violet', ongoing: 'fug', ended: 'gray' }
+const REG_STATUS_TONE: Record<RegStatus, BadgeTone> = { open: 'gold', closed: 'gray' }
+
+function Badge({ tone, children }: { tone: BadgeTone; children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        ...BADGE_STYLE[tone],
+        borderRadius: 999, padding: '3px 10px', fontSize: 11.5, fontWeight: 700,
+        display: 'inline-block', whiteSpace: 'nowrap', lineHeight: 1.4,
+      }}
+    >
+      {children}
+    </span>
+  )
 }
 
 function fmtDate(s?: string | null) {
@@ -48,6 +89,26 @@ export default function AdminRacesList() {
   const [token, setTokenState] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [settlingId, setSettlingId] = useState<string | null>(null)
+  // 勾選篩選：預設全勾＝全部顯示；純 client 端 filter，不打 API
+  const [eventStatusFilter, setEventStatusFilter] = useState<Set<EventStatus>>(new Set(ALL_EVENT_STATUSES))
+  const [regStatusFilter, setRegStatusFilter] = useState<Set<RegStatus>>(new Set(ALL_REG_STATUSES))
+
+  function toggleEventStatus(s: EventStatus) {
+    setEventStatusFilter((prev) => {
+      const next = new Set(prev)
+      if (next.has(s)) next.delete(s)
+      else next.add(s)
+      return next
+    })
+  }
+  function toggleRegStatus(s: RegStatus) {
+    setRegStatusFilter((prev) => {
+      const next = new Set(prev)
+      if (next.has(s)) next.delete(s)
+      else next.add(s)
+      return next
+    })
+  }
 
   async function handleSettle(e: React.MouseEvent, r: Race) {
     e.preventDefault()
@@ -146,7 +207,63 @@ export default function AdminRacesList() {
 
       {races && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {races.map((r) => (
+          <div
+            style={{
+              display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16,
+              background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12,
+              padding: '12px 16px', fontSize: 13,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--tx-dim)', fontSize: 12, fontWeight: 700 }}>賽事狀態</span>
+              {ALL_EVENT_STATUSES.map((s) => (
+                <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: 'var(--tx)' }}>
+                  <input type="checkbox" checked={eventStatusFilter.has(s)} onChange={() => toggleEventStatus(s)} />
+                  {EVENT_STATUS_LABEL[s]}
+                </label>
+              ))}
+            </div>
+            <div style={{ width: 1, height: 18, background: 'var(--line)' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--tx-dim)', fontSize: 12, fontWeight: 700 }}>報名狀態</span>
+              {ALL_REG_STATUSES.map((s) => (
+                <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: 'var(--tx)' }}>
+                  <input type="checkbox" checked={regStatusFilter.has(s)} onChange={() => toggleRegStatus(s)} />
+                  {REG_STATUS_LABEL[s]}
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+              <button
+                onClick={() => {
+                  setEventStatusFilter(new Set(ALL_EVENT_STATUSES))
+                  setRegStatusFilter(new Set(ALL_REG_STATUSES))
+                }}
+                style={{
+                  background: 'none', border: '1px solid var(--line)', borderRadius: 8,
+                  padding: '4px 10px', fontSize: 12, color: 'var(--tx-dim)', cursor: 'pointer',
+                }}
+              >
+                全選
+              </button>
+              <button
+                onClick={() => {
+                  setEventStatusFilter(new Set())
+                  setRegStatusFilter(new Set())
+                }}
+                style={{
+                  background: 'none', border: '1px solid var(--line)', borderRadius: 8,
+                  padding: '4px 10px', fontSize: 12, color: 'var(--tx-dim)', cursor: 'pointer',
+                }}
+              >
+                清除
+              </button>
+            </div>
+          </div>
+
+          {races
+            .filter((r) => eventStatusFilter.has(eventStatusOf(r)) && regStatusFilter.has(regStatusOf(r)))
+            .map((r) => (
             <Link
               key={r.id}
               href={`/admin/races/${r.id}`}
@@ -164,7 +281,11 @@ export default function AdminRacesList() {
             >
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>{r.title}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>{r.title}</div>
+                    <Badge tone={EVENT_STATUS_TONE[eventStatusOf(r)]}>{EVENT_STATUS_LABEL[eventStatusOf(r)]}</Badge>
+                    <Badge tone={REG_STATUS_TONE[regStatusOf(r)]}>{REG_STATUS_LABEL[regStatusOf(r)]}</Badge>
+                  </div>
                   <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
                     {r.subtitle} · {r.distances.join('/')}K · {r.slots_total} 名額
                   </div>
@@ -218,8 +339,8 @@ export default function AdminRacesList() {
               >
                 <InfoItem label="賽事模式" value={MODE_LABEL[r.event_mode] ?? r.event_mode} />
                 <InfoItem label="報名費" value={fmtFee(r.entry_fee)} />
-                <InfoItem label="報名狀態" value={DISPLAY_LABEL[r.display_status] ?? r.display_status} />
-                <InfoItem label="賽事狀態" value={CONTROL_LABEL[r.control_status] ?? r.control_status} />
+                <InfoItem label="顯示狀態" value={DISPLAY_LABEL[r.display_status] ?? r.display_status} />
+                <InfoItem label="控制狀態" value={CONTROL_LABEL[r.control_status] ?? r.control_status} />
                 <InfoItem label="報名時間" value={`${fmtDate(r.registration_start)} ~ ${fmtDate(r.registration_end)}`} />
                 <InfoItem label="賽事時間" value={`${fmtDate(r.start_date)} ~ ${fmtDate(r.end_date)}`} />
               </div>
