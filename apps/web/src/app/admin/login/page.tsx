@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { authApi } from '@/lib/api'
-import { setSession } from '@/lib/adminAuth'
+import { setSession, getToken, ensureValidToken } from '@/lib/adminAuth'
 
 export default function AdminLogin() {
   const router = useRouter()
@@ -12,6 +12,23 @@ export default function AdminLogin() {
   const [keepLogin, setKeepLogin] = useState(false) // 保持登入（預設不勾，安全優先）
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [checking, setChecking] = useState(true) // 進頁先檢查是否已有有效 session，避免表單閃現又跳走
+
+  // 已勾過「保持登入」→ localStorage 還有 refresh token 時，開這頁應直接導去後台，
+  // 而不是永遠顯示登入表單（AdminChrome 在 isLogin 分支故意跳過續期，所以要在這裡自己做）。
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      await ensureValidToken() // 有 refresh 且 access 快過期/已過期 → 自動續期
+      if (!alive) return
+      if (getToken()) {
+        router.replace('/admin/races')
+        return // 導開後不切換 checking，避免表單在導頁瞬間閃現
+      }
+      setChecking(false)
+    })()
+    return () => { alive = false }
+  }, [router])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -27,6 +44,10 @@ export default function AdminLogin() {
     } finally {
       setBusy(false)
     }
+  }
+
+  if (checking) {
+    return <div style={{ minHeight: '100vh' }} />
   }
 
   return (

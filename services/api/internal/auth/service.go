@@ -285,7 +285,11 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 	// 單一登入：refresh token 的 session epoch 若與帳號目前 epoch 不符，代表帳號已在
 	// 別處重新登入（epoch 已被遞增）、這顆 refresh token 已被取代 → 拒絕（明確語意，
 	// 讓 handler 回 401，前端走既有「refresh 失敗→登出」流程）。
-	if claims.SessionEpoch != user.SessionEpoch {
+	// admin 角色豁免：後台「保持登入」與玩家端共用同一顆帳號的 session_epoch，玩家端
+	// 重新登入 bump epoch 會誤踢掉後台的長效 session；admin 不上傳 GPS 里程，epoch 單一
+	// 登入防弊對 admin 無意義、只有誤傷 —— 故只有非 admin 才做此檢查（玩家端防弊不受影響）。
+	// 用「本次從 DB 查到的 user.Role」（非 claims 裡的舊 role）判斷，避免帳號被降級後仍被豁免。
+	if user.Role != "admin" && claims.SessionEpoch != user.SessionEpoch {
 		return nil, ErrSessionSuperseded
 	}
 
