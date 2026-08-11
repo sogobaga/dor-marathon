@@ -501,9 +501,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                 <button onClick={connectStrava} disabled={stravaBusy || strava?.enabled === false}
                   aria-label="Connect with Strava"
                   style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0, alignSelf: 'flex-start', opacity: stravaBusy || strava?.enabled === false ? 0.5 : 1 }}>
-                  {/* 官方「Connect with Strava」按鈕（送審前以 Strava ZIP 內官方 PNG 取代同路徑檔即可） */}
+                  {/* Strava 官方「Connect with Strava」按鈕（橙色 @2x；橙色實心底在深/淺 skin 與任何卡片底色皆清晰，白色版僅適純深底故不用） */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src="/strava/btn_strava_connect_orange.svg" alt="Connect with Strava" style={{ height: 44, display: 'block' }} />
+                  <img src="/strava/btn_strava_connect_with_orange_x2.png" alt="Connect with Strava" style={{ height: 48, display: 'block' }} />
                 </button>
               )}
             </div>
