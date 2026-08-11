@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail } from '@/lib/api'
+import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail, type GrantedReward } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useScrollLock } from '@/lib/useScrollLock'
@@ -11,6 +11,7 @@ import { useSheetDismiss } from '@/lib/useSheetDismiss'
 import { overlayMount } from '@/lib/overlayMount'
 import { renderCertificate, downloadCertificate, type CertificateRender } from '@/lib/certificate'
 import ExpSettlementModal from './ExpSettlementModal'
+import RewardGrantedModal from './RewardGrantedModal'
 import UpgradeVipModal from './UpgradeVipModal'
 import { BrochureBody } from './BrochureScreen'
 import { RankingBody } from './RaceRankingScreen'
@@ -119,6 +120,14 @@ export default function RaceDetailScreen({
     isPersonal && token ? ['personal-progress', race.id] : null,
     () => racesApi.personalProgress(race.id, token!),
   )
+  // 活動獎勵系統 P3：完成挑戰即得獎勵彈窗。後端只在「這次呼叫剛好把 attempt 判定為完成」才會回非空
+  // newly_granted（見 race.GetPersonalProgress／MarkAttemptCompletedAndGrant 的 CAS 保證），之後
+  // revalidate（如切背景回前景的 revalidateOnFocus）一律拿到 undefined/空陣列 → 依賴陣列參照變動的
+  // effect 天然只會觸發一次，不需要額外用 localStorage 記錄「看過了」。
+  const [rewardGranted, setRewardGranted] = useState<GrantedReward[] | undefined>(undefined)
+  useEffect(() => {
+    if (pp?.newly_granted && pp.newly_granted.length > 0) setRewardGranted(pp.newly_granted)
+  }, [pp?.newly_granted])
   // 個人挑戰模式可重複報名再挑戰：只有「進行中」(pending/paid未完成) 的 attempt 才算擋下再報名；
   // completed/expired/cancelled 的歷史報名應可再次顯示「報名挑戰」按鈕（與 RegistrationScreen 對稱）。
   // personal 用 pp（即時 CAS 判定結果）為準，而非 registration 快照——開頁評估可能剛把 attempt
@@ -315,13 +324,19 @@ export default function RaceDetailScreen({
         </div>
       )}
 
-      {/* 本場 EXP 結算演出 */}
-      {showExp && breakdown && breakdown.gained > 0 && (
+      {/* 本場 EXP 結算演出。與下方「完成獲得獎勵」彈窗互斥排隊：兩者同 z-index，若同時觸發（個人挑戰於
+          結束當下完成）先只顯示獎勵彈窗，待其關閉後 showExp 仍為 true 才補跳 EXP 結算，避免互相完全遮蓋。 */}
+      {showExp && breakdown && breakdown.gained > 0 && !(rewardGranted && rewardGranted.length > 0) && (
         <ExpSettlementModal breakdown={breakdown} subtitle={race.title} onClose={() => setShowExp(false)} />
       )}
 
       {/* 非 VIP 點「立即報名」VIP 專屬賽事 → 提示 + 升級 CTA */}
       {showUpgrade && <UpgradeVipModal reason="VIP專屬活動。" onClose={() => setShowUpgrade(false)} />}
+
+      {/* 完成挑戰即得獎勵彈窗（活動獎勵系統 P3；只跳一次，見上方 rewardGranted 的 effect 註解） */}
+      {rewardGranted && rewardGranted.length > 0 && (
+        <RewardGrantedModal rewards={rewardGranted} onClose={() => setRewardGranted(undefined)} />
+      )}
     </div>
   )
 }

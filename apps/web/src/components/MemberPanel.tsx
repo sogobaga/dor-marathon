@@ -26,6 +26,7 @@ export default function MemberPanel({
   onOpenTraining,
   onOpenPerks,
   onOpenMonopoly,
+  onOpenRewards,
   onUploadAvatar,
   uploadingAvatar,
   onReady,
@@ -41,6 +42,7 @@ export default function MemberPanel({
   onOpenTraining?: () => void
   onOpenPerks?: () => void
   onOpenMonopoly?: () => void
+  onOpenRewards?: () => void
   onUploadAvatar?: (file: File) => void
   uploadingAvatar?: boolean
   onReady?: () => void
@@ -280,6 +282,15 @@ export default function MemberPanel({
               style={entryBtn}>
               <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🔋 跑者充電站</span>
               <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>優惠好康都在這 ›</span>
+            </button>
+          </div>
+          {/* 活動獎勵（第14套）：完成挑戰機率獲得的序號好禮錢包，全體會員恆顯示（無入口可見性設定，比照跑者充電站） */}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); onOpenRewards?.() }}
+              style={entryBtn}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎁 活動獎勵</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>查看你的序號好禮 ›</span>
             </button>
           </div>
         </div>

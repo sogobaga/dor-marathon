@@ -58,6 +58,8 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/achievements/day", h.AchievementsDay)           // 單日明細
 	r.Post("/referral", h.GetOrCreateReferral)              // 產生/取得專屬推薦碼（需 total_km>=10）
 	r.Get("/referral", h.GetReferral)                       // 只查現況（不產生）；供頁面重掛載回顯既有連結
+	r.Get("/rewards", h.Rewards)                            // 活動獎勵系統 P3：玩家活動獎勵錢包（只回本人序號類獎勵）
+	r.Post("/rewards/{id}/use", h.MarkRewardUsed)           // 標記某筆活動獎勵已使用（只能改自己的，冪等）
 	return r
 }
 

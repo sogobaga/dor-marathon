@@ -92,6 +92,33 @@ export interface GrantedReward {
   code?: string        // serial
 }
 
+// --- 活動獎勵系統 P3：玩家活動獎勵錢包（只存序號類獎勵；見後端 profile.UserReward / migration 127 user_rewards） ---
+export interface UserReward {
+  id: string
+  source_type: string
+  source_race_id?: string
+  source_reg_id?: string
+  code: string
+  link?: string
+  item_label: string
+  merchant_name?: string
+  usage_note?: string
+  icon_url?: string
+  description?: string
+  valid_until?: string
+  used: boolean
+  used_at?: string
+  obtained_at: string
+}
+
+export const rewardsApi = {
+  // 只回登入者自己的序號類活動獎勵；排序（近到期置頂+外框、其餘新到舊）由前端依全量資料自行分組。
+  list: (token: string) => request<{ rewards: UserReward[] }>('/profile/rewards', { headers: withAuth(token) }),
+  // 標記某筆已使用（冪等，只能改自己的）
+  markUsed: (token: string, id: string) =>
+    request<{ ok: boolean; used: boolean; used_at?: string }>(`/profile/rewards/${id}/use`, { method: 'POST', headers: withAuth(token) }),
+}
+
 // --- 個人挑戰模式 P4：排行榜（依完成次數 desc、最早完成時間 asc；見後端 race.GetPersonalLeaderboard） ---
 export interface PersonalLeaderRow {
   rank: number

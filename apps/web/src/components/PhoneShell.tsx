@@ -26,6 +26,7 @@ const TitleScreen = dynamic(() => import('./TitleScreen'), { ssr: false })
 const AchievementScreen = dynamic(() => import('./AchievementScreen'), { ssr: false })
 const TrainingScreen = dynamic(() => import('./TrainingScreen'), { ssr: false })
 const PartnerPerksScreen = dynamic(() => import('./PartnerPerksScreen'), { ssr: false })
+const RewardsWalletScreen = dynamic(() => import('./RewardsWalletScreen'), { ssr: false })
 const MonopolyScreen = dynamic(() => import('./MonopolyScreen'), {
   ssr: false,
   // 環台大富翁 chunk 較大（盤面等圖已轉 WebP，但仍需下載時間）→ 加極簡置中骨架，避免下載期間全空白。
@@ -55,6 +56,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
   const [showPerks, setShowPerks] = useState(false)
   const [perksInitialShop, setPerksInitialShop] = useState<string | undefined>(undefined)
   const [showMonopoly, setShowMonopoly] = useState(false)
+  const [showRewards, setShowRewards] = useState(false)
   const [titlesModal, setTitlesModal] = useState<{ code: string; name: string; tier: number; category: string }[]>([])
   const titlesHandled = useRef(false)
   const [unlockCardId, setUnlockCardId] = useState<string | undefined>(undefined)
@@ -158,6 +160,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     else if (showAchievement) { path = '/achievements'; title = '數據探索' }
     else if (showTraining) { path = '/training'; title = '自主訓練' }
     else if (showPerks) { path = '/perks'; title = '跑者充電站' }
+    else if (showRewards) { path = '/rewards'; title = '活動獎勵' }
     else if (showMonopoly) { path = '/monopoly'; title = '環台大富翁' }
     else if (showExplore) { path = '/explore'; title = '城市探索' }
     else if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
@@ -165,7 +168,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     else if (registerRace) { path = `/register/${registerRace.slug}`; title = `報名 - ${registerRace.title}` }
     else if (detailRace) { path = `/race/${detailRace.slug}`; title = detailRace.title }
     pageview(path, title)
-  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showMonopoly, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
+  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showRewards, showMonopoly, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
 
   return (
     <GoogleAuthProvider>
@@ -192,6 +195,8 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
           <TrainingScreen onBack={() => setShowTraining(false)} />
         ) : showPerks ? (
           <PartnerPerksScreen onBack={() => setShowPerks(false)} initialShopId={perksInitialShop} />
+        ) : showRewards ? (
+          <RewardsWalletScreen onBack={() => setShowRewards(false)} />
         ) : showMonopoly ? (
           <MonopolyScreen onBack={() => setShowMonopoly(false)} />
         ) : showExplore ? (
@@ -211,6 +216,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
             onOpenTraining={() => setShowTraining(true)}
             onOpenPerks={() => setShowPerks(true)}
             onOpenMonopoly={() => setShowMonopoly(true)}
+            onOpenRewards={() => setShowRewards(true)}
           />
         ) : registerRace ? (
           <RegistrationScreen race={registerRace} onBack={() => setRegisterRace(null)} />

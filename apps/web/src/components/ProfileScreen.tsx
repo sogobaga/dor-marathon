@@ -43,7 +43,7 @@ function paceStr(sec: number) {
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
 }
 
-export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenPersonalTasks, onOpenExplore, onOpenGallery, onOpenTitle, onOpenAchievement, onOpenTraining, onOpenPerks, onOpenMonopoly }: { onBack: () => void; focusRaceID?: string; initialTab?: 'info' | 'sports' | 'records' | 'follows'; onOpenPersonalTasks?: () => void; onOpenExplore?: () => void; onOpenGallery?: () => void; onOpenTitle?: () => void; onOpenAchievement?: () => void; onOpenTraining?: () => void; onOpenPerks?: () => void; onOpenMonopoly?: () => void }) {
+export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenPersonalTasks, onOpenExplore, onOpenGallery, onOpenTitle, onOpenAchievement, onOpenTraining, onOpenPerks, onOpenMonopoly, onOpenRewards }: { onBack: () => void; focusRaceID?: string; initialTab?: 'info' | 'sports' | 'records' | 'follows'; onOpenPersonalTasks?: () => void; onOpenExplore?: () => void; onOpenGallery?: () => void; onOpenTitle?: () => void; onOpenAchievement?: () => void; onOpenTraining?: () => void; onOpenPerks?: () => void; onOpenMonopoly?: () => void; onOpenRewards?: () => void }) {
   const [p, setP] = useState<Profile | null>(null)
   const [regs, setRegs] = useState<MyRegistration[] | null>(null)
   const [payOrder, setPayOrder] = useState<MyOrder | null>(null)
@@ -337,7 +337,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '4px 18px 160px' }}>
         {err && <div style={{ color: 'var(--hunt)', padding: '8px 2px', fontSize: 13 }}>{err}</div>}
         {/* 會員資訊面板：與首頁共用同一元件、內容一致（此頁頭像可上傳） */}
-        <MemberPanel onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} onOpenPersonalTasks={onOpenPersonalTasks} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} onOpenTraining={onOpenTraining} onOpenPerks={onOpenPerks} onOpenMonopoly={onOpenMonopoly} />
+        <MemberPanel onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} onOpenPersonalTasks={onOpenPersonalTasks} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} onOpenTraining={onOpenTraining} onOpenPerks={onOpenPerks} onOpenMonopoly={onOpenMonopoly} onOpenRewards={onOpenRewards} />
         </div>{/* /背景層：會員資訊面板 */}
 
         {/* 可拖曳面板：分頁（個人資料/運動數據/報名紀錄/追蹤）+ 內容 */}
