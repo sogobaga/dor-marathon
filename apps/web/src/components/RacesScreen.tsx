@@ -302,7 +302,6 @@ function RaceCard({
             {race.subtitle && <div style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-dim)', marginTop: 3 }}>{race.subtitle}</div>}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-            {race.vip_only && <span style={vipBadge}>✦ VIP專屬</span>}
             {badges.map((b) => (
               <span key={b.label} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, color: b.color, border: `1px solid ${b.color}`, background: 'rgba(255,255,255,.03)', whiteSpace: 'nowrap' }}>● {b.label}</span>
             ))}
@@ -370,9 +369,4 @@ const linkBtnStyle: React.CSSProperties = {
 const ctaLink: React.CSSProperties = {
   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
   color: 'var(--fug)', fontWeight: 700, fontSize: 13.5,
-}
-// VIP 專屬徽章：金底白字（金黃色實心底框上的文字一律用白色）
-const vipBadge: React.CSSProperties = {
-  fontSize: 11, fontWeight: 800, padding: '4px 10px', borderRadius: 999,
-  background: 'var(--gold)', color: '#fff', whiteSpace: 'nowrap',
 }
