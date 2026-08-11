@@ -2702,6 +2702,108 @@ export const adminPartnersApi = {
     request<{ min_km: number }>('/admin/partner-shops/vip-featured-min-km', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ min_km: minKm }) }),
 }
 
+// --- 活動獎勵系統 P1：序號庫存管理（合作商家/序號組/序號匯入/清單狀態）---
+// 設計見 memory activity-reward-system；P1 只做序號庫存，即時獎勵 roll(P2)/玩家錢包(P3) 待後續上線。
+
+export interface RewardMerchant {
+  id: string
+  name: string
+  note: string
+  created_at: string
+}
+
+export type RewardUseLimitType = 'single' | 'repeat' | 'unlimited'
+
+export interface RewardSerialGroup {
+  id: string
+  merchant_id: string | null
+  merchant_name?: string
+  name: string
+  item_label: string
+  is_line_point: boolean
+  valid_until: string | null
+  use_limit_type: RewardUseLimitType
+  use_limit_count: number | null
+  grant_count: number
+  applies_all_races: boolean
+  race_ids: string[]
+  created_at: string
+  available_count: number
+  issued_count: number
+  void_count: number
+  total_count: number
+}
+
+export interface RewardSerialGroupWriteBody {
+  merchant_id: string | null
+  name: string
+  item_label: string
+  is_line_point: boolean
+  valid_until: string | null // RFC3339；null=無期限
+  use_limit_type: RewardUseLimitType
+  use_limit_count: number | null
+  grant_count: number
+  applies_all_races: boolean
+  race_ids: string[]
+}
+
+export interface RewardSerial {
+  id: string
+  group_id: string
+  code: string
+  link: string
+  status: 'available' | 'issued' | 'void'
+  used: boolean
+  used_at: string | null
+  issued_to: string | null
+  issued_at: string | null
+  created_at: string
+}
+
+export interface RewardSerialImportResult {
+  imported: number
+  skipped: number
+  duplicates: string[]
+}
+
+export const adminRewardMerchantsApi = {
+  list: (token: string) =>
+    request<{ merchants: RewardMerchant[] }>('/admin/reward-merchants', { headers: withAuth(token) }),
+  create: (token: string, body: { name: string; note: string }) =>
+    request<{ merchant: RewardMerchant }>('/admin/reward-merchants', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, id: string, body: { name: string; note: string }) =>
+    request<{ merchant: RewardMerchant }>(`/admin/reward-merchants/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  remove: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/reward-merchants/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
+export const adminRewardGroupsApi = {
+  list: (token: string) =>
+    request<{ groups: RewardSerialGroup[] }>('/admin/reward-groups', { headers: withAuth(token) }),
+  create: (token: string, body: RewardSerialGroupWriteBody) =>
+    request<{ group: RewardSerialGroup }>('/admin/reward-groups', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, id: string, body: RewardSerialGroupWriteBody) =>
+    request<{ group: RewardSerialGroup }>(`/admin/reward-groups/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  remove: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/reward-groups/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+  serials: (token: string, groupId: string, params?: { status?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.status) qs.set('status', params.status)
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.offset) qs.set('offset', String(params.offset))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ serials: RewardSerial[]; count: number }>(`/admin/reward-groups/${groupId}/serials${suffix}`, { headers: withAuth(token) })
+  },
+  importSerials: (token: string, groupId: string, serials: { code: string; link: string }[]) =>
+    request<RewardSerialImportResult>(`/admin/reward-groups/${groupId}/serials/import`, {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify({ serials }),
+    }),
+  voidSerial: (token: string, groupId: string, serialId: string) =>
+    request<{ ok: boolean }>(`/admin/reward-groups/${groupId}/serials/${serialId}/void`, { method: 'PUT', headers: withAuth(token) }),
+}
+
 // 環台大富翁（Phase 1：盤面遊戲）
 export interface MonopolyState {
   position: number

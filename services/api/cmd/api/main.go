@@ -42,6 +42,7 @@ import (
 	"github.com/dor/api/internal/race"
 	"github.com/dor/api/internal/realtime"
 	"github.com/dor/api/internal/reward"
+	"github.com/dor/api/internal/rewardserial"
 	"github.com/dor/api/internal/routing"
 	"github.com/dor/api/internal/training"
 	"github.com/dor/api/internal/version"
@@ -152,6 +153,11 @@ func main() {
 	rewardRepo := reward.NewRepository(pool)
 	rewardSvc := reward.NewService(rewardRepo)
 	rewardHandler := reward.NewHandler(rewardSvc)
+
+	// 活動獎勵系統 P1：序號庫存管理（合作商家/序號組/序號匯入去重/清單狀態）
+	rewardSerialRepo := rewardserial.NewRepository(pool)
+	rewardSerialSvc := rewardserial.NewService(rewardSerialRepo)
+	rewardSerialHandler := rewardserial.NewHandler(rewardSerialSvc)
 
 	// 環台大富翁（Phase 1：盤面遊戲，扣 GP 擲骰前進）
 	monopolyRepo := monopoly.NewRepository(pool)
@@ -435,6 +441,8 @@ func main() {
 			r.With(perm("organizer")).Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 			r.With(perm("partners")).Mount("/admin/partner-shops", partnerHandler.AdminRouter())
 			r.With(perm("monopoly")).Mount("/admin/monopoly", monopolyHandler.AdminRouter())
+			r.With(perm("rewards")).Mount("/admin/reward-merchants", rewardSerialHandler.MerchantRouter())
+			r.With(perm("rewards")).Mount("/admin/reward-groups", rewardSerialHandler.GroupRouter())
 			r.With(perm("settings")).Put("/admin/settings", profileHandler.PutSettings)
 			r.With(perm("gps_review")).Post("/admin/activities/add-mileage", actHandler.AdminAddMileage)
 			r.With(perm("gps_review")).Mount("/admin/gps-runs", actHandler.AdminRouter())

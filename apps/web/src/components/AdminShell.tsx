@@ -41,6 +41,7 @@ const NAV: { grp: string; items: NavItem[] }[] = [
       { k: 'training', t: '自主訓練課表', href: '/admin/training', perm: 'training' },
       { k: 'partners', t: '跑者充電站', href: '/admin/partners', perm: 'partners' },
       { k: 'monopoly', t: '環台大富翁', href: '/admin/monopoly', perm: 'monopoly' },
+      { k: 'reward-serials', t: '序號/獎勵管理', href: '/admin/reward-serials', perm: 'rewards' },
       { k: 'interstitial', t: '蓋板廣告', href: '/admin/interstitial', perm: 'settings' },
       { k: 'stores', t: '打卡門市' },
       { k: 'mileage', t: '里程規則' },
