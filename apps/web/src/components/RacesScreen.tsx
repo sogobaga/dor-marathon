@@ -240,7 +240,6 @@ const rewardsReminderBtn: React.CSSProperties = {
 function RaceCard({
   race,
   reg,
-  onOpenRanking,
   onRegister,
   onPay,
   onOpenBrochure,
@@ -261,9 +260,6 @@ function RaceCard({
     ? [DISPLAY_STATUS.ended]
     : [...(ongoing ? [DISPLAY_STATUS.racing] : []), ...(regOpen ? [DISPLAY_STATUS.registering] : [])]
   if (badges.length === 0) badges.push(s)
-  const isCompetition = race.event_mode === 'competition'
-  // 排行榜入口：競賽模式(分組榜) + 個人挑戰模式(完成次數榜，見 RankingBody personal 分支)；一般/分組對抗無此入口
-  const hasRankingEntry = isCompetition || race.event_mode === 'personal'
   const canRegister = race.can_register
   const stop = (e: React.MouseEvent) => e.stopPropagation()
   return (
@@ -286,27 +282,23 @@ function RaceCard({
       )}
 
       <div style={{ padding: 'var(--card-pad, 18px)', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {/* 標題 + 參加資格標示；右上角狀態／報名徽章直排 */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-          <div style={{ minWidth: 0 }}>
-            <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', lineHeight: 1.3, wordBreak: 'keep-all', overflowWrap: 'break-word', display: 'block' }}>{race.title}</span>
-            {/* 參加資格標示（取代原距離 chip；未來同一活動有全體/分組/個人多種目標，難用單一里程標籤表示）：
-                VIP專屬＝金底白字（金底白字通則）；所有會員＝線框無底。依 race.vip_only 擇一顯示。 */}
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-              {race.vip_only ? (
-                <span style={{ fontSize: 11.5, fontWeight: 800, padding: '2px 9px', borderRadius: 8, background: 'var(--gold)', color: '#fff', flexShrink: 0 }}>VIP專屬</span>
-              ) : (
-                <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 8, background: 'transparent', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0 }}>所有會員</span>
-              )}
+        {/* 標題整寬（不與右側標籤並排，避免擠壓換行） */}
+        <div>
+          <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', lineHeight: 1.3, wordBreak: 'keep-all', overflowWrap: 'break-word', display: 'block' }}>{race.title}</span>
+          {/* 同一列：參加資格（VIP專屬金底白字／所有會員線框無底，置左）＋ 狀態徽章（賽事進行中／報名中，置右） */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            {race.vip_only ? (
+              <span style={{ fontSize: 11.5, fontWeight: 800, padding: '2px 9px', borderRadius: 8, background: 'var(--gold)', color: '#fff', flexShrink: 0 }}>VIP專屬</span>
+            ) : (
+              <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 8, background: 'transparent', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0 }}>所有會員</span>
+            )}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {badges.map((b) => (
+                <span key={b.label} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, color: b.color, border: `1px solid ${b.color}`, background: 'rgba(255,255,255,.03)', whiteSpace: 'nowrap' }}>● {b.label}</span>
+              ))}
             </div>
-            {race.subtitle && <div style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-dim)', marginTop: 3 }}>{race.subtitle}</div>}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-            {badges.map((b) => (
-              <span key={b.label} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, color: b.color, border: `1px solid ${b.color}`, background: 'rgba(255,255,255,.03)', whiteSpace: 'nowrap' }}>● {b.label}</span>
-            ))}
-            <span style={{ fontSize: 12, fontWeight: 700, padding: '4px 12px', borderRadius: 999, color: 'var(--gold)', border: '1px solid var(--gold)', whiteSpace: 'nowrap' }}>{fmtFee(race.entry_fee)}</span>
-          </div>
+          {race.subtitle && <div style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-dim)', marginTop: 6 }}>{race.subtitle}</div>}
         </div>
 
         {/* 報名期間 / 賽事期間：兩並排資訊卡（各帶 icon） */}
@@ -315,11 +307,9 @@ function RaceCard({
           <PeriodBox icon="/source/ui/01_icons/icon_runner_green.png" label="活動期間" start={dt(race.start_date)} end={dt(race.end_date)} />
         </div>
 
-        {/* 底列：排行榜（左）＋ 立即報名／報名完成／前往繳費（右） */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13 }}>
-          {hasRankingEntry && onOpenRanking
-            ? <button onClick={(e) => { stop(e); onOpenRanking(race) }} style={linkBtnStyle}>排行榜</button>
-            : <span />}
+        {/* 底列：報名費用（左）＋ 立即報名／報名完成／前往繳費（右） */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, gap: 10 }}>
+          <span style={{ fontSize: 12.5, color: 'var(--tx-dim)', flexShrink: 0 }}>報名費用 <b style={{ color: 'var(--tx)', fontSize: 13.5, fontWeight: 800 }}>{race.entry_fee > 0 ? fmtFee(race.entry_fee) : '免費'}</b></span>
           {reg
             ? (reg.status === 'paid'
                 ? <span style={{ ...ctaLink, cursor: 'default' }}>報名完成 ›</span>
@@ -363,9 +353,6 @@ function PeriodBox({ icon, label, start, end }: { icon: string; label: string; s
   )
 }
 
-const linkBtnStyle: React.CSSProperties = {
-  background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 12.5, padding: 0,
-}
 const ctaLink: React.CSSProperties = {
   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
   color: 'var(--fug)', fontWeight: 700, fontSize: 13.5,
