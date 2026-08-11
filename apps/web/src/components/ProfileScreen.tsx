@@ -480,7 +480,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         {tab === 'sports' && (
         <div>
           <div style={recCard}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 700, color: '#fc4c02' }}>Strava<span style={{ fontSize: 10.5, color: 'var(--fug)', fontWeight: 800, marginLeft: 5 }}>· 推薦</span></div>
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
@@ -490,7 +490,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                 </div>
               </div>
               {strava?.connected ? (
-                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignSelf: 'flex-start' }}>
                   <button onClick={syncNow} disabled={syncing}
                     style={{ background: '#fc4c02', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', opacity: syncing ? 0.6 : 1 }}>
                     {syncing ? '同步中…' : '重新同步'}
@@ -500,7 +500,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               ) : (
                 <button onClick={connectStrava} disabled={stravaBusy || strava?.enabled === false}
                   aria-label="Connect with Strava"
-                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0, opacity: stravaBusy || strava?.enabled === false ? 0.5 : 1 }}>
+                  style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0, alignSelf: 'flex-start', opacity: stravaBusy || strava?.enabled === false ? 0.5 : 1 }}>
                   {/* 官方「Connect with Strava」按鈕（送審前以 Strava ZIP 內官方 PNG 取代同路徑檔即可） */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src="/strava/btn_strava_connect_orange.svg" alt="Connect with Strava" style={{ height: 44, display: 'block' }} />
