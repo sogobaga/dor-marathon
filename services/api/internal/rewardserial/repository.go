@@ -83,13 +83,15 @@ func (r *Repository) DeleteMerchant(ctx context.Context, id string) error {
 // --- 序號組 ---
 
 const groupCols = `g.id, g.merchant_id, COALESCE(m.name,''), g.name, COALESCE(g.item_label,''), g.is_line_point,
-	g.valid_until, g.use_limit_type, g.use_limit_count, g.grant_count, g.applies_all_races, g.created_at`
+	g.valid_until, g.use_limit_type, g.use_limit_count, g.grant_count, g.applies_all_races,
+	COALESCE(g.usage_note,''), COALESCE(g.icon_url,''), COALESCE(g.description,''), g.created_at`
 
 func scanGroup(row pgx.Row) (*Group, error) {
 	g := &Group{}
 	var merchantID *string
 	err := row.Scan(&g.ID, &merchantID, &g.MerchantName, &g.Name, &g.ItemLabel, &g.IsLinePoint,
-		&g.ValidUntil, &g.UseLimitType, &g.UseLimitCount, &g.GrantCount, &g.AppliesAllRaces, &g.CreatedAt)
+		&g.ValidUntil, &g.UseLimitType, &g.UseLimitCount, &g.GrantCount, &g.AppliesAllRaces,
+		&g.UsageNote, &g.IconURL, &g.Description, &g.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -239,10 +241,12 @@ func (r *Repository) CreateGroup(ctx context.Context, in GroupInput, validUntil 
 	var id string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO reward_serial_groups
-			(merchant_id, name, item_label, is_line_point, valid_until, use_limit_type, use_limit_count, grant_count, applies_all_races)
-		VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9)
+			(merchant_id, name, item_label, is_line_point, valid_until, use_limit_type, use_limit_count, grant_count, applies_all_races,
+			 usage_note, icon_url, description)
+		VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9,NULLIF($10,''),NULLIF($11,''),NULLIF($12,''))
 		RETURNING id`,
-		in.MerchantID, in.Name, in.ItemLabel, in.IsLinePoint, validUntil, in.UseLimitType, in.UseLimitCount, in.GrantCount, in.AppliesAllRaces).
+		in.MerchantID, in.Name, in.ItemLabel, in.IsLinePoint, validUntil, in.UseLimitType, in.UseLimitCount, in.GrantCount, in.AppliesAllRaces,
+		in.UsageNote, in.IconURL, in.Description).
 		Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("create group: %w", err)
@@ -268,10 +272,12 @@ func (r *Repository) UpdateGroup(ctx context.Context, id string, in GroupInput, 
 	ct, err := tx.Exec(ctx, `
 		UPDATE reward_serial_groups SET
 			merchant_id=$1, name=$2, item_label=NULLIF($3,''), is_line_point=$4, valid_until=$5,
-			use_limit_type=$6, use_limit_count=$7, grant_count=$8, applies_all_races=$9
-		WHERE id=$10`,
+			use_limit_type=$6, use_limit_count=$7, grant_count=$8, applies_all_races=$9,
+			usage_note=NULLIF($10,''), icon_url=NULLIF($11,''), description=NULLIF($12,'')
+		WHERE id=$13`,
 		in.MerchantID, in.Name, in.ItemLabel, in.IsLinePoint, validUntil,
-		in.UseLimitType, in.UseLimitCount, in.GrantCount, in.AppliesAllRaces, id)
+		in.UseLimitType, in.UseLimitCount, in.GrantCount, in.AppliesAllRaces,
+		in.UsageNote, in.IconURL, in.Description, id)
 	if err != nil {
 		return nil, fmt.Errorf("update group: %w", err)
 	}
@@ -319,7 +325,7 @@ func scanSerial(row pgx.Row) (*Serial, error) {
 	return s, nil
 }
 
-// ListSerials 某序號組的序號清單，status=''=全部；limit/offset 分頁。
+// ListSerials 某序號組的序號清單，status=”=全部；limit/offset 分頁。
 func (r *Repository) ListSerials(ctx context.Context, groupID, status string, limit, offset int) ([]Serial, int, error) {
 	var total int
 	if err := r.db.QueryRow(ctx,

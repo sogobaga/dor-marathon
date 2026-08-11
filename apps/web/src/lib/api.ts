@@ -49,6 +49,20 @@ export function formatChallengeRule(rule?: ChallengeRule | null): string {
   }
 }
 
+// --- 活動獎勵系統 P2：即時獎勵設定（全域模板 + 每場挑戰 config）（見後端 activityreward.RewardConfig） ---
+export type RewardItemType = 'exp' | 'dp' | 'gp' | 'vip' | 'serial'
+export interface RewardItem {
+  type: RewardItemType
+  min?: number            // exp/dp/gp：均勻隨機區間下界（含）
+  max?: number             // exp/dp/gp：均勻隨機區間上界（含）
+  days?: number            // vip：固定天數
+  prob_bp: number          // 中獎機率，萬分位（10000=100%）
+  serial_group_id?: string // serial：指定序號組
+}
+export interface RewardConfig {
+  items: RewardItem[]
+}
+
 // --- 個人挑戰模式 P3：完成判定引擎（見後端 race.GetPersonalProgress） ---
 export interface ChallengeProgress {
   completion_type: CompletionType
@@ -66,6 +80,16 @@ export interface PersonalProgress {
   rule?: ChallengeRule
   progress?: ChallengeProgress
   completed_count: number
+  newly_granted?: GrantedReward[] // 本次呼叫剛觸發完成時發放的即時獎勵（活動獎勵系統 P2；P3 前端彈窗才用）
+}
+
+// GrantedReward 一次完成觸發 roll 中「實際中獎並成功發放」的單筆結果（見後端 activityreward.GrantedReward）。
+export interface GrantedReward {
+  type: RewardItemType
+  amount?: number     // exp/dp/gp
+  days?: number        // vip
+  item_label?: string  // serial
+  code?: string        // serial
 }
 
 // --- 個人挑戰模式 P4：排行榜（依完成次數 desc、最早完成時間 asc；見後端 race.GetPersonalLeaderboard） ---
@@ -138,6 +162,7 @@ export interface Race {
   vip_only?: boolean // VIP 限定賽事（只提供給 VIP 帳號）
   config?: RaceConfig // 後端一律回傳（非 omitempty）；此處選填僅為前端防禦
   challenge_rule?: ChallengeRule | null // 個人挑戰模式(event_mode=personal)專用規則；其餘模式為 null
+  reward_config?: RewardConfig | null // 個人挑戰模式(event_mode=personal)完成觸發即時獎勵設定；其餘模式為 null，選填
   created_at: string
 }
 
@@ -2727,6 +2752,9 @@ export interface RewardSerialGroup {
   grant_count: number
   applies_all_races: boolean
   race_ids: string[]
+  usage_note: string   // 獎勵詳情：使用說明（活動獎勵系統 P2）
+  icon_url: string     // 獎勵詳情：獎勵圖示
+  description: string  // 獎勵詳情：活動/獎勵說明
   created_at: string
   available_count: number
   issued_count: number
@@ -2745,6 +2773,29 @@ export interface RewardSerialGroupWriteBody {
   grant_count: number
   applies_all_races: boolean
   race_ids: string[]
+  usage_note: string
+  icon_url: string
+  description: string
+}
+
+// --- 活動獎勵系統 P2：全域即時獎勵模板 ---
+
+export interface RewardTemplate {
+  id: string
+  name: string
+  items: RewardItem[]
+  created_at: string
+}
+
+export const adminRewardTemplatesApi = {
+  list: (token: string) =>
+    request<{ templates: RewardTemplate[] }>('/admin/reward-templates', { headers: withAuth(token) }),
+  create: (token: string, body: { name: string; items: RewardItem[] }) =>
+    request<{ template: RewardTemplate }>('/admin/reward-templates', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, id: string, body: { name: string; items: RewardItem[] }) =>
+    request<{ template: RewardTemplate }>(`/admin/reward-templates/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  remove: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/reward-templates/${id}`, { method: 'DELETE', headers: withAuth(token) }),
 }
 
 export interface RewardSerial {

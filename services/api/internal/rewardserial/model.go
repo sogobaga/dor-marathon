@@ -19,18 +19,21 @@ type Group struct {
 	MerchantID      *string    `json:"merchant_id"`
 	MerchantName    string     `json:"merchant_name,omitempty"` // 列表用，join reward_merchants 帶出
 	Name            string     `json:"name"`
-	ItemLabel       string     `json:"item_label"`               // 面額/品項（如「100元」「咖啡兌換」）
+	ItemLabel       string     `json:"item_label"` // 面額/品項（如「100元」「咖啡兌換」）
 	IsLinePoint     bool       `json:"is_line_point"`
-	ValidUntil      *time.Time `json:"valid_until"`               // 使用期限；null=無期限
-	UseLimitType    string     `json:"use_limit_type"`            // single|repeat|unlimited
-	UseLimitCount   *int       `json:"use_limit_count"`           // use_limit_type=repeat 時的次數
-	GrantCount      int        `json:"grant_count"`               // 每次中獎配發幾枚序號
+	ValidUntil      *time.Time `json:"valid_until"`     // 使用期限；null=無期限
+	UseLimitType    string     `json:"use_limit_type"`  // single|repeat|unlimited
+	UseLimitCount   *int       `json:"use_limit_count"` // use_limit_type=repeat 時的次數
+	GrantCount      int        `json:"grant_count"`     // 每次中獎配發幾枚序號
 	AppliesAllRaces bool       `json:"applies_all_races"`
-	RaceIDs         []string   `json:"race_ids"`                  // applies_all_races=false 時的指定活動（可複選）
+	RaceIDs         []string   `json:"race_ids"`    // applies_all_races=false 時的指定活動（可複選）
+	UsageNote       string     `json:"usage_note"`  // 獎勵詳情：使用說明（活動獎勵系統 P2，見 migration 127）
+	IconURL         string     `json:"icon_url"`    // 獎勵詳情：獎勵圖示
+	Description     string     `json:"description"` // 獎勵詳情：活動/獎勵說明
 	CreatedAt       time.Time  `json:"created_at"`
-	AvailableCount  int        `json:"available_count"`           // 統計：未發送
-	IssuedCount     int        `json:"issued_count"`              // 統計：已發送
-	VoidCount       int        `json:"void_count"`                // 統計：已註銷
+	AvailableCount  int        `json:"available_count"` // 統計：未發送
+	IssuedCount     int        `json:"issued_count"`    // 統計：已發送
+	VoidCount       int        `json:"void_count"`      // 統計：已註銷
 	TotalCount      int        `json:"total_count"`
 }
 
@@ -46,6 +49,9 @@ type GroupInput struct {
 	GrantCount      int      `json:"grant_count"`
 	AppliesAllRaces bool     `json:"applies_all_races"`
 	RaceIDs         []string `json:"race_ids"`
+	UsageNote       string   `json:"usage_note"`  // 獎勵詳情：使用說明（活動獎勵系統 P2）
+	IconURL         string   `json:"icon_url"`    // 獎勵詳情：獎勵圖示
+	Description     string   `json:"description"` // 獎勵詳情：活動/獎勵說明
 }
 
 // Serial 序號

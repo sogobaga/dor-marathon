@@ -808,8 +808,13 @@ func normalizeRequest(req *CreateRaceRequest) error {
 		if err := req.ChallengeRule.Validate(); err != nil {
 			return fmt.Errorf("challenge_rule: %w", err)
 		}
+		// 即時獎勵設定選填（可不設定），但有填就要合法（機率/區間/序號組皆需通過驗證）。
+		if err := req.RewardConfig.Validate(); err != nil {
+			return fmt.Errorf("reward_config: %w", err)
+		}
 	} else {
 		req.ChallengeRule = nil
+		req.RewardConfig = nil
 	}
 
 	for i := range req.Groups {

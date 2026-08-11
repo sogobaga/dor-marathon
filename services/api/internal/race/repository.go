@@ -40,6 +40,7 @@ const selectCols = `
 	       COALESCE(show_distance_rank,TRUE), COALESCE(show_time_rank,TRUE),
 	       COALESCE(vip_only,FALSE),
 	       challenge_rule,
+	       reward_config,
 	       created_at
 	FROM races`
 
@@ -115,6 +116,14 @@ func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
 	if challengeRuleBytes != nil {
 		challengeRuleArg = challengeRuleBytes
 	}
+	rewardConfigBytes, err := rewardConfigToBytes(race.RewardConfig)
+	if err != nil {
+		return nil, fmt.Errorf("marshal reward_config: %w", err)
+	}
+	var rewardConfigArg interface{}
+	if rewardConfigBytes != nil {
+		rewardConfigArg = rewardConfigBytes
+	}
 
 	dist32 := make([]int32, len(race.Distances))
 	for i, d := range race.Distances {
@@ -127,13 +136,13 @@ func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
-			vip_only=$20, challenge_rule=$21, updated_at=NOW()
-		WHERE id=$22`,
+			vip_only=$20, challenge_rule=$21, reward_config=$22, updated_at=NOW()
+		WHERE id=$23`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
-		race.VipOnly, challengeRuleArg, race.ID,
+		race.VipOnly, challengeRuleArg, rewardConfigArg, race.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -157,6 +166,14 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 	var challengeRuleArg interface{}
 	if challengeRuleBytes != nil {
 		challengeRuleArg = challengeRuleBytes
+	}
+	rewardConfigBytes, err := rewardConfigToBytes(race.RewardConfig)
+	if err != nil {
+		return nil, fmt.Errorf("marshal reward_config: %w", err)
+	}
+	var rewardConfigArg interface{}
+	if rewardConfigBytes != nil {
+		rewardConfigArg = rewardConfigBytes
 	}
 	dist32 := make([]int32, len(race.Distances))
 	for i, d := range race.Distances {
@@ -199,15 +216,15 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		                   slots_total, entry_fee, registration_start, registration_end,
 		                   start_date, end_date, config, created_by, review_status, required_fields,
 		                   control_status, starting_soon_days, brochure_title, allow_team_groups, vip_only,
-		                   challenge_rule)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+		                   challenge_rule, reward_config)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.RegStart, race.RegEnd,
 		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus, requiredFields,
 		controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
-		challengeRuleArg,
+		challengeRuleArg, rewardConfigArg,
 	).Scan(&raceID)
 	if err != nil {
 		return nil, fmt.Errorf("insert race: %w", err)
@@ -310,6 +327,14 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 	if challengeRuleBytes != nil {
 		challengeRuleArg = challengeRuleBytes
 	}
+	rewardConfigBytes, err := rewardConfigToBytes(race.RewardConfig)
+	if err != nil {
+		return nil, fmt.Errorf("marshal reward_config: %w", err)
+	}
+	var rewardConfigArg interface{}
+	if rewardConfigBytes != nil {
+		rewardConfigArg = rewardConfigBytes
+	}
 	dist32 := make([]int32, len(race.Distances))
 	for i, d := range race.Distances {
 		dist32[i] = int32(d)
@@ -343,14 +368,14 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
 			required_fields=$20, control_status=$21, starting_soon_days=$22, brochure_title=$23,
-			allow_team_groups=$24, vip_only=$25, challenge_rule=$26, updated_at=NOW()
-		WHERE id=$27`,
+			allow_team_groups=$24, vip_only=$25, challenge_rule=$26, reward_config=$27, updated_at=NOW()
+		WHERE id=$28`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
 		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
-		challengeRuleArg, raceID,
+		challengeRuleArg, rewardConfigArg, raceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -2169,6 +2194,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 	var dist32 []int32
 	var cfgBytes []byte
 	var challengeRuleBytes []byte
+	var rewardConfigBytes []byte
 	err := row.Scan(
 		&race.ID, &race.Slug, &race.Title, &race.Subtitle,
 		&race.World, &race.Blurb, &race.HeroImageURL,
@@ -2183,6 +2209,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&race.ShowDistanceRank, &race.ShowTimeRank,
 		&race.VipOnly,
 		&challengeRuleBytes,
+		&rewardConfigBytes,
 		&race.CreatedAt,
 	)
 	if err != nil {
@@ -2196,7 +2223,10 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 	if err != nil {
 		return nil, err
 	}
-	race.ChallengeRule, err = bytesToChallengeRule(challengeRuleBytes)
+	if race.ChallengeRule, err = bytesToChallengeRule(challengeRuleBytes); err != nil {
+		return nil, err
+	}
+	race.RewardConfig, err = bytesToRewardConfig(rewardConfigBytes)
 	return race, err
 }
 
@@ -2206,6 +2236,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 	var dist32 []int32
 	var cfgBytes []byte
 	var challengeRuleBytes []byte
+	var rewardConfigBytes []byte
 	err := rows.Scan(
 		&race.ID, &race.Slug, &race.Title, &race.Subtitle,
 		&race.World, &race.Blurb, &race.HeroImageURL,
@@ -2220,6 +2251,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&race.ShowDistanceRank, &race.ShowTimeRank,
 		&race.VipOnly,
 		&challengeRuleBytes,
+		&rewardConfigBytes,
 		&race.CreatedAt,
 	)
 	if err != nil {
@@ -2233,6 +2265,9 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 	if err != nil {
 		return nil, err
 	}
-	race.ChallengeRule, err = bytesToChallengeRule(challengeRuleBytes)
+	if race.ChallengeRule, err = bytesToChallengeRule(challengeRuleBytes); err != nil {
+		return nil, err
+	}
+	race.RewardConfig, err = bytesToRewardConfig(rewardConfigBytes)
 	return race, err
 }

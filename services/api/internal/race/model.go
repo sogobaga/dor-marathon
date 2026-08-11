@@ -5,46 +5,49 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/dor/api/internal/activityreward"
 )
 
 // Race 資料庫模型
 type Race struct {
-	ID               string         `json:"id"`
-	Slug             string         `json:"slug"`
-	Title            string         `json:"title"`
-	Subtitle         string         `json:"subtitle"`
-	World            string         `json:"world"`
-	Blurb            string         `json:"blurb"`
-	HeroImageURL     string         `json:"hero_image_url"`
-	Status           string         `json:"status"`     // soon|open|live|done
-	EventMode        string         `json:"event_mode"` // general|competition|faction_battle
-	GoalType         string         `json:"goal_type"`  // cumulative|distance（競賽完賽目標）
-	Distances        []int          `json:"distances"`
-	GroupType        string         `json:"group_type"` // faction|club|distance
-	GroupMode        string         `json:"group_mode"` // random|self
-	SlotsTotal       int            `json:"slots_total"`
-	EntryFee         int            `json:"entry_fee"`                    // 分（NT$ × 100）
-	RegStart         *time.Time     `json:"registration_start,omitempty"` // 報名開始
-	RegEnd           *time.Time     `json:"registration_end,omitempty"`   // 報名截止
-	StartDate        time.Time      `json:"start_date"`                   // 競賽時間 起
-	EndDate          time.Time      `json:"end_date"`                     // 競賽時間 迄
-	Config           RaceConfig     `json:"config"`
-	RequiredFields   []string       `json:"required_fields"`      // 報名必填欄位：real_name|nickname|phone|address|birthday|gender
-	BrochureTitle    string         `json:"brochure_title"`       // 簡章大主標
-	ControlStatus    string         `json:"control_status"`       // active|paused|suspended|closed|hidden|testing（admin 手動）
-	StartingSoonDays int            `json:"starting_soon_days"`   // 賽事即將開始 倒數天數
-	AllowTeamGroups  bool           `json:"allow_team_groups"`    // 競賽模式：是否開放前台自建跑團分組
-	DisplayStatus    string         `json:"display_status"`       // 計算欄位（讀取時填）：upcoming_reg|registering|reg_closed|starting_soon|racing|ended|paused|suspended
-	CanRegister      bool           `json:"can_register"`         // 計算欄位
-	CreatedBy        string         `json:"created_by,omitempty"` // organizer userID
-	ReviewStatus     string         `json:"review_status"`        // pending|approved|rejected
-	ReviewNote       string         `json:"review_note,omitempty"`
-	CertificateBgURL string         `json:"certificate_bg_url"`       // 完賽證明底圖（空=預設設計）
-	ShowDistanceRank bool           `json:"show_distance_rank"`       // 顯示累積里程榜（預設 true）
-	ShowTimeRank     bool           `json:"show_time_rank"`           // 顯示完成時間榜（預設 true）
-	VipOnly          bool           `json:"vip_only"`                 // VIP 限定賽事（預設 false）：只提供給 VIP 帳號
-	ChallengeRule    *ChallengeRule `json:"challenge_rule,omitempty"` // 個人挑戰模式(event_mode=personal)專用規則；其餘模式為 nil
-	CreatedAt        time.Time      `json:"created_at"`
+	ID               string                       `json:"id"`
+	Slug             string                       `json:"slug"`
+	Title            string                       `json:"title"`
+	Subtitle         string                       `json:"subtitle"`
+	World            string                       `json:"world"`
+	Blurb            string                       `json:"blurb"`
+	HeroImageURL     string                       `json:"hero_image_url"`
+	Status           string                       `json:"status"`     // soon|open|live|done
+	EventMode        string                       `json:"event_mode"` // general|competition|faction_battle
+	GoalType         string                       `json:"goal_type"`  // cumulative|distance（競賽完賽目標）
+	Distances        []int                        `json:"distances"`
+	GroupType        string                       `json:"group_type"` // faction|club|distance
+	GroupMode        string                       `json:"group_mode"` // random|self
+	SlotsTotal       int                          `json:"slots_total"`
+	EntryFee         int                          `json:"entry_fee"`                    // 分（NT$ × 100）
+	RegStart         *time.Time                   `json:"registration_start,omitempty"` // 報名開始
+	RegEnd           *time.Time                   `json:"registration_end,omitempty"`   // 報名截止
+	StartDate        time.Time                    `json:"start_date"`                   // 競賽時間 起
+	EndDate          time.Time                    `json:"end_date"`                     // 競賽時間 迄
+	Config           RaceConfig                   `json:"config"`
+	RequiredFields   []string                     `json:"required_fields"`      // 報名必填欄位：real_name|nickname|phone|address|birthday|gender
+	BrochureTitle    string                       `json:"brochure_title"`       // 簡章大主標
+	ControlStatus    string                       `json:"control_status"`       // active|paused|suspended|closed|hidden|testing（admin 手動）
+	StartingSoonDays int                          `json:"starting_soon_days"`   // 賽事即將開始 倒數天數
+	AllowTeamGroups  bool                         `json:"allow_team_groups"`    // 競賽模式：是否開放前台自建跑團分組
+	DisplayStatus    string                       `json:"display_status"`       // 計算欄位（讀取時填）：upcoming_reg|registering|reg_closed|starting_soon|racing|ended|paused|suspended
+	CanRegister      bool                         `json:"can_register"`         // 計算欄位
+	CreatedBy        string                       `json:"created_by,omitempty"` // organizer userID
+	ReviewStatus     string                       `json:"review_status"`        // pending|approved|rejected
+	ReviewNote       string                       `json:"review_note,omitempty"`
+	CertificateBgURL string                       `json:"certificate_bg_url"`       // 完賽證明底圖（空=預設設計）
+	ShowDistanceRank bool                         `json:"show_distance_rank"`       // 顯示累積里程榜（預設 true）
+	ShowTimeRank     bool                         `json:"show_time_rank"`           // 顯示完成時間榜（預設 true）
+	VipOnly          bool                         `json:"vip_only"`                 // VIP 限定賽事（預設 false）：只提供給 VIP 帳號
+	ChallengeRule    *ChallengeRule               `json:"challenge_rule,omitempty"` // 個人挑戰模式(event_mode=personal)專用規則；其餘模式為 nil
+	RewardConfig     *activityreward.RewardConfig `json:"reward_config,omitempty"`  // 個人挑戰模式(event_mode=personal)完成觸發即時獎勵設定；其餘模式為 nil，選填
+	CreatedAt        time.Time                    `json:"created_at"`
 }
 
 // ChallengeRule 個人挑戰模式（event_mode=personal）的完成條件參數化模板。存於 races.challenge_rule JSONB。
@@ -634,6 +637,27 @@ func bytesToChallengeRule(b []byte) (*ChallengeRule, error) {
 		return nil, nil
 	}
 	var c ChallengeRule
+	if err := json.Unmarshal(b, &c); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// rewardConfigToBytes 將 *activityreward.RewardConfig 序列化為 JSON bytes，供 pgx 存入 JSONB
+// （nullable）。nil → nil bytes（呼叫端須轉成 interface{}(nil) 才會寫入 SQL NULL，比照 challengeRuleToBytes）。
+func rewardConfigToBytes(c *activityreward.RewardConfig) ([]byte, error) {
+	if c == nil {
+		return nil, nil
+	}
+	return json.Marshal(c)
+}
+
+// bytesToRewardConfig 從 JSONB bytes 反序列化（NULL/空 bytes → nil）
+func bytesToRewardConfig(b []byte) (*activityreward.RewardConfig, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var c activityreward.RewardConfig
 	if err := json.Unmarshal(b, &c); err != nil {
 		return nil, err
 	}

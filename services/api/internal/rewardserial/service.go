@@ -67,6 +67,9 @@ func (s *Service) validateGroupInput(in *GroupInput) (*time.Time, error) {
 	if in.GrantCount <= 0 {
 		in.GrantCount = 1
 	}
+	in.UsageNote = strings.TrimSpace(in.UsageNote)
+	in.IconURL = strings.TrimSpace(in.IconURL)
+	in.Description = strings.TrimSpace(in.Description)
 
 	if in.MerchantID != nil {
 		mid := strings.TrimSpace(*in.MerchantID)

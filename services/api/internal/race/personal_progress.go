@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/dor/api/internal/activityreward"
 )
 
 // ChallengeProgress 個人挑戰進行中 attempt 的即時進度（依 rule.CompletionType 只填相關欄位）。
@@ -30,11 +32,12 @@ type ChallengeProgress struct {
 
 // PersonalProgress GET /races/{id}/personal-progress 回應。
 type PersonalProgress struct {
-	HasAttempt     bool               `json:"has_attempt"`
-	Status         string             `json:"status,omitempty"` // pending|paid|completed|expired（has_attempt=true 才有意義）
-	Rule           *ChallengeRule     `json:"rule,omitempty"`
-	Progress       *ChallengeProgress `json:"progress,omitempty"`
-	CompletedCount int                `json:"completed_count"` // 此使用者在此賽事已完成的挑戰次數
+	HasAttempt     bool                           `json:"has_attempt"`
+	Status         string                         `json:"status,omitempty"` // pending|paid|completed|expired（has_attempt=true 才有意義）
+	Rule           *ChallengeRule                 `json:"rule,omitempty"`
+	Progress       *ChallengeProgress             `json:"progress,omitempty"`
+	CompletedCount int                            `json:"completed_count"`         // 此使用者在此賽事已完成的挑戰次數
+	NewlyGranted   []activityreward.GrantedReward `json:"newly_granted,omitempty"` // 本次呼叫剛觸發完成時發放的即時獎勵（活動獎勵系統 P2；P3 前端彈窗才用）
 }
 
 // personalAttempt 使用者在此賽事「進行中」(pending/paid未完成) 的 attempt 精簡欄位。
@@ -125,17 +128,54 @@ func (r *Repository) maxDistanceSince(ctx context.Context, userID string, since 
 	return m, nil
 }
 
-// MarkAttemptCompleted CAS 標記個人挑戰 attempt 完成：搶鎖式 UPDATE，只有 status='paid' 且
-// completed_at IS NULL 才會更新（抄 event_race_goal.go 的達標搶鎖式樣）。冪等：對已完成/非 paid
-// 的 attempt 重複呼叫不會出錯，只是 claimed=false（沒搶到，代表已經被標記過或狀態不符）。
-func (r *Repository) MarkAttemptCompleted(ctx context.Context, regID string) (claimed bool, err error) {
-	tag, err := r.db.Exec(ctx, `
+// MarkAttemptCompletedAndGrant CAS 標記個人挑戰 attempt 完成：搶鎖式 UPDATE，只有 status='paid' 且
+// completed_at IS NULL 才會更新（抄 event_race_goal.go 的達標搶鎖式樣）。冪等：對已完成/非 paid 的
+// attempt 重複呼叫不會出錯，只是 claimed=false（沒搶到，代表已經被標記過或狀態不符）。
+//
+// 活動獎勵系統 P2：在同一交易內原子地把「判定完成」與「依賽事 reward_config 逐項獨立機率 roll 發放
+// 即時獎勵」綁在一起（見套件 activityreward.RollAndGrant）——只有 claimed=true（本次真的搶到完成權）
+// 才會查 reward_config、才會 roll；claimed=false 時直接跳過，不重複發獎。任一步失敗，交易整個
+// Rollback，「完成」與「發獎」保證同進退，不會出現「標完成了但獎沒發」或「發了獎但沒標完成」的半成功。
+func (r *Repository) MarkAttemptCompletedAndGrant(ctx context.Context, regID string) (claimed bool, granted []activityreward.GrantedReward, err error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return false, nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) // Commit 後為 no-op
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE registrations SET status='completed', completed_at=NOW()
 		WHERE id=$1 AND status='paid' AND completed_at IS NULL`, regID)
 	if err != nil {
-		return false, fmt.Errorf("mark attempt completed: %w", err)
+		return false, nil, fmt.Errorf("mark attempt completed: %w", err)
 	}
-	return tag.RowsAffected() > 0, nil
+	if tag.RowsAffected() == 0 {
+		return false, nil, nil // 沒搶到（已完成過/狀態不符）：no-op，交易靠 defer Rollback 收尾（反正沒有異動）
+	}
+
+	var userID, raceID string
+	var cfgBytes []byte
+	if err := tx.QueryRow(ctx, `
+		SELECT reg.user_id, reg.race_id, rc.reward_config
+		FROM registrations reg JOIN races rc ON rc.id = reg.race_id
+		WHERE reg.id=$1`, regID).Scan(&userID, &raceID, &cfgBytes); err != nil {
+		return false, nil, fmt.Errorf("load reward config: %w", err)
+	}
+
+	cfg, err := bytesToRewardConfig(cfgBytes)
+	if err != nil {
+		return false, nil, fmt.Errorf("parse reward_config: %w", err)
+	}
+	if cfg != nil && len(cfg.Items) > 0 {
+		if granted, err = activityreward.RollAndGrant(ctx, tx, userID, "personal_challenge", raceID, regID, cfg); err != nil {
+			return false, nil, fmt.Errorf("roll and grant: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, nil, fmt.Errorf("commit: %w", err)
+	}
+	return true, granted, nil
 }
 
 // MarkAttemptExpired CAS 標記個人挑戰 attempt 逾期：只有 status='paid' 才會更新（冪等；已 completed
@@ -259,14 +299,16 @@ func (s *Service) GetPersonalProgress(ctx context.Context, raceID, userID string
 	}
 
 	status := attempt.Status
+	var newlyGranted []activityreward.GrantedReward
 	if completed {
-		claimed, err := s.repo.MarkAttemptCompleted(ctx, attempt.ID)
+		claimed, grantedNow, err := s.repo.MarkAttemptCompletedAndGrant(ctx, attempt.ID)
 		if err != nil {
 			return nil, err
 		}
 		status = "completed"
 		if claimed {
 			completedCount++ // 這次呼叫剛完成，立即反映在回應（下次呼叫會改由 CompletedChallengeCount 算入）
+			newlyGranted = grantedNow
 		}
 	} else {
 		now := time.Now()
@@ -289,5 +331,6 @@ func (s *Service) GetPersonalProgress(ctx context.Context, raceID, userID string
 		Rule:           rule,
 		Progress:       progress,
 		CompletedCount: completedCount,
+		NewlyGranted:   newlyGranted,
 	}, nil
 }

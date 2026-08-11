@@ -36,10 +36,14 @@ type GroupForm = {
   grant_count: string
   applies_all_races: boolean
   race_ids: string[]
+  usage_note: string  // 獎勵詳情：使用說明（活動獎勵系統 P2）
+  icon_url: string    // 獎勵詳情：獎勵圖示
+  description: string // 獎勵詳情：活動/獎勵說明
 }
 const EMPTY_GROUP: GroupForm = {
   merchant_id: '', name: '', item_label: '', is_line_point: false, valid_until: '',
   use_limit_type: 'single', use_limit_count: '', grant_count: '1', applies_all_races: true, race_ids: [],
+  usage_note: '', icon_url: '', description: '',
 }
 
 export default function AdminRewardSerialsPage() {
@@ -148,6 +152,9 @@ export default function AdminRewardSerialsPage() {
       grant_count: String(g.grant_count),
       applies_all_races: g.applies_all_races,
       race_ids: g.race_ids,
+      usage_note: g.usage_note,
+      icon_url: g.icon_url,
+      description: g.description,
     })
     setErr(''); setMsg('')
     setSelectedGroupId(g.id)
@@ -188,6 +195,9 @@ export default function AdminRewardSerialsPage() {
         grant_count: Math.max(1, parseInt(groupForm.grant_count || '1', 10)),
         applies_all_races: groupForm.applies_all_races,
         race_ids: groupForm.applies_all_races ? [] : groupForm.race_ids,
+        usage_note: groupForm.usage_note.trim(),
+        icon_url: groupForm.icon_url.trim(),
+        description: groupForm.description.trim(),
       }
       if (groupForm.id) {
         await adminRewardGroupsApi.update(token, groupForm.id, body)
@@ -356,6 +366,15 @@ export default function AdminRewardSerialsPage() {
               <input type="checkbox" checked={groupForm.is_line_point} onChange={(e) => setGroupForm((f) => ({ ...f, is_line_point: e.target.checked }))} />
               LINE POINT 序號（僅供標記顯示，序號欄位仍統一為 code + link）
             </label>
+
+            {/* 獎勵詳情（活動獎勵系統 P2：中獎配發序號時 denormalize 進玩家錢包 user_rewards 供顯示） */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 10 }}>
+              <F label="獎勵圖示網址（選填）"><input style={inp} value={groupForm.icon_url} onChange={(e) => setGroupForm((f) => ({ ...f, icon_url: e.target.value }))} placeholder="https://…" /></F>
+              <F label="使用說明（選填）"><input style={inp} value={groupForm.usage_note} onChange={(e) => setGroupForm((f) => ({ ...f, usage_note: e.target.value }))} placeholder="如：至門市出示序號兌換" /></F>
+            </div>
+            <F label="活動/獎勵說明（選填）">
+              <textarea style={ta} rows={2} value={groupForm.description} onChange={(e) => setGroupForm((f) => ({ ...f, description: e.target.value }))} placeholder="顯示於玩家活動獎勵錢包的獎勵詳情" />
+            </F>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 10 }}>
               <F label="使用次數限制">

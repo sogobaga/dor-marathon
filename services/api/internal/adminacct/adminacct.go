@@ -367,8 +367,8 @@ var auditResourceLabel = map[string]string{
 	"orders": "訂單", "signups": "報名", "task-modules": "賽事任務", "membership": "等級設定",
 	"settings": "系統設定", "group-presets": "分組範本", "test-whitelist": "測試白名單",
 	"gps-runs": "GPS 軌跡", "images": "圖片", "organizer": "主辦", "activities": "活動",
-	"partner-shops": "跑者充電站",
-	"reward-merchants": "獎勵合作商家", "reward-groups": "獎勵序號組",
+	"partner-shops":    "跑者充電站",
+	"reward-merchants": "獎勵合作商家", "reward-groups": "獎勵序號組", "reward-templates": "獎勵模板",
 }
 var auditVerb = map[string]string{"POST": "新增", "PUT": "更新", "PATCH": "更新", "DELETE": "刪除"}
 

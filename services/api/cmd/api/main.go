@@ -18,6 +18,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/activity"
+	"github.com/dor/api/internal/activityreward"
 	"github.com/dor/api/internal/adminacct"
 	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
@@ -158,6 +159,12 @@ func main() {
 	rewardSerialRepo := rewardserial.NewRepository(pool)
 	rewardSerialSvc := rewardserial.NewService(rewardSerialRepo)
 	rewardSerialHandler := rewardserial.NewHandler(rewardSerialSvc)
+
+	// 活動獎勵系統 P2：全域即時獎勵模板 CRUD（完成觸發機率 roll 本體 activityreward.RollAndGrant
+	// 由 race.Service 在個人挑戰完成 CAS 點直接呼叫，不經過這裡的 HTTP handler）
+	activityRewardRepo := activityreward.NewRepository(pool)
+	activityRewardSvc := activityreward.NewService(activityRewardRepo)
+	activityRewardHandler := activityreward.NewHandler(activityRewardSvc)
 
 	// 環台大富翁（Phase 1：盤面遊戲，扣 GP 擲骰前進）
 	monopolyRepo := monopoly.NewRepository(pool)
@@ -443,6 +450,7 @@ func main() {
 			r.With(perm("monopoly")).Mount("/admin/monopoly", monopolyHandler.AdminRouter())
 			r.With(perm("rewards")).Mount("/admin/reward-merchants", rewardSerialHandler.MerchantRouter())
 			r.With(perm("rewards")).Mount("/admin/reward-groups", rewardSerialHandler.GroupRouter())
+			r.With(perm("rewards")).Mount("/admin/reward-templates", activityRewardHandler.TemplateRouter())
 			r.With(perm("settings")).Put("/admin/settings", profileHandler.PutSettings)
 			r.With(perm("gps_review")).Post("/admin/activities/add-mileage", actHandler.AdminAddMileage)
 			r.With(perm("gps_review")).Mount("/admin/gps-runs", actHandler.AdminRouter())

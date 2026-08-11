@@ -7,6 +7,8 @@ import {
   adminImagesApi,
   adminTaskModulesApi,
   adminAppSettingsApi,
+  adminRewardTemplatesApi,
+  adminRewardGroupsApi,
   METRIC_BY_KEY,
   type CreateRacePayload,
   type EventMode,
@@ -22,6 +24,10 @@ import {
   type CancellationPolicy,
   type ChallengeRule,
   type CompletionType,
+  type RewardItem,
+  type RewardItemType,
+  type RewardTemplate,
+  type RewardSerialGroup,
 } from '@/lib/api'
 import { TaskItemEditor, type TaskFields } from '../TaskItemEditor'
 import { CancellationPolicyFields, DEFAULT_CANCELLATION_POLICY, sortTiers, validateCancellationPolicy } from '../CancelPolicyEditor'
@@ -156,6 +162,10 @@ export default function RaceForm({
   const [chWindowDays, setChWindowDays] = useState(String(initial?.challenge_rule?.window_days ?? ''))
   const [chCumKm, setChCumKm] = useState(String(initial?.challenge_rule?.cum_km ?? ''))
   const [chSingleKm, setChSingleKm] = useState(String(initial?.challenge_rule?.single_km ?? ''))
+  // 即時獎勵設定（完成觸發機率 roll；活動獎勵系統 P2，僅 personal 模式使用，選填）
+  const [rewardItems, setRewardItems] = useState<RewardItem[]>(initial?.reward_config?.items ?? [])
+  const [rewardTemplates, setRewardTemplates] = useState<RewardTemplate[]>([])
+  const [rewardGroups, setRewardGroups] = useState<RewardSerialGroup[]>([])
   const [controlStatus, setControlStatus] = useState<string>(initial?.control_status ?? 'active')
   const [startingSoonDays, setStartingSoonDays] = useState<string>(String(initial?.starting_soon_days ?? 5))
   const [allowTeamGroups, setAllowTeamGroups] = useState<boolean>(initial?.allow_team_groups ?? false)
@@ -296,6 +306,8 @@ export default function RaceForm({
   useEffect(() => {
     adminPresetsApi.list(token).then((r) => setPresets(r.presets)).catch(() => {})
     adminTaskModulesApi.list(token).then((r) => setTaskModules(r.modules)).catch(() => {})
+    adminRewardTemplatesApi.list(token).then((r) => setRewardTemplates(r.templates)).catch(() => {})
+    adminRewardGroupsApi.list(token).then((r) => setRewardGroups(r.groups)).catch(() => {})
     adminAppSettingsApi.list(token).then((r) => {
       const raw = r.settings?.['cancellation_policy']
       if (!raw) return
@@ -451,6 +463,46 @@ export default function RaceForm({
     }
   }
 
+  // 即時獎勵設定 helpers（活動獎勵系統 P2；比照上面 challenge_rule 的驗證/建構模式）
+  function addRewardItem() {
+    setRewardItems((its) => [...its, { type: 'exp', min: 0, max: 0, prob_bp: 10000 }])
+  }
+  function updateRewardItem(i: number, patch: Partial<RewardItem>) {
+    setRewardItems((its) => its.map((it, idx) => (idx === i ? { ...it, ...patch } : it)))
+  }
+  function removeRewardItem(i: number) {
+    setRewardItems((its) => its.filter((_, idx) => idx !== i))
+  }
+  function applyRewardTemplate(templateId: string) {
+    const t = rewardTemplates.find((x) => x.id === templateId)
+    if (!t) return
+    if (rewardItems.length > 0 && !confirm(`套用模板「${t.name}」將覆蓋目前已設定的 ${rewardItems.length} 個獎勵項目，確定套用？`)) return
+    setRewardItems(t.items.map((it) => ({ ...it })))
+  }
+  async function saveCurrentAsRewardTemplate() {
+    if (rewardItems.length === 0) return
+    const name = prompt('模板名稱：')
+    if (!name || !name.trim()) return
+    try {
+      const { template } = await adminRewardTemplatesApi.create(token, { name: name.trim(), items: rewardItems })
+      setRewardTemplates((ts) => [template, ...ts])
+    } catch (e: any) {
+      setErr(e?.message || '儲存模板失敗')
+    }
+  }
+  // 即時獎勵項目是否皆已填妥（有填才檢查；整組選填，空陣列合法）
+  function rewardItemsValid(): boolean {
+    return rewardItems.every((it) => {
+      if (!(it.prob_bp > 0 && it.prob_bp <= 10000)) return false
+      if (it.type === 'exp' || it.type === 'dp' || it.type === 'gp') return (it.min ?? 0) > 0 && (it.max ?? 0) >= (it.min ?? 0)
+      if (it.type === 'vip') return (it.days ?? 0) > 0
+      if (it.type === 'serial') return !!it.serial_group_id
+      return false
+    })
+  }
+  // 本場活動可用的序號組：對應全部活動、或（編輯中）已明確勾選對應本場活動者
+  const availableRewardGroups = rewardGroups.filter((g) => g.applies_all_races || (!!initial?.id && g.race_ids.includes(initial.id)))
+
   function buildPayload(): CreateRacePayload {
     const cleanGroups: RaceGroup[] = groups
       .filter((g) => g.name.trim())
@@ -470,6 +522,7 @@ export default function RaceForm({
       allow_team_groups: mode === 'competition' ? allowTeamGroups : false,
       vip_only: vipOnly,
       challenge_rule: mode === 'personal' ? buildChallengeRule() : null,
+      reward_config: mode === 'personal' && rewardItems.length > 0 ? { items: rewardItems } : null,
       // config 是整包 JSONB struct marshal（非合併寫入）：務必以既有 config 為底、只覆寫 cancellation_policy，
       // 否則會把 factions/clubs/missions 等既有欄位一併清空（見後端 configToBytes/bytesToConfig 註解）。
       config: {
@@ -550,6 +603,11 @@ export default function RaceForm({
     }
     if (mode === 'personal' && !challengeRuleValid()) {
       setErr('請完整填寫個人挑戰規則參數')
+      setTab('basic')
+      return
+    }
+    if (mode === 'personal' && !rewardItemsValid()) {
+      setErr('請完整填寫即時獎勵設定的機率／數值／序號組')
       setTab('basic')
       return
     }
@@ -736,6 +794,47 @@ export default function RaceForm({
                     <input style={inp} type="number" min={0} step="0.1" value={chSingleKm} onChange={(e) => setChSingleKm(e.target.value)} />
                   </Field>
                 )}
+              </div>
+            )}
+
+            {mode === 'personal' && (
+              <div style={{ ...card, background: 'var(--bg-2)' }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5 }}>即時獎勵設定（選填）</div>
+                <div style={hint}>
+                  完成一次挑戰即觸發抽獎，每個項目獨立判定機率（可同時中多項）。經濟類（EXP/DP/GP/VIP）中獎直接入帳；
+                  序號類配發序號進玩家活動獎勵錢包，對應序號組若剛好發完則該項跳過、不影響其他項目。
+                </div>
+                <Row>
+                  {rewardTemplates.length > 0 && (
+                    <Field label="套用模板（載入後可再微調，不會持續同步）">
+                      <select
+                        style={inp} value=""
+                        onChange={(e) => { if (e.target.value) { applyRewardTemplate(e.target.value); e.target.value = '' } }}
+                      >
+                        <option value="">選擇模板套用…</option>
+                        {rewardTemplates.map((t) => <option key={t.id} value={t.id}>{t.name}（{t.items.length} 項）</option>)}
+                      </select>
+                    </Field>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                    <button type="button" onClick={saveCurrentAsRewardTemplate} disabled={rewardItems.length === 0} style={{ ...ghostBtn, opacity: rewardItems.length === 0 ? 0.5 : 1 }}>
+                      另存為模板
+                    </button>
+                  </div>
+                </Row>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
+                  {rewardItems.map((it, i) => (
+                    <RewardItemRow
+                      key={i}
+                      item={it}
+                      groups={availableRewardGroups}
+                      onChange={(patch) => updateRewardItem(i, patch)}
+                      onRemove={() => removeRewardItem(i)}
+                    />
+                  ))}
+                  {rewardItems.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚未設定即時獎勵</div>}
+                </div>
+                <button type="button" onClick={addRewardItem} style={{ ...ghostBtn, alignSelf: 'flex-start' }}>＋ 新增獎勵項目</button>
               </div>
             )}
 
@@ -1199,6 +1298,71 @@ export default function RaceForm({
 }
 
 // --- 小元件 ---
+
+const REWARD_TYPE_LABEL: Record<RewardItemType, string> = {
+  exp: 'EXP 經驗值', dp: 'DP', gp: 'GP', vip: 'VIP 天數', serial: '序號（合作商家／LINE POINT）',
+}
+
+// 即時獎勵設定單一項目列（活動獎勵系統 P2）：type 決定顯示哪些參數欄位。
+function RewardItemRow({ item, groups, onChange, onRemove }: {
+  item: RewardItem
+  groups: RewardSerialGroup[]
+  onChange: (patch: Partial<RewardItem>) => void
+  onRemove: () => void
+}) {
+  return (
+    <div style={{ ...card, background: 'var(--bg-1, #11131a)', padding: 12 }}>
+      <Row>
+        <Field label="獎勵類型">
+          <select style={inp} value={item.type} onChange={(e) => onChange({ type: e.target.value as RewardItemType })}>
+            {(Object.keys(REWARD_TYPE_LABEL) as RewardItemType[]).map((k) => (
+              <option key={k} value={k}>{REWARD_TYPE_LABEL[k]}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="中獎機率 (%)">
+          <input
+            style={inp} type="number" min={0} max={100} step="0.01"
+            value={item.prob_bp / 100}
+            onChange={(e) => {
+              const pct = parseFloat(e.target.value || '0') || 0
+              onChange({ prob_bp: Math.max(0, Math.min(10000, Math.round(pct * 100))) })
+            }}
+          />
+        </Field>
+      </Row>
+      {(item.type === 'exp' || item.type === 'dp' || item.type === 'gp') && (
+        <Row>
+          <Field label="數量下限">
+            <input style={inp} type="number" min={0} value={item.min ?? 0} onChange={(e) => onChange({ min: parseInt(e.target.value || '0', 10) || 0 })} />
+          </Field>
+          <Field label="數量上限">
+            <input style={inp} type="number" min={0} value={item.max ?? 0} onChange={(e) => onChange({ max: parseInt(e.target.value || '0', 10) || 0 })} />
+          </Field>
+        </Row>
+      )}
+      {item.type === 'vip' && (
+        <Field label="VIP 天數">
+          <input style={inp} type="number" min={1} value={item.days ?? 0} onChange={(e) => onChange({ days: parseInt(e.target.value || '0', 10) || 0 })} />
+        </Field>
+      )}
+      {item.type === 'serial' && (
+        <Field label="指定序號組">
+          <select style={inp} value={item.serial_group_id ?? ''} onChange={(e) => onChange({ serial_group_id: e.target.value })}>
+            <option value="">請選擇序號組…</option>
+            {groups.map((g) => <option key={g.id} value={g.id}>{g.name}（可用 {g.available_count}）</option>)}
+          </select>
+          {groups.length === 0 && (
+            <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+              尚無對應本場活動的序號組，請先到「序號/獎勵管理」建立序號組並勾選對應全部活動或本場活動。
+            </span>
+          )}
+        </Field>
+      )}
+      <button type="button" onClick={onRemove} style={{ ...linkBtn, color: 'var(--hunt)', alignSelf: 'flex-start' }}>移除此項目</button>
+    </div>
+  )
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
