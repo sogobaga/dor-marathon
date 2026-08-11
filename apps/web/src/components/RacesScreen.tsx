@@ -31,7 +31,7 @@ const DISPLAY_STATUS: Record<string, { label: string; color: string }> = {
   registering: { label: '報名中', color: 'var(--gold)' },
   reg_closed: { label: '報名結束', color: 'var(--tx-faint)' },
   starting_soon: { label: '賽事即將開始', color: 'var(--violet)' },
-  racing: { label: '賽事進行中', color: 'var(--fug)' },
+  racing: { label: '進行中', color: 'var(--fug)' },
   ended: { label: '賽事結束', color: 'var(--tx-faint)' },
   paused: { label: '暫停報名', color: 'var(--hunt)' },
   suspended: { label: '賽事中止', color: 'var(--hunt)' },
@@ -285,7 +285,7 @@ function RaceCard({
         {/* 標題整寬（不與右側標籤並排，避免擠壓換行） */}
         <div>
           <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', lineHeight: 1.3, wordBreak: 'keep-all', overflowWrap: 'break-word', display: 'block' }}>{race.title}</span>
-          {/* 同一列：參加資格（VIP專屬金底白字／所有會員線框無底，置左）＋ 狀態徽章（賽事進行中／報名中，置右） */}
+          {/* 同一列：參加資格（VIP專屬金底白字／所有會員線框無底，置左）＋ 狀態徽章（進行中／報名中，置右） */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
             {race.vip_only ? (
               <span style={{ fontSize: 11.5, fontWeight: 800, padding: '2px 9px', borderRadius: 8, background: 'var(--gold)', color: '#fff', flexShrink: 0 }}>VIP專屬</span>
