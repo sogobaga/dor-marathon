@@ -286,18 +286,19 @@ function RaceCard({
       )}
 
       <div style={{ padding: 'var(--card-pad, 18px)', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {/* 標題 + 距離 chip；右上角狀態／報名徽章直排 */}
+        {/* 標題 + 參加資格標示；右上角狀態／報名徽章直排 */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
           <div style={{ minWidth: 0 }}>
             <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', lineHeight: 1.3, wordBreak: 'keep-all', overflowWrap: 'break-word', display: 'block' }}>{race.title}</span>
-            {/* 距離 chip 換行至標題下方（不接在名稱後面） */}
-            {race.distances.length > 0 && (
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                {race.distances.map((d) => (
-                  <span key={d} style={{ fontSize: 11.5, padding: '2px 8px', borderRadius: 8, background: 'var(--bg-2)', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0 }}>{d}K</span>
-                ))}
-              </div>
-            )}
+            {/* 參加資格標示（取代原距離 chip；未來同一活動有全體/分組/個人多種目標，難用單一里程標籤表示）：
+                VIP專屬＝金底白字（金底白字通則）；所有會員＝線框無底。依 race.vip_only 擇一顯示。 */}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+              {race.vip_only ? (
+                <span style={{ fontSize: 11.5, fontWeight: 800, padding: '2px 9px', borderRadius: 8, background: 'var(--gold)', color: '#fff', flexShrink: 0 }}>VIP專屬</span>
+              ) : (
+                <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 8, background: 'transparent', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0 }}>所有會員</span>
+              )}
+            </div>
             {race.subtitle && <div style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-dim)', marginTop: 3 }}>{race.subtitle}</div>}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
