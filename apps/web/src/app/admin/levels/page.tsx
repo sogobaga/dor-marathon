@@ -202,33 +202,7 @@ export default function AdminLevelsPage() {
         </div>
       </div>
 
-      {/* 外觀：Strava「Powered by Strava」標章（雙版本，前台依 skin 深淺自動顯示對應版本） */}
-      <div style={{ ...panel, marginTop: 16 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>Strava 標章（Powered by Strava）</h2>
-        <p style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 0, lineHeight: 1.7 }}>
-          顯示在「會員資訊頁 → 運動數據」底部。一個檔案無法同時適用深/淺色 skin，故分兩版；前台會依目前 skin 自動顯示對應版本。請上傳 Strava 官方資產（.svg 或 .png），未上傳則用內建佔位圖。
-        </p>
-        <ImgSlot
-          title="深色 skin 用（白字版）"
-          hint="套用於預設深色主題。請上傳白色文字的版本（深底才看得清）。"
-          url={settings?.strava_powered_dark_url ?? ''}
-          dark
-          busy={imgBusy === 'strava_powered_dark_url'}
-          disabled={imgBusy !== ''}
-          onUpload={(f) => uploadImage('strava_powered_dark_url', f, '✓ 已更新（深色 skin 用）')}
-          onRemove={() => removeImage('strava_powered_dark_url', '✓ 已移除（深色 skin 用）')}
-        />
-        <ImgSlot
-          title="淺色 skin 用（深字版）"
-          hint="套用於暖色/淺色主題（warm、warm2…）。請上傳深色文字的版本（淺底才看得清）。"
-          url={settings?.strava_powered_light_url ?? ''}
-          dark={false}
-          busy={imgBusy === 'strava_powered_light_url'}
-          disabled={imgBusy !== ''}
-          onUpload={(f) => uploadImage('strava_powered_light_url', f, '✓ 已更新（淺色 skin 用）')}
-          onRemove={() => removeImage('strava_powered_light_url', '✓ 已移除（淺色 skin 用）')}
-        />
-      </div>
+      {/* Strava 標章（Powered by Strava）設定已移至「系統設定」頁（admin/system） */}
 
       {/* EXP 規則 */}
       <div style={panel}>
@@ -407,34 +381,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-// 單張圖片上傳槽（預覽底色可切深/淺，方便看白字或深字標章）。
-// disabled：有任何存檔進行中時停用所有槽，避免併發存檔以過期快照互相覆蓋。
-function ImgSlot({ title, hint, url, dark, busy, disabled, onUpload, onRemove }: {
-  title: string; hint: string; url: string; dark: boolean; busy: boolean; disabled: boolean;
-  onUpload: (f: File) => void; onRemove: () => void
-}) {
-  return (
-    <div style={{ marginTop: 14 }}>
-      <div style={{ fontSize: 13.5, fontWeight: 700 }}>{title}</div>
-      <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', margin: '2px 0 8px', lineHeight: 1.6 }}>{hint}</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-        <div style={{ width: 200, height: 56, borderRadius: 10, border: '1px solid var(--line-2)', overflow: 'hidden', background: dark ? '#0b0e13' : '#f3eee2', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 8 }}>
-          {url
-            // eslint-disable-next-line @next/next/no-img-element
-            ? <img src={url} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-            : <span style={{ fontSize: 11, color: dark ? 'rgba(255,255,255,.5)' : 'rgba(0,0,0,.4)' }}>未設定</span>}
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <label style={{ ...primaryBtn, display: 'inline-block', cursor: disabled ? 'default' : 'pointer', opacity: busy || disabled ? 0.6 : 1, pointerEvents: disabled ? 'none' : 'auto' }}>
-            {busy ? '上傳中…' : url ? '更換' : '上傳'}
-            <input type="file" accept="image/*,.svg" disabled={disabled} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = '' }} />
-          </label>
-          {url && <button onClick={onRemove} disabled={disabled} style={{ ...primaryBtn, background: 'var(--bg-2)', color: 'var(--hunt)', border: '1px solid var(--line-2)', opacity: disabled ? 0.6 : 1 }}>移除</button>}
-        </div>
-      </div>
-    </div>
-  )
-}
+// ImgSlot 已隨 Strava 標章設定搬到「系統設定」頁（admin/system）
 
 const panel: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: 18 }
 const inp: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '9px 11px', color: 'var(--tx)', fontSize: 14, fontFamily: 'inherit' }
