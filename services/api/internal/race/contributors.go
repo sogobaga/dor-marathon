@@ -64,6 +64,7 @@ func (r *Repository) LoadTaskContributors(ctx context.Context, raceID, groupID s
 		LEFT JOIN race_groups g ON g.id = reg.group_id
 		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 		                       AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
+		                       AND (rc.external_data OR a.source IS NULL)
 		WHERE rc.id = $1 AND ($2 = '' OR reg.group_id::text = $2)
 		GROUP BY reg.user_id, u.name, u.handle, td.name, g.name
 		ORDER BY dist DESC, acts DESC`, raceID, groupID)

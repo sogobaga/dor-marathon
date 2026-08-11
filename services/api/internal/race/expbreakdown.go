@@ -126,6 +126,7 @@ func (r *Repository) expBreakdown(ctx context.Context, raceID, userID string) (*
 		LEFT JOIN race_groups g ON g.id = reg.group_id
 		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 		                      AND a.recorded_at BETWEEN r.start_date AND r.end_date
+		                      AND (r.external_data OR a.source IS NULL)
 		WHERE reg.user_id=$1 AND reg.race_id=$2 AND reg.status<>'cancelled'`,
 		userID, raceID).Scan(&totalKm, &targetKm)
 	if targetKm > 0 {

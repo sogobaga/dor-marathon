@@ -40,6 +40,7 @@ func (r *Repository) loadUserRangeActivities(ctx context.Context, raceID, userID
 		SELECT a.distance_km, COALESCE(a.avg_hr,0), a.avg_pace_s, a.recorded_at, COALESCE(a.km_paces,'{}')
 		FROM races rc
 		JOIN activities a ON a.user_id=$2 AND NOT a.flagged AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
+		                  AND (rc.external_data OR a.source IS NULL)
 		WHERE rc.id=$1
 		ORDER BY a.recorded_at DESC`, raceID, userID)
 	if err != nil {

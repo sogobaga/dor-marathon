@@ -268,6 +268,7 @@ export default function RaceForm({
   const [showDistanceRank, setShowDistanceRank] = useState(initial?.show_distance_rank ?? true)
   const [showTimeRank, setShowTimeRank] = useState(initial?.show_time_rank ?? true)
   const [vipOnly, setVipOnly] = useState<boolean>(initial?.vip_only ?? false)
+  const [externalData, setExternalData] = useState<boolean>(initial?.external_data ?? false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -521,6 +522,7 @@ export default function RaceForm({
       starting_soon_days: parseInt(startingSoonDays || '5', 10) || 5,
       allow_team_groups: mode === 'competition' ? allowTeamGroups : false,
       vip_only: vipOnly,
+      external_data: externalData,
       challenge_rule: mode === 'personal' ? buildChallengeRule() : null,
       reward_config: mode === 'personal' && rewardItems.length > 0 ? { items: rewardItems } : null,
       // config 是整包 JSONB struct marshal（非合併寫入）：務必以既有 config 為底、只覆寫 cancellation_policy，
@@ -931,6 +933,16 @@ export default function RaceForm({
               </label>
               <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
                 預設關閉。勾選後此賽事所有人皆可見，但非 VIP 帳號點選報名會顯示「VIP專屬活動。」提示、無法完成報名；VIP 期間報名成功者即使日後 VIP 過期也不受影響。
+              </span>
+            </Field>
+
+            <Field label="活動數據來源">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--tx)', paddingTop: 2 }}>
+                <input type="checkbox" checked={externalData} onChange={(e) => setExternalData(e.target.checked)} />
+                採用 Strava 等外部數據做排名/里程統計
+              </label>
+              <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
+                預設關閉＝只採計 App 內 GPS 跑步追蹤（符合 Strava 使用規範）。開啟後將把 Strava/Garmin/COROS 等外部同步數據一併計入本活動排名與里程統計。
               </span>
             </Field>
 

@@ -486,7 +486,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
                   {strava?.connected
                     ? `已連接${strava.athlete_name ? `：${strava.athlete_name}` : ''} · 活動自動同步`
-                    : '連接後自動同步跑步活動（含 COROS/Garmin 等同步到 Strava 的裝置），用於任務達成與排行榜'}
+                    : '連接後自動同步跑步活動（含 COROS/Garmin 等同步到 Strava 的裝置），用於個人數據（個人任務、自主訓練、稱號成就、個人里程）；不用於活動排名或里程競賽統計'}
                 </div>
               </div>
               {strava?.connected ? (
@@ -508,6 +508,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               )}
             </div>
             {strava?.enabled === false && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 8 }}>（Strava 整合尚未由管理者設定）</div>}
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>Strava 數據僅用於個人數據，不會用於活動排名／里程競賽統計。</div>
             {stravaMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginTop: 8 }}>{stravaMsg}</div>}
             {strava?.connected && (
               <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>
@@ -546,7 +547,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
           {strava?.connected && (
             <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 12, padding: '12px 14px' }}>
               <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>里程優先來源</div>
-              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>你同時有「GPS 跑步追蹤」與「Strava」兩個來源。若同一趟被記成兩筆，將以此來源為準、另一筆不計入賽事。</div>
+              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>你同時有「GPS 跑步追蹤」與「Strava」兩個來源。若同一趟被記成兩筆，將以此來源為準、另一筆不重複計入個人數據（實際是否計入某活動的排名/里程統計，另依各活動的數據來源設定為準）。</div>
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                 {(['gps', 'strava'] as const).map((src) => {
                   const on = (p?.preferred_data_source ?? 'gps') === src

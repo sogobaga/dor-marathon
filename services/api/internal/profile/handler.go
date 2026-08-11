@@ -552,6 +552,7 @@ func (h *Handler) fetchRecords(ctx context.Context, userID string) ([]*RaceRecor
 		JOIN races r ON r.id = reg.race_id
 		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 		                      AND a.recorded_at BETWEEN r.start_date AND r.end_date
+		                      AND (r.external_data OR a.source IS NULL)
 		WHERE reg.user_id = $1 AND reg.status = 'paid'
 		GROUP BY r.id, r.slug, r.title, r.start_date, r.end_date, reg.distance, reg.faction
 		ORDER BY r.end_date DESC

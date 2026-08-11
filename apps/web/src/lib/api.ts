@@ -187,6 +187,7 @@ export interface Race {
   show_distance_rank?: boolean
   show_time_rank?: boolean
   vip_only?: boolean // VIP 限定賽事（只提供給 VIP 帳號）
+  external_data?: boolean // 是否採用 Strava 等外部數據做排名/里程統計（預設 false=只認 App GPS，合規）
   config?: RaceConfig // 後端一律回傳（非 omitempty）；此處選填僅為前端防禦
   challenge_rule?: ChallengeRule | null // 個人挑戰模式(event_mode=personal)專用規則；其餘模式為 null
   reward_config?: RewardConfig | null // 個人挑戰模式(event_mode=personal)完成觸發即時獎勵設定；其餘模式為 null，選填

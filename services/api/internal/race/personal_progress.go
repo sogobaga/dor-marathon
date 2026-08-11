@@ -80,14 +80,14 @@ func (r *Repository) CompletedChallengeCount(ctx context.Context, userID, raceID
 // streakQualifyingDays 回傳 since 起、依台灣日曆日「當日總里程 >= minKmPerDay」的日期清單（升冪）。
 // 台灣日曆日換算在 SQL 端做（AT TIME ZONE 'Asia/Taipei'，比照 titles.go/achievements.go 慣例，
 // Go 端不用 time.LoadLocation——production distroless 映像沒有 tzdata）。一律 NOT flagged 防弊。
-func (r *Repository) streakQualifyingDays(ctx context.Context, userID string, since time.Time, minKmPerDay float64) ([]time.Time, error) {
+func (r *Repository) streakQualifyingDays(ctx context.Context, userID string, since time.Time, minKmPerDay float64, externalData bool) ([]time.Time, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT (recorded_at AT TIME ZONE 'Asia/Taipei')::date AS d
 		FROM activities
-		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2
+		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND ($4 OR source IS NULL)
 		GROUP BY d
 		HAVING SUM(distance_km) >= $3
-		ORDER BY d`, userID, since, minKmPerDay)
+		ORDER BY d`, userID, since, minKmPerDay, externalData)
 	if err != nil {
 		return nil, fmt.Errorf("streak qualifying days: %w", err)
 	}
@@ -104,12 +104,12 @@ func (r *Repository) streakQualifyingDays(ctx context.Context, userID string, si
 }
 
 // windowAgg [from, to) 區間內未 flagged 活動的累積里程與最長單趟（window_cumulative 規則用）。
-func (r *Repository) windowAgg(ctx context.Context, userID string, from, to time.Time) (sumKm, maxKm float64, err error) {
+func (r *Repository) windowAgg(ctx context.Context, userID string, from, to time.Time, externalData bool) (sumKm, maxKm float64, err error) {
 	err = r.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(distance_km),0), COALESCE(MAX(distance_km),0)
 		FROM activities
-		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND recorded_at < $3`,
-		userID, from, to).Scan(&sumKm, &maxKm)
+		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND recorded_at < $3 AND ($4 OR source IS NULL)`,
+		userID, from, to, externalData).Scan(&sumKm, &maxKm)
 	if err != nil {
 		return 0, 0, fmt.Errorf("window agg: %w", err)
 	}
@@ -117,11 +117,11 @@ func (r *Repository) windowAgg(ctx context.Context, userID string, from, to time
 }
 
 // maxDistanceSince since 起未 flagged 活動的最長單趟里程（single_distance 規則用）。
-func (r *Repository) maxDistanceSince(ctx context.Context, userID string, since time.Time) (float64, error) {
+func (r *Repository) maxDistanceSince(ctx context.Context, userID string, since time.Time, externalData bool) (float64, error) {
 	var m float64
 	err := r.db.QueryRow(ctx,
-		`SELECT COALESCE(MAX(distance_km),0) FROM activities WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2`,
-		userID, since).Scan(&m)
+		`SELECT COALESCE(MAX(distance_km),0) FROM activities WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND ($3 OR source IS NULL)`,
+		userID, since, externalData).Scan(&m)
 	if err != nil {
 		return 0, fmt.Errorf("max distance since: %w", err)
 	}
@@ -206,10 +206,10 @@ func longestConsecutiveRun(days []time.Time) int {
 }
 
 // evaluateChallengeRule 依規則型別即時查詢使用者自 startedAt 起的活動、回傳是否達標 + 進度。
-func (s *Service) evaluateChallengeRule(ctx context.Context, rule *ChallengeRule, userID string, startedAt time.Time) (completed bool, progress *ChallengeProgress, err error) {
+func (s *Service) evaluateChallengeRule(ctx context.Context, rule *ChallengeRule, userID string, startedAt time.Time, externalData bool) (completed bool, progress *ChallengeProgress, err error) {
 	switch rule.CompletionType {
 	case CompletionStreakDays:
-		days, err := s.repo.streakQualifyingDays(ctx, userID, startedAt, rule.MinKmPerDay)
+		days, err := s.repo.streakQualifyingDays(ctx, userID, startedAt, rule.MinKmPerDay, externalData)
 		if err != nil {
 			return false, nil, err
 		}
@@ -219,7 +219,7 @@ func (s *Service) evaluateChallengeRule(ctx context.Context, rule *ChallengeRule
 
 	case CompletionWindowCumulative:
 		end := startedAt.AddDate(0, 0, rule.WindowDays)
-		sumKm, maxKm, err := s.repo.windowAgg(ctx, userID, startedAt, end)
+		sumKm, maxKm, err := s.repo.windowAgg(ctx, userID, startedAt, end, externalData)
 		if err != nil {
 			return false, nil, err
 		}
@@ -235,7 +235,7 @@ func (s *Service) evaluateChallengeRule(ctx context.Context, rule *ChallengeRule
 		return completed, progress, nil
 
 	case CompletionSingleDistance:
-		best, err := s.repo.maxDistanceSince(ctx, userID, startedAt)
+		best, err := s.repo.maxDistanceSince(ctx, userID, startedAt, externalData)
 		if err != nil {
 			return false, nil, err
 		}
@@ -293,7 +293,7 @@ func (s *Service) GetPersonalProgress(ctx context.Context, raceID, userID string
 	}
 
 	startedAt := *attempt.ChallengeStartedAt
-	completed, progress, err := s.evaluateChallengeRule(ctx, rule, userID, startedAt)
+	completed, progress, err := s.evaluateChallengeRule(ctx, rule, userID, startedAt, race.ExternalData)
 	if err != nil {
 		return nil, err
 	}

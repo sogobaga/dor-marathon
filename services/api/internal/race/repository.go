@@ -39,6 +39,7 @@ const selectCols = `
 	       COALESCE(certificate_bg_url,'') as certificate_bg_url,
 	       COALESCE(show_distance_rank,TRUE), COALESCE(show_time_rank,TRUE),
 	       COALESCE(vip_only,FALSE),
+	       COALESCE(external_data,FALSE),
 	       challenge_rule,
 	       reward_config,
 	       created_at
@@ -136,13 +137,13 @@ func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
-			vip_only=$20, challenge_rule=$21, reward_config=$22, updated_at=NOW()
-		WHERE id=$23`,
+			vip_only=$20, external_data=$21, challenge_rule=$22, reward_config=$23, updated_at=NOW()
+		WHERE id=$24`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
-		race.VipOnly, challengeRuleArg, rewardConfigArg, race.ID,
+		race.VipOnly, race.ExternalData, challengeRuleArg, rewardConfigArg, race.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -216,15 +217,15 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		                   slots_total, entry_fee, registration_start, registration_end,
 		                   start_date, end_date, config, created_by, review_status, required_fields,
 		                   control_status, starting_soon_days, brochure_title, allow_team_groups, vip_only,
-		                   challenge_rule, reward_config)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+		                   external_data, challenge_rule, reward_config)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.RegStart, race.RegEnd,
 		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus, requiredFields,
 		controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
-		challengeRuleArg, rewardConfigArg,
+		race.ExternalData, challengeRuleArg, rewardConfigArg,
 	).Scan(&raceID)
 	if err != nil {
 		return nil, fmt.Errorf("insert race: %w", err)
@@ -368,14 +369,14 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
 			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
 			required_fields=$20, control_status=$21, starting_soon_days=$22, brochure_title=$23,
-			allow_team_groups=$24, vip_only=$25, challenge_rule=$26, reward_config=$27, updated_at=NOW()
-		WHERE id=$28`,
+			allow_team_groups=$24, vip_only=$25, external_data=$26, challenge_rule=$27, reward_config=$28, updated_at=NOW()
+		WHERE id=$29`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
 		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
-		challengeRuleArg, rewardConfigArg, raceID,
+		race.ExternalData, challengeRuleArg, rewardConfigArg, raceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -2208,6 +2209,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&race.CertificateBgURL,
 		&race.ShowDistanceRank, &race.ShowTimeRank,
 		&race.VipOnly,
+		&race.ExternalData,
 		&challengeRuleBytes,
 		&rewardConfigBytes,
 		&race.CreatedAt,
@@ -2250,6 +2252,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&race.CertificateBgURL,
 		&race.ShowDistanceRank, &race.ShowTimeRank,
 		&race.VipOnly,
+		&race.ExternalData,
 		&challengeRuleBytes,
 		&rewardConfigBytes,
 		&race.CreatedAt,
