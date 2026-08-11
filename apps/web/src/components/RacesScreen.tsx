@@ -2,12 +2,29 @@
 
 import { useState } from 'react'
 import useSWR from 'swr'
-import { racesApi, raceStatusFlags, type Race, type MyRegLite } from '@/lib/api'
-import { getUserToken, useUser, clearUserSession } from '@/lib/userAuth'
+import { racesApi, raceStatusFlags, rewardsApi, type Race, type MyRegLite, type UserReward } from '@/lib/api'
+import { getUserToken, useUser, clearUserSession, withUserAuth } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import MemberPanel from './MemberPanel'
 import UpgradeVipModal from './UpgradeVipModal'
+
+// 活動獎勵系統 P4：未使用且 30 天內到期（未過期）筆數 — 邏輯比照 RewardsWalletScreen 的 sortRewards「即將到期」判斷
+// （無期限 valid_until=null 不算快到期；已過期不算「快到期」）。
+const REWARD_SOON_MS = 30 * 24 * 60 * 60 * 1000
+function countRewardsSoon(rewards: UserReward[] | undefined): number {
+  if (!rewards) return 0
+  const now = Date.now()
+  let n = 0
+  for (const r of rewards) {
+    if (r.used || !r.valid_until) continue
+    const t = new Date(r.valid_until).getTime()
+    if (isNaN(t)) continue
+    const diff = t - now
+    if (diff >= 0 && diff <= REWARD_SOON_MS) n++
+  }
+  return n
+}
 
 const DISPLAY_STATUS: Record<string, { label: string; color: string }> = {
   upcoming_reg: { label: '即將報名', color: 'var(--violet)' },
@@ -55,6 +72,7 @@ export default function RacesScreen({
   onOpenTitle,
   onOpenAchievement,
   onOpenBrochure,
+  onOpenRewards,
 }: {
   onOpenRanking?: (race: Race) => void
   onRegister?: (race: Race) => void
@@ -66,11 +84,16 @@ export default function RacesScreen({
   onOpenTitle?: () => void
   onOpenAchievement?: () => void
   onOpenBrochure?: (race: Race) => void
+  onOpenRewards?: () => void
 }) {
   const user = useUser() // 登入狀態變動時重新渲染 → 用最新 token 重抓報名狀態
   const token = getUserToken() || undefined
   const { data, error, isLoading } = useSWR(['races', user?.id ?? null, token], () => racesApi.list(token))
   const regs = data?.registrations || {}
+  // 活動獎勵 P4：共用 RewardsWalletScreen 同一個 SWR key（['profile-rewards']），不多打一次 API；
+  // 首屏不阻擋——只在資料就緒且算出 count>0 時才渲染提醒，載入中不顯示任何佔位。
+  const { data: rewardsData } = useSWR(token ? ['profile-rewards'] : null, () => withUserAuth((t) => rewardsApi.list(t)))
+  const rewardsSoonCount = countRewardsSoon(rewardsData?.rewards)
   // COROS 式 UX：會員面板固定最上方，活動列表做成可上下拖曳的面板（收合看完整會員面板／半展看列表／全展看整份列表）
   const sheet = useDraggableSheet('half') // 首頁預設半展先露活動列表（活動頁）；面板底部留白使其仍可完整捲動，與個資頁「可滑動」手感一致
   const [filter, setFilter] = useState<FilterKey>('all')
@@ -124,6 +147,15 @@ export default function RacesScreen({
       </header>
 
       {showUpgrade && <UpgradeVipModal reason={vipGateReason} onClose={() => { setShowUpgrade(false); setVipGateReason(undefined) }} />}
+
+      {/* 活動獎勵 P4：未使用且 30 天內到期＞0 才顯示（載入中不佔位）；點擊直接開活動獎勵錢包頁，醒目但不擋操作（僅佔一行、不遮蓋列表/CTA） */}
+      {rewardsSoonCount > 0 && (
+        <div style={{ padding: '10px 18px 0', flexShrink: 0 }}>
+          <button onClick={() => onOpenRewards?.()} style={rewardsReminderBtn}>
+            🎁 您有活動獎勵快到期。 ›
+          </button>
+        </div>
+      )}
 
       {/* 會員面板（固定最上方，背景層）+ 可拖曳活動列表面板 */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
@@ -197,6 +229,12 @@ const startBtn: React.CSSProperties = {
   display: 'block', width: '100%', boxSizing: 'border-box', textAlign: 'center', textDecoration: 'none',
   background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none',
   borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, cursor: 'pointer',
+}
+// 半透明金色淡底（非實心金底，故文字免強制白色，沿用 var(--tx) 於暗色/warm skin 皆可讀），比照 RewardsWalletScreen「即將到期」卡片的金框強調
+const rewardsReminderBtn: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', boxSizing: 'border-box',
+  background: 'rgba(197,139,29,.14)', border: '1.5px solid var(--gold)', borderRadius: 'var(--radius-lg, 14px)',
+  padding: '10px 14px', fontSize: 13, fontWeight: 800, color: 'var(--tx)', cursor: 'pointer', fontFamily: 'inherit',
 }
 
 function RaceCard({

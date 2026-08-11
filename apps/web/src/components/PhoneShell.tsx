@@ -239,6 +239,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
             onOpenTitle={() => setShowTitle(true)}
             onOpenAchievement={() => setShowAchievement(true)}
             onOpenBrochure={(r) => { setDetailTab(undefined); setDetailRace(r) }}
+            onOpenRewards={() => setShowRewards(true)}
           />
         )}
       </div>
