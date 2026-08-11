@@ -113,7 +113,7 @@ func main() {
 		Env:           "stage",
 		ReturnURL:     cfg.ECPayReturnURL,
 		ClientBackURL: cfg.ECPayClientBackURL,
-		AllowedBacks:  cfg.CORSOrigins, // 付款返回網址白名單＝允許的前台來源（含 www.dor.tw / dor.hero-mi.com）
+		AllowedBacks:  cfg.CORSOrigins, // 付款返回網址白名單＝允許的前台來源（如 www.dor.tw）
 	}
 	ecpayProdCfg := &payment.Config{
 		MerchantID:    cfg.ECPayProdMerchantID,

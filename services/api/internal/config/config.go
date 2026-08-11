@@ -23,7 +23,7 @@ type Config struct {
 	ECPayReturnURL     string // server 對 server 付款結果通知（須公開可達）
 	ECPayClientBackURL string // 付款後返回商店網址（預設 fallback）
 
-	// 綠界 ECPay — 正式特店。UAT(dor.hero-mi.com) 與正式(www.dor.tw) 目前共用同一後端 process，
+	// 綠界 ECPay — 正式特店。各前台來源(正式 www.dor.tw 等)共用同一後端 process，
 	// 為避免 UAT 測試不慎刷到真錢，正式特店僅在 ECPayEnv=prod 且前端結帳時帶來的 origin
 	// （window.location.origin，見 Checkout body 的 client_back_url；不是 HTTP Host／
 	// X-Forwarded-Host——前台是 Next.js 伺服器端代理，這兩個 header 在代理這一跳會被換成 API 自己的
@@ -62,8 +62,8 @@ func Load() *Config {
 		GoogleClientID: getEnv("GOOGLE_CLIENT_ID", ""),
 
 		ECPayEnv:           getEnv("ECPAY_ENV", "stage"),
-		ECPayReturnURL:     getEnv("ECPAY_RETURN_URL", "https://dor-marathon-production.up.railway.app/api/v1/payments/ecpay/notify"),
-		ECPayClientBackURL: getEnv("ECPAY_CLIENT_BACK_URL", "https://dor.hero-mi.com"),
+		ECPayReturnURL:     getEnv("ECPAY_RETURN_URL", "https://www.dor.tw/api/v1/payments/ecpay/notify"),
+		ECPayClientBackURL: getEnv("ECPAY_CLIENT_BACK_URL", "https://www.dor.tw"),
 
 		ECPayProdMerchantID: getEnv("ECPAY_PROD_MERCHANT_ID", ""),
 		ECPayProdHashKey:    getEnv("ECPAY_PROD_HASH_KEY", ""),
@@ -77,9 +77,9 @@ func Load() *Config {
 
 		StravaClientID:           getEnv("STRAVA_CLIENT_ID", ""),
 		StravaClientSecret:       getEnv("STRAVA_CLIENT_SECRET", ""),
-		StravaRedirectURI:        getEnv("STRAVA_REDIRECT_URI", "https://dor-marathon-production.up.railway.app/api/v1/integrations/strava/callback"),
+		StravaRedirectURI:        getEnv("STRAVA_REDIRECT_URI", "https://www.dor.tw/api/v1/integrations/strava/callback"),
 		StravaWebhookVerifyToken: getEnv("STRAVA_WEBHOOK_VERIFY_TOKEN", "dor-strava-webhook"),
-		FrontendURL:              getEnv("FRONTEND_URL", "https://dor.hero-mi.com"),
+		FrontendURL:              getEnv("FRONTEND_URL", "https://www.dor.tw"),
 	}
 }
 
