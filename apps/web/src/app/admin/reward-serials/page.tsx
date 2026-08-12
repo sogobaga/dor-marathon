@@ -452,7 +452,12 @@ export default function AdminRewardSerialsPage() {
                 : '每行一筆，格式為「序號」或「序號,連結」（也可用 Tab 分隔）；亦可上傳 .csv／.xlsx（欄位：序號 code / 連結 link，或依序取前兩欄）。'}
               　序號**全系統唯一**，撞碼（含跨其他序號組、本次批次內重複）會被跳過不建立，匯入結果會列出跳過清單。
             </div>
-            <textarea style={{ ...ta, fontFamily: 'monospace', fontSize: 12.5 }} rows={6} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={importMode === 'link' ? 'https://line.me/R/xxxxx\nhttps://line.me/R/yyyyy' : 'ABC123,https://line.me/xxx\nABC124'} />
+            <textarea style={{ ...ta, fontFamily: 'monospace', fontSize: 12.5 }} rows={14} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={importMode === 'link' ? 'https://line.me/R/xxxxx\nhttps://line.me/R/yyyyy\n…（一行一個，大量連結可直接整批貼入，右下角可再拉大）' : 'ABC123,https://line.me/xxx\nABC124'} />
+            {importText.trim() && (
+              <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 6 }}>
+                共 <b style={{ color: 'var(--tx)' }}>{importText.split(/\r?\n/).filter((l) => l.trim()).length}</b> 筆待匯入{importMode === 'link' ? '（每行一個連結）' : ''}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
               <button onClick={importFromTextarea} disabled={importBusy || !importText.trim()} style={{ ...primaryBtn, opacity: importBusy ? 0.6 : 1 }}>{importBusy ? '匯入中…' : '匯入貼上內容'}</button>
               <label style={{ ...ghostBtn, cursor: 'pointer', opacity: importBusy ? 0.6 : 1, display: 'inline-block' }}>
