@@ -72,6 +72,7 @@ export default function AdminRewardSerialsPage() {
   const [importText, setImportText] = useState('')
   const [importBusy, setImportBusy] = useState(false)
   const [importResult, setImportResult] = useState<RewardSerialImportResult | null>(null)
+  const [importMode, setImportMode] = useState<'code' | 'link'>('code') // 'link'＝純貼領取連結(每行一個，以連結本身當 code 去重)
 
   const loadMerchants = useCallback(() => {
     const t = getToken()
@@ -107,6 +108,11 @@ export default function AdminRewardSerialsPage() {
   useEffect(() => {
     if (selectedGroupId) loadSerials(selectedGroupId, serialStatus, serialOffset)
   }, [selectedGroupId, serialStatus, serialOffset, loadSerials])
+  // LINE POINT 序號組預設「純連結模式」(領取連結批次貼入)；其餘預設序號模式。切換序號組時重設。
+  useEffect(() => {
+    const g = groups?.find((x) => x.id === selectedGroupId)
+    setImportMode(g?.is_line_point ? 'link' : 'code')
+  }, [selectedGroupId, groups])
 
   // --- 合作商家 ---
 
@@ -249,6 +255,11 @@ export default function AdminRewardSerialsPage() {
     })
   }
 
+  // 純連結模式：每行一個領取連結（LINE POINT 等）→ 以連結本身當 code（去重＝連結唯一）＋存進 link。
+  function parseLinks(text: string): { code: string; link: string }[] {
+    return text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => ({ code: l, link: l }))
+  }
+
   async function doImport(items: { code: string; link: string }[]) {
     if (!token || !selectedGroupId) return
     const clean = items.filter((it) => it.code)
@@ -263,7 +274,7 @@ export default function AdminRewardSerialsPage() {
       loadGroups()
     } catch (e: any) { setErr(e?.message || '匯入失敗') } finally { setImportBusy(false) }
   }
-  async function importFromTextarea() { await doImport(parseManualText(importText)) }
+  async function importFromTextarea() { await doImport(importMode === 'link' ? parseLinks(importText) : parseManualText(importText)) }
 
   async function importFromCsv(file: File) {
     setErr('')
@@ -425,11 +436,23 @@ export default function AdminRewardSerialsPage() {
           {/* 匯入 */}
           <div style={innerCard}>
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>匯入序號</div>
-            <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 8, lineHeight: 1.7 }}>
-              每行一筆，格式為「序號」或「序號,連結」（也可用 Tab 分隔）；亦可上傳 .csv／.xlsx（欄位：序號 code / 連結 link，或依序取前兩欄）。
-              序號**全系統唯一**，撞碼（含跨其他序號組、本次批次內重複）會被跳過不建立，匯入結果會列出跳過清單。
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 8, fontSize: 12.5 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                <input type="radio" name="importMode" checked={importMode === 'code'} onChange={() => setImportMode('code')} />
+                序號模式（序號 或 序號,連結）
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                <input type="radio" name="importMode" checked={importMode === 'link'} onChange={() => setImportMode('link')} />
+                純連結模式（每行一個領取連結）
+              </label>
             </div>
-            <textarea style={{ ...ta, fontFamily: 'monospace', fontSize: 12.5 }} rows={6} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={'ABC123,https://line.me/xxx\nABC124'} />
+            <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 8, lineHeight: 1.7 }}>
+              {importMode === 'link'
+                ? '每行貼一個「領取連結」（適合 LINE POINT 批次連結）：系統以連結本身作為唯一序號去重。'
+                : '每行一筆，格式為「序號」或「序號,連結」（也可用 Tab 分隔）；亦可上傳 .csv／.xlsx（欄位：序號 code / 連結 link，或依序取前兩欄）。'}
+              　序號**全系統唯一**，撞碼（含跨其他序號組、本次批次內重複）會被跳過不建立，匯入結果會列出跳過清單。
+            </div>
+            <textarea style={{ ...ta, fontFamily: 'monospace', fontSize: 12.5 }} rows={6} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={importMode === 'link' ? 'https://line.me/R/xxxxx\nhttps://line.me/R/yyyyy' : 'ABC123,https://line.me/xxx\nABC124'} />
             <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
               <button onClick={importFromTextarea} disabled={importBusy || !importText.trim()} style={{ ...primaryBtn, opacity: importBusy ? 0.6 : 1 }}>{importBusy ? '匯入中…' : '匯入貼上內容'}</button>
               <label style={{ ...ghostBtn, cursor: 'pointer', opacity: importBusy ? 0.6 : 1, display: 'inline-block' }}>
