@@ -5,7 +5,6 @@ package activityreward
 
 import (
 	"fmt"
-	"strings"
 )
 
 var validRewardTypes = map[string]bool{"exp": true, "dp": true, "gp": true, "vip": true, "serial": true}
@@ -28,8 +27,11 @@ func (it *RewardItem) Validate() error {
 			return fmt.Errorf("reward item vip: requires days>0")
 		}
 	case "serial":
-		if strings.TrimSpace(it.SerialGroupID) == "" {
-			return fmt.Errorf("reward item serial: requires serial_group_id")
+		// 兩層抽獎：至少要有一個「有效」面額（GroupID 非空且 Weight>0）才有東西可抽，否則中獎機率
+		// 判定過了卻永遠抽不出面額，等於這個項目形同虛設（見 model.go validDenominations，內含
+		// 舊格式 SerialGroupID 的向後相容回退）。
+		if len(it.validDenominations()) == 0 {
+			return fmt.Errorf("reward item serial: requires at least one denomination (group_id + weight>0) or serial_group_id")
 		}
 	}
 	return nil

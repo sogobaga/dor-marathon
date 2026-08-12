@@ -51,13 +51,20 @@ export function formatChallengeRule(rule?: ChallengeRule | null): string {
 
 // --- 活動獎勵系統 P2：即時獎勵設定（全域模板 + 每場挑戰 config）（見後端 activityreward.RewardConfig） ---
 export type RewardItemType = 'exp' | 'dp' | 'gp' | 'vip' | 'serial'
+// RewardDenom serial 類：商家旗下一個序號組（面額）在兩層抽獎第二層的加權設定（見後端 activityreward.RewardDenom）。
+export interface RewardDenom {
+  group_id: string
+  weight: number
+}
 export interface RewardItem {
   type: RewardItemType
   min?: number            // exp/dp/gp：均勻隨機區間下界（含）
   max?: number             // exp/dp/gp：均勻隨機區間上界（含）
   days?: number            // vip：固定天數
-  prob_bp: number          // 中獎機率，萬分位（10000=100%）
-  serial_group_id?: string // serial：指定序號組
+  prob_bp: number          // 中獎機率，萬分位（10000=100%）；serial：該商家「給不給獎」的機率
+  serial_group_id?: string // 【已過時，僅供向後相容】serial 舊格式單一序號組；新設定請用 merchant_id + denominations
+  merchant_id?: string      // serial：指定商家（兩層抽獎第一層）
+  denominations?: RewardDenom[] // serial：該商家旗下序號組與抽獎權重（兩層抽獎第二層）
 }
 export interface RewardConfig {
   items: RewardItem[]

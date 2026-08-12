@@ -478,7 +478,15 @@ export default function RaceForm({
     const t = rewardTemplates.find((x) => x.id === templateId)
     if (!t) return
     if (rewardItems.length > 0 && !confirm(`套用模板「${t.name}」將覆蓋目前已設定的 ${rewardItems.length} 個獎勵項目，確定套用？`)) return
-    setRewardItems(t.items.map((it) => ({ ...it })))
+    const availableGroupIds = new Set(availableRewardGroups.map((g) => g.id))
+    setRewardItems(t.items.map((it) => {
+      if (it.type !== 'serial') return { ...it }
+      // 模板可能是在別場活動套用/儲存時存的，denominations／serial_group_id 裡的序號組不一定對應本場
+      // 活動——剔除本場用不到的組，避免套用後殘留他場專屬序號組仍通過驗證、存檔後真的把他場序號發出去。
+      const denominations = (it.denominations ?? []).filter((d) => availableGroupIds.has(d.group_id))
+      const serial_group_id = it.serial_group_id && availableGroupIds.has(it.serial_group_id) ? it.serial_group_id : undefined
+      return { ...it, denominations, serial_group_id }
+    }))
   }
   async function saveCurrentAsRewardTemplate() {
     if (rewardItems.length === 0) return
@@ -491,15 +499,53 @@ export default function RaceForm({
       setErr(e?.message || '儲存模板失敗')
     }
   }
-  // 即時獎勵項目是否皆已填妥（有填才檢查；整組選填，空陣列合法）
+  // serial 類「有效商家 id」：優先用新格式 merchant_id；舊資料只有 serial_group_id 時，從序號組反查其
+  // 所屬商家（向後相容，讓改版前設定過的賽事在編輯畫面仍能正確判斷/顯示，不必逼使用者重填）。
+  function serialEffectiveMerchantId(it: RewardItem): string {
+    if (it.merchant_id) return it.merchant_id
+    if (it.serial_group_id) {
+      const g = rewardGroups.find((x) => x.id === it.serial_group_id)
+      if (g?.merchant_id) return g.merchant_id
+    }
+    return ''
+  }
+  // 即時獎勵項目是否皆已填妥（有填才檢查；整組選填，空陣列合法）；serial 類另外要求已選商家、至少一個
+  // 面額權重>0（或舊格式 serial_group_id），面額的序號組必須都屬於本場活動可用範圍（見
+  // rewardItemsForeignGroupError，這裡是最後一道防線），且同一份設定內不可重複同一商家（後台防呆，見設計文件）。
   function rewardItemsValid(): boolean {
+    const availableGroupIds = new Set(availableRewardGroups.map((g) => g.id))
+    const seenMerchants = new Set<string>()
     return rewardItems.every((it) => {
       if (!(it.prob_bp > 0 && it.prob_bp <= 10000)) return false
       if (it.type === 'exp' || it.type === 'dp' || it.type === 'gp') return (it.min ?? 0) > 0 && (it.max ?? 0) >= (it.min ?? 0)
       if (it.type === 'vip') return (it.days ?? 0) > 0
-      if (it.type === 'serial') return !!it.serial_group_id
+      if (it.type === 'serial') {
+        const denoms = it.denominations ?? []
+        const hasDenom = denoms.some((d) => d.group_id && d.weight > 0)
+        if (!hasDenom && !it.serial_group_id) return false
+        if (denoms.some((d) => d.weight > 0 && !availableGroupIds.has(d.group_id))) return false
+        if (!hasDenom && it.serial_group_id && !availableGroupIds.has(it.serial_group_id)) return false
+        const mid = serialEffectiveMerchantId(it)
+        if (!mid || seenMerchants.has(mid)) return false
+        seenMerchants.add(mid)
+        return true
+      }
       return false
     })
+  }
+  // serial 項目是否含有「不屬於本場活動可用序號組」的面額（例如套用了別場專屬的模板但沒被
+  // applyRewardTemplate 剔除乾淨、或資料被外部工具直接改過）；回傳說明文字供 submit() 顯示明確錯誤，
+  // null 代表沒有這個問題。
+  function rewardItemsForeignGroupError(): string | null {
+    const availableGroupIds = new Set(availableRewardGroups.map((g) => g.id))
+    const hasForeign = rewardItems.some((it) => {
+      if (it.type !== 'serial') return false
+      const denoms = it.denominations ?? []
+      if (denoms.some((d) => d.weight > 0 && !availableGroupIds.has(d.group_id))) return true
+      if (!denoms.length && it.serial_group_id && !availableGroupIds.has(it.serial_group_id)) return true
+      return false
+    })
+    return hasForeign ? '即時獎勵設定中有序號組不屬於本場活動可選範圍（可能是套用了其他活動的模板殘留），請重新選擇面額後再儲存。' : null
   }
   // 本場活動可用的序號組：對應全部活動、或（編輯中）已明確勾選對應本場活動者
   const availableRewardGroups = rewardGroups.filter((g) => g.applies_all_races || (!!initial?.id && g.race_ids.includes(initial.id)))
@@ -608,10 +654,18 @@ export default function RaceForm({
       setTab('basic')
       return
     }
-    if (mode === 'personal' && !rewardItemsValid()) {
-      setErr('請完整填寫即時獎勵設定的機率／數值／序號組')
-      setTab('basic')
-      return
+    if (mode === 'personal') {
+      const foreignGroupErr = rewardItemsForeignGroupError()
+      if (foreignGroupErr) {
+        setErr(foreignGroupErr)
+        setTab('basic')
+        return
+      }
+      if (!rewardItemsValid()) {
+        setErr('請完整填寫即時獎勵設定的機率／數值／序號組')
+        setTab('basic')
+        return
+      }
     }
     setSaving(true)
     try {
@@ -804,7 +858,8 @@ export default function RaceForm({
                 <div style={{ fontWeight: 700, fontSize: 13.5 }}>即時獎勵設定（選填）</div>
                 <div style={hint}>
                   完成一次挑戰即觸發抽獎，每個項目獨立判定機率（可同時中多項）。經濟類（EXP/DP/GP/VIP）中獎直接入帳；
-                  序號類配發序號進玩家活動獎勵錢包，對應序號組若剛好發完則該項跳過、不影響其他項目。
+                  序號類為「以商家為單位的兩層抽獎」：先判定該商家中不中獎，中了才在該商家旗下有庫存的面額中依權重抽一組
+                  配發進玩家活動獎勵錢包；商家旗下面額當下全數缺貨則該項跳過、不影響其他項目，同一份設定不可重複選同一商家。
                 </div>
                 <Row>
                   {rewardTemplates.length > 0 && (
@@ -1332,7 +1387,7 @@ function RewardItemRow({ item, groups, onChange, onRemove }: {
             ))}
           </select>
         </Field>
-        <Field label="中獎機率 (%)">
+        <Field label={item.type === 'serial' ? '該商家中獎機率 (%)' : '中獎機率 (%)'}>
           <input
             style={inp} type="number" min={0} max={100} step="0.01"
             value={item.prob_bp / 100}
@@ -1358,21 +1413,80 @@ function RewardItemRow({ item, groups, onChange, onRemove }: {
           <input style={inp} type="number" min={1} value={item.days ?? 0} onChange={(e) => onChange({ days: parseInt(e.target.value || '0', 10) || 0 })} />
         </Field>
       )}
-      {item.type === 'serial' && (
-        <Field label="指定序號組">
-          <select style={inp} value={item.serial_group_id ?? ''} onChange={(e) => onChange({ serial_group_id: e.target.value })}>
-            <option value="">請選擇序號組…</option>
-            {groups.map((g) => <option key={g.id} value={g.id}>{g.name}（可用 {g.available_count}）</option>)}
-          </select>
-          {groups.length === 0 && (
-            <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
-              尚無對應本場活動的序號組，請先到「序號/獎勵管理」建立序號組並勾選對應全部活動或本場活動。
-            </span>
-          )}
-        </Field>
-      )}
+      {item.type === 'serial' && <SerialDenomFields item={item} groups={groups} onChange={onChange} />}
       <button type="button" onClick={onRemove} style={{ ...linkBtn, color: 'var(--hunt)', alignSelf: 'flex-start' }}>移除此項目</button>
     </div>
+  )
+}
+
+// serial 類「商家 → 面額權重」兩層設定欄位（活動獎勵系統：以商家為單位的兩層抽獎，見後端
+// activityreward.RewardItem 設計註解）：先選商家，再對該商家旗下每個序號組（面額）填權重，
+// 0＝不列入抽獎池。舊資料相容：item.merchant_id 未設定但有舊格式 serial_group_id 時，用該序號組
+// 反查所屬商家當作目前顯示值，一旦使用者調整任何權重就會自動轉存成新格式（denominations 非空後，
+// 後端一律優先採用 denominations，不再理會 serial_group_id）。
+function SerialDenomFields({ item, groups, onChange }: {
+  item: RewardItem
+  groups: RewardSerialGroup[]
+  onChange: (patch: Partial<RewardItem>) => void
+}) {
+  // 商家清單：只列出「有指定商家」的序號組，依 merchant_id 去重（未指定商家的序號組不適用兩層抽獎，不列入選項）
+  const merchants = Array.from(
+    new Map(groups.filter((g) => g.merchant_id).map((g) => [g.merchant_id as string, g.merchant_name || '(未命名商家)'])).entries()
+  ).map(([id, name]) => ({ id, name }))
+
+  const legacyGroup = !item.merchant_id && item.serial_group_id ? groups.find((g) => g.id === item.serial_group_id) : undefined
+  const selectedMerchantId = item.merchant_id || legacyGroup?.merchant_id || ''
+  const merchantGroups = groups.filter((g) => g.merchant_id === selectedMerchantId)
+
+  function weightOf(groupId: string): number {
+    const d = item.denominations?.find((x) => x.group_id === groupId)
+    if (d) return d.weight
+    if (!item.denominations?.length && item.serial_group_id === groupId) return 1 // 舊格式相容：唯一面額，權重視為 1
+    return 0
+  }
+  function setWeight(groupId: string, weight: number) {
+    const base = item.denominations ?? (item.serial_group_id ? [{ group_id: item.serial_group_id, weight: 1 }] : [])
+    const rest = base.filter((x) => x.group_id !== groupId)
+    onChange({ denominations: weight > 0 ? [...rest, { group_id: groupId, weight }] : rest })
+  }
+
+  return (
+    <>
+      <Field label="合作商家">
+        <select
+          style={inp} value={selectedMerchantId}
+          onChange={(e) => onChange({ merchant_id: e.target.value, denominations: [] })}
+        >
+          <option value="">請選擇商家…</option>
+          {merchants.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+        {merchants.length === 0 && (
+          <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+            尚無對應本場活動、且已指定商家的序號組，請先到「序號/獎勵管理」建立序號組（需指定商家）並勾選對應全部活動或本場活動。
+          </span>
+        )}
+      </Field>
+      {selectedMerchantId && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-faint)', textTransform: 'uppercase' }}>
+            面額權重（商家中獎後依權重比例抽一組面額；0＝不列入抽獎，「可用」僅供參考、缺貨面額會自動排除）
+          </span>
+          {merchantGroups.map((g) => (
+            <Row key={g.id}>
+              <span style={{ flex: 1, fontSize: 13, alignSelf: 'center' }}>{g.name}（可用 {g.available_count}）</span>
+              <input
+                style={{ ...inp, maxWidth: 100 }} type="number" min={0} step="1"
+                value={weightOf(g.id)}
+                onChange={(e) => setWeight(g.id, Math.max(0, parseInt(e.target.value || '0', 10) || 0))}
+              />
+            </Row>
+          ))}
+          {merchantGroups.length === 0 && (
+            <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>此商家尚無對應本場活動的序號組。</span>
+          )}
+        </div>
+      )}
+    </>
   )
 }
 

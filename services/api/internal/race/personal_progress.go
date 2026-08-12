@@ -9,11 +9,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/activityreward"
+	"github.com/dor/api/internal/notify"
 )
 
 // ChallengeProgress 個人挑戰進行中 attempt 的即時進度（依 rule.CompletionType 只填相關欄位）。
@@ -153,12 +158,12 @@ func (r *Repository) MarkAttemptCompletedAndGrant(ctx context.Context, regID str
 		return false, nil, nil // 沒搶到（已完成過/狀態不符）：no-op，交易靠 defer Rollback 收尾（反正沒有異動）
 	}
 
-	var userID, raceID string
+	var userID, raceID, raceTitle string
 	var cfgBytes []byte
 	if err := tx.QueryRow(ctx, `
-		SELECT reg.user_id, reg.race_id, rc.reward_config
+		SELECT reg.user_id, reg.race_id, rc.title, rc.reward_config
 		FROM registrations reg JOIN races rc ON rc.id = reg.race_id
-		WHERE reg.id=$1`, regID).Scan(&userID, &raceID, &cfgBytes); err != nil {
+		WHERE reg.id=$1`, regID).Scan(&userID, &raceID, &raceTitle, &cfgBytes); err != nil {
 		return false, nil, fmt.Errorf("load reward config: %w", err)
 	}
 
@@ -166,8 +171,9 @@ func (r *Repository) MarkAttemptCompletedAndGrant(ctx context.Context, regID str
 	if err != nil {
 		return false, nil, fmt.Errorf("parse reward_config: %w", err)
 	}
+	var issuedGroupIDs []string
 	if cfg != nil && len(cfg.Items) > 0 {
-		if granted, err = activityreward.RollAndGrant(ctx, tx, userID, "personal_challenge", raceID, regID, cfg); err != nil {
+		if granted, issuedGroupIDs, err = activityreward.RollAndGrant(ctx, tx, userID, "personal_challenge", raceID, regID, cfg); err != nil {
 			return false, nil, fmt.Errorf("roll and grant: %w", err)
 		}
 	}
@@ -175,7 +181,79 @@ func (r *Repository) MarkAttemptCompletedAndGrant(ctx context.Context, regID str
 	if err := tx.Commit(ctx); err != nil {
 		return false, nil, fmt.Errorf("commit: %w", err)
 	}
+	// tx 已成功 commit 才檢查低庫存：commit 前 issuedGroupIDs 只代表「這個交易自己扣了什麼」，READ
+	// COMMITTED 下看不到其他併發交易「已 UPDATE 但未 commit」的扣減，若在 tx 內用「配發前後」反推會導致
+	// 同一次真正跨越 20% 門檻被永久漏報（各自都覺得自己配發前還沒到門檻），或多筆併發各自誤判成「剛跨
+	// 越」而洗頻。commit 後改用 r.db（非 tx，看得到所有已 commit 的併發扣減）查真實庫存 + package 級節流
+	// （見 checkAndNotifyLowStock/lowStockShouldNotify）才正確：可能因為節流而偶爾漏發同一組的重複通知，
+	// 但不會漏掉「已經很低」這個事實本身。用背景 goroutine，不阻塞 HTTP 回應。
+	if len(issuedGroupIDs) > 0 {
+		go checkAndNotifyLowStock(r.db, raceTitle, issuedGroupIDs)
+	}
 	return true, granted, nil
+}
+
+// lowStockThrottle 同一序號組的低庫存告警節流窗口：窗口內只送第一次，避免每次中獎都 TG 洗頻
+// （低庫存後大概率會持續被抽中、持續觸發檢查）。
+const lowStockThrottle = 6 * time.Hour
+
+var (
+	lowStockMu   sync.Mutex
+	lowStockSeen = map[string]time.Time{} // group_id -> 最近一次通過節流檢查的時間；package 級記憶體狀態，
+	// 多執行個體(如 Railway 水平擴展)各自獨立節流，可能偶爾重複發送，但不會因此漏報，符合設計取捨。
+)
+
+// lowStockShouldNotify 節流的 atomic check-and-set：同一 groupID 在 lowStockThrottle 窗口內只有第一個
+// 呼叫者會拿到 true（呼叫當下立即佔位 lastNotified=now，避免併發多個請求同時通過檢查而洗頻）。
+func lowStockShouldNotify(groupID string) bool {
+	lowStockMu.Lock()
+	defer lowStockMu.Unlock()
+	if last, ok := lowStockSeen[groupID]; ok && time.Since(last) < lowStockThrottle {
+		return false
+	}
+	lowStockSeen[groupID] = time.Now()
+	return true
+}
+
+// checkAndNotifyLowStock 對這批「這次呼叫實際發過序號」的序號組（去重），用 db（呼叫端必須傳入
+// *pgxpool.Pool 而非 tx——必須保證只在外層交易 Commit 成功後才呼叫，見上）查目前真實庫存，<20% 且未被
+// 節流才送 Telegram。每組各自獨立判斷、各自獨立節流；每一則 Telegram 訊息各自用獨立的
+// context.WithTimeout（而非整批共用一個 timeout），避免前面一則卡住/變慢就把後面幾則的可用時間一起吃光。
+func checkAndNotifyLowStock(db *pgxpool.Pool, raceTitle string, groupIDs []string) {
+	for _, groupID := range groupIDs {
+		var available, total int
+		if err := db.QueryRow(context.Background(), `
+			SELECT COUNT(*) FILTER (WHERE status='available'), COUNT(*)
+			FROM reward_serials WHERE group_id=$1`, groupID).Scan(&available, &total); err != nil {
+			log.Warn().Err(err).Str("group_id", groupID).Msg("low stock check query failed")
+			continue
+		}
+		if total <= 0 || available*5 >= total { // available/total >= 20%：庫存健康，不告警
+			continue
+		}
+		if !lowStockShouldNotify(groupID) {
+			continue // 節流：此組近期已經告警過
+		}
+		var groupName, merchantName string
+		if err := db.QueryRow(context.Background(), `
+			SELECT g.name, COALESCE(m.name,'')
+			FROM reward_serial_groups g LEFT JOIN reward_merchants m ON m.id = g.merchant_id
+			WHERE g.id = $1`, groupID).Scan(&groupName, &merchantName); err != nil {
+			log.Warn().Err(err).Str("group_id", groupID).Msg("low stock load group name failed")
+			continue
+		}
+		text := fmt.Sprintf(
+			"⚠️ <b>序號庫存低於 20%%</b>\n賽事：%s\n商家：%s\n序號組：%s\n剩餘 / 總數：%d / %d",
+			html.EscapeString(raceTitle), html.EscapeString(merchantName), html.EscapeString(groupName),
+			available, total)
+		func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := notify.Telegram(ctx, text); err != nil {
+				log.Warn().Err(err).Str("group_id", groupID).Msg("low stock telegram notify failed")
+			}
+		}()
+	}
 }
 
 // MarkAttemptExpired CAS 標記個人挑戰 attempt 逾期：只有 status='paid' 才會更新（冪等；已 completed
