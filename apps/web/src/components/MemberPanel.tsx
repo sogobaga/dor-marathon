@@ -204,58 +204,62 @@ export default function MemberPanel({
 
       </div>
 
-      {/* 探索入口（面板下方、後台可控可見性；首頁不顯示）：第一排 城市探索|卡片圖鑑、第二排 成就探索|數據探索、第三排 環台大富翁|知識探索、末排 自主訓練|跑者充電站
-          跑者充電站開放全體會員（非 VIP 限定），故末排恆顯示，不受 training_entry 影響；知識探索由 knowledge_entry 三態控管，可點時本檔自開 KnowledgeGalleryScreen 全螢幕頁 */}
-      {showEntries && user && dash && (dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden' || dash.title_entry !== 'hidden' || dash.achievement_entry !== 'hidden' || dash.training_entry !== 'hidden' || true) && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
-          {(dash.explore_entry !== 'hidden' || dash.gallery_entry !== 'hidden') && (
-            <div style={{ display: 'flex', gap: 10 }}>
-              {dash.explore_entry !== 'hidden' && (
-                <button disabled={dash.explore_entry === 'locked'}
-                  onClick={(e) => { e.stopPropagation(); if (dash.explore_entry === 'shown') onOpenExplore?.() }}
-                  style={{ ...entryBtn, opacity: dash.explore_entry === 'shown' ? 1 : 0.6, cursor: dash.explore_entry === 'shown' ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🗺️ 城市探索</span>
-                  <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.explore_entry === 'locked' ? '即將開放 ›' : '發現城市美好 ›'}</span>
-                </button>
-              )}
-              {dash.gallery_entry !== 'hidden' && (
-                <button disabled={dash.gallery_entry === 'locked'}
-                  onClick={(e) => { e.stopPropagation(); if (dash.gallery_entry === 'shown') onOpenGallery?.() }}
-                  style={{ ...entryBtn, opacity: dash.gallery_entry === 'shown' ? 1 : 0.6, cursor: dash.gallery_entry === 'shown' ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🃏 卡片探索</span>
-                  <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.gallery_entry === 'locked' ? '即將開放 ›' : '挑戰各方好手 ›'}</span>
-                </button>
-              )}
-            </div>
-          )}
-          {(dash.title_entry !== 'hidden' || dash.achievement_entry !== 'hidden') && (
-            <div style={{ display: 'flex', gap: 10 }}>
-              {dash.title_entry !== 'hidden' && (
-                <button disabled={dash.title_entry === 'locked'}
-                  onClick={(e) => { e.stopPropagation(); if (dash.title_entry === 'shown') onOpenTitle?.() }}
-                  style={{ ...entryBtn, opacity: dash.title_entry === 'shown' ? 1 : 0.6, cursor: dash.title_entry === 'shown' ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏆 成就探索</span>
-                  <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.title_entry === 'locked' ? '即將開放 ›' : '解鎖你的稱號 ›'}</span>
-                </button>
-              )}
-              {dash.achievement_entry !== 'hidden' && (
-                <button disabled={dash.achievement_entry === 'locked'}
-                  onClick={(e) => { e.stopPropagation(); if (dash.achievement_entry === 'shown') onOpenAchievement?.() }}
-                  style={{ ...entryBtn, opacity: dash.achievement_entry === 'shown' ? 1 : 0.6, cursor: dash.achievement_entry === 'shown' ? 'pointer' : 'default' }}>
-                  <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>📊 數據探索</span>
-                  <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.achievement_entry === 'locked' ? '即將開放 ›' : '你的數據成就 ›'}</span>
-                </button>
-              )}
-            </div>
-          )}
-          {/* 環台大富翁（測試期間受 monopoly_entry 入口設定控管；Phase 1 盤面遊戲）與知識探索（尚未開放，靜態佔位）並排 */}
-          <div style={{ display: 'flex', gap: 10 }}>
-            {dash.monopoly_entry !== 'hidden' && (
-              <button disabled={dash.monopoly_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.monopoly_entry === 'shown') onOpenMonopoly?.() }}
-                style={{ ...entryBtn, opacity: dash.monopoly_entry === 'shown' ? 1 : 0.6, cursor: dash.monopoly_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎲 環台大富翁</span>
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.monopoly_entry === 'locked' ? '即將開放 ›' : '擲骰前進，好運等你 ›'}</span>
+      {/* 探索入口（面板下方、後台可控可見性；首頁不顯示）：兩欄直排——
+          左欄(上→下)：城市探索、卡片探索、成就探索、跑者充電站、數據探索
+          右欄(上→下)：自主訓練、知識探索、活動獎勵、環台大富翁。
+          跑者充電站／活動獎勵開放全體會員恆顯示；其餘由各自 *_entry 三態控管（hidden 不渲染、locked 反灰）。
+          外層 alignItems:flex-start，左右兩欄各依內容高度堆疊（按鈕數不同也不會被拉伸）；entryBtn 用 width:100% 撐滿欄寬。 */}
+      {showEntries && user && dash && (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 10 }}>
+          {/* 左欄 */}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {dash.explore_entry !== 'hidden' && (
+              <button disabled={dash.explore_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.explore_entry === 'shown') onOpenExplore?.() }}
+                style={{ ...entryBtn, opacity: dash.explore_entry === 'shown' ? 1 : 0.6, cursor: dash.explore_entry === 'shown' ? 'pointer' : 'default' }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🗺️ 城市探索</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.explore_entry === 'locked' ? '即將開放 ›' : '發現城市美好 ›'}</span>
+              </button>
+            )}
+            {dash.gallery_entry !== 'hidden' && (
+              <button disabled={dash.gallery_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.gallery_entry === 'shown') onOpenGallery?.() }}
+                style={{ ...entryBtn, opacity: dash.gallery_entry === 'shown' ? 1 : 0.6, cursor: dash.gallery_entry === 'shown' ? 'pointer' : 'default' }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🃏 卡片探索</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.gallery_entry === 'locked' ? '即將開放 ›' : '挑戰各方好手 ›'}</span>
+              </button>
+            )}
+            {dash.title_entry !== 'hidden' && (
+              <button disabled={dash.title_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.title_entry === 'shown') onOpenTitle?.() }}
+                style={{ ...entryBtn, opacity: dash.title_entry === 'shown' ? 1 : 0.6, cursor: dash.title_entry === 'shown' ? 'pointer' : 'default' }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏆 成就探索</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.title_entry === 'locked' ? '即將開放 ›' : '解鎖你的稱號 ›'}</span>
+              </button>
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onOpenPerks?.() }}
+              style={entryBtn}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🔋 跑者充電站</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>優惠好康都在這 ›</span>
+            </button>
+            {dash.achievement_entry !== 'hidden' && (
+              <button disabled={dash.achievement_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.achievement_entry === 'shown') onOpenAchievement?.() }}
+                style={{ ...entryBtn, opacity: dash.achievement_entry === 'shown' ? 1 : 0.6, cursor: dash.achievement_entry === 'shown' ? 'pointer' : 'default' }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>📊 數據探索</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.achievement_entry === 'locked' ? '即將開放 ›' : '你的數據成就 ›'}</span>
+              </button>
+            )}
+          </div>
+          {/* 右欄 */}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {dash.training_entry !== 'hidden' && (
+              <button disabled={dash.training_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.training_entry === 'shown') onOpenTraining?.() }}
+                style={{ ...entryBtn, opacity: dash.training_entry === 'shown' ? 1 : 0.6, cursor: dash.training_entry === 'shown' ? 'pointer' : 'default' }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏃 自主訓練</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.training_entry === 'locked' ? '即將開放 ›' : '打造你的專屬課表 ›'}</span>
               </button>
             )}
             {dash.knowledge_entry !== 'hidden' && (
@@ -266,32 +270,20 @@ export default function MemberPanel({
                 <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.knowledge_entry === 'locked' ? '即將開放 ›' : '收集跑者實用知識 ›'}</span>
               </button>
             )}
-          </div>
-          {/* 自主訓練（VIP 限定，後台可控可見性）與跑者充電站（全體會員開放，恆顯示）並排 */}
-          <div style={{ display: 'flex', gap: 10 }}>
-            {dash.training_entry !== 'hidden' && (
-              <button disabled={dash.training_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.training_entry === 'shown') onOpenTraining?.() }}
-                style={{ ...entryBtn, opacity: dash.training_entry === 'shown' ? 1 : 0.6, cursor: dash.training_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏃 自主訓練</span>
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.training_entry === 'locked' ? '即將開放 ›' : '打造你的專屬課表 ›'}</span>
-              </button>
-            )}
-            <button
-              onClick={(e) => { e.stopPropagation(); onOpenPerks?.() }}
-              style={entryBtn}>
-              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🔋 跑者充電站</span>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>優惠好康都在這 ›</span>
-            </button>
-          </div>
-          {/* 活動獎勵（第14套）：完成挑戰機率獲得的序號好禮錢包，全體會員恆顯示（無入口可見性設定，比照跑者充電站） */}
-          <div style={{ display: 'flex', gap: 10 }}>
             <button
               onClick={(e) => { e.stopPropagation(); onOpenRewards?.() }}
               style={entryBtn}>
               <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎁 活動獎勵</span>
               <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>查看你的序號好禮 ›</span>
             </button>
+            {dash.monopoly_entry !== 'hidden' && (
+              <button disabled={dash.monopoly_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.monopoly_entry === 'shown') onOpenMonopoly?.() }}
+                style={{ ...entryBtn, opacity: dash.monopoly_entry === 'shown' ? 1 : 0.6, cursor: dash.monopoly_entry === 'shown' ? 'pointer' : 'default' }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎲 環台大富翁</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.monopoly_entry === 'locked' ? '即將開放 ›' : '擲骰前進，好運等你 ›'}</span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -323,7 +315,7 @@ const dpBadge: React.CSSProperties = { display: 'inline-flex', alignItems: 'cent
 const gpBadge: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--violet)', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }
 const mileageBox: React.CSSProperties = { minWidth: 96, background: 'var(--bg-2)', borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }
 const taskBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 3, textAlign: 'left', border: 'none', borderRadius: 12, padding: '10px 14px', background: 'var(--fug)', color: 'var(--fug-ink)', fontFamily: 'inherit' }
-const entryBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3, textAlign: 'left', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 14px)', padding: '12px 14px', background: 'var(--bg-1)', fontFamily: 'inherit', boxShadow: 'var(--card-shadow, none)' }
+const entryBtn: React.CSSProperties = { width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3, textAlign: 'left', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 14px)', padding: '12px 14px', background: 'var(--bg-1)', fontFamily: 'inherit', boxShadow: 'var(--card-shadow, none)' }
 const avatarWrap: React.CSSProperties = {
   position: 'relative', width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
   background: 'var(--bg-2)', border: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
