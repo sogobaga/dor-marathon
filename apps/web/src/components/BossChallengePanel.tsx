@@ -8,12 +8,13 @@ import BossAvgPreview from './BossAvgPreview'
 // intro：Scene 圖 + 關主對話(dialogue_intro，含 <user_nickname> 需替換) + 挑戰資訊 + 接受(扣DP)/放棄；
 // start：接受後關主對話改用 boss.quote（單層引號金句，dialogue_start 資料是雙層引號+外層又包一層，
 // 不適合直接渲染）+ 「開始挑戰」→ 帶到 GPS 追蹤課表。
-export default function BossChallengePanel({ boss, phase, busy, dpCost, note, user, onAccept, onDecline, onStart }: {
+export default function BossChallengePanel({ boss, phase, busy, dpCost, note, outOfRange, user, onAccept, onDecline, onStart }: {
   boss: ExploreBoss
   phase: 'intro' | 'start'
   busy: boolean
   dpCost: number
   note?: string
+  outOfRange?: boolean // 目前 GPS 不在打卡範圍內：intro 階段「接受挑戰」反灰＋標「未到範圍」
   user?: User | null
   onAccept: () => void
   onDecline: () => void
@@ -60,7 +61,7 @@ export default function BossChallengePanel({ boss, phase, busy, dpCost, note, us
               {note && <div style={{ marginTop: 12, fontSize: 12.5, color: '#ffcf6b', background: 'rgba(231,184,75,.12)', border: '1px solid rgba(231,184,75,.35)', borderRadius: 10, padding: '8px 11px', lineHeight: 1.5 }}>{note}</div>}
               <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
                 <button onClick={onDecline} disabled={busy} style={declineBtn}>放棄</button>
-                <button onClick={onAccept} disabled={busy || !!note} style={{ ...acceptBtn, opacity: (busy || note) ? 0.5 : 1, cursor: (busy || note) ? 'default' : 'pointer' }}>{busy ? '處理中…' : `接受挑戰 · 扣 ${dpCost} DP`}</button>
+                <button onClick={onAccept} disabled={busy || !!note || !!outOfRange} style={{ ...acceptBtn, opacity: (busy || note || outOfRange) ? 0.5 : 1, cursor: (busy || note || outOfRange) ? 'default' : 'pointer' }}>{busy ? '處理中…' : outOfRange ? '未到範圍' : `接受挑戰 · 扣 ${dpCost} DP`}</button>
               </div>
             </>
           ) : (

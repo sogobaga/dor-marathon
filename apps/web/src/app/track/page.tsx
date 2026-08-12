@@ -1254,6 +1254,8 @@ export default function TrackPage() {
 
   const exDist = (b: ExploreBoss): number | null =>
     curPos ? haversineM({ lat: curPos.lat, lng: curPos.lng, t: 0, acc: 0 }, { lat: b.lat, lng: b.lng, t: 0, acc: 0 }) : null
+  // 是否在該關主打卡範圍內（curPos 到關主中心 ≤ radius_m）；curPos 是 state，移動時即時重算。挑戰面板「接受挑戰」需在範圍內才可點。
+  const exInRange = (b: ExploreBoss): boolean => { const d = exDist(b); return d != null && d <= (b.radius_m || 40) }
   const exDpCost = (b: ExploreBoss): number =>
     (b.attempts && b.attempts > 0 && b.retry_dp_cost > 0) ? b.retry_dp_cost : Math.max(0, b.difficulty_stars) * 10
   // 城市探索清單：依距離排序（最近在最上，未定位則維持原順序）
@@ -1810,6 +1812,7 @@ export default function TrackPage() {
           dpCost={bossPanel.dpCost}
           user={user}
           note={status === 'tracking' ? '⚠ 請先結束目前的跑步，再開始關主挑戰（挑戰為獨立的追蹤紀錄）' : undefined}
+          outOfRange={bossPanel.phase === 'intro' && !exInRange(bossPanel.boss)}
           onAccept={acceptBoss}
           onDecline={() => setBossPanel(null)}
           onStart={startBossWorkout}
