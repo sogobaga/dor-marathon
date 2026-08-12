@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  adminRacesApi, adminRewardMerchantsApi, adminRewardGroupsApi,
+  adminRacesApi, adminRewardMerchantsApi, adminRewardGroupsApi, adminImagesApi,
   type Race, type RewardMerchant, type RewardSerialGroup, type RewardSerialGroupWriteBody,
   type RewardSerial, type RewardUseLimitType, type RewardSerialImportResult,
 } from '@/lib/api'
@@ -62,6 +62,7 @@ export default function AdminRewardSerialsPage() {
   const [groups, setGroups] = useState<RewardSerialGroup[] | null>(null)
   const [groupForm, setGroupForm] = useState<GroupForm>(EMPTY_GROUP)
   const [groupBusy, setGroupBusy] = useState(false)
+  const [iconBusy, setIconBusy] = useState(false)
 
   // 序號清單／匯入（依所選序號組）
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
@@ -178,6 +179,16 @@ export default function AdminRewardSerialsPage() {
   }
   function toggleRace(id: string) {
     setGroupForm((f) => ({ ...f, race_ids: f.race_ids.includes(id) ? f.race_ids.filter((r) => r !== id) : [...f.race_ids, id] }))
+  }
+
+  // 上傳獎勵圖示→存到圖片服務、回填 icon_url（建議 800×400）
+  async function uploadIcon(file: File) {
+    if (!token || iconBusy) return
+    setIconBusy(true); setErr('')
+    try {
+      const { url } = await adminImagesApi.upload(token, file)
+      setGroupForm((f) => ({ ...f, icon_url: url }))
+    } catch (e: any) { setErr(e?.message || '圖片上傳失敗') } finally { setIconBusy(false) }
   }
 
   async function saveGroup() {
@@ -380,7 +391,21 @@ export default function AdminRewardSerialsPage() {
 
             {/* 獎勵詳情（活動獎勵系統 P2：中獎配發序號時 denormalize 進玩家錢包 user_rewards 供顯示） */}
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 10 }}>
-              <F label="獎勵圖示網址（選填）"><input style={inp} value={groupForm.icon_url} onChange={(e) => setGroupForm((f) => ({ ...f, icon_url: e.target.value }))} placeholder="https://…" /></F>
+              <F label="獎勵圖示（選填，建議 800×400）">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input style={{ ...inp, flex: 1 }} value={groupForm.icon_url} onChange={(e) => setGroupForm((f) => ({ ...f, icon_url: e.target.value }))} placeholder="https://… 或按右側上傳" />
+                    <label style={{ ...primaryBtn, cursor: iconBusy ? 'default' : 'pointer', opacity: iconBusy ? 0.6 : 1, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center' }}>
+                      {iconBusy ? '上傳中…' : '上傳圖片'}
+                      <input type="file" accept="image/*" disabled={iconBusy} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadIcon(f); e.target.value = '' }} />
+                    </label>
+                  </div>
+                  {groupForm.icon_url && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={groupForm.icon_url} alt="獎勵圖示" style={{ width: 160, height: 80, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line-2)' }} />
+                  )}
+                </div>
+              </F>
               <F label="使用說明（選填）"><input style={inp} value={groupForm.usage_note} onChange={(e) => setGroupForm((f) => ({ ...f, usage_note: e.target.value }))} placeholder="如：至門市出示序號兌換" /></F>
             </div>
             <F label="活動/獎勵說明（選填）">
