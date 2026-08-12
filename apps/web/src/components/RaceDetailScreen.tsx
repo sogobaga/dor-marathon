@@ -405,7 +405,10 @@ function RewardPreviewBody({ rewards }: { rewards: RewardPreviewItem[] }) {
               <img src={rw.icon_url} alt="" style={{ width: '100%', aspectRatio: '2 / 1', objectFit: 'cover', display: 'block' }} />
             )}
             <div style={{ padding: '11px 13px' }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)' }}>{rw.name}</div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)' }}>{rw.name}</span>
+                {rw.amount && <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--gold)' }}>{rw.amount}</span>}
+              </div>
               {rw.description && (
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.5 }}>{rw.description}</div>
               )}

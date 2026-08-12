@@ -1106,6 +1106,7 @@ export interface TaskRangeDetail {
 export interface RewardPreviewItem {
   kind: string // economy|serial
   name: string
+  amount: string // economy 類的數量/區間（如 100~500 / 7 天）；serial 類為空
   icon_url: string
   description: string
 }

@@ -8,12 +8,15 @@ package race
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 )
 
 // RewardPreviewItem 前台「活動獎勵」頁籤單筆卡片：只有可讀展示欄位，絕不含機率/數量/權重/面額庫存。
 type RewardPreviewItem struct {
-	Kind        string `json:"kind"`        // economy|serial
+	Kind        string `json:"kind"`   // economy|serial
 	Name        string `json:"name"`
+	Amount      string `json:"amount"` // economy 類的數量/區間顯示（如 100~500 / 7 天）；serial 類為空
 	IconURL     string `json:"icon_url"`
 	Description string `json:"description"`
 }
@@ -59,7 +62,19 @@ func (s *Service) GetRewardPreview(ctx context.Context, raceID string) ([]Reward
 			}
 		case "exp", "dp", "gp", "vip":
 			if label, ok := economyRewardLabel[item.Type]; ok {
-				out = append(out, RewardPreviewItem{Kind: "economy", Name: label})
+				// 顯示獎勵數字（金額區間/天數）——這是「獎勵大小」，非中獎機率，可對外；serial 面額/庫存/權重仍不外洩。
+				amount := ""
+				switch {
+				case item.Type == "vip":
+					if item.Days > 0 {
+						amount = fmt.Sprintf("%d 天", item.Days)
+					}
+				case item.Min == item.Max:
+					amount = strconv.Itoa(item.Max)
+				default:
+					amount = fmt.Sprintf("%d~%d", item.Min, item.Max)
+				}
+				out = append(out, RewardPreviewItem{Kind: "economy", Name: label, Amount: amount})
 			}
 		}
 	}
