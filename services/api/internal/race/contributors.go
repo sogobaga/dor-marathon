@@ -47,7 +47,9 @@ type contribRow struct {
 	Acts      int
 }
 
-// LoadTaskContributors 依範圍（groupID 空＝全體）彙總每位報名者在賽事期間的里程與活動數，里程高到低排序。
+// LoadTaskContributors 依範圍（groupID 空＝全體）彙總每位報名者的里程與活動數，里程高到低排序。
+// 個人挑戰模式(personal)與 LoadRaceActivities 一致：只算進行中(paid)attempt、且里程從「付款起算
+// (challenge_started_at)」之後算起，否則會把玩家「按挑戰之前」就跑的里程也算進貢獻榜，與「進度→我的里程」不一致。
 func (r *Repository) LoadTaskContributors(ctx context.Context, raceID, groupID string) ([]contribRow, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT reg.user_id::text,
@@ -57,13 +59,17 @@ func (r *Repository) LoadTaskContributors(ctx context.Context, raceID, groupID s
 		       COALESCE(SUM(a.distance_km),0)::float8 AS dist,
 		       COUNT(a.id) AS acts
 		FROM races rc
-		JOIN registrations reg ON reg.race_id = rc.id AND reg.status <> 'cancelled'
+		JOIN registrations reg ON reg.race_id = rc.id
+		     AND ( (rc.event_mode <> 'personal' AND reg.status <> 'cancelled')
+		        OR (rc.event_mode = 'personal' AND reg.status = 'paid' AND reg.challenge_started_at IS NOT NULL) )
 		JOIN users u ON u.id = reg.user_id
 		LEFT JOIN user_profiles p ON p.user_id = reg.user_id
 		LEFT JOIN title_defs td ON td.code = u.displayed_title
 		LEFT JOIN race_groups g ON g.id = reg.group_id
 		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
-		                       AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
+		                       AND a.recorded_at <= rc.end_date
+		                       AND a.recorded_at >= CASE WHEN rc.event_mode = 'personal'
+		                                                 THEN reg.challenge_started_at ELSE rc.start_date END
 		                       AND (rc.external_data OR a.source IS NULL)
 		WHERE rc.id = $1 AND ($2 = '' OR reg.group_id::text = $2)
 		GROUP BY reg.user_id, u.name, u.handle, td.name, g.name

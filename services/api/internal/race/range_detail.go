@@ -34,12 +34,18 @@ type TaskRangeDetail struct {
 	Activities []RangeActivity `json:"activities"`
 }
 
-// loadUserRangeActivities 目前登入者在此賽事期間的活動（含每公里分段），新到舊。
+// loadUserRangeActivities 目前登入者在此賽事的活動（含每公里分段），新到舊。個人挑戰模式(personal)里程窗
+// 與 LoadRaceActivities 一致：從付款起算(challenge_started_at)之後、進行中(paid)attempt（否則會含挑戰前的活動）。
 func (r *Repository) loadUserRangeActivities(ctx context.Context, raceID, userID string) ([]progAct, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT a.distance_km, COALESCE(a.avg_hr,0), a.avg_pace_s, a.recorded_at, COALESCE(a.km_paces,'{}')
 		FROM races rc
-		JOIN activities a ON a.user_id=$2 AND NOT a.flagged AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
+		LEFT JOIN registrations reg ON reg.race_id = rc.id AND reg.user_id = $2
+		     AND rc.event_mode = 'personal' AND reg.status = 'paid' AND reg.challenge_started_at IS NOT NULL
+		JOIN activities a ON a.user_id=$2 AND NOT a.flagged
+		                  AND a.recorded_at <= rc.end_date
+		                  AND a.recorded_at >= CASE WHEN rc.event_mode = 'personal'
+		                                            THEN reg.challenge_started_at ELSE rc.start_date END
 		                  AND (rc.external_data OR a.source IS NULL)
 		WHERE rc.id=$1
 		ORDER BY a.recorded_at DESC`, raceID, userID)
