@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail, type GrantedReward } from '@/lib/api'
+import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail, type GrantedReward, type RewardPreviewItem } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useScrollLock } from '@/lib/useScrollLock'
@@ -35,7 +35,7 @@ function paceFmt(sec: number) {
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
 }
 
-type Tab = 'brochure' | 'progress' | 'explore' | 'rank'
+type Tab = 'brochure' | 'progress' | 'explore' | 'rank' | 'reward'
 
 export default function RaceDetailScreen({
   race, onBack, onRegister, initialTab,
@@ -55,6 +55,10 @@ export default function RaceDetailScreen({
   )
   const detail = detailData?.race
   const registration = detailData?.registration
+
+  // 活動獎勵頁籤：完成活動有機會獲得的獎勵預覽（公開、輕量，不含機率/數量）。空陣列時不顯示頁籤。
+  const { data: rewardPreviewData } = useSWR(['reward-preview', race.id], () => racesApi.rewardPreview(race.id))
+  const rewardPreview = rewardPreviewData?.rewards ?? []
 
   // 完賽證明：賽事結束後、已報名、已登入才查
   const ended = race.display_status === 'ended'
@@ -295,7 +299,7 @@ export default function RaceDetailScreen({
 
         {/* 頁籤 */}
         <div style={{ display: 'flex', gap: 6, margin: '16px 0 14px', borderBottom: '1px solid var(--line)' }}>
-          {(([['brochure', '簡章'], ['progress', '進度'], ...(hasCheckpoints ? [['explore', '探索']] : []), ['rank', '排名']]) as [Tab, string][]).map(([v, label]) => (
+          {(([['brochure', '簡章'], ['progress', '進度'], ...(hasCheckpoints ? [['explore', '探索']] : []), ['rank', '排名'], ...(rewardPreview.length > 0 ? [['reward', '活動獎勵']] : [])]) as [Tab, string][]).map(([v, label]) => (
             <button key={v} onClick={() => setTab(v)} style={{
               padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14,
               color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 700 : 400,
@@ -312,6 +316,7 @@ export default function RaceDetailScreen({
         {tab === 'progress' && <ProgressBody race={race} />}
         {tab === 'explore' && <ExploreBody race={race} />}
         {tab === 'rank' && <RankingBody race={race} />}
+        {tab === 'reward' && <RewardPreviewBody rewards={rewardPreview} />}
       </ScrollArea>
 
       {/* 完賽證明全屏檢視 */}
@@ -379,6 +384,35 @@ function ProgressBody({ race }: { race: Race }) {
 
       {detailTask && <TaskContributorsModal race={race} task={detailTask} onClose={() => setDetailTask(null)} />}
       {rangeTask && <RangeDetailModal race={race} task={rangeTask} onClose={() => setRangeTask(null)} />}
+    </div>
+  )
+}
+
+// 活動獎勵頁籤：完成活動有機會獲得的獎勵預覽卡片列表。刻意只顯示 icon/名稱/說明，不露機率與數量
+// （後端 race.GetRewardPreview 白名單欄位，見 memory activity-reward-system）。
+function RewardPreviewBody({ rewards }: { rewards: RewardPreviewItem[] }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>有機會獲得以下獎勵</div>
+        <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3 }}>實際獲得依完成當次結果為準</div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {rewards.map((rw, i) => (
+          <div key={i} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 12px)', overflow: 'hidden' }}>
+            {rw.icon_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={rw.icon_url} alt="" style={{ width: '100%', aspectRatio: '2 / 1', objectFit: 'cover', display: 'block' }} />
+            )}
+            <div style={{ padding: '11px 13px' }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)' }}>{rw.name}</div>
+              {rw.description && (
+                <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.5 }}>{rw.description}</div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

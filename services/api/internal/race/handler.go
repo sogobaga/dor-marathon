@@ -45,6 +45,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/{raceID}/tasks/{taskID}/contributors", h.TaskContributors)
 	r.Get("/{raceID}/tasks/{taskID}/range-detail", h.TaskRangeDetail)
 	r.Get("/{raceID}/leaderboard", h.Leaderboard)
+	r.Get("/{raceID}/reward-preview", h.RewardPreview)
 	r.Get("/{raceID}/certificate", h.Certificate)
 	r.Get("/{raceID}/exp-breakdown", h.ExpBreakdown)
 	r.Get("/{raceID}/status", h.LiveStatus)
@@ -566,6 +567,21 @@ func (h *Handler) Progress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"progress": prog})
+}
+
+// GET /api/v1/races/:raceID/reward-preview — 活動獎勵預覽（公開，不需登入；不含機率/數量/權重）
+func (h *Handler) RewardPreview(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	rewards, err := h.svc.GetRewardPreview(r.Context(), raceID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get reward preview")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"rewards": rewards})
 }
 
 // GET /api/v1/races/:raceID/leaderboard — 一般模式個人完成排名（公開，登入後含追蹤狀態）

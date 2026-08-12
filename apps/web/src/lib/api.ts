@@ -1043,6 +1043,10 @@ export const racesApi = {
   // 個人挑戰模式(personal)排行榜：依完成次數 desc、最早完成時間 asc（公開；帶 token 則含 is_me/is_following/my_rank）
   personalLeaderboard: (raceID: string, token?: string) =>
     request<PersonalLeaderboard>(`/races/${raceID}/personal-leaderboard`, token ? { headers: withAuth(token) } : undefined),
+
+  // 活動獎勵預覽：完成活動有機會獲得的獎勵（公開，不需登入；不含機率/數量/權重，見 memory activity-reward-system）
+  rewardPreview: (raceID: string) =>
+    request<{ rewards: RewardPreviewItem[] }>(`/races/${raceID}/reward-preview`),
 }
 
 export interface TaskProgress extends RaceTask {
@@ -1097,6 +1101,13 @@ export interface TaskRangeDetail {
   range_lo: number
   range_hi: number
   activities: RangeActivity[]
+}
+// 活動獎勵預覽單筆卡片：只有可讀展示欄位，不含機率/數量/權重（見後端 race.RewardPreviewItem）
+export interface RewardPreviewItem {
+  kind: string // economy|serial
+  name: string
+  icon_url: string
+  description: string
 }
 
 // --- Admin: 數據總覽 ---

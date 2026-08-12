@@ -83,6 +83,13 @@ func (it *RewardItem) validDenominations() []RewardDenom {
 	return out
 }
 
+// ValidDenominations 匯出版 validDenominations，供 race 套件在不需要抽獎邏輯的情況下（例如活動獎勵預覽
+// 頁籤 race.GetRewardPreview）取得某 serial 項目「有效面額」的 group id 清單（含舊格式 SerialGroupID
+// 向後相容回退）。刻意不匯出 Weight 以外的抽獎細節給呼叫端——呼叫端本身就不該用這個結果做抽獎判斷。
+func (it *RewardItem) ValidDenominations() []RewardDenom {
+	return it.validDenominations()
+}
+
 // RewardConfig 一組即時獎勵設定（全域模板的 items、或每場賽事 races.reward_config 皆用此形狀）。
 type RewardConfig struct {
 	Items []RewardItem `json:"items"`

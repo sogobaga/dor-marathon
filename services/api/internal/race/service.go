@@ -162,6 +162,9 @@ func (s *Service) ListPublic(ctx context.Context, userID string) ([]*Race, error
 			}
 		}
 		r.FillDisplay(now)
+		// SEC：reward_config 內含機率(prob_bp)/面額權重(weight)/金額區間(min/max) 等機敏設定，公開列表
+		// 一律不得帶出（玩家能看到就等於看到中獎率），前台改走 GetRewardPreview 專用端點取代。
+		r.RewardConfig = nil
 		out = append(out, r)
 	}
 	return out, nil
@@ -258,6 +261,9 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 	for i := range detail.Groups {
 		detail.Groups[i].GroupKey = ""
 	}
+	// 安全：reward_config 內含機率(prob_bp)/面額權重(weight)/金額區間(min/max) 等機敏設定，公開詳情
+	// 一律不得帶出（玩家能看到就等於看到中獎率），前台改走 GetRewardPreview 專用端點取代。
+	detail.RewardConfig = nil
 
 	var reg *Registration
 	if userID != "" {
