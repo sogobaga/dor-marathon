@@ -107,6 +107,18 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
         </div>
 
         {err && <div style={{ fontSize: 12, color: 'var(--hunt)', marginTop: 12 }}>{err}</div>}
+
+        {/* 法律／支援連結：未登入者在登入/註冊前可先看說明。新分頁開啟、不中斷登入流程。 */}
+        <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid var(--line-2)' }}>
+          <p style={{ fontSize: 11.5, color: 'var(--tx-faint)', margin: '0 0 8px', lineHeight: 1.6, textAlign: 'center' }}>註冊／登入即表示你已閱讀並同意下列條款</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px', justifyContent: 'center', alignItems: 'center' }}>
+            <a href="/support" target="_blank" rel="noreferrer" style={legalLink}>支援說明</a>
+            <span style={{ color: 'var(--tx-faint)', fontSize: 12 }}>·</span>
+            <a href="/terms" target="_blank" rel="noreferrer" style={legalLink}>服務條款／退款</a>
+            <span style={{ color: 'var(--tx-faint)', fontSize: 12 }}>·</span>
+            <a href="/privacy" target="_blank" rel="noreferrer" style={legalLink}>隱私權政策</a>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -127,6 +139,7 @@ const loginBtn: React.CSSProperties = {
   background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none',
   borderRadius: 9, padding: '7px 16px', cursor: 'pointer', fontSize: 13,
 }
+const legalLink: React.CSSProperties = { fontSize: 12, color: 'var(--fug)', textDecoration: 'none', fontWeight: 600 }
 // 受邀歡迎提示（推廣連結 ?ref= 帶入、尚未登入時顯示）：輕量小字，不搶版面
 const refHint: React.CSSProperties = {
   fontSize: 12, color: 'var(--fug)', margin: '0 0 14px', lineHeight: 1.5,
