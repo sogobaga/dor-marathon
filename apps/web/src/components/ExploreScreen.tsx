@@ -33,6 +33,7 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
   const [rankingBoss, setRankingBoss] = useState<{ id: string; name: string } | null>(null)
   const [pos, setPos] = useState<{ lat: number; lng: number } | null>(null)
   const [county, setCounty] = useState('') // 縣市篩選（空＝全部）
+  const [onlyCheckedIn, setOnlyCheckedIn] = useState(false) // 全域「已打卡」篩選（b.discovered）——與下方縣市篩選獨立
 
   // 取一次目前位置（用於「越近排越上」；拒絕/失敗則維持原順序）
   useEffect(() => {
@@ -50,16 +51,20 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
   )
   // 依縣市篩選 → 依距離排序（最近在最上；未定位則維持伺服器順序）
   const shown = useMemo(() => {
-    let list = (bosses ?? []).filter((b) => !county || countyOf(b.region) === county)
+    let list = (bosses ?? []).filter((b) => (!county || countyOf(b.region) === county) && (!onlyCheckedIn || b.discovered))
     if (pos) list = list.slice().sort((a, b) => havM(pos.lat, pos.lng, a.lat, a.lng) - havM(pos.lat, pos.lng, b.lat, b.lng))
     return list
-  }, [bosses, county, pos])
+  }, [bosses, county, pos, onlyCheckedIn])
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>城市探索</span>
+        {/* 全域「已打卡」篩選：右上角、與頁名同高；獨立於下方縣市篩選（顯示 b.discovered=已揭露/已打卡的點） */}
+        <button onClick={() => setOnlyCheckedIn((v) => !v)} style={{ ...filterChip(onlyCheckedIn), marginLeft: 'auto' }}>
+          {onlyCheckedIn ? '✓ 已打卡' : '已打卡'}
+        </button>
       </header>
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 18px 28px' }}>
@@ -82,7 +87,7 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
         ) : bosses.length === 0 ? (
           <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>目前尚無探索點<br /><span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>（後台新增後即會顯示）</span></div>
         ) : shown.length === 0 ? (
-          <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>此縣市目前沒有打卡點</div>
+          <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>{onlyCheckedIn ? '尚無已打卡的探索點' : '此縣市目前沒有打卡點'}</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {shown.map((b) => {
@@ -185,4 +190,8 @@ const mysteryIcon: React.CSSProperties = { width: 48, height: 48, borderRadius: 
 const ghostFullBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'var(--bg-2)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
 function countyChip(active: boolean): React.CSSProperties {
   return { flexShrink: 0, border: '1px solid ' + (active ? 'var(--fug)' : 'var(--line-2)'), background: active ? 'var(--fug)' : 'var(--bg-2)', color: active ? 'var(--fug-ink)' : 'var(--tx-dim)', borderRadius: 999, padding: '5px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }
+}
+// header 右上角的全域「已打卡」toggle：透明底(未選)／fug 實心(選中)
+function filterChip(active: boolean): React.CSSProperties {
+  return { flexShrink: 0, border: '1px solid ' + (active ? 'var(--fug)' : 'var(--line-2)'), background: active ? 'var(--fug)' : 'transparent', color: active ? 'var(--fug-ink)' : 'var(--tx-dim)', borderRadius: 999, padding: '4px 11px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }
 }
