@@ -54,8 +54,6 @@ export default function PrivacyPage() {
         <H>6. 聯絡我們</H>
         <p style={p}>隱私相關問題請來信：<a href="mailto:info@unityprosper.com" style={link}>info@unityprosper.com</a></p>
         <ul style={ul}>
-          <li>地址：新北市八里區四維街 13 號 2 樓</li>
-          <li>電話：<a href="tel:0933951586" style={link}>0933-951586</a></li>
           <li>統一編號：83005678</li>
         </ul>
 
