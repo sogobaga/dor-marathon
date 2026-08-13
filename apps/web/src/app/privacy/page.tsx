@@ -52,7 +52,7 @@ export default function PrivacyPage() {
         <p style={p}>你可來信要求查詢、更正或刪除你的個人資料與帳號。我們會在合理期間內處理。</p>
 
         <H>6. 聯絡我們</H>
-        <p style={p}>隱私相關問題請來信：<a href="mailto:info@unityprosper.com" style={link}>info@unityprosper.com</a></p>
+        <p style={p}>隱私相關問題請來信：<a href="mailto:service@dor.tw" style={link}>service@dor.tw</a></p>
         <ul style={ul}>
           <li>統一編號：83005678</li>
         </ul>

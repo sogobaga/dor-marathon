@@ -16,7 +16,7 @@ export default function SupportPage() {
       <div style={body}>
         <Section title="聯絡我們">
           <p style={p}>有任何問題、帳號或資料相關需求，歡迎來信：</p>
-          <a href="mailto:info@unityprosper.com" style={mail}>info@unityprosper.com</a>
+          <a href="mailto:service@dor.tw" style={mail}>service@dor.tw</a>
           <div style={{ marginTop: 12, fontSize: 13.5, color: 'var(--tx)', lineHeight: 1.95 }}>
             <div>統一編號：83005678</div>
           </div>

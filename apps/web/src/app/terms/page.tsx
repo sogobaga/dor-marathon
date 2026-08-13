@@ -36,7 +36,7 @@ export default function TermsPage() {
           <li><b>報名繳費完成後恕不退款</b>（含已開通但未實際參賽者）。</li>
           <li>本服務屬「特定日期或期間提供之活動」「一經提供即難以回復之數位內容／線上服務」，依法<b>不適用七天鑑賞期</b>。</li>
           <li><b>例外</b>：若賽事因<b>主辦方因素</b>取消或延期，將另行公告退費、順延或其他處理方式。</li>
-          <li>報名相關問題請聯絡 <a href="mailto:info@unityprosper.com" style={link}>info@unityprosper.com</a>。</li>
+          <li>報名相關問題請聯絡 <a href="mailto:service@dor.tw" style={link}>service@dor.tw</a>。</li>
         </ul>
 
         <H>服務條款</H>
@@ -66,7 +66,7 @@ export default function TermsPage() {
         {!dash?.is_vip && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 6 }}>（僅 VIP 會員可取消訂閱）</div>}
 
         <H>聯絡我們</H>
-        <p style={p}><a href="mailto:info@unityprosper.com" style={link}>info@unityprosper.com</a></p>
+        <p style={p}><a href="mailto:service@dor.tw" style={link}>service@dor.tw</a></p>
         <ul style={ul}>
           <li>統一編號：83005678</li>
         </ul>

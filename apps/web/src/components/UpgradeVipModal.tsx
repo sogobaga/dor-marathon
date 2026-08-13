@@ -95,7 +95,7 @@ export default function UpgradeVipModal({ expired, reason, onClose, onSubscribe 
 
         {/* 公司資訊 */}
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)', fontSize: 11, color: 'var(--tx-faint)', lineHeight: 1.8 }}>
-          <div>客服信箱：<a href="mailto:info@unityprosper.com" style={{ color: 'var(--fug)' }}>info@unityprosper.com</a></div>
+          <div>客服信箱：<a href="mailto:service@dor.tw" style={{ color: 'var(--fug)' }}>service@dor.tw</a></div>
           <div>地址：新北市八里區四維街 13 號 2 樓</div>
           <div>電話：<a href="tel:0933951586" style={{ color: 'var(--fug)' }}>0933-951586</a>　·　統一編號：83005678</div>
         </div>
