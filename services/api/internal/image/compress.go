@@ -28,7 +28,14 @@ func CompressImage(data []byte, mime string) (out []byte, outMime string, change
 		return data, mime, false
 	}
 
-	// 最長邊 >1600 才等比縮小
+	// 依 EXIF Orientation 把方向「烘焙進像素」（image.Decode 不會套用 EXIF）：避免不同檢視器(手機遵守 EXIF、
+	// 直接開圖網址/部分桌機不遵守)對同一張照片顯示方向不一致(上下顛倒/翻轉)。重編碼本就會剝除 EXIF，轉正後即與檢視器無關。
+	// orient!=1 時「一律」採用重編碼版(即使沒變小)，否則會留著帶錯方向 EXIF 的原檔，bug 依舊。見 orientation.go。
+	orient := exifOrientation(data)
+
+	// 最長邊 >1600 才等比縮小。刻意「先縮圖、後轉正」：轉正對 90 度類(5..8)會交換寬高，但 max(w,h) 不變→縮放
+	// 決策與比例相同；且均勻縮放與軸對齊旋轉/翻轉可交換 → 先縮後轉的輸出與先轉後縮「像素完全相同」。先縮可避免在
+	// 原始全解析度先配置一份 RGBA 再逐點搬移(24MP 照片可省下約 90MB 暫用記憶體與 2400 萬次像素運算)。
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	if w <= 0 || h <= 0 {
@@ -54,6 +61,11 @@ func CompressImage(data []byte, mime string) (out []byte, outMime string, change
 		img = dst
 	}
 
+	// 轉正（在縮圖之後，見上方註解）
+	if orient != 1 {
+		img = applyOrientation(img, orient)
+	}
+
 	// 重編碼：含 alpha 透明 → PNG；否則 → JPEG q82
 	var buf bytes.Buffer
 	var newMime string
@@ -71,8 +83,9 @@ func CompressImage(data []byte, mime string) (out []byte, outMime string, change
 
 	encoded := buf.Bytes()
 
-	// 安全閥：沒有比原始更小就放棄
-	if len(encoded) >= len(data) {
+	// 安全閥：方向正常(orient==1)時，重編碼沒比原始小就放棄（維持原本不無謂膨脹的行為）；
+	// 但方向非正常時，一律採用已轉正的重編碼版——方向正確性優先於體積（否則會退回帶錯方向 EXIF 的原檔）。
+	if orient == 1 && len(encoded) >= len(data) {
 		return data, mime, false
 	}
 
