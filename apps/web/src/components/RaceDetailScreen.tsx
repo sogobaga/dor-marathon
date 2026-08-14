@@ -371,6 +371,9 @@ function ProgressBody({ race }: { race: Race }) {
         <Stat label="爬升" value={`${Math.round(my.ascent_m)} m`} />
       </div>
 
+      {/* 每日歷程記錄：第一層看每天統計，點「詳細」展開當天各筆活動（里程窗與上方「我的里程」完全一致，故每日加總對得起總里程） */}
+      <DailyHistory race={race} />
+
       {tasks.length === 0 && <Hint>此賽事尚未設定任務目標</Hint>}
 
       {groupsBy.map((g) => (
@@ -384,6 +387,93 @@ function ProgressBody({ race }: { race: Race }) {
 
       {detailTask && <TaskContributorsModal race={race} task={detailTask} onClose={() => setDetailTask(null)} />}
       {rangeTask && <RangeDetailModal race={race} task={rangeTask} onClose={() => setRangeTask(null)} />}
+    </div>
+  )
+}
+
+// 台北時區日期（YYYY-MM-DD）：offsetDays 為相對天數（0=今天、-1=昨天）。en-CA 產出正好是 YYYY-MM-DD 格式。
+function twDate(offsetDays = 0): string {
+  return new Date(Date.now() + offsetDays * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' })
+}
+// 每日標題：今天/昨天，其餘顯示 M/D（週X）
+function fmtDayLabel(date: string): string {
+  if (date === twDate(0)) return '今天'
+  if (date === twDate(-1)) return '昨天'
+  const [y, m, dd] = date.split('-').map(Number)
+  const wk = ['日', '一', '二', '三', '四', '五', '六'][new Date(Date.UTC(y, m - 1, dd)).getUTCDay()]
+  return `${m}/${dd}（週${wk}）`
+}
+// 活動時間 → 台北 HH:MM
+function fmtTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Taipei' })
+}
+// 時長秒數 → m:ss（超過 1 小時顯示 h:mm:ss）
+function fmtDur(sec: number): string {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+// 資料來源標籤：App GPS(空字串)不標，其餘顯示品牌
+function sourceLabel(src: string): string {
+  switch (src) {
+    case '': return ''
+    case 'strava': return 'Strava'
+    case 'garmin': return 'Garmin'
+    case 'coros': return 'COROS'
+    default: return src
+  }
+}
+const sourceChip: React.CSSProperties = { fontSize: 10, fontWeight: 700, color: 'var(--tx-dim)', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '1px 7px', whiteSpace: 'nowrap' }
+
+// 進度頁「每日歷程記錄」：第一層每天一列（日期＋當天總里程＋筆數），點「詳細」展開當天各筆活動
+//（時間/距離/時長/配速/來源）。里程窗與 GetRaceProgress 的「我的里程」一致，每日加總對得起總里程。
+function DailyHistory({ race }: { race: Race }) {
+  const token = getUserToken() || undefined
+  // 未登入無個人歷程可查（後端未登入回 404）→ 傳 null key 直接停用抓取，避免無謂請求
+  const { data, isLoading } = useSWR(token ? ['daily', race.id] : null, () => racesApi.myDailyActivities(race.id, token), { refreshInterval: 30000 })
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  const days = data?.days ?? []
+  if (isLoading || days.length === 0) return null // 靜默：載入中或尚無活動就不佔位（避免空白區塊）
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)', marginBottom: 8 }}>歷程記錄</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {days.map((d) => {
+          const isOpen = !!open[d.date]
+          return (
+            <div key={d.date} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 12px)', overflow: 'hidden' }}>
+              <div onClick={() => setOpen((o) => ({ ...o, [d.date]: !o[d.date] }))}
+                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '11px 13px', cursor: 'pointer' }}>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)' }}>{fmtDayLabel(d.date)}</span>
+                  <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 1 }}>{d.count} 筆</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--fug)' }}>{d.total_km.toFixed(2)} K</span>
+                  <span style={{ fontSize: 11, color: 'var(--gold)', whiteSpace: 'nowrap' }}>{isOpen ? '收合 ▾' : '詳細 ›'}</span>
+                </div>
+              </div>
+              {isOpen && (
+                <div style={{ borderTop: '1px solid var(--line)', padding: '4px 13px 6px' }}>
+                  {d.activities.map((a, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '7px 0', borderBottom: i < d.activities.length - 1 ? '1px solid var(--line-2)' : 'none' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                        <span style={{ fontSize: 12, color: 'var(--tx-faint)', width: 42, flexShrink: 0 }}>{fmtTime(a.recorded_at)}</span>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)' }}>{a.distance_km.toFixed(2)} km</span>
+                        {sourceLabel(a.source) && <span style={sourceChip}>{sourceLabel(a.source)}</span>}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                        <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>{fmtDur(a.duration_s)}</span>
+                        <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>{a.avg_pace_s > 0 ? `${paceFmt(a.avg_pace_s)}/km` : '—'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

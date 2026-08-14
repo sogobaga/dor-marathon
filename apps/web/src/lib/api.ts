@@ -1048,6 +1048,10 @@ export const racesApi = {
   // 活動獎勵預覽：完成活動有機會獲得的獎勵（公開，不需登入；不含機率/數量/權重，見 memory activity-reward-system）
   rewardPreview: (raceID: string) =>
     request<{ rewards: RewardPreviewItem[] }>(`/races/${raceID}/reward-preview`),
+
+  // 進度頁每日歷程記錄：每一天跑了幾筆、各筆距離/時長/配速（需登入；里程窗與「我的里程」完全一致）
+  myDailyActivities: (raceID: string, token?: string) =>
+    request<{ days: DailyStat[] }>(`/races/${raceID}/my-daily-activities`, token ? { headers: withAuth(token) } : undefined),
 }
 
 export interface TaskProgress extends RaceTask {
@@ -1110,6 +1114,21 @@ export interface RewardPreviewItem {
   amount: string // economy 類的數量/區間（如 100~500 / 7 天）；serial 類為空
   icon_url: string
   description: string
+}
+// 進度頁每日歷程：單筆活動（見後端 race.DailyActivity）
+export interface DailyActivity {
+  recorded_at: string
+  distance_km: number
+  duration_s: number
+  avg_pace_s: number
+  source: string // '' = App GPS；其餘 strava/garmin/coros
+}
+// 進度頁每日歷程：某一天的統計 + 當天各筆活動（見後端 race.DailyStat）
+export interface DailyStat {
+  date: string // 台北日期 YYYY-MM-DD
+  total_km: number
+  count: number
+  activities: DailyActivity[]
 }
 
 // --- Admin: 數據總覽 ---
