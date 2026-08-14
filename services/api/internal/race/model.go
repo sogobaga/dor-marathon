@@ -53,13 +53,14 @@ type Race struct {
 
 // ChallengeRule 個人挑戰模式（event_mode=personal）的完成條件參數化模板。存於 races.challenge_rule JSONB。
 // CompletionType 三選一：
-//   - streak_days：連續 Days 天、每天里程 >= MinKmPerDay 即完成
+//   - streak_days：連續 Days 天、每天里程 >= MinKmPerDay 即完成（DailyMode: ""/cumulative=當日累積[預設]／single=當日至少一趟達門檻）
 //   - window_cumulative：WindowDays 天內累積里程 >= CumKm（且若 SingleKm>0，需至少一趟單次 >= SingleKm）即完成
 //   - single_distance：單次跑步里程 >= SingleKm 即完成
 type ChallengeRule struct {
 	CompletionType string  `json:"completion_type"` // streak_days | window_cumulative | single_distance
 	Days           int     `json:"days,omitempty"`
 	MinKmPerDay    float64 `json:"min_km_per_day,omitempty"`
+	DailyMode      string  `json:"daily_mode,omitempty"` // streak_days 專用：""/"cumulative"=當日累積里程達標(預設)；"single"=當日至少一趟達門檻
 	WindowDays     int     `json:"window_days,omitempty"`
 	CumKm          float64 `json:"cum_km,omitempty"`
 	SingleKm       float64 `json:"single_km,omitempty"`

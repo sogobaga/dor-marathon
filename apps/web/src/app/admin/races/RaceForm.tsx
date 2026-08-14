@@ -159,6 +159,7 @@ export default function RaceForm({
   )
   const [chDays, setChDays] = useState(String(initial?.challenge_rule?.days ?? ''))
   const [chMinKmPerDay, setChMinKmPerDay] = useState(String(initial?.challenge_rule?.min_km_per_day ?? ''))
+  const [chDailyMode, setChDailyMode] = useState<'cumulative' | 'single'>(initial?.challenge_rule?.daily_mode === 'single' ? 'single' : 'cumulative')
   const [chWindowDays, setChWindowDays] = useState(String(initial?.challenge_rule?.window_days ?? ''))
   const [chCumKm, setChCumKm] = useState(String(initial?.challenge_rule?.cum_km ?? ''))
   const [chSingleKm, setChSingleKm] = useState(String(initial?.challenge_rule?.single_km ?? ''))
@@ -455,6 +456,7 @@ export default function RaceForm({
       completion_type: completionType,
       days: completionType === 'streak_days' ? Math.round(num(chDays)) : undefined,
       min_km_per_day: completionType === 'streak_days' ? num(chMinKmPerDay) : undefined,
+      daily_mode: completionType === 'streak_days' ? chDailyMode : undefined,
       window_days: completionType === 'window_cumulative' ? Math.round(num(chWindowDays)) : undefined,
       cum_km: completionType === 'window_cumulative' ? num(chCumKm) : undefined,
       single_km:
@@ -821,14 +823,22 @@ export default function RaceForm({
                   </select>
                 </Field>
                 {completionType === 'streak_days' && (
-                  <Row>
-                    <Field label="連續天數 (天)">
-                      <input style={inp} type="number" min={1} value={chDays} onChange={(e) => setChDays(e.target.value)} />
+                  <>
+                    <Row>
+                      <Field label="連續天數 (天)">
+                        <input style={inp} type="number" min={1} value={chDays} onChange={(e) => setChDays(e.target.value)} />
+                      </Field>
+                      <Field label="每天最低里程 (km)">
+                        <input style={inp} type="number" min={0} step="0.1" value={chMinKmPerDay} onChange={(e) => setChMinKmPerDay(e.target.value)} />
+                      </Field>
+                    </Row>
+                    <Field label="每天達標方式">
+                      <select style={inp} value={chDailyMode} onChange={(e) => setChDailyMode(e.target.value as 'cumulative' | 'single')}>
+                        <option value="cumulative">累積（當日所有跑步里程加總達標，適合初學者）</option>
+                        <option value="single">單次（當日需有一趟跑步達到該里程）</option>
+                      </select>
                     </Field>
-                    <Field label="每天最低里程 (km)">
-                      <input style={inp} type="number" min={0} step="0.1" value={chMinKmPerDay} onChange={(e) => setChMinKmPerDay(e.target.value)} />
-                    </Field>
-                  </Row>
+                  </>
                 )}
                 {completionType === 'window_cumulative' && (
                   <>

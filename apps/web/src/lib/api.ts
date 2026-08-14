@@ -27,6 +27,7 @@ export interface ChallengeRule {
   completion_type: CompletionType
   days?: number           // streak_days：連續天數
   min_km_per_day?: number // streak_days：每天最低里程 (km)
+  daily_mode?: string     // streak_days：'cumulative'(當日累積,預設)|'single'(當日至少一趟達標)
   window_days?: number    // window_cumulative：視窗天數
   cum_km?: number         // window_cumulative：視窗內累積里程 (km)
   single_km?: number      // window_cumulative：至少一趟里程(km，選填)／single_distance：單趟里程(km，必填)
@@ -37,7 +38,7 @@ export function formatChallengeRule(rule?: ChallengeRule | null): string {
   if (!rule) return ''
   switch (rule.completion_type) {
     case 'streak_days':
-      return `連續 ${rule.days ?? 0} 天，每天累積跑步里程 ≥ ${rule.min_km_per_day ?? 0} km`
+      return `連續 ${rule.days ?? 0} 天，每天${rule.daily_mode === 'single' ? '至少一趟' : '累積里程'} ≥ ${rule.min_km_per_day ?? 0} km`
     case 'window_cumulative': {
       const base = `${rule.window_days ?? 0} 天內累積跑步里程 ≥ ${rule.cum_km ?? 0} km`
       return rule.single_km && rule.single_km > 0 ? `${base}，且其中至少一趟單次里程 ≥ ${rule.single_km} km` : base

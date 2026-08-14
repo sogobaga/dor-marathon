@@ -82,17 +82,23 @@ func (r *Repository) CompletedChallengeCount(ctx context.Context, userID, raceID
 	return n, nil
 }
 
-// streakQualifyingDays 回傳 since 起、依台灣日曆日「當日總里程 >= minKmPerDay」的日期清單（升冪）。
+// streakQualifyingDays 回傳 since 起、依台灣日曆日達標的日期清單（升冪）。達標＝single?當日最長單趟:當日累積里程 >= minKmPerDay。
 // 台灣日曆日換算在 SQL 端做（AT TIME ZONE 'Asia/Taipei'，比照 titles.go/achievements.go 慣例，
 // Go 端不用 time.LoadLocation——production distroless 映像沒有 tzdata）。一律 NOT flagged 防弊。
-func (r *Repository) streakQualifyingDays(ctx context.Context, userID string, since time.Time, minKmPerDay float64, externalData bool) ([]time.Time, error) {
-	rows, err := r.db.Query(ctx, `
+func (r *Repository) streakQualifyingDays(ctx context.Context, userID string, since time.Time, minKmPerDay float64, single, externalData bool) ([]time.Time, error) {
+	// 當日達標判定：single=false(累積,預設) 用 SUM(當日所有里程加總)；single=true 用 MAX(當日至少一趟達門檻)。
+	// agg 為受控字面值(SUM/MAX)，非使用者輸入，無 SQL 注入風險。
+	agg := "SUM"
+	if single {
+		agg = "MAX"
+	}
+	rows, err := r.db.Query(ctx, fmt.Sprintf(`
 		SELECT (recorded_at AT TIME ZONE 'Asia/Taipei')::date AS d
 		FROM activities
 		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND ($4 OR source IS NULL)
 		GROUP BY d
-		HAVING SUM(distance_km) >= $3
-		ORDER BY d`, userID, since, minKmPerDay, externalData)
+		HAVING %s(distance_km) >= $3
+		ORDER BY d`, agg), userID, since, minKmPerDay, externalData)
 	if err != nil {
 		return nil, fmt.Errorf("streak qualifying days: %w", err)
 	}
@@ -287,7 +293,7 @@ func longestConsecutiveRun(days []time.Time) int {
 func (s *Service) evaluateChallengeRule(ctx context.Context, rule *ChallengeRule, userID string, startedAt time.Time, externalData bool) (completed bool, progress *ChallengeProgress, err error) {
 	switch rule.CompletionType {
 	case CompletionStreakDays:
-		days, err := s.repo.streakQualifyingDays(ctx, userID, startedAt, rule.MinKmPerDay, externalData)
+		days, err := s.repo.streakQualifyingDays(ctx, userID, startedAt, rule.MinKmPerDay, rule.DailyMode == "single", externalData)
 		if err != nil {
 			return false, nil, err
 		}
