@@ -91,6 +91,24 @@ export interface PersonalProgress {
   newly_granted?: GrantedReward[] // 本次呼叫剛觸發完成時發放的即時獎勵（活動獎勵系統 P2；P3 前端彈窗才用）
 }
 
+// GPS 跑步追蹤頁「進行中活動/賽事」面板：目前登入者「這筆 GPS 跑步、現在跑會被計入」的賽事/挑戰
+// 清單 + 各自進度（見後端 race.GetMyActiveRaces / GET /races/my-active）。
+export interface MyActiveRace {
+  id: string
+  slug: string
+  title: string
+  event_mode: EventMode
+  start_date: string
+  end_date: string
+  my_total_km: number
+  my_activities: number
+  tasks_done: number  // 非 personal 適用；personal 恆為 0
+  tasks_total: number // 非 personal 適用；personal 恆為 0
+  challenge_rule?: ChallengeRule         // personal 專用
+  challenge_progress?: ChallengeProgress // personal 專用
+  attempt_no?: number                    // personal 專用（reg.attempt_no）
+}
+
 // GrantedReward 一次完成觸發 roll 中「實際中獎並成功發放」的單筆結果（見後端 activityreward.GrantedReward）。
 export interface GrantedReward {
   type: RewardItemType
@@ -1052,6 +1070,9 @@ export const racesApi = {
   // 進度頁每日歷程記錄：每一天跑了幾筆、各筆距離/時長/配速（需登入；里程窗與「我的里程」完全一致）
   myDailyActivities: (raceID: string, token?: string) =>
     request<{ days: DailyStat[] }>(`/races/${raceID}/my-daily-activities`, token ? { headers: withAuth(token) } : undefined),
+
+  // GPS 跑步追蹤頁「進行中活動/賽事」面板：目前登入者「現在跑步會被計入」的賽事清單 + 各自進度（需登入）
+  myActive: (token: string) => request<{ races: MyActiveRace[] }>('/races/my-active', { headers: withAuth(token) }),
 }
 
 export interface TaskProgress extends RaceTask {

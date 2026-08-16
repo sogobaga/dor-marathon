@@ -35,6 +35,7 @@ func (h *Handler) SetOnActivity(fn func()) {
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.List)
+	r.Get("/my-active", h.MyActiveRaces)
 	r.Get("/{raceID}", h.Detail)
 	r.Post("/{raceID}/register", h.Register)
 	r.Post("/{raceID}/groups", h.CreateTeamGroup)

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, createRaceSocket, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss } from '@/lib/api'
+import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
@@ -62,6 +62,7 @@ export default function TrackPage() {
   const [stravaPriority, setStravaPriority] = useState(false) // 里程優先來源＝Strava 且已連接：GPS 結束不自動上傳，先讓使用者選
   const [confirmStravaHold, setConfirmStravaHold] = useState<null | { km: number; mins: number; paceS: number }>(null)
   const [showLogin, setShowLogin] = useState(false)
+  const [showActiveRaces, setShowActiveRaces] = useState(false) // 「進行中活動/賽事」面板開關
   const [uploading, setUploading] = useState(false)
   const [checkpoints, setCheckpoints] = useState<ActiveCheckpoint[]>([])
   const [curPos, setCurPos] = useState<{ lat: number; lng: number; acc: number } | null>(null)
@@ -1479,6 +1480,8 @@ export default function TrackPage() {
         <strong style={{ fontSize: 16 }}>GPS 跑步追蹤</strong>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <button onClick={toggleMute} title={muted ? '事件音效：關' : '事件音效：開'} aria-label="事件音效開關" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0, color: 'var(--tx-dim)' }}>{muted ? '🔇' : '🔊'}</button>
+          {/* 進行中活動/賽事：GPS 累積里程會計入的賽事清單，非導航連結，跑步中也可安全開啟查看 */}
+          {user && <button onClick={() => setShowActiveRaces(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, color: 'var(--fug)', padding: 0, whiteSpace: 'nowrap' }}>進行中活動/賽事</button>}
           {status !== 'tracking' && <a href="/track/history" style={{ color: 'var(--fug)', fontSize: 13, textDecoration: 'none' }}>歷史</a>}
         </div>
       </header>
@@ -1824,6 +1827,9 @@ export default function TrackPage() {
         <BossRankingPanel bossId={rankingBoss.id} bossName={rankingBoss.name} onClose={() => setRankingBoss(null)} />
       )}
 
+      {/* 進行中活動/賽事：GPS 跑步追蹤累積的里程會計入的賽事清單 + 各自進度 */}
+      {showActiveRaces && <ActiveRacesPanel onClose={() => setShowActiveRaces(false)} />}
+
       {/* 3★ 取卡恭喜彈窗 → 前往卡片圖鑑（帶 ?unlock 播翻轉解鎖特效）*/}
       {celebrateCard && (
         <CardUnlockCelebration
@@ -1835,6 +1841,93 @@ export default function TrackPage() {
       )}
     </PhoneFrame>
    </GoogleAuthProvider>
+  )
+}
+
+// 「進行中活動/賽事」面板：目前登入者「這筆 GPS 跑步、現在跑會被計入」的賽事/挑戰清單 + 各自進度。
+// 開啟時才 fetch（本元件只在 showActiveRaces=true 時才會被掛載）。不放任何導航連結——跑步中開啟本面板
+// 查看進度是安全的，但點連結跳頁會中斷正在進行的 GPS 追蹤。
+function ActiveRacesPanel({ onClose }: { onClose: () => void }) {
+  const [races, setRaces] = useState<MyActiveRace[] | null>(null)
+  const [err, setErr] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    if (!getUserToken()) { setErr(true); return }
+    withUserAuth((t) => racesApi.myActive(t))
+      .then((r) => { if (alive) setRaces(r.races) })
+      .catch(() => { if (alive) setErr(true) })
+    return () => { alive = false }
+  }, [])
+
+  function periodLabel(endDate: string) {
+    const end = new Date(endDate)
+    if (isNaN(end.getTime())) return ''
+    const daysLeft = Math.ceil((end.getTime() - Date.now()) / 86400000)
+    const md = `${end.getMonth() + 1}/${end.getDate()}`
+    return daysLeft <= 0 ? `今天截止（${md}）` : `剩 ${daysLeft} 天（至 ${md}）`
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 3300, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div style={{ width: '100%', maxWidth: 400, maxHeight: '85dvh', display: 'flex', flexDirection: 'column', background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 16, boxShadow: '0 12px 40px rgba(0,0,0,.6)', overflow: 'hidden' }}>
+        <div style={{ padding: '18px 18px 12px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <div style={{ fontSize: 17, fontWeight: 900, color: 'var(--tx)', flex: 1, minWidth: 0 }}>進行中活動/賽事</div>
+            <button onClick={onClose} aria-label="關閉" style={{ background: 'transparent', border: 'none', color: 'var(--tx-dim)', fontSize: 22, lineHeight: 1, cursor: 'pointer', padding: 0, flexShrink: 0 }}>×</button>
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 6, lineHeight: 1.6 }}>
+            GPS 跑步追蹤累積的里程，將會計入在以下活動/賽事：
+          </div>
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '12px 16px 18px' }}>
+          {err ? (
+            <div style={{ textAlign: 'center', padding: '36px 10px', fontSize: 13.5, color: 'var(--tx-dim)' }}>無法載入，請稍後再試</div>
+          ) : races === null ? (
+            <div style={{ textAlign: 'center', padding: '36px 10px', fontSize: 13.5, color: 'var(--tx-dim)' }}>載入中…</div>
+          ) : races.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '36px 10px', fontSize: 13.5, color: 'var(--tx-dim)' }}>目前沒有進行中的已報名活動/賽事</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {races.map((r) => (
+                <div key={r.id} style={{ background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                    <div style={{ fontSize: 14.5, fontWeight: 800, color: 'var(--tx)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>
+                    <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: 'var(--fug)', background: 'rgba(45,229,154,.14)', borderRadius: 999, padding: '2px 9px' }}>
+                      {r.event_mode === 'personal' ? '個人挑戰' : '賽事'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 4 }}>{periodLabel(r.end_date)}</div>
+
+                  <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>我的里程</div>
+                      <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>{r.my_total_km.toFixed(1)} <span style={{ fontSize: 11, color: 'var(--tx-dim)' }}>K</span></div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>活動筆數</div>
+                      <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>{r.my_activities} <span style={{ fontSize: 11, color: 'var(--tx-dim)' }}>筆</span></div>
+                    </div>
+                  </div>
+
+                  {r.event_mode === 'personal' ? (
+                    <div style={{ marginTop: 8, fontSize: 12, color: 'var(--tx-dim)', lineHeight: 1.6 }}>
+                      <div>條件：{formatChallengeRule(r.challenge_rule)}</div>
+                      {r.challenge_progress && <div style={{ color: 'var(--gold)', fontWeight: 700, marginTop: 2 }}>{formatChallengeProgress(r.challenge_progress)}</div>}
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 8, fontSize: 12, color: 'var(--tx-dim)' }}>
+                      任務 <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{r.tasks_done}/{r.tasks_total}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
