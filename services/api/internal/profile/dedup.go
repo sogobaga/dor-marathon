@@ -18,8 +18,12 @@ import (
 var validSources = map[string]bool{"gps": true, "strava": true, "garmin": true, "coros": true}
 
 // reResolveUser 立即重解某使用者的跨來源重複：先解除他既有的 cross_source_duplicate 標記，
-// 再以 source 為「最高優先」重新依 N 來源優先序去重（flag 每個時間叢集裡非最高優先的那些）。
+// 再依 N 來源優先序去重（flag 每個時間叢集裡非最高優先的那些）。
 // 用於玩家手動選擇/切換偏好時（免等 worker）。source 作為本次生效偏好（可與 user_profiles 不同，供「不記住」情境）。
+//
+// 優先序（2026-08-16 定案，正式紀錄一律 App GPS 優先，同步 worker resolveCrossSourceDups）：
+// App GPS 恆為最高優先（rank 0）；source 參數（使用者偏好的外部來源）僅在「沒有 App GPS 記錄、
+// 多個外部來源互相重疊」時才用來取捨（次高，rank 1）；其餘外部來源依 garmin > coros > strava 排序。
 func reResolveUser(ctx context.Context, db *pgxpool.Pool, userID, source string) {
 	if !validSources[source] {
 		return
@@ -38,11 +42,11 @@ func reResolveUser(ctx context.Context, db *pgxpool.Pool, userID, source string)
 			SELECT a.id, a.duration_s AS dur,
 				CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END AS st,
 				CASE
-					WHEN COALESCE(a.source,'gps') = $2 THEN 0
-					WHEN COALESCE(a.source,'gps') = 'garmin' THEN 1
-					WHEN COALESCE(a.source,'gps') = 'coros'  THEN 2
-					WHEN COALESCE(a.source,'gps') = 'strava' THEN 3
-					WHEN COALESCE(a.source,'gps') = 'gps'    THEN 4
+					WHEN a.source IS NULL THEN 0          -- App GPS 一律最高：正式紀錄一律 GPS 優先
+					WHEN a.source = $2 THEN 1              -- 使用者偏好的外部來源次之（僅在多個外部來源間取捨）
+					WHEN a.source = 'garmin' THEN 2
+					WHEN a.source = 'coros'  THEN 3
+					WHEN a.source = 'strava' THEN 4
 					ELSE 5 END AS rk
 			FROM activities a
 			WHERE a.user_id=$1 AND a.duration_s>0 AND NOT a.flagged

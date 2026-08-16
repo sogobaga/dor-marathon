@@ -516,9 +516,16 @@ func (h *StravaHandler) importOne(ctx context.Context, userID string, regAt time
 		log.Error().Err(err).Msg("strava import activity failed")
 		return ImportResult{Status: "error"}
 	}
-	// 僅「新匯入、未被 flag」的活動才扣血 + 發里程 EXP/DP（已存在/重複/跨帳號重複不算）
+	// stamina.ChargeSP 維持「僅新匯入」才扣血：SP 是扣血動作，同一趟不能被扣兩次。
 	if res.Status == "inserted" && na.DistanceKm > 0 {
 		stamina.ChargeSP(ctx, h.repo.db, na.UserID, na.DistanceKm, na.AvgPaceS)
+	}
+	// AwardMileageExp 的呼叫條件放寬到「新匯入」或「同帳號跨裝置的良性重複(multi_device_duplicate)」：
+	// 後者進函式後會走差額補償流程（可能補上與既有那筆的里程/EXP/DP 差額）。其他 duplicate 原因
+	// （同源精確重複 duplicate、跨帳號洗數據 cross_account_duplicate）不 inline 呼叫，交給函式內部
+	// 的 flagged 政策擋（cross_account 永遠不發；純同源 duplicate 本來就已經是同一筆數值，sweep
+	// 對帳掃到時一樣會被函式正確處理）。
+	if (res.Status == "inserted" || (res.Status == "duplicate" && res.Reason == "multi_device_duplicate")) && na.DistanceKm > 0 {
 		if err := h.repo.AwardMileageExp(ctx, res.ID, na.UserID); err != nil {
 			log.Error().Err(err).Str("activity", res.ID).Msg("strava award mileage exp failed")
 		}

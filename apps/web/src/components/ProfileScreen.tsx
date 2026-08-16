@@ -547,7 +547,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
           {strava?.connected && (
             <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 12, padding: '12px 14px' }}>
               <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>里程優先來源</div>
-              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>你同時有「GPS 跑步追蹤」與「Strava」兩個來源。若同一趟被記成兩筆，將以此來源為準、另一筆不重複計入個人數據（實際是否計入某活動的排名/里程統計，另依各活動的數據來源設定為準）。</div>
+              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>正式紀錄一律以「App GPS 跑步追蹤」為優先。此設定用於：①結束跑步時是否先跳出確認外部數據的提示；②沒有 App GPS 記錄時，多個外部來源(如 Strava)之間如何取捨。若外部紀錄(如手錶)里程較長，EXP/DP/總里程會自動補足差額，不需手動處理。</div>
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                 {(['gps', 'strava'] as const).map((src) => {
                   const on = (p?.preferred_data_source ?? 'gps') === src
