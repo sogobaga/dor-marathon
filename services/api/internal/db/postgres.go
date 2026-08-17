@@ -14,7 +14,8 @@ func Connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	}
 
 	// 連線池設定：配合 PgBouncer transaction mode
-	cfg.MaxConns = 10
+	// MaxConns=20：原 10 在 1000 併發下是全站排隊瓶頸；20 仍遠低於 Neon pooler 預設 default_pool_size=64，安全上調。
+	cfg.MaxConns = 20
 	// MinConns=0：閒置時不保留熱連線 → Neon compute 可完全休眠(scale-to-zero)，有請求再懶惰重連。
 	cfg.MinConns = 0
 

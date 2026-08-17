@@ -247,6 +247,12 @@ func (h *Handler) UploadGPS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
 		return
 	}
+	// 軌跡點數上限：20000 點約等於全馬 5 小時、每秒一點的軌跡量，仍有餘裕；
+	// 後續 Douglas-Peucker 簡化最壞情況 O(N²) 且同步跑在 handler 內，超量請求先擋下避免拖垮伺服器。
+	if len(req.Points) > 20000 {
+		http.Error(w, `{"error":"軌跡點數超過上限"}`, http.StatusRequestEntityTooLarge)
+		return
+	}
 	res, err := h.svc.SaveGPSRun(r.Context(), userID, req)
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)

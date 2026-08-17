@@ -357,10 +357,12 @@ func main() {
 			r.With(middleware.RateLimit(rdb, "checkpoints", 30, time.Minute, middleware.UserOrIP)).
 				Mount("/checkpoints", raceHandler.CheckpointRouter())
 
-			// 事件任務（日常隨機事件）— 跑步引擎用
-			r.Mount("/events", eventHandler.Router())
-			// 賽事多人連動事件（Phase B）— 觸發/加入/完成
-			r.Mount("/events/race", eventHandler.RaceRouter())
+			// 事件任務（日常隨機事件）— 跑步引擎用 — SEC-H1：比照 /activities 節流，避免高頻輪詢灌爆
+			r.With(middleware.RateLimit(rdb, "events", 60, time.Minute, middleware.UserOrIP)).
+				Mount("/events", eventHandler.Router())
+			// 賽事多人連動事件（Phase B）— 觸發/加入/完成 — SEC-H1：同上
+			r.With(middleware.RateLimit(rdb, "events_race", 60, time.Minute, middleware.UserOrIP)).
+				Mount("/events/race", eventHandler.RaceRouter())
 			// 效果資產覆寫（前台跑步引擎讀正式圖片/音檔）
 			r.Get("/effect-assets", eventHandler.PublicEffectAssets)
 

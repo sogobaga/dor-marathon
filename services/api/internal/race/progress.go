@@ -215,7 +215,8 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 	if err != nil {
 		return nil, err
 	}
-	acts, err := s.repo.LoadRaceActivities(ctx, raceID)
+	// 短 TTL 快取（見 cache.go）：進度頁前端 30 秒輪詢，讓同一窗口內的所有觀看者共用一次掃描。
+	acts, err := s.repo.getRaceActivitiesCached(ctx, raceID)
 	if err != nil {
 		return nil, err
 	}

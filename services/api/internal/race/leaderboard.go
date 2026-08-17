@@ -134,7 +134,9 @@ func (s *Service) GetLeaderboard(ctx context.Context, raceID, userID string) (*L
 	if race == nil || race.ReviewStatus != "approved" {
 		return nil, ErrRaceNotFound
 	}
-	finishers, total, err := s.repo.computeFinishers(ctx, raceID)
+	// 短 TTL 快取（見 cache.go）：基底完成榜與觀看者無關，同一窗口內的所有觀看者共用一次全場掃描；
+	// is_following 等 per-viewer 欄位維持在下面用 FollowingSet 逐請求查詢，不進快取。
+	finishers, total, err := s.repo.getFinishersCached(ctx, raceID)
 	if err != nil {
 		return nil, err
 	}

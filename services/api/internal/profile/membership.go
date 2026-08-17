@@ -186,12 +186,12 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	d.TrainingEntry = resolveEntry(r.Context(), h.db, "training_entry_state", "training_entry_whitelist", email, code, isSuperAdmin)
 	d.MonopolyEntry = resolveEntry(r.Context(), h.db, "monopoly_entry_state", "monopoly_entry_whitelist", email, code, isSuperAdmin)
 	d.KnowledgeEntry = resolveEntry(r.Context(), h.db, "knowledge_entry_state", "knowledge_entry_whitelist", email, code, isSuperAdmin)
-	d.NewTitles = h.checkAndAwardTitles(r.Context(), userID)
 	levels, err := h.levelConfigList(r.Context())
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	d.NewTitles = h.checkAndAwardTitles(r.Context(), userID, levels)
 	d.Level, d.LevelTitle, d.LevelFloor, d.NextLevelExp = computeLevel(d.Exp, levels)
 	if st, e := stamina.ReadSP(r.Context(), h.db, userID, d.Level); e == nil {
 		d.Sp, d.SpMax, d.SpRecoverMin, d.SpNextRecoverSec, d.SpFreezeUntil, d.Fitness = st.SP, st.SPMax, st.RecoverMin, st.NextRecoverSec, st.FreezeUntil, st.Fitness

@@ -675,8 +675,10 @@ export default function TrackPage() {
     vehicleLikeRef.current = vehLike
     setVehicleWarn(vehLike)
     if (woActiveRef.current || vehLike) return // 課表挑戰中 / 疑似搭車：暫停隨機事件/多人邀請
-    // 測試：跑步中、無進行中事件時輪詢認領後台手動觸發（每 5 秒；結算中不認領）
-    if (!activeEventRef.current && !completingRef.current && now - lastClaimRef.current > 5000) {
+    // 測試：跑步中、無進行中事件時輪詢認領後台手動觸發（每 30 秒；結算中不認領）
+    // 效能優化：跑步中 95% 時間空轉；1000 人同時跑步時此輪詢是全站最大宗請求流量（5s 間隔約 200 req/s）
+    // 拉長到 30 秒後降到約 33 req/s；管理員手動推送事件最晚 30 秒內會被領取，可接受。
+    if (!activeEventRef.current && !completingRef.current && now - lastClaimRef.current > 30000) {
       lastClaimRef.current = now
       claimManualEvent()
     }

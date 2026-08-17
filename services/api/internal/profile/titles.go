@@ -23,57 +23,49 @@ type AwardedTitle struct {
 }
 
 // titleCategoryStats 計算 8 類別（category -> 目前統計值）。
-func (h *Handler) titleCategoryStats(ctx context.Context, uid string) (map[string]float64, error) {
+// levels 由呼叫端傳入（Dashboard 流程與這裡共用同一份 level_config 查詢結果，避免重複打 DB）。
+//
+// 統計數字合併成單一 SQL（原本 6 條獨立查詢，逐一對應如下，皆以純量子查詢方式各自保留原 WHERE 條件
+// 與 NULL 處理：MAX/SUM 無符合列時為 NULL 故保留 COALESCE(...,0)；COUNT(*) 恆非 NULL 故不加 COALESCE）：
+//  1. single_dist: MAX(distance_km)  FROM activities WHERE user_id=$1 AND NOT flagged
+//  2. cum_dist:    SUM(distance_km)  FROM activities WHERE user_id=$1 AND NOT flagged
+//     cum_time:    SUM(duration_s)   FROM activities WHERE user_id=$1 AND NOT flagged（同一來源，換算小時）
+//  3. checkin:     COUNT(*) FROM explore_progress WHERE user_id=$1 AND discovered=true
+//  4. boss:        COUNT(*) FROM explore_progress WHERE user_id=$1 AND completed_at IS NOT NULL AND stars>0
+//  5. personal:    COUNT(*) FROM personal_task_progress WHERE user_id=$1
+//  6. card:        COUNT(*) FROM explore_progress WHERE user_id=$1 AND card_obtained=true
+//     exp:         users.exp（用於 computeLevel，非直接進 stats）
+//
+// FROM users u WHERE u.id=$1 作為外層錨點：使用者不存在時整條查詢回 0 列（pgx.ErrNoRows），
+// 與原本「SELECT exp FROM users WHERE id=$1」查無資料即報錯的行為一致。
+func (h *Handler) titleCategoryStats(ctx context.Context, uid string, levels []LevelConfig) (map[string]float64, error) {
 	stats := map[string]float64{}
 
+	var exp int
 	var singleMaxKm, cumKm float64
-	var cumSecs int
+	var cumSecs, checkinCount, bossCount, personalCount, cardCount int
 	if err := h.db.QueryRow(ctx, `
-		SELECT COALESCE(MAX(distance_km),0), COALESCE(SUM(distance_km),0), COALESCE(SUM(duration_s),0)
-		FROM activities WHERE user_id=$1 AND NOT flagged`, uid).
-		Scan(&singleMaxKm, &cumKm, &cumSecs); err != nil {
+		SELECT
+			u.exp,
+			COALESCE((SELECT MAX(distance_km) FROM activities WHERE user_id=$1 AND NOT flagged),0),
+			COALESCE((SELECT SUM(distance_km) FROM activities WHERE user_id=$1 AND NOT flagged),0),
+			COALESCE((SELECT SUM(duration_s) FROM activities WHERE user_id=$1 AND NOT flagged),0),
+			(SELECT COUNT(*) FROM explore_progress WHERE user_id=$1 AND discovered=true),
+			(SELECT COUNT(*) FROM explore_progress WHERE user_id=$1 AND completed_at IS NOT NULL AND stars>0),
+			(SELECT COUNT(*) FROM personal_task_progress WHERE user_id=$1),
+			(SELECT COUNT(*) FROM explore_progress WHERE user_id=$1 AND card_obtained=true)
+		FROM users u WHERE u.id=$1`, uid).
+		Scan(&exp, &singleMaxKm, &cumKm, &cumSecs, &checkinCount, &bossCount, &personalCount, &cardCount); err != nil {
 		return nil, err
 	}
 	stats["single_dist"] = singleMaxKm
 	stats["cum_dist"] = cumKm
 	stats["cum_time"] = float64(cumSecs) / 3600.0
-
-	var checkinCount int
-	if err := h.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM explore_progress WHERE user_id=$1 AND discovered=true`, uid).Scan(&checkinCount); err != nil {
-		return nil, err
-	}
 	stats["checkin"] = float64(checkinCount)
-
-	var bossCount int
-	if err := h.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM explore_progress WHERE user_id=$1 AND completed_at IS NOT NULL AND stars>0`, uid).Scan(&bossCount); err != nil {
-		return nil, err
-	}
 	stats["boss"] = float64(bossCount)
-
-	var personalCount int
-	if err := h.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM personal_task_progress WHERE user_id=$1`, uid).Scan(&personalCount); err != nil {
-		return nil, err
-	}
 	stats["personal"] = float64(personalCount)
-
-	var cardCount int
-	if err := h.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM explore_progress WHERE user_id=$1 AND card_obtained=true`, uid).Scan(&cardCount); err != nil {
-		return nil, err
-	}
 	stats["card"] = float64(cardCount)
 
-	var exp int
-	if err := h.db.QueryRow(ctx, `SELECT exp FROM users WHERE id=$1`, uid).Scan(&exp); err != nil {
-		return nil, err
-	}
-	levels, err := h.levelConfigList(ctx)
-	if err != nil {
-		return nil, err
-	}
 	level, _, _, _ := computeLevel(exp, levels)
 	stats["level"] = float64(level)
 
@@ -133,9 +125,9 @@ func (h *Handler) computeCurrentStreak(ctx context.Context, uid string) (int, er
 }
 
 // checkAndAwardTitles best-effort：算統計值→依門檻發放未解鎖稱號→回傳「未看過」清單。
-// 錯誤僅記 log、不中斷呼叫端（Dashboard 等流程）。
-func (h *Handler) checkAndAwardTitles(ctx context.Context, uid string) []AwardedTitle {
-	stats, err := h.titleCategoryStats(ctx, uid)
+// 錯誤僅記 log、不中斷呼叫端（Dashboard 等流程）。levels 由呼叫端傳入（見 titleCategoryStats 註解）。
+func (h *Handler) checkAndAwardTitles(ctx context.Context, uid string, levels []LevelConfig) []AwardedTitle {
+	stats, err := h.titleCategoryStats(ctx, uid, levels)
 	if err != nil {
 		log.Printf("checkAndAwardTitles: stats failed: %v", err)
 		return nil

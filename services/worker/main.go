@@ -25,6 +25,24 @@ const (
 	consumerGroup = "activity_workers"
 	batchSize     = 100
 	batchInterval = 5 * time.Second
+
+	// maxDrainRounds：processBatch 排空迴圈每次 tick 最多讀取的輪數上限（每輪最多 batchSize 筆）。
+	// 防止 Redis Stream 持續湧入新訊息時無窮迴圈/饑餓其他 select 分支（尤其 ctx.Done()）；
+	// 10 輪 * 100 筆 = 單次 tick 最多處理 1000 筆，遠高於舊版每 tick 固定 100 筆的人為吞吐上限。
+	maxDrainRounds = 10
+
+	// firstRoundBlockDur：readAndProcessRound 第一輪阻塞讀取的上限（對抗式審查修正：原本用
+	// BLOCK 0 無限阻塞，閒置時 worker 會整個卡在 Redis 讀取裡，連 ticker 都不會被檢查，導致節流
+	// 到期後累積的 pendingUserIDs 無上限延遲）。改成有界阻塞後，閒置期最多這麼久就會返回一次，
+	// 讓 run() 的 ticker 迴圈能週期性醒來 flush pending。
+	firstRoundBlockDur = 5 * time.Second
+
+	// recomputeThrottle：recomputeStandings 牽涉全表級的跨來源去重 + 對帳補發 + 排行榜重算，
+	// 尖峰時期（例如每 5 秒一批都非空）若每批都整套重跑，等於每 5 秒一次全表級重算，對 DB 負擔過大。
+	// 距離上次執行不到此間隔就跳過本次重算；跳過期間累積的 userID 會併入 pendingUserIDs（見
+	// Worker.maybeRecomputeStandings），下次真正執行時一併帶入，不會丟失。節流後排行榜/去重
+	// 最多延遲 recomputeThrottle（60 秒），可接受。
+	recomputeThrottle = 60 * time.Second
 )
 
 // ActivityEvent is the message pushed to Redis Streams when a user uploads a run.
@@ -50,8 +68,18 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// DB
-	pool, err := pgxpool.New(ctx, mustEnv("DATABASE_URL"))
+	// DB：比照 services/api/internal/db/postgres.go 的寫法（ParseConfig + 顯式連線池設定）。
+	dbCfg, err := pgxpool.ParseConfig(mustEnv("DATABASE_URL"))
+	if err != nil {
+		log.Fatal().Err(err).Msg("parse db config failed")
+	}
+	// MaxConns=3：worker 是單一 goroutine 依序處理批次的序列/批次工作負載，不像 api 端要應付大量
+	// 併發 HTTP 請求，不需要大連線池；小池也降低對 Neon pooler 常駐連線數的壓力。
+	dbCfg.MaxConns = 3
+	// MinConns=0：閒置時不保留熱連線 → Neon compute 可完全休眠(scale-to-zero)，有請求再懶惰重連（比照 api 端）。
+	dbCfg.MinConns = 0
+
+	pool, err := pgxpool.NewWithConfig(ctx, dbCfg)
 	if err != nil {
 		log.Fatal().Err(err).Msg("db connect failed")
 	}
@@ -70,8 +98,8 @@ func main() {
 
 	log.Info().Str("consumer", consumerName).Msg("DOR Activity Worker started")
 
-	w := &Worker{db: pool, rdb: rdb, consumerName: consumerName}
-	w.recomputeStandings(ctx) // 啟動時先算一次(補齊停機期間累積)；之後改「有新活動才重算」，閒置不打 DB → 讓 Neon 休眠
+	w := &Worker{db: pool, rdb: rdb, consumerName: consumerName, pendingUserIDs: make(map[string]struct{})}
+	w.recomputeStandings(ctx, nil) // 啟動時先算一次(補齊停機期間累積，不限縮 userID)；之後改「有新活動才重算」，閒置不打 DB → 讓 Neon 休眠
 	w.run(ctx)
 }
 
@@ -79,6 +107,11 @@ type Worker struct {
 	db           *pgxpool.Pool
 	rdb          *redis.Client
 	consumerName string
+
+	// lastRecompute / pendingUserIDs：recomputeStandings 節流狀態。只由 run() 所在的單一 goroutine
+	// 循序讀寫（processBatch/recomputeStandings 皆同步呼叫，無並行存取），故不需要額外鎖。
+	lastRecompute  time.Time           // 上次真正執行 recomputeStandings 的時間，zero value 代表尚未執行過
+	pendingUserIDs map[string]struct{} // 節流跳過時累積的 userID，下次真正執行時要與當批 userID 一併帶入，不可丟失
 }
 
 func (w *Worker) run(ctx context.Context) {
@@ -91,19 +124,66 @@ func (w *Worker) run(ctx context.Context) {
 			log.Info().Msg("worker shutting down")
 			return
 		case <-ticker.C:
-			if w.processBatch(ctx) > 0 {
-				w.recomputeStandings(ctx) // 有新活動才重算成績(事件驅動)；閒置(Redis 阻塞)時完全不打 DB
+			processed, userIDs := w.processBatch(ctx)
+			// 對抗式審查修正：節流跳過期間累積的 pendingUserIDs 必須「不依賴新活動」也能被 flush，
+			// 否則若節流到期後恰好進入閒置空窗（夜間/離峰、完全沒有新活動），pendingUserIDs 會卡在
+			// 記憶體裡無上限延遲，直到系統中任何人下一筆活動出現才重算——與「最多延遲 60 秒」的承諾矛盾。
+			// 因此即使本次 tick 沒有新活動（processed==0），只要還有 pending 待處理，也要呼叫
+			// maybeRecomputeStandings（userIDs 可為空 map，該函式本就是先併集合再判節流，空批安全）；
+			// 搭配下面 readAndProcessRound 的有界阻塞（5s），worker 迴圈在閒置期仍會週期性醒來檢查。
+			if processed > 0 || len(w.pendingUserIDs) > 0 {
+				w.maybeRecomputeStandings(ctx, userIDs)
 			}
 		}
 	}
 }
 
+// shouldRecompute 是 recomputeThrottle 節流判斷的純函式（抽出以利單元測試）：距離上次執行
+// （last）到現在（now）是否已經過了至少 minInterval。last 為 zero value（尚未執行過，例如
+// worker 剛啟動）一律視為「應該執行」。
+func shouldRecompute(last, now time.Time, minInterval time.Duration) bool {
+	if last.IsZero() {
+		return true
+	}
+	return now.Sub(last) >= minInterval
+}
+
+// maybeRecomputeStandings 依 recomputeThrottle 節流規則決定是否執行 recomputeStandings：
+//   - 一律先把本批 userIDs 併入 w.pendingUserIDs（無論本次是否真的執行）。
+//   - 若距離上次執行不到 recomputeThrottle，本次跳過，pendingUserIDs 保留給下次使用，函式直接返回。
+//   - 若可以執行，把累積的 pendingUserIDs（含本批 + 之前跳過時累積未消化的）整包傳入
+//     recomputeStandings，執行後清空 pendingUserIDs、更新 lastRecompute。
+func (w *Worker) maybeRecomputeStandings(ctx context.Context, userIDs map[string]struct{}) {
+	for uid := range userIDs {
+		w.pendingUserIDs[uid] = struct{}{}
+	}
+
+	now := time.Now()
+	if !shouldRecompute(w.lastRecompute, now, recomputeThrottle) {
+		return // 節流跳過；pendingUserIDs 已併入，留待下次真正執行時一起帶入，不會丟失
+	}
+
+	toProcess := w.pendingUserIDs
+	w.pendingUserIDs = make(map[string]struct{})
+	w.lastRecompute = now
+	w.recomputeStandings(ctx, toProcess)
+}
+
 // recomputeStandings 跨來源去重 + 里程 EXP/DP 對帳補發 + 重算競賽分組成績。只在「剛處理完新活動」
 // 或啟動時呼叫，閒置時完全不打 DB → 讓 Neon compute 休眠(scale-to-zero)。
-func (w *Worker) recomputeStandings(ctx context.Context) {
+//
+// userIDs：本輪（含節流跳過期間累積）涉及的使用者集合，僅用來限縮 aggregateStandings 的重算範圍
+// （見該函式註解）；resolveCrossSourceDups／reconcileMileageExp 仍是全表級操作，不受此限縮——
+// 去重需要看到所有使用者間的重疊、對帳是依 exp_awarded=false 全表掃描，兩者皆非「本批 userID」
+// 可局部判斷。userIDs 為 nil/空集合時（例如啟動時的全量重算）aggregateStandings 不加範圍限制。
+func (w *Worker) recomputeStandings(ctx context.Context, userIDs map[string]struct{}) {
 	w.resolveCrossSourceDups(ctx) // 先跨來源去重，再算成績
 	w.reconcileMileageExp(ctx)    // 對帳補發：抓漏發的里程 EXP/DP（inline 發放失敗的補救網）
-	w.aggregateStandings(ctx)
+	ids := make([]string, 0, len(userIDs))
+	for uid := range userIDs {
+		ids = append(ids, uid)
+	}
+	w.aggregateStandings(ctx, ids)
 }
 
 // reconcileMileageExp 對帳補發：inline 發放（本 worker processOne / api 端 Strava·Terra 匯入）
@@ -245,10 +325,15 @@ func (w *Worker) resolveCrossSourceDups(ctx context.Context) {
 	}
 }
 
-// aggregateStandings 以單一查詢重算所有競賽模式賽事的 race_group_standings（預聚合，前台直接讀）。
+// aggregateStandings 以單一查詢重算競賽模式賽事的 race_group_standings（預聚合，前台直接讀）。
 // 各分組：總累積里程、成員數、平均里程、平均配速（總時間/總里程）、完成累計總時間（成員總移動時間）。
-func (w *Worker) aggregateStandings(ctx context.Context) {
-	tag, err := w.db.Exec(ctx, `
+//
+// userIDs：非空時，只重算「本批使用者有報名」的賽事（EXISTS ... registrations bu WHERE bu.race_id=r.id
+// AND bu.user_id = ANY(userIDs)）——用 registrations（報名關係表）反查，而非 activities.race_id，因為
+// 一筆活動會計入該使用者「所有報名中的賽事」，不是活動本身綁定單一賽事；用報名表才能抓全本批使用者
+// 涉及的所有賽事。userIDs 為空（例如啟動時的全量重算）則不加此限制，比照原本全表級行為。
+func (w *Worker) aggregateStandings(ctx context.Context, userIDs []string) {
+	query := `
 		INSERT INTO race_group_standings
 			(race_id, group_id, total_km, member_count, avg_km, avg_pace_s, finish_total_s, updated_at)
 		SELECT
@@ -264,7 +349,17 @@ func (w *Worker) aggregateStandings(ctx context.Context) {
 			NOW()
 		FROM race_groups rg
 		JOIN races r ON r.id = rg.race_id AND r.event_mode = 'competition'
-		             AND r.control_status NOT IN ('suspended','closed')
+		             AND r.control_status NOT IN ('suspended','closed')`
+
+	var args []interface{}
+	if len(userIDs) > 0 {
+		// 範圍限縮：只重算本批使用者有報名的賽事，避免每批都全表級重算所有進行中賽事。
+		query += `
+		AND EXISTS (SELECT 1 FROM registrations bu WHERE bu.race_id = r.id AND bu.user_id = ANY($1::uuid[]))`
+		args = append(args, userIDs)
+	}
+
+	query += `
 		LEFT JOIN registrations reg ON reg.group_id = rg.id AND reg.status = 'paid'
 		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 		                       AND a.recorded_at BETWEEN r.start_date AND r.end_date
@@ -277,7 +372,9 @@ func (w *Worker) aggregateStandings(ctx context.Context) {
 			avg_pace_s     = EXCLUDED.avg_pace_s,
 			finish_total_s = EXCLUDED.finish_total_s,
 			updated_at     = NOW()
-	`)
+	`
+
+	tag, err := w.db.Exec(ctx, query, args...)
 	if err != nil {
 		log.Error().Err(err).Msg("aggregate standings failed")
 		return
@@ -287,34 +384,83 @@ func (w *Worker) aggregateStandings(ctx context.Context) {
 	}
 }
 
-// processBatch 讀取並處理一批活動訊息；回傳成功處理的筆數（供 run 決定是否重算成績）。
-func (w *Worker) processBatch(ctx context.Context) int {
-	// 讀取 Redis Streams pending + new messages
+// processBatch 排空 Redis Stream：迴圈呼叫 XReadGroup 讀取並處理訊息，直到某一輪讀不到新訊息、
+// 或最多讀滿 maxDrainRounds 輪為止（防止 stream 持續湧入新訊息時無窮迴圈/饑餓 ctx.Done()）。
+// 第一輪為有界阻塞讀取（block=true，見 readAndProcessRound：最多阻塞 5 秒，不是無限阻塞）——
+// 閒置時仍會在 5 秒內醒來一次，讓 run() 的 ticker 迴圈有機會檢查/flush pendingUserIDs
+// （對抗式審查修正：若這裡無限阻塞，閒置空窗期節流到期後的 pending 會無上限延遲，見 run() 註解）；
+// 讀到訊息後改用非阻塞讀取（block=false）持續嘗試撈下一批，藉此排空真正的 backlog，
+// 不再被「一次最多 batchSize 筆、下一批要等下個 ticker」的人為節奏卡住吞吐量。
+//
+// 回傳：整個排空流程處理成功的總筆數，以及排空期間涉及的 userID 集合（去重，取自本批所有訊息的
+// user_id）——recomputeStandings（受節流限制，見 maybeRecomputeStandings）應在排空流程「整個跑完
+// 之後」才呼叫一次，不要每一輪 XReadGroup 各自呼叫一次。
+func (w *Worker) processBatch(ctx context.Context) (int, map[string]struct{}) {
+	totalProcessed := 0
+	userIDs := make(map[string]struct{})
+
+	block := true
+	for round := 0; round < maxDrainRounds; round++ {
+		n, roundUserIDs, hasMore := w.readAndProcessRound(ctx, block)
+		totalProcessed += n
+		for uid := range roundUserIDs {
+			userIDs[uid] = struct{}{}
+		}
+		if !hasMore {
+			break // 本輪讀不到新訊息，stream 已排空，提前結束
+		}
+		block = false // 後續輪次改非阻塞：快速判斷「還有沒有 backlog」，不無謂等待
+	}
+	return totalProcessed, userIDs
+}
+
+// readAndProcessRound 讀取並處理單一輪（最多 batchSize 筆）活動訊息。block 控制本輪 XReadGroup
+// 是否阻塞等待（true=有界阻塞最多 firstRoundBlockDur(5秒)，逾時未讀到訊息就返回空結果；
+// false=非阻塞，立即回傳現有訊息，沒有就回傳空結果）。回傳成功處理筆數、本輪涉及的 userID 集合、
+// 以及本輪是否讀到訊息（hasMore=false 時，processBatch 的排空迴圈應停止）。
+//
+// ⚠️ block=true 刻意用「有界」阻塞（非 BLOCK 0 無限阻塞）：對抗式審查發現，若第一輪無限阻塞，
+// worker 在完全閒置（無新活動）時會整個卡在這次 Redis 讀取裡，連 run() 的 ticker 都不會被檢查，
+// 導致節流到期後累積的 pendingUserIDs 無上限延遲、直到系統中任何人下一筆活動出現才會被 flush——
+// 與「最多延遲 recomputeThrottle(60秒)」的承諾矛盾。改成有界阻塞後，閒置期最多 5 秒就會返回一次
+// （回傳 hasMore=false，processBatch 提前結束、回到 run() 的下一輪 ticker 檢查），恢復週期性喚醒。
+func (w *Worker) readAndProcessRound(ctx context.Context, block bool) (int, map[string]struct{}, bool) {
+	blockDur := time.Duration(-1) // 負值 → 不傳送 BLOCK 參數，非阻塞立即回傳
+	if block {
+		blockDur = firstRoundBlockDur // 有界阻塞：閒置時最多等這麼久就返回，讓迴圈能週期性醒來
+	}
+
 	streams, err := w.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    consumerGroup,
 		Consumer: w.consumerName,
 		Streams:  []string{streamKey, ">"},
 		Count:    batchSize,
-		Block:    0,
+		Block:    blockDur,
 	}).Result()
 	if err != nil || len(streams) == 0 {
-		return 0
+		return 0, nil, false
 	}
 
 	msgs := streams[0].Messages
 	if len(msgs) == 0 {
-		return 0
+		return 0, nil, false
 	}
 
 	log.Debug().Int("count", len(msgs)).Msg("processing activity batch")
 
+	userIDs := make(map[string]struct{})
 	var ids []string
 	for _, msg := range msgs {
 		ids = append(ids, msg.ID)
-		if err := w.processOne(ctx, msg); err != nil {
+		uid, err := w.processOne(ctx, msg)
+		if err != nil {
 			log.Error().Err(err).Str("msg_id", msg.ID).Msg("failed to process activity")
 			// 保留在 pending list，稍後重試
 			ids = ids[:len(ids)-1]
+			continue
+		}
+		if uid != "" {
+			userIDs[uid] = struct{}{}
 		}
 	}
 
@@ -322,18 +468,20 @@ func (w *Worker) processBatch(ctx context.Context) int {
 	if len(ids) > 0 {
 		w.rdb.XAck(ctx, streamKey, consumerGroup, ids...)
 	}
-	return len(ids)
+	return len(ids), userIDs, true
 }
 
-func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) error {
+// processOne 處理單筆活動訊息，回傳該訊息的 user_id（供 processBatch 收集本批涉及的使用者集合）
+// 與錯誤。訊息格式錯誤或處理失敗時 userID 回傳空字串。
+func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) (string, error) {
 	raw, ok := msg.Values["data"].(string)
 	if !ok {
-		return fmt.Errorf("missing data field")
+		return "", fmt.Errorf("missing data field")
 	}
 
 	var evt ActivityEvent
 	if err := json.Unmarshal([]byte(raw), &evt); err != nil {
-		return fmt.Errorf("unmarshal event: %w", err)
+		return "", fmt.Errorf("unmarshal event: %w", err)
 	}
 
 	// 寫入 PostgreSQL（RETURNING 偵測是否真的新插入，避免重複事件灌爆里程）
@@ -354,20 +502,20 @@ func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) error {
 		evt.KmPaces,
 	).Scan(&newID)
 	if err == pgx.ErrNoRows {
-		return nil // 重複活動，略過（不再累加里程）
+		return evt.UserID, nil // 重複活動，略過（不再累加里程），但 userID 仍有效供標準重算範圍使用
 	}
 	if err != nil {
-		return fmt.Errorf("insert activity: %w", err)
+		return "", fmt.Errorf("insert activity: %w", err)
 	}
 
 	// 去重感知、冪等地發放里程 EXP/DP/total_km（取代舊的「無條件 UPDATE total_km」+ awardMileageExp）：
 	// 若同一使用者存在時間重疊、已由其他來源（Strava/Terra）發放過的活動，這裡就不重發，
 	// 避免同一趟跑步被 GPS 與第三方來源各發一次。
 	if err := w.awardMileageDedup(ctx, newID, evt.UserID); err != nil {
-		return fmt.Errorf("award mileage dedup: %w", err)
+		return "", fmt.Errorf("award mileage dedup: %w", err)
 	}
 
-	return nil
+	return evt.UserID, nil
 }
 
 // benignFlagReasons：flagged=true 但屬於「同帳號跨裝置/跨來源/同源重複」的良性標記——不是作弊，

@@ -5,11 +5,15 @@ package appsettings
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/realtime"
@@ -212,14 +216,94 @@ func (h *Handler) Set(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	invalidateSettingsCache()
 	h.rt.PublishData(r.Context(), "settings", nil)
 	respondJSON(w, http.StatusOK, map[string]any{"settings": h.queryAll(r.Context(), false)})
 }
 
+// ---- 套件內記憶體快取（60 秒 TTL）----
+//
+// Dashboard 等熱路徑一次載入會呼叫 GetString/GetInt 多達 8-16 次，每次都現查 DB 對 1000 人併發
+// 會放大成大量重複的單列查詢。這裡加一層 process-local 快取：命中且未過期直接回傳，未命中/過期
+// 才查 DB。查無此 key（真的不存在）也快取（negative cache），否則不存在的 key 每次都會穿透查 DB。
+// Set 寫入成功後整個清快取，讓下次讀取重新取得最新值；PublishData('settings') 廣播邏輯不受影響。
+
+// settingsCacheTTL 快取有效期。
+const settingsCacheTTL = 60 * time.Second
+
+// settingsCacheEntry 一筆快取項。found 區分「DB 裡真的沒有這個 key（negative cache）」與
+// 「值存在但為空字串」，避免用 zero value（空字串）混淆兩種情況。
+type settingsCacheEntry struct {
+	value string
+	found bool
+	at    time.Time
+}
+
+var settingsCache = struct {
+	mu sync.RWMutex
+	m  map[string]settingsCacheEntry
+}{m: make(map[string]settingsCacheEntry)}
+
+// isSettingsCacheExpired 純函式（不依賴 DB/全域狀態），判斷快取項是否已過期，方便單元測試。
+// at 為零值視為「從未快取過」，一律視為過期。
+func isSettingsCacheExpired(at, now time.Time, ttl time.Duration) bool {
+	if at.IsZero() {
+		return true
+	}
+	return now.Sub(at) >= ttl
+}
+
+// getCachedSetting 讀快取；命中且未過期才回傳 ok=true。
+func getCachedSetting(key string) (settingsCacheEntry, bool) {
+	settingsCache.mu.RLock()
+	e, ok := settingsCache.m[key]
+	settingsCache.mu.RUnlock()
+	if !ok || isSettingsCacheExpired(e.at, time.Now(), settingsCacheTTL) {
+		return settingsCacheEntry{}, false
+	}
+	return e, true
+}
+
+func setCachedSetting(key, value string, found bool) {
+	settingsCache.mu.Lock()
+	settingsCache.m[key] = settingsCacheEntry{value: value, found: found, at: time.Now()}
+	settingsCache.mu.Unlock()
+}
+
+// invalidateSettingsCache 整個清空快取（Set 寫入成功後呼叫），簡單優先，避免只清單一 key 時
+// 遺漏邊界情況。設定變更頻率低，清空後下一輪讀取重新查 DB 的成本可忽略。
+func invalidateSettingsCache() {
+	settingsCache.mu.Lock()
+	settingsCache.m = make(map[string]settingsCacheEntry)
+	settingsCache.mu.Unlock()
+}
+
+// getRawSetting 讀 key 對應的原始字串值（未 trim、未套用預設值），供 GetInt/GetString 共用。
+// 命中快取（含 negative cache）直接回傳；未命中才查 DB 並回填快取。回傳 found=false 代表
+// 「DB 裡沒有這個 key」，呼叫端應回傳自己的預設值。
+//
+// 只在確定查無資料（pgx.ErrNoRows）時才寫入 negative cache；其他錯誤（如 DB 暫時不可用）不快取，
+// 讓下一次呼叫有機會在 DB 恢復後立刻拿到正確值，不必等滿一輪 TTL。
+func getRawSetting(ctx context.Context, db *pgxpool.Pool, key string) (string, bool) {
+	if e, ok := getCachedSetting(key); ok {
+		return e.value, e.found
+	}
+	var v string
+	err := db.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&v)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			setCachedSetting(key, "", false)
+		}
+		return "", false
+	}
+	setCachedSetting(key, v, true)
+	return v, true
+}
+
 // GetInt 讀整數設定；查無/解析失敗回 def。
 func GetInt(ctx context.Context, db *pgxpool.Pool, key string, def int) int {
-	var v string
-	if err := db.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&v); err != nil {
+	v, found := getRawSetting(ctx, db, key)
+	if !found {
 		return def
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(v))
@@ -231,8 +315,8 @@ func GetInt(ctx context.Context, db *pgxpool.Pool, key string, def int) int {
 
 // GetString 讀字串設定；查無/空值回 def。
 func GetString(ctx context.Context, db *pgxpool.Pool, key, def string) string {
-	var v string
-	if err := db.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&v); err != nil {
+	v, found := getRawSetting(ctx, db, key)
+	if !found {
 		return def
 	}
 	if v = strings.TrimSpace(v); v == "" {

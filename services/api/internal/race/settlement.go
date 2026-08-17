@@ -149,6 +149,8 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 	if err != nil {
 		return nil, err
 	}
+	// 刻意呼叫未快取的原始版本（見 cache.go 對 getRaceActivitiesCached 的說明）：EXP 結算不可吃到
+	// 20 秒內的 stale 活動資料，一律即時全場掃描。
 	acts, err := r.LoadRaceActivities(ctx, race.ID)
 	if err != nil {
 		return nil, err
