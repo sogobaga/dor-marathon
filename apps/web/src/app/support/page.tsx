@@ -25,13 +25,13 @@ export default function SupportPage() {
         <Section title="連接 / 中斷 Strava">
           <ol style={ol}>
             <li><b>連接</b>：登入後 → 右上角頭像進「會員中心」→「運動數據」分頁 → 點官方「Connect with Strava」按鈕 → 於 Strava 授權。</li>
-            <li><b>中斷</b>：「運動數據」分頁 →「中斷」。中斷後我們不再同步你的新活動；已匯入的紀錄會保留。</li>
+            <li><b>中斷</b>：「運動數據」分頁 →「中斷」。中斷後我們不再同步你的新活動，且會刪除已匯入的 Strava 活動紀錄（你已獲得的 EXP/DP 等獎勵不受影響）。</li>
             <li><b>更換 Strava 帳號</b>：先到 <a href="https://www.strava.com/logout" target="_blank" rel="noreferrer" style={link}>strava.com 登出</a> → 回本站「中斷」→ 重新連接（連到的是你瀏覽器當下登入的 Strava 帳號）。</li>
           </ol>
-          <p style={pDim}>我們只會匯入你「連接之後」的跑步活動（距離、時間、配速、爬升、心率、路線），用於賽事任務達成判定、排行榜與等級。</p>
+          <p style={pDim}>我們只會匯入你「連接之後」的跑步活動（距離、時間、配速、爬升、心率），用於你個人的數據頁、個人成就與等級經驗；賽事排名與里程競賽預設僅採計 App GPS 正式紀錄（除非該賽事明確開啟外部數據）。</p>
           <div style={{ marginTop: 14 }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/strava/powered_by_strava.svg" alt="Powered by Strava" style={{ height: 18, opacity: 0.85 }} />
+            <img src="/strava/powered_by_strava_white.png" alt="Powered by Strava" style={{ height: 18, opacity: 0.85 }} />
           </div>
         </Section>
 

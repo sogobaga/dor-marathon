@@ -112,3 +112,53 @@ func TestDeltaCompensationScenario(t *testing.T) {
 		t.Errorf("相等情境 delta = %v, want 0", delta)
 	}
 }
+
+// --- 對抗式審查 CRITICAL-2：external_award_ledger 去重雜湊測試 ---
+//
+// externalAwardHash 是 external_award_ledger（migrations/131）去重的唯一鍵材料來源（見
+// AwardMileageExp ③.5）：AwardMileageExp/awardMileageDedup 本身需要一顆真正的 Postgres 才能跑
+// （advisory lock、多表交易），這個套件目前沒有、也未引入任何 DB-backed 測試基礎設施（testcontainers/
+// sqlmock 等 — 這個 repo 迄今所有 Go 測試皆為純函式單元測試），故這裡改為對「帳本去重能否正確辨識
+// 同一筆 vs 不同筆外部活動」的核心依賴——雜湊本身——做嚴謹的單元測試：同一 (source, external_id)
+// 必須產生同一把鍵（ledger 才擋得住重複發放）、不同 external_id 或不同 source 必須產生不同鍵
+// （否則會誤傷不相干的活動）。實際交易層的 dedup 行為（命中不再 credit／未命中 credit 後寫入帳本）
+// 已在 mileage_exp.go 逐行走查（見對抗式審查回報的 trace），並靠這裡的雜湊正確性做地基保證。
+
+func TestExternalAwardHashDeterministic(t *testing.T) {
+	h1 := externalAwardHash("strava", "123456789")
+	h2 := externalAwardHash("strava", "123456789")
+	if h1 != h2 {
+		t.Fatalf("same (source, external_id) should hash identically: %q vs %q", h1, h2)
+	}
+	if len(h1) != 64 { // sha256 hex 固定 64 字元
+		t.Fatalf("expected 64-char hex sha256 digest, got %d chars: %q", len(h1), h1)
+	}
+}
+
+func TestExternalAwardHashDiffersByExternalID(t *testing.T) {
+	h1 := externalAwardHash("strava", "123456789")
+	h2 := externalAwardHash("strava", "987654321")
+	if h1 == h2 {
+		t.Fatalf("different external_id must not collide: both hashed to %q", h1)
+	}
+}
+
+func TestExternalAwardHashDiffersBySource(t *testing.T) {
+	// 同一個 external_id 字串若剛好在不同 provider 撞號，不該被誤判成同一筆（沒有 ":" 分隔會有
+	// "strava"+"a1"+"strava" 的字串前綴混淆風險，這裡驗證分隔確實有效區分 source）。
+	h1 := externalAwardHash("strava", "12345")
+	h2 := externalAwardHash("garmin", "12345")
+	if h1 == h2 {
+		t.Fatalf("different source with same external_id must not collide: both hashed to %q", h1)
+	}
+}
+
+func TestExternalAwardHashNoDelimiterConfusion(t *testing.T) {
+	// source+external_id 相接後若無分隔符，"st"+"rava123" 與 "stra"+"va123" 會撞成同一個明文——
+	// 用 ":" 分隔後兩者必須不同，防止這類邊界情況被誤判為同一筆外部活動。
+	h1 := externalAwardHash("st", "rava123")
+	h2 := externalAwardHash("stra", "va123")
+	if h1 == h2 {
+		t.Fatalf("delimiter should prevent concatenation ambiguity: both hashed to %q", h1)
+	}
+}

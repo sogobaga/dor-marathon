@@ -589,7 +589,7 @@ func (h *Handler) fetchStats(ctx context.Context, userID string) (*Stats, error)
 		FROM users u
 		LEFT JOIN registrations reg ON reg.user_id = u.id AND reg.status = 'paid'
 		LEFT JOIN mission_completions mc ON mc.user_id = u.id
-		LEFT JOIN activities a ON a.user_id = u.id
+		LEFT JOIN activities a ON a.user_id = u.id AND NOT a.flagged
 		WHERE u.id = $1
 		GROUP BY u.total_km
 	`, userID).Scan(&s.TotalKm, &s.TotalRaces, &s.Rescues, &s.BestPaceS)

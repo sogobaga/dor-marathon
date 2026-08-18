@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -179,6 +180,11 @@ func (h *StravaHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	// Strava API 條款 30 天刪除義務：中斷連接後刪除已匯入的活動（已發放的 EXP/DP/total_km 不追回，使用者拍板）。
+	if err := h.repo.DeleteProviderActivities(r.Context(), userID, providerStrava); err != nil {
+		log.Error().Err(err).Str("user", userID).Msg("strava disconnect: delete imported activities failed")
+		// 不因刪除失敗擋斷線本身（連線已刪、使用者已達成中斷目的）；錯誤已記錄供事後補償清理。
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -249,13 +255,17 @@ func (h *StravaHandler) WebhookVerify(w http.ResponseWriter, r *http.Request) {
 	respondErr(w, http.StatusForbidden, "verify failed")
 }
 
-// POST /webhook — 活動事件（須 2 秒內回 200，處理放背景）
+// POST /webhook — 活動事件 + 授權事件（須 2 秒內回 200，處理放背景）。
+// updates 為 Strava webhook 事件通用的 map[string]string 欄位（依 event_type 不同內容不同）；
+// 撤權事件（object_type=athlete, aspect_type=update）帶 updates={"authorized":"false"}
+// （見 https://developers.strava.com/docs/webhooks/ 的 Example athlete deauthorization event）。
 func (h *StravaHandler) WebhookEvent(w http.ResponseWriter, r *http.Request) {
 	var ev struct {
-		ObjectType string `json:"object_type"`
-		AspectType string `json:"aspect_type"`
-		ObjectID   int64  `json:"object_id"`
-		OwnerID    int64  `json:"owner_id"`
+		ObjectType string            `json:"object_type"`
+		AspectType string            `json:"aspect_type"`
+		ObjectID   int64             `json:"object_id"`
+		OwnerID    int64             `json:"owner_id"`
+		Updates    map[string]string `json:"updates"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
 		w.WriteHeader(http.StatusOK) // 仍回 200，避免 Strava 重試風暴
@@ -265,6 +275,85 @@ func (h *StravaHandler) WebhookEvent(w http.ResponseWriter, r *http.Request) {
 	if ev.ObjectType == "activity" && (ev.AspectType == "create" || ev.AspectType == "update") {
 		go h.handleActivityEvent(ev.OwnerID, ev.ObjectID)
 	}
+	if ev.ObjectType == "athlete" && ev.Updates["authorized"] == "false" {
+		go h.handleDeauthorizeEvent(ev.OwnerID)
+	}
+}
+
+// handleDeauthorizeEvent 使用者「直接在 Strava 端」撤銷本站授權（未先來本站按「中斷」）。
+// 與 Disconnect（使用者主動在本站中斷）對稱：都須刪本地連線 + 已匯入活動，滿足 Strava 30 天刪除義務。
+// 不呼叫 h.deauthorize（該 API 是本站主動撤銷，使用者已經在 Strava 端撤銷過了，再打一次沒有意義）。
+//
+// ⚠️ SEC（對抗式審查 CRITICAL-1）：/webhook 是無簽章公開端點，任何人都能偽造這個事件、帶受害者的
+// owner_id，若不驗證就直接刪，等同讓任何人都能清空任意使用者的 Strava 連線＋活動。比照隔壁
+// handleActivityEvent 的「confirm-via-API」防線（見該函式上方 SEC-H4 註解），刪除前一律先用該連線
+// 自己的 token 向 Strava 實測是否真的已撤權（見 verifyStravaDeauthorized）；另加 per-owner 節流，
+// 讓這條破壞性路徑的防線不比讀取路徑弱。
+//
+// (provider, provider_user_id) 沒有唯一約束（見 migrations/014_integrations.sql）：同一個 Strava
+// 帳號理論上可能被多個 DOR 帳號各自連接，撤權事件對應的是整個 Strava 帳號，故用 ListByProviderUser
+// 找出「全部」符合的連線逐一處理，而非只處理第一筆。
+func (h *StravaHandler) handleDeauthorizeEvent(ownerID int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ownerIDStr := strconv.FormatInt(ownerID, 10)
+	if !h.allowRate(ctx, "strava:webhook:deauth:"+ownerIDStr, 20, 5*time.Minute) {
+		log.Warn().Str("owner", ownerIDStr).Msg("strava deauth webhook event rate limited")
+		return
+	}
+	conns, err := h.repo.ListByProviderUser(ctx, providerStrava, ownerIDStr)
+	if err != nil || len(conns) == 0 {
+		return
+	}
+	for _, conn := range conns {
+		if !h.verifyStravaDeauthorized(ctx, conn) {
+			continue // 未確認撤權（可能是偽造事件、也可能只是暫時無法確認）→ 這條連線不動
+		}
+		if err := h.repo.Delete(ctx, conn.UserID, providerStrava); err != nil {
+			log.Error().Err(err).Str("user", conn.UserID).Msg("strava deauth webhook: delete connection failed")
+			continue
+		}
+		if err := h.repo.DeleteProviderActivities(ctx, conn.UserID, providerStrava); err != nil {
+			log.Error().Err(err).Str("user", conn.UserID).Msg("strava deauth webhook: delete imported activities failed")
+		}
+	}
+}
+
+// verifyStravaDeauthorized 向 Strava 實際確認某連線是否「真的」已被撤權，而不是單憑 webhook 事件的
+// 宣稱（見 handleDeauthorizeEvent 上方 SEC 註解）。
+//
+//   - token 刷新失敗、或 GET /athlete 遭拒（Strava 明確表示 token 已失效）→ 確認撤權，可以刪除。
+//   - GET /athlete 回 200（token 仍然有效）→ 這個「撤權事件」是偽造的，不刪除。
+//   - 其他錯誤（網路逾時／5xx／解碼失敗，狀態不確定）→ 保守不刪除：破壞性操作寧可暫時漏刪，也不可
+//     誤刪無辜使用者的資料。真撤權的話 Strava 之後仍會重送 webhook，使用者自己也可能在本站按「中斷」。
+func (h *StravaHandler) verifyStravaDeauthorized(ctx context.Context, conn *Connection) bool {
+	access, err := h.tokenForUser(ctx, conn)
+	if err != nil {
+		// token 刷新（/oauth/token, grant_type=refresh_token）失敗：Strava 官方文件僅明確保證資源型
+		// API（如 GET /athlete）對失效 token 回 401；OAuth token 端點對失效 refresh_token 未見官方
+		// 明文狀態碼，但依 OAuth2 標準（RFC 6749 invalid_grant）與 Strava revoke 端點本身以 400
+		// 表示 token 參數問題的慣例，400 在這個端點上實務上等同「token 已失效」，故與 401/403 一併
+		// 視為確認信號（防禦性涵蓋）。
+		if isStravaTokenInvalidGrant(err) {
+			return true
+		}
+		log.Warn().Err(err).Str("user", conn.UserID).Msg("strava deauth verify: token refresh inconclusive, not deleting")
+		return false
+	}
+	var athlete struct {
+		ID int64 `json:"id"`
+	}
+	if err := h.getJSON(ctx, access, "/athlete", &athlete); err != nil {
+		// 依 Strava 官方文件：「All requests made using invalidated tokens will receive a 401
+		// Unauthorized response」——401/403 即確認撤權。
+		if isStravaUnauthorized(err) {
+			return true
+		}
+		log.Warn().Err(err).Str("user", conn.UserID).Msg("strava deauth verify: /athlete check inconclusive, not deleting")
+		return false
+	}
+	log.Warn().Str("user", conn.UserID).Msg("strava deauth webhook: token still valid, event looks forged — refusing to delete")
+	return false
 }
 
 // SEC-H4：/webhook 是公開端點，POST 完全不驗來源（Strava webhook 不支援 payload 簽章）——
@@ -332,6 +421,12 @@ func (h *StravaHandler) exchangeCode(ctx context.Context, code string) (*stravaT
 	})
 }
 
+// errRateLimited 標記 Strava 回 429（Too Many Requests）。呼叫端（syncRecent/backfill）看到此錯誤
+// 應立即中止本輪剩餘處理，不要繼續打——Strava 限流窗口（15 分鐘 + 每日）過後，使用者下次手動
+// sync 或下次 webhook 事件自然會再試。不做排程重試／退避佇列：目前呼叫量小，過度設計反而增加
+// 複雜度，之後真的常撞限流再考慮。
+var errRateLimited = errors.New("strava rate limited (429)")
+
 func (h *StravaHandler) postToken(ctx context.Context, form url.Values) (*stravaToken, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, stravaTokenURL, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -340,8 +435,12 @@ func (h *StravaHandler) postToken(ctx context.Context, form url.Values) (*strava
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		log.Warn().Str("retry_after", resp.Header.Get("Retry-After")).Msg("strava token endpoint rate limited (429)")
+		return nil, errRateLimited
+	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("strava token http %d", resp.StatusCode)
+		return nil, &stravaHTTPError{Status: resp.StatusCode}
 	}
 	var t stravaToken
 	if err := json.NewDecoder(resp.Body).Decode(&t); err != nil {
@@ -384,6 +483,31 @@ type stravaActivity struct {
 	StartDate          string  `json:"start_date"` // RFC3339 UTC
 }
 
+// stravaHTTPError 包裝 Strava API/OAuth 端點回傳的非 2xx 狀態碼，讓呼叫端（如撤權驗證
+// verifyStravaDeauthorized）能用 errors.As 取出確切狀態碼判斷語意，而不必字串比對錯誤訊息。
+type stravaHTTPError struct{ Status int }
+
+func (e *stravaHTTPError) Error() string { return fmt.Sprintf("strava http %d", e.Status) }
+
+// isStravaUnauthorized 判斷錯誤是否代表 Strava 端回報 401/403（token 已失效/無權限）。
+func isStravaUnauthorized(err error) bool {
+	var he *stravaHTTPError
+	if errors.As(err, &he) {
+		return he.Status == http.StatusUnauthorized || he.Status == http.StatusForbidden
+	}
+	return false
+}
+
+// isStravaTokenInvalidGrant 判斷「/oauth/token 刷新」失敗是否代表 refresh_token 已失效
+// （見 verifyStravaDeauthorized 呼叫處註解：400 與 401/403 皆視為確認信號）。
+func isStravaTokenInvalidGrant(err error) bool {
+	var he *stravaHTTPError
+	if errors.As(err, &he) {
+		return he.Status == http.StatusBadRequest || he.Status == http.StatusUnauthorized || he.Status == http.StatusForbidden
+	}
+	return false
+}
+
 func (h *StravaHandler) getJSON(ctx context.Context, access, path string, out any) error {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, stravaAPIBase+path, nil)
 	req.Header.Set("Authorization", "Bearer "+access)
@@ -392,8 +516,12 @@ func (h *StravaHandler) getJSON(ctx context.Context, access, path string, out an
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		log.Warn().Str("retry_after", resp.Header.Get("Retry-After")).Str("path", path).Msg("strava api rate limited (429)")
+		return errRateLimited
+	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("strava api http %d", resp.StatusCode)
+		return &stravaHTTPError{Status: resp.StatusCode}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
@@ -429,6 +557,9 @@ func (h *StravaHandler) syncRecent(ctx context.Context, conn *Connection) (SyncR
 	}
 	after := regAt.Unix()
 	var acts []stravaActivity
+	// 429（errRateLimited）與其他錯誤同樣直接 return：整批列表抓取失敗，不進入下方逐筆匯入迴圈，
+	// 即「中止本輪剩餘項目、不要繼續打」——這裡列表一次拉齊、匯入不再打 Strava API，故不需要在
+	// for 迴圈中額外判斷。
 	if err := h.getJSON(ctx, access, fmt.Sprintf("/athlete/activities?after=%d&per_page=100", after), &acts); err != nil {
 		return res, err
 	}

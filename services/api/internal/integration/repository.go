@@ -3,12 +3,20 @@ package integration
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 )
 
 type Repository struct{ db *pgxpool.Pool }
@@ -28,7 +36,94 @@ type Connection struct {
 	AthleteName    string
 }
 
-// Save upsert（依 user_id+provider）
+// --- token 加密（graceful、漸進遷移）---
+//
+// STRAVA_TOKEN_KEY 未設定（空字串）或格式不對 → stravaTokenKey() 回傳 nil，encrypt/decrypt 全部
+// 原樣直通（零風險 fallback，完全維持現狀明碼，不影響任何既有連線）。
+// 設定後：新寫入（Save/UpdateTokens）一律加密、加 "enc:" 前綴標記；讀取（scanConn）看前綴——
+// 有前綴才解密，沒有前綴當 legacy 明碼直接用。既有明碼連線在下次 token refresh（每 6 小時，見
+// StravaHandler.tokenForUser）時自然輪換成密文，不需要一次性批次遷移。
+// 不快取金鑰（呼叫頻率低，僅連線建立/token 刷新時才會用到，重新讀取 env 的成本可忽略），
+// 好處是設定變更後不必重啟即生效、也方便測試以 t.Setenv 切換情境。
+const encPrefix = "enc:"
+
+// stravaTokenKey 解析 STRAVA_TOKEN_KEY（32 bytes，接受 hex 或 base64 編碼）。
+func stravaTokenKey() []byte {
+	raw := os.Getenv("STRAVA_TOKEN_KEY")
+	if raw == "" {
+		return nil
+	}
+	if k, err := hex.DecodeString(raw); err == nil && len(k) == 32 {
+		return k
+	}
+	if k, err := base64.StdEncoding.DecodeString(raw); err == nil && len(k) == 32 {
+		return k
+	}
+	log.Warn().Msg("STRAVA_TOKEN_KEY 已設定但不是有效的 32 bytes hex/base64 金鑰，token 將繼續以明碼儲存")
+	return nil
+}
+
+// encryptToken AES-256-GCM 加密；金鑰未設定/無效或輸入為空字串時原樣回傳（明碼 fallback）。
+func encryptToken(plain string) string {
+	key := stravaTokenKey()
+	if len(key) == 0 || plain == "" {
+		return plain
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		log.Error().Err(err).Msg("strava token encrypt: cipher init failed，本次以明碼儲存")
+		return plain
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		log.Error().Err(err).Msg("strava token encrypt: gcm init failed，本次以明碼儲存")
+		return plain
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		log.Error().Err(err).Msg("strava token encrypt: nonce 產生失敗，本次以明碼儲存")
+		return plain
+	}
+	ct := gcm.Seal(nonce, nonce, []byte(plain), nil)
+	return encPrefix + base64.RawURLEncoding.EncodeToString(ct)
+}
+
+// decryptToken 依前綴判斷：無 "enc:" 前綴 → legacy 明碼直接回傳；有前綴則解密——
+// 金鑰未設定或解密失敗一律回傳清楚的 error（絕不把密文當 token 用、也不 panic），
+// 交由呼叫端（GetByUser/GetByProviderUser）視為查詢失敗處理。
+func decryptToken(stored string) (string, error) {
+	if !strings.HasPrefix(stored, encPrefix) {
+		return stored, nil
+	}
+	key := stravaTokenKey()
+	if len(key) == 0 {
+		return "", fmt.Errorf("token 已加密但 STRAVA_TOKEN_KEY 未設定，無法解密")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(stored, encPrefix))
+	if err != nil {
+		return "", fmt.Errorf("decode encrypted token: %w", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("token cipher init: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("token gcm init: %w", err)
+	}
+	if len(raw) < gcm.NonceSize() {
+		return "", fmt.Errorf("encrypted token ciphertext too short")
+	}
+	nonce, ct := raw[:gcm.NonceSize()], raw[gcm.NonceSize():]
+	plain, err := gcm.Open(nil, nonce, ct, nil)
+	if err != nil {
+		return "", fmt.Errorf("decrypt token: %w", err)
+	}
+	return string(plain), nil
+}
+
+// Save upsert（依 user_id+provider）。access_token/refresh_token 寫入前經 encryptToken 處理
+// （未設金鑰時為 no-op，回傳原字串）。
 func (r *Repository) Save(ctx context.Context, c *Connection) error {
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO user_integrations
@@ -42,10 +137,24 @@ func (r *Repository) Save(ctx context.Context, c *Connection) error {
 			scope            = EXCLUDED.scope,
 			athlete_name     = EXCLUDED.athlete_name,
 			updated_at       = NOW()`,
-		c.UserID, c.Provider, c.ProviderUserID, c.AccessToken, c.RefreshToken, c.ExpiresAt, c.Scope, c.AthleteName)
+		c.UserID, c.Provider, c.ProviderUserID, encryptToken(c.AccessToken), encryptToken(c.RefreshToken),
+		c.ExpiresAt, c.Scope, c.AthleteName)
 	return err
 }
 
+// decryptConnFields 就地解密 Connection 的 access/refresh token（scanConn 與 ListByProviderUser 共用）。
+func decryptConnFields(c *Connection) error {
+	var err error
+	if c.AccessToken, err = decryptToken(c.AccessToken); err != nil {
+		return fmt.Errorf("decrypt access token: %w", err)
+	}
+	if c.RefreshToken, err = decryptToken(c.RefreshToken); err != nil {
+		return fmt.Errorf("decrypt refresh token: %w", err)
+	}
+	return nil
+}
+
+// scanConn 讀出後以 decryptToken 還原 access_token/refresh_token（legacy 明碼直通、密文則解密）。
 func scanConn(row pgx.Row) (*Connection, error) {
 	c := &Connection{}
 	err := row.Scan(&c.ID, &c.UserID, &c.Provider, &c.ProviderUserID,
@@ -53,7 +162,13 @@ func scanConn(row pgx.Row) (*Connection, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
-	return c, err
+	if err != nil {
+		return nil, err
+	}
+	if err := decryptConnFields(c); err != nil {
+		return nil, fmt.Errorf("scan connection %s: %w", c.ID, err)
+	}
+	return c, nil
 }
 
 const connCols = `SELECT id, user_id, provider, provider_user_id, access_token, refresh_token,
@@ -67,6 +182,32 @@ func (r *Repository) GetByProviderUser(ctx context.Context, provider, providerUs
 	return scanConn(r.db.QueryRow(ctx, connCols+` WHERE provider=$1 AND provider_user_id=$2`, provider, providerUserID))
 }
 
+// ListByProviderUser 回傳所有綁定同一 provider 帳號（如同一個 Strava athlete id）的連線列。
+// (provider, provider_user_id) 沒有唯一約束（見 migrations/014_integrations.sql，只建了一般索引，
+// 未加 UNIQUE），同一個 Strava 帳號理論上可能被多個 DOR 帳號各自連接。撤權事件（webhook 的
+// object_type=athlete）是整個 Strava 帳號層級的事件，用這個函式才能找出「全部」受影響的連線，
+// 只用 GetByProviderUser 取第一筆會漏掉其餘帳號（見 handleDeauthorizeEvent）。
+func (r *Repository) ListByProviderUser(ctx context.Context, provider, providerUserID string) ([]*Connection, error) {
+	rows, err := r.db.Query(ctx, connCols+` WHERE provider=$1 AND provider_user_id=$2`, provider, providerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Connection
+	for rows.Next() {
+		c := &Connection{}
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Provider, &c.ProviderUserID,
+			&c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.AthleteName); err != nil {
+			return nil, err
+		}
+		if err := decryptConnFields(c); err != nil {
+			return nil, fmt.Errorf("list connections %s: %w", c.ID, err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // UserCreatedAt 會員註冊時間（Strava 只抓此時間之後的活動）
 func (r *Repository) UserCreatedAt(ctx context.Context, userID string) (time.Time, error) {
 	var t time.Time
@@ -74,16 +215,57 @@ func (r *Repository) UserCreatedAt(ctx context.Context, userID string) (time.Tim
 	return t, err
 }
 
+// UpdateTokens 寫入前對 access/refresh 經 encryptToken 處理（見上方「token 加密」說明）。
 func (r *Repository) UpdateTokens(ctx context.Context, id, access, refresh string, expiresAt time.Time) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE user_integrations SET access_token=$1, refresh_token=$2, expires_at=$3, updated_at=NOW() WHERE id=$4`,
-		access, refresh, expiresAt, id)
+		encryptToken(access), encryptToken(refresh), expiresAt, id)
 	return err
 }
 
 func (r *Repository) Delete(ctx context.Context, userID, provider string) error {
 	_, err := r.db.Exec(ctx, `DELETE FROM user_integrations WHERE user_id=$1 AND provider=$2`, userID, provider)
 	return err
+}
+
+// DeleteProviderActivities 刪除使用者某來源（如 "strava"）已匯入的活動。
+//
+// 依 Strava API Agreement：使用者中斷連接（本站主動 disconnect）或於 Strava 端撤銷授權
+// （webhook object_type=athlete、updates.authorized=false）後，須於 30 天內刪除已匯入的活動資料——
+// 這裡兩個路徑都立即刪除，滿足該義務。已發放的 EXP/DP/total_km 一律不追回（使用者拍板：獎勵已發放
+// 視為既定事實，不因資料來源事後撤權而剝奪玩家）。
+//
+// dup_of 有 FK ON DELETE SET NULL（見 migrations/015_activity_dedup.sql），所以直接 DELETE 不會因
+// FK 約束報錯；但若某活動曾因為與這批 Strava 活動時間重疊而被標記為良性重複——
+// flag_reason='cross_source_duplicate'（見 profile/dedup.go reResolveUser 的跨來源去重邏輯，
+// 典型是 App GPS 列）或 flag_reason='multi_device_duplicate'（見 detectDuplicate，典型是使用者
+// 同時接 Strava 又接 Terra/Garmin/COROS 時，同一趟被記了兩筆），dup_of 皆指向被刪的 Strava
+// 那筆——Strava 活動刪除後，這些標記就已經沒有依據：FK 只會把 dup_of 設回 NULL，flagged/
+// flag_reason 不會自動清掉，所以必須在刪除前先手動解除兩者，否則那筆本來正常的活動會被錯誤地
+// 永久排除在賽事計算/統計之外。⚠️ 只解除這兩種良性原因；cross_account_duplicate（跨帳號洗資料
+// 的作弊標記）刻意不在此列——那是另一個使用者的可疑活動，不因這筆 Strava 資料被刪就該被平反。
+// worker 的跨來源去重排程重跑只兜底 cross_source_duplicate 這一種（resolveCrossSourceDups 的
+// 自癒邏輯），不涵蓋 multi_device_duplicate，故這裡兩種都必須主動處理，不能只依賴排程自癒。
+func (r *Repository) DeleteProviderActivities(ctx context.Context, userID, provider string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE activities
+		SET dup_of = NULL,
+		    flagged = CASE WHEN flag_reason IN ('cross_source_duplicate','multi_device_duplicate') THEN FALSE ELSE flagged END,
+		    flag_reason = CASE WHEN flag_reason IN ('cross_source_duplicate','multi_device_duplicate') THEN NULL ELSE flag_reason END
+		WHERE user_id = $1
+		  AND dup_of IN (SELECT id FROM activities WHERE user_id = $1 AND source = $2)`,
+		userID, provider); err != nil {
+		return fmt.Errorf("clear stale dup_of before provider activity delete: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM activities WHERE user_id=$1 AND source=$2`, userID, provider); err != nil {
+		return fmt.Errorf("delete provider activities: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 // NormalizedActivity 各 provider 正規化後的活動

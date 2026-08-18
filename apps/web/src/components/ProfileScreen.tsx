@@ -284,7 +284,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
     }
   }
   async function disconnectStrava() {
-    if (!window.confirm('中斷 Strava 連接？已同步的活動會保留。')) return
+    if (!window.confirm('中斷 Strava 連接？已同步的 Strava 活動將一併刪除；你已獲得的 EXP/DP 等獎勵不受影響。')) return
     setStravaBusy(true)
     try {
       await withUserAuth((t) => integrationsApi.stravaDisconnect(t))
@@ -620,9 +620,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
           <div style={{ marginTop: 16, display: 'flex', justifyContent: 'center' }}>
             <a href="https://www.strava.com" target="_blank" rel="noreferrer" aria-label="Powered by Strava">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img className="strava-badge-darkskin" src={site?.strava_powered_dark_url || '/strava/powered_by_strava.svg'} alt="Powered by Strava" style={{ height: 18 }} />
+              <img className="strava-badge-darkskin" src={site?.strava_powered_dark_url || '/strava/powered_by_strava_white.png'} alt="Powered by Strava" style={{ height: 18 }} />
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img className="strava-badge-lightskin" src={site?.strava_powered_light_url || '/strava/powered_by_strava.svg'} alt="Powered by Strava" style={{ height: 18 }} />
+              <img className="strava-badge-lightskin" src={site?.strava_powered_light_url || '/strava/powered_by_strava_orange.png'} alt="Powered by Strava" style={{ height: 18 }} />
             </a>
           </div>
         </div>

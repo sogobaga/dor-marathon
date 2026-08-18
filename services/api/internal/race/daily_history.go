@@ -22,7 +22,8 @@ type DailyActivity struct {
 	DistanceKm float64   `json:"distance_km"`
 	DurationS  int       `json:"duration_s"`
 	AvgPaceS   int       `json:"avg_pace_s"`
-	Source     string    `json:"source"` // "" = App GPS；其餘 strava/garmin/coros
+	Source     string    `json:"source"`      // "" = App GPS；其餘 strava/garmin/coros
+	ExternalID string    `json:"external_id"` // provider 活動 id（Strava→「View on Strava」回連；App GPS 無此值）
 }
 
 type DailyStat struct {
@@ -36,7 +37,7 @@ type DailyStat struct {
 // scoping 與 loadUserRangeActivities 完全一致（僅 SELECT 欄位不同：多取 duration_s / source）。
 func (r *Repository) loadUserDailyActivities(ctx context.Context, raceID, userID string) ([]DailyActivity, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT a.distance_km, a.duration_s, a.avg_pace_s, a.recorded_at, COALESCE(a.source,'')
+		SELECT a.distance_km, a.duration_s, a.avg_pace_s, a.recorded_at, COALESCE(a.source,''), COALESCE(a.external_id,'')
 		FROM races rc
 		LEFT JOIN registrations reg ON reg.race_id = rc.id AND reg.user_id = $2
 		     AND rc.event_mode = 'personal' AND reg.status = 'paid' AND reg.challenge_started_at IS NOT NULL
@@ -54,7 +55,7 @@ func (r *Repository) loadUserDailyActivities(ctx context.Context, raceID, userID
 	out := []DailyActivity{}
 	for rows.Next() {
 		var a DailyActivity
-		if err := rows.Scan(&a.DistanceKm, &a.DurationS, &a.AvgPaceS, &a.RecordedAt, &a.Source); err != nil {
+		if err := rows.Scan(&a.DistanceKm, &a.DurationS, &a.AvgPaceS, &a.RecordedAt, &a.Source, &a.ExternalID); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

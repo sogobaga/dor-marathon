@@ -27,14 +27,19 @@ type AwardedTitle struct {
 //
 // 統計數字合併成單一 SQL（原本 6 條獨立查詢，逐一對應如下，皆以純量子查詢方式各自保留原 WHERE 條件
 // 與 NULL 處理：MAX/SUM 無符合列時為 NULL 故保留 COALESCE(...,0)；COUNT(*) 恆非 NULL 故不加 COALESCE）：
-//  1. single_dist: MAX(distance_km)  FROM activities WHERE user_id=$1 AND NOT flagged
-//  2. cum_dist:    SUM(distance_km)  FROM activities WHERE user_id=$1 AND NOT flagged
-//     cum_time:    SUM(duration_s)   FROM activities WHERE user_id=$1 AND NOT flagged（同一來源，換算小時）
+//  1. single_dist: MAX(distance_km)  FROM activities WHERE user_id=$1 AND NOT flagged AND source IS NULL
+//  2. cum_dist:    SUM(distance_km)  FROM activities WHERE user_id=$1 AND NOT flagged AND source IS NULL
+//     cum_time:    SUM(duration_s)   FROM activities WHERE user_id=$1 AND NOT flagged AND source IS NULL（同一來源，換算小時）
 //  3. checkin:     COUNT(*) FROM explore_progress WHERE user_id=$1 AND discovered=true
 //  4. boss:        COUNT(*) FROM explore_progress WHERE user_id=$1 AND completed_at IS NOT NULL AND stars>0
 //  5. personal:    COUNT(*) FROM personal_task_progress WHERE user_id=$1
 //  6. card:        COUNT(*) FROM explore_progress WHERE user_id=$1 AND card_obtained=true
 //     exp:         users.exp（用於 computeLevel，非直接進 stats）
+//
+// source IS NULL（2026-08-18 拍板）：稱號是公開展示的正式榮譽，只認正式紀錄（App GPS）；
+// computeCurrentStreak 的查詢比照同一條原則。與賽事排名/里程競賽「正式紀錄一律 App GPS」語意一致
+// （見 activity-data-source-gate）。Strava 等外部來源的里程仍計入僅本人可見的成就頁（achievements.go
+// 不受影響，此檔只動稱號相關查詢）。
 //
 // FROM users u WHERE u.id=$1 作為外層錨點：使用者不存在時整條查詢回 0 列（pgx.ErrNoRows），
 // 與原本「SELECT exp FROM users WHERE id=$1」查無資料即報錯的行為一致。
@@ -47,9 +52,9 @@ func (h *Handler) titleCategoryStats(ctx context.Context, uid string, levels []L
 	if err := h.db.QueryRow(ctx, `
 		SELECT
 			u.exp,
-			COALESCE((SELECT MAX(distance_km) FROM activities WHERE user_id=$1 AND NOT flagged),0),
-			COALESCE((SELECT SUM(distance_km) FROM activities WHERE user_id=$1 AND NOT flagged),0),
-			COALESCE((SELECT SUM(duration_s) FROM activities WHERE user_id=$1 AND NOT flagged),0),
+			COALESCE((SELECT MAX(distance_km) FROM activities WHERE user_id=$1 AND NOT flagged AND source IS NULL),0),
+			COALESCE((SELECT SUM(distance_km) FROM activities WHERE user_id=$1 AND NOT flagged AND source IS NULL),0),
+			COALESCE((SELECT SUM(duration_s) FROM activities WHERE user_id=$1 AND NOT flagged AND source IS NULL),0),
 			(SELECT COUNT(*) FROM explore_progress WHERE user_id=$1 AND discovered=true),
 			(SELECT COUNT(*) FROM explore_progress WHERE user_id=$1 AND completed_at IS NOT NULL AND stars>0),
 			(SELECT COUNT(*) FROM personal_task_progress WHERE user_id=$1),
@@ -82,10 +87,11 @@ func (h *Handler) titleCategoryStats(ctx context.Context, uid string, levels []L
 // 日曆日採 Asia/Taipei（台灣無夏令時，固定 UTC+8）；轉換在 SQL 端做（AT TIME ZONE，Postgres 自帶時區資料，
 // 不依賴執行環境的 tzdata——production 用 distroless 映像沒有 tzdata，Go 端故意不用 time.LoadLocation）。
 func (h *Handler) computeCurrentStreak(ctx context.Context, uid string) (int, error) {
+	// source IS NULL：稱號的「連續步伐」比照同檔案上方 titleCategoryStats 的拍板——只認 App GPS 正式紀錄。
 	rows, err := h.db.Query(ctx, `
 		SELECT DISTINCT (recorded_at AT TIME ZONE 'Asia/Taipei')::date AS day
 		FROM activities
-		WHERE user_id=$1 AND NOT flagged
+		WHERE user_id=$1 AND NOT flagged AND source IS NULL
 		ORDER BY day DESC`, uid)
 	if err != nil {
 		return 0, err

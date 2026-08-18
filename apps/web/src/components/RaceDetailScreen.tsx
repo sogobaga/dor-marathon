@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail, type GrantedReward, type RewardPreviewItem } from '@/lib/api'
+import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, settingsApi, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail, type GrantedReward, type RewardPreviewItem, type SiteSettings } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useScrollLock } from '@/lib/useScrollLock'
@@ -432,8 +432,12 @@ function DailyHistory({ race }: { race: Race }) {
   // 未登入無個人歷程可查（後端未登入回 404）→ 傳 null key 直接停用抓取，避免無謂請求
   const { data, isLoading } = useSWR(token ? ['daily', race.id] : null, () => racesApi.myDailyActivities(race.id, token), { refreshInterval: 30000 })
   const [open, setOpen] = useState<Record<string, boolean>>({})
+  // 品牌合規：本區塊顯示 Strava 活動時須掛「Powered by Strava」標誌（見 ProfileScreen 同款掛法）
+  const [site, setSite] = useState<SiteSettings | null>(null)
+  useEffect(() => { settingsApi.get().then((r) => setSite(r.settings)).catch(() => {}) }, [])
   const days = data?.days ?? []
   if (isLoading || days.length === 0) return null // 靜默：載入中或尚無活動就不佔位（避免空白區塊）
+  const hasStrava = days.some((d) => d.activities.some((a) => a.source === 'strava'))
   return (
     <div>
       <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)', marginBottom: 8 }}>歷程記錄</div>
@@ -461,6 +465,12 @@ function DailyHistory({ race }: { race: Race }) {
                         <span style={{ fontSize: 12, color: 'var(--tx-faint)', width: 42, flexShrink: 0 }}>{fmtTime(a.recorded_at)}</span>
                         <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)' }}>{a.distance_km.toFixed(2)} km</span>
                         {sourceLabel(a.source) && <span style={sourceChip}>{sourceLabel(a.source)}</span>}
+                        {a.source === 'strava' && a.external_id && (
+                          <a href={`https://www.strava.com/activities/${a.external_id}`} target="_blank" rel="noreferrer"
+                            style={{ fontSize: 11, fontWeight: 700, color: '#fc4c02', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                            View on Strava ↗
+                          </a>
+                        )}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
                         <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>{fmtDur(a.duration_s)}</span>
@@ -474,6 +484,17 @@ function DailyHistory({ race }: { race: Race }) {
           )
         })}
       </div>
+      {/* Strava 資料來源歸屬（品牌合規）：本區塊含 Strava 活動時掛標誌，雙版本由 CSS 依 skin 深淺切換顯示（見 globals.css） */}
+      {hasStrava && (
+        <div style={{ marginTop: 14, display: 'flex', justifyContent: 'center' }}>
+          <a href="https://www.strava.com" target="_blank" rel="noreferrer" aria-label="Powered by Strava">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className="strava-badge-darkskin" src={site?.strava_powered_dark_url || '/strava/powered_by_strava_white.png'} alt="Powered by Strava" style={{ height: 18 }} />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className="strava-badge-lightskin" src={site?.strava_powered_light_url || '/strava/powered_by_strava_orange.png'} alt="Powered by Strava" style={{ height: 18 }} />
+          </a>
+        </div>
+      )}
     </div>
   )
 }

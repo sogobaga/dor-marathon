@@ -2,6 +2,8 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -59,6 +61,18 @@ func clampDeltaFloat(a, b float64) float64 {
 	return 0
 }
 
+// externalAwardHash 算出 (source, external_id) 的一次性、不可還原雜湊，供 external_award_ledger
+// （migrations/131_external_award_ledger.sql）記錄「這筆外部活動的獎勵是否已處理過」。只存雜湊、
+// 不存可識別的 Strava/Terra 活動內容本身，符合 DeleteProviderActivities 註解提到的刪除義務精神。
+// 純 sha256、無需密鑰（不是敏感資料，只是去重用途的一次性指紋）。
+//
+// ⚠️ 與 services/worker/main.go 的同名函式是同一語意的獨立實作（worker 為獨立 Go module，理由同
+// 上方 AwardMileageExp 註解）；修改時請同步修改另一份。
+func externalAwardHash(source, externalID string) string {
+	sum := sha256.Sum256([]byte(source + ":" + externalID))
+	return hex.EncodeToString(sum[:])
+}
+
 // AwardMileageExp 去重感知、冪等地發放里程 EXP/DP/total_km。供 Strava/Terra 匯入成功
 // (ImportActivity 回傳 Status=="inserted"，或 Status=="duplicate" 且 Reason=="multi_device_duplicate"
 // 的良性同帳號重複) 後呼叫；activityID 為剛插入的 activities.id。
@@ -111,17 +125,19 @@ func (r *Repository) AwardMileageExp(ctx context.Context, activityID, userID str
 		return fmt.Errorf("award mileage exp: advisory lock: %w", err)
 	}
 
-	// ② 冪等：鎖定本筆活動；一併撈 source（正規化 [start,end) 用）與 flagged/flag_reason（政策判斷用）
+	// ② 冪等：鎖定本筆活動；一併撈 source/external_id（正規化 [start,end) 用、外部帳本用）與
+	// flagged/flag_reason（政策判斷用）
 	var awarded, flagged bool
 	var distanceKm float64
 	var durationS int
 	var recordedAt time.Time
 	var source *string
 	var flagReason *string
+	var externalID string
 	if err := tx.QueryRow(ctx, `
-		SELECT exp_awarded, distance_km, duration_s, recorded_at, source, flagged, flag_reason
+		SELECT exp_awarded, distance_km, duration_s, recorded_at, source, flagged, flag_reason, COALESCE(external_id,'')
 		FROM activities WHERE id=$1 AND user_id=$2 FOR UPDATE`, activityID, userID).
-		Scan(&awarded, &distanceKm, &durationS, &recordedAt, &source, &flagged, &flagReason); err != nil {
+		Scan(&awarded, &distanceKm, &durationS, &recordedAt, &source, &flagged, &flagReason, &externalID); err != nil {
 		return fmt.Errorf("award mileage exp: load activity: %w", err)
 	}
 	if awarded {
@@ -131,6 +147,34 @@ func (r *Repository) AwardMileageExp(ctx context.Context, activityID, userID str
 	// ③ flagged 政策：非良性標記（如 cross_account_duplicate＝跨帳號作弊）一律不處理，見上方函式註解。
 	if flagged && !(flagReason != nil && benignFlagReasons[*flagReason]) {
 		return tx.Commit(ctx) // 尚無任何寫入，commit 等同 no-op，僅釋放鎖
+	}
+
+	// ③.5 durable 帳本去重（對抗式審查 CRITICAL-2 修補）：外部來源（Strava/Terra，source 非 nil 且
+	// external_id 非空）活動若先前已經被本函式處理過一次（無論是全額發放或差額補償，見下方 5a/5b
+	// 結尾的帳本寫入），即使原始 activities 列後來被刪除（見 DeleteProviderActivities，撤權/中斷
+	// 連接的刪除義務）又重新匯入回來變成一筆全新的列（exp_awarded 重置為 false），也絕不可以再次
+	// 走 5a/5b 重新 credit——activities 表本身的 exp_awarded / ON CONFLICT(source,external_id) 去重
+	// 完全依賴列還「活著」，列被刪掉後這層防線就消失，這裡查一張獨立、不受活動列刪除影響的帳本
+	// （external_award_ledger，migrations/131）補上。GPS 活動（source 為 nil）不會被刪除重匯，
+	// 不需要、也不查這張表。
+	var isExternal bool
+	var extHash string
+	if source != nil && externalID != "" {
+		isExternal = true
+		extHash = externalAwardHash(*source, externalID)
+		var alreadyAwarded bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM external_award_ledger WHERE user_id=$1 AND source=$2 AND ext_hash=$3)`,
+			userID, *source, extHash).Scan(&alreadyAwarded); err != nil {
+			return fmt.Errorf("award mileage exp: ledger check: %w", err)
+		}
+		if alreadyAwarded {
+			// 這筆外部活動先前（刪除前）已經處理過：只補標記，不再重複 credit 任何 total_km/exp/dp。
+			if _, err := tx.Exec(ctx, `UPDATE activities SET exp_awarded = TRUE WHERE id=$1`, activityID); err != nil {
+				return fmt.Errorf("award mileage exp: mark awarded (ledger dedup): %w", err)
+			}
+			return tx.Commit(ctx)
+		}
 	}
 
 	// 正規化本筆時間為 [thisStart, thisEnd)：GPS(source IS NULL) 的 recorded_at 是結束時間，
@@ -204,6 +248,14 @@ func (r *Repository) AwardMileageExp(ctx context.Context, activityID, userID str
 				return fmt.Errorf("award mileage exp: insert event: %w", err)
 			}
 		}
+		if isExternal {
+			// 首次處理這筆外部活動，寫入帳本：日後若原始列被刪除又重新匯入，會在 ③.5 被擋下不重發。
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO external_award_ledger (user_id, source, ext_hash) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+				userID, *source, extHash); err != nil {
+				return fmt.Errorf("award mileage exp: ledger insert: %w", err)
+			}
+		}
 		if _, err := tx.Exec(ctx, `UPDATE activities SET exp_awarded = TRUE WHERE id=$1`, activityID); err != nil {
 			return fmt.Errorf("award mileage exp: mark awarded: %w", err)
 		}
@@ -242,6 +294,14 @@ func (r *Repository) AwardMileageExp(ctx context.Context, activityID, userID str
 				 VALUES ($1,$2,$3,$4,$5,$6)`, userID, deltaExpAmt, deltaDpAmt, deltaReward, distanceKm, recordedAt); err != nil {
 				return fmt.Errorf("award mileage exp: insert event (delta): %w", err)
 			}
+		}
+	}
+	if isExternal {
+		// 首次處理這筆外部活動（無論 delta 是否為 0），寫入帳本，理由同 5a 分支。
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO external_award_ledger (user_id, source, ext_hash) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
+			userID, *source, extHash); err != nil {
+			return fmt.Errorf("award mileage exp: ledger insert (delta): %w", err)
 		}
 	}
 	// 無論 delta 是否為 0，一律標記 exp_awarded=TRUE（見函式註解 5b）。

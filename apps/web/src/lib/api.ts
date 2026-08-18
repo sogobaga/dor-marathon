@@ -1143,6 +1143,7 @@ export interface DailyActivity {
   duration_s: number
   avg_pace_s: number
   source: string // '' = App GPS；其餘 strava/garmin/coros
+  external_id: string // provider 活動 id（Strava→「View on Strava」回連；App GPS 為空字串）
 }
 // 進度頁每日歷程：某一天的統計 + 當天各筆活動（見後端 race.DailyStat）
 export interface DailyStat {

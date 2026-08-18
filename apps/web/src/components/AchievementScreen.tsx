@@ -2,7 +2,7 @@
 
 // 數據探索：頂部月曆里程熱力圖（可左右滑月、頁點指示，適合截圖分享）＋ 下方所有累積數值牆（多巴胺）。
 import { useEffect, useRef, useState } from 'react'
-import { achievementApi, type AchievementStats, type AchievementCalendar, type AchievementDayActivity } from '@/lib/api'
+import { achievementApi, settingsApi, type AchievementStats, type AchievementCalendar, type AchievementDayActivity, type SiteSettings } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
 
 const WK = ['日', '一', '二', '三', '四', '五', '六']
@@ -34,8 +34,11 @@ export default function AchievementScreen({ onBack }: { onBack: () => void }) {
   const [dayDetail, setDayDetail] = useState<{ date: string; activities: AchievementDayActivity[] } | null>(null)
   const [dayLoading, setDayLoading] = useState(false)
   const [dayErr, setDayErr] = useState('')
+  // 品牌合規：當日明細含 Strava 活動時掛「Powered by Strava」標誌（見 ProfileScreen 同款掛法）
+  const [site, setSite] = useState<SiteSettings | null>(null)
 
   useEffect(() => { if (getUserToken()) withUserAuth((t) => achievementApi.stats(t)).then(setStats).catch(() => {}) }, [])
+  useEffect(() => { settingsApi.get().then((r) => setSite(r.settings)).catch(() => {}) }, [])
   useEffect(() => {
     if (!getUserToken()) return
     setCal(null)
@@ -162,6 +165,7 @@ export default function AchievementScreen({ onBack }: { onBack: () => void }) {
           activities={dayDetail?.activities ?? null}
           loading={dayLoading}
           err={dayErr}
+          site={site}
           onClose={() => { setDayDetail(null); setDayErr('') }}
         />
       )}
@@ -169,7 +173,8 @@ export default function AchievementScreen({ onBack }: { onBack: () => void }) {
   )
 }
 
-function DayDetailModal({ date, activities, loading, err, onClose }: { date: string; activities: AchievementDayActivity[] | null; loading: boolean; err: string; onClose: () => void }) {
+function DayDetailModal({ date, activities, loading, err, site, onClose }: { date: string; activities: AchievementDayActivity[] | null; loading: boolean; err: string; site: SiteSettings | null; onClose: () => void }) {
+  const hasStrava = (activities ?? []).some((a) => a.source === 'strava')
   const validKm = (activities ?? []).filter((a) => !a.flagged).reduce((s, a) => s + a.distance_km, 0)
   return (
     <div data-skin="default" onClick={onClose} style={dayOverlay}>
@@ -218,6 +223,17 @@ function DayDetailModal({ date, activities, loading, err, onClose }: { date: str
               <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>計入合計</span>
               <span style={{ fontSize: 17, fontWeight: 900, color: 'var(--fug)' }}>{validKm.toFixed(2)} K</span>
             </div>
+            {/* Strava 資料來源歸屬（品牌合規）：當日含 Strava 活動時掛標誌，雙版本由 CSS 依 skin 深淺切換顯示 */}
+            {hasStrava && (
+              <div style={{ marginTop: 14, display: 'flex', justifyContent: 'center' }}>
+                <a href="https://www.strava.com" target="_blank" rel="noreferrer" aria-label="Powered by Strava">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img className="strava-badge-darkskin" src={site?.strava_powered_dark_url || '/strava/powered_by_strava_white.png'} alt="Powered by Strava" style={{ height: 18 }} />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img className="strava-badge-lightskin" src={site?.strava_powered_light_url || '/strava/powered_by_strava_orange.png'} alt="Powered by Strava" style={{ height: 18 }} />
+                </a>
+              </div>
+            )}
           </>
         )}
       </div>
