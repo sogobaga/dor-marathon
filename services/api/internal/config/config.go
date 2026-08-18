@@ -47,6 +47,11 @@ type Config struct {
 	StravaRedirectURI        string // 須與 Strava app 設定的 Authorization Callback Domain 相符
 	StravaWebhookVerifyToken string
 	FrontendURL              string // OAuth 完成後導回前台
+
+	// COROS 手錶直連（選用：空 ClientID = 未啟用）
+	CorosClientID     string
+	CorosClientSecret string
+	CorosRedirectURI  string // 須與 COROS 開發者後台設定的 redirect_uri 相符
 }
 
 func Load() *Config {
@@ -80,6 +85,10 @@ func Load() *Config {
 		StravaRedirectURI:        getEnv("STRAVA_REDIRECT_URI", "https://www.dor.tw/api/v1/integrations/strava/callback"),
 		StravaWebhookVerifyToken: getEnv("STRAVA_WEBHOOK_VERIFY_TOKEN", "dor-strava-webhook"),
 		FrontendURL:              getEnv("FRONTEND_URL", "https://www.dor.tw"),
+
+		CorosClientID:     getEnv("COROS_CLIENT_ID", ""),
+		CorosClientSecret: getEnv("COROS_CLIENT_SECRET", ""),
+		CorosRedirectURI:  getEnv("COROS_REDIRECT_URI", "https://www.dor.tw/api/v1/integrations/coros/callback"),
 	}
 }
 

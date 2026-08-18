@@ -220,6 +220,21 @@ func main() {
 		middleware.RequireAuth(authSvc),
 	)
 
+	// COROS 手錶直連：OAuth2 連接 + webhook 收活動。未設定 COROS_CLIENT_ID/SECRET → enabled()=false，
+	// webhook 只 ack 不處理。token 加密沿用 STRAVA_TOKEN_KEY（跨 provider 共用金鑰，見 repository.go）。
+	corosHandler := integration.NewCorosHandler(
+		integration.NewRepository(pool),
+		integration.CorosConfig{
+			ClientID:     cfg.CorosClientID,
+			ClientSecret: cfg.CorosClientSecret,
+			RedirectURI:  cfg.CorosRedirectURI,
+			FrontendURL:  cfg.FrontendURL,
+			JWTSecret:    cfg.JWTSecret,
+		},
+		middleware.RequireAuth(authSvc),
+		rdb,
+	)
+
 	// SMTP Email（推播擴充的 email 頻道用）：未設 SMTP_HOST/SMTP_FROM 時 enabled=false，發送 no-op。
 	smtpPort, _ := strconv.Atoi(os.Getenv("SMTP_PORT"))
 	mailerInst := mailer.NewMailer(mailer.Config{
@@ -334,6 +349,7 @@ func main() {
 		// 避免連坐節流到同掛載下呼叫頻率高的 /status、/connect。
 		r.Mount("/integrations/strava", stravaHandler.Router())
 		r.Mount("/integrations/terra", terraHandler.Router())
+		r.Mount("/integrations/coros", corosHandler.Router())
 
 		// 綠界付款結果通知（公開，server 對 server，自帶 CheckMacValue 驗章）
 		r.Post("/payments/ecpay/notify", paymentHandler.Notify)
