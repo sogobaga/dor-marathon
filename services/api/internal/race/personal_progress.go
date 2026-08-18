@@ -95,7 +95,7 @@ func (r *Repository) streakQualifyingDays(ctx context.Context, userID string, si
 	rows, err := r.db.Query(ctx, fmt.Sprintf(`
 		SELECT (recorded_at AT TIME ZONE 'Asia/Taipei')::date AS d
 		FROM activities
-		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND ($4 OR source IS NULL)
+		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND (source IS NULL OR ($4 AND source <> 'strava'))
 		GROUP BY d
 		HAVING %s(distance_km) >= $3
 		ORDER BY d`, agg), userID, since, minKmPerDay, externalData)
@@ -119,7 +119,7 @@ func (r *Repository) windowAgg(ctx context.Context, userID string, from, to time
 	err = r.db.QueryRow(ctx, `
 		SELECT COALESCE(SUM(distance_km),0), COALESCE(MAX(distance_km),0)
 		FROM activities
-		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND recorded_at < $3 AND ($4 OR source IS NULL)`,
+		WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND recorded_at < $3 AND (source IS NULL OR ($4 AND source <> 'strava'))`,
 		userID, from, to, externalData).Scan(&sumKm, &maxKm)
 	if err != nil {
 		return 0, 0, fmt.Errorf("window agg: %w", err)
@@ -131,7 +131,7 @@ func (r *Repository) windowAgg(ctx context.Context, userID string, from, to time
 func (r *Repository) maxDistanceSince(ctx context.Context, userID string, since time.Time, externalData bool) (float64, error) {
 	var m float64
 	err := r.db.QueryRow(ctx,
-		`SELECT COALESCE(MAX(distance_km),0) FROM activities WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND ($3 OR source IS NULL)`,
+		`SELECT COALESCE(MAX(distance_km),0) FROM activities WHERE user_id=$1 AND NOT flagged AND recorded_at >= $2 AND (source IS NULL OR ($3 AND source <> 'strava'))`,
 		userID, since, externalData).Scan(&m)
 	if err != nil {
 		return 0, fmt.Errorf("max distance since: %w", err)

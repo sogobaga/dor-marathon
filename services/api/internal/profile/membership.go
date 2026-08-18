@@ -214,7 +214,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 			JOIN race_groups g ON g.id=reg.group_id AND g.target_distance_km > 0
 			LEFT JOIN activities a ON a.user_id=reg.user_id AND NOT a.flagged
 			                      AND a.recorded_at BETWEEN r.start_date AND r.end_date
-			                      AND (r.external_data OR a.source IS NULL)
+			                      AND (a.source IS NULL OR (r.external_data AND a.source <> 'strava'))
 			WHERE reg.user_id=$1 AND reg.status<>'cancelled'
 			GROUP BY reg.race_id, g.target_distance_km
 			HAVING COALESCE(SUM(a.distance_km),0) >= g.target_distance_km

@@ -49,7 +49,7 @@ func (r *Repository) computeFinishers(ctx context.Context, raceID string) ([]fin
 		JOIN registrations reg ON reg.race_id = rc.id AND reg.status <> 'cancelled'
 		JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 		                  AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
-		                  AND (rc.external_data OR a.source IS NULL)
+		                  AND (a.source IS NULL OR (rc.external_data AND a.source <> 'strava'))
 		LEFT JOIN race_groups g ON g.id = reg.group_id
 		JOIN users u ON u.id = reg.user_id
 		LEFT JOIN user_profiles p ON p.user_id = reg.user_id

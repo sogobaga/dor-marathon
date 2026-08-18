@@ -69,7 +69,7 @@ func (r *Repository) LoadRaceActivities(ctx context.Context, raceID string) ([]p
 		                  AND a.recorded_at <= rc.end_date
 		                  AND a.recorded_at >= CASE WHEN rc.event_mode = 'personal'
 		                                            THEN reg.challenge_started_at ELSE rc.start_date END
-		                  AND (rc.external_data OR a.source IS NULL)
+		                  AND (a.source IS NULL OR (rc.external_data AND a.source <> 'strava'))
 		WHERE rc.id = $1`, raceID)
 	if err != nil {
 		return nil, fmt.Errorf("load race activities: %w", err)

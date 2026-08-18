@@ -411,7 +411,7 @@ func (w *Worker) aggregateStandings(ctx context.Context, userIDs []string) {
 		LEFT JOIN registrations reg ON reg.group_id = rg.id AND reg.status = 'paid'
 		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 		                       AND a.recorded_at BETWEEN r.start_date AND r.end_date
-		                       AND (r.external_data OR a.source IS NULL)
+		                       AND (a.source IS NULL OR (r.external_data AND a.source <> 'strava'))
 		GROUP BY rg.race_id, rg.id
 		ON CONFLICT (race_id, group_id) DO UPDATE SET
 			total_km       = EXCLUDED.total_km,

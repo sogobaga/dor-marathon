@@ -70,7 +70,7 @@ func (r *Repository) LoadTaskContributors(ctx context.Context, raceID, groupID s
 		                       AND a.recorded_at <= rc.end_date
 		                       AND a.recorded_at >= CASE WHEN rc.event_mode = 'personal'
 		                                                 THEN reg.challenge_started_at ELSE rc.start_date END
-		                       AND (rc.external_data OR a.source IS NULL)
+		                       AND (a.source IS NULL OR (rc.external_data AND a.source <> 'strava'))
 		WHERE rc.id = $1 AND ($2 = '' OR reg.group_id::text = $2)
 		GROUP BY reg.user_id, u.name, u.handle, td.name, g.name
 		ORDER BY dist DESC, acts DESC`, raceID, groupID)
