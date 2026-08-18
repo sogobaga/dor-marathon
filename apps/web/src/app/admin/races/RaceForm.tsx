@@ -305,6 +305,30 @@ export default function RaceForm({
     }
   }
 
+  async function uploadAddonImage(i: number, file: File) {
+    setUploadingKey(`addon-${i}`); setErr('')
+    try {
+      const { url } = await adminImagesApi.upload(token, file)
+      setAddons((as) => as.map((x, idx) => (idx === i ? { ...x, image_url: url } : x)))
+    } catch (e: any) {
+      setErr(e?.message || '圖片上傳失敗')
+    } finally {
+      setUploadingKey(null)
+    }
+  }
+
+  async function uploadSupplyImage(i: number, file: File) {
+    setUploadingKey(`supply-${i}`); setErr('')
+    try {
+      const { url } = await adminImagesApi.upload(token, file)
+      setSupplies((ss) => ss.map((x, idx) => (idx === i ? { ...x, image_url: url } : x)))
+    } catch (e: any) {
+      setErr(e?.message || '圖片上傳失敗')
+    } finally {
+      setUploadingKey(null)
+    }
+  }
+
   useEffect(() => {
     adminPresetsApi.list(token).then((r) => setPresets(r.presets)).catch(() => {})
     adminTaskModulesApi.list(token).then((r) => setTaskModules(r.modules)).catch(() => {})
@@ -1155,7 +1179,18 @@ export default function RaceForm({
                   </Field>
                 </Row>
                 <Field label="照片網址">
-                  <input style={inp} value={a.image_url} onChange={(e) => setAddons((as) => as.map((x, idx) => (idx === i ? { ...x, image_url: e.target.value } : x)))} />
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input style={{ ...inp, flex: 1, minWidth: 160 }} value={a.image_url} onChange={(e) => setAddons((as) => as.map((x, idx) => (idx === i ? { ...x, image_url: e.target.value } : x)))} />
+                    <label style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                      {uploadingKey === `addon-${i}` ? '上傳中…' : '⬆ 上傳'}
+                      <input type="file" accept="image/*" style={{ display: 'none' }}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAddonImage(i, f); e.target.value = '' }} />
+                    </label>
+                    {a.image_url && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={a.image_url} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)' }} />
+                    )}
+                  </div>
                 </Field>
                 <Field label="說明">
                   <input style={inp} value={a.description} onChange={(e) => setAddons((as) => as.map((x, idx) => (idx === i ? { ...x, description: e.target.value } : x)))} />
@@ -1204,7 +1239,18 @@ export default function RaceForm({
                     <input style={inp} value={s.name} onChange={(e) => setSupplies((ss) => ss.map((x, idx) => (idx === i ? { ...x, name: e.target.value } : x)))} />
                   </Field>
                   <Field label="照片網址">
-                    <input style={inp} value={s.image_url} onChange={(e) => setSupplies((ss) => ss.map((x, idx) => (idx === i ? { ...x, image_url: e.target.value } : x)))} />
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input style={{ ...inp, flex: 1, minWidth: 160 }} value={s.image_url} onChange={(e) => setSupplies((ss) => ss.map((x, idx) => (idx === i ? { ...x, image_url: e.target.value } : x)))} />
+                      <label style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                        {uploadingKey === `supply-${i}` ? '上傳中…' : '⬆ 上傳'}
+                        <input type="file" accept="image/*" style={{ display: 'none' }}
+                          onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadSupplyImage(i, f); e.target.value = '' }} />
+                      </label>
+                      {s.image_url && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={s.image_url} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)' }} />
+                      )}
+                    </div>
                   </Field>
                 </Row>
                 <Field label="說明">

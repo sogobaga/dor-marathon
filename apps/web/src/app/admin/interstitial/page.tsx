@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminInterstitialApi, adminAppSettingsApi, adminImagesApi, type InterstitialAd } from '@/lib/api'
+import { adminInterstitialApi, adminAppSettingsApi, adminImagesApi, adminRacesApi, type InterstitialAd, type Race } from '@/lib/api'
 import { CTA_PRESETS } from '@/lib/interstitial'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
@@ -12,6 +12,7 @@ export default function AdminInterstitialPage() {
   const router = useRouter()
   const [token, setToken] = useState<string | null>(null)
   const [ads, setAds] = useState<InterstitialAd[]>([])
+  const [races, setRaces] = useState<Race[]>([])
   const [master, setMaster] = useState(false)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
@@ -21,8 +22,8 @@ export default function AdminInterstitialPage() {
     const t = getToken()
     if (!t) { router.replace('/admin/login'); return }
     setToken(t)
-    Promise.all([adminInterstitialApi.list(t), adminAppSettingsApi.list(t)])
-      .then(([r, s]) => { setAds(r.ads || []); setMaster((s.settings?.interstitial_enabled || '0') === '1') })
+    Promise.all([adminInterstitialApi.list(t), adminAppSettingsApi.list(t), adminRacesApi.list(t)])
+      .then(([r, s, rc]) => { setAds(r.ads || []); setMaster((s.settings?.interstitial_enabled || '0') === '1'); setRaces(rc.races || []) })
       .catch((e) => {
         if (e?.status === 401) { clearToken(); router.replace('/admin/login') }
         else if (e?.status === 403) setErr('無「系統設定」權限')
@@ -126,6 +127,18 @@ export default function AdminInterstitialPage() {
                   </div>
                 </Field>
                 <Field label="CTA 連結（內部路徑如 /track，或外部網址；留白＝按了只關閉）"><input style={inp} value={a.cta_url} onChange={(e) => patch(i, { cta_url: e.target.value })} placeholder="/ 或 https://…" /></Field>
+                <Field label="或選擇活動頁面">
+                  <select style={inp} value="" onChange={(e) => {
+                    const v = e.target.value
+                    if (!v) return
+                    patch(i, { cta_url: v, ...(a.cta_label ? {} : { cta_label: '查看活動' }) })
+                  }}>
+                    <option value="">— 選擇活動 —</option>
+                    {races.filter((r) => r.slug).map((r) => (
+                      <option key={r.slug} value={`/event/${r.slug}`}>{r.title}</option>
+                    ))}
+                  </select>
+                </Field>
                 <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
                     排序 <input type="number" style={{ ...inp, width: 70 }} value={a.sort_order} onChange={(e) => patch(i, { sort_order: parseInt(e.target.value) || 0 })} />
