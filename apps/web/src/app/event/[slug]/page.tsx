@@ -57,36 +57,10 @@ export async function generateMetadata({ params }: { params: { slug: string } })
   }
 }
 
-export default async function EventPage({ params }: { params: { slug: string } }) {
-  const race = await getRaceBySlug(params.slug)
-
-  // 查無此活動（不存在／已下架）→ 簡單置中訊息頁，不依賴其他元件，避免 SSR 出錯。
-  if (!race) {
-    return (
-      <div
-        style={{
-          minHeight: '100dvh',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 12,
-          background: '#09090f',
-          color: '#fff',
-          textAlign: 'center',
-          padding: 24,
-        }}
-      >
-        <div style={{ fontSize: 20, fontWeight: 700 }}>找不到這場活動</div>
-        <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>
-          可能已結束或尚未開放，請確認連結是否正確。
-        </div>
-        <a href="/" style={{ marginTop: 12, color: '#fff', textDecoration: 'underline' }}>
-          回首頁
-        </a>
-      </div>
-    )
-  }
-
+// ⚠️ 不在 SSR 端擋「查無活動」：SSR 讀不到使用者 token（token 存 localStorage、伺服器端拿不到），
+// 對「測試(testing)」控制狀態的活動，後端會因 userID/email 為空而回 404 → 連白名單使用者都被誤擋。
+// 因此一律渲染 EventLanding，交給帶著 token 的前端（PhoneShell openEventBrochure）判定可見性；
+// 公開活動的 OG 由 generateMetadata 盡力抓取，測試/查無者退回通用標題（可接受）。
+export default function EventPage({ params }: { params: { slug: string } }) {
   return <EventLanding slug={params.slug} />
 }

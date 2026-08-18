@@ -89,7 +89,8 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
   // 開啟指定活動簡章（廣告落地頁 /event/{slug} 或 ?event= 深連結共用）。
   // 失敗（查無此活動/連線異常）靜默不動即可——不存在的 slug 由伺服器端落地頁擋掉，這裡只是保險。
   const openEventBrochure = (slug: string) => {
-    racesApi.detail(slug).then((res) => {
+    // 帶 token：測試(testing)控制狀態的活動需靠使用者 email 驗白名單，不帶 token 後端會回 404（見後端 GetPublicDetail）。
+    racesApi.detail(slug, getUserToken() || undefined).then((res) => {
       setDetailRace(res.race)
       setDetailTab('brochure')
     }).catch(() => {})
