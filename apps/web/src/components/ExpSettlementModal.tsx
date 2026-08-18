@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ExpBreakdown, ExpLevelRow } from '@/lib/api'
 import * as sfx from '@/lib/sfx'
@@ -75,15 +75,22 @@ export default function ExpSettlementModal({ breakdown, title = '成績結算', 
   const [litStars, setLitStars] = useState(0)
   const [canClose, setCanClose] = useState(false)
   const [muted, setMuted] = useState(false)
+  // 大量明細（例如首次連接 Strava 後回填整段歷史里程）時：只逐筆演出前 MAX_ITEMS 筆、其餘併成一列摘要，
+  // 避免彈窗被撐到超過畫面、且逐筆動畫拖到十幾秒。總 EXP/DP 仍以後端 gained/dp_gained 為準（含未逐列顯示者）。
+  const MAX_ITEMS = 8
+  const shownItems = items.length > MAX_ITEMS ? items.slice(0, MAX_ITEMS) : items
+  const extraCount = items.length - shownItems.length
+  // 取消旗標改用 ref：既供 unmount cleanup，也供「跳過」按鈕即時中止進行中的動畫（局部變數無法從事件處理器觸及）。
+  const cancelRef = useRef(false)
 
   useEffect(() => {
-    let cancelled = false
+    cancelRef.current = false
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
     const animate = (from: number, to: number, dur: number, cb: (v: number) => void) =>
       new Promise<void>((resolve) => {
         const start = performance.now()
         const tick = (now: number) => {
-          if (cancelled) return resolve()
+          if (cancelRef.current) return resolve()
           const t = Math.min(1, (now - start) / dur)
           cb(from + (to - from) * easeOut(t))
           if (t < 1) requestAnimationFrame(tick)
@@ -93,20 +100,20 @@ export default function ExpSettlementModal({ breakdown, title = '成績結算', 
       })
 
     ;(async () => {
-      setPhase('intro'); await sleep(750); if (cancelled) return
+      setPhase('intro'); await sleep(750); if (cancelRef.current) return
       setPhase('items')
-      for (let i = 0; i < items.length; i++) { if (cancelled) return; setRevealed(i + 1); await sleep(300) }
-      await sleep(280); if (cancelled) return
+      for (let i = 0; i < shownItems.length; i++) { if (cancelRef.current) return; setRevealed(i + 1); await sleep(300) }
+      await sleep(280); if (cancelRef.current) return
       setPhase('total')
       await animate(0, gained, Math.min(1700, 650 + gained * 4), (v) => setTotal(Math.round(v)))
-      setTotal(gained); await sleep(250); if (cancelled) return
+      setTotal(gained); await sleep(250); if (cancelRef.current) return
       if (dp_gained > 0) {
         await animate(0, dp_gained, Math.min(1400, 500 + dp_gained * 4), (v) => setTotalDp(Math.round(v)))
-        setTotalDp(dp_gained); await sleep(300); if (cancelled) return
+        setTotalDp(dp_gained); await sleep(300); if (cancelRef.current) return
       }
       setPhase('levels')
       for (let si = 0; si < steps.length; si++) {
-        if (cancelled) return
+        if (cancelRef.current) return
         setStepIdx(si); setBarPct(steps[si].fromPct); await sleep(60)
         const delta = steps[si].toPct - steps[si].fromPct
         // 連續升級時略加速，維持速度感；最後一段稍慢留住結果
@@ -117,18 +124,33 @@ export default function ExpSettlementModal({ breakdown, title = '成績結算', 
         sfx.stopFill()
         if (steps[si].willLevelUp) { sfx.playDing(); setFlash(true); await sleep(Math.max(300, 400 - si * 12)); setFlash(false) } // 到 100% → 噹
       }
-      if (cancelled) return
+      if (cancelRef.current) return
       // 星等演出：earned 顆星依序點亮（pop + 噹）
       if (showStars) {
         setPhase('stars'); await sleep(350)
-        for (let s = 1; s <= earnedStars; s++) { if (cancelled) return; setLitStars(s); sfx.playDing(); await sleep(520) }
-        await sleep(300); if (cancelled) return
+        for (let s = 1; s <= earnedStars; s++) { if (cancelRef.current) return; setLitStars(s); sfx.playDing(); await sleep(520) }
+        await sleep(300); if (cancelRef.current) return
       }
       setPhase('done'); setCanClose(true)
     })()
-    return () => { cancelled = true; sfx.stopFill() }
+    return () => { cancelRef.current = true; sfx.stopFill() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 跳過動畫：即時停掉進行中的逐筆/跳碼/等級演出，直接把畫面帶到最終結果並開放關閉。
+  function skipAnim() {
+    if (cancelRef.current) return
+    cancelRef.current = true
+    sfx.stopFill()
+    setRevealed(shownItems.length)
+    setTotal(gained)
+    setTotalDp(dp_gained)
+    if (steps.length) { setStepIdx(steps.length - 1); setBarPct(steps[steps.length - 1].toPct) }
+    setFlash(false)
+    if (showStars) setLitStars(earnedStars)
+    setPhase('done')
+    setCanClose(true)
+  }
 
   useEffect(() => { sfx.unlockAudio() }, [])
   useEffect(() => { sfx.setMuted(muted) }, [muted])
@@ -178,9 +200,9 @@ export default function ExpSettlementModal({ breakdown, title = '成績結算', 
           </div>
         )}
 
-        {/* 明細 */}
-        <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 7, minHeight: 8 }}>
-          {items.slice(0, revealed).map((it, i) => (
+        {/* 明細（僅逐筆顯示前 MAX_ITEMS 筆，超出併成一列摘要；容器自身可捲動，永不把下方關閉鈕擠出畫面） */}
+        <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 7, minHeight: 8, maxHeight: '34vh', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {shownItems.slice(0, revealed).map((it, i) => (
             <div key={i} style={{ ...rowItem, animation: 'itemIn .4s ease both' }}>
               <span style={{ fontSize: 13, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label}</span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
@@ -189,6 +211,11 @@ export default function ExpSettlementModal({ breakdown, title = '成績結算', 
               </span>
             </div>
           ))}
+          {extraCount > 0 && revealed >= shownItems.length && (
+            <div style={{ ...rowItem, justifyContent: 'center', color: 'var(--tx-dim)', fontSize: 12.5, animation: 'itemIn .4s ease both' }}>
+              …以及其他 {extraCount} 筆里程達成（已計入下方總計）
+            </div>
+          )}
         </div>
 
         {/* 總 EXP 跳碼 */}
@@ -236,13 +263,12 @@ export default function ExpSettlementModal({ breakdown, title = '成績結算', 
           </div>
         )}
 
-        {/* 關閉 */}
+        {/* 關閉：演出中一律可按（點擊＝跳過動畫直達結果），結束後＝完成關閉。永遠可互動，避免被卡住無法關閉。 */}
         <button
-          onClick={canClose ? onClose : undefined}
-          disabled={!canClose}
-          style={{ ...closeBtn, opacity: canClose ? 1 : 0.35, cursor: canClose ? 'pointer' : 'default', animation: canClose ? 'pulse 1.6s ease-in-out infinite' : 'none' }}
+          onClick={canClose ? onClose : skipAnim}
+          style={{ ...closeBtn, cursor: 'pointer', animation: canClose ? 'pulse 1.6s ease-in-out infinite' : 'none' }}
         >
-          {canClose ? '完成 ✓' : '結算中…'}
+          {canClose ? '完成 ✓' : '跳過 ▸'}
         </button>
       </div>
     </div>
@@ -253,7 +279,7 @@ export default function ExpSettlementModal({ breakdown, title = '成績結算', 
 
 const overlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 3300, background: 'radial-gradient(120% 90% at 50% 30%, #11201b 0%, #070a09 70%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, overflow: 'hidden' }
 const glow: React.CSSProperties = { position: 'absolute', top: '18%', left: '50%', width: 420, height: 420, transform: 'translateX(-50%)', background: 'radial-gradient(circle, rgba(229,196,107,.16), transparent 60%)', pointerEvents: 'none', animation: 'glowPulse 3s ease-in-out infinite' }
-const panel: React.CSSProperties = { position: 'relative', width: '100%', maxWidth: 380, background: 'rgba(10,14,12,.82)', border: '1px solid rgba(229,196,107,.35)', borderRadius: 18, padding: '24px 22px 20px', boxShadow: '0 20px 80px rgba(0,0,0,.6)', backdropFilter: 'blur(4px)' }
+const panel: React.CSSProperties = { position: 'relative', width: '100%', maxWidth: 380, maxHeight: 'calc(100dvh - 36px)', overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', background: 'rgba(10,14,12,.82)', border: '1px solid rgba(229,196,107,.35)', borderRadius: 18, padding: '24px 22px 20px', boxShadow: '0 20px 80px rgba(0,0,0,.6)', backdropFilter: 'blur(4px)' }
 const rowItem: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, background: 'rgba(255,255,255,.04)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '8px 12px' }
 const barOuter: React.CSSProperties = { height: 16, borderRadius: 999, background: 'rgba(255,255,255,.07)', border: '1px solid var(--line-2)', overflow: 'hidden', position: 'relative' }
 const barInner: React.CSSProperties = { height: '100%', borderRadius: 999, background: 'linear-gradient(90deg,#2ad18f,#46E3A0,#9bffd2)', boxShadow: '0 0 16px rgba(70,227,160,.7)', position: 'relative', overflow: 'hidden' }
