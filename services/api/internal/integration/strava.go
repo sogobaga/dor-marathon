@@ -240,8 +240,15 @@ func (h *StravaHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		redirectFront("error")
 		return
 	}
-	// 背景回填近期活動（避免阻塞導回）
-	go h.backfill(conn)
+	// ⚠️ Callback 建的 conn 沒有 ConnectedAt（floor 為零值 → 會關掉「只抓連接後」的防護、倒灌整段歷史里程）。
+	// Save 已把 created_at 寫成 NOW()，這裡重新讀回帶著 ConnectedAt 的連線再交給 backfill 當 floor。
+	saved, err := h.repo.GetByUser(r.Context(), userID, providerStrava)
+	if err != nil || saved == nil {
+		conn.ConnectedAt = time.Now() // 讀回失敗的保底：仍以現在為 floor，寧可略嚴也不倒灌歷史
+		saved = conn
+	}
+	// 背景回填「連接後」的活動（避免阻塞導回）
+	go h.backfill(saved)
 	redirectFront("connected")
 }
 
@@ -395,8 +402,7 @@ func (h *StravaHandler) handleActivityEvent(ownerID, activityID int64) {
 			Msg("strava activity athlete mismatch, refusing import")
 		return
 	}
-	regAt, _ := h.repo.UserCreatedAt(ctx, conn.UserID)
-	h.importOne(ctx, conn.UserID, regAt, act)
+	h.importOne(ctx, conn.UserID, conn.ConnectedAt, act)
 }
 
 // --- Strava API ---
@@ -542,20 +548,16 @@ type SyncResult struct {
 	Total      int `json:"total"`
 }
 
-// syncRecent 拉「會員註冊時間之後」的活動並匯入，回傳統計。
-// 用 Strava 的 after（epoch 秒）=會員 created_at 過濾；per_page=100（未來量大再分頁）。
+// syncRecent 拉「連接時間之後」的活動並匯入，回傳統計。
+// 用 Strava 的 after（epoch 秒）=連接時間(conn.ConnectedAt) 過濾；per_page=100（未來量大再分頁）。
 func (h *StravaHandler) syncRecent(ctx context.Context, conn *Connection) (SyncResult, error) {
 	var res SyncResult
 	access, err := h.tokenForUser(ctx, conn)
 	if err != nil {
 		return res, err
 	}
-	// 只抓會員註冊後的活動（統一規則：註冊前不抓，避免影響 EXP/等級）
-	regAt, err := h.repo.UserCreatedAt(ctx, conn.UserID)
-	if err != nil {
-		return res, err
-	}
-	after := regAt.Unix()
+	// 只抓「連接當下之後」的活動（floor=連接時間，見 Connection.ConnectedAt）：一連接不倒灌整段歷史里程
+	after := conn.ConnectedAt.Unix()
 	var acts []stravaActivity
 	// 429（errRateLimited）與其他錯誤同樣直接 return：整批列表抓取失敗，不進入下方逐筆匯入迴圈，
 	// 即「中止本輪剩餘項目、不要繼續打」——這裡列表一次拉齊、匯入不再打 Strava API，故不需要在
@@ -564,7 +566,7 @@ func (h *StravaHandler) syncRecent(ctx context.Context, conn *Connection) (SyncR
 		return res, err
 	}
 	for i := range acts {
-		r := h.importOne(ctx, conn.UserID, regAt, &acts[i])
+		r := h.importOne(ctx, conn.UserID, conn.ConnectedAt, &acts[i])
 		switch r.Status {
 		case "inserted":
 			res.Imported++
@@ -610,8 +612,9 @@ func isRun(a *stravaActivity) bool {
 	return false
 }
 
-// importOne 正規化單筆 Strava 活動並寫入。regAt=會員註冊時間，註冊前的活動一律不抓。
-func (h *StravaHandler) importOne(ctx context.Context, userID string, regAt time.Time, a *stravaActivity) ImportResult {
+// importOne 正規化單筆 Strava 活動並寫入。floor=連接時間（見 Connection.ConnectedAt）：連接當下以前的活動
+// 一律不抓（使用者定案：從串接當下起計算，避免一連接就把整段歷史里程灌入造成 EXP/DP 暴衝）。
+func (h *StravaHandler) importOne(ctx context.Context, userID string, floor time.Time, a *stravaActivity) ImportResult {
 	if !isRun(a) || a.Distance <= 0 || a.MovingTime <= 0 {
 		return ImportResult{Status: "skipped"}
 	}
@@ -619,8 +622,8 @@ func (h *StravaHandler) importOne(ctx context.Context, userID string, regAt time
 	if err != nil {
 		return ImportResult{Status: "skipped"}
 	}
-	// 會員註冊時間以前的資料一律不抓（避免舊資料影響 EXP/等級）
-	if !regAt.IsZero() && recordedAt.Before(regAt) {
+	// 連接當下以前的資料一律不抓
+	if !floor.IsZero() && recordedAt.Before(floor) {
 		return ImportResult{Status: "skipped"}
 	}
 	distanceKm := a.Distance / 1000.0

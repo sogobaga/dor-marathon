@@ -34,6 +34,11 @@ type Connection struct {
 	ExpiresAt      time.Time
 	Scope          string
 	AthleteName    string
+	// ConnectedAt=本次連接建立時間（user_integrations.created_at）。中斷連接會刪除整列（見 Delete），
+	// 重連即為全新列→created_at 自然是重連當下；Save 的 ON CONFLICT 也一併重設 created_at=NOW()，
+	// 涵蓋「未先中斷就重新授權」的情形。作為 Strava 匯入的起算 floor：只抓「連接當下之後」的活動，
+	// 避免一連接就把整段歷史里程灌入導致 EXP/DP 暴衝（使用者定案：從串接當下起計算）。
+	ConnectedAt time.Time
 }
 
 // --- token 加密（graceful、漸進遷移）---
@@ -136,7 +141,8 @@ func (r *Repository) Save(ctx context.Context, c *Connection) error {
 			expires_at       = EXCLUDED.expires_at,
 			scope            = EXCLUDED.scope,
 			athlete_name     = EXCLUDED.athlete_name,
-			updated_at       = NOW()`,
+			updated_at       = NOW(),
+			created_at       = NOW()`, // 重新授權(即使未先中斷)也重設連接起算點 → 匯入 floor 前移，不倒灌中斷/未連接期間的歷史里程
 		c.UserID, c.Provider, c.ProviderUserID, encryptToken(c.AccessToken), encryptToken(c.RefreshToken),
 		c.ExpiresAt, c.Scope, c.AthleteName)
 	return err
@@ -158,7 +164,7 @@ func decryptConnFields(c *Connection) error {
 func scanConn(row pgx.Row) (*Connection, error) {
 	c := &Connection{}
 	err := row.Scan(&c.ID, &c.UserID, &c.Provider, &c.ProviderUserID,
-		&c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.AthleteName)
+		&c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.AthleteName, &c.ConnectedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -172,7 +178,7 @@ func scanConn(row pgx.Row) (*Connection, error) {
 }
 
 const connCols = `SELECT id, user_id, provider, provider_user_id, access_token, refresh_token,
-	expires_at, COALESCE(scope,''), COALESCE(athlete_name,'') FROM user_integrations`
+	expires_at, COALESCE(scope,''), COALESCE(athlete_name,''), created_at FROM user_integrations`
 
 func (r *Repository) GetByUser(ctx context.Context, userID, provider string) (*Connection, error) {
 	return scanConn(r.db.QueryRow(ctx, connCols+` WHERE user_id=$1 AND provider=$2`, userID, provider))
@@ -197,7 +203,7 @@ func (r *Repository) ListByProviderUser(ctx context.Context, provider, providerU
 	for rows.Next() {
 		c := &Connection{}
 		if err := rows.Scan(&c.ID, &c.UserID, &c.Provider, &c.ProviderUserID,
-			&c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.AthleteName); err != nil {
+			&c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.AthleteName, &c.ConnectedAt); err != nil {
 			return nil, err
 		}
 		if err := decryptConnFields(c); err != nil {
@@ -206,13 +212,6 @@ func (r *Repository) ListByProviderUser(ctx context.Context, provider, providerU
 		out = append(out, c)
 	}
 	return out, rows.Err()
-}
-
-// UserCreatedAt 會員註冊時間（Strava 只抓此時間之後的活動）
-func (r *Repository) UserCreatedAt(ctx context.Context, userID string) (time.Time, error) {
-	var t time.Time
-	err := r.db.QueryRow(ctx, `SELECT created_at FROM users WHERE id=$1`, userID).Scan(&t)
-	return t, err
 }
 
 // UpdateTokens 寫入前對 access/refresh 經 encryptToken 處理（見上方「token 加密」說明）。
