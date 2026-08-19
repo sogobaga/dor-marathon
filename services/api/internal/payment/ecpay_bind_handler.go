@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
@@ -99,6 +100,20 @@ func (h *BindHandler) Subscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 1.5) 併發/重複防線（對抗式審查修正）：hasActive 檢查無鎖，擋不住「連按兩次訂閱→兩筆 pending
+	// 訂單→各自完成綁卡→重複扣款」。雙層防護：
+	//   a. 先作廢使用者既有的 pending VIP 訂單（每次發起＝一份新報價新訂單；舊訂單即使已在綠界拿過
+	//      綁卡 Token、事後被完成，settle 的 CAS 也會因訂單非 pending 而 no-op，並由 settle 端記
+	//      「已扣款但訂單不可結算」的人工對帳 log，見 settleVipBindPayment）。
+	//   b. DB 唯一索引 uq_orders_pending_vip（migration 133：每人至多一筆 pending VIP 訂單）兜底真併發
+	//      ——兩個請求同時通過這裡時，後到的 CreateVipOrder INSERT 撞索引，回 409。
+	if _, err := h.db.Exec(ctx, `
+		UPDATE orders SET status='cancelled'
+		WHERE user_id=$1 AND status='pending' AND race_id IS NULL`, userID); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to void previous pending order")
+		return
+	}
+
 	// 2) 算首期價：與 GET /profile/vip/pricing 同一套邏輯（見 vip.ComputeQuote），確保訂閱發起
 	// 算出的首期價恰好等於玩家在定價頁面看到的數字。
 	quote, err := vip.ComputeQuote(ctx, h.db, userID)
@@ -115,6 +130,12 @@ func (h *BindHandler) Subscribe(w http.ResponseWriter, r *http.Request) {
 	// 3) 建立 pending 訂單（無賽事，見 race.Repository.CreateVipOrder）
 	orderID, tradeNo, err := h.orders.CreateVipOrder(ctx, userID, req.Plan, amountCents, "")
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			// 撞 uq_orders_pending_vip（migration 133）：另一個並發的 Subscribe 剛建了 pending 訂單
+			respondErr(w, http.StatusConflict, "訂閱流程正在進行中，請勿重複發起")
+			return
+		}
 		log.Error().Err(err).Str("user_id", userID).Str("plan", req.Plan).Msg("vip subscribe: CreateVipOrder failed")
 		respondErr(w, http.StatusInternalServerError, "failed to create order")
 		return
@@ -256,7 +277,32 @@ func (h *BindHandler) CompleteBindCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3) 非 3D 成功 → 結算。金額一律用「我方自己這筆訂單當初算好的金額」（order.TotalCents），
+	// 3) 非 3D 成功 → 先驗「這個 token 實際完成的交易」與 client 宣稱的訂單一致，再結算
+	// （對抗式審查修正）：CreateBindCard 實際扣款對象由 BindCardPayToken 決定（token 綁著 GetToken
+	// 當下的 MerchantTradeNo／金額），client 傳入的 order_id 只是「宣稱」——若不驗證，攻擊者可拿
+	// 「月繳訂單的 token」配「年繳訂單的 order_id」低付高得。以綠界回報的 MerchantTradeNo 反查我方
+	// payment_transactions 對回真正的訂單，必須與 req.OrderID 一致才結算；驗不了（缺欄位/查無）
+	// 一律拒絕落地——寧可留給人工對帳，也不能把無法對應的扣款拿去標訂單。
+	// （3D 分支無此問題：其結算走 Notify/Result webhook，orderID 一律由綠界回報的 MerchantTradeNo
+	// 反查，不吃 client 輸入。）
+	mtn := ""
+	if resp.OrderInfo != nil {
+		mtn = resp.OrderInfo.MerchantTradeNo
+	}
+	if mtn == "" {
+		log.Error().Str("order_id", req.OrderID).Msg("vip bind-card complete: response missing MerchantTradeNo, refusing to settle (needs manual reconciliation)")
+		respondErr(w, http.StatusConflict, "付款結果無法核對訂單，請聯繫客服")
+		return
+	}
+	btx, err := h.repo.GetTxForNotify(ctx, mtn)
+	if err != nil || btx == nil || btx.OrderID != req.OrderID {
+		log.Error().Str("claimed_order_id", req.OrderID).Str("merchant_trade_no", mtn).
+			Msg("vip bind-card complete: token/order mismatch, refusing to settle (possible tampering)")
+		respondErr(w, http.StatusConflict, "付款結果與訂單不符，請聯繫客服")
+		return
+	}
+
+	// 金額一律用「我方自己這筆訂單當初算好的金額」（order.TotalCents），
 	// 不用綠界回應帶的數字，理由同 settleVipBindPayment 呼叫端的一般原則（見 handleBindWebhookData 註解）。
 	var card4, card6, mm, yy, ecpayTradeNo, gwsr string
 	if resp.CardInfo != nil {
@@ -271,6 +317,7 @@ func (h *BindHandler) CompleteBindCard(w http.ResponseWriter, r *http.Request) {
 	if err := h.settleVipBindPayment(ctx, req.OrderID, settleVipBindParams{
 		Plan:             plan,
 		AmountCents:      order.TotalCents,
+		MerchantTradeNo:  mtn,
 		MerchantMemberID: resp.MerchantMemberID,
 		BindCardID:       resp.BindCardID,
 		Card6No:          card6,
@@ -478,6 +525,15 @@ func (h *BindHandler) handleBindWebhookData(ctx context.Context, data bindWebhoo
 	}
 	tradeNo := data.OrderInfo.MerchantTradeNo
 
+	// BindCardID 缺漏 guard（對抗式審查修正）：成功通知理應帶 BindCardID；若缺（異常封包），絕不能
+	// 讓空字串落進 payment_card_bindings 當 active 綁卡——Phase D 續扣排程拿空 token 請款必失敗，
+	// 而且是靜默壞掉。這種異常一律不結算、記 log 留人工對帳（訂單留 pending）。
+	if data.RtnCode == 1 && data.OrderInfo.TradeStatus == "1" && data.BindCardID == "" {
+		log.Error().Str("merchant_trade_no", data.OrderInfo.MerchantTradeNo).
+			Msg("ecpay bind webhook: paid notification missing BindCardID, refusing to settle (needs manual reconciliation)")
+		return false
+	}
+
 	if data.RtnCode != 1 || data.OrderInfo.TradeStatus != "1" {
 		// 業務失敗/未付款通知：只標記交易本身，訂單維持 pending 讓玩家可重新綁卡付款
 		// （比照既有 AIO Notify 對失敗通知的處理，見 payment.go Notify，直接重用 MarkTxFailed）。
@@ -518,6 +574,7 @@ func (h *BindHandler) handleBindWebhookData(ctx context.Context, data bindWebhoo
 	if err := h.settleVipBindPayment(ctx, tx.OrderID, settleVipBindParams{
 		Plan:             plan,
 		AmountCents:      tx.AmountCents,
+		MerchantTradeNo:  tradeNo,
 		MerchantMemberID: data.MerchantMemberID,
 		BindCardID:       data.BindCardID,
 		Card6No:          card6,
@@ -543,6 +600,7 @@ func (h *BindHandler) handleBindWebhookData(ctx context.Context, data bindWebhoo
 type settleVipBindParams struct {
 	Plan             string // monthly | annual
 	AmountCents      int
+	MerchantTradeNo  string // 我方交易編號（orders.payment_ref 統一存 "ECPay:"+此值，與既有 AIO 慣例一致）
 	MerchantMemberID string
 	BindCardID       string
 	Card6No          string
@@ -575,12 +633,22 @@ func (h *BindHandler) settleVipBindPayment(ctx context.Context, orderID string, 
 	defer tx.Rollback(ctx)
 
 	// 1) CAS 閘門：0 列＝已被結算過（冪等出口，直接 return nil）。
+	// payment_ref 統一存 "ECPay:"+我方 MerchantTradeNo（與既有 AIO Notify 慣例一致，見 payment.go；
+	// 綠界端 TradeNo 另存 payment_transactions.ecpay_trade_no，客服對帳兩邊都查得到）。
 	var userID string
 	err = tx.QueryRow(ctx, `
 		UPDATE orders SET status='paid', paid_at=NOW(), payment_ref=$2
 		WHERE id=$1 AND status='pending'
-		RETURNING user_id`, orderID, "ECPay:"+p.EcpayTradeNo).Scan(&userID)
+		RETURNING user_id`, orderID, "ECPay:"+p.MerchantTradeNo).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// 冪等 no-op 的兩種情況要分開對待（對抗式審查修正）：訂單已是 paid＝正常的重複通知，靜默
+		// 返回即可；訂單處於 pending/paid 以外的狀態（如被新一次 Subscribe 作廢成 cancelled）卻收到
+		// 成功扣款＝「錢已收、單不可結」，必須大聲記 log 供人工對帳退款，不能靜默吞掉。
+		var st string
+		if qErr := h.db.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, orderID).Scan(&st); qErr == nil && st != "paid" {
+			log.Error().Str("order_id", orderID).Str("order_status", st).Str("merchant_trade_no", p.MerchantTradeNo).
+				Msg("settle vip bind: charge received but order is not settleable — needs manual reconciliation/refund")
+		}
 		return nil
 	}
 	if err != nil {
@@ -601,10 +669,22 @@ func (h *BindHandler) settleVipBindPayment(ctx context.Context, orderID string, 
 		WHERE user_id=$1 AND provider='ecpay' AND status='active'`, userID); err != nil {
 		return fmt.Errorf("settle vip bind: supersede old card binding: %w", err)
 	}
+	// ON CONFLICT 對應 uq_card_binding_active（partial unique：user_id+provider WHERE active）：
+	// 正常路徑上面的 UPDATE 已把舊 active 標 deleted、這裡不會衝突；衝突只發生在「另一筆訂單的結算
+	// 交易在本交易的快照之後才 commit 了它的 active 綁卡」的跨交易併發——此時直接把那筆 active 列
+	// 原地更新成本次的新卡資訊（等價於 supersede，只是不留歷史列），避免 unique_violation 拖垮整包
+	// 結算交易造成「已扣款卻 rollback 回 pending」（對抗式審查修正）。
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO payment_card_bindings
 			(user_id, provider, merchant_member_id, bind_card_id, card_last4, card_expiry_mm, card_expiry_yy, status)
-		VALUES ($1, 'ecpay', $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), 'active')`,
+		VALUES ($1, 'ecpay', $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), 'active')
+		ON CONFLICT (user_id, provider) WHERE status='active' DO UPDATE SET
+			merchant_member_id = EXCLUDED.merchant_member_id,
+			bind_card_id       = EXCLUDED.bind_card_id,
+			card_last4         = EXCLUDED.card_last4,
+			card_expiry_mm     = EXCLUDED.card_expiry_mm,
+			card_expiry_yy     = EXCLUDED.card_expiry_yy,
+			updated_at         = NOW()`,
 		userID, merchantMemberID, p.BindCardID, p.Card4No, p.CardValidMM, p.CardValidYY); err != nil {
 		return fmt.Errorf("settle vip bind: insert card binding: %w", err)
 	}
