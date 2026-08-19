@@ -1273,6 +1273,69 @@ export const adminRewardsApi = {
     }),
 }
 
+// --- Admin: 獎勵管理一般化（migration 135）——非 personal 模式賽事的賽後抽獎 ---
+// 抽獎資格底線＝完賽（各分組 target_distance_km，與前台排行榜/完賽證明同一條線）；全體/分組/個人額外
+// 挑戰(race_tasks)都是疊加的額外目標，不影響資格線。personal 模式仍走上面 adminRewardsApi 舊制。
+
+export type RewardDrawScope = 'all_finishers' | 'winning_group'
+export type RewardDrawWinRule = '' | 'highest_metric' | 'first_to_target'
+
+export interface RewardWinnerRow {
+  id: string
+  draw_id: string
+  user_id: string
+  user_name: string
+  user_email: string
+  group_id?: string
+  group_name?: string
+  reward_status: '' | 'fulfilled'
+  reward_note?: string
+  reward_fulfilled_at?: string | null
+  created_at: string
+}
+
+export interface RewardDraw {
+  id: string
+  race_id: string
+  title: string
+  scope: RewardDrawScope
+  win_rule?: RewardDrawWinRule
+  win_task_id?: string
+  winner_count: number
+  exclude_prior: boolean
+  winning_group_ids?: string[]
+  pool_size: number
+  drawn_by?: string
+  drawn_at: string
+  winners: RewardWinnerRow[]
+}
+
+export interface CreateRewardDrawPayload {
+  title: string
+  scope: RewardDrawScope
+  win_rule?: RewardDrawWinRule
+  win_task_id?: string
+  winner_count: number
+  exclude_prior: boolean
+}
+
+export const adminRewardDrawsApi = {
+  list: (token: string, raceId: string) =>
+    request<{ draws: RewardDraw[]; count: number }>(`/admin/races/${raceId}/reward-draws`, { headers: withAuth(token) }),
+  create: (token: string, raceId: string, payload: CreateRewardDrawPayload) =>
+    request<{ draw: RewardDraw }>(`/admin/races/${raceId}/reward-draws`, {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify(payload),
+    }),
+  updateWinner: (token: string, winnerId: string, body: { reward_status: '' | 'fulfilled'; reward_note: string }) =>
+    request<void>(`/admin/reward-winners/${winnerId}`, {
+      method: 'PATCH',
+      headers: withAuth(token),
+      body: JSON.stringify(body),
+    }),
+}
+
 // --- 個人資訊 (Profile) ---
 
 export interface Profile {

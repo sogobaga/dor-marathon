@@ -315,18 +315,16 @@ export default function AdminRacesList() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                   <span style={{ color: 'var(--fug)', fontSize: 13 }}>編輯 →</span>
-                  {r.event_mode === 'personal' && (
-                    <button
-                      onClick={(e) => handleRewardsClick(e, r)}
-                      title="個人挑戰模式：後台獎勵管理（完成者名單/抽獎/發放追蹤）"
-                      style={{
-                        background: 'rgba(255,196,0,.1)', color: 'var(--gold)', border: '1px solid rgba(255,196,0,.3)',
-                        borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13,
-                      }}
-                    >
-                      🎁 獎勵
-                    </button>
-                  )}
+                  <button
+                    onClick={(e) => handleRewardsClick(e, r)}
+                    title={r.event_mode === 'personal' ? '個人挑戰模式：後台獎勵管理（完成者名單/抽獎/發放追蹤）' : '後台獎勵管理（完賽者抽獎/發放追蹤）'}
+                    style={{
+                      background: 'rgba(255,196,0,.1)', color: 'var(--gold)', border: '1px solid rgba(255,196,0,.3)',
+                      borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+                    }}
+                  >
+                    🎁 獎勵
+                  </button>
                   {r.display_status === 'ended' && (
                     <button
                       onClick={(e) => handleSettle(e, r)}

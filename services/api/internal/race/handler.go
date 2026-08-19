@@ -121,6 +121,8 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Get("/{raceID}/signups", h.AdminListSignups)
 	r.Get("/{raceID}/reward-completions", h.AdminListRewardCompletions)  // 個人挑戰模式 P5
 	r.Post("/{raceID}/reward-draw", h.AdminDrawRewardWinners)            // 個人挑戰模式 P5
+	r.Post("/{raceID}/reward-draws", h.AdminCreateRewardDraw)            // 獎勵管理一般化 migration 135（非 personal）
+	r.Get("/{raceID}/reward-draws", h.AdminListRewardDraws)              // 獎勵管理一般化 migration 135（非 personal）
 	return r
 }
 
@@ -989,6 +991,90 @@ func (h *Handler) AdminDrawRewardWinners(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"winners": winners, "count": len(winners)})
+}
+
+// POST /api/v1/admin/races/:raceID/reward-draws  {title,scope,win_rule,win_task_id,winner_count,exclude_prior}
+// 獎勵管理一般化（migration 135）：非 personal 模式賽事的賽後抽獎批次（完賽者池；scope=all_finishers 全體
+// 完賽者｜winning_group 獲勝分組內完賽者）。personal 模式賽事打這支回 400（請改用上面 reward-draw 舊制）。
+func (h *Handler) AdminCreateRewardDraw(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	var req struct {
+		Title        string `json:"title"`
+		Scope        string `json:"scope"`
+		WinRule      string `json:"win_rule"`
+		WinTaskID    string `json:"win_task_id"`
+		WinnerCount  int    `json:"winner_count"`
+		ExcludePrior bool   `json:"exclude_prior"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	adminID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	draw, err := h.svc.CreateRewardDraw(r.Context(), raceID, DrawRewardRequest{
+		Title: req.Title, Scope: req.Scope, WinRule: req.WinRule, WinTaskID: req.WinTaskID,
+		WinnerCount: req.WinnerCount, ExcludePrior: req.ExcludePrior,
+	}, adminID)
+	switch {
+	case errors.Is(err, ErrRaceNotFound):
+		respondErr(w, http.StatusNotFound, "race not found")
+	case errors.Is(err, ErrRewardDrawNotApplicable),
+		errors.Is(err, ErrInvalidScope), errors.Is(err, ErrInvalidWinRule), errors.Is(err, ErrInvalidWinnerCount),
+		errors.Is(err, ErrNoGroupTask), errors.Is(err, ErrWinTaskNotFound), errors.Is(err, ErrGroupTaskUnsupported):
+		respondErr(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrNoGroupReachedTarget), errors.Is(err, ErrEmptyRewardPool):
+		respondErr(w, http.StatusConflict, err.Error())
+	case err != nil:
+		respondErr(w, http.StatusInternalServerError, "failed to draw reward winners")
+	default:
+		respondJSON(w, http.StatusOK, map[string]any{"draw": draw})
+	}
+}
+
+// GET /api/v1/admin/races/:raceID/reward-draws
+// 獎勵管理一般化（migration 135）：列出該賽事所有抽獎批次＋各自中獎名單（依 drawn_at DESC）。
+func (h *Handler) AdminListRewardDraws(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	draws, err := h.svc.ListRewardDraws(r.Context(), raceID)
+	switch {
+	case errors.Is(err, ErrRaceNotFound):
+		respondErr(w, http.StatusNotFound, "race not found")
+	case errors.Is(err, ErrRewardDrawNotApplicable):
+		respondErr(w, http.StatusBadRequest, err.Error())
+	case err != nil:
+		respondErr(w, http.StatusInternalServerError, "failed to list reward draws")
+	default:
+		respondJSON(w, http.StatusOK, map[string]any{"draws": draws, "count": len(draws)})
+	}
+}
+
+// PATCH /api/v1/admin/reward-winners/:id  {reward_status, reward_note}
+// 獎勵管理一般化（migration 135）：設定單筆中獎紀錄的發放狀態（''=中獎待發｜fulfilled=已發放）＋備註。
+func (h *Handler) AdminUpdateRewardWinner(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		RewardStatus string `json:"reward_status"`
+		RewardNote   string `json:"reward_note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	validStatuses := map[string]bool{"": true, "fulfilled": true}
+	if !validStatuses[req.RewardStatus] {
+		respondErr(w, http.StatusBadRequest, "invalid reward_status")
+		return
+	}
+	err := h.svc.UpdateRewardWinner(r.Context(), id, req.RewardStatus, req.RewardNote)
+	if errors.Is(err, ErrRewardWinnerNotFound) {
+		respondErr(w, http.StatusNotFound, "找不到符合條件的中獎紀錄")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to update reward winner")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---

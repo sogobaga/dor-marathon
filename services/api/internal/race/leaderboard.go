@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // --- 一般模式個人排名（累積里程達分組目標即「完成」）---
@@ -31,6 +33,8 @@ type Leaderboard struct {
 
 type finisher struct {
 	userID       string
+	groupID      string // 所屬分組 ID（獎勵管理一般化 migration 135：winning_group scope 依此過濾；既有呼叫端不使用）
+	email        string // 獎勵管理一般化：中獎名單顯示用；既有呼叫端不使用
 	nickname     string
 	title        string
 	groupName    string
@@ -39,11 +43,26 @@ type finisher struct {
 	distanceKm   float64
 }
 
+// pgQueryer 是 *pgxpool.Pool 與 pgx.Tx 的共同子集（Query/QueryRow），讓完賽者池查詢可在既有連線池或
+// 交易內執行——獎勵管理一般化（migration 135）的抽獎需要在「advisory lock 之後」的交易內重新取一次最新
+// 完賽者池，因此把查詢邏輯抽成可注入 db 的版本，既有呼叫端（GetLeaderboard/GetCertificate 等）不受影響。
+type pgQueryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // computeFinishers 逐使用者累積里程，達分組目標即記為完成
 func (r *Repository) computeFinishers(ctx context.Context, raceID string) ([]finisher, int, error) {
+	return computeFinishersWith(ctx, r.db, raceID)
+}
+
+// computeFinishersWith 是 computeFinishers 的核心實作，db 可傳 *pgxpool.Pool（一般讀取）或 pgx.Tx
+// （獎勵抽獎需要在交易內查最新資料，見 reward_draw.go DrawRaceRewardWinners）。
+func computeFinishersWith(ctx context.Context, db pgQueryer, raceID string) ([]finisher, int, error) {
 	// 跨賽事歸戶：依「報名中 + recorded_at 落在賽事期間」計入，不看 activity.race_id
-	rows, err := r.db.Query(ctx, `
-		SELECT a.user_id::text, COALESCE(NULLIF(u.name,''), u.handle), COALESCE(td.name,''), COALESCE(g.name,''),
+	rows, err := db.Query(ctx, `
+		SELECT a.user_id::text, COALESCE(g.id::text,''), u.email,
+		       COALESCE(NULLIF(u.name,''), u.handle), COALESCE(td.name,''), COALESCE(g.name,''),
 		       COALESCE(g.target_distance_km, 0), a.distance_km, a.duration_s, a.recorded_at
 		FROM races rc
 		JOIN registrations reg ON reg.race_id = rc.id AND reg.status <> 'cancelled'
@@ -65,19 +84,20 @@ func (r *Repository) computeFinishers(ctx context.Context, raceID string) ([]fin
 	var cur string
 	var accDist, target float64
 	var accTime int
-	var nickname, title, groupName string
+	var groupID, email, nickname, title, groupName string
 	var done bool
 
 	for rows.Next() {
-		var uid, nick, ttl, gname string
+		var uid, gid, em, nick, ttl, gname string
 		var tgt, dist float64
 		var dur int
 		var at time.Time
-		if err := rows.Scan(&uid, &nick, &ttl, &gname, &tgt, &dist, &dur, &at); err != nil {
+		if err := rows.Scan(&uid, &gid, &em, &nick, &ttl, &gname, &tgt, &dist, &dur, &at); err != nil {
 			return nil, 0, err
 		}
 		if uid != cur {
-			cur, accDist, accTime, target, nickname, title, groupName, done = uid, 0, 0, tgt, nick, ttl, gname, false
+			cur, accDist, accTime, target = uid, 0, 0, tgt
+			groupID, email, nickname, title, groupName, done = gid, em, nick, ttl, gname, false
 		}
 		if done {
 			continue
@@ -86,7 +106,7 @@ func (r *Repository) computeFinishers(ctx context.Context, raceID string) ([]fin
 		accTime += dur
 		if target > 0 && accDist >= target {
 			finishers = append(finishers, finisher{
-				userID: uid, nickname: nickname, title: title, groupName: groupName,
+				userID: uid, groupID: groupID, email: email, nickname: nickname, title: title, groupName: groupName,
 				completionAt: at, totalTimeS: accTime, distanceKm: accDist,
 			})
 			done = true
@@ -97,7 +117,7 @@ func (r *Repository) computeFinishers(ctx context.Context, raceID string) ([]fin
 	}
 
 	var total int
-	if err := r.db.QueryRow(ctx,
+	if err := db.QueryRow(ctx,
 		`SELECT COUNT(*) FROM registrations WHERE race_id=$1 AND status <> 'cancelled'`, raceID).Scan(&total); err != nil {
 		return nil, 0, err
 	}

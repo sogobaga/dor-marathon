@@ -1,22 +1,22 @@
 'use client'
 
-// 個人挑戰模式（event_mode=personal）P5：後台獎勵管理。
-// 獎勵＝「完成者中抽獎/限額」，LINE Point 由後台人工發放；系統只管「資格＋發放狀態」。
-// 以「每一筆完成」為單位（同一人完成多次＝多筆完成＝多個抽獎資格）。入口：admin/races 列表頁「🎁 獎勵」連結。
+// 後台「獎勵管理」（賽後抽獎）。分兩套並行、依賽事 event_mode 分流：
+//   personal（個人挑戰模式）：完成者名單（每一筆完成＝一個抽獎資格），沿用 registrations.reward_status 舊制
+//     （P5，見 personal-challenge-mode 設計）——見下方 PersonalRewardsPage，邏輯完全不動。
+//   其餘所有模式：獎勵管理一般化（migration 135）——抽獎資格底線＝完賽（各分組 target_distance_km，
+//     與前台排行榜/完賽證明同一條線），可對同一賽事建立多次抽獎批次，範圍(scope)分「全體完賽者」或
+//     「獲勝分組內完賽者」兩種——見下方 GeneralRewardsPage。
+// 入口：admin/races 列表頁「🎁 獎勵」連結，兩種模式皆顯示（見 page.tsx handleRewardsClick）。
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
-import { adminRacesApi, adminRewardsApi, type RewardCompletionRow, type RewardCompletionsResponse } from '@/lib/api'
+import {
+  adminRacesApi, adminRewardsApi, adminRewardDrawsApi,
+  type RewardCompletionRow, type RewardCompletionsResponse,
+  type RaceDetail, type RewardDraw, type RewardDrawScope, type RewardDrawWinRule, type RewardWinnerRow,
+} from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
-
-const PAGE = 50
-const STATUS_FILTERS: { k: string; t: string }[] = [
-  { k: 'all', t: '全部' },
-  { k: '', t: '待處理' },
-  { k: 'won', t: '中獎待發' },
-  { k: 'fulfilled', t: '已發放' },
-]
 
 function fmt(iso: string) {
   const d = new Date(iso)
@@ -30,7 +30,67 @@ export default function AdminRaceRewardsPage() {
   const raceId = params.id as string
 
   const [token, setTokenState] = useState<string | null>(null)
-  const [raceTitle, setRaceTitle] = useState('')
+  const [race, setRace] = useState<RaceDetail | null>(null)
+  const [loadErr, setLoadErr] = useState('')
+
+  useEffect(() => {
+    const t = getToken()
+    if (!t) {
+      router.replace('/admin/login')
+      return
+    }
+    setTokenState(t)
+    adminRacesApi
+      .get(t, raceId)
+      .then((res) => setRace(res.race))
+      .catch((e: any) => {
+        if (e?.status === 401) {
+          clearToken()
+          router.replace('/admin/login')
+        } else if (e?.status === 403) {
+          setLoadErr('此頁僅具「賽事管理」權限的管理者可存取')
+        } else if (e?.status === 404) {
+          setLoadErr('找不到此賽事')
+        } else {
+          setLoadErr(e?.message || '載入失敗')
+        }
+      })
+  }, [raceId, router])
+
+  if (loadErr) {
+    return (
+      <div style={{ maxWidth: 1040, margin: '0 auto' }}>
+        <Link href={`/admin/races/${raceId}`} style={{ color: 'var(--tx-dim)', fontSize: 13, textDecoration: 'none' }}>
+          ← 返回賽事編輯
+        </Link>
+        <div style={{ color: 'var(--hunt)', padding: '20px 0', fontSize: 14 }}>{loadErr}</div>
+      </div>
+    )
+  }
+  if (!token || !race) {
+    return <div style={{ padding: 40, color: 'var(--tx-dim)' }}>載入中…</div>
+  }
+
+  return race.event_mode === 'personal'
+    ? <PersonalRewardsPage token={token} raceId={raceId} raceTitle={race.title} />
+    : <GeneralRewardsPage token={token} raceId={raceId} race={race} />
+}
+
+// ============================================================
+// personal（個人挑戰模式）：既有獎勵管理，完全比照原本邏輯，僅將 token/raceTitle 改為外層傳入
+// （避免與外層重複打 adminRacesApi.get）。
+// ============================================================
+
+const PAGE = 50
+const STATUS_FILTERS: { k: string; t: string }[] = [
+  { k: 'all', t: '全部' },
+  { k: '', t: '待處理' },
+  { k: 'won', t: '中獎待發' },
+  { k: 'fulfilled', t: '已發放' },
+]
+
+function PersonalRewardsPage({ token, raceId, raceTitle }: { token: string; raceId: string; raceTitle: string }) {
+  const router = useRouter()
   const [data, setData] = useState<RewardCompletionsResponse | null>(null)
   const [filter, setFilter] = useState('all')
   const [offset, setOffset] = useState(0)
@@ -57,28 +117,21 @@ export default function AdminRaceRewardsPage() {
   }, [raceId, router])
 
   useEffect(() => {
-    const t = getToken()
-    if (!t) {
-      router.replace('/admin/login')
-      return
-    }
-    setTokenState(t)
-    load(t, 0, 'all')
-    adminRacesApi.get(t, raceId).then((res) => setRaceTitle(res.race.title)).catch(() => {})
-  }, [raceId, router, load])
+    load(token, 0, 'all')
+  }, [token, load])
 
   function changeFilter(f: string) {
     setFilter(f)
     setOffset(0)
-    if (token) load(token, 0, f)
+    load(token, 0, f)
   }
   function page(off: number) {
     setOffset(off)
-    if (token) load(token, off, filter)
+    load(token, off, filter)
   }
 
   async function handleDraw() {
-    if (!token || drawN <= 0) return
+    if (drawN <= 0) return
     if (!window.confirm(`確定要從「待處理」完成者中隨機抽出 ${drawN} 位中獎？此動作無法復原。`)) return
     setDrawing(true)
     setErr('')
@@ -94,7 +147,6 @@ export default function AdminRaceRewardsPage() {
   }
 
   async function handleRowSave(regId: string, status: string, note: string) {
-    if (!token) return
     await adminRewardsApi.update(token, regId, { reward_status: status as '' | 'won' | 'fulfilled', reward_note: note })
     load(token, offset, filter)
   }
@@ -243,6 +295,275 @@ function RewardRow({
           value={note}
           onChange={(e) => { setNote(e.target.value); setSaved(false) }}
           placeholder="LINE Point 序號/備註"
+          style={{ ...inp, padding: '5px 8px', fontSize: 12, width: '100%' }}
+        />
+      </span>
+      <span style={{ flex: '0 0 60px', textAlign: 'right' }}>
+        <button onClick={handleSave} disabled={saving} style={saveBtn}>
+          {saving ? '…' : saved ? '✓' : '儲存'}
+        </button>
+      </span>
+    </div>
+  )
+}
+
+// ============================================================
+// 其餘模式：獎勵管理一般化（migration 135）——完賽者池抽獎，可建多批次
+// ============================================================
+
+const SCOPE_LABEL: Record<RewardDrawScope, string> = { all_finishers: '全體完賽者', winning_group: '獲勝分組內完賽者' }
+const WIN_RULE_LABEL: Record<string, string> = { highest_metric: '分組指標最高', first_to_target: '最先達到分組目標' }
+
+function GeneralRewardsPage({ token, raceId, race }: { token: string; raceId: string; race: RaceDetail }) {
+  const router = useRouter()
+  const [draws, setDraws] = useState<RewardDraw[] | null>(null)
+  const [err, setErr] = useState('')
+  const [creating, setCreating] = useState(false)
+
+  const [title, setTitle] = useState('')
+  const [scope, setScope] = useState<RewardDrawScope>('all_finishers')
+  const [winRule, setWinRule] = useState<RewardDrawWinRule>('highest_metric')
+  const [winTaskId, setWinTaskId] = useState('')
+  const [winnerCount, setWinnerCount] = useState(1)
+  const [excludePrior, setExcludePrior] = useState(true)
+
+  const groupTasks = race.tasks.filter((t) => t.scope === 'group_team' && t.metric_type !== 'checkpoint')
+  const groupNameById: Record<string, string> = {}
+  for (const g of race.groups) if (g.id) groupNameById[g.id] = g.name
+
+  const loadDraws = useCallback(() => {
+    adminRewardDrawsApi
+      .list(token, raceId)
+      .then((res) => setDraws(res.draws))
+      .catch((e: any) => {
+        if (e?.status === 401) {
+          clearToken()
+          router.replace('/admin/login')
+        } else {
+          setErr(e?.message || '載入失敗')
+        }
+      })
+  }, [token, raceId, router])
+
+  useEffect(() => {
+    loadDraws()
+  }, [loadDraws])
+
+  async function handleCreate() {
+    if (winnerCount <= 0) return
+    if (scope === 'winning_group' && !winRule) {
+      setErr('請選擇獲勝組判定方式')
+      return
+    }
+    if (!window.confirm(`確定要建立這次抽獎批次（預計抽 ${winnerCount} 位）？此動作無法復原。`)) return
+    setCreating(true)
+    setErr('')
+    try {
+      const res = await adminRewardDrawsApi.create(token, raceId, {
+        title: title.trim(),
+        scope,
+        win_rule: scope === 'winning_group' ? winRule : undefined,
+        win_task_id: scope === 'winning_group' ? winTaskId : undefined,
+        winner_count: winnerCount,
+        exclude_prior: excludePrior,
+      })
+      const actual = res.draw.winners.length
+      window.alert(
+        actual < winnerCount
+          ? `資格池僅 ${res.draw.pool_size} 人，已全池皆中獎（${actual} 位，少於原訂 ${winnerCount} 位）。`
+          : `已抽出 ${actual} 位中獎者。`,
+      )
+      setTitle('')
+      setWinnerCount(1)
+      loadDraws()
+    } catch (e: any) {
+      setErr(e?.message || '抽獎失敗')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function handleWinnerSave(winnerId: string, status: string, note: string) {
+    await adminRewardDrawsApi.updateWinner(token, winnerId, { reward_status: status as '' | 'fulfilled', reward_note: note })
+    loadDraws()
+  }
+
+  return (
+    <div style={{ maxWidth: 1040, margin: '0 auto' }}>
+      <Link href={`/admin/races/${raceId}`} style={{ color: 'var(--tx-dim)', fontSize: 13, textDecoration: 'none' }}>
+        ← 返回賽事編輯
+      </Link>
+      <h1 style={{ fontSize: 24, fontWeight: 800, margin: '14px 0 4px' }}>獎勵管理：{race.title}</h1>
+      <p style={{ color: 'var(--tx-dim)', fontSize: 13, marginTop: 0 }}>
+        抽獎資格底線＝完賽（達成各分組完賽門檻）。可對此賽事建立多次抽獎批次（如頭獎/普獎分開抽）；
+        「排除先前批次中獎者」勾選時，本批次不會再抽到本賽事先前批次已中獎的人。
+      </p>
+      {err && <div style={{ color: 'var(--hunt)', padding: '10px 0', fontSize: 13 }}>{err}</div>}
+
+      <div
+        style={{
+          display: 'flex', flexDirection: 'column', gap: 10, margin: '14px 0',
+          background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: 16,
+        }}
+      >
+        <div style={{ fontSize: 14, fontWeight: 700 }}>🎲 建立抽獎批次</div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="批次名稱（如：頭獎）"
+            style={{ ...inp, width: 180 }}
+          />
+          <select value={scope} onChange={(e) => setScope(e.target.value as RewardDrawScope)} style={inp}>
+            <option value="all_finishers">全體完賽者</option>
+            <option value="winning_group">獲勝分組內完賽者</option>
+          </select>
+          {scope === 'winning_group' && (
+            <>
+              <select value={winRule} onChange={(e) => setWinRule(e.target.value as RewardDrawWinRule)} style={inp}>
+                <option value="highest_metric">獲勝判定：分組指標最高</option>
+                <option value="first_to_target">獲勝判定：最先達到分組目標</option>
+              </select>
+              <select value={winTaskId} onChange={(e) => setWinTaskId(e.target.value)} style={inp}>
+                <option value="">判定任務：預設（第一個分組任務）</option>
+                {groupTasks.map((t) => (
+                  <option key={t.id} value={t.id}>判定任務：{t.title}</option>
+                ))}
+              </select>
+              {groupTasks.length === 0 && (
+                <span style={{ fontSize: 12, color: 'var(--hunt)' }}>此賽事無可用分組(團體)任務，無法用獲勝組抽獎</span>
+              )}
+            </>
+          )}
+          <span style={{ fontSize: 14 }}>中獎</span>
+          <input
+            type="number"
+            min={1}
+            value={winnerCount}
+            onChange={(e) => setWinnerCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
+            style={{ ...inp, width: 70 }}
+          />
+          <span style={{ fontSize: 14 }}>位</span>
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--tx-dim)' }}>
+          <input type="checkbox" checked={excludePrior} onChange={(e) => setExcludePrior(e.target.checked)} />
+          排除先前批次中獎者
+        </label>
+        <div>
+          <button onClick={handleCreate} disabled={creating} style={{ ...drawBtn, opacity: creating ? 0.6 : 1 }}>
+            {creating ? '抽獎中…' : '開始抽獎'}
+          </button>
+        </div>
+      </div>
+
+      {!draws && <div style={{ padding: 16, color: 'var(--tx-dim)' }}>載入中…</div>}
+      {draws && draws.length === 0 && (
+        <div style={{ padding: 16, color: 'var(--tx-dim)', border: '1px solid var(--line)', borderRadius: 12 }}>
+          尚無抽獎批次
+        </div>
+      )}
+      {draws?.map((d) => (
+        <DrawCard key={d.id} draw={d} groupNameById={groupNameById} onSaveWinner={handleWinnerSave} />
+      ))}
+    </div>
+  )
+}
+
+function DrawCard({
+  draw,
+  groupNameById,
+  onSaveWinner,
+}: {
+  draw: RewardDraw
+  groupNameById: Record<string, string>
+  onSaveWinner: (winnerId: string, status: string, note: string) => Promise<void>
+}) {
+  const winningGroupNames = (draw.winning_group_ids || []).map((id) => groupNameById[id] || id)
+  return (
+    <div style={{ border: '1px solid var(--line)', borderRadius: 12, overflow: 'hidden', marginBottom: 16 }}>
+      <div style={{ background: 'var(--bg-2)', padding: '12px 16px', display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center' }}>
+        <span style={{ fontSize: 15, fontWeight: 700 }}>{draw.title || '（未命名批次）'}</span>
+        <Badge>{SCOPE_LABEL[draw.scope]}</Badge>
+        {draw.win_rule && <Badge>{WIN_RULE_LABEL[draw.win_rule] || draw.win_rule}</Badge>}
+        {winningGroupNames.length > 0 && <Badge tone="gold">獲勝組：{winningGroupNames.join('、')}</Badge>}
+        <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>資格池 {draw.pool_size} 人 · 中獎 {draw.winners.length}/{draw.winner_count} 位</span>
+        <span style={{ fontSize: 12, color: 'var(--tx-faint)', marginLeft: 'auto' }}>{fmt(draw.drawn_at)}</span>
+      </div>
+      <div style={{ ...rowStyle, ...headRow }}>
+        <span style={{ flex: '0 0 130px' }}>姓名</span>
+        <span style={{ flex: '0 0 190px' }}>Email</span>
+        <span style={{ flex: '0 0 100px' }}>分組</span>
+        <span style={{ flex: '0 0 100px' }}>狀態</span>
+        <span style={{ flex: 1, minWidth: 0 }}>備註</span>
+        <span style={{ flex: '0 0 60px' }} />
+      </div>
+      {draw.winners.map((w) => (
+        <WinnerRow key={w.id} row={w} onSave={onSaveWinner} />
+      ))}
+    </div>
+  )
+}
+
+function Badge({ children, tone }: { children: React.ReactNode; tone?: 'gold' }) {
+  return (
+    <span
+      style={{
+        fontSize: 12, padding: '3px 9px', borderRadius: 999,
+        background: tone === 'gold' ? 'rgba(255,196,0,.12)' : 'var(--bg-3, var(--bg-1))',
+        color: tone === 'gold' ? 'var(--gold)' : 'var(--tx-dim)',
+        border: `1px solid ${tone === 'gold' ? 'rgba(255,196,0,.3)' : 'var(--line-2)'}`,
+      }}
+    >
+      {children}
+    </span>
+  )
+}
+
+function WinnerRow({
+  row,
+  onSave,
+}: {
+  row: RewardWinnerRow
+  onSave: (winnerId: string, status: string, note: string) => Promise<void>
+}) {
+  const [status, setStatus] = useState(row.reward_status)
+  const [note, setNote] = useState(row.reward_note || '')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  async function handleSave() {
+    setSaving(true)
+    setSaved(false)
+    try {
+      await onSave(row.id, status, note)
+      setSaved(true)
+    } catch {
+      // 錯誤交給父層 err 狀態顯示
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={rowStyle}>
+      <span style={{ flex: '0 0 130px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.user_name}</span>
+      <span style={{ flex: '0 0 190px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--tx-dim)', fontSize: 12 }}>
+        {row.user_email}
+      </span>
+      <span style={{ flex: '0 0 100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--tx-dim)' }}>
+        {row.group_name || '—'}
+      </span>
+      <span style={{ flex: '0 0 100px' }}>
+        <select value={status} onChange={(e) => { setStatus(e.target.value as '' | 'fulfilled'); setSaved(false) }} style={sel}>
+          <option value="">中獎待發</option>
+          <option value="fulfilled">已發放</option>
+        </select>
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <input
+          value={note}
+          onChange={(e) => { setNote(e.target.value); setSaved(false) }}
+          placeholder="獎品/序號/備註"
           style={{ ...inp, padding: '5px 8px', fontSize: 12, width: '100%' }}
         />
       </span>

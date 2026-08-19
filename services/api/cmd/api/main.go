@@ -459,6 +459,7 @@ func main() {
 			r.With(perm("races")).Mount("/admin/races", raceHandler.AdminRouter())
 			r.With(perm("races")).Mount("/admin/group-presets", raceHandler.PresetRouter())
 			r.With(perm("races")).Put("/admin/reward-completions/{regID}", raceHandler.AdminUpdateRewardCompletion) // 個人挑戰模式 P5：獎勵發放狀態
+			r.With(perm("races")).Patch("/admin/reward-winners/{id}", raceHandler.AdminUpdateRewardWinner)         // 獎勵管理一般化 migration 135：中獎發放狀態
 			r.With(perm("tasks")).Mount("/admin/task-modules", raceHandler.TaskModuleRouter())
 			r.With(perm("event_tasks")).Mount("/admin/events", eventHandler.AdminRouter())
 			r.With(perm("event_tasks")).Mount("/admin/event-races", eventHandler.RaceAdminRouter())
