@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail, type GrantedReward, type RewardPreviewItem } from '@/lib/api'
+import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail, type GrantedReward, type RewardPreviewItem, type RaceSupply } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useScrollLock } from '@/lib/useScrollLock'
@@ -312,7 +312,12 @@ export default function RaceDetailScreen({
           <div style={notStartedHint}>賽事尚未開始，敬請期待。</div>
         )}
 
-        {tab === 'brochure' && (detail ? <BrochureBody detail={detail} /> : <Hint>載入中…</Hint>)}
+        {tab === 'brochure' && (detail ? (
+          <>
+            <BrochureBody detail={detail} />
+            <SuppliesBody supplies={detail.supplies} />
+          </>
+        ) : <Hint>載入中…</Hint>)}
         {tab === 'progress' && <ProgressBody race={race} />}
         {tab === 'explore' && <ExploreBody race={race} />}
         {tab === 'rank' && <RankingBody race={race} />}
@@ -730,6 +735,43 @@ function Row({ k, v }: { k: string; v: string }) {
 }
 function Hint({ children, color = 'var(--tx-dim)' }: { children: React.ReactNode; color?: string }) {
   return <div style={{ textAlign: 'center', padding: '40px 20px', fontSize: 13.5, color }}>{children}</div>
+}
+
+// 「簡章」頁籤尾部：參賽物資／完賽物資（依 kind 分節，group_id 非空標注分組專屬）
+function SuppliesBody({ supplies }: { supplies: RaceSupply[] }) {
+  if (!supplies || supplies.length === 0) return null
+  const raceItems = supplies.filter((s) => s.kind === 'race_pack')
+  const finisherItems = supplies.filter((s) => s.kind === 'finisher')
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', marginBottom: 10 }}>🎽 參賽物資</div>
+      {raceItems.length > 0 && <SupplySection label="參賽物資" items={raceItems} />}
+      {finisherItems.length > 0 && <SupplySection label="完賽物資" items={finisherItems} />}
+    </div>
+  )
+}
+function SupplySection({ label, items }: { label: string; items: RaceSupply[] }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 6 }}>{label}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {items.map((s, i) => (
+          <div key={s.id ?? i} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px' }}>
+            {s.image_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={s.image_url} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)', flexShrink: 0 }} />
+            )}
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)' }}>
+                {s.name}{s.group_id ? <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tx-faint)' }}>（分組專屬）</span> : ''}
+              </div>
+              {s.description && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 2 }}>{s.description}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0 }

@@ -213,7 +213,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     return (
       <div style={{ paddingLeft: 2 }}>
         <TaskList label="本組團體任務（全組加總達標）" items={s.team} />
-        <TaskList label="本組個人任務（每人各自達成）" items={s.individual} />
+        <TaskList label="本組個人額外挑戰（每人各自達成）" items={s.individual} />
       </div>
     )
   }
@@ -627,7 +627,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                     <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--fug)' }}>所有分組共同任務</div>
                     <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 2 }}>不論加入哪一組都需達成</div>
                     <TaskList label="團體任務（全組加總達標）" items={allGroupsTasks.team} />
-                    <TaskList label="個人任務（每人各自達成）" items={allGroupsTasks.individual} />
+                    <TaskList label="個人額外挑戰（每人各自達成）" items={allGroupsTasks.individual} />
                   </div>
                 )}
               </Section>
@@ -638,9 +638,15 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               <Section title="加購項目">
                 {detail.addons.map((a) => (
                   <div key={a.id} style={groupRow}>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{a.name}</div>
-                      <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{ntd(a.price_cents)}{a.description ? ` · ${a.description}` : ''}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {a.image_url && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={a.image_url} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)', flexShrink: 0 }} />
+                      )}
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{a.name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{ntd(a.price_cents)}{a.description ? ` · ${a.description}` : ''}</div>
+                      </div>
                     </div>
                     <input
                       type="number" min={0} max={a.per_user_limit ?? undefined}
@@ -845,7 +851,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               <div style={{ background: 'rgba(45,212,150,.06)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px', marginBottom: 10 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--fug)' }}>所有分組共同任務</div>
                 <TaskList label="團體任務（全組加總）" items={allGroupsTasks.team} />
-                <TaskList label="個人任務（每人達成）" items={allGroupsTasks.individual} />
+                <TaskList label="個人額外挑戰（每人達成）" items={allGroupsTasks.individual} />
               </div>
             )}
             <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 6 }}>點分組可展開查看該組專屬任務，再「選用此分組」。</div>

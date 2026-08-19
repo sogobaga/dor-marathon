@@ -328,3 +328,9 @@ html, body {
     0 0 0 11px rgba(255,255,255,.06),
     0 30px 80px rgba(0,0,0,.8);
 }
+
+/* 簡章/跑者充電站富文字內的表格排版（htmlsafe 白名單已開放 table 系列標籤）：
+   純排版用途，跟隨現有 skin 的 --line/--tx 變數，暗黑/warm 皆可讀。 */
+.brochure-html table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 13.5px; }
+.brochure-html th, .brochure-html td { border: 1px solid var(--line); padding: 8px; text-align: left; }
+.brochure-html th { font-weight: 700; }

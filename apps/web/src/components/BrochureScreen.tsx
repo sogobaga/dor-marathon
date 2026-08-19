@@ -102,7 +102,7 @@ export function BrochureBody({ detail }: { detail: RaceDetail }) {
 
 function Block({ block, onZoom }: { block: BrochureBlock; onZoom: (images: string[], index: number) => void }) {
   if (block.block_type === 'text') {
-    return <div style={{ fontSize: 14.5, lineHeight: 1.7, color: 'var(--tx)' }} dangerouslySetInnerHTML={{ __html: block.content }} />
+    return <div className="brochure-html" style={{ fontSize: 14.5, lineHeight: 1.7, color: 'var(--tx)' }} dangerouslySetInnerHTML={{ __html: block.content }} />
   }
   if (block.block_type === 'image') {
     const imgs = imagesOf(block.content)

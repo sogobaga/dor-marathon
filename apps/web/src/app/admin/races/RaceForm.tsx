@@ -1345,7 +1345,7 @@ export default function RaceForm({
         {tab === 'tasks' && (
           <div style={col}>
             <div style={hint}>
-              本輪為任務設定：可設賽事集體、各分組團體與個人的任務目標。完成判定與前台進度顯示將於後續推出（部分指標需擴充活動上傳資料）。
+              本輪為任務設定：可設賽事集體、各分組團體與個人額外挑戰目標。完成判定與前台進度顯示將於後續推出（部分指標需擴充活動上傳資料）。
             </div>
 
             {taskSection('race_collective', null, '賽事集體任務（全部參賽者）', '全體參賽者數值「加總」達標即完成，例：全員合計爬升 8848m。')}
@@ -1353,13 +1353,13 @@ export default function RaceForm({
             <div style={{ fontWeight: 800, fontSize: 14, marginTop: 6 }}>所有分組共同任務</div>
             <div style={hint}>套用到「每一個分組」的統一目標，設一次即可（前台所有分組都會顯示）。例：所有組都需完成總里程 200K。</div>
             {taskSection('group_team', null, '團體任務（每組加總）', '套用到所有分組：各分組成員加總達標。')}
-            {taskSection('group_individual', null, '個人任務（每人各自）', '套用到所有分組：每位成員各自達標。')}
+            {taskSection('group_individual', null, '個人額外挑戰（每人各自）', '套用到所有分組：每位成員各自達標。')}
 
             {groups.filter((g) => g.name.trim()).map((g, gi) => (
               <div key={g.id ?? `g-${gi}`} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ fontWeight: 800, fontSize: 14, marginTop: 6 }}>分組專屬：{g.name || `分組 ${gi + 1}`}</div>
                 {taskSection('group_team', gi, '本組團體任務（全組加總）', '僅此分組：成員加總達標。例：本組需維持團體配速。')}
-                {taskSection('group_individual', gi, '本組個人任務（每人各自）', '僅此分組：每位成員各自達標。例：A 組配速 7:00–8:00、B 組 5:00–6:00。')}
+                {taskSection('group_individual', gi, '本組個人額外挑戰（每人各自）', '僅此分組：每位成員各自達標。例：A 組配速 7:00–8:00、B 組 5:00–6:00。')}
               </div>
             ))}
             {groups.filter((g) => g.name.trim()).length === 0 && (

@@ -89,7 +89,7 @@ export default function AdminTaskModulesPage() {
         {!draft && <button onClick={startNew} style={primaryBtn}>＋ 新增任務模組</button>}
       </div>
       <p style={{ color: 'var(--tx-dim)', fontSize: 13, marginTop: 0 }}>
-        任務模組是可重複取用的任務組合，建立後可在各賽事的「任務」分頁快速套用到賽事集體 / 分組團體 / 分組個人任務。
+        任務模組是可重複取用的任務組合，建立後可在各賽事的「任務」分頁快速套用到賽事集體 / 分組團體 / 分組個人額外挑戰。
       </p>
 
       {err && <div style={{ color: 'var(--hunt)', padding: '8px 0' }}>{err}</div>}

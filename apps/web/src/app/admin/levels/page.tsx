@@ -219,7 +219,7 @@ export default function AdminLevelsPage() {
               <Field label="完成「分組」任務 EXP">
                 <input style={{ ...inp, width: 110 }} type="number" value={rules.per_group_task} onChange={(e) => setRules({ ...rules, per_group_task: parseInt(e.target.value || '0', 10) })} />
               </Field>
-              <Field label="完成「個人」任務 EXP">
+              <Field label="完成「個人額外挑戰」EXP">
                 <input style={{ ...inp, width: 110 }} type="number" value={rules.per_individual_task} onChange={(e) => setRules({ ...rules, per_individual_task: parseInt(e.target.value || '0', 10) })} />
               </Field>
               <Field label="日常每 1 公里 EXP">
@@ -237,7 +237,7 @@ export default function AdminLevelsPage() {
                 <Field label="完成「分組」任務 DP">
                   <input style={{ ...inp, width: 110 }} type="number" value={rules.dp_per_group_task} onChange={(e) => setRules({ ...rules, dp_per_group_task: parseInt(e.target.value || '0', 10) })} />
                 </Field>
-                <Field label="完成「個人」任務 DP">
+                <Field label="完成「個人額外挑戰」DP">
                   <input style={{ ...inp, width: 110 }} type="number" value={rules.dp_per_individual_task} onChange={(e) => setRules({ ...rules, dp_per_individual_task: parseInt(e.target.value || '0', 10) })} />
                 </Field>
                 <Field label="日常每 1 公里 DP">
@@ -254,7 +254,7 @@ export default function AdminLevelsPage() {
                 <Field label="完成「分組」任務 VIP 天數">
                   <input style={{ ...inp, width: 110 }} type="number" min={0} value={rules.vip_days_group_task} onChange={(e) => setRules({ ...rules, vip_days_group_task: parseInt(e.target.value || '0', 10) })} />
                 </Field>
-                <Field label="完成「個人」任務 VIP 天數">
+                <Field label="完成「個人額外挑戰」VIP 天數">
                   <input style={{ ...inp, width: 110 }} type="number" min={0} value={rules.vip_days_individual_task} onChange={(e) => setRules({ ...rules, vip_days_individual_task: parseInt(e.target.value || '0', 10) })} />
                 </Field>
               </div>
@@ -273,7 +273,7 @@ export default function AdminLevelsPage() {
                 <Field label="完成「分組」任務 GP">
                   <input style={{ ...inp, width: 110 }} type="number" min={0} value={rules.gp_per_group_task} onChange={(e) => setRules({ ...rules, gp_per_group_task: parseInt(e.target.value || '0', 10) })} />
                 </Field>
-                <Field label="完成「個人」任務 GP">
+                <Field label="完成「個人額外挑戰」GP">
                   <input style={{ ...inp, width: 110 }} type="number" min={0} value={rules.gp_per_individual_task} onChange={(e) => setRules({ ...rules, gp_per_individual_task: parseInt(e.target.value || '0', 10) })} />
                 </Field>
               </div>
