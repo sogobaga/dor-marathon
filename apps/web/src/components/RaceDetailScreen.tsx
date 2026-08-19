@@ -759,8 +759,9 @@ function SuppliesBody({ supplies }: { supplies: RaceSupply[] }) {
   const finisherItems = supplies.filter((s) => s.kind === 'finisher')
   return (
     <div className="skin-frame" style={{ ...dashCard, marginTop: 14 }}>
-      <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', marginBottom: 10 }}>🎽 報名禮</div>
-      {raceItems.length > 0 && <SupplySection label="報名禮" items={raceItems} />}
+      {/* 面板標題「報名禮」只出現一次（無 icon）；報名禮小節不再重複小標，完賽物資保留小標區隔 */}
+      <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', marginBottom: 10 }}>報名禮</div>
+      {raceItems.length > 0 && <SupplySection label="" items={raceItems} />}
       {finisherItems.length > 0 && <SupplySection label="完賽物資" items={finisherItems} />}
     </div>
   )
@@ -769,7 +770,7 @@ function SupplySection({ label, items }: { label: string; items: RaceSupply[] })
   const [zoomImg, setZoomImg] = useState<string | null>(null) // 物資縮圖放大檢視
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 6 }}>{label}</div>
+      {label && <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 6 }}>{label}</div>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {items.map((s, i) => (
           <div key={s.id ?? i} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px' }}>
