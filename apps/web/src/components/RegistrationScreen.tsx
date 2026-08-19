@@ -638,31 +638,113 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
             {/* 加購 */}
             {detail.addons.length > 0 && (
               <Section title="加購項目">
-                {detail.addons.map((a) => (
-                  <div key={a.id} style={groupRow}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      {a.image_url && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={a.image_url} alt="" onClick={() => setZoomImg(a.image_url!)}
-                          style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)', flexShrink: 0, cursor: 'zoom-in' }}
-                        />
-                      )}
-                      <div>
-                        <div style={{ fontWeight: 600 }}>{a.name}</div>
-                        <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{ntd(a.price_cents)}{a.description ? ` · ${a.description}` : ''}</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {detail.addons.map((a) => {
+                    const q = qty[a.id!] || 0
+                    const max = a.per_user_limit ?? Infinity
+                    return (
+                      <div key={a.id} style={groupRow}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                            {a.image_url && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={a.image_url} alt="" onClick={() => setZoomImg(a.image_url!)}
+                                style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)', cursor: 'zoom-in' }}
+                              />
+                            )}
+                            <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--gold)', whiteSpace: 'nowrap' }}>{ntd(a.price_cents)}</div>
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 600 }}>{a.name}</div>
+                            {a.description && <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 2 }}>{a.description}</div>}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                          <button
+                            type="button"
+                            onClick={() => setQty((qs) => ({ ...qs, [a.id!]: Math.max(0, (qs[a.id!] || 0) - 1) }))}
+                            disabled={q <= 0}
+                            style={{ ...stepBtn, opacity: q <= 0 ? 0.4 : 1, cursor: q <= 0 ? 'not-allowed' : 'pointer' }}
+                          >
+                            −
+                          </button>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)', width: 22, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{q}</span>
+                          <button
+                            type="button"
+                            onClick={() => setQty((qs) => ({ ...qs, [a.id!]: Math.min(max, (qs[a.id!] || 0) + 1) }))}
+                            disabled={q >= max}
+                            style={{ ...stepBtn, opacity: q >= max ? 0.4 : 1, cursor: q >= max ? 'not-allowed' : 'pointer' }}
+                          >
+                            ＋
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <input
-                      type="number" min={0} max={a.per_user_limit ?? undefined}
-                      value={qty[a.id!] || 0}
-                      onChange={(e) => setQty((q) => ({ ...q, [a.id!]: Math.max(0, parseInt(e.target.value || '0', 10)) }))}
-                      style={{ ...inp, width: 64 }}
-                    />
-                  </div>
-                ))}
+                    )
+                  })}
+                </div>
               </Section>
             )}
+
+            {/* 優惠序號 */}
+            <Section title="優惠序號">
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  value={promoCode}
+                  onChange={(e) => { setPromoCode(e.target.value.toUpperCase()); setPromoQuote(null) }}
+                  placeholder={useCoupon ? '已使用活動優惠券' : '輸入序號（選填）'}
+                  disabled={useCoupon}
+                  style={{ ...inp, flex: 1, textTransform: 'uppercase', opacity: useCoupon ? 0.5 : 1 }}
+                />
+                <button onClick={applyPromo} disabled={promoBusy || useCoupon} style={{ ...primaryBtn, width: 'auto', padding: '0 18px', opacity: useCoupon ? 0.5 : 1 }}>
+                  {promoBusy ? '驗證中…' : '套用'}
+                </button>
+              </div>
+              {promoQuote && !useCoupon && (
+                <div style={{ fontSize: 12.5, marginTop: 8, color: promoQuote.valid ? 'var(--fug)' : 'var(--hunt)' }}>
+                  {promoQuote.valid
+                    ? `✓ 已折抵 ${ntd(promoQuote.discount_cents)}${promoQuote.free ? '（0 元免付款）' : ''}`
+                    : `✕ ${promoQuote.reason || '序號無效'}`}
+                </div>
+              )}
+            </Section>
+
+            {/* VIP 活動優惠券（$100，只折報名費，與序號擇一） */}
+            {isVip && race.entry_fee > 0 && (
+              <Section title="活動優惠券">
+                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13.5, color: 'var(--tx)', opacity: couponBal > 0 || useCoupon ? 1 : 0.5 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={useCoupon}
+                      disabled={couponBal <= 0 || promoCode.trim() !== ''}
+                      onChange={(e) => { const on = e.target.checked; setUseCoupon(on); if (on) { setPromoCode(''); setPromoQuote(null) } }}
+                    />
+                    使用活動優惠券（折 {ntd(COUPON_CENTS)}）
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>持有數量：{couponBal}</span>
+                </label>
+                <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
+                  VIP 專屬，每月補齊 3 張；與優惠序號擇一，不可並用。
+                </div>
+              </Section>
+            )}
+
+            <div style={{ paddingTop: 4 }}>
+              {useCoupon && couponDiscount > 0 ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--tx-dim)' }}>
+                  <span>原價 {ntd(total)} · 優惠券折抵 −{ntd(couponDiscount)}</span>
+                </div>
+              ) : promoQuote?.valid && promoQuote.discount_cents > 0 ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--tx-dim)' }}>
+                  <span>原價 {ntd(total)} · 折抵 −{ntd(promoQuote.discount_cents)}</span>
+                </div>
+              ) : null}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                <span style={{ fontSize: 13, color: 'var(--tx-dim)' }}>應繳金額</span>
+                <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--gold)' }}>{ntd(payable)}</span>
+              </div>
+            </div>
 
             {/* 參賽者資料 */}
             <Section title="參賽者資料">
@@ -770,66 +852,6 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               )}
             </Section>
 
-            {/* 優惠序號 */}
-            <Section title="優惠序號">
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  value={promoCode}
-                  onChange={(e) => { setPromoCode(e.target.value.toUpperCase()); setPromoQuote(null) }}
-                  placeholder={useCoupon ? '已使用活動優惠券' : '輸入序號（選填）'}
-                  disabled={useCoupon}
-                  style={{ ...inp, flex: 1, textTransform: 'uppercase', opacity: useCoupon ? 0.5 : 1 }}
-                />
-                <button onClick={applyPromo} disabled={promoBusy || useCoupon} style={{ ...primaryBtn, width: 'auto', padding: '0 18px', opacity: useCoupon ? 0.5 : 1 }}>
-                  {promoBusy ? '驗證中…' : '套用'}
-                </button>
-              </div>
-              {promoQuote && !useCoupon && (
-                <div style={{ fontSize: 12.5, marginTop: 8, color: promoQuote.valid ? 'var(--fug)' : 'var(--hunt)' }}>
-                  {promoQuote.valid
-                    ? `✓ 已折抵 ${ntd(promoQuote.discount_cents)}${promoQuote.free ? '（0 元免付款）' : ''}`
-                    : `✕ ${promoQuote.reason || '序號無效'}`}
-                </div>
-              )}
-            </Section>
-
-            {/* VIP 活動優惠券（$100，只折報名費，與序號擇一） */}
-            {isVip && race.entry_fee > 0 && (
-              <Section title="活動優惠券">
-                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13.5, color: 'var(--tx)', opacity: couponBal > 0 || useCoupon ? 1 : 0.5 }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input
-                      type="checkbox"
-                      checked={useCoupon}
-                      disabled={couponBal <= 0 || promoCode.trim() !== ''}
-                      onChange={(e) => { const on = e.target.checked; setUseCoupon(on); if (on) { setPromoCode(''); setPromoQuote(null) } }}
-                    />
-                    使用活動優惠券（折 {ntd(COUPON_CENTS)}）
-                  </span>
-                  <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>持有數量：{couponBal}</span>
-                </label>
-                <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
-                  VIP 專屬，每月補齊 3 張；與優惠序號擇一，不可並用。
-                </div>
-              </Section>
-            )}
-
-            <div style={{ paddingTop: 4 }}>
-              {useCoupon && couponDiscount > 0 ? (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--tx-dim)' }}>
-                  <span>原價 {ntd(total)} · 優惠券折抵 −{ntd(couponDiscount)}</span>
-                </div>
-              ) : promoQuote?.valid && promoQuote.discount_cents > 0 ? (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--tx-dim)' }}>
-                  <span>原價 {ntd(total)} · 折抵 −{ntd(promoQuote.discount_cents)}</span>
-                </div>
-              ) : null}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                <span style={{ fontSize: 13, color: 'var(--tx-dim)' }}>應繳金額</span>
-                <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--gold)' }}>{ntd(payable)}</span>
-              </div>
-            </div>
-
             {err && <div style={{ color: 'var(--hunt)', fontSize: 13 }}>{err}</div>}
             <button onClick={submit} disabled={submitting} style={primaryBtn}>
               {submitting ? '送出中…' : isPersonal ? '報名挑戰' : isBattle ? '立即報名 – 隨機分組' : '確認報名'}
@@ -926,4 +948,10 @@ const primaryBtn: React.CSSProperties = {
 const ghostBtn: React.CSSProperties = {
   background: 'transparent', color: 'var(--tx)', border: '1px dashed var(--line-2)',
   borderRadius: 10, padding: '10px 14px', cursor: 'pointer', fontSize: 13, fontFamily: 'inherit',
+}
+// 加購數量 stepper 圓鈕（−/＋）
+const stepBtn: React.CSSProperties = {
+  background: 'var(--bg-2)', color: 'var(--tx)', border: '1px solid var(--line-2)',
+  borderRadius: 999, width: 28, height: 28, fontSize: 16, fontWeight: 700, fontFamily: 'inherit',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
 }
