@@ -132,6 +132,20 @@ export default function RaceDetailScreen({
   useEffect(() => {
     if (pp?.newly_granted && pp.newly_granted.length > 0) setRewardGranted(pp.newly_granted)
   }, [pp?.newly_granted])
+  // 即時獎勵一般化（migration 134）：非 personal 賽事完成「個人額外挑戰」(group_individual scope 任務)
+  // 觸發點在一般進度輪詢（見後端 progress.go GetRaceProgress／MarkRaceTaskCompletedAndGrant）。這裡與
+  // ProgressBody 內建的 SWR 共用同一個 key(['progress', race.id])，SWR 自動去重不會重複打兩次 API；
+  // 拉到父層是為了不論使用者目前停在哪個頁籤，只要輪詢在跑就能接住 newly_granted 彈窗（比照上面 pp 的寫法）。
+  const { data: progData } = useSWR(
+    !isPersonal && token ? ['progress', race.id] : null,
+    () => racesApi.progress(race.id, token),
+    { refreshInterval: 30000 },
+  )
+  useEffect(() => {
+    if (progData?.progress?.newly_granted && progData.progress.newly_granted.length > 0) {
+      setRewardGranted(progData.progress.newly_granted)
+    }
+  }, [progData?.progress?.newly_granted])
   // 個人挑戰模式可重複報名再挑戰：只有「進行中」(pending/paid未完成) 的 attempt 才算擋下再報名；
   // completed/expired/cancelled 的歷史報名應可再次顯示「報名挑戰」按鈕（與 RegistrationScreen 對稱）。
   // personal 用 pp（即時 CAS 判定結果）為準，而非 registration 快照——開頁評估可能剛把 attempt

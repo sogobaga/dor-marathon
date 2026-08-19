@@ -817,13 +817,14 @@ func normalizeRequest(req *CreateRaceRequest) error {
 		if err := req.ChallengeRule.Validate(); err != nil {
 			return fmt.Errorf("challenge_rule: %w", err)
 		}
-		// 即時獎勵設定選填（可不設定），但有填就要合法（機率/區間/序號組皆需通過驗證）。
-		if err := req.RewardConfig.Validate(); err != nil {
-			return fmt.Errorf("reward_config: %w", err)
-		}
 	} else {
 		req.ChallengeRule = nil
-		req.RewardConfig = nil
+	}
+	// 即時獎勵設定（migration 134 起一般化到所有模式，不再限 personal）：personal 完成一次挑戰觸發、
+	// 其餘模式完成任一「個人額外挑戰」(race_tasks scope=group_individual) 觸發（見 progress.go
+	// MarkRaceTaskCompletedAndGrant）。選填（可不設定），但有填就要合法（機率/區間/序號組皆需通過驗證）。
+	if err := req.RewardConfig.Validate(); err != nil {
+		return fmt.Errorf("reward_config: %w", err)
 	}
 
 	for i := range req.Groups {

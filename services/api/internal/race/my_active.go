@@ -83,9 +83,13 @@ func (r *Repository) myRaceTotals(ctx context.Context, raceID, userID string) (t
 	return
 }
 
-// GetMyActiveRaces 組裝登入者「進行中活動/賽事」清單（GPS 追蹤頁面板用）。每場皆為讀取/評估，
-// 不觸發任何完成結算或發獎（personal 只呼叫純讀取評估的 evaluateChallengeRule，絕不呼叫
-// MarkAttemptCompletedAndGrant／GetPersonalProgress）。
+// GetMyActiveRaces 組裝登入者「進行中活動/賽事」清單（GPS 追蹤頁面板用）。personal 只呼叫純讀取評估的
+// evaluateChallengeRule，絕不呼叫 MarkAttemptCompletedAndGrant／GetPersonalProgress，不觸發完成結算/發獎。
+// 非 personal 則直接呼叫 GetRaceProgress——與賽事詳情頁進度輪詢是同一顆函式，migration 134 起若使用者剛好
+// 在此完成某個「個人額外挑戰」(group_individual scope 任務)，可能連帶觸發該任務的即時獎勵 CAS
+// （見 progress.go MarkRaceTaskCompletedAndGrant）；因為呼叫時已帶入本函式呼叫者自己的 userID
+// （逐場組裝、per-user 路徑，非跨使用者快取結果），不會有誤觸他人帳號的風險。此清單本身仍不回傳
+// newly_granted（該欄位只在賽事詳情頁的 progress 輪詢消費，此處無對應前端彈窗），中獎與否不影響本清單內容。
 func (s *Service) GetMyActiveRaces(ctx context.Context, userID string) ([]MyActiveRace, error) {
 	regRows, err := s.repo.loadMyActiveRegistrations(ctx, userID)
 	if err != nil {

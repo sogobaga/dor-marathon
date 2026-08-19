@@ -596,7 +596,9 @@ export default function RaceForm({
       vip_only: vipOnly,
       external_data: externalData,
       challenge_rule: mode === 'personal' ? buildChallengeRule() : null,
-      reward_config: mode === 'personal' && rewardItems.length > 0 ? { items: rewardItems } : null,
+      // 即時獎勵設定一般化（migration 134）：不再限 personal 模式，其餘模式完成任一「個人額外挑戰」
+      // (group_individual scope 任務) 觸發（見後端 progress.go MarkRaceTaskCompletedAndGrant）。
+      reward_config: rewardItems.length > 0 ? { items: rewardItems } : null,
       // config 是整包 JSONB struct marshal（非合併寫入）：務必以既有 config 為底、只覆寫 cancellation_policy，
       // 否則會把 factions/clubs/missions 等既有欄位一併清空（見後端 configToBytes/bytesToConfig 註解）。
       config: {
@@ -680,7 +682,8 @@ export default function RaceForm({
       setTab('basic')
       return
     }
-    if (mode === 'personal') {
+    {
+      // 即時獎勵設定驗證一般化（migration 134）：不再限 personal 模式。
       const foreignGroupErr = rewardItemsForeignGroupError()
       if (foreignGroupErr) {
         setErr(foreignGroupErr)
@@ -887,11 +890,14 @@ export default function RaceForm({
               </div>
             )}
 
-            {mode === 'personal' && (
+            {(
               <div style={{ ...card, background: 'var(--bg-2)' }}>
                 <div style={{ fontWeight: 700, fontSize: 13.5 }}>即時獎勵設定（選填）</div>
                 <div style={hint}>
-                  完成一次挑戰即觸發抽獎，每個項目獨立判定機率（可同時中多項）。經濟類（EXP/DP/GP/VIP）中獎直接入帳；
+                  {mode === 'personal'
+                    ? '完成一次挑戰即觸發抽獎，每個項目獨立判定機率（可同時中多項）。'
+                    : '完成任一「個人額外挑戰」（任務頁籤中分組個人額外挑戰任務）即觸發抽獎，每個項目獨立判定機率（可同時中多項）；同一使用者同一任務只會觸發一次。'}
+                  經濟類（EXP/DP/GP/VIP）中獎直接入帳；
                   序號類為「以商家為單位的兩層抽獎」：先判定該商家中不中獎，中了才在該商家旗下有庫存的面額中依權重抽一組
                   配發進玩家活動獎勵錢包；商家旗下面額當下全數缺貨則該項跳過、不影響其他項目，同一份設定不可重複選同一商家。
                 </div>

@@ -1089,6 +1089,7 @@ export interface RaceProgress {
   started: boolean
   registered?: boolean
   tasks: TaskProgress[]
+  newly_granted?: GrantedReward[] // 本次呼叫剛觸發「個人額外挑戰」完成時發放的即時獎勵（活動獎勵系統一般化；比照 PersonalProgress.newly_granted）
 }
 export interface Contributor {
   rank: number

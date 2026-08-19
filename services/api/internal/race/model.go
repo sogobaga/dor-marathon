@@ -47,7 +47,7 @@ type Race struct {
 	VipOnly          bool                         `json:"vip_only"`                 // VIP 限定賽事（預設 false）：只提供給 VIP 帳號
 	ExternalData     bool                         `json:"external_data"`            // 是否採用 Strava 等外部數據做排名/里程統計（預設 false=只認 App GPS，合規）
 	ChallengeRule    *ChallengeRule               `json:"challenge_rule,omitempty"` // 個人挑戰模式(event_mode=personal)專用規則；其餘模式為 nil
-	RewardConfig     *activityreward.RewardConfig `json:"reward_config,omitempty"`  // 個人挑戰模式(event_mode=personal)完成觸發即時獎勵設定；其餘模式為 nil，選填
+	RewardConfig     *activityreward.RewardConfig `json:"reward_config,omitempty"`  // 完成觸發即時獎勵設定（migration 134 起一般化到所有模式）：personal 完成一次挑戰觸發；其餘模式完成任一「個人額外挑戰」(race_tasks scope=group_individual) 觸發；選填
 	CreatedAt        time.Time                    `json:"created_at"`
 }
 

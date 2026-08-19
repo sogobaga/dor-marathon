@@ -6,6 +6,10 @@ import (
 	"math"
 	"sort"
 	"time"
+
+	"github.com/rs/zerolog/log"
+
+	"github.com/dor/api/internal/activityreward"
 )
 
 // --- 賽事進度（讀取時即時計算使用者相關任務的達成度）---
@@ -41,12 +45,13 @@ type MyRaceStats struct {
 
 // RaceProgress 進度頁回應
 type RaceProgress struct {
-	My         MyRaceStats    `json:"my"`
-	HasGroup   bool           `json:"has_group"`
-	GroupName  string         `json:"group_name,omitempty"`
-	Started    bool           `json:"started"`    // 賽事是否已開始（未開始 → 前台顯示提示）
-	Registered bool           `json:"registered"` // 目前登入者是否已報名此賽事（未報名 → 打卡等需報名的操作先提示）
-	Tasks      []TaskProgress `json:"tasks"`
+	My           MyRaceStats                    `json:"my"`
+	HasGroup     bool                           `json:"has_group"`
+	GroupName    string                         `json:"group_name,omitempty"`
+	Started      bool                           `json:"started"`    // 賽事是否已開始（未開始 → 前台顯示提示）
+	Registered   bool                           `json:"registered"` // 目前登入者是否已報名此賽事（未報名 → 打卡等需報名的操作先提示）
+	Tasks        []TaskProgress                 `json:"tasks"`
+	NewlyGranted []activityreward.GrantedReward `json:"newly_granted,omitempty"` // 本次呼叫剛觸發「個人額外挑戰」完成時發放的即時獎勵（活動獎勵系統一般化，migration 134；比照 personal 模式 PersonalProgress.NewlyGranted）
 }
 
 // LoadRaceActivities 取得某賽事所有未標記活動（含活動者目前分組）
@@ -84,6 +89,70 @@ func (r *Repository) LoadRaceActivities(ctx context.Context, raceID string) ([]p
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// userRaceTaskCompletions 該會員在此賽事「已觸發過即時獎勵」的任務 id 集合（migration 134
+// race_task_completions）。一次查全部、放 map，供 GetRaceProgress 迴圈內判斷某 group_individual 任務
+// 這次評估到 Done 時是否為第一次，避免每次輪詢（前端 30 秒 SWR）都對已完成的任務重複開交易嘗試 INSERT。
+func (r *Repository) userRaceTaskCompletions(ctx context.Context, raceID, userID string) (map[string]bool, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT task_id::text FROM race_task_completions WHERE race_id=$1 AND user_id=$2`, raceID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("user race task completions: %w", err)
+	}
+	defer rows.Close()
+	m := map[string]bool{}
+	for rows.Next() {
+		var taskID string
+		if err := rows.Scan(&taskID); err != nil {
+			return nil, err
+		}
+		m[taskID] = true
+	}
+	return m, rows.Err()
+}
+
+// MarkRaceTaskCompletedAndGrant CAS 標記「個人額外挑戰」(race_tasks scope=group_individual) 完成觸發一次
+// 即時獎勵：INSERT race_task_completions ON CONFLICT(task_id,user_id) DO NOTHING，只有真的插入新列
+// （RowsAffected==1，代表這次呼叫是「第一個」把這個使用者這個任務標記完成的）才在同一交易內 roll 發放
+// （比照 personal_progress.go MarkAttemptCompletedAndGrant 的「CAS 搶完成 + 同交易 roll」模式；這裡沒有
+// 既有狀態欄位可 CAS UPDATE，改用 UNIQUE(task_id,user_id) + INSERT...ON CONFLICT 當唯一冪等防線——
+// 呼叫端(progress.go)的 map 預檢只是效能優化、不是正確性保證，真正擋重複發獎的是這裡的 DB 唯一約束）。
+// 任一步失敗，交易整個 Rollback——completion 不落地，下次評估到 Done 時會再次嘗試，不會出現
+// 「completion 記了但獎沒發」的半成功。
+func (r *Repository) MarkRaceTaskCompletedAndGrant(ctx context.Context, raceID, raceTitle, taskID, userID string, cfg *activityreward.RewardConfig) (claimed bool, granted []activityreward.GrantedReward, err error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return false, nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) // Commit 後為 no-op
+
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO race_task_completions (race_id, task_id, user_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (task_id, user_id) DO NOTHING`, raceID, taskID, userID)
+	if err != nil {
+		return false, nil, fmt.Errorf("insert race task completion: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return false, nil, nil // 沒搶到（此使用者此任務先前已觸發過）：no-op
+	}
+
+	var issuedGroupIDs []string
+	if cfg != nil && len(cfg.Items) > 0 {
+		if granted, issuedGroupIDs, err = activityreward.RollAndGrant(ctx, tx, userID, "race_task", raceID, taskID, cfg); err != nil {
+			return false, nil, fmt.Errorf("roll and grant: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, nil, fmt.Errorf("commit: %w", err)
+	}
+	// commit 後才用非 tx 連線查真實庫存告警，理由與 MarkAttemptCompletedAndGrant 完全相同（見該函式註解）。
+	if len(issuedGroupIDs) > 0 {
+		go checkAndNotifyLowStock(r.db, raceTitle, issuedGroupIDs)
+	}
+	return true, granted, nil
 }
 
 // metricValue 依指標計算累計/最佳值（threshold 類）
@@ -238,6 +307,37 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 		registered, _ = s.repo.userRegisteredInRace(ctx, userID, raceID)
 	}
 
+	// 即時獎勵一般化（migration 134）：personal 走既有 attempt 引擎(MarkAttemptCompletedAndGrant)，
+	// 絕不能在這裡重複觸發；只有非 personal 且此賽事有設定 reward_config 才需要查「已觸發過」的任務集合
+	// （多數賽事沒設定 reward_config，直接略過這次查詢，維持原本零開銷）。
+	taskCompletions := map[string]bool{}
+	rewardEligible := userID != "" && race.EventMode != "personal" && race.RewardConfig != nil && len(race.RewardConfig.Items) > 0
+	if rewardEligible {
+		taskCompletions, err = s.repo.userRaceTaskCompletions(ctx, raceID, userID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var newlyGranted []activityreward.GrantedReward
+	// triggerTaskReward 「個人額外挑戰」(group_individual scope) 完成時觸發一次即時獎勵 CAS
+	// （見 MarkRaceTaskCompletedAndGrant）。taskCompletions 只是效能預檢（避免對已完成任務重複開交易），
+	// 真正防重複發獎靠該函式內 race_task_completions 的 UNIQUE 約束。失敗時記錄警告但不中斷整個進度回應
+	// ——reward 是附加效果，不該因單次 roll 失敗連累使用者看不到自己的任務進度。
+	triggerTaskReward := func(t RaceTask, done bool) {
+		if !rewardEligible || !done || t.Scope != ScopeGroupIndividual || taskCompletions[t.ID] {
+			return
+		}
+		claimed, grantedNow, err := s.repo.MarkRaceTaskCompletedAndGrant(ctx, raceID, race.Title, t.ID, userID, race.RewardConfig)
+		if err != nil {
+			log.Warn().Err(err).Str("race_id", raceID).Str("task_id", t.ID).Str("user_id", userID).
+				Msg("race task reward grant failed")
+			return
+		}
+		if claimed {
+			newlyGranted = append(newlyGranted, grantedNow...)
+		}
+	}
+
 	// 個人統計
 	var mine []progAct
 	for _, a := range acts {
@@ -314,6 +414,7 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 			}
 			tp.Current = float64(collected)
 			tp.Done = len(tp.Checkpoints) > 0 && collected >= len(tp.Checkpoints)
+			triggerTaskReward(t, tp.Done)
 			prog.Tasks = append(prog.Tasks, tp)
 			continue
 		}
@@ -336,7 +437,9 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 			}
 			tp.Done = target > 0 && tp.Current >= target
 		}
+		triggerTaskReward(t, tp.Done)
 		prog.Tasks = append(prog.Tasks, tp)
 	}
+	prog.NewlyGranted = newlyGranted
 	return prog, nil
 }
