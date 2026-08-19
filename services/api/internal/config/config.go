@@ -49,6 +49,12 @@ type Config struct {
 	ECPayBindMerchantID string
 	ECPayBindHashKey    string
 	ECPayBindHashIV     string
+	// ECPayBindReturnURL 站內付2.0 綁卡/扣款的 ReturnURL（server-to-server webhook，見
+	// internal/payment.BindHandler.Notify）；ECPayBindResultURL 是 OrderResultURL（3D 驗證完成後
+	// 瀏覽器 Form POST 導回，見 BindHandler.Result）。獨立於上面 AIO 的 ECPayReturnURL——站內付2.0
+	// 是不同產品線，且 ReturnURL/OrderResultURL 是站內付2.0 特有的雙 callback 設計，AIO 沒有對應物。
+	ECPayBindReturnURL string
+	ECPayBindResultURL string
 
 	// Strava 運動數據整合（選用：空 ClientID = 未啟用）
 	StravaClientID           string
@@ -96,6 +102,8 @@ func Load() *Config {
 		ECPayBindMerchantID: getEnv("ECPAY_BIND_MERCHANT_ID", "3002607"),
 		ECPayBindHashKey:    getEnv("ECPAY_BIND_HASH_KEY", "pwFHCqoQZGmho4w6"),
 		ECPayBindHashIV:     getEnv("ECPAY_BIND_HASH_IV", "EkRm7iFT261dpevs"),
+		ECPayBindReturnURL:  getEnv("ECPAY_BIND_RETURN_URL", "https://www.dor.tw/api/v1/payments/ecpay/bind/notify"),
+		ECPayBindResultURL:  getEnv("ECPAY_BIND_RESULT_URL", "https://www.dor.tw/api/v1/payments/ecpay/bind/result"),
 
 		StravaClientID:           getEnv("STRAVA_CLIENT_ID", ""),
 		StravaClientSecret:       getEnv("STRAVA_CLIENT_SECRET", ""),

@@ -130,10 +130,18 @@ func main() {
 		GlobalEnv:   cfg.ECPayEnv,
 		ProdOrigins: cfg.ECPayProdOrigins,
 	}
-	paymentHandler := payment.NewHandler(payCfg, payment.NewRepository(pool), raceSvc)
+	payRepo := payment.NewRepository(pool)
+	paymentHandler := payment.NewHandler(payCfg, payRepo, raceSvc)
 	// 取消報名審核核准時複用退款核心（見 race.Service.ApproveCancelRequest）；晚繫結注入——
 	// payment.NewHandler 建構時需要 raceSvc 當 OrderMarker，兩者互相依賴，只能等這裡都建構好再接起來。
 	raceHandler.SetRefundCreator(paymentHandler.CreateRefund)
+
+	// 站內付2.0（VIP 訂閱綁卡，VIP 訂閱 Phase C2）——獨立於上面 AIO 的 MultiConfig，只有單一組憑證
+	// （見 config.ECPayBind*），故障安全設計已在 payment.NewBindClient 內：env 非 "prod" 一律用測試站。
+	// raceRepo 直接滿足 payment.VipOrderCreator 介面（CreateVipOrder 簽章相同，見該介面註解），
+	// 不需要額外轉接層。
+	bindClient := payment.NewBindClient(cfg.ECPayBindEnv, cfg.ECPayBindMerchantID, cfg.ECPayBindHashKey, cfg.ECPayBindHashIV)
+	bindHandler := payment.NewBindHandler(bindClient, payRepo, pool, raceRepo, cfg.ECPayBindEnv, cfg.ECPayBindReturnURL, cfg.ECPayBindResultURL, cfg.FrontendURL)
 
 	// Activity
 	actRepo := activity.NewRepository(pool)
@@ -354,6 +362,11 @@ func main() {
 		// 綠界付款結果通知（公開，server 對 server，自帶 CheckMacValue 驗章）
 		r.Post("/payments/ecpay/notify", paymentHandler.Notify)
 
+		// 站內付2.0 VIP 訂閱綁卡雙 callback（公開；ReturnURL 是 server-to-server AES-JSON，
+		// OrderResultURL 是瀏覽器 3D 驗證完成後的一次性 Form POST 導回，見 BindHandler 註解）
+		r.Post("/payments/ecpay/bind/notify", bindHandler.Notify)
+		r.Post("/payments/ecpay/bind/result", bindHandler.Result)
+
 		// --- 需要登入的端點 ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireAuth(authSvc))
@@ -361,6 +374,12 @@ func main() {
 			// 綠界結帳（產生付款表單參數）— SEC-H1：防灌單/重複觸發金流
 			r.With(middleware.RateLimit(rdb, "payment_checkout", 10, time.Minute, middleware.UserOrIP)).
 				Post("/payments/ecpay/checkout", paymentHandler.Checkout)
+
+			// VIP 訂閱發起 + 綁卡完成（VIP 訂閱 Phase C2）— SEC-H1：同上，防灌單/重複觸發金流
+			r.With(middleware.RateLimit(rdb, "vip_subscribe", 10, time.Minute, middleware.UserOrIP)).
+				Post("/profile/vip/subscribe", bindHandler.Subscribe)
+			r.With(middleware.RateLimit(rdb, "vip_bind_complete", 10, time.Minute, middleware.UserOrIP)).
+				Post("/profile/vip/bind-card/complete", bindHandler.CompleteBindCard)
 
 			// 活動上傳 — SEC-H1：整個掛載子路由共用一組節流（含讀取），數字放寬避免誤擋正常瀏覽
 			r.With(middleware.RateLimit(rdb, "activities", 60, time.Minute, middleware.UserOrIP)).
