@@ -312,6 +312,10 @@ export default function RaceDetailScreen({
           )}
         </div>
 
+        {/* 物資（報名禮）面板：緊接在「立即報名」面板下方，讓使用者一進頁面就看到報名禮／完賽物資
+            （原本掛在簡章頁籤尾部，v0.1.537 搬到此處；資料仍吃同一份 detail.supplies，不多打 API） */}
+        {detail && <SuppliesBody supplies={detail.supplies} />}
+
         {/* 頁籤 */}
         <div style={{ display: 'flex', gap: 6, margin: '16px 0 14px', borderBottom: '1px solid var(--line)' }}>
           {(([['brochure', '簡章'], ['progress', '進度'], ...(hasCheckpoints ? [['explore', '探索']] : []), ['rank', '排名'], ...(rewardPreview.length > 0 ? [['reward', '活動獎勵']] : [])]) as [Tab, string][]).map(([v, label]) => (
@@ -327,12 +331,7 @@ export default function RaceDetailScreen({
           <div style={notStartedHint}>賽事尚未開始，敬請期待。</div>
         )}
 
-        {tab === 'brochure' && (detail ? (
-          <>
-            <BrochureBody detail={detail} />
-            <SuppliesBody supplies={detail.supplies} />
-          </>
-        ) : <Hint>載入中…</Hint>)}
+        {tab === 'brochure' && (detail ? <BrochureBody detail={detail} /> : <Hint>載入中…</Hint>)}
         {tab === 'progress' && <ProgressBody race={race} />}
         {tab === 'explore' && <ExploreBody race={race} />}
         {tab === 'rank' && <RankingBody race={race} />}
@@ -752,15 +751,16 @@ function Hint({ children, color = 'var(--tx-dim)' }: { children: React.ReactNode
   return <div style={{ textAlign: 'center', padding: '40px 20px', fontSize: 13.5, color }}>{children}</div>
 }
 
-// 「簡章」頁籤尾部：參賽物資／完賽物資（依 kind 分節，group_id 非空標注分組專屬）
+// 「立即報名」面板正下方的獨立面板：報名禮／完賽物資（依 kind 分節，group_id 非空標注分組專屬）。
+// 卡片樣式比照上方 dashCard，讓它讀起來是同一系列的面板；supplies 為空時整塊不渲染。
 function SuppliesBody({ supplies }: { supplies: RaceSupply[] }) {
   if (!supplies || supplies.length === 0) return null
   const raceItems = supplies.filter((s) => s.kind === 'race_pack')
   const finisherItems = supplies.filter((s) => s.kind === 'finisher')
   return (
-    <div style={{ marginTop: 22 }}>
-      <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', marginBottom: 10 }}>🎽 參賽物資</div>
-      {raceItems.length > 0 && <SupplySection label="參賽物資" items={raceItems} />}
+    <div className="skin-frame" style={{ ...dashCard, marginTop: 14 }}>
+      <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', marginBottom: 10 }}>🎽 報名禮</div>
+      {raceItems.length > 0 && <SupplySection label="報名禮" items={raceItems} />}
       {finisherItems.length > 0 && <SupplySection label="完賽物資" items={finisherItems} />}
     </div>
   )
