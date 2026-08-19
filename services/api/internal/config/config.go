@@ -41,6 +41,15 @@ type Config struct {
 	ECPayStageHashKey    string
 	ECPayStageHashIV     string
 
+	// 綠界 ECPay — 站內付2.0（信用卡定期定額/幕後綁卡請款，VIP 訂閱用）。獨立於上面 AIO 結帳的
+	// 一組憑證（綠界站內付2.0 是不同產品線，MerchantID/HashKey/HashIV 通常也不同）。
+	// 預設值為綠界公開的一般 AIO 測試碼（3002607），非站內付2.0 專屬測試帳密——
+	// ⚠️ 待綠界業務提供站內付2.0 專屬測試帳密後，覆蓋 ECPAY_BIND_* 環境變數即可，程式不需再改。
+	ECPayBindEnv        string // stage | prod，預設沿用 ECPayEnv
+	ECPayBindMerchantID string
+	ECPayBindHashKey    string
+	ECPayBindHashIV     string
+
 	// Strava 運動數據整合（選用：空 ClientID = 未啟用）
 	StravaClientID           string
 	StravaClientSecret       string
@@ -55,6 +64,7 @@ type Config struct {
 }
 
 func Load() *Config {
+	ecpayEnv := getEnv("ECPAY_ENV", "stage")
 	return &Config{
 		Env:            getEnv("ENV", "development"),
 		Port:           getEnv("PORT", "8080"),
@@ -66,7 +76,7 @@ func Load() *Config {
 		CORSOrigins:    strings.Split(getEnv("CORS_ORIGINS", "http://localhost:3000"), ","),
 		GoogleClientID: getEnv("GOOGLE_CLIENT_ID", ""),
 
-		ECPayEnv:           getEnv("ECPAY_ENV", "stage"),
+		ECPayEnv:           ecpayEnv,
 		ECPayReturnURL:     getEnv("ECPAY_RETURN_URL", "https://www.dor.tw/api/v1/payments/ecpay/notify"),
 		ECPayClientBackURL: getEnv("ECPAY_CLIENT_BACK_URL", "https://www.dor.tw"),
 
@@ -79,6 +89,13 @@ func Load() *Config {
 		ECPayStageMerchantID: getEnv("ECPAY_STAGE_MERCHANT_ID", getEnv("ECPAY_MERCHANT_ID", "2000132")),
 		ECPayStageHashKey:    getEnv("ECPAY_STAGE_HASH_KEY", getEnv("ECPAY_HASH_KEY", "5294y06JbISpM5x9")),
 		ECPayStageHashIV:     getEnv("ECPAY_STAGE_HASH_IV", getEnv("ECPAY_HASH_IV", "v77hoKGq4kWxNNIS")),
+
+		// 站內付2.0（VIP 訂閱綁卡用）。預設值為綠界公開 AIO 測試碼，非站內付2.0 專屬——待業務提供後
+		// 覆蓋 ECPAY_BIND_* 環境變數即可。
+		ECPayBindEnv:        getEnv("ECPAY_BIND_ENV", ecpayEnv),
+		ECPayBindMerchantID: getEnv("ECPAY_BIND_MERCHANT_ID", "3002607"),
+		ECPayBindHashKey:    getEnv("ECPAY_BIND_HASH_KEY", "pwFHCqoQZGmho4w6"),
+		ECPayBindHashIV:     getEnv("ECPAY_BIND_HASH_IV", "EkRm7iFT261dpevs"),
 
 		StravaClientID:           getEnv("STRAVA_CLIENT_ID", ""),
 		StravaClientSecret:       getEnv("STRAVA_CLIENT_SECRET", ""),
