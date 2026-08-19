@@ -98,6 +98,9 @@ export default function InterstitialAd() {
     else setDragX(0)
   }
   const handleCTA = (url: string) => {
+    // 點了 CTA ＝ 使用者已互動：本次工作階段就別再彈。尤其站內跳轉後，使用者會預期廣告已關閉，
+    // 再冒出來很煩躁。明確寫入 SEEN（雖然顯示當下已寫過，這裡再保險一次、並自我說明此需求）。
+    try { sessionStorage.setItem(INTERSTITIAL_SEEN_KEY, '1') } catch { /* ignore */ }
     close()
     if (!url) return
     const internal = toInternalPath(url)
