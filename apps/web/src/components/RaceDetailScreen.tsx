@@ -17,6 +17,7 @@ import { BrochureBody } from './BrochureScreen'
 import { RankingBody } from './RaceRankingScreen'
 import { ExploreBody } from './ExploreBody'
 import ScrollArea from './ScrollArea'
+import ImageLightbox from './ImageLightbox'
 
 const STATUS_LABEL: Record<string, string> = {
   registering: '報名中', upcoming_reg: '即將報名', reg_closed: '報名結束',
@@ -765,6 +766,7 @@ function SuppliesBody({ supplies }: { supplies: RaceSupply[] }) {
   )
 }
 function SupplySection({ label, items }: { label: string; items: RaceSupply[] }) {
+  const [zoomImg, setZoomImg] = useState<string | null>(null) // 物資縮圖放大檢視
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 6 }}>{label}</div>
@@ -773,7 +775,10 @@ function SupplySection({ label, items }: { label: string; items: RaceSupply[] })
           <div key={s.id ?? i} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px' }}>
             {s.image_url && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={s.image_url} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)', flexShrink: 0 }} />
+              <img
+                src={s.image_url} alt="" onClick={() => setZoomImg(s.image_url!)}
+                style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)', flexShrink: 0, cursor: 'zoom-in' }}
+              />
             )}
             <div>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)' }}>
@@ -784,6 +789,7 @@ function SupplySection({ label, items }: { label: string; items: RaceSupply[] })
           </div>
         ))}
       </div>
+      {zoomImg && <ImageLightbox src={zoomImg} onClose={() => setZoomImg(null)} />}
     </div>
   )
 }

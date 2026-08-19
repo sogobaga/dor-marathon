@@ -21,6 +21,7 @@ import { useDashboard } from '@/lib/useDashboard'
 import { submitEcpayForm } from '@/lib/ecpay'
 import { track } from '@/lib/analytics'
 import ScrollArea from './ScrollArea'
+import ImageLightbox from './ImageLightbox'
 
 const FIELD_LABEL: Record<ParticipantField, string> = {
   real_name: '真實姓名', nickname: '暱稱', phone: '手機',
@@ -99,6 +100,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [existing, setExisting] = useState<RegistrationState | null>(null)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
+  const [zoomImg, setZoomImg] = useState<string | null>(null) // 加購縮圖放大檢視
 
   const [groupId, setGroupId] = useState('')
   const [groupKey, setGroupKey] = useState('') // 加入需鑰匙的分組時輸入
@@ -641,7 +643,10 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       {a.image_url && (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={a.image_url} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)', flexShrink: 0 }} />
+                        <img
+                          src={a.image_url} alt="" onClick={() => setZoomImg(a.image_url!)}
+                          style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)', flexShrink: 0, cursor: 'zoom-in' }}
+                        />
                       )}
                       <div>
                         <div style={{ fontWeight: 600 }}>{a.name}</div>
@@ -876,6 +881,8 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
           </div>
         </div>
       )}
+
+      {zoomImg && <ImageLightbox src={zoomImg} onClose={() => setZoomImg(null)} />}
     </div>
   )
 }
