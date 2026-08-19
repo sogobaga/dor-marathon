@@ -497,7 +497,7 @@ type RegisterRequest struct {
 	Addons      []AddonSelection `json:"addons"`
 	Participant ParticipantInfo  `json:"participant"`
 	PromoCode   string           `json:"promo_code,omitempty"`
-	UseCoupon   bool             `json:"use_coupon,omitempty"` // 使用 VIP 活動優惠券($100)；與 promo_code 擇一
+	UseCoupon   bool             `json:"use_coupon,omitempty"` // 使用 VIP 活動優惠券（面額見系統設定）；與 promo_code 擇一
 	Invoice     *InvoiceInfo     `json:"invoice,omitempty"`    // 發票資訊；未帶=預設 personal 且全空（雲端發票存證），不影響報名成功
 }
 

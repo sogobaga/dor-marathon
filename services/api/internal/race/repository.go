@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/htmlsafe"
 	"github.com/dor/api/internal/payment"
 	"github.com/dor/api/internal/promo"
@@ -975,12 +976,6 @@ func (r *Repository) IsUserVIP(ctx context.Context, userID string) bool {
 	return v
 }
 
-// 活動優惠券（VIP 專屬）：每月補券張數、每張折抵金額（分）。
-const (
-	couponPerMonth   = 3
-	couponValueCents = 10000 // NT$100
-)
-
 func (r *Repository) ListDefaultWhitelist(ctx context.Context) ([]string, error) {
 	rows, err := r.db.Query(ctx, `SELECT email FROM default_test_whitelist ORDER BY email`)
 	if err != nil {
@@ -1380,7 +1375,7 @@ type RegisterTxInput struct {
 	Addons        []AddonSelection
 	Participant   ParticipantInfo
 	PromoCode     string
-	UseCoupon     bool // 使用 VIP 活動優惠券($100)；與 PromoCode 擇一
+	UseCoupon     bool // 使用 VIP 活動優惠券（面額見系統設定）；與 PromoCode 擇一
 
 	// Invoice 已由 service.ValidateInvoice 驗證/正規化過的發票資訊（一定有值，未帶時已預設為 personal 全空）。
 	Invoice InvoiceInfo
@@ -1490,15 +1485,17 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		discount = promo.DiscountCents(ap, in.EntryFee)
 	}
 
-	// 2c. VIP 活動優惠券（$100 折抵，只折報名費，與序號擇一）：lazy 每月補券 → 上鎖扣券
+	// 2c. VIP 活動優惠券（面額見系統設定 vip_coupon_value_cents，只折報名費，與序號擇一）：lazy 每月補券 → 上鎖扣券
 	//     報名費為 0 時不扣券（避免浪費在免費賽事）
 	couponUsed := false
 	if in.UseCoupon && in.PromoCode == "" && in.EntryFee > 0 {
+		perMonth := appsettings.GetInt(ctx, r.db, "vip_coupon_per_month", 3)
+		valueCents := appsettings.GetInt(ctx, r.db, "vip_coupon_value_cents", 10000)
 		// 每月補券：VIP 且本月尚未補 → 補滿（與 Dashboard 讀取端一致，冪等）
 		_, _ = tx.Exec(ctx, `
 			UPDATE users SET activity_coupon_balance=$2, activity_coupon_month=to_char(NOW(),'YYYY-MM')
 			WHERE id=$1 AND vip_expires_at > NOW() AND COALESCE(activity_coupon_month,'') <> to_char(NOW(),'YYYY-MM')`,
-			in.UserID, couponPerMonth)
+			in.UserID, perMonth)
 		var bal int
 		e := tx.QueryRow(ctx, `
 			UPDATE users SET activity_coupon_balance=activity_coupon_balance-1
@@ -1510,7 +1507,7 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		if e != nil {
 			return nil, fmt.Errorf("use coupon: %w", e)
 		}
-		cd := couponValueCents
+		cd := valueCents
 		if cd > in.EntryFee {
 			cd = in.EntryFee
 		}
@@ -1917,7 +1914,7 @@ func (r *Repository) GetOrderDetail(ctx context.Context, orderID string) (*Order
 //
 // 與 RegisterWithOrder 的差異：VIP 訂閱不綁賽事/報名/分組/加購，orders.race_id 與
 // registration_id 皆為 NULL（migration 132 已將 race_id 改為可空）——ListOrders/GetOrderDetail/
-// GetPayableOrder/profile OrderDetail 皆已改為 LEFT JOIN races 並 COALESCE(title,'') 容錯，
+// GetPayableOrder/profile OrderDetail 皆已改為 LEFT JOIN races 並 COALESCE(title,”) 容錯，
 // 空字串由前端顯示「VIP 訂閱」。
 //
 // 只建立 pending 訂單，不呼叫任何金流 API（不產生 payment_transactions 列、不打 ECPay）——

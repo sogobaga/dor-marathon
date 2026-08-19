@@ -132,12 +132,12 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [promoCode, setPromoCode] = useState('')
   const [promoQuote, setPromoQuote] = useState<import('@/lib/api').PromoQuote | null>(null)
   const [promoBusy, setPromoBusy] = useState(false)
-  const [useCoupon, setUseCoupon] = useState(false) // 使用 VIP 活動優惠券($100)
+  const [useCoupon, setUseCoupon] = useState(false) // 使用 VIP 活動優惠券
 
   const { dash } = useDashboard()
   const isVip = !!dash?.is_vip
   const couponBal = dash?.activity_coupon_balance ?? 0
-  const COUPON_CENTS = 10000 // NT$100
+  const COUPON_CENTS = dash?.activity_coupon_value_cents ?? 10000 // VIP 活動優惠券面額（分）；來自後台系統設定 vip_coupon_value_cents，讀不到時 fallback $100
 
   const loggedIn = !!useUser()
   const isBattle = race.event_mode === 'faction_battle'
@@ -242,7 +242,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     return t
   }, [detail, qty, race.entry_fee])
 
-  // 折抵來源：VIP 優惠券($100，只折報名費) 或 優惠序號；擇一。加購不折。
+  // 折抵來源：VIP 優惠券（只折報名費) 或 優惠序號；擇一。加購不折。
   const couponDiscount = useCoupon ? Math.min(COUPON_CENTS, race.entry_fee) : 0
   const addonsTotal = total - race.entry_fee
   const payable = useCoupon
@@ -709,7 +709,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               )}
             </Section>
 
-            {/* VIP 活動優惠券（$100，只折報名費，與序號擇一） */}
+            {/* VIP 活動優惠券（面額依系統設定，只折報名費，與序號擇一） */}
             {isVip && race.entry_fee > 0 && (
               <Section title="活動優惠券">
                 <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13.5, color: 'var(--tx)', opacity: couponBal > 0 || useCoupon ? 1 : 0.5 }}>

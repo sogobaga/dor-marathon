@@ -49,12 +49,14 @@ var specs = map[string]func(string) bool{
 	"knowledge_entry_state":       isEntryState, // 知識探索(知識卡圖鑑)入口
 	"knowledge_entry_whitelist":   isWhitelist,
 	// VIP 訂閱制（後台可調數值）
-	"vip_trial_days":              isNonNegInt, // 新註冊自動 VIP 試用天數
-	"vip_price_monthly":           isNonNegInt, // 月繳原價（元）
-	"vip_price_annual":            isNonNegInt, // 年繳原價（元）
-	"vip_first_promo_monthly_pct": isPct,       // 首購促銷・月繳實付%（70=付七成）
-	"vip_first_promo_annual_pct":  isPct,       // 首購促銷・年繳實付%（55=付五五）
-	"vip_first_promo_days":        isNonNegInt, // 首購促銷窗天數（試用到期後幾天內續訂享優惠）
+	"vip_trial_days":              isNonNegInt,           // 新註冊自動 VIP 試用天數
+	"vip_price_monthly":           isNonNegInt,           // 月繳原價（元）
+	"vip_price_annual":            isNonNegInt,           // 年繳原價（元）
+	"vip_first_promo_monthly_pct": isPct,                 // 首購促銷・月繳實付%（70=付七成）
+	"vip_first_promo_annual_pct":  isPct,                 // 首購促銷・年繳實付%（55=付五五）
+	"vip_first_promo_days":        isNonNegInt,           // 首購促銷窗天數（試用到期後幾天內續訂享優惠）
+	"vip_coupon_value_cents":      isPosIntMax(10000000), // 活動優惠券面額（分，預設10000=$100）；改動後立即套用於「之後」的報名折抵，已持有的券張數不受影響
+	"vip_coupon_per_month":        isNonNegInt,           // VIP 每月補發活動優惠券張數（預設3）
 	// 取消退費政策系統預設（見 race.CancellationPolicy／race.ResolveCancellationPolicy）；
 	// 值為整包政策的 JSON 字串，個別賽事可在 races.config.cancellation_policy 覆寫。
 	"cancellation_policy": isCancellationPolicyJSON,

@@ -96,30 +96,31 @@ func computeLevel(exp int, levels []LevelConfig) (level int, title string, floor
 // --- Dashboard ---
 
 type DashboardInfo struct {
-	Name                  string     `json:"name"`
-	Nickname              string     `json:"nickname"`
-	DisplayedTitle        string     `json:"displayed_title"` // 展示中稱號名稱（空=未設定，面板顯示於顯示名稱下方）
-	Handle                string     `json:"handle"`
-	AvatarURL             string     `json:"avatar_url"`
-	AccountCode           string     `json:"account_code"`
-	Exp                   int        `json:"exp"`
-	Dp                    int        `json:"dp"` // DP 幣餘額
-	Gp                    int        `json:"gp"` // GP 幣餘額（環台大富翁）
-	Level                 int        `json:"level"`
-	LevelTitle            string     `json:"level_title"`
-	LevelFloor            int        `json:"level_floor"`    // 本級門檻 EXP
-	NextLevelExp          *int       `json:"next_level_exp"` // 下一級門檻（null=已頂級）
-	IsVIP                 bool       `json:"is_vip"`
-	VIPExpiresAt          *time.Time `json:"vip_expires_at,omitempty"`
-	VipPlan               string     `json:"vip_plan"`                 // ''=無 / trial / monthly / annual
-	ActivityCouponBalance int        `json:"activity_coupon_balance"`  // 活動優惠券($100)剩餘張數
-	ShowTrialExpiryNotice bool       `json:"show_trial_expiry_notice"` // 試用到期 + 尚未提示過 → 前台跳一次升級彈窗
-	TotalKm               float64    `json:"total_km"`
-	RaceCount             int        `json:"race_count"`      // 報名場數（未取消）
-	OngoingCount          int        `json:"ongoing_count"`   // 進行中場數
-	CompletedCount        int        `json:"completed_count"` // 已完成場數
-	FollowingCount        int        `json:"following_count"`
-	FollowerCount         int        `json:"follower_count"`
+	Name                     string     `json:"name"`
+	Nickname                 string     `json:"nickname"`
+	DisplayedTitle           string     `json:"displayed_title"` // 展示中稱號名稱（空=未設定，面板顯示於顯示名稱下方）
+	Handle                   string     `json:"handle"`
+	AvatarURL                string     `json:"avatar_url"`
+	AccountCode              string     `json:"account_code"`
+	Exp                      int        `json:"exp"`
+	Dp                       int        `json:"dp"` // DP 幣餘額
+	Gp                       int        `json:"gp"` // GP 幣餘額（環台大富翁）
+	Level                    int        `json:"level"`
+	LevelTitle               string     `json:"level_title"`
+	LevelFloor               int        `json:"level_floor"`    // 本級門檻 EXP
+	NextLevelExp             *int       `json:"next_level_exp"` // 下一級門檻（null=已頂級）
+	IsVIP                    bool       `json:"is_vip"`
+	VIPExpiresAt             *time.Time `json:"vip_expires_at,omitempty"`
+	VipPlan                  string     `json:"vip_plan"`                    // ''=無 / trial / monthly / annual
+	ActivityCouponBalance    int        `json:"activity_coupon_balance"`     // 活動優惠券剩餘張數
+	ActivityCouponValueCents int        `json:"activity_coupon_value_cents"` // 活動優惠券面額（分）；來自系統設定 vip_coupon_value_cents，可調（預設 10000=$100），供前台動態顯示
+	ShowTrialExpiryNotice    bool       `json:"show_trial_expiry_notice"`    // 試用到期 + 尚未提示過 → 前台跳一次升級彈窗
+	TotalKm                  float64    `json:"total_km"`
+	RaceCount                int        `json:"race_count"`      // 報名場數（未取消）
+	OngoingCount             int        `json:"ongoing_count"`   // 進行中場數
+	CompletedCount           int        `json:"completed_count"` // 已完成場數
+	FollowingCount           int        `json:"following_count"`
+	FollowerCount            int        `json:"follower_count"`
 	// PersonalEntry 個人任務入口的可見性（後端依系統設定 + 白名單解析後給前端）：
 	// hidden 不顯示 / locked 顯示但不能按 / shown 顯示且可按。
 	PersonalEntry    string         `json:"personal_entry"`
@@ -152,10 +153,11 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	// 活動優惠券每月補券（VIP 專屬，lazy）：本月尚未補齊 → 補滿 3 張（與報名扣券端一致）
+	// 活動優惠券每月補券（VIP 專屬，lazy）：本月尚未補齊 → 補齊至設定張數（與報名扣券端一致）
+	couponPerMonth := appsettings.GetInt(r.Context(), h.db, "vip_coupon_per_month", 3)
 	_, _ = h.db.Exec(r.Context(), `
-		UPDATE users SET activity_coupon_balance=3, activity_coupon_month=to_char(NOW(),'YYYY-MM')
-		WHERE id=$1 AND vip_expires_at > NOW() AND COALESCE(activity_coupon_month,'') <> to_char(NOW(),'YYYY-MM')`, userID)
+		UPDATE users SET activity_coupon_balance=$2, activity_coupon_month=to_char(NOW(),'YYYY-MM')
+		WHERE id=$1 AND vip_expires_at > NOW() AND COALESCE(activity_coupon_month,'') <> to_char(NOW(),'YYYY-MM')`, userID, couponPerMonth)
 	var d DashboardInfo
 	d.AccountCode = code
 	var email string
@@ -197,6 +199,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		d.Sp, d.SpMax, d.SpRecoverMin, d.SpNextRecoverSec, d.SpFreezeUntil, d.Fitness = st.SP, st.SPMax, st.RecoverMin, st.NextRecoverSec, st.FreezeUntil, st.Fitness
 	}
 	d.IsVIP = d.VIPExpiresAt != nil && d.VIPExpiresAt.After(time.Now())
+	d.ActivityCouponValueCents = appsettings.GetInt(r.Context(), h.db, "vip_coupon_value_cents", 10000)
 	// 試用到期(含未曾設到期日) 且尚未提示過 → 前台跳一次升級彈窗
 	d.ShowTrialExpiryNotice = d.VipPlan == "trial" && !trialShown && (d.VIPExpiresAt == nil || d.VIPExpiresAt.Before(time.Now()))
 	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE follower_id=$1`, userID).Scan(&d.FollowingCount)

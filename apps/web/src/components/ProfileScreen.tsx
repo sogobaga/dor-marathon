@@ -397,7 +397,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               </div>
               {dash?.is_vip && (
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                  <span style={{ color: 'var(--tx-faint)' }}>100元活動優惠券：</span>
+                  <span style={{ color: 'var(--tx-faint)' }}>{Math.round((dash.activity_coupon_value_cents ?? 10000) / 100)}元活動優惠券：</span>
                   <span style={{ fontWeight: 700, color: 'var(--gold)' }}>{dash.activity_coupon_balance ?? 0} 張</span>
                 </div>
               )}

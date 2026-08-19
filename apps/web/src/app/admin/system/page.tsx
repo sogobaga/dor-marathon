@@ -39,7 +39,11 @@ export default function AdminSystemPage() {
       if (!seeded.current) {
         seeded.current = true
         const next: Record<string, string> = {}
-        for (const spec of SETTINGS_SPECS) next[spec.key] = s[spec.key] ?? ''
+        for (const spec of SETTINGS_SPECS) {
+          const raw = s[spec.key]
+          const scale = spec.scale ?? 1
+          next[spec.key] = raw ? String(Number(raw) / scale) : ''
+        }
         setEdit(next)
       }
       if (!cancelPolicySeeded.current) {
@@ -81,18 +85,24 @@ export default function AdminSystemPage() {
     const key = spec.key
     const raw = (edit[key] ?? '').trim()
     let val: string
+    let editVal: string
     if (spec.type === 'number') {
+      const scale = spec.scale ?? 1
       const min = spec.min ?? 0, max = spec.max ?? 999999, def = parseFloat(spec.def) || 0
-      val = raw === '' ? String(def) : String(Math.min(max, Math.max(min, Math.round(parseFloat(raw) || def))))
+      const disp = raw === '' ? def : Math.min(max, Math.max(min, Math.round(parseFloat(raw) || def)))
+      editVal = String(disp)
+      val = String(Math.round(disp * scale))
     } else if (spec.type === 'text') {
       val = raw // 多行文字：允許清空（存空字串）
+      editVal = val
     } else {
       val = raw || spec.def
+      editVal = val
     }
     setBusy(key); setErr(''); setMsg('')
     try {
       const r = await adminAppSettingsApi.set(token, key, val)
-      setValues(r.settings || {}); setEdit((s) => ({ ...s, [key]: val })); setMsg(`✓ 已儲存「${spec.label}」`)
+      setValues(r.settings || {}); setEdit((s) => ({ ...s, [key]: editVal })); setMsg(`✓ 已儲存「${spec.label}」`)
     } catch (e: any) { setErr(e?.message || '儲存失敗') } finally { setBusy('') }
   }
 
@@ -158,7 +168,7 @@ export default function AdminSystemPage() {
                 ? (s.options?.find((o) => o.value === (hasCur ? cur : s.def))?.label ?? (hasCur ? cur : s.def))
                 : s.type === 'text'
                 ? (hasCur ? `已設定（${cur.split(/[\n,;\s]+/).filter(Boolean).length} 筆）` : '未設定')
-                : `${hasCur ? cur : s.def} ${s.unit ?? ''}`
+                : `${hasCur ? String(Number(cur ?? '0') / (s.scale ?? 1)) : s.def} ${s.unit ?? ''}`
               return (
                 <div key={s.key} style={card}>
                   <div style={{ fontWeight: 800, fontSize: 15 }}>{s.label}</div>

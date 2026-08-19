@@ -10,6 +10,7 @@ export interface SettingSpec {
   min?: number
   max?: number
   def: string // 預設值（統一字串化）
+  scale?: number // number 型別專用：後端儲存值＝顯示值×scale（例：面額用「元」顯示，換算成「分」存 app_settings）。省略＝1（顯示=儲存，多數欄位如此）
   options?: { value: string; label: string }[]
   placeholder?: string // type='text' 多行輸入框的提示
   rows?: number        // type='text' 多行輸入框行數
@@ -199,6 +200,16 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     key: 'vip_first_promo_days', group: 'VIP 訂閱制', label: '首購促銷窗天數', type: 'number', unit: '天',
     help: '試用到期後幾天內續訂可享上面的首購促銷價；超過此天數即恢復原價（「14 天後恢復原價」）。之後可另在促銷檔期設定其他優惠。',
     min: 0, max: 365, def: '14',
+  },
+  {
+    key: 'vip_coupon_value_cents', group: 'VIP 訂閱制', label: '活動優惠券面額', type: 'number', unit: '元', scale: 100,
+    help: '每張活動優惠券可折抵的金額（僅能用於賽事報名費折抵，與優惠序號擇一、報名費 0 元時不可用）。改動後「立即」套用於之後的報名折抵；玩家已持有的券張數不受影響。',
+    min: 1, max: 100000, def: '100',
+  },
+  {
+    key: 'vip_coupon_per_month', group: 'VIP 訂閱制', label: '每月補發張數', type: 'number', unit: '張',
+    help: 'VIP 會員每個月自動補發到幾張活動優惠券（lazy 補券：登入或報名當下若偵測到本月尚未補過才補齊，不會超額累加）。',
+    min: 0, max: 100, def: '3',
   },
   {
     key: 'explore_checkin_daily_cap_normal', group: '城市探索・打卡', label: '每日打卡上限（一般會員）', type: 'number', unit: '次',

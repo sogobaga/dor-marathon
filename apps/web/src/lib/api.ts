@@ -1392,6 +1392,7 @@ export interface DashboardInfo {
   vip_expires_at?: string
   vip_plan: '' | 'trial' | 'monthly' | 'annual' // 訂閱方案（''=無）
   activity_coupon_balance: number               // 活動優惠券($100)剩餘張數
+  activity_coupon_value_cents: number // 活動優惠券面額（分）；後台系統設定 vip_coupon_value_cents 可調
   show_trial_expiry_notice: boolean             // 試用到期 + 尚未提示過 → 前台跳一次升級彈窗
   total_km: number
   race_count: number
