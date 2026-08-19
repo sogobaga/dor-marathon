@@ -320,9 +320,11 @@ func (h *Handler) OrderDetail(w http.ResponseWriter, r *http.Request) {
 	orderID := chi.URLParam(r, "orderID")
 
 	var o MyOrder
+	// LEFT JOIN：VIP 訂閱訂單無賽事（orders.race_id 可為 NULL，見 migration 132），rc.title COALESCE 成空字串
+	// 由前端 race_title 為空時顯示「VIP 訂閱」（見 ProfileScreen.tsx）。
 	err := h.db.QueryRow(r.Context(), `
-		SELECT o.id, rc.title, o.total_cents, o.status, COALESCE(o.payment_ref,''), o.created_at
-		FROM orders o JOIN races rc ON rc.id = o.race_id
+		SELECT o.id, COALESCE(rc.title,''), o.total_cents, o.status, COALESCE(o.payment_ref,''), o.created_at
+		FROM orders o LEFT JOIN races rc ON rc.id = o.race_id
 		WHERE o.id = $1 AND o.user_id = $2`, orderID, userID).
 		Scan(&o.ID, &o.RaceTitle, &o.TotalCents, &o.Status, &o.PaymentRef, &o.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {

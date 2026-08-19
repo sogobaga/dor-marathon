@@ -19,7 +19,10 @@ const STATUS_LABEL: Record<string, { t: string; c: string }> = {
   cancelled: { t: '已取消', c: 'var(--tx-faint)' },
   refunded: { t: '已退款', c: 'var(--hunt)' },
 }
-const ITEM_LABEL: Record<string, string> = { entry: '報名費', addon: '加購' }
+const ITEM_LABEL: Record<string, string> = {
+  entry: '報名費', addon: '加購',
+  vip_month: 'VIP 月費訂閱', vip_year: 'VIP 年費訂閱', // VIP 訂閱訂單（無賽事，見 orders.race_id 可空）
+}
 
 const INVOICE_BUYER_LABEL: Record<string, string> = {
   personal: '二聯式（個人）',
@@ -230,7 +233,7 @@ export default function AdminOrdersPage() {
                     </button>
                     <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{o.user_email}</div>
                   </C>
-                  <C w={2}>{o.race_title}</C>
+                  <C w={2}>{o.race_title || 'VIP 訂閱'}</C>
                   <C w={1}>{ntd(o.total_cents)}</C>
                   <C w={1}><span style={{ color: st.c }}>{st.t}</span></C>
                   <C w={1}>

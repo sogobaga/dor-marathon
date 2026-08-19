@@ -101,6 +101,9 @@ var (
 	ErrCancelRequestPending    = errors.New("已有取消申請正在審核中")
 	ErrCancelRegistrationState = errors.New("此報名狀態無法申請取消")
 	ErrCancelDeadlinePassed    = errors.New("已超過可取消期限")
+
+	// ErrInvalidVipPlan CreateVipOrder 收到 monthly/annual 以外的方案代碼（見 VIP 訂閱 Phase C1）。
+	ErrInvalidVipPlan = errors.New("invalid vip plan")
 )
 
 type Service struct {

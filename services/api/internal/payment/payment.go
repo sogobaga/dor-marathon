@@ -241,9 +241,11 @@ type PayableOrder struct {
 // GetPayableOrder 取得屬於該使用者的訂單（結帳用）
 func (r *Repository) GetPayableOrder(ctx context.Context, orderID, userID string) (*PayableOrder, error) {
 	o := &PayableOrder{}
+	// LEFT JOIN：VIP 訂閱訂單無賽事（orders.race_id 可為 NULL，見 migration 132）；
+	// RaceTitle 目前僅供顯示（Checkout 的 itemName 是固定字串，不吃這欄），COALESCE 成空字串即可。
 	err := r.db.QueryRow(ctx, `
-		SELECT o.total_cents, o.status, rc.title
-		FROM orders o JOIN races rc ON rc.id = o.race_id
+		SELECT o.total_cents, o.status, COALESCE(rc.title,'')
+		FROM orders o LEFT JOIN races rc ON rc.id = o.race_id
 		WHERE o.id=$1 AND o.user_id=$2`, orderID, userID).
 		Scan(&o.TotalCents, &o.Status, &o.RaceTitle)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -595,6 +597,11 @@ func genTradeNo() string {
 	// DOR + 10 位 unix 秒 + 6 位亂數 = 19 字（≤20）
 	return fmt.Sprintf("DOR%d%s", time.Now().Unix(), string(suffix))
 }
+
+// GenTradeNo 匯出版 genTradeNo：供其他套件（如 race.Repository.CreateVipOrder）在建立訂單當下
+// 就能產生一組符合綠界 MerchantTradeNo 限制（半形英數、≤20 字）的識別碼，不必等到 Phase C2
+// 呼叫 Checkout 時才生成——沿用既有賽事訂單走的同一套格式，維持風格一致。
+func GenTradeNo() string { return genTradeNo() }
 
 func truncate(s string, n int) string {
 	r := []rune(s)

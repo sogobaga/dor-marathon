@@ -22,7 +22,10 @@ const REG_STATUS: Record<string, { t: string; c: string }> = {
   pending: { t: '待繳費', c: 'var(--gold)' },
   cancelled: { t: '已取消', c: 'var(--tx-faint)' },
 }
-const ITEM_LABEL: Record<string, string> = { entry: '報名費', addon: '加購', discount: '優惠折抵' }
+const ITEM_LABEL: Record<string, string> = {
+  entry: '報名費', addon: '加購', discount: '優惠折抵',
+  vip_month: 'VIP 月費訂閱', vip_year: 'VIP 年費訂閱', // VIP 訂閱訂單（無賽事，見 orders.race_id 可空）
+}
 const FLAG_LABEL: Record<string, string> = {
   multi_device_duplicate: '多裝置重複',
   cross_account_duplicate: '跨帳號重複',
@@ -728,7 +731,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               <strong style={{ fontSize: 17 }}>繳費</strong>
               <button onClick={() => setPayOrder(null)} style={backBtn}>✕</button>
             </div>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>{payOrder.race_title}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>{payOrder.race_title || 'VIP 訂閱'}</div>
 
             <div style={{ border: '1px solid var(--line-2)', borderRadius: 12, padding: 14, marginBottom: 14 }}>
               {payOrder.items.map((it, i) => (

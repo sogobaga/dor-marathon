@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/htmlsafe"
+	"github.com/dor/api/internal/payment"
 	"github.com/dor/api/internal/promo"
 )
 
@@ -1825,13 +1826,15 @@ func scanInvoicePtr(buyerType, taxID, title, carrierType, carrierID, loveCode st
 
 // ListOrders 列出訂單（race_id/status 可選過濾）
 func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limit, offset int) ([]OrderRow, error) {
+	// LEFT JOIN races：VIP 訂閱訂單無賽事（orders.race_id 可為 NULL，見 migration 132），rc.title COALESCE
+	// 成空字串，前端/後台 race_title 為空時顯示「VIP 訂閱」。
 	rows, err := r.db.Query(ctx, `
-		SELECT o.id, u.name, u.email, rc.title, o.total_cents, o.status,
+		SELECT o.id, u.name, u.email, COALESCE(rc.title,''), o.total_cents, o.status,
 		       COALESCE(o.payment_ref,''), o.paid_at, o.created_at, COALESCE(o.registration_id::text,''),
 		       `+invoiceColsSQL+`
 		FROM orders o
 		JOIN users u ON u.id = o.user_id
-		JOIN races rc ON rc.id = o.race_id
+		LEFT JOIN races rc ON rc.id = o.race_id
 		LEFT JOIN order_invoices inv ON inv.order_id = o.id
 		WHERE ($1='' OR o.race_id = $1::uuid)
 		  AND ($2='' OR o.status = $2)
@@ -1861,11 +1864,12 @@ func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limi
 func (r *Repository) GetOrderDetail(ctx context.Context, orderID string) (*OrderDetail, error) {
 	var o OrderRow
 	var invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode string
+	// LEFT JOIN races：VIP 訂閱訂單無賽事（orders.race_id 可為 NULL，見 migration 132），同 ListOrders。
 	err := r.db.QueryRow(ctx, `
-		SELECT o.id, u.name, u.email, rc.title, o.total_cents, o.status,
+		SELECT o.id, u.name, u.email, COALESCE(rc.title,''), o.total_cents, o.status,
 		       COALESCE(o.payment_ref,''), o.paid_at, o.created_at, COALESCE(o.registration_id::text,''),
 		       `+invoiceColsSQL+`
-		FROM orders o JOIN users u ON u.id=o.user_id JOIN races rc ON rc.id=o.race_id
+		FROM orders o JOIN users u ON u.id=o.user_id LEFT JOIN races rc ON rc.id=o.race_id
 		LEFT JOIN order_invoices inv ON inv.order_id = o.id
 		WHERE o.id=$1`, orderID).Scan(
 		&o.ID, &o.UserName, &o.UserEmail, &o.RaceTitle, &o.TotalCents, &o.Status,
@@ -1897,6 +1901,73 @@ func (r *Repository) GetOrderDetail(ctx context.Context, orderID string) (*Order
 		detail.Items = append(detail.Items, it)
 	}
 	return detail, rows.Err()
+}
+
+// CreateVipOrder 建立一筆「無賽事」的 VIP 訂閱 pending 訂單（VIP 訂閱 Phase C1：訂單模型一般化）。
+//
+// 與 RegisterWithOrder 的差異：VIP 訂閱不綁賽事/報名/分組/加購，orders.race_id 與
+// registration_id 皆為 NULL（migration 132 已將 race_id 改為可空）——ListOrders/GetOrderDetail/
+// GetPayableOrder/profile OrderDetail 皆已改為 LEFT JOIN races 並 COALESCE(title,'') 容錯，
+// 空字串由前端顯示「VIP 訂閱」。
+//
+// 只建立 pending 訂單，不呼叫任何金流 API（不產生 payment_transactions 列、不打 ECPay）——
+// 由 Phase C2 呼叫端決定要用一般 Checkout 流程還是綠界定期定額 API，並自行處理後續狀態轉移。
+// 回傳的 merchantTradeNo 沿用既有賽事訂單走的同一套產生器（payment.GenTradeNo，格式
+// DOR+10位unix秒+6位亂數＝19字，符合綠界「半形英數、≤20字」限制），但目前 orders 表沒有
+// merchant_trade_no 欄位可存（該欄位目前只存在於 payment_transactions，於 Checkout 當下才建立），
+// 因此本函式不落地此值，僅生成後回傳給呼叫端；若 Phase C2 需要在建單當下就固定這組編號
+// （例如定期定額 API 於建立訂閱當下就要帶入 MerchantTradeNo），屆時再評估是否要幫 orders 加欄位存它。
+func (r *Repository) CreateVipOrder(ctx context.Context, userID, plan string, amountCents int, desc string) (orderID, merchantTradeNo string, err error) {
+	if userID == "" {
+		return "", "", fmt.Errorf("create vip order: user id is required")
+	}
+	if amountCents <= 0 {
+		return "", "", fmt.Errorf("create vip order: amount must be positive")
+	}
+
+	var itemType, defaultDesc string
+	switch plan {
+	case "monthly":
+		itemType, defaultDesc = "vip_month", "VIP 月費訂閱"
+	case "annual":
+		itemType, defaultDesc = "vip_year", "VIP 年費訂閱"
+	default:
+		return "", "", ErrInvalidVipPlan
+	}
+	if desc == "" {
+		desc = defaultDesc
+	}
+	_ = desc // desc 目前不落地 DB（order_items 無 name 欄位，比照 entry/discount/addon 由前端 ITEM_LABEL
+	// 依 item_type 顯示中文），保留參數是給 Phase C2 組 ECPay itemName 用。
+
+	merchantTradeNo = payment.GenTradeNo()
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("create vip order: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// orders：race_id/registration_id 皆為 NULL；status 沿用既有賽事訂單的初始狀態值 'pending'
+	// （見 RegisterWithOrder／003_events.sql status 欄位預設值）；payment_ref/paid_at 留 NULL，
+	// coupon_used 用 DB 預設 false（VIP 訂閱不吃活動優惠券）。
+	if err = tx.QueryRow(ctx, `
+		INSERT INTO orders (user_id, race_id, registration_id, total_cents, status)
+		VALUES ($1, NULL, NULL, $2, 'pending')
+		RETURNING id`, userID, amountCents).Scan(&orderID); err != nil {
+		return "", "", fmt.Errorf("create vip order: insert order: %w", err)
+	}
+
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO order_items (order_id, item_type, qty, unit_price_cents, subtotal_cents)
+		VALUES ($1, $2, 1, $3, $3)`, orderID, itemType, amountCents); err != nil {
+		return "", "", fmt.Errorf("create vip order: insert item: %w", err)
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return "", "", fmt.Errorf("create vip order: commit: %w", err)
+	}
+	return orderID, merchantTradeNo, nil
 }
 
 // MarkOrderPaid 標記訂單已付，並連動其對應 registration（交易）。
