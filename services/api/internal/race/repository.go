@@ -602,8 +602,10 @@ func (r *Repository) GetDetail(ctx context.Context, raceID string) (*RaceDetail,
 }
 
 // insertBrochure 依陣列順序寫入簡章區塊（交易內，呼叫前須先清空舊區塊）。
-// 僅 block_type=text 的 content 是 HTML，寫入前消毒（image/video 的 content 是圖片URL／
-// YouTube 連結，消毒會破壞內容，不可處理）。
+// block_type=text 的 content 是 HTML，寫入前消毒；block_type=image 的 content 是圖片URL
+// 或 JSON 陣列（見 BrochureImageItem），寫入前用 EncodeBrochureImages 正規化＋驗證每張圖
+// 的點擊連結 scheme（擋 javascript: 等）；block_type=video 的 content 是 YouTube 連結，
+// 不可處理。
 func insertBrochure(ctx context.Context, tx pgx.Tx, raceID string, blocks []BrochureBlock) error {
 	for i := range blocks {
 		b := &blocks[i]
@@ -611,8 +613,14 @@ func insertBrochure(ctx context.Context, tx pgx.Tx, raceID string, blocks []Broc
 			continue
 		}
 		content := b.Content
-		if b.BlockType == "text" {
+		switch b.BlockType {
+		case "text":
 			content = htmlsafe.Sanitize(content)
+		case "image":
+			content = EncodeBrochureImages(ParseBrochureImages(content))
+			if content == "[]" {
+				continue // 全部圖片都是空白網址，整區塊不寫入
+			}
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO race_brochure_blocks (race_id, block_type, content, caption, display_order)
@@ -885,7 +893,9 @@ func (r *Repository) DeleteTaskModule(ctx context.Context, id string) (bool, err
 }
 
 // GetBrochure 取得賽事簡章區塊（依顯示順序）。text 區塊輸出前二度消毒（第二道防線，避免
-// 有人繞過 API 直接改 DB）；image/video 的 content 是圖片URL／YouTube 連結，不可消毒。
+// 有人繞過 API 直接改 DB）；image/video 的 content 是圖片URL／YouTube 連結，不可消毒——
+// image 的 content 原樣回傳給前端解析（見 BrochureImageItem／ParseBrochureImages），
+// 三種歷史格式（單一字串／字串陣列／{url,caption,link}物件陣列）都相容。
 func (r *Repository) GetBrochure(ctx context.Context, raceID string) ([]BrochureBlock, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, block_type, content, COALESCE(caption,''), display_order

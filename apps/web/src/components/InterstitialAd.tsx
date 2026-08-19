@@ -4,20 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { interstitialApi, type InterstitialAd as Ad } from '@/lib/api'
 import { INTERSTITIAL_OFF_KEY, INTERSTITIAL_SEEN_KEY, localDayKey } from '@/lib/interstitial'
-
-// 判斷 CTA 網址是否為「本站內部連結」：相對路徑，或絕對網址但網域為本站/dor.tw。
-// 是則回傳可供 router.push 的路徑（含 search/hash）；否則回傳 null（視為外部網址）。
-function toInternalPath(url: string): string | null {
-  if (url.startsWith('/')) return url
-  try {
-    const u = new URL(url, window.location.origin)
-    const host = u.host.toLowerCase()
-    if (host === window.location.host.toLowerCase() || host === 'dor.tw' || host === 'www.dor.tw') {
-      return u.pathname + u.search + u.hash
-    }
-  } catch { /* 非合法 URL */ }
-  return null
-}
+import { navigateLink } from '@/lib/links'
 
 // 蓋板廣告：拍立得卡片堆疊。前台開啟時彈一次；左右滑動換下一張、滑完自動關閉；右上 X；dots；本日不再顯示。
 export default function InterstitialAd() {
@@ -102,10 +89,7 @@ export default function InterstitialAd() {
     // 再冒出來很煩躁。明確寫入 SEEN（雖然顯示當下已寫過，這裡再保險一次、並自我說明此需求）。
     try { sessionStorage.setItem(INTERSTITIAL_SEEN_KEY, '1') } catch { /* ignore */ }
     close()
-    if (!url) return
-    const internal = toInternalPath(url)
-    if (internal) router.push(internal)
-    else window.open(url, '_blank', 'noopener')
+    navigateLink(url, router)
   }
 
   const stack = ads.slice(index, index + 3) // 顯示 index..index+2（最多 3 張）

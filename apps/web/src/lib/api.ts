@@ -313,6 +313,24 @@ export interface BrochureBlock {
   display_order: number
 }
 
+// 簡章「圖片」區塊 content 陣列（或單一字串）裡，一張圖片的結構。
+// 每張圖可選填 caption（顯示在圖片下方一行說明）與 link（點擊導向，站內/站外皆可）。
+export interface BrochureImageItem {
+  url: string
+  caption?: string
+  link?: string
+}
+
+// 正規化單一圖片項目：相容舊格式（陣列元素是純字串網址＝url）與新格式（物件）。
+// 讀取端（前台渲染／後台編輯）一律先經此函式，未來格式演進只需改這一處。
+export function normalizeBrochureImage(raw: string | BrochureImageItem | null | undefined): BrochureImageItem {
+  if (typeof raw === 'string') return { url: raw }
+  if (raw && typeof raw === 'object' && typeof raw.url === 'string') {
+    return { url: raw.url, caption: raw.caption || undefined, link: raw.link || undefined }
+  }
+  return { url: '' }
+}
+
 // --- 賽事任務系統 ---
 export type MetricType =
   | 'cumulative_distance' | 'single_distance' | 'daily_distance' | 'streak_days'

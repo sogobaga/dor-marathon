@@ -18,6 +18,8 @@ import {
   type RaceAddon,
   type GroupPreset,
   type BrochureBlock,
+  type BrochureImageItem,
+  normalizeBrochureImage,
   type RaceTask,
   type TaskScope,
   type TaskModule,
@@ -176,26 +178,35 @@ export default function RaceForm({
   const [brochure, setBrochure] = useState<BrochureBlock[]>(initial?.brochure ?? [])
   const [uploadingKey, setUploadingKey] = useState<string | null>(null)
 
-  // 圖片區塊 content 存「圖片網址陣列」JSON；相容舊的單一網址字串。
-  // 編輯時保留空白格（讓使用者剛新增的空格不會被吃掉）；送出/驗證時才濾空。
-  function imagesOf(content: string): string[] {
+  // 圖片區塊 content 存「陣列」JSON（元素可為純字串網址，或 {url,caption?,link?} 物件，
+  // 每張圖各自可選填說明文字＋點擊連結）；相容舊的單一網址字串。一律正規化成 BrochureImageItem。
+  // 編輯時保留空白格（讓使用者剛新增的空格不會被吃掉）；送出/驗證時才濾空（見 finalizeImageItems）。
+  function imagesOf(content: string): BrochureImageItem[] {
     const c = (content ?? '').trim()
     if (!c) return []
     if (c.startsWith('[')) {
       try {
         const a = JSON.parse(c)
-        return Array.isArray(a) ? a.map((x) => String(x ?? '')) : []
+        return Array.isArray(a) ? a.map(normalizeBrochureImage) : []
       } catch {
         return []
       }
     }
-    return [c]
+    return [normalizeBrochureImage(c)]
   }
   function blockHasContent(b: { block_type: string; content: string }): boolean {
-    return b.block_type === 'image' ? imagesOf(b.content).some((x) => x.trim()) : !!b.content.trim()
+    return b.block_type === 'image' ? imagesOf(b.content).some((x) => x.url.trim()) : !!b.content.trim()
   }
-  function setBlockImages(i: number, imgs: string[]) {
+  function setBlockImages(i: number, imgs: BrochureImageItem[]) {
     setBrochure((bs) => bs.map((x, idx) => (idx === i ? { ...x, content: JSON.stringify(imgs) } : x)))
+  }
+  // 送出前：trim 各欄位、濾除空白 URL 的項目；沒有 caption/link 的圖片維持純字串格式（與舊資料
+  // 格式一致，儲存最精簡，有填才升級成物件）。後端 EncodeBrochureImages 會再做一次正規化/驗證。
+  function finalizeImageItems(items: BrochureImageItem[]): (string | BrochureImageItem)[] {
+    return items
+      .map((it) => ({ url: it.url.trim(), caption: (it.caption ?? '').trim(), link: (it.link ?? '').trim() }))
+      .filter((it) => it.url)
+      .map((it) => (it.caption || it.link ? it : it.url))
   }
   async function uploadImage(i: number, k: number, file: File) {
     setUploadingKey(`${i}-${k}`)
@@ -205,7 +216,7 @@ export default function RaceForm({
       setBrochure((bs) => bs.map((x, idx) => {
         if (idx !== i) return x
         const imgs = imagesOf(x.content)
-        imgs[k] = url
+        imgs[k] = { ...imgs[k], url }
         return { ...x, content: JSON.stringify(imgs) }
       }))
     } catch (e: any) {
@@ -613,7 +624,7 @@ export default function RaceForm({
         .filter(blockHasContent)
         .map((b, idx) => ({
           ...b,
-          content: b.block_type === 'image' ? JSON.stringify(imagesOf(b.content).map((x) => x.trim()).filter(Boolean)) : b.content.trim(),
+          content: b.block_type === 'image' ? JSON.stringify(finalizeImageItems(imagesOf(b.content))) : b.content.trim(),
           display_order: idx,
         })),
       entry_fee: Math.round(parseFloat(entryFeeNtd || '0') * 100),
@@ -1304,30 +1315,40 @@ export default function RaceForm({
                   )}
                   {b.block_type === 'image' && (
                     <>
-                      <Field label="圖片（可多張；前台會左右滑動瀏覽）">
+                      <Field label="圖片（可多張；前台會左右滑動瀏覽；每張圖可各自選填說明文字＋點擊連結）">
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                          {imagesOf(b.content).map((src, k) => (
-                            <div key={k} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 11, color: 'var(--tx-faint)', width: 16 }}>{k + 1}</span>
-                              <input style={{ ...inp, flex: 1, minWidth: 160 }} value={src}
-                                onChange={(e) => { const imgs = imagesOf(b.content); imgs[k] = e.target.value; setBlockImages(i, imgs) }}
-                                placeholder="https://… 或上傳" />
-                              <label style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
-                                {uploadingKey === `${i}-${k}` ? '上傳中…' : '⬆ 上傳'}
-                                <input type="file" accept="image/*" style={{ display: 'none' }}
-                                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage(i, k, f); e.target.value = '' }} />
-                              </label>
-                              {src && (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={src} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)' }} />
-                              )}
-                              <button type="button" onClick={() => setBlockImages(i, imagesOf(b.content).filter((_, x) => x !== k))} style={{ ...linkBtn, color: 'var(--hunt)' }}>移除</button>
+                          {imagesOf(b.content).map((item, k) => (
+                            <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 8, border: '1px solid var(--line-2)', borderRadius: 8 }}>
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: 11, color: 'var(--tx-faint)', width: 16 }}>{k + 1}</span>
+                                <input style={{ ...inp, flex: 1, minWidth: 160 }} value={item.url}
+                                  onChange={(e) => { const imgs = imagesOf(b.content); imgs[k] = { ...imgs[k], url: e.target.value }; setBlockImages(i, imgs) }}
+                                  placeholder="https://… 或上傳" />
+                                <label style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+                                  {uploadingKey === `${i}-${k}` ? '上傳中…' : '⬆ 上傳'}
+                                  <input type="file" accept="image/*" style={{ display: 'none' }}
+                                    onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadImage(i, k, f); e.target.value = '' }} />
+                                </label>
+                                {item.url && (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={item.url} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)' }} />
+                                )}
+                                <button type="button" onClick={() => setBlockImages(i, imagesOf(b.content).filter((_, x) => x !== k))} style={{ ...linkBtn, color: 'var(--hunt)' }}>移除</button>
+                              </div>
+                              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingLeft: 24 }}>
+                                <input style={{ ...inp, flex: 1, minWidth: 160 }} value={item.caption ?? ''}
+                                  onChange={(e) => { const imgs = imagesOf(b.content); imgs[k] = { ...imgs[k], caption: e.target.value }; setBlockImages(i, imgs) }}
+                                  placeholder="圖片說明（選填，顯示在這張圖片下方）" />
+                                <input style={{ ...inp, flex: 1, minWidth: 160 }} value={item.link ?? ''}
+                                  onChange={(e) => { const imgs = imagesOf(b.content); imgs[k] = { ...imgs[k], link: e.target.value }; setBlockImages(i, imgs) }}
+                                  placeholder="點擊連結（選填，https://… 或站內路徑 /xxx，點這張圖會導向此網址）" />
+                              </div>
                             </div>
                           ))}
-                          <button type="button" onClick={() => setBlockImages(i, [...imagesOf(b.content), ''])} style={ghostBtn}>＋ 新增圖片</button>
+                          <button type="button" onClick={() => setBlockImages(i, [...imagesOf(b.content), { url: '' }])} style={ghostBtn}>＋ 新增圖片</button>
                         </div>
                       </Field>
-                      <Field label="圖說（選填）"><input style={inp} value={b.caption ?? ''} onChange={(e) => upd({ caption: e.target.value })} /></Field>
+                      <Field label="整組圖說（選填；顯示在整組圖片／輪播下方，非逐張說明）"><input style={inp} value={b.caption ?? ''} onChange={(e) => upd({ caption: e.target.value })} /></Field>
                     </>
                   )}
                   {b.block_type === 'video' && (

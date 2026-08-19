@@ -4,6 +4,9 @@
 // 抽出自 BrochureScreen.tsx，行為保持不變（僅搬移，未重寫邏輯）。
 
 import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { normalizeBrochureImage, type BrochureImageItem } from '@/lib/api'
+import { navigateLink } from '@/lib/links'
 
 // 從各種 YouTube 連結取出 video id
 export function ytId(url: string): string | null {
@@ -97,9 +100,21 @@ export function Lightbox({ images, index, onClose }: { images: string[]; index: 
   )
 }
 
-export function MediaCarousel({ images, onZoom }: { images: string[]; onZoom: (images: string[], index: number) => void }) {
+// images：可為純網址字串陣列（舊呼叫端，如跑者充電站商家照片），或 BrochureImageItem
+// 物件陣列（簡章圖片，各自可帶 caption/link）。點擊行為：有 link 的圖點擊導向連結
+// （站內 push／站外開新分頁，見 lib/links）；無 link 則維持原本的放大(Lightbox)行為。
+// caption 顯示在輪播下方，隨目前滑到第幾張切換。
+export function MediaCarousel({
+  images, onZoom,
+}: {
+  images: (string | BrochureImageItem)[]
+  onZoom: (images: string[], index: number) => void
+}) {
   const ref = useRef<HTMLDivElement>(null)
   const [idx, setIdx] = useState(0)
+  const router = useRouter()
+  const items = images.map(normalizeBrochureImage)
+  const urls = items.map((it) => it.url)
 
   function onScroll() {
     const el = ref.current
@@ -110,7 +125,7 @@ export function MediaCarousel({ images, onZoom }: { images: string[]; onZoom: (i
   function go(i: number) {
     const el = ref.current
     if (!el) return
-    const next = Math.max(0, Math.min(images.length - 1, i))
+    const next = Math.max(0, Math.min(items.length - 1, i))
     el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' })
   }
 
@@ -124,30 +139,30 @@ export function MediaCarousel({ images, onZoom }: { images: string[]; onZoom: (i
           borderRadius: 12, WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none',
         }}
       >
-        {images.map((src, i) => (
+        {items.map((item, i) => (
           // eslint-disable-next-line @next/next/no-img-element
           // 整張照片依顯示寬度縮放、不裁切不變形：height:auto + maxHeight 上限，objectFit 改 contain。
           // alignItems:'center'（見外層容器）避免 flex 預設 stretch 把矮的圖片撐成最高那張的高度。
           <img
-            key={i} src={src} alt=""
-            onClick={() => onZoom(images, i)}
-            style={{ flex: '0 0 100%', width: '100%', height: 'auto', maxHeight: '65vh', scrollSnapAlign: 'center', cursor: 'zoom-in', display: 'block', objectFit: 'contain' }}
+            key={i} src={item.url} alt={item.caption ?? ''}
+            onClick={() => (item.link ? navigateLink(item.link, router) : onZoom(urls, i))}
+            style={{ flex: '0 0 100%', width: '100%', height: 'auto', maxHeight: '65vh', scrollSnapAlign: 'center', cursor: item.link ? 'pointer' : 'zoom-in', display: 'block', objectFit: 'contain' }}
           />
         ))}
       </div>
 
       {/* 左右箭頭引導 */}
       {idx > 0 && <button onClick={() => go(idx - 1)} style={{ ...arrowBtn, left: 8 }} aria-label="上一張">‹</button>}
-      {idx < images.length - 1 && <button onClick={() => go(idx + 1)} style={{ ...arrowBtn, right: 8 }} aria-label="下一張">›</button>}
+      {idx < items.length - 1 && <button onClick={() => go(idx + 1)} style={{ ...arrowBtn, right: 8 }} aria-label="下一張">›</button>}
 
       {/* 計數徽章 */}
       <div style={{ position: 'absolute', top: 8, right: 10, background: 'rgba(0,0,0,.55)', color: '#fff', fontSize: 11, padding: '2px 8px', borderRadius: 999 }}>
-        {idx + 1} / {images.length}
+        {idx + 1} / {items.length}
       </div>
 
       {/* 頁碼點 ○●○○○ */}
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, marginTop: 8 }}>
-        {images.map((_, i) => (
+        {items.map((_, i) => (
           <button
             key={i} onClick={() => go(i)} aria-label={`第 ${i + 1} 張`}
             style={{
@@ -157,6 +172,10 @@ export function MediaCarousel({ images, onZoom }: { images: string[]; onZoom: (i
           />
         ))}
       </div>
+      {/* 當前圖片說明（隨滑動切換）*/}
+      {items[idx]?.caption && (
+        <div style={{ fontSize: 12, color: 'var(--tx-dim)', textAlign: 'center', marginTop: 6 }}>{items[idx].caption}</div>
+      )}
       <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>← 左右滑動瀏覽 →</div>
     </div>
   )

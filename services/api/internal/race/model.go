@@ -336,10 +336,13 @@ type RaceSupply struct {
 
 // BrochureBlock 簡章內容區塊
 type BrochureBlock struct {
-	ID           string `json:"id,omitempty"`
-	BlockType    string `json:"block_type"` // text | image | video
-	Content      string `json:"content"`    // text:HTML / image:URL / video:YouTube
-	Caption      string `json:"caption,omitempty"`
+	ID        string `json:"id,omitempty"`
+	BlockType string `json:"block_type"` // text | image | video
+	// Content：text=HTML；video=YouTube 連結；image=圖片網址，可為單一字串，或 JSON 陣列
+	// （元素可為純字串網址，或 {url,caption?,link?} 物件——每張圖各自的說明文字/點擊連結，
+	// 見 BrochureImageItem／ParseBrochureImages／EncodeBrochureImages）。
+	Content      string `json:"content"`
+	Caption      string `json:"caption,omitempty"` // 區塊層級說明（image/video 適用；圖片區塊另有逐張的 per-image caption，見 Content）
 	DisplayOrder int    `json:"display_order"`
 }
 
