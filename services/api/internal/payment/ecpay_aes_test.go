@@ -64,19 +64,80 @@ func TestPKCS7PadUnpad(t *testing.T) {
 	}
 }
 
-// TestEcpayAESEncryptKnownOutput 自我回歸：固定 HashKey/HashIV + 固定明文，防日後不小心改壞
-// UrlEncode 規則／padding／key-iv 取法等演算法細節卻沒發現（AES-CBC 在固定 key/iv 下是決定性的，
-// 沒有隨機性，因此輸出可以寫死比對）。這組 Base64 是用目前實作跑出來的結果；這個測試若壞掉，
-// 代表加密的位元輸出變了——先判斷是「刻意修正貼近綠界規格」還是「不小心改壞」，不要直接更新期望值。
-func TestEcpayAESEncryptKnownOutput(t *testing.T) {
-	const plaintext = `{"MerchantID":"3002607","Note":"固定測試 100%"}`
-	const wantB64 = "e5At4EjZSE50Pts+oFxqQ93f3o+EpvwdqhaMzEyaTxn3FUSxZu/+5Ix60tJ/9ZGSqS5xyeX01lron8kSMRwg7rCoPHbOhz5ATlfwpRz1n2nprdjS+7pTUVYJd7NneBxwzDmqmPjMgR1O/XCFwXFpdg=="
+// TestEcpayAESOfficialVectors 用「綠界官方 ECPay-API-Skill」提供的測試向量
+// （test-vectors/aes-encryption.json，HashKey/HashIV 為官方向量專用測試值）逐 byte 驗證：
+//   - 加密方向：我們的輸出必須與官方 expected_base64 完全一致（跨語言互通的黃金驗證——
+//     這組向量曾抓到本檔第一版把 aesUrlEncode 誤寫成 CheckMacValue 式編碼的 bug）。
+//   - 解密方向：官方密文解回來必須等於原始明文。
+//
+// 此測試若壞掉，代表加密位元輸出與綠界端不一致——先對照官方向量判斷是哪個環節
+// （UrlEncode 規則／padding／key-iv 取法）被改壞，不要直接更新期望值。
+func TestEcpayAESOfficialVectors(t *testing.T) {
+	const vecHashKey = "ejCk326UnaZWKisg"
+	const vecHashIV = "q9jcZX8Ib9LM8wYk"
 
-	got, err := ecpayAESEncrypt(testBindHashKey, testBindHashIV, plaintext)
-	if err != nil {
-		t.Fatalf("ecpayAESEncrypt: %v", err)
+	cases := []struct {
+		name      string
+		plaintext string
+		wantB64   string
+	}{
+		{
+			"基本（插入順序 JSON key）",
+			`{"MerchantID":"2000132","BarCode":"/1234567"}`,
+			"XeEOdHpTRvxKEqs/JD9RSd16s7VtpyWVCN6AV44pKTW3DVa6yI7vKmjBRp2eulDhXoru/qBqFDBH3fEqlkMn3bbJfJBfGAq+v+SvttutYnc=",
+		},
+		{
+			"基本（字母序 JSON key）",
+			`{"BarCode":"/1234567","MerchantID":"2000132"}`,
+			"r0JSyF9wVmywUav725b3rdJs3xp/ekrC/7PGb18zhKyXkPsamV9l4rPnBkaaraPcHtMSwrmSPP3wuS7b8g/aAKGs0iGiknpgpbdXKXvFrYM=",
+		},
+		{
+			"特殊字元 !*'()~（驗證 aesUrlEncode 與 CMV 編碼不混用）",
+			`{"Name":"test!*'()~value"}`,
+			"uvI4yrErM37XNQkXGAgRgBuDOiJoVs72Xn/rum9Ejl1DSna4HyLSoY7764PmhTR7JXb9jJWLSjCGcZEDeFiABg==",
+		},
+		{
+			"PKCS7 16-byte 邊界（URL encode 後剛好 32 bytes，需補整個 padding block）",
+			`{"N":"1234567890"}`,
+			"gVwWJnIpl1m3ZDypcRAjiCctilYnQhHn4h8OzJP5IxQPov7HuysXX+jPONvrHS7Z",
+		},
+		{
+			"UTF-8 中文",
+			`{"MerchantID":"2000132","ItemName":"綠界科技測試商品"}`,
+			"XeEOdHpTRvxKEqs/JD9RSd16s7VtpyWVCN6AV44pKTVKsXddZRgV+Cle9oeB2PqsEC2O0oDi4kObiCtdGznG9aAX69Kj0//VjGXhieBYZ3RuGW9v20xQyBevaBwtOvg1lYjlDw6jsgfToGMUvlGsIJ2DO6/tbXjNZumnRgj2GCSj7LLDRBU3KlkUWji16nO1",
+		},
 	}
-	if got != wantB64 {
-		t.Fatalf("known-output regression mismatch:\n want: %s\n got:  %s", wantB64, got)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := ecpayAESEncrypt(vecHashKey, vecHashIV, c.plaintext)
+			if err != nil {
+				t.Fatalf("ecpayAESEncrypt: %v", err)
+			}
+			if got != c.wantB64 {
+				t.Fatalf("官方向量加密不一致:\n want: %s\n got:  %s", c.wantB64, got)
+			}
+			back, err := ecpayAESDecrypt(vecHashKey, vecHashIV, c.wantB64)
+			if err != nil {
+				t.Fatalf("ecpayAESDecrypt: %v", err)
+			}
+			if back != c.plaintext {
+				t.Fatalf("官方向量解密不一致:\n want: %s\n got:  %s", c.plaintext, back)
+			}
+		})
+	}
+}
+
+// TestEcpayBindURLEncodeOfficialVectors 直接驗證 aesUrlEncode 輸出與官方 expected_url_encoded 一致
+// （url-encode-comparison.json／aes-encryption.json 的中間值）。
+func TestEcpayBindURLEncodeOfficialVectors(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`{"Name":"test!*'()~value"}`, "%7B%22Name%22%3A%22test%21%2A%27%28%29%7Evalue%22%7D"},
+		{`{"MerchantID":"2000132","BarCode":"/1234567"}`, "%7B%22MerchantID%22%3A%222000132%22%2C%22BarCode%22%3A%22%2F1234567%22%7D"},
+		{`{"N":"1234567890"}`, "%7B%22N%22%3A%221234567890%22%7D"},
+	}
+	for _, c := range cases {
+		if got := ecpayBindURLEncode(c.in); got != c.want {
+			t.Fatalf("aesUrlEncode 與官方向量不一致:\n in:   %s\n want: %s\n got:  %s", c.in, c.want, got)
+		}
 	}
 }
