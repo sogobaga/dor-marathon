@@ -200,7 +200,7 @@ type GetTokenOrderInfo struct {
 	TradeDesc         string `json:"TradeDesc"`
 	ItemName          string `json:"ItemName"`
 	ReturnURL         string `json:"ReturnURL"`
-	CreditInstallment int    `json:"CreditInstallment,omitempty"`
+	CreditInstallment string `json:"CreditInstallment,omitempty"` // 綠界 String(20)，逗號分隔如 "3,6,12"；VIP 不分期一律留空
 }
 
 // GetTokenReq GetTokenbyBindingCard 請求 Data。
@@ -349,7 +349,7 @@ type CreatePaymentReq struct {
 	BindCardID        string              `json:"BindCardID"`
 	OrderInfo         PaymentOrderInfoReq `json:"OrderInfo"`
 	ConsumerInfo      ConsumerInfo        `json:"ConsumerInfo"`
-	CreditInstallment int                 `json:"CreditInstallment,omitempty"`
+	CreditInstallment string              `json:"CreditInstallment,omitempty"` // 綠界 String(20)，逗號分隔如 "3,6,12"；VIP 不分期一律留空
 	// Need3D 幕後（無使用者互動）請款固定填 0——這支方法（CreatePayment）本身就是「幕後請款核心」，
 	// 場景就是背景自動扣款（VIP 續訂），沒有使用者在場可以跳轉去完成 3D 驗證頁面；因此 CreatePayment
 	// 方法內部固定把這個欄位覆寫成 0（見下方方法實作），不論呼叫端傳了什麼值——避免任何未來呼叫端
