@@ -45,7 +45,16 @@ type VipOrderCreator interface {
 	CreateVipOrder(ctx context.Context, userID, plan string, amountCents int, desc string) (orderID, merchantTradeNo string, err error)
 }
 
-// BindHandler 綠界站內付2.0 VIP 訂閱流程的 HTTP handler。
+// MailInserter 站內信最小介面（VIP 訂閱 Phase D 續約通知用）：由 mail.Handler 實作。用小介面而非直接
+// import internal/mail，比照 push 套件既有的 MailInserter 介面同一慣例（見 internal/push/push.go），
+// 雖然 payment↔mail 目前並無循環依賴風險，仍維持這個慣例讓依賴方向單純、好測試。
+type MailInserter interface {
+	InsertForUsers(ctx context.Context, userIDs []string, level, title, body, url string) (int, error)
+}
+
+// BindHandler 綠界站內付2.0 VIP 訂閱流程的 HTTP handler；同時也是 VIP 訂閱 Phase D 每日續約排程
+// （RunRenewalLoop，見 vip_renewal.go）的宿主——續約排程需要的 client/repo/db/orders/bindEnv/
+// returnURL 這裡全部已有，不另外開一個平行結構重複持有同一組依賴。
 type BindHandler struct {
 	client *BindClient
 	// repo 重用既有 AIO 的 Repository：CheckoutCreateTx/GetPayableOrder/GetTxForNotify/MarkTxFailed
@@ -53,15 +62,16 @@ type BindHandler struct {
 	repo        *Repository
 	db          *pgxpool.Pool
 	orders      VipOrderCreator
-	bindEnv     string // ECPayBindEnv，落地進 payment_transactions.ecpay_env 供稽核（Bind 本身只有單一組憑證，不像 AIO MultiConfig 需要靠它切換憑證/驗章）
-	returnURL   string // ReturnURL：server-to-server webhook（見 Notify）
-	resultURL   string // OrderResultURL：3D 驗證完成後瀏覽器導回（見 Result）
-	frontendURL string // Result 3D 導回結果頁用（沿用 config.FrontendURL，Strava OAuth 已用同一欄位）
+	mail        MailInserter // 續約排程通知用（Phase D）；可為 nil（測試/未注入時通知直接跳過，不影響金流本身）
+	bindEnv     string       // ECPayBindEnv，落地進 payment_transactions.ecpay_env 供稽核（Bind 本身只有單一組憑證，不像 AIO MultiConfig 需要靠它切換憑證/驗章）
+	returnURL   string       // ReturnURL：server-to-server webhook（見 Notify）；Phase D 續約請款也重用同一個 ReturnURL，共用同一入口做結算分流（見 handleBindWebhookData）
+	resultURL   string       // OrderResultURL：3D 驗證完成後瀏覽器導回（見 Result）
+	frontendURL string       // Result 3D 導回結果頁用（沿用 config.FrontendURL，Strava OAuth 已用同一欄位）
 }
 
-func NewBindHandler(client *BindClient, repo *Repository, db *pgxpool.Pool, orders VipOrderCreator, bindEnv, returnURL, resultURL, frontendURL string) *BindHandler {
+func NewBindHandler(client *BindClient, repo *Repository, db *pgxpool.Pool, orders VipOrderCreator, mail MailInserter, bindEnv, returnURL, resultURL, frontendURL string) *BindHandler {
 	return &BindHandler{
-		client: client, repo: repo, db: db, orders: orders,
+		client: client, repo: repo, db: db, orders: orders, mail: mail,
 		bindEnv: bindEnv, returnURL: returnURL, resultURL: resultURL, frontendURL: frontendURL,
 	}
 }
@@ -525,25 +535,6 @@ func (h *BindHandler) handleBindWebhookData(ctx context.Context, data bindWebhoo
 	}
 	tradeNo := data.OrderInfo.MerchantTradeNo
 
-	// BindCardID 缺漏 guard（對抗式審查修正）：成功通知理應帶 BindCardID；若缺（異常封包），絕不能
-	// 讓空字串落進 payment_card_bindings 當 active 綁卡——Phase D 續扣排程拿空 token 請款必失敗，
-	// 而且是靜默壞掉。這種異常一律不結算、記 log 留人工對帳（訂單留 pending）。
-	if data.RtnCode == 1 && data.OrderInfo.TradeStatus == "1" && data.BindCardID == "" {
-		log.Error().Str("merchant_trade_no", data.OrderInfo.MerchantTradeNo).
-			Msg("ecpay bind webhook: paid notification missing BindCardID, refusing to settle (needs manual reconciliation)")
-		return false
-	}
-
-	if data.RtnCode != 1 || data.OrderInfo.TradeStatus != "1" {
-		// 業務失敗/未付款通知：只標記交易本身，訂單維持 pending 讓玩家可重新綁卡付款
-		// （比照既有 AIO Notify 對失敗通知的處理，見 payment.go Notify，直接重用 MarkTxFailed）。
-		raw, _ := json.Marshal(data)
-		if err := h.repo.MarkTxFailed(ctx, tradeNo, strconv.Itoa(data.RtnCode), data.RtnMsg, raw); err != nil {
-			log.Warn().Err(err).Str("merchant_trade_no", tradeNo).Msg("ecpay bind webhook: mark tx failed error")
-		}
-		return false
-	}
-
 	tx, err := h.repo.GetTxForNotify(ctx, tradeNo)
 	if err != nil {
 		log.Error().Err(err).Str("merchant_trade_no", tradeNo).Msg("ecpay bind webhook: lookup tx failed")
@@ -551,6 +542,53 @@ func (h *BindHandler) handleBindWebhookData(ctx context.Context, data bindWebhoo
 	}
 	if tx == nil {
 		log.Warn().Str("merchant_trade_no", tradeNo).Msg("ecpay bind webhook: no matching payment_transactions row (unknown trade)")
+		return false
+	}
+
+	// Phase D 續約分流：這筆訂單若能在 vip_renewal_attempts 找到對應列，代表這是續約幕後請款
+	// （CreatePaymentWithCardID／RunRenewalLoop 建立），不是首次綁卡訂閱（CreateBindCard／Subscribe）——
+	// 兩者共用同一個 Notify/Result 入口（續約請款的 OrderInfo.ReturnURL 刻意沿用同一個 h.returnURL，
+	// 見 processRenewalCandidate），但結算方式完全不同：settleVipBindPayment 會 INSERT 新
+	// vip_subscriptions 列，若對續約訂單呼叫會撞 uq_vip_subs_active（該 user 已有一筆 active 訂閱）；
+	// 續約必須改呼叫 settleVipRenewal（更新既有 active 列，不新增、不動綁卡）。用 order_id 反查
+	// vip_renewal_attempts 是否命中，比「該 user 是否已有 active 訂閱」這種間接判斷更精確——不受
+	// 「使用者剛好在此刻取消訂閱/正在走另一次手動 Subscribe」等時序影響（那樣間接判斷可能誤判）。
+	var attemptID string
+	isRenewal := h.db.QueryRow(ctx, `SELECT id::text FROM vip_renewal_attempts WHERE order_id=$1`, tx.OrderID).Scan(&attemptID) == nil
+
+	// BindCardID 缺漏 guard（對抗式審查修正）只適用於「首次綁卡」流程：成功通知理應帶 BindCardID；
+	// 若缺（異常封包），絕不能讓空字串落進 payment_card_bindings 當 active 綁卡——Phase D 續扣排程
+	// 拿空 token 請款必失敗，而且是靜默壞掉。續約請款（CreatePaymentWithCardID）用的是既有 BindCardID，
+	// 這支端點的成功回應本來就不保證回帶 BindCardID 欄位（bindWebhookData 是兩種端點共用的解析
+	// DTO），不能套用同一條防線，否則會讓所有續約成功的 webhook 都被誤判成「異常缺欄位」而拒絕結算。
+	if !isRenewal && data.RtnCode == 1 && data.OrderInfo.TradeStatus == "1" && data.BindCardID == "" {
+		log.Error().Str("merchant_trade_no", data.OrderInfo.MerchantTradeNo).
+			Msg("ecpay bind webhook: paid notification missing BindCardID, refusing to settle (needs manual reconciliation)")
+		return false
+	}
+
+	if data.RtnCode != 1 || data.OrderInfo.TradeStatus != "1" {
+		// 業務失敗/未付款通知：只標記交易本身（比照既有 AIO Notify 對失敗通知的處理，見 payment.go
+		// Notify，直接重用 MarkTxFailed）。
+		raw, _ := json.Marshal(data)
+		if err := h.repo.MarkTxFailed(ctx, tradeNo, strconv.Itoa(data.RtnCode), data.RtnMsg, raw); err != nil {
+			log.Warn().Err(err).Str("merchant_trade_no", tradeNo).Msg("ecpay bind webhook: mark tx failed error")
+		}
+		if isRenewal {
+			// 續約訂單維持 pending 會卡住 uq_orders_pending_vip（明天的重試建不了新訂單）——首次綁卡
+			// 訂單則刻意維持 pending 讓玩家可在同一筆訂單上重新綁卡付款，兩者語意不同，故續約這裡額外
+			// 標記 attempt 列失敗＋作廢訂單；是否終結整個訂閱交給下一輪排程的 attempt_no 判斷
+			// （見 RenewalScheduler 同名邏輯 processRenewalCandidate），這裡只負責讓流程不被卡住。
+			if _, err := h.db.Exec(ctx, `
+				UPDATE vip_renewal_attempts SET status='failed', rtn_code=$2, rtn_msg=$3
+				WHERE id=$1 AND status='processing'`,
+				attemptID, strconv.Itoa(data.RtnCode), data.RtnMsg); err != nil {
+				log.Warn().Err(err).Str("attempt_id", attemptID).Msg("ecpay bind webhook: mark renewal attempt failed error")
+			}
+			if _, err := h.db.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1 AND status='pending'`, tx.OrderID); err != nil {
+				log.Warn().Err(err).Str("order_id", tx.OrderID).Msg("ecpay bind webhook: cancel failed renewal order error")
+			}
+		}
 		return false
 	}
 
@@ -567,10 +605,34 @@ func (h *BindHandler) handleBindWebhookData(ctx context.Context, data bindWebhoo
 	}
 	raw, _ := json.Marshal(data)
 
-	// 金額一律用「我方自己這筆交易當初建立時的金額」（tx.AmountCents，Subscribe 當下用
-	// vip.ComputeQuote 算出、寫進 payment_transactions），不使用 webhook 回傳的 OrderInfo.TradeAmt——
-	// 避免任何竄改/誤植的回傳金額被拿去當作實際入帳/延長 VIP 的依據，這條規則對 CompleteBindCard
-	// 同步路徑也一樣（見該函式：用 order.TotalCents，不用 resp 帶回的數字）。
+	// 金額一律用「我方自己這筆交易當初建立時的金額」（tx.AmountCents，Subscribe/續約排程當下寫進
+	// payment_transactions 的金額），不使用 webhook 回傳的 OrderInfo.TradeAmt——避免任何竄改/誤植的
+	// 回傳金額被拿去當作實際入帳/延長 VIP 的依據，這條規則對 CompleteBindCard 同步路徑也一樣。
+	if isRenewal {
+		userID, periodEnd, err := h.settleVipRenewal(ctx, tx.OrderID, attemptID, settleVipRenewalParams{
+			Plan:            plan,
+			AmountCents:     tx.AmountCents,
+			MerchantTradeNo: tradeNo,
+			EcpayTradeNo:    data.OrderInfo.TradeNo,
+			Gwsr:            gwsr,
+			Raw:             raw,
+		})
+		if err != nil {
+			log.Error().Err(err).Str("order_id", tx.OrderID).Str("merchant_trade_no", tradeNo).
+				Msg("ecpay bind webhook: settle vip renewal failed — payment received but not fully applied, needs manual reconciliation")
+			return false
+		}
+		// periodEnd 為零值代表 CAS 冪等 no-op（這筆已經被結算過，通常是排程本身的同步呼叫已先結算，
+		// webhook 才晚到）——不重複發信。
+		if !periodEnd.IsZero() && userID != "" && h.mail != nil {
+			level, title, body := renewalSuccessMail(formatTaipei(periodEnd))
+			if _, mErr := h.mail.InsertForUsers(ctx, []string{userID}, level, title, body, ""); mErr != nil {
+				log.Warn().Err(mErr).Str("order_id", tx.OrderID).Msg("ecpay bind webhook: send renewal success mail failed")
+			}
+		}
+		return true
+	}
+
 	if err := h.settleVipBindPayment(ctx, tx.OrderID, settleVipBindParams{
 		Plan:             plan,
 		AmountCents:      tx.AmountCents,

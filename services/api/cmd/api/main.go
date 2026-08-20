@@ -99,6 +99,10 @@ func main() {
 	raceSvc := race.NewService(raceRepo, rdb, promoSvc)
 	raceHandler := race.NewHandler(raceSvc, wsManager)
 
+	// 站內信（in-app mail）：供前台鈴鐺列表 + 後台廣播 mail 頻道寫入。提前到這裡建構（原本在後面），
+	// 因為 VIP 站內付2.0 BindHandler（Phase D 續約排程通知）需要在建構時就注入 MailInserter。
+	mailHandler := mail.NewHandler(pool, wsManager)
+
 	// Payment（綠界 ECPay）—— 正式／測試雙特店，依結帳來源 origin 故障安全切換（見 payment.MultiConfig）
 	// 啟動檢查：宣告要跑正式環境（ECPAY_ENV=prod）卻沒有配齊正式特店憑證，寧可直接拒絕啟動，
 	// 也不要讓服務帶著空字串 MerchantID/HashKey/HashIV 悄悄跑起來（那樣所有正式結帳都會失敗，
@@ -141,7 +145,7 @@ func main() {
 	// raceRepo 直接滿足 payment.VipOrderCreator 介面（CreateVipOrder 簽章相同，見該介面註解），
 	// 不需要額外轉接層。
 	bindClient := payment.NewBindClient(cfg.ECPayBindEnv, cfg.ECPayBindMerchantID, cfg.ECPayBindHashKey, cfg.ECPayBindHashIV)
-	bindHandler := payment.NewBindHandler(bindClient, payRepo, pool, raceRepo, cfg.ECPayBindEnv, cfg.ECPayBindReturnURL, cfg.ECPayBindResultURL, cfg.FrontendURL)
+	bindHandler := payment.NewBindHandler(bindClient, payRepo, pool, raceRepo, mailHandler, cfg.ECPayBindEnv, cfg.ECPayBindReturnURL, cfg.ECPayBindResultURL, cfg.FrontendURL)
 
 	// Activity
 	actRepo := activity.NewRepository(pool)
@@ -252,9 +256,6 @@ func main() {
 		Pass: os.Getenv("SMTP_PASS"),
 		From: os.Getenv("SMTP_FROM"),
 	})
-
-	// 站內信（in-app mail）：供前台鈴鐺列表 + 後台廣播 mail 頻道寫入。
-	mailHandler := mail.NewHandler(pool, wsManager)
 
 	// Web Push（VAPID）：未設齊 VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY/VAPID_SUBJECT 時 enabled=false，發送 no-op。
 	pushHandler := push.NewHandler(pool, push.Config{
@@ -540,6 +541,8 @@ func main() {
 	go eventHandler.RunExpiryLoop(bgCtx)
 	// 背景：Phase B3 排程主動觸發（到點且有人在跑才建立 collective 事件實例）
 	go eventHandler.RunScheduleLoop(bgCtx)
+	// 背景：VIP 訂閱 Phase D 每日續約排程（到期前 1 天起用綁定卡背景扣款，3 天寬限×最多 3 次重試）
+	go bindHandler.RunRenewalLoop(bgCtx)
 
 	go func() {
 		log.Info().Str("port", cfg.Port).Msg("DOR API server starting")
