@@ -7,6 +7,8 @@ import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRul
 import { getUserToken } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useScrollLock } from '@/lib/useScrollLock'
+import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
+import BindCardModal from './BindCardModal'
 import { useSheetDismiss } from '@/lib/useSheetDismiss'
 import { overlayMount } from '@/lib/overlayMount'
 import { renderCertificate, downloadCertificate, type CertificateRender } from '@/lib/certificate'
@@ -49,6 +51,7 @@ export default function RaceDetailScreen({
   const token = getUserToken() || undefined
   const { dash } = useDashboard()
   const [showUpgrade, setShowUpgrade] = useState(false)
+  const vipFlow = useVipSubscribeFlow() // VIP 訂閱 Phase E：Subscribe → BindCardModal（比照 ProfileScreen 接線）
   const { data: detailData } = useSWR(['detail', race.id], () => racesApi.detail(race.id, token))
   const { data: standings } = useSWR(
     race.event_mode === 'competition' ? ['standings', race.id] : null,
@@ -355,7 +358,26 @@ export default function RaceDetailScreen({
       )}
 
       {/* 非 VIP 點「立即報名」VIP 專屬賽事 → 提示 + 升級 CTA */}
-      {showUpgrade && <UpgradeVipModal reason="VIP專屬活動。" onClose={() => setShowUpgrade(false)} />}
+      {showUpgrade && (
+        <UpgradeVipModal
+          reason="VIP專屬活動。"
+          onClose={() => setShowUpgrade(false)}
+          onSubscribe={vipFlow.subscribe}
+          subscribing={vipFlow.busy}
+          subscribeError={vipFlow.error}
+        />
+      )}
+      {vipFlow.bindCard && (
+        <BindCardModal
+          plan={vipFlow.bindCard.plan}
+          amountCents={vipFlow.bindCard.amount_cents}
+          token={vipFlow.bindCard.token}
+          orderId={vipFlow.bindCard.order_id}
+          serverType={vipFlow.bindCard.server_type}
+          onClose={vipFlow.closeBindCard}
+          onSuccess={() => { vipFlow.handleBindSuccess(); setShowUpgrade(false) }}
+        />
+      )}
 
       {/* 完成挑戰即得獎勵彈窗（活動獎勵系統 P3；只跳一次，見上方 rewardGranted 的 effect 註解） */}
       {rewardGranted && rewardGranted.length > 0 && (

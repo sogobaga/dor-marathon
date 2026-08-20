@@ -6,6 +6,8 @@ import { trainingApi, type WorkoutTemplate, type PaceLevel, type TrainingCalenda
 import { resolveTemplate, saveFreetrainWorkout, totalKm, estMinutes, fmtDuration, segSummary, targetPaceBand, adjustMeta, adjustedValue, currentValue, pyramidPeak } from '@/lib/workout'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import UpgradeVipModal from './UpgradeVipModal'
+import BindCardModal from './BindCardModal'
+import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
 
 // 自主訓練（VIP 專屬）：
 // P1「📚 課表庫」——依分類列出，選配速等級後即時解析出總距離/預估時間；「開始訓練」把解析後的分段
@@ -241,6 +243,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   useEffect(() => { const v = window.localStorage.getItem('dor_training_pace_level'); if (v) setLevelId(Number(v)) }, [])
   const [navigating, setNavigating] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
+  const vipFlow = useVipSubscribeFlow() // VIP 訂閱 Phase E：Subscribe → BindCardModal（比照 ProfileScreen 接線）
 
   // ── Free Run（課表庫獨立卡）：不控配速/距離，只設時間(分鐘)倒數；預設 30、範圍 [10,240]、step 10 ──
   const FREE_RUN_LS_KEY = 'dor_training_freerun_min'
@@ -1231,7 +1234,25 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {showUpgrade && <UpgradeVipModal onClose={() => setShowUpgrade(false)} />}
+      {showUpgrade && (
+        <UpgradeVipModal
+          onClose={() => setShowUpgrade(false)}
+          onSubscribe={vipFlow.subscribe}
+          subscribing={vipFlow.busy}
+          subscribeError={vipFlow.error}
+        />
+      )}
+      {vipFlow.bindCard && (
+        <BindCardModal
+          plan={vipFlow.bindCard.plan}
+          amountCents={vipFlow.bindCard.amount_cents}
+          token={vipFlow.bindCard.token}
+          orderId={vipFlow.bindCard.order_id}
+          serverType={vipFlow.bindCard.server_type}
+          onClose={vipFlow.closeBindCard}
+          onSuccess={() => { vipFlow.handleBindSuccess(); setShowUpgrade(false) }}
+        />
+      )}
 
       {/* 選課表 modal：排定/更換某日課表，或開始已排定的課表 */}
       {pickerDate && (

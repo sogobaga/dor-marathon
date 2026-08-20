@@ -8,6 +8,8 @@ import { useDashboard } from '@/lib/useDashboard'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import MemberPanel from './MemberPanel'
 import UpgradeVipModal from './UpgradeVipModal'
+import BindCardModal from './BindCardModal'
+import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
 
 // 活動獎勵系統 P4：未使用且 30 天內到期（未過期）筆數 — 邏輯比照 RewardsWalletScreen 的 sortRewards「即將到期」判斷
 // （無期限 valid_until=null 不算快到期；已過期不算「快到期」）。
@@ -98,6 +100,7 @@ export default function RacesScreen({
   const sheet = useDraggableSheet('half') // 首頁預設半展先露活動列表（活動頁）；面板底部留白使其仍可完整捲動，與個資頁「可滑動」手感一致
   const [filter, setFilter] = useState<FilterKey>('all')
   const [showUpgrade, setShowUpgrade] = useState(false)
+  const vipFlow = useVipSubscribeFlow() // VIP 訂閱 Phase E：Subscribe → BindCardModal（比照 ProfileScreen 接線）
   const [vipGateReason, setVipGateReason] = useState<string | undefined>()
   const { dash } = useDashboard()
   const races = data?.races ?? []
@@ -146,7 +149,26 @@ export default function RacesScreen({
         )}
       </header>
 
-      {showUpgrade && <UpgradeVipModal reason={vipGateReason} onClose={() => { setShowUpgrade(false); setVipGateReason(undefined) }} />}
+      {showUpgrade && (
+        <UpgradeVipModal
+          reason={vipGateReason}
+          onClose={() => { setShowUpgrade(false); setVipGateReason(undefined) }}
+          onSubscribe={vipFlow.subscribe}
+          subscribing={vipFlow.busy}
+          subscribeError={vipFlow.error}
+        />
+      )}
+      {vipFlow.bindCard && (
+        <BindCardModal
+          plan={vipFlow.bindCard.plan}
+          amountCents={vipFlow.bindCard.amount_cents}
+          token={vipFlow.bindCard.token}
+          orderId={vipFlow.bindCard.order_id}
+          serverType={vipFlow.bindCard.server_type}
+          onClose={vipFlow.closeBindCard}
+          onSuccess={() => { vipFlow.handleBindSuccess(); setShowUpgrade(false); setVipGateReason(undefined) }}
+        />
+      )}
 
       {/* 活動獎勵 P4：未使用且 30 天內到期＞0 才顯示（載入中不佔位）；點擊直接開活動獎勵錢包頁，醒目但不擋操作（僅佔一行、不遮蓋列表/CTA） */}
       {rewardsSoonCount > 0 && (
