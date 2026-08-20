@@ -333,7 +333,7 @@ function RaceCard({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, gap: 10 }}>
           <span style={{ fontSize: 12.5, color: 'var(--tx-dim)', flexShrink: 0 }}>
             報名費用 <b style={{ color: 'var(--tx)', fontSize: 13.5, fontWeight: 800 }}>
-              {race.entry_fee > 0 ? fmtFee(race.entry_fee) : '免費'}{race.fee_mode === 'per_group' ? ' 起' : ''}
+              {race.display_fee_cents > 0 ? fmtFee(race.display_fee_cents) : '免費'}{race.fee_mode === 'per_group' ? ' 起' : ''}
             </b>
           </span>
           {reg

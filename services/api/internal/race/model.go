@@ -27,6 +27,11 @@ type Race struct {
 	SlotsTotal       int                          `json:"slots_total"`
 	EntryFee         int                          `json:"entry_fee"`                    // 分（NT$ × 100）；fee_mode=per_group 時語意為「預設報名費」（未獨立設定的組別、前台新增組別適用）
 	FeeMode          string                       `json:"fee_mode"`                     // uniform(預設，全場統一用 EntryFee) | per_group(各分組可獨立定價，見 RaceGroup.EntryFeeCents)
+	// DisplayFeeCents 計算欄位（讀取時由 SQL 算好填入，見 repository.go selectCols）：「列表/摘要情境」
+	// （尚未選定分組）該顯示的報名費。uniform 模式＝EntryFee；per_group 模式＝各組有效報名費
+	// （COALESCE(組獨立價, 預設價)）的最小值，賽事沒有任何分組則回退 EntryFee。前端 per_group 顯示
+	// 「NT$ {此值} 起」。純 Go 對照邏輯見 MinGroupFeeCents，供單元測試驗證正確性。
+	DisplayFeeCents int `json:"display_fee_cents"`
 	RegStart         *time.Time                   `json:"registration_start,omitempty"` // 報名開始
 	RegEnd           *time.Time                   `json:"registration_end,omitempty"`   // 報名截止
 	StartDate        time.Time                    `json:"start_date"`                   // 競賽時間 起
@@ -203,6 +208,29 @@ func EffectiveGroupFee(race *Race, group *RaceGroup) int {
 		return *group.EntryFeeCents
 	}
 	return race.EntryFee
+}
+
+// MinGroupFeeCents 計算 per_group 賽事「列表/摘要情境」（尚未選定分組）應顯示的最低有效報名費（分）：
+// 對每一組取 COALESCE(該組獨立價, 預設報名費) 後取最小值；沒有任何分組則回退 defaultFee。
+// 這是 repository.go selectCols 子查詢 `MIN(COALESCE(g.entry_fee_cents, r.entry_fee))` 的純 Go
+// 對照版本，僅供單元測試驗證邏輯正確性——正式請求路徑上實際的計算在 SQL 端完成（避免列表 N+1）。
+func MinGroupFeeCents(defaultFee int, groupFeeCentsOverrides []*int) int {
+	if len(groupFeeCentsOverrides) == 0 {
+		return defaultFee
+	}
+	min := defaultFee
+	first := true
+	for _, override := range groupFeeCentsOverrides {
+		fee := defaultFee
+		if override != nil {
+			fee = *override
+		}
+		if first || fee < min {
+			min = fee
+			first = false
+		}
+	}
+	return min
 }
 
 // CreateTeamGroupRequest 前台跑團成員自建分組 payload

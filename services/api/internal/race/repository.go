@@ -44,7 +44,12 @@ const selectCols = `
 	       COALESCE(external_data,FALSE),
 	       challenge_rule,
 	       reward_config,
-	       created_at
+	       created_at,
+	       CASE WHEN fee_mode = 'per_group'
+	            THEN COALESCE(
+	                   (SELECT MIN(COALESCE(g.entry_fee_cents, races.entry_fee)) FROM race_groups g WHERE g.race_id = races.id),
+	                   entry_fee)
+	            ELSE entry_fee END AS display_fee_cents
 	FROM races`
 
 // List 取得賽事列表，可依 status 過濾（空字串 = 全部）
@@ -2310,6 +2315,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&challengeRuleBytes,
 		&rewardConfigBytes,
 		&race.CreatedAt,
+		&race.DisplayFeeCents,
 	)
 	if err != nil {
 		return nil, err
@@ -2353,6 +2359,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&challengeRuleBytes,
 		&rewardConfigBytes,
 		&race.CreatedAt,
+		&race.DisplayFeeCents,
 	)
 	if err != nil {
 		return nil, err

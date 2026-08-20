@@ -104,3 +104,59 @@ func TestEffectiveGroupFee_CouponZeroFeeGate(t *testing.T) {
 		})
 	}
 }
+
+// TestMinGroupFeeCents 覆蓋 v0.1.546 修正：per_group 賽事活動列表顯示的價格應為「各組有效報名費的
+// 最低值」（此前誤顯示賽事預設價的近似值）。本測試驗證 MinGroupFeeCents 這個與 SQL 子查詢
+// （repository.go selectCols 的 display_fee_cents）等價的純 Go 邏輯。
+func TestMinGroupFeeCents(t *testing.T) {
+	low := 3000
+	mid := 8000
+	zero := 0
+
+	cases := []struct {
+		name       string
+		defaultFee int
+		overrides  []*int
+		want       int
+	}{
+		{
+			name:       "沒有任何分組 → 回退預設報名費",
+			defaultFee: 10000,
+			overrides:  nil,
+			want:       10000,
+		},
+		{
+			name:       "有分組但全部未設定獨立價（皆 nil）→ 全沿用預設價，最小值即預設價",
+			defaultFee: 10000,
+			overrides:  []*int{nil, nil},
+			want:       10000,
+		},
+		{
+			name:       "多組混合：部分獨立價低於預設價 → 取最低的獨立價",
+			defaultFee: 10000,
+			overrides:  []*int{&mid, &low, nil},
+			want:       3000,
+		},
+		{
+			name:       "唯一一組的獨立價高於預設價 → 未設定的組（沿用預設價）仍較低，取預設價",
+			defaultFee: 5000,
+			overrides:  []*int{&mid, nil},
+			want:       5000,
+		},
+		{
+			name:       "某組獨立價為 0（免費組）→ 最低值為 0",
+			defaultFee: 10000,
+			overrides:  []*int{&zero, &mid},
+			want:       0,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := MinGroupFeeCents(c.defaultFee, c.overrides)
+			if got != c.want {
+				t.Fatalf("got %d, want %d", got, c.want)
+			}
+		})
+	}
+}

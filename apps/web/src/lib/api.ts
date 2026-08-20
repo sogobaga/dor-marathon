@@ -198,6 +198,11 @@ export interface Race {
   slots_total: number
   entry_fee: number // 分；fee_mode=per_group 時語意為「預設報名費」（未獨立設定的組別、前台新增組別適用）
   fee_mode: 'uniform' | 'per_group' // uniform(預設，全場統一用 entry_fee) | per_group(各分組可獨立定價，見 RaceGroup.entry_fee_cents)
+  // 計算欄位（後端讀取時算好填入）：「列表/摘要情境」（尚未選定分組）該顯示的報名費。uniform＝entry_fee；
+  // per_group＝各組有效報名費（COALESCE(組獨立價, entry_fee)）的最小值，沒有任何分組則回退 entry_fee。
+  // 列表卡／後台列表一律改用本欄位（per_group 顯示「NT$ {此值} 起」），不要再用 entry_fee 近似。
+  // 報名頁/詳情頁「已選組別」情境仍走 effectiveGroupFee，不受影響。
+  display_fee_cents: number
   registration_start?: string | null
   registration_end?: string | null
   start_date: string

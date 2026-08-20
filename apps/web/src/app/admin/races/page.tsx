@@ -359,7 +359,7 @@ export default function AdminRacesList() {
                 }}
               >
                 <InfoItem label="賽事模式" value={MODE_LABEL[r.event_mode] ?? r.event_mode} />
-                <InfoItem label="報名費" value={r.fee_mode === 'per_group' ? `${fmtFee(r.entry_fee)} 起（各組獨立）` : fmtFee(r.entry_fee)} />
+                <InfoItem label="報名費" value={r.fee_mode === 'per_group' ? `${fmtFee(r.display_fee_cents)} 起（各組獨立）` : fmtFee(r.entry_fee)} />
                 <InfoItem label="顯示狀態" value={DISPLAY_LABEL[r.display_status] ?? r.display_status} />
                 <InfoItem label="控制狀態" value={CONTROL_LABEL[r.control_status] ?? r.control_status} />
                 <InfoItem label="報名時間" value={`${fmtDate(r.registration_start)} ~ ${fmtDate(r.registration_end)}`} />
