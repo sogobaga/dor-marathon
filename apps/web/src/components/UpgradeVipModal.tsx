@@ -100,9 +100,8 @@ export default function UpgradeVipModal({ expired, reason, onClose, onSubscribe,
 
         {/* 公司資訊 */}
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)', fontSize: 11, color: 'var(--tx-faint)', lineHeight: 1.8 }}>
-          <div>客服信箱：<a href="mailto:service@dor.tw" style={{ color: 'var(--fug)' }}>service@dor.tw</a></div>
-          <div>地址：新北市八里區四維街 13 號 2 樓</div>
-          <div>電話：<a href="tel:0933951586" style={{ color: 'var(--fug)' }}>0933-951586</a>　·　統一編號：83005678</div>
+          {/* 對外聯絡資訊政策（同 support/terms/privacy 頁）：只留 Email+統編，不列地址/電話 */}
+          <div>客服信箱：<a href="mailto:service@dor.tw" style={{ color: 'var(--fug)' }}>service@dor.tw</a>　·　統一編號：83005678</div>
         </div>
 
         <button onClick={onClose} style={{ marginTop: 14, width: '100%', background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '11px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>{expired ? '稍後再說' : '關閉'}</button>
