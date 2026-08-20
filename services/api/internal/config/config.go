@@ -98,7 +98,11 @@ func Load() *Config {
 
 		// 站內付2.0（VIP 訂閱綁卡用）。預設值為綠界公開 AIO 測試碼，非站內付2.0 專屬——待業務提供後
 		// 覆蓋 ECPAY_BIND_* 環境變數即可。
-		ECPayBindEnv:        getEnv("ECPAY_BIND_ENV", ecpayEnv),
+		// ⚠️ 防呆（v0.1.547，修正式站「failed to start bind-card flow」）：ECPAY_BIND_MERCHANT_ID 未設
+		// ＝還在用公開測試碼——此時即使 ECPAY_BIND_ENV/ECPAY_ENV 是 prod 也強制走 stage，杜絕「測試
+		// 憑證打正式端點被綠界拒絕」的無意義組合（正式站 ECPAY_ENV=prod、綁卡憑證未設時曾因沿用
+		// prod 而全數失敗）。要上正式：ECPAY_BIND_MERCHANT_ID/HASH_KEY/HASH_IV＋ECPAY_BIND_ENV=prod 全套一起設。
+		ECPayBindEnv:        bindEnvGuard(getEnv("ECPAY_BIND_ENV", ecpayEnv), getEnv("ECPAY_BIND_MERCHANT_ID", "")),
 		ECPayBindMerchantID: getEnv("ECPAY_BIND_MERCHANT_ID", "3002607"),
 		ECPayBindHashKey:    getEnv("ECPAY_BIND_HASH_KEY", "pwFHCqoQZGmho4w6"),
 		ECPayBindHashIV:     getEnv("ECPAY_BIND_HASH_IV", "EkRm7iFT261dpevs"),
@@ -118,6 +122,16 @@ func Load() *Config {
 }
 
 func (c *Config) IsDev() bool { return c.Env == "development" }
+
+// bindEnvGuard 站內付2.0 環境防呆：綁卡專屬商店代號（ECPAY_BIND_MERCHANT_ID）未設定＝仍使用
+// 公開測試碼，此時無論 env 參數為何一律回 "stage"——測試憑證只在測試端點有效，打正式端點必被
+// 綠界拒絕（fail-safe：寧可停留測試環境，也不用測試憑證打正式站）。
+func bindEnvGuard(env, bindMerchantID string) string {
+	if bindMerchantID == "" {
+		return "stage"
+	}
+	return env
+}
 
 func getEnv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
