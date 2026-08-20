@@ -1674,6 +1674,27 @@ export interface MyOrder {
   items: MyOrderItem[]
 }
 
+// VIP 訂閱 Phase E：綁卡 SDK 串接（見 lib/ecpay.ts loadEcpaySdk／components/BindCardModal）
+export interface VipSubscribeResponse {
+  token: string             // 綠界綁卡 Token（前端 ECPay.addBindingCard 用）
+  token_expire_date: string
+  order_id: string
+  merchant_trade_no: string
+  amount_cents: number
+  server_type: 'Stage' | 'Prod' // ECPay.initialize(ServerType,...) 用，後端依 ECPayBindEnv 決定，前端不用自己猜
+}
+export interface VipBindCompleteResponse {
+  status: 'paid' | '3d_required'
+  card_last4?: string   // status=paid
+  three_d_url?: string  // status=3d_required：整頁導轉（勿用 iframe，綠界官方明示）
+}
+export interface VipCardInfo {
+  bound: boolean
+  card_last4?: string
+  card_expiry_mm?: string
+  card_expiry_yy?: string
+}
+
 export const profileApi = {
   getMe: (token: string) =>
     request<{ profile: Profile }>('/profile', { headers: withAuth(token) }),
@@ -1690,6 +1711,18 @@ export const profileApi = {
     request<VipPricing>('/profile/vip/pricing', { headers: withAuth(token) }),
   vipCancel: (token: string) =>
     request<{ ok: boolean; vip_expires_at?: string }>('/profile/vip/cancel', { method: 'POST', headers: withAuth(token) }),
+  // VIP 訂閱 Phase E：發起訂閱（取得綁卡 Token）／綁卡完成／卡片查詢/解除
+  vipSubscribe: (token: string, plan: 'monthly' | 'annual') =>
+    request<VipSubscribeResponse>('/profile/vip/subscribe', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ plan }) }),
+  vipBindComplete: (token: string, bindCardPayToken: string, orderId: string) =>
+    request<VipBindCompleteResponse>('/profile/vip/bind-card/complete', {
+      method: 'POST', headers: withAuth(token),
+      body: JSON.stringify({ bind_card_pay_token: bindCardPayToken, order_id: orderId }),
+    }),
+  vipCard: (token: string) =>
+    request<VipCardInfo>('/profile/vip/card', { headers: withAuth(token) }),
+  vipCardDelete: (token: string) =>
+    request<{ ok: boolean }>('/profile/vip/card', { method: 'DELETE', headers: withAuth(token) }),
   markTrialNoticeShown: (token: string) =>
     request<{ ok: boolean }>('/profile/trial-notice-shown', { method: 'POST', headers: withAuth(token) }),
   // 跨來源去重：偏好來源、首次彈窗

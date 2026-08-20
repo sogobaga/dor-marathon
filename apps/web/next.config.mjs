@@ -1,7 +1,7 @@
 // 版號：v<VERSION_BASE>.<VERSION_SERIAL>.<commit8>。進大版號改 VERSION_BASE；每次推送遞增 VERSION_SERIAL
 //（= git commit 累計數 `git rev-list --count HEAD`）。兩者皆需與後端 internal/version 同步。
 const VERSION_BASE = '0.1'
-const VERSION_SERIAL = '542'
+const VERSION_SERIAL = '543'
 const COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || 'dev').slice(0, 8)
 
 /** @type {import('next').NextConfig} */
@@ -41,16 +41,23 @@ const nextConfig = {
     // - script-src/connect-src static.cloudflareinsights.com/cloudflareinsights.com：Cloudflare 自動注入的 RUM beacon
     //   （程式碼裡沒有、只有站台在 Cloudflare 後面才會出現，靜態盤點抓不到，靠實跑才發現）
     // - connect-src unpkg.com：Leaflet sourcemap（僅 DevTools 開啟時抓，不影響真實使用者，順手補齊）
+    // v0.1.543 起（VIP 訂閱 Phase E 前端綁卡）新增：
+    // - script-src ecpg-stage.ecpay.com.tw／ecpg.ecpay.com.tw：綠界站內付2.0 綁卡 JS SDK（依環境擇一載入，
+    //   見 lib/ecpay.ts loadEcpaySdk）；code.jquery.com：SDK 必要依賴 jQuery；cdn.jsdelivr.net：SDK 必要
+    //   依賴 node-forge（前端加密），三者缺一 SDK 會直接 throw Error
+    // - connect-src／frame-src 同兩個 ecpg 網域：SDK 內部 API 呼叫與渲染綁卡介面的 iframe
+    // ⚠️ style-src 目前刻意不加 ecpg 網域：SDK 官方文件未提及注入外部樣式表，若 stage 實測 console 報
+    //   style-src CSP 錯誤才補（比照本檔既有 v0.1.419 實跑補漏慣例，見上方段落）。
     // 其餘：GSI 走 accounts.google.com、地圖圖磚/商家圖靠 img-src https:、Next.js 水合靠 'unsafe-inline'。
     // ⚠️ 日後若新增外部資源，務必同步加對應 directive，否則 enforce 會直接擋下。
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://apis.google.com https://www.googletagmanager.com https://static.cloudflareinsights.com",
+      "script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://apis.google.com https://www.googletagmanager.com https://static.cloudflareinsights.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw https://code.jquery.com https://cdn.jsdelivr.net",
       "style-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
-      "connect-src 'self' wss: ws: https://accounts.google.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://cloudflareinsights.com https://unpkg.com",
-      "frame-src https://www.youtube-nocookie.com https://accounts.google.com",
+      "connect-src 'self' wss: ws: https://accounts.google.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://cloudflareinsights.com https://unpkg.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw",
+      "frame-src https://www.youtube-nocookie.com https://accounts.google.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self' https://payment.ecpay.com.tw https://payment-stage.ecpay.com.tw",

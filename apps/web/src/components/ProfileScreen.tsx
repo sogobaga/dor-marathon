@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo, type VipCardInfo } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendingGps'
 import { useDashboard } from '@/lib/useDashboard'
+import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
 import MemberPanel from './MemberPanel'
 import UpgradeVipModal from './UpgradeVipModal'
+import BindCardModal from './BindCardModal'
 import PushToggle from './PushToggle'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import { submitEcpayForm } from '@/lib/ecpay'
@@ -69,6 +71,12 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState(false)
+  const vipFlow = useVipSubscribeFlow() // VIP 訂閱 Phase E：Subscribe → BindCardModal（見 lib/useVipSubscribeFlow）
+  // 付款卡片（VIP 訂閱 Phase E 卡片管理）
+  const [card, setCard] = useState<VipCardInfo | null>(null)
+  const [showUnbind, setShowUnbind] = useState(false)
+  const [unbindBusy, setUnbindBusy] = useState(false)
+  const [unbindErr, setUnbindErr] = useState('')
   // 推廣連結：累積里程 ≥10km 才能產生；成功後存推薦碼/統計，供組連結與複製
   const [referral, setReferral] = useState<ReferralInfo | null>(null)
   const [referralBusy, setReferralBusy] = useState(false)
@@ -106,6 +114,22 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       setReferralErr(e?.status === 403 ? '需累積完成 10 公里' : (e?.message || '產生失敗，請稍後再試'))
     } finally {
       setReferralBusy(false)
+    }
+  }
+  // 付款卡片：查詢現況（供「個人資料」頁籤顯示）；解除綁卡（有 active 訂閱時後端 409，如實顯示引導先取消訂閱）。
+  function loadCard() {
+    withUserAuth((t) => profileApi.vipCard(t)).then(setCard).catch(() => {})
+  }
+  async function unbindCard() {
+    setUnbindBusy(true); setUnbindErr('')
+    try {
+      await withUserAuth((t) => profileApi.vipCardDelete(t))
+      setCard({ bound: false })
+      setShowUnbind(false)
+    } catch (e: any) {
+      setUnbindErr(e?.message || '解除綁卡失敗，請稍後再試')
+    } finally {
+      setUnbindBusy(false)
     }
   }
   function profilePayload(x: Profile): Partial<Profile> {
@@ -193,6 +217,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
     withUserAuth((t) => referralApi.get(t))
       .then((r) => { if (r.referral_code) setReferral(r) })
       .catch(() => {})
+    loadCard() // 付款卡片現況（VIP 訂閱 Phase E 卡片管理）
     withUserAuth((t) => profileApi.getMe(t))
       .then((r) => setP(r.profile))
       .catch((e) => setErr(e instanceof SessionExpiredError ? '登入已過期，請回上一頁重新登入' : e?.message || '載入失敗'))
@@ -436,6 +461,18 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                       已成功推薦 {referral.rewarded_count} 人（{referral.referred_count} 人已註冊）
                     </span>
                   </div>
+                )}
+              </div>
+              {/* 付款卡片（VIP 訂閱 Phase E 卡片管理）：顯示目前綁定的綠界卡片末四碼/到期年月，可解除綁定 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 2 }}>
+                <span style={{ color: 'var(--tx-faint)' }}>付款卡片：</span>
+                {card?.bound ? (
+                  <>
+                    <span style={{ fontWeight: 700, color: 'var(--tx)' }}>💳 **** {card.card_last4}{card.card_expiry_mm && card.card_expiry_yy ? `（${card.card_expiry_mm}/${card.card_expiry_yy.slice(-2)}）` : ''}</span>
+                    <button type="button" onClick={() => { setUnbindErr(''); setShowUnbind(true) }} style={{ ...ghostBtn, padding: '4px 10px', fontSize: 11.5 }}>解除綁定</button>
+                  </>
+                ) : (
+                  <span style={{ color: 'var(--tx-dim)' }}>{card ? '尚未綁定' : '載入中…'}</span>
                 )}
               </div>
             </div>
@@ -813,7 +850,46 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         </div>
       )}
 
-      {showUpgrade && <UpgradeVipModal onClose={() => setShowUpgrade(false)} />}
+      {showUpgrade && (
+        <UpgradeVipModal
+          onClose={() => setShowUpgrade(false)}
+          onSubscribe={vipFlow.subscribe}
+          subscribing={vipFlow.busy}
+          subscribeError={vipFlow.error}
+        />
+      )}
+      {vipFlow.bindCard && (
+        <BindCardModal
+          plan={vipFlow.bindCard.plan}
+          amountCents={vipFlow.bindCard.amount_cents}
+          token={vipFlow.bindCard.token}
+          orderId={vipFlow.bindCard.order_id}
+          serverType={vipFlow.bindCard.server_type}
+          onClose={vipFlow.closeBindCard}
+          onSuccess={() => { vipFlow.handleBindSuccess(); setShowUpgrade(false); loadCard() }}
+        />
+      )}
+      {/* 解除綁卡確認（VIP 訂閱 Phase E）：有 active 訂閱時後端 409，訊息如實顯示（引導先取消訂閱） */}
+      {showUnbind && (
+        <div style={overlay} onClick={() => { if (!unbindBusy) setShowUnbind(false) }}>
+          <div style={panel} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <strong style={{ fontSize: 17 }}>解除綁定付款卡片</strong>
+              <button onClick={() => setShowUnbind(false)} disabled={unbindBusy} style={backBtn}>✕</button>
+            </div>
+            <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.75 }}>
+              確定要解除目前綁定的付款卡片（💳 **** {card?.card_last4}）嗎？解除後需重新綁卡才能再次訂閱付款。
+            </div>
+            {unbindErr && <div style={{ color: 'var(--hunt)', fontSize: 13, marginTop: 10 }}>{unbindErr}</div>}
+            <button onClick={unbindCard} disabled={unbindBusy} style={{ ...primaryBtn, width: '100%', marginTop: 14, background: 'var(--hunt)', color: '#fff', opacity: unbindBusy ? 0.6 : 1 }}>
+              {unbindBusy ? '處理中…' : '確認解除綁定'}
+            </button>
+            <button onClick={() => setShowUnbind(false)} disabled={unbindBusy} style={{ ...primaryBtn, width: '100%', marginTop: 10, background: 'rgba(255,255,255,.06)', color: 'var(--tx)' }}>
+              先不要
+            </button>
+          </div>
+        </div>
+      )}
     </div>
 
     {/* 本機待上傳 GPS：是否等待 Strava 同步 二次確認 */}

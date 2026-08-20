@@ -11,10 +11,12 @@ import VersionBadge from './VersionBadge'
 import MileageExpGate from './MileageExpGate'
 import DedupNoticeGate from './DedupNoticeGate'
 import { validateSession, getUserToken } from '@/lib/userAuth'
-import { useDashboard } from '@/lib/useDashboard'
+import { useDashboard, refreshDashboard } from '@/lib/useDashboard'
+import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
 import { pageview } from '@/lib/analytics'
 import { profileApi, titleApi, racesApi, type Race } from '@/lib/api'
 import UpgradeVipModal from './UpgradeVipModal'
+import BindCardModal from './BindCardModal'
 
 // 非首屏必用的畫面 → code-split，減少首開 bundle（點了才載入對應 chunk）。
 // RacesScreen（首屏必用）與 ProfileScreen（登入後高機率立即用）保留靜態 import。
@@ -63,6 +65,9 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
   const [payRace, setPayRace] = useState<Race | null>(null)
   const [trialModal, setTrialModal] = useState(false)
   const trialHandled = useRef(false)
+  const vipFlow = useVipSubscribeFlow() // VIP 訂閱 Phase E：試用到期自動彈出的 UpgradeVipModal 也可直接訂閱（見 lib/useVipSubscribeFlow）
+  // 綠界 3D 驗證完成後的導回結果（?vip_bind=success|fail，見 BindHandler.redirectBindResult）
+  const [vipBindResult, setVipBindResult] = useState<'success' | 'fail' | null>(null)
 
   // 試用到期且尚未提示過 → 自動跳一次升級彈窗（標記已顯示，之後不再跳，改由「升級VIP」鈕）。
   // ⚠️ 必須「已登入(有 token)」才自動跳——未登入/未註冊者一進頁面就被強制跳付費彈窗很傷體驗，一律不跳。
@@ -109,6 +114,14 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     // Strava 授權導回（?strava=...）→ 直接開個人資訊頁顯示結果
     if (params.has('strava')) {
       setShowProfile(true)
+    }
+    // 綠界站內付 2.0 綁卡 3D 驗證完成導回（?vip_bind=success|fail，見 BindHandler.redirectBindResult）
+    // → 顯示結果彈窗；成功時順便讓全站會員儀表板重抓一次（VIP 徽章/到期日即時更新）。清參數避免重整重播。
+    const vipBind = params.get('vip_bind')
+    if (vipBind === 'success' || vipBind === 'fail') {
+      setVipBindResult(vipBind)
+      if (vipBind === 'success') refreshDashboard()
+      window.history.replaceState({}, '', '/')
     }
     // 深連結指定個人資訊頁分頁（?profile=sports，如：track 頁「有待上傳的 GPS，前往確認數據」）→ 開個人資訊頁並跳到指定分頁
     const profileParam = params.get('profile')
@@ -253,7 +266,47 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
       {/* 跨來源（GPS/Strava）重複數據首次提示彈窗（全域） */}
       <DedupNoticeGate />
       {/* VIP 試用到期升級彈窗（只跳一次） */}
-      {trialModal && <UpgradeVipModal expired onClose={() => setTrialModal(false)} />}
+      {trialModal && (
+        <UpgradeVipModal
+          expired
+          onClose={() => setTrialModal(false)}
+          onSubscribe={vipFlow.subscribe}
+          subscribing={vipFlow.busy}
+          subscribeError={vipFlow.error}
+        />
+      )}
+      {vipFlow.bindCard && (
+        <BindCardModal
+          plan={vipFlow.bindCard.plan}
+          amountCents={vipFlow.bindCard.amount_cents}
+          token={vipFlow.bindCard.token}
+          orderId={vipFlow.bindCard.order_id}
+          serverType={vipFlow.bindCard.server_type}
+          onClose={vipFlow.closeBindCard}
+          onSuccess={() => { vipFlow.handleBindSuccess(); setTrialModal(false) }}
+        />
+      )}
+      {/* 綠界 3D 驗證完成導回結果彈窗（?vip_bind=success|fail） */}
+      {vipBindResult && (
+        <div data-skin="default" onClick={() => setVipBindResult(null)} style={{ position: 'fixed', inset: 0, zIndex: 3500, background: 'rgba(4,8,6,.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 360, background: '#0b0e13', border: '1px solid var(--line-2)', borderRadius: 16, padding: '20px 18px', boxShadow: '0 16px 50px rgba(0,0,0,.7)', textAlign: 'center' }}>
+            {vipBindResult === 'success' ? (
+              <>
+                <div style={{ fontSize: 36 }}>✓</div>
+                <div style={{ fontSize: 17, fontWeight: 900, color: '#fff', marginTop: 8 }}>VIP 已生效</div>
+                <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.7 }}>綁卡付款完成，VIP 權益已開通。</div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 36 }}>✕</div>
+                <div style={{ fontSize: 17, fontWeight: 900, color: '#fff', marginTop: 8 }}>綁卡付款未完成</div>
+                <div style={{ fontSize: 13, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.7 }}>3D 驗證未成功或已取消，可重新嘗試訂閱。</div>
+              </>
+            )}
+            <button onClick={() => setVipBindResult(null)} style={{ marginTop: 16, width: '100%', background: 'var(--gold)', color: '#fff', fontWeight: 900, border: 'none', borderRadius: 12, padding: '11px', fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}>我知道了</button>
+          </div>
+        </div>
+      )}
       {/* 稱號解鎖彈窗（dashboard 驅動、只跳一次；關閉標記 seen） */}
       {titlesModal.length > 0 && (
         <TitleUnlockModal titles={titlesModal} onClose={() => {

@@ -382,6 +382,10 @@ func main() {
 			r.With(middleware.RateLimit(rdb, "vip_bind_complete", 10, time.Minute, middleware.UserOrIP)).
 				Post("/profile/vip/bind-card/complete", bindHandler.CompleteBindCard)
 
+			// VIP 綁卡卡片管理（Phase E）：查詢/解除本人目前的綠界綁卡
+			r.Get("/profile/vip/card", bindHandler.GetCard)
+			r.Delete("/profile/vip/card", bindHandler.DeleteCard)
+
 			// 活動上傳 — SEC-H1：整個掛載子路由共用一組節流（含讀取），數字放寬避免誤擋正常瀏覽
 			r.With(middleware.RateLimit(rdb, "activities", 60, time.Minute, middleware.UserOrIP)).
 				Mount("/activities", actHandler.Router())

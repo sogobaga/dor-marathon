@@ -7,12 +7,16 @@ import { getUserToken, withUserAuth } from '@/lib/userAuth'
 // 升級 VIP 視窗：權益 + 月/年方案(原價刪除線 + 綠色優惠價 + 現省) + 促銷期限 + 取消訂閱/退款條款 + 公司資訊。
 // expired=true：因試用到期自動跳出（標題改為「VIP 試用已到期」）。
 // reason：其他觸發原因的提示文字（例如非 VIP 點擊 VIP 專屬賽事報名 →「VIP專屬活動。」），顯示於標題下方；優先於 expired 的預設文字。
-// onSubscribe 未提供時，訂閱鈕顯示「金流整合中」佔位（綠界定期定額於 Phase 4 接上）。
-export default function UpgradeVipModal({ expired, reason, onClose, onSubscribe }: {
+// onSubscribe 未提供時，訂閱鈕顯示「金流整合中」佔位；提供時（VIP 訂閱 Phase E：見 lib/useVipSubscribeFlow）
+// 呼叫端負責打 /profile/vip/subscribe 並在成功後另外開 BindCardModal，subscribing/subscribeError 由
+// 呼叫端回饋處理中狀態與失敗訊息（例如「已有進行中的訂閱」409），本元件本身不知道背後打了什麼 API。
+export default function UpgradeVipModal({ expired, reason, onClose, onSubscribe, subscribing, subscribeError }: {
   expired?: boolean
   reason?: string
   onClose: () => void
   onSubscribe?: (plan: 'monthly' | 'annual') => void
+  subscribing?: boolean
+  subscribeError?: string
 }) {
   const [pricing, setPricing] = useState<VipPricing | null>(null)
   const [loadErr, setLoadErr] = useState(false)
@@ -76,13 +80,14 @@ export default function UpgradeVipModal({ expired, reason, onClose, onSubscribe 
               </div>
             )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <PlanCard label="月繳方案" unit="/ 月" p={pricing.monthly} ntd={ntd} onSub={() => subscribe('monthly')} />
-              <PlanCard label="年繳方案" unit="/ 年" p={pricing.annual} ntd={ntd} highlight onSub={() => subscribe('annual')} />
+              <PlanCard label="月繳方案" unit="/ 月" p={pricing.monthly} ntd={ntd} busy={subscribing} onSub={() => subscribe('monthly')} />
+              <PlanCard label="年繳方案" unit="/ 年" p={pricing.annual} ntd={ntd} highlight busy={subscribing} onSub={() => subscribe('annual')} />
             </div>
           </>
         )}
 
         {notice && <div style={{ fontSize: 12.5, color: 'var(--fug)', textAlign: 'center', marginTop: 12, fontWeight: 700 }}>{notice}</div>}
+        {subscribeError && <div style={{ fontSize: 12.5, color: 'var(--hunt)', textAlign: 'center', marginTop: 12, fontWeight: 700 }}>{subscribeError}</div>}
 
         {/* 取消訂閱 / 退款條款 */}
         <div style={{ marginTop: 16, fontSize: 11, color: 'var(--tx-faint)', lineHeight: 1.75 }}>
@@ -106,12 +111,13 @@ export default function UpgradeVipModal({ expired, reason, onClose, onSubscribe 
   )
 }
 
-function PlanCard({ label, unit, p, ntd, highlight, onSub }: {
+function PlanCard({ label, unit, p, ntd, highlight, busy, onSub }: {
   label: string
   unit: string
   p: { original: number; price: number; save: number; promo: boolean }
   ntd: (y: number) => string
   highlight?: boolean
+  busy?: boolean
   onSub: () => void
 }) {
   return (
@@ -127,7 +133,7 @@ function PlanCard({ label, unit, p, ntd, highlight, onSub }: {
           {p.promo && p.save > 0 && <div style={{ fontSize: 12, color: '#46E3A0', fontWeight: 700, marginTop: 4 }}>現省 {ntd(p.save)}</div>}
         </div>
       </div>
-      <button onClick={onSub} style={{ marginTop: 12, width: '100%', background: 'var(--gold)', color: '#fff', fontWeight: 900, border: 'none', borderRadius: 10, padding: '11px', fontSize: 14.5, cursor: 'pointer', fontFamily: 'inherit' }}>立即訂閱 · {ntd(p.price)}{unit}</button>
+      <button onClick={onSub} disabled={busy} style={{ marginTop: 12, width: '100%', background: 'var(--gold)', color: '#fff', fontWeight: 900, border: 'none', borderRadius: 10, padding: '11px', fontSize: 14.5, cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit', opacity: busy ? 0.6 : 1 }}>{busy ? '處理中…' : `立即訂閱 · ${ntd(p.price)}${unit}`}</button>
     </div>
   )
 }

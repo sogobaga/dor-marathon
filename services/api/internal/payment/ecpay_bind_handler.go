@@ -1,8 +1,10 @@
-// 綠界站內付2.0 VIP 訂閱綁卡流程的 HTTP handler（VIP 訂閱 Phase C2）：
-//   - Subscribe        POST /profile/vip/subscribe           發起訂閱：建立 pending 訂單 + 取得綁卡 Token
-//   - CompleteBindCard POST /profile/vip/bind-card/complete  前端完成綠界綁卡頁後，建立綁定卡片（可能落 3D 分支）
-//   - Notify           POST /payments/ecpay/bind/notify      綠界 ReturnURL（server-to-server webhook，公開）
-//   - Result           POST /payments/ecpay/bind/result      綠界 OrderResultURL（3D 驗證完成後瀏覽器導回，公開）
+// 綠界站內付2.0 VIP 訂閱綁卡流程的 HTTP handler（VIP 訂閱 Phase C2；卡片管理為 Phase E）：
+//   - Subscribe        POST   /profile/vip/subscribe           發起訂閱：建立 pending 訂單 + 取得綁卡 Token（含 server_type 供前端 SDK 環境判斷）
+//   - CompleteBindCard POST   /profile/vip/bind-card/complete  前端完成綠界綁卡頁後，建立綁定卡片（可能落 3D 分支）
+//   - GetCard          GET    /profile/vip/card                查詢本人目前 active 綁卡（顯示用，見 §6）
+//   - DeleteCard       DELETE /profile/vip/card                解除綁卡（有 active 訂閱時拒絕，見 §6）
+//   - Notify           POST   /payments/ecpay/bind/notify      綠界 ReturnURL（server-to-server webhook，公開）
+//   - Result           POST   /payments/ecpay/bind/result      綠界 OrderResultURL（3D 驗證完成後瀏覽器導回，公開）
 //
 // 與 ecpay_bind.go（Phase B，只有 outbound BindClient）、payment.go（既有 AIO Checkout/Notify）的分工：
 // 本檔是「這些 outbound 呼叫要怎麼被觸發、觸發後怎麼把結果落地到我方 DB」——三個入口
@@ -35,6 +37,17 @@ import (
 // 額外做 base62/base36 轉換）。集中一處，避免 GetToken／CreateBindCard 等各呼叫點各自轉換寫法不一致。
 func MerchantMemberID(userID string) string {
 	return strings.ReplaceAll(userID, "-", "")
+}
+
+// bindServerType 把後端 env 值（h.bindEnv，"stage"|"prod"）轉成綠界 JS SDK `ECPay.initialize(ServerType, ...)`
+// 要求的字串（"Stage"|"Prod"，注意大小寫）——前端據此挑選要載入哪個 domain 的 SDK script（ecpg-stage／ecpg）
+// 並呼叫 initialize，不用自己在前端另外猜測/寫死環境，與後端這裡實際打的 BindClient domain 保證一致
+// （見 NewBindClient 的 env=="prod" 判斷，故障安全同一套：非 "prod" 一律落 Stage）。
+func bindServerType(env string) string {
+	if env == "prod" {
+		return "Prod"
+	}
+	return "Stage"
 }
 
 // VipOrderCreator 由 race.Repository 實作（CreateVipOrder 簽章與此完全相同，Go 結構化型別自動滿足，
@@ -235,6 +248,7 @@ func (h *BindHandler) Subscribe(w http.ResponseWriter, r *http.Request) {
 		"order_id":          orderID,
 		"merchant_trade_no": tradeNo,
 		"amount_cents":      amountCents,
+		"server_type":       bindServerType(h.bindEnv), // 前端 ECPay.initialize(ServerType,...) 用，見 bindServerType 註解
 	})
 }
 
@@ -810,4 +824,102 @@ func (h *BindHandler) settleVipBindPayment(ctx context.Context, orderID string, 
 		return fmt.Errorf("settle vip bind: commit: %w", err)
 	}
 	return nil
+}
+
+// ================= §6 卡片管理（VIP 訂閱 Phase E：前端綁卡 UI＋卡片管理） =================
+
+// vipCardResp GET /api/v1/profile/vip/card 回應形狀（顯示用，永不回傳卡號本身，只有末四碼/到期年月）。
+type vipCardResp struct {
+	Bound        bool   `json:"bound"`
+	CardLast4    string `json:"card_last4,omitempty"`
+	CardExpiryMM string `json:"card_expiry_mm,omitempty"`
+	CardExpiryYY string `json:"card_expiry_yy,omitempty"`
+}
+
+// GetCard GET /api/v1/profile/vip/card（登入態）：回本人目前 active 的綠界綁卡資訊。
+func (h *BindHandler) GetCard(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	var last4, mm, yy string
+	err := h.db.QueryRow(r.Context(), `
+		SELECT COALESCE(card_last4,''), COALESCE(card_expiry_mm,''), COALESCE(card_expiry_yy,'')
+		FROM payment_card_bindings WHERE user_id=$1 AND provider='ecpay' AND status='active'`, userID).
+		Scan(&last4, &mm, &yy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondJSON(w, http.StatusOK, vipCardResp{Bound: false})
+		return
+	}
+	if err != nil {
+		log.Error().Err(err).Str("user_id", userID).Msg("vip card: load binding failed")
+		respondErr(w, http.StatusInternalServerError, "failed to load card binding")
+		return
+	}
+	respondJSON(w, http.StatusOK, vipCardResp{Bound: true, CardLast4: last4, CardExpiryMM: mm, CardExpiryYY: yy})
+}
+
+// DeleteCard DELETE /api/v1/profile/vip/card（登入態）：解除綁卡。
+//
+// 有 active 訂閱時一律拒絕（409）——VIP 訂閱依賴 Phase D 續約排程用既有 BindCardID 幕後請款
+// （見 vip_renewal.go RunRenewalLoop），解綁後下一期續扣必失敗，且會是「靜默壞掉、使用者當下無感」
+// 的失敗（要等到續約當天才會發現）。比照 Subscribe 已有的「已有 active 訂閱」409 檢查同一原則，
+// 引導使用者先走 /profile/vip/cancel 取消訂閱，而不是讓這裡代為處理兩件不同語意的事。
+func (h *BindHandler) DeleteCard(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	ctx := r.Context()
+
+	var hasActive bool
+	if err := h.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM vip_subscriptions WHERE user_id=$1 AND status='active')`, userID).
+		Scan(&hasActive); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to check existing subscription")
+		return
+	}
+	if hasActive {
+		respondErr(w, http.StatusConflict, "請先取消訂閱再解除綁卡")
+		return
+	}
+
+	var bindCardID string
+	err := h.db.QueryRow(ctx, `
+		SELECT bind_card_id FROM payment_card_bindings WHERE user_id=$1 AND provider='ecpay' AND status='active'`, userID).
+		Scan(&bindCardID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		respondJSON(w, http.StatusOK, map[string]any{"ok": true}) // 本來就沒綁卡：視為已完成（冪等，避免前端還要特判「查無」）
+		return
+	}
+	if err != nil {
+		log.Error().Err(err).Str("user_id", userID).Msg("vip card delete: load binding failed")
+		respondErr(w, http.StatusInternalServerError, "failed to load card binding")
+		return
+	}
+
+	if _, err := h.client.DeleteMemberBindCard(ctx, bindCardID); err != nil {
+		var bizErr *BindBizError
+		if !errors.As(err, &bizErr) {
+			log.Error().Err(err).Str("user_id", userID).Msg("vip card delete: DeleteMemberBindCard transport error")
+			respondErr(w, http.StatusInternalServerError, "解除綁卡失敗，請稍後再試")
+			return
+		}
+		// BindBizError 容錯：綠界端已查無此卡（例如已被其他管道解除）也視為成功——我方的目的只是
+		// 「這張卡不再是 active」，「綠界端查無此卡」與「綠界端已解除成功」對我方而言是同一個結果，
+		// 不應卡住使用者無法解除本地的 active 標記。
+		log.Warn().Str("user_id", userID).Int("rtn_code", bizErr.RtnCode).Str("rtn_msg", bizErr.RtnMsg).
+			Msg("vip card delete: ECPay biz error, treating as already-deleted on ECPay side")
+	}
+
+	if _, err := h.db.Exec(ctx, `
+		UPDATE payment_card_bindings SET status='deleted', updated_at=NOW()
+		WHERE user_id=$1 AND provider='ecpay' AND status='active'`, userID); err != nil {
+		log.Error().Err(err).Str("user_id", userID).Msg("vip card delete: mark local binding deleted failed")
+		respondErr(w, http.StatusInternalServerError, "解除綁卡失敗，請稍後再試")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
