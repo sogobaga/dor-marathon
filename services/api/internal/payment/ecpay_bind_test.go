@@ -66,6 +66,9 @@ func newBindTestServer(t *testing.T, handler bindTestHandler) *httptest.Server {
 func newTestBindClient(baseURL string) *BindClient {
 	c := NewBindClient("stage", "3002607", testBindHashKey, testBindHashIV)
 	c.BaseURL = baseURL
+	// QueryTrade 走另一個 domain（見 BindClient.QueryURL 欄位註解），測試一律指到同一個假 server——
+	// newBindTestServer 只依 r.URL.Path 分派，不管實際打的是哪個 domain。
+	c.QueryURL = baseURL
 	return c
 }
 
@@ -411,5 +414,120 @@ func TestDeleteMemberBindCardSuccess(t *testing.T) {
 	}
 	if resp.RtnCode != 1 {
 		t.Errorf("unexpected RtnCode: %d", resp.RtnCode)
+	}
+}
+
+// ================= QueryTrade（Phase D 對抗式審查修正：主動收斂 unknown 扣款狀態） =================
+
+// 情境 1：已付款——RtnCode=1, OrderInfo.TradeStatus="1"。
+func TestQueryTradePaid(t *testing.T) {
+	srv := newBindTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		if path != "/1.0.0/Cashier/QueryTrade" {
+			t.Errorf("unexpected path: %s (QueryTrade must hit ecpayment domain path, not /Merchant/*)", path)
+		}
+		if reqData["MerchantTradeNo"] != "DORTEST0009" {
+			t.Errorf("unexpected MerchantTradeNo: %v", reqData["MerchantTradeNo"])
+		}
+		resp := QueryTradeResp{
+			RtnCode:    1,
+			RtnMsg:     "交易成功",
+			MerchantID: "3002607",
+			OrderInfo: &QueryTradeOrderInfo{
+				MerchantTradeNo: "DORTEST0009",
+				TradeNo:         "2026082012345678",
+				TradeAmt:        399,
+				PaymentType:     "Credit",
+				PaymentDate:     "2026/08/20 12:00:00",
+				TradeStatus:     "1",
+			},
+		}
+		return 1, "", resp
+	})
+	defer srv.Close()
+
+	c := newTestBindClient(srv.URL)
+	resp, err := c.QueryTrade(context.Background(), "DORTEST0009")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.OrderInfo == nil || resp.OrderInfo.TradeStatus != "1" {
+		t.Fatalf("unexpected resp: %+v", resp)
+	}
+	if resp.OrderInfo.TradeNo != "2026082012345678" {
+		t.Errorf("unexpected TradeNo: %q", resp.OrderInfo.TradeNo)
+	}
+}
+
+// 情境 2：未付款——RtnCode=1, OrderInfo.TradeStatus="0"（訂單存在，但尚未完成付款）。
+func TestQueryTradeUnpaid(t *testing.T) {
+	srv := newBindTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		resp := QueryTradeResp{
+			RtnCode:    1,
+			RtnMsg:     "交易查詢成功",
+			MerchantID: "3002607",
+			OrderInfo: &QueryTradeOrderInfo{
+				MerchantTradeNo: "DORTEST0010",
+				TradeStatus:     "0",
+			},
+		}
+		return 1, "", resp
+	})
+	defer srv.Close()
+
+	c := newTestBindClient(srv.URL)
+	resp, err := c.QueryTrade(context.Background(), "DORTEST0010")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil || resp.OrderInfo == nil || resp.OrderInfo.TradeStatus != "0" {
+		t.Fatalf("unexpected resp: %+v", resp)
+	}
+}
+
+// 情境 3：查無此筆訂單——RtnCode!=1（業務層失敗），回 *BindBizError，同其餘 5 支端點慣例。
+func TestQueryTradeNotFound(t *testing.T) {
+	srv := newBindTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		resp := QueryTradeResp{RtnCode: 10200047, RtnMsg: "查無此訂單", MerchantID: "3002607"}
+		return 1, "", resp
+	})
+	defer srv.Close()
+
+	c := newTestBindClient(srv.URL)
+	resp, err := c.QueryTrade(context.Background(), "DORTEST0011")
+	var bizErr *BindBizError
+	if !errors.As(err, &bizErr) {
+		t.Fatalf("expected *BindBizError, got %T: %v", err, err)
+	}
+	if bizErr.RtnCode != 10200047 {
+		t.Errorf("unexpected RtnCode: %d", bizErr.RtnCode)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil resp even on biz error (same convention as other 5 endpoints)")
+	}
+}
+
+// 情境 4：查詢本身失敗（傳輸層）——TransCode!=1，回 *BindTransportError，與「查無/未付」須被呼叫端
+// 分開處理（見 ecpay_bind.go QueryTrade 方法註解／vip_renewal.go classifyQueryTradeResult）。
+func TestQueryTradeTransportFailure(t *testing.T) {
+	srv := newBindTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		return 0, "Signature Error", nil
+	})
+	defer srv.Close()
+
+	c := newTestBindClient(srv.URL)
+	resp, err := c.QueryTrade(context.Background(), "DORTEST0012")
+	var transErr *BindTransportError
+	if !errors.As(err, &transErr) {
+		t.Fatalf("expected *BindTransportError, got %T: %v", err, err)
+	}
+	if resp != nil {
+		t.Errorf("expected nil resp on transport error, got %+v", resp)
+	}
+}
+
+func TestQueryTradeRequiresMerchantTradeNo(t *testing.T) {
+	c := newTestBindClient("http://unused.invalid")
+	if _, err := c.QueryTrade(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty merchantTradeNo")
 	}
 }

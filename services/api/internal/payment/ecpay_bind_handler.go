@@ -117,9 +117,18 @@ func (h *BindHandler) Subscribe(w http.ResponseWriter, r *http.Request) {
 	//      「已扣款但訂單不可結算」的人工對帳 log，見 settleVipBindPayment）。
 	//   b. DB 唯一索引 uq_orders_pending_vip（migration 133：每人至多一筆 pending VIP 訂單）兜底真併發
 	//      ——兩個請求同時通過這裡時，後到的 CreateVipOrder INSERT 撞索引，回 409。
+	//
+	// ⚠️ 對抗式審查修正 high [1]：排除「有對應 vip_renewal_attempts 列」的訂單（＝Phase D 續約排程
+	// 建立、正在幕後請款中的訂單）——這種訂單不可被使用者手動發起 Subscribe 的動作作廢！作廢它會讓
+	// 綠界端稍後回來的 Notify/Result webhook（或 QueryTrade 收斂，見 vip_renewal.go）找到一筆已經
+	// 被使用者操作作廢的訂單，若那筆續約請款其實已經扣款成功，就會變成「已收使用者的錢，但訂單被
+	// 作廢、VIP 沒有真的延長」的資料不一致，且無法自動修復（作廢後這筆訂單不會再被任何收斂邏輯碰）。
+	// 續約排程本身有自己的 unique-violation 收斂機制（processRenewalCandidate④，透過 QueryTrade 主動
+	// 查明狀態），不需要、也不應該讓使用者這邊的操作代勞「清掉」它。
 	if _, err := h.db.Exec(ctx, `
 		UPDATE orders SET status='cancelled'
-		WHERE user_id=$1 AND status='pending' AND race_id IS NULL`, userID); err != nil {
+		WHERE user_id=$1 AND status='pending' AND race_id IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM vip_renewal_attempts a WHERE a.order_id = orders.id)`, userID); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to void previous pending order")
 		return
 	}
@@ -142,7 +151,22 @@ func (h *BindHandler) Subscribe(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			// 撞 uq_orders_pending_vip（migration 133）：另一個並發的 Subscribe 剛建了 pending 訂單
+			// 撞 uq_orders_pending_vip（migration 133）：可能是兩種情境之一——
+			//   a. 另一個並發的 Subscribe 剛建了 pending 訂單（雙擊/兩分頁）。
+			//   b. 對抗式審查修正 [1]：上面 1.5 段刻意不作廢「在途續約」的 pending 訂單（見該段
+			//      註解），使用者此刻剛好被 Phase D 續約排程卡住——這種情況文案不該說「請勿重複
+			//      發起」（誤導使用者以為自己操作有誤），改用專屬文案告知「系統正在處理」。
+			isRenewalBlocked := false
+			if pending, checkErr := h.findPendingRenewalOrder(ctx, userID); checkErr != nil {
+				log.Warn().Err(checkErr).Str("user_id", userID).
+					Msg("vip subscribe: check pending renewal order failed, falling back to generic conflict message")
+			} else if pending != nil {
+				isRenewalBlocked = pending.IsRenewalAttempt
+			}
+			if isRenewalBlocked {
+				respondErr(w, http.StatusConflict, "系統正在處理您的自動續約，請稍後再試")
+				return
+			}
 			respondErr(w, http.StatusConflict, "訂閱流程正在進行中，請勿重複發起")
 			return
 		}

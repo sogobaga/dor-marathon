@@ -7,9 +7,13 @@ import (
 )
 
 // 本檔測試延續 ecpay_bind_handler_test.go 頂部的既有慣例（本套件沒有 DB 整合測試地基）：純邏輯
-// （文案挑選、attempt_no/金額/請款欄位組裝、CreatePayment 結果分類）用單元測試覆蓋；牽涉 DB 的部分
-// （settleVipRenewal 的 CAS 冪等閘門、當日重複跑 no-op、attempt_no 計數 SQL 本身）以程式碼審閱取代
-// 單測，並在下方各測試/註解中對照要驗證的行為與其在正式程式碼中的位置。
+// （文案挑選、attempt_no/金額/請款欄位組裝、CreatePayment/QueryTrade 結果分類）用單元測試覆蓋；牽涉
+// DB 的部分（settleVipRenewal 的 CAS 冪等閘門、當日重複跑 no-op、attempt_no 計數 SQL 本身、
+// findPendingRenewalOrder／convergeRenewalPaid／convergeRenewalVoidStale／
+// finalizeRenewalSubscriptionGuarded 這些「unknown 收斂」流程實際碰 DB 的部分）以程式碼審閱取代單測，
+// 並在下方各測試/註解中對照要驗證的行為與其在正式程式碼中的位置——這些函式的分支邏輯（何時該收斂
+// 成已付/作廢重試/保守中止）已透過 classifyQueryTradeResult 的純函式單測覆蓋，DB 讀寫本身則是與既有
+// settleVipRenewal/settleVipBindPayment 相同的 CAS 寫法（已在正式環境驗證過的既有模式）。
 
 // ================= classifyCreatePaymentErr（透過真的 CreatePayment + mock 綠界 server 驅動） =================
 
@@ -136,6 +140,102 @@ func TestClassifyCreatePaymentErr_NetworkError(t *testing.T) {
 	}
 }
 
+// ================= classifyQueryTradeResult（透過真的 QueryTrade + mock 綠界 server 驅動，
+// 對抗式審查修正：QueryTrade 主動收斂 unknown 扣款狀態） =================
+
+// TestClassifyQueryTradeResult_Paid 驗證 QueryTrade 查到「已付款」（RtnCode=1, TradeStatus="1"）時
+// 分類成 queryTradePaid——這是唯一會觸發 convergeRenewalPaid 實際結算入帳的分類，錯判會導致「舊單
+// 明明已經扣款成功卻被當成未付而作廢」，形成使用者已付款、我方卻拒絕給服務的資料不一致。
+func TestClassifyQueryTradeResult_Paid(t *testing.T) {
+	srv := newBindTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		if path != "/1.0.0/Cashier/QueryTrade" {
+			t.Errorf("unexpected path: %s", path)
+		}
+		return 1, "", QueryTradeResp{
+			RtnCode: 1, RtnMsg: "交易成功", MerchantID: "3002607",
+			OrderInfo: &QueryTradeOrderInfo{MerchantTradeNo: "DORTEST0020", TradeStatus: "1"},
+		}
+	})
+	defer srv.Close()
+	client := newTestBindClient(srv.URL)
+
+	resp, err := client.QueryTrade(context.Background(), "DORTEST0020")
+	if got := classifyQueryTradeResult(resp, err); got != queryTradePaid {
+		t.Fatalf("expected queryTradePaid, got %v (resp=%+v err=%v)", got, resp, err)
+	}
+}
+
+// TestClassifyQueryTradeResult_Unpaid_TradeStatusZero 驗證 RtnCode=1 但 TradeStatus="0"（訂單存在，
+// 但尚未完成付款）分類成 queryTradeUnpaid——可以安全作廢重試，不會誤傷已扣款的交易。
+func TestClassifyQueryTradeResult_Unpaid_TradeStatusZero(t *testing.T) {
+	srv := newBindTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		return 1, "", QueryTradeResp{
+			RtnCode: 1, RtnMsg: "交易查詢成功", MerchantID: "3002607",
+			OrderInfo: &QueryTradeOrderInfo{MerchantTradeNo: "DORTEST0021", TradeStatus: "0"},
+		}
+	})
+	defer srv.Close()
+	client := newTestBindClient(srv.URL)
+
+	resp, err := client.QueryTrade(context.Background(), "DORTEST0021")
+	if got := classifyQueryTradeResult(resp, err); got != queryTradeUnpaid {
+		t.Fatalf("expected queryTradeUnpaid, got %v (resp=%+v err=%v)", got, resp, err)
+	}
+}
+
+// TestClassifyQueryTradeResult_Unpaid_NotFound 驗證業務層失敗（RtnCode!=1，例如查無此訂單）也歸類成
+// queryTradeUnpaid——與 TradeStatus="0" 對「該不該作廢重試」的決策完全相同（見 ecpay_bind.go
+// QueryTrade 方法註解），不可與傳輸層失敗混為一談。
+func TestClassifyQueryTradeResult_Unpaid_NotFound(t *testing.T) {
+	srv := newBindTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		return 1, "", QueryTradeResp{RtnCode: 10200047, RtnMsg: "查無此訂單", MerchantID: "3002607"}
+	})
+	defer srv.Close()
+	client := newTestBindClient(srv.URL)
+
+	resp, err := client.QueryTrade(context.Background(), "DORTEST0022")
+	if got := classifyQueryTradeResult(resp, err); got != queryTradeUnpaid {
+		t.Fatalf("expected queryTradeUnpaid (not-found biz error), got %v (resp=%+v err=%v)", got, resp, err)
+	}
+}
+
+// TestClassifyQueryTradeResult_Failed_Transport 驗證傳輸層錯誤（TransCode!=1）分類成 queryTradeFailed
+// ——狀態依然未知，規格要求絕不可清空重試（否則若舊單其實已扣款成功會變成雙扣）。
+func TestClassifyQueryTradeResult_Failed_Transport(t *testing.T) {
+	srv := newBindTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		return 0, "Signature Error", nil
+	})
+	defer srv.Close()
+	client := newTestBindClient(srv.URL)
+
+	resp, err := client.QueryTrade(context.Background(), "DORTEST0023")
+	if got := classifyQueryTradeResult(resp, err); got != queryTradeFailed {
+		t.Fatalf("expected queryTradeFailed, got %v (resp=%+v err=%v)", got, resp, err)
+	}
+}
+
+// TestClassifyQueryTradeResult_Failed_NetworkError 驗證更底層的網路錯誤（連不上/DNS 失敗）同樣落在
+// queryTradeFailed，不會 panic 或誤判成其他分類。
+func TestClassifyQueryTradeResult_Failed_NetworkError(t *testing.T) {
+	client := newTestBindClient("http://127.0.0.1:1") // 保留位址，連線必失敗
+	resp, err := client.QueryTrade(context.Background(), "DORTEST0024")
+	if got := classifyQueryTradeResult(resp, err); got != queryTradeFailed {
+		t.Fatalf("expected queryTradeFailed, got %v (resp=%+v err=%v)", got, resp, err)
+	}
+}
+
+// TestClassifyQueryTradeResult_NilRespNoErr 邊界防禦：err==nil 但 resp 或 resp.OrderInfo 為 nil
+// （理論上不該發生，call() 成功時 respData 必是已 Unmarshal 過的非 nil struct，但 OrderInfo 本身是
+// pointer 欄位、回應若缺這塊仍可能是 nil）時，必須保守視為未付，絕不能誤判成已付而放行結算。
+func TestClassifyQueryTradeResult_NilRespNoErr(t *testing.T) {
+	if got := classifyQueryTradeResult(nil, nil); got != queryTradeUnpaid {
+		t.Errorf("nil resp, nil err: expected queryTradeUnpaid, got %v", got)
+	}
+	if got := classifyQueryTradeResult(&QueryTradeResp{RtnCode: 1}, nil); got != queryTradeUnpaid {
+		t.Errorf("resp with nil OrderInfo: expected queryTradeUnpaid, got %v", got)
+	}
+}
+
 // ================= buildRenewalPaymentReq（純函式） =================
 
 func TestBuildRenewalPaymentReq(t *testing.T) {
@@ -191,11 +291,17 @@ func TestRenewalMailText(t *testing.T) {
 		t.Error("renewalSuccessMail: empty body")
 	}
 
+	// renewalUnknownMail（對抗式審查修正 [1]）：handleRenewalChargeUnknown 分支舊版完全不通知使用者，
+	// 這裡驗證新文案存在且非空，不誇大宣稱失敗或成功（只講「確認中」）。
+	if _, _, body := renewalUnknownMail(); body != "本次自動扣款結果確認中，系統將自動處理，無需操作" {
+		t.Errorf("renewalUnknownMail: unexpected body: %q", body)
+	}
+
 	level, title, body := renewalRetryMail(2)
 	if level != "important" {
 		t.Errorf("renewalRetryMail: expected level=important, got %q", level)
 	}
-	wantRetryBody := "扣款失敗（第 2/3 次），將於明日自動重試，請確認卡片額度"
+	wantRetryBody := "扣款失敗（第 2/3 次），將於明日自動重試，請確認卡片額度；若持續失敗，建議更換其他卡片後重新訂閱"
 	if body != wantRetryBody {
 		t.Errorf("renewalRetryMail body: got %q want %q", body, wantRetryBody)
 	}
@@ -209,7 +315,7 @@ func TestRenewalMailText(t *testing.T) {
 	if level != "urgent" {
 		t.Errorf("renewalFinalFailMail: expected level=urgent, got %q", level)
 	}
-	if body != "多次扣款失敗，VIP 將於到期後暫停" {
+	if body != "多次扣款失敗，VIP 將於到期後暫停；建議更換其他卡片後重新訂閱" {
 		t.Errorf("renewalFinalFailMail: unexpected body: %q", body)
 	}
 }
@@ -227,9 +333,9 @@ func TestClassifyRenewalFailureMail_Priority(t *testing.T) {
 		wantExact string
 	}{
 		{"first failure, not final", "failed", 1, false, "VIP 自動扣款失敗", ""},
-		{"third failure, final wins over generic", "failed", 3, true, "VIP 自動續訂已停止", "多次扣款失敗，VIP 將於到期後暫停"},
+		{"third failure, final wins over generic", "failed", 3, true, "VIP 自動續訂已停止", "多次扣款失敗，VIP 將於到期後暫停；建議更換其他卡片後重新訂閱"},
 		{"3DS, not final", "threeds_required", 1, false, "VIP 自動續訂需要驗證", "本次自動扣款需要持卡驗證，請於 App 內手動完成續費"},
-		{"3DS but also final: final wins over 3DS text", "threeds_required", 3, true, "VIP 自動續訂已停止", "多次扣款失敗，VIP 將於到期後暫停"},
+		{"3DS but also final: final wins over 3DS text", "threeds_required", 3, true, "VIP 自動續訂已停止", "多次扣款失敗，VIP 將於到期後暫停；建議更換其他卡片後重新訂閱"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

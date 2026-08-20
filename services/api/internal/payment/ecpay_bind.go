@@ -30,22 +30,25 @@ type BindClient struct {
 	MerchantID string
 	HashKey    string
 	HashIV     string
-	BaseURL    string
+	BaseURL    string // ecpg(-stage) domain：Token/建立交易/綁卡系列 API（見 ecpay_aes.go 常數註解）
+	QueryURL   string // ecpayment(-stage) domain：查詢/請退款系列 API（QueryTrade 用這個，不是 BaseURL）
 	HTTP       *http.Client
 }
 
 // NewBindClient 建立 BindClient；env=="prod" 用正式站，其餘（含空字串／stage／未知值）一律用測試站
-// ——故障安全：設定寫錯或漏帶時不會誤打正式站真的扣到錢。
+// ——故障安全：設定寫錯或漏帶時不會誤打正式站真的扣到錢。BaseURL／QueryURL 依同一個 env 各自解析成
+// 對應的兩個 domain（見 ecpay_aes.go 常數註解：站內付2.0 橫跨 ecpg／ecpayment 兩個不同 domain）。
 func NewBindClient(env, merchantID, hashKey, hashIV string) *BindClient {
-	base := ecpayBindStageURL
+	base, query := ecpayBindStageURL, ecpayQueryStageURL
 	if env == "prod" {
-		base = ecpayBindProdURL
+		base, query = ecpayBindProdURL, ecpayQueryProdURL
 	}
 	return &BindClient{
 		MerchantID: merchantID,
 		HashKey:    hashKey,
 		HashIV:     hashIV,
 		BaseURL:    base,
+		QueryURL:   query,
 		// 綠界建議站內付2.0 逾時設定 ≥30 秒（請款可能牽涉發卡行/收單風控判定），這裡抓 35s 留緩衝。
 		HTTP: &http.Client{Timeout: 35 * time.Second},
 	}
@@ -104,12 +107,20 @@ func (e *BindBizError) Error() string {
 	return fmt.Sprintf("ecpay bind: biz error RtnCode=%d RtnMsg=%q", e.RtnCode, e.RtnMsg)
 }
 
-// call 是共用的「加密 → 組傳輸層封包 → HTTP POST → 解傳輸層封包 → 解密」流程。
+// call 是共用的「加密 → 組傳輸層封包 → HTTP POST → 解傳輸層封包 → 解密」流程，打 c.BaseURL（ecpg
+// domain）。絕大多數端點（Token/建立交易/綁卡系列）都用這個 domain，見 ecpay_aes.go 常數註解。
 //
 // ⚠️ 兩層狀態，順序不可顛倒：先檢查傳輸層 TransCode（步驟 4），確認傳輸層本身有效才進行 AES 解密；
 // RtnCode（業務層）在 Data 解密、Unmarshal 進呼叫端傳入的 respData 之後，由各方法自行檢查——因為
 // RtnCode 欄位定義在各端點自己的 respData struct 內，此處是泛用流程，拿不到那個欄位。
 func (c *BindClient) call(ctx context.Context, path string, reqData, respData any) error {
+	return c.callAt(ctx, c.BaseURL, path, reqData, respData)
+}
+
+// callAt 同 call，但可指定 baseURL——QueryTrade 等查詢系列端點在 ecpayment domain（與 c.BaseURL 的
+// ecpg domain不同，見 BindClient.QueryURL 欄位註解），需要能覆寫 base，故把 call 的邏輯抽成本函式，
+// call 本身變成 callAt(c.BaseURL, ...) 的薄包裝，不重複實作一份加解密/傳輸邏輯。
+func (c *BindClient) callAt(ctx context.Context, baseURL, path string, reqData, respData any) error {
 	plainJSON, err := json.Marshal(reqData)
 	if err != nil {
 		return fmt.Errorf("ecpay bind: marshal request data: %w", err)
@@ -129,7 +140,7 @@ func (c *BindClient) call(ctx context.Context, path string, reqData, respData an
 		return fmt.Errorf("ecpay bind: marshal request envelope: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("ecpay bind: new http request: %w", err)
 	}
@@ -509,6 +520,72 @@ func (c *BindClient) DeleteMemberBindCard(ctx context.Context, bindCardID string
 	}
 	var resp DeleteMemberBindCardResp
 	if err := c.call(ctx, "/Merchant/DeleteMemberBindCard", req, &resp); err != nil {
+		return nil, err
+	}
+	if resp.RtnCode != 1 {
+		return &resp, &BindBizError{RtnCode: resp.RtnCode, RtnMsg: resp.RtnMsg}
+	}
+	return &resp, nil
+}
+
+// ================= (f) QueryTrade（Phase D 對抗式審查修正：主動收斂 unknown 扣款狀態） =================
+//
+// 端點依據：guides/02-payment-ecpg.md 及官方 9083.md（web_fetch 2026-08 校準）——查詢訂單走
+// ecpayment(-stage).ecpay.com.tw/1.0.0/Cashier/QueryTrade（不是 ecpg domain、也不是 /Merchant/
+// 前綴；本任務原始規格猜測的端點路徑與 domain 有誤，這裡改以官方文件為準），封包格式仍是與其餘 5 支
+// 端點相同的三層 AES-JSON envelope（MerchantID+RqHeader+Data），故直接複用 callAt，只是傳入
+// c.QueryURL 而非 c.BaseURL。
+
+// QueryTradeReq QueryTrade 請求 Data：MerchantID/MerchantTradeNo 必填，PlatformID 一般商店留空。
+type QueryTradeReq struct {
+	PlatformID      string `json:"PlatformID,omitempty"`
+	MerchantID      string `json:"MerchantID"`
+	MerchantTradeNo string `json:"MerchantTradeNo"`
+}
+
+// QueryTradeOrderInfo QueryTrade 回應內的 OrderInfo（欄位巢狀在 OrderInfo 內，同 CreatePayment 回應
+// 的形狀慣例——見官方文件範例 JSON）。
+type QueryTradeOrderInfo struct {
+	MerchantTradeNo string `json:"MerchantTradeNo,omitempty"`
+	TradeNo         string `json:"TradeNo,omitempty"`
+	TradeAmt        int    `json:"TradeAmt,omitempty"`
+	TradeDate       string `json:"TradeDate,omitempty"`
+	PaymentType     string `json:"PaymentType,omitempty"`
+	PaymentDate     string `json:"PaymentDate,omitempty"`
+	// TradeStatus "0"=未付款 "1"=已付款（官方文件明確定義的關鍵欄位——QueryTrade 存在的唯一目的
+	// 就是讀這個欄位，見 vip_renewal.go classifyQueryTradeResult）。
+	TradeStatus string `json:"TradeStatus,omitempty"`
+}
+
+// QueryTradeResp QueryTrade 回應 Data。OrderInfo 用 pointer：文件未明確定義「MerchantTradeNo 查無
+// 此筆交易」時的回應形狀，保守起見允許它整塊缺席（RtnCode!=1 時很可能沒有 OrderInfo）。
+type QueryTradeResp struct {
+	RtnCode    int                  `json:"RtnCode"`
+	RtnMsg     string               `json:"RtnMsg"`
+	MerchantID string               `json:"MerchantID,omitempty"`
+	OrderInfo  *QueryTradeOrderInfo `json:"OrderInfo,omitempty"`
+}
+
+// QueryTrade 呼叫 QueryTrade：查詢一筆訂單目前的真實付款狀態。Phase D 續約排程用它主動收斂「傳輸層
+// 逾時/斷線導致我方不確定是否已扣款成功」的舊訂單（見 vip_renewal.go 檔頭「unknown 收斂」設計），
+// 取代舊版「無限 pending 等 webhook」——舊版一旦某次續約請款逾時，訂單會卡在 pending 永遠擋住
+// uq_orders_pending_vip，隔天所有候選都無法真正重試扣款。
+//
+// RtnCode!=1（業務層失敗，例如查無此筆訂單、MerchantID 不符等）一律回傳 *BindBizError，與其餘 5 支
+// 端點同一慣例；呼叫端（vip_renewal.go classifyQueryTradeResult）把它與「RtnCode==1 但
+// TradeStatus=="0"（確定未付款）」同歸一類（未付/查無），因為兩者對「該不該作廢舊單重試」的決策
+// 完全相同；只有傳輸層錯誤（BindTransportError／網路錯誤）才是真正「查詢本身失敗、狀態依然未知」，
+// 需要與前兩者分開保守處理（不可清空重試，否則若舊單其實已扣款成功會變成雙扣）。
+func (c *BindClient) QueryTrade(ctx context.Context, merchantTradeNo string) (*QueryTradeResp, error) {
+	if merchantTradeNo == "" {
+		return nil, fmt.Errorf("ecpay bind: QueryTrade requires a non-empty merchantTradeNo")
+	}
+	req := QueryTradeReq{
+		MerchantID:      c.MerchantID,
+		MerchantTradeNo: merchantTradeNo,
+	}
+	var resp QueryTradeResp
+	if err := c.callAt(ctx, c.QueryURL, "/1.0.0/Cashier/QueryTrade", req, &resp); err != nil {
 		return nil, err
 	}
 	if resp.RtnCode != 1 {

@@ -31,6 +31,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
+	"github.com/dor/api/internal/notify"
 	"github.com/dor/api/internal/vip"
 )
 
@@ -98,6 +99,10 @@ func (h *BindHandler) runRenewalBatch(ctx context.Context) {
 		}
 	}()
 
+	if err := h.cleanupStaleRenewalAttempts(ctx); err != nil {
+		log.Error().Err(err).Msg("vip renewal: cleanup stale processing attempts failed")
+	}
+
 	candidates, err := h.loadRenewalCandidates(ctx)
 	if err != nil {
 		log.Error().Err(err).Msg("vip renewal: load candidates failed")
@@ -154,6 +159,31 @@ func (h *BindHandler) loadRenewalCandidates(ctx context.Context) ([]renewalCandi
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// cleanupStaleRenewalAttempts 清理「跨日仍卡在 processing」的殘留 attempt 列（對抗式審查修正 [7]）。
+// 正常情況下 attempt 列會在同一次 processRenewalCandidate 呼叫內就被更新成終態（paid/failed/
+// threeds_required）；唯一會留在 processing 的情境是處理過程中程序被中斷（部署重啟、panic 逃過
+// recover、資料庫連線斷線等）。這種殘留列若不清理：
+//  1. 稽核上看起來像「永遠處理中」，誤導人工排查。
+//  2. processRenewalCandidate①的 priorFails 計數 SQL 只認 status IN ('failed','threeds_required')，
+//     卡在 processing 的列不會被計入重試次數——等於讓那次中斷的嘗試被永遠忽略、變相多給使用者一次
+//     重試機會，長期下來可能讓某些訂閱的實際重試次數超過 renewalMaxAttempts 的設計上限。
+//
+// 只清「今天以前」的（created_at::date < CURRENT_DATE）：今天仍在 processing 的列可能是本次批次正在
+// 處理中的其他候選（尚未跑到終態的正常中間狀態），保守起見不動它，避免誤傷。
+func (h *BindHandler) cleanupStaleRenewalAttempts(ctx context.Context) error {
+	tag, err := h.db.Exec(ctx, `
+		UPDATE vip_renewal_attempts
+		SET status='failed', rtn_msg='stale processing (process interrupted)'
+		WHERE status='processing' AND created_at::date < CURRENT_DATE`)
+	if err != nil {
+		return err
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		log.Warn().Int64("count", n).Msg("vip renewal: cleaned up stale processing attempts from previous day(s)")
+	}
+	return nil
 }
 
 // processRenewalCandidateSafe 包 panic recover + 逾時保護，確保單筆候選出狀況不會拖垮整批（比照
@@ -217,20 +247,28 @@ func (h *BindHandler) processRenewalCandidate(ctx context.Context, c renewalCand
 		return nil
 	}
 
-	// ④ 建續約訂單（金額固定用候選當下的原訂閱金額，不重算促銷價，見檔頭）。
+	// ④ 建續約訂單（金額固定用候選當下的原訂閱金額，不重算促銷價，見檔頭）。撞 uq_orders_pending_vip
+	// 時不再直接放棄當日重試——改用 QueryTrade 主動收斂那筆卡住的舊訂單（見下方「unknown 收斂」區塊
+	// 的 convergeStuckPendingOrder），取代舊版「無限 pending 等 webhook」設計（對抗式審查
+	// critical [0]／high [2][4][6]：舊版一旦某次續約請款因逾時等傳輸層錯誤留下無限 pending 的訂單，
+	// 之後每天的候選都會撞這個唯一索引、永遠無法真正重試扣款，訂閱形同卡死）。
 	orderID, tradeNo, err := h.orders.CreateVipOrder(ctx, c.UserID, c.Plan, c.AmountCents, "VIP 續訂")
 	if err != nil {
-		if isUniqueViolation(err) {
-			// 撞 uq_orders_pending_vip：使用者剛好有另一筆 pending VIP 訂單在途（例如正在手動走
-			// Subscribe 改方案、或前一次續約的傳輸層錯誤訂單還沒被 webhook 結算掉）。不可硬塞第二筆
-			// pending 訂單——當日這次嘗試標失敗，明天再試。
-			h.markRenewalAttemptFailed(ctx, attemptID, "", "order create conflict: another pending VIP order exists for this user")
-			log.Warn().Str("user_id", c.UserID).Str("subscription_id", c.SubscriptionID).
-				Msg("vip renewal: pending VIP order already exists, skip today")
-			return nil
+		if !isUniqueViolation(err) {
+			h.markRenewalAttemptFailed(ctx, attemptID, "", "create order failed: "+err.Error())
+			return fmt.Errorf("create vip order: %w", err)
 		}
-		h.markRenewalAttemptFailed(ctx, attemptID, "", "create order failed: "+err.Error())
-		return fmt.Errorf("create vip order: %w", err)
+		retry := h.convergeStuckPendingOrder(ctx, c, attemptID, rawAttemptNo)
+		if !retry {
+			return nil // 收斂流程已完整處理本輪（收斂成已付／非續約訂單／查詢失敗），不再往下建新單
+		}
+		// 舊單已確認未付款/查無並作廢，唯一索引已釋放，重試一次真正建立本次的新訂單。
+		orderID, tradeNo, err = h.orders.CreateVipOrder(ctx, c.UserID, c.Plan, c.AmountCents, "VIP 續訂")
+		if err != nil {
+			// 理論上不該再撞（舊單已作廢）；此處是防禦性兜底，絕不無限重試——直接標失敗，留給明天。
+			h.markRenewalAttemptFailed(ctx, attemptID, "", "create order failed after convergence retry: "+err.Error())
+			return fmt.Errorf("create vip order after convergence retry: %w", err)
+		}
 	}
 	if err := h.repo.CheckoutCreateTx(ctx, orderID, tradeNo, h.bindEnv, h.client.MerchantID, c.AmountCents); err != nil {
 		h.markRenewalAttemptFailed(ctx, attemptID, "", "checkout create tx failed: "+err.Error())
@@ -367,12 +405,21 @@ func (h *BindHandler) handleRenewalChargeFailure(ctx context.Context, orderID, a
 		log.Error().Err(err).Str("order_id", orderID).Msg("vip renewal: cancel failed charge order failed")
 	}
 
+	// 對抗式審查修正 high [4]：終結訂閱前先確認名下沒有其他尚未收斂的卡住續約訂單（見
+	// finalizeRenewalSubscriptionGuarded），絕不能在錢可能已收的情況下對外發「訂閱已終止」。
 	final := attemptNo >= renewalMaxAttempts
+	outcome := renewalFinalizeDone
 	if final {
-		h.finalizeRenewalSubscription(ctx, c.SubscriptionID)
+		outcome = h.finalizeRenewalSubscriptionGuarded(ctx, c)
+	}
+	if outcome == renewalFinalizeRecoveredPaid {
+		// 收斂發現另一筆卡住的舊訂單其實已付款，視同續約成功，不該再發本次失敗通知（矛盾）。理論上
+		// 極少發生在這個呼叫點——這裡的 orderID 剛在上面被標成 cancelled，findPendingRenewalOrder
+		// 通常查不到別的 pending 訂單；保留只是防禦性處理，不假設「不可能發生」。
+		return nil
 	}
 
-	level, title, body := classifyRenewalFailureMail(status, attemptNo, final)
+	level, title, body := classifyRenewalFailureMail(status, attemptNo, final && outcome == renewalFinalizeDone)
 	h.sendRenewalMail(ctx, c.UserID, level, title, body)
 	return nil
 }
@@ -390,15 +437,25 @@ func (h *BindHandler) handleRenewalChargeUnknown(ctx context.Context, attemptID 
 		log.Error().Err(err).Str("attempt_id", attemptID).Msg("vip renewal: mark transport-error attempt failed")
 	}
 	log.Error().Str("user_id", c.UserID).Str("subscription_id", c.SubscriptionID).Str("reason", errMsg).
-		Msg("vip renewal: CreatePayment transport/unknown error — charge status unknown, needs manual reconciliation (order left pending for webhook rescue)")
+		Msg("vip renewal: CreatePayment transport/unknown error — charge status unknown, needs manual reconciliation (order left pending; next unique-violation hit will attempt QueryTrade convergence, see convergeStuckPendingOrder)")
+	// 對抗式審查修正 [1][6]：舊版這裡完全不通知使用者——使用者全程無感，直到某天訂閱被終結才發現。
+	// 這個分支發生當下我方還不知道錢到底扣了沒，不能講「失敗」也不能講「成功」，只能誠實告知「確認中」。
+	level, title, body := renewalUnknownMail()
+	h.sendRenewalMail(ctx, c.UserID, level, title, body)
 	return nil
 }
 
 // finalizeRenewalOverLimit attemptNo 超過上限的防禦性兜底分支（見 processRenewalCandidate ③）：
-// 直接終結訂閱，不嘗試請款。
+// 終結訂閱，不嘗試請款。這是「unknown 收斂」機制最主要的實戰觸發點——會走到這裡通常是因為前幾天有
+// 某次 handleRenewalChargeUnknown 把訂單留成 pending（見該函式），之後每天的候選都在④撞
+// uq_orders_pending_vip、被 markRenewalAttemptFailed 標成 failed，priorFails 逐日累積直到超過上限；
+// 這條路徑終結訂閱前必須先確認那筆卡住的舊訂單是否其實已經扣款成功（見
+// finalizeRenewalSubscriptionGuarded），不能不問青紅皂白直接終結。
 func (h *BindHandler) finalizeRenewalOverLimit(ctx context.Context, attemptID string, c renewalCandidate) {
 	h.markRenewalAttemptFailed(ctx, attemptID, "", "exceeded max retry attempts")
-	h.finalizeRenewalSubscription(ctx, c.SubscriptionID)
+	if h.finalizeRenewalSubscriptionGuarded(ctx, c) != renewalFinalizeDone {
+		return // 已收斂成已付（視同續約成功），或狀態仍未明（保留待下一輪）——都不發「已終止」通知
+	}
 	level, title, body := renewalFinalFailMail()
 	h.sendRenewalMail(ctx, c.UserID, level, title, body)
 }
@@ -418,6 +475,263 @@ func (h *BindHandler) markRenewalAttemptFailed(ctx context.Context, attemptID, r
 		UPDATE vip_renewal_attempts SET status='failed', rtn_code=$2, rtn_msg=$3
 		WHERE id=$1 AND status='processing'`, attemptID, rtnCode, rtnMsg); err != nil {
 		log.Error().Err(err).Str("attempt_id", attemptID).Msg("vip renewal: mark attempt failed error")
+	}
+}
+
+// --- unknown 收斂（QueryTrade 主動查詢，對抗式審查修正 critical [0]／high [2][4][6]） ---
+//
+// 舊版設計：CreatePayment 逾時等傳輸層錯誤時（handleRenewalChargeUnknown），訂單刻意留 pending，
+// 全指望晚到的 Notify/Result webhook 補結算。這個假設在綠界端「這次呼叫其實根本沒被受理」時會落空
+// ——webhook 永遠不會來，訂單就永遠卡在 pending，撞死 uq_orders_pending_vip，之後每天的候選都會在
+// processRenewalCandidate④建新單那步失敗，訂閱形同卡死，直到某天被 finalizeRenewalOverLimit 這個
+// 防禦性兜底分支強制終結——而舊版那個分支完全沒有先確認「錢到底有沒有真的扣到」，等於可能在「其實
+// 已經扣款成功」的情況下告知使用者「訂閱已終止」，是本次對抗式審查抓到的核心風險。
+//
+// 新機制：任何時候需要判斷一筆卡住的舊訂單真實狀態，一律用 QueryTrade 主動問綠界（取代被動等
+// webhook），三種收斂結果：
+//   - 已付（queryTradePaid）      → convergeRenewalPaid：結算舊單，視同本輪續約成功。
+//   - 未付/查無（queryTradeUnpaid） → convergeRenewalVoidStale：作廢舊單，釋放唯一索引，可以正常
+//     重試。RtnCode!=1（BindBizError，例如查無此訂單）與「RtnCode==1 但 TradeStatus=="0"」歸同一類
+//     ——兩者對「該不該作廢重試」的決策完全相同（理由見 ecpay_bind.go QueryTrade 方法註解）。
+//   - 查詢本身失敗（queryTradeFailed，傳輸層/網路錯誤） → 狀態依然未知，維持絕對保守：不作廢、
+//     不重試、不終結訂閱，只記告警等待下一輪重新判斷。
+//
+// 兩個呼叫點：①processRenewalCandidate④撞 uq_orders_pending_vip 當下（convergeStuckPendingOrder）；
+// ②finalizeRenewalSubscriptionGuarded——任何要終結訂閱的路徑統一改走這個前置檢查，是最後一道防線。
+
+// queryTradeOutcome QueryTrade 收斂決策用的三分類（純邏輯，見 classifyQueryTradeResult）。
+type queryTradeOutcome int
+
+const (
+	queryTradePaid queryTradeOutcome = iota
+	queryTradeUnpaid
+	queryTradeFailed
+)
+
+// classifyQueryTradeResult 把 BindClient.QueryTrade 的回傳結果分類成三種收斂決策之一，抽成不碰
+// DB/HTTP 的純函式方便單元測試。err==nil 時看 resp.OrderInfo.TradeStatus；err 是 *BindBizError
+// （業務層失敗，例如查無此訂單）視為未付/查無同一類（理由見 ecpay_bind.go QueryTrade 方法註解）；
+// 其餘 error（*BindTransportError／網路錯誤）才是真正查詢本身失敗、狀態依然未知。
+func classifyQueryTradeResult(resp *QueryTradeResp, err error) queryTradeOutcome {
+	if err == nil {
+		if resp != nil && resp.OrderInfo != nil && resp.OrderInfo.TradeStatus == "1" {
+			return queryTradePaid
+		}
+		return queryTradeUnpaid // TradeStatus=="0"，或欄位缺漏/不完整：保守視為未付，絕不誤判成已付
+	}
+	var bizErr *BindBizError
+	if errors.As(err, &bizErr) {
+		return queryTradeUnpaid
+	}
+	return queryTradeFailed
+}
+
+// pendingRenewalOrder 一筆使用者目前卡住的 pending VIP 訂單（uq_orders_pending_vip 定義下「同使用者
+// 至多一筆」），連同其目前 pending 的 payment_transactions.merchant_trade_no、以及是否有對應的
+// vip_renewal_attempts 列（＝這筆訂單是續約排程建立的，而非使用者手動走 Subscribe 留下的）。
+type pendingRenewalOrder struct {
+	OrderID          string
+	TradeNo          string
+	AttemptID        string // IsRenewalAttempt=false 時為空字串
+	IsRenewalAttempt bool
+}
+
+// findPendingRenewalOrder 找出該 user 目前卡住的 pending VIP 訂單，連同其 payment_transactions 的
+// merchant_trade_no、以及是否有對應的 vip_renewal_attempts 列。查無回傳 (nil, nil)。
+//
+// 也供 ecpay_bind_handler.go Subscribe 的 1.5 段共用（判斷 23505 衝突是否為續約造成，決定回應文案，
+// 對抗式審查修正 high [1]），不只是 vip_renewal.go 內部使用。
+func (h *BindHandler) findPendingRenewalOrder(ctx context.Context, userID string) (*pendingRenewalOrder, error) {
+	var p pendingRenewalOrder
+	err := h.db.QueryRow(ctx, `
+		SELECT o.id::text, pt.merchant_trade_no, COALESCE(a.id::text, '')
+		FROM orders o
+		JOIN payment_transactions pt ON pt.order_id = o.id AND pt.status = 'pending'
+		LEFT JOIN vip_renewal_attempts a ON a.order_id = o.id
+		WHERE o.user_id = $1 AND o.status = 'pending' AND o.race_id IS NULL`,
+		userID).Scan(&p.OrderID, &p.TradeNo, &p.AttemptID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	p.IsRenewalAttempt = p.AttemptID != ""
+	return &p, nil
+}
+
+// convergeRenewalPaid QueryTrade 確認舊訂單其實已付款後的收斂動作：呼叫 settleVipRenewal 結算
+// （CAS 冪等，即使這筆早被其他路徑結算過也安全 no-op）、成功才發站內信。c 提供 Plan/AmountCents——
+// 卡住的舊訂單必然是同一張訂閱先前某次續約嘗試留下的（uq_orders_pending_vip 是 per-user 唯一索引，
+// CreateVipOrder 建立續約訂單時金額固定用候選當下的原訂閱金額，見檔頭②），與本輪候選 c 屬於同一張
+// 訂閱、同一個方案/金額，可以直接沿用，不需要另外反查舊訂單當初的金額。
+func (h *BindHandler) convergeRenewalPaid(ctx context.Context, p *pendingRenewalOrder, resp *QueryTradeResp, c renewalCandidate) {
+	var ecpayTradeNo string
+	if resp != nil && resp.OrderInfo != nil {
+		ecpayTradeNo = resp.OrderInfo.TradeNo
+	}
+	raw, _ := json.Marshal(resp)
+	userID, periodEnd, err := h.settleVipRenewal(ctx, p.OrderID, p.AttemptID, settleVipRenewalParams{
+		Plan:            c.Plan,
+		AmountCents:     c.AmountCents,
+		MerchantTradeNo: p.TradeNo,
+		EcpayTradeNo:    ecpayTradeNo,
+		Raw:             raw,
+	})
+	if err != nil {
+		log.Error().Err(err).Str("order_id", p.OrderID).Str("attempt_id", p.AttemptID).
+			Msg("vip renewal: QueryTrade convergence found paid, but settleVipRenewal failed — needs manual reconciliation")
+		return
+	}
+	if periodEnd.IsZero() || userID == "" {
+		return // CAS no-op：這筆舊單已經被別的路徑結算過了（例如晚到的 webhook 搶先一步），不重複發信
+	}
+	level, title, body := renewalSuccessMail(formatTaipei(periodEnd))
+	h.sendRenewalMail(ctx, userID, level, title, body)
+}
+
+// convergeRenewalVoidStale QueryTrade 確認舊訂單未付款/查無後的收斂動作：標記舊 attempt 列失敗、
+// 作廢舊訂單＋交易，釋放 uq_orders_pending_vip，讓呼叫端可以正常建立新訂單重試。
+func (h *BindHandler) convergeRenewalVoidStale(ctx context.Context, p *pendingRenewalOrder, reason string) {
+	if p.IsRenewalAttempt {
+		if _, err := h.db.Exec(ctx, `
+			UPDATE vip_renewal_attempts SET status='failed', rtn_msg=$2
+			WHERE id=$1 AND status='processing'`, p.AttemptID, reason); err != nil {
+			log.Warn().Err(err).Str("attempt_id", p.AttemptID).Msg("vip renewal: mark stale attempt failed error")
+		}
+	}
+	if err := h.repo.MarkTxFailed(ctx, p.TradeNo, "", reason, nil); err != nil {
+		log.Warn().Err(err).Str("merchant_trade_no", p.TradeNo).Msg("vip renewal: mark stale tx failed error")
+	}
+	if _, err := h.db.Exec(ctx, `UPDATE orders SET status='cancelled' WHERE id=$1 AND status='pending'`, p.OrderID); err != nil {
+		log.Warn().Err(err).Str("order_id", p.OrderID).Msg("vip renewal: cancel stale order error")
+	}
+}
+
+// convergeStuckPendingOrder processRenewalCandidate④撞 uq_orders_pending_vip 時的收斂入口。
+// 回傳 retry：true＝舊單已確認未付款/查無並作廢，呼叫端應該重新嘗試建立新訂單（本次真正重試）；
+// false＝本輪已被完整處理（收斂成已付＝視同續約成功；或非續約訂單/查詢失敗＝保守中止待明天），
+// 呼叫端不應該再嘗試建立新訂單。
+func (h *BindHandler) convergeStuckPendingOrder(ctx context.Context, c renewalCandidate, attemptID string, rawAttemptNo int) (retry bool) {
+	pending, err := h.findPendingRenewalOrder(ctx, c.UserID)
+	if err != nil {
+		log.Error().Err(err).Str("user_id", c.UserID).Msg("vip renewal: load stuck pending order for convergence failed")
+		h.markRenewalAttemptFailed(ctx, attemptID, "", "order create conflict, and failed to load stuck order for convergence: "+err.Error())
+		return false
+	}
+	if pending == nil {
+		// 理論上不該發生（我們才剛撞到唯一索引）；極端時序下舊單可能剛好被別的路徑處理掉，安全起見
+		// 這天不重試，明天再判斷。
+		log.Warn().Str("user_id", c.UserID).Msg("vip renewal: unique violation but no stuck pending order found (race), skip today")
+		h.markRenewalAttemptFailed(ctx, attemptID, "", "order create conflict but stuck order not found (transient), skip today")
+		return false
+	}
+	if !pending.IsRenewalAttempt {
+		// 非續約造成的 pending 訂單（例如使用者正在手動走 Subscribe 改方案）：維持既有保守行為，
+		// 不動它、今天跳過。
+		h.markRenewalAttemptFailed(ctx, attemptID, "", "order create conflict: another pending VIP order exists for this user (not a renewal order, left untouched)")
+		log.Warn().Str("user_id", c.UserID).Str("subscription_id", c.SubscriptionID).Str("order_id", pending.OrderID).
+			Msg("vip renewal: pending VIP order already exists and is not a renewal order, skip today")
+		return false
+	}
+
+	resp, qErr := h.client.QueryTrade(ctx, pending.TradeNo)
+	switch classifyQueryTradeResult(resp, qErr) {
+	case queryTradePaid:
+		h.convergeRenewalPaid(ctx, pending, resp, c)
+		// 今天新插入的這筆 attempt 列（attemptID）也一併標成 paid：今天雖然沒有真的呼叫
+		// CreatePayment，但本輪的結果就是「續約已確認成功」，不該讓這筆列停在 processing——那樣看起來
+		// 像是還在跑、或被誤認成一次失敗的嘗試。CAS 條件維持 status='processing'（不需要用 D 修正
+		// 那種放寬版 WHERE status<>'paid'：這筆是本次呼叫剛插入的新列，執行期間不會有其他路徑動它，
+		// 此刻狀態保證仍是 processing；放寬版 CAS 是給 settleVipRenewal 內部處理「可能是好幾天前、
+		// 狀態已經是 failed 的舊 attempt 列」這種情境用的，見該函式步驟 5 註解）。
+		if _, err := h.db.Exec(ctx, `
+			UPDATE vip_renewal_attempts SET status='paid', rtn_code='1', rtn_msg=$2
+			WHERE id=$1 AND status='processing'`, attemptID, "recovered via QueryTrade"); err != nil {
+			log.Warn().Err(err).Str("attempt_id", attemptID).Msg("vip renewal: mark today's attempt paid (recovered) failed")
+		}
+		return false
+	case queryTradeUnpaid:
+		h.convergeRenewalVoidStale(ctx, pending, "voided via QueryTrade convergence (unpaid/not found), superseded by retry")
+		return true
+	default: // queryTradeFailed：查詢本身失敗，狀態依然未知，維持保守
+		msg := "order create conflict: stuck pending order status still unknown, QueryTrade query failed (transport error): "
+		if qErr != nil {
+			msg += qErr.Error()
+		}
+		h.markRenewalAttemptFailed(ctx, attemptID, "", msg)
+		log.Error().Str("user_id", c.UserID).Str("subscription_id", c.SubscriptionID).Str("order_id", pending.OrderID).
+			Msg("vip renewal: QueryTrade convergence query itself failed, stuck order left untouched, needs manual reconciliation")
+		// 比照 handleRenewalChargeFailure 做同樣的 finalize 判斷與通知（修 [2][6]：舊版這個分支完全
+		// 不終結也不通知，若剛好是第 3 次以上的嘗試，訂閱會無限期卡在「已達重試上限卻從未終結」）。
+		final := rawAttemptNo >= renewalMaxAttempts
+		outcome := renewalFinalizeDone
+		if final {
+			outcome = h.finalizeRenewalSubscriptionGuarded(ctx, c)
+		}
+		if outcome != renewalFinalizeRecoveredPaid {
+			level, title, body := classifyRenewalFailureMail("failed", rawAttemptNo, final && outcome == renewalFinalizeDone)
+			h.sendRenewalMail(ctx, c.UserID, level, title, body)
+		}
+		return false
+	}
+}
+
+// renewalFinalizeOutcome finalizeRenewalSubscriptionGuarded 的收斂結果。
+type renewalFinalizeOutcome int
+
+const (
+	renewalFinalizeDone          renewalFinalizeOutcome = iota // 實際終結了訂閱（原本行為）
+	renewalFinalizeRecoveredPaid                                // 收斂成已付，視同續約成功，未終結
+	renewalFinalizeBlocked                                      // 收斂結果仍未知（QueryTrade 查詢失敗），保留待下一輪，未終結
+)
+
+// finalizeRenewalSubscriptionGuarded 終結訂閱前的前置檢查（對抗式審查修正 high [4]）：若該訂閱的
+// 使用者名下存在尚未收斂的 pending 續約訂單，絕不能直接終結——那筆訂單背後的錢可能其實已經收了，
+// 若這時對外宣告「訂閱已終止」，就是「已扣款卻告知使用者服務中止」的嚴重風險。改為終結前先嘗試用
+// QueryTrade 收斂：
+//   - 收斂成已付 → 直接結算該筆訂單，不終結訂閱（訂閱視為續約成功）。
+//   - 收斂成未付/查無 → 已無阻擋因素，作廢舊單後正常終結。
+//   - 查詢本身仍失敗 → 兩者都不做，只記錄 log.Error + Telegram 營運告警，訂閱保持 active，留給下一輪
+//     排程（明天，或本函式下次被呼叫時）重新判斷——絕不能在狀態不明時貿然終結。
+//
+// 呼叫端（finalizeRenewalOverLimit／handleRenewalChargeFailure／convergeStuckPendingOrder）一律呼叫
+// 本函式取代直接呼叫 finalizeRenewalSubscription，並依回傳的 outcome 決定要不要發「已終止」通知。
+func (h *BindHandler) finalizeRenewalSubscriptionGuarded(ctx context.Context, c renewalCandidate) renewalFinalizeOutcome {
+	pending, err := h.findPendingRenewalOrder(ctx, c.UserID)
+	if err != nil {
+		// 前置檢查本身失敗：寧可維持舊行為直接終結，避免因為這裡出錯就永遠卡住不終結、使用者續約
+		// 真的失敗了卻一直收不到通知。
+		log.Error().Err(err).Str("subscription_id", c.SubscriptionID).Str("user_id", c.UserID).
+			Msg("vip renewal: finalize pre-check load pending order failed, finalizing without convergence")
+		h.finalizeRenewalSubscription(ctx, c.SubscriptionID)
+		return renewalFinalizeDone
+	}
+	if pending == nil || !pending.IsRenewalAttempt {
+		h.finalizeRenewalSubscription(ctx, c.SubscriptionID)
+		return renewalFinalizeDone
+	}
+
+	resp, qErr := h.client.QueryTrade(ctx, pending.TradeNo)
+	switch classifyQueryTradeResult(resp, qErr) {
+	case queryTradePaid:
+		h.convergeRenewalPaid(ctx, pending, resp, c)
+		return renewalFinalizeRecoveredPaid
+	case queryTradeUnpaid:
+		h.convergeRenewalVoidStale(ctx, pending, "voided during finalize pre-check (unpaid/not found)")
+		h.finalizeRenewalSubscription(ctx, c.SubscriptionID)
+		return renewalFinalizeDone
+	default: // queryTradeFailed
+		log.Error().Str("subscription_id", c.SubscriptionID).Str("user_id", c.UserID).Str("order_id", pending.OrderID).
+			Msg("vip renewal: finalize blocked — pending renewal order status still unknown after QueryTrade, subscription left active, needs manual reconciliation")
+		alertCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if tgErr := notify.Telegram(alertCtx, fmt.Sprintf(
+			"⚠️ <b>VIP 續約狀態未明</b>\n訂閱：%s\n使用者：%s\n卡住訂單：%s\n原因：終結前 QueryTrade 收斂查詢失敗，訂閱保留 active 待人工確認",
+			c.SubscriptionID, c.UserID, pending.OrderID)); tgErr != nil {
+			log.Warn().Err(tgErr).Str("subscription_id", c.SubscriptionID).Msg("vip renewal: telegram alert failed")
+		}
+		return renewalFinalizeBlocked
 	}
 }
 
@@ -445,10 +759,21 @@ func renewalSuccessMail(periodEndStr string) (level, title, body string) {
 	return "normal", "VIP 續訂成功", fmt.Sprintf("您的 DOR VIP 已成功自動續訂，效期已延長至 %s。", periodEndStr)
 }
 
-// renewalRetryMail 非最終失敗的重試通知文案（產品拍板原文字，見任務規格）。
+// renewalUnknownMail handleRenewalChargeUnknown 用的文案（對抗式審查修正 [1]）：CreatePayment
+// 傳輸層/未知錯誤發生當下，我方還不知道錢到底扣了沒，不能講「失敗」也不能講「成功」，只能誠實告知
+// 「確認中」——這正是舊版完全沒有通知使用者的分支，使用者原本全程無感。
+func renewalUnknownMail() (level, title, body string) {
+	return "normal", "VIP 自動續訂處理中", "本次自動扣款結果確認中，系統將自動處理，無需操作"
+}
+
+// renewalRetryMail 非最終失敗的重試通知文案（產品拍板原文字，見任務規格）。對抗式審查修正 [5]：
+// 補上「建議更換卡片」的引導——扣款持續失敗最常見的根因就是這張卡本身有問題（額度不足/已過期/被
+// 風控標記），單純提示「確認額度」對使用者幫助有限，讓使用者知道有「換卡」這個選項能更快解決問題。
+// 不做卡片比對邏輯（判斷使用者是否真的換了卡需要另外追蹤 card fingerprint，且涉及綠界風控計數範圍
+// 需另外找綠界確認，這裡先只做文案引導，不 investment 額外邏輯，見任務規格）。
 func renewalRetryMail(attemptNo int) (level, title, body string) {
 	return "important", "VIP 自動扣款失敗",
-		fmt.Sprintf("扣款失敗（第 %d/%d 次），將於明日自動重試，請確認卡片額度", attemptNo, renewalMaxAttempts)
+		fmt.Sprintf("扣款失敗（第 %d/%d 次），將於明日自動重試，請確認卡片額度；若持續失敗，建議更換其他卡片後重新訂閱", attemptNo, renewalMaxAttempts)
 }
 
 // renewalThreeDSMail 3DS 風險分流通知文案（產品拍板原文字，見任務規格）：幕後扣款被風控要求 3D，
@@ -458,8 +783,10 @@ func renewalThreeDSMail() (level, title, body string) {
 }
 
 // renewalFinalFailMail 最終失敗（用滿重試次數或超過上限）通知文案（產品拍板原文字，見任務規格）。
+// 對抗式審查修正 [5]：同 renewalRetryMail，補上換卡引導——此時使用者若要繼續訂閱 VIP，只能重新走一次
+// Subscribe 流程，換張卡是最直接的解法，明確告知比讓使用者自己猜測更好。
 func renewalFinalFailMail() (level, title, body string) {
-	return "urgent", "VIP 自動續訂已停止", "多次扣款失敗，VIP 將於到期後暫停"
+	return "urgent", "VIP 自動續訂已停止", "多次扣款失敗，VIP 將於到期後暫停；建議更換其他卡片後重新訂閱"
 }
 
 // classifyRenewalFailureMail 依「是否為最終失敗」與「是否為 3DS 分流」決定要用哪一種失敗文案，
@@ -565,11 +892,22 @@ func (h *BindHandler) settleVipRenewal(ctx context.Context, orderID, attemptID s
 		return "", time.Time{}, fmt.Errorf("settle vip renewal: mark payment_transactions paid: %w", err)
 	}
 
-	// 5) attempt 列標記 paid（CAS：僅 processing→paid，避免覆蓋掉已經被其他路徑 finalize 過的狀態）。
-	if _, err := tx.Exec(ctx, `
+	// 5) attempt 列標記 paid（CAS：僅在尚未是 paid 時才覆寫，放寬自舊版「僅 processing→paid」——
+	// 對抗式審查修正 [3]：QueryTrade 收斂流程（見下方「unknown 收斂」區塊）可能對一筆早已被
+	// handleRenewalChargeUnknown 標成 'failed' 的舊 attempt 列呼叫本函式（我方當初誤判扣款結果未知
+	// /失敗，QueryTrade 一查才發現其實已經付款成功），若 WHERE 仍卡死 status='processing'，這種情況
+	// 就會 0 列命中、稽核表（vip_renewal_attempts）永遠停在『failed』，與實際金流（orders 已 paid、
+	// VIP 已延長）長期脫節，人工事後對帳會被誤導。'paid' 本身不再被覆寫（CAS 終態，見 WHERE 條件），
+	// 其餘任何狀態（processing/failed/threeds_required）都允許收斂成 paid。
+	attemptTag, err := tx.Exec(ctx, `
 		UPDATE vip_renewal_attempts SET status='paid', rtn_code='1', rtn_msg='paid'
-		WHERE id=$1 AND status='processing'`, attemptID); err != nil {
+		WHERE id=$1 AND status<>'paid'`, attemptID)
+	if err != nil {
 		return "", time.Time{}, fmt.Errorf("settle vip renewal: mark attempt paid: %w", err)
+	}
+	if attemptTag.RowsAffected() == 0 {
+		log.Warn().Str("attempt_id", attemptID).Str("order_id", orderID).
+			Msg("settle vip renewal: attempt row already paid or missing at settle time (order/VIP still settled normally; audit row itself was a no-op)")
 	}
 
 	if err := tx.Commit(ctx); err != nil {

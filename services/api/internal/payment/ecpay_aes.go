@@ -15,10 +15,21 @@ import (
 	"strings"
 )
 
-// 綠界站內付2.0 端點基底（供之後 Phase B 組請求 URL 用；本階段尚未串接任何 HTTP 呼叫）。
+// 綠界站內付2.0 端點基底。⚠️ 站內付2.0 橫跨兩個不同 domain，混用會直接 404（見官方文件與
+// guides/02-payment-ecpg.md「Domain 警告」段）：
+//   - ecpg(-stage).ecpay.com.tw：Token 取得／建立交易／綁卡系列 API（GetTokenbyBindingCard、
+//     CreateBindCard、CreatePaymentWithCardID、GetMemberBindCard、DeleteMemberBindCard 皆在此）。
+//   - ecpayment(-stage).ecpay.com.tw：查詢／請退款系列 API（QueryTrade、DoAction 等）。
+//     QueryTrade（Phase D 對抗式審查修正：主動收斂 unknown 扣款狀態，見 vip_renewal.go）走這個
+//     domain，但封包格式（MerchantID+RqHeader+Data 三層、AES-128-CBC 加密 Data）與 ecpg 系列完全
+//     相同，只是 base URL 不同——因此 BindClient 需要同時持有兩個 base（見 NewBindClient／call 的
+//     baseURL 參數化），不能只有單一 c.BaseURL。
 const (
 	ecpayBindStageURL = "https://ecpg-stage.ecpay.com.tw"
 	ecpayBindProdURL  = "https://ecpg.ecpay.com.tw"
+
+	ecpayQueryStageURL = "https://ecpayment-stage.ecpay.com.tw"
+	ecpayQueryProdURL  = "https://ecpayment.ecpay.com.tw"
 )
 
 // ecpayAESEncrypt 依綠界站內付2.0 Data 欄位加密規格：
