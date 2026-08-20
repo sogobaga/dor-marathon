@@ -77,6 +77,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [showUnbind, setShowUnbind] = useState(false)
   const [unbindBusy, setUnbindBusy] = useState(false)
   const [unbindErr, setUnbindErr] = useState('')
+  const [unbindDone, setUnbindDone] = useState(false) // 解綁成功回饋（三態顯示：未綁定/已綁定/剛解除）
   // 推廣連結：累積里程 ≥10km 才能產生；成功後存推薦碼/統計，供組連結與複製
   const [referral, setReferral] = useState<ReferralInfo | null>(null)
   const [referralBusy, setReferralBusy] = useState(false)
@@ -126,6 +127,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       await withUserAuth((t) => profileApi.vipCardDelete(t))
       setCard({ bound: false })
       setShowUnbind(false)
+      setUnbindDone(true) // 明確的成功回饋：行內顯示「已解除綁定 ✓」，避免使用者以為解綁失敗
     } catch (e: any) {
       setUnbindErr(e?.message || '解除綁卡失敗，請稍後再試')
     } finally {
@@ -472,7 +474,11 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                     <button type="button" onClick={() => { setUnbindErr(''); setShowUnbind(true) }} style={{ ...ghostBtn, padding: '4px 10px', fontSize: 11.5 }}>解除綁定</button>
                   </>
                 ) : (
-                  <span style={{ color: 'var(--tx-dim)' }}>{card ? '尚未綁定' : '載入中…'}</span>
+                  // 三態顯示：剛解除→「未綁定信用卡（已解除綁定 ✓）」明確成功回饋；未綁定→「未綁定信用卡」；載入中
+                  <span style={{ color: 'var(--tx-dim)' }}>
+                    {card ? '未綁定信用卡' : '載入中…'}
+                    {unbindDone && <span style={{ color: 'var(--fug)', fontWeight: 700 }}>（已解除綁定 ✓）</span>}
+                  </span>
                 )}
               </div>
             </div>
