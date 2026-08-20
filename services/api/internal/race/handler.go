@@ -66,14 +66,15 @@ func (h *Handler) PromoCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Code   string           `json:"code"`
-		Addons []AddonSelection `json:"addons"`
+		Code    string           `json:"code"`
+		GroupID string           `json:"group_id"` // per_group 計價模式需要，據以算出正確的有效組價
+		Addons  []AddonSelection `json:"addons"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	quote, err := h.svc.QuotePromo(r.Context(), raceID, userID, req.Code, req.Addons)
+	quote, err := h.svc.QuotePromo(r.Context(), raceID, userID, req.GroupID, req.Code, req.Addons)
 	if errors.Is(err, ErrRaceNotFound) {
 		respondErr(w, http.StatusNotFound, "race not found")
 		return

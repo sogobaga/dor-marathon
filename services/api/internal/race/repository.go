@@ -31,7 +31,7 @@ const selectCols = `
 	       COALESCE(world,'') as world, COALESCE(blurb,'') as blurb,
 	       COALESCE(hero_image_url,'') as hero_image_url,
 	       status, event_mode, goal_type, distances, group_type, group_mode,
-	       slots_total, entry_fee, registration_start, registration_end,
+	       slots_total, entry_fee, fee_mode, registration_start, registration_end,
 	       start_date, end_date, config, required_fields,
 	       control_status, starting_soon_days, COALESCE(brochure_title,'') as brochure_title,
 	       allow_team_groups,
@@ -137,13 +137,13 @@ func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
 		UPDATE races SET
 			slug=$1, title=$2, subtitle=$3, world=$4, blurb=$5, hero_image_url=$6,
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
-			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
-			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
-			vip_only=$20, external_data=$21, challenge_rule=$22, reward_config=$23, updated_at=NOW()
-		WHERE id=$24`,
+			slots_total=$11, entry_fee=$12, fee_mode=$13, start_date=$14, end_date=$15, config=$16,
+			event_mode=$17, goal_type=$18, registration_start=$19, registration_end=$20,
+			vip_only=$21, external_data=$22, challenge_rule=$23, reward_config=$24, updated_at=NOW()
+		WHERE id=$25`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
-		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
+		race.SlotsTotal, race.EntryFee, defaultStr(race.FeeMode, "uniform"), race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
 		race.VipOnly, race.ExternalData, challengeRuleArg, rewardConfigArg, race.ID,
 	)
@@ -216,15 +216,15 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 	err = tx.QueryRow(ctx, `
 		INSERT INTO races (slug, title, subtitle, world, blurb, hero_image_url,
 		                   status, event_mode, goal_type, distances, group_type, group_mode,
-		                   slots_total, entry_fee, registration_start, registration_end,
+		                   slots_total, entry_fee, fee_mode, registration_start, registration_end,
 		                   start_date, end_date, config, created_by, review_status, required_fields,
 		                   control_status, starting_soon_days, brochure_title, allow_team_groups, vip_only,
 		                   external_data, challenge_rule, reward_config)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
-		race.SlotsTotal, race.EntryFee, race.RegStart, race.RegEnd,
+		race.SlotsTotal, race.EntryFee, defaultStr(race.FeeMode, "uniform"), race.RegStart, race.RegEnd,
 		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus, requiredFields,
 		controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
 		race.ExternalData, challengeRuleArg, rewardConfigArg,
@@ -255,12 +255,12 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		err = tx.QueryRow(ctx, `
 			INSERT INTO race_groups (race_id, name, description, display_order,
 			                         slot_limit, gender_limit, age_min, age_max, target_distance_km,
-			                         requires_key, group_key, exp_reward, dp_reward)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			                         requires_key, group_key, exp_reward, dp_reward, entry_fee_cents)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 			RETURNING id`,
 			raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
 			g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
-			g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward,
+			g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward, g.EntryFeeCents,
 		).Scan(&gid)
 		if err != nil {
 			return nil, fmt.Errorf("insert group %d: %w", i, err)
@@ -368,14 +368,14 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 		UPDATE races SET
 			slug=$1, title=$2, subtitle=$3, world=$4, blurb=$5, hero_image_url=$6,
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
-			slots_total=$11, entry_fee=$12, start_date=$13, end_date=$14, config=$15,
-			event_mode=$16, goal_type=$17, registration_start=$18, registration_end=$19,
-			required_fields=$20, control_status=$21, starting_soon_days=$22, brochure_title=$23,
-			allow_team_groups=$24, vip_only=$25, external_data=$26, challenge_rule=$27, reward_config=$28, updated_at=NOW()
-		WHERE id=$29`,
+			slots_total=$11, entry_fee=$12, fee_mode=$13, start_date=$14, end_date=$15, config=$16,
+			event_mode=$17, goal_type=$18, registration_start=$19, registration_end=$20,
+			required_fields=$21, control_status=$22, starting_soon_days=$23, brochure_title=$24,
+			allow_team_groups=$25, vip_only=$26, external_data=$27, challenge_rule=$28, reward_config=$29, updated_at=NOW()
+		WHERE id=$30`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
-		race.SlotsTotal, race.EntryFee, race.StartDate, race.EndDate, cfgBytes,
+		race.SlotsTotal, race.EntryFee, defaultStr(race.FeeMode, "uniform"), race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
 		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
 		race.ExternalData, challengeRuleArg, rewardConfigArg, raceID,
@@ -448,11 +448,11 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 				_, err = tx.Exec(ctx, `
 					UPDATE race_groups SET name=$1, description=$2, display_order=$3,
 					    slot_limit=$4, gender_limit=$5, age_min=$6, age_max=$7, target_distance_km=$8,
-					    requires_key=$9, group_key=$10, exp_reward=$11, dp_reward=$12
-					WHERE id=$13 AND race_id=$14`,
+					    requires_key=$9, group_key=$10, exp_reward=$11, dp_reward=$12, entry_fee_cents=$13
+					WHERE id=$14 AND race_id=$15`,
 					g.Name, nullStr(g.Description), g.DisplayOrder,
 					g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
-					g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward, g.ID, raceID,
+					g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward, g.EntryFeeCents, g.ID, raceID,
 				)
 				if err != nil {
 					return nil, fmt.Errorf("update group %d: %w", i, err)
@@ -463,11 +463,11 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 				err = tx.QueryRow(ctx, `
 					INSERT INTO race_groups (race_id, name, description, display_order,
 					                         slot_limit, gender_limit, age_min, age_max, target_distance_km,
-					                         requires_key, group_key, exp_reward, dp_reward)
-					VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+					                         requires_key, group_key, exp_reward, dp_reward, entry_fee_cents)
+					VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
 					raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
 					g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
-					g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward,
+					g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward, g.EntryFeeCents,
 				).Scan(&gid)
 				if err != nil {
 					return nil, fmt.Errorf("insert group %d: %w", i, err)
@@ -1012,7 +1012,8 @@ func (r *Repository) GetGroups(ctx context.Context, raceID string) ([]RaceGroup,
 	rows, err := r.db.Query(ctx, `
 		SELECT id, race_id, name, COALESCE(description,''), display_order,
 		       slot_limit, slots_taken, gender_limit, age_min, age_max, target_distance_km,
-		       requires_key, COALESCE(group_key,''), COALESCE(created_by::text,''), exp_reward, dp_reward
+		       requires_key, COALESCE(group_key,''), COALESCE(created_by::text,''), exp_reward, dp_reward,
+		       entry_fee_cents
 		FROM race_groups WHERE race_id=$1 ORDER BY display_order, created_at`, raceID)
 	if err != nil {
 		return nil, fmt.Errorf("list groups: %w", err)
@@ -1024,7 +1025,8 @@ func (r *Repository) GetGroups(ctx context.Context, raceID string) ([]RaceGroup,
 		var g RaceGroup
 		if err := rows.Scan(&g.ID, &g.RaceID, &g.Name, &g.Description, &g.DisplayOrder,
 			&g.SlotLimit, &g.SlotsTaken, &g.GenderLimit, &g.AgeMin, &g.AgeMax, &g.TargetDistanceKm,
-			&g.RequiresKey, &g.GroupKey, &g.CreatedBy, &g.ExpReward, &g.DpReward); err != nil {
+			&g.RequiresKey, &g.GroupKey, &g.CreatedBy, &g.ExpReward, &g.DpReward,
+			&g.EntryFeeCents); err != nil {
 			return nil, err
 		}
 		g.IsUserCreated = g.CreatedBy != ""
@@ -1240,6 +1242,9 @@ func (r *Repository) UserCanCreateTeamGroup(ctx context.Context, userID string) 
 
 // CreateTeamGroup 前台跑團成員自建分組（competition + allow_team_groups 已於 service 驗證）。
 // display_order 接在現有分組之後；slot_limit 不限；created_by 記錄自建者。
+// 定價：INSERT 刻意不含 entry_fee_cents 欄位（永遠落 DB 預設 NULL）——CreateTeamGroupRequest 本來就
+// 沒有這個欄位，前台關主無從帶價，per_group 模式下這組一律沿用 race.entry_fee 預設報名費（見
+// EffectiveGroupFee）。關主無定價權，不得在此新增任何接受費用輸入的參數。
 func (r *Repository) CreateTeamGroup(ctx context.Context, in CreateTeamGroupRequest) (*RaceGroup, error) {
 	var nextOrder int
 	if err := r.db.QueryRow(ctx,
@@ -1367,9 +1372,14 @@ type RegisterTxInput struct {
 	EventMode string
 	// AttemptNo 這是使用者在此賽事的第幾次挑戰（personal 由 service.NextAttemptNo 算出；非 personal 恆 1）。
 	AttemptNo     int
-	GroupID       string
-	GroupKey      string
-	EntryFee      int
+	GroupID  string
+	GroupKey string
+	// EntryFee races.entry_fee（賽事預設報名費，分）。實際計價基準（有效組價）由本函式在交易內、
+	// 對 GroupID 上鎖的同一刻，透過 EffectiveGroupFee(FeeMode, EntryFee, 該組鎖定的 entry_fee_cents)
+	// 重新算出（見下方 entryFee 區域變數），避免呼叫端在鎖定前算出的價格與實際扣款有 TOCTOU 落差。
+	EntryFee int
+	// FeeMode races.fee_mode（uniform | per_group），與 EntryFee 搭配供交易內重算有效組價。
+	FeeMode       string
 	GroupRevealed bool
 	Distance      int
 	Addons        []AddonSelection
@@ -1394,16 +1404,18 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 	}
 	defer tx.Rollback(ctx)
 
-	// 1. 鎖分組、檢查名額、驗證跑團鑰匙
+	// 1. 鎖分組、檢查名額、驗證跑團鑰匙（一併鎖出 entry_fee_cents：計價基準與名額鎖在同一列、同一刻，
+	// 避免報名當下才被後台改價造成的 TOCTOU 落差）
 	var slotLimit *int
 	var slotsTaken int
 	var groupName string
 	var requiresKey bool
 	var groupKey *string
+	var groupFeeCents *int
 	err = tx.QueryRow(ctx, `
-		SELECT slot_limit, slots_taken, name, requires_key, group_key FROM race_groups
+		SELECT slot_limit, slots_taken, name, requires_key, group_key, entry_fee_cents FROM race_groups
 		WHERE id=$1 AND race_id=$2 FOR UPDATE`,
-		in.GroupID, in.RaceID).Scan(&slotLimit, &slotsTaken, &groupName, &requiresKey, &groupKey)
+		in.GroupID, in.RaceID).Scan(&slotLimit, &slotsTaken, &groupName, &requiresKey, &groupKey, &groupFeeCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrGroupNotFound
 	}
@@ -1425,6 +1437,13 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 	if _, err = tx.Exec(ctx, `UPDATE race_groups SET slots_taken = slots_taken + 1 WHERE id=$1`, in.GroupID); err != nil {
 		return nil, fmt.Errorf("bump slots: %w", err)
 	}
+
+	// entryFee＝本次交易唯一計價基準（有效組價），在鎖定分組列的同一刻算出（見 EffectiveGroupFee 註解）。
+	// 本函式其餘所有金額計算一律用這個值，不得再讀 in.EntryFee。
+	entryFee := EffectiveGroupFee(
+		&Race{FeeMode: in.FeeMode, EntryFee: in.EntryFee},
+		&RaceGroup{EntryFeeCents: groupFeeCents},
+	)
 
 	// 2. 加購：鎖庫存、檢查、扣量、累計加購金額
 	addonsTotal := 0
@@ -1482,13 +1501,13 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 			return nil, err
 		}
 		appliedPromo = ap
-		discount = promo.DiscountCents(ap, in.EntryFee)
+		discount = promo.DiscountCents(ap, entryFee)
 	}
 
 	// 2c. VIP 活動優惠券（面額見系統設定 vip_coupon_value_cents，只折報名費，與序號擇一）：lazy 每月補券 → 上鎖扣券
 	//     報名費為 0 時不扣券（避免浪費在免費賽事）
 	couponUsed := false
-	if in.UseCoupon && in.PromoCode == "" && in.EntryFee > 0 {
+	if in.UseCoupon && in.PromoCode == "" && entryFee > 0 {
 		perMonth := appsettings.GetInt(ctx, r.db, "vip_coupon_per_month", 3)
 		valueCents := appsettings.GetInt(ctx, r.db, "vip_coupon_value_cents", 10000)
 		// 每月補券：VIP 且本月尚未補 → 補滿（與 Dashboard 讀取端一致，冪等）
@@ -1508,15 +1527,15 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 			return nil, fmt.Errorf("use coupon: %w", e)
 		}
 		cd := valueCents
-		if cd > in.EntryFee {
-			cd = in.EntryFee
+		if cd > entryFee {
+			cd = entryFee
 		}
 		discount = cd
 		couponUsed = true
 	}
 
 	// 應付 = max(0, 報名費-折抵) + 加購；不足 0.5 元（<50 分）視為 0、直接完成不跳金流
-	payable := in.EntryFee - discount
+	payable := entryFee - discount
 	if payable < 0 {
 		payable = 0
 	}
@@ -1582,10 +1601,10 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		in.UserID, in.RaceID, reg.ID, payable, regStatus, paymentRef, paid, couponUsed).Scan(&order.ID); err != nil {
 		return nil, fmt.Errorf("insert order: %w", err)
 	}
-	if in.EntryFee > 0 {
+	if entryFee > 0 {
 		if _, err = tx.Exec(ctx, `
 			INSERT INTO order_items (order_id, item_type, qty, unit_price_cents, subtotal_cents)
-			VALUES ($1,'entry',1,$2,$2)`, order.ID, in.EntryFee); err != nil {
+			VALUES ($1,'entry',1,$2,$2)`, order.ID, entryFee); err != nil {
 			return nil, fmt.Errorf("insert entry item: %w", err)
 		}
 	}
@@ -2279,7 +2298,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&race.World, &race.Blurb, &race.HeroImageURL,
 		&race.Status, &race.EventMode, &race.GoalType,
 		&dist32, &race.GroupType, &race.GroupMode,
-		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
+		&race.SlotsTotal, &race.EntryFee, &race.FeeMode, &race.RegStart, &race.RegEnd,
 		&race.StartDate, &race.EndDate, &cfgBytes, &race.RequiredFields,
 		&race.ControlStatus, &race.StartingSoonDays, &race.BrochureTitle,
 		&race.AllowTeamGroups,
@@ -2322,7 +2341,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&race.World, &race.Blurb, &race.HeroImageURL,
 		&race.Status, &race.EventMode, &race.GoalType,
 		&dist32, &race.GroupType, &race.GroupMode,
-		&race.SlotsTotal, &race.EntryFee, &race.RegStart, &race.RegEnd,
+		&race.SlotsTotal, &race.EntryFee, &race.FeeMode, &race.RegStart, &race.RegEnd,
 		&race.StartDate, &race.EndDate, &cfgBytes, &race.RequiredFields,
 		&race.ControlStatus, &race.StartingSoonDays, &race.BrochureTitle,
 		&race.AllowTeamGroups,

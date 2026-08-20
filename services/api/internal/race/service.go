@@ -473,7 +473,8 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		AttemptNo:     attemptNo,
 		GroupID:       chosen.ID,
 		GroupKey:      strings.TrimSpace(req.GroupKey),
-		EntryFee:      race.EntryFee,
+		EntryFee:      race.EntryFee, // 預設報名費；有效組價由 RegisterWithOrder 在鎖定分組列的同一刻重算（見該函式）
+		FeeMode:       race.FeeMode,
 		GroupRevealed: revealed,
 		Distance:      distance,
 		Addons:        req.Addons,
@@ -488,7 +489,9 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 }
 
 // QuotePromo 報名前試算優惠序號折抵（不寫入）。序號無效時回 Valid=false + Reason。
-func (s *Service) QuotePromo(ctx context.Context, raceID, userID, code string, addons []AddonSelection) (*PromoQuote, error) {
+// groupID 選填：per_group 計價模式下需要它才能算出正確的有效組價（見 EffectiveGroupFee）；
+// 分組對抗/個人挑戰模式報名前沒有「選分組」概念，帶空字串即可，會回退賽事預設報名費。
+func (s *Service) QuotePromo(ctx context.Context, raceID, userID, groupID, code string, addons []AddonSelection) (*PromoQuote, error) {
 	race, err := s.repo.GetByID(ctx, raceID)
 	if err != nil {
 		return nil, err
@@ -497,17 +500,32 @@ func (s *Service) QuotePromo(ctx context.Context, raceID, userID, code string, a
 		return nil, ErrRaceNotFound
 	}
 
+	var group *RaceGroup
+	if groupID != "" {
+		groups, err := s.repo.GetGroups(ctx, raceID)
+		if err != nil {
+			return nil, err
+		}
+		for i := range groups {
+			if groups[i].ID == groupID {
+				group = &groups[i]
+				break
+			}
+		}
+	}
+	entryFee := EffectiveGroupFee(race, group)
+
 	p, err := s.promo.ValidateForRace(ctx, code, raceID, userID)
 	if err != nil {
 		return &PromoQuote{Valid: false, Reason: err.Error()}, nil
 	}
 
-	discount := promo.DiscountCents(p, race.EntryFee)
+	discount := promo.DiscountCents(p, entryFee)
 	addonsTotal, err := s.addonsTotal(ctx, raceID, addons)
 	if err != nil {
 		return nil, err
 	}
-	payable := race.EntryFee - discount
+	payable := entryFee - discount
 	if payable < 0 {
 		payable = 0
 	}

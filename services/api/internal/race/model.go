@@ -25,7 +25,8 @@ type Race struct {
 	GroupType        string                       `json:"group_type"` // faction|club|distance
 	GroupMode        string                       `json:"group_mode"` // random|self
 	SlotsTotal       int                          `json:"slots_total"`
-	EntryFee         int                          `json:"entry_fee"`                    // 分（NT$ × 100）
+	EntryFee         int                          `json:"entry_fee"`                    // 分（NT$ × 100）；fee_mode=per_group 時語意為「預設報名費」（未獨立設定的組別、前台新增組別適用）
+	FeeMode          string                       `json:"fee_mode"`                     // uniform(預設，全場統一用 EntryFee) | per_group(各分組可獨立定價，見 RaceGroup.EntryFeeCents)
 	RegStart         *time.Time                   `json:"registration_start,omitempty"` // 報名開始
 	RegEnd           *time.Time                   `json:"registration_end,omitempty"`   // 報名截止
 	StartDate        time.Time                    `json:"start_date"`                   // 競賽時間 起
@@ -183,6 +184,25 @@ type RaceGroup struct {
 	IsUserCreated    bool     `json:"is_user_created"`      // created_by 非空
 	ExpReward        int      `json:"exp_reward"`           // 完成此分組可獲得的 EXP
 	DpReward         int      `json:"dp_reward"`            // 完成此分組可獲得的 DP
+	// EntryFeeCents 該組獨立報名費（分）；僅 race.fee_mode=per_group 時生效，NULL=沿用 race.entry_fee（預設報名費）。
+	// uniform 模式下本欄位一律忽略。前台跑團成員自建分組(created_by 非空)一律不設（無定價權，永遠 NULL），
+	// 只有後台官方分組編輯（RaceForm）可設定。見 EffectiveGroupFee 為唯一計價事實來源。
+	EntryFeeCents *int `json:"entry_fee_cents"`
+}
+
+// EffectiveGroupFee 是「有效組價」的單一事實來源（分）：race.fee_mode=per_group 且該組設有獨立報名費
+// (entry_fee_cents 非 NULL) 時用該組獨立價；其餘情況（uniform 模式，或 per_group 下該組未設定）一律
+// 使用 race.entry_fee 作為預設報名費。所有計價點（報名交易 RegisterWithOrder、優惠序號/VIP 優惠券折抵
+// 判定、報名前試算 QuotePromo、前台顯示）都必須呼叫本函式，不得直接讀 race.EntryFee。
+// group 可為 nil（例如分組對抗/個人挑戰模式報名前尚未指派分組時的試算）——一律回退預設報名費。
+func EffectiveGroupFee(race *Race, group *RaceGroup) int {
+	if race == nil {
+		return 0
+	}
+	if race.FeeMode == "per_group" && group != nil && group.EntryFeeCents != nil {
+		return *group.EntryFeeCents
+	}
+	return race.EntryFee
 }
 
 // CreateTeamGroupRequest 前台跑團成員自建分組 payload

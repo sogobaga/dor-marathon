@@ -237,6 +237,7 @@ export default function RaceForm({
   const [startDate, setStartDate] = useState(initial?.start_date ? toLocalInput(initial.start_date) : (isEdit ? '' : def.start))
   const [endDate, setEndDate] = useState(initial?.end_date ? toLocalInput(initial.end_date) : (isEdit ? '' : def.end))
   const [entryFeeNtd, setEntryFeeNtd] = useState(String((initial?.entry_fee ?? 0) / 100))
+  const [feeMode, setFeeMode] = useState<'uniform' | 'per_group'>(initial?.fee_mode ?? 'uniform')
   const [requiredFields, setRequiredFields] = useState<string[]>(
     initial?.required_fields ?? ['real_name', 'phone']
   )
@@ -588,9 +589,13 @@ export default function RaceForm({
   const availableRewardGroups = rewardGroups.filter((g) => g.applies_all_races || (!!initial?.id && g.race_ids.includes(initial.id)))
 
   function buildPayload(): CreateRacePayload {
+    // uniform 模式下分組費用欄位隱藏、送出一律不帶（強制清成 null，避免切換模式後殘留舊值誤套用）
     const cleanGroups: RaceGroup[] = groups
       .filter((g) => g.name.trim())
-      .map((g, idx) => ({ ...g, display_order: idx }))
+      .map((g, idx) => ({
+        ...g, display_order: idx,
+        entry_fee_cents: feeMode === 'per_group' ? (g.entry_fee_cents ?? null) : null,
+      }))
 
     return {
       title: title.trim(),
@@ -628,6 +633,7 @@ export default function RaceForm({
           display_order: idx,
         })),
       entry_fee: Math.round(parseFloat(entryFeeNtd || '0') * 100),
+      fee_mode: feeMode,
       required_fields: requiredFields,
       registration_start: regStart ? new Date(regStart).toISOString() : null,
       registration_end: regEnd ? new Date(regEnd).toISOString() : null,
@@ -817,9 +823,20 @@ export default function RaceForm({
               </Field>
             </Row>
             <Row>
-              <Field label="報名費 (NT$)">
+              <Field label="報名費模式">
+                <select style={inp} value={feeMode} onChange={(e) => setFeeMode(e.target.value as 'uniform' | 'per_group')}>
+                  <option value="uniform">全場統一報名費</option>
+                  <option value="per_group">各組獨立報名費</option>
+                </select>
+              </Field>
+              <Field label={feeMode === 'per_group' ? '預設報名費（未獨立設定的組別、前台新增組別適用）' : '報名費 (NT$)'}>
                 <input style={inp} type="number" value={entryFeeNtd} onChange={(e) => setEntryFeeNtd(e.target.value)} />
               </Field>
+            </Row>
+            {feeMode === 'per_group' && (
+              <div style={hint}>各組獨立報名費請至「分組」分頁逐組設定；留空的組別（含前台跑團成員新增的組別）自動套用上方預設報名費。</div>
+            )}
+            <Row>
               <Field label="賽事即將開始 倒數天數">
                 <input style={inp} type="number" min={0} value={startingSoonDays} onChange={(e) => setStartingSoonDays(e.target.value)} />
               </Field>
@@ -1135,6 +1152,15 @@ export default function RaceForm({
                   <Field label="人數限制 (空=不限)">
                     <input style={inp} type="number" value={g.slot_limit ?? ''} onChange={(e) => updateGroup(i, { slot_limit: e.target.value === '' ? null : parseInt(e.target.value, 10) })} />
                   </Field>
+                  {feeMode === 'per_group' && (
+                    <Field label="報名費 (NT$，留空＝用預設)">
+                      <input
+                        style={inp} type="number"
+                        value={g.entry_fee_cents == null ? '' : String(g.entry_fee_cents / 100)}
+                        onChange={(e) => updateGroup(i, { entry_fee_cents: e.target.value === '' ? null : Math.round(parseFloat(e.target.value) * 100) })}
+                      />
+                    </Field>
+                  )}
                 </Row>
                 <Row>
                   <Field label="完成此分組獎勵 EXP">

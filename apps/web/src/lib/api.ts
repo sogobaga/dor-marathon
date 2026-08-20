@@ -196,7 +196,8 @@ export interface Race {
   group_type: string
   group_mode: string
   slots_total: number
-  entry_fee: number
+  entry_fee: number // 分；fee_mode=per_group 時語意為「預設報名費」（未獨立設定的組別、前台新增組別適用）
+  fee_mode: 'uniform' | 'per_group' // uniform(預設，全場統一用 entry_fee) | per_group(各分組可獨立定價，見 RaceGroup.entry_fee_cents)
   registration_start?: string | null
   registration_end?: string | null
   start_date: string
@@ -280,6 +281,20 @@ export interface RaceGroup {
   is_user_created?: boolean
   exp_reward?: number // 完成此分組可獲得的 EXP
   dp_reward?: number // 完成此分組可獲得的 DP
+  // 該組獨立報名費（分）；僅 race.fee_mode='per_group' 時生效，null/undefined=沿用 race.entry_fee（預設報名費）。
+  // 前台跑團成員自建分組一律不會帶這個欄位（無定價權，永遠沿用預設）；僅後台官方分組可設定。
+  entry_fee_cents?: number | null
+}
+
+// effectiveGroupFee 是「有效組價」的單一事實來源（分），與後端 race.EffectiveGroupFee 對應一致：
+// fee_mode='per_group' 且該組設有獨立報名費時用該組獨立價；其餘情況（uniform 模式，或 per_group 下
+// 該組未設定/尚未選定分組）一律回退 race.entry_fee 作為預設報名費。所有前台計價/顯示點都應呼叫本函式，
+// 不得直接讀 race.entry_fee。
+export function effectiveGroupFee(race: Race, group?: RaceGroup | null): number {
+  if (race.fee_mode === 'per_group' && group && group.entry_fee_cents != null) {
+    return group.entry_fee_cents
+  }
+  return race.entry_fee
 }
 
 export interface RaceAddon {
@@ -1042,7 +1057,7 @@ export const racesApi = {
       headers: withAuth(token),
       body: JSON.stringify(payload),
     }),
-  promoCheck: (raceID: string, token: string, body: { code: string; addons?: { addon_id: string; qty: number }[] }) =>
+  promoCheck: (raceID: string, token: string, body: { code: string; group_id?: string; addons?: { addon_id: string; qty: number }[] }) =>
     request<PromoQuote>(`/races/${raceID}/promo/check`, {
       method: 'POST',
       headers: withAuth(token),

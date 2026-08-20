@@ -7,6 +7,7 @@ import {
   paymentsApi,
   METRIC_BY_KEY,
   formatChallengeRule,
+  effectiveGroupFee,
   type Race,
   type RaceDetail,
   type RaceGroup,
@@ -184,6 +185,13 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     [detail, groupId]
   )
 
+  // per_group 計價模式下換組別會改變報名費基準：已套用的優惠序號試算是依「舊組別」金額算出的
+  // discount_cents/payable_cents，換組後必須失效重算，否則會顯示錯的折抵/應繳金額（見 baseFee／
+  // promoQuote 用法）。使用者需重新點「套用」，序號輸入框內容保留方便重試。
+  useEffect(() => {
+    setPromoQuote(null)
+  }, [groupId])
+
   // 賽事任務分層：集體（全體合計）/ 所有分組共同（group scope 無 group_id）/ 各分組專屬
   const collectiveTasks = useMemo(
     () => (detail?.tasks ?? []).filter((t) => t.scope === 'race_collective'),
@@ -236,17 +244,21 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     [qty]
   )
 
+  // baseFee：目前所選分組的有效報名費（見 lib/api.ts effectiveGroupFee，per_group 模式下依 selectedGroup
+  // 換算；分組對抗/個人挑戰模式沒有「選分組」概念，selectedGroup 恆為 null，回退 race.entry_fee 預設報名費）。
+  const baseFee = useMemo(() => effectiveGroupFee(race, selectedGroup), [race, selectedGroup])
+
   const total = useMemo(() => {
-    let t = race.entry_fee
+    let t = baseFee
     for (const a of detail?.addons || []) t += (qty[a.id!] || 0) * a.price_cents
     return t
-  }, [detail, qty, race.entry_fee])
+  }, [detail, qty, baseFee])
 
   // 折抵來源：VIP 優惠券（只折報名費) 或 優惠序號；擇一。加購不折。
-  const couponDiscount = useCoupon ? Math.min(COUPON_CENTS, race.entry_fee) : 0
-  const addonsTotal = total - race.entry_fee
+  const couponDiscount = useCoupon ? Math.min(COUPON_CENTS, baseFee) : 0
+  const addonsTotal = total - baseFee
   const payable = useCoupon
-    ? Math.max(0, race.entry_fee - couponDiscount) + addonsTotal
+    ? Math.max(0, baseFee - couponDiscount) + addonsTotal
     : (promoQuote?.valid ? promoQuote.payable_cents : total)
 
   async function applyPromo() {
@@ -257,7 +269,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     }
     setPromoBusy(true)
     try {
-      const quote = await withUserAuth((t) => racesApi.promoCheck(race.id, t, { code, addons: addonsList }))
+      const quote = await withUserAuth((t) => racesApi.promoCheck(race.id, t, { code, group_id: groupId || undefined, addons: addonsList }))
       setPromoQuote(quote)
     } catch (e: any) {
       setPromoQuote({ valid: false, discount_cents: 0, payable_cents: total, free: false, reason: e instanceof SessionExpiredError ? '登入已過期' : (e?.message || '驗證失敗') })
@@ -710,7 +722,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
             </Section>
 
             {/* VIP 活動優惠券（面額依系統設定，只折報名費，與序號擇一） */}
-            {isVip && race.entry_fee > 0 && (
+            {isVip && baseFee > 0 && (
               <Section title="活動優惠券">
                 <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13.5, color: 'var(--tx)', opacity: couponBal > 0 || useCoupon ? 1 : 0.5 }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
