@@ -168,8 +168,9 @@ function GeneralLeaderboard({ race }: { race: Race }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div style={{ ...myBanner, borderColor: 'var(--line)' }}>
+        {/* 只顯示已完成人數，不顯示已報名人數（2026-08-21 使用者要求：報名數屬營運資訊不對外） */}
         <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>
-          已完成 <b style={{ color: 'var(--fug)', fontSize: 17 }}>{lb.finished_count}</b> / 報名 {lb.total_count} 人
+          已完成 <b style={{ color: 'var(--fug)', fontSize: 17 }}>{lb.finished_count}</b> 人
         </div>
       </div>
       {(race.show_time_rank ?? true) && (
