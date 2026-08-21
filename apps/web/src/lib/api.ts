@@ -2540,10 +2540,12 @@ export const adminCheckinReviewApi = {
 }
 
 export const adminOrdersApi = {
-  list: (token: string, params?: { race_id?: string; status?: string }) => {
+  list: (token: string, params?: { race_id?: string; status?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams()
     if (params?.race_id) qs.set('race_id', params.race_id)
     if (params?.status) qs.set('status', params.status)
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.offset) qs.set('offset', String(params.offset))
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     return request<{ orders: OrderRow[]; count: number }>(`/admin/orders${suffix}`, { headers: withAuth(token) })
   },

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { adminRacesApi, adminOrdersApi, adminPaymentsApi, type Race, type OrderRow, type OrderDetail, type RefundRow, type EcpayEnvCheck } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
+import * as XLSX from 'xlsx'
 
 const REFUND_STATUS_LABEL: Record<string, { t: string; c: string }> = {
   pending: { t: '處理中', c: 'var(--gold)' },
@@ -34,6 +35,24 @@ function ntd(c: number) {
   return 'NT$ ' + Math.round(c / 100).toLocaleString('zh-TW')
 }
 
+// 站內慣例格式 MM/DD HH:mm（同 RaceRankingScreen.fmtDateTime）；未付款 paid_at 為 null/undefined 時顯示「—」
+function fmtDT(iso?: string | null) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+function invoiceText(inv: OrderRow['invoice']): string {
+  if (!inv) return ''
+  const label = INVOICE_BUYER_LABEL[inv.buyer_type] ?? inv.buyer_type
+  if (inv.buyer_type === 'company') return `${label}｜統編 ${inv.tax_id || '—'}｜抬頭 ${inv.title || '—'}`
+  if (inv.buyer_type === 'personal') return `${label}｜載具 ${inv.carrier_type === 'mobile' && inv.carrier_id ? inv.carrier_id : '雲端發票存證'}`
+  if (inv.buyer_type === 'donation') return `${label}｜愛心碼 ${inv.love_code || '—'}`
+  return label
+}
+
 export default function AdminOrdersPage() {
   const router = useRouter()
   const [races, setRaces] = useState<Race[]>([])
@@ -47,6 +66,7 @@ export default function AdminOrdersPage() {
   const [busy, setBusy] = useState<string>('') // 進行中的 orderID/refundID，避免重複點擊
   const [envCheck, setEnvCheck] = useState<EcpayEnvCheck | null>(null)
   const [envCheckErr, setEnvCheckErr] = useState('')
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     const t = getToken()
@@ -153,6 +173,50 @@ export default function AdminOrdersPage() {
     }
   }
 
+  // 匯出目前篩選條件（賽事/狀態）下的「全部」訂單為 xlsx（不只當前頁）。
+  // 取捨：後端 AdminListOrders 單頁 clamp 上限 200（service.ListOrders），故用 limit=200 迴圈翻頁拉到全量，
+  // 而非一次把 limit 開超大——避免單次查詢/回應過重。品項明細（order_items）ListOrders 回應本來就沒帶，
+  // 若要帶出需對每筆訂單多打一次 GetOrderDetail（N+1），量大時會很慢，故本匯出比照列表現有資料，不含逐筆品項明細。
+  async function exportXlsx() {
+    if (!token || exporting) return
+    setExporting(true)
+    setErr('')
+    try {
+      const all: OrderRow[] = []
+      const pageSize = 200
+      let offset = 0
+      for (;;) {
+        const r = await adminOrdersApi.list(token, { race_id: raceID || undefined, status: status || undefined, limit: pageSize, offset })
+        all.push(...r.orders)
+        if (r.orders.length < pageSize) break
+        offset += pageSize
+      }
+      if (all.length === 0) { window.alert('沒有符合篩選條件的訂單可匯出'); return }
+      const rows = all.map((o) => ({
+        '訂單編號': o.id,
+        '會員名稱': o.user_name,
+        'Email': o.user_email,
+        '賽事名稱': o.race_title || 'VIP 訂閱',
+        '金額(元)': Math.round(o.total_cents / 100),
+        '狀態': STATUS_LABEL[o.status]?.t ?? o.status,
+        '付款時間': fmtDT(o.paid_at),
+        '建立時間': fmtDT(o.created_at),
+        '付款參考': o.payment_ref || '',
+        '發票資訊': invoiceText(o.invoice),
+      }))
+      const ws = XLSX.utils.json_to_sheet(rows)
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, '訂單')
+      const d = new Date()
+      const p = (n: number) => String(n).padStart(2, '0')
+      XLSX.writeFile(wb, `orders_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.xlsx`)
+    } catch (e: any) {
+      setErr(e?.message || '匯出失敗')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div>
       <h1 style={{ margin: '0 0 18px', fontSize: 24, fontWeight: 800 }}>訂單管理</h1>
@@ -200,7 +264,7 @@ export default function AdminOrdersPage() {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap', alignItems: 'center' }}>
         <select value={raceID} onChange={(e) => setRaceID(e.target.value)} style={{ ...inp, maxWidth: 260 }}>
           <option value="">全部賽事</option>
           {races.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
@@ -212,6 +276,12 @@ export default function AdminOrdersPage() {
           <option value="cancelled">已取消</option>
           <option value="refunded">已退款</option>
         </select>
+        <button
+          onClick={exportXlsx} disabled={exporting || !rows?.length}
+          style={{ ...exportBtn, opacity: exporting || !rows?.length ? 0.5 : 1, cursor: exporting || !rows?.length ? 'default' : 'pointer' }}
+        >
+          {exporting ? '匯出中…' : '匯出 xlsx'}
+        </button>
       </div>
 
       {err && <div style={{ color: 'var(--hunt)', padding: 16 }}>{err}</div>}
@@ -220,7 +290,7 @@ export default function AdminOrdersPage() {
 
       {rows && rows.length > 0 && (
         <div style={{ border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
-          <Row head><C w={2}>會員</C><C w={2}>賽事</C><C w={1}>金額</C><C w={1}>狀態</C><C w={1}>操作</C></Row>
+          <Row head><C w={2}>會員</C><C w={2}>賽事</C><C w={1}>金額</C><C w={1}>狀態</C><C w={1.2}>付款時間</C><C w={1}>操作</C></Row>
           {rows.map((o) => {
             const st = STATUS_LABEL[o.status] ?? { t: o.status, c: 'var(--tx-dim)' }
             const det = expanded[o.id]
@@ -236,6 +306,7 @@ export default function AdminOrdersPage() {
                   <C w={2}>{o.race_title || 'VIP 訂閱'}</C>
                   <C w={1}>{ntd(o.total_cents)}</C>
                   <C w={1}><span style={{ color: st.c }}>{st.t}</span></C>
+                  <C w={1.2}><span style={{ fontSize: 13, color: o.paid_at ? 'var(--tx-dim)' : 'var(--tx-faint)' }}>{fmtDT(o.paid_at)}</span></C>
                   <C w={1}>
                     {o.status === 'pending'
                       ? <button onClick={() => markPaid(o)} style={payBtn}>標記已付</button>
@@ -330,4 +401,8 @@ const smallBtn: React.CSSProperties = {
 }
 const linkBtn: React.CSSProperties = {
   background: 'none', border: 'none', color: 'var(--tx)', cursor: 'pointer', fontSize: 14, fontWeight: 600, padding: 0,
+}
+const exportBtn: React.CSSProperties = {
+  background: 'none', border: '1px solid var(--fug)', color: 'var(--fug)', borderRadius: 8,
+  padding: '9px 16px', cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'inherit',
 }

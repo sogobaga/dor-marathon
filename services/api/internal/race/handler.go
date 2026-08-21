@@ -209,10 +209,20 @@ func (h *Handler) AdminMarkRegistrationPaid(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// GET /api/v1/admin/orders?race_id=&status=
+// GET /api/v1/admin/orders?race_id=&status=&limit=&offset=
+// limit/offset 為選填分頁參數（預設 100/0，沿用原本行為）；後台匯出訂單明細會用 limit=200 迴圈翻頁拉全量
+// （service.ListOrders 有 clamp 到 <=200，見該檔案），一般列表載入不帶則行為不變。
 func (h *Handler) AdminListOrders(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+		limit = v
+	}
+	offset := 0
+	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v >= 0 {
+		offset = v
+	}
 	orders, err := h.svc.ListOrders(r.Context(),
-		r.URL.Query().Get("race_id"), r.URL.Query().Get("status"), 100, 0)
+		r.URL.Query().Get("race_id"), r.URL.Query().Get("status"), limit, offset)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to list orders")
 		return
