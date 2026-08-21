@@ -31,6 +31,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
+	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/notify"
 	"github.com/dor/api/internal/vip"
 )
@@ -122,7 +123,7 @@ type renewalCandidate struct {
 	SubscriptionID   string
 	UserID           string
 	Plan             string // monthly | annual
-	AmountCents      int    // 續約當下原訂閱的金額（不重算促銷價，見檔頭）
+	AmountCents      int    // 實際續扣金額：processRenewalCandidate 入口會覆寫成「續扣當下的現行標準價」（見 currentRenewalPriceCents）；SELECT 撈出的原訂閱首期金額僅作讀價失敗時的 fallback
 	CurrentPeriodEnd time.Time
 	BindCardID       string
 	MerchantMemberID string
@@ -247,7 +248,16 @@ func (h *BindHandler) processRenewalCandidate(ctx context.Context, c renewalCand
 		return nil
 	}
 
-	// ④ 建續約訂單（金額固定用候選當下的原訂閱金額，不重算促銷價，見檔頭）。撞 uq_orders_pending_vip
+	// ③.5 續扣金額＝續扣「當下」的現行標準價（app_settings vip_price_monthly/annual，單位元）——
+	// 產品決策（2026-08-22）：促銷（首購窗/vip_promos 檔期）只適用首期，續約一律回到當下標準價，
+	// 後台改價後自「下一期」起自動生效。刻意不用 vip.ComputeQuote（那會吃到促銷檔期）。
+	// 防禦：讀不到或非正值時維持訂閱首期金額 fallback，絕不送 0 元請款。
+	// c 為值拷貝，覆寫本地欄位即可讓本輪後續全鏈（建單/CheckoutCreateTx/TotalAmount/結算 params）一致。
+	if cents := h.currentRenewalPriceCents(ctx, c.Plan); cents > 0 {
+		c.AmountCents = cents
+	}
+
+	// ④ 建續約訂單（金額＝上面算出的現行標準價）。撞 uq_orders_pending_vip
 	// 時不再直接放棄當日重試——改用 QueryTrade 主動收斂那筆卡住的舊訂單（見下方「unknown 收斂」區塊
 	// 的 convergeStuckPendingOrder），取代舊版「無限 pending 等 webhook」設計（對抗式審查
 	// critical [0]／high [2][4][6]：舊版一旦某次續約請款因逾時等傳輸層錯誤留下無限 pending 的訂單，
@@ -532,6 +542,7 @@ func classifyQueryTradeResult(resp *QueryTradeResp, err error) queryTradeOutcome
 type pendingRenewalOrder struct {
 	OrderID          string
 	TradeNo          string
+	AmountCents      int    // 舊單建單當時的實際金額（paytx.amount_cents）——救援結算以此為準，非今日價
 	AttemptID        string // IsRenewalAttempt=false 時為空字串
 	IsRenewalAttempt bool
 }
@@ -541,15 +552,26 @@ type pendingRenewalOrder struct {
 //
 // 也供 ecpay_bind_handler.go Subscribe 的 1.5 段共用（判斷 23505 衝突是否為續約造成，決定回應文案，
 // 對抗式審查修正 high [1]），不只是 vip_renewal.go 內部使用。
+// currentRenewalPriceCents 讀「續扣當下」的現行標準價（分）。促銷只適用首期（產品決策 2026-08-22），
+// 續約一律用標準價，故直接讀 app_settings 的 vip_price_monthly/annual（單位元，與 vip.ComputeQuote
+// 的 Original 同源），不走 ComputeQuote（避免吃到 vip_promos 檔期折扣）。
+func (h *BindHandler) currentRenewalPriceCents(ctx context.Context, plan string) int {
+	key, def := "vip_price_monthly", 399
+	if plan == "annual" {
+		key, def = "vip_price_annual", 4788
+	}
+	return appsettings.GetInt(ctx, h.db, key, def) * 100
+}
+
 func (h *BindHandler) findPendingRenewalOrder(ctx context.Context, userID string) (*pendingRenewalOrder, error) {
 	var p pendingRenewalOrder
 	err := h.db.QueryRow(ctx, `
-		SELECT o.id::text, pt.merchant_trade_no, COALESCE(a.id::text, '')
+		SELECT o.id::text, pt.merchant_trade_no, pt.amount_cents, COALESCE(a.id::text, '')
 		FROM orders o
 		JOIN payment_transactions pt ON pt.order_id = o.id AND pt.status = 'pending'
 		LEFT JOIN vip_renewal_attempts a ON a.order_id = o.id
 		WHERE o.user_id = $1 AND o.status = 'pending' AND o.race_id IS NULL`,
-		userID).Scan(&p.OrderID, &p.TradeNo, &p.AttemptID)
+		userID).Scan(&p.OrderID, &p.TradeNo, &p.AmountCents, &p.AttemptID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -561,10 +583,9 @@ func (h *BindHandler) findPendingRenewalOrder(ctx context.Context, userID string
 }
 
 // convergeRenewalPaid QueryTrade 確認舊訂單其實已付款後的收斂動作：呼叫 settleVipRenewal 結算
-// （CAS 冪等，即使這筆早被其他路徑結算過也安全 no-op）、成功才發站內信。c 提供 Plan/AmountCents——
-// 卡住的舊訂單必然是同一張訂閱先前某次續約嘗試留下的（uq_orders_pending_vip 是 per-user 唯一索引，
-// CreateVipOrder 建立續約訂單時金額固定用候選當下的原訂閱金額，見檔頭②），與本輪候選 c 屬於同一張
-// 訂閱、同一個方案/金額，可以直接沿用，不需要另外反查舊訂單當初的金額。
+// （CAS 冪等，即使這筆早被其他路徑結算過也安全 no-op）、成功才發站內信。c 提供 Plan；金額用
+// p.AmountCents（舊單建單當時 paytx 落地的實際金額）——續扣金額自 2026-08-22 起為「建單當下的現行
+// 標準價」，若卡住的舊單與本輪之間曾改價，救援結算必須以舊單實際請款的金額為準，不可用今日價。
 func (h *BindHandler) convergeRenewalPaid(ctx context.Context, p *pendingRenewalOrder, resp *QueryTradeResp, c renewalCandidate) {
 	var ecpayTradeNo string
 	if resp != nil && resp.OrderInfo != nil {
@@ -573,7 +594,7 @@ func (h *BindHandler) convergeRenewalPaid(ctx context.Context, p *pendingRenewal
 	raw, _ := json.Marshal(resp)
 	userID, periodEnd, err := h.settleVipRenewal(ctx, p.OrderID, p.AttemptID, settleVipRenewalParams{
 		Plan:            c.Plan,
-		AmountCents:     c.AmountCents,
+		AmountCents:     p.AmountCents,
 		MerchantTradeNo: p.TradeNo,
 		EcpayTradeNo:    ecpayTradeNo,
 		Raw:             raw,
