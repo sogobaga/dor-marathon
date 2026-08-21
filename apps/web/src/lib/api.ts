@@ -51,7 +51,7 @@ export function formatChallengeRule(rule?: ChallengeRule | null): string {
 }
 
 // --- 活動獎勵系統 P2：即時獎勵設定（全域模板 + 每場挑戰 config）（見後端 activityreward.RewardConfig） ---
-export type RewardItemType = 'exp' | 'dp' | 'gp' | 'vip' | 'serial'
+export type RewardItemType = 'exp' | 'dp' | 'gp' | 'vip' | 'serial' | 'coupon'
 // RewardDenom serial 類：商家旗下一個序號組（面額）在兩層抽獎第二層的加權設定（見後端 activityreward.RewardDenom）。
 export interface RewardDenom {
   group_id: string
@@ -66,6 +66,7 @@ export interface RewardItem {
   serial_group_id?: string // 【已過時，僅供向後相容】serial 舊格式單一序號組；新設定請用 merchant_id + denominations
   merchant_id?: string      // serial：指定商家（兩層抽獎第一層）
   denominations?: RewardDenom[] // serial：該商家旗下序號組與抽獎權重（兩層抽獎第二層）
+  coupon_def_id?: string    // coupon（活動優惠券，migration 138）：指定券種
 }
 export interface RewardConfig {
   items: RewardItem[]
@@ -112,18 +113,19 @@ export interface MyActiveRace {
 // GrantedReward 一次完成觸發 roll 中「實際中獎並成功發放」的單筆結果（見後端 activityreward.GrantedReward）。
 export interface GrantedReward {
   type: RewardItemType
-  amount?: number     // exp/dp/gp
+  amount?: number     // exp/dp/gp 數量；coupon 為面額（分）
   days?: number        // vip
-  item_label?: string  // serial
+  item_label?: string  // serial 品項名稱；coupon 為券種名稱
   code?: string        // serial
 }
 
-// --- 活動獎勵系統 P3：玩家活動獎勵錢包（只存序號類獎勵；見後端 profile.UserReward / migration 127 user_rewards） ---
+// --- 活動獎勵系統 P3：玩家活動獎勵錢包（序號類 + 活動優惠券類，migration 138；見後端 profile.UserReward） ---
 export interface UserReward {
   id: string
   source_type: string
   source_race_id?: string
   source_reg_id?: string
+  kind: 'serial' | 'coupon' // 活動優惠券擴充（migration 138）；既有序號類舊資料一律 'serial'
   code: string
   link?: string
   item_label: string
@@ -131,6 +133,8 @@ export interface UserReward {
   usage_note?: string
   icon_url?: string
   description?: string
+  coupon_def_id?: string // kind='coupon' 專用
+  amount_cents?: number  // kind='coupon' 專用：面額（分）
   valid_until?: string
   used: boolean
   used_at?: string
@@ -138,9 +142,9 @@ export interface UserReward {
 }
 
 export const rewardsApi = {
-  // 只回登入者自己的序號類活動獎勵；排序（近到期置頂+外框、其餘新到舊）由前端依全量資料自行分組。
+  // 只回登入者自己的序號類/活動優惠券類活動獎勵；排序（近到期置頂+外框、其餘新到舊）由前端依全量資料自行分組。
   list: (token: string) => request<{ rewards: UserReward[] }>('/profile/rewards', { headers: withAuth(token) }),
-  // 標記某筆已使用（冪等，只能改自己的）
+  // 標記某筆已使用（冪等，只能改自己的）；coupon 類不提供此按鈕（券由報名系統自動核銷，見 RewardsWalletScreen）。
   markUsed: (token: string, id: string) =>
     request<{ ok: boolean; used: boolean; used_at?: string }>(`/profile/rewards/${id}/use`, { method: 'POST', headers: withAuth(token) }),
 }
@@ -952,7 +956,8 @@ export interface RegisterPayload {
   participant: Partial<Record<ParticipantField, string>>
   invoice?: InvoiceInfo // 電子發票資訊（選填）
   promo_code?: string
-  use_coupon?: boolean // 使用 VIP 活動優惠券($100)；與 promo_code 擇一
+  use_coupon?: boolean // 使用 VIP 活動優惠券($100)；與 promo_code、coupon_reward_id 三擇一
+  coupon_reward_id?: string // 使用活動優惠券（migration 138，user_rewards.id）；三者互斥
 }
 
 export interface CreateTeamGroupPayload {
@@ -3021,6 +3026,44 @@ export const adminRewardTemplatesApi = {
     request<{ template: RewardTemplate }>(`/admin/reward-templates/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
   remove: (token: string, id: string) =>
     request<{ ok: boolean }>(`/admin/reward-templates/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
+// --- 活動優惠券券種管理（migration 138）---
+
+export type CouponExpiryMode = 'fixed' | 'days'
+
+export interface EventCouponDef {
+  id: string
+  name: string
+  amount_cents: number
+  expiry_mode: CouponExpiryMode
+  expires_at: string | null // fixed 用（RFC3339）
+  valid_days: number | null // days 用
+  enabled: boolean
+  created_at: string
+  updated_at: string
+  issued_count: number // 統計：已發放張數
+  used_count: number   // 統計：已使用張數
+}
+
+export interface EventCouponDefWriteBody {
+  name: string
+  amount_cents: number
+  expiry_mode: CouponExpiryMode
+  expires_at: string | null
+  valid_days: number | null
+  enabled: boolean
+}
+
+export const adminEventCouponsApi = {
+  list: (token: string) =>
+    request<{ defs: EventCouponDef[] }>('/admin/event-coupons', { headers: withAuth(token) }),
+  create: (token: string, body: EventCouponDefWriteBody) =>
+    request<{ def: EventCouponDef }>('/admin/event-coupons', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, id: string, body: EventCouponDefWriteBody) =>
+    request<{ def: EventCouponDef }>(`/admin/event-coupons/${id}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  remove: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/event-coupons/${id}`, { method: 'DELETE', headers: withAuth(token) }),
 }
 
 export interface RewardSerial {

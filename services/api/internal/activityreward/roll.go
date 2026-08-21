@@ -197,10 +197,89 @@ func grantItem(ctx context.Context, db Execer, userID, sourceType, sourceRaceID,
 		}
 		return []GrantedReward{{Type: "vip", Days: item.Days}}, nil
 
+	case "coupon":
+		return grantCoupon(ctx, db, userID, sourceType, sourceRaceID, sourceRegID, item)
+
 	default:
 		// 未知型別（如後台先建了程式尚未支援的型別；理論上已被 Validate 擋下）：安全跳過，不 panic。
 		return nil, nil
 	}
+}
+
+// couponValidUntil 依券種期限模式計算這次中獎發出的券的到期時間。fixed 模式：到期日缺漏或已早於 now
+// →(nil,false)代表「當下不可發」；否則直接採用該到期日。days 模式：天數缺漏或 <=0（資料異常保底）
+// →(nil,false)；否則 now+N 天。抽成純函式（僅依賴傳入參數，不觸碰 DB／時鐘以外狀態）方便單元測試
+// fixed 過期／days 天數換算等邊界情況，供 grantCoupon 呼叫。
+func couponValidUntil(expiryMode string, expiresAt *time.Time, validDays *int, now time.Time) (*time.Time, bool) {
+	if expiryMode == "fixed" {
+		if expiresAt == nil || expiresAt.Before(now) {
+			return nil, false
+		}
+		t := *expiresAt
+		return &t, true
+	}
+	days := 0
+	if validDays != nil {
+		days = *validDays
+	}
+	if days <= 0 {
+		return nil, false
+	}
+	t := now.AddDate(0, 0, days)
+	return &t, true
+}
+
+// grantCoupon coupon 類（migration 138 活動優惠券）：讀券種當下設定，必須 enabled 且（fixed 模式時）
+// 尚未過期才實際發放——後台表單雖只列出「當下可選」的券種，但賽事的 reward_config 是存檔快照，
+// 券種可能在賽事建立後才被停用/到期，此處是最終把關；不合格一律安靜跳過（不影響其他獎勵項目），
+// 比照 grantSerialTwoLayer 商家旗下無庫存時的處理方式。中獎當下把面額/名稱/到期日 denormalize 寫入
+// user_rewards（kind='coupon'），供玩家錢包顯示、報名折抵時直接讀該筆記錄無需再 join 券種表。
+func grantCoupon(ctx context.Context, db Execer, userID, sourceType, sourceRaceID, sourceRegID string, item *RewardItem) ([]GrantedReward, error) {
+	if item.CouponDefID == "" {
+		return nil, nil
+	}
+	var name string
+	var amountCents int
+	var expiryMode string
+	var expiresAt *time.Time
+	var validDays *int
+	var enabled bool
+	err := db.QueryRow(ctx, `
+		SELECT name, amount_cents, expiry_mode, expires_at, valid_days, enabled
+		FROM event_coupon_defs WHERE id=$1`, item.CouponDefID,
+	).Scan(&name, &amountCents, &expiryMode, &expiresAt, &validDays, &enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil // 券種不存在（如已被刪除）：跳過，不視為錯誤
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load coupon def: %w", err)
+	}
+	if !enabled {
+		return nil, nil // 已停用：跳過
+	}
+
+	validUntil, ok := couponValidUntil(expiryMode, expiresAt, validDays, time.Now())
+	if !ok {
+		return nil, nil // 券種當下不可發（fixed 已過期/未設到期日，或 days 天數不合法）：跳過
+	}
+
+	var raceIDArg, regIDArg any
+	if sourceRaceID != "" {
+		raceIDArg = sourceRaceID
+	}
+	if sourceRegID != "" {
+		regIDArg = sourceRegID
+	}
+
+	if _, err := db.Exec(ctx, `
+		INSERT INTO user_rewards
+			(user_id, source_type, source_race_id, source_reg_id, kind, coupon_def_id, amount_cents, item_label, valid_until)
+		VALUES ($1,$2,$3,$4,'coupon',$5,$6,$7,$8)`,
+		userID, sourceType, raceIDArg, regIDArg, item.CouponDefID, amountCents, name, validUntil,
+	); err != nil {
+		return nil, fmt.Errorf("insert coupon user_reward: %w", err)
+	}
+	return []GrantedReward{{Type: "coupon", Amount: amountCents, ItemLabel: name}}, nil
 }
 
 // grantSerialTwoLayer serial 類「以商家為單位的兩層抽獎」第二層：item.ProbBP 判定的「該商家中不中獎」

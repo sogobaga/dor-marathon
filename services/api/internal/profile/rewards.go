@@ -14,11 +14,14 @@ import (
 )
 
 // UserReward 玩家活動獎勵錢包單筆（欄位見 activityreward.grantSerial denormalize 寫入 user_rewards 時的顯示欄位）。
+// Kind 區分序號類('serial'，migration 127 既有)／活動優惠券類('coupon'，migration 138 新增)：coupon 類
+// 只有 CouponDefID/AmountCents 有意義，Code/Link/MerchantName 等序號類欄位皆為空。
 type UserReward struct {
 	ID           string     `json:"id"`
 	SourceType   string     `json:"source_type"`
 	SourceRaceID string     `json:"source_race_id,omitempty"`
 	SourceRegID  string     `json:"source_reg_id,omitempty"`
+	Kind         string     `json:"kind"` // serial | coupon
 	Code         string     `json:"code"`
 	Link         string     `json:"link,omitempty"`
 	ItemLabel    string     `json:"item_label"`
@@ -26,14 +29,16 @@ type UserReward struct {
 	UsageNote    string     `json:"usage_note,omitempty"`
 	IconURL      string     `json:"icon_url,omitempty"`
 	Description  string     `json:"description,omitempty"`
+	CouponDefID  string     `json:"coupon_def_id,omitempty"` // kind=coupon 專用
+	AmountCents  *int       `json:"amount_cents,omitempty"`  // kind=coupon 專用：面額
 	ValidUntil   *time.Time `json:"valid_until,omitempty"`
 	Used         bool       `json:"used"`
 	UsedAt       *time.Time `json:"used_at,omitempty"`
 	ObtainedAt   time.Time  `json:"obtained_at"`
 }
 
-// GET /api/v1/profile/rewards — 玩家活動獎勵錢包：只回登入者自己的序號類獎勵。序號本身視同帳號機敏
-// 資訊（比照 account-code-privacy 通則），僅本人可見，故一律 WHERE user_id=$me、不提供查他人的路徑。
+// GET /api/v1/profile/rewards — 玩家活動獎勵錢包：只回登入者自己的序號類/活動優惠券類獎勵。序號本身
+// 視同帳號機敏資訊（比照 account-code-privacy 通則），僅本人可見，故一律 WHERE user_id=$me、不提供查他人的路徑。
 func (h *Handler) Rewards(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	if uid == "" {
@@ -41,9 +46,10 @@ func (h *Handler) Rewards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := h.db.Query(r.Context(), `
-		SELECT id, source_type, COALESCE(source_race_id::text,''), COALESCE(source_reg_id::text,''),
+		SELECT id, source_type, COALESCE(source_race_id::text,''), COALESCE(source_reg_id::text,''), kind,
 		       COALESCE(code,''), COALESCE(link,''), COALESCE(item_label,''), COALESCE(merchant_name,''),
-		       COALESCE(usage_note,''), COALESCE(icon_url,''), COALESCE(description,''), valid_until,
+		       COALESCE(usage_note,''), COALESCE(icon_url,''), COALESCE(description,''),
+		       COALESCE(coupon_def_id::text,''), amount_cents, valid_until,
 		       used, used_at, obtained_at
 		FROM user_rewards
 		WHERE user_id=$1
@@ -56,9 +62,9 @@ func (h *Handler) Rewards(w http.ResponseWriter, r *http.Request) {
 	out := []UserReward{}
 	for rows.Next() {
 		var rr UserReward
-		if err := rows.Scan(&rr.ID, &rr.SourceType, &rr.SourceRaceID, &rr.SourceRegID,
+		if err := rows.Scan(&rr.ID, &rr.SourceType, &rr.SourceRaceID, &rr.SourceRegID, &rr.Kind,
 			&rr.Code, &rr.Link, &rr.ItemLabel, &rr.MerchantName, &rr.UsageNote, &rr.IconURL, &rr.Description,
-			&rr.ValidUntil, &rr.Used, &rr.UsedAt, &rr.ObtainedAt); err != nil {
+			&rr.CouponDefID, &rr.AmountCents, &rr.ValidUntil, &rr.Used, &rr.UsedAt, &rr.ObtainedAt); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}

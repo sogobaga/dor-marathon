@@ -9,6 +9,7 @@ import {
   adminAppSettingsApi,
   adminRewardTemplatesApi,
   adminRewardGroupsApi,
+  adminEventCouponsApi,
   METRIC_BY_KEY,
   type CreateRacePayload,
   type EventMode,
@@ -30,6 +31,7 @@ import {
   type RewardItemType,
   type RewardTemplate,
   type RewardSerialGroup,
+  type EventCouponDef,
 } from '@/lib/api'
 import { TaskItemEditor, type TaskFields } from '../TaskItemEditor'
 import { CancellationPolicyFields, DEFAULT_CANCELLATION_POLICY, sortTiers, validateCancellationPolicy } from '../CancelPolicyEditor'
@@ -169,6 +171,7 @@ export default function RaceForm({
   const [rewardItems, setRewardItems] = useState<RewardItem[]>(initial?.reward_config?.items ?? [])
   const [rewardTemplates, setRewardTemplates] = useState<RewardTemplate[]>([])
   const [rewardGroups, setRewardGroups] = useState<RewardSerialGroup[]>([])
+  const [couponDefs, setCouponDefs] = useState<EventCouponDef[]>([])
   const [controlStatus, setControlStatus] = useState<string>(initial?.control_status ?? 'active')
   const [startingSoonDays, setStartingSoonDays] = useState<string>(String(initial?.starting_soon_days ?? 5))
   const [allowTeamGroups, setAllowTeamGroups] = useState<boolean>(initial?.allow_team_groups ?? false)
@@ -346,6 +349,7 @@ export default function RaceForm({
     adminTaskModulesApi.list(token).then((r) => setTaskModules(r.modules)).catch(() => {})
     adminRewardTemplatesApi.list(token).then((r) => setRewardTemplates(r.templates)).catch(() => {})
     adminRewardGroupsApi.list(token).then((r) => setRewardGroups(r.groups)).catch(() => {})
+    adminEventCouponsApi.list(token).then((r) => setCouponDefs(r.defs)).catch(() => {})
     adminAppSettingsApi.list(token).then((r) => {
       const raw = r.settings?.['cancellation_policy']
       if (!raw) return
@@ -518,6 +522,12 @@ export default function RaceForm({
     if (rewardItems.length > 0 && !confirm(`套用模板「${t.name}」將覆蓋目前已設定的 ${rewardItems.length} 個獎勵項目，確定套用？`)) return
     const availableGroupIds = new Set(availableRewardGroups.map((g) => g.id))
     setRewardItems(t.items.map((it) => {
+      if (it.type === 'coupon') {
+        // 模板存的券種可能事後被停用/過期——套用時只保留當下仍可選的，否則清空讓管理者重選
+        // （比照下方 serial 的處理方式）。
+        const coupon_def_id = it.coupon_def_id && availableCouponDefIds.has(it.coupon_def_id) ? it.coupon_def_id : undefined
+        return { ...it, coupon_def_id }
+      }
       if (it.type !== 'serial') return { ...it }
       // 模板可能是在別場活動套用/儲存時存的，denominations／serial_group_id 裡的序號組不一定對應本場
       // 活動——剔除本場用不到的組，避免套用後殘留他場專屬序號組仍通過驗證、存檔後真的把他場序號發出去。
@@ -568,6 +578,11 @@ export default function RaceForm({
         seenMerchants.add(mid)
         return true
       }
+      if (it.type === 'coupon') {
+        // 下拉只列出「當下可選」的券種（見 availableCouponDefs），故非空即代表選到合法選項；
+        // 仍保留這道檢查作為最後防線（例如券種在編輯期間被後台其他分頁停用/改過期）。
+        return !!it.coupon_def_id && availableCouponDefIds.has(it.coupon_def_id)
+      }
       return false
     })
   }
@@ -587,6 +602,10 @@ export default function RaceForm({
   }
   // 本場活動可用的序號組：對應全部活動、或（編輯中）已明確勾選對應本場活動者
   const availableRewardGroups = rewardGroups.filter((g) => g.applies_all_races || (!!initial?.id && g.race_ids.includes(initial.id)))
+  // 「當下可選」的活動優惠券券種：需啟用，且 fixed(指定到期日)模式未過期（days 模式無到期日概念，
+  // 一律視為可選）——即「設定時就不給選」已停用/已過期券種的把關點（見 memory activity-reward-system）。
+  const availableCouponDefs = couponDefs.filter((d) => d.enabled && (d.expiry_mode !== 'fixed' || !d.expires_at || new Date(d.expires_at).getTime() > Date.now()))
+  const availableCouponDefIds = new Set(availableCouponDefs.map((d) => d.id))
 
   function buildPayload(): CreateRacePayload {
     // uniform 模式下分組費用欄位隱藏、送出一律不帶（強制清成 null，避免切換模式後殘留舊值誤套用）
@@ -928,6 +947,8 @@ export default function RaceForm({
                   經濟類（EXP/DP/GP/VIP）中獎直接入帳；
                   序號類為「以商家為單位的兩層抽獎」：先判定該商家中不中獎，中了才在該商家旗下有庫存的面額中依權重抽一組
                   配發進玩家活動獎勵錢包；商家旗下面額當下全數缺貨則該項跳過、不影響其他項目，同一份設定不可重複選同一商家。
+                  活動優惠券類中獎直接發一張進玩家活動獎勵錢包，報名時可折抵報名費（一次最多用 1 張，與其他折抵方式互斥）；
+                  下拉只列出目前啟用且未過期的券種，請先到「活動優惠券管理」建立。
                 </div>
                 <Row>
                   {rewardTemplates.length > 0 && (
@@ -953,6 +974,7 @@ export default function RaceForm({
                       key={i}
                       item={it}
                       groups={availableRewardGroups}
+                      couponDefs={availableCouponDefs}
                       onChange={(patch) => updateRewardItem(i, patch)}
                       onRemove={() => removeRewardItem(i)}
                     />
@@ -1477,12 +1499,14 @@ export default function RaceForm({
 
 const REWARD_TYPE_LABEL: Record<RewardItemType, string> = {
   exp: 'EXP 經驗值', dp: 'DP', gp: 'GP', vip: 'VIP 天數', serial: '序號（合作商家／LINE POINT）',
+  coupon: '活動優惠券',
 }
 
-// 即時獎勵設定單一項目列（活動獎勵系統 P2）：type 決定顯示哪些參數欄位。
-function RewardItemRow({ item, groups, onChange, onRemove }: {
+// 即時獎勵設定單一項目列（活動獎勵系統 P2；coupon 為 migration 138 活動優惠券擴充）：type 決定顯示哪些參數欄位。
+function RewardItemRow({ item, groups, couponDefs, onChange, onRemove }: {
   item: RewardItem
   groups: RewardSerialGroup[]
+  couponDefs: EventCouponDef[]
   onChange: (patch: Partial<RewardItem>) => void
   onRemove: () => void
 }) {
@@ -1523,6 +1547,21 @@ function RewardItemRow({ item, groups, onChange, onRemove }: {
         </Field>
       )}
       {item.type === 'serial' && <SerialDenomFields item={item} groups={groups} onChange={onChange} />}
+      {item.type === 'coupon' && (
+        <Field label="券種">
+          <select style={inp} value={item.coupon_def_id ?? ''} onChange={(e) => onChange({ coupon_def_id: e.target.value })}>
+            <option value="">請選擇券種…</option>
+            {couponDefs.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}（NT$ {Math.round(d.amount_cents / 100)}）</option>
+            ))}
+          </select>
+          {couponDefs.length === 0 && (
+            <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+              尚無可用券種（已停用/已過期的不列入），請先到「活動優惠券管理」建立或啟用券種。
+            </span>
+          )}
+        </Field>
+      )}
       <button type="button" onClick={onRemove} style={{ ...linkBtn, color: 'var(--hunt)', alignSelf: 'flex-start' }}>移除此項目</button>
     </div>
   )

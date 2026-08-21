@@ -120,10 +120,10 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Put("/{raceID}/rank-display", h.AdminSetRankDisplay)
 	r.Post("/{raceID}/settle-exp", h.AdminSettleEXP)
 	r.Get("/{raceID}/signups", h.AdminListSignups)
-	r.Get("/{raceID}/reward-completions", h.AdminListRewardCompletions)  // 個人挑戰模式 P5
-	r.Post("/{raceID}/reward-draw", h.AdminDrawRewardWinners)            // 個人挑戰模式 P5
-	r.Post("/{raceID}/reward-draws", h.AdminCreateRewardDraw)            // 獎勵管理一般化 migration 135（非 personal）
-	r.Get("/{raceID}/reward-draws", h.AdminListRewardDraws)              // 獎勵管理一般化 migration 135（非 personal）
+	r.Get("/{raceID}/reward-completions", h.AdminListRewardCompletions) // 個人挑戰模式 P5
+	r.Post("/{raceID}/reward-draw", h.AdminDrawRewardWinners)           // 個人挑戰模式 P5
+	r.Post("/{raceID}/reward-draws", h.AdminCreateRewardDraw)           // 獎勵管理一般化 migration 135（非 personal）
+	r.Get("/{raceID}/reward-draws", h.AdminListRewardDraws)             // 獎勵管理一般化 migration 135（非 personal）
 	return r
 }
 
@@ -500,8 +500,10 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusForbidden, "vip_only")
 	case errors.Is(err, ErrNoCoupon):
 		respondErr(w, http.StatusConflict, "沒有可用的活動優惠券")
-	case errors.Is(err, ErrCouponPromoConflict):
-		respondErr(w, http.StatusBadRequest, "優惠券與優惠序號不可同時使用")
+	case errors.Is(err, ErrDiscountConflict):
+		respondErr(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrCouponRewardInvalid):
+		respondErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrGroupFull):
 		respondErr(w, http.StatusConflict, "該分組名額已滿")
 	case errors.Is(err, ErrGroupKeyWrong):
@@ -910,7 +912,7 @@ func (h *Handler) AdminListSignups(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/v1/admin/races/:raceID/reward-completions?reward_status=&limit=&offset=
 // 個人挑戰模式 P5：列出該賽事「已完成」的挑戰紀錄（依 completed_at ASC），供後台抽獎/發放追蹤。
-// reward_status 篩選：all（預設，不篩／未帶參數同義）｜''（待處理）｜won｜fulfilled。
+// reward_status 篩選：all（預設，不篩／未帶參數同義）｜”（待處理）｜won｜fulfilled。
 func (h *Handler) AdminListRewardCompletions(w http.ResponseWriter, r *http.Request) {
 	raceID := chi.URLParam(r, "raceID")
 	rewardStatus := "all"
@@ -968,7 +970,7 @@ func (h *Handler) AdminUpdateRewardCompletion(w http.ResponseWriter, r *http.Req
 }
 
 // POST /api/v1/admin/races/:raceID/reward-draw  {n}
-// 個人挑戰模式 P5：從尚未處理(reward_status='')的完成紀錄中隨機抽 n 筆設為中獎(won)。原子操作。
+// 個人挑戰模式 P5：從尚未處理(reward_status=”)的完成紀錄中隨機抽 n 筆設為中獎(won)。原子操作。
 func (h *Handler) AdminDrawRewardWinners(w http.ResponseWriter, r *http.Request) {
 	raceID := chi.URLParam(r, "raceID")
 	var req struct {
@@ -1050,7 +1052,7 @@ func (h *Handler) AdminListRewardDraws(w http.ResponseWriter, r *http.Request) {
 }
 
 // PATCH /api/v1/admin/reward-winners/:id  {reward_status, reward_note}
-// 獎勵管理一般化（migration 135）：設定單筆中獎紀錄的發放狀態（''=中獎待發｜fulfilled=已發放）＋備註。
+// 獎勵管理一般化（migration 135）：設定單筆中獎紀錄的發放狀態（”=中獎待發｜fulfilled=已發放）＋備註。
 func (h *Handler) AdminUpdateRewardWinner(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var req struct {

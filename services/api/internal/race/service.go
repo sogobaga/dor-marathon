@@ -45,6 +45,23 @@ func safeAddonLineTotal(priceCents, qty int) (int, bool) {
 	return total, true
 }
 
+// discountMethodCount 統計這次報名同時指定了幾種折抵方式（VIP活動優惠券／活動優惠券(migration 138)／
+// 優惠序號）。抽成純函式（不碰 DB）方便單元測試互斥矩陣，供 Register() 的前置守門與
+// Repository.RegisterWithOrder 的交易層最後防線共用同一套判斷邏輯。
+func discountMethodCount(useCoupon bool, promoCode, couponRewardID string) int {
+	n := 0
+	if useCoupon {
+		n++
+	}
+	if strings.TrimSpace(promoCode) != "" {
+		n++
+	}
+	if strings.TrimSpace(couponRewardID) != "" {
+		n++
+	}
+	return n
+}
+
 // checkAddonQty 驗證加購數量在合理範圍內（Qty<=0 由呼叫端略過該筆，不經過此函式）。
 func checkAddonQty(qty int) error {
 	if qty > maxAddonQtyPerLine {
@@ -87,8 +104,13 @@ var (
 	ErrTaskModuleNotFound   = errors.New("task module not found")
 	ErrVIPOnly              = errors.New("此賽事僅限 VIP 會員報名")
 	ErrNoCoupon             = errors.New("沒有可用的活動優惠券")
-	ErrCouponPromoConflict  = errors.New("優惠券與優惠序號不可同時使用")
-	ErrInvalidInvoice       = errors.New("invoice 資料有誤")
+	// ErrDiscountConflict 報名折抵三擇一（VIP活動優惠券／活動優惠券／優惠序號）同時帶超過一種
+	// （取代舊版只擋 VIP券+序號兩者的 ErrCouponPromoConflict，migration 138 加入活動優惠券後一般化為三擇一）。
+	ErrDiscountConflict = errors.New("折抵方式僅能擇一使用（VIP活動優惠券／活動優惠券／優惠序號）")
+	// ErrCouponRewardInvalid 指定的活動優惠券（user_rewards.id）不存在、非本人、已使用或已過期
+	// （CAS 核銷 0 列時回這個錯誤，見 Repository.RegisterWithOrder）。
+	ErrCouponRewardInvalid = errors.New("活動優惠券不存在、已使用或已過期")
+	ErrInvalidInvoice      = errors.New("invoice 資料有誤")
 	// ErrOrderNotPending 訂單存在，但目前狀態不是 pending 也不是已付款(paid)——例如 refunded/cancelled。
 	// 用於區分「已付款的冪等重複通知」（安靜成功）與「錢已收到但訂單處於異常狀態，需要人工核對」（要告警）。
 	ErrOrderNotPending = errors.New("order exists but is not pending")
@@ -370,9 +392,10 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 	if race.VipOnly && !s.repo.IsUserVIP(ctx, req.UserID) {
 		return nil, ErrVIPOnly
 	}
-	// 優惠券與序號擇一
-	if req.UseCoupon && strings.TrimSpace(req.PromoCode) != "" {
-		return nil, ErrCouponPromoConflict
+	// 報名折抵三擇一：VIP活動優惠券／活動優惠券(migration 138)／優惠序號，同時帶超過一種一律擋
+	// （比照原「優惠券與序號擇一」，一般化成三方互斥；只擋「多帶」，三者都不帶＝不折抵，合法）。
+	if discountMethodCount(req.UseCoupon, req.PromoCode, req.CouponRewardID) > 1 {
+		return nil, ErrDiscountConflict
 	}
 	// 加購數量上限（防整數溢位攻擊，見 SEC-C1）：在進交易前先擋，避免無謂鎖表
 	for _, a := range req.Addons {
@@ -467,21 +490,22 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 	}
 
 	return s.repo.RegisterWithOrder(ctx, RegisterTxInput{
-		UserID:        req.UserID,
-		RaceID:        req.RaceID,
-		EventMode:     race.EventMode,
-		AttemptNo:     attemptNo,
-		GroupID:       chosen.ID,
-		GroupKey:      strings.TrimSpace(req.GroupKey),
-		EntryFee:      race.EntryFee, // 預設報名費；有效組價由 RegisterWithOrder 在鎖定分組列的同一刻重算（見該函式）
-		FeeMode:       race.FeeMode,
-		GroupRevealed: revealed,
-		Distance:      distance,
-		Addons:        req.Addons,
-		Participant:   req.Participant,
-		PromoCode:     strings.TrimSpace(req.PromoCode),
-		UseCoupon:     req.UseCoupon,
-		Invoice:       invoice,
+		UserID:         req.UserID,
+		RaceID:         req.RaceID,
+		EventMode:      race.EventMode,
+		AttemptNo:      attemptNo,
+		GroupID:        chosen.ID,
+		GroupKey:       strings.TrimSpace(req.GroupKey),
+		EntryFee:       race.EntryFee, // 預設報名費；有效組價由 RegisterWithOrder 在鎖定分組列的同一刻重算（見該函式）
+		FeeMode:        race.FeeMode,
+		GroupRevealed:  revealed,
+		Distance:       distance,
+		Addons:         req.Addons,
+		Participant:    req.Participant,
+		PromoCode:      strings.TrimSpace(req.PromoCode),
+		UseCoupon:      req.UseCoupon,
+		CouponRewardID: strings.TrimSpace(req.CouponRewardID),
+		Invoice:        invoice,
 		// 只有本次報名真的帶了 invoice 物件才覆寫 user_profiles 的發票預填欄位；完全沒帶（例如舊版
 		// 前端）時維持既有預填不變，避免被正規化出來的空白值誤蓋掉使用者之前填過的統編/載具。
 		SaveInvoiceToProfile: req.Invoice != nil,

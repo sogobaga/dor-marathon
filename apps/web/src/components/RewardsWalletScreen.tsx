@@ -1,7 +1,8 @@
 'use client'
 
 // 活動獎勵系統 P3：玩家活動獎勵錢包（列表+詳情，比照 PartnerPerksScreen「跑者充電站」版型）。
-// 只顯示序號類獎勵（EXP/DP/GP/VIP 中獎直接入帳不進此表，見後端 activityreward）。
+// 顯示序號類（kind='serial'）與活動優惠券類（kind='coupon'，migration 138）兩種獎勵；
+// EXP/DP/GP/VIP 中獎直接入帳不進此表，見後端 activityreward。
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import useSWR from 'swr'
@@ -126,20 +127,30 @@ function RewardCard({ reward, onDetail }: { reward: SortedReward; onDetail: () =
         {reward.icon_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={reward.icon_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-        ) : <span style={{ fontSize: 24 }}>🎁</span>}
+        ) : <span style={{ fontSize: 24 }}>{reward.kind === 'coupon' ? '🎟️' : '🎁'}</span>}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 14.5, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {reward.item_label || '活動獎勵'}
+            {reward.item_label || (reward.kind === 'coupon' ? '活動優惠券' : '活動獎勵')}
           </span>
+          {reward.kind === 'coupon' && reward.amount_cents != null && (
+            <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--gold)' }}>NT$ {Math.round(reward.amount_cents / 100)}</span>
+          )}
           {urgent === 'soon' && <span style={soonBadge}>即將到期</span>}
           {urgent === 'expired' && <span style={expiredBadge}>已過期</span>}
         </div>
         {reward.merchant_name && <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reward.merchant_name}</div>}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, fontSize: 11, flexWrap: 'wrap' }}>
           <span style={{ color: 'var(--tx-faint)' }}>{fmtDateTime(reward.obtained_at)} 取得</span>
-          <span style={{ color: reward.used ? 'var(--tx-faint)' : 'var(--fug)', fontWeight: 700 }}>{reward.used ? '已使用' : '未使用'}</span>
+          {reward.kind === 'coupon' ? (
+            // 活動優惠券三態文案（可使用／已使用含日期／已過期），比照 serial 類但多帶已使用日期。
+            <span style={{ color: reward.used ? 'var(--tx-faint)' : 'var(--fug)', fontWeight: 700 }}>
+              {reward.used ? `已使用${reward.used_at ? `（${fmtDateTime(reward.used_at)}）` : ''}` : urgent === 'expired' ? '已過期' : '可使用'}
+            </span>
+          ) : (
+            <span style={{ color: reward.used ? 'var(--tx-faint)' : 'var(--fug)', fontWeight: 700 }}>{reward.used ? '已使用' : '未使用'}</span>
+          )}
         </div>
       </div>
       <button onClick={(e) => { e.stopPropagation(); onDetail() }} style={detailBtn}>獎勵資訊</button>
@@ -157,9 +168,17 @@ function RewardDetailModal({ reward, onClose, onMarkUsed }: { reward: UserReward
     <div data-skin="default" onClick={onClose} style={{ ...overlay, position: om.position }}>
       <div onClick={(e) => e.stopPropagation()} style={panel}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
-          <div style={{ fontSize: 16, fontWeight: 900, color: '#fff', wordBreak: 'break-word' }}>{reward.item_label || '活動獎勵'}</div>
+          <div style={{ fontSize: 16, fontWeight: 900, color: '#fff', wordBreak: 'break-word' }}>
+            {reward.item_label || (reward.kind === 'coupon' ? '活動優惠券' : '活動獎勵')}
+          </div>
           <button onClick={onClose} style={closeX} aria-label="關閉">✕</button>
         </div>
+
+        {reward.kind === 'coupon' && reward.amount_cents != null && (
+          <div style={{ textAlign: 'center', fontSize: 26, fontWeight: 900, color: 'var(--gold)', marginTop: 10 }}>
+            NT$ {Math.round(reward.amount_cents / 100)}
+          </div>
+        )}
 
         {reward.icon_url && (
           // eslint-disable-next-line @next/next/no-img-element
@@ -206,11 +225,16 @@ function RewardDetailModal({ reward, onClose, onMarkUsed }: { reward: UserReward
         <div style={infoRow}>
           <span style={infoLabel}>使用狀態</span>
           <span style={{ ...infoVal, color: reward.used ? 'var(--tx-dim)' : 'var(--fug)' }}>
-            {reward.used ? `已使用${reward.used_at ? `（${fmtDateTime(reward.used_at)}）` : ''}` : '未使用'}
+            {reward.used
+              ? `已使用${reward.used_at ? `（${fmtDateTime(reward.used_at)}）` : ''}`
+              : reward.kind === 'coupon' && reward.valid_until && new Date(reward.valid_until).getTime() < Date.now()
+                ? '已過期'
+                : reward.kind === 'coupon' ? '可使用' : '未使用'}
           </span>
         </div>
 
-        {!reward.used && (
+        {/* coupon 類不提供手動標記已使用：券由報名折抵流程自動核銷（CAS），不是玩家自行回報 */}
+        {!reward.used && reward.kind !== 'coupon' && (
           <button onClick={onMarkUsed} style={{ ...ghostFullBtn, marginTop: 14 }}>標記為已使用</button>
         )}
       </div>

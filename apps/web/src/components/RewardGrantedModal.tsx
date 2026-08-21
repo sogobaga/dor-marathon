@@ -54,6 +54,12 @@ function RewardRow({ r }: { r: GrantedReward }) {
           <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>已放入活動獎勵</span>
         </span>
       )}
+      {r.type === 'coupon' && (
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <span style={{ fontWeight: 800, color: '#fff' }}>🎟️ {r.item_label || '活動優惠券'}（NT$ {Math.round((r.amount ?? 0) / 100)}）</span>
+          <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>已放入活動獎勵</span>
+        </span>
+      )}
     </div>
   )
 }

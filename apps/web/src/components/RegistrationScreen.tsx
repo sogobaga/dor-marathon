@@ -5,6 +5,7 @@ import {
   racesApi,
   profileApi,
   paymentsApi,
+  rewardsApi,
   METRIC_BY_KEY,
   formatChallengeRule,
   effectiveGroupFee,
@@ -16,6 +17,7 @@ import {
   type ParticipantField,
   type RecommendRow,
   type InvoiceInfo,
+  type UserReward,
 } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError, useUser } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
@@ -134,6 +136,9 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [promoQuote, setPromoQuote] = useState<import('@/lib/api').PromoQuote | null>(null)
   const [promoBusy, setPromoBusy] = useState(false)
   const [useCoupon, setUseCoupon] = useState(false) // 使用 VIP 活動優惠券
+  // 活動優惠券（migration 138，活動獎勵抽獎所得）：報名折抵三選一之一，選定的 user_rewards.id。
+  const [couponRewardId, setCouponRewardId] = useState('')
+  const [eventCoupons, setEventCoupons] = useState<UserReward[]>([])
 
   const { dash } = useDashboard()
   const isVip = !!dash?.is_vip
@@ -177,6 +182,13 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         }
       }).catch(() => {})
       withUserAuth((t) => profileApi.recommendations(t, race.id)).then((r) => setRecommends(r.recommendations)).catch(() => {})
+      // 活動優惠券（migration 138）：只留「未使用且未過期」的可選（valid_until 為 null 視為無期限，皆可選）。
+      withUserAuth((t) => rewardsApi.list(t)).then((r) => {
+        const now = Date.now()
+        setEventCoupons(r.rewards.filter((x) =>
+          x.kind === 'coupon' && !x.used && (!x.valid_until || new Date(x.valid_until).getTime() > now)
+        ))
+      }).catch(() => {})
     }
   }, [race.id])
 
@@ -254,12 +266,16 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     return t
   }, [detail, qty, baseFee])
 
-  // 折抵來源：VIP 優惠券（只折報名費) 或 優惠序號；擇一。加購不折。
+  // 折抵來源：VIP活動優惠券／活動優惠券(migration 138)／優惠序號，三選一，只折報名費、加購不折。
   const couponDiscount = useCoupon ? Math.min(COUPON_CENTS, baseFee) : 0
+  const selectedEventCoupon = eventCoupons.find((c) => c.id === couponRewardId) || null
+  const eventCouponDiscount = selectedEventCoupon ? Math.min(selectedEventCoupon.amount_cents ?? 0, baseFee) : 0
   const addonsTotal = total - baseFee
   const payable = useCoupon
     ? Math.max(0, baseFee - couponDiscount) + addonsTotal
-    : (promoQuote?.valid ? promoQuote.payable_cents : total)
+    : couponRewardId
+      ? Math.max(0, baseFee - eventCouponDiscount) + addonsTotal
+      : (promoQuote?.valid ? promoQuote.payable_cents : total)
 
   async function applyPromo() {
     const code = promoCode.trim()
@@ -368,8 +384,11 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
           addons,
           participant,
           invoice,
-          promo_code: useCoupon ? undefined : (promoCode.trim() || undefined),
+          // 折抵三選一：VIP活動優惠券／活動優惠券／優惠序號，只送出當下選定的那一種（UI 已用 disable
+          // 互斥擋掉同時選兩種，這裡再保底一次，避免殘留輸入框內容被誤送出）。
+          promo_code: useCoupon || couponRewardId ? undefined : (promoCode.trim() || undefined),
           use_coupon: useCoupon || undefined,
+          coupon_reward_id: useCoupon ? undefined : (couponRewardId || undefined),
         })
       )
       setDone({ group: res.assigned_group, revealed: res.group_revealed, paid: res.paid, payable: res.payable_cents, orderId: res.order.id })
@@ -698,54 +717,95 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               </Section>
             )}
 
-            {/* 優惠序號 */}
-            <Section title="優惠序號">
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  value={promoCode}
-                  onChange={(e) => { setPromoCode(e.target.value.toUpperCase()); setPromoQuote(null) }}
-                  placeholder={useCoupon ? '已使用活動優惠券' : '輸入序號（選填）'}
-                  disabled={useCoupon}
-                  style={{ ...inp, flex: 1, textTransform: 'uppercase', opacity: useCoupon ? 0.5 : 1 }}
-                />
-                <button onClick={applyPromo} disabled={promoBusy || useCoupon} style={{ ...primaryBtn, width: 'auto', padding: '0 18px', opacity: useCoupon ? 0.5 : 1 }}>
-                  {promoBusy ? '驗證中…' : '套用'}
-                </button>
-              </div>
-              {promoQuote && !useCoupon && (
-                <div style={{ fontSize: 12.5, marginTop: 8, color: promoQuote.valid ? 'var(--fug)' : 'var(--hunt)' }}>
-                  {promoQuote.valid
-                    ? `✓ 已折抵 ${ntd(promoQuote.discount_cents)}${promoQuote.free ? '（0 元免付款）' : ''}`
-                    : `✕ ${promoQuote.reason || '序號無效'}`}
-                </div>
-              )}
-            </Section>
-
-            {/* VIP 活動優惠券（面額依系統設定，只折報名費，與序號擇一） */}
-            {isVip && baseFee > 0 && (
-              <Section title="活動優惠券">
-                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13.5, color: 'var(--tx)', opacity: couponBal > 0 || useCoupon ? 1 : 0.5 }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {/* 折抵方式三選一：VIP活動優惠券／活動優惠券(migration 138)／優惠序號 */}
+            {(() => {
+              const otherPicked = useCoupon || couponRewardId !== ''
+              return (
+                <Section title="優惠序號">
+                  <div style={{ display: 'flex', gap: 8 }}>
                     <input
-                      type="checkbox"
-                      checked={useCoupon}
-                      disabled={couponBal <= 0 || promoCode.trim() !== ''}
-                      onChange={(e) => { const on = e.target.checked; setUseCoupon(on); if (on) { setPromoCode(''); setPromoQuote(null) } }}
+                      value={promoCode}
+                      onChange={(e) => { setPromoCode(e.target.value.toUpperCase()); setPromoQuote(null) }}
+                      placeholder={otherPicked ? '折抵方式擇一，已選用其他方式' : '輸入序號（選填）'}
+                      disabled={otherPicked}
+                      style={{ ...inp, flex: 1, textTransform: 'uppercase', opacity: otherPicked ? 0.5 : 1 }}
                     />
-                    使用活動優惠券（折 {ntd(COUPON_CENTS)}）
-                  </span>
-                  <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>持有數量：{couponBal}</span>
-                </label>
-                <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
-                  VIP 專屬，每月補齊 3 張；與優惠序號擇一，不可並用。
-                </div>
-              </Section>
-            )}
+                    <button onClick={applyPromo} disabled={promoBusy || otherPicked} style={{ ...primaryBtn, width: 'auto', padding: '0 18px', opacity: otherPicked ? 0.5 : 1 }}>
+                      {promoBusy ? '驗證中…' : '套用'}
+                    </button>
+                  </div>
+                  {promoQuote && !otherPicked && (
+                    <div style={{ fontSize: 12.5, marginTop: 8, color: promoQuote.valid ? 'var(--fug)' : 'var(--hunt)' }}>
+                      {promoQuote.valid
+                        ? `✓ 已折抵 ${ntd(promoQuote.discount_cents)}${promoQuote.free ? '（0 元免付款）' : ''}`
+                        : `✕ ${promoQuote.reason || '序號無效'}`}
+                    </div>
+                  )}
+                </Section>
+              )
+            })()}
+
+            {/* VIP $100 活動優惠券（面額依系統設定，只折報名費，與其他折抵方式擇一） */}
+            {isVip && baseFee > 0 && (() => {
+              const otherPicked = promoCode.trim() !== '' || couponRewardId !== ''
+              return (
+                <Section title="VIP 活動優惠券">
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13.5, color: 'var(--tx)', opacity: (couponBal > 0 || useCoupon) && !otherPicked ? 1 : 0.5 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={useCoupon}
+                        disabled={couponBal <= 0 || otherPicked}
+                        onChange={(e) => { const on = e.target.checked; setUseCoupon(on); if (on) { setPromoCode(''); setPromoQuote(null); setCouponRewardId('') } }}
+                      />
+                      使用 VIP 活動優惠券（折 {ntd(COUPON_CENTS)}）
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>持有數量：{couponBal}</span>
+                  </label>
+                  <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
+                    VIP 專屬，每月補齊 3 張；折抵方式擇一，不可與活動優惠券／優惠序號並用。
+                  </div>
+                </Section>
+              )
+            })()}
+
+            {/* 活動優惠券（migration 138：完成挑戰機率獲得，見「活動獎勵」錢包），只折報名費、一次最多用 1 張 */}
+            {eventCoupons.length > 0 && baseFee > 0 && (() => {
+              const otherPicked = useCoupon || promoCode.trim() !== ''
+              return (
+                <Section title="活動優惠券">
+                  <select
+                    style={{ ...inp, opacity: otherPicked ? 0.5 : 1 }}
+                    value={couponRewardId}
+                    disabled={otherPicked}
+                    onChange={(e) => {
+                      const id = e.target.value
+                      setCouponRewardId(id)
+                      if (id) { setPromoCode(''); setPromoQuote(null); setUseCoupon(false) }
+                    }}
+                  >
+                    <option value="">{otherPicked ? '折抵方式擇一，已選用其他方式' : '不使用活動優惠券'}</option>
+                    {eventCoupons.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.item_label || '活動優惠券'}（折 {ntd(c.amount_cents ?? 0)}）{c.valid_until ? `・期限至 ${new Date(c.valid_until).toLocaleDateString('zh-TW')}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
+                    完成挑戰機率獲得，一次最多折抵 1 張；折抵方式擇一，不可與 VIP 活動優惠券／優惠序號並用。
+                  </div>
+                </Section>
+              )
+            })()}
 
             <div style={{ paddingTop: 4 }}>
               {useCoupon && couponDiscount > 0 ? (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--tx-dim)' }}>
-                  <span>原價 {ntd(total)} · 優惠券折抵 −{ntd(couponDiscount)}</span>
+                  <span>原價 {ntd(total)} · VIP優惠券折抵 −{ntd(couponDiscount)}</span>
+                </div>
+              ) : couponRewardId && eventCouponDiscount > 0 ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--tx-dim)' }}>
+                  <span>原價 {ntd(total)} · 活動優惠券折抵 −{ntd(eventCouponDiscount)}</span>
                 </div>
               ) : promoQuote?.valid && promoQuote.discount_cents > 0 ? (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--tx-dim)' }}>

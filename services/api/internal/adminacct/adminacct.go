@@ -369,6 +369,7 @@ var auditResourceLabel = map[string]string{
 	"gps-runs": "GPS 軌跡", "images": "圖片", "organizer": "主辦", "activities": "活動",
 	"partner-shops":    "跑者充電站",
 	"reward-merchants": "獎勵合作商家", "reward-groups": "獎勵序號組", "reward-templates": "獎勵模板",
+	"event-coupons": "活動優惠券",
 }
 var auditVerb = map[string]string{"POST": "新增", "PUT": "更新", "PATCH": "更新", "DELETE": "刪除"}
 

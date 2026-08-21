@@ -1376,9 +1376,9 @@ type RegisterTxInput struct {
 	// 時順便設 challenge_started_at。
 	EventMode string
 	// AttemptNo 這是使用者在此賽事的第幾次挑戰（personal 由 service.NextAttemptNo 算出；非 personal 恆 1）。
-	AttemptNo     int
-	GroupID  string
-	GroupKey string
+	AttemptNo int
+	GroupID   string
+	GroupKey  string
 	// EntryFee races.entry_fee（賽事預設報名費，分）。實際計價基準（有效組價）由本函式在交易內、
 	// 對 GroupID 上鎖的同一刻，透過 EffectiveGroupFee(FeeMode, EntryFee, 該組鎖定的 entry_fee_cents)
 	// 重新算出（見下方 entryFee 區域變數），避免呼叫端在鎖定前算出的價格與實際扣款有 TOCTOU 落差。
@@ -1390,7 +1390,10 @@ type RegisterTxInput struct {
 	Addons        []AddonSelection
 	Participant   ParticipantInfo
 	PromoCode     string
-	UseCoupon     bool // 使用 VIP 活動優惠券（面額見系統設定）；與 PromoCode 擇一
+	UseCoupon     bool // 使用 VIP 活動優惠券（面額見系統設定）；與 PromoCode、CouponRewardID 三擇一
+	// CouponRewardID 活動優惠券（migration 138）：user_rewards.id，一張未用未過期的 kind='coupon' 券。
+	// 與 PromoCode、UseCoupon 三者互斥（service.Register 已前置守門，這裡的 if 條件是交易層最後防線）。
+	CouponRewardID string
 
 	// Invoice 已由 service.ValidateInvoice 驗證/正規化過的發票資訊（一定有值，未帶時已預設為 personal 全空）。
 	Invoice InvoiceInfo
@@ -1512,7 +1515,7 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 	// 2c. VIP 活動優惠券（面額見系統設定 vip_coupon_value_cents，只折報名費，與序號擇一）：lazy 每月補券 → 上鎖扣券
 	//     報名費為 0 時不扣券（避免浪費在免費賽事）
 	couponUsed := false
-	if in.UseCoupon && in.PromoCode == "" && entryFee > 0 {
+	if in.UseCoupon && in.PromoCode == "" && in.CouponRewardID == "" && entryFee > 0 {
 		perMonth := appsettings.GetInt(ctx, r.db, "vip_coupon_per_month", 3)
 		valueCents := appsettings.GetInt(ctx, r.db, "vip_coupon_value_cents", 10000)
 		// 每月補券：VIP 且本月尚未補 → 補滿（與 Dashboard 讀取端一致，冪等）
@@ -1539,6 +1542,29 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		couponUsed = true
 	}
 
+	// 2d. 活動優惠券（migration 138，活動獎勵抽獎所得，見 internal/activityreward）：CAS 核銷——鎖定
+	// 這張券（used=TRUE）並取回其面額，用 WHERE 條件同時完成「存在／屬於本人／未使用／未過期」四項
+	// 檢查，0 列即代表任一條件不成立，回明確錯誤（比照 promo/VIP 券「先鎖後扣」的寫法）。used_order_id
+	// 此刻還不知道 order.id（order 要等到步驟 4 才建立），故先只標記 used，等 order 建立後在步驟 4b
+	// 補一筆 UPDATE 回填 order id（同一交易內，這張券的列鎖從這裡就已持有到 commit，不會被其他交易插隊）。
+	couponRewardUsed := false
+	couponRewardAmount := 0
+	if shouldRedeemCouponReward(in.CouponRewardID, in.PromoCode, in.UseCoupon, entryFee) {
+		e := tx.QueryRow(ctx, `
+			UPDATE user_rewards SET used=TRUE, used_at=NOW()
+			WHERE id=$1 AND user_id=$2 AND kind='coupon' AND used=FALSE
+			  AND (valid_until IS NULL OR valid_until > NOW())
+			RETURNING amount_cents`, in.CouponRewardID, in.UserID).Scan(&couponRewardAmount)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return nil, ErrCouponRewardInvalid
+		}
+		if e != nil {
+			return nil, fmt.Errorf("use event coupon reward: %w", e)
+		}
+		discount = couponRewardDiscountCents(couponRewardAmount, entryFee)
+		couponRewardUsed = true
+	}
+
 	// 應付 = max(0, 報名費-折抵) + 加購；不足 0.5 元（<50 分）視為 0、直接完成不跳金流
 	payable := entryFee - discount
 	if payable < 0 {
@@ -1557,6 +1583,8 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 			paymentRef = "PROMO:" + appliedPromo.Code
 		} else if couponUsed {
 			paymentRef = "COUPON"
+		} else if couponRewardUsed {
+			paymentRef = "EVENT_COUPON"
 		}
 	}
 
@@ -1636,7 +1664,16 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		}
 	}
 
-	// 4c. 發票資訊（一張訂單一筆）。開立相關欄位（invoice_number/invoice_status/issued_at/invoice_raw）
+	// 4c. 活動優惠券核銷回填 order id（見步驟 2d 註解：used=TRUE 在那裡已鎖定，這裡只是補上此刻才
+	// 存在的 order.ID，同一交易內、同一列，不需要再 CAS）——供 SettleCancellation 取消退費時依
+	// used_order_id 找回這筆券並回復 used=FALSE。
+	if couponRewardUsed {
+		if _, err = tx.Exec(ctx, `UPDATE user_rewards SET used_order_id=$1 WHERE id=$2`, order.ID, in.CouponRewardID); err != nil {
+			return nil, fmt.Errorf("link coupon reward to order: %w", err)
+		}
+	}
+
+	// 4d. 發票資訊（一張訂單一筆）。開立相關欄位（invoice_number/invoice_status/issued_at/invoice_raw）
 	// 現在一律不寫，維持 DB 預設（pending/空字串），等日後串接綠界發票 API 的開立流程再回填。
 	inv := in.Invoice
 	if _, err = tx.Exec(ctx, `
@@ -1698,6 +1735,23 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		PayableCents:  payable,
 		Paid:          paid,
 	}, nil
+}
+
+// shouldRedeemCouponReward 判斷本次報名是否應該嘗試核銷活動優惠券（migration 138；CAS 前的資格判斷，
+// 抽成純函式不碰 DB，方便單元測試）：需指定 CouponRewardID、與 VIP 券/優惠序號互斥（未使用其他折抵，
+// 交易層最後防線，service.Register 已用 discountMethodCount 前置守門過一次）、且報名費 >0（比照 VIP
+// 券，報名費 0 的免費賽事不消耗券）。
+func shouldRedeemCouponReward(couponRewardID, promoCode string, useCoupon bool, entryFee int) bool {
+	return strings.TrimSpace(couponRewardID) != "" && strings.TrimSpace(promoCode) == "" && !useCoupon && entryFee > 0
+}
+
+// couponRewardDiscountCents 活動優惠券折抵金額＝券面額，但不超過報名費本身（floor 0 由呼叫端的
+// payable=max(0,entryFee-discount) 保證，這裡只需保證不會折抵超過報名費）。
+func couponRewardDiscountCents(amountCents, entryFee int) int {
+	if amountCents > entryFee {
+		return entryFee
+	}
+	return amountCents
 }
 
 // isUniqueViolation 判斷是否為 Postgres 唯一鍵衝突（SQLSTATE 23505）
@@ -2200,6 +2254,16 @@ func (r *Repository) SettleCancellation(ctx context.Context, registrationID, tar
 				WHERE id = (SELECT user_id FROM orders WHERE id=$1)`, orderID); err != nil {
 				return false, fmt.Errorf("refund coupon: %w", err)
 			}
+		}
+
+		// 活動優惠券回補（migration 138）：比照上面 VIP 券與下方（本函式前段）優惠序號的現況——取消一律
+		// 退回可再用，不論退款金額多寡。用 used_order_id 找回這筆報名當初核銷的券（見 RegisterWithOrder
+		// 步驟 2d/4c），沒有對應券時此 UPDATE 影響 0 列，安全 no-op（不像 VIP 券需要旗標才知道要不要
+		// 回補——這裡直接以 used_order_id 是否指向本訂單為準，天然冪等）。
+		if _, err = tx.Exec(ctx, `
+			UPDATE user_rewards SET used=FALSE, used_at=NULL, used_order_id=NULL
+			WHERE used_order_id=$1`, orderID); err != nil {
+			return false, fmt.Errorf("release event coupon reward: %w", err)
 		}
 	}
 

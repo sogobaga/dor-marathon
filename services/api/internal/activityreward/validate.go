@@ -5,9 +5,10 @@ package activityreward
 
 import (
 	"fmt"
+	"strings"
 )
 
-var validRewardTypes = map[string]bool{"exp": true, "dp": true, "gp": true, "vip": true, "serial": true}
+var validRewardTypes = map[string]bool{"exp": true, "dp": true, "gp": true, "vip": true, "serial": true, "coupon": true}
 
 // Validate 驗證單一獎勵項目參數是否合理。
 func (it *RewardItem) Validate() error {
@@ -32,6 +33,13 @@ func (it *RewardItem) Validate() error {
 		// 舊格式 SerialGroupID 的向後相容回退）。
 		if len(it.validDenominations()) == 0 {
 			return fmt.Errorf("reward item serial: requires at least one denomination (group_id + weight>0) or serial_group_id")
+		}
+	case "coupon":
+		// 純結構驗證（比照 serial 只驗「有沒有指定面額/組」，不在此處查 DB）：實際「券種是否存在／
+		// 啟用／未過期」由後台表單只列出可選券種把關（見 RaceForm.tsx 的可選清單過濾），中獎當下再由
+		// roll.go grantCoupon 對 DB 現況做最終判斷（不合格則該項跳過，不影響其他項目）。
+		if strings.TrimSpace(it.CouponDefID) == "" {
+			return fmt.Errorf("reward item coupon: requires coupon_def_id")
 		}
 	}
 	return nil

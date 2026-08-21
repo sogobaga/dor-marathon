@@ -14,7 +14,7 @@ import (
 
 // RewardPreviewItem 前台「活動獎勵」頁籤單筆卡片：只有可讀展示欄位，絕不含機率/數量/權重/面額庫存。
 type RewardPreviewItem struct {
-	Kind        string `json:"kind"`   // economy|serial
+	Kind        string `json:"kind"` // economy|serial
 	Name        string `json:"name"`
 	Amount      string `json:"amount"` // economy 類的數量/區間顯示（如 100~500 / 7 天）；serial 類為空
 	IconURL     string `json:"icon_url"`
@@ -47,7 +47,9 @@ func (s *Service) GetRewardPreview(ctx context.Context, raceID string) ([]Reward
 
 	out := []RewardPreviewItem{}
 	seenGroups := map[string]bool{}
+	seenCouponDefs := map[string]bool{}
 	var groupIDs []string
+	var couponDefIDs []string
 	for i := range r.RewardConfig.Items {
 		item := &r.RewardConfig.Items[i]
 		switch item.Type {
@@ -59,6 +61,13 @@ func (s *Service) GetRewardPreview(ctx context.Context, raceID string) ([]Reward
 					seenGroups[d.GroupID] = true
 					groupIDs = append(groupIDs, d.GroupID)
 				}
+			}
+		case "coupon":
+			// 活動優惠券（migration 138）：只取 coupon_def_id 去查展示欄位（名稱/面額），機率(prob_bp)
+			// 仍不外洩。跨 item 重複引用同一券種時只列一次。
+			if item.CouponDefID != "" && !seenCouponDefs[item.CouponDefID] {
+				seenCouponDefs[item.CouponDefID] = true
+				couponDefIDs = append(couponDefIDs, item.CouponDefID)
 			}
 		case "exp", "dp", "gp", "vip":
 			if label, ok := economyRewardLabel[item.Type]; ok {
@@ -86,7 +95,36 @@ func (s *Service) GetRewardPreview(ctx context.Context, raceID string) ([]Reward
 		}
 		out = append(out, serialItems...)
 	}
+	if len(couponDefIDs) > 0 {
+		couponItems, err := s.repo.GetCouponDefPreview(ctx, couponDefIDs)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, couponItems...)
+	}
 	return out, nil
+}
+
+// GetCouponDefPreview 依券種 id 清單查前台展示欄位（名稱＋面額），刻意不查 enabled/期限等後台管理欄位
+// （機敏／與展示無關）。amount 格式化為「NT$ 100」比照 economy 類「100~500」的可讀字串慣例。
+func (r *Repository) GetCouponDefPreview(ctx context.Context, defIDs []string) ([]RewardPreviewItem, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT COALESCE(name,''), amount_cents FROM event_coupon_defs WHERE id = ANY($1::uuid[])`, defIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []RewardPreviewItem{}
+	for rows.Next() {
+		var name string
+		var amountCents int
+		if err := rows.Scan(&name, &amountCents); err != nil {
+			return nil, err
+		}
+		out = append(out, RewardPreviewItem{Kind: "coupon", Name: name, Amount: fmt.Sprintf("NT$ %d", amountCents/100)})
+	}
+	return out, rows.Err()
 }
 
 // GetRewardSerialGroupPreview 依序號組 id 清單查前台展示欄位（品項名稱/圖示/說明/商家名稱降階），

@@ -11,27 +11,27 @@ import (
 
 // Race 資料庫模型
 type Race struct {
-	ID               string                       `json:"id"`
-	Slug             string                       `json:"slug"`
-	Title            string                       `json:"title"`
-	Subtitle         string                       `json:"subtitle"`
-	World            string                       `json:"world"`
-	Blurb            string                       `json:"blurb"`
-	HeroImageURL     string                       `json:"hero_image_url"`
-	Status           string                       `json:"status"`     // soon|open|live|done
-	EventMode        string                       `json:"event_mode"` // general|competition|faction_battle
-	GoalType         string                       `json:"goal_type"`  // cumulative|distance（競賽完賽目標）
-	Distances        []int                        `json:"distances"`
-	GroupType        string                       `json:"group_type"` // faction|club|distance
-	GroupMode        string                       `json:"group_mode"` // random|self
-	SlotsTotal       int                          `json:"slots_total"`
-	EntryFee         int                          `json:"entry_fee"`                    // 分（NT$ × 100）；fee_mode=per_group 時語意為「預設報名費」（未獨立設定的組別、前台新增組別適用）
-	FeeMode          string                       `json:"fee_mode"`                     // uniform(預設，全場統一用 EntryFee) | per_group(各分組可獨立定價，見 RaceGroup.EntryFeeCents)
+	ID           string `json:"id"`
+	Slug         string `json:"slug"`
+	Title        string `json:"title"`
+	Subtitle     string `json:"subtitle"`
+	World        string `json:"world"`
+	Blurb        string `json:"blurb"`
+	HeroImageURL string `json:"hero_image_url"`
+	Status       string `json:"status"`     // soon|open|live|done
+	EventMode    string `json:"event_mode"` // general|competition|faction_battle
+	GoalType     string `json:"goal_type"`  // cumulative|distance（競賽完賽目標）
+	Distances    []int  `json:"distances"`
+	GroupType    string `json:"group_type"` // faction|club|distance
+	GroupMode    string `json:"group_mode"` // random|self
+	SlotsTotal   int    `json:"slots_total"`
+	EntryFee     int    `json:"entry_fee"` // 分（NT$ × 100）；fee_mode=per_group 時語意為「預設報名費」（未獨立設定的組別、前台新增組別適用）
+	FeeMode      string `json:"fee_mode"`  // uniform(預設，全場統一用 EntryFee) | per_group(各分組可獨立定價，見 RaceGroup.EntryFeeCents)
 	// DisplayFeeCents 計算欄位（讀取時由 SQL 算好填入，見 repository.go selectCols）：「列表/摘要情境」
 	// （尚未選定分組）該顯示的報名費。uniform 模式＝EntryFee；per_group 模式＝各組有效報名費
 	// （COALESCE(組獨立價, 預設價)）的最小值，賽事沒有任何分組則回退 EntryFee。前端 per_group 顯示
 	// 「NT$ {此值} 起」。純 Go 對照邏輯見 MinGroupFeeCents，供單元測試驗證正確性。
-	DisplayFeeCents int `json:"display_fee_cents"`
+	DisplayFeeCents  int                          `json:"display_fee_cents"`
 	RegStart         *time.Time                   `json:"registration_start,omitempty"` // 報名開始
 	RegEnd           *time.Time                   `json:"registration_end,omitempty"`   // 報名截止
 	StartDate        time.Time                    `json:"start_date"`                   // 競賽時間 起
@@ -545,8 +545,12 @@ type RegisterRequest struct {
 	Addons      []AddonSelection `json:"addons"`
 	Participant ParticipantInfo  `json:"participant"`
 	PromoCode   string           `json:"promo_code,omitempty"`
-	UseCoupon   bool             `json:"use_coupon,omitempty"` // 使用 VIP 活動優惠券（面額見系統設定）；與 promo_code 擇一
-	Invoice     *InvoiceInfo     `json:"invoice,omitempty"`    // 發票資訊；未帶=預設 personal 且全空（雲端發票存證），不影響報名成功
+	UseCoupon   bool             `json:"use_coupon,omitempty"` // 使用 VIP 活動優惠券（面額見系統設定）；與 promo_code、coupon_reward_id 三擇一
+	// CouponRewardID 活動優惠券（migration 138，從活動獎勵抽獎所得，見 internal/activityreward）：指定
+	// user_rewards.id 一張未用未過期的券折抵報名費；與 promo_code、use_coupon 三者互斥，同帶多個一律擋
+	// （見 Service.Register 的 ErrDiscountConflict 前置守門）。
+	CouponRewardID string       `json:"coupon_reward_id,omitempty"`
+	Invoice        *InvoiceInfo `json:"invoice,omitempty"` // 發票資訊；未帶=預設 personal 且全空（雲端發票存證），不影響報名成功
 }
 
 // PromoQuote 優惠序號折抵預覽（報名前即時試算）

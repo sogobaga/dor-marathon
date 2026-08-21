@@ -42,11 +42,11 @@ type Execer interface {
 // 「給不給獎」的機率；中了之後才在 Denominations（商家旗下序號組清單，各自帶抽獎權重）中，只在
 // 「目前有庫存」的面額裡依權重抽一組實際配發（見 roll.go grantSerialTwoLayer）。
 type RewardItem struct {
-	Type   string `json:"type"`            // exp|dp|gp|vip|serial
-	Min    int    `json:"min,omitempty"`   // exp/dp/gp：均勻隨機區間下界（含）
-	Max    int    `json:"max,omitempty"`   // exp/dp/gp：均勻隨機區間上界（含）
-	Days   int    `json:"days,omitempty"`  // vip：固定天數
-	ProbBP int    `json:"prob_bp"`         // 中獎機率，萬分位（10000=100%）；serial：該商家「給不給獎」的機率
+	Type   string `json:"type"`           // exp|dp|gp|vip|serial
+	Min    int    `json:"min,omitempty"`  // exp/dp/gp：均勻隨機區間下界（含）
+	Max    int    `json:"max,omitempty"`  // exp/dp/gp：均勻隨機區間上界（含）
+	Days   int    `json:"days,omitempty"` // vip：固定天數
+	ProbBP int    `json:"prob_bp"`        // 中獎機率，萬分位（10000=100%）；serial：該商家「給不給獎」的機率
 
 	// SerialGroupID 【已過時，僅供向後相容】serial 類舊格式的單一序號組。新設定一律用 MerchantID +
 	// Denominations；只有舊資料 Denominations 為空時，validDenominations() 才會把這個欄位當成
@@ -58,6 +58,11 @@ type RewardItem struct {
 	// Denominations serial 類：該商家旗下可能中獎的序號組與各自的抽獎權重（兩層抽獎第二層，見
 	// grantSerialTwoLayer）；Weight<=0 視為不列入抽獎池。
 	Denominations []RewardDenom `json:"denominations,omitempty"`
+
+	// CouponDefID coupon 類（migration 138 活動優惠券）：指定券種（event_coupon_defs.id）。中獎時讀取
+	// 該券種當下設定（面額/期限模式），denormalize 寫入 user_rewards，之後即使券種被改名/改面額也不影響
+	// 已發出的券（見 roll.go grantCoupon）。
+	CouponDefID string `json:"coupon_def_id,omitempty"`
 }
 
 // RewardDenom 商家旗下一個序號組（面額）在兩層抽獎第二層的加權設定。
@@ -99,10 +104,37 @@ type RewardConfig struct {
 // （P2 先把資料回出來，P3 彈窗才用）。
 type GrantedReward struct {
 	Type      string `json:"type"`
-	Amount    int    `json:"amount,omitempty"`     // exp/dp/gp
+	Amount    int    `json:"amount,omitempty"`     // exp/dp/gp 數量；coupon 為面額（分）
 	Days      int    `json:"days,omitempty"`       // vip
-	ItemLabel string `json:"item_label,omitempty"` // serial
+	ItemLabel string `json:"item_label,omitempty"` // serial 品項名稱；coupon 為券種名稱
 	Code      string `json:"code,omitempty"`       // serial
+}
+
+// CouponDef 活動優惠券券種（migration 138 活動優惠券，後台管理）：名稱＋面額＋使用期限（兩種模式擇一：
+// fixed=指定到期日｜days=獲得後 N 天內可用）。IssuedCount/UsedCount 為列表統計（COUNT user_rewards），
+// 由 Repository.ListCouponDefs 一併查出，非資料表實際欄位。
+type CouponDef struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	AmountCents int        `json:"amount_cents"`
+	ExpiryMode  string     `json:"expiry_mode"` // fixed | days
+	ExpiresAt   *time.Time `json:"expires_at"`
+	ValidDays   *int       `json:"valid_days"`
+	Enabled     bool       `json:"enabled"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	IssuedCount int        `json:"issued_count"` // 統計：已發放張數
+	UsedCount   int        `json:"used_count"`   // 統計：已使用張數
+}
+
+// CouponDefInput 建立/更新券種的輸入。
+type CouponDefInput struct {
+	Name        string  `json:"name"`
+	AmountCents int     `json:"amount_cents"`
+	ExpiryMode  string  `json:"expiry_mode"`
+	ExpiresAt   *string `json:"expires_at"` // RFC3339；expiry_mode=fixed 時必填
+	ValidDays   *int    `json:"valid_days"` // expiry_mode=days 時必填且 >0
+	Enabled     bool    `json:"enabled"`
 }
 
 // Template 全域即時獎勵模板：建立/編輯挑戰賽事時可套用進 reward_config 再微調（套用後即與模板脫鉤，
