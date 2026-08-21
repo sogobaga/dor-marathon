@@ -283,6 +283,11 @@ function RaceCard({
     : [...(ongoing ? [DISPLAY_STATUS.racing] : []), ...(regOpen ? [DISPLAY_STATUS.registering] : [])]
   if (badges.length === 0) badges.push(s)
   const canRegister = race.can_register
+  // 只有「進行中」(pending/paid未完成) 的報名才算「已報名」；completed/expired/cancelled 的歷史報名
+  // （後端 GetUserRegistrations 為個人挑戰模式回傳最近一筆歷史狀態，見 repository.go 註解）應回到可
+  // 再報名的按鈕——與 RaceDetailScreen/RegistrationScreen 的 inProgress 判斷一致（取消報名核准結算後
+  // registrations.status→'cancelled'，這裡才會正確切回「立即報名」；取消審核中 status 未變不受影響）。
+  const regActive = !!reg && (reg.status === 'pending' || reg.status === 'paid')
   const stop = (e: React.MouseEvent) => e.stopPropagation()
   return (
     <div
@@ -336,8 +341,8 @@ function RaceCard({
               {race.display_fee_cents > 0 ? fmtFee(race.display_fee_cents) : '免費'}{race.fee_mode === 'per_group' ? ' 起' : ''}
             </b>
           </span>
-          {reg
-            ? (reg.status === 'paid'
+          {regActive
+            ? (reg!.status === 'paid'
                 ? <span style={{ ...ctaLink, cursor: 'default' }}>報名完成 ›</span>
                 : <button onClick={(e) => { stop(e); onPay?.(race) }} style={ctaLink}>前往繳費 ›</button>)
             : (canRegister && onRegister
