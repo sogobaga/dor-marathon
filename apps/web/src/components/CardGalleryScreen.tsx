@@ -91,10 +91,10 @@ export default function CardGalleryScreen({ onBack, focusCardId }: { onBack: () 
                         </button>
                       )
                     ) : b ? (
-                      // 未收集（但存在此關主）→ 灰底 ？
+                      // 未收集（但存在此關主）→ 灰底 ？（統一不顯示難度星星——難度 0 星的卡沒星、
+                      // 其餘有星，看起來不一致；完成關主挑戰後才揭示卡片圖，2026-08-22 使用者要求）
                       <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'var(--bg-2)' }}>
                         <span style={{ fontSize: 34, fontWeight: 900, color: 'var(--tx-faint)' }}>？</span>
-                        <span style={{ fontSize: 9.5, color: 'var(--tx-faint)', letterSpacing: 1 }}>{'★'.repeat(Math.max(0, b.difficulty_stars))}</span>
                       </div>
                     ) : (
                       // 空位（補滿 3×3）
