@@ -448,6 +448,7 @@ func (h *BindHandler) handleRenewalChargeUnknown(ctx context.Context, attemptID 
 	}
 	log.Error().Str("user_id", c.UserID).Str("subscription_id", c.SubscriptionID).Str("reason", errMsg).
 		Msg("vip renewal: CreatePayment transport/unknown error — charge status unknown, needs manual reconciliation (order left pending; next unique-violation hit will attempt QueryTrade convergence, see convergeStuckPendingOrder)")
+	notify.Alert("vip_settle_fail", "VIP續約付款狀態未明", fmt.Sprintf("subscription_id=%s reason=%s", c.SubscriptionID, errMsg))
 	// 對抗式審查修正 [1][6]：舊版這裡完全不通知使用者——使用者全程無感，直到某天訂閱被終結才發現。
 	// 這個分支發生當下我方還不知道錢到底扣了沒，不能講「失敗」也不能講「成功」，只能誠實告知「確認中」。
 	level, title, body := renewalUnknownMail()
@@ -591,6 +592,7 @@ func (h *BindHandler) convergeRenewalPaid(ctx context.Context, p *pendingRenewal
 	if err != nil {
 		log.Error().Err(err).Str("order_id", p.OrderID).Str("attempt_id", p.AttemptID).
 			Msg("vip renewal: QueryTrade convergence found paid, but settleVipRenewal failed — needs manual reconciliation")
+		notify.Alert("vip_settle_fail", "VIP續約結算失敗", fmt.Sprintf("order_id=%s attempt_id=%s error=%v", p.OrderID, p.AttemptID, err))
 		return
 	}
 	if periodEnd.IsZero() || userID == "" {
@@ -672,6 +674,7 @@ func (h *BindHandler) convergeStuckPendingOrder(ctx context.Context, c renewalCa
 		h.markRenewalAttemptFailed(ctx, attemptID, "", msg)
 		log.Error().Str("user_id", c.UserID).Str("subscription_id", c.SubscriptionID).Str("order_id", pending.OrderID).
 			Msg("vip renewal: QueryTrade convergence query itself failed, stuck order left untouched, needs manual reconciliation")
+		notify.Alert("vip_reconcile_needed", "VIP續約卡住訂單狀態未明", fmt.Sprintf("subscription_id=%s order_id=%s", c.SubscriptionID, pending.OrderID))
 		// 比照 handleRenewalChargeFailure 做同樣的 finalize 判斷與通知（修 [2][6]：舊版這個分支完全
 		// 不終結也不通知，若剛好是第 3 次以上的嘗試，訂閱會無限期卡在「已達重試上限卻從未終結」）。
 		final := rawAttemptNo >= renewalMaxAttempts
@@ -859,6 +862,7 @@ func (h *BindHandler) settleVipRenewal(ctx context.Context, orderID, attemptID s
 		if qErr := h.db.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, orderID).Scan(&st); qErr == nil && st != "paid" {
 			log.Error().Str("order_id", orderID).Str("order_status", st).Str("merchant_trade_no", p.MerchantTradeNo).
 				Msg("settle vip renewal: charge received but order is not settleable — needs manual reconciliation/refund")
+			notify.Alert("vip_reconcile_needed", "VIP續約收款但訂單不可結算", fmt.Sprintf("order_id=%s status=%s trade_no=%s", orderID, st, p.MerchantTradeNo))
 		}
 		return "", time.Time{}, nil
 	}

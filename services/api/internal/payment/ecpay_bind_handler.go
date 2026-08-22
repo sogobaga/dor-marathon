@@ -29,6 +29,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/notify"
 	"github.com/dor/api/internal/vip"
 )
 
@@ -377,6 +378,7 @@ func (h *BindHandler) CompleteBindCard(w http.ResponseWriter, r *http.Request) {
 		Raw:              rawJSON,
 	}); err != nil {
 		log.Error().Err(err).Str("order_id", req.OrderID).Msg("vip bind-card complete: settle failed")
+		notify.Alert("bind_settle_fail", "綁卡付款結算失敗", fmt.Sprintf("order_id=%s error=%v", req.OrderID, err))
 		respondErr(w, http.StatusInternalServerError, "付款已受理但結算失敗，請稍後查詢訂單狀態或聯繫客服")
 		return
 	}
@@ -476,6 +478,7 @@ func (h *BindHandler) Notify(w http.ResponseWriter, r *http.Request) {
 		// 解密失敗＝不可信來源（沒有正確 HashKey/HashIV 不可能產生解得開的 Data）：直接 400，
 		// 不視為「封包合法」，不回 1|OK。
 		log.Warn().Err(err).Msg("ecpay bind notify: decrypt failed, refusing (untrusted source)")
+		notify.Alert("ecpay_webhook_bad", "綠界綁卡webhook解密失敗", "可能是攻擊或設定錯（HashKey/HashIV 不符），需檢查")
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -658,6 +661,7 @@ func (h *BindHandler) handleBindWebhookData(ctx context.Context, data bindWebhoo
 		if err != nil {
 			log.Error().Err(err).Str("order_id", tx.OrderID).Str("merchant_trade_no", tradeNo).
 				Msg("ecpay bind webhook: settle vip renewal failed — payment received but not fully applied, needs manual reconciliation")
+			notify.Alert("vip_settle_fail", "VIP續約結算失敗", fmt.Sprintf("order_id=%s trade_no=%s error=%v", tx.OrderID, tradeNo, err))
 			return false
 		}
 		// periodEnd 為零值代表 CAS 冪等 no-op（這筆已經被結算過，通常是排程本身的同步呼叫已先結算，
@@ -687,6 +691,7 @@ func (h *BindHandler) handleBindWebhookData(ctx context.Context, data bindWebhoo
 	}); err != nil {
 		log.Error().Err(err).Str("order_id", tx.OrderID).Str("merchant_trade_no", tradeNo).
 			Msg("ecpay bind webhook: settle failed — payment received but not fully applied, needs manual reconciliation")
+		notify.Alert("bind_settle_fail", "綁卡付款結算失敗", fmt.Sprintf("order_id=%s trade_no=%s error=%v", tx.OrderID, tradeNo, err))
 		return false
 	}
 	return true
@@ -748,6 +753,7 @@ func (h *BindHandler) settleVipBindPayment(ctx context.Context, orderID string, 
 		if qErr := h.db.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, orderID).Scan(&st); qErr == nil && st != "paid" {
 			log.Error().Str("order_id", orderID).Str("order_status", st).Str("merchant_trade_no", p.MerchantTradeNo).
 				Msg("settle vip bind: charge received but order is not settleable — needs manual reconciliation/refund")
+			notify.Alert("bind_reconcile_needed", "綁卡收款但訂單不可結算", fmt.Sprintf("order_id=%s status=%s trade_no=%s", orderID, st, p.MerchantTradeNo))
 		}
 		return nil
 	}

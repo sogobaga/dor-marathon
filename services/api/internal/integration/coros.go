@@ -21,6 +21,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/notify"
 	"github.com/dor/api/internal/stamina"
 )
 
@@ -357,6 +358,7 @@ func (h *CorosHandler) importOne(ctx context.Context, a *corosSportData) ImportR
 	res, err := h.repo.ImportActivity(ctx, na)
 	if err != nil {
 		log.Error().Err(err).Msg("coros import activity failed")
+		notify.Alert("coros_webhook_err", "COROS Webhook 處理錯誤", fmt.Sprintf("import activity failed: %v", err))
 		return ImportResult{Status: "error"}
 	}
 	// stamina.ChargeSP 維持「僅新匯入」才扣血：SP 是扣血動作，同一趟不能被扣兩次（比照 strava/terra）。
@@ -368,6 +370,7 @@ func (h *CorosHandler) importOne(ctx context.Context, a *corosSportData) ImportR
 	if (res.Status == "inserted" || (res.Status == "duplicate" && res.Reason == "multi_device_duplicate")) && na.DistanceKm > 0 {
 		if err := h.repo.AwardMileageExp(ctx, res.ID, na.UserID); err != nil {
 			log.Error().Err(err).Str("activity", res.ID).Msg("coros award mileage exp failed")
+			notify.Alert("coros_webhook_err", "COROS Webhook 處理錯誤", fmt.Sprintf("activity=%s award mileage exp failed: %v", res.ID, err))
 		}
 	}
 	return res

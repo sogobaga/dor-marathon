@@ -272,12 +272,20 @@ func main() {
 	// ErrEmailNotConfigured，後台顯示「Email 服務未設定」（migration 141）。
 	emailBroadcastHandler := emailbroadcast.NewHandler(pool, cfg.JWTSecret, cfg.FrontendURL)
 
+	// Telegram 告警：未設 TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID 時 notify.Alert 靜默 no-op，
+	// 正式環境會收不到關鍵錯誤告警（5xx激增/panic/金流結算失敗等），部署時務必記得設定。
+	if os.Getenv("TELEGRAM_BOT_TOKEN") == "" {
+		log.Warn().Msg("TG 告警未設定（TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID 未設），正式環境建議設定以接收關鍵錯誤告警")
+	}
+
 	// --- 路由 ---
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
 	r.Use(chimiddleware.Recoverer)
+	// panic 告警：需掛在 Recoverer 之後（更內層），才能在 Recoverer 吞掉 panic 之前先攔截到並送出 Telegram。
+	r.Use(middleware.PanicAlert)
 	r.Use(chimiddleware.Timeout(30 * time.Second))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
@@ -293,6 +301,8 @@ func main() {
 		"/api/v1/admin/images", "/api/v1/profile/avatar",
 		"/api/v1/admin/personal-tasks/import", // xlsx 轉 JSON 整包匯入，見 middleware.MaxBodyBytes 註解
 	))
+	// 5xx 聚合告警：短時間內大量 5xx 觸發一次 Telegram（避免每次 5xx 各自洗版）。
+	r.Use(middleware.FiveXXAlert)
 
 	// Health check：不碰 DB（避免外部監控/部署探針每次喚醒 Neon compute）。DB 就緒檢查改走 /health/db。
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {

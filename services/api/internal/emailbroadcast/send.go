@@ -108,6 +108,9 @@ func broadcastStatus(sent, failed int) string {
 // finishBroadcast 寫回最終狀態（見 broadcastStatus）。
 func (h *Handler) finishBroadcast(id string, sent, failed int, errNote string) {
 	status := broadcastStatus(sent, failed)
+	if status == "failed" {
+		notify.Alert("mail_broadcast_fail", "站內信廣播整體失敗", fmt.Sprintf("broadcast_id=%s sent=%d failed=%d", id, sent, failed))
+	}
 	if _, err := h.db.Exec(context.Background(), `
 		UPDATE email_broadcasts SET status=$1, sent_count=$2, fail_count=$3, error_note=$4, finished_at=NOW()
 		WHERE id=$5`, status, sent, failed, errNote, id); err != nil {

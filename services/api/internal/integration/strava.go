@@ -20,6 +20,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/notify"
 	"github.com/dor/api/internal/stamina"
 )
 
@@ -318,10 +319,12 @@ func (h *StravaHandler) handleDeauthorizeEvent(ownerID int64) {
 		}
 		if err := h.repo.Delete(ctx, conn.UserID, providerStrava); err != nil {
 			log.Error().Err(err).Str("user", conn.UserID).Msg("strava deauth webhook: delete connection failed")
+			notify.Alert("strava_webhook_err", "Strava Webhook 處理錯誤", fmt.Sprintf("delete connection failed: user_id=%s error=%v", conn.UserID, err))
 			continue
 		}
 		if err := h.repo.DeleteProviderActivities(ctx, conn.UserID, providerStrava); err != nil {
 			log.Error().Err(err).Str("user", conn.UserID).Msg("strava deauth webhook: delete imported activities failed")
+			notify.Alert("strava_webhook_err", "Strava Webhook 處理錯誤", fmt.Sprintf("delete imported activities failed: user_id=%s error=%v", conn.UserID, err))
 		}
 	}
 }
@@ -390,11 +393,13 @@ func (h *StravaHandler) handleActivityEvent(ownerID, activityID int64) {
 	access, err := h.tokenForUser(ctx, conn)
 	if err != nil {
 		log.Error().Err(err).Msg("strava token refresh failed")
+		notify.Alert("strava_webhook_err", "Strava Webhook 處理錯誤", fmt.Sprintf("token refresh failed: %v", err))
 		return
 	}
 	act, err := h.getActivity(ctx, access, activityID)
 	if err != nil {
 		log.Error().Err(err).Int64("activity", activityID).Msg("strava get activity failed")
+		notify.Alert("strava_webhook_err", "Strava Webhook 處理錯誤", fmt.Sprintf("activity_id=%d error=%v", activityID, err))
 		return
 	}
 	if strconv.FormatInt(act.Athlete.ID, 10) != conn.ProviderUserID {
@@ -589,6 +594,7 @@ func (h *StravaHandler) backfill(conn *Connection) {
 	res, err := h.syncRecent(ctx, conn)
 	if err != nil {
 		log.Error().Err(err).Msg("strava backfill failed")
+		notify.Alert("strava_webhook_err", "Strava Webhook 處理錯誤", fmt.Sprintf("backfill failed: %v", err))
 		return
 	}
 	log.Info().Int("imported", res.Imported).Int("dup", res.Duplicates).Str("user", conn.UserID).Msg("strava backfill done")
@@ -648,6 +654,7 @@ func (h *StravaHandler) importOne(ctx context.Context, userID string, floor time
 	res, err := h.repo.ImportActivity(ctx, na)
 	if err != nil {
 		log.Error().Err(err).Msg("strava import activity failed")
+		notify.Alert("strava_webhook_err", "Strava Webhook 處理錯誤", fmt.Sprintf("import activity failed: %v", err))
 		return ImportResult{Status: "error"}
 	}
 	// stamina.ChargeSP 維持「僅新匯入」才扣血：SP 是扣血動作，同一趟不能被扣兩次。
@@ -662,6 +669,7 @@ func (h *StravaHandler) importOne(ctx context.Context, userID string, floor time
 	if (res.Status == "inserted" || (res.Status == "duplicate" && res.Reason == "multi_device_duplicate")) && na.DistanceKm > 0 {
 		if err := h.repo.AwardMileageExp(ctx, res.ID, na.UserID); err != nil {
 			log.Error().Err(err).Str("activity", res.ID).Msg("strava award mileage exp failed")
+			notify.Alert("strava_webhook_err", "Strava Webhook 處理錯誤", fmt.Sprintf("activity=%s award mileage exp failed: %v", res.ID, err))
 		}
 	}
 	return res
