@@ -31,11 +31,16 @@ for r in main_rows:
         "lng": float(r[7]) if r[7] not in (None, "") else None,
         "radius": int(r[13]) if r[13] not in (None, "") else None,
     }
+# ⚠️ 關主名的權威來源＝主表「打卡地點整合V2V3」的「關主名」欄（使用者維護的主檔）；
+# 「關主挑戰對話」表的關主名欄曾出現與主表不一致的殘留（DOR-TRK-NTP-011 竹狐 vs 小月，2026-08-22
+# 誤用對話表導致誤改一筆），對話表僅供對話內容參考，名稱/性別/年齡一律以主表為準。
+hdr = [str(c) for c in next(wb["打卡地點整合V2V3"].iter_rows(max_row=1, values_only=True))]
+qi, gi, ai = hdr.index("關主名"), hdr.index("性別"), hdr.index("年齡")
 talk = {}
-for r in talk_rows:
+for r in main_rows:
     if not r[0]:
         continue
-    talk[str(r[0]).strip()] = {"name": str(r[6] or "").strip(), "gender": str(r[7] or "").strip(), "age": r[8]}
+    talk[str(r[0]).strip()] = {"name": str(r[qi] or "").strip(), "gender": str(r[gi] or "").strip(), "age": r[ai]}
 
 print(f"xlsx 主表 {len(main)} 筆 / 對話表 {len(talk)} 筆")
 
