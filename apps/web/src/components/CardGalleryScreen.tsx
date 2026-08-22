@@ -36,9 +36,12 @@ export default function CardGalleryScreen({ onBack, focusCardId }: { onBack: () 
   }, [bosses, focusCardId])
 
   const collected = bosses ? bosses.filter((b) => b.card_obtained).length : 0
-  const pages = bosses ? Math.max(1, Math.ceil(bosses.length / PER_PAGE)) : 1
+  // 「已收集」篩選：ON=只顯示已收集的卡片、OFF=顯示全部（含未收集？格）。切換時回到第一頁避免頁碼溢位。
+  const [onlyCollected, setOnlyCollected] = useState(false)
+  const shown = bosses ? (onlyCollected ? bosses.filter((b) => b.card_obtained) : bosses) : null
+  const pages = shown ? Math.max(1, Math.ceil(shown.length / PER_PAGE)) : 1
   const cur = page >= pages ? 0 : page
-  const slots: (ExploreGalleryCard | null)[] = bosses ? bosses.slice(cur * PER_PAGE, cur * PER_PAGE + PER_PAGE) : []
+  const slots: (ExploreGalleryCard | null)[] = shown ? shown.slice(cur * PER_PAGE, cur * PER_PAGE + PER_PAGE) : []
   while (slots.length < PER_PAGE) slots.push(null) // 補滿 3×3
 
   return (
@@ -59,9 +62,25 @@ export default function CardGalleryScreen({ onBack, focusCardId }: { onBack: () 
           <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
         ) : (
           <>
-            <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '2px 2px 12px', lineHeight: 1.7 }}>
-              到城市探索中進行打卡任務，可以收集意想不到的卡片唷～。
-            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '2px 2px 12px' }}>
+              <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: 0, lineHeight: 1.7, flex: 1 }}>
+                到城市探索中進行打卡任務，可以收集意想不到的卡片唷～。
+              </p>
+              {/* 已收集篩選 toggle：ON 只看已收集 / OFF 看全部 */}
+              <button
+                onClick={() => { setOnlyCollected((v) => !v); setPage(0) }}
+                style={{
+                  flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 999,
+                  border: `1px solid ${onlyCollected ? 'var(--gold)' : 'var(--line-2)'}`, cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                  background: onlyCollected ? 'var(--gold)' : 'transparent', color: onlyCollected ? '#fff' : 'var(--tx-dim)',
+                }}
+              >
+                已收集 {onlyCollected ? 'ON' : 'OFF'}
+              </button>
+            </div>
+            {onlyCollected && shown && shown.length === 0 && (
+              <div style={{ fontSize: 12.5, color: 'var(--tx-faint)', padding: '18px 2px' }}>還沒有收集到卡片——去城市探索挑戰關主吧！</div>
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
               {slots.map((b, i) => {
                 const unlocking = !!b && b.id === unlockingId
