@@ -359,12 +359,12 @@ func claimSerialsFromGroup(ctx context.Context, db Execer, userID, sourceType, s
 	// 避免因異常資料完全不發獎。序號組不存在（如已被刪除）→ 視為跳過，不算錯誤。
 	var grantCount int
 	var itemLabel, merchantName, usageNote, iconURL, description string
-	var validUntil *time.Time
+	var validFrom, validUntil *time.Time
 	err := db.QueryRow(ctx, `
 		SELECT g.grant_count, COALESCE(g.item_label,''), COALESCE(m.name,''), COALESCE(g.usage_note,''),
-		       COALESCE(g.icon_url,''), COALESCE(g.description,''), g.valid_until
+		       COALESCE(g.icon_url,''), COALESCE(g.description,''), g.valid_from, g.valid_until
 		FROM reward_serial_groups g LEFT JOIN reward_merchants m ON m.id = g.merchant_id
-		WHERE g.id = $1`, groupID).Scan(&grantCount, &itemLabel, &merchantName, &usageNote, &iconURL, &description, &validUntil)
+		WHERE g.id = $1`, groupID).Scan(&grantCount, &itemLabel, &merchantName, &usageNote, &iconURL, &description, &validFrom, &validUntil)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil // 序號組不存在：跳過，不視為錯誤
 	}
@@ -406,10 +406,10 @@ func claimSerialsFromGroup(ctx context.Context, db Execer, userID, sourceType, s
 		if _, err := db.Exec(ctx, `
 			INSERT INTO user_rewards
 				(user_id, source_type, source_race_id, source_reg_id, serial_id, group_id,
-				 code, link, item_label, merchant_name, usage_note, icon_url, description, valid_until)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+				 code, link, item_label, merchant_name, usage_note, icon_url, description, valid_from, valid_until)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 			userID, sourceType, raceIDArg, regIDArg, serialID, groupID,
-			code, link, itemLabel, merchantName, usageNote, iconURL, description, validUntil,
+			code, link, itemLabel, merchantName, usageNote, iconURL, description, validFrom, validUntil,
 		); err != nil {
 			return granted, fmt.Errorf("insert user_reward: %w", err)
 		}

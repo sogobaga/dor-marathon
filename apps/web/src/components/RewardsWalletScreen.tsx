@@ -18,6 +18,22 @@ function fmtDateTime(iso?: string) {
   return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+// 只取月/日（不含年份與時間），用於「有效期間：M/D ~ M/D」區間顯示（migration 139 valid_from），
+// 避免 valid_from~valid_until 兩個完整時間戳並列過長。iso 空或無效日期回傳空字串。
+function fmtMD(iso?: string) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+// 「尚未開始」＝有設定開始時間、且開始時間還沒到、且尚未使用（已使用者不受開始時間擋，避免序號組事後
+// 被改成有開始時間反而讓舊資料的已使用狀態顯示矛盾）。只有序號類（migration 139 valid_from）會有值，
+// coupon 類此欄位恆為 undefined 不受影響。
+function isNotStarted(reward: UserReward): boolean {
+  return !reward.used && !!reward.valid_from && Date.now() < new Date(reward.valid_from).getTime()
+}
+
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
 
 type SortedReward = UserReward & { urgent?: 'soon' | 'expired' }
@@ -149,7 +165,10 @@ function RewardCard({ reward, onDetail }: { reward: SortedReward; onDetail: () =
               {reward.used ? `已使用${reward.used_at ? `（${fmtDateTime(reward.used_at)}）` : ''}` : urgent === 'expired' ? '已過期' : '可使用'}
             </span>
           ) : (
-            <span style={{ color: reward.used ? 'var(--tx-faint)' : 'var(--fug)', fontWeight: 700 }}>{reward.used ? '已使用' : '未使用'}</span>
+            // 序號類多一種「尚未開始」（migration 139 valid_from，區別於可使用的正向色，用中性色）。
+            <span style={{ color: reward.used ? 'var(--tx-faint)' : isNotStarted(reward) ? 'var(--tx-dim)' : 'var(--fug)', fontWeight: 700 }}>
+              {reward.used ? '已使用' : isNotStarted(reward) ? '尚未開始' : '未使用'}
+            </span>
           )}
         </div>
       </div>
@@ -192,8 +211,14 @@ function RewardDetailModal({ reward, onClose, onMarkUsed }: { reward: UserReward
         )}
 
         <div style={infoRow}>
-          <span style={infoLabel}>使用期限</span>
-          <span style={infoVal}>{reward.valid_until ? fmtDateTime(reward.valid_until) : '無期限'}</span>
+          {/* 有 valid_from（migration 139，序號類專用）時改顯示區段「有效期間：M/D ~ M/D」；
+              沒有時維持原本單一「使用期限」的完整日期時間顯示，行為不變。 */}
+          <span style={infoLabel}>{reward.valid_from ? '有效期間' : '使用期限'}</span>
+          <span style={infoVal}>
+            {reward.valid_from
+              ? `${fmtMD(reward.valid_from)} ~ ${reward.valid_until ? fmtMD(reward.valid_until) : '無期限'}`
+              : reward.valid_until ? fmtDateTime(reward.valid_until) : '無期限'}
+          </span>
         </div>
 
         {reward.usage_note && (
@@ -224,18 +249,28 @@ function RewardDetailModal({ reward, onClose, onMarkUsed }: { reward: UserReward
 
         <div style={infoRow}>
           <span style={infoLabel}>使用狀態</span>
-          <span style={{ ...infoVal, color: reward.used ? 'var(--tx-dim)' : 'var(--fug)' }}>
+          <span style={{ ...infoVal, color: reward.used ? 'var(--tx-dim)' : isNotStarted(reward) ? 'var(--tx-dim)' : 'var(--fug)' }}>
             {reward.used
               ? `已使用${reward.used_at ? `（${fmtDateTime(reward.used_at)}）` : ''}`
-              : reward.kind === 'coupon' && reward.valid_until && new Date(reward.valid_until).getTime() < Date.now()
-                ? '已過期'
-                : reward.kind === 'coupon' ? '可使用' : '未使用'}
+              : isNotStarted(reward)
+                ? '尚未開始'
+                : reward.kind === 'coupon' && reward.valid_until && new Date(reward.valid_until).getTime() < Date.now()
+                  ? '已過期'
+                  : reward.kind === 'coupon' ? '可使用' : '未使用'}
           </span>
         </div>
 
-        {/* coupon 類不提供手動標記已使用：券由報名折抵流程自動核銷（CAS），不是玩家自行回報 */}
+        {/* coupon 類不提供手動標記已使用：券由報名折抵流程自動核銷（CAS），不是玩家自行回報。
+            序號類尚未開始（migration 139 valid_from）時 disable，避免點了才被後端 400 擋下；
+            後端 MarkRewardUsed 同步擋（見 internal/profile/rewards.go），前端只是提早防呆。 */}
         {!reward.used && reward.kind !== 'coupon' && (
-          <button onClick={onMarkUsed} style={{ ...ghostFullBtn, marginTop: 14 }}>標記為已使用</button>
+          <button
+            onClick={onMarkUsed}
+            disabled={isNotStarted(reward)}
+            style={{ ...ghostFullBtn, marginTop: 14, opacity: isNotStarted(reward) ? 0.5 : 1, cursor: isNotStarted(reward) ? 'not-allowed' : 'pointer' }}
+          >
+            {isNotStarted(reward) ? '尚未開始' : '標記為已使用'}
+          </button>
         )}
       </div>
     </div>

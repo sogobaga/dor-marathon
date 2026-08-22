@@ -67,6 +67,7 @@ export interface RewardItem {
   merchant_id?: string      // serial：指定商家（兩層抽獎第一層）
   denominations?: RewardDenom[] // serial：該商家旗下序號組與抽獎權重（兩層抽獎第二層）
   coupon_def_id?: string    // coupon（活動優惠券，migration 138）：指定券種
+  hidden?: boolean          // 前台「活動獎勵」預覽頁籤是否隱藏此項目（true=隱藏，發獎不受影響）
 }
 export interface RewardConfig {
   items: RewardItem[]
@@ -135,6 +136,7 @@ export interface UserReward {
   description?: string
   coupon_def_id?: string // kind='coupon' 專用
   amount_cents?: number  // kind='coupon' 專用：面額（分）
+  valid_from?: string
   valid_until?: string
   used: boolean
   used_at?: string
@@ -2978,6 +2980,7 @@ export interface RewardSerialGroup {
   name: string
   item_label: string
   is_line_point: boolean
+  valid_from: string | null
   valid_until: string | null
   use_limit_type: RewardUseLimitType
   use_limit_count: number | null
@@ -2999,6 +3002,7 @@ export interface RewardSerialGroupWriteBody {
   name: string
   item_label: string
   is_line_point: boolean
+  valid_from: string | null // RFC3339；null=即刻可用
   valid_until: string | null // RFC3339；null=無期限
   use_limit_type: RewardUseLimitType
   use_limit_count: number | null

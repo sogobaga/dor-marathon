@@ -52,6 +52,12 @@ func (s *Service) GetRewardPreview(ctx context.Context, raceID string) ([]Reward
 	var couponDefIDs []string
 	for i := range r.RewardConfig.Items {
 		item := &r.RewardConfig.Items[i]
+		// Hidden＝管理員設定的「驚喜獎勵」（見 activityreward.RewardItem.Hidden 註解）：只影響這支
+		// 公開預覽端點的可見清單，不進 groupIDs/couponDefIDs/out；RollAndGrant 抽獎/發獎完全不看這個
+		// 欄位、不受影響，玩家一樣會照常抽中拿到，只是事前在「活動獎勵」頁籤看不到會有這個項目。
+		if item.Hidden {
+			continue
+		}
 		switch item.Type {
 		case "serial":
 			// 兩層抽獎的第二層面額（見 activityreward.RewardItem 註解）：只取 group id 去查展示欄位，

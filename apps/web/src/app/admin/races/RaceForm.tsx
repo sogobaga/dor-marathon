@@ -1531,6 +1531,25 @@ function RewardItemRow({ item, groups, couponDefs, onChange, onRemove }: {
           />
         </Field>
       </Row>
+      {/* 前台顯示控制（見後端 activityreward.RewardItem.Hidden）：隱藏＝不出現在前台
+          「活動獎勵」預覽頁籤，做成「驚喜獎勵」，但 RollAndGrant 抽獎/發獎完全不受影響、照常進行。
+          checked＝顯示狀態（語意與資料欄位 hidden 相反，符合管理員直覺：勾選＝前台看得到）。 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tx)' }}>
+          <input type="checkbox" checked={!item.hidden} onChange={(e) => onChange({ hidden: !e.target.checked })} />
+          前台顯示
+        </label>
+        {item.hidden && (
+          <span
+            style={{
+              fontSize: 11, color: 'var(--tx-dim)', background: 'var(--bg-2)',
+              border: '1px solid var(--line-2)', borderRadius: 999, padding: '2px 8px',
+            }}
+          >
+            🙈 隱藏（驚喜獎勵）
+          </span>
+        )}
+      </div>
       {(item.type === 'exp' || item.type === 'dp' || item.type === 'gp') && (
         <Row>
           <Field label="數量下限">

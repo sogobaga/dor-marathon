@@ -31,6 +31,7 @@ type UserReward struct {
 	Description  string     `json:"description,omitempty"`
 	CouponDefID  string     `json:"coupon_def_id,omitempty"` // kind=coupon 專用
 	AmountCents  *int       `json:"amount_cents,omitempty"`  // kind=coupon 專用：面額
+	ValidFrom    *time.Time `json:"valid_from,omitempty"`
 	ValidUntil   *time.Time `json:"valid_until,omitempty"`
 	Used         bool       `json:"used"`
 	UsedAt       *time.Time `json:"used_at,omitempty"`
@@ -49,7 +50,7 @@ func (h *Handler) Rewards(w http.ResponseWriter, r *http.Request) {
 		SELECT id, source_type, COALESCE(source_race_id::text,''), COALESCE(source_reg_id::text,''), kind,
 		       COALESCE(code,''), COALESCE(link,''), COALESCE(item_label,''), COALESCE(merchant_name,''),
 		       COALESCE(usage_note,''), COALESCE(icon_url,''), COALESCE(description,''),
-		       COALESCE(coupon_def_id::text,''), amount_cents, valid_until,
+		       COALESCE(coupon_def_id::text,''), amount_cents, valid_from, valid_until,
 		       used, used_at, obtained_at
 		FROM user_rewards
 		WHERE user_id=$1
@@ -64,7 +65,7 @@ func (h *Handler) Rewards(w http.ResponseWriter, r *http.Request) {
 		var rr UserReward
 		if err := rows.Scan(&rr.ID, &rr.SourceType, &rr.SourceRaceID, &rr.SourceRegID, &rr.Kind,
 			&rr.Code, &rr.Link, &rr.ItemLabel, &rr.MerchantName, &rr.UsageNote, &rr.IconURL, &rr.Description,
-			&rr.CouponDefID, &rr.AmountCents, &rr.ValidUntil, &rr.Used, &rr.UsedAt, &rr.ObtainedAt); err != nil {
+			&rr.CouponDefID, &rr.AmountCents, &rr.ValidFrom, &rr.ValidUntil, &rr.Used, &rr.UsedAt, &rr.ObtainedAt); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -87,6 +88,24 @@ func (h *Handler) MarkRewardUsed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
+
+	// 先查現況：分辨「已使用」（冪等成功回現況，不受開始時間擋）vs「尚未開始」（400）vs「可以標記」，
+	// 才不會讓「序號組事後被改成有開始時間」誤傷已標記過已使用的舊資料。
+	var validFrom *time.Time
+	var usedNow bool
+	if err := h.db.QueryRow(r.Context(),
+		`SELECT valid_from, used FROM user_rewards WHERE id=$1 AND user_id=$2`, id, uid).Scan(&validFrom, &usedNow); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondErr(w, http.StatusNotFound, "reward not found")
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if !usedNow && validFrom != nil && time.Now().Before(*validFrom) {
+		respondErr(w, http.StatusBadRequest, "尚未開始，尚不可標記已使用")
+		return
+	}
 
 	var used bool
 	var usedAt *time.Time

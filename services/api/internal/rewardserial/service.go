@@ -49,17 +49,17 @@ func (s *Service) ListGroups(ctx context.Context) ([]Group, error) {
 	return s.repo.ListGroups(ctx)
 }
 
-// validateGroupInput 驗證並正規化輸入（就地修改 in），回傳解析後的 valid_until。
-func (s *Service) validateGroupInput(in *GroupInput) (*time.Time, error) {
+// validateGroupInput 驗證並正規化輸入（就地修改 in），回傳解析後的 valid_from/valid_until。
+func (s *Service) validateGroupInput(in *GroupInput) (*time.Time, *time.Time, error) {
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" {
-		return nil, fmt.Errorf("%w: 名稱必填", ErrInvalidInput)
+		return nil, nil, fmt.Errorf("%w: 名稱必填", ErrInvalidInput)
 	}
 	if !validUseLimitTypes[in.UseLimitType] {
-		return nil, fmt.Errorf("%w: use_limit_type 需為 single/repeat/unlimited", ErrInvalidInput)
+		return nil, nil, fmt.Errorf("%w: use_limit_type 需為 single/repeat/unlimited", ErrInvalidInput)
 	}
 	if in.UseLimitType == "repeat" && (in.UseLimitCount == nil || *in.UseLimitCount <= 0) {
-		return nil, fmt.Errorf("%w: 選擇「可重複使用」需填使用次數（正整數）", ErrInvalidInput)
+		return nil, nil, fmt.Errorf("%w: 選擇「可重複使用」需填使用次數（正整數）", ErrInvalidInput)
 	}
 	if in.UseLimitType != "repeat" {
 		in.UseLimitCount = nil // single/unlimited 不需要次數，避免殘留舊值
@@ -76,7 +76,7 @@ func (s *Service) validateGroupInput(in *GroupInput) (*time.Time, error) {
 		if mid == "" {
 			in.MerchantID = nil
 		} else if !isValidUUID(mid) {
-			return nil, fmt.Errorf("%w: merchant_id 格式錯誤", ErrInvalidInput)
+			return nil, nil, fmt.Errorf("%w: merchant_id 格式錯誤", ErrInvalidInput)
 		} else {
 			in.MerchantID = &mid
 		}
@@ -86,40 +86,51 @@ func (s *Service) validateGroupInput(in *GroupInput) (*time.Time, error) {
 		in.RaceIDs = nil
 	} else {
 		if len(in.RaceIDs) == 0 {
-			return nil, fmt.Errorf("%w: 未勾選「全部活動」時需至少指定一場活動", ErrInvalidInput)
+			return nil, nil, fmt.Errorf("%w: 未勾選「全部活動」時需至少指定一場活動", ErrInvalidInput)
 		}
 		for _, rid := range in.RaceIDs {
 			if !isValidUUID(rid) {
-				return nil, fmt.Errorf("%w: race_ids 含不合法的活動 ID", ErrInvalidInput)
+				return nil, nil, fmt.Errorf("%w: race_ids 含不合法的活動 ID", ErrInvalidInput)
 			}
 		}
 	}
 
+	var validFrom *time.Time
+	if in.ValidFrom != nil && strings.TrimSpace(*in.ValidFrom) != "" {
+		t, err := time.Parse(time.RFC3339, strings.TrimSpace(*in.ValidFrom))
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: valid_from 格式錯誤（需 RFC3339）", ErrInvalidInput)
+		}
+		validFrom = &t
+	}
 	var validUntil *time.Time
 	if in.ValidUntil != nil && strings.TrimSpace(*in.ValidUntil) != "" {
 		t, err := time.Parse(time.RFC3339, strings.TrimSpace(*in.ValidUntil))
 		if err != nil {
-			return nil, fmt.Errorf("%w: valid_until 格式錯誤（需 RFC3339）", ErrInvalidInput)
+			return nil, nil, fmt.Errorf("%w: valid_until 格式錯誤（需 RFC3339）", ErrInvalidInput)
 		}
 		validUntil = &t
 	}
-	return validUntil, nil
+	if validFrom != nil && validUntil != nil && !validFrom.Before(*validUntil) {
+		return nil, nil, fmt.Errorf("%w: 開始時間需早於使用期限", ErrInvalidInput)
+	}
+	return validFrom, validUntil, nil
 }
 
 func (s *Service) CreateGroup(ctx context.Context, in GroupInput) (*Group, error) {
-	validUntil, err := s.validateGroupInput(&in)
+	validFrom, validUntil, err := s.validateGroupInput(&in)
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.CreateGroup(ctx, in, validUntil)
+	return s.repo.CreateGroup(ctx, in, validFrom, validUntil)
 }
 
 func (s *Service) UpdateGroup(ctx context.Context, id string, in GroupInput) (*Group, error) {
-	validUntil, err := s.validateGroupInput(&in)
+	validFrom, validUntil, err := s.validateGroupInput(&in)
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.UpdateGroup(ctx, id, in, validUntil)
+	return s.repo.UpdateGroup(ctx, id, in, validFrom, validUntil)
 }
 
 func (s *Service) DeleteGroup(ctx context.Context, id string) error {

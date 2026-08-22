@@ -83,14 +83,14 @@ func (r *Repository) DeleteMerchant(ctx context.Context, id string) error {
 // --- 序號組 ---
 
 const groupCols = `g.id, g.merchant_id, COALESCE(m.name,''), g.name, COALESCE(g.item_label,''), g.is_line_point,
-	g.valid_until, g.use_limit_type, g.use_limit_count, g.grant_count, g.applies_all_races,
+	g.valid_from, g.valid_until, g.use_limit_type, g.use_limit_count, g.grant_count, g.applies_all_races,
 	COALESCE(g.usage_note,''), COALESCE(g.icon_url,''), COALESCE(g.description,''), g.created_at`
 
 func scanGroup(row pgx.Row) (*Group, error) {
 	g := &Group{}
 	var merchantID *string
 	err := row.Scan(&g.ID, &merchantID, &g.MerchantName, &g.Name, &g.ItemLabel, &g.IsLinePoint,
-		&g.ValidUntil, &g.UseLimitType, &g.UseLimitCount, &g.GrantCount, &g.AppliesAllRaces,
+		&g.ValidFrom, &g.ValidUntil, &g.UseLimitType, &g.UseLimitCount, &g.GrantCount, &g.AppliesAllRaces,
 		&g.UsageNote, &g.IconURL, &g.Description, &g.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -231,7 +231,7 @@ func (r *Repository) replaceGroupRaces(ctx context.Context, tx pgx.Tx, groupID s
 	return nil
 }
 
-func (r *Repository) CreateGroup(ctx context.Context, in GroupInput, validUntil *time.Time) (*Group, error) {
+func (r *Repository) CreateGroup(ctx context.Context, in GroupInput, validFrom, validUntil *time.Time) (*Group, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -241,11 +241,11 @@ func (r *Repository) CreateGroup(ctx context.Context, in GroupInput, validUntil 
 	var id string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO reward_serial_groups
-			(merchant_id, name, item_label, is_line_point, valid_until, use_limit_type, use_limit_count, grant_count, applies_all_races,
+			(merchant_id, name, item_label, is_line_point, valid_from, valid_until, use_limit_type, use_limit_count, grant_count, applies_all_races,
 			 usage_note, icon_url, description)
-		VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9,NULLIF($10,''),NULLIF($11,''),NULLIF($12,''))
+		VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9,$10,NULLIF($11,''),NULLIF($12,''),NULLIF($13,''))
 		RETURNING id`,
-		in.MerchantID, in.Name, in.ItemLabel, in.IsLinePoint, validUntil, in.UseLimitType, in.UseLimitCount, in.GrantCount, in.AppliesAllRaces,
+		in.MerchantID, in.Name, in.ItemLabel, in.IsLinePoint, validFrom, validUntil, in.UseLimitType, in.UseLimitCount, in.GrantCount, in.AppliesAllRaces,
 		in.UsageNote, in.IconURL, in.Description).
 		Scan(&id)
 	if err != nil {
@@ -262,7 +262,7 @@ func (r *Repository) CreateGroup(ctx context.Context, in GroupInput, validUntil 
 	return r.GetGroup(ctx, id)
 }
 
-func (r *Repository) UpdateGroup(ctx context.Context, id string, in GroupInput, validUntil *time.Time) (*Group, error) {
+func (r *Repository) UpdateGroup(ctx context.Context, id string, in GroupInput, validFrom, validUntil *time.Time) (*Group, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -271,11 +271,11 @@ func (r *Repository) UpdateGroup(ctx context.Context, id string, in GroupInput, 
 
 	ct, err := tx.Exec(ctx, `
 		UPDATE reward_serial_groups SET
-			merchant_id=$1, name=$2, item_label=NULLIF($3,''), is_line_point=$4, valid_until=$5,
-			use_limit_type=$6, use_limit_count=$7, grant_count=$8, applies_all_races=$9,
-			usage_note=NULLIF($10,''), icon_url=NULLIF($11,''), description=NULLIF($12,'')
-		WHERE id=$13`,
-		in.MerchantID, in.Name, in.ItemLabel, in.IsLinePoint, validUntil,
+			merchant_id=$1, name=$2, item_label=NULLIF($3,''), is_line_point=$4, valid_from=$5, valid_until=$6,
+			use_limit_type=$7, use_limit_count=$8, grant_count=$9, applies_all_races=$10,
+			usage_note=NULLIF($11,''), icon_url=NULLIF($12,''), description=NULLIF($13,'')
+		WHERE id=$14`,
+		in.MerchantID, in.Name, in.ItemLabel, in.IsLinePoint, validFrom, validUntil,
 		in.UseLimitType, in.UseLimitCount, in.GrantCount, in.AppliesAllRaces,
 		in.UsageNote, in.IconURL, in.Description, id)
 	if err != nil {

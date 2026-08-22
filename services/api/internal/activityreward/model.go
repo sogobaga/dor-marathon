@@ -63,6 +63,12 @@ type RewardItem struct {
 	// 該券種當下設定（面額/期限模式），denormalize 寫入 user_rewards，之後即使券種被改名/改面額也不影響
 	// 已發出的券（見 roll.go grantCoupon）。
 	CouponDefID string `json:"coupon_def_id,omitempty"`
+
+	// Hidden 前台顯示控制欄位（與抽獎/發獎邏輯完全無關）：true＝這個項目不出現在前台「活動獎勵」預覽頁籤
+	// （race.GetRewardPreview），做成「驚喜獎勵」——玩家事前看不到，但完成挑戰時 RollAndGrant 抽獎/發獎
+	// 仍照常進行，不受此欄位影響。omitempty 讓 reward_config JSONB 舊資料沒有這個欄位時 unmarshal 直接
+	// 為 false（＝顯示），天然向後相容，不需要補資料遷移。
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // RewardDenom 商家旗下一個序號組（面額）在兩層抽獎第二層的加權設定。

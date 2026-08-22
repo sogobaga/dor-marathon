@@ -21,6 +21,7 @@ type Group struct {
 	Name            string     `json:"name"`
 	ItemLabel       string     `json:"item_label"` // 面額/品項（如「100元」「咖啡兌換」）
 	IsLinePoint     bool       `json:"is_line_point"`
+	ValidFrom       *time.Time `json:"valid_from"`      // 開始時間；null=即刻可用
 	ValidUntil      *time.Time `json:"valid_until"`     // 使用期限；null=無期限
 	UseLimitType    string     `json:"use_limit_type"`  // single|repeat|unlimited
 	UseLimitCount   *int       `json:"use_limit_count"` // use_limit_type=repeat 時的次數
@@ -43,6 +44,7 @@ type GroupInput struct {
 	Name            string   `json:"name"`
 	ItemLabel       string   `json:"item_label"`
 	IsLinePoint     bool     `json:"is_line_point"`
+	ValidFrom       *string  `json:"valid_from"`  // 開始時間；RFC3339；空字串/未帶=即刻可用
 	ValidUntil      *string  `json:"valid_until"` // RFC3339；空字串/未帶=無期限
 	UseLimitType    string   `json:"use_limit_type"`
 	UseLimitCount   *int     `json:"use_limit_count"`

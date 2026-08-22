@@ -30,6 +30,7 @@ type GroupForm = {
   name: string
   item_label: string
   is_line_point: boolean
+  valid_from: string // datetime-local；空=即刻可用
   valid_until: string // datetime-local；空=無期限
   use_limit_type: RewardUseLimitType
   use_limit_count: string
@@ -41,7 +42,7 @@ type GroupForm = {
   description: string // 獎勵詳情：活動/獎勵說明
 }
 const EMPTY_GROUP: GroupForm = {
-  merchant_id: '', name: '', item_label: '', is_line_point: false, valid_until: '',
+  merchant_id: '', name: '', item_label: '', is_line_point: false, valid_from: '', valid_until: '',
   use_limit_type: 'single', use_limit_count: '', grant_count: '1', applies_all_races: true, race_ids: [],
   usage_note: '', icon_url: '', description: '',
 }
@@ -153,6 +154,7 @@ export default function AdminRewardSerialsPage() {
       name: g.name,
       item_label: g.item_label,
       is_line_point: g.is_line_point,
+      valid_from: g.valid_from ? toLocalInput(g.valid_from) : '',
       valid_until: g.valid_until ? toLocalInput(g.valid_until) : '',
       use_limit_type: g.use_limit_type,
       use_limit_count: g.use_limit_count != null ? String(g.use_limit_count) : '',
@@ -199,6 +201,9 @@ export default function AdminRewardSerialsPage() {
     if (groupForm.use_limit_type === 'repeat' && !(parseInt(groupForm.use_limit_count || '0', 10) > 0)) {
       setErr('選擇「可重複使用」需填使用次數（正整數）'); return
     }
+    if (groupForm.valid_from && groupForm.valid_until && new Date(groupForm.valid_from) >= new Date(groupForm.valid_until)) {
+      setErr('開始時間需早於使用期限'); return
+    }
     setGroupBusy(true); setErr(''); setMsg('')
     try {
       const body: RewardSerialGroupWriteBody = {
@@ -206,6 +211,7 @@ export default function AdminRewardSerialsPage() {
         name,
         item_label: groupForm.item_label.trim(),
         is_line_point: groupForm.is_line_point,
+        valid_from: groupForm.valid_from ? new Date(groupForm.valid_from).toISOString() : null,
         valid_until: groupForm.valid_until ? new Date(groupForm.valid_until).toISOString() : null,
         use_limit_type: groupForm.use_limit_type,
         use_limit_count: groupForm.use_limit_type === 'repeat' ? parseInt(groupForm.use_limit_count || '0', 10) : null,
@@ -382,6 +388,9 @@ export default function AdminRewardSerialsPage() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 8 }}>
               <F label="面額/品項"><input style={inp} value={groupForm.item_label} onChange={(e) => setGroupForm((f) => ({ ...f, item_label: e.target.value }))} placeholder="如：100元 / 咖啡兌換" /></F>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 8 }}>
+              <F label="開始時間（選填，空＝即刻可用）"><input style={inp} type="datetime-local" value={groupForm.valid_from} onChange={(e) => setGroupForm((f) => ({ ...f, valid_from: e.target.value }))} /></F>
               <F label="使用期限（空=無期限）"><input style={inp} type="datetime-local" value={groupForm.valid_until} onChange={(e) => setGroupForm((f) => ({ ...f, valid_until: e.target.value }))} /></F>
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginTop: 10 }}>
