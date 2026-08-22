@@ -31,7 +31,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
-	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/notify"
 	"github.com/dor/api/internal/vip"
 )
@@ -123,7 +122,7 @@ type renewalCandidate struct {
 	SubscriptionID   string
 	UserID           string
 	Plan             string // monthly | annual
-	AmountCents      int    // 實際續扣金額：processRenewalCandidate 入口會覆寫成「續扣當下的現行標準價」（見 currentRenewalPriceCents）；SELECT 撈出的原訂閱首期金額僅作讀價失敗時的 fallback
+	AmountCents      int    // 續扣金額＝訂閱當下鎖定的每期金額（vip_subscriptions.amount_cents）——價格鎖定模型，見 processRenewalCandidate ③.5 註解
 	CurrentPeriodEnd time.Time
 	BindCardID       string
 	MerchantMemberID string
@@ -248,16 +247,17 @@ func (h *BindHandler) processRenewalCandidate(ctx context.Context, c renewalCand
 		return nil
 	}
 
-	// ③.5 續扣金額＝續扣「當下」的現行標準價（app_settings vip_price_monthly/annual，單位元）——
-	// 產品決策（2026-08-22）：促銷（首購窗/vip_promos 檔期）只適用首期，續約一律回到當下標準價，
-	// 後台改價後自「下一期」起自動生效。刻意不用 vip.ComputeQuote（那會吃到促銷檔期）。
-	// 防禦：讀不到或非正值時維持訂閱首期金額 fallback，絕不送 0 元請款。
-	// c 為值拷貝，覆寫本地欄位即可讓本輪後續全鏈（建單/CheckoutCreateTx/TotalAmount/結算 params）一致。
-	if cents := h.currentRenewalPriceCents(ctx, c.Plan); cents > 0 {
-		c.AmountCents = cents
+	// ③.5 續扣金額＝訂閱當下鎖定的每期金額（c.AmountCents，撈自 vip_subscriptions.amount_cents）。
+	// 產品最終決策（2026-08-22，推翻同日稍早的「現行標準價」版本）：**價格鎖定（grandfather）模型**
+	// ——保障先訂閱者福利：用 $10 訂閱的會員此後每期都扣 $10，之後漲價到 $20 不影響既有訂閱者；
+	// 退訂後若重新訂閱，才以「重新訂閱當下」的新價成立新訂閱（Subscribe 走 ComputeQuote 現價報價）。
+	// 因此這裡刻意**不**重讀 app_settings 現價、不覆寫金額。防禦：金額非正值（理論不該發生）跳過本輪。
+	if c.AmountCents <= 0 {
+		h.markRenewalAttemptFailed(ctx, attemptID, "", "invalid locked amount, skip")
+		return nil
 	}
 
-	// ④ 建續約訂單（金額＝上面算出的現行標準價）。撞 uq_orders_pending_vip
+	// ④ 建續約訂單（金額＝訂閱鎖定價）。撞 uq_orders_pending_vip
 	// 時不再直接放棄當日重試——改用 QueryTrade 主動收斂那筆卡住的舊訂單（見下方「unknown 收斂」區塊
 	// 的 convergeStuckPendingOrder），取代舊版「無限 pending 等 webhook」設計（對抗式審查
 	// critical [0]／high [2][4][6]：舊版一旦某次續約請款因逾時等傳輸層錯誤留下無限 pending 的訂單，
@@ -552,17 +552,6 @@ type pendingRenewalOrder struct {
 //
 // 也供 ecpay_bind_handler.go Subscribe 的 1.5 段共用（判斷 23505 衝突是否為續約造成，決定回應文案，
 // 對抗式審查修正 high [1]），不只是 vip_renewal.go 內部使用。
-// currentRenewalPriceCents 讀「續扣當下」的現行標準價（分）。促銷只適用首期（產品決策 2026-08-22），
-// 續約一律用標準價，故直接讀 app_settings 的 vip_price_monthly/annual（單位元，與 vip.ComputeQuote
-// 的 Original 同源），不走 ComputeQuote（避免吃到 vip_promos 檔期折扣）。
-func (h *BindHandler) currentRenewalPriceCents(ctx context.Context, plan string) int {
-	key, def := "vip_price_monthly", 399
-	if plan == "annual" {
-		key, def = "vip_price_annual", 4788
-	}
-	return appsettings.GetInt(ctx, h.db, key, def) * 100
-}
-
 func (h *BindHandler) findPendingRenewalOrder(ctx context.Context, userID string) (*pendingRenewalOrder, error) {
 	var p pendingRenewalOrder
 	err := h.db.QueryRow(ctx, `
