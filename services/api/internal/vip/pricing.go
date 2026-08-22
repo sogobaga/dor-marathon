@@ -31,6 +31,10 @@ type Quote struct {
 	IsVIP         bool
 	VipPlan       string
 	VIPExpiresAt  *time.Time
+	// VIP 權益文案用（v0.1.566：升級彈窗的「每月 N 張 X 元活動優惠券」須跟著系統設定變動，
+	// 不可寫死——與補券/扣抵端同源 app_settings vip_coupon_*，見 v0.1.540）
+	CouponValueNTD int // 活動優惠券面額（元）
+	CouponPerMonth int // 每月補發張數
 }
 
 // ComputeQuote 依此使用者的促銷資格計算月/年方案定價（NTD 元，非分）。
@@ -94,6 +98,8 @@ func ComputeQuote(ctx context.Context, db *pgxpool.Pool, userID string) (Quote, 
 		IsVIP:         isVIP,
 		VipPlan:       vipPlan,
 		VIPExpiresAt:  vipExp,
+		CouponValueNTD: appsettings.GetInt(ctx, db, "vip_coupon_value_cents", 10000) / 100,
+		CouponPerMonth: appsettings.GetInt(ctx, db, "vip_coupon_per_month", 3),
 	}, nil
 }
 

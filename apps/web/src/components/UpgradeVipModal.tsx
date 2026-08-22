@@ -54,7 +54,8 @@ export default function UpgradeVipModal({ expired, reason, onClose, onSubscribe,
           <div style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--tx-faint)', fontWeight: 800, marginBottom: 8 }}>VIP 專屬權益</div>
           {[
             ['🏆', '解鎖完整個人任務', '全部階段課表任你挑戰'],
-            ['🎟️', '每月 3 張 100 元活動優惠券', '報名活動直接折抵，每月自動補齊'],
+            // 券張數/面額跟隨後台系統設定（pricing 端點動態帶回，v0.1.566；載入前用預設 3×100 避免閃爍）
+            ['🎟️', `每月 ${pricing?.coupon_per_month ?? 3} 張 ${pricing?.coupon_value_ntd ?? 100} 元活動優惠券`, '報名活動直接折抵，每月自動補齊'],
             ['🔒', '解鎖 VIP 限定活動', '搶先報名 VIP 專屬賽事'],
           ].map(([ico, t, d]) => (
             <div key={t} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '5px 0' }}>

@@ -29,6 +29,9 @@ type vipPricing struct {
 	IsVIP         bool       `json:"is_vip"`
 	VipPlan       string     `json:"vip_plan"`
 	VIPExpiresAt  *time.Time `json:"vip_expires_at,omitempty"`
+	// 權益文案動態化（v0.1.566）：升級彈窗「每月 N 張 X 元活動優惠券」跟隨系統設定
+	CouponValueNTD int `json:"coupon_value_ntd"`
+	CouponPerMonth int `json:"coupon_per_month"`
 }
 
 // VipPricing GET /profile/vip/pricing — 依此使用者的促銷資格計算月/年方案定價。
@@ -55,6 +58,8 @@ func (h *Handler) VipPricing(w http.ResponseWriter, r *http.Request) {
 		IsVIP:         q.IsVIP,
 		VipPlan:       q.VipPlan,
 		VIPExpiresAt:  q.VIPExpiresAt,
+		CouponValueNTD: q.CouponValueNTD,
+		CouponPerMonth: q.CouponPerMonth,
 	})
 }
 

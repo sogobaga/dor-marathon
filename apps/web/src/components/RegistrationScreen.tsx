@@ -769,7 +769,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                     <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>持有數量：{couponBal}</span>
                   </label>
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
-                    VIP 專屬，每月補齊 3 張；折抵方式擇一，不可與活動優惠券／優惠序號並用。
+                    VIP 專屬，每月自動補齊；折抵方式擇一，不可與活動優惠券／優惠序號並用。
                   </div>
                 </Section>
               )

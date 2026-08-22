@@ -1572,6 +1572,8 @@ export interface VipPricing {
   is_vip: boolean
   vip_plan: '' | 'trial' | 'monthly' | 'annual'
   vip_expires_at?: string
+  coupon_value_ntd: number
+  coupon_per_month: number
 }
 
 export interface FollowRow {
