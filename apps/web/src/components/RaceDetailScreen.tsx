@@ -344,7 +344,17 @@ export default function RaceDetailScreen({
         )}
 
         {tab === 'brochure' && (detail ? <BrochureBody detail={detail} /> : <Hint>載入中…</Hint>)}
-        {tab === 'progress' && <ProgressBody race={race} />}
+        {/* 修 bug：!started 時只顯示上面的「尚未開始」提示，不再額外掛載 ProgressBody——原本兩者同時渲染，
+            未開始的賽事本就無活動可算（後端 GetRaceProgress 統計只認 recorded_at>=start_date），掛載了也只是
+            白白多打一次 API 且和上面的提示重複；已開始才需要真的顯示進度內容。registered 用父層已算好的
+            inProgress（不必等這支 API 才知道，避免「未報名」的引導閃爍）。 */}
+        {tab === 'progress' && (started ? (
+          <ProgressBody
+            race={race}
+            registered={inProgress}
+            onRegister={detail?.can_register && onRegister ? handleRegisterClick : undefined}
+          />
+        ) : null)}
         {tab === 'explore' && <ExploreBody race={race} />}
         {tab === 'rank' && <RankingBody race={race} />}
         {tab === 'reward' && <RewardPreviewBody rewards={rewardPreview} />}
@@ -396,12 +406,31 @@ export default function RaceDetailScreen({
   )
 }
 
-function ProgressBody({ race }: { race: Race }) {
+// 修 bug：舊版 `isLoading || !prog` 把「載入中」「fetch 失敗（error）」「回應但資料為空」三種狀態通通顯示成
+// 同一句「載入中…」——一旦 API 失敗（逾時／短暫 5xx／網路抖動），isLoading 會安定為 false 但 prog 永遠是
+// undefined，畫面就卡死在「載入中」、使用者以為壞掉且沒有任何重試手段。這裡拆出 error 分支＋重試鈕
+// （比照同檔 GroupMembers 彈窗、RaceRankingScreen 的 RankingBody 既有寫法）。
+// registered／onRegister 由父層傳入（見呼叫點）：未報名（含未登入）者仍照打這支 API，讓「賽事集體」等
+// 公開任務進度可見（後端 GetRaceProgress 對未報名者 myGroup 為空，team/individual 任務天然被略過，只留
+// 公開的集體任務），但「我的統計」／「歷程記錄」對未報名者沒有意義（永遠是 0，容易誤會成「還沒開始跑」），
+// 改顯示報名引導；用父層已算好的狀態而非等這支 API 的 registered 欄位回來，避免先閃一下錯誤內容。
+function ProgressBody({ race, registered, onRegister }: { race: Race; registered: boolean; onRegister?: () => void }) {
   const token = getUserToken() || undefined
-  const { data, isLoading } = useSWR(['progress', race.id], () => racesApi.progress(race.id, token), { refreshInterval: 30000 })
+  const { data, error, isLoading, mutate } = useSWR(['progress', race.id], () => racesApi.progress(race.id, token), { refreshInterval: 30000 })
   const [detailTask, setDetailTask] = useState<TaskProgress | null>(null)
   const [rangeTask, setRangeTask] = useState<TaskProgress | null>(null)
   const prog = data?.progress
+
+  if (error) {
+    return (
+      <Hint color="var(--hunt)">
+        載入失敗，下拉重試
+        <div style={{ marginTop: 10 }}>
+          <button onClick={() => mutate()} style={certRetryBtn}>重新載入</button>
+        </div>
+      </Hint>
+    )
+  }
   if (isLoading || !prog) return <Hint>載入中…</Hint>
 
   const tasks = prog.tasks ?? []
@@ -414,15 +443,22 @@ function ProgressBody({ race }: { race: Race }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* 我的統計 */}
-      <div style={{ display: 'flex', gap: 10 }}>
-        <Stat label="我的里程" value={`${my.total_km.toFixed(1)} K`} />
-        <Stat label="活動" value={`${my.activities}`} />
-        <Stat label="爬升" value={`${Math.round(my.ascent_m)} m`} />
-      </div>
+      {/* 我的統計：未報名者顯示報名引導取代（見上方元件註解） */}
+      {registered ? (
+        <div style={{ display: 'flex', gap: 10 }}>
+          <Stat label="我的里程" value={`${my.total_km.toFixed(1)} K`} />
+          <Stat label="活動" value={`${my.activities}`} />
+          <Stat label="爬升" value={`${Math.round(my.ascent_m)} m`} />
+        </div>
+      ) : (
+        <div style={progressRegHint}>
+          <div>報名後即可查看你的個人進度</div>
+          {onRegister && <button onClick={onRegister} style={progressRegHintBtn}>前往報名</button>}
+        </div>
+      )}
 
-      {/* 每日歷程記錄：第一層看每天統計，點「詳細」展開當天各筆活動（里程窗與上方「我的里程」完全一致，故每日加總對得起總里程） */}
-      <DailyHistory race={race} />
+      {/* 每日歷程記錄：第一層看每天統計，點「詳細」展開當天各筆活動（里程窗與上方「我的里程」完全一致，故每日加總對得起總里程）；未報名者沒有個人歷程可看 */}
+      {registered && <DailyHistory race={race} />}
 
       {tasks.length === 0 && <Hint>此賽事尚未設定任務目標</Hint>}
 
@@ -870,3 +906,6 @@ const expBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 
 const lightbox: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(0,0,0,.88)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 16 }
 const lightboxDl: React.CSSProperties = { background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 10, padding: '11px 22px', cursor: 'pointer', fontSize: 15 }
 const notStartedHint: React.CSSProperties = { background: 'rgba(255,210,90,.08)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 12px)', padding: '12px 14px', fontSize: 13, color: 'var(--gold)', marginBottom: 14, textAlign: 'center' }
+// 進度頁「未報名」引導區塊（取代「我的統計」；見 ProgressBody）
+const progressRegHint: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 12px)', padding: '16px 14px', textAlign: 'center', fontSize: 13, color: 'var(--tx-dim)' }
+const progressRegHintBtn: React.CSSProperties = { marginTop: 10, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '9px 20px', cursor: 'pointer', fontSize: 13 }
