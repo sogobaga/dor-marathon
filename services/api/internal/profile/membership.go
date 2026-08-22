@@ -204,10 +204,11 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	d.ShowTrialExpiryNotice = d.VipPlan == "trial" && !trialShown && (d.VIPExpiresAt == nil || d.VIPExpiresAt.Before(time.Now()))
 	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE follower_id=$1`, userID).Scan(&d.FollowingCount)
 	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE followee_id=$1`, userID).Scan(&d.FollowerCount)
-	// 進行中（賽事期間內）
+	// 進行中（賽事期間內）：只認 pending|paid，避免 cancelled，以及個人挑戰模式(personal)已
+	// completed/expired 的歷史 attempt 被誤計為「目前仍在進行」（同族：目前報名狀態判定只認 pending|paid）。
 	h.db.QueryRow(r.Context(), `
 		SELECT COUNT(*) FROM registrations rg JOIN races r ON r.id=rg.race_id
-		WHERE rg.user_id=$1 AND rg.status<>'cancelled' AND NOW() BETWEEN r.start_date AND r.end_date`, userID).Scan(&d.OngoingCount)
+		WHERE rg.user_id=$1 AND rg.status IN ('pending','paid') AND NOW() BETWEEN r.start_date AND r.end_date`, userID).Scan(&d.OngoingCount)
 	// 已完成（累積里程達分組目標）
 	h.db.QueryRow(r.Context(), `
 		SELECT COUNT(*) FROM (

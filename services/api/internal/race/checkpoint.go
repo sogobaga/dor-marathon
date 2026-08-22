@@ -121,10 +121,14 @@ func (r *Repository) checkpointForCheckin(ctx context.Context, cpID string) (*ch
 	return &c, nil
 }
 
+// userRegisteredInRace 判定使用者「目前是否仍算此賽事有效報名者」（供打卡權限 CheckIn 與
+// GetRaceProgress 的 registered 欄位共用）。只認 pending|paid：cancelled 早已排除，個人挑戰模式
+// (personal) 的 completed/expired 歷史 attempt 也不該再算「目前報名」——挑戰已結束/逾期者不該保留打卡權限
+// 或被前台顯示為仍在報名中（同族：RaceDetailScreen「我的分組」cancelled 殘留、GetUserGroupID 判斷）。
 func (r *Repository) userRegisteredInRace(ctx context.Context, userID, raceID string) (bool, error) {
 	var ok bool
 	err := r.db.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM registrations WHERE user_id=$1 AND race_id=$2 AND status<>'cancelled')`,
+		`SELECT EXISTS(SELECT 1 FROM registrations WHERE user_id=$1 AND race_id=$2 AND status IN ('pending','paid'))`,
 		userID, raceID).Scan(&ok)
 	return ok, err
 }

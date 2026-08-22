@@ -244,8 +244,11 @@ export default function RaceDetailScreen({
             </div>
           )}
 
-          {/* 我的分組（競賽/分組對抗：當天揭曉＋戰報；一般：直接顯示分組；個人挑戰無分組概念，不顯示） */}
-          {!isPersonal && registration && (battleMode || registration.group_name) && (
+          {/* 我的分組（競賽/分組對抗：當天揭曉＋戰報；一般：直接顯示分組；個人挑戰無分組概念，不顯示）。
+              取消報名核准後 registration 會回退成該賽事「最近一筆」（含 cancelled，見 GetRegistration 註解，
+              服務 ProfileScreen 等歷史顯示需求），因此這裡必須額外用 inProgress（僅認 pending|paid）把
+              cancelled 排除，否則會顯示已取消報名時的舊分組（同族：RacesScreen regActive 判斷）。 */}
+          {!isPersonal && registration && inProgress && (battleMode || registration.group_name) && (
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
               <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>我的分組</div>
               {battleMode ? (
