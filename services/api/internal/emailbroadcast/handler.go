@@ -10,6 +10,7 @@ package emailbroadcast
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -131,6 +132,7 @@ type broadcastItem struct {
 	ID         string  `json:"id"`
 	Subject    string  `json:"subject"`
 	Status     string  `json:"status"`
+	Audience   string  `json:"audience"` // 'all' 全部玩家 | 'custom:N人' 指定 N 位會員（migration 142）
 	TotalCount int     `json:"total_count"`
 	SentCount  int     `json:"sent_count"`
 	FailCount  int     `json:"fail_count"`
@@ -142,7 +144,7 @@ type broadcastItem struct {
 // GET /api/v1/admin/email-broadcasts — 歷史列表（進度輪詢用），最新在前，上限 100 筆。
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(), `
-		SELECT id::text, subject, status, total_count, sent_count, fail_count, error_note,
+		SELECT id::text, subject, status, audience, total_count, sent_count, fail_count, error_note,
 		       to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SSZ'),
 		       to_char(finished_at, 'YYYY-MM-DD"T"HH24:MI:SSZ')
 		FROM email_broadcasts
@@ -158,7 +160,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var it broadcastItem
 		var finishedAt *string
-		if err := rows.Scan(&it.ID, &it.Subject, &it.Status, &it.TotalCount, &it.SentCount, &it.FailCount,
+		if err := rows.Scan(&it.ID, &it.Subject, &it.Status, &it.Audience, &it.TotalCount, &it.SentCount, &it.FailCount,
 			&it.ErrorNote, &it.CreatedAt, &finishedAt); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed to scan broadcasts")
 			return
@@ -173,15 +175,24 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"broadcasts": out})
 }
 
-// POST /api/v1/admin/email-broadcasts { subject, body_html }
+// POST /api/v1/admin/email-broadcasts { subject, body_html, recipients?, dry_run? }
 // 建立廣播紀錄（total_count=符合對象數）→ 啟動背景 goroutine 分批寄送 → 立即回應（不等寄送完成）。
 // 防呆：subject/body_html 必填、長度上限；同時只允許一個 status='sending' 的廣播（409）。
+//
+// recipients 選填（migration 142）：空/缺＝寄給全部玩家（沿用既有 listRecipients，audience='all'）；
+// 有值＝只寄給清單內比對到會員且未退訂的 email（audience='custom:N人'），查無會員/已退訂者從回應
+// 的 not_found／unsubscribed_excluded 回報給前台，讓管理員核對——不寄給非平台會員。
+//
+// dry_run=true 時只做清洗＋查詢＋回報數字，不建立廣播紀錄、不觸發寄送，讓前台能在真正送出前用
+// 這支端點的真實回應數字組確認 dialog（不影響「同時只能一則 sending」的防呆判斷）。
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 
 	var body struct {
-		Subject  string `json:"subject"`
-		BodyHTML string `json:"body_html"`
+		Subject    string   `json:"subject"`
+		BodyHTML   string   `json:"body_html"`
+		Recipients []string `json:"recipients"`
+		DryRun     bool     `json:"dry_run"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid body")
@@ -205,37 +216,76 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "內容過長（上限 100KB）")
 		return
 	}
-
-	var sendingCount int
-	if err := h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM email_broadcasts WHERE status='sending'`).Scan(&sendingCount); err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to check in-flight broadcasts")
-		return
-	}
-	if sendingCount > 0 {
-		respondErr(w, http.StatusConflict, "上一則廣播寄送中")
+	if len(body.Recipients) > maxCustomRecipients {
+		respondErr(w, http.StatusBadRequest, fmt.Sprintf("收件人數量上限 %d 筆", maxCustomRecipients))
 		return
 	}
 
-	recipients, err := h.listRecipients(r.Context())
-	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to load recipients")
+	if !body.DryRun {
+		var sendingCount int
+		if err := h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM email_broadcasts WHERE status='sending'`).Scan(&sendingCount); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to check in-flight broadcasts")
+			return
+		}
+		if sendingCount > 0 {
+			respondErr(w, http.StatusConflict, "上一則廣播寄送中")
+			return
+		}
+	}
+
+	var recipients []recipient
+	notFound := []string{}
+	unsubExcluded := 0
+	audience := "all"
+
+	if len(body.Recipients) == 0 {
+		var err error
+		recipients, err = h.listRecipients(r.Context())
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to load recipients")
+			return
+		}
+	} else {
+		cr, err := h.resolveCustomRecipients(r.Context(), body.Recipients)
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to resolve recipients")
+			return
+		}
+		if cr.MatchedCount == 0 {
+			respondErr(w, http.StatusBadRequest, "查無符合的會員")
+			return
+		}
+		recipients = cr.Recipients
+		notFound = cr.NotFound
+		unsubExcluded = cr.UnsubscribedExcluded
+		audience = customAudienceLabel(len(recipients))
+	}
+
+	if body.DryRun {
+		respondJSON(w, http.StatusOK, map[string]any{
+			"total": len(recipients), "audience": audience,
+			"not_found": notFound, "unsubscribed_excluded": unsubExcluded,
+		})
 		return
 	}
 
 	var id string
 	if err := h.db.QueryRow(r.Context(), `
-		INSERT INTO email_broadcasts (subject, body_html, status, total_count, created_by)
-		VALUES ($1, $2, 'sending', $3, NULLIF($4, '')::uuid)
-		RETURNING id::text`, subject, bodyHTML, len(recipients), userID).Scan(&id); err != nil {
+		INSERT INTO email_broadcasts (subject, body_html, status, total_count, created_by, audience)
+		VALUES ($1, $2, 'sending', $3, NULLIF($4, '')::uuid, $5)
+		RETURNING id::text`, subject, bodyHTML, len(recipients), userID, audience).Scan(&id); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to create broadcast")
 		return
 	}
 
-	log.Info().Str("broadcast_id", id).Int("total", len(recipients)).Str("admin", userID).
+	log.Info().Str("broadcast_id", id).Int("total", len(recipients)).Str("admin", userID).Str("audience", audience).
 		Msg("email broadcast: created, starting background send")
 	go h.runBroadcastSafe(id, subject, bodyHTML, recipients)
 
-	respondJSON(w, http.StatusOK, map[string]any{"id": id, "total": len(recipients)})
+	respondJSON(w, http.StatusOK, map[string]any{
+		"id": id, "total": len(recipients), "audience": audience,
+		"not_found": notFound, "unsubscribed_excluded": unsubExcluded,
+	})
 }
 
 func respondJSON(w http.ResponseWriter, status int, data any) {

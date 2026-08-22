@@ -2886,6 +2886,7 @@ export interface EmailBroadcastItem {
   id: string
   subject: string
   status: 'sending' | 'done' | 'failed' | 'partial'
+  audience: string // 'all' 全部玩家 | 'custom:N人' 指定 N 位會員（migration 142）
   total_count: number
   sent_count: number
   fail_count: number
@@ -2893,14 +2894,21 @@ export interface EmailBroadcastItem {
   created_at: string
   finished_at: string | null
 }
+export interface EmailBroadcastCreateResult {
+  id?: string             // dry_run=true 時不建立紀錄，不會回傳 id
+  total: number
+  audience: string
+  not_found: string[]              // 指定對象模式：格式不合法或查無此會員的 email
+  unsubscribed_excluded: number    // 指定對象模式：比對到會員但已退訂而被排除的筆數
+}
 
 export const adminEmailBroadcastApi = {
   recipientCount: (token: string) =>
     request<{ count: number }>('/admin/email-broadcasts/recipient-count', { headers: withAuth(token) }),
   list: (token: string) =>
     request<{ broadcasts: EmailBroadcastItem[] }>('/admin/email-broadcasts', { headers: withAuth(token) }),
-  create: (token: string, body: { subject: string; body_html: string }) =>
-    request<{ id: string; total: number }>('/admin/email-broadcasts', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  create: (token: string, body: { subject: string; body_html: string; recipients?: string[]; dry_run?: boolean }) =>
+    request<EmailBroadcastCreateResult>('/admin/email-broadcasts', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
 }
 
 // --- 跑者充電站 / 特約商店 (Partner Shops) ---

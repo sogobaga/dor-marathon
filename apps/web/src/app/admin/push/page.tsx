@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminPushApi, adminPushGroupsApi, adminRacesApi, adminEmailBroadcastApi, type PushGroup, type Race, type AdminPushBroadcastResult, type EmailBroadcastItem } from '@/lib/api'
+import { adminPushApi, adminPushGroupsApi, adminRacesApi, adminEmailBroadcastApi, type PushGroup, type Race, type AdminPushBroadcastResult, type EmailBroadcastItem, type EmailBroadcastCreateResult } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
 type TargetType = 'all' | 'user' | 'race' | 'group'
@@ -26,11 +26,14 @@ export default function AdminPushPage() {
   const [result, setResult] = useState<AdminPushBroadcastResult | null>(null)
   const [err, setErr] = useState('')
 
-  // --- Email 廣播（Resend，全玩家批次寄送）---
+  // --- Email 廣播（Resend，全玩家或指定帳號/Email 批次寄送，migration 142 加指定對象）---
   const [ebSubject, setEbSubject] = useState('')
   const [ebBody, setEbBody] = useState('')
+  const [ebAudience, setEbAudience] = useState<'all' | 'custom'>('all')
+  const [ebRecipients, setEbRecipients] = useState('')
   const [ebSending, setEbSending] = useState(false)
   const [ebErr, setEbErr] = useState('')
+  const [ebResult, setEbResult] = useState<EmailBroadcastCreateResult | null>(null)
   const [ebHistory, setEbHistory] = useState<EmailBroadcastItem[]>([])
   const ebPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -60,26 +63,50 @@ export default function AdminPushPage() {
     } catch { /* 靜默失敗，下次輪詢再試 */ }
   }
 
+  function parseRecipients(raw: string): string[] {
+    return raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean)
+  }
+
   async function sendEmailBroadcast() {
     const token = getToken()
     if (!token) { router.replace('/admin/login'); return }
     const subject = ebSubject.trim()
     const body = ebBody.trim()
     if (!subject || !body) { setEbErr('請填寫主旨與內文'); return }
-    setEbErr('')
-    let count = 0
+
+    const recipients = ebAudience === 'custom' ? parseRecipients(ebRecipients) : undefined
+    if (ebAudience === 'custom') {
+      if (!recipients || recipients.length === 0) { setEbErr('請輸入至少一個 Email'); return }
+      if (recipients.length > 500) { setEbErr('收件人數量上限 500 筆'); return }
+    }
+    setEbErr(''); setEbResult(null)
+
+    // 送出前先問一次真實數字（全部玩家＝recipient-count；指定對象＝Create 的 dry_run 預覽，
+    // 兩者都不影響「同時只能一則寄送中」的防呆，dry_run 不建立紀錄也不觸發寄送）。
+    let preview: { total: number; not_found: string[]; unsubscribed_excluded: number }
     try {
-      const r = await adminEmailBroadcastApi.recipientCount(token)
-      count = r.count
+      if (ebAudience === 'all') {
+        const r = await adminEmailBroadcastApi.recipientCount(token)
+        preview = { total: r.count, not_found: [], unsubscribed_excluded: 0 }
+      } else {
+        const r = await adminEmailBroadcastApi.create(token, { subject, body_html: body, recipients, dry_run: true })
+        preview = { total: r.total, not_found: r.not_found, unsubscribed_excluded: r.unsubscribed_excluded }
+      }
     } catch (e: any) {
       setEbErr(e?.message || '無法取得寄送對象人數'); return
     }
-    if (!window.confirm(`將寄給 ${count} 位玩家，確定？`)) return
+
+    const skipMsg = ebAudience === 'custom'
+      ? `（略過查無會員 ${preview.not_found.length} 筆／已退訂 ${preview.unsubscribed_excluded} 筆）`
+      : ''
+    const audienceWord = ebAudience === 'all' ? '位玩家' : '位會員'
+    if (!window.confirm(`將寄給 ${preview.total} ${audienceWord}${skipMsg}，確定？`)) return
 
     setEbSending(true)
     try {
-      await adminEmailBroadcastApi.create(token, { subject, body_html: body })
-      setEbSubject(''); setEbBody('')
+      const r = await adminEmailBroadcastApi.create(token, { subject, body_html: body, recipients })
+      setEbResult(r)
+      setEbSubject(''); setEbBody(''); setEbRecipients('')
       await loadEbHistory()
     } catch (e: any) {
       if (e?.status === 401) { clearToken(); router.replace('/admin/login') } else setEbErr(e?.message || '發送失敗')
@@ -96,6 +123,12 @@ export default function AdminPushPage() {
       case 'failed': return { text: '失敗', color: 'var(--hunt)' }
       default: return { text: s, color: 'var(--tx-dim)' }
     }
+  }
+
+  function ebAudienceLabel(a: string) {
+    if (a === 'all') return '全部玩家'
+    const m = a.match(/^custom:(\d+)人$/)
+    return m ? `指定 ${m[1]} 人` : a
   }
 
   async function send() {
@@ -197,7 +230,7 @@ export default function AdminPushPage() {
 
       <h1 style={{ margin: '32px 0 8px', fontSize: 24, fontWeight: 800 }}>📧 Email 廣播</h1>
       <p style={{ fontSize: 13, color: 'var(--tx-dim)', lineHeight: 1.7, margin: '0 0 16px', maxWidth: 640 }}>
-        透過 Resend 一次寄給全部有 Email 的玩家（已退訂者自動排除）。內文支援簡單 HTML（例如 <code>&lt;b&gt;</code>／<code>&lt;a href&gt;</code>／<code>&lt;br/&gt;</code>），會直接嵌入信件內文，請自行確認格式正確。每封信結尾會自動附上退訂連結與聯絡資訊。同時間只能有一則廣播在寄送中。
+        透過 Resend 寄給全部有 Email 的玩家，或改選「指定帳號/Email」只寄給貼上的清單（已退訂者一律自動排除；查無會員的 email 不會寄出）。內文支援簡單 HTML（例如 <code>&lt;b&gt;</code>／<code>&lt;a href&gt;</code>／<code>&lt;br/&gt;</code>），會直接嵌入信件內文，請自行確認格式正確。每封信結尾會自動附上退訂連結與聯絡資訊。同時間只能有一則廣播在寄送中。
       </p>
 
       <div style={card}>
@@ -206,12 +239,40 @@ export default function AdminPushPage() {
           <F label="內文（支援簡單 HTML）">
             <textarea style={{ ...inp, minHeight: 160, resize: 'vertical', fontFamily: 'monospace', fontSize: 13 }} value={ebBody} onChange={(e) => setEbBody(e.target.value)} placeholder="信件內文…" />
           </F>
+
+          <F label="發送對象">
+            <div style={{ display: 'flex', gap: 18, paddingTop: 4 }}>
+              <label style={chk}><input type="radio" name="eb-audience" checked={ebAudience === 'all'} onChange={() => setEbAudience('all')} /> 全部玩家</label>
+              <label style={chk}><input type="radio" name="eb-audience" checked={ebAudience === 'custom'} onChange={() => setEbAudience('custom')} /> 指定帳號/Email</label>
+            </div>
+          </F>
+          {ebAudience === 'custom' && (
+            <F label="收件 Email（每行一個或逗號分隔，上限 500 筆；只會寄給平台會員）">
+              <textarea style={{ ...inp, minHeight: 100, resize: 'vertical', fontFamily: 'monospace', fontSize: 13 }} value={ebRecipients} onChange={(e) => setEbRecipients(e.target.value)} placeholder={'someone@example.com\nanother@example.com'} />
+            </F>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 12, marginTop: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button onClick={sendEmailBroadcast} disabled={ebSending} style={primaryBtn}>{ebSending ? '發送中…' : '發送給全部玩家'}</button>
+          <button onClick={sendEmailBroadcast} disabled={ebSending} style={primaryBtn}>{ebSending ? '發送中…' : ebAudience === 'all' ? '發送給全部玩家' : '發送給指定對象'}</button>
         </div>
         {ebErr && <div style={{ color: 'var(--hunt)', marginTop: 10, fontSize: 13 }}>{ebErr}</div>}
+        {ebResult && (
+          <div style={{ marginTop: 12, fontSize: 13, color: 'var(--tx-dim)', borderTop: '1px solid var(--line-2)', paddingTop: 10 }}>
+            已送出，寄給 <b style={{ color: 'var(--fug)' }}>{ebResult.total}</b> 位
+            {ebResult.audience !== 'all' && (
+              <>
+                　·　略過查無會員 <b style={{ color: ebResult.not_found.length > 0 ? '#e0a020' : 'var(--tx-dim)' }}>{ebResult.not_found.length}</b> 筆
+                　·　已退訂 <b style={{ color: ebResult.unsubscribed_excluded > 0 ? '#e0a020' : 'var(--tx-dim)' }}>{ebResult.unsubscribed_excluded}</b> 筆
+                {ebResult.not_found.length > 0 && (
+                  <div style={{ marginTop: 6, wordBreak: 'break-all' }}>
+                    查無會員：{ebResult.not_found.join('、')}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {ebHistory.length > 0 && (
@@ -227,7 +288,7 @@ export default function AdminPushPage() {
                     <span style={{ color: st.color, fontWeight: 700 }}>{st.text}</span>
                   </div>
                   <div style={{ color: 'var(--tx-dim)', marginTop: 4 }}>
-                    {new Date(b.created_at).toLocaleString('zh-TW')}　·　進度 {b.sent_count + b.fail_count}／{b.total_count}　·　成功 <b style={{ color: 'var(--fug)' }}>{b.sent_count}</b>／失敗 <b style={{ color: b.fail_count > 0 ? 'var(--hunt)' : 'var(--tx-dim)' }}>{b.fail_count}</b>
+                    {new Date(b.created_at).toLocaleString('zh-TW')}　·　對象 {ebAudienceLabel(b.audience)}　·　進度 {b.sent_count + b.fail_count}／{b.total_count}　·　成功 <b style={{ color: 'var(--fug)' }}>{b.sent_count}</b>／失敗 <b style={{ color: b.fail_count > 0 ? 'var(--hunt)' : 'var(--tx-dim)' }}>{b.fail_count}</b>
                   </div>
                   {b.error_note && <div style={{ color: '#e0a020', marginTop: 4 }}>{b.error_note}</div>}
                 </div>
