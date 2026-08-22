@@ -256,9 +256,15 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     [qty]
   )
 
+  // 未選組別時的報名費顯示：per_group（各組獨立計價）模式下各組價格可能不同，未選組前顯示賽事
+  // 預設價會誤導（2026-08-22 使用者回報《月映菊島》未選組顯示 1060）→ 未選組一律當 0，選了組才
+  // 顯示該組有效價；uniform（全場統一價）模式價格固定，未選組即可直接顯示統一價。
   // baseFee：目前所選分組的有效報名費（見 lib/api.ts effectiveGroupFee，per_group 模式下依 selectedGroup
   // 換算；分組對抗/個人挑戰模式沒有「選分組」概念，selectedGroup 恆為 null，回退 race.entry_fee 預設報名費）。
-  const baseFee = useMemo(() => effectiveGroupFee(race, selectedGroup), [race, selectedGroup])
+  const baseFee = useMemo(() => {
+    if (race.fee_mode === 'per_group' && !selectedGroup) return 0
+    return effectiveGroupFee(race, selectedGroup)
+  }, [race, selectedGroup])
 
   const total = useMemo(() => {
     let t = baseFee
