@@ -102,6 +102,9 @@ func main() {
 	// 站內信（in-app mail）：供前台鈴鐺列表 + 後台廣播 mail 頻道寫入。提前到這裡建構（原本在後面），
 	// 因為 VIP 站內付2.0 BindHandler（Phase D 續約排程通知）需要在建構時就注入 MailInserter。
 	mailHandler := mail.NewHandler(pool, wsManager)
+	// 參賽虛擬獎勵發放通知（migration 140）：raceSvc 建構於 mailHandler 之前，兩者互相依賴的初始化順序
+	// 無法互換，晚繫結注入（比照下面 raceHandler.SetRefundCreator 的 setter 模式）。
+	raceSvc.SetMailInserter(mailHandler)
 
 	// Payment（綠界 ECPay）—— 正式／測試雙特店，依結帳來源 origin 故障安全切換（見 payment.MultiConfig）
 	// 啟動檢查：宣告要跑正式環境（ECPAY_ENV=prod）卻沒有配齊正式特店憑證，寧可直接拒絕啟動，
@@ -548,6 +551,9 @@ func main() {
 	go eventHandler.RunScheduleLoop(bgCtx)
 	// 背景：VIP 訂閱 Phase D 每日續約排程（到期前 1 天起用綁定卡背景扣款，3 天寬限×最多 3 次重試）
 	go bindHandler.RunRenewalLoop(bgCtx)
+	// 背景：參賽虛擬獎勵排程（migration 140）——已開賽的賽事每 5 分鐘掃描一次，把設定的虛擬獎勵發給
+	// 所有已報名(paid)者（不看任務條件，人人有獎）
+	go raceSvc.RunEntryRewardLoop(bgCtx)
 
 	go func() {
 		log.Info().Str("port", cfg.Port).Msg("DOR API server starting")

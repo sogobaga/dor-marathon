@@ -64,6 +64,11 @@ export default function RaceDetailScreen({
   const { data: rewardPreviewData } = useSWR(['reward-preview', race.id], () => racesApi.rewardPreview(race.id))
   const rewardPreview = rewardPreviewData?.rewards ?? []
 
+  // 參賽虛擬獎勵預覽（migration 140）：賽事開始後自動發放給所有已報名者的項目，展示在「報名禮」面板尾部
+  // （見 SuppliesBody）。公開、輕量，不含機率/數量；空陣列時不額外渲染。
+  const { data: entryRewardPreviewData } = useSWR(['entry-reward-preview', race.id], () => racesApi.entryRewardPreview(race.id))
+  const entryRewardPreview = entryRewardPreviewData?.rewards ?? []
+
   // 完賽證明：賽事結束後、已報名、已登入才查
   const ended = race.display_status === 'ended'
   const { data: certData } = useSWR(
@@ -316,8 +321,9 @@ export default function RaceDetailScreen({
         </div>
 
         {/* 物資（報名禮）面板：緊接在「立即報名」面板下方，讓使用者一進頁面就看到報名禮／完賽物資
-            （原本掛在簡章頁籤尾部，v0.1.537 搬到此處；資料仍吃同一份 detail.supplies，不多打 API） */}
-        {detail && <SuppliesBody supplies={detail.supplies} />}
+            （原本掛在簡章頁籤尾部，v0.1.537 搬到此處；資料仍吃同一份 detail.supplies，不多打 API）；
+            尾部追加參賽虛擬獎勵展示（migration 140，見 entryRewardPreview） */}
+        {detail && <SuppliesBody supplies={detail.supplies} entryRewards={entryRewardPreview} />}
 
         {/* 頁籤 */}
         <div style={{ display: 'flex', gap: 6, margin: '16px 0 14px', borderBottom: '1px solid var(--line)' }}>
@@ -774,9 +780,12 @@ function Hint({ children, color = 'var(--tx-dim)' }: { children: React.ReactNode
 }
 
 // 「立即報名」面板正下方的獨立面板：報名禮／完賽物資（依 kind 分節，group_id 非空標注分組專屬）。
-// 卡片樣式比照上方 dashCard，讓它讀起來是同一系列的面板；supplies 為空時整塊不渲染。
-function SuppliesBody({ supplies }: { supplies: RaceSupply[] }) {
-  if (!supplies || supplies.length === 0) return null
+// 卡片樣式比照上方 dashCard，讓它讀起來是同一系列的面板；supplies 與 entryRewards 皆為空時整塊不渲染。
+// entryRewards：參賽虛擬獎勵預覽（migration 140，見後端 race.GetEntryRewardPreview）——賽事開始後自動
+// 發放給所有已報名者，附在「參賽物資」小節尾部展示，不含機率/數量（比照 RewardPreviewBody 白名單欄位）。
+function SuppliesBody({ supplies, entryRewards }: { supplies: RaceSupply[]; entryRewards?: RewardPreviewItem[] }) {
+  const hasEntryRewards = !!entryRewards && entryRewards.length > 0
+  if ((!supplies || supplies.length === 0) && !hasEntryRewards) return null
   const raceItems = supplies.filter((s) => s.kind === 'race_pack')
   const finisherItems = supplies.filter((s) => s.kind === 'finisher')
   return (
@@ -784,7 +793,35 @@ function SuppliesBody({ supplies }: { supplies: RaceSupply[] }) {
       {/* 面板標題「報名禮」只出現一次（無 icon）；報名禮小節不再重複小標，完賽物資保留小標區隔 */}
       <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', marginBottom: 10 }}>報名禮</div>
       {raceItems.length > 0 && <SupplySection label="" items={raceItems} />}
+      {hasEntryRewards && <EntryRewardSection items={entryRewards!} />}
       {finisherItems.length > 0 && <SupplySection label="完賽物資" items={finisherItems} />}
+    </div>
+  )
+}
+
+// 參賽虛擬獎勵展示小節（migration 140）：緊接在「參賽物資」小節尾部，卡片樣式比照 SupplySection，
+// 但資料來源是 RewardPreviewItem（icon_url/name/amount/description），不是 RaceSupply。
+function EntryRewardSection({ items }: { items: RewardPreviewItem[] }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 6 }}>參賽虛擬獎勵（開賽後自動發放）</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {items.map((rw, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px' }}>
+            {rw.icon_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={rw.icon_url} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)', flexShrink: 0 }} />
+            )}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)' }}>{rw.name}</span>
+                {rw.amount && <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--gold)' }}>{rw.amount}</span>}
+              </div>
+              {rw.description && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 2 }}>{rw.description}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

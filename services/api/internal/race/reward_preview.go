@@ -10,6 +10,8 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+
+	"github.com/dor/api/internal/activityreward"
 )
 
 // RewardPreviewItem 前台「活動獎勵」頁籤單筆卡片：只有可讀展示欄位，絕不含機率/數量/權重/面額庫存。
@@ -41,7 +43,29 @@ func (s *Service) GetRewardPreview(ctx context.Context, raceID string) ([]Reward
 	if r == nil || r.ReviewStatus != "approved" {
 		return nil, ErrRaceNotFound
 	}
-	if r.RewardConfig == nil || len(r.RewardConfig.Items) == 0 {
+	return s.buildRewardPreviewItems(ctx, r.RewardConfig)
+}
+
+// GetEntryRewardPreview 回傳 raceID 這場賽事的參賽虛擬獎勵預覽（migration 140；公開；不需登入）：
+// 「賽事開始後自動發放給所有已報名者」的項目清單，與 GetRewardPreview 共用同一白名單欄位過濾邏輯
+// （buildRewardPreviewItems）——不含機率/數量/權重，理由同上（見 memory activity-reward-system）。
+// entry_reward_config 未設定/無項目 → 回空陣列（呼叫端據此判斷要不要顯示這段展示區塊）。
+func (s *Service) GetEntryRewardPreview(ctx context.Context, raceID string) ([]RewardPreviewItem, error) {
+	r, err := s.repo.GetByID(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	if r == nil || r.ReviewStatus != "approved" {
+		return nil, ErrRaceNotFound
+	}
+	return s.buildRewardPreviewItems(ctx, r.EntryRewardConfig)
+}
+
+// buildRewardPreviewItems 把一組 activityreward.RewardConfig 轉成公開展示用預覽項目清單，供
+// GetRewardPreview／GetEntryRewardPreview 共用（兩者觸發條件不同，但公開展示的白名單欄位過濾規則完全
+// 一致）。cfg 為 nil 或無項目 → 回空陣列。
+func (s *Service) buildRewardPreviewItems(ctx context.Context, cfg *activityreward.RewardConfig) ([]RewardPreviewItem, error) {
+	if cfg == nil || len(cfg.Items) == 0 {
 		return []RewardPreviewItem{}, nil
 	}
 
@@ -50,8 +74,8 @@ func (s *Service) GetRewardPreview(ctx context.Context, raceID string) ([]Reward
 	seenCouponDefs := map[string]bool{}
 	var groupIDs []string
 	var couponDefIDs []string
-	for i := range r.RewardConfig.Items {
-		item := &r.RewardConfig.Items[i]
+	for i := range cfg.Items {
+		item := &cfg.Items[i]
 		// Hidden＝管理員設定的「驚喜獎勵」（見 activityreward.RewardItem.Hidden 註解）：只影響這支
 		// 公開預覽端點的可見清單，不進 groupIDs/couponDefIDs/out；RollAndGrant 抽獎/發獎完全不看這個
 		// 欄位、不受影響，玩家一樣會照常抽中拿到，只是事前在「活動獎勵」頁籤看不到會有這個項目。

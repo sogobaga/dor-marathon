@@ -54,6 +54,11 @@ type Race struct {
 	ExternalData     bool                         `json:"external_data"`            // 是否採用 Strava 等外部數據做排名/里程統計（預設 false=只認 App GPS，合規）
 	ChallengeRule    *ChallengeRule               `json:"challenge_rule,omitempty"` // 個人挑戰模式(event_mode=personal)專用規則；其餘模式為 nil
 	RewardConfig     *activityreward.RewardConfig `json:"reward_config,omitempty"`  // 完成觸發即時獎勵設定（migration 134 起一般化到所有模式）：personal 完成一次挑戰觸發；其餘模式完成任一「個人額外挑戰」(race_tasks scope=group_individual) 觸發；選填
+	// EntryRewardConfig 參賽虛擬獎勵設定（migration 140）：沿用即時獎勵同一 RewardConfig 結構與抽獎/發放
+	// 引擎（activityreward.RollAndGrant），但觸發條件完全不同——不看任何任務/完成條件，賽事開始後由背景
+	// 排程（見 entry_reward_schedule.go RunEntryRewardLoop）自動發給所有「已報名(paid)」者，人人有獎的
+	// 場景管理者自己會把各項 prob_bp 設為 10000(100%)。選填，nil＝此賽事不設定參賽虛擬獎勵。
+	EntryRewardConfig *activityreward.RewardConfig `json:"entry_reward_config,omitempty"`
 	CreatedAt        time.Time                    `json:"created_at"`
 }
 

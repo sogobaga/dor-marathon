@@ -169,6 +169,9 @@ export default function RaceForm({
   const [chSingleKm, setChSingleKm] = useState(String(initial?.challenge_rule?.single_km ?? ''))
   // 即時獎勵設定（完成觸發機率 roll；活動獎勵系統 P2，僅 personal 模式使用，選填）
   const [rewardItems, setRewardItems] = useState<RewardItem[]>(initial?.reward_config?.items ?? [])
+  // 參賽虛擬獎勵設定（migration 140；選填）：與上面即時獎勵共用同一 RewardItem 結構/編輯元件
+  // （RewardItemRow），但觸發條件完全不同——不看任務，賽事開始後排程自動發給所有已報名(paid)者。
+  const [entryRewardItems, setEntryRewardItems] = useState<RewardItem[]>(initial?.entry_reward_config?.items ?? [])
   const [rewardTemplates, setRewardTemplates] = useState<RewardTemplate[]>([])
   const [rewardGroups, setRewardGroups] = useState<RewardSerialGroup[]>([])
   const [couponDefs, setCouponDefs] = useState<EventCouponDef[]>([])
@@ -516,6 +519,17 @@ export default function RaceForm({
   function removeRewardItem(i: number) {
     setRewardItems((its) => its.filter((_, idx) => idx !== i))
   }
+  // 參賽虛擬獎勵設定 helpers（migration 140；比照上面即時獎勵的建構/移除模式，獨立一組陣列狀態，不共用
+  // 模板套用/存模板功能——那是即時獎勵既有的模板庫，兩者用途不同不混用）。
+  function addEntryRewardItem() {
+    setEntryRewardItems((its) => [...its, { type: 'exp', min: 0, max: 0, prob_bp: 10000 }])
+  }
+  function updateEntryRewardItem(i: number, patch: Partial<RewardItem>) {
+    setEntryRewardItems((its) => its.map((it, idx) => (idx === i ? { ...it, ...patch } : it)))
+  }
+  function removeEntryRewardItem(i: number) {
+    setEntryRewardItems((its) => its.filter((_, idx) => idx !== i))
+  }
   function applyRewardTemplate(templateId: string) {
     const t = rewardTemplates.find((x) => x.id === templateId)
     if (!t) return
@@ -557,13 +571,15 @@ export default function RaceForm({
     }
     return ''
   }
-  // 即時獎勵項目是否皆已填妥（有填才檢查；整組選填，空陣列合法）；serial 類另外要求已選商家、至少一個
+  // 獎勵項目是否皆已填妥（有填才檢查；整組選填，空陣列合法）；serial 類另外要求已選商家、至少一個
   // 面額權重>0（或舊格式 serial_group_id），面額的序號組必須都屬於本場活動可用範圍（見
   // rewardItemsForeignGroupError，這裡是最後一道防線），且同一份設定內不可重複同一商家（後台防呆，見設計文件）。
-  function rewardItemsValid(): boolean {
+  // 抽成通用函式（items 參數化）供即時獎勵(rewardItems)與參賽虛擬獎勵(entryRewardItems，migration 140)
+  // 兩組獨立狀態共用同一套驗證規則；各自呼叫時各自算 seenMerchants，兩組設定互不影響彼此的重複商家判斷。
+  function validateRewardItems(items: RewardItem[]): boolean {
     const availableGroupIds = new Set(availableRewardGroups.map((g) => g.id))
     const seenMerchants = new Set<string>()
-    return rewardItems.every((it) => {
+    return items.every((it) => {
       if (!(it.prob_bp > 0 && it.prob_bp <= 10000)) return false
       if (it.type === 'exp' || it.type === 'dp' || it.type === 'gp') return (it.min ?? 0) > 0 && (it.max ?? 0) >= (it.min ?? 0)
       if (it.type === 'vip') return (it.days ?? 0) > 0
@@ -586,19 +602,31 @@ export default function RaceForm({
       return false
     })
   }
+  function rewardItemsValid(): boolean {
+    return validateRewardItems(rewardItems)
+  }
+  function entryRewardItemsValid(): boolean {
+    return validateRewardItems(entryRewardItems)
+  }
   // serial 項目是否含有「不屬於本場活動可用序號組」的面額（例如套用了別場專屬的模板但沒被
   // applyRewardTemplate 剔除乾淨、或資料被外部工具直接改過）；回傳說明文字供 submit() 顯示明確錯誤，
-  // null 代表沒有這個問題。
-  function rewardItemsForeignGroupError(): string | null {
+  // null 代表沒有這個問題。抽成通用函式（items+label 參數化），供即時獎勵與參賽虛擬獎勵共用。
+  function foreignGroupError(items: RewardItem[], label: string): string | null {
     const availableGroupIds = new Set(availableRewardGroups.map((g) => g.id))
-    const hasForeign = rewardItems.some((it) => {
+    const hasForeign = items.some((it) => {
       if (it.type !== 'serial') return false
       const denoms = it.denominations ?? []
       if (denoms.some((d) => d.weight > 0 && !availableGroupIds.has(d.group_id))) return true
       if (!denoms.length && it.serial_group_id && !availableGroupIds.has(it.serial_group_id)) return true
       return false
     })
-    return hasForeign ? '即時獎勵設定中有序號組不屬於本場活動可選範圍（可能是套用了其他活動的模板殘留），請重新選擇面額後再儲存。' : null
+    return hasForeign ? `${label}設定中有序號組不屬於本場活動可選範圍（可能是套用了其他活動的模板殘留），請重新選擇面額後再儲存。` : null
+  }
+  function rewardItemsForeignGroupError(): string | null {
+    return foreignGroupError(rewardItems, '即時獎勵')
+  }
+  function entryRewardItemsForeignGroupError(): string | null {
+    return foreignGroupError(entryRewardItems, '參賽虛擬獎勵')
   }
   // 本場活動可用的序號組：對應全部活動、或（編輯中）已明確勾選對應本場活動者
   const availableRewardGroups = rewardGroups.filter((g) => g.applies_all_races || (!!initial?.id && g.race_ids.includes(initial.id)))
@@ -634,6 +662,9 @@ export default function RaceForm({
       // 即時獎勵設定一般化（migration 134）：不再限 personal 模式，其餘模式完成任一「個人額外挑戰」
       // (group_individual scope 任務) 觸發（見後端 progress.go MarkRaceTaskCompletedAndGrant）。
       reward_config: rewardItems.length > 0 ? { items: rewardItems } : null,
+      // 參賽虛擬獎勵設定（migration 140）：賽事開始後由後端排程自動發給所有已報名(paid)者，不看任務條件
+      // （見後端 entry_reward_schedule.go RunEntryRewardLoop）。
+      entry_reward_config: entryRewardItems.length > 0 ? { items: entryRewardItems } : null,
       // config 是整包 JSONB struct marshal（非合併寫入）：務必以既有 config 為底、只覆寫 cancellation_policy，
       // 否則會把 factions/clubs/missions 等既有欄位一併清空（見後端 configToBytes/bytesToConfig 註解）。
       config: {
@@ -729,6 +760,20 @@ export default function RaceForm({
       if (!rewardItemsValid()) {
         setErr('請完整填寫即時獎勵設定的機率／數值／序號組')
         setTab('basic')
+        return
+      }
+    }
+    {
+      // 參賽虛擬獎勵設定驗證（migration 140）：共用同一套規則，但錯誤時切到「物資」分頁（該設定區塊位置）。
+      const entryForeignGroupErr = entryRewardItemsForeignGroupError()
+      if (entryForeignGroupErr) {
+        setErr(entryForeignGroupErr)
+        setTab('supplies')
+        return
+      }
+      if (!entryRewardItemsValid()) {
+        setErr('請完整填寫參賽虛擬獎勵設定的機率／數值／序號組')
+        setTab('supplies')
         return
       }
     }
@@ -1327,6 +1372,32 @@ export default function RaceForm({
               onClick={() => setSupplies((ss) => [...ss, { scope: -1, kind: 'race_pack', name: '', description: '', image_url: '' }])}
               style={ghostBtn}
             >＋ 新增物資</button>
+
+            {/* 參賽虛擬獎勵（migration 140；選填）：重用即時獎勵的 RewardItemRow 編輯元件，但觸發條件
+                完全不同——不看任務，賽事開始後由後端排程自動發放給所有已報名者（含開賽後才報名者），
+                人人有獎場景請把機率設 100%。 */}
+            <div style={{ ...card, background: 'var(--bg-2)' }}>
+              <div style={{ fontWeight: 700, fontSize: 13.5 }}>參賽虛擬獎勵（選填）</div>
+              <div style={hint}>
+                賽事開始後自動發放給所有已報名者（含開賽後才報名者），不需完成任務。人人有獎請將機率設 100%。
+                項目類型與抽獎規則與上方「即時獎勵設定」相同：經濟類（EXP/DP/GP/VIP）中獎直接入帳；
+                序號類為以商家為單位的兩層抽獎；活動優惠券中獎直接發一張進玩家活動獎勵錢包。
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
+                {entryRewardItems.map((it, i) => (
+                  <RewardItemRow
+                    key={i}
+                    item={it}
+                    groups={availableRewardGroups}
+                    couponDefs={availableCouponDefs}
+                    onChange={(patch) => updateEntryRewardItem(i, patch)}
+                    onRemove={() => removeEntryRewardItem(i)}
+                  />
+                ))}
+                {entryRewardItems.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚未設定參賽虛擬獎勵</div>}
+              </div>
+              <button type="button" onClick={addEntryRewardItem} style={{ ...ghostBtn, alignSelf: 'flex-start' }}>＋ 新增獎勵項目</button>
+            </div>
           </div>
         )}
 

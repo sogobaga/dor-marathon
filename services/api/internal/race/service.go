@@ -128,6 +128,13 @@ var (
 	ErrInvalidVipPlan = errors.New("invalid vip plan")
 )
 
+// MailInserter 站內信最小介面（參賽虛擬獎勵發放通知用，migration 140）：由 mail.Handler 實作。用小介面
+// 而非直接 import internal/mail，比照 push/payment 套件既有的 MailInserter 介面同一慣例（見
+// internal/push/push.go、internal/payment/ecpay_bind_handler.go），讓依賴方向單純、好測試。
+type MailInserter interface {
+	InsertForUsers(ctx context.Context, userIDs []string, level, title, body, url string) (int, error)
+}
+
 type Service struct {
 	repo  *Repository
 	rdb   *redis.Client
@@ -137,6 +144,11 @@ type Service struct {
 	// Service 建構——payment.NewHandler 需要 raceSvc 當 OrderMarker，兩者互相依賴，只能用 setter
 	// 晚繫結解開。未設定時 ApproveCancelRequest 會略過自動建立退款，留言請人工處理。
 	refundCreator RefundCreatorFunc
+	// mail：參賽虛擬獎勵發放通知用（migration 140，見 entry_reward_schedule.go grantEntryRewardSafe）。
+	// 注入自 mail.Handler（見 main.go 的 raceSvc.SetMailInserter），晚於本 Service 建構——mailHandler
+	// 建構需要 wsManager，兩者初始化順序無法互換，只能用 setter 晚繫結。未設定時通知直接跳過，不影響
+	// 發獎本身（比照 payment.BindHandler.sendRenewalMail 的取捨）。
+	mail MailInserter
 }
 
 func NewService(repo *Repository, rdb *redis.Client, promoSvc *promo.Service) *Service {
@@ -146,6 +158,11 @@ func NewService(repo *Repository, rdb *redis.Client, promoSvc *promo.Service) *S
 // SetRefundCreator 見上方欄位註解。
 func (s *Service) SetRefundCreator(fn RefundCreatorFunc) {
 	s.refundCreator = fn
+}
+
+// SetMailInserter 見上方欄位註解。
+func (s *Service) SetMailInserter(m MailInserter) {
+	s.mail = m
 }
 
 // List 回傳賽事列表（admin 用，含全部 control_status，填入 display_status）
@@ -190,6 +207,9 @@ func (s *Service) ListPublic(ctx context.Context, userID string) ([]*Race, error
 		// SEC：reward_config 內含機率(prob_bp)/面額權重(weight)/金額區間(min/max) 等機敏設定，公開列表
 		// 一律不得帶出（玩家能看到就等於看到中獎率），前台改走 GetRewardPreview 專用端點取代。
 		r.RewardConfig = nil
+		// SEC：entry_reward_config（migration 140）同樣機敏，理由相同；前台改走 GetEntryRewardPreview
+		// 專用端點取代（見 reward_preview.go）。
+		r.EntryRewardConfig = nil
 		out = append(out, r)
 	}
 	return out, nil
@@ -289,6 +309,9 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 	// 安全：reward_config 內含機率(prob_bp)/面額權重(weight)/金額區間(min/max) 等機敏設定，公開詳情
 	// 一律不得帶出（玩家能看到就等於看到中獎率），前台改走 GetRewardPreview 專用端點取代。
 	detail.RewardConfig = nil
+	// 安全：entry_reward_config（migration 140）同樣機敏，理由相同；前台改走 GetEntryRewardPreview
+	// 專用端點取代（見 reward_preview.go）。
+	detail.EntryRewardConfig = nil
 
 	var reg *Registration
 	if userID != "" {
@@ -867,6 +890,12 @@ func normalizeRequest(req *CreateRaceRequest) error {
 	// MarkRaceTaskCompletedAndGrant）。選填（可不設定），但有填就要合法（機率/區間/序號組皆需通過驗證）。
 	if err := req.RewardConfig.Validate(); err != nil {
 		return fmt.Errorf("reward_config: %w", err)
+	}
+	// 參賽虛擬獎勵設定（migration 140）：與上面 reward_config 結構共用同一驗證，但語意完全不同——不看
+	// 任何任務/完成條件，賽事開始後由背景排程自動發給所有已報名(paid)者（見 entry_reward_schedule.go）。
+	// 選填，不限模式。
+	if err := req.EntryRewardConfig.Validate(); err != nil {
+		return fmt.Errorf("entry_reward_config: %w", err)
 	}
 
 	for i := range req.Groups {

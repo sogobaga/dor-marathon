@@ -229,6 +229,10 @@ export interface Race {
   config?: RaceConfig // 後端一律回傳（非 omitempty）；此處選填僅為前端防禦
   challenge_rule?: ChallengeRule | null // 個人挑戰模式(event_mode=personal)專用規則；其餘模式為 null
   reward_config?: RewardConfig | null // 個人挑戰模式(event_mode=personal)完成觸發即時獎勵設定；其餘模式為 null，選填
+  // 參賽虛擬獎勵設定（migration 140）：沿用同一 RewardConfig 結構，但觸發條件完全不同——不看任何任務/
+  // 完成條件，賽事開始後由後端排程自動發給所有已報名(paid)者（見後端 race.EntryRewardConfig）。公開端點
+  // （ListPublic/GetPublicDetail）一律清空，前台改走 racesApi.entryRewardPreview 取得展示用清單；選填。
+  entry_reward_config?: RewardConfig | null
   created_at: string
 }
 
@@ -1111,6 +1115,11 @@ export const racesApi = {
   // 活動獎勵預覽：完成活動有機會獲得的獎勵（公開，不需登入；不含機率/數量/權重，見 memory activity-reward-system）
   rewardPreview: (raceID: string) =>
     request<{ rewards: RewardPreviewItem[] }>(`/races/${raceID}/reward-preview`),
+
+  // 參賽虛擬獎勵預覽（migration 140）：賽事開始後自動發放給所有已報名者的項目（公開，不需登入；不含
+  // 機率/數量/權重，見後端 race.GetEntryRewardPreview）。
+  entryRewardPreview: (raceID: string) =>
+    request<{ rewards: RewardPreviewItem[] }>(`/races/${raceID}/entry-reward-preview`),
 
   // 進度頁每日歷程記錄：每一天跑了幾筆、各筆距離/時長/配速（需登入；里程窗與「我的里程」完全一致）
   myDailyActivities: (raceID: string, token?: string) =>

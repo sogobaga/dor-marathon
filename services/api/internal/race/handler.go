@@ -48,6 +48,7 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/{raceID}/my-daily-activities", h.MyDailyActivities)
 	r.Get("/{raceID}/leaderboard", h.Leaderboard)
 	r.Get("/{raceID}/reward-preview", h.RewardPreview)
+	r.Get("/{raceID}/entry-reward-preview", h.EntryRewardPreview)
 	r.Get("/{raceID}/certificate", h.Certificate)
 	r.Get("/{raceID}/exp-breakdown", h.ExpBreakdown)
 	r.Get("/{raceID}/status", h.LiveStatus)
@@ -596,6 +597,22 @@ func (h *Handler) RewardPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to get reward preview")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"rewards": rewards})
+}
+
+// GET /api/v1/races/:raceID/entry-reward-preview — 參賽虛擬獎勵預覽（migration 140；公開，不需登入；
+// 不含機率/數量/權重）：賽事開始後自動發放給所有已報名者的項目清單，比照 RewardPreview 同一模式。
+func (h *Handler) EntryRewardPreview(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	rewards, err := h.svc.GetEntryRewardPreview(r.Context(), raceID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get entry reward preview")
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"rewards": rewards})
