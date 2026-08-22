@@ -174,7 +174,9 @@ export default function AdminPushPage() {
           <F label="發送頻道">
             <div style={{ display: 'flex', gap: 18, paddingTop: 4 }}>
               <label style={chk}><input type="checkbox" checked={doPush} onChange={(e) => setDoPush(e.target.checked)} /> 推播</label>
-              <label style={chk}><input type="checkbox" checked={doEmail} onChange={(e) => setDoEmail(e.target.checked)} /> Email</label>
+              {/* 舊 SMTP email 頻道已自介面移除（2026-08-22 使用者拍板）：無退訂連結/無寄送記錄，
+                  有行銷信合規風險；Email 一律改用下方「📧 Email 廣播」（Resend＋退訂＋稽核）。
+                  後端 email 頻道保留未動（僅 UI 移除，最小風險）。 */}
               <label style={chk}><input type="checkbox" checked={doMail} onChange={(e) => setDoMail(e.target.checked)} /> 站內信</label>
             </div>
           </F>
