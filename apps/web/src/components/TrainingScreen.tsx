@@ -5,6 +5,7 @@ import useSWR from 'swr'
 import { trainingApi, type WorkoutTemplate, type PaceLevel, type TrainingCalendar, type TrainingDay, type TrainingPlan, type AutoPlanRequest, type ScheduledWorkout, type WorkoutSegment } from '@/lib/api'
 import { resolveTemplate, saveFreetrainWorkout, totalKm, estMinutes, fmtDuration, segSummary, targetPaceBand, adjustMeta, adjustedValue, currentValue, pyramidPeak } from '@/lib/workout'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
+import { useDashboard } from '@/lib/useDashboard'
 import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
@@ -233,9 +234,17 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     uid && getUserToken() ? ['training-templates', uid] : null,
     () => withUserAuth((t) => trainingApi.templates(t)),
   )
-  const vipLocked = !!error && error?.status === 403 && error?.message === 'vip_only'
-  const loadFailed = !!error && !vipLocked
-  const unlocked = !!user && !vipLocked && !loadFailed && !!data
+  const loadFailed = !!error
+  const unlocked = !!user && !loadFailed && !!data
+
+  // 非 VIP 體驗（v0.1.565）：課表庫/月曆內容全部可瀏覽，只在「開始訓練」及其餘寫入動作
+  // （排程/更換/一鍵安排/拖曳改期/刪除）上鎖，點擊改跳 UpgradeVipModal，不再整面擋板。
+  const { dash } = useDashboard()
+  const isVip = !!dash?.is_vip
+  const [upgradeReason, setUpgradeReason] = useState<string | undefined>()
+  function openUpgrade(reason: string) { setUpgradeReason(reason); setShowUpgrade(true) }
+  // 寫入類操作的共用守門：VIP 直接執行，非 VIP 一律攔截改跳升級彈窗（純瀏覽動作不經過這層）。
+  function vipGate(action: () => void) { return () => { if (isVip) action(); else openUpgrade('自主訓練為 VIP 專屬功能。') } }
 
   const [tab, setTab] = useState<'library' | 'calendar'>('library')
   const [levelId, setLevelId] = useState<number | null>(null)
@@ -411,6 +420,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
 
   function cellPointerDown(e: React.PointerEvent<HTMLButtonElement>, dateStr: string, sched: ScheduledWorkout[]) {
     if (e.pointerType === 'mouse' && e.button !== 0) return
+    if (!isVip) return // 拖曳改期＝寫入動作，非 VIP 一律不可啟動（點日期本身的瀏覽不受影響，見 cellClick）
     if (dragRef.current || !sched.length) return
     hadLongPressRef.current = false
     lastPointerRef.current = { x: e.clientX, y: e.clientY }
@@ -823,17 +833,16 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
       )}
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '6px 18px 28px' }}>
+        {/* 非 VIP 提示橫幅（不擋內容）：課表庫/月曆照常瀏覽，只有開始訓練等寫入動作上鎖 */}
+        {unlocked && !isVip && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(255,194,75,.12)', border: '1px solid rgba(255,194,75,.4)', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
+            <span style={{ fontSize: 18, flexShrink: 0 }}>🔒</span>
+            <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--tx-dim)', lineHeight: 1.6 }}>自主訓練為 VIP 專屬功能——課表庫與訓練月曆可自由瀏覽，升級 VIP 即可開始訓練、排程課表。</div>
+            <button onClick={() => openUpgrade('自主訓練為 VIP 專屬功能。')} style={{ flexShrink: 0, background: 'var(--gold)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 9, padding: '7px 14px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>✦ 升級</button>
+          </div>
+        )}
         {!user ? (
           <div style={emptyBox}>請先登入以使用自主訓練</div>
-        ) : vipLocked ? (
-          <div style={emptyBox}>
-            <div style={{ fontSize: 32 }}>🔒</div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', marginTop: 8 }}>VIP 專屬功能</div>
-            <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 6, lineHeight: 1.7 }}>
-              自主訓練提供完整課表庫（恢復／輕鬆／節奏／閾值／間歇…）與訓練月曆排程，<br />升級 VIP 即可解鎖，依你的能力自訂訓練。
-            </div>
-            <button onClick={() => setShowUpgrade(true)} style={{ marginTop: 14, background: 'var(--gold)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 10, padding: '10px 22px', fontSize: 13.5, cursor: 'pointer' }}>✦ 升級 VIP</button>
-          </div>
         ) : loadFailed ? (
           <div style={emptyBox}>課表庫載入失敗，請稍後再試</div>
         ) : !data ? (
@@ -877,7 +886,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                 <button type="button" onClick={() => bumpFreeRun(10)} disabled={freeRunMin >= 240} style={{ ...adjustBtn, opacity: freeRunMin >= 240 ? 0.4 : 1 }}>＋</button>
               </div>
               <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 6 }}>時間到會提示，並可繼續累積里程</div>
-              <button onClick={startFreeRun} style={startBtn}>▶ 開始訓練</button>
+              <button onClick={vipGate(startFreeRun)} style={{ ...startBtn, ...(isVip ? {} : lockedBtn) }}>{isVip ? '▶ 開始訓練' : '🔒 開始訓練（VIP專屬功能）'}</button>
             </div>
 
             {groups.length === 0 && <div style={emptyBox}>目前尚無課表庫內容</div>}
@@ -912,7 +921,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                               </div>
                             )
                           })()}
-                          <button onClick={() => startTemplate(t)} disabled={!level} style={{ ...startBtn, opacity: level ? 1 : 0.5 }}>▶ 開始訓練</button>
+                          <button onClick={vipGate(() => startTemplate(t))} disabled={!level} style={{ ...startBtn, opacity: level ? 1 : 0.5, ...(isVip ? {} : lockedBtn) }}>{isVip ? '▶ 開始訓練' : '🔒 開始訓練（VIP專屬功能）'}</button>
                         </div>
                       )
                     })}
@@ -1126,7 +1135,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                                 <span style={{ fontSize: 11.5, color: 'var(--tx-dim)', fontVariantNumeric: 'tabular-nums' }}>
                                   {CATEGORY_LABELS[s.category] || s.category} · {s.planned_km.toFixed(1)} K · {fmtDuration(s.planned_min)}
                                 </span>
-                                <button onClick={() => { const lvl = levels.find((l) => l.id === s.pace_level) ?? null; startWorkout(s.template_code, lvl, s.adjust) }} style={{ flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>▶ 開始</button>
+                                <button onClick={vipGate(() => { const lvl = levels.find((l) => l.id === s.pace_level) ?? null; startWorkout(s.template_code, lvl, s.adjust) })} style={{ flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', ...(isVip ? {} : lockedBtnSmall) }}>{isVip ? '▶ 開始' : '🔒 VIP專屬'}</button>
                               </div>
                             </div>
                           )
@@ -1141,7 +1150,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
             {/* 一鍵安排課表：緊接在「我的訓練計畫」之上，產生的計畫直接併入下方清單 */}
             <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, margin: '20px 0 10px' }}>
               <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>訓練計畫 {plans ? plans.length : '…'}/3</span>
-              <button onClick={openAutoPlan} style={autoPlanBtn}>⚡ 一鍵安排課表</button>
+              <button onClick={vipGate(openAutoPlan)} style={{ ...autoPlanBtn, ...(isVip ? {} : lockedBtnSmall) }}>{isVip ? '⚡ 一鍵安排課表' : '🔒 一鍵安排課表'}</button>
             </div>
 
             {/* 我的訓練計畫（P3，≤3 個；重構後以計畫為單位顯示期間、進度與預計/實際執行狀況） */}
@@ -1183,7 +1192,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                               </div>
                             )}
                           </div>
-                          <button disabled={deletingPlanId === p.id} onClick={() => removePlan(p.id)} style={{ flexShrink: 0, background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>🗑 清除計畫</button>
+                          <button disabled={deletingPlanId === p.id} onClick={vipGate(() => removePlan(p.id))} style={{ flexShrink: 0, background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>🗑 清除計畫</button>
                         </div>
 
                         {/* 期間 + 進度條 */}
@@ -1236,7 +1245,8 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
 
       {showUpgrade && (
         <UpgradeVipModal
-          onClose={() => setShowUpgrade(false)}
+          reason={upgradeReason}
+          onClose={() => { setShowUpgrade(false); setUpgradeReason(undefined) }}
           onSubscribe={vipFlow.subscribe}
           subscribing={vipFlow.busy}
           subscribeError={vipFlow.error}
@@ -1288,10 +1298,10 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                       <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                         <button
                           disabled={pickerBusy || removingId === s.id}
-                          onClick={() => { const code = s.template_code; const lvl = levels.find((l) => l.id === s.pace_level) ?? null; const adj = s.adjust; closePicker(); startWorkout(code, lvl, adj) }}
-                          style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px 0', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}
-                        >▶ 開始此課表</button>
-                        <button disabled={pickerBusy || removingId === s.id} onClick={() => removeSchedule(s.id)} style={{ background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 9, padding: '9px 14px', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}>🗑 移除</button>
+                          onClick={vipGate(() => { const code = s.template_code; const lvl = levels.find((l) => l.id === s.pace_level) ?? null; const adj = s.adjust; closePicker(); startWorkout(code, lvl, adj) })}
+                          style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px 0', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit', ...(isVip ? {} : lockedBtnSmall) }}
+                        >{isVip ? '▶ 開始此課表' : '🔒 VIP專屬'}</button>
+                        <button disabled={pickerBusy || removingId === s.id} onClick={vipGate(() => removeSchedule(s.id))} style={{ background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 9, padding: '9px 14px', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}>🗑 移除</button>
                       </div>
                     </div>
                   )
@@ -1326,7 +1336,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
                         <div key={t.code} style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--line-2)', borderRadius: 11, padding: '9px 12px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                             <div style={{ fontSize: 13, fontWeight: 800, color: '#fff' }}>{t.name}{alreadyIn && <span style={{ color: 'var(--fug)', fontWeight: 700 }}> ✓</span>}</div>
-                            <button disabled={pickerBusy || !pickerLevel} onClick={() => saveSchedule(t)} style={{ flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit' }}>+ 加入</button>
+                            <button disabled={pickerBusy || !pickerLevel} onClick={vipGate(() => saveSchedule(t))} style={{ flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 11.5, fontFamily: 'inherit', ...(isVip ? {} : lockedBtnSmall) }}>{isVip ? '+ 加入' : '🔒 加入'}</button>
                           </div>
                           <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>總距離 {totalKm(resolved)} K · 預估 {fmtDuration(estMinutes(resolved))}</div>
                           {meta.type !== 'none' && (() => {
@@ -1510,6 +1520,9 @@ const emptyBox: React.CSSProperties = { color: 'var(--tx-dim)', fontSize: 13.5, 
 const levelSelect: React.CSSProperties = { flex: 1, minWidth: 0, background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '8px 10px', color: 'var(--tx)', fontSize: 13, fontFamily: 'inherit' }
 const tplCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '11px 13px' }
 const startBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '9px 0', cursor: 'pointer', fontSize: 13.5, fontFamily: 'inherit' }
+// 非 VIP「開始訓練」類按鈕的上鎖樣式：降飽和＋略透明，仍完整可見可點（點擊導向升級彈窗，不是 disabled）
+const lockedBtn: React.CSSProperties = { filter: 'grayscale(.65)', opacity: 0.72 }
+const lockedBtnSmall: React.CSSProperties = { filter: 'grayscale(.65)', opacity: 0.7 }
 // 課表微調（migration 085）「− 值 ＋」列：課表庫卡片版與選課表 modal 精簡版
 const adjustRow: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: 10, background: 'var(--bg-2)', borderRadius: 9, padding: '6px 10px' }
 const adjustBtn: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line-2)', color: 'var(--tx)', borderRadius: 7, width: 28, height: 28, fontSize: 15, fontWeight: 800, cursor: 'pointer', lineHeight: 1, fontFamily: 'inherit' }

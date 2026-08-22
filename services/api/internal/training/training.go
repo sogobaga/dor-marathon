@@ -1,4 +1,7 @@
-// Package training 自主訓練（P1 課表庫 + P2 月曆排程 + P3 訓練計畫產生器），VIP 限定功能。
+// Package training 自主訓練（P1 課表庫 + P2 月曆排程 + P3 訓練計畫產生器）。v0.1.565 起改為
+// 「內容全部可瀏覽、寫入/開始才鎖 VIP」：課表庫/配速表/月曆/訓練計畫清單唯讀端點登入即可讀
+// （見 requireLogin），實際排程/更換/一鍵安排/刪除/開始訓練（前端 sessionStorage 橋接、無對應
+// 後端端點）維持 VIP 專屬（見 requireVIP）。
 //
 // 前端拿到 TemplateSegment（以「效度 effort」表達強度：easy/marathon/threshold/interval/rep）＋
 // 玩家自選的 PaceLevel，在前端解析成既有 WorkoutSegment（帶實際配速秒/公里），沿用 /track 既有
@@ -30,7 +33,8 @@ type Handler struct {
 
 func NewHandler(db *pgxpool.Pool) *Handler { return &Handler{db: db} }
 
-// requireVIP 登入 + VIP 檢查共用 helper（P1 Templates 與 P2/P3 各排程/計畫端點共用）。
+// requireVIP 登入 + VIP 檢查共用 helper——僅供「寫入／開始」類端點使用（排程/更換/一鍵安排/刪除）：
+// 課表庫瀏覽對非 VIP 開放已改用 requireLogin（見下），非 VIP 只在實際寫入時才被擋下。
 // uid=="" 代表已寫好錯誤回應，呼叫端應立即 return。
 func (h *Handler) requireVIP(w http.ResponseWriter, r *http.Request) string {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
@@ -42,6 +46,19 @@ func (h *Handler) requireVIP(w http.ResponseWriter, r *http.Request) string {
 	_ = h.db.QueryRow(r.Context(), `SELECT COALESCE(vip_expires_at > NOW(), FALSE) FROM users WHERE id=$1`, uid).Scan(&isVip)
 	if !isVip {
 		respondErr(w, http.StatusForbidden, "vip_only")
+		return ""
+	}
+	return uid
+}
+
+// requireLogin 僅登入檢查（P1 Templates / P2 Calendar / P3 ListPlans 共用）——v0.1.565 起自主訓練改
+// 「內容全部可瀏覽，只在開始訓練／排程等寫入動作上鎖」：課表庫/配速表/月曆/訓練計畫清單皆屬唯讀瀏覽，
+// 非 VIP 也可讀取（前端據此讓內容產生升級慾望），實際寫入才由 requireVIP 擋下。
+// uid=="" 代表已寫好錯誤回應，呼叫端應立即 return。
+func (h *Handler) requireLogin(w http.ResponseWriter, r *http.Request) string {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if uid == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
 		return ""
 	}
 	return uid
@@ -73,21 +90,22 @@ type PaceLevel struct {
 // Router 前台（需登入）
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Get("/templates", h.Templates)              // GET /training/templates — 課表庫 + 配速等級表（VIP 限定）
-	r.Get("/calendar", h.Calendar)                // GET /training/calendar?month=YYYY-MM — 月曆排程 vs 實際（VIP 限定）
+	r.Get("/templates", h.Templates)              // GET /training/templates — 課表庫 + 配速等級表（唯讀，登入即可，v0.1.565）
+	r.Get("/calendar", h.Calendar)                // GET /training/calendar?month=YYYY-MM — 月曆排程 vs 實際（唯讀，登入即可，v0.1.565）
 	r.Post("/schedule", h.CreateSchedule)         // POST /training/schedule — 新增一筆手動排程（VIP 限定，一天可多份）
 	r.Delete("/schedule/{id}", h.DeleteSchedule)  // DELETE /training/schedule/{id} — 取消單筆排程（VIP 限定）
 	r.Post("/schedule/{id}/move", h.MoveSchedule) // POST /training/schedule/{id}/move — 拖曳改期＋同來源連鎖推擠（VIP 限定）
-	r.Get("/plans", h.ListPlans)                  // GET /training/plans — 訓練計畫清單（VIP 限定，上限 3）
+	r.Get("/plans", h.ListPlans)                  // GET /training/plans — 訓練計畫清單（唯讀，登入即可，v0.1.565；上限 3，寫入端點 AutoPlan 仍為 VIP 限定）
 	r.Post("/auto-plan", h.AutoPlan)              // POST /training/auto-plan — 一鍵產生訓練計畫（VIP 限定）
-	r.Delete("/plans/{id}", h.DeletePlan)         // DELETE /training/plans/{id} — 刪除計畫＋其排程（CASCADE）
+	r.Delete("/plans/{id}", h.DeletePlan)         // DELETE /training/plans/{id} — 刪除計畫＋其排程（VIP 限定，CASCADE）
 	return r
 }
 
-// Templates GET /training/templates — VIP 專屬：課表庫 + 配速等級表。
-// library_visible=FALSE 的距離變體（lsd_6..lsd_32/easy_4/8/10，migration 084）只給產生器排課，不進課表庫清單。
+// Templates GET /training/templates — 登入即可讀（v0.1.565 起唯讀端點對非 VIP 開放，見 requireLogin）：
+// 課表庫 + 配速等級表。library_visible=FALSE 的距離變體（lsd_6..lsd_32/easy_4/8/10，migration 084）
+// 只給產生器排課，不進課表庫清單。
 func (h *Handler) Templates(w http.ResponseWriter, r *http.Request) {
-	uid := h.requireVIP(w, r)
+	uid := h.requireLogin(w, r)
 	if uid == "" {
 		return
 	}
@@ -193,10 +211,12 @@ func resolveMonth(raw string) (time.Time, bool) {
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
 
-// Calendar GET /training/calendar?month=YYYY-MM — VIP 專屬：排定 vs 實際整月對照。
+// Calendar GET /training/calendar?month=YYYY-MM — 登入即可讀（v0.1.565 起唯讀端點對非 VIP 開放，見
+// requireLogin）：排定 vs 實際整月對照。非 VIP 沒有排程（CreateSchedule/AutoPlan 仍要求 VIP），故通常
+// 只看得到「實際」欄位，仍可正常瀏覽月曆殼；曾是 VIP、訂閱到期後的舊排程資料也能繼續看到（唯讀）。
 // 每日排定改回陣列（migration 084 起一天可多份），plan_id 非空時 LEFT JOIN training_plans 取 plan_name。
 func (h *Handler) Calendar(w http.ResponseWriter, r *http.Request) {
-	uid := h.requireVIP(w, r)
+	uid := h.requireLogin(w, r)
 	if uid == "" {
 		return
 	}
@@ -623,12 +643,14 @@ type PlanStats struct {
 // planLimit 每帳號最多同時保留的訓練計畫數（POST /training/auto-plan 超過即 409 plan_limit）。
 const planLimit = 3
 
-// ListPlans GET /training/plans — VIP 專屬：該帳號的訓練計畫清單，含 race_name 與每個計畫的統計
-// （PlanStats，以「計畫期間」為單位）。計畫最多 3 個，但無論幾個都固定發 3 次查詢（計畫本身 + planned
-// 統計 + actual 統計），皆以 user_id 為條件一次撈完全部計畫、GROUP BY 分組，避免依計畫數逐一查詢
-// （N+1）；PlanStats 在 Go 端用 map 對回各計畫，無資料的計畫維持 TrainingTotals 零值。
+// ListPlans GET /training/plans — 登入即可讀（v0.1.565 起唯讀端點對非 VIP 開放，見 requireLogin）：
+// 該帳號的訓練計畫清單，含 race_name 與每個計畫的統計（PlanStats，以「計畫期間」為單位）。非 VIP 通常
+// 是空清單（AutoPlan 仍要求 VIP），但訂閱到期後仍可唯讀看到先前產生的計畫。計畫最多 3 個，但無論幾個
+// 都固定發 3 次查詢（計畫本身 + planned 統計 + actual 統計），皆以 user_id 為條件一次撈完全部計畫、
+// GROUP BY 分組，避免依計畫數逐一查詢（N+1）；PlanStats 在 Go 端用 map 對回各計畫，無資料的計畫維持
+// TrainingTotals 零值。
 func (h *Handler) ListPlans(w http.ResponseWriter, r *http.Request) {
-	uid := h.requireVIP(w, r)
+	uid := h.requireLogin(w, r)
 	if uid == "" {
 		return
 	}
