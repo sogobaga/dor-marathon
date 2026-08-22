@@ -67,23 +67,35 @@ func ComputeQuote(ctx context.Context, db *pgxpool.Pool, userID string) (Quote, 
 			promoEnds = &end
 		}
 	}
-	// 後台其他促銷檔期（active 且在期間內）→ 取更優折扣（pay_pct 更低）
+	// 後台其他促銷檔期（active 且在期間內）→ 取更優折扣（pay_pct 更低）。
+	// PromoEndsAt 修正（v0.1.567）：舊版只有首購窗會寫 promoEnds，檔期促銷生效時前端顯示的
+	// 「X 後恢復原價」日期缺失或殘留首購窗日期（使用者回報顯示 9/1、實際檔期到 12/31）——
+	// 檔期被「採用」（提供了目前最優折扣）時，一併記下其 ends_at，最後取「最早的恢復時點」顯示。
 	if rows, err := db.Query(ctx, `
-		SELECT plan, pay_pct FROM vip_promos
+		SELECT plan, pay_pct, ends_at FROM vip_promos
 		WHERE active AND (starts_at IS NULL OR starts_at<=NOW()) AND (ends_at IS NULL OR ends_at>=NOW())`); err == nil {
+		var mEnds, aEnds *time.Time
 		for rows.Next() {
 			var pl string
 			var pct int
-			if rows.Scan(&pl, &pct) == nil && pct >= 1 && pct <= 100 {
+			var ends *time.Time
+			if rows.Scan(&pl, &pct, &ends) == nil && pct >= 1 && pct <= 100 {
 				if (pl == "monthly" || pl == "both") && pct < mEffPct {
-					mEffPct = pct
+					mEffPct, mEnds = pct, ends
 				}
 				if (pl == "annual" || pl == "both") && pct < aEffPct {
-					aEffPct = pct
+					aEffPct, aEnds = pct, ends
 				}
 			}
 		}
 		rows.Close()
+		// 檔期促銷被採用時更新促銷結束時點：取「最早結束」者（該時點後開始有方案恢復原價，
+		// 對玩家的「把握期限」語意最誠實）；與首購窗並存時同樣取較早者。
+		for _, e := range []*time.Time{mEnds, aEnds} {
+			if e != nil && (promoEnds == nil || e.Before(*promoEnds)) {
+				promoEnds = e
+			}
+		}
 	}
 
 	mPrice := (mp*mEffPct + 50) / 100 // 四捨五入
