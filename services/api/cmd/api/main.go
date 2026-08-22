@@ -25,6 +25,7 @@ import (
 	"github.com/dor/api/internal/cache"
 	"github.com/dor/api/internal/config"
 	"github.com/dor/api/internal/db"
+	"github.com/dor/api/internal/emailbroadcast"
 	"github.com/dor/api/internal/event"
 	"github.com/dor/api/internal/explore"
 	"github.com/dor/api/internal/image"
@@ -267,6 +268,10 @@ func main() {
 		Subject:    os.Getenv("VAPID_SUBJECT"),
 	}, mailerInst, mailHandler)
 
+	// Email 廣播（後台向全部玩家發送，Resend）：未設 RESEND_API_KEY 時 notify.SendEmailBatch 回
+	// ErrEmailNotConfigured，後台顯示「Email 服務未設定」（migration 141）。
+	emailBroadcastHandler := emailbroadcast.NewHandler(pool, cfg.JWTSecret, cfg.FrontendURL)
+
 	// --- 路由 ---
 	r := chi.NewRouter()
 
@@ -370,6 +375,9 @@ func main() {
 		// OrderResultURL 是瀏覽器 3D 驗證完成後的一次性 Form POST 導回，見 BindHandler 註解）
 		r.Post("/payments/ecpay/bind/notify", bindHandler.Notify)
 		r.Post("/payments/ecpay/bind/result", bindHandler.Result)
+
+		// Email 廣播退訂連結（公開，信件內點擊，HMAC token 驗證取代登入）
+		r.Mount("/email", emailBroadcastHandler.PublicRouter())
 
 		// --- 需要登入的端點 ---
 		r.Group(func(r chi.Router) {
@@ -504,6 +512,7 @@ func main() {
 			r.With(perm("gps_review")).Mount("/admin/checkin-review", raceHandler.CheckinReviewRouter())
 			r.With(perm("settings")).Mount("/admin/push", pushHandler.AdminRouter())
 			r.With(perm("settings")).Mount("/admin/push-groups", pushHandler.GroupAdminRouter())
+			r.With(perm("settings")).Mount("/admin/email-broadcasts", emailBroadcastHandler.AdminRouter())
 		})
 	})
 

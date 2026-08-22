@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminPushApi, adminPushGroupsApi, adminRacesApi, type PushGroup, type Race, type AdminPushBroadcastResult } from '@/lib/api'
+import { adminPushApi, adminPushGroupsApi, adminRacesApi, adminEmailBroadcastApi, type PushGroup, type Race, type AdminPushBroadcastResult, type EmailBroadcastItem } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
 type TargetType = 'all' | 'user' | 'race' | 'group'
@@ -26,12 +26,77 @@ export default function AdminPushPage() {
   const [result, setResult] = useState<AdminPushBroadcastResult | null>(null)
   const [err, setErr] = useState('')
 
+  // --- Email 廣播（Resend，全玩家批次寄送）---
+  const [ebSubject, setEbSubject] = useState('')
+  const [ebBody, setEbBody] = useState('')
+  const [ebSending, setEbSending] = useState(false)
+  const [ebErr, setEbErr] = useState('')
+  const [ebHistory, setEbHistory] = useState<EmailBroadcastItem[]>([])
+  const ebPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   useEffect(() => {
     const t = getToken()
     if (!t) { router.replace('/admin/login'); return }
     adminRacesApi.list(t).then((r) => setRaces(r.races)).catch(() => {})
     adminPushGroupsApi.list(t).then((r) => setGroups(r.groups)).catch(() => {})
+    loadEbHistory()
+    return () => { if (ebPollRef.current) clearInterval(ebPollRef.current) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
+
+  async function loadEbHistory() {
+    const t = getToken()
+    if (!t) return
+    try {
+      const r = await adminEmailBroadcastApi.list(t)
+      setEbHistory(r.broadcasts)
+      const hasSending = r.broadcasts.some((b) => b.status === 'sending')
+      if (hasSending && !ebPollRef.current) {
+        ebPollRef.current = setInterval(loadEbHistory, 5000)
+      } else if (!hasSending && ebPollRef.current) {
+        clearInterval(ebPollRef.current)
+        ebPollRef.current = null
+      }
+    } catch { /* 靜默失敗，下次輪詢再試 */ }
+  }
+
+  async function sendEmailBroadcast() {
+    const token = getToken()
+    if (!token) { router.replace('/admin/login'); return }
+    const subject = ebSubject.trim()
+    const body = ebBody.trim()
+    if (!subject || !body) { setEbErr('請填寫主旨與內文'); return }
+    setEbErr('')
+    let count = 0
+    try {
+      const r = await adminEmailBroadcastApi.recipientCount(token)
+      count = r.count
+    } catch (e: any) {
+      setEbErr(e?.message || '無法取得寄送對象人數'); return
+    }
+    if (!window.confirm(`將寄給 ${count} 位玩家，確定？`)) return
+
+    setEbSending(true)
+    try {
+      await adminEmailBroadcastApi.create(token, { subject, body_html: body })
+      setEbSubject(''); setEbBody('')
+      await loadEbHistory()
+    } catch (e: any) {
+      if (e?.status === 401) { clearToken(); router.replace('/admin/login') } else setEbErr(e?.message || '發送失敗')
+    } finally {
+      setEbSending(false)
+    }
+  }
+
+  function ebStatusLabel(s: EmailBroadcastItem['status']) {
+    switch (s) {
+      case 'sending': return { text: '寄送中…', color: 'var(--fug)' }
+      case 'done': return { text: '已完成', color: 'var(--fug)' }
+      case 'partial': return { text: '部分失敗', color: '#e0a020' }
+      case 'failed': return { text: '失敗', color: 'var(--hunt)' }
+      default: return { text: s, color: 'var(--tx-dim)' }
+    }
+  }
 
   async function send() {
     const token = getToken()
@@ -129,6 +194,48 @@ export default function AdminPushPage() {
         </div>
         {err && <div style={{ color: 'var(--hunt)', marginTop: 10, fontSize: 13 }}>{err}</div>}
       </div>
+
+      <h1 style={{ margin: '32px 0 8px', fontSize: 24, fontWeight: 800 }}>📧 Email 廣播</h1>
+      <p style={{ fontSize: 13, color: 'var(--tx-dim)', lineHeight: 1.7, margin: '0 0 16px', maxWidth: 640 }}>
+        透過 Resend 一次寄給全部有 Email 的玩家（已退訂者自動排除）。內文支援簡單 HTML（例如 <code>&lt;b&gt;</code>／<code>&lt;a href&gt;</code>／<code>&lt;br/&gt;</code>），會直接嵌入信件內文，請自行確認格式正確。每封信結尾會自動附上退訂連結與聯絡資訊。同時間只能有一則廣播在寄送中。
+      </p>
+
+      <div style={card}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <F label="主旨"><input style={inp} value={ebSubject} onChange={(e) => setEbSubject(e.target.value)} placeholder="例：8 月份新賽事開跑！" maxLength={200} /></F>
+          <F label="內文（支援簡單 HTML）">
+            <textarea style={{ ...inp, minHeight: 160, resize: 'vertical', fontFamily: 'monospace', fontSize: 13 }} value={ebBody} onChange={(e) => setEbBody(e.target.value)} placeholder="信件內文…" />
+          </F>
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, marginTop: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button onClick={sendEmailBroadcast} disabled={ebSending} style={primaryBtn}>{ebSending ? '發送中…' : '發送給全部玩家'}</button>
+        </div>
+        {ebErr && <div style={{ color: 'var(--hunt)', marginTop: 10, fontSize: 13 }}>{ebErr}</div>}
+      </div>
+
+      {ebHistory.length > 0 && (
+        <div style={{ ...card, maxWidth: 720 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: 'var(--tx)' }}>廣播歷史</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {ebHistory.map((b) => {
+              const st = ebStatusLabel(b.status)
+              return (
+                <div key={b.id} style={{ border: '1px solid var(--line-2)', borderRadius: 8, padding: '8px 12px', fontSize: 13 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                    <b style={{ color: 'var(--tx)' }}>{b.subject}</b>
+                    <span style={{ color: st.color, fontWeight: 700 }}>{st.text}</span>
+                  </div>
+                  <div style={{ color: 'var(--tx-dim)', marginTop: 4 }}>
+                    {new Date(b.created_at).toLocaleString('zh-TW')}　·　進度 {b.sent_count + b.fail_count}／{b.total_count}　·　成功 <b style={{ color: 'var(--fug)' }}>{b.sent_count}</b>／失敗 <b style={{ color: b.fail_count > 0 ? 'var(--hunt)' : 'var(--tx-dim)' }}>{b.fail_count}</b>
+                  </div>
+                  {b.error_note && <div style={{ color: '#e0a020', marginTop: 4 }}>{b.error_note}</div>}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

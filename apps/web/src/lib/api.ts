@@ -2880,6 +2880,29 @@ export const adminPushGroupsApi = {
     request<void>(`/admin/push-groups/${id}/members/remove`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ user_id }) }),
 }
 
+// --- Admin: Email 廣播（Resend 全玩家批次寄送，migration 141）---
+
+export interface EmailBroadcastItem {
+  id: string
+  subject: string
+  status: 'sending' | 'done' | 'failed' | 'partial'
+  total_count: number
+  sent_count: number
+  fail_count: number
+  error_note: string
+  created_at: string
+  finished_at: string | null
+}
+
+export const adminEmailBroadcastApi = {
+  recipientCount: (token: string) =>
+    request<{ count: number }>('/admin/email-broadcasts/recipient-count', { headers: withAuth(token) }),
+  list: (token: string) =>
+    request<{ broadcasts: EmailBroadcastItem[] }>('/admin/email-broadcasts', { headers: withAuth(token) }),
+  create: (token: string, body: { subject: string; body_html: string }) =>
+    request<{ id: string; total: number }>('/admin/email-broadcasts', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+}
+
 // --- 跑者充電站 / 特約商店 (Partner Shops) ---
 
 export interface PartnerShop {          // 列表用
