@@ -257,7 +257,9 @@ func (h *Handler) Registrations(w http.ResponseWriter, r *http.Request) {
 
 		var cfg race.RaceConfig
 		_ = json.Unmarshal(configBytes, &cfg) // 壞掉的 config 視同沒有覆寫
-		policy := race.ResolveCancellationPolicy(cfg.CancellationPolicy, sysDefaultPolicy)
+		// EffectiveCancellationPolicy：不退費賽事（config.refund_disabled）tiers 清空 → 預估退費 0 元，
+		// 與 CreateCancelRequest 申請當下的快照計算走同一顆，兩邊不會兜不起來。
+		policy := race.EffectiveCancellationPolicy(&cfg, sysDefaultPolicy)
 
 		// 未付款訂單沒有錢可退：即使政策算出 ratio>0，估算退費金額也要是 0（與 CreateCancelRequest 一致）。
 		effectiveAmount := 0

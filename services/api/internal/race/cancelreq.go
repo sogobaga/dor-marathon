@@ -310,7 +310,9 @@ func (s *Service) CreateCancelRequest(ctx context.Context, userID, regID, reason
 	var cfg RaceConfig
 	_ = json.Unmarshal(info.RaceConfig, &cfg) // 壞掉的 config 視同沒有覆寫，不阻擋申請
 	sysDefault := appsettings.GetString(ctx, s.repo.db, "cancellation_policy", "")
-	policy := ResolveCancellationPolicy(cfg.CancellationPolicy, sysDefault)
+	// EffectiveCancellationPolicy：不退費賽事（config.refund_disabled）會把 tiers 清空 → ratio=0/退 0 元，
+	// 但截止天數照常適用，玩家仍可申請取消釋出名額。
+	policy := EffectiveCancellationPolicy(&cfg, sysDefault)
 
 	// 未付款訂單沒有錢可退：即使政策算出 ratio>0，退費基準金額也要是 0（見 ComputeCancellation 註解）。
 	effectiveAmount := 0

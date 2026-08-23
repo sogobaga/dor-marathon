@@ -291,6 +291,8 @@ export default function RaceForm({
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
+  // 不退費開關：勾選＝此活動不提供退費（玩家仍可申請取消釋出名額，但退費為 0；簡章不顯示退費規則）。
+  const [refundDisabled, setRefundDisabled] = useState<boolean>(initial?.config?.refund_disabled ?? false)
   // 取消退費規則：預設「跟隨系統預設」；此賽事已有覆寫（config.cancellation_policy 非 null）才預設開啟自訂。
   const [cancelFollowDefault, setCancelFollowDefault] = useState<boolean>(!initial?.config?.cancellation_policy)
   const [cancelPolicy, setCancelPolicy] = useState<CancellationPolicy>(
@@ -669,6 +671,8 @@ export default function RaceForm({
       // 否則會把 factions/clubs/missions 等既有欄位一併清空（見後端 configToBytes/bytesToConfig 註解）。
       config: {
         ...(initial?.config ?? {}),
+        // 不退費開關：false 時送 undefined（JSON 序列化會整個略過該 key），保持 config 乾淨且可清掉舊值。
+        refund_disabled: refundDisabled || undefined,
         cancellation_policy: cancelFollowDefault
           ? null
           : { deadline_days: cancelPolicy.deadline_days, tiers: sortTiers(cancelPolicy.tiers ?? []) },
@@ -830,7 +834,7 @@ export default function RaceForm({
           ['supplies', `物資 (${supplies.filter((s) => s.name.trim()).length})`],
           ['brochure', `簡章 (${brochure.filter(blockHasContent).length})`],
           ['tasks', `任務 (${tasks.filter(taskComplete).length})`],
-          ['cancel', `取消退費${cancelFollowDefault ? '' : ' ・自訂'}`],
+          ['cancel', `取消退費${refundDisabled ? ' ・不退費' : cancelFollowDefault ? '' : ' ・自訂'}`],
         ].map(([v, label]) => (
           <button
             key={v}
@@ -1524,13 +1528,30 @@ export default function RaceForm({
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--tx)', fontWeight: 600 }}>
               <input
                 type="checkbox"
+                checked={refundDisabled}
+                onChange={(e) => setRefundDisabled(e.target.checked)}
+              />
+              此活動不提供退費
+            </label>
+
+            {refundDisabled && (
+              <div style={hint}>
+                前台簡章將不顯示取消退費規則；玩家仍可申請取消釋出名額，但退費金額為 0。
+              </div>
+            )}
+
+            {!refundDisabled && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--tx)', fontWeight: 600 }}>
+              <input
+                type="checkbox"
                 checked={!cancelFollowDefault}
                 onChange={(e) => setCancelFollowDefault(!e.target.checked)}
               />
               此賽事自訂取消退費規則（不勾選＝跟隨系統預設）
             </label>
+            )}
 
-            {cancelFollowDefault ? (
+            {refundDisabled ? null : cancelFollowDefault ? (
               <div style={{ ...card, background: 'var(--bg-2)' }}>
                 <div style={{ fontWeight: 700, fontSize: 13.5 }}>目前系統預設值（唯讀）</div>
                 <div style={{ ...hint, marginTop: 6 }}>

@@ -316,9 +316,15 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 
 	// 取消退費規則（簡章頁尾表格用）：解析好最終生效政策一併回傳，跟 CreateCancelRequest 實際退費
 	// 計算共用同一顆 ResolveCancellationPolicy，避免前端顯示跟真正退費金額兜不起來。
-	sysDefaultPolicy := appsettings.GetString(ctx, s.repo.db, "cancellation_policy", "")
-	resolvedPolicy := ResolveCancellationPolicy(detail.Config.CancellationPolicy, sysDefaultPolicy)
-	detail.ResolvedCancellationPolicy = &resolvedPolicy
+	// 不退費賽事（config.refund_disabled）不回傳解析後政策——前台簡章的「取消退費規則」區塊
+	// 已有 !policy 防禦（BrochureScreen RefundPolicyBody），會自動整塊不顯示。
+	if detail.Config.RefundDisabled {
+		detail.ResolvedCancellationPolicy = nil
+	} else {
+		sysDefaultPolicy := appsettings.GetString(ctx, s.repo.db, "cancellation_policy", "")
+		resolvedPolicy := ResolveCancellationPolicy(detail.Config.CancellationPolicy, sysDefaultPolicy)
+		detail.ResolvedCancellationPolicy = &resolvedPolicy
+	}
 
 	var reg *Registration
 	if userID != "" {

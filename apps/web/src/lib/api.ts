@@ -250,6 +250,7 @@ export interface CancellationPolicy {
 // 是整個 struct marshal，任何未帶到的欄位都會被清空）。
 export interface RaceConfig {
   cancellation_policy?: CancellationPolicy | null // null／不覆寫＝繼承系統預設
+  refund_disabled?: boolean // true＝此活動不提供退費（玩家仍可申請取消釋出名額，但退費為 0；簡章不顯示退費規則）
   [key: string]: unknown
 }
 

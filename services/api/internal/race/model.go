@@ -480,6 +480,10 @@ type RaceConfig struct {
 	// 必須放在 RaceConfig 這個型別內（而非另外存表）——後台編輯賽事時整包 config 會經 Go struct 序列化
 	// 往返（見 configToBytes/bytesToConfig），不在此型別內的欄位會在下次編輯賽事時被覆寫掉。
 	CancellationPolicy *CancellationPolicy `json:"cancellation_policy,omitempty"`
+	// RefundDisabled 此賽事不提供退費（false＝可退費，舊資料向下相容）。語意是「不退費 ≠ 不可取消」：
+	// 玩家仍可申請取消釋出名額，但退費比例強制 0（見 EffectiveCancellationPolicy）；公開簡章則不回傳
+	// 取消退費規則（見 GetPublicDetail）。
+	RefundDisabled bool `json:"refund_disabled,omitempty"`
 }
 
 type FactionDef struct {

@@ -46,6 +46,25 @@ func ResolveCancellationPolicy(override *CancellationPolicy, systemDefaultJSON s
 	return defaultCancellationPolicy
 }
 
+// EffectiveCancellationPolicy 解析「實際生效」的取消政策：先走 ResolveCancellationPolicy（賽事覆寫→
+// 系統預設→內建預設），若該賽事開了不退費開關（cfg.RefundDisabled），把 Tiers 清空——ComputeCancellation
+// 對空 tiers 自然算出 Ratio=0 / RefundAmountCents=0，而 DeadlineDays/CanCancel 判斷照常適用
+// （不退費 ≠ 不可取消：玩家仍可在截止前申請取消釋出名額，只是退費金額為 0）。
+// 取消申請流程（CreateCancelRequest）與預估退費（profile 報名紀錄）都必須走這顆，確保兩邊一致。
+func EffectiveCancellationPolicy(cfg *RaceConfig, systemDefaultJSON string) CancellationPolicy {
+	var override *CancellationPolicy
+	refundDisabled := false
+	if cfg != nil {
+		override = cfg.CancellationPolicy
+		refundDisabled = cfg.RefundDisabled
+	}
+	p := ResolveCancellationPolicy(override, systemDefaultJSON)
+	if refundDisabled {
+		p.Tiers = nil
+	}
+	return p
+}
+
 // CancellationCalc ComputeCancellation 的計算結果。
 type CancellationCalc struct {
 	DaysBefore        int    `json:"days_before"`
