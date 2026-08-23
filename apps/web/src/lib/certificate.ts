@@ -227,16 +227,16 @@ export async function renderCertificate(cert: Certificate): Promise<CertificateR
   ctx.fillStyle = GOLD_ACCENT
   ctx.fill()
 
-  // 完成賽事：安全寬 ≈46%W、置中；過長自動折成兩行（單行 y=48%H；兩行往 44%/52%H 分配，
-  // 下方組別固定於 56%H，兩者間留有間距，折成兩行時不會互疊）
+  // 完成賽事：安全寬 ≈46%W、置中；過長自動折成兩行（單行 y=48%H；兩行往 45.5%/50.5%H 分配
+  // ——行距 5%H，2026-08-24 使用者實測回饋原 44%/52% 間距過大；下方組別固定於 56%H 仍留有間距）
   const raceText = `完成「${cert.race_title}」`
   const raceSafeW = W * 0.46
   const raceLayout = layoutWrappedText(ctx, raceText, 700, 34, 30, 24, raceSafeW, 2)
   ctx.font = `700 ${raceLayout.size}px ${FONT}`
   ctx.fillStyle = NAVY
   if (raceLayout.lines.length > 1) {
-    ctx.fillText(raceLayout.lines[0], cx, H * 0.44)
-    ctx.fillText(raceLayout.lines[1], cx, H * 0.52)
+    ctx.fillText(raceLayout.lines[0], cx, H * 0.455)
+    ctx.fillText(raceLayout.lines[1], cx, H * 0.505)
   } else {
     ctx.fillText(raceLayout.lines[0], cx, H * 0.48)
   }
@@ -297,7 +297,7 @@ export async function renderCertificate(cert: Certificate): Promise<CertificateR
   size = fitFontSize(ctx, dateText, 700, 26, 20, dateMaxW)
   ctx.font = `700 ${size}px ${FONT}`
   ctx.fillStyle = NAVY
-  ctx.fillText(dateText, cx, H * 0.866)
+  ctx.fillText(dateText, cx, H * 0.882) // 2026-08-24 實測回饋：0.866 於膠囊框內視覺偏高，下移至 88.2%H 置中
 
   const dataUrl = canvas.toDataURL('image/png')
   const blob = await new Promise<Blob | null>((resolve) => {
