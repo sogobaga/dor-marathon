@@ -148,7 +148,7 @@ func TestDefaultFrom(t *testing.T) {
 	defer os.Setenv("EMAIL_FROM", old)
 
 	os.Unsetenv("EMAIL_FROM")
-	if got := DefaultFrom(); got != "DOR 跑步平台 <noreply@dor.tw>" {
+	if got := DefaultFrom(); got != "DOR｜城市探索 <noreply@dor.tw>" {
 		t.Fatalf("expected default from, got %q", got)
 	}
 
