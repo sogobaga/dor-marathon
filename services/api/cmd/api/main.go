@@ -34,6 +34,7 @@ import (
 	"github.com/dor/api/internal/mailer"
 	"github.com/dor/api/internal/middleware"
 	"github.com/dor/api/internal/monopoly"
+	"github.com/dor/api/internal/ops"
 	"github.com/dor/api/internal/organizer"
 	"github.com/dor/api/internal/partner"
 	"github.com/dor/api/internal/payment"
@@ -150,6 +151,10 @@ func main() {
 	// 不需要額外轉接層。
 	bindClient := payment.NewBindClient(cfg.ECPayBindEnv, cfg.ECPayBindMerchantID, cfg.ECPayBindHashKey, cfg.ECPayBindHashIV)
 	bindHandler := payment.NewBindHandler(bindClient, payRepo, pool, raceRepo, mailHandler, cfg.ECPayBindEnv, cfg.ECPayBindReturnURL, cfg.ECPayBindResultURL, cfg.FrontendURL)
+
+	// Ops（每日資料一致性自檢排程：orders/payment_transactions/vip_subscriptions 等金流表的一致性
+	// 健檢，異常送 Telegram，比照 bindHandler.RunRenewalLoop 的排程骨架，見 internal/ops/selfcheck.go）
+	opsHandler := ops.NewHandler(pool)
 
 	// Activity
 	actRepo := activity.NewRepository(pool)
@@ -523,6 +528,7 @@ func main() {
 			r.With(perm("settings")).Mount("/admin/push", pushHandler.AdminRouter())
 			r.With(perm("settings")).Mount("/admin/push-groups", pushHandler.GroupAdminRouter())
 			r.With(perm("settings")).Mount("/admin/email-broadcasts", emailBroadcastHandler.AdminRouter())
+			r.With(perm("settings")).Post("/admin/ops/selfcheck", opsHandler.SelfCheckNow)
 		})
 	})
 
@@ -573,6 +579,8 @@ func main() {
 	// 背景：參賽虛擬獎勵排程（migration 140）——已開賽的賽事每 5 分鐘掃描一次，把設定的虛擬獎勵發給
 	// 所有已報名(paid)者（不看任務條件，人人有獎）
 	go raceSvc.RunEntryRewardLoop(bgCtx)
+	// 背景：每日資料一致性自檢排程（台灣時間 08:00-08:59 執行一次；金流/報名表健檢異常送 Telegram）
+	go opsHandler.RunSelfCheckLoop(bgCtx)
 
 	go func() {
 		log.Info().Str("port", cfg.Port).Msg("DOR API server starting")
