@@ -321,6 +321,13 @@ export default function RaceForm({
   )
   const [certSelectedKey, setCertSelectedKey] = useState<string | null>(null)
   const certOverlayRef = useRef<HTMLDivElement>(null)
+  // 排版編輯器改「另開全屏 modal」（v0.1.578）：表單內預覽改純顯示防誤觸；互動全部搬進 modal。
+  // 開啟時快照 certLayout，「取消」/✕/Esc 一律還原快照丟棄本次調整，「確定」則保留（維持在 certLayout
+  // state 上，仍需回表單按「儲存」才真正送出——與 buildCertLayoutPayload 的既有語意完全一致，
+  // modal 只是換了互動的容器，不改變資料流）。certLayout 的每次寫入（updateCertLayout/resetCertElement/
+  // resetAllCertLayout）皆是回傳新物件、不原地 mutate，故存純參照當快照即可，不需深拷貝。
+  const [certEditorOpen, setCertEditorOpen] = useState(false)
+  const certLayoutSnapshotRef = useRef<Record<string, Partial<CertElementLayout>>>({})
   // 完賽證明顯示開關：勾選＝前台不顯示完賽證明（一般模式）／完賽歷程（personal 模式）按鈕，
   // 後端 certificate／personal-history 端點同步擋（403，防繞過），語意比照下方 refundDisabled。
   const [certificateDisabled, setCertificateDisabled] = useState<boolean>(initial?.config?.certificate_disabled ?? false)
@@ -456,6 +463,205 @@ export default function RaceForm({
       if (changed) out[key] = resolved
     }
     return Object.keys(out).length > 0 ? out : undefined
+  }
+  function openCertEditor() {
+    if (!certBgUrl) return // 無底圖不開放排版（沿用既有限制：位置不開放自訂，見上方 renderCertificate 註解）
+    certLayoutSnapshotRef.current = certLayout
+    setCertSelectedKey(null)
+    setCertEditorOpen(true)
+  }
+  // 「確定」：不還原快照，直接關閉——本次調整已經就是 certLayout state 本身，關閉 modal 即完成寫回表單 state。
+  function confirmCertEditor() {
+    setCertEditorOpen(false)
+  }
+  // 「取消」/✕/Esc/點背景共用：還原開啟當下的快照，丟棄 modal 內做的所有調整，誤觸/誤拖不再有代價。
+  function cancelCertEditor() {
+    setCertLayout(certLayoutSnapshotRef.current)
+    setCertSelectedKey(null)
+    setCertEditorOpen(false)
+  }
+  useEffect(() => {
+    if (!certEditorOpen) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { e.preventDefault(); cancelCertEditor() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [certEditorOpen])
+  // 清除底圖：確認 dialog 防誤觸（見排查結論——鈕本身無保護、緊鄰高互動排版區，單次誤點就讓縮圖消失，
+  // 是使用者回報「底圖消失」最可能的成因）。
+  function handleRemoveCertBg() {
+    if (!window.confirm('確定要清除底圖？清除後將改用系統預設證明設計（此動作在按下「儲存」前仍可用「取消」離開表單復原）。')) return
+    setCertBgUrl('')
+  }
+
+  // 完賽證明排版編輯器（全屏 modal）：用「函式呼叫」而非獨立元件，比照上方 taskSection 的既有慣例——
+  // 獨立元件在父層重渲染時可能被視為新的元件型別而整棵重新掛載，導致 X/Y/字級輸入框失焦；用函式呼叫
+  // 則沿用同一個 render tree，狀態與焦點都不受影響。互動邏輯（拖曳/方向鍵/數字輸入）完全沿用既有的
+  // handleCertPointerDown/Move/Up、handleCertKeyDown、updateCertLayout 等既有函式，只是換了外層容器。
+  function certEditorModal() {
+    return (
+      <div
+        style={certModalOverlay}
+        onClick={cancelCertEditor}
+        role="dialog"
+        aria-modal="true"
+        aria-label="編輯完賽證明排版"
+      >
+        <div style={certModalPanel} onClick={(e) => e.stopPropagation()}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid var(--line-2)' }}>
+            <div style={{ fontWeight: 800, fontSize: 16 }}>編輯完賽證明排版</div>
+            <button type="button" onClick={cancelCertEditor} style={{ background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: 4 }}>✕</button>
+          </div>
+
+          <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+            {/* 大尺寸預覽：畫面允許下盡量大，maxWidth 900 + aspect-ratio 維持 1240×877 畫布比例 */}
+            <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'auto', padding: 20 }}>
+              {certPreviewImg ? (
+                <div style={{ position: 'relative', width: '100%', maxWidth: 900, aspectRatio: '1240 / 877' }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={certPreviewImg}
+                    alt="完賽證明編輯預覽"
+                    draggable={false}
+                    style={{ width: '100%', height: '100%', display: 'block', borderRadius: 10, border: '1px solid var(--line-2)', objectFit: 'contain', pointerEvents: 'none', userSelect: 'none' }}
+                  />
+                  {/* 熱區座標直接用 layout 的 x/y 比例(0-1)換算成 %，與 renderCertificate 換算成 canvas px
+                      的方式相同，故拖曳結果與實際渲染完全對位。 */}
+                  <div ref={certOverlayRef} style={{ position: 'absolute', inset: 0 }}>
+                    {CERT_ELEMENT_KEYS.map((key) => {
+                      const l = resolveCertElementLayout(key, certLayout)
+                      const def = CERT_DEFAULT_LAYOUT[key]
+                      const box = CERT_HITBOX[key]
+                      const hRatio = def?.size ? l.size / def.size : 1
+                      const selected = certSelectedKey === key
+                      return (
+                        <div
+                          key={key}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`拖曳調整「${CERT_ELEMENT_LABELS[key]}」位置`}
+                          onPointerDown={(e) => handleCertPointerDown(key, e)}
+                          onPointerMove={(e) => handleCertPointerMove(key, e)}
+                          onPointerUp={handleCertPointerUp}
+                          onPointerCancel={handleCertPointerUp}
+                          onKeyDown={(e) => handleCertKeyDown(key, e)}
+                          onClick={() => setCertSelectedKey(key)}
+                          style={{
+                            position: 'absolute',
+                            left: `${l.x * 100}%`,
+                            top: `${l.y * 100}%`,
+                            width: `${(box.w / 1240) * 100}%`,
+                            height: `${(box.h * hRatio / 877) * 100}%`,
+                            transform: 'translate(-50%, -50%)',
+                            border: selected ? '2px solid #46E3A0' : '1px dashed rgba(255,255,255,.55)',
+                            background: selected ? 'rgba(70,227,160,.16)' : 'rgba(0,0,0,.02)',
+                            borderRadius: 4,
+                            cursor: 'move',
+                            touchAction: 'none',
+                            outline: 'none',
+                          }}
+                        >
+                          <span
+                            style={{
+                              position: 'absolute', top: -18, left: 0, fontSize: 11, color: '#fff',
+                              background: 'rgba(0,0,0,.6)', padding: '2px 5px', borderRadius: 3, whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {CERT_ELEMENT_LABELS[key]}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>{certPreviewLoading ? '產生預覽中…' : '尚無預覽'}</div>
+              )}
+            </div>
+
+            {/* 側欄：元素清單（點選切換）＋ X/Y/字級輸入 ＋ 單元素還原 ＋ 全部還原 */}
+            <div style={{ width: 260, flex: '0 0 260px', borderLeft: '1px solid var(--line-2)', padding: 16, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, letterSpacing: '.08em', color: 'var(--tx-faint)', marginBottom: 8, textTransform: 'uppercase' }}>元素清單</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {CERT_ELEMENT_KEYS.map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setCertSelectedKey(key)}
+                      style={{
+                        textAlign: 'left', padding: '8px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13,
+                        border: certSelectedKey === key ? '1px solid #46E3A0' : '1px solid var(--line-2)',
+                        background: certSelectedKey === key ? 'rgba(70,227,160,.12)' : 'var(--bg-2)',
+                        color: 'var(--tx)',
+                      }}
+                    >
+                      {CERT_ELEMENT_LABELS[key]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {certSelectedKey ? (
+                <div style={{ padding: 10, border: '1px solid var(--line-2)', borderRadius: 8, background: 'var(--bg-2)' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+                    編輯元素：{CERT_ELEMENT_LABELS[certSelectedKey]}
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                    <label style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+                      X %
+                      <input
+                        type="number" step={0.1}
+                        value={+(resolveCertElementLayout(certSelectedKey, certLayout).x * 100).toFixed(1)}
+                        onChange={(e) => updateCertLayout(certSelectedKey, { x: Math.min(1, Math.max(0, (parseFloat(e.target.value) || 0) / 100)) })}
+                        style={{ ...inp, width: 76, marginTop: 4 }}
+                      />
+                    </label>
+                    <label style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+                      Y %
+                      <input
+                        type="number" step={0.1}
+                        value={+(resolveCertElementLayout(certSelectedKey, certLayout).y * 100).toFixed(1)}
+                        onChange={(e) => updateCertLayout(certSelectedKey, { y: Math.min(1, Math.max(0, (parseFloat(e.target.value) || 0) / 100)) })}
+                        style={{ ...inp, width: 76, marginTop: 4 }}
+                      />
+                    </label>
+                    <label style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+                      字級 px
+                      <input
+                        type="number" step={1} min={8}
+                        value={Math.round(resolveCertElementLayout(certSelectedKey, certLayout).size)}
+                        onChange={(e) => updateCertLayout(certSelectedKey, { size: Math.max(8, parseFloat(e.target.value) || 8) })}
+                        style={{ ...inp, width: 76, marginTop: 4 }}
+                      />
+                    </label>
+                    <button type="button" style={ghostBtn} onClick={() => resetCertElement(certSelectedKey)}>還原此元素</button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>
+                  點選左側清單或預覽圖上的虛線框可拖曳調整位置；選取後可用方向鍵微調（每按 0.5%），或於出現的欄位輸入精確數值。
+                </div>
+              )}
+
+              <button type="button" style={ghostBtn} onClick={resetAllCertLayout}>全部還原預設排版</button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 18px', borderTop: '1px solid var(--line-2)', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+              「確定」套用本次調整到表單；仍需回到賽事表單按「儲存」才會真正寫入。「取消」／✕／Esc／點擊背景會捨棄本次在此畫面內的調整。
+            </span>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button type="button" style={ghostBtn} onClick={cancelCertEditor}>取消</button>
+              <button type="button" style={primaryBtn} onClick={confirmCertEditor}>確定</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   async function uploadBanner(file: File) {
@@ -1310,10 +1516,14 @@ export default function RaceForm({
 
             <Field label="完賽證明底圖（選填，留空用系統預設設計）">
               {certBgUrl ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={certBgUrl} alt="底圖" style={{ width: 140, height: 99, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--line-2)' }} />
-                  <button type="button" style={{ ...ghostBtn, color: 'var(--hunt)' }} onClick={() => setCertBgUrl('')}>移除</button>
+                  {/* 清除鈕：獨立點擊區域（與上方縮圖有明顯間距，且不與任何拖曳互動層相鄰——排版編輯器
+                      已改獨立 modal，此處表單原位只剩純顯示，見下方預覽區）＋確認 dialog 防誤觸——
+                      使用者曾回報「誤觸後底圖消失要重新上傳」，此鈕清空 certBgUrl 是唯一會讓縮圖立即消失
+                      的路徑，加確認 dialog 是最直接的防呆（詳細排查結論見 commit message）。 */}
+                  <button type="button" style={{ ...ghostBtn, color: 'var(--hunt)' }} onClick={handleRemoveCertBg}>移除底圖</button>
                 </div>
               ) : (
                 <label style={{ ...ghostBtn, display: 'inline-block', cursor: 'pointer' }}>
@@ -1327,7 +1537,7 @@ export default function RaceForm({
               {(certPreviewImg || certPreviewLoading) && (
                 <div style={{ marginTop: 10 }}>
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 6 }}>
-                    模擬預覽（示例資料，僅供確認版面配置，不影響實際發放）
+                    模擬預覽（示例資料，僅供確認版面配置，不影響實際發放；純顯示，不會誤觸——排版調整請按下方「編輯排版」另開畫面）
                   </div>
                   {certPreviewImg ? (
                     <div style={{ position: 'relative', width: '100%', maxWidth: 420 }}>
@@ -1335,113 +1545,28 @@ export default function RaceForm({
                       <img
                         src={certPreviewImg}
                         alt="完賽證明模擬預覽"
-                        style={{ width: '100%', display: 'block', borderRadius: 10, border: '1px solid var(--line-2)' }}
+                        draggable={false}
+                        style={{ width: '100%', display: 'block', borderRadius: 10, border: '1px solid var(--line-2)', pointerEvents: 'none', userSelect: 'none' }}
                       />
-                      {/* 可視化排版互動層：僅有底圖時顯示（無底圖用系統預設設計，位置不開放自訂）。
-                          熱區座標直接用 layout 的 x/y 比例(0-1)換算成 %，與 renderCertificate 換算成
-                          canvas px 的方式相同，故拖曳結果與實際渲染完全對位。 */}
-                      {certBgUrl && (
-                        <div ref={certOverlayRef} style={{ position: 'absolute', inset: 0 }}>
-                          {CERT_ELEMENT_KEYS.map((key) => {
-                            const l = resolveCertElementLayout(key, certLayout)
-                            const def = CERT_DEFAULT_LAYOUT[key]
-                            const box = CERT_HITBOX[key]
-                            const hRatio = def?.size ? l.size / def.size : 1
-                            const selected = certSelectedKey === key
-                            return (
-                              <div
-                                key={key}
-                                role="button"
-                                tabIndex={0}
-                                aria-label={`拖曳調整「${CERT_ELEMENT_LABELS[key]}」位置`}
-                                onPointerDown={(e) => handleCertPointerDown(key, e)}
-                                onPointerMove={(e) => handleCertPointerMove(key, e)}
-                                onPointerUp={handleCertPointerUp}
-                                onPointerCancel={handleCertPointerUp}
-                                onKeyDown={(e) => handleCertKeyDown(key, e)}
-                                onClick={() => setCertSelectedKey(key)}
-                                style={{
-                                  position: 'absolute',
-                                  left: `${l.x * 100}%`,
-                                  top: `${l.y * 100}%`,
-                                  width: `${(box.w / 1240) * 100}%`,
-                                  height: `${(box.h * hRatio / 877) * 100}%`,
-                                  transform: 'translate(-50%, -50%)',
-                                  border: selected ? '2px solid #46E3A0' : '1px dashed rgba(255,255,255,.55)',
-                                  background: selected ? 'rgba(70,227,160,.16)' : 'rgba(0,0,0,.02)',
-                                  borderRadius: 4,
-                                  cursor: 'move',
-                                  touchAction: 'none',
-                                  outline: 'none',
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    position: 'absolute', top: -16, left: 0, fontSize: 10, color: '#fff',
-                                    background: 'rgba(0,0,0,.6)', padding: '1px 4px', borderRadius: 3, whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {CERT_ELEMENT_LABELS[key]}
-                                </span>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
                     </div>
                   ) : (
                     <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>產生預覽中…</div>
                   )}
-                  {certBgUrl ? (
-                    <div style={{ marginTop: 10 }}>
-                      {certSelectedKey ? (
-                        <div style={{ padding: 10, border: '1px solid var(--line-2)', borderRadius: 8, background: 'var(--bg-2)' }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
-                            編輯元素：{CERT_ELEMENT_LABELS[certSelectedKey]}
-                          </div>
-                          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                            <label style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
-                              X %
-                              <input
-                                type="number" step={0.1}
-                                value={+(resolveCertElementLayout(certSelectedKey, certLayout).x * 100).toFixed(1)}
-                                onChange={(e) => updateCertLayout(certSelectedKey, { x: Math.min(1, Math.max(0, (parseFloat(e.target.value) || 0) / 100)) })}
-                                style={{ ...inp, width: 76, marginTop: 4 }}
-                              />
-                            </label>
-                            <label style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
-                              Y %
-                              <input
-                                type="number" step={0.1}
-                                value={+(resolveCertElementLayout(certSelectedKey, certLayout).y * 100).toFixed(1)}
-                                onChange={(e) => updateCertLayout(certSelectedKey, { y: Math.min(1, Math.max(0, (parseFloat(e.target.value) || 0) / 100)) })}
-                                style={{ ...inp, width: 76, marginTop: 4 }}
-                              />
-                            </label>
-                            <label style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
-                              字級 px
-                              <input
-                                type="number" step={1} min={8}
-                                value={Math.round(resolveCertElementLayout(certSelectedKey, certLayout).size)}
-                                onChange={(e) => updateCertLayout(certSelectedKey, { size: Math.max(8, parseFloat(e.target.value) || 8) })}
-                                style={{ ...inp, width: 76, marginTop: 4 }}
-                              />
-                            </label>
-                            <button type="button" style={ghostBtn} onClick={() => resetCertElement(certSelectedKey)}>還原此元素</button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>
-                          點選預覽圖上的虛線框可拖曳調整位置；選取後可用方向鍵微調（每按 0.5%），或於出現的欄位輸入精確數值。
-                        </div>
-                      )}
-                      <button type="button" style={{ ...ghostBtn, marginTop: 8 }} onClick={resetAllCertLayout}>全部還原預設排版</button>
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>
-                      上傳底圖後可在此拖曳調整完賽證明各資訊元素的位置與字級（可視化排版編輯器）。
-                    </div>
-                  )}
+                  <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={openCertEditor}
+                      disabled={!certBgUrl}
+                      style={{ ...ghostBtn, opacity: certBgUrl ? 1 : 0.45, cursor: certBgUrl ? 'pointer' : 'not-allowed' }}
+                    >
+                      ✎ 編輯排版
+                    </button>
+                    <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+                      {certBgUrl
+                        ? '開啟全屏編輯畫面，拖曳調整各資訊元素的位置與字級。'
+                        : '上傳底圖後可編輯各資訊元素的位置與字級（無底圖用系統預設設計，位置不開放自訂）。'}
+                    </span>
+                  </div>
                 </div>
               )}
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tx)', fontWeight: 600, marginTop: 12 }}>
@@ -1864,6 +1989,8 @@ export default function RaceForm({
           {saving ? '儲存中…' : submitLabel ?? (isEdit ? '儲存變更' : '建立賽事')}
         </button>
       </div>
+
+      {certEditorOpen && certEditorModal()}
     </div>
   )
 }
@@ -2064,4 +2191,16 @@ const ghostBtn: React.CSSProperties = {
 }
 const linkBtn: React.CSSProperties = {
   background: 'none', border: 'none', color: 'var(--fug)', cursor: 'pointer', fontSize: 12, padding: 0,
+}
+// 完賽證明排版編輯器 modal：admin 頁不在前台 phone-shell 內，一般 fixed 全屏即可（比照 NewRaceModal 的
+// overlay/panel 慣例，但 zIndex 拉高到 200——RaceForm 本身可能已被 NewRaceModal(zIndex 50) 包一層
+// （新增賽事流程），此 modal 需疊在其上）。
+const certModalOverlay: React.CSSProperties = {
+  position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', zIndex: 200,
+  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+}
+const certModalPanel: React.CSSProperties = {
+  width: '100%', height: '100%', maxWidth: 1280,
+  background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16,
+  display: 'flex', flexDirection: 'column', overflow: 'hidden',
 }
