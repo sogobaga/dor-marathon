@@ -113,7 +113,7 @@ export default function RaceDetailScreen({
     }
     let cancelled = false
     setCertErr(false)
-    renderCertificate(cert)
+    renderCertificate(cert, cert.layout)
       .then((r) => {
         if (cancelled) return
         setCertImg(r.dataUrl)

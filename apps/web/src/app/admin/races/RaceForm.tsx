@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   adminRacesApi,
   adminPresetsApi,
@@ -35,7 +35,8 @@ import {
 } from '@/lib/api'
 import { TaskItemEditor, type TaskFields } from '../TaskItemEditor'
 import { CancellationPolicyFields, DEFAULT_CANCELLATION_POLICY, sortTiers, validateCancellationPolicy } from '../CancelPolicyEditor'
-import { renderCertificate } from '@/lib/certificate'
+import { renderCertificate, CERT_DEFAULT_LAYOUT, resolveCertElementLayout } from '@/lib/certificate'
+import type { CertElementLayout } from '@/lib/api'
 
 // 物資編輯用的中介型別：scope 用「-1=共用」或分組索引表示
 interface SupplyDraft {
@@ -58,6 +59,30 @@ const COMPLETION_TYPES: { v: CompletionType; t: string }[] = [
   { v: 'window_cumulative', t: '區間累積（M 天內累積達標）' },
   { v: 'single_distance', t: '單趟距離（單次跑步達標）' },
 ]
+
+// 完賽證明可視化排版編輯器：8 組元素的顯示名稱＋概略熱區尺寸（canvas px，1240×877 座標系；粗略即可，
+// 中心對位）。與 '@/lib/certificate' 的 CERT_DEFAULT_LAYOUT 一一對應，順序即編輯器熱區的疊圖順序。
+const CERT_ELEMENT_LABELS: Record<string, string> = {
+  cert_title: '完賽證明（小標）',
+  name: '姓名',
+  race_name: '賽事名稱',
+  group: '分組',
+  col1: '完成里程',
+  col2: '完成時間',
+  col3: '完成名次',
+  date: '完成日期',
+}
+const CERT_ELEMENT_KEYS = Object.keys(CERT_ELEMENT_LABELS)
+const CERT_HITBOX: Record<string, { w: number; h: number }> = {
+  cert_title: { w: 220, h: 44 },
+  name: { w: 320, h: 100 },
+  race_name: { w: 580, h: 90 },
+  group: { w: 320, h: 44 },
+  col1: { w: 170, h: 90 },
+  col2: { w: 190, h: 90 },
+  col3: { w: 170, h: 90 },
+  date: { w: 380, h: 44 },
+}
 
 const CONTROL_STATUSES: { v: string; t: string; d: string }[] = [
   { v: 'active', t: '正常運作中', d: '依報名/賽事時間自動切換狀態' },
@@ -288,6 +313,14 @@ export default function RaceForm({
   // 不是本地 blob，故可直接沿用 renderCertificate 既有的 loadImage 同源載入，不需另外處理跨域/暫存）。
   const [certPreviewImg, setCertPreviewImg] = useState('')
   const [certPreviewLoading, setCertPreviewLoading] = useState(false)
+  // 完賽證明可視化排版編輯器（per-race cert_layout 覆寫）：只存「被改過」的 key，缺項/整個 key 不存
+  // 皆 fallback CERT_DEFAULT_LAYOUT（見 '@/lib/certificate'）。拖曳/方向鍵/數字輸入三種互動共用
+  // updateCertLayout 這一個寫入點。
+  const [certLayout, setCertLayout] = useState<Record<string, Partial<CertElementLayout>>>(
+    initial?.config?.cert_layout ?? {}
+  )
+  const [certSelectedKey, setCertSelectedKey] = useState<string | null>(null)
+  const certOverlayRef = useRef<HTMLDivElement>(null)
   // 完賽證明顯示開關：勾選＝前台不顯示完賽證明（一般模式）／完賽歷程（personal 模式）按鈕，
   // 後端 certificate／personal-history 端點同步擋（403，防繞過），語意比照下方 refundDisabled。
   const [certificateDisabled, setCertificateDisabled] = useState<boolean>(initial?.config?.certificate_disabled ?? false)
@@ -341,7 +374,7 @@ export default function RaceForm({
       finished_count: 128,
       race_ended: true,
       bg_url: certBgUrl || undefined,
-    })
+    }, certLayout)
       .then((r) => {
         if (cancelled) return
         setCertPreviewImg(r.dataUrl)
@@ -354,7 +387,76 @@ export default function RaceForm({
         if (!cancelled) setCertPreviewLoading(false)
       })
     return () => { cancelled = true }
-  }, [certBgUrl, title])
+  }, [certBgUrl, title, certLayout])
+
+  // 排版編輯器 helpers：拖曳/方向鍵/數字輸入三種互動共用同一個寫入點——只寫「解析後的完整值」，
+  // 避免局部覆寫堆疊出不一致的 partial 物件。
+  function updateCertLayout(key: string, patch: Partial<CertElementLayout>) {
+    setCertLayout((prev) => {
+      const cur = resolveCertElementLayout(key, prev)
+      return { ...prev, [key]: { ...cur, ...patch } }
+    })
+  }
+  function resetCertElement(key: string) {
+    setCertLayout((prev) => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+  function resetAllCertLayout() {
+    setCertLayout({})
+  }
+  function certPointToFraction(clientX: number, clientY: number): { x: number; y: number } | null {
+    const rect = certOverlayRef.current?.getBoundingClientRect()
+    if (!rect || rect.width === 0 || rect.height === 0) return null
+    return {
+      x: Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (clientY - rect.top) / rect.height)),
+    }
+  }
+  function handleCertPointerDown(key: string, e: React.PointerEvent) {
+    e.preventDefault()
+    setCertSelectedKey(key)
+    try { (e.currentTarget as Element).setPointerCapture(e.pointerId) } catch { /* 部分環境不支援，仍可用方向鍵/數字輸入調整 */ }
+  }
+  function handleCertPointerMove(key: string, e: React.PointerEvent) {
+    if (!(e.currentTarget as Element).hasPointerCapture?.(e.pointerId)) return
+    const pt = certPointToFraction(e.clientX, e.clientY)
+    if (!pt) return
+    updateCertLayout(key, pt)
+  }
+  function handleCertPointerUp(e: React.PointerEvent) {
+    try { (e.currentTarget as Element).releasePointerCapture(e.pointerId) } catch { /* 忽略 */ }
+  }
+  function handleCertKeyDown(key: string, e: React.KeyboardEvent) {
+    const step = 0.005 // 每按一下微調 0.5%
+    let dx = 0, dy = 0
+    if (e.key === 'ArrowLeft') dx = -step
+    else if (e.key === 'ArrowRight') dx = step
+    else if (e.key === 'ArrowUp') dy = -step
+    else if (e.key === 'ArrowDown') dy = step
+    else return
+    e.preventDefault()
+    setCertSelectedKey(key)
+    const cur = resolveCertElementLayout(key, certLayout)
+    updateCertLayout(key, { x: Math.min(1, Math.max(0, cur.x + dx)), y: Math.min(1, Math.max(0, cur.y + dy)) })
+  }
+  // 送出前把 certLayout 收斂成「只含真正被改過的 key」（與預設值逐欄比對，避免浮點誤差誤判成有改），
+  // 全部相同（或未編輯過）則整個欄位省略，讓 config JSON 保持精簡（比照 refund_disabled 的模式）。
+  function buildCertLayoutPayload(): Record<string, CertElementLayout> | undefined {
+    const out: Record<string, CertElementLayout> = {}
+    for (const key of Object.keys(certLayout)) {
+      const resolved = resolveCertElementLayout(key, certLayout)
+      const def = CERT_DEFAULT_LAYOUT[key]
+      const changed = !def
+        || Math.abs(resolved.x - def.x) > 1e-6
+        || Math.abs(resolved.y - def.y) > 1e-6
+        || Math.abs(resolved.size - def.size) > 1e-6
+      if (changed) out[key] = resolved
+    }
+    return Object.keys(out).length > 0 ? out : undefined
+  }
 
   async function uploadBanner(file: File) {
     setBannerUploading(true); setErr('')
@@ -718,6 +820,9 @@ export default function RaceForm({
         refund_disabled: refundDisabled || undefined,
         // 完賽證明顯示開關：同上，false 時送 undefined。
         certificate_disabled: certificateDisabled || undefined,
+        // 完賽證明可視化排版覆寫：只送「真的被改過（≠模板預設）」的元素，全部未改則整欄位省略
+        // （見 buildCertLayoutPayload；未設定的元素前後台一律 fallback CERT_DEFAULT_LAYOUT）。
+        cert_layout: buildCertLayoutPayload(),
         cancellation_policy: cancelFollowDefault
           ? null
           : { deadline_days: cancelPolicy.deadline_days, tiers: sortTiers(cancelPolicy.tiers ?? []) },
@@ -1225,14 +1330,117 @@ export default function RaceForm({
                     模擬預覽（示例資料，僅供確認版面配置，不影響實際發放）
                   </div>
                   {certPreviewImg ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={certPreviewImg}
-                      alt="完賽證明模擬預覽"
-                      style={{ width: '100%', maxWidth: 420, display: 'block', borderRadius: 10, border: '1px solid var(--line-2)' }}
-                    />
+                    <div style={{ position: 'relative', width: '100%', maxWidth: 420 }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={certPreviewImg}
+                        alt="完賽證明模擬預覽"
+                        style={{ width: '100%', display: 'block', borderRadius: 10, border: '1px solid var(--line-2)' }}
+                      />
+                      {/* 可視化排版互動層：僅有底圖時顯示（無底圖用系統預設設計，位置不開放自訂）。
+                          熱區座標直接用 layout 的 x/y 比例(0-1)換算成 %，與 renderCertificate 換算成
+                          canvas px 的方式相同，故拖曳結果與實際渲染完全對位。 */}
+                      {certBgUrl && (
+                        <div ref={certOverlayRef} style={{ position: 'absolute', inset: 0 }}>
+                          {CERT_ELEMENT_KEYS.map((key) => {
+                            const l = resolveCertElementLayout(key, certLayout)
+                            const def = CERT_DEFAULT_LAYOUT[key]
+                            const box = CERT_HITBOX[key]
+                            const hRatio = def?.size ? l.size / def.size : 1
+                            const selected = certSelectedKey === key
+                            return (
+                              <div
+                                key={key}
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`拖曳調整「${CERT_ELEMENT_LABELS[key]}」位置`}
+                                onPointerDown={(e) => handleCertPointerDown(key, e)}
+                                onPointerMove={(e) => handleCertPointerMove(key, e)}
+                                onPointerUp={handleCertPointerUp}
+                                onPointerCancel={handleCertPointerUp}
+                                onKeyDown={(e) => handleCertKeyDown(key, e)}
+                                onClick={() => setCertSelectedKey(key)}
+                                style={{
+                                  position: 'absolute',
+                                  left: `${l.x * 100}%`,
+                                  top: `${l.y * 100}%`,
+                                  width: `${(box.w / 1240) * 100}%`,
+                                  height: `${(box.h * hRatio / 877) * 100}%`,
+                                  transform: 'translate(-50%, -50%)',
+                                  border: selected ? '2px solid #46E3A0' : '1px dashed rgba(255,255,255,.55)',
+                                  background: selected ? 'rgba(70,227,160,.16)' : 'rgba(0,0,0,.02)',
+                                  borderRadius: 4,
+                                  cursor: 'move',
+                                  touchAction: 'none',
+                                  outline: 'none',
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    position: 'absolute', top: -16, left: 0, fontSize: 10, color: '#fff',
+                                    background: 'rgba(0,0,0,.6)', padding: '1px 4px', borderRadius: 3, whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {CERT_ELEMENT_LABELS[key]}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>產生預覽中…</div>
+                  )}
+                  {certBgUrl ? (
+                    <div style={{ marginTop: 10 }}>
+                      {certSelectedKey ? (
+                        <div style={{ padding: 10, border: '1px solid var(--line-2)', borderRadius: 8, background: 'var(--bg-2)' }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+                            編輯元素：{CERT_ELEMENT_LABELS[certSelectedKey]}
+                          </div>
+                          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                            <label style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+                              X %
+                              <input
+                                type="number" step={0.1}
+                                value={+(resolveCertElementLayout(certSelectedKey, certLayout).x * 100).toFixed(1)}
+                                onChange={(e) => updateCertLayout(certSelectedKey, { x: Math.min(1, Math.max(0, (parseFloat(e.target.value) || 0) / 100)) })}
+                                style={{ ...inp, width: 76, marginTop: 4 }}
+                              />
+                            </label>
+                            <label style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+                              Y %
+                              <input
+                                type="number" step={0.1}
+                                value={+(resolveCertElementLayout(certSelectedKey, certLayout).y * 100).toFixed(1)}
+                                onChange={(e) => updateCertLayout(certSelectedKey, { y: Math.min(1, Math.max(0, (parseFloat(e.target.value) || 0) / 100)) })}
+                                style={{ ...inp, width: 76, marginTop: 4 }}
+                              />
+                            </label>
+                            <label style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
+                              字級 px
+                              <input
+                                type="number" step={1} min={8}
+                                value={Math.round(resolveCertElementLayout(certSelectedKey, certLayout).size)}
+                                onChange={(e) => updateCertLayout(certSelectedKey, { size: Math.max(8, parseFloat(e.target.value) || 8) })}
+                                style={{ ...inp, width: 76, marginTop: 4 }}
+                              />
+                            </label>
+                            <button type="button" style={ghostBtn} onClick={() => resetCertElement(certSelectedKey)}>還原此元素</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>
+                          點選預覽圖上的虛線框可拖曳調整位置；選取後可用方向鍵微調（每按 0.5%），或於出現的欄位輸入精確數值。
+                        </div>
+                      )}
+                      <button type="button" style={{ ...ghostBtn, marginTop: 8 }} onClick={resetAllCertLayout}>全部還原預設排版</button>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>
+                      上傳底圖後可在此拖曳調整完賽證明各資訊元素的位置與字級（可視化排版編輯器）。
+                    </div>
                   )}
                 </div>
               )}

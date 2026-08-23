@@ -21,6 +21,9 @@ type Certificate struct {
 	RaceEnd       *time.Time `json:"race_end,omitempty"`
 	RaceEnded     bool       `json:"race_ended"`       // 賽事是否已結束（迄日已過）
 	BgURL         string     `json:"bg_url,omitempty"` // 後台自訂底圖（空=前台用預設設計）
+	// Layout 完賽證明可視化排版覆寫（見 RaceConfig.CertLayout）；此賽事未設定任何覆寫時為 nil，
+	// JSON 序列化省略此欄位（前端 renderCertificate 收到 undefined 時等同用內建預設，行為與 null 相同）。
+	Layout map[string]CertElementLayout `json:"layout,omitempty"`
 }
 
 // certInfo 取得證書顯示姓名與該使用者分組目標里程
@@ -69,6 +72,7 @@ func (s *Service) GetMyCertificate(ctx context.Context, raceID, userID string) (
 		RaceEnd:   &end,
 		RaceEnded: time.Now().After(race.EndDate),
 		BgURL:     race.CertificateBgURL,
+		Layout:    race.Config.CertLayout,
 	}
 
 	finishers, _, err := s.repo.computeFinishers(ctx, raceID)

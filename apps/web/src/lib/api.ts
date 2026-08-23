@@ -265,7 +265,19 @@ export interface RaceConfig {
   // personal 模式取代它的「完賽歷程」按鈕皆隱藏）。後端 certificate／personal-history 端點同步擋
   // （403），防止繞過前端隱藏直接呼叫 API。
   certificate_disabled?: boolean
+  // cert_layout：完賽證明可視化排版覆寫（後台 RaceForm 拖曳編輯器產出）。key 為元素識別碼（見
+  // '@/lib/certificate' 的 CERT_DEFAULT_LAYOUT），只存「被改過（≠預設）」的 key，未設定一律 fallback
+  // 模板預設值。
+  cert_layout?: Record<string, CertElementLayout>
   [key: string]: unknown
+}
+
+// CertElementLayout 完賽證明單一元素的座標/字級（見後端 race.CertElementLayout）。X/Y 為畫布寬高比例
+// （0–1，元素中心/基準點），Size 為該元素主文字字級（px）。
+export interface CertElementLayout {
+  x: number
+  y: number
+  size: number
 }
 
 export type ControlStatus = 'active' | 'paused' | 'suspended' | 'closed' | 'hidden' | 'testing'
@@ -952,6 +964,9 @@ export interface Certificate {
   race_end?: string
   race_ended: boolean
   bg_url?: string
+  // layout：完賽證明可視化排版覆寫（見 RaceConfig.cert_layout）；此賽事未設定任何覆寫時為 undefined，
+  // renderCertificate 收到 undefined 時等同用內建預設。
+  layout?: Record<string, CertElementLayout>
 }
 
 export interface RegistrationState {

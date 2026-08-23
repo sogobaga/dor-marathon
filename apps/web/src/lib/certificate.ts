@@ -1,4 +1,46 @@
-import type { Certificate } from './api'
+import type { Certificate, CertElementLayout } from './api'
+
+export type { CertElementLayout }
+
+// 完賽證明可視化排版：8 組元素的預設座標（畫布寬高比例 0-1，中心/基準點）與字級（px）——即
+// v0.1.576 前寫死在下方 renderCertificate 內的座標，現抽成表格供 per-race cert_layout 覆寫比對／
+// fallback（見 resolveCertElementLayout）。後台 RaceForm 拖曳編輯器與此表一致，新增元素只需在此
+// 加一筆 + renderCertificate 對應繪製一段，不必改資料模型（後端 RaceConfig.CertLayout 是通用 map）。
+export const CERT_DEFAULT_LAYOUT: Record<string, CertElementLayout> = {
+  cert_title: { x: 0.5, y: 0.3, size: 28 },
+  name: { x: 0.5, y: 0.38, size: 76 },
+  race_name: { x: 0.5, y: 0.48, size: 34 },
+  group: { x: 0.5, y: 0.56, size: 27 },
+  col1: { x: 0.333, y: 0.74, size: 38 },
+  col2: { x: 0.485, y: 0.74, size: 30 },
+  col3: { x: 0.65, y: 0.74, size: 38 },
+  date: { x: 0.5, y: 0.882, size: 26 },
+}
+
+// 純函數：依 per-race 覆寫（可能是完整或只填 x/y/size 其中幾項）解析出某元素的最終座標/字級，缺項
+// 一律 fallback CERT_DEFAULT_LAYOUT；key 不在預設表內（理論上不會發生，防禦用）則回傳置中的保守預設。
+// 刻意抽成純函數（不依賴 canvas/DOM）方便離線單元測試（同檔案內 wrapTextByWidth 的既有慣例）。
+export function resolveCertElementLayout(
+  key: string,
+  layout?: Record<string, Partial<CertElementLayout>> | null,
+): CertElementLayout {
+  const base = CERT_DEFAULT_LAYOUT[key] ?? { x: 0.5, y: 0.5, size: 24 }
+  const override = layout?.[key]
+  if (!override) return base
+  return {
+    x: override.x ?? base.x,
+    y: override.y ?? base.y,
+    size: override.size ?? base.size,
+  }
+}
+
+// 依「目標字級相對預設字級的縮放比」等比例縮放自動縮字下限，讓拖曳調大/調小字級時，自動縮字的下限
+// 跟著等比例移動（維持相同的可縮放彈性區間），而非固定沿用預設下限（字級調小時若仍卡預設下限，
+// 過長文字可能縮不下去而溢出）。下限不低於 8px，避免極端縮放後不可讀或觸發除以零之類的邊界問題。
+function scaledMin(defaultMax: number, defaultMin: number, targetMax: number): number {
+  if (defaultMax <= 0) return defaultMin
+  return Math.max(8, Math.round(defaultMin * (targetMax / defaultMax)))
+}
 
 const CJK = "'Noto Sans TC','PingFang TC','Microsoft JhengHei',sans-serif"
 const GOLD = '#E5C46B'
@@ -173,11 +215,17 @@ export interface CertificateRender {
   blob: Blob | null // 給下載用；toBlob 失敗時為 null（下載會退回 dataUrl）
 }
 
-// 繪製完賽證明（有自訂底圖則疊在底圖上）；同時回傳預覽用 dataURL 與下載用 Blob
-export async function renderCertificate(cert: Certificate): Promise<CertificateRender> {
+// 繪製完賽證明（有自訂底圖則疊在底圖上）；同時回傳預覽用 dataURL 與下載用 Blob。
+// layout：per-race 可視化排版覆寫（後台編輯中的草稿，或後端 cert.layout 已存值）；未帶／缺項一律
+// fallback CERT_DEFAULT_LAYOUT（即 v0.1.576 的寫死座標），舊賽事/未設定的元素完全零影響。
+export async function renderCertificate(
+  cert: Certificate,
+  layout?: Record<string, Partial<CertElementLayout>> | null,
+): Promise<CertificateRender> {
   const W = 1240
   const H = 877
   const cx = W / 2
+  const L = (key: string) => resolveCertElementLayout(key, layout)
   const canvas = document.createElement('canvas')
   canvas.width = W
   canvas.height = H
@@ -207,97 +255,107 @@ export async function renderCertificate(cert: Certificate): Promise<CertificateR
   ctx.shadowColor = 'transparent'
   ctx.shadowBlur = 0
 
-  // 標題
+  // 標題（座標/字級可由後台可視化排版編輯器覆寫，見 CERT_DEFAULT_LAYOUT／resolveCertElementLayout；
+  // 未設定 layout 時 L(key) 回傳的值與下方原本寫死的座標完全相同，行為零改變）
+  const titleL = L('cert_title')
   ctx.fillStyle = MUTED
-  ctx.font = `400 28px ${FONT}`
+  ctx.font = `400 ${titleL.size}px ${FONT}`
   ctx.letterSpacing = '6px'
-  ctx.fillText('完賽證明', cx, H * 0.3)
+  ctx.fillText('完賽證明', W * titleL.x, H * titleL.y)
   ctx.letterSpacing = '0px'
 
-  // 姓名 + 金色底線
+  // 姓名 + 金色底線（底線位置/寬度按現行比例跟隨姓名本身，不另外開 layout 欄位）
+  const nameL = L('name')
+  const nameDefault = CERT_DEFAULT_LAYOUT.name
   const nameText = cert.name || '跑者'
-  let size = fitFontSize(ctx, nameText, 700, 76, 50, W * 0.5)
+  let size = fitFontSize(ctx, nameText, 700, nameL.size, scaledMin(nameDefault.size, 50, nameL.size), W * 0.5)
   ctx.font = `700 ${size}px ${FONT}`
   ctx.fillStyle = NAVY
-  const nameY = H * 0.38
-  ctx.fillText(nameText, cx, nameY)
+  const nameX = W * nameL.x
+  const nameY = H * nameL.y
+  ctx.fillText(nameText, nameX, nameY)
   const nameW = ctx.measureText(nameText).width
   const barW = Math.min(280, Math.max(100, nameW * 0.72))
-  roundRectPath(ctx, cx - barW / 2, nameY + 25, barW, 6, 3)
+  roundRectPath(ctx, nameX - barW / 2, nameY + 25, barW, 6, 3)
   ctx.fillStyle = GOLD_ACCENT
   ctx.fill()
 
-  // 完成賽事：安全寬 ≈46%W、置中；過長自動折成兩行（單行 y=48%H；兩行往 45.5%/50.5%H 分配
-  // ——行距 5%H，2026-08-24 使用者實測回饋原 44%/52% 間距過大；下方組別固定於 56%H 仍留有間距）
+  // 完成賽事：安全寬 ≈46%W（折行邏輯保留，不受 layout 影響）；過長自動折成兩行，layout.y 為單行基準，
+  // 兩行時往 y±2.5%H 分配（行距 5%H，與寫死版本的 45.5%/50.5%H 相對 48%H 完全一致）
+  const raceL = L('race_name')
+  const raceDefault = CERT_DEFAULT_LAYOUT.race_name
   const raceText = `完成「${cert.race_title}」`
   const raceSafeW = W * 0.46
-  const raceLayout = layoutWrappedText(ctx, raceText, 700, 34, 30, 24, raceSafeW, 2)
-  ctx.font = `700 ${raceLayout.size}px ${FONT}`
+  const raceWrapped = layoutWrappedText(
+    ctx, raceText, 700,
+    raceL.size,
+    scaledMin(raceDefault.size, 30, raceL.size),
+    scaledMin(raceDefault.size, 24, raceL.size),
+    raceSafeW, 2,
+  )
+  ctx.font = `700 ${raceWrapped.size}px ${FONT}`
   ctx.fillStyle = NAVY
-  if (raceLayout.lines.length > 1) {
-    ctx.fillText(raceLayout.lines[0], cx, H * 0.455)
-    ctx.fillText(raceLayout.lines[1], cx, H * 0.505)
+  const raceX = W * raceL.x
+  const raceCenterY = H * raceL.y
+  const raceLineGap = H * 0.025
+  if (raceWrapped.lines.length > 1) {
+    ctx.fillText(raceWrapped.lines[0], raceX, raceCenterY - raceLineGap)
+    ctx.fillText(raceWrapped.lines[1], raceX, raceCenterY + raceLineGap)
   } else {
-    ctx.fillText(raceLayout.lines[0], cx, H * 0.48)
+    ctx.fillText(raceWrapped.lines[0], raceX, raceCenterY)
   }
 
   // 賽事細項（分組行；無分組資料則略過此欄）
+  const groupL = L('group')
   if (cert.group_name) {
-    size = fitFontSize(ctx, cert.group_name, 400, 27, 22, raceSafeW)
+    const groupDefault = CERT_DEFAULT_LAYOUT.group
+    size = fitFontSize(ctx, cert.group_name, 400, groupL.size, scaledMin(groupDefault.size, 22, groupL.size), raceSafeW)
     ctx.font = `400 ${size}px ${FONT}`
     ctx.fillStyle = MUTED
-    ctx.fillText(cert.group_name, cx, H * 0.56)
+    ctx.fillText(cert.group_name, W * groupL.x, H * groupL.y)
   }
 
-  // 成績三欄：對齊底圖中央大框（x 26%~73.3%W、y 63.6%~79.3%H，分隔線在 x 40.6%/56.5%W）
-  // 三欄文字中心 x 33.3%/48.5%/65%W；欄內文字若超出欄寬，字級自動微降
-  const col1X = W * 0.333
-  const col2X = W * 0.485
-  const col3X = W * 0.65
-  const labelY = H * 0.68
-  const valueY = H * 0.74
+  // 成績三欄：預設對齊底圖中央大框（x 26%~73.3%W、y 63.6%~79.3%H，分隔線在 x 40.6%/56.5%W）
+  // layout.y＝該欄「數值」的 y；標籤固定位於數值上方 6%H（LABEL_OFFSET_H，比例跟隨，不另開欄位）
   const colGutter = 24 // 每欄左右各留的內距，避免數值貼到分隔線
   const col1MaxW = W * 0.406 - W * 0.26 - colGutter
   const col2MaxW = W * 0.565 - W * 0.406 - colGutter
   const col3MaxW = W * 0.733 - W * 0.565 - colGutter
+  const LABEL_OFFSET_H = -0.06
+  const LABEL_FONT_DEFAULT = 20
+
+  const drawCol = (key: 'col1' | 'col2' | 'col3', label: string, valueText: string, maxW: number, valueColor: string, defaultMin: number) => {
+    const l = L(key)
+    const def = CERT_DEFAULT_LAYOUT[key]
+    const x = W * l.x
+    const valueY = H * l.y
+    const labelY = valueY + H * LABEL_OFFSET_H
+    const labelSize = Math.max(8, Math.round(LABEL_FONT_DEFAULT * (l.size / def.size)))
+    ctx.fillStyle = MUTED
+    ctx.font = `400 ${labelSize}px ${FONT}`
+    ctx.fillText(label, x, labelY)
+    const vs = fitFontSize(ctx, valueText, 700, l.size, scaledMin(def.size, defaultMin, l.size), maxW)
+    ctx.font = `700 ${vs}px ${FONT}`
+    ctx.fillStyle = valueColor
+    ctx.fillText(valueText, x, valueY)
+  }
 
   // 完成里程
-  ctx.fillStyle = MUTED
-  ctx.font = `400 20px ${FONT}`
-  ctx.fillText('完成里程', col1X, labelY)
-  const kmText = `${cert.completed_km.toFixed(1)} K`
-  size = fitFontSize(ctx, kmText, 700, 38, 26, col1MaxW)
-  ctx.font = `700 ${size}px ${FONT}`
-  ctx.fillStyle = RED
-  ctx.fillText(kmText, col1X, valueY)
-
+  drawCol('col1', '完成里程', `${cert.completed_km.toFixed(1)} K`, col1MaxW, RED, 26)
   // 完成時間
-  ctx.fillStyle = MUTED
-  ctx.font = `400 20px ${FONT}`
-  ctx.fillText('完成時間', col2X, labelY)
-  const timeText = fmtDuration(cert.total_time_s)
-  size = fitFontSize(ctx, timeText, 700, 30, 22, col2MaxW)
-  ctx.font = `700 ${size}px ${FONT}`
-  ctx.fillStyle = BLUE
-  ctx.fillText(timeText, col2X, valueY)
-
+  drawCol('col2', '完成時間', fmtDuration(cert.total_time_s), col2MaxW, BLUE, 22)
   // 完成名次（無名次資料時顯示 —，不整欄消失）
-  ctx.fillStyle = MUTED
-  ctx.font = `400 20px ${FONT}`
-  ctx.fillText('完成名次', col3X, labelY)
-  const rankText = cert.finish_rank > 0 ? `第 ${cert.finish_rank} 名` : '—'
-  size = fitFontSize(ctx, rankText, 700, 38, 26, col3MaxW)
-  ctx.font = `700 ${size}px ${FONT}`
-  ctx.fillStyle = GOLD_ACCENT
-  ctx.fillText(rankText, col3X, valueY)
+  drawCol('col3', '完成名次', cert.finish_rank > 0 ? `第 ${cert.finish_rank} 名` : '—', col3MaxW, GOLD_ACCENT, 26)
 
-  // 完成日期：對齊底圖下方日期膠囊框（x 33.3%~67%W、y 83%~90.3%H），整行置中
+  // 完成日期：預設對齊底圖下方日期膠囊框（x 33.3%~67%W、y 83%~90.3%H），整行置中
+  const dateL = L('date')
+  const dateDefault = CERT_DEFAULT_LAYOUT.date
   const dateText = `完成日期｜${fmtDate(cert.completion_at)}`
   const dateMaxW = W * (0.67 - 0.333) - 40
-  size = fitFontSize(ctx, dateText, 700, 26, 20, dateMaxW)
+  size = fitFontSize(ctx, dateText, 700, dateL.size, scaledMin(dateDefault.size, 20, dateL.size), dateMaxW)
   ctx.font = `700 ${size}px ${FONT}`
   ctx.fillStyle = NAVY
-  ctx.fillText(dateText, cx, H * 0.882) // 2026-08-24 實測回饋：0.866 於膠囊框內視覺偏高，下移至 88.2%H 置中
+  ctx.fillText(dateText, W * dateL.x, H * dateL.y)
 
   const dataUrl = canvas.toDataURL('image/png')
   const blob = await new Promise<Blob | null>((resolve) => {

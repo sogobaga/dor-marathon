@@ -491,6 +491,21 @@ type RaceConfig struct {
 	// （而非另外開欄位）——理由同上方 RefundDisabled 註解：後台編輯賽事時整包 config 會經 Go struct
 	// 序列化往返（見 configToBytes/bytesToConfig），不在此型別內的欄位會在下次編輯賽事時被覆寫掉。
 	CertificateDisabled bool `json:"certificate_disabled,omitempty"`
+	// CertLayout 完賽證明可視化排版：per-race 覆寫各元素座標/字級，取代寫死模板。key 為元素識別碼
+	// （cert_title/name/race_name/group/col1/col2/col3/date，見前端 certificate.ts 的
+	// CERT_DEFAULT_LAYOUT），value 為該元素的座標(比例)/字級(px)。未設定的 key 一律 fallback 前端內建
+	// 預設值——舊賽事/僅部分覆寫皆零影響。同上方 RefundDisabled/CertificateDisabled 註解：必須放在
+	// RaceConfig 這個型別內，理由相同（整包 config 經 Go struct 序列化往返）。
+	CertLayout map[string]CertElementLayout `json:"cert_layout,omitempty"`
+}
+
+// CertElementLayout 完賽證明單一元素的座標/字級覆寫（見 RaceConfig.CertLayout）。X/Y 為畫布寬高比例
+// （0–1，元素中心/基準點），Size 為該元素主文字字級（px）；衍生元素（如姓名底線、欄標籤）由前端依現行
+// 比例跟隨換算，不必另外存欄位。
+type CertElementLayout struct {
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	Size float64 `json:"size"`
 }
 
 type FactionDef struct {
