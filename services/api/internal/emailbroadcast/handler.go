@@ -112,6 +112,13 @@ func (h *Handler) listRecipients(ctx context.Context) ([]recipient, error) {
 		if err := rows.Scan(&rc.ID, &rc.Email, &rc.Name); err != nil {
 			return nil, err
 		}
+		// 格式不合法的 email 直接排除（2026-08-23 上線公告首發全滅根因：早期內建帳號 email='admin'
+		// 非合法信箱，Resend 批次 API「一封格式錯→整包 422 拒絕」，46 封全標失敗）。與「指定對象」
+		// 路徑的 emailFormatRe 同一把尺，兩條路徑永遠一致。
+		if !emailFormatRe.MatchString(rc.Email) {
+			log.Warn().Str("user_id", rc.ID).Msg("email broadcast: skip malformed email address")
+			continue
+		}
 		out = append(out, rc)
 	}
 	return out, rows.Err()
