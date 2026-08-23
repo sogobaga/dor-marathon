@@ -35,6 +35,7 @@ import {
 } from '@/lib/api'
 import { TaskItemEditor, type TaskFields } from '../TaskItemEditor'
 import { CancellationPolicyFields, DEFAULT_CANCELLATION_POLICY, sortTiers, validateCancellationPolicy } from '../CancelPolicyEditor'
+import { renderCertificate } from '@/lib/certificate'
 
 // 物資編輯用的中介型別：scope 用「-1=共用」或分組索引表示
 interface SupplyDraft {
@@ -282,6 +283,14 @@ export default function RaceForm({
   const [presets, setPresets] = useState<GroupPreset[]>([])
   const [certBgUrl, setCertBgUrl] = useState(initial?.certificate_bg_url ?? '')
   const [certBgUploading, setCertBgUploading] = useState(false)
+  // 完賽證明模擬預覽：底圖或賽事名稱一變就用示例資料重繪，讓管理者上傳底圖當下就能確認文字配置
+  // （見下方 useEffect；certBgUrl 上傳完成後已是真實已存 URL——adminImagesApi.upload 立即上傳到圖床，
+  // 不是本地 blob，故可直接沿用 renderCertificate 既有的 loadImage 同源載入，不需另外處理跨域/暫存）。
+  const [certPreviewImg, setCertPreviewImg] = useState('')
+  const [certPreviewLoading, setCertPreviewLoading] = useState(false)
+  // 完賽證明顯示開關：勾選＝前台不顯示完賽證明（一般模式）／完賽歷程（personal 模式）按鈕，
+  // 後端 certificate／personal-history 端點同步擋（403，防繞過），語意比照下方 refundDisabled。
+  const [certificateDisabled, setCertificateDisabled] = useState<boolean>(initial?.config?.certificate_disabled ?? false)
   const [bannerUrl, setBannerUrl] = useState(initial?.hero_image_url ?? '')
   const [bannerUploading, setBannerUploading] = useState(false)
   const [showDistanceRank, setShowDistanceRank] = useState(initial?.show_distance_rank ?? true)
@@ -312,6 +321,40 @@ export default function RaceForm({
       setCertBgUploading(false)
     }
   }
+
+  // 完賽證明模擬預覽：底圖或賽事名稱一變就重繪。示例資料固定用「王小明」+ 合理的假成績/名次，賽事名稱
+  // 用當前表單值即時反映（未填時給個 fallback，避免預覽空白看不出效果）；沿用前台既有 renderCertificate
+  // （無自訂底圖時它會自動退回系統預設設計，跟前台實際顯示邏輯完全一致，不用另外重繪一套）。
+  useEffect(() => {
+    let cancelled = false
+    setCertPreviewLoading(true)
+    renderCertificate({
+      completed: true,
+      race_title: title.trim() || '示例賽事',
+      name: '王小明',
+      group_name: '全程馬拉松組',
+      target_km: 42.2,
+      completed_km: 42.2,
+      completion_at: new Date().toISOString(),
+      total_time_s: 4 * 3600 + 32 * 60 + 18, // 4:32:18
+      finish_rank: 3,
+      finished_count: 128,
+      race_ended: true,
+      bg_url: certBgUrl || undefined,
+    })
+      .then((r) => {
+        if (cancelled) return
+        setCertPreviewImg(r.dataUrl)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setCertPreviewImg('')
+      })
+      .finally(() => {
+        if (!cancelled) setCertPreviewLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [certBgUrl, title])
 
   async function uploadBanner(file: File) {
     setBannerUploading(true); setErr('')
@@ -673,6 +716,8 @@ export default function RaceForm({
         ...(initial?.config ?? {}),
         // 不退費開關：false 時送 undefined（JSON 序列化會整個略過該 key），保持 config 乾淨且可清掉舊值。
         refund_disabled: refundDisabled || undefined,
+        // 完賽證明顯示開關：同上，false 時送 undefined。
+        certificate_disabled: certificateDisabled || undefined,
         cancellation_policy: cancelFollowDefault
           ? null
           : { deadline_days: cancelPolicy.deadline_days, tiers: sortTiers(cancelPolicy.tiers ?? []) },
@@ -1173,6 +1218,30 @@ export default function RaceForm({
               )}
               <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
                 建議橫式、比例約 1240×877；姓名與成績會自動疊加在中下方。
+              </span>
+              {(certPreviewImg || certPreviewLoading) && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 6 }}>
+                    模擬預覽（示例資料，僅供確認版面配置，不影響實際發放）
+                  </div>
+                  {certPreviewImg ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={certPreviewImg}
+                      alt="完賽證明模擬預覽"
+                      style={{ width: '100%', maxWidth: 420, display: 'block', borderRadius: 10, border: '1px solid var(--line-2)' }}
+                    />
+                  ) : (
+                    <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>產生預覽中…</div>
+                  )}
+                </div>
+              )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tx)', fontWeight: 600, marginTop: 12 }}>
+                <input type="checkbox" checked={certificateDisabled} onChange={(e) => setCertificateDisabled(e.target.checked)} />
+                不顯示完賽證明
+              </label>
+              <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
+                勾選後前台不顯示完賽證明按鈕（個人挑戰模式則不顯示完賽歷程按鈕）。
               </span>
             </Field>
           </div>

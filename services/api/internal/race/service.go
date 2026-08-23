@@ -127,6 +127,10 @@ var (
 
 	// ErrInvalidVipPlan CreateVipOrder 收到 monthly/annual 以外的方案代碼（見 VIP 訂閱 Phase C1）。
 	ErrInvalidVipPlan = errors.New("invalid vip plan")
+
+	// ErrCertificateDisabled 此賽事關閉完賽證明／完賽歷程顯示（config.certificate_disabled，見
+	// GetMyCertificate／GetPersonalHistory）。handler 層回 403，防止繞過前端隱藏直接呼叫 API。
+	ErrCertificateDisabled = errors.New("此賽事未開放完賽證明")
 )
 
 // MailInserter 站內信最小介面（參賽虛擬獎勵發放通知用，migration 140）：由 mail.Handler 實作。用小介面

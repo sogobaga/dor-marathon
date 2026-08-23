@@ -168,6 +168,16 @@ export interface PersonalLeaderboard {
   my_count: number
 }
 
+// --- 個人挑戰模式「完賽歷程」（取代一般模式完賽證明；見後端 race.GetPersonalHistory） ---
+export interface PersonalHistory {
+  total_attempts: number  // 總報名次數（不論結果）
+  completed_count: number // 已完成挑戰次數
+  best_metric?: 'duration' | 'distance' | '' // 空＝尚無完成紀錄；duration=最短用時、distance=最佳距離
+  best_duration_s?: number  // best_metric=duration 時有效
+  best_distance_km?: number // best_metric=distance 時有效
+  last_completed_at?: string // 最近一次完成時間
+}
+
 // formatChallengeProgress 把個人挑戰進行中的即時進度組成人看得懂的一句話（賽事詳情頁用）。
 export function formatChallengeProgress(p?: ChallengeProgress | null): string {
   if (!p) return ''
@@ -251,6 +261,10 @@ export interface CancellationPolicy {
 export interface RaceConfig {
   cancellation_policy?: CancellationPolicy | null // null／不覆寫＝繼承系統預設
   refund_disabled?: boolean // true＝此活動不提供退費（玩家仍可申請取消釋出名額，但退費為 0；簡章不顯示退費規則）
+  // certificate_disabled：true＝此賽事不顯示完賽證明／完賽歷程區塊（一般模式的「完賽證明」按鈕與
+  // personal 模式取代它的「完賽歷程」按鈕皆隱藏）。後端 certificate／personal-history 端點同步擋
+  // （403），防止繞過前端隱藏直接呼叫 API。
+  certificate_disabled?: boolean
   [key: string]: unknown
 }
 
@@ -1116,6 +1130,10 @@ export const racesApi = {
   // 個人挑戰模式(personal)排行榜：依完成次數 desc、最早完成時間 asc（公開；帶 token 則含 is_me/is_following/my_rank）
   personalLeaderboard: (raceID: string, token?: string) =>
     request<PersonalLeaderboard>(`/races/${raceID}/personal-leaderboard`, token ? { headers: withAuth(token) } : undefined),
+
+  // 個人挑戰模式(personal)完賽歷程：取代一般模式完賽證明（需登入，只回呼叫者自己的統計）
+  personalHistory: (raceID: string, token: string) =>
+    request<{ history: PersonalHistory }>(`/races/${raceID}/personal-history`, { headers: withAuth(token) }),
 
   // 活動獎勵預覽：完成活動有機會獲得的獎勵（公開，不需登入；不含機率/數量/權重，見 memory activity-reward-system）
   rewardPreview: (raceID: string) =>

@@ -55,6 +55,7 @@ func (h *Handler) Router() http.Handler {
 	r.Post("/{raceID}/promo/check", h.PromoCheck)
 	r.Get("/{raceID}/personal-progress", h.PersonalProgress)
 	r.Get("/{raceID}/personal-leaderboard", h.PersonalLeaderboard)
+	r.Get("/{raceID}/personal-history", h.PersonalHistory)
 	return r
 }
 
@@ -647,11 +648,42 @@ func (h *Handler) Certificate(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusNotFound, "race not found")
 		return
 	}
+	if errors.Is(err, ErrCertificateDisabled) {
+		respondErr(w, http.StatusForbidden, "certificate disabled")
+		return
+	}
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to get certificate")
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"certificate": cert})
+}
+
+// GET /api/v1/races/:raceID/personal-history — 個人挑戰模式(personal)完賽歷程彙總（需登入，僅回呼叫者
+// 自己的統計）。取代一般模式的完賽證明——personal 賽事可重複挑戰，一般完賽證明不適用（見 certificate.go
+// GetMyCertificate 對 personal 的擋下）；certificate_disabled 開關同時管控完賽證明與完賽歷程，見
+// GetPersonalHistory。非 personal 賽事回 404。
+func (h *Handler) PersonalHistory(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	hist, err := h.svc.GetPersonalHistory(r.Context(), raceID, userID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if errors.Is(err, ErrCertificateDisabled) {
+		respondErr(w, http.StatusForbidden, "certificate disabled")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to get personal history")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"history": hist})
 }
 
 // GET /api/v1/races/:raceID/exp-breakdown — 登入者本場 EXP 結算明細（需登入）

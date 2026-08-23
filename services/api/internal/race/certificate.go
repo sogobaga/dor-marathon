@@ -10,7 +10,7 @@ import (
 type Certificate struct {
 	Completed     bool       `json:"completed"`
 	RaceTitle     string     `json:"race_title"`
-	Name          string     `json:"name"`       // 證書顯示姓名（真實姓名優先）
+	Name          string     `json:"name"` // 證書顯示姓名（真實姓名優先）
 	GroupName     string     `json:"group_name,omitempty"`
 	TargetKm      float64    `json:"target_km"`
 	CompletedKm   float64    `json:"completed_km"`
@@ -19,7 +19,7 @@ type Certificate struct {
 	FinishRank    int        `json:"finish_rank"` // 完成時間名次
 	FinishedCount int        `json:"finished_count"`
 	RaceEnd       *time.Time `json:"race_end,omitempty"`
-	RaceEnded     bool       `json:"race_ended"`        // 賽事是否已結束（迄日已過）
+	RaceEnded     bool       `json:"race_ended"`       // 賽事是否已結束（迄日已過）
 	BgURL         string     `json:"bg_url,omitempty"` // 後台自訂底圖（空=前台用預設設計）
 }
 
@@ -44,6 +44,17 @@ func (s *Service) GetMyCertificate(ctx context.Context, raceID, userID string) (
 	}
 	if race == nil || race.ReviewStatus != "approved" {
 		return nil, ErrRaceNotFound
+	}
+	// personal 模式可重複挑戰，一般完賽證明（computeFinishers 依「分組目標里程」判定完成）不適用；
+	// 前台改走完賽歷程（GetPersonalHistory），此端點防禦性擋下，避免對 personal 賽事誤算/誤顯示
+	// （比照 GetPersonalProgress／GetPersonalLeaderboard 對「模式不符」一律回 ErrRaceNotFound 的慣例）。
+	if race.EventMode == "personal" {
+		return nil, ErrRaceNotFound
+	}
+	// 完賽證明顯示開關（config.certificate_disabled）：關閉時整塊不回傳，前台按鈕已隱藏，這裡是防繞過
+	// （直接打 API 也拿不到資料）。
+	if race.Config.CertificateDisabled {
+		return nil, ErrCertificateDisabled
 	}
 
 	name, target, err := s.repo.certInfo(ctx, userID, raceID)

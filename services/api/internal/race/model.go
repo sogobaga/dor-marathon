@@ -59,7 +59,7 @@ type Race struct {
 	// 排程（見 entry_reward_schedule.go RunEntryRewardLoop）自動發給所有「已報名(paid)」者，人人有獎的
 	// 場景管理者自己會把各項 prob_bp 設為 10000(100%)。選填，nil＝此賽事不設定參賽虛擬獎勵。
 	EntryRewardConfig *activityreward.RewardConfig `json:"entry_reward_config,omitempty"`
-	CreatedAt        time.Time                    `json:"created_at"`
+	CreatedAt         time.Time                    `json:"created_at"`
 }
 
 // ChallengeRule 個人挑戰模式（event_mode=personal）的完成條件參數化模板。存於 races.challenge_rule JSONB。
@@ -484,6 +484,13 @@ type RaceConfig struct {
 	// 玩家仍可申請取消釋出名額，但退費比例強制 0（見 EffectiveCancellationPolicy）；公開簡章則不回傳
 	// 取消退費規則（見 GetPublicDetail）。
 	RefundDisabled bool `json:"refund_disabled,omitempty"`
+	// CertificateDisabled 此賽事不顯示完賽證明／完賽歷程區塊（false＝顯示，舊資料向下相容）。開關語意
+	// 涵蓋一般模式的完賽證明「與」personal 模式取代它的完賽歷程——兩者是同一顯示區塊的兩種呈現。前台
+	// RaceDetailScreen 依此隱藏對應按鈕；後端 GetMyCertificate／GetPersonalHistory 同步擋（回
+	// ErrCertificateDisabled），防止繞過前端直接呼叫 API 取得證明資料。必須放在 RaceConfig 這個型別內
+	// （而非另外開欄位）——理由同上方 RefundDisabled 註解：後台編輯賽事時整包 config 會經 Go struct
+	// 序列化往返（見 configToBytes/bytesToConfig），不在此型別內的欄位會在下次編輯賽事時被覆寫掉。
+	CertificateDisabled bool `json:"certificate_disabled,omitempty"`
 }
 
 type FactionDef struct {

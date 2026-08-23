@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail, type GrantedReward, type RewardPreviewItem, type RaceSupply } from '@/lib/api'
+import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail, type GrantedReward, type RewardPreviewItem, type RaceSupply, type PersonalHistory } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useScrollLock } from '@/lib/useScrollLock'
@@ -38,6 +38,23 @@ function paceFmt(sec: number) {
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
 }
 
+// fmtDurationShort 個人挑戰「完成用時」通常橫跨數天，改用 天/時/分 呈現（不同於單場跑步的 時:分:秒）
+function fmtDurationShort(totalSec: number): string {
+  const d = Math.floor(totalSec / 86400)
+  const h = Math.floor((totalSec % 86400) / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  if (d > 0) return `${d} 天 ${h} 時`
+  if (h > 0) return `${h} 時 ${m} 分`
+  return `${m} 分`
+}
+
+// formatPersonalBest 完賽歷程「最佳成績」一句話呈現（見後端 race.PersonalHistory.BestMetric 註解）
+function formatPersonalBest(h: PersonalHistory): string {
+  if (h.best_metric === 'duration' && h.best_duration_s) return `最短用時 ${fmtDurationShort(h.best_duration_s)}`
+  if (h.best_metric === 'distance' && h.best_distance_km) return `最長距離 ${h.best_distance_km.toFixed(1)} km`
+  return ''
+}
+
 type Tab = 'brochure' | 'progress' | 'explore' | 'rank' | 'reward'
 
 export default function RaceDetailScreen({
@@ -59,6 +76,11 @@ export default function RaceDetailScreen({
   )
   const detail = detailData?.race
   const registration = detailData?.registration
+  const isPersonal = race.event_mode === 'personal'
+  // 完賽證明顯示開關（config.certificate_disabled）：關閉時一般模式的完賽證明、personal 模式取代它的
+  // 完賽歷程一併隱藏（見下方兩處區塊）。讀 detail（GetPublicDetail 回傳，含完整 config）而非 race prop
+  // ——race prop 來自列表頁可能是較舊的快取資料。
+  const certificateDisabled = !!detail?.config?.certificate_disabled
 
   // 活動獎勵頁籤：完成活動有機會獲得的獎勵預覽（公開、輕量，不含機率/數量）。空陣列時不顯示頁籤。
   const { data: rewardPreviewData } = useSWR(['reward-preview', race.id], () => racesApi.rewardPreview(race.id))
@@ -69,10 +91,11 @@ export default function RaceDetailScreen({
   const { data: entryRewardPreviewData } = useSWR(['entry-reward-preview', race.id], () => racesApi.entryRewardPreview(race.id))
   const entryRewardPreview = entryRewardPreviewData?.rewards ?? []
 
-  // 完賽證明：賽事結束後、已報名、已登入才查
+  // 完賽證明：賽事結束後、已報名、已登入才查；personal 模式改走完賽歷程（見下方 historyData），
+  // 一般完賽證明對 personal 不適用（後端 GetMyCertificate 也已擋下 personal，見 certificate.go）
   const ended = race.display_status === 'ended'
   const { data: certData } = useSWR(
-    ended && registration && token ? ['cert', race.id] : null,
+    !isPersonal && !certificateDisabled && ended && registration && token ? ['cert', race.id] : null,
     () => racesApi.certificate(race.id, token!),
   )
   const cert = certData?.certificate
@@ -126,13 +149,19 @@ export default function RaceDetailScreen({
     || (race.event_mode === 'personal' && !!race.start_date && Date.now() >= new Date(race.start_date).getTime())
   // 競賽/分組對抗才有「當天揭曉分組＋分組戰報」；一般模式分組直接顯示
   const battleMode = race.event_mode === 'competition' || race.event_mode === 'faction_battle'
-  const isPersonal = race.event_mode === 'personal'
   // 個人挑戰模式完成判定引擎觸發點：開頁即打，即時評估規則＋CAS 標記完成/逾期（見後端 GetPersonalProgress）。
   // revalidateOnFocus 全域預設 true（AppProviders.tsx）：跑步結束回前景時會自動重打，不用額外接 hook。
   const { data: pp } = useSWR(
     isPersonal && token ? ['personal-progress', race.id] : null,
     () => racesApi.personalProgress(race.id, token!),
   )
+  // 完賽歷程（取代一般模式完賽證明，見上方 certificateDisabled 註解）：等 detail 載入才判斷開關，
+  // 避免開關關閉時先打一次 API 才收回（比照 cert 的 !certificateDisabled 閘門寫法）。
+  const { data: historyData } = useSWR(
+    isPersonal && token && detail && !certificateDisabled ? ['personal-history', race.id] : null,
+    () => racesApi.personalHistory(race.id, token!),
+  )
+  const history = historyData?.history
   // 活動獎勵系統 P3：完成挑戰即得獎勵彈窗。後端只在「這次呼叫剛好把 attempt 判定為完成」才會回非空
   // newly_granted（見 race.GetPersonalProgress／MarkAttemptCompletedAndGrant 的 CAS 保證），之後
   // revalidate（如切背景回前景的 revalidateOnFocus）一律拿到 undefined/空陣列 → 依賴陣列參照變動的
@@ -288,8 +317,9 @@ export default function RaceDetailScreen({
             ) : null}
           </div>
 
-          {/* 完賽證明（賽事結束後，完賽者：預覽縮圖→點擊放大→下載） */}
-          {ended && cert?.completed && (
+          {/* 完賽證明（賽事結束後，完賽者：預覽縮圖→點擊放大→下載）；personal 模式不顯示，改用下方
+              「完賽歷程」；certificate_disabled 開關兩者共用（見上方 certificateDisabled 註解） */}
+          {!isPersonal && !certificateDisabled && ended && cert?.completed && (
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 8 }}>完賽證明</div>
               {certImg ? (
@@ -313,8 +343,30 @@ export default function RaceDetailScreen({
               )}
             </div>
           )}
-          {ended && cert && !cert.completed && registration && (
+          {!isPersonal && !certificateDisabled && ended && cert && !cert.completed && registration && (
             <div style={{ marginTop: 10, fontSize: 12, color: 'var(--tx-faint)', textAlign: 'center' }}>本場未達完賽標準，無完賽證明</div>
+          )}
+
+          {/* 完賽歷程（personal 模式取代完賽證明：挑戰次數/完成次數/最佳成績/最近完成時間）。
+              可重複挑戰，不比照一般模式綁 ended——只要登入且開關未關即顯示，尚無 attempt 時顯示空狀態。 */}
+          {isPersonal && !certificateDisabled && token && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 8 }}>完賽歷程</div>
+              {!history ? (
+                <div style={{ fontSize: 12, color: 'var(--tx-faint)', padding: '8px 0' }}>載入中…</div>
+              ) : history.total_attempts === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--tx-faint)', padding: '8px 0', textAlign: 'center' }}>
+                  尚無挑戰紀錄，完成一次挑戰後這裡會顯示你的歷程
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  <Row k="挑戰次數" v={`${history.total_attempts} 次`} />
+                  <Row k="完成次數" v={`${history.completed_count} 次`} />
+                  {formatPersonalBest(history) && <Row k="最佳成績" v={formatPersonalBest(history)} />}
+                  {history.last_completed_at && <Row k="最近完成" v={fmt(history.last_completed_at)} />}
+                </div>
+              )}
+            </div>
           )}
 
           {/* 本場 EXP 結算（重看） */}
