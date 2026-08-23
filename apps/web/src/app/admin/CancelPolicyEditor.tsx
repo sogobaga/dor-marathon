@@ -1,6 +1,7 @@
 'use client'
 
 import type { CancellationPolicy, CancellationTier } from '@/lib/api'
+import { cutoffDateForDaysBefore, formatCutoffDateTime } from '@/lib/refundSchedule'
 
 // 程式內建預設（migration 095 寫入 app_settings 的初始值一致）；系統設定尚未載入完成前的暫時顯示用。
 export const DEFAULT_CANCELLATION_POLICY: CancellationPolicy = {
@@ -35,19 +36,26 @@ export function validateCancellationPolicy(policy: CancellationPolicy): string |
   return null
 }
 
-/** 取消退費政策編輯區塊（deadline_days + tiers 動態增刪列），供「系統設定」與「賽事表單」共用。 */
+/** 取消退費政策編輯區塊（deadline_days + tiers 動態增刪列），供「系統設定」與「賽事表單」共用。
+ *  raceStartDate：該賽事的開始時間，用於即時把「天數」換算成實際日期顯示在輸入旁；系統設定頁沒有
+ *  特定賽事、或賽事表單尚未填開始時間時傳 undefined/null，改顯示提示文字而非亂算日期。 */
 export function CancellationPolicyFields({
   policy,
   onChange,
+  raceStartDate,
 }: {
   policy: CancellationPolicy
   onChange: (p: CancellationPolicy) => void
+  raceStartDate?: Date | null
 }) {
   const tiers = policy.tiers ?? []
   const updateTier = (i: number, patch: Partial<CancellationTier>) =>
     onChange({ ...policy, tiers: tiers.map((t, idx) => (idx === i ? { ...t, ...patch } : t)) })
   const removeTier = (i: number) => onChange({ ...policy, tiers: tiers.filter((_, idx) => idx !== i) })
   const addTier = () => onChange({ ...policy, tiers: [...tiers, { days_before: 0, ratio: 0 }] })
+  // 天數→日期即時換算提示；raceStartDate 未設（系統預設頁／賽事尚未填開始時間）時顯示引導文字。
+  const dateHint = (days: number) =>
+    raceStartDate ? `＝ ${formatCutoffDateTime(cutoffDateForDaysBefore(raceStartDate, days))} 前` : '（請先設定賽事日期）'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -62,6 +70,7 @@ export function CancellationPolicyFields({
           />
           <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>天</span>
         </div>
+        <div style={dateHintStyle}>{dateHint(policy.deadline_days)}</div>
       </Field>
 
       <div>
@@ -76,6 +85,7 @@ export function CancellationPolicyFields({
                   style={inp} type="number" min={0} value={t.days_before}
                   onChange={(e) => updateTier(i, { days_before: e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value, 10) || 0) })}
                 />
+                <div style={dateHintStyle}>{dateHint(t.days_before)}</div>
               </Field>
               <Field label="退費比例 (%)">
                 <input
@@ -119,3 +129,5 @@ const removeBtn: React.CSSProperties = {
   background: 'none', border: 'none', color: 'var(--hunt)', cursor: 'pointer', fontSize: 13, padding: '8px 4px',
 }
 const hint: React.CSSProperties = { fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 6, lineHeight: 1.6 }
+// 天數輸入旁的即時日期換算提示（deadline_days／每個級距的 days_before 共用）
+const dateHintStyle: React.CSSProperties = { fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 4 }

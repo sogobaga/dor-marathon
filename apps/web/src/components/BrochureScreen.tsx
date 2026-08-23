@@ -7,6 +7,7 @@ import { racesApi, type Race, type RaceDetail, type BrochureBlock, type Brochure
 import { getUserToken } from '@/lib/userAuth'
 import { navigateLink } from '@/lib/links'
 import { MediaCarousel, Lightbox, YouTubeEmbed, ytId } from '@/components/shared/MediaCarousel'
+import { buildRefundScheduleRows, formatCutoffDate } from '@/lib/refundSchedule'
 
 // 圖片區塊 content：新版存「陣列」JSON（元素可為純網址字串，或 {url,caption?,link?} 物件，
 // 每張圖各自可選填說明文字＋點擊連結）；相容舊的單一網址字串。一律正規化成 BrochureImageItem。
@@ -98,7 +99,44 @@ export function BrochureBody({ detail }: { detail: RaceDetail }) {
           <Block key={b.id ?? i} block={b} onZoom={zoom} />
         ))}
       </div>
+      <RefundPolicyBody detail={detail} />
       {lightbox && <Lightbox images={lightbox.images} index={lightbox.index} onClose={() => setLightbox(null)} />}
+    </div>
+  )
+}
+
+// 簡章頁尾「取消退費規則」表格：讀後端 GetPublicDetail 已解析好的 resolved_cancellation_policy
+// （賽事覆寫→系統預設→內建預設的最終生效政策），用 lib/refundSchedule 把天數換算成日期，跟實際
+// 取消退費計算（後端 race.ComputeCancellation）共用同一套天數比對規則，避免顯示跟真正退費金額
+// 兜不起來（v0.1.570）。無政策資料（理論上後端一律回傳，此處僅前端防禦）則整塊不顯示。表格樣式
+// 沿用 v0.1.532 既有的 .brochure-html table CSS（globals.css），暗黑/warm 兩種 skin 皆可讀。
+function RefundPolicyBody({ detail }: { detail: RaceDetail }) {
+  const policy = detail.resolved_cancellation_policy
+  if (!policy) return null
+  const startDate = new Date(detail.start_date)
+  const rows = buildRefundScheduleRows(policy, startDate)
+  return (
+    <div style={{ marginTop: 26 }}>
+      <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)', marginBottom: 8 }}>💰 取消退費規則</div>
+      <div className="brochure-html">
+        <table>
+          <thead>
+            <tr><th>取消時間</th><th>退費比例</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                <td>{formatCutoffDate(r.cutoff)}（含）前</td>
+                <td>退還 {r.ratio}%</td>
+              </tr>
+            ))}
+            <tr>
+              <td>之後取消</td>
+              <td>不予退費</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

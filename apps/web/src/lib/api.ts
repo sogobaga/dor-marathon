@@ -442,6 +442,10 @@ export interface RaceDetail extends Race {
   test_whitelist: string[]
   brochure: BrochureBlock[]
   tasks: RaceTask[]
+  // 後端 GetPublicDetail 解析好的最終生效取消退費政策（賽事覆寫→系統預設→內建預設），簡章頁尾
+  // 「取消退費規則」表格用；跟實際退費計算共用同一顆後端函式，顯示不會兜不起來。後台編輯用的
+  // GetDetail 不填此欄位。
+  resolved_cancellation_policy?: CancellationPolicy | null
 }
 
 // 建立賽事的巢狀 payload（Race 基本欄位 + 子陣列）

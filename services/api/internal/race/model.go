@@ -419,6 +419,12 @@ type RaceDetail struct {
 	TestWhitelist []string        `json:"test_whitelist"`
 	Brochure      []BrochureBlock `json:"brochure"`
 	Tasks         []RaceTask      `json:"tasks"`
+	// ResolvedCancellationPolicy：僅 GetPublicDetail（公開詳情頁）填入，供簡章頁尾「取消退費規則」表格
+	// 顯示用（見前端 BrochureScreen.tsx 的 RefundPolicyBody）。後端先解析好「該賽事覆寫→系統預設→內建
+	// 預設」的最終生效政策再回傳，前端不必自行查 app_settings，且保證跟 CreateCancelRequest 實際退費
+	// 計算共用同一顆 ResolveCancellationPolicy，顯示不會跟真正退費金額兜不起來。GetDetail（後台編輯讀取
+	// 原始 config.cancellation_policy 覆寫值）不填此欄位。
+	ResolvedCancellationPolicy *CancellationPolicy `json:"resolved_cancellation_policy,omitempty"`
 }
 
 // GroupPreset 分組預設選單（可擴充）

@@ -1547,7 +1547,11 @@ export default function RaceForm({
               </div>
             ) : (
               <div style={card}>
-                <CancellationPolicyFields policy={cancelPolicy} onChange={setCancelPolicy} />
+                <CancellationPolicyFields
+                  policy={cancelPolicy}
+                  onChange={setCancelPolicy}
+                  raceStartDate={startDate ? new Date(startDate) : null}
+                />
               </div>
             )}
           </div>

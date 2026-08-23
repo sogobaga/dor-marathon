@@ -14,6 +14,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/promo"
 )
 
@@ -312,6 +313,12 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 	// 安全：entry_reward_config（migration 140）同樣機敏，理由相同；前台改走 GetEntryRewardPreview
 	// 專用端點取代（見 reward_preview.go）。
 	detail.EntryRewardConfig = nil
+
+	// 取消退費規則（簡章頁尾表格用）：解析好最終生效政策一併回傳，跟 CreateCancelRequest 實際退費
+	// 計算共用同一顆 ResolveCancellationPolicy，避免前端顯示跟真正退費金額兜不起來。
+	sysDefaultPolicy := appsettings.GetString(ctx, s.repo.db, "cancellation_policy", "")
+	resolvedPolicy := ResolveCancellationPolicy(detail.Config.CancellationPolicy, sysDefaultPolicy)
+	detail.ResolvedCancellationPolicy = &resolvedPolicy
 
 	var reg *Registration
 	if userID != "" {
