@@ -55,7 +55,7 @@ func DefaultFrom() string {
 	if v := os.Getenv("EMAIL_FROM"); v != "" {
 		return v
 	}
-	return "DOR 跑步平台 <noreply@dor.tw>"
+	return "DOR｜城市探索 <noreply@dor.tw>"
 }
 
 // SendEmailBatch 一次寄送最多 100 封各自獨立的信（POST https://api.resend.com/emails/batch，

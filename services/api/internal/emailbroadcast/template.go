@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"net/url"
+	"strings"
 )
 
 // unsubTokenLen 取 HMAC-SHA256 前 16 hex 字元（比照既有 state token 慣例的簡短化取捨——這裡不需要
@@ -38,18 +39,26 @@ func (h *Handler) unsubscribeURL(userID string) string {
 // 允許簡單 HTML，故不逃逸——僅限有 settings 權限的後台管理員可觸發，信任範圍等同其他後台可自由
 // 輸入 HTML 的欄位）+ footer（比照 support/terms/privacy 頁「只留 Email+統編，不列地址電話」的
 // 對外聯絡政策）+ 退訂連結。
+// nl2br 把純文字換行轉成 <br/>（2026-08-23 使用者回報：textarea 輸入的換行寄出後全部黏在一起）。
+// 內文仍支援簡單 HTML 標籤——換行轉換與 HTML 並存：管理者貼純文字時換行如實呈現，貼 HTML 時
+// 標籤照常生效（HTML 原始碼裡的換行多轉一個 <br/> 只是多一點空行，無害且直覺）。
+func nl2br(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\n", "<br />\n")
+}
+
 func buildEmailHTML(subject, bodyHTML, unsubURL string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html><body style="font-family:sans-serif;color:#222;max-width:600px;margin:0 auto;padding:24px 20px;">
-<div style="color:#888;font-size:12px;letter-spacing:1px;">DOR 跑步平台</div>
+<div style="color:#888;font-size:12px;letter-spacing:1px;">DOR｜城市探索</div>
 <h2 style="margin:10px 0 20px;">%s</h2>
 <div style="line-height:1.75;font-size:15px;">%s</div>
 <hr style="margin:36px 0 16px;border:none;border-top:1px solid #eee;" />
 <div style="font-size:12px;color:#999;line-height:1.9;">
-DOR 跑步平台　·　service@dor.tw　·　統一編號：83005678<br />
+DOR｜城市探索　·　service@dor.tw　·　統一編號：83005678<br />
 不想再收到這類 Email？<a href="%s" style="color:#999;">取消訂閱</a>
 </div>
-</body></html>`, html.EscapeString(subject), bodyHTML, html.EscapeString(unsubURL))
+</body></html>`, html.EscapeString(subject), nl2br(bodyHTML), html.EscapeString(unsubURL))
 }
 
 // unsubscribePage 退訂成功/失敗的簡單 HTML 頁（白底、繁中，見 handler.go Unsubscribe）。
