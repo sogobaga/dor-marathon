@@ -64,6 +64,17 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
   const [fFuel, setFFuel] = useState<FuelRow[]>([])
   const [fBusy, setFBusy] = useState(false)
   const [fErr, setFErr] = useState('')
+  // 逐欄位驗證失敗標記（送出時填入、該欄 onChange 時清除）：key 格式 'name' / `seg-${i}-to` / `seg-${i}-min` /
+  // `seg-${i}-sec` / `fuel-${i}-val`，供輸入框套用紅框樣式，讓使用者一眼看出「哪裡」沒填好（不只是籠統失敗）。
+  const [fErrFields, setFErrFields] = useState<Set<string>>(new Set())
+  function clearFieldErr(key: string) {
+    setFErrFields((prev) => {
+      if (!prev.has(key)) return prev
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+  }
 
   function openCreate() {
     setEditingId(null)
@@ -71,6 +82,7 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
     setFSegs([{ to_km: '', paceMin: '', paceSec: '' }])
     setFFuel([])
     setFErr('')
+    setFErrFields(new Set())
     setShowForm(true)
   }
   function openEdit(s: RaceStrategy) {
@@ -79,6 +91,7 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
     setFSegs(s.segments.map((seg) => ({ to_km: String(seg.to_km), paceMin: String(Math.floor(seg.pace_s / 60)), paceSec: String(seg.pace_s % 60) })))
     setFFuel(s.fuel.map((f) => ({ kind: f.kind, mode: f.mode, val: f.mode === 'time' ? fmtMinutes(f.at) : fmtKm(f.at) })))
     setFErr('')
+    setFErrFields(new Set())
     setShowForm(true)
   }
   function closeForm() { if (!fBusy) setShowForm(false) }
@@ -90,47 +103,70 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
     return Number.isFinite(prev) ? prev : 0
   }
   function addSeg() { setFSegs((prev) => [...prev, { to_km: '', paceMin: '', paceSec: '' }]) }
-  function removeSeg(idx: number) { setFSegs((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev)) }
+  // 刪除會使後續列 index 位移，既有的逐欄錯誤標記可能對不上新 index，一併清除避免紅框錯位
+  function removeSeg(idx: number) { setFSegs((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev)); setFErrFields(new Set()); setFErr('') }
   function updateSeg(idx: number, patch: Partial<SegRow>) { setFSegs((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r))) }
 
   function addFuel() { setFFuel((prev) => [...prev, { kind: 'gel', mode: 'time', val: '' }]) }
-  function removeFuel(idx: number) { setFFuel((prev) => prev.filter((_, i) => i !== idx)) }
+  function removeFuel(idx: number) { setFFuel((prev) => prev.filter((_, i) => i !== idx)); setFErrFields(new Set()); setFErr('') }
   function updateFuel(idx: number, patch: Partial<FuelRow>) { setFFuel((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r))) }
 
   async function submitForm() {
     const name = fName.trim()
-    if (!name) { setFErr('請輸入策略名稱'); return }
     if (fSegs.length === 0) { setFErr('請至少新增一段配速'); return }
+
+    // 全欄位一次檢核（不像過去逐段擋在第一個錯誤就 return，只看得到一個問題）：
+    // 空值／NaN／負數／既有規則（終點需大於前段終點、配速需在合理區間）皆記入 badFields，
+    // 送出前一次標紅所有有問題的欄位，讓使用者一次看清楚哪裡沒填好。
+    const badFields = new Set<string>()
+    if (!name) badFields.add('name')
 
     // 組 segments：逐段檢核「終點需大於起點」（起點＝前段終點，首段固定 0）與配速合理區間
     const segments: StrategySegment[] = []
     let from = 0
     for (let i = 0; i < fSegs.length; i++) {
       const row = fSegs[i]
-      const to = Number(row.to_km)
-      if (!Number.isFinite(to) || to <= from) { setFErr(`第 ${i + 1} 段終點需大於 ${from.toFixed(1)} km`); return }
-      const min = row.paceMin === '' ? 0 : Number(row.paceMin)
-      const sec = row.paceSec === '' ? 0 : Number(row.paceSec)
-      if (!Number.isFinite(min) || !Number.isFinite(sec) || min < 0 || sec < 0 || sec > 59) { setFErr(`第 ${i + 1} 段配速格式錯誤`); return }
-      const pace_s = Math.round(min * 60 + sec)
-      if (pace_s < PACE_MIN_S || pace_s > PACE_MAX_S) { setFErr(`第 ${i + 1} 段配速需在 ${fmtPace(PACE_MIN_S)}～${fmtPace(PACE_MAX_S)} /km 之間`); return }
-      segments.push({ from_km: from, to_km: to, pace_s })
-      from = to
+      const segFrom = from
+      const toRaw = row.to_km.trim()
+      const to = toRaw === '' ? NaN : Number(toRaw)
+      const toOk = Number.isFinite(to) && to > segFrom
+      if (!toOk) badFields.add(`seg-${i}-to`)
+
+      const minRaw = row.paceMin.trim()
+      const secRaw = row.paceSec.trim()
+      const min = minRaw === '' ? NaN : Number(minRaw)
+      const sec = secRaw === '' ? NaN : Number(secRaw)
+      const minOk = Number.isFinite(min) && min >= 0
+      const secOk = Number.isFinite(sec) && sec >= 0 && sec <= 59
+      if (!minOk) badFields.add(`seg-${i}-min`)
+      if (!secOk) badFields.add(`seg-${i}-sec`)
+
+      let pace_s = 0
+      if (minOk && secOk) {
+        pace_s = Math.round(min * 60 + sec)
+        if (pace_s < PACE_MIN_S || pace_s > PACE_MAX_S) { badFields.add(`seg-${i}-min`); badFields.add(`seg-${i}-sec`) }
+      }
+
+      if (toOk) { segments.push({ from_km: segFrom, to_km: to, pace_s }); from = to }
     }
 
     // 組 fuel：時間模式輸入「分鐘」存秒、距離模式輸入「公里」存公尺，皆允許小數
     const fuel: FuelPoint[] = []
     for (let i = 0; i < fFuel.length; i++) {
       const row = fFuel[i]
-      const v = Number(row.val)
-      if (!Number.isFinite(v) || v < 0) { setFErr(`第 ${i + 1} 個補給點數值格式錯誤`); return }
+      const valRaw = row.val.trim()
+      const v = valRaw === '' ? NaN : Number(valRaw)
+      const vOk = Number.isFinite(v) && v >= 0
+      if (!vOk) { badFields.add(`fuel-${i}-val`); continue }
       const at = row.mode === 'time' ? Math.round(v * 60) : Math.round(v * 1000)
       fuel.push({ kind: row.kind, mode: row.mode, at })
     }
 
+    if (badFields.size > 0) { setFErrFields(badFields); setFErr('請填上您預計的策略資訊。'); return }
+
     const token = getUserToken()
     if (!token) return
-    setFBusy(true); setFErr('')
+    setFBusy(true); setFErr(''); setFErrFields(new Set())
     try {
       if (editingId) {
         await withUserAuth((t) => strategiesApi.update(t, editingId, { name, segments, fuel }))
@@ -261,7 +297,7 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
               <label style={formField}>
                 <span style={formLabel}>策略名稱</span>
-                <input value={fName} onChange={(e) => setFName(e.target.value)} maxLength={40} placeholder="例：台北馬拉松 破4 配速計畫" style={formInput} />
+                <input value={fName} onChange={(e) => { setFName(e.target.value); clearFieldErr('name') }} maxLength={40} placeholder="例：台北馬拉松 破4 配速計畫" style={{ ...formInput, ...(fErrFields.has('name') ? errInput : {}) }} />
               </label>
 
               <div style={formField}>
@@ -273,15 +309,15 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
                       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
                         <div style={{ flex: 1.3, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
                           <span style={miniLabel}>終點 km</span>
-                          <input type="number" min={0} step={0.1} inputMode="decimal" value={row.to_km} onChange={(e) => updateSeg(i, { to_km: e.target.value })} style={formInput} />
+                          <input type="number" min={0} step={0.1} inputMode="decimal" value={row.to_km} onChange={(e) => { updateSeg(i, { to_km: e.target.value }); clearFieldErr(`seg-${i}-to`) }} style={{ ...formInput, ...(fErrFields.has(`seg-${i}-to`) ? errInput : {}) }} />
                         </div>
                         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
                           <span style={miniLabel}>配速·分</span>
-                          <input type="number" min={0} max={60} step={1} inputMode="numeric" value={row.paceMin} onChange={(e) => updateSeg(i, { paceMin: e.target.value })} style={formInput} />
+                          <input type="number" min={0} max={60} step={1} inputMode="numeric" value={row.paceMin} onChange={(e) => { updateSeg(i, { paceMin: e.target.value }); clearFieldErr(`seg-${i}-min`) }} style={{ ...formInput, ...(fErrFields.has(`seg-${i}-min`) ? errInput : {}) }} />
                         </div>
                         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
                           <span style={miniLabel}>秒</span>
-                          <input type="number" min={0} max={59} step={1} inputMode="numeric" value={row.paceSec} onChange={(e) => updateSeg(i, { paceSec: e.target.value })} style={formInput} />
+                          <input type="number" min={0} max={59} step={1} inputMode="numeric" value={row.paceSec} onChange={(e) => { updateSeg(i, { paceSec: e.target.value }); clearFieldErr(`seg-${i}-sec`) }} style={{ ...formInput, ...(fErrFields.has(`seg-${i}-sec`) ? errInput : {}) }} />
                         </div>
                         <button type="button" disabled={fSegs.length <= 1} onClick={() => removeSeg(i)} style={{ ...rmBtn, opacity: fSegs.length <= 1 ? 0.35 : 1 }}>🗑</button>
                       </div>
@@ -311,9 +347,9 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
                       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <input
                           type="number" min={0} step={0.1} inputMode="decimal" value={row.val}
-                          onChange={(e) => updateFuel(i, { val: e.target.value })}
+                          onChange={(e) => { updateFuel(i, { val: e.target.value }); clearFieldErr(`fuel-${i}-val`) }}
                           placeholder={row.mode === 'time' ? '開跑後第幾分鐘' : '第幾公里'}
-                          style={{ ...formInput, flex: 1 }}
+                          style={{ ...formInput, flex: 1, ...(fErrFields.has(`fuel-${i}-val`) ? errInput : {}) }}
                         />
                         <span style={{ fontSize: 11.5, color: 'var(--tx-dim)', flexShrink: 0 }}>{row.mode === 'time' ? '分鐘' : 'km'}</span>
                       </div>
@@ -352,6 +388,8 @@ const formField: React.CSSProperties = { display: 'flex', flexDirection: 'column
 const formLabel: React.CSSProperties = { fontSize: 11.5, fontWeight: 800, color: 'var(--tx-dim)' }
 const miniLabel: React.CSSProperties = { fontSize: 10, color: 'var(--tx-faint)' }
 const formInput: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '8px 10px', color: 'var(--tx)', fontSize: 13, fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }
+// 欄位驗證失敗紅框（比照 admin/TaskItemEditor.tsx 的 missingInp 慣例：var(--hunt) 錯誤色 + 淡紅底）
+const errInput: React.CSSProperties = { borderColor: 'var(--hunt)', background: 'rgba(255,75,92,.07)' }
 const formSelect: React.CSSProperties = { minWidth: 0, background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '8px 10px', color: 'var(--tx)', fontSize: 12.5, fontFamily: 'inherit' }
 const rmBtn: React.CSSProperties = { flexShrink: 0, background: 'none', border: '1px solid var(--line-2)', color: 'var(--tx-dim)', borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 13, fontFamily: 'inherit' }
 const addRowBtn: React.CSSProperties = { marginTop: 4, background: 'none', border: '1px dashed var(--line-2)', color: 'var(--fug)', borderRadius: 9, padding: '7px 0', cursor: 'pointer', fontSize: 12, fontWeight: 700, fontFamily: 'inherit' }
