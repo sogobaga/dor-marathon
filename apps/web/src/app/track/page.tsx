@@ -63,6 +63,7 @@ export default function TrackPage() {
   const [confirmStravaHold, setConfirmStravaHold] = useState<null | { km: number; mins: number; paceS: number }>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [showActiveRaces, setShowActiveRaces] = useState(false) // 「進行中活動/賽事」面板開關
+  const [showStartTip, setShowStartTip] = useState(false) // 從賽事詳情頁「前往挑戰」進入（?from=race）→ idle 時顯示一次性新手提醒，可點擊/X關閉
   const [uploading, setUploading] = useState(false)
   const [checkpoints, setCheckpoints] = useState<ActiveCheckpoint[]>([])
   const [curPos, setCurPos] = useState<{ lat: number; lng: number; acc: number } | null>(null)
@@ -788,6 +789,7 @@ export default function TrackPage() {
   }
 
   function start() {
+    setShowStartTip(false) // 開跑後新手提醒的任務已完成，收起（idle 狀態本就已用 status 條件隱藏，這裡一併重置狀態避免「再跑一次」時殘留）
     setErr(''); clearTimeout(errTimerRef.current); setErrFade(false)
     if (!navigator.geolocation) { setErr('此裝置/瀏覽器不支援定位'); return }
     // 關掉進頁面的 GPS 預熱偵測，避免與正式追蹤重複回報
@@ -1284,6 +1286,11 @@ export default function TrackPage() {
   useEffect(() => {
     const p = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('focus') : null
     if (p) setFocusBoss(p)
+  }, [])
+  // 賽事詳情頁「前往挑戰」帶 ?from=race 進來 → 顯示一次性新手提醒（見下方 showStartTip 渲染處）
+  useEffect(() => {
+    const from = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('from') : null
+    if (from === 'race') setShowStartTip(true)
   }, [])
   useEffect(() => {
     if (focusDoneRef.current || !mapReady || !mapRef.current || !focusBoss) return
@@ -1793,6 +1800,23 @@ export default function TrackPage() {
           </div>
         </div>
       </div>
+
+      {/* 新手提醒（從賽事詳情頁「前往挑戰」進入，?from=race）：只在 idle、尚未進入結構化課表時顯示；
+          非 fixed 疊層，跟著版面正常排列在「開始跑步」按鈕正上方——不需 overlayMount（見該檔頂部註解），
+          也不受桌機 .phone-shell 模擬框的 fixed 疊層規則影響。點擊本身或 X 皆可關閉，不會再自動顯示。 */}
+      {showStartTip && status === 'idle' && !workout && (
+        <div
+          onClick={() => setShowStartTip(false)}
+          style={{ margin: '0 16px 10px', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(70,227,160,.1)', border: '1px solid var(--fug)', borderRadius: 12, padding: '10px 12px', fontSize: 13, color: 'var(--tx)', lineHeight: 1.5 }}
+        >
+          <span style={{ flex: 1, minWidth: 0 }}>👉 點擊下方「開始跑步」按鈕，立即進行挑戰。</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowStartTip(false) }}
+            aria-label="關閉"
+            style={{ flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--tx-dim)', fontSize: 15, lineHeight: 1, cursor: 'pointer', padding: '4px 6px', fontWeight: 700 }}
+          >✕</button>
+        </div>
+      )}
 
       {/* 操作 */}
       <div style={{ padding: '16px 16px calc(16px + var(--cta-safe, 0px))', flexShrink: 0, borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>

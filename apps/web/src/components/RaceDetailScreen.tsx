@@ -215,6 +215,12 @@ export default function RaceDetailScreen({
     onRegister?.(race)
   }
 
+  // 「前往挑戰」：已報名（含個人挑戰進行中）→ 導向 GPS 跑步追蹤頁；帶 from=race 供該頁顯示一次性新手提醒
+  // 「點擊下方開始跑步按鈕，立即進行挑戰」（見 track/page.tsx 的 showStartTip，只在此路徑進入時顯示）。
+  function goToTrack() {
+    window.location.href = '/track?from=race'
+  }
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <header style={{ padding: 'var(--app-top) 22px 10px', flexShrink: 0 }}>
@@ -238,6 +244,8 @@ export default function RaceDetailScreen({
             {statusLabels.map((label) => (
               <span key={label} style={statusBadge}>{label}</span>
             ))}
+            {/* 已報名標籤：與下方「前往挑戰」按鈕同一套判定（inProgress，見上方定義），使用者有效報名才顯示 */}
+            {inProgress && <span style={registeredBadge}>已報名</span>}
             <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
               {race.event_mode === 'competition' ? '競賽' : race.event_mode === 'faction_battle' ? '分組對抗' : isPersonal ? '個人挑戰' : '一般'}
             </span>
@@ -302,16 +310,13 @@ export default function RaceDetailScreen({
             </div>
           )}
 
-          {/* 報名按鈕 / 已報名（修正：不再多一層） */}
-          {/* 個人挑戰模式：只有「進行中」的 attempt 才顯示「挑戰進行中」，completed/expired/cancelled 的
-              舊 attempt 都應回到可再報名的按鈕（見 inProgress 計算；personal 以 pp 為準，見上方註解）。 */}
+          {/* 報名按鈕 / 前往挑戰（修正：不再多一層） */}
+          {/* 個人挑戰模式：只有「進行中」的 attempt 才顯示「前往挑戰」，completed/expired/cancelled 的
+              舊 attempt 都應回到可再報名的按鈕（見 inProgress 計算；personal 以 pp 為準，見上方註解）。
+              已報名（含待繳費）一律可按「前往挑戰」導去 GPS 追蹤頁；上方「已報名」徽章同用 inProgress 判定。 */}
           <div style={{ marginTop: 14 }}>
             {inProgress ? (
-              <div style={registeredBox}>
-                {isPersonal
-                  ? `挑戰進行中${pp?.status === 'pending' ? '（待繳費）' : ''}`
-                  : `✓ 你已報名此賽事${registration?.status === 'pending' ? '（待繳費）' : registration?.status === 'paid' ? '（已完成）' : ''}`}
-              </div>
+              <button onClick={goToTrack} style={registerBtn}>▶ 前往挑戰</button>
             ) : detail?.can_register && onRegister ? (
               <button onClick={handleRegisterClick} style={registerBtn}>{isPersonal ? '報名挑戰' : '立即報名'}</button>
             ) : null}
@@ -948,10 +953,11 @@ function SupplySection({ label, items }: { label: string; items: RaceSupply[] })
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0 }
 const dashCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 16, boxShadow: 'var(--card-shadow, none)' }
 const statusBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: 'var(--fug)', background: 'rgba(45,212,150,.1)', border: '1px solid var(--fug)', borderRadius: 999, padding: '2px 10px' }
+// 已報名徽章：實心底，比照 registerBtn 的 fug/fug-ink 配色組合（已隨皮膚正確配對前景/背景，非寫死顏色）
+const registeredBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: 'var(--fug-ink)', background: 'var(--fug)', borderRadius: 999, padding: '2px 10px' }
 // VIP 專屬徽章：金底白字（金黃色實心底框上的文字一律用白色）
 const vipBadge: React.CSSProperties = { fontSize: 11, fontWeight: 800, color: '#fff', background: 'var(--gold)', borderRadius: 999, padding: '2px 10px', whiteSpace: 'nowrap' }
 const registerBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '12px 20px', cursor: 'pointer', fontSize: 15, width: '100%' }
-const registeredBox: React.CSSProperties = { background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 'var(--radius-md, 12px)', padding: '11px 16px', textAlign: 'center', fontSize: 14, fontWeight: 700, color: 'var(--fug)' }
 const certBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '12px 20px', cursor: 'pointer', fontSize: 15 }
 const certRetryBtn: React.CSSProperties = { width: '100%', background: 'var(--bg-2)', color: 'var(--tx-dim)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 'var(--radius-btn, 12px)', padding: '10px 20px', cursor: 'pointer', fontSize: 13 }
 const expBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'rgba(70,227,160,.1)', color: 'var(--fug)', fontWeight: 800, border: '1px solid rgba(70,227,160,.35)', borderRadius: 'var(--radius-btn, 12px)', padding: '11px 20px', cursor: 'pointer', fontSize: 14 }
