@@ -139,8 +139,12 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   // 活動優惠券（migration 138，活動獎勵抽獎所得）：報名折抵三選一之一，選定的 user_rewards.id。
   const [couponRewardId, setCouponRewardId] = useState('')
   const [eventCoupons, setEventCoupons] = useState<UserReward[]>([])
+  const [eventCouponsErr, setEventCouponsErr] = useState(false) // 活動優惠券清單抓取失敗（不阻擋報名，僅折抵區提示）
 
   const { dash } = useDashboard()
+  // dash 為 null 代表儀表板尚未回來（SWR 首次載入、或本機無持久快取）：此時不知道是否為 VIP，
+  // 不可當「非 VIP」處理，否則 VIP 使用者會在資料回來前看到整塊優惠券消失（見本次修復緣由）。
+  const vipReady = dash !== null
   const isVip = !!dash?.is_vip
   const couponBal = dash?.activity_coupon_balance ?? 0
   const COUPON_CENTS = dash?.activity_coupon_value_cents ?? 10000 // VIP 活動優惠券面額（分）；來自後台系統設定 vip_coupon_value_cents，讀不到時 fallback $100
@@ -182,13 +186,17 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         }
       }).catch(() => {})
       withUserAuth((t) => profileApi.recommendations(t, race.id)).then((r) => setRecommends(r.recommendations)).catch(() => {})
-      // 活動優惠券（migration 138）：只留「未使用且未過期」的可選（valid_until 為 null 視為無期限，皆可選）。
+      // 活動優惠券（migration 138）：只留「未使用、已生效（valid_from 為 null 或已到）、未過期
+      // （valid_until 為 null 視為無期限）」的可選。
       withUserAuth((t) => rewardsApi.list(t)).then((r) => {
         const now = Date.now()
+        setEventCouponsErr(false)
         setEventCoupons(r.rewards.filter((x) =>
-          x.kind === 'coupon' && !x.used && (!x.valid_until || new Date(x.valid_until).getTime() > now)
+          x.kind === 'coupon' && !x.used &&
+          (!x.valid_from || new Date(x.valid_from).getTime() <= now) &&
+          (!x.valid_until || new Date(x.valid_until).getTime() > now)
         ))
-      }).catch(() => {})
+      }).catch(() => setEventCouponsErr(true))
     }
   }, [race.id])
 
@@ -723,6 +731,11 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               </Section>
             )}
 
+            {/* 活動優惠券清單抓取失敗：不阻擋報名，僅提示（見折抵三選一區） */}
+            {eventCouponsErr && baseFee > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--hunt)', marginBottom: 6 }}>優惠資料載入失敗，請重新整理</div>
+            )}
+
             {/* 折抵方式三選一：VIP活動優惠券／活動優惠券(migration 138)／優惠序號 */}
             {(() => {
               const otherPicked = useCoupon || couponRewardId !== ''
@@ -751,25 +764,33 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               )
             })()}
 
-            {/* VIP $100 活動優惠券（面額依系統設定，只折報名費，與其他折抵方式擇一） */}
-            {isVip && baseFee > 0 && (() => {
+            {/* VIP $100 活動優惠券（面額依系統設定，只折報名費，與其他折抵方式擇一）。
+                區塊本身一律渲染（不再以 isVip 當顯示條件）：dash 尚未回來時無法判斷是否為 VIP，
+                若拿「非 VIP」當預設會讓 VIP 使用者在資料回來前看到整塊消失（見本次修復緣由）；
+                改以 disabled + 文案表達「載入中／非VIP／可用」三態，塊本身恆在。 */}
+            {baseFee > 0 && (() => {
               const otherPicked = promoCode.trim() !== '' || couponRewardId !== ''
+              const disabled = !vipReady || !isVip || couponBal <= 0 || otherPicked
               return (
                 <Section title="VIP 活動優惠券">
-                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13.5, color: 'var(--tx)', opacity: (couponBal > 0 || useCoupon) && !otherPicked ? 1 : 0.5 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 13.5, color: 'var(--tx)', opacity: !disabled || useCoupon ? 1 : 0.5 }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input
                         type="checkbox"
                         checked={useCoupon}
-                        disabled={couponBal <= 0 || otherPicked}
+                        disabled={disabled}
                         onChange={(e) => { const on = e.target.checked; setUseCoupon(on); if (on) { setPromoCode(''); setPromoQuote(null); setCouponRewardId('') } }}
                       />
                       使用 VIP 活動優惠券（折 {ntd(COUPON_CENTS)}）
                     </span>
-                    <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>持有數量：{couponBal}</span>
+                    <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>{vipReady ? `持有數量：${couponBal}` : '載入中…'}</span>
                   </label>
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
-                    VIP 專屬，每月自動補齊；折抵方式擇一，不可與活動優惠券／優惠序號並用。
+                    {!vipReady
+                      ? 'VIP 會員資格確認中…'
+                      : !isVip
+                        ? 'VIP 專屬，升級 VIP 即可使用；折抵方式擇一，不可與活動優惠券／優惠序號並用。'
+                        : 'VIP 專屬，每月自動補齊；折抵方式擇一，不可與活動優惠券／優惠序號並用。'}
                   </div>
                 </Section>
               )
