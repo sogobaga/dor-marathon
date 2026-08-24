@@ -153,8 +153,12 @@ func main() {
 	bindHandler := payment.NewBindHandler(bindClient, payRepo, pool, raceRepo, mailHandler, cfg.ECPayBindEnv, cfg.ECPayBindReturnURL, cfg.ECPayBindResultURL, cfg.FrontendURL)
 
 	// Ops（每日資料一致性自檢排程：orders/payment_transactions/vip_subscriptions 等金流表的一致性
-	// 健檢，異常送 Telegram，比照 bindHandler.RunRenewalLoop 的排程骨架，見 internal/ops/selfcheck.go）
+	// 健檢，異常送 Telegram，比照 bindHandler.RunRenewalLoop 的排程骨架，見 internal/ops/selfcheck.go；
+	// 同一個 Handler 也承載每日營運報告排程，見 internal/ops/dailyreport.go）
 	opsHandler := ops.NewHandler(pool)
+	// IP/流量每日聚合中介層（migration 145，見 internal/middleware/ipdaily.go）：掛載於下方路由 r.Use
+	// 區塊，背景 flush loop 於下方 bgCtx 一併啟動。
+	ipDailyAgg := middleware.NewIPDailyAggregate(pool)
 
 	// Activity
 	actRepo := activity.NewRepository(pool)
@@ -308,6 +312,10 @@ func main() {
 	))
 	// 5xx 聚合告警：短時間內大量 5xx 觸發一次 Telegram（避免每次 5xx 各自洗版）。
 	r.Use(middleware.FiveXXAlert)
+	// IP/流量每日聚合（migration 145）：in-memory 累計每請求 IP/國家/狀態碼，背景每 5 分鐘批次寫入
+	// ops_ip_daily，供 opsHandler 每日報告的「流量安全」區塊與異常流量巡檢使用（見 internal/ops/
+	// dailyreport.go）。掛在 FiveXXAlert 之後，順序本身不影響行為（兩者互相獨立、各自量測狀態碼）。
+	r.Use(ipDailyAgg.Middleware)
 
 	// Health check：不碰 DB（避免外部監控/部署探針每次喚醒 Neon compute）。DB 就緒檢查改走 /health/db。
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -529,6 +537,7 @@ func main() {
 			r.With(perm("settings")).Mount("/admin/push-groups", pushHandler.GroupAdminRouter())
 			r.With(perm("settings")).Mount("/admin/email-broadcasts", emailBroadcastHandler.AdminRouter())
 			r.With(perm("settings")).Post("/admin/ops/selfcheck", opsHandler.SelfCheckNow)
+			r.With(perm("settings")).Post("/admin/ops/dailyreport", opsHandler.DailyReportNow)
 		})
 	})
 
@@ -581,6 +590,11 @@ func main() {
 	go raceSvc.RunEntryRewardLoop(bgCtx)
 	// 背景：每日資料一致性自檢排程（台灣時間 08:00-08:59 執行一次；金流/報名表健檢異常送 Telegram）
 	go opsHandler.RunSelfCheckLoop(bgCtx)
+	// 背景：每日營運報告排程（同一 08:00-08:59 執行窗口，固定發送，不論當天有無異常；見
+	// internal/ops/dailyreport.go）
+	go opsHandler.RunDailyReportLoop(bgCtx)
+	// 背景：IP/流量每日聚合 flush（每 5 分鐘批次寫入 ops_ip_daily + 每天順手清理 30 天前舊資料）
+	go ipDailyAgg.Run(bgCtx)
 
 	go func() {
 		log.Info().Str("port", cfg.Port).Msg("DOR API server starting")

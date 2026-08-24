@@ -71,7 +71,12 @@ type Handler struct {
 	db *pgxpool.Pool
 
 	mu          sync.Mutex
-	lastRunDate string // 台灣日期 YYYY-MM-DD：最近一次「已認領要執行」的日期（in-memory 標記，見檔頭）
+	lastRunDate string // 台灣日期 YYYY-MM-DD：最近一次「已認領要執行」自檢的日期（in-memory 標記，見檔頭）
+
+	// lastReportDate：每日營運報告（dailyreport.go）獨立的當日冪等標記，刻意與上面的 lastRunDate
+	// 分開——兩個排程共用同一個 Handler／同一小時執行窗口，但各自認領各自的「今天跑過了嗎」，
+	// 不能共用同一個欄位，否則其中一個先跑就會讓另一個誤判「今天已跑過」而被跳過。
+	lastReportDate string
 }
 
 // NewHandler 建構子。
