@@ -40,6 +40,7 @@ type OverviewRace struct {
 	ID            string    `json:"id"`
 	Title         string    `json:"title"`
 	DisplayStatus string    `json:"display_status"` // upcoming_reg|registering|reg_closed|starting_soon|racing|paused|suspended
+	CanRegister   bool      `json:"can_register"`   // 是否可報名（供前端 raceStatusFlags 判定用，與前台 Race.can_register 同義）
 	StartDate     time.Time `json:"start_date"`
 	EndDate       time.Time `json:"end_date"`
 	Registrations int       `json:"registrations"`  // 報名人數（未取消）
@@ -149,13 +150,13 @@ func (s *Service) GetAdminOverview(ctx context.Context, now time.Time) (*AdminOv
 
 	out := &AdminOverviewData{Races: []OverviewRace{}, TrackingTotal: total, GeneratedAt: now}
 	for i := range races {
-		disp, _ := races[i].ComputeDisplay(now)
+		disp, canReg := races[i].ComputeDisplay(now)
 		names := track[races[i].ID]
 		if names == nil {
 			names = []string{}
 		}
 		out.Races = append(out.Races, OverviewRace{
-			ID: races[i].ID, Title: races[i].Title, DisplayStatus: disp,
+			ID: races[i].ID, Title: races[i].Title, DisplayStatus: disp, CanRegister: canReg,
 			StartDate: races[i].StartDate, EndDate: races[i].EndDate,
 			Registrations: regCounts[races[i].ID],
 			TrackingCount: len(names), TrackingNames: names,

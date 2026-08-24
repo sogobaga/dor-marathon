@@ -287,8 +287,8 @@ export type DisplayStatus =
   | 'paused' | 'suspended'
 
 // raceStatusFlags：把「報名中」「進行中」拆成兩個獨立、可同時成立的布林（而非單一 display_status 互斥），
-// 給活動列表(RacesScreen)/賽事詳情(RaceDetailScreen)共用，讓「活動期間也開放報名」的賽事
-//（目前是個人挑戰模式，未來可能更多）能同時顯示/篩選到「進行中」＋「報名中」。
+// 給活動列表(RacesScreen)/賽事詳情(RaceDetailScreen)/後台數據總覽(admin/overview)共用，讓「活動期間也開放
+// 報名」的賽事（目前是個人挑戰模式，未來可能更多）能同時顯示/篩選到「進行中」＋「報名中」。
 // - ended：活動期間已結束（依 end_date，與 display_status==='ended' 等價，但不受 control_status 影響）
 // - ongoing：活動期間內（依 start_date～end_date）；後端 control_status=paused/suspended 會不分日期強制覆寫
 //   display_status（見 race.ComputeDisplay），故排除這兩種狀態，避免「賽事中止/暫停」在事件日期範圍內
@@ -296,12 +296,30 @@ export type DisplayStatus =
 // - regOpen：後端已算好「現在可否報名」（can_register，含報名窗/控制狀態；個人挑戰活動中為 true）
 // 一般賽事活動中 can_register 恆為 false，故只會顯示 ongoing，與改版前呈現等價；
 // 個人挑戰活動中 ongoing && regOpen 同時成立，兩者並存顯示。
-export function raceStatusFlags(race: Race): { ended: boolean; ongoing: boolean; regOpen: boolean } {
+// 參數只取結構子集（非完整 Race），讓 admin/overview 的輕量 OverviewRace（同樣含這 4 欄）也能重用同一套判定。
+export interface RaceStatusLike {
+  display_status: string
+  start_date: string
+  end_date: string
+  can_register: boolean
+}
+export function raceStatusFlags(race: RaceStatusLike): { ended: boolean; ongoing: boolean; regOpen: boolean } {
   const now = Date.now()
   const ended = now >= new Date(race.end_date).getTime()
   const overridden = race.display_status === 'paused' || race.display_status === 'suspended'
   const ongoing = !ended && !overridden && now >= new Date(race.start_date).getTime()
   return { ended, ongoing, regOpen: race.can_register }
+}
+
+// RACE_FILTER_CATEGORY：搜尋標籤分類 fallback，把 display_status 歸到 報名中/進行中/已結束。
+// 與 raceStatusFlags 搭配使用（`flags.xxx || RACE_FILTER_CATEGORY[display_status] === 'xxx'`），
+// 確保一般賽事在每個 display_status 下都落入正確分類，不因改採日期判斷而漏篩。
+// 前台(RacesScreen)/後台(admin/overview)共用同一份，避免兩邊各自維護的判定跑掉。
+export type RaceFilterCategory = 'reg' | 'racing' | 'ended'
+export const RACE_FILTER_CATEGORY: Record<string, RaceFilterCategory> = {
+  upcoming_reg: 'reg', registering: 'reg', paused: 'reg',
+  reg_closed: 'racing', starting_soon: 'racing', racing: 'racing',
+  ended: 'ended', suspended: 'ended',
 }
 
 export type ParticipantField = 'real_name' | 'nickname' | 'phone' | 'address' | 'birthday' | 'gender'
@@ -1251,6 +1269,7 @@ export interface OverviewRace {
   id: string
   title: string
   display_status: string
+  can_register: boolean // 供 raceStatusFlags 判定用，與前台 Race.can_register 同義
   start_date: string
   end_date: string
   registrations: number

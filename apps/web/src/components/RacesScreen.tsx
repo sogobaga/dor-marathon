@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import useSWR from 'swr'
-import { racesApi, raceStatusFlags, rewardsApi, type Race, type MyRegLite, type UserReward } from '@/lib/api'
+import { racesApi, raceStatusFlags, RACE_FILTER_CATEGORY, rewardsApi, type Race, type MyRegLite, type UserReward } from '@/lib/api'
 import { getUserToken, useUser, clearUserSession, withUserAuth } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
@@ -39,13 +39,10 @@ const DISPLAY_STATUS: Record<string, { label: string; color: string }> = {
   suspended: { label: '賽事中止', color: 'var(--hunt)' },
 }
 
-// 搜尋標籤分類：把 display_status 歸到 報名中/進行中/已結束
+// 搜尋標籤分類：把 display_status 歸到 報名中/進行中/已結束（CATEGORY fallback 定義搬到 lib/api.ts 的
+// RACE_FILTER_CATEGORY 共用，與後台數據總覽(admin/overview)同一份判定，避免兩邊各自維護跑掉）
 type FilterKey = 'all' | 'reg' | 'racing' | 'ended'
-const CATEGORY: Record<string, Exclude<FilterKey, 'all'>> = {
-  upcoming_reg: 'reg', registering: 'reg', paused: 'reg',
-  reg_closed: 'racing', starting_soon: 'racing', racing: 'racing',
-  ended: 'ended', suspended: 'ended',
-}
+const CATEGORY = RACE_FILTER_CATEGORY
 const FILTER_TABS: { key: FilterKey; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'reg', label: '報名中' },

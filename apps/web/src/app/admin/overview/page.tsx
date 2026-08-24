@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminOverviewApi, adminMetricsApi, type AdminOverview, type DataSourceMetrics, type VipAnalytics } from '@/lib/api'
+import { adminOverviewApi, adminMetricsApi, raceStatusFlags, RACE_FILTER_CATEGORY, type AdminOverview, type OverviewRace, type DataSourceMetrics, type VipAnalytics } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
 const STATUS: Record<string, { label: string; color: string }> = {
@@ -14,6 +14,18 @@ const STATUS: Record<string, { label: string; color: string }> = {
   paused: { label: '暫停報名', color: '#9aa0a6' },
   suspended: { label: '賽事中止', color: '#9aa0a6' },
 }
+
+// 狀態篩選：判定比照前台活動列表(RacesScreen)——重用 lib/api.ts 的 raceStatusFlags + RACE_FILTER_CATEGORY，
+// 兩邊同一套邏輯，不各自維護。
+type FilterKey = 'all' | 'reg' | 'racing' | 'ended'
+const FILTER_TABS: { key: FilterKey; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'reg', label: '報名中' },
+  { key: 'racing', label: '進行中' },
+  { key: 'ended', label: '已結束' },
+]
+const tabBtn: React.CSSProperties = { background: 'var(--bg-1)', color: 'var(--tx-dim)', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'inherit' }
+const tabBtnActive: React.CSSProperties = { ...tabBtn, background: 'var(--fug)', color: 'var(--fug-ink)', borderColor: 'var(--fug)' }
 function fmtDate(iso: string) {
   const d = new Date(iso)
   if (isNaN(d.getTime())) return '—'
@@ -28,6 +40,7 @@ export default function AdminOverviewPage() {
   const [va, setVa] = useState<VipAnalytics | null>(null)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState<Record<string, boolean>>({})
+  const [filter, setFilter] = useState<FilterKey>('all')
 
   const load = useCallback(() => {
     const t = getToken()
@@ -50,6 +63,19 @@ export default function AdminOverviewPage() {
     document.addEventListener('visibilitychange', onVisible)
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
   }, [load])
+
+  // 排序：越新（開始日期越晚）越上，比照前台公開賽事列表(race.List → ORDER BY start_date DESC)的慣例。
+  // 篩選：判定同前台活動列表(RacesScreen)——見 raceStatusFlags + RACE_FILTER_CATEGORY。
+  const sortedFilteredRaces: OverviewRace[] = (data?.races ?? [])
+    .slice()
+    .sort((a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime())
+    .filter((r) => {
+      if (filter === 'all') return true
+      const { ended, ongoing, regOpen } = raceStatusFlags(r)
+      if (filter === 'reg') return regOpen || RACE_FILTER_CATEGORY[r.display_status] === 'reg'
+      if (filter === 'racing') return ongoing || RACE_FILTER_CATEGORY[r.display_status] === 'racing'
+      return ended || RACE_FILTER_CATEGORY[r.display_status] === 'ended' // filter === 'ended'
+    })
 
   return (
     <div style={{ padding: 20, maxWidth: 900, margin: '0 auto' }}>
@@ -161,9 +187,19 @@ export default function AdminOverviewPage() {
         <TrendChart data={va?.churn ?? []} color="var(--hunt)" label="每月未續訂趨勢（近 12 月）" />
       </div>
 
+      {/* 狀態篩選：全部／報名中／進行中／已結束（判定同前台活動列表，見 raceStatusFlags + RACE_FILTER_CATEGORY） */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        {FILTER_TABS.map(({ key, label }) => (
+          <button key={key} onClick={() => setFilter(key)} style={filter === key ? tabBtnActive : tabBtn}>{label}</button>
+        ))}
+      </div>
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {data && data.races.length === 0 && <div style={{ color: 'var(--tx-faint)', fontSize: 13 }}>近半年沒有即將／進行中的賽事</div>}
-        {data?.races.map((r) => {
+        {data && data.races.length > 0 && sortedFilteredRaces.length === 0 && (
+          <div style={{ color: 'var(--tx-faint)', fontSize: 13 }}>此篩選條件下沒有符合的賽事</div>
+        )}
+        {sortedFilteredRaces.map((r) => {
           const st = STATUS[r.display_status] || { label: r.display_status, color: '#9aa0a6' }
           const isOpen = !!open[r.id]
           return (
