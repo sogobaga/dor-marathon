@@ -8,6 +8,7 @@ import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
+import RaceStrategyTab from './RaceStrategyTab'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
 
 // 自主訓練（VIP 專屬）：
@@ -241,12 +242,15 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   // （排程/更換/一鍵安排/拖曳改期/刪除）上鎖，點擊改跳 UpgradeVipModal，不再整面擋板。
   const { dash } = useDashboard()
   const isVip = !!dash?.is_vip
+  // 賽事策略分頁入口三態（比照 MemberPanel 入口模式）：hidden 不渲染 tab／locked 渲染但 disabled／shown 正常。
+  // dash 尚未載入時視同 hidden，避免載入前先閃現分頁。
+  const strategyEntry = dash?.strategy_entry
   const [upgradeReason, setUpgradeReason] = useState<string | undefined>()
   function openUpgrade(reason: string) { setUpgradeReason(reason); setShowUpgrade(true) }
   // 寫入類操作的共用守門：VIP 直接執行，非 VIP 一律攔截改跳升級彈窗（純瀏覽動作不經過這層）。
   function vipGate(action: () => void) { return () => { if (isVip) action(); else openUpgrade('自主訓練為 VIP 專屬功能。') } }
 
-  const [tab, setTab] = useState<'library' | 'calendar'>('library')
+  const [tab, setTab] = useState<'library' | 'calendar' | 'strategy'>('library')
   const [levelId, setLevelId] = useState<number | null>(null)
   // 記住上次選的配速等級（切頁/重整後維持不變，不再每次回到預設）
   useEffect(() => { const v = window.localStorage.getItem('dor_training_pace_level'); if (v) setLevelId(Number(v)) }, [])
@@ -813,6 +817,15 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
   ;(cal?.days ?? []).forEach((d) => { dayMap[d.date] = d })
   const todayStr = ymd(new Date())
 
+  // 分頁列表：賽事策略 hidden（含 dash 未載入）時整顆按鈕不渲染
+  const tabs: readonly (readonly ['library' | 'calendar' | 'strategy', string])[] = [
+    ['library', '📚 課表庫'],
+    ['calendar', '🗓️ 訓練月曆'],
+    ...(strategyEntry && strategyEntry !== 'hidden' ? ([['strategy', '🏁 賽事策略']] as const) : []),
+  ]
+  // 防禦：tab 停在 'strategy' 但入口已非 shown（例如管理員中途改回 hidden/locked）→ 內容區 fallback 回課表庫
+  const effectiveTab = tab === 'strategy' && strategyEntry !== 'shown' ? 'library' : tab
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -822,13 +835,17 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
 
       {unlocked && (
         <div style={{ display: 'flex', gap: 4, padding: '0 18px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
-          {([['library', '📚 課表庫'], ['calendar', '🗓️ 訓練月曆']] as const).map(([v, label]) => (
-            <button key={v} onClick={() => setTab(v)} style={{
-              padding: '10px 10px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13.5, whiteSpace: 'nowrap',
-              color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 800 : 500,
-              borderBottom: tab === v ? '2px solid var(--fug)' : '2px solid transparent', fontFamily: 'inherit',
-            }}>{label}</button>
-          ))}
+          {tabs.map(([v, label]) => {
+            const locked = v === 'strategy' && strategyEntry === 'locked'
+            return (
+              <button key={v} disabled={locked} onClick={() => { if (!locked) setTab(v) }} style={{
+                padding: '10px 10px', border: 'none', background: 'none', cursor: locked ? 'default' : 'pointer', fontSize: 13.5, whiteSpace: 'nowrap',
+                color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 800 : 500,
+                borderBottom: tab === v ? '2px solid var(--fug)' : '2px solid transparent', fontFamily: 'inherit',
+                opacity: locked ? 0.6 : 1,
+              }}>{label}</button>
+            )
+          })}
         </div>
       )}
 
@@ -837,7 +854,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
         {unlocked && !isVip && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(255,194,75,.12)', border: '1px solid rgba(255,194,75,.4)', borderRadius: 12, padding: '10px 14px', marginBottom: 14 }}>
             <span style={{ fontSize: 18, flexShrink: 0 }}>🔒</span>
-            <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--tx-dim)', lineHeight: 1.6 }}>自主訓練為 VIP 專屬功能——課表庫與訓練月曆可自由瀏覽，升級 VIP 即可開始訓練、排程課表。</div>
+            <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--tx-dim)', lineHeight: 1.6 }}>自主訓練為 VIP 專屬功能——課表庫、訓練月曆與賽事策略皆可自由瀏覽，升級 VIP 即可開始訓練、排程課表、建立賽事策略。</div>
             <button onClick={() => openUpgrade('自主訓練為 VIP 專屬功能。')} style={{ flexShrink: 0, background: 'var(--gold)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 9, padding: '7px 14px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>✦ 升級</button>
           </div>
         )}
@@ -847,7 +864,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
           <div style={emptyBox}>課表庫載入失敗，請稍後再試</div>
         ) : !data ? (
           <div style={emptyBox}>載入中…</div>
-        ) : tab === 'library' ? (
+        ) : effectiveTab === 'library' ? (
           <>
             <p style={{ fontSize: 12.5, color: 'var(--tx-dim)', margin: '4px 2px 12px', lineHeight: 1.7 }}>
               選擇配速等級，課表庫即自動換算成你的實際配速。挑一份「開始訓練」帶到 GPS 追蹤跑——完成即照常記錄跑步、累計里程 EXP。
@@ -930,6 +947,8 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
               ))}
             </div>
           </>
+        ) : effectiveTab === 'strategy' ? (
+          <RaceStrategyTab isVip={isVip} openUpgrade={openUpgrade} />
         ) : (
           <>
             {/* 顯示來源：切換月曆日格要看哪個來源的課表（手動排 or 某訓練計畫），避免多份塞爆格子 */}

@@ -1499,6 +1499,7 @@ export interface DashboardInfo {
   title_entry: 'hidden' | 'locked' | 'shown'       // 稱號系統(PB探索)入口可見性
   achievement_entry: 'hidden' | 'locked' | 'shown' // 成就統計(成就探索)入口可見性
   training_entry: 'hidden' | 'locked' | 'shown'    // 自主訓練入口可見性
+  strategy_entry: 'hidden' | 'locked' | 'shown'    // 賽事策略入口可見性（自主訓練第三分頁）
   monopoly_entry: 'hidden' | 'locked' | 'shown'    // 環台大富翁入口可見性
   knowledge_entry: 'hidden' | 'locked' | 'shown'   // 知識探索(知識卡圖鑑)入口可見性
   new_titles?: { code: string; name: string; tier: number; category: string }[] // 新解鎖稱號（前台跳彈窗用，跳完呼叫 /titles/seen）
@@ -2124,6 +2125,38 @@ export const trainingApi = {
   // 刪除訓練計畫（其排程 CASCADE 一併刪除）
   deletePlan: (token: string, id: string) =>
     request<{ ok: boolean }>(`/training/plans/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+
+// 賽事策略（自主訓練新分頁）：配速計劃（分段目標配速）＋補給計劃（時間/距離觸發提醒），
+// 開跑時帶 /track?strategy=<id> 進入「比賽專注模式」（半透明黑底大字資訊+配速/補給提醒）。
+// 比照自主訓練 v0.1.565 慣例：清單/單筆為唯讀瀏覽（登入即可），建立/修改/刪除為 VIP 動作
+// （非 VIP 回 403 {error:"vip_only"}）；每帳號最多 5 份（後端把關，超過回 409 {error:"strategy_limit"}）。
+export type FuelKind = 'gel' | 'salt' | 'electrolyte' | 'caffeine'
+export const FUEL_KIND_LABEL: Record<FuelKind, string> = { gel: '能量膠', salt: '鹽錠', electrolyte: '電解質', caffeine: '咖啡因錠' }
+// 配速段：from_km 由前一段 to_km 銜接（首段固定 0），pace_s=目標配速（秒/公里）
+export interface StrategySegment { from_km: number; to_km: number; pace_s: number }
+// 補給點：mode='time' 時 at=開跑後秒數；mode='distance' 時 at=移動距離公尺
+export interface FuelPoint { kind: FuelKind; mode: 'time' | 'distance'; at: number }
+export interface RaceStrategy {
+  id: string
+  name: string
+  total_km: number // 冗餘欄位＝segments 最後一段 to_km，供列表顯示與 ETA 計算
+  segments: StrategySegment[]
+  fuel: FuelPoint[]
+  created_at: string
+  updated_at: string
+}
+export const strategiesApi = {
+  list: (token: string) =>
+    request<{ strategies: RaceStrategy[]; limit: number }>('/training/strategies', { headers: withAuth(token) }),
+  get: (token: string, id: string) =>
+    request<{ strategy: RaceStrategy }>(`/training/strategies/${encodeURIComponent(id)}`, { headers: withAuth(token) }),
+  create: (token: string, body: { name: string; segments: StrategySegment[]; fuel: FuelPoint[] }) =>
+    request<{ strategy: RaceStrategy }>('/training/strategies', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, id: string, body: { name: string; segments: StrategySegment[]; fuel: FuelPoint[] }) =>
+    request<{ strategy: RaceStrategy }>(`/training/strategies/${encodeURIComponent(id)}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  remove: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/training/strategies/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
 }
 
 export const adminPersonalTasksApi = {

@@ -44,6 +44,8 @@ var specs = map[string]func(string) bool{
 	"achievement_entry_whitelist": isWhitelist,
 	"training_entry_state":        isEntryState, // 自主訓練入口
 	"training_entry_whitelist":    isWhitelist,
+	"strategy_entry_state":        isEntryState, // 賽事策略入口（自主訓練第三分頁）
+	"strategy_entry_whitelist":    isWhitelist,
 	"monopoly_entry_state":        isEntryState, // 環台大富翁入口
 	"monopoly_entry_whitelist":    isWhitelist,
 	"knowledge_entry_state":       isEntryState, // 知識探索(知識卡圖鑑)入口

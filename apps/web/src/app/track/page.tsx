@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace } from '@/lib/api'
+import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
@@ -21,6 +21,7 @@ import { EventInteraction } from '@/components/EventInteraction'
 import { useIsPhone } from '@/lib/useIsMobile'
 import { useIsLandscape } from '@/lib/useIsLandscape'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
+import RaceFocusMode from './RaceFocusMode'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -126,6 +127,10 @@ export default function TrackPage() {
   const vehicleLikeRef = useRef(false) // 即時偵測：近 45 秒配速快於人體極限（疑似搭車）
   const [panel, setPanel] = useState<{ cards: PanelCard[]; active_card: PanelCard | null } | null>(null) // 任務面板（各階段可挑戰課表）
   const [panelBusy, setPanelBusy] = useState('') // 面板挑戰處理中的 task_id
+  // 比賽專注模式：?strategy=<id> 帶入的賽事策略（配速分段＋補給計劃）。載入成功→開跑前顯示小標示（可取消）；
+  // 開跑後（status==='tracking'）交給 RaceFocusMode 疊層顯示大字資訊＋配速/補給提醒。載入失敗只提示、不擋跑步。
+  const [raceStrategy, setRaceStrategy] = useState<RaceStrategy | null>(null)
+  const [stratErr, setStratErr] = useState('')
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)      // 有效距離（排除超速段）：顯示/里程/課表進度用
@@ -1292,6 +1297,19 @@ export default function TrackPage() {
     const from = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('from') : null
     if (from === 'race') setShowStartTip(true)
   }, [])
+  // 比賽專注模式：?strategy=<id> 帶入賽事策略 → 載入後開跑前顯示小標示；403/404/網路失敗只提示一行、回一般模式
+  useEffect(() => {
+    const id = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('strategy') : null
+    if (!id) return
+    withUserAuth((t) => strategiesApi.get(t, id))
+      .then(({ strategy }) => setRaceStrategy(strategy))
+      .catch(() => setStratErr('賽事策略載入失敗，已切換一般模式'))
+  }, [])
+  useEffect(() => {
+    if (!stratErr) return
+    const t = setTimeout(() => setStratErr(''), 4000)
+    return () => clearTimeout(t)
+  }, [stratErr])
   useEffect(() => {
     if (focusDoneRef.current || !mapReady || !mapRef.current || !focusBoss) return
     const b = exploreCps.find((x) => x.id === focusBoss)
@@ -1457,6 +1475,11 @@ export default function TrackPage() {
       {status === 'tracking' && woPhase === 'countdown' && <Countdown321 onDone={woCountdownDone} />}
       {status === 'tracking' && activeEvent?.phase === 'active' && isInteractionType(activeEvent.def.completion_type) && (
         <EventInteraction active={activeEvent} onDone={handleInteractionDone} paused={isLandscape} assets={fxAssets} />
+      )}
+      {/* 比賽專注模式：開跑後才出現的全螢幕大字資訊＋配速/補給提醒疊層；z-index 600（>面板 500，
+          但低於事件演出 2100+/確認結束 2500/Strava 三選一與登入 3300），讓既有的警示/事件系統仍蓋在它之上。 */}
+      {status === 'tracking' && raceStrategy && (
+        <RaceFocusMode strategy={raceStrategy} distanceM={distance} movingS={movingS} movingAvgPace={movingAvgPace} movingSegLivePace={movingSegLivePace} />
       )}
       {confirmEnd && activeEvent && (() => {
         const ev = activeEvent
@@ -1816,6 +1839,17 @@ export default function TrackPage() {
             style={{ flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--tx-dim)', fontSize: 15, lineHeight: 1, cursor: 'pointer', padding: '4px 6px', fontWeight: 700 }}
           >✕</button>
         </div>
+      )}
+
+      {/* 已載入賽事策略（?strategy=<id>）：開跑前顯示，可取消（卸下策略回一般模式）；開跑後交給 RaceFocusMode 疊層 */}
+      {raceStrategy && status === 'idle' && (
+        <div style={{ margin: '0 16px 10px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,194,75,.1)', border: '1px solid var(--gold)', borderRadius: 12, padding: '10px 12px', fontSize: 13, color: 'var(--tx)', lineHeight: 1.5 }}>
+          <span style={{ flex: 1, minWidth: 0 }}>🏁 已載入賽事策略：<strong>{raceStrategy.name}</strong>（開跑後進入專注模式）</span>
+          <button onClick={() => setRaceStrategy(null)} aria-label="取消策略" style={{ flexShrink: 0, background: 'transparent', border: 'none', color: 'var(--tx-dim)', fontSize: 15, lineHeight: 1, cursor: 'pointer', padding: '4px 6px', fontWeight: 700 }}>✕</button>
+        </div>
+      )}
+      {stratErr && (
+        <div style={{ margin: '0 16px 10px', flexShrink: 0, fontSize: 12.5, color: 'var(--hunt)' }}>{stratErr}</div>
       )}
 
       {/* 操作 */}

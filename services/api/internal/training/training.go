@@ -98,6 +98,12 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/plans", h.ListPlans)                  // GET /training/plans — 訓練計畫清單（唯讀，登入即可，v0.1.565；上限 3，寫入端點 AutoPlan 仍為 VIP 限定）
 	r.Post("/auto-plan", h.AutoPlan)              // POST /training/auto-plan — 一鍵產生訓練計畫（VIP 限定）
 	r.Delete("/plans/{id}", h.DeletePlan)         // DELETE /training/plans/{id} — 刪除計畫＋其排程（VIP 限定，CASCADE）
+	// 賽事策略（配速計劃＋補給計劃，migration 143）：清單/單筆唯讀（登入即可），寫入 VIP 限定，見 strategies.go。
+	r.Get("/strategies", h.ListStrategies)         // GET /training/strategies — 賽事策略清單（唯讀，登入即可；上限見 strategyLimit）
+	r.Get("/strategies/{id}", h.GetStrategy)       // GET /training/strategies/{id} — 單筆
+	r.Post("/strategies", h.CreateStrategy)        // POST /training/strategies — 新增（VIP 限定，超過上限回 409 strategy_limit）
+	r.Put("/strategies/{id}", h.UpdateStrategy)    // PUT /training/strategies/{id} — 整份覆寫（VIP 限定）
+	r.Delete("/strategies/{id}", h.DeleteStrategy) // DELETE /training/strategies/{id} — 刪除（VIP 限定）
 	return r
 }
 
