@@ -145,6 +145,12 @@ export default function AdminRacesList() {
     router.push(`/admin/races/${r.id}/rewards`)
   }
 
+  function handleVirtualRunnersClick(e: React.MouseEvent, r: Race) {
+    e.preventDefault() // 阻止外層卡片 Link 導航，改為自行導向虛擬選手管理頁
+    e.stopPropagation()
+    router.push(`/admin/races/${r.id}/virtual-runners`)
+  }
+
   async function handleDelete(e: React.MouseEvent, r: Race) {
     e.preventDefault() // 阻止 Link 導航
     e.stopPropagation()
@@ -324,6 +330,16 @@ export default function AdminRacesList() {
                     }}
                   >
                     🎁 獎勵
+                  </button>
+                  <button
+                    onClick={(e) => handleVirtualRunnersClick(e, r)}
+                    title="虛擬選手管理（加入/移除 is_virtual 人頭帳號補熱度）"
+                    style={{
+                      background: 'rgba(157,140,255,.1)', color: 'var(--violet)', border: '1px solid rgba(157,140,255,.3)',
+                      borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+                    }}
+                  >
+                    🤖 虛擬選手
                   </button>
                   {r.display_status === 'ended' && (
                     <button

@@ -45,6 +45,7 @@ var Scopes = []Scope{
 	{"partners", "跑者充電站管理"},
 	{"monopoly", "環台大富翁管理"},
 	{"rewards", "活動獎勵管理"},
+	{"virtual", "虛擬選手管理"},
 }
 
 func validScope(k string) bool {

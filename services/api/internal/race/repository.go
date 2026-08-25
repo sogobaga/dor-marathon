@@ -2333,6 +2333,30 @@ func (r *Repository) MarkRegistrationPaid(ctx context.Context, regID string) err
 	return tx.Commit(ctx)
 }
 
+// VirtualUserIDSet 批次查詢 userID 子集合中屬於虛擬選手(is_virtual)者，回傳命中的 userID 集合。
+// 給賽後抽獎池排除用（見 reward_draw.go CreateRewardDraw：不能動 computeFinishersWith 本身，因排行榜
+// 仍需顯示虛擬選手，改在組完抽獎池之後另外查一次濾除）。
+func (r *Repository) VirtualUserIDSet(ctx context.Context, userIDs []string) (map[string]bool, error) {
+	if len(userIDs) == 0 {
+		return map[string]bool{}, nil
+	}
+	rows, err := r.db.Query(ctx, `SELECT id::text FROM users WHERE id = ANY($1) AND is_virtual`, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result[id] = true
+	}
+	return result, rows.Err()
+}
+
 // GetUserHandles 批次查詢 userID → handle/name（排行榜用）
 func (r *Repository) GetUserHandles(ctx context.Context, userIDs []string) (map[string][2]string, error) {
 	if len(userIDs) == 0 {

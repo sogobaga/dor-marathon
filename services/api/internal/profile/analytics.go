@@ -54,9 +54,11 @@ func (h *Handler) AdminVipAnalytics(w http.ResponseWriter, r *http.Request) {
 		Churn:                []vipMonthCount{},
 	}
 
+	// 虛擬選手(is_virtual)不參與 VIP 訂閱後台分析（total/vip/vip_by_plan/growth/churn/non_renewers 皆屬
+	// 營運統計，虛擬選手全數排除，與每日營運報告的會員數統計口徑一致）。
 	if err := h.db.QueryRow(ctx, `
 		SELECT COUNT(*), COUNT(*) FILTER (WHERE vip_expires_at > NOW())
-		FROM users`).Scan(&out.Total, &out.VIP); err != nil {
+		FROM users WHERE NOT is_virtual`).Scan(&out.Total, &out.VIP); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load totals")
 		return
 	}
@@ -67,7 +69,7 @@ func (h *Handler) AdminVipAnalytics(w http.ResponseWriter, r *http.Request) {
 			COUNT(*) FILTER (WHERE COALESCE(vip_plan,'')='trial'),
 			COUNT(*) FILTER (WHERE COALESCE(vip_plan,'')='monthly'),
 			COUNT(*) FILTER (WHERE COALESCE(vip_plan,'')='annual')
-		FROM users WHERE vip_expires_at > NOW()`).
+		FROM users WHERE vip_expires_at > NOW() AND NOT is_virtual`).
 		Scan(&out.VipByPlan.Trial, &out.VipByPlan.Monthly, &out.VipByPlan.Annual); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load vip_by_plan")
 		return
@@ -78,6 +80,7 @@ func (h *Handler) AdminVipAnalytics(w http.ResponseWriter, r *http.Request) {
 		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
 		WHERE u.vip_expires_at >= date_trunc('month', NOW()) - interval '1 month'
 		  AND u.vip_expires_at < date_trunc('month', NOW())
+		  AND NOT u.is_virtual
 		ORDER BY u.vip_expires_at DESC
 		LIMIT 200`)
 	if err != nil {
@@ -97,7 +100,7 @@ func (h *Handler) AdminVipAnalytics(w http.ResponseWriter, r *http.Request) {
 
 	growthRows, err := h.db.Query(ctx, monthSeriesCTE+`
 		SELECT months.m, COUNT(u.id)
-		FROM months LEFT JOIN users u ON date_trunc('month',u.created_at)=months.gs
+		FROM months LEFT JOIN users u ON date_trunc('month',u.created_at)=months.gs AND NOT u.is_virtual
 		GROUP BY months.m, months.gs ORDER BY months.gs`)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load growth")
@@ -117,7 +120,7 @@ func (h *Handler) AdminVipAnalytics(w http.ResponseWriter, r *http.Request) {
 	churnRows, err := h.db.Query(ctx, monthSeriesCTE+`
 		SELECT months.m, COUNT(u.id)
 		FROM months LEFT JOIN users u
-			ON date_trunc('month',u.vip_expires_at)=months.gs AND u.vip_expires_at < NOW()
+			ON date_trunc('month',u.vip_expires_at)=months.gs AND u.vip_expires_at < NOW() AND NOT u.is_virtual
 		GROUP BY months.m, months.gs ORDER BY months.gs`)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load churn")

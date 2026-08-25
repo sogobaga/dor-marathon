@@ -135,8 +135,10 @@ func (r *Repository) DrawRewardWinners(ctx context.Context, raceID string, n int
 		WITH picked AS (
 			UPDATE registrations SET reward_status = 'won'
 			WHERE id IN (
-				SELECT id FROM registrations
-				WHERE race_id = $1 AND status = 'completed' AND reward_status = ''
+				-- 虛擬選手(is_virtual)不參與個人挑戰後台抽獎池
+				SELECT reg.id FROM registrations reg
+				JOIN users u ON u.id = reg.user_id AND NOT u.is_virtual
+				WHERE reg.race_id = $1 AND reg.status = 'completed' AND reg.reward_status = ''
 				ORDER BY random() LIMIT $2
 				FOR UPDATE SKIP LOCKED
 			)

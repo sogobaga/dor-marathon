@@ -63,10 +63,11 @@ func (h *Handler) resolveCustomRecipients(ctx context.Context, raw []string) (cu
 		return result, nil
 	}
 
+	// 虛擬選手(is_virtual)不參與 Email 自訂名單廣播
 	rows, err := h.db.Query(ctx, `
 		SELECT id::text, email, name, (id IN (SELECT user_id FROM email_unsubscribes)) AS is_unsub
 		FROM users
-		WHERE LOWER(email) = ANY($1)`, valid)
+		WHERE LOWER(email) = ANY($1) AND NOT is_virtual`, valid)
 	if err != nil {
 		return result, err
 	}

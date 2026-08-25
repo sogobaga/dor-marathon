@@ -370,6 +370,26 @@ func (s *Service) CreateRewardDraw(ctx context.Context, raceID string, req DrawR
 		pool = append(pool, f)
 	}
 
+	// 虛擬選手(is_virtual)不參與賽後抽獎：不能動 computeFinishersWith 本身（排行榜共用，虛擬選手仍須
+	// 留在排行榜上），因此在組完 pool、抽獎之前另外查一次 is_virtual 集合，把虛擬選手從抽獎池濾掉。
+	poolUserIDs := make([]string, len(pool))
+	for i, f := range pool {
+		poolUserIDs[i] = f.userID
+	}
+	virtualSet, err := s.repo.VirtualUserIDSet(ctx, poolUserIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(virtualSet) > 0 {
+		filtered := pool[:0]
+		for _, f := range pool {
+			if !virtualSet[f.userID] {
+				filtered = append(filtered, f)
+			}
+		}
+		pool = filtered
+	}
+
 	return s.repo.DrawRaceRewardWinners(ctx, raceID, req, winTaskID, winningGroupIDs, pool, drawnBy)
 }
 

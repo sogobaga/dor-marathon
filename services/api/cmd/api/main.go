@@ -49,6 +49,7 @@ import (
 	"github.com/dor/api/internal/routing"
 	"github.com/dor/api/internal/training"
 	"github.com/dor/api/internal/version"
+	"github.com/dor/api/internal/virtualrunner"
 )
 
 func main() {
@@ -211,6 +212,8 @@ func main() {
 	exploreHandler := explore.NewHandler(pool, wsManager)
 	// 自主訓練（P1）：課表庫 + 配速等級表，VIP 限定
 	trainingHandler := training.NewHandler(pool)
+	// 虛擬選手：後台可建立/管理的機器人跑者帳號，用於賽事名額造勢/測試
+	virtualRunnerHandler := virtualrunner.NewHandler(virtualrunner.NewRepository(pool))
 	appSettingsHandler := appsettings.NewHandler(pool, wsManager)
 	// 跑步路線建議（ORS foot-walking 代理；未設 ORS_API_KEY 時端點回 503，前端優雅隱藏）
 	routingHandler := routing.NewHandler(os.Getenv("ORS_API_KEY"))
@@ -521,6 +524,7 @@ func main() {
 			r.With(perm("settings")).Mount("/admin/vip-promos", profileHandler.VipPromoAdminRouter())
 			r.With(perm("titles")).Mount("/admin/titles", profileHandler.TitleAdminRouter())
 			r.With(perm("training")).Mount("/admin/training", trainingHandler.AdminRouter())
+			r.With(perm("virtual")).Mount("/admin/virtual-runners", virtualRunnerHandler.AdminRouter())
 			r.With(perm("settings")).Get("/admin/data-source-metrics", profileHandler.AdminDataSourceMetrics)
 			r.With(perm("organizer")).Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 			r.With(perm("partners")).Mount("/admin/partner-shops", partnerHandler.AdminRouter())
@@ -595,6 +599,9 @@ func main() {
 	go opsHandler.RunDailyReportLoop(bgCtx)
 	// 背景：IP/流量每日聚合 flush（每 5 分鐘批次寫入 ops_ip_daily + 每天順手清理 30 天前舊資料）
 	go ipDailyAgg.Run(bgCtx)
+	// 背景：虛擬選手數據生成引擎 Phase 2（對齊台灣整點 H∈{5,6,7,20,21,22,23}，替 enabled 選手
+	// 自動生成 window_hour=H-1 這個活躍時段的活動；天氣/機率/防重寫入見 internal/virtualrunner/generator.go）
+	go virtualrunner.NewGenerator(pool).RunGenerateLoop(bgCtx)
 
 	go func() {
 		log.Info().Str("port", cfg.Port).Msg("DOR API server starting")

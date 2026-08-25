@@ -243,14 +243,15 @@ func (h *Handler) buildDailyReportData(ctx context.Context) (dailyReportData, er
 		ReportDate: windowStart.UTC().Add(8 * time.Hour).Format("2006-01-02"),
 	}
 
-	// 1) 會員
+	// 1) 會員（虛擬選手(is_virtual)不參與每日營運報告的新增/累計會員數統計；報名與營收段刻意不排除，
+	// 因為虛擬報名是管理者自己手動加的，看得到才對——見下方 2)）
 	if err := h.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM users WHERE created_at >= $1 AND created_at < $2`,
+		`SELECT COUNT(*) FROM users WHERE created_at >= $1 AND created_at < $2 AND NOT is_virtual`,
 		windowStart, windowEnd).Scan(&d.NewMembers); err != nil {
 		return dailyReportData{}, fmt.Errorf("new members: %w", err)
 	}
 	if err := h.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM users WHERE created_at < $1`,
+		`SELECT COUNT(*) FROM users WHERE created_at < $1 AND NOT is_virtual`,
 		windowEnd).Scan(&d.TotalMembers); err != nil {
 		return dailyReportData{}, fmt.Errorf("total members: %w", err)
 	}

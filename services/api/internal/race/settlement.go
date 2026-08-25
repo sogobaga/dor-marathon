@@ -110,8 +110,12 @@ func (r *Repository) expRules(ctx context.Context) (expRulesVals, error) {
 
 // raceParticipants 取得未取消的報名者（user + 分組）
 func (r *Repository) raceParticipants(ctx context.Context, raceID string) ([]participant, error) {
+	// 虛擬選手(is_virtual)不參與賽事結算 EXP/DP/VIP/GP 發放
 	rows, err := r.db.Query(ctx,
-		`SELECT user_id::text, COALESCE(group_id::text,'') FROM registrations WHERE race_id=$1 AND status <> 'cancelled'`, raceID)
+		`SELECT reg.user_id::text, COALESCE(reg.group_id::text,'')
+		 FROM registrations reg
+		 JOIN users u ON u.id = reg.user_id AND NOT u.is_virtual
+		 WHERE reg.race_id=$1 AND reg.status <> 'cancelled'`, raceID)
 	if err != nil {
 		return nil, err
 	}

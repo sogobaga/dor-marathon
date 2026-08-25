@@ -184,7 +184,8 @@ func (h *Handler) Broadcast(w http.ResponseWriter, r *http.Request) {
 
 	recipients := len(userIDs)
 	if isAll {
-		if err := h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM users`).Scan(&recipients); err != nil {
+		// 虛擬選手(is_virtual)不參與站內信/推播/Email 全體廣播
+		if err := h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM users WHERE NOT is_virtual`).Scan(&recipients); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed to count recipients")
 			return
 		}
@@ -254,12 +255,13 @@ func (h *Handler) Broadcast(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// listUserIDs 目標對象的去重 user_id 清單。isAll=true 時查全部 users。
+// listUserIDs 目標對象的去重 user_id 清單。isAll=true 時查全部 users
+// （虛擬選手(is_virtual)不參與站內信/推播全體廣播，排除之）。
 func (h *Handler) listUserIDs(ctx context.Context, userIDs []string, isAll bool) ([]string, error) {
 	if !isAll {
 		return userIDs, nil
 	}
-	rows, err := h.db.Query(ctx, `SELECT id::text FROM users`)
+	rows, err := h.db.Query(ctx, `SELECT id::text FROM users WHERE NOT is_virtual`)
 	if err != nil {
 		return nil, err
 	}
@@ -348,12 +350,13 @@ func (h *Handler) resolveBroadcastTargets(ctx context.Context, targetType, ident
 	}
 }
 
-// listEmails 撈目標對象的 email（非空者）。isAll=true 時查全部 users。
+// listEmails 撈目標對象的 email（非空者）。isAll=true 時查全部 users
+// （虛擬選手(is_virtual)不參與 Email 全體廣播，排除之）。
 func (h *Handler) listEmails(ctx context.Context, userIDs []string, isAll bool) ([]string, error) {
 	var rows pgx.Rows
 	var err error
 	if isAll {
-		rows, err = h.db.Query(ctx, `SELECT email FROM users WHERE COALESCE(email,'') <> ''`)
+		rows, err = h.db.Query(ctx, `SELECT email FROM users WHERE COALESCE(email,'') <> '' AND NOT is_virtual`)
 	} else {
 		if len(userIDs) == 0 {
 			return nil, nil

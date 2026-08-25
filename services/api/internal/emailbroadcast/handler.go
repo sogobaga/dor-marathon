@@ -96,10 +96,12 @@ type recipient struct {
 }
 
 // listRecipients 撈寄送對象：email 非空、且未退訂。
+// 虛擬選手(is_virtual)不參與 Email 全體廣播。
 func (h *Handler) listRecipients(ctx context.Context) ([]recipient, error) {
 	rows, err := h.db.Query(ctx, `
 		SELECT id::text, email, name FROM users
 		WHERE COALESCE(email,'') <> ''
+		  AND NOT is_virtual
 		  AND id NOT IN (SELECT user_id FROM email_unsubscribes)`)
 	if err != nil {
 		return nil, err

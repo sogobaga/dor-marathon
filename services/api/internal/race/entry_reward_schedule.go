@@ -226,9 +226,11 @@ func (r *Repository) ListEntryRewardActiveRaces(ctx context.Context, limit, grac
 // 「未曾成功配對」的列）。取消報名者(status<>'paid')天然不在候選之列，不會誤發；已取消但曾經 paid
 // 過的人若已在 grants 表也不會被重複列出（已發不追回，見檔頭註解）。
 func (r *Repository) ListUnrewardedPaidRegistrants(ctx context.Context, raceID string, limit int) ([]string, error) {
+	// 虛擬選手(is_virtual)不參與參賽虛擬獎勵背景排程
 	rows, err := r.db.Query(ctx, `
 		SELECT reg.user_id::text
 		FROM registrations reg
+		JOIN users u ON u.id = reg.user_id AND NOT u.is_virtual
 		LEFT JOIN race_entry_reward_grants g ON g.race_id = reg.race_id AND g.user_id = reg.user_id
 		WHERE reg.race_id = $1 AND reg.status = 'paid' AND g.id IS NULL
 		LIMIT $2`, raceID, limit)

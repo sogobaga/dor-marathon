@@ -2364,6 +2364,135 @@ export const adminTrainingApi = {
     }),
 }
 
+// --- 虛擬選手（virtual_runners；is_virtual=true 的人頭帳號，無 user_identities 天然無法登入，
+// 用來補賽事熱度/陪跑）。migration 146：users.is_virtual + vr_level_presets(8 級能力模板) + virtual_runners。
+// 能力值（avg_km 單次km/monthly_km 月里程/pace_fast_s-pace_slow_s 配速秒每公里）建立時由 preset 帶入±5%抖動；
+// PUT 更新若換 level 且未明給能力值 → 後端重新從新 preset 帶入抖動，故編輯表單用 overrideAbility 開關控制
+// 是否要把能力值欄位一併送出（見 virtual-runners/page.tsx RForm）。
+
+export type VirtualCity = 'taipei' | 'new_taipei' | 'taoyuan' | 'hsinchu' | 'taichung' | 'tainan' | 'kaohsiung'
+export type VirtualLevel =
+  | 'beginner' | 'citizen' | 'advanced' | 'half_challenger' | 'half_finisher' | 'full_challenger' | 'full_finisher' | 'elite'
+
+export interface VirtualRunnerLevelPreset {
+  level: VirtualLevel
+  label: string
+  sort_order: number
+  avg_km: number
+  monthly_km: number
+  pace_fast_s: number
+  pace_slow_s: number
+}
+
+export interface VirtualRunner {
+  user_id: string
+  name: string
+  gender: 'male' | 'female'
+  city: VirtualCity
+  level: VirtualLevel
+  diligence: number // 1-5，預設 3
+  window_hour: number // 4/5/6/19/20/21/22
+  avg_km: number
+  monthly_km: number
+  pace_fast_s: number
+  pace_slow_s: number
+  enabled: boolean
+  last_generated_at: string | null
+  race_count: number
+}
+
+export interface VirtualRunnerCreatePayload {
+  name?: string // 空 → 後端從姓名池自動取名
+  gender: 'male' | 'female'
+  city: VirtualCity
+  level: VirtualLevel
+  diligence: number
+  window_hour: number
+}
+
+export interface VirtualRunnerBatchPayload {
+  count: number // 1-200
+  level?: VirtualLevel // 空 → 逐位隨機
+  city?: VirtualCity
+  gender?: 'male' | 'female'
+}
+
+export interface VirtualRunnerUpdatePayload {
+  gender?: 'male' | 'female'
+  city?: VirtualCity
+  level?: VirtualLevel
+  diligence?: number
+  window_hour?: number
+  avg_km?: number
+  monthly_km?: number
+  pace_fast_s?: number
+  pace_slow_s?: number
+  enabled?: boolean
+}
+
+export interface VirtualRunnerRaceAssignedRow {
+  user_id: string
+  name: string
+  gender: 'male' | 'female'
+  level: VirtualLevel
+  group_id: string
+  group_name: string
+  reg_status: string
+}
+
+export interface VirtualRunnerRaceGroupRow {
+  id: string
+  name: string
+  slot_limit: number | null
+  slots_taken: number
+}
+
+export type VirtualRunnerAssignSkipReason = 'duplicate' | 'group_full' | 'disabled' | 'not_found'
+export interface VirtualRunnerAssignSkip {
+  user_id: string
+  reason: VirtualRunnerAssignSkipReason | string
+}
+
+export const adminVirtualRunnersApi = {
+  list: (token: string) =>
+    request<{ runners: VirtualRunner[]; presets: VirtualRunnerLevelPreset[] }>('/admin/virtual-runners', {
+      headers: withAuth(token),
+    }),
+  create: (token: string, body: VirtualRunnerCreatePayload) =>
+    request<{ runner: VirtualRunner }>('/admin/virtual-runners', {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  batchCreate: (token: string, body: VirtualRunnerBatchPayload) =>
+    request<{ created: number }>('/admin/virtual-runners/batch', {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  update: (token: string, userID: string, body: VirtualRunnerUpdatePayload) =>
+    request<{ runner: VirtualRunner }>(`/admin/virtual-runners/${userID}`, {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  remove: (token: string, userID: string) =>
+    request<{ ok: boolean }>(`/admin/virtual-runners/${userID}`, {
+      method: 'DELETE', headers: withAuth(token),
+    }),
+  updatePreset: (token: string, level: VirtualLevel, body: { avg_km: number; monthly_km: number; pace_fast_s: number; pace_slow_s: number }) =>
+    request<{ preset: VirtualRunnerLevelPreset }>(`/admin/virtual-runners/presets/${level}`, {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  race: (token: string, raceID: string) =>
+    request<{ assigned: VirtualRunnerRaceAssignedRow[]; groups: VirtualRunnerRaceGroupRow[]; candidates_count: number }>(
+      `/admin/virtual-runners/race/${raceID}`,
+      { headers: withAuth(token) },
+    ),
+  assign: (token: string, raceID: string, body: { user_ids?: string[]; random_count?: number; group_id?: string }) =>
+    request<{ added: number; skipped: VirtualRunnerAssignSkip[] }>(`/admin/virtual-runners/race/${raceID}/assign`, {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  unassign: (token: string, raceID: string, userID: string) =>
+    request<{ ok: boolean }>(`/admin/virtual-runners/race/${raceID}/${userID}`, {
+      method: 'DELETE', headers: withAuth(token),
+    }),
+}
+
 // --- 金流（綠界 ECPay）---
 
 export interface EcpayCheckout {
