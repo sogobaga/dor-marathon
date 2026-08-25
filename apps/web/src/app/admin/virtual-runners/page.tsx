@@ -159,6 +159,18 @@ export default function AdminVirtualRunnersPage() {
     } finally { setBusy(false) }
   }
 
+  // --- 全部重新取名 ---
+  async function regenerateAllNames() {
+    if (!token) return
+    if (!confirm('確定要重新產生「全部」虛擬選手的名字嗎？此動作會覆蓋所有虛擬選手（含已停用）目前的名字，無法復原。')) return
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const { renamed } = await adminVirtualRunnersApi.regenerateNames(token)
+      setMsg(`✓ 已重新命名 ${renamed} 位`)
+      load()
+    } catch (e: any) { setErr(e?.message || '重新取名失敗') } finally { setBusy(false) }
+  }
+
   // --- 批次產生 ---
   function bStartNew() { setBForm(emptyBForm()); setErr(''); setMsg(''); setRForm(null) }
   function bCancel() { setBForm(null); setErr('') }
@@ -220,6 +232,7 @@ export default function AdminVirtualRunnersPage() {
         action={
           !rForm && !bForm && (
             <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={regenerateAllNames} disabled={busy} style={{ ...ghostBtn, opacity: busy ? 0.5 : 1 }}>🎲 全部重新取名</button>
               <button onClick={bStartNew} style={ghostBtn}>⚡ 批次產生</button>
               <button onClick={rStartNew} style={primaryBtn}>＋ 新增</button>
             </div>

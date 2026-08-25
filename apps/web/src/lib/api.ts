@@ -2466,6 +2466,10 @@ export const adminVirtualRunnersApi = {
     request<{ created: number }>('/admin/virtual-runners/batch', {
       method: 'POST', headers: withAuth(token), body: JSON.stringify(body),
     }),
+  regenerateNames: (token: string) =>
+    request<{ renamed: number }>('/admin/virtual-runners/regenerate-names', {
+      method: 'POST', headers: withAuth(token),
+    }),
   update: (token: string, userID: string, body: VirtualRunnerUpdatePayload) =>
     request<{ runner: VirtualRunner }>(`/admin/virtual-runners/${userID}`, {
       method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),

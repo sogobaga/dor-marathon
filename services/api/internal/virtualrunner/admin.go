@@ -32,6 +32,7 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Get("/", h.List)
 	r.Post("/", h.Create)
 	r.Post("/batch", h.BatchCreate)
+	r.Post("/regenerate-names", h.RegenerateNames)
 	r.Put("/{userID}", h.Update)
 	r.Delete("/{userID}", h.Delete)
 	// 靜態路徑 "presets"/"race" 在 chi/{userID} 之上，radix tree 依字面優先比對，不會被
@@ -203,6 +204,46 @@ func (h *Handler) BatchCreate(w http.ResponseWriter, r *http.Request) {
 		created++
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"created": created})
+}
+
+// --- POST /regenerate-names ---
+
+// maxNicknameRetries 同批次內綽號去重的最大重抽次數；比照 BatchCreate 的重抽慣例（那裡最多
+// 5 次），這裡拉高到 8 次——「全部重新取名」的去重範圍是全部虛擬選手，可能遠多於單次
+// BatchCreate 的 200 筆上限，撞名機率更高，值得多重抽幾次。
+const maxNicknameRetries = 8
+
+// RegenerateNames 把「全部」虛擬選手（不論 enabled）的綽號整批重新產生：同批次內彼此不重複
+// （撞名就重抽，最多 8 次；重抽 8 次仍撞也照樣接受——真實跑者暱稱本來就會撞，不必為此擋住
+// 整批重新命名）。單一交易內寫回，要嘛全部成功要嘛全部不變。
+func (h *Handler) RegenerateNames(w http.ResponseWriter, r *http.Request) {
+	userIDs, err := h.repo.AllRunnerUserIDs(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list virtual runners")
+		return
+	}
+	if len(userIDs) == 0 {
+		respondJSON(w, http.StatusOK, map[string]any{"renamed": 0})
+		return
+	}
+
+	rng := newRNG()
+	used := make(map[string]bool, len(userIDs))
+	names := make(map[string]string, len(userIDs))
+	for _, uid := range userIDs {
+		name := RandomNickname(rng)
+		for attempt := 0; attempt < maxNicknameRetries && used[name]; attempt++ {
+			name = RandomNickname(rng)
+		}
+		used[name] = true
+		names[uid] = name
+	}
+
+	if err := h.repo.RegenerateAllNames(r.Context(), names); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to regenerate virtual runner names")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"renamed": len(names)})
 }
 
 // --- PUT /{userID} ---

@@ -296,6 +296,54 @@ func (r *Repository) DeleteRunner(ctx context.Context, userID string) error {
 	return tx.Commit(ctx)
 }
 
+// --- 綽號批次重新產生 ---
+
+// AllRunnerUserIDs 全部虛擬選手 user_id（不論 enabled），供 POST /regenerate-names 端點使用
+// ——「全部重新取名」刻意涵蓋停用中的選手，維運端要的是整批洗掉舊綽號，不是只洗還在用的。
+func (r *Repository) AllRunnerUserIDs(ctx context.Context) ([]string, error) {
+	rows, err := r.db.Query(ctx, `SELECT user_id FROM virtual_runners`)
+	if err != nil {
+		return nil, fmt.Errorf("list all virtual runner ids: %w", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// RegenerateAllNames 在單一交易內把 names（user_id -> 新綽號）逐筆寫回 users.name /
+// user_profiles.real_name+nickname；整批要嘛全部成功要嘛全部不變，避免半途失敗留下部分
+// 選手改名、部分沒改的不一致狀態。呼叫端（admin.go RegenerateNames）負責保證 names 內的值
+// 彼此不重複（RandomNickname 本身的黏接防呆之外，另外做同批次去重）。
+func (r *Repository) RegenerateAllNames(ctx context.Context, names map[string]string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	for userID, name := range names {
+		if _, err := tx.Exec(ctx, `UPDATE users SET name=$2 WHERE id=$1 AND is_virtual=TRUE`, userID, name); err != nil {
+			return fmt.Errorf("update user name: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE user_profiles SET real_name=$2, nickname=$2, updated_at=NOW() WHERE user_id=$1`,
+			userID, name); err != nil {
+			return fmt.Errorf("update profile name: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 // --- 賽事名額指派 ---
 
 // RaceExists 供 admin.go 在 RaceStatus/Assign 前擋 404，避免對不存在的賽事回一堆空陣列誤導後台。
