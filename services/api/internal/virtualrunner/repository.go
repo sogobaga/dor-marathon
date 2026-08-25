@@ -146,7 +146,9 @@ func randToken(n int) string {
 }
 
 // CreateRunner 建立一位虛擬選手：users(is_virtual=TRUE，不建 user_identities＝天然無法登入) +
-// user_profiles(nickname=real_name=姓名、gender) + virtual_runners(能力值)。
+// user_profiles(nickname=real_name=綽號、gender) + virtual_runners(能力值)。in.Name 是
+// namepool.go RandomNickname 產生的跑者綽號（非真人姓名）；real_name 也填同一值——虛擬帳號
+// 沒有「真實姓名」的需求，這欄只是跟著 schema 補值，實際顯示用的是 nickname。
 // email/handle 用隨機字尾湊唯一值，撞號（UNIQUE violation）就換一組重試，最多 6 次。
 func (r *Repository) CreateRunner(ctx context.Context, in CreateRunnerInput) (*Runner, error) {
 	const maxAttempts = 6

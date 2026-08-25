@@ -107,7 +107,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	rng := newRNG()
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		name = RandomName(req.Gender, rng)
+		name = RandomNickname(rng)
 	}
 	runner, err := h.repo.CreateRunner(r.Context(), CreateRunnerInput{
 		Name: name, Gender: req.Gender, City: req.City, Level: req.Level,
@@ -168,6 +168,9 @@ func (h *Handler) BatchCreate(w http.ResponseWriter, r *http.Request) {
 
 	rng := newRNG()
 	created := 0
+	// usedNicknames 同批內盡量避免綽號撞名：抽到已用過的就重抽，最多重抽 5 次；重抽 5 次仍撞
+	// 也照樣接受（現實中真人跑者暱稱本來就會撞，不必為此擋住整批建立）。
+	usedNicknames := make(map[string]bool, req.Count)
 	for i := 0; i < req.Count; i++ {
 		level := req.Level
 		if level == "" {
@@ -184,8 +187,14 @@ func (h *Handler) BatchCreate(w http.ResponseWriter, r *http.Request) {
 		windowHour := windowHourList[rng.Intn(len(windowHourList))]
 		diligence := 1 + rng.Intn(5)
 
+		nickname := RandomNickname(rng)
+		for attempt := 0; attempt < 5 && usedNicknames[nickname]; attempt++ {
+			nickname = RandomNickname(rng)
+		}
+		usedNicknames[nickname] = true
+
 		if _, err := h.repo.CreateRunner(r.Context(), CreateRunnerInput{
-			Name: RandomName(gender, rng), Gender: gender, City: city, Level: level,
+			Name: nickname, Gender: gender, City: city, Level: level,
 			Diligence: diligence, WindowHour: windowHour, Ability: jitterAbility(*presetByLevel[level], rng),
 		}); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed to batch create virtual runners")

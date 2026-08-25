@@ -2,7 +2,7 @@
 //
 // 虛擬選手＝users(is_virtual=TRUE) 的特殊帳號：不建 user_identities（provider/provider_uid
 // 天然缺席），因此永遠無法透過任何方式登入——這是刻意設計，不是漏洞。個人資訊落在 user_profiles
-// （nickname/real_name＝姓名、gender），能力值/行為參數落在本套 virtual_runners，由
+// （nickname/real_name＝跑者綽號，非真人姓名、gender），能力值/行為參數落在本套 virtual_runners，由
 // vr_level_presets 提供 8 級能力值範本（建立時 ±5% 個體抖動，見 jitter.go）。
 //
 // 分層仿 internal/partner：model.go 型別＋驗證白名單、repository.go 純 DB 存取、
