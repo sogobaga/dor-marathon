@@ -21,6 +21,7 @@ import { EventInteraction } from '@/components/EventInteraction'
 import { useIsPhone } from '@/lib/useIsMobile'
 import { useIsLandscape } from '@/lib/useIsLandscape'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
+import { initMovingState, advanceMovingState, classifyMoveSignal, currentMovingS, flushMovingState, type MovingState } from '@/lib/movingTime'
 import RaceFocusMode from './RaceFocusMode'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -209,9 +210,13 @@ export default function TrackPage() {
     if (zoom != null) map.setView(c, z); else map.panTo(c)
   }
 
-  // #4 移動時間（排除靜止/抖動/超速的「實際移動」時間）＋依它算的移動配速
-  const movingSecRef = useRef(0)
-  const [movingS, setMovingS] = useState(0)
+  // #4 移動時間（排除靜止/抖動的「實際移動」時間）＋依它算的移動配速
+  // 狀態機（movingAccumS 已結清秒數 + movingSince 目前移動段起點或 null）獨立於下面 onPos 的距離累積
+  // 邏輯，判定門檻也各自獨立（見 lib/movingTime.ts 頂部說明）；lastMoveRef 是專供這個狀態機用的
+  // 「上一個精度合格的點」，與距離累積用的 lastAccRef 分開更新節奏（不受距離 JITTER_MIN=6m 門檻限制）。
+  const movingStateRef = useRef<MovingState>(initMovingState())
+  const lastMoveRef = useRef<GpsPoint | null>(null)
+  const [movingS, setMovingS] = useState(0) // 顯示值：由下方 250ms 本地 tick 與 onPos 共同用 currentMovingS() 重算，見兩處呼叫點
   const movingSplitMarkRef = useRef<number[]>([]) // 跨每公里當下的移動時間（與 splitMarkRef 同步，供移動分段配速）
   const onPos = useCallback((pos: GeolocationPosition) => {
     const p: GpsPoint = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: pos.timestamp, acc: pos.coords.accuracy ?? 0 }
@@ -255,8 +260,6 @@ export default function TrackPage() {
           } else {
             distRef.current += seg
             setDistance(distRef.current)
-            movingSecRef.current += dt // #4 移動時間：只累積「有效移動段」的時間（排除靜止/抖動/超速）
-            setMovingS(movingSecRef.current)
             // 每公里分段（只在有效距離上前進）
             const km = Math.floor(distRef.current / 1000)
             const el = (p.t - startRef.current) / 1000
@@ -264,7 +267,9 @@ export default function TrackPage() {
               const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
               splitMarkRef.current.push(el)
               setSplits((s) => [...s, el - prevEl])
-              movingSplitMarkRef.current.push(movingSecRef.current) // #4 跨每公里當下的移動時間 → 供移動分段配速
+              // #4 移動時間改由獨立狀態機（movingStateRef，見下方 goodAcc 區塊）維護，這裡只是在整公里分段
+              // 當下拍一張快照，供「移動分段配速」用；不再依賴距離累積用的 movingSecRef（已移除，見狀態機說明）。
+              movingSplitMarkRef.current.push(currentMovingS(movingStateRef.current, Date.now()))
             }
           }
           lastAccRef.current = p // 仍前進採納點（避免搭車結束後算出巨大跳段）
@@ -272,6 +277,24 @@ export default function TrackPage() {
           if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
         }
       }
+    }
+    // #4 移動/靜止 狀態機：與上面的距離累積刻意各自獨立——距離用 JITTER_MIN=6m 抖動門檻＋MAX_ACC=65m
+    // 精度門檻決定「這個點算不算數」；這裡改用速度(≥0.6m/s)＋動態位移(>max(3m,0.5×accuracy))雙門檻＋
+    // 連續2筆遲滯才切換，避免「移動時間」沿用距離的寬鬆門檻而在原地休息/等紅燈時仍持續累加。
+    // lastMoveRef 每個精度合格的點都前進（不像 lastAccRef 只在通過 6m 門檻時前進），movingStateRef 才拿得到
+    // 「連續兩點」的真實速度樣本。狀態機定義與遲滯/斷流邊界說明見 lib/movingTime.ts。
+    if (goodAcc) {
+      const prevMove = lastMoveRef.current
+      if (prevMove) {
+        const dMove = haversineM(prevMove, p)
+        const signal = classifyMoveSignal(prevMove, p, dMove)
+        if (signal) {
+          const nowMs = Date.now() // 與 elapsed（Date.now()-startRef）同一牆鐘時間基準，兩個顯示數字才同步
+          movingStateRef.current = advanceMovingState(movingStateRef.current, signal, nowMs)
+          setMovingS(currentMovingS(movingStateRef.current, nowMs)) // GPS 觸發當下先更新一次；兩次 GPS 之間由下方 250ms tick 補平滑
+        }
+      }
+      lastMoveRef.current = p
     }
     // 事件正式進行中（非演出階段）才更新即時位移（進度條）
     if (activeEventRef.current?.phase === 'active') setEventMoved(distRef.current - activeEventRef.current.triggerD)
@@ -799,7 +822,8 @@ export default function TrackPage() {
     if (!navigator.geolocation) { setErr('此裝置/瀏覽器不支援定位'); return }
     // 關掉進頁面的 GPS 預熱偵測，避免與正式追蹤重複回報
     if (warmWatchRef.current != null) { try { navigator.geolocation.clearWatch(warmWatchRef.current) } catch { /* ignore */ } warmWatchRef.current = null }
-    pointsRef.current = []; distRef.current = 0; rawDistRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null; movingSecRef.current = 0; movingSplitMarkRef.current = []
+    pointsRef.current = []; distRef.current = 0; rawDistRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null; movingSplitMarkRef.current = []
+    movingStateRef.current = initMovingState(); lastMoveRef.current = null // #4 移動時間狀態機重置（見 lib/movingTime.ts）
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null); setMovingS(0)
     vehicleLikeRef.current = false; setVehicleWarn(false)
     followRef.current = true; setFollowing(true) // 每趟開始都恢復自動跟隨（即使 idle 時曾手動看地圖）
@@ -821,7 +845,15 @@ export default function TrackPage() {
     // ⚠️ iOS：定位權限提示必須在使用者手勢「同步」流程內直接請求，不能先 await 任何東西
     //（否則會失去使用者手勢 → Safari 直接判定拒絕，code 1）。acquireWatch() 為同步呼叫，符合此要求。
     acquireWatch()
-    timerRef.current = setInterval(() => setElapsed((Date.now() - startRef.current) / 1000), 250)
+    timerRef.current = setInterval(() => {
+      const now = Date.now()
+      setElapsed((now - startRef.current) / 1000)
+      // #4 移動時間顯示改由本地節拍驅動（原本只在 GPS onPos 回呼時前進，因 watchPosition 觸發頻率不定而
+      // 一段一段跳）；GPS 只負責透過 movingStateRef 判定/切換移動/靜止狀態，這裡每 250ms 用目前狀態重算
+      // 顯示值（見 currentMovingS），暫停中 movingSince=null 值會維持不動，移動中則隨牆鐘時間平滑前進，
+      // 與「全程時間」同等平滑；RaceFocusMode 的補給倒數/移動配速吃同一個 movingS，同步受益。
+      setMovingS(currentMovingS(movingStateRef.current, now))
+    }, 250)
     evalTimerRef.current = setInterval(evalTick, 1000) // 事件引擎每秒評估
     // 心跳：立即 + 每 30 秒回報「目前在跑」（供後台總覽名單；失敗忽略）
     const ping = () => { const t = getUserToken(); if (t) activitiesApi.trackPing(t).catch(() => {}) }
@@ -1128,8 +1160,18 @@ export default function TrackPage() {
   // 只在掛載/卸載執行：status 變動不可觸發 cleanup（否則會清掉 start 剛建立的計時器與定位）
   useEffect(() => {
     const onVis = () => {
-      // 回前景且仍在跑：重取 wake lock + 重新接上 GPS watch（背景時可能已被系統暫停）。切背景不做任何結束動作。
+      // 回前景且仍在跑：重取 wake lock + 重新接上 GPS watch（背景時可能已被系統暫停）。
+      // 切背景不做任何「結束跑步」的動作（沿用既有設計，不影響 GPS watch/計時器/事件引擎）。
       if (document.visibilityState === 'visible' && statusRef.current === 'tracking') { acquireWake(); acquireWatch() }
+      // #4 切背景：GPS 回呼隨時可能被系統整段暫停，若此刻正判定為「移動中」，主動把目前這段立即結清進
+      // movingAccumS（繞過遲滯，見 flushMovingState）；避免斷流期間的牆鐘時間被回前景後某一筆遲來的訊號
+      // 整段誤算成移動時間。回前景後由新的 GPS 訊號（onPos → advanceMovingState）重新判定要不要恢復移動，
+      // 不回溯補秒。這只新增「凍結移動時間」這一件事，不改動既有的 GPS 重連機制本身。
+      else if (document.visibilityState === 'hidden' && statusRef.current === 'tracking') {
+        const now = Date.now()
+        movingStateRef.current = flushMovingState(movingStateRef.current, now)
+        setMovingS(currentMovingS(movingStateRef.current, now))
+      }
     }
     document.addEventListener('visibilitychange', onVis)
     return () => { document.removeEventListener('visibilitychange', onVis); cleanup() }
