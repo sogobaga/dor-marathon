@@ -18,6 +18,10 @@ const (
 	SourceGoogle    = "google"
 	SourceThreads   = "threads"
 	SourceTikTok    = "tiktok"
+	SourceX         = "x"
+	SourceYoutube   = "youtube"
+	SourceDcard     = "dcard"
+	SourcePTT       = "ptt"
 	SourceOther     = "other"
 	SourceDirect    = "direct"
 )
@@ -98,6 +102,14 @@ func mapUTMSource(v string) string {
 		return SourceGoogle
 	case "line":
 		return SourceLine
+	case "x", "twitter":
+		return SourceX
+	case "youtube":
+		return SourceYoutube
+	case "dcard":
+		return SourceDcard
+	case "ptt":
+		return SourcePTT
 	default:
 		return SourceOther
 	}
@@ -140,6 +152,14 @@ func mapReferrerDomain(host string) string {
 		return SourceThreads
 	case matchesDomain(host, "tiktok.com"):
 		return SourceTikTok
+	case matchesDomain(host, "x.com", "twitter.com", "t.co"):
+		return SourceX
+	case matchesDomain(host, "youtube.com", "youtu.be"):
+		return SourceYoutube
+	case matchesDomain(host, "dcard.tw"):
+		return SourceDcard
+	case matchesDomain(host, "ptt.cc"):
+		return SourcePTT
 	default:
 		return SourceOther
 	}

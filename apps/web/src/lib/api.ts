@@ -2527,7 +2527,7 @@ export const paymentsApi = {
 // --- Admin: 會員管理 ---
 
 // 註冊來源歸因分類（migration 147_signup_attribution，見後端 classify 純函式）
-export type SignupSource = 'referral' | 'facebook' | 'instagram' | 'line' | 'google' | 'threads' | 'tiktok' | 'other' | 'direct'
+export type SignupSource = 'referral' | 'facebook' | 'instagram' | 'line' | 'google' | 'threads' | 'tiktok' | 'x' | 'youtube' | 'dcard' | 'ptt' | 'other' | 'direct'
 
 export interface MemberSummary {
   id: string
@@ -2547,6 +2547,7 @@ export interface MemberSummary {
   last_login_at?: string
   signup_source?: SignupSource | null // 歷史會員（migration 147 上線前註冊）無資料 → null/undefined
   signup_ref_name?: string | null // 推薦人暱稱，僅 source=referral 有值
+  signup_utm_source: string // utm_source 原值（未經正規化）；後端不 omitempty，無則空字串
 }
 
 // 完整歸因資料（會員詳情頁顯示用）

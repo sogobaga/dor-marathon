@@ -379,8 +379,9 @@ type MemberSummary struct {
 	LastLoginAt        *time.Time `json:"last_login_at,omitempty"` // 最近一次登入（password/google/register），見 user_login_logs
 	// 註冊來源歸因（見 migrations/147_signup_attribution.sql／internal/attribution）：歷史會員
 	// （本 migration 上線前註冊）沒有這筆列，皆回空字串——前端顯示「—」。
-	SignupSource  string `json:"signup_source"`             // referral|facebook|instagram|line|google|threads|tiktok|other|direct|""(無資料)
-	SignupRefName string `json:"signup_ref_name,omitempty"` // 推薦人暱稱；非 referral 來源或推薦人已被刪除則為空
+	SignupSource    string `json:"signup_source"`             // referral|facebook|instagram|line|google|threads|tiktok|x|youtube|dcard|ptt|other|direct|""(無資料)
+	SignupRefName   string `json:"signup_ref_name,omitempty"` // 推薦人暱稱；非 referral 來源或推薦人已被刪除則為空
+	SignupUTMSource string `json:"signup_utm_source"`         // a.utm->>'source' 原值（未經 mapUTMSource 正規化）；無則空字串，不 omitempty
 }
 
 // MemberDetail 後台會員詳情（含完整個資與報名數）
@@ -414,7 +415,7 @@ type SignupAttribution struct {
 // GET /api/v1/admin/members?q=&limit=&offset=&source=
 func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
-	source := r.URL.Query().Get("source") // 選填：referral|facebook|instagram|line|google|threads|tiktok|other|direct|none（none=無歸因資料的歷史會員）
+	source := r.URL.Query().Get("source") // 選填：referral|facebook|instagram|line|google|threads|tiktok|x|youtube|dcard|ptt|other|direct|none（none=無歸因資料的歷史會員）
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -429,7 +430,7 @@ func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 		SELECT u.id, u.email, u.handle, u.name, u.role, u.total_km, u.created_at,
 		       COALESCE(p.real_name,''), COALESCE(p.phone,''), COALESCE(p.gender,''), u.can_create_team_group,
 		       u.vip_expires_at, COALESCE(u.vip_plan,''), u.last_login_at,
-		       COALESCE(a.source,''), COALESCE(ref.handle,'')
+		       COALESCE(a.source,''), COALESCE(ref.handle,''), COALESCE(a.utm->>'source','')
 		FROM users u
 		LEFT JOIN user_profiles p ON p.user_id = u.id
 		LEFT JOIN user_signup_attribution a ON a.user_id = u.id
@@ -451,7 +452,7 @@ func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&m.ID, &m.Email, &m.Handle, &m.Name, &m.Role, &m.TotalKm, &m.CreatedAt,
 			&m.RealName, &m.Phone, &m.Gender, &m.CanCreateTeamGroup,
 			&m.VIPExpiresAt, &m.VipPlan, &m.LastLoginAt,
-			&m.SignupSource, &m.SignupRefName); err != nil {
+			&m.SignupSource, &m.SignupRefName, &m.SignupUTMSource); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}

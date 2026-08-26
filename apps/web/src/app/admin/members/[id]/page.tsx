@@ -216,7 +216,7 @@ export default function AdminMemberDetailPage() {
       <h2 style={{ margin: '26px 0 10px', fontSize: 16, fontWeight: 800 }}>註冊來源</h2>
       <div style={ctrlCard}>
         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: m.attribution ? 10 : 0, color: m.attribution ? 'var(--tx)' : 'var(--tx-faint)' }}>
-          {signupSourceText(m.attribution?.source, m.attribution?.ref_name)}
+          {signupSourceText(m.attribution?.source, m.attribution?.ref_name, m.attribution?.utm?.source)}
         </div>
         {m.attribution && (
           <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', display: 'grid', gap: 6 }}>

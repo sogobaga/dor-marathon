@@ -156,7 +156,7 @@ export default function AdminMembersList() {
                   }}>{m.is_vip ? 'VIP' : '一般'}</span>
                 </div>
                 <div style={{ width: 110, fontSize: 12, color: m.signup_source ? 'var(--tx-dim)' : 'var(--tx-faint)' }}>
-                  {signupSourceText(m.signup_source, m.signup_ref_name)}
+                  {signupSourceText(m.signup_source, m.signup_ref_name, m.signup_utm_source)}
                 </div>
                 <div style={{ width: 130, fontSize: 12, color: 'var(--tx-dim)' }}>
                   {m.is_vip && m.vip_expires_at ? (

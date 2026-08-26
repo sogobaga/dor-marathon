@@ -80,6 +80,11 @@ func TestClassify_UTMSourceMapping(t *testing.T) {
 		{"adwords", SourceGoogle},
 		{"AdWords", SourceGoogle},
 		{"line", SourceLine},
+		{"x", SourceX},
+		{"twitter", SourceX},
+		{"youtube", SourceYoutube},
+		{"dcard", SourceDcard},
+		{"ptt", SourcePTT},
 		{"newsletter", SourceOther}, // 未列出的別名 → other
 		{"threads", SourceOther},    // 契約明定：utm_source 只有列出的四種對映，其餘一律 other
 		{"tiktok", SourceOther},
@@ -117,6 +122,13 @@ func TestClassify_ReferrerDomainMapping(t *testing.T) {
 		{"line.me", "https://line.me/R/ti/p/xyz", SourceLine},
 		{"threads.net", "https://www.threads.net/@dor", SourceThreads},
 		{"tiktok.com", "https://www.tiktok.com/@dor/video/123", SourceTikTok},
+		{"x.com", "https://x.com/dor_tw/status/123", SourceX},
+		{"twitter.com", "https://twitter.com/dor_tw", SourceX},
+		{"t.co", "https://t.co/abc123", SourceX},
+		{"youtube.com", "https://www.youtube.com/watch?v=abc", SourceYoutube},
+		{"youtu.be", "https://youtu.be/abc123", SourceYoutube},
+		{"dcard.tw", "https://www.dcard.tw/f/marathon/p/123", SourceDcard},
+		{"ptt.cc", "https://www.ptt.cc/bbs/Road_Running/M.123.html", SourcePTT},
 		{"其他外部網域 → other", "https://news.example.com/article", SourceOther},
 		{"帶 port 的網域仍正確判斷", "https://www.facebook.com:443/somepage", SourceFacebook},
 	}
