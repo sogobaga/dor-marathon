@@ -1245,13 +1245,15 @@ export interface TaskRangeDetail {
   range_hi: number
   activities: RangeActivity[]
 }
-// 活動獎勵預覽單筆卡片：只有可讀展示欄位，不含機率/數量/權重（見後端 race.RewardPreviewItem）
+// 活動獎勵預覽單筆卡片（見後端 race.RewardPreviewItem）：可讀展示欄位＋中獎機率，不含權重/庫存等抽獎
+// 引擎內部設定。prob_bp 為選填（後端 omitempty，理論上有效設定必為 >0，缺欄位視同未知/不顯示）。
 export interface RewardPreviewItem {
-  kind: string // economy|serial
+  kind: string // economy|serial|coupon
   name: string
   amount: string // economy 類的數量/區間（如 100~500 / 7 天）；serial 類為空
   icon_url: string
   description: string
+  prob_bp?: number // 中獎機率，萬分位（10000=100% 必得）；serial 類已是「該面額實際機率」，非商家層機率
 }
 // 進度頁每日歷程：單筆活動（見後端 race.DailyActivity）
 export interface DailyActivity {

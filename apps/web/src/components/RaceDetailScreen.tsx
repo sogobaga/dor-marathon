@@ -38,6 +38,19 @@ function paceFmt(sec: number) {
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
 }
 
+// formatProbLabel 消保法機率揭露：把 prob_bp（萬分位）換算成前台「(中獎機率 xx%)」小字標示。
+// - undefined／>=10000（100% 必得）：回傳空字串——不特別標示，維持版面乾淨（玩家保證拿得到，沒有
+//   「機率」需要揭露；後端 race.RewardPreviewItem 註解也是這個口徑）。
+// - 其餘：四捨五入到最多 1 位小數（35% / 12.5%），整數時不帶小數點；換算後仍四捨五入成 0 但原始機率
+//   實際 >0 時，改顯示 <0.1%，避免讓玩家誤以為完全不會中獎。
+function formatProbLabel(probBP?: number): string {
+  if (!probBP || probBP >= 10000) return ''
+  const pct = probBP / 100
+  const rounded = Math.round(pct * 10) / 10
+  const text = rounded > 0 ? (Number.isInteger(rounded) ? `${rounded}` : `${rounded.toFixed(1)}`) : '<0.1'
+  return `(中獎機率 ${text}%)`
+}
+
 // fmtDurationShort 個人挑戰「完成用時」通常橫跨數天，改用 天/時/分 呈現（不同於單場跑步的 時:分:秒）
 function fmtDurationShort(totalSec: number): string {
   const d = Math.floor(totalSec / 86400)
@@ -621,8 +634,9 @@ function DailyHistory({ race }: { race: Race }) {
   )
 }
 
-// 活動獎勵頁籤：完成活動有機會獲得的獎勵預覽卡片列表。刻意只顯示 icon/名稱/說明，不露機率與數量
-// （後端 race.GetRewardPreview 白名單欄位，見 memory activity-reward-system）。
+// 活動獎勵頁籤：完成活動有機會獲得的獎勵預覽卡片列表。名稱後方視情況加中獎機率小字（消保法機率揭露，
+// 見 formatProbLabel；100% 必得的項目不標示）。仍只顯示 icon/名稱/說明/機率，不露權重與庫存等抽獎引擎
+// 內部設定（後端 race.GetRewardPreview 白名單欄位，見 memory activity-reward-system）。
 function RewardPreviewBody({ rewards }: { rewards: RewardPreviewItem[] }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -631,23 +645,27 @@ function RewardPreviewBody({ rewards }: { rewards: RewardPreviewItem[] }) {
         <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3 }}>實際獲得依完成當次結果為準</div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {rewards.map((rw, i) => (
-          <div key={i} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 12px)', overflow: 'hidden' }}>
-            {rw.icon_url && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={rw.icon_url} alt="" style={{ width: '100%', aspectRatio: '2 / 1', objectFit: 'cover', display: 'block' }} />
-            )}
-            <div style={{ padding: '11px 13px' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)' }}>{rw.name}</span>
-                {rw.amount && <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--gold)' }}>{rw.amount}</span>}
-              </div>
-              {rw.description && (
-                <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.5 }}>{rw.description}</div>
+        {rewards.map((rw, i) => {
+          const probLabel = formatProbLabel(rw.prob_bp)
+          return (
+            <div key={i} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 12px)', overflow: 'hidden' }}>
+              {rw.icon_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={rw.icon_url} alt="" style={{ width: '100%', aspectRatio: '2 / 1', objectFit: 'cover', display: 'block' }} />
               )}
+              <div style={{ padding: '11px 13px' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)' }}>{rw.name}</span>
+                  {probLabel && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tx-faint)' }}>{probLabel}</span>}
+                  {rw.amount && <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--gold)' }}>{rw.amount}</span>}
+                </div>
+                {rw.description && (
+                  <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.5 }}>{rw.description}</div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -896,27 +914,32 @@ function SuppliesBody({ supplies, entryRewards }: { supplies: RaceSupply[]; entr
 }
 
 // 參賽虛擬獎勵展示小節（migration 140）：緊接在「參賽物資」小節尾部，卡片樣式比照 SupplySection，
-// 但資料來源是 RewardPreviewItem（icon_url/name/amount/description），不是 RaceSupply。
+// 但資料來源是 RewardPreviewItem（icon_url/name/amount/description/prob_bp），不是 RaceSupply。名稱後
+// 方視情況加中獎機率小字（消保法機率揭露，見 formatProbLabel；100% 必得不標示）。
 function EntryRewardSection({ items }: { items: RewardPreviewItem[] }) {
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 6 }}>參賽虛擬獎勵（開賽後自動發放）</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {items.map((rw, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px' }}>
-            {rw.icon_url && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={rw.icon_url} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)', flexShrink: 0 }} />
-            )}
-            <div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)' }}>{rw.name}</span>
-                {rw.amount && <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--gold)' }}>{rw.amount}</span>}
+        {items.map((rw, i) => {
+          const probLabel = formatProbLabel(rw.prob_bp)
+          return (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px' }}>
+              {rw.icon_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={rw.icon_url} alt="" style={{ width: 64, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--line-2)', flexShrink: 0 }} />
+              )}
+              <div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)' }}>{rw.name}</span>
+                  {probLabel && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tx-faint)' }}>{probLabel}</span>}
+                  {rw.amount && <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--gold)' }}>{rw.amount}</span>}
+                </div>
+                {rw.description && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 2 }}>{rw.description}</div>}
               </div>
-              {rw.description && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 2 }}>{rw.description}</div>}
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
