@@ -207,6 +207,8 @@ export default function RaceForm({
   const [pointCostNtd, setPointCostNtd] = useState(1.3) // LINE POINTS 單點成本（元）；預設 1.3
   const [cardFeeRatePct, setCardFeeRatePct] = useState(2.35) // 信用卡刷卡手續費率（%）；預設 2.35
   const [expectedFinishRatePct, setExpectedFinishRatePct] = useState(100) // 預估完賽率（%）；預設 100
+  // 「🎯 目標反推建議」目前選取的檔位（見 REVERSE_TIERS）；預設成長期，純前端顯示用不隨表單送出。
+  const [reverseTierKey, setReverseTierKey] = useState<ReverseTierKey>('growth')
   // VIP 活動優惠券面額（分）：來自後台系統設定 vip_coupon_value_cents，見下方 useEffect 載入；
   // 10000（$100）為讀取失敗時的 fallback，與後端 appsettings.GetInt 的 fallback 預設一致。
   const [vipCouponValueCents, setVipCouponValueCents] = useState(10000)
@@ -950,6 +952,31 @@ export default function RaceForm({
       : [{ label: '', feeCents: uniformFeeCents }]
     const couponValueNtd = vipCouponValueCents / 100
 
+    // 🎯 目標反推建議用「淨實收」基準：per_group 多組時取最低淨實收的組別做保守基準（該組容許的期望成本
+    // 上限最嚴格，用它反推最安全，不會讓其他組的期望成本超出目標比例）；uniform 就只有一組直接用。
+    const feeNetCalcs = feeRows.map((fr) => {
+      const { net } = netProceeds(fr.feeCents / 100, couponValueNtd, cardFeeRatePct)
+      return { label: fr.label, net }
+    })
+    const minFeeNet = feeNetCalcs.length > 0 ? feeNetCalcs.reduce((min, x) => (x.net < min.net ? x : min)) : { label: '', net: 0 }
+    const reverseTier = REVERSE_TIERS.find((t) => t.key === reverseTierKey) ?? REVERSE_TIERS[0]
+    const { targetCostNtd, targetPoints } = reverseTargetPoints(minFeeNet.net, reverseTier.pct, pointCostNtd, expectedFinishRatePct)
+    const reverseFaceInputs = collectLinePointFaces(rewardItems, availableRewardGroups)
+    const reverseSuggestion = computeReverseSuggestion(reverseFaceInputs, targetPoints, pointCostNtd)
+    // 一鍵套用：僅當「表單上恰好一個含 LINE POINTS 面額的 serial 項目、且該項目的面額集合＝反推用的面額
+    // 集合（全表單聯集）」時才可套用——多個 serial 項目各自分散配置 LINE POINTS 面額時，反推建議是跨項目
+    // 彙總的單一組合，無法安全對應回某一個特定項目，故不顯示套用按鈕，改請管理者先整併。
+    const reverseCandidateItems = rewardItems
+      .map((it, idx) => ({ idx, faces: collectLinePointFaces([it], availableRewardGroups) }))
+      .filter((c) => c.faces.length > 0)
+    let reverseApplyIdx: number | null = null
+    if (reverseCandidateItems.length === 1 && reverseSuggestion.error == null) {
+      const itemValues = new Set(reverseCandidateItems[0].faces.map((f) => f.value))
+      const globalValues = new Set(reverseFaceInputs.map((f) => f.value))
+      const setsEqual = itemValues.size === globalValues.size && Array.from(itemValues).every((v) => globalValues.has(v))
+      if (setsEqual) reverseApplyIdx = reverseCandidateItems[0].idx
+    }
+
     return (
       <details style={{ marginTop: 8, border: '1px solid var(--line-2)', borderRadius: 10, padding: '8px 12px', background: 'var(--bg-1, #11131a)' }}>
         <summary style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', cursor: 'pointer' }}>💰 期望值試算</summary>
@@ -1018,6 +1045,83 @@ export default function RaceForm({
                 </div>
               )
             })}
+          </div>
+
+          <div style={{ borderTop: '1px dashed var(--line-2)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)' }}>🎯 目標反推建議</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {REVERSE_TIERS.map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setReverseTierKey(t.key)}
+                  style={{
+                    padding: '6px 14px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+                    border: '1px solid var(--line-2)',
+                    background: reverseTierKey === t.key ? 'var(--fug)' : 'var(--bg-2)',
+                    color: reverseTierKey === t.key ? 'var(--fug-ink)' : 'var(--tx)',
+                    fontWeight: reverseTierKey === t.key ? 700 : 400,
+                  }}
+                >
+                  {t.label} {t.pct}%
+                </button>
+              ))}
+            </div>
+            <div style={calcHint}>
+              目標期望成本 NT$ {targetCostNtd.toFixed(1)}（淨實收 NT$ {minFeeNet.net.toFixed(1)}
+              {feeMode === 'per_group' && feeRows.length > 1 ? `　取最低淨實收組「${minFeeNet.label || '（未命名）'}」做保守基準` : ''}
+              　× {reverseTier.pct}%）
+            </div>
+            <div style={calcHint}>
+              目標期望點數 {targetPoints.toFixed(2)} 點（每位完賽者；目標成本 ÷ 單點成本 {pointCostNtd} 元 ÷ 完賽率 {expectedFinishRatePct}%）
+            </div>
+
+            {reverseSuggestion.error === 'no_denoms' && (
+              <div style={calcHint}>請先在上方加入 LINE POINTS 序號獎勵。</div>
+            )}
+            {reverseSuggestion.error === 'target_too_low' && (
+              <div style={{ ...calcHint, color: 'var(--hunt)' }}>目標檔位過低，無法容納大獎恆存，請改檔位或移除大面額。</div>
+            )}
+
+            {reverseSuggestion.error == null && reverseSuggestion.faces.length > 0 && (
+              <>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {reverseSuggestion.faces.map((f) => (
+                    <div key={f.groupId} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12.5, flexWrap: 'wrap' }}>
+                      <span>面額 {f.value}{f.isJackpot ? '　🏆 大獎恆存' : ''}</span>
+                      <span>建議實際機率 {(f.suggestedProb * 100).toFixed(2)}%｜期望點數 {f.expectedPoints.toFixed(2)} 點</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>
+                  體感中獎率 {(reverseSuggestion.totalP * 100).toFixed(2)}%｜反推後實際期望成本 NT$ {reverseSuggestion.actualCostNtd.toFixed(1)}
+                  {(() => {
+                    const actualRegistrantCostNtd = reverseSuggestion.actualCostNtd * (expectedFinishRatePct / 100)
+                    const ratioPct = minFeeNet.net > 0 ? (actualRegistrantCostNtd / minFeeNet.net) * 100 : null
+                    return <>（佔淨收 {ratioPct != null ? ratioPct.toFixed(1) + '%' : '—'}，因取整與最低機率下限可能與目標略有出入）</>
+                  })()}
+                </div>
+                <div style={calcHint}>
+                  設定法：商家中獎機率 {(reverseSuggestion.totalP * 100).toFixed(2)}%、權重 {reverseSuggestion.faces.map((f) => reverseSuggestion.weights[f.groupId] ?? 0).join(':')}
+                </div>
+                {reverseApplyIdx != null ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const applyIdx = reverseApplyIdx as number
+                      const prob_bp = Math.max(1, Math.min(10000, Math.round(reverseSuggestion.totalP * 10000)))
+                      const denominations = reverseSuggestion.faces.map((f) => ({ group_id: f.groupId, weight: reverseSuggestion.weights[f.groupId] ?? 0 }))
+                      updateRewardItem(applyIdx, { prob_bp, denominations })
+                    }}
+                    style={{ ...ghostBtn, alignSelf: 'flex-start', padding: '6px 14px', fontSize: 12.5 }}
+                  >
+                    套用建議
+                  </button>
+                ) : (
+                  <div style={calcHint}>建議把 LINE POINTS 面額整併到同一個獎勵項目後即可一鍵套用。</div>
+                )}
+              </>
+            )}
           </div>
         </div>
       </details>
@@ -2159,6 +2263,139 @@ function netProceeds(feeNtd: number, couponValueNtd: number, feeRatePct: number)
   const afterCoupon = Math.max(0, feeNtd - couponValueNtd)
   const net = afterCoupon * (1 - feeRatePct / 100)
   return { afterCoupon, net }
+}
+
+// --- 「🎯 目標反推建議」純函式（v0.1.602 期望值試算面板擴充）：從「目標期望成本佔淨收 X%」倒推
+// 各 LINE POINTS 面額該設多少中獎機率，取代管理者手動試錯調整 prob_bp/weight。與上面 computeSerialDenomCalcs
+// 等既有函式共用同一套「面額值＝parsePointValue、面額實際機率＝denomActualProb」語意，只是反過來算。
+
+type ReverseTierKey = 'growth' | 'stable' | 'promo'
+const REVERSE_TIERS: { key: ReverseTierKey; label: string; pct: number }[] = [
+  { key: 'growth', label: '成長期', pct: 24 },
+  { key: 'stable', label: '穩定期', pct: 15 },
+  { key: 'promo', label: '促銷期', pct: 36 },
+]
+
+// 目標期望成本(每位報名者，NT$) = 淨實收 × 檔位%；目標期望點數(每位完賽者) = 目標成本 ÷ 單點成本 ÷ (完賽率/100)。
+// 與 renderRewardExpectedValuePanel 對比報名費區塊同一套 netProceeds 口徑；除以完賽率是因為
+// computeSerialDenomCalcs 系列函式算出的 expectedPoints 語意是「每位完賽者」，而目標成本是「每位報名者」
+// 口徑（報名費淨收就是每位報名者付的），兩者換算要補回完賽率這一層（比照 perRegistrantCostNtd 的算法反著推）。
+// 驗算例：淨實收150元、檔位24%、單點成本1.3元、完賽率100% → 目標成本=150×0.24=36元 → 目標點數=36÷1.3÷1=27.69點
+function reverseTargetPoints(
+  netNtd: number, tierPct: number, costPerPoint: number, finishRatePct: number
+): { targetCostNtd: number; targetPoints: number } {
+  const targetCostNtd = netNtd * (tierPct / 100)
+  const finishFrac = finishRatePct / 100
+  const targetPoints = finishFrac > 0 && costPerPoint > 0 ? targetCostNtd / costPerPoint / finishFrac : 0
+  return { targetCostNtd, targetPoints }
+}
+
+interface ReverseFaceInput { value: number; groupId: string }
+
+// 蒐集目前表單「全部」serial 項目（跨項目）中，權重>0 且屬於 is_line_point 序號組的面額，依面額值
+// 升冪排序、並以面額值去重（同面額值只取第一個遇到的 group_id，代表用；同時給「一鍵套用」比對用）。
+function collectLinePointFaces(items: RewardItem[], groups: RewardSerialGroup[]): ReverseFaceInput[] {
+  const byValue = new Map<number, string>()
+  items.forEach((item) => {
+    if (item.type !== 'serial') return
+    effectiveDenoms(item).forEach((d) => {
+      if (d.weight <= 0) return
+      const g = groups.find((x) => x.id === d.group_id)
+      if (!g || !g.is_line_point) return
+      const value = parsePointValue(g.name || g.item_label || '')
+      if (value == null) return
+      if (!byValue.has(value)) byValue.set(value, d.group_id)
+    })
+  })
+  return Array.from(byValue.entries()).map(([value, groupId]) => ({ value, groupId })).sort((a, b) => a.value - b.value)
+}
+
+// 幾何遞減權重 8:4:2:1:0.5…（取前 n 項、歸一化使總和=1）。面額數不足 4 個時自動只取前幾項比例重新
+// 歸一化（例如 n=3 時就是 8:4:2 三項歸一化，不會硬湊出第 4 項）。
+function geometricWeights(n: number): number[] {
+  if (n <= 0) return []
+  const seq: number[] = []
+  let w = 8
+  for (let i = 0; i < n; i++) { seq.push(w); w /= 2 }
+  const sum = seq.reduce((s, x) => s + x, 0)
+  return seq.map((x) => x / sum)
+}
+
+// 建議機率＝分到的期望點數 ÷ 面額值，四捨五入到 0.05% 精度、最小 0.05%（回傳為 0~1 的機率小數，例如 0.243＝24.3%）。
+function suggestProbForFace(allocatedPoints: number, faceValue: number): number {
+  const STEP = 0.0005 // 0.05%
+  const raw = faceValue > 0 ? allocatedPoints / faceValue : 0
+  const stepped = Math.round(raw / STEP) * STEP
+  return Math.max(STEP, stepped)
+}
+
+interface ReverseFaceSuggestion {
+  value: number
+  groupId: string
+  isJackpot: boolean
+  suggestedProb: number   // 0~1，該面額「建議實際機率」（體感機率，等同 denomActualProb 的反算結果）
+  expectedPoints: number  // = suggestedProb × value
+}
+interface ReverseSuggestion {
+  faces: ReverseFaceSuggestion[]           // 依面額值升冪排序，含大獎
+  totalP: number                            // 商家層建議機率 P（0~1）＝Σ各面額建議機率
+  weights: Record<string, number>           // group_id → 建議面額權重（整數，Σ約為1000，供套用寫回 denominations）
+  actualPoints: number                      // Σ expectedPoints（每位完賽者，反推後實際期望點數）
+  actualCostNtd: number                     // 反推後實際期望成本（每位完賽者，NT$）＝ actualPoints × costPerPoint
+  error: 'no_denoms' | 'target_too_low' | null
+}
+
+// 反推主演算法：
+// 1) 面額值 ≥500 的最大面額（若存在）＝「大獎恆存」，固定機率 0.05%，先扣掉它的期望點數(值×0.0005)。
+// 2) 其餘面額按面額值升冪、以 geometricWeights 分配剩餘目標期望點數，各自換算建議機率（四捨五入0.05%、下限0.05%）。
+// 3) 商家層機率 P＝Σ各面額建議機率；面額權重 w_i＝round(建議機率_i ÷ P × 1000)。
+//
+// 驗算例（對應需求規格範例）：面額 20/50/100/1000、目標點數 9：
+//   1000 為唯一 ≥500 面額 → 大獎恆存，建議機率 0.05%，期望點數 1000×0.0005=0.5 點。
+//   剩餘目標點數 = 9 − 0.5 = 8.5 點，按 8:4:2（3 個面額，取 geometricWeights(3) 歸一化 8/14:4/14:2/14）分配：
+//     20  → 分得 8.5×8/14=4.857143 點 → 建議機率 = 4.857143/20=24.2857% → 取整至0.05% → 24.30%
+//     50  → 分得 8.5×4/14=2.428571 點 → 建議機率 = 2.428571/50=4.85714% → 取整至0.05% → 4.85%
+//     100 → 分得 8.5×2/14=1.214286 點 → 建議機率 = 1.214286/100=1.21429% → 取整至0.05% → 1.20%
+//   商家層 P = 24.30%+4.85%+1.20%+0.05% = 30.40%（＝體感中獎率）
+//   權重 w＝round(機率/P×1000)：20→799、50→160、100→39、1000→2（Σ=1000）
+//   反推後實際期望點數 = 4.86+2.425+1.2+0.5 = 8.985 點（因取整與 0.05% 下限，與目標 9 點略有出入，符合預期）
+function computeReverseSuggestion(faceInputs: ReverseFaceInput[], targetPoints: number, costPerPoint: number): ReverseSuggestion {
+  if (faceInputs.length === 0) {
+    return { faces: [], totalP: 0, weights: {}, actualPoints: 0, actualCostNtd: 0, error: 'no_denoms' }
+  }
+  const JACKPOT_PROB = 0.0005 // 固定 0.05%
+  const jackpot = faceInputs.filter((f) => f.value >= 500).reduce<ReverseFaceInput | null>(
+    (best, f) => (best == null || f.value > best.value ? f : best), null
+  )
+  const rest = jackpot ? faceInputs.filter((f) => f.value !== jackpot.value) : faceInputs.slice()
+  const jackpotExpectedPoints = jackpot ? jackpot.value * JACKPOT_PROB : 0
+  const remainingTarget = targetPoints - jackpotExpectedPoints
+
+  if (jackpot && remainingTarget <= 0) {
+    return { faces: [], totalP: 0, weights: {}, actualPoints: 0, actualCostNtd: 0, error: 'target_too_low' }
+  }
+
+  const weightsSeq = geometricWeights(rest.length)
+  const restFaces: ReverseFaceSuggestion[] = rest.map((f, i) => {
+    const allocatedPoints = Math.max(0, remainingTarget) * (weightsSeq[i] ?? 0)
+    const suggestedProb = suggestProbForFace(allocatedPoints, f.value)
+    return { value: f.value, groupId: f.groupId, isJackpot: false, suggestedProb, expectedPoints: suggestedProb * f.value }
+  })
+  const jackpotFace: ReverseFaceSuggestion[] = jackpot
+    ? [{
+        value: jackpot.value, groupId: jackpot.groupId, isJackpot: true,
+        suggestedProb: JACKPOT_PROB, expectedPoints: jackpot.value * JACKPOT_PROB,
+      }]
+    : []
+
+  const faces = [...restFaces, ...jackpotFace].sort((a, b) => a.value - b.value)
+  const totalP = faces.reduce((s, f) => s + f.suggestedProb, 0)
+  const weights: Record<string, number> = {}
+  faces.forEach((f) => { weights[f.groupId] = totalP > 0 ? Math.round((f.suggestedProb / totalP) * 1000) : 0 })
+  const actualPoints = faces.reduce((s, f) => s + f.expectedPoints, 0)
+  const actualCostNtd = pointsToCost(actualPoints, costPerPoint)
+
+  return { faces, totalP, weights, actualPoints, actualCostNtd, error: null }
 }
 
 interface SerialDenomCalc {
