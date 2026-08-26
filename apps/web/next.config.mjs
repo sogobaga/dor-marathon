@@ -1,7 +1,7 @@
 // 版號：v<VERSION_BASE>.<VERSION_SERIAL>.<commit8>。進大版號改 VERSION_BASE；每次推送遞增 VERSION_SERIAL
 //（= git commit 累計數 `git rev-list --count HEAD`）。兩者皆需與後端 internal/version 同步。
 const VERSION_BASE = '0.1'
-const VERSION_SERIAL = '588'
+const VERSION_SERIAL = '589'
 const COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || 'dev').slice(0, 8)
 
 /** @type {import('next').NextConfig} */
@@ -48,6 +48,9 @@ const nextConfig = {
     // - connect-src／frame-src 同兩個 ecpg 網域：SDK 內部 API 呼叫與渲染綁卡介面的 iframe
     // ⚠️ style-src 目前刻意不加 ecpg 網域：SDK 官方文件未提及注入外部樣式表，若 stage 實測 console 報
     //   style-src CSP 錯誤才補（比照本檔既有 v0.1.419 實跑補漏慣例，見上方段落）。
+    // 簡章影片欄位加 FB Reel 支援後新增：
+    // - frame-src www.facebook.com：FB Reel 簡章嵌入（MediaCarousel.tsx FBReelEmbed，官方免 SDK
+    //   plugins/video.php iframe）。
     // 其餘：GSI 走 accounts.google.com、地圖圖磚/商家圖靠 img-src https:、Next.js 水合靠 'unsafe-inline'。
     // ⚠️ 日後若新增外部資源，務必同步加對應 directive，否則 enforce 會直接擋下。
     const csp = [
@@ -57,7 +60,7 @@ const nextConfig = {
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
       "connect-src 'self' wss: ws: https://accounts.google.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://cloudflareinsights.com https://unpkg.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw",
-      "frame-src https://www.youtube-nocookie.com https://accounts.google.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw",
+      "frame-src https://www.youtube-nocookie.com https://accounts.google.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw https://www.facebook.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self' https://payment.ecpay.com.tw https://payment-stage.ecpay.com.tw",

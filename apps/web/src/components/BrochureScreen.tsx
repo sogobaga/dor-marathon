@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { racesApi, type Race, type RaceDetail, type BrochureBlock, type BrochureImageItem, normalizeBrochureImage } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { navigateLink } from '@/lib/links'
-import { MediaCarousel, Lightbox, YouTubeEmbed, ytId } from '@/components/shared/MediaCarousel'
+import { MediaCarousel, Lightbox, YouTubeEmbed, ytId, FBReelEmbed, fbReelHref } from '@/components/shared/MediaCarousel'
 import { buildRefundScheduleRows, formatCutoffDate } from '@/lib/refundSchedule'
 
 // 圖片區塊 content：新版存「陣列」JSON（元素可為純網址字串，或 {url,caption?,link?} 物件，
@@ -160,11 +160,16 @@ function Block({ block, onZoom }: { block: BrochureBlock; onZoom: (images: strin
     )
   }
   if (block.block_type === 'video') {
+    // 同一個影片連結欄位先試 YouTube，再試 Facebook Reel，兩者都解析不出才顯示 fallback 文字
+    // （既有行為：不退化成普通連結）。
     const id = ytId(block.content)
+    const fbHref = id ? null : fbReelHref(block.content)
     return (
       <div>
         {id ? (
           <YouTubeEmbed url={block.content} title={block.caption ?? 'video'} />
+        ) : fbHref ? (
+          <FBReelEmbed url={block.content} title={block.caption ?? 'video'} />
         ) : (
           <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>無效的影片連結</div>
         )}

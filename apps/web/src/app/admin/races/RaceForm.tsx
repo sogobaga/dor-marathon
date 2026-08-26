@@ -1878,7 +1878,7 @@ export default function RaceForm({
                   )}
                   {b.block_type === 'video' && (
                     <>
-                      <Field label="YouTube 連結"><input style={inp} value={b.content} onChange={(e) => upd({ content: e.target.value })} placeholder="https://www.youtube.com/watch?v=…" /></Field>
+                      <Field label="YouTube / FB Reel 連結"><input style={inp} value={b.content} onChange={(e) => upd({ content: e.target.value })} placeholder="https://www.youtube.com/watch?v=… 或 https://www.facebook.com/reel/…" /></Field>
                       <Field label="影片說明（選填）"><input style={inp} value={b.caption ?? ''} onChange={(e) => upd({ caption: e.target.value })} /></Field>
                     </>
                   )}
@@ -1889,7 +1889,7 @@ export default function RaceForm({
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button onClick={() => setBrochure((bs) => [...bs, { block_type: 'text', content: '', display_order: bs.length }])} style={ghostBtn}>＋ 文字區塊</button>
               <button onClick={() => setBrochure((bs) => [...bs, { block_type: 'image', content: '', display_order: bs.length }])} style={ghostBtn}>＋ 圖片</button>
-              <button onClick={() => setBrochure((bs) => [...bs, { block_type: 'video', content: '', display_order: bs.length }])} style={ghostBtn}>＋ YouTube 影片</button>
+              <button onClick={() => setBrochure((bs) => [...bs, { block_type: 'video', content: '', display_order: bs.length }])} style={ghostBtn}>＋ 影片（YouTube / FB Reel）</button>
             </div>
           </div>
         )}

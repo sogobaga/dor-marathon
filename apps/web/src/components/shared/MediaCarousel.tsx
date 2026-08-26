@@ -1,6 +1,7 @@
 'use client'
 
-// 共用媒體元件：多圖輪播（MediaCarousel）、圖片燈箱（Lightbox）、YouTube 連結解析（ytId）+ 16:9 響應式嵌入（YouTubeEmbed）。
+// 共用媒體元件：多圖輪播（MediaCarousel）、圖片燈箱（Lightbox）、YouTube 連結解析（ytId）+ 16:9 響應式嵌入（YouTubeEmbed）、
+// Facebook Reel 連結解析（fbReelHref）+ 9:16 直式響應式嵌入（FBReelEmbed）。
 // 抽出自 BrochureScreen.tsx，行為保持不變（僅搬移，未重寫邏輯）。
 
 import { useEffect, useRef, useState } from 'react'
@@ -39,6 +40,63 @@ export function YouTubeEmbed({ url, title }: { url: string; title?: string }) {
         allowFullScreen
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
       />
+    </div>
+  )
+}
+
+// 從 Facebook Reel／短連結判斷是否為合法格式，回傳「標準化後的原始 https 連結」（供組 embed iframe
+// href 參數用）；非白名單網域或路徑格式不符一律回傳 null。網域比對一律用 URL 解析後的 hostname 做
+// 「結尾比對」（=== 或 .endsWith('.facebook.com')），不可用 includes/substring 字串比對（避免
+// evil-facebook.com.attacker.tld 這類字串包含繞過白名單）。
+// 支援格式（可帶 www./m. 子網域、結尾斜線、任意 query string）：
+//   - https://www.facebook.com/reel/<id>
+//   - https://www.facebook.com/share/r/<token>
+//   - https://fb.watch/<token>
+// 驗算範例：
+//   fbReelHref('https://www.facebook.com/reel/1234567890')                        → 'https://www.facebook.com/reel/1234567890'
+//   fbReelHref('https://m.facebook.com/share/r/AbC12_-/?mibextid=xyz')            → 'https://m.facebook.com/share/r/AbC12_-/?mibextid=xyz'
+//   fbReelHref('https://fb.watch/AbC123-_/')                                      → 'https://fb.watch/AbC123-_/'
+//   fbReelHref('fb.watch/AbC123')                                                 → 'https://fb.watch/AbC123'（無 scheme 自動補 https://）
+//   fbReelHref('https://evil-facebook.com.attacker.tld/reel/1')                   → null（網域非結尾比對通過）
+//   fbReelHref('https://www.facebook.com/watch/?v=123')                          → null（非 reel/share-r 路徑格式）
+//   fbReelHref('not a url')                                                       → null
+export function fbReelHref(url: string): string | null {
+  const raw = url.trim()
+  if (!raw) return null
+  let u: URL
+  try {
+    // 容許使用者貼上時漏打 scheme（例如 www.facebook.com/reel/123）
+    u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`)
+  } catch {
+    return null
+  }
+  const host = u.hostname.toLowerCase()
+  const isFacebook = host === 'facebook.com' || host.endsWith('.facebook.com')
+  const isFbWatch = host === 'fb.watch' || host.endsWith('.fb.watch')
+  if (!isFacebook && !isFbWatch) return null
+  if (isFacebook && !/^\/(reel\/[A-Za-z0-9._-]+|share\/r\/[A-Za-z0-9._-]+)\/?$/.test(u.pathname)) return null
+  if (isFbWatch && !/^\/[A-Za-z0-9._-]+\/?$/.test(u.pathname)) return null
+  return u.toString()
+}
+
+// 9:16 直式響應式 Facebook Reel 嵌入（官方免 SDK plugins/video.php），比照手機畫面置中、
+// max-width 340px（不佔滿整頁）。url 解析不出合法 FB 連結時不渲染任何東西（不可把使用者輸入
+// 直接塞進 iframe src；href query 一律放 fbReelHref() 解析後的標準化網址，不是原始輸入）。
+export function FBReelEmbed({ url, title }: { url: string; title?: string }) {
+  const href = fbReelHref(url)
+  if (!href) return null
+  return (
+    <div style={{ maxWidth: 340, margin: '0 auto' }}>
+      <div style={{ position: 'relative', aspectRatio: '9 / 16', borderRadius: 12, overflow: 'hidden' }}>
+        <iframe
+          src={`https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(href)}&show_text=false`}
+          title={title ?? 'video'}
+          allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
+          allowFullScreen
+          loading="lazy"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
+        />
+      </div>
     </div>
   )
 }
