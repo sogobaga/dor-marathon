@@ -248,6 +248,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
             onPay={setPayRace}
             onOpenProfile={() => setShowProfile(true)}
             onOpenPersonalTasks={() => setShowPersonalTasks(true)}
+            onOpenTraining={() => setShowTraining(true)}
             onOpenExplore={() => setShowExplore(true)}
             onOpenGallery={() => setShowGallery(true)}
             onOpenTitle={() => setShowTitle(true)}

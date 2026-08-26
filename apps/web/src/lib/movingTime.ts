@@ -50,8 +50,20 @@ export function initMovingState(): MovingState {
 }
 
 const MOVE_SPEED_MIN = 0.6 // m/s：連續兩點瞬時速度達此值才算「移動訊號」的必要條件之一
-const MOVE_DIST_MIN_BASE = 3 // 公尺：移動訊號的最小位移下限（另有 0.5×accuracy 動態下限，取較大者）
+const MOVE_DIST_MIN_BASE = 2.5 // 公尺：移動訊號的最小位移下限（另有 0.3×accuracy 動態下限，取較大者）
 export const HYSTERESIS_N = 2 // 連續 N 筆同類訊號才切換確定狀態，過濾單筆飄移尖峰
+
+// v0.1.587 上線後回報「移動時間不會前進」的根因（已用單元測試驗證，見 movingTime.test.ts 開頭的根因情境）：
+// 手機 watchPosition 在戶外常態以「約 1Hz」回報，跑步 3m/s 時單次回呼之間的位移只有約 3m；舊門檻
+// max(3m, 0.5×acc) 在精度 20m 時＝10m，遠大於單筆 3m 位移，導致「正常跑步」的每一筆訊號都被判定為
+// still、movingSince 永遠是 null、移動時間卡在 0。（另一個候選根因——精度 >30m 的點被完全排除在判定
+// 之外——查證後不成立：page.tsx 實際餵給這個狀態機的精度門檻是 goodAcc=acc<=65，與距離累積共用，
+// 30m 只是這裡曾經想像的預設值、從未被 page.tsx 呼叫，是死碼，已移除。）
+// 修法：呼叫端（page.tsx）改成「距上一個判定基準點 dt<2.5 秒的點不判定、也不推進基準點」（見
+// MOVE_JUDGE_WINDOW_S），讓進來的位移是 ≥2.5 秒的累積量，飄移在長視窗下的等效速度會被攤薄、真實移動
+// 的位移量則足以穿過門檻；同時把位移門檻放寬到 max(2.5m, 0.3×accuracy)（原 3m/0.5×accuracy 對長視窗
+// 位移仍偏嚴）。
+export const MOVE_JUDGE_WINDOW_S = 2.5 // 秒：lastMoveRef 判定基準點的最小視窗，見上方說明
 
 /** 精度過濾：沿用頁內既有精度門檻慣例（呼叫端傳入頁面既有的 MAX_ACC）；未帶入時用 30m 保守值。 */
 export function isAccurateEnough(acc: number, maxAcc = 30): boolean {
@@ -59,16 +71,19 @@ export function isAccurateEnough(acc: number, maxAcc = 30): boolean {
 }
 
 /**
- * 判定「上一點→本點」是移動訊號、靜止訊號、或不可判定（dt<=0，例如亂序/重複時間戳，呼叫端應略過）。
- * 與距離累積門檻（page.tsx 的 JITTER_MIN=6m）完全獨立：這裡的位移下限取 max(3m, 0.5×accuracy)，
- * accuracy 越差，需要越大的位移才敢判定為「真的在移動」（否則可能只是定位漂移，不是真的移動）。
+ * 判定「上一個判定基準點→本點」是移動訊號、靜止訊號、或不可判定（dt<=0，例如亂序/重複時間戳，
+ * 呼叫端應略過）。與距離累積門檻（page.tsx 的 JITTER_MIN=6m）完全獨立：這裡的位移下限取
+ * max(2.5m, 0.3×accuracy)，accuracy 越差，需要越大的位移才敢判定為「真的在移動」（否則可能只是定位
+ * 漂移，不是真的移動）。呼叫端應先套用 MOVE_JUDGE_WINDOW_S 篩選過 prev/cur 的時間間距（見上方常數
+ * 說明），讓 distM 是足夠長視窗下的累積位移，而不是單次 GPS 回呼之間的瞬時位移——這是本檔案修掉
+ * 「移動時間卡住不動」的關鍵前提，這個函式本身不重複檢查視窗長度。
  * distM 由呼叫端算好傳入（沿用頁面既有的 haversineM，避免這個檔案重複依賴地理計算的實作）。
  */
 export function classifyMoveSignal(prev: MovePoint, cur: MovePoint, distM: number): 'moving' | 'still' | null {
   const dt = (cur.t - prev.t) / 1000
   if (!(dt > 0)) return null
   const speed = distM / dt
-  const distMin = Math.max(MOVE_DIST_MIN_BASE, 0.5 * cur.acc)
+  const distMin = Math.max(MOVE_DIST_MIN_BASE, 0.3 * cur.acc)
   return speed >= MOVE_SPEED_MIN && distM > distMin ? 'moving' : 'still'
 }
 

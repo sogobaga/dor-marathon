@@ -1,10 +1,20 @@
 'use client'
 
-// 比賽專注模式：開跑後（status==='tracking'）套在 track 頁上的全螢幕大字資訊 + 配速/補給提醒層。
-// 純顯示/提醒，不寫入任何 GPS/里程狀態——所有數據皆由父層（track/page.tsx）算好傳入，這裡只讀不算第二套。
-// 引擎狀態機：pace 提醒＝「差值判斷 + 60 秒同方向去重」的邊緣觸發器；fuel 提醒＝「單一游標依序消化」的
-// 有限狀態機（等待 → 倒數顯示 → due（醒目 30 秒或點擊關閉）→ 游標前進取下一點），兩者互不干擾、各自用
-// ref 存計時器，不依賴 React effect 的自動 cleanup 時機（避免 GPS 高頻重繪把倒數計時器提前清掉的競態）。
+// 專注模式：任何 tracking 中的跑步都能切入的全螢幕大字資訊疊層，套在 track 頁上。
+// 純顯示/提醒，不寫入任何 GPS/里程/課表/事件任務狀態——所有數據皆由父層（track/page.tsx）算好傳入，
+// 這裡只讀不算第二套，也完全不碰 WorkoutHud/課表引擎/事件任務引擎的邏輯（它們在底下照常運作，
+// 專注模式只是蓋在上面的顯示層，見 track/page.tsx 掛載處的 zIndex 說明）。
+//
+// strategy 可為 null（一般跑步/課表/個人任務等沒有賽事策略的情境）：此時只顯示大字 移動距離/移動時間/
+// 平均配速/當下分段配速，策略專屬的「目標配速/預計完成/補給引擎/配速偏差提醒」整組不渲染（下面每個
+// strategy 專屬區塊都用 `strategy &&` 或 `if (!strategy) return` 短路，讀者可以直接搜 `strategy` 找全部）。
+// 帶 strategy 時維持原「比賽專注模式」完整版行為不變，包括開跑自動進入（由父層決定是否預設開啟，見
+// track/page.tsx 對 initialOpen 的說明）。
+//
+// 引擎狀態機（僅在有 strategy 時運作）：pace 提醒＝「差值判斷 + 60 秒同方向去重」的邊緣觸發器；
+// fuel 提醒＝「單一游標依序消化」的有限狀態機（等待 → 倒數顯示 → due（醒目 30 秒或點擊關閉）→
+// 游標前進取下一點），兩者互不干擾、各自用 ref 存計時器，不依賴 React effect 的自動 cleanup 時機
+//（避免 GPS 高頻重繪把倒數計時器提前清掉的競態）。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FUEL_KIND_LABEL, type RaceStrategy, type StrategySegment } from '@/lib/api'
@@ -38,20 +48,22 @@ type PaceDir = 'fast' | 'slow'
 export default function RaceFocusMode({
   strategy, distanceM, movingS, movingAvgPace, movingSegLivePace,
 }: {
-  strategy: RaceStrategy
+  strategy: RaceStrategy | null // null＝一般跑步/課表/個人任務等沒有賽事策略的情境，只顯示基本 4 大字指標
   distanceM: number // 目前有效距離（公尺）——與頁面主面板「距離」同一份數據（distRef）
   movingS: number // 移動時間（秒，排除靜止/抖動/超速）——頁面既有 #4 移動時間
   movingAvgPace: number // 移動時間平均配速（秒/公里；未達門檻為 0）——頁面既有 movingAvgPace
   movingSegLivePace: number // 目前這 1km 的移動時間即時配速（秒/公里；未達門檻為 0）——頁面既有 movingSegLivePace
 }) {
-  const [hidden, setHidden] = useState(false) // 「顯示完整介面」：暫時隱藏本覆蓋層，露出原本 UI
+  // 「顯示完整介面」：暫時隱藏本覆蓋層，露出原本 UI。初始值＝有 strategy 時預設開啟（維持既有「載入策略
+  // 開跑自動進入專注模式」行為），一般跑步（無 strategy）預設不自動進入、顯示切換鈕讓使用者手動切入。
+  const [hidden, setHidden] = useState(() => !strategy)
   const distKm = distanceM / 1000
 
   // 目前所在分段：落在 [from_km, to_km) 的那一段；已超過總距離則沿用最後一段的目標配速繼續顯示
-  const curSeg: StrategySegment | null =
-    strategy.segments.find((s) => distKm >= s.from_km && distKm < s.to_km)
-    ?? strategy.segments[strategy.segments.length - 1]
-    ?? null
+  // （以下 strategy 專屬邏輯全部短路：無 strategy 時維持安全的空/零值，不渲染對應區塊）
+  const curSeg: StrategySegment | null = strategy
+    ? (strategy.segments.find((s) => distKm >= s.from_km && distKm < s.to_km) ?? strategy.segments[strategy.segments.length - 1] ?? null)
+    : null
   const targetPaceS = curSeg?.pace_s ?? 0
 
   // ── 配速提醒：目前分段即時配速 vs 目前段目標配速，差超過 ±10s/km → 提示；同方向 60 秒內不重複跳 ──
@@ -60,7 +72,7 @@ export default function RaceFocusMode({
   const lastAtRef = useRef(0)
   const alertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
-    if (!targetPaceS || !movingSegLivePace) return
+    if (!strategy || !targetPaceS || !movingSegLivePace) return
     const diff = movingSegLivePace - targetPaceS // 正值＝比目標慢，負值＝比目標快
     const dir: PaceDir | null = diff > 10 ? 'slow' : diff < -10 ? 'fast' : null
     if (!dir) return
@@ -73,14 +85,16 @@ export default function RaceFocusMode({
     alertTimerRef.current = setTimeout(() => setPaceAlert(null), 4000)
     // 注意：不用 effect 的 return cleanup 清這顆計時器——GPS 高頻重繪會讓本 effect 頻繁重跑，
     // 若靠 cleanup 清時器，會在 4 秒未到前就被下一次（早退出的）重跑提前清掉，導致提示卡住不消失。
-  }, [movingSegLivePace, targetPaceS])
+  }, [strategy, movingSegLivePace, targetPaceS])
   useEffect(() => () => { if (alertTimerRef.current) clearTimeout(alertTimerRef.current) }, [])
 
   // ── 補給提醒引擎：time/distance 兩種模式依「預計耗時」換算到同一時間軸排序，單一游標依序消化 ──
   const fuelSorted = useMemo(
-    () => strategy.fuel
-      .map((f) => ({ ...f, _predS: f.mode === 'time' ? f.at : predictedTimeAtKm(f.at / 1000, strategy.segments) }))
-      .sort((a, b) => a._predS - b._predS),
+    () => strategy
+      ? strategy.fuel
+          .map((f) => ({ ...f, _predS: f.mode === 'time' ? f.at : predictedTimeAtKm(f.at / 1000, strategy.segments) }))
+          .sort((a, b) => a._predS - b._predS)
+      : [],
     [strategy],
   )
   const [fuelIdx, setFuelIdx] = useState(0)
@@ -120,8 +134,10 @@ export default function RaceFocusMode({
 
   // ── 預計完成時間：已耗移動時間 + 剩餘公里 × 移動平均配速；超過策略總距離則顯示「已達策略距離」──
   let etaLabel = '--:--'
-  if (distKm >= strategy.total_km) etaLabel = '已達策略距離'
-  else if (movingAvgPace > 0) etaLabel = fmtTime(movingS + (strategy.total_km - distKm) * movingAvgPace)
+  if (strategy) {
+    if (distKm >= strategy.total_km) etaLabel = '已達策略距離'
+    else if (movingAvgPace > 0) etaLabel = fmtTime(movingS + (strategy.total_km - distKm) * movingAvgPace)
+  }
 
   if (hidden) {
     return (
@@ -134,7 +150,7 @@ export default function RaceFocusMode({
           borderRadius: 999, padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer',
           boxShadow: '0 4px 16px rgba(0,0,0,.4)', fontFamily: 'inherit',
         }}
-      >🏁 回到專注模式</button>
+      >🏁 專注模式</button>
     )
   }
 
@@ -145,7 +161,7 @@ export default function RaceFocusMode({
       justifyContent: 'center', gap: '2.6vh', padding: '24px 20px', textAlign: 'center', overflowY: 'auto',
     }}>
       <div style={{ fontSize: 12, letterSpacing: '.15em', color: 'var(--tx-dim)', fontWeight: 700 }}>
-        比賽專注模式 · {strategy.name}
+        {strategy ? `比賽專注模式 · ${strategy.name}` : '專注模式'}
       </div>
 
       <Metric label="移動距離" value={distKm.toFixed(2)} unit="km" size="xl" />
@@ -154,12 +170,15 @@ export default function RaceFocusMode({
         <Metric label="平均配速" value={fmtPace(movingAvgPace)} unit="/km" size="md" />
         <Metric label="當下分段配速" value={fmtPace(movingSegLivePace)} unit="/km" size="md" />
       </div>
-      <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
-        <Metric label="目前段目標配速" value={curSeg ? fmtPace(curSeg.pace_s) : '--:--'} unit="/km" size="md" />
-        <Metric label="預計完成時間" value={etaLabel} unit="" size="md" />
-      </div>
+      {/* 以下皆為賽事策略專屬區塊：無 strategy（一般跑步/課表/個人任務等）整組不渲染 */}
+      {strategy && (
+        <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
+          <Metric label="目前段目標配速" value={curSeg ? fmtPace(curSeg.pace_s) : '--:--'} unit="/km" size="md" />
+          <Metric label="預計完成時間" value={etaLabel} unit="" size="md" />
+        </div>
+      )}
 
-      {paceAlert && (
+      {strategy && paceAlert && (
         <div style={{
           background: paceAlert === 'fast' ? 'rgba(255,194,75,.16)' : 'rgba(255,75,92,.16)',
           border: `1px solid ${paceAlert === 'fast' ? 'var(--gold)' : 'var(--hunt)'}`,
@@ -170,14 +189,14 @@ export default function RaceFocusMode({
         </div>
       )}
 
-      {fuelLine && (
+      {strategy && fuelLine && (
         <div style={{
           fontSize: 15, fontWeight: 800, color: 'var(--gold)',
           background: 'rgba(255,194,75,.12)', border: '1px solid rgba(255,194,75,.4)',
           borderRadius: 12, padding: '8px 16px',
         }}>🍫 {fuelLine}</div>
       )}
-      {hasFuel && due && dueActive && (
+      {strategy && hasFuel && due && dueActive && (
         <div
           onClick={advanceFuel}
           className="track-blink"

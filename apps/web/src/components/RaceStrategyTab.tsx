@@ -274,7 +274,7 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
                 )}
 
                 <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                  <button onClick={vipGate(() => startChallenge(s.id))} style={{ ...startBtnFlex, ...(isVip ? {} : lockedBtn) }}>{isVip ? '▶ 開始挑戰' : '🔒 開始挑戰（VIP專屬功能）'}</button>
+                  <button onClick={vipGate(() => startChallenge(s.id))} style={{ ...startBtnFlex, ...(isVip ? {} : lockedBtn) }}>{isVip ? '▶ 啟動賽事模式' : '🔒 開始挑戰（VIP專屬功能）'}</button>
                   <button onClick={vipGate(() => openEdit(s))} style={smallBtn}>✏️ 編輯</button>
                   <button disabled={deletingId === s.id} onClick={vipGate(() => removeStrategy(s.id))} style={smallBtn}>🗑 刪除</button>
                 </div>

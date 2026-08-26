@@ -165,11 +165,11 @@ export default function MemberPanel({
           </div>
         )}
 
-        {/* 累計完成里程（重點）+ 個人任務入口（後台可控可見性） */}
+        {/* 累計完成里程（重點）+ 自主訓練入口（後台可控可見性；使用頻率較高，故佔此顯眼位置——與「個人任務」對調） */}
         {user && dash && (
           <div style={{ display: 'flex', gap: 10, marginTop: 14, alignItems: 'stretch' }}>
             <div
-              style={{ ...mileageBox, flex: dash.personal_entry === 'hidden' ? 1 : '0 0 auto', cursor: dash.achievement_entry === 'shown' ? 'pointer' : 'default' }}
+              style={{ ...mileageBox, flex: dash.training_entry === 'hidden' ? 1 : '0 0 auto', cursor: dash.achievement_entry === 'shown' ? 'pointer' : 'default' }}
               onClick={(e) => { e.stopPropagation(); if (dash.achievement_entry === 'shown') onOpenAchievement?.() }}
             >
               <div style={{ fontSize: 22, fontWeight: 900, color: 'var(--fug)', fontVariantNumeric: 'tabular-nums', lineHeight: 1.05 }}>
@@ -178,14 +178,14 @@ export default function MemberPanel({
               {/* 可點提示：僅 achievement_entry='shown' 時顯示小箭頭，暗示可點開「數據探索」 */}
               <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 3, whiteSpace: 'nowrap' }}>累計完成里程{dash.achievement_entry === 'shown' ? ' ›' : ''}</div>
             </div>
-            {dash.personal_entry !== 'hidden' && (
+            {dash.training_entry !== 'hidden' && (
               <button
-                disabled={dash.personal_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.personal_entry === 'shown') onOpenPersonalTasks?.() }}
-                style={{ ...taskBtn, cursor: dash.personal_entry === 'shown' ? 'pointer' : 'default', opacity: dash.personal_entry === 'shown' ? 1 : 0.62 }}
+                disabled={dash.training_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.training_entry === 'shown') onOpenTraining?.() }}
+                style={{ ...taskBtn, cursor: dash.training_entry === 'shown' ? 'pointer' : 'default', opacity: dash.training_entry === 'shown' ? 1 : 0.62 }}
               >
-                <span style={{ fontSize: 15, fontWeight: 900 }}>個人任務</span>
-                <span style={{ fontSize: 11, fontWeight: 700 }}>{dash.personal_entry === 'locked' ? '即將開放 ›' : '開始你的訓練旅程 ›'}</span>
+                <span style={{ fontSize: 15, fontWeight: 900 }}>🏃 自主訓練</span>
+                <span style={{ fontSize: 11, fontWeight: 700 }}>{dash.training_entry === 'locked' ? '即將開放 ›' : '打造你的專屬課表 ›'}</span>
               </button>
             )}
           </div>
@@ -206,7 +206,7 @@ export default function MemberPanel({
 
       {/* 探索入口（面板下方、後台可控可見性；首頁不顯示）：兩欄直排——
           左欄(上→下)：城市探索、卡片探索、成就探索、跑者充電站、數據探索
-          右欄(上→下)：自主訓練、知識探索、活動獎勵、環台大富翁。
+          右欄(上→下)：個人任務、知識探索、活動獎勵、環台大富翁。
           跑者充電站／活動獎勵開放全體會員恆顯示；其餘由各自 *_entry 三態控管（hidden 不渲染、locked 反灰）。
           外層 alignItems:flex-start，左右兩欄各依內容高度堆疊（按鈕數不同也不會被拉伸）；entryBtn 用 width:100% 撐滿欄寬。 */}
       {showEntries && user && dash && (
@@ -252,14 +252,14 @@ export default function MemberPanel({
               </button>
             )}
           </div>
-          {/* 右欄 */}
+          {/* 右欄（首項：個人任務——與「自主訓練」對調，原為顯眼的資訊面板位置） */}
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {dash.training_entry !== 'hidden' && (
-              <button disabled={dash.training_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.training_entry === 'shown') onOpenTraining?.() }}
-                style={{ ...entryBtn, opacity: dash.training_entry === 'shown' ? 1 : 0.6, cursor: dash.training_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏃 自主訓練</span>
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.training_entry === 'locked' ? '即將開放 ›' : '打造你的專屬課表 ›'}</span>
+            {dash.personal_entry !== 'hidden' && (
+              <button disabled={dash.personal_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.personal_entry === 'shown') onOpenPersonalTasks?.() }}
+                style={{ ...entryBtn, opacity: dash.personal_entry === 'shown' ? 1 : 0.6, cursor: dash.personal_entry === 'shown' ? 'pointer' : 'default' }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>個人任務</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.personal_entry === 'locked' ? '即將開放 ›' : '開始你的訓練旅程 ›'}</span>
               </button>
             )}
             {dash.knowledge_entry !== 'hidden' && (

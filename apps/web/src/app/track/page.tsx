@@ -21,7 +21,7 @@ import { EventInteraction } from '@/components/EventInteraction'
 import { useIsPhone } from '@/lib/useIsMobile'
 import { useIsLandscape } from '@/lib/useIsLandscape'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
-import { initMovingState, advanceMovingState, classifyMoveSignal, currentMovingS, flushMovingState, type MovingState } from '@/lib/movingTime'
+import { initMovingState, advanceMovingState, classifyMoveSignal, currentMovingS, flushMovingState, MOVE_JUDGE_WINDOW_S, type MovingState } from '@/lib/movingTime'
 import RaceFocusMode from './RaceFocusMode'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -260,6 +260,16 @@ export default function TrackPage() {
           } else {
             distRef.current += seg
             setDistance(distRef.current)
+            // #4 距離訊號補強：這筆位移已經通過距離累積的採納門檻（d≥JITTER_MIN=6m 且非超速，acc≤65m）
+            // ——本身就足以證明「正在移動」，直接餵一筆 moving 訊號進移動狀態機（與下方 goodAcc 區塊的
+            // lastMoveRef 判定鏈共用同一個 movingStateRef、同一條遲滯計數）。這同時解掉「精度 30-65m
+            // （距離累積用較寬鬆的 MAX_ACC=65，但移動判定的 lastMoveRef 視窗可能還沒湊滿）時距離有累、
+            // 移動時間卻沒跟著走」的已知落差，見 lib/movingTime.ts 對此的說明。
+            {
+              const nowMsD = Date.now()
+              movingStateRef.current = advanceMovingState(movingStateRef.current, 'moving', nowMsD)
+              setMovingS(currentMovingS(movingStateRef.current, nowMsD))
+            }
             // 每公里分段（只在有效距離上前進）
             const km = Math.floor(distRef.current / 1000)
             const el = (p.t - startRef.current) / 1000
@@ -279,13 +289,18 @@ export default function TrackPage() {
       }
     }
     // #4 移動/靜止 狀態機：與上面的距離累積刻意各自獨立——距離用 JITTER_MIN=6m 抖動門檻＋MAX_ACC=65m
-    // 精度門檻決定「這個點算不算數」；這裡改用速度(≥0.6m/s)＋動態位移(>max(3m,0.5×accuracy))雙門檻＋
+    // 精度門檻決定「這個點算不算數」；這裡改用速度(≥0.6m/s)＋動態位移(>max(2.5m,0.3×accuracy))雙門檻＋
     // 連續2筆遲滯才切換，避免「移動時間」沿用距離的寬鬆門檻而在原地休息/等紅燈時仍持續累加。
-    // lastMoveRef 每個精度合格的點都前進（不像 lastAccRef 只在通過 6m 門檻時前進），movingStateRef 才拿得到
-    // 「連續兩點」的真實速度樣本。狀態機定義與遲滯/斷流邊界說明見 lib/movingTime.ts。
+    // ⚠️ 判定視窗（修「移動時間卡住不動」的根因，見 lib/movingTime.ts 開頭的根因說明）：手機 GPS 常態
+    // 以約 1Hz 回報，跑步單次回呼間位移只有 2-4m，套用上面的位移門檻幾乎必被判定為 still。改成「距上一個
+    // 判定基準點(lastMoveRef) dt<MOVE_JUDGE_WINDOW_S(2.5秒) 的點先不判定、也不推進基準點」，讓真正拿去
+    // classifyMoveSignal 的位移是 ≥2.5 秒的累積量（跑步 3m/s×2.5s=7.5m 能穿過門檻，靜止飄移在長視窗下
+    // 等效速度被攤薄）；只有真的做了判定，才把 lastMoveRef 推進到本點，否則留給下一個點繼續累積位移。
     if (goodAcc) {
       const prevMove = lastMoveRef.current
-      if (prevMove) {
+      if (!prevMove) {
+        lastMoveRef.current = p // 第一個精度合格的點：設為判定基準，不判定
+      } else if ((p.t - prevMove.t) / 1000 >= MOVE_JUDGE_WINDOW_S) {
         const dMove = haversineM(prevMove, p)
         const signal = classifyMoveSignal(prevMove, p, dMove)
         if (signal) {
@@ -293,8 +308,8 @@ export default function TrackPage() {
           movingStateRef.current = advanceMovingState(movingStateRef.current, signal, nowMs)
           setMovingS(currentMovingS(movingStateRef.current, nowMs)) // GPS 觸發當下先更新一次；兩次 GPS 之間由下方 250ms tick 補平滑
         }
+        lastMoveRef.current = p // 只在真的做了判定後才推進基準點；dt<視窗的點留給下一筆繼續累積位移
       }
-      lastMoveRef.current = p
     }
     // 事件正式進行中（非演出階段）才更新即時位移（進度條）
     if (activeEventRef.current?.phase === 'active') setEventMoved(distRef.current - activeEventRef.current.triggerD)
@@ -707,7 +722,10 @@ export default function TrackPage() {
     // 測試：跑步中、無進行中事件時輪詢認領後台手動觸發（每 30 秒；結算中不認領）
     // 效能優化：跑步中 95% 時間空轉；1000 人同時跑步時此輪詢是全站最大宗請求流量（5s 間隔約 200 req/s）
     // 拉長到 30 秒後降到約 33 req/s；管理員手動推送事件最晚 30 秒內會被領取，可接受。
-    if (!activeEventRef.current && !completingRef.current && now - lastClaimRef.current > 30000) {
+    // 賽事模式（raceStrategy 已載入）：與下方隨機事件觸發同理抑制——手動認領也是「事件任務」引擎的另一個
+    // 觸發入口（同一套 ActiveEvent/EventInteraction 全螢幕演出），賽事進行需要專注，不應被任何來源的新
+    // 事件打斷（使用者規格，見任務規格 C）。
+    if (!raceStrategy && !activeEventRef.current && !completingRef.current && now - lastClaimRef.current > 30000) {
       lastClaimRef.current = now
       claimManualEvent()
     }
@@ -808,6 +826,13 @@ export default function TrackPage() {
     }
     // 無進行中事件 → 等隨機等待時間到 + 符合觸發條件才挑選（結算中 / 建立 occurrence 中不 arm，避免重複觸發或蓋掉剛完成的結果）
     if (completingRef.current || armingRef.current || now < nextEventAtRef.current) return
+    // 賽事模式（已載入賽事策略 raceStrategy，見 RaceStrategyTab「啟動賽事模式」帶 ?strategy=<id> 進來）
+    // 抑制「事件任務」的新觸發：賽事進行需要專注在配速/補給，GPS 即時觸發的隨機任務全螢幕紅閃演出會打斷
+    // 比賽節奏，這是使用者明確規格（見任務規格 C）。只抑制「新事件的觸發」（這裡 activeEventRef 必為
+    // null，不存在「事件已在進行中」的情況）；claimManualEvent（後台手動測試認領）與 Phase B 多人賽事
+    // 邀請走各自獨立的機制，不受此處影響。raceStrategy 在追蹤期間不會變動（見 setRaceStrategy 呼叫點：
+    // 一次為 idle 時載入、一次為 idle 時取消策略，皆早於 start()），這裡讀取一般 state 而非 ref 是安全的。
+    if (raceStrategy) return
     // 事件間距＝「隨機等待 nextEventAtRef([最短,最長])」＋伺服器防濫用地板(taskGateOpen)決定。
     // 舊的 per-def cooldown_sec 是「寫死 15 分鐘冷卻」的殘留：第一個事件時 lastEventEndRef=0 剛好不擋，
     // 但事件結束後 lastEventEndRef 變成真時間，會把「所有」def 擋掉整趟（cooldown 越大擋越久）→ 第二個事件永遠不觸發。移除之。
@@ -1518,9 +1543,12 @@ export default function TrackPage() {
       {status === 'tracking' && activeEvent?.phase === 'active' && isInteractionType(activeEvent.def.completion_type) && (
         <EventInteraction active={activeEvent} onDone={handleInteractionDone} paused={isLandscape} assets={fxAssets} />
       )}
-      {/* 比賽專注模式：開跑後才出現的全螢幕大字資訊＋配速/補給提醒疊層；z-index 600（>面板 500，
-          但低於事件演出 2100+/確認結束 2500/Strava 三選一與登入 3300），讓既有的警示/事件系統仍蓋在它之上。 */}
-      {status === 'tracking' && raceStrategy && (
+      {/* 專注模式：任何 tracking 中的跑步都能切入的全螢幕大字資訊疊層（有賽事策略時＋配速/補給提醒完整版，
+          維持開跑自動進入；無策略的一般跑步/課表/個人任務只顯示基本 4 指標，預設不自動進入，靠元件內建的
+          切換鈕手動開關，見 RaceFocusMode 內 hidden 初始值）。z-index 600（>面板 500，但低於事件演出
+          2100+/確認結束 2500/Strava 三選一與登入 3300），讓既有的警示/事件系統仍蓋在它之上；純顯示層，
+          不影響 WorkoutHud/課表引擎/事件任務引擎下方繼續運作的任何邏輯。 */}
+      {status === 'tracking' && (
         <RaceFocusMode strategy={raceStrategy} distanceM={distance} movingS={movingS} movingAvgPace={movingAvgPace} movingSegLivePace={movingSegLivePace} />
       )}
       {confirmEnd && activeEvent && (() => {
