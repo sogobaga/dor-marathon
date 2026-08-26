@@ -6,7 +6,6 @@ import { useUser, getUserToken, clearUserSession, getSessionEpoch } from '@/lib/
 import { createSiteSocket } from '@/lib/api'
 import { useSiteRealtimeStore, DATA_TOPICS, type DataTopic } from '@/lib/siteRealtimeStore'
 import { overlayMount } from '@/lib/overlayMount'
-import RefreshBadge from './RefreshBadge'
 
 const INITIAL_BACKOFF_MS = 1000
 const MAX_BACKOFF_MS = 30000
@@ -19,13 +18,18 @@ interface DataUpdatedMsg {
 }
 
 // 全站掛載的 /ws/site 連線（登入才連）：收到 data_updated 就把 topic 記進待更新集合，
-// 交給 RefreshBadge 顯示非阻斷式提示，使用者點了才真的失效 SWR 快取。絕不自動刷新畫面。
+// 並在短暫去抖動後「靜默」失效對應 SWR 快取（背景重抓、資料原地換新）。
+// v0.1.600 起移除原本的 RefreshBadge「有新內容，點我更新」藥丸（使用者拍板：點了沒有可感知的
+// 變化、還讓玩家覺得系統一直在更新怪怪的）——改為自動靜默刷新，SWR 背景 revalidate 不打斷閱讀。
 export default function SiteRealtime() {
   const user = useUser()
   const userId = user?.id ?? null
   const addTopic = useSiteRealtimeStore((s) => s.addTopic)
+  const refreshAndClear = useSiteRealtimeStore((s) => s.refreshAndClear)
   const bumpMail = useSiteRealtimeStore((s) => s.bumpMail)
   const [revoked, setRevoked] = useState(false) // 單一登入：本裝置被踢下線時顯示提示彈窗
+  // 靜默刷新去抖動：後台批次操作常在一兩秒內連發多個 data_updated，收斂成一次失效
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -81,8 +85,13 @@ export default function SiteRealtime() {
         const targets = msg.target_user_ids
         const relevant = !targets || targets.length === 0 || (userIdRef.current != null && targets.includes(userIdRef.current))
         if (!relevant) return
-        if (msg.topic === 'mail') { bumpMail(); return } // 站內信：自動即時更新未讀紅點（不進 refresh badge）
-        if ((DATA_TOPICS as readonly string[]).includes(msg.topic)) addTopic(msg.topic as DataTopic)
+        if (msg.topic === 'mail') { bumpMail(); return } // 站內信：自動即時更新未讀紅點（獨立通道）
+        if ((DATA_TOPICS as readonly string[]).includes(msg.topic)) {
+          addTopic(msg.topic as DataTopic)
+          // 靜默自動失效（600ms 去抖動）：取代舊 RefreshBadge 的手動點擊觸發
+          if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
+          refreshTimerRef.current = setTimeout(() => { refreshTimerRef.current = null; refreshAndClear() }, 600)
+        }
       }
       ws.onclose = () => {
         if (wsRef.current === ws) wsRef.current = null
@@ -112,17 +121,13 @@ export default function SiteRealtime() {
       closingRef.current = true
       document.removeEventListener('visibilitychange', onVisible)
       clearReconnectTimer()
+      if (refreshTimerRef.current) { clearTimeout(refreshTimerRef.current); refreshTimerRef.current = null }
       wsRef.current?.close()
       wsRef.current = null
     }
-  }, [userId, addTopic, bumpMail])
+  }, [userId, addTopic, refreshAndClear, bumpMail])
 
-  return (
-    <>
-      <RefreshBadge />
-      {revoked && <SessionRevokedModal onClose={() => setRevoked(false)} />}
-    </>
-  )
+  return revoked ? <SessionRevokedModal onClose={() => setRevoked(false)} /> : null
 }
 
 // 單一登入被踢下線的提示彈窗：沿用 overlayMount()（PC 版框在手機模擬框內，獨立路由退回視窗 fixed）

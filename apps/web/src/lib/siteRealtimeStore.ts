@@ -1,5 +1,5 @@
 // 全站 data_updated 推播失效：待更新 topics 集合 + 依對應表精準失效 SWR keys。
-// SiteRealtime.tsx（WS onmessage）呼叫 addTopic；RefreshBadge.tsx 顯示 + 點擊呼叫 refreshAndClear。
+// SiteRealtime.tsx（WS onmessage）呼叫 addTopic 後以去抖動靜默呼叫 refreshAndClear（v0.1.600 起無 RefreshBadge）。
 import { create } from 'zustand'
 import { mutate } from 'swr'
 
@@ -24,7 +24,7 @@ interface SiteRealtimeState {
   // 站內信到達計數：收到 topic=mail 就 +1；MailPanel 訂閱此值→自動重抓未讀數（不經 refresh badge、紅點立即更新）
   mailTick: number
   bumpMail: () => void
-  // 對每個待更新 topic 失效對應 SWR keys，然後清空集合。絕不自動呼叫——只能由使用者點擊 Badge 觸發。
+  // 對每個待更新 topic 失效對應 SWR keys，然後清空集合。由 SiteRealtime 去抖動後靜默呼叫（背景 revalidate）。
   refreshAndClear: () => void
 }
 
