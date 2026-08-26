@@ -2680,6 +2680,26 @@ export const adminMembersApi = {
     }),
 }
 
+// 推廣連結頁「成效統計」：各通路近 12 週註冊數趨勢 + 彙總（見後端 internal/profile/signup_stats.go）
+export interface SignupStatsWeek {
+  week_start: string // 台灣時區週一起算的當週起始日 YYYY-MM-DD
+  counts: Record<string, number> // key=SignupSource，只含當週有註冊的來源
+}
+export interface SignupStatsTotal {
+  source: SignupSource
+  utm_source: string // 僅 source='other' 時可能有值（原始 utm_source）；其餘固定空字串
+  c7: number
+  c30: number
+  total: number
+}
+export interface SignupStats {
+  weekly: SignupStatsWeek[]
+  totals: SignupStatsTotal[]
+}
+export const adminSignupStatsApi = {
+  get: (token: string) => request<SignupStats>('/admin/signup-stats', { headers: withAuth(token) }),
+}
+
 export type TaskModuleInput = { name: string; description?: string; items: TaskModuleItem[] }
 
 export const adminTaskModulesApi = {

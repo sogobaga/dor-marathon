@@ -526,6 +526,7 @@ func main() {
 			r.With(perm("training")).Mount("/admin/training", trainingHandler.AdminRouter())
 			r.With(perm("virtual")).Mount("/admin/virtual-runners", virtualRunnerHandler.AdminRouter())
 			r.With(perm("settings")).Get("/admin/data-source-metrics", profileHandler.AdminDataSourceMetrics)
+			r.With(perm("settings")).Get("/admin/signup-stats", profileHandler.AdminSignupStats) // 推廣連結頁「成效統計」：各通路週別趨勢＋彙總
 			r.With(perm("organizer")).Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 			r.With(perm("partners")).Mount("/admin/partner-shops", partnerHandler.AdminRouter())
 			r.With(perm("monopoly")).Mount("/admin/monopoly", monopolyHandler.AdminRouter())
