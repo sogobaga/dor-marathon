@@ -17,16 +17,25 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid email or password")
-	ErrEmailTaken         = errors.New("email already registered")
-	ErrHandleTaken        = errors.New("handle already taken")
-	ErrTokenInvalid       = errors.New("token invalid or expired")
+	ErrInvalidCredentials  = errors.New("invalid email or password")
+	ErrEmailTaken          = errors.New("email already registered")
+	ErrHandleTaken         = errors.New("handle already taken")
+	ErrTokenInvalid        = errors.New("token invalid or expired")
 	ErrGoogleNotConfigured = errors.New("google login not configured")
 	ErrGoogleTokenInvalid  = errors.New("invalid google id token")
 	// ErrSessionSuperseded：refresh token 的 session epoch 與帳號目前 epoch 不符——
 	// 代表帳號已在別處重新登入（單一登入強制踢舊裝置），這顆 refresh token 已失效。
 	ErrSessionSuperseded = errors.New("session superseded by a newer login")
 )
+
+// Acq 前端 lib/acquisition.ts 於 App 首次進站（first-touch）擷取的來源歸因原始輸入，隨
+// Register/Google 請求選填夾帶；只在「新建用戶」路徑才會被用到（見 Repository.Create /
+// CreateGoogleUser），交給 internal/attribution.Classify 判斷本次註冊來源。皆可能為空字串
+// （前端尚未部署、使用者關閉 localStorage、或走既有帳號登入分支等情形）——零值即代表無歸因資訊。
+type Acq struct {
+	LandingURL  string
+	ReferrerURL string
+}
 
 type TokenPair struct {
 	AccessToken  string `json:"access_token"`
@@ -65,8 +74,10 @@ func NewService(repo *Repository, rdb *redis.Client, jwtSecret string, accessTTL
 }
 
 // Register 建立新使用者（role 由呼叫方指定：user 或 organizer）。refCode 為可選的推薦碼
-// （?ref=<code> 連結帶入），交給 repo.Create 綁定推薦關係（見 internal/referral.BindReferrer）。
-func (s *Service) Register(ctx context.Context, email, handle, name, password, role, refCode string) (*User, *TokenPair, error) {
+// （?ref=<code> 連結帶入），交給 repo.Create 綁定推薦關係（見 internal/referral.BindReferrer）；
+// acq 為可選的來源歸因原始輸入，一併交給 repo.Create 記錄（見 internal/attribution.Record），
+// 失敗只 log 絕不影響本函式的回傳結果——不需要在此處理錯誤分支。
+func (s *Service) Register(ctx context.Context, email, handle, name, password, role, refCode string, acq Acq) (*User, *TokenPair, error) {
 	if role == "" {
 		role = "user"
 	}
@@ -87,7 +98,7 @@ func (s *Service) Register(ctx context.Context, email, handle, name, password, r
 		return nil, nil, fmt.Errorf("hash password: %w", err)
 	}
 
-	user, err := s.repo.Create(ctx, email, handle, name, string(hash), role, refCode)
+	user, err := s.repo.Create(ctx, email, handle, name, string(hash), role, refCode, acq)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -135,9 +146,10 @@ func (s *Service) Login(ctx context.Context, email, password string) (*User, *To
 
 // LoginWithGoogle 用 Google ID token 登入/註冊（GIS ID-token 流程）。
 // 驗證 token → 依 sub 找帳號；無則用 email 連結既有帳號；再無則建立新會員。
-// refCode 為可選的推薦碼（?ref=<code> 連結帶入），只在「全新會員」分支才會被用到——
-// 既有帳號（已用 Google 登入過 / email 連結）完全不碰推薦綁定。
-func (s *Service) LoginWithGoogle(ctx context.Context, idToken, refCode string) (*User, *TokenPair, error) {
+// refCode 為可選的推薦碼（?ref=<code> 連結帶入）、acq 為可選的來源歸因原始輸入，皆只在
+// 「全新會員」分支才會被用到——既有帳號（已用 Google 登入過 / email 連結）完全不碰推薦綁定
+// 或來源歸因（一個帳號只會有一筆首次註冊來源，不因之後改用 Google 登入而改寫）。
+func (s *Service) LoginWithGoogle(ctx context.Context, idToken, refCode string, acq Acq) (*User, *TokenPair, error) {
 	if s.googleClientID == "" {
 		return nil, nil, ErrGoogleNotConfigured
 	}
@@ -188,7 +200,7 @@ func (s *Service) LoginWithGoogle(ctx context.Context, idToken, refCode string) 
 		if err != nil {
 			return nil, nil, err
 		}
-		user, err = s.repo.CreateGoogleUser(ctx, email, handle, name, picture, sub, refCode)
+		user, err = s.repo.CreateGoogleUser(ctx, email, handle, name, picture, sub, refCode, acq)
 		if err != nil {
 			return nil, nil, err
 		}

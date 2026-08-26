@@ -57,12 +57,13 @@ func (h *Handler) recordLogin(userID, method, ip string) {
 // POST /api/v1/auth/register
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email    string `json:"email"    validate:"required,email"`
-		Handle   string `json:"handle"   validate:"required,min=3,max=30,alphanum"`
-		Name     string `json:"name"     validate:"required,min=1,max=50"`
-		Password string `json:"password" validate:"required,min=8"`
-		Role     string `json:"role"`     // 可選：留空 = "user"，填 "organizer" = 合作方申請
-		RefCode  string `json:"ref_code"` // 可選：?ref=<code> 推廣連結帶入的推薦碼
+		Email    string  `json:"email"    validate:"required,email"`
+		Handle   string  `json:"handle"   validate:"required,min=3,max=30,alphanum"`
+		Name     string  `json:"name"     validate:"required,min=1,max=50"`
+		Password string  `json:"password" validate:"required,min=8"`
+		Role     string  `json:"role"`     // 可選：留空 = "user"，填 "organizer" = 合作方申請
+		RefCode  string  `json:"ref_code"` // 可選：?ref=<code> 推廣連結帶入的推薦碼
+		Acq      *acqReq `json:"acq"`      // 可選：來源歸因（見 lib/acquisition.ts），只在新帳號才會被用到
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -74,7 +75,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, pair, err := h.svc.Register(r.Context(), req.Email, req.Handle, req.Name, req.Password, req.Role, req.RefCode)
+	user, pair, err := h.svc.Register(r.Context(), req.Email, req.Handle, req.Name, req.Password, req.Role, req.RefCode, req.Acq.toAcq())
 	if errors.Is(err, ErrEmailTaken) {
 		respondErr(w, http.StatusConflict, "email already registered")
 		return
@@ -136,8 +137,9 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 // POST /api/v1/auth/google — Google ID token 登入（GIS 流程）
 func (h *Handler) Google(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		IDToken string `json:"id_token" validate:"required"`
-		RefCode string `json:"ref_code"` // 可選：?ref=<code> 推廣連結帶入的推薦碼（只在新帳號分支使用）
+		IDToken string  `json:"id_token" validate:"required"`
+		RefCode string  `json:"ref_code"` // 可選：?ref=<code> 推廣連結帶入的推薦碼（只在新帳號分支使用）
+		Acq     *acqReq `json:"acq"`      // 可選：來源歸因（只在新帳號分支使用）
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid json")
@@ -148,7 +150,7 @@ func (h *Handler) Google(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, pair, err := h.svc.LoginWithGoogle(r.Context(), req.IDToken, req.RefCode)
+	user, pair, err := h.svc.LoginWithGoogle(r.Context(), req.IDToken, req.RefCode, req.Acq.toAcq())
 	if errors.Is(err, ErrGoogleNotConfigured) {
 		respondErr(w, http.StatusServiceUnavailable, "google login not configured")
 		return
@@ -250,6 +252,24 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---
+
+// acqReq 是 Register/Google request body 裡 "acq" 欄位的形狀，對應前端 lib/acquisition.ts 的
+// getAcquisition()——App 首次進站（first-touch）擷取的 landing URL 與 document.referrer，皆選填。
+// 獨立成具名 struct（而非沿用既有 auth.Acq）是因為 JSON 欄位命名（snake_case）與內部 Acq 的欄位
+// 命名習慣不同，用 toAcq() 轉換，避免把 JSON tag 摻進 service 層的內部型別。
+type acqReq struct {
+	LandingURL  string `json:"landing_url"`
+	ReferrerURL string `json:"referrer_url"`
+}
+
+// toAcq 轉為 service 層的 Acq；req 為 nil（前端未帶 acq，或非 Register/Google 端點）時回傳零值，
+// 呼叫端（Service.Register/LoginWithGoogle）對零值 Acq 的行為等同「無歸因資訊」→ classify 落回 direct。
+func (req *acqReq) toAcq() Acq {
+	if req == nil {
+		return Acq{}
+	}
+	return Acq{LandingURL: req.LandingURL, ReferrerURL: req.ReferrerURL}
+}
 
 // CtxKeyUserID is the context key for the authenticated user's ID.
 // Exported so middleware can set it using the same type.

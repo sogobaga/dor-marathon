@@ -5,6 +5,7 @@ import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { adminMembersApi, type MemberDetail } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
+import { signupSourceText } from '@/lib/signupSource'
 
 const GENDER_LABEL: Record<string, string> = { male: '男', female: '女', other: '其他' }
 
@@ -210,8 +211,49 @@ export default function AdminMemberDetailPage() {
           <span>月均 {m.athlete.monthly_freq.toFixed(1)} 次</span>
         </div>
       </div>
+
+      {/* 註冊來源歸因（migration 147_signup_attribution；歷史會員（上線前註冊）無資料顯示 —） */}
+      <h2 style={{ margin: '26px 0 10px', fontSize: 16, fontWeight: 800 }}>註冊來源</h2>
+      <div style={ctrlCard}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: m.attribution ? 10 : 0, color: m.attribution ? 'var(--tx)' : 'var(--tx-faint)' }}>
+          {signupSourceText(m.attribution?.source, m.attribution?.ref_name)}
+        </div>
+        {m.attribution && (
+          <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', display: 'grid', gap: 6 }}>
+            {m.attribution.landing_url && (
+              <div title={m.attribution.landing_url} style={{ wordBreak: 'break-all' }}>
+                <span style={{ color: 'var(--tx-faint)' }}>Landing：</span>{truncateDisplay(m.attribution.landing_url)}
+              </div>
+            )}
+            {m.attribution.referrer_url && (
+              <div title={m.attribution.referrer_url} style={{ wordBreak: 'break-all' }}>
+                <span style={{ color: 'var(--tx-faint)' }}>Referrer：</span>{truncateDisplay(m.attribution.referrer_url)}
+              </div>
+            )}
+            {m.attribution.utm && (m.attribution.utm.source || m.attribution.utm.medium || m.attribution.utm.campaign) && (
+              <div style={{ wordBreak: 'break-all' }}>
+                <span style={{ color: 'var(--tx-faint)' }}>UTM：</span>
+                {[
+                  m.attribution.utm.source && `source=${m.attribution.utm.source}`,
+                  m.attribution.utm.medium && `medium=${m.attribution.utm.medium}`,
+                  m.attribution.utm.campaign && `campaign=${m.attribution.utm.campaign}`,
+                ].filter(Boolean).join(' · ')}
+              </div>
+            )}
+            {m.attribution.created_at && (
+              <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>記錄時間：{m.attribution.created_at.slice(0, 10)}</div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
+}
+
+// 詳情頁顯示用截斷（landing/referrer 網址過長時避免撐爆版面；完整值放 title 屬性供 hover 查看）
+function truncateDisplay(s?: string | null, max = 90): string {
+  if (!s) return ''
+  return s.length > max ? s.slice(0, max) + '…' : s
 }
 
 const ctrlCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: 16 }

@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { adminMembersApi, type MemberSummary } from '@/lib/api'
+import { adminMembersApi, type MemberSummary, type SignupSource } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
+import { signupSourceText, SIGNUP_SOURCE_OPTIONS } from '@/lib/signupSource'
 
 const GENDER_LABEL: Record<string, string> = { male: '男', female: '女', other: '其他' }
 
@@ -36,9 +37,10 @@ export default function AdminMembersList() {
   const [members, setMembers] = useState<MemberSummary[] | null>(null)
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
+  const [source, setSource] = useState<SignupSource | ''>('')
 
   const load = useCallback(
-    (query: string) => {
+    (query: string, src: SignupSource | '') => {
       const token = getToken()
       if (!token) {
         router.replace('/admin/login')
@@ -46,7 +48,7 @@ export default function AdminMembersList() {
       }
       setMembers(null)
       adminMembersApi
-        .list(token, { q: query, limit: 100 })
+        .list(token, { q: query, limit: 100, source: src || undefined })
         .then((res) => setMembers(res.members))
         .catch((e) => {
           if (e?.status === 401) {
@@ -61,7 +63,7 @@ export default function AdminMembersList() {
   )
 
   useEffect(() => {
-    load('')
+    load('', '')
   }, [load])
 
   return (
@@ -71,9 +73,9 @@ export default function AdminMembersList() {
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          load(q)
+          load(q, source)
         }}
-        style={{ display: 'flex', gap: 10, marginBottom: 18 }}
+        style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}
       >
         <input
           value={q}
@@ -84,6 +86,23 @@ export default function AdminMembersList() {
             borderRadius: 10, padding: '10px 12px', color: 'var(--tx)', fontSize: 14, fontFamily: 'inherit',
           }}
         />
+        <select
+          value={source}
+          onChange={(e) => {
+            const next = e.target.value as SignupSource | ''
+            setSource(next)
+            load(q, next)
+          }}
+          style={{
+            background: 'var(--bg-2)', border: '1px solid var(--line-2)',
+            borderRadius: 10, padding: '10px 12px', color: 'var(--tx)', fontSize: 14, fontFamily: 'inherit',
+          }}
+        >
+          <option value="">來源：全部</option>
+          {SIGNUP_SOURCE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
         <button
           type="submit"
           style={{
@@ -109,6 +128,7 @@ export default function AdminMembersList() {
             <div style={{ width: 50 }}>性別</div>
             <div style={{ width: 70, textAlign: 'right' }}>里程</div>
             <div style={{ width: 54 }}>身分</div>
+            <div style={{ width: 110 }}>來源</div>
             <div style={{ width: 130 }}>VIP到期(剩餘)</div>
             <div style={{ width: 110 }}>上次登入</div>
           </div>
@@ -134,6 +154,9 @@ export default function AdminMembersList() {
                       ? { background: 'rgba(255,194,75,.14)', border: '1px solid var(--gold)', color: 'var(--gold)' }
                       : { background: 'var(--bg-2)', border: '1px solid var(--line)', color: 'var(--tx-faint)' }),
                   }}>{m.is_vip ? 'VIP' : '一般'}</span>
+                </div>
+                <div style={{ width: 110, fontSize: 12, color: m.signup_source ? 'var(--tx-dim)' : 'var(--tx-faint)' }}>
+                  {signupSourceText(m.signup_source, m.signup_ref_name)}
                 </div>
                 <div style={{ width: 130, fontSize: 12, color: 'var(--tx-dim)' }}>
                   {m.is_vip && m.vip_expires_at ? (

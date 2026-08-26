@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/dor/api/internal/attribution"
 	"github.com/dor/api/internal/referral"
 )
 
@@ -32,7 +34,7 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) Create(ctx context.Context, email, handle, name, hash, role, refCode string) (*User, error) {
+func (r *Repository) Create(ctx context.Context, email, handle, name, hash, role, refCode string, acq Acq) (*User, error) {
 	u := &User{}
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO users (email, handle, name, password_hash, role, vip_expires_at, vip_plan, vip_since)
@@ -52,7 +54,25 @@ func (r *Repository) Create(ctx context.Context, email, handle, name, hash, role
 	if err := referral.BindReferrer(ctx, r.db, u.ID, refCode); err != nil {
 		return nil, fmt.Errorf("bind referrer: %w", err)
 	}
+	recordSignupAttribution(ctx, r.db, u.ID, acq)
 	return u, nil
+}
+
+// recordSignupAttribution 是 Create/CreateGoogleUser 共用的「新用戶建立後」歸因記錄步驟：讀
+// referrals 表（BindReferrer 剛寫入的資料）拿推薦人 user id、丟給 internal/attribution.Classify
+// 分類、寫入 user_signup_attribution。契約明定「失敗只 log 絕不影響註冊流程」——本函式因此不回傳
+// error，呼叫端無需（也不該）處理失敗分支。db 一律傳 pool（非 tx，見 CreateGoogleUser 呼叫點的
+// 說明：交易內若歸因 INSERT 失敗，COMMIT 在 aborted transaction 下等同 ROLLBACK，會把已成功建立
+// 的帳號一併回滾，違背「不影響註冊流程」的契約）。
+func recordSignupAttribution(ctx context.Context, db attribution.Execer, userID string, acq Acq) {
+	refUserID, err := attribution.ResolveReferrer(ctx, db, userID)
+	if err != nil {
+		log.Printf("auth.recordSignupAttribution: resolve referrer failed user=%s err=%v", userID, err)
+		return
+	}
+	if err := attribution.Record(ctx, db, userID, refUserID, acq.LandingURL, acq.ReferrerURL); err != nil {
+		log.Printf("auth.recordSignupAttribution: record failed user=%s err=%v", userID, err)
+	}
 }
 
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*User, error) {
@@ -128,7 +148,7 @@ func (r *Repository) FindByGoogleSub(ctx context.Context, sub string) (*User, er
 }
 
 // CreateGoogleUser 建立 Google 登入會員（無密碼）並寫入 user_identities，於單一交易內完成
-func (r *Repository) CreateGoogleUser(ctx context.Context, email, handle, name, avatarURL, sub, refCode string) (*User, error) {
+func (r *Repository) CreateGoogleUser(ctx context.Context, email, handle, name, avatarURL, sub, refCode string, acq Acq) (*User, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
@@ -166,6 +186,11 @@ func (r *Repository) CreateGoogleUser(ctx context.Context, email, handle, name, 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
 	}
+	// 來源歸因刻意在交易 Commit「之後」才記錄（見 recordSignupAttribution 的說明）：本函式的
+	// users/user_identities/referrals 建立必須保持原子（上面 tx 已保證），但歸因記錄失敗不可
+	// 波及已成功建立的帳號——若沿用同一筆 tx，一旦 INSERT user_signup_attribution 失敗，
+	// Postgres 會把整個交易視為 aborted，COMMIT 形同 ROLLBACK，反而把剛建好的帳號一起吃掉。
+	recordSignupAttribution(ctx, r.db, u.ID, acq)
 	return u, nil
 }
 

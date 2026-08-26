@@ -875,12 +875,17 @@ export const adminSettingsApi = {
 
 // --- Auth ---
 
+// 註冊來源歸因（migration 147_signup_attribution）：landing_url/referrer_url 選填，後端只在「新建用戶」路徑
+// 才會 classify+寫入，既有帳號一律忽略。由呼叫端帶入 buildAcqPayload()（見 lib/acquisition.ts）。
+export interface AcqPayload { landing_url: string; referrer_url: string }
+
 export const authApi = {
   // refCode：推廣連結帶入的推薦碼（optional，僅新帳號註冊時由後端綁定）
-  register: (body: { email: string; handle: string; name: string; password: string }, refCode?: string) =>
+  // acq：first-touch 擷取的 landing/referrer（optional，僅新帳號註冊時由後端 classify 來源）
+  register: (body: { email: string; handle: string; name: string; password: string }, refCode?: string, acq?: AcqPayload) =>
     request<{ user: User; tokens: TokenPair }>('/auth/register', {
       method: 'POST',
-      body: JSON.stringify(refCode ? { ...body, ref_code: refCode } : body),
+      body: JSON.stringify({ ...body, ...(refCode ? { ref_code: refCode } : {}), ...(acq ? { acq } : {}) }),
     }),
 
   login: (body: { email: string; password: string }) =>
@@ -889,11 +894,12 @@ export const authApi = {
       body: JSON.stringify(body),
     }),
 
-  // Google 登入（GIS ID-token）；refCode：推廣連結帶入的推薦碼（optional，僅新帳號註冊時由後端綁定）
-  google: (id_token: string, refCode?: string) =>
+  // Google 登入（GIS ID-token）；refCode：推廣連結帶入的推薦碼；acq：first-touch 來源擷取
+  // （皆 optional，僅「全新會員」分支由後端使用，既有帳號登入一律忽略）
+  google: (id_token: string, refCode?: string, acq?: AcqPayload) =>
     request<{ user: User; tokens: TokenPair }>('/auth/google', {
       method: 'POST',
-      body: JSON.stringify(refCode ? { id_token, ref_code: refCode } : { id_token }),
+      body: JSON.stringify({ id_token, ...(refCode ? { ref_code: refCode } : {}), ...(acq ? { acq } : {}) }),
     }),
 
   refresh: (refresh_token: string) =>
@@ -2520,6 +2526,9 @@ export const paymentsApi = {
 
 // --- Admin: 會員管理 ---
 
+// 註冊來源歸因分類（migration 147_signup_attribution，見後端 classify 純函式）
+export type SignupSource = 'referral' | 'facebook' | 'instagram' | 'line' | 'google' | 'threads' | 'tiktok' | 'other' | 'direct'
+
 export interface MemberSummary {
   id: string
   email: string
@@ -2536,6 +2545,18 @@ export interface MemberSummary {
   vip_expires_at?: string
   vip_plan: string
   last_login_at?: string
+  signup_source?: SignupSource | null // 歷史會員（migration 147 上線前註冊）無資料 → null/undefined
+  signup_ref_name?: string | null // 推薦人暱稱，僅 source=referral 有值
+}
+
+// 完整歸因資料（會員詳情頁顯示用）
+export interface SignupAttribution {
+  source: SignupSource
+  ref_name?: string | null // 推薦人暱稱，僅 source=referral 有值
+  utm?: { source?: string; medium?: string; campaign?: string } | null
+  landing_url?: string | null
+  referrer_url?: string | null
+  created_at?: string
 }
 
 export interface MemberDetail extends MemberSummary {
@@ -2548,6 +2569,7 @@ export interface MemberDetail extends MemberSummary {
   level: number
   level_title: string
   athlete: AthleteStats
+  attribution?: SignupAttribution | null // 歷史會員無資料 → null/undefined
 }
 
 // --- 後台管理者帳號 + 權限 ---
@@ -2619,11 +2641,12 @@ export const adminAccountsApi = {
 }
 
 export const adminMembersApi = {
-  list: (token: string, params?: { q?: string; limit?: number; offset?: number }) => {
+  list: (token: string, params?: { q?: string; limit?: number; offset?: number; source?: SignupSource }) => {
     const qs = new URLSearchParams()
     if (params?.q) qs.set('q', params.q)
     if (params?.limit) qs.set('limit', String(params.limit))
     if (params?.offset) qs.set('offset', String(params.offset))
+    if (params?.source) qs.set('source', params.source)
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     return request<{ members: MemberSummary[]; count: number }>(`/admin/members${suffix}`, {
       headers: withAuth(token),

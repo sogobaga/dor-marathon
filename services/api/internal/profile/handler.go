@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -376,27 +377,44 @@ type MemberSummary struct {
 	VIPExpiresAt       *time.Time `json:"vip_expires_at,omitempty"`
 	VipPlan            string     `json:"vip_plan"`
 	LastLoginAt        *time.Time `json:"last_login_at,omitempty"` // 最近一次登入（password/google/register），見 user_login_logs
+	// 註冊來源歸因（見 migrations/147_signup_attribution.sql／internal/attribution）：歷史會員
+	// （本 migration 上線前註冊）沒有這筆列，皆回空字串——前端顯示「—」。
+	SignupSource  string `json:"signup_source"`             // referral|facebook|instagram|line|google|threads|tiktok|other|direct|""(無資料)
+	SignupRefName string `json:"signup_ref_name,omitempty"` // 推薦人暱稱；非 referral 來源或推薦人已被刪除則為空
 }
 
 // MemberDetail 後台會員詳情（含完整個資與報名數）
 type MemberDetail struct {
 	MemberSummary
-	Nickname     string       `json:"nickname"`
-	Address      string       `json:"address"`
-	Birthday     string       `json:"birthday"`
-	RaceCount    int          `json:"race_count"`
-	Exp          int          `json:"exp"`
-	Gp           int          `json:"gp"` // GP 幣餘額（環台大富翁）
-	Level        int          `json:"level"`
-	LevelTitle   string       `json:"level_title"`
-	IsVIP        bool         `json:"is_vip"`
-	VIPExpiresAt *time.Time   `json:"vip_expires_at,omitempty"`
-	Athlete      AthleteStats `json:"athlete"` // 選手分級（後台限定顯示）
+	Nickname     string             `json:"nickname"`
+	Address      string             `json:"address"`
+	Birthday     string             `json:"birthday"`
+	RaceCount    int                `json:"race_count"`
+	Exp          int                `json:"exp"`
+	Gp           int                `json:"gp"` // GP 幣餘額（環台大富翁）
+	Level        int                `json:"level"`
+	LevelTitle   string             `json:"level_title"`
+	IsVIP        bool               `json:"is_vip"`
+	VIPExpiresAt *time.Time         `json:"vip_expires_at,omitempty"`
+	Athlete      AthleteStats       `json:"athlete"`               // 選手分級（後台限定顯示）
+	Attribution  *SignupAttribution `json:"attribution,omitempty"` // 完整來源歸因；歷史會員無資料則為 nil
 }
 
-// GET /api/v1/admin/members?q=&limit=&offset=
+// SignupAttribution 後台會員詳情的完整來源歸因（見 user_signup_attribution）。
+type SignupAttribution struct {
+	Source      string         `json:"source"`
+	RefUserID   string         `json:"ref_user_id,omitempty"`
+	RefName     string         `json:"ref_name,omitempty"` // 推薦人暱稱（handle），已刪除則空
+	UTM         map[string]any `json:"utm,omitempty"`
+	LandingURL  string         `json:"landing_url,omitempty"`
+	ReferrerURL string         `json:"referrer_url,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+}
+
+// GET /api/v1/admin/members?q=&limit=&offset=&source=
 func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
+	source := r.URL.Query().Get("source") // 選填：referral|facebook|instagram|line|google|threads|tiktok|other|direct|none（none=無歸因資料的歷史會員）
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -410,12 +428,17 @@ func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.Query(r.Context(), `
 		SELECT u.id, u.email, u.handle, u.name, u.role, u.total_km, u.created_at,
 		       COALESCE(p.real_name,''), COALESCE(p.phone,''), COALESCE(p.gender,''), u.can_create_team_group,
-		       u.vip_expires_at, COALESCE(u.vip_plan,''), u.last_login_at
-		FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id
+		       u.vip_expires_at, COALESCE(u.vip_plan,''), u.last_login_at,
+		       COALESCE(a.source,''), COALESCE(ref.handle,'')
+		FROM users u
+		LEFT JOIN user_profiles p ON p.user_id = u.id
+		LEFT JOIN user_signup_attribution a ON a.user_id = u.id
+		LEFT JOIN users ref ON ref.id = a.ref_user_id
 		WHERE ($1 = '' OR u.email ILIKE $2 OR u.name ILIKE $2
 		       OR COALESCE(p.real_name,'') ILIKE $2 OR COALESCE(p.phone,'') ILIKE $2)
+		  AND ($5 = '' OR ($5 = 'none' AND a.source IS NULL) OR a.source = $5)
 		ORDER BY u.created_at DESC
-		LIMIT $3 OFFSET $4`, q, like, limit, offset)
+		LIMIT $3 OFFSET $4`, q, like, limit, offset, source)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to list members")
 		return
@@ -427,11 +450,15 @@ func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 		var m MemberSummary
 		if err := rows.Scan(&m.ID, &m.Email, &m.Handle, &m.Name, &m.Role, &m.TotalKm, &m.CreatedAt,
 			&m.RealName, &m.Phone, &m.Gender, &m.CanCreateTeamGroup,
-			&m.VIPExpiresAt, &m.VipPlan, &m.LastLoginAt); err != nil {
+			&m.VIPExpiresAt, &m.VipPlan, &m.LastLoginAt,
+			&m.SignupSource, &m.SignupRefName); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
 		m.IsVIP = m.VIPExpiresAt != nil && m.VIPExpiresAt.After(time.Now())
+		if m.SignupSource != "referral" {
+			m.SignupRefName = "" // 只有 referral 來源才顯示推薦人（JOIN 條件本身已保證，這裡保底）
+		}
 		members = append(members, m)
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"members": members, "count": len(members)})
@@ -468,10 +495,55 @@ func (h *Handler) AdminGetMember(w http.ResponseWriter, r *http.Request) {
 		m.Level, m.LevelTitle, _, _ = computeLevel(m.Exp, levels)
 	}
 	m.IsVIP = m.VIPExpiresAt != nil && m.VIPExpiresAt.After(time.Now())
+	if attr, err := h.signupAttributionFor(r.Context(), userID); err == nil && attr != nil {
+		m.Attribution = attr
+		m.SignupSource = attr.Source
+		m.SignupRefName = attr.RefName
+	}
 	if a, err := h.athleteStatsFor(r.Context(), userID); err == nil {
 		m.Athlete = a
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"member": m})
+}
+
+// signupAttributionFor 查詢單一會員的完整來源歸因（user_signup_attribution，見 migrations/
+// 147_signup_attribution.sql），供 AdminGetMember 顯示。查無資料（本 migration 上線前註冊的
+// 歷史會員）回 (nil, nil)，不是錯誤。ref_name 為推薦人 handle（非 referral 來源或推薦人帳號
+// 已被刪除則空字串）。
+func (h *Handler) signupAttributionFor(ctx context.Context, userID string) (*SignupAttribution, error) {
+	var a SignupAttribution
+	var refUserID *string
+	var refHandle string
+	var utmBytes []byte
+	var landingURL, referrerURL *string
+	err := h.db.QueryRow(ctx, `
+		SELECT a.source, a.ref_user_id, COALESCE(ref.handle,''), a.utm, a.landing_url, a.referrer_url, a.created_at
+		FROM user_signup_attribution a
+		LEFT JOIN users ref ON ref.id = a.ref_user_id
+		WHERE a.user_id = $1`, userID).
+		Scan(&a.Source, &refUserID, &refHandle, &utmBytes, &landingURL, &referrerURL, &a.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("fetch signup attribution: %w", err)
+	}
+	if refUserID != nil {
+		a.RefUserID = *refUserID
+		a.RefName = refHandle
+	}
+	if landingURL != nil {
+		a.LandingURL = *landingURL
+	}
+	if referrerURL != nil {
+		a.ReferrerURL = *referrerURL
+	}
+	if len(utmBytes) > 0 {
+		if err := json.Unmarshal(utmBytes, &a.UTM); err != nil {
+			return nil, fmt.Errorf("parse signup attribution utm: %w", err)
+		}
+	}
+	return &a, nil
 }
 
 // PUT /api/v1/admin/members/:userID/team-group-permission  {"allowed":true}

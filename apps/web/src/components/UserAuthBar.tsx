@@ -7,6 +7,7 @@ import { authApi } from '@/lib/api'
 import { setUserSession, clearUserSession, useUser } from '@/lib/userAuth'
 import { googleConfigured } from './GoogleAuthProvider'
 import { overlayMount } from '@/lib/overlayMount'
+import { buildAcqPayload } from '@/lib/acquisition'
 
 const REF_CODE_KEY = 'dor:ref_code'
 
@@ -87,7 +88,8 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
                 try {
                   // 若之前透過推廣連結進站，帶上暫存的推薦碼（後端只在「新帳號」分支綁定，舊帳號會忽略）
                   const refCode = localStorage.getItem(REF_CODE_KEY) || undefined
-                  const res = await authApi.google(cred.credential, refCode)
+                  // 來源歸因（first-touch landing/referrer，見 lib/acquisition.ts）：同樣只在新帳號分支被後端使用
+                  const res = await authApi.google(cred.credential, refCode, buildAcqPayload())
                   setUserSession(res.tokens.access_token, res.tokens.refresh_token, res.user, res.tokens.session_epoch) // 觸發 useUser 更新；session_epoch 供單一登入判定
                   localStorage.removeItem(REF_CODE_KEY) // 不論新舊帳號都清，避免下次登入又誤帶
                   onClose()

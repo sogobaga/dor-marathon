@@ -11,6 +11,7 @@ import VersionBadge from './VersionBadge'
 import MileageExpGate from './MileageExpGate'
 import DedupNoticeGate from './DedupNoticeGate'
 import { validateSession, getUserToken } from '@/lib/userAuth'
+import { captureAcquisition } from '@/lib/acquisition'
 import { useDashboard, refreshDashboard } from '@/lib/useDashboard'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
 import { pageview } from '@/lib/analytics'
@@ -104,6 +105,8 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
   useEffect(() => {
     // 開啟 app 即驗證/換發 token：避免「顯示已登入但實際過期」的不一致
     validateSession()
+    // 會員註冊來源歸因（first-touch，見 lib/acquisition.ts）：與下面 ?ref= 擷取並存，互不覆蓋。
+    captureAcquisition()
     const params = new URLSearchParams(window.location.search)
     // 推廣連結（?ref=<code>）→ 記到 localStorage，留到登入/註冊成功時才帶給後端綁定。
     // 刻意不清 query、不清 localStorage：使用者可能先逛一逛才登入，要撐到那時候還在。
