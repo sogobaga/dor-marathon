@@ -38,7 +38,7 @@ export default function AdminMembersList() {
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
   const [source, setSource] = useState<SignupSource | ''>('')
-  const [hideVirtual, setHideVirtual] = useState(false)
+  const [hideVirtual, setHideVirtual] = useState(true) // 預設隱藏虛擬選手（使用者拍板），要看機器人帳號再手動取消勾選
 
   const load = useCallback(
     (query: string, src: SignupSource | '', hideVirtualArg: boolean) => {
@@ -64,7 +64,7 @@ export default function AdminMembersList() {
   )
 
   useEffect(() => {
-    load('', '', false)
+    load('', '', true) // 與 hideVirtual 預設值一致：首載即隱藏虛擬選手
   }, [load])
 
   return (
