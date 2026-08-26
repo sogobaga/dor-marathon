@@ -5,7 +5,7 @@
 // 這裡只讀不算第二套，也完全不碰 WorkoutHud/課表引擎/事件任務引擎的邏輯（它們在底下照常運作，
 // 專注模式只是蓋在上面的顯示層，見 track/page.tsx 掛載處的 zIndex 說明）。
 //
-// strategy 可為 null（一般跑步/課表/個人任務等沒有賽事策略的情境）：此時只顯示大字 移動距離/移動時間/
+// strategy 可為 null（一般跑步/課表/個人任務等沒有賽事策略的情境）：此時只顯示大字 移動距離/時間/
 // 平均配速/當下分段配速，策略專屬的「目標配速/預計完成/補給引擎/配速偏差提醒」整組不渲染（下面每個
 // strategy 專屬區塊都用 `strategy &&` 或 `if (!strategy) return` 短路，讀者可以直接搜 `strategy` 找全部）。
 // 帶 strategy 時維持原「比賽專注模式」完整版行為不變，包括開跑自動進入（由父層決定是否預設開啟，見
@@ -15,6 +15,20 @@
 // fuel 提醒＝「單一游標依序消化」的有限狀態機（等待 → 倒數顯示 → due（醒目 30 秒或點擊關閉）→
 // 游標前進取下一點），兩者互不干擾、各自用 ref 存計時器，不依賴 React effect 的自動 cleanup 時機
 //（避免 GPS 高頻重繪把倒數計時器提前清掉的競態）。
+//
+// 口徑決策（v0.1.5xx 時間口徑修正）：比賽情境的時鐘＝大會時間，不因站著不動而停錶，站定不動看到
+// 「時間」歸零／不走會被誤以為故障。因此主要顯示指標（時間／平均配速／預計完成 ETA）一律改用
+// elapsed（page.tsx 由 250ms interval 驅動、開跑起算的總牆鐘秒數）與其對應的總時間平均配速 avgPace
+// （elapsed/distance），三者同一把尺、同步前進，不會出現「時間在走、平均配速或 ETA 卻凍結」的矛盾。
+// 例外只有兩處，刻意維持「移動中表現」口徑不變：
+//   - 「當下分段配速」（movingSegLivePace）：即時分段本來就該反映跑者現正的實際擺動表現，扣掉停等
+//     時間才有教練意義（等紅燈不該拉低這一公里的即時配速），不隨本次調整。
+//   - 配速偏差提醒：比較對象仍是 movingSegLivePace vs 目標配速，理由同上。
+// 補給提醒引擎 time 模式門檻同樣用 elapsed（FuelPoint.at 契約＝「開跑後秒數」，比賽時鐘不停錶），
+// 本疊層已完全不吃移動時間（movingS），移動時間僅存在於一般介面的量測列。
+// 一般跑步/課表/個人任務（無 strategy）的「移動距離／時間／平均配速／當下分段配速」4 大字指標同一套
+// 邏輯，時間口徑統一採 elapsed；至於 page.tsx 主畫面（非本疊層）「移動時間/移動配速/分段」那排維持
+// 原樣不動——那是給一般訓練情境參考用的移動口徑，與本疊層各自獨立。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FUEL_KIND_LABEL, type RaceStrategy, type StrategySegment } from '@/lib/api'
@@ -46,13 +60,16 @@ function predictedTimeAtKm(km: number, segments: StrategySegment[]): number {
 type PaceDir = 'fast' | 'slow'
 
 export default function RaceFocusMode({
-  strategy, distanceM, movingS, movingAvgPace, movingSegLivePace,
+  strategy, distanceM, elapsed, avgPace, movingSegLivePace,
 }: {
   strategy: RaceStrategy | null // null＝一般跑步/課表/個人任務等沒有賽事策略的情境，只顯示基本 4 大字指標
   distanceM: number // 目前有效距離（公尺）——與頁面主面板「距離」同一份數據（distRef）
-  movingS: number // 移動時間（秒，排除靜止/抖動/超速）——頁面既有 #4 移動時間
-  movingAvgPace: number // 移動時間平均配速（秒/公里；未達門檻為 0）——頁面既有 movingAvgPace
-  movingSegLivePace: number // 目前這 1km 的移動時間即時配速（秒/公里；未達門檻為 0）——頁面既有 movingSegLivePace
+  elapsed: number // 開跑後總牆鐘秒數，不因靜止而停錶——頁面既有 elapsed（250ms tick 驅動，天然平滑）；
+  // 比賽情境＝大會時間口徑，本疊層「時間」大字、ETA 推估、補給 time 模式門檻都吃這個
+  avgPace: number // 總時間平均配速（秒/公里，elapsed/distance；未達門檻為 0）——頁面既有 avgPace；
+  // 與 elapsed 同一把尺，供「平均配速」大字與 ETA 推估共用，避免跟時間指標不同步
+  movingSegLivePace: number // 目前這 1km 的移動時間即時配速（秒/公里；未達門檻為 0）——頁面既有 movingSegLivePace；
+  // 刻意不隨本次調整改口徑，見上方口徑決策說明
 }) {
   // 「顯示完整介面」：暫時隱藏本覆蓋層，露出原本 UI。初始值＝有 strategy 時預設開啟（維持既有「載入策略
   // 開跑自動進入專注模式」行為），一般跑步（無 strategy）預設不自動進入、顯示切換鈕讓使用者手動切入。
@@ -102,7 +119,9 @@ export default function RaceFocusMode({
   const dueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hasFuel = fuelIdx < fuelSorted.length
   const fp = fuelSorted[fuelIdx]
-  const remaining = hasFuel ? (fp.mode === 'time' ? fp.at - movingS : fp.at - distanceM) : 0
+  // time 模式門檻用 elapsed：FuelPoint.at 契約即「開跑後秒數」（見 api.ts），且比賽時鐘不停錶——
+  // 若用移動時間，站著休息時補給倒數會凍結，與「時間」大字口徑矛盾（使用者回報過同款觀感問題）。
+  const remaining = hasFuel ? (fp.mode === 'time' ? fp.at - elapsed : fp.at - distanceM) : 0
   const due = hasFuel && remaining <= 0
 
   function advanceFuel() {
@@ -132,11 +151,13 @@ export default function RaceFocusMode({
     }
   }
 
-  // ── 預計完成時間：已耗移動時間 + 剩餘公里 × 移動平均配速；超過策略總距離則顯示「已達策略距離」──
+  // ── 預計完成時間：口徑＝大會時間 elapsed（已耗牆鐘秒數，不停錶）+ 剩餘公里 × 總時間平均配速 avgPace；
+  // 與上面「時間」「平均配速」大字同一把尺，避免時間持續前進、ETA 卻凍結在移動口徑上的矛盾。
+  // 超過策略總距離則顯示「已達策略距離」。
   let etaLabel = '--:--'
   if (strategy) {
     if (distKm >= strategy.total_km) etaLabel = '已達策略距離'
-    else if (movingAvgPace > 0) etaLabel = fmtTime(movingS + (strategy.total_km - distKm) * movingAvgPace)
+    else if (avgPace > 0) etaLabel = fmtTime(elapsed + (strategy.total_km - distKm) * avgPace)
   }
 
   if (hidden) {
@@ -165,9 +186,9 @@ export default function RaceFocusMode({
       </div>
 
       <Metric label="移動距離" value={distKm.toFixed(2)} unit="km" size="xl" />
-      <Metric label="移動時間" value={fmtTime(movingS)} unit="" size="lg" />
+      <Metric label="時間" value={fmtTime(elapsed)} unit="" size="lg" />
       <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
-        <Metric label="平均配速" value={fmtPace(movingAvgPace)} unit="/km" size="md" />
+        <Metric label="平均配速" value={fmtPace(avgPace)} unit="/km" size="md" />
         <Metric label="當下分段配速" value={fmtPace(movingSegLivePace)} unit="/km" size="md" />
       </div>
       {/* 以下皆為賽事策略專屬區塊：無 strategy（一般跑步/課表/個人任務等）整組不渲染 */}
