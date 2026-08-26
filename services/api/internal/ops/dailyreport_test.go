@@ -79,7 +79,9 @@ func TestBuildDailyReportMessage_NoSignupsShowsPlaceholder(t *testing.T) {
 	if !strings.Contains(msg, "昨日無新增報名") {
 		t.Errorf("expected placeholder line for no signups, got:\n%s", msg)
 	}
-	if !strings.Contains(msg, "8 項全數正常 ✅") {
+	// baseReportData() 的 Checks 固定給 2 筆 mock 結果（見該函式），訊息文字動態取自 len(d.Checks)，
+	// 不是寫死的正式檢查總數（見 assembleDailyReportMessage 註解）。
+	if !strings.Contains(msg, "2 項全數正常 ✅") {
 		t.Errorf("expected all-ok selfcheck line, got:\n%s", msg)
 	}
 	if !strings.Contains(msg, "資料收集中（今日啟用）") {
@@ -126,7 +128,7 @@ func TestBuildDailyReportMessage_SelfcheckFailuresListed(t *testing.T) {
 		{Name: activityHeartbeatCheck, OK: true},
 	}
 	msg := buildDailyReportMessage(d)
-	if strings.Contains(msg, "8 項全數正常") {
+	if strings.Contains(msg, "項全數正常") {
 		t.Errorf("should not show all-ok line when a check failed, got:\n%s", msg)
 	}
 	if !strings.Contains(msg, "failed=6 paid=2") {

@@ -95,7 +95,7 @@ type dailyReportData struct {
 	RefundCents      int
 	RefundCount      int
 
-	Checks []CheckResult // 重用 selfcheck 8 項檢查（runChecks）
+	Checks []CheckResult // 重用 selfcheck 全部檢查（runChecks）
 
 	Traffic trafficSummary
 }
@@ -309,7 +309,7 @@ func (h *Handler) buildDailyReportData(ctx context.Context) (dailyReportData, er
 		return dailyReportData{}, fmt.Errorf("refunds: %w", err)
 	}
 
-	// 4) 資料自檢：重用 selfcheck 的 8 項檢查（同一個 Handler、同一份 runChecks，見 selfcheck.go）。
+	// 4) 資料自檢：重用 selfcheck 的全部檢查（同一個 Handler、同一份 runChecks，見 selfcheck.go）。
 	d.Checks = h.runChecks(ctx)
 
 	// 5) 流量安全
@@ -425,8 +425,8 @@ func (h *Handler) buildTrafficSummary(ctx context.Context, day string) (trafficS
 
 // --- 訊息格式化（純函式，不碰 DB，方便單元測試） ---
 
-// checkFailureLines 把 selfcheck 8 項結果中「異常」的項目格式化成逐行文字，重用 selfcheck.go 既有的
-// checkLabel 中文標籤 map（該 map 涵蓋全部 8 項，含 activityHeartbeatCheck）。
+// checkFailureLines 把 selfcheck 全部檢查結果中「異常」的項目格式化成逐行文字，重用 selfcheck.go 既有的
+// checkLabel 中文標籤 map（該 map 涵蓋全部檢查項目，含 activityHeartbeatCheck）。
 func checkFailureLines(checks []CheckResult) []string {
 	var lines []string
 	for _, c := range checks {
@@ -537,7 +537,9 @@ func assembleDailyReportMessage(d dailyReportData, raceKeep int) string {
 
 	b.WriteString("🔍 資料自檢：\n")
 	if failed := checkFailureLines(d.Checks); len(failed) == 0 {
-		b.WriteString("8 項全數正常 ✅\n")
+		// 項目數動態取自 len(d.Checks)，而非寫死數字——runChecks 之後再增修檢查項目時這裡不必跟著改
+		// （曾經是寫死的「8 項」，加入第 9 項序號庫存吃緊檢查時已改成這樣，避免下次又忘記同步）。
+		fmt.Fprintf(&b, "%d 項全數正常 ✅\n", len(d.Checks))
 	} else {
 		for _, l := range failed {
 			b.WriteString(l + "\n")

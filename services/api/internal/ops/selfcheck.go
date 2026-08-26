@@ -57,6 +57,7 @@ var checkLabel = map[string]string{
 	"webhook_failure_rate":              "近24h付款webhook失敗率",
 	"cancel_refund_mismatch":            "取消報名但訂單未同步(仍為paid)",
 	activityHeartbeatCheck:              "近24h活動上傳心跳",
+	"serial_reward_stock_pressure":      "序號獎勵庫存吃緊(達標80%人數>剩餘庫存)",
 }
 
 // CheckResult 單一檢查項目的結果。
@@ -165,8 +166,8 @@ func (h *Handler) maybeRunDaily(ctx context.Context) {
 	h.reportSelfCheck(results)
 }
 
-// runChecks 依序執行全部 8 項檢查。單項查詢出錯（例如短暫 DB 逾時）視為該項「異常」落地，而非整批
-// 中止——避免一項查詢失敗就讓其餘 7 項的健檢結果也一併遺失。
+// runChecks 依序執行全部 9 項檢查。單項查詢出錯（例如短暫 DB 逾時）視為該項「異常」落地，而非整批
+// 中止——避免一項查詢失敗就讓其餘檢查的健檢結果也一併遺失。
 func (h *Handler) runChecks(ctx context.Context) []CheckResult {
 	checks := []struct {
 		name string
@@ -180,6 +181,7 @@ func (h *Handler) runChecks(ctx context.Context) []CheckResult {
 		{"webhook_failure_rate", h.checkWebhookFailureRate},
 		{"cancel_refund_mismatch", h.checkCancelRefundMismatch},
 		{activityHeartbeatCheck, h.checkActivityHeartbeat},
+		{"serial_reward_stock_pressure", h.checkSerialRewardStockPressure},
 	}
 	out := make([]CheckResult, 0, len(checks))
 	for _, c := range checks {
@@ -204,7 +206,8 @@ type selfCheckSummary struct {
 	HeartbeatDetail string
 }
 
-// summarizeSelfCheck 把 8 項檢查結果彙整成「1-7 合併一則、8 獨立一則」的兩軌告警素材（純函式）。
+// summarizeSelfCheck 把全部檢查結果彙整成「activityHeartbeatCheck 獨立一則、其餘全部合併一則」的兩軌
+// 告警素材（純函式）——第 9 項（序號獎勵庫存吃緊）比照第 1-7 項，併入合併的那一則，不另立 kind。
 func summarizeSelfCheck(results []CheckResult) selfCheckSummary {
 	var sum selfCheckSummary
 	sum.AllOK = true
@@ -237,7 +240,7 @@ func summarizeSelfCheck(results []CheckResult) selfCheckSummary {
 func (h *Handler) reportSelfCheck(results []CheckResult) {
 	sum := summarizeSelfCheck(results)
 	if sum.AllOK {
-		log.Info().Msg("selfcheck ok (8 checks)")
+		log.Info().Msgf("selfcheck ok (%d checks)", len(results))
 		return
 	}
 	if sum.FailedCount > 0 {
@@ -249,7 +252,7 @@ func (h *Handler) reportSelfCheck(results []CheckResult) {
 	}
 }
 
-// SelfCheckNow POST /admin/ops/selfcheck：手動立即執行全部 8 項檢查並回傳完整 JSON 報告，
+// SelfCheckNow POST /admin/ops/selfcheck：手動立即執行全部 9 項檢查並回傳完整 JSON 報告，
 // 不受「今日是否已跑」的窗口/冪等限制、也不佔用每日 in-memory 標記（不影響排程本身當天是否還會
 // 自動執行一次）；純粹回報現況供人工查驗，不送 Telegram（送不送告警的決策留給排程本身）。
 func (h *Handler) SelfCheckNow(w http.ResponseWriter, r *http.Request) {
