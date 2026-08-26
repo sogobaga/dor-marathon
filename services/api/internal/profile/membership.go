@@ -167,7 +167,12 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.QueryRow(r.Context(), `
 		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.dp, u.gp, u.vip_expires_at,
 		       COALESCE(u.vip_plan,''), COALESCE(u.activity_coupon_balance,0), COALESCE(u.trial_notice_shown,FALSE),
-		       COALESCE((SELECT SUM(distance_km) FROM activities WHERE user_id=u.id AND NOT flagged),0),
+		       -- 累計里程改讀權威帳本 users.total_km（v0.1.604）：與推廣連結資格（referral.go 的 10km 閘門）
+		       -- 同一口徑，杜絕「面板顯示 37.9K、產生連結卻說不足 10K」的脫鉤（total_km 由發獎管線
+		       -- 去重/防弊把關累加；舊寫法 SUM(activities) 是即時加總，兩者曾因 migration 108 回填斷層而分歧，
+		       -- 歷史缺口已於 2026-08-27 一次性回填 6 帳號）。數據探索頁(achievements.go)刻意保留活動即時
+		       -- 加總——那頁是活動數據分析，需與月曆明細加總一致。
+		       u.total_km,
 		       COALESCE(p.nickname,''),
 		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id AND rg.status<>'cancelled'),
 		       COALESCE(u.email,''),
