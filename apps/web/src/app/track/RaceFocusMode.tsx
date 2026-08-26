@@ -33,15 +33,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FUEL_KIND_LABEL, type RaceStrategy, type StrategySegment } from '@/lib/api'
 
+// 取整口徑必須與 track/page.tsx 的 fmtTime 完全一致（一律 Math.floor）：elapsed 是帶小數的秒數，
+// 若這裡先 Math.round、主面板 Math.floor，同一個值會顯示成差 1 秒的兩個數字（使用者實測回報過）。
 function fmtTime(s: number) {
-  const v = Math.max(0, Math.round(s))
+  const v = Math.max(0, Math.floor(s))
   const h = Math.floor(v / 3600), m = Math.floor((v % 3600) / 60), sec = v % 60
   const p = (n: number) => String(n).padStart(2, '0')
   return h > 0 ? `${h}:${p(m)}:${p(sec)}` : `${p(m)}:${p(sec)}`
 }
 function fmtPace(s: number) {
   if (!s || !isFinite(s) || s <= 0) return '--:--'
-  return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
+  // 先整體四捨五入再拆分秒，避免 479.6 → 「7:60」（秒位獨立 round 到 60 的邊界錯誤）
+  const v = Math.round(s)
+  return `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`
 }
 
 // 依分段目標配速，推算「跑到某公里數」預計耗費的移動秒數（假設全程照分段目標配速跑）。
