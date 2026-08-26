@@ -2548,6 +2548,7 @@ export interface MemberSummary {
   signup_source?: SignupSource | null // 歷史會員（migration 147 上線前註冊）無資料 → null/undefined
   signup_ref_name?: string | null // 推薦人暱稱，僅 source=referral 有值
   signup_utm_source: string // utm_source 原值（未經正規化）；後端不 omitempty，無則空字串
+  is_virtual: boolean // 虛擬選手（users.is_virtual，見 migrations/146_virtual_runner.sql）
 }
 
 // 完整歸因資料（會員詳情頁顯示用）
@@ -2642,12 +2643,13 @@ export const adminAccountsApi = {
 }
 
 export const adminMembersApi = {
-  list: (token: string, params?: { q?: string; limit?: number; offset?: number; source?: SignupSource }) => {
+  list: (token: string, params?: { q?: string; limit?: number; offset?: number; source?: SignupSource; hideVirtual?: boolean }) => {
     const qs = new URLSearchParams()
     if (params?.q) qs.set('q', params.q)
     if (params?.limit) qs.set('limit', String(params.limit))
     if (params?.offset) qs.set('offset', String(params.offset))
     if (params?.source) qs.set('source', params.source)
+    if (params?.hideVirtual) qs.set('hide_virtual', '1')
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     return request<{ members: MemberSummary[]; count: number }>(`/admin/members${suffix}`, {
       headers: withAuth(token),

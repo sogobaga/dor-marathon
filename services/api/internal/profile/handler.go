@@ -382,6 +382,7 @@ type MemberSummary struct {
 	SignupSource    string `json:"signup_source"`             // referral|facebook|instagram|line|google|threads|tiktok|x|youtube|dcard|ptt|other|direct|""(無資料)
 	SignupRefName   string `json:"signup_ref_name,omitempty"` // 推薦人暱稱；非 referral 來源或推薦人已被刪除則為空
 	SignupUTMSource string `json:"signup_utm_source"`         // a.utm->>'source' 原值（未經 mapUTMSource 正規化）；無則空字串，不 omitempty
+	IsVirtual       bool   `json:"is_virtual"`                // 虛擬選手（見 migrations/146_virtual_runner.sql），會員管理刻意保留可見，供後台勾選隱藏
 }
 
 // MemberDetail 後台會員詳情（含完整個資與報名數）
@@ -412,7 +413,7 @@ type SignupAttribution struct {
 	CreatedAt   time.Time      `json:"created_at"`
 }
 
-// GET /api/v1/admin/members?q=&limit=&offset=&source=
+// GET /api/v1/admin/members?q=&limit=&offset=&source=&hide_virtual=
 func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	source := r.URL.Query().Get("source") // 選填：referral|facebook|instagram|line|google|threads|tiktok|x|youtube|dcard|ptt|other|direct|none（none=無歸因資料的歷史會員）
@@ -424,13 +425,14 @@ func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 	if offset < 0 {
 		offset = 0
 	}
+	hideVirtual := r.URL.Query().Get("hide_virtual") == "1" // 選填：隱藏虛擬選手（users.is_virtual，見 migrations/146_virtual_runner.sql）
 
 	like := "%" + q + "%"
 	rows, err := h.db.Query(r.Context(), `
 		SELECT u.id, u.email, u.handle, u.name, u.role, u.total_km, u.created_at,
 		       COALESCE(p.real_name,''), COALESCE(p.phone,''), COALESCE(p.gender,''), u.can_create_team_group,
 		       u.vip_expires_at, COALESCE(u.vip_plan,''), u.last_login_at,
-		       COALESCE(a.source,''), COALESCE(ref.handle,''), COALESCE(a.utm->>'source','')
+		       COALESCE(a.source,''), COALESCE(ref.handle,''), COALESCE(a.utm->>'source',''), u.is_virtual
 		FROM users u
 		LEFT JOIN user_profiles p ON p.user_id = u.id
 		LEFT JOIN user_signup_attribution a ON a.user_id = u.id
@@ -438,8 +440,9 @@ func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 		WHERE ($1 = '' OR u.email ILIKE $2 OR u.name ILIKE $2
 		       OR COALESCE(p.real_name,'') ILIKE $2 OR COALESCE(p.phone,'') ILIKE $2)
 		  AND ($5 = '' OR ($5 = 'none' AND a.source IS NULL) OR a.source = $5)
+		  AND ($6 = false OR NOT u.is_virtual)
 		ORDER BY u.created_at DESC
-		LIMIT $3 OFFSET $4`, q, like, limit, offset, source)
+		LIMIT $3 OFFSET $4`, q, like, limit, offset, source, hideVirtual)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to list members")
 		return
@@ -452,7 +455,7 @@ func (h *Handler) AdminListMembers(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&m.ID, &m.Email, &m.Handle, &m.Name, &m.Role, &m.TotalKm, &m.CreatedAt,
 			&m.RealName, &m.Phone, &m.Gender, &m.CanCreateTeamGroup,
 			&m.VIPExpiresAt, &m.VipPlan, &m.LastLoginAt,
-			&m.SignupSource, &m.SignupRefName, &m.SignupUTMSource); err != nil {
+			&m.SignupSource, &m.SignupRefName, &m.SignupUTMSource, &m.IsVirtual); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}

@@ -38,9 +38,10 @@ export default function AdminMembersList() {
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
   const [source, setSource] = useState<SignupSource | ''>('')
+  const [hideVirtual, setHideVirtual] = useState(false)
 
   const load = useCallback(
-    (query: string, src: SignupSource | '') => {
+    (query: string, src: SignupSource | '', hideVirtualArg: boolean) => {
       const token = getToken()
       if (!token) {
         router.replace('/admin/login')
@@ -48,7 +49,7 @@ export default function AdminMembersList() {
       }
       setMembers(null)
       adminMembersApi
-        .list(token, { q: query, limit: 100, source: src || undefined })
+        .list(token, { q: query, limit: 100, source: src || undefined, hideVirtual: hideVirtualArg })
         .then((res) => setMembers(res.members))
         .catch((e) => {
           if (e?.status === 401) {
@@ -63,7 +64,7 @@ export default function AdminMembersList() {
   )
 
   useEffect(() => {
-    load('', '')
+    load('', '', false)
   }, [load])
 
   return (
@@ -73,9 +74,9 @@ export default function AdminMembersList() {
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          load(q, source)
+          load(q, source, hideVirtual)
         }}
-        style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}
+        style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap', alignItems: 'center' }}
       >
         <input
           value={q}
@@ -91,7 +92,7 @@ export default function AdminMembersList() {
           onChange={(e) => {
             const next = e.target.value as SignupSource | ''
             setSource(next)
-            load(q, next)
+            load(q, next, hideVirtual)
           }}
           style={{
             background: 'var(--bg-2)', border: '1px solid var(--line-2)',
@@ -103,6 +104,18 @@ export default function AdminMembersList() {
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--tx-dim)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={hideVirtual}
+            onChange={(e) => {
+              const next = e.target.checked
+              setHideVirtual(next)
+              load(q, source, next)
+            }}
+          />
+          隱藏虛擬選手
+        </label>
         <button
           type="submit"
           style={{
@@ -137,7 +150,10 @@ export default function AdminMembersList() {
             return (
               <Link key={m.id} href={`/admin/members/${m.id}`} style={{ ...rowStyle, textDecoration: 'none', color: 'inherit', flexWrap: 'wrap' }}>
                 <div style={{ flex: 2, minWidth: 140 }}>
-                  <div style={{ fontWeight: 600 }}>{m.name || m.handle}</div>
+                  <div style={{ fontWeight: 600 }}>
+                    {m.name || m.handle}
+                    {m.is_virtual && <span title="虛擬選手" style={{ marginLeft: 6 }}>🤖</span>}
+                  </div>
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
                     @{m.handle}{m.role !== 'user' ? ` · ${m.role}` : ''}
                   </div>
