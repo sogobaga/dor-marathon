@@ -1012,7 +1012,7 @@ export default function RaceForm({
               return (
                 <div key={idx} style={{ color: loss ? 'var(--hunt)' : 'var(--tx)' }}>
                   {fr.label ? `${fr.label}｜` : ''}
-                  報名費 NT$ {feeNtd.toFixed(0)}｜扣VIP券 NT$ {afterCoupon.toFixed(0)}｜手續費後淨收 NT$ {net.toFixed(1)}｜
+                  報名費 NT$ {feeNtd.toFixed(0)}｜扣VIP券 −{couponValueNtd.toFixed(0)} 後 NT$ {afterCoupon.toFixed(0)}｜手續費後淨收 NT$ {net.toFixed(1)}｜
                   期望成本 NT$ {perRegistrantCostNtd.toFixed(1)}（佔淨收 {ratioPct != null ? ratioPct.toFixed(0) + '%' : '—'}）
                   {loss && <> ⚠ 每單期望虧損 NT$ {(perRegistrantCostNtd - net).toFixed(1)}</>}
                 </div>
