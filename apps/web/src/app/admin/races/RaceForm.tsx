@@ -201,6 +201,15 @@ export default function RaceForm({
   const [rewardTemplates, setRewardTemplates] = useState<RewardTemplate[]>([])
   const [rewardGroups, setRewardGroups] = useState<RewardSerialGroup[]>([])
   const [couponDefs, setCouponDefs] = useState<EventCouponDef[]>([])
+  // 即時獎勵「期望值試算器」的可調假設值（純前端試算顯示用，不寫入賽事資料／不隨表單送出）：
+  // LINE POINTS 單點成本、信用卡刷卡手續費率、預估完賽率。三者皆可能隨時間變動（採購價/金流費率/
+  // 活動屬性不同），故做成輸入欄而非寫死常數，方便管理者依實際狀況調整。
+  const [pointCostNtd, setPointCostNtd] = useState(1.3) // LINE POINTS 單點成本（元）；預設 1.3
+  const [cardFeeRatePct, setCardFeeRatePct] = useState(2.35) // 信用卡刷卡手續費率（%）；預設 2.35
+  const [expectedFinishRatePct, setExpectedFinishRatePct] = useState(100) // 預估完賽率（%）；預設 100
+  // VIP 活動優惠券面額（分）：來自後台系統設定 vip_coupon_value_cents，見下方 useEffect 載入；
+  // 10000（$100）為讀取失敗時的 fallback，與後端 appsettings.GetInt 的 fallback 預設一致。
+  const [vipCouponValueCents, setVipCouponValueCents] = useState(10000)
   const [controlStatus, setControlStatus] = useState<string>(initial?.control_status ?? 'active')
   const [startingSoonDays, setStartingSoonDays] = useState<string>(String(initial?.starting_soon_days ?? 5))
   const [allowTeamGroups, setAllowTeamGroups] = useState<boolean>(initial?.allow_team_groups ?? false)
@@ -708,14 +717,21 @@ export default function RaceForm({
     adminEventCouponsApi.list(token).then((r) => setCouponDefs(r.defs)).catch(() => {})
     adminAppSettingsApi.list(token).then((r) => {
       const raw = r.settings?.['cancellation_policy']
-      if (!raw) return
-      try {
-        const parsed = JSON.parse(raw)
-        setSystemDefaultPolicy(parsed)
-        // 此賽事尚無覆寫時，把編輯器起始值帶成目前系統預設，使用者一旦切到「此賽事自訂」看到的是合理起點而非內建預設。
-        if (!initial?.config?.cancellation_policy) setCancelPolicy(parsed)
-      } catch {
-        /* 壞資料時維持內建預設，不擋表單載入 */
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw)
+          setSystemDefaultPolicy(parsed)
+          // 此賽事尚無覆寫時，把編輯器起始值帶成目前系統預設，使用者一旦切到「此賽事自訂」看到的是合理起點而非內建預設。
+          if (!initial?.config?.cancellation_policy) setCancelPolicy(parsed)
+        } catch {
+          /* 壞資料時維持內建預設，不擋表單載入 */
+        }
+      }
+      // 即時獎勵期望值試算器用：VIP 活動優惠券面額（分），供「對比報名費」面板換算「扣VIP券後」金額。
+      const couponRaw = r.settings?.['vip_coupon_value_cents']
+      if (couponRaw != null && couponRaw !== '') {
+        const n = parseInt(couponRaw, 10)
+        if (Number.isFinite(n) && n >= 0) setVipCouponValueCents(n)
       }
     }).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -914,6 +930,100 @@ export default function RaceForm({
       setErr(e?.message || '儲存模板失敗')
     }
   }
+
+  // 即時獎勵「期望值試算」彙總面板（區塊下方，摺疊區塊）：加總所有 serial 項目中 LINE POINTS 面額的
+  // 期望成本，換算每位完賽者／報名者期望成本，並與報名費（uniform 一行／per_group 逐組）對比顯示淨收與
+  // 期望虧損。純顯示、不影響送出資料；計算邏輯全部委由下方純函式（見「小元件」區塊 computeSerialDenomCalcs
+  // 等），與 SerialDenomFields/RewardItemRow 內的 inline 即時顯示共用同一套算法，避免兩處分岔。
+  function renderRewardExpectedValuePanel() {
+    const { rows, nonPointCount } = computeSerialDenomCalcs(rewardItems, availableRewardGroups)
+    const perFinisherPoints = rows.reduce((s, r) => s + r.expectedPoints, 0)
+    const perFinisherCostNtd = pointsToCost(perFinisherPoints, pointCostNtd)
+    const perRegistrantCostNtd = perFinisherCostNtd * (expectedFinishRatePct / 100)
+
+    // 報名費對比行：uniform 顯示一行；per_group 逐組顯示，各組取「有效報名費」——組自訂 entry_fee_cents，
+    // 未設定則沿用賽事預設 entryFeeNtd（比照 lib/api.ts effectiveGroupFee 的 fallback 規則，這裡直接用
+    // 表單目前的即時輸入值而非已存檔的 initial，讓試算隨表單編輯即時反映）。
+    const uniformFeeCents = Math.round((parseFloat(entryFeeNtd || '0') || 0) * 100)
+    const feeRows: { label: string; feeCents: number }[] = feeMode === 'per_group'
+      ? groups.filter((g) => g.name.trim()).map((g) => ({ label: g.name, feeCents: g.entry_fee_cents ?? uniformFeeCents }))
+      : [{ label: '', feeCents: uniformFeeCents }]
+    const couponValueNtd = vipCouponValueCents / 100
+
+    return (
+      <details style={{ marginTop: 8, border: '1px solid var(--line-2)', borderRadius: 10, padding: '8px 12px', background: 'var(--bg-1, #11131a)' }}>
+        <summary style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', cursor: 'pointer' }}>💰 期望值試算</summary>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+          <Row>
+            <Field label="LINE POINTS 單點成本（元，可調）">
+              <input
+                style={inp} type="number" min={0} step="0.01" value={pointCostNtd}
+                onChange={(e) => setPointCostNtd(Math.max(0, parseFloat(e.target.value || '0') || 0))}
+              />
+            </Field>
+            <Field label="信用卡刷卡手續費率（%，可調）">
+              <input
+                style={inp} type="number" min={0} max={100} step="0.01" value={cardFeeRatePct}
+                onChange={(e) => setCardFeeRatePct(Math.max(0, parseFloat(e.target.value || '0') || 0))}
+              />
+            </Field>
+            <Field label="預估完賽率（%）">
+              <input
+                style={inp} type="number" min={0} max={100} step="1" value={expectedFinishRatePct}
+                onChange={(e) => setExpectedFinishRatePct(Math.max(0, Math.min(100, parseFloat(e.target.value || '0') || 0)))}
+              />
+            </Field>
+          </Row>
+          <div style={calcHint}>
+            單點成本預設 1.3 元（可調）；刷卡手續費預設 2.35%（可調）；VIP 活動優惠券面額讀取系統設定，目前 NT$ {couponValueNtd}。
+          </div>
+
+          {rows.length === 0 && nonPointCount === 0 && (
+            <div style={calcHint}>目前即時獎勵設定中尚無 LINE POINTS 序號面額。</div>
+          )}
+          {rows.map((r, idx) => (
+            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12.5, flexWrap: 'wrap' }}>
+              <span>{r.groupName}{r.pointValue != null ? `　面額值 ${r.pointValue}（自名稱解析）` : ''}</span>
+              {r.pointValue != null
+                ? <span>{r.pointValue} × {r.grantCount} 枚 × {(r.actualProb * 100).toFixed(2)}% ＝ {r.expectedPoints.toFixed(2)} 點</span>
+                : <span style={{ color: 'var(--hunt)' }}>⚠ 無法從名稱解析面額，請在序號組名稱中包含點數數字</span>}
+            </div>
+          ))}
+          {nonPointCount > 0 && <div style={calcHint}>未計入：非點數類序號 {nonPointCount} 項</div>}
+
+          <div style={{ borderTop: '1px dashed var(--line-2)', paddingTop: 6, fontSize: 13, fontWeight: 700 }}>
+            每位完賽者期望成本 NT$ {perFinisherCostNtd.toFixed(1)}（{perFinisherPoints.toFixed(2)} 點 × {pointCostNtd} 元/點）
+          </div>
+          <div style={{ fontSize: 12.5 }}>每位報名者期望成本 NT$ {perRegistrantCostNtd.toFixed(1)}（完賽率 {expectedFinishRatePct}%）</div>
+
+          <div style={{ borderTop: '1px dashed var(--line-2)', paddingTop: 6, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5 }}>
+            {feeRows.map((fr, idx) => {
+              const feeNtd = fr.feeCents / 100
+              if (feeNtd <= 0) {
+                return (
+                  <div key={idx}>
+                    {fr.label ? `${fr.label}｜` : ''}免費活動：期望成本 NT$ {perRegistrantCostNtd.toFixed(1)}（純行銷成本）
+                  </div>
+                )
+              }
+              const { afterCoupon, net } = netProceeds(feeNtd, couponValueNtd, cardFeeRatePct)
+              const ratioPct = net > 0 ? (perRegistrantCostNtd / net) * 100 : null
+              const loss = perRegistrantCostNtd > net
+              return (
+                <div key={idx} style={{ color: loss ? 'var(--hunt)' : 'var(--tx)' }}>
+                  {fr.label ? `${fr.label}｜` : ''}
+                  報名費 NT$ {feeNtd.toFixed(0)}｜扣VIP券 NT$ {afterCoupon.toFixed(0)}｜手續費後淨收 NT$ {net.toFixed(1)}｜
+                  期望成本 NT$ {perRegistrantCostNtd.toFixed(1)}（佔淨收 {ratioPct != null ? ratioPct.toFixed(0) + '%' : '—'}）
+                  {loss && <> ⚠ 每單期望虧損 NT$ {(perRegistrantCostNtd - net).toFixed(1)}</>}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </details>
+    )
+  }
+
   // serial 類「有效商家 id」：優先用新格式 merchant_id；舊資料只有 serial_group_id 時，從序號組反查其
   // 所屬商家（向後相容，讓改版前設定過的賽事在編輯畫面仍能正確判斷/顯示，不必逼使用者重填）。
   function serialEffectiveMerchantId(it: RewardItem): string {
@@ -1380,6 +1490,7 @@ export default function RaceForm({
                       item={it}
                       groups={availableRewardGroups}
                       couponDefs={availableCouponDefs}
+                      costPerPoint={pointCostNtd}
                       onChange={(patch) => updateRewardItem(i, patch)}
                       onRemove={() => removeRewardItem(i)}
                     />
@@ -1387,6 +1498,7 @@ export default function RaceForm({
                   {rewardItems.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚未設定即時獎勵</div>}
                 </div>
                 <button type="button" onClick={addRewardItem} style={{ ...ghostBtn, alignSelf: 'flex-start' }}>＋ 新增獎勵項目</button>
+                {renderRewardExpectedValuePanel()}
               </div>
             )}
 
@@ -1997,16 +2109,107 @@ export default function RaceForm({
 
 // --- 小元件 ---
 
+// --- 即時獎勵「期望值試算」純函式（活動獎勵系統，serial 類 LINE POINTS 期望成本）---
+// 抽獎語意（見上方即時獎勵設定區塊說明）：serial 類是以商家為單位的兩層抽獎，每個 RewardItem 各自獨立
+// 擲骰——先擲該商家中不中獎（prob_bp/10000），中了才依權重比例在商家旗下面額中抽一組。以下函式只做
+// 「假設抽很多次後的長期平均」試算，不涉及實際抽獎（那是後端 activityreward.RollAndGrant 的事）。
+
+// 統一「有效面額清單」：優先用新格式 denominations；沒有則退回舊格式 serial_group_id（視為唯一面額、
+// 權重視為 1）。與 SerialDenomFields 內 weightOf/setWeight 的判斷邏輯一致，避免兩處實作分岔。
+function effectiveDenoms(item: RewardItem): { group_id: string; weight: number }[] {
+  if (item.denominations && item.denominations.length > 0) return item.denominations
+  if (item.serial_group_id) return [{ group_id: item.serial_group_id, weight: 1 }]
+  return []
+}
+
+// 從序號組名稱／品項名稱解析面額點數值：取字串中最大的連續數字。
+// 驗算例：parsePointValue('LINE POINTS 3000點') === 3000（唯一數字串即最大值）。
+// 找不到任何數字時回傳 null，由呼叫端顯示「⚠ 無法從名稱解析面額」。
+function parsePointValue(name: string): number | null {
+  const matches = name.match(/\d+/g)
+  if (!matches || matches.length === 0) return null
+  const nums = matches.map((s) => parseInt(s, 10)).filter((n) => Number.isFinite(n))
+  return nums.length > 0 ? Math.max(...nums) : null
+}
+
+// 面額實際機率 = 該商家中獎機率(prob_bp/10000) × 面額權重佔比(weight/該項目總weight)。
+// 驗算例：prob_bp=1000（該商家中獎機率10%）、denominations 總權重100、本面額權重70
+// → 實際機率 = 0.10 × (70/100) = 0.07（7%）
+function denomActualProb(probBp: number, weight: number, totalWeight: number): number {
+  if (totalWeight <= 0 || weight <= 0) return 0
+  return (probBp / 10000) * (weight / totalWeight)
+}
+
+// 該面額期望點數 = 面額點數值 × 配發枚數(grant_count) × 實際機率。
+// 驗算例：面額值3500點、配發枚數1、實際機率1%(0.01) → 期望點數 = 3500 × 1 × 0.01 = 35 點
+function denomExpectedPoints(pointValue: number, grantCount: number, actualProb: number): number {
+  return pointValue * Math.max(0, grantCount) * actualProb
+}
+
+// 期望成本(NT$) = 期望點數 × 單點成本。
+// 驗算例：期望點數35、單點成本1.3元 → 期望成本 = 35 × 1.3 = 45.5 元
+function pointsToCost(points: number, costPerPoint: number): number {
+  return points * costPerPoint
+}
+
+// 手續費後淨收 = max(0, 報名費 − VIP券面額) × (1 − 刷卡費率)。
+// 驗算例：報名費199元、VIP券面額49元、刷卡費率2.35% → 扣券後 afterCoupon=150 →
+// 淨收 net = 150 × (1 − 0.0235) = 150 × 0.9765 = 146.475（約 NT$146.5）
+function netProceeds(feeNtd: number, couponValueNtd: number, feeRatePct: number): { afterCoupon: number; net: number } {
+  const afterCoupon = Math.max(0, feeNtd - couponValueNtd)
+  const net = afterCoupon * (1 - feeRatePct / 100)
+  return { afterCoupon, net }
+}
+
+interface SerialDenomCalc {
+  itemIndex: number
+  groupId: string
+  groupName: string
+  weight: number
+  actualProb: number        // 0~1
+  pointValue: number | null // null = 無法從名稱解析
+  grantCount: number
+  expectedPoints: number    // pointValue 為 null 時恆為 0
+}
+// 彙整一批 RewardItem 中 serial 類、且面額權重>0 的 LINE POINTS 面額期望值明細（不含成本換算——
+// 成本＝expectedPoints×單點成本，由呼叫端乘上試算面板當下可調的值，避免每次調整單點成本就要重跑一次
+// 完整彙整）。傳入單一項目陣列（如 [item]）即可算該項目自己的期望值，供 RewardItemRow/SerialDenomFields
+// 內的 inline 顯示與下方彙總面板（renderRewardExpectedValuePanel）共用同一套算法。
+// nonPointCount：面額權重>0 但序號組非 is_line_point 者的列數（這類序號不計入點數期望值，另列一行「未計入」）。
+function computeSerialDenomCalcs(items: RewardItem[], groups: RewardSerialGroup[]): { rows: SerialDenomCalc[]; nonPointCount: number } {
+  const rows: SerialDenomCalc[] = []
+  let nonPointCount = 0
+  items.forEach((item, itemIndex) => {
+    if (item.type !== 'serial') return
+    const denoms = effectiveDenoms(item)
+    const totalWeight = denoms.reduce((s, d) => s + Math.max(0, d.weight), 0)
+    denoms.forEach((d) => {
+      if (d.weight <= 0) return
+      const g = groups.find((x) => x.id === d.group_id)
+      if (!g) return
+      if (!g.is_line_point) { nonPointCount++; return }
+      const actualProb = denomActualProb(item.prob_bp ?? 0, d.weight, totalWeight)
+      const pointValue = parsePointValue(g.name || g.item_label || '')
+      const expectedPoints = pointValue != null ? denomExpectedPoints(pointValue, g.grant_count, actualProb) : 0
+      rows.push({ itemIndex, groupId: d.group_id, groupName: g.name, weight: d.weight, actualProb, pointValue, grantCount: g.grant_count, expectedPoints })
+    })
+  })
+  return { rows, nonPointCount }
+}
+
 const REWARD_TYPE_LABEL: Record<RewardItemType, string> = {
   exp: 'EXP 經驗值', dp: 'DP', gp: 'GP', vip: 'VIP 天數', serial: '序號（合作商家／LINE POINT）',
   coupon: '活動優惠券',
 }
 
 // 即時獎勵設定單一項目列（活動獎勵系統 P2；coupon 為 migration 138 活動優惠券擴充）：type 決定顯示哪些參數欄位。
-function RewardItemRow({ item, groups, couponDefs, onChange, onRemove }: {
+// costPerPoint：LINE POINTS 期望值試算器的單點成本（元，選填）——只有呼叫端傳入時才顯示 inline 期望成本
+// 提示；目前只有「即時獎勵設定」區塊會傳，「參賽虛擬獎勵」沿用同一元件但不傳，維持原本無 inline 提示的樣式。
+function RewardItemRow({ item, groups, couponDefs, costPerPoint, onChange, onRemove }: {
   item: RewardItem
   groups: RewardSerialGroup[]
   couponDefs: EventCouponDef[]
+  costPerPoint?: number
   onChange: (patch: Partial<RewardItem>) => void
   onRemove: () => void
 }) {
@@ -2065,7 +2268,21 @@ function RewardItemRow({ item, groups, couponDefs, onChange, onRemove }: {
           <input style={inp} type="number" min={1} value={item.days ?? 0} onChange={(e) => onChange({ days: parseInt(e.target.value || '0', 10) || 0 })} />
         </Field>
       )}
-      {item.type === 'serial' && <SerialDenomFields item={item} groups={groups} onChange={onChange} />}
+      {item.type === 'serial' && <SerialDenomFields item={item} groups={groups} costPerPoint={costPerPoint} onChange={onChange} />}
+      {item.type === 'serial' && costPerPoint != null && (() => {
+        const { rows, nonPointCount } = computeSerialDenomCalcs([item], groups)
+        if (rows.length === 0 && nonPointCount === 0) return null
+        const totalPoints = rows.reduce((s, r) => s + r.expectedPoints, 0)
+        const totalCost = pointsToCost(totalPoints, costPerPoint)
+        const hasUnparsed = rows.some((r) => r.pointValue == null)
+        return (
+          <div style={calcHint}>
+            💰 本項期望成本 NT$ {totalCost.toFixed(1)}（{totalPoints.toFixed(2)} 點 × {costPerPoint} 元/點）
+            {hasUnparsed && <span style={{ color: 'var(--hunt)' }}>　⚠ 部分面額無法解析點數，未計入</span>}
+            {nonPointCount > 0 && <span>　未計入：非點數類序號 {nonPointCount} 項</span>}
+          </div>
+        )
+      })()}
       {item.type === 'coupon' && (
         <Field label="券種">
           <select style={inp} value={item.coupon_def_id ?? ''} onChange={(e) => onChange({ coupon_def_id: e.target.value })}>
@@ -2091,9 +2308,10 @@ function RewardItemRow({ item, groups, couponDefs, onChange, onRemove }: {
 // 0＝不列入抽獎池。舊資料相容：item.merchant_id 未設定但有舊格式 serial_group_id 時，用該序號組
 // 反查所屬商家當作目前顯示值，一旦使用者調整任何權重就會自動轉存成新格式（denominations 非空後，
 // 後端一律優先採用 denominations，不再理會 serial_group_id）。
-function SerialDenomFields({ item, groups, onChange }: {
+function SerialDenomFields({ item, groups, costPerPoint, onChange }: {
   item: RewardItem
   groups: RewardSerialGroup[]
+  costPerPoint?: number
   onChange: (patch: Partial<RewardItem>) => void
 }) {
   // 商家清單：只列出「有指定商家」的序號組，依 merchant_id 去重（未指定商家的序號組不適用兩層抽獎，不列入選項）
@@ -2138,16 +2356,40 @@ function SerialDenomFields({ item, groups, onChange }: {
           <span style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-faint)', textTransform: 'uppercase' }}>
             面額權重（商家中獎後依權重比例抽一組面額；0＝不列入抽獎，「可用」僅供參考、缺貨面額會自動排除）
           </span>
-          {merchantGroups.map((g) => (
-            <Row key={g.id}>
-              <span style={{ flex: 1, fontSize: 13, alignSelf: 'center' }}>{g.name}（可用 {g.available_count}）</span>
-              <input
-                style={{ ...inp, maxWidth: 100 }} type="number" min={0} step="1"
-                value={weightOf(g.id)}
-                onChange={(e) => setWeight(g.id, Math.max(0, parseInt(e.target.value || '0', 10) || 0))}
-              />
-            </Row>
-          ))}
+          {merchantGroups.map((g) => {
+            const weight = weightOf(g.id)
+            const totalWeight = effectiveDenoms(item).reduce((s, d) => s + Math.max(0, d.weight), 0)
+            return (
+              <div key={g.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Row>
+                  <span style={{ flex: 1, fontSize: 13, alignSelf: 'center' }}>{g.name}（可用 {g.available_count}）</span>
+                  <input
+                    style={{ ...inp, maxWidth: 100 }} type="number" min={0} step="1"
+                    value={weight}
+                    onChange={(e) => setWeight(g.id, Math.max(0, parseInt(e.target.value || '0', 10) || 0))}
+                  />
+                </Row>
+                {/* 期望值試算 inline 提示（costPerPoint 由呼叫端傳入才顯示，見 RewardItemRow 註解）：
+                    weight=0 代表此面額不在抽獎池中，不顯示提示。 */}
+                {costPerPoint != null && weight > 0 && (() => {
+                  if (!g.is_line_point) {
+                    return <span style={calcHint}>非 LINE POINTS，不計入點數期望值</span>
+                  }
+                  const actualProb = denomActualProb(item.prob_bp ?? 0, weight, totalWeight)
+                  const pointValue = parsePointValue(g.name || g.item_label || '')
+                  if (pointValue == null) {
+                    return <span style={{ ...calcHint, color: 'var(--hunt)' }}>⚠ 無法從名稱解析面額，請在序號組名稱中包含點數數字</span>
+                  }
+                  const expectedPoints = denomExpectedPoints(pointValue, g.grant_count, actualProb)
+                  return (
+                    <span style={calcHint}>
+                      面額值 {pointValue}（自名稱解析）｜實際機率 {(actualProb * 100).toFixed(2)}%｜期望 {expectedPoints.toFixed(2)} 點
+                    </span>
+                  )
+                })()}
+              </div>
+            )
+          })}
           {merchantGroups.length === 0 && (
             <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>此商家尚無對應本場活動的序號組。</span>
           )}
@@ -2177,6 +2419,8 @@ const card: React.CSSProperties = {
   display: 'flex', flexDirection: 'column', gap: 12, background: 'var(--bg-2)',
 }
 const hint: React.CSSProperties = { fontSize: 12, color: 'var(--tx-dim)' }
+// 期望值試算器 inline 提示文字樣式（小巧不搶版面，比照 hint 但更淡更小）
+const calcHint: React.CSSProperties = { fontSize: 11, color: 'var(--tx-faint)' }
 const inp: React.CSSProperties = {
   background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 10,
   padding: '10px 12px', color: 'var(--tx)', fontSize: 14, width: '100%', fontFamily: 'inherit',
