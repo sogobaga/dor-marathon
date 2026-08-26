@@ -133,71 +133,89 @@ export default function AdminMembersList() {
 
       {members && members.length > 0 && (
         <div style={{ border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
-          <div style={{ ...rowStyle, color: 'var(--tx-faint)', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', background: 'var(--bg-1)' }}>
-            <div style={{ flex: 2 }}>會員</div>
-            <div style={{ flex: 2 }}>Email</div>
-            <div style={{ flex: 1 }}>真實名稱</div>
-            <div style={{ flex: 1 }}>手機</div>
-            <div style={{ width: 50 }}>性別</div>
-            <div style={{ width: 70, textAlign: 'right' }}>里程</div>
-            <div style={{ width: 54 }}>身分</div>
-            <div style={{ width: 110 }}>來源</div>
-            <div style={{ width: 130 }}>VIP到期(剩餘)</div>
-            <div style={{ width: 110 }}>上次登入</div>
-          </div>
-          {members.map((m) => {
-            const days = m.is_vip ? vipDaysLeft(m.vip_expires_at) : null
-            return (
-              <Link key={m.id} href={`/admin/members/${m.id}`} style={{ ...rowStyle, textDecoration: 'none', color: 'inherit', flexWrap: 'wrap' }}>
-                <div style={{ flex: 2, minWidth: 140 }}>
-                  <div style={{ fontWeight: 600 }}>
-                    {m.name || m.handle}
-                    {m.is_virtual && <span title="虛擬選手" style={{ marginLeft: 6 }}>🤖</span>}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>
-                    @{m.handle}{m.role !== 'user' ? ` · ${m.role}` : ''}
-                  </div>
-                </div>
-                <div style={{ flex: 2, minWidth: 160, color: 'var(--tx-dim)', fontSize: 13, wordBreak: 'break-all' }}>{m.email}</div>
-                <div style={{ flex: 1, minWidth: 70, color: 'var(--tx-dim)', fontSize: 13 }}>{m.real_name || '—'}</div>
-                <div style={{ flex: 1, minWidth: 70, color: 'var(--tx-dim)', fontSize: 13 }}>{m.phone || '—'}</div>
-                <div style={{ width: 50, color: 'var(--tx-dim)', fontSize: 13 }}>{GENDER_LABEL[m.gender] || '—'}</div>
-                <div style={{ width: 70, textAlign: 'right', fontSize: 13 }}>{m.total_km.toFixed(1)}K</div>
-                <div style={{ width: 54 }}>
-                  <span style={{
-                    fontSize: 11, fontWeight: 800, borderRadius: 999, padding: '2px 9px', display: 'inline-block',
-                    ...(m.is_vip
-                      ? { background: 'rgba(255,194,75,.14)', border: '1px solid var(--gold)', color: 'var(--gold)' }
-                      : { background: 'var(--bg-2)', border: '1px solid var(--line)', color: 'var(--tx-faint)' }),
-                  }}>{m.is_vip ? 'VIP' : '一般'}</span>
-                </div>
-                <div style={{ width: 110, fontSize: 12, color: m.signup_source ? 'var(--tx-dim)' : 'var(--tx-faint)' }}>
-                  {signupSourceText(m.signup_source, m.signup_ref_name, m.signup_utm_source)}
-                </div>
-                <div style={{ width: 130, fontSize: 12, color: 'var(--tx-dim)' }}>
-                  {m.is_vip && m.vip_expires_at ? (
-                    <>
-                      <div>{fmtVipExpiry(m.vip_expires_at)}</div>
-                      <div style={{ fontSize: 11, color: days !== null && days <= 3 ? 'var(--hunt)' : 'var(--tx-faint)' }}>
-                        {days !== null ? `剩 ${days} 天` : ''}
+          <div style={{ overflowX: 'auto' }}>
+            <div style={{ minWidth: MEMBERS_TABLE_MIN_WIDTH }}>
+              <div style={{ ...rowStyle, color: 'var(--tx-faint)', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', background: 'var(--bg-1)' }}>
+                <div>會員</div>
+                <div>Email</div>
+                <div>真實名稱</div>
+                <div>手機</div>
+                <div>性別</div>
+                <div style={{ textAlign: 'right' }}>里程</div>
+                <div>身分</div>
+                <div>來源</div>
+                <div>VIP到期(剩餘)</div>
+                <div>上次登入</div>
+              </div>
+              {members.map((m) => {
+                const days = m.is_vip ? vipDaysLeft(m.vip_expires_at) : null
+                const sourceText = signupSourceText(m.signup_source, m.signup_ref_name, m.signup_utm_source)
+                const roleSuffix = m.role !== 'user' ? ` · ${m.role}` : ''
+                return (
+                  <Link key={m.id} href={`/admin/members/${m.id}`} style={{ ...rowStyle, textDecoration: 'none', color: 'inherit' }}>
+                    <div style={{ overflow: 'hidden' }}>
+                      <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={cellEllipsis} title={m.name || m.handle}>{m.name || m.handle}</span>
+                        {m.is_virtual && <span title="虛擬選手">🤖</span>}
                       </div>
-                    </>
-                  ) : '—'}
-                </div>
-                <div style={{ width: 110, fontSize: 12, color: 'var(--tx-dim)' }}>{fmtLastLogin(m.last_login_at)}</div>
-              </Link>
-            )
-          })}
+                      <div style={{ fontSize: 11, color: 'var(--tx-faint)', ...cellEllipsis }} title={`@${m.handle}${roleSuffix}`}>
+                        @{m.handle}{roleSuffix}
+                      </div>
+                    </div>
+                    <div style={{ color: 'var(--tx-dim)', fontSize: 13, ...cellEllipsis }} title={m.email}>{m.email}</div>
+                    <div style={{ color: 'var(--tx-dim)', fontSize: 13, ...cellEllipsis }} title={m.real_name || undefined}>{m.real_name || '—'}</div>
+                    <div style={{ color: 'var(--tx-dim)', fontSize: 13, ...cellEllipsis }}>{m.phone || '—'}</div>
+                    <div style={{ color: 'var(--tx-dim)', fontSize: 13 }}>{GENDER_LABEL[m.gender] || '—'}</div>
+                    <div style={{ textAlign: 'right', fontSize: 13 }}>{m.total_km.toFixed(1)}K</div>
+                    <div>
+                      <span style={{
+                        fontSize: 11, fontWeight: 800, borderRadius: 999, padding: '2px 9px', display: 'inline-block',
+                        ...(m.is_vip
+                          ? { background: 'rgba(255,194,75,.14)', border: '1px solid var(--gold)', color: 'var(--gold)' }
+                          : { background: 'var(--bg-2)', border: '1px solid var(--line)', color: 'var(--tx-faint)' }),
+                      }}>{m.is_vip ? 'VIP' : '一般'}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: m.signup_source ? 'var(--tx-dim)' : 'var(--tx-faint)', ...cellEllipsis }} title={sourceText}>
+                      {sourceText}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
+                      {m.is_vip && m.vip_expires_at ? (
+                        <>
+                          <div>{fmtVipExpiry(m.vip_expires_at)}</div>
+                          <div style={{ fontSize: 11, color: days !== null && days <= 3 ? 'var(--hunt)' : 'var(--tx-faint)' }}>
+                            {days !== null ? `剩 ${days} 天` : ''}
+                          </div>
+                        </>
+                      ) : '—'}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>{fmtLastLogin(m.last_login_at)}</div>
+                  </Link>
+                )
+              })}
+            </div>
+          </div>
         </div>
       )}
     </div>
   )
 }
 
+// 表頭與資料列共用同一組欄寬模板，確保逐欄對齊；順序＝會員/Email/真實名稱/手機/性別/里程/身分/來源/VIP到期(剩餘)/上次登入
+const MEMBERS_GRID_COLUMNS =
+  'minmax(170px,1.6fr) minmax(190px,1.4fr) 100px 110px 50px 70px 60px 110px 130px 110px'
+const MEMBERS_TABLE_MIN_WIDTH = 1100
+
 const rowStyle: React.CSSProperties = {
-  display: 'flex',
+  display: 'grid',
+  gridTemplateColumns: MEMBERS_GRID_COLUMNS,
   alignItems: 'center',
   gap: 12,
   padding: '12px 16px',
   borderBottom: '1px solid var(--line)',
+}
+
+const cellEllipsis: React.CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 }
