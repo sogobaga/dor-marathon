@@ -3678,6 +3678,70 @@ export const adminMonopolyApi = {
     request<MonopolySettings>('/admin/monopoly/settings', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
 }
 
+// --- Admin: 會員活躍度分析（member_analytics_reports，migration 148）---
+// 契約鍵名與後端 internal/analytics（日報 JSONB）一致，勿自行改名；統計皆已排除 users.is_virtual、
+// 活動皆已排除 flagged，時區台灣日（見後端 internal/ops/dailyreport.go 同口徑）。
+
+export interface AnalyticsDatePoint { date: string; count: number }
+export interface AnalyticsKmPoint { date: string; km: number }
+export interface AnalyticsBucket { bucket: string; count: number }
+export interface AnalyticsSourceCount { source: string; count: number }
+export interface AnalyticsGroupAvg { group: string; avg_km: number; users: number }
+export interface AnalyticsTopCount { title?: string; name?: string; count: number }
+export interface AnalyticsSystemUsage { system: string; label: string; users_30d: number; users_total: number }
+
+export interface MemberAnalyticsReport {
+  day: string // YYYY-MM-DD，統計基準日
+  generated_at: string
+  registrations: {
+    total_members: number
+    new_30d: AnalyticsDatePoint[]
+    by_hour: number[] // 24 個 int，index=小時
+    by_source: AnalyticsSourceCount[]
+  }
+  logins: {
+    dau_30d: AnalyticsDatePoint[]
+    active_7d: number
+    active_30d: number
+    freq_dist_30d: AnalyticsBucket[]
+    by_hour: number[]
+  }
+  mileage: {
+    daily_km_30d: AnalyticsKmPoint[]
+    pace_dist: AnalyticsBucket[]
+    monthly_volume_dist: AnalyticsBucket[]
+    by_gender: AnalyticsGroupAvg[]
+    by_age: AnalyticsGroupAvg[]
+  }
+  participation: {
+    reg_30d: AnalyticsDatePoint[]
+    ever_registered_pct: number
+    top_races: AnalyticsTopCount[]
+    repeat_dist: AnalyticsBucket[]
+  }
+  cards: {
+    collectors: number
+    total_collected: number
+    collection_dist: AnalyticsBucket[]
+    top_cards: AnalyticsTopCount[]
+  }
+  systems: {
+    usage: AnalyticsSystemUsage[]
+  }
+}
+
+export interface MemberAnalyticsResponse {
+  report: MemberAnalyticsReport
+  stale: boolean // 最新一筆已超過 48h 未重算
+}
+
+export const adminAnalyticsApi = {
+  // 讀最新一筆已存檔的日報
+  get: (token: string) => request<MemberAnalyticsResponse>('/admin/analytics/report', { headers: withAuth(token) }),
+  // 立即重算並存檔（後端 20s timeout 內完成），回同形狀 report
+  recompute: (token: string) => request<MemberAnalyticsResponse>('/admin/analytics/recompute', { method: 'POST', headers: withAuth(token) }),
+}
+
 // --- WebSocket helper ---
 
 export function createRaceSocket(raceID: string, accessToken: string): WebSocket {

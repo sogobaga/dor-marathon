@@ -20,6 +20,7 @@ import (
 	"github.com/dor/api/internal/activity"
 	"github.com/dor/api/internal/activityreward"
 	"github.com/dor/api/internal/adminacct"
+	"github.com/dor/api/internal/analytics"
 	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/cache"
@@ -157,6 +158,9 @@ func main() {
 	// 健檢，異常送 Telegram，比照 bindHandler.RunRenewalLoop 的排程骨架，見 internal/ops/selfcheck.go；
 	// 同一個 Handler 也承載每日營運報告排程，見 internal/ops/dailyreport.go）
 	opsHandler := ops.NewHandler(pool)
+	// 會員活躍度分析（六大區塊每日彙整報告，台灣時間 03:00 排程，見 internal/analytics/schedule.go；
+	// 與上面 opsHandler 的 08:00 自檢/營運報告排程分開時段、分開 advisory lock，互不搶跑）。
+	analyticsHandler := analytics.NewHandler(pool)
 	// IP/流量每日聚合中介層（migration 145，見 internal/middleware/ipdaily.go）：掛載於下方路由 r.Use
 	// 區塊，背景 flush loop 於下方 bgCtx 一併啟動。
 	ipDailyAgg := middleware.NewIPDailyAggregate(pool)
@@ -543,6 +547,8 @@ func main() {
 			r.With(perm("settings")).Mount("/admin/email-broadcasts", emailBroadcastHandler.AdminRouter())
 			r.With(perm("settings")).Post("/admin/ops/selfcheck", opsHandler.SelfCheckNow)
 			r.With(perm("settings")).Post("/admin/ops/dailyreport", opsHandler.DailyReportNow)
+			r.With(perm("analytics")).Get("/admin/analytics/report", analyticsHandler.GetReport)
+			r.With(perm("analytics")).Post("/admin/analytics/recompute", analyticsHandler.Recompute)
 		})
 	})
 
@@ -598,6 +604,10 @@ func main() {
 	// 背景：每日營運報告排程（同一 08:00-08:59 執行窗口，固定發送，不論當天有無異常；見
 	// internal/ops/dailyreport.go）
 	go opsHandler.RunDailyReportLoop(bgCtx)
+	// 背景：會員活躍度分析每日排程（台灣時間 03:00-03:59 執行窗口，彙整六大區塊存進
+	// member_analytics_reports；啟動時若最新報告超過 25h 未算會先補跑一次，見
+	// internal/analytics/schedule.go）
+	go analyticsHandler.RunLoop(bgCtx)
 	// 背景：IP/流量每日聚合 flush（每 5 分鐘批次寫入 ops_ip_daily + 每天順手清理 30 天前舊資料）
 	go ipDailyAgg.Run(bgCtx)
 	// 背景：虛擬選手數據生成引擎 Phase 2（對齊台灣整點 H∈{5,6,7,20,21,22,23}，替 enabled 選手
