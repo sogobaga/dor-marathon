@@ -212,6 +212,11 @@ export default function RaceForm({
   // VIP 活動優惠券面額（分）：來自後台系統設定 vip_coupon_value_cents，見下方 useEffect 載入；
   // 10000（$100）為讀取失敗時的 fallback，與後端 appsettings.GetInt 的 fallback 預設一致。
   const [vipCouponValueCents, setVipCouponValueCents] = useState(10000)
+  // 「🔄 更新試算資料」：序號組/券種/系統設定只在表單開啟時抓一次——若管理者中途去「序號/獎勵管理」
+  // 新建面額（例如 LINE POINTS 1000點）再回來加進獎勵，試算面板手上的舊清單解析不到新組、期望值
+  // 不會反映（2026-08-28 使用者回報）。此鈕重抓三個資料源，state 更新後試算自動重算。
+  const [evRefreshing, setEvRefreshing] = useState(false)
+  const [evRefreshedTip, setEvRefreshedTip] = useState(false)
   const [controlStatus, setControlStatus] = useState<string>(initial?.control_status ?? 'active')
   const [startingSoonDays, setStartingSoonDays] = useState<string>(String(initial?.starting_soon_days ?? 5))
   const [allowTeamGroups, setAllowTeamGroups] = useState<boolean>(initial?.allow_team_groups ?? false)
@@ -977,10 +982,49 @@ export default function RaceForm({
       if (setsEqual) reverseApplyIdx = reverseCandidateItems[0].idx
     }
 
+    // 重抓試算資料源（序號組/券種/VIP券面額）；rewardItems 等表單 state 本來就即時，唯獨這三個
+    // 外部目錄是快照——新建面額後按此鈕即可讓試算吃到最新資料（見 evRefreshing state 的註解）。
+    const refreshEvCalcData = async () => {
+      setEvRefreshing(true)
+      setEvRefreshedTip(false)
+      try {
+        const [g, c, s] = await Promise.all([
+          adminRewardGroupsApi.list(token),
+          adminEventCouponsApi.list(token),
+          adminAppSettingsApi.list(token),
+        ])
+        setRewardGroups(g.groups)
+        setCouponDefs(c.defs)
+        const couponRaw = s.settings?.['vip_coupon_value_cents']
+        if (couponRaw != null && couponRaw !== '') {
+          const n = parseInt(couponRaw, 10)
+          if (Number.isFinite(n) && n >= 0) setVipCouponValueCents(n)
+        }
+        setEvRefreshedTip(true)
+        setTimeout(() => setEvRefreshedTip(false), 2500)
+      } catch {
+        /* 失敗維持舊資料，不擋表單 */
+      } finally {
+        setEvRefreshing(false)
+      }
+    }
+
     return (
       <details style={{ marginTop: 8, border: '1px solid var(--line-2)', borderRadius: 10, padding: '8px 12px', background: 'var(--bg-1, #11131a)' }}>
         <summary style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', cursor: 'pointer' }}>💰 期望值試算</summary>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button
+              type="button"
+              onClick={refreshEvCalcData}
+              disabled={evRefreshing}
+              style={{ background: 'var(--bg-2)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '6px 12px', fontSize: 12.5, fontWeight: 700, cursor: evRefreshing ? 'default' : 'pointer', opacity: evRefreshing ? 0.6 : 1 }}
+            >
+              {evRefreshing ? '更新中…' : '🔄 更新期望值試算'}
+            </button>
+            {evRefreshedTip && <span style={{ fontSize: 12, color: 'var(--fug)' }}>✓ 已更新（序號組/券種/券面額）</span>}
+            <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>新建序號面額後按此鈕重新載入資料</span>
+          </div>
           <Row>
             <Field label="LINE POINTS 單點成本（元，可調）">
               <input
