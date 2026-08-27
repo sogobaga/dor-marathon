@@ -204,6 +204,13 @@ export default function AdminRewardSerialsPage() {
     if (groupForm.valid_from && groupForm.valid_until && new Date(groupForm.valid_from) >= new Date(groupForm.valid_until)) {
       setErr('開始時間需早於使用期限'); return
     }
+    // 防呆（2026-08-28 實際案例：LINE POINTS 1000 建立時旗標為 false，期望值試算靜默不計入）：
+    // 名稱/品項看起來是 LINE POINTS 卻沒勾「LINE POINT 序號」→ 儲存前確認一次，避免無聲漏勾。
+    if (!groupForm.is_line_point && /line\s*point/i.test(name + ' ' + groupForm.item_label)) {
+      if (!window.confirm('名稱看起來是 LINE POINTS 序號，但未勾選「LINE POINT 序號」。\n未勾選的話，期望值試算與點數類統計都不會計入這個面額。\n\n確定要以「未勾選」儲存嗎？（按取消回去勾選）')) {
+        return
+      }
+    }
     setGroupBusy(true); setErr(''); setMsg('')
     try {
       const body: RewardSerialGroupWriteBody = {
