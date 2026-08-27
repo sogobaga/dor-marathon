@@ -41,6 +41,27 @@ type GroupForm = {
   icon_url: string    // 獎勵詳情：獎勵圖示
   description: string // 獎勵詳情：活動/獎勵說明
 }
+// 依「商家名 → 面額數字小→大 → 名稱」排序序號組清單；面額數字＝名稱/品項中最大的連續數字
+//（與 RaceForm 期望值試算的 parsePointValue 同一種解析口徑），無數字者排在同商家最後。
+function denomValueOf(name: string, itemLabel: string): number | null {
+  const matches = (name + ' ' + itemLabel).match(/\d+/g)
+  if (!matches || matches.length === 0) return null
+  return Math.max(...matches.map((x) => parseInt(x, 10)))
+}
+function sortGroupsByDenom<T extends { merchant_name?: string; name: string; item_label: string }>(list: T[]): T[] {
+  return list.slice().sort((a, b) => {
+    const ma = a.merchant_name ?? ''
+    const mb = b.merchant_name ?? ''
+    if (ma !== mb) return ma.localeCompare(mb, 'zh-Hant')
+    const va = denomValueOf(a.name, a.item_label)
+    const vb = denomValueOf(b.name, b.item_label)
+    if (va != null && vb != null && va !== vb) return va - vb
+    if (va != null && vb == null) return -1
+    if (va == null && vb != null) return 1
+    return a.name.localeCompare(b.name, 'zh-Hant')
+  })
+}
+
 const EMPTY_GROUP: GroupForm = {
   merchant_id: '', name: '', item_label: '', is_line_point: false, valid_from: '', valid_until: '',
   use_limit_type: 'single', use_limit_count: '', grant_count: '1', applies_all_races: true, race_ids: [],
@@ -84,7 +105,9 @@ export default function AdminRewardSerialsPage() {
   const loadGroups = useCallback(() => {
     const t = getToken()
     if (!t) return
-    adminRewardGroupsApi.list(t).then((r) => setGroups(r.groups)).catch((e) => setErr(e?.message || '載入序號組失敗'))
+    // 列表排序：商家名 → 面額數字小→大（名稱中最大連續數字，如 LINE POINTS 20→50→100→1000→3000），
+    // 無數字者排最後依名稱（使用者拍板：自動依面額排序，與賽事表單面額權重列表同一套順序邏輯）。
+    adminRewardGroupsApi.list(t).then((r) => setGroups(sortGroupsByDenom(r.groups))).catch((e) => setErr(e?.message || '載入序號組失敗'))
   }, [])
 
   useEffect(() => {

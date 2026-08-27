@@ -2620,7 +2620,19 @@ function SerialDenomFields({ item, groups, costPerPoint, onChange }: {
 
   const legacyGroup = !item.merchant_id && item.serial_group_id ? groups.find((g) => g.id === item.serial_group_id) : undefined
   const selectedMerchantId = item.merchant_id || legacyGroup?.merchant_id || ''
-  const merchantGroups = groups.filter((g) => g.merchant_id === selectedMerchantId)
+  // 面額列表依「面額數字小→大」排序（20→50→100→1000），解析不到數字的排最後、同組依名稱
+  //（使用者拍板：自動依面額排序，與序號/獎勵管理列表同一套順序邏輯）。
+  const merchantGroups = groups
+    .filter((g) => g.merchant_id === selectedMerchantId)
+    .slice()
+    .sort((a, b) => {
+      const va = parsePointValue(a.name || a.item_label || '')
+      const vb = parsePointValue(b.name || b.item_label || '')
+      if (va != null && vb != null && va !== vb) return va - vb
+      if (va != null && vb == null) return -1
+      if (va == null && vb != null) return 1
+      return a.name.localeCompare(b.name, 'zh-Hant')
+    })
 
   function weightOf(groupId: string): number {
     const d = item.denominations?.find((x) => x.group_id === groupId)
