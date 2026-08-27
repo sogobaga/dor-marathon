@@ -20,10 +20,13 @@
 // 「時間」歸零／不走會被誤以為故障。因此主要顯示指標（時間／平均配速／預計完成 ETA）一律改用
 // elapsed（page.tsx 由 250ms interval 驅動、開跑起算的總牆鐘秒數）與其對應的總時間平均配速 avgPace
 // （elapsed/distance），三者同一把尺、同步前進，不會出現「時間在走、平均配速或 ETA 卻凍結」的矛盾。
-// 例外只有兩處，刻意維持「移動中表現」口徑不變：
-//   - 「當下分段配速」（movingSegLivePace）：即時分段本來就該反映跑者現正的實際擺動表現，扣掉停等
-//     時間才有教練意義（等紅燈不該拉低這一公里的即時配速），不隨本次調整。
-//   - 配速偏差提醒：比較對象仍是 movingSegLivePace vs 目標配速，理由同上。
+// 例外只有一處，刻意維持「移動中表現」口徑：
+//   - 配速偏差提醒（引擎內部）：比較對象是 movingSegLivePace vs 目標配速——扣掉停等時間才有教練
+//     意義，等紅燈不該被提醒「太慢」。
+// 顯示層的「分段即時配速」大字（2026-08-27 使用者拍板）：改吃與主面板四格完全相同的 segLivePace
+// （全程口徑）——本疊層定位是背景面板的放大鏡，四個大字必須跟四格數字一模一樣，否則「當下分段配速
+// 10:21 vs 分段即時配速 12:52」同名不同數會被當成 bug（使用者實測回報）。移動口徑的分段配速在主
+// 畫面次要列「分段」仍看得到；偏差提醒引擎與顯示脫鉤、各用各的口徑。
 // 補給提醒引擎 time 模式門檻同樣用 elapsed（FuelPoint.at 契約＝「開跑後秒數」，比賽時鐘不停錶），
 // 本疊層已完全不吃移動時間（movingS），移動時間僅存在於一般介面的量測列。
 // 一般跑步/課表/個人任務（無 strategy）的「移動距離／時間／平均配速／當下分段配速」4 大字指標同一套
@@ -64,7 +67,7 @@ function predictedTimeAtKm(km: number, segments: StrategySegment[]): number {
 type PaceDir = 'fast' | 'slow'
 
 export default function RaceFocusMode({
-  strategy, distanceM, elapsed, avgPace, movingSegLivePace,
+  strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace,
 }: {
   strategy: RaceStrategy | null // null＝一般跑步/課表/個人任務等沒有賽事策略的情境，只顯示基本 4 大字指標
   distanceM: number // 目前有效距離（公尺）——與頁面主面板「距離」同一份數據（distRef）
@@ -72,8 +75,10 @@ export default function RaceFocusMode({
   // 比賽情境＝大會時間口徑，本疊層「時間」大字、ETA 推估、補給 time 模式門檻都吃這個
   avgPace: number // 總時間平均配速（秒/公里，elapsed/distance；未達門檻為 0）——頁面既有 avgPace；
   // 與 elapsed 同一把尺，供「平均配速」大字與 ETA 推估共用，避免跟時間指標不同步
-  movingSegLivePace: number // 目前這 1km 的移動時間即時配速（秒/公里；未達門檻為 0）——頁面既有 movingSegLivePace；
-  // 刻意不隨本次調整改口徑，見上方口徑決策說明
+  segLivePace: number // 目前這 1km 的全程口徑即時配速（秒/公里；未達門檻為 0）——與四格「分段即時配速」
+  // 同一個值，供「分段即時配速」大字顯示（放大鏡原則，見上方口徑決策說明）
+  movingSegLivePace: number // 目前這 1km 的移動時間即時配速（秒/公里；未達門檻為 0）——只供配速偏差
+  // 提醒引擎內部比較用，不再上畫面（見上方口徑決策說明）
 }) {
   // 「顯示完整介面」：暫時隱藏本覆蓋層，露出原本 UI。初始值＝有 strategy 時預設開啟（維持既有「載入策略
   // 開跑自動進入專注模式」行為），一般跑步（無 strategy）預設不自動進入、顯示切換鈕讓使用者手動切入。
@@ -193,7 +198,7 @@ export default function RaceFocusMode({
       <Metric label="時間" value={fmtTime(elapsed)} unit="" size="lg" />
       <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
         <Metric label="平均配速" value={fmtPace(avgPace)} unit="/km" size="md" />
-        <Metric label="當下分段配速" value={fmtPace(movingSegLivePace)} unit="/km" size="md" />
+        <Metric label="分段即時配速" value={fmtPace(segLivePace)} unit="/km" size="md" />
       </div>
       {/* 以下皆為賽事策略專屬區塊：無 strategy（一般跑步/課表/個人任務等）整組不渲染 */}
       {strategy && (

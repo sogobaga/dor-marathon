@@ -1586,11 +1586,13 @@ export default function TrackPage() {
           切換鈕手動開關，見 RaceFocusMode 內 hidden 初始值）。z-index 600（>面板 500，但低於事件演出
           2100+/確認結束 2500/Strava 三選一與登入 3300），讓既有的警示/事件系統仍蓋在它之上；純顯示層，
           不影響 WorkoutHud/課表引擎/事件任務引擎下方繼續運作的任何邏輯。
-          時間口徑：疊層內「時間/平均配速/預計完成」改吃 elapsed/avgPace（大會時間，不因靜止停錶，見
-          RaceFocusMode 內口徑決策註解）；movingS 只剩補給提醒引擎在用，movingSegLivePace（當下分段配速）
-          維持移動口徑不變。下方本頁一般面板「移動時間/移動配速/分段」那排（約 #1707 起）不受影響。 */}
+          時間口徑：疊層內「時間/平均配速/預計完成」吃 elapsed/avgPace（大會時間，不因靜止停錶）；
+          「分段即時配速」大字吃 segLivePace＝與四格完全同一個值（2026-08-27 拍板「放大鏡原則」：疊層
+          四大字必須跟背景四格一模一樣，同名不同數會被當 bug）；movingSegLivePace 只供偏差提醒引擎內部
+          比較、不再上畫面（見 RaceFocusMode 內口徑決策註解）。下方一般面板「移動時間/移動配速/分段」
+          那排不受影響。 */}
       {status === 'tracking' && (
-        <RaceFocusMode strategy={raceStrategy} distanceM={distance} elapsed={elapsed} avgPace={avgPace} movingSegLivePace={movingSegLivePace} />
+        <RaceFocusMode strategy={raceStrategy} distanceM={distance} elapsed={elapsed} avgPace={avgPace} segLivePace={segLivePace} movingSegLivePace={movingSegLivePace} />
       )}
       {confirmEnd && activeEvent && (() => {
         const ev = activeEvent
