@@ -318,11 +318,14 @@ function RunnersSection({ runners }: { runners: AnalyticsRunner[] | undefined })
       ) : (
         <>
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 620 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 820 }}>
               <thead>
                 <tr style={{ background: 'var(--bg-2)' }}>
                   <th style={{ ...runnerThStyle, textAlign: 'left' }}>名次</th>
                   <th style={{ ...runnerThStyle, textAlign: 'left' }}>跑者</th>
+                  <th style={runnerThStyle}>等級</th>
+                  <th style={runnerThStyle}>DP</th>
+                  <th style={runnerThStyle}>GP</th>
                   <th style={runnerThStyle}>累積里程</th>
                   <th style={runnerThStyle}>累積時間</th>
                   <th style={runnerThStyle}>平均配速</th>
@@ -343,6 +346,9 @@ function RunnersSection({ runners }: { runners: AnalyticsRunner[] | undefined })
                         <span style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>@{r.handle}</span>
                       </div>
                     </td>
+                    <td style={{ ...runnerTdStyle, textAlign: 'right' }}>{r.level == null ? '—' : `Lv.${r.level}`}</td>
+                    <td style={{ ...runnerTdStyle, textAlign: 'right' }}>{r.dp == null ? '—' : r.dp}</td>
+                    <td style={{ ...runnerTdStyle, textAlign: 'right' }}>{r.gp == null ? '—' : r.gp}</td>
                     <td style={{ ...runnerTdStyle, textAlign: 'right' }}>{round1(r.total_km)} km</td>
                     <td style={{ ...runnerTdStyle, textAlign: 'right' }}>{fmtDurationHM(r.total_duration_s)}</td>
                     <td style={{ ...runnerTdStyle, textAlign: 'right' }}>{fmtPaceMinSec(r.avg_pace_s)} /km</td>

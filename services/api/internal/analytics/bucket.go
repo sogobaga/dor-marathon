@@ -250,6 +250,30 @@ func ageBucket(birthday *time.Time, asOf time.Time) string {
 	}
 }
 
+// levelRow 等級門檻（level_config 表單列，只取 levelFromExp 需要的兩欄；後台可調，見
+// internal/profile/membership.go LevelConfig／admin/levels 頁）。
+type levelRow struct {
+	Level       int
+	ExpRequired int
+}
+
+// levelFromExp 依 exp 與等級門檻表（由 queryLevelConfig 依 exp_required 升冪查回）推導目前等級。
+// 邏輯逐行對照移植自 internal/profile/membership.go:83-94 computeLevel（會員面板 MemberPanel.tsx
+// 顯示「Lv.X」的權威來源、GET /api/v1/profile/dashboard 回傳的 DashboardInfo.Level）——這裡只需要
+// 排行榜要顯示的等級數字本身，不需要 title/本級門檻/下一級門檻，故簡化回傳值；levels 為空（理論上
+// 不會發生，level_config 至少有 1 級種子資料，防禦性處理）回傳預設 1 級，比照來源函式的預設值。
+func levelFromExp(exp int, levels []levelRow) int {
+	level := 1
+	for i := range levels {
+		if exp >= levels[i].ExpRequired {
+			level = levels[i].Level
+		} else {
+			break
+		}
+	}
+	return level
+}
+
 var genderGroupOrder = []string{"male", "female", "other", "unspecified"}
 
 // normalizeGender 把 user_profiles.gender（male/female/other/NULL/空字串）正規化成固定分組鍵；

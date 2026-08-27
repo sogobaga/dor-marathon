@@ -3708,6 +3708,12 @@ export interface AnalyticsRunner {
   avg_pace_s: number
   runs: number
   avg_days_per_week: number
+  // level/dp/gp：目前等級（後端已依 exp 換算好，比照會員面板 Lv.X）／DP／GP 現況快照。舊日報
+  // （本三欄上線前算出的 JSONB，即使 runners 陣列本身已存在）沒有這三個鍵 → optional，容忍 undefined
+  // 顯示為 —（與 runners 整體 undefined 的舊版提示機制並存，見 RunnersSection）。
+  level?: number
+  dp?: number
+  gp?: number
 }
 
 export interface MemberAnalyticsReport {

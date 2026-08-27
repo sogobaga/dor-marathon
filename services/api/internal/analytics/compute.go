@@ -50,6 +50,24 @@ func queryDateKmMap(ctx context.Context, db *pgxpool.Pool, sql string, args ...a
 	return out, rows.Err()
 }
 
+// queryLevelConfig 撈整份等級門檻表（依 exp_required 升冪，供 levelFromExp 使用；見 bucket.go）。
+func queryLevelConfig(ctx context.Context, db *pgxpool.Pool) ([]levelRow, error) {
+	rows, err := db.Query(ctx, `SELECT level, exp_required FROM level_config ORDER BY exp_required`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []levelRow{}
+	for rows.Next() {
+		var l levelRow
+		if err := rows.Scan(&l.Level, &l.ExpRequired); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
 // queryHourArray 執行「SELECT 小時(0-23)::int, COUNT(*) ... GROUP BY 1」形狀的查詢，回傳長度 24 的
 // 陣列（index=小時）；查無資料的小時維持 0。
 func queryHourArray(ctx context.Context, db *pgxpool.Pool, sql string, args ...any) ([]int, error) {
@@ -592,11 +610,21 @@ func buildRunners(ctx context.Context, db *pgxpool.Pool, today time.Time) ([]Run
 	// taiwanDaySeries 的既有慣例。
 	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 
+	// 等級門檻表只需查一次（後台可調但單次報告計算期間視為不變），供下方逐人 levelFromExp 換算，
+	// 比在 SQL 端用 CASE WHEN 展開門檻表更簡單、且與會員面板算法（同樣是 Go 端迴圈）一致。
+	levels, err := queryLevelConfig(ctx, db)
+	if err != nil {
+		return out, fmt.Errorf("runners level_config: %w", err)
+	}
+
 	rows, err := db.Query(ctx, `
 		SELECT u.id::text,
 		       COALESCE(NULLIF(u.name,''), u.handle) AS name,
 		       u.handle,
 		       u.is_virtual,
+		       u.exp,
+		       u.dp,
+		       u.gp,
 		       COALESCE(SUM(a.distance_km), 0) AS total_km,
 		       COALESCE(SUM(a.duration_s), 0) AS total_duration_s,
 		       COUNT(*) AS runs,
@@ -605,7 +633,7 @@ func buildRunners(ctx context.Context, db *pgxpool.Pool, today time.Time) ([]Run
 		FROM activities a
 		JOIN users u ON u.id = a.user_id
 		WHERE NOT a.flagged
-		GROUP BY u.id, u.name, u.handle, u.is_virtual
+		GROUP BY u.id, u.name, u.handle, u.is_virtual, u.exp, u.dp, u.gp
 		ORDER BY total_km DESC
 		LIMIT 200`)
 	if err != nil {
@@ -615,10 +643,11 @@ func buildRunners(ctx context.Context, db *pgxpool.Pool, today time.Time) ([]Run
 	for rows.Next() {
 		var id, name, handle string
 		var isVirtual bool
+		var exp, dp, gp int
 		var totalKm float64
 		var totalDurationS, runs, runDays int
 		var firstDay time.Time
-		if err := rows.Scan(&id, &name, &handle, &isVirtual, &totalKm, &totalDurationS, &runs, &runDays, &firstDay); err != nil {
+		if err := rows.Scan(&id, &name, &handle, &isVirtual, &exp, &dp, &gp, &totalKm, &totalDurationS, &runs, &runDays, &firstDay); err != nil {
 			return out, fmt.Errorf("runners scan: %w", err)
 		}
 		out = append(out, RunnerStat{
@@ -630,6 +659,9 @@ func buildRunners(ctx context.Context, db *pgxpool.Pool, today time.Time) ([]Run
 			AvgPaceS:       avgPaceSeconds(totalDurationS, totalKm),
 			Runs:           runs,
 			AvgDaysPerWeek: avgDaysPerWeek(runDays, firstDay, todayDate),
+			Level:          levelFromExp(exp, levels),
+			Dp:             dp,
+			Gp:             gp,
 		})
 	}
 	if err := rows.Err(); err != nil {

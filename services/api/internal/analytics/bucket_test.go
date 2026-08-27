@@ -283,6 +283,45 @@ func TestAgeBucket(t *testing.T) {
 	}
 }
 
+func TestLevelFromExp(t *testing.T) {
+	// 門檻表比照 migrations/017_membership.sql 的種子資料（level_config 初始 5 級：
+	// 1='新手'/0exp、2='入門'/100exp、3='進階'/250exp、4='資深'/500exp、5='菁英'/1000exp）——
+	// 與 internal/profile/membership.go computeLevel 吃同一張表、同一種形狀，用真實種子值當對照點
+	// 才有意義（此表後台可調，這裡固定值只是驗證換算邏輯本身，非斷言正式環境現在的門檻）。
+	levels := []levelRow{
+		{Level: 1, ExpRequired: 0},
+		{Level: 2, ExpRequired: 100},
+		{Level: 3, ExpRequired: 250},
+		{Level: 4, ExpRequired: 500},
+		{Level: 5, ExpRequired: 1000},
+	}
+	cases := []struct {
+		name string
+		exp  int
+		want int
+	}{
+		{"exp=0 恰好門檻", 0, 1},
+		{"未達下一級門檻", 99, 1},
+		{"exp=100 恰好門檻", 100, 2},
+		{"exp=249 未達下一級", 249, 2},
+		{"exp=250 恰好門檻", 250, 3},
+		{"exp=999 未達頂級", 999, 4},
+		{"exp=1000 恰好頂級門檻", 1000, 5},
+		{"超過頂級門檻仍為頂級", 999999, 5},
+	}
+	for _, c := range cases {
+		if got := levelFromExp(c.exp, levels); got != c.want {
+			t.Errorf("%s: levelFromExp(%d) = %d, want %d", c.name, c.exp, got, c.want)
+		}
+	}
+
+	// 邊界：levels 為空（理論上不會發生，level_config 至少有種子資料）→ 防禦性回傳預設 1 級，
+	// 比照來源函式 computeLevel 的預設值（internal/profile/membership.go:84）。
+	if got := levelFromExp(500, []levelRow{}); got != 1 {
+		t.Errorf("levelFromExp(空門檻表) = %d, want 1", got)
+	}
+}
+
 func TestNormalizeGender(t *testing.T) {
 	cases := map[string]string{
 		"male":   "male",

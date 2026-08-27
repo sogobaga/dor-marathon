@@ -134,6 +134,13 @@ type RunnerStat struct {
 	AvgPaceS       int     `json:"avg_pace_s"`        // 距離加權平均配速（秒/公里，取整秒）
 	Runs           int     `json:"runs"`              // 累積活動筆數
 	AvgDaysPerWeek float64 `json:"avg_days_per_week"` // 平均每週跑步天數（四捨五入到小數第 1 位）
+	// Level/Dp/Gp：目前等級／DP／GP 餘額（u.exp/u.dp/u.gp 現況快照，非本報告統計窗口內的累積量）。
+	// Level 由後端依 levelFromExp（見 bucket.go，移植自 internal/profile/membership.go computeLevel）
+	// 算好才進 JSON，前端只負責顯示、不重算，確保與會員面板 MemberPanel「Lv.X」一致。舊日報（本三欄
+	// 上線前算出的）JSONB 裡沒有這三個鍵，前端 AnalyticsRunner 型別對應為 optional，容忍 undefined。
+	Level int `json:"level"`
+	Dp    int `json:"dp"`
+	Gp    int `json:"gp"`
 }
 
 // Report 完整報告契約（member_analytics_reports.report 的 JSONB 內容）。
