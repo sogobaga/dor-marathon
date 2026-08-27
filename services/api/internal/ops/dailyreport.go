@@ -49,7 +49,8 @@ const (
 type raceSignupLine struct {
 	Title string
 	N     int // 新增報名數（不含 cancelled）
-	M     int // 其中已付款數
+	M     int // 其中已付款數（含虛擬 0 元合成訂單的 paid，見 V）
+	V     int // 其中虛擬選手筆數（>0 時訊息加「，虛擬 V」後綴，避免被誤讀成真實金流）
 }
 
 // countryShare 單一國家昨日請求數（供 top5 分佈使用）。
@@ -258,12 +259,17 @@ func (h *Handler) buildDailyReportData(ctx context.Context) (dailyReportData, er
 
 	// 2) 報名：每賽事新增報名數（不含 cancelled）與其中已付款數。HAVING 排除「昨天雖有新報名但
 	// 全部當天又被取消」的賽事（N=0 沒有列出的意義）。
+	// V＝其中虛擬選手筆數：報名數「刻意包含」虛擬報名（管理者自己加的造勢，報告該呈現全貌），但
+	// 必須獨立標示——2026-08-28 使用者把「已付 50」誤讀成 50 筆真實金流去綠界對帳（實為 50 筆
+	// 虛擬 0 元合成訂單），訊息端見 assembleDailyReportMessage 的「，虛擬 V」後綴。
 	rows, err := h.db.Query(ctx, `
 		SELECT r.title,
 		       COUNT(*) FILTER (WHERE reg.status <> 'cancelled') AS n,
-		       COUNT(*) FILTER (WHERE reg.status = 'paid') AS m
+		       COUNT(*) FILTER (WHERE reg.status = 'paid') AS m,
+		       COUNT(*) FILTER (WHERE reg.status <> 'cancelled' AND u.is_virtual) AS v
 		FROM registrations reg
 		JOIN races r ON r.id = reg.race_id
+		JOIN users u ON u.id = reg.user_id
 		WHERE reg.created_at >= $1 AND reg.created_at < $2
 		GROUP BY r.id, r.title
 		HAVING COUNT(*) FILTER (WHERE reg.status <> 'cancelled') > 0
@@ -274,7 +280,7 @@ func (h *Handler) buildDailyReportData(ctx context.Context) (dailyReportData, er
 	}
 	for rows.Next() {
 		var line raceSignupLine
-		if err := rows.Scan(&line.Title, &line.N, &line.M); err != nil {
+		if err := rows.Scan(&line.Title, &line.N, &line.M, &line.V); err != nil {
 			rows.Close()
 			return dailyReportData{}, fmt.Errorf("race signups scan: %w", err)
 		}
@@ -288,15 +294,20 @@ func (h *Handler) buildDailyReportData(ctx context.Context) (dailyReportData, er
 
 	// 3) 營收：orders.race_id IS NOT NULL＝賽事報名收入；race_id IS NULL＝VIP 訂閱收款
 	// （migration 132：VIP 訂單為獨立訂單，無賽事，見 selfcheck.go checkStuckPendingVipOrders 同款判準）。
+	// 排除虛擬選手（NOT u.is_virtual）＝防禦性：虛擬報名的合成訂單現制恆為 0 元（AssignUser），
+	// 計入也不影響金額，但營收是要與綠界對帳的數字，口徑上就該只含真人金流——萬一未來合成訂單
+	// 帶了金額也不會污染對帳。
 	if err := h.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(total_cents),0), COUNT(*) FROM orders
-		WHERE race_id IS NOT NULL AND status='paid' AND paid_at >= $1 AND paid_at < $2
+		SELECT COALESCE(SUM(o.total_cents),0), COUNT(*) FROM orders o
+		JOIN users u ON u.id = o.user_id AND NOT u.is_virtual
+		WHERE o.race_id IS NOT NULL AND o.status='paid' AND o.paid_at >= $1 AND o.paid_at < $2
 	`, windowStart, windowEnd).Scan(&d.RaceRevenueCents, &d.RaceOrderCount); err != nil {
 		return dailyReportData{}, fmt.Errorf("race revenue: %w", err)
 	}
 	if err := h.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(total_cents),0), COUNT(*) FROM orders
-		WHERE race_id IS NULL AND status='paid' AND paid_at >= $1 AND paid_at < $2
+		SELECT COALESCE(SUM(o.total_cents),0), COUNT(*) FROM orders o
+		JOIN users u ON u.id = o.user_id AND NOT u.is_virtual
+		WHERE o.race_id IS NULL AND o.status='paid' AND o.paid_at >= $1 AND o.paid_at < $2
 	`, windowStart, windowEnd).Scan(&d.VipRevenueCents, &d.VipOrderCount); err != nil {
 		return dailyReportData{}, fmt.Errorf("vip revenue: %w", err)
 	}
@@ -517,7 +528,11 @@ func assembleDailyReportMessage(d dailyReportData, raceKeep int) string {
 			hidden = len(d.RaceSignups) - raceKeep
 		}
 		for _, line := range shown {
-			fmt.Fprintf(&b, "《%s》+%d（已付 %d）\n", line.Title, line.N, line.M)
+			if line.V > 0 {
+				fmt.Fprintf(&b, "《%s》+%d（已付 %d，虛擬 %d）\n", line.Title, line.N, line.M, line.V)
+			} else {
+				fmt.Fprintf(&b, "《%s》+%d（已付 %d）\n", line.Title, line.N, line.M)
+			}
 		}
 		if hidden > 0 {
 			fmt.Fprintf(&b, "…其餘 %d 場\n", hidden)

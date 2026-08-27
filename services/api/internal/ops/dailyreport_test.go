@@ -111,6 +111,23 @@ func TestBuildDailyReportMessage_RaceLinesAndTotals(t *testing.T) {
 	}
 }
 
+// 虛擬選手報名標註：V>0 加「，虛擬 V」後綴、V=0 維持原格式——防止「已付 N」被誤讀成真實金流
+// 去綠界對帳（2026-08-28 實際發生過，見 buildDailyReportData 報名查詢的註解）。
+func TestBuildDailyReportMessage_VirtualSignupAnnotation(t *testing.T) {
+	d := baseReportData()
+	d.RaceSignups = []raceSignupLine{
+		{Title: "健康啟動", N: 50, M: 50, V: 50},
+		{Title: "台北馬拉松", N: 3, M: 2, V: 0},
+	}
+	msg := buildDailyReportMessage(d)
+	if !strings.Contains(msg, "《健康啟動》+50（已付 50，虛擬 50）") {
+		t.Errorf("virtual annotation missing, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "《台北馬拉松》+3（已付 2）") {
+		t.Errorf("V=0 line should keep original format, got:\n%s", msg)
+	}
+}
+
 func TestBuildDailyReportMessage_ShowsRefundLineOnlyWhenPresent(t *testing.T) {
 	d := baseReportData()
 	d.RefundCents = 9900
