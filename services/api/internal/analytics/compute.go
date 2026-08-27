@@ -2,6 +2,8 @@ package analytics
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -123,6 +125,10 @@ func emptySystems() Systems {
 
 func emptyRunners() []RunnerStat {
 	return []RunnerStat{}
+}
+
+func emptyRunnersSummary() RunnersSummary {
+	return RunnersSummary{}
 }
 
 // --- 六大區塊 ---
@@ -671,6 +677,49 @@ func buildRunners(ctx context.Context, db *pgxpool.Pool, today time.Time) ([]Run
 	return out, nil
 }
 
+// buildRunnersSummary 第七區塊表格上方的「總覽統計列」：昨日/近 7 日開跑人數（real/virtual 分列）、
+// 全站跑者數（至少 1 筆 NOT flagged 活動者，全來源、不限 source，比照 buildRunners 的口徑而非
+// buildMileage 只認 App GPS 的口徑）、會員數，供前端算「跑者佔會員」「昨日開跑佔跑者」等比率（見
+// admin/analytics/page.tsx RunnersSection）。第一條 SQL 對 activities 只全表掃描一次、用 FILTER
+// 子句同時算六個口徑（real/virtual × 昨日/7日/全部跑者），比逐一起 6 條查詢省下重複掃描；members
+// 兩欄另開一條簡單查詢（users 表本身很小，不必跟 activities 那條合併——合併會讓 JOIN 基數暴增，
+// 反而更貴）。「昨日」＝report 統計基準日（today，即 Report.Day）的前一個台灣日整天（半開區間
+// [昨日00:00, 今日00:00)）；「近 7 日」比照 buildLogins active_7d 的既有慣例（今天起算含今天共
+// 7 天，開放式往後不設上界，即 >= 7天前的00:00）。
+func buildRunnersSummary(ctx context.Context, db *pgxpool.Pool, today time.Time) (RunnersSummary, error) {
+	out := emptyRunnersSummary()
+
+	yesterdayStart := taiwanDayBoundaryUTC(today.AddDate(0, 0, -1))
+	todayStart := taiwanDayBoundaryUTC(today)
+	start7 := taiwanDayBoundaryUTC(today.AddDate(0, 0, -6))
+
+	err := db.QueryRow(ctx, `
+		SELECT
+			COUNT(DISTINCT a.user_id) FILTER (WHERE NOT u.is_virtual AND a.recorded_at >= $1 AND a.recorded_at < $2),
+			COUNT(DISTINCT a.user_id) FILTER (WHERE u.is_virtual AND a.recorded_at >= $1 AND a.recorded_at < $2),
+			COUNT(DISTINCT a.user_id) FILTER (WHERE NOT u.is_virtual AND a.recorded_at >= $3),
+			COUNT(DISTINCT a.user_id) FILTER (WHERE u.is_virtual AND a.recorded_at >= $3),
+			COUNT(DISTINCT a.user_id) FILTER (WHERE NOT u.is_virtual),
+			COUNT(DISTINCT a.user_id) FILTER (WHERE u.is_virtual)
+		FROM activities a
+		JOIN users u ON u.id = a.user_id
+		WHERE NOT a.flagged`,
+		yesterdayStart, todayStart, start7,
+	).Scan(&out.RanYesterdayReal, &out.RanYesterdayVirtual, &out.Ran7dReal, &out.Ran7dVirtual,
+		&out.RunnersTotalReal, &out.RunnersTotalVirtual)
+	if err != nil {
+		return out, fmt.Errorf("runners_summary activity counts: %w", err)
+	}
+
+	if err := db.QueryRow(ctx, `
+		SELECT COUNT(*) FILTER (WHERE NOT is_virtual), COUNT(*) FILTER (WHERE is_virtual) FROM users`,
+	).Scan(&out.MembersReal, &out.MembersVirtual); err != nil {
+		return out, fmt.Errorf("runners_summary members: %w", err)
+	}
+
+	return out, nil
+}
+
 // BuildReport 依序算出六大區塊，組成完整報告。單一區塊查詢失敗只記 log 並填入該區塊的安全預設值
 // （空陣列/0），不讓整份報告因為一段查詢出錯就完全算不出來——六個區塊彼此獨立、互不依賴，這樣的
 // 容錯策略比「整份重試」更划算（詳見任務規格：容忍 0 列、單一函式失敗填空區塊並記 log）。
@@ -728,6 +777,35 @@ func BuildReport(ctx context.Context, db *pgxpool.Pool) Report {
 		rpt.Runners = emptyRunners()
 	} else {
 		rpt.Runners = v
+	}
+
+	if v, err := buildRunnersSummary(ctx, db, today); err != nil {
+		log.Error().Err(err).Msg("member analytics: runners_summary block failed, falling back to empty block")
+		rpt.RunnersSummary = emptyRunnersSummary()
+	} else {
+		rpt.RunnersSummary = v
+	}
+
+	// 排名升降（rank_delta／is_new）：抓「上週或更早最近一份」報告的 runners 欄位當比較基準，
+	// 見 repository.go ReportBefore／bucket.go applyRankDeltas。cutoffDay＝今天(today)-7 的台灣日
+	// （只截年/月/日，比照 taiwanDaySeries 等既有慣例），與 rpt.Runners 是否算成功無關——即使
+	// buildRunners 失敗落回空陣列，applyRankDeltas 對空 slice 也只是 no-op，不需要額外判斷。
+	cutoffDay := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC).
+		AddDate(0, 0, -7).Format("2006-01-02")
+	priorRaw, err := ReportBefore(ctx, db, cutoffDay)
+	switch {
+	case err != nil && !errors.Is(err, ErrNoReport):
+		log.Error().Err(err).Msg("member analytics: runners rank_delta lookup failed, leaving rank_delta/is_new unset")
+	case err == nil:
+		var priorReport Report
+		if uerr := json.Unmarshal(priorRaw, &priorReport); uerr != nil {
+			log.Error().Err(uerr).Msg("member analytics: runners rank_delta prior report unmarshal failed, leaving rank_delta/is_new unset")
+		} else {
+			rpt.Runners = applyRankDeltas(rpt.Runners, priorReport.Runners)
+		}
+	// else errors.Is(err, ErrNoReport)：這個日期以前完全沒有任何報告（例如上線未滿 7 天）——
+	// 全部真人列維持缺省 rank_delta/is_new，不需額外處理（applyRankDeltas(x, nil) 本來就是no-op，
+	// 這裡直接跳過連呼叫都省了）。
 	}
 
 	return rpt

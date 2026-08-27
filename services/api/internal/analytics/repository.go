@@ -50,3 +50,17 @@ func LatestComputedAt(ctx context.Context, db *pgxpool.Pool) (time.Time, error) 
 	}
 	return t, err
 }
+
+// ReportBefore 讀「day（含）或更早」最近一筆報告的 report 原始 JSON（day 為 YYYY-MM-DD 字串，比照
+// SaveReport／LatestReport 對 day 欄位的既有繫結慣例）。供 BuildReport 算 runners 的 rank_delta
+// 時抓「上週或更早最近一份」快照比較用（呼叫端傳「今天-7」的台灣日，見 compute.go）——刻意不要求
+// 剛好等於 7 天前那一天，允許回退取更早一份，兼容排程曾中斷/漏跑幾天的情形。ErrNoReport 語意同
+// LatestReport：這個日期以前完全沒有任何報告（例如 migration 148 上線未滿 7 天）。
+func ReportBefore(ctx context.Context, db *pgxpool.Pool, day string) (raw json.RawMessage, err error) {
+	err = db.QueryRow(ctx, `
+		SELECT report FROM member_analytics_reports WHERE day <= $1 ORDER BY day DESC LIMIT 1`, day).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNoReport
+	}
+	return raw, err
+}

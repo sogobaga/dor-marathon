@@ -274,6 +274,64 @@ func levelFromExp(exp int, levels []levelRow) int {
 	return level
 }
 
+// buildHandleRankMap 依「real-only 真人序」建 handle→名次(1-based) map（虛擬選手不佔名次、也不
+// 出現在回傳的 map 中）。輸入 runners 必須已經依 total_km DESC 排序（buildRunners 查詢本身已這樣
+// 排序，這裡只是在同一份排序基礎上跳過虛擬列重新編號，不重新排序）。供「上週報告」與「本週報告」
+// 各自建一份 map 比較用（見 applyRankDeltas），本週／上週用同一套函式才能保證口徑一致（都是真人
+// 序，不受虛擬選手數量增減影響排名）。
+func buildHandleRankMap(runners []RunnerStat) map[string]int {
+	out := map[string]int{}
+	rank := 0
+	for _, r := range runners {
+		if r.IsVirtual {
+			continue
+		}
+		rank++
+		out[r.Handle] = rank
+	}
+	return out
+}
+
+// applyRankDeltas 原地幫「本週」runners（已依 total_km DESC 排序，含真人與虛擬混合）逐一真人列填上
+// RankDelta／IsNew，並回傳同一個 slice（方便呼叫端串接）。
+//
+// priorRunners 為「上週或更早最近一份」報告的 runners 欄位：
+//   - nil：該份舊報告的 JSON 根本沒有 runners 這個鍵（例如 migration 148 上線未滿一週，還挖不到
+//     早於一週前的報告；或更早期版本尚未有 runners 欄位）。呼叫端應利用 encoding/json 對「缺 key」
+//     （unmarshal 後仍是 nil slice）vs.「key 存在但是空陣列」（unmarshal 後是 non-nil 空 slice）的
+//     既有區分行為來準備這個參數（見 compute.go BuildReport 對 Report 型別 unmarshal 舊報告的
+//     用法）。此情形下全部真人列的 RankDelta／IsNew 皆維持缺省（nil／false），因為完全沒有比較
+//     基準，函式直接原樣回傳、不做任何欄位異動。
+//   - 非 nil（含空陣列）：確實有上週資料可比較。本週每個真人列依 handle 查上週名次表：找得到＝
+//     RankDelta＝上週名次－本週名次（正值＝上升，負值＝下降）、IsNew＝false；找不到（新進榜，或
+//     上週報告剛好是空陣列）＝RankDelta 缺省（nil）、IsNew＝true。
+//
+// 虛擬列一律不計算、不佔名次（RankDelta 恆 nil、IsNew 恆 false），因為排名升降只在「真人榜」概念下
+// 有意義，比照 buildHandleRankMap 排除虛擬列的既有口徑。用 handle 而非 name 比對——handle 全站
+// 唯一且不可改名（比照全站其餘以 handle 當身分鍵的既有慣例），name 允許重複/變更。
+func applyRankDeltas(runners []RunnerStat, priorRunners []RunnerStat) []RunnerStat {
+	if priorRunners == nil {
+		return runners
+	}
+	priorRanks := buildHandleRankMap(priorRunners)
+	rank := 0
+	for i := range runners {
+		if runners[i].IsVirtual {
+			continue
+		}
+		rank++
+		if priorRank, ok := priorRanks[runners[i].Handle]; ok {
+			delta := priorRank - rank
+			runners[i].RankDelta = &delta
+			runners[i].IsNew = false
+		} else {
+			runners[i].RankDelta = nil
+			runners[i].IsNew = true
+		}
+	}
+	return runners
+}
+
 var genderGroupOrder = []string{"male", "female", "other", "unspecified"}
 
 // normalizeGender 把 user_profiles.gender（male/female/other/NULL/空字串）正規化成固定分組鍵；

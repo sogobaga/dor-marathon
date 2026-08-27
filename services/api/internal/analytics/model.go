@@ -141,6 +141,34 @@ type RunnerStat struct {
 	Level int `json:"level"`
 	Dp    int `json:"dp"`
 	Gp    int `json:"gp"`
+	// RankDelta／IsNew：與「上週或更早最近一份」報告比較的真人榜名次升降（見 compute.go
+	// applyRankDeltas／bucket.go buildHandleRankMap）。只在真人列（IsVirtual=false）填值；虛擬列
+	// 兩者永遠缺省（RankDelta=nil、IsNew=false），因為名次升降只在「真人榜」概念下有意義——虛擬
+	// 選手是後台自建帳號，混進排名升降統計沒有意義。RankDelta＝上週名次－本週名次（正值＝上升，
+	// 用 *int 而非 int：nil 代表「該筆缺乏可比較的上週資料」，別跟 0＝「名次不變」搞混，故
+	// omitempty）。IsNew：上週報告確實有 runners 資料、但這位這次才第一次出現在真人榜（新進榜）；
+	// 若上週報告根本沒有 runners 欄位（例如 migration 148 上線未滿一週），RankDelta 與 IsNew 兩者
+	// 皆缺省（nil／false），無法判斷，前端顯示為「—」並附口徑小字（見 admin/analytics/page.tsx）。
+	RankDelta *int `json:"rank_delta,omitempty"`
+	IsNew     bool `json:"is_new"`
+}
+
+// RunnersSummary 第七區塊表格上方的「總覽統計列」（見 compute.go buildRunnersSummary）。
+// 「跑者」＝至少 1 筆 NOT flagged 活動的使用者（不限 source，比照 RunnerStat 的全來源口徑，非
+// buildMileage 只認 App GPS 的口徑）；「昨日」＝統計基準日（Report.Day）的前一個台灣日整天；
+// 「近 7 日」比照 Logins.Active7d 的既有慣例（今天起算含今天共 7 天，開放式往後不設上界）。
+// Real／Virtual 分列，前端依「隱藏虛擬選手」開關決定只顯示 real 或 real+virtual 加總（見
+// admin/analytics/page.tsx RunnersSection）。舊日報（本欄位上線前算出的）沒有這個鍵，前端需容忍
+// undefined、不顯示這一列統計（比照 Runners 欄位的既有慣例）。
+type RunnersSummary struct {
+	RanYesterdayReal    int `json:"ran_yesterday_real"`
+	RanYesterdayVirtual int `json:"ran_yesterday_virtual"`
+	Ran7dReal           int `json:"ran_7d_real"`
+	Ran7dVirtual        int `json:"ran_7d_virtual"`
+	RunnersTotalReal    int `json:"runners_total_real"`
+	RunnersTotalVirtual int `json:"runners_total_virtual"`
+	MembersReal         int `json:"members_real"`
+	MembersVirtual      int `json:"members_virtual"`
 }
 
 // Report 完整報告契約（member_analytics_reports.report 的 JSONB 內容）。
@@ -155,5 +183,11 @@ type Report struct {
 	Systems       Systems       `json:"systems"`
 	// Runners 第七區塊「跑步數據分析排行」：依 total_km DESC 取前 200 名，0 筆活動的會員不進榜。
 	// 舊日報（本欄位上線前算出的）沒有這個鍵，前端需容忍 undefined（見 admin/analytics/page.tsx）。
+	// 注意：此欄位型別是「鍵缺失 vs. 空陣列」在 encoding/json unmarshal 語意上有差異的關鍵——
+	// compute.go BuildReport 算 rank_delta 時就是利用這個既有行為（缺鍵→nil slice）判斷「上週報告
+	// 根本沒有 runners 欄位」，見 applyRankDeltas 註解，改動這裡的型別/tag 前務必留意這個依賴。
 	Runners []RunnerStat `json:"runners"`
+	// RunnersSummary 第七區塊表格上方的總覽統計列，見 RunnersSummary 型別註解。舊日報（本欄位上線
+	// 前算出的）沒有這個鍵，前端需容忍 undefined（比照 Runners 欄位的既有慣例）。
+	RunnersSummary RunnersSummary `json:"runners_summary"`
 }

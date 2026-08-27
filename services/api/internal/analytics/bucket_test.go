@@ -322,6 +322,126 @@ func TestLevelFromExp(t *testing.T) {
 	}
 }
 
+func TestBuildHandleRankMap(t *testing.T) {
+	runners := []RunnerStat{
+		{Handle: "alice", IsVirtual: false},
+		{Handle: "bot1", IsVirtual: true}, // 虛擬選手夾在中間，不佔名次也不進 map
+		{Handle: "bob", IsVirtual: false},
+		{Handle: "carol", IsVirtual: false},
+	}
+	got := buildHandleRankMap(runners)
+	want := map[string]int{"alice": 1, "bob": 2, "carol": 3}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("buildHandleRankMap() = %+v, want %+v", got, want)
+	}
+	if _, ok := got["bot1"]; ok {
+		t.Errorf("buildHandleRankMap() 不應含虛擬選手 bot1，got %+v", got)
+	}
+
+	if got := buildHandleRankMap(nil); len(got) != 0 {
+		t.Errorf("buildHandleRankMap(nil) 應為空 map，got %+v", got)
+	}
+}
+
+func TestApplyRankDeltas(t *testing.T) {
+	intp := func(n int) *int { return &n }
+
+	t.Run("上週缺欄位_priorRunners為nil_全部維持缺省", func(t *testing.T) {
+		runners := []RunnerStat{
+			{Handle: "alice", IsVirtual: false},
+			{Handle: "bot1", IsVirtual: true},
+		}
+		got := applyRankDeltas(runners, nil)
+		for _, r := range got {
+			if r.RankDelta != nil {
+				t.Errorf("%s: RankDelta = %v, want nil", r.Handle, *r.RankDelta)
+			}
+			if r.IsNew {
+				t.Errorf("%s: IsNew = true, want false", r.Handle)
+			}
+		}
+	})
+
+	t.Run("上週有資料但是空陣列_全部真人列視為新進榜", func(t *testing.T) {
+		runners := []RunnerStat{
+			{Handle: "alice", IsVirtual: false},
+			{Handle: "bot1", IsVirtual: true},
+		}
+		got := applyRankDeltas(runners, []RunnerStat{}) // non-nil 空陣列，代表「有資料但 0 筆」
+		if got[0].RankDelta != nil || !got[0].IsNew {
+			t.Errorf("alice: RankDelta=%v IsNew=%v, want nil/true", got[0].RankDelta, got[0].IsNew)
+		}
+		if got[1].RankDelta != nil || got[1].IsNew {
+			t.Errorf("bot1（虛擬）: RankDelta=%v IsNew=%v, want nil/false（虛擬列永遠不計算）", got[1].RankDelta, got[1].IsNew)
+		}
+	})
+
+	t.Run("排名升降與新進榜混合案例", func(t *testing.T) {
+		prior := []RunnerStat{
+			{Handle: "bob", IsVirtual: false},   // 上週第1
+			{Handle: "carol", IsVirtual: false}, // 上週第2
+			{Handle: "alice", IsVirtual: false}, // 上週第3
+		}
+		// 本週：alice 上升到第1（3→1，+2）；bob 下降到第2（1→2，-1）；carol 不動（2→2以下驗證需插入
+		// 一個虛擬列確認虛擬不佔名次）；dave 新進榜。
+		current := []RunnerStat{
+			{Handle: "alice", IsVirtual: false}, // 本週第1
+			{Handle: "bot1", IsVirtual: true},   // 虛擬選手，不佔名次
+			{Handle: "bob", IsVirtual: false},   // 本週第2
+			{Handle: "carol", IsVirtual: false}, // 本週第3（與上週第2相比 -1）
+			{Handle: "dave", IsVirtual: false},  // 本週第4，新進榜
+		}
+		got := applyRankDeltas(current, prior)
+
+		checkDelta := func(handle string, want *int, wantNew bool) {
+			for _, r := range got {
+				if r.Handle != handle {
+					continue
+				}
+				if want == nil && r.RankDelta != nil {
+					t.Errorf("%s: RankDelta = %v, want nil", handle, *r.RankDelta)
+				}
+				if want != nil && (r.RankDelta == nil || *r.RankDelta != *want) {
+					t.Errorf("%s: RankDelta = %v, want %v", handle, r.RankDelta, *want)
+				}
+				if r.IsNew != wantNew {
+					t.Errorf("%s: IsNew = %v, want %v", handle, r.IsNew, wantNew)
+				}
+				return
+			}
+			t.Fatalf("handle %s 不在結果中", handle)
+		}
+		checkDelta("alice", intp(2), false)  // 3→1 上升 2
+		checkDelta("bob", intp(-1), false)   // 1→2 下降 1
+		checkDelta("carol", intp(-1), false) // 2→3 下降 1
+		checkDelta("dave", nil, true)        // 新進榜
+
+		// 虛擬列 bot1：永遠不帶 RankDelta，IsNew 也不計算。
+		for _, r := range got {
+			if r.Handle == "bot1" {
+				if r.RankDelta != nil {
+					t.Errorf("bot1（虛擬）: RankDelta = %v, want nil", *r.RankDelta)
+				}
+				if r.IsNew {
+					t.Errorf("bot1（虛擬）: IsNew = true, want false")
+				}
+			}
+		}
+	})
+
+	t.Run("名次不變_delta為0而非nil", func(t *testing.T) {
+		prior := []RunnerStat{{Handle: "alice", IsVirtual: false}}
+		current := []RunnerStat{{Handle: "alice", IsVirtual: false}}
+		got := applyRankDeltas(current, prior)
+		if got[0].RankDelta == nil || *got[0].RankDelta != 0 {
+			t.Errorf("alice: RankDelta = %v, want 0（非 nil，代表「有比較但沒有變化」）", got[0].RankDelta)
+		}
+		if got[0].IsNew {
+			t.Errorf("alice: IsNew = true, want false")
+		}
+	})
+}
+
 func TestNormalizeGender(t *testing.T) {
 	cases := map[string]string{
 		"male":   "male",

@@ -9,6 +9,7 @@ import {
   type AnalyticsGroupAvg,
   type AnalyticsSystemUsage,
   type AnalyticsRunner,
+  type AnalyticsRunnersSummary,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import { SIGNUP_SOURCE_LABEL, SIGNUP_SOURCE_COLOR } from '@/lib/signupSource'
@@ -201,7 +202,7 @@ export default function AdminAnalyticsPage() {
 
           {/* ───────── 7. 跑步數據排行 ───────── */}
           <SectionCard icon="🏆" title="跑步數據排行">
-            <RunnersSection runners={report.runners} />
+            <RunnersSection runners={report.runners} summary={report.runners_summary} />
           </SectionCard>
         </div>
       )}
@@ -291,7 +292,9 @@ function Legend({ color, label }: { color: string; label: string }) {
 // 顯示提示要求重算，而非當成空陣列（空陣列＝有算但 0 筆，語意不同）。hideVirtual／showAll 純屬本
 // 表格的顯示狀態，不影響其餘區塊，故就地用 useState 管理，不上提到頁面層級。過濾在 client side 做
 // （資料已在同一份 report 裡，不必為了篩虛擬選手多打一次 API），過濾後名次（rank）重新從 1 編號。
-function RunnersSection({ runners }: { runners: AnalyticsRunner[] | undefined }) {
+// summary undefined＝舊日報沒有 runners_summary 鍵，該統計列整段不顯示（比照 runners undefined 的
+// 判斷方式，不當成 0 處理，語意不同）。
+function RunnersSection({ runners, summary }: { runners: AnalyticsRunner[] | undefined; summary: AnalyticsRunnersSummary | undefined }) {
   const [hideVirtual, setHideVirtual] = useState(true)
   const [showAll, setShowAll] = useState(false)
 
@@ -305,6 +308,11 @@ function RunnersSection({ runners }: { runners: AnalyticsRunner[] | undefined })
 
   const filtered = hideVirtual ? runners.filter((r) => !r.is_virtual) : runners
   const visible = showAll ? filtered : filtered.slice(0, 50)
+  // 排名升降資料可用性：只看真人列（虛擬列本就永遠沒有 rank_delta，不計入判斷）。全部真人列都沒有
+  // rank_delta 也不是新進榜＝這份報告還沒有累積到「上週」快照可比較（例如 migration 上線未滿一週），
+  // 顯示提示句而非讓每一列都各自顯示一次「—」卻沒有說明。
+  const realRunners = runners.filter((r) => !r.is_virtual)
+  const noRankData = realRunners.length > 0 && realRunners.every((r) => r.rank_delta == null && !r.is_new)
 
   return (
     <div>
@@ -312,6 +320,14 @@ function RunnersSection({ runners }: { runners: AnalyticsRunner[] | undefined })
         <input type="checkbox" checked={hideVirtual} onChange={(e) => { setHideVirtual(e.target.checked); setShowAll(false) }} />
         隱藏虛擬選手
       </label>
+
+      {summary && <RunnersSummaryRow summary={summary} hideVirtual={hideVirtual} />}
+
+      {noRankData && (
+        <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginBottom: 8 }}>
+          排名變化需累積一週快照後顯示。
+        </div>
+      )}
 
       {filtered.length === 0 ? (
         <div style={{ fontSize: 12, color: 'var(--tx-faint)', padding: '16px 0' }}>尚無資料</div>
@@ -336,7 +352,10 @@ function RunnersSection({ runners }: { runners: AnalyticsRunner[] | undefined })
               <tbody>
                 {visible.map((r, i) => (
                   <tr key={`${r.handle}-${i}`} style={{ borderTop: '1px solid var(--line)' }}>
-                    <td style={runnerTdStyle}>{i + 1}</td>
+                    <td style={runnerTdStyle}>
+                      {i + 1}
+                      <RankDeltaBadge runner={r} />
+                    </td>
                     <td style={runnerTdStyle}>
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
                         <span style={{ color: 'var(--tx)' }}>
@@ -371,10 +390,54 @@ function RunnersSection({ runners }: { runners: AnalyticsRunner[] | undefined })
       )}
 
       <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 10, lineHeight: 1.5 }}>
-        口徑：全來源（App GPS + Strava 等同步來源，已排除重複/異常活動），依累積里程由高到低排序，取前 200 名；週均跑步天數＝有跑步的相異台灣日數 ÷ 經過週數（今天−首跑日的天數 ÷7，下限 1 週）。
+        口徑：全來源（App GPS + Strava 等同步來源，已排除重複/異常活動），依累積里程由高到低排序，取前 200 名；週均跑步天數＝有跑步的相異台灣日數 ÷ 經過週數（今天−首跑日的天數 ÷7，下限 1 週）；排名變化以真人榜為基準。
       </div>
     </div>
   )
+}
+
+// 總覽統計列：依「隱藏虛擬選手」開關切換 real-only／real+virtual 加總口徑，兩個比率（跑者佔會員／
+// 昨日開跑佔跑者）的分子分母一律用同一種口徑算，避免出現「real 分子 / real+virtual 分母」這種
+// 混搭口徑的誤導數字。
+function RunnersSummaryRow({ summary, hideVirtual }: { summary: AnalyticsRunnersSummary; hideVirtual: boolean }) {
+  const yesterday = hideVirtual ? summary.ran_yesterday_real : summary.ran_yesterday_real + summary.ran_yesterday_virtual
+  const d7 = hideVirtual ? summary.ran_7d_real : summary.ran_7d_real + summary.ran_7d_virtual
+  const runnersTotal = hideVirtual ? summary.runners_total_real : summary.runners_total_real + summary.runners_total_virtual
+  const members = hideVirtual ? summary.members_real : summary.members_real + summary.members_virtual
+  const runnerPct = members > 0 ? Math.round((runnersTotal / members) * 1000) / 10 : 0
+  const yesterdayPct = runnersTotal > 0 ? Math.round((yesterday / runnersTotal) * 1000) / 10 : 0
+
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+      <StatTile label="昨日開跑" value={yesterday} unit="人" color="var(--fug)" />
+      <StatTile label="近 7 日開跑" value={d7} unit="人" color="var(--fug)" />
+      <StatTile label="全站跑者" value={runnersTotal} unit="人" color="var(--tx)" />
+      <StatTile label="會員數" value={members} unit="人" color="var(--tx)" />
+      <StatTile label="跑者佔會員" value={`${runnerPct}%`} color="var(--gold)" />
+      <StatTile label="昨日開跑佔跑者" value={`${yesterdayPct}%`} color="var(--gold)" />
+    </div>
+  )
+}
+
+// 名次旁的升降徽章：▲N（上升，綠）／▼N（下降，紅）／—（有比較基準但沒有變化，或缺乏比較資料）／
+// NEW（金，新進榜）。虛擬選手永遠不顯示（後端也永遠不會給虛擬列 rank_delta／is_new＝true，見後端
+// model.go RunnerStat 型別註解——虛擬選手不屬於「真人榜」，連「—」都不顯示，跟真人的「有榜但不變」
+// 語意不同，避免混淆）。
+function RankDeltaBadge({ runner }: { runner: AnalyticsRunner }) {
+  if (runner.is_virtual) return null
+  if (runner.is_new) {
+    return <span style={{ color: 'var(--gold)', fontWeight: 700, marginLeft: 5, fontSize: 11 }}>NEW</span>
+  }
+  if (runner.rank_delta == null) {
+    return <span style={{ color: 'var(--tx-faint)', marginLeft: 5, fontSize: 11 }}>—</span>
+  }
+  if (runner.rank_delta === 0) {
+    return <span style={{ color: 'var(--tx-faint)', marginLeft: 5, fontSize: 11 }}>—</span>
+  }
+  if (runner.rank_delta > 0) {
+    return <span style={{ color: 'var(--fug)', marginLeft: 5, fontSize: 11 }}>▲{runner.rank_delta}</span>
+  }
+  return <span style={{ color: 'var(--hunt)', marginLeft: 5, fontSize: 11 }}>▼{Math.abs(runner.rank_delta)}</span>
 }
 const runnerThStyle: React.CSSProperties = { padding: '9px 10px', textAlign: 'right', fontSize: 11, letterSpacing: '.04em', color: 'var(--tx-faint)', fontWeight: 700 }
 const runnerTdStyle: React.CSSProperties = { padding: '8px 10px' }

@@ -3714,6 +3714,24 @@ export interface AnalyticsRunner {
   level?: number
   dp?: number
   gp?: number
+  // rank_delta／is_new：與「上週或更早最近一份」報告比較的真人榜名次升降（見後端 model.go
+  // RunnerStat 型別註解）。只在真人列（is_virtual=false）有值；虛擬列兩者永遠缺省。舊日報（本兩欄
+  // 上線前算出的）也沒有這兩個鍵 → optional，容忍 undefined；rank_delta 缺且 is_new 非 true 時，
+  // 前端一律顯示「—」（無法判斷是否有變化，見 RunnersSection）。
+  rank_delta?: number
+  is_new?: boolean
+}
+
+// AnalyticsRunnersSummary 第七區塊表格上方的總覽統計列（見後端 model.go RunnersSummary 型別註解）。
+export interface AnalyticsRunnersSummary {
+  ran_yesterday_real: number
+  ran_yesterday_virtual: number
+  ran_7d_real: number
+  ran_7d_virtual: number
+  runners_total_real: number
+  runners_total_virtual: number
+  members_real: number
+  members_virtual: number
 }
 
 export interface MemberAnalyticsReport {
@@ -3757,6 +3775,9 @@ export interface MemberAnalyticsReport {
   // runners 第七區塊「跑步數據分析排行」：舊日報（本欄位上線前算出的）沒有這個鍵，故為 optional，
   // 前端顯示「按『立即重算』後出現」提示（見 admin/analytics/page.tsx）。
   runners?: AnalyticsRunner[]
+  // runners_summary 第七區塊表格上方的總覽統計列：舊日報（本欄位上線前算出的）沒有這個鍵，故為
+  // optional，前端不顯示這一列統計（比照 runners 欄位的既有慣例，見 admin/analytics/page.tsx）。
+  runners_summary?: AnalyticsRunnersSummary
 }
 
 export interface MemberAnalyticsResponse {
