@@ -3699,6 +3699,16 @@ export interface AnalyticsSourceCount { source: string; count: number }
 export interface AnalyticsGroupAvg { group: string; avg_km: number; users: number }
 export interface AnalyticsTopCount { title?: string; name?: string; count: number }
 export interface AnalyticsSystemUsage { system: string; label: string; users_30d: number; users_total: number }
+export interface AnalyticsRunner {
+  name: string
+  handle: string
+  is_virtual: boolean
+  total_km: number
+  total_duration_s: number
+  avg_pace_s: number
+  runs: number
+  avg_days_per_week: number
+}
 
 export interface MemberAnalyticsReport {
   day: string // YYYY-MM-DD，統計基準日
@@ -3738,6 +3748,9 @@ export interface MemberAnalyticsReport {
   systems: {
     usage: AnalyticsSystemUsage[]
   }
+  // runners 第七區塊「跑步數據分析排行」：舊日報（本欄位上線前算出的）沒有這個鍵，故為 optional，
+  // 前端顯示「按『立即重算』後出現」提示（見 admin/analytics/page.tsx）。
+  runners?: AnalyticsRunner[]
 }
 
 export interface MemberAnalyticsResponse {

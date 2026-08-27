@@ -8,6 +8,7 @@ import {
   type AnalyticsDatePoint,
   type AnalyticsGroupAvg,
   type AnalyticsSystemUsage,
+  type AnalyticsRunner,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import { SIGNUP_SOURCE_LABEL, SIGNUP_SOURCE_COLOR } from '@/lib/signupSource'
@@ -197,6 +198,11 @@ export default function AdminAnalyticsPage() {
               />
             </ChartBlock>
           </SectionCard>
+
+          {/* ───────── 7. 跑步數據排行 ───────── */}
+          <SectionCard icon="🏆" title="跑步數據排行">
+            <RunnersSection runners={report.runners} />
+          </SectionCard>
         </div>
       )}
     </div>
@@ -222,6 +228,22 @@ function systemDatum(s: AnalyticsSystemUsage): BarDatum {
     label: s.label, value: s.users_30d, value2: s.users_total,
     hover: `${s.label}：近30日 ${s.users_30d} 人`, hover2: `${s.label}：累計 ${s.users_total} 人`,
   }
+}
+// 累積時間（秒）→「時:分」，四捨五入到分鐘（本區塊只用於排行顯示，不需要秒級精度）。
+function fmtDurationHM(totalSeconds: number): string {
+  const totalMin = Math.round((totalSeconds || 0) / 60)
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  return `${h}:${String(m).padStart(2, '0')}`
+}
+// 平均配速（秒/公里）→「分:秒」，比照 admin/TaskItemEditor.tsx paceToStr 同款格式（本頁自成一體，
+// 未跨頁匯入，理由同頁首註解：圖表三件組刻意頁內自含）。avg_pace_s<=0（理論上不會發生，後端已保證
+// 至少一筆活動）防禦性顯示 —。
+function fmtPaceMinSec(paceS: number): string {
+  if (!paceS || paceS <= 0) return '—'
+  const m = Math.floor(paceS / 60)
+  const s = Math.round(paceS % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
 }
 
 // ── 版面小元件 ──
@@ -264,6 +286,92 @@ function Legend({ color, label }: { color: string; label: string }) {
     </div>
   )
 }
+
+// 第七區塊「跑步數據排行」表格。runners undefined＝舊日報（本欄位上線前算出的、無 runners 鍵），
+// 顯示提示要求重算，而非當成空陣列（空陣列＝有算但 0 筆，語意不同）。hideVirtual／showAll 純屬本
+// 表格的顯示狀態，不影響其餘區塊，故就地用 useState 管理，不上提到頁面層級。過濾在 client side 做
+// （資料已在同一份 report 裡，不必為了篩虛擬選手多打一次 API），過濾後名次（rank）重新從 1 編號。
+function RunnersSection({ runners }: { runners: AnalyticsRunner[] | undefined }) {
+  const [hideVirtual, setHideVirtual] = useState(true)
+  const [showAll, setShowAll] = useState(false)
+
+  if (runners === undefined) {
+    return (
+      <div style={{ fontSize: 12.5, color: 'var(--tx-faint)', padding: '16px 0' }}>
+        本報告為舊版統計（尚未包含本區塊），請按上方「🔄 立即重算」後再查看。
+      </div>
+    )
+  }
+
+  const filtered = hideVirtual ? runners.filter((r) => !r.is_virtual) : runners
+  const visible = showAll ? filtered : filtered.slice(0, 50)
+
+  return (
+    <div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--tx-dim)', marginBottom: 10, cursor: 'pointer', width: 'fit-content' }}>
+        <input type="checkbox" checked={hideVirtual} onChange={(e) => { setHideVirtual(e.target.checked); setShowAll(false) }} />
+        隱藏虛擬選手
+      </label>
+
+      {filtered.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--tx-faint)', padding: '16px 0' }}>尚無資料</div>
+      ) : (
+        <>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 620 }}>
+              <thead>
+                <tr style={{ background: 'var(--bg-2)' }}>
+                  <th style={{ ...runnerThStyle, textAlign: 'left' }}>名次</th>
+                  <th style={{ ...runnerThStyle, textAlign: 'left' }}>跑者</th>
+                  <th style={runnerThStyle}>累積里程</th>
+                  <th style={runnerThStyle}>累積時間</th>
+                  <th style={runnerThStyle}>平均配速</th>
+                  <th style={runnerThStyle}>筆數</th>
+                  <th style={runnerThStyle}>週均跑步天數</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((r, i) => (
+                  <tr key={`${r.handle}-${i}`} style={{ borderTop: '1px solid var(--line)' }}>
+                    <td style={runnerTdStyle}>{i + 1}</td>
+                    <td style={runnerTdStyle}>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ color: 'var(--tx)' }}>
+                          {r.name}
+                          {r.is_virtual && <span title="虛擬選手" style={{ marginLeft: 4 }}>🤖</span>}
+                        </span>
+                        <span style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>@{r.handle}</span>
+                      </div>
+                    </td>
+                    <td style={{ ...runnerTdStyle, textAlign: 'right' }}>{round1(r.total_km)} km</td>
+                    <td style={{ ...runnerTdStyle, textAlign: 'right' }}>{fmtDurationHM(r.total_duration_s)}</td>
+                    <td style={{ ...runnerTdStyle, textAlign: 'right' }}>{fmtPaceMinSec(r.avg_pace_s)} /km</td>
+                    <td style={{ ...runnerTdStyle, textAlign: 'right' }}>{r.runs}</td>
+                    <td style={{ ...runnerTdStyle, textAlign: 'right' }}>{r.avg_days_per_week} 天</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {filtered.length > 50 && (
+            <div style={{ textAlign: 'center', marginTop: 10 }}>
+              <button onClick={() => setShowAll((v) => !v)} style={ghostBtn}>
+                {showAll ? '收合' : `顯示更多（共 ${filtered.length} 筆）`}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 10, lineHeight: 1.5 }}>
+        口徑：全來源（App GPS + Strava 等同步來源，已排除重複/異常活動），依累積里程由高到低排序，取前 200 名；週均跑步天數＝有跑步的相異台灣日數 ÷ 經過週數（今天−首跑日的天數 ÷7，下限 1 週）。
+      </div>
+    </div>
+  )
+}
+const runnerThStyle: React.CSSProperties = { padding: '9px 10px', textAlign: 'right', fontSize: 11, letterSpacing: '.04em', color: 'var(--tx-faint)', fontWeight: 700 }
+const runnerTdStyle: React.CSSProperties = { padding: '8px 10px' }
 
 // ── 圖表元件三件組（頁內自含，不依賴外部圖表庫；風格比照 admin/overview TrendChart + admin/promo-links 堆疊長條）──
 
@@ -423,3 +531,4 @@ function BarChart({
 }
 
 const primaryBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 10, padding: '9px 16px', cursor: 'pointer', fontSize: 13.5 }
+const ghostBtn: React.CSSProperties = { background: 'transparent', color: 'var(--tx-dim)', fontWeight: 700, border: '1px solid var(--line)', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 12.5 }

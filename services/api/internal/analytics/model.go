@@ -123,6 +123,19 @@ type Systems struct {
 	Usage []SystemUsage `json:"usage"`
 }
 
+// RunnerStat 單一跑者的累積跑步數據（第七區塊「跑步數據分析排行」單一列）。含虛擬選手
+// （IsVirtual 隨列帶出，是否隱藏交給前端 client-side 過濾，見 buildRunners 註解）。
+type RunnerStat struct {
+	Name           string  `json:"name"` // COALESCE(NULLIF(u.name,''), u.handle)，比照全站顯示名慣例
+	Handle         string  `json:"handle"`
+	IsVirtual      bool    `json:"is_virtual"`
+	TotalKm        float64 `json:"total_km"`          // 累積里程（公里，四捨五入到小數第 2 位）
+	TotalDurationS int     `json:"total_duration_s"`  // 累積時間（秒）
+	AvgPaceS       int     `json:"avg_pace_s"`        // 距離加權平均配速（秒/公里，取整秒）
+	Runs           int     `json:"runs"`              // 累積活動筆數
+	AvgDaysPerWeek float64 `json:"avg_days_per_week"` // 平均每週跑步天數（四捨五入到小數第 1 位）
+}
+
 // Report 完整報告契約（member_analytics_reports.report 的 JSONB 內容）。
 type Report struct {
 	Day           string        `json:"day"`
@@ -133,4 +146,7 @@ type Report struct {
 	Participation Participation `json:"participation"`
 	Cards         Cards         `json:"cards"`
 	Systems       Systems       `json:"systems"`
+	// Runners 第七區塊「跑步數據分析排行」：依 total_km DESC 取前 200 名，0 筆活動的會員不進榜。
+	// 舊日報（本欄位上線前算出的）沒有這個鍵，前端需容忍 undefined（見 admin/analytics/page.tsx）。
+	Runners []RunnerStat `json:"runners"`
 }

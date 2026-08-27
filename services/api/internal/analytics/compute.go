@@ -103,6 +103,10 @@ func emptySystems() Systems {
 	return Systems{Usage: []SystemUsage{}}
 }
 
+func emptyRunners() []RunnerStat {
+	return []RunnerStat{}
+}
+
 // --- 六大區塊 ---
 
 // buildRegistrations 註冊區塊：累計會員數（現況）＋近 30 日新增（日序列＋時段分佈）＋來源歸因
@@ -575,6 +579,66 @@ func buildSystems(ctx context.Context, db *pgxpool.Pool, today time.Time) (Syste
 	return out, nil
 }
 
+// buildRunners 第七區塊「跑步數據分析排行」：對 activities（WHERE NOT flagged）JOIN users 逐人
+// 彙總累積里程/時間/配速/筆數/每週跑步天數。刻意只加 NOT flagged、不像 buildMileage 那樣另外限制
+// source IS NULL——flagged 本身已涵蓋跨來源去重（見 strava-dedup 系列邏輯：同一筆活動只有其中一個
+// 來源會是「未 flagged 的主紀錄」），故這裡全來源（App GPS + Strava/Garmin 等同步）計入，反映「這
+// 位跑者總共跑了多少」，用途與 buildMileage「只認 App GPS 的官方排名口徑」不同。含虛擬選手（含
+// IsVirtual 欄位，是否隱藏交給前端 client-side 過濾，因為資料量小、200 列以內全部一次回傳更省一次
+// API 往返），依 total_km DESC 取前 200 名；0 筆活動的會員靠 INNER JOIN 天然不進榜，不必額外過濾。
+func buildRunners(ctx context.Context, db *pgxpool.Pool, today time.Time) ([]RunnerStat, error) {
+	out := emptyRunners()
+	// today 只取年/月/日（截斷到當天 00:00，Location 不影響 avgDaysPerWeek 的天數差計算），比照
+	// taiwanDaySeries 的既有慣例。
+	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+
+	rows, err := db.Query(ctx, `
+		SELECT u.id::text,
+		       COALESCE(NULLIF(u.name,''), u.handle) AS name,
+		       u.handle,
+		       u.is_virtual,
+		       COALESCE(SUM(a.distance_km), 0) AS total_km,
+		       COALESCE(SUM(a.duration_s), 0) AS total_duration_s,
+		       COUNT(*) AS runs,
+		       COUNT(DISTINCT (a.recorded_at AT TIME ZONE 'Asia/Taipei')::date) AS run_days,
+		       MIN((a.recorded_at AT TIME ZONE 'Asia/Taipei')::date) AS first_day
+		FROM activities a
+		JOIN users u ON u.id = a.user_id
+		WHERE NOT a.flagged
+		GROUP BY u.id, u.name, u.handle, u.is_virtual
+		ORDER BY total_km DESC
+		LIMIT 200`)
+	if err != nil {
+		return out, fmt.Errorf("runners query: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name, handle string
+		var isVirtual bool
+		var totalKm float64
+		var totalDurationS, runs, runDays int
+		var firstDay time.Time
+		if err := rows.Scan(&id, &name, &handle, &isVirtual, &totalKm, &totalDurationS, &runs, &runDays, &firstDay); err != nil {
+			return out, fmt.Errorf("runners scan: %w", err)
+		}
+		out = append(out, RunnerStat{
+			Name:           name,
+			Handle:         handle,
+			IsVirtual:      isVirtual,
+			TotalKm:        round2(totalKm),
+			TotalDurationS: totalDurationS,
+			AvgPaceS:       avgPaceSeconds(totalDurationS, totalKm),
+			Runs:           runs,
+			AvgDaysPerWeek: avgDaysPerWeek(runDays, firstDay, todayDate),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return out, fmt.Errorf("runners rows: %w", err)
+	}
+
+	return out, nil
+}
+
 // BuildReport 依序算出六大區塊，組成完整報告。單一區塊查詢失敗只記 log 並填入該區塊的安全預設值
 // （空陣列/0），不讓整份報告因為一段查詢出錯就完全算不出來——六個區塊彼此獨立、互不依賴，這樣的
 // 容錯策略比「整份重試」更划算（詳見任務規格：容忍 0 列、單一函式失敗填空區塊並記 log）。
@@ -625,6 +689,13 @@ func BuildReport(ctx context.Context, db *pgxpool.Pool) Report {
 		rpt.Systems = emptySystems()
 	} else {
 		rpt.Systems = v
+	}
+
+	if v, err := buildRunners(ctx, db, today); err != nil {
+		log.Error().Err(err).Msg("member analytics: runners block failed, falling back to empty block")
+		rpt.Runners = emptyRunners()
+	} else {
+		rpt.Runners = v
 	}
 
 	return rpt

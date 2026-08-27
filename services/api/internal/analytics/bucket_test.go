@@ -108,6 +108,75 @@ func TestRound2(t *testing.T) {
 	}
 }
 
+func TestRound1(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want float64
+	}{
+		{3.45, 3.5}, // 四捨五入而非銀行家捨去（同 TestRound2 的 1.005 案例邏輯）
+		{3.44, 3.4},
+		{0, 0},
+		{3.5, 3.5},
+	}
+	for _, c := range cases {
+		if got := round1(c.in); got != c.want {
+			t.Errorf("round1(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestAvgPaceSeconds(t *testing.T) {
+	cases := []struct {
+		durationS int
+		km        float64
+		want      int
+	}{
+		{3600, 10, 360}, // 10km/hr 配速 = 360 秒/km
+		{0, 0, 0},       // totalKm<=0 防禦性回傳 0
+		{100, 0, 0},     // totalKm=0 防禦性回傳 0
+		{361, 1, 361},   // 整除
+		{100, 3, 33},    // 100/3=33.33 → 四捨五入 33
+		{101, 3, 34},    // 101/3=33.67 → 四捨五入 34
+	}
+	for _, c := range cases {
+		if got := avgPaceSeconds(c.durationS, c.km); got != c.want {
+			t.Errorf("avgPaceSeconds(%d, %v) = %d, want %d", c.durationS, c.km, got, c.want)
+		}
+	}
+}
+
+func TestAvgDaysPerWeek(t *testing.T) {
+	today := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+
+	// 邊界：首跑當天=週數1（first_day == today，天數差 0，weeks 下限 1 保護生效）。
+	if got := avgDaysPerWeek(1, today, today); got != 1.0 {
+		t.Errorf("avgDaysPerWeek(首跑當天) = %v, want 1.0", got)
+	}
+
+	// 邊界：整除。14 天前開始（剛好滿 2 週），6 個有跑步的日子 → 6/2 = 3.0。
+	first14 := today.AddDate(0, 0, -14)
+	if got := avgDaysPerWeek(6, first14, today); got != 3.0 {
+		t.Errorf("avgDaysPerWeek(整除) = %v, want 3.0", got)
+	}
+
+	// 邊界：非整除。10 天前開始（10/7 週），5 個有跑步的日子 → 5/(10/7) = 3.5。
+	first10 := today.AddDate(0, 0, -10)
+	if got := avgDaysPerWeek(5, first10, today); got != 3.5 {
+		t.Errorf("avgDaysPerWeek(非整除) = %v, want 3.5", got)
+	}
+
+	// 觀察窗口不足 1 週（3 天前開始）：weeks 下限 1 保護生效，不會膨脹成 2/(3/7)=4.67。
+	first3 := today.AddDate(0, 0, -3)
+	if got := avgDaysPerWeek(2, first3, today); got != 2.0 {
+		t.Errorf("avgDaysPerWeek(不足1週) = %v, want 2.0", got)
+	}
+
+	// runDays<=0 防禦性回傳 0。
+	if got := avgDaysPerWeek(0, first10, today); got != 0 {
+		t.Errorf("avgDaysPerWeek(runDays=0) = %v, want 0", got)
+	}
+}
+
 func TestLoginFreqBucket(t *testing.T) {
 	cases := map[int]string{0: "0", 1: "1-2", 2: "1-2", 3: "3-9", 9: "3-9", 10: "10-29", 29: "10-29", 30: "30+", 100: "30+", -1: "0"}
 	for in, want := range cases {

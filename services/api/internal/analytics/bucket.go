@@ -90,6 +90,42 @@ func round2(f float64) float64 {
 	return float64(int64(f*100+0.5+epsilon)) / 100
 }
 
+// round1 四捨五入到小數第一位（週均跑步天數顯示用）。邏輯同 round2，只是精度不同；同樣只用於本
+// 套件內部恆為非負的數值（avg_days_per_week），未處理負數。
+func round1(f float64) float64 {
+	const epsilon = 1e-9
+	return float64(int64(f*10+0.5+epsilon)) / 10
+}
+
+// avgPaceSeconds 距離加權平均配速（總秒數/總公里，取整秒，四捨五入而非無條件捨去）。totalKm<=0
+// （理論上呼叫端 buildRunners 用 INNER JOIN 保證至少一筆活動、distance_km 恆為非負，這裡防禦性處理
+// 避免除以 0）回傳 0。
+func avgPaceSeconds(totalDurationS int, totalKm float64) int {
+	if totalKm <= 0 {
+		return 0
+	}
+	return int(float64(totalDurationS)/totalKm + 0.5)
+}
+
+// avgDaysPerWeek 平均每週跑步天數＝有活動的相異台灣日數 ÷ 經過週數；週數＝(今天−首跑日的天數)÷7，
+// 下限 1 週（避免首跑當天、或觀察窗口不滿一週時分母趨近 0 使比值失真膨脹），結果四捨五入到小數
+// 第 1 位。runDays<=0（理論上呼叫端只會餵有活動的使用者，這裡防禦性處理）回傳 0。firstDay/today
+// 只讀年/月/日欄位（呼叫端應傳入已截斷到當天 00:00 的值，比照 taiwanDaySeries 的既有慣例，
+// Location 不影響結果）。
+func avgDaysPerWeek(runDays int, firstDay, today time.Time) float64 {
+	if runDays <= 0 {
+		return 0
+	}
+	d1 := time.Date(firstDay.Year(), firstDay.Month(), firstDay.Day(), 0, 0, 0, 0, time.UTC)
+	d2 := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+	days := d2.Sub(d1).Hours() / 24
+	weeks := days / 7
+	if weeks < 1 {
+		weeks = 1
+	}
+	return round1(float64(runDays) / weeks)
+}
+
 // --- 分桶標籤定義（固定順序，供 bucketList 使用）---
 
 var loginFreqBucketOrder = []string{"0", "1-2", "3-9", "10-29", "30+"}
