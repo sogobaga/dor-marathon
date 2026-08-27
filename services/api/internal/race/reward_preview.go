@@ -12,10 +12,32 @@ package race
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/dor/api/internal/activityreward"
 )
+
+// largestNumberIn 取字串中最大的連續數字（如「LINE POINTS 1000」→1000），無數字回 ok=false。
+// 供面額卡排序用——與前台 RaceForm parsePointValue／後台序號管理 denomValueOf 同一種解析口徑。
+func largestNumberIn(s string) (int, bool) {
+	best, cur, has, curHas := 0, 0, false, false
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			cur = cur*10 + int(r-'0')
+			curHas = true
+			continue
+		}
+		if curHas && (!has || cur > best) {
+			best, has = cur, true
+		}
+		cur, curHas = 0, false
+	}
+	if curHas && (!has || cur > best) {
+		best, has = cur, true
+	}
+	return best, has
+}
 
 // RewardPreviewItem 前台「活動獎勵」頁籤單筆卡片：可讀展示欄位＋中獎機率（prob_bp），絕不含權重/面額
 // 庫存等抽獎引擎內部設定。
@@ -152,6 +174,9 @@ func (s *Service) buildRewardPreviewItems(ctx context.Context, cfg *activityrewa
 	}
 
 	if len(groupIDs) > 0 {
+		// 面額卡排序＝面額數字小→大（20→50→100→1000），解析不到數字者殿後依名稱——與後台
+		// 序號/獎勵管理、賽事表單面額權重列表同一套順序（2026-08-28 使用者要求前後台同步）。
+		// 查詢用 WHERE id=ANY($1) 回傳順序不定，必須顯式排序。
 		serialItems, err := s.repo.GetRewardSerialGroupPreview(ctx, groupIDs)
 		if err != nil {
 			return nil, err
@@ -159,6 +184,17 @@ func (s *Service) buildRewardPreviewItems(ctx context.Context, cfg *activityrewa
 		for i := range serialItems {
 			serialItems[i].ProbBP = groupProbBP[serialItems[i].refID]
 		}
+		sort.SliceStable(serialItems, func(a, b int) bool {
+			va, oka := largestNumberIn(serialItems[a].Name)
+			vb, okb := largestNumberIn(serialItems[b].Name)
+			if oka && okb && va != vb {
+				return va < vb
+			}
+			if oka != okb {
+				return oka // 有數字者在前
+			}
+			return serialItems[a].Name < serialItems[b].Name
+		})
 		out = append(out, serialItems...)
 	}
 	if len(couponDefIDs) > 0 {
