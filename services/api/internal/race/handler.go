@@ -147,22 +147,24 @@ func (h *Handler) OrderRouter() http.Handler {
 	return r
 }
 
-// GET /api/v1/admin/signups?race_id=&q=
+// GET /api/v1/admin/signups?race_id=&q=&hide_virtual=
+// race_id 選填：留空＝跨賽事「全部賽事」模式（依報名時間 DESC，僅取最新 200 筆，見 repo.ListSignups）。
+// 全部賽事模式下不回傳 groups（分組是單一賽事概念，跨賽事沒有意義，前端也只在 groups 非空時才顯示分組下拉）。
 func (h *Handler) AdminListSignupRows(w http.ResponseWriter, r *http.Request) {
 	raceID := r.URL.Query().Get("race_id")
-	if raceID == "" {
-		respondErr(w, http.StatusBadRequest, "race_id is required")
-		return
-	}
-	rows, err := h.svc.ListSignups(r.Context(), raceID, r.URL.Query().Get("q"))
+	hideVirtual := r.URL.Query().Get("hide_virtual") == "1" // 選填：隱藏虛擬選手（users.is_virtual），比照會員管理頁
+	rows, err := h.svc.ListSignups(r.Context(), raceID, r.URL.Query().Get("q"), hideVirtual)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to list signups")
 		return
 	}
-	groups, err := h.svc.ListRaceGroups(r.Context(), raceID)
-	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to list groups")
-		return
+	groups := []RaceGroup{}
+	if raceID != "" {
+		groups, err = h.svc.ListRaceGroups(r.Context(), raceID)
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to list groups")
+			return
+		}
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"signups": rows, "count": len(rows), "groups": groups})
 }
@@ -211,7 +213,7 @@ func (h *Handler) AdminMarkRegistrationPaid(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// GET /api/v1/admin/orders?race_id=&status=&limit=&offset=
+// GET /api/v1/admin/orders?race_id=&status=&limit=&offset=&hide_virtual=
 // limit/offset 為選填分頁參數（預設 100/0，沿用原本行為）；後台匯出訂單明細會用 limit=200 迴圈翻頁拉全量
 // （service.ListOrders 有 clamp 到 <=200，見該檔案），一般列表載入不帶則行為不變。
 func (h *Handler) AdminListOrders(w http.ResponseWriter, r *http.Request) {
@@ -223,8 +225,9 @@ func (h *Handler) AdminListOrders(w http.ResponseWriter, r *http.Request) {
 	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v >= 0 {
 		offset = v
 	}
+	hideVirtual := r.URL.Query().Get("hide_virtual") == "1" // 選填：隱藏虛擬選手（users.is_virtual），比照會員管理頁
 	orders, err := h.svc.ListOrders(r.Context(),
-		r.URL.Query().Get("race_id"), r.URL.Query().Get("status"), limit, offset)
+		r.URL.Query().Get("race_id"), r.URL.Query().Get("status"), limit, offset, hideVirtual)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to list orders")
 		return

@@ -1823,22 +1823,33 @@ func (r *Repository) ListRegistrations(ctx context.Context, raceID string) ([]*R
 
 // --- 後台報名 / 訂單管理 ---
 
-// ListSignups 列出某賽事的報名（含會員、分組、訂單狀態），q 可搜尋姓名/email/手機
-func (r *Repository) ListSignups(ctx context.Context, raceID, q string) ([]SignupRow, error) {
+// ListSignups 列出報名（含會員、分組、訂單狀態），q 可搜尋姓名/email/手機。
+// raceID 留空＝跨賽事「全部賽事」模式：不加 race_id 篩選、多回傳 race_title、依報名時間 DESC 僅取最新 200 筆
+// （後台跨賽事一次查全表太重，比照既有 limit 慣例；單一賽事模式維持原本不限筆數的行為不變）。
+// hideVirtual＝true 時排除虛擬選手（users.is_virtual，見 migrations/146_virtual_runner.sql），比照會員管理頁模式。
+func (r *Repository) ListSignups(ctx context.Context, raceID, q string, hideVirtual bool) ([]SignupRow, error) {
 	like := "%" + q + "%"
+	limit := 0 // 0＝不限（單一賽事模式，維持既有行為）
+	if raceID == "" {
+		limit = 200
+	}
 	rows, err := r.db.Query(ctx, `
 		SELECT reg.id, u.name, u.email, COALESCE(reg.group_id::text,''), COALESCE(g.name,''), reg.status,
 		       reg.group_revealed, COALESCE(reg.snap_real_name,''), COALESCE(reg.snap_phone,''),
 		       reg.created_at,
-		       COALESCE(o.id::text,''), COALESCE(o.total_cents,0), COALESCE(o.status,'')
+		       COALESCE(o.id::text,''), COALESCE(o.total_cents,0), COALESCE(o.status,''),
+		       COALESCE(rc.title,''), u.is_virtual
 		FROM registrations reg
 		JOIN users u ON u.id = reg.user_id
 		LEFT JOIN race_groups g ON g.id = reg.group_id
 		LEFT JOIN orders o ON o.registration_id = reg.id
-		WHERE reg.race_id = $1
+		LEFT JOIN races rc ON rc.id = reg.race_id
+		WHERE ($1='' OR reg.race_id = $1::uuid)
 		  AND ($2='' OR u.name ILIKE $3 OR u.email ILIKE $3
 		       OR COALESCE(reg.snap_real_name,'') ILIKE $3 OR COALESCE(reg.snap_phone,'') ILIKE $3)
-		ORDER BY reg.created_at DESC`, raceID, q, like)
+		  AND ($5 = false OR NOT u.is_virtual)
+		ORDER BY reg.created_at DESC
+		LIMIT CASE WHEN $4::int > 0 THEN $4::int END`, raceID, q, like, limit, hideVirtual)
 	if err != nil {
 		return nil, fmt.Errorf("list signups: %w", err)
 	}
@@ -1849,7 +1860,7 @@ func (r *Repository) ListSignups(ctx context.Context, raceID, q string) ([]Signu
 		var s SignupRow
 		if err := rows.Scan(&s.ID, &s.UserName, &s.UserEmail, &s.GroupID, &s.GroupName, &s.Status,
 			&s.GroupRevealed, &s.SnapRealName, &s.SnapPhone, &s.CreatedAt,
-			&s.OrderID, &s.OrderTotal, &s.OrderStatus); err != nil {
+			&s.OrderID, &s.OrderTotal, &s.OrderStatus, &s.RaceTitle, &s.IsVirtual); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -1935,22 +1946,24 @@ func scanInvoicePtr(buyerType, taxID, title, carrierType, carrierID, loveCode st
 	}
 }
 
-// ListOrders 列出訂單（race_id/status 可選過濾）
-func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limit, offset int) ([]OrderRow, error) {
+// ListOrders 列出訂單（race_id/status 可選過濾）。hideVirtual＝true 時排除虛擬選手（users.is_virtual，
+// 見 migrations/146_virtual_runner.sql），比照會員管理頁模式。
+func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limit, offset int, hideVirtual bool) ([]OrderRow, error) {
 	// LEFT JOIN races：VIP 訂閱訂單無賽事（orders.race_id 可為 NULL，見 migration 132），rc.title COALESCE
 	// 成空字串，前端/後台 race_title 為空時顯示「VIP 訂閱」。
 	rows, err := r.db.Query(ctx, `
 		SELECT o.id, u.name, u.email, COALESCE(rc.title,''), o.total_cents, o.status,
 		       COALESCE(o.payment_ref,''), o.paid_at, o.created_at, COALESCE(o.registration_id::text,''),
-		       `+invoiceColsSQL+`
+		       `+invoiceColsSQL+`, u.is_virtual
 		FROM orders o
 		JOIN users u ON u.id = o.user_id
 		LEFT JOIN races rc ON rc.id = o.race_id
 		LEFT JOIN order_invoices inv ON inv.order_id = o.id
 		WHERE ($1='' OR o.race_id = $1::uuid)
 		  AND ($2='' OR o.status = $2)
+		  AND ($5 = false OR NOT u.is_virtual)
 		ORDER BY o.created_at DESC
-		LIMIT $3 OFFSET $4`, raceID, status, limit, offset)
+		LIMIT $3 OFFSET $4`, raceID, status, limit, offset, hideVirtual)
 	if err != nil {
 		return nil, fmt.Errorf("list orders: %w", err)
 	}
@@ -1962,7 +1975,7 @@ func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limi
 		var invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode string
 		if err := rows.Scan(&o.ID, &o.UserName, &o.UserEmail, &o.RaceTitle, &o.TotalCents,
 			&o.Status, &o.PaymentRef, &o.PaidAt, &o.CreatedAt, &o.RegistrationID,
-			&invBuyerType, &invTaxID, &invTitle, &invCarrierType, &invCarrierID, &invLoveCode); err != nil {
+			&invBuyerType, &invTaxID, &invTitle, &invCarrierType, &invCarrierID, &invLoveCode, &o.IsVirtual); err != nil {
 			return nil, err
 		}
 		o.Invoice = scanInvoicePtr(invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode)

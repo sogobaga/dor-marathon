@@ -2739,6 +2739,8 @@ export interface SignupRow {
   order_id?: string
   order_total_cents: number
   order_status?: string
+  race_title?: string // 僅「全部賽事」模式（race_id 留空）有值，後端多回傳供前端顯示賽事名稱欄
+  is_virtual: boolean // 虛擬選手（users.is_virtual），供🤖標記
 }
 
 export interface OrderItemRow {
@@ -2761,6 +2763,7 @@ export interface OrderRow {
   created_at: string
   registration_id?: string
   invoice: InvoiceInfo | null // 發票資訊（過渡期人工開立用）；舊訂單沒有資料則為 null
+  is_virtual: boolean // 虛擬選手（users.is_virtual），供🤖標記
 }
 
 export interface OrderDetail extends OrderRow {
@@ -2783,10 +2786,14 @@ export interface RefundRow {
 }
 
 export const adminSignupsApi = {
-  list: (token: string, params: { race_id: string; q?: string }) => {
-    const qs = new URLSearchParams({ race_id: params.race_id })
-    if (params.q) qs.set('q', params.q)
-    return request<{ signups: SignupRow[]; count: number; groups: RaceGroup[] }>(`/admin/signups?${qs.toString()}`, {
+  // race_id 選填：留空＝跨賽事「全部賽事」模式（後端依報名時間 DESC，僅取最新 200 筆）
+  list: (token: string, params?: { race_id?: string; q?: string; hideVirtual?: boolean }) => {
+    const qs = new URLSearchParams()
+    if (params?.race_id) qs.set('race_id', params.race_id)
+    if (params?.q) qs.set('q', params.q)
+    if (params?.hideVirtual) qs.set('hide_virtual', '1')
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ signups: SignupRow[]; count: number; groups: RaceGroup[] }>(`/admin/signups${suffix}`, {
       headers: withAuth(token),
     })
   },
@@ -2824,12 +2831,13 @@ export const adminCheckinReviewApi = {
 }
 
 export const adminOrdersApi = {
-  list: (token: string, params?: { race_id?: string; status?: string; limit?: number; offset?: number }) => {
+  list: (token: string, params?: { race_id?: string; status?: string; limit?: number; offset?: number; hideVirtual?: boolean }) => {
     const qs = new URLSearchParams()
     if (params?.race_id) qs.set('race_id', params.race_id)
     if (params?.status) qs.set('status', params.status)
     if (params?.limit) qs.set('limit', String(params.limit))
     if (params?.offset) qs.set('offset', String(params.offset))
+    if (params?.hideVirtual) qs.set('hide_virtual', '1')
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     return request<{ orders: OrderRow[]; count: number }>(`/admin/orders${suffix}`, { headers: withAuth(token) })
   },

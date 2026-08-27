@@ -1278,8 +1278,8 @@ func (s *Service) AdminListSignups(ctx context.Context, raceID string) ([]*Regis
 
 // --- 後台報名 / 訂單管理 ---
 
-func (s *Service) ListSignups(ctx context.Context, raceID, q string) ([]SignupRow, error) {
-	return s.repo.ListSignups(ctx, raceID, q)
+func (s *Service) ListSignups(ctx context.Context, raceID, q string, hideVirtual bool) ([]SignupRow, error) {
+	return s.repo.ListSignups(ctx, raceID, q, hideVirtual)
 }
 
 // ListRaceGroups 後台報名管理用：取分組（含名額上限/已用），並清掉鑰匙明碼。
@@ -1299,14 +1299,14 @@ func (s *Service) ChangeSignupGroup(ctx context.Context, regID, groupID string) 
 	return s.repo.ChangeSignupGroup(ctx, regID, groupID)
 }
 
-func (s *Service) ListOrders(ctx context.Context, raceID, status string, limit, offset int) ([]OrderRow, error) {
+func (s *Service) ListOrders(ctx context.Context, raceID, status string, limit, offset int, hideVirtual bool) ([]OrderRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	return s.repo.ListOrders(ctx, raceID, status, limit, offset)
+	return s.repo.ListOrders(ctx, raceID, status, limit, offset, hideVirtual)
 }
 
 func (s *Service) GetOrderDetail(ctx context.Context, orderID string) (*OrderDetail, error) {

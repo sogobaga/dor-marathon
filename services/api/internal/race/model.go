@@ -615,6 +615,8 @@ type SignupRow struct {
 	OrderID       string    `json:"order_id,omitempty"`
 	OrderTotal    int       `json:"order_total_cents"`
 	OrderStatus   string    `json:"order_status,omitempty"`
+	RaceTitle     string    `json:"race_title,omitempty"` // 僅「全部賽事」模式（race_id 留空）需要，前端多顯示一欄賽事名稱
+	IsVirtual     bool      `json:"is_virtual"`            // 虛擬選手（users.is_virtual），供後台勾選隱藏＋🤖標記
 }
 
 // OrderRow 後台訂單管理列表單筆
@@ -629,7 +631,8 @@ type OrderRow struct {
 	PaidAt         *time.Time   `json:"paid_at,omitempty"`
 	CreatedAt      time.Time    `json:"created_at"`
 	RegistrationID string       `json:"registration_id,omitempty"`
-	Invoice        *InvoiceInfo `json:"invoice"` // 發票資訊（過渡期人工開立用）；舊訂單沒有資料則為 null
+	Invoice        *InvoiceInfo `json:"invoice"`  // 發票資訊（過渡期人工開立用）；舊訂單沒有資料則為 null
+	IsVirtual      bool         `json:"is_virtual"` // 虛擬選手（users.is_virtual），供後台勾選隱藏＋🤖標記
 }
 
 // OrderItemRow 訂單明細單筆

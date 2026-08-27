@@ -58,6 +58,7 @@ export default function AdminOrdersPage() {
   const [races, setRaces] = useState<Race[]>([])
   const [raceID, setRaceID] = useState('')
   const [status, setStatus] = useState('')
+  const [hideVirtual, setHideVirtual] = useState(true) // 預設隱藏虛擬選手，比照會員管理頁
   const [rows, setRows] = useState<OrderRow[] | null>(null)
   const [err, setErr] = useState('')
   const [token, setTok] = useState<string | null>(null)
@@ -79,16 +80,16 @@ export default function AdminOrdersPage() {
     adminPaymentsApi.envCheck(t, origin).then(setEnvCheck).catch((e) => setEnvCheckErr(e?.message || '金流環境診斷載入失敗'))
   }, [router])
 
-  const load = useCallback((rid: string, st: string) => {
+  const load = useCallback((rid: string, st: string, hideVirtualArg: boolean) => {
     const t = getToken()
     if (!t) return
     setRows(null)
-    adminOrdersApi.list(t, { race_id: rid || undefined, status: st || undefined })
+    adminOrdersApi.list(t, { race_id: rid || undefined, status: st || undefined, hideVirtual: hideVirtualArg })
       .then((r) => setRows(r.orders))
       .catch((e) => setErr(e?.message || '載入失敗'))
   }, [])
 
-  useEffect(() => { load(raceID, status) }, [raceID, status, load])
+  useEffect(() => { load(raceID, status, hideVirtual) }, [raceID, status, hideVirtual, load])
 
   async function toggle(o: OrderRow) {
     if (expanded[o.id] !== undefined) {
@@ -186,7 +187,7 @@ export default function AdminOrdersPage() {
       const pageSize = 200
       let offset = 0
       for (;;) {
-        const r = await adminOrdersApi.list(token, { race_id: raceID || undefined, status: status || undefined, limit: pageSize, offset })
+        const r = await adminOrdersApi.list(token, { race_id: raceID || undefined, status: status || undefined, hideVirtual, limit: pageSize, offset })
         all.push(...r.orders)
         if (r.orders.length < pageSize) break
         offset += pageSize
@@ -276,6 +277,14 @@ export default function AdminOrdersPage() {
           <option value="cancelled">已取消</option>
           <option value="refunded">已退款</option>
         </select>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--tx-dim)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={hideVirtual}
+            onChange={(e) => setHideVirtual(e.target.checked)}
+          />
+          隱藏虛擬選手
+        </label>
         <button
           onClick={exportXlsx} disabled={exporting || !rows?.length}
           style={{ ...exportBtn, opacity: exporting || !rows?.length ? 0.5 : 1, cursor: exporting || !rows?.length ? 'default' : 'pointer' }}
@@ -300,6 +309,7 @@ export default function AdminOrdersPage() {
                   <C w={2}>
                     <button onClick={() => toggle(o)} style={linkBtn}>
                       {expanded[o.id] !== undefined ? '▾ ' : '▸ '}{o.user_name}
+                      {o.is_virtual && <span title="虛擬選手" style={{ marginLeft: 4 }}>🤖</span>}
                     </button>
                     <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{o.user_email}</div>
                   </C>

@@ -26,25 +26,24 @@ export default function AdminSignupsPage() {
   const [err, setErr] = useState('')
   const [busyGroup, setBusyGroup] = useState('')
   const [token, setTok] = useState<string | null>(null)
+  const [hideVirtual, setHideVirtual] = useState(true) // 預設隱藏虛擬選手，比照會員管理頁 v0.1.593/598
 
   useEffect(() => {
     const t = getToken()
     if (!t) { router.replace('/admin/login'); return }
     setTok(t)
-    adminRacesApi.list(t).then((r) => {
-      setRaces(r.races)
-      if (r.races.length) setRaceID(r.races[0].id)
-    }).catch((e) => {
+    adminRacesApi.list(t).then((r) => setRaces(r.races)).catch((e) => {
       if (e?.status === 401) { clearToken(); router.replace('/admin/login') } else setErr(e?.message || '載入失敗')
     })
   }, [router])
 
-  const load = useCallback((rid: string, query: string) => {
+  const load = useCallback((rid: string, query: string, hideVirtualArg: boolean) => {
     const t = getToken()
-    if (!t || !rid) return
+    if (!t) return
     setRows(null)
     setAppliedQ(query)
-    adminSignupsApi.list(t, { race_id: rid, q: query })
+    // race_id 留空＝跨賽事「全部賽事」模式（後端依報名時間 DESC，僅取最新 200 筆）
+    adminSignupsApi.list(t, { race_id: rid || undefined, q: query, hideVirtual: hideVirtualArg })
       .then((r) => { setRows(r.signups); setGroups(r.groups ?? []) })
       .catch((e) => setErr(e?.message || '載入失敗'))
   }, [])
@@ -54,14 +53,14 @@ export default function AdminSignupsPage() {
     setErr(''); setBusyGroup(s.id)
     try {
       await adminSignupsApi.changeGroup(token, s.id, groupID)
-      load(raceID, appliedQ) // 重載以更新各組已用名額
+      load(raceID, appliedQ, hideVirtual) // 重載以更新各組已用名額
     } catch (e: any) {
       setErr(e?.message || '調整分組失敗')
       setBusyGroup('')
     }
   }
 
-  useEffect(() => { if (raceID) load(raceID, '') }, [raceID, load])
+  useEffect(() => { load('', '', true) }, [load]) // 首載＝全部賽事＋隱藏虛擬選手（與 raceID/hideVirtual 預設值一致）
 
   async function markPaid(s: SignupRow) {
     if (!token) return
@@ -76,33 +75,55 @@ export default function AdminSignupsPage() {
     <div>
       <h1 style={{ margin: '0 0 18px', fontSize: 24, fontWeight: 800 }}>報名管理</h1>
 
-      <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
-        <select value={raceID} onChange={(e) => setRaceID(e.target.value)} style={{ ...inp, maxWidth: 280 }}>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <select
+          value={raceID}
+          onChange={(e) => { const next = e.target.value; setRaceID(next); load(next, q, hideVirtual) }}
+          style={{ ...inp, maxWidth: 280 }}
+        >
+          <option value="">全部賽事</option>
           {races.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
         </select>
-        <form onSubmit={(e) => { e.preventDefault(); load(raceID, q) }} style={{ display: 'flex', gap: 8 }}>
+        <form onSubmit={(e) => { e.preventDefault(); load(raceID, q, hideVirtual) }} style={{ display: 'flex', gap: 8 }}>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜尋姓名/Email/手機" style={{ ...inp, maxWidth: 240 }} />
           <button type="submit" style={primaryBtn}>搜尋</button>
         </form>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--tx-dim)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={hideVirtual}
+            onChange={(e) => { const next = e.target.checked; setHideVirtual(next); load(raceID, q, next) }}
+          />
+          隱藏虛擬選手
+        </label>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 18, minHeight: 16 }}>
+        {!raceID && '全部賽事模式僅顯示最新 200 筆報名（依報名時間排序）'}
       </div>
 
       {err && <div style={{ color: 'var(--hunt)', padding: 16 }}>{err}</div>}
       {!rows && !err && <div style={{ color: 'var(--tx-dim)', padding: 16 }}>載入中…</div>}
-      {rows && rows.length === 0 && <div style={{ color: 'var(--tx-dim)', padding: 16 }}>此賽事尚無報名</div>}
+      {rows && rows.length === 0 && <div style={{ color: 'var(--tx-dim)', padding: 16 }}>{raceID ? '此賽事尚無報名' : '目前沒有符合條件的報名'}</div>}
 
       {rows && rows.length > 0 && (
         <div style={{ border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
           <Row head>
-            <C w={2}>報名者</C><C w={1}>分組</C><C w={1}>報名狀態</C><C w={1}>訂單</C><C w={1}>操作</C>
+            <C w={2}>報名者</C>
+            {!raceID && <C w={1.2}>賽事</C>}
+            <C w={1}>分組</C><C w={1}>報名狀態</C><C w={1}>訂單</C><C w={1}>操作</C>
           </Row>
           {rows.map((s) => {
             const st = STATUS_LABEL[s.status] ?? { t: s.status, c: 'var(--tx-dim)' }
             return (
               <Row key={s.id}>
                 <C w={2}>
-                  <div style={{ fontWeight: 600 }}>{s.user_name}{s.snap_real_name && s.snap_real_name !== s.user_name ? `（${s.snap_real_name}）` : ''}</div>
+                  <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span>{s.user_name}{s.snap_real_name && s.snap_real_name !== s.user_name ? `（${s.snap_real_name}）` : ''}</span>
+                    {s.is_virtual && <span title="虛擬選手">🤖</span>}
+                  </div>
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{s.user_email}{s.snap_phone ? ` · ${s.snap_phone}` : ''}</div>
                 </C>
+                {!raceID && <C w={1.2}>{s.race_title || '—'}</C>}
                 <C w={1}>
                   {groups.length === 0
                     ? (s.group_name || '—')
