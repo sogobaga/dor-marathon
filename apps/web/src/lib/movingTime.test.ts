@@ -13,6 +13,7 @@
 import assert from 'node:assert/strict'
 import {
   initMovingState, advanceMovingState, classifyMoveSignal, currentMovingS, flushMovingState, isAccurateEnough,
+  classifyDistSignal, shouldCommitDist, RETRO_WINDOW_S,
   MOVE_JUDGE_WINDOW_S, type MovingState, type MovePoint,
 } from './movingTime'
 
@@ -302,6 +303,174 @@ check('實戰情境③：跑30秒 → 停15秒（有界飄移）→ 跑30秒，�
   assert.ok(snap[75000] > snap[44000] + 15, `恢復跑步後應明顯繼續累加，實得 停止水位=${snap[44000]}s 結束=${snap[75000]}s`)
   // 上限保底：不可能超過全程真實時間 75 秒。
   assert.ok(snap[75000] <= 75, '移動時間不可能超過全程總時間')
+})
+
+// ---- classifyDistSignal ----
+
+check('classifyDistSignal: speed < 0.5 → still（靜止強證據，覆蓋漂移假位移）', () => {
+  assert.equal(classifyDistSignal(0), 'still')
+  assert.equal(classifyDistSignal(0.3), 'still')
+  assert.equal(classifyDistSignal(0.499), 'still')
+})
+
+check('classifyDistSignal: speed ≥ 0.6 → moving', () => {
+  assert.equal(classifyDistSignal(0.6), 'moving')
+  assert.equal(classifyDistSignal(3), 'moving')
+})
+
+check('classifyDistSignal: 死區 0.5~0.6 → moving（fallback）', () => {
+  assert.equal(classifyDistSignal(0.5), 'moving')
+  assert.equal(classifyDistSignal(0.55), 'moving')
+})
+
+check('classifyDistSignal: null/undefined/NaN → moving（速度缺失裝置）', () => {
+  assert.equal(classifyDistSignal(null), 'moving')
+  assert.equal(classifyDistSignal(undefined), 'moving')
+  assert.equal(classifyDistSignal(NaN), 'moving')
+})
+
+// ---- shouldCommitDist ----
+
+check('shouldCommitDist: 移動中（movingSince != null）→ 永遠 commit', () => {
+  const moving: MovingState = { movingAccumS: 0, movingSince: 1000, stillStreak: 0, moveStreak: 0 }
+  assert.equal(shouldCommitDist(moving, 0), true)    // 即使 speed=0 靜止也 commit（狀態機說移動）
+  assert.equal(shouldCommitDist(moving, null), true)
+  assert.equal(shouldCommitDist(moving, 3), true)
+})
+
+check('shouldCommitDist: 靜止中（movingSince == null）+ speed 存在 → 不 commit', () => {
+  const still: MovingState = { movingAccumS: 0, movingSince: null, stillStreak: 2, moveStreak: 0 }
+  assert.equal(shouldCommitDist(still, 0.3), false)
+  assert.equal(shouldCommitDist(still, 0), false)
+})
+
+check('shouldCommitDist: 靜止中 + speed 缺失 → fallback commit（速度缺失裝置）', () => {
+  const still: MovingState = { movingAccumS: 0, movingSince: null, stillStreak: 2, moveStreak: 0 }
+  assert.equal(shouldCommitDist(still, null), true)
+  assert.equal(shouldCommitDist(still, undefined), true)
+  assert.equal(shouldCommitDist(still, NaN), true)
+})
+
+// ---- RETRO_WINDOW_S ----
+
+check('RETRO_WINDOW_S 常數存在且為正數', () => {
+  assert.ok(typeof RETRO_WINDOW_S === 'number' && RETRO_WINDOW_S > 0, `RETRO_WINDOW_S 應為正數，實得 ${RETRO_WINDOW_S}`)
+})
+
+// ---- 距離防漂移 端到端情境模擬 ----
+// simulateDistancePipeline() 是 track/page.tsx onPos「距離採納＋防漂移」與「lastMoveRef 判定鏈」兩條
+// 路徑的最小重現：兩條路徑共餵同一個狀態機（feed），並在「靜止→移動」翻轉那一刻回補 RETRO_WINDOW_S
+// 內的暫存段——與 page.tsx 的 commitSeg/feedMoveSignal 同構。模擬中以 GPS 時間戳（p.t）作牆鐘
+// （實作用 Date.now()，兩者節奏等價），committedTs 記錄每個被 commit 的點的時間戳供斷言回補行為。
+
+type SimPoint = MovePoint & { speed: number | null }
+const SIM_JITTER_MIN = 6      // page.tsx JITTER_MIN
+const SIM_MAX_ACC = 65        // page.tsx MAX_ACC
+const SIM_MAX_SPEED = 1000 / 120 // page.tsx MAX_SPEED（8.33 m/s）
+
+function sptAt(cumM: number, tS: number, acc: number, speed: number | null): SimPoint {
+  return { ...ptAt(cumM, tS * 1000, acc), speed }
+}
+
+function simulateDistancePipeline(points: SimPoint[]): { dist: number; committedTs: number[]; state: MovingState; movingS: number } {
+  let state = initMovingState()
+  let lastAcc: SimPoint | null = null
+  let lastMove: SimPoint | null = null
+  let dist = 0
+  const committedTs: number[] = []
+  let pending: { p: SimPoint; d: number; at: number }[] = []
+  const commitSeg = (cp: SimPoint, dSeg: number) => { dist += dSeg; committedTs.push(cp.t) }
+  const feed = (signal: 'moving' | 'still', nowMs: number) => {
+    const prev = state
+    state = advanceMovingState(prev, signal, nowMs)
+    if (prev.movingSince == null && state.movingSince != null && pending.length) {
+      const cutoff = nowMs - RETRO_WINDOW_S * 1000
+      const retro = pending.filter((it) => it.at >= cutoff)
+      pending = []
+      for (const it of retro) commitSeg(it.p, it.d)
+    }
+  }
+  for (const p of points) {
+    if (!(p.acc === 0 || p.acc <= SIM_MAX_ACC)) continue
+    // 距離鏈（對映 page.tsx onPos 距離採納區塊）
+    if (!lastAcc) { lastAcc = p; committedTs.push(p.t) }
+    else {
+      const d = haversineM(lastAcc, p), dt = (p.t - lastAcc.t) / 1000
+      if (d >= SIM_JITTER_MIN && dt > 0) {
+        const over = d / dt > SIM_MAX_SPEED
+        const seg = over ? SIM_MAX_SPEED * dt : d
+        lastAcc = p
+        if (!over) {
+          const nowMs = p.t
+          pending = pending.filter((it) => it.at >= nowMs - RETRO_WINDOW_S * 1000)
+          feed(classifyDistSignal(p.speed), nowMs)
+          if (shouldCommitDist(state, p.speed)) commitSeg(p, seg)
+          else pending.push({ p, d: seg, at: nowMs })
+        }
+      }
+    }
+    // 判定鏈（對映 lastMoveRef 視窗判定）
+    if (!lastMove) lastMove = p
+    else if ((p.t - lastMove.t) / 1000 >= MOVE_JUDGE_WINDOW_S) {
+      const sig = classifyMoveSignal(lastMove, p, haversineM(lastMove, p))
+      if (sig) feed(sig, p.t)
+      lastMove = p
+    }
+  }
+  return { dist, committedTs, state, movingS: points.length ? currentMovingS(state, points[points.length - 1].t) : 0 }
+}
+
+// 情境①②共用的靜止漂移軌跡：定位點每 9 秒在 0m↔7m 之間跳一次（±14m 精度下的典型隨機遊走，
+// 每跳 7m ≥ JITTER_MIN=6m 會被距離採納閘門收為「有效位移」），其餘時間停在原地，共 60 秒、6 段假位移。
+function driftTrace(speed: number | null): SimPoint[] {
+  const pts: SimPoint[] = []
+  for (let t = 0; t <= 60; t++) {
+    const pos = Math.floor(t / 9) % 2 === 1 ? 7 : 0
+    pts.push(sptAt(pos, t, 14, speed))
+  }
+  return pts
+}
+
+check('情境①靜止漂移：speed≈0、每9秒飄7m共60秒 → committed 距離=0、移動時間=0（修復前距離吃進42m）', () => {
+  const r = simulateDistancePipeline(driftTrace(0.2))
+  assert.equal(r.dist, 0, `靜止漂移不應累積任何距離，實得 ${r.dist}m`)
+  assert.ok(r.movingS < 1, `靜止漂移不應累積移動時間，實得 ${r.movingS}s`)
+})
+
+check('情境②速度缺失裝置：同一漂移軌跡但 speed=null → 行為與現行完全相同（6段×7m=42m 照進，不比今天差、也不會被凍結）', () => {
+  const r = simulateDistancePipeline(driftTrace(null))
+  assert.ok(Math.abs(r.dist - 42) < 0.5, `速度缺失 fallback 應照現行採納 6 段×7m≈42m，實得 ${r.dist}m`)
+})
+
+check('情境③紅綠燈：跑30s(3m/s)→停30s(speed 0,飄移)→再跑30s → 停等段0距離、重啟5秒窗內回補、漂移段不回補', () => {
+  const pts: SimPoint[] = []
+  for (let t = 0; t <= 30; t++) pts.push(sptAt(3 * t, t, 10, 3)) // 跑 30 秒（3m/s，0→90m）
+  for (let t = 31; t <= 60; t++) { // 停 30 秒：speed=0；t=40~48 飄到 97m、t=49 飄回 90m（兩段 7m 假位移）
+    const pos = t >= 40 && t <= 48 ? 97 : 90
+    pts.push(sptAt(pos, t, 14, 0))
+  }
+  for (let t = 61; t <= 90; t++) pts.push(sptAt(90 + 3 * (t - 60), t, 10, 3)) // 再跑 30 秒（90→180m）
+  const r = simulateDistancePipeline(pts)
+  // 兩段跑步各 90m 應全數計入（含起步/重啟遲滯未滿前經回補的段）；停等段兩次 7m 漂移應為 0。
+  // 註：1Hz×3m/s 下 6m 門檻因 haversine 浮點落在 5.999…，採納實際每 3 秒一次（d=9m），總量不受影響。
+  assert.ok(Math.abs(r.dist - 180) < 0.5, `總距離應=90+0+90=180m（停等漂移 0 計入），實得 ${r.dist}m`)
+  // 停跑（t=30s）到重啟確認（t=63s）之間：停等期間（t=40s 飄出、t=49s 飄回）的漂移採納段
+  // 不 commit、也不得於重啟時回補（距重啟翻轉 >RETRO_WINDOW_S=5 秒，已老化丟棄）
+  assert.ok(!r.committedTs.some((t) => t > 30000 && t < 63000), '停等期間的漂移段不應被 commit 或回補')
+  // 重啟後第一個採納段（t=63s：距離鏈餵 moving 但遲滯未滿 → 暫存）應在同秒判定鏈第 2 筆 moving
+  // 造成「靜止→移動」翻轉時被回補（見 RETRO_WINDOW_S 窗口內）
+  assert.ok(r.committedTs.includes(63000), '重啟後 5 秒窗內的暫存段應在「靜止→移動」翻轉時被回補')
+})
+
+check('情境④起跑暖機：前幾筆 speed=3 但狀態機遲滯未滿 → 翻轉時回補，起步距離零損失', () => {
+  const pts: SimPoint[] = []
+  for (let t = 0; t <= 12; t++) pts.push(sptAt(3 * t, t, 10, 3)) // 起跑 12 秒（3m/s，0→36m）
+  const r = simulateDistancePipeline(pts)
+  // 採納每 3 秒一次（見情境③註）：t=3,6,9,12 共 4 段×9m=36m ＝ 實際位移全額，起步零損失
+  assert.ok(Math.abs(r.dist - 36) < 0.5, `起跑 12 秒×3m/s 應全數計入(36m)，實得 ${r.dist}m`)
+  // 第一個採納段（t=3s）發生在遲滯未滿（距離鏈餵第 1 筆 moving）時：先暫存，同秒判定鏈第 2 筆 moving
+  // 翻轉「靜止→移動」→ 回補 → 必須出現在 committed 清單，證明暖機段沒有漏計
+  assert.ok(r.committedTs.includes(3000), '暖機期間暫存的第一段(t=3s)應在翻轉時被回補')
 })
 
 console.log(`\n${passed} assertions passed`)

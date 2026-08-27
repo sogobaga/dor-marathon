@@ -21,7 +21,7 @@ import { EventInteraction } from '@/components/EventInteraction'
 import { useIsPhone } from '@/lib/useIsMobile'
 import { useIsLandscape } from '@/lib/useIsLandscape'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
-import { initMovingState, advanceMovingState, classifyMoveSignal, currentMovingS, flushMovingState, MOVE_JUDGE_WINDOW_S, type MovingState } from '@/lib/movingTime'
+import { initMovingState, advanceMovingState, classifyMoveSignal, currentMovingS, flushMovingState, classifyDistSignal, shouldCommitDist, MOVE_JUDGE_WINDOW_S, RETRO_WINDOW_S, type MovingState } from '@/lib/movingTime'
 import RaceFocusMode from './RaceFocusMode'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -157,6 +157,7 @@ export default function TrackPage() {
   const statusRef = useRef(status)
   statusRef.current = status
   const lastAccRef = useRef<GpsPoint | null>(null) // 上一個「採納」的點（過濾原地抖動用）
+  const pendingRef = useRef<{ p: GpsPoint; d: number; at: number }[]>([]) // 距離防漂移：已採納但未 commit 的暫存段（狀態機靜止期間、有速度讀值的位移）；「靜止→移動」翻轉時回補最近 RETRO_WINDOW_S 秒內的，其餘老化丟棄
   // 事件引擎用
   const distSamplesRef = useRef<{ t: number; d: number }[]>([]) // {時間ms, 累積距離m}
   const eventDefsRef = useRef<EventDef[]>([])
@@ -223,7 +224,10 @@ export default function TrackPage() {
   const [movingS, setMovingS] = useState(0) // 顯示值：由下方 250ms 本地 tick 與 onPos 共同用 currentMovingS() 重算，見兩處呼叫點
   const movingSplitMarkRef = useRef<number[]>([]) // 跨每公里當下的移動時間（與 splitMarkRef 同步，供移動分段配速）
   const onPos = useCallback((pos: GeolocationPosition) => {
-    const p: GpsPoint = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: pos.timestamp, acc: pos.coords.accuracy ?? 0 }
+    // speed：都卜勒速度（裝置直接量測，非位置差分——靜止時漂移「假位移」不會推高它，是防漂移的關鍵訊號）。
+    // 缺失/非有限值一律正規化為 null，下游（classifyDistSignal/shouldCommitDist）以 null 走「速度缺失裝置」fallback。
+    const spdRaw = pos.coords.speed
+    const p: GpsPoint = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: pos.timestamp, acc: pos.coords.accuracy ?? 0, speed: typeof spdRaw === 'number' && isFinite(spdRaw) ? spdRaw : null }
     setCurPos({ lat: p.lat, lng: p.lng, acc: p.acc })
     try { localStorage.setItem('dor:gps-authorized', '1') } catch { /* ignore */ } // 曾成功定位＝已授權；供 Safari(無 permissions.query) 回訪時判斷可否預熱定位
     ensureMap(p.lat, p.lng)
@@ -241,6 +245,41 @@ export default function TrackPage() {
       setWarn(`GPS 訊號較弱（±${Math.round(p.acc)}m），移動可能未被記錄，請到較空曠處`)
       clearTimeout(warnTimer.current)
       warnTimer.current = setTimeout(() => setWarn(''), 4000)
+    }
+
+    // ---- 距離防漂移 helpers（設計說明見 lib/movingTime.ts「距離防漂移」段落）----
+    // commitSeg：把一段已採納的位移正式計入——distRef、每公里分段、軌跡點/軌跡線。
+    // pointsRef 只收 committed 點：上傳給後端的就是這批點，後端以同批點重算距離/分段，口徑自然一致
+    // （後端零改動）；漂移暫存段未被回補就不會出現在軌跡與上傳資料裡。
+    const commitSeg = (cp: GpsPoint, dSeg: number) => {
+      distRef.current += dSeg
+      setDistance(distRef.current)
+      // 每公里分段（只在有效距離上前進）；el 用該點自己的 GPS 時間戳（回補時=暫存當下的點，非現在）
+      const km = Math.floor(distRef.current / 1000)
+      const el = (cp.t - paceBaseMs()) / 1000 // 從第一個 GPS 點算（非按鈕時間），與後端一致
+      while (splitMarkRef.current.length < km) {
+        const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
+        splitMarkRef.current.push(el)
+        setSplits((s) => [...s, el - prevEl])
+        // 整公里分段當下拍移動時間快照，供「移動分段配速」用（與 splitMarkRef 同步）
+        movingSplitMarkRef.current.push(currentMovingS(movingStateRef.current, Date.now()))
+      }
+      pointsRef.current.push(cp)
+      if (lineRef.current) lineRef.current.addLatLng([cp.lat, cp.lng])
+    }
+    // feedMoveSignal：所有「餵訊號進移動狀態機」的路徑共用（距離採納分流＋下方 lastMoveRef 判定鏈）。
+    // 在「靜止→移動」翻轉那一刻（無論由哪條路徑觸發翻轉），把暫存段中最近 RETRO_WINDOW_S 秒內的
+    // 按時間序回補 commit——解紅綠燈重啟/起跑暖機（遲滯未滿前的真位移）漏計；更早的即為漂移，直接丟棄。
+    const feedMoveSignal = (signal: 'moving' | 'still', nowMs: number) => {
+      const prev = movingStateRef.current
+      movingStateRef.current = advanceMovingState(prev, signal, nowMs)
+      setMovingS(currentMovingS(movingStateRef.current, nowMs)) // GPS 觸發當下先更新一次；兩次 GPS 之間由下方 250ms tick 補平滑
+      if (prev.movingSince == null && movingStateRef.current.movingSince != null && pendingRef.current.length) {
+        const cutoff = nowMs - RETRO_WINDOW_S * 1000
+        const retro = pendingRef.current.filter((it) => it.at >= cutoff)
+        pendingRef.current = []
+        for (const it of retro) commitSeg(it.p, it.d) // push 順序即時間序
+      }
     }
 
     // 距離以「上一個採納點」為基準計算；移動不足門檻 → 視為原地抖動，不採納、不累積
@@ -261,34 +300,22 @@ export default function TrackPage() {
           if (over) {
             setAnomalies((n) => n + 1)
             // 超速段完全不計入有效距離：不刷里程、不推進課表分段（與伺服器一致）
+            lastAccRef.current = p // 仍前進採納點（避免搭車結束後算出巨大跳段）
+            pointsRef.current.push(p)
+            if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
           } else {
-            distRef.current += seg
-            setDistance(distRef.current)
-            // #4 距離訊號補強：這筆位移已經通過距離累積的採納門檻（d≥JITTER_MIN=6m 且非超速，acc≤65m）
-            // ——本身就足以證明「正在移動」，直接餵一筆 moving 訊號進移動狀態機（與下方 goodAcc 區塊的
-            // lastMoveRef 判定鏈共用同一個 movingStateRef、同一條遲滯計數）。這同時解掉「精度 30-65m
-            // （距離累積用較寬鬆的 MAX_ACC=65，但移動判定的 lastMoveRef 視窗可能還沒湊滿）時距離有累、
-            // 移動時間卻沒跟著走」的已知落差，見 lib/movingTime.ts 對此的說明。
-            {
-              const nowMsD = Date.now()
-              movingStateRef.current = advanceMovingState(movingStateRef.current, 'moving', nowMsD)
-              setMovingS(currentMovingS(movingStateRef.current, nowMsD))
-            }
-            // 每公里分段（只在有效距離上前進）
-            const km = Math.floor(distRef.current / 1000)
-            const el = (p.t - paceBaseMs()) / 1000 // 從第一個 GPS 點算（非按鈕時間），與後端一致
-            while (splitMarkRef.current.length < km) {
-              const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
-              splitMarkRef.current.push(el)
-              setSplits((s) => [...s, el - prevEl])
-              // #4 移動時間改由獨立狀態機（movingStateRef，見下方 goodAcc 區塊）維護，這裡只是在整公里分段
-              // 當下拍一張快照，供「移動分段配速」用；不再依賴距離累積用的 movingSecRef（已移除，見狀態機說明）。
-              movingSplitMarkRef.current.push(currentMovingS(movingStateRef.current, Date.now()))
-            }
+            const nowMsD = Date.now()
+            // 平時老化：剔除超過回補窗口的暫存段（防膨脹；它們已確定是漂移，不會再被回補）
+            if (pendingRef.current.length) pendingRef.current = pendingRef.current.filter((it) => it.at >= nowMsD - RETRO_WINDOW_S * 1000)
+            // ① 訊號分流（classifyDistSignal）：不再無條件餵 moving——speed<0.5 的採納段（漂移假位移）
+            //    改餵 still，修「靜止 85 秒還累出 21 秒移動時間」的根因；死區/速度缺失維持現行餵 moving。
+            feedMoveSignal(classifyDistSignal(p.speed), nowMsD)
+            // ② commit 閘門（shouldCommitDist）：狀態機移動中、或該點速度缺失（fallback 現行行為）才立即
+            //    commit；否則暫存，等「靜止→移動」翻轉時由 feedMoveSignal 回補最近 RETRO_WINDOW_S 秒內的段。
+            if (shouldCommitDist(movingStateRef.current, p.speed)) commitSeg(p, seg)
+            else pendingRef.current.push({ p, d: seg, at: nowMsD })
+            lastAccRef.current = p // 永遠前進採納點（未 commit 也前進：維持既有「仍前進採納點」語意，避免漂移結束後算出巨大跳段）
           }
-          lastAccRef.current = p // 仍前進採納點（避免搭車結束後算出巨大跳段）
-          pointsRef.current.push(p)
-          if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
         }
       }
     }
@@ -309,8 +336,7 @@ export default function TrackPage() {
         const signal = classifyMoveSignal(prevMove, p, dMove)
         if (signal) {
           const nowMs = Date.now() // 與 elapsed（Date.now()-startRef）同一牆鐘時間基準，兩個顯示數字才同步
-          movingStateRef.current = advanceMovingState(movingStateRef.current, signal, nowMs)
-          setMovingS(currentMovingS(movingStateRef.current, nowMs)) // GPS 觸發當下先更新一次；兩次 GPS 之間由下方 250ms tick 補平滑
+          feedMoveSignal(signal, nowMs) // 共用餵訊號入口：這條路徑翻轉「靜止→移動」時同樣觸發暫存段回補
         }
         lastMoveRef.current = p // 只在真的做了判定後才推進基準點；dt<視窗的點留給下一筆繼續累積位移
       }
@@ -853,6 +879,7 @@ export default function TrackPage() {
     if (warmWatchRef.current != null) { try { navigator.geolocation.clearWatch(warmWatchRef.current) } catch { /* ignore */ } warmWatchRef.current = null }
     pointsRef.current = []; distRef.current = 0; rawDistRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null; movingSplitMarkRef.current = []
     movingStateRef.current = initMovingState(); lastMoveRef.current = null // #4 移動時間狀態機重置（見 lib/movingTime.ts）
+    pendingRef.current = [] // 距離防漂移：清掉上一趟未回補的暫存段
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null); setMovingS(0)
     vehicleLikeRef.current = false; setVehicleWarn(false)
     followRef.current = true; setFollowing(true) // 每趟開始都恢復自動跟隨（即使 idle 時曾手動看地圖）

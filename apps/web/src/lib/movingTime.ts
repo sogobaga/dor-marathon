@@ -128,3 +128,39 @@ export function flushMovingState(state: MovingState, nowMs: number): MovingState
 export function currentMovingS(state: MovingState, nowMs: number): number {
   return state.movingAccumS + (state.movingSince != null ? Math.max(0, (nowMs - state.movingSince) / 1000) : 0)
 }
+
+// ---- 距離防漂移（distance anti-drift）----
+// 背景：實測（靜止 85 秒、精度 ±14m）距離累積器吃進 50m 漂移——±14m 精度下定位點隨機遊走，每飄
+// ≥6m(page.tsx JITTER_MIN) 就被收為有效位移；同時距離採納閘門「每次直接餵一筆 moving 訊號」進本狀態機
+// （v0.1.588 ③），讓靜止時也累出假移動時間（實測 85 秒靜止累出 21 秒）。
+// 修法：距離採納段改依「都卜勒速度」分流訊號（classifyDistSignal），且距離 commit 綁定狀態機的移動
+// 判定（shouldCommitDist）；狀態機靜止期間未 commit 的採納段先暫存，於「靜止→移動」翻轉那一刻回補
+// 最近 RETRO_WINDOW_S 秒內的段（解紅綠燈重啟/起跑暖機的漏計），更早的視為漂移丟棄。
+// ⚠️ 速度缺失裝置的活路（v0.1.588 教訓：門檻過嚴曾把移動時間凍成恆 0）：speed 為 null/undefined/NaN
+// 時，訊號與 commit 都 fallback 到現行行為（餵 moving、直接 commit），距離永遠不可能被狀態機凍結。
+
+export const RETRO_WINDOW_S = 5 // 秒：「靜止→移動」翻轉時回補暫存段的最大窗口，更早的視為漂移丟棄
+const DIST_STILL_SPEED_MAX = 0.5 // m/s：都卜勒速度低於此值＝靜止的強證據（0.5~MOVE_SPEED_MIN(0.6) 為死區）
+
+/**
+ * 距離採納段（d≥JITTER_MIN 非超速）要餵給遲滯鏈的訊號，依都卜勒速度（pos.coords.speed）分流：
+ * - speed 存在且 ≥0.6（MOVE_SPEED_MIN）→ 'moving'（同現行）
+ * - speed 存在且 <0.5 → 'still'（靜止的強證據，覆蓋漂移假位移——修「靜止還累出移動時間」的根因）
+ * - 0.5~0.6 死區、或 speed 為 null/undefined/NaN → 'moving'（維持 v0.1.588 現行行為；
+ *   這是「速度缺失裝置」的活路，不可拿掉）
+ */
+export function classifyDistSignal(speed: number | null | undefined): 'moving' | 'still' {
+  if (typeof speed === 'number' && isFinite(speed) && speed < DIST_STILL_SPEED_MAX) return 'still'
+  return 'moving'
+}
+
+/**
+ * 距離採納段是否應立即 commit（計入 distRef/pointsRef/splits）：
+ * - 狀態機當下為移動中（movingSince != null）→ commit
+ * - 該點速度缺失（null/undefined/NaN）→ commit（速度缺失裝置 fallback 現行行為，不受狀態機挾持）
+ * - 否則（狀態機靜止且該點有速度讀值）→ 不 commit，呼叫端暫存待「靜止→移動」翻轉時回補
+ */
+export function shouldCommitDist(state: MovingState, speed: number | null | undefined): boolean {
+  if (state.movingSince != null) return true // 狀態機判定移動中：直接 commit
+  return !(typeof speed === 'number' && isFinite(speed)) // 速度缺失 → fallback 現行行為（commit）
+}

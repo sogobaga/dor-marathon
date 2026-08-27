@@ -581,7 +581,9 @@ export interface GpsRunResult {
   too_short?: boolean
   km_paces?: number[] // 每公里分段配速（秒/km）；上傳後由後端回傳，結束畫面以此覆寫本地分段保持同源
 }
-export interface GpsPoint { lat: number; lng: number; t: number; acc: number }
+// speed：都卜勒速度 m/s（距離防漂移的訊號分流用，見 lib/movingTime.ts）；裝置不支援時為 null。
+// 上傳相容：後端以 encoding/json 解析、忽略未知欄位，多帶 speed 不影響既有 API（後端零改動）。
+export interface GpsPoint { lat: number; lng: number; t: number; acc: number; speed?: number | null }
 export interface GpsRunHistory {
   id: string
   distance_km: number
