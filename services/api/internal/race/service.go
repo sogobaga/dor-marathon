@@ -1278,8 +1278,8 @@ func (s *Service) AdminListSignups(ctx context.Context, raceID string) ([]*Regis
 
 // --- 後台報名 / 訂單管理 ---
 
-func (s *Service) ListSignups(ctx context.Context, raceID, q string, hideVirtual bool) ([]SignupRow, error) {
-	return s.repo.ListSignups(ctx, raceID, q, hideVirtual)
+func (s *Service) ListSignups(ctx context.Context, raceID, q string, hideVirtual bool, statuses []string) ([]SignupRow, error) {
+	return s.repo.ListSignups(ctx, raceID, q, hideVirtual, statuses)
 }
 
 // ListRaceGroups 後台報名管理用：取分組（含名額上限/已用），並清掉鑰匙明碼。

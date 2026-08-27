@@ -147,13 +147,26 @@ func (h *Handler) OrderRouter() http.Handler {
 	return r
 }
 
-// GET /api/v1/admin/signups?race_id=&q=&hide_virtual=
+// validSignupStatuses registrations.status 合法值白名單，供 AdminListSignupRows 的 statuses 參數過濾非法值。
+var validSignupStatuses = map[string]bool{
+	"pending": true, "paid": true, "cancelled": true, "completed": true, "expired": true,
+}
+
+// GET /api/v1/admin/signups?race_id=&q=&hide_virtual=&statuses=
 // race_id 選填：留空＝跨賽事「全部賽事」模式（依報名時間 DESC，僅取最新 200 筆，見 repo.ListSignups）。
 // 全部賽事模式下不回傳 groups（分組是單一賽事概念，跨賽事沒有意義，前端也只在 groups 非空時才顯示分組下拉）。
+// statuses 選填：逗號分隔的報名狀態清單（如 paid,pending），白名單驗證非法值直接忽略；空／未帶＝不過濾。
 func (h *Handler) AdminListSignupRows(w http.ResponseWriter, r *http.Request) {
 	raceID := r.URL.Query().Get("race_id")
 	hideVirtual := r.URL.Query().Get("hide_virtual") == "1" // 選填：隱藏虛擬選手（users.is_virtual），比照會員管理頁
-	rows, err := h.svc.ListSignups(r.Context(), raceID, r.URL.Query().Get("q"), hideVirtual)
+	statuses := []string{}                                  // 非 nil：nil slice 傳給 pgx text[] 會變 SQL NULL，見 repo.ListSignups 註解
+	for _, s := range strings.Split(r.URL.Query().Get("statuses"), ",") {
+		s = strings.TrimSpace(s)
+		if validSignupStatuses[s] {
+			statuses = append(statuses, s)
+		}
+	}
+	rows, err := h.svc.ListSignups(r.Context(), raceID, r.URL.Query().Get("q"), hideVirtual, statuses)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to list signups")
 		return

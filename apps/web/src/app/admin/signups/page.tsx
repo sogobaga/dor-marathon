@@ -9,7 +9,10 @@ const STATUS_LABEL: Record<string, { t: string; c: string }> = {
   paid: { t: '已付款', c: 'var(--fug)' },
   pending: { t: '待繳費', c: 'var(--gold)' },
   cancelled: { t: '已取消', c: 'var(--tx-faint)' },
+  completed: { t: '已完成', c: 'var(--fug)' }, // 個人挑戰模式
+  expired: { t: '已過期', c: 'var(--hunt)' },  // 個人挑戰模式
 }
+const ALL_STATUSES = Object.keys(STATUS_LABEL)
 
 function ntd(c: number) {
   return 'NT$ ' + Math.round(c / 100).toLocaleString('zh-TW')
@@ -27,6 +30,7 @@ export default function AdminSignupsPage() {
   const [busyGroup, setBusyGroup] = useState('')
   const [token, setTok] = useState<string | null>(null)
   const [hideVirtual, setHideVirtual] = useState(true) // 預設隱藏虛擬選手，比照會員管理頁 v0.1.593/598
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(ALL_STATUSES)) // 報名狀態篩選，預設全選
 
   useEffect(() => {
     const t = getToken()
@@ -37,13 +41,15 @@ export default function AdminSignupsPage() {
     })
   }, [router])
 
-  const load = useCallback((rid: string, query: string, hideVirtualArg: boolean) => {
+  const load = useCallback((rid: string, query: string, hideVirtualArg: boolean, statuses: Set<string>) => {
     const t = getToken()
     if (!t) return
     setRows(null)
     setAppliedQ(query)
     // race_id 留空＝跨賽事「全部賽事」模式（後端依報名時間 DESC，僅取最新 200 筆）
-    adminSignupsApi.list(t, { race_id: rid || undefined, q: query, hideVirtual: hideVirtualArg })
+    // statuses：全選或全不選都視為「不過濾」（不帶 statuses 參數），只有勾選部分狀態時才送出篩選清單
+    const statusList = (statuses.size === 0 || statuses.size === ALL_STATUSES.length) ? undefined : Array.from(statuses)
+    adminSignupsApi.list(t, { race_id: rid || undefined, q: query, hideVirtual: hideVirtualArg, statuses: statusList })
       .then((r) => { setRows(r.signups); setGroups(r.groups ?? []) })
       .catch((e) => setErr(e?.message || '載入失敗'))
   }, [])
@@ -53,14 +59,21 @@ export default function AdminSignupsPage() {
     setErr(''); setBusyGroup(s.id)
     try {
       await adminSignupsApi.changeGroup(token, s.id, groupID)
-      load(raceID, appliedQ, hideVirtual) // 重載以更新各組已用名額
+      load(raceID, appliedQ, hideVirtual, statusFilter) // 重載以更新各組已用名額
     } catch (e: any) {
       setErr(e?.message || '調整分組失敗')
       setBusyGroup('')
     }
   }
 
-  useEffect(() => { load('', '', true) }, [load]) // 首載＝全部賽事＋隱藏虛擬選手（與 raceID/hideVirtual 預設值一致）
+  function toggleStatus(key: string) {
+    const next = new Set(statusFilter)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    setStatusFilter(next)
+    load(raceID, q, hideVirtual, next)
+  }
+
+  useEffect(() => { load('', '', true, new Set(ALL_STATUSES)) }, [load]) // 首載＝全部賽事＋隱藏虛擬選手＋全狀態（與各項預設值一致）
 
   async function markPaid(s: SignupRow) {
     if (!token) return
@@ -78,13 +91,13 @@ export default function AdminSignupsPage() {
       <div style={{ display: 'flex', gap: 10, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <select
           value={raceID}
-          onChange={(e) => { const next = e.target.value; setRaceID(next); load(next, q, hideVirtual) }}
+          onChange={(e) => { const next = e.target.value; setRaceID(next); load(next, q, hideVirtual, statusFilter) }}
           style={{ ...inp, maxWidth: 280 }}
         >
           <option value="">全部賽事</option>
           {races.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
         </select>
-        <form onSubmit={(e) => { e.preventDefault(); load(raceID, q, hideVirtual) }} style={{ display: 'flex', gap: 8 }}>
+        <form onSubmit={(e) => { e.preventDefault(); load(raceID, q, hideVirtual, statusFilter) }} style={{ display: 'flex', gap: 8 }}>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜尋姓名/Email/手機" style={{ ...inp, maxWidth: 240 }} />
           <button type="submit" style={primaryBtn}>搜尋</button>
         </form>
@@ -92,13 +105,22 @@ export default function AdminSignupsPage() {
           <input
             type="checkbox"
             checked={hideVirtual}
-            onChange={(e) => { const next = e.target.checked; setHideVirtual(next); load(raceID, q, next) }}
+            onChange={(e) => { const next = e.target.checked; setHideVirtual(next); load(raceID, q, next, statusFilter) }}
           />
           隱藏虛擬選手
         </label>
       </div>
+      <div style={{ display: 'flex', gap: 14, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {ALL_STATUSES.map((key) => (
+          <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--tx-dim)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={statusFilter.has(key)} onChange={() => toggleStatus(key)} />
+            <span style={{ color: STATUS_LABEL[key].c }}>{STATUS_LABEL[key].t}</span>
+          </label>
+        ))}
+      </div>
       <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 18, minHeight: 16 }}>
         {!raceID && '全部賽事模式僅顯示最新 200 筆報名（依報名時間排序）'}
+        {statusFilter.size === 0 && '　未勾選任何報名狀態，視同全選（顯示全部狀態）'}
       </div>
 
       {err && <div style={{ color: 'var(--hunt)', padding: 16 }}>{err}</div>}

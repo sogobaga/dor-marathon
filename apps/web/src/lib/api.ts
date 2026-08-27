@@ -2787,11 +2787,13 @@ export interface RefundRow {
 
 export const adminSignupsApi = {
   // race_id 選填：留空＝跨賽事「全部賽事」模式（後端依報名時間 DESC，僅取最新 200 筆）
-  list: (token: string, params?: { race_id?: string; q?: string; hideVirtual?: boolean }) => {
+  // statuses 選填：報名狀態過濾清單（如 ['paid','pending']），空／未帶＝不過濾（後端白名單驗證非法值忽略）
+  list: (token: string, params?: { race_id?: string; q?: string; hideVirtual?: boolean; statuses?: string[] }) => {
     const qs = new URLSearchParams()
     if (params?.race_id) qs.set('race_id', params.race_id)
     if (params?.q) qs.set('q', params.q)
     if (params?.hideVirtual) qs.set('hide_virtual', '1')
+    if (params?.statuses && params.statuses.length > 0) qs.set('statuses', params.statuses.join(','))
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     return request<{ signups: SignupRow[]; count: number; groups: RaceGroup[] }>(`/admin/signups${suffix}`, {
       headers: withAuth(token),

@@ -1827,7 +1827,9 @@ func (r *Repository) ListRegistrations(ctx context.Context, raceID string) ([]*R
 // raceID 留空＝跨賽事「全部賽事」模式：不加 race_id 篩選、多回傳 race_title、依報名時間 DESC 僅取最新 200 筆
 // （後台跨賽事一次查全表太重，比照既有 limit 慣例；單一賽事模式維持原本不限筆數的行為不變）。
 // hideVirtual＝true 時排除虛擬選手（users.is_virtual，見 migrations/146_virtual_runner.sql），比照會員管理頁模式。
-func (r *Repository) ListSignups(ctx context.Context, raceID, q string, hideVirtual bool) ([]SignupRow, error) {
+// statuses 選填：報名狀態白名單過濾（pending/paid/cancelled/completed/expired），空切片＝不過濾（呼叫端須保證非 nil，
+// 見 handler.AdminListSignupRows；nil slice 傳給 pgx text[] 會變成 SQL NULL，cardinality(NULL)非0會整條 AND 判非真）。
+func (r *Repository) ListSignups(ctx context.Context, raceID, q string, hideVirtual bool, statuses []string) ([]SignupRow, error) {
 	like := "%" + q + "%"
 	limit := 0 // 0＝不限（單一賽事模式，維持既有行為）
 	if raceID == "" {
@@ -1848,8 +1850,9 @@ func (r *Repository) ListSignups(ctx context.Context, raceID, q string, hideVirt
 		  AND ($2='' OR u.name ILIKE $3 OR u.email ILIKE $3
 		       OR COALESCE(reg.snap_real_name,'') ILIKE $3 OR COALESCE(reg.snap_phone,'') ILIKE $3)
 		  AND ($5 = false OR NOT u.is_virtual)
+		  AND (cardinality($6::text[]) = 0 OR reg.status = ANY($6))
 		ORDER BY reg.created_at DESC
-		LIMIT CASE WHEN $4::int > 0 THEN $4::int END`, raceID, q, like, limit, hideVirtual)
+		LIMIT CASE WHEN $4::int > 0 THEN $4::int END`, raceID, q, like, limit, hideVirtual, statuses)
 	if err != nil {
 		return nil, fmt.Errorf("list signups: %w", err)
 	}
