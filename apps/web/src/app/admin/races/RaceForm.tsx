@@ -943,7 +943,7 @@ export default function RaceForm({
   // 期望虧損。純顯示、不影響送出資料；計算邏輯全部委由下方純函式（見「小元件」區塊 computeSerialDenomCalcs
   // 等），與 SerialDenomFields/RewardItemRow 內的 inline 即時顯示共用同一套算法，避免兩處分岔。
   function renderRewardExpectedValuePanel() {
-    const { rows, nonPointCount } = computeSerialDenomCalcs(rewardItems, availableRewardGroups)
+    const { rows, nonPointCount, zeroWeightNames, missingGroupCount } = computeSerialDenomCalcs(rewardItems, availableRewardGroups)
     const perFinisherPoints = rows.reduce((s, r) => s + r.expectedPoints, 0)
     const perFinisherCostNtd = pointsToCost(perFinisherPoints, pointCostNtd)
     const perRegistrantCostNtd = perFinisherCostNtd * (expectedFinishRatePct / 100)
@@ -1061,6 +1061,16 @@ export default function RaceForm({
             </div>
           ))}
           {nonPointCount > 0 && <div style={calcHint}>未計入：非點數類序號 {nonPointCount} 項</div>}
+          {zeroWeightNames.length > 0 && (
+            <div style={{ ...calcHint, color: 'var(--hunt)' }}>
+              ⚠ 權重為 0 未計入：{zeroWeightNames.join('、')}——面額權重填 ≥1 即納入試算（試算不看庫存，可先試算再採購）
+            </div>
+          )}
+          {missingGroupCount > 0 && (
+            <div style={{ ...calcHint, color: 'var(--hunt)' }}>
+              ⚠ {missingGroupCount} 個面額引用的序號組不適用本賽事——到「序號/獎勵管理」勾選「適用全部活動」或指定本賽事後，按「🔄 更新期望值試算」
+            </div>
+          )}
 
           <div style={{ borderTop: '1px dashed var(--line-2)', paddingTop: 6, fontSize: 13, fontWeight: 700 }}>
             每位完賽者期望成本 NT$ {perFinisherCostNtd.toFixed(1)}（{perFinisherPoints.toFixed(2)} 點 × {pointCostNtd} 元/點）
@@ -2457,17 +2467,25 @@ interface SerialDenomCalc {
 // 完整彙整）。傳入單一項目陣列（如 [item]）即可算該項目自己的期望值，供 RewardItemRow/SerialDenomFields
 // 內的 inline 顯示與下方彙總面板（renderRewardExpectedValuePanel）共用同一套算法。
 // nonPointCount：面額權重>0 但序號組非 is_line_point 者的列數（這類序號不計入點數期望值，另列一行「未計入」）。
-function computeSerialDenomCalcs(items: RewardItem[], groups: RewardSerialGroup[]): { rows: SerialDenomCalc[]; nonPointCount: number } {
+// zeroWeightNames/missingGroupCount：原本被「靜默略過」的兩種情況（權重 0／序號組不在本賽事適用清單），
+// 2026-08-28 使用者新建 1000 點面額後試算沒反應、無從得知原因——改成回傳出來由面板明示警告。
+// 注意：試算「刻意不看庫存」（available_count 完全不參與）——這是先試算成本、再採購點數的規劃工具。
+function computeSerialDenomCalcs(items: RewardItem[], groups: RewardSerialGroup[]): { rows: SerialDenomCalc[]; nonPointCount: number; zeroWeightNames: string[]; missingGroupCount: number } {
   const rows: SerialDenomCalc[] = []
   let nonPointCount = 0
+  const zeroWeightNames: string[] = []
+  let missingGroupCount = 0
   items.forEach((item, itemIndex) => {
     if (item.type !== 'serial') return
     const denoms = effectiveDenoms(item)
     const totalWeight = denoms.reduce((s, d) => s + Math.max(0, d.weight), 0)
     denoms.forEach((d) => {
-      if (d.weight <= 0) return
       const g = groups.find((x) => x.id === d.group_id)
-      if (!g) return
+      if (!g) { missingGroupCount++; return }
+      if (d.weight <= 0) {
+        if (g.is_line_point) zeroWeightNames.push(g.name)
+        return
+      }
       if (!g.is_line_point) { nonPointCount++; return }
       const actualProb = denomActualProb(item.prob_bp ?? 0, d.weight, totalWeight)
       const pointValue = parsePointValue(g.name || g.item_label || '')
@@ -2475,7 +2493,7 @@ function computeSerialDenomCalcs(items: RewardItem[], groups: RewardSerialGroup[
       rows.push({ itemIndex, groupId: d.group_id, groupName: g.name, weight: d.weight, actualProb, pointValue, grantCount: g.grant_count, expectedPoints })
     })
   })
-  return { rows, nonPointCount }
+  return { rows, nonPointCount, zeroWeightNames, missingGroupCount }
 }
 
 const REWARD_TYPE_LABEL: Record<RewardItemType, string> = {
@@ -2650,8 +2668,12 @@ function SerialDenomFields({ item, groups, costPerPoint, onChange }: {
                     onChange={(e) => setWeight(g.id, Math.max(0, parseInt(e.target.value || '0', 10) || 0))}
                   />
                 </Row>
-                {/* 期望值試算 inline 提示（costPerPoint 由呼叫端傳入才顯示，見 RewardItemRow 註解）：
-                    weight=0 代表此面額不在抽獎池中，不顯示提示。 */}
+                {/* 期望值試算 inline 提示（costPerPoint 由呼叫端傳入才顯示，見 RewardItemRow 註解）。
+                    weight=0 的 LINE POINTS 面額改為明示警告（原本完全不顯示——使用者新建面額後
+                    試算沒反應、無從得知是權重 0 被略過，2026-08-28 回報）。 */}
+                {costPerPoint != null && weight <= 0 && g.is_line_point && (
+                  <span style={{ ...calcHint, color: 'var(--hunt)' }}>⚠ 權重 0：未列入抽獎與試算，填 ≥1 即計入</span>
+                )}
                 {costPerPoint != null && weight > 0 && (() => {
                   if (!g.is_line_point) {
                     return <span style={calcHint}>非 LINE POINTS，不計入點數期望值</span>
