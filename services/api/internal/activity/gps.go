@@ -50,6 +50,7 @@ type gpsRunResult struct {
 	ExpAwarded  bool    `json:"exp_awarded"` // 未標記才進活動管線發里程 EXP
 	TooShort    bool    `json:"too_short"`   // 移動距離不足，無法計算（非異常）
 	Duplicate   bool    `json:"duplicate,omitempty"` // 這一趟已上傳過（同 user+起跑時間）→ 冪等 no-op，未重複記錄/發獎
+	KmPaces     []int   `json:"km_paces,omitempty"` // 每公里分段配速（秒/km）；前端結束畫面「分段」與「結果卡均配速」同源
 }
 
 func haversineM(lat1, lon1, lat2, lon2 float64) float64 {
@@ -184,6 +185,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 	return &gpsRunResult{
 		DistanceKm: round2(distanceKm), DurationS: durationS, AvgPaceS: avgPaceS,
 		Flagged: flagged, FlagReason: flagReason, AnomalySegs: anomalies, ExpAwarded: !flagged,
+		KmPaces: kmSplits,
 	}, nil
 }
 

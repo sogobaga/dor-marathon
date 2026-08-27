@@ -138,6 +138,10 @@ export default function TrackPage() {
   const rawDistRef = useRef(0)   // 原始距離（含超速夾限）：僅供疑似搭車偵測，避免排除有效距離後偵測失效
   const splitMarkRef = useRef<number[]>([]) // 每跨整公里時的 elapsed 秒
   const startRef = useRef(0)
+  // 配速基準：第一個 GPS 點的時間戳（GPS 鎖定後才開始計時），若尚無點則退回按鈕按下時間。
+  // 修正「第一公里分段被 GPS 鎖定等待時間虛胖」的問題：前端 elapsed 從按鈕算，後端從第一個 GPS 點算，
+  // 用 paceBaseMs() 統一前端所有配速計算的基準，使前後端保持一致。
+  const paceBaseMs = () => pointsRef.current[0]?.t ?? startRef.current
   const watchRef = useRef<number | null>(null)
   const warmWatchRef = useRef<number | null>(null) // 進頁面時的 GPS 預熱偵測（顯示精度/定位地圖，不記錄）
   const wakeRef = useRef<any>(null)
@@ -272,7 +276,7 @@ export default function TrackPage() {
             }
             // 每公里分段（只在有效距離上前進）
             const km = Math.floor(distRef.current / 1000)
-            const el = (p.t - startRef.current) / 1000
+            const el = (p.t - paceBaseMs()) / 1000 // 從第一個 GPS 點算（非按鈕時間），與後端一致
             while (splitMarkRef.current.length < km) {
               const prevEl = splitMarkRef.current.length ? splitMarkRef.current[splitMarkRef.current.length - 1] : 0
               splitMarkRef.current.push(el)
@@ -981,6 +985,9 @@ export default function TrackPage() {
         points: pts,
       }))
       setResult(result)
+      // 結束後以後端分段為單一真相：後端由軌跡重算、可信，且與 avg_pace_s 同源。
+      // 覆寫本地即時分段（可能因 paceBaseMs 時間差而略有誤差），讓結束畫面「分段」與「均配速」一致。
+      if (result.km_paces?.length) setSplits(result.km_paces)
       localStorage.removeItem(LS_KEY)
       return result
     } catch (e: any) {
@@ -1468,12 +1475,16 @@ export default function TrackPage() {
   }
 
   const distKm = distance / 1000
-  const avgPace = distKm >= PACE_MIN_KM ? elapsed / distKm : 0 // 未達門檻先顯示 --:--，避免爆數字
+  // paceElapsed：從第一個 GPS 點到現在的秒數（與後端 duration_s 口徑一致）；
+  // 跑步開始前（无 GPS 點）退回按鈕時間，此時兩者相同，行為不變。
+  const paceElapsed = (Date.now() - paceBaseMs()) / 1000
+  const avgPace = distKm >= PACE_MIN_KM ? paceElapsed / distKm : 0 // 未達門檻先顯示 --:--，避免爆數字
   // 分段即時配速：當下（進行中）這一公里的即時配速（秒/公里）。跨過整公里即歸零重算；不足 30m 先顯示 --:--
+  // segStartT 與 paceElapsed 同一基準（皆從第一個 GPS 點算），相減才正確。
   const segKmDone = splitMarkRef.current.length
   const segStartT = segKmDone > 0 ? splitMarkRef.current[segKmDone - 1] : 0
   const segDistM = Math.max(0, distance - segKmDone * 1000)
-  const segLivePace = segDistM >= 30 ? (elapsed - segStartT) / (segDistM / 1000) : 0
+  const segLivePace = segDistM >= 30 ? (paceElapsed - segStartT) / (segDistM / 1000) : 0
   // #4 依「移動時間」（排除靜止/停等）計的平均配速與分段即時配速
   const movingAvgPace = distKm >= PACE_MIN_KM ? movingS / distKm : 0
   const movingSegStartT = segKmDone > 0 && movingSplitMarkRef.current.length >= segKmDone ? movingSplitMarkRef.current[segKmDone - 1] : 0

@@ -579,6 +579,7 @@ export interface GpsRunResult {
   anomaly_segments: number
   exp_awarded: boolean
   too_short?: boolean
+  km_paces?: number[] // 每公里分段配速（秒/km）；上傳後由後端回傳，結束畫面以此覆寫本地分段保持同源
 }
 export interface GpsPoint { lat: number; lng: number; t: number; acc: number }
 export interface GpsRunHistory {
