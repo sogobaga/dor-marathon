@@ -27,14 +27,17 @@ type HundredHero struct {
 func (h *Handler) HundredHeroes(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 
+	// 顯示名稱口徑＝COALESCE(NULLIF(u.name,''), u.handle)，與「一般賽事排行榜」（race/leaderboard.go:65）
+	// 完全一致——玩家在兩個榜看到的自己必須是同一個名字（2026-08-28 使用者回報：英雄榜顯示個資暱稱
+	// 「廣三」而非排行榜慣用的顯示名稱「MiMi」）。注意 personal_leaderboard.go 目前仍用 p.nickname
+	// 優先，屬既有不一致，另案處理。
 	rows, err := h.db.Query(r.Context(), `
-		SELECT u.id::text, COALESCE(NULLIF(p.nickname,''), u.name) AS name,
+		SELECT u.id::text, COALESCE(NULLIF(u.name,''), u.handle) AS name,
 		       COALESCE(u.avatar_url,'') AS avatar_url, u.total_km,
 		       ($1 <> '' AND EXISTS(
 		           SELECT 1 FROM follows f WHERE f.follower_id = NULLIF($1,'')::uuid AND f.followee_id = u.id
 		       )) AS is_following
 		FROM users u
-		LEFT JOIN user_profiles p ON p.user_id = u.id
 		WHERE u.total_km >= 100
 		ORDER BY u.total_km DESC
 		LIMIT 100`, userID)
