@@ -15,50 +15,71 @@ type Merchant struct {
 
 // Group 活動序號組
 type Group struct {
-	ID              string     `json:"id"`
-	MerchantID      *string    `json:"merchant_id"`
-	MerchantName    string     `json:"merchant_name,omitempty"` // 列表用，join reward_merchants 帶出
-	Name            string     `json:"name"`
-	ItemLabel       string     `json:"item_label"` // 面額/品項（如「100元」「咖啡兌換」）
-	IsLinePoint     bool       `json:"is_line_point"`
+	ID           string  `json:"id"`
+	MerchantID   *string `json:"merchant_id"`
+	MerchantName string  `json:"merchant_name,omitempty"` // 列表用，join reward_merchants 帶出
+	Name         string  `json:"name"`
+	ItemLabel    string  `json:"item_label"` // 面額/品項（如「100元」「咖啡兌換」）
+	IsLinePoint  bool    `json:"is_line_point"`
 	// FaceValue 結構化面額（migration 149）：如 1000/500，取代靠 name/item_label 字串解析數字（見
-	// race/reward_preview.go largestNumberIn）。組合包（activityreward.RewardItem.Bundle）的
-	// bundle_total = Σ(FaceValue × count) 靠此欄位計算，不能繼續賭字串裡一定能解析出數字。0=未設。
-	FaceValue       int        `json:"face_value"`
-	ValidFrom       *time.Time `json:"valid_from"`      // 開始時間；null=即刻可用
-	ValidUntil      *time.Time `json:"valid_until"`     // 使用期限；null=無期限
-	UseLimitType    string     `json:"use_limit_type"`  // single|repeat|unlimited
-	UseLimitCount   *int       `json:"use_limit_count"` // use_limit_type=repeat 時的次數
-	GrantCount      int        `json:"grant_count"`     // 每次中獎配發幾枚序號
-	AppliesAllRaces bool       `json:"applies_all_races"`
-	RaceIDs         []string   `json:"race_ids"`    // applies_all_races=false 時的指定活動（可複選）
-	UsageNote       string     `json:"usage_note"`  // 獎勵詳情：使用說明（活動獎勵系統 P2，見 migration 127）
-	IconURL         string     `json:"icon_url"`    // 獎勵詳情：獎勵圖示
-	Description     string     `json:"description"` // 獎勵詳情：活動/獎勵說明
-	CreatedAt       time.Time  `json:"created_at"`
-	AvailableCount  int        `json:"available_count"` // 統計：未發送
-	IssuedCount     int        `json:"issued_count"`    // 統計：已發送
-	VoidCount       int        `json:"void_count"`      // 統計：已註銷
-	TotalCount      int        `json:"total_count"`
+	// race/reward_preview.go largestNumberIn）。一般序號組：管理員手動填、存於 DB 該欄位。組合型序號組
+	// （IsBundle=true，migration 150）：不存靜態值（CRUD 寫入時強制歸零），改由 Repository 查詢時動態算
+	// Σ(子面額組 FaceValue × count)——組合定義本身才是真值，快照容易跟子項改動脫鉤。
+	FaceValue int `json:"face_value"`
+	// IsBundle 組合型序號組（migration 150）：true＝不自己存 reward_serials，而是由 BundleItems 定義成
+	// 「子面額組 × 數量」的固定組合（如「LINE POINTS 3000」= LINE POINTS 1000 × 3）。中獎抽到組合型序號組
+	// 時，發放引擎（internal/activityreward/roll.go grantSerialBundle）會對每個子項原子搶對應數量的序號，
+	// all-or-nothing 全發或全不發，全部綁同一 bundle_id 進 user_rewards。
+	IsBundle bool `json:"is_bundle"`
+	// BundleItems IsBundle=true 時的組合定義（子面額組×數量），讀自 reward_serial_group_items；一般序號組
+	// 恆為空陣列（不可能有列，CRUD 驗證擋下）。
+	BundleItems     []GroupBundleItem `json:"bundle_items"`
+	ValidFrom       *time.Time        `json:"valid_from"`      // 開始時間；null=即刻可用
+	ValidUntil      *time.Time        `json:"valid_until"`     // 使用期限；null=無期限
+	UseLimitType    string            `json:"use_limit_type"`  // single|repeat|unlimited
+	UseLimitCount   *int              `json:"use_limit_count"` // use_limit_type=repeat 時的次數
+	GrantCount      int               `json:"grant_count"`     // 每次中獎配發幾枚序號
+	AppliesAllRaces bool              `json:"applies_all_races"`
+	RaceIDs         []string          `json:"race_ids"`    // applies_all_races=false 時的指定活動（可複選）
+	UsageNote       string            `json:"usage_note"`  // 獎勵詳情：使用說明（活動獎勵系統 P2，見 migration 127）
+	IconURL         string            `json:"icon_url"`    // 獎勵詳情：獎勵圖示
+	Description     string            `json:"description"` // 獎勵詳情：活動/獎勵說明
+	CreatedAt       time.Time         `json:"created_at"`
+	// AvailableCount 統計：一般序號組＝未發送序號張數；組合型＝目前能湊滿幾包（min(floor(子面額組可用
+	// 張數/該子項所需數量))，見 Repository.hydrateGroups）。
+	AvailableCount int `json:"available_count"`
+	IssuedCount    int `json:"issued_count"` // 統計：已發送（組合型：本身無自有序號，恆為 0）
+	VoidCount      int `json:"void_count"`   // 統計：已註銷（組合型：恆為 0）
+	TotalCount     int `json:"total_count"`  // 統計：總數（組合型：恆為 0）
+}
+
+// GroupBundleItem 組合型序號組（is_bundle=true，migration 150）的一個子項：子面額組 × 數量。子面額組
+// （ChildGroupID）須為非組合型（不可巢狀）且與其餘子項同一商家，由 Service.validateBundleItems 驗證。
+type GroupBundleItem struct {
+	ChildGroupID string `json:"child_group_id"`
+	Count        int    `json:"count"` // 這個子面額組發幾張（≥1）
 }
 
 // GroupInput 建立/更新序號組的輸入
 type GroupInput struct {
-	MerchantID      *string  `json:"merchant_id"`
-	Name            string   `json:"name"`
-	ItemLabel       string   `json:"item_label"`
-	IsLinePoint     bool     `json:"is_line_point"`
-	FaceValue       int      `json:"face_value"` // 結構化面額（migration 149）：如 1000；0=未設
-	ValidFrom       *string  `json:"valid_from"`  // 開始時間；RFC3339；空字串/未帶=即刻可用
-	ValidUntil      *string  `json:"valid_until"` // RFC3339；空字串/未帶=無期限
-	UseLimitType    string   `json:"use_limit_type"`
-	UseLimitCount   *int     `json:"use_limit_count"`
-	GrantCount      int      `json:"grant_count"`
-	AppliesAllRaces bool     `json:"applies_all_races"`
-	RaceIDs         []string `json:"race_ids"`
-	UsageNote       string   `json:"usage_note"`  // 獎勵詳情：使用說明（活動獎勵系統 P2）
-	IconURL         string   `json:"icon_url"`    // 獎勵詳情：獎勵圖示
-	Description     string   `json:"description"` // 獎勵詳情：活動/獎勵說明
+	MerchantID  *string `json:"merchant_id"`
+	Name        string  `json:"name"`
+	ItemLabel   string  `json:"item_label"`
+	IsLinePoint bool    `json:"is_line_point"`
+	FaceValue   int     `json:"face_value"` // 結構化面額（migration 149）：如 1000；0=未設；IsBundle=true 時忽略（動態算）
+	IsBundle    bool    `json:"is_bundle"`  // 組合型序號組（migration 150）
+	// BundleItems IsBundle=true 時必填（≥1 子項）；IsBundle=false 時須為空（見 Service.validateGroupInput）。
+	BundleItems     []GroupBundleItem `json:"bundle_items"`
+	ValidFrom       *string           `json:"valid_from"`  // 開始時間；RFC3339；空字串/未帶=即刻可用
+	ValidUntil      *string           `json:"valid_until"` // RFC3339；空字串/未帶=無期限
+	UseLimitType    string            `json:"use_limit_type"`
+	UseLimitCount   *int              `json:"use_limit_count"`
+	GrantCount      int               `json:"grant_count"`
+	AppliesAllRaces bool              `json:"applies_all_races"`
+	RaceIDs         []string          `json:"race_ids"`
+	UsageNote       string            `json:"usage_note"`  // 獎勵詳情：使用說明（活動獎勵系統 P2）
+	IconURL         string            `json:"icon_url"`    // 獎勵詳情：獎勵圖示
+	Description     string            `json:"description"` // 獎勵詳情：活動/獎勵說明
 }
 
 // Serial 序號

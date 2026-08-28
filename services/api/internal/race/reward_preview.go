@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/dor/api/internal/activityreward"
 )
@@ -107,10 +106,8 @@ func (s *Service) buildRewardPreviewItems(ctx context.Context, cfg *activityrewa
 	out := []RewardPreviewItem{}
 	seenGroups := map[string]bool{}
 	seenCouponDefs := map[string]bool{}
-	seenBundles := map[string]bool{}
 	var groupIDs []string
 	var couponDefIDs []string
-	var bundleItems []*activityreward.RewardItem
 	// groupProbBP/couponProbBP：group/coupon-def id → 算好的展示用機率（萬分位）。用「第一次遇到該
 	// id 時所屬的 item」算出來的值，跟既有 seenGroups/seenCouponDefs 去重邏輯（name/description 也是
 	// 取第一次遇到的值）保持一致；同一序號組/券種被多個 item 重複引用、且各 item 機率不同時，只呈現
@@ -128,20 +125,6 @@ func (s *Service) buildRewardPreviewItems(ctx context.Context, cfg *activityrewa
 		}
 		switch item.Type {
 		case "serial":
-			if len(item.Bundle) > 0 {
-				// 固定組合包（migration 149，見 activityreward.RewardItem.Bundle）：中獎後「全發」，不是
-				// 「加權抽一個」——item.ProbBP 本身就是玩家實際拿到「整包」的機率，不需要再乘任何權重
-				// 換算（不同於下面兩層抽獎分支）。all-or-nothing 之下拆開顯示各面額各自機率沒有意義
-				// （玩家要嘛全拿要嘛全沒有），故不比照兩層抽獎逐面額各自一張卡，改成合併成一張卡片。
-				// 去重 key 用「所有 entry 的 group_id:count」组成，避免多個 item 重複設定同一組合包時
-				// 卡片重複；不同 item 若組合內容不同（不同 group/count 組合）視為不同卡片各自顯示。
-				key := bundleDedupKey(item.Bundle)
-				if !seenBundles[key] {
-					seenBundles[key] = true
-					bundleItems = append(bundleItems, item)
-				}
-				continue
-			}
 			// 兩層抽獎的第二層面額（見 activityreward.RewardItem 註解）：取 group id 去查展示欄位，
 			// 並把 Weight 換算成「該面額實際被抽中的機率」＝ item.ProbBP（商家層機率）× 該面額權重 /
 			// 該 item 所有有效面額權重總和——這是玩家拿到「這張卡片」的真實機率，不是商家層機率（直接
@@ -224,96 +207,7 @@ func (s *Service) buildRewardPreviewItems(ctx context.Context, cfg *activityrewa
 		}
 		out = append(out, couponItems...)
 	}
-	if len(bundleItems) > 0 {
-		// 每個 bundleItem 各自查它涉及的 group 顯示欄位＋面額，合併成一張卡（見上方 case "serial" 分支
-		// 註解：all-or-nothing 之下不比照兩層抽獎逐面額拆卡）。逐 item 各自查詢（而非像上面 groupIDs/
-		// couponDefIDs 那樣攢成一次查詢）：組合包數量在賽事設定中通常很少（P1 用例僅 LINE POINTS 少數
-		// 幾組），且每個 bundleItem 的 group 組合彼此不同，攢在一起查完還要拆回各自 item 反而更複雜，
-		// 不值得為此優化。name/icon/description 的合併演算法刻意與 roll.go grantSerialBundle 算
-		// bundle_label 的邏輯一致（商家名+總額，商家未指定則用「LINE POINTS」前綴）——玩家事前看到的
-		// 卡片名稱應該跟實際中獎後拿到的一致，不要兩邊各算一套。
-		for _, item := range bundleItems {
-			bundleGroupIDs := make([]string, len(item.Bundle))
-			countByGroup := map[string]int{}
-			for i, e := range item.Bundle {
-				bundleGroupIDs[i] = e.GroupID
-				countByGroup[e.GroupID] = e.Count
-			}
-			meta, err := s.repo.GetRewardBundlePreviewMeta(ctx, bundleGroupIDs)
-			if err != nil {
-				return nil, err
-			}
-			total := 0
-			merchantName, desc, icon := "", "", ""
-			for _, gid := range bundleGroupIDs {
-				m := meta[gid]
-				total += m.FaceValue * countByGroup[gid]
-				if merchantName == "" {
-					merchantName = m.MerchantName
-				}
-				if desc == "" {
-					desc = m.Description
-				}
-				if icon == "" {
-					icon = m.IconURL
-				}
-			}
-			out = append(out, RewardPreviewItem{
-				Kind: "serial", Name: activityreward.FormatBundleLabel(merchantName, total),
-				IconURL: icon, Description: desc, ProbBP: item.ProbBP,
-			})
-		}
-	}
 	return out, nil
-}
-
-// bundleDedupKey 把一個組合包 item 的 entries（group_id+count）序列化成穩定字串，供
-// buildRewardPreviewItems 去重「同一組合設定被多個 item 重複引用」時卡片重複顯示（見該函式 case
-// "serial" 分支）。逐 entry 依原始設定順序串接、不重排序——同一組合包在後台設定的 entries 順序理論上
-// 固定，不需要額外排序也能保證同一組合每次算出同一個 key。
-func bundleDedupKey(entries []activityreward.BundleEntry) string {
-	var b strings.Builder
-	for _, e := range entries {
-		b.WriteString(e.GroupID)
-		b.WriteByte(':')
-		b.WriteString(strconv.Itoa(e.Count))
-		b.WriteByte('|')
-	}
-	return b.String()
-}
-
-// bundlePreviewRow GetRewardBundlePreviewMeta 單筆序號組展示欄位，供 buildRewardPreviewItems 組合包分支
-// 合併計算用。
-type bundlePreviewRow struct {
-	MerchantName, Description, IconURL string
-	FaceValue                          int
-}
-
-// GetRewardBundlePreviewMeta 依組合包 entries 的 group_id 清單查前台展示需要的欄位（商家名稱/圖示/說明/
-// 結構化面額），供 buildRewardPreviewItems 組合包分支合併成單張卡片。與 GetRewardSerialGroupPreview
-// 的差異：多查 face_value（migration 149 結構化面額）——組合包合併總額屬於「獎勵大小」而非「中獎機率」，
-// 比照 coupon 已揭露面額（NT$）的既有先例可對外，不算揭露義務範圍外的抽獎內部設定（庫存/權重才不可揭露）。
-func (r *Repository) GetRewardBundlePreviewMeta(ctx context.Context, groupIDs []string) (map[string]bundlePreviewRow, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT g.id, COALESCE(m.name,''), COALESCE(g.description,''), COALESCE(g.icon_url,''), g.face_value
-		FROM reward_serial_groups g
-		LEFT JOIN reward_merchants m ON m.id = g.merchant_id
-		WHERE g.id = ANY($1::uuid[])`, groupIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := map[string]bundlePreviewRow{}
-	for rows.Next() {
-		var id string
-		var row bundlePreviewRow
-		if err := rows.Scan(&id, &row.MerchantName, &row.Description, &row.IconURL, &row.FaceValue); err != nil {
-			return nil, err
-		}
-		out[id] = row
-	}
-	return out, rows.Err()
 }
 
 // GetCouponDefPreview 依券種 id 清單查前台展示欄位（名稱＋面額），刻意不查 enabled/期限等後台管理欄位
@@ -341,10 +235,20 @@ func (r *Repository) GetCouponDefPreview(ctx context.Context, defIDs []string) (
 
 // GetRewardSerialGroupPreview 依序號組 id 清單查前台展示欄位（品項名稱/圖示/說明/商家名稱降階），
 // 刻意不查庫存數與抽獎權重本身（機敏，不對外；換算過的「該面額實際機率」由呼叫端 buildRewardPreviewItems
-// 算好後透過 refID 對回填入，見該函式）。name 優先用 item_label（面額/品項名稱），空則退回商家名稱。
+// 算好後透過 refID 對回填入，見該函式）。name 優先用 item_label（面額/品項名稱），空則退回商家名稱——
+// 但組合型序號組（is_bundle=true，migration 150）不採 item_label，一律用 FormatBundleLabel(商家名,
+// 組合總額) 動態算出「合併成一張卡」的顯示名稱（如「LINE POINTS 3500」），確保玩家事前看到的數字跟
+// grantSerialBundle 實際發放時算出的 bundle_total 一致，不必仰賴管理員手動把總額同步進 item_label。
+// 組合總額用子查詢 Σ(子面額組 face_value × count) 即時算——這是「獎勵大小」而非「中獎機率」，比照 coupon
+// 已揭露面額（NT$）的既有先例可對外，不算揭露義務範圍外的抽獎內部設定（庫存/權重才不可揭露）。
 func (r *Repository) GetRewardSerialGroupPreview(ctx context.Context, groupIDs []string) ([]RewardPreviewItem, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT g.id, COALESCE(g.item_label,''), COALESCE(g.icon_url,''), COALESCE(g.description,''), COALESCE(m.name,'')
+		SELECT g.id, g.is_bundle, COALESCE(g.item_label,''), COALESCE(g.icon_url,''), COALESCE(g.description,''), COALESCE(m.name,''),
+		       COALESCE((
+		           SELECT SUM(cg.face_value * i.count)
+		           FROM reward_serial_group_items i JOIN reward_serial_groups cg ON cg.id = i.child_group_id
+		           WHERE i.parent_group_id = g.id
+		       ), 0) AS bundle_total
 		FROM reward_serial_groups g
 		LEFT JOIN reward_merchants m ON m.id = g.merchant_id
 		WHERE g.id = ANY($1::uuid[])`, groupIDs)
@@ -356,11 +260,15 @@ func (r *Repository) GetRewardSerialGroupPreview(ctx context.Context, groupIDs [
 	out := []RewardPreviewItem{}
 	for rows.Next() {
 		var id, itemLabel, iconURL, description, merchantName string
-		if err := rows.Scan(&id, &itemLabel, &iconURL, &description, &merchantName); err != nil {
+		var isBundle bool
+		var bundleTotal int
+		if err := rows.Scan(&id, &isBundle, &itemLabel, &iconURL, &description, &merchantName, &bundleTotal); err != nil {
 			return nil, err
 		}
 		name := itemLabel
-		if name == "" {
+		if isBundle {
+			name = activityreward.FormatBundleLabel(merchantName, bundleTotal)
+		} else if name == "" {
 			name = merchantName
 		}
 		out = append(out, RewardPreviewItem{Kind: "serial", Name: name, IconURL: iconURL, Description: description, refID: id})

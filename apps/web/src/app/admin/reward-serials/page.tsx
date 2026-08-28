@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   adminRacesApi, adminRewardMerchantsApi, adminRewardGroupsApi, adminImagesApi,
   type Race, type RewardMerchant, type RewardSerialGroup, type RewardSerialGroupWriteBody,
-  type RewardSerial, type RewardUseLimitType, type RewardSerialImportResult,
+  type RewardSerial, type RewardUseLimitType, type RewardSerialImportResult, type RewardGroupBundleItem,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
@@ -30,7 +30,9 @@ type GroupForm = {
   name: string
   item_label: string
   is_line_point: boolean
-  face_value: string // 結構化面額（migration 149），如 1000；空/0=未設
+  face_value: string // 結構化面額（migration 149），如 1000；空/0=未設。組合型此欄不使用（後端依 bundle_items 算）
+  is_bundle: boolean // 組合型序號組（migration 150）：true=不自己存序號，由 bundle_items 定義子面額組×數量
+  bundle_items: { child_group_id: string; count: string }[] // is_bundle=true 時的組合內容；count 為文字輸入暫存，存檔時轉數字
   valid_from: string // datetime-local；空=即刻可用
   valid_until: string // datetime-local；空=無期限
   use_limit_type: RewardUseLimitType
@@ -64,7 +66,8 @@ function sortGroupsByDenom<T extends { merchant_name?: string; name: string; ite
 }
 
 const EMPTY_GROUP: GroupForm = {
-  merchant_id: '', name: '', item_label: '', is_line_point: false, face_value: '', valid_from: '', valid_until: '',
+  merchant_id: '', name: '', item_label: '', is_line_point: false, face_value: '', is_bundle: false, bundle_items: [],
+  valid_from: '', valid_until: '',
   use_limit_type: 'single', use_limit_count: '', grant_count: '1', applies_all_races: true, race_ids: [],
   usage_note: '', icon_url: '', description: '',
 }
@@ -179,6 +182,8 @@ export default function AdminRewardSerialsPage() {
       item_label: g.item_label,
       is_line_point: g.is_line_point,
       face_value: g.face_value ? String(g.face_value) : '',
+      is_bundle: g.is_bundle,
+      bundle_items: g.bundle_items.map((it) => ({ child_group_id: it.child_group_id, count: String(it.count) })),
       valid_from: g.valid_from ? toLocalInput(g.valid_from) : '',
       valid_until: g.valid_until ? toLocalInput(g.valid_until) : '',
       use_limit_type: g.use_limit_type,
@@ -208,6 +213,17 @@ export default function AdminRewardSerialsPage() {
     setGroupForm((f) => ({ ...f, race_ids: f.race_ids.includes(id) ? f.race_ids.filter((r) => r !== id) : [...f.race_ids, id] }))
   }
 
+  // --- 組合型序號組：組合內容編輯（migration 150） ---
+  function addBundleItem() {
+    setGroupForm((f) => ({ ...f, bundle_items: [...f.bundle_items, { child_group_id: '', count: '1' }] }))
+  }
+  function removeBundleItem(idx: number) {
+    setGroupForm((f) => ({ ...f, bundle_items: f.bundle_items.filter((_, i) => i !== idx) }))
+  }
+  function updateBundleItem(idx: number, patch: Partial<{ child_group_id: string; count: string }>) {
+    setGroupForm((f) => ({ ...f, bundle_items: f.bundle_items.map((it, i) => (i === idx ? { ...it, ...patch } : it)) }))
+  }
+
   // 上傳獎勵圖示→存到圖片服務、回填 icon_url（建議 800×400）
   async function uploadIcon(file: File) {
     if (!token || iconBusy) return
@@ -223,11 +239,18 @@ export default function AdminRewardSerialsPage() {
     const name = groupForm.name.trim()
     if (!name) { setErr('請填序號組名稱'); return }
     if (!groupForm.applies_all_races && groupForm.race_ids.length === 0) { setErr('未勾選「全部活動」時需至少指定一場活動'); return }
-    if (groupForm.use_limit_type === 'repeat' && !(parseInt(groupForm.use_limit_count || '0', 10) > 0)) {
+    if (!groupForm.is_bundle && groupForm.use_limit_type === 'repeat' && !(parseInt(groupForm.use_limit_count || '0', 10) > 0)) {
       setErr('選擇「可重複使用」需填使用次數（正整數）'); return
     }
     if (groupForm.valid_from && groupForm.valid_until && new Date(groupForm.valid_from) >= new Date(groupForm.valid_until)) {
       setErr('開始時間需早於使用期限'); return
+    }
+    // 組合型序號組：需先選商家（子項限同商家），且至少一項組合內容、數量皆為正整數
+    const bundleItemsClean = groupForm.bundle_items.filter((it) => it.child_group_id)
+    if (groupForm.is_bundle) {
+      if (!groupForm.merchant_id) { setErr('組合型序號組需先選擇合作商家（組合內容僅能挑選同商家旗下的一般序號組）'); return }
+      if (bundleItemsClean.length === 0) { setErr('組合型序號組需至少一項組合內容'); return }
+      if (bundleItemsClean.some((it) => !(parseInt(it.count || '0', 10) > 0))) { setErr('組合內容數量需為正整數'); return }
     }
     // 防呆（2026-08-28 實際案例：LINE POINTS 1000 建立時旗標為 false，期望值試算靜默不計入）：
     // 名稱/品項看起來是 LINE POINTS 卻沒勾「LINE POINT 序號」→ 儲存前確認一次，避免無聲漏勾。
@@ -238,17 +261,24 @@ export default function AdminRewardSerialsPage() {
     }
     setGroupBusy(true); setErr(''); setMsg('')
     try {
+      const bundleItemsBody: RewardGroupBundleItem[] = groupForm.is_bundle
+        ? bundleItemsClean.map((it) => ({ child_group_id: it.child_group_id, count: Math.max(1, parseInt(it.count || '1', 10)) }))
+        : []
       const body: RewardSerialGroupWriteBody = {
         merchant_id: groupForm.merchant_id || null,
         name,
         item_label: groupForm.item_label.trim(),
         is_line_point: groupForm.is_line_point,
-        face_value: Math.max(0, parseInt(groupForm.face_value || '0', 10) || 0),
+        // 組合型面額由後端依 bundle_items 動態算，前端傳 0
+        face_value: groupForm.is_bundle ? 0 : Math.max(0, parseInt(groupForm.face_value || '0', 10) || 0),
+        is_bundle: groupForm.is_bundle,
+        bundle_items: bundleItemsBody,
         valid_from: groupForm.valid_from ? new Date(groupForm.valid_from).toISOString() : null,
         valid_until: groupForm.valid_until ? new Date(groupForm.valid_until).toISOString() : null,
-        use_limit_type: groupForm.use_limit_type,
-        use_limit_count: groupForm.use_limit_type === 'repeat' ? parseInt(groupForm.use_limit_count || '0', 10) : null,
-        grant_count: Math.max(1, parseInt(groupForm.grant_count || '1', 10)),
+        // 組合型：使用次數限制／每次配發數語意屬於「單一序號」，組合型不自己存序號，故固定傳預設值（UI 亦隱藏）
+        use_limit_type: groupForm.is_bundle ? 'single' : groupForm.use_limit_type,
+        use_limit_count: groupForm.is_bundle ? null : (groupForm.use_limit_type === 'repeat' ? parseInt(groupForm.use_limit_count || '0', 10) : null),
+        grant_count: groupForm.is_bundle ? 1 : Math.max(1, parseInt(groupForm.grant_count || '1', 10)),
         applies_all_races: groupForm.applies_all_races,
         race_ids: groupForm.applies_all_races ? [] : groupForm.race_ids,
         usage_note: groupForm.usage_note.trim(),
@@ -351,6 +381,16 @@ export default function AdminRewardSerialsPage() {
   const serialPageCount = serialsTotal === 0 ? 0 : Math.ceil(serialsTotal / SERIAL_PAGE)
   const serialPageIdx = Math.floor(serialOffset / SERIAL_PAGE)
 
+  // 組合型序號組：組合內容編輯 — 候選子項＝同商家旗下、非組合型、非自己
+  const bundleCandidates = (groups ?? []).filter(
+    (g) => !g.is_bundle && g.id !== groupForm.id && (!groupForm.merchant_id || g.merchant_id === groupForm.merchant_id)
+  )
+  const bundleTotal = groupForm.bundle_items.reduce((sum, it) => {
+    const child = groups?.find((g) => g.id === it.child_group_id)
+    const cnt = parseInt(it.count || '0', 10) || 0
+    return sum + (child ? child.face_value * cnt : 0)
+  }, 0)
+
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto' }}>
       <h1 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px' }}>序號 / 獎勵管理</h1>
@@ -395,12 +435,14 @@ export default function AdminRewardSerialsPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {groups?.map((g) => (
                 <div key={g.id} onClick={() => editGroup(g)} style={{ ...rowCard, borderColor: groupForm.id === g.id ? 'var(--fug)' : 'var(--line)', cursor: 'pointer' }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{g.name}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{g.is_bundle && <span style={{ marginRight: 4 }}>🎁 組合</span>}{g.name}</div>
                   <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 2 }}>
-                    {g.merchant_name || '（未指定商家）'}{g.item_label ? ` · ${g.item_label}` : ''}{g.face_value > 0 ? ` · 面額 ${g.face_value}` : ''}
+                    {g.merchant_name || '（未指定商家）'}{g.item_label ? ` · ${g.item_label}` : ''}{g.face_value > 0 ? ` · ${g.is_bundle ? '組合總額' : '面額'} ${g.face_value}` : ''}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 3 }}>
-                    可用 {g.available_count} · 已發送 {g.issued_count} · 註銷 {g.void_count} ／ 共 {g.total_count}
+                    {g.is_bundle
+                      ? <>可發 {g.available_count} 包</>
+                      : <>可用 {g.available_count} · 已發送 {g.issued_count} · 註銷 {g.void_count} ／ 共 {g.total_count}</>}
                   </div>
                 </div>
               ))}
@@ -410,6 +452,19 @@ export default function AdminRewardSerialsPage() {
 
           {/* 表單 */}
           <div style={innerCard}>
+            <div style={{ marginBottom: 10 }}>
+              <span style={{ fontSize: 11, color: 'var(--tx-faint)', display: 'block', marginBottom: 4 }}>序號組類型</span>
+              <div style={{ display: 'flex', gap: 16, fontSize: 13 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                  <input type="radio" name="groupType" checked={!groupForm.is_bundle} onChange={() => setGroupForm((f) => ({ ...f, is_bundle: false }))} />
+                  一般序號組
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                  <input type="radio" name="groupType" checked={groupForm.is_bundle} onChange={() => setGroupForm((f) => ({ ...f, is_bundle: true }))} />
+                  🎁 組合型序號組（多個子面額組合成，如 LINE POINTS 3000 = 1000 × 3）
+                </label>
+              </div>
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10 }}>
               <F label="名稱（必填）"><input style={inp} value={groupForm.name} onChange={(e) => setGroupForm((f) => ({ ...f, name: e.target.value }))} placeholder="如：週年慶 100 元序號" /></F>
               <F label="合作商家">
@@ -421,13 +476,49 @@ export default function AdminRewardSerialsPage() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 8 }}>
               <F label="面額/品項"><input style={inp} value={groupForm.item_label} onChange={(e) => setGroupForm((f) => ({ ...f, item_label: e.target.value }))} placeholder="如：100元 / 咖啡兌換" /></F>
-              <F label="面額（單張，選填）">
-                <input style={inp} type="number" min={0} value={groupForm.face_value} onChange={(e) => setGroupForm((f) => ({ ...f, face_value: e.target.value }))} placeholder="如：1000" />
+              <F label={groupForm.is_bundle ? '面額（組合型面額自動計算）' : '面額（單張，選填）'}>
+                {groupForm.is_bundle
+                  ? <input style={{ ...inp, opacity: 0.6 }} value={`${bundleTotal || 0}（依組合內容加總，不可手動輸入）`} disabled />
+                  : <input style={inp} type="number" min={0} value={groupForm.face_value} onChange={(e) => setGroupForm((f) => ({ ...f, face_value: e.target.value }))} placeholder="如：1000" />}
               </F>
             </div>
             <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: -4, marginBottom: 4 }}>
-              單張序號的結構化面額（如 1000）；用於期望值試算與組合包總額計算 Σ(面額×數量)，優先於「面額/品項」名稱解析。
+              {groupForm.is_bundle
+                ? '組合型面額 = Σ(子面額組面額 × 數量)，由後端依下方「組合內容」動態計算，不需也不可手動填寫。'
+                : '單張序號的結構化面額（如 1000）；用於期望值試算與組合包總額計算 Σ(面額×數量)，優先於「面額/品項」名稱解析。'}
             </div>
+
+            {groupForm.is_bundle && (
+              <div style={{ ...innerCard, background: 'var(--bg-1)', marginTop: 8, marginBottom: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>組合內容（子面額組 × 數量）</div>
+                {!groupForm.merchant_id && (
+                  <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>請先選擇合作商家，組合內容僅能挑選同商家旗下的一般序號組（子項須非組合型）。</div>
+                )}
+                {groupForm.merchant_id && (
+                  <>
+                    {groupForm.bundle_items.map((it, idx) => {
+                      const child = groups?.find((g) => g.id === it.child_group_id)
+                      const cnt = parseInt(it.count || '0', 10) || 0
+                      return (
+                        <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+                          <select style={{ ...inp, flex: 2 }} value={it.child_group_id} onChange={(e) => updateBundleItem(idx, { child_group_id: e.target.value })}>
+                            <option value="">（選擇子序號組）</option>
+                            {bundleCandidates.map((g) => <option key={g.id} value={g.id}>{g.name}{g.face_value > 0 ? `（面額 ${g.face_value}）` : ''}</option>)}
+                          </select>
+                          <input style={{ ...inp, width: 80 }} type="number" min={1} value={it.count} onChange={(e) => updateBundleItem(idx, { count: e.target.value })} placeholder="數量" />
+                          <span style={{ fontSize: 12, color: 'var(--tx-dim)', minWidth: 90, textAlign: 'right' }}>{child ? `＝ ${child.face_value * cnt}` : ''}</span>
+                          <button onClick={() => removeBundleItem(idx)} style={{ ...tinyBtn, color: 'var(--hunt)' }}>移除</button>
+                        </div>
+                      )
+                    })}
+                    <button onClick={addBundleItem} style={ghostBtn}>＋ 新增子項</button>
+                    {groupForm.bundle_items.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4 }}>尚未加入任何子項。</div>}
+                    <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700 }}>組合總額：{bundleTotal}</div>
+                  </>
+                )}
+              </div>
+            )}
+
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 8 }}>
               <F label="開始時間（選填，空＝即刻可用）"><input style={inp} type="datetime-local" value={groupForm.valid_from} onChange={(e) => setGroupForm((f) => ({ ...f, valid_from: e.target.value }))} /></F>
               <F label="使用期限（空=無期限）"><input style={inp} type="datetime-local" value={groupForm.valid_until} onChange={(e) => setGroupForm((f) => ({ ...f, valid_until: e.target.value }))} /></F>
@@ -460,17 +551,23 @@ export default function AdminRewardSerialsPage() {
               <textarea style={ta} rows={2} value={groupForm.description} onChange={(e) => setGroupForm((f) => ({ ...f, description: e.target.value }))} placeholder="顯示於玩家活動獎勵錢包的獎勵詳情" />
             </F>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 10 }}>
-              <F label="使用次數限制">
-                <select style={inp} value={groupForm.use_limit_type} onChange={(e) => setGroupForm((f) => ({ ...f, use_limit_type: e.target.value as RewardUseLimitType }))}>
-                  {(Object.keys(USE_LIMIT_LABEL) as RewardUseLimitType[]).map((k) => <option key={k} value={k}>{USE_LIMIT_LABEL[k]}</option>)}
-                </select>
-              </F>
-              {groupForm.use_limit_type === 'repeat' && (
-                <F label="可重複次數"><input style={inp} type="number" min={1} value={groupForm.use_limit_count} onChange={(e) => setGroupForm((f) => ({ ...f, use_limit_count: e.target.value }))} /></F>
-              )}
-              <F label="每次中獎配發序號數"><input style={inp} type="number" min={1} value={groupForm.grant_count} onChange={(e) => setGroupForm((f) => ({ ...f, grant_count: e.target.value }))} /></F>
-            </div>
+            {groupForm.is_bundle ? (
+              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 10, lineHeight: 1.7 }}>
+                組合型序號組不自己存序號，「使用次數限制」與「每次中獎配發序號數」由組合內容的各子序號組各自決定，此處不需設定。
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 10 }}>
+                <F label="使用次數限制">
+                  <select style={inp} value={groupForm.use_limit_type} onChange={(e) => setGroupForm((f) => ({ ...f, use_limit_type: e.target.value as RewardUseLimitType }))}>
+                    {(Object.keys(USE_LIMIT_LABEL) as RewardUseLimitType[]).map((k) => <option key={k} value={k}>{USE_LIMIT_LABEL[k]}</option>)}
+                  </select>
+                </F>
+                {groupForm.use_limit_type === 'repeat' && (
+                  <F label="可重複次數"><input style={inp} type="number" min={1} value={groupForm.use_limit_count} onChange={(e) => setGroupForm((f) => ({ ...f, use_limit_count: e.target.value }))} /></F>
+                )}
+                <F label="每次中獎配發序號數"><input style={inp} type="number" min={1} value={groupForm.grant_count} onChange={(e) => setGroupForm((f) => ({ ...f, grant_count: e.target.value }))} /></F>
+              </div>
+            )}
 
             <div style={{ marginTop: 12 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700 }}>
@@ -498,8 +595,30 @@ export default function AdminRewardSerialsPage() {
         </div>
       </div>
 
+      {/* 序號清單 + 匯入（組合型序號組改顯示組合內容，不自己存序號） */}
+      {selectedGroup && selectedGroup.is_bundle && (
+        <div style={{ ...card, marginTop: 16 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>🎁 組合內容 · {selectedGroup.name}</h2>
+          <p style={{ fontSize: 12, color: 'var(--tx-dim)', margin: '0 0 12px' }}>
+            組合總額 {selectedGroup.face_value} ・可發 {selectedGroup.available_count} 包（組合型序號組不自己存序號，庫存＝各子序號組庫存換算後取最小值）
+          </p>
+          <div style={innerCard}>
+            {selectedGroup.bundle_items.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--tx-dim)' }}>尚未設定組合內容，請於上方表單編輯。</div>}
+            {selectedGroup.bundle_items.map((it, idx) => {
+              const child = groups?.find((g) => g.id === it.child_group_id)
+              return (
+                <div key={idx} style={{ fontSize: 13, padding: '5px 0', borderBottom: idx < selectedGroup.bundle_items.length - 1 ? '1px solid var(--line-2)' : 'none' }}>
+                  {child ? child.name : `（序號組已刪除：${it.child_group_id}）`} × {it.count}
+                  {child && <span style={{ color: 'var(--tx-dim)' }}> ＝ {child.face_value * it.count}</span>}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 序號清單 + 匯入 */}
-      {selectedGroup && (
+      {selectedGroup && !selectedGroup.is_bundle && (
         <div style={{ ...card, marginTop: 16 }}>
           <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>序號清單 · {selectedGroup.name}</h2>
           <p style={{ fontSize: 12, color: 'var(--tx-dim)', margin: '0 0 12px' }}>

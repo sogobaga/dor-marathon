@@ -2,43 +2,42 @@ package activityreward
 
 import "testing"
 
-// TestComputeBundleTotal bundle_total = Σ(faceValueByGroup[entry.GroupID] × entry.Count)（migration 149
-// 契約）。涵蓋多 entry 加總、單一 entry、查不到面額（缺該 group_id）視為 0 的防呆。
+// TestComputeBundleTotal bundle_total = Σ(faceValues[i] × counts[i])（migration 149/150 契約）。涵蓋多
+// 子項加總、單一子項、slice 長度不一致（防呆）。
 func TestComputeBundleTotal(t *testing.T) {
 	cases := []struct {
-		name    string
-		entries []BundleEntry
-		faceVal map[string]int
-		want    int
+		name               string
+		faceValues, counts []int
+		want               int
 	}{
 		{
-			name:    "多 entry：1000×3+500×1=3500",
-			entries: []BundleEntry{{GroupID: "g1000", Count: 3}, {GroupID: "g500", Count: 1}},
-			faceVal: map[string]int{"g1000": 1000, "g500": 500},
-			want:    3500,
+			name:       "多子項：1000×3+500×1=3500",
+			faceValues: []int{1000, 500},
+			counts:     []int{3, 1},
+			want:       3500,
 		},
 		{
-			name:    "單一 entry",
-			entries: []BundleEntry{{GroupID: "g100", Count: 5}},
-			faceVal: map[string]int{"g100": 100},
-			want:    500,
+			name:       "單一子項",
+			faceValues: []int{100},
+			counts:     []int{5},
+			want:       500,
 		},
 		{
-			name:    "查不到面額（缺該 group_id）視為 0，不 panic",
-			entries: []BundleEntry{{GroupID: "unknown", Count: 3}},
-			faceVal: map[string]int{"other": 100},
-			want:    0,
+			name:       "counts 比 faceValues 短（防呆）：只加總到較短者",
+			faceValues: []int{100, 200, 300},
+			counts:     []int{1, 2},
+			want:       500, // 100*1 + 200*2；第三筆缺 count，不計入
 		},
 		{
-			name:    "空 entries → 0",
-			entries: nil,
-			faceVal: map[string]int{"g1": 100},
-			want:    0,
+			name:       "皆空 → 0",
+			faceValues: nil,
+			counts:     nil,
+			want:       0,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := computeBundleTotal(c.entries, c.faceVal)
+			got := computeBundleTotal(c.faceValues, c.counts)
 			if got != c.want {
 				t.Fatalf("computeBundleTotal() = %d, want %d", got, c.want)
 			}
@@ -72,6 +71,33 @@ func TestFirstInsufficientBundleEntry(t *testing.T) {
 	}
 }
 
+// TestBundlePacksFromStock 純函式：min(floor(avail[i]/count[i])) over i，即組合型序號組（migration 150
+// is_bundle=true）目前能湊滿幾包。涵蓋「各子項餘量不同取最小」「除不盡無條件捨去」「count<=0 防呆視為
+// 1」「slice 長度不一致（防呆）」「無子項回 0」。
+func TestBundlePacksFromStock(t *testing.T) {
+	cases := []struct {
+		name         string
+		avail, count []int
+		want         int
+	}{
+		{"單一子項剛好整除", []int{10}, []int{2}, 5},
+		{"多子項取最小（瓶頸在第二項）", []int{100, 7}, []int{10, 3}, 2}, // 100/10=10, 7/3=2 → min=2
+		{"除不盡無條件捨去", []int{7}, []int{3}, 2},
+		{"某子項庫存 0 → 整體 0", []int{50, 0}, []int{5, 1}, 0},
+		{"count<=0 防呆視為 1（理論不會發生）", []int{5}, []int{0}, 5},
+		{"avail 比 count 短（防呆）：只算到較短者", []int{10, 20}, []int{2}, 5},
+		{"無子項 → 0", nil, nil, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := bundlePacksFromStock(c.avail, c.count)
+			if got != c.want {
+				t.Fatalf("bundlePacksFromStock() = %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
 // TestFormatBundleLabel "{商家名} {總額}"；商家名稱為空時退回固定前綴「LINE POINTS」，避免顯示空白標籤。
 func TestFormatBundleLabel(t *testing.T) {
 	cases := []struct {
@@ -91,83 +117,4 @@ func TestFormatBundleLabel(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestSamePtrString 供 grantSerialBundle 判斷 bundle 內各 entry 的 merchant_id 是否一致：皆 nil 視為
-// 相同（都未指定商家）；一 nil 一非 nil 視為不同；皆非 nil 則比較實際值。
-func TestSamePtrString(t *testing.T) {
-	s := func(v string) *string { return &v }
-	cases := []struct {
-		name string
-		a, b *string
-		want bool
-	}{
-		{"皆 nil → 相同", nil, nil, true},
-		{"一 nil 一非 nil → 不同", nil, s("m1"), false},
-		{"非 nil 且值相同 → 相同", s("m1"), s("m1"), true},
-		{"非 nil 但值不同 → 不同", s("m1"), s("m2"), false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := samePtrString(c.a, c.b); got != c.want {
-				t.Fatalf("samePtrString(%v, %v) = %v, want %v", c.a, c.b, got, c.want)
-			}
-		})
-	}
-}
-
-// TestBundleEntryValidate serial 類 Bundle 分支的結構驗證：與 Denominations 互斥、entry 數 1-20、
-// group_id/count 合法、同一 bundle 內不可重複 group_id。
-func TestBundleEntryValidate(t *testing.T) {
-	base := func() RewardItem {
-		return RewardItem{Type: "serial", ProbBP: 5000, Bundle: []BundleEntry{
-			{GroupID: "g1", Count: 3}, {GroupID: "g2", Count: 1},
-		}}
-	}
-
-	t.Run("合法組合包", func(t *testing.T) {
-		it := base()
-		if err := it.Validate(); err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-	})
-	t.Run("與 denominations 同時非空 → 錯誤", func(t *testing.T) {
-		it := base()
-		it.Denominations = []RewardDenom{{GroupID: "g3", Weight: 1}}
-		if err := it.Validate(); err == nil {
-			t.Fatalf("expected error for bundle+denominations mutual exclusivity")
-		}
-	})
-	t.Run("entry group_id 空白 → 錯誤", func(t *testing.T) {
-		it := base()
-		it.Bundle[0].GroupID = "   "
-		if err := it.Validate(); err == nil {
-			t.Fatalf("expected error for blank group_id")
-		}
-	})
-	t.Run("entry count<1 → 錯誤", func(t *testing.T) {
-		it := base()
-		it.Bundle[1].Count = 0
-		if err := it.Validate(); err == nil {
-			t.Fatalf("expected error for count<1")
-		}
-	})
-	t.Run("超過 20 個 entry → 錯誤", func(t *testing.T) {
-		it := base()
-		entries := make([]BundleEntry, 21)
-		for i := range entries {
-			entries[i] = BundleEntry{GroupID: "g", Count: 1}
-		}
-		it.Bundle = entries
-		if err := it.Validate(); err == nil {
-			t.Fatalf("expected error for >20 entries")
-		}
-	})
-	t.Run("同一 bundle 內重複 group_id → 錯誤", func(t *testing.T) {
-		it := base()
-		it.Bundle = []BundleEntry{{GroupID: "g1", Count: 1}, {GroupID: "g1", Count: 2}}
-		if err := it.Validate(); err == nil {
-			t.Fatalf("expected error for duplicate group_id within bundle")
-		}
-	})
 }

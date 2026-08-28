@@ -30,10 +30,10 @@ import (
 // 序號與序號組的顯示欄位（面額/商家/使用說明…），不能只用 Exec。呼叫端傳入既有 pgx.Tx 時，本套件與
 // wallet.AwardGP/AwardDP、vip.Extend 的所有 SQL 都會在同一交易內執行，確保「判定完成」與「發獎」同進退
 // （呼叫端傳入的 Execer 值可直接傳給 wallet.AwardGP 等要求 wallet.Execer 的函式——Go 介面依方法集合結
-// 構相容，本介面方法集是其超集）。Query（多列查詢）是 migration 149 組合包新增需求：grantSerialBundle
-// 的「先鎖定並確認每個 entry 庫存足夠」階段要一次鎖定/取回一個 entry 需要的 N 個序號 id（見
-// lockAvailableSerialIDs），單列的 QueryRow 做不到；*pgxpool.Pool 與 pgx.Tx 皆已原生支援 Query，加入
-// 這個方法不影響任何既有呼叫端。
+// 構相容，本介面方法集是其超集）。Query（多列查詢）供組合型序號組（migration 150，is_bundle=true）發放
+// 使用：grantSerialBundle 的「先鎖定並確認每個子項庫存足夠」階段要一次鎖定/取回一個子項需要的 N 個序號 id
+// （見 lockAvailableSerialIDs），單列的 QueryRow 做不到；也用於讀取組合定義（reward_serial_group_items）
+// 這種多列結果。*pgxpool.Pool 與 pgx.Tx 皆已原生支援 Query，加入這個方法不影響任何既有呼叫端。
 type Execer interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
@@ -60,15 +60,12 @@ type RewardItem struct {
 	// Denominations 決定，不會另外拿 MerchantID 去查序號組）。
 	MerchantID string `json:"merchant_id,omitempty"`
 	// Denominations serial 類：該商家旗下可能中獎的序號組與各自的抽獎權重（兩層抽獎第二層，見
-	// grantSerialTwoLayer）；Weight<=0 視為不列入抽獎池。與 Bundle 互斥（見 Validate）。
+	// grantSerialTwoLayer）。Weight<=0 視為不列入抽獎池。某面額組若本身是組合型序號組
+	// （reward_serial_groups.is_bundle=true，migration 150，見 internal/rewardserial.Group.BundleItems）
+	// 在這裡就是一個普通候選面額，跟其他面額一起加權抽——組合能力已下放到序號組本身，賽事設定端不需要、
+	// 也不再有獨立的「組合包模式」；中獎抽到組合型面額組時，claimSerialsFromGroup 會偵測到並自動轉呼叫
+	// grantSerialBundle 拆解成子面額組發放（all-or-nothing），對本 struct 完全透明。
 	Denominations []RewardDenom `json:"denominations,omitempty"`
-
-	// Bundle serial 類【固定組合包，migration 149】：中獎（ProbBP）後不是「加權抽一組」而是「全發」——
-	// 對每個 entry 各自從 entry.GroupID 搶 entry.Count 張序號，全部歸同一次發放（見 roll.go
-	// grantSerialBundle）。用於單張面額有上限（如 LINE POINTS 單張最高 1000）但要送出更大額（如
-	// 3500=1000×3+500×1）的情境。與 Denominations 互斥：兩者不可同時非空（見 Validate）。非空即代表這個
-	// item 走組合包路徑，空則維持原本兩層抽獎路徑，向後相容既有設定。
-	Bundle []BundleEntry `json:"bundle,omitempty"`
 
 	// CouponDefID coupon 類（migration 138 活動優惠券）：指定券種（event_coupon_defs.id）。中獎時讀取
 	// 該券種當下設定（面額/期限模式），denormalize 寫入 user_rewards，之後即使券種被改名/改面額也不影響
@@ -86,13 +83,6 @@ type RewardItem struct {
 type RewardDenom struct {
 	GroupID string `json:"group_id"`
 	Weight  int    `json:"weight"`
-}
-
-// BundleEntry 固定組合包（migration 149）其中一個面額要發幾張，見 RewardItem.Bundle／roll.go
-// grantSerialBundle。Count 為這個面額這次組合包要發出的張數（≥1）。
-type BundleEntry struct {
-	GroupID string `json:"group_id"`
-	Count   int    `json:"count"`
 }
 
 // validDenominations 回傳 it.Denominations 中「有效」的面額（GroupID 非空且 Weight>0）；若因此為空、

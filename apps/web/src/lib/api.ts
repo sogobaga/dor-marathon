@@ -57,12 +57,13 @@ export interface RewardDenom {
   group_id: string
   weight: number
 }
-// 序號組合包（migration 149）：固定組合，中獎後「全發」而非加權隨機抽一個——用於單張面額最高 1000
-// 的 LINE POINTS 要送大額（如 3500=1000×3+500×1）。與 denominations（加權隨機抽一個）互斥：
-// bundle 非空時該 serial 項目走組合包發放（all-or-nothing，任一面額組庫存不足整包不發+告警）。
-export interface RewardBundleEntry {
-  group_id: string // 面額組（reward_serial_groups.id）
-  count: number    // 這個面額發幾張（≥1）
+// 組合型序號組子項（migration 150）：組合型序號組（reward_serial_groups.is_bundle=true）不自己存
+// 序號，而是定義成「子面額組 × 數量」的固定組合（如「LINE POINTS 3000」= LINE POINTS 1000 × 3）。
+// 發放此組合型序號組時，系統從各子面額組原子搶出對應數量的序號、綁同一 bundle_id 給玩家（錢包併成
+// 一張卡，展開看零散序號）。組合定義在序號管理頁，不在賽事即時獎勵設定——賽事只是把它當一個普通面額選。
+export interface RewardGroupBundleItem {
+  child_group_id: string // 子面額組（reward_serial_groups.id，須為非組合型）
+  count: number          // 這個子面額發幾張（≥1）
 }
 export interface RewardItem {
   type: RewardItemType
@@ -72,8 +73,7 @@ export interface RewardItem {
   prob_bp: number          // 中獎機率，萬分位（10000=100%）；serial：該商家「給不給獎」的機率
   serial_group_id?: string // 【已過時，僅供向後相容】serial 舊格式單一序號組；新設定請用 merchant_id + denominations
   merchant_id?: string      // serial：指定商家（兩層抽獎第一層）
-  denominations?: RewardDenom[] // serial：該商家旗下序號組與抽獎權重（兩層抽獎第二層，加權隨機抽一個）
-  bundle?: RewardBundleEntry[]  // serial：固定組合包（全發，與 denominations 互斥），見 RewardBundleEntry
+  denominations?: RewardDenom[] // serial：該商家旗下序號組與抽獎權重（兩層抽獎第二層，加權隨機抽一個）；某面額組若為組合型序號組，抽中時自動拆解全發
   coupon_def_id?: string    // coupon（活動優惠券，migration 138）：指定券種
   hidden?: boolean          // 前台「活動獎勵」預覽頁籤是否隱藏此項目（true=隱藏，發獎不受影響）
 }
@@ -3341,7 +3341,9 @@ export interface RewardSerialGroup {
   name: string
   item_label: string
   is_line_point: boolean
-  face_value: number   // 結構化面額（migration 149）：如 1000/500，取代靠名稱字串解析；0=未設。組合包總額 Σ(face_value×count) 靠此欄
+  face_value: number   // 結構化面額（migration 149）：如 1000/500，取代靠名稱字串解析；0=未設。組合型序號組回傳「組合總額」Σ(子面額×數量)
+  is_bundle: boolean   // 組合型序號組（migration 150）：true=不自己存序號，由 bundle_items 定義成子面額組×數量的固定組合
+  bundle_items: RewardGroupBundleItem[] // is_bundle=true 時的組合定義（子面額組×數量）；一般序號組為空陣列
   valid_from: string | null
   valid_until: string | null
   use_limit_type: RewardUseLimitType
@@ -3353,7 +3355,7 @@ export interface RewardSerialGroup {
   icon_url: string     // 獎勵詳情：獎勵圖示
   description: string  // 獎勵詳情：活動/獎勵說明
   created_at: string
-  available_count: number
+  available_count: number   // 一般序號組=庫存序號數；組合型=可發包數 min(子面額組available / count)
   issued_count: number
   void_count: number
   total_count: number
@@ -3364,7 +3366,9 @@ export interface RewardSerialGroupWriteBody {
   name: string
   item_label: string
   is_line_point: boolean
-  face_value: number // 結構化面額（migration 149）：如 1000；0=未設
+  face_value: number // 結構化面額（migration 149）：如 1000；0=未設。組合型序號組此欄由後端依 bundle_items 算，前端傳 0 即可
+  is_bundle: boolean // 組合型序號組（migration 150）
+  bundle_items: RewardGroupBundleItem[] // is_bundle=true 時必填（≥1 子項）；一般序號組傳空陣列
   valid_from: string | null // RFC3339；null=即刻可用
   valid_until: string | null // RFC3339；null=無期限
   use_limit_type: RewardUseLimitType

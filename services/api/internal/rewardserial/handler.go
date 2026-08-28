@@ -176,6 +176,10 @@ func (h *Handler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusNotFound, "group not found")
 		return
 	}
+	if errors.Is(err, ErrGroupInUseAsBundleChild) {
+		respondErr(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to delete group")
 		return

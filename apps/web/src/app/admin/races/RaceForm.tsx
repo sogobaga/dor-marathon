@@ -919,12 +919,11 @@ export default function RaceForm({
         return { ...it, coupon_def_id }
       }
       if (it.type !== 'serial') return { ...it }
-      // 模板可能是在別場活動套用/儲存時存的，denominations／serial_group_id／bundle 裡的序號組不一定
-      // 對應本場活動——剔除本場用不到的組，避免套用後殘留他場專屬序號組仍通過驗證、存檔後真的把他場序號發出去。
+      // 模板可能是在別場活動套用/儲存時存的，denominations／serial_group_id 裡的序號組不一定對應本場
+      // 活動——剔除本場用不到的組，避免套用後殘留他場專屬序號組仍通過驗證、存檔後真的把他場序號發出去。
       const denominations = (it.denominations ?? []).filter((d) => availableGroupIds.has(d.group_id))
       const serial_group_id = it.serial_group_id && availableGroupIds.has(it.serial_group_id) ? it.serial_group_id : undefined
-      const bundle = (it.bundle ?? []).filter((b) => availableGroupIds.has(b.group_id))
-      return { ...it, denominations, serial_group_id, bundle }
+      return { ...it, denominations, serial_group_id }
     }))
   }
   async function saveCurrentAsRewardTemplate() {
@@ -969,9 +968,6 @@ export default function RaceForm({
     const { targetCostNtd, targetPoints } = reverseTargetPoints(minFeeNet.net, reverseTier.pct, pointCostNtd, expectedFinishRatePct)
     const reverseFaceInputs = collectLinePointFaces(rewardItems, availableRewardGroups)
     const reverseSuggestion = computeReverseSuggestion(reverseFaceInputs, targetPoints, pointCostNtd)
-    // 組合包為固定發放（見上方 computeSerialDenomCalcs 的 bundle 分支），沒有「權重比例」可言，不強行
-    // 塞進反推邏輯——collectLinePointFaces 已因 denominations 被清空而自動排除，這裡只用來顯示提示文字。
-    const hasBundleItems = rewardItems.some((it) => it.type === 'serial' && (it.bundle?.length ?? 0) > 0)
     // 一鍵套用：僅當「表單上恰好一個含 LINE POINTS 面額的 serial 項目、且該項目的面額集合＝反推用的面額
     // 集合（全表單聯集）」時才可套用——多個 serial 項目各自分散配置 LINE POINTS 面額時，反推建議是跨項目
     // 彙總的單一組合，無法安全對應回某一個特定項目，故不顯示套用按鈕，改請管理者先整併。
@@ -1058,17 +1054,9 @@ export default function RaceForm({
           )}
           {rows.map((r, idx) => (
             <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12.5, flexWrap: 'wrap' }}>
-              <span>
-                {r.groupName}{r.isBundle ? '　🎁 組合包固定發放' : ''}
-                {r.pointValue != null ? `　面額值 ${r.pointValue}（${r.fromFaceValue ? '序號組面額' : '自名稱解析'}）` : ''}
-              </span>
+              <span>{r.groupName}{r.pointValue != null ? `　面額值 ${r.pointValue}（${r.fromFaceValue ? '序號組面額' : '自名稱解析'}）` : ''}</span>
               {r.pointValue != null
-                ? (r.isBundle
-                    ? (r.fromFaceValue
-                        ? <span>{r.pointValue} × {r.grantCount} ＝ {r.pointValue * r.grantCount} 點小計｜商家中獎機率 {(r.actualProb * 100).toFixed(2)}% ＝ 期望 {r.expectedPoints.toFixed(2)} 點</span>
-                        // 組合包只信結構化 face_value：靠名稱解析（fromFaceValue=false）會被儲存擋下（見 validateRewardItems），這裡紅字明示原因。
-                        : <span style={{ color: 'var(--hunt)' }}>⚠ 此序號組未設定面額（目前靠名稱推測）——組合包必須到序號/獎勵管理設好面額才能儲存</span>)
-                    : <span>{r.pointValue} × {r.grantCount} 枚 × {(r.actualProb * 100).toFixed(2)}% ＝ {r.expectedPoints.toFixed(2)} 點</span>)
+                ? <span>{r.pointValue} × {r.grantCount} 枚 × {(r.actualProb * 100).toFixed(2)}% ＝ {r.expectedPoints.toFixed(2)} 點</span>
                 : <span style={{ color: 'var(--hunt)' }}>⚠ 無法解析面額，請在序號組設定面額或於名稱中包含點數數字</span>}
             </div>
           ))}
@@ -1115,11 +1103,6 @@ export default function RaceForm({
 
           <div style={{ borderTop: '1px dashed var(--line-2)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)' }}>🎯 目標反推建議</div>
-            {hasBundleItems && (
-              <div style={calcHint}>
-                🎁 組合包為固定發放，不參與機率反推（其期望成本已計入上方「每位完賽者期望成本」總計，僅加權隨機面額才會出現在下方反推建議）。
-              </div>
-            )}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {REVERSE_TIERS.map((t) => (
                 <button
@@ -1222,25 +1205,13 @@ export default function RaceForm({
       if (it.type === 'exp' || it.type === 'dp' || it.type === 'gp') return (it.min ?? 0) > 0 && (it.max ?? 0) >= (it.min ?? 0)
       if (it.type === 'vip') return (it.days ?? 0) > 0
       if (it.type === 'serial') {
-        const mid = serialEffectiveMerchantId(it)
-        if (!mid || seenMerchants.has(mid)) return false
-        // 固定組合包（migration 149）：與 denominations 互斥，1-20 個 entry、每個 count>0、group 需屬於
-        // 本場活動可用範圍（比照下面 denominations 分支的最後防線）。
-        if (it.bundle && it.bundle.length > 0) {
-          if (it.bundle.length > 20) return false
-          if (it.bundle.some((b) => !b.group_id || !(b.count > 0) || !availableGroupIds.has(b.group_id))) return false
-          // face_value 必須已設定（>0）：組合包總額只信結構化 face_value，若靠名稱解析矇混（face_value=0），
-          // 後台顯示的總額與實際發放會不一致（2026-08-28 對抗性審查發現）——擋在儲存前，逼管理員先到序號
-          // 組管理設好面額。rewardGroups 是全量清單（非僅 available），確保能查到 face_value。
-          if (it.bundle.some((b) => (rewardGroups.find((g) => g.id === b.group_id)?.face_value ?? 0) <= 0)) return false
-          seenMerchants.add(mid)
-          return true
-        }
         const denoms = it.denominations ?? []
         const hasDenom = denoms.some((d) => d.group_id && d.weight > 0)
         if (!hasDenom && !it.serial_group_id) return false
         if (denoms.some((d) => d.weight > 0 && !availableGroupIds.has(d.group_id))) return false
         if (!hasDenom && it.serial_group_id && !availableGroupIds.has(it.serial_group_id)) return false
+        const mid = serialEffectiveMerchantId(it)
+        if (!mid || seenMerchants.has(mid)) return false
         seenMerchants.add(mid)
         return true
       }
@@ -1265,9 +1236,6 @@ export default function RaceForm({
     const availableGroupIds = new Set(availableRewardGroups.map((g) => g.id))
     const hasForeign = items.some((it) => {
       if (it.type !== 'serial') return false
-      if (it.bundle && it.bundle.length > 0) {
-        return it.bundle.some((b) => b.count > 0 && !availableGroupIds.has(b.group_id))
-      }
       const denoms = it.denominations ?? []
       if (denoms.some((d) => d.weight > 0 && !availableGroupIds.has(d.group_id))) return true
       if (!denoms.length && it.serial_group_id && !availableGroupIds.has(it.serial_group_id)) return true
@@ -2497,12 +2465,11 @@ interface SerialDenomCalc {
   groupId: string
   groupName: string
   weight: number
-  actualProb: number        // 0~1；bundle 列＝該項目 prob_bp/10000（全發，非依權重比例分攤）
+  actualProb: number        // 0~1
   pointValue: number | null // null = 無法解析面額（序號組面額與名稱皆無）
   fromFaceValue: boolean    // pointValue 來源：true=序號組結構化面額、false=自名稱解析（顯示標註用）
-  grantCount: number        // 加權模式＝序號組 grant_count；bundle 模式＝該面額組數量 count
+  grantCount: number
   expectedPoints: number    // pointValue 為 null 時恆為 0
-  isBundle: boolean         // true＝來自固定組合包（bundle），非加權隨機
 }
 // 彙整一批 RewardItem 中 serial 類、且面額權重>0 的 LINE POINTS 面額期望值明細（不含成本換算——
 // 成本＝expectedPoints×單點成本，由呼叫端乘上試算面板當下可調的值，避免每次調整單點成本就要重跑一次
@@ -2519,24 +2486,6 @@ function computeSerialDenomCalcs(items: RewardItem[], groups: RewardSerialGroup[
   let missingGroupCount = 0
   items.forEach((item, itemIndex) => {
     if (item.type !== 'serial') return
-    // 固定組合包（migration 149）：與 denominations 互斥，中獎後「全發」——不是依權重比例分攤，
-    // 每個面額組的 actualProb 就是該項目本身的 prob_bp/10000；expectedPoints = 面額值 × 數量 × 該機率。
-    if (item.bundle && item.bundle.length > 0) {
-      const bundleProb = (item.prob_bp ?? 0) / 10000
-      item.bundle.forEach((b) => {
-        const g = groups.find((x) => x.id === b.group_id)
-        if (!g) { missingGroupCount++; return }
-        if (b.count <= 0) return // 存檔前就會被 UI 濾掉，這裡防呆
-        if (!g.is_line_point) { nonPointCount++; return }
-        const { value: pointValue, fromFaceValue } = resolveFaceValue(g)
-        const expectedPoints = pointValue != null ? denomExpectedPoints(pointValue, b.count, bundleProb) : 0
-        rows.push({
-          itemIndex, groupId: b.group_id, groupName: g.name, weight: b.count, actualProb: bundleProb,
-          pointValue, fromFaceValue, grantCount: b.count, expectedPoints, isBundle: true,
-        })
-      })
-      return
-    }
     const denoms = effectiveDenoms(item)
     const totalWeight = denoms.reduce((s, d) => s + Math.max(0, d.weight), 0)
     denoms.forEach((d) => {
@@ -2552,7 +2501,7 @@ function computeSerialDenomCalcs(items: RewardItem[], groups: RewardSerialGroup[
       const expectedPoints = pointValue != null ? denomExpectedPoints(pointValue, g.grant_count, actualProb) : 0
       rows.push({
         itemIndex, groupId: d.group_id, groupName: g.name, weight: d.weight, actualProb,
-        pointValue, fromFaceValue, grantCount: g.grant_count, expectedPoints, isBundle: false,
+        pointValue, fromFaceValue, grantCount: g.grant_count, expectedPoints,
       })
     })
   })
@@ -2665,34 +2614,17 @@ function RewardItemRow({ item, groups, couponDefs, costPerPoint, onChange, onRem
   )
 }
 
-type SerialGrantMode = 'weighted' | 'bundle'
-
-// serial 類「商家 → 面額」設定欄位（活動獎勵系統：以商家為單位的兩層抽獎，見後端
-// activityreward.RewardItem 設計註解）：先選商家，再選發放模式：
-//   - 加權隨機抽一張（weighted，現行）：對商家旗下每個序號組（面額）填權重，中獎後依權重比例抽「一組」。
-//   - 固定組合包（bundle，migration 149）：對每個面額填「數量」，中獎後「全部」按數量發放（all-or-nothing）。
-// 兩者互斥、切換時清空另一種（見 switchMode）。舊資料相容：item.merchant_id 未設定但有舊格式
-// serial_group_id 時，用該序號組反查所屬商家當作目前顯示值，一旦使用者調整任何權重就會自動轉存成新格式
-//（denominations 非空後，後端一律優先採用 denominations，不再理會 serial_group_id）。
+// serial 類「商家 → 面額權重」兩層設定欄位（活動獎勵系統：以商家為單位的兩層抽獎，見後端
+// activityreward.RewardItem 設計註解）：先選商家，再對該商家旗下每個序號組（面額）填權重，
+// 0＝不列入抽獎池。舊資料相容：item.merchant_id 未設定但有舊格式 serial_group_id 時，用該序號組
+// 反查所屬商家當作目前顯示值，一旦使用者調整任何權重就會自動轉存成新格式（denominations 非空後，
+// 後端一律優先採用 denominations，不再理會 serial_group_id）。
 function SerialDenomFields({ item, groups, costPerPoint, onChange }: {
   item: RewardItem
   groups: RewardSerialGroup[]
   costPerPoint?: number
   onChange: (patch: Partial<RewardItem>) => void
 }) {
-  // 模式判斷用元件內部 state（RewardItem 型別已定案不可加欄位）：以初次渲染當下的資料判斷起始模式，
-  // 之後由使用者手動切換 setMode 維護；只在「一開始就有真的 bundle 資料」時預設為組合包模式，其餘
-  // （含全新項目、weighted 資料）預設加權模式。
-  const [mode, setMode] = useState<SerialGrantMode>(() => ((item.bundle?.length ?? 0) > 0 ? 'bundle' : 'weighted'))
-
-  function switchMode(next: SerialGrantMode) {
-    if (next === mode) return
-    setMode(next)
-    // 互斥：切到組合包清空 denominations，切回加權清空 bundle（見任務契約「與 Denominations 互斥」）。
-    if (next === 'bundle') onChange({ denominations: [], serial_group_id: undefined })
-    else onChange({ bundle: [] })
-  }
-
   // 商家清單：只列出「有指定商家」的序號組，依 merchant_id 去重（未指定商家的序號組不適用兩層抽獎，不列入選項）
   const merchants = Array.from(
     new Map(groups.filter((g) => g.merchant_id).map((g) => [g.merchant_id as string, g.merchant_name || '(未命名商家)'])).entries()
@@ -2725,25 +2657,13 @@ function SerialDenomFields({ item, groups, costPerPoint, onChange }: {
     const rest = base.filter((x) => x.group_id !== groupId)
     onChange({ denominations: weight > 0 ? [...rest, { group_id: groupId, weight }] : rest })
   }
-  function bundleCountOf(groupId: string): number {
-    return item.bundle?.find((x) => x.group_id === groupId)?.count ?? 0
-  }
-  function setBundleCount(groupId: string, count: number) {
-    const rest = (item.bundle ?? []).filter((x) => x.group_id !== groupId)
-    onChange({ bundle: count > 0 ? [...rest, { group_id: groupId, count }] : rest })
-  }
-  const bundleTotal = (item.bundle ?? []).reduce((sum, b) => {
-    const g = groups.find((x) => x.id === b.group_id)
-    const faceValue = g ? resolveFaceValue(g).value ?? 0 : 0
-    return sum + faceValue * Math.max(0, b.count)
-  }, 0)
 
   return (
     <>
       <Field label="合作商家">
         <select
           style={inp} value={selectedMerchantId}
-          onChange={(e) => onChange({ merchant_id: e.target.value, denominations: [], bundle: [] })}
+          onChange={(e) => onChange({ merchant_id: e.target.value, denominations: [] })}
         >
           <option value="">請選擇商家…</option>
           {merchants.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -2755,18 +2675,6 @@ function SerialDenomFields({ item, groups, costPerPoint, onChange }: {
         )}
       </Field>
       {selectedMerchantId && (
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12.5 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
-            <input type="radio" name={`grantMode-${selectedMerchantId}`} checked={mode === 'weighted'} onChange={() => switchMode('weighted')} />
-            加權隨機抽一張
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
-            <input type="radio" name={`grantMode-${selectedMerchantId}`} checked={mode === 'bundle'} onChange={() => switchMode('bundle')} />
-            固定組合包（全發，all-or-nothing）
-          </label>
-        </div>
-      )}
-      {selectedMerchantId && mode === 'weighted' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-faint)', textTransform: 'uppercase' }}>
             面額權重（商家中獎後依權重比例抽一組面額；0＝不列入抽獎，「可用」僅供參考、缺貨面額會自動排除）
@@ -2811,54 +2719,6 @@ function SerialDenomFields({ item, groups, costPerPoint, onChange }: {
           })}
           {merchantGroups.length === 0 && (
             <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>此商家尚無對應本場活動的序號組。</span>
-          )}
-        </div>
-      )}
-      {selectedMerchantId && mode === 'bundle' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <span style={{ fontSize: 11, letterSpacing: '.1em', color: 'var(--tx-faint)', textTransform: 'uppercase' }}>
-            組合包內容（中獎後每個面額都按下方數量全部發放；任一面額庫存不足則整包不發，並通知業主補貨）
-          </span>
-          {merchantGroups.map((g) => {
-            const count = bundleCountOf(g.id)
-            const { value: faceValue, fromFaceValue } = resolveFaceValue(g)
-            const subtotal = (faceValue ?? 0) * count
-            return (
-              <div key={g.id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <Row>
-                  <span style={{ flex: 1, fontSize: 13, alignSelf: 'center' }}>
-                    {g.name}（可用 {g.available_count}｜面額 {faceValue ?? '未設定'}）
-                  </span>
-                  <Field label="數量">
-                    <input
-                      style={{ ...inp, maxWidth: 100 }} type="number" min={0} step="1"
-                      value={count}
-                      onChange={(e) => setBundleCount(g.id, Math.max(0, parseInt(e.target.value || '0', 10) || 0))}
-                    />
-                  </Field>
-                </Row>
-                {count > 0 && (
-                  faceValue == null
-                    ? <span style={{ ...calcHint, color: 'var(--hunt)' }}>⚠ 無法解析面額，請在序號組設定面額或於名稱中包含點數數字（小計以 0 計）</span>
-                    : <span style={calcHint}>
-                        面額 {faceValue}（{fromFaceValue ? '序號組面額' : '自名稱解析'}）× 數量 {count} ＝ 小計 {subtotal}
-                      </span>
-                )}
-              </div>
-            )
-          })}
-          {merchantGroups.length === 0 && (
-            <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>此商家尚無對應本場活動的序號組。</span>
-          )}
-          {(item.bundle?.length ?? 0) > 0 && (
-            <div style={{ borderTop: '1px dashed var(--line-2)', paddingTop: 6, fontSize: 13, fontWeight: 700 }}>
-              整包總額 {bundleTotal} 點
-              {costPerPoint != null && (
-                <span style={{ fontWeight: 400, fontSize: 12.5 }}>
-                　｜商家中獎機率 {(( (item.prob_bp ?? 0) / 100)).toFixed(2)}%｜期望 {(bundleTotal * (item.prob_bp ?? 0) / 10000).toFixed(2)} 點｜期望成本 NT$ {pointsToCost(bundleTotal * (item.prob_bp ?? 0) / 10000, costPerPoint).toFixed(1)}
-                </span>
-              )}
-            </div>
           )}
         </div>
       )}

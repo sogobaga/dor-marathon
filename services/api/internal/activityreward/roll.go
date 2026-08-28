@@ -47,30 +47,20 @@ func RollAndGrant(ctx context.Context, db Execer, userID, sourceType, sourceRace
 			continue
 		}
 		if item.Type == "serial" {
-			if len(item.Bundle) > 0 {
-				// 固定組合包（migration 149）：與兩層抽獎（grantSerialTwoLayer）是互斥的兩條路徑——
-				// item.Bundle 非空才會走這裡，validate.go 已擋掉兩者同時非空的設定（見 Validate）。
-				gs, bundleGroupIDs, err := grantSerialBundle(ctx, db, userID, sourceType, sourceRaceID, sourceRegID, item)
-				if err != nil {
-					return granted, issuedGroupIDs, fmt.Errorf("grant item %d (serial bundle): %w", i, err)
-				}
-				granted = append(granted, gs...)
-				for _, gid := range bundleGroupIDs {
-					if gid != "" && !seenGroups[gid] {
-						seenGroups[gid] = true
-						issuedGroupIDs = append(issuedGroupIDs, gid)
-					}
-				}
-				continue
-			}
-			gs, issuedGroupID, err := grantSerialTwoLayer(ctx, db, userID, sourceType, sourceRaceID, sourceRegID, item)
+			// 組合能力（migration 150）已下放到序號組本身（is_bundle=true）：不再有獨立的「組合包
+			// item」分派——一律走兩層抽獎，抽中的候選面額組若剛好是組合型，claimSerialsFromGroup 內部會
+			// 自動偵測並轉呼叫 grantSerialBundle 拆解發放，對這裡完全透明。
+			gs, issuedIDs, err := grantSerialTwoLayer(ctx, db, userID, sourceType, sourceRaceID, sourceRegID, item)
 			if err != nil {
 				return granted, issuedGroupIDs, fmt.Errorf("grant item %d (serial): %w", i, err)
 			}
 			granted = append(granted, gs...)
-			if issuedGroupID != "" && !seenGroups[issuedGroupID] {
-				seenGroups[issuedGroupID] = true
-				issuedGroupIDs = append(issuedGroupIDs, issuedGroupID)
+			// issuedIDs＝真正被扣庫存的組（組合型會是多個子面額組），逐一去重併入，供低庫存告警查真實庫存。
+			for _, gid := range issuedIDs {
+				if gid != "" && !seenGroups[gid] {
+					seenGroups[gid] = true
+					issuedGroupIDs = append(issuedGroupIDs, gid)
+				}
 			}
 			continue
 		}
@@ -303,32 +293,36 @@ func grantCoupon(ctx context.Context, db Execer, userID, sourceType, sourceRaceI
 // 已經由 RollAndGrant 呼叫 rollHit 做完（本函式只在「中獎」時才會被呼叫），這裡只處理「中獎後要抽哪一組
 // 面額、實際配發」：
 //  1. 取 item.validDenominations()（含舊格式 SerialGroupID 的向後相容回退）當候選面額。
-//  2. 對每個候選面額在傳入的 tx 內查目前 available 數，只留下「有庫存」的候選組成加權池——缺貨面額
-//     不進池，避免抽到注定落空的面額而浪費一次抽獎。
+//  2. 對每個候選面額在傳入的 tx 內查目前可發放的「份數」，只留下「有庫存」的候選組成加權池——缺貨面額
+//     不進池，避免抽到注定落空的面額而浪費一次抽獎。份數計算見 groupAvailableCount：一般面額組＝可用
+//     序號張數；組合型面額組（is_bundle=true，migration 150）＝能湊滿幾包（min(子面額組可用/所需數量)）。
 //  3. 加權抽一組（pickWeightedDenomIndex，crypto/rand），對抽中的面額原子搶碼（claimSerialsFromGroup，
-//     沿用 UPDATE...FOR UPDATE SKIP LOCKED...RETURNING 手法）。
-//  4. 併發回退：若該面額一枚都搶不到（claimSerialsFromGroup 回傳空 slice）——代表「查庫存」與「搶碼」
-//     之間被另一筆併發交易把這組搶完了——把該面額移出池、從剩餘有庫存面額重新加權抽一組再試，直到
-//     搶到或池空為止。只有「一枚都沒搶到」才觸發回退；只要搶到至少一枚就視為此商家本次已發放完畢
+//     內部會依該面額組是否為組合型自動分派：一般面額組沿用 UPDATE...FOR UPDATE SKIP LOCKED...RETURNING
+//     單張搶碼；組合型轉呼叫 grantSerialBundle 做 all-or-nothing 多子面額組原子搶碼）。
+//  4. 併發回退：若該面額一枚都搶不到（claimSerialsFromGroup 回傳空 slice、且無 error）——代表「查庫存」
+//     與「搶碼」之間被另一筆併發交易把這組搶完了——把該面額移出池、從剩餘有庫存面額重新加權抽一組再試，
+//     直到搶到或池空為止。只有「一枚都沒搶到」才觸發回退；只要搶到至少一枚就視為此商家本次已發放完畢
 //     （即使 grant_count>1 中途扣光也不回頭改抽別組，維持舊版「庫存中途不足→跳過剩餘配額」的語意）。
+//     組合型面額組不適用這個「撞空重抽」回退：grantSerialBundle 庫存不足時回傳的是 error（不是空
+//     slice）——all-or-nothing 語意下庫存競態視為需要整個 tx rollback 的失敗，不會靜默改抽別組（見
+//     grantSerialBundle 文件註解）。
 //  5. 池空（商家旗下所有候選面額當下都已無庫存或搶碼全部撲空）→ 不發、不視為錯誤。
 //
-// 同一 serial item（=同一商家）最多只會發出一組面額的序號。回傳的第二個值是「實際發出序號的 group
-// id」（沒發成功則為空字串）；本函式刻意不在這裡判斷是否低庫存——理由見套件頂部 model.go 說明。
-func grantSerialTwoLayer(ctx context.Context, db Execer, userID, sourceType, sourceRaceID, sourceRegID string, item *RewardItem) ([]GrantedReward, string, error) {
+// 同一 serial item（=同一商家）最多只會發出一組面額的序號（組合型面額組一次發出的是「一包」，內含多張
+// 序號但仍算這一個 item 的一次發放）。回傳的第二個值是「實際發出序號的 group id」（沒發成功則為空
+// 字串）；本函式刻意不在這裡判斷是否低庫存——理由見套件頂部 model.go 說明。
+func grantSerialTwoLayer(ctx context.Context, db Execer, userID, sourceType, sourceRaceID, sourceRegID string, item *RewardItem) ([]GrantedReward, []string, error) {
 	pool := item.validDenominations()
 	if len(pool) == 0 {
-		return nil, "", nil
+		return nil, nil, nil
 	}
 
 	// 只保留「目前查得有庫存」的面額才進加權池。
 	weighted := make([]RewardDenom, 0, len(pool))
 	for _, d := range pool {
-		var avail int
-		if err := db.QueryRow(ctx,
-			`SELECT COUNT(*) FILTER (WHERE status='available') FROM reward_serials WHERE group_id=$1`, d.GroupID,
-		).Scan(&avail); err != nil {
-			return nil, "", fmt.Errorf("check denom stock %s: %w", d.GroupID, err)
+		avail, err := groupAvailableCount(ctx, db, d.GroupID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("check denom stock %s: %w", d.GroupID, err)
 		}
 		if avail > 0 {
 			weighted = append(weighted, d)
@@ -338,55 +332,155 @@ func grantSerialTwoLayer(ctx context.Context, db Execer, userID, sourceType, sou
 	for len(weighted) > 0 {
 		idx, err := pickWeightedDenomIndex(weighted)
 		if err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
 		if idx < 0 {
 			break // 理論上不會發生（weighted 內每筆 Weight 皆 >0，見 validDenominations），保底跳出不發
 		}
 		groupID := weighted[idx].GroupID
 
-		granted, err := claimSerialsFromGroup(ctx, db, userID, sourceType, sourceRaceID, sourceRegID, groupID)
+		// issuedIDs＝真正被扣庫存的組（一般組=自己；組合型=子面額組清單）——直接往上傳，供低庫存告警。
+		granted, issuedIDs, err := claimSerialsFromGroup(ctx, db, userID, sourceType, sourceRaceID, sourceRegID, groupID)
 		if err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
 		if len(granted) == 0 {
 			// 併發撞空：查庫存到搶碼之間被別筆交易搶完，剔除該面額、從剩餘候選重抽（不視為錯誤）。
 			weighted = append(weighted[:idx], weighted[idx+1:]...)
 			continue
 		}
-		return granted, groupID, nil
+		return granted, issuedIDs, nil
 	}
-	return nil, "", nil
+	return nil, nil, nil
 }
 
-// claimSerialsFromGroup 從 groupID 指定的序號組取該組 grant_count 枚可用序號逐一配發（P1 後台可設「每次
-// 中獎配發幾枚序號」，預設 1）：每一枚都各自用 UPDATE...RETURNING 搭配子查詢 FOR UPDATE SKIP LOCKED，
-// 單一陳述式內完成「挑一筆可用序號＋標記已發送」，避免併發搶碼衝突（比照 internal/monopoly/draw.go
-// claimRedemptionCode 的作法），並各自 INSERT 一筆 user_rewards、各回一筆 GrantedReward。
-// 庫存中途不足（某次 claim 查無可用序號）→ 跳過剩餘配額、不視為錯誤，已成功發出的照留；整組一枚都
-// 沒搶到（第一枚就落空）時回傳空 slice——呼叫端 grantSerialTwoLayer 靠這個「空 slice」訊號判斷要不要
-// 把這個面額從加權池移除、重抽別組。
-func claimSerialsFromGroup(ctx context.Context, db Execer, userID, sourceType, sourceRaceID, sourceRegID, groupID string) ([]GrantedReward, error) {
+// groupAvailableCount 回傳 groupID 這個序號組目前可發放的「份數」：一般序號組＝status='available' 的
+// 序號張數；組合型序號組（is_bundle=true，migration 150）＝能湊滿幾包（min(floor(子面額組可用張數/該
+// 子項所需數量))，見 bundlePackAvailable）。序號組不存在（如剛好被刪除）→ 回 0，不算 error（沿用既有
+// 「序號組不存在→跳過」慣例）。
+func groupAvailableCount(ctx context.Context, db Execer, groupID string) (int, error) {
+	var isBundle bool
+	err := db.QueryRow(ctx, `SELECT is_bundle FROM reward_serial_groups WHERE id=$1`, groupID).Scan(&isBundle)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("check group is_bundle %s: %w", groupID, err)
+	}
+	if !isBundle {
+		var avail int
+		if err := db.QueryRow(ctx,
+			`SELECT COUNT(*) FILTER (WHERE status='available') FROM reward_serials WHERE group_id=$1`, groupID,
+		).Scan(&avail); err != nil {
+			return 0, fmt.Errorf("check denom stock %s: %w", groupID, err)
+		}
+		return avail, nil
+	}
+	return bundlePackAvailable(ctx, db, groupID)
+}
+
+// bundlePackAvailable 查 groupID（組合型序號組）目前每個子項的「所需數量」與「該子面額組可用張數」，
+// 交給純函式 bundlePacksFromStock 算出能湊滿幾包。
+func bundlePackAvailable(ctx context.Context, db Execer, groupID string) (int, error) {
+	rows, err := db.Query(ctx, `
+		SELECT i.count, COUNT(s.id) FILTER (WHERE s.status='available')
+		FROM reward_serial_group_items i
+		LEFT JOIN reward_serials s ON s.group_id = i.child_group_id
+		WHERE i.parent_group_id = $1
+		GROUP BY i.id, i.count`, groupID)
+	if err != nil {
+		return 0, fmt.Errorf("load bundle children stock %s: %w", groupID, err)
+	}
+	defer rows.Close()
+	var counts, avails []int
+	for rows.Next() {
+		var c, a int
+		if err := rows.Scan(&c, &a); err != nil {
+			return 0, err
+		}
+		counts = append(counts, c)
+		avails = append(avails, a)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	return bundlePacksFromStock(avails, counts), nil
+}
+
+// bundlePacksFromStock 純函式：min(floor(avail[i]/count[i])) over i，即組合型序號組目前能湊滿幾包
+// （migration 150 語意，供 groupAvailableCount 展示用、grantSerialBundle 實際發放前的池篩選共用邏輯）。
+// avail/count 需等長（防呆：只算到較短者）；count[i]<=0 視為 1（理論上不會發生，CRUD 已擋 count>=1）。
+// 無子項（皆空）回 0，不 panic。
+func bundlePacksFromStock(avail, count []int) int {
+	n := len(avail)
+	if len(count) < n {
+		n = len(count)
+	}
+	if n == 0 {
+		return 0
+	}
+	best := -1
+	for i := 0; i < n; i++ {
+		c := count[i]
+		if c <= 0 {
+			c = 1
+		}
+		packs := avail[i] / c
+		if best == -1 || packs < best {
+			best = packs
+		}
+	}
+	if best < 0 {
+		return 0
+	}
+	return best
+}
+
+// claimSerialsFromGroup 從 groupID 指定的序號組配發：一般序號組取該組 grant_count 枚可用序號逐一配發
+// （P1 後台可設「每次中獎配發幾枚序號」，預設 1）：每一枚都各自用 UPDATE...RETURNING 搭配子查詢
+// FOR UPDATE SKIP LOCKED，單一陳述式內完成「挑一筆可用序號＋標記已發送」，避免併發搶碼衝突（比照
+// internal/monopoly/draw.go claimRedemptionCode 的作法），並各自 INSERT 一筆 user_rewards、各回一筆
+// GrantedReward。庫存中途不足（某次 claim 查無可用序號）→ 跳過剩餘配額、不視為錯誤，已成功發出的照留；
+// 整組一枚都沒搶到（第一枚就落空）時回傳空 slice——呼叫端 grantSerialTwoLayer 靠這個「空 slice」訊號
+// 判斷要不要把這個面額從加權池移除、重抽別組。
+//
+// 組合型序號組（is_bundle=true，migration 150）：本函式是「抽中/指定某個序號組要發放」的統一入口——
+// 不論這個 groupID 是 grantSerialTwoLayer 加權抽中，或走舊格式 serial_group_id 直接指定，都會先經過
+// 這裡；查出 g.is_bundle=true 時整段轉呼叫 grantSerialBundle 拆解成子面額組發放（all-or-nothing），
+// 不再進入下方的單張序號 UPDATE...RETURNING 邏輯。grantSerialBundle 回傳的 error（如庫存不足）會直接
+// 原樣回傳給呼叫端——與一般序號組「空 slice、無 error → 重抽別組」的併發回退語意不同（all-or-nothing
+// 不重抽，見 grantSerialTwoLayer 文件註解）。
+// claimSerialsFromGroup 回傳 (granted, issuedGroupIDs, error)：issuedGroupIDs 是「真正持有序號、實際
+// 被扣庫存」的序號組 id 清單——一般序號組即自己 [groupID]；組合型序號組（is_bundle）則是其子面額組
+// 清單（組合包 parent 自己不持有序號）。供上層併入 issuedGroupIDs 給事件驅動低庫存告警查真實庫存。
+func claimSerialsFromGroup(ctx context.Context, db Execer, userID, sourceType, sourceRaceID, sourceRegID, groupID string) ([]GrantedReward, []string, error) {
 	if groupID == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	// 一次查齊 grant_count（配發枚數）與顯示欄位（含 join 商家名稱），避免每枚都重查一次。
+	// 一次查齊 is_bundle（分派用）、grant_count（配發枚數）與顯示欄位（含 join 商家名稱），避免多次查詢。
 	// grant_count 欄位理論上 NOT NULL DEFAULT 1（見 migration 126），<1 視為髒資料保底當 1，
 	// 避免因異常資料完全不發獎。序號組不存在（如已被刪除）→ 視為跳過，不算錯誤。
+	var isBundle bool
 	var grantCount int
 	var itemLabel, merchantName, usageNote, iconURL, description string
 	var validFrom, validUntil *time.Time
 	err := db.QueryRow(ctx, `
-		SELECT g.grant_count, COALESCE(g.item_label,''), COALESCE(m.name,''), COALESCE(g.usage_note,''),
+		SELECT g.is_bundle, g.grant_count, COALESCE(g.item_label,''), COALESCE(m.name,''), COALESCE(g.usage_note,''),
 		       COALESCE(g.icon_url,''), COALESCE(g.description,''), g.valid_from, g.valid_until
 		FROM reward_serial_groups g LEFT JOIN reward_merchants m ON m.id = g.merchant_id
-		WHERE g.id = $1`, groupID).Scan(&grantCount, &itemLabel, &merchantName, &usageNote, &iconURL, &description, &validFrom, &validUntil)
+		WHERE g.id = $1`, groupID).Scan(&isBundle, &grantCount, &itemLabel, &merchantName, &usageNote, &iconURL, &description, &validFrom, &validUntil)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil // 序號組不存在：跳過，不視為錯誤
+		return nil, nil, nil // 序號組不存在：跳過，不視為錯誤
 	}
 	if err != nil {
-		return nil, fmt.Errorf("load serial group: %w", err)
+		return nil, nil, fmt.Errorf("load serial group: %w", err)
+	}
+	if isBundle {
+		// 組合型：回傳的 issuedIDs 是「真正持有序號」的子面額組 id 清單（非組合包 parent 自己——它不持有
+		// 任何 reward_serials）。低庫存告警（checkAndNotifyLowStock）必須查子面額組庫存才有意義，
+		// 若回傳 parent id 會查到 total=0 而被 skip（2026-08-28 對抗審查抓到的 high 迴歸）。
+		return grantSerialBundle(ctx, db, userID, sourceType, sourceRaceID, sourceRegID, groupID)
 	}
 	if grantCount < 1 {
 		grantCount = 1
@@ -417,7 +511,7 @@ func claimSerialsFromGroup(ctx context.Context, db Execer, userID, sourceType, s
 			break // 庫存中途不足：跳過剩餘配額，不視為錯誤；已成功發出的照留
 		}
 		if err != nil {
-			return granted, fmt.Errorf("claim serial: %w", err)
+			return granted, nil, fmt.Errorf("claim serial: %w", err)
 		}
 
 		if _, err := db.Exec(ctx, `
@@ -428,118 +522,135 @@ func claimSerialsFromGroup(ctx context.Context, db Execer, userID, sourceType, s
 			userID, sourceType, raceIDArg, regIDArg, serialID, groupID,
 			code, link, itemLabel, merchantName, usageNote, iconURL, description, validFrom, validUntil,
 		); err != nil {
-			return granted, fmt.Errorf("insert user_reward: %w", err)
+			return granted, nil, fmt.Errorf("insert user_reward: %w", err)
 		}
 
 		granted = append(granted, GrantedReward{Type: "serial", ItemLabel: itemLabel, Code: code})
 	}
-	return granted, nil
+	// 一般序號組：真正被扣庫存的就是自己（只有實際發出至少一張才回報，供低庫存告警查真實庫存）。
+	if len(granted) > 0 {
+		return granted, []string{groupID}, nil
+	}
+	return granted, nil, nil
 }
 
-// grantSerialBundle serial 類【固定組合包，migration 149】：item.Bundle 非空時的發放路徑，與兩層抽獎
-// grantSerialTwoLayer 互斥（RollAndGrant 依 len(item.Bundle)>0 二擇一呼叫；validate.go 已擋掉兩者同時
-// 設定）。ProbBP 中獎判定已由 RollAndGrant 呼叫 rollHit 做完（本函式只在「中獎」時才會被呼叫）——中獎後
-// 不是「加權抽一個」而是「全發」：對每個 entry 各自搶 entry.Count 張序號，全部歸同一次發放（同一
-// bundle_id）。
+// grantSerialBundle serial 類【組合型序號組，migration 150】：groupID 指定的序號組 is_bundle=true 時的
+// 發放路徑，由 claimSerialsFromGroup 偵測到 is_bundle=true 後轉呼叫（統一入口，見該函式文件註解）——
+// 不論這個 groupID 是 grantSerialTwoLayer 加權抽中，或走舊格式 serial_group_id 直接指定，組合能力現在
+// 是序號組本身的固定屬性（reward_serial_group_items，由 internal/rewardserial CRUD 寫入與驗證），不再
+// 依附於某個 RewardItem 設定。中獎後不是「加權抽一個」而是「全發」：對每個子項各自搶 count 張序號，
+// 全部歸同一次發放（同一 bundle_id）。
 //
-// all-or-nothing（使用者拍板）：明確拆成兩個階段，不是「邊搶邊發現不夠再回滾」——
-//  1. 鎖定＋確認：對每個 entry 用 SELECT...FOR UPDATE SKIP LOCKED 一次鎖住最多 entry.Count 筆該組目前
+// all-or-nothing（沿用 migration 149 的設計拍板，只是子項定義來源換了）：明確拆成兩個階段，不是「邊搶
+// 邊發現不夠再回滾」——
+//  1. 鎖定＋確認：對每個子項用 SELECT...FOR UPDATE SKIP LOCKED 一次鎖住最多 count 筆該子面額組目前
 //     available 的序號（lockAvailableSerialIDs），鎖到幾筆就是「目前真的搶得到」幾筆；只鎖不改狀態。
-//     firstInsufficientBundleEntry 純函式判斷是否每個 entry 都鎖到足夠張數。
-//  2. 只有全部 entry 都足夠，才進入實際配發：對每個 entry 已鎖定的序號逐一 UPDATE 標記 issued＋INSERT
+//     firstInsufficientBundleEntry 純函式判斷是否每個子項都鎖到足夠張數。
+//  2. 只有全部子項都足夠，才進入實際配發：對每個子項已鎖定的序號逐一 UPDATE 標記 issued＋INSERT
 //     user_rewards（此時序號已經是本交易獨佔鎖住的，不會再被搶走，必定成功）。
-//     任一 entry 不足 → 完全不進入配發階段、直接 notify.Alert 告警＋回傳 error；階段 1 已經 SELECT FOR
+//     任一子項不足 → 完全不進入配發階段、直接 notify.Alert 告警＋回傳 error；階段 1 已經 SELECT FOR
 //     UPDATE 鎖住的序號（若有）維持「僅本交易可見的鎖定」，本函式全程不自己開/關交易，呼叫鏈最上層（如
 //     personal_progress.go MarkAttemptCompletedAndGrant）的 defer tx.Rollback(ctx) 會在收到本函式回傳
 //     的 error 後整個 Rollback，釋放這些鎖、確保序號狀態完全沒被動過——不會有「這組扣了、那組沒扣」的
 //     部分發放。notify.Alert 內部用獨立 context/goroutine 送出 Telegram，不受本交易稍後 Rollback 影響
 //     （見 notify.Alert 文件註解），告警本身不會因為交易回滾而消失。
 //
-// 同商家把關：Validate 只能做結構驗證（entry 數 1-20、group_id/count 合法），無法在不查 DB 的情況下確認
-// 每個 group_id 實際隸屬哪個商家，這項規則因此挪到本函式執行期——查出每個 entry 的 merchant_id 後跨
-// entry 比對，不一致視為設定錯誤直接 fail（一般 error，非 all-or-nothing 的「庫存不足」情境，不觸發
-// serial_bundle_shortage 告警——這是後台設定錯了，不是業主庫存問題，回報方式應該不同）。
+// 不巢狀、同商家：這兩項規則現在是「組合定義」本身（reward_serial_group_items）的持久不變量，已在
+// internal/rewardserial.Service 建立/更新組合型序號組時查 DB 驗證過（子項須非組合型、須同一商家）——
+// 不是像 migration 149 那樣每次 roll 才臨時組出的設定，因此本函式執行期不再需要重新查每個子項的
+// merchant_id 跨項比對；子項清單本身查出來就是已經驗證過的持久資料。
 //
 // 冪等：與其餘發放路徑一致——RollAndGrant 只會在呼叫端已用 CAS 確認「這次呼叫確定是首次判定完成」時才
-// 呼叫一次（見套件頂部說明），本函式不自建冪等機制，也不查詢/依賴「這個 item 是否已經發過」；不會與序號
-// 組自身的 grant_count（兩層抽獎專用設定，見 claimSerialsFromGroup）混淆——組合包完全不讀 grant_count，
-// 每個 entry 發幾張只看 entry.Count。
+// 呼叫一次（見套件頂部說明），本函式不自建冪等機制，也不查詢/依賴「這個序號組是否已經發過」；不會與序號
+// 組自身的 grant_count（兩層抽獎專用設定，見 claimSerialsFromGroup）混淆——組合只看每個子項的 count。
 //
-// 回傳的第二個值是本次組合包「每個 entry 各自的 group id」（validate.go 已擋掉同一 bundle 內重複
-// group_id，實務上不會重複），供呼叫端（RollAndGrant）併入 issuedGroupIDs，供 commit 後的低庫存檢查。
-func grantSerialBundle(ctx context.Context, db Execer, userID, sourceType, sourceRaceID, sourceRegID string, item *RewardItem) ([]GrantedReward, []string, error) {
-	if len(item.Bundle) == 0 {
-		return nil, nil, nil
+// 回傳的第二個值是本次組合包「每個子項各自的 child group id」（CRUD 已擋同一組合內重複 child_group_id，
+// 見 rewardserial.Service 驗證），供呼叫端（grantSerialTwoLayer／RollAndGrant）併入 issuedGroupIDs，
+// 供 commit 後的低庫存檢查。
+func grantSerialBundle(ctx context.Context, db Execer, userID, sourceType, sourceRaceID, sourceRegID, groupID string) ([]GrantedReward, []string, error) {
+	var parentMerchantName string
+	err := db.QueryRow(ctx, `
+		SELECT COALESCE(m.name,'')
+		FROM reward_serial_groups g LEFT JOIN reward_merchants m ON m.id = g.merchant_id
+		WHERE g.id = $1`, groupID).Scan(&parentMerchantName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, fmt.Errorf("grant serial bundle: group %s not found", groupID)
 	}
-
-	// bundle_id 由 DB 產生一次，本次組合包所有 entry 發出的序號共用同一個值（前台錢包 group by 併卡，見
-	// migration 149 idx_user_rewards_bundle）。
-	var bundleID string
-	if err := db.QueryRow(ctx, `SELECT gen_random_uuid()`).Scan(&bundleID); err != nil {
-		return nil, nil, fmt.Errorf("gen bundle id: %w", err)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load bundle group %s: %w", groupID, err)
 	}
 
 	type bundleEntryMeta struct {
 		groupID, itemLabel, merchantName, usageNote, iconURL, description string
-		merchantID                                                       *string
-		validFrom, validUntil                                            *time.Time
-		faceValue, count                                                 int
+		validFrom, validUntil                                             *time.Time
+		faceValue, count                                                  int
 	}
-	metas := make([]bundleEntryMeta, len(item.Bundle))
-	var commonMerchant *string
-	merchantMismatch := false
-	for i, e := range item.Bundle {
-		m := bundleEntryMeta{groupID: e.GroupID, count: e.Count}
-		err := db.QueryRow(ctx, `
-			SELECT g.merchant_id, COALESCE(g.item_label,''), COALESCE(mc.name,''), COALESCE(g.usage_note,''),
-			       COALESCE(g.icon_url,''), COALESCE(g.description,''), g.valid_from, g.valid_until, g.face_value
-			FROM reward_serial_groups g LEFT JOIN reward_merchants mc ON mc.id = g.merchant_id
-			WHERE g.id = $1`, e.GroupID,
-		).Scan(&m.merchantID, &m.itemLabel, &m.merchantName, &m.usageNote, &m.iconURL, &m.description,
-			&m.validFrom, &m.validUntil, &m.faceValue)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil, fmt.Errorf("grant serial bundle: group %s not found", e.GroupID)
-		}
-		if err != nil {
-			return nil, nil, fmt.Errorf("load bundle entry group %s: %w", e.GroupID, err)
-		}
-		if i == 0 {
-			commonMerchant = m.merchantID
-		} else if !samePtrString(commonMerchant, m.merchantID) {
-			merchantMismatch = true
-		}
-		metas[i] = m
+	rows, err := db.Query(ctx, `
+		SELECT i.child_group_id::text, i.count,
+		       COALESCE(g.item_label,''), COALESCE(mc.name,''), COALESCE(g.usage_note,''),
+		       COALESCE(g.icon_url,''), COALESCE(g.description,''), g.valid_from, g.valid_until, g.face_value
+		FROM reward_serial_group_items i
+		JOIN reward_serial_groups g ON g.id = i.child_group_id
+		LEFT JOIN reward_merchants mc ON mc.id = g.merchant_id
+		WHERE i.parent_group_id = $1
+		ORDER BY i.sort_order, i.id`, groupID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load bundle items %s: %w", groupID, err)
 	}
-	if merchantMismatch {
-		return nil, nil, fmt.Errorf("grant serial bundle: entries reference different merchants (item merchant_id=%s)", item.MerchantID)
+	var metas []bundleEntryMeta
+	for rows.Next() {
+		var m bundleEntryMeta
+		if err := rows.Scan(&m.groupID, &m.count, &m.itemLabel, &m.merchantName, &m.usageNote,
+			&m.iconURL, &m.description, &m.validFrom, &m.validUntil, &m.faceValue); err != nil {
+			rows.Close()
+			return nil, nil, fmt.Errorf("scan bundle item: %w", err)
+		}
+		metas = append(metas, m)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, err
+	}
+	rows.Close()
+	if len(metas) == 0 {
+		// 理論上不會發生：is_bundle=true 的序號組在 CRUD 建立時已強制要求 ≥1 個子項（見
+		// rewardserial.Service.validateBundleItems）。保底防呆，避免發出一個空的組合。
+		return nil, nil, fmt.Errorf("grant serial bundle: group %s has no bundle items", groupID)
 	}
 
-	// 面額防呆（2026-08-28 對抗性審查發現）：組合包總額/標籤只信 DB 的 face_value 結構化欄位，若任一
-	// entry 的序號組 face_value<=0（管理員漏設），會算出 bundle_total=0 → 玩家錢包顯示「LINE POINTS 0」、
+	// 面額防呆（沿用 2026-08-28 對抗性審查發現）：組合包總額/標籤只信 DB 的 face_value 結構化欄位，若任一
+	// 子項的序號組 face_value<=0（管理員漏設），會算出 bundle_total=0 → 玩家錢包顯示「LINE POINTS 0」、
 	// 與後台當初靠名稱解析看到的數字不一致，且無人察覺。此處視為設定錯誤：整包不發、告警（獨立 kind，
 	// 非 shortage——這不是庫存問題而是設定缺漏，補庫存無用，要補的是序號組面額）。序號在階段 1 才鎖定，
 	// 此刻尚未動任何序號狀態，直接 return 不會有殘留。
-	for _, m := range metas {
+	faceValues := make([]int, len(metas))
+	counts := make([]int, len(metas))
+	for i, m := range metas {
 		if m.faceValue <= 0 {
 			notify.Alert("serial_bundle_facevalue_missing",
 				"組合包序號組未設定面額",
 				fmt.Sprintf("序號組 %s（%s）的 face_value 未設定，組合包無法計算總額，本次未發放。請到序號/獎勵管理補上面額。", m.groupID, m.itemLabel))
 			return nil, nil, fmt.Errorf("grant serial bundle: group %s has face_value<=0 (unset), refuse to grant", m.groupID)
 		}
+		faceValues[i] = m.faceValue
+		counts[i] = m.count
 	}
 
-	faceValueByGroup := make(map[string]int, len(metas))
-	for _, m := range metas {
-		faceValueByGroup[m.groupID] = m.faceValue
-	}
-	bundleTotal := computeBundleTotal(item.Bundle, faceValueByGroup)
-	// bundleLabel：優先用面額組共同的商家名稱（"{商家名} {總額}"，如「LINE POINTS 3500」）；商家未指定
-	// 時退回固定前綴「LINE POINTS」（P1 組合包當下唯一實際用例即 LINE POINTS，見 apps/web api.ts
-	// RewardBundleEntry 註解）。與 race/reward_preview.go 前台預覽卡片沿用同一套 FormatBundleLabel，
-	// 確保玩家事前看到的名稱跟實際中獎後拿到的一致。
-	bundleLabel := FormatBundleLabel(metas[0].merchantName, bundleTotal)
+	bundleTotal := computeBundleTotal(faceValues, counts)
+	// bundleLabel："{商家名} {總額}"（如「LINE POINTS 3500」），用組合型序號組自身的商家名稱（parent
+	// group 的 merchant_id）——子項已在 CRUD 時驗證過皆為同一商家，parent 本身就是這個商家旗下的一個
+	// 面額選項（見 memory activity-reward-system 設計）。與 race/reward_preview.go 前台預覽卡片沿用同一
+	// 套 FormatBundleLabel，確保玩家事前看到的名稱跟實際中獎後拿到的一致。
+	bundleLabel := FormatBundleLabel(parentMerchantName, bundleTotal)
 
-	// 階段 1：鎖定＋確認每個 entry 的庫存足不足，只鎖不改狀態（見函式文件註解）。
+	// bundle_id 由 DB 產生一次，本次組合包所有子項發出的序號共用同一個值（前台錢包 group by 併卡，見
+	// migration 149 idx_user_rewards_bundle）。
+	var bundleID string
+	if err := db.QueryRow(ctx, `SELECT gen_random_uuid()`).Scan(&bundleID); err != nil {
+		return nil, nil, fmt.Errorf("gen bundle id: %w", err)
+	}
+
+	// 階段 1：鎖定＋確認每個子項的庫存足不足，只鎖不改狀態（見函式文件註解）。
 	need := make([]int, len(metas))
 	lockedIDs := make([][]string, len(metas))
 	for i, m := range metas {
@@ -557,12 +668,12 @@ func grantSerialBundle(ctx context.Context, db Execer, userID, sourceType, sourc
 	if idx := firstInsufficientBundleEntry(need, locked); idx >= 0 {
 		m := metas[idx]
 		notify.Alert("serial_bundle_shortage", "序號組合包庫存不足，整包未發放",
-			fmt.Sprintf("merchant=%s bundle_label=%s group_id=%s item_label=%s 需求=%d 目前可鎖定=%d",
-				metas[0].merchantName, bundleLabel, m.groupID, m.itemLabel, m.count, locked[idx]))
+			fmt.Sprintf("parent_group=%s bundle_label=%s child_group_id=%s item_label=%s 需求=%d 目前可鎖定=%d",
+				groupID, bundleLabel, m.groupID, m.itemLabel, m.count, locked[idx]))
 		return nil, nil, fmt.Errorf("grant serial bundle: insufficient stock in group %s (need %d, got %d)", m.groupID, m.count, locked[idx])
 	}
 
-	// 階段 2：全部 entry 都確認足夠，才實際配發——此時的序號都已是本交易獨佔鎖住的，逐一標記 issued 必定
+	// 階段 2：全部子項都確認足夠，才實際配發——此時的序號都已是本交易獨佔鎖住的，逐一標記 issued 必定
 	// 成功（見函式文件註解）。
 	var raceIDArg, regIDArg any
 	if sourceRaceID != "" {
@@ -648,35 +759,30 @@ func firstInsufficientBundleEntry(need, locked []int) int {
 	return -1
 }
 
-// computeBundleTotal 純函式：Σ(faceValueByGroup[entry.GroupID] × entry.Count)，即組合包的合併總面額
-// （bundle_total，見 migration 149 契約）。查不到面額（faceValueByGroup 缺該 group_id，理論上不會發生，
-// 因為呼叫端一定會先把每個 entry 涉及的 group 都查過一輪才會走到這裡）視為面額 0，不 panic。
-func computeBundleTotal(entries []BundleEntry, faceValueByGroup map[string]int) int {
+// computeBundleTotal 純函式：Σ(faceValues[i] × counts[i])，即組合包的合併總面額（bundle_total，見
+// migration 149/150 契約）。兩個 slice 需等長（呼叫端保證，理論上不會有子項缺漏）；長度不一致時只加總到
+// 較短者，不 panic。
+func computeBundleTotal(faceValues, counts []int) int {
 	total := 0
-	for _, e := range entries {
-		total += faceValueByGroup[e.GroupID] * e.Count
+	n := len(faceValues)
+	if len(counts) < n {
+		n = len(counts)
+	}
+	for i := 0; i < n; i++ {
+		total += faceValues[i] * counts[i]
 	}
 	return total
 }
 
 // FormatBundleLabel 組合包顯示名稱："{商家名} {總額}"（如「LINE POINTS 3500」）；商家名稱為空時退回固定
-// 前綴「LINE POINTS」（P1 組合包當下唯一實際用例，見 apps/web api.ts RewardBundleEntry 註解），避免顯示
-// 空白標籤。匯出供 race/reward_preview.go 前台預覽卡片沿用同一套算法——玩家事前在「活動獎勵」頁籤看到的
-// 卡片名稱，必須跟實際中獎後 user_rewards.bundle_label 一致，不要兩邊各算一套导致對不上。
+// 前綴「LINE POINTS」（P1 組合包當下唯一實際用例，見 apps/web api.ts RewardGroupBundleItem 註解），避免
+// 顯示空白標籤。匯出供 race/reward_preview.go 前台預覽卡片、rewardserial 序號組本身皆沿用同一套算法——
+// 玩家事前在「活動獎勵」頁籤看到的卡片名稱，必須跟實際中獎後 user_rewards.bundle_label 一致，不要兩邊
+// 各算一套导致對不上。
 func FormatBundleLabel(merchantName string, total int) string {
 	prefix := merchantName
 	if prefix == "" {
 		prefix = "LINE POINTS"
 	}
 	return fmt.Sprintf("%s %d", prefix, total)
-}
-
-// samePtrString 比較兩個可能為 nil 的字串指標是否代表同一值：皆 nil 視為相同（都未指定商家）；一 nil
-// 一非 nil 視為不同；皆非 nil 則比較實際值。供 grantSerialBundle 判斷 bundle 內各 entry 的 merchant_id
-// 是否一致。
-func samePtrString(a, b *string) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
 }

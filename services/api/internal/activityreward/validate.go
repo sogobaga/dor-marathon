@@ -28,39 +28,6 @@ func (it *RewardItem) Validate() error {
 			return fmt.Errorf("reward item vip: requires days>0")
 		}
 	case "serial":
-		if len(it.Bundle) > 0 {
-			// 固定組合包（migration 149）：與 Denominations（加權隨機抽一個）互斥——同一 item 只能走
-			// 其中一種發放邏輯，兩者同時非空會讓 grantSerialBundle/grantSerialTwoLayer 該選誰失去定義。
-			if len(it.Denominations) > 0 {
-				return fmt.Errorf("reward item serial: bundle and denominations are mutually exclusive")
-			}
-			if len(it.Bundle) > 20 {
-				return fmt.Errorf("reward item serial: bundle supports at most 20 entries")
-			}
-			seenBundleGroups := map[string]bool{}
-			for i, e := range it.Bundle {
-				gid := strings.TrimSpace(e.GroupID)
-				if gid == "" {
-					return fmt.Errorf("reward item serial: bundle entry %d requires group_id", i)
-				}
-				if e.Count < 1 {
-					return fmt.Errorf("reward item serial: bundle entry %d requires count>=1", i)
-				}
-				if seenBundleGroups[gid] {
-					// 同一 bundle 內不可重複引用同一序號組：grantSerialBundle 逐 entry 各自對該 group 做
-					// 「UPDATE...RETURNING 搭配 FOR UPDATE SKIP LOCKED」搶碼，同一交易內重複搶同一組會
-					// 讓兩個 entry 各自的 LIMIT 查詢在庫存邊界互相干擾（詳見 roll.go 函式註解），故禁止。
-					return fmt.Errorf("reward item serial: bundle entry %d duplicates group_id %s", i, gid)
-				}
-				seenBundleGroups[gid] = true
-			}
-			// 「Bundle 內 group 需同一商家」需要查 DB 才能確認每個 group_id 實際隸屬哪個商家——本函式是
-			// 純結構驗證（比照上面 coupon 的取捨：不在此處查 DB），這項規則因此挪到 roll.go
-			// grantSerialBundle 執行期查出每個 entry 的 merchant_id 後跨 entry 比對，不一致視為設定
-			// 錯誤直接 fail（非 all-or-nothing 的庫存不足情境，不算「商家庫存不足」，不觸發
-			// serial_bundle_shortage 告警，而是回一般錯誤）。
-			return nil
-		}
 		// 兩層抽獎：至少要有一個「有效」面額（GroupID 非空且 Weight>0）才有東西可抽，否則中獎機率
 		// 判定過了卻永遠抽不出面額，等於這個項目形同虛設（見 model.go validDenominations，內含
 		// 舊格式 SerialGroupID 的向後相容回退）。
