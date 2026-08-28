@@ -50,7 +50,7 @@ export default function HundredHeroesScreen({ onBack }: { onBack: () => void }) 
                 <Avatar url={h.avatar_url} name={h.name} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {h.name}{h.is_self ? '（我）' : ''}{h.title && <span style={{ color: 'var(--gold)', fontWeight: 800, marginLeft: 5 }}>{h.title}</span>}
+                    {h.title && <span style={{ color: 'var(--gold)', fontWeight: 800, marginRight: 5 }}>{h.title}</span>}{h.name}{h.is_self ? '（我）' : ''}
                   </div>
                 </div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fug)', whiteSpace: 'nowrap' }}>{h.total_km.toFixed(1)} K</div>
