@@ -388,7 +388,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               <div style={{ width: 40, height: 5, borderRadius: 3, background: 'var(--line-2)', margin: '0 auto' }} />
             </div>
             <div style={{ display: 'flex', gap: 6, padding: '2px 14px 0', borderBottom: '1px solid var(--line)' }}>
-              {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄'], ['follows', '追蹤']] as const).map(([v, label]) => (
+              {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄'], ['follows', '追蹤列表']] as const).map(([v, label]) => (
                 <button key={v} onClick={() => { setTab(v); if (sheet.snap === 'peek') sheet.setSnap('half') }} style={{
                   padding: '8px 9px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap',
                   color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 700 : 400,

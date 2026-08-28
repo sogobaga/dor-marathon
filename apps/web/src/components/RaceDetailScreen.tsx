@@ -15,6 +15,7 @@ import { renderCertificate, downloadCertificate, type CertificateRender } from '
 import ExpSettlementModal from './ExpSettlementModal'
 import RewardGrantedModal from './RewardGrantedModal'
 import UpgradeVipModal from './UpgradeVipModal'
+import FollowHeartButton from './shared/FollowHeartButton'
 import { BrochureBody } from './BrochureScreen'
 import { RankingBody } from './RaceRankingScreen'
 import { ExploreBody } from './ExploreBody'
@@ -744,8 +745,6 @@ function TaskRow({ t, onClick }: { t: TaskProgress; onClick?: () => void }) {
 }
 
 // 任務貢獻明細彈窗：前 20 名里程貢獻 + 自己（即使在 20 名外）
-const followBtnC: React.CSSProperties = { flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 999, padding: '5px 11px', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
-const followingBtnC: React.CSSProperties = { flexShrink: 0, background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '5px 11px', fontSize: 11.5, cursor: 'pointer', fontFamily: 'inherit' }
 
 function TaskContributorsModal({ race, task, onClose }: { race: Race; task: TaskProgress; onClose: () => void }) {
   useScrollLock() // 開啟時鎖背景捲動 → 只滑得動本彈窗清單
@@ -783,7 +782,7 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
         <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>{x.activities} 筆</div>
       </div>
       {token && !x.is_me && (
-        <button onClick={() => toggleFollow(x)} style={isFollowing(x) ? followingBtnC : followBtnC}>{isFollowing(x) ? '追蹤中' : '＋追蹤'}</button>
+        <FollowHeartButton following={isFollowing(x)} onClick={() => toggleFollow(x)} size={16} />
       )}
     </div>
   )

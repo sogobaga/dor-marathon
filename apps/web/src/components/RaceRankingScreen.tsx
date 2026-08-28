@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom'
 import { racesApi, followApi, type Race, type StandingRank, type LeaderboardRow, type Contributor, type PersonalLeaderRow } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
 import { overlayMount } from '@/lib/overlayMount'
+import FollowHeartButton from './shared/FollowHeartButton'
 
 function fmtPace(s: number) {
   if (!s) return '—'
@@ -221,9 +222,7 @@ function LbList({
               </div>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fug)', whiteSpace: 'nowrap' }}>{metric(r)}</div>
               {loggedIn && !r.is_me && (
-                <button onClick={() => onToggle(r)} style={following(r) ? followingBtn : followBtn}>
-                  {following(r) ? '追蹤中' : '＋追蹤'}
-                </button>
+                <FollowHeartButton following={following(r)} onClick={() => onToggle(r)} />
               )}
             </div>
           ))}
@@ -285,9 +284,7 @@ function PersonalChallengeLeaderboard({ race }: { race: Race }) {
               </div>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fug)', whiteSpace: 'nowrap' }}>完成 {r.completed_count} 次</div>
               {token && !r.is_me && (
-                <button onClick={() => toggle(r)} style={following(r) ? followingBtn : followBtn}>
-                  {following(r) ? '追蹤中' : '＋追蹤'}
-                </button>
+                <FollowHeartButton following={following(r)} onClick={() => toggle(r)} />
               )}
             </div>
           ))}
@@ -417,7 +414,7 @@ function GroupMembersModal({ race, group, onClose }: { race: Race; group: Standi
               </div>
               <div style={{ fontSize: 14, fontWeight: 900, color: 'var(--fug)', fontVariantNumeric: 'tabular-nums' }}>{m.distance_km.toFixed(1)} <span style={{ fontSize: 11, color: 'var(--tx-dim)' }}>km</span></div>
               {token && !m.is_me && (
-                <button onClick={() => toggle(m)} style={isFollowing(m) ? followingBtn : followBtn}>{isFollowing(m) ? '追蹤中' : '＋追蹤'}</button>
+                <FollowHeartButton following={isFollowing(m)} onClick={() => toggle(m)} />
               )}
             </div>
           ))}
@@ -437,12 +434,4 @@ const backBtn: React.CSSProperties = {
 }
 const myBanner: React.CSSProperties = {
   background: 'var(--bg-1)', border: '1px solid var(--fug)', borderRadius: 16, padding: 16,
-}
-const followBtn: React.CSSProperties = {
-  flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 999,
-  padding: '5px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-}
-const followingBtn: React.CSSProperties = {
-  flexShrink: 0, background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)',
-  borderRadius: 999, padding: '5px 12px', fontSize: 12, cursor: 'pointer',
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { exploreApi, followApi, type ExploreRankRow } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
+import FollowHeartButton from './shared/FollowHeartButton'
 
 // 關主挑戰者排行覆蓋層：時間榜（最短完成時間，前 100）+ 追蹤。可在 /track 或探索頁上開啟。
 export default function BossRankingPanel({ bossId, bossName, onClose }: {
@@ -80,9 +81,7 @@ export default function BossRankingPanel({ bossId, bossName, onClose }: {
                   </div>
                   <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--gold)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{fmtT(r.best_time_s)}</div>
                   {!r.is_me && (
-                    <button onClick={() => toggle(r)} style={following(r) ? followingBtn : followBtn}>
-                      {following(r) ? '追蹤中' : '＋追蹤'}
-                    </button>
+                    <FollowHeartButton following={following(r)} onClick={() => toggle(r)} />
                   )}
                 </div>
               ))}
@@ -121,5 +120,3 @@ function Hint({ children }: { children: React.ReactNode }) {
   return <div style={{ textAlign: 'center', padding: '44px 20px', fontSize: 13.5, color: 'var(--tx-dim)' }}>{children}</div>
 }
 
-const followBtn: React.CSSProperties = { flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 999, padding: '5px 11px', fontSize: 12, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }
-const followingBtn: React.CSSProperties = { flexShrink: 0, background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '5px 11px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }

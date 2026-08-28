@@ -4,6 +4,7 @@ import { useState } from 'react'
 import useSWR from 'swr'
 import { heroesApi, followApi, type HundredHero } from '@/lib/api'
 import { getUserToken } from '@/lib/userAuth'
+import FollowHeartButton from './shared/FollowHeartButton'
 
 // 百里英雄榜：累積里程突破 100 公里的跑者，前 100 名（依 total_km desc）。公開可看（未登入也能瀏覽），
 // 登入後才顯示追蹤鈕（is_self 不顯示，比照 RaceRankingScreen 的排行榜追蹤鈕慣例）。
@@ -55,9 +56,7 @@ export default function HundredHeroesScreen({ onBack }: { onBack: () => void }) 
                 </div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fug)', whiteSpace: 'nowrap' }}>{h.total_km.toFixed(1)} K</div>
                 {token && !h.is_self && (
-                  <button onClick={() => toggle(h)} style={following(h) ? followingBtn : followBtn}>
-                    {following(h) ? '✓ 已追蹤' : '＋追蹤'}
-                  </button>
+                  <FollowHeartButton following={following(h)} onClick={() => toggle(h)} />
                 )}
               </div>
             ))}
@@ -83,11 +82,3 @@ function Hint({ children }: { children: React.ReactNode }) {
 }
 
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0 }
-const followBtn: React.CSSProperties = {
-  flexShrink: 0, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 999,
-  padding: '5px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-}
-const followingBtn: React.CSSProperties = {
-  flexShrink: 0, background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)',
-  borderRadius: 999, padding: '5px 12px', fontSize: 12, cursor: 'pointer',
-}
