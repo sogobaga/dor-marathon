@@ -333,7 +333,7 @@ const loginBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--
 
 // ── 首頁訪客 Hero（獨立元件，不受會員面板卡片框架/父層 padding 限制，2026-08-28 使用者指示滿版放大）──
 // RacesScreen 未登入時直接渲染本元件（父層捲動容器的側邊 padding 也會歸零），品牌主視覺 edge-to-edge
-// 滿版顯示；文案全在圖內（標題/副文案/三支柱/結尾標語），僅保留「免費開始探索」CTA。點圖同樣開登入。
+// 滿版顯示；文案全在圖內（標題/副文案/三支柱/結尾標語），僅保留「立即開始探索」CTA。點圖同樣開登入。
 export function GuestHero() {
   const [showLogin, setShowLogin] = useState(false)
   return (
@@ -350,7 +350,7 @@ export function GuestHero() {
         />
         <div style={{ padding: '12px 18px 0' }}>
           <button onClick={(e) => { e.stopPropagation(); setShowLogin(true) }} style={heroCta}>
-            免費開始探索
+            立即開始探索
           </button>
         </div>
       </div>
