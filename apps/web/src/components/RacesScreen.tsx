@@ -6,7 +6,7 @@ import { racesApi, raceStatusFlags, RACE_FILTER_CATEGORY, rewardsApi, type Race,
 import { getUserToken, useUser, clearUserSession, withUserAuth } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
-import MemberPanel from './MemberPanel'
+import MemberPanel, { GuestHero } from './MemberPanel'
 import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
@@ -180,9 +180,15 @@ export default function RacesScreen({
 
       {/* 會員面板（固定最上方，背景層）+ 可拖曳活動列表面板 */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        {/* 會員資訊面板：固定最上方；面板收合時完整顯示，可自行捲動（底部留白略大於收合面板高度，與個資頁一致） */}
-        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '4px 18px 160px' }}>
-          <MemberPanel onOpenProfile={onOpenProfile} onOpenPersonalTasks={onOpenPersonalTasks} onOpenTraining={onOpenTraining} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} showEntries={false} showHero />
+        {/* 會員資訊面板：固定最上方；面板收合時完整顯示，可自行捲動（底部留白略大於收合面板高度，與個資頁一致）。
+            未登入＝品牌 Hero 滿版（GuestHero 不受會員面板卡片框架限制，側邊 padding 歸零 edge-to-edge，
+            2026-08-28 使用者指示「圖太小、別受限個人資訊面板框架」）。 */}
+        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: user ? '4px 18px 160px' : '0 0 160px' }}>
+          {user ? (
+            <MemberPanel onOpenProfile={onOpenProfile} onOpenPersonalTasks={onOpenPersonalTasks} onOpenTraining={onOpenTraining} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} showEntries={false} />
+          ) : (
+            <GuestHero />
+          )}
         </div>
 
         {/* 可拖曳活動列表面板 */}

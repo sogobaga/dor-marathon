@@ -31,7 +31,6 @@ export default function MemberPanel({
   uploadingAvatar,
   onReady,
   showEntries = true,
-  showHero = false,
 }: {
   dash?: DashboardInfo | null
   onOpenProfile?: () => void
@@ -48,7 +47,6 @@ export default function MemberPanel({
   uploadingAvatar?: boolean
   onReady?: () => void
   showEntries?: boolean // 城市探索/卡片圖鑑入口：首頁隱藏(小尺寸會被遮)、僅會員資料頁顯示
-  showHero?: boolean   // 首頁訪客 Hero 區：僅在首頁未登入時顯示品牌 Hero，取代「？」頭像＋登入鈕
 }) {
   const controlled = dashProp !== undefined // 有傳 dash（含 null）＝受控；未傳＝用共用快取
   const { dash: hookDash, loading, user } = useDashboard() // 共用快取：與會員資訊頁同一份、切頁不再 loading
@@ -81,33 +79,6 @@ export default function MemberPanel({
   }, [spFrozen])
 
   const clickable = !!user && !!onOpenProfile
-
-  // 首頁訪客 Hero 區（僅 showHero=true 且未登入時）
-  if (showHero && !user) {
-    return (
-      <>
-        <div style={heroWrap}>
-          {/* 品牌主視覺（2026-08-28 使用者提供設計圖，文案全在圖內：標題/副文案/三支柱/結尾標語）。
-              width/height 為固定屬性防 CLS；實際尺寸交給 heroImg 的 width:100% 縮放。 */}
-          <img
-            src="/brand-hero.webp"
-            alt="DOR 城市探索——把城市，變成你的遊戲場：跑步即冒險、打卡集卡片、跑旅遍台灣"
-            width={1400}
-            height={735}
-            style={heroImg}
-          />
-          {/* 主 CTA（依使用者指示保留） */}
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowLogin(true) }}
-            style={heroCta}
-          >
-            免費開始探索
-          </button>
-        </div>
-        {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
-      </>
-    )
-  }
 
   return (
     <>
@@ -360,7 +331,32 @@ const barOuter: React.CSSProperties = { height: 7, background: 'var(--bg-2)', bo
 const barInner: React.CSSProperties = { height: '100%', background: 'var(--fug)', borderRadius: 999, transition: 'width .3s' }
 const loginBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 10, padding: '9px 18px', cursor: 'pointer', fontSize: 14 }
 
-// 首頁訪客 Hero 區樣式（僅未登入首頁使用；文案改由 brand-hero.webp 設計圖承載，樣式只剩容器/圖/CTA）
-const heroWrap: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 'var(--card-pad, 16px)', boxShadow: 'var(--card-shadow, none)' }
-const heroImg: React.CSSProperties = { width: '100%', height: 'auto', display: 'block', borderRadius: 12, marginBottom: 12 }
+// ── 首頁訪客 Hero（獨立元件，不受會員面板卡片框架/父層 padding 限制，2026-08-28 使用者指示滿版放大）──
+// RacesScreen 未登入時直接渲染本元件（父層捲動容器的側邊 padding 也會歸零），品牌主視覺 edge-to-edge
+// 滿版顯示；文案全在圖內（標題/副文案/三支柱/結尾標語），僅保留「免費開始探索」CTA。點圖同樣開登入。
+export function GuestHero() {
+  const [showLogin, setShowLogin] = useState(false)
+  return (
+    <>
+      <div>
+        {/* width/height 固定屬性防 CLS；實際尺寸由 CSS width:100% 縮放 */}
+        <img
+          src="/brand-hero.webp"
+          alt="DOR 城市探索——把城市，變成你的遊戲場：跑步即冒險、打卡集卡片、跑旅遍台灣"
+          width={1400}
+          height={735}
+          style={guestHeroImg}
+          onClick={() => setShowLogin(true)}
+        />
+        <div style={{ padding: '12px 18px 0' }}>
+          <button onClick={(e) => { e.stopPropagation(); setShowLogin(true) }} style={heroCta}>
+            免費開始探索
+          </button>
+        </div>
+      </div>
+      {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
+    </>
+  )
+}
+const guestHeroImg: React.CSSProperties = { width: '100%', height: 'auto', display: 'block', cursor: 'pointer' }
 const heroCta: React.CSSProperties = { width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 12, padding: '12px 0', cursor: 'pointer', fontSize: 15, fontFamily: 'inherit' }
