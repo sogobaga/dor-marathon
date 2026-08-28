@@ -13,12 +13,14 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/notify"
@@ -33,6 +35,9 @@ const (
 
 	// dailyReportAdvisoryLockName：獨立於 selfCheckAdvisoryLockName 的鎖名，避免兩個排程互搶同一把鎖。
 	dailyReportAdvisoryLockName = "ops_daily_report"
+
+	// dailyReportPersistentKey 第三層持久防重的 app_settings key（見 maybeRunDailyReport 說明）。
+	dailyReportPersistentKey = "ops_daily_report_last_date"
 
 	// telegramMaxLen：Telegram sendMessage 文字上限（官方文件為 4096 characters，以 Unicode 字元數計，
 	// 非 byte）。用 utf8.RuneCountInString 量測而非 len()（後者是 UTF-8 byte 長度，中文報告用 byte
@@ -122,9 +127,15 @@ func (h *Handler) RunDailyReportLoop(ctx context.Context) {
 	}
 }
 
-// maybeRunDailyReport 窗口 + 當日冪等閘門判斷，命中才真的產生並送出報告。雙層防重複邏輯與
-// maybeRunDaily 完全對稱，唯一差異是用獨立的 lastReportDate 欄位與獨立的 advisory lock key
-// （dailyReportAdvisoryLockName），避免跟 selfcheck 排程互相誤判「今天已跑過」。
+// maybeRunDailyReport 窗口 + 當日冪等閘門判斷，命中才真的產生並送出報告。三層防重複邏輯與
+// maybeRunDaily 完全對稱，唯一差異是用獨立的 lastReportDate 欄位、獨立的 advisory lock key
+// （dailyReportAdvisoryLockName）、以及獨立的持久標記 key（dailyReportPersistentKey），避免跟
+// selfcheck 排程互相誤判「今天已跑過」。
+//
+// 第三層持久防重：修部署落在08時窗口內重啟造成的重複推播（2026-08-28 實案）。in-memory 標記
+// 重啟歸零、advisory lock 執行完即主動 unlock，兩層在重啟後皆無法攔截同一天已執行過的情況；
+// 持久標記跨程序存活，確保當天已執行過就不再執行。讀取失敗時 warn 後視同未跑過（寧可重發也不
+// 要漏整天報告）。
 func (h *Handler) maybeRunDailyReport(ctx context.Context) {
 	now := taiwanNow()
 	if !inDailyReportWindow(now) {
@@ -162,9 +173,35 @@ func (h *Handler) maybeRunDailyReport(ctx context.Context) {
 		}
 	}()
 
+	// 第三層：持久標記（在 lock 內查詢，避免多實例競態）。
+	var persistedDate string
+	if err := h.db.QueryRow(ctx,
+		`SELECT value FROM app_settings WHERE key = $1`, dailyReportPersistentKey,
+	).Scan(&persistedDate); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		log.Warn().Err(err).Msg("ops dailyreport: read persistent date marker failed, treating as not-run")
+	}
+	if persistedDate == today {
+		// 本實例重啟前已執行過，同步 in-memory 後跳過。
+		h.mu.Lock()
+		h.lastReportDate = today
+		h.mu.Unlock()
+		log.Debug().Msg("ops dailyreport: persistent marker says already ran today, skip")
+		return
+	}
+
+	// 搶到鎖且持久標記確認今天尚未執行，先佔位（in-memory + 持久），再執行——
+	// 比照 vip_renewal.go 冪等閘門「先佔位再執行」的順序。
 	h.mu.Lock()
 	h.lastReportDate = today
 	h.mu.Unlock()
+
+	if _, err := h.db.Exec(ctx,
+		`INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+		dailyReportPersistentKey, today,
+	); err != nil {
+		log.Warn().Err(err).Msg("ops dailyreport: upsert persistent date marker failed (continuing)")
+	}
 
 	h.runAndSendDailyReport(ctx)
 }

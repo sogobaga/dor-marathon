@@ -14,12 +14,14 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
@@ -113,12 +115,21 @@ func (h *Handler) RunSelfCheckLoop(ctx context.Context) {
 	}
 }
 
-// maybeRunDaily 窗口 + 當日冪等閘門判斷；命中才真的執行巡檢。雙層防重複：
+const (
+	// selfCheckPersistentKey 第三層持久防重的 app_settings key（見 maybeRunDaily 說明）。
+	selfCheckPersistentKey = "ops_selfcheck_last_date"
+)
+
+// maybeRunDaily 窗口 + 當日冪等閘門判斷；命中才真的執行巡檢。三層防重複：
 //  1. in-memory lastRunDate：同一實例同一天只認領一次，避免同一小時內因故被呼叫多次而重跑。
 //  2. pg_try_advisory_lock：多實例（Railway 水平擴展）情境下，同一時刻只有一個實例真的執行本輪
 //     查詢；沒搶到鎖的實例直接跳過（不影響正確性——本檢查全程唯讀，就算真的重複執行兩次，頂多是
 //     Telegram 告警因 notify.Alert 的 30 分節流被吃掉一次，不會有資料被誤改的風險，這裡用鎖純粹是
 //     避免重複查詢的效能考量，比照 vip_renewal.go 的取捨）。
+//  3. 持久標記（app_settings key=ops_selfcheck_last_date）：第三層持久防重：修部署落在08時窗口
+//     內重啟造成的重複推播（2026-08-28 實案）。in-memory 標記重啟歸零、advisory lock 執行完即
+//     主動 unlock，兩層在重啟後皆無法攔截同一天已執行過的情況；持久標記跨程序存活，確保當天已
+//     執行過就不再執行。讀取失敗時 warn 後視同未跑過（寧可重發也不要漏整天報告）。
 func (h *Handler) maybeRunDaily(ctx context.Context) {
 	now := taiwanNow()
 	if !inSelfCheckWindow(now) {
@@ -156,11 +167,35 @@ func (h *Handler) maybeRunDaily(ctx context.Context) {
 		}
 	}()
 
-	// 搶到鎖即視為「今天由本實例認領」，不論後面實際執行結果如何都不重試（下一次落在窗口內的
-	// tick 已是明天）——比照 vip_renewal.go 冪等閘門「先佔位再執行」的順序。
+	// 第三層：持久標記（在 lock 內查詢，避免多實例競態）。
+	var persistedDate string
+	if err := h.db.QueryRow(ctx,
+		`SELECT value FROM app_settings WHERE key = $1`, selfCheckPersistentKey,
+	).Scan(&persistedDate); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		log.Warn().Err(err).Msg("ops selfcheck: read persistent date marker failed, treating as not-run")
+	}
+	if persistedDate == today {
+		// 本實例重啟前已執行過，同步 in-memory 後跳過。
+		h.mu.Lock()
+		h.lastRunDate = today
+		h.mu.Unlock()
+		log.Debug().Msg("ops selfcheck: persistent marker says already ran today, skip")
+		return
+	}
+
+	// 搶到鎖且持久標記確認今天尚未執行，先佔位（in-memory + 持久），再執行——
+	// 比照 vip_renewal.go 冪等閘門「先佔位再執行」的順序。
 	h.mu.Lock()
 	h.lastRunDate = today
 	h.mu.Unlock()
+
+	if _, err := h.db.Exec(ctx,
+		`INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+		selfCheckPersistentKey, today,
+	); err != nil {
+		log.Warn().Err(err).Msg("ops selfcheck: upsert persistent date marker failed (continuing)")
+	}
 
 	results := h.runChecks(ctx)
 	h.reportSelfCheck(results)
