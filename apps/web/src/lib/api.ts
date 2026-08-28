@@ -1907,6 +1907,7 @@ export interface HundredHero {
   name: string
   avatar_url: string
   total_km: number
+  title: string          // 目前掛載展示的稱號名稱；未掛載為空字串
   is_following: boolean // 登入時才有意義；未登入恆 false
   is_self: boolean       // 登入時才有意義；未登入恆 false
 }

@@ -17,6 +17,7 @@ type HundredHero struct {
 	Name        string  `json:"name"`       // 暱稱優先：COALESCE(NULLIF(nickname,''), 顯示名稱)
 	AvatarURL   string  `json:"avatar_url"`
 	TotalKm     float64 `json:"total_km"`
+	Title       string  `json:"title"`         // 玩家目前掛載展示的稱號名稱；未掛載為空字串（欄位命名沿用 race/leaderboard.go LeaderRow.Title）
 	IsFollowing bool    `json:"is_following"` // 登入時才有意義；未登入或查詢自己恆 false
 	IsSelf      bool    `json:"is_self"`      // 登入時才有意義；未登入恆 false
 }
@@ -32,13 +33,16 @@ func (h *Handler) HundredHeroes(w http.ResponseWriter, r *http.Request) {
 	// 「廣三」而非排行榜慣用的顯示名稱「MiMi」）。personal_leaderboard.go 原本仍用 p.nickname 優先，
 	// 屬既有不一致，已於同日全面盤點後改齊統一口徑（顯示名稱統一口徑（2026-08-28 使用者定案：
 	// 個資暱稱已由顯示名稱取代））。
+	// 掛載稱號：LEFT JOIN title_defs 取 u.displayed_title 對應的稱號名稱，沿用 race/leaderboard.go
+	// computeFinishersWith 同款查法（COALESCE(td.name,'') AS title，未掛載/查無定義即空字串）。
 	rows, err := h.db.Query(r.Context(), `
 		SELECT u.id::text, COALESCE(NULLIF(u.name,''), u.handle) AS name,
-		       COALESCE(u.avatar_url,'') AS avatar_url, u.total_km,
+		       COALESCE(u.avatar_url,'') AS avatar_url, u.total_km, COALESCE(td.name,'') AS title,
 		       ($1 <> '' AND EXISTS(
 		           SELECT 1 FROM follows f WHERE f.follower_id = NULLIF($1,'')::uuid AND f.followee_id = u.id
 		       )) AS is_following
 		FROM users u
+		LEFT JOIN title_defs td ON td.code = u.displayed_title
 		WHERE u.total_km >= 100
 		ORDER BY u.total_km DESC
 		LIMIT 100`, userID)
@@ -51,7 +55,7 @@ func (h *Handler) HundredHeroes(w http.ResponseWriter, r *http.Request) {
 	out := []HundredHero{}
 	for rows.Next() {
 		var row HundredHero
-		if err := rows.Scan(&row.UserID, &row.Name, &row.AvatarURL, &row.TotalKm, &row.IsFollowing); err != nil {
+		if err := rows.Scan(&row.UserID, &row.Name, &row.AvatarURL, &row.TotalKm, &row.Title, &row.IsFollowing); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
