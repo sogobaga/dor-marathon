@@ -54,7 +54,7 @@ export async function generateMetadata(): Promise<Metadata> {
       siteName: 'DOR｜城市探索',
       locale: 'zh_TW',
       type: 'website',
-      images: [{ url: 'https://www.dor.tw/brand-hero-og.jpg', width: 1200, height: 630, alt: 'DOR｜城市探索——把城市，變成你的遊戲場' }],
+      images: [{ url: 'https://www.dor.tw/brand-hero-og-v2.jpg', width: 1200, height: 630, alt: 'DOR｜城市探索——把城市，變成你的遊戲場' }],
     },
     twitter: {
       card: 'summary_large_image', // 有 1200×630 主視覺後改大圖卡（原 summary 小方圖）

@@ -341,7 +341,7 @@ export function GuestHero() {
       <div>
         {/* width/height 固定屬性防 CLS；實際尺寸由 CSS width:100% 縮放 */}
         <img
-          src="/brand-hero.webp"
+          src="/brand-hero-v2.webp"
           alt="DOR 城市探索——把城市，變成你的遊戲場：跑步即冒險、打卡集卡片、跑旅遍台灣"
           width={1400}
           height={735}
