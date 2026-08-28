@@ -378,6 +378,9 @@ func main() {
 		// 跑者充電站（合作商家目錄，公開，登入後附帶收藏狀態）
 		r.With(middleware.OptionalAuth(authSvc)).Mount("/partner-shops", partnerHandler.PublicRouter())
 
+		// 百里英雄榜（累積里程 >= 100km 前 100 名，公開，登入後附帶追蹤/本人狀態）
+		r.With(middleware.OptionalAuth(authSvc)).Get("/heroes/hundred", profileHandler.HundredHeroes)
+
 		// 圖片取用（公開）
 		r.Mount("/images", imageHandler.PublicRouter())
 

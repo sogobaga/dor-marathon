@@ -27,6 +27,7 @@ export default function MemberPanel({
   onOpenPerks,
   onOpenMonopoly,
   onOpenRewards,
+  onOpenHeroes,
   onUploadAvatar,
   uploadingAvatar,
   onReady,
@@ -43,6 +44,7 @@ export default function MemberPanel({
   onOpenPerks?: () => void
   onOpenMonopoly?: () => void
   onOpenRewards?: () => void
+  onOpenHeroes?: () => void
   onUploadAvatar?: (file: File) => void
   uploadingAvatar?: boolean
   onReady?: () => void
@@ -184,7 +186,7 @@ export default function MemberPanel({
                 onClick={(e) => { e.stopPropagation(); if (dash.training_entry === 'shown') onOpenTraining?.() }}
                 style={{ ...taskBtn, cursor: dash.training_entry === 'shown' ? 'pointer' : 'default', opacity: dash.training_entry === 'shown' ? 1 : 0.62 }}
               >
-                <span style={{ fontSize: 15, fontWeight: 900 }}>🏃 自主訓練</span>
+                <span style={{ fontSize: 15, fontWeight: 900 }}>自主訓練</span>
                 <span style={{ fontSize: 11, fontWeight: 700 }}>{dash.training_entry === 'locked' ? '即將開放 ›' : '打造你的專屬課表 ›'}</span>
               </button>
             )}
@@ -206,8 +208,8 @@ export default function MemberPanel({
 
       {/* 探索入口（面板下方、後台可控可見性；首頁不顯示）：兩欄直排——
           左欄(上→下)：城市探索、卡片探索、成就探索、跑者充電站、數據探索
-          右欄(上→下)：個人任務、知識探索、活動獎勵、環台大富翁。
-          跑者充電站／活動獎勵開放全體會員恆顯示；其餘由各自 *_entry 三態控管（hidden 不渲染、locked 反灰）。
+          右欄(上→下)：個人任務、知識探索、活動獎勵、環台大富翁、百里英雄榜。
+          跑者充電站／活動獎勵／百里英雄榜開放全體會員恆顯示；其餘由各自 *_entry 三態控管（hidden 不渲染、locked 反灰）。
           外層 alignItems:flex-start，左右兩欄各依內容高度堆疊（按鈕數不同也不會被拉伸）；entryBtn 用 width:100% 撐滿欄寬。 */}
       {showEntries && user && dash && (
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 10 }}>
@@ -258,7 +260,7 @@ export default function MemberPanel({
               <button disabled={dash.personal_entry === 'locked'}
                 onClick={(e) => { e.stopPropagation(); if (dash.personal_entry === 'shown') onOpenPersonalTasks?.() }}
                 style={{ ...entryBtn, opacity: dash.personal_entry === 'shown' ? 1 : 0.6, cursor: dash.personal_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>個人任務</span>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏃 個人任務</span>
                 <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.personal_entry === 'locked' ? '即將開放 ›' : '開始你的訓練旅程 ›'}</span>
               </button>
             )}
@@ -284,6 +286,13 @@ export default function MemberPanel({
                 <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.monopoly_entry === 'locked' ? '即將開放 ›' : '擲骰前進，好運等你 ›'}</span>
               </button>
             )}
+            {/* 百里英雄榜：不比照 *_entry 三態控管，全體會員恆顯示（比照跑者充電站/活動獎勵） */}
+            <button
+              onClick={(e) => { e.stopPropagation(); onOpenHeroes?.() }}
+              style={entryBtn}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏅 百里英雄榜</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>突破百公里的跑者 ›</span>
+            </button>
           </div>
         </div>
       )}

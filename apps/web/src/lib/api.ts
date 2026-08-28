@@ -1881,6 +1881,22 @@ export const followApi = {
     request<null>(`/profile/follow/${userId}`, { method: 'DELETE', headers: withAuth(token) }),
 }
 
+// --- 百里英雄榜（累積里程 >= 100km 前 100 名；公開，登入後附帶 is_following/is_self）---
+
+export interface HundredHero {
+  user_id: string
+  name: string
+  avatar_url: string
+  total_km: number
+  is_following: boolean // 登入時才有意義；未登入恆 false
+  is_self: boolean       // 登入時才有意義；未登入恆 false
+}
+
+export const heroesApi = {
+  hundred: (token?: string) =>
+    request<{ heroes: HundredHero[]; count: number }>('/heroes/hundred', token ? { headers: withAuth(token) } : undefined),
+}
+
 // --- 個人任務（跑者生命週期 10 計畫 × 每 100 天鏈式任務）---
 
 export interface PersonalPlan {
