@@ -129,7 +129,7 @@ export default function RacesScreen({
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       {/* Header（精簡品牌列；登出置最右上角） */}
       <header style={{ padding: 'var(--app-top) max(22px, env(safe-area-inset-right, 0px)) 0 max(22px, env(safe-area-inset-left, 0px))', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-        <div style={{ fontSize: 11, letterSpacing: '.18em', color: 'var(--fug)', fontWeight: 600 }}>
+        <div style={{ fontSize: 13.5, letterSpacing: '.18em', color: 'var(--fug)', fontWeight: 800 }}>
           DOR · 城市探索
         </div>
         {user && (
@@ -182,7 +182,7 @@ export default function RacesScreen({
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {/* 會員資訊面板：固定最上方；面板收合時完整顯示，可自行捲動（底部留白略大於收合面板高度，與個資頁一致） */}
         <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '4px 18px 160px' }}>
-          <MemberPanel onOpenProfile={onOpenProfile} onOpenPersonalTasks={onOpenPersonalTasks} onOpenTraining={onOpenTraining} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} showEntries={false} />
+          <MemberPanel onOpenProfile={onOpenProfile} onOpenPersonalTasks={onOpenPersonalTasks} onOpenTraining={onOpenTraining} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} showEntries={false} showHero />
         </div>
 
         {/* 可拖曳活動列表面板 */}

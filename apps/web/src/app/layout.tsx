@@ -47,6 +47,18 @@ export async function generateMetadata(): Promise<Metadata> {
       apple: '/apple-touch-icon.png',
     },
     appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'DOR' },
+    openGraph: {
+      title: 'DOR｜城市探索',
+      description: '一場把城市變成賽道的跑步挑戰——不用站上起跑線，也能用每一次出門，跑出屬於自己的完賽故事。',
+      url: 'https://www.dor.tw',
+      siteName: 'DOR｜城市探索',
+      locale: 'zh_TW',
+      type: 'website',
+      images: [{ url: 'https://www.dor.tw/icon-512.png', width: 512, height: 512, alt: 'DOR｜城市探索' }],
+    },
+    twitter: {
+      card: 'summary',
+    },
   }
 }
 

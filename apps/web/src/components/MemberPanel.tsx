@@ -31,6 +31,7 @@ export default function MemberPanel({
   uploadingAvatar,
   onReady,
   showEntries = true,
+  showHero = false,
 }: {
   dash?: DashboardInfo | null
   onOpenProfile?: () => void
@@ -47,6 +48,7 @@ export default function MemberPanel({
   uploadingAvatar?: boolean
   onReady?: () => void
   showEntries?: boolean // 城市探索/卡片圖鑑入口：首頁隱藏(小尺寸會被遮)、僅會員資料頁顯示
+  showHero?: boolean   // 首頁訪客 Hero 區：僅在首頁未登入時顯示品牌 Hero，取代「？」頭像＋登入鈕
 }) {
   const controlled = dashProp !== undefined // 有傳 dash（含 null）＝受控；未傳＝用共用快取
   const { dash: hookDash, loading, user } = useDashboard() // 共用快取：與會員資訊頁同一份、切頁不再 loading
@@ -79,6 +81,47 @@ export default function MemberPanel({
   }, [spFrozen])
 
   const clickable = !!user && !!onOpenProfile
+
+  // 首頁訪客 Hero 區（僅 showHero=true 且未登入時）
+  if (showHero && !user) {
+    return (
+      <>
+        <div style={heroWrap}>
+          {/* 1. 大字標題 */}
+          <h2 style={heroTitle}>把城市，變成你的遊戲場</h2>
+          {/* 2. 副文案 */}
+          <p style={heroSub}>
+            一場把城市變成賽道的跑步挑戰——不用站上起跑線，也能用每一次出門，跑出屬於自己的完賽故事。
+          </p>
+          {/* 3. 三支柱 */}
+          <div style={heroPillars}>
+            <div style={heroPillar}>
+              <span style={heroPillarIcon}>🏃</span>
+              <span style={heroPillarText}><b>跑步即冒險</b> — GPS 跑步途中隨機觸發任務，賺經驗值升級</span>
+            </div>
+            <div style={heroPillar}>
+              <span style={heroPillarIcon}>🗺️</span>
+              <span style={heroPillarText}><b>打卡集卡片</b> — 探索全台關主據點，完成挑戰、收集限定卡片</span>
+            </div>
+            <div style={heroPillar}>
+              <span style={heroPillarIcon}>🎲</span>
+              <span style={heroPillarText}><b>玩著跑遍台灣</b> — 環台大富翁、稱號成就、生命週期任務</span>
+            </div>
+          </div>
+          {/* 4. 主 CTA */}
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowLogin(true) }}
+            style={heroCta}
+          >
+            免費開始探索
+          </button>
+          {/* 5. 提示小字 */}
+          <p style={heroHint}>↓ 下方看看正在進行的賽事與挑戰</p>
+        </div>
+        {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
+      </>
+    )
+  }
 
   return (
     <>
@@ -330,3 +373,14 @@ function fmtFreezeLeft(sec: number): string {
 const barOuter: React.CSSProperties = { height: 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden', marginTop: 5 }
 const barInner: React.CSSProperties = { height: '100%', background: 'var(--fug)', borderRadius: 999, transition: 'width .3s' }
 const loginBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 10, padding: '9px 18px', cursor: 'pointer', fontSize: 14 }
+
+// 首頁訪客 Hero 區樣式（僅未登入首頁使用）
+const heroWrap: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 'var(--card-pad, 16px)', boxShadow: 'var(--card-shadow, none)' }
+const heroTitle: React.CSSProperties = { margin: '0 0 8px', fontSize: 22, fontWeight: 900, color: 'var(--tx)', lineHeight: 1.25 }
+const heroSub: React.CSSProperties = { margin: '0 0 12px', fontSize: 12.5, fontWeight: 500, color: 'var(--tx-dim)', lineHeight: 1.6 }
+const heroPillars: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }
+const heroPillar: React.CSSProperties = { display: 'flex', alignItems: 'flex-start', gap: 7, background: 'var(--bg-2)', borderRadius: 10, padding: '8px 10px' }
+const heroPillarIcon: React.CSSProperties = { fontSize: 14, flexShrink: 0, lineHeight: 1.5 }
+const heroPillarText: React.CSSProperties = { fontSize: 11.5, color: 'var(--tx-dim)', lineHeight: 1.5 }
+const heroCta: React.CSSProperties = { width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 12, padding: '12px 0', cursor: 'pointer', fontSize: 15, fontFamily: 'inherit', marginBottom: 8 }
+const heroHint: React.CSSProperties = { margin: 0, fontSize: 11, color: 'var(--tx-faint)', textAlign: 'center' }
