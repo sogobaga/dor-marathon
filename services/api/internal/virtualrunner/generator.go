@@ -257,10 +257,15 @@ func (r *Repository) ApplyGeneratedActivity(ctx context.Context, userID string, 
 			userID, act.DistanceKm, act.DurationS, act.PaceS, recordedAt, act.KmPaces); err != nil {
 			return fmt.Errorf("insert virtual runner activity: %w", err)
 		}
+		// exp：比照真人「每滿 1km +1 EXP」口徑就地累加（2026-08-28 使用者要求：虛擬選手也要有
+		// 對應等級，否則累積數百公里卻 Lv.1 一看就是假人）。刻意「不走」真人發獎管線
+		// （worker awardMileageDedup／integration mileage_exp）——exp_awarded=TRUE 鐵律不變，
+		// 推薦獎勵/任務/體力/每日上限等真人機制對虛擬帳號一律不觸發；也刻意不發 DP
+		// （DP 僅本人登入可見，虛擬帳號永不登入，發了只污染經濟統計）。
 		if _, err = tx.Exec(ctx, `
-			UPDATE users SET total_km = total_km + $1, updated_at = NOW() WHERE id = $2`,
-			act.DistanceKm, userID); err != nil {
-			return fmt.Errorf("update total_km: %w", err)
+			UPDATE users SET total_km = total_km + $1, exp = exp + $2, updated_at = NOW() WHERE id = $3`,
+			act.DistanceKm, int(act.DistanceKm), userID); err != nil {
+			return fmt.Errorf("update total_km/exp: %w", err)
 		}
 	}
 
