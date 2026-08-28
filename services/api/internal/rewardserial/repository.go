@@ -83,14 +83,14 @@ func (r *Repository) DeleteMerchant(ctx context.Context, id string) error {
 // --- 序號組 ---
 
 const groupCols = `g.id, g.merchant_id, COALESCE(m.name,''), g.name, COALESCE(g.item_label,''), g.is_line_point,
-	g.valid_from, g.valid_until, g.use_limit_type, g.use_limit_count, g.grant_count, g.applies_all_races,
+	g.face_value, g.valid_from, g.valid_until, g.use_limit_type, g.use_limit_count, g.grant_count, g.applies_all_races,
 	COALESCE(g.usage_note,''), COALESCE(g.icon_url,''), COALESCE(g.description,''), g.created_at`
 
 func scanGroup(row pgx.Row) (*Group, error) {
 	g := &Group{}
 	var merchantID *string
 	err := row.Scan(&g.ID, &merchantID, &g.MerchantName, &g.Name, &g.ItemLabel, &g.IsLinePoint,
-		&g.ValidFrom, &g.ValidUntil, &g.UseLimitType, &g.UseLimitCount, &g.GrantCount, &g.AppliesAllRaces,
+		&g.FaceValue, &g.ValidFrom, &g.ValidUntil, &g.UseLimitType, &g.UseLimitCount, &g.GrantCount, &g.AppliesAllRaces,
 		&g.UsageNote, &g.IconURL, &g.Description, &g.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -241,11 +241,11 @@ func (r *Repository) CreateGroup(ctx context.Context, in GroupInput, validFrom, 
 	var id string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO reward_serial_groups
-			(merchant_id, name, item_label, is_line_point, valid_from, valid_until, use_limit_type, use_limit_count, grant_count, applies_all_races,
+			(merchant_id, name, item_label, is_line_point, face_value, valid_from, valid_until, use_limit_type, use_limit_count, grant_count, applies_all_races,
 			 usage_note, icon_url, description)
-		VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9,$10,NULLIF($11,''),NULLIF($12,''),NULLIF($13,''))
+		VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),NULLIF($13,''),NULLIF($14,''))
 		RETURNING id`,
-		in.MerchantID, in.Name, in.ItemLabel, in.IsLinePoint, validFrom, validUntil, in.UseLimitType, in.UseLimitCount, in.GrantCount, in.AppliesAllRaces,
+		in.MerchantID, in.Name, in.ItemLabel, in.IsLinePoint, in.FaceValue, validFrom, validUntil, in.UseLimitType, in.UseLimitCount, in.GrantCount, in.AppliesAllRaces,
 		in.UsageNote, in.IconURL, in.Description).
 		Scan(&id)
 	if err != nil {
@@ -271,11 +271,11 @@ func (r *Repository) UpdateGroup(ctx context.Context, id string, in GroupInput, 
 
 	ct, err := tx.Exec(ctx, `
 		UPDATE reward_serial_groups SET
-			merchant_id=$1, name=$2, item_label=NULLIF($3,''), is_line_point=$4, valid_from=$5, valid_until=$6,
-			use_limit_type=$7, use_limit_count=$8, grant_count=$9, applies_all_races=$10,
-			usage_note=NULLIF($11,''), icon_url=NULLIF($12,''), description=NULLIF($13,'')
-		WHERE id=$14`,
-		in.MerchantID, in.Name, in.ItemLabel, in.IsLinePoint, validFrom, validUntil,
+			merchant_id=$1, name=$2, item_label=NULLIF($3,''), is_line_point=$4, face_value=$5, valid_from=$6, valid_until=$7,
+			use_limit_type=$8, use_limit_count=$9, grant_count=$10, applies_all_races=$11,
+			usage_note=NULLIF($12,''), icon_url=NULLIF($13,''), description=NULLIF($14,'')
+		WHERE id=$15`,
+		in.MerchantID, in.Name, in.ItemLabel, in.IsLinePoint, in.FaceValue, validFrom, validUntil,
 		in.UseLimitType, in.UseLimitCount, in.GrantCount, in.AppliesAllRaces,
 		in.UsageNote, in.IconURL, in.Description, id)
 	if err != nil {

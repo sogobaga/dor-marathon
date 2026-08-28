@@ -38,15 +38,21 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
 
 type SortedReward = UserReward & { urgent?: 'soon' | 'expired' }
 
+// 排序用的最小介面：single reward 與 bundle 卡（見下方 groupRewards）都能滿足，讓同一套
+// 「近到期置頂/已過期分群/其餘新到舊」邏輯同時套用在兩種卡片上。
+type Sortable = { used: boolean; valid_until?: string; obtained_at: string }
+
 // 排序規則（使用者拍板：近到期置頂+外框、其餘新到舊；過期的合理處理＝仍顯示、獨立標示「已過期」，
 // 排在「即將到期」群組之後、「其餘」群組之前——比純粹「離現在最近」排序更符合直覺：尚未過期者按
 // 「還剩多久」由少到多排（最快到期在最上面）；已過期者按「多久前過期」由近到遠排（剛過期的比很久
 // 以前過期的更值得被看見，避免陳年過期項目反而排到最頂端）。
-function sortRewards(list: UserReward[]): SortedReward[] {
+// 泛型化（原僅吃 UserReward[]）：bundle 卡片以「包內最早到期」合成的 Sortable 代入，即可與零散
+// 序號卡片用同一套規則混合排序（見 groupRewards）。
+function classifyAndSort<T extends Sortable>(list: T[]): (T & { urgent?: 'soon' | 'expired' })[] {
   const now = Date.now()
-  const soon: SortedReward[] = []
-  const expired: SortedReward[] = []
-  const rest: UserReward[] = []
+  const soon: (T & { urgent?: 'soon' | 'expired' })[] = []
+  const expired: (T & { urgent?: 'soon' | 'expired' })[] = []
+  const rest: T[] = []
   for (const r of list) {
     if (!r.used && r.valid_until) {
       const t = new Date(r.valid_until).getTime()
@@ -64,6 +70,71 @@ function sortRewards(list: UserReward[]): SortedReward[] {
   return [...soon, ...expired, ...rest]
 }
 
+// 組合包卡片資料（migration 149）：同一 bundle_id 的多筆 user_rewards 併成一張卡。
+export type BundleCardData = {
+  kind: 'bundle'
+  bundle_id: string
+  label: string
+  total: number
+  items: UserReward[] // 已排序：未使用在前、已使用在後，供展開列表用
+  usedCount: number
+  urgent?: 'soon' | 'expired'
+}
+type SingleCardData = { kind: 'single'; reward: SortedReward }
+export type WalletCard = BundleCardData | SingleCardData
+
+// group by bundle_id：非空者併成一張組合包卡（bundle 卡以「包內最早到期」為基準參與排序、
+// 全部已使用才視為 used=true 不再標示近到期/已過期，比照單張序號「已使用不受期限影響」的邏輯）；
+// bundle_id 為空維持一列一卡，行為與原本完全相同。
+function groupRewards(list: UserReward[]): WalletCard[] {
+  const singles: UserReward[] = []
+  const bundleMap = new Map<string, UserReward[]>()
+  for (const r of list) {
+    if (r.bundle_id) {
+      const arr = bundleMap.get(r.bundle_id)
+      if (arr) arr.push(r)
+      else bundleMap.set(r.bundle_id, [r])
+    } else {
+      singles.push(r)
+    }
+  }
+
+  type Pre = Sortable & { card: WalletCard }
+  const pre: Pre[] = []
+  for (const r of singles) {
+    pre.push({ used: r.used, valid_until: r.valid_until, obtained_at: r.obtained_at, card: { kind: 'single', reward: r } })
+  }
+  for (const [bundle_id, items] of bundleMap) {
+    const usedCount = items.filter((i) => i.used).length
+    const allUsed = usedCount === items.length
+    let earliestValidUntil: string | undefined
+    for (const it of items) {
+      if (!it.valid_until) continue
+      if (!earliestValidUntil || new Date(it.valid_until).getTime() < new Date(earliestValidUntil).getTime()) earliestValidUntil = it.valid_until
+    }
+    let earliestObtainedAt = items[0].obtained_at
+    for (const it of items) {
+      if (new Date(it.obtained_at).getTime() < new Date(earliestObtainedAt).getTime()) earliestObtainedAt = it.obtained_at
+    }
+    const first = items[0]
+    pre.push({
+      used: allUsed,
+      valid_until: earliestValidUntil,
+      obtained_at: earliestObtainedAt,
+      card: {
+        kind: 'bundle',
+        bundle_id,
+        label: first.bundle_label || first.item_label,
+        total: first.bundle_total ?? 0,
+        items: items.slice().sort((a, b) => Number(a.used) - Number(b.used)),
+        usedCount,
+      },
+    })
+  }
+
+  return classifyAndSort(pre).map((p) => (p.card.kind === 'bundle' ? { ...p.card, urgent: p.urgent } : { kind: 'single', reward: { ...p.card.reward, urgent: p.urgent } }))
+}
+
 export default function RewardsWalletScreen({ onBack }: { onBack: () => void }) {
   const token = getUserToken() || undefined
   const { data, error, isLoading, mutate } = useSWR(
@@ -71,9 +142,11 @@ export default function RewardsWalletScreen({ onBack }: { onBack: () => void }) 
     () => withUserAuth((t) => rewardsApi.list(t)),
   )
   const rewards = data?.rewards ?? null
-  const sorted = rewards ? sortRewards(rewards) : []
+  const cards = rewards ? groupRewards(rewards) : []
   const [detailId, setDetailId] = useState<string | null>(null)
-  const detail = sorted.find((r) => r.id === detailId) ?? null
+  // 展開的 modal 僅用於「單張」卡片（bundle 卡點擊改為就地展開清單，見 BundleCard）；
+  // 在全量 rewards 裡找（而非只找 singles）不影響行為，因為 detailId 只會被單張卡片的 onDetail 設定。
+  const detail = rewards?.find((r) => r.id === detailId) ?? null
 
   // 標記已使用：樂觀更新 SWR 快取（不重打列表 API），失敗回滾。
   // 用 functional mutate（以「當下最新快取」為基礎、只 patch 這一筆），避免以呼叫當下的舊快照重建整個
@@ -111,11 +184,15 @@ export default function RewardsWalletScreen({ onBack }: { onBack: () => void }) 
           <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
         ) : error ? (
           <div style={{ color: 'var(--hunt)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>載入失敗，請稍後再試</div>
-        ) : sorted.length === 0 ? (
+        ) : cards.length === 0 ? (
           <div style={{ color: 'var(--tx-dim)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>尚未獲得任何活動獎勵，完成挑戰試試手氣吧！</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {sorted.map((r) => <RewardCard key={r.id} reward={r} onDetail={() => setDetailId(r.id)} />)}
+            {cards.map((c) =>
+              c.kind === 'bundle'
+                ? <BundleCard key={c.bundle_id} card={c} onMarkUsed={markUsed} />
+                : <RewardCard key={c.reward.id} reward={c.reward} onDetail={() => setDetailId(c.reward.id)} />
+            )}
           </div>
         )}
       </div>
@@ -173,6 +250,91 @@ function RewardCard({ reward, onDetail }: { reward: SortedReward; onDetail: () =
         </div>
       </div>
       <button onClick={(e) => { e.stopPropagation(); onDetail() }} style={detailBtn}>獎勵資訊</button>
+    </div>
+  )
+}
+
+// 組合包卡（migration 149）：標題為 bundle_label（已含總額，如「LINE POINTS 3500」）＋總額徽章、
+// 「已兌換 X/N」進度；點擊就地展開包內每張零散序號（各自 code/連結/使用狀態，各自可標記已使用，
+// 沿用 markUsed 逐張標記——不走單張的 RewardDetailModal，因為一個 bundle 對應多筆 user_reward）。
+function BundleCard({ card, onMarkUsed }: { card: BundleCardData; onMarkUsed: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(false)
+  const urgent = card.urgent
+  const total = card.items.length
+  return (
+    <div
+      style={{
+        background: 'var(--bg-1)',
+        border: urgent ? '2px solid var(--gold)' : '1px solid var(--line)',
+        borderRadius: 'var(--radius-lg, 14px)',
+        boxShadow: urgent ? '0 4px 18px rgba(197,139,29,.22)' : 'var(--card-shadow, none)',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        onClick={() => setExpanded((e) => !e)}
+        style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '12px 14px', cursor: 'pointer' }}
+      >
+        <div style={iconWrap}><span style={{ fontSize: 24 }}>🎁</span></div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 14.5, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {card.label}
+            </span>
+            {card.total > 0 && <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--gold)' }}>{card.total}</span>}
+            {urgent === 'soon' && <span style={soonBadge}>即將到期</span>}
+            {urgent === 'expired' && <span style={expiredBadge}>已過期</span>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, fontSize: 11, flexWrap: 'wrap' }}>
+            <span style={{ color: 'var(--tx-faint)' }}>組合包，共 {total} 張</span>
+            <span style={{ color: card.usedCount === total ? 'var(--tx-faint)' : 'var(--fug)', fontWeight: 700 }}>
+              已兌換 {card.usedCount}/{total}
+            </span>
+          </div>
+        </div>
+        <span style={{ fontSize: 12, color: 'var(--tx-dim)', flexShrink: 0, transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}>▾</span>
+      </div>
+
+      {expanded && (
+        <div style={{ borderTop: '1px solid var(--line)', padding: '10px 14px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {card.items.map((it) => <BundleItemRow key={it.id} item={it} onMarkUsed={() => onMarkUsed(it.id)} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// 展開清單內的單張序號列：獨立顯示 code/連結/使用狀態，各自可複製、前往兌換、標記已使用
+// （沿用外層 markUsed，同一個樂觀更新+回滾邏輯，只是入口從 modal 換成這裡的逐列按鈕）。
+function BundleItemRow({ item, onMarkUsed }: { item: UserReward; onMarkUsed: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const notStarted = isNotStarted(item)
+  return (
+    <div style={{ background: 'var(--bg-2)', borderRadius: 10, padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 800, color: 'var(--gold)', letterSpacing: '.02em', overflowWrap: 'break-word', wordBreak: 'break-all' }}>
+          {item.code}
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 700, flexShrink: 0, color: item.used ? 'var(--tx-faint)' : notStarted ? 'var(--tx-dim)' : 'var(--fug)' }}>
+          {item.used ? `已使用${item.used_at ? `（${fmtDateTime(item.used_at)}）` : ''}` : notStarted ? '尚未開始' : '未使用'}
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button
+          onClick={() => { navigator.clipboard?.writeText(item.code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }}
+          style={ghostBtnSmall}
+        >{copied ? '已複製' : '複製序號'}</button>
+        {item.link && (
+          <button onClick={() => window.open(item.link, '_blank', 'noopener,noreferrer')} style={ghostBtnSmall}>前往兌換</button>
+        )}
+        {!item.used && (
+          <button
+            onClick={onMarkUsed}
+            disabled={notStarted}
+            style={{ ...ghostBtnSmall, opacity: notStarted ? 0.5 : 1, cursor: notStarted ? 'not-allowed' : 'pointer' }}
+          >{notStarted ? '尚未開始' : '標記已使用'}</button>
+        )}
+      </div>
     </div>
   )
 }
@@ -292,5 +454,7 @@ const infoLabel: React.CSSProperties = { color: 'var(--tx-faint)', flexShrink: 0
 const infoVal: React.CSSProperties = { color: 'var(--tx)', fontWeight: 700, textAlign: 'right' }
 const codeBox: React.CSSProperties = { flex: 1, minWidth: 0, background: 'var(--bg-2)', border: '1px dashed var(--line-2)', borderRadius: 8, padding: '9px 12px', fontSize: 14, fontWeight: 800, color: 'var(--gold)', fontFamily: 'monospace', letterSpacing: '.03em', overflowWrap: 'break-word', wordBreak: 'break-all' }
 const ghostBtn: React.CSSProperties = { flexShrink: 0, background: 'var(--bg-2)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '9px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
+// BundleItemRow 展開列表內的按鈕：比 ghostBtn 更小，適合一列多顆並排（複製/前往兌換/標記已使用）
+const ghostBtnSmall: React.CSSProperties = { flexShrink: 0, background: 'var(--bg-1)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 7, padding: '6px 10px', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }
 const primaryBtn: React.CSSProperties = { width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 10, padding: '11px 0', fontSize: 13.5, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }
 const ghostFullBtn: React.CSSProperties = { width: '100%', background: 'var(--bg-2)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '11px 0', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }

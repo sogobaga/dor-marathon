@@ -21,6 +21,10 @@ type Group struct {
 	Name            string     `json:"name"`
 	ItemLabel       string     `json:"item_label"` // 面額/品項（如「100元」「咖啡兌換」）
 	IsLinePoint     bool       `json:"is_line_point"`
+	// FaceValue 結構化面額（migration 149）：如 1000/500，取代靠 name/item_label 字串解析數字（見
+	// race/reward_preview.go largestNumberIn）。組合包（activityreward.RewardItem.Bundle）的
+	// bundle_total = Σ(FaceValue × count) 靠此欄位計算，不能繼續賭字串裡一定能解析出數字。0=未設。
+	FaceValue       int        `json:"face_value"`
 	ValidFrom       *time.Time `json:"valid_from"`      // 開始時間；null=即刻可用
 	ValidUntil      *time.Time `json:"valid_until"`     // 使用期限；null=無期限
 	UseLimitType    string     `json:"use_limit_type"`  // single|repeat|unlimited
@@ -44,6 +48,7 @@ type GroupInput struct {
 	Name            string   `json:"name"`
 	ItemLabel       string   `json:"item_label"`
 	IsLinePoint     bool     `json:"is_line_point"`
+	FaceValue       int      `json:"face_value"` // 結構化面額（migration 149）：如 1000；0=未設
 	ValidFrom       *string  `json:"valid_from"`  // 開始時間；RFC3339；空字串/未帶=即刻可用
 	ValidUntil      *string  `json:"valid_until"` // RFC3339；空字串/未帶=無期限
 	UseLimitType    string   `json:"use_limit_type"`

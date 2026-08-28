@@ -67,6 +67,9 @@ func (s *Service) validateGroupInput(in *GroupInput) (*time.Time, *time.Time, er
 	if in.GrantCount <= 0 {
 		in.GrantCount = 1
 	}
+	if in.FaceValue < 0 {
+		in.FaceValue = 0 // 面額（migration 149）：負值視同未設，避免帶壞組合包 bundle_total 計算
+	}
 	in.UsageNote = strings.TrimSpace(in.UsageNote)
 	in.IconURL = strings.TrimSpace(in.IconURL)
 	in.Description = strings.TrimSpace(in.Description)

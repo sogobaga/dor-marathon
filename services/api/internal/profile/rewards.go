@@ -31,6 +31,12 @@ type UserReward struct {
 	Description  string     `json:"description,omitempty"`
 	CouponDefID  string     `json:"coupon_def_id,omitempty"` // kind=coupon 專用
 	AmountCents  *int       `json:"amount_cents,omitempty"`  // kind=coupon 專用：面額
+	// 組合包（migration 149，activityreward.grantSerialBundle）：同一次組合包發放的多張序號共用同一
+	// BundleID；前端 group by bundle_id 併成一張卡（BundleLabel 顯示名如「LINE POINTS 3500」、
+	// BundleTotal 為組合總面額）。非組合包（既有兩層抽獎單張序號獎勵）三欄皆為空，維持一列一卡不受影響。
+	BundleID     string     `json:"bundle_id,omitempty"`
+	BundleLabel  string     `json:"bundle_label,omitempty"`
+	BundleTotal  *int       `json:"bundle_total,omitempty"`
 	ValidFrom    *time.Time `json:"valid_from,omitempty"`
 	ValidUntil   *time.Time `json:"valid_until,omitempty"`
 	Used         bool       `json:"used"`
@@ -51,7 +57,8 @@ func (h *Handler) Rewards(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(code,''), COALESCE(link,''), COALESCE(item_label,''), COALESCE(merchant_name,''),
 		       COALESCE(usage_note,''), COALESCE(icon_url,''), COALESCE(description,''),
 		       COALESCE(coupon_def_id::text,''), amount_cents, valid_from, valid_until,
-		       used, used_at, obtained_at
+		       used, used_at, obtained_at,
+		       COALESCE(bundle_id::text,''), COALESCE(bundle_label,''), bundle_total
 		FROM user_rewards
 		WHERE user_id=$1
 		ORDER BY obtained_at DESC`, uid)
@@ -65,7 +72,8 @@ func (h *Handler) Rewards(w http.ResponseWriter, r *http.Request) {
 		var rr UserReward
 		if err := rows.Scan(&rr.ID, &rr.SourceType, &rr.SourceRaceID, &rr.SourceRegID, &rr.Kind,
 			&rr.Code, &rr.Link, &rr.ItemLabel, &rr.MerchantName, &rr.UsageNote, &rr.IconURL, &rr.Description,
-			&rr.CouponDefID, &rr.AmountCents, &rr.ValidFrom, &rr.ValidUntil, &rr.Used, &rr.UsedAt, &rr.ObtainedAt); err != nil {
+			&rr.CouponDefID, &rr.AmountCents, &rr.ValidFrom, &rr.ValidUntil, &rr.Used, &rr.UsedAt, &rr.ObtainedAt,
+			&rr.BundleID, &rr.BundleLabel, &rr.BundleTotal); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}

@@ -30,6 +30,7 @@ type GroupForm = {
   name: string
   item_label: string
   is_line_point: boolean
+  face_value: string // 結構化面額（migration 149），如 1000；空/0=未設
   valid_from: string // datetime-local；空=即刻可用
   valid_until: string // datetime-local；空=無期限
   use_limit_type: RewardUseLimitType
@@ -63,7 +64,7 @@ function sortGroupsByDenom<T extends { merchant_name?: string; name: string; ite
 }
 
 const EMPTY_GROUP: GroupForm = {
-  merchant_id: '', name: '', item_label: '', is_line_point: false, valid_from: '', valid_until: '',
+  merchant_id: '', name: '', item_label: '', is_line_point: false, face_value: '', valid_from: '', valid_until: '',
   use_limit_type: 'single', use_limit_count: '', grant_count: '1', applies_all_races: true, race_ids: [],
   usage_note: '', icon_url: '', description: '',
 }
@@ -177,6 +178,7 @@ export default function AdminRewardSerialsPage() {
       name: g.name,
       item_label: g.item_label,
       is_line_point: g.is_line_point,
+      face_value: g.face_value ? String(g.face_value) : '',
       valid_from: g.valid_from ? toLocalInput(g.valid_from) : '',
       valid_until: g.valid_until ? toLocalInput(g.valid_until) : '',
       use_limit_type: g.use_limit_type,
@@ -241,6 +243,7 @@ export default function AdminRewardSerialsPage() {
         name,
         item_label: groupForm.item_label.trim(),
         is_line_point: groupForm.is_line_point,
+        face_value: Math.max(0, parseInt(groupForm.face_value || '0', 10) || 0),
         valid_from: groupForm.valid_from ? new Date(groupForm.valid_from).toISOString() : null,
         valid_until: groupForm.valid_until ? new Date(groupForm.valid_until).toISOString() : null,
         use_limit_type: groupForm.use_limit_type,
@@ -394,7 +397,7 @@ export default function AdminRewardSerialsPage() {
                 <div key={g.id} onClick={() => editGroup(g)} style={{ ...rowCard, borderColor: groupForm.id === g.id ? 'var(--fug)' : 'var(--line)', cursor: 'pointer' }}>
                   <div style={{ fontSize: 13, fontWeight: 700 }}>{g.name}</div>
                   <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 2 }}>
-                    {g.merchant_name || '（未指定商家）'}{g.item_label ? ` · ${g.item_label}` : ''}
+                    {g.merchant_name || '（未指定商家）'}{g.item_label ? ` · ${g.item_label}` : ''}{g.face_value > 0 ? ` · 面額 ${g.face_value}` : ''}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 3 }}>
                     可用 {g.available_count} · 已發送 {g.issued_count} · 註銷 {g.void_count} ／ 共 {g.total_count}
@@ -418,6 +421,12 @@ export default function AdminRewardSerialsPage() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 8 }}>
               <F label="面額/品項"><input style={inp} value={groupForm.item_label} onChange={(e) => setGroupForm((f) => ({ ...f, item_label: e.target.value }))} placeholder="如：100元 / 咖啡兌換" /></F>
+              <F label="面額（單張，選填）">
+                <input style={inp} type="number" min={0} value={groupForm.face_value} onChange={(e) => setGroupForm((f) => ({ ...f, face_value: e.target.value }))} placeholder="如：1000" />
+              </F>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: -4, marginBottom: 4 }}>
+              單張序號的結構化面額（如 1000）；用於期望值試算與組合包總額計算 Σ(面額×數量)，優先於「面額/品項」名稱解析。
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 8 }}>
               <F label="開始時間（選填，空＝即刻可用）"><input style={inp} type="datetime-local" value={groupForm.valid_from} onChange={(e) => setGroupForm((f) => ({ ...f, valid_from: e.target.value }))} /></F>

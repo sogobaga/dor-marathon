@@ -57,6 +57,13 @@ export interface RewardDenom {
   group_id: string
   weight: number
 }
+// 序號組合包（migration 149）：固定組合，中獎後「全發」而非加權隨機抽一個——用於單張面額最高 1000
+// 的 LINE POINTS 要送大額（如 3500=1000×3+500×1）。與 denominations（加權隨機抽一個）互斥：
+// bundle 非空時該 serial 項目走組合包發放（all-or-nothing，任一面額組庫存不足整包不發+告警）。
+export interface RewardBundleEntry {
+  group_id: string // 面額組（reward_serial_groups.id）
+  count: number    // 這個面額發幾張（≥1）
+}
 export interface RewardItem {
   type: RewardItemType
   min?: number            // exp/dp/gp：均勻隨機區間下界（含）
@@ -65,7 +72,8 @@ export interface RewardItem {
   prob_bp: number          // 中獎機率，萬分位（10000=100%）；serial：該商家「給不給獎」的機率
   serial_group_id?: string // 【已過時，僅供向後相容】serial 舊格式單一序號組；新設定請用 merchant_id + denominations
   merchant_id?: string      // serial：指定商家（兩層抽獎第一層）
-  denominations?: RewardDenom[] // serial：該商家旗下序號組與抽獎權重（兩層抽獎第二層）
+  denominations?: RewardDenom[] // serial：該商家旗下序號組與抽獎權重（兩層抽獎第二層，加權隨機抽一個）
+  bundle?: RewardBundleEntry[]  // serial：固定組合包（全發，與 denominations 互斥），見 RewardBundleEntry
   coupon_def_id?: string    // coupon（活動優惠券，migration 138）：指定券種
   hidden?: boolean          // 前台「活動獎勵」預覽頁籤是否隱藏此項目（true=隱藏，發獎不受影響）
 }
@@ -136,6 +144,12 @@ export interface UserReward {
   description?: string
   coupon_def_id?: string // kind='coupon' 專用
   amount_cents?: number  // kind='coupon' 專用：面額（分）
+  // 組合包（migration 149）：同一次組合包發放的多張序號共用同一 bundle_id，前台錢包 group by
+  // bundle_id 併成一張卡（bundle_label 顯示名如「LINE POINTS 3500」、bundle_total 總面額）。
+  // 非組合包（單張序號獎勵）bundle_id 為空，維持一列一卡。
+  bundle_id?: string
+  bundle_label?: string
+  bundle_total?: number
   valid_from?: string
   valid_until?: string
   used: boolean
@@ -3327,6 +3341,7 @@ export interface RewardSerialGroup {
   name: string
   item_label: string
   is_line_point: boolean
+  face_value: number   // 結構化面額（migration 149）：如 1000/500，取代靠名稱字串解析；0=未設。組合包總額 Σ(face_value×count) 靠此欄
   valid_from: string | null
   valid_until: string | null
   use_limit_type: RewardUseLimitType
@@ -3349,6 +3364,7 @@ export interface RewardSerialGroupWriteBody {
   name: string
   item_label: string
   is_line_point: boolean
+  face_value: number // 結構化面額（migration 149）：如 1000；0=未設
   valid_from: string | null // RFC3339；null=即刻可用
   valid_until: string | null // RFC3339；null=無期限
   use_limit_type: RewardUseLimitType
