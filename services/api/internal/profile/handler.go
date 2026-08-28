@@ -29,6 +29,34 @@ func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler {
 }
 
 // Router 個人資料路由（掛載在 /api/v1/profile，需登入）
+// requireEntry 回傳一個中介層：後端強制某功能入口白名單（stateKey/wlKey 指向 app_settings 的
+// *_entry_state / *_entry_whitelist）。複用同套件的 resolveEntry——非 "shown" 一律 403
+// （super_admin 在 resolveEntry 內恆得 "shown"）。SEC-H5 同款防護：前端 UI 隱藏不等於後端有擋。
+func (h *Handler) requireEntry(stateKey, wlKey string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+			if uid == "" {
+				respondErr(w, http.StatusUnauthorized, "login required")
+				return
+			}
+			var email, code string
+			var isSuperAdmin bool
+			if err := h.db.QueryRow(r.Context(), `
+				SELECT COALESCE(email,''), COALESCE(account_code,''), is_super_admin
+				FROM users WHERE id=$1`, uid).Scan(&email, &code, &isSuperAdmin); err != nil {
+				respondErr(w, http.StatusInternalServerError, "failed to resolve access")
+				return
+			}
+			if resolveEntry(r.Context(), h.db, stateKey, wlKey, email, code, isSuperAdmin) != "shown" {
+				respondErr(w, http.StatusForbidden, "not available")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.GetMe)
@@ -51,12 +79,19 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/vip/pricing", h.VipPricing)                     // VIP 方案定價（依促銷資格）
 	r.Post("/vip/cancel", h.CancelVipSub)                   // 取消訂閱（不再續扣，權益至到期日）
 	r.Post("/trial-notice-shown", h.MarkTrialNoticeShown)   // 標記試用到期彈窗已顯示（只跳一次）
-	r.Get("/titles", h.Titles)                              // 稱號圖鑑
-	r.Post("/titles/display", h.SetDisplayedTitle)          // 設定展示中稱號
-	r.Post("/titles/seen", h.MarkTitlesSeen)                // 標記新解鎖稱號已看過
-	r.Get("/achievements", h.GetAchievements)               // 成就總覽
-	r.Get("/achievements/calendar", h.AchievementsCalendar) // 月曆里程
-	r.Get("/achievements/day", h.AchievementsDay)           // 單日明細
+	// SEC（2026-08-28 資安盤點，同 monopoly SEC-H5 模式）：稱號/成就入口白名單原本只有前端
+	// MemberPanel 擋 UI，後端這幾支 API 無複查——非白名單會員直接打即可繞過測試階段閘門。改用
+	// requireEntry 中介層在後端複查入口狀態（非 shown 且非 super_admin 一律 403）。
+	r.With(h.requireEntry("title_entry_state", "title_entry_whitelist")).Group(func(r chi.Router) {
+		r.Get("/titles", h.Titles)                     // 稱號圖鑑
+		r.Post("/titles/display", h.SetDisplayedTitle) // 設定展示中稱號
+		r.Post("/titles/seen", h.MarkTitlesSeen)       // 標記新解鎖稱號已看過
+	})
+	r.With(h.requireEntry("achievement_entry_state", "achievement_entry_whitelist")).Group(func(r chi.Router) {
+		r.Get("/achievements", h.GetAchievements)               // 成就總覽
+		r.Get("/achievements/calendar", h.AchievementsCalendar) // 月曆里程
+		r.Get("/achievements/day", h.AchievementsDay)           // 單日明細
+	})
 	r.Post("/referral", h.GetOrCreateReferral)              // 產生/取得專屬推薦碼（需 total_km>=10）
 	r.Get("/referral", h.GetReferral)                       // 只查現況（不產生）；供頁面重掛載回顯既有連結
 	r.Get("/rewards", h.Rewards)                            // 活動獎勵系統 P3：玩家活動獎勵錢包（只回本人序號類獎勵）

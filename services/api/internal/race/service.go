@@ -215,6 +215,9 @@ func (s *Service) ListPublic(ctx context.Context, userID string) ([]*Race, error
 		// SEC：entry_reward_config（migration 140）同樣機敏，理由相同；前台改走 GetEntryRewardPreview
 		// 專用端點取代（見 reward_preview.go）。
 		r.EntryRewardConfig = nil
+		// SEC（2026-08-28 資安盤點）：review_note 是後台審核合作方投稿賽事的內部備註（reject 時的
+		// 質疑/業務判斷用語），公開列表不得帶出——與 test_whitelist 同款「漏清機敏欄位」。
+		r.ReviewNote = ""
 		out = append(out, r)
 	}
 	return out, nil
@@ -321,6 +324,8 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 	// 只有後台編輯表單需要（走 AdminGetRace→GetRaceDetail 另一條路），公開詳情一律清空——
 	// 否則任何看得到詳情頁的訪客都能拿到測試名單的 email（PII 洩漏）。
 	detail.TestWhitelist = nil
+	// 安全（SEC，2026-08-28 資安盤點再發現同款）：review_note 是後台審核內部備註，公開詳情不得帶出。
+	detail.ReviewNote = ""
 
 	// 取消退費規則（簡章頁尾表格用）：解析好最終生效政策一併回傳，跟 CreateCancelRequest 實際退費
 	// 計算共用同一顆 ResolveCancellationPolicy，避免前端顯示跟真正退費金額兜不起來。
