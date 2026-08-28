@@ -317,6 +317,10 @@ func (s *Service) GetPublicDetail(ctx context.Context, raceID, userID string) (*
 	// 安全：entry_reward_config（migration 140）同樣機敏，理由相同；前台改走 GetEntryRewardPreview
 	// 專用端點取代（見 reward_preview.go）。
 	detail.EntryRewardConfig = nil
+	// 安全（SEC，2026-08-28 測試標籤任務盤點時發現）：test_whitelist 是白名單成員 email 明碼，
+	// 只有後台編輯表單需要（走 AdminGetRace→GetRaceDetail 另一條路），公開詳情一律清空——
+	// 否則任何看得到詳情頁的訪客都能拿到測試名單的 email（PII 洩漏）。
+	detail.TestWhitelist = nil
 
 	// 取消退費規則（簡章頁尾表格用）：解析好最終生效政策一併回傳，跟 CreateCancelRequest 實際退費
 	// 計算共用同一顆 ResolveCancellationPolicy，避免前端顯示跟真正退費金額兜不起來。

@@ -230,6 +230,10 @@ export interface Race {
   allow_team_groups?: boolean
   display_status: DisplayStatus
   can_register: boolean
+  // 計算欄位（等同 control_status==='testing'）：只有「本來就看得到這場測試賽事的人」（白名單）才會收到
+  // true——後端 ListPublic/GetPublicDetail 已先過濾掉看不到的人，不是獨立的資訊外洩面。前台用來顯示
+  // 「🧪 測試中」識別標籤（RacesScreen 卡片／RaceDetailScreen 狀態列）。
+  is_testing?: boolean
   review_status: string
   certificate_bg_url?: string
   show_distance_rank?: boolean

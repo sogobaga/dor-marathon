@@ -44,6 +44,10 @@ type Race struct {
 	AllowTeamGroups  bool                         `json:"allow_team_groups"`    // 競賽模式：是否開放前台自建跑團分組
 	DisplayStatus    string                       `json:"display_status"`       // 計算欄位（讀取時填）：upcoming_reg|registering|reg_closed|starting_soon|racing|ended|paused|suspended
 	CanRegister      bool                         `json:"can_register"`         // 計算欄位
+	// IsTesting 計算欄位（讀取時由 FillDisplay 填，等同 control_status=="testing"）：前台識別標籤用。
+	// 不是獨立的資訊外洩面——ListPublic/GetPublicDetail 已在白名單守門通過「之後」才呼叫 FillDisplay，
+	// 看不到這場測試賽事的人本來就收不到這筆 race 資料，自然也不會收到 is_testing=true。
+	IsTesting bool `json:"is_testing"`
 	CreatedBy        string                       `json:"created_by,omitempty"` // organizer userID
 	ReviewStatus     string                       `json:"review_status"`        // pending|approved|rejected
 	ReviewNote       string                       `json:"review_note,omitempty"`
@@ -173,6 +177,7 @@ func (r *Race) ComputeDisplay(now time.Time) (string, bool) {
 // FillDisplay 將計算欄位填入 race（讀取後呼叫）
 func (r *Race) FillDisplay(now time.Time) {
 	r.DisplayStatus, r.CanRegister = r.ComputeDisplay(now)
+	r.IsTesting = r.ControlStatus == "testing"
 }
 
 // RaceGroup 分組（一般/競賽=選手自選，分組對抗=隨機分配）

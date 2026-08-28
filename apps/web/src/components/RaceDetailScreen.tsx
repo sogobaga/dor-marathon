@@ -257,6 +257,9 @@ export default function RaceDetailScreen({
             {statusLabels.map((label) => (
               <span key={label} style={statusBadge}>{label}</span>
             ))}
+            {/* 測試中標籤：只有白名單成員能看到這場賽事本身才會收到 is_testing=true，不是外洩——
+                虛線框＋紫色系跟正式狀態徽章（實線框／綠色）區隔 */}
+            {race.is_testing && <span style={testingBadge}>🧪 測試中</span>}
             {/* 已報名標籤：與下方「前往挑戰」按鈕同一套判定（inProgress，見上方定義），使用者有效報名才顯示 */}
             {inProgress && <span style={registeredBadge}>已報名</span>}
             <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
@@ -976,6 +979,8 @@ function SupplySection({ label, items }: { label: string; items: RaceSupply[] })
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', cursor: 'pointer', fontSize: 14, padding: 0 }
 const dashCard: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 16px)', padding: 16, boxShadow: 'var(--card-shadow, none)' }
 const statusBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: 'var(--fug)', background: 'rgba(45,212,150,.1)', border: '1px solid var(--fug)', borderRadius: 999, padding: '2px 10px' }
+// 測試中徽章：虛線框（非實線）＋紫色系，跟正式狀態徽章（statusBadge 綠色實線）明顯區隔，不會被誤認成已開放的正式狀態
+const testingBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: 'var(--violet)', background: 'rgba(157,140,255,.12)', border: '1px dashed var(--violet)', borderRadius: 999, padding: '2px 10px' }
 // 已報名徽章：實心底，比照 registerBtn 的 fug/fug-ink 配色組合（已隨皮膚正確配對前景/背景，非寫死顏色）
 const registeredBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: 'var(--fug-ink)', background: 'var(--fug)', borderRadius: 999, padding: '2px 10px' }
 // VIP 專屬徽章：金底白字（金黃色實心底框上的文字一律用白色）

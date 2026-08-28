@@ -325,6 +325,11 @@ function RaceCard({
               <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 8, background: 'transparent', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0 }}>所有會員</span>
             )}
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {/* 測試中標籤：只有白名單成員能看到這場賽事本身，能看到就代表本來就有權限看，不是外洩——
+                  用虛線框＋紫色系跟正式狀態徽章（實線框）區隔，避免誤以為是已開放的正式狀態 */}
+              {race.is_testing && (
+                <span style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 999, color: 'var(--violet)', border: '1px dashed var(--violet)', background: 'rgba(255,255,255,.03)', whiteSpace: 'nowrap' }}>🧪 測試中</span>
+              )}
               {badges.map((b) => (
                 <span key={b.label} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, color: b.color, border: `1px solid ${b.color}`, background: 'rgba(255,255,255,.03)', whiteSpace: 'nowrap' }}>● {b.label}</span>
               ))}
