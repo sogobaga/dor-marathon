@@ -35,14 +35,14 @@ type PersonalLeaderboard struct {
 func (r *Repository) personalLeaderboardRows(ctx context.Context, raceID, userID string) ([]PersonalLeaderRow, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT r.user_id::text, COUNT(*) AS cnt, MIN(r.completed_at) AS first_at,
-		       COALESCE(NULLIF(p.nickname,''), u.handle) AS name,
+		       -- 顯示名稱統一口徑（2026-08-28 使用者定案：個資暱稱已由顯示名稱取代）
+		       COALESCE(NULLIF(u.name,''), u.handle) AS name,
 		       COALESCE(u.avatar_url,'') AS avatar,
 		       ($2 <> '' AND EXISTS(SELECT 1 FROM follows f WHERE f.follower_id = NULLIF($2,'')::uuid AND f.followee_id = r.user_id)) AS is_following
 		FROM registrations r
 		JOIN users u ON u.id = r.user_id
-		LEFT JOIN user_profiles p ON p.user_id = r.user_id
 		WHERE r.race_id = $1 AND r.status = 'completed'
-		GROUP BY r.user_id, p.nickname, u.handle, u.avatar_url
+		GROUP BY r.user_id, u.name, u.handle, u.avatar_url
 		ORDER BY cnt DESC, first_at ASC
 		LIMIT 100`, raceID, userID)
 	if err != nil {
