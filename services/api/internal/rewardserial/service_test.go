@@ -1,7 +1,9 @@
 package rewardserial
 
 import (
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -184,5 +186,55 @@ func TestBuildNotFoundReasons(t *testing.T) {
 	}
 	if got := buildNotFoundReasons(4); !reflect.DeepEqual(got, []string{"序號不存在（4 筆）"}) {
 		t.Fatalf("buildNotFoundReasons(4) = %v, want [序號不存在（4 筆）]", got)
+	}
+}
+
+// TestCanRevive 匯入「復活搬移」（2026-08-29 實案：序號輸錯→註銷→全系統唯一卡死無法重匯）的資格判斷：
+// 只有 status='void' 且 issued_to 為 nil（曾註銷、從未發送過玩家）才符合；available／issued 一律不符，
+// 即使 issued_to 為 nil（理論上 available 狀態的 issued_to 恆為 nil，仍須以 status 為準不可誤放行）；
+// void 但 issued_to 非 nil（先發送後又被註銷，序號已進過玩家的 user_rewards 生命週期）也不可復活，避免
+// 誤把曾經發送過的序號搬去別組。
+func TestCanRevive(t *testing.T) {
+	someUser := "user-1"
+	cases := []struct {
+		name     string
+		status   string
+		issuedTo *string
+		want     bool
+	}{
+		{"void 且從未發送 → 可復活", "void", nil, true},
+		{"void 但曾發送過（issued_to 非 nil）→ 不可復活", "void", &someUser, false},
+		{"available → 不可復活", "available", nil, false},
+		{"issued 且 issued_to 非 nil → 不可復活", "issued", &someUser, false},
+		{"issued 但 issued_to 意外為 nil（不應發生，仍不可復活，status 優先）", "issued", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := canRevive(c.status, c.issuedTo); got != c.want {
+				t.Fatalf("canRevive(%q, %v) = %v, want %v", c.status, c.issuedTo, got, c.want)
+			}
+		})
+	}
+}
+
+// TestBundleOrphanErr 轉組合型防孤兒（2026-08-29 實案：序號組轉組合型後序號管理 UI 被隱藏，殘留序號變成
+// 看不到的孤兒）：n<=0（無殘留序號）允許轉型回 nil；n>0 回傳含筆數的錯誤訊息，供前端原樣顯示。
+func TestBundleOrphanErr(t *testing.T) {
+	if err := bundleOrphanErr(0); err != nil {
+		t.Fatalf("bundleOrphanErr(0) = %v, want nil", err)
+	}
+	if err := bundleOrphanErr(-1); err != nil {
+		t.Fatalf("bundleOrphanErr(-1) = %v, want nil", err)
+	}
+	err := bundleOrphanErr(3)
+	if err == nil {
+		t.Fatalf("bundleOrphanErr(3) = nil, want error")
+	}
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("bundleOrphanErr(3) should wrap ErrInvalidInput, got %v", err)
+	}
+	wantMsg := "此序號組仍有 3 筆序號，請先刪除或移轉後再轉為組合型"
+	if !strings.Contains(err.Error(), wantMsg) {
+		t.Fatalf("bundleOrphanErr(3).Error() = %q, want substring %q", err.Error(), wantMsg)
 	}
 }

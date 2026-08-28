@@ -416,7 +416,7 @@ export default function AdminRewardSerialsPage() {
     try {
       const res = await adminRewardGroupsApi.importSerials(token, selectedGroupId, clean)
       setImportResult(res)
-      setMsg(`✓ 匯入完成：新增 ${res.imported} 筆${res.skipped ? `，跳過重複 ${res.skipped} 筆（全系統序號需唯一）` : ''}`)
+      setMsg(`✓ 匯入完成：新增 ${res.imported} 筆${res.revived ? `・復活 ${res.revived} 筆（原已註銷、從未發送過，已改配到本組）` : ''}${res.skipped ? `，跳過重複 ${res.skipped} 筆（全系統序號需唯一）` : ''}`)
       setImportText('')
       loadSerials(selectedGroupId, serialStatus, serialOffset)
       loadGroups()
@@ -710,7 +710,8 @@ export default function AdminRewardSerialsPage() {
               {importMode === 'link'
                 ? '每行貼一個「領取連結」（適合 LINE POINT 批次連結）：系統以連結本身作為唯一序號去重。'
                 : '每行一筆，格式為「序號」或「序號,連結」（也可用 Tab 分隔）；亦可上傳 .csv／.xlsx（欄位：序號 code / 連結 link，或依序取前兩欄）。'}
-              　序號**全系統唯一**，撞碼（含跨其他序號組、本次批次內重複）會被跳過不建立，匯入結果會列出跳過清單。
+              　序號**全系統唯一**，撞碼（含跨其他序號組、本次批次內重複）若原序號仍在使用中（未發送或已發送）會被跳過不建立；
+              若原序號**已註銷且從未發送過**，會視為復活搬移到本組並重新變為可用（不算跳過），匯入結果會分別列出新增／復活／跳過清單。
             </div>
             <textarea style={{ ...ta, fontFamily: 'monospace', fontSize: 12.5 }} rows={14} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={importMode === 'link' ? 'https://line.me/R/xxxxx\nhttps://line.me/R/yyyyy\n…（一行一個，大量連結可直接整批貼入，右下角可再拉大）' : 'ABC123,https://line.me/xxx\nABC124'} />
             {importText.trim() && (
@@ -728,7 +729,7 @@ export default function AdminRewardSerialsPage() {
             </div>
             {importResult && (
               <div style={{ marginTop: 10, fontSize: 12, color: 'var(--tx-dim)' }}>
-                新增 {importResult.imported} 筆・跳過重複 {importResult.skipped} 筆
+                新增 {importResult.imported} 筆・復活 {importResult.revived} 筆・跳過重複 {importResult.skipped} 筆
                 {importResult.duplicates.length > 0 && (
                   <div style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 11, color: 'var(--tx-faint)', wordBreak: 'break-all' }}>
                     重複序號：{importResult.duplicates.join(', ')}

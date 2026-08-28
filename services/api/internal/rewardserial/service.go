@@ -81,6 +81,19 @@ func (s *Service) validateGroupInput(ctx context.Context, in *GroupInput, selfID
 	// Group.FaceValue 註解），避免子項改動後這裡的舊快照跟真值脫鉤。is_bundle=false 則反過來要求
 	// bundle_items 必須是空——不允許一般序號組偷偷帶組合定義造成前後端認知不一致。
 	if in.IsBundle {
+		// 轉型防孤兒（2026-08-29 實案）：selfID 非空＝正在編輯既有序號組（CreateGroup 傳空字串，新建組合
+		// 型天然無序號，不受影響）。若這個既有序號組仍持有任何 reward_serials，一旦轉為組合型，前端序號
+		// 管理 UI 會整個切換成「組合內容」畫面，這些殘留序號會變成沒有任何 UI 能看到／操作的孤兒——擋下
+		// 逼管理員先刪除或移轉。
+		if selfID != "" {
+			n, err := s.repo.countSerialsInGroup(ctx, selfID)
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := bundleOrphanErr(n); err != nil {
+				return nil, nil, err
+			}
+		}
 		if err := s.validateBundleItems(ctx, in, selfID); err != nil {
 			return nil, nil, err
 		}
@@ -216,6 +229,16 @@ func validateBundleChildMeta(items []GroupBundleItem, metas map[string]childGrou
 		}
 	}
 	return nil
+}
+
+// bundleOrphanErr 序號組轉為組合型（is_bundle=true）時，若該組仍持有 n 筆 reward_serials（不論狀態）要
+// 回傳的錯誤；n<=0（沒有殘留序號，允許轉型）回傳 nil。抽成純函式方便單元測試訊息格式與門檻判斷，呼叫端
+// （validateGroupInput）負責用 Repository.countSerialsInGroup 查出 n。
+func bundleOrphanErr(n int) error {
+	if n <= 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: 此序號組仍有 %d 筆序號，請先刪除或移轉後再轉為組合型", ErrInvalidInput, n)
 }
 
 // samePtrString 比較兩個可能為 nil 的字串指標是否代表同一值：皆 nil 視為相同（都未指定商家）；一 nil

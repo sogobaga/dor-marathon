@@ -251,6 +251,17 @@ func (r *Repository) hydrateGroups(ctx context.Context, groups []Group) error {
 	return nil
 }
 
+// countSerialsInGroup 某序號組目前持有的 reward_serials 筆數（不論狀態：available/issued/void 皆計入）。
+// 供 Service.validateGroupInput 在把既有序號組轉為組合型（is_bundle=true）前把關——組合型序號組本身不
+// 持有序號（見 Group.IsBundle 註解），一旦轉型，前端序號管理 UI 會整個切換成「組合內容」畫面（見
+// reward-serials/page.tsx 的 selectedGroup.is_bundle 分支），任何殘留的 reward_serials 會變成沒有任何
+// UI 能看到／操作的孤兒列（2026-08-29 實案）。轉型前若發現仍有殘留序號一律擋下，逼管理員先刪除或移轉。
+func (r *Repository) countSerialsInGroup(ctx context.Context, groupID string) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM reward_serials WHERE group_id=$1`, groupID).Scan(&n)
+	return n, err
+}
+
 // childGroupMeta 供 Service.validateBundleItems 驗證組合子項「非組合型（防巢狀）＋ 同一商家」用，
 // 見 loadGroupMetaByIDs。
 type childGroupMeta struct {
@@ -488,9 +499,27 @@ func (r *Repository) ListSerials(ctx context.Context, groupID, status string, li
 	return out, total, rows.Err()
 }
 
-// ImportSerials 匯入序號，全系統唯一去重：撞碼（跨任何序號組，含本次批次內部重複）一律跳過不建立，
-// 回報 imported/skipped/duplicates 供前端提示管理員。用 ON CONFLICT (code) DO NOTHING RETURNING code
-// 判斷實際是否寫入，避免 check-then-insert 的競態。
+// canRevive 純函式：判斷一筆「code 已存在」的序號依目前 status／issued_to 是否符合匯入時的「復活搬移」
+// 資格——曾被註銷（status='void'）且從未發送給任何玩家（issued_to 為 nil）。ImportSerials 用
+// SELECT ... FOR UPDATE 鎖住該列拿到最新狀態後呼叫本函式決定分支；鎖同時提供併發安全（見 ImportSerials
+// 註解），本函式本身不碰 DB，方便單元測試涵蓋各種既有狀態組合。
+func canRevive(status string, issuedTo *string) bool {
+	return status == "void" && issuedTo == nil
+}
+
+// ImportSerials 匯入序號。全系統唯一（code），撞碼分三種情況：
+//  1. 全新 code：直接 INSERT，計入 Imported。
+//  2. code 已存在且符合 canRevive（曾註銷、從未發送過玩家）：視為「復活搬移」——UPDATE 該列 group_id 改
+//     成本次匯入目標組、status 改回 available、link 若本次匯入有帶新值則覆寫、否則保留舊值，計入
+//     Revived。這是為了解決序號因輸入錯誤被誤註銷後，全系統唯一約束導致該碼永久卡死無法重新匯入的問題
+//     （2026-08-29 實案）。
+//  3. code 已存在但仍在使用中（available/issued）：維持既有行為，跳過不動，計入 Skipped／Duplicates。
+//
+// 併發安全：每筆先以 SELECT ... FOR UPDATE 鎖住既有列（若存在）再決定分支，同一 code 若被另一筆匯入
+// 交易同時處理，後到者會被鎖住直到前一筆交易 commit／rollback 後才能取得最新資料重新判斷——一旦前一筆
+// 已把序號改成 available／搬到別組，後到者的 canRevive 判斷自然為 false，不會誤把已被復活或已發送的
+// 序號再次搬動。全新 code 的建立額外用 ON CONFLICT (code) DO NOTHING 當安全網（FOR UPDATE 在查無列時
+// 沒有東西可鎖，避免極端競態下兩筆匯入同時建立同一全新 code 觸發 unique violation 炸掉整批交易）。
 func (r *Repository) ImportSerials(ctx context.Context, groupID string, items []ImportInput) (*ImportResult, error) {
 	res := &ImportResult{Duplicates: []string{}}
 	seen := map[string]bool{}
@@ -516,21 +545,44 @@ func (r *Repository) ImportSerials(ctx context.Context, groupID string, items []
 	defer tx.Rollback(ctx)
 
 	for _, it := range uniq {
-		var got string
-		err := tx.QueryRow(ctx, `
-			INSERT INTO reward_serials (group_id, code, link)
-			VALUES ($1,$2,NULLIF($3,''))
-			ON CONFLICT (code) DO NOTHING
-			RETURNING code`, groupID, it.Code, it.Link).Scan(&got)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				res.Skipped++
-				res.Duplicates = append(res.Duplicates, it.Code)
-				continue
+		var status string
+		var issuedTo *string
+		lookupErr := tx.QueryRow(ctx,
+			`SELECT status, issued_to FROM reward_serials WHERE code=$1 FOR UPDATE`, it.Code).Scan(&status, &issuedTo)
+
+		switch {
+		case errors.Is(lookupErr, pgx.ErrNoRows):
+			var got string
+			err := tx.QueryRow(ctx, `
+				INSERT INTO reward_serials (group_id, code, link)
+				VALUES ($1,$2,NULLIF($3,''))
+				ON CONFLICT (code) DO NOTHING
+				RETURNING code`, groupID, it.Code, it.Link).Scan(&got)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					res.Skipped++
+					res.Duplicates = append(res.Duplicates, it.Code)
+					continue
+				}
+				return nil, fmt.Errorf("import serial: %w", err)
 			}
-			return nil, fmt.Errorf("import serial: %w", err)
+			res.Imported++
+
+		case lookupErr != nil:
+			return nil, fmt.Errorf("import serial: lookup %s: %w", it.Code, lookupErr)
+
+		case canRevive(status, issuedTo):
+			if _, err := tx.Exec(ctx, `
+				UPDATE reward_serials SET group_id=$1, status='available', link=COALESCE(NULLIF($3,''), link)
+				WHERE code=$2`, groupID, it.Code, it.Link); err != nil {
+				return nil, fmt.Errorf("revive serial: %w", err)
+			}
+			res.Revived++
+
+		default:
+			res.Skipped++
+			res.Duplicates = append(res.Duplicates, it.Code)
 		}
-		res.Imported++
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err

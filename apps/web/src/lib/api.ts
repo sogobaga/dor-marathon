@@ -3454,6 +3454,7 @@ export interface RewardSerial {
 
 export interface RewardSerialImportResult {
   imported: number
+  revived: number // 復活搬移（2026-08-29）：撞碼但原列已註銷且從未發送過玩家，改配到本次匯入目標組並重新變為可用
   skipped: number
   duplicates: string[]
 }

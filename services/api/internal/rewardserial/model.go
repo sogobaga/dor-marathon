@@ -102,9 +102,14 @@ type ImportInput struct {
 	Link string `json:"link"`
 }
 
-// ImportResult 匯入結果：全系統唯一去重，撞碼（跨任何序號組，含本次批次內重複）一律跳過不建立。
+// ImportResult 匯入結果：全系統唯一去重，撞碼分三種——全新 code 直接建立（Imported）；已存在但
+// status='void' 且從未發送過玩家（issued_to IS NULL）視為「復活搬移」，改配到本次匯入目標組並重新變為
+// available（Revived，2026-08-29 實案：解決序號因輸入錯誤被誤註銷後、全系統唯一約束導致永久卡死無法
+// 重匯的問題，見 Repository.ImportSerials／canRevive）；已存在且仍在使用中（available/issued）維持既有
+// 行為跳過不動（Skipped，計入 Duplicates）。
 type ImportResult struct {
 	Imported   int      `json:"imported"`
+	Revived    int      `json:"revived"`
 	Skipped    int      `json:"skipped"`
 	Duplicates []string `json:"duplicates"`
 }
