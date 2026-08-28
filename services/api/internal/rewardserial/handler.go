@@ -39,6 +39,8 @@ func (h *Handler) GroupRouter() http.Handler {
 	r.Get("/{id}/serials", h.ListSerials)
 	r.Post("/{id}/serials/import", h.ImportSerials)
 	r.Put("/{id}/serials/{serialID}/void", h.VoidSerial)
+	r.Post("/{id}/serials/void-batch", h.VoidSerialsBatch)
+	r.Post("/{id}/serials/delete", h.DeleteSerials)
 	return r
 }
 
@@ -245,6 +247,47 @@ func (h *Handler) VoidSerial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// VoidSerialsBatch 批次註銷（前端複選工具列用）；單筆註銷仍走既有 VoidSerial（PUT .../void）不變。
+func (h *Handler) VoidSerialsBatch(w http.ResponseWriter, r *http.Request) {
+	groupID := chi.URLParam(r, "id")
+	if !isValidUUID(groupID) {
+		respondErr(w, http.StatusBadRequest, "id is invalid")
+		return
+	}
+	var req SerialIDsInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	res, err := h.svc.VoidSerialsBatch(r.Context(), groupID, req.IDs)
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, res)
+}
+
+// DeleteSerials 真刪除序號（單筆亦透過此端點，ids 傳 1 個即可）。安全邊界（status IN
+// ('available','void') 才可刪、issued 一律拒絕）在 Service/Repository 層強制，見 Service.DeleteSerials。
+func (h *Handler) DeleteSerials(w http.ResponseWriter, r *http.Request) {
+	groupID := chi.URLParam(r, "id")
+	if !isValidUUID(groupID) {
+		respondErr(w, http.StatusBadRequest, "id is invalid")
+		return
+	}
+	var req SerialIDsInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	res, err := h.svc.DeleteSerials(r.Context(), groupID, req.IDs)
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respondJSON(w, http.StatusOK, res)
 }
 
 // --- helpers ---

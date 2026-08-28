@@ -108,3 +108,26 @@ type ImportResult struct {
 	Skipped    int      `json:"skipped"`
 	Duplicates []string `json:"duplicates"`
 }
+
+// SerialIDsInput 批次操作（刪除／批次註銷）輸入：一批序號 id。單筆操作亦透過同一端點，ids 傳 1 個即可
+// （2026-08-29 拍板：刪除與批次註銷不另開單筆端點，統一走批次形狀）。
+type SerialIDsInput struct {
+	IDs []string `json:"ids"`
+}
+
+// SerialDeleteResult 批次刪除序號的結果。安全邊界：只允許刪除 status IN ('available','void') 的序號；
+// issued（已發送，user_rewards.serial_id 可能已外鍵引用）一律拒絕，Reasons 列出被拒數量與原因，供前端
+// 顯示「已選 N 筆：成功 n／跳過 n（原因）」。
+type SerialDeleteResult struct {
+	Deleted int      `json:"deleted"`
+	Skipped int      `json:"skipped"`
+	Reasons []string `json:"reasons"` // 人類可讀的跳過原因彙總，如「已發送的序號不可刪除（2 筆）」
+}
+
+// SerialVoidBatchResult 批次註銷序號的結果。沿用單筆 VoidSerial 的既有語意（不限制當前狀態，含已是
+// void 的再次註銷視為成功/冪等）；查無此序號（跨組或不存在）計入 Skipped。
+type SerialVoidBatchResult struct {
+	Voided  int      `json:"voided"`
+	Skipped int      `json:"skipped"`
+	Reasons []string `json:"reasons"`
+}

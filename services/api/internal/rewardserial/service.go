@@ -257,3 +257,101 @@ func (s *Service) ImportSerials(ctx context.Context, groupID string, items []Imp
 func (s *Service) VoidSerial(ctx context.Context, groupID, serialID string) error {
 	return s.repo.VoidSerial(ctx, groupID, serialID)
 }
+
+// maxSerialBatchSize 批次刪除／批次註銷單次最多處理筆數（前端目前每頁 50 筆、全選僅限當頁，正常操作遠低
+// 於此；設上限單純防呆避免異常大量 body 拖垮查詢）。
+const maxSerialBatchSize = 2000
+
+// dedupeValidUUIDs 過濾＋去重一批序號 id：trim 後空字串丟棄、非合法 UUID 格式計入 invalidCount（視同
+// 「查無此序號」，避免格式錯誤的字串打進 DB 的 uuid[] 轉型觸發 500）、重複 id 只保留一次。供
+// DeleteSerials／VoidSerialsBatch 共用。
+func dedupeValidUUIDs(raw []string) (valid []string, invalidCount int) {
+	seen := map[string]bool{}
+	for _, id := range raw {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if !isValidUUID(id) {
+			invalidCount++
+			continue
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		valid = append(valid, id)
+	}
+	return valid, invalidCount
+}
+
+// buildDeleteReasons 把 DeleteSerials 的跳過原因彙總成人類可讀字串（供前端顯示批次結果）。
+func buildDeleteReasons(skippedIssued, skippedNotFound int) []string {
+	reasons := []string{}
+	if skippedIssued > 0 {
+		reasons = append(reasons, fmt.Sprintf("已發送的序號不可刪除（%d 筆）", skippedIssued))
+	}
+	if skippedNotFound > 0 {
+		reasons = append(reasons, fmt.Sprintf("序號不存在（%d 筆）", skippedNotFound))
+	}
+	return reasons
+}
+
+// buildNotFoundReasons 把「查無此序號」的跳過原因彙總成人類可讀字串，供 VoidSerialsBatch 使用。
+func buildNotFoundReasons(skippedNotFound int) []string {
+	if skippedNotFound > 0 {
+		return []string{fmt.Sprintf("序號不存在（%d 筆）", skippedNotFound)}
+	}
+	return []string{}
+}
+
+// DeleteSerials 批次真刪除序號（單筆亦透過此方法，ids 傳 1 個即可）。安全邊界：只允許刪除
+// status IN ('available','void') 的序號；issued（已發送，user_rewards.serial_id 可能已外鍵引用）一律拒絕，
+// 回應列出被拒數量與原因，避免管理員誤刪已發放給玩家的序號造成資料不一致（見 Repository.DeleteSerials）。
+func (s *Service) DeleteSerials(ctx context.Context, groupID string, rawIDs []string) (*SerialDeleteResult, error) {
+	if len(rawIDs) == 0 {
+		return nil, fmt.Errorf("%w: 沒有指定要刪除的序號", ErrInvalidInput)
+	}
+	if len(rawIDs) > maxSerialBatchSize {
+		return nil, fmt.Errorf("%w: 一次最多刪除 %d 筆", ErrInvalidInput, maxSerialBatchSize)
+	}
+	ids, invalidCount := dedupeValidUUIDs(rawIDs)
+	if len(ids) == 0 {
+		return &SerialDeleteResult{Deleted: 0, Skipped: invalidCount, Reasons: buildDeleteReasons(0, invalidCount)}, nil
+	}
+	deleted, skippedIssued, skippedNotFound, err := s.repo.DeleteSerials(ctx, groupID, ids)
+	if err != nil {
+		return nil, err
+	}
+	skippedNotFound += invalidCount
+	return &SerialDeleteResult{
+		Deleted: deleted,
+		Skipped: skippedIssued + skippedNotFound,
+		Reasons: buildDeleteReasons(skippedIssued, skippedNotFound),
+	}, nil
+}
+
+// VoidSerialsBatch 批次註銷（單筆註銷維持既有 VoidSerial／PUT .../void 端點不變，此為前端「批次工具列」
+// 複選多筆時使用，避免對每筆序號各發一次請求）。沿用 VoidSerial 既有語意，不額外限制當前狀態。
+func (s *Service) VoidSerialsBatch(ctx context.Context, groupID string, rawIDs []string) (*SerialVoidBatchResult, error) {
+	if len(rawIDs) == 0 {
+		return nil, fmt.Errorf("%w: 沒有指定要註銷的序號", ErrInvalidInput)
+	}
+	if len(rawIDs) > maxSerialBatchSize {
+		return nil, fmt.Errorf("%w: 一次最多註銷 %d 筆", ErrInvalidInput, maxSerialBatchSize)
+	}
+	ids, invalidCount := dedupeValidUUIDs(rawIDs)
+	if len(ids) == 0 {
+		return &SerialVoidBatchResult{Voided: 0, Skipped: invalidCount, Reasons: buildNotFoundReasons(invalidCount)}, nil
+	}
+	voided, skippedNotFound, err := s.repo.VoidSerials(ctx, groupID, ids)
+	if err != nil {
+		return nil, err
+	}
+	skippedNotFound += invalidCount
+	return &SerialVoidBatchResult{
+		Voided:  voided,
+		Skipped: skippedNotFound,
+		Reasons: buildNotFoundReasons(skippedNotFound),
+	}, nil
+}

@@ -549,3 +549,87 @@ func (r *Repository) VoidSerial(ctx context.Context, groupID, serialID string) e
 	}
 	return nil
 }
+
+// VoidSerials 批次註銷（沿用 VoidSerial 既有語意：不檢查當前狀態，直接改 status='void'；已是 void 的再次
+// 註銷仍算成功/冪等）。ids 須為呼叫端（Service）已過濾過的合法 UUID。以 RETURNING id 判斷實際命中哪些
+// id（同組別、確實存在），沒命中的（跨組／id 不存在）計入 skippedNotFound。
+func (r *Repository) VoidSerials(ctx context.Context, groupID string, ids []string) (voided, skippedNotFound int, err error) {
+	rows, err := r.db.Query(ctx,
+		`UPDATE reward_serials SET status='void' WHERE group_id=$1 AND id = ANY($2::uuid[]) RETURNING id`, groupID, ids)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	hit := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return 0, 0, err
+		}
+		hit[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+	voided = len(hit)
+	skippedNotFound = len(ids) - voided
+	return voided, skippedNotFound, nil
+}
+
+// DeleteSerials 批次真刪除（非註銷）。安全邊界由呼叫端（Service.DeleteSerials）強制：只傳入已過濾的合法
+// UUID；此處再依「當下實際狀態」把關——issued（已發送，user_rewards.serial_id 可能已外鍵引用該序號）一律
+// 跳過不刪，避免留下懸空外鍵；查無此序號（跨組／id 不存在）也跳過。其餘（available/void）直接 DELETE，
+// 真刪除輸入錯誤的序號不留殘骸（不同於 VoidSerial 只是改狀態）。先查狀態再刪、包在同一 tx 內，避免查完
+// 到刪之間狀態被別的請求改變導致誤刪 issued 序號的競態。
+func (r *Repository) DeleteSerials(ctx context.Context, groupID string, ids []string) (deleted, skippedIssued, skippedNotFound int, err error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx,
+		`SELECT id, status FROM reward_serials WHERE group_id=$1 AND id = ANY($2::uuid[]) FOR UPDATE`, groupID, ids)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	statusByID := map[string]string{}
+	for rows.Next() {
+		var id, status string
+		if err := rows.Scan(&id, &status); err != nil {
+			rows.Close()
+			return 0, 0, 0, err
+		}
+		statusByID[id] = status
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, 0, 0, err
+	}
+	rows.Close()
+
+	deletable := make([]string, 0, len(ids))
+	for _, id := range ids {
+		status, ok := statusByID[id]
+		if !ok {
+			skippedNotFound++
+			continue
+		}
+		if status == "issued" {
+			skippedIssued++
+			continue
+		}
+		deletable = append(deletable, id)
+	}
+	if len(deletable) > 0 {
+		ct, err := tx.Exec(ctx, `DELETE FROM reward_serials WHERE group_id=$1 AND id = ANY($2::uuid[])`, groupID, deletable)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		deleted = int(ct.RowsAffected())
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, 0, err
+	}
+	return deleted, skippedIssued, skippedNotFound, nil
+}

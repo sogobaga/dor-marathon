@@ -101,6 +101,11 @@ export default function AdminRewardSerialsPage() {
   const [importResult, setImportResult] = useState<RewardSerialImportResult | null>(null)
   const [importMode, setImportMode] = useState<'code' | 'link'>('code') // 'link'＝純貼領取連結(每行一個，以連結本身當 code 去重)
 
+  // 複選批次操作（僅限當頁；換頁/換序號組/換狀態篩選時清空選取）
+  const [selectedSerialIds, setSelectedSerialIds] = useState<Set<string>>(new Set())
+  const [batchBusy, setBatchBusy] = useState(false)
+  const [batchResult, setBatchResult] = useState<{ label: string; ok: number; skipped: number; reasons: string[] } | null>(null)
+
   const loadMerchants = useCallback(() => {
     const t = getToken()
     if (!t) return
@@ -136,12 +141,15 @@ export default function AdminRewardSerialsPage() {
 
   useEffect(() => {
     if (selectedGroupId) loadSerials(selectedGroupId, serialStatus, serialOffset)
+    // 換序號組／換狀態篩選／換頁時，上一批選取的序號已不在畫面上，清空避免誤操作到看不見的列
+    setSelectedSerialIds(new Set())
+    setBatchResult(null)
   }, [selectedGroupId, serialStatus, serialOffset, loadSerials])
-  // LINE POINT 序號組預設「純連結模式」(領取連結批次貼入)；其餘預設序號模式。切換序號組時重設。
+  // 匯入模式一律預設「序號模式」(2026-08-29 使用者拍板改預設；原本 LINE POINT 序號組會自動預設「純
+  // 連結模式」，改為一律預設序號模式，使用者要貼純連結時再手動切換)。切換序號組時重設回預設值。
   useEffect(() => {
-    const g = groups?.find((x) => x.id === selectedGroupId)
-    setImportMode(g?.is_line_point ? 'link' : 'code')
-  }, [selectedGroupId, groups])
+    setImportMode('code')
+  }, [selectedGroupId])
 
   // --- 合作商家 ---
 
@@ -208,6 +216,7 @@ export default function AdminRewardSerialsPage() {
   function setServiceStateReset() {
     setSerials(null); setSerialsTotal(0); setSerialStatus(''); setSerialOffset(0)
     setImportText(''); setImportResult(null)
+    setSelectedSerialIds(new Set()); setBatchResult(null)
   }
   function toggleRace(id: string) {
     setGroupForm((f) => ({ ...f, race_ids: f.race_ids.includes(id) ? f.race_ids.filter((r) => r !== id) : [...f.race_ids, id] }))
@@ -321,6 +330,65 @@ export default function AdminRewardSerialsPage() {
       loadSerials(selectedGroupId, serialStatus, serialOffset)
       loadGroups()
     } catch (e: any) { setErr(e?.message || '註銷失敗') }
+  }
+
+  // 刪除（真刪除，非註銷）：後端只允許 status IN (available, void)，已發送的列前端本就不顯示刪除鈕，
+  // 這裡的錯誤處理是防呆（如狀態在確認彈窗跳出後被別的分頁改變）。
+  async function deleteSerial(s: RewardSerial) {
+    if (!token || !selectedGroupId) return
+    if (!confirm(`確定刪除序號「${s.code}」？此操作無法復原（非註銷，直接刪除該筆資料）。`)) return
+    setErr(''); setMsg('')
+    try {
+      const res = await adminRewardGroupsApi.deleteSerials(token, selectedGroupId, [s.id])
+      if (res.deleted > 0) setMsg('已刪除序號')
+      else setErr(res.reasons[0] || '刪除失敗（此序號目前狀態不可刪除）')
+      setSelectedSerialIds((prev) => { const next = new Set(prev); next.delete(s.id); return next })
+      loadSerials(selectedGroupId, serialStatus, serialOffset)
+      loadGroups()
+    } catch (e: any) { setErr(e?.message || '刪除失敗') }
+  }
+
+  // --- 複選批次操作 ---
+
+  function toggleSerialSelect(id: string) {
+    setSelectedSerialIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  function toggleSelectAllOnPage() {
+    if (!serials) return
+    const allSelected = serials.length > 0 && serials.every((s) => selectedSerialIds.has(s.id))
+    setSelectedSerialIds(allSelected ? new Set() : new Set(serials.map((s) => s.id)))
+  }
+
+  async function batchVoidSerials() {
+    if (!token || !selectedGroupId || selectedSerialIds.size === 0) return
+    const ids = Array.from(selectedSerialIds)
+    if (!confirm(`確定批次註銷已選取的 ${ids.length} 筆序號？`)) return
+    setBatchBusy(true); setErr(''); setMsg(''); setBatchResult(null)
+    try {
+      const res = await adminRewardGroupsApi.voidSerialsBatch(token, selectedGroupId, ids)
+      setBatchResult({ label: '批次註銷', ok: res.voided, skipped: res.skipped, reasons: res.reasons })
+      setSelectedSerialIds(new Set())
+      loadSerials(selectedGroupId, serialStatus, serialOffset)
+      loadGroups()
+    } catch (e: any) { setErr(e?.message || '批次註銷失敗') } finally { setBatchBusy(false) }
+  }
+
+  async function batchDeleteSerials() {
+    if (!token || !selectedGroupId || selectedSerialIds.size === 0) return
+    const ids = Array.from(selectedSerialIds)
+    if (!confirm(`確定批次刪除已選取的 ${ids.length} 筆序號？已發送的序號不會被刪除，其餘將直接刪除、無法復原。`)) return
+    setBatchBusy(true); setErr(''); setMsg(''); setBatchResult(null)
+    try {
+      const res = await adminRewardGroupsApi.deleteSerials(token, selectedGroupId, ids)
+      setBatchResult({ label: '批次刪除', ok: res.deleted, skipped: res.skipped, reasons: res.reasons })
+      setSelectedSerialIds(new Set())
+      loadSerials(selectedGroupId, serialStatus, serialOffset)
+      loadGroups()
+    } catch (e: any) { setErr(e?.message || '批次刪除失敗') } finally { setBatchBusy(false) }
   }
 
   // --- 匯入 ---
@@ -670,14 +738,29 @@ export default function AdminRewardSerialsPage() {
             )}
           </div>
 
-          {/* 狀態篩選 */}
-          <div style={{ display: 'flex', gap: 8, margin: '14px 0 10px' }}>
+          {/* 狀態篩選 + 複選批次工具列 */}
+          <div style={{ display: 'flex', gap: 8, margin: '14px 0 10px', flexWrap: 'wrap', alignItems: 'center' }}>
             {(['', 'available', 'issued', 'void'] as const).map((s) => (
               <button key={s} onClick={() => { setSerialStatus(s); setSerialOffset(0) }} style={serialStatus === s ? tabBtnActive : tabBtn}>
                 {s === '' ? '全部' : STATUS_LABEL[s]}
               </button>
             ))}
+            {selectedSerialIds.size > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', fontSize: 12.5 }}>
+                <span style={{ color: 'var(--tx-dim)' }}>已選 {selectedSerialIds.size} 筆</span>
+                <button onClick={batchVoidSerials} disabled={batchBusy} style={{ ...tinyBtn, opacity: batchBusy ? 0.6 : 1 }}>批次註銷</button>
+                <button onClick={batchDeleteSerials} disabled={batchBusy} style={{ ...tinyBtn, color: 'var(--hunt)', opacity: batchBusy ? 0.6 : 1 }}>批次刪除</button>
+              </div>
+            )}
           </div>
+          {batchResult && (
+            <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginBottom: 10 }}>
+              {batchResult.label}完成：成功 {batchResult.ok} 筆・跳過 {batchResult.skipped} 筆
+              {batchResult.reasons.length > 0 && (
+                <div style={{ marginTop: 2, color: 'var(--tx-faint)' }}>{batchResult.reasons.join('；')}</div>
+              )}
+            </div>
+          )}
 
           {/* 列表 */}
           {!serials && <div style={{ color: 'var(--tx-dim)', fontSize: 13, padding: '8px 0' }}>載入中…</div>}
@@ -685,10 +768,16 @@ export default function AdminRewardSerialsPage() {
           {serials && serials.length > 0 && (
             <div style={{ border: '1px solid var(--line)', borderRadius: 10, overflow: 'hidden' }}>
               <div style={{ ...serialRow, background: 'var(--bg-1)', fontSize: 11, color: 'var(--tx-faint)', textTransform: 'uppercase' }}>
-                <div style={{ flex: 2 }}>序號</div><div style={{ flex: 2 }}>連結</div><div style={{ flex: 1 }}>狀態</div><div style={{ flex: 2 }}>建立時間</div><div style={{ flex: 1 }} />
+                <div style={{ width: 20, flexShrink: 0 }}>
+                  <input type="checkbox" checked={serials.every((s) => selectedSerialIds.has(s.id))} onChange={toggleSelectAllOnPage} aria-label="全選當頁" />
+                </div>
+                <div style={{ flex: 2 }}>序號</div><div style={{ flex: 2 }}>連結</div><div style={{ flex: 1 }}>狀態</div><div style={{ flex: 2 }}>建立時間</div><div style={{ flex: 1.4 }} />
               </div>
               {serials.map((s) => (
                 <div key={s.id} style={serialRow}>
+                  <div style={{ width: 20, flexShrink: 0 }}>
+                    <input type="checkbox" checked={selectedSerialIds.has(s.id)} onChange={() => toggleSerialSelect(s.id)} />
+                  </div>
                   <div style={{ flex: 2, fontFamily: 'monospace', fontSize: 12.5, wordBreak: 'break-all' }}>{s.code}</div>
                   <div style={{ flex: 2, fontSize: 11.5, color: 'var(--tx-dim)', wordBreak: 'break-all' }}>{s.link || '—'}</div>
                   <div style={{ flex: 1, fontSize: 12 }}>
@@ -696,8 +785,9 @@ export default function AdminRewardSerialsPage() {
                     {s.used && <span style={{ color: 'var(--tx-faint)' }}>・已使用</span>}
                   </div>
                   <div style={{ flex: 2, fontSize: 11.5, color: 'var(--tx-faint)' }}>{new Date(s.created_at).toLocaleString('zh-TW')}</div>
-                  <div style={{ flex: 1, textAlign: 'right' }}>
+                  <div style={{ flex: 1.4, display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
                     {s.status !== 'void' && <button onClick={() => voidSerial(s)} style={{ ...tinyBtn, color: 'var(--hunt)' }}>註銷</button>}
+                    {s.status !== 'issued' && <button onClick={() => deleteSerial(s)} style={{ ...tinyBtn, color: 'var(--hunt)' }}>刪除</button>}
                   </div>
                 </div>
               ))}

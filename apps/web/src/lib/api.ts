@@ -3458,6 +3458,18 @@ export interface RewardSerialImportResult {
   duplicates: string[]
 }
 
+// 批次刪除／批次註銷序號（2026-08-29 新增：序號清單複選批次操作）
+export interface RewardSerialDeleteResult {
+  deleted: number
+  skipped: number
+  reasons: string[] // 人類可讀的跳過原因彙總，如「已發送的序號不可刪除（2 筆）」
+}
+export interface RewardSerialVoidBatchResult {
+  voided: number
+  skipped: number
+  reasons: string[]
+}
+
 export const adminRewardMerchantsApi = {
   list: (token: string) =>
     request<{ merchants: RewardMerchant[] }>('/admin/reward-merchants', { headers: withAuth(token) }),
@@ -3494,6 +3506,14 @@ export const adminRewardGroupsApi = {
     }),
   voidSerial: (token: string, groupId: string, serialId: string) =>
     request<{ ok: boolean }>(`/admin/reward-groups/${groupId}/serials/${serialId}/void`, { method: 'PUT', headers: withAuth(token) }),
+  voidSerialsBatch: (token: string, groupId: string, ids: string[]) =>
+    request<RewardSerialVoidBatchResult>(`/admin/reward-groups/${groupId}/serials/void-batch`, {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify({ ids }),
+    }),
+  deleteSerials: (token: string, groupId: string, ids: string[]) =>
+    request<RewardSerialDeleteResult>(`/admin/reward-groups/${groupId}/serials/delete`, {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify({ ids }),
+    }),
 }
 
 // 環台大富翁（Phase 1：盤面遊戲）
