@@ -243,6 +243,10 @@ type MyRegistration struct {
 	EstimatedRefundCents int    `json:"estimated_refund_cents"`
 	CancelRequestStatus  string `json:"cancel_request_status"` // 無申請時為空字串；否則 pending|processing|approved|rejected
 	// （processing 是後台核准流程中的短暫過渡狀態，正常情況幾乎看不到——見 race.beginCancelRequestProcessing）
+	// RefundDisabled 該賽事 config.refund_disabled（此活動不提供退費）：前台報名紀錄頁用來把「申請取消
+	// 報名」按鈕換成「本活動不適用七天鑑賞期」灰字說明——CanCancel 本身不受影響（不退費≠不可取消，見
+	// EffectiveCancellationPolicy），只是這裡選擇不再讓玩家走一趟必為 0 元的取消流程。
+	RefundDisabled bool `json:"refund_disabled"`
 }
 
 // GET /api/v1/profile/registrations — 我的報名紀錄
@@ -293,6 +297,7 @@ func (h *Handler) Registrations(w http.ResponseWriter, r *http.Request) {
 
 		var cfg race.RaceConfig
 		_ = json.Unmarshal(configBytes, &cfg) // 壞掉的 config 視同沒有覆寫
+		m.RefundDisabled = cfg.RefundDisabled
 		// EffectiveCancellationPolicy：不退費賽事（config.refund_disabled）tiers 清空 → 預估退費 0 元，
 		// 與 CreateCancelRequest 申請當下的快照計算走同一顆，兩邊不會兜不起來。
 		policy := race.EffectiveCancellationPolicy(&cfg, sysDefaultPolicy)

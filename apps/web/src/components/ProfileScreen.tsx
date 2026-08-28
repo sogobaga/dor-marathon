@@ -91,6 +91,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [cancelSubmitting, setCancelSubmitting] = useState(false)
   const [cancelErr, setCancelErr] = useState('')
   const [recMsg, setRecMsg] = useState('') // 報名紀錄頁籤操作成功提示（申請取消／撤回）
+  const [expandedRegId, setExpandedRegId] = useState<string | null>(null) // 報名紀錄收合/展開：預設只顯示活動名稱+狀態，點擊展開明細
   const [withdrawBusy, setWithdrawBusy] = useState<string | null>(null) // 撤回中的 registration_id
   // COROS 式 UX：會員資訊面板固定最上方，分頁內容做成可上下拖曳面板（收合看完整會員面板／半展看分頁／全展看整份內容）
   const sheet = useDraggableSheet('peek') // 預設收合到底部（只露把手＋分頁列）→ 會員面板四個入口(含 PB/成就探索)一進頁就完整顯示
@@ -684,54 +685,70 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             {regs?.map((r) => {
               const st = REG_STATUS[r.status] ?? { t: r.status, c: 'var(--tx-dim)' }
               const cancelling = r.cancel_request_status === 'pending' || r.cancel_request_status === 'processing'
+              const expanded = expandedRegId === r.registration_id
               return (
                 <div key={r.registration_id} style={recCard}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 15, wordBreak: 'keep-all', overflowWrap: 'break-word' }}>{r.race_title}</div>
-                      <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 2 }}>
+                  {/* 第一層（收合）：只顯示活動名稱＋目前狀態，點擊展開/收合明細 */}
+                  <button
+                    onClick={() => setExpandedRegId(expanded ? null : r.registration_id)}
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, width: '100%', background: 'none', border: 'none', padding: 0, margin: 0, cursor: 'pointer', textAlign: 'left', font: 'inherit', color: 'inherit' }}
+                  >
+                    <div style={{ fontWeight: 700, fontSize: 15, wordBreak: 'keep-all', overflowWrap: 'break-word' }}>{r.race_title}</div>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                      <span style={{ fontSize: 12, color: st.c, fontWeight: 700 }}>{st.t}</span>
+                      <span style={{ fontSize: 10, color: 'var(--tx-faint)' }}>{expanded ? '▾' : '▸'}</span>
+                    </span>
+                  </button>
+
+                  {/* 第二層（展開）：分組/繳費明細 + 取消報名申請（沿用既有流程） */}
+                  {expanded && (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+                      <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>
                         {r.group_revealed ? (r.group_name || '—') : '分組賽事當天公布'}
                       </div>
-                    </div>
-                    <span style={{ fontSize: 12, color: st.c, fontWeight: 700, flexShrink: 0 }}>{st.t}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
-                    <span style={{ fontSize: 13, color: 'var(--tx-dim)' }}>應繳 {ntd(r.order_total_cents)}</span>
-                    {r.status === 'pending' && r.order_id && (
-                      <button onClick={() => openPay(r.order_id!)} style={payBtn}>前往繳費</button>
-                    )}
-                  </div>
-
-                  {/* 取消報名 / 分級退費申請狀態 */}
-                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
-                    {cancelling ? (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 700 }}>⏳ 取消申請審核中</span>
-                        <button
-                          onClick={() => withdrawCancel(r)}
-                          disabled={withdrawBusy === r.registration_id}
-                          style={{ ...ghostBtn, opacity: withdrawBusy === r.registration_id ? 0.6 : 1 }}
-                        >
-                          {withdrawBusy === r.registration_id ? '撤回中…' : '撤回申請'}
-                        </button>
-                      </div>
-                    ) : r.cancel_request_status === 'approved' ? (
-                      <span style={{ fontSize: 12, color: 'var(--tx-dim)', fontWeight: 700 }}>已取消（已核准）</span>
-                    ) : r.cancel_request_status === 'rejected' ? (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 12, color: 'var(--hunt)', fontWeight: 700 }}>取消申請未通過</span>
-                        {r.can_cancel && (
-                          <button onClick={() => openCancelModal(r)} style={ghostBtn}>重新申請取消</button>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+                        <span style={{ fontSize: 13, color: 'var(--tx-dim)' }}>應繳 {ntd(r.order_total_cents)}</span>
+                        {r.status === 'pending' && r.order_id && (
+                          <button onClick={() => openPay(r.order_id!)} style={payBtn}>前往繳費</button>
                         )}
                       </div>
-                    ) : r.can_cancel ? (
-                      <button onClick={() => openCancelModal(r)} style={{ ...ghostBtn, color: 'var(--hunt)', borderColor: 'var(--hunt)' }}>
-                        申請取消報名
-                      </button>
-                    ) : r.cancel_blocked_reason ? (
-                      <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{r.cancel_blocked_reason}</span>
-                    ) : null}
-                  </div>
+
+                      {/* 取消報名 / 分級退費申請狀態 */}
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
+                        {cancelling ? (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 700 }}>⏳ 取消申請審核中</span>
+                            <button
+                              onClick={() => withdrawCancel(r)}
+                              disabled={withdrawBusy === r.registration_id}
+                              style={{ ...ghostBtn, opacity: withdrawBusy === r.registration_id ? 0.6 : 1 }}
+                            >
+                              {withdrawBusy === r.registration_id ? '撤回中…' : '撤回申請'}
+                            </button>
+                          </div>
+                        ) : r.cancel_request_status === 'approved' ? (
+                          <span style={{ fontSize: 12, color: 'var(--tx-dim)', fontWeight: 700 }}>已取消（已核准）</span>
+                        ) : r.cancel_request_status === 'rejected' ? (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 12, color: 'var(--hunt)', fontWeight: 700 }}>取消申請未通過</span>
+                            {/* 不提供退費的賽事不再引導重新申請（見下方 refund_disabled 分支同款說明） */}
+                            {r.can_cancel && !r.refund_disabled && (
+                              <button onClick={() => openCancelModal(r)} style={ghostBtn}>重新申請取消</button>
+                            )}
+                          </div>
+                        ) : r.refund_disabled ? (
+                          // config.refund_disabled（此活動不提供退費）：不顯示「申請取消報名」，改灰字說明
+                          <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>本活動不適用七天鑑賞期</span>
+                        ) : r.can_cancel ? (
+                          <button onClick={() => openCancelModal(r)} style={{ ...ghostBtn, color: 'var(--hunt)', borderColor: 'var(--hunt)' }}>
+                            申請取消報名
+                          </button>
+                        ) : r.cancel_blocked_reason ? (
+                          <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{r.cancel_blocked_reason}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )
             })}

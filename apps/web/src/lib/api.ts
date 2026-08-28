@@ -1751,6 +1751,7 @@ export interface MyRegistration {
   refund_ratio: number
   estimated_refund_cents: number
   cancel_request_status: string // ''|'pending'|'processing'|'approved'|'rejected'
+  refund_disabled: boolean // 該賽事 config.refund_disabled；true 時報名紀錄頁不顯示「申請取消報名」，改顯示「本活動不適用七天鑑賞期」
 }
 
 export interface MyOrderItem {

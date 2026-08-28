@@ -845,6 +845,17 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
               </div>
             </div>
 
+            {/* 此賽事 config.refund_disabled（不提供退費）：費用區下方明顯提示，但不擋操作（非彈窗）。
+                見後端 race.RaceConfig.RefundDisabled；公開詳情一律回傳 config，前台直接讀取即可，不需另開端點。 */}
+            {detail.config?.refund_disabled && (
+              <div style={{
+                background: 'rgba(255,107,107,.08)', border: '1px solid rgba(255,107,107,.35)',
+                borderRadius: 10, padding: '10px 12px', fontSize: 12.5, color: 'var(--hunt)', fontWeight: 700, lineHeight: 1.6,
+              }}>
+                ⚠ 本活動一經報名，隨即開始進行，不予退費。
+              </div>
+            )}
+
             {/* 參賽者資料 */}
             <Section title="參賽者資料">
               {(['real_name', 'nickname', 'phone', 'address', 'birthday', 'gender'] as ParticipantField[]).map((f) => (
