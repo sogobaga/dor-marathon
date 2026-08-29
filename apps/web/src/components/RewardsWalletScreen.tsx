@@ -210,18 +210,20 @@ function RewardCard({ reward, onDetail }: { reward: SortedReward; onDetail: () =
     <div
       onClick={onDetail}
       style={{
-        display: 'flex', gap: 12, alignItems: 'center', background: 'var(--bg-1)',
+        background: 'var(--bg-1)', overflow: 'hidden',
         border: urgent ? '2px solid var(--gold)' : '1px solid var(--line)',
-        borderRadius: 'var(--radius-lg, 14px)', padding: '12px 14px', cursor: 'pointer',
+        borderRadius: 'var(--radius-lg, 14px)', cursor: 'pointer',
         boxShadow: urgent ? '0 4px 18px rgba(197,139,29,.22)' : 'var(--card-shadow, none)',
       }}
     >
-      {reward.icon_url ? (
-        // 完整顯示獎勵圖（原始比例、不裁切）：獎勵圖多為橫式卡面，正方形 cover 會把右側面額/資訊切掉
-        //（2026-08-29 使用者回報）；固定寬、高度自適應，沒圖才用下方 emoji 方框。
+      {/* 頂部 Banner：仿活動列表卡（RacesScreen RaceCard）——滿版、原始比例完整顯示不裁切
+          （2026-08-29 使用者指示改「Banner 在上、資訊在下」，不再與資訊併排）。 */}
+      {reward.icon_url && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={reward.icon_url} alt="" style={{ width: 96, height: 'auto', borderRadius: 10, flexShrink: 0, display: 'block' }} />
-      ) : (
+        <img src={reward.icon_url} alt="" loading="lazy" style={{ width: '100%', display: 'block' }} />
+      )}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '12px 14px' }}>
+      {!reward.icon_url && (
         <div style={iconWrap}><span style={{ fontSize: 24 }}>{reward.kind === 'coupon' ? '🎟️' : '🎁'}</span></div>
       )}
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -252,6 +254,7 @@ function RewardCard({ reward, onDetail }: { reward: SortedReward; onDetail: () =
         </div>
       </div>
       <button onClick={(e) => { e.stopPropagation(); onDetail() }} style={detailBtn}>獎勵資訊</button>
+      </div>
     </div>
   )
 }
