@@ -20,6 +20,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 const BUBBLE_SRC = '/ui/cheer/chatbox.webp'
 const CHAR_SRCS = ['/ui/cheer/cheerleader-01.webp', '/ui/cheer/cheerleader-02.webp', '/ui/cheer/cheerleader-03.webp']
+// 角色大小/裁切（2026-08-29 使用者要求放大 ≥150%、切掉下半身沒關係、上半身要清楚）：
+// 寬度 min(90vw, 460px)（手機約為原 58vw 的 1.55 倍）；容器高 = 寬 × 1.2，400×800 圖等比縮放後高 = 2×寬，
+// 只露出頂部 60%（頭頂到腰臀），底部貼齊螢幕；上方泡泡框約佔 220px，此高度在 iPhone 尺寸下不會相撞。要再調就改這兩個常數。
+const CHAR_WIDTH = 'min(90vw, 460px)'
+const CHAR_ASPECT = '1 / 1.2'
 
 export default function CheerShow({ cheer }: { cheer: { text: string; key: number } | null }) {
   const [shown, setShown] = useState<{ text: string; key: number } | null>(null)
@@ -74,11 +79,11 @@ export default function CheerShow({ cheer }: { cheer: { text: string; key: numbe
         >{shown.text}</div>
       </div>
 
-      {/* 啦啦隊角色：容器只露出頭頂往下 400×600（overflow:hidden 裁掉膝蓋以下），底部貼齊螢幕底部 */}
+      {/* 啦啦隊角色：容器只露出頭頂往下約 60%（overflow:hidden 裁掉腰臀以下），底部貼齊螢幕底部；尺寸見 CHAR_WIDTH/CHAR_ASPECT */}
       <div
         key={`char-${shown.key}-${phase}`}
         style={{
-          position: 'absolute', bottom: 0, left: '50%', width: 'min(58vw, 300px)', aspectRatio: '2 / 3', overflow: 'hidden',
+          position: 'absolute', bottom: 0, left: '50%', width: CHAR_WIDTH, aspectRatio: CHAR_ASPECT, overflow: 'hidden',
           transform: 'translateX(-50%)',
           animation: phase === 'in' ? 'cheerCharIn .42s cubic-bezier(.34,1.56,.64,1) .06s both' : 'cheerOut .24s ease both',
         }}
