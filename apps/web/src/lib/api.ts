@@ -3919,18 +3919,21 @@ export const runCheersApi = {
 // ── 啦啦隊位置校正（2026-08-29）────────────────────────────────────────────────
 // dx/dy：相對角色容器「自身寬/高」的百分比位移（跨裝置一致；正 dx 往右、正 dy 往下），scale：縮放倍率（transform-origin 上中）。
 export interface CheerCharLayoutItem { dx: number; dy: number; scale: number }
-export type CheerCharId = '01' | '02' | '03'
+// 角色清單：新增角色時把 webp 放到 public/ui/cheer/cheerleader-NN.webp，並在這裡（與後端 profile/cheer_layout.go 的
+// cheerLayoutKeys）加上編號即可；其餘（預設校正值、解析、CheerShow 隨機/校正 UI）皆由此陣列驅動。
+export const CHEER_CHAR_IDS = ['01', '02', '03', '04', '05', '06', '07', '08'] as const
+export type CheerCharId = (typeof CHEER_CHAR_IDS)[number]
 export type CheerCharLayout = Record<CheerCharId, CheerCharLayoutItem>
-export const DEFAULT_CHEER_CHAR_LAYOUT: CheerCharLayout = {
-  '01': { dx: 0, dy: 0, scale: 1 }, '02': { dx: 0, dy: 0, scale: 1 }, '03': { dx: 0, dy: 0, scale: 1 },
-}
+export const DEFAULT_CHEER_CHAR_LAYOUT: CheerCharLayout = Object.fromEntries(
+  CHEER_CHAR_IDS.map((id) => [id, { dx: 0, dy: 0, scale: 1 }]),
+) as CheerCharLayout
 // 解析 Dashboard.cheer_char_layout；缺欄位/壞 JSON 一律補預設，永不 throw
 export function parseCheerCharLayout(raw: string | null | undefined): CheerCharLayout {
-  const out: CheerCharLayout = { '01': { ...DEFAULT_CHEER_CHAR_LAYOUT['01'] }, '02': { ...DEFAULT_CHEER_CHAR_LAYOUT['02'] }, '03': { ...DEFAULT_CHEER_CHAR_LAYOUT['03'] } }
+  const out = Object.fromEntries(CHEER_CHAR_IDS.map((id) => [id, { ...DEFAULT_CHEER_CHAR_LAYOUT[id] }])) as CheerCharLayout
   if (!raw) return out
   try {
     const j = JSON.parse(raw) as Partial<Record<CheerCharId, Partial<CheerCharLayoutItem>>>
-    for (const id of ['01', '02', '03'] as CheerCharId[]) {
+    for (const id of CHEER_CHAR_IDS) {
       const v = j?.[id]
       if (!v) continue
       if (typeof v.dx === 'number' && Number.isFinite(v.dx)) out[id].dx = v.dx

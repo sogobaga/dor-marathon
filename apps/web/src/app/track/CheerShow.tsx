@@ -13,7 +13,7 @@
 // 「淡出前維持顯示」慣例）。keyframes 定義於 globals.css（cheerBubbleIn/cheerCharIn/cheerOut），
 // reduced-motion 使用者改走同名但只做 opacity 淡入淡出的簡化版（見 globals.css media query）。
 //
-// 啦啦隊位置校正（2026-08-29）：白名單帳號可拖曳/縮放三張角色各自的位置，套用到所有跑者。契約定義在
+// 啦啦隊位置校正（2026-08-29）：白名單帳號可拖曳/縮放各角色（CHEER_CHAR_IDS，8 位）各自的位置，套用到所有跑者。契約定義在
 // lib/api.ts 檔尾「啦啦隊位置校正」區塊（CheerCharLayout/CheerCharId/DEFAULT_CHEER_CHAR_LAYOUT/
 // parseCheerCharLayout/cheerLayoutApi.save）。dx/dy 是相對角色容器自身寬高的位移百分比（正右正下）。
 //
@@ -23,17 +23,24 @@
 //     → 內層 div（套 cheerCharIn/cheerOut 進場/退場動畫，只做 translateY，不含 X 位移）→ img。
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { CheerCharId, CheerCharLayout, CheerCharLayoutItem } from '@/lib/api'
-import { DEFAULT_CHEER_CHAR_LAYOUT } from '@/lib/api'
+import { CHEER_CHAR_IDS, DEFAULT_CHEER_CHAR_LAYOUT } from '@/lib/api'
 
 // 素材版本參數：檔名不變但內容更新時（例如換更高解析度原圖）改這個值，強制瀏覽器與 Cloudflare 快取失效
 const ASSET_VER = 'v3'
 const BUBBLE_SRC = `/ui/cheer/chatbox.webp?${ASSET_VER}`
-const CHAR_IDS: CheerCharId[] = ['01', '02', '03']
-const CHAR_SRC_BY_ID: Record<CheerCharId, string> = {
-  '01': `/ui/cheer/cheerleader-01.webp?${ASSET_VER}`,
-  '02': `/ui/cheer/cheerleader-02.webp?${ASSET_VER}`,
-  '03': `/ui/cheer/cheerleader-03.webp?${ASSET_VER}`,
+// 角色清單一律由契約 CHEER_CHAR_IDS（lib/api.ts，目前 8 位 '01'..'08'）推導，這裡不再手寫。
+const CHAR_SRC_BY_ID: Record<CheerCharId, string> = Object.fromEntries(
+  CHEER_CHAR_IDS.map((id) => [id, `/ui/cheer/cheerleader-${id}.webp?${ASSET_VER}`]),
+) as Record<CheerCharId, string>
+// 隨機挑一位角色（可排除某一位，避免連續兩輪/當前輪與下一輪撞臉）。純函式，不做任何 side effect。
+function pickCharId(exclude: CheerCharId | null): CheerCharId {
+  const idx = Math.floor(Math.random() * CHEER_CHAR_IDS.length)
+  let id = CHEER_CHAR_IDS[idx]
+  if (CHEER_CHAR_IDS.length > 1 && id === exclude) id = CHEER_CHAR_IDS[(idx + 1) % CHEER_CHAR_IDS.length]
+  return id
 }
+function preloadChar(id: CheerCharId) { const img = new Image(); img.src = CHAR_SRC_BY_ID[id] }
+
 const EDIT_BUBBLE_TEXT = '校正模式：拖曳啦啦隊調整位置'
 const SCALE_MIN = 0.3
 const SCALE_MAX = 3
@@ -85,8 +92,11 @@ export default function CheerShow({ cheer, layout, edit }: {
 }) {
   const [shown, setShown] = useState<{ text: string; key: number } | null>(null)
   const [phase, setPhase] = useState<'in' | 'out'>('in')
-  const lastCharIdRef = useRef<CheerCharId | null>(null)
-  const [selected, setSelected] = useState<CheerCharId>('01') // 校正模式：目前選中要編輯的那張
+  // 預載策略（2026-08-29，8 位角色全載約 2.8MB 不可接受）：只預載「下一位」。nextCharIdRef 存的永遠是
+  // 已用 new Image() 預載過、下一輪保證已在快取的角色 id。mount 時先挑一位並預載它（+泡泡框）；
+  // 每次新一輪演出（shown.key 變更）就直接用掉這個已預載好的角色，再立刻重挑一位不同的當下一位並預載。
+  const nextCharIdRef = useRef<CheerCharId | null>(null)
+  const [selected, setSelected] = useState<CheerCharId>(CHEER_CHAR_IDS[0]) // 校正模式：目前選中要編輯的那張
   const [savedFlash, setSavedFlash] = useState(false) // 儲存成功後短暫顯示「✓ 已儲存」
   const [isDragging, setIsDragging] = useState(false)
   const dragOuterRef = useRef<HTMLDivElement | null>(null)
@@ -97,20 +107,35 @@ export default function CheerShow({ cheer, layout, edit }: {
     if (cheer) { setShown(cheer); setPhase('in') } else { setPhase('out') }
   }, [cheer, edit])
 
-  // 角色隨機：每次新一輪演出（shown.key 變更）才重抽，同一輪演出中途不換臉。校正模式不使用（改由 selected 決定）。
+  // mount：挑一位當「下一位」，預載它與泡泡框（一次只多載一張角色圖）。
+  useEffect(() => {
+    const bubbleImg = new Image(); bubbleImg.src = BUBBLE_SRC
+    const id = pickCharId(null)
+    nextCharIdRef.current = id
+    preloadChar(id)
+  }, [])
+
+  // 角色決定：每次新一輪演出（shown.key 變更）才重算，同一輪演出中途不換臉。直接用掉 nextCharIdRef 這個
+  // 已預載好的角色（保證出場時已在快取），mount 首次渲染時 ref 尚未由上面的 effect 寫入，用 pickCharId
+  // 兜底（此時 shown 必為 null，不會真的渲染出來）。校正模式不使用（改由 selected 決定）。
   const randomCharId = useMemo(() => {
-    let idx = Math.floor(Math.random() * CHAR_IDS.length)
-    let id = CHAR_IDS[idx]
-    if (CHAR_IDS.length > 1 && id === lastCharIdRef.current) id = CHAR_IDS[(idx + 1) % CHAR_IDS.length]
-    lastCharIdRef.current = id
-    return id
+    return nextCharIdRef.current ?? pickCharId(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown?.key])
 
-  // 預先載入四張圖，避免第一次觸發時才開始下載造成的閃爍/延遲。
+  // 用掉這輪角色後，立刻再挑一位不同的當下一位並預載，確保下次出場時已在快取——一次只多載一張。
   useEffect(() => {
-    [BUBBLE_SRC, ...Object.values(CHAR_SRC_BY_ID)].forEach((src) => { const img = new Image(); img.src = src })
-  }, [])
+    if (edit || !shown) return
+    const next = pickCharId(randomCharId)
+    nextCharIdRef.current = next
+    preloadChar(next)
+  }, [shown?.key, edit, randomCharId])
+
+  // 校正模式：角色由 selected 決定、按需載入，不需整批預載；切換 pill 時順手預載該張。
+  useEffect(() => {
+    if (!edit) return
+    preloadChar(selected)
+  }, [edit, selected])
 
   if (!edit && !shown) return null
 
@@ -232,18 +257,19 @@ export default function CheerShow({ cheer, layout, edit }: {
         </div>
       </div>
 
-      {/* 校正模式工具列：右側直欄（118px，390px 手機寬綽有餘）。只影響目前選中(selected)那張。 */}
+      {/* 校正模式工具列：右側直欄（132px，390px 手機寬綽有餘；8 位角色改 4×2 格線放不下 118px 舊寬）。
+          只影響目前選中(selected)那張。 */}
       {edit && (
         <div
           style={{
-            position: 'absolute', top: 'calc(var(--app-top, 24px) + 54px)', right: 8, width: 118,
+            position: 'absolute', top: 'calc(var(--app-top, 24px) + 54px)', right: 8, width: 132,
             background: 'rgba(11,14,19,.92)', border: '1px solid rgba(255,194,75,.5)', borderRadius: 12,
             padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 6,
             boxShadow: '0 6px 20px rgba(0,0,0,.35)', fontFamily: 'inherit',
           }}
         >
-          <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
-            {CHAR_IDS.map((id) => (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4 }}>
+            {CHEER_CHAR_IDS.map((id) => (
               <button key={id} onClick={() => setSelected(id)} style={toolPillStyle(id === selected)}>{id}</button>
             ))}
           </div>

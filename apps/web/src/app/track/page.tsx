@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import useSWR from 'swr'
-import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, cheerLayoutApi, parseCheerCharLayout, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy, type CheerCharLayout } from '@/lib/api'
+import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, cheerLayoutApi, parseCheerCharLayout, CHEER_CHAR_IDS, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy, type CheerCharLayout } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
@@ -192,7 +192,7 @@ export default function TrackPage() {
   // 進入校正模式那一刻，把當時的 cheerLayout 複製成草稿；離開時清空草稿。
   useEffect(() => {
     if (cheerEditOn) {
-      if (!editLayout) setEditLayout({ '01': { ...cheerLayout['01'] }, '02': { ...cheerLayout['02'] }, '03': { ...cheerLayout['03'] } })
+      if (!editLayout) setEditLayout(Object.fromEntries(CHEER_CHAR_IDS.map((id) => [id, { ...cheerLayout[id] }])) as CheerCharLayout)
     } else if (editLayout) {
       setEditLayout(null); cheerDirtyRef.current = false
     }

@@ -51,7 +51,7 @@ var specs = map[string]func(string) bool{
 	"cheer_test_entry_whitelist":  isWhitelist,
 	"cheer_edit_entry_state":      isEntryState, // 啦啦隊角色位置校正模式入口（GPS 跑步頁「🎯 校正啦啦隊」按鈕 + ?cheerEdit=1）
 	"cheer_edit_entry_whitelist":  isWhitelist,
-	"cheer_char_layout":           isCheerLayoutJSON, // 啦啦隊三張角色的位置校正值（見 internal/profile.normalizeCheerLayout）
+	"cheer_char_layout":           isCheerLayoutJSON, // 啦啦隊八張角色的位置校正值（見 internal/profile.normalizeCheerLayout）
 	"monopoly_entry_state":        isEntryState, // 環台大富翁入口
 	"monopoly_entry_whitelist":    isWhitelist,
 	"knowledge_entry_state":       isEntryState, // 知識探索(知識卡圖鑑)入口
@@ -153,11 +153,18 @@ func isCancellationPolicyJSON(v string) bool {
 	return true
 }
 
+// cheerLayoutValidKeys 啦啦隊角色位置校正值合法 key 集合（01~08，對應八張啦啦隊圖，
+// 擴充自舊版 01/02/03；與 internal/profile.cheerLayoutKeys 同步維護）。
+var cheerLayoutValidKeys = map[string]bool{
+	"01": true, "02": true, "03": true, "04": true,
+	"05": true, "06": true, "07": true, "08": true,
+}
+
 // isCheerLayoutJSON 驗證啦啦隊角色位置校正值 JSON（見 internal/profile.normalizeCheerLayout，
 // 前台校正模式儲存端的正規化邏輯與此驗證同一組範圍常數，各自獨立實作以避免 profile→appsettings
-// 之外再反向 import 形成循環依賴）。必須是 JSON 物件、恰有 01/02/03 三個 key，每個 key 底下
-// dx/dy/scale 皆為有限數且落在合法範圍（dx/dy: -300~300，scale: 0.2~4）。空字串合法（清空、退回
-// 程式內建預設）。
+// 之外再反向 import 形成循環依賴）。必須是 JSON 物件、所有 key 皆屬於 01~08（可少不可多——缺
+// key 由 normalizeCheerLayout 補預設值，這裡只需擋未知 key），每個 key 底下 dx/dy/scale 皆為
+// 有限數且落在合法範圍（dx/dy: -300~300，scale: 0.2~4）。空字串合法（清空、退回程式內建預設）。
 func isCheerLayoutJSON(v string) bool {
 	if v == "" {
 		return true
@@ -170,12 +177,8 @@ func isCheerLayoutJSON(v string) bool {
 	if err := json.Unmarshal([]byte(v), &m); err != nil {
 		return false
 	}
-	if len(m) != 3 {
-		return false
-	}
-	for _, key := range []string{"01", "02", "03"} {
-		item, ok := m[key]
-		if !ok {
+	for key, item := range m {
+		if !cheerLayoutValidKeys[key] {
 			return false
 		}
 		if !isFiniteInRange(item.DX, -300, 300) || !isFiniteInRange(item.DY, -300, 300) {

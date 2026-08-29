@@ -69,11 +69,13 @@ func TestSettingsCacheSetGetInvalidate(t *testing.T) {
 	}
 }
 
-// TestIsCheerLayoutJSON 涵蓋合法(空字串/完整三key)、缺key、多餘key、壞JSON、非物件、各數值超範圍
+// TestIsCheerLayoutJSON 涵蓋合法(空字串/只有3key/完整8key)、未知key、壞JSON、非物件、各數值超範圍
 // 的情況。對應啦啦隊角色位置校正值（見 internal/profile.normalizeCheerLayout 的儲存端正規化邏輯，
-// 兩邊各自獨立實作以避免循環依賴，範圍常數需保持一致：dx/dy -300~300、scale 0.2~4）。
+// 兩邊各自獨立實作以避免循環依賴，範圍常數需保持一致：dx/dy -300~300、scale 0.2~4）。key 可少
+// 不可多——缺 key 由 normalizeCheerLayout 端補預設值，這裡只需擋未知 key。
 func TestIsCheerLayoutJSON(t *testing.T) {
-	const valid = `{"01":{"dx":0,"dy":0,"scale":1},"02":{"dx":12.3,"dy":-45.6,"scale":1.5},"03":{"dx":-300,"dy":300,"scale":4}}`
+	const valid3 = `{"01":{"dx":0,"dy":0,"scale":1},"02":{"dx":12.3,"dy":-45.6,"scale":1.5},"03":{"dx":-300,"dy":300,"scale":4}}`
+	const valid8 = `{"01":{"dx":0,"dy":0,"scale":1},"02":{"dx":12.3,"dy":-45.6,"scale":1.5},"03":{"dx":-300,"dy":300,"scale":4},"04":{"dx":0,"dy":0,"scale":1},"05":{"dx":0,"dy":0,"scale":1},"06":{"dx":0,"dy":0,"scale":1},"07":{"dx":0,"dy":0,"scale":1},"08":{"dx":0,"dy":0,"scale":1}}`
 
 	cases := []struct {
 		name string
@@ -81,11 +83,11 @@ func TestIsCheerLayoutJSON(t *testing.T) {
 		want bool
 	}{
 		{"空字串合法(清空用預設)", "", true},
-		{"完整三key合法", valid, true},
+		{"只有3key(01/02/03)合法(缺key由normalizeCheerLayout補預設)", valid3, true},
+		{"完整8key合法", valid8, true},
 		{"壞JSON", `{"01":{"dx":0`, false},
 		{"非物件(陣列)", `[1,2,3]`, false},
-		{"缺key(只有01/02)", `{"01":{"dx":0,"dy":0,"scale":1},"02":{"dx":0,"dy":0,"scale":1}}`, false},
-		{"多餘key(01/02/03/04)", `{"01":{"dx":0,"dy":0,"scale":1},"02":{"dx":0,"dy":0,"scale":1},"03":{"dx":0,"dy":0,"scale":1},"04":{"dx":0,"dy":0,"scale":1}}`, false},
+		{"含未知key(09)不合法", `{"01":{"dx":0,"dy":0,"scale":1},"09":{"dx":0,"dy":0,"scale":1}}`, false},
 		{"dx超過上限301", `{"01":{"dx":301,"dy":0,"scale":1},"02":{"dx":0,"dy":0,"scale":1},"03":{"dx":0,"dy":0,"scale":1}}`, false},
 		{"dy超過下限-301", `{"01":{"dx":0,"dy":-301,"scale":1},"02":{"dx":0,"dy":0,"scale":1},"03":{"dx":0,"dy":0,"scale":1}}`, false},
 		{"scale低於下限0.1", `{"01":{"dx":0,"dy":0,"scale":0.1},"02":{"dx":0,"dy":0,"scale":1},"03":{"dx":0,"dy":0,"scale":1}}`, false},

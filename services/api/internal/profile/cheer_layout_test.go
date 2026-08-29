@@ -2,14 +2,19 @@ package profile
 
 import "testing"
 
-// TestNormalizeCheerLayout 涵蓋合法輸入（含四捨五入）、缺 key、多餘 key、超範圍（dx/dy/scale 各自）
-// 四種情況。純函式、不碰 http/db，可直接單元測試。
+// TestNormalizeCheerLayout 涵蓋合法輸入（含四捨五入）、缺 key 補預設、未知 key 回錯誤、超範圍
+// （dx/dy/scale 各自）等情況。純函式、不碰 http/db，可直接單元測試。
 func TestNormalizeCheerLayout(t *testing.T) {
 	valid := func() CheerLayout {
 		return CheerLayout{
 			"01": {DX: 0, DY: 0, Scale: 1},
 			"02": {DX: 12.345, DY: -50, Scale: 1.5},
 			"03": {DX: -300, DY: 300, Scale: 4},
+			"04": {DX: 0, DY: 0, Scale: 1},
+			"05": {DX: 0, DY: 0, Scale: 1},
+			"06": {DX: 0, DY: 0, Scale: 1},
+			"07": {DX: 0, DY: 0, Scale: 1},
+			"08": {DX: 0, DY: 0, Scale: 1},
 		}
 	}
 
@@ -18,8 +23,8 @@ func TestNormalizeCheerLayout(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(out) != 3 {
-			t.Fatalf("expected 3 keys, got %d", len(out))
+		if len(out) != 8 {
+			t.Fatalf("expected 8 keys, got %d", len(out))
 		}
 		if out["02"].DX != 12.35 { // 12.345 四捨五入到小數2位
 			t.Errorf("expected 02.dx=12.35, got %v", out["02"].DX)
@@ -32,25 +37,55 @@ func TestNormalizeCheerLayout(t *testing.T) {
 		}
 	})
 
-	t.Run("缺key(只有01/02)回錯誤", func(t *testing.T) {
-		in := valid()
-		delete(in, "03")
-		if _, err := normalizeCheerLayout(in); err == nil {
-			t.Fatalf("expected error for missing key 03")
+	t.Run("只有3筆(01/02/03)補齊成8筆且原值保留", func(t *testing.T) {
+		in := CheerLayout{
+			"01": {DX: 10, DY: 20, Scale: 1.2},
+			"02": {DX: -30, DY: 40, Scale: 0.8},
+			"03": {DX: 5, DY: -5, Scale: 2},
+		}
+		out, err := normalizeCheerLayout(in)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(out) != 8 {
+			t.Fatalf("expected 8 keys, got %d", len(out))
+		}
+		if out["01"] != (CheerLayoutItem{DX: 10, DY: 20, Scale: 1.2}) {
+			t.Errorf("expected 01 preserved, got %+v", out["01"])
+		}
+		if out["02"] != (CheerLayoutItem{DX: -30, DY: 40, Scale: 0.8}) {
+			t.Errorf("expected 02 preserved, got %+v", out["02"])
+		}
+		if out["03"] != (CheerLayoutItem{DX: 5, DY: -5, Scale: 2}) {
+			t.Errorf("expected 03 preserved, got %+v", out["03"])
+		}
+		for _, key := range []string{"04", "05", "06", "07", "08"} {
+			if out[key] != (CheerLayoutItem{DX: 0, DY: 0, Scale: 1}) {
+				t.Errorf("expected %s filled with default, got %+v", key, out[key])
+			}
 		}
 	})
 
-	t.Run("多餘key(01/02/03/04)回錯誤", func(t *testing.T) {
+	t.Run("含未知key(09)回錯誤", func(t *testing.T) {
 		in := valid()
-		in["04"] = CheerLayoutItem{DX: 0, DY: 0, Scale: 1}
+		in["09"] = CheerLayoutItem{DX: 0, DY: 0, Scale: 1}
 		if _, err := normalizeCheerLayout(in); err == nil {
-			t.Fatalf("expected error for extra key 04")
+			t.Fatalf("expected error for unknown key 09")
 		}
 	})
 
-	t.Run("空map回錯誤", func(t *testing.T) {
-		if _, err := normalizeCheerLayout(CheerLayout{}); err == nil {
-			t.Fatalf("expected error for empty layout")
+	t.Run("空map回8筆全預設值(不算錯誤)", func(t *testing.T) {
+		out, err := normalizeCheerLayout(CheerLayout{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(out) != 8 {
+			t.Fatalf("expected 8 keys, got %d", len(out))
+		}
+		for _, key := range cheerLayoutKeys {
+			if out[key] != (CheerLayoutItem{DX: 0, DY: 0, Scale: 1}) {
+				t.Errorf("expected %s filled with default, got %+v", key, out[key])
+			}
 		}
 	})
 
