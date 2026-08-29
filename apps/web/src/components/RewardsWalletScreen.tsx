@@ -266,6 +266,9 @@ function BundleCard({ card, onMarkUsed }: { card: BundleCardData; onMarkUsed: (i
   const [expanded, setExpanded] = useState(false)
   const urgent = card.urgent
   const total = card.items.length
+  // 組合包主視覺：grantSerialBundle 把「組合群組本身」的 icon_url 蓋到包內每張序號上（roll.go），
+  // 故取第一張即代表整包；比照單張獎勵卡（RewardCard）「Banner 在上、資訊在下」滿版原比例配置。
+  const iconUrl = card.items[0]?.icon_url
   return (
     <div
       style={{
@@ -276,11 +279,13 @@ function BundleCard({ card, onMarkUsed }: { card: BundleCardData; onMarkUsed: (i
         overflow: 'hidden',
       }}
     >
-      <div
-        onClick={() => setExpanded((e) => !e)}
-        style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '12px 14px', cursor: 'pointer' }}
-      >
-        <div style={iconWrap}><span style={{ fontSize: 24 }}>🎁</span></div>
+      <div onClick={() => setExpanded((e) => !e)} style={{ cursor: 'pointer' }}>
+      {iconUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={iconUrl} alt="" loading="lazy" style={{ width: '100%', display: 'block' }} />
+      )}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '12px 14px' }}>
+        {!iconUrl && <div style={iconWrap}><span style={{ fontSize: 24 }}>🎁</span></div>}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 14.5, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -298,6 +303,7 @@ function BundleCard({ card, onMarkUsed }: { card: BundleCardData; onMarkUsed: (i
           </div>
         </div>
         <span style={{ fontSize: 12, color: 'var(--tx-dim)', flexShrink: 0, transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }}>▾</span>
+      </div>
       </div>
 
       {expanded && (
