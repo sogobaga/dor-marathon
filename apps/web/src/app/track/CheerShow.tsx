@@ -25,12 +25,14 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { CheerCharId, CheerCharLayout, CheerCharLayoutItem } from '@/lib/api'
 import { DEFAULT_CHEER_CHAR_LAYOUT } from '@/lib/api'
 
-const BUBBLE_SRC = '/ui/cheer/chatbox.webp'
+// 素材版本參數：檔名不變但內容更新時（例如換更高解析度原圖）改這個值，強制瀏覽器與 Cloudflare 快取失效
+const ASSET_VER = 'v3'
+const BUBBLE_SRC = `/ui/cheer/chatbox.webp?${ASSET_VER}`
 const CHAR_IDS: CheerCharId[] = ['01', '02', '03']
 const CHAR_SRC_BY_ID: Record<CheerCharId, string> = {
-  '01': '/ui/cheer/cheerleader-01.webp',
-  '02': '/ui/cheer/cheerleader-02.webp',
-  '03': '/ui/cheer/cheerleader-03.webp',
+  '01': `/ui/cheer/cheerleader-01.webp?${ASSET_VER}`,
+  '02': `/ui/cheer/cheerleader-02.webp?${ASSET_VER}`,
+  '03': `/ui/cheer/cheerleader-03.webp?${ASSET_VER}`,
 }
 const EDIT_BUBBLE_TEXT = '校正模式：拖曳啦啦隊調整位置'
 const SCALE_MIN = 0.3
