@@ -26,7 +26,7 @@ import type { CheerCharId, CheerCharLayout, CheerCharLayoutItem } from '@/lib/ap
 import { CHEER_CHAR_IDS, DEFAULT_CHEER_CHAR_LAYOUT } from '@/lib/api'
 
 // 素材版本參數：檔名不變但內容更新時（例如換更高解析度原圖）改這個值，強制瀏覽器與 Cloudflare 快取失效
-const ASSET_VER = 'v3'
+const ASSET_VER = 'v4'
 const BUBBLE_SRC = `/ui/cheer/chatbox.webp?${ASSET_VER}`
 // 角色清單一律由契約 CHEER_CHAR_IDS（lib/api.ts，目前 8 位 '01'..'08'）推導，這裡不再手寫。
 const CHAR_SRC_BY_ID: Record<CheerCharId, string> = Object.fromEntries(
