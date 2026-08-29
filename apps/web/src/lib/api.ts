@@ -1529,6 +1529,8 @@ export interface DashboardInfo {
   achievement_entry: 'hidden' | 'locked' | 'shown' // 成就統計(成就探索)入口可見性
   training_entry: 'hidden' | 'locked' | 'shown'    // 自主訓練入口可見性
   strategy_entry: 'hidden' | 'locked' | 'shown'    // 賽事策略入口可見性（自主訓練第三分頁）
+  cheer_test_entry: 'hidden' | 'locked' | 'shown' // 每公里應援「測試觸發」按鈕入口（cheer_test_entry_state/whitelist，2026-08-29）
+  cheer_display_ms: number // 應援表演（泡泡框+啦啦隊）顯示毫秒數，系統設定 cheer_display_ms，預設 3000
   monopoly_entry: 'hidden' | 'locked' | 'shown'    // 環台大富翁入口可見性
   knowledge_entry: 'hidden' | 'locked' | 'shown'   // 知識探索(知識卡圖鑑)入口可見性
   new_titles?: { code: string; name: string; tier: number; category: string }[] // 新解鎖稱號（前台跳彈窗用，跳完呼叫 /titles/seen）

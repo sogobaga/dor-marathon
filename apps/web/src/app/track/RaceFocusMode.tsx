@@ -68,7 +68,7 @@ function predictedTimeAtKm(km: number, segments: StrategySegment[]): number {
 type PaceDir = 'fast' | 'slow'
 
 export default function RaceFocusMode({
-  strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace, goal, cheer,
+  strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace, goal, canTestCheer, onTestCheer,
 }: {
   strategy: RaceStrategy | null // null＝一般跑步/課表/個人任務等沒有賽事策略的情境，只顯示基本 4 大字指標
   distanceM: number // 目前有效距離（公尺）——與頁面主面板「距離」同一份數據（distRef）
@@ -81,8 +81,9 @@ export default function RaceFocusMode({
   movingSegLivePace: number // 目前這 1km 的移動時間即時配速（秒/公里；未達門檻為 0）——只供配速偏差
   // 提醒引擎內部比較用，不再上畫面（見上方口徑決策說明）
   goal: RunGoal // 本次跑步目標（distance/time/none，見 lib/runGoal.ts resolveRunGoal）——驅動進度條
-  cheer: { text: string; key: number } | null // 每公里鼓勵語（page.tsx commitSeg 每跨整公里觸發，5 秒後自動清空）；
-  // key 遞增供 CheerBanner 判斷「連續兩次同一句也要重新播放淡入動畫」
+  canTestCheer?: boolean // 白名單測試應援按鈕（cheer_test_entry==='shown'，見 page.tsx）——只在完整專注
+  // 模式的「顯示完整介面」按鈕旁多渲染一顆同款按鈕；hidden 分支不需要（一般畫面右上角已有一顆，見 page.tsx）
+  onTestCheer?: () => void // 按下時觸發一次應援演出（page.tsx testCheer，內部呼叫 fireCheer）
 }) {
   // 「顯示完整介面」：暫時隱藏本覆蓋層，露出原本 UI。初始值＝有 strategy 時預設開啟（維持既有「載入策略
   // 開跑自動進入專注模式」行為），一般跑步（無 strategy）預設不自動進入、顯示切換鈕讓使用者手動切入。
@@ -176,8 +177,8 @@ export default function RaceFocusMode({
   if (hidden) {
     return (
       <>
-        {/* 顯示完整介面已切回一般畫面時，每公里鼓勵語仍要看得到——固定在畫面上方 1/3，與浮動按鈕同層（z-index 600） */}
-        <CheerBanner cheer={cheer} fixed />
+        {/* 每公里鼓勵語演出（泡泡框+啦啦隊角色）已改由 page.tsx 頂層的 CheerShow 獨立負責，
+            z-index 650 蓋過本疊層，hidden 模式（只有浮動按鈕）下同樣看得到，這裡不需要再渲染。 */}
         <button
           data-skin="default"
           onClick={() => setHidden(false)}
@@ -199,7 +200,8 @@ export default function RaceFocusMode({
       justifyContent: 'center', gap: '2.6vh', padding: '24px 20px', textAlign: 'center', overflowY: 'auto',
     }}>
       <GoalProgressBar goal={goal} distanceM={distanceM} elapsed={elapsed} />
-      <CheerBanner cheer={cheer} />
+      {/* 每公里鼓勵語演出（泡泡框+啦啦隊角色）改由 page.tsx 頂層的 CheerShow 負責，z-index 650 蓋過
+          本疊層（600），這裡不需要再渲染任何東西。 */}
 
       <div style={{ fontSize: 12, letterSpacing: '.15em', color: 'var(--tx-dim)', fontWeight: 700 }}>
         {strategy ? `比賽專注模式 · ${strategy.name}` : '專注模式'}
@@ -251,14 +253,25 @@ export default function RaceFocusMode({
         </div>
       )}
 
-      <button
-        onClick={() => setHidden(true)}
-        style={{
-          position: 'absolute', right: 16, bottom: 'calc(20px + env(safe-area-inset-bottom))',
-          background: 'rgba(255,255,255,.1)', color: 'var(--tx)', border: '1px solid var(--line-2)',
-          borderRadius: 999, padding: '9px 15px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-        }}
-      >顯示完整介面</button>
+      {/* 「顯示完整介面」＋（白名單）「📣 測試應援」同一列、同款樣式；測試按鈕見 canTestCheer/onTestCheer props 說明 */}
+      <div style={{ position: 'absolute', right: 16, bottom: 'calc(20px + env(safe-area-inset-bottom))', display: 'flex', gap: 8 }}>
+        {canTestCheer && (
+          <button
+            onClick={onTestCheer}
+            style={{
+              background: 'rgba(255,255,255,.1)', color: 'var(--tx)', border: '1px solid var(--line-2)',
+              borderRadius: 999, padding: '9px 15px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >📣 測試應援</button>
+        )}
+        <button
+          onClick={() => setHidden(true)}
+          style={{
+            background: 'rgba(255,255,255,.1)', color: 'var(--tx)', border: '1px solid var(--line-2)',
+            borderRadius: 999, padding: '9px 15px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+          }}
+        >顯示完整介面</button>
+      </div>
     </div>
   )
 }
@@ -316,37 +329,6 @@ function GoalProgressBar({ goal, distanceM, elapsed }: { goal: RunGoal; distance
   )
 }
 
-// 每公里鼓勵語橫幅。fixed=true 供「顯示完整介面」（hidden 模式，只有浮動按鈕）時仍能看到——此時本元件是
-// 疊層外的獨立節點，沒有共同祖先帶 data-skin="default"，故自己補上，避免 warm skin 把綠字變成看不見
-//（見檔頭專注模式固定亮字慣例）。淡入淡出：cheer 變化（含連續兩次同一句、key 遞增）時整個節點用新 key
-// 重新掛載（初始 opacity:0），下一輪 rAF 才把 visible 扳成 true，讓 CSS transition 有「前後兩個值」可過渡；
-// cheer 變 null 時只切 visible=false（沿用同一個掛載節點），讓文字維持顯示、淡出後才真正消失。
-function CheerBanner({ cheer, fixed }: { cheer: { text: string; key: number } | null; fixed?: boolean }) {
-  const [shown, setShown] = useState<{ text: string; key: number } | null>(null)
-  const [visible, setVisible] = useState(false)
-  useEffect(() => {
-    if (cheer) {
-      setShown(cheer)
-      const id = requestAnimationFrame(() => setVisible(true))
-      return () => cancelAnimationFrame(id)
-    }
-    setVisible(false)
-  }, [cheer])
-  if (!shown) return null
-  return (
-    <div
-      key={shown.key}
-      data-skin="default"
-      style={{
-        position: fixed ? 'fixed' : 'absolute',
-        top: fixed ? '30vh' : '13%',
-        left: '50%', transform: 'translateX(-50%)', zIndex: fixed ? 600 : undefined,
-        maxWidth: fixed ? 'min(88vw, 420px)' : '86%',
-        textAlign: 'center', color: 'var(--fug)', fontSize: 'clamp(20px, 6vw, 26px)', fontWeight: 800,
-        background: 'rgba(0,0,0,.55)', borderRadius: 16, padding: '14px 22px', lineHeight: 1.4,
-        boxShadow: '0 8px 24px rgba(0,0,0,.35)', wordBreak: 'break-word', pointerEvents: 'none',
-        opacity: visible ? 1 : 0, transition: 'opacity .3s ease',
-      }}
-    >{shown.text}</div>
-  )
-}
+// 舊「每公里鼓勵語橫幅」元件已移除（v1.1.664 升級成泡泡對話框+啦啦隊角色演出，改由
+// page.tsx 頂層的 track/CheerShow.tsx 獨立負責顯示，見上方 canTestCheer/onTestCheer props 說明
+// 與兩處掛載點的移除註解）。

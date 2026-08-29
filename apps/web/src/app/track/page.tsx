@@ -24,7 +24,9 @@ import { useIsPhone } from '@/lib/useIsMobile'
 import { useIsLandscape } from '@/lib/useIsLandscape'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import { initMovingState, advanceMovingState, classifyMoveSignal, currentMovingS, flushMovingState, classifyDistSignal, shouldCommitDist, MOVE_JUDGE_WINDOW_S, RETRO_WINDOW_S, type MovingState } from '@/lib/movingTime'
+import { useDashboard } from '@/lib/useDashboard'
 import RaceFocusMode from './RaceFocusMode'
+import CheerShow from './CheerShow'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -161,10 +163,19 @@ export default function TrackPage() {
     before: cheerPoolRaw?.before?.length ? cheerPoolRaw.before : CHEER_FALLBACK.before,
     after: cheerPoolRaw?.after?.length ? cheerPoolRaw.after : CHEER_FALLBACK.after,
   }
-  const [cheer, setCheer] = useState<{ text: string; key: number } | null>(null) // 目前顯示的鼓勵語（5 秒後自動清空）
+  // 應援表演升級（泡泡對話框+啦啦隊角色，v1.1.664）：顯示秒數吃系統設定 cheer_display_ms（DashboardInfo，
+  // api.ts:1533），未設定/非正數 fallback 3000ms；存 ref 供 fireCheer 讀最新值（fireCheer 是具名函式宣告，
+  // 只讀 ref，不受呼叫端 closure 是否為舊版影響，同檔既有慣例）。cheer_test_entry==='shown' 才顯示白名單
+  // 測試按鈕（後台系統設定白名單開關，本頁不做任何權限判斷、只吃這顆旗標）。
+  const { dash } = useDashboard()
+  const cheerDurationRef = useRef(3000)
+  cheerDurationRef.current = dash?.cheer_display_ms && dash.cheer_display_ms > 0 ? dash.cheer_display_ms : 3000
+  const canTestCheer = dash?.cheer_test_entry === 'shown'
+  const [cheer, setCheer] = useState<{ text: string; key: number } | null>(null) // 目前顯示的鼓勵語（cheerDurationRef 毫秒後自動清空）
   const cheerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastCheerTextRef = useRef<string | null>(null) // 避免連續兩次抽到同一句
   const cheerKeyRef = useRef(0) // 遞增 key，讓連續兩句也能重新觸發淡入動畫
+  const cheerTestCountRef = useRef(0) // 測試按鈕：遞增當假 km，讓有目標時能連續看到 50% 前後兩種文案
 
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)      // 有效距離（排除超速段）：顯示/里程/課表進度用
@@ -269,9 +280,17 @@ export default function TrackPage() {
     setCheer({ text: finalText, key: cheerKeyRef.current })
     try { navigator.vibrate?.([80, 60, 80]) } catch { /* 無此 API 就略過 */ }
     if (cheerTimerRef.current) clearTimeout(cheerTimerRef.current)
-    cheerTimerRef.current = setTimeout(() => setCheer(null), 5000)
+    cheerTimerRef.current = setTimeout(() => setCheer(null), cheerDurationRef.current) // 顯示秒數吃系統設定（cheerDurationRef，見上方宣告處）
   }
   useEffect(() => () => { if (cheerTimerRef.current) clearTimeout(cheerTimerRef.current) }, [])
+
+  // 白名單測試按鈕（canTestCheer，見上方 cheer_test_entry 宣告處）：手動觸發一次應援演出，不需要真的
+  // 跑到整公里。km 用遞增計數器模擬「第 1、2、3…公里」（第 1 次=1、第 2 次=2…），有目標時能連續看到
+  // 50% 前後兩種文案分支；elapsedS 直接讀目前 elapsed，與正式觸發同一套 fireCheer 邏輯。
+  function testCheer() {
+    cheerTestCountRef.current += 1
+    fireCheer(cheerTestCountRef.current, elapsed)
+  }
 
   // #4 移動時間（排除靜止/抖動的「實際移動」時間）＋依它算的移動配速
   // 狀態機（movingAccumS 已結清秒數 + movingSince 目前移動段起點或 null）獨立於下面 onPos 的距離累積
@@ -1653,7 +1672,25 @@ export default function TrackPage() {
           比較、不再上畫面（見 RaceFocusMode 內口徑決策註解）。下方一般面板「移動時間/移動配速/分段」
           那排不受影響。 */}
       {status === 'tracking' && (
-        <RaceFocusMode strategy={raceStrategy} distanceM={distance} elapsed={elapsed} avgPace={avgPace} segLivePace={segLivePace} movingSegLivePace={movingSegLivePace} goal={runGoal} cheer={cheer} />
+        <RaceFocusMode strategy={raceStrategy} distanceM={distance} elapsed={elapsed} avgPace={avgPace} segLivePace={segLivePace} movingSegLivePace={movingSegLivePace} goal={runGoal} canTestCheer={canTestCheer} onTestCheer={testCheer} />
+      )}
+      {/* 每公里鼓勵語「泡泡對話框+啦啦隊角色」演出（v1.1.664）：獨立掛在本頁頂層、不論 status，
+          z-index 650 蓋過上面的 RaceFocusMode（600）——hidden 分支切回一般畫面時本節點仍在，不需要
+          RaceFocusMode 內再各自渲染一份。 */}
+      <CheerShow cheer={cheer} />
+      {/* 白名單測試按鈕：cheer_test_entry==='shown' 才顯示（系統設定白名單，見上方 canTestCheer 宣告處）。
+          一般畫面固定在右上角；RaceFocusMode 完整專注模式另有一顆同款按鈕（見該檔「顯示完整介面」旁）。 */}
+      {canTestCheer && (
+        <button
+          data-skin="default"
+          onClick={testCheer}
+          style={{
+            position: 'fixed', top: 'calc(var(--app-top, 24px) + 8px)', right: 12, zIndex: 560,
+            background: 'rgba(11,14,19,.9)', color: 'var(--tx)', border: '1px solid rgba(255,194,75,.6)',
+            borderRadius: 999, padding: '8px 13px', fontSize: 12.5, fontWeight: 800, cursor: 'pointer',
+            boxShadow: '0 3px 12px rgba(0,0,0,.28)', fontFamily: 'inherit',
+          }}
+        >📣 測試應援</button>
       )}
       {confirmEnd && activeEvent && (() => {
         const ev = activeEvent

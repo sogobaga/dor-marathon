@@ -46,6 +46,8 @@ var specs = map[string]func(string) bool{
 	"training_entry_whitelist":    isWhitelist,
 	"strategy_entry_state":        isEntryState, // 賽事策略入口（自主訓練第三分頁）
 	"strategy_entry_whitelist":    isWhitelist,
+	"cheer_test_entry_state":      isEntryState, // 每公里應援「測試觸發」按鈕入口（GPS 跑步頁）
+	"cheer_test_entry_whitelist":  isWhitelist,
 	"monopoly_entry_state":        isEntryState, // 環台大富翁入口
 	"monopoly_entry_whitelist":    isWhitelist,
 	"knowledge_entry_state":       isEntryState, // 知識探索(知識卡圖鑑)入口
@@ -59,6 +61,7 @@ var specs = map[string]func(string) bool{
 	"vip_first_promo_days":        isNonNegInt,           // 首購促銷窗天數（試用到期後幾天內續訂享優惠）
 	"vip_coupon_value_cents":      isPosIntMax(10000000), // 活動優惠券面額（分，預設10000=$100）；改動後立即套用於「之後」的報名折抵，已持有的券張數不受影響
 	"vip_coupon_per_month":        isNonNegInt,           // VIP 每月補發活動優惠券張數（預設3）
+	"cheer_display_ms":            isPosIntMax(60000),    // 每公里應援表演（泡泡框+啦啦隊）顯示毫秒數（預設3000=3秒）
 	// 取消退費政策系統預設（見 race.CancellationPolicy／race.ResolveCancellationPolicy）；
 	// 值為整包政策的 JSON 字串，個別賽事可在 races.config.cancellation_policy 覆寫。
 	"cancellation_policy": isCancellationPolicyJSON,
