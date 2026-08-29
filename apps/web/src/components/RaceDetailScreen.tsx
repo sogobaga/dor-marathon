@@ -886,7 +886,8 @@ function Stat({ label, value }: { label: string; value: string }) {
 function Row({ k, v }: { k: string; v: string }) {
   return (
     <div style={{ display: 'flex', gap: 8 }}>
-      <span style={{ color: 'var(--tx-faint)', width: 56, flexShrink: 0 }}>{k}</span>
+      {/* minWidth+nowrap：標籤一律單行——原寫死 width:56 在完賽歷程字級下四字標籤被折行（2026-08-29 使用者回報） */}
+      <span style={{ color: 'var(--tx-faint)', minWidth: 56, whiteSpace: 'nowrap', flexShrink: 0 }}>{k}</span>
       <span style={{ color: 'var(--tx-dim)' }}>{v}</span>
     </div>
   )
