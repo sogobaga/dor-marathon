@@ -39,6 +39,7 @@ const NAV: { grp: string; items: NavItem[] }[] = [
       { k: 'personal-tasks', t: '個人任務', href: '/admin/personal-tasks', perm: 'event_tasks' },
       { k: 'explore', t: '城市探索', href: '/admin/explore', perm: 'event_tasks' },
       { k: 'titles', t: '稱號管理', href: '/admin/titles', perm: 'titles' },
+      { k: 'run_cheers', t: '跑步鼓勵語', href: '/admin/run-cheers', perm: 'run_cheers' },
       { k: 'training', t: '自主訓練課表', href: '/admin/training', perm: 'training' },
       { k: 'virtual', t: '虛擬選手', href: '/admin/virtual-runners', perm: 'virtual' },
       { k: 'partners', t: '跑者充電站', href: '/admin/partners', perm: 'partners' },

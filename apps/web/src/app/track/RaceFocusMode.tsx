@@ -35,6 +35,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FUEL_KIND_LABEL, type RaceStrategy, type StrategySegment } from '@/lib/api'
+import { fmtKm, type RunGoal } from '@/lib/runGoal'
 
 // 取整口徑必須與 track/page.tsx 的 fmtTime 完全一致（一律 Math.floor）：elapsed 是帶小數的秒數，
 // 若這裡先 Math.round、主面板 Math.floor，同一個值會顯示成差 1 秒的兩個數字（使用者實測回報過）。
@@ -67,7 +68,7 @@ function predictedTimeAtKm(km: number, segments: StrategySegment[]): number {
 type PaceDir = 'fast' | 'slow'
 
 export default function RaceFocusMode({
-  strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace,
+  strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace, goal, cheer,
 }: {
   strategy: RaceStrategy | null // null＝一般跑步/課表/個人任務等沒有賽事策略的情境，只顯示基本 4 大字指標
   distanceM: number // 目前有效距離（公尺）——與頁面主面板「距離」同一份數據（distRef）
@@ -79,6 +80,9 @@ export default function RaceFocusMode({
   // 同一個值，供「分段即時配速」大字顯示（放大鏡原則，見上方口徑決策說明）
   movingSegLivePace: number // 目前這 1km 的移動時間即時配速（秒/公里；未達門檻為 0）——只供配速偏差
   // 提醒引擎內部比較用，不再上畫面（見上方口徑決策說明）
+  goal: RunGoal // 本次跑步目標（distance/time/none，見 lib/runGoal.ts resolveRunGoal）——驅動進度條
+  cheer: { text: string; key: number } | null // 每公里鼓勵語（page.tsx commitSeg 每跨整公里觸發，5 秒後自動清空）；
+  // key 遞增供 CheerBanner 判斷「連續兩次同一句也要重新播放淡入動畫」
 }) {
   // 「顯示完整介面」：暫時隱藏本覆蓋層，露出原本 UI。初始值＝有 strategy 時預設開啟（維持既有「載入策略
   // 開跑自動進入專注模式」行為），一般跑步（無 strategy）預設不自動進入、顯示切換鈕讓使用者手動切入。
@@ -171,16 +175,20 @@ export default function RaceFocusMode({
 
   if (hidden) {
     return (
-      <button
-        data-skin="default"
-        onClick={() => setHidden(false)}
-        style={{
-          position: 'fixed', right: 16, bottom: 'calc(100px + env(safe-area-inset-bottom))', zIndex: 600,
-          background: 'rgba(11,14,19,.9)', color: 'var(--tx)', border: '1px solid rgba(255,194,75,.6)',
-          borderRadius: 999, padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer',
-          boxShadow: '0 4px 16px rgba(0,0,0,.4)', fontFamily: 'inherit',
-        }}
-      >🏁 專注模式</button>
+      <>
+        {/* 顯示完整介面已切回一般畫面時，每公里鼓勵語仍要看得到——固定在畫面上方 1/3，與浮動按鈕同層（z-index 600） */}
+        <CheerBanner cheer={cheer} fixed />
+        <button
+          data-skin="default"
+          onClick={() => setHidden(false)}
+          style={{
+            position: 'fixed', right: 16, bottom: 'calc(100px + env(safe-area-inset-bottom))', zIndex: 600,
+            background: 'rgba(11,14,19,.9)', color: 'var(--tx)', border: '1px solid rgba(255,194,75,.6)',
+            borderRadius: 999, padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer',
+            boxShadow: '0 4px 16px rgba(0,0,0,.4)', fontFamily: 'inherit',
+          }}
+        >🏁 專注模式</button>
+      </>
     )
   }
 
@@ -190,6 +198,9 @@ export default function RaceFocusMode({
       color: 'var(--tx)', display: 'flex', flexDirection: 'column', alignItems: 'center',
       justifyContent: 'center', gap: '2.6vh', padding: '24px 20px', textAlign: 'center', overflowY: 'auto',
     }}>
+      <GoalProgressBar goal={goal} distanceM={distanceM} elapsed={elapsed} />
+      <CheerBanner cheer={cheer} />
+
       <div style={{ fontSize: 12, letterSpacing: '.15em', color: 'var(--tx-dim)', fontWeight: 700 }}>
         {strategy ? `比賽專注模式 · ${strategy.name}` : '專注模式'}
       </div>
@@ -261,5 +272,81 @@ function Metric({ label, value, unit, size }: { label: string; value: string; un
         {value}{unit && <span style={{ fontSize: '0.35em', marginLeft: 4, color: 'var(--tx-dim)' }}>{unit}</span>}
       </div>
     </div>
+  )
+}
+
+// 本次跑步目標進度條（疊層最上面第一個節點，見掛載處）。三種目標型態的左/右標籤、填充比例、目前值
+// 全部走 goal（見 lib/runGoal.ts resolveRunGoal）；none（無單一目標）改成「每 1 km 一段」自然歸零的
+// 分段進度，讓一般跑步/混合課表也有個持續推進的視覺回饋。
+function GoalProgressBar({ goal, distanceM, elapsed }: { goal: RunGoal; distanceM: number; elapsed: number }) {
+  let leftLabel: string, rightLabel: string, ratio: number, curLabel: string | null = null, hint: string | null = null
+  if (goal.type === 'distance') {
+    leftLabel = '0 km'
+    rightLabel = `${fmtKm(goal.totalM / 1000)} km`
+    ratio = goal.totalM > 0 ? distanceM / goal.totalM : 0
+    curLabel = `${fmtKm(distanceM / 1000)} km`
+  } else if (goal.type === 'time') {
+    leftLabel = '00:00:00'
+    rightLabel = fmtTime(goal.totalS) // 沿用檔內既有 fmtTime（floor，非 round）——與「時間」大字同一把尺
+    ratio = goal.totalS > 0 ? elapsed / goal.totalS : 0
+    curLabel = fmtTime(elapsed)
+  } else {
+    leftLabel = '0 km'
+    rightLabel = '1 km'
+    ratio = (distanceM % 1000) / 1000 // 每跨一整公里自然歸零，持續有進度感
+    hint = '每 1 km 一段'
+  }
+  const pct = Math.min(1, Math.max(0, ratio)) * 100
+  const reached = ratio >= 1
+  return (
+    <div style={{ width: '100%', maxWidth: 520 }}>
+      {hint && <div style={{ textAlign: 'right', fontSize: 10.5, color: 'var(--tx-dim)', fontWeight: 700, marginBottom: 2 }}>{hint}</div>}
+      {curLabel && (
+        <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 800, fontVariantNumeric: 'tabular-nums', marginBottom: 3, color: reached ? 'var(--gold)' : 'var(--fug)' }}>
+          {curLabel}
+        </div>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--tx-dim)', fontWeight: 700, marginBottom: 4 }}>
+        <span>{leftLabel}</span><span>{rightLabel}</span>
+      </div>
+      <div style={{ height: 10, borderRadius: 999, background: 'rgba(255,255,255,.18)', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: reached ? 'var(--gold)' : 'var(--fug)', borderRadius: 999, transition: 'width .4s linear' }} />
+      </div>
+    </div>
+  )
+}
+
+// 每公里鼓勵語橫幅。fixed=true 供「顯示完整介面」（hidden 模式，只有浮動按鈕）時仍能看到——此時本元件是
+// 疊層外的獨立節點，沒有共同祖先帶 data-skin="default"，故自己補上，避免 warm skin 把綠字變成看不見
+//（見檔頭專注模式固定亮字慣例）。淡入淡出：cheer 變化（含連續兩次同一句、key 遞增）時整個節點用新 key
+// 重新掛載（初始 opacity:0），下一輪 rAF 才把 visible 扳成 true，讓 CSS transition 有「前後兩個值」可過渡；
+// cheer 變 null 時只切 visible=false（沿用同一個掛載節點），讓文字維持顯示、淡出後才真正消失。
+function CheerBanner({ cheer, fixed }: { cheer: { text: string; key: number } | null; fixed?: boolean }) {
+  const [shown, setShown] = useState<{ text: string; key: number } | null>(null)
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    if (cheer) {
+      setShown(cheer)
+      const id = requestAnimationFrame(() => setVisible(true))
+      return () => cancelAnimationFrame(id)
+    }
+    setVisible(false)
+  }, [cheer])
+  if (!shown) return null
+  return (
+    <div
+      key={shown.key}
+      data-skin="default"
+      style={{
+        position: fixed ? 'fixed' : 'absolute',
+        top: fixed ? '30vh' : '13%',
+        left: '50%', transform: 'translateX(-50%)', zIndex: fixed ? 600 : undefined,
+        maxWidth: fixed ? 'min(88vw, 420px)' : '86%',
+        textAlign: 'center', color: 'var(--fug)', fontSize: 'clamp(20px, 6vw, 26px)', fontWeight: 800,
+        background: 'rgba(0,0,0,.55)', borderRadius: 16, padding: '14px 22px', lineHeight: 1.4,
+        boxShadow: '0 8px 24px rgba(0,0,0,.35)', wordBreak: 'break-word', pointerEvents: 'none',
+        opacity: visible ? 1 : 0, transition: 'opacity .3s ease',
+      }}
+    >{shown.text}</div>
   )
 }

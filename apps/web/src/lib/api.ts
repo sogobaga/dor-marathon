@@ -3874,3 +3874,40 @@ export function createSiteSocket(accessToken: string): WebSocket {
   const url = `${protocol}//${host}/ws/site?token=${accessToken}`
   return new WebSocket(url)
 }
+
+// ── 跑步鼓勵語（每公里彈出；專注模式進度條配套，2026-08-29）──────────────────────────
+// phase：'before'＝完成目標 50% 前（累積式文案，含佔位符 {done}，例「加油!!你已經完成{done}囉!!」→ 3 km）；
+//        'after' ＝超過 50% 後（剩餘式文案，含 {remain}，例「努力撐住，還剩下{remain}。」→ 7 km／38 分鐘）。
+// 無目標跑步一律用 before 池。佔位符由前台代入，後台文案不需管單位。
+export type RunCheerPhase = 'before' | 'after'
+export interface RunCheerMessage {
+  id: string
+  phase: RunCheerPhase
+  text: string
+  enabled: boolean
+  sort_order: number
+  created_at: string
+}
+export interface RunCheerInput {
+  phase: RunCheerPhase
+  text: string
+  enabled: boolean
+  sort_order: number
+}
+// 後台 CRUD（perm scope: run_cheers）
+export const adminRunCheersApi = {
+  list: (token: string) =>
+    request<{ items: RunCheerMessage[] }>('/admin/run-cheers', { headers: withAuth(token) }),
+  create: (token: string, body: RunCheerInput) =>
+    request<{ item: RunCheerMessage }>('/admin/run-cheers', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  update: (token: string, id: string, body: RunCheerInput) =>
+    request<{ item: RunCheerMessage }>(`/admin/run-cheers/${encodeURIComponent(id)}`, {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  remove: (token: string, id: string) =>
+    request<{ deleted: boolean }>(`/admin/run-cheers/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+}
+// 前台公開讀取（免登入）：只回 enabled 的文案，依 sort_order, created_at 排序
+export const runCheersApi = {
+  get: () => request<{ before: string[]; after: string[] }>('/run-cheers'),
+}

@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
-import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy } from '@/lib/api'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import useSWR from 'swr'
+import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
@@ -10,6 +11,7 @@ import CardUnlockCelebration from '@/components/CardUnlockCelebration'
 import TrackTaskPanel from '@/components/TrackTaskPanel'
 import FreetrainIntroPanel from '@/components/FreetrainIntroPanel'
 import { expandSegments, paceInBand, takeFreetrainWorkout, type WoStep } from '@/lib/workout'
+import { resolveRunGoal, cheerPhaseAndRemain, fmtKm, type RunGoal } from '@/lib/runGoal'
 import { loadLeaflet } from '@/lib/leaflet'
 import { unlockAudio, playEventAlarm, playEventComplete, vibrate, setMuted as sfxSetMuted, isMuted } from '@/lib/sfx'
 import { loadEffectAssets } from '@/lib/effects'
@@ -46,6 +48,20 @@ function fmtTime(s: number) {
 function fmtPace(s: number) {
   if (!s || !isFinite(s) || s <= 0) return '--:--'
   return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
+}
+
+// 每公里鼓勵語內建 fallback（後台文案 API 失敗/池為空時使用）：{done}=已完成量、{remain}=剩餘量，見 lib/runGoal.ts
+const CHEER_FALLBACK: { before: string[]; after: string[] } = {
+  before: [
+    '加油！你已經完成 {done} 了，保持這個節奏！',
+    '很棒的表現，{done} 已經穩穩入袋，繼續前進！',
+    '{done} 達成，身體正在熱起來，享受這股勁道！',
+  ],
+  after: [
+    '撐住！只剩 {remain}，終點就在不遠處！',
+    '進入最後階段，還剩 {remain}，你可以的！',
+    '最後衝刺，剩下 {remain}，堅持就是勝利！',
+  ],
 }
 
 export default function TrackPage() {
@@ -133,6 +149,23 @@ export default function TrackPage() {
   const [raceStrategy, setRaceStrategy] = useState<RaceStrategy | null>(null)
   const [stratErr, setStratErr] = useState('')
 
+  // 專注模式進度條的目標：strategy > 自主訓練 Free Run > 結構化課表全距離/全時間（純函式見 lib/runGoal.ts）。
+  // runGoalRef：commitSeg 活在 onPos 的 useCallback 裡（deps=[ensureMap]，closure 凍結在首次 render），
+  // 直接讀 runGoal 會拿到舊值，所以照全檔既有慣例（distRef 等）另存一份 ref 供 commitSeg 讀最新值。
+  const runGoal: RunGoal = useMemo(() => resolveRunGoal(raceStrategy, workout), [raceStrategy, workout])
+  const runGoalRef = useRef<RunGoal>(runGoal); runGoalRef.current = runGoal
+  // 每公里鼓勵語（v1.1.663）：免登入文案池，失敗/為空時用內建 fallback（CHEER_FALLBACK）。
+  const { data: cheerPoolRaw } = useSWR('run-cheers', () => runCheersApi.get(), { revalidateOnFocus: false, shouldRetryOnError: false })
+  const cheerPoolRef = useRef<{ before: string[]; after: string[] }>(CHEER_FALLBACK)
+  cheerPoolRef.current = {
+    before: cheerPoolRaw?.before?.length ? cheerPoolRaw.before : CHEER_FALLBACK.before,
+    after: cheerPoolRaw?.after?.length ? cheerPoolRaw.after : CHEER_FALLBACK.after,
+  }
+  const [cheer, setCheer] = useState<{ text: string; key: number } | null>(null) // 目前顯示的鼓勵語（5 秒後自動清空）
+  const cheerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastCheerTextRef = useRef<string | null>(null) // 避免連續兩次抽到同一句
+  const cheerKeyRef = useRef(0) // 遞增 key，讓連續兩句也能重新觸發淡入動畫
+
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)      // 有效距離（排除超速段）：顯示/里程/課表進度用
   const rawDistRef = useRef(0)   // 原始距離（含超速夾限）：僅供疑似搭車偵測，避免排除有效距離後偵測失效
@@ -215,6 +248,31 @@ export default function TrackPage() {
     if (zoom != null) map.setView(c, z); else map.panTo(c)
   }
 
+  // 每公里鼓勵語觸發：呼叫端＝commitSeg 的 while 迴圈（每跨一整公里呼叫一次）。km＝剛跨過的整公里數
+  // （1-based），elapsedS＝commitSeg 內同一基準算好的 el（GPS 第一點起算秒數，與 splitMarkRef 同源）。
+  // 用 function 宣告（非 const）→ 具名函式宣告會 hoist，onPos 的 useCallback（deps=[ensureMap]，closure
+  // 凍結在首次 render）引用到的一定是這份、不受宣告先後順序影響；內部只讀 ref／呼叫穩定的 setState，
+  // 所以即使 onPos 閉包本身是舊的，fireCheer 執行時讀到的仍是最新 runGoal/文案池。
+  function fireCheer(km: number, elapsedS: number) {
+    const { phase, remainText } = cheerPhaseAndRemain(runGoalRef.current, km, elapsedS)
+    const pool = cheerPoolRef.current[phase]
+    const list = pool.length ? pool : CHEER_FALLBACK[phase]
+    if (!list.length) return
+    let text = list[Math.floor(Math.random() * list.length)]
+    if (list.length > 1 && text === lastCheerTextRef.current) {
+      const others = list.filter((t) => t !== lastCheerTextRef.current)
+      text = others[Math.floor(Math.random() * others.length)] ?? text
+    }
+    lastCheerTextRef.current = text
+    const finalText = text.replace('{done}', `${fmtKm(km)} km`).replace('{remain}', remainText)
+    cheerKeyRef.current += 1
+    setCheer({ text: finalText, key: cheerKeyRef.current })
+    try { navigator.vibrate?.([80, 60, 80]) } catch { /* 無此 API 就略過 */ }
+    if (cheerTimerRef.current) clearTimeout(cheerTimerRef.current)
+    cheerTimerRef.current = setTimeout(() => setCheer(null), 5000)
+  }
+  useEffect(() => () => { if (cheerTimerRef.current) clearTimeout(cheerTimerRef.current) }, [])
+
   // #4 移動時間（排除靜止/抖動的「實際移動」時間）＋依它算的移動配速
   // 狀態機（movingAccumS 已結清秒數 + movingSince 目前移動段起點或 null）獨立於下面 onPos 的距離累積
   // 邏輯，判定門檻也各自獨立（見 lib/movingTime.ts 頂部說明）；lastMoveRef 是專供這個狀態機用的
@@ -263,6 +321,7 @@ export default function TrackPage() {
         setSplits((s) => [...s, el - prevEl])
         // 整公里分段當下拍移動時間快照，供「移動分段配速」用（與 splitMarkRef 同步）
         movingSplitMarkRef.current.push(currentMovingS(movingStateRef.current, Date.now()))
+        fireCheer(splitMarkRef.current.length, el) // 剛跨過的整公里數 + 同基準已耗秒數 → 每公里鼓勵語
       }
       pointsRef.current.push(cp)
       if (lineRef.current) lineRef.current.addLatLng([cp.lat, cp.lng])
@@ -881,6 +940,8 @@ export default function TrackPage() {
     movingStateRef.current = initMovingState(); lastMoveRef.current = null // #4 移動時間狀態機重置（見 lib/movingTime.ts）
     pendingRef.current = [] // 距離防漂移：清掉上一趟未回補的暫存段
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null); setMovingS(0)
+    // 每公里鼓勵語重置：避免上一趟結束前顯示中的句子/去重記憶殘留到這一趟
+    setCheer(null); lastCheerTextRef.current = null; if (cheerTimerRef.current) clearTimeout(cheerTimerRef.current)
     vehicleLikeRef.current = false; setVehicleWarn(false)
     followRef.current = true; setFollowing(true) // 每趟開始都恢復自動跟隨（即使 idle 時曾手動看地圖）
     if (lineRef.current) lineRef.current.setLatLngs([]) // 清掉上一趟的軌跡線（避免地圖殘留）
@@ -1592,7 +1653,7 @@ export default function TrackPage() {
           比較、不再上畫面（見 RaceFocusMode 內口徑決策註解）。下方一般面板「移動時間/移動配速/分段」
           那排不受影響。 */}
       {status === 'tracking' && (
-        <RaceFocusMode strategy={raceStrategy} distanceM={distance} elapsed={elapsed} avgPace={avgPace} segLivePace={segLivePace} movingSegLivePace={movingSegLivePace} />
+        <RaceFocusMode strategy={raceStrategy} distanceM={distance} elapsed={elapsed} avgPace={avgPace} segLivePace={segLivePace} movingSegLivePace={movingSegLivePace} goal={runGoal} cheer={cheer} />
       )}
       {confirmEnd && activeEvent && (() => {
         const ev = activeEvent

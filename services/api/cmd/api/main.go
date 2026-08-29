@@ -48,6 +48,7 @@ import (
 	"github.com/dor/api/internal/reward"
 	"github.com/dor/api/internal/rewardserial"
 	"github.com/dor/api/internal/routing"
+	"github.com/dor/api/internal/runcheer"
 	"github.com/dor/api/internal/training"
 	"github.com/dor/api/internal/version"
 	"github.com/dor/api/internal/virtualrunner"
@@ -221,6 +222,8 @@ func main() {
 	appSettingsHandler := appsettings.NewHandler(pool, wsManager)
 	// 跑步路線建議（ORS foot-walking 代理；未設 ORS_API_KEY 時端點回 503，前端優雅隱藏）
 	routingHandler := routing.NewHandler(os.Getenv("ORS_API_KEY"))
+	// 跑步鼓勵語（GPS 跑步頁每跨一整公里彈出一句；後台可增刪改文案）
+	runCheerHandler := runcheer.NewHandler(pool)
 
 	// Image（圖片上傳，存 Postgres）
 	imageHandler := image.NewHandler(image.NewRepository(pool))
@@ -390,6 +393,9 @@ func main() {
 		// 通用系統設定的公開白名單（前台外觀，如 active_skin）
 		r.Get("/app-settings/public", appSettingsHandler.Public)
 
+		// 跑步鼓勵語（GPS 跑步頁每跨一整公里彈出一句；免登入，只回 enabled 文案）
+		r.Get("/run-cheers", runCheerHandler.Public)
+
 		// 蓋板廣告（前台開啟時彈出）— 公開讀取，受總開關 interstitial_enabled 控制
 		r.Get("/interstitial", appSettingsHandler.PublicInterstitial)
 
@@ -530,6 +536,7 @@ func main() {
 			r.With(perm("settings")).Mount("/admin/membership", profileHandler.MembershipAdminRouter())
 			r.With(perm("settings")).Mount("/admin/vip-promos", profileHandler.VipPromoAdminRouter())
 			r.With(perm("titles")).Mount("/admin/titles", profileHandler.TitleAdminRouter())
+			r.With(perm("run_cheers")).Mount("/admin/run-cheers", runCheerHandler.AdminRouter())
 			r.With(perm("training")).Mount("/admin/training", trainingHandler.AdminRouter())
 			r.With(perm("virtual")).Mount("/admin/virtual-runners", virtualRunnerHandler.AdminRouter())
 			r.With(perm("settings")).Get("/admin/data-source-metrics", profileHandler.AdminDataSourceMetrics)
