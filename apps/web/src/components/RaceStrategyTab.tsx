@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { strategiesApi, FUEL_KIND_LABEL, type RaceStrategy, type StrategySegment, type FuelPoint, type FuelKind } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
+import { generateRaceStrategy, autoStrategyName, formatSegmentPreviewLines, formatFuelPreviewLines, DISTANCE_PRESETS, type GenerateOutput } from '@/lib/strategyGenerator'
 
 // 賽事策略（自主訓練第 3 分頁）：配速計劃（分段目標配速）＋補給計劃（時間/距離觸發提醒），
 // 開跑時帶 /track?strategy=<id> 進入「比賽專注模式」（由另一位負責 track 頁串接，本檔不動 track）。
@@ -76,6 +77,72 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
     })
   }
 
+  // ── 自動建立策略（純函式 generateRaceStrategy，見 lib/strategyGenerator.ts）：
+  // 選距離＋目標完賽時間 → 產生建議（配速分段＋補給計畫）→ 使用者確認後一次套入上面的表單 state，
+  // 仍可手動微調再走既有 submitForm 儲存流程，不另開一條寫入路徑。
+  const [autoOpen, setAutoOpen] = useState(false)
+  const [autoDistMode, setAutoDistMode] = useState<'full' | 'half' | 'custom'>('full')
+  const [autoCustomKm, setAutoCustomKm] = useState('')
+  const [autoGoalH, setAutoGoalH] = useState('')
+  const [autoGoalM, setAutoGoalM] = useState('')
+  const [autoGoalS, setAutoGoalS] = useState('')
+  const [autoErr, setAutoErr] = useState('')
+  const [autoResult, setAutoResult] = useState<GenerateOutput | null>(null)
+  const [autoParams, setAutoParams] = useState<{ distanceKm: number; targetSeconds: number } | null>(null)
+  // 「套用到表單」成功後的一次性提示；關閉表單或重新產生建議時清除
+  const [appliedNotice, setAppliedNotice] = useState(false)
+  // 每帳號最多 limit 份（見上方 loadList），自動建立區塊達上限時「產生建議」／「套用到表單」都要擋下
+  // （不動「+ 建立賽事策略」本身）
+  const atAutoLimit = !!list && list.length >= limit
+
+  function resetAuto() {
+    setAutoResult(null); setAutoParams(null); setAutoErr(''); setAppliedNotice(false)
+  }
+  function openAuto() { setAutoOpen((v) => !v) }
+
+  function generateAutoPreview() {
+    if (atAutoLimit) return
+    setAppliedNotice(false)
+    setAutoErr('')
+    let distanceKm: number
+    if (autoDistMode === 'full') distanceKm = DISTANCE_PRESETS.full
+    else if (autoDistMode === 'half') distanceKm = DISTANCE_PRESETS.half
+    else {
+      const km = Number(autoCustomKm.trim())
+      if (!Number.isFinite(km) || km < 3 || km > 100) { setAutoErr('請輸入 3–100 公里的距離'); setAutoResult(null); return }
+      distanceKm = km
+    }
+    const h = autoGoalH.trim() === '' ? 0 : Number(autoGoalH)
+    const m = autoGoalM.trim() === '' ? 0 : Number(autoGoalM)
+    const s = autoGoalS.trim() === '' ? 0 : Number(autoGoalS)
+    if (!Number.isFinite(h) || !Number.isFinite(m) || !Number.isFinite(s) || h < 0 || m < 0 || s < 0) { setAutoErr('請輸入正確的目標完賽時間'); setAutoResult(null); return }
+    const targetSeconds = Math.round(h * 3600 + m * 60 + s)
+    if (targetSeconds <= 0) { setAutoErr('請輸入目標完賽時間'); setAutoResult(null); return }
+    setAutoResult(generateRaceStrategy({ distanceKm, targetSeconds }))
+    setAutoParams({ distanceKm, targetSeconds })
+  }
+
+  // 套用建議到上面的表單 state：若表單已有內容（名稱/分段/補給任一非空）先確認是否覆蓋。
+  function applyAutoResult() {
+    if (atAutoLimit) return
+    if (!autoResult || !autoParams || autoResult.segments.length === 0) return
+    const hasContent = fName.trim() !== '' || fFuel.length > 0 ||
+      fSegs.some((r) => r.to_km.trim() !== '' || r.paceMin.trim() !== '' || r.paceSec.trim() !== '')
+    if (hasContent && !window.confirm('套用自動建議將覆蓋目前表單內容，確定要覆蓋嗎？')) return
+
+    const baseName = autoStrategyName(autoParams.distanceKm, autoParams.targetSeconds)
+    const existingNames = new Set((list ?? []).filter((s) => s.id !== editingId).map((s) => s.name))
+    let name = baseName
+    for (let n = 2; existingNames.has(name); n++) name = `${baseName} (${n})`
+
+    setFName(name)
+    setFSegs(autoResult.segments.map((seg) => ({ to_km: String(seg.to_km), paceMin: String(Math.floor(seg.pace_s / 60)), paceSec: String(seg.pace_s % 60) })))
+    setFFuel(autoResult.fuel.map((f) => ({ kind: f.kind, mode: f.mode, val: String(f.mode === 'time' ? f.at / 60 : f.at / 1000) })))
+    setFErr('')
+    setFErrFields(new Set())
+    setAppliedNotice(true)
+  }
+
   function openCreate() {
     setEditingId(null)
     setFName('')
@@ -83,6 +150,9 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
     setFFuel([])
     setFErr('')
     setFErrFields(new Set())
+    setAutoOpen(false)
+    resetAuto()
+    setAutoDistMode('full'); setAutoCustomKm(''); setAutoGoalH(''); setAutoGoalM(''); setAutoGoalS('')
     setShowForm(true)
   }
   function openEdit(s: RaceStrategy) {
@@ -92,9 +162,12 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
     setFFuel(s.fuel.map((f) => ({ kind: f.kind, mode: f.mode, val: f.mode === 'time' ? fmtMinutes(f.at) : fmtKm(f.at) })))
     setFErr('')
     setFErrFields(new Set())
+    setAutoOpen(false)
+    resetAuto()
+    setAutoDistMode('full'); setAutoCustomKm(''); setAutoGoalH(''); setAutoGoalM(''); setAutoGoalS('')
     setShowForm(true)
   }
-  function closeForm() { if (!fBusy) setShowForm(false) }
+  function closeForm() { if (!fBusy) { setShowForm(false); setAppliedNotice(false) } }
 
   // 第 idx 段的起點＝前一段終點（首段固定 0）；不開放輸入，僅供顯示與送出時組 segments 用
   function segFromKm(idx: number): number {
@@ -292,6 +365,116 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ fontSize: 15, fontWeight: 900, color: '#fff' }}>{editingId ? '編輯賽事策略' : '建立賽事策略'}</div>
               <button disabled={fBusy} onClick={closeForm} style={{ background: 'none', border: 'none', color: 'var(--tx-dim)', fontSize: 20, cursor: 'pointer', lineHeight: 1, padding: 4 }}>×</button>
+            </div>
+
+            {appliedNotice && (
+              <div style={{ fontSize: 11, color: 'var(--tx-faint)', lineHeight: 1.7, marginTop: 8 }}>
+                已依保守策略自動填入：慢起步、中段巡航、後段預留掉速；配速為含補給/走路的區段平均，可手動微調。請先在長距離訓練測試補給耐受度。
+              </div>
+            )}
+
+            {/* 自動建立策略：選距離＋目標完賽時間 → generateRaceStrategy 純函式產生建議（配速分段＋補給計畫），
+                預覽後才「套用到表單」，不繞過下面既有的欄位編輯與 submitForm 儲存流程。 */}
+            <div style={{ marginTop: 12, background: 'rgba(255,255,255,.03)', border: '1px solid var(--line-2)', borderRadius: 12, overflow: 'hidden' }}>
+              <button type="button" onClick={openAuto} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'none', border: 'none', color: 'var(--tx)', padding: '10px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 800, fontFamily: 'inherit' }}>
+                <span>⚡ 自動建立策略</span>
+                <span style={{ color: 'var(--tx-faint)', fontSize: 11 }}>{autoOpen ? '收合 ▲' : '展開 ▼'}</span>
+              </button>
+              {autoOpen && (
+                <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ fontSize: 11, color: 'var(--tx-faint)', lineHeight: 1.7 }}>
+                    依距離與目標完賽時間，自動產生一組保守配速分段與補給提醒，可套用後再手動微調。
+                  </div>
+
+                  <div style={formField}>
+                    <span style={formLabel}>賽事距離</span>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {(['full', 'half', 'custom'] as const).map((mode) => (
+                        <button key={mode} type="button" onClick={() => { setAutoDistMode(mode); resetAuto() }} style={{ ...modeBtn, flex: 1, ...(autoDistMode === mode ? modeBtnActive : {}) }}>
+                          {mode === 'full' ? '全馬' : mode === 'half' ? '半馬' : '自訂'}
+                        </button>
+                      ))}
+                    </div>
+                    {autoDistMode === 'custom' && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                        <input type="number" min={3} max={100} step={0.1} inputMode="decimal" value={autoCustomKm} onChange={(e) => { setAutoCustomKm(e.target.value); resetAuto() }} placeholder="3–100" style={{ ...formInput, flex: 1 }} />
+                        <span style={{ fontSize: 11.5, color: 'var(--tx-dim)', flexShrink: 0 }}>km</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={formField}>
+                    <span style={formLabel}>目標完賽時間</span>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <input type="number" min={0} max={24} step={1} inputMode="numeric" value={autoGoalH} onChange={(e) => { setAutoGoalH(e.target.value); resetAuto() }} placeholder="4" style={formInput} />
+                        <span style={{ fontSize: 11, color: 'var(--tx-dim)', flexShrink: 0 }}>時</span>
+                      </div>
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <input type="number" min={0} max={59} step={1} inputMode="numeric" value={autoGoalM} onChange={(e) => { setAutoGoalM(e.target.value); resetAuto() }} placeholder="30" style={formInput} />
+                        <span style={{ fontSize: 11, color: 'var(--tx-dim)', flexShrink: 0 }}>分</span>
+                      </div>
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <input type="number" min={0} max={59} step={1} inputMode="numeric" value={autoGoalS} onChange={(e) => { setAutoGoalS(e.target.value); resetAuto() }} placeholder="0" style={formInput} />
+                        <span style={{ fontSize: 11, color: 'var(--tx-dim)', flexShrink: 0 }}>秒</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {atAutoLimit ? (
+                    <div style={{ fontSize: 11.5, color: '#f0b429', textAlign: 'center', lineHeight: 1.6 }}>策略已達 {limit} 份上限，請先刪除一份再自動建立</div>
+                  ) : null}
+
+                  <button type="button" disabled={atAutoLimit} onClick={generateAutoPreview} style={{ ...modeBtn, background: 'var(--fug)', borderColor: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, padding: '9px 0', opacity: atAutoLimit ? 0.5 : 1, cursor: atAutoLimit ? 'default' : 'pointer' }}>產生建議</button>
+
+                  {autoErr && <div style={{ fontSize: 12, color: '#ff6b6b', textAlign: 'center' }}>{autoErr}</div>}
+
+                  {autoResult && (
+                    <div style={{ background: 'rgba(255,255,255,.04)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {autoResult.segments.length > 0 ? (
+                        <div style={{ fontSize: 12, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums', lineHeight: 1.8 }}>
+                          平均配速 {fmtPace(autoResult.avgPaceSecPerKm)}/km · 配速 {autoResult.segments.length} 段 · 補給 {autoResult.fuel.length} 點
+                        </div>
+                      ) : null}
+                      {autoResult.warnings.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          {autoResult.warnings.map((w, i) => (
+                            <div key={i} style={{ fontSize: 11, color: '#f0b429', lineHeight: 1.6 }}>⚠ {w}</div>
+                          ))}
+                        </div>
+                      )}
+                      {autoResult.segments.length > 0 && (
+                        <div style={{ maxHeight: '40vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, paddingRight: 2 }}>
+                          <div>
+                            <div style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--tx-faint)', marginBottom: 4 }}>配速分段</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              {formatSegmentPreviewLines(autoResult.segments, autoResult.avgPaceSecPerKm).map((line, i) => (
+                                <div key={i} style={{ fontSize: 11.5, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>{line}</div>
+                              ))}
+                            </div>
+                          </div>
+                          {autoResult.fuel.length > 0 && (
+                            <div>
+                              <div style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--tx-faint)', marginBottom: 4 }}>補給計畫</div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                {formatFuelPreviewLines(autoResult.fuel, autoResult.segments).map((line, i) => (
+                                  <div key={i} style={{ fontSize: 11.5, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>{line}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {autoResult.fuel.some((f) => f.kind === 'caffeine') && (
+                        <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>咖啡因為選填，平時不喝咖啡或心悸者請刪除此點。</div>
+                      )}
+                      {autoResult.segments.length > 0 && (
+                        <button type="button" disabled={atAutoLimit} onClick={applyAutoResult} style={{ ...addRowBtn, marginTop: 2, borderStyle: 'solid', borderColor: 'var(--fug)', color: 'var(--fug)', opacity: atAutoLimit ? 0.5 : 1, cursor: atAutoLimit ? 'default' : 'pointer' }}>套用到表單</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
