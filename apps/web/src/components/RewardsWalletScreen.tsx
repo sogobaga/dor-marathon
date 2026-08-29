@@ -216,12 +216,14 @@ function RewardCard({ reward, onDetail }: { reward: SortedReward; onDetail: () =
         boxShadow: urgent ? '0 4px 18px rgba(197,139,29,.22)' : 'var(--card-shadow, none)',
       }}
     >
-      <div style={iconWrap}>
-        {reward.icon_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={reward.icon_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-        ) : <span style={{ fontSize: 24 }}>{reward.kind === 'coupon' ? '🎟️' : '🎁'}</span>}
-      </div>
+      {reward.icon_url ? (
+        // 完整顯示獎勵圖（原始比例、不裁切）：獎勵圖多為橫式卡面，正方形 cover 會把右側面額/資訊切掉
+        //（2026-08-29 使用者回報）；固定寬、高度自適應，沒圖才用下方 emoji 方框。
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={reward.icon_url} alt="" style={{ width: 96, height: 'auto', borderRadius: 10, flexShrink: 0, display: 'block' }} />
+      ) : (
+        <div style={iconWrap}><span style={{ fontSize: 24 }}>{reward.kind === 'coupon' ? '🎟️' : '🎁'}</span></div>
+      )}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 14.5, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -363,7 +365,7 @@ function RewardDetailModal({ reward, onClose, onMarkUsed }: { reward: UserReward
 
         {reward.icon_url && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={reward.icon_url} alt="" style={{ width: 72, height: 72, borderRadius: 14, objectFit: 'cover', margin: '14px auto 0', display: 'block' }} />
+          <img src={reward.icon_url} alt="" style={{ width: '100%', height: 'auto', borderRadius: 14, margin: '14px auto 0', display: 'block' }} />
         )}
 
         {reward.merchant_name && <div style={{ textAlign: 'center', fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8 }}>{reward.merchant_name}</div>}
