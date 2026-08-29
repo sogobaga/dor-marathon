@@ -131,9 +131,11 @@ type DashboardInfo struct {
 	TrainingEntry    string         `json:"training_entry"`       // 自主訓練入口可見性（同上）
 	StrategyEntry    string         `json:"strategy_entry"`       // 賽事策略入口可見性（同上）
 	CheerTestEntry   string         `json:"cheer_test_entry"`     // 每公里應援「測試觸發」按鈕入口可見性（同上）
+	CheerEditEntry   string         `json:"cheer_edit_entry"`     // 啦啦隊角色位置校正模式入口可見性（同上）
 	MonopolyEntry    string         `json:"monopoly_entry"`       // 環台大富翁入口可見性（同上）
 	KnowledgeEntry   string         `json:"knowledge_entry"`      // 知識探索入口可見性（同上）
 	CheerDisplayMs   int            `json:"cheer_display_ms"`     // 每公里應援表演（泡泡框+啦啦隊）顯示毫秒數；來自系統設定 cheer_display_ms（預設 3000）
+	CheerCharLayout  string         `json:"cheer_char_layout"`    // 啦啦隊三張角色的位置校正值（原始 JSON 字串；系統設定 cheer_char_layout，前端 parseCheerCharLayout 解析）
 	NewTitles        []AwardedTitle `json:"new_titles,omitempty"` // 本次 dashboard 新解鎖（未看過）稱號
 	// 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；見 internal/stamina）
 	Sp               int        `json:"sp"`
@@ -198,6 +200,9 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	// CheerTestEntry 只控制前端「測試應援」按鈕的顯示（GPS 跑步頁），沒有對應的後端 API 要保護，
 	// 所以不需要比照其他入口再加 requireEntry 中介層——這裡解析出的可見性純粹是前端 UI 開關。
 	d.CheerTestEntry = resolveEntry(r.Context(), h.db, "cheer_test_entry_state", "cheer_test_entry_whitelist", email, code, isSuperAdmin)
+	// CheerEditEntry 控制前端「🎯 校正啦啦隊」按鈕/?cheerEdit=1 連結的顯示；對應的 PUT /me/cheer-layout
+	// 另掛 RequireCheerLayoutEntry 中介層做後端複查（見 cheer_layout.go），這裡解析出的只是 UI 開關。
+	d.CheerEditEntry = resolveEntry(r.Context(), h.db, "cheer_edit_entry_state", "cheer_edit_entry_whitelist", email, code, isSuperAdmin)
 	d.MonopolyEntry = resolveEntry(r.Context(), h.db, "monopoly_entry_state", "monopoly_entry_whitelist", email, code, isSuperAdmin)
 	d.KnowledgeEntry = resolveEntry(r.Context(), h.db, "knowledge_entry_state", "knowledge_entry_whitelist", email, code, isSuperAdmin)
 	levels, err := h.levelConfigList(r.Context())
@@ -213,6 +218,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	d.IsVIP = d.VIPExpiresAt != nil && d.VIPExpiresAt.After(time.Now())
 	d.ActivityCouponValueCents = appsettings.GetInt(r.Context(), h.db, "vip_coupon_value_cents", 10000)
 	d.CheerDisplayMs = appsettings.GetInt(r.Context(), h.db, "cheer_display_ms", 3000)
+	d.CheerCharLayout = appsettings.GetString(r.Context(), h.db, "cheer_char_layout", defaultCheerCharLayoutJSON)
 	// 試用到期(含未曾設到期日) 且尚未提示過 → 前台跳一次升級彈窗
 	d.ShowTrialExpiryNotice = d.VipPlan == "trial" && !trialShown && (d.VIPExpiresAt == nil || d.VIPExpiresAt.Before(time.Now()))
 	h.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM follows WHERE follower_id=$1`, userID).Scan(&d.FollowingCount)

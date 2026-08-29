@@ -1531,6 +1531,8 @@ export interface DashboardInfo {
   strategy_entry: 'hidden' | 'locked' | 'shown'    // 賽事策略入口可見性（自主訓練第三分頁）
   cheer_test_entry: 'hidden' | 'locked' | 'shown' // 每公里應援「測試觸發」按鈕入口（cheer_test_entry_state/whitelist，2026-08-29）
   cheer_display_ms: number // 應援表演（泡泡框+啦啦隊）顯示毫秒數，系統設定 cheer_display_ms，預設 3000
+  cheer_edit_entry: 'hidden' | 'locked' | 'shown' // 啦啦隊位置校正模式入口（cheer_edit_entry_state/whitelist，2026-08-29）
+  cheer_char_layout: string // 啦啦隊三張角色的位置校正 JSON 字串（CheerCharLayout；系統設定 cheer_char_layout），前端 try/catch 解析
   monopoly_entry: 'hidden' | 'locked' | 'shown'    // 環台大富翁入口可見性
   knowledge_entry: 'hidden' | 'locked' | 'shown'   // 知識探索(知識卡圖鑑)入口可見性
   new_titles?: { code: string; name: string; tier: number; category: string }[] // 新解鎖稱號（前台跳彈窗用，跳完呼叫 /titles/seen）
@@ -3912,4 +3914,36 @@ export const adminRunCheersApi = {
 // 前台公開讀取（免登入）：只回 enabled 的文案，依 sort_order, created_at 排序
 export const runCheersApi = {
   get: () => request<{ before: string[]; after: string[] }>('/run-cheers'),
+}
+
+// ── 啦啦隊位置校正（2026-08-29）────────────────────────────────────────────────
+// dx/dy：相對角色容器「自身寬/高」的百分比位移（跨裝置一致；正 dx 往右、正 dy 往下），scale：縮放倍率（transform-origin 上中）。
+export interface CheerCharLayoutItem { dx: number; dy: number; scale: number }
+export type CheerCharId = '01' | '02' | '03'
+export type CheerCharLayout = Record<CheerCharId, CheerCharLayoutItem>
+export const DEFAULT_CHEER_CHAR_LAYOUT: CheerCharLayout = {
+  '01': { dx: 0, dy: 0, scale: 1 }, '02': { dx: 0, dy: 0, scale: 1 }, '03': { dx: 0, dy: 0, scale: 1 },
+}
+// 解析 Dashboard.cheer_char_layout；缺欄位/壞 JSON 一律補預設，永不 throw
+export function parseCheerCharLayout(raw: string | null | undefined): CheerCharLayout {
+  const out: CheerCharLayout = { '01': { ...DEFAULT_CHEER_CHAR_LAYOUT['01'] }, '02': { ...DEFAULT_CHEER_CHAR_LAYOUT['02'] }, '03': { ...DEFAULT_CHEER_CHAR_LAYOUT['03'] } }
+  if (!raw) return out
+  try {
+    const j = JSON.parse(raw) as Partial<Record<CheerCharId, Partial<CheerCharLayoutItem>>>
+    for (const id of ['01', '02', '03'] as CheerCharId[]) {
+      const v = j?.[id]
+      if (!v) continue
+      if (typeof v.dx === 'number' && Number.isFinite(v.dx)) out[id].dx = v.dx
+      if (typeof v.dy === 'number' && Number.isFinite(v.dy)) out[id].dy = v.dy
+      if (typeof v.scale === 'number' && Number.isFinite(v.scale) && v.scale > 0) out[id].scale = v.scale
+    }
+  } catch { /* 壞 JSON → 預設 */ }
+  return out
+}
+// 儲存校正值：後端掛 requireEntry(cheer_edit_entry_state/whitelist)，非白名單 403
+export const cheerLayoutApi = {
+  save: (token: string, layout: CheerCharLayout) =>
+    request<{ ok: boolean; layout: CheerCharLayout }>('/me/cheer-layout', {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify({ layout }),
+    }),
 }

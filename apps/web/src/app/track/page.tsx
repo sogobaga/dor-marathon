@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import useSWR from 'swr'
-import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy } from '@/lib/api'
+import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, cheerLayoutApi, parseCheerCharLayout, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy, type CheerCharLayout } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
@@ -167,10 +167,60 @@ export default function TrackPage() {
   // api.ts:1533），未設定/非正數 fallback 3000ms；存 ref 供 fireCheer 讀最新值（fireCheer 是具名函式宣告，
   // 只讀 ref，不受呼叫端 closure 是否為舊版影響，同檔既有慣例）。cheer_test_entry==='shown' 才顯示白名單
   // 測試按鈕（後台系統設定白名單開關，本頁不做任何權限判斷、只吃這顆旗標）。
-  const { dash } = useDashboard()
+  const { dash, revalidate: revalidateDash } = useDashboard()
   const cheerDurationRef = useRef(3000)
   cheerDurationRef.current = dash?.cheer_display_ms && dash.cheer_display_ms > 0 ? dash.cheer_display_ms : 3000
   const canTestCheer = dash?.cheer_test_entry === 'shown'
+  // 啦啦隊位置校正模式（2026-08-29）：白名單帳號（cheer_edit_entry==='shown'）可拖曳/縮放三張角色的位置
+  // 並存到伺服器，套用給所有跑者。契約見 lib/api.ts 檔尾「啦啦隊位置校正」區塊。
+  // cheerLayout＝伺服器目前生效值（非編輯模式直接用）；editLayout＝進入校正時複製一份的草稿，onChange
+  // 只改草稿、onSave 才真正送出＋重抓 dashboard 讓 cheerLayout 更新。
+  const cheerLayout = useMemo(() => parseCheerCharLayout(dash?.cheer_char_layout), [dash?.cheer_char_layout])
+  const canEditCheer = dash?.cheer_edit_entry === 'shown'
+  const [cheerEditOn, setCheerEditOn] = useState(false) // SSR 安全：預設 false，由下方 effect 依 URL 參數決定是否自動開啟
+  const [editLayout, setEditLayout] = useState<CheerCharLayout | null>(null)
+  const [cheerSaving, setCheerSaving] = useState(false)
+  const cheerDirtyRef = useRef(false) // 草稿是否有未儲存變更：onExit 離開前用來決定要不要跳確認
+
+  // ?cheerEdit=1 直接帶入校正模式（白名單才生效）；要等 dash 載入、canEditCheer 確定後才判斷一次。
+  useEffect(() => {
+    if (!canEditCheer) return
+    if (typeof window === 'undefined') return
+    if (new URLSearchParams(window.location.search).get('cheerEdit') === '1') setCheerEditOn(true)
+  }, [canEditCheer])
+
+  // 進入校正模式那一刻，把當時的 cheerLayout 複製成草稿；離開時清空草稿。
+  useEffect(() => {
+    if (cheerEditOn) {
+      if (!editLayout) setEditLayout({ '01': { ...cheerLayout['01'] }, '02': { ...cheerLayout['02'] }, '03': { ...cheerLayout['03'] } })
+    } else if (editLayout) {
+      setEditLayout(null); cheerDirtyRef.current = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cheerEditOn])
+
+  function cheerEditChange(next: CheerCharLayout) { cheerDirtyRef.current = true; setEditLayout(next) }
+  async function cheerEditSave() {
+    if (!editLayout) return
+    const token = getUserToken()
+    if (!token) { alert('請先登入'); throw new Error('no token') }
+    setCheerSaving(true)
+    try {
+      const res = await cheerLayoutApi.save(token, editLayout)
+      cheerDirtyRef.current = false
+      setEditLayout(res.layout)
+      revalidateDash() // 讓 dash.cheer_char_layout（→ cheerLayout）跟著更新，套用到非編輯畫面
+    } catch (e: any) {
+      alert(e?.status === 403 ? '沒有校正權限' : '儲存失敗，請稍後再試')
+      throw e
+    } finally {
+      setCheerSaving(false)
+    }
+  }
+  function cheerEditExit() {
+    if (cheerDirtyRef.current && !window.confirm('尚未儲存，確定離開？')) return
+    setCheerEditOn(false)
+  }
   const [cheer, setCheer] = useState<{ text: string; key: number } | null>(null) // 目前顯示的鼓勵語（cheerDurationRef 毫秒後自動清空）
   const cheerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastCheerTextRef = useRef<string | null>(null) // 避免連續兩次抽到同一句
@@ -1677,7 +1727,13 @@ export default function TrackPage() {
       {/* 每公里鼓勵語「泡泡對話框+啦啦隊角色」演出（v1.1.664）：獨立掛在本頁頂層、不論 status，
           z-index 650 蓋過上面的 RaceFocusMode（600）——hidden 分支切回一般畫面時本節點仍在，不需要
           RaceFocusMode 內再各自渲染一份。 */}
-      <CheerShow cheer={cheer} />
+      <CheerShow
+        cheer={cheer}
+        layout={cheerEditOn && editLayout ? editLayout : cheerLayout}
+        edit={cheerEditOn && editLayout ? {
+          layout: editLayout, onChange: cheerEditChange, onSave: cheerEditSave, onExit: cheerEditExit, saving: cheerSaving,
+        } : undefined}
+      />
       {/* 白名單測試按鈕：cheer_test_entry==='shown' 才顯示（系統設定白名單，見上方 canTestCheer 宣告處）。
           一般畫面固定在右上角；RaceFocusMode 完整專注模式另有一顆同款按鈕（見該檔「顯示完整介面」旁）。 */}
       {canTestCheer && (
@@ -1691,6 +1747,20 @@ export default function TrackPage() {
             boxShadow: '0 3px 12px rgba(0,0,0,.28)', fontFamily: 'inherit',
           }}
         >📣 測試應援</button>
+      )}
+      {/* 白名單校正入口：cheer_edit_entry==='shown' 才顯示（見上方 canEditCheer 宣告處）。與測試應援按鈕
+          並排在右上角（有測試按鈕時往左讓開）；點下開啟 CheerShow 的校正模式（拖曳三張角色位置）。 */}
+      {canEditCheer && !cheerEditOn && (
+        <button
+          data-skin="default"
+          onClick={() => setCheerEditOn(true)}
+          style={{
+            position: 'fixed', top: 'calc(var(--app-top, 24px) + 8px)', right: canTestCheer ? 112 : 12, zIndex: 560,
+            background: 'rgba(11,14,19,.9)', color: 'var(--tx)', border: '1px solid rgba(255,194,75,.6)',
+            borderRadius: 999, padding: '8px 13px', fontSize: 12.5, fontWeight: 800, cursor: 'pointer',
+            boxShadow: '0 3px 12px rgba(0,0,0,.28)', fontFamily: 'inherit',
+          }}
+        >🎯 校正啦啦隊</button>
       )}
       {confirmEnd && activeEvent && (() => {
         const ev = activeEvent

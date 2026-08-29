@@ -472,6 +472,11 @@ func main() {
 			// 頭像上傳（重用圖片上傳，登入即可）
 			r.Post("/profile/avatar", imageHandler.Upload)
 
+			// 啦啦隊角色位置校正（GPS 跑步頁校正模式）— requireEntry(cheer_edit_entry_state/whitelist)：
+			// 非白名單一律 403（SEC-H5 同款：前端 UI 隱藏不等於後端有擋）。前端呼叫的是 /me/cheer-layout
+			// 這個字面路徑（見 apps/web/src/lib/api.ts cheerLayoutApi），不是掛在 /profile 底下。
+			r.With(profileHandler.RequireCheerLayoutEntry).Put("/me/cheer-layout", profileHandler.PutCheerLayout)
+
 			// 取消報名申請/撤回（審核由後台 /admin/cancel-requests 進行）
 			r.Post("/profile/registrations/{registrationID}/cancel-request", raceHandler.CreateCancelRequest)
 			r.Delete("/profile/registrations/{registrationID}/cancel-request", raceHandler.WithdrawCancelRequest)

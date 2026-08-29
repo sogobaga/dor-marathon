@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -48,6 +49,9 @@ var specs = map[string]func(string) bool{
 	"strategy_entry_whitelist":    isWhitelist,
 	"cheer_test_entry_state":      isEntryState, // 每公里應援「測試觸發」按鈕入口（GPS 跑步頁）
 	"cheer_test_entry_whitelist":  isWhitelist,
+	"cheer_edit_entry_state":      isEntryState, // 啦啦隊角色位置校正模式入口（GPS 跑步頁「🎯 校正啦啦隊」按鈕 + ?cheerEdit=1）
+	"cheer_edit_entry_whitelist":  isWhitelist,
+	"cheer_char_layout":           isCheerLayoutJSON, // 啦啦隊三張角色的位置校正值（見 internal/profile.normalizeCheerLayout）
 	"monopoly_entry_state":        isEntryState, // 環台大富翁入口
 	"monopoly_entry_whitelist":    isWhitelist,
 	"knowledge_entry_state":       isEntryState, // 知識探索(知識卡圖鑑)入口
@@ -147,6 +151,46 @@ func isCancellationPolicyJSON(v string) bool {
 		}
 	}
 	return true
+}
+
+// isCheerLayoutJSON 驗證啦啦隊角色位置校正值 JSON（見 internal/profile.normalizeCheerLayout，
+// 前台校正模式儲存端的正規化邏輯與此驗證同一組範圍常數，各自獨立實作以避免 profile→appsettings
+// 之外再反向 import 形成循環依賴）。必須是 JSON 物件、恰有 01/02/03 三個 key，每個 key 底下
+// dx/dy/scale 皆為有限數且落在合法範圍（dx/dy: -300~300，scale: 0.2~4）。空字串合法（清空、退回
+// 程式內建預設）。
+func isCheerLayoutJSON(v string) bool {
+	if v == "" {
+		return true
+	}
+	var m map[string]struct {
+		DX    float64 `json:"dx"`
+		DY    float64 `json:"dy"`
+		Scale float64 `json:"scale"`
+	}
+	if err := json.Unmarshal([]byte(v), &m); err != nil {
+		return false
+	}
+	if len(m) != 3 {
+		return false
+	}
+	for _, key := range []string{"01", "02", "03"} {
+		item, ok := m[key]
+		if !ok {
+			return false
+		}
+		if !isFiniteInRange(item.DX, -300, 300) || !isFiniteInRange(item.DY, -300, 300) {
+			return false
+		}
+		if !isFiniteInRange(item.Scale, 0.2, 4) {
+			return false
+		}
+	}
+	return true
+}
+
+// isFiniteInRange 純函式：v 為有限數（非 NaN/Inf）且落在 [min,max] 區間。
+func isFiniteInRange(v, min, max float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= min && v <= max
 }
 
 // publicKeys 允許未登入前台讀取的 key（皆為非敏感外觀設定）。
@@ -279,6 +323,10 @@ func setCachedSetting(key, value string, found bool) {
 
 // invalidateSettingsCache 整個清空快取（Set 寫入成功後呼叫），簡單優先，避免只清單一 key 時
 // 遺漏邊界情況。設定變更頻率低，清空後下一輪讀取重新查 DB 的成本可忽略。
+// InvalidateCache 供其他套件在「直接 SQL 寫入 app_settings」後清空 60 秒記憶體快取（例如
+// profile.PutCheerLayout 寫 cheer_char_layout），否則 Dashboard 等讀取端會在 TTL 內拿到舊值。
+func InvalidateCache() { invalidateSettingsCache() }
+
 func invalidateSettingsCache() {
 	settingsCache.mu.Lock()
 	settingsCache.m = make(map[string]settingsCacheEntry)
