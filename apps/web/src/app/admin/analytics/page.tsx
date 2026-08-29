@@ -360,7 +360,6 @@ function RunnersSection({ runners, summary }: { runners: AnalyticsRunner[] | und
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
                         <span style={{ color: 'var(--tx)' }}>
                           {r.name}
-                          {r.is_virtual && <span title="虛擬選手" style={{ marginLeft: 4 }}>🤖</span>}
                         </span>
                         <span style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>@{r.handle}</span>
                       </div>

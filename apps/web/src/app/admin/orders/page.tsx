@@ -309,7 +309,6 @@ export default function AdminOrdersPage() {
                   <C w={2}>
                     <button onClick={() => toggle(o)} style={linkBtn}>
                       {expanded[o.id] !== undefined ? '▾ ' : '▸ '}{o.user_name}
-                      {o.is_virtual && <span title="虛擬選手" style={{ marginLeft: 4 }}>🤖</span>}
                     </button>
                     <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{o.user_email}</div>
                   </C>

@@ -141,7 +141,6 @@ export default function AdminSignupsPage() {
                 <C w={2}>
                   <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span>{s.user_name}{s.snap_real_name && s.snap_real_name !== s.user_name ? `（${s.snap_real_name}）` : ''}</span>
-                    {s.is_virtual && <span title="虛擬選手">🤖</span>}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{s.user_email}{s.snap_phone ? ` · ${s.snap_phone}` : ''}</div>
                 </C>

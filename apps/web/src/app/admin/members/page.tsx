@@ -156,7 +156,6 @@ export default function AdminMembersList() {
                     <div style={{ overflow: 'hidden' }}>
                       <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
                         <span style={cellEllipsis} title={m.name || m.handle}>{m.name || m.handle}</span>
-                        {m.is_virtual && <span title="虛擬選手">🤖</span>}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--tx-faint)', ...cellEllipsis }} title={`@${m.handle}${roleSuffix}`}>
                         @{m.handle}{roleSuffix}
