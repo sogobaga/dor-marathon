@@ -9,8 +9,8 @@
 // pointerEvents:none（不擋底下地圖/按鈕操作）。
 //
 // 素材安全區（相對整張泡泡框圖 1523×697）：左右各 5%、上 9%、下 27%（下方留給尾巴，尾巴朝下、
-// 底部正中央）。啦啦隊角色圖 400×800 全身、人物置中；容器 aspect-ratio 2/3 只露出頭頂往下
-// 400×600 的部分（等比縮放後裁掉膝蓋以下），底部與螢幕底部切齊，像角色「站」在畫面下緣。
+// 底部正中央）。啦啦隊角色圖 400×800 全身、人物置中；頭頂對齊泡泡框底緣 + 20px 往下放，
+// 超出螢幕底部的腿由根容器 overflow:hidden 切掉（版面常數見下方）。
 //
 // 動畫：cheer 變化（key 遞增）→ 泡泡＋角色各自套用進場 keyframes（角色延遲 60ms 有層次）；cheer 變
 // null 時不立即卸載——保留最後一筆內容切成 out 動畫，onAnimationEnd 後才真正清空（沿用舊版橫幅元件
@@ -20,11 +20,16 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 const BUBBLE_SRC = '/ui/cheer/chatbox.webp'
 const CHAR_SRCS = ['/ui/cheer/cheerleader-01.webp', '/ui/cheer/cheerleader-02.webp', '/ui/cheer/cheerleader-03.webp']
-// 角色大小/裁切（2026-08-29 使用者要求放大 ≥150%、切掉下半身沒關係、上半身要清楚）：
-// 寬度 min(90vw, 460px)（手機約為原 58vw 的 1.55 倍）；容器高 = 寬 × 1.2，400×800 圖等比縮放後高 = 2×寬，
-// 只露出頂部 60%（頭頂到腰臀），底部貼齊螢幕；上方泡泡框約佔 220px，此高度在 iPhone 尺寸下不會相撞。要再調就改這兩個常數。
+// 版面常數（2026-08-29 使用者定案）：泡泡框在上；啦啦隊角色「頭頂對齊泡泡框底緣 + 20px」往下放，
+// 腳超出螢幕就被根容器 overflow:hidden 切掉（不再貼底部對齊）。角色寬 min(90vw, 460px)（≈原 58vw 的 1.55 倍）。
+// ⚠️ 角色原圖只有 400×800，放大到這個尺寸在 Retina 上會糊，根治需換 ≥1200×2400 的原圖重壓（見 public/ui/cheer）。
+const BUBBLE_TOP = 'calc(var(--app-top, 24px) + 10px)'
+const BUBBLE_WIDTH = 'min(92vw, 520px)'
+const BUBBLE_RATIO = 1523 / 697 // 泡泡框圖寬高比
 const CHAR_WIDTH = 'min(90vw, 460px)'
-const CHAR_ASPECT = '1 / 1.2'
+const CHAR_GAP_PX = 20 // 角色頭頂與泡泡框底緣的距離
+// 角色頂端 = 泡泡框 top + 泡泡框高度（寬 / 比例）+ 間距
+const CHAR_TOP = `calc(${BUBBLE_TOP} + ${BUBBLE_WIDTH} / ${BUBBLE_RATIO.toFixed(4)} + ${CHAR_GAP_PX}px)`
 
 export default function CheerShow({ cheer }: { cheer: { text: string; key: number } | null }) {
   const [shown, setShown] = useState<{ text: string; key: number } | null>(null)
@@ -56,14 +61,14 @@ export default function CheerShow({ cheer }: { cheer: { text: string; key: numbe
       data-skin="default"
       // inset:0 而非 height:var(--app-h)：桌機的 .phone-shell（transform）是 fixed 的定位基準，--app-h 是整個瀏覽器視窗高度、
       // 會比模擬框高，角色 bottom:0 會貼到框外被裁掉；inset:0 在手機（視窗）與桌機（模擬框）兩種基準下都貼齊底部。
-      style={{ position: 'fixed', inset: 0, zIndex: 650, pointerEvents: 'none' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 650, pointerEvents: 'none', overflow: 'hidden' }}
     >
       {/* 泡泡對話框：文字容器扣掉底部 27%（尾巴留白）與左右各 5% */}
       <div
         key={`bubble-${shown.key}-${phase}`}
         style={{
-          position: 'absolute', top: 'calc(var(--app-top, 24px) + 10px)', left: '50%',
-          width: 'min(92vw, 520px)', aspectRatio: '1523 / 697',
+          position: 'absolute', top: BUBBLE_TOP, left: '50%',
+          width: BUBBLE_WIDTH, aspectRatio: '1523 / 697',
           background: `url(${BUBBLE_SRC}) center / 100% 100% no-repeat`,
           transform: 'translateX(-50%)',
           animation: phase === 'in' ? 'cheerBubbleIn .36s cubic-bezier(.34,1.56,.64,1) both' : 'cheerOut .24s ease both',
@@ -79,11 +84,11 @@ export default function CheerShow({ cheer }: { cheer: { text: string; key: numbe
         >{shown.text}</div>
       </div>
 
-      {/* 啦啦隊角色：容器只露出頭頂往下約 60%（overflow:hidden 裁掉腰臀以下），底部貼齊螢幕底部；尺寸見 CHAR_WIDTH/CHAR_ASPECT */}
+      {/* 啦啦隊角色：頭頂對齊泡泡框底緣 + CHAR_GAP_PX，全圖往下放，超出螢幕底部的腿由根容器 overflow:hidden 切掉 */}
       <div
         key={`char-${shown.key}-${phase}`}
         style={{
-          position: 'absolute', bottom: 0, left: '50%', width: CHAR_WIDTH, aspectRatio: CHAR_ASPECT, overflow: 'hidden',
+          position: 'absolute', top: CHAR_TOP, left: '50%', width: CHAR_WIDTH,
           transform: 'translateX(-50%)',
           animation: phase === 'in' ? 'cheerCharIn .42s cubic-bezier(.34,1.56,.64,1) .06s both' : 'cheerOut .24s ease both',
         }}
