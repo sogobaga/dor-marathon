@@ -212,9 +212,18 @@ html, body {
   color: var(--tx);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* body 有 overflow:hidden，內容一律以 body 自身高度裁切；根容器（.app-h）撐高了但 body 沒跟著撐，
+     照樣會被 body 裁掉，所以 body 也必須跟 --app-h（見 ViewportHeightFix.tsx），不能只改根容器。 */
   height: 100%;
+  height: var(--app-h, 100%);
   overflow: hidden;
   overscroll-behavior: none; /* App 化鎖版：body 本身永不捲動/回彈，捲動一律發生在內部 overflow:auto 容器 */
+}
+
+/* 根容器高度：預設 100dvh，ViewportHeightFix.tsx 量測寫入 --app-h 後改用該值（修 iOS Safari 回前景 100dvh 卡舊值）。 */
+.app-h {
+  height: 100dvh;
+  height: var(--app-h, 100dvh);
 }
 
 /* 手機模擬框容器 */
@@ -238,7 +247,8 @@ html, body {
    完全無瀏覽器介面的沉浸體驗＝將本站「加入主畫面」以 PWA standalone 啟動。 */
 @media (max-width: 500px), (pointer: coarse) and (max-width: 600px) {
   :root { --app-top: 22px; } /* 真手機頁首呼吸空間（真瀏海由 PhoneShell 的 safe-area 另外處理，故此值不含 safe-area） */
-  .phone-frame { display: block; padding: 0; height: 100dvh; min-height: 0; overflow: hidden; }
+  .phone-frame { display: block; padding: 0; height: 100dvh; height: var(--app-h, 100dvh); min-height: 0; overflow: hidden; }
+  /* 目前 markup 手機不套 .phone-shell class（手機分支直接用 .app-h），此覆寫是死碼，保留備援。 */
   .phone-shell { width: 100% !important; height: 100dvh !important; max-height: none !important; border-radius: 0 !important; border: none !important; box-shadow: none !important; }
   .fake-notch { display: none !important; }
 }

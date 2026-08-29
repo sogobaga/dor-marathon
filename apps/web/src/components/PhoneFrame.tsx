@@ -10,7 +10,7 @@ export default function PhoneFrame({ children }: { children: ReactNode }) {
 
   return (
     <main className="phone-frame">
-      <div className={isMobile ? 'w-full h-dvh' : 'phone-shell'} style={{ position: 'relative' }}>
+      <div className={isMobile ? 'w-full app-h' : 'phone-shell'} style={{ position: 'relative' }}>
         <div style={{
           position: 'absolute', inset: 0,
           paddingTop: isMobile ? 'env(safe-area-inset-top)' : 0,

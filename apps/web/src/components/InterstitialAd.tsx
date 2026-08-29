@@ -151,7 +151,9 @@ export default function InterstitialAd() {
   )
 }
 
-const overlay: React.CSSProperties = { position: 'fixed', inset: 0, zIndex: 2500, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(10,12,16,.72)', backdropFilter: 'blur(2px)', padding: 24, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }
+// height 額外指定 var(--app-h, 100dvh)：top/bottom(inset:0) 與 height 同時存在時 height 優先，
+// 確保 iOS Safari 回前景、ICB(inset:0 依據的視窗矩形)卡在過期值時，蓋板仍用 ViewportHeightFix 量測到的正確高度。
+const overlay: React.CSSProperties = { position: 'fixed', inset: 0, height: 'var(--app-h, 100dvh)', zIndex: 2500, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(10,12,16,.72)', backdropFilter: 'blur(2px)', padding: 24, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }
 const closeBtn: React.CSSProperties = { position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 14px)', right: 16, width: 38, height: 38, borderRadius: 999, border: '1px solid rgba(255,255,255,.28)', background: 'rgba(0,0,0,.35)', color: '#fff', fontSize: 16, cursor: 'pointer', zIndex: 20 }
 const cardWrap: React.CSSProperties = { position: 'absolute', inset: 0, willChange: 'transform' }
 const polaroid: React.CSSProperties = { width: '100%', height: '100%', background: '#fff', borderRadius: 14, padding: '12px 12px 0', boxShadow: '0 18px 50px rgba(0,0,0,.45)', display: 'flex', flexDirection: 'column' }

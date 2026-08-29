@@ -192,7 +192,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
 
   return (
     <GoogleAuthProvider>
-    <div id="app-shell" className={isMobile ? 'w-full h-dvh' : 'phone-shell'} style={{ position: 'relative', overflow: 'hidden' }}>
+    <div id="app-shell" className={isMobile ? 'w-full app-h' : 'phone-shell'} style={{ position: 'relative', overflow: 'hidden' }}>
       {/* 假動態島（僅桌面模擬框顯示；真手機由 CSS .fake-notch media query 隱藏） */}
       <div className="fake-notch" />
 
