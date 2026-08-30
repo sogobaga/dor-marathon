@@ -58,6 +58,10 @@ var specs = map[string]func(string) bool{
 	"knowledge_entry_whitelist":   isWhitelist,
 	"gps_calib_entry_state":       isEntryState, // App GPS 距離校正入口（見 internal/gpscalib）
 	"gps_calib_entry_whitelist":   isWhitelist,
+	// 站內信通知白名單：與上面「是否套用校正」的入口白名單**刻意分開**——入口一旦改成 open（全站
+	// 套用），仍然只有這份名單裡的帳號會收到「GPS 距離校正已啟用／暫停中」站內信。空字串＝一封都
+	// 不發（fail-closed，見 internal/gpscalib.notifyAllowed），與 entry_whitelist 的空值語意不同。
+	"gps_calib_notify_whitelist": isWhitelist,
 	// VIP 訂閱制（後台可調數值）
 	"vip_trial_days":              isNonNegInt,           // 新註冊自動 VIP 試用天數
 	"vip_price_monthly":           isNonNegInt,           // 月繳原價（元）

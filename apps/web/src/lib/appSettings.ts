@@ -242,6 +242,13 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
   {
+    key: 'gps_calib_notify_whitelist', group: 'GPS 校正', label: '校正通知信白名單', type: 'text', def: '',
+    help: '⚠️ 空白或未設定＝一封都不發（不是「全部都發」）。只有名單內的帳號會收到「GPS 距離校正已啟用／暫停中」站內信，'
+      + '與上方「是否套用校正」的白名單完全分開——就算入口改成「全部開放」，也只有這裡列出的帳號會收到信。'
+      + '一行一個，可填帳號編碼（#可省）或註冊 Email。（種子值由 migration 155 寫入；若這裡顯示「未設定」代表該 migration 尚未套用。）',
+    placeholder: 'sogobaga@gmail.com', rows: 3,
+  },
+  {
     key: 'vip_trial_days', group: 'VIP 訂閱制', label: '新註冊試用天數', type: 'number', unit: '天',
     help: '玩家「新註冊完成」後自動獲得 VIP 的天數。試用到期後首次開啟 App 會跳一次「是否續訂」彈窗，之後降為一般會員（VIP 限定功能重新上鎖）。',
     min: 0, max: 365, def: '14',

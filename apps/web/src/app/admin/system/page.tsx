@@ -41,8 +41,18 @@ export default function AdminSystemPage() {
         const next: Record<string, string> = {}
         for (const spec of SETTINGS_SPECS) {
           const raw = s[spec.key]
-          const scale = spec.scale ?? 1
-          next[spec.key] = raw ? String(Number(raw) / scale) : ''
+          // 對抗式審查修正（high finding）：只有 number 型才做「儲存值 ÷ scale」的換算。舊版本
+          // 對所有 spec 一律 Number(raw)/scale，text 型（白名單那幾個，值是 email／帳號編碼）會
+          // 被算成 NaN，輸入框顯示字面字串 "NaN"；管理員只要在那一列按一次「儲存」（連改都不用
+          // 改）就會把白名單洗成 "NaN" 並回 200——正式 DB 的 strategy_entry_whitelist 已經真的
+          // 被這樣毀過一次。gps_calib_notify_whitelist 是「只發給指定帳號」的唯一控制點，被洗掉
+          // 就變成一封都不發（連 sogobaga 也收不到）且完全靜默。
+          if (spec.type === 'number') {
+            const scale = spec.scale ?? 1
+            next[spec.key] = raw ? String(Number(raw) / scale) : ''
+          } else {
+            next[spec.key] = raw ?? ''
+          }
         }
         setEdit(next)
       }

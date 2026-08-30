@@ -648,12 +648,23 @@ export type GpsCalibState = 'warming' | 'active' | 'unstable' | 'stale' | 'froze
 export interface GpsCalibPair {
   activity_at: string
   ext_source: string
-  gps_km: number
-  ext_km: number
-  ratio: number
-  accepted: boolean
+  gps_km: number // App GPS 原始距離（永不套校正）
+  ext_km: number // 手錶／外部來源距離
+  // 「這趟當時真正入帳」的距離與係數，逐趟凍結在 gps_runs.calib_distance_km / calib_factor。
+  // 係數隨時間演進（±2% 遲滯步幅、warming 期間恆為 1.0），所以舊配對多半不等於今天的係數——
+  // 要講「實際入帳」只能用這兩個欄位，不能拿現在的係數回推。
+  credited_km: number
+  credited_factor: number
+  // 回推（back-test）：gps_km × 目前生效係數（effective_factor）。用來評估「現在這組係數好不好」，
+  // **不是**實際入帳的距離。前端一律直接顯示後端算好的值，不要自己乘（四捨五入口徑會不一致）。
+  calib_km: number
+  ratio: number // = ext_km / gps_km
+  accepted: boolean // 通過 G1-G7 閘門；不含視窗條件，會多於實際採用的組數
+  in_window: boolean // 真的進了估計視窗（accepted + 有 inlier_w + 仍在 120 天內）
   reject_reason?: string
   inlier_w?: number
+  gps_run_id: string // 供後台追查原始跑步紀錄
+  ext_activity_id: string // 供後台追查外部活動
 }
 export interface GpsCalibLogEntry {
   version: number
@@ -664,8 +675,20 @@ export interface GpsCalibLogEntry {
   actor: string  // system|user|admin:<id>
   created_at: string
 }
+// not_apply_reason：校正沒生效的原因（生效時不回傳）。
+//   entry=影子模式（入口非 shown，Recompute 照算但不套）／no_data=從未有過配對／
+//   disabled=使用者自己關掉／status=warming 或 unstable／stale=太久沒新配對
+export type GpsCalibNotApplyReason = 'entry' | 'no_data' | 'disabled' | 'status' | 'stale'
 export interface GpsCalibInfo {
   entry: 'hidden' | 'locked' | 'shown'
+  // apply_entry 不含 super_admin 旁路，是「校正對他是否真的生效」那一道；entry 是「卡片可不可見」。
+  apply_entry: 'hidden' | 'locked' | 'shown'
+  // factor 是 user_gps_calib 的估計係數，**不等於**實際入帳的係數（Recompute 是影子模式，對全體
+  // 無條件執行）。effective_factor 才是這一刻真的乘上去的那個數字，與 GPS 上傳的 EffectiveFactor
+  // 同一份判定。任何要講「校正後」的畫面一律用 effective_factor。
+  effective_factor: number
+  applied: boolean
+  not_apply_reason?: GpsCalibNotApplyReason
   enabled: boolean
   factor: number
   status: GpsCalibState
@@ -686,8 +709,42 @@ export const gpsCalibApi = {
   // 每人 60 秒限流，超限拋 429（ApiError，e?.status 可判斷）
   recompute: (token: string) => request<GpsCalibInfo>('/me/gps-calib/recompute', { method: 'POST', headers: withAuth(token) }),
 }
+// GpsCalibRow GET /admin/gps-calib 列表的一列（後台「GPS 校正紀錄」頁）。factor/status 已在後端
+// SQL 套用懶判 stale、effective_factor 另外含入口與使用者開關兩道閘門，與點進詳情
+// GET /admin/gps-calib/{user_id} 同一口徑，兩處數字保證一致。
+// account_code 僅後台可見（面向玩家的 API 一律不得回傳他人帳號編碼，見 memory account-code-privacy）。
+export interface GpsCalibRow {
+  user_id: string
+  name: string // COALESCE(NULLIF(users.name,''), users.handle)，顯示名稱統一口徑
+  email: string
+  account_code: string
+  // 語意同 GpsCalibInfo 的同名欄位：factor 只是估計值，effective_factor 才是實際入帳的係數。
+  apply_entry: 'hidden' | 'locked' | 'shown'
+  effective_factor: number
+  applied: boolean
+  not_apply_reason?: GpsCalibNotApplyReason
+  factor: number
+  status: GpsCalibState
+  enabled: boolean
+  ref_source: string // strava|garmin|coros，可能為空字串
+  n_pairs: number
+  n_eff: number
+  sigma: number // DB 為 NULL 時後端回 0
+  last_pair_at?: string
+  computed_at?: string
+  version: number
+}
 // 後台管理（需 admin + members 權限）：會員詳情頁凍結/解凍/重設用，見 memory event-schema-round1 GPS 校正段落。
 export const adminGpsCalibApi = {
+  // 全站校正概況；total 為套用 status 篩選後的總筆數（供分頁）。status 只接受 GpsCalibState，其餘回 400。
+  list: (token: string, params?: { limit?: number; offset?: number; status?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.offset != null) qs.set('offset', String(params.offset))
+    if (params?.status) qs.set('status', params.status)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ items: GpsCalibRow[]; total: number }>(`/admin/gps-calib${suffix}`, { headers: withAuth(token) })
+  },
   get: (token: string, userID: string) => request<GpsCalibInfo>(`/admin/gps-calib/${userID}`, { headers: withAuth(token) }),
   freeze: (token: string, userID: string, factor: number) =>
     request<void>(`/admin/gps-calib/${userID}/freeze`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ factor }) }),

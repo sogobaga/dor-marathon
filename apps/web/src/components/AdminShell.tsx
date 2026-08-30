@@ -63,6 +63,8 @@ const NAV: { grp: string; items: NavItem[] }[] = [
       { k: 'promo-links', t: '推廣連結', href: '/admin/promo-links', perm: 'settings' },
       { k: 'gps-review', t: 'GPS 審核', href: '/admin/gps-review', perm: 'gps_review' },
       { k: 'checkin-review', t: '打卡審核', href: '/admin/checkin-review', perm: 'gps_review' },
+      // GPS 距離校正紀錄。perm 用 members，與後端 main.go 的 r.With(perm("members")).Mount("/admin/gps-calib") 一致。
+      { k: 'gps-calib', t: 'GPS 校正紀錄', href: '/admin/gps-calib', perm: 'members' },
       { k: 'whitelist', t: '測試白名單', href: '/admin/settings', perm: 'settings' },
       { k: 'system', t: '系統設定', href: '/admin/system', perm: 'settings' },
       { k: 'audit', t: '操作紀錄', href: '/admin/audit', super: true },

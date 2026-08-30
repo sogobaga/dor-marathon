@@ -36,13 +36,30 @@ func ResolveEntry(ctx context.Context, db *pgxpool.Pool, email, code string, isS
 // （含旁路，比照 cheer_edit/monopoly 既有慣例：超管永遠看得到/管得到功能本身）；只有「校正是否真的
 // 動到里程數字」這一步改用這支嚴格版本，兩者都走同一份 app_settings 判斷邏輯，只差 super_admin 那行。
 func resolveApplyEntry(ctx context.Context, db *pgxpool.Pool, email, code string) string {
-	switch appsettings.GetString(ctx, db, "gps_calib_entry_state", "hidden") {
+	return applyEntryFrom(
+		appsettings.GetString(ctx, db, EntryStateKey, "hidden"),
+		appsettings.GetString(ctx, db, EntryWhitelistKey, ""),
+		email, code)
+}
+
+// EntryStateKey/EntryWhitelistKey 入口設定的 app_settings key（migration 154 種下，後台「系統設定 →
+// GPS 校正」可改）。抽成常數是因為後台列表（handler.go AdminList）一次要判上百位會員的入口狀態，
+// 必須把兩個設定值撈出來重複使用，不能每列都各查一次。
+const (
+	EntryStateKey     = "gps_calib_entry_state"
+	EntryWhitelistKey = "gps_calib_entry_whitelist"
+)
+
+// applyEntryFrom resolveApplyEntry 的純函式版本（設定值由呼叫端傳入）——同一份判斷邏輯，供
+// 「一次判一位」（resolveApplyEntry）與「一次判一整頁」（AdminList）共用，避免兩處走樣。
+func applyEntryFrom(state, whitelist, email, code string) string {
+	switch state {
 	case "open":
 		return "shown"
 	case "locked":
 		return "locked"
 	case "whitelist":
-		if whitelisted(appsettings.GetString(ctx, db, "gps_calib_entry_whitelist", ""), email, code) {
+		if whitelisted(whitelist, email, code) {
 			return "shown"
 		}
 		return "hidden"
@@ -70,6 +87,22 @@ func whitelisted(list, email, code string) bool {
 	return false
 }
 
+// NotifyWhitelistKey 站內信通知白名單的系統設定 key（後台「系統設定 → GPS 校正」可編輯，種子值見
+// migrations/155_gps_calib_notify.sql）。與 gps_calib_entry_whitelist 分開的理由見 notifyAllowed。
+const NotifyWhitelistKey = "gps_calib_notify_whitelist"
+
+// notifyAllowed 純函式：這個使用者該不該收到 GPS 校正的狀態變更站內信。兩個條件必須**同時**成立：
+//  1. applyEntry=="shown"——校正對他真的生效（沿用 resolveApplyEntry，不含 super_admin 旁路），
+//     否則會通知一個他看不到也沒生效的功能。
+//  2. 命中 gps_calib_notify_whitelist——**獨立於入口白名單**的第二道閘門。入口設定
+//     （gps_calib_entry_state）日後改成 open 時條件 1 對全站都成立，只剩這道能擋住廣發。
+//
+// 空白名單刻意回 false（fail-closed，一封都不發），與 gps_calib_entry_whitelist「空值＋open＝全放行」
+// 的語意相反——通知是「打擾使用者」的動作，預設值必須是最保守的那一邊。
+func notifyAllowed(applyEntry, notifyList, email, code string) bool {
+	return applyEntry == "shown" && whitelisted(notifyList, email, code)
+}
+
 // resolveUserIdentity 查該使用者的 email/account_code/is_super_admin（ResolveEntry 所需）。
 func resolveUserIdentity(ctx context.Context, db *pgxpool.Pool, userID string) (email, code string, isSuperAdmin bool, err error) {
 	err = db.QueryRow(ctx, `SELECT COALESCE(email,''), COALESCE(account_code,''), is_super_admin FROM users WHERE id=$1`, userID).
@@ -83,6 +116,54 @@ type EffectiveMeta struct {
 	Applied bool   // 這次是否真的套用了非 1.0 的係數
 	Entry   string // hidden|locked|shown
 	Status  string // warming|active|unstable|stale|frozen（entry 非 shown 時為空字串）
+}
+
+// EffectiveState 「這位會員此刻到底有沒有在校正」的判定結果。純資料，由下面的 effectiveState
+// 算出，EffectiveFactor（GPS 上傳實際入帳那一步）與所有讀取端（GET /me/gps-calib、後台詳情、
+// 後台列表）共用同一份，確保後台看到的數字＝實際入帳的數字。
+//
+// 對抗式審查修正（high finding）：Recompute 是刻意的「影子模式」——對全體使用者無條件執行，
+// 非白名單會員一樣會被寫成 status='active'、factor=0.97xx。讀取端若只看 user_gps_calib 的
+// status/factor（甚至只補了懶判 stale 一種），就會把這些「只算不套」的會員顯示成「校正中
+// ×0.97xx」，而 EffectiveFactor 對他們其實回 1.0、gps_runs.calib_distance_km 存的是原始距離。
+// enabled=false（使用者自己關掉）同理。因此讀取端一律改走這支。
+type EffectiveState struct {
+	Factor  float64 // 生效係數（任何一步判定不套用一律 1.0）
+	Applied bool    // 是否真的套用了校正
+	// Reason 不套用的原因，供後台顯示（生效時為空字串）：
+	//   entry    入口非 shown（隱藏/鎖定/未在 gps_calib_entry_whitelist）＝影子模式，只算不套
+	//   no_data  尚無 user_gps_calib 列（從未有過候選配對）
+	//   disabled 使用者自己在個人資料頁關掉
+	//   status   狀態非 active/frozen（warming/unstable）
+	//   stale    active 但超過 StaleDays 沒有新配對（讀取端懶判，不寫 DB）
+	Reason string
+}
+
+// effectiveState EffectiveFactor 判定順序 1/3/4/5/6/7 的純函式版本（第 2 步「查無列」由 hasRow
+// 表達）。不碰 DB，所以列表端可以一次判一整頁，也讓判定邏輯能被單元測試釘住。
+func effectiveState(applyEntry string, hasRow, enabled bool, status string, factor float64, lastPairAt *time.Time, now time.Time) EffectiveState {
+	if applyEntry != "shown" {
+		return EffectiveState{Factor: 1.0, Reason: "entry"}
+	}
+	if !hasRow {
+		return EffectiveState{Factor: 1.0, Reason: "no_data"}
+	}
+	if !enabled {
+		return EffectiveState{Factor: 1.0, Reason: "disabled"}
+	}
+	if status == "frozen" {
+		return EffectiveState{Factor: factor, Applied: factor > 0}
+	}
+	if status != "active" {
+		if status == "stale" {
+			return EffectiveState{Factor: 1.0, Reason: "stale"}
+		}
+		return EffectiveState{Factor: 1.0, Reason: "status"}
+	}
+	if lastPairAt != nil && now.Sub(*lastPairAt) > StaleDays*24*time.Hour {
+		return EffectiveState{Factor: 1.0, Reason: "stale"}
+	}
+	return EffectiveState{Factor: factor, Applied: true}
 }
 
 // EffectiveFactor 回傳「目前生效」的校正係數——GPS 上傳（activity/gps.go SaveGPSRun）與
@@ -109,7 +190,8 @@ func EffectiveFactor(ctx context.Context, db *pgxpool.Pool, userID string) (floa
 	meta := EffectiveMeta{Entry: ResolveEntry(ctx, db, email, code, isSuperAdmin)}
 	// 對抗式審查修正：套用與否一律用 resolveApplyEntry（不含 super_admin 旁路）判斷，meta.Entry 仍用
 	// 上面含旁路的版本（給呼叫端顯示用，不影響是否真的套用），見 resolveApplyEntry 註解。
-	if resolveApplyEntry(ctx, db, email, code) != "shown" {
+	applyEntry := resolveApplyEntry(ctx, db, email, code)
+	if applyEntry != "shown" {
 		return 1.0, meta
 	}
 
@@ -123,21 +205,11 @@ func EffectiveFactor(ctx context.Context, db *pgxpool.Pool, userID string) (floa
 		return 1.0, meta // 查無列或查詢失敗：一律不套用
 	}
 	meta.Status = status
-	if !enabled {
-		return 1.0, meta
-	}
-	if status == "frozen" {
-		meta.Applied = factor > 0
-		return factor, meta
-	}
-	if status != "active" {
-		return 1.0, meta
-	}
-	if lastPairAt != nil && time.Since(*lastPairAt) > StaleDays*24*time.Hour {
-		return 1.0, meta
-	}
-	meta.Applied = true
-	return factor, meta
+	// 判定本身走 effectiveState（純函式），與讀取端（GetStatus／AdminList）共用同一份，確保後台
+	// 顯示的「生效係數」＝這裡實際入帳的係數。
+	es := effectiveState(applyEntry, true, enabled, status, factor, lastPairAt, time.Now())
+	meta.Applied = es.Applied
+	return es.Factor, meta
 }
 
 // DashboardSummary 給 profile.Dashboard 用的精簡讀模型（不含 pairs/log，那些留給 GET
@@ -415,9 +487,25 @@ func Recompute(ctx context.Context, db *pgxpool.Pool, userID, reason, actor stri
 	// 與 EffectiveFactor 同一判斷）先過濾，否則非白名單使用者會收到「已自動校正」的信，但
 	// EffectiveFactor 對他們恆回 1.0、Dashboard 卡片也不顯示、GET /me/gps-calib 還會 403——通知一個
 	// 使用者看不到也沒生效的功能。resolveUserIdentity 查詢失敗保守跳過，不因此擋住既有信件邏輯。
+	//
+	// 第二道閘門（使用者需求：「不應該發送給任何人，除了指定帳號」）：resolveApplyEntry 綁的是「校正
+	// 對他生效」，一旦 gps_calib_entry_state 改成 open（正式全站開放）全體都會收信；因此再 AND 一份
+	// **獨立的** gps_calib_notify_whitelist，空字串＝一封都不發（fail-closed，見 notifyAllowed）。
 	if changed {
-		if email, code, _, err := resolveUserIdentity(ctx, db, userID); err == nil && resolveApplyEntry(ctx, db, email, code) == "shown" {
-			notifyStatusChange(ctx, userID, prevStatus, newStatus, newFactor)
+		if email, code, _, err := resolveUserIdentity(ctx, db, userID); err == nil {
+			applyEntry := resolveApplyEntry(ctx, db, email, code)
+			notifyList := appsettings.GetString(ctx, db, NotifyWhitelistKey, "")
+			switch {
+			case notifyAllowed(applyEntry, notifyList, email, code):
+				notifyStatusChange(ctx, userID, prevStatus, newStatus, newFactor)
+			case applyEntry == "shown" && strings.TrimSpace(notifyList) == "":
+				// 對抗式審查修正（medium finding）：fail-closed 的代價是「設定根本不存在」與「刻意
+				// 關掉通知」長得一模一樣。校正對他確實生效、狀態也真的變了，卻因為名單是空的而不
+				// 發信時留一行 warn——migration 155 尚未套用（app_settings 查無 key → GetString 回
+				// 空字串）就是走這條路徑，否則整件事完全靜默、沒有任何線索可查。
+				log.Warn().Str("user", userID).Str("setting", NotifyWhitelistKey).
+					Msg("gpscalib: 通知白名單為空（migration 155 是否已套用？），本次狀態變更不發站內信")
+			}
 		}
 	}
 
@@ -603,9 +691,13 @@ func AdminUnfreeze(ctx context.Context, db *pgxpool.Pool, userID, actor string) 
 		tx.Rollback(ctx)
 		return err
 	}
+	// 對抗式審查修正（low finding）：factor_after 一併寫入（＝上面 UPDATE 實際寫進去的 1.0）。
+	// 少了它，後台「歷史校正變化」這一列會顯示成「0.9500 → —」，而係數軌跡折線圖只取
+	// factor_after 非 null 的點，整個漏掉這次由 0.95 掉回 1.0 的變動；若解凍後重算結果仍是
+	// warming/1.0，Recompute 的 changed 為 false 不會補寫另一列，這個斷點就永久留在歷史裡。
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO user_gps_calib_log (user_id, version, factor_before, status, reason, actor)
-		VALUES ($1,$2,$3,'warming','admin_unfreeze',$4)`, userID, version, prevFactor, actor); err != nil {
+		INSERT INTO user_gps_calib_log (user_id, version, factor_before, factor_after, status, reason, actor)
+		VALUES ($1,$2,$3,1.0,'warming','admin_unfreeze',$4)`, userID, version, prevFactor, actor); err != nil {
 		tx.Rollback(ctx)
 		return err
 	}
