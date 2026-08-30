@@ -1,7 +1,9 @@
 # 城市探索關主卡片批次管線：PNG → WebP(q82, 長邊1200) → R2 explore/cards/ → manifest + UPDATE SQL。
 # 增量設計：scripts/master_cards.manifest.json 記每張原始檔 sha256——未來新版圖包重跑本腳本，
 # 內容相同的自動跳過，只壓縮/上傳/更新有變動的張。
-# 憑證讀 repo 根 r2.env（不進 git、不進聊天）。執行：python scripts/card-upload/upload.py
+# 憑證讀 repo 根 r2.env（不進 git、不進聊天）。執行：python scripts/card-upload/upload.py（DRY_RUN=1 只比對不上傳）
+# 2026-08-30 快取失效：R2 物件以 immutable 一年快取，同 key 覆蓋不會被瀏覽器/Cloudflare 重抓，所以「有變動的卡」
+# 其 card_image_url 一律改帶 ?v=<sha8> 版本參數（SQL 只產出變動卡；未變動的卡不動 DB、不打擾使用者快取）。
 import hashlib
 import io
 import json
@@ -23,6 +25,7 @@ MANIFEST = os.path.join(REPO, "scripts", "master_cards.manifest.json")
 SQL_OUT = os.path.join(os.path.dirname(__file__), "update_card_urls.sql")
 MAX_DIM = 1200
 QUALITY = 82
+DRY_RUN = os.environ.get("DRY_RUN") == "1"
 
 env = {}
 with open(os.path.join(REPO, "r2.env"), encoding="utf-8-sig") as f:
@@ -63,7 +66,8 @@ def process(fname: str):
         src = f.read()
     sha = hashlib.sha256(src).hexdigest()
     key = f"explore/cards/{code}.webp"
-    url = f"https://img.dor.tw/{key}"
+    # 變動卡的 URL 帶 ?v=<sha8>（首次上傳的新卡也帶，日後再改版就自然換版本）
+    url = f"https://img.dor.tw/{key}?v={sha[:8]}"
     try:
         if prev.get(code, {}).get("srcSha256") == sha:
             manifest[code] = prev[code]
@@ -74,15 +78,16 @@ def process(fname: str):
             buf = io.BytesIO()
             im.save(buf, "WEBP", quality=QUALITY, method=6)
             webp = buf.getvalue()
-            s3.put_object(
-                Bucket=BUCKET, Key=key, Body=webp, ContentType="image/webp",
-                CacheControl="public, max-age=31536000, immutable",
-            )
+            if not DRY_RUN:
+                s3.put_object(
+                    Bucket=BUCKET, Key=key, Body=webp, ContentType="image/webp",
+                    CacheControl="public, max-age=31536000, immutable",
+                )
             manifest[code] = {
                 "srcSha256": sha, "srcBytes": len(src), "webpBytes": len(webp),
-                "key": key, "uploadedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "key": key, "url": url, "uploadedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             }
-        sql_lines.append(f"UPDATE explore_bosses SET card_image_url='{url}' WHERE code='{code}';")
+            sql_lines.append(f"UPDATE explore_bosses SET card_image_url='{url}' WHERE code='{code}';")
     except Exception as e:  # noqa: BLE001
         failed.append((fname, str(e)[:300]))
     done += 1
@@ -93,13 +98,14 @@ def process(fname: str):
 with ThreadPoolExecutor(max_workers=5) as ex:
     list(ex.map(process, files))
 
-with open(MANIFEST, "w", encoding="utf-8") as f:
-    json.dump(manifest, f, indent=1, ensure_ascii=False)
+if not DRY_RUN:
+    with open(MANIFEST, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=1, ensure_ascii=False)
 with open(SQL_OUT, "w", encoding="utf-8") as f:
     f.write("\n".join(sorted(sql_lines)) + "\n")
 
 total_webp = sum(m.get("webpBytes", 0) for m in manifest.values())
-print(f"DONE. uploaded={done - skipped - len(failed)} skipped={skipped} failed={len(failed)}")
+print(f"DONE.{' (DRY RUN)' if DRY_RUN else ''} uploaded={done - skipped - len(failed)} skipped={skipped} failed={len(failed)}")
 print(f"webp total {total_webp / 1048576:.1f} MB; manifest -> scripts/master_cards.manifest.json; sql -> {SQL_OUT}")
 for fname, err in failed:
     print("FAILED:", fname, err)
