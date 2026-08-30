@@ -96,6 +96,7 @@ export default function InterstitialAd() {
 
   return (
     <div style={overlay} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+      <div style={overlayBackdrop} aria-hidden />
       <button onClick={close} aria-label="關閉" style={closeBtn}>✕</button>
 
       <div style={{ position: 'relative', width: 'min(78vw, 300px)', aspectRatio: '3 / 4.5' }}>
@@ -151,9 +152,27 @@ export default function InterstitialAd() {
   )
 }
 
-// height 額外指定 var(--app-h, 100dvh)：top/bottom(inset:0) 與 height 同時存在時 height 優先，
-// 確保 iOS Safari 回前景、ICB(inset:0 依據的視窗矩形)卡在過期值時，蓋板仍用 ViewportHeightFix 量測到的正確高度。
-const overlay: React.CSSProperties = { position: 'fixed', inset: 0, height: 'var(--app-h, 100dvh)', zIndex: 2500, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(10,12,16,.72)', backdropFilter: 'blur(2px)', padding: 24, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }
+// 高度與根容器同一條公式（單一真相）：inset:0 已錨在 layout viewport，height 再用 max() 夾一次，
+// 保證蓋板永遠 ≥ 100dvh，不可能比根容器矮。v1.1.664 曾寫成 var(--app-h, 100dvh)，JS 量到偏小值時
+// 蓋板被截在同一條線 → 改 max() 後在數學上不可能發生。背景色移到下方 overlayBackdrop。
+// 註（與 globals.css 的 @supports 對照）：這裡刻意**不需要** @supports 隔離。無 dvh 的舊引擎上這條
+// inline height 一樣會 invalid at computed-value time → height:auto，但本元素同時有 inset:0
+// （top 與 bottom 皆為 0），auto 高度會自動撐滿視窗，結果與預期一致；globals.css 那三處之所以必須
+// 隔離，是因為它們有「要被保護的 100vh 前置宣告」而且子節點全是 absolute（auto ⇒ 0）。
+const overlay: React.CSSProperties = { position: 'fixed', inset: 0, height: 'max(100dvh, var(--app-h, 0px))', zIndex: 2500, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', padding: 24, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }
+
+// 遮罩底色獨立成一層，上下各超掃 30vh（共 160vh）。
+// ⚠️ 這是「有機會、失敗即無害」的降級保護，**不是保證**。它只在「合成器的裁切矩形大於過期的 layout
+//    viewport」時才有效；若 Safari 連裁切矩形都用同一個過期偏小值，overlay 是 position:fixed，
+//    它與所有後代都會被裁在同一條線上，超掃 160vh 也照樣被腰斬、畫面完全不變。
+//    （下方 17% 看到的米色不能當反證：root 背景色會傳播到 canvas，不論 ICB 多大都塗滿整個視窗。）
+//    驗收時請一併回報「遮罩被裁的線是否與 app 內容被裁的線同高」——同高即代表裁切線假設成立，
+//    症狀 A 的所有「換 CSS 長度單位」方案（含 100lvh）都可直接排除，只剩 ?vpfix=heal 一條路。
+// ⚠️ 這招只能用在「純裝飾、底部沒有互動元件」的層。app 根容器不可比照辦理——超掃會把底部導覽列推出
+//    可見區，等於把外觀缺陷換成功能缺陷。
+// z-index:-1 是必要的：overlay 是 fixed（自成 stacking context），absolute 子節點若 z-index:auto 會
+// 排在未定位的 in-flow 內容（卡片/說明文字/checkbox）之後，把它們蓋掉。
+const overlayBackdrop: React.CSSProperties = { position: 'absolute', left: 0, right: 0, top: '-30vh', height: '160vh', background: 'rgba(10,12,16,.72)', pointerEvents: 'none', zIndex: -1 }
 const closeBtn: React.CSSProperties = { position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 14px)', right: 16, width: 38, height: 38, borderRadius: 999, border: '1px solid rgba(255,255,255,.28)', background: 'rgba(0,0,0,.35)', color: '#fff', fontSize: 16, cursor: 'pointer', zIndex: 20 }
 const cardWrap: React.CSSProperties = { position: 'absolute', inset: 0, willChange: 'transform' }
 const polaroid: React.CSSProperties = { width: '100%', height: '100%', background: '#fff', borderRadius: 14, padding: '12px 12px 0', boxShadow: '0 18px 50px rgba(0,0,0,.45)', display: 'flex', flexDirection: 'column' }

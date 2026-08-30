@@ -7,6 +7,7 @@ import LandscapeNotice from '@/components/LandscapeNotice'
 import Analytics from '@/components/Analytics'
 import AppProviders from '@/components/AppProviders'
 import ViewportHeightFix from '@/components/ViewportHeightFix'
+import ViewportDebug from '@/components/ViewportDebug'
 
 // 各 skin 的瀏覽器 chrome（狀態列）色；新增 skin 時在此與 globals.css/appSettings/後端 specs 一併加。
 const SKIN_THEME_COLOR: Record<string, string> = { default: '#09090f', warm: '#FBF4E9', warm2: '#FBF5EA' }
@@ -71,6 +72,14 @@ export async function generateViewport(): Promise<Viewport> {
     maximumScale: 1,
     userScalable: false,
     viewportFit: 'cover',
+    // 明文宣告「虛擬鍵盤只縮 visual viewport、不縮版面」——這正是本站要的行為。
+    // ・iOS：WebKit 尚未實作（bug 259770，2023 開單至今 NEW）→ 這行是 no-op，不會壞任何事；
+    //   而 iOS 現行預設本來就等同 resizes-visual。
+    // ・Android Chrome 108+ 預設同樣是 resizes-visual → 明寫等於把行為釘死，不怕未來預設值變動，
+    //   並可救回舊 Chrome/WebView 那種「鍵盤壓縮 layout viewport」的預設。
+    // ⚠️ 永遠不要改成 resizes-content：那就是症狀 B 的規格化版本。
+    // ⚠️ 也不要用 overlays-content：會奪走瀏覽器「自動捲到焦點輸入框」的能力。
+    interactiveWidget: 'resizes-visual',
     themeColor: SKIN_THEME_COLOR[skin] || SKIN_THEME_COLOR.default,
   }
 }
@@ -79,7 +88,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const skin = skinOf(await getPublicSettings())
   return (
     <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined}>
-      <body><AppProviders><ViewportHeightFix /><Analytics /><InAppBrowserNotice /><InterstitialAd /><LandscapeNotice />{children}</AppProviders></body>
+      <body><AppProviders><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><LandscapeNotice />{children}</AppProviders></body>
     </html>
   )
 }

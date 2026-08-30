@@ -212,18 +212,46 @@ html, body {
   color: var(--tx);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
-  /* body 有 overflow:hidden，內容一律以 body 自身高度裁切；根容器（.app-h）撐高了但 body 沒跟著撐，
-     照樣會被 body 裁掉，所以 body 也必須跟 --app-h（見 ViewportHeightFix.tsx），不能只改根容器。 */
+  /* 高度＝瀏覽器自己維護的 layout viewport（100%）。--app-h 只是「安全網加高」：
+     ViewportHeightFix 僅在量到 visualViewport 比 layout viewport 大時才寫入（只准加高），
+     用 max() 夾住 → JS 永遠不可能讓版面比純 CSS 版更矮，症狀 B（鍵盤把版面壓成 40%）在數學上被排除。
+     body 有 overflow:hidden，根容器一旦被加高，body 必須一起加高否則照樣被裁 → 兩者用同一條公式。
+     ⚠️ 絕不可寫成 height: var(--app-h, 100%)（v1.1.664 的寫法）：那讓 JS 有權把版面寫矮並鎖死。
+     ⚠️ 含 var() 的那行一定要關進 @supports（理由見下方 .app-h 的長註解）：只要宣告含 var()，
+        它在 parse 階段一律被視為合法並蓋掉上面的 height:100%，要到 computed-value 階段才失效，
+        而失效的結果是 initial 值 height:auto，**不會**回退到前一條宣告。 */
   height: 100%;
-  height: var(--app-h, 100%);
   overflow: hidden;
   overscroll-behavior: none; /* App 化鎖版：body 本身永不捲動/回彈，捲動一律發生在內部 overflow:auto 容器 */
 }
+@supports (height: max(0px, 0px)) {
+  html, body { height: max(100%, var(--app-h, 0px)); }
+}
 
-/* 根容器高度：預設 100dvh，ViewportHeightFix.tsx 量測寫入 --app-h 後改用該值（修 iOS Safari 回前景 100dvh 卡舊值）。 */
-.app-h {
-  height: 100dvh;
-  height: var(--app-h, 100dvh);
+/* 手機根容器高度：兩段式後備鏈。
+   ① 裸露的 .app-h{height:100vh}                  — 無 dvh 的舊引擎唯一會生效的一條（略高、底部可能被
+                                                    工具列蓋住，但絕不塌陷）
+   ② @supports 內的 100dvh → max(100dvh,var())    — 正常路徑。dvh 源自 ICB，iOS 預設 resizes-visual
+                                                    ⇒ 鍵盤完全不影響它（這正是我們要的）；max() 是
+                                                    「只准加高」的安全網，--app-h 未定義時 = 100dvh。
+   ⚠️⚠️ 為什麼 dvh/max() 那兩行**必須**關在 @supports 裡，不能三條並排（v1.1.676 修正的實作 bug）：
+      CSS Variables 規範明定「宣告只要含語法合法的 var()，parse 階段一律視為有效」（存成
+      pending-substitution），於是 max(100dvh, var(--app-h,0px)) 會贏得 cascade 並丟棄前面兩條；
+      要到 computed-value 階段代換完才發現舊引擎不認得 dvh → invalid at computed-value time →
+      非繼承屬性取 initial 值 → height:auto，**不會**回退到 100vh（cascade 回退只發生在 parse 階段）。
+      而 .app-h / .phone-frame 的子節點全是 position:absolute（PhoneShell.tsx:200、PhoneFrame.tsx:14），
+      height:auto 會收斂成 0 → 使用者看到的是整頁 body 米色空白，不是「底部被工具列蓋住 10%」。
+      受影響引擎：iOS Safari <15.4、Chrome/Android WebView <108、Firefox <101、Samsung Internet <21。
+      把含 var() 的宣告關進 @supports，舊引擎連看都看不到，100vh 才活得下來。
+      （同理：var() 的後備值也只准放 0px 這種到處合法的值，不得放 100dvh/100%。）
+   註：條件多帶一個 (height: max(0px, 0px)) 是為了涵蓋「支援 dvh 卻不支援 max()」的假想引擎——
+       目前沒有這種瀏覽器（max() 一律早於 dvh 落地），但這樣寫成本為零且讓推論不依賴瀏覽器歷史。 */
+.app-h { height: 100vh; }
+@supports (height: 100dvh) and (height: max(0px, 0px)) {
+  .app-h {
+    height: 100dvh;
+    height: max(100dvh, var(--app-h, 0px));
+  }
 }
 
 /* 手機模擬框容器 */
@@ -247,9 +275,22 @@ html, body {
    完全無瀏覽器介面的沉浸體驗＝將本站「加入主畫面」以 PWA standalone 啟動。 */
 @media (max-width: 500px), (pointer: coarse) and (max-width: 600px) {
   :root { --app-top: 22px; } /* 真手機頁首呼吸空間（真瀏海由 PhoneShell 的 safe-area 另外處理，故此值不含 safe-area） */
-  .phone-frame { display: block; padding: 0; height: 100dvh; height: var(--app-h, 100dvh); min-height: 0; overflow: hidden; }
-  /* 目前 markup 手機不套 .phone-shell class（手機分支直接用 .app-h），此覆寫是死碼，保留備援。 */
-  .phone-shell { width: 100% !important; height: 100dvh !important; max-height: none !important; border-radius: 0 !important; border: none !important; box-shadow: none !important; }
+  /* ⚠️ 不要把 .phone-frame 改成 position:fixed。fixed 必定建立 stacking context，
+     會把 #app-shell 子樹內所有 z-index 2000~4600 的覆蓋層（登入 3300／策略 sheet 3600／拖曳徽章 4600…）
+     整批壓到 body 直下的 InterstitialAd(2500)、LandscapeNotice(4000)、SiteRealtime(5000) 之下。
+     （桌機 .phone-shell 的 transform 就是刻意利用同一機制把覆蓋層框進模擬框，手機不可比照。） */
+  .phone-frame { display: block; padding: 0; min-height: 0; overflow: hidden; height: 100vh; }
+  /* 目前 markup 手機不套 .phone-shell class（手機分支直接用 .app-h），此覆寫是死碼，保留備援；
+     公式與 .app-h 對齊，避免 useIsMobile 首幀為 false 時高度來源在一幀內跳動。
+     ⚠️ 這條的 100vh 後備比 .app-h 更關鍵：舊引擎上若它 IACVT 成 auto，連「fall-through 到桌機
+        .phone-shell{height:844px}」這條退路都會被切斷（!important 的 auto 仍然贏），畫面全黑/全空。 */
+  .phone-shell { width: 100% !important; height: 100vh !important; max-height: none !important; border-radius: 0 !important; border: none !important; box-shadow: none !important; }
+  /* dvh/max() 一律關進 @supports，理由與 .app-h 完全相同（含 var() 的宣告會蓋掉上面的 100vh，
+     舊引擎上 IACVT 成 height:auto → 手機整頁空白）。@supports 可合法巢狀在 @media 內。 */
+  @supports (height: 100dvh) and (height: max(0px, 0px)) {
+    .phone-frame { height: 100dvh; height: max(100dvh, var(--app-h, 0px)); }
+    .phone-shell { height: max(100dvh, var(--app-h, 0px)) !important; }
+  }
   .fake-notch { display: none !important; }
 }
 

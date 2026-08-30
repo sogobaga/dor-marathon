@@ -203,8 +203,10 @@ export default function CheerShow({ cheer, layout, edit }: {
   return (
     <div
       data-skin="default"
-      // inset:0 而非 height:var(--app-h)：桌機的 .phone-shell（transform）是 fixed 的定位基準，--app-h 是整個瀏覽器視窗高度、
-      // 會比模擬框高，角色 bottom:0 會貼到框外被裁掉；inset:0 在手機（視窗）與桌機（模擬框）兩種基準下都貼齊底部。
+      // 維持 inset:0、不寫 height：桌機的 .phone-shell（transform）是 fixed 的定位基準，
+      // 而 --app-h 是整個瀏覽器視窗高、會超出模擬框（角色 bottom:0 會貼到框外被裁掉）；
+      // inset:0 在手機（視窗）與桌機（模擬框）兩種基準下都貼齊底部。
+      // （--app-h 現已改為「只能加高的安全網」，語意見 ViewportHeightFix.tsx）
       style={{ position: 'fixed', inset: 0, zIndex: 650, pointerEvents: edit ? 'auto' : 'none', overflow: 'hidden' }}
     >
       {/* 泡泡對話框：文字容器扣掉底部 27%（尾巴留白）與左右各 5%。校正模式：文字固定、不套動畫。 */}
