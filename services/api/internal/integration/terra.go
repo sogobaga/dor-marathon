@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
 
+	"github.com/dor/api/internal/gpscalib"
 	"github.com/dor/api/internal/stamina"
 )
 
@@ -178,6 +179,10 @@ func (h *TerraHandler) importTerra(r *http.Request, userID, source string, a *te
 	if err != nil {
 		log.Error().Err(err).Str("source", source).Msg("terra import activity failed")
 		return
+	}
+	// GPS 距離校正 T1 觸發點（比照 strava.go）：非同步重算（debounce），不阻塞這次匯入。
+	if res.Status == "inserted" || res.Status == "duplicate" {
+		gpscalib.RecomputeAsync(h.repo.db, na.UserID)
 	}
 	// stamina.ChargeSP 維持「僅新匯入」才扣血：SP 是扣血動作，同一趟不能被扣兩次。
 	// 比照 strava.go importOne：Terra 匯入原本完全沒有呼叫 ChargeSP，導致穿戴裝置直連使用者不消耗體力值。

@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo, type VipCardInfo } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, gpsCalibApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo, type VipCardInfo, type GpsCalibInfo } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendingGps'
 import { useDashboard } from '@/lib/useDashboard'
+import { APP_VERSION } from '@/lib/version'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
 import MemberPanel from './MemberPanel'
 import UpgradeVipModal from './UpgradeVipModal'
@@ -32,6 +33,31 @@ const FLAG_LABEL: Record<string, string> = {
   multi_device_duplicate: '多裝置重複',
   cross_account_duplicate: '跨帳號重複',
   duplicate: '重複資料',
+}
+// GPS 距離校正（見 internal/gpscalib，2026-08-30）
+const GPS_CALIB_STATUS_LABEL: Record<string, string> = {
+  warming: '暖機中（配對數不足）',
+  active: '校正中',
+  unstable: '資料不一致',
+  stale: '已過期（逾 120 天無新配對）',
+  frozen: '後台已鎖定',
+}
+const GPS_CALIB_STATUS_COLOR: Record<string, string> = {
+  warming: 'var(--tx-dim)',
+  active: 'var(--fug)',
+  unstable: 'var(--hunt)',
+  stale: 'var(--tx-faint)',
+  frozen: 'var(--gold)',
+}
+const GPS_CALIB_SRC_LABEL: Record<string, string> = { strava: 'Strava', garmin: 'Garmin', coros: 'COROS' }
+const GPS_CALIB_REJECT_LABEL: Record<string, string> = {
+  flagged: '已標記異常',
+  ambiguous: '配對不明確',
+  partial: '距離差異過大',
+  short: '距離過短',
+  edge: '起訖時間差過大',
+  range: '比值超出合理範圍',
+  other_source: '非目前參考來源',
 }
 
 function ntd(c: number) {
@@ -61,6 +87,11 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [stravaMsg, setStravaMsg] = useState('')
   const [activities, setActivities] = useState<SyncedActivity[] | null>(null)
   const [syncing, setSyncing] = useState(false)
+  // GPS 距離校正（見 internal/gpscalib，2026-08-30）：入口白名單 shown 才抓；locked 只顯示鎖定卡片、不打 API。
+  const [gpsCalib, setGpsCalib] = useState<GpsCalibInfo | null>(null)
+  const [gpsCalibBusy, setGpsCalibBusy] = useState(false)
+  const [gpsCalibErr, setGpsCalibErr] = useState('')
+  const [gpsCalibDetail, setGpsCalibDetail] = useState(false) // 展開最近配對/係數歷程
   const { dash, revalidate: loadDashboard } = useDashboard() // 共用會員儀表板快取（與首頁會員卡同一份）
   const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>(initialTab ?? 'info')
   // 本機尚未上傳的 GPS（里程優先來源=Strava 時，track 頁結束不自動上傳，留給這裡決定）
@@ -178,6 +209,29 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   // 本機尚未上傳的 GPS（不管是否連 Strava，都可能有——里程優先來源=Strava 時 track 頁結束會保留在本機）
   useEffect(() => { setPending(readPendingGps()) }, [])
 
+  // GPS 距離校正：僅在入口=shown 才打 API（locked/hidden 打了也是 403，不必浪費請求）
+  function loadGpsCalib() {
+    withUserAuth((t) => gpsCalibApi.get(t)).then(setGpsCalib).catch(() => {})
+  }
+  useEffect(() => { if (dash?.gps_calib_entry === 'shown') loadGpsCalib() }, [dash?.gps_calib_entry])
+  async function toggleGpsCalib() {
+    if (!gpsCalib) return
+    setGpsCalibBusy(true); setGpsCalibErr('')
+    try {
+      const r = await withUserAuth((t) => gpsCalibApi.setEnabled(t, !gpsCalib.enabled))
+      setGpsCalib(r)
+    } catch (e: any) { setGpsCalibErr(e?.message || '設定失敗') }
+    finally { setGpsCalibBusy(false) }
+  }
+  async function recomputeGpsCalib() {
+    setGpsCalibBusy(true); setGpsCalibErr('')
+    try {
+      const r = await withUserAuth((t) => gpsCalibApi.recompute(t))
+      setGpsCalib(r)
+    } catch (e: any) { setGpsCalibErr(e?.status === 429 ? '請稍候再試（60 秒限流）' : e?.message || '重新計算失敗') }
+    finally { setGpsCalibBusy(false) }
+  }
+
   async function uploadPending() {
     if (!pending) return
     const token = getUserToken(); if (!token) return
@@ -187,9 +241,13 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         started_at: new Date(pending.start).toISOString(),
         ended_at: new Date(pending.endedAt).toISOString(),
         points: pending.points,
+        client_version: APP_VERSION,
       }))
       clearPendingGps(); setPending(null); setPendingAsk(false)
       loadActivities() // 刷新已同步活動（該清單含 GPS 來源）
+      loadDashboard() // GPS 距離校正（見 internal/gpscalib）：上傳後係數可能被 RecomputeAsync 更新，
+      // 讓共用 dashboard 快取（與 /track 頁 calibKRef 開跑快照同一份，見 useDashboard.ts）跟著重抓，
+      // 避免下一趟開跑仍拿到舊係數（對抗式審查修正）。
     } catch (e: any) { setPendingErr(e?.message || '上傳失敗，請稍後再試') }
     finally { setPendingBusy(false) }
   }
@@ -638,6 +696,13 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                       <span style={{ fontWeight: 700, fontSize: 14 }}>{a.distance_km.toFixed(2)} K</span>
                       <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{fmtDate(a.started_at || a.recorded_at)}</span>
                     </div>
+                    {/* GPS 距離校正（見 internal/gpscalib，2026-08-30）：calib_factor!=null 且 <1 才代表這筆
+                        App GPS 活動實際套用過校正——只在這種情況下才多顯示一行「校正後/原始」對照。 */}
+                    {a.calib_factor != null && a.calib_factor < 1 && (
+                      <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 1 }}>
+                        校正後 · 原始 {a.raw_distance_km.toFixed(2)} K ×{a.calib_factor.toFixed(4)}
+                      </div>
+                    )}
                     <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 3 }}>
                       配速 {paceStr(a.avg_pace_s)}/km · {Math.round(a.duration_s / 60)} 分
                       {a.ascent_m != null ? ` · 爬升 ${Math.round(a.ascent_m)}m` : ''}
@@ -659,6 +724,96 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* GPS 距離校正（見 internal/gpscalib，2026-08-30）：以連接的手錶/App(Strava/Garmin/COROS)紀錄
+              為參考，估計 App GPS 距離的系統性偏差、只准向下修正、只向前生效。hidden 不渲染；locked 顯示
+              鎖定卡片但不打 API（SEC-H5：前端隱藏不等於後端有擋，實際存取仍由 requireEntry 在後端強制複查）。 */}
+          {dash && dash.gps_calib_entry !== 'hidden' && (
+            <div style={{ ...recCard, marginTop: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ fontWeight: 700, color: 'var(--tx)' }}>📡 GPS 距離校正</div>
+                {dash.gps_calib_entry === 'locked' && (
+                  <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: 'var(--tx-faint)', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '6px 10px' }}>即將開放</span>
+                )}
+              </div>
+              {dash.gps_calib_entry === 'locked' ? (
+                <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.6 }}>
+                  以你連接的手錶/App（Strava/Garmin/COROS）紀錄為參考，自動校正 App GPS 跑步的距離系統性偏差。
+                </div>
+              ) : !gpsCalib ? (
+                <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 8 }}>載入中…</div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 6, lineHeight: 1.6 }}>
+                    以你的{gpsCalib.ref_source ? `「${GPS_CALIB_SRC_LABEL[gpsCalib.ref_source] ?? gpsCalib.ref_source}」紀錄` : '手錶/App 紀錄'}為參考，自動校正 App GPS 距離的系統性偏差；只會讓距離變短、不會變長，且只影響上線後新跑的紀錄，不會回頭改已有的成績。
+                  </div>
+                  <div style={{ display: 'flex', gap: 20, marginTop: 10, flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>目前係數</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)' }}>×{gpsCalib.factor.toFixed(4)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>狀態</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: GPS_CALIB_STATUS_COLOR[gpsCalib.status] ?? 'var(--tx)' }}>{GPS_CALIB_STATUS_LABEL[gpsCalib.status] ?? gpsCalib.status}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>視窗內配對數</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--tx)' }}>{gpsCalib.n_pairs}</div>
+                    </div>
+                    {gpsCalib.last_pair_at && (
+                      <div>
+                        <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>最近配對</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--tx)' }}>{fmtDate(gpsCalib.last_pair_at)}</div>
+                      </div>
+                    )}
+                  </div>
+                  {gpsCalibErr && <div style={{ fontSize: 11.5, color: 'var(--hunt)', marginTop: 8 }}>{gpsCalibErr}</div>}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                    <button onClick={toggleGpsCalib} disabled={gpsCalibBusy}
+                      style={{ flex: 1, padding: '8px 0', borderRadius: 10, fontSize: 12.5, fontWeight: 800, cursor: gpsCalibBusy ? 'default' : 'pointer', background: gpsCalib.enabled ? 'var(--fug)' : 'transparent', color: gpsCalib.enabled ? 'var(--fug-ink)' : 'var(--tx-dim)', border: `1px solid ${gpsCalib.enabled ? 'var(--fug)' : 'var(--line-2)'}`, opacity: gpsCalibBusy ? 0.6 : 1 }}>
+                      {gpsCalib.enabled ? '✓ 已開啟校正' : '已關閉（只計算不套用）'}
+                    </button>
+                    <button onClick={recomputeGpsCalib} disabled={gpsCalibBusy}
+                      style={{ padding: '8px 14px', borderRadius: 10, fontSize: 12.5, fontWeight: 800, cursor: gpsCalibBusy ? 'default' : 'pointer', background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', opacity: gpsCalibBusy ? 0.6 : 1, whiteSpace: 'nowrap' }}>
+                      重新計算
+                    </button>
+                  </div>
+                  {(gpsCalib.pairs.length > 0 || gpsCalib.log.length > 0) && (
+                    <div style={{ marginTop: 10 }}>
+                      <button onClick={() => setGpsCalibDetail((v) => !v)} style={{ background: 'transparent', border: 'none', color: 'var(--tx-faint)', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', padding: 0 }}>
+                        {gpsCalibDetail ? '收起最近配對 ▲' : `查看最近配對（${gpsCalib.pairs.length}）▼`}
+                      </button>
+                      {gpsCalibDetail && gpsCalib.pairs.length > 0 && (
+                        <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {gpsCalib.pairs.map((pr, i) => (
+                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, color: pr.accepted ? 'var(--tx-dim)' : 'var(--tx-faint)', background: 'var(--bg-2)', borderRadius: 6, padding: '5px 8px' }}>
+                              <span style={{ flexShrink: 0 }}>{fmtDate(pr.activity_at)}</span>
+                              <span style={{ flexShrink: 0 }}>{pr.gps_km.toFixed(2)} / {pr.ext_km.toFixed(2)} km</span>
+                              <span style={{ textAlign: 'right' }}>{pr.accepted ? `採用（×${pr.ratio.toFixed(3)}）` : (GPS_CALIB_REJECT_LABEL[pr.reject_reason ?? ''] ?? '拒絕')}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {gpsCalibDetail && gpsCalib.log.length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--tx-faint)', marginBottom: 4 }}>係數歷程</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {gpsCalib.log.map((le, i) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, color: 'var(--tx-dim)', background: 'var(--bg-2)', borderRadius: 6, padding: '5px 8px' }}>
+                            <span style={{ flexShrink: 0 }}>{fmtDate(le.created_at)}</span>
+                            <span>{le.factor_before != null && le.factor_after != null ? `×${le.factor_before.toFixed(4)} → ×${le.factor_after.toFixed(4)}` : (GPS_CALIB_STATUS_LABEL[le.status ?? ''] ?? le.reason)}</span>
+                            <span style={{ flexShrink: 0, color: 'var(--tx-faint)' }}>{le.reason}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 

@@ -25,12 +25,14 @@ import { useIsLandscape } from '@/lib/useIsLandscape'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import { initMovingState, advanceMovingState, classifyMoveSignal, currentMovingS, flushMovingState, classifyDistSignal, shouldCommitDist, MOVE_JUDGE_WINDOW_S, RETRO_WINDOW_S, type MovingState } from '@/lib/movingTime'
 import { useDashboard } from '@/lib/useDashboard'
+import { APP_VERSION } from '@/lib/version'
 import RaceFocusMode from './RaceFocusMode'
 import CheerShow from './CheerShow'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const LS_KEY = 'dor_gps_run'
+const LAST_K_KEY = 'dor_gps_calib_k' // 最近一次已知的 GPS 距離校正係數快照（見 lastKnownKRef 宣告處）
 const MAX_ACC = 65 // 精度差於此（公尺）的點不採計距離（城市/大樓旁訊號較差，放寬以免整趟記不到）
 const MAX_SPEED = 1000 / 120 // 8.33 m/s（2:00/km）人類極限上限
 const JITTER_MIN = 6 // 公尺：距上一個採納點移動不足此值視為原地抖動，不計距離
@@ -171,6 +173,25 @@ export default function TrackPage() {
   const cheerDurationRef = useRef(3000)
   cheerDurationRef.current = dash?.cheer_display_ms && dash.cheer_display_ms > 0 ? dash.cheer_display_ms : 3000
   const canTestCheer = dash?.cheer_test_entry === 'shown'
+  // GPS 距離校正（見 internal/gpscalib，2026-08-30）：開跑當下對 dash 的係數拍一張快照、整趟固定
+  // （重算只發生在跑完匯入之後，不會在跑步過程中變動）——commitSeg 用 calibKRef.current 乘上有效位移，
+  // 其餘（超速判定/疑似搭車偵測/上傳軌跡點）一律用原始值，見下方 commitSeg 與 doUploadGps。
+  const calibKRef = useRef(1)
+  const gpsCalibApplied = !!result && result.calib_factor > 0 && result.calib_factor < 1
+  // 對抗式審查修正：dash 來自 SWR 快取，start() 拍快照時可能還沒載入（冷啟動/深連結直開 /track）
+  // 或已過期（同一頁跑完一趟後係數被 RecomputeAsync 改動，未離開頁面直接開下一趟）。LAST_K_KEY 記
+  // 「最近一次已知的生效係數」（entry='shown' 才記，避免非白名單使用者也存到無意義的 1），dash 尚未
+  // 就緒時用它當 fallback，比 dash 沒載入就一律視為 1（可能讓這一趟前端顯示比實際入帳值多算）更接近
+  // 真相；dash 一到位仍以 dash 當下值為準（見下方 effect 與 start() 內的判斷式）。
+  const lastKnownKRef = useRef(1)
+  useEffect(() => {
+    try { const v = Number(localStorage.getItem(LAST_K_KEY)); if (v > 0) lastKnownKRef.current = v } catch { /* ignore */ }
+  }, [])
+  useEffect(() => {
+    if (dash?.gps_calib_entry !== 'shown' || !(dash.gps_calib_factor > 0)) return
+    lastKnownKRef.current = dash.gps_calib_factor
+    try { localStorage.setItem(LAST_K_KEY, String(dash.gps_calib_factor)) } catch { /* ignore */ }
+  }, [dash?.gps_calib_entry, dash?.gps_calib_factor])
   // 啦啦隊位置校正模式（2026-08-29）：白名單帳號（cheer_edit_entry==='shown'）可拖曳/縮放三張角色的位置
   // 並存到伺服器，套用給所有跑者。契約見 lib/api.ts 檔尾「啦啦隊位置校正」區塊。
   // cheerLayout＝伺服器目前生效值（非編輯模式直接用）；editLayout＝進入校正時複製一份的草稿，onChange
@@ -379,7 +400,10 @@ export default function TrackPage() {
     // pointsRef 只收 committed 點：上傳給後端的就是這批點，後端以同批點重算距離/分段，口徑自然一致
     // （後端零改動）；漂移暫存段未被回補就不會出現在軌跡與上傳資料裡。
     const commitSeg = (cp: GpsPoint, dSeg: number) => {
-      distRef.current += dSeg
+      // GPS 距離校正（見 calibKRef 宣告處）：唯一乘係數的地方——下游（即時距離/配速/每公里 splits/
+      // fireCheer/課表進度/目標進度/事件任務移動量）全部自動吃到校正後的值。dSeg 本身（超速判定用的
+      // 原始位移）不受影響，pointsRef/上傳軌跡點也不受影響（見下方 doUploadGps 只送 points，不送距離）。
+      distRef.current += dSeg * calibKRef.current
       setDistance(distRef.current)
       // 每公里分段（只在有效距離上前進）；el 用該點自己的 GPS 時間戳（回補時=暫存當下的點，非現在）
       const km = Math.floor(distRef.current / 1000)
@@ -471,8 +495,8 @@ export default function TrackPage() {
     }
     // 事件正式進行中（非演出階段）才更新即時位移（進度條）
     if (activeEventRef.current?.phase === 'active') setEventMoved(distRef.current - activeEventRef.current.triggerD)
-    // 防當掉：暫存採納後的軌跡
-    localStorage.setItem(LS_KEY, JSON.stringify({ start: startRef.current, points: pointsRef.current.slice(-2000) }))
+    // 防當掉：暫存採納後的軌跡（k=本趟固定的 GPS 校正係數快照，供意外中斷後「上次未上傳的跑步」預估距離時還原同一係數，見 calibKRef 宣告處）
+    localStorage.setItem(LS_KEY, JSON.stringify({ start: startRef.current, points: pointsRef.current.slice(-2000), k: calibKRef.current }))
   }, [ensureMap])
   const onPosRef = useRef(onPos); onPosRef.current = onPos
   // 進頁面即初始化地圖（不等 GPS）：GPS 權限未授權時「預熱定位」不會啟動（見下方 permissions.query 判斷），
@@ -1006,6 +1030,10 @@ export default function TrackPage() {
     // 關掉進頁面的 GPS 預熱偵測，避免與正式追蹤重複回報
     if (warmWatchRef.current != null) { try { navigator.geolocation.clearWatch(warmWatchRef.current) } catch { /* ignore */ } warmWatchRef.current = null }
     pointsRef.current = []; distRef.current = 0; rawDistRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null; movingSplitMarkRef.current = []
+    // GPS 距離校正：開跑當下對 dash 拍快照、整趟固定（見上方 calibKRef 宣告處）。dash 尚未載入/過期
+    // 時 fallback 到 lastKnownKRef（上一次已知的生效係數，見其宣告處的對抗式審查修正註解），而非
+    // 一律視為 1——後者在 dash 冷啟動的窄視窗內會讓前端顯示距離系統性比後端實際入帳值多算。
+    calibKRef.current = dash?.gps_calib_entry === 'shown' && dash.gps_calib_factor > 0 ? dash.gps_calib_factor : lastKnownKRef.current
     movingStateRef.current = initMovingState(); lastMoveRef.current = null // #4 移動時間狀態機重置（見 lib/movingTime.ts）
     pendingRef.current = [] // 距離防漂移：清掉上一趟未回補的暫存段
     setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null); setMovingS(0)
@@ -1140,12 +1168,16 @@ export default function TrackPage() {
         started_at: new Date(startRef.current).toISOString(),
         ended_at: new Date(pts[pts.length - 1].t).toISOString(),
         points: pts,
+        client_version: APP_VERSION,
       }))
       setResult(result)
       // 結束後以後端分段為單一真相：後端由軌跡重算、可信，且與 avg_pace_s 同源。
       // 覆寫本地即時分段（可能因 paceBaseMs 時間差而略有誤差），讓結束畫面「分段」與「均配速」一致。
       if (result.km_paces?.length) setSplits(result.km_paces)
       localStorage.removeItem(LS_KEY)
+      // GPS 距離校正（對抗式審查修正）：這趟上傳後 gpscalib.RecomputeAsync 可能在 5 秒後把係數
+      // 改掉，讓 dash 重抓，避免不離開頁面直接開下一趟時 calibKRef 還在用這趟開跑當下的舊快照。
+      revalidateDash()
       return result
     } catch (e: any) {
       setErr(e?.message || '上傳失敗')
@@ -1162,7 +1194,7 @@ export default function TrackPage() {
     // 收尾（cleanup+setStatus+上傳/導頁）由彈窗各按鈕決定。軌跡太短/未登入則落到下面一般流程。
     if (allowStravaHold && stravaPriority && pts.length >= 2 && getUserToken()) {
       let m = 0; for (let i = 1; i < pts.length; i++) m += haversineM(pts[i - 1], pts[i])
-      const km = Math.round(m / 10) / 100
+      const km = Math.round(m * calibKRef.current / 10) / 100 // 純前端估算供彈窗顯示；非上傳值（見 doUploadGps 只送 points）
       const durS = Math.max(1, Math.round((pts[pts.length - 1].t - startRef.current) / 1000))
       setConfirmStravaHold({ km, mins: Math.round(durS / 60), paceS: km > 0 ? Math.round(durS / km) : 0 })
       return null
@@ -1187,7 +1219,8 @@ export default function TrackPage() {
       if (Date.now() - lastT > 24 * 3600 * 1000) { localStorage.removeItem(LS_KEY); return } // 太舊(>24h)不提示
       let m = 0
       for (let i = 1; i < pts.length; i++) m += haversineM(pts[i - 1], pts[i])
-      setRecover({ start: data.start, points: pts, km: Math.round(m / 10) / 100, mins: Math.round((lastT - data.start) / 60000) })
+      const k = typeof data.k === 'number' && data.k > 0 ? data.k : 1 // 該趟記錄當下固定的 GPS 校正係數快照（舊資料無此欄位 → 1）
+      setRecover({ start: data.start, points: pts, km: Math.round(m * k / 10) / 100, mins: Math.round((lastT - data.start) / 60000) })
     } catch { localStorage.removeItem(LS_KEY) }
   }, [])
 
@@ -1202,8 +1235,10 @@ export default function TrackPage() {
         started_at: new Date(recover.start).toISOString(),
         ended_at: new Date(pts[pts.length - 1].t).toISOString(),
         points: pts,
+        client_version: APP_VERSION,
       }))
       setResult(result); setStatus('done'); localStorage.removeItem(LS_KEY); setRecover(null)
+      revalidateDash() // 同 doUploadGps：見該處對抗式審查修正註解
     } catch (e: any) { setErr(e?.message || '上傳失敗') }
     finally { setUploading(false) }
   }
@@ -2096,6 +2131,9 @@ export default function TrackPage() {
                   {result.flagged
                     ? <span style={{ color: '#ff8a8a' }}>原因：{result.flag_reason}（不發 EXP，待後台審核）</span>
                     : <span style={{ color: 'var(--fug)' }}>已進活動記錄{result.exp_awarded ? '，里程 EXP 將於數秒後發放' : ''}</span>}
+                  {gpsCalibApplied && (
+                    <><br /><span style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>已依手錶紀錄校正 ×{result.calib_factor.toFixed(4)}（原始 {result.raw_distance_km.toFixed(2)} K）</span></>
+                  )}
                 </>
               )}
             </div>

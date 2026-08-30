@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/gpscalib"
 	"github.com/dor/api/internal/stamina"
 )
 
@@ -34,23 +36,26 @@ type gpsPoint struct {
 }
 
 type gpsRunReq struct {
-	RaceID    string     `json:"race_id"`
-	StartedAt string     `json:"started_at"`
-	EndedAt   string     `json:"ended_at"`
-	Points    []gpsPoint `json:"points"`
+	RaceID        string     `json:"race_id"`
+	StartedAt     string     `json:"started_at"`
+	EndedAt       string     `json:"ended_at"`
+	Points        []gpsPoint `json:"points"`
+	ClientVersion string     `json:"client_version"` // App/前端版號（量測用途，見 gpscalib acc_p50/p90 同批欄位）
 }
 
 type gpsRunResult struct {
-	DistanceKm  float64 `json:"distance_km"`
-	DurationS   int     `json:"duration_s"`
-	AvgPaceS    int     `json:"avg_pace_s"`
-	Flagged     bool    `json:"flagged"`
-	FlagReason  string  `json:"flag_reason,omitempty"`
-	AnomalySegs int     `json:"anomaly_segments"`
-	ExpAwarded  bool    `json:"exp_awarded"` // 未標記才進活動管線發里程 EXP
-	TooShort    bool    `json:"too_short"`   // 移動距離不足，無法計算（非異常）
-	Duplicate   bool    `json:"duplicate,omitempty"` // 這一趟已上傳過（同 user+起跑時間）→ 冪等 no-op，未重複記錄/發獎
-	KmPaces     []int   `json:"km_paces,omitempty"` // 每公里分段配速（秒/km）；前端結束畫面「分段」與「結果卡均配速」同源
+	DistanceKm    float64 `json:"distance_km"`
+	DurationS     int     `json:"duration_s"`
+	AvgPaceS      int     `json:"avg_pace_s"`
+	Flagged       bool    `json:"flagged"`
+	FlagReason    string  `json:"flag_reason,omitempty"`
+	AnomalySegs   int     `json:"anomaly_segments"`
+	ExpAwarded    bool    `json:"exp_awarded"`         // 未標記才進活動管線發里程 EXP
+	TooShort      bool    `json:"too_short"`           // 移動距離不足，無法計算（非異常）
+	Duplicate     bool    `json:"duplicate,omitempty"` // 這一趟已上傳過（同 user+起跑時間）→ 冪等 no-op，未重複記錄/發獎
+	KmPaces       []int   `json:"km_paces,omitempty"`  // 每公里分段配速（秒/km）；前端結束畫面「分段」與「結果卡均配速」同源
+	RawDistanceKm float64 `json:"raw_distance_km"`     // 校正前原始距離（見 internal/gpscalib）；未套校正時與 DistanceKm 相同
+	CalibFactor   float64 `json:"calib_factor"`        // 上傳當下生效的係數；未套校正恆為 1.0
 }
 
 func haversineM(lat1, lon1, lat2, lon2 float64) float64 {
@@ -63,25 +68,46 @@ func haversineM(lat1, lon1, lat2, lon2 float64) float64 {
 	return R * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }
 
-// SaveGPSRun 伺服器端重算 + 防弊；未標記者推入活動管線（記錄+里程EXP）
-func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) (*gpsRunResult, error) {
-	if len(req.Points) < 2 {
-		return nil, fmt.Errorf("軌跡點不足")
-	}
+// runCalc 是 computeRun 的計算結果——SaveGPSRun 唯一的純計算核心，見該函式與 computeRun 的註解。
+type runCalc struct {
+	RawKm          float64 // 原始有效距離（未套校正；防弊判定與 gps_runs.distance_km 用這個）
+	DistanceKm     float64 // 校正後距離（計入賽事/發獎/顯示用這個）
+	DurationS      int
+	RawAvgPaceS    int // 原始平均配速：防弊判定 + gps_runs.avg_pace_s 用這個
+	AvgPaceS       int // 校正後平均配速：ActivityEvent/SP 扣血/回應用這個
+	Flagged        bool
+	FlagReason     string
+	Anomalies      int
+	KmSplits       []int // 每公里分段配速（秒/km），依校正後距離的公里邊界切
+	UsedPointCount int
+	AccP50, AccP90 *float64
+}
 
+// computeRun 是 SaveGPSRun 的純計算核心（無 DB/Redis 依賴，方便單元測試，見 gps_test.go）：從一批
+// 軌跡點與校正係數 k 算出距離/配速/防弊判定/每公里分段。**不變量**：Flagged/FlagReason/Anomalies/
+// RawKm/RawAvgPaceS 完全不受 k 影響（防弊判定一律用原始值）——校正只改變 DistanceKm/AvgPaceS/
+// KmSplits 這三項「計入賽事/發獎/顯示」用的輸出，任何 k 值都不能讓一趟原本會被標記的軌跡變成不
+// 標記，也不能讓原本正常的軌跡被標記。
+func computeRun(points []gpsPoint, k float64) (runCalc, error) {
 	maxSpeed := 1000.0 / float64(minPaceSecPerKm) // 公尺/秒（= 2:00/km 對應速度）
 	var distM, fastDistM float64
-	var anomalies int
+	var anomalies, usedPointCount int
+	var accs []float64
 	var prev *gpsPoint
-	// 每公里分段配速（秒/km）：距離每跨一整公里記一段，供「平均配速區間」任務改用「任一公里落在區間即算」判定
-	//（比整段均配速好達成）。伺服器端由軌跡重算 → 可信、不易偽造。
+	// 每公里分段配速（秒/km）：校正後距離每跨一整公里記一段（與前端 fireCheer 判定同一個公里
+	// 邊界），供「平均配速區間」任務改用「任一公里落在區間即算」判定（比整段均配速好達成）。
+	// 伺服器端由軌跡重算 → 可信、不易偽造。
 	var kmSplits []int
 	kmTarget := 1000.0
-	lastKmT := req.Points[0].T
-	for i := range req.Points {
-		p := &req.Points[i]
+	lastKmT := points[0].T
+	for i := range points {
+		p := &points[i]
 		if p.Acc > 0 && p.Acc > gpsMaxAccuracyM {
 			continue // 精度太差，略過
+		}
+		usedPointCount++
+		if p.Acc > 0 {
+			accs = append(accs, p.Acc)
 		}
 		if prev != nil {
 			d := haversineM(prev.Lat, prev.Lng, p.Lat, p.Lng)
@@ -91,8 +117,8 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 					anomalies++                // 超過人類極限速度的區段（疑似載具/GPS 跳點）
 					fastDistM += maxSpeed * dt // 以極限速度估計超速距離（供占比判定）——但不列入有效里程
 				} else {
-					distM += d // 只有「正常速度」才算有效距離；超速段完全不計（不刷里程、不推進課表）
-					for distM >= kmTarget { // 跨過整公里 → 記這一段配速
+					distM += d                // 只有「正常速度」才算有效距離；超速段完全不計（不刷里程、不推進課表）
+					for distM*k >= kmTarget { // 跨過整公里（校正後）→ 記這一段配速
 						if splitS := int(float64(p.T-lastKmT) / 1000.0); splitS > 0 {
 							kmSplits = append(kmSplits, splitS)
 						}
@@ -105,17 +131,22 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		prev = p
 	}
 
-	distanceKm := distM / 1000.0
-	durationS := int((req.Points[len(req.Points)-1].T - req.Points[0].T) / 1000)
+	rawKm := distM / 1000.0
+	distanceKm := distM * k / 1000.0
+	durationS := int((points[len(points)-1].T - points[0].T) / 1000)
 	if durationS <= 0 {
-		return nil, fmt.Errorf("時間區間無效")
+		return runCalc{}, fmt.Errorf("時間區間無效")
+	}
+	rawAvgPaceS := 0
+	if rawKm > 0 {
+		rawAvgPaceS = int(float64(durationS) / rawKm)
 	}
 	avgPaceS := 0
 	if distanceKm > 0 {
 		avgPaceS = int(float64(durationS) / distanceKm)
 	}
 
-	// 防弊判定（先算）：只抓「過快」（疑似騎車/搭車等載具），不抓過慢（走路、慢跑皆正常）。
+	// 防弊判定（先算，一律用原始值）：只抓「過快」（疑似騎車/搭車等載具），不抓過慢（走路、慢跑皆正常）。
 	// 占比以「原始移動 rawM＝有效+超速」為分母，避免有效距離被排除後占比失真。
 	rawM := distM + fastDistM
 	fastRatio := 0.0
@@ -123,7 +154,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		fastRatio = fastDistM / rawM
 	}
 	var reasons []string
-	if avgPaceS > 0 && avgPaceS < minPaceSecPerKm {
+	if rawAvgPaceS > 0 && rawAvgPaceS < minPaceSecPerKm {
 		reasons = append(reasons, "平均配速快於 2:00/km（疑似使用交通工具）")
 	}
 	// 超速占比：需有足夠原始移動才判定，避免短程單一 GPS 跳點被誤判為異常
@@ -133,11 +164,43 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 	flagged := len(reasons) > 0
 	flagReason := strings.Join(reasons, "；")
 
-	// 有效距離不足「且」未判定為載具 → 單純距離不足（走幾步），不記錄、不發 EXP。
+	accP50, accP90 := accPercentiles(accs)
+
+	return runCalc{
+		RawKm: rawKm, DistanceKm: distanceKm, DurationS: durationS,
+		RawAvgPaceS: rawAvgPaceS, AvgPaceS: avgPaceS,
+		Flagged: flagged, FlagReason: flagReason, Anomalies: anomalies,
+		KmSplits: kmSplits, UsedPointCount: usedPointCount, AccP50: accP50, AccP90: accP90,
+	}, nil
+}
+
+// SaveGPSRun 伺服器端重算 + 防弊；未標記者推入活動管線（記錄+里程EXP）。
+//
+// GPS 距離校正（見 internal/gpscalib）：k 是這位使用者「上傳當下生效」的校正係數（入口非白名單/
+// 使用者關閉/尚未 active 一律回 1.0，即完全等同校正前行為）。實際計算全部委派給純函式
+// computeRun——防弊判定與校正互不影響的不變量在那裡說明並在 gps_test.go 驗證。gps_runs 表恆存
+// 原始值（distance_km/avg_pace_s），校正後的值另存 calib_distance_km/calib_factor——原始檔案表
+// 任何時候都能重建真相。
+func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) (*gpsRunResult, error) {
+	if len(req.Points) < 2 {
+		return nil, fmt.Errorf("軌跡點不足")
+	}
+
+	k, _ := gpscalib.EffectiveFactor(ctx, s.repo.db, userID)
+	calc, err := computeRun(req.Points, k)
+	if err != nil {
+		return nil, err
+	}
+	rawKm, distanceKm, durationS := calc.RawKm, calc.DistanceKm, calc.DurationS
+	rawAvgPaceS, avgPaceS := calc.RawAvgPaceS, calc.AvgPaceS
+	flagged, flagReason, anomalies, kmSplits := calc.Flagged, calc.FlagReason, calc.Anomalies, calc.KmSplits
+
+	// 有效距離不足「且」未判定為載具 → 單純距離不足（走幾步），不記錄、不發 EXP（用原始值判定）。
 	// 若是載具（整趟超速被排除、有效距離趨近 0）則不走這裡，仍以 flagged 記錄一筆（歷史看得到、且不發獎）。
-	if distanceKm < gpsMinDistKm && !flagged {
+	if rawKm < gpsMinDistKm && !flagged {
 		return &gpsRunResult{
-			DistanceKm: round2(distanceKm), DurationS: durationS, AvgPaceS: avgPaceS, TooShort: true,
+			DistanceKm: round2(rawKm), DurationS: durationS, AvgPaceS: rawAvgPaceS, TooShort: true,
+			RawDistanceKm: round2(rawKm), CalibFactor: k,
 		}, nil
 	}
 
@@ -152,7 +215,8 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 	}
 	polyline := encodePolyline(simplifyPath(latlng, 5))
 	inserted, err := s.repo.InsertGPSRun(ctx, userID, req.RaceID, started, ended,
-		round2(distanceKm), durationS, avgPaceS, flagged, flagReason, len(req.Points), polyline, kmSplits)
+		round2(rawKm), durationS, rawAvgPaceS, flagged, flagReason, len(req.Points), polyline, kmSplits,
+		k, round2(distanceKm), req.ClientVersion, calc.AccP50, calc.AccP90, calc.UsedPointCount)
 	if err != nil {
 		return nil, err
 	}
@@ -162,19 +226,22 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		return &gpsRunResult{
 			DistanceKm: round2(distanceKm), DurationS: durationS, AvgPaceS: avgPaceS,
 			Flagged: flagged, FlagReason: flagReason, AnomalySegs: anomalies, ExpAwarded: false, Duplicate: true,
+			RawDistanceKm: round2(rawKm), CalibFactor: k,
 		}, nil
 	}
 
-	// 未標記 → 進既有活動管線（記錄活動 + 日常里程 EXP）
+	// 未標記 → 進既有活動管線（記錄活動 + 日常里程 EXP，皆用校正後的值）
 	if !flagged && distanceKm > 0 {
 		evt := ActivityEvent{
-			UserID:     userID,
-			RaceID:     req.RaceID,
-			DistanceKm: round2(distanceKm),
-			DurationS:  durationS,
-			AvgPaceS:   avgPaceS,
-			RecordedAt: ended.Format(time.RFC3339),
-			KmPaces:    kmSplits,
+			UserID:        userID,
+			RaceID:        req.RaceID,
+			DistanceKm:    round2(distanceKm),
+			DurationS:     durationS,
+			AvgPaceS:      avgPaceS,
+			RecordedAt:    ended.Format(time.RFC3339),
+			KmPaces:       kmSplits,
+			RawDistanceKm: round2(rawKm),
+			CalibFactor:   k,
 		}
 		b, _ := json.Marshal(evt)
 		s.rdb.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{"data": string(b)}})
@@ -182,11 +249,31 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		stamina.ChargeSP(ctx, s.repo.db, userID, round2(distanceKm), avgPaceS)
 	}
 
+	// 這一趟成功入庫（無論 flagged 與否）：候選配對可能新增了一筆，非同步重算校正係數
+	// （debounce 5 秒，見 gpscalib.RecomputeAsync）——不阻塞這次上傳的回應。
+	gpscalib.RecomputeAsync(s.repo.db, userID)
+
 	return &gpsRunResult{
 		DistanceKm: round2(distanceKm), DurationS: durationS, AvgPaceS: avgPaceS,
 		Flagged: flagged, FlagReason: flagReason, AnomalySegs: anomalies, ExpAwarded: !flagged,
-		KmPaces: kmSplits,
+		KmPaces: kmSplits, RawDistanceKm: round2(rawKm), CalibFactor: k,
 	}, nil
+}
+
+// accPercentiles 回傳 accs 的 p50/p90（皆為 nil 代表無精度資料，如全部點都沒帶 acc 欄位）。
+// 量測用途（見 gps_runs.acc_p50/acc_p90），本期無任何邏輯讀取，僅供後續分層分析。
+func accPercentiles(accs []float64) (p50, p90 *float64) {
+	if len(accs) == 0 {
+		return nil, nil
+	}
+	s := append([]float64(nil), accs...)
+	sort.Float64s(s)
+	at := func(q float64) *float64 {
+		i := int(q * float64(len(s)-1))
+		v := s[i]
+		return &v
+	}
+	return at(0.5), at(0.9)
 }
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
@@ -204,7 +291,8 @@ func (r *Repository) HistAvgPace(ctx context.Context, userID string) int {
 // 冪等：靠 uq_gps_runs_user_start(user_id, started_at) 唯一索引 + ON CONFLICT DO NOTHING——
 // 同一 user 的同一起跑時間已存在時不再插入、回 inserted=false，呼叫端據此不重複進活動管線/發獎。
 func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, started, ended time.Time,
-	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, polyline string, kmPaces []int) (bool, error) {
+	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, polyline string, kmPaces []int,
+	calibFactor, calibDistanceKm float64, clientVersion string, accP50, accP90 *float64, usedPointCount int) (bool, error) {
 	var rid interface{}
 	if raceID != "" {
 		rid = raceID
@@ -212,11 +300,13 @@ func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, st
 	var id string
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO gps_runs (user_id, race_id, started_at, ended_at, distance_km, duration_s,
-		                      avg_pace_s, flagged, flag_reason, point_count, polyline, km_paces)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12)
+		                      avg_pace_s, flagged, flag_reason, point_count, polyline, km_paces,
+		                      calib_factor, calib_distance_km, client_version, acc_p50, acc_p90, used_point_count)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12,$13,$14,NULLIF($15,''),$16,$17,$18)
 		ON CONFLICT (user_id, started_at) DO NOTHING
 		RETURNING id`,
-		userID, rid, started, ended, distanceKm, durationS, avgPaceS, flagged, flagReason, pointCount, polyline, kmPaces).Scan(&id)
+		userID, rid, started, ended, distanceKm, durationS, avgPaceS, flagged, flagReason, pointCount, polyline, kmPaces,
+		calibFactor, calibDistanceKm, clientVersion, accP50, accP90, usedPointCount).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil // 同一趟已上傳過 → 冪等 no-op
 	}

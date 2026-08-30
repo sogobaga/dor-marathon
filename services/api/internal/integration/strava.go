@@ -20,6 +20,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/gpscalib"
 	"github.com/dor/api/internal/notify"
 	"github.com/dor/api/internal/stamina"
 )
@@ -484,7 +485,8 @@ type stravaActivity struct {
 		ID int64 `json:"id"` // SEC-H4：用於核對抓回的活動確實屬於連線中的 athlete，防「以自己 token 抓他人公開活動」
 	} `json:"athlete"`
 	Distance           float64 `json:"distance"`             // 公尺
-	MovingTime         int     `json:"moving_time"`          // 秒
+	MovingTime         int     `json:"moving_time"`          // 秒（扣掉停等，DurationS/AvgPaceS 用這個）
+	ElapsedTime        int     `json:"elapsed_time"`         // 秒（含停等，僅供 gpscalib 時間對齊用，見 ElapsedS）
 	TotalElevationGain float64 `json:"total_elevation_gain"` // 公尺
 	AverageSpeed       float64 `json:"average_speed"`        // m/s
 	AverageHeartrate   float64 `json:"average_heartrate"`
@@ -492,6 +494,7 @@ type stravaActivity struct {
 	Type               string  `json:"type"`
 	SportType          string  `json:"sport_type"`
 	StartDate          string  `json:"start_date"` // RFC3339 UTC
+	Manual             bool    `json:"manual"`     // 人工輸入的活動（非裝置紀錄）；見 NormalizedActivity.Manual 註解
 }
 
 // stravaHTTPError 包裝 Strava API/OAuth 端點回傳的非 2xx 狀態碼，讓呼叫端（如撤權驗證
@@ -642,6 +645,13 @@ func (h *StravaHandler) importOne(ctx context.Context, userID string, floor time
 		DurationS:   a.MovingTime,
 		AvgPaceS:    int(math.Round(float64(a.MovingTime) / distanceKm)),
 		RecordedAt:  recordedAt,
+		Manual:      a.Manual,
+	}
+	// 對抗式審查修正：elapsed_time（含停等）另存供 gpscalib 時間對齊閘門用；moving_time 仍是
+	// DurationS/AvgPaceS 的口徑不變（其他 7 個讀取點都預期看到 moving_time）。
+	if a.ElapsedTime > 0 {
+		v := a.ElapsedTime
+		na.ElapsedS = &v
 	}
 	if a.TotalElevationGain > 0 {
 		v := a.TotalElevationGain
@@ -656,6 +666,12 @@ func (h *StravaHandler) importOne(ctx context.Context, userID string, floor time
 		log.Error().Err(err).Msg("strava import activity failed")
 		notify.Alert("strava_webhook_err", "Strava Webhook 處理錯誤", fmt.Sprintf("import activity failed: %v", err))
 		return ImportResult{Status: "error"}
+	}
+	// GPS 距離校正（見 internal/gpscalib）T1 觸發點：這筆外部活動可能是某趟 App GPS 紀錄的候選
+	// 配對來源（無論 inserted 或 duplicate——連 cross_account_duplicate 也觸發也無妨，Gate 內的
+	// G1 會把它擋在估計之外，只是白算一次），非同步重算（debounce），不阻塞這次匯入。
+	if res.Status == "inserted" || res.Status == "duplicate" {
+		gpscalib.RecomputeAsync(h.repo.db, na.UserID)
 	}
 	// stamina.ChargeSP 維持「僅新匯入」才扣血：SP 是扣血動作，同一趟不能被扣兩次。
 	if res.Status == "inserted" && na.DistanceKm > 0 {

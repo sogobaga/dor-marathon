@@ -21,6 +21,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/gpscalib"
 	"github.com/dor/api/internal/notify"
 	"github.com/dor/api/internal/stamina"
 )
@@ -360,6 +361,10 @@ func (h *CorosHandler) importOne(ctx context.Context, a *corosSportData) ImportR
 		log.Error().Err(err).Msg("coros import activity failed")
 		notify.Alert("coros_webhook_err", "COROS Webhook 處理錯誤", fmt.Sprintf("import activity failed: %v", err))
 		return ImportResult{Status: "error"}
+	}
+	// GPS 距離校正 T1 觸發點（比照 strava.go）：非同步重算（debounce），不阻塞這次匯入。
+	if res.Status == "inserted" || res.Status == "duplicate" {
+		gpscalib.RecomputeAsync(h.repo.db, na.UserID)
 	}
 	// stamina.ChargeSP 維持「僅新匯入」才扣血：SP 是扣血動作，同一趟不能被扣兩次（比照 strava/terra）。
 	if res.Status == "inserted" && na.DistanceKm > 0 {

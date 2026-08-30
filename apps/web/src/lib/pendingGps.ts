@@ -25,7 +25,13 @@ export function readPendingGps(): PendingGpsRun | null {
     let m = 0
     for (let i = 1; i < points.length; i++) m += haversineM(points[i - 1], points[i])
     const durS = Math.max(1, Math.round((endedAt - data.start) / 1000))
-    return { start: data.start, endedAt, points, km: Math.round(m / 10) / 100, mins: Math.round(durS / 60) }
+    // GPS 距離校正（見 internal/gpscalib，2026-08-30）：該趟記錄當下固定的係數快照（track/page.tsx
+    // 開跑時存進同一把 LS_KEY，見 calibKRef 宣告處）；舊資料無此欄位 → 1（未套校正）。對抗式審查
+    // 修正：track 頁自己的 recover 彈窗已經套這個係數，這裡（ProfileScreen「本機尚未上傳」卡片
+    // 讀的同一份資料）先前完全沒讀 data.k，顯示值比實際上傳入帳的距離多約 1/k−1（例如係數 0.9781
+    // 時多約 2.2%），同一筆資料在兩處顯示不同公里數。
+    const k = typeof data?.k === 'number' && data.k > 0 ? data.k : 1
+    return { start: data.start, endedAt, points, km: Math.round(m * k / 10) / 100, mins: Math.round(durS / 60) }
   } catch { return null }
 }
 

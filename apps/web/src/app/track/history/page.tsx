@@ -87,10 +87,18 @@ export default function TrackHistoryPage() {
           </div>
           <div id="hist-map" style={{ width: '100%', height: 300, borderRadius: 10, overflow: 'hidden', background: 'var(--bg-2)' }} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginTop: 12 }}>
-            <Stat label="距離" v={`${sel.distance_km.toFixed(2)} km`} />
+            <Stat label="距離" v={`${(sel.calib_distance_km ?? sel.distance_km).toFixed(2)} km`} />
             <Stat label="時間" v={fmtTime(sel.duration_s)} />
-            <Stat label="平均配速" v={`${fmtPace(sel.avg_pace_s)}/km`} />
+            <Stat label="平均配速" v={`${fmtPace(sel.calib_avg_pace_s ?? sel.avg_pace_s)}/km`} />
           </div>
+          {/* GPS 距離校正（見 internal/gpscalib，2026-08-30）：這裡與「已同步活動」列表/總里程用同一套
+              校正後數字；calib_factor<1 才代表真的套用過，額外標示原始值供對照（medium-3 finding 修正
+              前，這裡顯示的是未校正原始距離，跟其他頁面對不上）。 */}
+          {sel.calib_factor != null && sel.calib_factor < 1 && (
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4, textAlign: 'center' }}>
+              已依手錶紀錄校正 · 原始 {sel.distance_km.toFixed(2)} km ×{sel.calib_factor.toFixed(4)}
+            </div>
+          )}
           {sel.km_paces && sel.km_paces.length > 0 ? (
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}>每公里分段配速</div>
@@ -130,8 +138,8 @@ export default function TrackHistoryPage() {
             <button key={r.id} onClick={() => openRun(r.id)} style={{ ...card, textAlign: 'left', cursor: 'pointer' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
                 <div>
-                  <div style={{ fontSize: 15, fontWeight: 800 }}>{r.distance_km.toFixed(2)} km {r.flagged && <span style={{ fontSize: 11, color: '#ff8a8a' }}>⚠️</span>}</div>
-                  <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2 }}>{fmtDt(r.started_at)} · {fmtTime(r.duration_s)} · {fmtPace(r.avg_pace_s)}/km</div>
+                  <div style={{ fontSize: 15, fontWeight: 800 }}>{(r.calib_distance_km ?? r.distance_km).toFixed(2)} km {r.flagged && <span style={{ fontSize: 11, color: '#ff8a8a' }}>⚠️</span>}</div>
+                  <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2 }}>{fmtDt(r.started_at)} · {fmtTime(r.duration_s)} · {fmtPace(r.calib_avg_pace_s ?? r.avg_pace_s)}/km</div>
                 </div>
                 <span style={{ color: 'var(--fug)', fontSize: 13, alignSelf: 'center' }}>回放 →</span>
               </div>

@@ -598,13 +598,18 @@ export interface GpsRunResult {
   exp_awarded: boolean
   too_short?: boolean
   km_paces?: number[] // 每公里分段配速（秒/km）；上傳後由後端回傳，結束畫面以此覆寫本地分段保持同源
+  // GPS 距離校正（見 internal/gpscalib，2026-08-30）：raw_distance_km 為校正前原始距離、calib_factor 為
+  // 上傳當下生效的係數（未套用恆 1.0）。distance_km/avg_pace_s/km_paces 皆已是「校正後」的值，前端不必
+  // 再自己乘係數；這兩欄只用於顯示「原始 vs 校正後」對照。
+  raw_distance_km: number
+  calib_factor: number
 }
 // speed：都卜勒速度 m/s（距離防漂移的訊號分流用，見 lib/movingTime.ts）；裝置不支援時為 null。
 // 上傳相容：後端以 encoding/json 解析、忽略未知欄位，多帶 speed 不影響既有 API（後端零改動）。
 export interface GpsPoint { lat: number; lng: number; t: number; acc: number; speed?: number | null }
 export interface GpsRunHistory {
   id: string
-  distance_km: number
+  distance_km: number // 原始距離（未套 GPS 距離校正，見 internal/gpscalib）；一律以 calib_distance_km 優先顯示
   duration_s: number
   avg_pace_s: number
   point_count: number
@@ -615,14 +620,81 @@ export interface GpsRunHistory {
   ended_at: string
   polyline?: string
   km_paces?: number[] // 每公里分段配速(秒/km)；僅詳情回傳、v0.1.205 後的新跑步才有
+  // GPS 距離校正（見 internal/gpscalib，2026-08-30）：校正後距離，與「已同步活動」列表/總里程
+  // 同一套數字；未套校正時等於 distance_km。calib_factor<1 才代表這筆真的套用過校正。
+  calib_distance_km?: number
+  calib_factor?: number
+  // calib_avg_pace_s：校正後平均配速（duration_s / calib_distance_km）。對抗式審查修正：距離已改
+  // 顯示校正後但配速若仍用 avg_pace_s（原始），同畫面「距離×配速≠時間」且跟已同步活動的同一趟
+  // 配速對不上；有值時優先顯示這個，沒有（舊資料/未套校正）才 fallback 回 avg_pace_s。
+  calib_avg_pace_s?: number
 }
 export const activitiesApi = {
-  uploadGps: (token: string, body: { race_id?: string; started_at: string; ended_at: string; points: GpsPoint[] }) =>
+  // client_version：App/前端版號，供 GPS 距離校正量測用（見 internal/gpscalib），可不送。
+  uploadGps: (token: string, body: { race_id?: string; started_at: string; ended_at: string; points: GpsPoint[]; client_version?: string }) =>
     request<{ result: GpsRunResult }>('/activities/gps', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   gpsHistory: (token: string) => request<{ runs: GpsRunHistory[] }>('/activities/gps/history', { headers: withAuth(token) }),
   gpsDetail: (token: string, id: string) => request<{ run: GpsRunHistory }>(`/activities/gps/${id}`, { headers: withAuth(token) }),
   // 跑步中心跳（後台「目前在跑名單」用）；失敗可忽略
   trackPing: (token: string) => request<void>('/track/ping', { method: 'POST', headers: withAuth(token) }),
+}
+
+// --- GPS 距離校正（見 internal/gpscalib，2026-08-30）：以穿戴裝置(Strava/Garmin/COROS)匯入的活動為
+// 參考，估計 App GPS 的系統性偏差，只准向下修正(factor∈[0.92,1.00])、只向前生效。Dashboard 的
+// gps_calib_factor 與 GPS 上傳當下套用的係數同一函式（gpscalib.EffectiveFactor）算出，保證「看到的＝
+// 入帳的」；本區塊為使用者自助端點（/me/gps-calib），需入口白名單 shown（見 DashboardInfo.gps_calib_entry）
+// 才會 200，否則 401/403。---
+export type GpsCalibState = 'warming' | 'active' | 'unstable' | 'stale' | 'frozen'
+export interface GpsCalibPair {
+  activity_at: string
+  ext_source: string
+  gps_km: number
+  ext_km: number
+  ratio: number
+  accepted: boolean
+  reject_reason?: string
+  inlier_w?: number
+}
+export interface GpsCalibLogEntry {
+  version: number
+  factor_before?: number
+  factor_after?: number
+  status?: string
+  reason: string // recompute|enable|disable|reset|admin_freeze|admin_unfreeze
+  actor: string  // system|user|admin:<id>
+  created_at: string
+}
+export interface GpsCalibInfo {
+  entry: 'hidden' | 'locked' | 'shown'
+  enabled: boolean
+  factor: number
+  status: GpsCalibState
+  ref_source: string
+  n_pairs: number
+  n_eff: number
+  sigma: number
+  last_pair_at?: string
+  computed_at?: string
+  version: number
+  pairs: GpsCalibPair[] // 最近 20 筆（後台查詢最近 200 筆）
+  log: GpsCalibLogEntry[] // 最近 30 筆（後台查詢最近 200 筆）
+}
+export const gpsCalibApi = {
+  get: (token: string) => request<GpsCalibInfo>('/me/gps-calib', { headers: withAuth(token) }),
+  setEnabled: (token: string, enabled: boolean) =>
+    request<GpsCalibInfo>('/me/gps-calib', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ enabled }) }),
+  // 每人 60 秒限流，超限拋 429（ApiError，e?.status 可判斷）
+  recompute: (token: string) => request<GpsCalibInfo>('/me/gps-calib/recompute', { method: 'POST', headers: withAuth(token) }),
+}
+// 後台管理（需 admin + members 權限）：會員詳情頁凍結/解凍/重設用，見 memory event-schema-round1 GPS 校正段落。
+export const adminGpsCalibApi = {
+  get: (token: string, userID: string) => request<GpsCalibInfo>(`/admin/gps-calib/${userID}`, { headers: withAuth(token) }),
+  freeze: (token: string, userID: string, factor: number) =>
+    request<void>(`/admin/gps-calib/${userID}/freeze`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ factor }) }),
+  unfreeze: (token: string, userID: string) =>
+    request<void>(`/admin/gps-calib/${userID}/unfreeze`, { method: 'POST', headers: withAuth(token) }),
+  reset: (token: string, userID: string) =>
+    request<void>(`/admin/gps-calib/${userID}/reset`, { method: 'POST', headers: withAuth(token) }),
 }
 
 // --- 打卡點任務（geofence check-in）---
@@ -1097,6 +1169,11 @@ export interface SyncedActivity {
   flagged: boolean
   flag_reason?: string
   external_id?: string // provider 活動 id（Strava→「View on Strava」回連）
+  // GPS 距離校正（見 internal/gpscalib，2026-08-30）：raw_distance_km 已 COALESCE（非 App GPS 或未套校正
+  // 時等於 distance_km）；calib_factor 為 null 代表尚未評估/非 App GPS 來源，App GPS 來源即使 k=1.0 也會
+  // 是 1.0 而非 null——用 calib_factor != null && calib_factor < 1 判斷是否顯示「校正後/原始」對照。
+  raw_distance_km: number
+  calib_factor: number | null
 }
 
 export interface SyncResult {
@@ -1543,6 +1620,13 @@ export interface DashboardInfo {
   sp_next_recover_sec: number  // 距下一點恢復秒數（0=已滿）
   sp_freeze_until: string | null // 過度訓練凍結到此時間（null=無）
   fitness: number              // 跑步水準 0-100
+  // GPS 距離校正（見 internal/gpscalib，2026-08-30）：gps_calib_factor 與 GPS 上傳當下套用的係數同一函式
+  // （gpscalib.EffectiveFactor）算出，保證「看到的＝入帳的」；entry 非 shown 時 factor 恆 1.0。
+  gps_calib_entry: 'hidden' | 'locked' | 'shown'
+  gps_calib_factor: number
+  gps_calib_status: GpsCalibState
+  gps_calib_pairs: number // 視窗內配對數
+  gps_calib_enabled: boolean
 }
 
 // --- 稱號系統 (PB探索) ---

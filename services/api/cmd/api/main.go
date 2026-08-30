@@ -29,6 +29,7 @@ import (
 	"github.com/dor/api/internal/emailbroadcast"
 	"github.com/dor/api/internal/event"
 	"github.com/dor/api/internal/explore"
+	"github.com/dor/api/internal/gpscalib"
 	"github.com/dor/api/internal/image"
 	"github.com/dor/api/internal/integration"
 	"github.com/dor/api/internal/mail"
@@ -204,6 +205,12 @@ func main() {
 
 	// Profile（完賽紀錄 + 個人統計）
 	profileHandler := profile.NewHandler(pool, wsManager)
+
+	// GPS 距離校正（見 internal/gpscalib）：以穿戴裝置匯入的活動為參考，估計 App GPS 系統性偏差。
+	gpsCalibHandler := gpscalib.NewHandler(pool)
+	// 首次 active / active→stale 站內信通知（規格 §3.4，見 gpscalib.SetMailInserter 註解）；比照
+	// raceSvc.SetMailInserter 同一慣例，mailHandler 已於上方建構完成。
+	gpscalib.SetMailInserter(mailHandler)
 
 	// Admin 帳號管理 + 各模組權限
 	adminAcctHandler := adminacct.NewHandler(pool)
@@ -477,6 +484,10 @@ func main() {
 			// 這個字面路徑（見 apps/web/src/lib/api.ts cheerLayoutApi），不是掛在 /profile 底下。
 			r.With(profileHandler.RequireCheerLayoutEntry).Put("/me/cheer-layout", profileHandler.PutCheerLayout)
 
+			// GPS 距離校正（見 internal/gpscalib）— 三個端點皆掛套件私有 requireEntry
+			// （gps_calib_entry_state/whitelist），比照 monopoly/cheer-layout 前例：非白名單一律 403。
+			r.Mount("/me/gps-calib", gpsCalibHandler.Router())
+
 			// 取消報名申請/撤回（審核由後台 /admin/cancel-requests 進行）
 			r.Post("/profile/registrations/{registrationID}/cancel-request", raceHandler.CreateCancelRequest)
 			r.Delete("/profile/registrations/{registrationID}/cancel-request", raceHandler.WithdrawCancelRequest)
@@ -537,7 +548,8 @@ func main() {
 			r.With(perm("promo")).Mount("/admin/promo-codes", promoHandler.Router())
 			r.With(perm("members")).Mount("/admin/members", profileHandler.AdminMembersRouter())
 			r.With(perm("members")).Get("/admin/vip-analytics", profileHandler.AdminVipAnalytics)
-			r.With(perm("members")).Get("/admin/login-logs", authHandler.AdminLoginLogs) // 用戶登入紀錄（沿用 members 權限）
+			r.With(perm("members")).Get("/admin/login-logs", authHandler.AdminLoginLogs)     // 用戶登入紀錄（沿用 members 權限）
+			r.With(perm("members")).Mount("/admin/gps-calib", gpsCalibHandler.AdminRouter()) // GPS 距離校正（沿用 members 權限）
 			r.With(perm("settings")).Mount("/admin/membership", profileHandler.MembershipAdminRouter())
 			r.With(perm("settings")).Mount("/admin/vip-promos", profileHandler.VipPromoAdminRouter())
 			r.With(perm("titles")).Mount("/admin/titles", profileHandler.TitleAdminRouter())

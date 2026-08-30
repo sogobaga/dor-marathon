@@ -10,6 +10,7 @@ import (
 
 	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/gpscalib"
 	"github.com/dor/api/internal/stamina"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -123,20 +124,28 @@ type DashboardInfo struct {
 	FollowerCount            int        `json:"follower_count"`
 	// PersonalEntry 個人任務入口的可見性（後端依系統設定 + 白名單解析後給前端）：
 	// hidden 不顯示 / locked 顯示但不能按 / shown 顯示且可按。
-	PersonalEntry    string         `json:"personal_entry"`
-	ExploreEntry     string         `json:"explore_entry"`        // 城市探索入口可見性（同上）
-	GalleryEntry     string         `json:"gallery_entry"`        // 卡片圖鑑入口可見性（同上）
-	TitleEntry       string         `json:"title_entry"`          // 稱號系統入口可見性（同上）
-	AchievementEntry string         `json:"achievement_entry"`    // 成就統計入口可見性（同上）
-	TrainingEntry    string         `json:"training_entry"`       // 自主訓練入口可見性（同上）
-	StrategyEntry    string         `json:"strategy_entry"`       // 賽事策略入口可見性（同上）
-	CheerTestEntry   string         `json:"cheer_test_entry"`     // 每公里應援「測試觸發」按鈕入口可見性（同上）
-	CheerEditEntry   string         `json:"cheer_edit_entry"`     // 啦啦隊角色位置校正模式入口可見性（同上）
-	MonopolyEntry    string         `json:"monopoly_entry"`       // 環台大富翁入口可見性（同上）
-	KnowledgeEntry   string         `json:"knowledge_entry"`      // 知識探索入口可見性（同上）
-	CheerDisplayMs   int            `json:"cheer_display_ms"`     // 每公里應援表演（泡泡框+啦啦隊）顯示毫秒數；來自系統設定 cheer_display_ms（預設 3000）
-	CheerCharLayout  string         `json:"cheer_char_layout"`    // 啦啦隊三張角色的位置校正值（原始 JSON 字串；系統設定 cheer_char_layout，前端 parseCheerCharLayout 解析）
-	NewTitles        []AwardedTitle `json:"new_titles,omitempty"` // 本次 dashboard 新解鎖（未看過）稱號
+	PersonalEntry    string `json:"personal_entry"`
+	ExploreEntry     string `json:"explore_entry"`     // 城市探索入口可見性（同上）
+	GalleryEntry     string `json:"gallery_entry"`     // 卡片圖鑑入口可見性（同上）
+	TitleEntry       string `json:"title_entry"`       // 稱號系統入口可見性（同上）
+	AchievementEntry string `json:"achievement_entry"` // 成就統計入口可見性（同上）
+	TrainingEntry    string `json:"training_entry"`    // 自主訓練入口可見性（同上）
+	StrategyEntry    string `json:"strategy_entry"`    // 賽事策略入口可見性（同上）
+	CheerTestEntry   string `json:"cheer_test_entry"`  // 每公里應援「測試觸發」按鈕入口可見性（同上）
+	CheerEditEntry   string `json:"cheer_edit_entry"`  // 啦啦隊角色位置校正模式入口可見性（同上）
+	MonopolyEntry    string `json:"monopoly_entry"`    // 環台大富翁入口可見性（同上）
+	KnowledgeEntry   string `json:"knowledge_entry"`   // 知識探索入口可見性（同上）
+	// GPS 距離校正（見 internal/gpscalib）：GpsCalibFactor 一律走 gpscalib.EffectiveFactor 同一判斷
+	// （入口/開關/狀態/過期皆已套用），未套用時為 1.0——這裡不是原始係數，是「目前生效」的係數，
+	// 與 GPS 上傳端(activity/gps.go SaveGPSRun)使用同一函式，保證「跑者看到的＝入帳的」。
+	GpsCalibEntry   string         `json:"gps_calib_entry"`
+	GpsCalibFactor  float64        `json:"gps_calib_factor"`
+	GpsCalibStatus  string         `json:"gps_calib_status"`
+	GpsCalibPairs   int            `json:"gps_calib_pairs"`
+	GpsCalibEnabled bool           `json:"gps_calib_enabled"`
+	CheerDisplayMs  int            `json:"cheer_display_ms"`     // 每公里應援表演（泡泡框+啦啦隊）顯示毫秒數；來自系統設定 cheer_display_ms（預設 3000）
+	CheerCharLayout string         `json:"cheer_char_layout"`    // 啦啦隊三張角色的位置校正值（原始 JSON 字串；系統設定 cheer_char_layout，前端 parseCheerCharLayout 解析）
+	NewTitles       []AwardedTitle `json:"new_titles,omitempty"` // 本次 dashboard 新解鎖（未看過）稱號
 	// 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；見 internal/stamina）
 	Sp               int        `json:"sp"`
 	SpMax            int        `json:"sp_max"`
@@ -205,6 +214,8 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	d.CheerEditEntry = resolveEntry(r.Context(), h.db, "cheer_edit_entry_state", "cheer_edit_entry_whitelist", email, code, isSuperAdmin)
 	d.MonopolyEntry = resolveEntry(r.Context(), h.db, "monopoly_entry_state", "monopoly_entry_whitelist", email, code, isSuperAdmin)
 	d.KnowledgeEntry = resolveEntry(r.Context(), h.db, "knowledge_entry_state", "knowledge_entry_whitelist", email, code, isSuperAdmin)
+	d.GpsCalibEntry, d.GpsCalibFactor, d.GpsCalibStatus, d.GpsCalibPairs, d.GpsCalibEnabled =
+		gpscalib.DashboardSummary(r.Context(), h.db, userID, email, code, isSuperAdmin)
 	levels, err := h.levelConfigList(r.Context())
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")

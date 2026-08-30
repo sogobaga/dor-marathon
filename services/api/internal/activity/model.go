@@ -58,4 +58,10 @@ type ActivityEvent struct {
 	AvgPaceS   int     `json:"avg_pace_s"`
 	RecordedAt string  `json:"recorded_at"`
 	KmPaces    []int   `json:"km_paces,omitempty"` // 每公里分段配速(秒/km)；GPS 追蹤才有，Strava/手動為空
+	// GPS 距離校正（見 internal/gpscalib）：RawDistanceKm 為伺服器重算的原始距離（未套校正）、
+	// CalibFactor 為上傳當下生效的係數；DistanceKm 已是 round2(RawDistanceKm*CalibFactor)。兩者
+	// 皆 omitempty——非 GPS 來源（後台補里程/GPS 審核核准）不帶這兩欄時，worker 端會 fallback
+	// RawDistanceKm=DistanceKm、CalibFactor=1.0（見 services/worker/main.go processOne）。
+	RawDistanceKm float64 `json:"raw_distance_km,omitempty"`
+	CalibFactor   float64 `json:"calib_factor,omitempty"`
 }

@@ -48,15 +48,25 @@ const (
 )
 
 // ActivityEvent is the message pushed to Redis Streams when a user uploads a run.
+//
+// RawDistanceKm/CalibFactor（GPS 距離校正，見 services/api/internal/gpscalib；worker 是獨立 Go
+// module 不能 import api 的 internal package，這裡只需要照抄欄位、不需要估計器邏輯本身）：
+// api 端只有 GPS 上傳路徑（activity/gps.go SaveGPSRun）會帶這兩個欄位；後台補里程
+// （AdminAddMileage）、GPS 審核核准（AdminApproveGPS）等其他 producer 不帶，此時皆為零值，
+// processOne 寫入 activities 時會 fallback：RawDistanceKm<=0 時視為 = DistanceKm，
+// CalibFactor<=0 時視為 1.0（代表「已評估、無校正」，語意與 api 端 k=1.0 時仍寫 raw=distance
+// 一致）。
 type ActivityEvent struct {
-	UserID     string  `json:"user_id"`
-	RaceID     string  `json:"race_id"`
-	MissionDay int     `json:"mission_day"`
-	DistanceKm float64 `json:"distance_km"`
-	DurationS  int     `json:"duration_s"`
-	AvgPaceS   int     `json:"avg_pace_s"`
-	RecordedAt string  `json:"recorded_at"`
-	KmPaces    []int   `json:"km_paces,omitempty"` // 每公里分段配速(秒/km)
+	UserID        string  `json:"user_id"`
+	RaceID        string  `json:"race_id"`
+	MissionDay    int     `json:"mission_day"`
+	DistanceKm    float64 `json:"distance_km"`
+	DurationS     int     `json:"duration_s"`
+	AvgPaceS      int     `json:"avg_pace_s"`
+	RecordedAt    string  `json:"recorded_at"`
+	KmPaces       []int   `json:"km_paces,omitempty"` // 每公里分段配速(秒/km)
+	RawDistanceKm float64 `json:"raw_distance_km,omitempty"`
+	CalibFactor   float64 `json:"calib_factor,omitempty"`
 }
 
 func main() {
@@ -532,11 +542,23 @@ func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) (string, er
 		return "", fmt.Errorf("unmarshal event: %w", err)
 	}
 
+	// GPS 距離校正（見 ActivityEvent 註解）：非 GPS producer 不帶這兩欄時 fallback 成
+	// 「已評估、無校正」的語意（raw=distance、factor=1.0），而不是留 0/NULL 造成下游（前端「原始
+	// vs 校正」對照、8 個距離讀取點之外的直接顯示）誤讀成距離 0 或係數 0。
+	rawDistanceKm := evt.RawDistanceKm
+	if rawDistanceKm <= 0 {
+		rawDistanceKm = evt.DistanceKm
+	}
+	calibFactor := evt.CalibFactor
+	if calibFactor <= 0 {
+		calibFactor = 1.0
+	}
+
 	// 寫入 PostgreSQL（RETURNING 偵測是否真的新插入，避免重複事件灌爆里程）
 	var newID string
 	err := w.db.QueryRow(ctx, `
-		INSERT INTO activities (user_id, race_id, mission_day, distance_km, duration_s, avg_pace_s, recorded_at, km_paces, processed)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
+		INSERT INTO activities (user_id, race_id, mission_day, distance_km, duration_s, avg_pace_s, recorded_at, km_paces, processed, raw_distance_km, calib_factor)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9, $10)
 		ON CONFLICT DO NOTHING
 		RETURNING id
 	`,
@@ -548,6 +570,8 @@ func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) (string, er
 		evt.AvgPaceS,
 		evt.RecordedAt,
 		evt.KmPaces,
+		rawDistanceKm,
+		calibFactor,
 	).Scan(&newID)
 	if err == pgx.ErrNoRows {
 		return evt.UserID, nil // 重複活動，略過（不再累加里程），但 userID 仍有效供標準重算範圍使用

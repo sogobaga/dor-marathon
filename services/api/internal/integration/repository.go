@@ -279,6 +279,15 @@ type NormalizedActivity struct {
 	AscentM     *float64
 	AvgHR       *int
 	RecordedAt  time.Time
+	// Manual：Strava summary.manual（人工輸入的活動，非裝置紀錄）。目前只存不判——見
+	// migrations/154_gps_calibration.sql 的 activities.ext_manual 欄位註解：未來若要解除 GPS
+	// 距離校正係數只准向下的上限（k>1），必須先能辨識/排除人工輸入活動，這是前置資料準備。
+	// 本期 gpscalib 估計器完全不讀這個欄位。非 Strava 來源（COROS/Terra）目前無對應資訊，恆 false。
+	Manual bool
+	// ElapsedS：外部來源回報的「總經過時間」（含停等）。只有 Strava 填（elapsed_time，區別於
+	// DurationS=moving_time）；nil 代表無對應資訊（COROS/Terra，其 Duration 語意本來就接近經過時間）。
+	// 供 gpscalib 候選查詢時間對齊用（COALESCE 回 duration_s），DurationS/AvgPaceS 口徑不受影響。
+	ElapsedS *int
 }
 
 // ImportResult 匯入結果
@@ -362,12 +371,12 @@ func (r *Repository) ImportActivity(ctx context.Context, a *NormalizedActivity) 
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO activities
 			(user_id, race_id, distance_km, duration_s, avg_pace_s, ascent_m, avg_hr, recorded_at,
-			 processed, source, external_id, fingerprint, flagged, flag_reason, dup_of)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10,$11,$12,$13,$14)
+			 processed, source, external_id, fingerprint, flagged, flag_reason, dup_of, ext_manual, elapsed_s)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10,$11,$12,$13,$14,$15,$16)
 		ON CONFLICT (source, external_id) DO NOTHING
 		RETURNING id::text`,
 		a.UserID, raceArg, a.DistanceKm, a.DurationS, a.AvgPaceS, a.AscentM, a.AvgHR, a.RecordedAt,
-		a.Source, a.ExternalID, a.Fingerprint, flagged, reasonArg, dupArg).Scan(&newID)
+		a.Source, a.ExternalID, a.Fingerprint, flagged, reasonArg, dupArg, a.Manual, a.ElapsedS).Scan(&newID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ImportResult{Status: "exists"}, nil
 	}
@@ -395,6 +404,12 @@ type ActivityRow struct {
 	Flagged    bool      `json:"flagged"`
 	FlagReason string    `json:"flag_reason,omitempty"`
 	ExternalID string    `json:"external_id,omitempty"` // provider 活動 id（Strava→「View on Strava」回連）
+	// GPS 距離校正（見 internal/gpscalib）：只有 App GPS 上傳（source IS NULL）的活動可能非 NULL；
+	// 外部來源(Strava/COROS/Terra)匯入的活動這兩欄恆 NULL（distance_km 就是原始值，無校正概念）。
+	// COALESCE 成 DistanceKm：舊資料/外部活動未套過校正時，前端「原始 vs 校正」對照直接退化成
+	// 「兩者相同」，不必額外判斷 null。
+	RawDistanceKm float64  `json:"raw_distance_km"`
+	CalibFactor   *float64 `json:"calib_factor,omitempty"`
 }
 
 // ListActivities 取得使用者活動（最新 N 筆，含賽事名稱與 flagged 狀態）
@@ -407,7 +422,7 @@ func (r *Repository) ListActivities(ctx context.Context, userID string, limit in
 		       a.ascent_m, a.avg_hr, a.recorded_at,
 		       CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END AS started_at,
 		       COALESCE(r.title,''), a.flagged, COALESCE(a.flag_reason,''),
-		       COALESCE(a.external_id,'')
+		       COALESCE(a.external_id,''), COALESCE(a.raw_distance_km, a.distance_km), a.calib_factor
 		FROM activities a LEFT JOIN races r ON r.id = a.race_id
 		WHERE a.user_id=$1
 		ORDER BY a.recorded_at DESC
@@ -420,7 +435,8 @@ func (r *Repository) ListActivities(ctx context.Context, userID string, limit in
 	for rows.Next() {
 		var a ActivityRow
 		if err := rows.Scan(&a.ID, &a.Source, &a.DistanceKm, &a.DurationS, &a.AvgPaceS,
-			&a.AscentM, &a.AvgHR, &a.RecordedAt, &a.StartedAt, &a.RaceTitle, &a.Flagged, &a.FlagReason, &a.ExternalID); err != nil {
+			&a.AscentM, &a.AvgHR, &a.RecordedAt, &a.StartedAt, &a.RaceTitle, &a.Flagged, &a.FlagReason, &a.ExternalID,
+			&a.RawDistanceKm, &a.CalibFactor); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

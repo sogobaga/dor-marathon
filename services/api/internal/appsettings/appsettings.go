@@ -52,10 +52,12 @@ var specs = map[string]func(string) bool{
 	"cheer_edit_entry_state":      isEntryState, // 啦啦隊角色位置校正模式入口（GPS 跑步頁「🎯 校正啦啦隊」按鈕 + ?cheerEdit=1）
 	"cheer_edit_entry_whitelist":  isWhitelist,
 	"cheer_char_layout":           isCheerLayoutJSON, // 啦啦隊八張角色的位置校正值（見 internal/profile.normalizeCheerLayout）
-	"monopoly_entry_state":        isEntryState, // 環台大富翁入口
+	"monopoly_entry_state":        isEntryState,      // 環台大富翁入口
 	"monopoly_entry_whitelist":    isWhitelist,
 	"knowledge_entry_state":       isEntryState, // 知識探索(知識卡圖鑑)入口
 	"knowledge_entry_whitelist":   isWhitelist,
+	"gps_calib_entry_state":       isEntryState, // App GPS 距離校正入口（見 internal/gpscalib）
+	"gps_calib_entry_whitelist":   isWhitelist,
 	// VIP 訂閱制（後台可調數值）
 	"vip_trial_days":              isNonNegInt,           // 新註冊自動 VIP 試用天數
 	"vip_price_monthly":           isNonNegInt,           // 月繳原價（元）
