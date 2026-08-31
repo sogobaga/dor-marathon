@@ -282,12 +282,9 @@ func (h *Handler) buildCard(m *meetRow, viewer string, withBand, isAdmin bool) C
 	isOwner := m.OwnerID == viewer
 	hasAccess := HasDetailAccess(m.IsPrivate, isOwner, m.MyStatus, m.Unlocked, isAdmin)
 
-	var cover *string
-	// 私密團未解鎖時不給封面圖（excerpt 仍給——需求 2(c) 明寫列表要有摘要）
-	if hasAccess && len(m.ImageURLs) > 0 {
-		u := m.ImageURLs[0]
-		cover = &u
-	}
+	// 封面：先判權限（私密團未解鎖不給，excerpt 仍給——需求 2(c) 明寫列表要有摘要），
+	// 再判 show_cover 偏好（migration 162）。順序寫死在 resolveCoverURL 裡，這裡不得自己拆開判。
+	cover := resolveCoverURL(hasAccess, m.ShowCover, m.ImageURLs)
 	c := CardView{
 		ID:               m.ID,
 		Title:            m.Title,
@@ -301,6 +298,7 @@ func (h *Handler) buildCard(m *meetRow, viewer string, withBand, isAdmin bool) C
 		ApprovalRequired: m.ApprovalRequired,
 		Excerpt:          excerpt(m.Description, excerptRunes),
 		CoverURL:         cover,
+		ShowCover:        m.ShowCover,
 		Status:           m.Status,
 		IsEnded:          !m.MeetAt.After(time.Now()),
 		Owner:            OwnerView{ID: m.OwnerID, Name: m.OwnerName, AvatarURL: m.OwnerAvatar},

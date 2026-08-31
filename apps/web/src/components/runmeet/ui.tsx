@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { overlayMount } from '@/lib/overlayMount'
 import type { RunMeetCard } from '@/lib/api'
-import { distanceBandLabel, fmtMeetAt, meetCountdown, memberCountText, memberPct, runMeetLocationIcon, runMeetLocationText } from '@/lib/runMeet'
+import { coverFallbackGlyph, distanceBandLabel, fmtMeetAt, meetCountdown, memberCountText, memberPct, runMeetLocationIcon, runMeetLocationText } from '@/lib/runMeet'
 
 // 團練邀請共用 UI：樣式常數、彈窗殼、toast、卡片。
 // ⚠️ 所有彈窗一律 createPortal 到 overlayMount()——桌機 .phone-shell 有 transform，
@@ -110,11 +110,16 @@ export function Avatar({ url, name, size = 30 }: { url?: string; name?: string; 
   )
 }
 
-/** 無封面時的漸層底 + 標題首字（不留白框）。 */
-function CoverFallback({ title }: { title: string }) {
+/** 無封面時的漸層底：私密團顯示 🔒（不透露團練名稱首字這種可辨識資訊），
+ * 非私密團維持既有的標題首字（不留白框）。
+ * ⚠️ 私密團在「未解鎖」與「已解鎖但 show_cover=false」兩種情況下都會走到這支
+ * （cover_url 皆為 null，見 model.go resolveCoverURL）——鎖頭圖示對兩者都適用，
+ * 不需要再細分「是不是因為沒解鎖」。 */
+function CoverFallback({ title, isPrivate }: { title: string; isPrivate: boolean }) {
+  const glyph = coverFallbackGlyph(isPrivate, title)
   return (
     <div style={{ width: '100%', aspectRatio: '16 / 9', background: 'linear-gradient(135deg, var(--bg-2), var(--bg-1))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <span style={{ fontSize: 34, fontWeight: 900, color: 'var(--tx-faint)' }}>{(title || '團').slice(0, 1)}</span>
+      <span style={{ fontSize: 34, ...(isPrivate ? {} : { fontWeight: 900, color: 'var(--tx-faint)' }) }}>{glyph}</span>
     </div>
   )
 }
@@ -135,7 +140,7 @@ export function MeetCard({ meet, onOpen, now }: { meet: RunMeetCard; onOpen: () 
       {meet.cover_url
         // eslint-disable-next-line @next/next/no-img-element
         ? <img src={meet.cover_url} alt="" loading="lazy" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block' }} />
-        : <CoverFallback title={meet.title} />}
+        : <CoverFallback title={meet.title} isPrivate={meet.is_private} />}
       <div style={{ padding: '11px 13px 12px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           <div style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 900, color: 'var(--tx)', lineHeight: 1.35, wordBreak: 'break-word' }}>{meet.title}</div>

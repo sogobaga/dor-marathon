@@ -248,22 +248,39 @@ func imageIDFromURL(u string) string {
 // uid 一律取自 r.Context().Value(auth.CtxKeyUserID)。路徑 {uid} 只用於「指定操作對象」，
 // 且每次先驗 run_meets.owner_id = ctxUID。
 type MeetInput struct {
-	Title            string    `json:"title"`
-	MeetAt           time.Time `json:"meet_at"`
-	Region           string    `json:"region"`
-	PlaceLabel       string    `json:"place_label"`
+	Title      string    `json:"title"`
+	MeetAt     time.Time `json:"meet_at"`
+	Region     string    `json:"region"`
+	PlaceLabel string    `json:"place_label"`
 	// NoLocation 「不限地點」（migration 161）：true 時 validateMeetInput 會強制清空 Lat/Lng、
 	// 並在 Region/PlaceLabel 為空時補上「不限」佔位文字，見 normalizeNoLocation。
-	NoLocation       bool      `json:"no_location"`
-	Lat              *float64  `json:"lat"`
-	Lng              *float64  `json:"lng"`
-	MeetingDetail    string    `json:"meeting_detail"`
-	Capacity         int       `json:"capacity"`
-	Description      string    `json:"description"`
-	ImageURLs        []string  `json:"image_urls"`
-	ApprovalRequired bool      `json:"approval_required"`
-	Password         *string   `json:"password"` // 建立：非空＝私密團；編輯：nil=不動、""=移除密碼、其他=重設
-	ClientToken      string    `json:"client_token"`
+	NoLocation       bool     `json:"no_location"`
+	Lat              *float64 `json:"lat"`
+	Lng              *float64 `json:"lng"`
+	MeetingDetail    string   `json:"meeting_detail"`
+	Capacity         int      `json:"capacity"`
+	Description      string   `json:"description"`
+	ImageURLs        []string `json:"image_urls"`
+	ApprovalRequired bool     `json:"approval_required"`
+	// ShowCover 「顯示封面圖片」開關（migration 162）。⚠️ 故意用 *bool 不用 bool：Go 的 bool
+	// 零值是 false，前端若沒送這個欄位（例如舊版前端、或呼叫端沒特別處理），用 bool 解 JSON 會把
+	// 「沒帶欄位」誤判成「使用者主動取消勾選」，與 migration 162 的預設 TRUE 恰好相反。
+	// nil＝未帶欄位，由 resolveShowCover 決定實際值：建立時採預設 true、編輯時維持資料庫既有值。
+	ShowCover   *bool   `json:"show_cover"`
+	Password    *string `json:"password"` // 建立：非空＝私密團；編輯：nil=不動、""=移除密碼、其他=重設
+	ClientToken string  `json:"client_token"`
+}
+
+// resolveShowCover 決定寫入 DB 的 show_cover 值（純函式，可單元測試）。
+//
+//	in != nil  → 前端明確帶了欄位，照值採用（含使用者主動勾掉＝false）。
+//	in == nil  → 前端沒帶這個欄位，用 fallback：CreateMeet 傳 true（migration 162 的預設值），
+//	             UpdateMeet 傳資料庫既有值（維持原值，不因為前端沒送就被改成任何一種預設）。
+func resolveShowCover(in *bool, fallback bool) bool {
+	if in != nil {
+		return *in
+	}
+	return fallback
 }
 
 // noLocationText 使用者需求原話：「如果設定為『不限地點』的話，行政區和地點名稱，

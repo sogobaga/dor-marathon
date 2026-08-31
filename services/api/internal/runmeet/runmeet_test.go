@@ -290,6 +290,58 @@ func TestHasDetailAccess(t *testing.T) {
 	}
 }
 
+// TestResolveCoverURL migration 162：「封面圖要不要給觀看者」的唯一判定，順序是先權限、
+// 後偏好——這裡把使用者驗收條件逐條釘死，任何人改動 resolveCoverURL 的順序或短路邏輯都會
+// 立刻測試失敗。
+func TestResolveCoverURL(t *testing.T) {
+	imgs := []string{"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab"}
+	cases := []struct {
+		name      string
+		hasAccess bool
+		showCover bool
+		images    []string
+		wantNil   bool
+	}{
+		{"私密未解鎖+show_cover=true → 仍 null（權限先於偏好）", false, true, imgs, true},
+		{"私密未解鎖+show_cover=false → 仍 null", false, false, imgs, true},
+		{"公開+show_cover=false → null（偏好在權限通過之後才生效）", true, false, imgs, true},
+		{"公開+show_cover=true+有圖 → 給第一張", true, true, imgs, false},
+		{"公開+show_cover=true+沒圖 → null（不是偏好擋，是根本沒圖）", true, true, nil, true},
+	}
+	for _, c := range cases {
+		got := resolveCoverURL(c.hasAccess, c.showCover, c.images)
+		if (got == nil) != c.wantNil {
+			t.Fatalf("%s：want nil=%v got %v", c.name, c.wantNil, got)
+		}
+		if !c.wantNil && *got != c.images[0] {
+			t.Fatalf("%s：cover 應為第一張圖，得 %q", c.name, *got)
+		}
+	}
+}
+
+// TestResolveShowCover migration 162：MeetInput.ShowCover 用 *bool 是因為 Go bool 零值是
+// false，前端沒帶欄位時絕不能被誤讀成「使用者取消勾選」。建立時的 fallback 固定是 true
+// （migration 的 DEFAULT TRUE），編輯時的 fallback 是呼叫端傳進來的資料庫既有值。
+func TestResolveShowCover(t *testing.T) {
+	if got := resolveShowCover(nil, true); got != true {
+		t.Fatal("建立時未帶欄位應採預設 true")
+	}
+	if got := resolveShowCover(nil, false); got != false {
+		t.Fatal("編輯時未帶欄位應維持資料庫既有值（既有值 false 時不得被拉回 true）")
+	}
+	if got := resolveShowCover(nil, true); got != true {
+		t.Fatal("編輯時未帶欄位應維持資料庫既有值（既有值 true 時應保持 true）")
+	}
+	f := false
+	if got := resolveShowCover(&f, true); got != false {
+		t.Fatal("明確帶 false 應照用，即使 fallback 是 true（使用者主動取消勾選必須生效）")
+	}
+	tt := true
+	if got := resolveShowCover(&tt, false); got != true {
+		t.Fatal("明確帶 true 應照用，即使 fallback 是 false")
+	}
+}
+
 func TestMyState(t *testing.T) {
 	if MyState(true, ptr(MemberJoined)) != "owner" {
 		t.Fatal("發起人恆為 owner")
@@ -684,6 +736,41 @@ func TestBuildCardIncludesNoLocation(t *testing.T) {
 	c := h.buildCard(&m, "stranger", false, false)
 	if !c.NoLocation {
 		t.Fatal("CardView.NoLocation 應照實反映 meetRow.NoLocation")
+	}
+}
+
+// TestBuildCardShowCoverFalseHidesCoverButKeepsShowCoverField show_cover=false 時卡片的
+// cover_url 要被拿掉，但 ShowCover 欄位本身要照實回傳原值（給發起人編輯表單用，不能只靠
+// cover_url==nil 反推——那也可能是單純沒圖）。
+func TestBuildCardShowCoverFalseHidesCoverButKeepsShowCoverField(t *testing.T) {
+	h := &Handler{}
+	m := privateMeetRow()
+	m.IsPrivate = false // 公開團，isAdmin/isOwner 不影響 hasAccess
+	m.ShowCover = false
+	c := h.buildCard(&m, "stranger", false, false)
+	if c.CoverURL != nil {
+		t.Fatalf("show_cover=false 時 cover_url 應為 null，得 %v", *c.CoverURL)
+	}
+	if c.ShowCover != false {
+		t.Fatal("CardView.ShowCover 應照實回傳 false（給發起人編輯表單用）")
+	}
+	if c.Excerpt == "" {
+		t.Fatal("show_cover=false 不應連 excerpt 一起清空——只管封面")
+	}
+}
+
+// TestBuildShareViewShowCoverFalseHidesCover 公開團但 show_cover=false：分享卡的 cover_url
+// 要回 null，即使該團確實有圖片。
+func TestBuildShareViewShowCoverFalseHidesCover(t *testing.T) {
+	imgs := []string{"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab"}
+	row := shareTestRow(false, imgs)
+	row.ShowCover = false
+	v := buildShareView(row)
+	if v.CoverURL != nil {
+		t.Fatalf("show_cover=false 時分享卡 cover_url 應為 null，得 %v", *v.CoverURL)
+	}
+	if v.Region == "" || v.PlaceLabel == "" {
+		t.Fatal("show_cover 只管封面，不應連公開團的地點欄一起遮蔽")
 	}
 }
 
@@ -1092,6 +1179,7 @@ func privateMeetRow() meetRow {
 		Capacity: 10, Description: "這裡是要給管理員審的完整說明",
 		ImageURLs:  []string{"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab"},
 		ImageLimit: 4, IsPrivate: true, MemberCount: 1, PendingCount: 2, Status: StatusOpen,
+		ShowCover: true, // migration 162 預設值；沒特別測 show_cover=false 的案例另有專屬測試
 	}
 }
 
@@ -1199,6 +1287,7 @@ func shareTestRow(isPrivate bool, images []string) shareRow {
 		Title: "晨間夜跑團", MeetAt: time.Date(2026, 9, 10, 6, 0, 0, 0, time.UTC),
 		Region: "臺北市・大安區", PlaceLabel: "大安森林公園",
 		ImageURLs: images, IsPrivate: isPrivate, MemberCount: 3, Capacity: 10,
+		ShowCover: true, // migration 162 預設值；show_cover=false 案例見專屬測試
 	}
 }
 

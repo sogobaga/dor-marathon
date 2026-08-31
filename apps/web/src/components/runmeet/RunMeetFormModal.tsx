@@ -75,6 +75,9 @@ export default function RunMeetFormModal({
   const [capacity, setCapacity] = useState<number>(initial?.capacity ?? 10)
   const [description, setDescription] = useState(initial?.description ?? '')
   const [images, setImages] = useState<string[]>(initial?.image_urls ?? [])
+  // 「顯示封面圖片」開關（migration 162），預設勾選。「再辦一次」（mode==='create' 且帶 initial）
+  // 也沿用原團的設定，跟 title/地點/人數上限等其他欄位的複製規則一致。
+  const [showCover, setShowCover] = useState<boolean>(initial?.show_cover ?? true)
   const [approval, setApproval] = useState<boolean>(initial?.approval_required ?? false)
   const [pwMode, setPwMode] = useState<PwMode>(mode === 'edit' ? 'keep' : 'set')
   const [pw, setPw] = useState('')
@@ -134,6 +137,7 @@ export default function RunMeetFormModal({
       description: description.trim(),
       image_urls: images,
       approval_required: approval,
+      show_cover: showCover,
     }
     // 密碼語意：建立＝非空即私密團；編輯＝省略欄位不動、'' 移除、其他重設。
     if (mode === 'create') {
@@ -345,6 +349,13 @@ export default function RunMeetFormModal({
               </>
             )}
           </div>
+
+          {/* 「顯示封面圖片」開關（migration 162）：只管列表卡片／分享卡的封面，詳情頁圖片不受影響。 */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 12.5, color: 'var(--tx)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={showCover} onChange={(e) => setShowCover(e.target.checked)} style={{ width: 16, height: 16 }} />
+            在列表顯示封面圖片
+          </label>
+          <div style={fieldHint}>取消勾選後，列表與分享連結不會顯示圖片，團練詳情頁仍看得到。</div>
         </div>
 
         {/* 審核開關 */}

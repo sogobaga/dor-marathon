@@ -7,7 +7,7 @@ const modUrl = new URL('../src/lib/runMeet.ts', import.meta.url).href
 const {
   taipeiParts, taipeiLocalToISO, isoToTaipeiLocalInput, fmtMeetAt, fmtMeetAtConfirm, meetCountdown,
   isFetchPending, isAbsorbing, shouldShowError,
-  distanceBandLabel, runMeetLocationIcon, runMeetLocationText, createBtnText, resetDayText, remainingText,
+  distanceBandLabel, runMeetLocationIcon, runMeetLocationText, coverFallbackGlyph, createBtnText, resetDayText, remainingText,
   memberCountText, memberPct, confirmSubText, runMeetCta, isDeviceTaipei, createGate,
   reactionPills, sortReactionCounts, optimisticReactionUpdate, mentionPrefix, replyTargetId,
   hasMoreCursor, showViewAllComments, showReplyToggle, replyToggleLabel, viewAllCommentsLabel,
@@ -91,6 +91,12 @@ eq(
 )
 eq(runMeetLocationIcon(false), '📍', 'runMeetLocationIcon｜一般定點用 📍')
 eq(runMeetLocationIcon(true), '🌏', 'runMeetLocationIcon｜不限地點用 🌏')
+
+// ── 卡片封面佔位（migration 162：私密團沒有封面時改顯示鎖頭，不再顯示名稱首字）───
+eq(coverFallbackGlyph(true, '晨間夜跑團'), '🔒', '私密團無封面 → 鎖頭，不透露名稱首字')
+eq(coverFallbackGlyph(true, ''), '🔒', '私密團無封面（無標題）→ 仍是鎖頭')
+eq(coverFallbackGlyph(false, '晨間夜跑團'), '晨', '非私密團無封面 → 維持既有的標題首字佔位')
+eq(coverFallbackGlyph(false, ''), '團', '非私密團無封面且無標題 → 預設「團」字（既有防禦性行為）')
 
 // ── 配額文案 ────────────────────────────────────────────────────
 // 配額只出現在「發起」按鈕上（v1.1.683 使用者定案：獨立徽章與入口旁的「本月還有 N 次」

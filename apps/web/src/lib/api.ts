@@ -4135,7 +4135,11 @@ export interface RunMeetCard {
   is_private: boolean
   approval_required: boolean
   excerpt: string            // 60 字摘要（列表不給完整 description，swrCache 單筆 100KB 上限）
-  cover_url: string | null   // 私密團未解鎖時為 null
+  cover_url: string | null   // 私密團未解鎖、或 show_cover=false 時為 null（見下方 show_cover）
+  // 「顯示封面圖片」偏好（migration 162），預設 true。這是原始偏好值本身，不是「這次算出來
+  // 要不要顯示」的結果（cover_url 才是那個結果）——編輯表單用這個欄位決定 checkbox 初始勾選狀態，
+  // 不要用 cover_url==null 反推（那也可能單純是沒圖，或私密團未解鎖）。
+  show_cover: boolean
   status: RunMeetStatus
   is_ended: boolean
   owner: RunMeetOwner
@@ -4241,6 +4245,10 @@ export interface RunMeetInput {
   description?: string
   image_urls?: string[]
   approval_required: boolean
+  // 「顯示封面圖片」開關（migration 162），預設 true。⚠️ 後端用 *bool 解析、把「省略此欄位」
+  // 當成「維持預設/原值」——前端這裡刻意宣告成必填（不是 `show_cover?:`），逼所有建構
+  // RunMeetInput 的呼叫端都要明確帶值，不要不小心漏帶而觸發後端那條「未帶欄位」語意。
+  show_cover: boolean
   // 建立：非空＝私密團；編輯：欄位省略=不動、''=移除密碼、其他=重設
   password?: string | null
   client_token?: string  // crypto.randomUUID()，防連點/網路重試重複扣配額

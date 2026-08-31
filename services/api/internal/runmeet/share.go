@@ -81,6 +81,8 @@ type shareRow struct {
 	IsPrivate   bool
 	MemberCount int
 	Capacity    int
+	ShowCover   bool // migration 162；buildShareView 決定 cover_url 時要先過 IsPrivate 這道權限，
+	// 通過後才輪到這個偏好欄位——順序見 resolveCoverURL。
 }
 
 // errDeleted 分享卡／詳情端點共用的哨兵錯誤：這個團練「曾經存在、現在已被發起人軟刪」。
@@ -104,11 +106,11 @@ func (r *Repository) GetMeetShare(ctx context.Context, id string) (shareRow, err
 	var status string
 	err := r.db.QueryRow(ctx, `
 		SELECT title, meet_at, region, place_label, no_location, image_urls,
-		       (join_password_hash IS NOT NULL) AS is_private, member_count, capacity,
+		       (join_password_hash IS NOT NULL) AS is_private, member_count, capacity, show_cover,
 		       deleted_at, hidden_by_admin, hidden_by_owner, status
 		  FROM run_meets WHERE id = $1`,
 		id).Scan(&m.Title, &m.MeetAt, &m.Region, &m.PlaceLabel, &m.NoLocation, &m.ImageURLs,
-		&m.IsPrivate, &m.MemberCount, &m.Capacity,
+		&m.IsPrivate, &m.MemberCount, &m.Capacity, &m.ShowCover,
 		&deletedAt, &hiddenAdmin, &hiddenOwner, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return m, errNotFound
@@ -139,19 +141,19 @@ func shareAvailability(deleted, hiddenAdmin, hiddenOwner bool, status string) er
 
 // ShareView GET /run-meets/{id}/share 的成功回應。欄位順序即回應契約的順序。
 type ShareView struct {
-	Available   bool      `json:"available"`
-	Title       string    `json:"title"`
-	MeetAt      time.Time `json:"meet_at"`
-	Region      string    `json:"region"`
-	PlaceLabel  string    `json:"place_label"`
+	Available  bool      `json:"available"`
+	Title      string    `json:"title"`
+	MeetAt     time.Time `json:"meet_at"`
+	Region     string    `json:"region"`
+	PlaceLabel string    `json:"place_label"`
 	// NoLocation 「不限地點」：即使私密團把 Region/PlaceLabel 遮蔽成空字串，這個旗標本身仍照實回傳
 	// （見 buildShareView）——它不揭露任何座標或行政區資訊，只表示「這團沒有指定集合地點」，
 	// 前端據此把地點欄改顯示「🌏 不限地點」，避免對已遮蔽的空字串誤判成「沒填地點」。
-	NoLocation  bool      `json:"no_location"`
-	CoverURL    *string   `json:"cover_url"`
-	IsPrivate   bool      `json:"is_private"`
-	MemberCount int       `json:"member_count"`
-	Capacity    int       `json:"capacity"`
+	NoLocation  bool    `json:"no_location"`
+	CoverURL    *string `json:"cover_url"`
+	IsPrivate   bool    `json:"is_private"`
+	MemberCount int     `json:"member_count"`
+	Capacity    int     `json:"capacity"`
 }
 
 // buildShareView 把 shareRow 轉成分享卡（純函式，可單元測試，不碰 DB）。
@@ -161,6 +163,10 @@ type ShareView struct {
 // 匿名分享卡沒有理由知道得比未解鎖的會員還多。no_location 例外：不論公開/私密都照實回傳，
 // 它不揭露座標或行政區，只是「這團沒有指定地點」這個事實本身，且前端私密團分支根本不畫
 // 地點欄（見 app/m/[id]/page.tsx），這裡多回一個布林不構成新的資訊揭露。
+//
+// cover_url 的判定交給 resolveCoverURL（先權限、後偏好，migration 162）：私密團 hasAccess
+// 傳 false（不論 show_cover 為何都拿掉，見上一段的權限理由）；公開團 hasAccess 傳 true，
+// 這時才輪到 m.ShowCover 決定要不要把封面拿掉。
 func buildShareView(m shareRow) ShareView {
 	v := ShareView{
 		Available:   true,
@@ -176,11 +182,8 @@ func buildShareView(m shareRow) ShareView {
 	if m.IsPrivate {
 		v.Region = ""
 		v.PlaceLabel = ""
-		return v // CoverURL 維持 nil（私密團未解鎖不給封面圖）
+		return v // CoverURL 維持 nil（resolveCoverURL 的 hasAccess=false 分支）
 	}
-	if len(m.ImageURLs) > 0 {
-		u := m.ImageURLs[0]
-		v.CoverURL = &u
-	}
+	v.CoverURL = resolveCoverURL(true, m.ShowCover, m.ImageURLs)
 	return v
 }

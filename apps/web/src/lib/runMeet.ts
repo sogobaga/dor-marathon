@@ -164,6 +164,23 @@ export function runMeetLocationText(m: RunMeetLocationFields): string {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 卡片封面佔位（migration 162：cover_url 為 null 時要顯示什麼）
+//
+// ⚠️ cover_url==null 可能是「私密團未解鎖」「show_cover=false」或單純「沒圖」，
+//    三種原因都用同一個 null 表示（見後端 model.go resolveCoverURL）——前端不需要、
+//    也拿不到區分它們的資訊，佔位規則只需要 is_private 這一個輸入。
+// 使用者原話：「如果是需要密碼的，改成顯示『鎖頭』，不要顯示團練名稱的第一個字。」
+// 非私密團沒有變動：維持既有的「標題首字」佔位。
+// ─────────────────────────────────────────────────────────────
+
+export const COVER_FALLBACK_LOCK = '🔒'
+
+/** 無封面時的佔位字：私密團回鎖頭，非私密團回標題首字（無標題時回「團」）。 */
+export function coverFallbackGlyph(isPrivate: boolean, title: string): string {
+  return isPrivate ? COVER_FALLBACK_LOCK : (title || '團').slice(0, 1)
+}
+
+// ─────────────────────────────────────────────────────────────
 // 配額文案
 // ─────────────────────────────────────────────────────────────
 

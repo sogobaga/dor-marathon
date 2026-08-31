@@ -58,17 +58,19 @@ type meetRow struct {
 	ImageURLs        []string
 	ImageLimit       int
 	ApprovalRequired bool
-	IsPrivate        bool // 由 join_password_hash IS NOT NULL 推導；hash 本身永不離開 repository
-	MemberCount      int
-	PendingCount     int
-	Status           string
-	HiddenByAdmin    bool
-	HiddenByOwner    bool // migration 158；發起人自行隱藏，可逆，與 HiddenByAdmin 分離（發起人不得自行解除後者）
-	HiddenReason     string
-	CommentCount     int
-	ReactionCount    int
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ShowCover        bool // migration 162；列表/分享卡「顯示封面圖片」偏好，預設 TRUE。只管封面，
+	// image_urls／詳情頁不受影響——見 resolveCoverURL。
+	IsPrivate     bool // 由 join_password_hash IS NOT NULL 推導；hash 本身永不離開 repository
+	MemberCount   int
+	PendingCount  int
+	Status        string
+	HiddenByAdmin bool
+	HiddenByOwner bool // migration 158；發起人自行隱藏，可逆，與 HiddenByAdmin 分離（發起人不得自行解除後者）
+	HiddenReason  string
+	CommentCount  int
+	ReactionCount int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 
 	// 隨查詢帶出的「觀看者視角」欄位
 	OwnerName   string
@@ -94,29 +96,33 @@ type OwnerView struct {
 
 // CardView 列表卡片＋詳情共用的公開層。**地點只有 region / place_label 兩個公開欄位。**
 type CardView struct {
-	ID               string    `json:"id"`
-	Title            string    `json:"title"`
-	MeetAt           time.Time `json:"meet_at"`
-	Region           string    `json:"region"`
-	PlaceLabel       string    `json:"place_label"`
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	MeetAt     time.Time `json:"meet_at"`
+	Region     string    `json:"region"`
+	PlaceLabel string    `json:"place_label"`
 	// NoLocation 「不限地點」：true 時 Region/PlaceLabel 固定是「不限」佔位文字（見 service.go
 	// normalizeNoLocation），前端據此改顯示「🌏 不限地點」而不是把兩個公開欄位字面拼接
 	// （否則會顯示成「不限・不限」）。詳情頁另外據此決定要不要載入地圖，見 buildDetail 呼叫端。
-	NoLocation       bool      `json:"no_location"`
-	Capacity         int       `json:"capacity"`
-	MemberCount      int       `json:"member_count"`
-	IsPrivate        bool      `json:"is_private"`
-	ApprovalRequired bool      `json:"approval_required"`
-	Excerpt          string    `json:"excerpt"`   // 60 字摘要（swrCache 單筆 100KB 上限，列表不給完整 description）
-	CoverURL         *string   `json:"cover_url"` // 私密團且未解鎖時為 null
-	Status           string    `json:"status"`    // open|closed|cancelled
-	IsEnded          bool      `json:"is_ended"`  // meet_at <= NOW()
-	Owner            OwnerView `json:"owner"`
-	MyState          string    `json:"my_state"` // none|pending|joined|rejected|kicked|left|owner
-	ReactionCount    int       `json:"reaction_count"`
-	CommentCount     int       `json:"comment_count"`
-	MyReaction       *string   `json:"my_reaction"`
-	HasAccess        bool      `json:"has_access"`
+	NoLocation       bool    `json:"no_location"`
+	Capacity         int     `json:"capacity"`
+	MemberCount      int     `json:"member_count"`
+	IsPrivate        bool    `json:"is_private"`
+	ApprovalRequired bool    `json:"approval_required"`
+	Excerpt          string  `json:"excerpt"`   // 60 字摘要（swrCache 單筆 100KB 上限，列表不給完整 description）
+	CoverURL         *string `json:"cover_url"` // 私密團且未解鎖、或 show_cover=false 時為 null（見 resolveCoverURL）
+	// ShowCover migration 162 的顯示偏好原值（不是「這次算出來要不要顯示」的結果，CoverURL 才是
+	// 那個結果）。回這個原值是給發起人編輯表單用——編輯時要知道 checkbox 目前該勾還是不勾，
+	// 不能靠 CoverURL==nil 反推（那也可能是「有權限、show_cover=true，但根本沒圖」）。
+	ShowCover     bool      `json:"show_cover"`
+	Status        string    `json:"status"`   // open|closed|cancelled
+	IsEnded       bool      `json:"is_ended"` // meet_at <= NOW()
+	Owner         OwnerView `json:"owner"`
+	MyState       string    `json:"my_state"` // none|pending|joined|rejected|kicked|left|owner
+	ReactionCount int       `json:"reaction_count"`
+	CommentCount  int       `json:"comment_count"`
+	MyReaction    *string   `json:"my_reaction"`
+	HasAccess     bool      `json:"has_access"`
 	// DistanceBand 只在「附近搜尋」時出現，且**只有分級字串**（lt1|1to3|3to5|5to10|gt10）。
 	// ⚠️ 絕不回精確距離：回 0.23 km 這種值可讓攻擊者換多組座標查詢、三角定位反推出精確地點，
 	// 等於繞過整套地點分層設計。排序用精確距離（後端記憶體內），輸出只給 band。
@@ -267,6 +273,26 @@ func HasDetailAccess(isPrivate, isOwner bool, memberStatus *string, unlocked, is
 		return false
 	}
 	return *memberStatus == MemberJoined || *memberStatus == MemberPending
+}
+
+// resolveCoverURL 「封面圖要不要給觀看者」的唯一判定（純函式，可單元測試；buildCard／
+// buildShareView 共用，不要各自散落 if）。
+//
+// ⚠️ 順序是硬規則：**先判權限、再判偏好**（migration 162 檔頭）。
+//
+//	hasAccess=false（私密團未解鎖）→ 一律 null，不管 showCover 是什麼——這是既有的權限遮蔽，
+//	                                 show_cover 這個「顯示偏好」欄位不得取代或繞過它。
+//	hasAccess=true 但 showCover=false → 通過權限後，才因為發起人的偏好額外把封面拿掉。
+//	hasAccess=true 且 showCover=true 且有圖 → 給第一張。
+//
+// ⚠️ 這裡只管封面（列表卡片／分享卡），不影響 image_urls——詳情頁的圖片照常給有權限的人看，
+// 是需求語意（使用者要的是「列表不要曝光圖片」，不是「圖片本身變成機密」）。
+func resolveCoverURL(hasAccess, showCover bool, imageURLs []string) *string {
+	if !hasAccess || !showCover || len(imageURLs) == 0 {
+		return nil
+	}
+	u := imageURLs[0]
+	return &u
 }
 
 // --- 狀態機（純函式，可單元測試；handler/repository 一律呼叫這裡，不要各自散落 if）---

@@ -24,7 +24,7 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 const meetCols = `
 	m.id, m.owner_id, m.title, m.meet_at, m.region, m.place_label, m.lat, m.lng, m.meeting_detail,
 	m.no_location,
-	m.capacity, m.description, m.image_urls, m.image_limit, m.approval_required,
+	m.capacity, m.description, m.image_urls, m.image_limit, m.approval_required, m.show_cover,
 	(m.join_password_hash IS NOT NULL) AS is_private,
 	m.member_count, m.pending_count, m.status, m.hidden_by_admin, m.hidden_by_owner, m.hidden_reason,
 	m.comment_count, m.reaction_count, m.created_at, m.updated_at,
@@ -45,7 +45,7 @@ func scanMeet(row interface{ Scan(...any) error }) (meetRow, error) {
 	var m meetRow
 	err := row.Scan(&m.ID, &m.OwnerID, &m.Title, &m.MeetAt, &m.Region, &m.PlaceLabel, &m.Lat, &m.Lng, &m.MeetingDetail,
 		&m.NoLocation,
-		&m.Capacity, &m.Description, &m.ImageURLs, &m.ImageLimit, &m.ApprovalRequired, &m.IsPrivate,
+		&m.Capacity, &m.Description, &m.ImageURLs, &m.ImageLimit, &m.ApprovalRequired, &m.ShowCover, &m.IsPrivate,
 		&m.MemberCount, &m.PendingCount, &m.Status, &m.HiddenByAdmin, &m.HiddenByOwner, &m.HiddenReason,
 		&m.CommentCount, &m.ReactionCount, &m.CreatedAt, &m.UpdatedAt,
 		&m.OwnerName, &m.OwnerAvatar, &m.MyStatus, &m.MyReaction, &m.Unlocked)
@@ -166,16 +166,19 @@ func (r *Repository) CreateMeet(ctx context.Context, uid string, in *MeetInput, 
 		token = &t
 	}
 
+	// show_cover 未帶欄位（in.ShowCover==nil）時，建立走 migration 162 的預設 TRUE。
+	showCover := resolveShowCover(in.ShowCover, true)
+
 	err = tx.QueryRow(ctx, `
 		INSERT INTO run_meets
 			(owner_id, title, meet_at, region, place_label, lat, lng, meeting_detail,
 			 capacity, description, image_urls, image_limit, approval_required, no_location, join_password_hash,
-			 member_count, pending_count, status, quota_month, client_token)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,1,0,'open',$16,$17)
+			 member_count, pending_count, status, quota_month, client_token, show_cover)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,1,0,'open',$16,$17,$18)
 		RETURNING id`,
 		uid, in.Title, in.MeetAt, in.Region, in.PlaceLabel, in.Lat, in.Lng, in.MeetingDetail,
 		in.Capacity, in.Description, in.ImageURLs, imageLimit, in.ApprovalRequired, in.NoLocation, hash,
-		month, token).Scan(&id)
+		month, token, showCover).Scan(&id)
 	if err != nil {
 		// 併發連點：兩個請求同時通過上面的預查 → 唯一索引擋下第二個。
 		var pgErr *pgconn.PgError
@@ -485,18 +488,18 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 	// （含發起人）繞過後台審核逕自編輯內容。
 	var ownerID, status string
 	var memberCount, pendingCount, imageLimit int
-	var oldApproval bool
+	var oldApproval, oldShowCover bool
 	var oldMeetAt time.Time
 	var oldRegion, oldPlace, oldDetail string
 	var oldLat, oldLng *float64
 	err = tx.QueryRow(ctx, `
 		SELECT owner_id, status, member_count, pending_count, image_limit, approval_required,
-		       meet_at, region, place_label, meeting_detail, lat, lng
+		       meet_at, region, place_label, meeting_detail, lat, lng, show_cover
 		  FROM run_meets
 		 WHERE id=$1 AND deleted_at IS NULL AND hidden_by_admin = FALSE
 		 FOR UPDATE`, id).
 		Scan(&ownerID, &status, &memberCount, &pendingCount, &imageLimit, &oldApproval,
-			&oldMeetAt, &oldRegion, &oldPlace, &oldDetail, &oldLat, &oldLng)
+			&oldMeetAt, &oldRegion, &oldPlace, &oldDetail, &oldLat, &oldLng, &oldShowCover)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return res, errNotFound
 	}
@@ -543,10 +546,13 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 		return res, errImageOverLimit(limit, 0) // repository 拿不到設定 → 不做升級引導
 	}
 
+	// show_cover 未帶欄位（in.ShowCover==nil）時，編輯維持資料庫既有值不變（不是套任何預設）。
+	showCover := resolveShowCover(in.ShowCover, oldShowCover)
+
 	// 密碼三態：nil＝不動 / ""＝移除（改公開）/ 其他＝重設
 	passwordSQL := "join_password_hash"
 	args := []any{id, in.Title, in.MeetAt, in.Region, in.PlaceLabel, in.Lat, in.Lng,
-		in.MeetingDetail, in.Capacity, in.Description, in.ImageURLs, in.ApprovalRequired, in.NoLocation}
+		in.MeetingDetail, in.Capacity, in.Description, in.ImageURLs, in.ApprovalRequired, in.NoLocation, showCover}
 	if in.Password != nil {
 		if *in.Password == "" {
 			passwordSQL = "NULL"
@@ -564,7 +570,7 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 		UPDATE run_meets
 		   SET title=$2, meet_at=$3, region=$4, place_label=$5, lat=$6, lng=$7,
 		       meeting_detail=$8, capacity=$9, description=$10, image_urls=$11,
-		       approval_required=$12, no_location=$13, join_password_hash=`+passwordSQL+`, updated_at=NOW()
+		       approval_required=$12, no_location=$13, show_cover=$14, join_password_hash=`+passwordSQL+`, updated_at=NOW()
 		 WHERE id=$1`, args...); err != nil {
 		return res, err
 	}
