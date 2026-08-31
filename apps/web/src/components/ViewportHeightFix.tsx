@@ -10,7 +10,7 @@ import { MOBILE_MQ } from '@/lib/useIsMobile'
  * 本檔只做一件事：在偵測到「瀏覽器回報的 layout viewport 明顯小於實際可見區」時，寫入 --app-h 把版面**加高**。
  * CSS 端一律 max(100dvh, var(--app-h, 0px)) ⇒ 本檔不可能讓版面變矮，最壞情況＝完全沒有這支程式。
  *
- * 【五條不變式，改動時不得違反】
+ * 【四條不變式，改動時不得違反】
  *  I  下限：CSS 的 max() 保證 ≥ 100dvh。JS 無權讓版面比純 CSS 版矮。
  *  II 只准加高，且只信 visualViewport.height。
  *     ⚠️ 禁止用 innerHeight 加高：部分 iOS 版本它等同「工具列收合態的大 viewport」，
@@ -23,9 +23,12 @@ import { MOBILE_MQ } from '@/lib/useIsMobile'
  *  IV 100dvh 也可能過期：CSS 的 100dvh 本身可能比可見區矮（實測差一個「狀態列＋網址列」的高度），
  *     此時 vv.height 與 root.clientHeight 都是對的，不變式 II 那條規則不會成立。用 dvhPx() 探針
  *     直接量「純 100dvh 解析出多少」，比 vv.height 矮才加高。加高值仍只取 vv.height（見不變式 II）。
- *  V  跨工作階段記憶（v1.1.703）：病態（分頁釋放後重載）下 vh/dvh/icb/vv 可能**全體一致地過期**，
- *     任何「拿現值互比」的規則都偵測不到。以 localStorage 記住健康時的 min(vv,icb) 歷史最大值當基準，
- *     現值明顯矮於記憶即加高（差距上限 MEM_MAX_DELTA_PX）。記憶依瀏覽器情境隔離、45 天過期重學。
+ *
+ * 【v1.1.703 的教訓（勿重蹈）】「跨工作階段記憶健康高度、重載後用記憶補高」上線當天即翻車：
+ *  病態不只會「一致地偏小」（露出底色米白帶），也會「一致地偏大」（載入瞬間短暫回報工具列收合的
+ *  大 viewport）——偏大樣本一旦被記住，之後每次健康瀏覽都被多墊 70px，首頁「開始跑步」面板整個
+ *  被推出可見區。變矮只是難看、變高會藏掉功能；在「無法分辨誰說謊」的前提下，任何基於歷史記憶的
+ *  自動加高都不安全，故整組撤除（v1.1.704），並主動清掉舊鍵 dor.vpmem。
  *
  * 【v1.1.664 的教訓（勿重蹈）】
  *  ・Math.max(innerHeight, visualViewport.height) 的前提是「innerHeight 不受鍵盤影響」，
@@ -50,9 +53,6 @@ const BLUR_GRACE_MS = 700      // 失焦後鍵盤收合動畫殘留期
 const KB_HINT_MS = 2000        // 數值旁證（被 pan 過的 visual viewport）的信任期，超過即不再採信
 const KB_LATCH_MAX_MS = 12000  // 鍵盤態連續判定上限：超過此值仍在「鍵盤中」就強制釋放 --app-h（防永久 latch）
 const POLL_MS = 1500
-const MEM_MAX_DELTA_PX = 160   // 記憶值最多只准比現值高這麼多（實測病態差 70px；防記憶被污染時把版面撐爆）
-const MEM_TTL_MS = 45 * 24 * 3600 * 1000 // 記憶有效期：iOS 改版可能改變工具列高度，過期作廢重學
-const MEM_REFRESH_MS = 24 * 3600 * 1000  // 同值免重寫 localStorage 的節流間隔
 const RESUME_STEPS = [0, 120, 400, 1000]
 
 const NO_KB_INPUT = new Set(['button', 'checkbox', 'radio', 'submit', 'reset', 'file', 'image', 'range', 'color'])
@@ -61,6 +61,7 @@ export default function ViewportHeightFix() {
   useEffect(() => {
     const root = document.documentElement
     const clearVar = () => { try { root.style.removeProperty('--app-h') } catch { /* noop */ } }
+    try { localStorage.removeItem('dor.vpmem') } catch { /* noop */ } // v1.1.703 記憶規則已撤除，清掉可能被污染的舊鍵
 
     // URL 參數是最高優先來源，且與 localStorage 的存取分開 try：無痕分頁（setItem 丟
     // QuotaExceededError）、Safari「封鎖所有 Cookie」或 in-app WebView 停用 DOM storage
@@ -157,31 +158,6 @@ export default function ViewportHeightFix() {
     }
     const dropProbe = () => { try { probe?.remove() } catch { /* noop */ } finally { probe = null } }
 
-    // ── 不變式 V 的記憶庫：同一組 (寬度 x 螢幕高 x dpr) 在健康工作階段量到的可見高度 ──
-    // 存 min(vv.height, root.clientHeight) 的歷史最大值：min 排除「工具列收合的大 viewport」
-    //（icb＝小 viewport 恆定，能把 623 壓回 553），歷史最大值讓病態的 483 永遠贏不過健康的 553。
-    // localStorage 依瀏覽器情境隔離（LINE/FB in-app 各自一份），不會拿 Safari 的高度去套 in-app。
-    const MEM_LS_KEY = 'dor.vpmem'
-    let memMap: Record<string, { h: number; t: number }> = {}
-    try { memMap = JSON.parse(localStorage.getItem(MEM_LS_KEY) || '{}') || {} } catch { memMap = {} }
-    const memKeyOf = (w: number) => `${w}x${(window.screen && window.screen.height) || 0}x${Math.round((window.devicePixelRatio || 1) * 10)}`
-    const memGet = (w: number): number => {
-      const e = memMap[memKeyOf(w)]
-      if (!e || typeof e.h !== 'number' || typeof e.t !== 'number') return 0
-      if (Date.now() - e.t > MEM_TTL_MS) return 0
-      return e.h
-    }
-    const memRemember = (w: number, h: number) => {
-      if (h < MIN_SANE_PX) return
-      const k = memKeyOf(w)
-      const e = memMap[k]
-      if (e && e.h >= h && Date.now() - (e.t || 0) < MEM_REFRESH_MS) return
-      memMap[k] = { h: Math.max(h, e ? e.h || 0 : 0), t: Date.now() }
-      const keys = Object.keys(memMap)
-      if (keys.length > 6) keys.sort((a, b) => (memMap[a].t || 0) - (memMap[b].t || 0)).slice(0, keys.length - 6).forEach((dead) => { delete memMap[dead] })
-      try { localStorage.setItem(MEM_LS_KEY, JSON.stringify(memMap)) } catch { /* 無痕/封鎖 storage → 本規則自然停用 */ }
-    }
-
     // 【猜測性去黏劑】把 meta viewport 改寫成「解析值等價、字串不同」再還原，逼 WebKit 重新跑一次
     // viewport 解析。對「重新載入後 viewport 幾何整組過期」或許有機會觸發重算；成功率無一手來源佐證，
     // 失敗＝什麼都沒發生（值等價，不影響縮放/排版）。只在 resume 時做，不進 commit 熱路徑。
@@ -228,8 +204,6 @@ export default function ViewportHeightFix() {
       if (cand < MIN_SANE_PX || icb < MIN_SANE_PX) return
       if (cand > screenCeil()) return           // 荒謬值護欄
 
-      memRemember(w, Math.min(cand, icb))       // 已通過鍵盤/捏合/荒謬值護欄 → 記錄本情境的健康高度
-
       if (cand > icb + GROW_MIN_PX) {           // 不變式 II：可見區 > layout viewport ⇒ layout viewport 過期 ⇒ 加高
         calmCount = 0
         setVar(cand)
@@ -248,21 +222,6 @@ export default function ViewportHeightFix() {
       if (dvh >= MIN_SANE_PX && cand > dvh + GROW_MIN_PX) {
         calmCount = 0
         setVar(cand)
-        return
-      }
-
-      // 不變式 V（v1.1.703，依後台截圖新事證）：**所有可讀指標可能一起過期**。
-      // 後台 inline 100vh（＝靜態大 viewport）也矮了同一截 → 病態下 vh/dvh/icb/vv 彼此一致地說謊，
-      // 規則 II/IV 那種「拿 A 比 B」的偵測在數學上不可能觸發。唯一可信的基準是跨工作階段記憶：
-      // 同一組 (寬, 螢幕, dpr) 在健康時量到的高度。現值比記憶矮超過 GROW_MIN_PX（實測病態差 70px）
-      // 且差距在 MEM_MAX_DELTA_PX 內 → 用記憶值加高。
-      // 風險控管：同情境內合法變矮（尋找列/橫幅）最多被多墊 160px 且僅在該 UI 顯示期間；
-      // 鍵盤已被上方 kbUp() 擋掉；in-app 瀏覽器 storage 隔離、各學各的，不會交叉污染。
-      // Safari 之後若自行回神（真 resize 進來、現值恢復），本規則停火 → 走既有 calm 釋放路徑歸零。
-      const remembered = memGet(w)
-      if (remembered >= MIN_SANE_PX && remembered > cand + GROW_MIN_PX && remembered - cand <= MEM_MAX_DELTA_PX) {
-        calmCount = 0
-        setVar(Math.min(remembered, screenCeil()))
         return
       }
 
