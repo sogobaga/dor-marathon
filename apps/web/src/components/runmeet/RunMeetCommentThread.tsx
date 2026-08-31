@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { runMeetApi, type RunMeetComment, type RunMeetReactionKind } from '@/lib/api'
-import { withUserAuth } from '@/lib/userAuth'
+import { useUser, withUserAuth } from '@/lib/userAuth'
 import {
   REACTION_META, hasMoreCursor, insertReply, insertTopComment, markCommentDeleted, mentionPrefix,
   mergeCommentPages, optimisticReactionUpdate, reactionPills, replyTargetId, replyToggleLabel,
   showReplyToggle, updateCommentReaction, type ReactionCount,
 } from '@/lib/runMeet'
-import { Avatar, fieldHint, ghostBtn, inputStyle } from './ui'
+import { Avatar, fieldHint, ghostBtn, inputStyle, RunMeetModal, dangerBtn, modalTitle } from './ui'
 
 // 留言討論串共用邏輯／渲染：detail 頁的精簡留言區（RunMeetDetailView CommentsBlock）與完整討論區
 // （RunMeetThreadModal）都是同一份 useCommentThread + 同一組列渲染元件，只差初次載入筆數與是否有
@@ -232,6 +232,14 @@ function SingleCommentRow({
   onToast: (t: string, tone?: 'ok' | 'err') => void
 }) {
   const [busyDelete, setBusyDelete] = useState(false)
+  // ⚠️ 「⋯」選單（比照 Threads）：刪除／檢舉不再是裸露在留言下方的文字連結——那太容易誤觸
+  // （2026-08-31 使用者回報）。收進選單後，刪除還要再過一次確認才會真的送出。
+  const [menu, setMenu] = useState<'none' | 'menu' | 'confirmDelete'>('none')
+  const user = useUser()
+  const isMine = Boolean(user?.id) && comment.user_id === user?.id
+  // can_delete 由後端算（自己的留言 or 我是團主）。UI 上把兩者分開講：
+  // 自己的＝「刪除留言」；別人的但我能刪＝我是團主，標明身分避免看起來像能刪任何人的留言。
+  const canDeleteAsOwner = comment.can_delete && !isMine
 
   if (comment.deleted) {
     return (
@@ -247,6 +255,7 @@ function SingleCommentRow({
     setBusyDelete(true)
     try {
       await withUserAuth((t) => runMeetApi.deleteComment(t, meetId, comment.id))
+      setMenu('none')
       onDeleted()
       onToast('留言已刪除')
     } catch (e: any) {
@@ -258,16 +267,56 @@ function SingleCommentRow({
     <div style={{ display: 'flex', gap: 8 }}>
       <Avatar url={comment.avatar_url} name={comment.name} size={isReply ? 22 : 26} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--tx)' }}>{comment.name}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 800, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{comment.name}</div>
+          {/* 「⋯」：刪除／檢舉收在這裡（Threads 慣例），避免誤觸。點擊區給足 28px 好按。 */}
+          <button
+            type="button"
+            aria-label="更多操作"
+            onClick={() => setMenu('menu')}
+            style={{ flexShrink: 0, background: 'none', border: 'none', color: 'var(--tx-faint)', cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: '2px 6px', minWidth: 28, fontFamily: 'inherit' }}
+          >⋯</button>
+        </div>
         {/* 純文字：React 文字節點自動跳脫，說明/留言一律不 linkify、不解析 HTML */}
         <div style={{ fontSize: 13, color: 'var(--tx)', lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{comment.body}</div>
         <ReactionRow meetId={meetId} comment={comment} onReactionChanged={onReactionChanged} onToast={onToast} />
         <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
           {canComment && <button type="button" onClick={() => onReply(comment)} style={linkBtnStyle}>回覆</button>}
-          {comment.can_delete && <button type="button" onClick={() => void del()} disabled={busyDelete} style={linkBtnStyle}>刪除</button>}
-          <button type="button" onClick={() => onReport(comment.id)} style={linkBtnStyle}>檢舉</button>
         </div>
       </div>
+
+      {menu !== 'none' && (
+        <RunMeetModal onClose={() => (busyDelete ? undefined : setMenu('none'))} maxWidth={320}>
+          {menu === 'menu' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={modalTitle}>留言操作</div>
+              {/* 自己的留言：只給刪除（檢舉自己沒有意義）。別人的留言：給檢舉；
+                  若我同時是團主（can_delete 為真），額外給一顆標明身分的刪除鍵。 */}
+              {isMine && (
+                <button type="button" onClick={() => setMenu('confirmDelete')} style={{ ...dangerBtn, width: '100%' }}>🗑 刪除我的留言</button>
+              )}
+              {!isMine && (
+                <button type="button" onClick={() => { setMenu('none'); onReport(comment.id) }} style={{ ...ghostBtn, width: '100%' }}>🚩 檢舉這則留言</button>
+              )}
+              {canDeleteAsOwner && (
+                <button type="button" onClick={() => setMenu('confirmDelete')} style={{ ...dangerBtn, width: '100%' }}>🗑 以團主身分刪除</button>
+              )}
+              <button type="button" onClick={() => setMenu('none')} style={{ ...ghostBtn, width: '100%' }}>取消</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={modalTitle}>刪除留言</div>
+              <div style={{ fontSize: 13, color: 'var(--tx)', lineHeight: 1.7 }}>
+                刪除後這則留言的內容就看不到了，底下的回覆仍會保留。此動作無法復原。
+              </div>
+              <button type="button" onClick={() => void del()} disabled={busyDelete} style={{ ...dangerBtn, width: '100%', opacity: busyDelete ? 0.6 : 1 }}>
+                {busyDelete ? '刪除中…' : '確定刪除'}
+              </button>
+              <button type="button" onClick={() => setMenu('menu')} disabled={busyDelete} style={{ ...ghostBtn, width: '100%' }}>返回</button>
+            </div>
+          )}
+        </RunMeetModal>
+      )}
     </div>
   )
 }
