@@ -92,6 +92,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [gpsCalibBusy, setGpsCalibBusy] = useState(false)
   const [gpsCalibErr, setGpsCalibErr] = useState('')
   const [gpsCalibDetail, setGpsCalibDetail] = useState(false) // 展開最近配對/係數歷程
+  const [reminderBusy, setReminderBusy] = useState(false) // 團練開跑前 Email 提醒開關送出中
   const { dash, revalidate: loadDashboard } = useDashboard() // 共用會員儀表板快取（與首頁會員卡同一份）
   const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>(initialTab ?? 'info')
   // 本機尚未上傳的 GPS（里程優先來源=Strava 時，track 頁結束不自動上傳，留給這裡決定）
@@ -222,6 +223,21 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       setGpsCalib(r)
     } catch (e: any) { setGpsCalibErr(e?.message || '設定失敗') }
     finally { setGpsCalibBusy(false) }
+  }
+  // 團練開跑前 Email 提醒開關（見 internal/runmeet/reminder.go；migration 163 users.runmeet_reminder_email）。
+  // 站內信不受此開關影響，一律照發；這裡只管 Email。
+  async function toggleReminderEmail() {
+    if (!dash) return
+    const next = !dash.runmeet_reminder_email
+    setReminderBusy(true)
+    try {
+      await withUserAuth((t) => profileApi.setNotifyPrefs(t, { runmeet_reminder_email: next }))
+      loadDashboard() // 讓共用 dashboard 快取跟著重抓，開關狀態立即反映
+    } catch {
+      /* ignore，維持原值，使用者可再按一次重試 */
+    } finally {
+      setReminderBusy(false)
+    }
   }
   async function recomputeGpsCalib() {
     setGpsCalibBusy(true); setGpsCalibErr('')
@@ -627,6 +643,29 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
           {/* 推播通知開關 */}
           <div style={{ marginTop: 12 }}>
             <PushToggle />
+          </div>
+
+          {/* 團練開跑前 Email 提醒開關（見 internal/runmeet/reminder.go；migration 163）。
+              站內信一律照發，這裡只管 Email；偏好關閉或在行銷退訂名單都不會收到這封信。 */}
+          <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>團練開跑前 Email 提醒</div>
+                <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>
+                  開跑前會寄一封提醒信到你的註冊信箱，提醒你別忘了準時出發。只針對你加入的團練，站內信不受此開關影響。
+                </div>
+              </div>
+              <button onClick={toggleReminderEmail} disabled={reminderBusy || !dash}
+                style={{
+                  flexShrink: 0, padding: '9px 14px', borderRadius: 10, fontSize: 13, fontWeight: 700,
+                  whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: 'inherit',
+                  background: dash?.runmeet_reminder_email ? 'var(--fug)' : 'transparent',
+                  color: dash?.runmeet_reminder_email ? 'var(--fug-ink)' : 'var(--tx-dim)',
+                  border: `1px solid ${dash?.runmeet_reminder_email ? 'var(--fug)' : 'var(--line-2)'}`,
+                }}>
+                {reminderBusy ? '處理中…' : dash?.runmeet_reminder_email ? '已開啟 ✓' : '已關閉'}
+              </button>
+            </div>
           </div>
 
           {/* 手錶直連（Garmin / COROS）+ Terra 同意文案 — 先隱藏（尚未實際串接）；未來要接 Terra/直連時把

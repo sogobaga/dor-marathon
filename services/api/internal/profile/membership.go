@@ -141,6 +141,10 @@ type DashboardInfo struct {
 	// 規格否決的是「跨表 COUNT 待審申請數」，不是這個 users 主鍵讀取。
 	RunMeetEntry     string `json:"runmeet_entry"`
 	RunMeetRemaining int    `json:"runmeet_remaining"`
+	// RunmeetReminderEmail 開跑前提醒 Email 開關（users.runmeet_reminder_email，migration 163，
+	// 預設 TRUE）。站內信不受此開關影響（一律發）；前端切換走 POST /profile/notify-prefs
+	// （見 internal/profile/notifyprefs.go），這裡只回目前值供個人資料頁渲染開關狀態。
+	RunmeetReminderEmail bool `json:"runmeet_reminder_email"`
 	// GPS 距離校正（見 internal/gpscalib）：GpsCalibFactor 一律走 gpscalib.EffectiveFactor 同一判斷
 	// （入口/開關/狀態/過期皆已套用），未套用時為 1.0——這裡不是原始係數，是「目前生效」的係數，
 	// 與 GPS 上傳端(activity/gps.go SaveGPSRun)使用同一函式，保證「跑者看到的＝入帳的」。
@@ -186,6 +190,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.QueryRow(r.Context(), `
 		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.dp, u.gp, u.vip_expires_at,
 		       COALESCE(u.vip_plan,''), COALESCE(u.activity_coupon_balance,0), COALESCE(u.trial_notice_shown,FALSE),
+		       COALESCE(u.runmeet_reminder_email,TRUE),
 		       -- 累計里程改讀權威帳本 users.total_km（v0.1.604）：與推廣連結資格（referral.go 的 10km 閘門）
 		       -- 同一口徑，杜絕「面板顯示 37.9K、產生連結卻說不足 10K」的脫鉤（total_km 由發獎管線
 		       -- 去重/防弊把關累加；舊寫法 SUM(activities) 是即時加總，兩者曾因 migration 108 回填斷層而分歧，
@@ -201,7 +206,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN user_profiles p ON p.user_id=u.id
 		LEFT JOIN title_defs td ON td.code = u.displayed_title
 		WHERE u.id=$1`, userID).
-		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.Gp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &trialShown, &d.TotalKm, &d.Nickname, &d.RaceCount, &email, &d.DisplayedTitle, &isSuperAdmin); err != nil {
+		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.Gp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &trialShown, &d.RunmeetReminderEmail, &d.TotalKm, &d.Nickname, &d.RaceCount, &email, &d.DisplayedTitle, &isSuperAdmin); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load dashboard")
 		return
 	}

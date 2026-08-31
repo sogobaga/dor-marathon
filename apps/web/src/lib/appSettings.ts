@@ -410,4 +410,19 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '團練時間過了之後，還要在探索頁底部的「已結束」折疊區顯示幾天。超過就從探索消失，但成員仍可在「我的團練」看到，資料不刪除。',
     min: 1, max: 365, def: '90',
   },
+  // ── 開跑前提醒（見 services/api/internal/runmeet/reminder.go，migration 163）──
+  // 站內信 + Email，排程每小時掃描一次「meet_at 落在 now ~ now+N 小時內」且尚未提醒過的團練。
+  {
+    key: 'runmeet_reminder_enabled', group: '團練邀請規則', label: '開跑前提醒總開關', type: 'select', def: '1',
+    help: '控制團練「開跑前提醒」排程（站內信 + Email）要不要跑。出事時可一鍵關閉，不必重新部署。關閉不影響已經發出的提醒。',
+    options: [
+      { value: '1', label: '開啟' },
+      { value: '0', label: '關閉' },
+    ],
+  },
+  {
+    key: 'runmeet_reminder_hours', group: '團練邀請規則', label: '開跑前幾小時提醒', type: 'number', unit: '小時',
+    help: '團練開跑前幾小時發送提醒（站內信 + Email，一人有多場只合併發一封）。每場團練只會提醒一次，不會因為改這個值而補發或重發。',
+    min: 1, max: 72, def: '3',
+  },
 ]

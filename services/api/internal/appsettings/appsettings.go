@@ -98,18 +98,21 @@ var specs = map[string]func(string) bool{
 	// （「跑團分組」是賽事的既有功能，撞名會混淆）。兩層閘門要分清楚：
 	//   runmeet_entry_*  控制「這個功能對此帳號開不開放」（測試期控管，四態）
 	//   runmeet_quota_*  控制「功能開放後能發起幾次」（VIP 判定 + 每月計數）
-	"runmeet_entry_state":         isEntryState,
-	"runmeet_entry_whitelist":     isWhitelist,
-	"runmeet_create_requires_vip": func(v string) bool { return v == "" || v == "0" || v == "1" }, // 1=發起限 VIP
-	"runmeet_quota_normal":        isPosIntMax(50),                                               // 一般會員每月可發起次數
-	"runmeet_quota_vip":           isPosIntMax(50),                                               // VIP 每月可發起次數
-	"runmeet_images_normal":       isPosIntMax(20),                                                // 一般會員每團圖片張數
-	"runmeet_images_vip":          isPosIntMax(20),                                                // VIP 每團圖片張數
-	"runmeet_capacity_max":        isPosIntMax(500),                                              // 人數上限的上限
-	"runmeet_pending_max":         isPosIntMax(500),                                              // 待審核申請上限
-	"runmeet_comment_daily_cap":   isPosIntMax(1000),                                             // 每人每日留言則數上限
-	"runmeet_reject_cooldown_hours": isNonNegInt,     // 被婉拒後多久才能再申請（0=不冷卻）
-	"runmeet_ended_visible_days":    isPosIntMax(365), // 已結束的團在探索折疊區保留天數
+	"runmeet_entry_state":           isEntryState,
+	"runmeet_entry_whitelist":       isWhitelist,
+	"runmeet_create_requires_vip":   func(v string) bool { return v == "" || v == "0" || v == "1" }, // 1=發起限 VIP
+	"runmeet_quota_normal":          isPosIntMax(50),                                                // 一般會員每月可發起次數
+	"runmeet_quota_vip":             isPosIntMax(50),                                                // VIP 每月可發起次數
+	"runmeet_images_normal":         isPosIntMax(20),                                                // 一般會員每團圖片張數
+	"runmeet_images_vip":            isPosIntMax(20),                                                // VIP 每團圖片張數
+	"runmeet_capacity_max":          isPosIntMax(500),                                               // 人數上限的上限
+	"runmeet_pending_max":           isPosIntMax(500),                                               // 待審核申請上限
+	"runmeet_comment_daily_cap":     isPosIntMax(1000),                                              // 每人每日留言則數上限
+	"runmeet_reject_cooldown_hours": isNonNegInt,                                                    // 被婉拒後多久才能再申請（0=不冷卻）
+	"runmeet_ended_visible_days":    isPosIntMax(365),                                               // 已結束的團在探索折疊區保留天數
+	// 開跑前提醒（見 internal/runmeet/reminder.go，migration 163）：站內信 + Email，排程每小時掃描。
+	"runmeet_reminder_enabled": func(v string) bool { return v == "" || v == "0" || v == "1" }, // 總開關，'1' 才跑
+	"runmeet_reminder_hours":   isPosIntMax(72),                                                // 開跑前幾小時發送（預設 3）
 }
 
 func isEntryState(v string) bool {

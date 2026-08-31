@@ -1674,6 +1674,9 @@ export interface DashboardInfo {
   // entry 非 shown 時 runmeet_remaining 恆 0（後端不查 DB，dashboard 熱路徑零額外成本）。
   runmeet_entry: 'hidden' | 'locked' | 'shown'
   runmeet_remaining: number
+  // 團練開跑前 Email 提醒開關（users.runmeet_reminder_email，migration 163；預設 true）。
+  // 站內信不受此開關影響（一律發）；切換走 profileApi.setNotifyPrefs。
+  runmeet_reminder_email: boolean
   new_titles?: { code: string; name: string; tier: number; category: string }[] // 新解鎖稱號（前台跳彈窗用，跳完呼叫 /titles/seen）
   // 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；扣到 0 凍結 6 小時）
   sp: number
@@ -1989,6 +1992,9 @@ export const profileApi = {
   // 跨來源去重：偏好來源、首次彈窗
   setDataSource: (token: string, source: 'gps' | 'strava') =>
     request<{ ok: boolean; preferred_data_source: string }>('/profile/data-source', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ source }) }),
+  // 通知偏好（目前：團練開跑前 Email 提醒）。比照 setDataSource 同一慣例：小 body、只改一個欄位。
+  setNotifyPrefs: (token: string, body: { runmeet_reminder_email: boolean }) =>
+    request<{ ok: boolean; runmeet_reminder_email: boolean }>('/profile/notify-prefs', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   dedupNotice: (token: string) =>
     request<{ notice: DedupNotice | null }>('/profile/dedup-notice', { headers: withAuth(token) }),
   dedupResolve: (token: string, choice: 'gps' | 'strava', remember: boolean) =>

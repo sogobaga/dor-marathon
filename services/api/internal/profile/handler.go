@@ -69,16 +69,17 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/mileage-exp", h.GetMileageExp)
 	r.Get("/mileage-config", h.MileageConfig)
 	r.Post("/mileage-exp/seen", h.MarkMileageSeen)
-	r.Post("/data-source", h.SetDataSource) // 偏好資料來源（跨來源去重）
-	r.Get("/dedup-notice", h.DedupNotice)   // 首次去重彈窗
+	r.Post("/data-source", h.SetDataSource)   // 偏好資料來源（跨來源去重）
+	r.Post("/notify-prefs", h.SetNotifyPrefs) // 通知偏好（目前：團練開跑前 Email 提醒，見 notifyprefs.go）
+	r.Get("/dedup-notice", h.DedupNotice)     // 首次去重彈窗
 	r.Post("/dedup-resolve", h.DedupResolve)
 	r.Get("/records", h.Records)
 	r.Get("/stats", h.Stats)
 	r.Get("/registrations", h.Registrations)
 	r.Get("/orders/{orderID}", h.OrderDetail)
-	r.Get("/vip/pricing", h.VipPricing)                     // VIP 方案定價（依促銷資格）
-	r.Post("/vip/cancel", h.CancelVipSub)                   // 取消訂閱（不再續扣，權益至到期日）
-	r.Post("/trial-notice-shown", h.MarkTrialNoticeShown)   // 標記試用到期彈窗已顯示（只跳一次）
+	r.Get("/vip/pricing", h.VipPricing)                   // VIP 方案定價（依促銷資格）
+	r.Post("/vip/cancel", h.CancelVipSub)                 // 取消訂閱（不再續扣，權益至到期日）
+	r.Post("/trial-notice-shown", h.MarkTrialNoticeShown) // 標記試用到期彈窗已顯示（只跳一次）
 	// SEC（2026-08-28 資安盤點，同 monopoly SEC-H5 模式）：稱號/成就入口白名單原本只有前端
 	// MemberPanel 擋 UI，後端這幾支 API 無複查——非白名單會員直接打即可繞過測試階段閘門。改用
 	// requireEntry 中介層在後端複查入口狀態（非 shown 且非 super_admin 一律 403）。
@@ -92,10 +93,10 @@ func (h *Handler) Router() http.Handler {
 		r.Get("/achievements/calendar", h.AchievementsCalendar) // 月曆里程
 		r.Get("/achievements/day", h.AchievementsDay)           // 單日明細
 	})
-	r.Post("/referral", h.GetOrCreateReferral)              // 產生/取得專屬推薦碼（需 total_km>=10）
-	r.Get("/referral", h.GetReferral)                       // 只查現況（不產生）；供頁面重掛載回顯既有連結
-	r.Get("/rewards", h.Rewards)                            // 活動獎勵系統 P3：玩家活動獎勵錢包（只回本人序號類獎勵）
-	r.Post("/rewards/{id}/use", h.MarkRewardUsed)           // 標記某筆活動獎勵已使用（只能改自己的，冪等）
+	r.Post("/referral", h.GetOrCreateReferral)    // 產生/取得專屬推薦碼（需 total_km>=10）
+	r.Get("/referral", h.GetReferral)             // 只查現況（不產生）；供頁面重掛載回顯既有連結
+	r.Get("/rewards", h.Rewards)                  // 活動獎勵系統 P3：玩家活動獎勵錢包（只回本人序號類獎勵）
+	r.Post("/rewards/{id}/use", h.MarkRewardUsed) // 標記某筆活動獎勵已使用（只能改自己的，冪等）
 	return r
 }
 

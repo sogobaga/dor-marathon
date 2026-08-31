@@ -218,6 +218,9 @@ func main() {
 	runMeetHandler := runmeet.NewHandler(pool, rdb, wsManager)
 	// 後台強制下架時發 urgent 站內信給發起人（1-method 介面 + 晚繫結，比照 gpscalib 同一慣例）。
 	runmeet.SetMailInserter(mailHandler)
+	// 開跑前提醒（見 internal/runmeet/reminder.go，migration 163）Email 內連結用的網站根網址；
+	// 比照 emailbroadcast.NewHandler 同樣吃 cfg.FrontendURL。
+	runmeet.SetFrontendURL(cfg.FrontendURL)
 
 	// Admin 帳號管理 + 各模組權限
 	adminAcctHandler := adminacct.NewHandler(pool)
@@ -668,6 +671,9 @@ func main() {
 	// 背景：虛擬選手數據生成引擎 Phase 2（對齊台灣整點 H∈{5,6,7,20,21,22,23}，替 enabled 選手
 	// 自動生成 window_hour=H-1 這個活躍時段的活動；天氣/機率/防重寫入見 internal/virtualrunner/generator.go）
 	go virtualrunner.NewGenerator(pool).RunGenerateLoop(bgCtx)
+	// 背景：團練「開跑前提醒」排程（每小時 tick；meet_at 落在 now~now+N 小時且尚未提醒過才發，
+	// 站內信 + Email，一人多場合併發一封；見 internal/runmeet/reminder.go）
+	go runMeetHandler.RunReminderLoop(bgCtx)
 
 	go func() {
 		log.Info().Str("port", cfg.Port).Msg("DOR API server starting")
