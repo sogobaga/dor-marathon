@@ -10,7 +10,7 @@ import { MOBILE_MQ } from '@/lib/useIsMobile'
  * 本檔只做一件事：在偵測到「瀏覽器回報的 layout viewport 明顯小於實際可見區」時，寫入 --app-h 把版面**加高**。
  * CSS 端一律 max(100dvh, var(--app-h, 0px)) ⇒ 本檔不可能讓版面變矮，最壞情況＝完全沒有這支程式。
  *
- * 【三條不變式，改動時不得違反】
+ * 【四條不變式，改動時不得違反】
  *  I  下限：CSS 的 max() 保證 ≥ 100dvh。JS 無權讓版面比純 CSS 版矮。
  *  II 只准加高，且只信 visualViewport.height。
  *     ⚠️ 禁止用 innerHeight 加高：部分 iOS 版本它等同「工具列收合態的大 viewport」，
@@ -20,6 +20,9 @@ import { MOBILE_MQ } from '@/lib/useIsMobile'
  *     上可能永久為真（收鍵盤後 vv.offsetTop 不歸零、iframe/select 長駐焦點），若讓它連釋放一起
  *     擋掉，--app-h 會被永久鎖在偏大的值 → 底部導覽列被推出可見區、又因 body overflow:hidden
  *     捲不到，那是比症狀 A 更嚴重的功能缺陷。故所有旁證都有時效，並額外設 KB_LATCH_MAX_MS 上限。
+ *  IV 100dvh 也可能過期：CSS 的 100dvh 本身可能比可見區矮（實測差一個「狀態列＋網址列」的高度），
+ *     此時 vv.height 與 root.clientHeight 都是對的，不變式 II 那條規則不會成立。用 dvhPx() 探針
+ *     直接量「純 100dvh 解析出多少」，比 vv.height 矮才加高。加高值仍只取 vv.height（見不變式 II）。
  *
  * 【v1.1.664 的教訓（勿重蹈）】
  *  ・Math.max(innerHeight, visualViewport.height) 的前提是「innerHeight 不受鍵盤影響」，
@@ -127,6 +130,27 @@ export default function ViewportHeightFix() {
       return (portrait ? long : short) + 2
     }
 
+    // 【探針】量出消費端拿到的「純 100dvh」實際是多少（不含 var(--app-h)，故非循環：
+    // --app-h 不影響 100dvh，也不影響 vv.height，不會自我震盪）。
+    // visibility:hidden 仍會參與版面計算，讀 rect 拿得到高度；不進無障礙樹、不吃點擊。
+    // 舊引擎（無 dvh）→ height 宣告無效 → auto → 固定定位空元素高度 0 → 回傳 0 讓規則整條略過
+    //（那些引擎走的是 CSS 的 100vh 分支，本來就用不到 --app-h）。
+    const supportsDvh = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('height', '100dvh')
+    let probe: HTMLDivElement | null = null
+    const dvhPx = (): number => {
+      if (!supportsDvh) return 0
+      try {
+        if (!probe) {
+          probe = document.createElement('div')
+          probe.setAttribute('aria-hidden', 'true')
+          probe.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:100dvh;visibility:hidden;pointer-events:none;z-index:-2147483647'
+          document.body.appendChild(probe)
+        }
+        return Math.round(probe.getBoundingClientRect().height)
+      } catch { return 0 }
+    }
+    const dropProbe = () => { try { probe?.remove() } catch { /* noop */ } finally { probe = null } }
+
     const setVar = (px: number) => {
       if (px === applied) return
       applied = px
@@ -161,6 +185,21 @@ export default function ViewportHeightFix() {
       if (cand > screenCeil()) return           // 荒謬值護欄
 
       if (cand > icb + GROW_MIN_PX) {           // 不變式 II：可見區 > layout viewport ⇒ layout viewport 過期 ⇒ 加高
+        calmCount = 0
+        setVar(cand)
+        return
+      }
+
+      // 不變式 IV（v1.1.701 新增，依實測數據）：**100dvh 自己也可能過期偏小**。
+      // 2026-08-31 使用者回報「Safari 把分頁資源釋放掉、回來時重新讀取」後跑版，兩張同機截圖量出：
+      // 可見內容區 553px，但蓋板／根容器只有 483px，差 70px ＝ 狀態列＋網址列高度；
+      // 而該狀態下 vv.height 與 root.clientHeight 都是正確的 553 → 上面那條「cand > icb」永遠不成立，
+      // 安全網從頭到尾沒啟動過。也就是說壞掉的不是 layout viewport，而是 100dvh 本身——
+      // 這是前三次修正都沒有量測過的維度（都在假設 layout viewport 過期）。
+      // 寫入值一律用 cand（visualViewport.height）＝不變式 II 唯一信任的來源；
+      // 刻意不用 root.clientHeight，避免踩到「大 viewport 把底部導覽列推出可見區」那個更嚴重的坑。
+      const dvh = dvhPx()
+      if (dvh >= MIN_SANE_PX && cand > dvh + GROW_MIN_PX) {
         calmCount = 0
         setVar(cand)
         return
@@ -240,6 +279,7 @@ export default function ViewportHeightFix() {
 
     return () => {
       disposed = true
+      dropProbe()
       clearInterval(poll)
       clearTimers()
       if (nudgeTimer) clearTimeout(nudgeTimer)
