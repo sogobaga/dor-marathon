@@ -23,6 +23,7 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 // join_password_hash 應只命中 INSERT / UPDATE / 密碼驗證查詢三處（規格 1.4）。
 const meetCols = `
 	m.id, m.owner_id, m.title, m.meet_at, m.region, m.place_label, m.lat, m.lng, m.meeting_detail,
+	m.no_location,
 	m.capacity, m.description, m.image_urls, m.image_limit, m.approval_required,
 	(m.join_password_hash IS NOT NULL) AS is_private,
 	m.member_count, m.pending_count, m.status, m.hidden_by_admin, m.hidden_by_owner, m.hidden_reason,
@@ -43,6 +44,7 @@ const meetJoins = `
 func scanMeet(row interface{ Scan(...any) error }) (meetRow, error) {
 	var m meetRow
 	err := row.Scan(&m.ID, &m.OwnerID, &m.Title, &m.MeetAt, &m.Region, &m.PlaceLabel, &m.Lat, &m.Lng, &m.MeetingDetail,
+		&m.NoLocation,
 		&m.Capacity, &m.Description, &m.ImageURLs, &m.ImageLimit, &m.ApprovalRequired, &m.IsPrivate,
 		&m.MemberCount, &m.PendingCount, &m.Status, &m.HiddenByAdmin, &m.HiddenByOwner, &m.HiddenReason,
 		&m.CommentCount, &m.ReactionCount, &m.CreatedAt, &m.UpdatedAt,
@@ -167,12 +169,12 @@ func (r *Repository) CreateMeet(ctx context.Context, uid string, in *MeetInput, 
 	err = tx.QueryRow(ctx, `
 		INSERT INTO run_meets
 			(owner_id, title, meet_at, region, place_label, lat, lng, meeting_detail,
-			 capacity, description, image_urls, image_limit, approval_required, join_password_hash,
+			 capacity, description, image_urls, image_limit, approval_required, no_location, join_password_hash,
 			 member_count, pending_count, status, quota_month, client_token)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,1,0,'open',$15,$16)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,1,0,'open',$16,$17)
 		RETURNING id`,
 		uid, in.Title, in.MeetAt, in.Region, in.PlaceLabel, in.Lat, in.Lng, in.MeetingDetail,
-		in.Capacity, in.Description, in.ImageURLs, imageLimit, in.ApprovalRequired, hash,
+		in.Capacity, in.Description, in.ImageURLs, imageLimit, in.ApprovalRequired, in.NoLocation, hash,
 		month, token).Scan(&id)
 	if err != nil {
 		// 併發連點：兩個請求同時通過上面的預查 → 唯一索引擋下第二個。
@@ -285,6 +287,9 @@ func (r *Repository) ListMeets(ctx context.Context, uid string, f ListFilter, en
 		minLat, maxLat, minLng, maxLng := boundingBox(*f.NearLat, *f.NearLng, f.RadiusKm+geoCellMeters/1000)
 		args = append(args, minLat, maxLat, minLng, maxLng)
 		i := len(args)
+		// ⚠️ m.lat IS NOT NULL 順帶把 no_location=TRUE 的團排除在附近搜尋之外——這些團沒有座標
+		// 可比對距離（migration 161 的 CHECK 保證 no_location 恆無座標），被濾掉是正確行為，
+		// 不是漏洞：使用者選了「不限地點」，本來就沒有「附近」這個概念可言，不需要另外特判。
 		where = append(where, "m.lat IS NOT NULL",
 			fmt.Sprintf("m.lat BETWEEN $%d AND $%d", i-3, i-2),
 			fmt.Sprintf("m.lng BETWEEN $%d AND $%d", i-1, i))
@@ -529,7 +534,7 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 	// 密碼三態：nil＝不動 / ""＝移除（改公開）/ 其他＝重設
 	passwordSQL := "join_password_hash"
 	args := []any{id, in.Title, in.MeetAt, in.Region, in.PlaceLabel, in.Lat, in.Lng,
-		in.MeetingDetail, in.Capacity, in.Description, in.ImageURLs, in.ApprovalRequired}
+		in.MeetingDetail, in.Capacity, in.Description, in.ImageURLs, in.ApprovalRequired, in.NoLocation}
 	if in.Password != nil {
 		if *in.Password == "" {
 			passwordSQL = "NULL"
@@ -547,7 +552,7 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 		UPDATE run_meets
 		   SET title=$2, meet_at=$3, region=$4, place_label=$5, lat=$6, lng=$7,
 		       meeting_detail=$8, capacity=$9, description=$10, image_urls=$11,
-		       approval_required=$12, join_password_hash=`+passwordSQL+`, updated_at=NOW()
+		       approval_required=$12, no_location=$13, join_password_hash=`+passwordSQL+`, updated_at=NOW()
 		 WHERE id=$1`, args...); err != nil {
 		return res, err
 	}

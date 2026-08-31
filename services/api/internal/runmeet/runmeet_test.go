@@ -507,6 +507,118 @@ func TestValidateMeetInput(t *testing.T) {
 	}
 }
 
+// --- 不限地點（migration 161）---
+
+// TestNormalizeNoLocationClearsCoordAndFillsBlank no_location=true 時：座標一律被清掉
+// （不是報錯，直接清掉——CHECK run_meets_noloc_chk 要求），region/place_label 為空白時
+// 補上「不限」；已經有值的欄位不覆蓋。
+func TestNormalizeNoLocationClearsCoordAndFillsBlank(t *testing.T) {
+	lat, lng := 25.033, 121.565
+	in := &MeetInput{NoLocation: true, Lat: &lat, Lng: &lng}
+	normalizeNoLocation(in)
+	if in.Lat != nil || in.Lng != nil {
+		t.Fatalf("no_location=true 應強制清空座標，得 lat=%v lng=%v", in.Lat, in.Lng)
+	}
+	if in.Region != noLocationText || in.PlaceLabel != noLocationText {
+		t.Fatalf("region/place_label 為空時應補「不限」，得 region=%q place_label=%q", in.Region, in.PlaceLabel)
+	}
+
+	// 空白字元也視為空（TrimSpace 後仍是空字串）
+	in2 := &MeetInput{NoLocation: true, Region: "   ", PlaceLabel: "\t"}
+	normalizeNoLocation(in2)
+	if in2.Region != noLocationText || in2.PlaceLabel != noLocationText {
+		t.Fatalf("純空白也應視為空、補「不限」，得 region=%q place_label=%q", in2.Region, in2.PlaceLabel)
+	}
+
+	// 已有值時不覆蓋（呼叫端自己填了別的文字）
+	in3 := &MeetInput{NoLocation: true, Region: "臺北市・大安區", PlaceLabel: "大安森林公園"}
+	normalizeNoLocation(in3)
+	if in3.Region != "臺北市・大安區" || in3.PlaceLabel != "大安森林公園" {
+		t.Fatalf("已有值不應被覆蓋，得 region=%q place_label=%q", in3.Region, in3.PlaceLabel)
+	}
+}
+
+// TestNormalizeNoLocationFalseIsNoOp no_location=false 時完全不作用，既有驗證行為不受影響。
+func TestNormalizeNoLocationFalseIsNoOp(t *testing.T) {
+	lat, lng := 25.033, 121.565
+	in := &MeetInput{NoLocation: false, Region: "", PlaceLabel: "", Lat: &lat, Lng: &lng}
+	normalizeNoLocation(in)
+	if in.Lat == nil || in.Lng == nil {
+		t.Fatal("no_location=false 不應清空座標")
+	}
+	if in.Region != "" || in.PlaceLabel != "" {
+		t.Fatal("no_location=false 不應補「不限」，應維持原樣（讓下面的必填檢查照舊擋掉空白）")
+	}
+}
+
+// TestValidateMeetInputNoLocation 整合進 validateMeetInput：no_location=true 且帶座標與空白
+// 地點文字進來，驗證後應通過（不再擋 errBadCoord/errRegionLen），且座標被清掉、地點補「不限」；
+// meeting_detail 不受影響，仍可正常填寫與驗證長度上限。
+func TestValidateMeetInputNoLocation(t *testing.T) {
+	now := time.Now()
+	in := baseInput(now)
+	in.NoLocation = true
+	in.Region = ""
+	in.PlaceLabel = ""
+	lat, lng := 25.033, 121.565
+	in.Lat, in.Lng = &lat, &lng
+	in.MeetingDetail = "各自跑，跑完在群組回報"
+
+	if err := validateMeetInput(&in, now, 50, 4, 4); err != nil {
+		t.Fatalf("no_location=true 帶座標與空白地點應通過（後端自行清空/補值）：%v", err)
+	}
+	if in.Lat != nil || in.Lng != nil {
+		t.Fatalf("驗證後座標應被清空，得 lat=%v lng=%v", in.Lat, in.Lng)
+	}
+	if in.Region != noLocationText || in.PlaceLabel != noLocationText {
+		t.Fatalf("驗證後 region/place_label 應補「不限」，得 %q / %q", in.Region, in.PlaceLabel)
+	}
+	if in.MeetingDetail != "各自跑，跑完在群組回報" {
+		t.Fatalf("meeting_detail 不應被 no_location 連帶清空，得 %q", in.MeetingDetail)
+	}
+
+	// meeting_detail 仍受既有長度上限約束（no_location 不豁免這條驗證）
+	in2 := baseInput(now)
+	in2.NoLocation = true
+	in2.MeetingDetail = strings.Repeat("細", 201)
+	if err := validateMeetInput(&in2, now, 50, 4, 4); !errors.Is(err, errMeetingDetail) {
+		t.Fatalf("no_location=true 時 meeting_detail 仍應套用 200 字上限，得 %v", err)
+	}
+}
+
+// TestBuildCardIncludesNoLocation buildCard 的 CardView 必須把 no_location 原樣帶出去，
+// 前端才有依據判斷要不要顯示「🌏 不限地點」而不是拼接空殼的 region/place_label。
+func TestBuildCardIncludesNoLocation(t *testing.T) {
+	h := &Handler{}
+	m := privateMeetRow()
+	m.IsPrivate = false
+	m.NoLocation = true
+	m.Region, m.PlaceLabel = noLocationText, noLocationText
+	c := h.buildCard(&m, "stranger", false, false)
+	if !c.NoLocation {
+		t.Fatal("CardView.NoLocation 應照實反映 meetRow.NoLocation")
+	}
+}
+
+// TestBuildShareViewPassesThroughNoLocation buildShareView 無論公開或私密團，no_location
+// 都應照實回傳（它不揭露座標或行政區，只是「沒有指定地點」這個事實本身）。
+func TestBuildShareViewPassesThroughNoLocation(t *testing.T) {
+	row := shareTestRow(false, nil)
+	row.NoLocation = true
+	if v := buildShareView(row); !v.NoLocation {
+		t.Fatal("公開團 no_location 應照實回傳 true")
+	}
+	privRow := shareTestRow(true, nil)
+	privRow.NoLocation = true
+	if v := buildShareView(privRow); !v.NoLocation {
+		t.Fatal("私密團的 no_location 也應照實回傳（不因 region/place_label 被遮蔽而連帶被清掉）")
+	}
+	falseRow := shareTestRow(false, nil)
+	if v := buildShareView(falseRow); v.NoLocation {
+		t.Fatal("no_location=false 應照實回傳 false")
+	}
+}
+
 func TestMeetStatusError(t *testing.T) {
 	if err := meetStatusError(StatusOpen, false); err != nil {
 		t.Fatalf("open 且未結束不應有錯：%v", err)
@@ -1063,7 +1175,7 @@ func TestShareViewJSONHasNoMemberLayerFields(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"available", "title", "meet_at", "region", "place_label",
+	want := []string{"available", "title", "meet_at", "region", "place_label", "no_location",
 		"cover_url", "is_private", "member_count", "capacity"}
 	if len(got) != len(want) {
 		t.Fatalf("回應欄位數應為 %d，得 %d：%s", len(want), len(got), raw)

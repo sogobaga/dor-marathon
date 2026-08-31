@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -247,6 +248,9 @@ type MeetInput struct {
 	MeetAt           time.Time `json:"meet_at"`
 	Region           string    `json:"region"`
 	PlaceLabel       string    `json:"place_label"`
+	// NoLocation 「不限地點」（migration 161）：true 時 validateMeetInput 會強制清空 Lat/Lng、
+	// 並在 Region/PlaceLabel 為空時補上「不限」佔位文字，見 normalizeNoLocation。
+	NoLocation       bool      `json:"no_location"`
 	Lat              *float64  `json:"lat"`
 	Lng              *float64  `json:"lng"`
 	MeetingDetail    string    `json:"meeting_detail"`
@@ -258,11 +262,45 @@ type MeetInput struct {
 	ClientToken      string    `json:"client_token"`
 }
 
+// noLocationText 使用者需求原話：「如果設定為『不限地點』的話，行政區和地點名稱，
+// 預設就帶入『不限』的文字」。
+const noLocationText = "不限"
+
+// normalizeNoLocation 「不限地點」的正規化（純函式，可單元測試；不碰 DB）。
+//
+// NoLocation=true 時：
+//   - Lat/Lng 一律強制清成 nil（不是報錯，直接清掉）——避免前端忘了清，且與 migration 161 的
+//     CHECK run_meets_noloc_chk（NOT no_location OR (lat IS NULL AND lng IS NULL)）保持一致，
+//     不清掉的話 CreateMeet/UpdateMeet 送進 DB 會直接違反 CHECK 而 500。
+//   - Region/PlaceLabel 若為空白才補「不限」，已有值（呼叫端自己填了別的文字）則保留不覆蓋——
+//     這兩欄仍是必填的公開層欄位，下面沿用既有的 2–30／2–60 字長度驗證，「不限」本身也通得過。
+//   - MeetingDetail 完全不動：不限地點的團仍可能想寫「各自跑，跑完在群組回報」這類集合細節，
+//     這是合理用途，不該因為沒有精確地點就被連帶清空。
+//
+// NoLocation=false 時整個函式不做任何事，既有驗證行為原樣不變。
+func normalizeNoLocation(in *MeetInput) {
+	if !in.NoLocation {
+		return
+	}
+	in.Lat, in.Lng = nil, nil
+	if strings.TrimSpace(in.Region) == "" {
+		in.Region = noLocationText
+	}
+	if strings.TrimSpace(in.PlaceLabel) == "" {
+		in.PlaceLabel = noLocationText
+	}
+}
+
 // validateMeetInput 正規化 + 驗證（不碰 DB 的部分）。imageLimit 是「建立當下的快照」或
 // 既有 run_meets.image_limit（編輯時），由呼叫端決定要傳哪一個；vipImages 只用於錯誤文案
 // （runmeet_images_vip，後台可調），傳 0 表示不做升級引導。
 func validateMeetInput(in *MeetInput, now time.Time, capacityMax, imageLimit, vipImages int) error {
 	var err error
+
+	// 「不限地點」正規化必須排在最前面：後面的 region/place_label 長度檢查與 lat/lng 成對檢查
+	// 都要吃到正規化後的值（no_location=true 時 lat/lng 已被清空、region/place_label 空白時
+	// 已補上「不限」），否則會誤把合法的「不限地點」請求擋成 400。
+	normalizeNoLocation(in)
 
 	// ⚠️ image_urls 在 DB 是 TEXT[] NOT NULL DEFAULT '{}'，但 pgx v5 把 Go 的 nil slice 編成
 	// SQL NULL（不是空陣列）→ 省略欄位或送 "image_urls": null 會撞 23502 變成 500。

@@ -10,6 +10,7 @@ import { loadLeaflet } from '@/lib/leaflet'
 import { MediaCarousel, Lightbox } from '../shared/MediaCarousel'
 import {
   REACTION_META, ctaInputOf, fmtMeetAt, meetCountdown, memberCountText, memberPct, runMeetCta,
+  runMeetLocationIcon, runMeetLocationText,
   showViewAllComments, viewAllCommentsLabel, isFetchPending, LOADING_TEXT } from '@/lib/runMeet'
 import RunMeetFormModal from './RunMeetFormModal'
 import RunMeetManageSheet from './RunMeetManageSheet'
@@ -102,7 +103,7 @@ export default function RunMeetDetailView({
     // 落地頁按鈕會導向既有的 /?runmeet={id} 深連結——PhoneShell 的 ?runmeet= 處理維持不動，
     // 舊分享連結（/?runmeet=）仍可正常使用。
     const url = `${window.location.origin}/m/${id}`
-    const text = card ? `🏃 ${card.title}｜${fmtMeetAt(card.meet_at)}｜${card.place_label}` : ''
+    const text = card ? `🏃 ${card.title}｜${fmtMeetAt(card.meet_at)}｜${runMeetLocationText(card)}` : ''
     if (navigator.share) {
       navigator.share({ title: card?.title, text, url }).catch(() => {})
       return
@@ -152,7 +153,7 @@ export default function RunMeetDetailView({
               <>
                 <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--tx)', lineHeight: 1.35, wordBreak: 'break-word' }}>{card.title}</div>
                 <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 6, lineHeight: 1.8 }}>
-                  {fmtMeetAt(card.meet_at)}<br />{card.region}・{card.place_label}
+                  {fmtMeetAt(card.meet_at)}<br />{runMeetLocationIcon(card.no_location)} {runMeetLocationText(card)}
                 </div>
               </>
             )}
@@ -194,7 +195,7 @@ export default function RunMeetDetailView({
             {/* 資訊區 */}
             <div style={{ ...cardBox, padding: '12px 13px', marginTop: 12 }}>
               <InfoRow icon="🕕" text={`${fmtMeetAt(meet.meet_at)} · ${meetCountdown(meet.meet_at).text}`} />
-              <InfoRow icon="📍" text={`${meet.region}${meet.place_label ? ` · ${meet.place_label}` : ''}`} />
+              <InfoRow icon={runMeetLocationIcon(meet.no_location)} text={runMeetLocationText(meet)} />
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
                 <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>👥 {memberCountText(meet.member_count, meet.capacity)}</span>
                 <span style={{ flex: 1, height: 6, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden' }}>
@@ -360,7 +361,7 @@ function LockedPanel({ card, onUnlock }: { card: RunMeetCard | null; onUnlock: (
       {card && (
         <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.8 }}>
           🕕 {fmtMeetAt(card.meet_at)}<br />
-          📍 {card.region}{card.place_label ? ` · ${card.place_label}` : ''}<br />
+          {runMeetLocationIcon(card.no_location)} {runMeetLocationText(card)}<br />
           👥 {memberCountText(card.member_count, card.capacity)}
         </div>
       )}
@@ -373,12 +374,30 @@ function LockedPanel({ card, onUnlock }: { card: RunMeetCard | null; onUnlock: (
 }
 
 // 地點區塊：型別即閘門——location_locked 為 true 的 DTO 上根本沒有 lat/lng/meeting_detail。
+//
+// ⚠️ no_location=true（「不限地點」，migration 161）獨立於 location_locked 之外自成一支分流：
+//    完全不載入地圖（連 Leaflet 都不載——MiniMap 元件本身在這支就沒被渲染到），也不顯示
+//    「成功加入後才會顯示完整詳細地點」這句提示——沒有地點可隱藏，顯示那句提示只會讓人誤會
+//    以為「加入後就會看到座標」。meeting_detail 仍是成員層欄位，只有 !location_locked（已加入
+//    /發起人/後台）才看得到，未加入者即使是 no_location 團也一樣看不到。
 function LocationBlock({ meet }: { meet: RunMeetDetail }) {
+  if (meet.no_location) {
+    return (
+      <div style={{ ...cardBox, padding: '12px 13px', marginTop: 12 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>集合地點</div>
+        <div style={{ fontSize: 13, color: 'var(--tx)', marginTop: 6, lineHeight: 1.7 }}>🌏 不限地點</div>
+        <div style={fieldHint}>這場團練不指定集合地點，各自在方便的地方跑。</div>
+        {!meet.location_locked && meet.meeting_detail && (
+          <div style={{ fontSize: 13, color: 'var(--tx)', marginTop: 6, lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>📌 {meet.meeting_detail}</div>
+        )}
+      </div>
+    )
+  }
   if (meet.location_locked) {
     return (
       <div style={{ ...cardBox, padding: '12px 13px', marginTop: 12 }}>
         <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>集合地點</div>
-        <div style={{ fontSize: 13, color: 'var(--tx)', marginTop: 6, lineHeight: 1.7 }}>{meet.region} · {meet.place_label}</div>
+        <div style={{ fontSize: 13, color: 'var(--tx)', marginTop: 6, lineHeight: 1.7 }}>{runMeetLocationText(meet)}</div>
         <div style={{ ...fieldHint, color: 'var(--gold)', fontWeight: 700 }}>🔒 {meet.location_note}</div>
       </div>
     )
@@ -386,7 +405,7 @@ function LocationBlock({ meet }: { meet: RunMeetDetail }) {
   return (
     <div style={{ ...cardBox, padding: '12px 13px', marginTop: 12 }}>
       <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>集合地點（團員可見）</div>
-      <div style={{ fontSize: 13, color: 'var(--tx)', marginTop: 6, lineHeight: 1.7 }}>{meet.region} · {meet.place_label}</div>
+      <div style={{ fontSize: 13, color: 'var(--tx)', marginTop: 6, lineHeight: 1.7 }}>{runMeetLocationText(meet)}</div>
       {meet.meeting_detail && (
         <div style={{ fontSize: 13, color: 'var(--tx)', marginTop: 6, lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>📌 {meet.meeting_detail}</div>
       )}

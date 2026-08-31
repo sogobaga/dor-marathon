@@ -4126,6 +4126,10 @@ export interface RunMeetCard {
   meet_at: string            // RFC3339；顯示一律用 Asia/Taipei 格式化（見 lib/runMeet.ts）
   region: string             // 公開層：縣市・行政區
   place_label: string        // 公開層：地標名
+  // 「不限地點」（migration 161）：true 時 region/place_label 固定是「不限」佔位文字——
+  // 前端顯示邏輯必須先判斷這個旗標，不可直接拼接兩欄，否則會顯示成「不限・不限」
+  // （見 lib/runMeet.ts runMeetLocationText）。詳情頁另據此決定要不要載入地圖與 Leaflet。
+  no_location: boolean
   capacity: number
   member_count: number
   is_private: boolean
@@ -4227,6 +4231,9 @@ export interface RunMeetInput {
   meet_at: string        // ISO（表單以台北時間解讀後轉出，見 lib/runMeet.ts taipeiLocalToISO）
   region: string
   place_label: string
+  // 「不限地點」：true 時後端會強制清空 lat/lng、region/place_label 空白時補「不限」
+  // （見 services/api/internal/runmeet/service.go normalizeNoLocation）。
+  no_location: boolean
   lat?: number | null
   lng?: number | null
   meeting_detail?: string

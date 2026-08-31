@@ -24,6 +24,9 @@ interface ShareInfo {
   meet_at?: string
   region?: string
   place_label?: string
+  // 「不限地點」（migration 161）：true 時 region/place_label 是「不限」佔位文字——一律先判斷
+  // 這個旗標，不要直接拼接兩欄，否則會顯示成「不限・不限」這種沒有意義的字面組合。
+  no_location?: boolean
   cover_url?: string | null
   is_private?: boolean
   member_count?: number
@@ -78,8 +81,9 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
     ? '私密團練・需要密碼加入'
     : [
         share.meet_at ? fmtDateShort(share.meet_at) : '',
-        share.region || '',
-        share.place_label || '',
+        // 「不限地點」一律顯示固定文字，不把 region/place_label 兩欄拼進來——no_location=true
+        // 時兩欄後端固定回「不限」，字面拼接會變成「不限・不限」。
+        ...(share.no_location ? ['🌏 不限地點'] : [share.region || '', share.place_label || '']),
         share.capacity ? `${share.member_count ?? 0}/${share.capacity} 人` : '',
       ].filter(Boolean).join('・')
 
@@ -149,6 +153,8 @@ export default async function RunMeetSharePage({ params }: { params: { id: strin
         {share.meet_at && <div>🕕 {fmtDateShort(share.meet_at)}</div>}
         {share.is_private ? (
           <div>🔒 私密團練・需要密碼加入</div>
+        ) : share.no_location ? (
+          <div>🌏 不限地點</div>
         ) : (
           (share.region || share.place_label) && (
             <div>📍 {share.region}{share.place_label ? ` · ${share.place_label}` : ''}</div>

@@ -76,6 +76,7 @@ type shareRow struct {
 	MeetAt      time.Time
 	Region      string
 	PlaceLabel  string
+	NoLocation  bool
 	ImageURLs   []string
 	IsPrivate   bool
 	MemberCount int
@@ -102,11 +103,11 @@ func (r *Repository) GetMeetShare(ctx context.Context, id string) (shareRow, err
 	var hiddenAdmin, hiddenOwner bool
 	var status string
 	err := r.db.QueryRow(ctx, `
-		SELECT title, meet_at, region, place_label, image_urls,
+		SELECT title, meet_at, region, place_label, no_location, image_urls,
 		       (join_password_hash IS NOT NULL) AS is_private, member_count, capacity,
 		       deleted_at, hidden_by_admin, hidden_by_owner, status
 		  FROM run_meets WHERE id = $1`,
-		id).Scan(&m.Title, &m.MeetAt, &m.Region, &m.PlaceLabel, &m.ImageURLs,
+		id).Scan(&m.Title, &m.MeetAt, &m.Region, &m.PlaceLabel, &m.NoLocation, &m.ImageURLs,
 		&m.IsPrivate, &m.MemberCount, &m.Capacity,
 		&deletedAt, &hiddenAdmin, &hiddenOwner, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -143,6 +144,10 @@ type ShareView struct {
 	MeetAt      time.Time `json:"meet_at"`
 	Region      string    `json:"region"`
 	PlaceLabel  string    `json:"place_label"`
+	// NoLocation 「不限地點」：即使私密團把 Region/PlaceLabel 遮蔽成空字串，這個旗標本身仍照實回傳
+	// （見 buildShareView）——它不揭露任何座標或行政區資訊，只表示「這團沒有指定集合地點」，
+	// 前端據此把地點欄改顯示「🌏 不限地點」，避免對已遮蔽的空字串誤判成「沒填地點」。
+	NoLocation  bool      `json:"no_location"`
 	CoverURL    *string   `json:"cover_url"`
 	IsPrivate   bool      `json:"is_private"`
 	MemberCount int       `json:"member_count"`
@@ -153,7 +158,9 @@ type ShareView struct {
 //
 // 私密團（join_password_hash 非 NULL）：region/place_label 回空字串、cover_url 回 null——
 // 未解鎖的登入會員本來就看不到這些（見 buildCard 的私密團封面規則），一個連身分都沒有的
-// 匿名分享卡沒有理由知道得比未解鎖的會員還多。
+// 匿名分享卡沒有理由知道得比未解鎖的會員還多。no_location 例外：不論公開/私密都照實回傳，
+// 它不揭露座標或行政區，只是「這團沒有指定地點」這個事實本身，且前端私密團分支根本不畫
+// 地點欄（見 app/m/[id]/page.tsx），這裡多回一個布林不構成新的資訊揭露。
 func buildShareView(m shareRow) ShareView {
 	v := ShareView{
 		Available:   true,
@@ -161,6 +168,7 @@ func buildShareView(m shareRow) ShareView {
 		MeetAt:      m.MeetAt,
 		Region:      m.Region,
 		PlaceLabel:  m.PlaceLabel,
+		NoLocation:  m.NoLocation,
 		IsPrivate:   m.IsPrivate,
 		MemberCount: m.MemberCount,
 		Capacity:    m.Capacity,

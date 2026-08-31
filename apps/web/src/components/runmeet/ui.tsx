@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { overlayMount } from '@/lib/overlayMount'
 import type { RunMeetCard } from '@/lib/api'
-import { distanceBandLabel, fmtMeetAt, meetCountdown, memberCountText, memberPct } from '@/lib/runMeet'
+import { distanceBandLabel, fmtMeetAt, meetCountdown, memberCountText, memberPct, runMeetLocationIcon, runMeetLocationText } from '@/lib/runMeet'
 
 // 團練邀請共用 UI：樣式常數、彈窗殼、toast、卡片。
 // ⚠️ 所有彈窗一律 createPortal 到 overlayMount()——桌機 .phone-shell 有 transform，
@@ -150,7 +150,7 @@ export function MeetCard({ meet, onOpen, now }: { meet: RunMeetCard; onOpen: () 
           <span style={{ color: cd.urgent ? '#f4623a' : 'var(--tx-faint)', fontWeight: cd.urgent ? 800 : 400 }}>· {cd.text}</span>
         </div>
         <div style={{ marginTop: 4, fontSize: 12, color: 'var(--tx-dim)', wordBreak: 'break-word' }}>
-          📍 {meet.region}{meet.place_label ? ` · ${meet.place_label}` : ''}
+          {runMeetLocationIcon(meet.no_location)} {runMeetLocationText(meet)}
           {band && <span style={{ marginLeft: 6, color: 'var(--fug)', fontWeight: 800 }}>· {band}</span>}
         </div>
 

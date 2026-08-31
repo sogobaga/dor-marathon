@@ -5,7 +5,7 @@ import useSWR, { mutate } from 'swr'
 import { runMeetApi, type RunMeetCard, type RunMeetDetail } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
-import { fmtMeetAt, createBtnText } from '@/lib/runMeet'
+import { fmtMeetAt, createBtnText, runMeetLocationText } from '@/lib/runMeet'
 import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
 import RunMeetListView, { EMPTY_FILTERS, type NearPos, type NearState, type RunMeetFilters } from './runmeet/RunMeetListView'
@@ -260,7 +260,7 @@ export default function RunMeetScreen({ onBack, initialMeetId }: { onBack: () =>
 // 一次性分享文案（規格 1.4）：標題｜時間｜地點 + 密碼 + 深連結。
 function shareText(meet: RunMeetDetail, password?: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://www.dor.tw'
-  const lines = [`🏃 ${meet.title}｜${fmtMeetAt(meet.meet_at)}｜${meet.place_label}`]
+  const lines = [`🏃 ${meet.title}｜${fmtMeetAt(meet.meet_at)}｜${runMeetLocationText(meet)}`]
   if (password) lines.push(`入團密碼：${password}`)
   lines.push(`👉 ${origin}/?runmeet=${meet.id}`)
   return lines.join('\n')

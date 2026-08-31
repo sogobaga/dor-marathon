@@ -7,7 +7,7 @@ const modUrl = new URL('../src/lib/runMeet.ts', import.meta.url).href
 const {
   taipeiParts, taipeiLocalToISO, isoToTaipeiLocalInput, fmtMeetAt, fmtMeetAtConfirm, meetCountdown,
   isFetchPending, isAbsorbing, shouldShowError,
-  distanceBandLabel, createBtnText, resetDayText, remainingText,
+  distanceBandLabel, runMeetLocationIcon, runMeetLocationText, createBtnText, resetDayText, remainingText,
   memberCountText, memberPct, confirmSubText, runMeetCta, isDeviceTaipei,
   reactionPills, sortReactionCounts, optimisticReactionUpdate, mentionPrefix, replyTargetId,
   hasMoreCursor, showViewAllComments, showReplyToggle, replyToggleLabel, viewAllCommentsLabel,
@@ -52,6 +52,27 @@ eq(distanceBandLabel('5to10'), '5–10 公里', 'band 5to10')
 eq(distanceBandLabel('gt10'), '10 公里以上', 'band gt10')
 eq(distanceBandLabel(undefined), '', '未帶 band（非附近搜尋）→ 空字串')
 eq(distanceBandLabel('0.23km'), '', '未知值 → 空字串（不外洩精確距離格式）')
+
+// ── 集合地點顯示（migration 161「不限地點」）─────────────────────
+// ⚠️ 後端 no_location=true 的團，region/place_label 固定是「不限」佔位字串——顯示邏輯必須先判斷
+// no_location 旗標本身，不能直接拼接兩欄，否則會顯示成「不限・不限」這種沒有意義的字面組合。
+eq(
+  runMeetLocationText({ no_location: false, region: '臺北市・大安區', place_label: '大安森林公園' }),
+  '臺北市・大安區 · 大安森林公園',
+  'runMeetLocationText｜一般定點：region · place_label',
+)
+eq(
+  runMeetLocationText({ no_location: false, region: '臺北市・大安區', place_label: '' }),
+  '臺北市・大安區',
+  'runMeetLocationText｜無 place_label 時只顯示 region（防禦性；正常情境兩欄皆必填）',
+)
+eq(
+  runMeetLocationText({ no_location: true, region: '不限', place_label: '不限' }),
+  '不限地點',
+  'runMeetLocationText｜no_location 一律回固定文字，不拼接成「不限・不限」',
+)
+eq(runMeetLocationIcon(false), '📍', 'runMeetLocationIcon｜一般定點用 📍')
+eq(runMeetLocationIcon(true), '🌏', 'runMeetLocationIcon｜不限地點用 🌏')
 
 // ── 配額文案 ────────────────────────────────────────────────────
 // 配額只出現在「發起」按鈕上（v1.1.683 使用者定案：獨立徽章與入口旁的「本月還有 N 次」

@@ -116,6 +116,31 @@ export function distanceBandLabel(band?: string | null): string {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 集合地點顯示（migration 161「不限地點」）
+//
+// ⚠️ no_location=true 的團，後端 region/place_label 固定是「不限」佔位文字（見 service.go
+//    normalizeNoLocation）。顯示邏輯必須先判斷 no_location 這個旗標本身，不能直接把
+//    region/place_label 兩欄拼接——那樣會顯示成「不限・不限」這種沒有意義的字面組合。
+// ─────────────────────────────────────────────────────────────
+
+export const NO_LOCATION_TEXT = '不限'
+
+export interface RunMeetLocationFields { no_location: boolean; region: string; place_label: string }
+
+/** 集合地點的圖示：一般定點 📍；不限地點 🌏。 */
+export function runMeetLocationIcon(noLocation: boolean): string {
+  return noLocation ? '🌏' : '📍'
+}
+
+/** 集合地點顯示文字。no_location 一律回「不限地點」固定文字；一般定點回
+ *  「region · place_label」（沒有 place_label 時只顯示 region，理論上不會發生，因為
+ *  兩欄都是必填，這裡只是防禦性處理）。 */
+export function runMeetLocationText(m: RunMeetLocationFields): string {
+  if (m.no_location) return '不限地點'
+  return m.place_label ? `${m.region} · ${m.place_label}` : m.region
+}
+
+// ─────────────────────────────────────────────────────────────
 // 配額文案
 // ─────────────────────────────────────────────────────────────
 

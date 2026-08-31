@@ -7,6 +7,7 @@ import {
   type RunMeetMember, type RunMeetMemberDetail, type RunMeetStatus,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
+import { runMeetLocationText } from '@/lib/runMeet'
 
 // 團練邀請後台（perm run_meets）：列表／詳情／強制下架／刪違規留言／檢舉審核／人工調整配額／孤兒圖 GC。
 //
@@ -187,7 +188,7 @@ export default function AdminRunMeetsPage() {
                   <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.8 }}>
                     發起人：{detail.meet.owner.name}（{detail.meet.owner.id}）<br />
                     時間：{new Date(detail.meet.meet_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}<br />
-                    公開地點：{detail.meet.region} · {detail.meet.place_label}<br />
+                    公開地點：{runMeetLocationText(detail.meet)}<br />
                     {/* 後台視角看得到成員層地點——處理檢舉/糾紛需要完整資訊 */}
                     精確座標：{detail.meet.lat != null ? `${detail.meet.lat}, ${detail.meet.lng}` : '未設定'}<br />
                     集合細節：{detail.meet.meeting_detail || '（未填）'}<br />

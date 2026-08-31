@@ -56,6 +56,7 @@ export default function RunMeetFormModal({
   const [title, setTitle] = useState(initial?.title ?? '')
   const [meetAt, setMeetAt] = useState(initial ? isoToTaipeiLocalInput(initial.meet_at) : defaultMeetAtInput())
   const [loc, setLoc] = useState<LocationValue>({
+    no_location: initial?.no_location ?? false,
     region: initial?.region ?? '',
     place_label: initial?.place_label ?? '',
     lat: initial?.lat ?? null,
@@ -109,6 +110,7 @@ export default function RunMeetFormModal({
     const input: RunMeetInput = {
       title: title.trim(),
       meet_at: isoMeetAt,
+      no_location: loc.no_location,
       region: loc.region.trim(),
       place_label: loc.place_label.trim(),
       lat: loc.lat,

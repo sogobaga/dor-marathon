@@ -294,6 +294,7 @@ func (h *Handler) buildCard(m *meetRow, viewer string, withBand, isAdmin bool) C
 		MeetAt:           m.MeetAt,
 		Region:           m.Region,
 		PlaceLabel:       m.PlaceLabel,
+		NoLocation:       m.NoLocation,
 		Capacity:         m.Capacity,
 		MemberCount:      m.MemberCount,
 		IsPrivate:        m.IsPrivate,

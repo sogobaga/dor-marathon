@@ -49,6 +49,7 @@ type meetRow struct {
 	MeetAt           time.Time
 	Region           string
 	PlaceLabel       string
+	NoLocation       bool     // 公開層；true 時 Lat/Lng 恆為 nil（CHECK run_meets_noloc_chk，migration 161）
 	Lat              *float64 // 成員層
 	Lng              *float64 // 成員層
 	MeetingDetail    string   // 成員層
@@ -98,6 +99,10 @@ type CardView struct {
 	MeetAt           time.Time `json:"meet_at"`
 	Region           string    `json:"region"`
 	PlaceLabel       string    `json:"place_label"`
+	// NoLocation 「不限地點」：true 時 Region/PlaceLabel 固定是「不限」佔位文字（見 service.go
+	// normalizeNoLocation），前端據此改顯示「🌏 不限地點」而不是把兩個公開欄位字面拼接
+	// （否則會顯示成「不限・不限」）。詳情頁另外據此決定要不要載入地圖，見 buildDetail 呼叫端。
+	NoLocation       bool      `json:"no_location"`
 	Capacity         int       `json:"capacity"`
 	MemberCount      int       `json:"member_count"`
 	IsPrivate        bool      `json:"is_private"`
