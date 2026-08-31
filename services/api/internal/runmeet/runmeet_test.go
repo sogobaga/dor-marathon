@@ -1286,7 +1286,8 @@ func shareTestRow(isPrivate bool, images []string) shareRow {
 	return shareRow{
 		Title: "晨間夜跑團", MeetAt: time.Date(2026, 9, 10, 6, 0, 0, 0, time.UTC),
 		Region: "臺北市・大安區", PlaceLabel: "大安森林公園",
-		ImageURLs: images, IsPrivate: isPrivate, MemberCount: 3, Capacity: 10,
+		Description: "集合後暖身 10 分鐘，配速 5:30-6:00，繞公園外圈跑 8 公里，跑完一起吃早餐！",
+		ImageURLs:   images, IsPrivate: isPrivate, MemberCount: 3, Capacity: 10,
 		ShowCover: true, // migration 162 預設值；show_cover=false 案例見專屬測試
 	}
 }
@@ -1304,6 +1305,9 @@ func TestBuildShareViewPublicKeepsLocationAndCover(t *testing.T) {
 	}
 	if v.CoverURL == nil || *v.CoverURL != imgs[0] {
 		t.Fatalf("公開團應帶封面圖：%+v", v)
+	}
+	if v.Description == "" {
+		t.Fatal("公開團應帶說明摘要（公開層資訊，見 buildDetail 的 HasAccess 邏輯）")
 	}
 }
 
@@ -1336,11 +1340,30 @@ func TestBuildShareViewPrivateMasksLocationAndCover(t *testing.T) {
 	if !v.Available {
 		t.Fatal("私密團本身仍是 available=true（只是內容被遮蔽，不是整筆不可用）")
 	}
+	if v.Description != "" {
+		t.Fatalf("私密團 description 應回空字串，得 %q", v.Description)
+	}
 }
 
-// TestShareViewJSONHasNoMemberLayerFields 回應契約：只能有這 9 個 key，尤其不得出現
-// lat/lng/meeting_detail/description/owner/id/成員名單等任何成員層或個資欄位——這支端點
-// 連身分都沒有，沒有後續閘門能補救多回的欄位。
+// TestBuildShareViewDescriptionExcerptedTo200Runes 公開團的說明摘要要截斷到
+// shareExcerptRunes（200），不是回全文——落地頁只需要一眼看懂在辦什麼。
+func TestBuildShareViewDescriptionExcerptedTo200Runes(t *testing.T) {
+	row := shareTestRow(false, nil)
+	row.Description = strings.Repeat("跑", 500) // 500 個多位元組字元，測 rune 計長不會切壞字
+	v := buildShareView(row)
+	rs := []rune(v.Description)
+	if len(rs) != 201 { // 200 字 + 省略號「…」
+		t.Fatalf("公開團 description 應截斷到 200 字 + 省略號，得 %d 字：%q", len(rs), v.Description)
+	}
+	if !strings.HasSuffix(v.Description, "…") {
+		t.Fatalf("截斷後應以省略號結尾，得 %q", v.Description)
+	}
+}
+
+// TestShareViewJSONHasNoMemberLayerFields 回應契約：只能有這 11 個 key（description 是
+// migration 後新增的公開層欄位，見 buildShareView），尤其不得出現 lat/lng/meeting_detail/
+// owner/id/成員名單/發起人 email 或帳號編碼/留言等任何成員層或個資欄位——這支端點連身分都
+// 沒有，沒有後續閘門能補救多回的欄位。
 func TestShareViewJSONHasNoMemberLayerFields(t *testing.T) {
 	imgs := []string{"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab"}
 	v := buildShareView(shareTestRow(false, imgs))
@@ -1353,7 +1376,7 @@ func TestShareViewJSONHasNoMemberLayerFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"available", "title", "meet_at", "region", "place_label", "no_location",
-		"cover_url", "is_private", "member_count", "capacity"}
+		"cover_url", "is_private", "description", "member_count", "capacity"}
 	if len(got) != len(want) {
 		t.Fatalf("回應欄位數應為 %d，得 %d：%s", len(want), len(got), raw)
 	}
@@ -1362,8 +1385,9 @@ func TestShareViewJSONHasNoMemberLayerFields(t *testing.T) {
 			t.Fatalf("回應缺少契約欄位 %q：%s", k, raw)
 		}
 	}
-	forbidden := []string{"lat", "lng", "meeting_detail", "description", "id",
-		"owner", "owner_id", "email", "members", "image_urls", "excerpt", "status"}
+	forbidden := []string{"lat", "lng", "meeting_detail", "id",
+		"owner", "owner_id", "email", "account_code", "members", "comments", "comment_count",
+		"image_urls", "excerpt", "status"}
 	for _, k := range forbidden {
 		if _, ok := got[k]; ok {
 			t.Fatalf("回應絕不可出現成員層/個資欄位 %q：%s", k, raw)

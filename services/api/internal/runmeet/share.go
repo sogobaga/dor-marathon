@@ -20,9 +20,13 @@ import (
 // 靜態／具體路徑優先於 Mount 的萬用比對，不會衝突。
 //
 // ⚠️ 隱私是這支端點唯一的重點，欄位表到 ShareView 為止，絕不可加 lat/lng/meeting_detail/
-// description/成員名單/發起人 email 等任何成員層或個資欄位——這裡沒有任何後續閘門能補救
+// 成員名單/發起人 email 或帳號編碼/留言等任何成員層或個資欄位——這裡沒有任何後續閘門能補救
 // 多回的欄位（其他端點還能靠登入/入口/成員身分擋一層，這支端點前面什麼都沒有）。
-// 私密團之下 region/place_label/cover_url 一律遮蔽，見 buildShareView。
+// 私密團之下 region/place_label/cover_url/description 一律遮蔽，見 buildShareView。
+//
+// description（團練說明）例外：對公開團是公開層資訊——公開團的未加入登入者本來就看得到
+// （見 buildDetail 的 HasAccess 邏輯，公開團 hasAccess 恆真），匿名者看得到不構成新洩漏。
+// 私密團一律回空字串，比照 region/place_label。落地頁只需要摘要，截斷到 shareExcerptRunes。
 //
 // ⚠️「不可用」原則上一律回 HTTP 200 + {"available":false}，不分原因、不用 404：不存在／
 // 後台已下架／發起人已隱藏／status 非 open 全部收斂進同一句——如果每種原因回不同的狀態碼或
@@ -77,6 +81,7 @@ type shareRow struct {
 	Region      string
 	PlaceLabel  string
 	NoLocation  bool
+	Description string
 	ImageURLs   []string
 	IsPrivate   bool
 	MemberCount int
@@ -105,11 +110,11 @@ func (r *Repository) GetMeetShare(ctx context.Context, id string) (shareRow, err
 	var hiddenAdmin, hiddenOwner bool
 	var status string
 	err := r.db.QueryRow(ctx, `
-		SELECT title, meet_at, region, place_label, no_location, image_urls,
+		SELECT title, meet_at, region, place_label, no_location, description, image_urls,
 		       (join_password_hash IS NOT NULL) AS is_private, member_count, capacity, show_cover,
 		       deleted_at, hidden_by_admin, hidden_by_owner, status
 		  FROM run_meets WHERE id = $1`,
-		id).Scan(&m.Title, &m.MeetAt, &m.Region, &m.PlaceLabel, &m.NoLocation, &m.ImageURLs,
+		id).Scan(&m.Title, &m.MeetAt, &m.Region, &m.PlaceLabel, &m.NoLocation, &m.Description, &m.ImageURLs,
 		&m.IsPrivate, &m.MemberCount, &m.Capacity, &m.ShowCover,
 		&deletedAt, &hiddenAdmin, &hiddenOwner, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -149,24 +154,32 @@ type ShareView struct {
 	// NoLocation 「不限地點」：即使私密團把 Region/PlaceLabel 遮蔽成空字串，這個旗標本身仍照實回傳
 	// （見 buildShareView）——它不揭露任何座標或行政區資訊，只表示「這團沒有指定集合地點」，
 	// 前端據此把地點欄改顯示「🌏 不限地點」，避免對已遮蔽的空字串誤判成「沒填地點」。
-	NoLocation  bool    `json:"no_location"`
-	CoverURL    *string `json:"cover_url"`
-	IsPrivate   bool    `json:"is_private"`
-	MemberCount int     `json:"member_count"`
-	Capacity    int     `json:"capacity"`
+	NoLocation bool    `json:"no_location"`
+	CoverURL   *string `json:"cover_url"`
+	IsPrivate  bool    `json:"is_private"`
+	// Description 團練說明摘要（shareExcerptRunes=200 字元截斷）。私密團一律空字串，
+	// 比照 Region/PlaceLabel——見本檔案首與 buildShareView 的隱私理由。
+	Description string `json:"description"`
+	MemberCount int    `json:"member_count"`
+	Capacity    int    `json:"capacity"`
 }
 
 // buildShareView 把 shareRow 轉成分享卡（純函式，可單元測試，不碰 DB）。
 //
-// 私密團（join_password_hash 非 NULL）：region/place_label 回空字串、cover_url 回 null——
-// 未解鎖的登入會員本來就看不到這些（見 buildCard 的私密團封面規則），一個連身分都沒有的
-// 匿名分享卡沒有理由知道得比未解鎖的會員還多。no_location 例外：不論公開/私密都照實回傳，
-// 它不揭露座標或行政區，只是「這團沒有指定地點」這個事實本身，且前端私密團分支根本不畫
-// 地點欄（見 app/m/[id]/page.tsx），這裡多回一個布林不構成新的資訊揭露。
+// 私密團（join_password_hash 非 NULL）：region/place_label/description 回空字串、cover_url
+// 回 null——未解鎖的登入會員本來就看不到這些（見 buildCard 的私密團封面規則、buildDetail 的
+// HasAccess 邏輯），一個連身分都沒有的匿名分享卡沒有理由知道得比未解鎖的會員還多。no_location
+// 例外：不論公開/私密都照實回傳，它不揭露座標或行政區，只是「這團沒有指定地點」這個事實本身，
+// 且前端私密團分支根本不畫地點欄（見 app/m/[id]/page.tsx），這裡多回一個布林不構成新的資訊揭露。
 //
 // cover_url 的判定交給 resolveCoverURL（先權限、後偏好，migration 162）：私密團 hasAccess
 // 傳 false（不論 show_cover 為何都拿掉，見上一段的權限理由）；公開團 hasAccess 傳 true，
 // 這時才輪到 m.ShowCover 決定要不要把封面拿掉。
+//
+// description 同樣先過 IsPrivate 這道權限（私密團一律空字串），公開團才用 excerpt 截斷到
+// shareExcerptRunes——公開團的完整說明對登入會員本來就是公開層資訊（buildDetail 的
+// HasAccess 對公開團恆真），匿名者看到摘要不構成新洩漏；截斷是為了落地頁排版與 DTO 大小，
+// 不是隱私考量。
 func buildShareView(m shareRow) ShareView {
 	v := ShareView{
 		Available:   true,
@@ -182,8 +195,9 @@ func buildShareView(m shareRow) ShareView {
 	if m.IsPrivate {
 		v.Region = ""
 		v.PlaceLabel = ""
-		return v // CoverURL 維持 nil（resolveCoverURL 的 hasAccess=false 分支）
+		return v // CoverURL 維持 nil、Description 維持 ""（resolveCoverURL 的 hasAccess=false 分支）
 	}
 	v.CoverURL = resolveCoverURL(true, m.ShowCover, m.ImageURLs)
+	v.Description = excerpt(m.Description, shareExcerptRunes)
 	return v
 }

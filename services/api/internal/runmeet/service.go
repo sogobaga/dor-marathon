@@ -177,6 +177,9 @@ const (
 	endedCommentDays = 7
 	// excerptRunes 列表卡片摘要長度。
 	excerptRunes = 60
+	// shareExcerptRunes 分享卡（GET /run-meets/{id}/share）說明摘要長度：落地頁只需要一眼
+	// 看懂在辦什麼，比列表卡片（60）更寬裕一點，但仍是摘要不是全文。
+	shareExcerptRunes = 200
 
 	// --- 討論串分頁（migration 159；規格 5）---
 	// defCommentPageLimit/maxCommentPageLimit 頂層留言與回覆共用同一組預設/上限。

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { cache } from 'react'
-import { fmtMeetAt } from '@/lib/runMeet'
+import { fmtMeetAt, memberCountText, runMeetLocationIcon, runMeetLocationText } from '@/lib/runMeet'
 import DeletedRedirect from './DeletedRedirect'
 
 // 團練分享短網址 /m/{id}：給社群分享用（RunMeetDetailView.tsx 的分享按鈕會產生這個網址取代
@@ -29,6 +29,9 @@ interface ShareInfo {
   no_location?: boolean
   cover_url?: string | null
   is_private?: boolean
+  // 團練說明摘要（後端已截斷到 200 字元）。私密團一律空字串（後端遮蔽，見 share.go），
+  // 前端不需要、也拿不到區分「沒填」與「私密被遮蔽」的資訊，兩者都當「不顯示」處理即可。
+  description?: string
   member_count?: number
   capacity?: number
 }
@@ -103,6 +106,7 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
 export default async function RunMeetSharePage({ params }: { params: { id: string } }) {
   const share = await getShare(params.id)
   const openHref = `/?runmeet=${encodeURIComponent(params.id)}` // PhoneShell 既有 ?runmeet= 深連結處理（保留不動）
+  const listHref = '/?runmeet=list'
 
   if (!share || !share.available) {
     // 已刪除：與 RunMeetDetailView.tsx 詳情頁 410 時同一句文案 + 3 秒倒數導頁（DeletedRedirect 是
@@ -112,7 +116,7 @@ export default async function RunMeetSharePage({ params }: { params: { id: strin
         <Frame>
           <DeletedRedirect />
           {/* 手動連結與倒數導向一致（團練邀請頁），不要一個回首頁一個回列表 */}
-          <a href="/?runmeet=list" style={homeLinkStyle}>看看其他團練</a>
+          <a href={listHref} style={homeLinkStyle}>看看其他團練</a>
         </Frame>
       )
     }
@@ -122,41 +126,71 @@ export default async function RunMeetSharePage({ params }: { params: { id: strin
         <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', lineHeight: 1.7 }}>
           可能已經結束、被刪除、被下架，或尚未開放查看。請確認連結是否正確。
         </div>
-        <a href="/?runmeet=list" style={homeLinkStyle}>看看其他團練</a>
+        <a href={listHref} style={homeLinkStyle}>看看其他團練</a>
       </Frame>
     )
   }
 
-  const memberText = share.capacity ? `${share.member_count ?? 0} / ${share.capacity} 人` : ''
+  // 「已結束」前端自己用 meet_at 跟現在的時間比較即可——share 端點沒有、也不需要多回一個
+  // is_ended 欄位（那是詳情/卡片層的計算欄位，見 lib/api.ts），這裡已經有 meet_at 了。
+  const ended = !!share.meet_at && new Date(share.meet_at).getTime() <= Date.now()
+  const isFull = !!share.capacity && (share.member_count ?? 0) >= share.capacity
+  const memberText = share.capacity ? memberCountText(share.member_count ?? 0, share.capacity) : ''
 
   return (
     <Frame>
-      {share.cover_url && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={share.cover_url}
-          alt=""
-          style={{ width: '100%', maxWidth: 420, aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: 16, border: '1px solid rgba(255,255,255,0.12)' }}
-        />
-      )}
-
-      <div style={{ fontSize: 21, fontWeight: 800, lineHeight: 1.4, wordBreak: 'break-word' }}>{share.title}</div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13.5, color: 'rgba(255,255,255,0.82)', lineHeight: 1.8 }}>
-        {share.meet_at && <div>🕕 {fmtMeetAt(share.meet_at)}</div>}
-        {share.is_private ? (
-          <div>🔒 私密團練・需要密碼加入</div>
-        ) : share.no_location ? (
-          <div>🌏 不限地點</div>
-        ) : (
-          (share.region || share.place_label) && (
-            <div>📍 {share.region}{share.place_label ? ` · ${share.place_label}` : ''}</div>
-          )
-        )}
-        {memberText && <div>👥 {memberText}</div>}
+      {/* 產品介紹：這頁常是完全沒聽過 DOR 的人第一次看到這個 App（分享連結的宣傳重點），
+          放在卡片外面、不搶團練本身的版面。 */}
+      <div style={introStyle}>
+        DOR 是一款結合 GPS 跑步紀錄與遊戲化任務的訓練 App。「團練邀請」是其中一個功能——想約人一起跑步，直接在 App 內發起就好，大家看得到集合時間地點、按個讚表示要來，不用再另外開群組喬細節。
       </div>
 
-      <a href={openHref} style={ctaStyle}>開啟 DOR 查看團練</a>
+      <div style={cardStyle}>
+        {share.cover_url && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={share.cover_url}
+            alt=""
+            style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: 12, border: '1px solid rgba(255,255,255,0.12)' }}
+          />
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 21, fontWeight: 800, lineHeight: 1.4, wordBreak: 'break-word' }}>{share.title}</div>
+          {ended && <span style={endedPillStyle}>已結束</span>}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13.5, color: 'rgba(255,255,255,0.82)', lineHeight: 1.8 }}>
+          {share.meet_at && <div>🕕 {fmtMeetAt(share.meet_at)}</div>}
+          {share.is_private ? (
+            <div>🔒 私密團練・需要密碼加入</div>
+          ) : (
+            (share.no_location || share.region || share.place_label) && (
+              <div>
+                {runMeetLocationIcon(!!share.no_location)}{' '}
+                {runMeetLocationText({ no_location: !!share.no_location, region: share.region || '', place_label: share.place_label || '' })}
+              </div>
+            )
+          )}
+          {memberText && <div>👥 {memberText}{isFull ? '・已額滿' : ''}</div>}
+        </div>
+
+        {/* 說明摘要：私密團 description 後端一律回空字串（見 share.go），這裡再判一次 is_private
+            是防禦性寫法，不是唯一防線。 */}
+        {!share.is_private && share.description && (
+          <div style={descStyle}>{share.description}</div>
+        )}
+
+        {ended ? (
+          // 已結束：不引導去加入一個過去的團練，CTA 直接換成看其他團練。
+          <a href={listHref} style={ctaStyle}>看看其他團練</a>
+        ) : (
+          <>
+            <a href={openHref} style={ctaStyle}>登入並加入這場團練</a>
+            <a href={listHref} style={homeLinkStyle}>看看其他團練</a>
+          </>
+        )}
+      </div>
     </Frame>
   )
 }
@@ -194,4 +228,47 @@ const ctaStyle: React.CSSProperties = {
   padding: '13px 28px',
   borderRadius: 999,
   textDecoration: 'none',
+}
+
+// 產品介紹（第一印象文案）：比卡片本身淡一點、字級小一點，不搶團練資訊的視覺重量。
+const introStyle: React.CSSProperties = {
+  width: '100%',
+  maxWidth: 380,
+  fontSize: 12.5,
+  lineHeight: 1.8,
+  color: 'rgba(255,255,255,0.55)',
+  textAlign: 'left',
+}
+
+const cardStyle: React.CSSProperties = {
+  width: '100%',
+  maxWidth: 420,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  gap: 14,
+  background: 'rgba(255,255,255,0.04)',
+  border: '1px solid rgba(255,255,255,0.10)',
+  borderRadius: 20,
+  padding: '20px 18px',
+}
+
+const descStyle: React.CSSProperties = {
+  width: '100%',
+  fontSize: 13,
+  lineHeight: 1.8,
+  color: 'rgba(255,255,255,0.7)',
+  textAlign: 'left',
+  wordBreak: 'break-word',
+}
+
+const endedPillStyle: React.CSSProperties = {
+  display: 'inline-block',
+  fontSize: 11,
+  fontWeight: 800,
+  color: 'rgba(255,255,255,0.75)',
+  background: 'rgba(255,255,255,0.12)',
+  padding: '3px 9px',
+  borderRadius: 999,
+  flexShrink: 0,
 }

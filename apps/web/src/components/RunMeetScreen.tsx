@@ -12,6 +12,7 @@ import RunMeetListView, { EMPTY_FILTERS, type NearPos, type NearState, type RunM
 import RunMeetMineView from './runmeet/RunMeetMineView'
 import RunMeetDetailView from './runmeet/RunMeetDetailView'
 import RunMeetFormModal from './runmeet/RunMeetFormModal'
+import { LoginModal } from './UserAuthBar'
 import {
   RunMeetModal, Toast, backBtn, chip, chipActive, ghostBtn, goldPill, headerStyle,
   modalSubText, modalTitle, primaryBtn, scrollBody,
@@ -38,6 +39,10 @@ export default function RunMeetScreen({ onBack, initialMeetId }: { onBack: () =>
   const [duplicateSeed, setDuplicateSeed] = useState<RunMeetMemberDetail | null>(null)
   const [vipModal, setVipModal] = useState(false)
   const [created, setCreated] = useState<{ meet: RunMeetDetail; password?: string } | null>(null)
+  // 未登入深連結（分享卡「登入並加入這場團練」點過來）：直接在原地跳登入視窗，而不是把人
+  // 送回首頁再讓他自己找登入按鈕——登入成功後 useUser() 會重新渲染這個畫面，loggedIn 轉真，
+  // 直接落在這個團練的詳情，不用使用者自己再找路回來。見下方 !loggedIn 分支。
+  const [showLogin, setShowLogin] = useState(false)
   const [toast, setToast] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null)
   const vipFlow = useVipSubscribeFlow()
 
@@ -127,15 +132,18 @@ export default function RunMeetScreen({ onBack, initialMeetId }: { onBack: () =>
         <div style={{ ...scrollBody, textAlign: 'center', paddingTop: 60 }}>
           <div style={{ fontSize: 34 }}>🔒</div>
           <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)', marginTop: 10 }}>
-            請先登入才能{initialMeetId ? '查看這個團練' : '使用團練邀請'}
+            {initialMeetId ? '登入就能查看這場團練' : '登入後就能揪團練、跟大家一起跑'}
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.8 }}>
-            登入後就能看到集合時間地點，並直接加入。
+            {initialMeetId
+              ? '登入後就能看到完整集合時間地點、目前有誰要來，還能直接留言或按讚，一分鐘內搞定。'
+              : '登入後就能看到集合時間地點，直接加入別人辦的團練，或自己發起一場。'}
           </div>
-          <button onClick={onBack} style={{ ...primaryBtn, width: 'auto', padding: '9px 22px', marginTop: 18 }}>
-            返回首頁登入
+          <button onClick={() => setShowLogin(true)} style={{ ...primaryBtn, width: 'auto', padding: '9px 22px', marginTop: 18 }}>
+            {initialMeetId ? '登入查看團練' : '登入'}
           </button>
         </div>
+        {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
       </div>
     )
   }
