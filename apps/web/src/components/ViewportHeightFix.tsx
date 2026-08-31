@@ -35,7 +35,8 @@ import { MOBILE_MQ } from '@/lib/useIsMobile'
  *    iOS 12 起已被推翻、iOS 17/18 更有 innerHeight/vv/100dvh 三者一起掉的實測 → max() 兩邊同時被壓 →
  *    版面被寫成鍵盤態高度並鎖死（症狀 B）。
  *  ・不綁 visualViewport 的 'scroll'：那是 iOS 把焦點輸入框 pan 進可視區時的過渡值來源。
- *  ・不做 window.scrollTo(0,0) nudge：body 是 overflow:hidden，那行從頭到尾都是 no-op。
+ *  ・單獨的 window.scrollTo(0,0) 是 no-op（內容沒有超出、也已在 0）；有效版本見 nudge()：
+ *    先把 <html> 暫時 +2px 讓文件真的有 1px 可捲，捲下去再捲回來，逼 WebKit 重新錨定 viewport。
  *
  * 【使用者端逃生門／診斷（不需重新部署）】
  *  ?vpfix=off  完全停用並清除 --app-h（＝純 CSS 版），設定寫入 localStorage 持久生效
@@ -238,15 +239,23 @@ export default function ViewportHeightFix() {
       rafId = requestAnimationFrame(() => { rafId = 0; commit() })
     }
 
-    // 只推一下、不寫任何量測值：把 <html> 高度 +1px 再還原，嘗試逼 WebKit 重新解析 ICB。
-    // 有效性無一手來源佐證；失敗＝什麼都沒發生（inline height 一定會被清掉，回到 CSS 公式）。
+    // 只推一下、不寫任何量測值：把 <html> 暫時 +2px、做一次 1px 的**真實文件捲動**、再捲回並還原。
+    // 2026-09-01 vpdebug 實測定性（iPhone、分頁釋放後重載）：病態＝inner/icb/vv/dvh/svh 全部正確
+    //（小 viewport）、off 0、--app-h (none)，但整個 layout viewport 被「錨定」在工具列收合的位置——
+    // 上緣藏進網址列底下、下緣提早 (lvh−svh) px 露出 canvas 底色。尺寸沒壞、位置壞了：
+    // 所有可讀數值都對 ⇒ 任何量測規則在數學上都偵測不到，唯一出路是逼 WebKit 重新錨定，
+    // 而已知最可靠的重新錨定觸發器就是一次真實捲動（本站 overflow:hidden 從不捲動＝從無自癒機會）。
+    // overflow:hidden 只擋「使用者」捲動；內容一旦超出（+2px），程式化 scrollTo 仍有效。
+    // 1px 遠低於 Safari 收合工具列的捲動門檻，不會反過來把工具列縮起來；scrollY 停在 1 的那一幀
+    // 只是整頁上移 1px，肉眼不可見，還原時歸零。鍵盤中不捲，避免干擾輸入框的自動捲位。
     const nudge = () => {
       try {
-        root.style.height = 'calc(100% + 1px)'
+        root.style.height = 'calc(100% + 2px)'
         void root.offsetHeight
+        if (!kbUp()) window.scrollTo(0, 1)
         if (nudgeTimer) clearTimeout(nudgeTimer)
-        nudgeTimer = setTimeout(() => { root.style.height = '' }, 300) // rAF 被凍結時的保險清除
-        requestAnimationFrame(() => requestAnimationFrame(() => { root.style.height = '' }))
+        nudgeTimer = setTimeout(() => { root.style.height = ''; window.scrollTo(0, 0) }, 300) // rAF 凍結時的保險清除
+        requestAnimationFrame(() => requestAnimationFrame(() => { root.style.height = ''; window.scrollTo(0, 0) }))
       } catch { /* noop */ }
     }
 
