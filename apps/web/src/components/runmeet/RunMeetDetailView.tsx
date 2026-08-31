@@ -27,12 +27,16 @@ import {
 // ⚠️ 全檔零 dangerouslySetInnerHTML：說明/留言都是純文字，用 white-space:pre-wrap 呈現換行。
 
 export default function RunMeetDetailView({
-  id, fallbackCard, quota, onBack, onToast, onChanged, onLearnVip,
+  id, fallbackCard, quota, onBack, onGoHome, onToast, onChanged, onLearnVip,
 }: {
   id: string
   fallbackCard: RunMeetCard | null
   quota: RunMeetQuota | null
   onBack: () => void
+  // 已被刪除時倒數結束要「切回首頁」，不是「返回上一頁」（deep link 進來的人上一頁可能就是這個已刪除的
+  // 團練）。不提供時退回 onBack——仍優於停在一個永遠 404 的畫面。見 RunMeetScreen 怎麼接（接的是它自己
+  // 的 onBack，也就是真正離開整個團練邀請畫面回到首頁，而不是這個元件自己的 onBack＝回列表）。
+  onGoHome?: () => void
   onToast: (text: string, tone?: 'ok' | 'err') => void
   onChanged: () => void
   onLearnVip?: () => void
@@ -40,6 +44,7 @@ export default function RunMeetDetailView({
   const user = useUser()
   const uid = user?.id ?? 'guest'
   const [locked, setLocked] = useState(false)
+  const [deletedCountdown, setDeletedCountdown] = useState<number | null>(null)
   const [showUnlock, setShowUnlock] = useState(false)
   const [showManage, setShowManage] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
@@ -54,8 +59,22 @@ export default function RunMeetDetailView({
     () => withUserAuth((t) => runMeetApi.detail(t, id)),
     { shouldRetryOnError: false },
   )
-  // 私密團未解鎖 → 後端回 403（body 另帶摘要卡）；request() 只保留訊息，所以用 status 判定。
-  useEffect(() => { setLocked((error as any)?.status === 403) }, [error])
+  // 私密團未解鎖 → 後端回 403（body 另帶摘要卡）；已被發起人刪除 → 410（其餘不可見仍是 404，
+  // 落到下面泛用的「找不到這個團練」）。request() 只保留訊息，所以用 status 判定。
+  useEffect(() => {
+    const status = (error as any)?.status
+    setLocked(status === 403)
+    setDeletedCountdown(status === 410 ? 3 : null)
+  }, [error])
+
+  // 3 秒倒數：每秒遞減，歸零時切回首頁。cleanup 清掉 setTimeout，避免使用者提早自己按返回、
+  // 元件已卸載後，還在跑的計時器對它呼叫 setState / 導頁。
+  useEffect(() => {
+    if (deletedCountdown === null) return
+    if (deletedCountdown <= 0) { (onGoHome ?? onBack)(); return }
+    const t = setTimeout(() => setDeletedCountdown((s) => (s === null ? null : s - 1)), 1000)
+    return () => clearTimeout(t)
+  }, [deletedCountdown, onGoHome, onBack])
 
   const meet = data?.meet ?? null
   const card: RunMeetCard | null = meet ?? fallbackCard
@@ -116,12 +135,19 @@ export default function RunMeetDetailView({
       <header style={headerStyle}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <span style={{ flex: 1, fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>團練詳情</span>
-        {card && !isOwner && <button onClick={() => setShowReport({})} style={{ ...backBtn, color: 'var(--tx-faint)', fontSize: 12 }}>⚠ 檢舉</button>}
+        {card && !isOwner && deletedCountdown === null && <button onClick={() => setShowReport({})} style={{ ...backBtn, color: 'var(--tx-faint)', fontSize: 12 }}>⚠ 檢舉</button>}
       </header>
 
       <div style={scrollBody}>
         {isLoading && !card ? (
           <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
+        ) : deletedCountdown !== null ? (
+          // ⚠️ 這裡刻意不管 fallbackCard（可能是使用者從列表點進來時帶的舊卡片摘要）——
+          // 一旦後端回 410，畫面就只顯示這句倒數導頁文案，不能讓下面「找到 card 就渲染完整內容」
+          // 的分支用過期資料畫出一個其實已經被刪除的團練詳情。
+          <div style={{ color: 'var(--hunt)', fontSize: 15, fontWeight: 800, textAlign: 'center', padding: '40px 2px', lineHeight: 1.8 }}>
+            該團練已被刪除，{deletedCountdown} 秒後將會切換至首頁。
+          </div>
         ) : locked ? (
           <LockedPanel card={fallbackCard} onUnlock={() => setShowUnlock(true)} />
         ) : error || !meet || !card ? (
@@ -144,7 +170,8 @@ export default function RunMeetDetailView({
               <span style={tagPill}>{meet.approval_required ? '⏳ 需審核' : '⚡ 自由加入'}</span>
               {meet.is_ended && <span style={tagPill}>已結束</span>}
               {!meet.is_ended && meet.status === 'closed' && <span style={tagPill}>已關閉</span>}
-              {!meet.is_ended && meet.status === 'cancelled' && <span style={tagPill}>已取消</span>}
+              {!meet.is_ended && meet.status === 'cancelled' && <span style={tagPill}>已中止</span>}
+              {meet.hidden_by_owner && <span style={tagPill}>🙈 已隱藏</span>}
             </div>
 
             {/* 資訊區 */}
@@ -219,8 +246,8 @@ export default function RunMeetDetailView({
         )}
       </div>
 
-      {/* 底部 CTA */}
-      {cta && !locked && (
+      {/* 底部 CTA（deletedCountdown !== null 時強制不顯示——cta 可能是用舊 fallbackCard 算出來的） */}
+      {cta && !locked && deletedCountdown === null && (
         <div style={{ flexShrink: 0, padding: '10px 16px calc(env(safe-area-inset-bottom, 0px) + 24px)', borderTop: '1px solid var(--line)', background: 'var(--bg)', display: 'flex', gap: 8 }}>
           <button
             onClick={onCta}

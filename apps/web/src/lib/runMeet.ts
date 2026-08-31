@@ -203,12 +203,14 @@ export function runMeetCta(c: CtaInput): RunMeetCta {
       secondary: { label: '撤回申請', action: 'withdraw' },
     }
   }
-  // 5) 生命週期擋下（順序：已結束 → 已關閉 → 已取消）
-  //    ⚠️ 規格 5.7 第三格寫「已下架」，這裡改用「已取消」：本專案「下架」＝後台強制下架
+  // 5) 生命週期擋下（順序：已結束 → 已關閉 → 已中止）
+  //    ⚠️ 規格 5.7 第三格寫「已下架」，這裡改用「已中止」：本專案「下架」＝後台強制下架
   //    （hidden_by_admin，前台任何端點一律 404，根本不會渲染到 CTA），沿用會誤導玩家。
+  //    ⚠️ 「已取消」已改名「已中止」（後端狀態模型重整）：closed＝暫停收人、其他都照舊，
+  //    cancelled＝停止一切加入動作、可再重新開啟；兩者都不是終局狀態，措辭不能再暗示「結束了」。
   if (c.is_ended) return { label: '已結束', action: 'none', disabled: true, variant: 'muted' }
-  if (c.status === 'closed') return { label: '已關閉', action: 'none', disabled: true, variant: 'muted' }
-  if (c.status === 'cancelled') return { label: '已取消', action: 'none', disabled: true, variant: 'muted' }
+  if (c.status === 'closed') return { label: '已關閉，不再收新成員', action: 'none', disabled: true, variant: 'muted' }
+  if (c.status === 'cancelled') return { label: '已中止', action: 'none', disabled: true, variant: 'muted' }
   // 6) 婉拒冷卻中（24 小時後恢復可再申請；後端仍會再擋一次）
   if (c.my_state === 'rejected') {
     return { label: '申請未通過', action: 'none', disabled: true, variant: 'muted' }

@@ -21,26 +21,38 @@ import (
 
 // lockedMeet FOR UPDATE 鎖出來的團練狀態。
 type lockedMeet struct {
-	OwnerID      string
-	Capacity     int
-	MemberCount  int
-	PendingCount int
-	Status       string
-	MeetAt       time.Time
-	IsPrivate    bool
-	Approval     bool
+	OwnerID       string
+	Capacity      int
+	MemberCount   int
+	PendingCount  int
+	Status        string
+	MeetAt        time.Time
+	IsPrivate     bool
+	Approval      bool
+	HiddenByOwner bool
 }
 
+// lockMeet 鎖出目前的團練狀態，供 Join/LeaveOrWithdraw/Approve/Reject/Kick 五個動作共用。
+//
+// ⚠️ 刻意**不**在 WHERE 加 hidden_by_owner 過濾（與 GetMeet 不同）：這支是視角無關的內部鎖，
+// 五個呼叫端對「隱藏中的團還能不能動」的需求並不一樣——
+//   - Approve/Reject/Kick：呼叫者一定是發起人（函式內另有 `if m.OwnerID != ownerID` 擋非本人），
+//     發起人本來就該能管理自己隱藏中的團，不該被這裡攔下。
+//   - LeaveOrWithdraw：既有成員（joined/pending）退出/撤回自己的申請，不該因為發起人事後
+//     把團隱藏了就被卡住退不出去。
+//   - Join：**這支需要擋隱藏團**，但因為呼叫者在這個時間點還不是 joined 成員（是的話會在
+//     下面 switch 直接落 errAlreadyJoined），所以改成在 Join() 函式內用回傳的 HiddenByOwner
+//     欄位單獨判斷（見下方），而不是在這支共用鎖裡攔——攔在這裡會連帶誤傷上面三個情境。
 func lockMeet(ctx context.Context, tx pgx.Tx, meetID string) (lockedMeet, error) {
 	var m lockedMeet
 	err := tx.QueryRow(ctx, `
 		SELECT owner_id, capacity, member_count, pending_count, status, meet_at,
-		       (join_password_hash IS NOT NULL), approval_required
+		       (join_password_hash IS NOT NULL), approval_required, hidden_by_owner
 		  FROM run_meets
 		 WHERE id=$1 AND deleted_at IS NULL AND hidden_by_admin = FALSE
 		 FOR UPDATE`, meetID).
 		Scan(&m.OwnerID, &m.Capacity, &m.MemberCount, &m.PendingCount, &m.Status, &m.MeetAt,
-			&m.IsPrivate, &m.Approval)
+			&m.IsPrivate, &m.Approval, &m.HiddenByOwner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return m, errNotFound
 	}
@@ -69,17 +81,28 @@ func (r *Repository) Join(ctx context.Context, uid, meetID, note string, s Setti
 	if m.OwnerID == uid {
 		return res, errAlreadyJoined
 	}
-	if e := meetStatusError(m.Status, !m.MeetAt.After(time.Now())); e != nil {
-		return res, e
-	}
 
-	// 現有成員列（決定能不能加入／是否在冷卻中）
+	// 現有成員列（決定能不能加入／是否在冷卻中；也用來判斷隱藏團的可見性例外，見下方）。
+	// 查詢順序刻意提前到 meetStatusError 之前——兩者互不依賴，只是隱藏檢查需要先知道 cur。
 	var cur, role string
 	var decidedAt *time.Time
 	err = tx.QueryRow(ctx, `SELECT status, role, decided_at FROM run_meet_members WHERE meet_id=$1 AND user_id=$2`,
 		meetID, uid).Scan(&cur, &role, &decidedAt)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return res, err
+	}
+
+	// 隱藏（hidden_by_owner）但呼叫者不是已加入成員 → 一律當作不存在，不透露存在（規格：
+	// 隱藏團練只剩發起人和管理者看得到；pending/rejected/kicked 都算「其他人」）。
+	// ⚠️ Defense-in-depth 第二層：handler.Join 呼叫 GetMeet 已有第一層閘門（同樣條件，見
+	// repository.go GetMeet 的註解），這裡是保護所有可能繞過 handler 直接呼叫 Join() 的路徑
+	// （例如未來新增的內部呼叫或測試）。
+	if m.HiddenByOwner && !CanSeeWhenHidden(false, cur) {
+		return res, errNotFound
+	}
+
+	if e := meetStatusError(m.Status, !m.MeetAt.After(time.Now())); e != nil {
+		return res, e
 	}
 	switch cur {
 	case MemberJoined:

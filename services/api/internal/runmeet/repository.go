@@ -25,7 +25,7 @@ const meetCols = `
 	m.id, m.owner_id, m.title, m.meet_at, m.region, m.place_label, m.lat, m.lng, m.meeting_detail,
 	m.capacity, m.description, m.image_urls, m.image_limit, m.approval_required,
 	(m.join_password_hash IS NOT NULL) AS is_private,
-	m.member_count, m.pending_count, m.status, m.hidden_by_admin, m.hidden_reason,
+	m.member_count, m.pending_count, m.status, m.hidden_by_admin, m.hidden_by_owner, m.hidden_reason,
 	m.comment_count, m.reaction_count, m.created_at, m.updated_at,
 	COALESCE(NULLIF(u.name,''), u.handle) AS owner_name,
 	COALESCE(u.avatar_url,'') AS owner_avatar,
@@ -44,7 +44,7 @@ func scanMeet(row interface{ Scan(...any) error }) (meetRow, error) {
 	var m meetRow
 	err := row.Scan(&m.ID, &m.OwnerID, &m.Title, &m.MeetAt, &m.Region, &m.PlaceLabel, &m.Lat, &m.Lng, &m.MeetingDetail,
 		&m.Capacity, &m.Description, &m.ImageURLs, &m.ImageLimit, &m.ApprovalRequired, &m.IsPrivate,
-		&m.MemberCount, &m.PendingCount, &m.Status, &m.HiddenByAdmin, &m.HiddenReason,
+		&m.MemberCount, &m.PendingCount, &m.Status, &m.HiddenByAdmin, &m.HiddenByOwner, &m.HiddenReason,
 		&m.CommentCount, &m.ReactionCount, &m.CreatedAt, &m.UpdatedAt,
 		&m.OwnerName, &m.OwnerAvatar, &m.MyStatus, &m.MyReaction, &m.Unlocked)
 	return m, err
@@ -235,7 +235,9 @@ const nearCandidateCap = 500
 // 讓非成員從附近搜尋能得到的資訊，不比公開層的 region/place_label 多。改這段前先讀完 geo.go。
 func (r *Repository) ListMeets(ctx context.Context, uid string, f ListFilter, endedVisibleDays int) ([]meetRow, int, error) {
 	args := []any{uid}
-	where := []string{"m.deleted_at IS NULL", "m.hidden_by_admin = FALSE"}
+	// hidden_by_owner 在探索列表一律排除，沒有例外（包含發起人自己瀏覽時）——「隱藏」的產品定義
+	// 就是「從入口關閉」，發起人要管理自己隱藏的團練，走的是 Mine()/owned 分頁，不是這裡。
+	where := []string{"m.deleted_at IS NULL", "m.hidden_by_admin = FALSE", "m.hidden_by_owner = FALSE"}
 
 	if f.Ended {
 		// 已結束折疊區：meet_at 已過，且還在保留天數內（超過就從探索消失，資料不刪）
@@ -372,9 +374,16 @@ func (r *Repository) ListMeets(ctx context.Context, uid string, f ListFilter, en
 }
 
 // GetMeet 單筆（前台視角）。軟刪／後台下架一律當作不存在（404，不外洩差異）。
+//
+// ⚠️ hidden_by_owner 的可見性例外：發起人自己、已加入成員（mm.status='joined'）仍可查看——
+// 否則已成團的人會突然看不到集合資訊（規格明訂）。申請中（pending）不算數：隱藏的產品定義
+// 是「只剩發起人和管理者看得到」，pending 屬於「其他人」。這支同時是 Join 端點的第一道閘門
+// （handler.Join 呼叫 GetMeet 失敗就直接 404，走不到 repository.Join），Join() 內部另有
+// 第二道（見 members.go 的 hidden 檢查），兩層互為防線。
 func (r *Repository) GetMeet(ctx context.Context, uid, id string) (meetRow, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+meetCols+meetJoins+
-		` WHERE m.id = $2 AND m.deleted_at IS NULL AND m.hidden_by_admin = FALSE`, uid, id)
+		` WHERE m.id = $2 AND m.deleted_at IS NULL AND m.hidden_by_admin = FALSE
+		    AND (m.hidden_by_owner = FALSE OR m.owner_id = $1 OR mm.status = 'joined')`, uid, id)
 	m, err := scanMeet(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return m, errNotFound
@@ -382,7 +391,23 @@ func (r *Repository) GetMeet(ctx context.Context, uid, id string) (meetRow, erro
 	return m, err
 }
 
-// GetMeetAdmin 單筆（後台視角）：含已下架與已軟刪。
+// IsDeleted 只給 Detail 端點用：分辨「已軟刪」與其餘讓 GetMeet 找不到列的原因（不存在／
+// 後台下架／發起人隱藏且非當事人）。只有「已刪除」這一種可以額外揭露成 410（規格理由：
+// 連結是發起人主動分享出去的，收到連結的人本來就知道它存在過，不構成新洩漏；其餘原因
+// GetMeet 仍統一回 404，不外洩差異——同一套理由見 share.go 檔頭）。
+// 刻意獨立於 GetMeet 之外：不想讓 Update/Join/Members 等其他呼叫端也跟著換行為或回應碼。
+func (r *Repository) IsDeleted(ctx context.Context, id string) (bool, error) {
+	var deleted bool
+	err := r.db.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM run_meets WHERE id=$1`, id).Scan(&deleted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return deleted, err
+}
+
+// GetMeetAdmin 單筆（後台視角）：含已下架、已軟刪、發起人已隱藏——**刻意不加任何 hidden_by_*
+// 過濾**。後台需要無條件看到一切才能處理檢舉/糾紛，這條路徑本來就沒有 hidden_by_admin 過濾
+// （見既有實作），hidden_by_owner 比照辦理，不需要另外加白名單條件。
 func (r *Repository) GetMeetAdmin(ctx context.Context, viewerID, id string) (meetRow, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+meetCols+meetJoins+` WHERE m.id = $2`, viewerID, id)
 	m, err := scanMeet(row)
@@ -394,6 +419,12 @@ func (r *Repository) GetMeetAdmin(ctx context.Context, viewerID, id string) (mee
 
 // Mine 我的團練三段：我發起的 / 我參加的 / 申請中。
 // 已結束的仍然看得到（規格 5.6：從探索折疊區消失後，成員仍可在「我的」看到）。
+//
+// ⚠️ 刻意不加 hidden_by_owner 過濾：這整支查詢本來就是「當事人可見」——owned 段是
+// owner_id=$1（發起人本人管理隱藏團練正是走這裡，不是探索列表）；joined 段是
+// mm.status='joined'（規格明訂已加入成員不受隱藏影響）；pending 段雖不在規格的例外清單裡，
+// 但這是使用者自己申請中的清單，讓自己的申請從自己的「我的」頁面消失沒有任何隱私或產品
+// 上的理由——加了 hidden_by_owner 過濾只會製造「申請明明還在、卻突然從清單消失」的錯覺。
 func (r *Repository) Mine(ctx context.Context, uid string) (owned, joined, pending []meetRow, err error) {
 	load := func(cond string) ([]meetRow, error) {
 		rows, e := r.db.Query(ctx, `SELECT `+meetCols+meetJoins+
@@ -441,6 +472,12 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 	}
 	defer tx.Rollback(ctx)
 
+	// ⚠️ 這裡的 FOR UPDATE 查詢刻意**不加 hidden_by_owner 過濾**：與 GetMeet（前台瀏覽用、要在
+	// SQL 層擋非當事人）不同，這支只服務「編輯」這一個動作，緊接著就用 Go 層的
+	// `ownerID != uid` 擋掉所有非本人——本人一定要能編輯自己隱藏中的團練（隱藏是「不給別人看」，
+	// 不是「連自己都不能改」），加了 hidden_by_owner 條件反而會誤傷這個情境。
+	// hidden_by_admin 仍然過濾：後台下架與發起人自己的動作無關，下架期間本來就不該讓任何人
+	// （含發起人）繞過後台審核逕自編輯內容。
 	var ownerID, status string
 	var memberCount, pendingCount, imageLimit int
 	var oldApproval bool
@@ -464,7 +501,7 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 	if ownerID != uid {
 		return res, errNotOwner
 	}
-	if status != StatusOpen {
+	if !CanEdit(status) {
 		return res, meetStatusError(status, false)
 	}
 	// ⚠️ 已過期的團一律不得編輯。過期不改 status 是刻意的（規格 5.6 用查詢條件判定），
@@ -536,14 +573,23 @@ func sameCoord(a, b *float64) bool {
 	return *a == *b
 }
 
-// SetStatus 關閉／取消（僅發起人）。回傳被一併婉拒的待審申請數。
+// SetStatus 切換 open/closed/cancelled（僅發起人）。合法轉換表見 model.go CanTransition：
+//
+//	open→closed（關閉，可逆）／closed→open（重新開啟）／open→cancelled／closed→cancelled（中止）／
+//	cancelled→open（恢復）。不合法轉換（例如 cancelled→closed、同狀態互轉）回 errBadTransition，
+//	不外洩目前確切狀態——呼叫端自己指定要轉去哪裡，只需要知道「不行」。
+//
+// 回傳被一併婉拒的待審申請 user_id（只有轉為 cancelled 才會非空）：
+//
+//	⚠️ closed 是可逆的「不再收新人，其他功能照舊」（使用者定案），待審申請一律保留，
+//	重開後發起人可以繼續處理——這是本次重整的主因，原本關閉會無條件婉拒所有待審，
+//	那是為「不可逆」設計的收尾，現在改由 cancelled 承擔。
+//	cancelled 才是「停止加入的任何動作」，此時才把所有待審一併婉拒（沿用原本 closed 那段
+//	交易邏輯）：不做的話會卡出一個無法離開的死迴圈——pending_count 不歸零 → 詳情頁一直顯示
+//	「有 N 筆待審核申請，前往處理」→ 發起人按同意卻被 Approve 的 status != open 檢查擋成
+//	409 → 申請人那端 CTA 也永遠停在「審核中…」。
 //
 // ⚠️ 這條路徑**完全不碰 run_meet_used**——「開啟後關閉一樣消耗一次」（見 quota.go 檔頭）。
-//
-// ⚠️ 待審申請必須在同一交易內一併婉拒（規格 6.3 的關閉確認文案就是這樣寫的：
-// 「待審核的申請會一併婉拒」）。不做的話會卡出一個無法離開的死迴圈：
-// pending_count 不歸零 → 詳情頁一直顯示「有 N 筆待審核申請，前往處理」→ 發起人按同意
-// 卻被 Approve 的 status != open 檢查擋成 409 → 申請人那端 CTA 也永遠停在「審核中…」。
 func (r *Repository) SetStatus(ctx context.Context, uid, id, status string) ([]string, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -551,18 +597,45 @@ func (r *Repository) SetStatus(ctx context.Context, uid, id, status string) ([]s
 	}
 	defer tx.Rollback(ctx)
 
-	tag, err := tx.Exec(ctx, `
-		UPDATE run_meets SET status=$3, closed_at=NOW(), closed_by=$2, updated_at=NOW()
-		 WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL AND hidden_by_admin=FALSE AND status='open'`,
-		id, uid, status)
+	// ⚠️ 這裡沒有 hidden_by_owner 過濾：WHERE 已經直接帶 owner_id=$2，本來就是「當事人可見」
+	// 查詢——切換自己團練的狀態這件事，跟自己有沒有把它隱藏起來無關，加了只會誤傷發起人本人。
+	var cur string
+	err = tx.QueryRow(ctx, `
+		SELECT status FROM run_meets
+		 WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL AND hidden_by_admin=FALSE
+		 FOR UPDATE`, id, uid).Scan(&cur)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errNotFound // 不存在／非本人／已下架，一律不外洩差異
+	}
 	if err != nil {
 		return nil, err
 	}
-	if tag.RowsAffected() == 0 {
-		return nil, errNotFound // 不存在／非本人／已非 open，一律不外洩差異
+	if !CanTransition(cur, status) {
+		return nil, errBadTransition
 	}
 
-	// 一併婉拒所有待審申請（decided_by 記發起人；婉拒冷卻讀 decided_at）。
+	// closed_at/closed_by 只在進入 closed/cancelled 時寫；回到 open 時清成 NULL——可逆語意下，
+	// 重開的團不該留著上一輪關閉的時間戳／操作者（前端若拿它顯示「已關閉多久」會被誤導成
+	// 從沒開過一樣久）。
+	var closedAt *time.Time
+	var closedBy *string
+	if status != StatusOpen {
+		now := time.Now()
+		closedAt, closedBy = &now, &uid
+	}
+	if _, err = tx.Exec(ctx, `
+		UPDATE run_meets SET status=$2, closed_at=$3, closed_by=$4, updated_at=NOW()
+		 WHERE id=$1`, id, status, closedAt, closedBy); err != nil {
+		return nil, err
+	}
+
+	if status != StatusCancelled {
+		// closed（可逆）／open（重開）都不動待審申請：closed 保留給重開後繼續處理；
+		// open 本來就沒有「因為轉態而該婉拒」的申請（唯一會累積 pending 的來源是加入申請本身）。
+		return nil, tx.Commit(ctx)
+	}
+
+	// 中止：一併婉拒所有待審申請（decided_by 記發起人；婉拒冷卻讀 decided_at）。
 	// 回傳被婉拒者的 user_id 供 handler 推播——他們已不在 joined/pending 名單裡，
 	// notifyMembers 撈不到，不主動推的話 CTA 會一直停在「⏳ 審核中…」。
 	rows, err := tx.Query(ctx, `
@@ -593,6 +666,24 @@ func (r *Repository) SetStatus(ctx context.Context, uid, id, status string) ([]s
 	return rejected, tx.Commit(ctx)
 }
 
+// SetVisibility 發起人自行隱藏／取消隱藏（hidden_by_owner，可逆）。
+// ⚠️ 與 hidden_by_admin 分離：這支只能動 hidden_by_owner 這一欄，發起人無法透過它解除
+// 後台下架（WHERE 排除 hidden_by_admin=TRUE，一併下架期間前台任何端點對該團一律 404，
+// 這支也不例外——與既有 GetMeet/lockMeet 的行為一致，不開特例）。
+func (r *Repository) SetVisibility(ctx context.Context, uid, id string, hidden bool) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE run_meets SET hidden_by_owner=$3, updated_at=NOW()
+		 WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL AND hidden_by_admin=FALSE`,
+		id, uid, hidden)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errNotFound // 不存在／非本人／已下架，一律不外洩差異
+	}
+	return nil
+}
+
 // SoftDelete 發起人軟刪除。⚠️ 同樣不回補配額。
 func (r *Repository) SoftDelete(ctx context.Context, uid, id string) error {
 	tag, err := r.db.Exec(ctx, `
@@ -616,11 +707,17 @@ var dummyHash = []byte("$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17
 
 // VerifyPassword 驗證私密團密碼。回 (ok, isPrivate, err)。
 // 團不存在／非私密團一律走 dummy 比對後回 ok=false，呼叫端統一回同一句 403。
+//
+// ⚠️ hidden_by_owner=FALSE 這裡無條件加、不留當事人例外：Unlock 這支動作的意義是「讓一個
+// 還沒有存取權的訪客拿到詳情頁入場券」，發起人與已加入成員本來就不需要（也不會）呼叫這支
+// ——HasDetailAccess 對 isOwner/joined 早就直接放行。所以會打這支端點的人，一定是還沒有
+// 任何關係的訪客；隱藏團練的定義正是「這種人看不到」，讓密碼正確與否都無法解鎖一個隱藏的團，
+// 才是「隱藏」這個詞該有的效果——否則知道連結＋猜中密碼就能繞過隱藏，隱藏就形同虛設。
 func (r *Repository) VerifyPassword(ctx context.Context, id, password string) (bool, error) {
 	var hash *string
 	err := r.db.QueryRow(ctx, `
 		SELECT join_password_hash FROM run_meets
-		 WHERE id=$1 AND deleted_at IS NULL AND hidden_by_admin=FALSE`, id).Scan(&hash)
+		 WHERE id=$1 AND deleted_at IS NULL AND hidden_by_admin=FALSE AND hidden_by_owner=FALSE`, id).Scan(&hash)
 	if err != nil || hash == nil || *hash == "" {
 		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password)) // 統一時序
 		return false, nil

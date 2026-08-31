@@ -181,6 +181,7 @@ func (h *Handler) AdminDetail(w http.ResponseWriter, r *http.Request) {
 		"meet": h.buildDetail(&m, viewer, true), "members": members,
 		"pending": pending, "comments": comments,
 		"hidden_by_admin": m.HiddenByAdmin, "hidden_reason": m.HiddenReason,
+		"hidden_by_owner": m.HiddenByOwner, // 資訊性：讓管理員知道發起人自己也隱藏了這個團
 	})
 }
 

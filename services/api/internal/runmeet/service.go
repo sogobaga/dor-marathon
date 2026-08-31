@@ -37,10 +37,10 @@ var (
 	errRequiresVIP = newErr(http.StatusForbidden, "發起團練是 VIP 專屬功能。")
 
 	// 私密團密碼
-	errLocked       = newErr(http.StatusForbidden, "這是私密團練，請輸入發起人提供的密碼。")
-	errPasswordWrong = newErr(http.StatusForbidden, "團練密碼錯誤，請再確認一次。")
+	errLocked          = newErr(http.StatusForbidden, "這是私密團練，請輸入發起人提供的密碼。")
+	errPasswordWrong   = newErr(http.StatusForbidden, "團練密碼錯誤，請再確認一次。")
 	errPasswordTooMany = newErr(http.StatusTooManyRequests, "密碼錯誤次數過多，請 10 分鐘後再試。")
-	errPasswordLen  = newErr(http.StatusBadRequest, "密碼請填 4 到 32 個字元。")
+	errPasswordLen     = newErr(http.StatusBadRequest, "密碼請填 4 到 32 個字元。")
 
 	// 名額／成員
 	errMeetFull        = newErr(http.StatusConflict, "這個團練已經滿了。")
@@ -53,9 +53,15 @@ var (
 	errEnded           = newErr(http.StatusConflict, "這個團練的時間已經過了，無法加入。")
 	errMeetClosed      = newErr(http.StatusConflict, "發起人已關閉這個團練。")
 	errEditEnded       = newErr(http.StatusConflict, "這個團練的時間已經過了，無法再編輯。請重新發起一個新的團練。")
-	errMeetCancelled   = newErr(http.StatusConflict, "這個團練已被發起人取消。")
-	errOwnerCantLeave  = newErr(http.StatusBadRequest, "你是發起人，無法退出自己的團練（請改用關閉或取消）。")
-	errNoSuchMember    = newErr(http.StatusConflict, "這位跑者目前不在團練成員名單中。")
+	// errMeetCancelled 規格用字是「中止」不是「取消」：中止＝停止加入的任何動作（可恢復），
+	// 與舊版「取消＝單向終局」語意不同，文案跟著改，避免使用者誤以為不可逆。
+	errMeetCancelled  = newErr(http.StatusConflict, "該團練已中止。")
+	errOwnerCantLeave = newErr(http.StatusBadRequest, "你是發起人，無法退出自己的團練（請改用關閉或中止）。")
+	errNoSuchMember   = newErr(http.StatusConflict, "這位跑者目前不在團練成員名單中。")
+	// errBadTransition SetStatus 收到不合法的狀態轉換（見 model.go CanTransition）。
+	// 不細分「為什麼不行」（例如 cancelled→closed vs 同狀態互轉）：呼叫端本來就是自己指定
+	// 要轉去哪個狀態，這裡只需告知「不行」，不需要額外資訊。
+	errBadTransition = newErr(http.StatusConflict, "目前狀態無法這樣切換。")
 
 	// 內容驗證
 	errTooLong        = newErr(http.StatusBadRequest, "內容超過長度上限。")
@@ -305,14 +311,31 @@ func validateMeetInput(in *MeetInput, now time.Time, capacityMax, imageLimit, vi
 
 func runeLen(s string) int { return len([]rune(s)) }
 
-// meetStatusError 把「這個團練現在不能被加入/留言」的原因轉成對應錯誤。
+// joinStatusBlocks status → 該狀態擋加入時要用哪個既有錯誤物件（套件層級單例指標）。
+//
+// ⚠️ 這裡刻意用一個共用的 map，而不是讓 joinBlockReason 和 meetStatusError 各自寫一份
+// switch：兩邊都要回同一個 *apiErr 單例（errors.Is 靠指標相等比對，newErr 現造一個新指標
+// 會讓既有的 errors.Is(err, errMeetClosed) 全部失效），單一資料來源才不會兩邊漂移。
+var joinStatusBlocks = map[string]*apiErr{
+	StatusClosed:    errMeetClosed,
+	StatusCancelled: errMeetCancelled,
+}
+
+// joinBlockReason 依 status 本身回「不能加入」的文案（""＝這個狀態本身不擋，是否已過期
+// 由呼叫端另外用 isEnded 判斷，見 meetStatusError）。純函式，可單元測試。
+func joinBlockReason(status string) string {
+	if e, ok := joinStatusBlocks[status]; ok {
+		return e.Msg
+	}
+	return ""
+}
+
+// meetStatusError 把「這個團練現在不能被加入/留言/編輯」的原因轉成對應錯誤物件——
+// handler/repository 一律呼叫這裡，不要各自 if status == "closed" 散落判斷。
 // isEnded 由 meet_at <= now 判定（過期是查詢條件，不是狀態欄位——刻意不開排程改 status）。
 func meetStatusError(status string, isEnded bool) error {
-	switch status {
-	case StatusClosed:
-		return errMeetClosed
-	case StatusCancelled:
-		return errMeetCancelled
+	if e, ok := joinStatusBlocks[status]; ok {
+		return e
 	}
 	if isEnded {
 		return errEnded

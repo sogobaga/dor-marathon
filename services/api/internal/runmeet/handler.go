@@ -185,8 +185,8 @@ func (h *Handler) Router() http.Handler {
 
 	r.Get("/{id}", h.Detail)
 	r.With(h.limit("runmeet_write", 20, time.Minute)).Put("/{id}", h.Update)
-	r.With(h.limit("runmeet_write", 20, time.Minute)).Post("/{id}/close", h.Close)
-	r.With(h.limit("runmeet_write", 20, time.Minute)).Post("/{id}/cancel", h.Cancel)
+	r.With(h.limit("runmeet_write", 20, time.Minute)).Post("/{id}/status", h.SetStatus)
+	r.With(h.limit("runmeet_write", 20, time.Minute)).Post("/{id}/visibility", h.Visibility)
 	r.With(h.limit("runmeet_write", 20, time.Minute)).Delete("/{id}", h.Delete)
 
 	// 密碼端點：mount 級限流掛在**具體 route** 上（不是 r.Use）——掛 r.Use 時路由尚未匹配，
@@ -295,6 +295,12 @@ func (h *Handler) buildCard(m *meetRow, viewer string, withBand, isAdmin bool) C
 	}
 	if withBand {
 		c.DistanceBand = DistanceBand(m.distanceM)
+	}
+	// HiddenByOwner 只給發起人／後台視角（比照 PendingCount 的既有模式）：這是發起人管理面板
+	// 專用的旗標，一般訪客本來就看不到被隱藏的團（GetMeet/ListMeets 已在 SQL 層擋掉），
+	// 沒有機會走到這個欄位有意義的分支，恆 false 也不算洩漏。
+	if isOwner || isAdmin {
+		c.HiddenByOwner = m.HiddenByOwner
 	}
 	return c
 }
@@ -550,6 +556,15 @@ func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
 	u := uid(r)
 	m, err := h.repo.GetMeet(r.Context(), u, id)
 	if err != nil {
+		// 已軟刪回 410 + {"error":"deleted"}，讓前端能顯示倒數導頁文案（規格：連結是發起人
+		// 主動分享出去的，收到連結的人本來就知道它存在過，不構成新洩漏）；其餘讓 GetMeet
+		// 找不到列的原因（不存在／後台下架／發起人隱藏且非當事人）維持 404，不外洩差異。
+		if errIsNotFound(err) {
+			if deleted, derr := h.repo.IsDeleted(r.Context(), id); derr == nil && deleted {
+				respondJSON(w, http.StatusGone, map[string]string{"error": "deleted"})
+				return
+			}
+		}
 		respondAPIErr(w, err)
 		return
 	}
@@ -630,19 +645,47 @@ func (h *Handler) notifyMembers(ctx context.Context, meetID string) {
 	h.notify(ctx, ids...)
 }
 
-// POST /run-meets/{id}/close ／ /cancel
-// ⚠️ 兩條路徑都**不碰 run_meet_used**：「開啟後關閉，一樣消耗一次」（見 quota.go 檔頭）。
-func (h *Handler) Close(w http.ResponseWriter, r *http.Request)  { h.setStatus(w, r, StatusClosed) }
-func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) { h.setStatus(w, r, StatusCancelled) }
+// statusAction 前端傳入的 action 字串 → 目標 status（純函式，可單元測試）。
+// 刻意用白名單而不是直接把 action 當 status 值送進 repository：action 是 API 契約用字
+// （動詞：open/close/cancel），status 是資料庫欄位值（名詞：open/closed/cancelled），
+// 兩者故意不共用同一組字串，避免前端傳入奇怪字串時被當成合法 status 值直接打進 SQL 參數。
+func statusAction(action string) (status string, ok bool) {
+	switch action {
+	case "open":
+		return StatusOpen, true
+	case "close":
+		return StatusClosed, true
+	case "cancel":
+		return StatusCancelled, true
+	}
+	return "", false
+}
 
-func (h *Handler) setStatus(w http.ResponseWriter, r *http.Request, status string) {
+// POST /run-meets/{id}/status  {"action":"open"|"close"|"cancel"}
+//
+// 三個動作共用一支端點、一支 repository 方法（SetStatus）；合法轉換表見 model.go
+// CanTransition——open⇄closed（關閉可逆）、open/closed→cancelled（中止）、cancelled→open（恢復）。
+// ⚠️ 不碰 run_meet_used：「開啟後關閉一樣消耗一次」（見 quota.go 檔頭）。
+func (h *Handler) SetStatus(w http.ResponseWriter, r *http.Request) {
 	id, ok := meetIDParam(r)
 	if !ok {
 		respondAPIErr(w, errBadID)
 		return
 	}
+	var body struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
+	status, ok := statusAction(body.Action)
+	if !ok {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
 	u := uid(r)
-	// rejected＝被一併婉拒的待審申請者（關閉確認文案「待審核的申請會一併婉拒」的實作）
+	// rejected＝轉為 cancelled 時被一併婉拒的待審申請者；closed/open 恆空（見 SetStatus 註解）。
 	rejected, err := h.repo.SetStatus(r.Context(), u, id, status)
 	if err != nil {
 		respondAPIErr(w, err)
@@ -651,6 +694,29 @@ func (h *Handler) setStatus(w http.ResponseWriter, r *http.Request, status strin
 	h.notifyMembers(r.Context(), id)
 	h.notify(r.Context(), rejected...) // 已不在 joined/pending 名單，必須單獨推
 	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "status": status, "rejected": len(rejected)})
+}
+
+// POST /run-meets/{id}/visibility  {"hidden":true|false}（僅發起人；hidden_by_owner，可逆）
+func (h *Handler) Visibility(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	var body struct {
+		Hidden bool `json:"hidden"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
+	u := uid(r)
+	if err := h.repo.SetVisibility(r.Context(), u, id, body.Hidden); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	h.notify(r.Context(), u)
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "hidden": body.Hidden})
 }
 
 // DELETE /run-meets/{id}（軟刪；同樣不返還配額）

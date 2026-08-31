@@ -164,7 +164,10 @@ export function MeetCard({ meet, onOpen, now }: { meet: RunMeetCard; onOpen: () 
           {full && <span style={tagPill}>✅ 已滿</span>}
           {meet.is_ended && <span style={tagPill}>已結束</span>}
           {!meet.is_ended && meet.status === 'closed' && <span style={tagPill}>已關閉</span>}
-          {!meet.is_ended && meet.status === 'cancelled' && <span style={tagPill}>已取消</span>}
+          {!meet.is_ended && meet.status === 'cancelled' && <span style={tagPill}>已中止</span>}
+          {/* 只有發起人／後台視角才會是 true（見 api.ts RunMeetCard.hidden_by_owner 註解），
+              其他人看到的這張卡永遠不會帶著這個標籤——不會外洩「這團被誰隱藏了」。 */}
+          {meet.hidden_by_owner && <span style={tagPill}>🙈 已隱藏</span>}
         </div>
 
         {meet.excerpt && (

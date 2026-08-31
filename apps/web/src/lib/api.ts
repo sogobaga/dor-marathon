@@ -4109,7 +4109,11 @@ export const cheerLayoutApi = {
 
 export type RunMeetOwner = { id: string; name: string; avatar_url: string }
 export type RunMeetMyState = 'none' | 'pending' | 'joined' | 'rejected' | 'kicked' | 'left' | 'owner'
+// open⇄closed（closed＝暫停收新成員，其他功能照舊）、open/closed→cancelled（中止＝停止一切加入動作，
+// 待審申請一併婉拒）、cancelled→open（重新開啟）；cancelled→closed 不合法（後端回 409）。
 export type RunMeetStatus = 'open' | 'closed' | 'cancelled'
+// POST /run-meets/{id}/status 的 body.action（見 runMeetApi.setStatus）。
+export type RunMeetStatusAction = 'open' | 'close' | 'cancel'
 // ⚠️ 後端刻意只回「距離分級」不回精確距離：回 0.23 km 這種值可讓攻擊者換多組座標查詢、
 //    三角定位反推出精確地點，等於繞過整套地點分層設計。只在帶 near_lat/near_lng 查詢時出現。
 export type RunMeetDistanceBand = 'lt1' | '1to3' | '3to5' | '5to10' | 'gt10'
@@ -4136,6 +4140,9 @@ export interface RunMeetCard {
   my_reaction: RunMeetReactionKind | null
   has_access: boolean
   distance_band?: RunMeetDistanceBand
+  // 發起人自己把團練從探索/連結隱藏（≠ status、≠ 後台強制下架 hidden_by_admin）。
+  // 恆存在；非發起人/後台視角一律 false（不外洩「這團被隱藏了」給其他人）。
+  hidden_by_owner: boolean
 }
 
 interface RunMeetDetailBase extends RunMeetCard {
@@ -4309,17 +4316,26 @@ export const runMeetApi = {
   },
   // 私密團未解鎖 → 403 { error, locked:true, card }（見 RunMeetScreen 的解鎖流程；
   // request() 只會把 error 字串包成 ApiError，卡片摘要由呼叫端改打 list 或直接顯示已知卡片）。
+  // 已被發起人刪除 → 410 { error: 'deleted' }（其餘不可見仍是 404）；呼叫端用 ApiError.status 判斷，
+  // 見 RunMeetDetailView 的「該團練已被刪除，3 秒後將會切換至首頁」倒數導頁。
   detail: (token: string, id: string) =>
     request<{ meet: RunMeetDetail }>(`/run-meets/${id}`, { headers: withAuth(token) }),
   update: (token: string, id: string, input: RunMeetInput) =>
     request<{ meet: RunMeetDetail; pending_kept: number }>(`/run-meets/${id}`, {
       method: 'PUT', headers: withAuth(token), body: JSON.stringify(input),
     }),
-  // rejected＝關閉/取消時被一併婉拒的待審申請數（後端在同一交易內處理，pending_count 歸零）
-  close: (token: string, id: string) =>
-    request<{ ok: boolean; status: RunMeetStatus; rejected: number }>(`/run-meets/${id}/close`, { method: 'POST', headers: withAuth(token) }),
-  cancel: (token: string, id: string) =>
-    request<{ ok: boolean; status: RunMeetStatus; rejected: number }>(`/run-meets/${id}/cancel`, { method: 'POST', headers: withAuth(token) }),
+  // 狀態機（見 RunMeetStatus 註解）：action 'open'|'close'|'cancel'。
+  // rejected＝中止時被一併婉拒的待審申請數（後端在同一交易內處理）；關閉時待審申請會保留、
+  // rejected 恆 0（重新開啟後可繼續處理）。非法轉換（例如 cancelled→closed）回 409。
+  setStatus: (token: string, id: string, action: RunMeetStatusAction) =>
+    request<{ ok: boolean; status: RunMeetStatus; rejected: number }>(`/run-meets/${id}/status`, {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify({ action }),
+    }),
+  // 發起人自行隱藏/取消隱藏（限發起人）；與 status 無關，closed/cancelled 期間也能隱藏。
+  setVisibility: (token: string, id: string, hidden: boolean) =>
+    request<{ ok: boolean; hidden: boolean }>(`/run-meets/${id}/visibility`, {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify({ hidden }),
+    }),
   remove: (token: string, id: string) =>
     request<{ ok: boolean }>(`/run-meets/${id}`, { method: 'DELETE', headers: withAuth(token) }),
   unlock: (token: string, id: string, password: string) =>

@@ -24,14 +24,19 @@ import (
 // 多回的欄位（其他端點還能靠登入/入口/成員身分擋一層，這支端點前面什麼都沒有）。
 // 私密團之下 region/place_label/cover_url 一律遮蔽，見 buildShareView。
 //
-// ⚠️「不可用」一律回 HTTP 200 + {"available":false}，不分原因、不用 404：不存在／已軟刪／
-// 後台已下架／status 非 open 全部收斂進 Repository.GetMeetShare 的同一個 errNotFound，
-// 這裡再統一轉成同一句——如果每種原因回不同的狀態碼或錯誤，等於開放外部用這支免登入端點
-// 對任意 UUID 做「這個團練存不存在／被下架了嗎」的批次探測。
+// ⚠️「不可用」原則上一律回 HTTP 200 + {"available":false}，不分原因、不用 404：不存在／
+// 後台已下架／發起人已隱藏／status 非 open 全部收斂進同一句——如果每種原因回不同的狀態碼或
+// 錯誤，等於開放外部用這支免登入端點對任意 UUID 做「這個團練存不存在／被下架了嗎」的批次探測。
+//
+// ⚠️ 唯一的例外是「已軟刪」：回 {"available":false,"deleted":true}。理由：連結是發起人主動
+// 分享出去的，收到連結的人本來就知道它存在過，多回一個「已刪除」不構成新洩漏（前端可以用它
+// 顯示導頁提示）；但「查無此團」不得回 deleted，一律走前面那句籠統的 unavailable，避免被拿來
+// 探測任意 UUID 是否曾經存在過（見 Repository.GetMeetShare 的 errNotFound / errDeleted 分流）。
 func (h *Handler) Share(w http.ResponseWriter, r *http.Request) {
 	// 爬蟲會反覆重新抓同一張卡（發文編輯、平台快取失效重驗證等），5 分鐘內回應可安全重用。
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	unavailable := func() { respondJSON(w, http.StatusOK, map[string]bool{"available": false}) }
+	deleted := func() { respondJSON(w, http.StatusOK, map[string]bool{"available": false, "deleted": true}) }
 
 	id, ok := meetIDParam(r)
 	if !ok {
@@ -48,6 +53,10 @@ func (h *Handler) Share(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m, err := h.repo.GetMeetShare(r.Context(), id)
+	if errors.Is(err, errDeleted) {
+		deleted()
+		return
+	}
 	if err != nil {
 		unavailable()
 		return
@@ -73,24 +82,56 @@ type shareRow struct {
 	Capacity    int
 }
 
-// GetMeetShare 分享卡專用查詢：不存在／已軟刪／後台下架／status 非 open 一律回 errNotFound
-// （呼叫端 Handler.Share 不區分原因，統一轉成 {"available":false}）。
+// errDeleted 分享卡／詳情端點共用的哨兵錯誤：這個團練「曾經存在、現在已被發起人軟刪」。
+// 是唯一允許從「查無/不可用」的統一回應裡多揭露一點資訊的原因（見本檔案首與 GetMeetShare
+// 的長註解）。刻意獨立於 errNotFound（*apiErr，會被 respondAPIErr 轉成 404）之外：
+// Handler.Share／Handler.Detail 都要在轉成通用「不可用」之前，先攔截這個特殊分支。
+var errDeleted = errors.New("meet deleted")
+
+// GetMeetShare 分享卡專用查詢。
+//
+// ⚠️ 三種結果：(a) 查無此列 → errNotFound；(b) 已軟刪 → errDeleted（呼叫端據此多回一個
+// deleted:true，見本檔案首的理由）；(c) 其餘不可用（後台下架／發起人隱藏／status 非 open）
+// → errNotFound，與「查無」共用同一個錯誤、統一轉成籠統的 {"available":false}，不外洩差異。
 //
 // ⚠️ SELECT 清單就是防線本身——不是先撈全欄位再靠程式碼過濾，而是壓根不把 lat/lng/
 // meeting_detail/description/join_password_hash/owner_id 等欄位帶出資料庫。
 func (r *Repository) GetMeetShare(ctx context.Context, id string) (shareRow, error) {
 	var m shareRow
+	var deletedAt *time.Time
+	var hiddenAdmin, hiddenOwner bool
+	var status string
 	err := r.db.QueryRow(ctx, `
 		SELECT title, meet_at, region, place_label, image_urls,
-		       (join_password_hash IS NOT NULL) AS is_private, member_count, capacity
-		  FROM run_meets
-		 WHERE id = $1 AND deleted_at IS NULL AND hidden_by_admin = FALSE AND status = 'open'`,
+		       (join_password_hash IS NOT NULL) AS is_private, member_count, capacity,
+		       deleted_at, hidden_by_admin, hidden_by_owner, status
+		  FROM run_meets WHERE id = $1`,
 		id).Scan(&m.Title, &m.MeetAt, &m.Region, &m.PlaceLabel, &m.ImageURLs,
-		&m.IsPrivate, &m.MemberCount, &m.Capacity)
+		&m.IsPrivate, &m.MemberCount, &m.Capacity,
+		&deletedAt, &hiddenAdmin, &hiddenOwner, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return m, errNotFound
 	}
-	return m, err
+	if err != nil {
+		return m, err
+	}
+	return m, shareAvailability(deletedAt != nil, hiddenAdmin, hiddenOwner, status)
+}
+
+// shareAvailability 純函式版的「這個團練分享卡能不能用」判定（GetMeetShare 是它與 DB 之間
+// 唯一的轉譯層，方便脫離 DB 單元測試）。
+//
+//	nil        → 可用
+//	errDeleted → 已軟刪（唯一可以額外揭露成 deleted:true 的原因，見本檔案首）
+//	errNotFound → 其餘原因（後台下架／發起人隱藏／status 非 open），統一收斂、不外洩差異
+func shareAvailability(deleted, hiddenAdmin, hiddenOwner bool, status string) error {
+	if deleted {
+		return errDeleted
+	}
+	if hiddenAdmin || hiddenOwner || status != StatusOpen {
+		return errNotFound
+	}
+	return nil
 }
 
 // --- 對外 DTO ---

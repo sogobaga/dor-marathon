@@ -15,7 +15,7 @@ import { getToken, clearToken } from '@/lib/adminAuth'
 // ⚠️ 配額「人工調整」是唯一的返還管道——close/cancel/delete 一律不回補（後端 quota.go 只有 consume()）。
 //    delta 負數＝返還次數；所有操作都會被 Audit middleware 留痕。
 
-const STATUS_LABEL: Record<RunMeetStatus, string> = { open: '開放中', closed: '已關閉', cancelled: '已取消' }
+const STATUS_LABEL: Record<RunMeetStatus, string> = { open: '開放中', closed: '已關閉', cancelled: '已中止' }
 const PAGE = 30
 
 export default function AdminRunMeetsPage() {
@@ -137,7 +137,7 @@ export default function AdminRunMeetsPage() {
               <option value="">全部狀態</option>
               <option value="open">開放中</option>
               <option value="closed">已關閉</option>
-              <option value="cancelled">已取消</option>
+              <option value="cancelled">已中止</option>
             </select>
             <label style={chk}><input type="checkbox" checked={hiddenOnly} onChange={(e) => setHiddenOnly(e.target.checked)} />只看已下架</label>
             <label style={chk}><input type="checkbox" checked={includeDeleted} onChange={(e) => setIncludeDeleted(e.target.checked)} />含已刪除</label>

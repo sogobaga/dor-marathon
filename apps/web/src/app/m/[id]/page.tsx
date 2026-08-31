@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { cache } from 'react'
 import { taipeiParts } from '@/lib/runMeet'
+import DeletedRedirect from './DeletedRedirect'
 
 // 團練分享短網址 /m/{id}：給社群分享用（RunMeetDetailView.tsx 的分享按鈕會產生這個網址取代
 // 原本的 /?runmeet={id}）。後端公開端點免登入、不區分「不存在／已刪／已下架／未開放」，一律回
@@ -16,6 +17,9 @@ import { taipeiParts } from '@/lib/runMeet'
 
 interface ShareInfo {
   available: boolean
+  // available:false 時才可能出現：已被發起人刪除。其餘不可用（不存在／已下架／未開放）一律不帶這個欄位，
+  // 沿用「這個團練目前無法查看」的通用文案（防列舉：不透露是哪一種不可用）。
+  deleted?: boolean
   title?: string
   meet_at?: string
   region?: string
@@ -105,6 +109,16 @@ export default async function RunMeetSharePage({ params }: { params: { id: strin
   const openHref = `/?runmeet=${encodeURIComponent(params.id)}` // PhoneShell 既有 ?runmeet= 深連結處理（保留不動）
 
   if (!share || !share.available) {
+    // 已刪除：與 RunMeetDetailView.tsx 詳情頁 410 時同一句文案 + 3 秒倒數導頁（DeletedRedirect 是
+    // client component，這頁本身維持 SSR）。其餘不可用（不存在／下架／未開放）維持原本靜態提示，不倒數。
+    if (share?.deleted) {
+      return (
+        <Frame>
+          <DeletedRedirect />
+          <a href="/" style={homeLinkStyle}>回首頁</a>
+        </Frame>
+      )
+    }
     return (
       <Frame>
         <div style={{ fontSize: 20, fontWeight: 700 }}>這個團練目前無法查看</div>

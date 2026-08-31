@@ -381,8 +381,8 @@ func TestValidImageURL(t *testing.T) {
 	}
 	bad := []string{
 		"javascript:alert(1)",
-		"https://evil.example.com/pixel.gif",  // 外站追蹤像素
-		"//evil.example.com/x.png",            // protocol-relative
+		"https://evil.example.com/pixel.gif",                      // 外站追蹤像素
+		"//evil.example.com/x.png",                                // protocol-relative
 		"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab?x=1", // query 夾帶
 		"/api/v1/images/0123ABCD-4567-89AB-CDEF-0123456789AB",     // 大寫（DB 一律小寫）
 		"/api/v1/images/not-a-uuid",
@@ -729,7 +729,8 @@ func TestErrorStatusContract(t *testing.T) {
 		{"重複加入", errAlreadyJoined, 409},
 		{"已結束", errEnded, 409},
 		{"已關閉", errMeetClosed, 409},
-		{"已取消", errMeetCancelled, 409},
+		{"已中止", errMeetCancelled, 409},
+		{"狀態轉換不合法", errBadTransition, 409},
 		{"找不到", errNotFound, 404},
 		{"名稱長度", errTitleLen, 400},
 		{"圖片來源", errImageSource, 400},
@@ -756,6 +757,7 @@ func TestNoTeamOrGroupWording(t *testing.T) {
 		errPasswordWrong.Msg, errPasswordTooMany.Msg, errMeetFull.Msg, errApproveFull.Msg,
 		errApplicationDone.Msg, errKicked.Msg, errPendingFull.Msg, errAlreadyJoined.Msg,
 		errAlreadyPending.Msg, errEnded.Msg, errMeetClosed.Msg, errMeetCancelled.Msg,
+		errBadTransition.Msg,
 		errOwnerCantLeave.Msg, errNoSuchMember.Msg, errTitleLen.Msg, errRequiresVIP.Msg,
 		errRegionLen.Msg, errPlaceLabelLen.Msg, locationNote, errEditEnded.Msg,
 		errQuotaUsedUp(1, false, time.September, 10).Msg,
@@ -849,7 +851,7 @@ func TestSnapCoordQuantises(t *testing.T) {
 	seen := map[[2]float64]bool{}
 	for i := 0; i < 30; i++ {
 		for j := 0; j < 30; j++ {
-			la := lat + float64(i)*0.00015  // ≈ 16.7 m 一步，30 步 ≈ 500 m
+			la := lat + float64(i)*0.00015 // ≈ 16.7 m 一步，30 步 ≈ 500 m
 			ln := lng + float64(j)*0.00015
 			x, y := snapCoord(la, ln, id)
 			seen[[2]float64{x, y}] = true
@@ -877,7 +879,6 @@ func TestItoa(t *testing.T) {
 	}
 }
 
-
 // --- buildDetail 的兩道獨立閘門（HasDetailAccess／CanSeePreciseLocation）---
 
 func privateMeetRow() meetRow {
@@ -888,7 +889,7 @@ func privateMeetRow() meetRow {
 		Region: "臺北市・大安區", PlaceLabel: "大安森林公園",
 		Lat: &lat, Lng: &lng, MeetingDetail: "2 號出口涼亭旁",
 		Capacity: 10, Description: "這裡是要給管理員審的完整說明",
-		ImageURLs: []string{"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab"},
+		ImageURLs:  []string{"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab"},
 		ImageLimit: 4, IsPrivate: true, MemberCount: 1, PendingCount: 2, Status: StatusOpen,
 	}
 }
@@ -954,6 +955,25 @@ func TestBuildDetailNonMemberHasNoLocationKeys(t *testing.T) {
 	}
 	if got["pending_count"] != float64(0) {
 		t.Fatalf("非發起人不得看到 pending_count：%s", raw)
+	}
+}
+
+// TestBuildCardHiddenByOwnerVisibleOnlyToOwnerAndAdmin hidden_by_owner 只給發起人／後台
+// 管理面板用（比照 pending_count 的既有模式）：非 owner、非 admin 視角恆看到 false，
+// 即使實際值是 true——一般訪客本來就看不到被隱藏的團（SQL 層已擋掉），這裡是最後一道保險。
+func TestBuildCardHiddenByOwnerVisibleOnlyToOwnerAndAdmin(t *testing.T) {
+	h := &Handler{}
+	m := privateMeetRow()
+	m.HiddenByOwner = true
+
+	if c := h.buildCard(&m, m.OwnerID, false, false); !c.HiddenByOwner {
+		t.Fatal("發起人視角應看到 hidden_by_owner=true")
+	}
+	if c := h.buildCard(&m, "someone-else", false, true); !c.HiddenByOwner {
+		t.Fatal("後台視角應看到 hidden_by_owner=true")
+	}
+	if c := h.buildCard(&m, "stranger", false, false); c.HiddenByOwner {
+		t.Fatal("非發起人／非後台視角不應看到真實的 hidden_by_owner 值")
 	}
 }
 
@@ -1079,5 +1099,177 @@ func TestShareUnavailableShapeIsMinimal(t *testing.T) {
 	}
 	if got["available"] != false {
 		t.Fatalf("available 應為 false：%s", raw)
+	}
+}
+
+// TestShareDeletedShapeIsMinimal 已刪除的分享卡回應只能有 available/deleted 這兩個 key，
+// deleted 恆 true（規格：連結是發起人主動分享出去的，顯示「已刪除」不構成新洩漏）。
+func TestShareDeletedShapeIsMinimal(t *testing.T) {
+	raw, err := json.Marshal(map[string]bool{"available": false, "deleted": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("已刪除回應應只有 2 個 key，得 %d：%s", len(got), raw)
+	}
+	if got["available"] != false || got["deleted"] != true {
+		t.Fatalf("已刪除回應內容不對：%s", raw)
+	}
+}
+
+// --- shareAvailability（分享卡「能不能用」純函式判定）---
+
+// TestShareAvailabilityDeletedTakesPriorityAndOnlyLeaksItself 已刪除是唯一能被單獨識別出來
+// 的不可用原因；其餘原因（下架／隱藏／status 非 open）一律收斂成同一個 errNotFound，不分原因。
+func TestShareAvailabilityDeletedTakesPriorityAndOnlyLeaksItself(t *testing.T) {
+	if err := shareAvailability(false, false, false, StatusOpen); err != nil {
+		t.Fatalf("正常公開開放中的團應可用：%v", err)
+	}
+	// 已刪除：即使同時也被下架/隱藏/status 非 open，仍回 errDeleted（deleted 優先揭露）
+	if err := shareAvailability(true, true, true, StatusClosed); !errors.Is(err, errDeleted) {
+		t.Fatalf("已刪除應回 errDeleted（即使同時有其他不可用原因），得 %v", err)
+	}
+	cases := []struct {
+		name                     string
+		hiddenAdmin, hiddenOwner bool
+		status                   string
+	}{
+		{"後台下架", true, false, StatusOpen},
+		{"發起人隱藏", false, true, StatusOpen},
+		{"已關閉", false, false, StatusClosed},
+		{"已中止", false, false, StatusCancelled},
+	}
+	for _, c := range cases {
+		err := shareAvailability(false, c.hiddenAdmin, c.hiddenOwner, c.status)
+		if !errors.Is(err, errNotFound) {
+			t.Fatalf("%s：應收斂成 errNotFound（不外洩具體原因），得 %v", c.name, err)
+		}
+	}
+	// 查無此團（不存在）不經過這支函式（GetMeetShare 在 QueryRow 就先回 errNotFound 了），
+	// 但確認它不會被誤判成 deleted：deleted 參數為 false 時絕不能回 errDeleted。
+	if err := shareAvailability(false, false, false, StatusClosed); errors.Is(err, errDeleted) {
+		t.Fatal("deleted=false 時絕不能回 errDeleted（避免被拿來探測任意 UUID 是否曾經存在過）")
+	}
+}
+
+// --- 狀態機（CanTransition／CanEdit／CanSeeWhenHidden，model.go）---
+
+// TestCanTransition 逐一列出使用者定案的合法轉換表，並確認所有「不合法」組合都被擋下——
+// 尤其 cancelled→closed 與同狀態互轉，這是本次重整前不存在、容易漏掉的兩類。
+func TestCanTransition(t *testing.T) {
+	allowed := map[[2]string]bool{
+		{StatusOpen, StatusClosed}:      true,
+		{StatusOpen, StatusCancelled}:   true,
+		{StatusClosed, StatusOpen}:      true,
+		{StatusClosed, StatusCancelled}: true,
+		{StatusCancelled, StatusOpen}:   true,
+	}
+	all := []string{StatusOpen, StatusClosed, StatusCancelled}
+	for _, from := range all {
+		for _, to := range all {
+			want := allowed[[2]string{from, to}]
+			if got := CanTransition(from, to); got != want {
+				t.Fatalf("CanTransition(%q,%q) want %v got %v", from, to, want, got)
+			}
+		}
+	}
+	// 使用者原話最在意的那一條：關閉必須可逆
+	if !CanTransition(StatusClosed, StatusOpen) {
+		t.Fatal("closed→open 必須合法：「關閉的團練，發起人應該可以再次開啟才對」")
+	}
+	// 中止不可跳過 open 直接變 closed
+	if CanTransition(StatusCancelled, StatusClosed) {
+		t.Fatal("cancelled→closed 不應合法（必須先恢復 open 才能再關閉）")
+	}
+}
+
+func TestCanEdit(t *testing.T) {
+	// 使用者定義：「關閉＝不再收新人，其他功能都照舊」，所以 closed 期間必須能編輯
+	// （常見動作：關閉停招 → 改時間/集合細節 → 重新開啟）。cancelled 才真的鎖住。
+	if !CanEdit(StatusOpen) {
+		t.Fatal("open 應可編輯")
+	}
+	if !CanEdit(StatusClosed) {
+		t.Fatal("closed 應可編輯（關閉只是不再收人，其他功能照舊）")
+	}
+	if CanEdit(StatusCancelled) {
+		t.Fatal("cancelled 不應可編輯")
+	}
+}
+
+func TestCanSeeWhenHidden(t *testing.T) {
+	if !CanSeeWhenHidden(true, "") {
+		t.Fatal("發起人應能看到自己隱藏的團")
+	}
+	if !CanSeeWhenHidden(false, MemberJoined) {
+		t.Fatal("已加入成員應能看到隱藏的團（否則已成團的人會突然看不到集合資訊）")
+	}
+	for _, s := range []string{MemberPending, MemberRejected, MemberKicked, MemberLeft, ""} {
+		if CanSeeWhenHidden(false, s) {
+			t.Fatalf("非 owner 且 status=%q 不應看得到隱藏的團", s)
+		}
+	}
+}
+
+// --- joinBlockReason／meetStatusError（service.go；狀態擋加入的唯一出口）---
+
+func TestJoinBlockReason(t *testing.T) {
+	if got := joinBlockReason(StatusOpen); got != "" {
+		t.Fatalf("open 不應擋加入，得 %q", got)
+	}
+	if got := joinBlockReason(StatusClosed); got != errMeetClosed.Msg {
+		t.Fatalf("closed 應回既有的關閉文案，得 %q", got)
+	}
+	if got := joinBlockReason(StatusCancelled); got != errMeetCancelled.Msg {
+		t.Fatalf("cancelled 應回「該團練已中止」，得 %q", got)
+	}
+	// 使用者明確要求的字面文案
+	if errMeetCancelled.Msg != "該團練已中止。" {
+		t.Fatalf("cancelled 的錯誤文案應為「該團練已中止。」，得 %q", errMeetCancelled.Msg)
+	}
+}
+
+// TestMeetStatusErrorAndJoinBlockReasonShareSameSingleton 確保 meetStatusError 回的物件
+// 與 joinBlockReason 讀的是同一個單例指標（errors.Is 賴此比對），不是兩份各自維護、可能漂移
+// 的文案來源。
+func TestMeetStatusErrorAndJoinBlockReasonShareSameSingleton(t *testing.T) {
+	for _, status := range []string{StatusClosed, StatusCancelled} {
+		err := meetStatusError(status, false)
+		var e *apiErr
+		if !errors.As(err, &e) {
+			t.Fatalf("meetStatusError(%q) 應回 *apiErr", status)
+		}
+		if e.Msg != joinBlockReason(status) {
+			t.Fatalf("meetStatusError 與 joinBlockReason 對 %q 的文案不一致：%q vs %q",
+				status, e.Msg, joinBlockReason(status))
+		}
+	}
+}
+
+// --- statusAction（handler.go；API 契約 action 值 → status 欄位值）---
+
+func TestStatusAction(t *testing.T) {
+	cases := []struct {
+		action     string
+		wantStatus string
+		wantOK     bool
+	}{
+		{"open", StatusOpen, true},
+		{"close", StatusClosed, true},
+		{"cancel", StatusCancelled, true},
+		{"", "", false},
+		{"closed", "", false}, // 不接受資料庫欄位值本身，只接受動詞
+		{"delete", "", false},
+		{"OPEN", "", false}, // 大小寫敏感
+	}
+	for _, c := range cases {
+		status, ok := statusAction(c.action)
+		if ok != c.wantOK || (ok && status != c.wantStatus) {
+			t.Fatalf("statusAction(%q) want (%q,%v) got (%q,%v)", c.action, c.wantStatus, c.wantOK, status, ok)
+		}
 	}
 }

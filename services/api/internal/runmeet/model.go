@@ -62,6 +62,7 @@ type meetRow struct {
 	PendingCount     int
 	Status           string
 	HiddenByAdmin    bool
+	HiddenByOwner    bool // migration 158；發起人自行隱藏，可逆，與 HiddenByAdmin 分離（發起人不得自行解除後者）
 	HiddenReason     string
 	CommentCount     int
 	ReactionCount    int
@@ -81,7 +82,7 @@ type meetRow struct {
 
 // --- 對外 DTO ---
 
-// OwnerView 發起人公開身分。名字一律 COALESCE(NULLIF(u.name,''), u.handle)
+// OwnerView 發起人公開身分。名字一律 COALESCE(NULLIF(u.name,”), u.handle)
 // （memory display-name-convention：玩家可見名字禁讀 user_profiles.nickname）。
 // 絕不含 account_code / email / is_vip（memory account-code-privacy；VIP 狀態外洩會讓 VIP 成為詐騙目標）。
 type OwnerView struct {
@@ -101,10 +102,10 @@ type CardView struct {
 	MemberCount      int       `json:"member_count"`
 	IsPrivate        bool      `json:"is_private"`
 	ApprovalRequired bool      `json:"approval_required"`
-	Excerpt          string    `json:"excerpt"`    // 60 字摘要（swrCache 單筆 100KB 上限，列表不給完整 description）
-	CoverURL         *string   `json:"cover_url"`  // 私密團且未解鎖時為 null
-	Status           string    `json:"status"`     // open|closed|cancelled
-	IsEnded          bool      `json:"is_ended"`   // meet_at <= NOW()
+	Excerpt          string    `json:"excerpt"`   // 60 字摘要（swrCache 單筆 100KB 上限，列表不給完整 description）
+	CoverURL         *string   `json:"cover_url"` // 私密團且未解鎖時為 null
+	Status           string    `json:"status"`    // open|closed|cancelled
+	IsEnded          bool      `json:"is_ended"`  // meet_at <= NOW()
 	Owner            OwnerView `json:"owner"`
 	MyState          string    `json:"my_state"` // none|pending|joined|rejected|kicked|left|owner
 	ReactionCount    int       `json:"reaction_count"`
@@ -115,16 +116,21 @@ type CardView struct {
 	// ⚠️ 絕不回精確距離：回 0.23 km 這種值可讓攻擊者換多組座標查詢、三角定位反推出精確地點，
 	// 等於繞過整套地點分層設計。排序用精確距離（後端記憶體內），輸出只給 band。
 	DistanceBand string `json:"distance_band,omitempty"`
+	// HiddenByOwner 發起人管理面板用：目前是否被自己隱藏。只有 isOwner || isAdmin 視角會填真值
+	// （比照下面 PendingCount 的既有模式：非 owner 恆 false），因為這欄位的唯一用途是「發起人
+	// 要知道自己按過隱藏沒」，不是給一般訪客判斷用的公開狀態——一般訪客本來就看不到被隱藏的團
+	// （見 repository.GetMeet），沒有機會走到這個欄位有意義的分支。
+	HiddenByOwner bool `json:"hidden_by_owner"`
 }
 
 // detailBase 詳情的公開部分（完整說明與圖片；需通過私密團解鎖才拿得到）。
 type detailBase struct {
 	CardView
-	Description string   `json:"description"`
-	ImageURLs   []string `json:"image_urls"`
-	ImageLimit  int      `json:"image_limit"`
-	PendingCount int     `json:"pending_count"` // 只有 owner 視角有意義；非 owner 恆 0
-	CanComment  bool     `json:"can_comment"`   // joined/owner 且未超過「結束 7 天」唯讀期
+	Description  string   `json:"description"`
+	ImageURLs    []string `json:"image_urls"`
+	ImageLimit   int      `json:"image_limit"`
+	PendingCount int      `json:"pending_count"` // 只有 owner 視角有意義；非 owner 恆 0
+	CanComment   bool     `json:"can_comment"`   // joined/owner 且未超過「結束 7 天」唯讀期
 }
 
 // PublicDetailView 未加入者（含已解鎖但尚未加入、申請中 pending）看到的詳情。
@@ -236,4 +242,52 @@ func HasDetailAccess(isPrivate, isOwner bool, memberStatus *string, unlocked, is
 		return false
 	}
 	return *memberStatus == MemberJoined || *memberStatus == MemberPending
+}
+
+// --- 狀態機（純函式，可單元測試；handler/repository 一律呼叫這裡，不要各自散落 if）---
+
+// runmeetTransitions 合法的狀態轉換白名單（使用者定案）：
+//
+//	open      → closed | cancelled
+//	closed    → open   | cancelled   （關閉可逆——這是本次重整的主因：使用者原話「關閉的團練
+//	                                   為什麼無法再開啟，發起人應該可以再次開啟才對」）
+//	cancelled → open                 （中止可恢復；但不可直接 cancelled → closed，必須先回到
+//	                                   open 才能再關閉——中止當下已把所有待審一併婉拒，跳過 open
+//	                                   直接變 closed 會讓「重開後繼續處理待審」這個語意變得含糊）
+//
+// 同狀態互轉（open→open 等）刻意不在白名單內：那不是一次有意義的轉換，呼叫端該用「不做任何事」
+// 表達，不該讓 API 靜默把它當成功。
+var runmeetTransitions = map[string]map[string]bool{
+	StatusOpen:      {StatusClosed: true, StatusCancelled: true},
+	StatusClosed:    {StatusOpen: true, StatusCancelled: true},
+	StatusCancelled: {StatusOpen: true},
+}
+
+// CanTransition 這個狀態轉換是否合法。
+func CanTransition(from, to string) bool {
+	return runmeetTransitions[from][to]
+}
+
+// CanEdit 只有 open 狀態能編輯基本資料（title/meet_at/地點/人數上限…）。
+// closed／cancelled 都不行——「不再收人」或「已中止」的當下不該還能把時間地點整個換掉。
+// 已過期（meet_at <= now）是另一條獨立的擋法（errEditEnded，查詢條件判定，不歸這支管）。
+// CanEdit 這個狀態下發起人能不能編輯團練內容（名稱/時間/地點/說明/圖片/人數上限）。
+//
+// open、closed 都可以編輯；cancelled 不行。
+// ⚠️ closed 必須可編輯——使用者對「關閉」的定義是「不再收新人，其他功能都照舊」（見
+// migration 158 檔頭），發起人常見的動作正是「先關閉停止招募、再把時間或集合細節改一改、
+// 然後重新開啟」。把 closed 也擋掉會讓「可逆的關閉」失去意義。
+// 「同意待審申請」則相反，仍只在 open 允許（見 members.go Approve）——同意＝收新人，
+// 與關閉的語意直接衝突；待審申請在 closed 期間保留不動，重開後才處理。
+func CanEdit(status string) bool { return status == StatusOpen || status == StatusClosed }
+
+// CanSeeWhenHidden 團練被發起人隱藏（hidden_by_owner）時，這個身分是否仍看得到／能互動。
+//
+// 與 repository.GetMeet 的 SQL 條件（hidden_by_owner=FALSE OR owner_id=viewer OR
+// mm.status='joined'）語意刻意保持一致——那條規則因為要在 SQL 層擋掉非當事人，沒辦法直接
+// 單元測試，這裡把同一條規則抽成 Go 純函式：一來給 members.go 的 Join() 用（呼叫者在那個
+// 時間點一定不是 owner，見呼叫端註解），二來讓這條「隱藏可見性」規則本身可以脫離 DB 被測試，
+// 未來 SQL 那邊改規則時，這裡的測試會提醒維護者同步改。
+func CanSeeWhenHidden(isOwner bool, memberStatus string) bool {
+	return isOwner || memberStatus == MemberJoined
 }
