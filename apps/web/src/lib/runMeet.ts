@@ -119,9 +119,15 @@ export function distanceBandLabel(band?: string | null): string {
 // 配額文案
 // ─────────────────────────────────────────────────────────────
 
-/** Header 徽章：非 VIP「本月 0/1」；VIP「本月 3/10 · VIP」。 */
-export function quotaBadgeText(q: Pick<RunMeetQuota, 'used' | 'cap' | 'is_vip'>): string {
-  return `本月 ${q.used}/${q.cap}${q.is_vip ? ' · VIP' : ''}`
+// 「＋ 發起團練（尚可發起 3 次）」——配額資訊一律整合進發起按鈕本身。
+//
+// ⚠️ 不要再把配額做成獨立徽章（例如「本月 0/10 · VIP」）或放在功能入口旁：
+// 使用者實測回饋是「看不出那是剩餘還是已用」，而放在入口旁的「本月還有 N 次」
+// 更會被誤讀成「我還能加入 N 個團練」。配額只跟「發起」這個動作有關，
+// 就只寫在發起按鈕上，並用「尚可發起」明確指向剩餘數。
+export function createBtnText(remaining: number, short = false): string {
+  const head = short ? '＋ 發起' : '＋ 發起團練'
+  return remaining > 0 ? `${head}（尚可發起 ${remaining} 次）` : head
 }
 
 /** 「9 月 1 日」——配額重置日（台北）。 */

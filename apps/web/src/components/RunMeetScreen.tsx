@@ -5,7 +5,7 @@ import useSWR, { mutate } from 'swr'
 import { runMeetApi, type RunMeetCard, type RunMeetDetail } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
-import { fmtMeetAt, quotaBadgeText, remainingText } from '@/lib/runMeet'
+import { fmtMeetAt, createBtnText } from '@/lib/runMeet'
 import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
 import RunMeetListView, { EMPTY_FILTERS, type NearPos, type NearState, type RunMeetFilters } from './runmeet/RunMeetListView'
@@ -88,9 +88,10 @@ export default function RunMeetScreen({ onBack, initialMeetId }: { onBack: () =>
     // 政策開關 runmeet_create_requires_vip=1：非 VIP 直接跳 VIP 引導，不消耗任何次數。
     if (quota.requires_vip && !quota.is_vip) { setVipModal(true); return }
     if (quota.remaining <= 0) {
-      showToast(quota.is_vip
-        ? `本月發起次數已用完（${quota.used}/${quota.cap}）`
-        : `本月發起次數已用完（${quota.used}/${quota.cap}），升級 VIP 每月可發起更多次`, 'err')
+      // 次數為 0 的兩種身分給不同出口（使用者定案）：非 VIP 導向升級（有解法），
+      // VIP 已是上限，只能告知何時恢復——不要對 VIP 再跳升級引導，那是死路。
+      if (!quota.is_vip) { setVipModal(true); return }
+      showToast('本月團練發起次數為 0，請等待下個月更新次數。', 'err')
       return
     }
     setShowCreate(true)
@@ -155,20 +156,14 @@ export default function RunMeetScreen({ onBack, initialMeetId }: { onBack: () =>
           <header style={headerStyle}>
             <button onClick={onBack} style={backBtn}>← 返回</button>
             <span style={{ flex: 1, fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>🤝 團練邀請</span>
-            {quota && <span style={goldPill}>{quotaBadgeText(quota)}</span>}
           </header>
 
           <div style={{ display: 'flex', gap: 8, padding: '10px 16px 0' }}>
             <button onClick={() => setTab('explore')} style={tab === 'explore' ? chipActive : chip}>探索</button>
             <button onClick={() => setTab('mine')} style={tab === 'mine' ? chipActive : chip}>我的</button>
             <span style={{ flex: 1 }} />
-            <button onClick={openCreate} style={{ ...primaryBtn, width: 'auto', padding: '6px 14px', fontSize: 13 }}>＋ 發起</button>
+            <button onClick={openCreate} style={{ ...primaryBtn, width: 'auto', padding: '6px 14px', fontSize: 13 }}>{createBtnText(quota?.remaining ?? 0, true)}</button>
           </div>
-          {quota && (
-            <div style={{ padding: '6px 16px 0', fontSize: 11.5, color: 'var(--tx-faint)' }}>
-              {remainingText(quota.remaining, quota.resets_at)}
-            </div>
-          )}
 
           <div style={scrollBody}>
             {tab === 'explore' ? (

@@ -213,7 +213,7 @@ export default function RunMeetFormModal({
 
         {mode === 'create' && (
           <div style={{ ...fieldHint, marginTop: 8, color: quota.remaining > 0 ? 'var(--gold)' : 'var(--hunt)', fontWeight: 800, fontSize: 12 }}>
-            本月剩餘 {quota.remaining} 次發起機會（已用 {quota.used}/{quota.cap}{quota.is_vip ? ' · VIP' : ''}）
+            建立後本月尚可發起 {Math.max(0, quota.remaining - 1)} 次
           </div>
         )}
 

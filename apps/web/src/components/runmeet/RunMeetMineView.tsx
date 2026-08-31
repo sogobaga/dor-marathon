@@ -3,6 +3,7 @@
 import useSWR from 'swr'
 import { runMeetApi, type RunMeetCard } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
+import { createBtnText } from '@/lib/runMeet'
 import { MeetCard, emptyBox, ghostBtn, primaryBtn } from './ui'
 
 // 我的團練：三段（我發起的／我參加的／申請中）。
@@ -36,9 +37,9 @@ export default function RunMeetMineView({
           <div style={emptyBox}>
             <div style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--tx)' }}>你還沒有發起過團練</div>
             <div style={{ fontSize: 12.5, marginTop: 6 }}>
-              {remaining > 0 ? `本月還有 ${remaining} 次發起機會` : '本月的發起次數已用完'}
+              揪一場團練，找跑友一起練
             </div>
-            <button onClick={onCreate} style={{ ...primaryBtn, width: 'auto', padding: '10px 20px', marginTop: 12 }}>＋ 發起團練</button>
+            <button onClick={onCreate} style={{ ...primaryBtn, width: 'auto', padding: '10px 20px', marginTop: 12 }}>{createBtnText(remaining)}</button>
           </div>
         ) : owned.map((m) => <MeetCard key={m.id} meet={m} onOpen={() => onOpen(m)} />)}
       </Section>

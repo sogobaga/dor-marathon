@@ -6,7 +6,7 @@
 const modUrl = new URL('../src/lib/runMeet.ts', import.meta.url).href
 const {
   taipeiParts, taipeiLocalToISO, isoToTaipeiLocalInput, fmtMeetAt, fmtMeetAtConfirm, meetCountdown,
-  distanceBandLabel, quotaBadgeText, resetDayText, remainingText,
+  distanceBandLabel, createBtnText, resetDayText, remainingText,
   memberCountText, memberPct, confirmSubText, runMeetCta, isDeviceTaipei,
 } = await import(modUrl)
 
@@ -50,8 +50,13 @@ eq(distanceBandLabel(undefined), '', '未帶 band（非附近搜尋）→ 空字
 eq(distanceBandLabel('0.23km'), '', '未知值 → 空字串（不外洩精確距離格式）')
 
 // ── 配額文案 ────────────────────────────────────────────────────
-eq(quotaBadgeText({ used: 0, cap: 1, is_vip: false }), '本月 0/1', '一般會員配額徽章')
-eq(quotaBadgeText({ used: 3, cap: 10, is_vip: true }), '本月 3/10 · VIP', 'VIP 配額徽章')
+// 配額只出現在「發起」按鈕上（v1.1.683 使用者定案：獨立徽章與入口旁的「本月還有 N 次」
+// 都會被誤讀成「還能加入 N 個團練」，一律移除）。
+eq(createBtnText(3), '＋ 發起團練（尚可發起 3 次）', '有次數時按鈕帶剩餘數')
+eq(createBtnText(1), '＋ 發起團練（尚可發起 1 次）', '剩 1 次')
+eq(createBtnText(0), '＋ 發起團練', '0 次時不顯示括號（點下去才給對應出口）')
+eq(createBtnText(3, true), '＋ 發起（尚可發起 3 次）', '短版（頁首）')
+eq(createBtnText(0, true), '＋ 發起', '短版 0 次')
 eq(resetDayText(RESETS), '9 月 1 日', '重置日文字')
 eq(remainingText(1, RESETS), '本月剩餘 1 次（9 月 1 日重置）', '剩餘次數文案')
 eq(remainingText(0, RESETS), '本月發起次數已用完（9 月 1 日重置）', '用完的文案')

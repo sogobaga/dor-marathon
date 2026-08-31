@@ -1669,7 +1669,8 @@ export interface DashboardInfo {
   cheer_char_layout: string // 啦啦隊三張角色的位置校正 JSON 字串（CheerCharLayout；系統設定 cheer_char_layout），前端 try/catch 解析
   monopoly_entry: 'hidden' | 'locked' | 'shown'    // 環台大富翁入口可見性
   knowledge_entry: 'hidden' | 'locked' | 'shown'   // 知識探索(知識卡圖鑑)入口可見性
-  // 團練邀請（見 internal/runmeet）：入口三態 + 本月剩餘發起次數（入口徽章「還有 N 次」用）。
+  // 團練邀請（見 internal/runmeet）：入口三態 + 本月剩餘發起次數（只用在「＋ 發起團練」按鈕文案，
+  // 不做成入口徽章——會被誤讀成「還能加入 N 個團練」，見 lib/runMeet.ts createBtnText 註解）。
   // entry 非 shown 時 runmeet_remaining 恆 0（後端不查 DB，dashboard 熱路徑零額外成本）。
   runmeet_entry: 'hidden' | 'locked' | 'shown'
   runmeet_remaining: number
