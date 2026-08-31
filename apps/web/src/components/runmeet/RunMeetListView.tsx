@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
 import { runMeetApi, type RunMeetCard, type RunMeetListParams } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
-import { isFetchPending, shouldShowError, LOADING_TEXT } from '@/lib/runMeet'
+import { isFetchPending, isAbsorbing, shouldShowError, LOADING_TEXT } from '@/lib/runMeet'
 import { MeetCard, cardBox, chip, chipActive, emptyBox, ghostBtn, inputStyle, primaryBtn, tinyBtn } from './ui'
 
 // 團練探索：搜尋 + 篩選 chips + 排序 + 卡片列表 + 底部「已結束的團練（N）」折疊區。
@@ -129,7 +129,7 @@ export default function RunMeetListView({
 
       {/* 判定順序：pending → error → 空狀態 → 內容。見 lib/runMeet.ts isFetchPending 的註解，
           只判 isLoading 會讓「金鑰切換的空窗期」誤顯示成載入失敗。 */}
-      {items.length === 0 && isFetchPending(isLoading, data, error) ? (
+      {items.length === 0 && (isFetchPending(isLoading, data, error) || isAbsorbing(items.length, data?.items.length)) ? (
         <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>{LOADING_TEXT}</div>
       ) : shouldShowError(isLoading, data, error, items.length > 0) ? (
         <div style={{ color: 'var(--hunt)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>載入失敗，請稍後再試</div>

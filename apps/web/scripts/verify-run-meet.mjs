@@ -6,7 +6,7 @@
 const modUrl = new URL('../src/lib/runMeet.ts', import.meta.url).href
 const {
   taipeiParts, taipeiLocalToISO, isoToTaipeiLocalInput, fmtMeetAt, fmtMeetAtConfirm, meetCountdown,
-  isFetchPending, shouldShowError,
+  isFetchPending, isAbsorbing, shouldShowError,
   distanceBandLabel, createBtnText, resetDayText, remainingText,
   memberCountText, memberPct, confirmSubText, runMeetCta, isDeviceTaipei,
   reactionPills, sortReactionCounts, optimisticReactionUpdate, mentionPrefix, replyTargetId,
@@ -238,6 +238,13 @@ eq(shouldShowError(false, undefined, new Error('x'), false), true, '有錯誤且
 eq(shouldShowError(false, undefined, new Error('x'), true), false, '重新驗證失敗但有舊資料 → 不清空畫面')
 eq(shouldShowError(false, undefined, undefined, false), false, '空窗期 → 絕不顯示失敗')
 eq(shouldShowError(true, undefined, new Error('x'), false), false, '仍在載入 → 先不報錯')
+
+
+// ── 「資料到手但清單尚未同步」的那一幀（使用者回報：一進頁面先閃「找不到團練」）──
+eq(isAbsorbing(0, 10), true, 'data 有 10 筆、items 還是 0 → 仍算載入中，不可顯示空狀態')
+eq(isAbsorbing(0, 0), false, '後端就是回空陣列 → 正常顯示空狀態')
+eq(isAbsorbing(0, undefined), false, 'data 還沒到（undefined）→ 交給 isFetchPending 判定')
+eq(isAbsorbing(5, 10), false, '已有內容 → 不是同步中')
 
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

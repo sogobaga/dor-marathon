@@ -430,3 +430,17 @@ export function shouldShowError(isLoading: boolean, data: unknown, error: unknow
   return Boolean(error) && !isFetchPending(isLoading, data, error) && !hasItems
 }
 export const LOADING_TEXT = '資料載入中，請稍後。'
+
+/**
+ * isAbsorbing 「資料已到手，但畫面用的累積清單還沒同步」的那一幀。
+ *
+ * ⚠️ 列表用 useEffect 把 SWR 的 data 併進累積 state（分頁要保留前幾頁），
+ * 而 effect 在 render 之後才跑——於是有一幀是「data 有 10 筆、items 還是 0 筆」。
+ * 那一幀 isFetchPending 已經是 false，會直接掉進空狀態分支，使用者一進頁面
+ * 就先閃過「找不到符合條件的團練」（2026-08-31 使用者回報）。
+ * 這個判定把那一幀也算成載入中；若後端回的本來就是空陣列（真的沒有團練），
+ * fetchedCount 為 0 → 回 false → 正常顯示空狀態。
+ */
+export function isAbsorbing(itemCount: number, fetchedCount: number | undefined): boolean {
+  return itemCount === 0 && (fetchedCount ?? 0) > 0
+}

@@ -76,7 +76,11 @@ export default function RunMeetFormModal({
   const [confirm, setConfirm] = useState(false)
   const clientToken = useRef<string>(typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now()))
 
-  const imageLimit = mode === 'edit' ? (initial?.image_limit ?? 1) : quota.image_limit
+  // 編輯上限＝max(該團建立當下的快照, 目前身分的上限)，與後端 EffectiveImageLimit 同一規則：
+  // 快照保底（VIP 到期仍能編輯既有多圖團）、現行上限跟進（後台把 4 調成 10 後既有團練也放寬）。
+  const imageLimit = mode === 'edit'
+    ? Math.max(initial?.image_limit ?? 1, quota.image_limit)
+    : quota.image_limit
   const capacityMax = quota.capacity_max || 50
   const memberCount = initial?.member_count ?? 1
   const isoMeetAt = useMemo(() => taipeiLocalToISO(meetAt), [meetAt])

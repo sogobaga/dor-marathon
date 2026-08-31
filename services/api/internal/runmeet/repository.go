@@ -464,7 +464,7 @@ type UpdateResult struct {
 
 // UpdateMeet 編輯（僅發起人）。在 FOR UPDATE 交易內檢查「新上限不得低於現有成員數」——
 // 刻意不加 DB CHECK (member_count <= capacity)：那會讓舊資料或正常 UPDATE 整筆炸掉。
-func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInput) (UpdateResult, error) {
+func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInput, effectiveLimit int) (UpdateResult, error) {
 	var res UpdateResult
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -515,8 +515,15 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 	if in.Capacity < memberCount {
 		return res, errCapacityBelowMembers(memberCount)
 	}
-	if len(in.ImageURLs) > imageLimit {
-		return res, errImageOverLimit(imageLimit, 0) // repository 拿不到設定 → 不做升級引導
+	// 上限＝max(建立當下快照, handler 依現行設定與 VIP 身分算出的 effectiveLimit)，
+	// 見 quota.go EffectiveImageLimit：快照保底（VIP 到期仍能編輯既有多圖團）、
+	// 現行上限跟進（後台調高後既有團練也放寬）。effectiveLimit<=0 代表呼叫端沒給，退回只用快照。
+	limit := imageLimit
+	if effectiveLimit > limit {
+		limit = effectiveLimit
+	}
+	if len(in.ImageURLs) > limit {
+		return res, errImageOverLimit(limit, 0) // repository 拿不到設定 → 不做升級引導
 	}
 
 	// 密碼三態：nil＝不動 / ""＝移除（改公開）/ 其他＝重設

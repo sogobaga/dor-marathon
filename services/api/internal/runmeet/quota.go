@@ -60,6 +60,23 @@ func ImageLimit(isVIP bool, normalLimit, vipLimit int) int {
 	return normalLimit
 }
 
+// EffectiveImageLimit 編輯既有團練時真正可用的圖片張數上限＝max(建立當下的快照, 現行身分上限)。
+//
+// ⚠️ 兩個目標必須同時成立，少一邊都會出事：
+//   ・保底（快照）：VIP 到期後，既有 4 張圖的團練仍要能編輯——若只用現行上限（1 張），
+//     使用者連「改個人數上限」都會被 400 擋死。
+//   ・跟進（現行）：後台把上限從 4 調到 10 之後，既有團練也要能加到 10 張——
+//     若只用快照，調高設定對既有團練完全無效（2026-08-31 使用者回報：
+//     「系統設定目前設定為 10 張，但是前台仍然為 4 張」）。
+// 取兩者最大值同時滿足這兩件事；DB 端仍有 CHECK <= 20 的技術上限兜底（migration 157/160）。
+func EffectiveImageLimit(snapshot int, isVIP bool, normalLimit, vipLimit int) int {
+	cur := ImageLimit(isVIP, normalLimit, vipLimit)
+	if snapshot > cur {
+		return snapshot
+	}
+	return cur
+}
+
 // ErrQuotaExhausted 本月發起次數已用完（→ 409）。
 var ErrQuotaExhausted = errors.New("quota exhausted")
 

@@ -607,7 +607,6 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := loadSettings(r.Context(), h.db)
-	// 編輯用「該團的 image_limit 快照」當上限（不是即時 VIP 判定）——VIP 到期後仍能編輯既有 4 張團。
 	cur, err := h.repo.GetMeet(r.Context(), u, id)
 	if err != nil {
 		respondAPIErr(w, err)
@@ -617,7 +616,15 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		respondAPIErr(w, errNotOwner)
 		return
 	}
-	if err := validateMeetInput(&in, time.Now(), s.CapacityMax, cur.ImageLimit, s.ImagesVIP); err != nil {
+	// 編輯上限＝max(建立當下快照, 現行身分上限)，見 quota.go EffectiveImageLimit 的註解：
+	// 快照負責「VIP 到期仍能編輯既有多圖團」，現行上限負責「後台調高後既有團練也跟著放寬」。
+	_, _, _, isVIP, err := h.repo.UserFlags(r.Context(), u)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	editLimit := EffectiveImageLimit(cur.ImageLimit, isVIP, s.ImagesNormal, s.ImagesVIP)
+	if err := validateMeetInput(&in, time.Now(), s.CapacityMax, editLimit, s.ImagesVIP); err != nil {
 		respondAPIErr(w, err)
 		return
 	}
@@ -625,7 +632,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		respondAPIErr(w, err)
 		return
 	}
-	res, err := h.repo.UpdateMeet(r.Context(), u, id, &in)
+	res, err := h.repo.UpdateMeet(r.Context(), u, id, &in, editLimit)
 	if err != nil {
 		respondAPIErr(w, err)
 		return
