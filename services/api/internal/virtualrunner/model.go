@@ -94,6 +94,7 @@ type LevelPreset struct {
 type Runner struct {
 	UserID          string     `json:"user_id"`
 	Name            string     `json:"name"`
+	AvatarURL       string     `json:"avatar_url"` // 空＝無頭像（前台顯示字首圓）
 	Gender          string     `json:"gender"`
 	City            string     `json:"city"`
 	Level           string     `json:"level"`
@@ -131,6 +132,8 @@ type CreateRunnerInput struct {
 // AbilityGiven=true 代表本次請求有明給至少一個能力值欄位——用來判斷「level 變更時是否要重新
 // 從新 preset 帶入抖動」：level 有變更且本次沒有明給任何能力值時才重算（見 admin.go Update）。
 type UpdateRunnerInput struct {
+	Name       *string // 改名（nil＝不改）；同步 users.name 與 user_profiles.nickname/real_name
+	AvatarURL  *string // 頭像（nil＝不改；空字串＝清除，回退字首圓）；寫 users.avatar_url
 	Gender     *string
 	City       *string
 	Level      *string

@@ -84,7 +84,7 @@ func (r *Repository) UpdatePreset(ctx context.Context, level string, avgKm, mont
 // runnerSelectCols 供 ListRunners/GetRunner 共用；race_count 只算非 cancelled 報名（比照
 // AdminDelete 的 has_registrations 判斷口徑一致）。
 const runnerSelectCols = `
-	u.id, u.name, COALESCE(p.gender,''), COALESCE(vr.city,''), vr.level, vr.diligence,
+	u.id, u.name, COALESCE(u.avatar_url,''), COALESCE(p.gender,''), COALESCE(vr.city,''), vr.level, vr.diligence,
 	COALESCE(vr.window_hour,0), vr.avg_km, vr.monthly_km, vr.pace_fast_s, vr.pace_slow_s,
 	vr.enabled, vr.last_generated_at,
 	(SELECT COUNT(*) FROM registrations reg WHERE reg.user_id = u.id AND reg.status <> 'cancelled')`
@@ -96,7 +96,7 @@ const runnerFrom = `
 
 func scanRunner(row pgx.Row) (*Runner, error) {
 	rn := &Runner{}
-	if err := row.Scan(&rn.UserID, &rn.Name, &rn.Gender, &rn.City, &rn.Level, &rn.Diligence,
+	if err := row.Scan(&rn.UserID, &rn.Name, &rn.AvatarURL, &rn.Gender, &rn.City, &rn.Level, &rn.Diligence,
 		&rn.WindowHour, &rn.AvgKm, &rn.MonthlyKm, &rn.PaceFastS, &rn.PaceSlowS,
 		&rn.Enabled, &rn.LastGeneratedAt, &rn.RaceCount); err != nil {
 		return nil, err
@@ -201,7 +201,7 @@ func (r *Repository) CreateRunner(ctx context.Context, in CreateRunnerInput) (*R
 	return nil, fmt.Errorf("failed to allocate unique virtual account after %d attempts", maxAttempts)
 }
 
-// UpdateRunner 局部更新（nil 欄位不變）。level/gender 若給值一併更新 user_profiles.gender。
+// UpdateRunner 局部更新（nil 欄位不變）。level/gender 若給值一併更新 user_profiles.gender；name 若給值＝改名，同步 users.name 與 user_profiles.nickname/real_name。
 // 「level 變更時能力值重新帶入抖動」的決策在呼叫端（admin.go）做——由那裡先算好新的
 // Ability 再一起傳進來，本函式只單純套用 COALESCE 局部覆寫，不含業務判斷。
 func (r *Repository) UpdateRunner(ctx context.Context, userID string, in UpdateRunnerInput) (*Runner, error) {
@@ -237,6 +237,29 @@ func (r *Repository) UpdateRunner(ctx context.Context, userID string, in UpdateR
 		if _, err = tx.Exec(ctx, `
 			UPDATE user_profiles SET gender=$2, updated_at=NOW() WHERE user_id=$1`, userID, *in.Gender); err != nil {
 			return nil, fmt.Errorf("update profile gender: %w", err)
+		}
+	}
+
+	if in.Name != nil {
+		// 改名同步兩處（與 RegenerateAllNames 同口徑）：users.name 是玩家可見顯示名的來源
+		//（全站 COALESCE(u.name, handle)），user_profiles.nickname/real_name 跟著寫齊。
+		// is_virtual=TRUE 防呆：本路徑只准動虛擬帳號，永遠不得改到真人。
+		if _, err = tx.Exec(ctx, `
+			UPDATE users SET name=$2 WHERE id=$1 AND is_virtual=TRUE`, userID, *in.Name); err != nil {
+			return nil, fmt.Errorf("update user name: %w", err)
+		}
+		if _, err = tx.Exec(ctx, `
+			UPDATE user_profiles SET real_name=$2, nickname=$2, updated_at=NOW() WHERE user_id=$1`, userID, *in.Name); err != nil {
+			return nil, fmt.Errorf("update profile name: %w", err)
+		}
+	}
+
+	if in.AvatarURL != nil {
+		// 頭像與玩家自改走同一欄位 users.avatar_url（NULLIF：空字串＝清除，前台回退字首圓）。
+		// is_virtual=TRUE 防呆同改名。
+		if _, err = tx.Exec(ctx, `
+			UPDATE users SET avatar_url=NULLIF($2,''), updated_at=NOW() WHERE id=$1 AND is_virtual=TRUE`, userID, *in.AvatarURL); err != nil {
+			return nil, fmt.Errorf("update user avatar: %w", err)
 		}
 	}
 

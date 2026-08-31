@@ -249,6 +249,8 @@ func (h *Handler) RegenerateNames(w http.ResponseWriter, r *http.Request) {
 // --- PUT /{userID} ---
 
 type updateReq struct {
+	Name       *string  `json:"name"` // 改名（nil＝不改；給值必須非空白）
+	AvatarURL  *string  `json:"avatar_url"` // 頭像（nil＝不改；""＝清除；其餘限站內圖 URL）
 	Gender     *string  `json:"gender"`
 	City       *string  `json:"city"`
 	Level      *string  `json:"level"`
@@ -271,6 +273,21 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondErr(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	if req.Name != nil {
+		*req.Name = strings.TrimSpace(*req.Name)
+		if *req.Name == "" {
+			respondErr(w, http.StatusBadRequest, "name 不可為空白")
+			return
+		}
+	}
+	if req.AvatarURL != nil {
+		*req.AvatarURL = strings.TrimSpace(*req.AvatarURL)
+		// 只收站內圖片 URL（/admin/images 上傳的回傳值）：不開放外部網址，避免後台被塞外連圖。
+		if *req.AvatarURL != "" && !strings.HasPrefix(*req.AvatarURL, "/api/v1/images/") {
+			respondErr(w, http.StatusBadRequest, "avatar_url 須為站內圖片網址（/api/v1/images/…）")
+			return
+		}
 	}
 	if req.Gender != nil && !ValidGender(*req.Gender) {
 		respondErr(w, http.StatusBadRequest, "gender 不合法")
@@ -300,6 +317,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	in := UpdateRunnerInput{
+		Name: req.Name, AvatarURL: req.AvatarURL,
 		Gender: req.Gender, City: req.City, Level: req.Level, Diligence: req.Diligence,
 		WindowHour: req.WindowHour, AvgKm: req.AvgKm, MonthlyKm: req.MonthlyKm,
 		PaceFastS: req.PaceFastS, PaceSlowS: req.PaceSlowS, Enabled: req.Enabled,

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  adminVirtualRunnersApi,
+  adminImagesApi, adminVirtualRunnersApi,
   type VirtualRunner, type VirtualRunnerLevelPreset, type VirtualCity, type VirtualLevel,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
@@ -38,7 +38,7 @@ function fmtPace(s: number) {
 //     控制是否連同能力值一起送出——不勾＝交給後端依新 level 重新從 preset 帶入±5%抖動）---
 type RForm = {
   user_id: string
-  name: string
+  name: string; avatar_url: string
   gender: 'male' | 'female'
   city: VirtualCity
   level: VirtualLevel
@@ -54,13 +54,13 @@ type RForm = {
 
 function emptyRForm(firstLevel: VirtualLevel): RForm {
   return {
-    user_id: '', name: '', gender: 'male', city: 'taipei', level: firstLevel, diligence: 3, window_hour: 6,
+    user_id: '', name: '', avatar_url: '', gender: 'male', city: 'taipei', level: firstLevel, diligence: 3, window_hour: 6,
     overrideAbility: false, avg_km: 0, monthly_km: 0, pace_fast_s: 0, pace_slow_s: 0, enabled: true,
   }
 }
 function toRForm(r: VirtualRunner): RForm {
   return {
-    user_id: r.user_id, name: r.name, gender: r.gender, city: r.city, level: r.level, diligence: r.diligence,
+    user_id: r.user_id, name: r.name, avatar_url: r.avatar_url, gender: r.gender, city: r.city, level: r.level, diligence: r.diligence,
     window_hour: r.window_hour, overrideAbility: false,
     avg_km: r.avg_km, monthly_km: r.monthly_km, pace_fast_s: r.pace_fast_s, pace_slow_s: r.pace_slow_s, enabled: r.enabled,
   }
@@ -79,6 +79,7 @@ export default function AdminVirtualRunnersPage() {
   const [bForm, setBForm] = useState<BForm | null>(null)
   const [presetForm, setPresetForm] = useState<{ level: VirtualLevel; avg_km: number; monthly_km: number; pace_fast_s: number; pace_slow_s: number } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [avatarBusy, setAvatarBusy] = useState(false)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
 
@@ -108,6 +109,18 @@ export default function AdminVirtualRunnersPage() {
   function rCancel() { setRForm(null); setErr('') }
   function setRF<K extends keyof RForm>(k: K, v: RForm[K]) { setRForm((f) => (f ? { ...f, [k]: v } : f)) }
 
+  // 頭像：走既有 /admin/images 上傳（≤5MB、後端自動壓縮），成功後只先寫進表單，按「儲存」才落庫
+  async function onPickAvatar(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = '' // 清掉 value，允許重選同一個檔案
+    if (!file || !token) return
+    setAvatarBusy(true); setErr('')
+    try {
+      const { url } = await adminImagesApi.upload(token, file)
+      setRF('avatar_url', url)
+    } catch (er: any) { setErr(er?.message || '頭像上傳失敗') } finally { setAvatarBusy(false) }
+  }
+
   async function rSave() {
     if (!token || !rForm) return
     setBusy(true); setErr(''); setMsg('')
@@ -123,6 +136,9 @@ export default function AdminVirtualRunnersPage() {
           gender: rForm.gender, city: rForm.city, level: rForm.level, diligence: rForm.diligence,
           window_hour: rForm.window_hour, enabled: rForm.enabled,
         }
+        const newName = rForm.name.trim()
+        if (newName) body.name = newName // 空＝不改名（後端 name 欄位省略即不動）
+        body.avatar_url = rForm.avatar_url // 每次帶上：''＝清除、值未變＝冪等
         if (rForm.overrideAbility) {
           body.avg_km = rForm.avg_km; body.monthly_km = rForm.monthly_km
           body.pace_fast_s = rForm.pace_fast_s; body.pace_slow_s = rForm.pace_slow_s
@@ -279,9 +295,21 @@ export default function AdminVirtualRunnersPage() {
         <div style={{ ...card, marginTop: 12 }}>
           <div style={{ fontWeight: 800, marginBottom: 12 }}>{rIsNew ? '新增虛擬選手' : `編輯選手：${rForm.name}`}</div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            {rIsNew && (
-              <Field label="姓名（空＝自動取名）">
-                <input style={{ ...inp, width: 140 }} value={rForm.name} onChange={(e) => setRF('name', e.target.value)} placeholder="自動" />
+            <Field label={rIsNew ? '姓名（空＝自動取名）' : '姓名（空＝不改名）'}>
+              <input style={{ ...inp, width: 140 }} value={rForm.name} onChange={(e) => setRF('name', e.target.value)} placeholder={rIsNew ? '自動' : ''} />
+            </Field>
+            {!rIsNew && (
+              <Field label="頭像">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {rForm.avatar_url
+                    ? <img src={rForm.avatar_url} alt="" style={{ width: 36, height: 36, borderRadius: 999, objectFit: 'cover', border: '1px solid var(--line-2)' }} />
+                    : <div style={{ width: 36, height: 36, borderRadius: 999, background: 'var(--bg-2)', border: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>{rForm.name.trim().charAt(0) || '？'}</div>}
+                  <label style={{ ...ghostBtn, cursor: 'pointer', opacity: avatarBusy ? 0.5 : 1 }}>
+                    {avatarBusy ? '上傳中…' : '上傳圖片'}
+                    <input type="file" accept="image/*" style={{ display: 'none' }} disabled={avatarBusy} onChange={onPickAvatar} />
+                  </label>
+                  {rForm.avatar_url && <button onClick={() => setRF('avatar_url', '')} style={ghostBtn}>移除</button>}
+                </div>
               </Field>
             )}
             <Field label="性別">
@@ -432,6 +460,9 @@ function RunnerRow({
 }: { r: VirtualRunner; levelLabel: string; onToggle: () => void; onEdit: () => void; onDelete: () => void }) {
   return (
     <div style={row}>
+      {r.avatar_url
+        ? <img src={r.avatar_url} alt="" style={{ width: 34, height: 34, borderRadius: 999, objectFit: 'cover', flexShrink: 0, border: '1px solid var(--line-2)' }} />
+        : <div style={{ width: 34, height: 34, borderRadius: 999, background: 'var(--bg-2)', border: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0 }}>{r.name.charAt(0)}</div>}
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontWeight: 700, fontSize: 14 }}>
           {r.name}

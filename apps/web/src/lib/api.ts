@@ -2590,6 +2590,7 @@ export interface VirtualRunnerLevelPreset {
 export interface VirtualRunner {
   user_id: string
   name: string
+  avatar_url: string // 空＝無頭像（顯示字首圓）
   gender: 'male' | 'female'
   city: VirtualCity
   level: VirtualLevel
@@ -2621,6 +2622,8 @@ export interface VirtualRunnerBatchPayload {
 }
 
 export interface VirtualRunnerUpdatePayload {
+  name?: string // 改名（省略＝不改）
+  avatar_url?: string // 頭像站內 URL；''＝清除；省略＝不改
   gender?: 'male' | 'female'
   city?: VirtualCity
   level?: VirtualLevel
