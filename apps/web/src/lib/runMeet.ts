@@ -66,6 +66,10 @@ export function isoToTaipeiLocalInput(iso: string | null | undefined): string {
  *  不是「上午 0 點」或「下午 0 點」。fmtMeetAt 是全站顯示預計時間的唯一函式（2026-08-31
  *  使用者回報「分不清楚是上午 4:30 還是下午 4:30」），這兩個邊界在 verify-run-meet.mjs 有專門測資釘住。 */
 function fmtHour12(hh: number, mm: number): string {
+  // ⚠️ 0 點單獨處理成「凌晨 0:30」而不是「上午 12:30」（2026-08-31 使用者定案）：
+  // 中文口語就是說「凌晨零點半」，「上午 12:30」反而會被讀成中午。
+  // 中午 12:xx 仍是「下午 12:xx」——那個轉換是對的，不要一起改掉。
+  if (hh === 0) return `凌晨 0:${pad2(mm)}`
   const period = hh < 12 ? '上午' : '下午'
   const h12 = hh % 12 === 0 ? 12 : hh % 12
   return `${period} ${h12}:${pad2(mm)}`
