@@ -11,6 +11,7 @@ import (
 	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/gpscalib"
+	"github.com/dor/api/internal/runmeet"
 	"github.com/dor/api/internal/stamina"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -135,6 +136,11 @@ type DashboardInfo struct {
 	CheerEditEntry   string `json:"cheer_edit_entry"`  // 啦啦隊角色位置校正模式入口可見性（同上）
 	MonopolyEntry    string `json:"monopoly_entry"`    // 環台大富翁入口可見性（同上）
 	KnowledgeEntry   string `json:"knowledge_entry"`   // 知識探索入口可見性（同上）
+	// 團練邀請（見 internal/runmeet）：入口可見性 + 本月剩餘發起次數（給入口徽章「本月 0/1」顯示）。
+	// ⚠️ 入口非 shown 時 runmeet.DashboardSummary 完全不查 DB（回 0），dashboard 熱路徑零額外成本；
+	// 規格否決的是「跨表 COUNT 待審申請數」，不是這個 users 主鍵讀取。
+	RunMeetEntry     string `json:"runmeet_entry"`
+	RunMeetRemaining int    `json:"runmeet_remaining"`
 	// GPS 距離校正（見 internal/gpscalib）：GpsCalibFactor 一律走 gpscalib.EffectiveFactor 同一判斷
 	// （入口/開關/狀態/過期皆已套用），未套用時為 1.0——這裡不是原始係數，是「目前生效」的係數，
 	// 與 GPS 上傳端(activity/gps.go SaveGPSRun)使用同一函式，保證「跑者看到的＝入帳的」。
@@ -227,6 +233,8 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		d.Sp, d.SpMax, d.SpRecoverMin, d.SpNextRecoverSec, d.SpFreezeUntil, d.Fitness = st.SP, st.SPMax, st.RecoverMin, st.NextRecoverSec, st.FreezeUntil, st.Fitness
 	}
 	d.IsVIP = d.VIPExpiresAt != nil && d.VIPExpiresAt.After(time.Now())
+	// 團練邀請入口 + 本月剩餘發起次數（需在 d.IsVIP 算出之後——配額上限是即時依 VIP 判定的）
+	d.RunMeetEntry, d.RunMeetRemaining = runmeet.DashboardSummary(r.Context(), h.db, userID, email, code, isSuperAdmin, d.IsVIP)
 	d.ActivityCouponValueCents = appsettings.GetInt(r.Context(), h.db, "vip_coupon_value_cents", 10000)
 	d.CheerDisplayMs = appsettings.GetInt(r.Context(), h.db, "cheer_display_ms", 3000)
 	d.CheerCharLayout = appsettings.GetString(r.Context(), h.db, "cheer_char_layout", defaultCheerCharLayoutJSON)

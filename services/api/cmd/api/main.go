@@ -50,6 +50,7 @@ import (
 	"github.com/dor/api/internal/rewardserial"
 	"github.com/dor/api/internal/routing"
 	"github.com/dor/api/internal/runcheer"
+	"github.com/dor/api/internal/runmeet"
 	"github.com/dor/api/internal/training"
 	"github.com/dor/api/internal/version"
 	"github.com/dor/api/internal/virtualrunner"
@@ -212,6 +213,12 @@ func main() {
 	// raceSvc.SetMailInserter 同一慣例，mailHandler 已於上方建構完成。
 	gpscalib.SetMailInserter(mailHandler)
 
+	// 團練邀請（見 internal/runmeet，migration 156）：會員自行發起「揪人一起去跑步」的聚會。
+	// Router() 內第一行即 requireEntry（runmeet_entry_state/whitelist），非白名單一律 403（SEC-H5）。
+	runMeetHandler := runmeet.NewHandler(pool, rdb, wsManager)
+	// 後台強制下架時發 urgent 站內信給發起人（1-method 介面 + 晚繫結，比照 gpscalib 同一慣例）。
+	runmeet.SetMailInserter(mailHandler)
+
 	// Admin 帳號管理 + 各模組權限
 	adminAcctHandler := adminacct.NewHandler(pool)
 
@@ -326,6 +333,10 @@ func main() {
 	r.Use(middleware.MaxBodyBytes(1<<20,
 		"/api/v1/admin/images", "/api/v1/profile/avatar",
 		"/api/v1/admin/personal-tasks/import", // xlsx 轉 JSON 整包匯入，見 middleware.MaxBodyBytes 註解
+		// 團練邀請圖片上傳（自帶 5MB MaxBytesReader + 嚴格嗅探/重編碼，見 internal/runmeet/imageupload.go）。
+		// ⚠️ 這裡是 strings.HasPrefix 前綴比對，所以上傳路徑必須是扁平的 /run-meets/images
+		// （不能寫成 /run-meets/{id}/images）；不加這行會被 1MB 全域上限先擋成 413。
+		"/api/v1/run-meets/images",
 	))
 	// 5xx 聚合告警：短時間內大量 5xx 觸發一次 Telegram（避免每次 5xx 各自洗版）。
 	r.Use(middleware.FiveXXAlert)
@@ -499,6 +510,11 @@ func main() {
 			r.With(middleware.RateLimit(rdb, "monopoly", 30, time.Minute, middleware.UserOrIP)).
 				Mount("/monopoly", monopolyHandler.Router())
 
+			// 團練邀請（見 internal/runmeet）— mount 級粗粒度節流；個別端點另有更嚴的
+			// per-route 限流（建立 5/h、上傳圖 20/h、密碼 10/min＋每團每人失敗計數…）。
+			r.With(middleware.RateLimit(rdb, "runmeet", 120, time.Minute, middleware.UserOrIP)).
+				Mount("/run-meets", runMeetHandler.Router())
+
 			// Web Push 訂閱（VAPID 金鑰 + subscribe/unsubscribe）
 			r.Mount("/push", pushHandler.Router())
 
@@ -561,6 +577,7 @@ func main() {
 			r.With(perm("organizer")).Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 			r.With(perm("partners")).Mount("/admin/partner-shops", partnerHandler.AdminRouter())
 			r.With(perm("monopoly")).Mount("/admin/monopoly", monopolyHandler.AdminRouter())
+			r.With(perm("run_meets")).Mount("/admin/run-meets", runMeetHandler.AdminRouter()) // 團練邀請（列表/下架/檢舉/配額/孤兒圖 GC）
 			r.With(perm("rewards")).Mount("/admin/reward-merchants", rewardSerialHandler.MerchantRouter())
 			r.With(perm("rewards")).Mount("/admin/reward-groups", rewardSerialHandler.GroupRouter())
 			r.With(perm("rewards")).Mount("/admin/reward-templates", activityRewardHandler.TemplateRouter())

@@ -48,6 +48,7 @@ var Scopes = []Scope{
 	{"virtual", "虛擬選手管理"},
 	{"analytics", "活躍度分析"},
 	{"run_cheers", "跑步鼓勵語"},
+	{"run_meets", "團練邀請管理"},
 }
 
 func validScope(k string) bool {
@@ -373,6 +374,7 @@ var auditResourceLabel = map[string]string{
 	"partner-shops":    "跑者充電站",
 	"reward-merchants": "獎勵合作商家", "reward-groups": "獎勵序號組", "reward-templates": "獎勵模板",
 	"event-coupons": "活動優惠券",
+	"run-meets":     "團練邀請",
 }
 var auditVerb = map[string]string{"POST": "新增", "PUT": "更新", "PATCH": "更新", "DELETE": "刪除"}
 

@@ -28,6 +28,7 @@ export default function MemberPanel({
   onOpenMonopoly,
   onOpenRewards,
   onOpenHeroes,
+  onOpenRunMeet,
   onUploadAvatar,
   uploadingAvatar,
   onReady,
@@ -45,6 +46,7 @@ export default function MemberPanel({
   onOpenMonopoly?: () => void
   onOpenRewards?: () => void
   onOpenHeroes?: () => void
+  onOpenRunMeet?: () => void
   onUploadAvatar?: (file: File) => void
   uploadingAvatar?: boolean
   onReady?: () => void
@@ -251,6 +253,19 @@ export default function MemberPanel({
                 style={{ ...entryBtn, opacity: dash.achievement_entry === 'shown' ? 1 : 0.6, cursor: dash.achievement_entry === 'shown' ? 'pointer' : 'default' }}>
                 <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>📊 數據探索</span>
                 <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.achievement_entry === 'locked' ? '即將開放 ›' : '你的數據成就 ›'}</span>
+              </button>
+            )}
+            {/* 團練邀請（見 components/RunMeetScreen）：三態入口；shown 時多顯示本月剩餘發起次數
+                （runmeet_remaining 由 dashboard 一併回，不需另外打 API）。 */}
+            {!!dash.runmeet_entry && dash.runmeet_entry !== 'hidden' && (
+              <button disabled={dash.runmeet_entry === 'locked'}
+                onClick={(e) => { e.stopPropagation(); if (dash.runmeet_entry === 'shown') onOpenRunMeet?.() }}
+                style={{ ...entryBtn, opacity: dash.runmeet_entry === 'shown' ? 1 : 0.6, cursor: dash.runmeet_entry === 'shown' ? 'pointer' : 'default' }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🤝 團練邀請</span>
+                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.runmeet_entry === 'locked' ? '即將開放 ›' : '揪人一起去跑步 ›'}</span>
+                {dash.runmeet_entry === 'shown' && dash.runmeet_remaining > 0 && (
+                  <span style={{ fontSize: 10, fontWeight: 800, color: 'var(--gold)' }}>本月還有 {dash.runmeet_remaining} 次</span>
+                )}
               </button>
             )}
           </div>

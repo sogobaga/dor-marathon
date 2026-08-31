@@ -43,6 +43,9 @@ const NAV: { grp: string; items: NavItem[] }[] = [
       { k: 'training', t: '自主訓練課表', href: '/admin/training', perm: 'training' },
       { k: 'virtual', t: '虛擬選手', href: '/admin/virtual-runners', perm: 'virtual' },
       { k: 'partners', t: '跑者充電站', href: '/admin/partners', perm: 'partners' },
+      // 團練邀請（run_meets）：全站第一個 UGC 功能，後台要能下架＋處理檢舉。
+      // ⚠️ 不接管上面營運群組既有的 teams 佔位——那是賽事的「跑團分組」語意，兩者無關。
+      { k: 'run-meets', t: '團練邀請', href: '/admin/run-meets', perm: 'run_meets' },
       { k: 'monopoly', t: '環台大富翁', href: '/admin/monopoly', perm: 'monopoly' },
       { k: 'reward-serials', t: '序號/獎勵管理', href: '/admin/reward-serials', perm: 'rewards' },
       { k: 'reward-coupons', t: '活動優惠券管理', href: '/admin/reward-coupons', perm: 'rewards' },

@@ -1,0 +1,1168 @@
+package runmeet
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/dor/api/internal/appsettings"
+	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/middleware"
+	"github.com/dor/api/internal/realtime"
+)
+
+// uuidRE 路徑/body 帶入的 id 必須是合法 UUID（比照 partner/handler.go:16）：
+// 不合法直接擋，避免把非 UUID 字串丟給 Postgres 的 uuid 欄位比較（型別錯誤 → 500 + log 噪音）。
+var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+func isValidUUID(s string) bool { return uuidRE.MatchString(s) }
+
+type Handler struct {
+	db   *pgxpool.Pool
+	repo *Repository
+	rdb  *redis.Client
+	rt   *realtime.Manager
+}
+
+func NewHandler(db *pgxpool.Pool, rdb *redis.Client, rt *realtime.Manager) *Handler {
+	return &Handler{db: db, repo: NewRepository(db), rdb: rdb, rt: rt}
+}
+
+// --- 回應工具（每套件各自複製一份，比照 partner/handler.go:237）---
+
+func respondJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func respondErr(w http.ResponseWriter, code int, msg string) {
+	respondJSON(w, code, map[string]string{"error": msg})
+}
+
+// respondAPIErr 把 apiErr 轉成對應 status + 中文訊息；非 apiErr（DB 錯等）一律 500 + 英文短句，
+// 不外洩內部錯誤內容。
+func respondAPIErr(w http.ResponseWriter, err error) {
+	var e *apiErr
+	if errors.As(err, &e) {
+		respondErr(w, e.Status, e.Msg)
+		return
+	}
+	if errors.Is(err, ErrQuotaExhausted) {
+		respondErr(w, http.StatusConflict, "本月發起次數已用完。")
+		return
+	}
+	respondErr(w, http.StatusInternalServerError, "failed")
+}
+
+// --- 入口閘門 ---
+
+// ResolveEntry 團練邀請入口可見性（hidden|locked|shown）。供 profile 的 DashboardInfo 使用。
+// 超管恆放行（比照 monopoly/gps_calib 既有慣例：超管永遠看得到功能本身）。
+func ResolveEntry(ctx context.Context, db *pgxpool.Pool, email, code string, isSuperAdmin bool) string {
+	if isSuperAdmin {
+		return "shown"
+	}
+	return entryFrom(
+		appsettings.GetString(ctx, db, EntryStateKey, "hidden"),
+		appsettings.GetString(ctx, db, EntryWhitelistKey, ""),
+		email, code)
+}
+
+// entryFrom 純函式版（設定值由呼叫端傳入），可單元測試。
+// 「locked」在前端是顯示但不可按，對應到後端一樣不放行——requireEntry 只認 "shown"。
+func entryFrom(state, whitelist, email, code string) string {
+	switch state {
+	case "open":
+		return "shown"
+	case "locked":
+		return "locked"
+	case "whitelist":
+		if whitelisted(whitelist, email, code) {
+			return "shown"
+		}
+		return "hidden"
+	default: // hidden 或未設定 → fail-closed
+		return "hidden"
+	}
+}
+
+// whitelisted 比照 profile.personalWhitelisted / gpscalib.whitelisted：
+// 換行/逗號/分號/空白分隔，可填帳號編碼（# 可省）或 email，大小寫不敏感。
+func whitelisted(list, email, code string) bool {
+	email = strings.ToLower(strings.TrimSpace(email))
+	code = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(code), "#"))
+	for _, tok := range strings.FieldsFunc(list, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ';' || r == ' ' || r == '\t'
+	}) {
+		t := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(tok), "#"))
+		if t == "" {
+			continue
+		}
+		if (email != "" && t == email) || (code != "" && t == code) {
+			return true
+		}
+	}
+	return false
+}
+
+// DashboardSummary 給 profile 的 DashboardInfo 用：入口旗標 + 本月剩餘發起次數。
+//
+// ⚠️ Dashboard 是熱路徑：入口非 shown 時**完全不查 DB**（直接回 0），只有真的看得到入口的
+// 帳號才多一次 users 主鍵查詢。規格 1.7 否決的是「跨表 COUNT 待審申請數」，不是這個。
+func DashboardSummary(ctx context.Context, db *pgxpool.Pool, userID, email, code string, isSuperAdmin, isVIP bool) (entry string, remaining int) {
+	entry = ResolveEntry(ctx, db, email, code, isSuperAdmin)
+	if entry != "shown" {
+		return entry, 0
+	}
+	var month *string
+	var used int
+	if err := db.QueryRow(ctx, `SELECT run_meet_month, COALESCE(run_meet_used,0) FROM users WHERE id=$1`, userID).
+		Scan(&month, &used); err != nil {
+		return entry, 0
+	}
+	cap := QuotaCap(isVIP,
+		appsettings.GetInt(ctx, db, keyQuotaNormal, defQuotaNormal),
+		appsettings.GetInt(ctx, db, keyQuotaVIP, defQuotaVIP))
+	if month == nil || *month != QuotaMonth(time.Now()) {
+		return entry, cap // 跨月自動重置（CAS 在下次建立時才真的寫入）
+	}
+	if remaining = cap - used; remaining < 0 {
+		remaining = 0
+	}
+	return entry, remaining
+}
+
+// requireEntry 後端強制入口白名單（SEC-H5：前端隱藏 ≠ 後端有擋）。
+// 獨立實作、不 import profile（避免循環依賴），比照 gpscalib/monopoly 既有前例。
+func (h *Handler) requireEntry(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+		if uid == "" {
+			respondErr(w, http.StatusUnauthorized, "login required")
+			return
+		}
+		email, code, isSuper, _, err := h.repo.UserFlags(r.Context(), uid)
+		if err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to resolve access")
+			return
+		}
+		if ResolveEntry(r.Context(), h.db, email, code, isSuper) != "shown" {
+			respondErr(w, http.StatusForbidden, errEntryClosed.Msg)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// --- 路由 ---
+
+// Router 前台（掛在 /api/v1/run-meets，需 RequireAuth）。第一行即 requireEntry。
+//
+// ⚠️ 上傳路徑必須是扁平的 /images（不是 /{id}/images）：全域 MaxBodyBytes 的 skip 清單是
+// strings.HasPrefix 前綴比對（見 middleware/bodylimit.go），巢狀路徑無法用前綴排除。
+// chi 的 radix tree 靜態段優先於 param 段，POST /run-meets/images 與 GET /run-meets/{id} 可共存。
+func (h *Handler) Router() http.Handler {
+	r := chi.NewRouter()
+	r.Use(h.requireEntry)
+
+	// 靜態路徑必須寫在 {id} 之前（可讀性；chi 本身已保證靜態優先）
+	r.Get("/", h.List)
+	r.Get("/mine", h.Mine)
+	r.Get("/quota", h.Quota)
+	r.Get("/place-suggest", h.PlaceSuggest)
+	r.With(h.limit("runmeet_create", 5, time.Hour)).Post("/", h.Create)
+	r.With(h.limit("runmeet_image", 20, time.Hour)).Post("/images", h.UploadImage)
+
+	r.Get("/{id}", h.Detail)
+	r.With(h.limit("runmeet_write", 20, time.Minute)).Put("/{id}", h.Update)
+	r.With(h.limit("runmeet_write", 20, time.Minute)).Post("/{id}/close", h.Close)
+	r.With(h.limit("runmeet_write", 20, time.Minute)).Post("/{id}/cancel", h.Cancel)
+	r.With(h.limit("runmeet_write", 20, time.Minute)).Delete("/{id}", h.Delete)
+
+	// 密碼端點：mount 級限流掛在**具體 route** 上（不是 r.Use）——掛 r.Use 時路由尚未匹配，
+	// chi.URLParam 取不到 {id}，自訂維度會回空字串而 middleware.RateLimit 對空維度直接放行
+	// ＝完全不限流的假防護（見 middleware/ratelimit.go 的 d == "" 分支）。
+	// 每團每人的失敗計數另在 handler 內自行 INCR（見 Unlock）。
+	r.With(h.limit("runmeet_unlock", 10, time.Minute)).Post("/{id}/unlock", h.Unlock)
+
+	r.With(h.limit("runmeet_join", 10, time.Minute)).Post("/{id}/join", h.Join)
+	r.With(h.limit("runmeet_join", 10, time.Minute)).Delete("/{id}/join", h.Leave)
+
+	r.Get("/{id}/members", h.Members)
+	r.With(h.limit("runmeet_decide", 60, time.Minute)).Post("/{id}/members/approve-batch", h.ApproveBatch)
+	r.With(h.limit("runmeet_decide", 60, time.Minute)).Post("/{id}/members/{uid}/approve", h.ApproveOne)
+	r.With(h.limit("runmeet_decide", 60, time.Minute)).Post("/{id}/members/{uid}/reject", h.RejectOne)
+	r.With(h.limit("runmeet_decide", 60, time.Minute)).Post("/{id}/members/{uid}/kick", h.KickOne)
+	r.With(h.limit("runmeet_write", 20, time.Minute)).Delete("/{id}/members/{uid}/ban", h.UnbanOne)
+
+	r.Get("/{id}/comments", h.ListComments)
+	r.With(h.limit("runmeet_comment", 20, time.Minute)).Post("/{id}/comments", h.CreateComment)
+	r.With(h.limit("runmeet_write", 20, time.Minute)).Delete("/{id}/comments/{cid}", h.DeleteComment)
+	r.With(h.limit("runmeet_react", 60, time.Minute)).Put("/{id}/reaction", h.PutReaction)
+	r.With(h.limit("runmeet_react", 60, time.Minute)).Delete("/{id}/reaction", h.DeleteReaction)
+
+	r.With(h.limit("runmeet_report", 10, time.Hour)).Post("/{id}/report", h.Report)
+	return r
+}
+
+func (h *Handler) limit(action string, n int, window time.Duration) func(http.Handler) http.Handler {
+	return middleware.RateLimit(h.rdb, action, n, window, middleware.UserOrIP)
+}
+
+// --- 共用小工具 ---
+
+func uid(r *http.Request) string {
+	s, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	return s
+}
+
+func meetIDParam(r *http.Request) (string, bool) {
+	id := chi.URLParam(r, "id")
+	return id, isValidUUID(id)
+}
+
+func pageParams(r *http.Request, defLimit, maxLimit int) (limit, offset int) {
+	limit = defLimit
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+		limit = v
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v > 0 {
+		offset = v
+	}
+	return
+}
+
+// notify 即時推播（全站 data_updated，topic=runmeet；前端 siteRealtimeStore 需同步登記 topic，
+// 否則會被靜默丟棄）。fire-and-forget，失敗不影響主流程。
+func (h *Handler) notify(ctx context.Context, userIDs ...string) {
+	if h.rt == nil || len(userIDs) == 0 {
+		return
+	}
+	h.rt.PublishData(ctx, "runmeet", userIDs)
+}
+
+// --- DTO 組裝（地點分層的唯一出口，改這裡前先讀 model.go 檔頭）---
+
+// buildCard 組公開層卡片。
+//
+// ⚠️ isAdmin 必須一路傳到底：後台在處理檢舉/下架時，看的常常正是「私密、且管理員不是成員」
+// 的團——若這裡把 isAdmin 寫死成 false，HasDetailAccess 會回 false，buildDetail 接著把
+// description 清空、image_urls 清成空陣列，管理員在後台看到的是一個「沒填說明也沒圖」的團，
+// 等於無法據以判斷該不該下架（而 lat/lng 卻正常顯示，錯得很不直觀）。
+func (h *Handler) buildCard(m *meetRow, viewer string, withBand, isAdmin bool) CardView {
+	isOwner := m.OwnerID == viewer
+	hasAccess := HasDetailAccess(m.IsPrivate, isOwner, m.MyStatus, m.Unlocked, isAdmin)
+
+	var cover *string
+	// 私密團未解鎖時不給封面圖（excerpt 仍給——需求 2(c) 明寫列表要有摘要）
+	if hasAccess && len(m.ImageURLs) > 0 {
+		u := m.ImageURLs[0]
+		cover = &u
+	}
+	c := CardView{
+		ID:               m.ID,
+		Title:            m.Title,
+		MeetAt:           m.MeetAt,
+		Region:           m.Region,
+		PlaceLabel:       m.PlaceLabel,
+		Capacity:         m.Capacity,
+		MemberCount:      m.MemberCount,
+		IsPrivate:        m.IsPrivate,
+		ApprovalRequired: m.ApprovalRequired,
+		Excerpt:          excerpt(m.Description, excerptRunes),
+		CoverURL:         cover,
+		Status:           m.Status,
+		IsEnded:          !m.MeetAt.After(time.Now()),
+		Owner:            OwnerView{ID: m.OwnerID, Name: m.OwnerName, AvatarURL: m.OwnerAvatar},
+		MyState:          MyState(isOwner, m.MyStatus),
+		ReactionCount:    m.ReactionCount,
+		CommentCount:     m.CommentCount,
+		MyReaction:       m.MyReaction,
+		HasAccess:        hasAccess,
+	}
+	if withBand {
+		c.DistanceBand = DistanceBand(m.distanceM)
+	}
+	return c
+}
+
+// locationNote 未加入者在地點欄位下方看到的固定提示。
+const locationNote = "成功加入後才會顯示完整詳細地點"
+
+// buildDetail 依觀看者身分回**不同型別**的詳情。
+// ⚠️ 非成員拿到的是 PublicDetailView——結構上就沒有 lat/lng/meeting_detail 三個欄位，
+// 序列化出來的 JSON 不會有這些 key（不是回 null、也不是回 0）。
+func (h *Handler) buildDetail(m *meetRow, viewer string, isAdmin bool) any {
+	isOwner := m.OwnerID == viewer
+	base := detailBase{
+		CardView:    h.buildCard(m, viewer, false, isAdmin),
+		Description: m.Description,
+		ImageURLs:   m.ImageURLs,
+		ImageLimit:  m.ImageLimit,
+		CanComment:  canComment(isOwner, m.MyStatus, m.Status, m.MeetAt),
+	}
+	if base.ImageURLs == nil {
+		base.ImageURLs = []string{} // 前端契約：image_urls 恆為陣列，不會是 null
+	}
+	// 私密團未解鎖：完整說明與圖片一律不給（列表 excerpt 仍給，需求 2(c)）。
+	// isAdmin 已在 buildCard 內納入 HasDetailAccess，所以後台不會被這段清空。
+	if !base.HasAccess {
+		base.ImageURLs = []string{}
+		base.Description = ""
+	}
+	if isOwner || isAdmin {
+		base.PendingCount = m.PendingCount
+	}
+	if CanSeePreciseLocation(isOwner, m.MyStatus, isAdmin) {
+		return MemberDetailView{detailBase: base, LocationLocked: false,
+			Lat: m.Lat, Lng: m.Lng, MeetingDetail: m.MeetingDetail}
+	}
+	return PublicDetailView{detailBase: base, LocationLocked: true, LocationNote: locationNote}
+}
+
+// canComment 留言權：joined/owner，且未超過「結束後 7 天」的唯讀界線，且團未取消。
+func canComment(isOwner bool, myStatus *string, status string, meetAt time.Time) bool {
+	if !isOwner && (myStatus == nil || *myStatus != MemberJoined) {
+		return false
+	}
+	if status == StatusCancelled {
+		return false
+	}
+	return time.Now().Before(meetAt.Add(endedCommentDays * 24 * time.Hour))
+}
+
+// --- 前台 handlers ---
+
+// GET /run-meets
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	u := uid(r)
+	q := r.URL.Query()
+	limit, offset := pageParams(r, 20, 50)
+
+	f := ListFilter{
+		Q:        q.Get("q"),
+		Region:   q.Get("region"),
+		Privacy:  q.Get("privacy"),
+		Approval: q.Get("approval"),
+		HasSlot:  q.Get("has_slot") == "1",
+		Ended:    q.Get("ended") == "1",
+		Sort:     q.Get("sort"),
+		Limit:    limit,
+		Offset:   offset,
+	}
+
+	// 「搜尋附近的團練」。使用者位置只當查詢參數：不寫入 DB、不進 log。
+	withBand := false
+	if ls, ns := q.Get("near_lat"), q.Get("near_lng"); ls != "" && ns != "" {
+		lat, e1 := strconv.ParseFloat(ls, 64)
+		lng, e2 := strconv.ParseFloat(ns, 64)
+		if e1 != nil || e2 != nil || !validCoord(lat, lng) {
+			respondAPIErr(w, errBadCoord)
+			return
+		}
+		// ⚠️ 半徑只接受與 distance_band 邊界重合的離散值（1/3/5/10 km），任意值一律吸附。
+		// 這條是資安要求不是輸入清理：radius_km 若可連續調整，「這個團練有沒有出現在結果裡」
+		// 就成了「距離 < X 嗎」的布林神諭，對 X 二分搜尋 25 次即可把距離收斂到公尺級，
+		// 再換三組 near 座標聯立就解得出精確集合點（見 geo.go snapRadiusKm 的長註解）。
+		radius := snapRadiusKm(10)
+		if rs := q.Get("radius_km"); rs != "" {
+			if v, err := strconv.ParseFloat(rs, 64); err == nil && v > 0 {
+				radius = snapRadiusKm(v)
+			}
+		}
+		f.NearLat, f.NearLng, f.RadiusKm = &lat, &lng, radius
+		withBand = true
+	}
+
+	s := loadSettings(r.Context(), h.db)
+	rows, total, err := h.repo.ListMeets(r.Context(), u, f, s.EndedVisibleDays)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	items := make([]CardView, 0, len(rows))
+	for i := range rows {
+		items = append(items, h.buildCard(&rows[i], u, withBand, false))
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
+}
+
+// GET /run-meets/mine → {owned, joined, pending}
+func (h *Handler) Mine(w http.ResponseWriter, r *http.Request) {
+	u := uid(r)
+	owned, joined, pending, err := h.repo.Mine(r.Context(), u)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	conv := func(rows []meetRow) []CardView {
+		out := make([]CardView, 0, len(rows))
+		for i := range rows {
+			out = append(out, h.buildCard(&rows[i], u, false, false))
+		}
+		return out
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"owned": conv(owned), "joined": conv(joined), "pending": conv(pending)})
+}
+
+// GET /run-meets/quota
+func (h *Handler) Quota(w http.ResponseWriter, r *http.Request) {
+	u := uid(r)
+	_, _, _, isVIP, err := h.repo.UserFlags(r.Context(), u)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	s := loadSettings(r.Context(), h.db)
+	now := time.Now()
+	month := QuotaMonth(now)
+	dbMonth, used, err := h.repo.QuotaOf(r.Context(), u)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	if dbMonth != month {
+		used = 0 // 跨月自動重置（CAS 在下次建立時才真的寫入）
+	}
+	cap := QuotaCap(isVIP, s.QuotaNormal, s.QuotaVIP)
+	remaining := cap - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	respondJSON(w, http.StatusOK, QuotaView{
+		Month: month, Cap: cap, Used: used, Remaining: remaining,
+		IsVIP: isVIP, RequiresVIP: s.RequiresVIP,
+		ImageLimit: ImageLimit(isVIP, s.ImagesNormal, s.ImagesVIP),
+		// VIP 權益數字給前端做文案（後台可調，前端不得寫死 10 / 4）
+		VIPCap: s.QuotaVIP, VIPImageLimit: s.ImagesVIP,
+		CapacityMax: s.CapacityMax,
+		ResetsAt:    QuotaResetAt(now),
+	})
+}
+
+// GET /run-meets/place-suggest?q=&lat=&lng=
+func (h *Handler) PlaceSuggest(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var lat, lng *float64
+	if ls, ns := q.Get("lat"), q.Get("lng"); ls != "" && ns != "" {
+		a, e1 := strconv.ParseFloat(ls, 64)
+		b, e2 := strconv.ParseFloat(ns, 64)
+		if e1 != nil || e2 != nil || !validCoord(a, b) {
+			respondAPIErr(w, errBadCoord)
+			return
+		}
+		lat, lng = &a, &b
+	}
+	items, err := h.repo.PlaceSuggest(r.Context(), q.Get("q"), lat, lng)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// POST /run-meets
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
+	u := uid(r)
+	var in MeetInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
+	_, _, _, isVIP, err := h.repo.UserFlags(r.Context(), u)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	s := loadSettings(r.Context(), h.db)
+	if s.RequiresVIP && !isVIP {
+		// 政策開關（runmeet_create_requires_vip=1）：不消耗任何次數，直接引導升級。
+		respondAPIErr(w, errRequiresVIP)
+		return
+	}
+	imgLimit := ImageLimit(isVIP, s.ImagesNormal, s.ImagesVIP)
+	if err := validateMeetInput(&in, time.Now(), s.CapacityMax, imgLimit, s.ImagesVIP); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	if len(in.ClientToken) > 64 {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
+	if err := h.repo.VerifyImageOwnership(r.Context(), u, in.ImageURLs); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+
+	now := time.Now()
+	quotaCap := QuotaCap(isVIP, s.QuotaNormal, s.QuotaVIP)
+	id, used, dup, err := h.repo.CreateMeet(r.Context(), u, &in, imgLimit, quotaCap, QuotaMonth(now))
+	if errors.Is(err, ErrQuotaExhausted) {
+		respondAPIErr(w, errQuotaUsedUp(quotaCap, isVIP, QuotaResetAt(now).Month(), s.QuotaVIP))
+		return
+	}
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	_ = dup // 冪等命中時同樣回 200 + 既有 id（前端無需區分）
+	m, err := h.repo.GetMeet(r.Context(), u, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	h.notify(r.Context(), u)
+	respondJSON(w, http.StatusOK, map[string]any{
+		"meet": h.buildDetail(&m, u, false), "used": used, "remaining": maxInt(quotaCap-used, 0)})
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// GET /run-meets/{id}
+//
+// 私密團未解鎖時回 403 + 摘要卡（規格 4.3），讓前端能渲染「請輸入密碼」而不是空白頁。
+// 卡片只含公開層欄位（地點只有 region/place_label）。
+func (h *Handler) Detail(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	u := uid(r)
+	m, err := h.repo.GetMeet(r.Context(), u, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	isOwner := m.OwnerID == u
+	if !HasDetailAccess(m.IsPrivate, isOwner, m.MyStatus, m.Unlocked, false) {
+		respondJSON(w, http.StatusForbidden, map[string]any{
+			"error": errLocked.Msg, "locked": true, "card": h.buildCard(&m, u, false, false)})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"meet": h.buildDetail(&m, u, false)})
+}
+
+// PUT /run-meets/{id}
+func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	u := uid(r)
+	var in MeetInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
+	s := loadSettings(r.Context(), h.db)
+	// 編輯用「該團的 image_limit 快照」當上限（不是即時 VIP 判定）——VIP 到期後仍能編輯既有 4 張團。
+	cur, err := h.repo.GetMeet(r.Context(), u, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	if cur.OwnerID != u {
+		respondAPIErr(w, errNotOwner)
+		return
+	}
+	if err := validateMeetInput(&in, time.Now(), s.CapacityMax, cur.ImageLimit, s.ImagesVIP); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	if err := h.repo.VerifyImageOwnership(r.Context(), u, in.ImageURLs); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	res, err := h.repo.UpdateMeet(r.Context(), u, id, &in)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	m, err := h.repo.GetMeet(r.Context(), u, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	h.notifyMembers(r.Context(), id)
+	respondJSON(w, http.StatusOK, map[string]any{
+		"meet": h.buildDetail(&m, u, false), "pending_kept": res.PendingKept})
+}
+
+// notifyMembers 推播給該團所有 joined/pending 成員（含發起人）。
+func (h *Handler) notifyMembers(ctx context.Context, meetID string) {
+	if h.rt == nil {
+		return
+	}
+	rows, err := h.db.Query(ctx, `
+		SELECT user_id FROM run_meet_members WHERE meet_id=$1 AND status IN ('joined','pending')`, meetID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var s string
+		if rows.Scan(&s) == nil {
+			ids = append(ids, s)
+		}
+	}
+	h.notify(ctx, ids...)
+}
+
+// POST /run-meets/{id}/close ／ /cancel
+// ⚠️ 兩條路徑都**不碰 run_meet_used**：「開啟後關閉，一樣消耗一次」（見 quota.go 檔頭）。
+func (h *Handler) Close(w http.ResponseWriter, r *http.Request)  { h.setStatus(w, r, StatusClosed) }
+func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) { h.setStatus(w, r, StatusCancelled) }
+
+func (h *Handler) setStatus(w http.ResponseWriter, r *http.Request, status string) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	u := uid(r)
+	// rejected＝被一併婉拒的待審申請者（關閉確認文案「待審核的申請會一併婉拒」的實作）
+	rejected, err := h.repo.SetStatus(r.Context(), u, id, status)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	h.notifyMembers(r.Context(), id)
+	h.notify(r.Context(), rejected...) // 已不在 joined/pending 名單，必須單獨推
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "status": status, "rejected": len(rejected)})
+}
+
+// DELETE /run-meets/{id}（軟刪；同樣不返還配額）
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	u := uid(r)
+	if err := h.repo.SoftDelete(r.Context(), u, id); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	h.notify(r.Context(), u)
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// POST /run-meets/images
+func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
+	u := uid(r)
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+1024)
+	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+		respondAPIErr(w, errImageTooLarge)
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		respondAPIErr(w, errImageMissing)
+		return
+	}
+	defer file.Close()
+
+	out, mime, err := processUpload(file)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	id, err := h.repo.InsertImage(r.Context(), u, mime, out)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	respondJSON(w, http.StatusOK, map[string]string{"id": id, "url": "/api/v1/images/" + id})
+}
+
+// --- 私密團密碼 ---
+
+// pwFailScript 每團每人密碼失敗計數：INCR + 首次 EXPIRE 原子執行（沿用 middleware/ratelimit.go
+// 的 Lua 做法，避免「已 INCR 但沒 TTL」永久鎖死）。
+var pwFailScript = redis.NewScript(`
+local n = redis.call("INCR", KEYS[1])
+if n == 1 then
+	redis.call("EXPIRE", KEYS[1], ARGV[1])
+end
+return n
+`)
+
+const (
+	pwFailMax    = 5
+	pwFailWindow = 600 // 秒
+)
+
+// POST /run-meets/{id}/unlock  {"password":"..."}
+//
+// 防暴力破解四層（規格 1.4）：
+//  1. route 級 middleware.RateLimit（runmeet_unlock 10/min，掛在具體 route 不是 r.Use）
+//  2. 每團每人失敗計數（本函式內自行 INCR；不可用 middleware——r.Use 層取不到 {id}）
+//  3. 統一錯誤 + 統一時序（團不存在也對 dummy hash 跑一次 bcrypt，見 Repository.VerifyPassword）
+//  4. Redis 不可用時**不 fail-open**：改成固定 500ms 延遲。這是與既有 RateLimit（rdb==nil 放行）
+//     的刻意分歧——密碼面 fail-open 風險高於一般端點；配合 bcrypt cost 10（約 60–100ms）
+//     把單連線速率壓到 ~100 次/分。
+func (h *Handler) Unlock(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	u := uid(r)
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
+
+	key := "ratelimit:runmeet_pwfail:" + u + ":" + id
+	if h.rdb == nil {
+		time.Sleep(500 * time.Millisecond)
+	} else {
+		n, err := h.rdb.Get(r.Context(), key).Int64()
+		if err == nil && n >= pwFailMax {
+			w.Header().Set("Retry-After", strconv.Itoa(pwFailWindow))
+			respondAPIErr(w, errPasswordTooMany)
+			return
+		}
+		if err != nil && !errors.Is(err, redis.Nil) {
+			time.Sleep(500 * time.Millisecond) // Redis 出錯：降級成延遲，不放行
+		}
+	}
+
+	okPw, err := h.repo.VerifyPassword(r.Context(), id, body.Password)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	if !okPw {
+		if h.rdb != nil {
+			_, _ = pwFailScript.Run(r.Context(), h.rdb, []string{key}, pwFailWindow).Int64()
+		}
+		// 團不存在／已下架／密碼錯誤一律回同一句（不外洩「這個團存不存在」）
+		respondAPIErr(w, errPasswordWrong)
+		return
+	}
+	if h.rdb != nil {
+		h.rdb.Del(r.Context(), key)
+	}
+	if err := h.repo.GrantAccess(r.Context(), id, u); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// --- 加入／退出 ---
+
+// POST /run-meets/{id}/join  {"note":"..."}
+func (h *Handler) Join(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	u := uid(r)
+	var body struct {
+		Note string `json:"note"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // note 選填，body 可為空
+	note, err := normalizeText(body.Note, MaxApplyNoteRunes, false)
+	if err != nil {
+		respondAPIErr(w, errTooLong)
+		return
+	}
+
+	m, err := h.repo.GetMeet(r.Context(), u, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	// 私密團必須先 unlock（或已是成員）——密碼是加入的前置條件
+	if !HasDetailAccess(m.IsPrivate, m.OwnerID == u, m.MyStatus, m.Unlocked, false) {
+		respondAPIErr(w, errLocked)
+		return
+	}
+
+	s := loadSettings(r.Context(), h.db)
+	res, err := h.repo.Join(r.Context(), u, id, note, s)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	h.notify(r.Context(), u, m.OwnerID)
+	respondJSON(w, http.StatusOK, res)
+}
+
+// DELETE /run-meets/{id}/join（撤回申請／自行退出）
+func (h *Handler) Leave(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	u := uid(r)
+	state, err := h.repo.LeaveOrWithdraw(r.Context(), u, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	h.notifyMembers(r.Context(), id)
+	h.notify(r.Context(), u)
+	respondJSON(w, http.StatusOK, map[string]string{"state": state})
+}
+
+// --- 成員管理 ---
+
+// GET /run-meets/{id}/members?status=joined|pending
+// joined 清單：joined 成員與發起人可看；pending 清單：只有發起人可看。
+func (h *Handler) Members(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	u := uid(r)
+	m, err := h.repo.GetMeet(r.Context(), u, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	isOwner := m.OwnerID == u
+	status := r.URL.Query().Get("status")
+	if status == "" {
+		status = MemberJoined
+	}
+	if status != MemberJoined && status != MemberPending {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	if status == MemberPending && !isOwner {
+		respondAPIErr(w, errNotOwner)
+		return
+	}
+	if !isOwner && (m.MyStatus == nil || *m.MyStatus != MemberJoined) {
+		respondAPIErr(w, errNotMember)
+		return
+	}
+	items, err := h.repo.ListMembers(r.Context(), id, status)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+}
+
+// memberAction 三個「指定操作對象」端點的共用外殼。
+// ⚠️ 對象一律取自路徑 {uid}，操作者一律取自 context；owner 驗證在 repository 的鎖內做。
+func (h *Handler) memberAction(w http.ResponseWriter, r *http.Request,
+	fn func(ctx context.Context, ownerID, meetID, targetID string) error) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	target := chi.URLParam(r, "uid")
+	if !isValidUUID(target) {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	if err := fn(r.Context(), uid(r), id, target); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	h.notify(r.Context(), target)
+	h.notifyMembers(r.Context(), id)
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (h *Handler) ApproveOne(w http.ResponseWriter, r *http.Request) {
+	h.memberAction(w, r, h.repo.Approve)
+}
+func (h *Handler) RejectOne(w http.ResponseWriter, r *http.Request) {
+	h.memberAction(w, r, h.repo.Reject)
+}
+func (h *Handler) KickOne(w http.ResponseWriter, r *http.Request) {
+	h.memberAction(w, r, h.repo.Kick)
+}
+func (h *Handler) UnbanOne(w http.ResponseWriter, r *http.Request) {
+	h.memberAction(w, r, h.repo.Unban)
+}
+
+// POST /run-meets/{id}/members/approve-batch  {"user_ids":[...]}
+// ⚠️ 一人一交易、逐筆執行，回 per-item 結果。刻意不包成單一大交易——一人失敗全滾回體驗更差
+// （名額只剩 3 個卻同意 5 人時，應該是「成功 3 筆、2 筆 409」而不是「全部沒發生」）。
+func (h *Handler) ApproveBatch(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	u := uid(r)
+	var body struct {
+		UserIDs []string `json:"user_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
+	if len(body.UserIDs) == 0 || len(body.UserIDs) > 50 {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
+	type item struct {
+		UserID string `json:"user_id"`
+		OK     bool   `json:"ok"`
+		Error  string `json:"error,omitempty"`
+	}
+	results := make([]item, 0, len(body.UserIDs))
+	approved, failed := 0, 0
+	for _, target := range body.UserIDs {
+		if !isValidUUID(target) {
+			results = append(results, item{UserID: target, Error: errBadID.Msg})
+			failed++
+			continue
+		}
+		if err := h.repo.Approve(r.Context(), u, id, target); err != nil {
+			msg := "failed"
+			var e *apiErr
+			if errors.As(err, &e) {
+				msg = e.Msg
+			}
+			results = append(results, item{UserID: target, Error: msg})
+			failed++
+			continue
+		}
+		results = append(results, item{UserID: target, OK: true})
+		approved++
+		h.notify(r.Context(), target)
+	}
+	h.notifyMembers(r.Context(), id)
+	respondJSON(w, http.StatusOK, map[string]any{
+		"approved": approved, "failed": failed, "results": results})
+}
+
+// --- 留言與心情 ---
+
+// requireMember 留言/心情共用的授權：joined 或 owner。回 meetRow 供後續判斷。
+func (h *Handler) requireMember(r *http.Request, id string) (meetRow, error) {
+	u := uid(r)
+	m, err := h.repo.GetMeet(r.Context(), u, id)
+	if err != nil {
+		return m, err
+	}
+	if m.OwnerID == u {
+		return m, nil
+	}
+	if m.MyStatus == nil || *m.MyStatus != MemberJoined {
+		return m, errNotMember
+	}
+	return m, nil
+}
+
+// GET /run-meets/{id}/comments
+func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	m, err := h.requireMember(r, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	limit, offset := pageParams(r, 50, 100)
+	items, total, err := h.repo.ListComments(r.Context(), id, uid(r), m.OwnerID, limit, offset)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
+}
+
+// POST /run-meets/{id}/comments  {"body":"..."}
+func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	m, err := h.requireMember(r, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	u := uid(r)
+	if !canComment(m.OwnerID == u, m.MyStatus, m.Status, m.MeetAt) {
+		// 已結束 7 天後留言區唯讀（規格 5.6）
+		respondAPIErr(w, newErr(http.StatusConflict, "這個團練已結束超過 7 天，留言區已關閉。"))
+		return
+	}
+	var body struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
+	text, err := normalizeText(body.Body, MaxCommentRunes, true)
+	if err != nil {
+		respondAPIErr(w, errCommentLen)
+		return
+	}
+	if text == "" {
+		respondAPIErr(w, errCommentEmpty)
+		return
+	}
+	s := loadSettings(r.Context(), h.db)
+	c, err := h.repo.CreateComment(r.Context(), id, u, text, s.CommentDailyCap)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	h.notifyMembers(r.Context(), id)
+	respondJSON(w, http.StatusOK, map[string]any{"comment": c})
+}
+
+// DELETE /run-meets/{id}/comments/{cid}（作者本人或發起人；軟刪）
+func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	cid := chi.URLParam(r, "cid")
+	if !isValidUUID(cid) {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	m, err := h.requireMember(r, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	u := uid(r)
+	if err := h.repo.DeleteComment(r.Context(), id, cid, u, m.OwnerID == u); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	h.notifyMembers(r.Context(), id)
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// PUT /run-meets/{id}/reaction  {"kind":"like"}
+func (h *Handler) PutReaction(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	if _, err := h.requireMember(r, id); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	var body struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
+	if err := h.repo.SetReaction(r.Context(), id, uid(r), body.Kind); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// DELETE /run-meets/{id}/reaction
+func (h *Handler) DeleteReaction(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	if _, err := h.requireMember(r, id); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	if err := h.repo.RemoveReaction(r.Context(), id, uid(r)); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// POST /run-meets/{id}/report  {"comment_id":"...","reason":"..."}
+// 任何過入口閘門的登入者都能檢舉（不需為成員）——全站第一個 UGC，檢舉管道要夠寬。
+func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	var body struct {
+		CommentID string `json:"comment_id"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondAPIErr(w, errBadJSON)
+		return
+	}
+	reason, err := normalizeText(body.Reason, MaxReportReasonRunes, true)
+	if err != nil {
+		respondAPIErr(w, errTooLong)
+		return
+	}
+	if _, err := h.repo.GetMeet(r.Context(), uid(r), id); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	var commentID *string
+	if body.CommentID != "" {
+		if !isValidUUID(body.CommentID) {
+			respondAPIErr(w, errBadID)
+			return
+		}
+		owner, err := h.repo.CommentMeetID(r.Context(), body.CommentID)
+		if err != nil {
+			respondAPIErr(w, err)
+			return
+		}
+		if owner != id {
+			respondAPIErr(w, errBadID) // 留言不屬於這個團
+			return
+		}
+		commentID = &body.CommentID
+	}
+	if err := h.repo.CreateReport(r.Context(), id, commentID, uid(r), reason); err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}

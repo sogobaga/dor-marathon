@@ -1669,6 +1669,10 @@ export interface DashboardInfo {
   cheer_char_layout: string // 啦啦隊三張角色的位置校正 JSON 字串（CheerCharLayout；系統設定 cheer_char_layout），前端 try/catch 解析
   monopoly_entry: 'hidden' | 'locked' | 'shown'    // 環台大富翁入口可見性
   knowledge_entry: 'hidden' | 'locked' | 'shown'   // 知識探索(知識卡圖鑑)入口可見性
+  // 團練邀請（見 internal/runmeet）：入口三態 + 本月剩餘發起次數（入口徽章「還有 N 次」用）。
+  // entry 非 shown 時 runmeet_remaining 恆 0（後端不查 DB，dashboard 熱路徑零額外成本）。
+  runmeet_entry: 'hidden' | 'locked' | 'shown'
+  runmeet_remaining: number
   new_titles?: { code: string; name: string; tier: number; category: string }[] // 新解鎖稱號（前台跳彈窗用，跳完呼叫 /titles/seen）
   // 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；扣到 0 凍結 6 小時）
   sp: number
@@ -4090,4 +4094,306 @@ export const cheerLayoutApi = {
     request<{ ok: boolean; layout: CheerCharLayout }>('/me/cheer-layout', {
       method: 'PUT', headers: withAuth(token), body: JSON.stringify({ layout }),
     }),
+}
+
+// ── 團練邀請（run meets，見 services/api/internal/runmeet；migration 156）─────────────────
+// ⚠️ 中文顯示文案一律用「團練」，不得出現「跑團」二字（賽事已有「跑團分組」，撞名會混淆）。
+//    英文命名維持 run_meets / run-meets / runmeet（語意＝跑步聚會），與 race group 不衝突。
+//
+// ⚠️ 地點三層揭露（本功能最重要的資安不變式，型別即契約）：
+//    公開層 region / place_label      → 所有人（列表與詳情皆可見）
+//    成員層 lat / lng / meeting_detail → 發起人、已加入成員、後台
+//    後端用**兩種不同的 DTO** 分層：未加入者拿到的 JSON **根本沒有** lat/lng/meeting_detail 三個 key
+//    （不是 null、不是 0）。前端型別因此用 discriminated union（location_locked），
+//    不要為了省事把兩者併成一個「欄位都 optional」的介面——那會讓「忘了判斷」重新變成可能。
+
+export type RunMeetOwner = { id: string; name: string; avatar_url: string }
+export type RunMeetMyState = 'none' | 'pending' | 'joined' | 'rejected' | 'kicked' | 'left' | 'owner'
+export type RunMeetStatus = 'open' | 'closed' | 'cancelled'
+// ⚠️ 後端刻意只回「距離分級」不回精確距離：回 0.23 km 這種值可讓攻擊者換多組座標查詢、
+//    三角定位反推出精確地點，等於繞過整套地點分層設計。只在帶 near_lat/near_lng 查詢時出現。
+export type RunMeetDistanceBand = 'lt1' | '1to3' | '3to5' | '5to10' | 'gt10'
+export type RunMeetReactionKind = 'like' | 'fire' | 'muscle' | 'pray' | 'heart'
+
+export interface RunMeetCard {
+  id: string
+  title: string
+  meet_at: string            // RFC3339；顯示一律用 Asia/Taipei 格式化（見 lib/runMeet.ts）
+  region: string             // 公開層：縣市・行政區
+  place_label: string        // 公開層：地標名
+  capacity: number
+  member_count: number
+  is_private: boolean
+  approval_required: boolean
+  excerpt: string            // 60 字摘要（列表不給完整 description，swrCache 單筆 100KB 上限）
+  cover_url: string | null   // 私密團未解鎖時為 null
+  status: RunMeetStatus
+  is_ended: boolean
+  owner: RunMeetOwner
+  my_state: RunMeetMyState
+  reaction_count: number
+  comment_count: number
+  my_reaction: RunMeetReactionKind | null
+  has_access: boolean
+  distance_band?: RunMeetDistanceBand
+}
+
+interface RunMeetDetailBase extends RunMeetCard {
+  description: string
+  image_urls: string[]  // 恆為陣列；私密團未解鎖時為 []
+  image_limit: number   // 建立當下的 VIP 快照（1 或 4）；編輯表單以此為上限，不可用即時 VIP 判定
+  pending_count: number // 非 owner/admin 恆 0
+  can_comment: boolean  // joined/owner 且未過「結束後 7 天」唯讀線
+}
+
+/** 未加入者（含已解鎖但尚未加入、申請中）看到的詳情：結構上就沒有成員層三欄位。 */
+export interface RunMeetPublicDetail extends RunMeetDetailBase {
+  location_locked: true
+  location_note: string // 固定「成功加入後才會顯示完整詳細地點」
+}
+
+/** 發起人／已加入成員／後台看到的詳情。 */
+export interface RunMeetMemberDetail extends RunMeetDetailBase {
+  location_locked: false
+  lat: number | null // 與 lng 成對出現（同時 null 或同時有值）
+  lng: number | null
+  meeting_detail: string
+}
+
+// 前端判斷：if (!d.location_locked) { 載入 Leaflet 地圖 + 標記 } else { 只顯示公開層 + location_note }
+export type RunMeetDetail = RunMeetPublicDetail | RunMeetMemberDetail
+
+export interface RunMeetMember {
+  user_id: string
+  name: string
+  avatar_url: string
+  is_owner: boolean
+  status: 'joined' | 'pending'
+  apply_note: string
+  joined_at: string | null
+  applied_at: string
+}
+
+export interface RunMeetComment {
+  id: string
+  user_id: string
+  name: string
+  avatar_url: string
+  body: string
+  created_at: string
+  can_delete: boolean
+}
+
+export interface RunMeetQuota {
+  month: string      // 台北月 YYYY-MM
+  cap: number
+  used: number
+  remaining: number
+  is_vip: boolean
+  requires_vip: boolean // runmeet_create_requires_vip=1 時，非 VIP 按發起要跳 VIP 引導（不扣次數）
+  image_limit: number
+  // ⚠️ VIP 權益數字一律用後端帶下來的這兩個值做文案，前端不得寫死 10 / 4——
+  //    它們是後台可調設定（runmeet_quota_vip / runmeet_images_vip），營運一改，
+  //    寫死的文案就會對非 VIP 承諾拿不到的權益。
+  vip_cap: number
+  vip_image_limit: number
+  capacity_max: number
+  resets_at: string
+}
+
+/** 熱門跑點快選建議（來源 explore_bosses；後端只回四個地點欄位，不含關主身分/圖/課表）。 */
+export interface RunMeetPlaceSuggestion { region: string; place: string; lat: number; lng: number }
+
+export interface RunMeetInput {
+  title: string
+  meet_at: string        // ISO（表單以台北時間解讀後轉出，見 lib/runMeet.ts taipeiLocalToISO）
+  region: string
+  place_label: string
+  lat?: number | null
+  lng?: number | null
+  meeting_detail?: string
+  capacity: number
+  description?: string
+  image_urls?: string[]
+  approval_required: boolean
+  // 建立：非空＝私密團；編輯：欄位省略=不動、''=移除密碼、其他=重設
+  password?: string | null
+  client_token?: string  // crypto.randomUUID()，防連點/網路重試重複扣配額
+}
+
+export interface RunMeetAdminRow {
+  id: string
+  title: string
+  meet_at: string
+  region: string
+  place_label: string
+  capacity: number
+  member_count: number
+  pending_count: number
+  is_private: boolean
+  status: RunMeetStatus
+  hidden_by_admin: boolean
+  hidden_reason: string
+  deleted: boolean
+  comment_count: number
+  reaction_count: number
+  quota_month: string
+  created_at: string
+  owner: RunMeetOwner
+}
+
+export interface RunMeetAdminReport {
+  id: string
+  meet_id: string
+  meet_title: string
+  comment_id: string | null
+  comment_body: string
+  reporter_id: string
+  reporter_name: string
+  reason: string
+  status: 'pending' | 'handled' | 'dismissed'
+  review_note: string
+  created_at: string
+}
+
+export interface RunMeetListParams {
+  q?: string
+  region?: string
+  privacy?: 'public' | 'private'
+  approval?: 'free' | 'review'
+  has_slot?: '1'
+  ended?: '1'
+  sort?: 'soon' | 'new' | 'hot'
+  limit?: number
+  offset?: number
+  // 附近搜尋：使用者位置只當查詢參數，後端不寫 DB、不進 log；回應只給 distance_band。
+  near_lat?: number
+  near_lng?: number
+  radius_km?: number
+}
+
+function runMeetQuery(params: object): string {
+  const sp = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === '') continue
+    sp.set(k, String(v))
+  }
+  const s = sp.toString()
+  return s ? `?${s}` : ''
+}
+
+// 前台（RequireAuth → requireEntry：入口未開放一律 403「團練邀請尚未開放。」）
+export const runMeetApi = {
+  list: (token: string, params: RunMeetListParams = {}) =>
+    request<{ items: RunMeetCard[]; total: number }>(`/run-meets${runMeetQuery(params)}`, { headers: withAuth(token) }),
+  mine: (token: string) =>
+    request<{ owned: RunMeetCard[]; joined: RunMeetCard[]; pending: RunMeetCard[] }>('/run-meets/mine', { headers: withAuth(token) }),
+  quota: (token: string) =>
+    request<RunMeetQuota>('/run-meets/quota', { headers: withAuth(token) }),
+  placeSuggest: (token: string, q?: string, lat?: number, lng?: number) =>
+    request<{ items: RunMeetPlaceSuggestion[] }>(`/run-meets/place-suggest${runMeetQuery({ q, lat, lng })}`, { headers: withAuth(token) }),
+  create: (token: string, input: RunMeetInput) =>
+    request<{ meet: RunMeetDetail; used: number; remaining: number }>('/run-meets', {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify(input),
+    }),
+  // 上傳團練圖片（multipart，欄位名 file）；不可手動設 Content-Type（讓瀏覽器帶 boundary）。
+  // 後端只收 JPG/PNG（嗅探 + DecodeConfig 交叉比對）並無條件重新編碼（去 EXIF/GPS 與夾帶內容）。
+  uploadImage: async (token: string, file: File): Promise<{ id: string; url: string }> => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await fetch(`${BASE}/run-meets/images`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd })
+    const text = await res.text()
+    const data = text ? JSON.parse(text) : null
+    if (!res.ok) throw new ApiError(res.status, data?.error ?? '圖片上傳失敗')
+    return data as { id: string; url: string }
+  },
+  // 私密團未解鎖 → 403 { error, locked:true, card }（見 RunMeetScreen 的解鎖流程；
+  // request() 只會把 error 字串包成 ApiError，卡片摘要由呼叫端改打 list 或直接顯示已知卡片）。
+  detail: (token: string, id: string) =>
+    request<{ meet: RunMeetDetail }>(`/run-meets/${id}`, { headers: withAuth(token) }),
+  update: (token: string, id: string, input: RunMeetInput) =>
+    request<{ meet: RunMeetDetail; pending_kept: number }>(`/run-meets/${id}`, {
+      method: 'PUT', headers: withAuth(token), body: JSON.stringify(input),
+    }),
+  // rejected＝關閉/取消時被一併婉拒的待審申請數（後端在同一交易內處理，pending_count 歸零）
+  close: (token: string, id: string) =>
+    request<{ ok: boolean; status: RunMeetStatus; rejected: number }>(`/run-meets/${id}/close`, { method: 'POST', headers: withAuth(token) }),
+  cancel: (token: string, id: string) =>
+    request<{ ok: boolean; status: RunMeetStatus; rejected: number }>(`/run-meets/${id}/cancel`, { method: 'POST', headers: withAuth(token) }),
+  remove: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/run-meets/${id}`, { method: 'DELETE', headers: withAuth(token) }),
+  unlock: (token: string, id: string, password: string) =>
+    request<{ ok: boolean }>(`/run-meets/${id}/unlock`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ password }) }),
+  join: (token: string, id: string, note?: string) =>
+    request<{ state: 'joined' | 'pending' }>(`/run-meets/${id}/join`, {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify({ note: note ?? '' }),
+    }),
+  leave: (token: string, id: string) =>
+    request<{ state: 'withdrawn' | 'left' }>(`/run-meets/${id}/join`, { method: 'DELETE', headers: withAuth(token) }),
+  members: (token: string, id: string, status: 'joined' | 'pending') =>
+    request<{ items: RunMeetMember[]; total: number }>(`/run-meets/${id}/members?status=${status}`, { headers: withAuth(token) }),
+  approve: (token: string, id: string, uid: string) =>
+    request<{ ok: boolean }>(`/run-meets/${id}/members/${uid}/approve`, { method: 'POST', headers: withAuth(token) }),
+  reject: (token: string, id: string, uid: string) =>
+    request<{ ok: boolean }>(`/run-meets/${id}/members/${uid}/reject`, { method: 'POST', headers: withAuth(token) }),
+  kick: (token: string, id: string, uid: string) =>
+    request<{ ok: boolean }>(`/run-meets/${id}/members/${uid}/kick`, { method: 'POST', headers: withAuth(token) }),
+  unban: (token: string, id: string, uid: string) =>
+    request<{ ok: boolean }>(`/run-meets/${id}/members/${uid}/ban`, { method: 'DELETE', headers: withAuth(token) }),
+  // 批次同意：後端一人一交易，回 per-item 結果（名額只剩 3 個卻同意 5 人 → 成功 3 筆、2 筆 409）
+  approveBatch: (token: string, id: string, userIDs: string[]) =>
+    request<{ approved: number; failed: number; results: { user_id: string; ok: boolean; error?: string }[] }>(
+      `/run-meets/${id}/members/approve-batch`,
+      { method: 'POST', headers: withAuth(token), body: JSON.stringify({ user_ids: userIDs }) },
+    ),
+  comments: (token: string, id: string, limit?: number, offset?: number) =>
+    request<{ items: RunMeetComment[]; total: number }>(`/run-meets/${id}/comments${runMeetQuery({ limit, offset })}`, { headers: withAuth(token) }),
+  addComment: (token: string, id: string, body: string) =>
+    request<{ comment: RunMeetComment }>(`/run-meets/${id}/comments`, {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify({ body }),
+    }),
+  deleteComment: (token: string, id: string, cid: string) =>
+    request<{ ok: boolean }>(`/run-meets/${id}/comments/${cid}`, { method: 'DELETE', headers: withAuth(token) }),
+  setReaction: (token: string, id: string, kind: RunMeetReactionKind) =>
+    request<{ ok: boolean }>(`/run-meets/${id}/reaction`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ kind }) }),
+  clearReaction: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/run-meets/${id}/reaction`, { method: 'DELETE', headers: withAuth(token) }),
+  report: (token: string, id: string, body: { comment_id?: string; reason: string }) =>
+    request<{ ok: boolean }>(`/run-meets/${id}/report`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+}
+
+// 後台（RequireAuth → RequireAdmin → Audit → perm('run_meets')）
+export const adminRunMeetsApi = {
+  list: (token: string, params: { q?: string; status?: RunMeetStatus | ''; owner?: string; hidden?: '1'; include_deleted?: '1'; limit?: number; offset?: number } = {}) =>
+    request<{ items: RunMeetAdminRow[]; total: number }>(`/admin/run-meets${runMeetQuery(params)}`, { headers: withAuth(token) }),
+  // 後台視角看得到成員層地點（處理檢舉/糾紛需要完整資訊）→ 恆為 RunMeetMemberDetail
+  detail: (token: string, id: string) =>
+    request<{
+      meet: RunMeetMemberDetail
+      members: RunMeetMember[]
+      pending: RunMeetMember[]
+      comments: RunMeetComment[]
+      hidden_by_admin: boolean
+      hidden_reason: string
+    }>(`/admin/run-meets/${id}`, { headers: withAuth(token) }),
+  takedown: (token: string, id: string, reason: string) =>
+    request<{ ok: boolean }>(`/admin/run-meets/${id}/takedown`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ reason }) }),
+  restore: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/run-meets/${id}/restore`, { method: 'POST', headers: withAuth(token) }),
+  deleteComment: (token: string, id: string, cid: string) =>
+    request<{ ok: boolean }>(`/admin/run-meets/${id}/comments/${cid}`, { method: 'DELETE', headers: withAuth(token) }),
+  reports: (token: string, params: { status?: 'pending' | 'handled' | 'dismissed' | ''; limit?: number; offset?: number } = {}) =>
+    request<{ items: RunMeetAdminReport[]; total: number }>(`/admin/run-meets/reports${runMeetQuery(params)}`, { headers: withAuth(token) }),
+  reviewReport: (token: string, rid: string, body: { status: 'handled' | 'dismissed'; review_note: string }) =>
+    request<{ ok: boolean }>(`/admin/run-meets/reports/${rid}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  quota: (token: string, userID: string) =>
+    request<{ user_id: string; month: string; cap: number; used: number; remaining: number; is_vip: boolean }>(
+      `/admin/run-meets/quota/${userID}`, { headers: withAuth(token) }),
+  // ⚠️ 唯一的配額返還管道（close/cancel/delete 一律不回補）；delta −50..50 非零，負=返還。
+  adjustQuota: (token: string, userID: string, body: { delta: number; reason: string }) =>
+    request<{ ok: boolean; month: string; used: number }>(`/admin/run-meets/quota/${userID}/adjust`, {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify(body),
+    }),
+  imageGC: (token: string) =>
+    request<{ ok: boolean; deleted: number }>('/admin/run-meets/images/gc', { method: 'POST', headers: withAuth(token) }),
 }

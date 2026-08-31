@@ -338,4 +338,76 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '完成關主挑戰時額外發放 GP 的機率（系統級預設，0=不發）。打卡點若個別設了非 0 的完成 GP 上限或機率，該點優先用自己的設定（三個值一起）。',
     min: 0, max: 100, def: '30',
   },
+  // ── 團練邀請（見 services/api/internal/runmeet，migration 156）──
+  // ⚠️ 中文顯示一律「團練」，不得寫成「跑團」（賽事已有「跑團分組」，撞名會混淆）。
+  // ⚠️ 白名單那列務必 type:'text'——admin/system/page.tsx 只有 type==='number' 才做 Number(raw)/scale，
+  //    text 型誤設成 number 會被寫成字串 "NaN"（正式 DB 的 strategy_entry_whitelist 真的被毀過一次）。
+  {
+    key: 'runmeet_entry_state', group: '團練邀請入口', label: '入口顯示狀態', type: 'select', def: 'whitelist',
+    help: '控制「會員面板的團練邀請按鈕」對前台玩家的可見性。測試中，建議先「僅指定帳號」。後端同一份設定也會擋 API（非白名單直接 403），不是只藏 UI。',
+    options: [
+      { value: 'hidden', label: '前台隱藏（都看不到）' },
+      { value: 'locked', label: '顯示但不能按（即將開放）' },
+      { value: 'whitelist', label: '顯示且指定帳號可按（下方白名單）' },
+      { value: 'open', label: '顯示且全部開放（正式開放）' },
+    ],
+  },
+  {
+    key: 'runmeet_entry_whitelist', group: '團練邀請入口', label: '指定帳號白名單', type: 'text', def: '',
+    help: '僅在上方選「指定帳號可按」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email。',
+    placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
+  },
+  {
+    key: 'runmeet_create_requires_vip', group: '團練邀請規則', label: '發起團練限 VIP', type: 'select', def: '0',
+    help: '預設關閉：一般會員也能發起（每月次數較少），這是最強的 VIP 轉換鉤子。開啟後，非 VIP 按「＋ 發起」會直接跳 VIP 引導彈窗，且不消耗任何次數。加入團練一律不限 VIP。',
+    options: [
+      { value: '0', label: '關閉（一般會員也能發起）' },
+      { value: '1', label: '開啟（只有 VIP 能發起）' },
+    ],
+  },
+  {
+    key: 'runmeet_quota_normal', group: '團練邀請規則', label: '一般會員每月發起次數', type: 'number', unit: '次',
+    help: '一般會員每個自然月（台北時間，每月 1 日 00:00 重置）可發起幾個團練。⚠️ 建立後即使關閉或刪除，次數一律不返還——唯一的返還管道是後台「人工調整配額」。',
+    min: 1, max: 50, def: '1',
+  },
+  {
+    key: 'runmeet_quota_vip', group: '團練邀請規則', label: 'VIP 每月發起次數', type: 'number', unit: '次',
+    help: 'VIP 每個自然月可發起幾個團練。上限在「每次建立當下」依 VIP 狀態即時計算，所以月中升級 VIP 的人立刻享有這個額度（已用掉的次數仍照算）。',
+    min: 1, max: 50, def: '10',
+  },
+  {
+    key: 'runmeet_images_normal', group: '團練邀請規則', label: '一般會員每團圖片張數', type: 'number', unit: '張',
+    help: '一般會員每個團練可上傳幾張圖片。⚠️ 這個值是「建立當下的快照」，寫進該團練——之後改設定不影響已建立的團練（避免 VIP 到期後連改人數上限都被擋死）。',
+    min: 1, max: 4, def: '1',
+  },
+  {
+    key: 'runmeet_images_vip', group: '團練邀請規則', label: 'VIP 每團圖片張數', type: 'number', unit: '張',
+    help: 'VIP 每個團練可上傳幾張圖片（同樣是建立當下的快照）。圖片只收 JPG／PNG，上傳後一律重新編碼（去除 EXIF 含 GPS 座標與夾帶內容）。',
+    min: 1, max: 4, def: '4',
+  },
+  {
+    key: 'runmeet_capacity_max', group: '團練邀請規則', label: '人數上限的上限', type: 'number', unit: '人',
+    help: '發起人設定「這個團練最多幾人」時可填的最大值（含發起人本人）。最小恆為 2 人。',
+    min: 2, max: 500, def: '50',
+  },
+  {
+    key: 'runmeet_pending_max', group: '團練邀請規則', label: '待審核申請上限', type: 'number', unit: '筆',
+    help: '審核制團練最多可同時累積幾筆待審核申請，超過就擋下新申請（避免發起人信箱被灌爆）。待審核不占名額。',
+    min: 1, max: 500, def: '50',
+  },
+  {
+    key: 'runmeet_comment_daily_cap', group: '團練邀請規則', label: '每人每日留言上限', type: 'number', unit: '則',
+    help: '同一位會員每天（台北時間）在所有團練加總最多可發幾則留言。另有「兩則間隔 3 秒」與「10 分鐘內同一團不得重複相同內容」兩道節流。',
+    min: 1, max: 1000, def: '100',
+  },
+  {
+    key: 'runmeet_reject_cooldown_hours', group: '團練邀請規則', label: '婉拒後冷卻時數', type: 'number', unit: '小時',
+    help: '申請被發起人婉拒後，要等幾小時才能對同一個團練再次申請（0＝不冷卻）。被「剔除」則是永久不能再加入，需發起人在成員管理手動解除。',
+    min: 0, max: 720, def: '24',
+  },
+  {
+    key: 'runmeet_ended_visible_days', group: '團練邀請規則', label: '已結束保留天數', type: 'number', unit: '天',
+    help: '團練時間過了之後，還要在探索頁底部的「已結束」折疊區顯示幾天。超過就從探索消失，但成員仍可在「我的團練」看到，資料不刪除。',
+    min: 1, max: 365, def: '90',
+  },
 ]

@@ -1,0 +1,519 @@
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+import useSWR from 'swr'
+import {
+  runMeetApi, type RunMeetCard, type RunMeetDetail, type RunMeetMemberDetail, type RunMeetQuota,
+} from '@/lib/api'
+import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
+import { loadLeaflet } from '@/lib/leaflet'
+import { MediaCarousel, Lightbox } from '../shared/MediaCarousel'
+import {
+  REACTION_META, ctaInputOf, fmtMeetAt, meetCountdown, memberCountText, memberPct, runMeetCta,
+} from '@/lib/runMeet'
+import RunMeetFormModal from './RunMeetFormModal'
+import RunMeetManageSheet from './RunMeetManageSheet'
+import RunMeetUnlockModal from './RunMeetUnlockModal'
+import {
+  Avatar, RunMeetModal, backBtn, cardBox, errText, fieldHint, ghostBtn, headerStyle, inputStyle,
+  modalTitle, mutedBtn, outlineBtn, primaryBtn, scrollBody, tagPill, textareaStyle, tinyBtn,
+} from './ui'
+
+// 團練詳情：資訊區 + 地點（分層）+ 成員 + 審核專區入口 + 留言 + 心情 + CTA。
+//
+// ⚠️ 地點分層完全依後端 DTO：`location_locked` 為 true 時，回應裡**根本沒有** lat/lng/meeting_detail，
+//    前端連地圖都不載入，只顯示公開層文字 + 「成功加入後才會顯示完整詳細地點」。
+//    不要寫成 `d.lat ?? 隱藏` 之類的判斷——那會讓「哪天後端多吐了欄位」變成靜默外洩。
+// ⚠️ 全檔零 dangerouslySetInnerHTML：說明/留言都是純文字，用 white-space:pre-wrap 呈現換行。
+
+export default function RunMeetDetailView({
+  id, fallbackCard, quota, onBack, onToast, onChanged, onLearnVip,
+}: {
+  id: string
+  fallbackCard: RunMeetCard | null
+  quota: RunMeetQuota | null
+  onBack: () => void
+  onToast: (text: string, tone?: 'ok' | 'err') => void
+  onChanged: () => void
+  onLearnVip?: () => void
+}) {
+  const user = useUser()
+  const uid = user?.id ?? 'guest'
+  const [locked, setLocked] = useState(false)
+  const [showUnlock, setShowUnlock] = useState(false)
+  const [showManage, setShowManage] = useState(false)
+  const [showEdit, setShowEdit] = useState(false)
+  const [showJoinNote, setShowJoinNote] = useState(false)
+  const [showReport, setShowReport] = useState<{ commentId?: string } | null>(null)
+  const [zoom, setZoom] = useState<{ images: string[]; index: number } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  const { data, error, isLoading, mutate: reload } = useSWR(
+    getUserToken() ? ['run-meet', id, uid] : null,
+    () => withUserAuth((t) => runMeetApi.detail(t, id)),
+    { shouldRetryOnError: false },
+  )
+  // 私密團未解鎖 → 後端回 403（body 另帶摘要卡）；request() 只保留訊息，所以用 status 判定。
+  useEffect(() => { setLocked((error as any)?.status === 403) }, [error])
+
+  const meet = data?.meet ?? null
+  const card: RunMeetCard | null = meet ?? fallbackCard
+  const isOwner = card?.my_state === 'owner'
+  const isMember = card?.my_state === 'joined' || isOwner
+
+  async function act(fn: () => Promise<unknown>, okMsg: string) {
+    if (busy) return
+    setBusy(true); setErr('')
+    try {
+      await fn()
+      await reload()
+      onChanged()
+      onToast(okMsg)
+    } catch (e: any) {
+      setErr(e?.message || '系統忙碌中，請稍後再試')
+      onToast(e?.message || '系統忙碌中，請稍後再試', 'err')
+    } finally { setBusy(false) }
+  }
+
+  function share() {
+    const url = `${window.location.origin}/?runmeet=${id}`
+    const text = card ? `🏃 ${card.title}｜${fmtMeetAt(card.meet_at)}｜${card.place_label}` : ''
+    if (navigator.share) {
+      navigator.share({ title: card?.title, text, url }).catch(() => {})
+      return
+    }
+    navigator.clipboard?.writeText(`${text}\n👉 ${url}`).then(
+      () => onToast('連結已複製，快去揪人吧！'),
+      () => onToast('複製失敗，請手動複製網址', 'err'),
+    )
+  }
+
+  const cta = card ? runMeetCta(ctaInputOf(card)) : null
+
+  function onCta() {
+    if (!cta || !card) return
+    switch (cta.action) {
+      case 'manage': setShowManage(true); break
+      case 'unlock': setShowUnlock(true); break
+      case 'apply': setShowJoinNote(true); break
+      case 'join': void act(() => withUserAuth((t) => runMeetApi.join(t, id)), '已加入團練 🎉'); break
+      default: break
+    }
+  }
+  function onSecondary() {
+    if (!cta?.secondary) return
+    if (cta.secondary.action === 'share') { share(); return }
+    const withdraw = cta.secondary.action === 'withdraw'
+    void act(() => withUserAuth((t) => runMeetApi.leave(t, id)), withdraw ? '已撤回申請' : '已退出團練')
+  }
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)', position: 'relative' }}>
+      <header style={headerStyle}>
+        <button onClick={onBack} style={backBtn}>← 返回</button>
+        <span style={{ flex: 1, fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>團練詳情</span>
+        {card && !isOwner && <button onClick={() => setShowReport({})} style={{ ...backBtn, color: 'var(--tx-faint)', fontSize: 12 }}>⚠ 檢舉</button>}
+      </header>
+
+      <div style={scrollBody}>
+        {isLoading && !card ? (
+          <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
+        ) : locked ? (
+          <LockedPanel card={fallbackCard} onUnlock={() => setShowUnlock(true)} />
+        ) : error || !meet || !card ? (
+          <div style={{ color: 'var(--hunt)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>
+            找不到這個團練，可能已被發起人刪除。
+          </div>
+        ) : (
+          <>
+            {meet.image_urls.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <MediaCarousel images={meet.image_urls} onZoom={(images, index) => setZoom({ images, index })} />
+              </div>
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0, fontSize: 18, fontWeight: 900, color: 'var(--tx)', lineHeight: 1.35, wordBreak: 'break-word' }}>{meet.title}</div>
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+              <span style={tagPill}>{meet.is_private ? '🔒 私密' : '🌐 公開'}</span>
+              <span style={tagPill}>{meet.approval_required ? '⏳ 需審核' : '⚡ 自由加入'}</span>
+              {meet.is_ended && <span style={tagPill}>已結束</span>}
+              {!meet.is_ended && meet.status === 'closed' && <span style={tagPill}>已關閉</span>}
+              {!meet.is_ended && meet.status === 'cancelled' && <span style={tagPill}>已取消</span>}
+            </div>
+
+            {/* 資訊區 */}
+            <div style={{ ...cardBox, padding: '12px 13px', marginTop: 12 }}>
+              <InfoRow icon="🕕" text={`${fmtMeetAt(meet.meet_at)} · ${meetCountdown(meet.meet_at).text}`} />
+              <InfoRow icon="📍" text={`${meet.region}${meet.place_label ? ` · ${meet.place_label}` : ''}`} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>👥 {memberCountText(meet.member_count, meet.capacity)}</span>
+                <span style={{ flex: 1, height: 6, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden' }}>
+                  <span style={{ display: 'block', height: '100%', width: `${memberPct(meet.member_count, meet.capacity)}%`, background: 'var(--fug)', borderRadius: 999 }} />
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, paddingTop: 9, borderTop: '1px solid var(--line)' }}>
+                <Avatar url={meet.owner.avatar_url} name={meet.owner.name} size={24} />
+                <span style={{ fontSize: 12.5, color: 'var(--tx-dim)' }}>發起人 {meet.owner.name}</span>
+              </div>
+            </div>
+
+            {/* 地點分層：未加入者只有公開層文字 + 提示，且不載入地圖 */}
+            <LocationBlock meet={meet} />
+
+            {meet.description && (
+              <div style={{ marginTop: 14, fontSize: 13.5, color: 'var(--tx)', lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {meet.description}
+              </div>
+            )}
+
+            {/* 安全提示（固定、不可關閉） */}
+            <div style={{ ...cardBox, padding: '10px 12px', marginTop: 14, fontSize: 11.5, color: 'var(--tx-dim)', lineHeight: 1.75 }}>
+              線下相約請注意安全：建議揪伴同行、選擇公開明亮的集合點，勿提供住家地址、身分證件或金錢往來。遇到可疑情況請使用右上角「檢舉」。
+            </div>
+
+            {/* 心情（成員限定） */}
+            {isMember && (
+              <div style={{ display: 'flex', gap: 6, marginTop: 14, flexWrap: 'wrap' }}>
+                {REACTION_META.map((r) => {
+                  const on = meet.my_reaction === r.kind
+                  return (
+                    <button
+                      key={r.kind}
+                      disabled={busy}
+                      onClick={() => void act(
+                        () => withUserAuth((t) => (on ? runMeetApi.clearReaction(t, id) : runMeetApi.setReaction(t, id, r.kind))),
+                        on ? '已收回心情' : `已送出「${r.label}」`,
+                      )}
+                      style={{ ...tinyBtn, padding: '6px 10px', borderColor: on ? 'var(--fug)' : 'var(--line-2)', color: on ? 'var(--fug)' : 'var(--tx)' }}
+                    >
+                      {r.emoji} {r.label}
+                    </button>
+                  )
+                })}
+                <span style={{ alignSelf: 'center', fontSize: 12, color: 'var(--tx-faint)', marginLeft: 4 }}>🔥 {meet.reaction_count}</span>
+              </div>
+            )}
+
+            {/* 成員區（成員/發起人才拿得到名單） */}
+            {isMember && <MembersBlock meetId={id} />}
+
+            {/* 審核專區入口（發起人） */}
+            {isOwner && meet.pending_count > 0 && (
+              <button onClick={() => setShowManage(true)} style={{ ...ghostBtn, width: '100%', marginTop: 12, borderColor: 'var(--gold)', color: 'var(--gold)' }}>
+                ⏳ 有 {meet.pending_count} 筆待審核申請，前往處理
+              </button>
+            )}
+
+            {/* 留言區 */}
+            {isMember && <CommentsBlock meetId={id} canComment={meet.can_comment} onToast={onToast} onReport={(cid) => setShowReport({ commentId: cid })} onChanged={() => void reload()} />}
+
+            {err && <div style={errText}>{err}</div>}
+            <div style={{ height: 12 }} />
+          </>
+        )}
+      </div>
+
+      {/* 底部 CTA */}
+      {cta && !locked && (
+        <div style={{ flexShrink: 0, padding: '10px 16px calc(env(safe-area-inset-bottom, 0px) + 24px)', borderTop: '1px solid var(--line)', background: 'var(--bg)', display: 'flex', gap: 8 }}>
+          <button
+            onClick={onCta}
+            disabled={cta.disabled || busy}
+            style={{
+              ...(cta.variant === 'primary' ? primaryBtn : cta.variant === 'outline' ? outlineBtn : mutedBtn),
+              flex: 1, cursor: cta.disabled ? 'default' : 'pointer', opacity: busy ? 0.7 : 1,
+            }}
+          >{cta.label}</button>
+          {cta.secondary && (
+            <button onClick={onSecondary} disabled={busy} style={{ ...ghostBtn, flexShrink: 0, padding: '11px 14px' }}>{cta.secondary.label}</button>
+          )}
+        </div>
+      )}
+      {locked && (
+        <div style={{ flexShrink: 0, padding: '10px 16px calc(env(safe-area-inset-bottom, 0px) + 24px)', borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
+          <button onClick={() => setShowUnlock(true)} style={primaryBtn}>🔒 輸入密碼</button>
+        </div>
+      )}
+
+      {showUnlock && (
+        <RunMeetUnlockModal
+          meetId={id}
+          title={card?.title ?? '這個團練'}
+          onClose={() => setShowUnlock(false)}
+          onUnlocked={() => { setShowUnlock(false); setLocked(false); void reload(); onToast('已解鎖，來看看團練內容吧') }}
+        />
+      )}
+
+      {showJoinNote && (
+        <JoinNoteModal
+          busy={busy}
+          onClose={() => setShowJoinNote(false)}
+          onSubmit={(note) => { setShowJoinNote(false); void act(() => withUserAuth((t) => runMeetApi.join(t, id, note)), '已送出申請，等發起人回覆囉') }}
+        />
+      )}
+
+      {showManage && meet && !meet.location_locked && (
+        <RunMeetManageSheet
+          meet={meet as RunMeetMemberDetail}
+          onClose={() => { setShowManage(false); void reload(); onChanged() }}
+          onEdit={() => { setShowManage(false); setShowEdit(true) }}
+          onChanged={() => { void reload(); onChanged() }}
+          onToast={onToast}
+        />
+      )}
+
+      {showEdit && meet && !meet.location_locked && quota && (
+        <RunMeetFormModal
+          mode="edit"
+          initial={meet as RunMeetMemberDetail}
+          quota={quota}
+          onClose={() => setShowEdit(false)}
+          onSaved={(_m, info) => {
+            setShowEdit(false)
+            void reload(); onChanged()
+            onToast(info.pendingKept ? `已更新，仍有 ${info.pendingKept} 筆待審核申請` : '已更新，團員會收到通知')
+          }}
+          onLearnVip={onLearnVip}
+        />
+      )}
+
+      {showReport && (
+        <ReportModal
+          onClose={() => setShowReport(null)}
+          onSubmit={(reason) => {
+            const commentId = showReport.commentId
+            setShowReport(null)
+            void act(() => withUserAuth((t) => runMeetApi.report(t, id, { comment_id: commentId, reason })), '已送出檢舉，我們會盡快處理')
+          }}
+        />
+      )}
+
+      {zoom && <Lightbox images={zoom.images} index={zoom.index} onClose={() => setZoom(null)} />}
+    </div>
+  )
+}
+
+function InfoRow({ icon, text }: { icon: string; text: string }) {
+  return (
+    <div style={{ display: 'flex', gap: 7, fontSize: 13, color: 'var(--tx)', lineHeight: 1.7, wordBreak: 'break-word' }}>
+      <span style={{ flexShrink: 0 }}>{icon}</span><span>{text}</span>
+    </div>
+  )
+}
+
+// 私密團未解鎖：只渲染已知的公開層卡片摘要 + 密碼 CTA（後端 403 的 body 也只給公開層卡片）。
+function LockedPanel({ card, onUnlock }: { card: RunMeetCard | null; onUnlock: () => void }) {
+  return (
+    <div style={{ ...cardBox, padding: '18px 16px', textAlign: 'center' }}>
+      <div style={{ fontSize: 30 }}>🔒</div>
+      <div style={{ fontSize: 15.5, fontWeight: 900, color: 'var(--tx)', marginTop: 8 }}>{card?.title ?? '這是私密團練'}</div>
+      {card && (
+        <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.8 }}>
+          🕕 {fmtMeetAt(card.meet_at)}<br />
+          📍 {card.region}{card.place_label ? ` · ${card.place_label}` : ''}<br />
+          👥 {memberCountText(card.member_count, card.capacity)}
+        </div>
+      )}
+      <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 12, lineHeight: 1.8 }}>
+        這是私密團練，請輸入發起人提供的密碼。
+      </div>
+      <button onClick={onUnlock} style={{ ...primaryBtn, marginTop: 14 }}>輸入密碼</button>
+    </div>
+  )
+}
+
+// 地點區塊：型別即閘門——location_locked 為 true 的 DTO 上根本沒有 lat/lng/meeting_detail。
+function LocationBlock({ meet }: { meet: RunMeetDetail }) {
+  if (meet.location_locked) {
+    return (
+      <div style={{ ...cardBox, padding: '12px 13px', marginTop: 12 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>集合地點</div>
+        <div style={{ fontSize: 13, color: 'var(--tx)', marginTop: 6, lineHeight: 1.7 }}>{meet.region} · {meet.place_label}</div>
+        <div style={{ ...fieldHint, color: 'var(--gold)', fontWeight: 700 }}>🔒 {meet.location_note}</div>
+      </div>
+    )
+  }
+  return (
+    <div style={{ ...cardBox, padding: '12px 13px', marginTop: 12 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>集合地點（團員可見）</div>
+      <div style={{ fontSize: 13, color: 'var(--tx)', marginTop: 6, lineHeight: 1.7 }}>{meet.region} · {meet.place_label}</div>
+      {meet.meeting_detail && (
+        <div style={{ fontSize: 13, color: 'var(--tx)', marginTop: 6, lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>📌 {meet.meeting_detail}</div>
+      )}
+      {meet.lat != null && meet.lng != null && <MiniMap lat={meet.lat} lng={meet.lng} />}
+    </div>
+  )
+}
+
+// 唯讀小地圖（只有成員才會渲染到這裡；Leaflet 走既有 lib/leaflet.ts CDN 載入器）
+function MiniMap({ lat, lng }: { lat: number; lng: number }) {
+  const idRef = useRef(`runmeet-map-${Math.random().toString(36).slice(2, 8)}`)
+  const mapRef = useRef<any>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    loadLeaflet().then((L) => {
+      if (cancelled || mapRef.current) return
+      const el = document.getElementById(idRef.current)
+      if (!el) return
+      const map = L.map(idRef.current, { zoomControl: false, attributionControl: false }).setView([lat, lng], 16)
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map)
+      L.marker([lat, lng]).addTo(map)
+      mapRef.current = map
+      setTimeout(() => { try { map.invalidateSize() } catch { /* 已卸載 */ } }, 80)
+    }).catch(() => setFailed(true))
+    return () => {
+      cancelled = true
+      if (mapRef.current) { try { mapRef.current.remove() } catch { /* ignore */ } mapRef.current = null }
+    }
+  }, [lat, lng])
+  if (failed) return <div style={fieldHint}>地圖載入失敗，座標：{lat}, {lng}</div>
+  return <div id={idRef.current} style={{ width: '100%', height: 170, borderRadius: 10, overflow: 'hidden', marginTop: 10, border: '1px solid var(--line-2)' }} />
+}
+
+function MembersBlock({ meetId }: { meetId: string }) {
+  const { data } = useSWR(
+    ['run-meet-members', meetId, 'joined'],
+    () => withUserAuth((t) => runMeetApi.members(t, meetId, 'joined')),
+  )
+  const items = data?.items ?? []
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>成員（{items.length}）</div>
+      {items.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: 'var(--tx-faint)' }}>還沒有其他人加入</div>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+          {items.map((m) => (
+            <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-2)', borderRadius: 999, padding: '4px 10px 4px 4px' }}>
+              <Avatar url={m.avatar_url} name={m.name} size={22} />
+              <span style={{ fontSize: 12, color: 'var(--tx)', fontWeight: 700 }}>{m.name}</span>
+              {m.is_owner && <span style={{ fontSize: 10.5, color: 'var(--gold)', fontWeight: 800 }}>發起人</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CommentsBlock({ meetId, canComment, onToast, onReport, onChanged }: {
+  meetId: string
+  canComment: boolean
+  onToast: (t: string, tone?: 'ok' | 'err') => void
+  onReport: (commentId: string) => void
+  onChanged: () => void
+}) {
+  const [body, setBody] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const { data, mutate } = useSWR(
+    ['run-meet-comments', meetId],
+    () => withUserAuth((t) => runMeetApi.comments(t, meetId, 50, 0)),
+  )
+  const items = data?.items ?? []
+
+  async function submit() {
+    const text = body.trim()
+    if (!text || busy) return
+    setBusy(true); setErr('')
+    try {
+      await withUserAuth((t) => runMeetApi.addComment(t, meetId, text))
+      setBody('')
+      await mutate()
+      onChanged()
+    } catch (e: any) {
+      setErr(e?.message || '留言失敗，請稍後再試')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>留言（{data?.total ?? items.length}）</div>
+      {items.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: 'var(--tx-faint)', lineHeight: 1.7 }}>還沒有人留言。說點什麼，讓大家知道你會到 👋</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {items.map((c) => (
+            <div key={c.id} style={{ display: 'flex', gap: 8 }}>
+              <Avatar url={c.avatar_url} name={c.name} size={26} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--tx)' }}>{c.name}</div>
+                {/* 純文字：React 文字節點自動跳脫，說明/留言一律不 linkify、不解析 HTML */}
+                <div style={{ fontSize: 13, color: 'var(--tx)', lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.body}</div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 3 }}>
+                  {c.can_delete && (
+                    <button
+                      onClick={async () => {
+                        try { await withUserAuth((t) => runMeetApi.deleteComment(t, meetId, c.id)); await mutate(); onChanged(); onToast('留言已刪除') }
+                        catch (e: any) { onToast(e?.message || '刪除失敗', 'err') }
+                      }}
+                      style={{ background: 'none', border: 'none', padding: 0, fontSize: 11, color: 'var(--tx-faint)', cursor: 'pointer', fontFamily: 'inherit' }}
+                    >刪除</button>
+                  )}
+                  <button onClick={() => onReport(c.id)} style={{ background: 'none', border: 'none', padding: 0, fontSize: 11, color: 'var(--tx-faint)', cursor: 'pointer', fontFamily: 'inherit' }}>檢舉</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {canComment ? (
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <input
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void submit() }}
+            maxLength={200}
+            placeholder="說點什麼…"
+            style={{ ...inputStyle, fontSize: 13.5 }}
+          />
+          <button onClick={() => void submit()} disabled={busy || !body.trim()} style={{ ...ghostBtn, flexShrink: 0, opacity: busy || !body.trim() ? 0.6 : 1 }}>
+            {busy ? '送出中…' : '送出'}
+          </button>
+        </div>
+      ) : (
+        <div style={{ ...fieldHint, marginTop: 10 }}>這個團練已結束超過 7 天，留言區已關閉。</div>
+      )}
+      {err && <div style={errText}>{err}</div>}
+    </div>
+  )
+}
+
+function JoinNoteModal({ busy, onClose, onSubmit }: { busy: boolean; onClose: () => void; onSubmit: (note: string) => void }) {
+  const [note, setNote] = useState('')
+  return (
+    <RunMeetModal onClose={onClose} maxWidth={340}>
+      <div style={modalTitle}>申請加入</div>
+      <div style={{ fontSize: 13, color: 'var(--tx-dim)', lineHeight: 1.8, marginTop: 10 }}>
+        這個團練需要發起人同意。可以留一句話讓對方認識你（選填，60 字內）。
+      </div>
+      <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={60} placeholder="我是新手，配速大約 7:00，想跟大家一起跑！" style={{ ...textareaStyle, minHeight: 64, marginTop: 10 }} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 16 }}>
+        <button onClick={onClose} style={{ ...ghostBtn, width: '100%', padding: '11px 0' }}>取消</button>
+        <button onClick={() => onSubmit(note.trim())} disabled={busy} style={{ ...primaryBtn, opacity: busy ? 0.7 : 1 }}>送出申請</button>
+      </div>
+    </RunMeetModal>
+  )
+}
+
+function ReportModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (reason: string) => void }) {
+  const [reason, setReason] = useState('')
+  return (
+    <RunMeetModal onClose={onClose} maxWidth={340}>
+      <div style={modalTitle}>檢舉</div>
+      <div style={{ fontSize: 13, color: 'var(--tx-dim)', lineHeight: 1.8, marginTop: 10 }}>
+        請簡述問題（例如不實資訊、騷擾、廣告）。我們會盡快處理，處理結果不會公開。
+      </div>
+      <textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} placeholder="請描述問題…" style={{ ...textareaStyle, minHeight: 80, marginTop: 10 }} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 16 }}>
+        <button onClick={onClose} style={{ ...ghostBtn, width: '100%', padding: '11px 0' }}>取消</button>
+        <button onClick={() => onSubmit(reason.trim())} style={{ ...primaryBtn, background: 'var(--hunt)', color: '#fff' }}>送出檢舉</button>
+      </div>
+    </RunMeetModal>
+  )
+}

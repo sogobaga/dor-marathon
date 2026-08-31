@@ -123,6 +123,16 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	// 安全標頭（全域連帶修正，隨團練邀請同批上線）：本端點是「公開無授權」的（main.go 掛在
+	// 未登入群組），而既有上傳鏈（/profile/avatar、/admin/images）放行整個 image/*，任何已登入
+	// 會員都能上傳 image/svg+xml 再從**同源**取回執行 → 儲存型 XSS。三個標頭同時關掉利用面：
+	//   nosniff        瀏覽器不再依內容猜型別（擋 polyglot/錯 MIME）
+	//   CSP sandbox    即使被當 HTML/SVG 解析，也沒有 script/同源能力
+	//   X-Frame-Options 不能被嵌進他站做點擊劫持
+	// 團練邀請把這條路徑從「1 張頭像」放大成「每人每團 4 張 UGC 圖」，必須同批關掉。
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	w.Header().Set("X-Frame-Options", "DENY")
 	w.Write(data)
 }
 

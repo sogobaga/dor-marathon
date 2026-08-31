@@ -41,6 +41,7 @@ const MonopolyScreen = dynamic(() => import('./MonopolyScreen'), {
   ),
 })
 const RaceDetailScreen = dynamic(() => import('./RaceDetailScreen'), { ssr: false })
+const RunMeetScreen = dynamic(() => import('./RunMeetScreen'), { ssr: false })
 
 // openEventSlug：廣告落地頁 /event/{slug} 傳入，開頁即直接顯示該活動簡章（見 app/event/[slug]/EventLanding.tsx）。
 // openShopId：合作商家專屬連結 /shop/{id} 傳入，開頁即直接顯示該商家詳細頁（見 app/shop/[id]/ShopLanding.tsx）。
@@ -62,6 +63,9 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
   const [showMonopoly, setShowMonopoly] = useState(false)
   const [showRewards, setShowRewards] = useState(false)
   const [showHeroes, setShowHeroes] = useState(false)
+  // 團練邀請（見 components/RunMeetScreen）：?runmeet={id} 深連結可直接開到某個團練詳情
+  const [showRunMeet, setShowRunMeet] = useState(false)
+  const [runMeetInitialId, setRunMeetInitialId] = useState<string | undefined>(undefined)
   const [titlesModal, setTitlesModal] = useState<{ code: string; name: string; tier: number; category: string }[]>([])
   const titlesHandled = useRef(false)
   const [unlockCardId, setUnlockCardId] = useState<string | undefined>(undefined)
@@ -153,6 +157,14 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
         window.history.replaceState({}, '', '/') // 清掉參數，避免重整重播
       }
     }
+    // 團練邀請深連結（?runmeet={id}）：分享文案帶的連結，開頁即進該團練詳情。
+    // 清掉參數避免重整重播；未過入口 gate 的帳號進去只會拿到 403（後端 requireEntry），不會外洩內容。
+    const runMeetParam = params.get('runmeet')
+    if (runMeetParam) {
+      setShowRunMeet(true)
+      setRunMeetInitialId(runMeetParam)
+      window.history.replaceState({}, '', '/')
+    }
     // 合作商家詳細頁深連結：優先吃 openShopId prop（來自 /shop/{id} 路由，網址已經是漂亮的、不清參數）；
     // 否則吃 ?shop= query（例如外部連結手動帶參數），清掉參數避免重整重播。做法比照上面的活動簡章深連結。
     if (openShopId) {
@@ -182,13 +194,14 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     else if (showRewards) { path = '/rewards'; title = '活動獎勵' }
     else if (showMonopoly) { path = '/monopoly'; title = '環台大富翁' }
     else if (showHeroes) { path = '/heroes'; title = '百里英雄榜' }
+    else if (showRunMeet) { path = '/run-meets'; title = '團練邀請' }
     else if (showExplore) { path = '/explore'; title = '城市探索' }
     else if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
     else if (showProfile || payRace) { path = '/profile'; title = '會員資訊' }
     else if (registerRace) { path = `/register/${registerRace.slug}`; title = `報名 - ${registerRace.title}` }
     else if (detailRace) { path = `/race/${detailRace.slug}`; title = detailRace.title }
     pageview(path, title)
-  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showRewards, showMonopoly, showHeroes, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
+  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showRewards, showMonopoly, showHeroes, showRunMeet, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
 
   return (
     <GoogleAuthProvider>
@@ -221,6 +234,8 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
           <MonopolyScreen onBack={() => setShowMonopoly(false)} />
         ) : showHeroes ? (
           <HundredHeroesScreen onBack={() => setShowHeroes(false)} />
+        ) : showRunMeet ? (
+          <RunMeetScreen onBack={() => { setShowRunMeet(false); setRunMeetInitialId(undefined) }} initialMeetId={runMeetInitialId} />
         ) : showExplore ? (
           <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={(bossId) => { window.location.href = bossId ? '/track?focus=' + encodeURIComponent(bossId) : '/track' }} />
         ) : showPersonalTasks ? (
@@ -240,6 +255,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
             onOpenMonopoly={() => setShowMonopoly(true)}
             onOpenRewards={() => setShowRewards(true)}
             onOpenHeroes={() => setShowHeroes(true)}
+            onOpenRunMeet={() => setShowRunMeet(true)}
           />
         ) : registerRace ? (
           <RegistrationScreen race={registerRace} onBack={() => setRegisterRace(null)} />

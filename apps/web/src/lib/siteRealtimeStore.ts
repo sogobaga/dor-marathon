@@ -3,11 +3,15 @@
 import { create } from 'zustand'
 import { mutate } from 'swr'
 
-export type DataTopic = 'races' | 'dashboard' | 'personal_tasks' | 'explore' | 'settings'
-export const DATA_TOPICS: readonly DataTopic[] = ['races', 'dashboard', 'personal_tasks', 'explore', 'settings']
+export type DataTopic = 'races' | 'dashboard' | 'personal_tasks' | 'explore' | 'settings' | 'runmeet'
+export const DATA_TOPICS: readonly DataTopic[] = ['races', 'dashboard', 'personal_tasks', 'explore', 'settings', 'runmeet']
 
 const RACES_KEYS = ['races', 'detail', 'brochure', 'standings', 'leaderboard', 'progress', 'cert', 'exp-bd', 'contrib', 'rangedetail']
 const EXPLORE_KEYS = ['explore-gallery', 'explore-list', 'progress']
+// 團練邀請（見 lib/api.ts runMeetApi）：後端在成員/狀態/留言變動時 PublishData(ctx,"runmeet",…)。
+// ⚠️ topic 沒列進 DATA_TOPICS 會被 SiteRealtime.tsx 靜默丟棄（它直接 import 這裡的常數），
+//    這裡與 matcher 兩處都要有，缺一不可。
+const RUNMEET_KEYS = ['run-meets', 'run-meet', 'run-meet-mine', 'run-meet-quota', 'run-meet-members', 'run-meet-comments']
 
 // topic → 是否命中某 SWR key 的判斷式（照編排者的精準失效對應表）
 const TOPIC_MATCHERS: Record<DataTopic, (key: unknown) => boolean> = {
@@ -16,6 +20,7 @@ const TOPIC_MATCHERS: Record<DataTopic, (key: unknown) => boolean> = {
   personal_tasks: (key) => Array.isArray(key) && key[0] === 'personal-plans',
   explore: (key) => Array.isArray(key) && EXPLORE_KEYS.includes(key[0]),
   settings: (key) => key === 'site-settings', // 字串 key，非陣列
+  runmeet: (key) => Array.isArray(key) && RUNMEET_KEYS.includes(key[0] as string),
 }
 
 interface SiteRealtimeState {
