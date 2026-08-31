@@ -209,21 +209,18 @@ export default async function RunMeetSharePage({ params }: { params: { id: strin
 
 function Frame({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      style={{
-        minHeight: '100dvh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 14,
-        background: '#09090f',
-        color: '#fff',
-        textAlign: 'center',
-        padding: '24px 20px',
-      }}
-    >
-      {children}
+    // 兩層是必要的，不能合併成一層：
+    // 外層＝捲動容器。globals.css 的 body 是 `height:100%; overflow:hidden` 的 App 化鎖版
+    //（捲動一律發生在內部 overflow:auto 容器），所以這頁若不自己開一個捲動容器，
+    // 內容一超過一屏就永遠看不到下半部——加了品牌主視覺之後必然超過（v1.1.700 修）。
+    // 高度用 100% 而不是 100dvh：body 已經處理過 iOS 動態工具列的高度修正
+    //（見 globals.css 的 --app-h 安全網），這裡直接繼承就好，不要再多一個 dvh 消費者。
+    // SWRConfig 不產生 DOM，所以這層的 offsetParent 就是 body，100% 解得出來。
+    <div style={frameScroll}>
+      {/* 內層＝置中容器。min-height:100% 讓內容不滿一屏時仍垂直置中；
+          內容超過一屏時它被內容撐高，justify-content:center 自然失效 →
+          避開「flex 置中把溢出內容的上緣切掉、且捲不上去」的經典陷阱。 */}
+      <div style={frameInner}>{children}</div>
     </div>
   )
 }
@@ -240,6 +237,27 @@ const ctaStyle: React.CSSProperties = {
   padding: '13px 28px',
   borderRadius: 999,
   textDecoration: 'none',
+}
+
+const frameScroll: React.CSSProperties = {
+  height: '100%',
+  overflowY: 'auto',
+  WebkitOverflowScrolling: 'touch',
+  overscrollBehavior: 'contain', // 捲到底不把捲動傳給 body（body 已鎖版，傳過去只會有橡皮筋感）
+  background: '#09090f',
+  color: '#fff',
+}
+
+const frameInner: React.CSSProperties = {
+  minHeight: '100%',
+  boxSizing: 'border-box',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 14,
+  textAlign: 'center',
+  padding: '24px 20px',
 }
 
 // 品牌主視覺：與未登入首頁同一張圖。maxWidth／borderRadius 都對齊下方的資訊卡（420／20），
