@@ -65,13 +65,21 @@ export function isoToTaipeiLocalInput(iso: string | null | undefined): string {
  *  ⚠️ 兩個最容易寫錯的邊界：0 時（凌晨）是「上午 12:xx」，12 時（中午）是「下午 12:xx」——
  *  不是「上午 0 點」或「下午 0 點」。fmtMeetAt 是全站顯示預計時間的唯一函式（2026-08-31
  *  使用者回報「分不清楚是上午 4:30 還是下午 4:30」），這兩個邊界在 verify-run-meet.mjs 有專門測資釘住。 */
+// 時段用語（2026-08-31 使用者定案）：左閉右開，一律以台北時間判定。
+//   [0,4) 凌晨　[4,6) 清晨　[6,12) 上午　[12,17) 下午　[17,19) 傍晚　[19,24) 晚上
+// ⚠️ 小時採 12 小時制但 0 點保留 0（「凌晨 0:30」，不是「上午 12:30」——中文會把後者讀成中午），
+//    中午 12:xx 也保留 12（「下午 12:30」）。所以換算是「>12 才減 12」，不是常見的 hh%12。
+const DAY_PERIODS: ReadonlyArray<{ from: number; label: string }> = [
+  { from: 19, label: '晚上' },
+  { from: 17, label: '傍晚' },
+  { from: 12, label: '下午' },
+  { from: 6, label: '上午' },
+  { from: 4, label: '清晨' },
+  { from: 0, label: '凌晨' },
+]
 function fmtHour12(hh: number, mm: number): string {
-  // ⚠️ 0 點單獨處理成「凌晨 0:30」而不是「上午 12:30」（2026-08-31 使用者定案）：
-  // 中文口語就是說「凌晨零點半」，「上午 12:30」反而會被讀成中午。
-  // 中午 12:xx 仍是「下午 12:xx」——那個轉換是對的，不要一起改掉。
-  if (hh === 0) return `凌晨 0:${pad2(mm)}`
-  const period = hh < 12 ? '上午' : '下午'
-  const h12 = hh % 12 === 0 ? 12 : hh % 12
+  const period = DAY_PERIODS.find((p) => hh >= p.from)?.label ?? '凌晨'
+  const h12 = hh > 12 ? hh - 12 : hh
   return `${period} ${h12}:${pad2(mm)}`
 }
 
