@@ -6,6 +6,7 @@
 const modUrl = new URL('../src/lib/runMeet.ts', import.meta.url).href
 const {
   taipeiParts, taipeiLocalToISO, isoToTaipeiLocalInput, fmtMeetAt, fmtMeetAtConfirm, meetCountdown,
+  isFetchPending, shouldShowError,
   distanceBandLabel, createBtnText, resetDayText, remainingText,
   memberCountText, memberPct, confirmSubText, runMeetCta, isDeviceTaipei,
   reactionPills, sortReactionCounts, optimisticReactionUpdate, mentionPrefix, replyTargetId,
@@ -225,6 +226,18 @@ eq(
   }],
   'markCommentDeleted｜遮蔽某則回覆，所屬頂層留言不受影響',
 )
+
+
+// ── 載入態判定（2026-08-31 使用者回報：一進頁面先看到「載入失敗」）──────────────
+// 空窗期＝isLoading 已 false、但 data 與 error 都還是 undefined（SWR 切換查詢金鑰的那一幀）。
+eq(isFetchPending(true, undefined, undefined), true, '正在載入 → pending')
+eq(isFetchPending(false, undefined, undefined), true, '金鑰切換空窗期（三者皆空）→ 仍算 pending，不可顯示失敗')
+eq(isFetchPending(false, { items: [] }, undefined), false, '已拿到資料 → 不是 pending')
+eq(isFetchPending(false, undefined, new Error('x')), false, '確定失敗 → 不是 pending')
+eq(shouldShowError(false, undefined, new Error('x'), false), true, '有錯誤且無資料 → 顯示失敗')
+eq(shouldShowError(false, undefined, new Error('x'), true), false, '重新驗證失敗但有舊資料 → 不清空畫面')
+eq(shouldShowError(false, undefined, undefined, false), false, '空窗期 → 絕不顯示失敗')
+eq(shouldShowError(true, undefined, new Error('x'), false), false, '仍在載入 → 先不報錯')
 
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

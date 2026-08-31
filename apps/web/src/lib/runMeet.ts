@@ -413,3 +413,20 @@ export function confirmSubText(
   if (!isVip) lines.push(`VIP 會員每月可發起 ${vipCap} 次，並可上傳最多 ${vipImages} 張圖片。`)
   return lines
 }
+
+// ─────────────────────────────────────────────────────────────
+// 載入態判定（SWR）
+//
+// ⚠️ 不可只用 SWR 的 isLoading 當「載入中」：切換查詢金鑰的空窗期（例如 useUser 解析完把
+// uid 從 'guest' 換成真實 id）會出現「isLoading=false、data 與 error 都還是 undefined」的一幀，
+// 只判 isLoading 的話那一幀會掉進錯誤分支，使用者一進頁面就先看到「載入失敗」，
+// 以為系統壞了（2026-08-31 使用者回報）。
+// 判定順序固定：pending（還在等） → error（真的失敗且沒有可顯示的資料） → 空狀態 → 內容。
+export function isFetchPending(isLoading: boolean, data: unknown, error: unknown): boolean {
+  return isLoading || (data === undefined && error === undefined)
+}
+/** 真的該顯示錯誤：有 error、不在 pending、且沒有既有資料可續用（重新驗證失敗時不該把畫面清空）。 */
+export function shouldShowError(isLoading: boolean, data: unknown, error: unknown, hasItems: boolean): boolean {
+  return Boolean(error) && !isFetchPending(isLoading, data, error) && !hasItems
+}
+export const LOADING_TEXT = '資料載入中，請稍後。'

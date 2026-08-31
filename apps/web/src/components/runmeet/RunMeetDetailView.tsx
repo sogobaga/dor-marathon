@@ -10,8 +10,7 @@ import { loadLeaflet } from '@/lib/leaflet'
 import { MediaCarousel, Lightbox } from '../shared/MediaCarousel'
 import {
   REACTION_META, ctaInputOf, fmtMeetAt, meetCountdown, memberCountText, memberPct, runMeetCta,
-  showViewAllComments, viewAllCommentsLabel,
-} from '@/lib/runMeet'
+  showViewAllComments, viewAllCommentsLabel, isFetchPending, LOADING_TEXT } from '@/lib/runMeet'
 import RunMeetFormModal from './RunMeetFormModal'
 import RunMeetManageSheet from './RunMeetManageSheet'
 import RunMeetUnlockModal from './RunMeetUnlockModal'
@@ -142,8 +141,8 @@ export default function RunMeetDetailView({
       </header>
 
       <div style={scrollBody}>
-        {isLoading && !card ? (
-          <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
+        {!card && isFetchPending(isLoading, meet, error) ? (
+          <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>{LOADING_TEXT}</div>
         ) : deletedCountdown !== null ? (
           // ⚠️ 這裡刻意不管 fallbackCard（可能是使用者從列表點進來時帶的舊卡片摘要）——
           // 一旦後端回 410，畫面就只顯示這句倒數導頁文案，不能讓下面「找到 card 就渲染完整內容」

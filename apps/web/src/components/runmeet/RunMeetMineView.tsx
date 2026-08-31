@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { runMeetApi, type RunMeetCard } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
-import { createBtnText } from '@/lib/runMeet'
+import { createBtnText, isFetchPending, shouldShowError, LOADING_TEXT } from '@/lib/runMeet'
 import { MeetCard, emptyBox, ghostBtn, primaryBtn } from './ui'
 
 // 我的團練：三段（我發起的／我參加的／申請中）。
@@ -23,8 +23,9 @@ export default function RunMeetMineView({
     () => withUserAuth((t) => runMeetApi.mine(t)),
   )
 
-  if (isLoading) return <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>載入中…</div>
-  if (error) return <div style={{ color: 'var(--hunt)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>載入失敗，請稍後再試</div>
+  // 判定順序：pending → error（見 lib/runMeet.ts isFetchPending 註解，只判 isLoading 會誤報失敗）
+  if (isFetchPending(isLoading, data, error)) return <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>{LOADING_TEXT}</div>
+  if (shouldShowError(isLoading, data, error, false)) return <div style={{ color: 'var(--hunt)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>載入失敗，請稍後再試</div>
 
   const owned = data?.owned ?? []
   const joined = data?.joined ?? []
