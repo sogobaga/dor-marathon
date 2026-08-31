@@ -153,7 +153,10 @@ export default function RunMeetLocationPicker({ value, onChange }: {
           {mapErr ? (
             <div style={{ ...fieldHint, color: 'var(--hunt)' }}>{mapErr}</div>
           ) : (
-            <div id="runmeet-pick-map" style={{ width: '100%', height: 220, borderRadius: 12, overflow: 'hidden', border: '1px solid var(--line-2)' }} />
+            // touchAction:'none'：外層表單鎖 pan-y（見 ui.tsx RunMeetModal），交集規則下子元素只會更嚴不會更寬鬆，
+            // 所以地圖容器要自己宣告 none（交集 pan-y∩none=none）——等同完全不讓瀏覽器接管手勢，全交給 Leaflet 自己的
+            // 拖曳/縮放處理，才不會被外層的垂直鎖誤擋成只能上下滑。
+            <div id="runmeet-pick-map" style={{ width: '100%', height: 220, borderRadius: 12, overflow: 'hidden', border: '1px solid var(--line-2)', touchAction: 'none' }} />
           )}
           <div style={fieldHint}>點地圖或拖曳標記可調整位置。</div>
           {nearby && (

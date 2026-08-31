@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from 'react'
 import { runMeetApi, type RunMeetDetail, type RunMeetInput, type RunMeetMemberDetail, type RunMeetQuota } from '@/lib/api'
 import { withUserAuth } from '@/lib/userAuth'
 import { fmtMeetAtConfirm, isDeviceTaipei, isoToTaipeiLocalInput, taipeiLocalToISO, taipeiParts } from '@/lib/runMeet'
+import { compressImageFile } from '@/lib/imageCompress'
 import RunMeetConfirmModal from './RunMeetConfirmModal'
 import RunMeetLocationPicker, { type LocationValue } from './RunMeetLocationPicker'
 import {
@@ -18,6 +19,11 @@ import {
 // - client_token：本表單開啟時產生一次，重試沿用同一個 → 後端部分唯一索引擋重複扣配額。
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
+
+// 前端不再預先擋檔案大小（手機隨手拍的照片本來就常見 3–12MB，擋 5MB 違反使用情境）——
+// 一律先在瀏覽器壓縮（見 lib/imageCompress.ts），只有壓縮後仍然過大才擋下，此門檻對齊
+// 後端安全網上限（25MB）。
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 /** 預設集合時間：明天 06:00（台北牆上時間）。 */
 function defaultMeetAtInput(now = new Date()): string {
@@ -63,6 +69,7 @@ export default function RunMeetFormModal({
   const [pwMode, setPwMode] = useState<PwMode>(mode === 'edit' ? 'keep' : 'set')
   const [pw, setPw] = useState('')
   const [imgBusy, setImgBusy] = useState(false)
+  const [imgStatus, setImgStatus] = useState('') // 「壓縮中…」/「上傳中…」/多張時「壓縮中 2/4」等，僅在 imgBusy 時顯示
   const [imgErr, setImgErr] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -147,16 +154,43 @@ export default function RunMeetFormModal({
     }
   }
 
-  async function upload(file: File) {
-    if (images.length >= imageLimit) { setImgErr(`這個團練最多可上傳 ${imageLimit} 張圖片。`); return }
+  // 選檔 → 瀏覽器先壓縮（見 lib/imageCompress.ts；失敗一律 fallback 回原檔，不擋使用者）→ 才上傳。
+  // 多張圖逐張處理（不併發，避免手機端同時解好幾張大圖），imgStatus 顯示目前進度供按鈕文字使用。
+  // ⚠️ 上傳錯誤訊息一律原樣顯示 e?.message（不吞、不改寫）：HEIC 等 canvas 解不了的格式會 fallback
+  //    傳原檔給後端，後端格式驗證失敗的錯誤要讓使用者看到，才知道可以換一張圖。
+  async function uploadFiles(files: File[]) {
+    if (files.length === 0) return
+    const room = imageLimit - images.length
+    if (room <= 0) { setImgErr(`這個團練最多可上傳 ${imageLimit} 張圖片。`); return }
+    const list = files.slice(0, room)
+    const truncated = files.length > room
+
     setImgBusy(true); setImgErr('')
+    let hadError = false
     try {
-      const { url } = await withUserAuth((t) => runMeetApi.uploadImage(t, file))
-      setImages((arr) => [...arr, url])
-    } catch (e: any) {
-      setImgErr(e?.message || '圖片上傳失敗')
+      for (let i = 0; i < list.length; i++) {
+        const multi = list.length > 1
+        setImgStatus(multi ? `壓縮中 ${i + 1}/${list.length}` : '壓縮中…')
+        const compressed = await compressImageFile(list[i])
+        if (compressed.size > MAX_UPLOAD_BYTES) {
+          setImgErr('圖片檔案過大，請換一張。')
+          hadError = true
+          break
+        }
+        setImgStatus(multi ? `上傳中 ${i + 1}/${list.length}` : '上傳中…')
+        try {
+          const { url } = await withUserAuth((t) => runMeetApi.uploadImage(t, compressed))
+          setImages((arr) => [...arr, url])
+        } catch (e: any) {
+          setImgErr(e?.message || '圖片上傳失敗')
+          hadError = true
+          break // 錯誤原樣顯示並停止後續，已成功的張數維持在 images 裡不受影響
+        }
+      }
+      // 選取張數超過剩餘可上傳額度時提示已截斷；有其他錯誤時該錯誤優先顯示，不覆蓋。
+      if (truncated && !hadError) setImgErr(`這個團練最多可上傳 ${imageLimit} 張圖片，已取前 ${room} 張。`)
     } finally {
-      setImgBusy(false)
+      setImgBusy(false); setImgStatus('')
     }
   }
   function moveImg(idx: number, dir: -1 | 1) {
@@ -246,19 +280,27 @@ export default function RunMeetFormModal({
               </div>
             ))}
             {images.length < imageLimit && (
-              <label style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 96, height: 92, boxSizing: 'border-box', cursor: imgBusy ? 'default' : 'pointer' }}>
-                {imgBusy ? '上傳中…' : '＋ 上傳'}
-                {/* 與後端白名單一致：只收 JPG/PNG（不寫 image/*）；選完清 value 才能重選同一檔 */}
+              <label style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 96, height: 92, boxSizing: 'border-box', cursor: imgBusy ? 'default' : 'pointer', textAlign: 'center', fontSize: 12 }}>
+                {imgBusy ? (imgStatus || '處理中…') : '＋ 上傳'}
+                {/* accept="image/*"：手機相簿直接選圖，不再限定 JPG/PNG 副檔名——選好會先在瀏覽器壓縮
+                    成 JPEG（見 lib/imageCompress.ts），壓不了的格式（如 HEIC）fallback 傳原檔給後端判斷。
+                    multiple：一次可選多張，逐張壓縮＋上傳並顯示進度。選完清 value 才能重選同一檔。 */}
                 <input
-                  type="file" accept="image/jpeg,image/png" style={{ display: 'none' }} disabled={imgBusy}
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); e.target.value = '' }}
+                  type="file" accept="image/*" multiple style={{ display: 'none' }} disabled={imgBusy}
+                  onChange={(e) => {
+                    const files = e.target.files ? Array.from(e.target.files) : []
+                    if (files.length) void uploadFiles(files)
+                    e.target.value = ''
+                  }}
                 />
               </label>
             )}
           </div>
           {imgErr && <div style={errText}>{imgErr}</div>}
           <div style={fieldHint}>
-            只接受 JPG／PNG，單張 5MB 以內；上傳後會重新編碼（自動移除 EXIF 含 GPS 座標）。<br />
+            支援手機相簿直接選圖，上傳前會自動壓縮，不需要自己先縮圖；上傳後仍會在伺服器重新編碼
+            （自動移除 EXIF 含 GPS 座標）。少數格式（如 HEIC）瀏覽器無法預先壓縮，會直接送出讓系統判斷，
+            若顯示格式不支援請換一張常見的 JPG／PNG／HEIC 轉出的照片。<br />
             圖片連結為公開連結，請勿上傳含個資或不願外流的影像。
             {!quota.is_vip && mode === 'create' && (
               <>

@@ -333,7 +333,8 @@ func main() {
 	r.Use(middleware.MaxBodyBytes(1<<20,
 		"/api/v1/admin/images", "/api/v1/profile/avatar",
 		"/api/v1/admin/personal-tasks/import", // xlsx 轉 JSON 整包匯入，見 middleware.MaxBodyBytes 註解
-		// 團練邀請圖片上傳（自帶 5MB MaxBytesReader + 嚴格嗅探/重編碼，見 internal/runmeet/imageupload.go）。
+		// 團練邀請圖片上傳（自帶 25MB MaxBytesReader（安全網，前端已先壓縮）+ 嚴格嗅探/重編碼，
+		// 見 internal/runmeet/imageupload.go）。
 		// ⚠️ 這裡是 strings.HasPrefix 前綴比對，所以上傳路徑必須是扁平的 /run-meets/images
 		// （不能寫成 /run-meets/{id}/images）；不加這行會被 1MB 全域上限先擋成 413。
 		"/api/v1/run-meets/images",
@@ -410,6 +411,16 @@ func main() {
 
 		// 通用系統設定的公開白名單（前台外觀，如 active_skin）
 		r.Get("/app-settings/public", appSettingsHandler.Public)
+
+		// 團練分享卡（公開、免登入，供前端 /m/[id] SSR OG 卡用；社群爬蟲沒有身分）。
+		// ⚠️ 刻意掛在這個公開群組、不是下面 runMeetHandler.Router()（那條第一行是
+		// h.requireEntry，非登入會直接被擋）；路徑字面上仍是 /run-meets/{id}/share，
+		// 與該 Router() 掛的 /run-meets/* Mount 是 chi 兩個不同的路由註冊，具體路徑
+		// 優先於 Mount 的萬用比對，不衝突（見 internal/runmeet/share.go 檔頭）。
+		// IP 級限流防止被當成「批次探測某個 id 存不存在」的工具（回應本身已對這點做了收斂，
+		// 這裡是縱深防禦）。
+		r.With(middleware.RateLimit(rdb, "runmeet_share", 60, time.Minute, middleware.ClientIP)).
+			Get("/run-meets/{id}/share", runMeetHandler.Share)
 
 		// 跑步鼓勵語（GPS 跑步頁每跨一整公里彈出一句；免登入，只回 enabled 文案）
 		r.Get("/run-cheers", runCheerHandler.Public)

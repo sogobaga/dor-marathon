@@ -77,7 +77,10 @@ export default function RunMeetDetailView({
   }
 
   function share() {
-    const url = `${window.location.origin}/?runmeet=${id}`
+    // 分享短網址 /m/{id}：帶 OG 社群預覽卡（見 app/m/[id]/page.tsx generateMetadata），
+    // 落地頁按鈕會導向既有的 /?runmeet={id} 深連結——PhoneShell 的 ?runmeet= 處理維持不動，
+    // 舊分享連結（/?runmeet=）仍可正常使用。
+    const url = `${window.location.origin}/m/${id}`
     const text = card ? `🏃 ${card.title}｜${fmtMeetAt(card.meet_at)}｜${card.place_label}` : ''
     if (navigator.share) {
       navigator.share({ title: card?.title, text, url }).catch(() => {})

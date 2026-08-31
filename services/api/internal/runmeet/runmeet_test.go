@@ -696,12 +696,12 @@ func TestProcessUploadAcceptsAlreadyCompressed(t *testing.T) {
 	}
 }
 
-// TestProcessUploadRejectsOversize 5MB 上限 → 413。
+// TestProcessUploadRejectsOversize 上限（現行 25MB，安全網）→ 413。
 func TestProcessUploadRejectsOversize(t *testing.T) {
 	big := make([]byte, maxUploadBytes+1)
 	copy(big, []byte{0xff, 0xd8, 0xff}) // 讓它看起來像 JPEG 開頭
 	if _, _, err := processUpload(bytes.NewReader(big)); !errors.Is(err, errImageTooLarge) {
-		t.Fatalf("超過 5MB 應回 413，得 %v", err)
+		t.Fatalf("超過上限應回 413，得 %v", err)
 	}
 }
 
@@ -968,5 +968,116 @@ func TestValidateMeetInputNilImages(t *testing.T) {
 	}
 	if in.ImageURLs == nil {
 		t.Fatal("驗證後 ImageURLs 必須是空陣列而非 nil（否則 pgx 會寫入 SQL NULL）")
+	}
+}
+
+// --- 分享卡（GET /run-meets/{id}/share，公開／免登入）---
+
+func shareTestRow(isPrivate bool, images []string) shareRow {
+	return shareRow{
+		Title: "晨間夜跑團", MeetAt: time.Date(2026, 9, 10, 6, 0, 0, 0, time.UTC),
+		Region: "臺北市・大安區", PlaceLabel: "大安森林公園",
+		ImageURLs: images, IsPrivate: isPrivate, MemberCount: 3, Capacity: 10,
+	}
+}
+
+// TestBuildShareViewPublicKeepsLocationAndCover 公開團：region/place_label 照給，
+// cover_url 取 image_urls 的第一張。
+func TestBuildShareViewPublicKeepsLocationAndCover(t *testing.T) {
+	imgs := []string{"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab"}
+	v := buildShareView(shareTestRow(false, imgs))
+	if !v.Available {
+		t.Fatal("公開團應 available=true")
+	}
+	if v.Region != "臺北市・大安區" || v.PlaceLabel != "大安森林公園" {
+		t.Fatalf("公開團地點不應被遮蔽：%+v", v)
+	}
+	if v.CoverURL == nil || *v.CoverURL != imgs[0] {
+		t.Fatalf("公開團應帶封面圖：%+v", v)
+	}
+}
+
+// TestBuildShareViewPublicNoImagesCoverNil 公開團但沒圖：cover_url 仍是 null（不是空字串）。
+func TestBuildShareViewPublicNoImagesCoverNil(t *testing.T) {
+	v := buildShareView(shareTestRow(false, nil))
+	if v.CoverURL != nil {
+		t.Fatalf("沒有圖片時 cover_url 應為 null，得 %v", *v.CoverURL)
+	}
+}
+
+// TestBuildShareViewPrivateMasksLocationAndCover 私密團隱私遮蔽（規格重點）：即使該團真的
+// 有 region/place_label/圖片，分享卡也一律回空字串／null——分享卡連身分都沒有，
+// 沒有理由知道得比未解鎖的登入會員還多。
+func TestBuildShareViewPrivateMasksLocationAndCover(t *testing.T) {
+	imgs := []string{"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab"}
+	v := buildShareView(shareTestRow(true, imgs))
+	if v.Region != "" {
+		t.Fatalf("私密團 region 應回空字串，得 %q", v.Region)
+	}
+	if v.PlaceLabel != "" {
+		t.Fatalf("私密團 place_label 應回空字串，得 %q", v.PlaceLabel)
+	}
+	if v.CoverURL != nil {
+		t.Fatalf("私密團 cover_url 應為 null，得 %v", *v.CoverURL)
+	}
+	if !v.IsPrivate {
+		t.Fatal("is_private 應照實回 true")
+	}
+	if !v.Available {
+		t.Fatal("私密團本身仍是 available=true（只是內容被遮蔽，不是整筆不可用）")
+	}
+}
+
+// TestShareViewJSONHasNoMemberLayerFields 回應契約：只能有這 9 個 key，尤其不得出現
+// lat/lng/meeting_detail/description/owner/id/成員名單等任何成員層或個資欄位——這支端點
+// 連身分都沒有，沒有後續閘門能補救多回的欄位。
+func TestShareViewJSONHasNoMemberLayerFields(t *testing.T) {
+	imgs := []string{"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab"}
+	v := buildShareView(shareTestRow(false, imgs))
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"available", "title", "meet_at", "region", "place_label",
+		"cover_url", "is_private", "member_count", "capacity"}
+	if len(got) != len(want) {
+		t.Fatalf("回應欄位數應為 %d，得 %d：%s", len(want), len(got), raw)
+	}
+	for _, k := range want {
+		if _, ok := got[k]; !ok {
+			t.Fatalf("回應缺少契約欄位 %q：%s", k, raw)
+		}
+	}
+	forbidden := []string{"lat", "lng", "meeting_detail", "description", "id",
+		"owner", "owner_id", "email", "members", "image_urls", "excerpt", "status"}
+	for _, k := range forbidden {
+		if _, ok := got[k]; ok {
+			t.Fatalf("回應絕不可出現成員層/個資欄位 %q：%s", k, raw)
+		}
+	}
+}
+
+// TestShareUnavailableShapeIsMinimal 「不可用」的回應只能有 available:false 這一個 key
+// （不存在／已軟刪／後台下架／status 非 open／入口 hidden 一律走這條，不分原因，
+// 也不得夾帶任何其他欄位讓人從回應形狀猜出差異——Handler.Share 的 unavailable() 就是
+// 直接回這個 literal map，這裡把契約釘死，未來有人手滑多塞欄位會立刻測試失敗）。
+func TestShareUnavailableShapeIsMinimal(t *testing.T) {
+	raw, err := json.Marshal(map[string]bool{"available": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("不可用回應應只有 1 個 key，得 %d：%s", len(got), raw)
+	}
+	if got["available"] != false {
+		t.Fatalf("available 應為 false：%s", raw)
 	}
 }

@@ -63,7 +63,11 @@ export function RunMeetModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ width: '100%', maxWidth, maxHeight: '92dvh', overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--line-2)', borderRadius: 16, padding: '18px 16px', boxShadow: '0 16px 50px rgba(0,0,0,.7)' }}
+        // ⚠️ App 手感：只能垂直捲動，擋掉水平/自由拖曳（touch-action:pan-y）與捲到底把背景一起帶動
+        // （overscrollBehavior:contain）；overflowX:hidden 兜底子元素萬一溢出也不會冒出水平捲軸。
+        // 例外：地圖選點（RunMeetLocationPicker 的 Leaflet 容器）需要吃滿手勢，該容器自帶
+        // touchAction:'none'——與此處 pan-y 取交集後仍是 none，等同完全交給 Leaflet 自己的手勢處理，不受影響。
+        style={{ width: '100%', maxWidth, maxHeight: '92dvh', overflowY: 'auto', overflowX: 'hidden', touchAction: 'pan-y', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', background: '#0b0e13', border: '1px solid var(--line-2)', borderRadius: 16, padding: '18px 16px', boxShadow: '0 16px 50px rgba(0,0,0,.7)' }}
       >
         {children}
       </div>
