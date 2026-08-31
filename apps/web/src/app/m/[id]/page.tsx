@@ -139,6 +139,18 @@ export default async function RunMeetSharePage({ params }: { params: { id: strin
 
   return (
     <Frame>
+      {/* 品牌主視覺：與未登入首頁（components/MemberPanel.tsx GuestHero）同一張圖，
+          分享連結常是陌生訪客第一次看到 DOR，先給一眼看懂的世界觀再談這場團練。
+          width/height 固定屬性防 CLS（版面跳動），實際尺寸由 CSS width:100% 縮放。 */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/brand-hero-v3.webp"
+        alt="DOR 城市探索——把城市，變成你的遊戲場：跑步即冒險、打卡集卡片、跑旅遍台灣"
+        width={1400}
+        height={732}
+        style={heroStyle}
+      />
+
       {/* 產品介紹：這頁常是完全沒聽過 DOR 的人第一次看到這個 App（分享連結的宣傳重點），
           放在卡片外面、不搶團練本身的版面。 */}
       <div style={introStyle}>
@@ -228,6 +240,16 @@ const ctaStyle: React.CSSProperties = {
   padding: '13px 28px',
   borderRadius: 999,
   textDecoration: 'none',
+}
+
+// 品牌主視覺：與未登入首頁同一張圖。maxWidth／borderRadius 都對齊下方的資訊卡（420／20），
+// 讓圖與卡的左右邊緣切齊；display:block 去掉 inline 圖片底部的行高空隙。
+const heroStyle: React.CSSProperties = {
+  width: '100%',
+  maxWidth: 420,
+  height: 'auto',
+  display: 'block',
+  borderRadius: 20,
 }
 
 // 產品介紹（第一印象文案）：比卡片本身淡一點、字級小一點，不搶團練資訊的視覺重量。
