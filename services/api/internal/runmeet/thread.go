@@ -5,11 +5,13 @@ package runmeet
 // ⚠️ 只允許一層：本檔的 validateReplyParent 是唯一的權威判定（handler/repository 都呼叫這裡），
 // 見 migrations/159_runmeet_comment_thread.sql 檔頭的設計理由。
 //
-// ⚠️ idx_rmc_thread 是局部索引（WHERE deleted_at IS NULL）：頂層留言軟刪後仍要以佔位形式留在
-// 列表裡（見 CommentView 檔頭），所以分頁查詢不能單純加 WHERE deleted_at IS NULL——那樣會漏掉
-// 已刪的頂層留言。這裡改成 UNION ALL 兩支：「未刪」那支的 WHERE 完全對齊局部索引謂詞，吃得到
-// idx_rmc_thread；「已刪」那支因為要撈進通常極少數的軟刪列，沒辦法套用那個局部謂詞，改用
-// meet_id/parent_id 過濾＋LIMIT 上限頂住成本（見 runThreadUnion）。
+// ⚠️ 討論串分頁查詢刻意不濾 deleted_at：軟刪的留言仍要以佔位形式留在串裡（見 CommentView
+// 檔頭），由 maskDeleted 負責遮蔽 Body/Reactions 等欄位，不是靠 WHERE 排除。migration 159 原本
+// 建的 idx_rmc_thread 是局部索引（WHERE deleted_at IS NULL），套不上這個查詢，被迫拆成
+// UNION ALL 兩支（未刪那支吃得到局部索引；已刪那支吃不到，Seq Scan+Sort，在 16 萬筆留言的
+// 環境實測要 11.37 ms、佔整條查詢 98% 時間）。migration 160 已把索引換成不帶謂詞的
+// idx_rmc_thread_all (meet_id, parent_id, created_at DESC, id DESC)，兩種留言現在共用同一個
+// 索引，查詢改回單一查詢（見 runThreadPage），同一環境實測降到 1.95 ms。
 
 import (
 	"context"
@@ -175,13 +177,33 @@ func applyReactions(v *CommentView, byComment map[string][]ReactionCountView, my
 	}
 }
 
-// --- 游標分頁核心查詢（UNION ALL 未刪／已刪兩支；見檔頭說明）---
+// --- 游標分頁核心查詢（單一查詢，取代舊版 UNION ALL 未刪／已刪兩支；見檔頭說明）---
 
-// runThreadUnion 撈一頁留言：parentEq==nil 時撈頂層（parent_id IS NULL），否則撈 *parentEq
+// runThreadPage 撈一頁留言：parentEq==nil 時撈頂層（parent_id IS NULL），否則撈 *parentEq
 // 底下的回覆（parent_id = *parentEq）。desc=true 用於頂層（created_at DESC, id DESC，最新在
 // 前）；desc=false 用於回覆（ASC，對話由舊到新才讀得順）。多撈一筆（limit+1）判斷還有沒有下一頁，
 // 回傳時已裁回 limit 筆。
-func (r *Repository) runThreadUnion(ctx context.Context, meetID string, parentEq *string, desc bool,
+//
+// SQL 結構（由內而外）：
+//  1. 最內層只碰 run_meet_comments、只用得到 idx_rmc_thread_all（migration 160）欄位的條件
+//     （meet_id 等值 → parent_id 等值 → (created_at,id) 游標範圍），排序＋LIMIT limit+1 都在
+//     這層做——規劃器因此會用 Index Scan 直接取 N 筆結束，不必先把整個討論串撈出來再排序
+//     （這正是舊版 UNION ALL「已刪」分支 Seq Scan+Sort 的病灶）。已刪留言不再被濾掉：軟刪的
+//     留言本來就該一起回來，由 maskDeleted 負責遮蔽 Body/Reactions 等欄位、以佔位形式呈現。
+//  2. 中間層在這個已經 LIMIT 過的小結果集（最多 limit+1 筆）上用 COUNT(*) OVER() 算出
+//     fetched_n——即「子查詢實際撈回幾筆」，供最外層判斷 hasMore（見下方 JOIN 的註解）。
+//  3. 最外層才 JOIN users 取顯示用的 name/avatar_url，並重新 ORDER BY 一次（子查詢內的排序
+//     不保證外層一定保留）。
+//
+// 已在 16 萬筆留言的環境用 EXPLAIN (ANALYZE) 實測（2026-08-31，同一團練 600 則留言，詳見
+// migrations/160_runmeet_thread_index_fix.sql 檔頭）：
+//
+//	舊版 UNION ALL 兩支（未刪 0.18ms + 已刪 11.37ms）   11.56 ms
+//	單一查詢、JOIN users 寫在外層                        3.26 ms
+//	單一查詢、子查詢先 LIMIT+1 再 JOIN users（本版）      1.95 ms
+//
+// 這條 SQL 已用上述實測驗證過，不是紙上談兵。
+func (r *Repository) runThreadPage(ctx context.Context, meetID string, parentEq *string, desc bool,
 	afterAt *time.Time, afterID *string, limit int) ([]threadCommentRow, bool, error) {
 
 	op, dir := ">", "ASC"
@@ -191,32 +213,44 @@ func (r *Repository) runThreadUnion(ctx context.Context, meetID string, parentEq
 
 	// parentCond／atPh／idPh／limPh 用具名字串組出各自要用的 $N，不靠 fmt 動詞位置對應——
 	// 兩個分支（頂層 vs 回覆）各自使用的參數數量不同（少一個 parentID），用具名變數組字串
-	// 比用 fmt.Sprintf 數第幾個 %d 更不容易出錯，且這條查詢不會有活資料庫可以實際跑起來驗證。
+	// 比用 fmt.Sprintf 數第幾個 %d 更不容易出錯。
 	var parentCond, atPh, idPh, limPh string
 	args := []any{meetID}
 	if parentEq != nil {
-		parentCond = "c.parent_id = $2"
+		parentCond = "parent_id = $2"
 		args = append(args, *parentEq)
 		atPh, idPh, limPh = "$3", "$4", "$5"
 	} else {
-		parentCond = "c.parent_id IS NULL"
+		parentCond = "parent_id IS NULL"
 		atPh, idPh, limPh = "$2", "$3", "$4"
 	}
 	args = append(args, afterAt, afterID, limit+1)
 
-	branch := func(deletedCond string) string {
-		return `SELECT ` + threadCommentCols + `
-		   FROM run_meet_comments c
-		   JOIN users u ON u.id = c.user_id AND u.is_virtual = FALSE
-		  WHERE c.meet_id=$1 AND ` + parentCond + ` AND c.deleted_at ` + deletedCond + `
-		    AND (` + atPh + `::timestamptz IS NULL OR (c.created_at, c.id) ` + op + ` (` +
-			atPh + `::timestamptz, ` + idPh + `::uuid))
-		  ORDER BY c.created_at ` + dir + `, c.id ` + dir + `
-		  LIMIT ` + limPh
-	}
-	live := branch("IS NULL")
-	dead := branch("IS NOT NULL")
-	q := `(` + live + `) UNION ALL (` + dead + `) ORDER BY created_at ` + dir + `, id ` + dir + ` LIMIT ` + limPh
+	// threadCommentCols 沿用（見上方常數）：中間層的欄位名與 run_meet_comments 同名
+	// （id/user_id/body/created_at/parent_id/reply_count/deleted_at），所以 `c.xxx` 在這裡
+	// 一樣解析得到；c.fetched_n 是中間層另外算出來、只給這支查詢用的欄位。
+	q := `
+		SELECT ` + threadCommentCols + `, c.fetched_n
+		  FROM (
+		    SELECT id, user_id, body, created_at, parent_id, reply_count, deleted_at,
+		           COUNT(*) OVER () AS fetched_n
+		      FROM (
+		        SELECT id, user_id, body, created_at, parent_id, reply_count, deleted_at
+		          FROM run_meet_comments
+		         WHERE meet_id=$1 AND ` + parentCond + `
+		           AND (` + atPh + `::timestamptz IS NULL OR (created_at, id) ` + op + ` (` +
+		atPh + `::timestamptz, ` + idPh + `::uuid))
+		         ORDER BY created_at ` + dir + `, id ` + dir + `
+		         LIMIT ` + limPh + `
+		      ) page
+		  ) c
+		  -- is_virtual=FALSE 是防禦性條件（虛擬選手見 migration 146，只有系統生成的跑步紀錄，
+		  -- 不會留言），但過濾發生在上面 LIMIT 之後：理論上如果虛擬選手哪天真的能留言，這裡
+		  -- 可能讓這一頁少回幾筆（少的是虛擬選手那幾筆，不影響真人留言的完整性）。hasMore 用
+		  -- fetched_n（LIMIT 當下、JOIN 之前的筆數）判斷、不是用 JOIN 後掃到的列數，所以不會
+		  -- 因為 JOIN 篩掉幾筆就誤判「沒有下一頁」而讓 next_cursor 提早消失。
+		  JOIN users u ON u.id = c.user_id AND u.is_virtual = FALSE
+		 ORDER BY c.created_at ` + dir + `, c.id ` + dir
 
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
@@ -225,18 +259,22 @@ func (r *Repository) runThreadUnion(ctx context.Context, meetID string, parentEq
 	defer rows.Close()
 
 	var out []threadCommentRow
+	fetchedN := 0
 	for rows.Next() {
-		c, err := scanThreadComment(rows)
-		if err != nil {
+		var c threadCommentRow
+		var n int
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Name, &c.AvatarURL, &c.Body, &c.CreatedAt,
+			&c.ParentID, &c.ReplyCount, &c.DeletedAt, &n); err != nil {
 			return nil, false, err
 		}
+		fetchedN = n // COUNT(*) OVER() 沒有 PARTITION BY，同一批列裡每筆都是同一個值
 		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, err
 	}
-	hasMore := len(out) > limit
-	if hasMore {
+	hasMore := fetchedN > limit
+	if len(out) > limit {
 		out = out[:limit]
 	}
 	return out, hasMore, nil
@@ -342,7 +380,10 @@ func (r *Repository) batchMyReactions(ctx context.Context, meetID, viewerID stri
 // ListComments 頂層留言（parent_id IS NULL）游標分頁，依 created_at DESC, id DESC。
 // 每則頂層留言隨附最早 replyPreview 則回覆與 reply_count（詳情頁不必再打一次 API）；
 // N+1 對策：回覆／反應／我的反應三者都用「一次批次查詢」撈回，不對每則留言各查一次。
-// total 為該團**未刪**頂層留言數（供「查看全部留言(N)」用），走 idx_rmc_thread 的局部索引。
+// total 為該團**未刪**頂層留言數（供「查看全部留言(N)」用）；migration 160 後 idx_rmc_thread_all
+// 不再帶 WHERE deleted_at IS NULL 謂詞，這條 COUNT 查詢改成靠索引前綴(meet_id, parent_id)
+// 縮小掃描範圍到「這個團練的頂層留言」，deleted_at IS NULL 變成 Filter（而非索引內建謂詞）；
+// 掃描範圍仍侷限在單一團練、不是全站，成本不受影響。
 func (r *Repository) ListComments(ctx context.Context, meetID, viewerID, ownerID string, limit int,
 	cursorStr string, replyPreview int) ([]CommentView, *string, int, error) {
 
@@ -360,7 +401,7 @@ func (r *Repository) ListComments(ctx context.Context, meetID, viewerID, ownerID
 		atPtr, idPtr = &afterAt, &afterID
 	}
 
-	rows, hasMore, err := r.runThreadUnion(ctx, meetID, nil, true, atPtr, idPtr, limit)
+	rows, hasMore, err := r.runThreadPage(ctx, meetID, nil, true, atPtr, idPtr, limit)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -436,7 +477,7 @@ func (r *Repository) ListReplies(ctx context.Context, meetID, parentID, viewerID
 	}
 
 	pid := parentID
-	rows, hasMore, err := r.runThreadUnion(ctx, meetID, &pid, false, atPtr, idPtr, limit)
+	rows, hasMore, err := r.runThreadPage(ctx, meetID, &pid, false, atPtr, idPtr, limit)
 	if err != nil {
 		return nil, nil, err
 	}
