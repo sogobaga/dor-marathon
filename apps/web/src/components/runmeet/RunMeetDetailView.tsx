@@ -448,6 +448,18 @@ function CommentsBlock({ meetId, canComment, onToast, onReport, onChanged }: {
   return (
     <div style={{ marginTop: 18 }}>
       <div style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>留言（{thread.total}）</div>
+
+      {/* ⚠️ 輸入框放在標題下方、留言串上方（2026-08-31 使用者定案）：
+          留言是「新的在前」，輸入框擺頂端符合閱讀順序（送出後新留言就出現在正下方）；
+          置底的話留言一多就要一路滑到最下面才找得到輸入框。 */}
+      <div style={{ marginBottom: 12 }}>
+        <CommentComposer
+          canComment={canComment} replyTo={thread.replyTo} body={thread.composerBody}
+          onBodyChange={thread.setComposerBody} busy={thread.composerBusy}
+          onSubmit={() => void thread.submitComment()} onCancelReply={thread.cancelReply}
+        />
+        {thread.err && <div style={errText}>{thread.err}</div>}
+      </div>
       {thread.loadingInitial ? (
         <div style={{ fontSize: 12.5, color: 'var(--tx-faint)' }}>載入中…</div>
       ) : thread.items.length === 0 ? (
@@ -472,14 +484,6 @@ function CommentsBlock({ meetId, canComment, onToast, onReport, onChanged }: {
         </button>
       )}
 
-      <div style={{ marginTop: 12 }}>
-        <CommentComposer
-          canComment={canComment} replyTo={thread.replyTo} body={thread.composerBody}
-          onBodyChange={thread.setComposerBody} busy={thread.composerBusy}
-          onSubmit={() => void thread.submitComment()} onCancelReply={thread.cancelReply}
-        />
-      </div>
-      {thread.err && <div style={errText}>{thread.err}</div>}
 
       {showFull && (
         <RunMeetThreadModal

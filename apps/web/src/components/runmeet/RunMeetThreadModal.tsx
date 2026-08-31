@@ -68,11 +68,24 @@ export default function RunMeetThreadModal({
         <span style={{ flex: 1, fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>討論串（{thread.total}）</span>
       </header>
 
+      {/* ⚠️ 輸入框固定在標題下方、留言串上方（2026-08-31 使用者定案）：
+          留言是「新的在前」，這個位置符合閱讀順序，且討論串再長也永遠看得到輸入框——
+          置底的話留言一多就要一路滑到最下面才找得到，這正是使用者回報的問題。 */}
+      <div style={{ flexShrink: 0, padding: '10px 16px 12px', borderBottom: '1px solid var(--line)', background: 'var(--bg)' }}>
+        <CommentComposer
+          canComment={canComment} replyTo={thread.replyTo} body={thread.composerBody}
+          onBodyChange={thread.setComposerBody} busy={thread.composerBusy}
+          onSubmit={() => void thread.submitComment()} onCancelReply={thread.cancelReply}
+        />
+        {thread.err && <div style={errText}>{thread.err}</div>}
+      </div>
+
       <div
         ref={scrollRef}
         style={{
           flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', touchAction: 'pan-y',
-          overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '10px 16px 16px',
+          overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch',
+          padding: '10px 16px calc(env(safe-area-inset-bottom, 0px) + 20px)',
         }}
       >
         {thread.loadingInitial ? (
@@ -103,14 +116,6 @@ export default function RunMeetThreadModal({
         )}
       </div>
 
-      <div style={{ flexShrink: 0, padding: '10px 16px calc(env(safe-area-inset-bottom, 0px) + 14px)', borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
-        <CommentComposer
-          canComment={canComment} replyTo={thread.replyTo} body={thread.composerBody}
-          onBodyChange={thread.setComposerBody} busy={thread.composerBusy}
-          onSubmit={() => void thread.submitComment()} onCancelReply={thread.cancelReply}
-        />
-        {thread.err && <div style={errText}>{thread.err}</div>}
-      </div>
     </div>,
     mount.node,
   )
