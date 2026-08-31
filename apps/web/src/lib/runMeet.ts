@@ -7,7 +7,7 @@
 // ⚠️ 中文顯示文案一律用「團練」，不得出現「跑團」二字（賽事已有「跑團分組」，撞名會混淆）。
 
 import type {
-  RunMeetCard, RunMeetDistanceBand, RunMeetMyState, RunMeetQuota, RunMeetStatus,
+  RunMeetCard, RunMeetComment, RunMeetDistanceBand, RunMeetMyState, RunMeetQuota, RunMeetReactionKind, RunMeetStatus,
 } from './api'
 
 // ─────────────────────────────────────────────────────────────
@@ -269,6 +269,135 @@ export function memberCountText(memberCount: number, capacity: number): string {
 export function memberPct(memberCount: number, capacity: number): number {
   if (capacity <= 0) return 0
   return Math.max(0, Math.min(100, Math.round((memberCount / capacity) * 100)))
+}
+
+// ─────────────────────────────────────────────────────────────
+// 留言討論串（migration 159）：純函式部分——表情彙總、@提及前綴組裝、cursor 分頁、
+// 樂觀更新／回捲、軟刪遮蔽、頂層留言插入／回覆插入。元件只呼叫這些函式改本地陣列，
+// 錯了不會有畫面報錯（只會默默少一則留言或表情數字兜不起來），所以一定要能被
+// scripts/verify-run-meet.mjs 逐條驗證。
+// ─────────────────────────────────────────────────────────────
+
+export type ReactionCount = { kind: RunMeetReactionKind; count: number }
+export interface ReactionPill extends ReactionCount { emoji: string; label: string; mine: boolean }
+
+/** 把後端已排序好的 reactions（count desc, kind asc）套上 emoji/label，並標出「我按過的那顆」。 */
+export function reactionPills(reactions: ReactionCount[], myReaction: RunMeetReactionKind | null): ReactionPill[] {
+  return reactions.map((r) => {
+    const meta = REACTION_META.find((m) => m.kind === r.kind)
+    return { kind: r.kind, count: r.count, emoji: meta?.emoji ?? '', label: meta?.label ?? '', mine: r.kind === myReaction }
+  })
+}
+
+/** 依 count desc、kind asc 排序（比照後端 thread.go sortReactions，樂觀更新期間也要同順序，
+ *  否則伺服器回應蓋回來時 pill 順序會跳動）。就地排序＋回傳同一個陣列，方便鏈式使用。 */
+export function sortReactionCounts(rs: ReactionCount[]): ReactionCount[] {
+  rs.sort((a, b) => (b.count !== a.count ? b.count - a.count : a.kind.localeCompare(b.kind)))
+  return rs
+}
+
+/** 點下表情鈕當下先算出的本地狀態（樂觀更新）；targetKind=null 代表取消。
+ *  一人一則只能一種：換新的會先扣掉舊的那顆再加上新的那顆。失敗時呼叫端用回傳值之前的
+ *  reactions/myReaction 快照回捲即可，這裡不處理回捲（純函式不留副作用）。 */
+export function optimisticReactionUpdate(
+  reactions: ReactionCount[], myReaction: RunMeetReactionKind | null, targetKind: RunMeetReactionKind | null,
+): { reactions: ReactionCount[]; myReaction: RunMeetReactionKind | null } {
+  const counts = new Map(reactions.map((r) => [r.kind, r.count]))
+  if (myReaction) {
+    const c = (counts.get(myReaction) ?? 1) - 1
+    if (c <= 0) counts.delete(myReaction); else counts.set(myReaction, c)
+  }
+  if (targetKind) counts.set(targetKind, (counts.get(targetKind) ?? 0) + 1)
+  const next = Array.from(counts.entries()).map(([kind, count]) => ({ kind, count }))
+  return { reactions: sortReactionCounts(next), myReaction: targetKind }
+}
+
+/** 「@對方顯示名稱 」——回覆輸入框預填前綴；空白/未帶名稱時不強加 @。 */
+export function mentionPrefix(name: string): string {
+  const trimmed = (name || '').trim()
+  return trimmed ? `@${trimmed} ` : ''
+}
+
+/** 對留言按「回覆」時，POST 要帶的 parent_id：對頂層留言＝它自己的 id；
+ *  對回覆再按回覆＝該回覆所屬的頂層留言 id（後端只允許一層，前端不該送出違規請求）。 */
+export function replyTargetId(comment: { id: string; parent_id: string | null }): string {
+  return comment.parent_id ?? comment.id
+}
+
+/** next_cursor 是否代表「還有下一頁」（後端無效 cursor 一律當第一頁處理、不報錯，
+ *  前端這裡只需要判斷有沒有下一頁游標）。 */
+export function hasMoreCursor(nextCursor: string | null | undefined): boolean {
+  return typeof nextCursor === 'string' && nextCursor.length > 0
+}
+
+/** 「查看全部留言(N)」：預設只載入前 10 筆，N<=10 時不必再開完整討論區。 */
+export function showViewAllComments(total: number): boolean {
+  return total > 10
+}
+
+/** 「查看全部 N 則回覆」／收起回覆：reply_count 超過預覽則數（預設 2）才顯示這顆按鈕。 */
+export function showReplyToggle(replyCount: number, previewCount = 2): boolean {
+  return replyCount > previewCount
+}
+
+/** 展開／收起回覆的按鈕文案。 */
+export function replyToggleLabel(replyCount: number, expanded: boolean): string {
+  return expanded ? '收起回覆' : `查看全部 ${replyCount} 則回覆`
+}
+
+/** 分頁合併：把新載入的一頁接到既有陣列後面，用 id 去重（游標分頁理論上不會重疊，
+ *  但同一筆留言若因為併發新增而落在邊界上，這裡兜底不重複渲染）。 */
+export function mergeCommentPages(existing: RunMeetComment[], incoming: RunMeetComment[]): RunMeetComment[] {
+  const seen = new Set(existing.map((c) => c.id))
+  const merged = existing.slice()
+  for (const c of incoming) {
+    if (!seen.has(c.id)) { merged.push(c); seen.add(c.id) }
+  }
+  return merged
+}
+
+/** 新頂層留言送出成功後插入陣列最前面（新的在前，呼應 GET 列表的排序）。 */
+export function insertTopComment(items: RunMeetComment[], comment: RunMeetComment): RunMeetComment[] {
+  return [comment, ...items]
+}
+
+/** 新回覆送出成功後接到所屬頂層留言的 replies 陣列尾端（回覆正序，對話由舊到新）；
+ *  reply_count 同步 +1（後端下一次整批重新整理時仍會被權威值覆蓋，這裡只是本地即時反映）。
+ *  parentId 對不到任何一則頂層留言時（理論上不會發生，因為送出前已用 replyTargetId 算過）原樣返回。 */
+export function insertReply(items: RunMeetComment[], parentId: string, reply: RunMeetComment): RunMeetComment[] {
+  return items.map((c) => (c.id === parentId ? { ...c, reply_count: c.reply_count + 1, replies: [...c.replies, reply] } : c))
+}
+
+/** 把某則留言（頂層或其回覆）的表情狀態換成伺服器回傳的權威值——PUT/DELETE 表情端點都回
+ *  「該留言更新後的完整狀態」，直接覆蓋本地即可，不需要再自己兜計算。 */
+export function updateCommentReaction(
+  items: RunMeetComment[], commentId: string, reactions: ReactionCount[], myReaction: RunMeetReactionKind | null,
+): RunMeetComment[] {
+  return items.map((c) => {
+    if (c.id === commentId) return { ...c, reactions, my_reaction: myReaction }
+    if (c.replies.some((r) => r.id === commentId)) {
+      return { ...c, replies: c.replies.map((r) => (r.id === commentId ? { ...r, reactions, my_reaction: myReaction } : r)) }
+    }
+    return c
+  })
+}
+
+/** 軟刪某則留言（頂層或回覆）的本地遮蔽——比照後端 thread.go maskDeleted：deleted=true、
+ *  body=''、can_delete=false、reactions=[]、my_reaction=null；佔位仍留在陣列裡，回覆照常顯示。 */
+export function markCommentDeleted(items: RunMeetComment[], commentId: string): RunMeetComment[] {
+  const mask = (c: RunMeetComment): RunMeetComment => ({ ...c, deleted: true, body: '', can_delete: false, reactions: [], my_reaction: null })
+  return items.map((c) => {
+    if (c.id === commentId) return mask(c)
+    if (c.replies.some((r) => r.id === commentId)) {
+      return { ...c, replies: c.replies.map((r) => (r.id === commentId ? mask(r) : r)) }
+    }
+    return c
+  })
+}
+
+/** 「查看全部留言（N）」按鈕文案。 */
+export function viewAllCommentsLabel(total: number): string {
+  return `查看全部留言（${total}）`
 }
 
 /** 建立前確認彈窗的次級說明（非 VIP 多一行 VIP 權益）。主文另外寫死在元件內、一字不改。

@@ -80,6 +80,15 @@ var (
 	errCommentFast    = newErr(http.StatusTooManyRequests, "留言太快了，休息一下再發吧。")
 	errCommentCap     = newErr(http.StatusTooManyRequests, "今天的留言則數已達上限，明天再來吧。")
 	errBadReaction    = newErr(http.StatusBadRequest, "不支援這個心情。")
+
+	// 討論串（migration 159：留言升級為 Threads 式回覆＋表情反應）
+	errCommentParentNotFound = newErr(http.StatusNotFound, "找不到要回覆的留言。")
+	// errCommentNestedReply 只允許一層：parent_id 指向的留言必須是頂層留言（它的 parent_id
+	// 必須為 NULL）。對「回覆」再按回覆時前端會改掛到同一頂層（帶 @對象），不會打到這裡；
+	// 這裡是後端擋非法直呼 API 的最後一道防線。
+	errCommentNestedReply = newErr(http.StatusBadRequest, "只能回覆到留言串的第一層，請直接回覆原留言。")
+	// errCommentDeleted 對已軟刪的留言回覆或設定表情，一律 409（規格「其他要求」明定）。
+	errCommentDeleted = newErr(http.StatusConflict, "這則留言已被刪除。")
 	errBadJSON        = newErr(http.StatusBadRequest, "invalid json")
 	errBadID          = newErr(http.StatusBadRequest, "invalid id")
 	errServer         = newErr(http.StatusInternalServerError, "failed")
@@ -163,6 +172,15 @@ const (
 	endedCommentDays = 7
 	// excerptRunes 列表卡片摘要長度。
 	excerptRunes = 60
+
+	// --- 討論串分頁（migration 159；規格 5）---
+	// defCommentPageLimit/maxCommentPageLimit 頂層留言與回覆共用同一組預設/上限。
+	// 前端「展開留言」流程：初次展開帶 limit=20，之後每次滑到底帶 limit=10 續抓
+	// （避免瞬間載入過多筆數），兩個值都在 [1,maxCommentPageLimit] 內，這裡只需夾住上限。
+	defCommentPageLimit = 10
+	maxCommentPageLimit = 50
+	// defReplyPreview 頂層留言列表隨附「最早 N 則回覆」的預設筆數。
+	defReplyPreview = 2
 )
 
 // Settings 一次讀齊本套件用到的可調參數（每個端點只查一輪，避免逐筆重查 app_settings）。

@@ -4182,6 +4182,10 @@ export interface RunMeetMember {
   applied_at: string
 }
 
+// migration 159：留言升級成討論串——ParentID/ReplyCount/Replies 只有頂層留言（parent_id===null）
+// 才有意義；回覆的 ReplyCount 恆 0、Replies 恆 []（規格只允許一層，回覆沒有子回覆）。
+// ⚠️ 軟刪遮蔽：deleted===true 時 body 恆 ''、can_delete 恆 false、reactions 恆 []、
+// my_reaction 恆 null——但列表仍會回傳這則留言本身（佔位），底下的回覆照常顯示。
 export interface RunMeetComment {
   id: string
   user_id: string
@@ -4190,6 +4194,12 @@ export interface RunMeetComment {
   body: string
   created_at: string
   can_delete: boolean
+  parent_id: string | null
+  reply_count: number
+  reactions: { kind: RunMeetReactionKind; count: number }[]
+  my_reaction: RunMeetReactionKind | null
+  deleted: boolean
+  replies: RunMeetComment[]
 }
 
 export interface RunMeetQuota {
@@ -4363,11 +4373,21 @@ export const runMeetApi = {
       `/run-meets/${id}/members/approve-batch`,
       { method: 'POST', headers: withAuth(token), body: JSON.stringify({ user_ids: userIDs }) },
     ),
-  comments: (token: string, id: string, limit?: number, offset?: number) =>
-    request<{ items: RunMeetComment[]; total: number }>(`/run-meets/${id}/comments${runMeetQuery({ limit, offset })}`, { headers: withAuth(token) }),
-  addComment: (token: string, id: string, body: string) =>
+  // 頂層留言，游標分頁（新的在前）；total＝未刪頂層留言數，供「查看全部留言(N)」。
+  comments: (token: string, id: string, limit?: number, cursor?: string | null) =>
+    request<{ items: RunMeetComment[]; next_cursor: string | null; total: number }>(
+      `/run-meets/${id}/comments${runMeetQuery({ limit, cursor: cursor || undefined })}`, { headers: withAuth(token) },
+    ),
+  // 某頂層留言的回覆，游標分頁（舊的在前，對話由舊到新才讀得順）。
+  replies: (token: string, id: string, commentId: string, limit?: number, cursor?: string | null) =>
+    request<{ items: RunMeetComment[]; next_cursor: string | null }>(
+      `/run-meets/${id}/comments/${commentId}/replies${runMeetQuery({ limit, cursor: cursor || undefined })}`, { headers: withAuth(token) },
+    ),
+  // parentId 非空＝回覆；只允許一層，parentId 必須指向同團練的頂層留言（後端擋第三層，前端不該送出違規請求，
+  // 見 lib/runMeet.ts replyTargetId：對「回覆」再按回覆時，要把 parentId 換成該回覆的 parent_id）。
+  addComment: (token: string, id: string, body: string, parentId?: string | null) =>
     request<{ comment: RunMeetComment }>(`/run-meets/${id}/comments`, {
-      method: 'POST', headers: withAuth(token), body: JSON.stringify({ body }),
+      method: 'POST', headers: withAuth(token), body: JSON.stringify({ body, parent_id: parentId ?? null }),
     }),
   deleteComment: (token: string, id: string, cid: string) =>
     request<{ ok: boolean }>(`/run-meets/${id}/comments/${cid}`, { method: 'DELETE', headers: withAuth(token) }),
@@ -4375,6 +4395,16 @@ export const runMeetApi = {
     request<{ ok: boolean }>(`/run-meets/${id}/reaction`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ kind }) }),
   clearReaction: (token: string, id: string) =>
     request<{ ok: boolean }>(`/run-meets/${id}/reaction`, { method: 'DELETE', headers: withAuth(token) }),
+  // 單則留言的表情反應（migration 159；與上面團練層級的 setReaction/clearReaction 是兩張表、兩套端點）。
+  // 團練結束後仍可按（只有留言輸入框停用），回傳該留言更新後的完整狀態，直接覆蓋本地即可。
+  setCommentReaction: (token: string, id: string, commentId: string, kind: RunMeetReactionKind) =>
+    request<{ reactions: { kind: RunMeetReactionKind; count: number }[]; my_reaction: RunMeetReactionKind | null }>(
+      `/run-meets/${id}/comments/${commentId}/reaction`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ kind }) },
+    ),
+  clearCommentReaction: (token: string, id: string, commentId: string) =>
+    request<{ reactions: { kind: RunMeetReactionKind; count: number }[]; my_reaction: RunMeetReactionKind | null }>(
+      `/run-meets/${id}/comments/${commentId}/reaction`, { method: 'DELETE', headers: withAuth(token) },
+    ),
   report: (token: string, id: string, body: { comment_id?: string; reason: string }) =>
     request<{ ok: boolean }>(`/run-meets/${id}/report`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
 }

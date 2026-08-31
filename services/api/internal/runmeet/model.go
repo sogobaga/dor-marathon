@@ -165,7 +165,13 @@ type MemberView struct {
 	AppliedAt string  `json:"applied_at"`
 }
 
-// CommentView 留言（同樣只給顯示名與頭像）。
+// CommentView 留言（同樣只給顯示名與頭像）。migration 159：升級成討論串——
+// ParentID/ReplyCount/Replies 三個欄位只有「頂層留言」有意義（parent_id IS NULL 時）；
+// 回覆（parent_id 非 NULL）的 ReplyCount 恆 0、Replies 恆 []（規格只允許一層，回覆沒有子回覆）。
+//
+// ⚠️ 軟刪遮蔽（見 thread.go maskDeleted）：deleted_at 非空的留言，Body 恆 ""、CanDelete 恆
+// false、Reactions 恆 []、MyReaction 恆 nil——但列表仍要回傳這則留言本身（Deleted=true 的
+// 佔位），否則討論串中間被挖掉，後面的回覆會看不懂（migration 159 檔頭的既有教訓）。
 type CommentView struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
@@ -174,6 +180,20 @@ type CommentView struct {
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
 	CanDelete bool      `json:"can_delete"`
+
+	ParentID   *string             `json:"parent_id"`
+	ReplyCount int                 `json:"reply_count"`
+	Reactions  []ReactionCountView `json:"reactions"`
+	MyReaction *string             `json:"my_reaction"`
+	Deleted    bool                `json:"deleted"`
+	Replies    []CommentView       `json:"replies"`
+}
+
+// ReactionCountView 單一留言的表情反應統計（依 count desc、kind asc 排序，見 thread.go
+// sortReactions；無反應時上層一律回 []，不是 null）。
+type ReactionCountView struct {
+	Kind  string `json:"kind"`
+	Count int    `json:"count"`
 }
 
 // QuotaView GET /run-meets/quota。

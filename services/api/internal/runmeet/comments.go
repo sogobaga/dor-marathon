@@ -13,46 +13,18 @@ import (
 // 事後改成惡意內容」，UGC 情境下這條路一定會被走。
 // ⚠️ 留言是純文字，不走 htmlsafe（見 sanitize.go 檔頭）。
 
-// ListComments 留言列表（僅 joined/owner 可讀，授權在 handler 判）。
-// CanDelete：作者本人或發起人（後台另有專屬刪除端點）。
-func (r *Repository) ListComments(ctx context.Context, meetID, viewerID, ownerID string, limit, offset int) ([]CommentView, int, error) {
-	var total int
-	if err := r.db.QueryRow(ctx, `
-		SELECT COUNT(*) FROM run_meet_comments c
-		  JOIN users u ON u.id = c.user_id AND u.is_virtual = FALSE
-		 WHERE c.meet_id=$1 AND c.deleted_at IS NULL`, meetID).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-	rows, err := r.db.Query(ctx, `
-		SELECT c.id, c.user_id, COALESCE(NULLIF(u.name,''), u.handle), COALESCE(u.avatar_url,''),
-		       c.body, c.created_at
-		  FROM run_meet_comments c
-		  JOIN users u ON u.id = c.user_id AND u.is_virtual = FALSE
-		 WHERE c.meet_id=$1 AND c.deleted_at IS NULL
-		 ORDER BY c.created_at ASC
-		 LIMIT $2 OFFSET $3`, meetID, limit, offset)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-	out := []CommentView{}
-	for rows.Next() {
-		var c CommentView
-		if err := rows.Scan(&c.ID, &c.UserID, &c.Name, &c.AvatarURL, &c.Body, &c.CreatedAt); err != nil {
-			return nil, 0, err
-		}
-		c.CanDelete = c.UserID == viewerID || viewerID == ownerID
-		out = append(out, c)
-	}
-	return out, total, rows.Err()
-}
+// ListComments／ListReplies（游標分頁、頂層留言＋一層回覆＋表情反應）已搬到 thread.go
+// （migration 159：留言升級為討論串）。
 
-// CreateComment 發留言。三道節流都在 DB 判（Redis 只擋粗粒度的 20/min）：
+// CreateComment 發留言／回覆。三道節流都在 DB 判（Redis 只擋粗粒度的 20/min），回覆同樣適用：
 //
 //	① 3 秒間隔      —— 擋連點/腳本刷版
 //	② 每日 N 則     —— runmeet_comment_daily_cap（跨團加總，預設 100）
 //	③ 重複內容      —— 同一團同一人 10 分鐘內同樣內容視為重複
-func (r *Repository) CreateComment(ctx context.Context, meetID, uid, body string, dailyCap int) (CommentView, error) {
+//
+// parentID 非 nil 時是回覆：只允許一層（見 thread.go validateReplyParent），成功時同一交易內
+// 一併把父留言的 reply_count 與團練的 comment_count 都加 1。
+func (r *Repository) CreateComment(ctx context.Context, meetID, uid, body string, parentID *string, dailyCap int) (CommentView, error) {
 	var v CommentView
 
 	var lastAt *time.Time
@@ -94,14 +66,38 @@ func (r *Repository) CreateComment(ctx context.Context, meetID, uid, body string
 	}
 	defer tx.Rollback(ctx)
 
+	// 只允許一層：parent_id 指向的留言必須是「同一團練的頂層留言」且未刪除（規格 3；
+	// 純函式判定見 thread.go validateReplyParent）。FOR UPDATE 鎖住父留言列，避免同時刪除
+	// 父留言與建立回覆的競態（刪除那邊也在交易內，兩者互斥）。
+	if parentID != nil {
+		var st parentCommentState
+		var pmMeetID string
+		err := tx.QueryRow(ctx, `
+			SELECT meet_id, parent_id, (deleted_at IS NOT NULL) FROM run_meet_comments
+			 WHERE id=$1 FOR UPDATE`, *parentID).Scan(&pmMeetID, &st.ParentID, &st.Deleted)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return v, err
+		}
+		st.Exists = err == nil && pmMeetID == meetID
+		if verr := validateReplyParent(st); verr != nil {
+			return v, verr
+		}
+	}
+
 	if err = tx.QueryRow(ctx, `
-		INSERT INTO run_meet_comments (meet_id, user_id, body) VALUES ($1,$2,$3)
-		RETURNING id, created_at`, meetID, uid, body).Scan(&v.ID, &v.CreatedAt); err != nil {
+		INSERT INTO run_meet_comments (meet_id, user_id, body, parent_id) VALUES ($1,$2,$3,$4)
+		RETURNING id, created_at`, meetID, uid, body, parentID).Scan(&v.ID, &v.CreatedAt); err != nil {
 		return v, err
 	}
 	if _, err = tx.Exec(ctx, `
 		UPDATE run_meets SET comment_count=comment_count+1, updated_at=NOW() WHERE id=$1`, meetID); err != nil {
 		return v, err
+	}
+	if parentID != nil {
+		if _, err = tx.Exec(ctx, `
+			UPDATE run_meet_comments SET reply_count = reply_count + 1 WHERE id=$1`, *parentID); err != nil {
+			return v, err
+		}
 	}
 	if err = tx.QueryRow(ctx, `
 		SELECT COALESCE(NULLIF(name,''), handle), COALESCE(avatar_url,'') FROM users WHERE id=$1`, uid).
@@ -109,6 +105,9 @@ func (r *Repository) CreateComment(ctx context.Context, meetID, uid, body string
 		return v, err
 	}
 	v.UserID, v.Body, v.CanDelete = uid, body, true
+	v.ParentID = parentID
+	v.Reactions = []ReactionCountView{}
+	v.Replies = []CommentView{}
 	return v, tx.Commit(ctx)
 }
 

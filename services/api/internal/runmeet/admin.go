@@ -172,7 +172,9 @@ func (h *Handler) AdminDetail(w http.ResponseWriter, r *http.Request) {
 		respondAPIErr(w, err)
 		return
 	}
-	comments, _, err := h.repo.ListComments(r.Context(), id, viewer, m.OwnerID, 200, 0)
+	// 後台一次拉 200 則頂層留言（略過分頁）；每則帶 defReplyPreview 則回覆預覽，足夠判斷檢舉脈絡，
+	// 需要看完整討論串時後台可再呼叫 GET .../comments/{cid}/replies。
+	comments, _, _, err := h.repo.ListComments(r.Context(), id, viewer, m.OwnerID, 200, "", defReplyPreview)
 	if err != nil {
 		respondAPIErr(w, err)
 		return

@@ -2,6 +2,7 @@ package runmeet
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -1272,4 +1273,174 @@ func TestStatusAction(t *testing.T) {
 			t.Fatalf("statusAction(%q) want (%q,%v) got (%q,%v)", c.action, c.wantStatus, c.wantOK, status, ok)
 		}
 	}
+}
+
+// --- 討論串（migration 159：留言升級為 Threads 式回覆＋表情反應＋游標分頁；見 thread.go）---
+
+// TestCursorRoundTrip encode→decode 必須拿回一模一樣的 (created_at, id)——游標分頁的正確性
+// 完全建立在這個往返不失真上（用 UnixNano 而非 RFC3339 字串正是為了這個）。
+func TestCursorRoundTrip(t *testing.T) {
+	want := time.Date(2026, 8, 31, 12, 34, 56, 789000000, time.UTC)
+	id := "11111111-1111-1111-1111-111111111111"
+
+	s := encodeCursor(want, id)
+	if s == "" {
+		t.Fatal("encodeCursor 不應回空字串")
+	}
+	gotAt, gotID, ok := decodeCursor(s)
+	if !ok {
+		t.Fatalf("decodeCursor(%q) 應成功", s)
+	}
+	if !gotAt.Equal(want) {
+		t.Fatalf("created_at 往返失真：want %v got %v", want, gotAt)
+	}
+	if gotID != id {
+		t.Fatalf("id 往返失真：want %q got %q", id, gotID)
+	}
+}
+
+// TestDecodeCursorInvalid 規格明定：無效 cursor 一律當第一頁處理、不報錯——這裡驗證
+// decodeCursor 對各種壞輸入都回 ok=false，而不是 panic 或回一個假的時間/id。
+func TestDecodeCursorInvalid(t *testing.T) {
+	validID := "11111111-1111-1111-1111-111111111111"
+	valid := encodeCursor(time.Now(), validID)
+
+	cases := []struct {
+		name   string
+		cursor string
+	}{
+		{"空字串", ""},
+		{"非法 base64", "!!!not-base64!!!"},
+		{"base64 合法但內容缺分隔符", base64.RawURLEncoding.EncodeToString([]byte("noSeparatorHere"))},
+		{"id 不是合法 UUID", base64.RawURLEncoding.EncodeToString([]byte("123|not-a-uuid"))},
+		{"缺 id（分隔符後為空）", base64.RawURLEncoding.EncodeToString([]byte("123|"))},
+		{"created_at 不是數字", base64.RawURLEncoding.EncodeToString([]byte("abc|" + validID))},
+	}
+	for _, c := range cases {
+		if _, _, ok := decodeCursor(c.cursor); ok {
+			t.Fatalf("%s：decodeCursor(%q) 應回 ok=false", c.name, c.cursor)
+		}
+	}
+
+	// 對照組：確認上面壞掉的不是「decodeCursor 整支都壞了」——合法游標本身要能過。
+	if _, _, ok := decodeCursor(valid); !ok {
+		t.Fatal("合法游標不應被判定為無效")
+	}
+}
+
+// TestValidateReplyParent 只允許一層回覆＋不可回覆已刪留言的核心判定（規格 3 與「其他要求」）。
+func TestValidateReplyParent(t *testing.T) {
+	cases := []struct {
+		name    string
+		state   parentCommentState
+		wantErr error
+	}{
+		{"查無此留言（含跨團）", parentCommentState{Exists: false}, errCommentParentNotFound},
+		{"父留言已被軟刪", parentCommentState{Exists: true, Deleted: true}, errCommentDeleted},
+		{"父留言本身是回覆（第二層）", parentCommentState{Exists: true, ParentID: ptr("x")}, errCommentNestedReply},
+		{"父留言是合法頂層留言", parentCommentState{Exists: true, ParentID: nil}, nil},
+	}
+	for _, c := range cases {
+		if got := validateReplyParent(c.state); got != c.wantErr {
+			t.Fatalf("%s：want %v got %v", c.name, c.wantErr, got)
+		}
+	}
+}
+
+// TestSortReactions 依 count desc、kind asc 排序（規格固定順序）。
+func TestSortReactions(t *testing.T) {
+	rs := []ReactionCountView{
+		{Kind: "pray", Count: 2},
+		{Kind: "like", Count: 5},
+		{Kind: "fire", Count: 5}, // 與 like 同票數，應按 kind 字母序排在前面
+		{Kind: "heart", Count: 1},
+	}
+	sortReactions(rs)
+	want := []string{"fire", "like", "pray", "heart"}
+	for i, k := range want {
+		if rs[i].Kind != k {
+			t.Fatalf("排序結果第 %d 個 want %q got %q（完整結果 %+v）", i, k, rs[i].Kind, rs)
+		}
+	}
+
+	// 無反應：空切片排序後仍是空切片，不 panic、不變成 nil。
+	empty := []ReactionCountView{}
+	sortReactions(empty)
+	if empty == nil || len(empty) != 0 {
+		t.Fatalf("空切片排序後應仍是長度 0 的非 nil 切片，got %#v", empty)
+	}
+}
+
+// TestMaskDeleted 軟刪留言的欄位遮蔽（規格「其他要求」）：deleted_at 非空一律
+// can_delete=false、reactions=[]、body=""、deleted=true；未刪留言完全不受影響。
+func TestMaskDeleted(t *testing.T) {
+	now := time.Now()
+
+	deleted := CommentView{
+		Body: "原始內容", CanDelete: true,
+		Reactions:  []ReactionCountView{{Kind: "like", Count: 3}},
+		MyReaction: ptr("like"),
+	}
+	maskDeleted(&deleted, &now)
+	if !deleted.Deleted {
+		t.Fatal("deleted_at 非空應標記 Deleted=true")
+	}
+	if deleted.Body != "" {
+		t.Fatalf("已刪留言 Body 應為空字串，got %q", deleted.Body)
+	}
+	if deleted.CanDelete {
+		t.Fatal("已刪留言 CanDelete 應恆為 false")
+	}
+	if len(deleted.Reactions) != 0 {
+		t.Fatalf("已刪留言 Reactions 應為 []，got %+v", deleted.Reactions)
+	}
+	if deleted.MyReaction != nil {
+		t.Fatal("已刪留言 MyReaction 應為 nil")
+	}
+
+	live := CommentView{Body: "還在", CanDelete: true, Reactions: []ReactionCountView{{Kind: "fire", Count: 1}}}
+	maskDeleted(&live, nil)
+	if live.Deleted || live.Body != "還在" || !live.CanDelete || len(live.Reactions) != 1 {
+		t.Fatalf("未刪留言不應被 maskDeleted 動到任何欄位，got %+v", live)
+	}
+}
+
+// TestToCommentViewJSONShape 前端契約：Reactions/Replies 恆為陣列（不是 null），即使沒有
+// 回覆／反應也一樣——JSON 契約靠這裡把關，避免前端拿到 null 需要額外判斷。
+func TestToCommentViewJSONShape(t *testing.T) {
+	row := threadCommentRow{ID: "c1", UserID: "u1", Name: "小明", Body: "hi", CreatedAt: time.Now(), ReplyCount: 0}
+	v := toCommentView(row, true)
+	if v.Reactions == nil || len(v.Reactions) != 0 {
+		t.Fatalf("Reactions 應為非 nil 空陣列，got %#v", v.Reactions)
+	}
+	if v.Replies == nil || len(v.Replies) != 0 {
+		t.Fatalf("Replies 應為非 nil 空陣列，got %#v", v.Replies)
+	}
+	if v.Deleted {
+		t.Fatal("未刪留言 Deleted 應為 false")
+	}
+}
+
+// TestCanReact 與 TestCanComment 對照：canReact 一樣要求 joined/owner、團未中止，但**不**擋
+// 「結束後 7 天」的唯讀期——已結束團練仍可按表情（規格 4）。
+func TestCanReact(t *testing.T) {
+	if !canReact(true, nil, StatusOpen) {
+		t.Fatal("發起人應可設定表情")
+	}
+	if canReact(false, nil, StatusOpen) {
+		t.Fatal("非成員不可設定表情")
+	}
+	if canReact(false, ptr(MemberPending), StatusOpen) {
+		t.Fatal("申請中不可設定表情")
+	}
+	if !canReact(false, ptr(MemberJoined), StatusClosed) {
+		t.Fatal("已關閉的團仍可設定表情")
+	}
+	if canReact(false, ptr(MemberJoined), StatusCancelled) {
+		t.Fatal("已中止的團不可設定表情")
+	}
+	// 與 canComment 的關鍵差異：canComment 對「結束超過 7 天」的團會擋，canReact 不擋。
+	// canReact 本身沒有時間參數，這裡確認它的簽章就是不含 meetAt——這條測試若編譯失敗，
+	// 代表有人不小心把時間判定加回 canReact，違反規格 4。
+	_ = canReact(false, ptr(MemberJoined), StatusOpen)
 }

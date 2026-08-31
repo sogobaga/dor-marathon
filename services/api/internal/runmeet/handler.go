@@ -208,6 +208,9 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/{id}/comments", h.ListComments)
 	r.With(h.limit("runmeet_comment", 20, time.Minute)).Post("/{id}/comments", h.CreateComment)
 	r.With(h.limit("runmeet_write", 20, time.Minute)).Delete("/{id}/comments/{cid}", h.DeleteComment)
+	r.Get("/{id}/comments/{cid}/replies", h.ListReplies)
+	r.With(h.limit("runmeet_react", 60, time.Minute)).Put("/{id}/comments/{cid}/reaction", h.PutCommentReaction)
+	r.With(h.limit("runmeet_react", 60, time.Minute)).Delete("/{id}/comments/{cid}/reaction", h.PutCommentReaction)
 	r.With(h.limit("runmeet_react", 60, time.Minute)).Put("/{id}/reaction", h.PutReaction)
 	r.With(h.limit("runmeet_react", 60, time.Minute)).Delete("/{id}/reaction", h.DeleteReaction)
 
@@ -229,6 +232,19 @@ func uid(r *http.Request) string {
 func meetIDParam(r *http.Request) (string, bool) {
 	id := chi.URLParam(r, "id")
 	return id, isValidUUID(id)
+}
+
+// cursorLimit 讀 ?limit=（討論串游標分頁用；沒有 offset）。缺省或不合法一律回 defLimit，
+// 夾在 [1,maxLimit]——前端「展開留言」流程會依情境帶不同 limit（初次展開 20、之後續抓 10）。
+func cursorLimit(r *http.Request, defLimit, maxLimit int) int {
+	v, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil || v <= 0 {
+		return defLimit
+	}
+	if v > maxLimit {
+		return maxLimit
+	}
+	return v
 }
 
 func pageParams(r *http.Request, defLimit, maxLimit int) (limit, offset int) {
@@ -1050,7 +1066,9 @@ func (h *Handler) requireMember(r *http.Request, id string) (meetRow, error) {
 	return m, nil
 }
 
-// GET /run-meets/{id}/comments
+// GET /run-meets/{id}/comments?limit=&cursor=
+// 頂層留言（parent_id IS NULL）游標分頁，依 created_at DESC, id DESC；每則隨附最早
+// defReplyPreview 則回覆與 reply_count（migration 159：留言升級為討論串）。
 func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	id, ok := meetIDParam(r)
 	if !ok {
@@ -1062,16 +1080,47 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 		respondAPIErr(w, err)
 		return
 	}
-	limit, offset := pageParams(r, 50, 100)
-	items, total, err := h.repo.ListComments(r.Context(), id, uid(r), m.OwnerID, limit, offset)
+	limit := cursorLimit(r, defCommentPageLimit, maxCommentPageLimit)
+	items, next, total, err := h.repo.ListComments(r.Context(), id, uid(r), m.OwnerID, limit,
+		r.URL.Query().Get("cursor"), defReplyPreview)
 	if err != nil {
 		respondAPIErr(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
+	respondJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": next, "total": total})
 }
 
-// POST /run-meets/{id}/comments  {"body":"..."}
+// GET /run-meets/{id}/comments/{cid}/replies?limit=&cursor=
+// 某頂層留言的回覆，依 created_at ASC, id ASC 游標分頁（正序：對話由舊到新才讀得順）。
+func (h *Handler) ListReplies(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	cid := chi.URLParam(r, "cid")
+	if !isValidUUID(cid) {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	m, err := h.requireMember(r, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	limit := cursorLimit(r, defCommentPageLimit, maxCommentPageLimit)
+	items, next, err := h.repo.ListReplies(r.Context(), id, cid, uid(r), m.OwnerID, limit,
+		r.URL.Query().Get("cursor"))
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": next})
+}
+
+// POST /run-meets/{id}/comments  {"body":"...", "parent_id": "uuid"|null}
+// parent_id 非 null＝回覆；只允許一層，父留言必須是同團練的頂層留言且未刪除（見 thread.go
+// validateReplyParent，由 repository.CreateComment 在交易內判定）。
 func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	id, ok := meetIDParam(r)
 	if !ok {
@@ -1085,15 +1134,20 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	u := uid(r)
 	if !canComment(m.OwnerID == u, m.MyStatus, m.Status, m.MeetAt) {
-		// 已結束 7 天後留言區唯讀（規格 5.6）
+		// 已結束 7 天後留言區唯讀（規格 5.6；回覆同樣受這條唯讀期限制）
 		respondAPIErr(w, newErr(http.StatusConflict, "這個團練已結束超過 7 天，留言區已關閉。"))
 		return
 	}
 	var body struct {
-		Body string `json:"body"`
+		Body     string  `json:"body"`
+		ParentID *string `json:"parent_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respondAPIErr(w, errBadJSON)
+		return
+	}
+	if body.ParentID != nil && !isValidUUID(*body.ParentID) {
+		respondAPIErr(w, errBadID)
 		return
 	}
 	text, err := normalizeText(body.Body, MaxCommentRunes, true)
@@ -1106,13 +1160,62 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := loadSettings(r.Context(), h.db)
-	c, err := h.repo.CreateComment(r.Context(), id, u, text, s.CommentDailyCap)
+	c, err := h.repo.CreateComment(r.Context(), id, u, text, body.ParentID, s.CommentDailyCap)
 	if err != nil {
 		respondAPIErr(w, err)
 		return
 	}
 	h.notifyMembers(r.Context(), id)
 	respondJSON(w, http.StatusOK, map[string]any{"comment": c})
+}
+
+// PUT /run-meets/{id}/comments/{cid}/reaction  {"kind":"like|fire|muscle|pray|heart"}
+// body {"kind":null} 或 DELETE 同路徑＝取消。已結束團練仍可按表情（canReact 不含 canComment
+// 的唯讀期判定，見 thread.go）；對已軟刪的留言一律 409。
+func (h *Handler) PutCommentReaction(w http.ResponseWriter, r *http.Request) {
+	id, ok := meetIDParam(r)
+	if !ok {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	cid := chi.URLParam(r, "cid")
+	if !isValidUUID(cid) {
+		respondAPIErr(w, errBadID)
+		return
+	}
+	m, err := h.requireMember(r, id)
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	u := uid(r)
+	if !canReact(m.OwnerID == u, m.MyStatus, m.Status) {
+		respondAPIErr(w, errMeetCancelled)
+		return
+	}
+
+	var body struct {
+		Kind *string `json:"kind"`
+	}
+	if r.Method == http.MethodPut {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			respondAPIErr(w, errBadJSON)
+			return
+		}
+	}
+
+	var reactions []ReactionCountView
+	var my *string
+	if r.Method == http.MethodDelete || body.Kind == nil {
+		reactions, my, err = h.repo.RemoveCommentReaction(r.Context(), id, cid, u)
+	} else {
+		reactions, my, err = h.repo.SetCommentReaction(r.Context(), id, cid, u, *body.Kind)
+	}
+	if err != nil {
+		respondAPIErr(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"reactions": reactions, "my_reaction": my})
 }
 
 // DELETE /run-meets/{id}/comments/{cid}（作者本人或發起人；軟刪）

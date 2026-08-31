@@ -10,12 +10,15 @@ import { loadLeaflet } from '@/lib/leaflet'
 import { MediaCarousel, Lightbox } from '../shared/MediaCarousel'
 import {
   REACTION_META, ctaInputOf, fmtMeetAt, meetCountdown, memberCountText, memberPct, runMeetCta,
+  showViewAllComments, viewAllCommentsLabel,
 } from '@/lib/runMeet'
 import RunMeetFormModal from './RunMeetFormModal'
 import RunMeetManageSheet from './RunMeetManageSheet'
 import RunMeetUnlockModal from './RunMeetUnlockModal'
+import RunMeetThreadModal from './RunMeetThreadModal'
+import { CommentComposer, TopLevelCommentBlock, useCommentThread } from './RunMeetCommentThread'
 import {
-  Avatar, RunMeetModal, backBtn, cardBox, errText, fieldHint, ghostBtn, headerStyle, inputStyle,
+  Avatar, RunMeetModal, backBtn, cardBox, errText, fieldHint, ghostBtn, headerStyle,
   modalTitle, mutedBtn, outlineBtn, primaryBtn, scrollBody, tagPill, textareaStyle, tinyBtn,
 } from './ui'
 
@@ -430,6 +433,9 @@ function MembersBlock({ meetId }: { meetId: string }) {
   )
 }
 
+// 詳情頁的精簡留言區：預設 10 筆頂層留言（每則帶最多 2 則回覆預覽），reply_count>2 可展開全部；
+// total>10 才顯示「查看全部留言」開完整討論區（RunMeetThreadModal，初次 20 筆 + 捲動每次 10 筆）。
+// 狀態機／API 呼叫集中在 useCommentThread（與完整討論區共用同一份，見 RunMeetCommentThread.tsx）。
 function CommentsBlock({ meetId, canComment, onToast, onReport, onChanged }: {
   meetId: string
   canComment: boolean
@@ -437,79 +443,51 @@ function CommentsBlock({ meetId, canComment, onToast, onReport, onChanged }: {
   onReport: (commentId: string) => void
   onChanged: () => void
 }) {
-  const [body, setBody] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const { data, mutate } = useSWR(
-    ['run-meet-comments', meetId],
-    () => withUserAuth((t) => runMeetApi.comments(t, meetId, 50, 0)),
-  )
-  const items = data?.items ?? []
-
-  async function submit() {
-    const text = body.trim()
-    if (!text || busy) return
-    setBusy(true); setErr('')
-    try {
-      await withUserAuth((t) => runMeetApi.addComment(t, meetId, text))
-      setBody('')
-      await mutate()
-      onChanged()
-    } catch (e: any) {
-      setErr(e?.message || '留言失敗，請稍後再試')
-    } finally { setBusy(false) }
-  }
+  const thread = useCommentThread({ meetId, initialLimit: 10, onChanged })
+  const [showFull, setShowFull] = useState(false)
 
   return (
     <div style={{ marginTop: 18 }}>
-      <div style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>留言（{data?.total ?? items.length}）</div>
-      {items.length === 0 ? (
+      <div style={{ fontSize: 12.5, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>留言（{thread.total}）</div>
+      {thread.loadingInitial ? (
+        <div style={{ fontSize: 12.5, color: 'var(--tx-faint)' }}>載入中…</div>
+      ) : thread.items.length === 0 ? (
         <div style={{ fontSize: 12.5, color: 'var(--tx-faint)', lineHeight: 1.7 }}>還沒有人留言。說點什麼，讓大家知道你會到 👋</div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {items.map((c) => (
-            <div key={c.id} style={{ display: 'flex', gap: 8 }}>
-              <Avatar url={c.avatar_url} name={c.name} size={26} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--tx)' }}>{c.name}</div>
-                {/* 純文字：React 文字節點自動跳脫，說明/留言一律不 linkify、不解析 HTML */}
-                <div style={{ fontSize: 13, color: 'var(--tx)', lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.body}</div>
-                <div style={{ display: 'flex', gap: 10, marginTop: 3 }}>
-                  {c.can_delete && (
-                    <button
-                      onClick={async () => {
-                        try { await withUserAuth((t) => runMeetApi.deleteComment(t, meetId, c.id)); await mutate(); onChanged(); onToast('留言已刪除') }
-                        catch (e: any) { onToast(e?.message || '刪除失敗', 'err') }
-                      }}
-                      style={{ background: 'none', border: 'none', padding: 0, fontSize: 11, color: 'var(--tx-faint)', cursor: 'pointer', fontFamily: 'inherit' }}
-                    >刪除</button>
-                  )}
-                  <button onClick={() => onReport(c.id)} style={{ background: 'none', border: 'none', padding: 0, fontSize: 11, color: 'var(--tx-faint)', cursor: 'pointer', fontFamily: 'inherit' }}>檢舉</button>
-                </div>
-              </div>
-            </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {thread.items.map((c) => (
+            <TopLevelCommentBlock
+              key={c.id} meetId={meetId} comment={c} canComment={canComment}
+              threadUI={thread.threadUI[c.id]}
+              onExpand={thread.expandReplies} onCollapse={thread.collapseReplies} onLoadMore={thread.loadMoreReplies}
+              onReply={thread.startReply} onReport={onReport}
+              onReactionChanged={thread.reactionChanged} onDeleted={thread.commentDeleted} onToast={onToast}
+            />
           ))}
         </div>
       )}
 
-      {canComment ? (
-        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-          <input
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void submit() }}
-            maxLength={200}
-            placeholder="說點什麼…"
-            style={{ ...inputStyle, fontSize: 13.5 }}
-          />
-          <button onClick={() => void submit()} disabled={busy || !body.trim()} style={{ ...ghostBtn, flexShrink: 0, opacity: busy || !body.trim() ? 0.6 : 1 }}>
-            {busy ? '送出中…' : '送出'}
-          </button>
-        </div>
-      ) : (
-        <div style={{ ...fieldHint, marginTop: 10 }}>這個團練已結束超過 7 天，留言區已關閉。</div>
+      {showViewAllComments(thread.total) && (
+        <button type="button" onClick={() => setShowFull(true)} style={{ ...ghostBtn, width: '100%', marginTop: 12 }}>
+          {viewAllCommentsLabel(thread.total)}
+        </button>
       )}
-      {err && <div style={errText}>{err}</div>}
+
+      <div style={{ marginTop: 12 }}>
+        <CommentComposer
+          canComment={canComment} replyTo={thread.replyTo} body={thread.composerBody}
+          onBodyChange={thread.setComposerBody} busy={thread.composerBusy}
+          onSubmit={() => void thread.submitComment()} onCancelReply={thread.cancelReply}
+        />
+      </div>
+      {thread.err && <div style={errText}>{thread.err}</div>}
+
+      {showFull && (
+        <RunMeetThreadModal
+          meetId={meetId} canComment={canComment} onClose={() => setShowFull(false)}
+          onToast={onToast} onReport={onReport} onChanged={onChanged}
+        />
+      )}
     </div>
   )
 }

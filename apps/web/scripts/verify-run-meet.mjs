@@ -8,6 +8,9 @@ const {
   taipeiParts, taipeiLocalToISO, isoToTaipeiLocalInput, fmtMeetAt, fmtMeetAtConfirm, meetCountdown,
   distanceBandLabel, createBtnText, resetDayText, remainingText,
   memberCountText, memberPct, confirmSubText, runMeetCta, isDeviceTaipei,
+  reactionPills, sortReactionCounts, optimisticReactionUpdate, mentionPrefix, replyTargetId,
+  hasMoreCursor, showViewAllComments, showReplyToggle, replyToggleLabel, viewAllCommentsLabel,
+  mergeCommentPages, insertTopComment, insertReply, updateCommentReaction, markCommentDeleted,
 } = await import(modUrl)
 
 let pass = 0, fail = 0
@@ -117,6 +120,111 @@ eq(cta({ my_state: 'owner', status: 'cancelled', is_ended: true }), { label: '�
 
 // isDeviceTaipei 只驗「純函式、不看實際執行環境時區」：傳入固定 Date 由該 Date 的 offset 決定
 eq(typeof isDeviceTaipei(new Date()), 'boolean', 'isDeviceTaipei 回傳布林')
+
+// ── 留言討論串（migration 159）：表情彙總／樂觀更新、@提及前綴、cursor 分頁、頂層插入／回覆插入、
+// 軟刪遮蔽——這幾條錯了不會有畫面報錯，只會默默少一則留言或表情數字兜不起來。────────────────
+
+eq(
+  reactionPills([{ kind: 'fire', count: 3 }, { kind: 'like', count: 1 }], 'fire'),
+  [{ kind: 'fire', count: 3, emoji: '🔥', label: '熱血', mine: true }, { kind: 'like', count: 1, emoji: '👍', label: '讚', mine: false }],
+  'reactionPills 套上 emoji/label，標出我按過的那顆',
+)
+eq(reactionPills([], null), [], 'reactionPills 無反應→空陣列')
+
+eq(
+  sortReactionCounts([{ kind: 'like', count: 1 }, { kind: 'fire', count: 3 }, { kind: 'heart', count: 3 }]),
+  [{ kind: 'fire', count: 3 }, { kind: 'heart', count: 3 }, { kind: 'like', count: 1 }],
+  'sortReactionCounts count desc、同票 kind asc（比照後端 thread.go sortReactions）',
+)
+
+eq(optimisticReactionUpdate([], null, 'fire'), { reactions: [{ kind: 'fire', count: 1 }], myReaction: 'fire' }, '樂觀更新｜原本沒反應→按下去 +1')
+eq(optimisticReactionUpdate([{ kind: 'fire', count: 1 }], 'fire', null), { reactions: [], myReaction: null }, '樂觀更新｜取消自己唯一的反應→歸零移除')
+eq(
+  optimisticReactionUpdate([{ kind: 'fire', count: 2 }, { kind: 'like', count: 1 }], 'fire', 'like'),
+  { reactions: [{ kind: 'like', count: 2 }, { kind: 'fire', count: 1 }], myReaction: 'like' },
+  '樂觀更新｜換成另一種表情：舊的 -1、新的 +1，並依新計數重新排序',
+)
+eq(
+  optimisticReactionUpdate([{ kind: 'fire', count: 1 }, { kind: 'like', count: 5 }], null, 'fire'),
+  { reactions: [{ kind: 'like', count: 5 }, { kind: 'fire', count: 2 }], myReaction: 'fire' },
+  '樂觀更新｜原本沒按過，直接對既有計數 +1（不影響其他人已有的反應）',
+)
+
+eq(mentionPrefix('小明'), '@小明 ', 'mentionPrefix 組出「@name 」前綴')
+eq(mentionPrefix('  '), '', 'mentionPrefix 空白名稱不強加 @')
+eq(mentionPrefix(''), '', 'mentionPrefix 空字串')
+
+eq(replyTargetId({ id: 'c2', parent_id: null }), 'c2', 'replyTargetId｜對頂層留言回覆＝它自己的 id')
+eq(replyTargetId({ id: 'c3', parent_id: 'c1' }), 'c1', 'replyTargetId｜對回覆再按回覆＝所屬頂層留言 id（只允許一層）')
+
+eq(hasMoreCursor(null), false, 'hasMoreCursor｜null→false')
+eq(hasMoreCursor(undefined), false, 'hasMoreCursor｜undefined→false')
+eq(hasMoreCursor(''), false, 'hasMoreCursor｜空字串→false')
+eq(hasMoreCursor('abc123'), true, 'hasMoreCursor｜有值→true（還有下一頁）')
+
+eq(showViewAllComments(10), false, 'showViewAllComments｜total=10 不顯示（<=10 不必開完整討論區）')
+eq(showViewAllComments(11), true, 'showViewAllComments｜total=11 顯示')
+eq(showViewAllComments(0), false, 'showViewAllComments｜total=0 不顯示')
+
+eq(showReplyToggle(2), false, 'showReplyToggle｜reply_count=2 不顯示（等於預覽則數，兩則都已顯示）')
+eq(showReplyToggle(3), true, 'showReplyToggle｜reply_count=3 顯示「查看全部回覆」')
+
+eq(replyToggleLabel(5, false), '查看全部 5 則回覆', 'replyToggleLabel｜未展開')
+eq(replyToggleLabel(5, true), '收起回覆', 'replyToggleLabel｜已展開')
+
+eq(viewAllCommentsLabel(23), '查看全部留言（23）', 'viewAllCommentsLabel 文案')
+
+eq(mergeCommentPages([{ id: 'a' }, { id: 'b' }], [{ id: 'b' }, { id: 'c' }]), [{ id: 'a' }, { id: 'b' }, { id: 'c' }], 'mergeCommentPages｜依 id 去重（邊界重疊那筆不重複）')
+eq(mergeCommentPages([], [{ id: 'x' }]), [{ id: 'x' }], 'mergeCommentPages｜空陣列起頭')
+
+eq(insertTopComment([{ id: 'old' }], { id: 'new' }), [{ id: 'new' }, { id: 'old' }], 'insertTopComment｜插入陣列最前面（新的在前）')
+
+const baseThread = [
+  { id: 't1', parent_id: null, reply_count: 1, replies: [{ id: 'r1', parent_id: 't1' }] },
+  { id: 't2', parent_id: null, reply_count: 0, replies: [] },
+]
+eq(
+  insertReply(baseThread, 't1', { id: 'r2', parent_id: 't1' }),
+  [
+    { id: 't1', parent_id: null, reply_count: 2, replies: [{ id: 'r1', parent_id: 't1' }, { id: 'r2', parent_id: 't1' }] },
+    { id: 't2', parent_id: null, reply_count: 0, replies: [] },
+  ],
+  'insertReply｜接到所屬頂層留言的 replies 尾端，reply_count +1',
+)
+eq(insertReply(baseThread, 'nope', { id: 'r3' }), baseThread, 'insertReply｜parentId 對不到任何頂層留言時原樣返回')
+
+const rxItems = [{ id: 't1', reactions: [], my_reaction: null, replies: [{ id: 'r1', reactions: [], my_reaction: null }] }]
+eq(
+  updateCommentReaction(rxItems, 't1', [{ kind: 'fire', count: 1 }], 'fire'),
+  [{ id: 't1', reactions: [{ kind: 'fire', count: 1 }], my_reaction: 'fire', replies: [{ id: 'r1', reactions: [], my_reaction: null }] }],
+  'updateCommentReaction｜命中頂層留言本身',
+)
+eq(
+  updateCommentReaction(rxItems, 'r1', [{ kind: 'heart', count: 1 }], 'heart'),
+  [{ id: 't1', reactions: [], my_reaction: null, replies: [{ id: 'r1', reactions: [{ kind: 'heart', count: 1 }], my_reaction: 'heart' }] }],
+  'updateCommentReaction｜命中某則回覆（不動同一則頂層留言自己的欄位）',
+)
+
+const delItems = [{
+  id: 't1', body: 'hi', can_delete: true, reactions: [{ kind: 'like', count: 1 }], my_reaction: 'like', deleted: false,
+  replies: [{ id: 'r1', body: 'yo', can_delete: true, reactions: [], my_reaction: null, deleted: false }],
+}]
+eq(
+  markCommentDeleted(delItems, 't1'),
+  [{
+    id: 't1', body: '', can_delete: false, reactions: [], my_reaction: null, deleted: true,
+    replies: [{ id: 'r1', body: 'yo', can_delete: true, reactions: [], my_reaction: null, deleted: false }],
+  }],
+  'markCommentDeleted｜遮蔽頂層留言本身，其回覆照常顯示',
+)
+eq(
+  markCommentDeleted(delItems, 'r1'),
+  [{
+    id: 't1', body: 'hi', can_delete: true, reactions: [{ kind: 'like', count: 1 }], my_reaction: 'like', deleted: false,
+    replies: [{ id: 'r1', body: '', can_delete: false, reactions: [], my_reaction: null, deleted: true }],
+  }],
+  'markCommentDeleted｜遮蔽某則回覆，所屬頂層留言不受影響',
+)
 
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)
