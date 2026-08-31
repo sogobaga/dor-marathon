@@ -54,6 +54,10 @@ var (
 	errEnded           = newErr(http.StatusConflict, "這個團練的時間已經過了，無法加入。")
 	errMeetClosed      = newErr(http.StatusConflict, "發起人已關閉這個團練。")
 	errEditEnded       = newErr(http.StatusConflict, "這個團練的時間已經過了，無法再編輯。請重新發起一個新的團練。")
+	// errMeetAtLocked 預計時間建立後鎖死，編輯時一律以資料庫既有值為準；傳入值與既有值不同
+	// 就整包拒絕（400），**不得靜默忽略**（靜默會讓前端以為改成功了）。見 repository.UpdateMeet
+	// 檔頭：這同時是補上「過期前改期＝無限次重複使用同一次配額」漏洞的另一半。
+	errMeetAtLocked = newErr(http.StatusBadRequest, "預計時間建立後不能修改，請用「再辦一次」建立新的團練。")
 	// errMeetCancelled 規格用字是「中止」不是「取消」：中止＝停止加入的任何動作（可恢復），
 	// 與舊版「取消＝單向終局」語意不同，文案跟著改，避免使用者誤以為不可逆。
 	errMeetCancelled  = newErr(http.StatusConflict, "該團練已中止。")
@@ -294,7 +298,14 @@ func normalizeNoLocation(in *MeetInput) {
 // validateMeetInput 正規化 + 驗證（不碰 DB 的部分）。imageLimit 是「建立當下的快照」或
 // 既有 run_meets.image_limit（編輯時），由呼叫端決定要傳哪一個；vipImages 只用於錯誤文案
 // （runmeet_images_vip，後台可調），傳 0 表示不做升級引導。
-func validateMeetInput(in *MeetInput, now time.Time, capacityMax, imageLimit, vipImages int) error {
+//
+// ⚠️ isCreate 只控制 meet_at「必須在未來、最多 90 天後」這兩條檢查——這兩條的前提是「使用者
+// 正在挑一個新時間」，只在建立時成立。編輯路徑 meet_at 已在 repository.UpdateMeet 鎖死、
+// 一律採資料庫既有值（見 checkMeetAtLocked），若這裡繼續套用「必須在未來」，會讓「時間已到
+// 但團練還沒被判定過期（errEditEnded 是另一條獨立檢查）」這種正常編輯其他欄位的請求被誤擋
+// ——而且擋的理由（meet_at 是舊值）跟使用者送出的內容完全無關，訊息只會讓人更困惑。
+// isCreate=false 時這兩條檢查整段跳過，其餘欄位驗證（名稱/地點/人數/圖片/密碼…）不受影響。
+func validateMeetInput(in *MeetInput, now time.Time, capacityMax, imageLimit, vipImages int, isCreate bool) error {
 	var err error
 
 	// 「不限地點」正規化必須排在最前面：後面的 region/place_label 長度檢查與 lat/lng 成對檢查
@@ -325,11 +336,13 @@ func validateMeetInput(in *MeetInput, now time.Time, capacityMax, imageLimit, vi
 		return errDescriptionLen
 	}
 
-	if in.MeetAt.IsZero() || !in.MeetAt.After(now) {
-		return errMeetAtPast
-	}
-	if in.MeetAt.After(now.Add(maxMeetAtDays * 24 * time.Hour)) {
-		return errMeetAtFar
+	if isCreate {
+		if in.MeetAt.IsZero() || !in.MeetAt.After(now) {
+			return errMeetAtPast
+		}
+		if in.MeetAt.After(now.Add(maxMeetAtDays * 24 * time.Hour)) {
+			return errMeetAtFar
+		}
 	}
 
 	if capacityMax < 2 {

@@ -13,10 +13,15 @@ import { memberCountText } from '@/lib/runMeet'
 //    「已同意 3 人，2 人因名額已滿未處理」這種回饋直接來自 approve-batch 的 results 陣列。
 // ⚠️ 被剔除者沒有列表端點（成員清單只支援 joined/pending），所以「解除封鎖」只在本次面板內
 //    針對「剛剛移出的人」提供撤銷；離開面板後要解除需請對方聯繫發起人（後端 unban 端點仍在）。
-export default function RunMeetManageSheet({ meet, onClose, onEdit, onChanged, onToast }: {
+export default function RunMeetManageSheet({ meet, onClose, onEdit, onDuplicate, onChanged, onToast }: {
   meet: RunMeetMemberDetail
   onClose: () => void
   onEdit: () => void
+  // 「再辦一次」：複製這個團練的設定建立新團練（走既有 POST /run-meets，正常消耗一次發起次數）。
+  // ⚠️ 團練處於任何狀態都可用（含已結束/已關閉/已中止）——固定班表的跑團最常見的操作正是
+  // 「上一次已經結束/中止了，用同樣的設定再開一次，只改時間」，這正是它最有用的時機，
+  // 因此刻意不比照下面「編輯」按鈕受 `ended` 限制。
+  onDuplicate: () => void
   onChanged: () => void
   onToast: (text: string, tone?: 'ok' | 'err') => void
 }) {
@@ -166,6 +171,10 @@ export default function RunMeetManageSheet({ meet, onClose, onEdit, onChanged, o
           {!ended
             ? <button type="button" onClick={onEdit} style={{ ...ghostBtn, width: '100%' }}>✎ 編輯團練資料</button>
             : <div style={fieldHint}>這個團練的時間已經過了，無法再編輯；要再揪一次請重新發起。</div>}
+
+          {/* 再辦一次：任何狀態都可用（含已結束/已關閉/已中止）——固定班表的跑團最常見的動作
+              正是「照舊設定、只換時間」，這正是它最有用的時機，不受上面的 ended 限制。 */}
+          <button type="button" onClick={onDuplicate} style={{ ...ghostBtn, width: '100%' }}>🔁 再辦一次</button>
 
           {/* 1) 開放／關閉切換：closed＝暫停收新成員，其他功能（編輯、留言、成員）都照舊；
               cancelled 狀態不在這裡出現「關閉」——cancelled→closed 後端不合法（409），

@@ -518,7 +518,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	imgLimit := ImageLimit(isVIP, s.ImagesNormal, s.ImagesVIP)
-	if err := validateMeetInput(&in, time.Now(), s.CapacityMax, imgLimit, s.ImagesVIP); err != nil {
+	if err := validateMeetInput(&in, time.Now(), s.CapacityMax, imgLimit, s.ImagesVIP, true); err != nil {
 		respondAPIErr(w, err)
 		return
 	}
@@ -625,7 +625,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	editLimit := EffectiveImageLimit(cur.ImageLimit, isVIP, s.ImagesNormal, s.ImagesVIP)
-	if err := validateMeetInput(&in, time.Now(), s.CapacityMax, editLimit, s.ImagesVIP); err != nil {
+	if err := validateMeetInput(&in, time.Now(), s.CapacityMax, editLimit, s.ImagesVIP, false); err != nil {
 		respondAPIErr(w, err)
 		return
 	}

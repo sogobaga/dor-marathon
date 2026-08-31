@@ -30,7 +30,7 @@ import {
 // ⚠️ 全檔零 dangerouslySetInnerHTML：說明/留言都是純文字，用 white-space:pre-wrap 呈現換行。
 
 export default function RunMeetDetailView({
-  id, fallbackCard, quota, onBack, onGoHome, onToast, onChanged, onLearnVip,
+  id, fallbackCard, quota, onBack, onGoHome, onToast, onChanged, onLearnVip, onDuplicate,
 }: {
   id: string
   fallbackCard: RunMeetCard | null
@@ -43,6 +43,9 @@ export default function RunMeetDetailView({
   onToast: (text: string, tone?: 'ok' | 'err') => void
   onChanged: () => void
   onLearnVip?: () => void
+  // 「再辦一次」：把這個團練的完整資料交給 RunMeetScreen——配額/VIP 閘門與「建立成功」的分享
+  // 彈窗都是 Screen 層的既有狀態（quota / created），這裡只負責「收集這一團的資料 + 關閉管理面板」。
+  onDuplicate?: (meet: RunMeetMemberDetail) => void
 }) {
   const user = useUser()
   const uid = user?.id ?? 'guest'
@@ -96,6 +99,13 @@ export default function RunMeetDetailView({
       setErr(e?.message || '系統忙碌中，請稍後再試')
       onToast(e?.message || '系統忙碌中，請稍後再試', 'err')
     } finally { setBusy(false) }
+  }
+
+  // 「再辦一次」：關閉管理面板，把目前這團（owner 視角、含成員層地點）交給上層開複製表單。
+  function handleDuplicate() {
+    if (!meet) return
+    setShowManage(false)
+    onDuplicate?.(meet as RunMeetMemberDetail)
   }
 
   function share() {
@@ -308,6 +318,7 @@ export default function RunMeetDetailView({
           meet={meet as RunMeetMemberDetail}
           onClose={() => { setShowManage(false); void reload(); onChanged() }}
           onEdit={() => { setShowManage(false); setShowEdit(true) }}
+          onDuplicate={handleDuplicate}
           onChanged={() => { void reload(); onChanged() }}
           onToast={onToast}
         />

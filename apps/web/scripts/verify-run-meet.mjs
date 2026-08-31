@@ -8,7 +8,7 @@ const {
   taipeiParts, taipeiLocalToISO, isoToTaipeiLocalInput, fmtMeetAt, fmtMeetAtConfirm, meetCountdown,
   isFetchPending, isAbsorbing, shouldShowError,
   distanceBandLabel, runMeetLocationIcon, runMeetLocationText, createBtnText, resetDayText, remainingText,
-  memberCountText, memberPct, confirmSubText, runMeetCta, isDeviceTaipei,
+  memberCountText, memberPct, confirmSubText, runMeetCta, isDeviceTaipei, createGate,
   reactionPills, sortReactionCounts, optimisticReactionUpdate, mentionPrefix, replyTargetId,
   hasMoreCursor, showViewAllComments, showReplyToggle, replyToggleLabel, viewAllCommentsLabel,
   mergeCommentPages, insertTopComment, insertReply, updateCommentReaction, markCommentDeleted,
@@ -33,9 +33,15 @@ eq(isoToTaipeiLocalInput(null), '', 'null → 空字串')
 // 跨日邊界：台北 00:30 的前一天 UTC 16:30，日期不可以退回 8/30
 eq(taipeiParts('2026-08-30T16:30:00.000Z'), { y: 2026, m: 8, d: 31, hh: 0, mm: 30, wd: '一' }, '台北午夜後仍屬同一天（UTC 前一日 16:30）')
 
-eq(fmtMeetAt(MEET_ISO, new Date('2026-08-29T10:00:00+08:00')), '8/31（一）06:00', 'fmtMeetAt 非當日 → 月/日（週）時:分')
-eq(fmtMeetAt(MEET_ISO, new Date('2026-08-31T05:00:00+08:00')), '今天 06:00', 'fmtMeetAt 當日（台北）→ 今天 06:00')
-eq(fmtMeetAtConfirm(MEET_ISO), '將於 8/31（一）06:00（台北時間）開跑', '表單反算確認行')
+// fmtMeetAt（2026-08-31 使用者回報「分不清楚是上午 4:30 還是下午 4:30」→ 改 12 小時制＋上午/下午）
+eq(fmtMeetAt(MEET_ISO, new Date('2026-08-29T10:00:00+08:00')), '8/31（一）上午 6:00', 'fmtMeetAt 非當日 → 月/日（週）上午/下午 h:mm')
+eq(fmtMeetAt(MEET_ISO, new Date('2026-08-31T05:00:00+08:00')), '今天 上午 6:00', 'fmtMeetAt 當日（台北）→ 今天 上午 6:00')
+// 下午案例：16:30 台北 → 下午 4:30（時不補零、分補零）
+eq(fmtMeetAt('2026-08-30T08:30:00.000Z', new Date('2026-08-29T10:00:00+08:00')), '8/30（日）下午 4:30', 'fmtMeetAt 下午（16:30）→ 下午 4:30')
+// ⚠️ 最容易寫錯的兩個邊界：中午 12:xx 是「下午」、凌晨 0:xx 是「上午 12:xx」（不是「上午 0 點」）
+eq(fmtMeetAt('2026-08-30T04:00:00.000Z', new Date('2026-08-29T10:00:00+08:00')), '8/30（日）下午 12:00', 'fmtMeetAt 邊界｜中午 12:00（台北）→ 下午 12:00，不是上午')
+eq(fmtMeetAt('2026-08-29T16:00:00.000Z', new Date('2026-08-29T10:00:00+08:00')), '8/30（日）上午 12:00', 'fmtMeetAt 邊界｜凌晨 0:00（台北）→ 上午 12:00，不是下午或「上午 0 點」')
+eq(fmtMeetAtConfirm(MEET_ISO), '將於 8/31（一）06:00（台北時間）開跑', '表單反算確認行（維持 24 小時制，這行不受本次變更影響）')
 
 // ── 相對時間 ────────────────────────────────────────────────────
 eq(meetCountdown(MEET_ISO, new Date('2026-08-29T06:00:00+08:00')), { text: '還有 2 天', urgent: false, ended: false }, '48 小時 → 還有 2 天')
@@ -142,6 +148,14 @@ eq(cta({ my_state: 'owner', status: 'cancelled', is_ended: true }), { label: '�
 
 // isDeviceTaipei 只驗「純函式、不看實際執行環境時區」：傳入固定 Date 由該 Date 的 offset 決定
 eq(typeof isDeviceTaipei(new Date()), 'boolean', 'isDeviceTaipei 回傳布林')
+
+// ── 「發起團練」開表單前的配額/VIP 閘門（「＋ 發起團練」與「再辦一次」共用同一判定）─────
+eq(createGate({ requires_vip: false, is_vip: false, remaining: 3 }), 'ok', 'createGate｜非 VIP 尚有次數 → ok')
+eq(createGate({ requires_vip: false, is_vip: true, remaining: 5 }), 'ok', 'createGate｜VIP 尚有次數 → ok')
+eq(createGate({ requires_vip: true, is_vip: false, remaining: 3 }), 'vip', 'createGate｜政策要求 VIP 且本人非 VIP → vip（即使還有次數也不能開）')
+eq(createGate({ requires_vip: true, is_vip: true, remaining: 3 }), 'ok', 'createGate｜政策要求 VIP 但本人已是 VIP → ok')
+eq(createGate({ requires_vip: false, is_vip: false, remaining: 0 }), 'vip', 'createGate｜非 VIP 次數用完 → vip（有解法：升級）')
+eq(createGate({ requires_vip: false, is_vip: true, remaining: 0 }), 'wait', 'createGate｜VIP 次數也用完 → wait（無解法，只能等下個月，不可再跳升級引導）')
 
 // ── 留言討論串（migration 159）：表情彙總／樂觀更新、@提及前綴、cursor 分頁、頂層插入／回覆插入、
 // 軟刪遮蔽——這幾條錯了不會有畫面報錯，只會默默少一則留言或表情數字兜不起來。────────────────

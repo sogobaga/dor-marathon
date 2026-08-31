@@ -7,7 +7,7 @@ import {
   type RunMeetMember, type RunMeetMemberDetail, type RunMeetStatus,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
-import { runMeetLocationText } from '@/lib/runMeet'
+import { fmtMeetAt, runMeetLocationText } from '@/lib/runMeet'
 
 // 團練邀請後台（perm run_meets）：列表／詳情／強制下架／刪違規留言／檢舉審核／人工調整配額／孤兒圖 GC。
 //
@@ -159,7 +159,7 @@ export default function AdminRunMeetsPage() {
                       {r.is_private ? '🔒 ' : ''}{r.title}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 2 }}>
-                      {new Date(r.meet_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      {fmtMeetAt(r.meet_at)}
                       ｜{r.region}｜{r.member_count}/{r.capacity} 人｜{STATUS_LABEL[r.status]}
                     </div>
                     <div style={{ fontSize: 11, marginTop: 2, color: r.hidden_by_admin ? 'var(--hunt)' : r.deleted ? 'var(--tx-faint)' : 'var(--fug)' }}>
@@ -187,7 +187,7 @@ export default function AdminRunMeetsPage() {
                   <div style={{ fontSize: 16, fontWeight: 800 }}>{detail.meet.title}</div>
                   <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.8 }}>
                     發起人：{detail.meet.owner.name}（{detail.meet.owner.id}）<br />
-                    時間：{new Date(detail.meet.meet_at).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}<br />
+                    時間：{fmtMeetAt(detail.meet.meet_at)}<br />
                     公開地點：{runMeetLocationText(detail.meet)}<br />
                     {/* 後台視角看得到成員層地點——處理檢舉/糾紛需要完整資訊 */}
                     精確座標：{detail.meet.lat != null ? `${detail.meet.lat}, ${detail.meet.lng}` : '未設定'}<br />

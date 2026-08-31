@@ -513,10 +513,22 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 	// 但這也代表 status 仍是 'open'——若放行，團主可以把一個早就結束的團的 title/地點/說明
 	// 全部換掉、meet_at 推到下週，等於用同一次配額無限產出「新團練」，架空
 	// 「非 VIP 每月 1 次」這個最強的 VIP 轉換鉤子（規格 1.2）。
-	// 過期前改期（固定團練每週順延）仍然可以，那是刻意支援的情境。
+	//
+	// ⚠️ 光擋「已過期」還不夠：對抗性複核抓到團主可以在**尚未過期時**改期——把 title/地點/說明
+	// 全部換掉、meet_at 往後推，一樣是用同一次配額無限重複產生「新團練」，只是換一個時間點下手，
+	// 架空的是同一個「每月 1 次」鉤子。使用者現在明確要求「預計時間建立後不能變更」，兩個理由
+	// 指向同一個修法：meet_at 建立後全面鎖死（見下面 checkMeetAtLocked），不再有「過期前改期／
+	// 固定團練順延」這種例外——想用新時間，一律走「再辦一次」（POST /run-meets），正常消耗一次
+	// 配額，漏洞與例外一併關閉。
 	if !oldMeetAt.After(time.Now()) {
 		return res, errEditEnded
 	}
+	// meet_at 一律以資料庫既有值為準：傳入值與既有值不同就整包拒絕，不得靜默忽略（靜默會讓
+	// 前端以為改成功了）。checkMeetAtLocked 是純函式版本，可脫離 DB 單元測試。
+	if err = checkMeetAtLocked(oldMeetAt, in.MeetAt); err != nil {
+		return res, err
+	}
+	in.MeetAt = oldMeetAt // 保險：即使比對通過也強制採資料庫值，杜絕任何精度/時區邊緣情況下的落差
 	if in.Capacity < memberCount {
 		return res, errCapacityBelowMembers(memberCount)
 	}
@@ -572,10 +584,22 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 	if oldApproval && !in.ApprovalRequired {
 		res.PendingKept = pendingCount // 不自動通過，只提示發起人手動處理
 	}
-	res.TimeOrPlaceChg = !oldMeetAt.Equal(in.MeetAt) || oldRegion != in.Region ||
-		oldPlace != in.PlaceLabel || oldDetail != in.MeetingDetail ||
-		!sameCoord(oldLat, in.Lat) || !sameCoord(oldLng, in.Lng)
+	// meet_at 已在上面鎖死、不可能與 oldMeetAt 不同，這裡不再比較它——欄位名沿用
+	// TimeOrPlaceChg（P2 站內信文案仍統稱「時間或地點」）是為了不動既有呼叫端/欄位契約，
+	// 現在實質只由地點三欄決定。
+	res.TimeOrPlaceChg = oldRegion != in.Region || oldPlace != in.PlaceLabel ||
+		oldDetail != in.MeetingDetail || !sameCoord(oldLat, in.Lat) || !sameCoord(oldLng, in.Lng)
 	return res, nil
+}
+
+// checkMeetAtLocked meet_at 建立後鎖死的判定：submitted 與 old（資料庫既有值）不同就回
+// errMeetAtLocked，相同回 nil。純函式（不碰 DB），讓「編輯時 meet_at 不可變更」這條規則
+// 能脫離 UpdateMeet 的交易與 FOR UPDATE 鎖被單獨單元測試。
+func checkMeetAtLocked(old, submitted time.Time) error {
+	if !old.Equal(submitted) {
+		return errMeetAtLocked
+	}
+	return nil
 }
 
 func sameCoord(a, b *float64) bool {

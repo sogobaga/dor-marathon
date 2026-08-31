@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { cache } from 'react'
-import { taipeiParts } from '@/lib/runMeet'
+import { fmtMeetAt } from '@/lib/runMeet'
 import DeletedRedirect from './DeletedRedirect'
 
 // 團練分享短網址 /m/{id}：給社群分享用（RunMeetDetailView.tsx 的分享按鈕會產生這個網址取代
@@ -59,14 +59,6 @@ function absoluteUrl(u: string | null | undefined, site: string): string | null 
   return u.startsWith('http') ? u : site + u
 }
 
-const pad2 = (n: number) => String(n).padStart(2, '0')
-
-/** 「9/6（六）06:00」——與 lib/runMeet.ts fmtMeetAtConfirm 同規則，但不含「將於...開跑」包裝文字。 */
-function fmtDateShort(iso: string): string {
-  const t = taipeiParts(iso)
-  return `${t.m}/${t.d}（${t.wd}）${pad2(t.hh)}:${pad2(t.mm)}`
-}
-
 export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
   const share = await getShare(params.id)
   const site = siteUrl()
@@ -80,7 +72,7 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
   const description = share.is_private
     ? '私密團練・需要密碼加入'
     : [
-        share.meet_at ? fmtDateShort(share.meet_at) : '',
+        share.meet_at ? fmtMeetAt(share.meet_at) : '',
         // 「不限地點」一律顯示固定文字，不把 region/place_label 兩欄拼進來——no_location=true
         // 時兩欄後端固定回「不限」，字面拼接會變成「不限・不限」。
         ...(share.no_location ? ['🌏 不限地點'] : [share.region || '', share.place_label || '']),
@@ -150,7 +142,7 @@ export default async function RunMeetSharePage({ params }: { params: { id: strin
       <div style={{ fontSize: 21, fontWeight: 800, lineHeight: 1.4, wordBreak: 'break-word' }}>{share.title}</div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13.5, color: 'rgba(255,255,255,0.82)', lineHeight: 1.8 }}>
-        {share.meet_at && <div>🕕 {fmtDateShort(share.meet_at)}</div>}
+        {share.meet_at && <div>🕕 {fmtMeetAt(share.meet_at)}</div>}
         {share.is_private ? (
           <div>🔒 私密團練・需要密碼加入</div>
         ) : share.no_location ? (

@@ -416,53 +416,53 @@ func TestValidateMeetInput(t *testing.T) {
 	now := time.Now()
 
 	in := baseInput(now)
-	if err := validateMeetInput(&in, now, 50, 4, 4); err != nil {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); err != nil {
 		t.Fatalf("正常輸入應通過：%v", err)
 	}
 
 	// 時間必須是未來
 	in = baseInput(now)
 	in.MeetAt = now.Add(-time.Minute)
-	if err := validateMeetInput(&in, now, 50, 4, 4); !errors.Is(err, errMeetAtPast) {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errMeetAtPast) {
 		t.Fatalf("過去時間應被拒，得 %v", err)
 	}
 	// 最遠 90 天
 	in = baseInput(now)
 	in.MeetAt = now.Add(91 * 24 * time.Hour)
-	if err := validateMeetInput(&in, now, 50, 4, 4); !errors.Is(err, errMeetAtFar) {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errMeetAtFar) {
 		t.Fatalf("91 天後應被拒，得 %v", err)
 	}
 	// 人數上限
 	in = baseInput(now)
 	in.Capacity = 1
-	if err := validateMeetInput(&in, now, 50, 4, 4); err == nil {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); err == nil {
 		t.Fatal("capacity=1 應被拒（最少 2 人）")
 	}
 	in.Capacity = 51
-	if err := validateMeetInput(&in, now, 50, 4, 4); err == nil {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); err == nil {
 		t.Fatal("超過 runmeet_capacity_max 應被拒")
 	}
 	// 公開層地點必填
 	in = baseInput(now)
 	in.Region = ""
-	if err := validateMeetInput(&in, now, 50, 4, 4); !errors.Is(err, errRegionLen) {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errRegionLen) {
 		t.Fatalf("region 必填，得 %v", err)
 	}
 	in = baseInput(now)
 	in.PlaceLabel = "x"
-	if err := validateMeetInput(&in, now, 50, 4, 4); !errors.Is(err, errPlaceLabelLen) {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errPlaceLabelLen) {
 		t.Fatalf("place_label 至少 2 字，得 %v", err)
 	}
 	// lat/lng 必須成對
 	in = baseInput(now)
 	lat := 25.03
 	in.Lat = &lat
-	if err := validateMeetInput(&in, now, 50, 4, 4); !errors.Is(err, errBadCoord) {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errBadCoord) {
 		t.Fatalf("只給 lat 沒給 lng 應被拒，得 %v", err)
 	}
 	lng := 999.0
 	in.Lng = &lng
-	if err := validateMeetInput(&in, now, 50, 4, 4); !errors.Is(err, errBadCoord) {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errBadCoord) {
 		t.Fatalf("超範圍座標應被拒，得 %v", err)
 	}
 	// 圖片張數與來源
@@ -471,39 +471,126 @@ func TestValidateMeetInput(t *testing.T) {
 		"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab",
 		"/api/v1/images/1123abcd-4567-89ab-cdef-0123456789ab",
 	}
-	if err := validateMeetInput(&in, now, 50, 1, 4); err == nil {
+	if err := validateMeetInput(&in, now, 50, 1, 4, true); err == nil {
 		t.Fatal("超過 image_limit 應被拒")
 	}
 	in.ImageURLs = []string{"https://evil.example.com/pixel.gif"}
-	if err := validateMeetInput(&in, now, 50, 4, 4); !errors.Is(err, errImageSource) {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errImageSource) {
 		t.Fatalf("外站圖片 URL 應被拒（避免團主埋 tracking pixel），得 %v", err)
 	}
 	// 密碼長度
 	in = baseInput(now)
 	short := "abc"
 	in.Password = &short
-	if err := validateMeetInput(&in, now, 50, 4, 4); !errors.Is(err, errPasswordLen) {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errPasswordLen) {
 		t.Fatalf("3 字密碼應被拒，得 %v", err)
 	}
 	empty := ""
 	in.Password = &empty
-	if err := validateMeetInput(&in, now, 50, 4, 4); err != nil {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); err != nil {
 		t.Fatalf("空字串＝移除密碼（改公開團），不應被拒：%v", err)
 	}
 	// 集合細節（成員層）長度
 	in = baseInput(now)
 	in.MeetingDetail = strings.Repeat("細", 201)
-	if err := validateMeetInput(&in, now, 50, 4, 4); !errors.Is(err, errMeetingDetail) {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errMeetingDetail) {
 		t.Fatalf("meeting_detail 超過 200 字應被拒，得 %v", err)
 	}
 	// 標題會被正規化（RLO 移除）後才存
 	in = baseInput(now)
 	in.Title = "晨跑\u202egnp.exe"
-	if err := validateMeetInput(&in, now, 50, 4, 4); err != nil {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); err != nil {
 		t.Fatal(err)
 	}
 	if strings.ContainsRune(in.Title, 0x202E) {
 		t.Fatalf("驗證後的 Title 仍含雙向控制字元：%q", in.Title)
+	}
+}
+
+// TestValidateMeetInputEditSkipsMeetAtFutureCheck 編輯路徑（isCreate=false）不得套用
+// 「meet_at 必須在未來、最多 90 天後」這兩條建立限定的檢查——編辑時 meet_at 已在
+// repository.UpdateMeet 鎖死、一律採資料庫既有值，這裡若仍檢查，會讓「時間已到但團練
+// 還沒被判定過期」的正常編輯請求被誤擋，而且擋的理由跟使用者實際送出的內容無關。
+func TestValidateMeetInputEditSkipsMeetAtFutureCheck(t *testing.T) {
+	now := time.Now()
+
+	// 過去時間：建立要擋，編輯不擋（其餘欄位驗證仍照常跑）
+	in := baseInput(now)
+	in.MeetAt = now.Add(-time.Minute)
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errMeetAtPast) {
+		t.Fatalf("建立時過去時間應被拒，得 %v", err)
+	}
+	in = baseInput(now)
+	in.MeetAt = now.Add(-time.Minute)
+	if err := validateMeetInput(&in, now, 50, 4, 4, false); err != nil {
+		t.Fatalf("編輯時不應檢查 meet_at 是否在未來（該檢查只在建立時適用）：%v", err)
+	}
+
+	// 超過 90 天：建立要擋，編輯不擋
+	in = baseInput(now)
+	in.MeetAt = now.Add(91 * 24 * time.Hour)
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errMeetAtFar) {
+		t.Fatalf("建立時 91 天後應被拒，得 %v", err)
+	}
+	in = baseInput(now)
+	in.MeetAt = now.Add(91 * 24 * time.Hour)
+	if err := validateMeetInput(&in, now, 50, 4, 4, false); err != nil {
+		t.Fatalf("編輯時不應檢查 meet_at 最遠 90 天（該檢查只在建立時適用）：%v", err)
+	}
+
+	// 零值 meet_at：建立要擋（IsZero 分支），編輯不擋——後續由 repository.checkMeetAtLocked
+	// 接手比對資料庫既有值，零值必然不相等，仍會在那一層被擋下，不會讓時間被清空。
+	in = baseInput(now)
+	in.MeetAt = time.Time{}
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errMeetAtPast) {
+		t.Fatalf("建立時零值 meet_at 應被拒，得 %v", err)
+	}
+	in = baseInput(now)
+	in.MeetAt = time.Time{}
+	if err := validateMeetInput(&in, now, 50, 4, 4, false); err != nil {
+		t.Fatalf("編輯時零值 meet_at 不應在這一層被擋（交給 repository 層擋）：%v", err)
+	}
+
+	// 對照：編輯路徑其餘欄位驗證仍正常運作，不是整段被跳過
+	in = baseInput(now)
+	in.Region = ""
+	if err := validateMeetInput(&in, now, 50, 4, 4, false); !errors.Is(err, errRegionLen) {
+		t.Fatalf("編輯時 region 仍應必填，得 %v", err)
+	}
+}
+
+// TestCheckMeetAtLocked 編輯時 meet_at 不可變更（repository.UpdateMeet 的核心擋法，純函式版）：
+// 送出的值與資料庫既有值相同才放行，不同一律拒絕——不分改早改晚、改幾秒還是改幾天。
+func TestCheckMeetAtLocked(t *testing.T) {
+	base := time.Date(2026, 9, 10, 6, 0, 0, 0, time.UTC)
+
+	if err := checkMeetAtLocked(base, base); err != nil {
+		t.Fatalf("與資料庫既有值相同應放行，得 %v", err)
+	}
+	// 時區表示法不同但代表同一時刻：Equal 而非逐欄位比較，不應被誤判成「被改過」
+	taipei := base.In(time.FixedZone("Asia/Taipei", 8*3600))
+	if err := checkMeetAtLocked(base, taipei); err != nil {
+		t.Fatalf("同一時刻換時區表示法不應被判定為變更，得 %v", err)
+	}
+
+	cases := []struct {
+		name string
+		diff time.Duration
+	}{
+		{"改早 1 分鐘", -time.Minute},
+		{"改晚 1 分鐘", time.Minute},
+		{"改晚 1 天", 24 * time.Hour},
+		{"改晚 1 秒（精度差異也算變更）", time.Second},
+	}
+	for _, c := range cases {
+		if err := checkMeetAtLocked(base, base.Add(c.diff)); !errors.Is(err, errMeetAtLocked) {
+			t.Fatalf("%s：應回 errMeetAtLocked，得 %v", c.name, err)
+		}
+	}
+
+	// 零值（例如前端誤送空 meet_at）與任何真實時間都不相等，一樣要被擋
+	if err := checkMeetAtLocked(base, time.Time{}); !errors.Is(err, errMeetAtLocked) {
+		t.Fatalf("零值 meet_at 應被判定為變更並拒絕，得 %v", err)
 	}
 }
 
@@ -564,7 +651,7 @@ func TestValidateMeetInputNoLocation(t *testing.T) {
 	in.Lat, in.Lng = &lat, &lng
 	in.MeetingDetail = "各自跑，跑完在群組回報"
 
-	if err := validateMeetInput(&in, now, 50, 4, 4); err != nil {
+	if err := validateMeetInput(&in, now, 50, 4, 4, true); err != nil {
 		t.Fatalf("no_location=true 帶座標與空白地點應通過（後端自行清空/補值）：%v", err)
 	}
 	if in.Lat != nil || in.Lng != nil {
@@ -581,7 +668,7 @@ func TestValidateMeetInputNoLocation(t *testing.T) {
 	in2 := baseInput(now)
 	in2.NoLocation = true
 	in2.MeetingDetail = strings.Repeat("細", 201)
-	if err := validateMeetInput(&in2, now, 50, 4, 4); !errors.Is(err, errMeetingDetail) {
+	if err := validateMeetInput(&in2, now, 50, 4, 4, true); !errors.Is(err, errMeetingDetail) {
 		t.Fatalf("no_location=true 時 meeting_detail 仍應套用 200 字上限，得 %v", err)
 	}
 }
@@ -846,6 +933,7 @@ func TestErrorStatusContract(t *testing.T) {
 		{"狀態轉換不合法", errBadTransition, 409},
 		{"找不到", errNotFound, 404},
 		{"名稱長度", errTitleLen, 400},
+		{"預計時間鎖死", errMeetAtLocked, 400},
 		{"圖片來源", errImageSource, 400},
 		{"圖片格式", errImageFormat, 400},
 		{"圖片解析度", errImageDims, 400},
@@ -872,7 +960,7 @@ func TestNoTeamOrGroupWording(t *testing.T) {
 		errAlreadyPending.Msg, errEnded.Msg, errMeetClosed.Msg, errMeetCancelled.Msg,
 		errBadTransition.Msg,
 		errOwnerCantLeave.Msg, errNoSuchMember.Msg, errTitleLen.Msg, errRequiresVIP.Msg,
-		errRegionLen.Msg, errPlaceLabelLen.Msg, locationNote, errEditEnded.Msg,
+		errRegionLen.Msg, errPlaceLabelLen.Msg, locationNote, errEditEnded.Msg, errMeetAtLocked.Msg,
 		errQuotaUsedUp(1, false, time.September, 10).Msg,
 		errQuotaUsedUp(10, true, time.September, 10).Msg,
 		errCapacityBelowMembers(8).Msg, errImageOverLimit(4, 4).Msg, errImageOverLimit(1, 4).Msg,
@@ -1096,7 +1184,7 @@ func TestValidateMeetInputNilImages(t *testing.T) {
 	now := time.Now()
 	in := baseInput(now)
 	in.ImageURLs = nil
-	if err := validateMeetInput(&in, now, 50, 1, 4); err != nil {
+	if err := validateMeetInput(&in, now, 50, 1, 4, true); err != nil {
 		t.Fatalf("省略 image_urls 應合法：%v", err)
 	}
 	if in.ImageURLs == nil {

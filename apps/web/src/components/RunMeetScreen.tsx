@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import useSWR, { mutate } from 'swr'
-import { runMeetApi, type RunMeetCard, type RunMeetDetail } from '@/lib/api'
+import { runMeetApi, type RunMeetCard, type RunMeetDetail, type RunMeetMemberDetail } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
-import { fmtMeetAt, createBtnText, runMeetLocationText } from '@/lib/runMeet'
+import { fmtMeetAt, createBtnText, createGate, runMeetLocationText, CREATE_GATE_WAIT_TEXT } from '@/lib/runMeet'
 import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
 import RunMeetListView, { EMPTY_FILTERS, type NearPos, type NearState, type RunMeetFilters } from './runmeet/RunMeetListView'
@@ -34,6 +34,8 @@ export default function RunMeetScreen({ onBack, initialMeetId }: { onBack: () =>
   const [near, setNear] = useState<NearPos | null>(null)
   const [nearState, setNearState] = useState<NearState>('idle')
   const [showCreate, setShowCreate] = useState(false)
+  // 「再辦一次」：帶著要複製的原團資料（owner 視角、含成員層地點）；非 null 時開複製建立表單。
+  const [duplicateSeed, setDuplicateSeed] = useState<RunMeetMemberDetail | null>(null)
   const [vipModal, setVipModal] = useState(false)
   const [created, setCreated] = useState<{ meet: RunMeetDetail; password?: string } | null>(null)
   const [toast, setToast] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null)
@@ -83,18 +85,36 @@ export default function RunMeetScreen({ onBack, initialMeetId }: { onBack: () =>
     )
   }
 
+  // 開表單前的配額/VIP 閘門：'ok' 直接開、'vip' 跳升級引導（非 VIP 或政策要求 VIP）、
+  // 'wait' 是 VIP 本月次數也用完（無解法，只能提示等下個月，不可再跳升級引導那是死路）。
+  // 「再辦一次」（openDuplicate）與「＋ 發起團練」（openCreate）共用同一支 createGate，
+  // 任何一邊改判定邏輯都不會漏改另一邊——不可讓使用者填完整張表才在送出時被擋。
   function openCreate() {
     if (!quota) return
-    // 政策開關 runmeet_create_requires_vip=1：非 VIP 直接跳 VIP 引導，不消耗任何次數。
-    if (quota.requires_vip && !quota.is_vip) { setVipModal(true); return }
-    if (quota.remaining <= 0) {
-      // 次數為 0 的兩種身分給不同出口（使用者定案）：非 VIP 導向升級（有解法），
-      // VIP 已是上限，只能告知何時恢復——不要對 VIP 再跳升級引導，那是死路。
-      if (!quota.is_vip) { setVipModal(true); return }
-      showToast('本月團練發起次數為 0，請等待下個月更新次數。', 'err')
-      return
-    }
+    const gate = createGate(quota)
+    if (gate === 'vip') { setVipModal(true); return }
+    if (gate === 'wait') { showToast(CREATE_GATE_WAIT_TEXT, 'err'); return }
     setShowCreate(true)
+  }
+
+  // 「再辦一次」：複製既有團練設定建立新團練，走的是同一個建立流程（正常消耗一次發起次數），
+  // 所以開表單前要過與「＋ 發起團練」完全一樣的閘門。
+  function openDuplicate(meet: RunMeetMemberDetail) {
+    if (!quota) return
+    const gate = createGate(quota)
+    if (gate === 'vip') { setVipModal(true); return }
+    if (gate === 'wait') { showToast(CREATE_GATE_WAIT_TEXT, 'err'); return }
+    setDuplicateSeed(meet)
+  }
+
+  // 建立成功共用收尾（「＋ 發起團練」與「再辦一次」都走這裡）：關掉對應的表單、刷新列表/配額、
+  // 顯示一次性分享文案彈窗。
+  function handleCreated(meet: RunMeetDetail, info: { created: boolean; remaining?: number; pendingKept?: number; password?: string }) {
+    setShowCreate(false)
+    setDuplicateSeed(null)
+    refreshLists()
+    setCreated({ meet, password: info.password })
+    showToast(`團練建立完成！本月還剩 ${info.remaining ?? 0} 次`)
   }
 
   if (!loggedIn) {
@@ -150,6 +170,7 @@ export default function RunMeetScreen({ onBack, initialMeetId }: { onBack: () =>
           onToast={showToast}
           onChanged={refreshLists}
           onLearnVip={() => setVipModal(true)}
+          onDuplicate={openDuplicate}
         />
       ) : (
         <>
@@ -193,12 +214,20 @@ export default function RunMeetScreen({ onBack, initialMeetId }: { onBack: () =>
           mode="create"
           quota={quota}
           onClose={() => setShowCreate(false)}
-          onSaved={(meet, info) => {
-            setShowCreate(false)
-            refreshLists()
-            setCreated({ meet, password: info.password })
-            showToast(`團練建立完成！本月還剩 ${info.remaining ?? 0} 次`)
-          }}
+          onSaved={handleCreated}
+          onLearnVip={() => setVipModal(true)}
+        />
+      )}
+
+      {/* 「再辦一次」：複製 duplicateSeed（原團完整資料）預填的建立表單——不預填時間與密碼
+          （見 RunMeetFormModal 檔頭說明），送出後走同一套 handleCreated 收尾。 */}
+      {duplicateSeed && quota && (
+        <RunMeetFormModal
+          mode="create"
+          initial={duplicateSeed}
+          quota={quota}
+          onClose={() => setDuplicateSeed(null)}
+          onSaved={handleCreated}
           onLearnVip={() => setVipModal(true)}
         />
       )}

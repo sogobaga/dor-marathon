@@ -11,7 +11,7 @@ import { remainingText } from '@/lib/runMeet'
 //    刻意不給預設值——寫死 10 / 4 的話，營運改了後台設定（runmeet_quota_vip / runmeet_images_vip）
 //    這裡就會對非 VIP 承諾拿不到的權益，是會直接引發客訴的文案錯誤。
 export default function RunMeetConfirmModal({
-  remaining, resetsAt, isVip, vipCap, vipImages, busy, onCancel, onConfirm, onLearnVip,
+  remaining, resetsAt, isVip, vipCap, vipImages, busy, onCancel, onConfirm, onLearnVip, sourceTitle,
 }: {
   remaining: number
   resetsAt: string
@@ -22,11 +22,17 @@ export default function RunMeetConfirmModal({
   onCancel: () => void
   onConfirm: () => void
   onLearnVip?: () => void
+  // 「再辦一次」情境（複製既有團練設定建立新團練）：帶原團名稱時，標題與主文上方多一句情境說明，
+  // 主文那句固定文案本身仍一字不改（下面 modalText 內容）。
+  sourceTitle?: string
 }) {
   return (
     <RunMeetModal onClose={busy ? () => {} : onCancel} dismissOnBackdrop={!busy} maxWidth={360}>
-      <div style={modalTitle}>確認建立團練</div>
-      <div style={modalText}>一旦確認建立，將會消耗團練發起次數，請問要繼續建立嗎？</div>
+      <div style={modalTitle}>{sourceTitle ? '確認再辦一次' : '確認建立團練'}</div>
+      <div style={modalText}>
+        {sourceTitle && <>沿用「{sourceTitle}」的設定，建立一個新團練（時間需另外設定）。<br /></>}
+        一旦確認建立，將會消耗團練發起次數，請問要繼續建立嗎？
+      </div>
       <div style={modalSubText}>
         {remainingText(remaining, resetsAt)}。<br />
         團練建立後即使關閉或刪除，次數也不會返還。

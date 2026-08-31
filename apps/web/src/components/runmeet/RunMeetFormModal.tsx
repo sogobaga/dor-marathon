@@ -17,6 +17,13 @@ import {
 //   刻意不即時判定——VIP 用 4 張建團後到期，只想改人數上限時不該被 400 擋死）。
 // - 送出（建立）前一定會跳確認彈窗（需求指定），文案見 RunMeetConfirmModal。
 // - client_token：本表單開啟時產生一次，重試沿用同一個 → 後端部分唯一索引擋重複扣配額。
+// - 預計時間建立後不可變更（後端 repository.UpdateMeet 一律以資料庫既有值為準，見 checkMeetAtLocked）：
+//   編輯模式的時間欄位改唯讀顯示，不受理修改；client 端的「必須在未來/最多 90 天」檢查也只在
+//   mode==='create' 時跑，避免誤擋「時間已到但團練還沒被判定過期」的正常編輯請求。
+// - 「再辦一次」（複製既有團練設定建立新團練）：mode='create' 時若額外帶入 initial（該團的完整
+//   MemberDetailView），會拿它預填名稱/地點/人數上限/說明/圖片/審核開關——但**不**預填預計時間
+//   （留給使用者選新的，defaultMeetAtInput）與密碼（雜湊無法還原）。判斷「現在是不是複製流程」
+//   一律用 `mode === 'create' && initial` 這個組合，不要新增獨立的 duplicate 旗標分裂判斷式。
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
 
@@ -54,7 +61,9 @@ export default function RunMeetFormModal({
   onLearnVip?: () => void
 }) {
   const [title, setTitle] = useState(initial?.title ?? '')
-  const [meetAt, setMeetAt] = useState(initial ? isoToTaipeiLocalInput(initial.meet_at) : defaultMeetAtInput())
+  // ⚠️ 只有「編輯」才把 meet_at 帶進來當初始值——「再辦一次」(mode==='create' 且帶 initial)
+  // 必須是全新的時間，若沿用 `initial ? ... : ...` 判斷式會誤把舊團的時間也複製過來。
+  const [meetAt, setMeetAt] = useState(mode === 'edit' && initial ? isoToTaipeiLocalInput(initial.meet_at) : defaultMeetAtInput())
   const [loc, setLoc] = useState<LocationValue>({
     no_location: initial?.no_location ?? false,
     region: initial?.region ?? '',
@@ -89,10 +98,15 @@ export default function RunMeetFormModal({
   function validate(): string {
     const t = title.trim()
     if (t.length < 2 || t.length > 40) return '團練名稱請填 2 到 40 個字。'
-    if (!isoMeetAt) return '預計時間必須晚於現在。'
-    const ms = new Date(isoMeetAt).getTime() - Date.now()
-    if (ms <= 0) return '預計時間必須晚於現在。'
-    if (ms > 90 * 24 * 3600 * 1000) return '預計時間最多只能設定到 90 天後。'
+    // 「必須在未來/最多 90 天後」只在建立時檢查——編輯模式 meet_at 是唯讀欄位，一律沿用原值，
+    // 後端也只在建立時驗證這兩條（見 service.go validateMeetInput 的 isCreate 參數）；若在編輯時
+    // 也套用，會讓「時間已到但團練還沒被判定過期」的正常編輯請求被一個文不對題的訊息誤擋。
+    if (mode === 'create') {
+      if (!isoMeetAt) return '預計時間必須晚於現在。'
+      const ms = new Date(isoMeetAt).getTime() - Date.now()
+      if (ms <= 0) return '預計時間必須晚於現在。'
+      if (ms > 90 * 24 * 3600 * 1000) return '預計時間最多只能設定到 90 天後。'
+    }
     const region = loc.region.trim()
     if (region.length < 2 || region.length > 30) return '縣市・行政區請填 2 到 30 個字。'
     const place = loc.place_label.trim()
@@ -229,20 +243,36 @@ export default function RunMeetFormModal({
           <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={40} placeholder="大安森林公園晨跑 10K" style={inputStyle} />
         </div>
 
-        {/* 時間 */}
+        {/* 時間：編輯模式唯讀（預計時間建立後不可變更，見檔頭說明），建立模式不受影響 */}
         <div style={{ marginTop: 12 }}>
           <label style={fieldLabel}>預計時間</label>
-          <input
-            type="datetime-local"
-            value={meetAt}
-            min={nowTaipeiInput()}
-            max={maxTaipeiInput()}
-            onChange={(e) => setMeetAt(e.target.value)}
-            style={inputStyle}
-          />
-          {isoMeetAt && <div style={{ ...fieldHint, color: 'var(--fug)' }}>{fmtMeetAtConfirm(isoMeetAt)}</div>}
-          {/* 團練一定是台灣的實體集合 → 一律以台北時間解讀，裝置時區不同時要講明白 */}
-          {!isDeviceTaipei() && <div style={{ ...fieldHint, color: 'var(--tx-faint)' }}>你的裝置時區不是台北，上方時間會以台北時間儲存</div>}
+          {mode === 'edit' ? (
+            <>
+              <input
+                type="datetime-local"
+                value={meetAt}
+                readOnly
+                disabled
+                style={{ ...inputStyle, opacity: 0.6, cursor: 'not-allowed' }}
+              />
+              {isoMeetAt && <div style={{ ...fieldHint, color: 'var(--fug)' }}>{fmtMeetAtConfirm(isoMeetAt)}</div>}
+              <div style={{ ...fieldHint, color: 'var(--gold)' }}>預計時間建立後不能修改。想改時間請用「再辦一次」建立新的團練。</div>
+            </>
+          ) : (
+            <>
+              <input
+                type="datetime-local"
+                value={meetAt}
+                min={nowTaipeiInput()}
+                max={maxTaipeiInput()}
+                onChange={(e) => setMeetAt(e.target.value)}
+                style={inputStyle}
+              />
+              {isoMeetAt && <div style={{ ...fieldHint, color: 'var(--fug)' }}>{fmtMeetAtConfirm(isoMeetAt)}</div>}
+              {/* 團練一定是台灣的實體集合 → 一律以台北時間解讀，裝置時區不同時要講明白 */}
+              {!isDeviceTaipei() && <div style={{ ...fieldHint, color: 'var(--tx-faint)' }}>你的裝置時區不是台北，上方時間會以台北時間儲存</div>}
+            </>
+          )}
         </div>
 
         {/* 地點（三層揭露） */}
@@ -351,6 +381,8 @@ export default function RunMeetFormModal({
               : '留白＝公開團練。密碼只用來限制加入；團練名稱、時間、地點與說明仍會顯示在探索列表。'}
             <br />建議 6 碼以上，勿與登入密碼相同。
             {mode === 'edit' && pwMode === 'set' && <><br />重設密碼後，先前用舊密碼解鎖但尚未加入的跑者需要重新輸入。已加入的團員不受影響。</>}
+            {/* 「再辦一次」：原團密碼是雜湊，無法還原帶入新團練，只能提醒發起人自己重設，不強制。 */}
+            {mode === 'create' && initial?.is_private && <><br /><span style={{ color: 'var(--gold)' }}>原本是私密團，請重新設定密碼。</span></>}
           </div>
         </div>
 
@@ -373,6 +405,8 @@ export default function RunMeetFormModal({
           onCancel={() => setConfirm(false)}
           onConfirm={() => void doSubmit()}
           onLearnVip={onLearnVip}
+          // 「再辦一次」情境：帶原團名稱讓確認彈窗的文案能反映「這是複製設定建立新團練」
+          sourceTitle={initial?.title}
         />
       )}
     </>

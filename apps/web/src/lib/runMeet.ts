@@ -61,11 +61,22 @@ export function isoToTaipeiLocalInput(iso: string | null | undefined): string {
   return `${t.y}-${pad2(t.m)}-${pad2(t.d)}T${pad2(t.hh)}:${pad2(t.mm)}`
 }
 
-/** 「8/31（日）06:00」；同一天（台北）則為「今天 06:00」。 */
+/** 24 小時制 hh（0–23）→「上午/下午 h:mm」（12 小時制，時 1–12 不補零、分補零）。
+ *  ⚠️ 兩個最容易寫錯的邊界：0 時（凌晨）是「上午 12:xx」，12 時（中午）是「下午 12:xx」——
+ *  不是「上午 0 點」或「下午 0 點」。fmtMeetAt 是全站顯示預計時間的唯一函式（2026-08-31
+ *  使用者回報「分不清楚是上午 4:30 還是下午 4:30」），這兩個邊界在 verify-run-meet.mjs 有專門測資釘住。 */
+function fmtHour12(hh: number, mm: number): string {
+  const period = hh < 12 ? '上午' : '下午'
+  const h12 = hh % 12 === 0 ? 12 : hh % 12
+  return `${period} ${h12}:${pad2(mm)}`
+}
+
+/** 「8/31（日）上午 6:00」／「8/31（日）下午 4:30」；同一天（台北）則為「今天 上午 6:00」。
+ *  一律以台北時間判定日期與上午/下午（沿用 taipeiParts，不吃裝置時區）。 */
 export function fmtMeetAt(iso: string, now: Date = new Date()): string {
   const t = taipeiParts(iso)
   const n = taipeiParts(now)
-  const time = `${pad2(t.hh)}:${pad2(t.mm)}`
+  const time = fmtHour12(t.hh, t.mm)
   if (t.y === n.y && t.m === n.m && t.d === n.d) return `今天 ${time}`
   return `${t.m}/${t.d}（${t.wd}）${time}`
 }
@@ -168,6 +179,28 @@ export function remainingText(remaining: number, resetsAt: string): string {
   const tail = day ? `（${day}重置）` : ''
   return remaining > 0 ? `本月剩餘 ${remaining} 次${tail}` : `本月發起次數已用完${tail}`
 }
+
+// ─────────────────────────────────────────────────────────────
+// 「發起團練」表單開啟前的配額/VIP 閘門（使用者定案的出口矩陣）
+//
+// ⚠️「再辦一次」（複製既有團練設定建立新團練）走的是同一套 POST /run-meets 建立流程，
+//    會正常消耗一次發起次數，因此開啟表單前必須套用與「＋ 發起團練」完全相同的判定——
+//    不可讓使用者填完整張表單才在送出時被 403/409 擋下。RunMeetScreen 的 openCreate 與
+//    openDuplicate 都呼叫這支，任何一邊改判定邏輯不會漏改另一邊。
+// ─────────────────────────────────────────────────────────────
+
+export type CreateGate = 'ok' | 'vip' | 'wait'
+
+/** 'ok'＝可直接開表單；'vip'＝非 VIP（政策開關要求 VIP，或次數用完但升級有解）→ 跳 VIP 引導；
+ *  'wait'＝VIP 本月次數也用完 → 無解法，只能提示等下個月（不可再跳 VIP 引導，那是死路）。 */
+export function createGate(quota: { requires_vip: boolean; is_vip: boolean; remaining: number }): CreateGate {
+  if (quota.requires_vip && !quota.is_vip) return 'vip'
+  if (quota.remaining <= 0) return quota.is_vip ? 'wait' : 'vip'
+  return 'ok'
+}
+
+/** 'wait' 時的固定提示文案（VIP 本月次數用完，唯一出口是等下個月）。 */
+export const CREATE_GATE_WAIT_TEXT = '本月團練發起次數為 0，請等待下個月更新次數。'
 
 // ─────────────────────────────────────────────────────────────
 // CTA 狀態矩陣（規格 5.7）
