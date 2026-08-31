@@ -24,7 +24,8 @@ export default function AdminChrome({ children }: { children: React.ReactNode })
     return () => { alive = false; clearInterval(id); document.removeEventListener('visibilitychange', onVis) }
   }, [isLogin])
 
-  if (isLogin) return <div style={{ minHeight: '100vh', background: 'var(--bg)', color: 'var(--tx)' }}>{children}</div>
-  if (!ready) return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)', color: 'var(--tx-faint)', fontSize: 13 }}>載入中…</div>
+  // minHeight 掛 .app-min-h：inline 100vh 在 viewport 單位過期時會矮一截、露出 body 奶油底（globals.css 有詳註）
+  if (isLogin) return <div className="app-min-h" style={{ background: 'var(--bg)', color: 'var(--tx)' }}>{children}</div>
+  if (!ready) return <div className="app-min-h" style={{ display: 'grid', placeItems: 'center', background: 'var(--bg)', color: 'var(--tx-faint)', fontSize: 13 }}>載入中…</div>
   return <AdminShell>{children}</AdminShell>
 }

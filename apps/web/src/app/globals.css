@@ -254,6 +254,18 @@ html, body {
   }
 }
 
+/* min-height 版：給「自帶底色、需保證至少蓋滿一屏」的容器（後台 AdminShell/AdminChrome/admin layout）。
+   後台原本 inline 寫死 100vh/minHeight:100vh，在「viewport 單位過期偏小」的狀態（見
+   ViewportHeightFix 不變式 IV）會跟著矮一截、露出 body 的 warm 奶油底——與前台症狀 A 同根因。
+   inline style 無法寫「同屬性兩條宣告」的後備鏈，所以必須改掛 class 進這裡的 @supports 體系。 */
+.app-min-h { min-height: 100vh; }
+@supports (height: 100dvh) and (height: max(0px, 0px)) {
+  .app-min-h {
+    min-height: 100dvh;
+    min-height: max(100dvh, var(--app-h, 0px));
+  }
+}
+
 /* 手機模擬框容器 */
 .phone-frame {
   display: flex;

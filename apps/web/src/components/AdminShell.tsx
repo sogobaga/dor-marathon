@@ -141,7 +141,8 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   // ── 手機版：無側欄，窄欄置中 ──
   if (view === 'mobile') {
     return (
-      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--tx)' }}>
+      // 高度掛 .app-h（100vh→100dvh→max(...,--app-h)）：inline 寫死 100vh 在 viewport 單位過期時會矮一截露出奶油底
+      <div className="app-h" style={{ display: 'flex', flexDirection: 'column', background: 'var(--bg)', color: 'var(--tx)' }}>
         {topbar}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <div style={{ maxWidth: 600, margin: '0 auto', padding: '20px 16px 48px' }}>{children}</div>
@@ -152,7 +153,8 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
 
   // ── 網頁版（PC，預設）：左側功能列表 + 主內容 ──
   return (
-    <div style={{ height: '100vh', display: 'flex', background: 'var(--bg)', color: 'var(--tx)' }}>
+    // 高度掛 .app-h，理由同上（手機版分支）
+    <div className="app-h" style={{ display: 'flex', background: 'var(--bg)', color: 'var(--tx)' }}>
       <aside
         style={{
           width: 232,
