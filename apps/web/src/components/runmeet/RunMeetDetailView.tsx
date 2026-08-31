@@ -141,8 +141,23 @@ export default function RunMeetDetailView({
       </header>
 
       <div style={scrollBody}>
-        {!card && isFetchPending(isLoading, meet, error) ? (
-          <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: '20px 2px' }}>{LOADING_TEXT}</div>
+        {/* ⚠️ 載入中的判斷不可加上「!card」這個前提（2026-08-31 使用者回報）：
+            從列表點進來時 card 已經有列表帶的摘要（fallbackCard），`!card` 為 false 會跳過這一支，
+            但詳情 meet 還沒到，於是直接掉進下面 `!meet` 的「找不到這個團練」——一進頁面就先看到錯誤。
+            正確順序是「還在等 → 已刪除 → 未解鎖 → 真的找不到 → 內容」；
+            有摘要時順便把標題/時間先畫出來，比整頁空白的載入感更快。 */}
+        {isFetchPending(isLoading, meet, error) ? (
+          <div style={{ padding: '4px 2px' }}>
+            {card && (
+              <>
+                <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--tx)', lineHeight: 1.35, wordBreak: 'break-word' }}>{card.title}</div>
+                <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 6, lineHeight: 1.8 }}>
+                  {fmtMeetAt(card.meet_at)}<br />{card.region}・{card.place_label}
+                </div>
+              </>
+            )}
+            <div style={{ color: 'var(--tx-faint)', fontSize: 13, padding: card ? '14px 0 0' : '20px 0' }}>{LOADING_TEXT}</div>
+          </div>
         ) : deletedCountdown !== null ? (
           // ⚠️ 這裡刻意不管 fallbackCard（可能是使用者從列表點進來時帶的舊卡片摘要）——
           // 一旦後端回 410，畫面就只顯示這句倒數導頁文案，不能讓下面「找到 card 就渲染完整內容」
@@ -152,7 +167,7 @@ export default function RunMeetDetailView({
           </div>
         ) : locked ? (
           <LockedPanel card={fallbackCard} onUnlock={() => setShowUnlock(true)} />
-        ) : error || !meet || !card ? (
+        ) : error || !meet ? (
           <div style={{ color: 'var(--hunt)', fontSize: 13.5, textAlign: 'center', padding: '24px 2px' }}>
             找不到這個團練，可能已被發起人刪除。
           </div>
