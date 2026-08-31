@@ -31,6 +31,7 @@ export default function ViewportDebug() {
         `vv ${vv ? Math.round(vv.height) : '-'} · off ${vv ? Math.round(vv.offsetTop) : '-'} · scale ${vv ? vv.scale.toFixed(2) : '-'}`,
         `vh ${unit('100vh')} · dvh ${unit('100dvh')} · svh ${unit('100svh')} · lvh ${unit('100lvh')}`,
         `--app-h ${root.style.getPropertyValue('--app-h') || '(none)'} · ae ${document.activeElement?.tagName || '-'}`,
+        `mem ${(() => { try { const m = JSON.parse(localStorage.getItem('dor.vpmem') || '{}'); return Object.entries(m).map(([k, v]) => `${k}=${(v as { h: number }).h}`).join(' ') || '(none)' } catch { return '(err)' } })()}`,
       ])
     }
     tick()
