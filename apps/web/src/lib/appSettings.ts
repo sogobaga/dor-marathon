@@ -378,12 +378,12 @@ export const SETTINGS_SPECS: SettingSpec[] = [
   {
     key: 'runmeet_images_normal', group: '團練邀請規則', label: '一般會員每團圖片張數', type: 'number', unit: '張',
     help: '一般會員每個團練可上傳幾張圖片。⚠️ 這個值是「建立當下的快照」，寫進該團練——之後改設定不影響已建立的團練（避免 VIP 到期後連改人數上限都被擋死）。',
-    min: 1, max: 4, def: '1',
+    min: 1, max: 20, def: '1',
   },
   {
     key: 'runmeet_images_vip', group: '團練邀請規則', label: 'VIP 每團圖片張數', type: 'number', unit: '張',
-    help: 'VIP 每個團練可上傳幾張圖片（同樣是建立當下的快照）。圖片只收 JPG／PNG，上傳後一律重新編碼（去除 EXIF 含 GPS 座標與夾帶內容）。',
-    min: 1, max: 4, def: '4',
+    help: 'VIP 每個團練可上傳幾張圖片（同樣是建立當下的快照）。圖片只收 JPG／PNG，上傳後一律重新編碼（去除 EXIF 含 GPS 座標與夾帶內容）。上限 20 是資料庫層的技術防呆（見 migration 157），營運要調幾張自由決定。',
+    min: 1, max: 20, def: '4',
   },
   {
     key: 'runmeet_capacity_max', group: '團練邀請規則', label: '人數上限的上限', type: 'number', unit: '人',

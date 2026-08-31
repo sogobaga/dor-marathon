@@ -103,8 +103,8 @@ var specs = map[string]func(string) bool{
 	"runmeet_create_requires_vip": func(v string) bool { return v == "" || v == "0" || v == "1" }, // 1=發起限 VIP
 	"runmeet_quota_normal":        isPosIntMax(50),                                               // 一般會員每月可發起次數
 	"runmeet_quota_vip":           isPosIntMax(50),                                               // VIP 每月可發起次數
-	"runmeet_images_normal":       isPosIntMax(4),                                                // 一般會員每團圖片張數
-	"runmeet_images_vip":          isPosIntMax(4),                                                // VIP 每團圖片張數
+	"runmeet_images_normal":       isPosIntMax(20),                                                // 一般會員每團圖片張數
+	"runmeet_images_vip":          isPosIntMax(20),                                                // VIP 每團圖片張數
 	"runmeet_capacity_max":        isPosIntMax(500),                                              // 人數上限的上限
 	"runmeet_pending_max":         isPosIntMax(500),                                              // 待審核申請上限
 	"runmeet_comment_daily_cap":   isPosIntMax(1000),                                             // 每人每日留言則數上限
