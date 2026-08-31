@@ -4335,7 +4335,7 @@ export const runMeetApi = {
   // 私密團未解鎖 → 403 { error, locked:true, card }（見 RunMeetScreen 的解鎖流程；
   // request() 只會把 error 字串包成 ApiError，卡片摘要由呼叫端改打 list 或直接顯示已知卡片）。
   // 已被發起人刪除 → 410 { error: 'deleted' }（其餘不可見仍是 404）；呼叫端用 ApiError.status 判斷，
-  // 見 RunMeetDetailView 的「該團練已被刪除，3 秒後將會切換至首頁」倒數導頁。
+  // 見 RunMeetDetailView 的「該團練已被刪除，3 秒後將返回團練邀請頁」倒數導頁。
   detail: (token: string, id: string) =>
     request<{ meet: RunMeetDetail }>(`/run-meets/${id}`, { headers: withAuth(token) }),
   update: (token: string, id: string, input: RunMeetInput) =>

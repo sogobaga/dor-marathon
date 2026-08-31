@@ -30,7 +30,7 @@ import {
 // ⚠️ 全檔零 dangerouslySetInnerHTML：說明/留言都是純文字，用 white-space:pre-wrap 呈現換行。
 
 export default function RunMeetDetailView({
-  id, fallbackCard, quota, onBack, onGoHome, onToast, onChanged, onLearnVip, onDuplicate,
+  id, fallbackCard, quota, onBack, onToast, onChanged, onLearnVip, onDuplicate,
 }: {
   id: string
   fallbackCard: RunMeetCard | null
@@ -39,7 +39,6 @@ export default function RunMeetDetailView({
   // 已被刪除時倒數結束要「切回首頁」，不是「返回上一頁」（deep link 進來的人上一頁可能就是這個已刪除的
   // 團練）。不提供時退回 onBack——仍優於停在一個永遠 404 的畫面。見 RunMeetScreen 怎麼接（接的是它自己
   // 的 onBack，也就是真正離開整個團練邀請畫面回到首頁，而不是這個元件自己的 onBack＝回列表）。
-  onGoHome?: () => void
   onToast: (text: string, tone?: 'ok' | 'err') => void
   onChanged: () => void
   onLearnVip?: () => void
@@ -77,10 +76,17 @@ export default function RunMeetDetailView({
   // 元件已卸載後，還在跑的計時器對它呼叫 setState / 導頁。
   useEffect(() => {
     if (deletedCountdown === null) return
-    if (deletedCountdown <= 0) { (onGoHome ?? onBack)(); return }
+    if (deletedCountdown <= 0) {
+      // 回「團練邀請」列表，不是首頁（2026-08-31 使用者定案）：使用者本來就在團練情境裡，
+      // 丟回首頁會讓人不知道自己在哪。順便 onChanged() 讓列表重抓——這個團剛被刪掉，
+      // 不重抓的話它還會留在列表上（尤其別人刪、我正在看的情況）。
+      onChanged()
+      onBack()
+      return
+    }
     const t = setTimeout(() => setDeletedCountdown((s) => (s === null ? null : s - 1)), 1000)
     return () => clearTimeout(t)
-  }, [deletedCountdown, onGoHome, onBack])
+  }, [deletedCountdown, onBack, onChanged])
 
   const meet = data?.meet ?? null
   const card: RunMeetCard | null = meet ?? fallbackCard
@@ -174,7 +180,7 @@ export default function RunMeetDetailView({
           // 一旦後端回 410，畫面就只顯示這句倒數導頁文案，不能讓下面「找到 card 就渲染完整內容」
           // 的分支用過期資料畫出一個其實已經被刪除的團練詳情。
           <div style={{ color: 'var(--hunt)', fontSize: 15, fontWeight: 800, textAlign: 'center', padding: '40px 2px', lineHeight: 1.8 }}>
-            該團練已被刪除，{deletedCountdown} 秒後將會切換至首頁。
+            該團練已被刪除，{deletedCountdown} 秒後將返回團練邀請頁。
           </div>
         ) : locked ? (
           <LockedPanel card={fallbackCard} onUnlock={() => setShowUnlock(true)} />

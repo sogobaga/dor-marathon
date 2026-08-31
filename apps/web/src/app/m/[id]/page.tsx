@@ -111,7 +111,8 @@ export default async function RunMeetSharePage({ params }: { params: { id: strin
       return (
         <Frame>
           <DeletedRedirect />
-          <a href="/" style={homeLinkStyle}>回首頁</a>
+          {/* 手動連結與倒數導向一致（團練邀請頁），不要一個回首頁一個回列表 */}
+          <a href="/?runmeet=list" style={homeLinkStyle}>看看其他團練</a>
         </Frame>
       )
     }
@@ -121,7 +122,7 @@ export default async function RunMeetSharePage({ params }: { params: { id: strin
         <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', lineHeight: 1.7 }}>
           可能已經結束、被刪除、被下架，或尚未開放查看。請確認連結是否正確。
         </div>
-        <a href="/" style={homeLinkStyle}>回首頁</a>
+        <a href="/?runmeet=list" style={homeLinkStyle}>看看其他團練</a>
       </Frame>
     )
   }

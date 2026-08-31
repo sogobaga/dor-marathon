@@ -162,7 +162,10 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     const runMeetParam = params.get('runmeet')
     if (runMeetParam) {
       setShowRunMeet(true)
-      setRunMeetInitialId(runMeetParam)
+      // 'list' 是「只開團練邀請頁、不進任何詳情」的哨兵值（團練被刪除後的倒數導頁用，
+      // 見 app/m/[id]/DeletedRedirect.tsx）——導回首頁會讓人不知道自己在哪，
+      // 回到團練列表才接得上「那個團沒了，看看別的」。其餘值一律當團練 id 開詳情。
+      if (runMeetParam !== 'list') setRunMeetInitialId(runMeetParam)
       window.history.replaceState({}, '', '/')
     }
     // 合作商家詳細頁深連結：優先吃 openShopId prop（來自 /shop/{id} 路由，網址已經是漂亮的、不清參數）；

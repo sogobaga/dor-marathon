@@ -166,7 +166,6 @@ export default function RunMeetScreen({ onBack, initialMeetId }: { onBack: () =>
           onBack={() => { setSelected(null); refreshLists() }}
           // 團練已被刪除的倒數導頁要切回「首頁」，不是這個 Screen 內部的列表——沿用本 Screen
           // 自己收到的 onBack（PhoneShell 傳進來的，會整個關掉團練邀請畫面回到首頁）。
-          onGoHome={onBack}
           onToast={showToast}
           onChanged={refreshLists}
           onLearnVip={() => setVipModal(true)}
