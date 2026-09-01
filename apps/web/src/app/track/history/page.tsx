@@ -44,7 +44,9 @@ export default function TrackHistoryPage() {
   const [realNameInput, setRealNameInput] = useState('')
   const [realNameSaving, setRealNameSaving] = useState(false)
   const [gov500Msg, setGov500Msg] = useState('') // 下載完成提示（幾秒後自動清除）
-  const proofCacheRef = useRef<{ key: string; blob: Blob } | null>(null) // 成品快取：手勢過期要求再點一次時，第二次即時分享 // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
+  const proofCacheRef = useRef<{ key: string; blob: Blob } | null>(null) // 兩段式的成品快取（第一段建立、第二段即時分享）
+  const [proofReadyKey, setProofReadyKey] = useState('') // 已建立完成的 cacheKey（控制按鈕名：建立證明圖→儲存證明圖）
+  useEffect(() => { setProofReadyKey(''); setGov500Msg('') }, [sel]) // 換選別筆紀錄 → 兩段式狀態重置 // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
 
   // 把「畫面上的地圖」重繪成一張乾淨 canvas：磚用實際渲染位置（getBoundingClientRect 已含
   // Leaflet 所有 transform）、軌跡/起終點用 latLngToContainerPoint 重投影——與畫面同一套座標。
@@ -137,15 +139,34 @@ export default function TrackHistoryPage() {
   // 政府「揮汗有禮」活動證明圖：優先「畫面實況擷取」（含 GPS 軌跡圖/統計/分段計量表，與畫面
   // 一致才不會有作假疑慮）；地圖以 snapshotMap 預繪快照替換（見上）。擷取鏈任一環失敗
   //（磚汙染/記憶體不足等）退回合成卡片（仍含官方要求的日期/時間/距離）。數據同源（校正後優先）。
+  // 確定性兩段式（使用者定案：兩次點擊要有不同按鈕名，否則像 bug）——
+  // 第一段「建立證明圖」：產圖耗時數秒、iOS 手勢必過期，所以這段**不**嘗試開分享面板，
+  // 完成後快取成品、按鈕切成「儲存證明圖」並給綠色提示；
+  // 第二段「儲存證明圖」：用快取成品在手勢當下即時開分享面板（毫秒級不會過期）→ 儲存影像 → 相簿。
   async function runProofFlow(realName: string) {
     if (!sel) return
+    const cacheKey = `${sel.started_at}|${realName}`
+
+    // 第二段
+    if (proofCacheRef.current?.key === cacheKey) {
+      const fname = `DOR跑步證明_${new Date(sel.started_at).toISOString().slice(0, 10).replace(/-/g, '')}.png`
+      const how = await deliverRunProof(proofCacheRef.current.blob, fname)
+      if (how === 'retry') {
+        setGov500Msg('請再點一次「儲存證明圖」') // 理論上不會發生（即時開啟），保險提示
+      } else if (how === 'downloaded') {
+        setGov500Msg('已下載證明圖：在「檔案」App 的「下載項目」可找到，直接到 500.gov.tw 上傳即可')
+        setTimeout(() => setGov500Msg(''), 8000)
+      } else {
+        setGov500Msg('')
+      }
+      return
+    }
+
+    // 第一段
     setGov500Busy(true)
     try {
-      const cacheKey = `${sel.started_at}|${realName}`
       let blob: Blob
-      if (proofCacheRef.current?.key === cacheKey) {
-        blob = proofCacheRef.current.blob // 第二次點擊：直接用成品，分享面板在手勢當下即時開啟
-      } else try {
+      try {
         const mapCv = await snapshotMap()
         const mapEl = document.getElementById('hist-map')
         if (!proofAreaRef.current || !mapCv || !mapEl) throw new Error('地圖快照未就緒')
@@ -164,18 +185,10 @@ export default function TrackHistoryPage() {
         })
       }
       proofCacheRef.current = { key: cacheKey, blob }
-      const fname = `DOR跑步證明_${new Date(sel.started_at).toISOString().slice(0, 10).replace(/-/g, '')}.png`
-      const how = await deliverRunProof(blob, fname)
-      if (how === 'retry') {
-        setGov500Msg('證明圖已產生完成——請再點一次「儲存證明圖」，就會跳出存入相簿的視窗')
-      } else if (how === 'downloaded') {
-        setGov500Msg('已下載證明圖：在「檔案」App 的「下載項目」可找到，直接到 500.gov.tw 上傳即可')
-        setTimeout(() => setGov500Msg(''), 8000)
-      } else {
-        setGov500Msg('')
-      }
+      setProofReadyKey(cacheKey)
+      setGov500Msg('證明圖已建立完成——點「儲存證明圖」存入相簿')
     } catch (e: any) {
-      setErr(e?.message || '證明圖產生失敗，請再試一次')
+      setErr(e?.message || '證明圖建立失敗，請再試一次')
     } finally {
       setGov500Busy(false)
     }
@@ -296,7 +309,7 @@ export default function TrackHistoryPage() {
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={handleGov500Proof} disabled={gov500Busy}
                   style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: gov500Busy ? 'default' : 'pointer', opacity: gov500Busy ? 0.6 : 1 }}>
-                  {gov500Busy ? '產生中…' : '儲存證明圖'}
+                  {gov500Busy ? '建立中…' : proofReadyKey.startsWith(`${sel.started_at}|`) ? '儲存證明圖' : '建立證明圖'}
                 </button>
                 <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
                   style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>

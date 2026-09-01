@@ -89,6 +89,9 @@ export default function TrackPage() {
   const [showStartTip, setShowStartTip] = useState(false) // 從賽事詳情頁「前往挑戰」進入（?from=race）→ idle 時顯示一次性新手提醒，可點擊/X關閉
   const [uploading, setUploading] = useState(false)
   const [gov500Busy, setGov500Busy] = useState(false) // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
+  const [gov500Ready, setGov500Ready] = useState(false) // 兩段式：建立證明圖→儲存證明圖（與歷史頁一致）
+  const gov500CacheRef = useRef<Blob | null>(null)
+  useEffect(() => { setGov500Ready(false); gov500CacheRef.current = null }, [result]) // 新一趟結果 → 重置
   const [checkpoints, setCheckpoints] = useState<ActiveCheckpoint[]>([])
   const [curPos, setCurPos] = useState<{ lat: number; lng: number; acc: number } | null>(null)
   const curPosRef = useRef<{ lat: number; lng: number; acc: number } | null>(null); curPosRef.current = curPos // 供 marker click 等閉包讀最新位置（避免 stale）
@@ -368,8 +371,19 @@ export default function TrackPage() {
   // 政府「揮汗有禮」活動證明圖（gov500_entry，見 lib/runProof.ts；入口先只給超管看，見後端
   // profile/membership.go resolveEntry 的 gov500_entry_state）：用跑後總結 result 的距離/時間/配速 +
   // startRef 記下的開跑時間戳，畫一張證明卡後叫出系統分享面板，讓使用者存到相簿再上傳 500.gov.tw。
+  // 確定性兩段式（與歷史頁一致）：第一段「建立證明圖」只產圖並快取（個資請求＋畫圖的耗時
+  // 會讓 iOS 手勢過期，這段不開分享面板）；第二段「儲存證明圖」用快取成品即時開面板存相簿。
   async function handleGov500Proof() {
     if (!result || gov500Busy) return
+    if (gov500Ready && gov500CacheRef.current) {
+      try {
+        const how = await deliverRunProof(gov500CacheRef.current, `DOR跑步證明_${new Date(startRef.current).toISOString().slice(0, 10).replace(/-/g, '')}.png`)
+        if (how === 'retry') setErr('請再點一次「儲存證明圖」')
+      } catch (e: any) {
+        setErr(e?.message || '儲存失敗，請再試一次')
+      }
+      return
+    }
     setGov500Busy(true)
     try {
       // 署名需「真實姓名」（政府網站上傳用，不能用暱稱）。個資未填→提示改走個資頁或歷史頁
@@ -387,10 +401,10 @@ export default function TrackPage() {
         avgPaceS: result.avg_pace_s > 0 ? result.avg_pace_s : null,
         displayName: realName,
       })
-      const how = await deliverRunProof(blob, `DOR跑步證明_${new Date(startRef.current).toISOString().slice(0, 10).replace(/-/g, '')}.png`)
-      if (how === 'retry') setErr('證明圖已產生完成——請再點一次「儲存證明圖」存入相簿')
+      gov500CacheRef.current = blob
+      setGov500Ready(true)
     } catch (e: any) {
-      setErr(e?.message || '證明圖產生失敗，請再試一次')
+      setErr(e?.message || '證明圖建立失敗，請再試一次')
     } finally {
       setGov500Busy(false)
     }
@@ -2170,7 +2184,7 @@ export default function TrackPage() {
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={handleGov500Proof} disabled={gov500Busy}
                 style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: gov500Busy ? 'default' : 'pointer', opacity: gov500Busy ? 0.6 : 1 }}>
-                {gov500Busy ? '產生中…' : '儲存證明圖'}
+                {gov500Busy ? '建立中…' : gov500Ready ? '儲存證明圖' : '建立證明圖'}
               </button>
               <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
                 style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
