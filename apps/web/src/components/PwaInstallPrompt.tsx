@@ -105,11 +105,13 @@ export default function PwaInstallPrompt() {
       </div>
 
       {ios ? (
-        // 兩個步驟各自一行、靠左對齊；第一行 nowrap 讓文字與分享鈕圖示永遠同行（曾被換行打斷閱讀）
+        // 兩個步驟各自一行、靠左對齊。第一行用 flex 把文字與分享鈕圖示鎖在同一行——
+        // 先前用 inline svg + nowrap 仍被 WebKit 排成獨立一行（實測兩版皆如此），
+        // flex 不換行是規格保證、與子元素 display 無關，一勞永逸。
         <div style={stepsBox}>
-          <div style={{ whiteSpace: 'nowrap' }}>
-            ① 點 Safari 下方的分享鈕
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: '-2px', marginLeft: 5 }} aria-label="分享">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span>① 點 Safari 下方的分享鈕</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'block', flexShrink: 0 }} aria-label="分享">
               <path d="M12 3v12" /><path d="m8 7 4-4 4 4" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
             </svg>
           </div>
