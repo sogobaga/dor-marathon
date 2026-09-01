@@ -56,6 +56,8 @@ var specs = map[string]func(string) bool{
 	"monopoly_entry_whitelist":    isWhitelist,
 	"knowledge_entry_state":       isEntryState, // 知識探索(知識卡圖鑑)入口
 	"knowledge_entry_whitelist":   isWhitelist,
+	"gov500_entry_state":          isEntryState, // 500.gov.tw「揮汗有禮」運動證明圖入口（見 internal/profile.resolveEntry）
+	"gov500_entry_whitelist":      isWhitelist,
 	"gps_calib_entry_state":       isEntryState, // App GPS 距離校正入口（見 internal/gpscalib）
 	"gps_calib_entry_whitelist":   isWhitelist,
 	// 站內信通知白名單：與上面「是否套用校正」的入口白名單**刻意分開**——入口一旦改成 open（全站
@@ -116,7 +118,8 @@ var specs = map[string]func(string) bool{
 }
 
 func isEntryState(v string) bool {
-	return v == "" || v == "hidden" || v == "locked" || v == "whitelist" || v == "open"
+	// "off"：階段性工具收納開關（見 internal/profile.resolveEntry）——比 hidden 多一層，連超管旁路都關閉。
+	return v == "" || v == "hidden" || v == "locked" || v == "whitelist" || v == "open" || v == "off"
 }
 func isWhitelist(v string) bool { return len(v) <= 20000 }
 

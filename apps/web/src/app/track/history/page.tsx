@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { activitiesApi, type GpsRunHistory } from '@/lib/api'
-import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
+import { getUserToken, withUserAuth, useUser, getUser } from '@/lib/userAuth'
 import { decodePolyline } from '@/lib/polyline'
+import { useDashboard } from '@/lib/useDashboard'
+import { generateRunProofImage, shareRunProof } from '@/lib/runProof'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
 
@@ -33,6 +35,29 @@ export default function TrackHistoryPage() {
   const [sel, setSel] = useState<GpsRunHistory | null>(null)
   const [err, setErr] = useState('')
   const mapRef = useRef<any>(null)
+  const { dash } = useDashboard() // 共用會員儀表板快取（見 lib/useDashboard.ts）；這裡只用來讀 gov500_entry
+  const [gov500Busy, setGov500Busy] = useState(false) // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
+
+  // 政府「揮汗有禮」活動證明圖：用選中這筆歷史紀錄的日期/距離/時間/配速（校正後優先，與畫面顯示同源）畫卡片。
+  async function handleGov500Proof() {
+    if (!sel || gov500Busy) return
+    setGov500Busy(true)
+    try {
+      const avgPaceS = sel.calib_avg_pace_s ?? sel.avg_pace_s
+      const blob = await generateRunProofImage({
+        startedAt: new Date(sel.started_at),
+        durationS: sel.duration_s,
+        distanceKm: sel.calib_distance_km ?? sel.distance_km,
+        avgPaceS: avgPaceS > 0 ? avgPaceS : null,
+        displayName: getUser()?.name || '',
+      })
+      await shareRunProof(blob)
+    } catch (e: any) {
+      setErr(e?.message || '證明圖產生失敗，請再試一次')
+    } finally {
+      setGov500Busy(false)
+    }
+  }
 
   const load = useCallback(() => {
     const t = getUserToken(); if (!t) return
@@ -91,6 +116,26 @@ export default function TrackHistoryPage() {
             <Stat label="時間" v={fmtTime(sel.duration_s)} />
             <Stat label="平均配速" v={`${fmtPace(sel.calib_avg_pace_s ?? sel.avg_pace_s)}/km`} />
           </div>
+          {/* 政府「揮汗有禮」活動證明圖：先只給超管看（gov500_entry，見系統設定 gov500_entry_state），
+              之後備妥後由系統設定開放給一般玩家。 */}
+          {dash?.gov500_entry === 'shown' && (
+            <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>政府「揮汗有禮」活動</div>
+              <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
+                產生含日期/時間/距離的證明圖，上傳到 500.gov.tw 完成當週任務。
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={handleGov500Proof} disabled={gov500Busy}
+                  style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: gov500Busy ? 'default' : 'pointer', opacity: gov500Busy ? 0.6 : 1 }}>
+                  {gov500Busy ? '產生中…' : '產生證明圖'}
+                </button>
+                <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
+                  style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
+                  前往 500.gov.tw
+                </button>
+              </div>
+            </div>
+          )}
           {/* GPS 距離校正（見 internal/gpscalib，2026-08-30）：這裡與「已同步活動」列表/總里程用同一套
               校正後數字；calib_factor<1 才代表真的套用過，額外標示原始值供對照（medium-3 finding 修正
               前，這裡顯示的是未校正原始距離，跟其他頁面對不上）。 */}

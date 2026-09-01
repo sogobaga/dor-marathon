@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import useSWR from 'swr'
 import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, cheerLayoutApi, parseCheerCharLayout, CHEER_CHAR_IDS, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy, type CheerCharLayout } from '@/lib/api'
-import { getUserToken, withUserAuth, useUser, AUTH_EVENT } from '@/lib/userAuth'
+import { getUserToken, withUserAuth, useUser, getUser, AUTH_EVENT } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
 import BossRankingPanel from '@/components/BossRankingPanel'
@@ -25,6 +25,7 @@ import { useIsLandscape } from '@/lib/useIsLandscape'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import { initMovingState, advanceMovingState, classifyMoveSignal, currentMovingS, flushMovingState, classifyDistSignal, shouldCommitDist, MOVE_JUDGE_WINDOW_S, RETRO_WINDOW_S, type MovingState } from '@/lib/movingTime'
 import { useDashboard } from '@/lib/useDashboard'
+import { generateRunProofImage, shareRunProof } from '@/lib/runProof'
 import { APP_VERSION } from '@/lib/version'
 import RaceFocusMode from './RaceFocusMode'
 import CheerShow from './CheerShow'
@@ -87,6 +88,7 @@ export default function TrackPage() {
   const [showActiveRaces, setShowActiveRaces] = useState(false) // 「進行中活動/賽事」面板開關
   const [showStartTip, setShowStartTip] = useState(false) // 從賽事詳情頁「前往挑戰」進入（?from=race）→ idle 時顯示一次性新手提醒，可點擊/X關閉
   const [uploading, setUploading] = useState(false)
+  const [gov500Busy, setGov500Busy] = useState(false) // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
   const [checkpoints, setCheckpoints] = useState<ActiveCheckpoint[]>([])
   const [curPos, setCurPos] = useState<{ lat: number; lng: number; acc: number } | null>(null)
   const curPosRef = useRef<{ lat: number; lng: number; acc: number } | null>(null); curPosRef.current = curPos // 供 marker click 等閉包讀最新位置（避免 stale）
@@ -361,6 +363,28 @@ export default function TrackPage() {
   function testCheer() {
     cheerTestCountRef.current += 1
     fireCheer(cheerTestCountRef.current, elapsed)
+  }
+
+  // 政府「揮汗有禮」活動證明圖（gov500_entry，見 lib/runProof.ts；入口先只給超管看，見後端
+  // profile/membership.go resolveEntry 的 gov500_entry_state）：用跑後總結 result 的距離/時間/配速 +
+  // startRef 記下的開跑時間戳，畫一張證明卡後叫出系統分享面板，讓使用者存到相簿再上傳 500.gov.tw。
+  async function handleGov500Proof() {
+    if (!result || gov500Busy) return
+    setGov500Busy(true)
+    try {
+      const blob = await generateRunProofImage({
+        startedAt: new Date(startRef.current),
+        durationS: result.duration_s,
+        distanceKm: result.distance_km,
+        avgPaceS: result.avg_pace_s > 0 ? result.avg_pace_s : null,
+        displayName: getUser()?.name || '',
+      })
+      await shareRunProof(blob)
+    } catch (e: any) {
+      setErr(e?.message || '證明圖產生失敗，請再試一次')
+    } finally {
+      setGov500Busy(false)
+    }
   }
 
   // #4 移動時間（排除靜止/抖動的「實際移動」時間）＋依它算的移動配速
@@ -2122,6 +2146,27 @@ export default function TrackPage() {
                   </div>
                 )
               })}
+            </div>
+          </div>
+        )}
+
+        {/* 政府「揮汗有禮」活動證明圖：先只給超管看（gov500_entry，見系統設定 gov500_entry_state），
+            之後備妥後由系統設定開放給一般玩家。純前端功能，跑完才有 result 可用。 */}
+        {status === 'done' && result && dash?.gov500_entry === 'shown' && (
+          <div style={{ marginTop: 16, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
+            <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>政府「揮汗有禮」活動</div>
+            <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
+              產生含日期/時間/距離的證明圖，上傳到 500.gov.tw 完成當週任務。
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={handleGov500Proof} disabled={gov500Busy}
+                style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: gov500Busy ? 'default' : 'pointer', opacity: gov500Busy ? 0.6 : 1 }}>
+                {gov500Busy ? '產生中…' : '產生證明圖'}
+              </button>
+              <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
+                style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
+                前往 500.gov.tw
+              </button>
             </div>
           </div>
         )}

@@ -136,6 +136,7 @@ type DashboardInfo struct {
 	CheerEditEntry   string `json:"cheer_edit_entry"`  // 啦啦隊角色位置校正模式入口可見性（同上）
 	MonopolyEntry    string `json:"monopoly_entry"`    // 環台大富翁入口可見性（同上）
 	KnowledgeEntry   string `json:"knowledge_entry"`   // 知識探索入口可見性（同上）
+	Gov500Entry      string `json:"gov500_entry"`      // 500.gov.tw「揮汗有禮」運動證明圖入口可見性（同上）
 	// 團練邀請（見 internal/runmeet）：入口可見性 + 本月剩餘發起次數（給入口徽章「本月 0/1」顯示）。
 	// ⚠️ 入口非 shown 時 runmeet.DashboardSummary 完全不查 DB（回 0），dashboard 熱路徑零額外成本；
 	// 規格否決的是「跨表 COUNT 待審申請數」，不是這個 users 主鍵讀取。
@@ -225,6 +226,11 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	d.CheerEditEntry = resolveEntry(r.Context(), h.db, "cheer_edit_entry_state", "cheer_edit_entry_whitelist", email, code, isSuperAdmin)
 	d.MonopolyEntry = resolveEntry(r.Context(), h.db, "monopoly_entry_state", "monopoly_entry_whitelist", email, code, isSuperAdmin)
 	d.KnowledgeEntry = resolveEntry(r.Context(), h.db, "knowledge_entry_state", "knowledge_entry_whitelist", email, code, isSuperAdmin)
+	// Gov500Entry：500.gov.tw「揮汗有禮」運動證明圖入口，純前端 UI 開關（產生證明圖 canvas 純前端跑、
+	// 分享走系統分享面板，沒有對應的後端 API 要保護，不需要比照其他入口再加 requireEntry 中介層）。
+	// state 未設定＝hidden＝一般玩家看不到，只有超管旁路看得到——正是「先只給站長」的預設；
+	// 之後系統設定開放（whitelist/open）即可讓一般跑者也看到。
+	d.Gov500Entry = resolveEntry(r.Context(), h.db, "gov500_entry_state", "gov500_entry_whitelist", email, code, isSuperAdmin)
 	d.GpsCalibEntry, d.GpsCalibFactor, d.GpsCalibStatus, d.GpsCalibPairs, d.GpsCalibEnabled =
 		gpscalib.DashboardSummary(r.Context(), h.db, userID, email, code, isSuperAdmin)
 	levels, err := h.levelConfigList(r.Context())
@@ -272,10 +278,17 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 // resolveEntry 依系統設定 <stateKey>（+ <wlKey> 白名單）解析出「這個使用者」該看到的入口狀態。
 // 回 hidden 不顯示 / locked 顯示但不能按 / shown 顯示且可按。白名單留在後端解析，避免整包帳號外流。
 func resolveEntry(ctx context.Context, db *pgxpool.Pool, stateKey, wlKey, email, code string, isSuperAdmin bool) string {
+	state := appsettings.GetString(ctx, db, stateKey, "hidden")
+	// "off" 一律回 hidden，連超管旁路都不放行——階段性工具（例：測試應援/校正啦啦隊）收納用，
+	// 站長要整批關閉時免得還得一一登出超管帳號才看不到；之後要新增啦啦隊、需要重新開放校正時，
+	// 把對應 state 改回 whitelist/open 即可重新啟用，不需要改程式。
+	if state == "off" {
+		return "hidden"
+	}
 	if isSuperAdmin {
 		return "shown"
 	}
-	switch appsettings.GetString(ctx, db, stateKey, "hidden") {
+	switch state {
 	case "open":
 		return "shown"
 	case "locked":

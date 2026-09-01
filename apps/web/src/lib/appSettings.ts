@@ -157,6 +157,24 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
   {
+    key: 'gov500_entry_state', group: '揮汗有禮證明圖入口', label: '入口顯示狀態', type: 'select', def: 'hidden',
+    help: '控制「跑後總結／歷史紀錄詳情」頁的政府「揮汗有禮」活動證明圖產生按鈕對前台玩家的可見性（500.gov.tw）。'
+      + '純前端功能（產圖+叫出系統分享面板，無對應後端 API），先只給超管看，備妥後再開放。'
+      + '「off」比其他狀態多一層：連超管旁路都關閉，整批收納此工具時用。',
+    options: [
+      { value: 'hidden', label: '前台隱藏（都看不到，超管仍看得到）' },
+      { value: 'locked', label: '顯示但不能按（即將開放）' },
+      { value: 'whitelist', label: '顯示且指定帳號可按（下方白名單）' },
+      { value: 'open', label: '顯示且全部開放（正式開放）' },
+      { value: 'off', label: 'off（全面關閉，含超管）' },
+    ],
+  },
+  {
+    key: 'gov500_entry_whitelist', group: '揮汗有禮證明圖入口', label: '指定帳號白名單', type: 'text', def: '',
+    help: '僅在上方選「指定帳號可按」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email。',
+    placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
+  },
+  {
     key: 'training_entry_state', group: '自主訓練入口', label: '入口顯示狀態', type: 'select', def: 'whitelist',
     help: '控制「會員面板的自主訓練按鈕」對前台玩家的可見性（VIP 限定功能）。測試中，建議先「僅指定帳號」。',
     options: [
@@ -188,12 +206,14 @@ export const SETTINGS_SPECS: SettingSpec[] = [
   },
   {
     key: 'cheer_test_entry_state', group: '跑步應援', label: '應援測試按鈕入口', type: 'select', def: 'whitelist',
-    help: 'GPS 跑步頁的「測試應援」按鈕；預設僅白名單帳號可見。',
+    help: 'GPS 跑步頁的「測試應援」按鈕；預設僅白名單帳號可見。「off」比「前台隱藏」多一層：連超管旁路都關閉，'
+      + '測試告一段落想整批收納時用，之後要重新校正/測試再改回 whitelist 即可，不用改程式。',
     options: [
-      { value: 'hidden', label: '前台隱藏（都看不到）' },
+      { value: 'hidden', label: '前台隱藏（都看不到，超管仍看得到）' },
       { value: 'locked', label: '顯示但不能按（即將開放）' },
       { value: 'whitelist', label: '顯示且指定帳號可按（下方白名單）' },
       { value: 'open', label: '顯示且全部開放（正式開放）' },
+      { value: 'off', label: 'off（全面關閉，含超管）' },
     ],
   },
   {
@@ -208,12 +228,14 @@ export const SETTINGS_SPECS: SettingSpec[] = [
   },
   {
     key: 'cheer_edit_entry_state', group: '跑步應援', label: '啦啦隊位置校正模式入口', type: 'select', def: 'whitelist',
-    help: 'GPS 跑步頁的『🎯 校正啦啦隊』按鈕與 ?cheerEdit=1 連結；校正完成後可改為隱藏關閉。',
+    help: 'GPS 跑步頁的『🎯 校正啦啦隊』按鈕與 ?cheerEdit=1 連結；校正完成後可改為隱藏關閉。「off」比「前台隱藏」'
+      + '多一層：連超管旁路都關閉，之後新增啦啦隊需要重新校正時，改回 whitelist/open 即可重新啟用。',
     options: [
-      { value: 'hidden', label: '前台隱藏（都看不到）' },
+      { value: 'hidden', label: '前台隱藏（都看不到，超管仍看得到）' },
       { value: 'locked', label: '顯示但不能按（即將開放）' },
       { value: 'whitelist', label: '顯示且指定帳號可按（下方白名單）' },
       { value: 'open', label: '顯示且全部開放（正式開放）' },
+      { value: 'off', label: 'off（全面關閉，含超管）' },
     ],
   },
   {
