@@ -25,7 +25,7 @@ import { useIsLandscape } from '@/lib/useIsLandscape'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import { initMovingState, advanceMovingState, classifyMoveSignal, currentMovingS, flushMovingState, classifyDistSignal, shouldCommitDist, MOVE_JUDGE_WINDOW_S, RETRO_WINDOW_S, type MovingState } from '@/lib/movingTime'
 import { useDashboard } from '@/lib/useDashboard'
-import { generateRunProofImage, shareRunProof } from '@/lib/runProof'
+import { deliverRunProof, generateRunProofImage } from '@/lib/runProof'
 import { APP_VERSION } from '@/lib/version'
 import RaceFocusMode from './RaceFocusMode'
 import CheerShow from './CheerShow'
@@ -387,7 +387,7 @@ export default function TrackPage() {
         avgPaceS: result.avg_pace_s > 0 ? result.avg_pace_s : null,
         displayName: realName,
       })
-      await shareRunProof(blob)
+      await deliverRunProof(blob, `DOR跑步證明_${new Date(startRef.current).toISOString().slice(0, 10).replace(/-/g, '')}.png`)
     } catch (e: any) {
       setErr(e?.message || '證明圖產生失敗，請再試一次')
     } finally {
@@ -2164,12 +2164,12 @@ export default function TrackPage() {
           <div style={{ marginTop: 16, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
             <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>政府「揮汗有禮」活動</div>
             <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
-              產生含日期/時間/距離的證明圖，上傳到 500.gov.tw 完成當週任務。
+              一鍵下載含日期/時間/距離的證明圖，再到 500.gov.tw 上傳完成當週任務。
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={handleGov500Proof} disabled={gov500Busy}
                 style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: gov500Busy ? 'default' : 'pointer', opacity: gov500Busy ? 0.6 : 1 }}>
-                {gov500Busy ? '產生中…' : '產生證明圖'}
+                {gov500Busy ? '產生中…' : '下載證明圖'}
               </button>
               <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
                 style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>

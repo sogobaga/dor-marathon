@@ -219,3 +219,26 @@ export async function captureRunProofFromDom(
   ctx.fillText(right, out.width - ctx.measureText(right).width - 28, shot.height + footerH / 2)
   return await new Promise<Blob>((resolve, reject) => out.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'))
 }
+
+// 一鍵取得成品（使用者要求把「產生＋儲存」合併成一步）：
+// 瀏覽器 → 程式觸發 <a download> 直接下載（免分享面板；iOS Safari 存進「檔案」App 的下載項目，
+// 網址列會出現下載圖示）。iOS 主畫面 App（standalone）→ 下載管線不可靠（歷來常無聲失敗），
+// 退回系統分享面板（儲存影像），至少一定拿得到圖。
+export async function deliverRunProof(blob: Blob, filename: string): Promise<'downloaded' | 'shared'> {
+  const standalone = (navigator as { standalone?: boolean }).standalone === true
+  if (!standalone) {
+    try {
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 30_000) // 給下載管線足夠時間再回收
+      return 'downloaded'
+    } catch { /* 罕見失敗 → 分享面板兜底 */ }
+  }
+  await shareRunProof(blob)
+  return 'shared'
+}

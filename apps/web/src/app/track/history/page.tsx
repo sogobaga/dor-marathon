@@ -5,7 +5,7 @@ import { activitiesApi, profileApi, type GpsRunHistory, type Profile } from '@/l
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { decodePolyline } from '@/lib/polyline'
 import { useDashboard } from '@/lib/useDashboard'
-import { captureRunProofFromDom, generateRunProofImage, shareRunProof } from '@/lib/runProof'
+import { captureRunProofFromDom, deliverRunProof, generateRunProofImage } from '@/lib/runProof'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
 
@@ -42,7 +42,8 @@ export default function TrackHistoryPage() {
   const profileRef = useRef<Profile | null>(null)  // 個資快取（真實姓名）
   const [askRealName, setAskRealName] = useState(false)
   const [realNameInput, setRealNameInput] = useState('')
-  const [realNameSaving, setRealNameSaving] = useState(false) // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
+  const [realNameSaving, setRealNameSaving] = useState(false)
+  const [gov500Msg, setGov500Msg] = useState('') // 下載完成提示（幾秒後自動清除） // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
 
   // 把「畫面上的地圖」重繪成一張乾淨 canvas：磚用實際渲染位置（getBoundingClientRect 已含
   // Leaflet 所有 transform）、軌跡/起終點用 latLngToContainerPoint 重投影——與畫面同一套座標。
@@ -158,7 +159,12 @@ export default function TrackHistoryPage() {
           displayName: realName,
         })
       }
-      await shareRunProof(blob)
+      const fname = `DOR跑步證明_${new Date(sel.started_at).toISOString().slice(0, 10).replace(/-/g, '')}.png`
+      const how = await deliverRunProof(blob, fname)
+      if (how === 'downloaded') {
+        setGov500Msg('已下載證明圖：在「檔案」App 的「下載項目」可找到，直接到 500.gov.tw 上傳即可')
+        setTimeout(() => setGov500Msg(''), 8000)
+      }
     } catch (e: any) {
       setErr(e?.message || '證明圖產生失敗，請再試一次')
     } finally {
@@ -276,18 +282,19 @@ export default function TrackHistoryPage() {
             <div data-proof-ignore="1" style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
               <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>政府「揮汗有禮」活動</div>
               <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
-                產生含日期/時間/距離的證明圖，上傳到 500.gov.tw 完成當週任務。
+                一鍵下載含日期/時間/距離的證明圖，再到 500.gov.tw 上傳完成當週任務。
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={handleGov500Proof} disabled={gov500Busy}
                   style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: gov500Busy ? 'default' : 'pointer', opacity: gov500Busy ? 0.6 : 1 }}>
-                  {gov500Busy ? '產生中…' : '產生證明圖'}
+                  {gov500Busy ? '產生中…' : '下載證明圖'}
                 </button>
                 <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
                   style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
                   前往 500.gov.tw
                 </button>
               </div>
+              {gov500Msg && <div style={{ fontSize: 12, color: 'var(--fug)', marginTop: 8, lineHeight: 1.5 }}>✓ {gov500Msg}</div>}
               <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.5 }}>
                 小提示：政府網站第一次登入時，讓 Safari「儲存密碼」——之後回訪只要 Face ID 自動填入，免重打帳密。
               </div>
