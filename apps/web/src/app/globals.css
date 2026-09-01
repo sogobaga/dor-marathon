@@ -272,6 +272,21 @@ html, body {
    治不了錨定，但條帶變成暗色＝隱形。:has 需 iOS 15.4+；更舊引擎維持現狀（僅外觀，無功能影響）。 */
 html:has([data-admin-root]), html:has([data-admin-root]) body { background: #09090f; }
 
+/* ── PWA（standalone）專屬版面修正 ──
+   區隔方式：@media (display-mode: standalone) 只在「加入主畫面」啟動時成立（JS 對應
+   navigator.standalone）。瀏覽器模式完全不受影響。
+   1. --cta-safe 歸零：PhoneShell/PhoneFrame 的內容 wrapper 已經 paddingBottom:
+      env(safe-area-inset-bottom) 讓過一次底部安全區；置底 CTA 又加一次 var(--cta-safe)
+      ＝同值雙重讓位——瀏覽器模式 env=0 看不出來，standalone 裡「開始跑步」面板懸空 54+34px。
+      歸零後安全區由外層統一處理，面板貼底。
+   2. 版號上移：瀏覽器模式的 bottom:5 在 standalone 會壓進 home indicator 區疊在一起；
+      上移到安全區之上，剛好落在 CTA 面板與 home indicator 之間，各有各的空間。
+      （!important 是必要的：VersionBadge 的 bottom 是 inline style，唯有 !important 蓋得過。） */
+@media (display-mode: standalone) {
+  :root { --cta-safe: 0px; }
+  .version-badge-abs { bottom: calc(env(safe-area-inset-bottom, 0px) + 4px) !important; }
+}
+
 /* 手機模擬框容器 */
 .phone-frame {
   display: flex;

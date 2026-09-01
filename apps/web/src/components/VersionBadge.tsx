@@ -17,7 +17,8 @@ export default function VersionBadge({ showApi = false, absolute = false }: { sh
     : { padding: '8px 0 12px' }
 
   return (
-    <div style={{ ...wrap, textAlign: 'center', fontSize: 10, color: 'var(--tx-faint)', letterSpacing: '.04em' }}>
+    // version-badge-abs：globals.css 的 @media (display-mode: standalone) 用它把版號上移到安全區之上
+    <div className={absolute ? 'version-badge-abs' : undefined} style={{ ...wrap, textAlign: 'center', fontSize: 10, color: 'var(--tx-faint)', letterSpacing: '.04em' }}>
       {showApi ? `前台 ${APP_VERSION} · 後端 ${api ?? '…'}` : APP_VERSION}
     </div>
   )
