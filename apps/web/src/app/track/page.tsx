@@ -2176,6 +2176,9 @@ export default function TrackPage() {
                 前往 500.gov.tw
               </button>
             </div>
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.5 }}>
+              小提示：政府網站第一次登入時，讓 Safari「儲存密碼」——之後回訪只要 Face ID 自動填入，免重打帳密。
+            </div>
           </div>
         )}
 
