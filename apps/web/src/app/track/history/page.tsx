@@ -144,7 +144,7 @@ export default function TrackHistoryPage() {
         const mapCv = await snapshotMap()
         const mapEl = document.getElementById('hist-map')
         if (!proofAreaRef.current || !mapCv || !mapEl) throw new Error('地圖快照未就緒')
-        blob = await captureRunProofFromDom(proofAreaRef.current, realName, { mapOverlay: { el: mapEl, canvas: mapCv } })
+        blob = await captureRunProofFromDom(proofAreaRef.current, realName, { mapOverlay: { el: mapEl, canvas: mapCv, selector: '#hist-map' } })
       } catch (capErr: any) {
         // 退回合成卡仍可交差（含官方要求欄位），但把原因顯示出來——靜默退回會讓「圖裡沒地圖」
         // 變成無從追查的謎（v720 教訓）。

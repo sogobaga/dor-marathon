@@ -155,13 +155,22 @@ export async function shareRunProof(blob: Blob): Promise<'shared' | 'downloaded'
 export async function captureRunProofFromDom(
   el: HTMLElement,
   displayName: string,
-  opts?: { mapOverlay?: { el: HTMLElement; canvas: HTMLCanvasElement } },
+  opts?: { mapOverlay?: { el: HTMLElement; canvas: HTMLCanvasElement; selector: string } },
 ): Promise<Blob> {
   const html2canvas = (await import('html2canvas')).default
   const bg = getComputedStyle(document.body).backgroundColor || '#0d0f14'
+  const mapSel = opts?.mapOverlay?.selector
   const shot = await html2canvas(el, {
     scale: 2, useCORS: true, backgroundColor: bg, logging: false,
-    ignoreElements: (node) => (node as HTMLElement).dataset?.proofIgnore === '1',
+    // 活地圖「內容」全部不拍（容器本身保留當底框）：v724 實測 html2canvas 會把帶 CORS 的磚
+    // 依算錯的縮放 transform 放大、且未遵守容器 overflow 裁切，直接噴到頁面下半部。
+    // 地圖畫面一律只由下方的快照疊圖提供。
+    ignoreElements: (node) => {
+      const h = node as HTMLElement
+      if (h.dataset?.proofIgnore === '1') return true
+      if (mapSel && typeof h.closest === 'function' && h.closest(mapSel) && !(typeof h.matches === 'function' && h.matches(mapSel))) return true
+      return false
+    },
   })
   // Leaflet 地圖用「成品後製疊圖」：把預繪快照（snapshotMap，與畫面同座標系）直接 drawImage
   // 蓋到成品上地圖所在的位置。演進備忘——v719 讓 html2canvas 自己拍活地圖：多層 translate3d
