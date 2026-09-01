@@ -2133,7 +2133,7 @@ export default function TrackPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {splits.map((s, i) => (
                 <div key={i} style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-2)', borderRadius: 8, padding: '7px 12px', fontSize: 13 }}>
-                  <span style={{ color: 'var(--tx-dim)' }}>第 {i + 1} km</span>
+                  <span style={{ color: 'var(--tx-dim)', whiteSpace: 'nowrap' }}>第{i + 1}km</span>
                   <span style={{ fontWeight: 700 }}>{fmtPace(s)} /km</span>
                 </div>
               ))}

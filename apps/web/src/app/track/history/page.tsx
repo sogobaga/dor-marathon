@@ -110,11 +110,13 @@ export default function TrackHistoryPage() {
                     const pct = mx > mn ? 100 - ((p - mn) / (mx - mn)) * 62 : 100 // 越快(秒少)條越長
                     return (
                       <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                        <span style={{ width: 46, color: 'var(--tx-dim)', flexShrink: 0 }}>第 {i + 1} km</span>
+                        {/* 不換行＋自然寬度（minWidth 對齊常見 1-2 位數）：第1km～第100km 皆單行，
+                            量條 flex:1 自動讓位——原本硬限 46px 使「第 2 km」就折行、一列變兩列高 */}
+                        <span style={{ minWidth: 46, whiteSpace: 'nowrap', color: 'var(--tx-dim)', flexShrink: 0 }}>第{i + 1}km</span>
                         <div style={{ flex: 1, height: 8, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden' }}>
                           <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#FFD24D,#46E3A0)', borderRadius: 999 }} />
                         </div>
-                        <span style={{ width: 58, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtPace(p)}/km</span>
+                        <span style={{ minWidth: 58, whiteSpace: 'nowrap', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtPace(p)}/km</span>
                       </div>
                     )
                   })
