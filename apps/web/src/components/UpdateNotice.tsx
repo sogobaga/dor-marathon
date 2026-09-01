@@ -13,7 +13,8 @@ import { usePathname } from 'next/navigation'
 // 比對 /app-version（no-store，由 Next 伺服器回答）與 build 時內聯的 NEXT_PUBLIC_APP_VERSION。
 //
 // 自動更新的安全界線：
-// ・/track 跑步中絕不打擾——不檢查、不顯示、倒數中途進入 /track 立即取消（跑步紀錄不可被 reload 打斷）。
+// ・/track 跑步中絕不打擾——不檢查、不顯示、倒數中途進入 /track 立即取消且不視同「稍後」
+//   （被動打斷≠拒絕；跑完離開後重新提醒補上更新）。跑步紀錄不可被 reload 打斷。
 // ・焦點在輸入框（打字中）只顯示卡片、不倒數，避免 reload 吃掉打到一半的留言；倒數途中開始打字則暫停。
 // ・其餘情況倒數 5 秒自動 reload；「稍後」＝本工作階段對這個版本不再提醒（下個版本照常通知）。
 // z-index 1450：> 面板(500)/安裝引導(1400)、< 蓋板廣告(2500)。
@@ -64,13 +65,14 @@ export default function UpdateNotice() {
     return () => { alive = false; clearTimeout(t); clearInterval(iv); document.removeEventListener('visibilitychange', onVis) }
   }, [onTrack])
 
-  // 倒數自動更新。打字中不啟動；倒數途中打字＝暫停在當前秒數；途中進 /track＝取消並視同「稍後」。
+  // 倒數自動更新。打字中不啟動；倒數途中打字＝暫停在當前秒數；途中進 /track＝取消（不視同稍後，跑完再提醒）。
   useEffect(() => {
     if (!newVer) return
     const iv = setInterval(() => {
       if (window.location.pathname.startsWith('/track')) {
+        // 取消但**不記**「稍後」：進跑步頁是被動打斷、不是使用者拒絕，
+        // 跑完離開 /track 後偵測器重啟，這個版本要再次提醒並補上更新。
         clearInterval(iv)
-        try { sessionStorage.setItem(DISMISS_KEY, newVer) } catch { /* ignore */ }
         setNewVer(null); setCount(null)
         return
       }
