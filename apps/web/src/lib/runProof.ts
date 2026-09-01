@@ -188,6 +188,9 @@ export async function captureRunProofFromDom(
     const sctx = shot.getContext('2d')
     if (sctx) {
       sctx.save()
+      // ⚠️ html2canvas 回傳的 canvas，其 context 殘留內部 scale 變換——不重設就 drawImage，
+      // 座標與尺寸會被再放大一次（v724/725 疊圖越畫越大越偏的真因，實測兩張截圖定案）。
+      sctx.setTransform(1, 0, 0, 1, 0, 0)
       // 沿用容器圓角裁切（roundRect iOS16+；不支援就方角，僅四角些微出界、可接受）
       const rr = (sctx as CanvasRenderingContext2D & { roundRect?: (x: number, y: number, w: number, h: number, r: number) => void }).roundRect
       if (typeof rr === 'function') { sctx.beginPath(); rr.call(sctx, x, y, w, h, 10 * sx); sctx.clip() }
