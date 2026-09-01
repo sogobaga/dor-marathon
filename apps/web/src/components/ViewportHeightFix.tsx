@@ -33,13 +33,18 @@ import { MOBILE_MQ } from '@/lib/useIsMobile'
  *     下 viewport ≡ 實體螢幕；首啟少算狀態列（852→793）時以 screen 邊長加高。僅 iOS standalone，
  *     Android 旗標不存在天然排除；轉向自癒後規則停火、走 calm 釋放。
  *
+ * 【v1.1.706-707 的教訓（勿重蹈）】三個「猜測性去黏」hack——真實捲動 nudge（+2px→scrollTo(0,1)）、
+ *  meta viewport 等價改寫、root translateZ(0) 層重建——上線期間使用者回報「一般瀏覽也開始出現底部
+ *  空帶」（先前僅『分頁被釋放後還原』偶發），時間點吻合、又修不好原病（有截圖為證），v1.1.728
+ *  全數移除、nudge 回到 +1px 重排版。合成器行為本機無法驗證，此類主動干預沒有 A/B 證據不得再上；
+ *  量測性規則（II/IV/S，只准加高、只信可驗證來源）不在此限。
+ *
  * 【v1.1.664 的教訓（勿重蹈）】
  *  ・Math.max(innerHeight, visualViewport.height) 的前提是「innerHeight 不受鍵盤影響」，
  *    iOS 12 起已被推翻、iOS 17/18 更有 innerHeight/vv/100dvh 三者一起掉的實測 → max() 兩邊同時被壓 →
  *    版面被寫成鍵盤態高度並鎖死（症狀 B）。
  *  ・不綁 visualViewport 的 'scroll'：那是 iOS 把焦點輸入框 pan 進可視區時的過渡值來源。
- *  ・單獨的 window.scrollTo(0,0) 是 no-op（內容沒有超出、也已在 0）；有效版本見 nudge()：
- *    先把 <html> 暫時 +2px 讓文件真的有 1px 可捲，捲下去再捲回來，逼 WebKit 重新錨定 viewport。
+ *  ・不做 window.scrollTo(0,0) nudge：body 是 overflow:hidden，那行從頭到尾都是 no-op。
  *
  * 【使用者端逃生門／診斷（不需重新部署）】
  *  ?vpfix=off  完全停用並清除 --app-h（＝純 CSS 版），設定寫入 localStorage 持久生效
@@ -162,19 +167,6 @@ export default function ViewportHeightFix() {
     }
     const dropProbe = () => { try { probe?.remove() } catch { /* noop */ } finally { probe = null } }
 
-    // 【猜測性去黏劑】把 meta viewport 改寫成「解析值等價、字串不同」再還原，逼 WebKit 重新跑一次
-    // viewport 解析。對「重新載入後 viewport 幾何整組過期」或許有機會觸發重算；成功率無一手來源佐證，
-    // 失敗＝什麼都沒發生（值等價，不影響縮放/排版）。只在 resume 時做，不進 commit 熱路徑。
-    const twiddleViewportMeta = () => {
-      try {
-        const m = document.querySelector('meta[name="viewport"]')
-        const orig = m?.getAttribute('content') || ''
-        if (!m || !orig) return
-        m.setAttribute('content', orig + ', width=device-width')
-        later(60, () => { try { m.setAttribute('content', orig) } catch { /* noop */ } })
-      } catch { /* noop */ }
-    }
-
     const setVar = (px: number) => {
       if (px === applied) return
       applied = px
@@ -258,38 +250,15 @@ export default function ViewportHeightFix() {
       rafId = requestAnimationFrame(() => { rafId = 0; commit() })
     }
 
-    // 只推一下、不寫任何量測值：把 <html> 暫時 +2px、做一次 1px 的**真實文件捲動**、再捲回並還原。
-    // 2026-09-01 vpdebug 實測定性（iPhone、分頁釋放後重載）：病態＝inner/icb/vv/dvh/svh 全部正確
-    //（小 viewport）、off 0、--app-h (none)，但整個 layout viewport 被「錨定」在工具列收合的位置——
-    // 上緣藏進網址列底下、下緣提早 (lvh−svh) px 露出 canvas 底色。尺寸沒壞、位置壞了：
-    // 所有可讀數值都對 ⇒ 任何量測規則在數學上都偵測不到，唯一出路是逼 WebKit 重新錨定，
-    // 而已知最可靠的重新錨定觸發器就是一次真實捲動（本站 overflow:hidden 從不捲動＝從無自癒機會）。
-    // overflow:hidden 只擋「使用者」捲動；內容一旦超出（+2px），程式化 scrollTo 仍有效。
-    // 1px 遠低於 Safari 收合工具列的捲動門檻，不會反過來把工具列縮起來；scrollY 停在 1 的那一幀
-    // 只是整頁上移 1px，肉眼不可見，還原時歸零。鍵盤中不捲，避免干擾輸入框的自動捲位。
-    // v1.1.707 再定性：第二張 vpdebug（前台病態畫面）顯示**連 dvh 都正確**、off=0——排版層完全正確，
-    // 是「合成器把 root 圖層放錯位置」（stale compositor placement），對所有 JS/CSS API 隱形。因此：
-    // ① 捲動加讀回儀表 html[data-vpnudge]（vpdebug 會顯示）：scrollTo 若被 overflow:hidden 的
-    //    viewport 擋下，下一張截圖就能證明「捲動根本沒發生」；
-    // ② 追加合成器層重建：root transform: translateZ(0) 開一幀再關，強迫 root 圖層重建/重放置。
-    //    transform 期間 fixed 子孫改錨到 html 盒——幾何與 viewport 相同，一幀內無感。
-    // 兩者對已正確的畫面皆無感；此為對症嘗試的最後一輪，再無效即走 PWA/偽裝路線。
+    // 只推一下、不寫任何量測值：把 <html> 高度 +1px 再還原，嘗試逼 WebKit 重新解析 ICB。
+    // 有效性無一手來源佐證；失敗＝什麼都沒發生（inline height 一定會被清掉，回到 CSS 公式）。
     const nudge = () => {
       try {
-        root.style.height = 'calc(100% + 2px)'
+        root.style.height = 'calc(100% + 1px)'
         void root.offsetHeight
-        let scrolled = false
-        if (!kbUp()) {
-          window.scrollTo(0, 1)
-          scrolled = (window.scrollY || 0) > 0
-          if (!scrolled) { root.scrollTop = 1; scrolled = root.scrollTop > 0 } // 有些引擎 window 擋、element 不擋
-        }
-        root.dataset.vpnudge = `${scrolled ? 'ok' : 'blocked'}@${new Date().toTimeString().slice(0, 8)}`
-        root.style.transform = 'translateZ(0)'
         if (nudgeTimer) clearTimeout(nudgeTimer)
-        const restore = () => { root.style.height = ''; root.style.transform = ''; window.scrollTo(0, 0); root.scrollTop = 0 }
-        nudgeTimer = setTimeout(restore, 300) // rAF 凍結時的保險清除
-        requestAnimationFrame(() => requestAnimationFrame(restore))
+        nudgeTimer = setTimeout(() => { root.style.height = '' }, 300) // rAF 被凍結時的保險清除
+        requestAnimationFrame(() => requestAnimationFrame(() => { root.style.height = '' }))
       } catch { /* noop */ }
     }
 
@@ -310,8 +279,6 @@ export default function ViewportHeightFix() {
       if (disposed || document.hidden || !mql.matches) return
       clearTimers()
       nudge()
-      twiddleViewportMeta()
-      later(600, nudge) // Safari 還原流程晚定案時第一發可能太早，補一發（nudge 冪等且無感）
       RESUME_STEPS.forEach((ms) => later(ms, commit))
       if (mode === 'heal') later(500, () => { hardHeal(); commit() })
     }

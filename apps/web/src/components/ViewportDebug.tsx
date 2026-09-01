@@ -30,7 +30,7 @@ export default function ViewportDebug() {
         `inner ${window.innerHeight} · icb ${root.clientHeight} · screen ${window.screen.height}`,
         `vv ${vv ? Math.round(vv.height) : '-'} · off ${vv ? Math.round(vv.offsetTop) : '-'} · scale ${vv ? vv.scale.toFixed(2) : '-'}`,
         `vh ${unit('100vh')} · dvh ${unit('100dvh')} · svh ${unit('100svh')} · lvh ${unit('100lvh')}`,
-        `--app-h ${root.style.getPropertyValue('--app-h') || '(none)'} · ae ${document.activeElement?.tagName || '-'} · nud ${root.dataset.vpnudge || '-'}`,
+        `--app-h ${root.style.getPropertyValue('--app-h') || '(none)'} · ae ${document.activeElement?.tagName || '-'}`,
       ])
     }
     tick()
