@@ -2124,7 +2124,8 @@ export default function TrackPage() {
               )}
               <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
                 style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                前往 500.gov.tw
+                <span style={{ display: 'block', lineHeight: 1.35 }}>上傳證明圖</span>
+                <span style={{ display: 'block', fontSize: 11, opacity: 0.8, lineHeight: 1.35 }}>500.gov.tw</span>
               </button>
             </div>
             {status === 'done' && result && gov500Ready && (
@@ -2234,7 +2235,8 @@ export default function TrackPage() {
               </button>
               <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
                 style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                前往 500.gov.tw
+                <span style={{ display: 'block', lineHeight: 1.35 }}>上傳證明圖</span>
+                <span style={{ display: 'block', fontSize: 11, opacity: 0.8, lineHeight: 1.35 }}>500.gov.tw</span>
               </button>
             </div>
             <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.5 }}>
@@ -2259,7 +2261,8 @@ export default function TrackPage() {
                 </button>
                 <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
                   style={{ flex: 1, background: 'var(--bg-2)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                  前往 500.gov.tw
+                  <span style={{ display: 'block', lineHeight: 1.35 }}>上傳證明圖</span>
+                  <span style={{ display: 'block', fontSize: 11, opacity: 0.8, lineHeight: 1.35 }}>500.gov.tw</span>
                 </button>
               </div>
               {gov500Ready && (

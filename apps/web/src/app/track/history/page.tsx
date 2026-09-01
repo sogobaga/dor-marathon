@@ -313,7 +313,8 @@ export default function TrackHistoryPage() {
                 </button>
                 <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
                   style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                  前往 500.gov.tw
+                  <span style={{ display: 'block', lineHeight: 1.35 }}>上傳證明圖</span>
+                  <span style={{ display: 'block', fontSize: 11, opacity: 0.8, lineHeight: 1.35 }}>500.gov.tw</span>
                 </button>
               </div>
               {gov500Msg && <div style={{ fontSize: 12, color: 'var(--fug)', marginTop: 8, lineHeight: 1.5 }}>✓ {gov500Msg}</div>}
