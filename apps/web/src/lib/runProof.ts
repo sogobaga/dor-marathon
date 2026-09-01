@@ -155,28 +155,37 @@ export async function shareRunProof(blob: Blob): Promise<'shared' | 'downloaded'
 export async function captureRunProofFromDom(
   el: HTMLElement,
   displayName: string,
-  opts?: { mapReplace?: { selector: string; canvas: HTMLCanvasElement } },
+  opts?: { mapOverlay?: { el: HTMLElement; canvas: HTMLCanvasElement } },
 ): Promise<Blob> {
   const html2canvas = (await import('html2canvas')).default
   const bg = getComputedStyle(document.body).backgroundColor || '#0d0f14'
-  const mapDataURL = opts?.mapReplace ? opts.mapReplace.canvas.toDataURL('image/png') : null
   const shot = await html2canvas(el, {
     scale: 2, useCORS: true, backgroundColor: bg, logging: false,
     ignoreElements: (node) => (node as HTMLElement).dataset?.proofIgnore === '1',
-    // Leaflet 地圖以「預先重繪好的快照」替換（動的是 clone，不影響畫面上的活地圖）：
-    // html2canvas 對 Leaflet 多層 translate3d 疊層的計算不準，會讓軌跡相對磚面偏移
-    //（使用者實測回報）；直接給成品圖繞開整個 transform 問題。
-    onclone: (doc: Document) => {
-      if (!mapDataURL || !opts?.mapReplace) return
-      const target = doc.querySelector(opts.mapReplace.selector) as HTMLElement | null
-      if (!target) return
-      target.innerHTML = ''
-      const img = doc.createElement('img')
-      img.src = mapDataURL
-      img.style.cssText = 'width:100%;height:100%;display:block;object-fit:cover'
-      target.appendChild(img)
-    },
   })
+  // Leaflet 地圖用「成品後製疊圖」：把預繪快照（snapshotMap，與畫面同座標系）直接 drawImage
+  // 蓋到成品上地圖所在的位置。演進備忘——v719 讓 html2canvas 自己拍活地圖：多層 translate3d
+  // 疊層算不準 → 軌跡偏移；v720-723 在 clone 注入 dataURL <img> 替換：html2canvas 圖片管線
+  // 沒把它畫出來 → 整塊空白。直接畫在成品 canvas 上沒有任何中間層，不再受它的管線影響；
+  // 活地圖在底下拍成什麼樣都無所謂，會被快照完整蓋掉。
+  if (opts?.mapOverlay) {
+    const rootR = el.getBoundingClientRect()
+    const mapR = opts.mapOverlay.el.getBoundingClientRect()
+    const sx = shot.width / rootR.width // 實際輸出縮放（≈scale 2，以量到的為準）
+    const x = (mapR.left - rootR.left) * sx
+    const y = (mapR.top - rootR.top) * sx
+    const w = mapR.width * sx
+    const h = mapR.height * sx
+    const sctx = shot.getContext('2d')
+    if (sctx) {
+      sctx.save()
+      // 沿用容器圓角裁切（roundRect iOS16+；不支援就方角，僅四角些微出界、可接受）
+      const rr = (sctx as CanvasRenderingContext2D & { roundRect?: (x: number, y: number, w: number, h: number, r: number) => void }).roundRect
+      if (typeof rr === 'function') { sctx.beginPath(); rr.call(sctx, x, y, w, h, 10 * sx); sctx.clip() }
+      sctx.drawImage(opts.mapOverlay.canvas, x, y, w, h)
+      sctx.restore()
+    }
+  }
   const footerH = 84
   const out = document.createElement('canvas')
   out.width = shot.width
