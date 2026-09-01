@@ -98,19 +98,22 @@ export default function PwaInstallPrompt() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/icon-192.png" alt="" width={44} height={44} style={{ borderRadius: 10, flexShrink: 0 }} />
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 800, fontSize: 14.5 }}>把 DOR 裝進主畫面</div>
+          <div style={{ fontWeight: 800, fontSize: 14.5 }}>把 DOR 下載到手機</div>
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,.66)', marginTop: 2 }}>全螢幕體驗、開啟更快，跑步一鍵開始</div>
         </div>
         <button onClick={snooze} aria-label="關閉" style={xBtn}>✕</button>
       </div>
 
       {ios ? (
+        // 兩個步驟各自一行、靠左對齊；第一行 nowrap 讓文字與分享鈕圖示永遠同行（曾被換行打斷閱讀）
         <div style={stepsBox}>
-          ① 點 Safari 下方的分享鈕
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: '-2px', margin: '0 3px' }} aria-label="分享">
-            <path d="M12 3v12" /><path d="m8 7 4-4 4 4" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
-          </svg>
-          　② 選「加入主畫面」
+          <div style={{ whiteSpace: 'nowrap' }}>
+            ① 點 Safari 下方的分享鈕
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: '-2px', marginLeft: 5 }} aria-label="分享">
+              <path d="M12 3v12" /><path d="m8 7 4-4 4 4" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" />
+            </svg>
+          </div>
+          <div>② 選「加入主畫面」</div>
         </div>
       ) : canNative ? (
         <button onClick={install} style={installBtn}>立即安裝</button>
