@@ -20,8 +20,9 @@ import { usePathname } from 'next/navigation'
 // z-index 1450：> 面板(500)/安裝引導(1400)、< 蓋板廣告(2500)。
 
 const CHECK_MIN_GAP_MS = 60 * 1000
-const POLL_MS = 15 * 60 * 1000
+const POLL_MS = 5 * 60 * 1000   // 15 分鐘實測太鈍（本站一天推十餘版，部署 5-8 分鐘完成，使用者等不到）
 const FIRST_DELAY_MS = 10 * 1000
+const SECOND_DELAY_MS = 90 * 1000 // 首查常落在「推送後、部署完成前」→ 90 秒補一查接住剛部署完的版本
 const COUNTDOWN_S = 5
 const DISMISS_KEY = 'dor.updDismissed'
 
@@ -59,10 +60,12 @@ export default function UpdateNotice() {
       } catch { /* 離線／部署切換瞬間：靜默略過，下次再查 */ }
     }
     const t = setTimeout(check, FIRST_DELAY_MS)
+    const t2 = setTimeout(check, SECOND_DELAY_MS)
     const iv = setInterval(check, POLL_MS)
     const onVis = () => { if (!document.hidden) check() }
     document.addEventListener('visibilitychange', onVis)
-    return () => { alive = false; clearTimeout(t); clearInterval(iv); document.removeEventListener('visibilitychange', onVis) }
+    window.addEventListener('pageshow', onVis) // Safari bfcache 還原不一定發 visibilitychange，補一手
+    return () => { alive = false; clearTimeout(t); clearTimeout(t2); clearInterval(iv); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('pageshow', onVis) }
   }, [onTrack])
 
   // 倒數自動更新。打字中不啟動；倒數途中打字＝暫停在當前秒數；途中進 /track＝取消（不視同稍後，跑完再提醒）。
