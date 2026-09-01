@@ -36,7 +36,9 @@ import { MOBILE_MQ } from '@/lib/useIsMobile'
  * 【v1.1.706-707 的教訓（勿重蹈）】三個「猜測性去黏」hack——真實捲動 nudge（+2px→scrollTo(0,1)）、
  *  meta viewport 等價改寫、root translateZ(0) 層重建——上線期間使用者回報「一般瀏覽也開始出現底部
  *  空帶」（先前僅『分頁被釋放後還原』偶發），時間點吻合、又修不好原病（有截圖為證），v1.1.728
- *  全數移除、nudge 回到 +1px 重排版。合成器行為本機無法驗證，此類主動干預沒有 A/B 證據不得再上；
+ *  全數移除、nudge 回到 +1px 重排版；v1.1.744 連 +1px nudge 也移除（每次載入/回前景讓文件短暫
+ *  可捲動，是最後一個無佐證的干預、也是病態的可疑誘因之一）——本檔自此為**純量測**：只讀數值、
+ *  只在規則 II/IV/S 成立時寫 --app-h。合成器行為本機無法驗證，主動干預沒有 A/B 證據不得再上；
  *  量測性規則（II/IV/S，只准加高、只信可驗證來源）不在此限。
  *
  * 【v1.1.664 的教訓（勿重蹈）】
@@ -102,7 +104,6 @@ export default function ViewportHeightFix() {
     let wasHidden = false
     let rafId = 0
     let timers: ReturnType<typeof setTimeout>[] = []
-    let nudgeTimer: ReturnType<typeof setTimeout> | null = null
 
     const clearTimers = () => { timers.forEach(clearTimeout); timers = [] }
     const later = (ms: number, fn: () => void) => { timers.push(setTimeout(() => { if (!disposed) fn() }, ms)) }
@@ -250,18 +251,6 @@ export default function ViewportHeightFix() {
       rafId = requestAnimationFrame(() => { rafId = 0; commit() })
     }
 
-    // 只推一下、不寫任何量測值：把 <html> 高度 +1px 再還原，嘗試逼 WebKit 重新解析 ICB。
-    // 有效性無一手來源佐證；失敗＝什麼都沒發生（inline height 一定會被清掉，回到 CSS 公式）。
-    const nudge = () => {
-      try {
-        root.style.height = 'calc(100% + 1px)'
-        void root.offsetHeight
-        if (nudgeTimer) clearTimeout(nudgeTimer)
-        nudgeTimer = setTimeout(() => { root.style.height = '' }, 300) // rAF 被凍結時的保險清除
-        requestAnimationFrame(() => requestAnimationFrame(() => { root.style.height = '' }))
-      } catch { /* noop */ }
-    }
-
     // cederhook healViewport：強迫整棵子樹重排。已知副作用：閃一下、子樹捲動位置/CSS 動畫/媒體狀態重置。
     // 預設關閉（需 ?vpfix=heal），且 /track 永久排除（跑步中 Leaflet/計時器不可重排）。
     const hardHeal = () => {
@@ -278,7 +267,6 @@ export default function ViewportHeightFix() {
     const onResume = () => {
       if (disposed || document.hidden || !mql.matches) return
       clearTimers()
-      nudge()
       RESUME_STEPS.forEach((ms) => later(ms, commit))
       if (mode === 'heal') later(500, () => { hardHeal(); commit() })
     }
@@ -314,7 +302,6 @@ export default function ViewportHeightFix() {
       dropProbe()
       clearInterval(poll)
       clearTimers()
-      if (nudgeTimer) clearTimeout(nudgeTimer)
       if (rafId) cancelAnimationFrame(rafId)
       window.removeEventListener('resize', onResize)
       window.removeEventListener('orientationchange', onOrientation)
