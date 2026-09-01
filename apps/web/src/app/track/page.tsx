@@ -387,7 +387,8 @@ export default function TrackPage() {
         avgPaceS: result.avg_pace_s > 0 ? result.avg_pace_s : null,
         displayName: realName,
       })
-      await deliverRunProof(blob, `DOR跑步證明_${new Date(startRef.current).toISOString().slice(0, 10).replace(/-/g, '')}.png`)
+      const how = await deliverRunProof(blob, `DOR跑步證明_${new Date(startRef.current).toISOString().slice(0, 10).replace(/-/g, '')}.png`)
+      if (how === 'retry') setErr('證明圖已產生完成——請再點一次「儲存證明圖」存入相簿')
     } catch (e: any) {
       setErr(e?.message || '證明圖產生失敗，請再試一次')
     } finally {

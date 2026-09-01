@@ -224,7 +224,10 @@ export async function captureRunProofFromDom(
 // iOS 安全限制：網頁**不可能**靜默寫入相簿（防網站偷塞圖），唯一路徑是系統分享面板的
 // 「儲存影像」——所以存相簿的最短流程必然是兩點（按鈕→儲存影像）。分享面板不可用的環境
 //（桌機瀏覽器/舊 iOS）才退回 <a download> 檔案下載（存「檔案」App 的下載項目）。
-export async function deliverRunProof(blob: Blob, filename: string): Promise<'downloaded' | 'shared'> {
+// 回傳 'retry'＝iOS 判定使用者手勢已過期（NotAllowedError）：產圖耗時數秒，分享面板必須在
+// 點擊當下開啟——此時「不要」退下載（會違反使用者的相簿預期），改叫呼叫端提示再點一次；
+// 第二次點擊用快取的成品即時開面板，一定成功。
+export async function deliverRunProof(blob: Blob, filename: string): Promise<'downloaded' | 'shared' | 'retry'> {
   const file = new File([blob], filename, { type: 'image/png' })
   if (typeof navigator.share === 'function' && !!navigator.canShare?.({ files: [file] })) {
     try {
@@ -232,6 +235,7 @@ export async function deliverRunProof(blob: Blob, filename: string): Promise<'do
       return 'shared'
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') return 'shared' // 使用者取消＝流程正常結束
+      if (e instanceof Error && e.name === 'NotAllowedError') return 'retry' // 手勢過期：引導再點一次
       // 其他失敗 → 落到下載兜底
     }
   }

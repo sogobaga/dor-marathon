@@ -43,7 +43,8 @@ export default function TrackHistoryPage() {
   const [askRealName, setAskRealName] = useState(false)
   const [realNameInput, setRealNameInput] = useState('')
   const [realNameSaving, setRealNameSaving] = useState(false)
-  const [gov500Msg, setGov500Msg] = useState('') // 下載完成提示（幾秒後自動清除） // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
+  const [gov500Msg, setGov500Msg] = useState('') // 下載完成提示（幾秒後自動清除）
+  const proofCacheRef = useRef<{ key: string; blob: Blob } | null>(null) // 成品快取：手勢過期要求再點一次時，第二次即時分享 // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
 
   // 把「畫面上的地圖」重繪成一張乾淨 canvas：磚用實際渲染位置（getBoundingClientRect 已含
   // Leaflet 所有 transform）、軌跡/起終點用 latLngToContainerPoint 重投影——與畫面同一套座標。
@@ -140,8 +141,11 @@ export default function TrackHistoryPage() {
     if (!sel) return
     setGov500Busy(true)
     try {
+      const cacheKey = `${sel.started_at}|${realName}`
       let blob: Blob
-      try {
+      if (proofCacheRef.current?.key === cacheKey) {
+        blob = proofCacheRef.current.blob // 第二次點擊：直接用成品，分享面板在手勢當下即時開啟
+      } else try {
         const mapCv = await snapshotMap()
         const mapEl = document.getElementById('hist-map')
         if (!proofAreaRef.current || !mapCv || !mapEl) throw new Error('地圖快照未就緒')
@@ -159,11 +163,16 @@ export default function TrackHistoryPage() {
           displayName: realName,
         })
       }
+      proofCacheRef.current = { key: cacheKey, blob }
       const fname = `DOR跑步證明_${new Date(sel.started_at).toISOString().slice(0, 10).replace(/-/g, '')}.png`
       const how = await deliverRunProof(blob, fname)
-      if (how === 'downloaded') {
+      if (how === 'retry') {
+        setGov500Msg('證明圖已產生完成——請再點一次「儲存證明圖」，就會跳出存入相簿的視窗')
+      } else if (how === 'downloaded') {
         setGov500Msg('已下載證明圖：在「檔案」App 的「下載項目」可找到，直接到 500.gov.tw 上傳即可')
         setTimeout(() => setGov500Msg(''), 8000)
+      } else {
+        setGov500Msg('')
       }
     } catch (e: any) {
       setErr(e?.message || '證明圖產生失敗，請再試一次')
