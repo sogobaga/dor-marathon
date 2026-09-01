@@ -152,12 +152,30 @@ export async function shareRunProof(blob: Blob): Promise<'shared' | 'downloaded'
 // 避免「另外合成的卡片看起來像作假」的疑慮；只在底部追加 DOR 署名列，不改動任何數據呈現。
 // 地圖磚是跨網域圖片：useCORS 讓 html2canvas 以 crossOrigin=anonymous 重抓（OSM 磚有 ACAO:*）。
 // 標了 data-proof-ignore="1" 的節點（關閉鈕、活動卡片本身）不入鏡。
-export async function captureRunProofFromDom(el: HTMLElement, displayName: string): Promise<Blob> {
+export async function captureRunProofFromDom(
+  el: HTMLElement,
+  displayName: string,
+  opts?: { mapReplace?: { selector: string; canvas: HTMLCanvasElement } },
+): Promise<Blob> {
   const html2canvas = (await import('html2canvas')).default
   const bg = getComputedStyle(document.body).backgroundColor || '#0d0f14'
+  const mapDataURL = opts?.mapReplace ? opts.mapReplace.canvas.toDataURL('image/png') : null
   const shot = await html2canvas(el, {
     scale: 2, useCORS: true, backgroundColor: bg, logging: false,
     ignoreElements: (node) => (node as HTMLElement).dataset?.proofIgnore === '1',
+    // Leaflet 地圖以「預先重繪好的快照」替換（動的是 clone，不影響畫面上的活地圖）：
+    // html2canvas 對 Leaflet 多層 translate3d 疊層的計算不準，會讓軌跡相對磚面偏移
+    //（使用者實測回報）；直接給成品圖繞開整個 transform 問題。
+    onclone: (doc: Document) => {
+      if (!mapDataURL || !opts?.mapReplace) return
+      const target = doc.querySelector(opts.mapReplace.selector) as HTMLElement | null
+      if (!target) return
+      target.innerHTML = ''
+      const img = doc.createElement('img')
+      img.src = mapDataURL
+      img.style.cssText = 'width:100%;height:100%;display:block;object-fit:cover'
+      target.appendChild(img)
+    },
   })
   const footerH = 84
   const out = document.createElement('canvas')

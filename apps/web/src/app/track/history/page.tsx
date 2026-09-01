@@ -1,8 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { activitiesApi, type GpsRunHistory } from '@/lib/api'
-import { getUserToken, withUserAuth, useUser, getUser } from '@/lib/userAuth'
+import { activitiesApi, profileApi, type GpsRunHistory, type Profile } from '@/lib/api'
+import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { decodePolyline } from '@/lib/polyline'
 import { useDashboard } from '@/lib/useDashboard'
 import { captureRunProofFromDom, generateRunProofImage, shareRunProof } from '@/lib/runProof'
@@ -37,20 +37,103 @@ export default function TrackHistoryPage() {
   const mapRef = useRef<any>(null)
   const { dash } = useDashboard() // 共用會員儀表板快取（見 lib/useDashboard.ts）；這裡只用來讀 gov500_entry
   const [gov500Busy, setGov500Busy] = useState(false)
-  const proofAreaRef = useRef<HTMLDivElement | null>(null) // 證明圖擷取範圍（詳情容器；關閉鈕/活動卡以 data-proof-ignore 排除） // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
+  const proofAreaRef = useRef<HTMLDivElement | null>(null) // 證明圖擷取範圍（詳情容器；關閉鈕/活動卡以 data-proof-ignore 排除）
+  const coordsRef = useRef<[number, number][]>([]) // 目前選中紀錄的軌跡座標（snapshotMap 重投影用）
+  const profileRef = useRef<Profile | null>(null)  // 個資快取（真實姓名）
+  const [askRealName, setAskRealName] = useState(false)
+  const [realNameInput, setRealNameInput] = useState('')
+  const [realNameSaving, setRealNameSaving] = useState(false) // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
+
+  // 把「畫面上的地圖」重繪成一張乾淨 canvas：磚用實際渲染位置（getBoundingClientRect 已含
+  // Leaflet 所有 transform）、軌跡/起終點用 latLngToContainerPoint 重投影——與畫面同一套座標。
+  // 動機：html2canvas 對 Leaflet 多層 translate3d 的疊層計算不準，成品的軌跡會相對磚面偏移
+  //（使用者實測回報）；預繪快照在擷取時替換活地圖即可完全繞開。磚需 CORS 載入
+  //（tileLayer crossOrigin:true），否則畫入即汙染 canvas、toBlob 會失敗（回 null 走合成卡退路）。
+  function snapshotMap(): HTMLCanvasElement | null {
+    const map = mapRef.current
+    const cont = document.getElementById('hist-map')
+    const coords = coordsRef.current
+    if (!map || !cont || coords.length < 2) return null
+    const rect = cont.getBoundingClientRect()
+    if (rect.width < 10 || rect.height < 10) return null
+    const cv = document.createElement('canvas')
+    cv.width = Math.round(rect.width * 2); cv.height = Math.round(rect.height * 2)
+    const ctx = cv.getContext('2d')
+    if (!ctx) return null
+    ctx.scale(2, 2)
+    ctx.fillStyle = '#e8e6e1'; ctx.fillRect(0, 0, rect.width, rect.height) // 磚縫底色
+    for (const t of Array.from(cont.querySelectorAll<HTMLImageElement>('img.leaflet-tile'))) {
+      if (!t.complete || !t.naturalWidth) continue
+      const r = t.getBoundingClientRect()
+      try { ctx.drawImage(t, r.left - rect.left, r.top - rect.top, r.width, r.height) } catch { return null }
+    }
+    const pts = coords.map((c) => map.latLngToContainerPoint(c))
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round'
+    ctx.strokeStyle = sel?.flagged ? '#ff5a5a' : '#46E3A0'; ctx.lineWidth = 5
+    ctx.beginPath()
+    pts.forEach((pt, i) => (i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y)))
+    ctx.stroke()
+    const dot = (pt: { x: number; y: number }, fill: string) => {
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, 7, 0, Math.PI * 2)
+      ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke()
+    }
+    dot(pts[0], '#46E3A0'); dot(pts[pts.length - 1], '#ff5a5a')
+    // OSM 授權標示（ODbL 要求，重繪後仍須保留）
+    ctx.font = '11px -apple-system, sans-serif'
+    const attr = '© OpenStreetMap'
+    const tw = ctx.measureText(attr).width
+    ctx.fillStyle = 'rgba(255,255,255,.78)'; ctx.fillRect(rect.width - tw - 12, rect.height - 20, tw + 12, 20)
+    ctx.fillStyle = '#333'; ctx.fillText(attr, rect.width - tw - 6, rect.height - 6)
+    return cv
+  }
+
+  // 取「真實姓名」：政府網站上傳需與身分相符的姓名，不能用暱稱（使用者明確要求）。
+  // 個資已填→直接用；沒填→開彈窗補填，儲存回個人資料（之後不用再填）並自動接續產圖。
+  async function ensureRealName(): Promise<string | null> {
+    const cached = profileRef.current?.real_name?.trim()
+    if (cached) return cached
+    const { profile } = await withUserAuth((t) => profileApi.getMe(t))
+    profileRef.current = profile
+    const rn = (profile.real_name || '').trim()
+    if (rn) return rn
+    setRealNameInput('')
+    setAskRealName(true)
+    return null
+  }
+
+  async function saveRealNameAndContinue() {
+    const rn = realNameInput.trim()
+    if (!rn || realNameSaving) return
+    setRealNameSaving(true); setErr('')
+    try {
+      const prev = profileRef.current
+      // 讀改寫全欄位：後端 PUT /profile 的空字串有「清空該欄」語意，不能只送 real_name
+      const { profile } = await withUserAuth((t) => profileApi.updateMe(t, {
+        name: prev?.name, avatar_url: prev?.avatar_url, real_name: rn, nickname: prev?.nickname,
+        phone: prev?.phone, address: prev?.address, birthday: prev?.birthday, gender: prev?.gender,
+      }))
+      profileRef.current = profile
+      setAskRealName(false)
+      await runProofFlow(rn)
+    } catch (e: any) {
+      setErr(e?.message || '儲存失敗，請再試一次')
+    } finally {
+      setRealNameSaving(false)
+    }
+  }
 
   // 政府「揮汗有禮」活動證明圖：優先「畫面實況擷取」（含 GPS 軌跡圖/統計/分段計量表，與畫面
-  // 一致才不會有作假疑慮——使用者明確要求）；擷取失敗（地圖磚 CORS/記憶體不足等）才退回合成卡片
-  //（至少含官方要求的日期/時間/距離欄位）。兩者數據同源（校正後優先）。
-  async function handleGov500Proof() {
-    if (!sel || gov500Busy) return
+  // 一致才不會有作假疑慮）；地圖以 snapshotMap 預繪快照替換（見上）。擷取鏈任一環失敗
+  //（磚汙染/記憶體不足等）退回合成卡片（仍含官方要求的日期/時間/距離）。數據同源（校正後優先）。
+  async function runProofFlow(realName: string) {
+    if (!sel) return
     setGov500Busy(true)
     try {
-      const name = getUser()?.name || ''
       let blob: Blob
       try {
-        if (!proofAreaRef.current) throw new Error('no capture area')
-        blob = await captureRunProofFromDom(proofAreaRef.current, name)
+        const mapCv = snapshotMap()
+        if (!proofAreaRef.current || !mapCv) throw new Error('capture not ready')
+        blob = await captureRunProofFromDom(proofAreaRef.current, realName, { mapReplace: { selector: '#hist-map', canvas: mapCv } })
       } catch {
         const avgPaceS = sel.calib_avg_pace_s ?? sel.avg_pace_s
         blob = await generateRunProofImage({
@@ -58,7 +141,7 @@ export default function TrackHistoryPage() {
           durationS: sel.duration_s,
           distanceKm: sel.calib_distance_km ?? sel.distance_km,
           avgPaceS: avgPaceS > 0 ? avgPaceS : null,
-          displayName: name,
+          displayName: realName,
         })
       }
       await shareRunProof(blob)
@@ -66,6 +149,17 @@ export default function TrackHistoryPage() {
       setErr(e?.message || '證明圖產生失敗，請再試一次')
     } finally {
       setGov500Busy(false)
+    }
+  }
+
+  async function handleGov500Proof() {
+    if (!sel || gov500Busy) return
+    try {
+      const rn = await ensureRealName()
+      if (!rn) return // 彈窗接手：儲存真實姓名後自動接續產圖
+      await runProofFlow(rn)
+    } catch (e: any) {
+      setErr(e?.message || '讀取個人資料失敗，請再試一次')
     }
   }
 
@@ -86,6 +180,7 @@ export default function TrackHistoryPage() {
   useEffect(() => {
     if (!sel) return
     const coords = decodePolyline(sel.polyline || '')
+    coordsRef.current = coords
     let cancelled = false
     ;(async () => {
       const L = await loadLeaflet()
@@ -93,7 +188,7 @@ export default function TrackHistoryPage() {
       if (mapRef.current) { mapRef.current.remove(); mapRef.current = null }
       const center = coords[0] || [25.04, 121.56]
       const map = L.map('hist-map').setView(center, 15)
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map)
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap', crossOrigin: true }).addTo(map) // crossOrigin：磚要能畫進證明圖 canvas 而不汙染（OSM 有 ACAO:*）
       if (coords.length > 1) {
         const line = L.polyline(coords, { color: sel.flagged ? '#ff5a5a' : '#46E3A0', weight: 5 }).addTo(map)
         L.circleMarker(coords[0], { radius: 7, color: '#fff', fillColor: '#46E3A0', fillOpacity: 1 }).addTo(map).bindTooltip('起')
@@ -205,6 +300,28 @@ export default function TrackHistoryPage() {
         </div>
       </div>
       </ScrollArea>
+
+      {/* 真實姓名補填彈窗：證明圖要上傳政府網站，署名需真實姓名（暱稱無法核對身分）；
+          填一次即回存個人資料。此頁為手機全螢幕路由（PhoneFrame），fixed 覆蓋可視區即可。 */}
+      {askRealName && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1600, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ width: '100%', maxWidth: 340, background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 14, padding: 18 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 6 }}>請輸入真實姓名</div>
+            <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', lineHeight: 1.6, marginBottom: 12 }}>
+              證明圖要上傳到政府活動網站，署名需使用真實姓名（暱稱無法核對身分）。填寫後會存入你的個人資料，之後不用再填。
+            </div>
+            <input value={realNameInput} onChange={(e) => setRealNameInput(e.target.value)} placeholder="與身分證件相同的姓名"
+              style={{ width: '100%', boxSizing: 'border-box', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px 12px', fontSize: 14, color: 'var(--tx)', marginBottom: 12 }} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={saveRealNameAndContinue} disabled={!realNameInput.trim() || realNameSaving}
+                style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13.5, cursor: 'pointer', opacity: !realNameInput.trim() || realNameSaving ? 0.5 : 1 }}>
+                {realNameSaving ? '儲存中…' : '確認並產生證明圖'}
+              </button>
+              <button onClick={() => setAskRealName(false)} style={{ background: 'var(--bg-2)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px 14px', fontSize: 13.5, cursor: 'pointer' }}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
     </PhoneFrame>
   )
 }

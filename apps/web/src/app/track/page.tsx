@@ -372,12 +372,20 @@ export default function TrackPage() {
     if (!result || gov500Busy) return
     setGov500Busy(true)
     try {
+      // 署名需「真實姓名」（政府網站上傳用，不能用暱稱）。個資未填→提示改走個資頁或歷史頁
+      //（歷史頁有補填彈窗＋含 GPS 軌跡的完整版證明圖），這裡保持輕量不重複做彈窗。
+      const { profile } = await withUserAuth((t) => profileApi.getMe(t))
+      const realName = (profile.real_name || '').trim()
+      if (!realName) {
+        setErr('證明圖需要真實姓名：請到「會員資訊 → 個人資料」填寫，或改由「歷史」頁產生（可直接補填）')
+        return
+      }
       const blob = await generateRunProofImage({
         startedAt: new Date(startRef.current),
         durationS: result.duration_s,
         distanceKm: result.distance_km,
         avgPaceS: result.avg_pace_s > 0 ? result.avg_pace_s : null,
-        displayName: getUser()?.name || '',
+        displayName: realName,
       })
       await shareRunProof(blob)
     } catch (e: any) {
