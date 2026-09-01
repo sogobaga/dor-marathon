@@ -192,8 +192,15 @@ export default function AdminVirtualRunnersPage() {
     if (!token) return
     setBusy(true); setErr(''); setMsg('')
     try {
-      const { synced, changed } = await adminVirtualRunnersApi.syncTitles(token)
-      setMsg(`✓ 已同步 ${synced} 位、更新展示稱號 ${changed} 位`)
+      // 分批串完（一批 20）：全量單發會超過閘道逾時（實測 request failed）
+      let offset = 0, syncedSum = 0, changedSum = 0
+      for (;;) {
+        const { synced, changed, total, done } = await adminVirtualRunnersApi.syncTitles(token, offset)
+        syncedSum += synced; changedSum += changed; offset += synced
+        setMsg(`🏅 同步中… ${Math.min(offset, total)}/${total}`)
+        if (done) break
+      }
+      setMsg(`✓ 已同步 ${syncedSum} 位、更新展示稱號 ${changedSum} 位`)
       load()
     } catch (e: any) { setErr(e?.message || '同步稱號失敗') } finally { setBusy(false) }
   }

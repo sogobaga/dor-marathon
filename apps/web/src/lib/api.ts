@@ -2677,8 +2677,10 @@ export const adminVirtualRunnersApi = {
     request<{ renamed: number }>('/admin/virtual-runners/regenerate-names', {
       method: 'POST', headers: withAuth(token),
     }),
-  syncTitles: (token: string) =>
-    request<{ synced: number; changed: number }>('/admin/virtual-runners/sync-titles', {
+  // 分批同步（一批預設 20）：全量一次會超過閘道逾時，前端以 offset 逐批串完
+  syncTitles: (token: string, offset: number, limit = 20) =>
+    request<{ synced: number; changed: number; total: number; done: boolean }>(
+      `/admin/virtual-runners/sync-titles?offset=${offset}&limit=${limit}`, {
       method: 'POST', headers: withAuth(token),
     }),
   update: (token: string, userID: string, body: VirtualRunnerUpdatePayload) =>

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"regexp"
 	"strings"
 	"time"
@@ -253,12 +254,27 @@ func (h *Handler) RegenerateNames(w http.ResponseWriter, r *http.Request) {
 // 解鎖新稱號，並視情況更新展示稱號。也是本功能上線後的「初次回填」入口——既有選手在此之前累積
 // 的活動從未被稱號引擎掃過。
 func (h *Handler) SyncTitlesAll(w http.ResponseWriter, r *http.Request) {
-	synced, changed, err := SyncAllEnabledTitles(r.Context(), h.repo.Pool())
+	// 分批（?offset=&limit=，預設一批 20、上限 50）：全量一次跑會超過閘道逾時，由前端串批。
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	synced, changed, total, err := SyncEnabledTitlesBatch(r.Context(), h.repo.Pool(), offset, limit)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to sync virtual runner titles")
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"synced": synced, "changed": changed})
+	respondJSON(w, http.StatusOK, map[string]any{
+		"synced": synced, "changed": changed, "total": total,
+		"done": offset+synced >= total || synced == 0,
+	})
 }
 
 // --- PUT /{userID} ---

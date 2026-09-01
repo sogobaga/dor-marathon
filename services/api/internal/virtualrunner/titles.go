@@ -128,23 +128,29 @@ func SyncTitles(ctx context.Context, db *pgxpool.Pool, userID string) (changed b
 // 單一選手失敗只記警告、不中斷整批（比照 generator.go runBatch 對 SyncTitles 的呼叫慣例）。
 // synced＝實際嘗試處理的選手數（不含失敗者，失敗者不計入 synced 也不計入 changed），
 // changed＝展示稱號有變動的選手數。
-func SyncAllEnabledTitles(ctx context.Context, db *pgxpool.Pool) (synced, changed int, err error) {
-	rows, err := db.Query(ctx, `SELECT user_id::text FROM virtual_runners WHERE enabled`)
+// SyncEnabledTitlesBatch 分批同步（offset/limit 以 user_id 穩定排序分頁）。
+// 全量 179 位一次跑會超過閘道逾時（每位 4-6 條查詢 × Neon RTT，實測 request failed），
+// 由前端逐批呼叫（一批 20）串完整趟。total 供前端顯示進度與判斷是否還有下一批。
+func SyncEnabledTitlesBatch(ctx context.Context, db *pgxpool.Pool, offset, limit int) (synced, changed, total int, err error) {
+	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM virtual_runners WHERE enabled`).Scan(&total); err != nil {
+		return 0, 0, 0, fmt.Errorf("count enabled virtual runners: %w", err)
+	}
+	rows, err := db.Query(ctx, `SELECT user_id::text FROM virtual_runners WHERE enabled ORDER BY user_id OFFSET $1 LIMIT $2`, offset, limit)
 	if err != nil {
-		return 0, 0, fmt.Errorf("list enabled virtual runners: %w", err)
+		return 0, 0, 0, fmt.Errorf("list enabled virtual runners: %w", err)
 	}
 	var userIDs []string
 	for rows.Next() {
 		var uid string
 		if err := rows.Scan(&uid); err != nil {
 			rows.Close()
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		userIDs = append(userIDs, uid)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	rows.Close()
 
@@ -159,5 +165,5 @@ func SyncAllEnabledTitles(ctx context.Context, db *pgxpool.Pool) (synced, change
 			changed++
 		}
 	}
-	return synced, changed, nil
+	return synced, changed, total, nil
 }
