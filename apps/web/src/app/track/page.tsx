@@ -91,7 +91,12 @@ export default function TrackPage() {
   const [gov500Busy, setGov500Busy] = useState(false) // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
   const [gov500Ready, setGov500Ready] = useState(false) // 兩段式：建立證明圖→儲存證明圖（與歷史頁一致）
   const gov500CacheRef = useRef<Blob | null>(null)
-  useEffect(() => { setGov500Ready(false); gov500CacheRef.current = null }, [result]) // 新一趟結果 → 重置
+  const [gov500Modal, setGov500Modal] = useState(false)  // 跑完滿 5km 自動彈出的活動視窗
+  const gov500PromptedRef = useRef(false)                // 每趟只自動彈一次（關掉後不再糾纏）
+  useEffect(() => {
+    setGov500Ready(false); gov500CacheRef.current = null
+    if (!result) { gov500PromptedRef.current = false; setGov500Modal(false) } // 新一趟開始 → 全部重置
+  }, [result])
   const [checkpoints, setCheckpoints] = useState<ActiveCheckpoint[]>([])
   const [curPos, setCurPos] = useState<{ lat: number; lng: number; acc: number } | null>(null)
   const curPosRef = useRef<{ lat: number; lng: number; acc: number } | null>(null); curPosRef.current = curPos // 供 marker click 等閉包讀最新位置（避免 stale）
@@ -178,6 +183,14 @@ export default function TrackPage() {
   const cheerDurationRef = useRef(3000)
   cheerDurationRef.current = dash?.cheer_display_ms && dash.cheer_display_ms > 0 ? dash.cheer_display_ms : 3000
   const canTestCheer = dash?.cheer_test_entry === 'shown'
+  // 跑完滿 5 km → 自動彈出「揮汗有禮」視窗（門檻＝活動週任務常見標準；dash 晚到也會補彈）
+  useEffect(() => {
+    if (status !== 'done' || !result || gov500PromptedRef.current) return
+    if (result.distance_km >= 5 && dash?.gov500_entry === 'shown') {
+      gov500PromptedRef.current = true
+      setGov500Modal(true)
+    }
+  }, [status, result, dash])
   // GPS 距離校正（見 internal/gpscalib，2026-08-30）：開跑當下對 dash 的係數拍一張快照、整趟固定
   // （重算只發生在跑完匯入之後，不會在跑步過程中變動）——commitSeg 用 calibKRef.current 乘上有效位移，
   // 其餘（超速判定/疑似搭車偵測/上傳軌跡點）一律用原始值，見下方 commitSeg 與 doUploadGps。
@@ -2177,7 +2190,7 @@ export default function TrackPage() {
             之後備妥後由系統設定開放給一般玩家。純前端功能，跑完才有 result 可用。 */}
         {status === 'done' && result && dash?.gov500_entry === 'shown' && (
           <div style={{ marginTop: 16, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
-            <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>政府「揮汗有禮」活動</div>
+            <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>運動部「揮汗有禮・全民動起來」活動</div>
             <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
               產生含日期/時間/距離的證明圖並存入相簿（點分享面板的「儲存影像」），再到 500.gov.tw 上傳。
             </div>
@@ -2193,6 +2206,36 @@ export default function TrackPage() {
             </div>
             <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.5 }}>
               小提示：政府網站第一次登入時，讓 Safari「儲存密碼」——之後回訪只要 Face ID 自動填入，免重打帳密。
+            </div>
+          </div>
+        )}
+
+        {/* 跑完滿 5km 自動彈出的「揮汗有禮」視窗：內容與上方卡片相同、共用兩段式狀態（建立→儲存）。
+            手機全螢幕路由（PhoneFrame），fixed 覆蓋可視區即可。 */}
+        {gov500Modal && status === 'done' && result && dash?.gov500_entry === 'shown' && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 1600, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+            <div style={{ width: '100%', maxWidth: 340, background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 14, padding: 18 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>運動部「揮汗有禮・全民動起來」活動</div>
+              <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', lineHeight: 1.6, marginBottom: 12 }}>
+                本趟 {result.distance_km.toFixed(2)} km 已達 5 km！建立含日期/時間/距離的證明圖存入相簿，再到 500.gov.tw 上傳完成本週任務。
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <button onClick={handleGov500Proof} disabled={gov500Busy}
+                  style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: gov500Busy ? 'default' : 'pointer', opacity: gov500Busy ? 0.6 : 1 }}>
+                  {gov500Busy ? '建立中…' : gov500Ready ? '儲存證明圖' : '建立證明圖'}
+                </button>
+                <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
+                  style={{ flex: 1, background: 'var(--bg-2)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
+                  前往 500.gov.tw
+                </button>
+              </div>
+              {gov500Ready && (
+                <div style={{ fontSize: 12, color: 'var(--fug)', marginBottom: 8, lineHeight: 1.5 }}>✓ 證明圖已建立完成——點「儲存證明圖」存入相簿</div>
+              )}
+              <button onClick={() => setGov500Modal(false)}
+                style={{ width: '100%', background: 'var(--bg-2)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '9px', fontSize: 13, cursor: 'pointer' }}>
+                稍後再說
+              </button>
             </div>
           </div>
         )}

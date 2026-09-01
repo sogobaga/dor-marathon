@@ -302,7 +302,7 @@ export default function TrackHistoryPage() {
               之後備妥後由系統設定開放給一般玩家。 */}
           {dash?.gov500_entry === 'shown' && (
             <div data-proof-ignore="1" style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
-              <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>政府「揮汗有禮」活動</div>
+              <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>運動部「揮汗有禮・全民動起來」活動</div>
               <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
                 產生含日期/時間/距離的證明圖並存入相簿（點分享面板的「儲存影像」），再到 500.gov.tw 上傳。
               </div>
