@@ -220,25 +220,28 @@ export async function captureRunProofFromDom(
   return await new Promise<Blob>((resolve, reject) => out.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'))
 }
 
-// 一鍵取得成品（使用者要求把「產生＋儲存」合併成一步）：
-// 瀏覽器 → 程式觸發 <a download> 直接下載（免分享面板；iOS Safari 存進「檔案」App 的下載項目，
-// 網址列會出現下載圖示）。iOS 主畫面 App（standalone）→ 下載管線不可靠（歷來常無聲失敗），
-// 退回系統分享面板（儲存影像），至少一定拿得到圖。
+// 取得成品——「相簿優先」（使用者定案：絕大多數人直覺找相簿）。
+// iOS 安全限制：網頁**不可能**靜默寫入相簿（防網站偷塞圖），唯一路徑是系統分享面板的
+// 「儲存影像」——所以存相簿的最短流程必然是兩點（按鈕→儲存影像）。分享面板不可用的環境
+//（桌機瀏覽器/舊 iOS）才退回 <a download> 檔案下載（存「檔案」App 的下載項目）。
 export async function deliverRunProof(blob: Blob, filename: string): Promise<'downloaded' | 'shared'> {
-  const standalone = (navigator as { standalone?: boolean }).standalone === true
-  if (!standalone) {
+  const file = new File([blob], filename, { type: 'image/png' })
+  if (typeof navigator.share === 'function' && !!navigator.canShare?.({ files: [file] })) {
     try {
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 30_000) // 給下載管線足夠時間再回收
-      return 'downloaded'
-    } catch { /* 罕見失敗 → 分享面板兜底 */ }
+      await navigator.share({ files: [file] })
+      return 'shared'
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') return 'shared' // 使用者取消＝流程正常結束
+      // 其他失敗 → 落到下載兜底
+    }
   }
-  await shareRunProof(blob)
-  return 'shared'
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 30_000) // 給下載管線足夠時間再回收
+  return 'downloaded'
 }

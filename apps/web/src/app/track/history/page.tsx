@@ -282,12 +282,12 @@ export default function TrackHistoryPage() {
             <div data-proof-ignore="1" style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
               <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>政府「揮汗有禮」活動</div>
               <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
-                一鍵下載含日期/時間/距離的證明圖，再到 500.gov.tw 上傳完成當週任務。
+                產生含日期/時間/距離的證明圖並存入相簿（點分享面板的「儲存影像」），再到 500.gov.tw 上傳。
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={handleGov500Proof} disabled={gov500Busy}
                   style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: gov500Busy ? 'default' : 'pointer', opacity: gov500Busy ? 0.6 : 1 }}>
-                  {gov500Busy ? '產生中…' : '下載證明圖'}
+                  {gov500Busy ? '產生中…' : '儲存證明圖'}
                 </button>
                 <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
                   style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
