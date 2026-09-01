@@ -116,26 +116,6 @@ export default function TrackHistoryPage() {
             <Stat label="時間" v={fmtTime(sel.duration_s)} />
             <Stat label="平均配速" v={`${fmtPace(sel.calib_avg_pace_s ?? sel.avg_pace_s)}/km`} />
           </div>
-          {/* 政府「揮汗有禮」活動證明圖：先只給超管看（gov500_entry，見系統設定 gov500_entry_state），
-              之後備妥後由系統設定開放給一般玩家。 */}
-          {dash?.gov500_entry === 'shown' && (
-            <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
-              <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>政府「揮汗有禮」活動</div>
-              <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
-                產生含日期/時間/距離的證明圖，上傳到 500.gov.tw 完成當週任務。
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={handleGov500Proof} disabled={gov500Busy}
-                  style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: gov500Busy ? 'default' : 'pointer', opacity: gov500Busy ? 0.6 : 1 }}>
-                  {gov500Busy ? '產生中…' : '產生證明圖'}
-                </button>
-                <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
-                  style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                  前往 500.gov.tw
-                </button>
-              </div>
-            </div>
-          )}
           {/* GPS 距離校正（見 internal/gpscalib，2026-08-30）：這裡與「已同步活動」列表/總里程用同一套
               校正後數字；calib_factor<1 才代表真的套用過，額外標示原始值供對照（medium-3 finding 修正
               前，這裡顯示的是未校正原始距離，跟其他頁面對不上）。 */}
@@ -170,6 +150,26 @@ export default function TrackHistoryPage() {
             </div>
           ) : (
             <div style={{ marginTop: 12, fontSize: 11.5, color: 'var(--tx-faint)' }}>（此筆沒有每公里分段資料；v0.1.205 之後的新 GPS 跑步才會記錄）</div>
+          )}
+          {/* 政府「揮汗有禮」活動證明圖：先只給超管看（gov500_entry，見系統設定 gov500_entry_state），
+              之後備妥後由系統設定開放給一般玩家。 */}
+          {dash?.gov500_entry === 'shown' && (
+            <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>政府「揮汗有禮」活動</div>
+              <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
+                產生含日期/時間/距離的證明圖，上傳到 500.gov.tw 完成當週任務。
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={handleGov500Proof} disabled={gov500Busy}
+                  style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: gov500Busy ? 'default' : 'pointer', opacity: gov500Busy ? 0.6 : 1 }}>
+                  {gov500Busy ? '產生中…' : '產生證明圖'}
+                </button>
+                <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
+                  style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
+                  前往 500.gov.tw
+                </button>
+              </div>
+            </div>
           )}
           {sel.flagged && <div style={{ marginTop: 10, fontSize: 12, color: '#ff8a8a' }}>⚠️ 此筆標記{sel.review_action === 'rejected' ? '（已駁回，不計）' : sel.review_action === 'approved' ? '（已核准計入）' : '待審'}：{sel.flag_reason}</div>}
         </div>
