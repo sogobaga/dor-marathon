@@ -5,7 +5,7 @@ import { activitiesApi, type GpsRunHistory } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser, getUser } from '@/lib/userAuth'
 import { decodePolyline } from '@/lib/polyline'
 import { useDashboard } from '@/lib/useDashboard'
-import { generateRunProofImage, shareRunProof } from '@/lib/runProof'
+import { captureRunProofFromDom, generateRunProofImage, shareRunProof } from '@/lib/runProof'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
 
@@ -36,21 +36,31 @@ export default function TrackHistoryPage() {
   const [err, setErr] = useState('')
   const mapRef = useRef<any>(null)
   const { dash } = useDashboard() // 共用會員儀表板快取（見 lib/useDashboard.ts）；這裡只用來讀 gov500_entry
-  const [gov500Busy, setGov500Busy] = useState(false) // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
+  const [gov500Busy, setGov500Busy] = useState(false)
+  const proofAreaRef = useRef<HTMLDivElement | null>(null) // 證明圖擷取範圍（詳情容器；關閉鈕/活動卡以 data-proof-ignore 排除） // 政府「揮汗有禮」證明圖產生中（gov500_entry，見 lib/runProof.ts）
 
-  // 政府「揮汗有禮」活動證明圖：用選中這筆歷史紀錄的日期/距離/時間/配速（校正後優先，與畫面顯示同源）畫卡片。
+  // 政府「揮汗有禮」活動證明圖：優先「畫面實況擷取」（含 GPS 軌跡圖/統計/分段計量表，與畫面
+  // 一致才不會有作假疑慮——使用者明確要求）；擷取失敗（地圖磚 CORS/記憶體不足等）才退回合成卡片
+  //（至少含官方要求的日期/時間/距離欄位）。兩者數據同源（校正後優先）。
   async function handleGov500Proof() {
     if (!sel || gov500Busy) return
     setGov500Busy(true)
     try {
-      const avgPaceS = sel.calib_avg_pace_s ?? sel.avg_pace_s
-      const blob = await generateRunProofImage({
-        startedAt: new Date(sel.started_at),
-        durationS: sel.duration_s,
-        distanceKm: sel.calib_distance_km ?? sel.distance_km,
-        avgPaceS: avgPaceS > 0 ? avgPaceS : null,
-        displayName: getUser()?.name || '',
-      })
+      const name = getUser()?.name || ''
+      let blob: Blob
+      try {
+        if (!proofAreaRef.current) throw new Error('no capture area')
+        blob = await captureRunProofFromDom(proofAreaRef.current, name)
+      } catch {
+        const avgPaceS = sel.calib_avg_pace_s ?? sel.avg_pace_s
+        blob = await generateRunProofImage({
+          startedAt: new Date(sel.started_at),
+          durationS: sel.duration_s,
+          distanceKm: sel.calib_distance_km ?? sel.distance_km,
+          avgPaceS: avgPaceS > 0 ? avgPaceS : null,
+          displayName: name,
+        })
+      }
       await shareRunProof(blob)
     } catch (e: any) {
       setErr(e?.message || '證明圖產生失敗，請再試一次')
@@ -105,10 +115,10 @@ export default function TrackHistoryPage() {
 
       <ScrollArea>
       {sel && (
-        <div style={{ padding: 16 }}>
+        <div ref={proofAreaRef} style={{ padding: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             <strong>{fmtDt(sel.started_at)}</strong>
-            <button onClick={() => { setSel(null); if (mapRef.current) { mapRef.current.remove(); mapRef.current = null } }} style={ghost}>關閉</button>
+            <button data-proof-ignore="1" onClick={() => { setSel(null); if (mapRef.current) { mapRef.current.remove(); mapRef.current = null } }} style={ghost}>關閉</button>
           </div>
           <div id="hist-map" style={{ width: '100%', height: 300, borderRadius: 10, overflow: 'hidden', background: 'var(--bg-2)' }} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginTop: 12 }}>
@@ -154,7 +164,7 @@ export default function TrackHistoryPage() {
           {/* 政府「揮汗有禮」活動證明圖：先只給超管看（gov500_entry，見系統設定 gov500_entry_state），
               之後備妥後由系統設定開放給一般玩家。 */}
           {dash?.gov500_entry === 'shown' && (
-            <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
+            <div data-proof-ignore="1" style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
               <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>政府「揮汗有禮」活動</div>
               <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
                 產生含日期/時間/距離的證明圖，上傳到 500.gov.tw 完成當週任務。

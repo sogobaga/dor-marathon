@@ -146,3 +146,37 @@ export async function shareRunProof(blob: Blob): Promise<'shared' | 'downloaded'
   window.open(url, '_blank')
   return 'downloaded'
 }
+
+// 依 DOM 實況擷取（html2canvas 動態載入，按下才抓 ~200KB chunk）：把歷史詳情區塊
+//（日期/GPS 軌跡地圖/距離·時間·配速統計/每公里分段計量表）**原樣**轉成圖片——與畫面一致，
+// 避免「另外合成的卡片看起來像作假」的疑慮；只在底部追加 DOR 署名列，不改動任何數據呈現。
+// 地圖磚是跨網域圖片：useCORS 讓 html2canvas 以 crossOrigin=anonymous 重抓（OSM 磚有 ACAO:*）。
+// 標了 data-proof-ignore="1" 的節點（關閉鈕、活動卡片本身）不入鏡。
+export async function captureRunProofFromDom(el: HTMLElement, displayName: string): Promise<Blob> {
+  const html2canvas = (await import('html2canvas')).default
+  const bg = getComputedStyle(document.body).backgroundColor || '#0d0f14'
+  const shot = await html2canvas(el, {
+    scale: 2, useCORS: true, backgroundColor: bg, logging: false,
+    ignoreElements: (node) => (node as HTMLElement).dataset?.proofIgnore === '1',
+  })
+  const footerH = 84
+  const out = document.createElement('canvas')
+  out.width = shot.width
+  out.height = shot.height + footerH
+  const ctx = out.getContext('2d')
+  if (!ctx) throw new Error('canvas unsupported')
+  ctx.fillStyle = bg
+  ctx.fillRect(0, 0, out.width, out.height)
+  ctx.drawImage(shot, 0, 0)
+  ctx.fillStyle = '#0d0f14' // 署名列固定深色（與 skin 無關），與內容區以色塊自然分隔
+  ctx.fillRect(0, shot.height, out.width, footerH)
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = '#46E3A0'
+  ctx.font = `bold ${Math.round(footerH * 0.34)}px -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif`
+  ctx.fillText('DOR｜城市探索', 28, shot.height + footerH / 2)
+  ctx.fillStyle = 'rgba(255,255,255,.78)'
+  ctx.font = `${Math.round(footerH * 0.26)}px -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif`
+  const right = `${displayName ? displayName + ' · ' : ''}www.dor.tw`
+  ctx.fillText(right, out.width - ctx.measureText(right).width - 28, shot.height + footerH / 2)
+  return await new Promise<Blob>((resolve, reject) => out.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'))
+}
