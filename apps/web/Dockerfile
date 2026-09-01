@@ -1,10 +1,12 @@
 # 生產環境 Dockerfile — Next.js standalone 多階段建構
-FROM node:24-alpine AS deps
+# 基底映像走 AWS ECR Public 官方鏡像（同內容同 tag）：Docker Hub 2026-09-01 間歇性 500
+# 連續打掛兩次部署，ECR Public 由 AWS 託管不受其影響（見 services/api/Dockerfile 同註）。
+FROM public.ecr.aws/docker/library/node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM node:24-alpine AS builder
+FROM public.ecr.aws/docker/library/node:24-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -21,7 +23,7 @@ ENV RAILWAY_GIT_COMMIT_SHA=$RAILWAY_GIT_COMMIT_SHA
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM node:24-alpine AS runner
+FROM public.ecr.aws/docker/library/node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
