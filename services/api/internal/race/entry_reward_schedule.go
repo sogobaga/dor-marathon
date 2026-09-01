@@ -30,7 +30,11 @@ const (
 	// DB」的閒置省睡眠優化——候選查詢本身有索引、結果集小（僅「已開賽且設定了 entry_reward_config」的
 	// 賽事 × 各自「尚未發放的 paid 報名者」），5 分鐘一次對 Neon 負擔可忽略，換取「開賽後才報名者」與
 	// 「賽事剛開始那刻」都能儘快被處理到的時效性。
-	entryRewardTickInterval = 5 * time.Minute
+	// ⚠️ 2026-09-02 由 5 分鐘改為 1 小時：原註解評估「5 分鐘一次對 Neon 負擔可忽略」漏算了
+	// 真正的成本——5 分鐘 ≤ Neon 自動休眠門檻，這條 tick 單獨就讓 compute 永不休眠（實測醒著 93%）。
+	// 時效性代價：「開賽後才報名者」的參賽獎勵最晚 1 小時內補發（原 5 分鐘），可接受；
+	// 賽事剛開始那刻仍由「啟動時先跑一次＋每小時對齊其他迴圈」涵蓋。
+	entryRewardTickInterval = time.Hour
 
 	// entryRewardAdvisoryLockName pg_try_advisory_lock 用的鎖名（經 hashtext 轉成 lock id）。純粹是效率
 	// 考量、減少多實例情境下的重複查詢，真正的冪等防線是 race_entry_reward_grants 的

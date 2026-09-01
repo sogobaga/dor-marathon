@@ -16,7 +16,11 @@ import (
 
 const (
 	// ipDailyFlushInterval：in-memory 累計多久批次 UPSERT 一次進 ops_ip_daily（migration 145）。
-	ipDailyFlushInterval = 5 * time.Minute
+	// ⚠️ 2026-09-02 由 5 分鐘改為 1 小時：5 分鐘 ≤ Neon 自動休眠門檻（5 分鐘），任何流量
+	// （含 Hetrix 每分鐘監控 ping）都讓每個窗至少一次 DB 寫入 → compute 永不休眠（實測醒著 93%）。
+	// 聚合只供每日 08:00 營運報告使用，小時級新鮮度綽綽有餘；crash 最多遺失 1 小時的計數，
+	// 屬可接受的遙測損失。與其他 time.Hour 迴圈同於開機啟動 → 每小時「同時」醒一次，其餘時間讓 Neon 睡。
+	ipDailyFlushInterval = time.Hour
 
 	// ipDailyMaxUniqueIPs：單日相異 IP 上限。超過後「新」IP（今天沒見過的）不再計入，只累計已見過
 	// 的既有 IP，避免惡意灑大量偽造 IP（例如帶假 X-Forwarded-For）把 in-memory map 撐爆記憶體。
