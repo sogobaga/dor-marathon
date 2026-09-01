@@ -187,6 +187,17 @@ export default function AdminVirtualRunnersPage() {
     } catch (e: any) { setErr(e?.message || '重新取名失敗') } finally { setBusy(false) }
   }
 
+  // --- 同步稱號：對所有 enabled 選手依既有稱號引擎解鎖稱號 + 視情況更新展示稱號（也是初次回填入口）---
+  async function syncTitles() {
+    if (!token) return
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const { synced, changed } = await adminVirtualRunnersApi.syncTitles(token)
+      setMsg(`✓ 已同步 ${synced} 位、更新展示稱號 ${changed} 位`)
+      load()
+    } catch (e: any) { setErr(e?.message || '同步稱號失敗') } finally { setBusy(false) }
+  }
+
   // --- 批次產生 ---
   function bStartNew() { setBForm(emptyBForm()); setErr(''); setMsg(''); setRForm(null) }
   function bCancel() { setBForm(null); setErr('') }
@@ -249,6 +260,7 @@ export default function AdminVirtualRunnersPage() {
           !rForm && !bForm && (
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={regenerateAllNames} disabled={busy} style={{ ...ghostBtn, opacity: busy ? 0.5 : 1 }}>🎲 全部重新取名</button>
+              <button onClick={syncTitles} disabled={busy} style={{ ...ghostBtn, opacity: busy ? 0.5 : 1 }}>🏅 同步稱號</button>
               <button onClick={bStartNew} style={ghostBtn}>⚡ 批次產生</button>
               <button onClick={rStartNew} style={primaryBtn}>＋ 新增</button>
             </div>

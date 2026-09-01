@@ -33,6 +33,7 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Post("/", h.Create)
 	r.Post("/batch", h.BatchCreate)
 	r.Post("/regenerate-names", h.RegenerateNames)
+	r.Post("/sync-titles", h.SyncTitlesAll)
 	r.Put("/{userID}", h.Update)
 	r.Delete("/{userID}", h.Delete)
 	// 靜態路徑 "presets"/"race" 在 chi/{userID} 之上，radix tree 依字面優先比對，不會被
@@ -244,6 +245,20 @@ func (h *Handler) RegenerateNames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"renamed": len(names)})
+}
+
+// --- POST /sync-titles ---
+
+// SyncTitlesAll 對所有 enabled 虛擬選手跑一次 SyncTitles（見 titles.go）：依既有稱號引擎規則
+// 解鎖新稱號，並視情況更新展示稱號。也是本功能上線後的「初次回填」入口——既有選手在此之前累積
+// 的活動從未被稱號引擎掃過。
+func (h *Handler) SyncTitlesAll(w http.ResponseWriter, r *http.Request) {
+	synced, changed, err := SyncAllEnabledTitles(r.Context(), h.repo.Pool())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to sync virtual runner titles")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"synced": synced, "changed": changed})
 }
 
 // --- PUT /{userID} ---

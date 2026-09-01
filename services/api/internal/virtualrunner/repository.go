@@ -19,6 +19,11 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{db: db}
 }
 
+// Pool 匯出底層連線池，供 titles.go SyncAllEnabledTitles 之類需要直接操作 db（跨表、非
+// Repository 既有 CRUD 方法涵蓋的查詢）的套件內函式使用，不必為每個新查詢都在 Repository 上
+// 新增一個一次性方法。
+func (r *Repository) Pool() *pgxpool.Pool { return r.db }
+
 // isUniqueViolation 判斷是否為 Postgres 唯一鍵衝突（SQLSTATE 23505），比照 internal/race 慣例。
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError

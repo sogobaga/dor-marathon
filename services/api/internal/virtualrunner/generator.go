@@ -443,6 +443,15 @@ func (g *Generator) runBatch(ctx context.Context) {
 		}
 	}
 
+	// 稱號同步：對「本輪實際有產生活動」的選手（ranUserIDs，act.Ran=true 才進這份清單）逐一評估是否
+	// 解鎖新稱號/換展示稱號（見 titles.go SyncTitles）。單一選手失敗只記警告，不影響其餘選手或中斷
+	// 批次——比照本函式其餘 best-effort 錯誤處理慣例（recomputeStandingsForUsers 亦僅 log 不 return）。
+	for _, uid := range ranUserIDs {
+		if _, err := SyncTitles(ctx, g.db, uid); err != nil {
+			log.Warn().Err(err).Str("user_id", uid).Msg("virtual runner generator: sync titles failed")
+		}
+	}
+
 	log.Info().Int("window_hour", windowHour).Int("candidates", len(runners)).
 		Int("generated", generated).Int("skipped", skipped).Int("failed", failed).
 		Msg("virtual runner generator: batch done")
