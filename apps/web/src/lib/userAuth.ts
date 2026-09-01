@@ -8,7 +8,7 @@ const TOKEN_KEY = 'dor_user_token'
 const REFRESH_KEY = 'dor_user_refresh'
 const USER_KEY = 'dor_user'
 const SEV_KEY = 'dor_user_sev' // session_epoch：單一登入判定用，每次登入/refresh 後端都會遞增/帶回
-const AUTH_EVENT = 'dor-auth-changed'
+export const AUTH_EVENT = 'dor-auth-changed' // 登入/登出/過期清除時廣播；供外部（track 個人任務面板）監聽重載
 
 // 通知所有訂閱者登入狀態變了（登入/登出/session 過期清除）
 function emitAuthChange() {

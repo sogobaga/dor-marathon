@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import useSWR from 'swr'
 import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, cheerLayoutApi, parseCheerCharLayout, CHEER_CHAR_IDS, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy, type CheerCharLayout } from '@/lib/api'
-import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
+import { getUserToken, withUserAuth, useUser, AUTH_EVENT } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
 import BossRankingPanel from '@/components/BossRankingPanel'
@@ -1257,20 +1257,45 @@ export default function TrackPage() {
 
   // ── 個人任務「結構化課表」：面板載入 / 挑戰 / 開始 / 逐段驅動 / 完成 ──
   // 載入任務面板（各階段前沿課表卡 + 進行中挑戰卡）。有進行中挑戰 → 載入分段序列進入就緒。
-  const loadPanel = useCallback(async () => {
-    if (!getUserToken()) return
+  const panelLoadedRef = useRef(false) // 面板是否已成功載過（重試/回前景補載只在「從未成功」時啟動）
+  const loadPanel = useCallback(async (): Promise<boolean> => {
+    if (!getUserToken()) return false
     try {
       const r = await withUserAuth((t) => personalTasksApi.trackPanel(t))
       setPanel(r)
+      panelLoadedRef.current = true
       const ac = r.active_card
       if (ac && ac.segments && ac.segments.length) {
         setWorkout({ taskId: ac.task_id, title: ac.title || '課表挑戰', steps: expandSegments(ac.segments), kind: 'personal' })
       } else if (!woActiveRef.current && !freetrainRef.current) {
         setWorkout(null)
       }
-    } catch { /* ignore */ }
+      return true
+    } catch { return false /* 靜默：由下方重試/重載機制補救 */ }
   }, [])
-  useEffect(() => { loadPanel() }, [loadPanel])
+  // 載入時機：進頁一次；失敗則指數退避重試（2s/6s/15s），並在登入狀態變更、回前景時補載。
+  // 動機（使用者 PWA 實測回報）：冷啟動的首發請求偶發失敗，原本一次性＋靜默 catch 使個人任務
+  // 區塊整段消失且永不自癒；頁面其他資料走 SWR 自帶重驗所以只有這段壞。
+  // 安全界線：所有補載只在「從未成功載入」時觸發（panelLoadedRef），已載成功後不做背景重抓，
+  // 不會在使用者選課表或跑步中把面板/課表狀態抽換掉。
+  useEffect(() => {
+    let dead = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const kick = (round = 0) => {
+      if (dead || panelLoadedRef.current) return
+      loadPanel().then((ok) => {
+        if (dead || ok) return
+        const delays = [2000, 6000, 15000]
+        if (round < delays.length) timer = setTimeout(() => kick(round + 1), delays[round])
+      })
+    }
+    kick()
+    const onAuth = () => kick()
+    const onVis = () => { if (!document.hidden) kick() }
+    window.addEventListener(AUTH_EVENT, onAuth)
+    document.addEventListener('visibilitychange', onVis)
+    return () => { dead = true; if (timer) clearTimeout(timer); window.removeEventListener(AUTH_EVENT, onAuth); document.removeEventListener('visibilitychange', onVis) }
+  }, [loadPanel])
 
   // 自主訓練：進頁偵測 TrainingScreen 橋接帶來的一次性課表（sessionStorage）→ 進就緒，等使用者按「開始」
   useEffect(() => {
