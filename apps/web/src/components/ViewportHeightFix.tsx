@@ -10,7 +10,7 @@ import { MOBILE_MQ } from '@/lib/useIsMobile'
  * 本檔只做一件事：在偵測到「瀏覽器回報的 layout viewport 明顯小於實際可見區」時，寫入 --app-h 把版面**加高**。
  * CSS 端一律 max(100dvh, var(--app-h, 0px)) ⇒ 本檔不可能讓版面變矮，最壞情況＝完全沒有這支程式。
  *
- * 【四條不變式，改動時不得違反】
+ * 【不變式（I–IV＋S），改動時不得違反】
  *  I  下限：CSS 的 max() 保證 ≥ 100dvh。JS 無權讓版面比純 CSS 版矮。
  *  II 只准加高，且只信 visualViewport.height。
  *     ⚠️ 禁止用 innerHeight 加高：部分 iOS 版本它等同「工具列收合態的大 viewport」，
@@ -29,6 +29,9 @@ import { MOBILE_MQ } from '@/lib/useIsMobile'
  *  大 viewport）——偏大樣本一旦被記住，之後每次健康瀏覽都被多墊 70px，首頁「開始跑步」面板整個
  *  被推出可見區。變矮只是難看、變高會藏掉功能；在「無法分辨誰說謊」的前提下，任何基於歷史記憶的
  *  自動加高都不安全，故整組撤除（v1.1.704），並主動清掉舊鍵 dor.vpmem。
+ *  S  standalone 硬基準（v1.1.709）：iOS 主畫面 App（navigator.standalone===true）＋viewport-fit=cover
+ *     下 viewport ≡ 實體螢幕；首啟少算狀態列（852→793）時以 screen 邊長加高。僅 iOS standalone，
+ *     Android 旗標不存在天然排除；轉向自癒後規則停火、走 calm 釋放。
  *
  * 【v1.1.664 的教訓（勿重蹈）】
  *  ・Math.max(innerHeight, visualViewport.height) 的前提是「innerHeight 不受鍵盤影響」，
@@ -224,6 +227,22 @@ export default function ViewportHeightFix() {
         calmCount = 0
         setVar(cand)
         return
+      }
+
+      // 不變式 S（v1.1.709，standalone 專屬）：iOS 主畫面 App（navigator.standalone===true）＋
+      // meta viewport-fit=cover 下，「viewport ≡ 實體螢幕」是硬事實——沒有工具列、沒有動態 chrome。
+      // 已知 WebKit 病態：standalone 首次啟動 viewport 少算一條狀態列高（實例：852 回報 793，
+      // 底部露出一條 canvas 帶），且各 API 一致地錯、轉向後才自癒。瀏覽器模式沒有任何絕對基準
+      // 可信（見上方 v1.1.703 教訓），但 standalone 有：window.screen 不受 webview 狀態影響。
+      // 只在 iOS standalone 生效——navigator.standalone 是 iOS 專屬旗標；Android standalone 的
+      // viewport 本來就不含狀態列，套 screen 會過高（把底部導覽推出畫面），靠旗標天然排除。
+      if ((navigator as { standalone?: boolean }).standalone === true) {
+        const full = screenCeil() - 2 // screenCeil 的 +2 是護欄餘裕；這裡要的是依方向選出的實際螢幕邊長
+        if (Number.isFinite(full) && full >= MIN_SANE_PX && full > cand + GROW_MIN_PX) {
+          calmCount = 0
+          setVar(full)
+          return
+        }
       }
 
       if (applied === 0) return

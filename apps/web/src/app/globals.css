@@ -270,7 +270,7 @@ html, body {
    --bg 是奶油色；iOS Safari 病態（合成器把 root 圖層放錯位置，詳見 ViewportHeightFix.tsx）在
    視窗底部露出的 canvas 帶子，於暗色後台上就是刺眼的奶油帶。:has 讓後台路由連 canvas 一起押暗——
    治不了錨定，但條帶變成暗色＝隱形。:has 需 iOS 15.4+；更舊引擎維持現狀（僅外觀，無功能影響）。 */
-html:has([data-admin-root]) { background: #09090f; }
+html:has([data-admin-root]), html:has([data-admin-root]) body { background: #09090f; }
 
 /* 手機模擬框容器 */
 .phone-frame {

@@ -31,9 +31,12 @@ export default function InterstitialAd() {
   useEffect(() => {
     if (!open) return
     const el = document.documentElement
+    const bd = document.body
     const prev = el.style.background
+    const prevB = bd.style.background
     el.style.background = '#0c0e12'
-    return () => { el.style.background = prev }
+    bd.style.background = '#0c0e12' // body 一起押：露出的帶子有時取的是 body 背景（standalone 實測）
+    return () => { el.style.background = prev; bd.style.background = prevB }
   }, [open])
 
   useEffect(() => {
