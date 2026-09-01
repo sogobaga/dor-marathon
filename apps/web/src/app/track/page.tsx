@@ -2116,10 +2116,11 @@ export default function TrackPage() {
                   {gov500Busy ? '建立中…' : gov500Ready ? '儲存證明圖' : '建立證明圖'}
                 </button>
               ) : (
+                // 兩行結構與右側「上傳證明圖／500.gov.tw」同款（主行在上、小字在下），左右對齊
                 <a href="/track/history"
-                  style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '7px 10px', fontSize: 13, textAlign: 'center', textDecoration: 'none', lineHeight: 1.35 }}>
-                  <span style={{ display: 'block', fontSize: 11, fontWeight: 700, opacity: 0.85 }}>前往歷史紀錄</span>
-                  建立證明圖
+                  style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, textAlign: 'center', textDecoration: 'none' }}>
+                  <span style={{ display: 'block', lineHeight: 1.35 }}>建立證明圖</span>
+                  <span style={{ display: 'block', fontSize: 11, opacity: 0.8, lineHeight: 1.35 }}>前往歷史紀錄</span>
                 </a>
               )}
               <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
