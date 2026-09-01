@@ -9,6 +9,7 @@ import AppProviders from '@/components/AppProviders'
 import ViewportHeightFix from '@/components/ViewportHeightFix'
 import ViewportDebug from '@/components/ViewportDebug'
 import PwaInstallPrompt from '@/components/PwaInstallPrompt'
+import UpdateNotice from '@/components/UpdateNotice'
 
 // 各 skin 的瀏覽器 chrome（狀態列）色；新增 skin 時在此與 globals.css/appSettings/後端 specs 一併加。
 const SKIN_THEME_COLOR: Record<string, string> = { default: '#09090f', warm: '#FBF4E9', warm2: '#FBF5EA' }
@@ -89,7 +90,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const skin = skinOf(await getPublicSettings())
   return (
     <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined}>
-      <body><AppProviders><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><PwaInstallPrompt /><LandscapeNotice />{children}</AppProviders></body>
+      <body><AppProviders><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><PwaInstallPrompt /><UpdateNotice /><LandscapeNotice />{children}</AppProviders></body>
     </html>
   )
 }
