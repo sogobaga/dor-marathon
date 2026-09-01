@@ -2100,6 +2100,39 @@ export default function TrackPage() {
             )}
             {/* warn / err 已改為浮在面板上方的常駐提示（見地圖區），此處不再重複顯示 */}
 
+        {/* 運動部「揮汗有禮」常駐入口（在打卡點任務上方）：跑者一進頁就知道這裡能做活動。
+            未跑完（本趟無結果）→ 主按鈕兩行「前往歷史紀錄／建立證明圖」導向歷史頁挑既有紀錄；
+            剛跑完 → 直接走既有兩段式（建立證明圖→儲存證明圖，與跑後總結卡/彈窗共用狀態）。 */}
+        {dash?.gov500_entry === 'shown' && (
+          <div style={{ marginTop: 16, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
+            <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>運動部「揮汗有禮・全民動起來」活動</div>
+            <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
+              跑完 5 公里，建立含日期/時間/距離的證明圖存入相簿，到 500.gov.tw 上傳即可完成本週任務。
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {status === 'done' && result ? (
+                <button onClick={handleGov500Proof} disabled={gov500Busy}
+                  style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: gov500Busy ? 'default' : 'pointer', opacity: gov500Busy ? 0.6 : 1 }}>
+                  {gov500Busy ? '建立中…' : gov500Ready ? '儲存證明圖' : '建立證明圖'}
+                </button>
+              ) : (
+                <a href="/track/history"
+                  style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '7px 10px', fontSize: 13, textAlign: 'center', textDecoration: 'none', lineHeight: 1.35 }}>
+                  <span style={{ display: 'block', fontSize: 11, fontWeight: 700, opacity: 0.85 }}>前往歷史紀錄</span>
+                  建立證明圖
+                </a>
+              )}
+              <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
+                style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
+                前往 500.gov.tw
+              </button>
+            </div>
+            {status === 'done' && result && gov500Ready && (
+              <div style={{ fontSize: 12, color: 'var(--fug)', marginTop: 8, lineHeight: 1.5 }}>✓ 證明圖已建立完成——點「儲存證明圖」存入相簿</div>
+            )}
+          </div>
+        )}
+
         {/* 打卡點任務 */}
         {(checkpoints.length > 0 || exploreCps.length > 0) && (
           <div style={{ marginTop: 16 }}>
