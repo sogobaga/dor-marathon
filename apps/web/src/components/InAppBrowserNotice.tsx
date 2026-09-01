@@ -16,6 +16,9 @@ const IN_APP: { re: RegExp; name: string }[] = [
   { re: /LinkedInApp/i, name: 'LinkedIn' },
 ]
 
+// 供其他元件共用（PwaInstallPrompt）：這類環境裝不了 PWA，安裝引導必須跳過
+export function isInAppBrowser(ua: string): boolean { return detect(ua) != null }
+
 function detect(ua: string): string | null {
   for (const p of IN_APP) if (p.re.test(ua)) return p.name
   if (/Android/i.test(ua) && /;\s*wv\)/i.test(ua)) return 'App 內建瀏覽器' // 泛用 Android WebView
