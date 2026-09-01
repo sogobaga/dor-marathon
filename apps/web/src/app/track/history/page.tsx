@@ -49,7 +49,7 @@ export default function TrackHistoryPage() {
   // 動機：html2canvas 對 Leaflet 多層 translate3d 的疊層計算不準，成品的軌跡會相對磚面偏移
   //（使用者實測回報）；預繪快照在擷取時替換活地圖即可完全繞開。磚需 CORS 載入
   //（tileLayer crossOrigin:true），否則畫入即汙染 canvas、toBlob 會失敗（回 null 走合成卡退路）。
-  function snapshotMap(): HTMLCanvasElement | null {
+  async function snapshotMap(): Promise<HTMLCanvasElement | null> {
     const map = mapRef.current
     const cont = document.getElementById('hist-map')
     const coords = coordsRef.current
@@ -62,11 +62,20 @@ export default function TrackHistoryPage() {
     if (!ctx) return null
     ctx.scale(2, 2)
     ctx.fillStyle = '#e8e6e1'; ctx.fillRect(0, 0, rect.width, rect.height) // 磚縫底色
-    for (const t of Array.from(cont.querySelectorAll<HTMLImageElement>('img.leaflet-tile'))) {
-      if (!t.complete || !t.naturalWidth) continue
-      const r = t.getBoundingClientRect()
-      try { ctx.drawImage(t, r.left - rect.left, r.top - rect.top, r.width, r.height) } catch { return null }
-    }
+    // 磚不直接 drawImage(DOM img)：瀏覽器可能命中「無 ACAO 標頭的舊快取」，畫入即汙染 canvas、
+    // toDataURL 丟 SecurityError（v720 靜默退回合成卡=沒有地圖的原因）。改 fetch(mode:'cors')
+    // 重取（OSM 磚有 ACAO:*），逐磚失敗只留底色缺口、不影響整體。
+    const tiles = Array.from(cont.querySelectorAll<HTMLImageElement>('img.leaflet-tile'))
+      .filter((t) => t.complete && t.naturalWidth > 0)
+    await Promise.all(tiles.map(async (t) => {
+      try {
+        const res = await fetch(t.src, { mode: 'cors' })
+        if (!res.ok) return
+        const bmp = await createImageBitmap(await res.blob())
+        const r = t.getBoundingClientRect()
+        ctx.drawImage(bmp, r.left - rect.left, r.top - rect.top, r.width, r.height)
+      } catch { /* 單磚失敗：留底色 */ }
+    }))
     const pts = coords.map((c) => map.latLngToContainerPoint(c))
     ctx.lineJoin = 'round'; ctx.lineCap = 'round'
     ctx.strokeStyle = sel?.flagged ? '#ff5a5a' : '#46E3A0'; ctx.lineWidth = 5
@@ -84,6 +93,7 @@ export default function TrackHistoryPage() {
     const tw = ctx.measureText(attr).width
     ctx.fillStyle = 'rgba(255,255,255,.78)'; ctx.fillRect(rect.width - tw - 12, rect.height - 20, tw + 12, 20)
     ctx.fillStyle = '#333'; ctx.fillText(attr, rect.width - tw - 6, rect.height - 6)
+    ctx.getImageData(0, 0, 1, 1) // 汙染自檢：被汙染會在這裡丟 SecurityError，交外層以明確訊息退回合成卡
     return cv
   }
 
@@ -131,10 +141,13 @@ export default function TrackHistoryPage() {
     try {
       let blob: Blob
       try {
-        const mapCv = snapshotMap()
-        if (!proofAreaRef.current || !mapCv) throw new Error('capture not ready')
+        const mapCv = await snapshotMap()
+        if (!proofAreaRef.current || !mapCv) throw new Error('地圖快照未就緒')
         blob = await captureRunProofFromDom(proofAreaRef.current, realName, { mapReplace: { selector: '#hist-map', canvas: mapCv } })
-      } catch {
+      } catch (capErr: any) {
+        // 退回合成卡仍可交差（含官方要求欄位），但把原因顯示出來——靜默退回會讓「圖裡沒地圖」
+        // 變成無從追查的謎（v720 教訓）。
+        setErr(`實況擷取失敗（${capErr?.message || capErr?.name || '未知'}），已改用合成卡片`)
         const avgPaceS = sel.calib_avg_pace_s ?? sel.avg_pace_s
         blob = await generateRunProofImage({
           startedAt: new Date(sel.started_at),
