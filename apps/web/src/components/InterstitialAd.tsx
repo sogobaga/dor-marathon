@@ -23,6 +23,19 @@ export default function InterstitialAd() {
   const indexRef = useRef(0); indexRef.current = index
   const dontShowRef = useRef(false); dontShowRef.current = dontShow
 
+  // 蓋板開啟期間把 canvas 底色（html background）暫時押成遮罩同系深色。
+  // 背景：iOS Safari 分頁還原後有「合成器把 root 圖層放錯位置」的病態（見 ViewportHeightFix 註解），
+  // 視窗底部會露出一條 canvas 底色；warm skin 的奶油色配深色遮罩非常刺眼。此舉治不了錨定，
+  // 但讓露出的帶子與遮罩同色＝隱形。關閉/卸載即還原原 inline 值（正常畫面完全無感——canvas
+  // 被 .phone-frame/遮罩整面蓋住，只有病態露出的那條看得到 canvas）。
+  useEffect(() => {
+    if (!open) return
+    const el = document.documentElement
+    const prev = el.style.background
+    el.style.background = '#0c0e12'
+    return () => { el.style.background = prev }
+  }, [open])
+
   useEffect(() => {
     if (pathname?.startsWith('/admin')) return
     try {

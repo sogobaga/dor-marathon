@@ -248,14 +248,29 @@ export default function ViewportHeightFix() {
     // overflow:hidden 只擋「使用者」捲動；內容一旦超出（+2px），程式化 scrollTo 仍有效。
     // 1px 遠低於 Safari 收合工具列的捲動門檻，不會反過來把工具列縮起來；scrollY 停在 1 的那一幀
     // 只是整頁上移 1px，肉眼不可見，還原時歸零。鍵盤中不捲，避免干擾輸入框的自動捲位。
+    // v1.1.707 再定性：第二張 vpdebug（前台病態畫面）顯示**連 dvh 都正確**、off=0——排版層完全正確，
+    // 是「合成器把 root 圖層放錯位置」（stale compositor placement），對所有 JS/CSS API 隱形。因此：
+    // ① 捲動加讀回儀表 html[data-vpnudge]（vpdebug 會顯示）：scrollTo 若被 overflow:hidden 的
+    //    viewport 擋下，下一張截圖就能證明「捲動根本沒發生」；
+    // ② 追加合成器層重建：root transform: translateZ(0) 開一幀再關，強迫 root 圖層重建/重放置。
+    //    transform 期間 fixed 子孫改錨到 html 盒——幾何與 viewport 相同，一幀內無感。
+    // 兩者對已正確的畫面皆無感；此為對症嘗試的最後一輪，再無效即走 PWA/偽裝路線。
     const nudge = () => {
       try {
         root.style.height = 'calc(100% + 2px)'
         void root.offsetHeight
-        if (!kbUp()) window.scrollTo(0, 1)
+        let scrolled = false
+        if (!kbUp()) {
+          window.scrollTo(0, 1)
+          scrolled = (window.scrollY || 0) > 0
+          if (!scrolled) { root.scrollTop = 1; scrolled = root.scrollTop > 0 } // 有些引擎 window 擋、element 不擋
+        }
+        root.dataset.vpnudge = `${scrolled ? 'ok' : 'blocked'}@${new Date().toTimeString().slice(0, 8)}`
+        root.style.transform = 'translateZ(0)'
         if (nudgeTimer) clearTimeout(nudgeTimer)
-        nudgeTimer = setTimeout(() => { root.style.height = ''; window.scrollTo(0, 0) }, 300) // rAF 凍結時的保險清除
-        requestAnimationFrame(() => requestAnimationFrame(() => { root.style.height = ''; window.scrollTo(0, 0) }))
+        const restore = () => { root.style.height = ''; root.style.transform = ''; window.scrollTo(0, 0); root.scrollTop = 0 }
+        nudgeTimer = setTimeout(restore, 300) // rAF 凍結時的保險清除
+        requestAnimationFrame(() => requestAnimationFrame(restore))
       } catch { /* noop */ }
     }
 
@@ -277,6 +292,7 @@ export default function ViewportHeightFix() {
       clearTimers()
       nudge()
       twiddleViewportMeta()
+      later(600, nudge) // Safari 還原流程晚定案時第一發可能太早，補一發（nudge 冪等且無感）
       RESUME_STEPS.forEach((ms) => later(ms, commit))
       if (mode === 'heal') later(500, () => { hardHeal(); commit() })
     }
