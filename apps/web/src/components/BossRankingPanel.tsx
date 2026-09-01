@@ -74,8 +74,9 @@ export default function BossRankingPanel({ bossId, bossName, onClose }: {
                   <div style={{ width: 24, textAlign: 'center', fontWeight: 900, fontSize: 14, color: r.rank <= 3 ? 'var(--gold)' : 'var(--tx-faint)' }}>{r.rank}</div>
                   <Avatar url={r.avatar_url} name={r.nickname} />
                   <div style={{ flex: 1, minWidth: 0 }}>
+                    {r.title && <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--gold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>}
                     <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {r.title && <span style={{ color: 'var(--gold)', fontWeight: 800, marginRight: 5 }}>{r.title}</span>}{r.nickname}{r.is_me ? '（我）' : ''}
+                      {r.nickname}{r.is_me ? '（我）' : ''}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{r.stars > 0 ? <span style={{ color: 'var(--gold)', letterSpacing: 1 }}>{'★'.repeat(r.stars)}</span> : null} {fmtDate(r.completed_at)}</div>
                   </div>

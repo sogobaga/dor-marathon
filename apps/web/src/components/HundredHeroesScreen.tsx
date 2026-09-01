@@ -50,8 +50,11 @@ export default function HundredHeroesScreen({ onBack }: { onBack: () => void }) 
                 <div style={{ width: 26, textAlign: 'center', fontWeight: 800, color: i < 3 ? 'var(--gold)' : 'var(--tx-dim)' }}>{i + 1}</div>
                 <Avatar url={h.avatar_url} name={h.name} />
                 <div style={{ flex: 1, minWidth: 0 }}>
+                  {/* 稱號在上、暱稱在下（併排時長名會被稱號擠到截斷——使用者回報）；
+                      無稱號＝僅暱稱一行，外層 row 的 alignItems:center 讓它自然上下置中 */}
+                  {h.title && <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--gold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.title}</div>}
                   <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {h.title && <span style={{ color: 'var(--gold)', fontWeight: 800, marginRight: 5 }}>{h.title}</span>}{h.name}{h.is_self ? '（我）' : ''}
+                    {h.name}{h.is_self ? '（我）' : ''}
                   </div>
                 </div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fug)', whiteSpace: 'nowrap' }}>{h.total_km.toFixed(1)} K</div>

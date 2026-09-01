@@ -215,8 +215,10 @@ function LbList({
             }}>
               <div style={{ width: 24, textAlign: 'center', fontWeight: 800, color: r.rank <= 3 ? 'var(--gold)' : 'var(--tx-dim)' }}>{r.rank}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
+                {/* 稱號獨立一行在暱稱上方（併排會擠壓長名，與百里英雄榜同款，v1.1.742） */}
+                {r.title && <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--gold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>}
                 <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {r.title && <span style={{ color: 'var(--gold)', fontWeight: 800, marginRight: 5 }}>{r.title}</span>}{r.nickname}{r.is_me ? '（我）' : ''}
+                  {r.nickname}{r.is_me ? '（我）' : ''}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{r.group_name || ''} · {r.distance_km.toFixed(1)}K</div>
               </div>
@@ -407,8 +409,9 @@ function GroupMembersModal({ race, group, onClose }: { race: Race; group: Standi
             <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 10, background: m.is_me ? 'rgba(45,212,150,.1)' : 'var(--bg-2)', border: m.is_me ? '1px solid var(--fug)' : '1px solid transparent' }}>
               <span style={{ width: 28, textAlign: 'center', fontWeight: 900, fontSize: 13, color: m.rank <= 3 ? 'var(--gold)' : 'var(--tx-dim)' }}>{m.rank}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
+                {m.title && <div style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--gold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.title}</div>}
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {m.title && <span style={{ color: 'var(--gold)', fontWeight: 800, marginRight: 5 }}>{m.title}</span>}{m.name}{m.is_me ? '（我）' : ''}
+                  {m.name}{m.is_me ? '（我）' : ''}
                 </div>
                 <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>{m.activities} 筆</div>
               </div>
