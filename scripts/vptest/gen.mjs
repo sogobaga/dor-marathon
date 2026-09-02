@@ -12,10 +12,19 @@
  * healZoom/healScroll/healFit/healSize/healTheme/healAlert/healTab/healAll），
  * 另外新增 11–15（第二輪）：heal-auto-all/fit/zoom/scroll 四個「lock-osb ＋ 700ms/1800ms
  * 自動觸發治療」變體，以及 bounce 一個無面板的極簡中轉頁（600ms 後 location.replace 到
- * lock-osb.html，測試「先落地穩定再換頁」能否拿到正確的第二份文件）。
+ * lock-osb.html，測試「先落地穩定再換頁」能否拿到正確的第二份文件）。第二輪實機結果：
+ * 11–14 全跑版、15 bounce 正常。
+ *
+ * 第三輪：bounce 從單一頁擴成四個延遲變體（BOUNCES），找「中轉要停多久才夠」的下限：
+ *   - bounce      600ms（原始，行為不變，byte-identical）
+ *   - bounce-150  150ms
+ *   - bounce-300  300ms
+ *   - bounce-0      0ms，location.replace 直接寫在 <head> 內同步執行（不用 setTimeout、
+ *                   不等 <body> 解析完），測試第一份文件是否連 paint 都不需要就能治好。
+ * 四個都各自導到 lock-osb.html?via=<name>，方便從落地頁的 querystring 分辨是哪個變體治好的。
  *
  * 用法：
- *   node scripts/vptest/gen.mjs           產生 15 個 variant + index.html，並自動跑驗證
+ *   node scripts/vptest/gen.mjs           產生 18 個 variant + index.html，並自動跑驗證
  *   node scripts/vptest/gen.mjs --check   只驗證既有輸出（不重新產生）
  *
  * 只允許新增檔案：本檔＋它產出的 apps/web/public/vptest/*.html。不得改動 repo 其他檔案。
@@ -228,10 +237,31 @@ const VARIANTS = [
 
 // 11–15 輪：01–10 已實測全部重現，本輪只留一個純中轉頁（無面板/按鈕），
 // 用來測試「先落地在空白頁、等幾何穩定後再換頁」是否能拿到正確的第二份文件。
-const BOUNCE = {
-  name: 'bounce',
-  desc: '極簡中轉頁：只有 viewport/theme-color + 置中文字，600ms 後 location.replace 到 lock-osb.html?via=bounce（不含面板/按鈕）',
-}
+// 第三輪：bounce 從單一頁展開成四個延遲變體，找最短中轉延遲下限。
+// delay:0 的變體不用 setTimeout，location.replace 直接同步寫在 <head> 內（見
+// buildBouncePage），其餘變體維持「body 內 setTimeout(fn, delay)」的既有結構。
+const BOUNCES = [
+  {
+    name: 'bounce',
+    delay: 600,
+    desc: '極簡中轉頁：只有 viewport/theme-color + 置中文字，600ms 後 location.replace 到 lock-osb.html?via=bounce（不含面板/按鈕）',
+  },
+  {
+    name: 'bounce-0',
+    delay: 0,
+    desc: '極簡中轉頁：location.replace 直接同步寫在 <head> 內（無 setTimeout、不等 <body> 解析完），測試第一份文件是否連 paint 都不需要就能治好（不含面板/按鈕）',
+  },
+  {
+    name: 'bounce-150',
+    delay: 150,
+    desc: '極簡中轉頁：只有 viewport/theme-color + 置中文字，150ms 後 location.replace 到 lock-osb.html?via=bounce-150（不含面板/按鈕）',
+  },
+  {
+    name: 'bounce-300',
+    delay: 300,
+    desc: '極簡中轉頁：只有 viewport/theme-color + 置中文字，300ms 後 location.replace 到 lock-osb.html?via=bounce-300（不含面板/按鈕）',
+  },
+]
 
 // 自動治療變體：extraBodyScript 值 → { tag: logHeal 標記, fn: 要呼叫的 heal 函式名 }
 const AUTO_HEAL_MAP = {
@@ -894,9 +924,12 @@ function buildPage(v) {
   return parts.join('\n') + '\n'
 }
 
-// bounce：極簡中轉頁，無面板/按鈕/尺規/探針/heal script。
-// 只驗證「先落地在一張空白頁、等 Safari 幾何穩定後再換頁」是否能拿到正確的第二份文件。
-function buildBouncePage() {
+// bounce 系列：極簡中轉頁，無面板/按鈕/尺規/探針/heal script。
+// 只驗證「先落地在一張空白頁、等 Safari 幾何穩定後再換頁」是否能拿到正確的第二份文件，
+// 以及「要落地多久才夠」。delay===0 是特例：location.replace 同步寫在 <head> 內、
+// 不經 setTimeout、在 <body> 被解析之前就執行，測試第一份文件是否連 paint 都不需要。
+function buildBouncePage(b) {
+  const target = `lock-osb.html?via=${b.name}`
   const parts = []
   parts.push('<!DOCTYPE html>')
   parts.push('<html lang="zh-TW">')
@@ -904,19 +937,27 @@ function buildBouncePage() {
   parts.push('<meta charset="utf-8">')
   parts.push(`<meta name="viewport" content="${VIEWPORT_DEFAULT}">`)
   parts.push('<meta name="theme-color" content="#0c0e12">')
-  parts.push(`<title>vptest: ${BOUNCE.name}</title>`)
+  parts.push(`<title>vptest: ${b.name}</title>`)
+  if (b.delay === 0) {
+    // 同步、無 setTimeout：<body> 還沒解析就已經換頁。
+    parts.push('<script>')
+    parts.push(`location.replace('${target}');`)
+    parts.push('<\/script>')
+  }
   parts.push('<style>')
   parts.push('html,body{margin:0;height:100%;background:#0c0e12;color:#fff;font-family:-apple-system,system-ui,sans-serif}')
   parts.push('#c{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:14px system-ui}')
   parts.push('</style>')
   parts.push('</head>')
   parts.push('<body>')
-  parts.push('<div id="c">中轉中…</div>')
-  parts.push('<script>')
-  parts.push('setTimeout(function(){')
-  parts.push("  location.replace('lock-osb.html?via=bounce');")
-  parts.push('}, 600);')
-  parts.push('<\/script>')
+  parts.push(`<div id="c">中轉中… (${b.delay}ms)</div>`)
+  if (b.delay > 0) {
+    parts.push('<script>')
+    parts.push('setTimeout(function(){')
+    parts.push(`  location.replace('${target}');`)
+    parts.push(`}, ${b.delay});`)
+    parts.push('<\/script>')
+  }
   parts.push('</body>')
   parts.push('</html>')
   return parts.join('\n') + '\n'
@@ -937,6 +978,7 @@ function buildIndex(variants) {
   parts.push('h1{font-size:18px}')
   parts.push('#warn{background:#3a2a00;border:1px solid #ffd60a;color:#ffd60a;border-radius:10px;padding:10px 12px;font:13px/1.6 system-ui;margin-bottom:16px}')
   parts.push('#round2{background:#0d2b1e;border:1px solid #30d158;color:#30d158;border-radius:10px;padding:10px 12px;font:13px/1.6 system-ui;margin-bottom:16px}')
+  parts.push('#round3{background:#0d1f2b;border:1px solid #64d2ff;color:#64d2ff;border-radius:10px;padding:10px 12px;font:13px/1.6 system-ui;margin-bottom:16px}')
   parts.push('ul{list-style:none;padding:0;margin:0}')
   parts.push('li{margin-bottom:10px;background:#1c1f26;border:1px solid #3a3f4b;border-radius:10px;padding:10px 12px}')
   parts.push('a{color:#7fb1ff;font:600 15px system-ui;text-decoration:none}')
@@ -951,6 +993,9 @@ function buildIndex(variants) {
   )
   parts.push(
     '<div id="round2">01–10 已實測全部重現 → 本輪測 11–15 誰能自動治好</div>'
+  )
+  parts.push(
+    '<div id="round3">第二輪結果：11–14 全跑版、15 bounce 正常 → 第三輪：bounce-0 / 150 / 300 找最短中轉延遲</div>'
   )
   parts.push('<ul>')
   for (const v of variants) {
@@ -978,10 +1023,12 @@ function generate() {
     fs.writeFileSync(file, html, 'utf8')
     written.push(file)
   }
-  const bounceFile = path.join(OUT_DIR, `${BOUNCE.name}.html`)
-  fs.writeFileSync(bounceFile, buildBouncePage(), 'utf8')
-  written.push(bounceFile)
-  const indexHtml = buildIndex([...VARIANTS, BOUNCE])
+  for (const b of BOUNCES) {
+    const bounceFile = path.join(OUT_DIR, `${b.name}.html`)
+    fs.writeFileSync(bounceFile, buildBouncePage(b), 'utf8')
+    written.push(bounceFile)
+  }
+  const indexHtml = buildIndex([...VARIANTS, ...BOUNCES])
   const indexFile = path.join(OUT_DIR, 'index.html')
   fs.writeFileSync(indexFile, indexHtml, 'utf8')
   written.push(indexFile)
@@ -1192,30 +1239,54 @@ function runChecks() {
     checkFile(results, file, label, checks)
   }
 
-  // bounce：獨立結構（無面板/按鈕/尺規/探針），單獨檢查
-  const bounceFile = path.join(OUT_DIR, `${BOUNCE.name}.html`)
-  checkFile(results, bounceFile, BOUNCE.name, [
-    { name: 'viewport meta 內容正確', fn: (c) => c.includes(`content="${VIEWPORT_DEFAULT}"`) },
-    {
-      name: '結構：script 標籤成對、無裸 </script 字樣',
-      fn: (c) => {
-        const s = structuralChecks(c)
-        return s.scriptTagsBalanced && s.noStrayCloseTag && s.noBackslashArtifact
+  // bounce 系列：獨立結構（無面板/按鈕/尺規/探針），逐一檢查
+  for (const b of BOUNCES) {
+    const bounceFile = path.join(OUT_DIR, `${b.name}.html`)
+    const target = `lock-osb.html?via=${b.name}`
+    const checks = [
+      { name: 'viewport meta 內容正確', fn: (c) => c.includes(`content="${VIEWPORT_DEFAULT}"`) },
+      {
+        name: '結構：script 標籤成對、無裸 </script 字樣',
+        fn: (c) => {
+          const s = structuralChecks(c)
+          return s.scriptTagsBalanced && s.noStrayCloseTag && s.noBackslashArtifact
+        },
       },
-    },
-    {
-      name: "含 600ms 後 location.replace('lock-osb.html?via=bounce')",
-      fn: (c) => c.includes("location.replace('lock-osb.html?via=bounce')") && c.includes('}, 600);'),
-    },
-    { name: '不含面板 #m（bounce 無面板/按鈕）', fn: (c) => !c.includes('id="m"') },
-  ])
+      { name: '不含面板 #m（bounce 無面板/按鈕）', fn: (c) => !c.includes('id="m"') },
+    ]
+    if (b.delay === 0) {
+      checks.push({
+        name: `含 <head> 內同步 location.replace('${target}')，且完全不含 setTimeout`,
+        fn: (c) => {
+          const headCloseIdx = c.indexOf('</head>')
+          const bodyOpenIdx = c.indexOf('<body>')
+          const replaceIdx = c.indexOf(`location.replace('${target}')`)
+          return (
+            replaceIdx !== -1 &&
+            headCloseIdx !== -1 &&
+            bodyOpenIdx !== -1 &&
+            replaceIdx < headCloseIdx &&
+            replaceIdx < bodyOpenIdx &&
+            !c.includes('setTimeout')
+          )
+        },
+      })
+    } else {
+      checks.push({
+        name: `含 ${b.delay}ms 後 location.replace('${target}')`,
+        fn: (c) => c.includes(`location.replace('${target}')`) && c.includes(`}, ${b.delay});`),
+      })
+    }
+    checkFile(results, bounceFile, b.name, checks)
+  }
 
   // index.html
   const indexFile = path.join(OUT_DIR, 'index.html')
   checkFile(results, indexFile, 'index', [
     { name: '含警語（站內跳轉≠掃QR）', fn: (c) => c.includes('不等於掃 QR 的外部到站') },
     { name: '含 01–10 已重現→測 11–15 提醒文字', fn: (c) => c.includes('01–10 已實測全部重現') && c.includes('11–15 誰能自動治好') },
-    { name: '含 15 個 variant 連結（10 舊 + heal-auto-* 4 + bounce）', fn: (c) => [...VARIANTS, BOUNCE].every((v) => c.includes(`/vptest/${v.name}.html`)) },
+    { name: '含第三輪 bounce-0/150/300 找最短延遲提醒文字', fn: (c) => c.includes('第三輪：bounce-0 / 150 / 300 找最短中轉延遲') },
+    { name: '含 18 個 variant 連結（10 舊 + heal-auto-* 4 + bounce 系列 4）', fn: (c) => [...VARIANTS, ...BOUNCES].every((v) => c.includes(`/vptest/${v.name}.html`)) },
     { name: '結構：script 標籤成對（index 無 script 亦可）', fn: (c) => {
       const s = structuralChecks(c)
       return s.openCount === 0 ? true : (s.scriptTagsBalanced && s.noStrayCloseTag)

@@ -11,6 +11,7 @@ html,body{margin:0;background:#0c0e12;color:#fff;font-family:-apple-system,syste
 h1{font-size:18px}
 #warn{background:#3a2a00;border:1px solid #ffd60a;color:#ffd60a;border-radius:10px;padding:10px 12px;font:13px/1.6 system-ui;margin-bottom:16px}
 #round2{background:#0d2b1e;border:1px solid #30d158;color:#30d158;border-radius:10px;padding:10px 12px;font:13px/1.6 system-ui;margin-bottom:16px}
+#round3{background:#0d1f2b;border:1px solid #64d2ff;color:#64d2ff;border-radius:10px;padding:10px 12px;font:13px/1.6 system-ui;margin-bottom:16px}
 ul{list-style:none;padding:0;margin:0}
 li{margin-bottom:10px;background:#1c1f26;border:1px solid #3a3f4b;border-radius:10px;padding:10px 12px}
 a{color:#7fb1ff;font:600 15px system-ui;text-decoration:none}
@@ -22,6 +23,7 @@ p{margin:4px 0 0;font:12px/1.5 system-ui;color:#9aa3b2}
 <h1>vptest — iOS Safari 視窗二分測試頁</h1>
 <div id="warn">⚠️ 從這裡點連結是站內跳轉，不等於掃 QR 的外部到站；正式測試請用相機掃 QR。</div>
 <div id="round2">01–10 已實測全部重現 → 本輪測 11–15 誰能自動治好</div>
+<div id="round3">第二輪結果：11–14 全跑版、15 bounce 正常 → 第三輪：bounce-0 / 150 / 300 找最短中轉延遲</div>
 <ul>
 <li>
 <a href="/vptest/flow.html">flow.html</a>
@@ -82,6 +84,18 @@ p{margin:4px 0 0;font:12px/1.5 system-ui;color:#9aa3b2}
 <li>
 <a href="/vptest/bounce.html">bounce.html</a>
 <p>極簡中轉頁：只有 viewport/theme-color + 置中文字，600ms 後 location.replace 到 lock-osb.html?via=bounce（不含面板/按鈕）</p>
+</li>
+<li>
+<a href="/vptest/bounce-0.html">bounce-0.html</a>
+<p>極簡中轉頁：location.replace 直接同步寫在 <head> 內（無 setTimeout、不等 <body> 解析完），測試第一份文件是否連 paint 都不需要就能治好（不含面板/按鈕）</p>
+</li>
+<li>
+<a href="/vptest/bounce-150.html">bounce-150.html</a>
+<p>極簡中轉頁：只有 viewport/theme-color + 置中文字，150ms 後 location.replace 到 lock-osb.html?via=bounce-150（不含面板/按鈕）</p>
+</li>
+<li>
+<a href="/vptest/bounce-300.html">bounce-300.html</a>
+<p>極簡中轉頁：只有 viewport/theme-color + 置中文字，300ms 後 location.replace 到 lock-osb.html?via=bounce-300（不含面板/按鈕）</p>
 </li>
 </ul>
 </body>

@@ -10,6 +10,8 @@ import ViewportHeightFix from '@/components/ViewportHeightFix'
 import ViewportDebug from '@/components/ViewportDebug'
 import PwaInstallPrompt from '@/components/PwaInstallPrompt'
 import UpdateNotice from '@/components/UpdateNotice'
+import BounceCleanup from '@/components/BounceCleanup'
+import { veilColorsOf } from '@/lib/skinColors'
 
 // 各 skin 的瀏覽器 chrome（狀態列）色；新增 skin 時在此與 globals.css/appSettings/後端 specs 一併加。
 const SKIN_THEME_COLOR: Record<string, string> = { default: '#09090f', warm: '#FBF4E9', warm2: '#FBF5EA' }
@@ -86,9 +88,6 @@ export async function generateViewport(): Promise<Viewport> {
   }
 }
 
-// 白幕底色／前景色：跟 skin 走（帶子區域在網頁圖層之外、任何元素都畫不到，只能靠 html/body 背景把它染成同色）
-const VEIL_COLORS: Record<string, [string, string]> = { default: ['#09090f', '#e8e8ef'], warm: ['#FBF4E9', '#6b5a3e'], warm2: ['#FBF5EA', '#6b5a3e'] }
-
 // 開機腳本（body 第一個 <script>，在任何內容繪製前同步執行；try/catch 全包）。兩件事：
 //
 // A. 載入瞬間快照 → window.__dorVis（?vpdebug=1 面板讀）：能見度／視窗高度／導航類型、第一次 visible 與第一次
@@ -114,6 +113,17 @@ const VEIL_COLORS: Record<string, [string, string]> = { default: ['#09090f', '#e
 //    skip:no-trigger），再加上 dor.arrivalReload 的 2 分鐘節流。
 //    另提供 window.__dorVeilReload(why)：給 ViewportHeightFix 的「觸點越界」偵測當備援（重載後仍壞時的第二道）。
 //    6 秒保險：若 reload 因故沒發生，自動移除白幕，頁面不會被永久蓋住。
+//    ⚠️ v757 起主要治療改由 src/middleware.ts 的「到站彈跳頁」在伺服器端接手：符合條件的到站請求直接回一份
+//    ~1KB 品牌色彈跳頁（含轉圈），600ms 後 location.replace() 同網址；那次 replace 是同源導覽，middleware 判定
+//    後放行、直接吃到治好的第二次載入，使用者完全不會看到完整 app 載入兩次。以下這段 boot-script 重載改為
+//    「備援」：只涵蓋 middleware 判斷不到的路徑（iOS < 16.4 無 Sec-Fetch-* 標頭、分頁還原、bot/monitor UA 等
+//    middleware 主動放行的情境）。由 middleware 彈跳頁 replace 過來的文件帶 cookie dor_b=1，本段落必須認得
+//    這個記號並跳過（見下方 skip='bounced'），否則會變成「彈跳後又整份重載」的雙重延遲。
+//
+// C. bounced 標記：由彈跳頁 replace 過來的文件 referrer 是同源（strict-origin-when-cross-origin 對同源給完整網址），
+//    本來就落在 no-trigger；帶 dor_b=1 cookie 時只是把標籤改成 skip:bounced 讓 ?vpdebug=1 面板看得出走了哪條路。
+//    刻意「不」把 cookie 當成跳過重載的理由：cookie 跨分頁共享（5 秒），同一支手機 5 秒內再掃一張 QR 時 middleware
+//    會因 cookie 放行、那份文件仍是病態的到站（referrer 空）→ 這裡必須照常走 arrival 重載，否則沒人治它。
 //    ⚠️ 白幕刻意「不插任何 DOM 節點」：本站是 React 18.3，hydration 對 <body> 子節點嚴格比對，多塞一個 <div>
 //    會觸發 hydration mismatch → 整棵樹客端重繪（白幕也被拔掉）。改用 constructable stylesheet
 //    （document.adoptedStyleSheets）把白幕畫在 html::before／轉圈畫在 html::after——純 CSS 偽元素，React 看不見。
@@ -166,7 +176,7 @@ else if(n.standalone===true)skip='standalone';
 else if(/vpfix=off|noreload=1/.test(q))skip='opt-out';
 else if(/^[/]track([/]|$)/.test(path))skip='track';
 else if(/[?&#](code|state|token|access_token|id_token)=/i.test(q))skip='auth-url';
-else if(!why)skip='no-trigger';
+else if(!why)skip=/(^|; )dor_b=1(;|$)/.test(d.cookie||'')?'bounced':'no-trigger';
 else if(last&&now-last<120000)skip='recent';
 if(skip)v.ar='skip:'+skip;else reload(why);
 }catch(e){}})();`
@@ -174,10 +184,10 @@ if(skip)v.ar='skip:'+skip;else reload(why);
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const skin = skinOf(await getPublicSettings())
-  const [veilBg, veilFg] = VEIL_COLORS[skin] || VEIL_COLORS.default
+  const [veilBg, veilFg] = veilColorsOf(skin)
   return (
     <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined}>
-      <body><script dangerouslySetInnerHTML={{ __html: bootJs(veilBg, veilFg) }} /><AppProviders><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><PwaInstallPrompt /><UpdateNotice /><LandscapeNotice />{children}</AppProviders></body>
+      <body><script dangerouslySetInnerHTML={{ __html: bootJs(veilBg, veilFg) }} /><AppProviders><BounceCleanup /><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><PwaInstallPrompt /><UpdateNotice /><LandscapeNotice />{children}</AppProviders></body>
     </html>
   )
 }
