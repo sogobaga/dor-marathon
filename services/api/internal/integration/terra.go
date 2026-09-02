@@ -263,6 +263,11 @@ func (h *TerraHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	// 若使用者偏好資料來源正好是這個品牌，斷線後改回預設 gps（見 repository.go ResetPreferredSource）；
+	// 失敗只記錄、不擋斷線本身。
+	if err := h.repo.ResetPreferredSource(r.Context(), userID, brand); err != nil {
+		log.Warn().Err(err).Str("user", userID).Str("provider", brand).Msg("terra disconnect: reset preferred data source failed")
+	}
 	// external_award_ledger（見 mileage_exp.go）不受影響：DeleteProviderActivities 只刪 activities
 	// 列本身，帳本記錄留存，防止「中斷再重連」重複請領 EXP/DP（比照 strava.go Disconnect 的刪除義務）。
 	if err := h.repo.DeleteProviderActivities(r.Context(), userID, brand); err != nil {
@@ -635,6 +640,11 @@ func (h *TerraHandler) handleDeauthEvent(ctx context.Context, body []byte) {
 	if err := h.repo.Delete(ctx, conn.UserID, source); err != nil {
 		log.Error().Err(err).Msg("terra webhook: deauth delete connection failed")
 		return
+	}
+	// 若使用者偏好資料來源正好是這個品牌，撤權後改回預設 gps（見 repository.go ResetPreferredSource）；
+	// 失敗只記錄、不擋撤權處理本身。
+	if err := h.repo.ResetPreferredSource(ctx, conn.UserID, source); err != nil {
+		log.Warn().Err(err).Str("user", conn.UserID).Str("provider", source).Msg("terra webhook: deauth reset preferred data source failed")
 	}
 	if err := h.repo.DeleteProviderActivities(ctx, conn.UserID, source); err != nil {
 		log.Error().Err(err).Str("user", conn.UserID).Msg("terra webhook: deauth delete activities failed")

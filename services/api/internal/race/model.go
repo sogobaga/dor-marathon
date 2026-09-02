@@ -55,7 +55,7 @@ type Race struct {
 	ShowDistanceRank bool                         `json:"show_distance_rank"`       // 顯示累積里程榜（預設 true）
 	ShowTimeRank     bool                         `json:"show_time_rank"`           // 顯示完成時間榜（預設 true）
 	VipOnly          bool                         `json:"vip_only"`                 // VIP 限定賽事（預設 false）：只提供給 VIP 帳號
-	ExternalData     bool                         `json:"external_data"`            // 是否採用 Strava 等外部數據做排名/里程統計（預設 false=只認 App GPS，合規）
+	ExternalData     bool                         `json:"external_data"`            // 是否採用手錶外部數據（garmin/coros/polar/suunto/wahoo）做排名/里程統計；Strava 一律排除（gate v2，見 activity-data-source-gate）；DB 預設 FALSE、後台新賽事表單預設 true
 	ChallengeRule    *ChallengeRule               `json:"challenge_rule,omitempty"` // 個人挑戰模式(event_mode=personal)專用規則；其餘模式為 nil
 	RewardConfig     *activityreward.RewardConfig `json:"reward_config,omitempty"`  // 完成觸發即時獎勵設定（migration 134 起一般化到所有模式）：personal 完成一次挑戰觸發；其餘模式完成任一「個人額外挑戰」(race_tasks scope=group_individual) 觸發；選填
 	// EntryRewardConfig 參賽虛擬獎勵設定（migration 140）：沿用即時獎勵同一 RewardConfig 結構與抽獎/發放

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, gpsCalibApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type TerraStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo, type VipCardInfo, type GpsCalibInfo } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, gpsCalibApi, sourceLabel, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type TerraStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo, type VipCardInfo, type GpsCalibInfo, type DataSource } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendingGps'
 import { useDashboard } from '@/lib/useDashboard'
@@ -97,6 +97,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [terra, setTerra] = useState<TerraStatus | null>(null)
   const [terraBusy, setTerraBusy] = useState(false)
   const [terraMsg, setTerraMsg] = useState('')
+  const [dataSrcMsg, setDataSrcMsg] = useState('') // 里程優先來源設定錯誤訊息（如選到尚未連接的來源）
   const terraPollTimers = useRef<ReturnType<typeof setTimeout>[]>([]) // auth webhook 可能晚到，導回後輪詢用；卸載時清空
   const [activities, setActivities] = useState<SyncedActivity[] | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -108,9 +109,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [reminderBusy, setReminderBusy] = useState(false) // 團練開跑前 Email 提醒開關送出中
   const { dash, revalidate: loadDashboard } = useDashboard() // 共用會員儀表板快取（與首頁會員卡同一份）
   const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>(initialTab ?? 'info')
-  // 本機尚未上傳的 GPS（里程優先來源=Strava 時，track 頁結束不自動上傳，留給這裡決定）
+  // 本機尚未上傳的 GPS（里程優先來源=外部來源時，track 頁結束不自動上傳，留給這裡決定）
   const [pending, setPending] = useState<PendingGpsRun | null>(null)
-  const [pendingAsk, setPendingAsk] = useState(false) // 「是否等待 Strava 同步」二次確認彈窗
+  const [pendingAsk, setPendingAsk] = useState(false) // 「是否等待外部來源同步」二次確認彈窗
   const [pendingBusy, setPendingBusy] = useState(false)
   const [pendingErr, setPendingErr] = useState('')
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
@@ -243,7 +244,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
     }
   }
 
-  // 本機尚未上傳的 GPS（不管是否連 Strava，都可能有——里程優先來源=Strava 時 track 頁結束會保留在本機）
+  // 本機尚未上傳的 GPS（不管是否連 Strava，都可能有——里程優先來源=外部來源時 track 頁結束會保留在本機）
   useEffect(() => { setPending(readPendingGps()) }, [])
 
   // GPS 距離校正：僅在入口=shown 才打 API（locked/hidden 打了也是 403，不必浪費請求）
@@ -302,6 +303,20 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       // 避免下一趟開跑仍拿到舊係數（對抗式審查修正）。
     } catch (e: any) { setPendingErr(e?.message || '上傳失敗，請稍後再試') }
     finally { setPendingBusy(false) }
+  }
+
+  // 里程優先來源：樂觀切換，失敗（如選到尚未連接的來源，後端回 400 not_connected）就退回原值＋顯示訊息
+  async function selectDataSource(src: DataSource) {
+    const prev = p?.preferred_data_source ?? 'gps'
+    if (prev === src) return
+    setDataSrcMsg('')
+    setP((c) => (c ? { ...c, preferred_data_source: src } : c))
+    try {
+      await withUserAuth((t) => profileApi.setDataSource(t, src))
+    } catch (e: any) {
+      setP((c) => (c ? { ...c, preferred_data_source: prev } : c))
+      setDataSrcMsg(e?.message === 'not_connected' ? '這個來源尚未連接，請先連接後再選擇' : '設定失敗，請再試一次')
+    }
   }
 
   useEffect(() => {
@@ -508,6 +523,19 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   // Terra 手錶直連品牌清單文案：enabled 後有 providers 就照後端開放的品牌顯示，否則退回全品牌（卡片仍在「即將開放」，此值不會被用到）
   const terraBrandList = (terra?.providers?.length ? terra.providers.map(terraBrandName) : ['Garmin', 'COROS', 'Polar', 'Suunto', 'Wahoo']).join('／')
 
+  // 里程優先來源：使用者實際已連接的來源，固定順序 gps → 手錶品牌 → strava（App GPS 永遠在，其餘依是否連接過濾）
+  const connectedTerraProviders = new Set((terra?.connections ?? []).map((c) => c.provider.toLowerCase()))
+  const connectedSources: DataSource[] = [
+    'gps',
+    ...(['garmin', 'coros', 'polar', 'suunto', 'wahoo'] as const).filter((b) => connectedTerraProviders.has(b)),
+    ...(strava?.connected ? (['strava'] as const) : []),
+  ]
+  // 有效選擇：後端存的偏好若已不在目前已連接清單內（如來源後來被斷開）就退回 gps，避免畫面卡在一個選不到的來源
+  const effectiveSource: DataSource = p?.preferred_data_source && connectedSources.includes(p.preferred_data_source)
+    ? p.preferred_data_source
+    : 'gps'
+  const prefLabel = sourceLabel(effectiveSource)
+
   return (
     <>
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
@@ -697,7 +725,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
                   {strava?.connected
                     ? `已連接${strava.athlete_name ? `：${strava.athlete_name}` : ''} · 活動自動同步`
-                    : '連接後自動同步跑步活動（含 COROS/Garmin 等同步到 Strava 的裝置），用於個人數據（個人任務、自主訓練、稱號成就、個人里程）；不用於活動排名或里程競賽統計'}
+                    : '連接後自動同步跑步活動，用於個人數據（個人任務、自主訓練、稱號成就、個人里程）；依 Strava 平台規範，Strava 數據不計入活動排名或里程競賽統計——要讓手錶紀錄進賽事，請用下方「直接連手錶」'}
                 </div>
               </div>
               {strava?.connected ? (
@@ -719,7 +747,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               )}
             </div>
             {strava?.enabled === false && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 8 }}>（Strava 整合尚未由管理者設定）</div>}
-            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>Strava 數據僅用於個人數據，不會用於活動排名／里程競賽統計。</div>
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>依 Strava 平台規範，Strava 數據僅用於你的個人數據，不會用於活動排名／里程競賽統計（此為 Strava 的限制，與賽事設定無關）。</div>
             {stravaMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginTop: 8 }}>{stravaMsg}</div>}
             {strava?.connected && (
               <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>
@@ -771,7 +799,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3, lineHeight: 1.6 }}>
                   {!terra?.enabled
                     ? <>Strava 名額已滿也沒關係——很快就能直接連你的 Garmin／COROS／Polar／Suunto／Wahoo 帳號同步跑步，<b>正在開通中</b>。</>
-                    : `直接連接 ${terraBrandList} 等手錶帳號同步跑步，用於個人數據（個人任務、自主訓練、稱號成就、個人里程）；不用於活動排名或里程競賽統計。`}
+                    : `直接連接 ${terraBrandList} 等手錶帳號同步跑步：計入個人數據（個人任務、自主訓練、稱號成就、個人里程），主辦方開放外部數據的賽事也會計入排名與里程統計。`}
                 </div>
               </div>
               {!terra?.enabled ? (
@@ -802,35 +830,37 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             </div>
           </div>
 
-          {/* 里程優先來源（有 2 個來源時可設定；跨來源去重用） */}
-          {strava?.connected && (
+          {/* 里程優先來源（連接 2 個以上來源時可設定；跨來源去重用） */}
+          {connectedSources.length >= 2 && (
             <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 12, padding: '12px 14px' }}>
               <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>里程優先來源</div>
-              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>正式紀錄一律以「App GPS 跑步追蹤」為優先。此設定用於：①結束跑步時是否先跳出確認外部數據的提示；②沒有 App GPS 記錄時，多個外部來源(如 Strava)之間如何取捨。若外部紀錄(如手錶)里程較長，EXP/DP/總里程會自動補足差額，不需手動處理。</div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                {(['gps', 'strava'] as const).map((src) => {
-                  const on = (p?.preferred_data_source ?? 'gps') === src
+              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>正式紀錄一律以「App GPS 跑步追蹤」為優先。此設定用於：①結束跑步時是否先跳出確認外部數據的提示；②沒有 App GPS 記錄時，多個外部來源（Strava／手錶）之間如何取捨。若外部紀錄里程較長，EXP/DP/總里程會自動補足差額。</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                {connectedSources.map((src) => {
+                  const on = effectiveSource === src
                   return (
-                    <button key={src} disabled={on}
-                      onClick={async () => { setP((c) => c ? { ...c, preferred_data_source: src } : c); try { await withUserAuth((t) => profileApi.setDataSource(t, src)) } catch { /* ignore */ } }}
-                      style={{ flex: 1, padding: '9px 0', borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: on ? 'default' : 'pointer', background: on ? 'var(--fug)' : 'transparent', color: on ? 'var(--fug-ink)' : 'var(--tx-dim)', border: `1px solid ${on ? 'var(--fug)' : 'var(--line-2)'}` }}>
-                      {src === 'gps' ? 'GPS 跑步追蹤' : 'Strava'}{on ? ' ✓' : ''}
+                    <button key={src} disabled={on} onClick={() => selectDataSource(src)}
+                      style={{ flex: '1 1 84px', minWidth: 84, padding: '9px 0', borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: on ? 'default' : 'pointer', background: on ? 'var(--fug)' : 'transparent', color: on ? 'var(--fug-ink)' : 'var(--tx-dim)', border: `1px solid ${on ? 'var(--fug)' : 'var(--line-2)'}` }}>
+                      {sourceLabel(src)}{on ? ' ✓' : ''}
                     </button>
                   )
                 })}
               </div>
+              {dataSrcMsg && <div style={{ fontSize: 11.5, color: 'var(--hunt)', marginTop: 8 }}>{dataSrcMsg}</div>}
             </div>
           )}
 
-          {/* 本機尚未上傳的 GPS（里程優先來源=Strava 時，track 頁結束不自動上傳）——不限於已連 Strava，故不包在 strava?.connected 內 */}
+          {/* 本機尚未上傳的 GPS（里程優先來源=外部來源時，track 頁結束不自動上傳）——不限於已連 Strava，故不包在 strava?.connected 內 */}
           {pending && (
             <div style={{ marginTop: 12, background: 'var(--bg-2)', border: '1px solid var(--fug)', borderRadius: 12, padding: '12px 14px' }}>
               <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>🏃 本機尚未上傳的跑步</div>
               <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.6 }}>
-                約 {pending.km} km · {pending.mins} 分。你的優先來源是 Strava，可等 Strava 同步後以 Strava 為準，或直接上傳這趟 GPS 數據。
+                {effectiveSource === 'gps'
+                  ? `約 ${pending.km} km · ${pending.mins} 分。這趟跑步尚未上傳，可直接上傳這趟 GPS 數據。`
+                  : `約 ${pending.km} km · ${pending.mins} 分。你的優先來源是 ${prefLabel}，可等 ${prefLabel} 同步後以 ${prefLabel} 為準，或直接上傳這趟 GPS 數據。`}
               </div>
               {pendingErr && <div style={{ fontSize: 11.5, color: 'var(--hunt)', marginTop: 6 }}>{pendingErr}</div>}
-              <button onClick={() => setPendingAsk(true)} disabled={pendingBusy}
+              <button onClick={() => (effectiveSource === 'gps' ? uploadPending() : setPendingAsk(true))} disabled={pendingBusy}
                 style={{ marginTop: 10, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer', opacity: pendingBusy ? 0.6 : 1 }}>
                 {pendingBusy ? '上傳中…' : '上傳數據'}
               </button>
@@ -1225,13 +1255,13 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       )}
     </div>
 
-    {/* 本機待上傳 GPS：是否等待 Strava 同步 二次確認 */}
+    {/* 本機待上傳 GPS：是否等待外部來源同步 二次確認 */}
     {pendingAsk && (
       <div style={{ position: 'fixed', inset: 0, zIndex: 3600, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 16, padding: '20px 18px', maxWidth: 340, width: '100%' }}>
-          <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>是否要等待 STRAVA 數據同步？</div>
+          <div style={{ fontSize: 16, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>是否要等待 {prefLabel} 數據同步？</div>
           <div style={{ fontSize: 13, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
-            你的優先來源是 Strava。若等 Strava 同步完成，將以 Strava 數據為準；若直接上傳，這趟會以 GPS 數據計入。
+            你的優先來源是 {prefLabel}。若等 {prefLabel} 同步完成，將以 {prefLabel} 數據為準；若直接上傳，這趟會以 GPS 數據計入。
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
             <button onClick={uploadPending} disabled={pendingBusy}

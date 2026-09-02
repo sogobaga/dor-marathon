@@ -173,6 +173,11 @@ func (h *CorosHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	// 若使用者偏好資料來源正好是 coros，斷線後改回預設 gps（見 repository.go ResetPreferredSource）；
+	// 失敗只記錄、不擋斷線本身。
+	if err := h.repo.ResetPreferredSource(r.Context(), userID, providerCoros); err != nil {
+		log.Warn().Err(err).Str("user", userID).Msg("coros disconnect: reset preferred data source failed")
+	}
 	if err := h.repo.DeleteProviderActivities(r.Context(), userID, providerCoros); err != nil {
 		log.Error().Err(err).Str("user", userID).Msg("coros disconnect: delete imported activities failed")
 		// 不因刪除失敗擋斷線本身，錯誤已記錄供事後補償清理（比照 strava.go Disconnect）。

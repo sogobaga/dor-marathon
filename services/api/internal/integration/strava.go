@@ -182,6 +182,11 @@ func (h *StravaHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	// 若使用者偏好資料來源正好是 strava，斷線後改回預設 gps（見 repository.go ResetPreferredSource）；
+	// 失敗只記錄、不擋斷線本身。
+	if err := h.repo.ResetPreferredSource(r.Context(), userID, providerStrava); err != nil {
+		log.Warn().Err(err).Str("user", userID).Msg("strava disconnect: reset preferred data source failed")
+	}
 	// Strava API 條款 30 天刪除義務：中斷連接後刪除已匯入的活動（已發放的 EXP/DP/total_km 不追回，使用者拍板）。
 	if err := h.repo.DeleteProviderActivities(r.Context(), userID, providerStrava); err != nil {
 		log.Error().Err(err).Str("user", userID).Msg("strava disconnect: delete imported activities failed")

@@ -11,7 +11,7 @@ import (
 	"github.com/dor/api/internal/auth"
 )
 
-// 跨來源（App GPS / Strava）重複活動去重的「使用者互動」層：偏好來源設定、首次彈窗提示/確認。
+// 跨來源（App GPS / 外部來源，見 validSources）重複活動去重的「使用者互動」層：偏好來源設定、首次彈窗提示/確認。
 // 實際週期性去重由 worker resolveCrossSourceDups 執行；此處提供「立即重解」與 UI 端點。
 
 // validSources 可作為偏好資料來源的合法值。polar/suunto/wahoo 為 Terra 聚合器新增品牌
@@ -90,6 +90,23 @@ func (h *Handler) SetDataSource(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !validSources[req.Source] {
 		respondErr(w, http.StatusBadRequest, "source 需為 gps / strava / garmin / coros / polar / suunto / wahoo")
 		return
+	}
+	// 只能選「已連接」的外部來源：gps 恆可選；其餘須在 user_integrations 有對應 provider 的連線列
+	// （direct 或 terra via 皆可，provider 欄位一律存小寫品牌，與 preferred_data_source 同口徑，
+	// 見 internal/integration/strava.go providerStrava、coros.go providerCoros、
+	// terra.go providerToSource 的落地值）。前端同步只讓使用者從已連接來源中選，這裡是後端複查。
+	if req.Source != "gps" {
+		var connected bool
+		if err := h.db.QueryRow(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM user_integrations WHERE user_id=$1 AND provider=$2)`,
+			userID, req.Source).Scan(&connected); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed")
+			return
+		}
+		if !connected {
+			respondErr(w, http.StatusBadRequest, "not_connected")
+			return
+		}
 	}
 	if _, err := h.db.Exec(r.Context(), `
 		INSERT INTO user_profiles (user_id, preferred_data_source, updated_at) VALUES ($1,$2,NOW())

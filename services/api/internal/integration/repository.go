@@ -294,6 +294,18 @@ func (r *Repository) Delete(ctx context.Context, userID, provider string) error 
 	return err
 }
 
+// ResetPreferredSource 中斷連接（或撤權）後，若使用者的 user_profiles.preferred_data_source 剛好
+// 就是這個 provider，改回預設 'gps'（見 profile/dedup.go SetDataSource 的「只能選已連接來源」防呆——
+// 斷線後若不重置，偏好會卡在一個已經沒有連線的來源上）。userID/provider 皆為小寫品牌字串，與
+// user_integrations.provider、user_profiles.preferred_data_source 同口徑。呼叫端一律只 log 失敗、
+// 不擋斷線本身（比照 DeleteProviderActivities 的呼叫模式）。
+func (r *Repository) ResetPreferredSource(ctx context.Context, userID, provider string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE user_profiles SET preferred_data_source='gps', updated_at=NOW() WHERE user_id=$1 AND preferred_data_source=$2`,
+		userID, provider)
+	return err
+}
+
 // DeleteProviderActivities 刪除使用者某來源（如 "strava"）已匯入的活動。
 //
 // 依 Strava API Agreement：使用者中斷連接（本站主動 disconnect）或於 Strava 端撤銷授權

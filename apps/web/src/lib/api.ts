@@ -253,7 +253,7 @@ export interface Race {
   show_distance_rank?: boolean
   show_time_rank?: boolean
   vip_only?: boolean // VIP 限定賽事（只提供給 VIP 帳號）
-  external_data?: boolean // 是否採用 Strava 等外部數據做排名/里程統計（預設 false=只認 App GPS，合規）
+  external_data?: boolean // 是否採用手錶外部數據（garmin/coros/polar/suunto/wahoo）做排名/里程統計；Strava 一律排除（gate v2）；後台新賽事表單預設 true
   config?: RaceConfig // 後端一律回傳（非 omitempty）；此處選填僅為前端防禦
   challenge_rule?: ChallengeRule | null // 個人挑戰模式(event_mode=personal)專用規則；其餘模式為 null
   reward_config?: RewardConfig | null // 個人挑戰模式(event_mode=personal)完成觸發即時獎勵設定；其餘模式為 null，選填
@@ -1637,6 +1637,16 @@ export const adminRewardDrawsApi = {
 
 // --- 個人資訊 (Profile) ---
 
+// 里程優先來源：App GPS、Strava、或任一 Terra 手錶品牌（小寫）。見 memory terra-wearable-integration。
+export type DataSource = 'gps' | 'strava' | 'garmin' | 'coros' | 'polar' | 'suunto' | 'wahoo'
+const DATA_SOURCE_LABEL: Record<DataSource, string> = {
+  gps: 'GPS 跑步追蹤', strava: 'Strava', garmin: 'Garmin', coros: 'COROS', polar: 'Polar', suunto: 'Suunto', wahoo: 'Wahoo',
+}
+// 里程優先來源顯示名稱（ProfileScreen 的「里程優先來源」按鈕、track 頁的三選一彈窗共用，避免各自維護一份）
+export function sourceLabel(src: string): string {
+  return DATA_SOURCE_LABEL[src as DataSource] ?? src
+}
+
 export interface Profile {
   user_id: string
   email: string
@@ -1648,7 +1658,7 @@ export interface Profile {
   address: string
   birthday: string // YYYY-MM-DD
   gender: '' | 'male' | 'female' | 'other'
-  preferred_data_source?: 'gps' | 'strava' // 跨來源去重偏好
+  preferred_data_source?: DataSource // 跨來源去重偏好
   invoice: InvoiceInfo // 發票資訊（上次填的，供報名表單預填）
 }
 
@@ -2015,8 +2025,8 @@ export const profileApi = {
     request<{ ok: boolean }>('/profile/vip/card', { method: 'DELETE', headers: withAuth(token) }),
   markTrialNoticeShown: (token: string) =>
     request<{ ok: boolean }>('/profile/trial-notice-shown', { method: 'POST', headers: withAuth(token) }),
-  // 跨來源去重：偏好來源、首次彈窗
-  setDataSource: (token: string, source: 'gps' | 'strava') =>
+  // 跨來源去重：偏好來源、首次彈窗（來源尚未連接時後端回 400 { error: 'not_connected' }）
+  setDataSource: (token: string, source: DataSource) =>
     request<{ ok: boolean; preferred_data_source: string }>('/profile/data-source', { method: 'POST', headers: withAuth(token), body: JSON.stringify({ source }) }),
   // 通知偏好（目前：團練開跑前 Email 提醒）。比照 setDataSource 同一慣例：小 body、只改一個欄位。
   setNotifyPrefs: (token: string, body: { runmeet_reminder_email: boolean }) =>

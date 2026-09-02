@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import useSWR from 'swr'
-import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, cheerLayoutApi, parseCheerCharLayout, CHEER_CHAR_IDS, createRaceSocket, formatChallengeRule, formatChallengeProgress, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy, type CheerCharLayout } from '@/lib/api'
+import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, cheerLayoutApi, parseCheerCharLayout, CHEER_CHAR_IDS, createRaceSocket, formatChallengeRule, formatChallengeProgress, sourceLabel, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy, type CheerCharLayout } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser, getUser, AUTH_EVENT } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
@@ -82,7 +82,8 @@ export default function TrackPage() {
   const [vehicleWarn, setVehicleWarn] = useState(false) // 即時偵測到疑似搭車速度
   const [recover, setRecover] = useState<{ start: number; points: GpsPoint[]; km: number; mins: number } | null>(null) // 上次未上傳的跑步（可恢復上傳）
   const [result, setResult] = useState<GpsRunResult | null>(null)
-  const [stravaPriority, setStravaPriority] = useState(false) // 里程優先來源＝Strava 且已連接：GPS 結束不自動上傳，先讓使用者選
+  const [stravaPriority, setStravaPriority] = useState(false) // 里程優先來源＝外部來源（Strava／手錶品牌）且已連接：GPS 結束不自動上傳，先讓使用者選
+  const [holdSourceLabel, setHoldSourceLabel] = useState('') // stravaPriority 成立時，對應外部來源的顯示名稱（''=無暫緩）；供下方彈窗文案共用
   const [confirmStravaHold, setConfirmStravaHold] = useState<null | { km: number; mins: number; paceS: number }>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [showActiveRaces, setShowActiveRaces] = useState(false) // 「進行中活動/賽事」面板開關
@@ -571,14 +572,21 @@ export default function TrackPage() {
     withUserAuth((t) => mileageExpApi.config(t)).then(setMileageCfg).catch(() => {})
   }, [])
 
-  // 里程優先來源＝Strava 且已連接 → GPS 結束不自動上傳，改為讓使用者選擇（避免與 Strava 同步重複而輸掉去重）
+  // 里程優先來源＝外部來源（Strava／手錶品牌）且已連接 → GPS 結束不自動上傳，改為讓使用者選擇（避免與外部來源同步重複而輸掉去重）
   useEffect(() => {
     const token = getUserToken(); if (!token) return
     Promise.all([
       profileApi.getMe(token).catch(() => null),
       integrationsApi.stravaStatus(token).catch(() => null),
-    ]).then(([me, st]) => {
-      setStravaPriority(me?.profile?.preferred_data_source === 'strava' && !!st?.connected)
+      integrationsApi.terraStatus(token).catch(() => null),
+    ]).then(([me, st, terra]) => {
+      const pref = me?.profile?.preferred_data_source
+      const isStravaHold = pref === 'strava' && !!st?.connected
+      const isTerraHold = !!pref && pref !== 'gps' && pref !== 'strava' &&
+        !!terra?.connections?.some((c) => c.provider.toLowerCase() === pref)
+      const hold = isStravaHold || isTerraHold
+      setStravaPriority(hold)
+      setHoldSourceLabel(hold && pref ? sourceLabel(pref) : '')
     })
   }, [user?.id])
 
@@ -1245,11 +1253,11 @@ export default function TrackPage() {
     } finally { setUploading(false) }
   }
 
-  // allowStravaHold：僅「自由跑結束」允許偏好 Strava 時暫緩上傳讓使用者選；
-  // 課表挑戰（finishWorkout）必須直接上傳——課表成績要靠 GPS 防弊/best_time，且不可讓 Strava 彈窗蓋掉 WorkoutHud 收服演出。
+  // allowStravaHold：僅「自由跑結束」允許偏好外部來源（Strava／手錶品牌）時暫緩上傳讓使用者選；
+  // 課表挑戰（finishWorkout）必須直接上傳——課表成績要靠 GPS 防弊/best_time，且不可讓外部來源彈窗蓋掉 WorkoutHud 收服演出。
   async function finish(allowStravaHold = true): Promise<GpsRunResult | null> {
     const pts = pointsRef.current
-    // 偏好 Strava 的自由跑：先「不」cleanup、「不」setStatus('done')——GPS 保持追蹤，只跳彈窗讓使用者三選一
+    // 偏好外部來源的自由跑：先「不」cleanup、「不」setStatus('done')——GPS 保持追蹤，只跳彈窗讓使用者三選一
     // （直接使用本次數據／前往確認數據／繼續進行跑步）。這樣「繼續進行跑步」才能真的接續，不會被結束掉；
     // 收尾（cleanup+setStatus+上傳/導頁）由彈窗各按鈕決定。軌跡太短/未登入則落到下面一般流程。
     if (allowStravaHold && stravaPriority && pts.length >= 2 && getUserToken()) {
@@ -1791,13 +1799,13 @@ export default function TrackPage() {
           </div>
         </div>
       )}
-      {/* 里程優先來源＝Strava：GPS 結束不自動上傳，先讓使用者選 */}
+      {/* 里程優先來源＝外部來源：GPS 結束不自動上傳，先讓使用者選 */}
       {confirmStravaHold && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 3300, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
           <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 16, padding: '20px 18px', maxWidth: 340, width: '100%', boxShadow: '0 12px 40px rgba(0,0,0,.6)' }}>
-            <div style={{ fontSize: 17, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>您已開啟 STRAVA 數據同步</div>
+            <div style={{ fontSize: 17, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>您已開啟 {holdSourceLabel} 數據同步</div>
             <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
-              是否優先確認 STRAVA 數據，或是直接使用本次數據？
+              是否優先確認 {holdSourceLabel} 數據，或是直接使用本次數據？
             </div>
             <div style={{ fontSize: 13.5, color: 'var(--tx)', marginTop: 10 }}>
               本次跑步 · {confirmStravaHold.km} km · {confirmStravaHold.mins} 分

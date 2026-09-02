@@ -136,7 +136,7 @@ type Profile struct {
 	Address             string           `json:"address"`
 	Birthday            string           `json:"birthday"`              // YYYY-MM-DD，空=未填
 	Gender              string           `json:"gender"`                // male|female|other|空
-	PreferredDataSource string           `json:"preferred_data_source"` // gps|strava（跨來源去重偏好；預設 gps）
+	PreferredDataSource string           `json:"preferred_data_source"` // gps|strava|garmin|coros|polar|suunto|wahoo（跨來源去重偏好；預設 gps）
 	Invoice             race.InvoiceInfo `json:"invoice"`               // 上次報名填的發票資訊，供前端預填；從未報名過則全空
 }
 

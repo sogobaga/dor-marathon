@@ -352,7 +352,7 @@ export default function RaceForm({
   const [showDistanceRank, setShowDistanceRank] = useState(initial?.show_distance_rank ?? true)
   const [showTimeRank, setShowTimeRank] = useState(initial?.show_time_rank ?? true)
   const [vipOnly, setVipOnly] = useState<boolean>(initial?.vip_only ?? false)
-  const [externalData, setExternalData] = useState<boolean>(initial?.external_data ?? false)
+  const [externalData, setExternalData] = useState<boolean>(initial?.external_data ?? true) // 2026-09-03 使用者定案：手錶打通後新賽事預設開放外部數據；既有賽事沿用各自設定
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -1759,10 +1759,10 @@ export default function RaceForm({
             <Field label="活動數據來源">
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--tx)', paddingTop: 2 }}>
                 <input type="checkbox" checked={externalData} onChange={(e) => setExternalData(e.target.checked)} />
-                採用 Strava 等外部數據做排名/里程統計
+                採用手錶外部數據（Garmin／COROS／Polar／Suunto／Wahoo）做排名/里程統計
               </label>
               <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
-                預設關閉＝只採計 App 內 GPS 跑步追蹤（符合 Strava 使用規範）。開啟後將把 Strava/Garmin/COROS 等外部同步數據一併計入本活動排名與里程統計。
+                關閉＝只採計 App 內 GPS 跑步追蹤。開啟＝透過手錶同步的外部數據一併計入本活動排名與里程統計（新賽事預設開啟）。Strava 數據依 Strava 規範一律不計入賽事，不受此開關影響。
               </span>
             </Field>
 
