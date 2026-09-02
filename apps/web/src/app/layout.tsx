@@ -86,11 +86,18 @@ export async function generateViewport(): Promise<Viewport> {
   }
 }
 
+// 載入瞬間快照（2026-09-02，症狀 A 從 QR 掃碼進站可 100% 重現後加）：在 HTML 解析到 body 的第一刻記下
+// 能見度／視窗高度／導航類型，並記錄「第一次變成可見」與「第一次 resize」的時間點。
+// 目的：分辨 QR 路徑的首次繪製是否發生在「分頁尚未可見／視窗尺寸還在過渡」時——這是圖層位移的候選成因，
+// 也是之後把自癒（例如使用者提議的白幕自動重載）鎖定在「只有這條路徑才做」的依據。
+// 只寫 window.__dorVis，?vpdebug=1 面板讀它；try/catch 全包、無任何副作用，對一般使用者零成本。
+const LOAD_SNAPSHOT_JS = "(function(){try{var d=document,p=performance,w=window;var v={l:d.visibilityState,t:Math.round(p.now()),pr:!!d.prerendering,vt:-1,n:'',ih:w.innerHeight,ch:d.documentElement.clientHeight,sh:(w.screen||{}).height||0,rt:-1,rih:0};var e=p.getEntriesByType&&p.getEntriesByType('navigation')[0];if(e)v.n=e.type;if(v.l==='visible')v.vt=v.t;else d.addEventListener('visibilitychange',function f(){if(d.visibilityState==='visible'){v.vt=Math.round(p.now());d.removeEventListener('visibilitychange',f)}});w.addEventListener('resize',function r(){v.rt=Math.round(p.now());v.rih=w.innerHeight;w.removeEventListener('resize',r)});w.__dorVis=v}catch(e){}})();"
+
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const skin = skinOf(await getPublicSettings())
   return (
     <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined}>
-      <body><AppProviders><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><PwaInstallPrompt /><UpdateNotice /><LandscapeNotice />{children}</AppProviders></body>
+      <body><script dangerouslySetInnerHTML={{ __html: LOAD_SNAPSHOT_JS }} /><AppProviders><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><PwaInstallPrompt /><UpdateNotice /><LandscapeNotice />{children}</AppProviders></body>
     </html>
   )
 }
