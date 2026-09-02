@@ -295,10 +295,40 @@ export default function ViewportHeightFix() {
     // ⚠️ 刻意不綁 vv 的 'scroll'：那是 iOS 捲到焦點輸入框時的過渡值來源（v1.1.664 的惡性迴圈觸發點之一）。
     mql.addEventListener('change', onMqChange)
 
+    // ── 症狀 A 自癒（2026-09-02，證據鏈完備後上線）──
+    // 病態＝root 圖層被合成器上移 Δ=lvh−svh（兩張 vpdebug 定量），所有可讀指標卻全部正常
+    // → 量測式偵測在數學上不可能。唯一可靠訊號：**命中測試跟著位移走**——實體觸點落在畫面
+    // 下緣 Δ 區（如底部導覽列，它也被上移了）時，事件 clientY 會超過 layout viewport 高度，
+    // 健康狀態幾何上不可能（捏合縮放/視窗被 pan 為僅有例外，已排除）。
+    // 治癒＝程式化切分頁（about:blank 開 0.4s 即關）：使用者實測 vpdebug 🅱 按鈕當場復原
+    // （🅰 html 重建無效＝需要 UI 行程的 detach/attach，頁內重排搆不著）；pointerdown 屬使用者
+    // 手勢上下文，popup blocker 放行（按鈕已證明）。節流：每次載入最多 2 次、間隔 30s——
+    // 幾何誤判理論上不存在，這是縱深防禦。副作用＝分頁閃一下，但只發生在病態且當場治好。
+    let healCount = 0
+    let lastHealAt = 0
+    const onPointerHeal = (e: PointerEvent) => {
+      if (!mql.matches) return
+      if (healCount >= 2) return
+      if (lastHealAt > 0 && Date.now() - lastHealAt < 30_000) return
+      const vvp = window.visualViewport
+      if (vvp && (vvp.scale > 1.01 || vvp.offsetTop > 1)) return
+      const icb = root.clientHeight || 0
+      if (icb < MIN_SANE_PX || e.clientY <= icb + 8) return
+      healCount++
+      lastHealAt = Date.now()
+      try {
+        const w = window.open('about:blank', '_blank')
+        setTimeout(() => { try { w?.close() } catch { /* noop */ } }, 400)
+        root.dataset.vpheal = `tabflip#${healCount}@${new Date().toTimeString().slice(0, 8)}`
+      } catch { /* noop */ }
+    }
+    window.addEventListener('pointerdown', onPointerHeal, { capture: true, passive: true })
+
     const poll = setInterval(() => { if (!document.hidden) commit() }, POLL_MS)
 
     return () => {
       disposed = true
+      window.removeEventListener('pointerdown', onPointerHeal, { capture: true } as EventListenerOptions)
       dropProbe()
       clearInterval(poll)
       clearTimers()

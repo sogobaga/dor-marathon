@@ -34,6 +34,7 @@ export default function ViewportDebug() {
         `vv ${vv ? Math.round(vv.height) : '-'} · off ${vv ? Math.round(vv.offsetTop) : '-'} · scale ${vv ? vv.scale.toFixed(2) : '-'}`,
         `vh ${unit('100vh')} · dvh ${unit('100dvh')} · svh ${unit('100svh')} · lvh ${unit('100lvh')}`,
         `--app-h ${root.style.getPropertyValue('--app-h') || '(none)'} · ae ${document.activeElement?.tagName || '-'}`,
+        `heal ${root.dataset.vpheal || '-'}`, // 自癒儀表：觸點越界偵測觸發過的 tabflip 紀錄
         APP_VERSION, // 版號直接進面板：面板會蓋住頁尾版號，截圖回傳時才能確認當下版本（使用者要求）
       ])
     }
@@ -48,15 +49,6 @@ export default function ViewportDebug() {
   // 🅰 重建＝<html> display:none 一幀再還原（摧毀重建整棵圖層樹，「重新掛載」的程式化近似；
   //    副作用：畫面閃一下、容器捲動位置可能重置——手動修復情境可接受）
   // 🅱 切頁＝window.open 空白分頁 0.4s 後自動關閉（逐字重演使用者實測有效的「切分頁再回」）
-  const healRebuild = () => {
-    try {
-      const root = document.documentElement
-      const prev = root.style.display
-      root.style.display = 'none'
-      void root.offsetHeight
-      setTimeout(() => { root.style.display = prev }, 50)
-    } catch { /* noop */ }
-  }
   const healTabFlip = () => {
     try {
       const w = window.open('about:blank', '_blank')
@@ -68,13 +60,9 @@ export default function ViewportDebug() {
   return (
     <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 9999, background: 'rgba(0,0,0,.82)', color: '#0f0', font: '11px/1.45 ui-monospace,monospace', padding: '6px 8px', whiteSpace: 'pre', display: 'flex', alignItems: 'flex-end', gap: 8 }}>
       <div style={{ flex: 1, pointerEvents: 'none', minWidth: 0 }}>{rows.join('\n')}</div>
-      <button onClick={healRebuild}
-        style={{ flexShrink: 0, background: '#0f0', color: '#000', border: 'none', borderRadius: 6, padding: '6px 8px', font: 'bold 11px ui-monospace,monospace', cursor: 'pointer' }}>
-        🅰 重建
-      </button>
       <button onClick={healTabFlip}
         style={{ flexShrink: 0, background: '#ff0', color: '#000', border: 'none', borderRadius: 6, padding: '6px 8px', font: 'bold 11px ui-monospace,monospace', cursor: 'pointer' }}>
-        🅱 切頁
+        🅱 修復
       </button>
     </div>
   )
