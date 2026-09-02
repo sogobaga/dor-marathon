@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, gpsCalibApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo, type VipCardInfo, type GpsCalibInfo } from '@/lib/api'
+import { useEffect, useRef, useState } from 'react'
+import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, gpsCalibApi, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type TerraStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo, type VipCardInfo, type GpsCalibInfo } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendingGps'
 import { useDashboard } from '@/lib/useDashboard'
@@ -33,6 +33,14 @@ const FLAG_LABEL: Record<string, string> = {
   multi_device_duplicate: '多裝置重複',
   cross_account_duplicate: '跨帳號重複',
   duplicate: '重複資料',
+}
+// Terra 手錶直連（Phase 1）：已知品牌顯示中文慣用大小寫，未知品牌（後端新增但前端未同步）退回首字大寫。
+const TERRA_BRAND_LABEL: Record<string, string> = {
+  garmin: 'Garmin', coros: 'COROS', polar: 'Polar', suunto: 'Suunto', wahoo: 'Wahoo',
+}
+function terraBrandName(provider: string): string {
+  const key = provider.toLowerCase()
+  return TERRA_BRAND_LABEL[key] ?? (key.charAt(0).toUpperCase() + key.slice(1))
 }
 // GPS 距離校正（見 internal/gpscalib，2026-08-30）
 const GPS_CALIB_STATUS_LABEL: Record<string, string> = {
@@ -85,6 +93,11 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [strava, setStrava] = useState<StravaStatus | null>(null)
   const [stravaBusy, setStravaBusy] = useState(false)
   const [stravaMsg, setStravaMsg] = useState('')
+  // Terra 手錶直連（Phase 1）：terra===null 或 !terra.enabled 時卡片維持「即將開放」（production 尚未設定憑證前的常態）
+  const [terra, setTerra] = useState<TerraStatus | null>(null)
+  const [terraBusy, setTerraBusy] = useState(false)
+  const [terraMsg, setTerraMsg] = useState('')
+  const terraPollTimers = useRef<ReturnType<typeof setTimeout>[]>([]) // auth webhook 可能晚到，導回後輪詢用；卸載時清空
   const [activities, setActivities] = useState<SyncedActivity[] | null>(null)
   const [syncing, setSyncing] = useState(false)
   // GPS 距離校正（見 internal/gpscalib，2026-08-30）：入口白名單 shown 才抓；locked 只顯示鎖定卡片、不打 API。
@@ -190,6 +203,29 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       .then((s) => { setStrava(s); if (s.connected) loadActivities() })
       .catch(() => {})
   }
+  // Terra 手錶直連狀態；載入失敗（含尚未登入的暫態）就不管它，不影響 Strava 卡片。
+  function loadTerra() {
+    withUserAuth((t) => integrationsApi.terraStatus(t))
+      .then(setTerra)
+      .catch(() => {})
+  }
+  // 導回後品牌可能還沒進 connections（Terra auth webhook 晚到），輪詢至多 5 次、每 2 秒一次，
+  // 該品牌一出現就停止；計時器記進 ref，卸載時（見下方 useEffect）全部清掉避免記憶體洩漏/setState after unmount。
+  function pollTerraForBrand(provider: string, triesLeft: number) {
+    if (triesLeft <= 0) return
+    const timer = setTimeout(() => {
+      withUserAuth((t) => integrationsApi.terraStatus(t))
+        .then((s) => {
+          setTerra(s)
+          if (!s.connections.some((c) => c.provider === provider)) pollTerraForBrand(provider, triesLeft - 1)
+        })
+        .catch(() => pollTerraForBrand(provider, triesLeft - 1))
+    }, 2000)
+    terraPollTimers.current.push(timer)
+  }
+  useEffect(() => {
+    return () => { terraPollTimers.current.forEach(clearTimeout); terraPollTimers.current = [] }
+  }, [])
   function loadActivities() {
     withUserAuth((t) => integrationsApi.stravaActivities(t)).then((r) => setActivities(r.activities)).catch(() => {})
   }
@@ -274,16 +310,35 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       return
     }
     loadStrava()
+    loadTerra()
     settingsApi.get().then((r) => setSite(r.settings)).catch(() => {}) // Strava 標章雙版本 URL
-    // 處理 Strava OAuth 導回參數
+    // 處理 Strava／Terra 導回參數（同一頁面、同一組 query string 邏輯）
     if (typeof window !== 'undefined') {
       const sp = new URLSearchParams(window.location.search)
+      let touched = false
       const s = sp.get('strava')
       if (s) {
         setStravaMsg(s === 'connected' ? '✓ 已連接 Strava，正在同步近期活動…'
           : s === 'denied' ? '已取消授權'
           : 'Strava 連接失敗，請再試一次')
         sp.delete('strava')
+        touched = true
+      }
+      const tr = sp.get('terra')
+      if (tr) {
+        const provider = sp.get('provider') || ''
+        const reason = sp.get('reason') || ''
+        if (tr === 'connected') {
+          setTerraMsg(`✓ 已連接 ${provider ? terraBrandName(provider) : '手錶'}，之後手錶同步的跑步會自動匯入（僅計算連接之後的紀錄）`)
+          loadTerra()
+          if (provider) pollTerraForBrand(provider, 5) // webhook 可能晚到，補幾次輪詢
+        } else {
+          setTerraMsg(`連接未完成，請再試一次${reason ? `（${reason}）` : ''}`)
+        }
+        sp.delete('terra'); sp.delete('provider'); sp.delete('reason')
+        touched = true
+      }
+      if (touched) {
         const qs = sp.toString()
         window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''))
       }
@@ -401,6 +456,33 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       setStravaBusy(false)
     }
   }
+  async function connectTerra() {
+    setTerraBusy(true)
+    setTerraMsg('')
+    try {
+      // 帶回程網址＝目前頁面（同源），Terra widget 完成後導回這裡，session 不會掉（同 connectStrava 作法）
+      const returnUrl = window.location.origin + window.location.pathname
+      const { url } = await withUserAuth((t) => integrationsApi.terraConnectUrl(t, returnUrl))
+      window.location.href = url // 導去 Terra 連接 widget
+    } catch (e: any) {
+      setTerraMsg(e?.status === 503 ? '手錶連接功能尚未開放，請稍後再試' : (e?.message || '無法連接，請再試一次'))
+      setTerraBusy(false)
+    }
+  }
+  async function disconnectTerra(provider: string) {
+    const brand = terraBrandName(provider)
+    if (!window.confirm(`中斷 ${brand} 連接？之後 ${brand} 手錶同步的跑步將不再自動匯入；已獲得的 EXP/DP 等獎勵不受影響。`)) return
+    setTerraBusy(true)
+    try {
+      await withUserAuth((t) => integrationsApi.terraDisconnect(t, provider))
+      setTerraMsg(`已中斷 ${brand} 連接`)
+      loadTerra()
+    } catch (e: any) {
+      setTerraMsg(e?.message || '中斷失敗')
+    } finally {
+      setTerraBusy(false)
+    }
+  }
 
   function set<K extends keyof Profile>(k: K, v: Profile[K]) {
     setP((prev) => (prev ? { ...prev, [k]: v } : prev))
@@ -422,6 +504,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       setSaving(false)
     }
   }
+
+  // Terra 手錶直連品牌清單文案：enabled 後有 providers 就照後端開放的品牌顯示，否則退回全品牌（卡片仍在「即將開放」，此值不會被用到）
+  const terraBrandList = (terra?.providers?.length ? terra.providers.map(terraBrandName) : ['Garmin', 'COROS', 'Polar', 'Suunto', 'Wahoo']).join('／')
 
   return (
     <>
@@ -601,9 +686,14 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         {tab === 'sports' && (
         <div>
           <div style={recCard}>
+            {/* Strava 官方連接名額誠實告知（見 memory strava-api-review：上限 10 已滿，重送審核中）；不管 Terra 是否開放都顯示，
+                不隱藏連接按鈕（有人中斷會釋出名額）。琥珀色半透明底＋var(--tx) 文字，不用金黃實心底（專案規則：實色金底才強制白字）。 */}
+            <div style={{ fontSize: 11.5, color: 'var(--tx)', background: 'rgba(245,158,11,.14)', border: '1px solid rgba(245,158,11,.35)', borderRadius: 8, padding: '8px 10px', marginBottom: 12, lineHeight: 1.6 }}>
+              ⚠ Strava 官方限制每個 App 只能連接 10 位跑者，目前名額已滿、升級審核中。使用 Garmin／COROS 等手錶的跑者請改用「直接連手錶」。
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, color: '#fc4c02' }}>Strava<span style={{ fontSize: 10.5, color: 'var(--fug)', fontWeight: 800, marginLeft: 5 }}>· 推薦</span></div>
+                <div style={{ fontWeight: 700, color: '#fc4c02' }}>Strava{!terra?.enabled && <span style={{ fontSize: 10.5, color: 'var(--fug)', fontWeight: 800, marginLeft: 5 }}>· 推薦</span>}</div>
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
                   {strava?.connected
                     ? `已連接${strava.athlete_name ? `：${strava.athlete_name}` : ''} · 活動自動同步`
@@ -668,24 +758,49 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             </div>
           </div>
 
-          {/* 手錶直連（Garmin / COROS）+ Terra 同意文案 — 先隱藏（尚未實際串接）；未來要接 Terra/直連時把
-              下面的 false 改回顯示條件（或 Phase 1 開放旗標）即可。整段保留不刪。 */}
-          {false && (
+          {/* 手錶直連（Garmin/COROS/Polar/Suunto/Wahoo，Terra 聚合器，Phase 1）。terra===null 或 !enabled 時維持
+              「即將開放」佔位卡（production 尚未設定 Terra 憑證前的常態，見 memory terra-wearable-integration）；
+              enabled 後才是真正的連接流程，且升級為推薦卡（Strava 名額已滿，見上方卡片琥珀提示）。 */}
           <div style={{ ...recCard, marginTop: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, color: 'var(--tx)' }}>⌚ 直接連手錶（Garmin / COROS）</div>
+                <div style={{ fontWeight: 700, color: 'var(--tx)' }}>
+                  ⌚ 直接連手錶
+                  {terra?.enabled && <span style={{ fontSize: 10.5, color: 'var(--fug)', fontWeight: 800, marginLeft: 5 }}>· 推薦</span>}
+                </div>
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3, lineHeight: 1.6 }}>
-                  沒有用 Strava？之後可直接連你的 Garmin / COROS 帳號同步跑步。多數手錶用戶其實已透過上方 Strava 自動同步，<b>建議優先用 Strava</b>。
+                  {!terra?.enabled
+                    ? <>Strava 名額已滿也沒關係——很快就能直接連你的 Garmin／COROS／Polar／Suunto／Wahoo 帳號同步跑步，<b>正在開通中</b>。</>
+                    : `直接連接 ${terraBrandList} 等手錶帳號同步跑步，用於個人數據（個人任務、自主訓練、稱號成就、個人里程）；不用於活動排名或里程競賽統計。`}
                 </div>
               </div>
-              <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: 'var(--tx-faint)', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '6px 10px' }}>即將開放</span>
+              {!terra?.enabled ? (
+                <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: 'var(--tx-faint)', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '6px 10px' }}>即將開放</span>
+              ) : (
+                <button onClick={connectTerra} disabled={terraBusy}
+                  style={{ background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 10, padding: '9px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap', flexShrink: 0, alignSelf: 'flex-start', opacity: terraBusy ? 0.6 : 1 }}>
+                  {terraBusy ? '連接中…' : '連接手錶'}
+                </button>
+              )}
             </div>
+
+            {/* 已連接品牌清單：可能同時連好幾支不同品牌的手錶，逐一列出＋各自可斷開；「連接手錶」按鈕仍保留在上方可再加一支 */}
+            {terra?.enabled && terra.connections.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+                {terra.connections.map((c) => (
+                  <div key={c.provider} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: 'var(--bg-2)', borderRadius: 8, padding: '7px 10px' }}>
+                    <span style={{ fontSize: 12.5, color: 'var(--tx)' }}>✓ {terraBrandName(c.provider)} ・ 已連接 {fmtDate(c.connected_at).split(' ')[0]}</span>
+                    <button onClick={() => disconnectTerra(c.provider)} disabled={terraBusy} style={{ ...ghostBtn, padding: '5px 10px', fontSize: 11.5, whiteSpace: 'nowrap' }}>斷開</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {terraMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginTop: 8 }}>{terraMsg}</div>}
             <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
               連接即表示你同意透過整合商 <b>Terra</b> 取得你的跑步活動資料（跨境處理），並同意本平台 <a href="/privacy" target="_blank" rel="noreferrer" style={{ color: 'var(--fug)' }}>隱私權政策</a>。
             </div>
           </div>
-          )}
 
           {/* 里程優先來源（有 2 個來源時可設定；跨來源去重用） */}
           {strava?.connected && (

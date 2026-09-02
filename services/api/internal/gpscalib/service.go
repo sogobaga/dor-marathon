@@ -266,7 +266,7 @@ const candidateSQL = `
 	WHERE g.user_id = $1 AND NOT g.flagged AND g.review_action IS DISTINCT FROM 'rejected'
 	  AND g.ended_at >= now() - interval '120 days'
 	  AND ($2::timestamptz IS NULL OR g.started_at >= $2)
-	  AND a.source IN ('strava','garmin','coros') AND a.external_id IS NOT NULL AND a.duration_s > 0
+	  AND a.source IN ('strava','garmin','coros','polar','suunto','wahoo') AND a.external_id IS NOT NULL AND a.duration_s > 0
 	  AND abs(extract(epoch from (a.recorded_at - (g.ended_at - make_interval(secs=>g.duration_s))))) <= 600`
 
 func loadCandidatePairs(ctx context.Context, tx pgx.Tx, userID string, resetAt *time.Time) ([]Pair, error) {
@@ -287,10 +287,12 @@ func loadCandidatePairs(ctx context.Context, tx pgx.Tx, userID string, resetAt *
 	return out, rows.Err()
 }
 
-// pickRefSource：user_profiles.preferred_data_source 在 {strava,garmin,coros} 內就用它；否則試
-// 三個候選來源各自當 refSource 跑一次 Gate()，取「若選它為參考來源、會有最多筆通過 G1-G7 全部
-// 閘門」者，同數依 garmin > coros > strava。候選為空、或三個來源都是 0 筆 accepted（使用者從未
-// 接過任何支援的穿戴/第三方來源，或現有候選全被其他閘門擋下）回空字串。
+// pickRefSource：user_profiles.preferred_data_source 在 {strava,garmin,coros,polar,suunto,wahoo}
+// 內就用它；否則試候選來源各自當 refSource 跑一次 Gate()，取「若選它為參考來源、會有最多筆通過
+// G1-G7 全部閘門」者，同數依 garmin > coros > polar > suunto > wahoo > strava（優先序理由同
+// profile/dedup.go reResolveUser 的排序註解：Terra 直連品牌 > Terra-only 品牌 > Strava 二手來源）。
+// 候選為空、或所有來源都是 0 筆 accepted（使用者從未接過任何支援的穿戴/第三方來源，或現有候選全被
+// 其他閘門擋下）回空字串。
 //
 // 對抗式審查修正（medium-1 finding 附帶的次要問題）：舊版本以「候選出現次數」計數，會把明顯
 // 不合格的候選（partial/short/edge/range 都會被擋）也算進去，使自動挑選的來源可能其實一筆都
@@ -299,11 +301,11 @@ func loadCandidatePairs(ctx context.Context, tx pgx.Tx, userID string, resetAt *
 // 只有數十筆，成本可忽略）。
 func pickRefSource(preferred string, pairs []Pair) string {
 	switch preferred {
-	case "strava", "garmin", "coros":
+	case "strava", "garmin", "coros", "polar", "suunto", "wahoo":
 		return preferred
 	}
 	best, bestN := "", 0
-	for _, src := range []string{"garmin", "coros", "strava"} {
+	for _, src := range []string{"garmin", "coros", "polar", "suunto", "wahoo", "strava"} {
 		n := 0
 		for _, g := range Gate(pairs, src) {
 			if g.Accepted {

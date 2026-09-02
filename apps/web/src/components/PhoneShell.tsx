@@ -124,6 +124,13 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     if (params.has('strava')) {
       setShowProfile(true)
     }
+    // Terra 手錶連接導回（?terra=connected|failed|error&provider=...，見 integration/terra.go Callback：
+    // Terra widget 只能導回固定網址，所以一律落在首頁）→ 開個人資訊頁「運動數據」分頁顯示結果；
+    // 參數由 ProfileScreen 讀完自己清。
+    if (params.has('terra')) {
+      setShowProfile(true)
+      setProfileInitialTab('sports')
+    }
     // 綠界站內付 2.0 綁卡 3D 驗證完成導回（?vip_bind=success|fail，見 BindHandler.redirectBindResult）
     // → 顯示結果彈窗；成功時順便讓全站會員儀表板重抓一次（VIP 徽章/到期日即時更新）。清參數避免重整重播。
     const vipBind = params.get('vip_bind')

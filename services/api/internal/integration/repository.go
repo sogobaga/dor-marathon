@@ -39,6 +39,10 @@ type Connection struct {
 	// 涵蓋「未先中斷就重新授權」的情形。作為 Strava 匯入的起算 floor：只抓「連接當下之後」的活動，
 	// 避免一連接就把整段歷史里程灌入導致 EXP/DP 暴衝（使用者定案：從串接當下起計算）。
 	ConnectedAt time.Time
+	// Via：連線管道，'direct'（本站既有 OAuth，預設）或 'terra'（透過 Terra 聚合器，見 migrations/165）。
+	// (user_id, provider) 唯一鍵兩種管道共用——同品牌只會有一條連線，後連上的一方連 via 一併覆蓋
+	// （見 Save/SaveTerra）。
+	Via string
 }
 
 // --- token 加密（graceful、漸進遷移）---
@@ -127,13 +131,16 @@ func decryptToken(stored string) (string, error) {
 	return string(plain), nil
 }
 
-// Save upsert（依 user_id+provider）。access_token/refresh_token 寫入前經 encryptToken 處理
-// （未設金鑰時為 no-op，回傳原字串）。
+// Save upsert（依 user_id+provider）：本站既有 OAuth 直連流程專用（Strava/COROS）。
+// access_token/refresh_token 寫入前經 encryptToken 處理（未設金鑰時為 no-op，回傳原字串）。
+// via 恆寫 'direct'：即使這個 (user_id, provider) 之前是一條 Terra 連線（via='terra'），使用者改走
+// 本站直連 OAuth 重新授權時，也要把 via 一併覆蓋成 'direct'，讓 /status 卡片與 DeleteProviderActivities
+// 的行為都反映「現在真正在用的管道」（見 migrations/165、SaveTerra 的對稱處理）。
 func (r *Repository) Save(ctx context.Context, c *Connection) error {
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO user_integrations
-			(user_id, provider, provider_user_id, access_token, refresh_token, expires_at, scope, athlete_name)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+			(user_id, provider, provider_user_id, access_token, refresh_token, expires_at, scope, athlete_name, via)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'direct')
 		ON CONFLICT (user_id, provider) DO UPDATE SET
 			provider_user_id = EXCLUDED.provider_user_id,
 			access_token     = EXCLUDED.access_token,
@@ -141,11 +148,69 @@ func (r *Repository) Save(ctx context.Context, c *Connection) error {
 			expires_at       = EXCLUDED.expires_at,
 			scope            = EXCLUDED.scope,
 			athlete_name     = EXCLUDED.athlete_name,
+			via              = 'direct',
 			updated_at       = NOW(),
 			created_at       = NOW()`, // 重新授權(即使未先中斷)也重設連接起算點 → 匯入 floor 前移，不倒灌中斷/未連接期間的歷史里程
 		c.UserID, c.Provider, c.ProviderUserID, encryptToken(c.AccessToken), encryptToken(c.RefreshToken),
 		c.ExpiresAt, c.Scope, c.AthleteName)
 	return err
+}
+
+// SaveTerra upsert 一條 Terra 聚合器連線（user_id+provider=底層品牌小寫，如 "garmin"）。
+// 與 Save 的三個刻意差異：
+//  1. via 恆寫 'terra'（即使覆蓋掉同品牌一條既有的 direct 連線，見 Save 對稱處理／migrations/165）。
+//  2. access_token/refresh_token 恆空字串：Terra 不會把底層品牌的 OAuth token 曝露給我方，我方也
+//     不需要——活動资料由 Terra webhook 推播，不用我方自己拿 token 去品牌 API 拉資料。
+//  3. ⚠️ 與 Save 最大的不同：ON CONFLICT 時「不」覆寫 created_at（=ConnectedAt，匯入 floor）。
+//     Terra 使用者可能因為手錶重新配對、App 重新授權等原因觸發 auth/user_reauth 事件重連，這些都
+//     不是「使用者主動在本站中斷再重連」，floor 不該因此往後移動而漏抓中間這段時間的活動
+//     （對稱地：也不該往前移動而倒灌連接前的歷史）——只有全新列（INSERT 分支）才是 NOW()。
+func (r *Repository) SaveTerra(ctx context.Context, c *Connection) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO user_integrations
+			(user_id, provider, provider_user_id, access_token, refresh_token, expires_at, scope, athlete_name, via)
+		VALUES ($1,$2,$3,'','',$4,$5,'','terra')
+		ON CONFLICT (user_id, provider) DO UPDATE SET
+			provider_user_id = EXCLUDED.provider_user_id,
+			access_token     = '',
+			refresh_token    = '',
+			expires_at       = EXCLUDED.expires_at,
+			scope            = EXCLUDED.scope,
+			via              = 'terra',
+			updated_at       = NOW()`,
+		c.UserID, c.Provider, c.ProviderUserID, c.ExpiresAt, c.Scope)
+	return err
+}
+
+// ListTerraConnections 回傳某使用者「經 Terra 連線」的全部品牌（via='terra'）。
+// 供 /api/v1/integrations/terra/status 用——同品牌若是 direct 連線（如 COROS 官方直連），
+// 屬於那張卡片自己的 GetByUser 查詢，不會出現在這裡（見 migrations/165 註解）。
+func (r *Repository) ListTerraConnections(ctx context.Context, userID string) ([]*Connection, error) {
+	rows, err := r.db.Query(ctx, connCols+` WHERE user_id=$1 AND via='terra'`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Connection
+	for rows.Next() {
+		c := &Connection{}
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Provider, &c.ProviderUserID,
+			&c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.AthleteName, &c.ConnectedAt, &c.Via); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// UserExists 檢查某 id 是否為既有使用者。Terra 的 webhook/callback 只帶回 reference_id（我方連接
+// widget 時塞進去的 DOR user id）這個裸字串，任何人都能偽造 webhook 帶任意 reference_id——
+// 寫入 user_integrations 前必須先確認它真的對應一個存在的使用者（否則 FK 會直接報錯，但那是在
+// 交易失敗之後才發現；這裡先查一次也讓呼叫端能提早、乾淨地拒絕並記 log）。
+func (r *Repository) UserExists(ctx context.Context, userID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)`, userID).Scan(&exists)
+	return exists, err
 }
 
 // decryptConnFields 就地解密 Connection 的 access/refresh token（scanConn 與 ListByProviderUser 共用）。
@@ -164,7 +229,7 @@ func decryptConnFields(c *Connection) error {
 func scanConn(row pgx.Row) (*Connection, error) {
 	c := &Connection{}
 	err := row.Scan(&c.ID, &c.UserID, &c.Provider, &c.ProviderUserID,
-		&c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.AthleteName, &c.ConnectedAt)
+		&c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.AthleteName, &c.ConnectedAt, &c.Via)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -177,8 +242,10 @@ func scanConn(row pgx.Row) (*Connection, error) {
 	return c, nil
 }
 
+// COALESCE(via,'direct')：欄位本身是 NOT NULL DEFAULT 'direct'（migrations/165），理論上不會是
+// NULL，這裡仍比照專案慣例（COALESCE-safe）防禦性處理，避免未來欄位定義若被放寬時整批查詢炸開。
 const connCols = `SELECT id, user_id, provider, provider_user_id, access_token, refresh_token,
-	expires_at, COALESCE(scope,''), COALESCE(athlete_name,''), created_at FROM user_integrations`
+	expires_at, COALESCE(scope,''), COALESCE(athlete_name,''), created_at, COALESCE(via,'direct') FROM user_integrations`
 
 func (r *Repository) GetByUser(ctx context.Context, userID, provider string) (*Connection, error) {
 	return scanConn(r.db.QueryRow(ctx, connCols+` WHERE user_id=$1 AND provider=$2`, userID, provider))
@@ -203,7 +270,7 @@ func (r *Repository) ListByProviderUser(ctx context.Context, provider, providerU
 	for rows.Next() {
 		c := &Connection{}
 		if err := rows.Scan(&c.ID, &c.UserID, &c.Provider, &c.ProviderUserID,
-			&c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.AthleteName, &c.ConnectedAt); err != nil {
+			&c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.AthleteName, &c.ConnectedAt, &c.Via); err != nil {
 			return nil, err
 		}
 		if err := decryptConnFields(c); err != nil {

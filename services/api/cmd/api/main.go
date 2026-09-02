@@ -260,14 +260,20 @@ func main() {
 		rdb,
 	)
 
-	// Terra 聚合器（Phase 0 骨架）：一條 webhook 收 Garmin/COROS/Strava 正規化活動。
-	// 未設定 TERRA_SIGNING_SECRET → enabled()=false，webhook 只 ack 不處理。
+	// Terra 聚合器（Phase 1）：widget 連接 + webhook 收 Garmin/COROS/Polar/Suunto/Wahoo 正規化活動
+	// （明確不含 Strava，見 internal/integration/terra.go 檔案頂端註解）。
+	// 未設定 TERRA_DEV_ID/TERRA_API_KEY/TERRA_SIGNING_SECRET 任一 → enabled()=false，
+	// webhook 只 ack 不處理、/connect 回 503。
 	terraHandler := integration.NewTerraHandler(
 		integration.NewRepository(pool),
 		integration.TerraConfig{
 			DevID:         os.Getenv("TERRA_DEV_ID"),
 			APIKey:        os.Getenv("TERRA_API_KEY"),
 			SigningSecret: os.Getenv("TERRA_SIGNING_SECRET"),
+			RedirectURI:   os.Getenv("TERRA_REDIRECT_URI"), // 空字串時 NewTerraHandler 套用預設
+			APIBase:       os.Getenv("TERRA_API_BASE"),     // 空字串時 NewTerraHandler 套用預設
+			FrontendURL:   cfg.FrontendURL,                 // 與 Strava/COROS 共用同一顆 FRONTEND_URL
+			Providers:     integration.ParseTerraProviders(os.Getenv("TERRA_PROVIDERS")),
 		},
 		middleware.RequireAuth(authSvc),
 	)

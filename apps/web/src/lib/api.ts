@@ -1212,6 +1212,18 @@ export interface StravaStatus {
   athlete_name?: string
 }
 
+// Terra（Garmin/COROS/Polar/Suunto/Wahoo 等手錶直連聚合器，Phase 1；見 memory terra-wearable-integration）
+export interface TerraConnection {
+  provider: string // 小寫品牌代碼，如 garmin/coros
+  connected_at: string
+  via: 'terra'
+}
+export interface TerraStatus {
+  enabled: boolean // 後端未設定 Terra 憑證時為 false，卡片維持「即將開放」
+  providers: string[] // 目前開放連接的品牌（小寫）
+  connections: TerraConnection[] // 使用者已連接的品牌，可有多筆（不同手錶）
+}
+
 export interface SyncedActivity {
   id: string
   source: string
@@ -1258,6 +1270,19 @@ export const integrationsApi = {
     request<SyncResult>('/integrations/strava/sync', { method: 'POST', headers: withAuth(token) }),
   stravaActivities: (token: string) =>
     request<{ activities: SyncedActivity[] }>('/integrations/strava/activities', { headers: withAuth(token) }),
+  // Terra 手錶直連（Phase 1）：狀態未設定憑證時 enabled=false；connect 未開通時回 503 { error: 'terra_disabled' }
+  terraStatus: (token: string) =>
+    request<TerraStatus>('/integrations/terra/status', { headers: withAuth(token) }),
+  terraConnectUrl: (token: string, returnUrl?: string) =>
+    request<{ url: string }>(
+      `/integrations/terra/connect${returnUrl ? `?return=${encodeURIComponent(returnUrl)}` : ''}`,
+      { headers: withAuth(token) }
+    ),
+  terraDisconnect: (token: string, provider: string) =>
+    request<{ ok: true }>(`/integrations/terra/disconnect?provider=${encodeURIComponent(provider)}`, {
+      method: 'POST',
+      headers: withAuth(token),
+    }),
 }
 
 export const racesApi = {

@@ -14,16 +14,24 @@ import (
 // 跨來源（App GPS / Strava）重複活動去重的「使用者互動」層：偏好來源設定、首次彈窗提示/確認。
 // 實際週期性去重由 worker resolveCrossSourceDups 執行；此處提供「立即重解」與 UI 端點。
 
-// validSources 可作為偏好資料來源的合法值。
-var validSources = map[string]bool{"gps": true, "strava": true, "garmin": true, "coros": true}
+// validSources 可作為偏好資料來源的合法值。polar/suunto/wahoo 為 Terra 聚合器新增品牌
+// （見 internal/integration/terra.go），與既有 garmin/coros 走同一套 App GPS 優先、外部來源次之的邏輯。
+var validSources = map[string]bool{
+	"gps": true, "strava": true, "garmin": true, "coros": true,
+	"polar": true, "suunto": true, "wahoo": true,
+}
 
 // reResolveUser 立即重解某使用者的跨來源重複：先解除他既有的 cross_source_duplicate 標記，
 // 再依 N 來源優先序去重（flag 每個時間叢集裡非最高優先的那些）。
 // 用於玩家手動選擇/切換偏好時（免等 worker）。source 作為本次生效偏好（可與 user_profiles 不同，供「不記住」情境）。
 //
-// 優先序（2026-08-16 定案，正式紀錄一律 App GPS 優先，同步 worker resolveCrossSourceDups）：
+// 優先序（2026-08-16 定案，正式紀錄一律 App GPS 優先，同步 worker resolveCrossSourceDups；
+// 2026-09-03 Terra Phase 1 新增 polar/suunto/wahoo，接在 coros 之後、strava 之前——這三個品牌
+// 都只能透過 Terra 聚合器連接，資料新鮮度/完整度與 garmin/coros 直連相近，故排在直連品牌之後、
+// 仍優於 Strava（Strava 常是「事後從其他 App 匯入」的二手來源，可信度最低）：
 // App GPS 恆為最高優先（rank 0）；source 參數（使用者偏好的外部來源）僅在「沒有 App GPS 記錄、
-// 多個外部來源互相重疊」時才用來取捨（次高，rank 1）；其餘外部來源依 garmin > coros > strava 排序。
+// 多個外部來源互相重疊」時才用來取捨（次高，rank 1）；其餘外部來源依
+// garmin > coros > polar > suunto > wahoo > strava 排序。
 func reResolveUser(ctx context.Context, db *pgxpool.Pool, userID, source string) {
 	if !validSources[source] {
 		return
@@ -46,8 +54,11 @@ func reResolveUser(ctx context.Context, db *pgxpool.Pool, userID, source string)
 					WHEN a.source = $2 THEN 1              -- 使用者偏好的外部來源次之（僅在多個外部來源間取捨）
 					WHEN a.source = 'garmin' THEN 2
 					WHEN a.source = 'coros'  THEN 3
-					WHEN a.source = 'strava' THEN 4
-					ELSE 5 END AS rk
+					WHEN a.source = 'polar'  THEN 4
+					WHEN a.source = 'suunto' THEN 5
+					WHEN a.source = 'wahoo'  THEN 6
+					WHEN a.source = 'strava' THEN 7
+					ELSE 8 END AS rk
 			FROM activities a
 			WHERE a.user_id=$1 AND a.duration_s>0 AND NOT a.flagged
 		)
@@ -77,7 +88,7 @@ func (h *Handler) SetDataSource(w http.ResponseWriter, r *http.Request) {
 		Source string `json:"source"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !validSources[req.Source] {
-		respondErr(w, http.StatusBadRequest, "source 需為 gps / strava / garmin / coros")
+		respondErr(w, http.StatusBadRequest, "source 需為 gps / strava / garmin / coros / polar / suunto / wahoo")
 		return
 	}
 	if _, err := h.db.Exec(r.Context(), `
