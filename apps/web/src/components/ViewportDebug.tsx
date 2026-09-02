@@ -74,6 +74,7 @@ export default function ViewportDebug() {
         loadRow,
         `heal ${root.dataset.vpheal || '-'}`, // 自癒儀表：觸點越界偵測觸發過的 tabflip 紀錄
         `tap ${lastTap}`, // 最後一次觸點：y vs icb 的差值 Δ 直接判別「圖層位移」或「DOM 預留空間」
+        `ua ${navigator.userAgent}`, // UA 全文：iOS 26 Safari 本體會把 OS 凍結成 18_x；回報真實版本＋無 Safari/ 的是裸 WebKit 情境（v758 閘門依據）
         APP_VERSION, // 版號直接進面板：面板會蓋住頁尾版號，截圖回傳時才能確認當下版本（使用者要求）
       ])
     }

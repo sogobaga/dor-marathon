@@ -18,6 +18,10 @@
 //   ③ 彈跳頁自己種的 cookie dor_b=1（Max-Age=5s）：即使①②因某些代理/隱私模式失真，這道是最後防線。
 //      刻意只留 5 秒：cookie 跨分頁共享，若同一支手機 5 秒內再掃一張 QR，第二次到站會被這道擋掉不彈跳——
 //      那份文件會退回 layout.tsx 開機腳本的舊路徑（到站 → 白幕 → reload）仍能治好，只是慢一點；窗口越短越好。
+//
+// PWA standalone 的排除靠 cookie dor_pwa=1（一年）而非 UA：iOS 主畫面 web app 有獨立 cookie jar，這顆 cookie
+// 只會在 standalone 情境被種下（layout.tsx 開機腳本、以及彈跳頁自己在 navigator.standalone===true 時）——
+// 首次啟動會被彈一次（多一趟 1KB 請求），之後都放行。為什麼不能用 UA 排除，見 decideBounce 內 v758 註解。
 
 export const BOUNCE_DELAY_MS = 600
 
@@ -46,13 +50,18 @@ export function decideBounce(
 
   const ua = h.get('user-agent') || ''
   if (!/iPhone|iPod/.test(ua)) return { bounce: false, reason: 'not-iphone' }
-  // 這段刻意跟 layout.tsx 開機腳本的判定式一致（同一份「這是不是 iPhone 上的 Safari 本體」邏輯兩處各留一份，
+  // 這段刻意跟 layout.tsx 開機腳本的判定式一致（同一份「這是不是會發病的 iPhone WebKit」邏輯兩處各留一份，
   // 一份跑 edge runtime、一份跑瀏覽器，無法共用同一個檔案——但語意必須對齊，改一邊記得改另一邊）。
-  // 額外要求 /Version[/]/：iOS PWA standalone 的 UA 沒有 Safari/ 也沒有 Version/，會被前一條攔下，
-  // 但這裡明講出來避免日後有人誤以為只要排掉 Safari/ 就夠。
-  if (!/Safari[/]/.test(ua) || !/Version[/]/.test(ua) || NOT_SAFARI_UA_RE.test(ua)) {
-    return { bounce: false, reason: 'not-safari' }
-  }
+  //
+  // ⚠️ v758 真機證據（第三輪掃碼，iOS 26.6.1，勿再要求 Safari/ 或 Version/）：從「條碼掃描器」喚起的 Safari
+  // 分頁，navigator.userAgent 回報真實 OS 版本 26_6_1、且沒有 Safari/ 也沒有 Version/——Safari 26 本體的 UA
+  // 依 Apple 新規把 OS token 凍結在 18_x（nielsleenheer.com「The User-Agent string of Safari on iOS 26」），
+  // 會回報真實版本的只有非 Safari 的 WebKit 情境。也就是說，會發病的那份文件，UA 長得跟「裸 WKWebView／
+  // PWA standalone」一模一樣；v757 要求 Safari/+Version/ 的閘門把真正的病人全擋在外面（面板 ar 顯示
+  // skip:not-safari、A/B 卡全跑版；靜態 C/D 卡 0ms/150ms 彈跳皆正常＝療法本身沒錯，是閘門錯）。
+  // 因此只排除「明確標示自己是別家瀏覽器／in-app 瀏覽器」的 UA；PWA standalone 改由 cookie dor_pwa=1 排除。
+  // 其他裸 UA 的 in-app WebView（Gmail/Twitter 等）會被彈一次——只多一趟 1KB 請求，無害。
+  if (NOT_SAFARI_UA_RE.test(ua)) return { bounce: false, reason: 'not-safari' }
   if (BOT_RE.test(ua)) return { bounce: false, reason: 'bot' }
 
   // Sec-Fetch-Site:none 的導覽依規範不帶 Referer；出現 Referer 就代表不是「真到站」（見上方保險②）。
@@ -60,6 +69,7 @@ export function decideBounce(
 
   const cookie = h.get('cookie') || ''
   if (/(^|;\s*)dor_b=1(;|$)/.test(cookie)) return { bounce: false, reason: 'cookie' }
+  if (/(^|;\s*)dor_pwa=1(;|$)/.test(cookie)) return { bounce: false, reason: 'pwa' }
 
   if (/vpfix=off|noreload=1/.test(url.search)) return { bounce: false, reason: 'opt-out' }
   if (/[?&](code|state|token|access_token|id_token)=/i.test(url.search)) return { bounce: false, reason: 'auth-url' }
@@ -97,6 +107,7 @@ export function bounceHtml(o: { bg: string; fg: string; target: string; delayMs:
   const scriptBody =
     'try{' +
     'document.cookie="dor_b=1;Max-Age=5;Path=/;SameSite=Lax";' +
+    'if(navigator.standalone===true){document.cookie="dor_pwa=1;Max-Age=31536000;Path=/;SameSite=Lax"}' +
     'var u=location.href;' +
     'if(location.hash){u=location.pathname+location.search+(location.search?"&":"?")+"_b=1"+location.hash}' +
     (delayMs === 0

@@ -98,7 +98,11 @@ export async function generateViewport(): Promise<Viewport> {
 //    （切頁槓桿在賽事落地頁失效）、且提議「白幕＋自動刷新＋小動畫掩飾閃爍」。做法：在第一次繪製前先蓋上與 skin 同色
 //    的白幕（含轉圈），並把 html/body 背景染成同色讓圖層外的帶子看不出來，等分頁可見後 0.4s 重載；重載後的載入
 //    nav=reload 不再觸發，畫面直接正常。觸發範圍刻意收窄，站內換頁完全不受影響：
-//      ・只在 iPhone 的 Safari 本體（排除 PWA standalone、Chrome/LINE/FB 等內建瀏覽器、Android、桌機）
+//      ・只在 iPhone 的 WebKit（排除 PWA standalone、Chrome/LINE/FB 等明確標示的內建瀏覽器、Android、桌機）
+//        ⚠️ v758 起不再要求 UA 含 Safari/：真機證實「條碼掃描器→Safari」這條會發病的到站路徑，UA 是沒有 Safari/、
+//        沒有 Version/、OS 版本未凍結（26_6_1）的裸 WebKit 形狀（Safari 26 本體會凍結成 18_x）；v753–757 的
+//        Safari/ 閘門把病人全部判成 skip:not-safari，自癒從未在真實掃碼路徑上發動過。PWA 由 navigator.standalone
+//        排除並順手種 cookie dor_pwa=1 給 middleware（standalone 有獨立 cookie jar）。詳見 src/lib/arrivalBounce.ts。
 //      ・本次載入是 navigate／back_forward（reload 不算），且 referrer 為空或外站（站內整頁跳轉不算）
 //      ・同一分頁 2 分鐘內只做一次（sessionStorage；Safari 還原分頁會連 sessionStorage 一起還原，隔夜回來會再做）
 //      ・排除 /track（跑步恢復不能被打斷）、帶 code=/state=/token= 的授權回跳網址（一次性授權碼禁不起重載）
@@ -171,8 +175,8 @@ if((nt==='navigate'||nt==='back_forward')&&external)why='arrival';
 else if(seen&&now-seen>300000)why='restore';
 var skip='';
 if(!/iPhone|iPod/.test(ua))skip='not-iphone';
-else if(!/Safari[/]/.test(ua)||/CriOS|FxiOS|EdgiOS|OPiOS|Line[/]|FBAN|FBAV|Instagram|MicroMessenger|DuckDuckGo/.test(ua))skip='not-safari';
-else if(n.standalone===true)skip='standalone';
+else if(/CriOS|FxiOS|EdgiOS|OPiOS|Line[/]|FBAN|FBAV|Instagram|MicroMessenger|DuckDuckGo/.test(ua))skip='not-safari';
+else if(n.standalone===true){skip='standalone';try{d.cookie='dor_pwa=1;Max-Age=31536000;Path=/;SameSite=Lax'}catch(x){}}
 else if(/vpfix=off|noreload=1/.test(q))skip='opt-out';
 else if(/^[/]track([/]|$)/.test(path))skip='track';
 else if(/[?&#](code|state|token|access_token|id_token)=/i.test(q))skip='auth-url';

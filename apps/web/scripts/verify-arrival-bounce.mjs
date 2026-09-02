@@ -40,6 +40,7 @@ function headers(map) {
 function url(pathname, search = '') { return { pathname, search } }
 
 const IPHONE_SAFARI = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1'
+const IPHONE_BARE_REAL_OS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148' // 第三輪真機（條碼掃描器→Safari）
 const IPHONE_STANDALONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148' // PWA standalone：無 Safari/、無 Version/
 const IPHONE_CRIOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/125.0.6422.80 Mobile/15E148 Safari/604.1'
 const IPHONE_LINE = IPHONE_SAFARI + ' Line/14.0.0'
@@ -65,7 +66,12 @@ console.log('── decideBounce ──')
 
 eq(decide(), { bounce: true }, 'QR 到站基準情境（iPhone Safari, sec-fetch-site:none, 無 referer/cookie）→ bounce')
 
-eq(decide({ 'user-agent': IPHONE_STANDALONE }), { bounce: false, reason: 'not-safari' }, 'PWA standalone UA（無 Safari/、無 Version/）→ not-safari')
+// v758：裸 WebKit 形狀的 UA（無 Safari/、無 Version/、OS 未凍結）正是真機會發病的「條碼掃描器→Safari」到站文件，必須彈跳
+eq(decide({ 'user-agent': IPHONE_STANDALONE }), { bounce: true }, '裸 WebKit UA（無 Safari/、無 Version/）→ bounce（v758：這才是真正的病人）')
+eq(decide({ 'user-agent': IPHONE_BARE_REAL_OS }), { bounce: true }, '真機 UA 形狀（iPhone OS 26_6_1、無 Safari/）→ bounce')
+eq(decide({ 'user-agent': IPHONE_STANDALONE, cookie: 'dor_pwa=1' }), { bounce: false, reason: 'pwa' }, 'PWA standalone（cookie dor_pwa=1）→ pwa')
+eq(decide({ cookie: 'a=1; dor_pwa=1; b=2' }), { bounce: false, reason: 'pwa' }, 'cookie dor_pwa=1 夾在中間 → pwa')
+eq(decide({ cookie: 'dor_pwa=10' }), { bounce: true }, 'cookie dor_pwa=10（值不是 1）不算 → bounce')
 eq(decide({ 'user-agent': IPHONE_CRIOS }), { bounce: false, reason: 'not-safari' }, 'CriOS（iOS Chrome）UA → not-safari')
 eq(decide({ 'user-agent': IPHONE_LINE }), { bounce: false, reason: 'not-safari' }, 'LINE 內建瀏覽器 UA → not-safari')
 eq(decide({ 'user-agent': IPHONE_FBAN }), { bounce: false, reason: 'not-safari' }, 'FBAN（FB 內建瀏覽器）UA → not-safari')
@@ -113,6 +119,7 @@ function scriptBodies(html) {
 {
   const html = bounceHtml({ bg: '#FBF4E9', fg: '#6b5a3e', target: '/', delayMs: 600 })
   ok(html.includes('document.cookie="dor_b=1'), 'bounceHtml：含種 cookie dor_b=1 的那行')
+  ok(html.includes('if(navigator.standalone===true){document.cookie="dor_pwa=1;Max-Age=31536000'), 'bounceHtml：standalone 時種 cookie dor_pwa=1（一年）')
   ok(html.includes('location.replace('), 'bounceHtml：含 location.replace(')
 }
 

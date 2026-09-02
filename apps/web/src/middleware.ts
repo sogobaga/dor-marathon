@@ -88,6 +88,20 @@ async function getSkin(event: NextFetchEvent): Promise<string> {
 export async function middleware(req: NextRequest, event: NextFetchEvent) {
   const decision = decideBounce(req.headers, req.nextUrl, req.method)
 
+  // 診斷（只在 ?vpdebug=1）：真機的 UA／Sec-Fetch／Referer／cookie 只有在這裡看得到，寫進 Railway log
+  // 讓開發端能對照面板截圖（第三輪掃碼就是靠面板 ar=skip:not-safari 才抓到 UA 閘門判錯，但看不到 UA 全文）。
+  if (req.nextUrl.searchParams.get('vpdebug') === '1') {
+    const h = req.headers
+    const ck = h.get('cookie') || ''
+    console.log(
+      `[arrival-bounce] ${decision.bounce ? 'BOUNCE' : 'skip:' + decision.reason}` +
+        ` path=${req.nextUrl.pathname} site=${h.get('sec-fetch-site')} mode=${h.get('sec-fetch-mode')}` +
+        ` dest=${h.get('sec-fetch-dest')} referer=${h.get('referer') ? 'yes' : 'no'}` +
+        ` cookie=${/dor_b=1/.test(ck) ? 'dor_b' : '-'}/${/dor_pwa=1/.test(ck) ? 'dor_pwa' : '-'}` +
+        ` ua=${JSON.stringify(h.get('user-agent') || '')}`
+    )
+  }
+
   if (!decision.bounce) {
     if (req.nextUrl.searchParams.get('vpdebug') === '1') {
       const headers = new Headers()
