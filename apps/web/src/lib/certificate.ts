@@ -284,7 +284,7 @@ export async function renderCertificate(
   // 兩行時往 y±2.5%H 分配（行距 5%H，與寫死版本的 45.5%/50.5%H 相對 48%H 完全一致）
   const raceL = L('race_name')
   const raceDefault = CERT_DEFAULT_LAYOUT.race_name
-  const raceText = `完成「${cert.race_title}」`
+  const raceText = cert.race_title // 2026-09-02 使用者定案：不加「完成『』」包裝，只放賽事名稱本身
   const raceSafeW = W * 0.46
   const raceWrapped = layoutWrappedText(
     ctx, raceText, 700,
