@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0c0e12">
+<title>vptest: lock-osb-slow</title>
+<script>
+var __ihms = {};
+__ihms[0] = window.innerHeight;
+</script>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;background:#0c0e12;color:#fff;font-family:-apple-system,system-ui,sans-serif}
+html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+#root{position:relative;overflow:hidden;background:#0c0e12}
+#root{height:100vh}
+@supports (height:100dvh){#root{height:100dvh}}
+#top{position:absolute;top:0;left:0;right:0;height:28px;background:#ffd60a;color:#000;font:700 13px/28px system-ui;text-align:center;z-index:10}
+#bottom{position:absolute;bottom:0;left:0;right:0;height:28px;background:#30d158;color:#000;font:700 13px/28px system-ui;text-align:center;z-index:10}
+#hint{position:absolute;top:34px;left:12px;right:12px;font:12px system-ui;color:#9aa3b2;z-index:10}
+#m{position:absolute;top:36%;left:12px;right:12px;background:#1c1f26;border:1px solid #3a3f4b;border-radius:10px;padding:10px 12px;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;z-index:10}
+.ruler-line{position:absolute;left:0;right:0;height:1px;background:rgba(255,255,255,.35)}
+.ruler-label{position:absolute;left:4px;top:-13px;font:11px system-ui;color:rgba(255,255,255,.7)}
+#m .btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+#m button{font:600 13px system-ui;padding:8px 10px;border-radius:8px;border:0;background:#2f6fed;color:#fff}
+</style>
+</head>
+<body>
+<script>
+(function(){
+  var t0 = Date.now();
+  while (Date.now() - t0 < 1500) {}
+})();
+</script>
+<div id="root">
+<div id="top">▲ 頂端 TOP ▲　看不到這條黃色＝內容被往上推</div>
+<div id="bottom">▼ 底端 BOTTOM ▼　這條綠色下方若有黑帶＝跑版</div>
+<div id="hint">用相機掃 QR 進來看：黃條在最上、綠條貼底且下方無黑帶＝正常</div>
+<div id="m">量測中…</div>
+</div>
+<div id="probe-vh" style="position:fixed;left:-9999px;width:1px;visibility:hidden;height:100vh"></div>
+<div id="probe-svh" style="position:fixed;left:-9999px;width:1px;visibility:hidden;height:100svh"></div>
+<div id="probe-lvh" style="position:fixed;left:-9999px;width:1px;visibility:hidden;height:100lvh"></div>
+<div id="probe-dvh" style="position:fixed;left:-9999px;width:1px;visibility:hidden;height:100dvh"></div>
+<script>
+(function(){
+  'use strict';
+  function $(id){ return document.getElementById(id); }
+
+  // 尺規：50px 一條，畫到 1100px
+  var rootEl = $("root");
+  (function buildRuler(){
+    var step = 50, max = 1100;
+    for (var t = step; t <= max; t += step) {
+      var line = document.createElement("div");
+      line.className = "ruler-line";
+      line.style.top = t + "px";
+      var label = document.createElement("span");
+      label.className = "ruler-label";
+      label.textContent = t + "px";
+      line.appendChild(label);
+      rootEl.appendChild(line);
+    }
+  })();
+
+  // ih@ms：0/100/500/1000/2000/3000 各時間點的 innerHeight
+  var MS_POINTS = [100, 500, 1000, 2000, 3000];
+  window.__ihms = window.__ihms || {};
+  for (var i = 0; i < MS_POINTS.length; i++) {
+    (function(ms){
+      setTimeout(function(){
+        try { window.__ihms[ms] = window.innerHeight; } catch (e) {}
+      }, ms);
+    })(MS_POINTS[i]);
+  }
+
+  // 觸點越界偵測：capture 監聽 pointerdown
+  window.__lastTap = null;
+  try {
+    document.addEventListener("pointerdown", function(e){
+      window.__lastTap = { y: e.clientY };
+    }, true);
+  } catch (e) {}
+
+  function probeUnit(unit, id){
+    try {
+      if (window.CSS && CSS.supports && CSS.supports("height", "100" + unit)) {
+        var el = $(id);
+        if (el) return el.offsetHeight;
+      }
+    } catch (e) {}
+    return "-";
+  }
+
+  function collectData(){
+    var data = {
+      variant: "lock-osb-slow",
+      desc: "lock-osb ＋ body 開頭同步忙等 1500ms，模擬「讀取暫停」後才繪製",
+      ih: window.innerHeight,
+      ch: document.documentElement.clientHeight,
+      sh: (window.screen && screen.height) || null,
+      sy: window.scrollY,
+      vv: null,
+      units: {
+        vh: probeUnit("vh", "probe-vh"),
+        svh: probeUnit("svh", "probe-svh"),
+        lvh: probeUnit("lvh", "probe-lvh"),
+        dvh: probeUnit("dvh", "probe-dvh")
+      },
+      appH: "-",
+      nav: "?",
+      ref: document.referrer || "(none)",
+      ihms: {},
+      tap: null,
+      ua: (navigator.userAgent || "").slice(0, 90)
+    };
+    try {
+      if (window.visualViewport) {
+        var vv = window.visualViewport;
+        data.vv = { h: vv.height, ot: vv.offsetTop, pt: vv.pageTop, sc: vv.scale };
+      }
+    } catch (e) {}
+    try {
+      data.appH = document.documentElement.style.getPropertyValue("--app-h") || "-";
+    } catch (e) {}
+    try {
+      if (window.performance && performance.getEntriesByType) {
+        var entries = performance.getEntriesByType("navigation");
+        if (entries && entries[0]) data.nav = entries[0].type;
+      }
+    } catch (e) {}
+    var pts = [0, 100, 500, 1000, 2000, 3000];
+    for (var i = 0; i < pts.length; i++) {
+      var v = window.__ihms ? window.__ihms[pts[i]] : undefined;
+      data.ihms[pts[i]] = (v === undefined) ? null : v;
+    }
+    var chNow = data.ch;
+    if (window.__lastTap) {
+      var y = window.__lastTap.y;
+      data.tap = { y: y, ch: chNow, outOfBounds: (y > chNow + 8) };
+    }
+    return data;
+  }
+
+  function fmtVV(data){
+    if (!data.vv) return "vv n/a";
+    return "vv h=" + data.vv.h + " ot=" + data.vv.ot + " pt=" + data.vv.pt + " sc=" + data.vv.sc;
+  }
+
+  function fmtIhMs(data){
+    var pts = [0, 100, 500, 1000, 2000, 3000];
+    var out = [];
+    for (var i = 0; i < pts.length; i++) {
+      var v = data.ihms[pts[i]];
+      out.push(pts[i] + "\u2192" + (v === null ? "\u2026" : v));
+    }
+    return "ih@ms: " + out.join(" ");
+  }
+
+  function fmtTap(data){
+    if (!data.tap) return "tap: -";
+    var status = data.tap.outOfBounds ? "\u26a0\ufe0f\u8d8a\u754c" : "ok";
+    return "tap: y=" + data.tap.y + " ch=" + data.tap.ch + " " + status;
+  }
+
+  function buildPanelText(data){
+    var lines = [];
+    lines.push("variant: " + data.variant);
+    lines.push(data.desc);
+    lines.push("ih=" + data.ih + " ch=" + data.ch + " sh=" + data.sh + " sy=" + data.sy);
+    lines.push(fmtVV(data));
+    lines.push("vh=" + data.units.vh + " svh=" + data.units.svh + " lvh=" + data.units.lvh + " dvh=" + data.units.dvh);
+    lines.push("--app-h=" + data.appH);
+    lines.push("nav=" + data.nav + " ref=" + data.ref);
+    lines.push(fmtIhMs(data));
+    lines.push(fmtTap(data));
+    lines.push("ua: " + data.ua);
+    return lines.join("\n");
+  }
+
+  function btnScrollTop(){
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }
+
+  function btnOpenScrollClose(){
+    var html = document.documentElement, body = document.body, root = $("root");
+    var orig = {
+      ho: html.style.overflow, hb: html.style.overscrollBehavior,
+      bo: body.style.overflow, bb: body.style.overscrollBehavior,
+      rm: root.style.minHeight
+    };
+    html.style.overflow = "auto";
+    html.style.overscrollBehavior = "auto";
+    body.style.overflow = "auto";
+    body.style.overscrollBehavior = "auto";
+    root.style.minHeight = "calc(100% + 2px)";
+    window.scrollTo(0, 1);
+    requestAnimationFrame(function(){
+      window.scrollTo(0, 0);
+      requestAnimationFrame(function(){
+        html.style.overflow = orig.ho;
+        html.style.overscrollBehavior = orig.hb;
+        body.style.overflow = orig.bo;
+        body.style.overscrollBehavior = orig.bb;
+        root.style.minHeight = orig.rm;
+      });
+    });
+  }
+
+  function btnCopyDiag(btnEl){
+    var data = collectData();
+    var original = btnEl.textContent;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(JSON.stringify(data)).then(function(){
+          btnEl.textContent = "\u5df2\u8907\u88fd";
+          setTimeout(function(){ btnEl.textContent = original; }, 1500);
+        })["catch"](function(){});
+      }
+    } catch (e) {}
+  }
+
+  function buildButtons(container){
+    var b1 = document.createElement("button");
+    b1.type = "button";
+    b1.textContent = "\ud83d\udd04 reload";
+    b1.addEventListener("click", function(){ location.reload(); });
+
+    var b2 = document.createElement("button");
+    b2.type = "button";
+    b2.textContent = "\u2460 scrollTo(0,0)";
+    b2.addEventListener("click", btnScrollTop);
+
+    var b3 = document.createElement("button");
+    b3.type = "button";
+    b3.textContent = "\u2461 \u958b\u6372\u2192\u63771px\u2192\u95dc";
+    b3.addEventListener("click", btnOpenScrollClose);
+
+    var b4 = document.createElement("button");
+    b4.type = "button";
+    b4.textContent = "\u2462 \u8907\u88fd\u8a3a\u65b7";
+    b4.addEventListener("click", function(){ btnCopyDiag(b4); });
+
+    container.appendChild(b1);
+    container.appendChild(b2);
+    container.appendChild(b3);
+    container.appendChild(b4);
+  }
+
+  var mText = null;
+  function renderPanel(){
+    var m = $("m");
+    if (!m) return;
+    if (!mText) {
+      m.textContent = "";
+      mText = document.createElement("div");
+      m.appendChild(mText);
+      var row = document.createElement("div");
+      row.className = "btnrow";
+      m.appendChild(row);
+      buildButtons(row);
+    }
+    mText.textContent = buildPanelText(collectData());
+  }
+
+  renderPanel();
+  setInterval(renderPanel, 500);
+})();
+</script>
+</body>
+</html>

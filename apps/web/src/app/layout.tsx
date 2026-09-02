@@ -104,6 +104,14 @@ const VEIL_COLORS: Record<string, [string, string]> = { default: ['#09090f', '#e
 //      ・同一分頁 2 分鐘內只做一次（sessionStorage；Safari 還原分頁會連 sessionStorage 一起還原，隔夜回來會再做）
 //      ・排除 /track（跑步恢復不能被打斷）、帶 code=/state=/token= 的授權回跳網址（一次性授權碼禁不起重載）
 //      ・逃生口：?vpfix=off 或 ?noreload=1
+//    ⚠️ v754 補上「分頁還原」路徑（使用者回報 v753 沒治到）：症狀 A 有兩條發生路徑，v753 只涵蓋第一條——
+//    ① 外部到站（QR/連結/輸入網址）：nav=navigate|back_forward 且 referrer 為空或外站。
+//    ② 分頁還原：分頁被 Safari 回收後回來，會整份重新載入（畫面先卡一下再出現，出現時就已跑版）。
+//       這一次載入的 nav 是 reload/back_forward、referrer 是站內，正好被 v753 的 nav=reload 與 internal-ref
+//       兩個排除條件擋掉，所以完全沒開火。改用 sessionStorage 的 dor.tabSeen（每次載入寫入時間戳、隨分頁還原
+//       一起被 Safari 還原）判定：同一分頁距上次載入 > 5 分鐘的整份重載＝還原路徑。
+//    防迴圈有兩道獨立保險：我方重載後的新文件 dor.tabSeen 只差幾百毫秒（不構成 restore、且非外部到站 →
+//    skip:no-trigger），再加上 dor.arrivalReload 的 2 分鐘節流。
 //    另提供 window.__dorVeilReload(why)：給 ViewportHeightFix 的「觸點越界」偵測當備援（重載後仍壞時的第二道）。
 //    6 秒保險：若 reload 因故沒發生，自動移除白幕，頁面不會被永久蓋住。
 //    ⚠️ 白幕刻意「不插任何 DOM 節點」：本站是 React 18.3，hydration 對 <body> 子節點嚴格比對，多塞一個 <div>
@@ -142,6 +150,15 @@ function reload(why){
 w.__dorVeilReload=function(why){reload(why||'manual')};
 var ua=n.userAgent||'';
 var q=w.location.search+w.location.hash,path=w.location.pathname;
+var now=Date.now(),seen=0,last=0;
+try{seen=+sessionStorage.getItem('dor.tabSeen')||0;last=+sessionStorage.getItem('dor.arrivalReload')||0}catch(x){}
+try{sessionStorage.setItem('dor.tabSeen',String(now))}catch(x){}
+var ref=d.referrer||'',org=w.location.origin;
+var external=!ref||(ref!==org&&ref.indexOf(org+'/')!==0);
+var nt=v.n||'navigate';
+var why='';
+if((nt==='navigate'||nt==='back_forward')&&external)why='arrival';
+else if(seen&&now-seen>300000)why='restore';
 var skip='';
 if(!/iPhone|iPod/.test(ua))skip='not-iphone';
 else if(!/Safari[/]/.test(ua)||/CriOS|FxiOS|EdgiOS|OPiOS|Line[/]|FBAN|FBAV|Instagram|MicroMessenger|DuckDuckGo/.test(ua))skip='not-safari';
@@ -149,14 +166,9 @@ else if(n.standalone===true)skip='standalone';
 else if(/vpfix=off|noreload=1/.test(q))skip='opt-out';
 else if(/^[/]track([/]|$)/.test(path))skip='track';
 else if(/[?&#](code|state|token|access_token|id_token)=/i.test(q))skip='auth-url';
-else if(v.n&&v.n!=='navigate'&&v.n!=='back_forward')skip='nav='+v.n;
-else{
-  var ref=d.referrer||'',org=w.location.origin;
-  if(ref&&(ref===org||ref.indexOf(org+'/')===0))skip='internal-ref';
-  else{var last=0;try{last=+sessionStorage.getItem('dor.arrivalReload')||0}catch(x){}
-    if(last&&Date.now()-last<120000)skip='recent';}
-}
-if(skip)v.ar='skip:'+skip;else reload('arrival');
+else if(!why)skip='no-trigger';
+else if(last&&now-last<120000)skip='recent';
+if(skip)v.ar='skip:'+skip;else reload(why);
 }catch(e){}})();`
 }
 

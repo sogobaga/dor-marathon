@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0c0e12">
+<title>vptest: index</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;background:#0c0e12;color:#fff;font-family:-apple-system,system-ui,sans-serif;padding:20px}
+h1{font-size:18px}
+#warn{background:#3a2a00;border:1px solid #ffd60a;color:#ffd60a;border-radius:10px;padding:10px 12px;font:13px/1.6 system-ui;margin-bottom:16px}
+ul{list-style:none;padding:0;margin:0}
+li{margin-bottom:10px;background:#1c1f26;border:1px solid #3a3f4b;border-radius:10px;padding:10px 12px}
+a{color:#7fb1ff;font:600 15px system-ui;text-decoration:none}
+a:active{opacity:.7}
+p{margin:4px 0 0;font:12px/1.5 system-ui;color:#9aa3b2}
+</style>
+</head>
+<body>
+<h1>vptest — iOS Safari 視窗二分測試頁</h1>
+<div id="warn">⚠️ 從這裡點連結是站內跳轉，不等於掃 QR 的外部到站；正式測試請用相機掃 QR。</div>
+<ul>
+<li>
+<a href="/vptest/flow.html">flow.html</a>
+<p>對照組＝最初版本模型（純文件流，可捲動，無鎖版）</p>
+</li>
+<li>
+<a href="/vptest/lock.html">lock.html</a>
+<p>07-01 鎖版模型：html/body 高度鎖 100% 並 overflow:hidden（尚未加 overscroll-behavior）</p>
+</li>
+<li>
+<a href="/vptest/lock-osb.html">lock-osb.html</a>
+<p>07-28 模型（現行基礎）：lock 再加 overscroll-behavior:none</p>
+</li>
+<li>
+<a href="/vptest/lock-osb-vh.html">lock-osb-vh.html</a>
+<p>測「文件比可視區高 lvh−svh」：#root 只用 100vh（=lvh），不升級成 dvh</p>
+</li>
+<li>
+<a href="/vptest/lock-osb-apph.html">lock-osb-apph.html</a>
+<p>JS 量測後 --app-h 只准加高，html/body/#root 改用 max(現行值, var(--app-h))</p>
+</li>
+<li>
+<a href="/vptest/lock-osb-overlay.html">lock-osb-overlay.html</a>
+<p>lock-osb ＋ 進站 1500ms 後彈出模擬蓋板廣告（測蓋板是否誘發位移）</p>
+</li>
+<li>
+<a href="/vptest/lock-osb-slow.html">lock-osb-slow.html</a>
+<p>lock-osb ＋ body 開頭同步忙等 1500ms，模擬「讀取暫停」後才繪製</p>
+</li>
+<li>
+<a href="/vptest/lock-osb-nofit.html">lock-osb-nofit.html</a>
+<p>lock-osb，但 viewport meta 拿掉 viewport-fit=cover</p>
+</li>
+<li>
+<a href="/vptest/lock-osb-transform.html">lock-osb-transform.html</a>
+<p>lock-osb，#root 初始帶 transform:translateZ(0)，120ms 後移除（模擬桌機→手機切 class）</p>
+</li>
+<li>
+<a href="/vptest/lock-fixed.html">lock-fixed.html</a>
+<p>候選替代模型：body 不鎖，#root 改用 position:fixed;inset:0 撐滿</p>
+</li>
+</ul>
+</body>
+</html>
