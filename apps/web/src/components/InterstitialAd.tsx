@@ -41,6 +41,11 @@ export default function InterstitialAd() {
 
   useEffect(() => {
     if (pathname?.startsWith('/admin')) return
+    // 深連結落地頁不彈蓋板（2026-09-02 使用者實測：海報 QR 掃進賽事頁被自家廣告整個蓋住，
+    // 行銷動線被攔截）。這裡 return 時「不」標記 SEEN——使用者之後導回首頁，effect 依 pathname
+    // 重跑會照常查詢顯示，廣告沒有損失、只是讓出第一眼給掃碼目標內容。
+    // 範圍：賽事/活動/商家/團練分享/track 這些「有明確目的地」的路徑。
+    if (/^\/(race|event|shop|m|track)(\/|$)/.test(pathname || '')) return
     try {
       if (localStorage.getItem(INTERSTITIAL_OFF_KEY) === localDayKey()) return // 本日已勾不再顯示
       if (sessionStorage.getItem(INTERSTITIAL_SEEN_KEY) === '1') return          // 本次工作階段已查過
