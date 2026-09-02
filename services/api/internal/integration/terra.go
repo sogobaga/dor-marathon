@@ -190,7 +190,8 @@ func (h *TerraHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	// Terra 實測回 201 Created（不是文件示意的 200）——任何 2xx 都算成功，別再硬比 200。
+	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		log.Error().Int("status", resp.StatusCode).Str("body", string(b)).
 			Msg("terra generateWidgetSession non-2xx") // 絕不記 dev-id/x-api-key
@@ -291,12 +292,10 @@ func (h *TerraHandler) deauthenticateTerraUser(ctx context.Context, terraUserID 
 		return
 	}
 	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK, http.StatusNoContent, http.StatusNotFound, http.StatusGone:
-		return // 成功，或帳號本來就已經不存在——都視為「已達成撤權目的」
-	default:
-		log.Warn().Int("status", resp.StatusCode).Msg("terra deauthenticateUser non-2xx")
+	if resp.StatusCode/100 == 2 || resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+		return // 成功（任何 2xx），或帳號本來就已經不存在——都視為「已達成撤權目的」
 	}
+	log.Warn().Int("status", resp.StatusCode).Msg("terra deauthenticateUser non-2xx")
 }
 
 // --- 公開端點 ---
@@ -372,7 +371,7 @@ func (h *TerraHandler) fetchTerraUserInfo(ctx context.Context, terraUserID strin
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		log.Warn().Int("status", resp.StatusCode).Str("body", string(b)).Msg("terra userInfo non-2xx")
 		return nil, fmt.Errorf("terra userInfo http %d", resp.StatusCode)
