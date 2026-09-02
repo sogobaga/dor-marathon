@@ -91,7 +91,7 @@ export default function AdminAnalyticsPage() {
             <ChartBlock title="註冊時刻分布" caption="口徑：全期間累計註冊時間點分布（24 小時制，台灣時區）。">
               <BarChart
                 data={report.registrations.by_hour.map((v, h) => ({ label: String(h), value: v }))}
-                orientation="v" color="var(--fug)" unit=" 人" tickEvery={3} showValues={false}
+                orientation="v" color="var(--fug)" unit=" 人" tickEvery={3}
               />
             </ChartBlock>
             <ChartBlock title="註冊來源分布" caption="口徑：全期間累計，依 UTM／referrer 歸因分類（見 migration 147）。">
@@ -120,7 +120,7 @@ export default function AdminAnalyticsPage() {
             <ChartBlock title="登入時刻分布" caption="口徑：近 30 日登入時間點分布（24 小時制，台灣時區）。">
               <BarChart
                 data={report.logins.by_hour.map((v, h) => ({ label: String(h), value: v }))}
-                orientation="v" color="var(--gold)" unit=" 次" tickEvery={3} showValues={false}
+                orientation="v" color="var(--gold)" unit=" 次" tickEvery={3}
               />
             </ChartBlock>
           </SectionCard>
@@ -503,6 +503,10 @@ function TrendLine({ data, color, unit = '' }: { data: (AnalyticsDatePoint | { d
             <rect x={x} y={y} width={bw} height={barH} fill={color} rx={1.5} opacity={0.85}>
               <title>{d.date}: {d.count}{unit}</title>
             </rect>
+            {/* 柱上直接標數值（手機沒有 hover、title 提示看不到——使用者定案）；0 不標避免整排雜訊 */}
+            {d.count > 0 && (
+              <text x={x + bw / 2} y={y - 4} textAnchor="middle" fontSize="8.5" fill="var(--tx-dim)">{d.count}</text>
+            )}
             {i % labelEvery === 0 && (
               <text x={x + bw / 2} y={h - padB + 12} textAnchor="middle" fontSize="8" fill="var(--tx-faint)">{dateLabel}</text>
             )}
