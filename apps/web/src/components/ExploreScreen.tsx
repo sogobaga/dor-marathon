@@ -93,25 +93,29 @@ export default function ExploreScreen({ onBack, onOpenTrack }: { onBack: () => v
             {shown.map((b) => {
               const dm = pos ? havM(pos.lat, pos.lng, b.lat, b.lng) : null
               return b.discovered && b.checkin_only ? (
-                // 純打卡點：已打卡完成，無關主內容可揭露
-                <div key={b.id} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, padding: '14px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ ...mysteryIcon, color: 'var(--fug)', border: '1px solid var(--line-2)' }}>✓</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 15.5, fontWeight: 900, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.place || '打卡點'}</div>
-                      <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2 }}>📍 {b.region || '未知地區'}{dm != null && dm !== Infinity ? ` · ${fmtDist(dm)}` : ''}</div>
+                // 純打卡點：已打卡完成，無關主內容可揭露——但有專屬場景圖（R2 scene/{code}.webp）。
+                // 打卡前後端 maskBossListItem 會清空 scene_image_url，所以這裡有值＝已揭露，可直接顯示。
+                <div key={b.id} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
+                  {b.scene_image_url && <img src={b.scene_image_url} alt="" loading="lazy" style={{ width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block' }} />}
+                  <div style={{ padding: '14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ ...mysteryIcon, color: 'var(--fug)', border: '1px solid var(--line-2)' }}>✓</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 15.5, fontWeight: 900, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.place || '打卡點'}</div>
+                        <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 2 }}>📍 {b.region || '未知地區'}{dm != null && dm !== Infinity ? ` · ${fmtDist(dm)}` : ''}</div>
+                      </div>
+                      <span style={{ fontSize: 11.5, color: 'var(--fug)', fontWeight: 700, flexShrink: 0 }}>✓ 已打卡完成</span>
                     </div>
-                    <span style={{ fontSize: 11.5, color: 'var(--fug)', fontWeight: 700, flexShrink: 0 }}>✓ 已打卡完成</span>
+                    {((b.checkin_reward_dp_max ?? 0) > 0 || (b.checkin_reward_gp_max ?? 0) > 0) && (
+                      <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
+                        過 24h 冷卻可再次打卡，可得
+                        {(b.checkin_reward_dp_max ?? 0) > 0 && ` DP+${fmtRange(b.checkin_reward_dp_min ?? 0, b.checkin_reward_dp_max ?? 0)}`}
+                        {(b.checkin_reward_gp_max ?? 0) > 0 && ` GP+${fmtRange(b.checkin_reward_gp_min ?? 0, b.checkin_reward_gp_max ?? 0)}`}
+                        {dailyRemaining != null && `（今日剩餘 ${dailyRemaining} 次）`}
+                      </div>
+                    )}
+                    {onOpenTrack && <button onClick={() => onOpenTrack(b.id)} style={ghostFullBtn}>再次前往打卡</button>}
                   </div>
-                  {((b.checkin_reward_dp_max ?? 0) > 0 || (b.checkin_reward_gp_max ?? 0) > 0) && (
-                    <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
-                      過 24h 冷卻可再次打卡，可得
-                      {(b.checkin_reward_dp_max ?? 0) > 0 && ` DP+${fmtRange(b.checkin_reward_dp_min ?? 0, b.checkin_reward_dp_max ?? 0)}`}
-                      {(b.checkin_reward_gp_max ?? 0) > 0 && ` GP+${fmtRange(b.checkin_reward_gp_min ?? 0, b.checkin_reward_gp_max ?? 0)}`}
-                      {dailyRemaining != null && `（今日剩餘 ${dailyRemaining} 次）`}
-                    </div>
-                  )}
-                  {onOpenTrack && <button onClick={() => onOpenTrack(b.id)} style={ghostFullBtn}>再次前往打卡</button>}
                 </div>
               ) : b.discovered ? (
                 // 已打卡揭露：Scene banner + 關主資訊 + 挑戰

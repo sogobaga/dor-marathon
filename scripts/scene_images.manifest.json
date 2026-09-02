@@ -1,0 +1,5834 @@
+{
+ "DOR-CHA-CUL-001": {
+  "srcSha256": "0f5d578c14a09b3e46767a9e050007628927a583f32189e18ca6d0c93d7651ee",
+  "srcBytes": 3280818,
+  "webpBytes": 101524,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:11+00:00"
+ },
+ "DOR-CHA-ART-001": {
+  "srcSha256": "5fc5f8f1af3b05e29c09b7c3193e4bb457dc53392ed3fefb18c65d103fb23bb5",
+  "srcBytes": 3201648,
+  "webpBytes": 100424,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:43:11+00:00"
+ },
+ "DOR-CHA-M001": {
+  "srcSha256": "7d1eed6680161cea448f6fab7e77c58b23223746f19e1719f772e809de62d44b",
+  "srcBytes": 3201477,
+  "webpBytes": 123250,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:11+00:00"
+ },
+ "DOR-CHA-HIS-001": {
+  "srcSha256": "e22940132ce2591c421f5153a2e1c98536e75e55a9f6b5da6d36adc9b0f9a2c9",
+  "srcBytes": 3510221,
+  "webpBytes": 114680,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:43:11+00:00"
+ },
+ "DOR-CHA-GRN-001": {
+  "srcSha256": "857bf76cc3bbb6a720148e5e557a37a91691d1fdb524c7ebf778d806e4f651b5",
+  "srcBytes": 3457348,
+  "webpBytes": 148122,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:43:11+00:00"
+ },
+ "DOR-CHA-M002": {
+  "srcSha256": "8548f34138974cbd237edb5aeb38a90249f0a71ef4bb2a91a6c9595d14c0ec3d",
+  "srcBytes": 3282991,
+  "webpBytes": 104432,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:11+00:00"
+ },
+ "DOR-CHA-M004": {
+  "srcSha256": "a020bb97e872b3778d3f294c72844a471760689073e88c75bee12e71cd37aa0d",
+  "srcBytes": 3060455,
+  "webpBytes": 84426,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:11+00:00"
+ },
+ "DOR-CHA-M003": {
+  "srcSha256": "69b6f2d815803ae283473e74fac3c4c35b69d621984c26ac1d84d88b4e906fce",
+  "srcBytes": 3152406,
+  "webpBytes": 107812,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:11+00:00"
+ },
+ "DOR-CHA-M005": {
+  "srcSha256": "93218ccca57a9160ef0f566f3008837df18980033022885899337e0260c3c1a4",
+  "srcBytes": 3286321,
+  "webpBytes": 94520,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:11+00:00"
+ },
+ "DOR-CHA-M006": {
+  "srcSha256": "54ac892ba6bff3d04eebf152919117029563e2385b6fbd28ad7e21ff904f4fb9",
+  "srcBytes": 3259414,
+  "webpBytes": 129286,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-M006.webp",
+  "uploadedAt": "2026-09-02T05:43:12+00:00"
+ },
+ "DOR-CHA-M008": {
+  "srcSha256": "6a7049be19699d162607a8261370cf55fd808772bec65c7c9342bb8496ee7d99",
+  "srcBytes": 3450313,
+  "webpBytes": 137880,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-M008.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-M008.webp",
+  "uploadedAt": "2026-09-02T05:43:12+00:00"
+ },
+ "DOR-CHA-M007": {
+  "srcSha256": "b520beb4127e0f90ff8bf285f1486169ab0ca6563f11fc5d6aead17f568127b4",
+  "srcBytes": 3117126,
+  "webpBytes": 118288,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-M007.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-M007.webp",
+  "uploadedAt": "2026-09-02T05:43:12+00:00"
+ },
+ "DOR-CHA-RAIL-001": {
+  "srcSha256": "577b4d55fa55516911cfc107953fef2d323ac2b07d7d8f7d93e55544c3722445",
+  "srcBytes": 3045128,
+  "webpBytes": 105816,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:12+00:00"
+ },
+ "DOR-CHA-RAIL-002": {
+  "srcSha256": "17112eb82dfac7e2be12484b05d2c71df4e04c7c3b752626e0705abf227c79cb",
+  "srcBytes": 3233983,
+  "webpBytes": 106622,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-RAIL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-RAIL-002.webp",
+  "uploadedAt": "2026-09-02T05:43:12+00:00"
+ },
+ "DOR-CYI-HIS-001": {
+  "srcSha256": "9d787a6b0ad6aa08eccb2a9fb2dd0f7907c4edaf5c16a13aa663e1b262b5f684",
+  "srcBytes": 3134950,
+  "webpBytes": 105102,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYI-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYI-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:43:13+00:00"
+ },
+ "DOR-CYI-M002": {
+  "srcSha256": "a913a62ae529061b02bec3dcab6d292efbc5f9e0de480de553ed1c1966b8ccd5",
+  "srcBytes": 3039041,
+  "webpBytes": 94998,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYI-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYI-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:13+00:00"
+ },
+ "DOR-CYI-M001": {
+  "srcSha256": "b3dedd9de4ff3803a065aa160870b8d240acaacc0c66886df8294e4307ae2af5",
+  "srcBytes": 3394307,
+  "webpBytes": 125516,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYI-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYI-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:13+00:00"
+ },
+ "DOR-CHA-WAT-001": {
+  "srcSha256": "34263824e3e953510b0cdf9270b85a24cfde69f5bc938e0e5c0175e60a90ea23",
+  "srcBytes": 2775601,
+  "webpBytes": 53490,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CHA-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CHA-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:43:13+00:00"
+ },
+ "DOR-CYI-ART-001": {
+  "srcSha256": "c70aa51c05d6df834e5fe15de1447a7bfe959391ce4ec2c5375dc47d7df4d955",
+  "srcBytes": 3208519,
+  "webpBytes": 119132,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYI-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYI-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:43:13+00:00"
+ },
+ "DOR-CYI-M003": {
+  "srcSha256": "0fe8e1de9d24550c04020553cf5920614cd4b9f526c8a769f864b8b6f35a664b",
+  "srcBytes": 3305971,
+  "webpBytes": 129788,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYI-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYI-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:13+00:00"
+ },
+ "DOR-CYI-M004": {
+  "srcSha256": "9ee6fcf9b13774100f1af2fe327c562b7b437d5739646897e0ac3a48af21eab2",
+  "srcBytes": 3356676,
+  "webpBytes": 122346,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYI-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYI-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:13+00:00"
+ },
+ "DOR-CYI-RAIL-001": {
+  "srcSha256": "f84cdc6ee97ebe43f04cf34cde5bf5fbd1f367c8e7b02812cb0d7e4e6d7e0377",
+  "srcBytes": 3416065,
+  "webpBytes": 115470,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYI-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYI-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:13+00:00"
+ },
+ "DOR-CYI-RAIL-002": {
+  "srcSha256": "6bfc1f1e694e6e668b352ed0e2888a32bf12328770709cdb9edb43fda07d4ace",
+  "srcBytes": 3265784,
+  "webpBytes": 107878,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYI-RAIL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYI-RAIL-002.webp",
+  "uploadedAt": "2026-09-02T05:43:13+00:00"
+ },
+ "DOR-CYI-RAIL-003": {
+  "srcSha256": "4dbcd7eb055a14523a5eae8844668612258cbae9d83bdf145725cf096a4d6e13",
+  "srcBytes": 2924820,
+  "webpBytes": 76284,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYI-RAIL-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYI-RAIL-003.webp",
+  "uploadedAt": "2026-09-02T05:43:13+00:00"
+ },
+ "DOR-CYQ-ART-001": {
+  "srcSha256": "dbd86576f4dc6b04a66ab7e4c888594bf83cc45969b9a9e2c45a30f5a3acf02b",
+  "srcBytes": 2746891,
+  "webpBytes": 69358,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:43:14+00:00"
+ },
+ "DOR-CYQ-M001": {
+  "srcSha256": "8194d5e52a16cb6dc2622f70f2572cd9f70ccf8edfb8a3e13ca7cee633475b05",
+  "srcBytes": 2943492,
+  "webpBytes": 109194,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:14+00:00"
+ },
+ "DOR-CYQ-CUL-001": {
+  "srcSha256": "14f07482082e3b43e649de08e583499985f7703784a5baa0f07da5bc06a50121",
+  "srcBytes": 3359012,
+  "webpBytes": 116714,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:14+00:00"
+ },
+ "DOR-CYQ-M002": {
+  "srcSha256": "94e1cb966bd6d047a56f018cfedd89cc801dd8a04be011b833ceece6b0aff991",
+  "srcBytes": 3196131,
+  "webpBytes": 148950,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:14+00:00"
+ },
+ "DOR-CYQ-M003": {
+  "srcSha256": "cf7a650eb0757ded5421e5cd25c431eab40bbe3bf09adc992c4161bd308d6f15",
+  "srcBytes": 3016270,
+  "webpBytes": 105304,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:14+00:00"
+ },
+ "DOR-CYQ-M004": {
+  "srcSha256": "ccf527cf03b17369da5d9db4f167ee3df7334798c4d5deb7173f58a61e274872",
+  "srcBytes": 3141551,
+  "webpBytes": 123108,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:14+00:00"
+ },
+ "DOR-CYQ-M005": {
+  "srcSha256": "225579933e8377d294c77e07bfbfa0048a6f384af7bab5af7f90293a15eab959",
+  "srcBytes": 3430951,
+  "webpBytes": 134812,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:14+00:00"
+ },
+ "DOR-CYQ-M006": {
+  "srcSha256": "361f4547bedbe966ebedaebf5549b50779ae670aed1d268814e3fbbc95535ae8",
+  "srcBytes": 3255384,
+  "webpBytes": 123598,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-M006.webp",
+  "uploadedAt": "2026-09-02T05:43:14+00:00"
+ },
+ "DOR-CYQ-M007": {
+  "srcSha256": "4904f02eb26e86ade3013f19a84eb90c52402a0925c3c1bf47ba6845b0e000a7",
+  "srcBytes": 3016057,
+  "webpBytes": 100400,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-M007.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-M007.webp",
+  "uploadedAt": "2026-09-02T05:43:15+00:00"
+ },
+ "DOR-CYQ-RAIL-001": {
+  "srcSha256": "3dafcdc4598e85c7208b4e97efe0df8e883701495bf4b6976ac61fe3b98bcea2",
+  "srcBytes": 3209270,
+  "webpBytes": 79640,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:15+00:00"
+ },
+ "DOR-CYQ-WAT-001": {
+  "srcSha256": "2110b42f8c9343cd2268c1f90219253ce907b56c3887d958ec2084150b45bdf6",
+  "srcBytes": 2793064,
+  "webpBytes": 62898,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:43:15+00:00"
+ },
+ "DOR-CYQ-WAT-002": {
+  "srcSha256": "b8c03e2bc8a62bfc8d3bfc91e9af856a98845c6ffbfe03f15000f814a59e53bb",
+  "srcBytes": 3401978,
+  "webpBytes": 113150,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-CYQ-WAT-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-CYQ-WAT-002.webp",
+  "uploadedAt": "2026-09-02T05:43:15+00:00"
+ },
+ "DOR-HSQ-CUL-001": {
+  "srcSha256": "377089e08394498fefb63844e9ce9d3c1540b9b7b358e0c1961348dc9c0b63f0",
+  "srcBytes": 3112932,
+  "webpBytes": 102042,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSQ-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSQ-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:15+00:00"
+ },
+ "DOR-HSQ-HIS-001": {
+  "srcSha256": "bb3ac2cc2908bef67dc21f95d73686aa24fc390ad43938ea7a0a8c7c4884e2ff",
+  "srcBytes": 3185881,
+  "webpBytes": 106340,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSQ-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSQ-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:43:15+00:00"
+ },
+ "DOR-HSQ-HIS-002": {
+  "srcSha256": "f0bd3e09fde2cd7fcc7791fc09b4be27073624962f6691404bc1241177820e72",
+  "srcBytes": 3234859,
+  "webpBytes": 82496,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSQ-HIS-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSQ-HIS-002.webp",
+  "uploadedAt": "2026-09-02T05:43:16+00:00"
+ },
+ "DOR-HSQ-HIS-003": {
+  "srcSha256": "f6410b13a187c4111d0dc3b3724cfaa2ff386e14cad4203318a0bc47bb8e9d98",
+  "srcBytes": 2997949,
+  "webpBytes": 119306,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSQ-HIS-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSQ-HIS-003.webp",
+  "uploadedAt": "2026-09-02T05:43:16+00:00"
+ },
+ "DOR-HSQ-GRN-001": {
+  "srcSha256": "695c9556c807a2dbfc5d687d8204391ba934e10bbb969ae7c596caf1ddb1421e",
+  "srcBytes": 3475859,
+  "webpBytes": 170180,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSQ-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSQ-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:43:16+00:00"
+ },
+ "DOR-HSQ-M001": {
+  "srcSha256": "3bd4fc1ef2ff7d8b3f4e5d0259c1a5a07c7284bd6e392755aeebd57878899b4c",
+  "srcBytes": 3064839,
+  "webpBytes": 112554,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSQ-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSQ-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:16+00:00"
+ },
+ "DOR-HSQ-M002": {
+  "srcSha256": "ce4a33121f0cfe94e426f95658b48db85b42072fbbc75c6ceab64fd4464d0910",
+  "srcBytes": 3015795,
+  "webpBytes": 112372,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSQ-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSQ-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:16+00:00"
+ },
+ "DOR-HSQ-M003": {
+  "srcSha256": "60ed027697037cf38df07c78bbb1f10deab5c3e95d78c40dbabbe914beebd363",
+  "srcBytes": 3063091,
+  "webpBytes": 106880,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSQ-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSQ-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:16+00:00"
+ },
+ "DOR-HSQ-M004": {
+  "srcSha256": "88a03fce78fb40d36826da53aa2d2e9bc5d1affa634039106dcb017432706167",
+  "srcBytes": 3317233,
+  "webpBytes": 134164,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSQ-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSQ-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:16+00:00"
+ },
+ "DOR-HSQ-M005": {
+  "srcSha256": "bc46c1f286d6b7f02b8889015a0df7cca7c222ba65afcb235471771b909272d0",
+  "srcBytes": 3100401,
+  "webpBytes": 107402,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSQ-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSQ-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:16+00:00"
+ },
+ "DOR-HSQ-RAIL-001": {
+  "srcSha256": "cc04d1a7b1c7a6095017e77898851980f5efaf4b77c862f5fc280b2ed44fa7ca",
+  "srcBytes": 3477194,
+  "webpBytes": 129556,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSQ-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSQ-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:17+00:00"
+ },
+ "DOR-HSZ-ART-001": {
+  "srcSha256": "61d58b9a2b93e08d89a49c376491b10a195c0b492af659b66fc89600fa5abbd0",
+  "srcBytes": 3019236,
+  "webpBytes": 86950,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSZ-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSZ-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:43:17+00:00"
+ },
+ "DOR-HSZ-ART-002": {
+  "srcSha256": "34f9f1eb1827706237c0020ad67ef4e6af72807747654310971e56c255486dbb",
+  "srcBytes": 3225221,
+  "webpBytes": 115596,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSZ-ART-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSZ-ART-002.webp",
+  "uploadedAt": "2026-09-02T05:43:17+00:00"
+ },
+ "DOR-HSZ-GRN-001": {
+  "srcSha256": "18e819e76240dc25a17be4f767978fbf2184868cdf13ace5e54a6f39e6178200",
+  "srcBytes": 2621251,
+  "webpBytes": 52690,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSZ-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSZ-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:43:17+00:00"
+ },
+ "DOR-HSZ-GRN-002": {
+  "srcSha256": "48af832d2c7098e00de72c73cc6596986319c111d586a5256a61166b58254ffd",
+  "srcBytes": 3221519,
+  "webpBytes": 110280,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSZ-GRN-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSZ-GRN-002.webp",
+  "uploadedAt": "2026-09-02T05:43:17+00:00"
+ },
+ "DOR-HSZ-HIS-001": {
+  "srcSha256": "06295d501a77703810db16f7f68daa50d452dc907af5c459a5de9ab23721995d",
+  "srcBytes": 3153252,
+  "webpBytes": 93068,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSZ-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSZ-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:43:17+00:00"
+ },
+ "DOR-HSZ-M001": {
+  "srcSha256": "44f1d71ece69066444b6b9977c6216ef77c053ac72f068890bb88e8ceef786a6",
+  "srcBytes": 2995080,
+  "webpBytes": 109322,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSZ-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSZ-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:17+00:00"
+ },
+ "DOR-HSZ-M002": {
+  "srcSha256": "6792bbb8f59e9decfb35e17f5fcc7793a571535e3443d5223b34ef7a041372e5",
+  "srcBytes": 3316595,
+  "webpBytes": 125078,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSZ-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSZ-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:17+00:00"
+ },
+ "DOR-HSZ-M003": {
+  "srcSha256": "fca159077c4e34a784141eac4cdc4baee04f0e175d95dfaf9da6bb3df4c52a92",
+  "srcBytes": 3190496,
+  "webpBytes": 144398,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSZ-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSZ-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:17+00:00"
+ },
+ "DOR-HSZ-M004": {
+  "srcSha256": "ecc8b7c28e044f076d5a9e813c7fe7612766ee6acec5376fb24393026a3fe999",
+  "srcBytes": 3258450,
+  "webpBytes": 113968,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSZ-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSZ-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:18+00:00"
+ },
+ "DOR-HSZ-WAT-001": {
+  "srcSha256": "2c09027d70d4e0d8e6500fe95ee1e7520b7b2e997b19de85ac6e99237ade10a9",
+  "srcBytes": 2942638,
+  "webpBytes": 82274,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSZ-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSZ-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:43:18+00:00"
+ },
+ "DOR-HUA-GRN-001": {
+  "srcSha256": "96f85374f6c6995a380bec1e41fb38752faa1db0cd6dbb797ffe99abf4d9093b",
+  "srcBytes": 2631757,
+  "webpBytes": 62704,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HUA-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HUA-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:43:18+00:00"
+ },
+ "DOR-HUA-ART-001": {
+  "srcSha256": "657756e5a2574a646bb8dd9342221b72a15411b01991d0f1a3dd6dc5679dd766",
+  "srcBytes": 3299696,
+  "webpBytes": 120164,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HUA-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HUA-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:43:18+00:00"
+ },
+ "DOR-HUA-M001": {
+  "srcSha256": "f4faa6a792f9d2046f8939e1c70698181c645d118957692cc89309fdf06f1a25",
+  "srcBytes": 2885624,
+  "webpBytes": 86022,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HUA-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HUA-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:18+00:00"
+ },
+ "DOR-HUA-M002": {
+  "srcSha256": "b93e39c8992d21bd3ff0d9d72869ee5877387fea1c1e1e2ca7a56eb968d9d5c3",
+  "srcBytes": 3126716,
+  "webpBytes": 105802,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HUA-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-HUA-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:18+00:00"
+ },
+ "DOR-HSZ-M005": {
+  "srcSha256": "5e310341bac17637dfddf33761d71ad347b624ac5912fd50aa30cda206f0842d",
+  "srcBytes": 3137119,
+  "webpBytes": 114206,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HSZ-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-HSZ-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:18+00:00"
+ },
+ "DOR-HUA-M003": {
+  "srcSha256": "32a2cba18eac87b52f2dc44bea630a9c2af79cdba5f63ca80b4f9a50549cdf8d",
+  "srcBytes": 2986907,
+  "webpBytes": 93244,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HUA-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-HUA-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:19+00:00"
+ },
+ "DOR-HUA-M004": {
+  "srcSha256": "c66f5f1fcc38b5e57007e6eda191cad800b3e05a5a358a6ba50f9e1a8b3cf063",
+  "srcBytes": 2885547,
+  "webpBytes": 61000,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HUA-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-HUA-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:19+00:00"
+ },
+ "DOR-HUA-M005": {
+  "srcSha256": "cb34725a38eaafe65f8bc28e967b9367e8de6699f53bb382684df1da509d958f",
+  "srcBytes": 3051333,
+  "webpBytes": 92810,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HUA-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-HUA-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:19+00:00"
+ },
+ "DOR-HUA-WAT-001": {
+  "srcSha256": "0f164594e9a1d76c5401d71c586176268c58e34cb699aaac34c0fa5495c3d21c",
+  "srcBytes": 2973806,
+  "webpBytes": 79466,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HUA-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HUA-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:43:19+00:00"
+ },
+ "DOR-HUA-RAIL-001": {
+  "srcSha256": "50f7c6ed7b17abde0f8674c653a054ce2d88e10d8f3ad8757a9f982a96299293",
+  "srcBytes": 3195267,
+  "webpBytes": 123904,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-HUA-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-HUA-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:19+00:00"
+ },
+ "DOR-ILA-ART-001": {
+  "srcSha256": "6549ea024c40db837b24797a8c86ffa7008c8fba86d0eb24a8233ba6b6e9c21d",
+  "srcBytes": 2993945,
+  "webpBytes": 83834,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-ILA-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-ILA-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:43:19+00:00"
+ },
+ "DOR-ILA-GRN-001": {
+  "srcSha256": "1a10b72281b9572c424847523e536c97736f46bd09c45ae5fa31d51a24da3c4e",
+  "srcBytes": 2799778,
+  "webpBytes": 67738,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-ILA-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-ILA-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:43:19+00:00"
+ },
+ "DOR-ILA-M001": {
+  "srcSha256": "832811d8a636fe60d3962a545cbac273ed1d8c3283d2425684d3bf9a3e5f3971",
+  "srcBytes": 2925997,
+  "webpBytes": 84134,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-ILA-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-ILA-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:19+00:00"
+ },
+ "DOR-ILA-M004": {
+  "srcSha256": "f18b5e4beead4b6f35607932bff61832dbb280097d1f513d7b9857caadef7c7a",
+  "srcBytes": 2967799,
+  "webpBytes": 89446,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-ILA-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-ILA-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:20+00:00"
+ },
+ "DOR-ILA-M002": {
+  "srcSha256": "21952f980443edc7303c8c9f48e60fdd46f8924908b4b18ea70069fd1f03ddc1",
+  "srcBytes": 3135081,
+  "webpBytes": 92718,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-ILA-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-ILA-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:20+00:00"
+ },
+ "DOR-ILA-M005": {
+  "srcSha256": "0b6c5398ac11d094899a9c47b479bee5ff995c63217c03d88b35e8b79219e8e4",
+  "srcBytes": 2864056,
+  "webpBytes": 59524,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-ILA-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-ILA-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:20+00:00"
+ },
+ "DOR-ILA-M006": {
+  "srcSha256": "eaf7237672d7eb27bfa2f55aa8cec2b6dcac95943914737baa011dbf70592e2e",
+  "srcBytes": 2990577,
+  "webpBytes": 99436,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-ILA-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-ILA-M006.webp",
+  "uploadedAt": "2026-09-02T05:43:20+00:00"
+ },
+ "DOR-ILA-M003": {
+  "srcSha256": "249a92ffdc9646754edc17825e3b11929269713e4ec7314c6706da3f031a4a53",
+  "srcBytes": 2992911,
+  "webpBytes": 91378,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-ILA-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-ILA-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:20+00:00"
+ },
+ "DOR-ILA-M007": {
+  "srcSha256": "57fd5a8421a69d7e8096cf33c19d3297a58daaa48be446a3be2a6cdeb7a33a2c",
+  "srcBytes": 3040857,
+  "webpBytes": 111718,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-ILA-M007.webp",
+  "url": "https://img.dor.tw/scene/DOR-ILA-M007.webp",
+  "uploadedAt": "2026-09-02T05:43:20+00:00"
+ },
+ "DOR-ILA-WAT-001": {
+  "srcSha256": "24ead0ac756ff8893004072d2c83896666ef7a14bb70d2bbe45bd55d2ea7745d",
+  "srcBytes": 2760463,
+  "webpBytes": 81814,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-ILA-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-ILA-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:43:20+00:00"
+ },
+ "DOR-ILA-RAIL-001": {
+  "srcSha256": "adf23d6a894506147980105508593152bf29b2cc14dd0dfb9df5841193175564",
+  "srcBytes": 3133070,
+  "webpBytes": 103498,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-ILA-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-ILA-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:20+00:00"
+ },
+ "DOR-KEE-M001": {
+  "srcSha256": "7bfa53c10d7d659d7dcfa8d9701f45f56d4d3ef88ae5a4361d59a5fff9f51e0e",
+  "srcBytes": 3184320,
+  "webpBytes": 107814,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KEE-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-KEE-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:21+00:00"
+ },
+ "DOR-KEE-M002": {
+  "srcSha256": "d7ff2da6ed70b7d509c4f8179149109a2098f8655964957170b47ea1c85ab2fd",
+  "srcBytes": 3073247,
+  "webpBytes": 123094,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KEE-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-KEE-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:21+00:00"
+ },
+ "DOR-KEE-M003": {
+  "srcSha256": "98cb25313e66934d7af5ca377ad174fede990b6f74084b63ccdd357d2811d058",
+  "srcBytes": 3144232,
+  "webpBytes": 115750,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KEE-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-KEE-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:21+00:00"
+ },
+ "DOR-KEE-M004": {
+  "srcSha256": "7a4261a81735e226f3fe237535c7db5262424fcd0c248b56879a78d193e4c785",
+  "srcBytes": 3110265,
+  "webpBytes": 108560,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KEE-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-KEE-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:21+00:00"
+ },
+ "DOR-KEE-WAT-001": {
+  "srcSha256": "36ec55564018db2ede061921c0dc3941159b4e41dd248cb02fe618e4741116a6",
+  "srcBytes": 2812159,
+  "webpBytes": 74778,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KEE-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-KEE-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:43:21+00:00"
+ },
+ "DOR-KEE-WAT-002": {
+  "srcSha256": "daa0785f6d93ccb0221be5d1a70bfda9b35792ec45890de88b7a8cce8206a4be",
+  "srcBytes": 3061114,
+  "webpBytes": 101260,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KEE-WAT-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-KEE-WAT-002.webp",
+  "uploadedAt": "2026-09-02T05:43:21+00:00"
+ },
+ "DOR-KEE-WAT-003": {
+  "srcSha256": "5bd45e02b0f0f250ba2a941ccfa401ad11db6b35f29b6171945eb94cbf2b2eb5",
+  "srcBytes": 2965351,
+  "webpBytes": 63690,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KEE-WAT-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-KEE-WAT-003.webp",
+  "uploadedAt": "2026-09-02T05:43:21+00:00"
+ },
+ "DOR-KHH-ART-001": {
+  "srcSha256": "b88350effd9158aec1e6930d75325c9a718ccce5001ace04047f5eaff49c9a60",
+  "srcBytes": 3060228,
+  "webpBytes": 109942,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:43:21+00:00"
+ },
+ "DOR-KHH-ART-002": {
+  "srcSha256": "712716e38c9a9c35e2ece498a65ffe81e050749e185beaa20a8f3387972e0514",
+  "srcBytes": 2897767,
+  "webpBytes": 99296,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-ART-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-ART-002.webp",
+  "uploadedAt": "2026-09-02T05:43:21+00:00"
+ },
+ "DOR-KHH-CUL-001": {
+  "srcSha256": "c0ff6d659ada62be490aac0c61e3aa500b8381238aedf09b1538139baac8882e",
+  "srcBytes": 2802275,
+  "webpBytes": 68084,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:21+00:00"
+ },
+ "DOR-KHH-CUL-002": {
+  "srcSha256": "1e2774c65aa9dc8fa45fc4509d5583a8bc39aabff7b9d893b35fb620a48da9e0",
+  "srcBytes": 3191488,
+  "webpBytes": 117686,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-CUL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-CUL-002.webp",
+  "uploadedAt": "2026-09-02T05:43:22+00:00"
+ },
+ "DOR-KHH-CUL-003": {
+  "srcSha256": "04937667254a21a75e383edb8b41c5954b6261fa7d2087de8558e4af2bf61b38",
+  "srcBytes": 3177266,
+  "webpBytes": 102678,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-CUL-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-CUL-003.webp",
+  "uploadedAt": "2026-09-02T05:43:22+00:00"
+ },
+ "DOR-KHH-M001": {
+  "srcSha256": "650c1c00dce2914c9c4e9474be421adbeaed9cba272410ef373627de6b9cb092",
+  "srcBytes": 3006615,
+  "webpBytes": 76670,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:22+00:00"
+ },
+ "DOR-KHH-GRN-001": {
+  "srcSha256": "d84f66768dd75f52f3a04360ff8592f5c1f1340d743aa6cf198d5fd940b80e3a",
+  "srcBytes": 2882317,
+  "webpBytes": 90886,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:43:22+00:00"
+ },
+ "DOR-KHH-GRN-002": {
+  "srcSha256": "ea95f0d01a88f79c1e487163d7ccc55e25538c132822a1768e356d2fa52db768",
+  "srcBytes": 3108349,
+  "webpBytes": 89894,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-GRN-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-GRN-002.webp",
+  "uploadedAt": "2026-09-02T05:43:22+00:00"
+ },
+ "DOR-KHH-M003": {
+  "srcSha256": "8c53ebb2fb01fdfdc5843035b5a20ae35ff7a8e888733dad5976b286d7602da2",
+  "srcBytes": 2863448,
+  "webpBytes": 89932,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:22+00:00"
+ },
+ "DOR-KHH-M005": {
+  "srcSha256": "0684b5f82ea7b9e0863626a262dc7027ff37f4878f2d76362a55b3ac1087638b",
+  "srcBytes": 2865251,
+  "webpBytes": 81298,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:23+00:00"
+ },
+ "DOR-KHH-M006": {
+  "srcSha256": "dd4b71092b984eed74f959c02e8e71e39decb1b55ccfe6c78b2fef1e83be615b",
+  "srcBytes": 3131301,
+  "webpBytes": 111996,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-M006.webp",
+  "uploadedAt": "2026-09-02T05:43:23+00:00"
+ },
+ "DOR-KHH-M004": {
+  "srcSha256": "60a0936de65823a292a9e1d6d34ec784dbf285cea003f9f17eb2cce7afedc9b9",
+  "srcBytes": 2989541,
+  "webpBytes": 84850,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:23+00:00"
+ },
+ "DOR-KHH-M007": {
+  "srcSha256": "c08459b3c416658a3b87ef8e78d634775d30e38357a7c1f8af8342ef7deaeded",
+  "srcBytes": 3099139,
+  "webpBytes": 101908,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-M007.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-M007.webp",
+  "uploadedAt": "2026-09-02T05:43:23+00:00"
+ },
+ "DOR-KHH-M008": {
+  "srcSha256": "ea61b3b632ca7512c9696f6cd9fae7f61921110d35af49edc4d3a74d11be1214",
+  "srcBytes": 2977747,
+  "webpBytes": 103868,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-M008.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-M008.webp",
+  "uploadedAt": "2026-09-02T05:43:23+00:00"
+ },
+ "DOR-KHH-M010": {
+  "srcSha256": "1a5b2652dd708946d212ef2fdabbbd28d512318bdad5f04c53ffb566bb627a4a",
+  "srcBytes": 3001029,
+  "webpBytes": 77996,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-M010.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-M010.webp",
+  "uploadedAt": "2026-09-02T05:43:23+00:00"
+ },
+ "DOR-KHH-M009": {
+  "srcSha256": "f09f501361665a689d3717d287ae8e6ecc7b5f54273a5d093b8d1a4129cfcf26",
+  "srcBytes": 3079107,
+  "webpBytes": 106940,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-M009.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-M009.webp",
+  "uploadedAt": "2026-09-02T05:43:23+00:00"
+ },
+ "DOR-KHH-WAT-001": {
+  "srcSha256": "bfb02b7771fbefc4e0ccbf1f767e2fbacdb658fafeeade7daeff9fc644b7ca88",
+  "srcBytes": 2272916,
+  "webpBytes": 50610,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:43:24+00:00"
+ },
+ "DOR-KHH-WAT-002": {
+  "srcSha256": "1625f36bf5d31b45d42c9af5b7fa278527ac75ff2d131bccd9e993ee4a9c3457",
+  "srcBytes": 2753797,
+  "webpBytes": 56016,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-WAT-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-WAT-002.webp",
+  "uploadedAt": "2026-09-02T05:43:24+00:00"
+ },
+ "DOR-KIN-GRN-001": {
+  "srcSha256": "2df34b63c69c3fd9da2135904afdb2102aeee0ba49594623fdaa405adeb31bbd",
+  "srcBytes": 2769668,
+  "webpBytes": 56162,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KIN-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-KIN-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:43:24+00:00"
+ },
+ "DOR-KIN-CUL-001": {
+  "srcSha256": "7058b304196c61cd331e85146fc841e8014717874dfdf2de5d2f925a638914f6",
+  "srcBytes": 3336391,
+  "webpBytes": 119706,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KIN-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-KIN-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:24+00:00"
+ },
+ "DOR-KIN-HIS-001": {
+  "srcSha256": "fa9ab2fca4b84625f6126c4b62731ac2d767349dfd11fff81d6cb36b40248e96",
+  "srcBytes": 3436151,
+  "webpBytes": 104948,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KIN-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-KIN-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:43:24+00:00"
+ },
+ "DOR-KIN-M001": {
+  "srcSha256": "96f0df9a559843f65057943941ca4ef156042870d711318b18c6756f4ebde104",
+  "srcBytes": 3073743,
+  "webpBytes": 96634,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KIN-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-KIN-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:24+00:00"
+ },
+ "DOR-KIN-M002": {
+  "srcSha256": "aaaed5647fc2c924d42032c2c61a88e847fcd6d38d78508be9cbf06046ad453f",
+  "srcBytes": 3199731,
+  "webpBytes": 104888,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KIN-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-KIN-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:24+00:00"
+ },
+ "DOR-KIN-M003": {
+  "srcSha256": "1e6419517821c44ff04c02afa5287f5fefc7d3be0421725ba7e69708a76c5a64",
+  "srcBytes": 3265585,
+  "webpBytes": 118768,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KIN-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-KIN-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:24+00:00"
+ },
+ "DOR-KIN-M004": {
+  "srcSha256": "d9e8d0818a158abafefe3763cd0aefa2729d680d51e9dccc677adaceaf3adeee",
+  "srcBytes": 3018280,
+  "webpBytes": 76220,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KIN-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-KIN-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:25+00:00"
+ },
+ "DOR-KIN-M005": {
+  "srcSha256": "39a1c1f65f16f0805f3e874f41e83089ee327aec394eef0aae26af9eca861e28",
+  "srcBytes": 3123673,
+  "webpBytes": 97668,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KIN-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-KIN-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:25+00:00"
+ },
+ "DOR-LIE-HIS-001": {
+  "srcSha256": "2ea67e9ab22eb2549e954d71323f5cf5894a2a907e809c4bd3f47d4db3589ed3",
+  "srcBytes": 3244435,
+  "webpBytes": 120386,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-LIE-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-LIE-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:43:25+00:00"
+ },
+ "DOR-LIE-M001": {
+  "srcSha256": "668ca8b70d6901e144bfcbda043d39912dcf8feb68833663c497efa49e5ff31b",
+  "srcBytes": 2896497,
+  "webpBytes": 90810,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-LIE-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-LIE-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:25+00:00"
+ },
+ "DOR-LIE-M002": {
+  "srcSha256": "a536d6c450ef2fdcddcd68769677837f80e6baa7a04605908e248a729e6c980a",
+  "srcBytes": 3185666,
+  "webpBytes": 86020,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-LIE-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-LIE-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:25+00:00"
+ },
+ "DOR-LIE-M003": {
+  "srcSha256": "c433cc580aa077a5783e2ede90f993a7cafc19c2697727c649251772d0b9ee8f",
+  "srcBytes": 3150657,
+  "webpBytes": 92292,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-LIE-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-LIE-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:26+00:00"
+ },
+ "DOR-LIE-M004": {
+  "srcSha256": "7ab280a4c5e1180ec274897468e91824c6de18273472be1aaab99b391934305f",
+  "srcBytes": 2805300,
+  "webpBytes": 94326,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-LIE-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-LIE-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:26+00:00"
+ },
+ "DOR-LIE-M005": {
+  "srcSha256": "3b62a9e5c9b9be2d32e02784290f29a43f41d6fe0253cdeccadafd8d3b5e53d2",
+  "srcBytes": 2670413,
+  "webpBytes": 64768,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-LIE-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-LIE-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:26+00:00"
+ },
+ "DOR-MIA-ART-001": {
+  "srcSha256": "d5c7a5a3c81bfab02dc198d25504421717f20d0e00ac8030c8978ceea30a3ae5",
+  "srcBytes": 3098533,
+  "webpBytes": 54704,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:43:26+00:00"
+ },
+ "DOR-MIA-CUL-001": {
+  "srcSha256": "d19590c9b81218dc5295874d1e113d9f1189e62d0dbb25d0b6621d556e8e84df",
+  "srcBytes": 2810096,
+  "webpBytes": 60200,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:26+00:00"
+ },
+ "DOR-MIA-CUL-002": {
+  "srcSha256": "2475f791dc625332a1d73bb9472b6ecea5bcfb0116d4cb5e715fdb9fe9f1399f",
+  "srcBytes": 3119059,
+  "webpBytes": 90642,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-CUL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-CUL-002.webp",
+  "uploadedAt": "2026-09-02T05:43:26+00:00"
+ },
+ "DOR-MIA-GRN-001": {
+  "srcSha256": "4a97ed75ee02fb8c911798bd6a32c1b930bd7e05656ff153431fffb4928df66b",
+  "srcBytes": 2875931,
+  "webpBytes": 81194,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:43:26+00:00"
+ },
+ "DOR-MIA-HIS-001": {
+  "srcSha256": "2a990be9a057987117e3f03743958e0cfa2e6fe8eb2f19d34ed3a5fca4f66033",
+  "srcBytes": 3075205,
+  "webpBytes": 98092,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:43:27+00:00"
+ },
+ "DOR-MIA-HIS-002": {
+  "srcSha256": "41a3f81be3e68d787d7f51a3983c50580cb60fd220f3373ada778bb5dcb4e6b9",
+  "srcBytes": 2864264,
+  "webpBytes": 72736,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-HIS-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-HIS-002.webp",
+  "uploadedAt": "2026-09-02T05:43:27+00:00"
+ },
+ "DOR-KHH-M002": {
+  "srcSha256": "e77ddd645e84240af54ac389c5acdb5ab95f2e6ad16dad9f0eeb9d5d95fcda00",
+  "srcBytes": 3092735,
+  "webpBytes": 102802,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-KHH-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-KHH-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:27+00:00"
+ },
+ "DOR-MIA-M001": {
+  "srcSha256": "c6dda0ad94820a562cbcf89c8c40991b7f8d74fcfda4dfe5bd1870b130de117d",
+  "srcBytes": 3035640,
+  "webpBytes": 115198,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:27+00:00"
+ },
+ "DOR-MIA-M002": {
+  "srcSha256": "75c2a3dac4ea8f00dc74fdf7e68fe5f319774907a83e1f79c3dd7666cf046b83",
+  "srcBytes": 3009206,
+  "webpBytes": 117572,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:27+00:00"
+ },
+ "DOR-MIA-M003": {
+  "srcSha256": "34fdac46da14785d8826d22ca945456cf4e526689905bf6523610a807cc52ad1",
+  "srcBytes": 3080966,
+  "webpBytes": 106104,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:27+00:00"
+ },
+ "DOR-MIA-M004": {
+  "srcSha256": "9b157eb26fdc522c10aafbe9d67805d297e756f10340feb06ef9b9ee779e690b",
+  "srcBytes": 3088695,
+  "webpBytes": 113254,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:27+00:00"
+ },
+ "DOR-MIA-M005": {
+  "srcSha256": "37c290e6fc1ed995daa9f154f2b3f57c405be1e7b1d0710285f2d8ce3c6d1a9a",
+  "srcBytes": 3198939,
+  "webpBytes": 116026,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:27+00:00"
+ },
+ "DOR-MIA-M006": {
+  "srcSha256": "6029ca01d81f1543440703f0b9235d6e63056397d7b19f413c54905ab187dba0",
+  "srcBytes": 3118671,
+  "webpBytes": 110884,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-M006.webp",
+  "uploadedAt": "2026-09-02T05:43:28+00:00"
+ },
+ "DOR-MIA-RAIL-001": {
+  "srcSha256": "9f4e684d8c61d53884a46126915314e56e3568f6d4469343272bee0e7dc6cf1e",
+  "srcBytes": 3165761,
+  "webpBytes": 107454,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:28+00:00"
+ },
+ "DOR-MIA-WAT-001": {
+  "srcSha256": "bdbdd6f1583a6b3707b591fc5433757715c7974c48c5c9f53bdacb998d5553e2",
+  "srcBytes": 2603231,
+  "webpBytes": 55704,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:43:28+00:00"
+ },
+ "DOR-MIA-RAIL-003": {
+  "srcSha256": "a887597558c94cba1ba858b222ca528250f462df166be3bbbda79f7bff7d38c3",
+  "srcBytes": 3103040,
+  "webpBytes": 91334,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-RAIL-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-RAIL-003.webp",
+  "uploadedAt": "2026-09-02T05:43:28+00:00"
+ },
+ "DOR-MIA-RAIL-002": {
+  "srcSha256": "105e1c53109d2f1490f80232d022b3088733c4e6365b260378a1a74998106a46",
+  "srcBytes": 2877551,
+  "webpBytes": 94724,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-MIA-RAIL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-MIA-RAIL-002.webp",
+  "uploadedAt": "2026-09-02T05:43:28+00:00"
+ },
+ "DOR-NAN-ART-001": {
+  "srcSha256": "dd84c3dd9514167ee69dfbaa82da89c1381559b81b59c079d23833cea8aa03f7",
+  "srcBytes": 2909153,
+  "webpBytes": 72402,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:43:28+00:00"
+ },
+ "DOR-NAN-GRN-001": {
+  "srcSha256": "130e39c19aa505c1b82a0c79609ffc67dd41ba539160221b33db37a1e6fb0879",
+  "srcBytes": 3370798,
+  "webpBytes": 132442,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:43:28+00:00"
+ },
+ "DOR-NAN-GRN-002": {
+  "srcSha256": "bfa653cbfc079614d5c88006cec10235bcd53a313ecb936b79203a169c8a1f36",
+  "srcBytes": 2774637,
+  "webpBytes": 91580,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-GRN-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-GRN-002.webp",
+  "uploadedAt": "2026-09-02T05:43:28+00:00"
+ },
+ "DOR-NAN-M001": {
+  "srcSha256": "04fbcddcded146fc373c37e6a7ccc9587b0ee7303f065c28eed4ba6e77151d9b",
+  "srcBytes": 3091573,
+  "webpBytes": 101434,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:28+00:00"
+ },
+ "DOR-NAN-M002": {
+  "srcSha256": "53368294dfdd15455e26d5d2d2301f3bfc6faecc64c62e3eec4518a857ee67e7",
+  "srcBytes": 3160288,
+  "webpBytes": 109338,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:28+00:00"
+ },
+ "DOR-NAN-M003": {
+  "srcSha256": "ee69ab396e59ae98f179c915cd41c51299f2462bfe1c30d66c0bdadc4f188955",
+  "srcBytes": 3026811,
+  "webpBytes": 66560,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:29+00:00"
+ },
+ "DOR-NAN-M004": {
+  "srcSha256": "bed6ded2fb84e16f52b37cbd395e89d0fc25410b1e89009fa4281f68a8fbfaf0",
+  "srcBytes": 3017913,
+  "webpBytes": 97392,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:29+00:00"
+ },
+ "DOR-NAN-M005": {
+  "srcSha256": "0c47e360ec1221b614ef7eaa1fb7c670ade77956164f08e0adb039dd190b7d44",
+  "srcBytes": 2804613,
+  "webpBytes": 82776,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:29+00:00"
+ },
+ "DOR-NAN-RAIL-001": {
+  "srcSha256": "f84ef11f9f1e632a3c6742f428e957103a6ef91a89478a93f0df422d55a8f35e",
+  "srcBytes": 2884871,
+  "webpBytes": 73888,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:29+00:00"
+ },
+ "DOR-NAN-M006": {
+  "srcSha256": "ac9697de5ffbc10d6bf774d3b32cd8df45d0df844fb1554f4d98e7a7de2433e4",
+  "srcBytes": 2927678,
+  "webpBytes": 99142,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-M006.webp",
+  "uploadedAt": "2026-09-02T05:43:29+00:00"
+ },
+ "DOR-NAN-RAIL-003": {
+  "srcSha256": "b36f2161702b6985f07d40c585ef92c45d4e61e2b3c1e4baa56e8b362200fc5c",
+  "srcBytes": 3344318,
+  "webpBytes": 134744,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-RAIL-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-RAIL-003.webp",
+  "uploadedAt": "2026-09-02T05:43:29+00:00"
+ },
+ "DOR-NAN-RAIL-002": {
+  "srcSha256": "4b9f06f6d420d237463cdc2e48cec2ce31b34681eceaa08da42b715fe1397695",
+  "srcBytes": 2776798,
+  "webpBytes": 83898,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-RAIL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-RAIL-002.webp",
+  "uploadedAt": "2026-09-02T05:43:30+00:00"
+ },
+ "DOR-NTP-ART-002": {
+  "srcSha256": "1f79f0afc2c2c1de9f1dc3b7c92f89cecb294ffa290766d025b6be893180eb80",
+  "srcBytes": 2501050,
+  "webpBytes": 51832,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-ART-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-ART-002.webp",
+  "uploadedAt": "2026-09-02T05:43:30+00:00"
+ },
+ "DOR-NAN-RAIL-004": {
+  "srcSha256": "95ded2c3c568e814b5a437f090b21f8b987d325a59a209bf7b9d7c48f7d9908f",
+  "srcBytes": 3272585,
+  "webpBytes": 117650,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NAN-RAIL-004.webp",
+  "url": "https://img.dor.tw/scene/DOR-NAN-RAIL-004.webp",
+  "uploadedAt": "2026-09-02T05:43:30+00:00"
+ },
+ "DOR-NTP-ART-001": {
+  "srcSha256": "909294619dcd77aecacfc8f8a834afe93bd191bbeed7c49c56af895a3cb7bda6",
+  "srcBytes": 3327996,
+  "webpBytes": 110860,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:43:30+00:00"
+ },
+ "DOR-NTP-CUL-001": {
+  "srcSha256": "c91415d3aba4b5031e3de4f6620b120bcc270537d0ad40c8972ebfab94e7f949",
+  "srcBytes": 3360559,
+  "webpBytes": 148892,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:30+00:00"
+ },
+ "DOR-NTP-HIS-001": {
+  "srcSha256": "fcec248cb2037a7e0562326a0896c4a92afe8deb1711b4440ccf66a3b9a810d0",
+  "srcBytes": 2994693,
+  "webpBytes": 106916,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:43:30+00:00"
+ },
+ "DOR-NTP-CUL-002": {
+  "srcSha256": "3af3ad4a3d30e267f15943f8f0f50194900a666552ebe4e2c849c5a2fd5e9547",
+  "srcBytes": 3032811,
+  "webpBytes": 66538,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-CUL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-CUL-002.webp",
+  "uploadedAt": "2026-09-02T05:43:30+00:00"
+ },
+ "DOR-NTP-GRN-002": {
+  "srcSha256": "81d120bf0831ed58c74c3b4e60e84896992a935a590c9b4fb3d3ee3a2ae7f3f4",
+  "srcBytes": 3467285,
+  "webpBytes": 155264,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-GRN-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-GRN-002.webp",
+  "uploadedAt": "2026-09-02T05:43:30+00:00"
+ },
+ "DOR-NTP-GRN-001": {
+  "srcSha256": "8fa5c3f578ec1c8dcb15af876b9f10861685d4a7548842cc47f588b4d7e48f9d",
+  "srcBytes": 3329456,
+  "webpBytes": 128270,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:43:30+00:00"
+ },
+ "DOR-NTP-HIS-002": {
+  "srcSha256": "ede2e6a4b69ca574680f8e6951ef9f3448fed08685ecad4b61f58da5122c2ac4",
+  "srcBytes": 3312916,
+  "webpBytes": 116224,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-HIS-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-HIS-002.webp",
+  "uploadedAt": "2026-09-02T05:43:31+00:00"
+ },
+ "DOR-NTP-HIS-005": {
+  "srcSha256": "c0c3240a442eb73bd45e84cca6589096725d2fbc9727948f8ff498e90987eeb1",
+  "srcBytes": 3249492,
+  "webpBytes": 82168,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-HIS-005.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-HIS-005.webp",
+  "uploadedAt": "2026-09-02T05:43:31+00:00"
+ },
+ "DOR-NTP-HIS-004": {
+  "srcSha256": "176ccfd3314547e33d2c1da9f92cffc2c8246a0cfec1bac50f77dcf753b5253a",
+  "srcBytes": 3207621,
+  "webpBytes": 104624,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-HIS-004.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-HIS-004.webp",
+  "uploadedAt": "2026-09-02T05:43:31+00:00"
+ },
+ "DOR-NTP-HIS-003": {
+  "srcSha256": "f2abf302160aaf0ddb2d1d78dab70edee814a128553fb624d827ca16df43ba68",
+  "srcBytes": 3422776,
+  "webpBytes": 139204,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-HIS-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-HIS-003.webp",
+  "uploadedAt": "2026-09-02T05:43:31+00:00"
+ },
+ "DOR-NTP-M001": {
+  "srcSha256": "354aee8188a2d630e3a4f02a22ffd6a2b00994caa892ba6141c58d069c401e93",
+  "srcBytes": 3002110,
+  "webpBytes": 121926,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:31+00:00"
+ },
+ "DOR-NTP-M002": {
+  "srcSha256": "845f582e49dfee45b07b07a9d8202f02b59f04e941938f1975a96640fd8068c9",
+  "srcBytes": 2907201,
+  "webpBytes": 87948,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:31+00:00"
+ },
+ "DOR-NTP-M004": {
+  "srcSha256": "f91705533b8ad5074c392cb6cc3cdceb43a0d504e7dd0d224105bf1a06838b77",
+  "srcBytes": 2482523,
+  "webpBytes": 67604,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:31+00:00"
+ },
+ "DOR-NTP-M003": {
+  "srcSha256": "1db89ab630e60e06cc437547277ad11bc2a67d5738f6887866bb2ab5c9c1f4e3",
+  "srcBytes": 2918308,
+  "webpBytes": 84572,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:31+00:00"
+ },
+ "DOR-NTP-M005": {
+  "srcSha256": "52dfc9fab4dba559be1ccf4b80526e7d0c001f8d0107c62eb5978cec7425b527",
+  "srcBytes": 2967313,
+  "webpBytes": 98132,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:32+00:00"
+ },
+ "DOR-NTP-M006": {
+  "srcSha256": "3d1a0374a1d31933f9b3f88c51aed471e10eeb5c85051999043f3b4dff206f05",
+  "srcBytes": 3408254,
+  "webpBytes": 135158,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-M006.webp",
+  "uploadedAt": "2026-09-02T05:43:32+00:00"
+ },
+ "DOR-NTP-M007": {
+  "srcSha256": "75bd8c19b2d8d09b6e0220b73bd85fe0b3ab862516e617434c9b0e43197cd598",
+  "srcBytes": 3335550,
+  "webpBytes": 137444,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-M007.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-M007.webp",
+  "uploadedAt": "2026-09-02T05:43:32+00:00"
+ },
+ "DOR-NTP-RAIL-001": {
+  "srcSha256": "71ba5e53fded70f9f0ae0c501faf1471da61d7cdb0ff020aff88327e63cdff84",
+  "srcBytes": 3193959,
+  "webpBytes": 111864,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:32+00:00"
+ },
+ "DOR-NTP-M008": {
+  "srcSha256": "d40f6744d0b359acaca17b8bcae7cf9d24824b5551ac60328be4400967795a2b",
+  "srcBytes": 2991206,
+  "webpBytes": 108642,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-M008.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-M008.webp",
+  "uploadedAt": "2026-09-02T05:43:32+00:00"
+ },
+ "DOR-NTP-RAIL-002": {
+  "srcSha256": "6d52066dad0c3d8fe87c19282fffca691b99c8deddc6051c12ffeaf0a7d5442d",
+  "srcBytes": 3427073,
+  "webpBytes": 147382,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-RAIL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-RAIL-002.webp",
+  "uploadedAt": "2026-09-02T05:43:32+00:00"
+ },
+ "DOR-NTP-RAIL-003": {
+  "srcSha256": "c136519612534d85b5114a0a2c361e2c3f66dd529d0fbcdd084305f0217cfd58",
+  "srcBytes": 3408005,
+  "webpBytes": 143028,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-RAIL-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-RAIL-003.webp",
+  "uploadedAt": "2026-09-02T05:43:32+00:00"
+ },
+ "DOR-NTP-RAIL-004": {
+  "srcSha256": "1d9c691a66b6fbbccb5559b62bb1bfba42837d5e8f30f962955b449f01a37f43",
+  "srcBytes": 3168417,
+  "webpBytes": 107000,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-RAIL-004.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-RAIL-004.webp",
+  "uploadedAt": "2026-09-02T05:43:32+00:00"
+ },
+ "DOR-NTP-WAT-001": {
+  "srcSha256": "2a5d7ff854515341afaf40d7c54dd959a363885c5de250857bc53e6005b1c56f",
+  "srcBytes": 3071068,
+  "webpBytes": 96024,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:43:33+00:00"
+ },
+ "DOR-NTP-RAIL-005": {
+  "srcSha256": "80c870b799254db906234dbc09278b429c7c2a49e20e44e11ac2463f53b042ff",
+  "srcBytes": 3482961,
+  "webpBytes": 149744,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-RAIL-005.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-RAIL-005.webp",
+  "uploadedAt": "2026-09-02T05:43:33+00:00"
+ },
+ "DOR-NTP-WAT-002": {
+  "srcSha256": "0fe9baa88069bca6bf7361597bc72ef5b12a2a9090abb855a1fee1260345e77b",
+  "srcBytes": 3075330,
+  "webpBytes": 92738,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-WAT-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-WAT-002.webp",
+  "uploadedAt": "2026-09-02T05:43:33+00:00"
+ },
+ "DOR-NTP-WAT-003": {
+  "srcSha256": "574816f48cfb7b6ccdedfc9e0fd5670d1489641d255d295580481d3e9ffd99a4",
+  "srcBytes": 2544369,
+  "webpBytes": 47350,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-WAT-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-WAT-003.webp",
+  "uploadedAt": "2026-09-02T05:43:33+00:00"
+ },
+ "DOR-NTP-WAT-004": {
+  "srcSha256": "62dee59b733f1051f6b3959ccc36526b3d4241efbee5cf4b03dfcfbe432f7966",
+  "srcBytes": 3342830,
+  "webpBytes": 108702,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-NTP-WAT-004.webp",
+  "url": "https://img.dor.tw/scene/DOR-NTP-WAT-004.webp",
+  "uploadedAt": "2026-09-02T05:43:33+00:00"
+ },
+ "DOR-PARK-001": {
+  "srcSha256": "b1be4047a86a3d41b036c0a90d6241e8068378011c5da0809cdfbe0a484f2ffd",
+  "srcBytes": 3227045,
+  "webpBytes": 122966,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-001.webp",
+  "uploadedAt": "2026-09-02T05:43:33+00:00"
+ },
+ "DOR-PARK-002": {
+  "srcSha256": "59b62ab5846efd9cab9e8f9336acfff7584e3bf1b696c3d131727fcea4752b6e",
+  "srcBytes": 3426778,
+  "webpBytes": 177312,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-002.webp",
+  "uploadedAt": "2026-09-02T05:43:33+00:00"
+ },
+ "DOR-PARK-003": {
+  "srcSha256": "19cffc3ea663b16ab16072088dd4d405ba502b02e9dbdda6a783863dc5f680d5",
+  "srcBytes": 3192653,
+  "webpBytes": 121340,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-003.webp",
+  "uploadedAt": "2026-09-02T05:43:33+00:00"
+ },
+ "DOR-PARK-004": {
+  "srcSha256": "e8efc839f88342e378ba120ac5a86fe8a23bcc32ed26d69ad5657d12513efa39",
+  "srcBytes": 3455634,
+  "webpBytes": 157634,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-004.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-004.webp",
+  "uploadedAt": "2026-09-02T05:43:34+00:00"
+ },
+ "DOR-PARK-006": {
+  "srcSha256": "49141700bbd3093925327a91d52e7ba15b52888584d4e99f59db7c1455168536",
+  "srcBytes": 3121281,
+  "webpBytes": 135758,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-006.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-006.webp",
+  "uploadedAt": "2026-09-02T05:43:34+00:00"
+ },
+ "DOR-PARK-005": {
+  "srcSha256": "128b7455f81d313d89064bfac8c52a60f7f8760d25af9f4429cae6f2166111c8",
+  "srcBytes": 3020275,
+  "webpBytes": 95844,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-005.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-005.webp",
+  "uploadedAt": "2026-09-02T05:43:34+00:00"
+ },
+ "DOR-PARK-007": {
+  "srcSha256": "bef2c0eefe159eaf179d6ed7643039806d4493be7247529bc0c5d037f5a44078",
+  "srcBytes": 3152389,
+  "webpBytes": 125540,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-007.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-007.webp",
+  "uploadedAt": "2026-09-02T05:43:34+00:00"
+ },
+ "DOR-PARK-008": {
+  "srcSha256": "ca4455068981016f5dcc84e0de5f9dfb14d19cc2ac9cb897985df8b9baa72f95",
+  "srcBytes": 2752258,
+  "webpBytes": 72966,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-008.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-008.webp",
+  "uploadedAt": "2026-09-02T05:43:34+00:00"
+ },
+ "DOR-PARK-009": {
+  "srcSha256": "ae0ab5040600c309558e1458832c28a373179efa6114de74564e586503ef1508",
+  "srcBytes": 3202938,
+  "webpBytes": 113448,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-009.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-009.webp",
+  "uploadedAt": "2026-09-02T05:43:34+00:00"
+ },
+ "DOR-PARK-010": {
+  "srcSha256": "74529d12e50fe899a859a34b50bbcf9d759dd81c5e77f0fa9af3dbf1fe1587e7",
+  "srcBytes": 2994824,
+  "webpBytes": 90382,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-010.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-010.webp",
+  "uploadedAt": "2026-09-02T05:43:34+00:00"
+ },
+ "DOR-PARK-011": {
+  "srcSha256": "e3a1869cc06b7c1d2599d9c317b5a1f1b962e292535850a76a373714f8666f18",
+  "srcBytes": 2933781,
+  "webpBytes": 107540,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-011.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-011.webp",
+  "uploadedAt": "2026-09-02T05:43:34+00:00"
+ },
+ "DOR-PARK-013": {
+  "srcSha256": "fe8a958fdae46130c840a87f0871618b098064097a9786e3490eb9a5c58934ea",
+  "srcBytes": 3298269,
+  "webpBytes": 143226,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-013.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-013.webp",
+  "uploadedAt": "2026-09-02T05:43:35+00:00"
+ },
+ "DOR-PARK-012": {
+  "srcSha256": "e6f7ddf372db33ed93be3da73760cae4e7653b8b1e396eba112557341298f3c9",
+  "srcBytes": 3418638,
+  "webpBytes": 153070,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-012.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-012.webp",
+  "uploadedAt": "2026-09-02T05:43:35+00:00"
+ },
+ "DOR-PARK-014": {
+  "srcSha256": "cc179839eaf7c2152d494d930a563ba6087bae6dc69bc844d9ff27aa3af43c74",
+  "srcBytes": 3474087,
+  "webpBytes": 126772,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-014.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-014.webp",
+  "uploadedAt": "2026-09-02T05:43:35+00:00"
+ },
+ "DOR-PARK-015": {
+  "srcSha256": "372b3d438fe03e6cfe3b9cc1bcb4a15111921d38855be40d86e4da17851e5d0a",
+  "srcBytes": 2727509,
+  "webpBytes": 78014,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-015.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-015.webp",
+  "uploadedAt": "2026-09-02T05:43:35+00:00"
+ },
+ "DOR-PARK-016": {
+  "srcSha256": "58429e2012a4b407c9b7190431d85b73f48ed74def7d4459402900f67ad55191",
+  "srcBytes": 3182651,
+  "webpBytes": 91326,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-016.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-016.webp",
+  "uploadedAt": "2026-09-02T05:43:35+00:00"
+ },
+ "DOR-PARK-017": {
+  "srcSha256": "482ec4acf2e4ccb35b82716e1096fbd5a4956ee82debfd58b8dedb64d1841c11",
+  "srcBytes": 2952068,
+  "webpBytes": 82832,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-017.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-017.webp",
+  "uploadedAt": "2026-09-02T05:43:35+00:00"
+ },
+ "DOR-PARK-018": {
+  "srcSha256": "504cb0bf43aee1176f73480e366ec2a41e633db58eefea24bdac9de13c09c3c2",
+  "srcBytes": 2823356,
+  "webpBytes": 88094,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-018.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-018.webp",
+  "uploadedAt": "2026-09-02T05:43:35+00:00"
+ },
+ "DOR-PARK-019": {
+  "srcSha256": "1f2e3b7b2e302a6f3c3913698c1412c654c3673f3b2f3700b8a73ced99102e03",
+  "srcBytes": 3113966,
+  "webpBytes": 119996,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-019.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-019.webp",
+  "uploadedAt": "2026-09-02T05:43:35+00:00"
+ },
+ "DOR-PARK-020": {
+  "srcSha256": "6fabf2b266a4da2cbe3d0da9647881377cbbd053e9eb810ec1eba355f57d1918",
+  "srcBytes": 3121180,
+  "webpBytes": 96332,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-020.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-020.webp",
+  "uploadedAt": "2026-09-02T05:43:35+00:00"
+ },
+ "DOR-PARK-021": {
+  "srcSha256": "fbb154c3c553e62aedbc33c23591db0e8eb48ac1bc616689398c4bc94c3f42fd",
+  "srcBytes": 3375842,
+  "webpBytes": 133320,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-021.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-021.webp",
+  "uploadedAt": "2026-09-02T05:43:36+00:00"
+ },
+ "DOR-PARK-023": {
+  "srcSha256": "2508a7acb2553ffb4a4c8f62e92d4769b6e14694afac46b0623d07a00d513ff0",
+  "srcBytes": 3239706,
+  "webpBytes": 125402,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-023.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-023.webp",
+  "uploadedAt": "2026-09-02T05:43:36+00:00"
+ },
+ "DOR-PARK-022": {
+  "srcSha256": "26bb53975a29927b8c4ae83dd767b4a4a6493ff19caff7b127a5579f4de4d3d8",
+  "srcBytes": 2968126,
+  "webpBytes": 105902,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-022.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-022.webp",
+  "uploadedAt": "2026-09-02T05:43:36+00:00"
+ },
+ "DOR-PARK-025": {
+  "srcSha256": "a64934623ac1b490e19aa6dbed815c4b4711d7c03ba747692fe458dd0013cae0",
+  "srcBytes": 2979704,
+  "webpBytes": 90196,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-025.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-025.webp",
+  "uploadedAt": "2026-09-02T05:43:36+00:00"
+ },
+ "DOR-PARK-024": {
+  "srcSha256": "227613f3a2e507f1177296763980cba3a8ecd7e37b18f50530927cfe07df24a2",
+  "srcBytes": 3495808,
+  "webpBytes": 161014,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-024.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-024.webp",
+  "uploadedAt": "2026-09-02T05:43:36+00:00"
+ },
+ "DOR-PARK-027": {
+  "srcSha256": "091fdbd4ed5538d9caba08aed7b6bc5cd02e7b504ecbd8f4bdf28dab1105e678",
+  "srcBytes": 3437707,
+  "webpBytes": 162784,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-027.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-027.webp",
+  "uploadedAt": "2026-09-02T05:43:36+00:00"
+ },
+ "DOR-PARK-026": {
+  "srcSha256": "8fc3972e6bfeed8b8749cade07d6104f0a95d817275aa9bfd34afc7dd17f8dd9",
+  "srcBytes": 2907082,
+  "webpBytes": 67886,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-026.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-026.webp",
+  "uploadedAt": "2026-09-02T05:43:36+00:00"
+ },
+ "DOR-PARK-028": {
+  "srcSha256": "0b0340f8efe814de6d2f22bd677bee83a15cc90743ce8ba3e53117ffa2ece8dc",
+  "srcBytes": 3010356,
+  "webpBytes": 78850,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-028.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-028.webp",
+  "uploadedAt": "2026-09-02T05:43:37+00:00"
+ },
+ "DOR-PARK-029": {
+  "srcSha256": "a7d4fec79a2d2f587c7572d2c34c62b62c6fb6078e4d9beb4de926f454c21620",
+  "srcBytes": 2852888,
+  "webpBytes": 74276,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-029.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-029.webp",
+  "uploadedAt": "2026-09-02T05:43:37+00:00"
+ },
+ "DOR-PARK-030": {
+  "srcSha256": "6ebedebb34ecc859eb876a7f4bfa1cc7457fb01d5159f27a44f16e5c753ada5b",
+  "srcBytes": 3299255,
+  "webpBytes": 125152,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-030.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-030.webp",
+  "uploadedAt": "2026-09-02T05:43:37+00:00"
+ },
+ "DOR-PARK-031": {
+  "srcSha256": "b5e6c7e52a69713e2dcea5a127a0e16d3e0b558d017e0866d67f43e9b14a99e2",
+  "srcBytes": 3318898,
+  "webpBytes": 125456,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-031.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-031.webp",
+  "uploadedAt": "2026-09-02T05:43:37+00:00"
+ },
+ "DOR-PARK-032": {
+  "srcSha256": "708623bb2fcc09d51d05169f76106c0d05d451f1c894544d60821e79bee7ce83",
+  "srcBytes": 3067531,
+  "webpBytes": 110398,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-032.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-032.webp",
+  "uploadedAt": "2026-09-02T05:43:37+00:00"
+ },
+ "DOR-PARK-033": {
+  "srcSha256": "dc52404c510167ea07589e1c6cf77e0a0975080f31b5335abfc805c37c794f6d",
+  "srcBytes": 3387854,
+  "webpBytes": 176528,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-033.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-033.webp",
+  "uploadedAt": "2026-09-02T05:43:37+00:00"
+ },
+ "DOR-PARK-034": {
+  "srcSha256": "b9cba6366107839272cd0d7fc4d6fa1932431da50b1508b093d003bf1598373c",
+  "srcBytes": 3250450,
+  "webpBytes": 122596,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-034.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-034.webp",
+  "uploadedAt": "2026-09-02T05:43:37+00:00"
+ },
+ "DOR-PARK-035": {
+  "srcSha256": "a5e42386ca86e17cfaa36e9b0f09c0def3bf7cf4646e3c900cac559177152585",
+  "srcBytes": 3417429,
+  "webpBytes": 124924,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-035.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-035.webp",
+  "uploadedAt": "2026-09-02T05:43:37+00:00"
+ },
+ "DOR-PARK-036": {
+  "srcSha256": "069f789cc212929c546e86bd9ac3bbb95a7b6f48b51dd07ffb7ea7fd7e56aaa5",
+  "srcBytes": 2695219,
+  "webpBytes": 66308,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-036.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-036.webp",
+  "uploadedAt": "2026-09-02T05:43:38+00:00"
+ },
+ "DOR-PARK-038": {
+  "srcSha256": "0c0dd4078707f43b1871eb467f792e73584cdc6bed1965447b585b00966c0ccd",
+  "srcBytes": 2598186,
+  "webpBytes": 52580,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-038.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-038.webp",
+  "uploadedAt": "2026-09-02T05:43:38+00:00"
+ },
+ "DOR-PARK-039": {
+  "srcSha256": "459a67558e608e526f1efa68889330e98017744d137cd21e44f76118538ab47e",
+  "srcBytes": 3385396,
+  "webpBytes": 124774,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-039.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-039.webp",
+  "uploadedAt": "2026-09-02T05:43:38+00:00"
+ },
+ "DOR-PARK-040": {
+  "srcSha256": "66bcf1a49c737d6ede95d92166526323f1ab3c62a865e151a39314f73c421230",
+  "srcBytes": 3372311,
+  "webpBytes": 116528,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-040.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-040.webp",
+  "uploadedAt": "2026-09-02T05:43:38+00:00"
+ },
+ "DOR-PARK-037": {
+  "srcSha256": "ee431f7feb944335044befebb55a03f6bcfdf14cf53fea068549a54e97059323",
+  "srcBytes": 3321547,
+  "webpBytes": 148390,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-037.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-037.webp",
+  "uploadedAt": "2026-09-02T05:43:38+00:00"
+ },
+ "DOR-PARK-041": {
+  "srcSha256": "ca14d969aefb3049cad0969181a0182e5fdc02b2bcf7df0812b28b1ca2850310",
+  "srcBytes": 3110151,
+  "webpBytes": 106064,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-041.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-041.webp",
+  "uploadedAt": "2026-09-02T05:43:38+00:00"
+ },
+ "DOR-PARK-042": {
+  "srcSha256": "8c60aa6eecdb51887592d289ca1f74da249fbcf0214b1bdbc8db8dc4b94f4701",
+  "srcBytes": 3282651,
+  "webpBytes": 109822,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-042.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-042.webp",
+  "uploadedAt": "2026-09-02T05:43:38+00:00"
+ },
+ "DOR-PARK-044": {
+  "srcSha256": "4385040b013391607d4e67e8264a9528c576103e7a0c607cbbab4c1410356bd4",
+  "srcBytes": 3028292,
+  "webpBytes": 88974,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-044.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-044.webp",
+  "uploadedAt": "2026-09-02T05:43:39+00:00"
+ },
+ "DOR-PARK-043": {
+  "srcSha256": "288a6031d8cb6f2d15be190f8d05fd6e6735d7b0bfa1907bf459f577797ef681",
+  "srcBytes": 3111275,
+  "webpBytes": 123106,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-043.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-043.webp",
+  "uploadedAt": "2026-09-02T05:43:39+00:00"
+ },
+ "DOR-PARK-045": {
+  "srcSha256": "2495c3569c77426bc51e9826777b0db683d516fd06a3e31155095613f5a722d8",
+  "srcBytes": 3218434,
+  "webpBytes": 115590,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-045.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-045.webp",
+  "uploadedAt": "2026-09-02T05:43:39+00:00"
+ },
+ "DOR-PARK-046": {
+  "srcSha256": "69e6c6c365c0dc684190fdb3579586848cae3f73dd6a2db9b2a5f20656300d87",
+  "srcBytes": 3430786,
+  "webpBytes": 148388,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-046.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-046.webp",
+  "uploadedAt": "2026-09-02T05:43:39+00:00"
+ },
+ "DOR-PARK-047": {
+  "srcSha256": "d3accf80c4778dd7d8db1f3752e1f6455558b9589b7e52ef4345d5cb995fba5e",
+  "srcBytes": 3323608,
+  "webpBytes": 138978,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-047.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-047.webp",
+  "uploadedAt": "2026-09-02T05:43:39+00:00"
+ },
+ "DOR-PARK-049": {
+  "srcSha256": "f535b07101c3377db4273632385858dca1d4e9bec909c9f71cc7489fe1512f54",
+  "srcBytes": 3131487,
+  "webpBytes": 82526,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-049.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-049.webp",
+  "uploadedAt": "2026-09-02T05:43:39+00:00"
+ },
+ "DOR-PARK-050": {
+  "srcSha256": "c3e4ef374dd8e28e082a5ea5be6400f698140abf3aceb3204771b30fb6264362",
+  "srcBytes": 3168747,
+  "webpBytes": 115136,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-050.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-050.webp",
+  "uploadedAt": "2026-09-02T05:43:39+00:00"
+ },
+ "DOR-PARK-048": {
+  "srcSha256": "0212c9193f42ecd027d9f3cfc1e455ba7f587127ea7087f5fe7ec050ab91fc69",
+  "srcBytes": 3548044,
+  "webpBytes": 172236,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-048.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-048.webp",
+  "uploadedAt": "2026-09-02T05:43:39+00:00"
+ },
+ "DOR-PARK-051": {
+  "srcSha256": "0a7d72c3187607cf73d55748506aac6dd0e657d15077403ad9c1cb7cc885e488",
+  "srcBytes": 2488432,
+  "webpBytes": 41998,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-051.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-051.webp",
+  "uploadedAt": "2026-09-02T05:43:40+00:00"
+ },
+ "DOR-PARK-052": {
+  "srcSha256": "a5d92082d6197823add97acb9adcb32549e5516b2adb1a96636978fbb24fe117",
+  "srcBytes": 3047943,
+  "webpBytes": 80628,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-052.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-052.webp",
+  "uploadedAt": "2026-09-02T05:43:40+00:00"
+ },
+ "DOR-PARK-053": {
+  "srcSha256": "f39eb3ec3df3d591ca00316003b9d669ff65a01fa4aa4536c5cd996f5cee7e1d",
+  "srcBytes": 2759840,
+  "webpBytes": 67748,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-053.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-053.webp",
+  "uploadedAt": "2026-09-02T05:43:40+00:00"
+ },
+ "DOR-PARK-054": {
+  "srcSha256": "bdcbf3e22b8946fdb7d0bc726732dca50b4425de63f28386e0569efe2b85f88f",
+  "srcBytes": 3448719,
+  "webpBytes": 131740,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-054.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-054.webp",
+  "uploadedAt": "2026-09-02T05:43:40+00:00"
+ },
+ "DOR-PARK-055": {
+  "srcSha256": "315f592822917950c1ab2d59e24c4f7e19c31506f2e5f4b2fe3ccfc73e53fc72",
+  "srcBytes": 3155534,
+  "webpBytes": 111190,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-055.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-055.webp",
+  "uploadedAt": "2026-09-02T05:43:40+00:00"
+ },
+ "DOR-PARK-056": {
+  "srcSha256": "de0725abb318b3d20c63186c8069ed1e103289edccd882c4ea277469e61ad6d6",
+  "srcBytes": 3061527,
+  "webpBytes": 89120,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-056.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-056.webp",
+  "uploadedAt": "2026-09-02T05:43:40+00:00"
+ },
+ "DOR-PARK-057": {
+  "srcSha256": "5e52a67cc5cfae3b2374689a5bad2e9aa72dcfef2e781c1063741d0866dc3dec",
+  "srcBytes": 2815486,
+  "webpBytes": 69162,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-057.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-057.webp",
+  "uploadedAt": "2026-09-02T05:43:40+00:00"
+ },
+ "DOR-PARK-058": {
+  "srcSha256": "0805c37c2c09c6d413097120b8054d278095954fadcc04fc1d399fb29c5701a0",
+  "srcBytes": 3098180,
+  "webpBytes": 116974,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-058.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-058.webp",
+  "uploadedAt": "2026-09-02T05:43:41+00:00"
+ },
+ "DOR-PARK-059": {
+  "srcSha256": "d5a81a752a3dca55c10096450d3c277964bd5c7a63c9af605a50bcfdfe4e4684",
+  "srcBytes": 3206315,
+  "webpBytes": 109292,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-059.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-059.webp",
+  "uploadedAt": "2026-09-02T05:43:41+00:00"
+ },
+ "DOR-PARK-060": {
+  "srcSha256": "3ea8936db05131c88a3d2f7009463a7256f13e071b279e2604de9741830aa27b",
+  "srcBytes": 3273939,
+  "webpBytes": 112790,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-060.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-060.webp",
+  "uploadedAt": "2026-09-02T05:43:41+00:00"
+ },
+ "DOR-PARK-061": {
+  "srcSha256": "b410524191c7d1fcc6683c9fbe1566f626336708064124e57ec6f015d562d6df",
+  "srcBytes": 2630047,
+  "webpBytes": 60574,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-061.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-061.webp",
+  "uploadedAt": "2026-09-02T05:43:41+00:00"
+ },
+ "DOR-PARK-062": {
+  "srcSha256": "d0e4824528ead9f83f37829a14636737bfde1383e792774c65b669eefedd5f2c",
+  "srcBytes": 2578617,
+  "webpBytes": 39082,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-062.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-062.webp",
+  "uploadedAt": "2026-09-02T05:43:41+00:00"
+ },
+ "DOR-PARK-064": {
+  "srcSha256": "e07a083de1d8a3a47290ae87b6f4e993eb6c8fac9b019af763812c11fd2e4a87",
+  "srcBytes": 3383352,
+  "webpBytes": 136280,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-064.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-064.webp",
+  "uploadedAt": "2026-09-02T05:43:41+00:00"
+ },
+ "DOR-PARK-063": {
+  "srcSha256": "caf9ce1a3ae604639f4eda4a5d25c0aae95a686e70cea393f5f77ddce5f67677",
+  "srcBytes": 3326071,
+  "webpBytes": 157544,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-063.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-063.webp",
+  "uploadedAt": "2026-09-02T05:43:41+00:00"
+ },
+ "DOR-PARK-065": {
+  "srcSha256": "b693ce89f905156300a97020ac132cede3a1dd2b95bf0e1937d5ae2428d4ceea",
+  "srcBytes": 3313855,
+  "webpBytes": 133400,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-065.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-065.webp",
+  "uploadedAt": "2026-09-02T05:43:41+00:00"
+ },
+ "DOR-PARK-067": {
+  "srcSha256": "e1446ecb6594f90c6ee6568c50888445eb01fc885c0c1a166a904285f2a80151",
+  "srcBytes": 3056257,
+  "webpBytes": 90316,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-067.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-067.webp",
+  "uploadedAt": "2026-09-02T05:43:42+00:00"
+ },
+ "DOR-PARK-066": {
+  "srcSha256": "4833cfd9b98c2e0ce885a2ba10913349e3739c3441f7b786cb7504005e90af03",
+  "srcBytes": 3319249,
+  "webpBytes": 149866,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-066.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-066.webp",
+  "uploadedAt": "2026-09-02T05:43:42+00:00"
+ },
+ "DOR-PARK-068": {
+  "srcSha256": "351bd9cf3791cee60e9abb9f36bd909a265490a34acabf3b0efa55d1b12caddd",
+  "srcBytes": 3539840,
+  "webpBytes": 146612,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-068.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-068.webp",
+  "uploadedAt": "2026-09-02T05:43:42+00:00"
+ },
+ "DOR-PARK-069": {
+  "srcSha256": "34def6aa7018916cfa5d2bcc5780c967afe1463d7f7305301b44e39a464b0fae",
+  "srcBytes": 3297361,
+  "webpBytes": 118240,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-069.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-069.webp",
+  "uploadedAt": "2026-09-02T05:43:42+00:00"
+ },
+ "DOR-PARK-070": {
+  "srcSha256": "76a2e3d469daaa1375cbcecb38d9a3cc00ff206890f21d62983cd2e5619afb37",
+  "srcBytes": 2965759,
+  "webpBytes": 103526,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-070.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-070.webp",
+  "uploadedAt": "2026-09-02T05:43:42+00:00"
+ },
+ "DOR-PARK-071": {
+  "srcSha256": "b6a13f2d7601830777528122b7736449b7c22c27d69aae0a75d44d5cdd7e803b",
+  "srcBytes": 2799901,
+  "webpBytes": 67138,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-071.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-071.webp",
+  "uploadedAt": "2026-09-02T05:43:42+00:00"
+ },
+ "DOR-PARK-072": {
+  "srcSha256": "76bf0af01e665696c3b9be687ff007fcdff2496e9ab47c240fa4e5ada8a7a290",
+  "srcBytes": 2718346,
+  "webpBytes": 64148,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-072.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-072.webp",
+  "uploadedAt": "2026-09-02T05:43:42+00:00"
+ },
+ "DOR-PARK-073": {
+  "srcSha256": "b6f0674163a77b9f114c925e6a44a5c662ea54124ad54ce3b64b58cce8d37632",
+  "srcBytes": 3477729,
+  "webpBytes": 143846,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-073.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-073.webp",
+  "uploadedAt": "2026-09-02T05:43:42+00:00"
+ },
+ "DOR-PARK-074": {
+  "srcSha256": "c826c81a1cf4abc2d3d49165f6bdbcb928eff9335d0e3479b425164e4e18c50d",
+  "srcBytes": 3007696,
+  "webpBytes": 104732,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-074.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-074.webp",
+  "uploadedAt": "2026-09-02T05:43:42+00:00"
+ },
+ "DOR-PARK-075": {
+  "srcSha256": "50ef677e90d68185655c3cf31d0bf954523084c7cd5ea27c2784535107177d09",
+  "srcBytes": 3021323,
+  "webpBytes": 104722,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-075.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-075.webp",
+  "uploadedAt": "2026-09-02T05:43:42+00:00"
+ },
+ "DOR-PARK-076": {
+  "srcSha256": "caefa8f9956b7312f3335db508904e3b7d5d176c3c7d7f765d3aba9e85cdef7e",
+  "srcBytes": 3093550,
+  "webpBytes": 103554,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-076.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-076.webp",
+  "uploadedAt": "2026-09-02T05:43:43+00:00"
+ },
+ "DOR-PARK-077": {
+  "srcSha256": "da515c07550a732c6166988382d2dd2179825bc14f1284735bfc3f2e2a9523f8",
+  "srcBytes": 2871022,
+  "webpBytes": 93018,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-077.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-077.webp",
+  "uploadedAt": "2026-09-02T05:43:43+00:00"
+ },
+ "DOR-PARK-079": {
+  "srcSha256": "7bb6d60fb74ae9be725562cf43cafefadb25f896f8171594397c66c65a3b140a",
+  "srcBytes": 3265262,
+  "webpBytes": 92694,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-079.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-079.webp",
+  "uploadedAt": "2026-09-02T05:43:43+00:00"
+ },
+ "DOR-PARK-078": {
+  "srcSha256": "b602889ba10813bd391e3dc2dd370fc26f7420f68e0f21044e951c919d9ee25f",
+  "srcBytes": 3094112,
+  "webpBytes": 109610,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-078.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-078.webp",
+  "uploadedAt": "2026-09-02T05:43:43+00:00"
+ },
+ "DOR-PARK-080": {
+  "srcSha256": "72b03b91c09d5522b4322b97a9e75939dc68d471a9e41c8d983ac63eb910853d",
+  "srcBytes": 2990607,
+  "webpBytes": 93958,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-080.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-080.webp",
+  "uploadedAt": "2026-09-02T05:43:43+00:00"
+ },
+ "DOR-PARK-081": {
+  "srcSha256": "0ad7c28fa42ef80b1dc2b60e9b668bed01ef0f01ccf8422ae557497212e06af8",
+  "srcBytes": 3153809,
+  "webpBytes": 120424,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-081.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-081.webp",
+  "uploadedAt": "2026-09-02T05:43:43+00:00"
+ },
+ "DOR-PARK-082": {
+  "srcSha256": "ca814b1990ab03b744a39566de403488bcd619a95d9bb11d17f8b31b2c50ff1c",
+  "srcBytes": 3082293,
+  "webpBytes": 102472,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-082.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-082.webp",
+  "uploadedAt": "2026-09-02T05:43:43+00:00"
+ },
+ "DOR-PARK-084": {
+  "srcSha256": "50ea5be47ae918b0c6da7e2b3bdf96261209f3d1afb06358f8941934be7bfe54",
+  "srcBytes": 2684039,
+  "webpBytes": 71928,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-084.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-084.webp",
+  "uploadedAt": "2026-09-02T05:43:44+00:00"
+ },
+ "DOR-PARK-083": {
+  "srcSha256": "d2dff18abf9cde046ffb154e4b2d70405011f32dcb790f6e4e8a634f657d835a",
+  "srcBytes": 3698333,
+  "webpBytes": 193016,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-083.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-083.webp",
+  "uploadedAt": "2026-09-02T05:43:44+00:00"
+ },
+ "DOR-PARK-085": {
+  "srcSha256": "23210489769317357f53ff295a11a4885d32ada055b76db0c9b1de4482359db3",
+  "srcBytes": 3177311,
+  "webpBytes": 112598,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-085.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-085.webp",
+  "uploadedAt": "2026-09-02T05:43:44+00:00"
+ },
+ "DOR-PARK-086": {
+  "srcSha256": "24f7a5f8ab88579d6b4da47084403fbba1a6497a12b8158b42394edc288f557e",
+  "srcBytes": 3040391,
+  "webpBytes": 95826,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-086.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-086.webp",
+  "uploadedAt": "2026-09-02T05:43:44+00:00"
+ },
+ "DOR-PARK-087": {
+  "srcSha256": "81be8872f4ab7d3386b71f94932d14af3a174e544c0e6bf64a40a35acb98889b",
+  "srcBytes": 2631705,
+  "webpBytes": 47126,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-087.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-087.webp",
+  "uploadedAt": "2026-09-02T05:43:44+00:00"
+ },
+ "DOR-PARK-088": {
+  "srcSha256": "a873b244d6e7dcd60e3a6318688c4488290b008f086c7dee9048b28cb474cbdb",
+  "srcBytes": 3242268,
+  "webpBytes": 103788,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-088.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-088.webp",
+  "uploadedAt": "2026-09-02T05:43:44+00:00"
+ },
+ "DOR-PARK-089": {
+  "srcSha256": "b7afffeaecea2f9fb29e92614cd37600cc076c9d7af7385015016dc927a0dade",
+  "srcBytes": 3247307,
+  "webpBytes": 138240,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-089.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-089.webp",
+  "uploadedAt": "2026-09-02T05:43:44+00:00"
+ },
+ "DOR-PARK-091": {
+  "srcSha256": "4499b2be3d61625f1689b9e89c39a47b4629d1311df1bdde734809cca8e41fb9",
+  "srcBytes": 3066018,
+  "webpBytes": 91616,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-091.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-091.webp",
+  "uploadedAt": "2026-09-02T05:43:44+00:00"
+ },
+ "DOR-PARK-092": {
+  "srcSha256": "2739cc2e46d542254f7ab7135b3134d547ef893d738dfca83ae57a09719eb2fe",
+  "srcBytes": 3575817,
+  "webpBytes": 149740,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-092.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-092.webp",
+  "uploadedAt": "2026-09-02T05:43:45+00:00"
+ },
+ "DOR-PARK-093": {
+  "srcSha256": "0afac52b2875c1c19c1b468cf3015a492dc6aecf90ff1fcdd92e53f2a7d5fee6",
+  "srcBytes": 2449792,
+  "webpBytes": 33236,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-093.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-093.webp",
+  "uploadedAt": "2026-09-02T05:43:45+00:00"
+ },
+ "DOR-PARK-090": {
+  "srcSha256": "a2033f6888817b5745a09eb4e61da04cb3bd56809d7b18a0ddfcb7ff20197ac5",
+  "srcBytes": 3148411,
+  "webpBytes": 139418,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-090.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-090.webp",
+  "uploadedAt": "2026-09-02T05:43:45+00:00"
+ },
+ "DOR-PARK-094": {
+  "srcSha256": "82b33b51d3fe28b4e2a9c1bb932dcfdac087f5be1a572e762b48a57c9343cbe5",
+  "srcBytes": 3163765,
+  "webpBytes": 119168,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-094.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-094.webp",
+  "uploadedAt": "2026-09-02T05:43:45+00:00"
+ },
+ "DOR-PARK-095": {
+  "srcSha256": "18e045a03e4a76a34807f09f69484b2e6bcb2a49db3ab2cdc7bc635a14276f58",
+  "srcBytes": 2920385,
+  "webpBytes": 81794,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-095.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-095.webp",
+  "uploadedAt": "2026-09-02T05:43:45+00:00"
+ },
+ "DOR-PARK-096": {
+  "srcSha256": "647adfaca3084686bcc9524405f45d1c4ada90b570e47833244785629c65c1fb",
+  "srcBytes": 2956206,
+  "webpBytes": 102524,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-096.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-096.webp",
+  "uploadedAt": "2026-09-02T05:43:45+00:00"
+ },
+ "DOR-PARK-097": {
+  "srcSha256": "1591735518368620b66874e9abb89d17aeef370e32fdba9c72f93e8303227119",
+  "srcBytes": 3208156,
+  "webpBytes": 101302,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-097.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-097.webp",
+  "uploadedAt": "2026-09-02T05:43:45+00:00"
+ },
+ "DOR-PARK-098": {
+  "srcSha256": "e352c30556d56e70ac42971c7242f7ca86c8f5e53893d2359d2ba5f9e57fa4d9",
+  "srcBytes": 3149220,
+  "webpBytes": 128642,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-098.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-098.webp",
+  "uploadedAt": "2026-09-02T05:43:45+00:00"
+ },
+ "DOR-PARK-099": {
+  "srcSha256": "cf9c8b50103212f64402764fe066f5f3d4427a7013a2bf4ed49affbb8d91f6d1",
+  "srcBytes": 3479106,
+  "webpBytes": 159610,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-099.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-099.webp",
+  "uploadedAt": "2026-09-02T05:43:45+00:00"
+ },
+ "DOR-PARK-100": {
+  "srcSha256": "c08d16dbafe2a3eefe995a7ca89a457f1ce4ee85babeb787b2c6d9bcc7c3acc0",
+  "srcBytes": 2952423,
+  "webpBytes": 106284,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-100.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-100.webp",
+  "uploadedAt": "2026-09-02T05:43:46+00:00"
+ },
+ "DOR-PARK-101": {
+  "srcSha256": "c097f1f813adf20ca3fcf3715a4f171869be5b0a621a7a1102c2c96d6f3cb6c3",
+  "srcBytes": 2586556,
+  "webpBytes": 71634,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-101.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-101.webp",
+  "uploadedAt": "2026-09-02T05:43:46+00:00"
+ },
+ "DOR-PARK-102": {
+  "srcSha256": "26804a89615ddc5bd0f07b1145ae453ae7b18e0829ca71252e0276a30e5d0453",
+  "srcBytes": 3196247,
+  "webpBytes": 112178,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-102.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-102.webp",
+  "uploadedAt": "2026-09-02T05:43:46+00:00"
+ },
+ "DOR-PARK-103": {
+  "srcSha256": "299eab5436fc2b82bc123e7de29f1d6a65a6d8dfab7f6d6f5f382f59c5928437",
+  "srcBytes": 2923172,
+  "webpBytes": 79592,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-103.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-103.webp",
+  "uploadedAt": "2026-09-02T05:43:46+00:00"
+ },
+ "DOR-PARK-104": {
+  "srcSha256": "0c7bf351275332032252c7609e25cc73b0d6c6097c42e0876284c84f657dadd6",
+  "srcBytes": 3194515,
+  "webpBytes": 106012,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-104.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-104.webp",
+  "uploadedAt": "2026-09-02T05:43:46+00:00"
+ },
+ "DOR-PARK-105": {
+  "srcSha256": "a174744231155ff15d08bcc944c970ddfacbdb66007ea1e635a0cc1488bc0310",
+  "srcBytes": 3057407,
+  "webpBytes": 110264,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-105.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-105.webp",
+  "uploadedAt": "2026-09-02T05:43:46+00:00"
+ },
+ "DOR-PARK-106": {
+  "srcSha256": "bcf58753844c6c766ab855da7df066480337ec7307d7980fa50dc2304e5ce7dc",
+  "srcBytes": 2884921,
+  "webpBytes": 75762,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-106.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-106.webp",
+  "uploadedAt": "2026-09-02T05:43:47+00:00"
+ },
+ "DOR-PARK-107": {
+  "srcSha256": "2d51af00cd40444afcd4c4fbe8ebeb12c88439c58eb72ba3ff4c2201a5cfa336",
+  "srcBytes": 3354978,
+  "webpBytes": 112396,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-107.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-107.webp",
+  "uploadedAt": "2026-09-02T05:43:47+00:00"
+ },
+ "DOR-PARK-109": {
+  "srcSha256": "3fa8ffd6e40d2f3cac73d7f4362e4000bc19527b97ad54530a75f5a5a841361c",
+  "srcBytes": 2610752,
+  "webpBytes": 70594,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-109.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-109.webp",
+  "uploadedAt": "2026-09-02T05:43:47+00:00"
+ },
+ "DOR-PARK-108": {
+  "srcSha256": "48eb9b38279beefb65a1fa491570dbf4fa6d8ffabf242eb3fa3f7ea8987b0ebe",
+  "srcBytes": 3500863,
+  "webpBytes": 147208,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-108.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-108.webp",
+  "uploadedAt": "2026-09-02T05:43:47+00:00"
+ },
+ "DOR-PARK-110": {
+  "srcSha256": "baf22ec3463c8f8dea7651cba7fdae57b503bfe4848f81d3239cab4a9c4ac4d7",
+  "srcBytes": 2920013,
+  "webpBytes": 89836,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-110.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-110.webp",
+  "uploadedAt": "2026-09-02T05:43:47+00:00"
+ },
+ "DOR-PARK-112": {
+  "srcSha256": "a45cf12b3c09753cabb66b78869dd09e55d81f8e0484ac07e4365f37722cec63",
+  "srcBytes": 3168327,
+  "webpBytes": 91980,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-112.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-112.webp",
+  "uploadedAt": "2026-09-02T05:43:47+00:00"
+ },
+ "DOR-PARK-111": {
+  "srcSha256": "4098cdf8914722ae736ae40cbc3e6e3afc2ddf8e8af496dd1e89bfecba490ebf",
+  "srcBytes": 3151258,
+  "webpBytes": 103070,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-111.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-111.webp",
+  "uploadedAt": "2026-09-02T05:43:47+00:00"
+ },
+ "DOR-PARK-113": {
+  "srcSha256": "7add7b6d06b151abc9c399251b5084d45431dc15a67163fa10d5de7844b29ce1",
+  "srcBytes": 3365166,
+  "webpBytes": 158402,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-113.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-113.webp",
+  "uploadedAt": "2026-09-02T05:43:47+00:00"
+ },
+ "DOR-PARK-114": {
+  "srcSha256": "f10d23b4b701dba8080737fe5c57437cb5e582ec3f874772014dee59e8465460",
+  "srcBytes": 3058665,
+  "webpBytes": 101744,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-114.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-114.webp",
+  "uploadedAt": "2026-09-02T05:43:47+00:00"
+ },
+ "DOR-PARK-115": {
+  "srcSha256": "fd0c7abc142aba8ad2f238c092205c0d527c2ca6154e7cf298b1d2a4eea8fb15",
+  "srcBytes": 3525353,
+  "webpBytes": 154656,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-115.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-115.webp",
+  "uploadedAt": "2026-09-02T05:43:48+00:00"
+ },
+ "DOR-PARK-116": {
+  "srcSha256": "7eeb4e116d777efc1fea1de7f27d2c7fd8c349c92de0195f75447e51f5d66727",
+  "srcBytes": 3232496,
+  "webpBytes": 128430,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-116.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-116.webp",
+  "uploadedAt": "2026-09-02T05:43:48+00:00"
+ },
+ "DOR-PARK-117": {
+  "srcSha256": "cd6f133df1f8a3b6c09897880064352568632ce88a3321cfdac12e0f0d17bcce",
+  "srcBytes": 3437812,
+  "webpBytes": 130918,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-117.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-117.webp",
+  "uploadedAt": "2026-09-02T05:43:48+00:00"
+ },
+ "DOR-PARK-118": {
+  "srcSha256": "bbb24a94555fdc55f7709659a3acbd3f0e71779799db9b947efd95be9b4e3722",
+  "srcBytes": 2771980,
+  "webpBytes": 63822,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-118.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-118.webp",
+  "uploadedAt": "2026-09-02T05:43:48+00:00"
+ },
+ "DOR-PARK-119": {
+  "srcSha256": "a6e6c48b874df1ceccde275d46928fc353d5cb3129b1d07cb522b3cb77902333",
+  "srcBytes": 3385509,
+  "webpBytes": 125496,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-119.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-119.webp",
+  "uploadedAt": "2026-09-02T05:43:48+00:00"
+ },
+ "DOR-PARK-120": {
+  "srcSha256": "cedca05ebe2d564cec5d1708e08964b8018290db914744635bbd764a8d6fa5ec",
+  "srcBytes": 3133963,
+  "webpBytes": 128326,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-120.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-120.webp",
+  "uploadedAt": "2026-09-02T05:43:48+00:00"
+ },
+ "DOR-PARK-121": {
+  "srcSha256": "3fbedac0abf6762f6c438ae26988689221027309bb979c0788d620747d3e7c51",
+  "srcBytes": 3091543,
+  "webpBytes": 115098,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-121.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-121.webp",
+  "uploadedAt": "2026-09-02T05:43:48+00:00"
+ },
+ "DOR-PARK-122": {
+  "srcSha256": "bb65f69978928666f659a97c40ba80ed6ae0fc1c4f83cf48bb8f58aa3a01f05e",
+  "srcBytes": 2955020,
+  "webpBytes": 88754,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-122.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-122.webp",
+  "uploadedAt": "2026-09-02T05:43:48+00:00"
+ },
+ "DOR-PARK-123": {
+  "srcSha256": "5ae00b1265205a2bbdf041b02cd433a2b75ce565f8339b3597be3c4c80e52148",
+  "srcBytes": 3333895,
+  "webpBytes": 154236,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-123.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-123.webp",
+  "uploadedAt": "2026-09-02T05:43:49+00:00"
+ },
+ "DOR-PARK-124": {
+  "srcSha256": "d84911861b5ac3f9866c8f75b2e92917e1ffae010794698eb7460fcb159a912b",
+  "srcBytes": 3288519,
+  "webpBytes": 120670,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-124.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-124.webp",
+  "uploadedAt": "2026-09-02T05:43:49+00:00"
+ },
+ "DOR-PARK-126": {
+  "srcSha256": "9c6a0b72e8d4a7ab9e6c38ccde42630b3d76e7b409674a6773edbd6b902d9611",
+  "srcBytes": 3389080,
+  "webpBytes": 151782,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-126.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-126.webp",
+  "uploadedAt": "2026-09-02T05:43:49+00:00"
+ },
+ "DOR-PARK-127": {
+  "srcSha256": "8cc8ad7cf7c8d19dea0d50efbe651b6505b99b2dbe0372f0a2ef467245f4d4ac",
+  "srcBytes": 3442765,
+  "webpBytes": 138500,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-127.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-127.webp",
+  "uploadedAt": "2026-09-02T05:43:49+00:00"
+ },
+ "DOR-PARK-125": {
+  "srcSha256": "533a03412d73a352f0ce95c298ee60b4c5214f4205810fe2934908a773bc2a77",
+  "srcBytes": 3168874,
+  "webpBytes": 121972,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-125.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-125.webp",
+  "uploadedAt": "2026-09-02T05:43:49+00:00"
+ },
+ "DOR-PARK-128": {
+  "srcSha256": "0eb9164642de8424367c8724c9b3ffa68dfe92554ae26d2f6d11620bcea92534",
+  "srcBytes": 2951163,
+  "webpBytes": 102260,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-128.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-128.webp",
+  "uploadedAt": "2026-09-02T05:43:49+00:00"
+ },
+ "DOR-PARK-129": {
+  "srcSha256": "ea95f0d01a88f79c1e487163d7ccc55e25538c132822a1768e356d2fa52db768",
+  "srcBytes": 3108349,
+  "webpBytes": 89894,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-129.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-129.webp",
+  "uploadedAt": "2026-09-02T05:43:49+00:00"
+ },
+ "DOR-PARK-130": {
+  "srcSha256": "3cef4f805e47af5a9cae7af2e7b36d93d21d810045ae566e1a60448cfdadd4ab",
+  "srcBytes": 3464650,
+  "webpBytes": 132358,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-130.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-130.webp",
+  "uploadedAt": "2026-09-02T05:43:50+00:00"
+ },
+ "DOR-PARK-131": {
+  "srcSha256": "12905912c2e219e1a1c6acaf88104a78bd624c4fcfb5249964e8c84e6359203b",
+  "srcBytes": 2909416,
+  "webpBytes": 105222,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-131.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-131.webp",
+  "uploadedAt": "2026-09-02T05:43:50+00:00"
+ },
+ "DOR-PARK-132": {
+  "srcSha256": "74112013724cdc3733148b0e0e07fa6062fd8792b112a3d53831fdbc8416b173",
+  "srcBytes": 3377609,
+  "webpBytes": 136320,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-132.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-132.webp",
+  "uploadedAt": "2026-09-02T05:43:50+00:00"
+ },
+ "DOR-PARK-133": {
+  "srcSha256": "cd53d243c411011177dbdbf8035a51467c2e65771e1a7e86619757458775e16e",
+  "srcBytes": 2689560,
+  "webpBytes": 66528,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-133.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-133.webp",
+  "uploadedAt": "2026-09-02T05:43:50+00:00"
+ },
+ "DOR-PARK-134": {
+  "srcSha256": "11798ffe31d7b95008db8312e2baa409e7a2d70c3b4c2a61da45ae9f23993182",
+  "srcBytes": 2859950,
+  "webpBytes": 95064,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-134.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-134.webp",
+  "uploadedAt": "2026-09-02T05:43:50+00:00"
+ },
+ "DOR-PARK-135": {
+  "srcSha256": "dcc3b649789fac0f8c20a456ffd08d1f15aa55e7b7495dba13d79e95bcf0aefe",
+  "srcBytes": 2739548,
+  "webpBytes": 52696,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-135.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-135.webp",
+  "uploadedAt": "2026-09-02T05:43:50+00:00"
+ },
+ "DOR-PARK-136": {
+  "srcSha256": "bdb43ea5840b1d4c141f0a74883700645395c66b67a38e9d6568f3b655bc7c07",
+  "srcBytes": 3295856,
+  "webpBytes": 133606,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-136.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-136.webp",
+  "uploadedAt": "2026-09-02T05:43:50+00:00"
+ },
+ "DOR-PARK-138": {
+  "srcSha256": "67fdc652acd86cfdbe04d98bdad1221222e8e54fc5277290ce72606cafffdd7f",
+  "srcBytes": 3109348,
+  "webpBytes": 107008,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-138.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-138.webp",
+  "uploadedAt": "2026-09-02T05:43:50+00:00"
+ },
+ "DOR-PARK-137": {
+  "srcSha256": "26ad0804fff9f42527907f6baecbfff8721f6d3f77f32aced96283e2e9b0a8a4",
+  "srcBytes": 3086213,
+  "webpBytes": 114362,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-137.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-137.webp",
+  "uploadedAt": "2026-09-02T05:43:50+00:00"
+ },
+ "DOR-PARK-139": {
+  "srcSha256": "726ce10983d5d75faf231872e80bfff6764d1097999795a626a4b9bd1c8f2fe9",
+  "srcBytes": 2993824,
+  "webpBytes": 83498,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-139.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-139.webp",
+  "uploadedAt": "2026-09-02T05:43:50+00:00"
+ },
+ "DOR-PARK-141": {
+  "srcSha256": "d25ac9b3c445eae3932d27364f24761628a698c33429950099728bb2c8bab570",
+  "srcBytes": 2649115,
+  "webpBytes": 60128,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-141.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-141.webp",
+  "uploadedAt": "2026-09-02T05:43:51+00:00"
+ },
+ "DOR-PARK-142": {
+  "srcSha256": "0ee871e8579e7bd354a2d9f503e403ddfb2815204307deed6f8b299e750fbd65",
+  "srcBytes": 2905097,
+  "webpBytes": 67464,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-142.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-142.webp",
+  "uploadedAt": "2026-09-02T05:43:51+00:00"
+ },
+ "DOR-PARK-143": {
+  "srcSha256": "c506e75a6345ec4a217c0e489a9eb2716b0dbd73babbdb685f7baf17f65b761c",
+  "srcBytes": 2473041,
+  "webpBytes": 57740,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-143.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-143.webp",
+  "uploadedAt": "2026-09-02T05:43:51+00:00"
+ },
+ "DOR-PARK-144": {
+  "srcSha256": "9eab2c5dba5da8e690a3528cfe78b3ba4139712e506bd313c2a201f7102e805d",
+  "srcBytes": 3407685,
+  "webpBytes": 150942,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-144.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-144.webp",
+  "uploadedAt": "2026-09-02T05:43:51+00:00"
+ },
+ "DOR-PARK-140": {
+  "srcSha256": "b2c7e8d640c6d25204e25a624c1f2a7e7ee379212efbc6246260c2f1324c9635",
+  "srcBytes": 3154288,
+  "webpBytes": 112860,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-140.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-140.webp",
+  "uploadedAt": "2026-09-02T05:43:51+00:00"
+ },
+ "DOR-PARK-145": {
+  "srcSha256": "bd05d17750f0a10d47d0b853166cebc7fd341925caeba7eeed3f6bdc8b48caa0",
+  "srcBytes": 2482181,
+  "webpBytes": 58254,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-145.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-145.webp",
+  "uploadedAt": "2026-09-02T05:43:51+00:00"
+ },
+ "DOR-PARK-147": {
+  "srcSha256": "b289e1ccf03ee26b0894e5250f1c73e218f9e73b0fdde31cc79964a5b81964f4",
+  "srcBytes": 2689970,
+  "webpBytes": 54886,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-147.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-147.webp",
+  "uploadedAt": "2026-09-02T05:43:51+00:00"
+ },
+ "DOR-PARK-146": {
+  "srcSha256": "57441dedbf442945852aef99f0565375866477edfb36ac3e04f9eac7436ad9b5",
+  "srcBytes": 2757163,
+  "webpBytes": 65994,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-146.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-146.webp",
+  "uploadedAt": "2026-09-02T05:43:51+00:00"
+ },
+ "DOR-PARK-148": {
+  "srcSha256": "4038647d35b2d461915b659164c8f02127e69503a20a058d0a8378e09e508bbb",
+  "srcBytes": 3027236,
+  "webpBytes": 109498,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-148.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-148.webp",
+  "uploadedAt": "2026-09-02T05:43:52+00:00"
+ },
+ "DOR-PARK-149": {
+  "srcSha256": "b69c4c5929cb969420b4aa91270ae13935f6559f331d97d15071691861bb7504",
+  "srcBytes": 3237691,
+  "webpBytes": 135530,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-149.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-149.webp",
+  "uploadedAt": "2026-09-02T05:43:52+00:00"
+ },
+ "DOR-PARK-151": {
+  "srcSha256": "6d023e4668b9aae534e28f5ab72c44c8550aa6013519ee568cdb51898baaa097",
+  "srcBytes": 3084237,
+  "webpBytes": 105010,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-151.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-151.webp",
+  "uploadedAt": "2026-09-02T05:43:52+00:00"
+ },
+ "DOR-PARK-150": {
+  "srcSha256": "af3d0381877cd1b6309c7becaea1a2fec3bc27235e47bbed076a803216e416d1",
+  "srcBytes": 3128900,
+  "webpBytes": 116358,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-150.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-150.webp",
+  "uploadedAt": "2026-09-02T05:43:52+00:00"
+ },
+ "DOR-PARK-152": {
+  "srcSha256": "deb7d60ebf306c3554e6d8fcc3fd186d3defb587c9e83f91fbb12bb8ce59ec4a",
+  "srcBytes": 2949750,
+  "webpBytes": 89404,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-152.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-152.webp",
+  "uploadedAt": "2026-09-02T05:43:52+00:00"
+ },
+ "DOR-PARK-154": {
+  "srcSha256": "5a3e66a01bc796bcccecd36da61a55fb9acb577cf64ff25df412e1becc56d8ab",
+  "srcBytes": 3085148,
+  "webpBytes": 106046,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-154.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-154.webp",
+  "uploadedAt": "2026-09-02T05:43:52+00:00"
+ },
+ "DOR-PARK-153": {
+  "srcSha256": "f12375d2ea88acbe87eb8ea3d1902c3baaadc452e9d6d53d65b5aa98ab48105a",
+  "srcBytes": 2943281,
+  "webpBytes": 88950,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-153.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-153.webp",
+  "uploadedAt": "2026-09-02T05:43:52+00:00"
+ },
+ "DOR-PARK-155": {
+  "srcSha256": "191b31f9f38ee0b69c13458f3b58fbabe33f200291e583c588761cd2d35ff3b7",
+  "srcBytes": 3077058,
+  "webpBytes": 101386,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-155.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-155.webp",
+  "uploadedAt": "2026-09-02T05:43:53+00:00"
+ },
+ "DOR-PARK-156": {
+  "srcSha256": "c14b039c529d919173701fa4eee30c9fb58a181531fc990571666e0f840b75b4",
+  "srcBytes": 3319345,
+  "webpBytes": 134360,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-156.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-156.webp",
+  "uploadedAt": "2026-09-02T05:43:53+00:00"
+ },
+ "DOR-PARK-158": {
+  "srcSha256": "1b1820f5559cf0ba2be33f06aa9b3d76beed5ed935962d398bbc4e66fb6cacfb",
+  "srcBytes": 2777972,
+  "webpBytes": 61450,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-158.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-158.webp",
+  "uploadedAt": "2026-09-02T05:43:53+00:00"
+ },
+ "DOR-PARK-157": {
+  "srcSha256": "3e226f2bbfe423eea7c5723b301836cf126e37eee6a6017a3902ea82d1f10ffa",
+  "srcBytes": 3211416,
+  "webpBytes": 129118,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-157.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-157.webp",
+  "uploadedAt": "2026-09-02T05:43:53+00:00"
+ },
+ "DOR-PARK-159": {
+  "srcSha256": "5c246fc976ba8f53160a28abcc257e9f3efdda13f02d4d877ed9c072d15690bb",
+  "srcBytes": 3119383,
+  "webpBytes": 117086,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-159.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-159.webp",
+  "uploadedAt": "2026-09-02T05:43:53+00:00"
+ },
+ "DOR-PARK-160": {
+  "srcSha256": "464e31a64361fc733200d08e39c8ec43b3bc58eddd8cb7d29211c5b3c621eda8",
+  "srcBytes": 3349746,
+  "webpBytes": 138308,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-160.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-160.webp",
+  "uploadedAt": "2026-09-02T05:43:53+00:00"
+ },
+ "DOR-PARK-163": {
+  "srcSha256": "b34e95f3b1f59eb82e0be2bd9a272a6b1d9b76b7a155c8fa22e7e293bd85211f",
+  "srcBytes": 3053261,
+  "webpBytes": 93594,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-163.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-163.webp",
+  "uploadedAt": "2026-09-02T05:43:53+00:00"
+ },
+ "DOR-PARK-161": {
+  "srcSha256": "791b8174a03298dc997e277fc2868280eb615bd212b4e173ae868697974b91d8",
+  "srcBytes": 2716166,
+  "webpBytes": 56626,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-161.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-161.webp",
+  "uploadedAt": "2026-09-02T05:43:54+00:00"
+ },
+ "DOR-PARK-164": {
+  "srcSha256": "d547a42ac30274ed4d09716b282127ba79f921ea26538f9d24d74ece2e83b3a4",
+  "srcBytes": 2970149,
+  "webpBytes": 98448,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-164.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-164.webp",
+  "uploadedAt": "2026-09-02T05:43:54+00:00"
+ },
+ "DOR-PARK-162": {
+  "srcSha256": "9f0f17e88aeaa8d4d594136f5052cdd3353dccbf5d920ebd8708fb5edfc938b5",
+  "srcBytes": 2696008,
+  "webpBytes": 58034,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-162.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-162.webp",
+  "uploadedAt": "2026-09-02T05:43:54+00:00"
+ },
+ "DOR-PARK-165": {
+  "srcSha256": "1f1b354de81e9dc3c4a9d0a66385ca9f2464246c7e9b288dc60ea947543a78d0",
+  "srcBytes": 2944611,
+  "webpBytes": 78314,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-165.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-165.webp",
+  "uploadedAt": "2026-09-02T05:43:54+00:00"
+ },
+ "DOR-PARK-166": {
+  "srcSha256": "db62d9c5d4c54fddc9728cccc11cb523d4a223aab166a16666b73d37d1b62366",
+  "srcBytes": 3274126,
+  "webpBytes": 119370,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-166.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-166.webp",
+  "uploadedAt": "2026-09-02T05:43:54+00:00"
+ },
+ "DOR-PARK-167": {
+  "srcSha256": "e6880b10757795d23866f3f0366da3cba768567f95de33cc877cfb4f30a4f256",
+  "srcBytes": 3177837,
+  "webpBytes": 123318,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-167.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-167.webp",
+  "uploadedAt": "2026-09-02T05:43:54+00:00"
+ },
+ "DOR-PARK-168": {
+  "srcSha256": "a3969b05b52858e3fffb73acc1bc91736c307d74eb3e39cbab30b220ae7af0dd",
+  "srcBytes": 3417185,
+  "webpBytes": 138212,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-168.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-168.webp",
+  "uploadedAt": "2026-09-02T05:43:54+00:00"
+ },
+ "DOR-PARK-169": {
+  "srcSha256": "7e7720f3043c641e1519af9f9482f7f480c0f910551775cb7fb788b8626abb90",
+  "srcBytes": 3306992,
+  "webpBytes": 106456,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-169.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-169.webp",
+  "uploadedAt": "2026-09-02T05:43:54+00:00"
+ },
+ "DOR-PARK-170": {
+  "srcSha256": "566dd4dd493111a44c4617f0c3c523191cd1a2a7943e781f2f1fc073ca0efde8",
+  "srcBytes": 3104699,
+  "webpBytes": 94082,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-170.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-170.webp",
+  "uploadedAt": "2026-09-02T05:43:54+00:00"
+ },
+ "DOR-PARK-171": {
+  "srcSha256": "95a266947c77987c4341adaeed78fc6983ddeee7e97c809ff117c06c847aea7d",
+  "srcBytes": 3040007,
+  "webpBytes": 101456,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-171.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-171.webp",
+  "uploadedAt": "2026-09-02T05:43:55+00:00"
+ },
+ "DOR-PARK-172": {
+  "srcSha256": "d41f089f867675fd25c690f144bfef598cae58a61a62ef9888273fa49cdaba05",
+  "srcBytes": 3047663,
+  "webpBytes": 115340,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-172.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-172.webp",
+  "uploadedAt": "2026-09-02T05:43:55+00:00"
+ },
+ "DOR-PARK-173": {
+  "srcSha256": "edafc53623acee191881fbf6b73d399a9d8d59fd593e41ec09d5a2a0fb0d028e",
+  "srcBytes": 3289022,
+  "webpBytes": 108640,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-173.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-173.webp",
+  "uploadedAt": "2026-09-02T05:43:55+00:00"
+ },
+ "DOR-PARK-174": {
+  "srcSha256": "fe7f595c6f57d44c1699c492374e11e536519623fb32666b88dbb82b56e77cfd",
+  "srcBytes": 2727630,
+  "webpBytes": 61318,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-174.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-174.webp",
+  "uploadedAt": "2026-09-02T05:43:55+00:00"
+ },
+ "DOR-PARK-175": {
+  "srcSha256": "679f52cb777034fb7e61720b127c01c2b9ac8d4c5dc56c537a7b71fc60fdf2e3",
+  "srcBytes": 2935080,
+  "webpBytes": 85066,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-175.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-175.webp",
+  "uploadedAt": "2026-09-02T05:43:55+00:00"
+ },
+ "DOR-PARK-176": {
+  "srcSha256": "98131e2643011c7cec6d9acf85cbad11904b08bee4b8555dd216a0e0e72b8fe9",
+  "srcBytes": 2932961,
+  "webpBytes": 98856,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-176.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-176.webp",
+  "uploadedAt": "2026-09-02T05:43:55+00:00"
+ },
+ "DOR-PARK-177": {
+  "srcSha256": "82cc0676fab99efcc38d87b98a21917d757f8da029760887615f10342d5d654d",
+  "srcBytes": 3438921,
+  "webpBytes": 133432,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-177.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-177.webp",
+  "uploadedAt": "2026-09-02T05:43:55+00:00"
+ },
+ "DOR-PARK-178": {
+  "srcSha256": "587e9445fd48f53dd540e27e446582c2d199666afa4b9a2195a04d34326c3d54",
+  "srcBytes": 2857568,
+  "webpBytes": 85898,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-178.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-178.webp",
+  "uploadedAt": "2026-09-02T05:43:55+00:00"
+ },
+ "DOR-PARK-179": {
+  "srcSha256": "7a9bdd5a5a38f794e62b2b6097e48a5f7022c78a864e6d0c72146a00aea96c90",
+  "srcBytes": 3417418,
+  "webpBytes": 165742,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-179.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-179.webp",
+  "uploadedAt": "2026-09-02T05:43:55+00:00"
+ },
+ "DOR-PARK-180": {
+  "srcSha256": "22e0c26ea368f52b6fea4e9e9ef767ac055e97b59be88588e34357630d39ef5e",
+  "srcBytes": 2792246,
+  "webpBytes": 82244,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-180.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-180.webp",
+  "uploadedAt": "2026-09-02T05:43:56+00:00"
+ },
+ "DOR-PARK-182": {
+  "srcSha256": "984eb64cb68ee815e45205888d021c9a00f822f8099c4b525b586f850a24c9b4",
+  "srcBytes": 3219563,
+  "webpBytes": 135960,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-182.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-182.webp",
+  "uploadedAt": "2026-09-02T05:43:56+00:00"
+ },
+ "DOR-PARK-181": {
+  "srcSha256": "753e73f0253e0907de361dc31fbeffbd20ba63476bfd125475a3a412334688b1",
+  "srcBytes": 3268281,
+  "webpBytes": 137166,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-181.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-181.webp",
+  "uploadedAt": "2026-09-02T05:43:56+00:00"
+ },
+ "DOR-PARK-183": {
+  "srcSha256": "7b446fc501208b87581464b7afacf375a36ecf9cd98e73f685b440cd8d58417a",
+  "srcBytes": 2996894,
+  "webpBytes": 98406,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-183.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-183.webp",
+  "uploadedAt": "2026-09-02T05:43:56+00:00"
+ },
+ "DOR-PARK-184": {
+  "srcSha256": "bd9ccbc95826ba53d92a1963507e291a7515d3cf18d49e38eeae6599ee3b7a0e",
+  "srcBytes": 3397206,
+  "webpBytes": 159942,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-184.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-184.webp",
+  "uploadedAt": "2026-09-02T05:43:56+00:00"
+ },
+ "DOR-PARK-185": {
+  "srcSha256": "c0943f5eb03b6bdb4ab9a4aecc3f49961d4ad03563f5ee17a3eb9781605d78d9",
+  "srcBytes": 2438836,
+  "webpBytes": 51360,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-185.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-185.webp",
+  "uploadedAt": "2026-09-02T05:43:56+00:00"
+ },
+ "DOR-PARK-186": {
+  "srcSha256": "1a8c895f4547e2de6375c38de6a455a8c5a81da5093a072523fa1a9623f9a5d4",
+  "srcBytes": 2727440,
+  "webpBytes": 56922,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-186.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-186.webp",
+  "uploadedAt": "2026-09-02T05:43:56+00:00"
+ },
+ "DOR-PARK-188": {
+  "srcSha256": "f3e81d2cae0eda75c76f47cd689d2fbc77fea04e36c021bf589ef407cf58e8b7",
+  "srcBytes": 3167193,
+  "webpBytes": 85752,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-188.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-188.webp",
+  "uploadedAt": "2026-09-02T05:43:57+00:00"
+ },
+ "DOR-PARK-187": {
+  "srcSha256": "a8035a0e1a39c52fd6e14b271b304036f678d15d52881f06decb92a72bb7484f",
+  "srcBytes": 3222266,
+  "webpBytes": 153112,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-187.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-187.webp",
+  "uploadedAt": "2026-09-02T05:43:57+00:00"
+ },
+ "DOR-PARK-189": {
+  "srcSha256": "7f9cc1515c43d2f606623b86b061f62578b9ab37b3a30e367b5e023b75b26938",
+  "srcBytes": 2743892,
+  "webpBytes": 58136,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-189.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-189.webp",
+  "uploadedAt": "2026-09-02T05:43:57+00:00"
+ },
+ "DOR-PARK-190": {
+  "srcSha256": "d387e272e0f83bb8f8a418000d6c3c3fa2b77f943bfda5d10548e17e94050457",
+  "srcBytes": 2821312,
+  "webpBytes": 77912,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-190.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-190.webp",
+  "uploadedAt": "2026-09-02T05:43:57+00:00"
+ },
+ "DOR-PEN-CUL-001": {
+  "srcSha256": "72e7c151972082077116d8d558e380337594779260420e9a8b53259b6e6c4fb3",
+  "srcBytes": 2907633,
+  "webpBytes": 87752,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PEN-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-PEN-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:57+00:00"
+ },
+ "DOR-PARK-191": {
+  "srcSha256": "fd523138cbeba8207a889a5bcc7dce76cbb83fcce790f9cb7f4a998d2341758a",
+  "srcBytes": 3081407,
+  "webpBytes": 93736,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PARK-191.webp",
+  "url": "https://img.dor.tw/scene/DOR-PARK-191.webp",
+  "uploadedAt": "2026-09-02T05:43:57+00:00"
+ },
+ "DOR-PEN-CUL-002": {
+  "srcSha256": "a23a99e54b262ccd2447a9e3162b05294c5ecbc67a12792d6601108b7e102c32",
+  "srcBytes": 3333732,
+  "webpBytes": 143590,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PEN-CUL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-PEN-CUL-002.webp",
+  "uploadedAt": "2026-09-02T05:43:57+00:00"
+ },
+ "DOR-PEN-HIS-001": {
+  "srcSha256": "d5b0520201223f502a98f4460d74a93bde1daddb2b85717ad862527157939ab6",
+  "srcBytes": 3051866,
+  "webpBytes": 63844,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PEN-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-PEN-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:43:57+00:00"
+ },
+ "DOR-PEN-M001": {
+  "srcSha256": "4012a03bb023fba49ea310976908c1434636ada067929f40aab935705e82ddcb",
+  "srcBytes": 2679036,
+  "webpBytes": 69296,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PEN-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-PEN-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:57+00:00"
+ },
+ "DOR-PEN-M004": {
+  "srcSha256": "50cc2e71b497915bec0b0517bb44b1399c429967787ddeb69ae83856097daeb4",
+  "srcBytes": 2674691,
+  "webpBytes": 56940,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PEN-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-PEN-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:58+00:00"
+ },
+ "DOR-PEN-M002": {
+  "srcSha256": "461d1f8d6b9c8cae4b460dcaa3d3d86d502bb07e17abda6f7618b94e813b3958",
+  "srcBytes": 2977088,
+  "webpBytes": 102736,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PEN-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-PEN-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:58+00:00"
+ },
+ "DOR-PEN-M003": {
+  "srcSha256": "eb058fcd2ad0f7a42768d220c7ae5ad98be4bbec367a1a061e8723a0f466b383",
+  "srcBytes": 2878368,
+  "webpBytes": 90822,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PEN-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-PEN-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:58+00:00"
+ },
+ "DOR-PEN-M005": {
+  "srcSha256": "844948f772c740be96d30b96d0df0c0c8ec5d6508b1719310608a603b6367315",
+  "srcBytes": 3055474,
+  "webpBytes": 133340,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PEN-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-PEN-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:58+00:00"
+ },
+ "DOR-PEN-M006": {
+  "srcSha256": "a12b09d440de8d608373fdd7679f0af06ba5b6ceb4fb7fd40719f0c153206426",
+  "srcBytes": 2885026,
+  "webpBytes": 102222,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PEN-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-PEN-M006.webp",
+  "uploadedAt": "2026-09-02T05:43:58+00:00"
+ },
+ "DOR-PEN-WAT-001": {
+  "srcSha256": "fa809d1482825dab8a57c1defd70873f5fc3781f32034f11afd55cdf4e114758",
+  "srcBytes": 2932589,
+  "webpBytes": 53688,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PEN-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-PEN-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:43:58+00:00"
+ },
+ "DOR-PIF-CUL-001": {
+  "srcSha256": "a4d5564662d8152b37f07304694f3eb768e55d51c93452a99261210567e9b323",
+  "srcBytes": 2971306,
+  "webpBytes": 91718,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:43:58+00:00"
+ },
+ "DOR-PIF-CUL-002": {
+  "srcSha256": "023c2803dc268818b591e7c5706282c695d321fbfe42d601101347e2d1e46227",
+  "srcBytes": 2998877,
+  "webpBytes": 106046,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-CUL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-CUL-002.webp",
+  "uploadedAt": "2026-09-02T05:43:58+00:00"
+ },
+ "DOR-PIF-CUL-003": {
+  "srcSha256": "26291ce8728eabfd5f3663fc33d399ad58d069bbd4ee80ec1557650304c639bd",
+  "srcBytes": 2739353,
+  "webpBytes": 53006,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-CUL-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-CUL-003.webp",
+  "uploadedAt": "2026-09-02T05:43:58+00:00"
+ },
+ "DOR-PIF-GRN-001": {
+  "srcSha256": "591287313aa7737d36d59c1130c14637c05929d9b4d6b17891632d66cbf2fbd3",
+  "srcBytes": 2716688,
+  "webpBytes": 72712,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:43:58+00:00"
+ },
+ "DOR-PIF-HIS-001": {
+  "srcSha256": "3268f3ec8f24d5a3eda717780556883028249760a69ae94f1ed535b8e4c69b52",
+  "srcBytes": 2983681,
+  "webpBytes": 98704,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:43:59+00:00"
+ },
+ "DOR-PIF-M001": {
+  "srcSha256": "053a1e487153adcf3bdb81f1fab232cb118e27b96fc67d815d92fb6dbe6fabe5",
+  "srcBytes": 3310842,
+  "webpBytes": 159422,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-M001.webp",
+  "uploadedAt": "2026-09-02T05:43:59+00:00"
+ },
+ "DOR-PIF-M003": {
+  "srcSha256": "facc5daa600b6462db0194b23f1499f465263b03ca88e2a73219dab99b59200c",
+  "srcBytes": 3006392,
+  "webpBytes": 102506,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-M003.webp",
+  "uploadedAt": "2026-09-02T05:43:59+00:00"
+ },
+ "DOR-PIF-M004": {
+  "srcSha256": "8b1cc8de093f4597dd01a172a6c10ef147e429cdc07497c3a58061621a5cf33c",
+  "srcBytes": 3043356,
+  "webpBytes": 100842,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-M004.webp",
+  "uploadedAt": "2026-09-02T05:43:59+00:00"
+ },
+ "DOR-PIF-M002": {
+  "srcSha256": "4c917629eb4c5aaea097d8e7fc7ac43dca6474a559d11bcb6af25bf1f93b8169",
+  "srcBytes": 3202648,
+  "webpBytes": 112674,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-M002.webp",
+  "uploadedAt": "2026-09-02T05:43:59+00:00"
+ },
+ "DOR-PIF-M005": {
+  "srcSha256": "3b835e4b5ec1153d44a91845929b94eea408e2d12063153ab791302c0013476a",
+  "srcBytes": 2999762,
+  "webpBytes": 102262,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-M005.webp",
+  "uploadedAt": "2026-09-02T05:43:59+00:00"
+ },
+ "DOR-PIF-M008": {
+  "srcSha256": "9025fae5c5b9e6b99171dd91be9fdf36e09e59ceecccab4d140bdfdcc6be292d",
+  "srcBytes": 2757578,
+  "webpBytes": 64604,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-M008.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-M008.webp",
+  "uploadedAt": "2026-09-02T05:44:00+00:00"
+ },
+ "DOR-PIF-M007": {
+  "srcSha256": "ee2f2db23caee8503f90072ed43934207120e9860db09fcbcf79f0d14b7c8755",
+  "srcBytes": 2768024,
+  "webpBytes": 77022,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-M007.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-M007.webp",
+  "uploadedAt": "2026-09-02T05:44:00+00:00"
+ },
+ "DOR-PIF-WAT-001": {
+  "srcSha256": "08b9b6e29d3f7ee82b85aea35f0201af22fe9325b612b5c0c463b5db3a83e696",
+  "srcBytes": 2456333,
+  "webpBytes": 47646,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:44:00+00:00"
+ },
+ "DOR-PIF-M006": {
+  "srcSha256": "23140c47990c99294a0eda05ee706fdb784ae1c0f82623026df39cd3258c70af",
+  "srcBytes": 2971509,
+  "webpBytes": 97530,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-PIF-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-PIF-M006.webp",
+  "uploadedAt": "2026-09-02T05:44:00+00:00"
+ },
+ "DOR-TAO-CUL-001": {
+  "srcSha256": "5f55e52b2938f87f450bcb43c7c5a9239470a4d82cbca5e4b25f0835083a9849",
+  "srcBytes": 3017274,
+  "webpBytes": 84038,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:44:00+00:00"
+ },
+ "DOR-TAO-CUL-002": {
+  "srcSha256": "8d8f9e183c65766f3f9d7f3a71843633a81909db791543f0e23828672578e704",
+  "srcBytes": 3250847,
+  "webpBytes": 108768,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-CUL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-CUL-002.webp",
+  "uploadedAt": "2026-09-02T05:44:00+00:00"
+ },
+ "DOR-TAO-HIS-001": {
+  "srcSha256": "3812491160766e89b5ad3a09b9d590c3ce6fc2f99840a502ab24b2f5a7a75b0c",
+  "srcBytes": 3123262,
+  "webpBytes": 87594,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:44:00+00:00"
+ },
+ "DOR-TAO-GRN-001": {
+  "srcSha256": "3621662340c1ada55a0bc43fcf2f3efb8f37793d681334e02f127f6acd5608f8",
+  "srcBytes": 3293558,
+  "webpBytes": 157548,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:44:00+00:00"
+ },
+ "DOR-TAO-HIS-002": {
+  "srcSha256": "9f76f0f17cf87d5361481c64ca6eb6b36a961674448c871ee271309639623aca",
+  "srcBytes": 3121979,
+  "webpBytes": 77022,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-HIS-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-HIS-002.webp",
+  "uploadedAt": "2026-09-02T05:44:00+00:00"
+ },
+ "DOR-TAO-HIS-003": {
+  "srcSha256": "bd7e61bf2a32b71ec524f2edc6753dfd8465aeacdb8e095400689c5640f1e83f",
+  "srcBytes": 3202996,
+  "webpBytes": 83204,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-HIS-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-HIS-003.webp",
+  "uploadedAt": "2026-09-02T05:44:01+00:00"
+ },
+ "DOR-TAO-M002": {
+  "srcSha256": "536cf9e3e7724f1e55bfef002e80684a2067fa41297b1fc4b1c69f5a975fb439",
+  "srcBytes": 3033255,
+  "webpBytes": 100552,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-M002.webp",
+  "uploadedAt": "2026-09-02T05:44:01+00:00"
+ },
+ "DOR-TAO-M001": {
+  "srcSha256": "032a12180aa67f717a4c284d474769b448ef5754a76f53ca76235dc668da4f31",
+  "srcBytes": 3191346,
+  "webpBytes": 119744,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-M001.webp",
+  "uploadedAt": "2026-09-02T05:44:01+00:00"
+ },
+ "DOR-TAO-M003": {
+  "srcSha256": "d7c7788c4429e40b127e101b454cbd2c898c68400566e57adc155dbf9fae39be",
+  "srcBytes": 3269677,
+  "webpBytes": 129212,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-M003.webp",
+  "uploadedAt": "2026-09-02T05:44:01+00:00"
+ },
+ "DOR-TAO-M004": {
+  "srcSha256": "79b6adcf019cf7af668d4babe828532bcce1cb25f6bfdf8afc8a450b7c835a33",
+  "srcBytes": 3001937,
+  "webpBytes": 96164,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-M004.webp",
+  "uploadedAt": "2026-09-02T05:44:01+00:00"
+ },
+ "DOR-TAO-M006": {
+  "srcSha256": "9f70d2db0683bf8bd2ef36857fd1dae87c82e5a9080d33da01a44607933b63ab",
+  "srcBytes": 3168213,
+  "webpBytes": 129284,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-M006.webp",
+  "uploadedAt": "2026-09-02T05:44:01+00:00"
+ },
+ "DOR-TAO-WAT-001": {
+  "srcSha256": "a6aa749d7ac9a53f46db9107780165518ec0df6421a1e40bed4d3eb1e906958d",
+  "srcBytes": 2939279,
+  "webpBytes": 87496,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:44:01+00:00"
+ },
+ "DOR-TAO-WAT-002": {
+  "srcSha256": "15e9d3a1744d24283c30b5aa103e813b86f3e71ae55e1a038748f027ae171aad",
+  "srcBytes": 2650172,
+  "webpBytes": 60228,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-WAT-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-WAT-002.webp",
+  "uploadedAt": "2026-09-02T05:44:01+00:00"
+ },
+ "DOR-TNN-ART-001": {
+  "srcSha256": "063d80be9003f07053ae4743f82e616fa7a321e858568f6f66364e61e27ee35b",
+  "srcBytes": 2746490,
+  "webpBytes": 68666,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:44:01+00:00"
+ },
+ "DOR-TAO-M005": {
+  "srcSha256": "4ef42143e91d3e2f50e01f590f45b17dcabb04d29cd4bc01a2062f1b245dd479",
+  "srcBytes": 2974446,
+  "webpBytes": 89494,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TAO-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-TAO-M005.webp",
+  "uploadedAt": "2026-09-02T05:44:02+00:00"
+ },
+ "DOR-TNN-CUL-002": {
+  "srcSha256": "acd7cd70082643cb13fda743eca926b14ee45726f763da1b3befaf0ebf74c48d",
+  "srcBytes": 2664160,
+  "webpBytes": 49498,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-CUL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-CUL-002.webp",
+  "uploadedAt": "2026-09-02T05:44:02+00:00"
+ },
+ "DOR-TNN-ART-002": {
+  "srcSha256": "565917b096fb3db53c592aa600d618451533cd17dce854aed785d824a5623b84",
+  "srcBytes": 3288795,
+  "webpBytes": 120408,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-ART-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-ART-002.webp",
+  "uploadedAt": "2026-09-02T05:44:02+00:00"
+ },
+ "DOR-TNN-CUL-003": {
+  "srcSha256": "958724f78c028c0fa5d77e0028833152762ba3431149875c35ec1c7650fb50f1",
+  "srcBytes": 3212055,
+  "webpBytes": 101170,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-CUL-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-CUL-003.webp",
+  "uploadedAt": "2026-09-02T05:44:02+00:00"
+ },
+ "DOR-TNN-GRN-001": {
+  "srcSha256": "8376a922f4fe6620a69c3d7710b23e7bd026830e69a52d6d54264160f67dc5e6",
+  "srcBytes": 3484927,
+  "webpBytes": 170864,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:44:02+00:00"
+ },
+ "DOR-TNN-CUL-001": {
+  "srcSha256": "4490297427e95298f9c3de9fcf0687ae5658bc566f149c0b396f269d91cd1f00",
+  "srcBytes": 3376972,
+  "webpBytes": 140786,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:44:02+00:00"
+ },
+ "DOR-TNN-GRN-002": {
+  "srcSha256": "797fac94f1baf372cce88674f5247e264507bfa6b344e457859c9f8df09d6277",
+  "srcBytes": 3033792,
+  "webpBytes": 97306,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-GRN-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-GRN-002.webp",
+  "uploadedAt": "2026-09-02T05:44:03+00:00"
+ },
+ "DOR-TNN-HIS-002": {
+  "srcSha256": "d2deba8118e1e36cc53db4eef4009e6bcb40c1e14b29965416a2d2046729f9f1",
+  "srcBytes": 3195738,
+  "webpBytes": 107894,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-HIS-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-HIS-002.webp",
+  "uploadedAt": "2026-09-02T05:44:03+00:00"
+ },
+ "DOR-TNN-HIS-001": {
+  "srcSha256": "6d4eb4d51bee15d7fa429a869031270a0ec1f762a2fd10b766011a3b57d25374",
+  "srcBytes": 3369702,
+  "webpBytes": 124734,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:44:03+00:00"
+ },
+ "DOR-TNN-M002": {
+  "srcSha256": "a9f4dcc355478254e8e42df43e6d8af4b5142df4c6cb814dd2bc8b9186c8799d",
+  "srcBytes": 2382470,
+  "webpBytes": 85000,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M002.webp",
+  "uploadedAt": "2026-09-02T05:44:03+00:00"
+ },
+ "DOR-TNN-M001": {
+  "srcSha256": "7ab3573b3a818a38562dd3b233e8b79d2e51524bb548a776536727d8bd7a5129",
+  "srcBytes": 2640421,
+  "webpBytes": 88562,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M001.webp",
+  "uploadedAt": "2026-09-02T05:44:03+00:00"
+ },
+ "DOR-TNN-M004": {
+  "srcSha256": "cfed411a0fbc7bb29ef36b054b5ee4e3540cdd38cd606246dd48529111262902",
+  "srcBytes": 3233094,
+  "webpBytes": 112960,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M004.webp",
+  "uploadedAt": "2026-09-02T05:44:03+00:00"
+ },
+ "DOR-TNN-M003": {
+  "srcSha256": "fdc7385b01925df152774e82cf05cc85edea87bcbe9ff1dbd107526f7bd76952",
+  "srcBytes": 2619256,
+  "webpBytes": 77494,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M003.webp",
+  "uploadedAt": "2026-09-02T05:44:03+00:00"
+ },
+ "DOR-TNN-M005": {
+  "srcSha256": "f6cf296aab6de4e99e3e1b741107e6c068c3763b6ecfcf98488c1392a66a55b1",
+  "srcBytes": 3150185,
+  "webpBytes": 112716,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M005.webp",
+  "uploadedAt": "2026-09-02T05:44:03+00:00"
+ },
+ "DOR-TNN-M006": {
+  "srcSha256": "c0b4882ae520cb9963143dbf261612d7ddf4ac962d6373bebed6b3ac0a94b97e",
+  "srcBytes": 2582548,
+  "webpBytes": 74416,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M006.webp",
+  "uploadedAt": "2026-09-02T05:44:03+00:00"
+ },
+ "DOR-TNN-M007": {
+  "srcSha256": "39dcd16fcf2b5a4025b2d535d973ec02027aa90cf1bee1ef7a45401c5915b7e8",
+  "srcBytes": 3347569,
+  "webpBytes": 126180,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M007.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M007.webp",
+  "uploadedAt": "2026-09-02T05:44:03+00:00"
+ },
+ "DOR-TNN-M008": {
+  "srcSha256": "0417b3f06124fcd906ab86de2418baa3c9eda801d1989c639eba8328f37b23d3",
+  "srcBytes": 2643601,
+  "webpBytes": 50034,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M008.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M008.webp",
+  "uploadedAt": "2026-09-02T05:44:04+00:00"
+ },
+ "DOR-TNN-M010": {
+  "srcSha256": "f73f70f15e0964c95612369c3e07faeeb7eafb8245fd39038688d70a37c36f91",
+  "srcBytes": 2765237,
+  "webpBytes": 81718,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M010.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M010.webp",
+  "uploadedAt": "2026-09-02T05:44:04+00:00"
+ },
+ "DOR-TNN-M009": {
+  "srcSha256": "cea3cc68ca499634c4e72b075fa2ed937aff686eac0162880bb214be7816ffe5",
+  "srcBytes": 2835673,
+  "webpBytes": 88636,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M009.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M009.webp",
+  "uploadedAt": "2026-09-02T05:44:04+00:00"
+ },
+ "DOR-TNN-M011": {
+  "srcSha256": "4501bb0c71f1a37a3bd84cfc089b4ad849bdc89bedbd2fce3c1a134a8a04b78b",
+  "srcBytes": 2766122,
+  "webpBytes": 76962,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M011.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M011.webp",
+  "uploadedAt": "2026-09-02T05:44:04+00:00"
+ },
+ "DOR-TNN-M012": {
+  "srcSha256": "c229bf0801fd11dcf4700855f8827e90013d3e81a3ae1862950f2bbcd54a33c1",
+  "srcBytes": 3103523,
+  "webpBytes": 111004,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-M012.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-M012.webp",
+  "uploadedAt": "2026-09-02T05:44:04+00:00"
+ },
+ "DOR-TNN-WAT-001": {
+  "srcSha256": "86662c4948d4f89a139b5977cbca2e4de6a72084b038c97124748851f100c2b3",
+  "srcBytes": 2669963,
+  "webpBytes": 70692,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TNN-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TNN-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:44:04+00:00"
+ },
+ "DOR-TPE-ART-001": {
+  "srcSha256": "89d73c12faeffdc5ea818cdc82b02f699fb89303326d1e97df68134491bb26f7",
+  "srcBytes": 2935527,
+  "webpBytes": 89896,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:44:04+00:00"
+ },
+ "DOR-TPE-ART-003": {
+  "srcSha256": "19dd965e241e68f71d48b526f9a770e6f6c97ef447f7580617c3d0e24dd72865",
+  "srcBytes": 2969173,
+  "webpBytes": 81946,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-ART-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-ART-003.webp",
+  "uploadedAt": "2026-09-02T05:44:04+00:00"
+ },
+ "DOR-TPE-ART-002": {
+  "srcSha256": "aa7250ef92a83decc2546bea23e1356652d6d739988073eddbb8026854bb41e7",
+  "srcBytes": 3328010,
+  "webpBytes": 133166,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-ART-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-ART-002.webp",
+  "uploadedAt": "2026-09-02T05:44:04+00:00"
+ },
+ "DOR-TPE-ART-004": {
+  "srcSha256": "2613569a86280a77f30f639232c40a942d2559a6e66a0eb147e145dbec93680d",
+  "srcBytes": 3304771,
+  "webpBytes": 107080,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-ART-004.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-ART-004.webp",
+  "uploadedAt": "2026-09-02T05:44:05+00:00"
+ },
+ "DOR-TPE-ART-005": {
+  "srcSha256": "13be2718dded6e21e0c82e57d6eaf733baaa18a47dab5cafb529f338f2a488b9",
+  "srcBytes": 2904886,
+  "webpBytes": 65204,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-ART-005.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-ART-005.webp",
+  "uploadedAt": "2026-09-02T05:44:05+00:00"
+ },
+ "DOR-TPE-ART-006": {
+  "srcSha256": "31dea4daed55cd5860a3cfff792c2cd6a3582965cce70f895bb09d23ca3e4400",
+  "srcBytes": 3284496,
+  "webpBytes": 106290,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-ART-006.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-ART-006.webp",
+  "uploadedAt": "2026-09-02T05:44:05+00:00"
+ },
+ "DOR-TPE-CUL-002": {
+  "srcSha256": "08a15f8efdc388ad8bb6fd01f39d35fbcc140cd21fcc8935cc3260fa9aef58f9",
+  "srcBytes": 3175755,
+  "webpBytes": 70660,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-CUL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-CUL-002.webp",
+  "uploadedAt": "2026-09-02T05:44:05+00:00"
+ },
+ "DOR-TPE-CUL-001": {
+  "srcSha256": "6d9dc406c0b174393ba091d4606790b3dbf1ac00e45c3365edcb655f73d5d16f",
+  "srcBytes": 3256569,
+  "webpBytes": 103280,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-CUL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-CUL-001.webp",
+  "uploadedAt": "2026-09-02T05:44:05+00:00"
+ },
+ "DOR-TPE-CUL-003": {
+  "srcSha256": "64f5edbdfd01e4613a919c7e40ac546b3386b56d073ecf09c53bff86ca3b96d1",
+  "srcBytes": 3200886,
+  "webpBytes": 92738,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-CUL-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-CUL-003.webp",
+  "uploadedAt": "2026-09-02T05:44:05+00:00"
+ },
+ "DOR-TPE-CUL-004": {
+  "srcSha256": "62e36a0925deca3e680a9cc659f12a5d06e75d8f5e9a55458513014afc52c4af",
+  "srcBytes": 3084358,
+  "webpBytes": 125240,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-CUL-004.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-CUL-004.webp",
+  "uploadedAt": "2026-09-02T05:44:06+00:00"
+ },
+ "DOR-TPE-HIS-001": {
+  "srcSha256": "183745f6876872940ff73cbc8a7dddb2881ca67bcb58039db34ebc5e2f88a771",
+  "srcBytes": 3251631,
+  "webpBytes": 109246,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:44:06+00:00"
+ },
+ "DOR-TPE-HIS-002": {
+  "srcSha256": "4de9bc1071db64b07a4d0ee408724629bcfc93a7abab101d41360e237bd710f7",
+  "srcBytes": 3239107,
+  "webpBytes": 96384,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-HIS-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-HIS-002.webp",
+  "uploadedAt": "2026-09-02T05:44:06+00:00"
+ },
+ "DOR-TPE-GRN-001": {
+  "srcSha256": "3047b45430529fe096958aad789f7fb6b8bfb296642a94de9620d1700855abf1",
+  "srcBytes": 3216379,
+  "webpBytes": 89230,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:44:06+00:00"
+ },
+ "DOR-TPE-M001": {
+  "srcSha256": "3f3d0ce4396f1f4c1ba0ba4ee5bfd776361ef72ae27edd3ee1ef69453a6bca6b",
+  "srcBytes": 3279264,
+  "webpBytes": 138032,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-M001.webp",
+  "uploadedAt": "2026-09-02T05:44:06+00:00"
+ },
+ "DOR-TPE-M002": {
+  "srcSha256": "4fc7de7976050180a8ce66834aa953f31013ce35eab82c03974e4cac8cfa4a88",
+  "srcBytes": 2936092,
+  "webpBytes": 89262,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-M002.webp",
+  "uploadedAt": "2026-09-02T05:44:06+00:00"
+ },
+ "DOR-TPE-M003": {
+  "srcSha256": "9081c06d58d5e1bf3d7546166cb5b5033b6d5ac2dde8fa5a529cccf2a79619c2",
+  "srcBytes": 2709926,
+  "webpBytes": 94662,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-M003.webp",
+  "uploadedAt": "2026-09-02T05:44:06+00:00"
+ },
+ "DOR-TPE-M004": {
+  "srcSha256": "d09216e4bf644a7340ddf1763ee35ce29089d0bd7c46ed23f6d5446d1a84986e",
+  "srcBytes": 3157519,
+  "webpBytes": 134684,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-M004.webp",
+  "uploadedAt": "2026-09-02T05:44:06+00:00"
+ },
+ "DOR-TPE-M005": {
+  "srcSha256": "5670d059bc639611a15179c28107231cc680d627cda7d1317e4bba9944578ae1",
+  "srcBytes": 3199414,
+  "webpBytes": 115184,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-M005.webp",
+  "uploadedAt": "2026-09-02T05:44:06+00:00"
+ },
+ "DOR-TPE-M006": {
+  "srcSha256": "efedd3bdb0a509976d0ff82b55eb12e0b51c50c41bdf273fa4cb4a5ffb7f8653",
+  "srcBytes": 3242725,
+  "webpBytes": 109892,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-M006.webp",
+  "uploadedAt": "2026-09-02T05:44:06+00:00"
+ },
+ "DOR-TPE-M008": {
+  "srcSha256": "9b15424f311eacd9ba27323bef59aa8a430bbf9e9464ed6350e229b011ea4822",
+  "srcBytes": 3279565,
+  "webpBytes": 151514,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-M008.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-M008.webp",
+  "uploadedAt": "2026-09-02T05:44:07+00:00"
+ },
+ "DOR-TPE-M007": {
+  "srcSha256": "18a92ab0d37997e72a058d8df428b0fff53508a294b9a067cb0e1973c73e4166",
+  "srcBytes": 3269932,
+  "webpBytes": 139538,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-M007.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-M007.webp",
+  "uploadedAt": "2026-09-02T05:44:07+00:00"
+ },
+ "DOR-TPE-WAT-001": {
+  "srcSha256": "b3f4e8f60f2745f62ec397758e0bc9cd2fbacafbdde711a261c8311a47c1aef6",
+  "srcBytes": 3038843,
+  "webpBytes": 84242,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:44:07+00:00"
+ },
+ "DOR-TPE-WAT-002": {
+  "srcSha256": "3a890be302d2846459557c8f4443405db6bcb9a94c6764878ba49432ab797a8d",
+  "srcBytes": 2790230,
+  "webpBytes": 65112,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TPE-WAT-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TPE-WAT-002.webp",
+  "uploadedAt": "2026-09-02T05:44:07+00:00"
+ },
+ "DOR-TTT-ART-001": {
+  "srcSha256": "79a8a6a2a2dc5890737d7b7fb074666867264d0e82eb764eefcf66ba50e47fd2",
+  "srcBytes": 3493625,
+  "webpBytes": 152132,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TTT-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TTT-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:44:07+00:00"
+ },
+ "DOR-TTT-GRN-001": {
+  "srcSha256": "7be3d7152637df400fe2a35dbb9958f66f286bf95d0d0ce031dd5209ed647fb5",
+  "srcBytes": 2546337,
+  "webpBytes": 54774,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TTT-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TTT-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:44:07+00:00"
+ },
+ "DOR-TTT-M002": {
+  "srcSha256": "db1bce83e70ccad5f6fdbd690796d59ba53455a2f7ea3cae3cfe91b19fd4be46",
+  "srcBytes": 2374694,
+  "webpBytes": 29128,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TTT-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TTT-M002.webp",
+  "uploadedAt": "2026-09-02T05:44:07+00:00"
+ },
+ "DOR-TTT-M001": {
+  "srcSha256": "ea5164217d7309089995710d04c560948656b5d91cc9dd642c26bedef0de8eb1",
+  "srcBytes": 2927531,
+  "webpBytes": 124548,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TTT-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TTT-M001.webp",
+  "uploadedAt": "2026-09-02T05:44:07+00:00"
+ },
+ "DOR-TTT-GRN-002": {
+  "srcSha256": "75c5bfafbe6f1c8936e4c9a4ede8693eaf484c60a5aea13511be2427b997ec67",
+  "srcBytes": 3375680,
+  "webpBytes": 159612,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TTT-GRN-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TTT-GRN-002.webp",
+  "uploadedAt": "2026-09-02T05:44:07+00:00"
+ },
+ "DOR-TTT-M003": {
+  "srcSha256": "eb99a6d6253b1662da6aba876c157e5a1f05af398dec10fe597f46ea4cd68bf5",
+  "srcBytes": 2931824,
+  "webpBytes": 96228,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TTT-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-TTT-M003.webp",
+  "uploadedAt": "2026-09-02T05:44:08+00:00"
+ },
+ "DOR-TTT-M004": {
+  "srcSha256": "070f941518fbbd545766ec4f6384618394f7810a093260a60490f2efe8ae1673",
+  "srcBytes": 2553874,
+  "webpBytes": 66480,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TTT-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-TTT-M004.webp",
+  "uploadedAt": "2026-09-02T05:44:08+00:00"
+ },
+ "DOR-TTT-M005": {
+  "srcSha256": "18161d31ad1a734e938b3191186c2af33563bfd0388784966fec3273e40abfc0",
+  "srcBytes": 2724382,
+  "webpBytes": 57116,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TTT-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-TTT-M005.webp",
+  "uploadedAt": "2026-09-02T05:44:08+00:00"
+ },
+ "DOR-TTT-RAIL-001": {
+  "srcSha256": "3dd195fa5f351316d1e74c4e575580db44960e067b285d97ba627e92de8fa013",
+  "srcBytes": 3411459,
+  "webpBytes": 118930,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TTT-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TTT-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:44:08+00:00"
+ },
+ "DOR-TTT-WAT-001": {
+  "srcSha256": "bc960fe5d544539555d3093ee31c0e63c7d0fc97775d90a3caa1ff59e48d1691",
+  "srcBytes": 2781263,
+  "webpBytes": 42544,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TTT-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TTT-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:44:08+00:00"
+ },
+ "DOR-TXG-ART-001": {
+  "srcSha256": "9033e588477e3d9580697b6ffce059eb3ba8382b1779f11572e7478820bf2f94",
+  "srcBytes": 3362568,
+  "webpBytes": 136354,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-ART-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-ART-001.webp",
+  "uploadedAt": "2026-09-02T05:44:08+00:00"
+ },
+ "DOR-TXG-ART-002": {
+  "srcSha256": "d74f3962b56bf757898b77c5c7f72273fc1dcceee5af07d5ce136c81525495d6",
+  "srcBytes": 3138182,
+  "webpBytes": 95934,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-ART-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-ART-002.webp",
+  "uploadedAt": "2026-09-02T05:44:08+00:00"
+ },
+ "DOR-TXG-ART-003": {
+  "srcSha256": "03decd063881c9259f9a6d78fc107132a6499907a538594246b12412e5cf129f",
+  "srcBytes": 3318315,
+  "webpBytes": 115874,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-ART-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-ART-003.webp",
+  "uploadedAt": "2026-09-02T05:44:08+00:00"
+ },
+ "DOR-TXG-GRN-001": {
+  "srcSha256": "943faddbaaa710e64f1834d865eae5176157da423fdfaac83807316ad332f21b",
+  "srcBytes": 2646894,
+  "webpBytes": 57778,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:44:09+00:00"
+ },
+ "DOR-TXG-GRN-002": {
+  "srcSha256": "731a558053d2889a96e77c3624e30141a31cfc99aec31d77a81dfdb7f04ae2af",
+  "srcBytes": 3311206,
+  "webpBytes": 128114,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-GRN-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-GRN-002.webp",
+  "uploadedAt": "2026-09-02T05:44:09+00:00"
+ },
+ "DOR-TXG-GRN-003": {
+  "srcSha256": "d43581202be550dbe9085cd33d47366b3a9b7dee4319e291528ae463e4106eb3",
+  "srcBytes": 3406360,
+  "webpBytes": 148838,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-GRN-003.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-GRN-003.webp",
+  "uploadedAt": "2026-09-02T05:44:09+00:00"
+ },
+ "DOR-TXG-M001": {
+  "srcSha256": "c8a1265ee1070659d80b7615c78108ed1e85495c3969d7162adacfbe236794af",
+  "srcBytes": 3196637,
+  "webpBytes": 121600,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-M001.webp",
+  "uploadedAt": "2026-09-02T05:44:09+00:00"
+ },
+ "DOR-TXG-M002": {
+  "srcSha256": "90ce7faf7ec16aa4389241cd22aa80d5f7214383a2488b794e9309e3811af363",
+  "srcBytes": 3177446,
+  "webpBytes": 118716,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-M002.webp",
+  "uploadedAt": "2026-09-02T05:44:09+00:00"
+ },
+ "DOR-TXG-M003": {
+  "srcSha256": "3a42130a9dd74770a41785268a1214a13263d58a2b533e63d3fac3a1a5588e70",
+  "srcBytes": 3230543,
+  "webpBytes": 118560,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-M003.webp",
+  "uploadedAt": "2026-09-02T05:44:09+00:00"
+ },
+ "DOR-TXG-M004": {
+  "srcSha256": "da6832c317ee1d3d1fbbfc95ee68d6ab197a4f562c64f9b53a5cbe462616f06f",
+  "srcBytes": 3175476,
+  "webpBytes": 119124,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-M004.webp",
+  "uploadedAt": "2026-09-02T05:44:09+00:00"
+ },
+ "DOR-TXG-M005": {
+  "srcSha256": "1ff4b970159b6b077da2b199710968f235df7a1946a9ae3cf7daae6aba420bd1",
+  "srcBytes": 3267481,
+  "webpBytes": 126186,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-M005.webp",
+  "uploadedAt": "2026-09-02T05:44:10+00:00"
+ },
+ "DOR-TXG-M008": {
+  "srcSha256": "6f9b791365957638b2cede4b26b9708e35005c3f133a722ae71f131a1eaa2e88",
+  "srcBytes": 2940643,
+  "webpBytes": 59904,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-M008.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-M008.webp",
+  "uploadedAt": "2026-09-02T05:44:10+00:00"
+ },
+ "DOR-TXG-M007": {
+  "srcSha256": "2b913251110b199f8c7ce3991e53a9f9958192ad6e7ce97401342c2df1db7708",
+  "srcBytes": 3261719,
+  "webpBytes": 119952,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-M007.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-M007.webp",
+  "uploadedAt": "2026-09-02T05:44:10+00:00"
+ },
+ "DOR-TXG-M006": {
+  "srcSha256": "41b66fcd6c2e1e7859a8ac0cb1d7147167eb4592c0ca8838e20241aababa141d",
+  "srcBytes": 3441814,
+  "webpBytes": 131510,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-M006.webp",
+  "uploadedAt": "2026-09-02T05:44:10+00:00"
+ },
+ "DOR-TXG-RAIL-001": {
+  "srcSha256": "89db19264d3110b02d7f709921ee332d7157b168f1c777cdf4aed2f800fb158d",
+  "srcBytes": 3420044,
+  "webpBytes": 141282,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:44:10+00:00"
+ },
+ "DOR-TXG-RAIL-002": {
+  "srcSha256": "879c45f138d6b8f81476fd8dbed4ef8b9a166441c8b7fe0b2612d7a73d929a24",
+  "srcBytes": 2972309,
+  "webpBytes": 99222,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-RAIL-002.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-RAIL-002.webp",
+  "uploadedAt": "2026-09-02T05:44:10+00:00"
+ },
+ "DOR-YUN-GRN-001": {
+  "srcSha256": "01ac24ecf9fff1b7fe7bbfa25fad6db82b8a31513ef84dda32b0823e2656fe84",
+  "srcBytes": 3258593,
+  "webpBytes": 126888,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-YUN-GRN-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-YUN-GRN-001.webp",
+  "uploadedAt": "2026-09-02T05:44:10+00:00"
+ },
+ "DOR-TXG-WAT-001": {
+  "srcSha256": "2150daeb1d636f2735a5ab949f7e5174ea1d894402039c7dcc390076ccda161e",
+  "srcBytes": 3503365,
+  "webpBytes": 128652,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-TXG-WAT-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-TXG-WAT-001.webp",
+  "uploadedAt": "2026-09-02T05:44:10+00:00"
+ },
+ "DOR-YUN-HIS-001": {
+  "srcSha256": "f5127c324874e411e053ca630f4759cd0623c8937102207a08e096b1b8c008db",
+  "srcBytes": 3168184,
+  "webpBytes": 89982,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-YUN-HIS-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-YUN-HIS-001.webp",
+  "uploadedAt": "2026-09-02T05:44:10+00:00"
+ },
+ "DOR-YUN-M001": {
+  "srcSha256": "afed9c72c3b0b11ee73ac48cb70a2e0de025f49edd0836dff9103e64698a7de0",
+  "srcBytes": 2964980,
+  "webpBytes": 115626,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-YUN-M001.webp",
+  "url": "https://img.dor.tw/scene/DOR-YUN-M001.webp",
+  "uploadedAt": "2026-09-02T05:44:10+00:00"
+ },
+ "DOR-YUN-M002": {
+  "srcSha256": "22fae33964b6f0c77b2eda8833a53e3366af1f7a364a219c6832ff64e2c8e970",
+  "srcBytes": 3157164,
+  "webpBytes": 117316,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-YUN-M002.webp",
+  "url": "https://img.dor.tw/scene/DOR-YUN-M002.webp",
+  "uploadedAt": "2026-09-02T05:44:11+00:00"
+ },
+ "DOR-YUN-M003": {
+  "srcSha256": "f00c1e735bd5b5153e9111e01129d8bb0077900fff4297dca6d492a89b6b5087",
+  "srcBytes": 3143337,
+  "webpBytes": 111480,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-YUN-M003.webp",
+  "url": "https://img.dor.tw/scene/DOR-YUN-M003.webp",
+  "uploadedAt": "2026-09-02T05:44:11+00:00"
+ },
+ "DOR-YUN-M004": {
+  "srcSha256": "f6695d2e4d4e43d25b1200488b415c3e488d98b6531abc87548ada1d6fc71d15",
+  "srcBytes": 3080767,
+  "webpBytes": 120666,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-YUN-M004.webp",
+  "url": "https://img.dor.tw/scene/DOR-YUN-M004.webp",
+  "uploadedAt": "2026-09-02T05:44:11+00:00"
+ },
+ "DOR-YUN-M005": {
+  "srcSha256": "57620e5eca53fd3ba51bbc848d2876fc4c352eea0777368e518963b896190c12",
+  "srcBytes": 3009083,
+  "webpBytes": 98274,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-YUN-M005.webp",
+  "url": "https://img.dor.tw/scene/DOR-YUN-M005.webp",
+  "uploadedAt": "2026-09-02T05:44:11+00:00"
+ },
+ "DOR-YUN-M006": {
+  "srcSha256": "4db9b7943dd3bc3d4d6a8ba52abe73478a839d72480cfea74b2af2c7695fba66",
+  "srcBytes": 3065963,
+  "webpBytes": 118864,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-YUN-M006.webp",
+  "url": "https://img.dor.tw/scene/DOR-YUN-M006.webp",
+  "uploadedAt": "2026-09-02T05:44:11+00:00"
+ },
+ "DOR-YUN-M007": {
+  "srcSha256": "496be96ce437a1ce95d39b1119311d33d0ef15434aded87901b34beb8d49ac52",
+  "srcBytes": 2880648,
+  "webpBytes": 110426,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-YUN-M007.webp",
+  "url": "https://img.dor.tw/scene/DOR-YUN-M007.webp",
+  "uploadedAt": "2026-09-02T05:44:11+00:00"
+ },
+ "DOR-YUN-RAIL-001": {
+  "srcSha256": "53a4ff99ff12e24cad47d6c3a8cabacf5133a8a9e5ce38a3214c3a41a1127a81",
+  "srcBytes": 3144240,
+  "webpBytes": 111016,
+  "dim": [
+   960,
+   480
+  ],
+  "key": "scene/DOR-YUN-RAIL-001.webp",
+  "url": "https://img.dor.tw/scene/DOR-YUN-RAIL-001.webp",
+  "uploadedAt": "2026-09-02T05:44:11+00:00"
+ }
+}
