@@ -9,6 +9,112 @@
 var __ihms = {};
 __ihms[0] = window.innerHeight;
 </script>
+<script>
+var VM = document.querySelector("meta[name=viewport]");
+var META0 = VM ? VM.getAttribute("content") : "";
+window.__healLog = window.__healLog || [];
+function logHeal(t){
+  try {
+    window.__healLog.push(t + "@" + Math.round(performance.now()));
+    if (window.__healLog.length > 6) window.__healLog.shift();
+  } catch (e) {}
+}
+// ⑤ 縮放微擾：強制 scale 1.02 兩幀再還原
+function healZoom(cb){
+  if (!VM) return cb && cb();
+  VM.setAttribute("content", META0.replace(/initial-scale=1(\.0+)?/, "initial-scale=1.02").replace(/maximum-scale=1(\.0+)?/, "maximum-scale=1.02") + ", minimum-scale=1.02");
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){
+      VM.setAttribute("content", META0);
+      logHeal("zoom");
+      cb && cb();
+    });
+  });
+}
+// ⑥ 大幅捲動：暫時放開鎖版可捲，捲到 150 再捲回 0，再鎖回去
+function healScroll(cb){
+  var h = document.documentElement, b = document.body;
+  var s = [h.style.cssText, b.style.cssText];
+  h.style.cssText += ";height:auto!important;overflow:auto!important;overscroll-behavior:auto!important";
+  b.style.cssText += ";height:auto!important;min-height:300vh!important;overflow:visible!important;overscroll-behavior:auto!important";
+  window.scrollTo(0, 150);
+  requestAnimationFrame(function(){
+    window.scrollTo(0, 0);
+    requestAnimationFrame(function(){
+      h.style.cssText = s[0];
+      b.style.cssText = s[1];
+      logHeal("scroll150");
+      cb && cb();
+    });
+  });
+}
+// ⑦ viewport-fit 翻轉：cover<->contain（或無<->cover）兩幀再還原
+function healFit(cb){
+  if (!VM) return cb && cb();
+  var alt = /viewport-fit=cover/.test(META0) ? META0.replace("viewport-fit=cover", "viewport-fit=contain") : META0 + ", viewport-fit=cover";
+  VM.setAttribute("content", alt);
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){
+      VM.setAttribute("content", META0);
+      logHeal("fit");
+      cb && cb();
+    });
+  });
+}
+// ⑧ 內容尺寸脈衝：html 暫時 3000px 高一幀再還原
+function healSize(cb){
+  var h = document.documentElement, s = h.style.cssText;
+  h.style.cssText += ";height:3000px!important;overflow:hidden!important";
+  void h.offsetHeight;
+  requestAnimationFrame(function(){
+    h.style.cssText = s;
+    logHeal("size");
+    cb && cb();
+  });
+}
+// ⑨ theme-color 切換：讓 Safari 重畫工具列
+function healTheme(cb){
+  var m = document.querySelector("meta[name=theme-color]");
+  if (!m) return cb && cb();
+  var c = m.getAttribute("content");
+  m.setAttribute("content", c === "#0c0e12" ? "#0d0f13" : "#0c0e12");
+  setTimeout(function(){
+    m.setAttribute("content", c);
+    logHeal("theme");
+    cb && cb();
+  }, 120);
+}
+// ⑩ alert：關掉系統對話框後 Safari 會重新排版
+function healAlert(){
+  logHeal("alert");
+  alert("\u95dc\u6389\u9019\u500b\u5c0d\u8a71\u6846\u5f8c\uff0c\u770b\u7248\u9762\u6709\u6c92\u6709\u5fa9\u539f");
+}
+// ⑪ 切分頁：開空白分頁 0.4s 後自動關（需手勢，只能按鈕觸發）
+function healTab(){
+  logHeal("tab");
+  try {
+    var w = window.open("about:blank", "_blank");
+    setTimeout(function(){
+      try { w && w.close(); } catch (e) {}
+    }, 400);
+  } catch (e) {}
+}
+// ⑫ 全套：⑤→⑥→⑦→⑧→⑨ 依序串接
+function healAll(cb){
+  healZoom(function(){
+    healScroll(function(){
+      healFit(function(){
+        healSize(function(){
+          healTheme(function(){
+            logHeal("ALL-done");
+            cb && cb();
+          });
+        });
+      });
+    });
+  });
+}
+</script>
 <style>
 *{box-sizing:border-box}
 html,body{margin:0;background:#0c0e12;color:#fff;font-family:-apple-system,system-ui,sans-serif}
@@ -20,11 +126,11 @@ body{background:#101318}
 #top{position:absolute;top:0;left:0;right:0;height:28px;background:#ffd60a;color:#000;font:700 13px/28px system-ui;text-align:center;z-index:10}
 #bottom{position:absolute;bottom:0;left:0;right:0;height:28px;background:#30d158;color:#000;font:700 13px/28px system-ui;text-align:center;z-index:10}
 #hint{position:absolute;top:34px;left:12px;right:12px;font:12px system-ui;color:#9aa3b2;z-index:10}
-#m{position:absolute;top:36%;left:12px;right:12px;background:#1c1f26;border:1px solid #3a3f4b;border-radius:10px;padding:10px 12px;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;z-index:10}
+#m{position:absolute;top:36%;left:12px;right:12px;background:#1c1f26;border:1px solid #3a3f4b;border-radius:10px;padding:10px 12px;max-height:78%;overflow:auto;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;z-index:10}
 .ruler-line{position:absolute;left:0;right:0;height:1px;background:rgba(255,255,255,.35)}
 .ruler-label{position:absolute;left:4px;top:-13px;font:11px system-ui;color:rgba(255,255,255,.7)}
-#m .btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
-#m button{font:600 13px system-ui;padding:8px 10px;border-radius:8px;border:0;background:#2f6fed;color:#fff}
+#m .btnrow{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+#m button{font:600 11px system-ui;padding:6px 8px;border-radius:8px;border:0;background:#2f6fed;color:#fff}
 </style>
 </head>
 <body>
@@ -78,6 +184,24 @@ body{background:#101318}
     }, true);
   } catch (e) {}
 
+  // ua 精簡：只留 iPhone OS x_y_z 片段，避免面板被長 UA 字串撐爆
+  function shortUA(){
+    try {
+      var full = navigator.userAgent || "";
+      var m = full.match(/OS (\d+_\d+(_\d+)?)/);
+      if (m) return "iPhone OS " + m[1];
+      return full.slice(0, 40);
+    } catch (e) { return "-"; }
+  }
+
+  function healLogText(){
+    try {
+      var log = window.__healLog;
+      if (!log || !log.length) return "-";
+      return log.join(" | ");
+    } catch (e) { return "-"; }
+  }
+
   function probeUnit(unit, id){
     try {
       if (window.CSS && CSS.supports && CSS.supports("height", "100" + unit)) {
@@ -108,7 +232,7 @@ body{background:#101318}
       ref: document.referrer || "(none)",
       ihms: {},
       tap: null,
-      ua: (navigator.userAgent || "").slice(0, 90)
+      ua: shortUA()
     };
     try {
       if (window.visualViewport) {
@@ -170,6 +294,7 @@ body{background:#101318}
     lines.push("nav=" + data.nav + " ref=" + data.ref);
     lines.push(fmtIhMs(data));
     lines.push(fmtTap(data));
+    lines.push("heal: " + healLogText());
     lines.push("ua: " + data.ua);
     return lines.join("\n");
   }
@@ -243,6 +368,54 @@ body{background:#101318}
     container.appendChild(b2);
     container.appendChild(b3);
     container.appendChild(b4);
+    var b5 = document.createElement("button");
+    b5.type = "button";
+    b5.textContent = "\u2464 \u7e2e\u653e1.02";
+    b5.addEventListener("click", function(){ healZoom(); });
+
+    var b6 = document.createElement("button");
+    b6.type = "button";
+    b6.textContent = "\u2465 \u6372150\u21920";
+    b6.addEventListener("click", function(){ healScroll(); });
+
+    var b7 = document.createElement("button");
+    b7.type = "button";
+    b7.textContent = "\u2466 fit\u7ffb\u8f49";
+    b7.addEventListener("click", function(){ healFit(); });
+
+    var b8 = document.createElement("button");
+    b8.type = "button";
+    b8.textContent = "\u2467 \u5c3a\u5bf8\u8108\u885d";
+    b8.addEventListener("click", function(){ healSize(); });
+
+    var b9 = document.createElement("button");
+    b9.type = "button";
+    b9.textContent = "\u2468 theme\u8272";
+    b9.addEventListener("click", function(){ healTheme(); });
+
+    var b10 = document.createElement("button");
+    b10.type = "button";
+    b10.textContent = "\u2469 alert";
+    b10.addEventListener("click", function(){ healAlert(); });
+
+    var b11 = document.createElement("button");
+    b11.type = "button";
+    b11.textContent = "\u246a \u5207\u5206\u9801";
+    b11.addEventListener("click", function(){ healTab(); });
+
+    var b12 = document.createElement("button");
+    b12.type = "button";
+    b12.textContent = "\u246b \u5168\u5957";
+    b12.addEventListener("click", function(){ healAll(); });
+
+    container.appendChild(b5);
+    container.appendChild(b6);
+    container.appendChild(b7);
+    container.appendChild(b8);
+    container.appendChild(b9);
+    container.appendChild(b10);
+    container.appendChild(b11);
+    container.appendChild(b12);
   }
 
   var mText = null;

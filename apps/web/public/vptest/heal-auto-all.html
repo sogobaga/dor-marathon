@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0c0e12">
-<title>vptest: lock-osb</title>
+<title>vptest: heal-auto-all</title>
 <script>
 var __ihms = {};
 __ihms[0] = window.innerHeight;
@@ -213,8 +213,8 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none}
 
   function collectData(){
     var data = {
-      variant: "lock-osb",
-      desc: "07-28 模型（現行基礎）：lock 再加 overscroll-behavior:none",
+      variant: "heal-auto-all",
+      desc: "lock-osb ＋ 700ms/1800ms 自動跑全套治療（⑤⑥⑦⑧⑨）",
       ih: window.innerHeight,
       ch: document.documentElement.clientHeight,
       sh: (window.screen && screen.height) || null,
@@ -435,6 +435,25 @@ html,body{height:100%;overflow:hidden;overscroll-behavior:none}
 
   renderPanel();
   setInterval(renderPanel, 500);
+})();
+</script>
+<script>
+(function(){
+  function ready(fn){
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", fn);
+    } else {
+      fn();
+    }
+  }
+  function fire(){
+    logHeal("auto-all");
+    if (typeof healAll === "function") healAll();
+  }
+  ready(function(){
+    setTimeout(fire, 700);
+    setTimeout(fire, 1800);
+  });
 })();
 </script>
 </body>

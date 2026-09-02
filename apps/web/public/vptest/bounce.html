@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0c0e12">
+<title>vptest: bounce</title>
+<style>
+html,body{margin:0;height:100%;background:#0c0e12;color:#fff;font-family:-apple-system,system-ui,sans-serif}
+#c{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:14px system-ui}
+</style>
+</head>
+<body>
+<div id="c">中轉中…</div>
+<script>
+setTimeout(function(){
+  location.replace('lock-osb.html?via=bounce');
+}, 600);
+</script>
+</body>
+</html>

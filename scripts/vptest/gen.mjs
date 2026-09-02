@@ -7,8 +7,15 @@
  * 外部到站（掃 QR）時出現的「整頁往上位移約 100lvh-100svh、底部露黑帶」病態，拆成 10 個
  * 互相只差一個變因的靜態頁，方便用實機逐一隔離觸發條件。
  *
+ * 01–10（第一輪）已實機測過：全部重現，包含純文件流對照組。目標因此從「找觸發變因」
+ * 轉為「找哪一個 JS 槓桿能當場治好」：所有頁面面板都加了 8 顆手動治療按鈕（⑤–⑫，
+ * healZoom/healScroll/healFit/healSize/healTheme/healAlert/healTab/healAll），
+ * 另外新增 11–15（第二輪）：heal-auto-all/fit/zoom/scroll 四個「lock-osb ＋ 700ms/1800ms
+ * 自動觸發治療」變體，以及 bounce 一個無面板的極簡中轉頁（600ms 後 location.replace 到
+ * lock-osb.html，測試「先落地穩定再換頁」能否拿到正確的第二份文件）。
+ *
  * 用法：
- *   node scripts/vptest/gen.mjs           產生 10 個 variant + index.html，並自動跑驗證
+ *   node scripts/vptest/gen.mjs           產生 15 個 variant + index.html，並自動跑驗證
  *   node scripts/vptest/gen.mjs --check   只驗證既有輸出（不重新產生）
  *
  * 只允許新增檔案：本檔＋它產出的 apps/web/public/vptest/*.html。不得改動 repo 其他檔案。
@@ -169,7 +176,95 @@ const VARIANTS = [
     extraBodyScript: null,
     slowBusyWait: false,
   },
+  {
+    name: 'heal-auto-all',
+    desc: 'lock-osb ＋ 700ms/1800ms 自動跑全套治療（⑤⑥⑦⑧⑨）',
+    isFlow: false,
+    viewport: VIEWPORT_DEFAULT,
+    htmlBodyCss: HTML_BODY_LOCK_OSB,
+    extraHeadCss: '',
+    rootCss: `#root{position:relative;overflow:hidden;background:#0c0e12}\n${ROOT_HEIGHT_LOCK_OSB}`,
+    rootInlineStyle: '',
+    extraBodyScript: 'heal-auto-all',
+    slowBusyWait: false,
+  },
+  {
+    name: 'heal-auto-fit',
+    desc: 'lock-osb ＋ 700ms/1800ms 自動跑 healFit（viewport-fit 翻轉治療）',
+    isFlow: false,
+    viewport: VIEWPORT_DEFAULT,
+    htmlBodyCss: HTML_BODY_LOCK_OSB,
+    extraHeadCss: '',
+    rootCss: `#root{position:relative;overflow:hidden;background:#0c0e12}\n${ROOT_HEIGHT_LOCK_OSB}`,
+    rootInlineStyle: '',
+    extraBodyScript: 'heal-auto-fit',
+    slowBusyWait: false,
+  },
+  {
+    name: 'heal-auto-zoom',
+    desc: 'lock-osb ＋ 700ms/1800ms 自動跑 healZoom（縮放 1.02 微擾治療）',
+    isFlow: false,
+    viewport: VIEWPORT_DEFAULT,
+    htmlBodyCss: HTML_BODY_LOCK_OSB,
+    extraHeadCss: '',
+    rootCss: `#root{position:relative;overflow:hidden;background:#0c0e12}\n${ROOT_HEIGHT_LOCK_OSB}`,
+    rootInlineStyle: '',
+    extraBodyScript: 'heal-auto-zoom',
+    slowBusyWait: false,
+  },
+  {
+    name: 'heal-auto-scroll',
+    desc: 'lock-osb ＋ 700ms/1800ms 自動跑 healScroll（大幅捲動 150→0 治療）',
+    isFlow: false,
+    viewport: VIEWPORT_DEFAULT,
+    htmlBodyCss: HTML_BODY_LOCK_OSB,
+    extraHeadCss: '',
+    rootCss: `#root{position:relative;overflow:hidden;background:#0c0e12}\n${ROOT_HEIGHT_LOCK_OSB}`,
+    rootInlineStyle: '',
+    extraBodyScript: 'heal-auto-scroll',
+    slowBusyWait: false,
+  },
 ]
+
+// 11–15 輪：01–10 已實測全部重現，本輪只留一個純中轉頁（無面板/按鈕），
+// 用來測試「先落地在空白頁、等幾何穩定後再換頁」是否能拿到正確的第二份文件。
+const BOUNCE = {
+  name: 'bounce',
+  desc: '極簡中轉頁：只有 viewport/theme-color + 置中文字，600ms 後 location.replace 到 lock-osb.html?via=bounce（不含面板/按鈕）',
+}
+
+// 自動治療變體：extraBodyScript 值 → { tag: logHeal 標記, fn: 要呼叫的 heal 函式名 }
+const AUTO_HEAL_MAP = {
+  'heal-auto-all': { tag: 'auto-all', fn: 'healAll' },
+  'heal-auto-fit': { tag: 'auto-fit', fn: 'healFit' },
+  'heal-auto-zoom': { tag: 'auto-zoom', fn: 'healZoom' },
+  'heal-auto-scroll': { tag: 'auto-scroll', fn: 'healScroll' },
+}
+
+// 新增的 8 顆手動治療按鈕：{ label(原始中文), fnCall(按下時呼叫的程式碼) }
+// label 用 escNonAscii() 在產生階段轉成 \uXXXX（沿用既有 buildButtons 的轉義慣例）
+const HEAL_BUTTONS = [
+  { label: '⑤ 縮放1.02', call: 'healZoom();' },
+  { label: '⑥ 捲150→0', call: 'healScroll();' },
+  { label: '⑦ fit翻轉', call: 'healFit();' },
+  { label: '⑧ 尺寸脈衝', call: 'healSize();' },
+  { label: '⑨ theme色', call: 'healTheme();' },
+  { label: '⑩ alert', call: 'healAlert();' },
+  { label: '⑪ 切分頁', call: 'healTab();' },
+  { label: '⑫ 全套', call: 'healAll();' },
+]
+
+// 把字串中的非 ASCII 字元逐字轉成 \uXXXX（含代理對），ASCII 原樣保留。
+// 用於在產生階段算出「跟既有 b1~b4 按鈕字樣同樣風格」的轉義字面量，
+// 避免手動抄寫十六碼碼位出錯。
+function escNonAscii(str) {
+  let out = ''
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i)
+    out += code > 126 ? '\\u' + code.toString(16).padStart(4, '0') : str[i]
+  }
+  return out
+}
 
 // ---------------------------------------------------------------------------
 // 共用 CSS / JS 字串模板
@@ -195,12 +290,12 @@ function buildStyle(v) {
     `#hint{position:${posMode};top:34px;left:12px;right:12px;font:12px system-ui;color:#9aa3b2;z-index:10}`
   )
   lines.push(
-    `#m{position:${posMode};top:36%;left:12px;right:12px;background:#1c1f26;border:1px solid #3a3f4b;border-radius:10px;padding:10px 12px;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;z-index:10}`
+    `#m{position:${posMode};top:36%;left:12px;right:12px;background:#1c1f26;border:1px solid #3a3f4b;border-radius:10px;padding:10px 12px;max-height:78%;overflow:auto;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;z-index:10}`
   )
   lines.push('.ruler-line{position:absolute;left:0;right:0;height:1px;background:rgba(255,255,255,.35)}')
   lines.push('.ruler-label{position:absolute;left:4px;top:-13px;font:11px system-ui;color:rgba(255,255,255,.7)}')
-  lines.push('#m .btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}')
-  lines.push('#m button{font:600 13px system-ui;padding:8px 10px;border-radius:8px;border:0;background:#2f6fed;color:#fff}')
+  lines.push('#m .btnrow{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}')
+  lines.push('#m button{font:600 11px system-ui;padding:6px 8px;border-radius:8px;border:0;background:#2f6fed;color:#fff}')
   return lines.join('\n')
 }
 
@@ -219,6 +314,167 @@ function buildSlowScript() {
     '})();',
     '<\/script>',
   ].join('\n')
+}
+
+// 治療函式庫（⑤–⑫）＋ logHeal 記錄器。刻意不包在 IIFE 裡：
+// buildMainScript 的按鈕、以及自動治療變體的 extra script 都要能直接呼叫這些
+// 全域函式（同一頁多個 <script> 標籤依文件順序同步執行，函式宣告即成為 window 屬性）。
+// 每個頁面載入時先記住原始 viewport meta 內容（nofit 變體沒有 viewport-fit，要動態讀）。
+function buildHealScript() {
+  const alertMsgEsc = escNonAscii('關掉這個對話框後，看版面有沒有復原')
+  return [
+    '<script>',
+    'var VM = document.querySelector("meta[name=viewport]");',
+    'var META0 = VM ? VM.getAttribute("content") : "";',
+    'window.__healLog = window.__healLog || [];',
+    'function logHeal(t){',
+    '  try {',
+    '    window.__healLog.push(t + "@" + Math.round(performance.now()));',
+    '    if (window.__healLog.length > 6) window.__healLog.shift();',
+    '  } catch (e) {}',
+    '}',
+    '// ⑤ 縮放微擾：強制 scale 1.02 兩幀再還原',
+    'function healZoom(cb){',
+    '  if (!VM) return cb && cb();',
+    '  VM.setAttribute("content", META0.replace(/initial-scale=1(\\.0+)?/, "initial-scale=1.02").replace(/maximum-scale=1(\\.0+)?/, "maximum-scale=1.02") + ", minimum-scale=1.02");',
+    '  requestAnimationFrame(function(){',
+    '    requestAnimationFrame(function(){',
+    '      VM.setAttribute("content", META0);',
+    '      logHeal("zoom");',
+    '      cb && cb();',
+    '    });',
+    '  });',
+    '}',
+    '// ⑥ 大幅捲動：暫時放開鎖版可捲，捲到 150 再捲回 0，再鎖回去',
+    'function healScroll(cb){',
+    '  var h = document.documentElement, b = document.body;',
+    '  var s = [h.style.cssText, b.style.cssText];',
+    '  h.style.cssText += ";height:auto!important;overflow:auto!important;overscroll-behavior:auto!important";',
+    '  b.style.cssText += ";height:auto!important;min-height:300vh!important;overflow:visible!important;overscroll-behavior:auto!important";',
+    '  window.scrollTo(0, 150);',
+    '  requestAnimationFrame(function(){',
+    '    window.scrollTo(0, 0);',
+    '    requestAnimationFrame(function(){',
+    '      h.style.cssText = s[0];',
+    '      b.style.cssText = s[1];',
+    '      logHeal("scroll150");',
+    '      cb && cb();',
+    '    });',
+    '  });',
+    '}',
+    '// ⑦ viewport-fit 翻轉：cover<->contain（或無<->cover）兩幀再還原',
+    'function healFit(cb){',
+    '  if (!VM) return cb && cb();',
+    '  var alt = /viewport-fit=cover/.test(META0) ? META0.replace("viewport-fit=cover", "viewport-fit=contain") : META0 + ", viewport-fit=cover";',
+    '  VM.setAttribute("content", alt);',
+    '  requestAnimationFrame(function(){',
+    '    requestAnimationFrame(function(){',
+    '      VM.setAttribute("content", META0);',
+    '      logHeal("fit");',
+    '      cb && cb();',
+    '    });',
+    '  });',
+    '}',
+    '// ⑧ 內容尺寸脈衝：html 暫時 3000px 高一幀再還原',
+    'function healSize(cb){',
+    '  var h = document.documentElement, s = h.style.cssText;',
+    '  h.style.cssText += ";height:3000px!important;overflow:hidden!important";',
+    '  void h.offsetHeight;',
+    '  requestAnimationFrame(function(){',
+    '    h.style.cssText = s;',
+    '    logHeal("size");',
+    '    cb && cb();',
+    '  });',
+    '}',
+    '// ⑨ theme-color 切換：讓 Safari 重畫工具列',
+    'function healTheme(cb){',
+    '  var m = document.querySelector("meta[name=theme-color]");',
+    '  if (!m) return cb && cb();',
+    '  var c = m.getAttribute("content");',
+    '  m.setAttribute("content", c === "#0c0e12" ? "#0d0f13" : "#0c0e12");',
+    '  setTimeout(function(){',
+    '    m.setAttribute("content", c);',
+    '    logHeal("theme");',
+    '    cb && cb();',
+    '  }, 120);',
+    '}',
+    '// ⑩ alert：關掉系統對話框後 Safari 會重新排版',
+    'function healAlert(){',
+    '  logHeal("alert");',
+    '  alert("' + alertMsgEsc + '");',
+    '}',
+    '// ⑪ 切分頁：開空白分頁 0.4s 後自動關（需手勢，只能按鈕觸發）',
+    'function healTab(){',
+    '  logHeal("tab");',
+    '  try {',
+    '    var w = window.open("about:blank", "_blank");',
+    '    setTimeout(function(){',
+    '      try { w && w.close(); } catch (e) {}',
+    '    }, 400);',
+    '  } catch (e) {}',
+    '}',
+    '// ⑫ 全套：⑤→⑥→⑦→⑧→⑨ 依序串接',
+    'function healAll(cb){',
+    '  healZoom(function(){',
+    '    healScroll(function(){',
+    '      healFit(function(){',
+    '        healSize(function(){',
+    '          healTheme(function(){',
+    '            logHeal("ALL-done");',
+    '            cb && cb();',
+    '          });',
+    '        });',
+    '      });',
+    '    });',
+    '  });',
+    '}',
+    '<\/script>',
+  ].join('\n')
+}
+
+// 自動觸發治療 script（heal-auto-* 變體用）：DOMContentLoaded 後 700ms / 1800ms
+// 各觸發一次，先 logHeal(tag) 留下「這是自動觸發」的標記，再呼叫對應治療函式。
+function buildAutoHealScript(tag, fnName) {
+  return [
+    '<script>',
+    '(function(){',
+    '  function ready(fn){',
+    '    if (document.readyState === "loading") {',
+    '      document.addEventListener("DOMContentLoaded", fn);',
+    '    } else {',
+    '      fn();',
+    '    }',
+    '  }',
+    '  function fire(){',
+    '    logHeal(' + JSON.stringify(tag) + ');',
+    '    if (typeof ' + fnName + ' === "function") ' + fnName + '();',
+    '  }',
+    '  ready(function(){',
+    '    setTimeout(fire, 700);',
+    '    setTimeout(fire, 1800);',
+    '  });',
+    '})();',
+    '<\/script>',
+  ].join('\n')
+}
+
+// 依 HEAL_BUTTONS 產生 b5~b12 的建立/監聽/掛載程式碼行（給 buildButtons 使用）
+function healButtonLines() {
+  const lines = []
+  HEAL_BUTTONS.forEach((btn, i) => {
+    const n = i + 5 // b5..b12
+    const label = escNonAscii(btn.label)
+    lines.push(`    var b${n} = document.createElement("button");`)
+    lines.push(`    b${n}.type = "button";`)
+    lines.push(`    b${n}.textContent = "${label}";`)
+    lines.push(`    b${n}.addEventListener("click", function(){ ${btn.call} });`)
+    lines.push('')
+  })
+  HEAL_BUTTONS.forEach((btn, i) => {
+    const n = i + 5
+    lines.push(`    container.appendChild(b${n});`)
+  })
+  return lines.join('\n')
 }
 
 // 主量測面板／尺規／按鈕 script（每個 variant 都有，共用邏輯，僅 name/desc 不同）
@@ -266,6 +522,24 @@ function buildMainScript(v) {
     '    }, true);',
     '  } catch (e) {}',
     '',
+    '  // ua 精簡：只留 iPhone OS x_y_z 片段，避免面板被長 UA 字串撐爆',
+    '  function shortUA(){',
+    '    try {',
+    '      var full = navigator.userAgent || "";',
+    '      var m = full.match(/OS (\\d+_\\d+(_\\d+)?)/);',
+    '      if (m) return "iPhone OS " + m[1];',
+    '      return full.slice(0, 40);',
+    '    } catch (e) { return "-"; }',
+    '  }',
+    '',
+    '  function healLogText(){',
+    '    try {',
+    '      var log = window.__healLog;',
+    '      if (!log || !log.length) return "-";',
+    '      return log.join(" | ");',
+    '    } catch (e) { return "-"; }',
+    '  }',
+    '',
     '  function probeUnit(unit, id){',
     '    try {',
     '      if (window.CSS && CSS.supports && CSS.supports("height", "100" + unit)) {',
@@ -296,7 +570,7 @@ function buildMainScript(v) {
     '      ref: document.referrer || "(none)",',
     '      ihms: {},',
     '      tap: null,',
-    '      ua: (navigator.userAgent || "").slice(0, 90)',
+    '      ua: shortUA()',
     '    };',
     '    try {',
     '      if (window.visualViewport) {',
@@ -358,6 +632,7 @@ function buildMainScript(v) {
     '    lines.push("nav=" + data.nav + " ref=" + data.ref);',
     '    lines.push(fmtIhMs(data));',
     '    lines.push(fmtTap(data));',
+    '    lines.push("heal: " + healLogText());',
     '    lines.push("ua: " + data.ua);',
     '    return lines.join("\\n");',
     '  }',
@@ -431,6 +706,7 @@ function buildMainScript(v) {
     '    container.appendChild(b2);',
     '    container.appendChild(b3);',
     '    container.appendChild(b4);',
+    healButtonLines(),
     '  }',
     '',
     '  var mText = null;',
@@ -456,8 +732,12 @@ function buildMainScript(v) {
   ].join('\n')
 }
 
-// variant 專屬額外 script（apph / overlay / transform），各自獨立自足
+// variant 專屬額外 script（apph / overlay / transform / heal-auto-*），各自獨立自足
 function buildExtraScript(kind) {
+  if (AUTO_HEAL_MAP[kind]) {
+    const { tag, fn } = AUTO_HEAL_MAP[kind]
+    return buildAutoHealScript(tag, fn)
+  }
   if (kind === 'apph') {
     return [
       '<script>',
@@ -592,6 +872,7 @@ function buildPage(v) {
   parts.push('<meta name="theme-color" content="#0c0e12">')
   parts.push(`<title>vptest: ${v.name}</title>`)
   parts.push(buildHeadScript())
+  parts.push(buildHealScript())
   parts.push('<style>')
   parts.push(buildStyle(v))
   parts.push('</style>')
@@ -613,6 +894,34 @@ function buildPage(v) {
   return parts.join('\n') + '\n'
 }
 
+// bounce：極簡中轉頁，無面板/按鈕/尺規/探針/heal script。
+// 只驗證「先落地在一張空白頁、等 Safari 幾何穩定後再換頁」是否能拿到正確的第二份文件。
+function buildBouncePage() {
+  const parts = []
+  parts.push('<!DOCTYPE html>')
+  parts.push('<html lang="zh-TW">')
+  parts.push('<head>')
+  parts.push('<meta charset="utf-8">')
+  parts.push(`<meta name="viewport" content="${VIEWPORT_DEFAULT}">`)
+  parts.push('<meta name="theme-color" content="#0c0e12">')
+  parts.push(`<title>vptest: ${BOUNCE.name}</title>`)
+  parts.push('<style>')
+  parts.push('html,body{margin:0;height:100%;background:#0c0e12;color:#fff;font-family:-apple-system,system-ui,sans-serif}')
+  parts.push('#c{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:14px system-ui}')
+  parts.push('</style>')
+  parts.push('</head>')
+  parts.push('<body>')
+  parts.push('<div id="c">中轉中…</div>')
+  parts.push('<script>')
+  parts.push('setTimeout(function(){')
+  parts.push("  location.replace('lock-osb.html?via=bounce');")
+  parts.push('}, 600);')
+  parts.push('<\/script>')
+  parts.push('</body>')
+  parts.push('</html>')
+  return parts.join('\n') + '\n'
+}
+
 function buildIndex(variants) {
   const parts = []
   parts.push('<!DOCTYPE html>')
@@ -627,6 +936,7 @@ function buildIndex(variants) {
   parts.push('html,body{margin:0;background:#0c0e12;color:#fff;font-family:-apple-system,system-ui,sans-serif;padding:20px}')
   parts.push('h1{font-size:18px}')
   parts.push('#warn{background:#3a2a00;border:1px solid #ffd60a;color:#ffd60a;border-radius:10px;padding:10px 12px;font:13px/1.6 system-ui;margin-bottom:16px}')
+  parts.push('#round2{background:#0d2b1e;border:1px solid #30d158;color:#30d158;border-radius:10px;padding:10px 12px;font:13px/1.6 system-ui;margin-bottom:16px}')
   parts.push('ul{list-style:none;padding:0;margin:0}')
   parts.push('li{margin-bottom:10px;background:#1c1f26;border:1px solid #3a3f4b;border-radius:10px;padding:10px 12px}')
   parts.push('a{color:#7fb1ff;font:600 15px system-ui;text-decoration:none}')
@@ -638,6 +948,9 @@ function buildIndex(variants) {
   parts.push('<h1>vptest — iOS Safari 視窗二分測試頁</h1>')
   parts.push(
     '<div id="warn">⚠️ 從這裡點連結是站內跳轉，不等於掃 QR 的外部到站；正式測試請用相機掃 QR。</div>'
+  )
+  parts.push(
+    '<div id="round2">01–10 已實測全部重現 → 本輪測 11–15 誰能自動治好</div>'
   )
   parts.push('<ul>')
   for (const v of variants) {
@@ -665,7 +978,10 @@ function generate() {
     fs.writeFileSync(file, html, 'utf8')
     written.push(file)
   }
-  const indexHtml = buildIndex(VARIANTS)
+  const bounceFile = path.join(OUT_DIR, `${BOUNCE.name}.html`)
+  fs.writeFileSync(bounceFile, buildBouncePage(), 'utf8')
+  written.push(bounceFile)
+  const indexHtml = buildIndex([...VARIANTS, BOUNCE])
   const indexFile = path.join(OUT_DIR, 'index.html')
   fs.writeFileSync(indexFile, indexHtml, 'utf8')
   written.push(indexFile)
@@ -834,16 +1150,72 @@ function runChecks() {
       checks.push({ name: '不含 overlay 邏輯', fn: (c) => !c.includes('mountOverlay') })
     }
 
+    if (AUTO_HEAL_MAP[v.name]) {
+      const { tag, fn } = AUTO_HEAL_MAP[v.name]
+      checks.push({
+        name: `含自動觸發標記 logHeal(${tag}) 與 700ms/1800ms 計時器`,
+        fn: (c) =>
+          c.includes(`logHeal(${JSON.stringify(tag)})`) &&
+          c.includes('setTimeout(fire, 700)') &&
+          c.includes('setTimeout(fire, 1800)') &&
+          c.includes(`typeof ${fn} === "function"`),
+      })
+    }
+
     checks.push({ name: '含面板/按鈕/尺規主 script', fn: (c) => c.includes('buildPanelText') && c.includes('buildButtons') && c.includes('buildRuler') })
+
+    // (A) 所有變體頁共用：⑤–⑫ 八顆手動治療按鈕 + 8 個治療函式 + UA 精簡 + heal 記錄行 + 面板高度保險
+    checks.push({
+      name: '含 ⑤–⑫ 八顆治療按鈕文字',
+      fn: (c) => HEAL_BUTTONS.every((btn) => c.includes(escNonAscii(btn.label))),
+    })
+    checks.push({
+      name: '含 8 個治療函式宣告（healZoom…healAll）',
+      fn: (c) =>
+        ['healZoom', 'healScroll', 'healFit', 'healSize', 'healTheme', 'healAlert', 'healTab', 'healAll'].every(
+          (fnName) => c.includes(`function ${fnName}`)
+        ),
+    })
+    checks.push({
+      name: '含 UA 精簡 shortUA()（iPhone OS x_y_z 片段）',
+      fn: (c) => c.includes('function shortUA') && c.includes('iPhone OS'),
+    })
+    checks.push({
+      name: '面板含 heal: 記錄行（healLogText）',
+      fn: (c) => c.includes('"heal: "') && c.includes('healLogText'),
+    })
+    checks.push({
+      name: 'CSS: #m 面板 max-height:78%;overflow:auto（防被擠出上緣）',
+      fn: (c) => extractStyleBlock(c).includes('max-height:78%;overflow:auto'),
+    })
 
     checkFile(results, file, label, checks)
   }
+
+  // bounce：獨立結構（無面板/按鈕/尺規/探針），單獨檢查
+  const bounceFile = path.join(OUT_DIR, `${BOUNCE.name}.html`)
+  checkFile(results, bounceFile, BOUNCE.name, [
+    { name: 'viewport meta 內容正確', fn: (c) => c.includes(`content="${VIEWPORT_DEFAULT}"`) },
+    {
+      name: '結構：script 標籤成對、無裸 </script 字樣',
+      fn: (c) => {
+        const s = structuralChecks(c)
+        return s.scriptTagsBalanced && s.noStrayCloseTag && s.noBackslashArtifact
+      },
+    },
+    {
+      name: "含 600ms 後 location.replace('lock-osb.html?via=bounce')",
+      fn: (c) => c.includes("location.replace('lock-osb.html?via=bounce')") && c.includes('}, 600);'),
+    },
+    { name: '不含面板 #m（bounce 無面板/按鈕）', fn: (c) => !c.includes('id="m"') },
+  ])
 
   // index.html
   const indexFile = path.join(OUT_DIR, 'index.html')
   checkFile(results, indexFile, 'index', [
     { name: '含警語（站內跳轉≠掃QR）', fn: (c) => c.includes('不等於掃 QR 的外部到站') },
-    { name: '含 10 個 variant 連結', fn: (c) => VARIANTS.every((v) => c.includes(`/vptest/${v.name}.html`)) },
+    { name: '含 01–10 已重現→測 11–15 提醒文字', fn: (c) => c.includes('01–10 已實測全部重現') && c.includes('11–15 誰能自動治好') },
+    { name: '含 15 個 variant 連結（10 舊 + heal-auto-* 4 + bounce）', fn: (c) => [...VARIANTS, BOUNCE].every((v) => c.includes(`/vptest/${v.name}.html`)) },
     { name: '結構：script 標籤成對（index 無 script 亦可）', fn: (c) => {
       const s = structuralChecks(c)
       return s.openCount === 0 ? true : (s.scriptTagsBalanced && s.noStrayCloseTag)
