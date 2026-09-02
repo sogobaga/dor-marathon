@@ -31,7 +31,7 @@ import { veilColorsOf } from '@/lib/skinColors'
 //
 // 【?bdelay= 調參】測試/除錯用；0 代表把 location.replace 移到 <head> 同步執行（沒有轉圈可看，最快）、
 // 非 0 則在 <body> 尾端 setTimeout（可看到轉圈，避免使用者覺得「白畫面沒反應」）。正式環境不需要帶這個參數，
-// 預設 BOUNCE_DELAY_MS（600ms）是「轉圈至少可見一輪、但不會讓使用者覺得慢」的經驗值。
+// 預設 BOUNCE_DELAY_MS 自 v760 起為 0（真機 0ms 已證實可治、使用者無感）；600 是舊預設，留作 ?bdelay=600 對照。
 //
 // 【逃生口】?vpfix=off 或 ?noreload=1：跳過彈跳（沿用舊的頁內判斷，那邊也認得同一組參數）；
 // auth-url（?code=/?state=/?token=…）：一次性授權碼經不起被彈跳頁「消費」一次網址再導覽一次的風險，直接放行。
@@ -95,7 +95,7 @@ export async function middleware(req: NextRequest, event: NextFetchEvent) {
     const ck = h.get('cookie') || ''
     console.log(
       `[arrival-bounce] ${decision.bounce ? 'BOUNCE' : 'skip:' + decision.reason}` +
-        ` path=${req.nextUrl.pathname} site=${h.get('sec-fetch-site')} mode=${h.get('sec-fetch-mode')}` +
+        ` path=${req.nextUrl.pathname}${req.nextUrl.search} site=${h.get('sec-fetch-site')} mode=${h.get('sec-fetch-mode')}` +
         ` dest=${h.get('sec-fetch-dest')} referer=${h.get('referer') ? 'yes' : 'no'}` +
         ` cookie=${/dor_b=1/.test(ck) ? 'dor_b' : '-'}/${/dor_pwa=1/.test(ck) ? 'dor_pwa' : '-'}` +
         ` ua=${JSON.stringify(h.get('user-agent') || '')}`

@@ -107,11 +107,12 @@ eq(decide({ 'user-agent': IPHONE_GOOGLEBOT }), { bounce: false, reason: 'bot' },
 eq(decide({ 'user-agent': IPHONE_FBEXT }), { bounce: false, reason: 'bot' }, 'facebookexternalhit UA → bot')
 
 console.log('\n── parseBounceDelay ──')
-eq(parseBounceDelay(''), BOUNCE_DELAY_MS, "'' → BOUNCE_DELAY_MS(600)")
+eq(BOUNCE_DELAY_MS, 0, 'BOUNCE_DELAY_MS 預設 0（v760：真機 0ms 已證實）')
+eq(parseBounceDelay(''), BOUNCE_DELAY_MS, "'' → BOUNCE_DELAY_MS")
 eq(parseBounceDelay('?bdelay=0'), 0, '?bdelay=0 → 0')
 eq(parseBounceDelay('?bdelay=150'), 150, '?bdelay=150 → 150')
-eq(parseBounceDelay('?bdelay=9999'), BOUNCE_DELAY_MS, '?bdelay=9999（超出 0..3000）→ 回退 600')
-eq(parseBounceDelay('?bdelay=abc'), BOUNCE_DELAY_MS, '?bdelay=abc（非數字）→ 回退 600')
+eq(parseBounceDelay('?bdelay=9999'), BOUNCE_DELAY_MS, '?bdelay=9999（超出 0..3000）→ 回退預設')
+eq(parseBounceDelay('?bdelay=abc'), BOUNCE_DELAY_MS, '?bdelay=abc（非數字）→ 回退預設')
 
 console.log('\n── bounceHtml ──')
 

@@ -23,7 +23,10 @@
 // 只會在 standalone 情境被種下（layout.tsx 開機腳本、以及彈跳頁自己在 navigator.standalone===true 時）——
 // 首次啟動會被彈一次（多一趟 1KB 請求），之後都放行。為什麼不能用 UA 排除，見 decideBounce 內 v758 註解。
 
-export const BOUNCE_DELAY_MS = 600
+// v760 起預設 0：真機第五輪（Chrome iOS，2026-09-02）A(600ms)/B(0ms) 皆正常、靜態 C 卡 0ms 也正常——
+// 0 代表 location.replace 在 <head> 同步執行、彈跳頁根本不會繪製，使用者只多等一趟 1KB 往返、完全無感。
+// 想看轉圈或懷疑 0ms 又不夠時用 ?bdelay=600 對照。
+export const BOUNCE_DELAY_MS = 0
 
 export type BounceDecision = { bounce: true } | { bounce: false; reason: string }
 
