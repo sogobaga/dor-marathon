@@ -42,23 +42,25 @@ export default function ViewportDebug() {
     return () => { window.clearInterval(id); probe.remove() }
   }, [])
 
-  // 「🔧 修復」＝程式化的等效轉向：真實改變 initial-scale（非 v707 那種解析值等價的改寫）逼 WebKit
-  // 重算 viewport 與圖層樹，150ms 後還原。依 2026-09-02 使用者實驗：轉橫轉回／切分頁再回都能讓
-  // 症狀 A（root 圖層被上移 lvh−svh）當場復原 → 「圖層重新提交」即治；這顆按鈕就是在驗證
-  // 程式化觸發是否等效——若實測有效，下一步才把它自動接到「分頁還原載入」時機（tombstone 規則：
-  // 合成器干預需先有 A/B 證據才可自動化）。
-  // ⚠️ generateViewport 設了 maximumScale=1 會把放大夾回去，blip 字串必須同步抬高 maximum-scale。
-  const blip = () => {
+  // 修復槓桿實驗 v2（2026-09-02）：v1 的 initial-scale 微擾實測無效——viewport meta 帶
+  // user-scalable=no + maximum-scale=1，Safari 疑直接無視 scale 變更，槓桿沒扳動。
+  // 使用者實測「轉橫轉回」「切分頁再回」皆可當場復原症狀 A → 補上兩支更接近該手勢的槓桿：
+  // 🅰 重建＝<html> display:none 一幀再還原（摧毀重建整棵圖層樹，「重新掛載」的程式化近似；
+  //    副作用：畫面閃一下、容器捲動位置可能重置——手動修復情境可接受）
+  // 🅱 切頁＝window.open 空白分頁 0.4s 後自動關閉（逐字重演使用者實測有效的「切分頁再回」）
+  const healRebuild = () => {
     try {
-      const m = document.querySelector('meta[name="viewport"]')
-      if (!m) return
-      const orig = m.getAttribute('content') || ''
-      if (!orig) return
-      const blipped = orig
-        .replace(/initial-scale=[0-9.]+/, 'initial-scale=1.001')
-        .replace(/maximum-scale=[0-9.]+/, 'maximum-scale=1.001')
-      m.setAttribute('content', blipped)
-      setTimeout(() => { try { m.setAttribute('content', orig) } catch { /* noop */ } }, 150)
+      const root = document.documentElement
+      const prev = root.style.display
+      root.style.display = 'none'
+      void root.offsetHeight
+      setTimeout(() => { root.style.display = prev }, 50)
+    } catch { /* noop */ }
+  }
+  const healTabFlip = () => {
+    try {
+      const w = window.open('about:blank', '_blank')
+      setTimeout(() => { try { w?.close() } catch { /* noop */ } }, 400)
     } catch { /* noop */ }
   }
 
@@ -66,9 +68,13 @@ export default function ViewportDebug() {
   return (
     <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 9999, background: 'rgba(0,0,0,.82)', color: '#0f0', font: '11px/1.45 ui-monospace,monospace', padding: '6px 8px', whiteSpace: 'pre', display: 'flex', alignItems: 'flex-end', gap: 8 }}>
       <div style={{ flex: 1, pointerEvents: 'none', minWidth: 0 }}>{rows.join('\n')}</div>
-      <button onClick={blip}
-        style={{ flexShrink: 0, background: '#0f0', color: '#000', border: 'none', borderRadius: 6, padding: '6px 10px', font: 'bold 11px ui-monospace,monospace', cursor: 'pointer' }}>
-        🔧 修復
+      <button onClick={healRebuild}
+        style={{ flexShrink: 0, background: '#0f0', color: '#000', border: 'none', borderRadius: 6, padding: '6px 8px', font: 'bold 11px ui-monospace,monospace', cursor: 'pointer' }}>
+        🅰 重建
+      </button>
+      <button onClick={healTabFlip}
+        style={{ flexShrink: 0, background: '#ff0', color: '#000', border: 'none', borderRadius: 6, padding: '6px 8px', font: 'bold 11px ui-monospace,monospace', cursor: 'pointer' }}>
+        🅱 切頁
       </button>
     </div>
   )
