@@ -28,7 +28,8 @@ export const BOUNCE_DELAY_MS = 600
 export type BounceDecision = { bounce: true } | { bounce: false; reason: string }
 
 const BOT_RE = /bot|crawl|spider|slurp|facebookexternalhit|preview|headless|lighthouse|pingdom|hetrix|uptime/i
-const NOT_SAFARI_UA_RE = /CriOS|FxiOS|EdgiOS|OPiOS|Line[/]|FBAN|FBAV|Instagram|MicroMessenger|DuckDuckGo/
+// v759 起沒有「瀏覽器白名單」：iPhone 上所有瀏覽器都是 WebKit（Apple 規定），會發病的正是第三方瀏覽器
+// （真機＝Chrome iOS，見 decideBounce 內註解），所以只排 bot 與 PWA；不再依 UA 猜「這家會不會發病」。
 
 export function decideBounce(
   h: { get(name: string): string | null },
@@ -53,15 +54,15 @@ export function decideBounce(
   // 這段刻意跟 layout.tsx 開機腳本的判定式一致（同一份「這是不是會發病的 iPhone WebKit」邏輯兩處各留一份，
   // 一份跑 edge runtime、一份跑瀏覽器，無法共用同一個檔案——但語意必須對齊，改一邊記得改另一邊）。
   //
-  // ⚠️ v758 真機證據（第三輪掃碼，iOS 26.6.1，勿再要求 Safari/ 或 Version/）：從「條碼掃描器」喚起的 Safari
-  // 分頁，navigator.userAgent 回報真實 OS 版本 26_6_1、且沒有 Safari/ 也沒有 Version/——Safari 26 本體的 UA
-  // 依 Apple 新規把 OS token 凍結在 18_x（nielsleenheer.com「The User-Agent string of Safari on iOS 26」），
-  // 會回報真實版本的只有非 Safari 的 WebKit 情境。也就是說，會發病的那份文件，UA 長得跟「裸 WKWebView／
-  // PWA standalone」一模一樣；v757 要求 Safari/+Version/ 的閘門把真正的病人全擋在外面（面板 ar 顯示
-  // skip:not-safari、A/B 卡全跑版；靜態 C/D 卡 0ms/150ms 彈跳皆正常＝療法本身沒錯，是閘門錯）。
-  // 因此只排除「明確標示自己是別家瀏覽器／in-app 瀏覽器」的 UA；PWA standalone 改由 cookie dor_pwa=1 排除。
-  // 其他裸 UA 的 in-app WebView（Gmail/Twitter 等）會被彈一次——只多一趟 1KB 請求，無害。
-  if (NOT_SAFARI_UA_RE.test(ua)) return { bounce: false, reason: 'not-safari' }
+  // ⚠️ 真機證據（第四輪掃碼 2026-09-02，面板 ua 全文）：
+  //   Mozilla/5.0 (iPhone; CPU iPhone OS 26_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko)
+  //   CriOS/152.0.7977.64 Mobile/15E148 Safari/604.1
+  // 會發病的到站文件是 **Chrome iOS（CriOS）**——使用者手機的預設瀏覽器是 Chrome，條碼掃描器／相機掃 QR 都開到
+  // Chrome，而 Chrome iOS 是包 WKWebView 的殼、UI 又跟 iOS 26 Safari 幾乎一樣（底部工具列＋分頁數），所以
+  // 三輪掃碼一直被當成 Safari 在追。v753–757 的 Safari 本體閘門與 v758 的「排 CriOS」都把病人擋在外面
+  // （面板 ar=skip:not-safari）；靜態 C/D 卡在同一支 Chrome 上 0ms/150ms 彈跳皆正常＝療法沒錯、閘門錯。
+  // Safari 本體到底有沒有這病目前**沒有任何一次真機證據**（每次都是 Chrome）——別再依 UA 猜哪家會發病：
+  // iPhone 上所有瀏覽器都是 WebKit，多彈一次只是多一趟 1KB 請求，所以只排 bot；PWA 由 cookie dor_pwa=1 排。
   if (BOT_RE.test(ua)) return { bounce: false, reason: 'bot' }
 
   // Sec-Fetch-Site:none 的導覽依規範不帶 Referer；出現 Referer 就代表不是「真到站」（見上方保險②）。

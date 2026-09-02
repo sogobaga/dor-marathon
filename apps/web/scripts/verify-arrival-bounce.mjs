@@ -42,6 +42,7 @@ function url(pathname, search = '') { return { pathname, search } }
 const IPHONE_SAFARI = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1'
 const IPHONE_BARE_REAL_OS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148' // 第三輪真機（條碼掃描器→Safari）
 const IPHONE_STANDALONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148' // PWA standalone：無 Safari/、無 Version/
+const IPHONE_REAL_CRIOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/152.0.7977.64 Mobile/15E148 Safari/604.1' // 第四輪真機面板 ua 全文
 const IPHONE_CRIOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/125.0.6422.80 Mobile/15E148 Safari/604.1'
 const IPHONE_LINE = IPHONE_SAFARI + ' Line/14.0.0'
 const IPHONE_FBAN = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 [FBAN/FBIOS;FBAV/456.0.0.36.108;]'
@@ -72,9 +73,11 @@ eq(decide({ 'user-agent': IPHONE_BARE_REAL_OS }), { bounce: true }, '真機 UA �
 eq(decide({ 'user-agent': IPHONE_STANDALONE, cookie: 'dor_pwa=1' }), { bounce: false, reason: 'pwa' }, 'PWA standalone（cookie dor_pwa=1）→ pwa')
 eq(decide({ cookie: 'a=1; dor_pwa=1; b=2' }), { bounce: false, reason: 'pwa' }, 'cookie dor_pwa=1 夾在中間 → pwa')
 eq(decide({ cookie: 'dor_pwa=10' }), { bounce: true }, 'cookie dor_pwa=10（值不是 1）不算 → bounce')
-eq(decide({ 'user-agent': IPHONE_CRIOS }), { bounce: false, reason: 'not-safari' }, 'CriOS（iOS Chrome）UA → not-safari')
-eq(decide({ 'user-agent': IPHONE_LINE }), { bounce: false, reason: 'not-safari' }, 'LINE 內建瀏覽器 UA → not-safari')
-eq(decide({ 'user-agent': IPHONE_FBAN }), { bounce: false, reason: 'not-safari' }, 'FBAN（FB 內建瀏覽器）UA → not-safari')
+// v759：真機病人就是 Chrome iOS；iPhone 上所有瀏覽器都是 WebKit，一律彈跳（只排 bot／PWA）
+eq(decide({ 'user-agent': IPHONE_CRIOS }), { bounce: true }, 'CriOS（iOS Chrome）UA → bounce（v759：真機病人）')
+eq(decide({ 'user-agent': IPHONE_REAL_CRIOS }), { bounce: true }, '第四輪真機 UA 全文（CriOS/152、OS 26_6_1）→ bounce')
+eq(decide({ 'user-agent': IPHONE_LINE }), { bounce: true }, 'LINE 內建瀏覽器 UA → bounce（多一趟 1KB，無害）')
+eq(decide({ 'user-agent': IPHONE_FBAN }), { bounce: true }, 'FBAN（FB 內建瀏覽器）UA → bounce')
 eq(decide({ 'user-agent': ANDROID_CHROME }), { bounce: false, reason: 'not-iphone' }, 'Android Chrome UA → not-iphone')
 eq(decide({ 'user-agent': MAC_SAFARI }), { bounce: false, reason: 'not-iphone' }, 'Mac Safari UA → not-iphone')
 
