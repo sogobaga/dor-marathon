@@ -175,7 +175,12 @@ export default function InterstitialAd() {
 // inline height 一樣會 invalid at computed-value time → height:auto，但本元素同時有 inset:0
 // （top 與 bottom 皆為 0），auto 高度會自動撐滿視窗，結果與預期一致；globals.css 那三處之所以必須
 // 隔離，是因為它們有「要被保護的 100vh 前置宣告」而且子節點全是 absolute（auto ⇒ 0）。
-const overlay: React.CSSProperties = { position: 'fixed', inset: 0, height: 'max(100dvh, var(--app-h, 0px))', zIndex: 2500, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)', padding: 24, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }
+// ⚠️ 2026-09-02 移除 backdrop-filter: blur(2px)（單變因實驗）：使用者觀察「每次跑版都在蓋板
+// 出現時」。全螢幕 fixed ＋ backdrop-filter＝要求合成器即時快照背後內容的重量級圖層，且掛載
+// 時機正落在 Safari 還原/載入的敏感窗（症狀 A＝root 圖層被上移 lvh−svh）。注意混淆因子：蓋板
+// 與病態都只在「工作階段第一次載入」出現，相關未必因果——故拆掉觀察發生率，底色 .72→.78 補償
+// 失去的模糊分離感。若發生率歸零＝因果確認；若不變＝排除此嫌疑、把 blur 加回來也無妨。
+const overlay: React.CSSProperties = { position: 'fixed', inset: 0, height: 'max(100dvh, var(--app-h, 0px))', zIndex: 2500, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none' }
 
 // 遮罩底色獨立成一層，上下各超掃 30vh（共 160vh）。
 // ⚠️ 這是「有機會、失敗即無害」的降級保護，**不是保證**。它只在「合成器的裁切矩形大於過期的 layout
@@ -188,7 +193,7 @@ const overlay: React.CSSProperties = { position: 'fixed', inset: 0, height: 'max
 //    可見區，等於把外觀缺陷換成功能缺陷。
 // z-index:-1 是必要的：overlay 是 fixed（自成 stacking context），absolute 子節點若 z-index:auto 會
 // 排在未定位的 in-flow 內容（卡片/說明文字/checkbox）之後，把它們蓋掉。
-const overlayBackdrop: React.CSSProperties = { position: 'absolute', left: 0, right: 0, top: '-30vh', height: '160vh', background: 'rgba(10,12,16,.72)', pointerEvents: 'none', zIndex: -1 }
+const overlayBackdrop: React.CSSProperties = { position: 'absolute', left: 0, right: 0, top: '-30vh', height: '160vh', background: 'rgba(10,12,16,.78)', pointerEvents: 'none', zIndex: -1 }
 const closeBtn: React.CSSProperties = { position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 14px)', right: 16, width: 38, height: 38, borderRadius: 999, border: '1px solid rgba(255,255,255,.28)', background: 'rgba(0,0,0,.35)', color: '#fff', fontSize: 16, cursor: 'pointer', zIndex: 20 }
 const cardWrap: React.CSSProperties = { position: 'absolute', inset: 0, willChange: 'transform' }
 const polaroid: React.CSSProperties = { width: '100%', height: '100%', background: '#fff', borderRadius: 14, padding: '12px 12px 0', boxShadow: '0 18px 50px rgba(0,0,0,.45)', display: 'flex', flexDirection: 'column' }
