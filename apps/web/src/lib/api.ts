@@ -1008,11 +1008,37 @@ export interface GpsRunSummary {
   ended_at: string
   polyline?: string
 }
+// 2026-09-03「回收異常數據」：已入帳（早於偵測或漏網）的 GPS 跑步，後台可事後標異常＋反沖已發的 EXP/DP/里程。
+export interface AdminRecentGpsRun {
+  id: string; user_id: string; user_name: string; user_email: string
+  started_at: string; ended_at: string
+  distance_km: number; calib_distance_km: number | null; duration_s: number; avg_pace_s: number
+  flagged: boolean; flag_reason: string; review_action: string
+  excluded_km: number; excluded_segments: number
+  activity_id: string | null; exp_awarded: boolean | null
+}
+export interface GpsRecallResult {
+  run_id: string; activity_id: string | null; already_recalled: boolean
+  reversed: { total_km: number; exp: number; dp: number; km_added: number }
+  reason: string; followups: string[]
+}
 export const adminGpsApi = {
   list: (token: string) => request<{ runs: GpsRunSummary[] }>('/admin/gps-runs', { headers: withAuth(token) }),
   get: (token: string, id: string) => request<{ run: GpsRunSummary }>(`/admin/gps-runs/${id}`, { headers: withAuth(token) }),
   approve: (token: string, id: string) => request<void>(`/admin/gps-runs/${id}/approve`, { method: 'POST', headers: withAuth(token) }),
   reject: (token: string, id: string) => request<void>(`/admin/gps-runs/${id}/reject`, { method: 'POST', headers: withAuth(token) }),
+  // 近期已入帳跑步（含未被旗標者），供人工事後回收；q 為選填的使用者 ID／Email／名稱模糊搜尋
+  recent: (token: string, params: { days?: number; limit?: number; q?: string }) => {
+    const qs = new URLSearchParams()
+    if (params.days != null) qs.set('days', String(params.days))
+    if (params.limit != null) qs.set('limit', String(params.limit))
+    if (params.q) qs.set('q', params.q)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ runs: AdminRecentGpsRun[] }>(`/admin/gps-runs/recent${suffix}`, { headers: withAuth(token) })
+  },
+  // 標為異常並反沖已發出的 EXP/DP/里程（保留紀錄不刪，僅排除計算）
+  recall: (token: string, id: string, body: { reason?: string; valid_distance_km?: number | null; activity_id?: string | null }) =>
+    request<GpsRecallResult>(`/admin/gps-runs/${id}/recall`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
 }
 
 export const mileageExpApi = {

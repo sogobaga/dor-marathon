@@ -40,9 +40,15 @@ func (h *Handler) GetMileageExp(w http.ResponseWriter, r *http.Request) {
 
 	// 顯示「實際發獎的整公里數」km_added（跨越幾個整公里就發幾份），
 	// 不用單趟 distance_km（避免出現「里程 0.2 km 卻發獎」的誤導——獎勵其實是跨過整公里才給）。
+	//
+	// AND (exp_amount > 0 OR dp_amount > 0)：防禦性修正（2026-09-03 owner 回收決策新增，見
+	// internal/activity/gps_recall.go）——異常活動回收會寫入 exp_amount/dp_amount/km_added 皆為
+	// 負值的「回收標記列」，正常情況下該列的 seen_at 在寫入當下就已直接設為 NOW()，理論上不會被
+	// 這裡的 seen_at IS NULL 撈到；這裡加這層過濾是雙保險，即使 seen_at 因故仍是 NULL，也絕不能讓
+	// 使用者看到「里程 -11 km，獲得 EXP -50」這種倒扣彈窗。
 	rows, err := h.db.Query(r.Context(),
 		`SELECT exp_amount, dp_amount, km_added FROM mileage_exp_events
-		 WHERE user_id=$1 AND seen_at IS NULL ORDER BY created_at`, userID)
+		 WHERE user_id=$1 AND seen_at IS NULL AND (exp_amount > 0 OR dp_amount > 0) ORDER BY created_at`, userID)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return

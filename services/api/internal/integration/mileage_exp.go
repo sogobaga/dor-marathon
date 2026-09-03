@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/dor/api/internal/referral"
@@ -19,6 +21,35 @@ var benignFlagReasons = map[string]bool{
 	"cross_source_duplicate": true, // resolveCrossSourceDups：同帳號 GPS/Strava/Terra 互相重複
 	"duplicate":              true, // 同帳號、精確指紋相同的重複匯入
 }
+
+// IsBenignFlagReason 供本模組（services/api，與 internal/activity 同一個 Go module，不像 worker
+// 是獨立 module）內其他套件判斷某 flag_reason 是否屬於良性標記——目前給 internal/activity 的 GPS
+// 回收端點（2026-09-03 owner 決策新增，見 gps_recall.go）用來擋掉管理者誤把良性重複標記當回收原因
+// 使用（那類重複另有 dedup/差額補償流程處理，混用會讓語意衝突）。刻意用 exported 函式而非讓
+// activity 套件自己再開一份 map：activity 與 integration 同屬本模組，沒有 worker 那種「無法互相
+// import」的限制，沒理由再維護第三份重複清單。
+func IsBenignFlagReason(reason string) bool {
+	return benignFlagReasons[reason]
+}
+
+// benignReasonsSQLIn 由 benignFlagReasons 產生 SQL NOT IN(...) 用的逗號分隔清單（map key 皆為 Go
+// 原始碼常數字面值、非使用者輸入，字串插入無注入風險）。只在套件初始化時建置一次，供
+// AwardMileageExp 的 overlap 查詢排除「非良性標記已發放列」使用（2026-09-03 owner 回收決策：
+// admin_anomaly 等回收標記的已發放列，不可再被拿來當差額補償的比較基準，否則同時段的合法重複
+// 活動會把「已被回收」的里程當基準扣掉，等於白白漏發）。
+//
+// ⚠️ 與 services/worker/main.go 的同名函式是同一語意的獨立實作（worker 為獨立 Go module，理由同
+// 上方 AwardMileageExp 註解）；修改 benignFlagReasons 內容時記得兩邊都要重算。
+func benignReasonsSQLIn(m map[string]bool) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, "'"+k+"'")
+	}
+	sort.Strings(keys) // 穩定順序，利於除錯/測試
+	return strings.Join(keys, ",")
+}
+
+var benignReasonsSQLList = benignReasonsSQLIn(benignFlagReasons)
 
 // computeRewardKm 算出單趟活動可折算的獎勵公里數：floor(distance) → 套單趟上限 capKm → 套配速防造假
 // minPaceS。distanceKm<1 或 durationS<=0 或 perKm 與 dpPerKm 皆為 0 時直接回 0（不具備發放資格）。
@@ -196,12 +227,15 @@ func (r *Repository) AwardMileageExp(ctx context.Context, activityID, userID str
 
 	// ⑤ 撈出「時間重疊且已發放」的其他活動之 (distance_km, duration_s)（實務 0~2 筆）。候選列同樣
 	// 依 source 正規化成 [candStart, candEnd) 再判重疊（candStart < thisEnd AND candEnd > thisStart）。
-	rows, err := tx.Query(ctx, `
+	rows, err := tx.Query(ctx, fmt.Sprintf(`
 		SELECT a.distance_km, a.duration_s FROM activities a
 		WHERE a.user_id=$1 AND a.exp_awarded=true AND a.id<>$2
+		  -- 2026-09-03 owner 回收決策：已回收（flagged 且 flag_reason 非良性標記，如 admin_anomaly）
+		  -- 的已發放列不可再作差額補償基準，見 benignReasonsSQLIn 註解。
+		  AND NOT (a.flagged AND COALESCE(a.flag_reason,'') NOT IN (%s))
 		  AND (CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END) < $3
 		  AND (CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END)
-		      + make_interval(secs=>a.duration_s) > $4`,
+		      + make_interval(secs=>a.duration_s) > $4`, benignReasonsSQLList),
 		userID, activityID, thisEnd, thisStart)
 	if err != nil {
 		return fmt.Errorf("award mileage exp: overlap query: %w", err)
@@ -243,8 +277,8 @@ func (r *Repository) AwardMileageExp(ctx context.Context, activityID, userID str
 		}
 		if thisReward > 0 {
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO mileage_exp_events (user_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
-				 VALUES ($1,$2,$3,$4,$5,$6)`, userID, expAmt, dpAmt, thisReward, distanceKm, recordedAt); err != nil {
+				`INSERT INTO mileage_exp_events (user_id, activity_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
+				 VALUES ($1,$2,$3,$4,$5,$6,$7)`, userID, activityID, expAmt, dpAmt, thisReward, distanceKm, recordedAt); err != nil {
 				return fmt.Errorf("award mileage exp: insert event: %w", err)
 			}
 		}
@@ -290,8 +324,8 @@ func (r *Repository) AwardMileageExp(ctx context.Context, activityID, userID str
 		}
 		if deltaReward > 0 {
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO mileage_exp_events (user_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
-				 VALUES ($1,$2,$3,$4,$5,$6)`, userID, deltaExpAmt, deltaDpAmt, deltaReward, distanceKm, recordedAt); err != nil {
+				`INSERT INTO mileage_exp_events (user_id, activity_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
+				 VALUES ($1,$2,$3,$4,$5,$6,$7)`, userID, activityID, deltaExpAmt, deltaDpAmt, deltaReward, distanceKm, recordedAt); err != nil {
 				return fmt.Errorf("award mileage exp: insert event (delta): %w", err)
 			}
 		}

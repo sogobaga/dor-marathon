@@ -135,6 +135,14 @@ var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[
 
 func isValidUUID(s string) bool { return uuidRE.MatchString(s) }
 
+// prefix8 取字串前 8 碼供 log 對照（Terra user_id 是 UUID，前 8 碼足以在 dashboard 對出是哪個 user，且不洩漏完整 id）。
+func prefix8(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
+}
+
 // Router 掛在 /api/v1/integrations/terra。webhook/callback 公開；connect/status/disconnect 需登入。
 func (h *TerraHandler) Router() http.Handler {
 	r := chi.NewRouter()
@@ -950,7 +958,11 @@ func (h *TerraHandler) handleActivityEvent(ctx context.Context, body []byte) {
 	if conn == nil {
 		refID := strings.TrimSpace(p.User.ReferenceID)
 		if !isValidUUID(refID) {
-			log.Warn().Str("provider", source).Msg("terra webhook: activity event has no known connection and no valid reference_id")
+			// 診斷欄位（2026-09-03 真機：13:35 一筆 COROS activity 事件走到這裡被丟掉，疑似掛在另一個 Terra user_id 下）：
+			// 只記 user_id 前 8 碼、reference_id 是否存在／長度、筆數——都不是健康資料。
+			log.Warn().Str("provider", source).Str("terra_user_prefix", prefix8(terraUserID)).
+				Int("reference_id_len", len(refID)).Int("data", len(p.Data)).
+				Msg("terra webhook: activity event has no known connection and no valid reference_id")
 			return
 		}
 		if ok, uerr := h.repo.UserExists(ctx, refID); uerr != nil || !ok {

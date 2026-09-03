@@ -282,6 +282,20 @@ export default function TrackHistoryPage() {
               ⚠️ 本次有 {sel.excluded_segments} 段異常數據已排除（{(sel.excluded_km ?? 0).toFixed(1)} km 不計入）
             </div>
           )}
+          {/* 後台「回收異常數據」（2026-09-03）：整趟被標異常時，讓跑者看得懂為什麼這筆不算——
+              軌跡已依 sel.flagged 畫成紅線（見上面 decodePolylineSegments 那段），這裡補文字說明。 */}
+          {sel.flagged && (
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4, textAlign: 'center' }}>
+              ⚠️ 此筆已列為異常，不列入里程與統計
+              {sel.flag_reason === 'admin_anomaly'
+                ? '（後台判定：跳點／載具軌跡）'
+                : /speed|pace/i.test(sel.flag_reason || '')
+                  ? '（速度超過人體極限）'
+                  : sel.flag_reason
+                    ? `（${sel.flag_reason}）`
+                    : ''}
+            </div>
+          )}
           {sel.km_paces && sel.km_paces.length > 0 ? (
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}>每公里分段配速</div>

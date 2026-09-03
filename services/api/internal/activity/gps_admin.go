@@ -23,6 +23,7 @@ type GPSRunSummary struct {
 	ID              string    `json:"id"`
 	UserID          string    `json:"user_id,omitempty"`
 	UserName        string    `json:"user_name,omitempty"`
+	UserEmail       string    `json:"user_email,omitempty"` // 僅 ListRecentGPS（回收流程，2026-09-03）填入
 	DistanceKm      float64   `json:"distance_km"`
 	DurationS       int       `json:"duration_s"`
 	AvgPaceS        int       `json:"avg_pace_s"`
@@ -47,6 +48,12 @@ type GPSRunSummary struct {
 	// 審核（ListPendingGPS/GetGPSRun）目前 SELECT 未帶這兩欄，維持零值。
 	ExcludedKm       float64 `json:"excluded_km"`
 	ExcludedSegments int     `json:"excluded_segments"`
+	// ActivityID/ExpAwarded：僅 ListRecentGPS（回收流程，2026-09-03 owner 決策新增，見 gps_recall.go）
+	// 填入——依「同 user、source IS NULL、recorded_at=gps_runs.ended_at」慣例解析出對應 activities
+	// 列；查無對應活動時皆為 nil（該趟從未產生活動，例如上傳當下已被標記）。刻意不用 omitempty：
+	// 前端需要能區分「這欄位存在但是 null」與「後端沒回這欄位」。
+	ActivityID *string `json:"activity_id"`
+	ExpAwarded *bool   `json:"exp_awarded"`
 }
 
 // withCalibAvgPace 由 CalibDistanceKm/DurationS 算出校正後平均配速，只有本人歷史（有帶
@@ -199,10 +206,14 @@ func (h *Handler) AdminRejectGPSHandler(w http.ResponseWriter, r *http.Request) 
 // AdminRouter GPS 審核路由（掛 /admin/gps-runs）
 func (h *Handler) AdminRouter() http.Handler {
 	r := chi.NewRouter()
+	// /recent 是固定路徑，必須（習慣上）在 /{id} 之前註冊，避免與動態參數路由混淆；chi 的樹狀路由
+	// 本身會優先比對靜態節點，但仍照這個順序寫，一目了然、也不依賴實作細節。
+	r.Get("/recent", h.AdminRecentGPSHandler) // 回收流程用清單（見 gps_recall.go，2026-09-03 owner 決策）
 	r.Get("/", h.AdminListGPS)
 	r.Get("/{id}", h.AdminGetGPS)
 	r.Post("/{id}/approve", h.AdminApproveGPSHandler)
 	r.Post("/{id}/reject", h.AdminRejectGPSHandler)
+	r.Post("/{id}/recall", h.AdminRecallGPSHandler) // 已入帳活動的異常回收（見 gps_recall.go）
 	return r
 }
 

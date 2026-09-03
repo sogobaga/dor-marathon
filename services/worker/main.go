@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -603,6 +604,26 @@ var benignFlagReasons = map[string]bool{
 	"duplicate":              true, // 同帳號、精確指紋相同的重複匯入
 }
 
+// benignReasonsSQLIn 由 benignFlagReasons 產生 SQL NOT IN(...) 用的逗號分隔清單（map key 皆為 Go
+// 原始碼常數字面值、非使用者輸入，字串插入無注入風險）。只在套件初始化時建置一次，供
+// awardMileageDedup 的 overlap 查詢排除「非良性標記已發放列」使用（2026-09-03 owner 回收決策：
+// admin_anomaly 等回收標記的已發放列，不可再被拿來當差額補償的比較基準，否則同時段的合法重複
+// 活動會把「已被回收」的里程當基準扣掉，等於白白漏發）。
+//
+// ⚠️ 與 services/api/internal/integration/mileage_exp.go 的同名函式是同一語意的獨立實作（worker
+// 為獨立 Go module，理由同上方 awardMileageDedup 註解）；修改 benignFlagReasons 內容時記得兩邊
+// 都要重算。
+func benignReasonsSQLIn(m map[string]bool) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, "'"+k+"'")
+	}
+	sort.Strings(keys) // 穩定順序，利於除錯/測試
+	return strings.Join(keys, ",")
+}
+
+var benignReasonsSQLList = benignReasonsSQLIn(benignFlagReasons)
+
 // computeRewardKm 算出單趟活動可折算的獎勵公里數：floor(distance) → 套單趟上限 capKm → 套配速防造假
 // minPaceS。distanceKm<1 或 durationS<=0 或 perKm 與 dpPerKm 皆為 0 時直接回 0（不具備發放資格）。
 // 供 awardMileageDedup 全額發放與差額補償共用（差額補償需要對本筆與每筆重疊已發放筆各自計算一次）。
@@ -772,12 +793,15 @@ func (w *Worker) awardMileageDedup(ctx context.Context, activityID, userID strin
 
 	// ⑤ 撈出「時間重疊且已發放」的其他活動之 (distance_km, duration_s)（實務 0~2 筆）。候選列同樣
 	// 依 source 正規化成 [candStart, candEnd) 再判重疊（candStart < thisEnd AND candEnd > thisStart）。
-	rows, err := tx.Query(ctx, `
+	rows, err := tx.Query(ctx, fmt.Sprintf(`
 		SELECT a.distance_km, a.duration_s FROM activities a
 		WHERE a.user_id=$1 AND a.exp_awarded=true AND a.id<>$2
+		  -- 2026-09-03 owner 回收決策：已回收（flagged 且 flag_reason 非良性標記，如 admin_anomaly）
+		  -- 的已發放列不可再作差額補償基準，見 benignReasonsSQLIn 註解。
+		  AND NOT (a.flagged AND COALESCE(a.flag_reason,'') NOT IN (%s))
 		  AND (CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END) < $3
 		  AND (CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END)
-		      + make_interval(secs=>a.duration_s) > $4`,
+		      + make_interval(secs=>a.duration_s) > $4`, benignReasonsSQLList),
 		userID, activityID, thisEnd, thisStart)
 	if err != nil {
 		return fmt.Errorf("overlap query: %w", err)
@@ -824,8 +848,8 @@ func (w *Worker) awardMileageDedup(ctx context.Context, activityID, userID strin
 		}
 		if thisReward > 0 {
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO mileage_exp_events (user_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
-				 VALUES ($1,$2,$3,$4,$5,$6)`, userID, expAmt, dpAmt, thisReward, distanceKm, recordedAt); err != nil {
+				`INSERT INTO mileage_exp_events (user_id, activity_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
+				 VALUES ($1,$2,$3,$4,$5,$6,$7)`, userID, activityID, expAmt, dpAmt, thisReward, distanceKm, recordedAt); err != nil {
 				return fmt.Errorf("insert event: %w", err)
 			}
 		}
@@ -870,8 +894,8 @@ func (w *Worker) awardMileageDedup(ctx context.Context, activityID, userID strin
 		}
 		if deltaReward > 0 {
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO mileage_exp_events (user_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
-				 VALUES ($1,$2,$3,$4,$5,$6)`, userID, deltaExpAmt, deltaDpAmt, deltaReward, distanceKm, recordedAt); err != nil {
+				`INSERT INTO mileage_exp_events (user_id, activity_id, exp_amount, dp_amount, km_added, distance_km, recorded_at)
+				 VALUES ($1,$2,$3,$4,$5,$6,$7)`, userID, activityID, deltaExpAmt, deltaDpAmt, deltaReward, distanceKm, recordedAt); err != nil {
 				return fmt.Errorf("insert event (delta): %w", err)
 			}
 		}

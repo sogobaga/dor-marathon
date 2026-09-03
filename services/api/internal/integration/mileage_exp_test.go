@@ -1,6 +1,9 @@
 package integration
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestComputeRewardKm(t *testing.T) {
 	cases := []struct {
@@ -160,5 +163,51 @@ func TestExternalAwardHashNoDelimiterConfusion(t *testing.T) {
 	h2 := externalAwardHash("stra", "va123")
 	if h1 == h2 {
 		t.Fatalf("delimiter should prevent concatenation ambiguity: both hashed to %q", h1)
+	}
+}
+
+// --- 2026-09-03 owner 回收決策：overlap 查詢 NOT IN(...) 清單的純函式測試 ---
+//
+// benignReasonsSQLIn 把 benignFlagReasons map 轉成 SQL IN(...) 用的逗號分隔清單，供 AwardMileageExp
+// 的 overlap 查詢排除「非良性標記已發放列」（見 mileage_exp.go 該函式與 benignReasonsSQLIn 的註解）。
+// 這裡驗證：清單內容跟 benignFlagReasons 完全一致（一個不多一個不少）、每個 key 都正確加上單引號、
+// 輸出結果穩定（sort 過，不受 map 疊代順序影響）。
+
+func TestBenignReasonsSQLIn_ContainsExactlyMapKeys(t *testing.T) {
+	got := benignReasonsSQLIn(benignFlagReasons)
+	parts := strings.Split(got, ",")
+	if len(parts) != len(benignFlagReasons) {
+		t.Fatalf("benignReasonsSQLIn produced %d entries, want %d (from map): %q", len(parts), len(benignFlagReasons), got)
+	}
+	for _, p := range parts {
+		if len(p) < 2 || p[0] != '\'' || p[len(p)-1] != '\'' {
+			t.Fatalf("entry %q is not single-quoted", p)
+		}
+		key := p[1 : len(p)-1]
+		if !benignFlagReasons[key] {
+			t.Fatalf("entry %q (key=%q) is not a real benignFlagReasons key", p, key)
+		}
+	}
+	for key := range benignFlagReasons {
+		if !strings.Contains(got, "'"+key+"'") {
+			t.Fatalf("benignReasonsSQLIn missing key %q, got %q", key, got)
+		}
+	}
+}
+
+func TestBenignReasonsSQLIn_StableOrder(t *testing.T) {
+	// 同一份 map 連續呼叫兩次應該產生完全相同的字串（sort 過，不受 map 疊代隨機順序影響）——
+	// 這個 SQL 字串在套件初始化時只算一次（package-level var），穩定性本身不是執行期風險，但
+	// 用測試釘住這個不變量，避免日後有人把 sort.Strings 誤刪掉又沒發現（測試才會浮動失敗）。
+	a := benignReasonsSQLIn(benignFlagReasons)
+	b := benignReasonsSQLIn(benignFlagReasons)
+	if a != b {
+		t.Fatalf("benignReasonsSQLIn is not stable across calls: %q vs %q", a, b)
+	}
+}
+
+func TestBenignReasonsSQLIn_EmptyMap(t *testing.T) {
+	if got := benignReasonsSQLIn(map[string]bool{}); got != "" {
+		t.Fatalf("empty map should produce empty string, got %q", got)
 	}
 }
