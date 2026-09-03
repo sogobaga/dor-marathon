@@ -5,10 +5,11 @@
 --   1) 必須與 meet_at 同一個台北日曆日（Asia/Taipei，UTC+8）——團練是單日活動，
 --      不支援跨日（例如夜跑跨過午夜），跨日需求另開單處理。
 --   2) 必須晚於 meet_at（不得等於或早於）。
--- ⚠️ ends_at 刻意「只做資訊顯示 + 建立/編輯時驗證」，不牽動任何既有以 meet_at 為準的規則——
---    is_ended（活動是否已結束）、可編輯時間窗、提醒排程（reminder.go）、瀏覽排序（ListMeets）、
---    每月配額，全部維持只讀 meet_at，行為與 migration 168 之前完全一致。之後如需「活動實際
---    進行到 ends_at 才算結束」等語意，需另開 migration/owner 決策，本次不動。
+-- ⚠️ 同日（2026-09-04）owner 追加定案：結束時間一到團練「自動關閉」但仍可查看並標示已結束——
+--    is_ended、加入閘門、留言窗口起點、可編輯時間窗、瀏覽列表截止，全部改以
+--    有效結束時間 COALESCE(ends_at, meet_at) 為準（程式端 effectiveEnd()，見 internal/runmeet/model.go）；
+--    舊資料 ends_at 為 NULL 時退回 meet_at，行為與以前完全相同。提醒排程（reminder.go）與每月配額
+--    仍以 meet_at 為準（提醒的是「開始」）。
 -- ⚠️ 舊資料 ends_at 一律 NULL（無法回溯）；DTO 對外一律 nullable（json "ends_at": string|null）。
 --    NULL 不觸發 CHECK（ends_at IS NULL OR ends_at > meet_at 允許 NULL 通過）。
 -- ⚠️ 本 migration 只寫檔，未套用到任何資料庫。部署順序：先套 migration 再推程式
