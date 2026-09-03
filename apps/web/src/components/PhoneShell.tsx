@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useIsMobile } from '@/lib/useIsMobile'
 import RacesScreen from './RacesScreen'
+import ActivityExploreScreen from './ActivityExploreScreen'
 import ProfileScreen from './ProfileScreen'
 import TitleUnlockModal from './TitleUnlockModal'
 import GoogleAuthProvider from './GoogleAuthProvider'
@@ -20,7 +21,9 @@ import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
 
 // 非首屏必用的畫面 → code-split，減少首開 bundle（點了才載入對應 chunk）。
-// RacesScreen（首屏必用）與 ProfileScreen（登入後高機率立即用）保留靜態 import。
+// RacesScreen（首屏必用）、ActivityExploreScreen（2026-09-03 改版：原本首頁內嵌的活動列表拆出去的
+// 全頁，取代原本「幾乎必用」的地位，故沿用原本 RacesScreen 的靜態 import 待遇）
+// 與 ProfileScreen（登入後高機率立即用）保留靜態 import。
 const RegistrationScreen = dynamic(() => import('./RegistrationScreen'), { ssr: false })
 const PersonalTasksScreen = dynamic(() => import('./PersonalTasksScreen'), { ssr: false })
 const ExploreScreen = dynamic(() => import('./ExploreScreen'), { ssr: false })
@@ -50,6 +53,8 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
   const [detailRace, setDetailRace] = useState<Race | null>(null)
   const [detailTab, setDetailTab] = useState<'brochure' | 'progress' | 'rank' | undefined>(undefined)
   const [registerRace, setRegisterRace] = useState<Race | null>(null)
+  // 活動探索（2026-09-03 改版：原首頁內嵌的可拖曳活動列表拆成獨立全頁，見 ActivityExploreScreen）
+  const [showActivityExplore, setShowActivityExplore] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
   const [profileInitialTab, setProfileInitialTab] = useState<'info' | 'sports' | 'records' | 'follows' | undefined>(undefined)
   const [showPersonalTasks, setShowPersonalTasks] = useState(false)
@@ -207,11 +212,13 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     else if (showRunMeet) { path = '/run-meets'; title = '團練邀請' }
     else if (showExplore) { path = '/explore'; title = '城市探索' }
     else if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
-    else if (showProfile || payRace) { path = '/profile'; title = '會員資訊' }
+    else if (showProfile || payRace) { path = '/profile'; title = '會員管理' }
     else if (registerRace) { path = `/register/${registerRace.slug}`; title = `報名 - ${registerRace.title}` }
     else if (detailRace) { path = `/race/${detailRace.slug}`; title = detailRace.title }
+    // 活動探索：與畫面渲染鏈同一順序評估（見下方 JSX），registerRace/detailRace 蓋在它上面時優先算那兩個
+    else if (showActivityExplore) { path = '/activities'; title = '活動探索' }
     pageview(path, title)
-  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showRewards, showMonopoly, showHeroes, showRunMeet, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace])
+  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showRewards, showMonopoly, showHeroes, showRunMeet, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace, showActivityExplore])
 
   return (
     <GoogleAuthProvider>
@@ -276,20 +283,31 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
             onBack={() => setDetailRace(null)}
             onRegister={(r) => { setDetailRace(null); setRegisterRace(r) }}
           />
-        ) : (
-          <RacesScreen
+        ) : showActivityExplore ? (
+          // registerRace/detailRace 在鏈中排它前面：從活動探索開賽事詳情/報名時 showActivityExplore
+          // 仍保持 true（不清），返回時（上面兩支 onBack 只清各自的 state）自然落回這支分支而非首頁。
+          <ActivityExploreScreen
+            onBack={() => setShowActivityExplore(false)}
             onOpenRanking={(r) => { setDetailTab('rank'); setDetailRace(r) }}
             onRegister={setRegisterRace}
             onPay={setPayRace}
+            onOpenBrochure={(r) => { setDetailTab(undefined); setDetailRace(r) }}
+          />
+        ) : (
+          <RacesScreen
             onOpenProfile={() => setShowProfile(true)}
+            onOpenActivityExplore={() => setShowActivityExplore(true)}
             onOpenPersonalTasks={() => setShowPersonalTasks(true)}
             onOpenTraining={() => setShowTraining(true)}
             onOpenExplore={() => setShowExplore(true)}
             onOpenGallery={() => setShowGallery(true)}
             onOpenTitle={() => setShowTitle(true)}
             onOpenAchievement={() => setShowAchievement(true)}
-            onOpenBrochure={(r) => { setDetailTab(undefined); setDetailRace(r) }}
+            onOpenPerks={() => setShowPerks(true)}
+            onOpenMonopoly={() => setShowMonopoly(true)}
             onOpenRewards={() => setShowRewards(true)}
+            onOpenHeroes={() => setShowHeroes(true)}
+            onOpenRunMeet={() => setShowRunMeet(true)}
           />
         )}
       </div>

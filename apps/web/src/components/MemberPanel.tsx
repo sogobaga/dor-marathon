@@ -10,14 +10,15 @@ import GpCoin from './GpCoin'
 import MailPanel from './MailPanel'
 import KnowledgeGalleryScreen from './KnowledgeGalleryScreen'
 
-// 會員資訊面板（首頁與「會員資訊頁」共用，內容一致）。
+// 會員資訊面板（首頁與「會員管理頁」ProfileScreen 共用，內容一致；2026-09-03 首頁改版起，入口按鈕列在首頁顯示）。
 // - 未帶 dash：自行抓取（首頁用法），並在資料就緒時呼叫 onReady。
-// - 有帶 dash：受控（會員資訊頁用法，用該頁既有的 dashboard 資料）。
-// - onOpenProfile：整張卡可點 → 開會員資訊頁（首頁）。
-// - onUploadAvatar：頭像變成可上傳（會員資訊頁）。
+// - 有帶 dash：受控（會員管理頁用法，用該頁既有的 dashboard 資料）。
+// - onOpenProfile：整張卡可點 → 開會員管理頁（首頁）；入口列最後一格「會員管理」也走這條。
+// - onUploadAvatar：頭像變成可上傳（會員管理頁）。
 export default function MemberPanel({
   dash: dashProp,
   onOpenProfile,
+  onOpenActivityExplore,
   onOpenPersonalTasks,
   onOpenExplore,
   onOpenGallery,
@@ -36,6 +37,7 @@ export default function MemberPanel({
 }: {
   dash?: DashboardInfo | null
   onOpenProfile?: () => void
+  onOpenActivityExplore?: () => void // 活動探索（原首頁活動列表，2026-09-03 改版收進入口網格，固定排最前）
   onOpenPersonalTasks?: () => void
   onOpenExplore?: () => void
   onOpenGallery?: () => void
@@ -50,7 +52,7 @@ export default function MemberPanel({
   onUploadAvatar?: (file: File) => void
   uploadingAvatar?: boolean
   onReady?: () => void
-  showEntries?: boolean // 城市探索/卡片圖鑑入口：首頁隱藏(小尺寸會被遮)、僅會員資料頁顯示
+  showEntries?: boolean // 入口按鈕列：預設 true，首頁(RacesScreen)顯示；會員管理頁(ProfileScreen)傳 false 隱藏（入口已搬到首頁，2026-09-03）
 }) {
   const controlled = dashProp !== undefined // 有傳 dash（含 null）＝受控；未傳＝用共用快取
   const { dash: hookDash, loading, user } = useDashboard() // 共用快取：與會員資訊頁同一份、切頁不再 loading
@@ -208,104 +210,116 @@ export default function MemberPanel({
 
       </div>
 
-      {/* 探索入口（面板下方、後台可控可見性；首頁不顯示）：兩欄直排——
-          左欄(上→下)：城市探索、卡片探索、成就探索、跑者充電站、數據探索
-          右欄(上→下)：個人任務、知識探索、活動獎勵、環台大富翁、百里英雄榜。
-          跑者充電站／活動獎勵／百里英雄榜開放全體會員恆顯示；其餘由各自 *_entry 三態控管（hidden 不渲染、locked 反灰）。
-          外層 alignItems:flex-start，左右兩欄各依內容高度堆疊（按鈕數不同也不會被拉伸）；entryBtn 用 width:100% 撐滿欄寬。 */}
+      {/* 探索入口（面板下方、後台可控可見性；首頁顯示、會員管理頁隱藏）：單一順序清單、以 2 欄 grid 逐列填滿（row-major：
+          第1項左上、第2項右上、第3項左下……），取代舊版左右兩欄各自堆疊——2026-09-03 首頁改版，使用者指示
+          函式按鈕列要出現在首頁，故固定順序改為：
+          [活動探索(恆顯示,固定最前)] → 城市探索/卡片探索/成就探索/跑者充電站/數據探索/團練邀請/個人任務/
+          知識探索/活動獎勵/環台大富翁/百里英雄榜 → [會員管理(恆顯示,固定最後)]。
+          跑者充電站／活動獎勵／百里英雄榜／活動探索／會員管理恆顯示；其餘由各自 *_entry 三態控管
+          （hidden 不渲染、locked 反灰）。entryBtn 用 width:100% 撐滿格寬，不因項目數量不同而錯位。 */}
       {showEntries && user && dash && (
-        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 10 }}>
-          {/* 左欄 */}
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {dash.explore_entry !== 'hidden' && (
-              <button disabled={dash.explore_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.explore_entry === 'shown') onOpenExplore?.() }}
-                style={{ ...entryBtn, opacity: dash.explore_entry === 'shown' ? 1 : 0.6, cursor: dash.explore_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🗺️ 城市探索</span>
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.explore_entry === 'locked' ? '即將開放 ›' : '發現城市美好 ›'}</span>
-              </button>
-            )}
-            {dash.gallery_entry !== 'hidden' && (
-              <button disabled={dash.gallery_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.gallery_entry === 'shown') onOpenGallery?.() }}
-                style={{ ...entryBtn, opacity: dash.gallery_entry === 'shown' ? 1 : 0.6, cursor: dash.gallery_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🃏 卡片探索</span>
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.gallery_entry === 'locked' ? '即將開放 ›' : '挑戰各方好手 ›'}</span>
-              </button>
-            )}
-            {dash.title_entry !== 'hidden' && (
-              <button disabled={dash.title_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.title_entry === 'shown') onOpenTitle?.() }}
-                style={{ ...entryBtn, opacity: dash.title_entry === 'shown' ? 1 : 0.6, cursor: dash.title_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏆 成就探索</span>
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.title_entry === 'locked' ? '即將開放 ›' : '解鎖你的稱號 ›'}</span>
-              </button>
-            )}
-            <button
-              onClick={(e) => { e.stopPropagation(); onOpenPerks?.() }}
-              style={entryBtn}>
-              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🔋 跑者充電站</span>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>優惠好康都在這 ›</span>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
+          {/* 活動探索：原本首頁的可拖曳活動列表收合進本鈕，固定排最前 */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenActivityExplore?.() }}
+            style={entryBtn}>
+            <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏁 活動探索</span>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>賽事與活動 ›</span>
+          </button>
+
+          {dash.explore_entry !== 'hidden' && (
+            <button disabled={dash.explore_entry === 'locked'}
+              onClick={(e) => { e.stopPropagation(); if (dash.explore_entry === 'shown') onOpenExplore?.() }}
+              style={{ ...entryBtn, opacity: dash.explore_entry === 'shown' ? 1 : 0.6, cursor: dash.explore_entry === 'shown' ? 'pointer' : 'default' }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🗺️ 城市探索</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.explore_entry === 'locked' ? '即將開放 ›' : '發現城市美好 ›'}</span>
             </button>
-            {dash.achievement_entry !== 'hidden' && (
-              <button disabled={dash.achievement_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.achievement_entry === 'shown') onOpenAchievement?.() }}
-                style={{ ...entryBtn, opacity: dash.achievement_entry === 'shown' ? 1 : 0.6, cursor: dash.achievement_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>📊 數據探索</span>
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.achievement_entry === 'locked' ? '即將開放 ›' : '你的數據成就 ›'}</span>
-              </button>
-            )}
-            {/* 團練邀請（見 components/RunMeetScreen）：三態入口。刻意不在入口顯示剩餘發起次數
-                （runmeet_remaining 由 dashboard 一併回，不需另外打 API）。 */}
-            {!!dash.runmeet_entry && dash.runmeet_entry !== 'hidden' && (
-              <button disabled={dash.runmeet_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.runmeet_entry === 'shown') onOpenRunMeet?.() }}
-                style={{ ...entryBtn, opacity: dash.runmeet_entry === 'shown' ? 1 : 0.6, cursor: dash.runmeet_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🤝 團練邀請</span>
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.runmeet_entry === 'locked' ? '即將開放 ›' : '揪人一起去跑步 ›'}</span>
-              </button>
-            )}
-          </div>
-          {/* 右欄（首項：個人任務——與「自主訓練」對調，原為顯眼的資訊面板位置） */}
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {dash.personal_entry !== 'hidden' && (
-              <button disabled={dash.personal_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.personal_entry === 'shown') onOpenPersonalTasks?.() }}
-                style={{ ...entryBtn, opacity: dash.personal_entry === 'shown' ? 1 : 0.6, cursor: dash.personal_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏃 個人任務</span>
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.personal_entry === 'locked' ? '即將開放 ›' : '開始你的訓練旅程 ›'}</span>
-              </button>
-            )}
-            {dash.knowledge_entry !== 'hidden' && (
-              <button disabled={dash.knowledge_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.knowledge_entry === 'shown') setShowKnowledge(true) }}
-                style={{ ...entryBtn, opacity: dash.knowledge_entry === 'shown' ? 1 : 0.6, cursor: dash.knowledge_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>📚 知識探索</span>
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.knowledge_entry === 'locked' ? '即將開放 ›' : '收集跑者實用知識 ›'}</span>
-              </button>
-            )}
-            <button
-              onClick={(e) => { e.stopPropagation(); onOpenRewards?.() }}
-              style={entryBtn}>
-              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎁 活動獎勵</span>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>查看你的序號好禮 ›</span>
+          )}
+          {dash.gallery_entry !== 'hidden' && (
+            <button disabled={dash.gallery_entry === 'locked'}
+              onClick={(e) => { e.stopPropagation(); if (dash.gallery_entry === 'shown') onOpenGallery?.() }}
+              style={{ ...entryBtn, opacity: dash.gallery_entry === 'shown' ? 1 : 0.6, cursor: dash.gallery_entry === 'shown' ? 'pointer' : 'default' }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🃏 卡片探索</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.gallery_entry === 'locked' ? '即將開放 ›' : '挑戰各方好手 ›'}</span>
             </button>
-            {dash.monopoly_entry !== 'hidden' && (
-              <button disabled={dash.monopoly_entry === 'locked'}
-                onClick={(e) => { e.stopPropagation(); if (dash.monopoly_entry === 'shown') onOpenMonopoly?.() }}
-                style={{ ...entryBtn, opacity: dash.monopoly_entry === 'shown' ? 1 : 0.6, cursor: dash.monopoly_entry === 'shown' ? 'pointer' : 'default' }}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎲 環台大富翁</span>
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.monopoly_entry === 'locked' ? '即將開放 ›' : '擲骰前進，好運等你 ›'}</span>
-              </button>
-            )}
-            {/* 百里英雄榜：不比照 *_entry 三態控管，全體會員恆顯示（比照跑者充電站/活動獎勵） */}
-            <button
-              onClick={(e) => { e.stopPropagation(); onOpenHeroes?.() }}
-              style={entryBtn}>
-              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏅 百里英雄榜</span>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>突破百公里的跑者 ›</span>
+          )}
+          {dash.title_entry !== 'hidden' && (
+            <button disabled={dash.title_entry === 'locked'}
+              onClick={(e) => { e.stopPropagation(); if (dash.title_entry === 'shown') onOpenTitle?.() }}
+              style={{ ...entryBtn, opacity: dash.title_entry === 'shown' ? 1 : 0.6, cursor: dash.title_entry === 'shown' ? 'pointer' : 'default' }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏆 成就探索</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.title_entry === 'locked' ? '即將開放 ›' : '解鎖你的稱號 ›'}</span>
             </button>
-          </div>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenPerks?.() }}
+            style={entryBtn}>
+            <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🔋 跑者充電站</span>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>優惠好康都在這 ›</span>
+          </button>
+          {dash.achievement_entry !== 'hidden' && (
+            <button disabled={dash.achievement_entry === 'locked'}
+              onClick={(e) => { e.stopPropagation(); if (dash.achievement_entry === 'shown') onOpenAchievement?.() }}
+              style={{ ...entryBtn, opacity: dash.achievement_entry === 'shown' ? 1 : 0.6, cursor: dash.achievement_entry === 'shown' ? 'pointer' : 'default' }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>📊 數據探索</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.achievement_entry === 'locked' ? '即將開放 ›' : '你的數據成就 ›'}</span>
+            </button>
+          )}
+          {/* 團練邀請（見 components/RunMeetScreen）：三態入口。刻意不在入口顯示剩餘發起次數
+              （runmeet_remaining 由 dashboard 一併回，不需另外打 API）。 */}
+          {!!dash.runmeet_entry && dash.runmeet_entry !== 'hidden' && (
+            <button disabled={dash.runmeet_entry === 'locked'}
+              onClick={(e) => { e.stopPropagation(); if (dash.runmeet_entry === 'shown') onOpenRunMeet?.() }}
+              style={{ ...entryBtn, opacity: dash.runmeet_entry === 'shown' ? 1 : 0.6, cursor: dash.runmeet_entry === 'shown' ? 'pointer' : 'default' }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🤝 團練邀請</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.runmeet_entry === 'locked' ? '即將開放 ›' : '揪人一起去跑步 ›'}</span>
+            </button>
+          )}
+          {dash.personal_entry !== 'hidden' && (
+            <button disabled={dash.personal_entry === 'locked'}
+              onClick={(e) => { e.stopPropagation(); if (dash.personal_entry === 'shown') onOpenPersonalTasks?.() }}
+              style={{ ...entryBtn, opacity: dash.personal_entry === 'shown' ? 1 : 0.6, cursor: dash.personal_entry === 'shown' ? 'pointer' : 'default' }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏃 個人任務</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.personal_entry === 'locked' ? '即將開放 ›' : '開始你的訓練旅程 ›'}</span>
+            </button>
+          )}
+          {dash.knowledge_entry !== 'hidden' && (
+            <button disabled={dash.knowledge_entry === 'locked'}
+              onClick={(e) => { e.stopPropagation(); if (dash.knowledge_entry === 'shown') setShowKnowledge(true) }}
+              style={{ ...entryBtn, opacity: dash.knowledge_entry === 'shown' ? 1 : 0.6, cursor: dash.knowledge_entry === 'shown' ? 'pointer' : 'default' }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>📚 知識探索</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.knowledge_entry === 'locked' ? '即將開放 ›' : '收集跑者實用知識 ›'}</span>
+            </button>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenRewards?.() }}
+            style={entryBtn}>
+            <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎁 活動獎勵</span>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>查看你的序號好禮 ›</span>
+          </button>
+          {dash.monopoly_entry !== 'hidden' && (
+            <button disabled={dash.monopoly_entry === 'locked'}
+              onClick={(e) => { e.stopPropagation(); if (dash.monopoly_entry === 'shown') onOpenMonopoly?.() }}
+              style={{ ...entryBtn, opacity: dash.monopoly_entry === 'shown' ? 1 : 0.6, cursor: dash.monopoly_entry === 'shown' ? 'pointer' : 'default' }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎲 環台大富翁</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.monopoly_entry === 'locked' ? '即將開放 ›' : '擲骰前進，好運等你 ›'}</span>
+            </button>
+          )}
+          {/* 百里英雄榜：不比照 *_entry 三態控管，全體會員恆顯示（比照跑者充電站/活動獎勵） */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenHeroes?.() }}
+            style={entryBtn}>
+            <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏅 百里英雄榜</span>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>突破百公里的跑者 ›</span>
+          </button>
+
+          {/* 會員管理：原「拖曳面板下方入口」改為固定的會員管理全頁，固定排最後（沿用 onOpenProfile） */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenProfile?.() }}
+            style={entryBtn}>
+            <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>👤 會員管理</span>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>個人資料／數據／報名 ›</span>
+          </button>
         </div>
       )}
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
@@ -336,7 +350,8 @@ const dpBadge: React.CSSProperties = { display: 'inline-flex', alignItems: 'cent
 const gpBadge: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--violet)', fontWeight: 900, fontSize: 14, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }
 const mileageBox: React.CSSProperties = { minWidth: 96, background: 'var(--bg-2)', borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }
 const taskBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 3, textAlign: 'left', border: 'none', borderRadius: 12, padding: '10px 14px', background: 'var(--fug)', color: 'var(--fug-ink)', fontFamily: 'inherit' }
-const entryBtn: React.CSSProperties = { width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3, textAlign: 'left', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 14px)', padding: '12px 14px', background: 'var(--bg-1)', fontFamily: 'inherit', boxShadow: 'var(--card-shadow, none)' }
+// exported：訪客首頁（無會員面板可放函式按鈕列）沿用同一顆按鈕樣式渲染單一「活動探索」入口，見 RacesScreen.tsx
+export const entryBtn: React.CSSProperties = { width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3, textAlign: 'left', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 14px)', padding: '12px 14px', background: 'var(--bg-1)', fontFamily: 'inherit', boxShadow: 'var(--card-shadow, none)' }
 const avatarWrap: React.CSSProperties = {
   position: 'relative', width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
   background: 'var(--bg-2)', border: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', justifyContent: 'center',

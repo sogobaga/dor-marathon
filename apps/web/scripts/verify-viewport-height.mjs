@@ -37,7 +37,7 @@ const cssDecls = css.replace(/\/\*[\s\S]*?\*\//g, '')
 const adDecls = adSrc.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n')
 
 const consumers = [...cssDecls.matchAll(/var\(--app-h[^)]*\)/g), ...adDecls.matchAll(/var\(--app-h[^)]*\)/g)]
-eq(consumers.length, 5, '--app-h 消費點恰好 5 處（html/body、.app-h、.phone-frame、.phone-shell 死碼、InterstitialAd）')
+eq(consumers.length, 6, '--app-h 消費點恰好 6 處（html/body、.app-h、.app-min-h、.phone-frame、.phone-shell 死碼、InterstitialAd）')
 ok(consumers.every((m) => m[0] === 'var(--app-h, 0px)'), '每個 var(--app-h) 的後備值都是 0px（不得是 100dvh/100%：舊瀏覽器解析失敗會蓋掉上一行的 100vh → height:auto 塌陷）')
 
 // 不變式 I：每個消費點都被 max() 包住 → JS 無權讓版面比純 CSS 版矮。

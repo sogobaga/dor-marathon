@@ -11,7 +11,7 @@ import MemberPanel from './MemberPanel'
 import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
 import PushToggle from './PushToggle'
-import { useDraggableSheet } from '@/lib/useDraggableSheet'
+import ScrollArea from './ScrollArea'
 import { submitEcpayForm } from '@/lib/ecpay'
 
 const GENDERS = [
@@ -139,9 +139,6 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [recMsg, setRecMsg] = useState('') // 報名紀錄頁籤操作成功提示（申請取消／撤回）
   const [expandedRegId, setExpandedRegId] = useState<string | null>(null) // 報名紀錄收合/展開：預設只顯示活動名稱+狀態，點擊展開明細
   const [withdrawBusy, setWithdrawBusy] = useState<string | null>(null) // 撤回中的 registration_id
-  // COROS 式 UX：會員資訊面板固定最上方，分頁內容做成可上下拖曳面板（收合看完整會員面板／半展看分頁／全展看整份內容）
-  const sheet = useDraggableSheet('peek') // 預設收合到底部（只露把手＋分頁列）→ 會員面板四個入口(含 PB/成就探索)一進頁就完整顯示
-
   function loadFollows() {
     withUserAuth((t) => profileApi.follows(t)).then((r) => setFollows(r.following)).catch(() => {})
   }
@@ -569,6 +566,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
+        <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>會員管理</span>
         {/* 加入 LINE 社群：與「返回」同層、靠右對齊 */}
         <a href="https://line.me/ti/g2/aWgkU9OMGvCDJy6pTCejNRzgaPB6yosiMXKkew?utm_source=invitation&utm_medium=link_copy&utm_campaign=default"
           target="_blank" rel="noopener noreferrer"
@@ -577,44 +575,28 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         </a>
       </header>
 
-      {/* 會員資訊面板固定最上方 + 可拖曳（個人資料/運動數據/報名紀錄/追蹤）面板 */}
-      <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        {/* 背景層：會員資訊面板（可自行捲動）。底部留白略大於收合面板高度，讓最下方入口(PB/成就探索)必要時能捲到把手上方 */}
-        <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '4px 18px 160px' }}>
-        {err && <div style={{ color: 'var(--hunt)', padding: '8px 2px', fontSize: 13 }}>{err}</div>}
-        {/* 會員資訊面板：與首頁共用同一元件、內容一致（此頁頭像可上傳） */}
-        <MemberPanel onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} onOpenPersonalTasks={onOpenPersonalTasks} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} onOpenTraining={onOpenTraining} onOpenPerks={onOpenPerks} onOpenMonopoly={onOpenMonopoly} onOpenRewards={onOpenRewards} onOpenHeroes={onOpenHeroes} onOpenRunMeet={onOpenRunMeet} />
-        </div>{/* /背景層：會員資訊面板 */}
+      {err && <div style={{ color: 'var(--hunt)', padding: '8px 20px 0', fontSize: 13, flexShrink: 0 }}>{err}</div>}
 
-        {/* 可拖曳面板：分頁（個人資料/運動數據/報名紀錄/追蹤）+ 內容 */}
-        <div style={{
-          position: 'absolute', left: 0, right: 0, top: sheet.curY, bottom: 0,
-          transition: !sheet.dragging && sheet.ready ? 'top .28s cubic-bezier(.22,.61,.36,1)' : 'none',
-          opacity: sheet.ready ? 1 : 0,
-          display: 'flex', flexDirection: 'column',
-          background: 'var(--bg)', color: 'var(--tx)',
-          borderTopLeftRadius: 18, borderTopRightRadius: 18,
-          borderTop: '1px solid var(--line)', boxShadow: '0 -10px 30px rgba(0,0,0,.22)',
-          zIndex: 500, userSelect: 'none', WebkitUserSelect: 'none',
-        }}>
-          {/* 把手 + 分頁列：整個頂部皆可拖曳（移動超過門檻才拖曳，故分頁仍可點切換） */}
-          <div ref={sheet.peekRef} {...sheet.handlers} style={{ flexShrink: 0, touchAction: 'none', cursor: 'grab' }}>
-            <div style={{ padding: '8px 0 6px' }}>
-              <div style={{ width: 40, height: 5, borderRadius: 3, background: 'var(--line-2)', margin: '0 auto' }} />
-            </div>
-            <div style={{ display: 'flex', gap: 6, padding: '2px 14px 0', borderBottom: '1px solid var(--line)' }}>
-              {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄'], ['follows', '追蹤列表']] as const).map(([v, label]) => (
-                <button key={v} onClick={() => { setTab(v); if (sheet.snap === 'peek') sheet.setSnap('half') }} style={{
-                  padding: '8px 9px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap',
-                  color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 700 : 400,
-                  borderBottom: tab === v ? '2px solid var(--fug)' : '2px solid transparent',
-                }}>{label}</button>
-              ))}
-            </div>
-          </div>
+      {/* 會員資訊面板：與首頁共用同一元件、內容一致（此頁頭像可上傳）。2026-09-03 使用者回饋改版：
+          入口按鈕列（城市探索/卡片探索/成就探索…）搬去首頁常駐顯示，本頁 showEntries=false 只留會員卡本體，
+          原本「COROS 式可上下拖曳面板」也一併拿掉，改回會員卡固定在上＋分頁列固定＋內容捲動的一般全頁版型。 */}
+      <div style={{ padding: '4px 18px 0', flexShrink: 0 }}>
+        <MemberPanel showEntries={false} onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} onOpenPersonalTasks={onOpenPersonalTasks} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} onOpenTraining={onOpenTraining} onOpenPerks={onOpenPerks} onOpenMonopoly={onOpenMonopoly} onOpenRewards={onOpenRewards} onOpenHeroes={onOpenHeroes} onOpenRunMeet={onOpenRunMeet} />
+      </div>
 
-          {/* 分頁內容（可捲動）：userSelect 還原成 text，避免面板的 userSelect:none 讓「個人資料」輸入框在 iOS 無法聚焦/編輯 */}
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', userSelect: 'text', WebkitUserSelect: 'text', padding: '14px 18px calc(20px + var(--cta-safe, 0px))' }}>
+      {/* 分頁列（個人資料/運動數據/報名紀錄/追蹤列表）：固定在會員卡下方、不隨內容捲動 */}
+      <div style={{ display: 'flex', gap: 6, padding: '12px 18px 0', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
+        {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄'], ['follows', '追蹤列表']] as const).map(([v, label]) => (
+          <button key={v} onClick={() => setTab(v)} style={{
+            padding: '8px 9px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap',
+            color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 700 : 400,
+            borderBottom: tab === v ? '2px solid var(--fug)' : '2px solid transparent',
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {/* 分頁內容（可捲動） */}
+      <ScrollArea padding="14px 18px calc(20px + var(--cta-safe, 0px))">
         {!p && !err && <div style={{ color: 'var(--tx-dim)', padding: 16 }}>載入中…</div>}
 
         {/* 頁籤①個人資料 */}
@@ -1155,9 +1137,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             <a href="/privacy" style={{ color: 'var(--fug)', textDecoration: 'underline' }}>隱私權政策</a>
           </div>
         </div>
-          </div>{/* /分頁內容 */}
-        </div>{/* /可拖曳面板 */}
-      </div>{/* /容器 */}
+      </ScrollArea>
 
       {/* 繳費頁面 */}
       {payOrder && (
@@ -1347,7 +1327,6 @@ const payBtn: React.CSSProperties = {
   background: 'var(--gold)', color: '#fff', fontWeight: 700, border: 'none',
   borderRadius: 'var(--radius-btn, 9px)', padding: '7px 14px', cursor: 'pointer', fontSize: 13,
 }
-// zIndex 需高於本頁的可拖曳資訊面板(500)，否則從「報名紀錄」開的繳費視窗會被面板蓋住（見 [[frontend-draggable-sheet]] 疊層慣例）
 const overlay: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200, padding: 20 }
 // maxHeight + overflowY：長訂單（多項加購）在小螢幕不會把「前往綠界付款/關閉」擠到畫面外而點不到
 const panel: React.CSSProperties = { background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 16, padding: 20, width: '100%', maxWidth: 420, maxHeight: '90dvh', overflowY: 'auto', overscrollBehavior: 'contain' }
