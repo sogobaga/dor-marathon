@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   racesApi,
   profileApi,
@@ -25,6 +25,7 @@ import { submitEcpayForm } from '@/lib/ecpay'
 import { track } from '@/lib/analytics'
 import ScrollArea from './ScrollArea'
 import ImageLightbox from './ImageLightbox'
+import { LoginModal } from './UserAuthBar'
 
 const FIELD_LABEL: Record<ParticipantField, string> = {
   real_name: '真實姓名', nickname: '暱稱', phone: '手機',
@@ -150,14 +151,21 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const COUPON_CENTS = dash?.activity_coupon_value_cents ?? 10000 // VIP 活動優惠券面額（分）；來自後台系統設定 vip_coupon_value_cents，讀不到時 fallback $100
 
   const loggedIn = !!useUser()
+  // 未登入者在本頁直接登入（LoginModal 就地彈出，不跳轉）：這頁從分享連結／FB／LINE 點進來時沒有首頁右上角的
+  // 登入鈕，舊文案「請先用右上角 Google 登入」等於叫人自己找路。登入成功後 useUser 轉真、下方 effect 以 token
+  // 重載報名狀態＋個資預填，使用者直接留在這張報名表。
+  const [showLogin, setShowLogin] = useState(false)
+  // 掛載時是否已有 token：已登入者的 useUser 水合（null→user）不需要重載；只有「在本頁登入」才重載
+  const hadToken = useRef(false)
   const isBattle = race.event_mode === 'faction_battle'
   const isPersonal = race.event_mode === 'personal'
   // 個人挑戰模式可重複報名再挑戰：只有「進行中」(pending/paid未完成) 的舊 attempt 才視為擋下再報名；
   // completed/expired/cancelled 的歷史報名不算，仍應顯示報名表單（見後端 service.Register 對稱邏輯）。
   const inProgress = !!existing && (existing.status === 'pending' || existing.status === 'paid')
 
-  useEffect(() => {
+  const load = () => {
     const hasToken = !!getUserToken()
+    hadToken.current = hasToken
     const loadDetail = hasToken
       ? withUserAuth((t) => racesApi.detail(race.id, t)).catch(() => racesApi.detail(race.id))
       : racesApi.detail(race.id)
@@ -198,7 +206,14 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         ))
       }).catch(() => setEventCouponsErr(true))
     }
-  }, [race.id])
+  }
+  useEffect(() => { load() }, [race.id])
+  // 在本頁登入成功 → 以 token 重載（報名狀態／個資預填／優惠券）
+  useEffect(() => {
+    if (!loggedIn || hadToken.current) return
+    setLoading(true)
+    load()
+  }, [loggedIn])
 
   const selectedGroup = useMemo(
     () => detail?.groups.find((g) => g.id === groupId) || null,
@@ -491,8 +506,18 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         {loading && <Hint>載入中…</Hint>}
 
         {!loading && !loggedIn && (
-          <Hint>請先用右上角「Google 登入」後再報名。</Hint>
+          <div style={{ ...card, textAlign: 'center', marginTop: 24 }}>
+            <div style={{ fontSize: 34 }}>🔒</div>
+            <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)', marginTop: 10 }}>登入後就能報名</div>
+            <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.8 }}>
+              用 Google 帳號一鍵登入，登入後直接留在這張報名表，不用再找路回來。
+            </div>
+            <button onClick={() => setShowLogin(true)} style={{ ...primaryBtn, width: 'auto', padding: '11px 30px', marginTop: 18 }}>
+              立即登入
+            </button>
+          </div>
         )}
+        {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
 
         {!loading && loggedIn && done && (
           <div style={card}>
