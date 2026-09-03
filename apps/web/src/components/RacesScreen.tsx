@@ -146,8 +146,10 @@ export default function RacesScreen({
             <GuestHero />
             {/* 訪客沒有會員面板可放函式按鈕列，仍需能瀏覽賽事——單一滿版「活動探索」鈕，沿用 MemberPanel 匯出的 entryBtn 樣式（與登入版視覺一致） */}
             <div style={{ padding: '12px 18px 0' }}>
-              <button onClick={() => onOpenActivityExplore?.()} style={entryBtn}>
-                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏁 活動探索</span>
+              {/* 訪客版文案改「現在舉辦中的活動」並置中（2026-09-03 使用者指示）：訪客看的是「有什麼活動可以參加」，
+                  不是登入版那顆入口格；entryBtn 預設靠左（配合雙欄格線），這裡覆寫成置中 */}
+              <button onClick={() => onOpenActivityExplore?.()} style={{ ...entryBtn, alignItems: 'center', textAlign: 'center' }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🏁 現在舉辦中的活動</span>
                 <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>賽事與活動 ›</span>
               </button>
             </div>
