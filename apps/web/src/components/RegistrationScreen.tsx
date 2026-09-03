@@ -158,8 +158,10 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [showLogin, setShowLogin] = useState(false)
   // 掛載時是否已有 token：已登入者的 useUser 水合（null→user）不需要重載；只有「在本頁登入」才重載
   const hadToken = useRef(false)
-  // App 內建瀏覽器（FB／LINE／IG…）：Google 登入會被 Google 擋（disallowed_useragent），「立即登入」按了只會撞牆
-  // → 換成「用 Safari／Chrome 開啟」引導卡（LINE／Android 能一鍵跳出，iOS FB 系只能複製網址＋⋯選單）。
+  // App 內建瀏覽器（FB／LINE／IG…）：⚠️ 2026-09-03 使用者真機證實 **FB iOS 內建瀏覽器可以直接 Google 登入成功**
+  // （GIS 按鈕的 popup 流程沒被 disallowed_useragent 擋）→ 不得再用引導卡「取代」登入鈕（v768 這樣做會把能登入的人趕走）。
+  // 改為：「立即登入」永遠是主動線；內建瀏覽器只在按鈕下方附一行備援「登入被擋？用 Safari／Chrome 開啟」
+  // （LINE／Android 一鍵跳出，iOS FB 系複製網址＋⋯選單）。哪些 App 真的擋，以真機為準、不預設全擋。
   const [inApp, setInApp] = useState<string | null>(null)
   const [extHref, setExtHref] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -524,32 +526,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
       <ScrollArea padding="4px 18px 28px">
         {loading && <Hint>載入中…</Hint>}
 
-        {!loading && !loggedIn && inApp && (
-          <div style={{ ...card, textAlign: 'center', marginTop: 24 }}>
-            <div style={{ fontSize: 34 }}>🧭</div>
-            <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)', marginTop: 10 }}>用 Safari／Chrome 開啟後再登入</div>
-            <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.8 }}>
-              你正在 <b>{inApp}</b> 的內建瀏覽器，Google 登入會被擋（Google 安全政策）。
-              {extHref
-                ? '點下方按鈕改用系統瀏覽器開啟這一頁，再登入報名。'
-                : '請點右上角 ⋯／分享，選「用預設瀏覽器開啟」；或複製網址貼到 Safari／Chrome。'}
-            </div>
-            {extHref ? (
-              <a href={extHref} style={{ ...primaryBtn, display: 'inline-block', textDecoration: 'none', width: 'auto', padding: '11px 30px', marginTop: 18 }}>
-                用 Safari／Chrome 開啟
-              </a>
-            ) : (
-              <button onClick={copyUrl} style={{ ...primaryBtn, width: 'auto', padding: '11px 30px', marginTop: 18 }}>
-                {copied ? '✓ 已複製網址' : '📋 複製網址'}
-              </button>
-            )}
-            <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 10 }}>
-              或直接在瀏覽器輸入：<b style={{ userSelect: 'all', fontFamily: 'monospace', color: 'var(--tx-dim)' }}>www.dor.tw</b>
-            </div>
-          </div>
-        )}
-
-        {!loading && !loggedIn && !inApp && (
+        {!loading && !loggedIn && (
           <div style={{ ...card, textAlign: 'center', marginTop: 24 }}>
             <div style={{ fontSize: 34 }}>🔒</div>
             <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)', marginTop: 10 }}>登入後就能報名</div>
@@ -559,6 +536,22 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
             <button onClick={() => setShowLogin(true)} style={{ ...primaryBtn, width: 'auto', padding: '11px 30px', marginTop: 18 }}>
               立即登入
             </button>
+            {inApp && (
+              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 14, lineHeight: 1.8 }}>
+                在 {inApp} 內登入若被 Google 擋下：
+                {extHref ? (
+                  <a href={extHref} style={{ color: 'var(--tx-dim)', fontWeight: 700, textDecoration: 'underline' }}>用 Safari／Chrome 開啟</a>
+                ) : (
+                  <>
+                    <button onClick={copyUrl} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'var(--tx-dim)', fontWeight: 700, textDecoration: 'underline' }}>
+                      {copied ? '✓ 已複製網址' : '複製網址'}
+                    </button>
+                    貼到 Safari／Chrome
+                  </>
+                )}
+                ，或點右上角 ⋯／分享 → 用預設瀏覽器開啟
+              </div>
+            )}
           </div>
         )}
         {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}

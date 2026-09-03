@@ -42,7 +42,9 @@ export function externalOpenHref(ua: string, href: string): string | null {
   return null
 }
 
-// 在 App 內建瀏覽器時，提示改用系統瀏覽器（否則 Google 登入會被 Google 擋）。前台專用，不在後台顯示。
+// 在 App 內建瀏覽器時，提示「若登入被擋」改用系統瀏覽器。前台專用，不在後台顯示。
+// ⚠️ 2026-09-03 使用者真機證實 FB iOS 內建瀏覽器可直接 Google 登入成功 → 文案不得斷言「會被擋」，
+// 只當備援提示（先試登入、失敗再跳出）；哪些 App 真的擋以真機為準。
 export default function InAppBrowserNotice() {
   const pathname = usePathname()
   const [app, setApp] = useState<string | null>(null)
@@ -70,10 +72,10 @@ export default function InAppBrowserNotice() {
   return (
     <div style={overlay}>
       <div style={card}>
-        <div style={{ fontSize: 15, fontWeight: 900 }}>⚠️ 請用瀏覽器開啟才能登入</div>
+        <div style={{ fontSize: 15, fontWeight: 900 }}>💡 登入被擋？改用瀏覽器開啟</div>
         <div style={{ fontSize: 13, lineHeight: 1.7, marginTop: 6 }}>
-          你正在 <b>{app}</b> 的內建瀏覽器，<b>Google 登入會被擋</b>（Google 安全政策）。
-          請點右上角的 <b>⋯ ／ 分享</b> 圖示，選「<b>用預設瀏覽器開啟</b>」{isAndroid ? '（Chrome）' : '（Safari）'}，再登入。
+          你正在 <b>{app}</b> 的內建瀏覽器，部分 App 會擋 Google 登入。可先直接登入試試；若被擋下，
+          點右上角的 <b>⋯ ／ 分享</b> 圖示，選「<b>用預設瀏覽器開啟</b>」{isAndroid ? '（Chrome）' : '（Safari）'}，再登入。
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           {extHref && <a href={extHref} style={{ ...btnPrimary, textDecoration: 'none', display: 'inline-block' }}>🧭 用 Safari／Chrome 開啟</a>}
