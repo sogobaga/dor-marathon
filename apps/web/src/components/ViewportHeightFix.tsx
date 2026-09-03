@@ -302,7 +302,9 @@ export default function ViewportHeightFix() {
     // 健康狀態幾何上不可能（捏合縮放/視窗被 pan 為僅有例外，已排除）。
     // 治癒（v752 改）＝白幕重載 window.__dorVeilReload（layout.tsx 開機腳本）：v749 原用程式化切分頁
     // （about:blank 開 0.4s 即關），使用者在首頁實測有效、但在賽事落地頁實測無效；程式化 location.reload()
-    // 則實測有效（vpdebug 🔄 按鈕，nav=reload 後版面正常）。這條現在是「到站自動重載」之後的第二道備援
+    // 當時實測有效（vpdebug 🔄 按鈕，nav=reload 後版面正常）。⚠️ v766 第七輪 log 證實開機瞬間的程式化 reload
+    // 生出的文件仍病態，__dorVeilReload 內部已改為 location.replace(同網址)（見 layout.tsx 註解 E）。
+    // 這條現在是「到站自動重載」之後的第二道備援
     // （重載後仍壞、或到站重載被閘門跳過時），節流：每次載入最多 1 次——幾何誤判理論上不存在，這是縱深防禦。
     let healCount = 0
     const onPointerHeal = (e: PointerEvent) => {

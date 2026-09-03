@@ -20,8 +20,11 @@ import { APP_VERSION } from '@/lib/version'
  */
 declare global {
   interface Window {
-    /** layout.tsx 開機腳本寫入的載入瞬間快照；ar＝到站自動重載的決策（arrival@ms／restore@ms／tap@ms／skip:原因）；ts＝navigation transferSize（0＝HTML 由瀏覽器快取供應、伺服器零請求＝分頁回收還原路徑，v764） */
-    __dorVis?: { l: string; t: number; pr: boolean; vt: number; n: string; ih: number; ch: number; sh: number; rt: number; rih: number; ar: string; ts?: number }
+    /** layout.tsx 開機腳本寫入的載入瞬間快照；ar＝到站自動重載的決策（arrival@ms／restore@ms／tap@ms／skip:原因）；
+     *  ts＝navigation transferSize（⚠️ v766 起不可信：CriOS 對網路供應的賽事頁也回 0，第七輪 log 證實，只當參考）；
+     *  prev＝上一份文件離開時寫的「ar|nav|referrer host」（sessionStorage dor.prevAr，看病態文件是誰生的）；
+     *  sa／la＝距上次 tabSeen／上次白幕治療的毫秒數（-1＝無） */
+    __dorVis?: { l: string; t: number; pr: boolean; vt: number; n: string; ih: number; ch: number; sh: number; rt: number; rih: number; ar: string; ts?: number; prev?: string; sa?: number; la?: number }
     /** 白幕重載（layout.tsx 開機腳本提供）：症狀 A 的治療手段，ViewportHeightFix 觸點越界偵測與診斷面板共用 */
     __dorVeilReload?: (why: string) => void
   }
@@ -64,7 +67,8 @@ export default function ViewportDebug() {
       const root = document.documentElement
       const s = window.__dorVis
       const loadRow = s
-        ? `load vis=${s.l}${s.vt >= 0 ? `→vis@${s.vt}ms` : '→never'} nav=${s.n || '?'}${typeof s.ts === 'number' ? ` ts=${s.ts}` : ''}${s.pr ? ' prerender' : ''} · ih0 ${s.ih} ch0 ${s.ch} · rs ${s.rt >= 0 ? `@${s.rt}ms→${s.rih}` : '-'} · ref ${ref} · ar ${s.ar || '-'}`
+        ? `load vis=${s.l}${s.vt >= 0 ? `→vis@${s.vt}ms` : '→never'} nav=${s.n || '?'}${typeof s.ts === 'number' ? ` ts=${s.ts}` : ''}${s.pr ? ' prerender' : ''} · ih0 ${s.ih} ch0 ${s.ch} · rs ${s.rt >= 0 ? `@${s.rt}ms→${s.rih}` : '-'} · ref ${ref} · ar ${s.ar || '-'}
+prev ${s.prev || '-'} · seen ${typeof s.sa === 'number' && s.sa >= 0 ? `${Math.round(s.sa / 1000)}s` : '-'} · heal ${typeof s.la === 'number' && s.la >= 0 ? `${Math.round(s.la / 1000)}s` : '-'}`
         : `load (no snapshot) · ref ${ref}`
       setRows([
         `inner ${window.innerHeight} · icb ${root.clientHeight} · screen ${window.screen.height}`,
@@ -90,6 +94,9 @@ export default function ViewportDebug() {
   // 🅱 切頁＝window.open 空白分頁 0.4s 後自動關閉（逐字重演使用者實測有效的「切分頁再回」；實測有效）
   // 🔄 重載＝location.reload()：驗證使用者提議的「白幕＋自動刷新」方案的引擎是否真的能治
   //    （必須用按鈕而非下拉更新：下拉手勢本身會動到捲動視圖，會混淆判讀）
+  //    ⚠️ 第七輪（v766）log 證實：開機瞬間的程式化 reload 生出來的文件仍是病的；此鈕保留當「對照組」。
+  // 🔁 替換＝location.replace(同網址)：v766 起白幕治療改用的引擎（FrameLoadType::Same，不還原 HistoryItem
+  //    的 view state；與 middleware 彈跳頁同一手段）。病態時按這顆 vs 🔄 對照，就能真機分辨兩種 load type。
   const healTabFlip = () => {
     try {
       const w = window.open('about:blank', '_blank')
@@ -97,6 +104,7 @@ export default function ViewportDebug() {
     } catch { /* noop */ }
   }
   const reload = () => { try { window.location.reload() } catch { /* noop */ } }
+  const replace = () => { try { window.location.replace(window.location.href) } catch { /* noop */ } }
 
   if (!rows) return null
   const btn: React.CSSProperties = { flexShrink: 0, background: '#ff0', color: '#000', border: 'none', borderRadius: 6, padding: '6px 8px', font: 'bold 11px ui-monospace,monospace', cursor: 'pointer' }
@@ -106,6 +114,7 @@ export default function ViewportDebug() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         <button onClick={healTabFlip} style={btn}>🅱 修復</button>
         <button onClick={reload} style={btn}>🔄 重載</button>
+        <button onClick={replace} style={btn}>🔁 替換</button>
       </div>
     </div>
   )

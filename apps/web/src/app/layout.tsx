@@ -96,7 +96,7 @@ export async function generateViewport(): Promise<Viewport> {
 // B. 到站自動重載（症狀 A 的治療；2026-09-02 定案）：iOS Safari 從外部到站（QR 掃碼／連結／輸入網址／分頁還原）
 //    100% 重現「root 圖層被合成器上移 lvh−svh、所有量測值卻正確」的病態；使用者實測程式化 location.reload() 能治
 //    （切頁槓桿在賽事落地頁失效）、且提議「白幕＋自動刷新＋小動畫掩飾閃爍」。做法：在第一次繪製前先蓋上與 skin 同色
-//    的白幕（含轉圈），並把 html/body 背景染成同色讓圖層外的帶子看不出來，等分頁可見後 0.4s 重載；重載後的載入
+//    的白幕（含轉圈），並把 html/body 背景染成同色讓圖層外的帶子看不出來，等分頁可見後 0.4s 重載（v766 起改為 replace 同網址，見 E）；重載後的載入
 //    nav=reload 不再觸發，畫面直接正常。觸發範圍刻意收窄，站內換頁完全不受影響：
 //      ・只在 iPhone 的 WebKit（排除 PWA standalone、Android、桌機；**不再依 UA 排除任何一家瀏覽器**）
 //        ⚠️ v759 真機定案：會發病的到站文件是 Chrome iOS（面板 ua 有 CriOS/152），使用者手機預設瀏覽器是 Chrome、
@@ -137,6 +137,20 @@ export async function generateViewport(): Promise<Viewport> {
 //    是彈跳頁把 referrer 變成同源才打開這個洞。規則：nav=back_forward 一律視為還原並重載一次（站內跨文件返回若
 //    bfcache 沒接住也會多重載一次，代價可接受；bfcache 接住的不會跑到這段）。/track 仍排除、2 分鐘節流仍有效。
 //    v.ts＝navigation transferSize（快取供應為 0）進 ?vpdebug=1 面板，下次真機可直接看到「零網路載入」的證據。
+// E. 治療手段從 location.reload() 改為 location.replace(同網址)（v766，第七輪；Railway HTTP log 重建 2026-09-03
+//    01:44:42–01:47 真機時間軸）：賽事頁 /event/<slug> 是 no-store（每份文件都是 Railway 請求，不可能快取供應），
+//    log 裡同一賽事頁相隔 0.72 秒被抓兩次（皆 7292B、同一 iPhone）、之後只有一組 boot 請求，面板顯示的病態文件
+//    nav=reload、referrer 同源、ar=skip:no-trigger。也就是：第一份文件才剛開機就被程式化 reload（本段 arrival/
+//    restore 或觸點越界 tap），reload 出來的第二份文件**仍然是病的**——早期程式化 reload 在這條路徑上治不好，
+//    v753 起「reload 實測有效」的前提不成立（當時有效的很可能是使用者手動下拉／等畫面穩定後的 reload）。
+//    工作假說：WebKit 對 reload 與 back/forward 兩種 load type 會還原 HistoryItem 上保存的捲動＋view state
+//    （iOS restoreScrollPositionAndViewState），病態幾何跟著被帶進新文件；location.replace(同網址) 是
+//    FrameLoadType::Same，不做 view-state 還原——這正是 middleware 彈跳頁用的手段、而且在第五輪真機驗收有效。
+//    因此 renav()：有 hash 時仍用 reload（同網址帶片段的 replace 會被當成頁內片段導覽、不會重新載入），否則
+//    replace(href)。replace 出來的新文件 nav=navigate、referrer 同源 → no-trigger，2 分鐘節流照舊，不會迴圈。
+//    診斷補強：v.ts（transferSize）在 CriOS 對網路供應的文件也回 0，**不能**再當快取供應的證據；每份文件離開決策
+//    後把「本份的 ar|nav|referrer host」寫進 sessionStorage dor.prevAr，下一份文件開機讀成 v.prev 進面板，真機
+//    就能看出「病態文件是誰生的、上一份做了什麼決定」；v.sa／v.la＝距上次 tabSeen／上次治療的毫秒數。
 // C. bounced 標記：由彈跳頁 replace 過來的文件 referrer 是同源（strict-origin-when-cross-origin 對同源給完整網址），
 //    本來就落在 no-trigger；帶 dor_b=1 cookie 時只是把標籤改成 skip:bounced 讓 ?vpdebug=1 面板看得出走了哪條路。
 //    刻意「不」把 cookie 當成跳過重載的理由：cookie 跨分頁共享（5 秒），同一支手機 5 秒內再掃一張 QR 時 middleware
@@ -148,7 +162,7 @@ export async function generateViewport(): Promise<Viewport> {
 function bootJs(bg: string, fg: string): string {
   return `(function(){try{
 var d=document,p=performance,w=window,n=navigator;
-var v={l:d.visibilityState,t:Math.round(p.now()),pr:!!d.prerendering,vt:-1,n:'',ih:w.innerHeight,ch:d.documentElement.clientHeight,sh:(w.screen||{}).height||0,rt:-1,rih:0,ar:'',ts:-1};
+var v={l:d.visibilityState,t:Math.round(p.now()),pr:!!d.prerendering,vt:-1,n:'',ih:w.innerHeight,ch:d.documentElement.clientHeight,sh:(w.screen||{}).height||0,rt:-1,rih:0,ar:'',ts:-1,prev:'',sa:-1,la:-1};
 var e=p.getEntriesByType&&p.getEntriesByType('navigation')[0];if(e){v.n=e.type;v.ts=typeof e.transferSize==='number'?e.transferSize:-1}
 if(v.l==='visible')v.vt=v.t;else d.addEventListener('visibilitychange',function f(){if(d.visibilityState==='visible'){v.vt=Math.round(p.now());d.removeEventListener('visibilitychange',f)}});
 w.addEventListener('resize',function r(){v.rt=Math.round(p.now());v.rih=w.innerHeight;w.removeEventListener('resize',r)});
@@ -166,12 +180,15 @@ function showVeil(){
     setTimeout(function(){try{d.adoptedStyleSheets=[]}catch(x){}},6000);
   }catch(x){}
 }
+function refHost(){return ref?(ref.split('/')[2]||ref):'-'}
+function mark(){try{sessionStorage.setItem('dor.prevAr',(v.ar||'-')+'|'+(v.n||'?')+'|'+refHost())}catch(x){}}
+function renav(){var L=w.location;try{if(L.hash){L.reload();return}L.replace(L.href)}catch(x){try{L.reload()}catch(y){}}}
 function reload(why){
   if(done)return;done=true;
   try{sessionStorage.setItem('dor.arrivalReload',String(Date.now()))}catch(x){}
-  v.ar=why+'@'+Math.round(p.now());
+  v.ar=why+'@'+Math.round(p.now());mark();
   showVeil();
-  var go=function(){setTimeout(function(){try{w.location.reload()}catch(x){}},400)};
+  var go=function(){setTimeout(renav,400)};
   if(d.visibilityState==='visible')go();else d.addEventListener('visibilitychange',function g(){if(d.visibilityState==='visible'){d.removeEventListener('visibilitychange',g);go()}});
 }
 w.__dorVeilReload=function(why){reload(why||'manual')};
@@ -179,6 +196,8 @@ var ua=n.userAgent||'';
 var q=w.location.search+w.location.hash,path=w.location.pathname;
 var now=Date.now(),seen=0,last=0;
 try{seen=+sessionStorage.getItem('dor.tabSeen')||0;last=+sessionStorage.getItem('dor.arrivalReload')||0}catch(x){}
+var prev='';try{prev=sessionStorage.getItem('dor.prevAr')||''}catch(x){}
+v.prev=prev;v.sa=seen?now-seen:-1;v.la=last?now-last:-1;
 try{sessionStorage.setItem('dor.tabSeen',String(now))}catch(x){}
 var ref=d.referrer||'',org=w.location.origin;
 var external=!ref||(ref!==org&&ref.indexOf(org+'/')!==0);
@@ -195,7 +214,7 @@ else if(/^[/]track([/]|$)/.test(path))skip='track';
 else if(/[?&#](code|state|token|access_token|id_token)=/i.test(q))skip='auth-url';
 else if(!why)skip=/(^|; )dor_b=1(;|$)/.test(d.cookie||'')?'bounced':'no-trigger';
 else if(last&&now-last<120000)skip='recent';
-if(skip)v.ar='skip:'+skip;else reload(why);
+if(skip){v.ar='skip:'+skip;mark()}else reload(why);
 }catch(e){}})();`
 }
 
