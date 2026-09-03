@@ -7,7 +7,6 @@ import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendi
 import { useDashboard } from '@/lib/useDashboard'
 import { APP_VERSION } from '@/lib/version'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
-import MemberPanel from './MemberPanel'
 import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
 import PushToggle from './PushToggle'
@@ -572,12 +571,8 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
 
       {err && <div style={{ color: 'var(--hunt)', padding: '8px 20px 0', fontSize: 13, flexShrink: 0 }}>{err}</div>}
 
-      {/* 會員資訊面板：與首頁共用同一元件、內容一致（此頁頭像可上傳）。2026-09-03 使用者回饋改版：
-          入口按鈕列（城市探索/卡片探索/成就探索…）搬去首頁常駐顯示，本頁 showEntries=false 只留會員卡本體，
-          原本「COROS 式可上下拖曳面板」也一併拿掉，改回會員卡固定在上＋分頁列固定＋內容捲動的一般全頁版型。 */}
-      <div style={{ padding: '4px 18px 0', flexShrink: 0 }}>
-        <MemberPanel showEntries={false} onUploadAvatar={onAvatar} uploadingAvatar={uploadingAvatar} onOpenPersonalTasks={onOpenPersonalTasks} onOpenExplore={onOpenExplore} onOpenGallery={onOpenGallery} onOpenTitle={onOpenTitle} onOpenAchievement={onOpenAchievement} onOpenTraining={onOpenTraining} onOpenPerks={onOpenPerks} onOpenMonopoly={onOpenMonopoly} onOpenRewards={onOpenRewards} onOpenHeroes={onOpenHeroes} onOpenRunMeet={onOpenRunMeet} />
-      </div>
+      {/* 2026-09-03 使用者指示：會員管理頁上方不再顯示會員資訊面板（首頁已有同一張卡）。
+          原本掛在面板頭像上的「更換頭像」改放到「個人資料」分頁最上方（見 tab==='info'）。 */}
 
       {/* 分頁列（個人資料/運動數據/報名紀錄/追蹤列表）：固定在會員卡下方、不隨內容捲動 */}
       <div style={{ display: 'flex', gap: 6, padding: '12px 18px 0', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
@@ -597,6 +592,24 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         {/* 頁籤①個人資料 */}
         {tab === 'info' && p && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {/* 頭像：會員資訊面板自本頁移除後（2026-09-03），更換頭像的入口改放這裡；上傳流程沿用 onAvatar（R2 上傳 → updateMe） */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 12, borderBottom: '1px solid var(--line)' }}>
+              <div style={{ width: 56, height: 56, borderRadius: '50%', overflow: 'hidden', background: 'var(--bg-2)', border: '1px solid var(--line-2)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {p.avatar_url
+                  // eslint-disable-next-line @next/next/no-img-element
+                  ? <img src={p.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : <span style={{ fontWeight: 800, color: 'var(--tx-dim)' }}>{(p.name || p.nickname || '?').slice(0, 1)}</span>}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name || p.nickname || '跑者'}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>頭像會顯示在排行榜與團練</div>
+              </div>
+              <label style={{ ...ghostBtn, padding: '6px 12px', fontSize: 12, flexShrink: 0, cursor: uploadingAvatar ? 'default' : 'pointer', opacity: uploadingAvatar ? 0.6 : 1 }}>
+                {uploadingAvatar ? '上傳中…' : '更換頭像'}
+                <input type="file" accept="image/*" disabled={uploadingAvatar} style={{ display: 'none' }}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) onAvatar(f); e.target.value = '' }} />
+              </label>
+            </div>
             {/* 帳號資訊（唯讀，純文字呈現；非可編輯項目，不用輸入框樣式。帳號編碼保留一鍵複製） */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 9, fontSize: 14, paddingBottom: 12, borderBottom: '1px solid var(--line)' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
