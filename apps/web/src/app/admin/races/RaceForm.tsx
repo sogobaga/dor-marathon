@@ -1759,10 +1759,10 @@ export default function RaceForm({
             <Field label="活動數據來源">
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, color: 'var(--tx)', paddingTop: 2 }}>
                 <input type="checkbox" checked={externalData} onChange={(e) => setExternalData(e.target.checked)} />
-                採用手錶外部數據（Garmin／COROS／Polar／Suunto／Wahoo）做排名/里程統計
+                採用外部裝置數據（Garmin／COROS／Polar／Suunto／Wahoo）做排名/里程統計
               </label>
               <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4 }}>
-                關閉＝只採計 App 內 GPS 跑步追蹤。開啟＝透過手錶同步的外部數據一併計入本活動排名與里程統計（新賽事預設開啟）。Strava 數據依 Strava 規範一律不計入賽事，不受此開關影響。
+                關閉＝只採計 App 內 GPS 跑步追蹤。開啟＝透過跑步裝置同步的外部數據一併計入本活動排名與里程統計（新賽事預設開啟）。Strava 數據依 Strava 規範一律不計入賽事，不受此開關影響。
               </span>
             </Field>
 

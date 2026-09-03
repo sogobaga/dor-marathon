@@ -27,7 +27,7 @@ export default function PrivacyPage() {
         <H>2. 我們如何使用</H>
         <ul style={ul}>
           <li>處理賽事報名與身分識別。</li>
-          <li>判定賽事任務達成、計算完賽與排行榜（賽事排名與里程競賽採計 App GPS 正式紀錄；主辦方開放外部數據的賽事會一併採計 Garmin／COROS 等手錶同步紀錄；Strava 數據依其平台規範一律不計入賽事）。</li>
+          <li>判定賽事任務達成、計算完賽與排行榜（賽事排名與里程競賽採計 App GPS 正式紀錄；主辦方開放外部數據的賽事會一併採計 Garmin／COROS 等裝置同步紀錄；Strava 數據依其平台規範一律不計入賽事）。</li>
           <li>累積經驗值、推導等級、產生完賽證明。</li>
           <li>排行榜對外一律以<b>暱稱</b>顯示，不顯示你的真實姓名。</li>
         </ul>
@@ -35,7 +35,7 @@ export default function PrivacyPage() {
         <H>3. 第三方服務</H>
         <ul style={ul}>
           <li><b>Strava</b>：運動數據來源，依其 <a href="https://www.strava.com/legal/privacy" target="_blank" rel="noreferrer" style={link}>Strava 隱私政策</a> 處理。</li>
-          <li><b>Terra（tryterra.co）</b>：運動穿戴資料整合商。當你選擇「直接連手錶（Garmin／COROS 等）」時，我們透過 Terra 取得你的<b>跑步活動資料</b>（距離、時間、配速、心率、爬升、路線）。此屬<b>跨境傳輸</b>（資料經 Terra 於境外處理），僅在你<b>明確授權連接後</b>才啟用；你可隨時中斷，中斷即停止取得新資料。詳見 <a href="https://tryterra.co/privacy-policy" target="_blank" rel="noreferrer" style={link}>Terra 隱私政策</a>。</li>
+          <li><b>Terra（tryterra.co）</b>：運動穿戴資料整合商。當你選擇「連接你常用的跑步裝置（Garmin／COROS 等）」時，我們透過 Terra 取得你的<b>跑步活動資料</b>（距離、時間、配速、心率、爬升、路線）。此屬<b>跨境傳輸</b>（資料經 Terra 於境外處理），僅在你<b>明確授權連接後</b>才啟用；你可隨時中斷，中斷即停止取得新資料。詳見 <a href="https://tryterra.co/privacy-policy" target="_blank" rel="noreferrer" style={link}>Terra 隱私政策</a>。</li>
           <li><b>Google</b>：第三方登入。</li>
           <li><b>綠界 ECPay</b>：金流付款處理。</li>
         </ul>

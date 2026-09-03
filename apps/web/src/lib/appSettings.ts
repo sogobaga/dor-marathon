@@ -250,7 +250,7 @@ export const SETTINGS_SPECS: SettingSpec[] = [
   },
   {
     key: 'gps_calib_entry_state', group: 'GPS 校正', label: 'GPS 距離校正入口', type: 'select', def: 'whitelist',
-    help: '以連接的手錶/App(Strava/Garmin/COROS)紀錄為參考，自動估計並校正 App GPS 距離的系統性偏差（見個人資料頁「GPS 距離校正」卡片、GPS 上傳當下即套用）。',
+    help: '以連接的裝置/App(Strava/Garmin/COROS)紀錄為參考，自動估計並校正 App GPS 距離的系統性偏差（見個人資料頁「GPS 距離校正」卡片、GPS 上傳當下即套用）。',
     options: [
       { value: 'hidden', label: '前台隱藏（都看不到）' },
       { value: 'locked', label: '顯示但不套用（即將開放）' },

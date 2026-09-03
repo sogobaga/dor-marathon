@@ -344,7 +344,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         const provider = sp.get('provider') || ''
         const reason = sp.get('reason') || ''
         if (tr === 'connected') {
-          setTerraMsg(`✓ 已連接 ${provider ? terraBrandName(provider) : '手錶'}，之後手錶同步的跑步會自動匯入（僅計算連接之後的紀錄）`)
+          setTerraMsg(`✓ 已連接 ${provider ? terraBrandName(provider) : '裝置'}，之後裝置同步的跑步會自動匯入（僅計算連接之後的紀錄）`)
           loadTerra()
           if (provider) pollTerraForBrand(provider, 5) // webhook 可能晚到，補幾次輪詢
         } else {
@@ -480,13 +480,13 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       const { url } = await withUserAuth((t) => integrationsApi.terraConnectUrl(t, returnUrl))
       window.location.href = url // 導去 Terra 連接 widget
     } catch (e: any) {
-      setTerraMsg(e?.status === 503 ? '手錶連接功能尚未開放，請稍後再試' : (e?.message || '無法連接，請再試一次'))
+      setTerraMsg(e?.status === 503 ? '裝置連接功能尚未開放，請稍後再試' : (e?.message || '無法連接，請再試一次'))
       setTerraBusy(false)
     }
   }
   async function disconnectTerra(provider: string) {
     const brand = terraBrandName(provider)
-    if (!window.confirm(`中斷 ${brand} 連接？之後 ${brand} 手錶同步的跑步將不再自動匯入；已獲得的 EXP/DP 等獎勵不受影響。`)) return
+    if (!window.confirm(`中斷 ${brand} 連接？之後 ${brand} 裝置同步的跑步將不再自動匯入；已獲得的 EXP/DP 等獎勵不受影響。`)) return
     setTerraBusy(true)
     try {
       await withUserAuth((t) => integrationsApi.terraDisconnect(t, provider))
@@ -717,7 +717,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             {/* Strava 官方連接名額誠實告知（見 memory strava-api-review：上限 10 已滿，重送審核中）；不管 Terra 是否開放都顯示，
                 不隱藏連接按鈕（有人中斷會釋出名額）。琥珀色半透明底＋var(--tx) 文字，不用金黃實心底（專案規則：實色金底才強制白字）。 */}
             <div style={{ fontSize: 11.5, color: 'var(--tx)', background: 'rgba(245,158,11,.14)', border: '1px solid rgba(245,158,11,.35)', borderRadius: 8, padding: '8px 10px', marginBottom: 12, lineHeight: 1.6 }}>
-              ⚠ Strava 官方限制每個 App 只能連接 10 位跑者，目前名額已滿、升級審核中。使用 Garmin／COROS 等手錶的跑者請改用「直接連手錶」。
+              ⚠ Strava 官方限制每個 App 只能連接 10 位跑者，目前名額已滿、升級審核中。使用 Garmin／COROS 等裝置的跑者請改用「連接你常用的跑步裝置」。
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
@@ -725,7 +725,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
                   {strava?.connected
                     ? `已連接${strava.athlete_name ? `：${strava.athlete_name}` : ''} · 活動自動同步`
-                    : '連接後自動同步跑步活動，用於個人數據（個人任務、自主訓練、稱號成就、個人里程）；依 Strava 平台規範，Strava 數據不計入活動排名或里程競賽統計——要讓手錶紀錄進賽事，請用下方「直接連手錶」'}
+                    : '連接後自動同步跑步活動，用於個人數據（個人任務、自主訓練、稱號成就、個人里程）；依 Strava 平台規範，Strava 數據不計入活動排名或里程競賽統計——要讓裝置紀錄進賽事，請用下方「連接你常用的跑步裝置」'}
                 </div>
               </div>
               {strava?.connected ? (
@@ -793,13 +793,13 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 700, color: 'var(--tx)' }}>
-                  ⌚ 直接連手錶
+                  ⌚ 連接你常用的跑步裝置
                   {terra?.enabled && <span style={{ fontSize: 10.5, color: 'var(--fug)', fontWeight: 800, marginLeft: 5 }}>· 推薦</span>}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3, lineHeight: 1.6 }}>
                   {!terra?.enabled
-                    ? <>Strava 名額已滿也沒關係——很快就能直接連你的 Garmin／COROS／Polar／Suunto／Wahoo 帳號同步跑步，<b>正在開通中</b>。</>
-                    : `直接連接 ${terraBrandList} 等手錶帳號同步跑步：計入個人數據（個人任務、自主訓練、稱號成就、個人里程），主辦方開放外部數據的賽事也會計入排名與里程統計。`}
+                    ? <>Strava 名額已滿也沒關係——很快就能連接你的 Garmin／COROS／Polar／Suunto／Wahoo 裝置帳號同步跑步，<b>正在開通中</b>。</>
+                    : `直接連接 ${terraBrandList} 等裝置帳號同步跑步：計入個人數據（個人任務、自主訓練、稱號成就、個人里程），主辦方開放外部數據的賽事也會計入排名與里程統計。`}
                 </div>
               </div>
               {!terra?.enabled ? (
@@ -807,7 +807,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               ) : (
                 <button onClick={connectTerra} disabled={terraBusy}
                   style={{ background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 10, padding: '9px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap', flexShrink: 0, alignSelf: 'flex-start', opacity: terraBusy ? 0.6 : 1 }}>
-                  {terraBusy ? '連接中…' : '連接手錶'}
+                  {terraBusy ? '連接中…' : '連接裝置'}
                 </button>
               )}
             </div>
@@ -834,7 +834,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
           {connectedSources.length >= 2 && (
             <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 12, padding: '12px 14px' }}>
               <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>里程優先來源</div>
-              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>正式紀錄一律以「App GPS 跑步追蹤」為優先。此設定用於：①結束跑步時是否先跳出確認外部數據的提示；②沒有 App GPS 記錄時，多個外部來源（Strava／手錶）之間如何取捨。若外部紀錄里程較長，EXP/DP/總里程會自動補足差額。</div>
+              <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>正式紀錄一律以「App GPS 跑步追蹤」為優先。此設定用於：①結束跑步時是否先跳出確認外部數據的提示；②沒有 App GPS 記錄時，多個外部來源（Strava／裝置）之間如何取捨。若外部紀錄里程較長，EXP/DP/總里程會自動補足差額。</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
                 {connectedSources.map((src) => {
                   const on = effectiveSource === src
@@ -924,14 +924,14 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               </div>
               {dash.gps_calib_entry === 'locked' ? (
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.6 }}>
-                  以你連接的手錶/App（Strava/Garmin/COROS）紀錄為參考，自動校正 App GPS 跑步的距離系統性偏差。
+                  以你連接的裝置/App（Strava/Garmin/COROS）紀錄為參考，自動校正 App GPS 跑步的距離系統性偏差。
                 </div>
               ) : !gpsCalib ? (
                 <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 8 }}>載入中…</div>
               ) : (
                 <>
                   <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 6, lineHeight: 1.6 }}>
-                    以你的{gpsCalib.ref_source ? `「${GPS_CALIB_SRC_LABEL[gpsCalib.ref_source] ?? gpsCalib.ref_source}」紀錄` : '手錶/App 紀錄'}為參考，自動校正 App GPS 距離的系統性偏差；只會讓距離變短、不會變長，且只影響上線後新跑的紀錄，不會回頭改已有的成績。
+                    以你的{gpsCalib.ref_source ? `「${GPS_CALIB_SRC_LABEL[gpsCalib.ref_source] ?? gpsCalib.ref_source}」紀錄` : '裝置/App 紀錄'}為參考，自動校正 App GPS 距離的系統性偏差；只會讓距離變短、不會變長，且只影響上線後新跑的紀錄，不會回頭改已有的成績。
                   </div>
                   <div style={{ display: 'flex', gap: 20, marginTop: 10, flexWrap: 'wrap' }}>
                     <div>

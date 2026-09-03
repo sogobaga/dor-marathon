@@ -28,7 +28,7 @@ export default function SupportPage() {
             <li><b>中斷</b>：「運動數據」分頁 →「中斷」。中斷後我們不再同步你的新活動，且會刪除已匯入的 Strava 活動紀錄（你已獲得的 EXP/DP 等獎勵不受影響）。</li>
             <li><b>更換 Strava 帳號</b>：先到 <a href="https://www.strava.com/logout" target="_blank" rel="noreferrer" style={link}>strava.com 登出</a> → 回本站「中斷」→ 重新連接（連到的是你瀏覽器當下登入的 Strava 帳號）。</li>
           </ol>
-          <p style={pDim}>我們只會匯入你「連接之後」的跑步活動（距離、時間、配速、爬升、心率），用於你個人的數據頁、個人成就與等級經驗。賽事排名與里程競賽採計 App GPS 正式紀錄；主辦方開放外部數據的賽事會一併採計 Garmin／COROS／Polar／Suunto／Wahoo 等手錶同步紀錄；Strava 數據依其平台規範一律不計入賽事。</p>
+          <p style={pDim}>我們只會匯入你「連接之後」的跑步活動（距離、時間、配速、爬升、心率），用於你個人的數據頁、個人成就與等級經驗。賽事排名與里程競賽採計 App GPS 正式紀錄；主辦方開放外部數據的賽事會一併採計 Garmin／COROS／Polar／Suunto／Wahoo 等裝置同步紀錄；Strava 數據依其平台規範一律不計入賽事。</p>
           <div style={{ marginTop: 14 }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/strava/powered_by_strava_white.png" alt="Powered by Strava" style={{ height: 18, opacity: 0.85 }} />
