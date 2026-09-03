@@ -82,6 +82,7 @@ export default function AdminVirtualRunnersPage() {
   const [avatarBusy, setAvatarBusy] = useState(false)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
+  const [rerollMinRuns, setRerollMinRuns] = useState(0) // 「🎲 重抽稱號」的門檻：僅對累積趟數 ≥ 此值的啟用選手重抽
 
   const load = useCallback(() => {
     const t = getToken()
@@ -205,6 +206,25 @@ export default function AdminVirtualRunnersPage() {
     } catch (e: any) { setErr(e?.message || '同步稱號失敗') } finally { setBusy(false) }
   }
 
+  // --- 重抽稱號：管理員手動動作，無視「每 N 趟」規則，對 run 數 ≥ 門檻的啟用選手立即從已解鎖稱號隨機重抽 ---
+  async function rerollTitles() {
+    if (!token) return
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      // 同樣分批串完（一批 20）：全量單發會超過閘道逾時，沿用 syncTitles 的節奏
+      let offset = 0, rerolledSum = 0, skippedSum = 0
+      for (;;) {
+        const { rerolled, skipped, total, next_offset } = await adminVirtualRunnersApi.rerollTitles(token, rerollMinRuns, offset)
+        rerolledSum += rerolled; skippedSum += skipped
+        setMsg(`🎲 重抽中… ${Math.min(offset + rerolled + skipped, total)}/${total}`)
+        if (next_offset == null) break
+        offset = next_offset
+      }
+      setMsg(`✓ 已重抽 ${rerolledSum}／略過 ${skippedSum}（無已解鎖稱號）`)
+      load()
+    } catch (e: any) { setErr(e?.message || '重抽稱號失敗') } finally { setBusy(false) }
+  }
+
   // --- 批次產生 ---
   function bStartNew() { setBForm(emptyBForm()); setErr(''); setMsg(''); setRForm(null) }
   function bCancel() { setBForm(null); setErr('') }
@@ -268,6 +288,16 @@ export default function AdminVirtualRunnersPage() {
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={regenerateAllNames} disabled={busy} style={{ ...ghostBtn, opacity: busy ? 0.5 : 1 }}>🎲 全部重新取名</button>
               <button onClick={syncTitles} disabled={busy} style={{ ...ghostBtn, opacity: busy ? 0.5 : 1 }}>🏅 同步稱號</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input
+                  type="number" min={0} value={rerollMinRuns} disabled={busy}
+                  onChange={(e) => setRerollMinRuns(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  placeholder="≥ N 趟"
+                  title="僅重抽累積跑步趟數（未標記異常）≥ 此值的啟用選手；0＝全部"
+                  style={{ ...inp, width: 70, padding: '8px 8px', opacity: busy ? 0.5 : 1 }}
+                />
+                <button onClick={rerollTitles} disabled={busy} style={{ ...ghostBtn, opacity: busy ? 0.5 : 1 }}>🎲 重抽稱號</button>
+              </div>
               <button onClick={bStartNew} style={ghostBtn}>⚡ 批次產生</button>
               <button onClick={rStartNew} style={primaryBtn}>＋ 新增</button>
             </div>

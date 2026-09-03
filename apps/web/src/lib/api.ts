@@ -2771,6 +2771,13 @@ export const adminVirtualRunnersApi = {
       `/admin/virtual-runners/sync-titles?offset=${offset}&limit=${limit}`, {
       method: 'POST', headers: withAuth(token),
     }),
+  // 管理員手動重抽：無視「每 N 趟」規則，對 run 數 ≥ min_runs 的啟用選手立即從已解鎖稱號隨機重抽展示稱號。
+  // 同樣分批（一批預設 20，後端上限 50）避免全量單發超過閘道逾時；以回傳的 next_offset 串下一批（null＝完成）。
+  rerollTitles: (token: string, minRuns: number, offset: number, limit = 20) =>
+    request<{ rerolled: number; skipped: number; total: number; next_offset: number | null }>(
+      `/admin/virtual-runners/reroll-titles?min_runs=${minRuns}&offset=${offset}&limit=${limit}`, {
+      method: 'POST', headers: withAuth(token),
+    }),
   update: (token: string, userID: string, body: VirtualRunnerUpdatePayload) =>
     request<{ runner: VirtualRunner }>(`/admin/virtual-runners/${userID}`, {
       method: 'PUT', headers: withAuth(token), body: JSON.stringify(body),

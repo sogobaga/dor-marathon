@@ -96,6 +96,9 @@ var specs = map[string]func(string) bool{
 	// 推薦/推廣連結系統（見 internal/referral）：達標（雙方 total_km 皆 >=10）時雙向 VIP 天數獎勵
 	"referral_reward_referrer_days": isNonNegInt, // 推薦人（老朋友）獎勵天數，預設 1
 	"referral_reward_referred_days": isNonNegInt, // 被推薦人（新朋友）獎勵天數，預設 3
+	// 虛擬選手展示稱號（見 internal/virtualrunner/titles.go）：每累積達此趟數就從已解鎖稱號中
+	// 隨機重抽一次展示稱號（避免 179 位虛擬選手因決定論選法看起來千篇一律）；預設 10。
+	"virtual_title_reroll_every": isPosIntMax(10000),
 	// 團練邀請（見 internal/runmeet，migration 156）。⚠️ 中文顯示一律「團練」，不得寫成「跑團」
 	// （「跑團分組」是賽事的既有功能，撞名會混淆）。兩層閘門要分清楚：
 	//   runmeet_entry_*  控制「這個功能對此帳號開不開放」（測試期控管，四態）

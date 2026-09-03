@@ -5,12 +5,13 @@ import (
 	"errors"
 	"math/rand"
 	"net/http"
-	"strconv"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // uuidRE 驗證路徑帶入的 id 是否為合法 UUID 格式，比照 internal/partner 慣例——不合法直接擋掉，
@@ -35,6 +36,7 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Post("/batch", h.BatchCreate)
 	r.Post("/regenerate-names", h.RegenerateNames)
 	r.Post("/sync-titles", h.SyncTitlesAll)
+	r.Post("/reroll-titles", h.RerollTitles)
 	r.Put("/{userID}", h.Update)
 	r.Delete("/{userID}", h.Delete)
 	// 靜態路徑 "presets"/"race" 在 chi/{userID} 之上，radix tree 依字面優先比對，不會被
@@ -277,10 +279,47 @@ func (h *Handler) SyncTitlesAll(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- POST /reroll-titles ---
+
+// RerollTitles 後台「重抽稱號」明確動作（見 titles.go RerollTitlesBatch）：刻意忽略 SyncTitles
+// 的節流規則（每 N 趟才重抽），對候選逐一從已解鎖稱號中隨機重挑一個直接寫入展示稱號。
+// 分批（?min_runs=&offset=&limit=，預設 min_runs=0/offset=0/limit=20、limit 上限 50，比照
+// SyncTitlesAll）；response 為前後端已約定好的固定形狀 {rerolled,skipped,total,next_offset}——
+// next_offset 為 null 代表這批跑完已到底，非 null 則是前端下一批要帶的 offset（不是 done 布林，
+// 刻意跟 SyncTitlesAll 的回應形狀不同，兩邊各自獨立不必對齊）。
+func (h *Handler) RerollTitles(w http.ResponseWriter, r *http.Request) {
+	minRuns, _ := strconv.Atoi(r.URL.Query().Get("min_runs"))
+	if minRuns < 0 {
+		minRuns = 0
+	}
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	rerolled, skipped, total, nextOffset, err := RerollTitlesBatch(r.Context(), h.repo.Pool(), minRuns, offset, limit)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to reroll virtual runner titles")
+		return
+	}
+	log.Info().Int("min_runs", minRuns).Int("offset", offset).Int("limit", limit).
+		Int("rerolled", rerolled).Int("skipped", skipped).Int("total", total).
+		Msg("virtual runner reroll-titles: batch done")
+	respondJSON(w, http.StatusOK, map[string]any{
+		"rerolled": rerolled, "skipped": skipped, "total": total, "next_offset": nextOffset,
+	})
+}
+
 // --- PUT /{userID} ---
 
 type updateReq struct {
-	Name       *string  `json:"name"` // 改名（nil＝不改；給值必須非空白）
+	Name       *string  `json:"name"`       // 改名（nil＝不改；給值必須非空白）
 	AvatarURL  *string  `json:"avatar_url"` // 頭像（nil＝不改；""＝清除；其餘限站內圖 URL）
 	Gender     *string  `json:"gender"`
 	City       *string  `json:"city"`

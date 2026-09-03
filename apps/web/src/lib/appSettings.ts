@@ -447,4 +447,11 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '團練開跑前幾小時發送提醒（站內信 + Email，一人有多場只合併發一封）。每場團練只會提醒一次，不會因為改這個值而補發或重發。',
     min: 1, max: 72, def: '3',
   },
+  // ── 虛擬選手展示稱號（見 services/api/internal/virtualrunner/titles.go）──
+  // 2026-09-03 決策：展示稱號改「全隨機」（不再挑類別內最高階），每累積達 N 趟就重抽一次；N 在此可調。
+  {
+    key: 'virtual_title_reroll_every', group: '虛擬選手', label: '虛擬選手稱號重抽間隔（趟）', type: 'number', unit: '趟',
+    help: '每累積達此趟數就從已解鎖稱號中隨機重抽展示稱號；預設 10。首次指派（尚無展示稱號）一律立即隨機指派，不受此間隔限制。',
+    min: 1, max: 10000, def: '10',
+  },
 ]
