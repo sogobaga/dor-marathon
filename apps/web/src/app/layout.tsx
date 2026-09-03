@@ -125,6 +125,18 @@ export async function generateViewport(): Promise<Viewport> {
 //    middleware 主動放行的情境）。由 middleware 彈跳頁 replace 過來的文件帶 cookie dor_b=1，本段落必須認得
 //    這個記號並跳過（見下方 skip='bounced'），否則會變成「彈跳後又整份重載」的雙重延遲。
 //
+// D. 分頁回收後從快取還原（v764，Railway HTTP log 重建 2026-09-03 08:35–08:37 真機時間軸）：
+//    08:35:29 首頁到站 → middleware 彈跳（825B）→ replace 載入 app（5KB）→ 治好；使用者切去別的分頁／掃活動頁 QR；
+//    08:37:10 首頁分頁「重新開機」（auth/me、interstitial、races… 整組 boot 請求全部重打、蓋板廣告再彈一次）
+//    ——但伺服器**完全沒有收到首頁 HTML 請求**。唯一解釋：Chrome iOS 在記憶體壓力下回收了該分頁的 WKWebView，
+//    切回時以「歷史導覽」重建，HTML 直接由瀏覽器快取供應（首頁回應是 s-maxage=30、無 no-store，WebKit 對
+//    back/forward 一律先用快取），middleware 根本沒機會彈跳。這份新文件：nav=back_forward、referrer＝彈跳頁的
+//    同源網址（v757 起所有到站文件的 referrer 都長這樣）、sessionStorage 全新（Chrome iOS 重建 WKWebView 不帶
+//    sessionStorage → tabSeen=0、蓋板 SEEN 也沒了）→ 舊規則三條全不中（非 external、tabSeen=0）→ skip:no-trigger
+//    → 這份「WKWebView 重建後的第一份文件」病態卻沒人治。v757 之前到站文件 referrer 是空的、還原時會走 arrival，
+//    是彈跳頁把 referrer 變成同源才打開這個洞。規則：nav=back_forward 一律視為還原並重載一次（站內跨文件返回若
+//    bfcache 沒接住也會多重載一次，代價可接受；bfcache 接住的不會跑到這段）。/track 仍排除、2 分鐘節流仍有效。
+//    v.ts＝navigation transferSize（快取供應為 0）進 ?vpdebug=1 面板，下次真機可直接看到「零網路載入」的證據。
 // C. bounced 標記：由彈跳頁 replace 過來的文件 referrer 是同源（strict-origin-when-cross-origin 對同源給完整網址），
 //    本來就落在 no-trigger；帶 dor_b=1 cookie 時只是把標籤改成 skip:bounced 讓 ?vpdebug=1 面板看得出走了哪條路。
 //    刻意「不」把 cookie 當成跳過重載的理由：cookie 跨分頁共享（5 秒），同一支手機 5 秒內再掃一張 QR 時 middleware
@@ -136,8 +148,8 @@ export async function generateViewport(): Promise<Viewport> {
 function bootJs(bg: string, fg: string): string {
   return `(function(){try{
 var d=document,p=performance,w=window,n=navigator;
-var v={l:d.visibilityState,t:Math.round(p.now()),pr:!!d.prerendering,vt:-1,n:'',ih:w.innerHeight,ch:d.documentElement.clientHeight,sh:(w.screen||{}).height||0,rt:-1,rih:0,ar:''};
-var e=p.getEntriesByType&&p.getEntriesByType('navigation')[0];if(e)v.n=e.type;
+var v={l:d.visibilityState,t:Math.round(p.now()),pr:!!d.prerendering,vt:-1,n:'',ih:w.innerHeight,ch:d.documentElement.clientHeight,sh:(w.screen||{}).height||0,rt:-1,rih:0,ar:'',ts:-1};
+var e=p.getEntriesByType&&p.getEntriesByType('navigation')[0];if(e){v.n=e.type;v.ts=typeof e.transferSize==='number'?e.transferSize:-1}
 if(v.l==='visible')v.vt=v.t;else d.addEventListener('visibilitychange',function f(){if(d.visibilityState==='visible'){v.vt=Math.round(p.now());d.removeEventListener('visibilitychange',f)}});
 w.addEventListener('resize',function r(){v.rt=Math.round(p.now());v.rih=w.innerHeight;w.removeEventListener('resize',r)});
 w.__dorVis=v;
@@ -173,6 +185,7 @@ var external=!ref||(ref!==org&&ref.indexOf(org+'/')!==0);
 var nt=v.n||'navigate';
 var why='';
 if((nt==='navigate'||nt==='back_forward')&&external)why='arrival';
+else if(nt==='back_forward')why='restore';
 else if(seen&&now-seen>300000)why='restore';
 var skip='';
 if(!/iPhone|iPod/.test(ua))skip='not-iphone';

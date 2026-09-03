@@ -20,8 +20,8 @@ import { APP_VERSION } from '@/lib/version'
  */
 declare global {
   interface Window {
-    /** layout.tsx 開機腳本寫入的載入瞬間快照；ar＝到站自動重載的決策（arrival@ms／tap@ms／skip:原因） */
-    __dorVis?: { l: string; t: number; pr: boolean; vt: number; n: string; ih: number; ch: number; sh: number; rt: number; rih: number; ar: string }
+    /** layout.tsx 開機腳本寫入的載入瞬間快照；ar＝到站自動重載的決策（arrival@ms／restore@ms／tap@ms／skip:原因）；ts＝navigation transferSize（0＝HTML 由瀏覽器快取供應、伺服器零請求＝分頁回收還原路徑，v764） */
+    __dorVis?: { l: string; t: number; pr: boolean; vt: number; n: string; ih: number; ch: number; sh: number; rt: number; rih: number; ar: string; ts?: number }
     /** 白幕重載（layout.tsx 開機腳本提供）：症狀 A 的治療手段，ViewportHeightFix 觸點越界偵測與診斷面板共用 */
     __dorVeilReload?: (why: string) => void
   }
@@ -64,7 +64,7 @@ export default function ViewportDebug() {
       const root = document.documentElement
       const s = window.__dorVis
       const loadRow = s
-        ? `load vis=${s.l}${s.vt >= 0 ? `→vis@${s.vt}ms` : '→never'} nav=${s.n || '?'}${s.pr ? ' prerender' : ''} · ih0 ${s.ih} ch0 ${s.ch} · rs ${s.rt >= 0 ? `@${s.rt}ms→${s.rih}` : '-'} · ref ${ref} · ar ${s.ar || '-'}`
+        ? `load vis=${s.l}${s.vt >= 0 ? `→vis@${s.vt}ms` : '→never'} nav=${s.n || '?'}${typeof s.ts === 'number' ? ` ts=${s.ts}` : ''}${s.pr ? ' prerender' : ''} · ih0 ${s.ih} ch0 ${s.ch} · rs ${s.rt >= 0 ? `@${s.rt}ms→${s.rih}` : '-'} · ref ${ref} · ar ${s.ar || '-'}`
         : `load (no snapshot) · ref ${ref}`
       setRows([
         `inner ${window.innerHeight} · icb ${root.clientHeight} · screen ${window.screen.height}`,
