@@ -567,12 +567,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>會員管理</span>
-        {/* 加入 LINE 社群：與「返回」同層、靠右對齊 */}
-        <a href="https://line.me/ti/g2/aWgkU9OMGvCDJy6pTCejNRzgaPB6yosiMXKkew?utm_source=invitation&utm_medium=link_copy&utm_campaign=default"
-          target="_blank" rel="noopener noreferrer"
-          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, background: '#06C755', color: '#fff', fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 999, textDecoration: 'none', whiteSpace: 'nowrap' }}>
-          <span aria-hidden>👥</span>加入社群認識更多跑友
-        </a>
+        {/* 「加入社群」LINE 連結已於 2026-09-03 搬到首頁入口按鈕列（MemberPanel LINE_COMMUNITY_URL），此頁不再重複 */}
       </header>
 
       {err && <div style={{ color: 'var(--hunt)', padding: '8px 20px 0', fontSize: 13, flexShrink: 0 }}>{err}</div>}

@@ -213,9 +213,9 @@ export default function MemberPanel({
       {/* 探索入口（面板下方、後台可控可見性；首頁顯示、會員管理頁隱藏）：單一順序清單、以 2 欄 grid 逐列填滿（row-major：
           第1項左上、第2項右上、第3項左下……），取代舊版左右兩欄各自堆疊——2026-09-03 首頁改版，使用者指示
           函式按鈕列要出現在首頁，故固定順序改為：
-          [活動探索(恆顯示,固定最前)] → 城市探索/卡片探索/成就探索/跑者充電站/數據探索/團練邀請/個人任務/
+          [活動探索(恆顯示,固定最前)] → 城市探索/卡片探索/成就探索/跑者充電站/數據探索/團練邀請/加入社群/個人任務/
           知識探索/活動獎勵/環台大富翁/百里英雄榜 → [會員管理(恆顯示,固定最後)]。
-          跑者充電站／活動獎勵／百里英雄榜／活動探索／會員管理恆顯示；其餘由各自 *_entry 三態控管
+          跑者充電站／活動獎勵／百里英雄榜／活動探索／加入社群／會員管理恆顯示；其餘由各自 *_entry 三態控管
           （hidden 不渲染、locked 反灰）。entryBtn 用 width:100% 撐滿格寬，不因項目數量不同而錯位。 */}
       {showEntries && user && dash && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
@@ -275,6 +275,14 @@ export default function MemberPanel({
               <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.runmeet_entry === 'locked' ? '即將開放 ›' : '揪人一起去跑步 ›'}</span>
             </button>
           )}
+          {/* 加入社群（LINE 社群外連）：原本在會員資訊頁右上角的綠色膠囊，2026-09-03 使用者指示搬進首頁按鈕列、
+              放在團練邀請右側，其餘後移一格。恆顯示、不受後台閘門；<a> 套 entryBtn 讓外觀與其他格一致。 */}
+          <a href={LINE_COMMUNITY_URL} target="_blank" rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            style={{ ...entryBtn, textDecoration: 'none', boxSizing: 'border-box' }}>
+            <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>👥 加入社群</span>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>認識更多跑友 ›</span>
+          </a>
           {dash.personal_entry !== 'hidden' && (
             <button disabled={dash.personal_entry === 'locked'}
               onClick={(e) => { e.stopPropagation(); if (dash.personal_entry === 'shown') onOpenPersonalTasks?.() }}
@@ -351,6 +359,9 @@ const gpBadge: React.CSSProperties = { display: 'inline-flex', alignItems: 'cent
 const mileageBox: React.CSSProperties = { minWidth: 96, background: 'var(--bg-2)', borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }
 const taskBtn: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 3, textAlign: 'left', border: 'none', borderRadius: 12, padding: '10px 14px', background: 'var(--fug)', color: 'var(--fug-ink)', fontFamily: 'inherit' }
 // exported：訪客首頁（無會員面板可放函式按鈕列）沿用同一顆按鈕樣式渲染單一「活動探索」入口，見 RacesScreen.tsx
+// DOR LINE 社群邀請連結（首頁「加入社群」按鈕；原會員資訊頁右上角膠囊）
+export const LINE_COMMUNITY_URL = 'https://line.me/ti/g2/aWgkU9OMGvCDJy6pTCejNRzgaPB6yosiMXKkew?utm_source=invitation&utm_medium=link_copy&utm_campaign=default'
+
 export const entryBtn: React.CSSProperties = { width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3, textAlign: 'left', border: '1px solid var(--line)', borderRadius: 'var(--radius-lg, 14px)', padding: '12px 14px', background: 'var(--bg-1)', fontFamily: 'inherit', boxShadow: 'var(--card-shadow, none)' }
 const avatarWrap: React.CSSProperties = {
   position: 'relative', width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
