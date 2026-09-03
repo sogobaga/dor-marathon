@@ -30,8 +30,8 @@ type progAct struct {
 type TaskProgress struct {
 	RaceTask
 	GroupName    string  `json:"group_name,omitempty"`
-	ScopeLabel   string  `json:"scope_label"`   // 集體 / 本組團體 / 本組個人（前台分區）
-	Current      float64 `json:"current"`       // threshold 累計值
+	ScopeLabel   string  `json:"scope_label"` // 集體 / 本組團體 / 本組個人（前台分區）
+	Current      float64 `json:"current"`     // threshold 累計值
 	Done         bool    `json:"done"`
 	QualifyCount int     `json:"qualify_count"` // range 符合筆數
 }
@@ -155,6 +155,12 @@ func (r *Repository) MarkRaceTaskCompletedAndGrant(ctx context.Context, raceID, 
 	return true, granted, nil
 }
 
+// taipeiTZ：每日／每週／連續天數分桶一律用台灣日曆日（固定 +8，不依賴容器 tzdata）。
+// ⚠️ 2026-09-03 事故：原本用 recorded_at 的 UTC 日期分桶，8/30 06:52（台北）的 12.41km 是 8/29 22:52Z，
+// 被併進 8/29 那一桶（3.31+12.41=15.72），「每日里程」任務顯示 15.72 km，與每日列表／貢獻榜（皆已用台北日）對不上。
+// daily_history.go（+8h）與 personal_progress.go（SQL AT TIME ZONE 'Asia/Taipei'）早已是台北口徑，這裡補齊。
+var taipeiTZ = time.FixedZone("Asia/Taipei", 8*3600)
+
 // metricValue 依指標計算累計/最佳值（threshold 類）
 func metricValue(acts []progAct, metric string) float64 {
 	switch metric {
@@ -187,10 +193,10 @@ func metricValue(acts []progAct, metric string) float64 {
 		}
 		return m
 	case "daily_distance":
-		return bestBucket(acts, func(a progAct) string { return a.At.Format("2006-01-02") })
+		return bestBucket(acts, func(a progAct) string { return a.At.In(taipeiTZ).Format("2006-01-02") })
 	case "weekly_distance":
 		return bestBucket(acts, func(a progAct) string {
-			y, w := a.At.ISOWeek()
+			y, w := a.At.In(taipeiTZ).ISOWeek()
 			return fmt.Sprintf("%d-%02d", y, w)
 		})
 	case "streak_days":
@@ -221,7 +227,7 @@ func longestStreak(acts []progAct) float64 {
 	}
 	daySet := map[string]bool{}
 	for _, a := range acts {
-		daySet[a.At.Format("2006-01-02")] = true
+		daySet[a.At.In(taipeiTZ).Format("2006-01-02")] = true // 台北日曆日（見 taipeiTZ）
 	}
 	days := make([]time.Time, 0, len(daySet))
 	for d := range daySet {

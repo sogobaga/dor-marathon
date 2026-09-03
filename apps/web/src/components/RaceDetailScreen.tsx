@@ -736,6 +736,9 @@ function TaskRow({ t, onClick }: { t: TaskProgress; onClick?: () => void }) {
           </div>
           <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 4, textAlign: 'right' }}>
             {t.current} / {t.target_value ?? '—'} {m?.unit ?? ''}
+            {/* 每日／每週類指標顯示的是「最佳單日／單週」桶值（後端 metricValue bestBucket），不是累計——
+                貢獻榜是累計總和，兩者本來就不同口徑；標出來避免被當成數據落差（2026-09-03 使用者回報） */}
+            {t.metric_type === 'daily_distance' ? '（最佳單日）' : t.metric_type === 'weekly_distance' ? '（最佳單週）' : ''}
           </div>
         </>
       )}
