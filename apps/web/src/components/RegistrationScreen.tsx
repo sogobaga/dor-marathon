@@ -26,6 +26,7 @@ import { track } from '@/lib/analytics'
 import ScrollArea from './ScrollArea'
 import ImageLightbox from './ImageLightbox'
 import { LoginModal } from './UserAuthBar'
+import { detectInAppBrowser, externalOpenHref } from './InAppBrowserNotice'
 
 const FIELD_LABEL: Record<ParticipantField, string> = {
   real_name: '真實姓名', nickname: '暱稱', phone: '手機',
@@ -157,6 +158,24 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [showLogin, setShowLogin] = useState(false)
   // 掛載時是否已有 token：已登入者的 useUser 水合（null→user）不需要重載；只有「在本頁登入」才重載
   const hadToken = useRef(false)
+  // App 內建瀏覽器（FB／LINE／IG…）：Google 登入會被 Google 擋（disallowed_useragent），「立即登入」按了只會撞牆
+  // → 換成「用 Safari／Chrome 開啟」引導卡（LINE／Android 能一鍵跳出，iOS FB 系只能複製網址＋⋯選單）。
+  const [inApp, setInApp] = useState<string | null>(null)
+  const [extHref, setExtHref] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    try {
+      const ua = navigator.userAgent || ''
+      setInApp(detectInAppBrowser(ua))
+      setExtHref(externalOpenHref(ua, window.location.href))
+    } catch { /* ignore */ }
+  }, [])
+  const copyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      setCopied(true); setTimeout(() => setCopied(false), 2000)
+    } catch { /* 舊瀏覽器不支援：使用者可自行輸入網址 */ }
+  }
   const isBattle = race.event_mode === 'faction_battle'
   const isPersonal = race.event_mode === 'personal'
   // 個人挑戰模式可重複報名再挑戰：只有「進行中」(pending/paid未完成) 的舊 attempt 才視為擋下再報名；
@@ -505,7 +524,32 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
       <ScrollArea padding="4px 18px 28px">
         {loading && <Hint>載入中…</Hint>}
 
-        {!loading && !loggedIn && (
+        {!loading && !loggedIn && inApp && (
+          <div style={{ ...card, textAlign: 'center', marginTop: 24 }}>
+            <div style={{ fontSize: 34 }}>🧭</div>
+            <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)', marginTop: 10 }}>用 Safari／Chrome 開啟後再登入</div>
+            <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.8 }}>
+              你正在 <b>{inApp}</b> 的內建瀏覽器，Google 登入會被擋（Google 安全政策）。
+              {extHref
+                ? '點下方按鈕改用系統瀏覽器開啟這一頁，再登入報名。'
+                : '請點右上角 ⋯／分享，選「用預設瀏覽器開啟」；或複製網址貼到 Safari／Chrome。'}
+            </div>
+            {extHref ? (
+              <a href={extHref} style={{ ...primaryBtn, display: 'inline-block', textDecoration: 'none', width: 'auto', padding: '11px 30px', marginTop: 18 }}>
+                用 Safari／Chrome 開啟
+              </a>
+            ) : (
+              <button onClick={copyUrl} style={{ ...primaryBtn, width: 'auto', padding: '11px 30px', marginTop: 18 }}>
+                {copied ? '✓ 已複製網址' : '📋 複製網址'}
+              </button>
+            )}
+            <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 10 }}>
+              或直接在瀏覽器輸入：<b style={{ userSelect: 'all', fontFamily: 'monospace', color: 'var(--tx-dim)' }}>www.dor.tw</b>
+            </div>
+          </div>
+        )}
+
+        {!loading && !loggedIn && !inApp && (
           <div style={{ ...card, textAlign: 'center', marginTop: 24 }}>
             <div style={{ fontSize: 34 }}>🔒</div>
             <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--tx)', marginTop: 10 }}>登入後就能報名</div>

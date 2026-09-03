@@ -18,10 +18,27 @@ const IN_APP: { re: RegExp; name: string }[] = [
 
 // 供其他元件共用（PwaInstallPrompt）：這類環境裝不了 PWA，安裝引導必須跳過
 export function isInAppBrowser(ua: string): boolean { return detect(ua) != null }
+// 回傳 App 名稱（LINE／Facebook…）或 null；報名頁的「用 Safari／Chrome 開啟」引導卡也用這個判定
+export function detectInAppBrowser(ua: string): string | null { return detect(ua) }
 
 function detect(ua: string): string | null {
   for (const p of IN_APP) if (p.re.test(ua)) return p.name
   if (/Android/i.test(ua) && /;\s*wv\)/i.test(ua)) return 'App 內建瀏覽器' // 泛用 Android WebView
+  return null
+}
+
+// 能「一鍵」跳出內建瀏覽器的手段（做得到才回連結，做不到回 null → 由「複製網址＋⋯選單」引導接手）：
+// ・LINE（iOS/Android）：網址加 openExternalBrowser=1，LINE 會改交給系統瀏覽器開啟（LINE 官方支援的參數）。
+// ・Android 其他 App 的 WebView：intent:// 指定 Chrome 套件，FB/IG/Messenger 多數放行。
+// ・iOS 的 FB/IG/Messenger/Threads：WKWebView 內沒有任何 API 能叫出 Safari，只能引導 ⋯／分享 選單或複製網址。
+export function externalOpenHref(ua: string, href: string): string | null {
+  const app = detect(ua)
+  if (!app) return null
+  try {
+    const u = new URL(href)
+    if (app === 'LINE') { u.searchParams.set('openExternalBrowser', '1'); return u.toString() }
+    if (/Android/i.test(ua)) return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=https;package=com.android.chrome;end`
+  } catch { /* 非法網址：退回複製引導 */ }
   return null
 }
 
@@ -41,6 +58,7 @@ export default function InAppBrowserNotice() {
 
   const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
   const host = typeof window !== 'undefined' ? window.location.host : 'www.dor.tw'
+  const extHref = typeof window !== 'undefined' ? externalOpenHref(navigator.userAgent || '', window.location.href) : null
 
   const copy = async () => {
     try {
@@ -58,7 +76,8 @@ export default function InAppBrowserNotice() {
           請點右上角的 <b>⋯ ／ 分享</b> 圖示，選「<b>用預設瀏覽器開啟</b>」{isAndroid ? '（Chrome）' : '（Safari）'}，再登入。
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button onClick={copy} style={btnPrimary}>{copied ? '✓ 已複製網址' : '📋 複製網址'}</button>
+          {extHref && <a href={extHref} style={{ ...btnPrimary, textDecoration: 'none', display: 'inline-block' }}>🧭 用 Safari／Chrome 開啟</a>}
+          <button onClick={copy} style={extHref ? btnGhost : btnPrimary}>{copied ? '✓ 已複製網址' : '📋 複製網址'}</button>
           <button onClick={() => setDismissed(true)} style={btnGhost}>先關閉</button>
         </div>
         <div style={{ fontSize: 11.5, marginTop: 8, opacity: 0.85 }}>
