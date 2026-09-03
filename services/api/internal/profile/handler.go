@@ -25,7 +25,9 @@ type Handler struct {
 }
 
 func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler {
-	return &Handler{db: db, rt: rt}
+	h := &Handler{db: db, rt: rt}
+	siteSettingsCache = newSiteSettingsCache(h) // 見 settings.go 頂部註解
+	return h
 }
 
 // Router 個人資料路由（掛載在 /api/v1/profile，需登入）

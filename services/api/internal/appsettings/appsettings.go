@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/realtime"
+	"github.com/dor/api/internal/ttlcache"
 )
 
 // specs 登記所有合法設定 key 及其值驗證器（後端權威；新增設定時在此加一列）。
@@ -243,7 +244,27 @@ type Handler struct {
 	rt *realtime.Manager
 }
 
-func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler { return &Handler{db: db, rt: rt} }
+// publicSettingsCacheTTL 見下方 publicSettingsCache 註解。
+const publicSettingsCacheTTL = 10 * time.Minute
+
+// publicSettingsCache 快取 GET /app-settings/public 的完整回應 map（10 分鐘 TTL）。與下面「套件內
+// 記憶體快取（60 秒 TTL）」是兩層不同粒度：這層快取「整包公開 map」本身（省掉每次對 app_settings
+// 整表 SELECT），下面那層快取「單一 key 現查」（GetInt/GetString 用）。兩者互不影響，但寫入端都
+// 要一起清（見 InvalidateCache，也是本檔案唯一改動兩層快取的入口）。
+//
+// 在 NewHandler 建構時就綁死 load closure（不用 sync.Once 延遲到第一次 Public() 呼叫才建）：本
+// Handler 只會在 main.go 建構一次，建構當下是單一 goroutine（HTTP server 尚未開始收 request），
+// 對這個 package-level 變數的寫入沒有資料競賽疑慮；換成延遲初始化反而要讓 InvalidateCache() 這種
+// 「不透過 Handler、直接讀 package 變數」的呼叫端多處理一種「還沒初始化」的競態視窗。
+var publicSettingsCache *ttlcache.Cache[map[string]string]
+
+func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler {
+	h := &Handler{db: db, rt: rt}
+	publicSettingsCache = ttlcache.New(publicSettingsCacheTTL, func(ctx context.Context) (map[string]string, error) {
+		return h.queryAllDB(ctx, true)
+	})
+	return h
+}
 
 // AdminRouter 掛 /admin/app-settings（需 settings 權限）
 func (h *Handler) AdminRouter() http.Handler {
@@ -253,11 +274,14 @@ func (h *Handler) AdminRouter() http.Handler {
 	return r
 }
 
-func (h *Handler) queryAll(ctx context.Context, publicOnly bool) map[string]string {
+// queryAllDB 現查 DB（無快取），供 List/Set（永遠要最新資料的後台端點）與 publicSettingsCache 的
+// load closure共用。回傳 error 讓 ttlcache 能分辨「查詢失敗」與「查詢成功但是空 map」——查詢失敗時
+// 上層快取要保留舊值，不能誤把「這次查失敗」當成「設定真的被清空了」。
+func (h *Handler) queryAllDB(ctx context.Context, publicOnly bool) (map[string]string, error) {
 	m := map[string]string{}
 	rows, err := h.db.Query(ctx, `SELECT key, value FROM app_settings`)
 	if err != nil {
-		return m
+		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -265,6 +289,15 @@ func (h *Handler) queryAll(ctx context.Context, publicOnly bool) map[string]stri
 		if rows.Scan(&k, &v) == nil && (!publicOnly || publicKeys[k]) {
 			m[k] = v
 		}
+	}
+	return m, rows.Err()
+}
+
+// queryAll 是 queryAllDB 的舊介面（吞掉 error 回空 map），維持 List/Set 既有行為不變。
+func (h *Handler) queryAll(ctx context.Context, publicOnly bool) map[string]string {
+	m, err := h.queryAllDB(ctx, publicOnly)
+	if err != nil {
+		return map[string]string{}
 	}
 	return m
 }
@@ -274,8 +307,15 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // Public 前台（可未登入）讀取白名單設定，如 active_skin。
+//
+// 效能（2026-09-03，Neon 夜間喚醒問題「先做 A」）：這支被 apps/web RootLayout（layout.tsx
+// getPublicSettings）幾乎每個 request 都呼叫一次。原本每次都對 app_settings 整表 SELECT；改走
+// publicSettingsCache 後，穩態下不管多少 request／爬蟲掃多少頁，最多每 10 分鐘一次查詢。
+// Cache-Control 順手加 60 秒——對瀏覽器與 Next.js fetch cache 有幫助；Cloudflare 對這條路徑仍判定
+// DYNAMIC（回應帶這個 header 不影響 CF 快取分類），純粹錦上添花、無害。
 func (h *Handler) Public(w http.ResponseWriter, r *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]any{"settings": h.queryAll(r.Context(), true)})
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	respondJSON(w, http.StatusOK, map[string]any{"settings": publicSettingsCache.Get(r.Context())})
 }
 
 func (h *Handler) Set(w http.ResponseWriter, r *http.Request) {
@@ -302,6 +342,7 @@ func (h *Handler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	invalidateSettingsCache()
+	publicSettingsCache.Invalidate()
 	h.rt.PublishData(r.Context(), "settings", nil)
 	respondJSON(w, http.StatusOK, map[string]any{"settings": h.queryAll(r.Context(), false)})
 }
@@ -357,9 +398,18 @@ func setCachedSetting(key, value string, found bool) {
 
 // invalidateSettingsCache 整個清空快取（Set 寫入成功後呼叫），簡單優先，避免只清單一 key 時
 // 遺漏邊界情況。設定變更頻率低，清空後下一輪讀取重新查 DB 的成本可忽略。
-// InvalidateCache 供其他套件在「直接 SQL 寫入 app_settings」後清空 60 秒記憶體快取（例如
-// profile.PutCheerLayout 寫 cheer_char_layout），否則 Dashboard 等讀取端會在 TTL 內拿到舊值。
-func InvalidateCache() { invalidateSettingsCache() }
+// InvalidateCache 供其他套件在「直接 SQL 寫入 app_settings」後清掉兩層快取——60 秒單 key 快取
+// （settingsCache，供 GetInt/GetString）與 10 分鐘公開 map 快取（publicSettingsCache，供
+// Public()）——目前只有 profile.PutCheerLayout 這樣直接下 SQL 寫 cheer_char_layout（繞過本套件
+// 的 Set handler）。publicSettingsCache 只在 NewHandler 建構後才非 nil；理論上不會有套件在
+// appsettings.NewHandler 跑之前就呼叫到這裡，但 nil 檢查在單元測試等未經完整 main.go 啟動流程的
+// 情境下更安全。
+func InvalidateCache() {
+	invalidateSettingsCache()
+	if publicSettingsCache != nil {
+		publicSettingsCache.Invalidate()
+	}
+}
 
 func invalidateSettingsCache() {
 	settingsCache.mu.Lock()

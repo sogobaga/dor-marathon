@@ -10,14 +10,15 @@ interface PublicShop {
 }
 
 // 伺服器端讀取商家公開詳情（供 SEO/OG metadata 與「查無此商家」判斷用）。
-// 完全比照 app/event/[slug]/page.tsx 的 getRaceBySlug pattern：React cache 同請求只查一次、
-// fetch 快取 30 秒、逾時/失敗回 null。
+// 完全比照 app/event/[slug]/page.tsx 的 getRaceMeta pattern：React cache 同請求只查一次、逾時/失敗回 null。
+// fetch 快取 2026-09-03 由 30 秒拉到 300 秒（降低 Neon 夜間空轉喚醒；name/summary/banner_url 非個人化、
+// 收藏狀態等即時資料仍由 ShopLanding 掛載後的 client-side 認證 fetch 取得，不受影響）。
 // GET /api/v1/partner-shops/{id} 回傳形狀為 {shop: {...}}（見 services/api/internal/partner/handler.go Detail）。
 const getShop = cache(async (id: string): Promise<PublicShop | null> => {
   try {
     const base = process.env.API_URL || 'http://localhost:8080'
     const res = await fetch(`${base}/api/v1/partner-shops/${encodeURIComponent(id)}`, {
-      next: { revalidate: 30 },
+      next: { revalidate: 300 },
       signal: AbortSignal.timeout(2500),
     })
     if (!res.ok) return null

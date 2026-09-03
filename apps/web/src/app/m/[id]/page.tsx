@@ -7,8 +7,10 @@ import DeletedRedirect from './DeletedRedirect'
 // 原本的 /?runmeet={id}）。後端公開端點免登入、不區分「不存在／已刪／已下架／未開放」，一律回
 // {available:false}（防列舉），私密團的 region/place_label 為空字串、cover_url 為 null（不洩漏地點）。
 //
-// 完全比照 app/event/[slug]/page.tsx（getRaceBySlug）與 app/shop/[id]/page.tsx（getShop）的既有
-// OG 慣例：React cache 同請求只查一次、fetch 快取 30 秒、逾時/失敗回 null。
+// 完全比照 app/event/[slug]/page.tsx（getRaceMeta）與 app/shop/[id]/page.tsx（getShop）的既有
+// OG 慣例：React cache 同請求只查一次、逾時/失敗回 null。
+// fetch 快取 2026-09-03 由 30 秒拉到 300 秒（降低 Neon 夜間空轉喚醒；這支資料非個人化、不受影響），
+// 剛好對齊後端 share.go 本來就下的 Cache-Control: max-age=300（見下方 fetch），兩層快取秒數一致。
 //
 // ⚠️ 與 Event/Shop 兩頁不同：那兩頁會掛載完整的 PhoneShell（client SPA）當落地頁本身。
 //    這裡刻意不掛 PhoneShell——社群 App 內建瀏覽器（LINE/IG/FB 等）常對「載入一個完整 SPA 再自動跳轉」
@@ -42,7 +44,7 @@ const getShare = cache(async (id: string): Promise<ShareInfo | null> => {
   try {
     const base = process.env.API_URL || 'http://localhost:8080'
     const res = await fetch(`${base}/api/v1/run-meets/${encodeURIComponent(id)}/share`, {
-      next: { revalidate: 30 },
+      next: { revalidate: 300 },
       signal: AbortSignal.timeout(2500),
     })
     if (!res.ok) return null

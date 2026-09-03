@@ -36,6 +36,7 @@ func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.List)
 	r.Get("/my-active", h.MyActiveRaces)
+	r.Get("/{slug}/meta", h.Meta)
 	r.Get("/{raceID}", h.Detail)
 	r.Post("/{raceID}/register", h.Register)
 	r.Post("/{raceID}/groups", h.CreateTeamGroup)
@@ -468,6 +469,21 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	respondJSON(w, http.StatusOK, resp)
+}
+
+// GET /api/v1/races/:slug/meta — 公開賽事「精簡」metadata（title/subtitle/hero_image_url 等），
+// 供前台事件廣告落地頁 SSR generateMetadata 用（見 meta_cache.go 頂部註解）。刻意不含分組/加購/
+// 物資/報名狀態/取消退費政策等重欄位、不判斷/回傳個人報名狀態，因此不需要 userID、可安全地被整包
+// 快取。查無（未上線／未核准／closed／testing）一律回 404，跟 Detail 對匿名訪客的行為一致。
+func (h *Handler) Meta(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	meta, ok := h.svc.GetRaceMeta(r.Context(), slug)
+	if !ok {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	respondJSON(w, http.StatusOK, map[string]any{"race": meta})
 }
 
 // GET /api/v1/races/:raceID — 公開賽事詳情（含分組/加購/物資）+ 報名狀態

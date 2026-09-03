@@ -36,7 +36,9 @@ import { veilColorsOf } from '@/lib/skinColors'
 // 【逃生口】?vpfix=off 或 ?noreload=1：跳過彈跳（沿用舊的頁內判斷，那邊也認得同一組參數）；
 // auth-url（?code=/?state=/?token=…）：一次性授權碼經不起被彈跳頁「消費」一次網址再導覽一次的風險，直接放行。
 
-const SKIN_CACHE_MS = 60_000
+// 2026-09-03：60s → 300s，理由同 app/layout.tsx 的 getPublicSettings（同一支 /app-settings/public
+// 端點，兩處都是壓低 Neon 夜間空轉喚醒頻率的一環）。skin 極少變動，後台切換 skin 最多晚 5 分鐘生效可接受。
+const SKIN_CACHE_MS = 300_000
 const SKIN_FETCH_TIMEOUT_MS = 800
 let skinCache: { skin: string; at: number } = { skin: 'default', at: 0 }
 let refreshing = false

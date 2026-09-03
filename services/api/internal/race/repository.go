@@ -73,6 +73,38 @@ func (r *Repository) List(ctx context.Context, status string) ([]*Race, error) {
 	return scanRaces(rows)
 }
 
+// ListPublicRaceMeta 一次查完「匿名訪客看得到」的所有賽事的精簡 SSR metadata 欄位（見
+// meta_cache.go 的 raceMetaCache）。可見性比照 GetPublicDetail 的匿名分支：review_status 必須
+// approved；control_status 排除 closed（全擋）與 testing（GetPublicDetail 對 testing 還會查
+// email 白名單，這裡沒有 per-user email 可查，一律排除比較安全，反正 SSR metadata 少一筆測試賽事
+// 影響不大）。
+func (r *Repository) ListPublicRaceMeta(ctx context.Context) (map[string]RaceMeta, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, slug, title, COALESCE(brochure_title,''), COALESCE(subtitle,''),
+		       COALESCE(hero_image_url,''), start_date, end_date, status, event_mode
+		FROM races
+		WHERE review_status = 'approved' AND control_status NOT IN ('closed', 'testing')
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list public race meta: %w", err)
+	}
+	defer rows.Close()
+
+	m := make(map[string]RaceMeta)
+	for rows.Next() {
+		var meta RaceMeta
+		if err := rows.Scan(&meta.ID, &meta.Slug, &meta.Title, &meta.BrochureTitle, &meta.Subtitle,
+			&meta.HeroImageURL, &meta.StartDate, &meta.EndDate, &meta.Status, &meta.EventMode); err != nil {
+			return nil, fmt.Errorf("scan public race meta: %w", err)
+		}
+		m[meta.Slug] = meta
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // GetByID 取得單一賽事
 func (r *Repository) GetByID(ctx context.Context, id string) (*Race, error) {
 	return r.getBy(ctx, "id", id)

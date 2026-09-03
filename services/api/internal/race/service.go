@@ -16,6 +16,7 @@ import (
 
 	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/promo"
+	"github.com/dor/api/internal/ttlcache"
 )
 
 // uuidRe 判斷字串是否為標準 UUID 格式，用於區分 raceID 路徑參數是 UUID 還是 slug。
@@ -154,10 +155,17 @@ type Service struct {
 	// 建構需要 wsManager，兩者初始化順序無法互換，只能用 setter 晚繫結。未設定時通知直接跳過，不影響
 	// 發獎本身（比照 payment.BindHandler.sendRenewalMail 的取捨）。
 	mail MailInserter
+	// raceMetaCache 見 meta_cache.go：GET /races/{slug}/meta 用的「所有已上線賽事精簡欄位」快取
+	// （10 分鐘 TTL）。NewService 建構時就綁好 load closure，不用 sync.Once 延遲初始化——本 Service
+	// 只會在 main.go 建構一次，建構當下還是單一 goroutine（HTTP server 尚未開始收 request），沒有
+	// 資料競賽疑慮。
+	raceMetaCache *ttlcache.Cache[map[string]RaceMeta]
 }
 
 func NewService(repo *Repository, rdb *redis.Client, promoSvc *promo.Service) *Service {
-	return &Service{repo: repo, rdb: rdb, promo: promoSvc}
+	s := &Service{repo: repo, rdb: rdb, promo: promoSvc}
+	s.raceMetaCache = newRaceMetaCache(s.repo.ListPublicRaceMeta)
+	return s
 }
 
 // SetRefundCreator 見上方欄位註解。
@@ -807,7 +815,11 @@ func (s *Service) UpdateRanking(ctx context.Context, raceID, userID string, addK
 
 // UpdateRaceStatus 更新賽事狀態（admin 用）
 func (s *Service) UpdateRaceStatus(ctx context.Context, raceID, status string) error {
-	return s.repo.UpdateStatus(ctx, raceID, status)
+	if err := s.repo.UpdateStatus(ctx, raceID, status); err != nil {
+		return err
+	}
+	s.InvalidateRaceMetaCache() // status 是 meta 表欄位之一，改了要讓 SSR 快取重查
+	return nil
 }
 
 // SetCertificateBg 設定完賽證明底圖（admin 用）
@@ -833,13 +845,21 @@ func (s *Service) UpdateRace(ctx context.Context, raceID string, race *Race) (*R
 	if race.Status == "" {
 		race.Status = existing.Status
 	}
-	return s.repo.Update(ctx, race)
+	updated, err := s.repo.Update(ctx, race)
+	if err == nil {
+		s.InvalidateRaceMetaCache()
+	}
+	return updated, err
 }
 
 // CreateRace 建立新賽事（admin 用，直接 approved）
 func (s *Service) CreateRace(ctx context.Context, race *Race) (*Race, error) {
 	race.ReviewStatus = "approved"
-	return s.repo.Create(ctx, race)
+	created, err := s.repo.Create(ctx, race)
+	if err == nil {
+		s.InvalidateRaceMetaCache()
+	}
+	return created, err
 }
 
 var (
@@ -999,7 +1019,11 @@ func (s *Service) CreateRaceFull(ctx context.Context, req *CreateRaceRequest) (*
 	}
 	ensurePersonalDefaultGroup(req)
 	req.ReviewStatus = "approved"
-	return s.repo.CreateWithChildren(ctx, req)
+	detail, err := s.repo.CreateWithChildren(ctx, req)
+	if err == nil {
+		s.InvalidateRaceMetaCache() // 新賽事直接 approved 上線，可能立刻被 SSR 抓到
+	}
+	return detail, err
 }
 
 // UpdateRaceFull 更新含巢狀分組/加購/物資的賽事（後台編輯賽事用）。
@@ -1019,7 +1043,11 @@ func (s *Service) UpdateRaceFull(ctx context.Context, raceID string, req *Create
 	if !statusSpecified {
 		req.Status = existing.Status
 	}
-	return s.repo.UpdateWithChildren(ctx, raceID, req)
+	detail, err := s.repo.UpdateWithChildren(ctx, raceID, req)
+	if err == nil {
+		s.InvalidateRaceMetaCache()
+	}
+	return detail, err
 }
 
 // GetRaceDetail 取得賽事 + 巢狀子資料（後台編輯載入用）
@@ -1198,7 +1226,13 @@ func (s *Service) DeleteTaskModule(ctx context.Context, id string) error {
 // CreateRaceWithReview 合作方提交賽事，指定審核狀態（pending）
 func (s *Service) CreateRaceWithReview(ctx context.Context, race *Race, reviewStatus string) (*Race, error) {
 	race.ReviewStatus = reviewStatus
-	return s.repo.Create(ctx, race)
+	created, err := s.repo.Create(ctx, race)
+	if err == nil {
+		// 通常是 pending（合作方提交，尚未上線），meta 表不會收錄；仍一併清快取——萬一呼叫端
+		// 直接帶 approved 進來（例如未來擴充），不會漏了這一筆。
+		s.InvalidateRaceMetaCache()
+	}
+	return created, err
 }
 
 // DeleteRace 刪除賽事（admin 用）。有報名的賽事不可刪，其餘連同子資料一併移除。
@@ -1217,7 +1251,11 @@ func (s *Service) DeleteRace(ctx context.Context, raceID string) error {
 	if n > 0 {
 		return ErrRaceHasRegistrations
 	}
-	return s.repo.Delete(ctx, raceID)
+	if err := s.repo.Delete(ctx, raceID); err != nil {
+		return err
+	}
+	s.InvalidateRaceMetaCache()
+	return nil
 }
 
 // UpdateFactionKm 更新陣營累積里程（activity upload 後呼叫）

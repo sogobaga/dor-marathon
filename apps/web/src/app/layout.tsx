@@ -17,11 +17,13 @@ import { veilColorsOf } from '@/lib/skinColors'
 const SKIN_THEME_COLOR: Record<string, string> = { default: '#09090f', warm: '#FBF4E9', warm2: '#FBF5EA' }
 
 // 伺服器端讀取前台公開系統設定（skin、favicon…）：直接寫進 SSR，第一次繪製就正確、不靠 localStorage。
-// React cache：同一請求只查一次；fetch 快取 30 秒（改設定約 30 秒內於「下次載入」生效）。逾時/失敗回空 → 用預設。
+// React cache：同一請求只查一次；fetch 快取拉到 300 秒（原 30 秒，2026-09-03 為降低 Neon 夜間空轉喚醒——
+// 這支端點跑在「每一個 request」的 RootLayout 上，是喚醒 Neon 最大宗的來源）。skin/favicon 極少變動，
+// 後台改了最多等 5 分鐘於「下次載入」生效，可接受。逾時/失敗回空 → 用預設。
 const getPublicSettings = cache(async (): Promise<Record<string, string>> => {
   try {
     const base = process.env.API_URL || 'http://localhost:8080'
-    const res = await fetch(`${base}/api/v1/app-settings/public`, { next: { revalidate: 30 }, signal: AbortSignal.timeout(2500) })
+    const res = await fetch(`${base}/api/v1/app-settings/public`, { next: { revalidate: 300 }, signal: AbortSignal.timeout(2500) })
     if (!res.ok) return {}
     const j = await res.json()
     return (j?.settings as Record<string, string>) || {}

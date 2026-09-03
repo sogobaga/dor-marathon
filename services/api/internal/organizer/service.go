@@ -8,14 +8,14 @@ import (
 )
 
 var (
-	ErrNotVerified      = errors.New("organizer not verified by platform yet")
-	ErrProfileNotFound  = errors.New("organizer profile not found")
-	ErrNotOwner         = errors.New("race does not belong to this organizer")
+	ErrNotVerified     = errors.New("organizer not verified by platform yet")
+	ErrProfileNotFound = errors.New("organizer profile not found")
+	ErrNotOwner        = errors.New("race does not belong to this organizer")
 )
 
 type Service struct {
-	repo     *Repository
-	raceSvc  *race.Service
+	repo    *Repository
+	raceSvc *race.Service
 }
 
 func NewService(repo *Repository, raceSvc *race.Service) *Service {
@@ -106,7 +106,13 @@ func (s *Service) ReviewRace(ctx context.Context, raceID, action, note, reviewer
 	if action == "reject" {
 		status = "rejected"
 	}
-	return s.repo.ReviewRace(ctx, raceID, status, note, reviewerID)
+	if err := s.repo.ReviewRace(ctx, raceID, status, note, reviewerID); err != nil {
+		return err
+	}
+	// 核准會讓這場賽事從「查無」變成「SSR meta 快取查得到」（approve 分支同時把 status 改回
+	// soon 可上線）；退回則反過來讓它從快取消失。兩種方向都要清，讓下一次讀取重查。
+	s.raceSvc.InvalidateRaceMetaCache()
+	return nil
 }
 
 // ListOrganizers admin 列出所有合作方
