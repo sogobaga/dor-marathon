@@ -1224,6 +1224,20 @@ export interface TerraStatus {
   connections: TerraConnection[] // 使用者已連接的品牌，可有多筆（不同手錶）
 }
 
+// 手動補匯（見 integrationsApi.terraImport）的回應：webhook 可能不會送 activity 事件，故留一個補救管道
+export interface TerraImportResult {
+  provider: string
+  days: number
+  fetched: number
+  imported: number
+  duplicate: number
+  skipped_before_connect: number
+  skipped_non_running: number
+  skipped_invalid: number
+  errors: number
+  async: boolean
+}
+
 export interface SyncedActivity {
   id: string
   source: string
@@ -1280,6 +1294,12 @@ export const integrationsApi = {
     ),
   terraDisconnect: (token: string, provider: string) =>
     request<{ ok: true }>(`/integrations/terra/disconnect?provider=${encodeURIComponent(provider)}`, {
+      method: 'POST',
+      headers: withAuth(token),
+    }),
+  // 手動補匯：webhook 可能沒送活動事件（如 COROS 真機只送 daily 沒送 activity），提供使用者主動向 Terra 要近期紀錄
+  terraImport: (token: string, provider: string, days = 30) =>
+    request<TerraImportResult>(`/integrations/terra/import?provider=${encodeURIComponent(provider)}&days=${days}`, {
       method: 'POST',
       headers: withAuth(token),
     }),

@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -97,6 +98,12 @@ type TerraHandler struct {
 	cfg         TerraConfig
 	requireAuth func(http.Handler) http.Handler
 	hc          *http.Client
+
+	// importMu/importLast：POST /import 的簡單記憶體內節流（同一使用者 60 秒內限一次），見 allowImport。
+	// 刻意不用 Redis——手動匯入是低頻、使用者自發觸發的操作，單機記憶體節流足夠擋手滑連點；多副本部署下
+	// 節流窗口退化成「per-instance」而非全站一致，可接受（比照 strava.go allowRate 的節流目的，取代方案）。
+	importMu   sync.Mutex
+	importLast map[string]time.Time
 }
 
 func NewTerraHandler(repo *Repository, cfg TerraConfig, requireAuth func(http.Handler) http.Handler) *TerraHandler {
@@ -138,6 +145,7 @@ func (h *TerraHandler) Router() http.Handler {
 		r.Get("/connect", h.Connect) // 取得 widget session url
 		r.Get("/status", h.Status)   // 連線狀態
 		r.Post("/disconnect", h.Disconnect)
+		r.Post("/import", h.Import) // 手動匯入近期活動（見 Import 註解）
 	})
 	return r
 }
@@ -275,6 +283,253 @@ func (h *TerraHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 			Msg("terra disconnect: delete imported activities failed")
 	}
 	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// POST /import?provider=<brand>&days=<1-90，預設30> — 手動匯入近期活動。
+// 背景（2026-09-03）：使用者連上 COROS（透過 Terra）當天，Terra 只送了 daily 等事件，activity
+// webhook 遲遲沒到（見 handleActivityEvent／WebhookEvent：at-least-once 送達但無時效保證，也可能
+// 因帳號當下沒有任何 activity 事件觸發而永遠不送），前台需要一個「使用者主動要求現在拉一次」的入口，
+// 不用乾等 webhook。走 Terra REST /v2/activity（見 fetchTerraActivities），落地邏輯與 webhook 路徑
+// 共用 importTerra（見該函式），維持「同一筆活動不論走 webhook 或手動匯入都精準去重」。
+//
+// 端點回應形狀是前台已經在依此開發的既定契約，欄位名稱不可任意調整。
+func (h *TerraHandler) Import(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if !h.enabled() {
+		respondErr(w, http.StatusServiceUnavailable, "terra_disabled")
+		return
+	}
+	brandRaw := strings.TrimSpace(r.URL.Query().Get("provider"))
+	if brandRaw == "" {
+		respondErr(w, http.StatusBadRequest, "provider 必填")
+		return
+	}
+	source := providerToSource(brandRaw)
+	conn, err := h.repo.GetByUser(r.Context(), userID, source)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if conn == nil || conn.Via != "terra" {
+		respondErr(w, http.StatusBadRequest, "尚未連接 "+strings.ToUpper(source))
+		return
+	}
+	if !h.allowImport(userID) {
+		respondErr(w, http.StatusTooManyRequests, "匯入太頻繁，請 1 分鐘後再試")
+		return
+	}
+	days := 30
+	if raw := strings.TrimSpace(r.URL.Query().Get("days")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			days = n
+		}
+	}
+	if days < 1 {
+		days = 1
+	} else if days > 90 {
+		days = 90
+	}
+
+	res, err := h.importRecent(r.Context(), conn, source, days)
+	if err != nil {
+		log.Error().Err(err).Str("provider", source).Str("user", userID).Msg("terra manual import: fetch failed")
+		respondErr(w, http.StatusBadGateway, "向 Terra 取得活動失敗")
+		return
+	}
+	respondJSON(w, http.StatusOK, res)
+}
+
+// allowImport 簡單記憶體內節流：同一使用者 60 秒內只能呼叫一次 /import 成功放行一次（見 TerraHandler
+// 的 importMu/importLast 欄位註解）。呼叫時即登記時間戳（而非匯入完成後才登記），避免使用者對著慢速
+// 請求連點造成多個匯入同時在跑。
+func (h *TerraHandler) allowImport(userID string) bool {
+	h.importMu.Lock()
+	defer h.importMu.Unlock()
+	if h.importLast == nil {
+		h.importLast = make(map[string]time.Time)
+	}
+	if last, ok := h.importLast[userID]; ok && time.Since(last) < time.Minute {
+		return false
+	}
+	h.importLast[userID] = time.Now()
+	return true
+}
+
+// TerraImportResult /import 回應（前台契約，欄位名稱固定，見 Import 註解）。
+type TerraImportResult struct {
+	Provider             string `json:"provider"`
+	Days                 int    `json:"days"`
+	Fetched              int    `json:"fetched"`
+	Imported             int    `json:"imported"`
+	Duplicate            int    `json:"duplicate"`
+	SkippedBeforeConnect int    `json:"skipped_before_connect"`
+	SkippedNonRunning    int    `json:"skipped_non_running"`
+	SkippedInvalid       int    `json:"skipped_invalid"`
+	Errors               int    `json:"errors"`
+	Async                bool   `json:"async"`
+}
+
+// importRecent 對一條 Terra 連線，依 days 切成多個 ≤28 天窗口（terraSplitWindows）逐段呼叫
+// fetchTerraActivities、分類略過原因（terraSkipReason）、其餘交給既有 importTerra 落地去重。
+// 任一窗口的 REST 呼叫本身失敗（非 2xx／解碼失敗／逾時等）就整個中止並回傳錯誤給呼叫方（Import
+// 回 502）——比照 strava.go syncRecent 的「列表拉取失敗就不進入匯入迴圈」；但單一窗口回應「改走
+// webhook 非同步」不算錯誤，只標記 async=true 並繼續處理其他窗口（見 fetchTerraActivities 註解）。
+func (h *TerraHandler) importRecent(ctx context.Context, conn *Connection, source string, days int) (TerraImportResult, error) {
+	res := TerraImportResult{Provider: source, Days: days}
+	for _, win := range terraSplitWindows(time.Now(), days) {
+		data, async, err := h.fetchTerraActivities(ctx, conn.ProviderUserID, win.From, win.To)
+		if err != nil {
+			return res, err
+		}
+		if async {
+			res.Async = true
+			continue
+		}
+		for i := range data {
+			a := &data[i]
+			// ⚠️ 只記非健康中繼資料（無心率/無座標），供對照真實 COROS payload 校對用（見
+			// terra-wearable-integration 記憶：實際 payload 至今沒收過）；務必是 Debug 而非 Info。
+			log.Debug().
+				Str("provider", source).
+				Int("type", a.Metadata.Type).
+				Str("start_time", a.Metadata.StartTime).
+				Float64("distance_m", a.DistanceData.Summary.DistanceMeters).
+				Float64("duration_s", a.ActiveDurationsData.ActivitySeconds).
+				Str("summary_id", a.Metadata.SummaryID).
+				Msg("terra manual import: fetched activity")
+			res.Fetched++
+			switch terraSkipReason(conn.ConnectedAt, a) {
+			case "non_running":
+				res.SkippedNonRunning++
+				continue
+			case "invalid":
+				res.SkippedInvalid++
+				continue
+			case "before_connect":
+				res.SkippedBeforeConnect++
+				continue
+			}
+			switch h.importTerra(ctx, conn.UserID, source, conn.ConnectedAt, a).Status {
+			case "inserted":
+				res.Imported++
+			case "error":
+				res.Errors++
+			default: // duplicate / exists（或理論上不該再出現的 skipped）：一律計入 duplicate
+				res.Duplicate++
+			}
+		}
+	}
+	log.Info().Str("provider", source).Str("user", conn.UserID).Int("days", days).
+		Int("fetched", res.Fetched).Int("imported", res.Imported).Int("duplicate", res.Duplicate).
+		Int("skipped_before_connect", res.SkippedBeforeConnect).
+		Int("skipped_non_running", res.SkippedNonRunning).Int("skipped_invalid", res.SkippedInvalid).
+		Int("errors", res.Errors).Bool("async", res.Async).
+		Msg("terra manual import done")
+	return res, nil
+}
+
+// terraImportWindow 一個 REST 匯入窗口的起訖日期（皆含端點）。
+type terraImportWindow struct {
+	From time.Time
+	To   time.Time
+}
+
+// terraImportMaxWindowDays：Terra inline（to_webhook=false）活動查詢單次建議不超過約 28 天
+// （官方未明確文件化精確上限，依任務規格採用 28 天保守值）。
+const terraImportMaxWindowDays = 28
+
+// terraSplitWindows 把「now 往前 days 天（含 now 當天）」切成連續、不重疊、無縫隙、每段
+// ≤terraImportMaxWindowDays 天的窗口序列，供 importRecent 逐段呼叫 fetchTerraActivities。
+// 例：days=28 → 1 段；days=30 → 2 段；days=90 → 4 段。最後一段的 To 恆為 now 的 UTC 日期。
+func terraSplitWindows(now time.Time, days int) []terraImportWindow {
+	if days < 1 {
+		days = 1
+	}
+	end := now.UTC().Truncate(24 * time.Hour)
+	start := end.AddDate(0, 0, -(days - 1))
+	var out []terraImportWindow
+	for cur := start; !cur.After(end); {
+		winEnd := cur.AddDate(0, 0, terraImportMaxWindowDays-1)
+		if winEnd.After(end) {
+			winEnd = end
+		}
+		out = append(out, terraImportWindow{From: cur, To: winEnd})
+		cur = winEnd.AddDate(0, 0, 1)
+	}
+	return out
+}
+
+// fetchTerraActivities GET /v2/activity?user_id=&start_date=&end_date=&to_webhook=false&with_samples=false
+// 單一窗口（≤28 天，見 terraSplitWindows）。20 秒逾時（比 fetchTerraUserInfo/Connect 的 10 秒長：
+// 活動列表 payload 可能較大、筆數不定）。
+//
+// async=true 代表這個窗口 Terra 判定改走非同步（送 webhook）而非直接把 data 放在這次回應裡——依任務
+// 規格：回應沒有 data 陣列（key 不存在，區別於「存在但是空陣列」）、或 status 不是 "success"，都算這種
+// 情形；呼叫方（importRecent）不當錯誤處理，只標記 async 並繼續處理其他窗口。
+// ⚠️ Terra 真實回應在這個端點的確切形狀未經校對驗證——本檔目前只驗證過 generateWidgetSession/
+// userInfo/deauthenticateUser 三支端點的實際回應（見檔案頂端註解），/v2/activity 是依任務規格
+// （非官方文件逐字核對）先行對映，若日後發現落地筆數異常，優先懷疑這裡的欄位假設。
+func (h *TerraHandler) fetchTerraActivities(ctx context.Context, terraUserID string, from, to time.Time) ([]terraActivity, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	q := url.Values{
+		"user_id":      {terraUserID},
+		"start_date":   {from.UTC().Format("2006-01-02")},
+		"end_date":     {to.UTC().Format("2006-01-02")},
+		"to_webhook":   {"false"},
+		"with_samples": {"false"},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.cfg.APIBase+"/v2/activity?"+q.Encode(), nil)
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("dev-id", h.cfg.DevID)
+	req.Header.Set("x-api-key", h.cfg.APIKey)
+	resp, err := h.hc.Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		log.Warn().Int("status", resp.StatusCode).Str("body", string(b)).Msg("terra activity fetch non-2xx")
+		return nil, false, fmt.Errorf("terra activity http %d", resp.StatusCode)
+	}
+	var out struct {
+		Status string          `json:"status"`
+		Data   []terraActivity `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, false, err
+	}
+	if out.Status != "success" || out.Data == nil {
+		return nil, true, nil
+	}
+	return out.Data, false, nil
+}
+
+// terraSkipReason 純函式：比照 mapTerraActivity 的判斷順序（非跑步類型 → 距離/時長無效 → 早於
+// floor），只回傳「為什麼會被略過」的分類字串供 /import 統計用；"" 代表這筆會被交給 importTerra
+// 落地（是否真的寫入還要看 UNIQUE(source,external_id) 去重結果）。刻意獨立於 mapTerraActivity 之外
+// （而非把它改成回傳原因），避免動到已有完整測試覆蓋、webhook 路徑也在用的既有函式行為；兩者的判斷
+// 順序與條件須保持一致，異動其中一個務必同步檢查另一個。
+func terraSkipReason(floor time.Time, a *terraActivity) string {
+	if !isTerraRunningActivity(a.Metadata.Type) {
+		return "non_running"
+	}
+	distM := a.DistanceData.Summary.DistanceMeters
+	durS := int(math.Round(a.ActiveDurationsData.ActivitySeconds))
+	if distM <= 0 || durS <= 0 {
+		return "invalid"
+	}
+	recordedAt, err := time.Parse(time.RFC3339, a.Metadata.StartTime)
+	if err != nil {
+		return "invalid"
+	}
+	if !floor.IsZero() && recordedAt.Before(floor) {
+		return "before_connect"
+	}
+	return ""
 }
 
 // deauthenticateTerraUser DELETE /v2/auth/deauthenticateUser?user_id=<terra_user_id>

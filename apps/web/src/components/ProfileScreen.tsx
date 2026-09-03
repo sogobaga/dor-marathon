@@ -498,6 +498,34 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       setTerraBusy(false)
     }
   }
+  // 手動補匯：Terra webhook 不保證會送 activity 事件（2026-09-03 COROS 真機實測：只收到 daily，沒有 activity），
+  // 裝置同步的跑步理論上會自動匯入，但沒進來時給使用者一個主動向 Terra 要近期紀錄的按鈕。
+  async function importTerra(provider: string) {
+    const brand = terraBrandName(provider)
+    setTerraBusy(true)
+    setTerraMsg('')
+    try {
+      const r = await withUserAuth((t) => integrationsApi.terraImport(t, provider))
+      if (r.async) {
+        setTerraMsg(`已向 Terra 請求重送近 ${r.days} 天的紀錄，資料會在幾分鐘內自動匯入，請稍後再回來看`)
+      } else {
+        let msg = `${brand} 匯入完成：新增 ${r.imported} 筆`
+        if (r.duplicate > 0) msg += `、重複 ${r.duplicate} 筆`
+        if (r.skipped_before_connect > 0) msg += `、${r.skipped_before_connect} 筆為連接前的紀錄未計入`
+        if (r.skipped_non_running > 0) msg += `、${r.skipped_non_running} 筆非跑步`
+        if (r.errors > 0) msg += `、${r.errors} 筆失敗`
+        msg += r.fetched === 0
+          ? `（Terra 近 ${r.days} 天沒有回傳任何活動——請確認 ${brand} App 已把活動同步到雲端）`
+          : `（Terra 回傳 ${r.fetched} 筆）`
+        setTerraMsg(msg)
+        if (r.imported > 0) loadActivities()
+      }
+    } catch (e: any) {
+      setTerraMsg(e?.message || '匯入失敗')
+    } finally {
+      setTerraBusy(false)
+    }
+  }
 
   function set<K extends keyof Profile>(k: K, v: Profile[K]) {
     setP((prev) => (prev ? { ...prev, [k]: v } : prev))
@@ -817,8 +845,11 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
                 {terra.connections.map((c) => (
                   <div key={c.provider} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: 'var(--bg-2)', borderRadius: 8, padding: '7px 10px' }}>
-                    <span style={{ fontSize: 12.5, color: 'var(--tx)' }}>✓ {terraBrandName(c.provider)} ・ 已連接 {fmtDate(c.connected_at).split(' ')[0]}</span>
-                    <button onClick={() => disconnectTerra(c.provider)} disabled={terraBusy} style={{ ...ghostBtn, padding: '5px 10px', fontSize: 11.5, whiteSpace: 'nowrap' }}>斷開</button>
+                    <span style={{ fontSize: 12.5, color: 'var(--tx)', minWidth: 0 }}>✓ {terraBrandName(c.provider)} ・ 已連接 {fmtDate(c.connected_at).split(' ')[0]}</span>
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      <button onClick={() => importTerra(c.provider)} disabled={terraBusy} style={{ ...ghostBtn, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', padding: '5px 10px', fontSize: 11.5, whiteSpace: 'nowrap' }}>{terraBusy ? '處理中…' : '匯入數據'}</button>
+                      <button onClick={() => disconnectTerra(c.provider)} disabled={terraBusy} style={{ ...ghostBtn, padding: '5px 10px', fontSize: 11.5, whiteSpace: 'nowrap' }}>斷開</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -828,6 +859,11 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
               連接即表示你同意透過整合商 <b>Terra</b> 取得你的跑步活動資料（跨境處理），並同意本平台 <a href="/privacy" target="_blank" rel="noreferrer" style={{ color: 'var(--fug)' }}>隱私權政策</a>。
             </div>
+            {terra?.enabled && terra.connections.length > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4, lineHeight: 1.6 }}>
+                裝置同步的跑步通常會自動匯入；若沒進來，按「匯入數據」會向 Terra 抓近 30 天的紀錄（只計入連接之後的跑步）。
+              </div>
+            )}
           </div>
 
           {/* 里程優先來源（連接 2 個以上來源時可設定；跨來源去重用） */}

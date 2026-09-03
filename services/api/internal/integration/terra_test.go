@@ -1,11 +1,15 @@
 package integration
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -287,4 +291,192 @@ func signTerraBody(t *testing.T, secret string, ts int64, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(tsStr + "." + string(body)))
 	return "t=" + tsStr + ",v1=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+// --- POST /import：fetchTerraActivities ---
+
+func TestFetchTerraActivities_TwoActivitiesDecoded(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		if got := r.Header.Get("dev-id"); got != "dev-1" {
+			t.Errorf("dev-id header = %q, want dev-1", got)
+		}
+		if got := r.Header.Get("x-api-key"); got != "key-1" {
+			t.Errorf("x-api-key header = %q, want key-1", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"status": "success",
+			"type": "activity",
+			"user": {"user_id": "terra-user-1", "provider": "COROS"},
+			"data": [` + terraSampleActivityJSON + `, ` + terraSampleActivityJSON + `]
+		}`))
+	}))
+	defer srv.Close()
+
+	h := &TerraHandler{
+		cfg: TerraConfig{APIBase: srv.URL, DevID: "dev-1", APIKey: "key-1"},
+		hc:  &http.Client{},
+	}
+	from, _ := time.Parse("2006-01-02", "2026-08-01")
+	to, _ := time.Parse("2006-01-02", "2026-08-28")
+	data, async, err := h.fetchTerraActivities(context.Background(), "terra-user-1", from, to)
+	if err != nil {
+		t.Fatalf("fetchTerraActivities() err = %v, want nil", err)
+	}
+	if async {
+		t.Fatalf("fetchTerraActivities() async = true, want false")
+	}
+	if len(data) != 2 {
+		t.Fatalf("fetchTerraActivities() len(data) = %d, want 2", len(data))
+	}
+	if data[0].Metadata.SummaryID != "terra-sum-001" {
+		t.Errorf("data[0].Metadata.SummaryID = %q, want terra-sum-001", data[0].Metadata.SummaryID)
+	}
+	if !strings.Contains(gotQuery, "start_date=2026-08-01") || !strings.Contains(gotQuery, "end_date=2026-08-28") {
+		t.Errorf("query = %q, want start_date=2026-08-01 & end_date=2026-08-28", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "to_webhook=false") || !strings.Contains(gotQuery, "with_samples=false") {
+		t.Errorf("query = %q, want to_webhook=false & with_samples=false", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "user_id=terra-user-1") {
+		t.Errorf("query = %q, want user_id=terra-user-1", gotQuery)
+	}
+}
+
+func TestFetchTerraActivities_NoDataMeansAsync(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","message":"request is being processed and will be sent to your webhook"}`))
+	}))
+	defer srv.Close()
+
+	h := &TerraHandler{cfg: TerraConfig{APIBase: srv.URL, DevID: "d", APIKey: "k"}, hc: &http.Client{}}
+	data, async, err := h.fetchTerraActivities(context.Background(), "terra-user-1", time.Now(), time.Now())
+	if err != nil {
+		t.Fatalf("fetchTerraActivities() err = %v, want nil", err)
+	}
+	if !async {
+		t.Fatalf("fetchTerraActivities() async = false, want true (no data array in response)")
+	}
+	if len(data) != 0 {
+		t.Fatalf("fetchTerraActivities() len(data) = %d, want 0", len(data))
+	}
+}
+
+func TestFetchTerraActivities_ServerErrorReturnsErr(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("boom"))
+	}))
+	defer srv.Close()
+
+	h := &TerraHandler{cfg: TerraConfig{APIBase: srv.URL, DevID: "d", APIKey: "k"}, hc: &http.Client{}}
+	_, _, err := h.fetchTerraActivities(context.Background(), "terra-user-1", time.Now(), time.Now())
+	if err == nil {
+		t.Fatalf("fetchTerraActivities() err = nil, want error on HTTP 500")
+	}
+}
+
+// --- POST /import：terraSplitWindows ---
+
+func TestTerraSplitWindows(t *testing.T) {
+	now, err := time.Parse(time.RFC3339, "2026-09-03T12:00:00Z")
+	if err != nil {
+		t.Fatalf("parse now: %v", err)
+	}
+	wantEnd := now.UTC().Truncate(24 * time.Hour)
+
+	cases := []struct {
+		name        string
+		days        int
+		wantWindows int
+	}{
+		{"28天=1段", 28, 1},
+		{"30天=2段", 30, 2},
+		{"90天=4段", 90, 4},
+		{"1天=1段", 1, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := terraSplitWindows(now, c.days)
+			if len(got) != c.wantWindows {
+				t.Fatalf("terraSplitWindows(days=%d) = %d windows, want %d (%+v)", c.days, len(got), c.wantWindows, got)
+			}
+			// 連續、無縫隙、無重疊：每段 From 恰為前一段 To+1 天。
+			for i := 1; i < len(got); i++ {
+				wantFrom := got[i-1].To.AddDate(0, 0, 1)
+				if !got[i].From.Equal(wantFrom) {
+					t.Errorf("window[%d].From = %v, want %v (前一段 To+1 天，無縫隙無重疊)", i, got[i].From, wantFrom)
+				}
+			}
+			// 每段長度 ≤28 天。
+			for i, w := range got {
+				span := int(w.To.Sub(w.From).Hours()/24) + 1
+				if span > terraImportMaxWindowDays {
+					t.Errorf("window[%d] span = %d days, want <= %d", i, span, terraImportMaxWindowDays)
+				}
+				if span <= 0 {
+					t.Errorf("window[%d] span = %d days, want > 0", i, span)
+				}
+			}
+			// 最後一段 To == now 的 UTC 日期。
+			last := got[len(got)-1]
+			if !last.To.Equal(wantEnd) {
+				t.Errorf("last window.To = %v, want %v (now's UTC date)", last.To, wantEnd)
+			}
+			// 總天數涵蓋恰好 days 天（第一段 From 到最後一段 To）。
+			first := got[0]
+			totalSpan := int(last.To.Sub(first.From).Hours()/24) + 1
+			if totalSpan != c.days {
+				t.Errorf("total span = %d days, want %d", totalSpan, c.days)
+			}
+		})
+	}
+}
+
+// --- POST /import：terraSkipReason ---
+
+func TestTerraSkipReason(t *testing.T) {
+	okActivity := mustDecodeTerraActivity(t, terraSampleActivityJSON) // type 8=RUNNING, 2026-09-01T06:00:00Z
+
+	nonRunning := mustDecodeTerraActivity(t, `{"metadata":{"start_time":"2026-09-01T06:00:00Z","type":9,"summary_id":"x"},
+		"distance_data":{"summary":{"distance_meters":10000}},"active_durations_data":{"activity_seconds":1800}}`)
+
+	invalidDistance := mustDecodeTerraActivity(t, `{"metadata":{"start_time":"2026-09-01T06:00:00Z","type":8},
+		"distance_data":{"summary":{"distance_meters":0}},"active_durations_data":{"activity_seconds":600}}`)
+
+	invalidStartTime := mustDecodeTerraActivity(t, `{"metadata":{"start_time":"not-a-time","type":8},
+		"distance_data":{"summary":{"distance_meters":1000}},"active_durations_data":{"activity_seconds":600}}`)
+
+	cases := []struct {
+		name  string
+		floor time.Time
+		a     *terraActivity
+		want  string
+	}{
+		{"非跑步類型", time.Time{}, nonRunning, "non_running"},
+		{"距離無效", time.Time{}, invalidDistance, "invalid"},
+		{"開始時間無法解析", time.Time{}, invalidStartTime, "invalid"},
+		{"早於連接時間", mustParseRFC3339(t, "2026-09-01T12:00:00Z"), okActivity, "before_connect"},
+		{"通過（floor為零值）", time.Time{}, okActivity, ""},
+		{"通過（floor早於活動時間）", mustParseRFC3339(t, "2026-09-01T00:00:00Z"), okActivity, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := terraSkipReason(c.floor, c.a); got != c.want {
+				t.Errorf("terraSkipReason() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func mustParseRFC3339(t *testing.T, s string) time.Time {
+	t.Helper()
+	tm, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatalf("parse %q: %v", s, err)
+	}
+	return tm
 }
