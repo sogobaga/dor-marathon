@@ -41,6 +41,12 @@ type GPSRunSummary struct {
 	// 距離已改顯示校正後（CalibDistanceKm），若配速仍顯示原始值，同一畫面會出現「距離×配速≠時間」
 	// 且跟「已同步活動」（activities.avg_pace_s 是校正後）的同一趟配速對不上，兩處數字互相矛盾。
 	CalibAvgPaceS *int `json:"calib_avg_pace_s,omitempty"`
+	// ExcludedKm/ExcludedSegments：被排除區段（超速∪訊號斷點，見 internal/activity/gps.go
+	// computeRun 的 gapInvalid/speedInvalid、migrations/166）的原始直線距離加總／段數；不套校正
+	// 係數 k。本人歷史（ListUserGPS/GetUserGPSRun）填入實際值供前端顯示「⚠️ 已排除 Xkm」；後台
+	// 審核（ListPendingGPS/GetGPSRun）目前 SELECT 未帶這兩欄，維持零值。
+	ExcludedKm       float64 `json:"excluded_km"`
+	ExcludedSegments int     `json:"excluded_segments"`
 }
 
 // withCalibAvgPace 由 CalibDistanceKm/DurationS 算出校正後平均配速，只有本人歷史（有帶

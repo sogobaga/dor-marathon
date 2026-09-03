@@ -26,6 +26,12 @@ const (
 	gpsMinDistKm      = 0.005 // 短於此（公里=5m）視為移動距離不足，不計算/不記錄/不判異常
 	gpsFastRatioFlag  = 0.30  // 超速距離占比達此且總距離足夠 → 判定疑似載具
 	gpsRatioMinDistKm = 0.3   // 套用「超速占比」判定所需的最低總距離（避免短程單一跳點誤判）
+	// gpsGapMaxS/gpsGapMaxMeters：訊號斷點排除規則（2026-09-03 事故：步行後搭捷運，地下無 GPS，
+	// 長時間斷點讓兩點間直線距離除以經過時間仍低於極限速度、未被超速規則攔下）。與速度規則是
+	// OR 的關係——dt 超過門檻「且」d 也超過門檻才視為無效（避免把單純訊號差、但實際仍在移動的
+	// 短距離斷點也排除掉）。見 computeRun 內 gapInvalid 判定與檔頭 migrations/166 說明。
+	gpsGapMaxS      = 60.0  // 秒；此門檻本身不觸發排除，需與下方距離門檻同時成立
+	gpsGapMaxMeters = 250.0 // 公尺
 )
 
 type gpsPoint struct {
@@ -56,6 +62,11 @@ type gpsRunResult struct {
 	KmPaces       []int   `json:"km_paces,omitempty"`  // 每公里分段配速（秒/km）；前端結束畫面「分段」與「結果卡均配速」同源
 	RawDistanceKm float64 `json:"raw_distance_km"`     // 校正前原始距離（見 internal/gpscalib）；未套校正時與 DistanceKm 相同
 	CalibFactor   float64 `json:"calib_factor"`        // 上傳當下生效的係數；未套校正恆為 1.0
+	// ExcludedKm/ExcludedSegments：被排除區段（超速∪訊號斷點，見 gpsGapMaxS/gpsGapMaxMeters）的原始
+	// 直線距離加總／段數；不套校正係數 k（排除的是「無效」距離，校正只對「有效」距離有意義）。前端
+	// 據此顯示「⚠️ 已排除 Xkm」提示——這趟仍照常存檔，只是排除掉的部分不計入距離/EXP。
+	ExcludedKm       float64 `json:"excluded_km"`
+	ExcludedSegments int     `json:"excluded_segments"`
 }
 
 func haversineM(lat1, lon1, lat2, lon2 float64) float64 {
@@ -81,6 +92,9 @@ type runCalc struct {
 	KmSplits       []int // 每公里分段配速（秒/km），依校正後距離的公里邊界切
 	UsedPointCount int
 	AccP50, AccP90 *float64
+	ExcludedM      float64      // 被排除區段的原始直線距離加總（公尺，未套 k；見 gpsGapMaxS/gpsGapMaxMeters）
+	ExcludedSegs   int          // 被排除的區段數（超速規則∪斷點規則，同一區段只算一次）
+	BreakBefore    map[int]bool // 斷點：key 為「已接受點序列」中的序號（0-based），true 代表該點前另起一段 polyline（見 encodePolylineSegments）
 }
 
 // computeRun 是 SaveGPSRun 的純計算核心（無 DB/Redis 依賴，方便單元測試，見 gps_test.go）：從一批
@@ -90,8 +104,8 @@ type runCalc struct {
 // 標記，也不能讓原本正常的軌跡被標記。
 func computeRun(points []gpsPoint, k float64) (runCalc, error) {
 	maxSpeed := 1000.0 / float64(minPaceSecPerKm) // 公尺/秒（= 2:00/km 對應速度）
-	var distM, fastDistM float64
-	var anomalies, usedPointCount int
+	var distM, fastDistM, excludedM float64
+	var anomalies, usedPointCount, excludedSegs int
 	var accs []float64
 	var prev *gpsPoint
 	// 每公里分段配速（秒/km）：校正後距離每跨一整公里記一段（與前端 fireCheer 判定同一個公里
@@ -100,11 +114,13 @@ func computeRun(points []gpsPoint, k float64) (runCalc, error) {
 	var kmSplits []int
 	kmTarget := 1000.0
 	lastKmT := points[0].T
+	breakBefore := map[int]bool{}
 	for i := range points {
 		p := &points[i]
 		if p.Acc > 0 && p.Acc > gpsMaxAccuracyM {
 			continue // 精度太差，略過
 		}
+		ordinal := usedPointCount // 這個點在「已接受序列」中的序號（0-based）——breakBefore 用這個索引
 		usedPointCount++
 		if p.Acc > 0 {
 			accs = append(accs, p.Acc)
@@ -113,11 +129,23 @@ func computeRun(points []gpsPoint, k float64) (runCalc, error) {
 			d := haversineM(prev.Lat, prev.Lng, p.Lat, p.Lng)
 			dt := float64(p.T-prev.T) / 1000.0
 			if dt > 0 {
-				if d > gpsMinSegMeters && d/dt > maxSpeed {
+				speedInvalid := d > gpsMinSegMeters && d/dt > maxSpeed
+				// 訊號斷點：長時間沒有訊號（dt 夠大）且遠端點離得夠遠（d 夠大）才視為無效——單純
+				// dt 大但 d 小（原地停留/訊號差但沒怎麼移動）不算，避免誤傷。
+				gapInvalid := dt > gpsGapMaxS && d > gpsGapMaxMeters
+				if speedInvalid {
 					anomalies++                // 超過人類極限速度的區段（疑似載具/GPS 跳點）
 					fastDistM += maxSpeed * dt // 以極限速度估計超速距離（供占比判定）——但不列入有效里程
+				}
+				if speedInvalid || gapInvalid {
+					// 無效區段（超速∪訊號斷點）：距離不計入 distM、km 分段不推進；但遠端點 p 仍會
+					// 在迴圈末尾成為新的 prev（下一段從這個真實新位置起算），且標記為 polyline 斷點
+					// （見 encodePolylineSegments）——斷點規則本身不算作弊，不進 fastDistM/anomalies。
+					excludedM += d
+					excludedSegs++
+					breakBefore[ordinal] = true
 				} else {
-					distM += d                // 只有「正常速度」才算有效距離；超速段完全不計（不刷里程、不推進課表）
+					distM += d                // 只有「正常速度」才算有效距離；超速/斷點段完全不計（不刷里程、不推進課表）
 					for distM*k >= kmTarget { // 跨過整公里（校正後）→ 記這一段配速
 						if splitS := int(float64(p.T-lastKmT) / 1000.0); splitS > 0 {
 							kmSplits = append(kmSplits, splitS)
@@ -171,7 +199,35 @@ func computeRun(points []gpsPoint, k float64) (runCalc, error) {
 		RawAvgPaceS: rawAvgPaceS, AvgPaceS: avgPaceS,
 		Flagged: flagged, FlagReason: flagReason, Anomalies: anomalies,
 		KmSplits: kmSplits, UsedPointCount: usedPointCount, AccP50: accP50, AccP90: accP90,
+		ExcludedM: excludedM, ExcludedSegs: excludedSegs, BreakBefore: breakBefore,
 	}, nil
+}
+
+// encodePolylineSegments 是 SaveGPSRun 軌跡壓縮的純函式核心（無 DB 依賴，方便單元測試，見
+// gps_test.go）：依 breakBefore 標記的斷點把一條軌跡切成多段，各段分別做 Douglas-Peucker 簡化
+// (5m) + encode，用 "|" 串接——無效區段（超速/訊號斷點，見 computeRun 的 gapInvalid/speedInvalid）
+// 不會被畫成一條直線。breakBefore[i]==true 代表 points[i]（無效區段的遠端點）前另起一段，即 i 是
+// 新一段的第一個點。沒有任何斷點時退化成單一 polyline，與舊資料格式（無 "|"）相容。少於 2 個點的
+// 子段仍會被 encode（單點也是合法、可還原的 encoded polyline，只是不會畫出線段）——刻意不捨棄，
+// 讓「排除了什麼」在 polyline 的段落切分上如實呈現。
+func encodePolylineSegments(points []gpsPoint, breakBefore map[int]bool) string {
+	var segments []string
+	var cur [][2]float64
+	flush := func() {
+		if len(cur) == 0 {
+			return
+		}
+		segments = append(segments, encodePolyline(simplifyPath(cur, 5)))
+		cur = nil
+	}
+	for i, p := range points {
+		if breakBefore[i] {
+			flush()
+		}
+		cur = append(cur, [2]float64{p.Lat, p.Lng})
+	}
+	flush()
+	return strings.Join(segments, "|")
 }
 
 // SaveGPSRun 伺服器端重算 + 防弊；未標記者推入活動管線（記錄+里程EXP）。
@@ -194,6 +250,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 	rawKm, distanceKm, durationS := calc.RawKm, calc.DistanceKm, calc.DurationS
 	rawAvgPaceS, avgPaceS := calc.RawAvgPaceS, calc.AvgPaceS
 	flagged, flagReason, anomalies, kmSplits := calc.Flagged, calc.FlagReason, calc.Anomalies, calc.KmSplits
+	excludedKm := round3(calc.ExcludedM / 1000.0) // 不套校正係數 k——排除的是「無效」距離，見 gpsRunResult 欄位註解
 
 	// 有效距離不足「且」未判定為載具 → 單純距離不足（走幾步），不記錄、不發 EXP（用原始值判定）。
 	// 若是載具（整趟超速被排除、有效距離趨近 0）則不走這裡，仍以 flagged 記錄一筆（歷史看得到、且不發獎）。
@@ -201,22 +258,26 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		return &gpsRunResult{
 			DistanceKm: round2(rawKm), DurationS: durationS, AvgPaceS: rawAvgPaceS, TooShort: true,
 			RawDistanceKm: round2(rawKm), CalibFactor: k,
+			ExcludedKm: excludedKm, ExcludedSegments: calc.ExcludedSegs,
 		}, nil
 	}
 
 	started, _ := time.Parse(time.RFC3339, req.StartedAt)
 	ended, _ := time.Parse(time.RFC3339, req.EndedAt)
-	// 軌跡壓縮：精度過差的點剔除 → Douglas-Peucker 簡化(5m) → encoded polyline（數百 bytes）
-	latlng := make([][2]float64, 0, len(req.Points))
+	// 軌跡壓縮：精度過差的點剔除 → 依斷點切段 → 各段分別 Douglas-Peucker 簡化(5m) + encode，
+	// 用 "|" 串接（見 encodePolylineSegments）——無效區段（超速/訊號斷點）不畫線連過去；
+	// 舊資料（無 "|"）維持單一 polyline 格式相容。
+	usedPts := make([]gpsPoint, 0, len(req.Points))
 	for _, p := range req.Points {
 		if p.Acc == 0 || p.Acc <= gpsMaxAccuracyM {
-			latlng = append(latlng, [2]float64{p.Lat, p.Lng})
+			usedPts = append(usedPts, p)
 		}
 	}
-	polyline := encodePolyline(simplifyPath(latlng, 5))
+	polyline := encodePolylineSegments(usedPts, calc.BreakBefore)
 	inserted, err := s.repo.InsertGPSRun(ctx, userID, req.RaceID, started, ended,
 		round2(rawKm), durationS, rawAvgPaceS, flagged, flagReason, len(req.Points), polyline, kmSplits,
-		k, round2(distanceKm), req.ClientVersion, calc.AccP50, calc.AccP90, calc.UsedPointCount)
+		k, round2(distanceKm), req.ClientVersion, calc.AccP50, calc.AccP90, calc.UsedPointCount,
+		excludedKm, calc.ExcludedSegs)
 	if err != nil {
 		return nil, err
 	}
@@ -227,6 +288,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 			DistanceKm: round2(distanceKm), DurationS: durationS, AvgPaceS: avgPaceS,
 			Flagged: flagged, FlagReason: flagReason, AnomalySegs: anomalies, ExpAwarded: false, Duplicate: true,
 			RawDistanceKm: round2(rawKm), CalibFactor: k,
+			ExcludedKm: excludedKm, ExcludedSegments: calc.ExcludedSegs,
 		}, nil
 	}
 
@@ -257,6 +319,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		DistanceKm: round2(distanceKm), DurationS: durationS, AvgPaceS: avgPaceS,
 		Flagged: flagged, FlagReason: flagReason, AnomalySegs: anomalies, ExpAwarded: !flagged,
 		KmPaces: kmSplits, RawDistanceKm: round2(rawKm), CalibFactor: k,
+		ExcludedKm: excludedKm, ExcludedSegments: calc.ExcludedSegs,
 	}, nil
 }
 
@@ -277,6 +340,7 @@ func accPercentiles(accs []float64) (p50, p90 *float64) {
 }
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
+func round3(v float64) float64 { return math.Round(v*1000) / 1000 }
 
 // HistAvgPace 該會員歷史日常平均配速（秒/km；無資料回 0）
 func (r *Repository) HistAvgPace(ctx context.Context, userID string) int {
@@ -292,7 +356,8 @@ func (r *Repository) HistAvgPace(ctx context.Context, userID string) int {
 // 同一 user 的同一起跑時間已存在時不再插入、回 inserted=false，呼叫端據此不重複進活動管線/發獎。
 func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, started, ended time.Time,
 	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, polyline string, kmPaces []int,
-	calibFactor, calibDistanceKm float64, clientVersion string, accP50, accP90 *float64, usedPointCount int) (bool, error) {
+	calibFactor, calibDistanceKm float64, clientVersion string, accP50, accP90 *float64, usedPointCount int,
+	excludedKm float64, excludedSegments int) (bool, error) {
 	var rid interface{}
 	if raceID != "" {
 		rid = raceID
@@ -301,12 +366,14 @@ func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, st
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO gps_runs (user_id, race_id, started_at, ended_at, distance_km, duration_s,
 		                      avg_pace_s, flagged, flag_reason, point_count, polyline, km_paces,
-		                      calib_factor, calib_distance_km, client_version, acc_p50, acc_p90, used_point_count)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12,$13,$14,NULLIF($15,''),$16,$17,$18)
+		                      calib_factor, calib_distance_km, client_version, acc_p50, acc_p90, used_point_count,
+		                      excluded_km, excluded_segments)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12,$13,$14,NULLIF($15,''),$16,$17,$18,$19,$20)
 		ON CONFLICT (user_id, started_at) DO NOTHING
 		RETURNING id`,
 		userID, rid, started, ended, distanceKm, durationS, avgPaceS, flagged, flagReason, pointCount, polyline, kmPaces,
-		calibFactor, calibDistanceKm, clientVersion, accP50, accP90, usedPointCount).Scan(&id)
+		calibFactor, calibDistanceKm, clientVersion, accP50, accP90, usedPointCount,
+		excludedKm, excludedSegments).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil // 同一趟已上傳過 → 冪等 no-op
 	}

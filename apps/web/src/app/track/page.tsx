@@ -37,6 +37,11 @@ const LAST_K_KEY = 'dor_gps_calib_k' // 最近一次已知的 GPS 距離校正�
 const MAX_ACC = 65 // 精度差於此（公尺）的點不採計距離（城市/大樓旁訊號較差，放寬以免整趟記不到）
 const MAX_SPEED = 1000 / 120 // 8.33 m/s（2:00/km）人類極限上限
 const JITTER_MIN = 6 // 公尺：距上一個採納點移動不足此值視為原地抖動，不計距離
+// 訊號中斷跳點門檻（2026-09-03 事故：走路 2km 後搭捷運 10km 地下段斷訊，重新收訊瞬間把斷訊期間的
+// 直線距離整段算進去——10km/約25分鐘≈6.7m/s，未超過 MAX_SPEED 仍被吃下）。與超速規則獨立判斷：
+// 斷訊 GAP_MAX_S 秒以上、且重連跳了 GAP_MAX_M 公尺以上，視為不可信的直線距離，整段排除。
+const GAP_MAX_S = 60 // 秒
+const GAP_MAX_M = 250 // 公尺
 const PACE_MIN_KM = 0.005 // 累積達此距離（5m，約顯示 0.01km 時）即顯示平均配速
 
 function haversineM(a: GpsPoint, b: GpsPoint) {
@@ -75,7 +80,9 @@ export default function TrackPage() {
   const [distance, setDistance] = useState(0) // 公尺
   const [elapsed, setElapsed] = useState(0)
   const [splits, setSplits] = useState<number[]>([]) // 每公里配速（秒）
-  const [anomalies, setAnomalies] = useState(0)
+  // anomalies（單純計超速跳點數）已折入 excluded（見下方宣告）：excluded.segs 是超速＋訊號中斷跳點的
+  // 完整無效段數，兩套數字並存只會互相矛盾，故不再另外保留 anomalies 這個 state。
+  const [excluded, setExcluded] = useState({ segs: 0, km: 0 }) // 已排除的異常段（超速／訊號中斷跳點）：段數＋距離，鏡射 excludedSegsRef/excludedMRef 供渲染
   const [warn, setWarn] = useState('')
   const [err, setErr] = useState('')
   const [errFade, setErrFade] = useState(false) // 提示訊息淡出中
@@ -270,6 +277,8 @@ export default function TrackPage() {
   const pointsRef = useRef<GpsPoint[]>([])
   const distRef = useRef(0)      // 有效距離（排除超速段）：顯示/里程/課表進度用
   const rawDistRef = useRef(0)   // 原始距離（含超速夾限）：僅供疑似搭車偵測，避免排除有效距離後偵測失效
+  const excludedMRef = useRef(0)    // 已排除的異常距離（公尺）：超速段 + 訊號中斷跳點段，皆不計入 distRef
+  const excludedSegsRef = useRef(0) // 已排除的異常段數（同一段觸發兩條規則只算一次）
   const splitMarkRef = useRef<number[]>([]) // 每跨整公里時的 elapsed 秒
   const startRef = useRef(0)
   // 配速基準：第一個 GPS 點的時間戳（GPS 鎖定後才開始計時），若尚無點則退回按鈕按下時間。
@@ -508,12 +517,19 @@ export default function TrackPage() {
         const dt = (p.t - lastAcc.t) / 1000
         if (d >= JITTER_MIN && dt > 0) {
           const over = d / dt > MAX_SPEED // 超過人體極限（疑似載具/GPS 跳點）
-          const seg = over ? MAX_SPEED * dt : d
-          rawDistRef.current += seg // 原始距離（含超速夾限）→ 供疑似搭車偵測（不因排除有效距離而失效）
-          if (over) {
-            setAnomalies((n) => n + 1)
-            // 超速段完全不計入有效距離：不刷里程、不推進課表分段（與伺服器一致）
-            lastAccRef.current = p // 仍前進採納點（避免搭車結束後算出巨大跳段）
+          const gapBad = dt > GAP_MAX_S && d > GAP_MAX_M // 訊號中斷跳點（見 GAP_MAX_S/GAP_MAX_M 宣告處的事故說明）
+          const invalid = over || gapBad
+          // 原始距離（超速段夾限為極限速度×dt、訊號中斷跳點段記 0——斷訊期間根本沒觀測到移動，不能餵給
+          // 疑似搭車偵測，否則出站重連那一瞬間會被當成 10km 的高速位移）
+          const seg = over ? MAX_SPEED * dt : gapBad ? 0 : d
+          rawDistRef.current += seg // 供疑似搭車偵測（不因排除有效距離而失效）
+          if (invalid) {
+            // 無效段（超速 或 訊號中斷跳點）完全不計入有效距離：不刷里程、不推進課表分段、不餵移動狀態機
+            // （與伺服器一致——伺服器對上傳的同批點套用同一條規則重算）
+            excludedMRef.current += d
+            excludedSegsRef.current += 1
+            setExcluded({ segs: excludedSegsRef.current, km: excludedMRef.current / 1000 })
+            lastAccRef.current = p // 仍前進採納點（避免異常段結束後算出巨大跳段）
             pointsRef.current.push(p)
             if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
           } else {
@@ -707,6 +723,18 @@ export default function TrackPage() {
     for (let i = s.length - 1; i >= 0; i--) { if (s[i].t <= target) { past = s[i]; break } }
     if (!past) return null // 尚無足夠歷史（跑步時間短於觀察視窗）
     return rawDistRef.current - past.d
+  }
+  // 近 windowMs 的位移「與其實際經過的時間」；歷史不足回 null。疑似搭車偵測需要真實配速，不能沿用
+  // 名目 windowMs 當分母——分頁背景/裝置螢幕鎖定時 evalTick 的 setInterval 可能被系統暫停，恢復後
+  // 兩次取樣間的真實間隔（ms）遠大於名目 windowMs，若仍除以固定值會把配速算得比真實快很多而誤判。
+  function movedAndElapsed(windowMs: number): { d: number; ms: number } | null {
+    const s = distSamplesRef.current
+    if (s.length < 2) return null
+    const target = Date.now() - windowMs
+    let past: { t: number; d: number } | null = null
+    for (let i = s.length - 1; i >= 0; i--) { if (s[i].t <= target) { past = s[i]; break } }
+    if (!past) return null
+    return { d: rawDistRef.current - past.d, ms: Date.now() - past.t }
   }
   function triggerEligible(def: EventDef): boolean {
     const p = def.trigger_params
@@ -964,8 +992,9 @@ export default function TrackPage() {
     distSamplesRef.current.push({ t: now, d: rawDistRef.current })
     if (distSamplesRef.current.length > 1600) distSamplesRef.current.splice(0, 400) // 上限 ~25 分鐘
     // 疑似搭車（即時偵測）：近 45 秒配速快於 2:20/km（遠超人體極限）→ 即時提醒＋暫停事件（避免搭車刷任務）
-    const veh45 = movedInWindow(45000)
-    const vehLike = veh45 != null && veh45 > 150 && 45000 / veh45 < 140
+    // 分母用實際經過時間（movedAndElapsed），不是固定 45000（見該函式註解：修長時間背景暫停誤判搭車的 bug）
+    const veh = movedAndElapsed(45000)
+    const vehLike = veh != null && veh.d > 150 && veh.ms / veh.d < 140
     vehicleLikeRef.current = vehLike
     setVehicleWarn(vehLike)
     if (woActiveRef.current || vehLike) return // 課表挑戰中 / 疑似搭車：暫停隨機事件/多人邀請
@@ -1098,13 +1127,14 @@ export default function TrackPage() {
     // 關掉進頁面的 GPS 預熱偵測，避免與正式追蹤重複回報
     if (warmWatchRef.current != null) { try { navigator.geolocation.clearWatch(warmWatchRef.current) } catch { /* ignore */ } warmWatchRef.current = null }
     pointsRef.current = []; distRef.current = 0; rawDistRef.current = 0; splitMarkRef.current = []; lastAccRef.current = null; movingSplitMarkRef.current = []
+    excludedMRef.current = 0; excludedSegsRef.current = 0
     // GPS 距離校正：開跑當下對 dash 拍快照、整趟固定（見上方 calibKRef 宣告處）。dash 尚未載入/過期
     // 時 fallback 到 lastKnownKRef（上一次已知的生效係數，見其宣告處的對抗式審查修正註解），而非
     // 一律視為 1——後者在 dash 冷啟動的窄視窗內會讓前端顯示距離系統性比後端實際入帳值多算。
     calibKRef.current = dash?.gps_calib_entry === 'shown' && dash.gps_calib_factor > 0 ? dash.gps_calib_factor : lastKnownKRef.current
     movingStateRef.current = initMovingState(); lastMoveRef.current = null // #4 移動時間狀態機重置（見 lib/movingTime.ts）
     pendingRef.current = [] // 距離防漂移：清掉上一趟未回補的暫存段
-    setDistance(0); setElapsed(0); setSplits([]); setAnomalies(0); setResult(null); setMovingS(0)
+    setDistance(0); setElapsed(0); setSplits([]); setExcluded({ segs: 0, km: 0 }); setResult(null); setMovingS(0)
     // 每公里鼓勵語重置：避免上一趟結束前顯示中的句子/去重記憶殘留到這一趟
     setCheer(null); lastCheerTextRef.current = null; if (cheerTimerRef.current) clearTimeout(cheerTimerRef.current)
     vehicleLikeRef.current = false; setVehicleWarn(false)
@@ -1988,6 +2018,15 @@ export default function TrackPage() {
             </div>
           </div>
         )}
+        {/* 已排除異常段落即時提醒（超速／訊號中斷跳點，見 GAP_MAX_S/GAP_MAX_M）：常駐顯示，不像精度警告
+            4 秒後自動淡出——排除掉的距離不是暫時性訊號問題，使用者應該持續知道這件事直到跑完。 */}
+        {excluded.segs > 0 && status === 'tracking' && (
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 960, padding: '10px 12px 0', pointerEvents: 'none' }}>
+            <div style={{ background: '#b46a00', color: '#fff', borderRadius: 10, padding: '10px 12px', fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,.4)', lineHeight: 1.5 }}>
+              ⚠️ 已排除 {excluded.segs} 段異常 GPS 數據（約 {excluded.km.toFixed(1)} km）——訊號中斷或跳點期間的直線距離不計入
+            </div>
+          </div>
+        )}
         {activeEvent?.phase === 'active' && (
           <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1000, pointerEvents: 'none' }}>
             <EventBanner
@@ -2103,8 +2142,11 @@ export default function TrackPage() {
                 <div style={{ fontSize: 11.5, marginBottom: 10, color: 'var(--tx-faint)' }}><span className="skin-ico" data-ico="gps" aria-hidden>📶</span> GPS 偵測中…（首次進入請允許定位權限）</div>
               ) : null
             )}
-            {anomalies > 0 && (
-              <div style={{ fontSize: 11.5, marginBottom: 10, color: 'var(--tx-faint)' }}>⚠ 已濾除 {anomalies} 個 GPS 跳點（未計入距離）</div>
+            {/* 折入「已排除異常段」統一顯示（見 excludedMRef/excludedSegsRef 宣告處）：超速跳點只是排除
+                規則之一，excluded.segs 已完整涵蓋（含新增的訊號中斷跳點規則），與上方地圖常駐提醒同一
+                套數字，避免兩行各報一個數字互相矛盾（anomalies 舊行已折入、不再單獨顯示）。 */}
+            {excluded.segs > 0 && (
+              <div style={{ fontSize: 11.5, marginBottom: 10, color: 'var(--tx-faint)' }}>⚠️ 已排除 {excluded.segs} 段異常 GPS 數據（約 {excluded.km.toFixed(1)} km）——訊號中斷或跳點期間的直線距離不計入</div>
             )}
             {/* warn / err 已改為浮在面板上方的常駐提示（見地圖區），此處不再重複顯示 */}
 
@@ -2318,6 +2360,9 @@ export default function TrackPage() {
                   {gpsCalibApplied && (
                     <><br /><span style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>已依手錶紀錄校正 ×{result.calib_factor.toFixed(4)}（原始 {result.raw_distance_km.toFixed(2)} K）</span></>
                   )}
+                  {result.excluded_segments > 0 && (
+                    <><br /><span style={{ fontSize: 11.5, color: 'var(--tx-faint)' }}>⚠️ 已排除 {result.excluded_segments} 段異常數據（{result.excluded_km.toFixed(1)} km 不計入）</span></>
+                  )}
                 </>
               )}
             </div>
@@ -2365,7 +2410,7 @@ export default function TrackPage() {
             : <button onClick={() => setShowLogin(true)} style={btn}>請先登入</button>
         )}
         {status === 'tracking' && <button onClick={requestFinish} className="skin-btn-end" style={{ ...btn, background: 'var(--hunt)', color: '#fff' }}>■ 結束並上傳</button>}
-        {status === 'done' && <button onClick={() => { setStatus('idle'); setElapsed(0); setDistance(0); setSplits([]); setAnomalies(0) }} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)' }}>再跑一次</button>}
+        {status === 'done' && <button onClick={() => { setStatus('idle'); setElapsed(0); setDistance(0); setSplits([]); setExcluded({ segs: 0, km: 0 }) }} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)' }}>再跑一次</button>}
         {status === 'tracking' && <div className="track-blink" style={{ textAlign: 'center', fontSize: 12.5, fontWeight: 800, color: 'var(--hunt)', marginTop: 8, lineHeight: 1.5 }}>⚠️ 數據偵測中，請勿離開或關閉視窗！跑完請按「結束並上傳」{uploading ? '（上傳中…）' : ''}</div>}
       </div>
 

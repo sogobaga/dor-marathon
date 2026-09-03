@@ -16,7 +16,8 @@ func (r *Repository) ListUserGPS(ctx context.Context, userID string) ([]GPSRunSu
 	rows, err := r.db.Query(ctx, `
 		SELECT id::text, distance_km, duration_s, avg_pace_s, point_count,
 		       flagged, COALESCE(flag_reason,''), COALESCE(review_action,''), started_at, ended_at,
-		       COALESCE(calib_distance_km, distance_km), calib_factor
+		       COALESCE(calib_distance_km, distance_km), calib_factor,
+		       excluded_km, excluded_segments
 		FROM gps_runs WHERE user_id=$1
 		ORDER BY started_at DESC LIMIT 100`, userID)
 	if err != nil {
@@ -28,7 +29,8 @@ func (r *Repository) ListUserGPS(ctx context.Context, userID string) ([]GPSRunSu
 		var s GPSRunSummary
 		if err := rows.Scan(&s.ID, &s.DistanceKm, &s.DurationS, &s.AvgPaceS, &s.PointCount,
 			&s.Flagged, &s.FlagReason, &s.ReviewAction, &s.StartedAt, &s.EndedAt,
-			&s.CalibDistanceKm, &s.CalibFactor); err != nil {
+			&s.CalibDistanceKm, &s.CalibFactor,
+			&s.ExcludedKm, &s.ExcludedSegments); err != nil {
 			return nil, err
 		}
 		out = append(out, *s.withCalibAvgPace())
@@ -42,11 +44,13 @@ func (r *Repository) GetUserGPSRun(ctx context.Context, userID, id string) (*GPS
 	err := r.db.QueryRow(ctx, `
 		SELECT id::text, distance_km, duration_s, avg_pace_s, point_count,
 		       flagged, COALESCE(flag_reason,''), COALESCE(review_action,''), started_at, ended_at, COALESCE(polyline,''), COALESCE(km_paces,'{}'),
-		       COALESCE(calib_distance_km, distance_km), calib_factor
+		       COALESCE(calib_distance_km, distance_km), calib_factor,
+		       excluded_km, excluded_segments
 		FROM gps_runs WHERE id=$1 AND user_id=$2`, id, userID).
 		Scan(&s.ID, &s.DistanceKm, &s.DurationS, &s.AvgPaceS, &s.PointCount,
 			&s.Flagged, &s.FlagReason, &s.ReviewAction, &s.StartedAt, &s.EndedAt, &s.Polyline, &s.KmPaces,
-			&s.CalibDistanceKm, &s.CalibFactor)
+			&s.CalibDistanceKm, &s.CalibFactor,
+			&s.ExcludedKm, &s.ExcludedSegments)
 	if err != nil {
 		return nil, err
 	}

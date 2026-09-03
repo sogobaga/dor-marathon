@@ -14,3 +14,12 @@ export function decodePolyline(str: string): [number, number][] {
   }
   return coords
 }
+
+// 後端斷訊/跳點排除上線後（見 apps/web/src/app/track/page.tsx 的 GAP_MAX_S/GAP_MAX_M），一趟軌跡可能
+// 存成多段 encoded polyline 以 '|' 相接（每段各自獨立編碼、座標從 0,0 重新累加）；舊資料沒有 '|'，
+// 整串就是單一段，行為與 decodePolyline 完全相同。呼叫端應每段各畫一條 Leaflet polyline，段落之間
+// 不連線——那段被排除的訊號中斷/跳點距離本來就不該畫成一條直線。
+export function decodePolylineSegments(str: string): [number, number][][] {
+  if (!str) return []
+  return str.split('|').map(decodePolyline).filter((seg) => seg.length > 0)
+}

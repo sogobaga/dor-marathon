@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { activitiesApi, profileApi, type GpsRunHistory, type Profile } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
-import { decodePolyline } from '@/lib/polyline'
+import { decodePolylineSegments } from '@/lib/polyline'
 import { useDashboard } from '@/lib/useDashboard'
 import { captureRunProofFromDom, deliverRunProof, generateRunProofImage } from '@/lib/runProof'
 import PhoneFrame from '@/components/PhoneFrame'
@@ -221,8 +221,11 @@ export default function TrackHistoryPage() {
 
   useEffect(() => {
     if (!sel) return
-    const coords = decodePolyline(sel.polyline || '')
-    coordsRef.current = coords
+    // 一趟軌跡可能存成多段 '|' 相接的 encoded polyline（斷訊/跳點期間排除，見 lib/polyline.ts 註解）；
+    // 每段各畫一條 Leaflet polyline、段落間不連線——舊資料無 '|' 時就是單一段，行為與過去相同。
+    const segments = decodePolylineSegments(sel.polyline || '')
+    const coords = segments.flat()
+    coordsRef.current = coords // snapshotMap 重投影仍用扁平座標：只取起訖點畫圓點，中間排除段不連線不影響
     let cancelled = false
     ;(async () => {
       const L = await loadLeaflet()
@@ -231,11 +234,12 @@ export default function TrackHistoryPage() {
       const center = coords[0] || [25.04, 121.56]
       const map = L.map('hist-map').setView(center, 15)
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap', crossOrigin: true }).addTo(map) // crossOrigin：磚要能畫進證明圖 canvas 而不汙染（OSM 有 ACAO:*）
-      if (coords.length > 1) {
-        const line = L.polyline(coords, { color: sel.flagged ? '#ff5a5a' : '#46E3A0', weight: 5 }).addTo(map)
+      const lines = segments.filter((seg) => seg.length > 1).map((seg) => L.polyline(seg, { color: sel.flagged ? '#ff5a5a' : '#46E3A0', weight: 5 }).addTo(map))
+      if (coords.length > 1 && lines.length > 0) {
         L.circleMarker(coords[0], { radius: 7, color: '#fff', fillColor: '#46E3A0', fillOpacity: 1 }).addTo(map).bindTooltip('起')
         L.circleMarker(coords[coords.length - 1], { radius: 7, color: '#fff', fillColor: '#ff5a5a', fillOpacity: 1 }).addTo(map).bindTooltip('終')
-        map.fitBounds(line.getBounds(), { padding: [22, 22] })
+        const group = L.featureGroup(lines)
+        map.fitBounds(group.getBounds(), { padding: [22, 22] })
       }
       mapRef.current = map
     })()
@@ -269,6 +273,13 @@ export default function TrackHistoryPage() {
           {sel.calib_factor != null && sel.calib_factor < 1 && (
             <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4, textAlign: 'center' }}>
               已依手錶紀錄校正 · 原始 {sel.distance_km.toFixed(2)} km ×{sel.calib_factor.toFixed(4)}
+            </div>
+          )}
+          {/* 已排除異常段（超速／訊號中斷跳點，見 apps/web/src/app/track/page.tsx 的 GAP_MAX_S/GAP_MAX_M）：
+              optional 欄位，此功能上線前的舊紀錄沒有這兩欄，undefined/0 都不顯示。 */}
+          {(sel.excluded_segments ?? 0) > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4, textAlign: 'center' }}>
+              ⚠️ 本次有 {sel.excluded_segments} 段異常數據已排除（{(sel.excluded_km ?? 0).toFixed(1)} km 不計入）
             </div>
           )}
           {sel.km_paces && sel.km_paces.length > 0 ? (

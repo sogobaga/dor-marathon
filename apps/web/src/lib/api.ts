@@ -603,6 +603,10 @@ export interface GpsRunResult {
   // 再自己乘係數；這兩欄只用於顯示「原始 vs 校正後」對照。
   raw_distance_km: number
   calib_factor: number
+  // 已排除的異常段（超速／訊號中斷跳點，見前端 apps/web/src/app/track/page.tsx 的 GAP_MAX_S/GAP_MAX_M）：
+  // 後端對同一批上傳點套用相同規則重算，這趟一律回傳（無異常時為 0），前端結束畫面據此顯示提示。
+  excluded_km: number
+  excluded_segments: number
 }
 // speed：都卜勒速度 m/s（距離防漂移的訊號分流用，見 lib/movingTime.ts）；裝置不支援時為 null。
 // 上傳相容：後端以 encoding/json 解析、忽略未知欄位，多帶 speed 不影響既有 API（後端零改動）。
@@ -628,6 +632,9 @@ export interface GpsRunHistory {
   // 顯示校正後但配速若仍用 avg_pace_s（原始），同畫面「距離×配速≠時間」且跟已同步活動的同一趟
   // 配速對不上；有值時優先顯示這個，沒有（舊資料/未套校正）才 fallback 回 avg_pace_s。
   calib_avg_pace_s?: number
+  // 已排除的異常段（同上，見 GpsRunResult）：optional——舊資料（此欄位上線前的紀錄）沒有這兩欄。
+  excluded_km?: number
+  excluded_segments?: number
 }
 export const activitiesApi = {
   // client_version：App/前端版號，供 GPS 距離校正量測用（見 internal/gpscalib），可不送。
