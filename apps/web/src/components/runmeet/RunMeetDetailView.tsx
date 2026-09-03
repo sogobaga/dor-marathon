@@ -9,7 +9,7 @@ import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
 import { MediaCarousel, Lightbox } from '../shared/MediaCarousel'
 import {
-  REACTION_META, ctaInputOf, fmtMeetAt, meetCountdown, memberCountText, memberPct, runMeetCta,
+  REACTION_META, ctaInputOf, fmtMeetRange, memberCountText, memberPct, phaseCountdown, runMeetCta,
   runMeetLocationIcon, runMeetLocationText,
   showViewAllComments, viewAllCommentsLabel, isFetchPending, LOADING_TEXT } from '@/lib/runMeet'
 import RunMeetFormModal from './RunMeetFormModal'
@@ -18,7 +18,7 @@ import RunMeetUnlockModal from './RunMeetUnlockModal'
 import RunMeetThreadModal from './RunMeetThreadModal'
 import { CommentComposer, TopLevelCommentBlock, useCommentThread } from './RunMeetCommentThread'
 import {
-  Avatar, RunMeetModal, backBtn, cardBox, errText, fieldHint, ghostBtn, headerStyle,
+  Avatar, PhaseBadge, RunMeetModal, backBtn, cardBox, errText, fieldHint, ghostBtn, headerStyle,
   modalTitle, mutedBtn, outlineBtn, primaryBtn, scrollBody, tagPill, textareaStyle, tinyBtn,
 } from './ui'
 
@@ -119,7 +119,7 @@ export default function RunMeetDetailView({
     // 落地頁按鈕會導向既有的 /?runmeet={id} 深連結——PhoneShell 的 ?runmeet= 處理維持不動，
     // 舊分享連結（/?runmeet=）仍可正常使用。
     const url = `${window.location.origin}/m/${id}`
-    const text = card ? `🏃 ${card.title}｜${fmtMeetAt(card.meet_at)}｜${runMeetLocationText(card)}` : ''
+    const text = card ? `🏃 ${card.title}｜${fmtMeetRange(card.meet_at, card.ends_at)}｜${runMeetLocationText(card)}` : ''
     if (navigator.share) {
       navigator.share({ title: card?.title, text, url }).catch(() => {})
       return
@@ -169,7 +169,7 @@ export default function RunMeetDetailView({
               <>
                 <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--tx)', lineHeight: 1.35, wordBreak: 'break-word' }}>{card.title}</div>
                 <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 6, lineHeight: 1.8 }}>
-                  {fmtMeetAt(card.meet_at)}<br />{runMeetLocationIcon(card.no_location)} {runMeetLocationText(card)}
+                  {fmtMeetRange(card.meet_at, card.ends_at)}<br />{runMeetLocationIcon(card.no_location)} {runMeetLocationText(card)}
                 </div>
               </>
             )}
@@ -202,15 +202,15 @@ export default function RunMeetDetailView({
             <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
               <span style={tagPill}>{meet.is_private ? '🔒 私密' : '🌐 公開'}</span>
               <span style={tagPill}>{meet.approval_required ? '⏳ 需審核' : '⚡ 自由加入'}</span>
-              {meet.is_ended && <span style={tagPill}>已結束</span>}
-              {!meet.is_ended && meet.status === 'closed' && <span style={tagPill}>已關閉</span>}
-              {!meet.is_ended && meet.status === 'cancelled' && <span style={tagPill}>已中止</span>}
+              <PhaseBadge phase={meet.phase} />
+              {meet.phase !== 'ended' && meet.status === 'closed' && <span style={tagPill}>已關閉</span>}
+              {meet.phase !== 'ended' && meet.status === 'cancelled' && <span style={tagPill}>已中止</span>}
               {meet.hidden_by_owner && <span style={tagPill}>🙈 已隱藏</span>}
             </div>
 
             {/* 資訊區 */}
             <div style={{ ...cardBox, padding: '12px 13px', marginTop: 12 }}>
-              <InfoRow icon="🕕" text={`${fmtMeetAt(meet.meet_at)} · ${meetCountdown(meet.meet_at).text}`} />
+              <InfoRow icon="🕕" text={`${fmtMeetRange(meet.meet_at, meet.ends_at)} · ${phaseCountdown(meet.phase, meet.meet_at).text}`} />
               <InfoRow icon={runMeetLocationIcon(meet.no_location)} text={runMeetLocationText(meet)} />
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
                 <span style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>👥 {memberCountText(meet.member_count, meet.capacity)}</span>
@@ -377,7 +377,7 @@ function LockedPanel({ card, onUnlock }: { card: RunMeetCard | null; onUnlock: (
       <div style={{ fontSize: 15.5, fontWeight: 900, color: 'var(--tx)', marginTop: 8 }}>{card?.title ?? '這是私密團練'}</div>
       {card && (
         <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.8 }}>
-          🕕 {fmtMeetAt(card.meet_at)}<br />
+          🕕 {fmtMeetRange(card.meet_at, card.ends_at)}<br />
           {runMeetLocationIcon(card.no_location)} {runMeetLocationText(card)}<br />
           👥 {memberCountText(card.member_count, card.capacity)}
         </div>

@@ -43,10 +43,15 @@ var ReactionKinds = map[string]bool{
 // --- 內部資料列（repository 掃出來的原始欄位，含成員層敏感欄位；**不得**直接序列化回前台）---
 
 type meetRow struct {
-	ID               string
-	OwnerID          string
-	Title            string
-	MeetAt           time.Time
+	ID      string
+	OwnerID string
+	Title   string
+	MeetAt  time.Time
+	// EndsAt migration 168；舊資料為 NULL（無法回溯），對外 DTO 一律 nullable。建立/編輯時驗證
+	// 見 service.go validateEndsAt。2026-09-04 owner 決策 phase 2 之後，is_ended／可編輯時間窗／
+	// 瀏覽排序的「結束」判定一律改讀 effectiveEnd(MeetAt, EndsAt)（見 model.go 同名函式），
+	// 不再只看 MeetAt——只有提醒信（reminder.go）維持錨定 MeetAt（提醒的是「要開始了」）。
+	EndsAt           *time.Time
 	Region           string
 	PlaceLabel       string
 	NoLocation       bool     // 公開層；true 時 Lat/Lng 恆為 nil（CHECK run_meets_noloc_chk，migration 161）
@@ -96,11 +101,14 @@ type OwnerView struct {
 
 // CardView 列表卡片＋詳情共用的公開層。**地點只有 region / place_label 兩個公開欄位。**
 type CardView struct {
-	ID         string    `json:"id"`
-	Title      string    `json:"title"`
-	MeetAt     time.Time `json:"meet_at"`
-	Region     string    `json:"region"`
-	PlaceLabel string    `json:"place_label"`
+	ID     string    `json:"id"`
+	Title  string    `json:"title"`
+	MeetAt time.Time `json:"meet_at"`
+	// EndsAt migration 168；舊資料 NULL（json null）。is_ended／phase（下面）都由
+	// effectiveEnd(MeetAt, EndsAt) 算出，這欄本身仍照實輸出供前端顯示「幾點到幾點」。
+	EndsAt     *time.Time `json:"ends_at"`
+	Region     string     `json:"region"`
+	PlaceLabel string     `json:"place_label"`
 	// NoLocation 「不限地點」：true 時 Region/PlaceLabel 固定是「不限」佔位文字（見 service.go
 	// normalizeNoLocation），前端據此改顯示「🌏 不限地點」而不是把兩個公開欄位字面拼接
 	// （否則會顯示成「不限・不限」）。詳情頁另外據此決定要不要載入地圖，見 buildDetail 呼叫端。
@@ -114,9 +122,17 @@ type CardView struct {
 	// ShowCover migration 162 的顯示偏好原值（不是「這次算出來要不要顯示」的結果，CoverURL 才是
 	// 那個結果）。回這個原值是給發起人編輯表單用——編輯時要知道 checkbox 目前該勾還是不勾，
 	// 不能靠 CoverURL==nil 反推（那也可能是「有權限、show_cover=true，但根本沒圖」）。
-	ShowCover     bool      `json:"show_cover"`
-	Status        string    `json:"status"`   // open|closed|cancelled
-	IsEnded       bool      `json:"is_ended"` // meet_at <= NOW()
+	ShowCover bool   `json:"show_cover"`
+	Status    string `json:"status"` // open|closed|cancelled
+	// IsEnded migration 168 之後改讀 effectiveEnd（見下面同名函式），不再只看 meet_at：
+	// 有填 ends_at 的團要撐到 ends_at 才算結束，只有舊資料（ends_at 為 NULL）才退回原本
+	// 「meet_at <= NOW() 即結束」的行為。
+	IsEnded bool `json:"is_ended"`
+	// Phase upcoming｜ongoing｜ended（2026-09-04 owner 決策 phase 2 新增）：前端不必自己重算
+	// effectiveEnd 再比較兩個時間，直接讀這欄。與 IsEnded 是同一份判定的兩種形狀——IsEnded
+	// 留著是因為既有前端已經在用；Phase 補上「進行中」這個 IsEnded 這個布林表達不出來的中間態
+	// （meet_at 已過但 effectiveEnd 未到）。見 meetPhase。
+	Phase         string    `json:"phase"`
 	Owner         OwnerView `json:"owner"`
 	MyState       string    `json:"my_state"` // none|pending|joined|rejected|kicked|left|owner
 	ReactionCount int       `json:"reaction_count"`
@@ -321,7 +337,8 @@ func CanTransition(from, to string) bool {
 
 // CanEdit 只有 open 狀態能編輯基本資料（title/meet_at/地點/人數上限…）。
 // closed／cancelled 都不行——「不再收人」或「已中止」的當下不該還能把時間地點整個換掉。
-// 已過期（meet_at <= now）是另一條獨立的擋法（errEditEnded，查詢條件判定，不歸這支管）。
+// 已結束（now >= effectiveEnd(meet_at, ends_at)）是另一條獨立的擋法（errEditEnded，查詢條件
+// 判定，不歸這支管；2026-09-04 owner 決策 phase 2 之後錨點是 effectiveEnd，不再只看 meet_at）。
 // CanEdit 這個狀態下發起人能不能編輯團練內容（名稱/時間/地點/說明/圖片/人數上限）。
 //
 // open、closed 都可以編輯；cancelled 不行。
@@ -341,4 +358,42 @@ func CanEdit(status string) bool { return status == StatusOpen || status == Stat
 // 未來 SQL 那邊改規則時，這裡的測試會提醒維護者同步改。
 func CanSeeWhenHidden(isOwner bool, memberStatus string) bool {
 	return isOwner || memberStatus == MemberJoined
+}
+
+// --- 結束時間生效判定／生命週期階段（migration 168；2026-09-04 owner 決策 phase 2）---
+//
+// 「結束後該團練就會自動關閉」：套件內所有「這個團練算不算結束」的判斷（is_ended、留言唯讀期、
+// 加入閘門、可編輯時間窗）一律改呼叫 effectiveEnd，不得繼續各自寫 m.MeetAt.After(...)——
+// 否則同一個「有沒有結束」的問題會在不同檔案給出不同答案（例如某處還沒切換，導致已經過了
+// ends_at 的團仍然收得到新成員）。提醒信（reminder.go）刻意例外：提醒的主題是「要開始了」，
+// 錨點維持 meet_at，不受這裡影響（見 reminder.go 檔頭）。
+
+const (
+	PhaseUpcoming = "upcoming" // now <  meet_at
+	PhaseOngoing  = "ongoing"  // meet_at <= now < effectiveEnd
+	PhaseEnded    = "ended"    // now >= effectiveEnd
+)
+
+// effectiveEnd 這個團練實際上什麼時候算結束：有填 ends_at 就用 ends_at；舊資料（migration 168
+// 上線前建立、ends_at 為 NULL、無法回溯）退回只看 meet_at 的既有行為——不強迫回填，也不對舊資料
+// 顯示一個編造出來的結束時間。
+func effectiveEnd(meetAt time.Time, endsAt *time.Time) time.Time {
+	if endsAt != nil {
+		return *endsAt
+	}
+	return meetAt
+}
+
+// meetPhase 三態生命週期（純函式，可單元測試）。end 一律傳 effectiveEnd(meetAt, endsAt) 算出來的
+// 值，不在這裡重算——呼叫端通常同時需要 end 本身（例如順便算 IsEnded），拆開避免同一個
+// effectiveEnd 在同一次請求裡被算兩遍。
+func meetPhase(meetAt, end, now time.Time) string {
+	switch {
+	case now.Before(meetAt):
+		return PhaseUpcoming
+	case now.Before(end):
+		return PhaseOngoing
+	default:
+		return PhaseEnded
+	}
 }

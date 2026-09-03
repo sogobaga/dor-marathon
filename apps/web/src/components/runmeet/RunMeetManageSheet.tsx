@@ -4,7 +4,7 @@ import { useState } from 'react'
 import useSWR from 'swr'
 import { runMeetApi, type RunMeetMemberDetail, type RunMeetMember } from '@/lib/api'
 import { withUserAuth } from '@/lib/userAuth'
-import { Avatar, RunMeetModal, dangerBtn, errText, fieldHint, ghostBtn, modalTitle, primaryBtn, tinyBtn } from './ui'
+import { Avatar, PhaseBadge, RunMeetModal, dangerBtn, errText, fieldHint, ghostBtn, modalTitle, primaryBtn, tinyBtn } from './ui'
 import { memberCountText } from '@/lib/runMeet'
 
 // 發起人管理面板：審核專區（同意/婉拒/全部同意）、成員名單（剔除）、生命週期（編輯/關閉/取消/刪除）。
@@ -87,7 +87,9 @@ export default function RunMeetManageSheet({ meet, onClose, onEdit, onDuplicate,
           <button type="button" onClick={onClose} style={{ ...ghostBtn, padding: '5px 10px' }}>關閉</button>
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginTop: 6, lineHeight: 1.6 }}>
-          {meet.title}｜{memberCountText(meet.member_count, meet.capacity)}
+          {/* 生命週期三態（2026-09-04 使用者定案：管理面板也要看得到現在是即將開始／進行中／已結束）—
+              管理動作本身仍是照 ended（見下面 const ended）逐項判斷，這裡純粹是顯示。 */}
+          {meet.title}｜{memberCountText(meet.member_count, meet.capacity)} <PhaseBadge phase={meet.phase} />
         </div>
 
         {err && <div style={errText}>{err}</div>}

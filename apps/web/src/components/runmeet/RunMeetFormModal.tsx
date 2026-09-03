@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { runMeetApi, type RunMeetDetail, type RunMeetInput, type RunMeetMemberDetail, type RunMeetQuota } from '@/lib/api'
 import { withUserAuth } from '@/lib/userAuth'
-import { fmtMeetAtConfirm, isDeviceTaipei, isoToTaipeiLocalInput, taipeiLocalToISO, taipeiParts } from '@/lib/runMeet'
+import { fmtMeetAtConfirm, fmtMeetRange, isDeviceTaipei, isoToTaipeiLocalInput, taipeiLocalToISO, taipeiParts } from '@/lib/runMeet'
 import { compressImageFile } from '@/lib/imageCompress'
 import RunMeetConfirmModal from './RunMeetConfirmModal'
 import RunMeetLocationPicker, { type LocationValue } from './RunMeetLocationPicker'
@@ -20,6 +20,16 @@ import {
 // - 預計時間建立後不可變更（後端 repository.UpdateMeet 一律以資料庫既有值為準，見 checkMeetAtLocked）：
 //   編輯模式的時間欄位改唯讀顯示，不受理修改；client 端的「必須在未來/最多 90 天」檢查也只在
 //   mode==='create' 時跑，避免誤擋「時間已到但團練還沒被判定過期」的正常編輯請求。
+// - 結束時間（ends_at，migration 168）：與預計時間相反，**不**被鎖定，編輯模式仍可自由修改。
+//   表單只收一個 HH:mm 時間輸入（endTime state），套用在與開始時間同一天——組出 ISO 的方式是
+//   `${meetAt.slice(0,10)}T${endTime}`。建立／編輯皆必填，驗證訊息與後端一字對齊（見 validate()）。
+//   編輯一筆 migration 168 上線前建立的舊團練（ends_at=null）時，預設帶入「開始時間 +1 小時」
+//   而不是空白，減少每筆舊資料都要使用者自己算的麻煩。
+//   ⚠️ endTouched（ref）：建立模式的開始時間欄位可以改（見上一條），在使用者手動碰過結束時間
+//   欄位之前，結束時間要「跟著」開始時間走——每次改開始時間都重算一次「新開始時間 +1 小時」
+//   （handleMeetAtChange），不是只在掛載那一刻算一次；否則使用者選好日期後才回頭調開始時間，
+//   結束時間會停在舊日期／舊時分，兩者兜不起來。使用者一旦自己動過結束時間 input，
+//   endTouched 轉 true，之後改開始時間就不再覆寫使用者已經選好的值。
 // - 「再辦一次」（複製既有團練設定建立新團練）：mode='create' 時若額外帶入 initial（該團的完整
 //   MemberDetailView），會拿它預填名稱/地點/人數上限/說明/圖片/審核開關——但**不**預填預計時間
 //   （留給使用者選新的，defaultMeetAtInput）與密碼（雜湊無法還原）。判斷「現在是不是複製流程」
@@ -45,6 +55,23 @@ function maxTaipeiInput(now = new Date()): string {
   const t = taipeiParts(new Date(now.getTime() + 90 * 24 * 3600 * 1000))
   return `${t.y}-${pad2(t.m)}-${pad2(t.d)}T${pad2(t.hh)}:${pad2(t.mm)}`
 }
+/** 結束時間預設值：開始時間（台北牆上時間字串）+1 小時，只取 HH:mm。
+ *  ⚠️ 若加 1 小時跨過午夜（例如開始訂在 23:30），後端要求 ends_at 與 meet_at 同一台北日曆日，
+ *  這裡不能真的跳到隔天——夾到當天最後一刻。
+ *  ⚠️ 不能直接夾死在 23:59：開始時間若剛好也選在 23:58／23:59 這種極端邊界，「夾住的結束時間」
+ *  會跟開始時間相等甚至更早（後端 400「結束時間須晚於開始時間」，validate() 也會擋，但預設值
+ *  本身就不該生出一個必然不合法的組合）。一般情況夾在 23:58；開始時間本身已經逼近日尾時，
+ *  退而求其次夾在「開始時間 +1 分鐘」，確保這個預設值只要開始時間不是 23:59 就恆合法——
+ *  23:59 這個唯一無解的極端邊界（同一天內找不到比它晚的時刻）留給使用者自己手動改。 */
+function plusOneHourClamped(startLocalInput: string): string {
+  const startIso = taipeiLocalToISO(startLocalInput)
+  if (!startIso) return '07:00'
+  const start = taipeiParts(startIso)
+  const end = taipeiParts(new Date(new Date(startIso).getTime() + 3600 * 1000))
+  if (end.y === start.y && end.m === start.m && end.d === start.d) return `${pad2(end.hh)}:${pad2(end.mm)}`
+  if (start.hh === 23 && start.mm >= 58) return `23:${pad2(Math.min(59, start.mm + 1))}`
+  return '23:58'
+}
 
 type PwMode = 'keep' | 'set' | 'remove'
 
@@ -64,6 +91,22 @@ export default function RunMeetFormModal({
   // ⚠️ 只有「編輯」才把 meet_at 帶進來當初始值——「再辦一次」(mode==='create' 且帶 initial)
   // 必須是全新的時間，若沿用 `initial ? ... : ...` 判斷式會誤把舊團的時間也複製過來。
   const [meetAt, setMeetAt] = useState(mode === 'edit' && initial ? isoToTaipeiLocalInput(initial.meet_at) : defaultMeetAtInput())
+  // 結束時間只存 HH:mm（見檔頭說明）。編輯既有 ends_at → 取它的台北時分；編輯一筆舊資料
+  // （ends_at=null）或建立（含「再辦一次」，一律不沿用 initial.ends_at，理由同不沿用 meet_at）
+  // → 開始時間 +1 小時。這裡刻意讀上面剛算出來的 meetAt 變數，不是重新分岔一次 mode/initial 判斷，
+  // 避免兩處判斷式日後改一邊漏改另一邊。
+  const [endTime, setEndTime] = useState<string>(() => {
+    if (mode === 'edit' && initial?.ends_at) {
+      const t = taipeiParts(initial.ends_at)
+      return `${pad2(t.hh)}:${pad2(t.mm)}`
+    }
+    return plusOneHourClamped(meetAt)
+  })
+  // 結束時間是否被使用者手動改過：false 期間，開始時間變動要連動把結束時間重算成
+  // 「新開始時間 +1 小時」（見下面 handleMeetAtChange）；使用者一旦自己動過結束時間欄位
+  // （見結束時間 input 的 onChange），就不再跟著開始時間跑，尊重使用者已經選好的值。
+  // 用 ref 不用 state：這個旗標只影響「要不要連動」這個副作用本身，改變它不需要觸發重繪。
+  const endTouched = useRef(mode === 'edit' && !!initial?.ends_at)
   const [loc, setLoc] = useState<LocationValue>({
     no_location: initial?.no_location ?? false,
     region: initial?.region ?? '',
@@ -97,6 +140,10 @@ export default function RunMeetFormModal({
   const capacityMax = quota.capacity_max || 50
   const memberCount = initial?.member_count ?? 1
   const isoMeetAt = useMemo(() => taipeiLocalToISO(meetAt), [meetAt])
+  // 結束時間的 ISO：套用在開始時間「同一天」——用 meetAt 的日期部分＋endTime 的時分組出來，
+  // 讓「同一台北日曆日」這條後端規則在前端這裡是結構上必然成立，不需要另外判斷
+  // （endTime 本身要不要跟著開始時間連動見上面 endTouched／handleMeetAtChange 的說明）。
+  const isoEndsAt = useMemo(() => taipeiLocalToISO(`${meetAt.slice(0, 10)}T${endTime}`), [meetAt, endTime])
 
   function validate(): string {
     const t = title.trim()
@@ -110,6 +157,10 @@ export default function RunMeetFormModal({
       if (ms <= 0) return '預計時間必須晚於現在。'
       if (ms > 90 * 24 * 3600 * 1000) return '預計時間最多只能設定到 90 天後。'
     }
+    // 結束時間：建立與編輯都必填、都要檢查（不像上面 meet_at 那三條只在建立時跑）——
+    // 後端 validateMeetInput 對 ends_at 就是不分 isCreate 一律驗證，訊息與它一字對齊。
+    if (!endTime || !isoEndsAt) return '請填寫結束時間。'
+    if (new Date(isoEndsAt).getTime() <= new Date(isoMeetAt).getTime()) return '結束時間須晚於開始時間。'
     const region = loc.region.trim()
     if (region.length < 2 || region.length > 30) return '縣市・行政區請填 2 到 30 個字。'
     const place = loc.place_label.trim()
@@ -127,6 +178,7 @@ export default function RunMeetFormModal({
     const input: RunMeetInput = {
       title: title.trim(),
       meet_at: isoMeetAt,
+      ends_at: isoEndsAt,
       no_location: loc.no_location,
       region: loc.region.trim(),
       place_label: loc.place_label.trim(),
@@ -149,6 +201,13 @@ export default function RunMeetFormModal({
       input.password = pw
     }
     return input
+  }
+
+  // 開始時間變動：只要使用者還沒自己動過結束時間，就跟著重算「新開始時間 +1 小時」——
+  // 只有建立模式的開始時間欄位會呼叫到這裡（編輯模式唯讀），見上面 endTouched 的說明。
+  function handleMeetAtChange(v: string) {
+    setMeetAt(v)
+    if (!endTouched.current) setEndTime(plusOneHourClamped(v))
   }
 
   function trySubmit() {
@@ -269,7 +328,7 @@ export default function RunMeetFormModal({
                 value={meetAt}
                 min={nowTaipeiInput()}
                 max={maxTaipeiInput()}
-                onChange={(e) => setMeetAt(e.target.value)}
+                onChange={(e) => handleMeetAtChange(e.target.value)}
                 style={inputStyle}
               />
               {isoMeetAt && <div style={{ ...fieldHint, color: 'var(--fug)' }}>{fmtMeetAtConfirm(isoMeetAt)}</div>}
@@ -277,6 +336,22 @@ export default function RunMeetFormModal({
               {!isDeviceTaipei() && <div style={{ ...fieldHint, color: 'var(--tx-faint)' }}>你的裝置時區不是台北，上方時間會以台北時間儲存</div>}
             </>
           )}
+        </div>
+
+        {/* 結束時間：與預計時間相反，兩個模式都可自由修改（後端不鎖定 ends_at，見檔頭說明）。
+            只收 HH:mm，套用在跟開始時間同一天。 */}
+        <div style={{ marginTop: 12 }}>
+          <label style={fieldLabel}>結束時間</label>
+          <input
+            type="time"
+            value={endTime}
+            onChange={(e) => { endTouched.current = true; setEndTime(e.target.value) }}
+            style={{ ...inputStyle, width: 140 }}
+          />
+          {isoMeetAt && isoEndsAt && (
+            <div style={{ ...fieldHint, color: 'var(--fug)' }}>{fmtMeetRange(isoMeetAt, isoEndsAt)}（台北時間）</div>
+          )}
+          <div style={fieldHint}>須與開始時間同一天，且晚於開始時間。</div>
         </div>
 
         {/* 地點（三層揭露） */}

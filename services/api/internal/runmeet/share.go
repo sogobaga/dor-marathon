@@ -76,8 +76,10 @@ func (h *Handler) Share(w http.ResponseWriter, r *http.Request) {
 // 詳情欄位，若共用一個型別，日後有人幫 meetRow 加欄位、忘了檢查這條路徑，就會直接經
 // buildShareView 外洩到匿名爬蟲手上。這裡的欄位表就是分享卡允許離開資料庫的全部。
 type shareRow struct {
-	Title       string
-	MeetAt      time.Time
+	Title  string
+	MeetAt time.Time
+	// EndsAt migration 168；舊資料 NULL。資訊性欄位，不影響 shareAvailability 判定。
+	EndsAt      *time.Time
 	Region      string
 	PlaceLabel  string
 	NoLocation  bool
@@ -110,11 +112,11 @@ func (r *Repository) GetMeetShare(ctx context.Context, id string) (shareRow, err
 	var hiddenAdmin, hiddenOwner bool
 	var status string
 	err := r.db.QueryRow(ctx, `
-		SELECT title, meet_at, region, place_label, no_location, description, image_urls,
+		SELECT title, meet_at, ends_at, region, place_label, no_location, description, image_urls,
 		       (join_password_hash IS NOT NULL) AS is_private, member_count, capacity, show_cover,
 		       deleted_at, hidden_by_admin, hidden_by_owner, status
 		  FROM run_meets WHERE id = $1`,
-		id).Scan(&m.Title, &m.MeetAt, &m.Region, &m.PlaceLabel, &m.NoLocation, &m.Description, &m.ImageURLs,
+		id).Scan(&m.Title, &m.MeetAt, &m.EndsAt, &m.Region, &m.PlaceLabel, &m.NoLocation, &m.Description, &m.ImageURLs,
 		&m.IsPrivate, &m.MemberCount, &m.Capacity, &m.ShowCover,
 		&deletedAt, &hiddenAdmin, &hiddenOwner, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -146,11 +148,14 @@ func shareAvailability(deleted, hiddenAdmin, hiddenOwner bool, status string) er
 
 // ShareView GET /run-meets/{id}/share 的成功回應。欄位順序即回應契約的順序。
 type ShareView struct {
-	Available  bool      `json:"available"`
-	Title      string    `json:"title"`
-	MeetAt     time.Time `json:"meet_at"`
-	Region     string    `json:"region"`
-	PlaceLabel string    `json:"place_label"`
+	Available bool      `json:"available"`
+	Title     string    `json:"title"`
+	MeetAt    time.Time `json:"meet_at"`
+	// EndsAt migration 168；純資訊性、不受 IsPrivate 遮蔽（見 buildShareView 的處理位置與
+	// NoLocation 同一段落的說明——不揭露座標或行政區，只是「幾點結束」這個事實本身）。
+	EndsAt     *time.Time `json:"ends_at"`
+	Region     string     `json:"region"`
+	PlaceLabel string     `json:"place_label"`
 	// NoLocation 「不限地點」：即使私密團把 Region/PlaceLabel 遮蔽成空字串，這個旗標本身仍照實回傳
 	// （見 buildShareView）——它不揭露任何座標或行政區資訊，只表示「這團沒有指定集合地點」，
 	// 前端據此把地點欄改顯示「🌏 不限地點」，避免對已遮蔽的空字串誤判成「沒填地點」。
@@ -185,6 +190,7 @@ func buildShareView(m shareRow) ShareView {
 		Available:   true,
 		Title:       m.Title,
 		MeetAt:      m.MeetAt,
+		EndsAt:      m.EndsAt,
 		Region:      m.Region,
 		PlaceLabel:  m.PlaceLabel,
 		NoLocation:  m.NoLocation,

@@ -22,7 +22,7 @@ func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 // ⚠️ join_password_hash **永遠不在這裡**——只推導出布林 is_private。整個套件 grep
 // join_password_hash 應只命中 INSERT / UPDATE / 密碼驗證查詢三處（規格 1.4）。
 const meetCols = `
-	m.id, m.owner_id, m.title, m.meet_at, m.region, m.place_label, m.lat, m.lng, m.meeting_detail,
+	m.id, m.owner_id, m.title, m.meet_at, m.ends_at, m.region, m.place_label, m.lat, m.lng, m.meeting_detail,
 	m.no_location,
 	m.capacity, m.description, m.image_urls, m.image_limit, m.approval_required, m.show_cover,
 	(m.join_password_hash IS NOT NULL) AS is_private,
@@ -43,7 +43,7 @@ const meetJoins = `
 
 func scanMeet(row interface{ Scan(...any) error }) (meetRow, error) {
 	var m meetRow
-	err := row.Scan(&m.ID, &m.OwnerID, &m.Title, &m.MeetAt, &m.Region, &m.PlaceLabel, &m.Lat, &m.Lng, &m.MeetingDetail,
+	err := row.Scan(&m.ID, &m.OwnerID, &m.Title, &m.MeetAt, &m.EndsAt, &m.Region, &m.PlaceLabel, &m.Lat, &m.Lng, &m.MeetingDetail,
 		&m.NoLocation,
 		&m.Capacity, &m.Description, &m.ImageURLs, &m.ImageLimit, &m.ApprovalRequired, &m.ShowCover, &m.IsPrivate,
 		&m.MemberCount, &m.PendingCount, &m.Status, &m.HiddenByAdmin, &m.HiddenByOwner, &m.HiddenReason,
@@ -171,12 +171,12 @@ func (r *Repository) CreateMeet(ctx context.Context, uid string, in *MeetInput, 
 
 	err = tx.QueryRow(ctx, `
 		INSERT INTO run_meets
-			(owner_id, title, meet_at, region, place_label, lat, lng, meeting_detail,
+			(owner_id, title, meet_at, ends_at, region, place_label, lat, lng, meeting_detail,
 			 capacity, description, image_urls, image_limit, approval_required, no_location, join_password_hash,
 			 member_count, pending_count, status, quota_month, client_token, show_cover)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,1,0,'open',$16,$17,$18)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1,0,'open',$17,$18,$19)
 		RETURNING id`,
-		uid, in.Title, in.MeetAt, in.Region, in.PlaceLabel, in.Lat, in.Lng, in.MeetingDetail,
+		uid, in.Title, in.MeetAt, in.EndsAt, in.Region, in.PlaceLabel, in.Lat, in.Lng, in.MeetingDetail,
 		in.Capacity, in.Description, in.ImageURLs, imageLimit, in.ApprovalRequired, in.NoLocation, hash,
 		month, token, showCover).Scan(&id)
 	if err != nil {
@@ -244,16 +244,27 @@ func (r *Repository) ListMeets(ctx context.Context, uid string, f ListFilter, en
 	// 就是「從入口關閉」，發起人要管理自己隱藏的團練，走的是 Mine()/owned 分頁，不是這裡。
 	where := []string{"m.deleted_at IS NULL", "m.hidden_by_admin = FALSE", "m.hidden_by_owner = FALSE"}
 
+	// ⚠️ 2026-09-04 owner 決策 phase 2：「結束後該團練就會自動關閉／但還能看到，只是會顯示已
+	// 結束」——探索列表（else 分支）與已結束折疊區（if 分支）這兩個查詢合起來，必須恰好把每個
+	// 團練分到其中一邊，不能重疊也不能漏接。原本兩邊都用 meet_at 判斷，天然互斥；這裡把兩邊
+	// 一起改成 COALESCE(m.ends_at, m.meet_at)（=effectiveEnd，見 model.go 同名函式，SQL 端沒有
+	// 這個 Go 函式可呼叫，語意須手動保持同步）：假設只改 else 分支，一個「已開跑但還沒到
+	// ends_at」（進行中）的團練會同時符合兩條查詢——留在探索列表沒錯，但也會被這裡的
+	// `m.meet_at <= NOW()` 收進已結束折疊區，讓同一團同時出現在兩個分頁，且已結束分頁還會
+	// 顯示一個尚未結束的團練。保留天數的視窗一併改成從 effectiveEnd 起算（「已結束 N 天內仍
+	// 可見」現在真的是「結束後 N 天」，不是「開跑後 N 天」）。
 	if f.Ended {
-		// 已結束折疊區：meet_at 已過，且還在保留天數內（超過就從探索消失，資料不刪）
+		// 已結束折疊區：effectiveEnd 已過，且還在保留天數內（超過就從探索消失，資料不刪）
 		// ⚠️ 用 make_interval(days => $n) 而不是 ($n || ' days')::interval：
 		// pgx 會把參數當 int4 送出，而 Postgres 沒有 integer || text 的運算子，
 		// 後者會在執行期炸成 42883（operator does not exist）。
 		args = append(args, endedVisibleDays)
-		where = append(where, "m.meet_at <= NOW()",
-			fmt.Sprintf("m.meet_at > NOW() - make_interval(days => $%d)", len(args)))
+		where = append(where, "COALESCE(m.ends_at, m.meet_at) <= NOW()",
+			fmt.Sprintf("COALESCE(m.ends_at, m.meet_at) > NOW() - make_interval(days => $%d)", len(args)))
 	} else {
-		where = append(where, "m.meet_at > NOW()", "m.status = 'open'")
+		// 探索列表：只要還沒到 effectiveEnd 就留著（「即將開始」與「進行中」都算），
+		// 開跑當下（meet_at 已過但 ends_at 未到）不再提前退出瀏覽——「結束後才自動關閉」。
+		where = append(where, "COALESCE(m.ends_at, m.meet_at) > NOW()", "m.status = 'open'")
 	}
 
 	if q := strings.TrimSpace(f.Q); q != "" {
@@ -490,16 +501,19 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 	var memberCount, pendingCount, imageLimit int
 	var oldApproval, oldShowCover bool
 	var oldMeetAt time.Time
+	// oldEndsAt migration 168；只用來算 effectiveEnd 判斷「已過期不得編輯」（下面），不是
+	// checkMeetAtLocked 那種鎖死比對——ends_at 本來就可自由編輯，見下面 UPDATE 那段註解。
+	var oldEndsAt *time.Time
 	var oldRegion, oldPlace, oldDetail string
 	var oldLat, oldLng *float64
 	err = tx.QueryRow(ctx, `
 		SELECT owner_id, status, member_count, pending_count, image_limit, approval_required,
-		       meet_at, region, place_label, meeting_detail, lat, lng, show_cover
+		       meet_at, ends_at, region, place_label, meeting_detail, lat, lng, show_cover
 		  FROM run_meets
 		 WHERE id=$1 AND deleted_at IS NULL AND hidden_by_admin = FALSE
 		 FOR UPDATE`, id).
 		Scan(&ownerID, &status, &memberCount, &pendingCount, &imageLimit, &oldApproval,
-			&oldMeetAt, &oldRegion, &oldPlace, &oldDetail, &oldLat, &oldLng, &oldShowCover)
+			&oldMeetAt, &oldEndsAt, &oldRegion, &oldPlace, &oldDetail, &oldLat, &oldLng, &oldShowCover)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return res, errNotFound
 	}
@@ -523,7 +537,10 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 	// 指向同一個修法：meet_at 建立後全面鎖死（見下面 checkMeetAtLocked），不再有「過期前改期／
 	// 固定團練順延」這種例外——想用新時間，一律走「再辦一次」（POST /run-meets），正常消耗一次
 	// 配額，漏洞與例外一併關閉。
-	if !oldMeetAt.After(time.Now()) {
+	// 「結束後該團練就會自動關閉」（2026-09-04 owner 決策 phase 2）：錨點改成 effectiveEnd
+	// （有 ends_at 用 ends_at，沒有退回 meet_at），不再只看 meet_at——開跑後、結束前（進行中）
+	// 發起人仍可編輯，只有真的過了 ends_at 才鎖死。
+	if !effectiveEnd(oldMeetAt, oldEndsAt).After(time.Now()) {
 		return res, errEditEnded
 	}
 	// meet_at 一律以資料庫既有值為準：傳入值與既有值不同就整包拒絕，不得靜默忽略（靜默會讓
@@ -550,8 +567,11 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 	showCover := resolveShowCover(in.ShowCover, oldShowCover)
 
 	// 密碼三態：nil＝不動 / ""＝移除（改公開）/ 其他＝重設
+	// ⚠️ ends_at（migration 168）刻意**不**比照 meet_at 鎖死——決策明訂只有 meet_at 建立後不可改，
+	// ends_at 可自由編輯，這裡直接寫入 in.EndsAt（已在 validateMeetInput 驗證過），不需要像
+	// meet_at 那樣先查 FOR UPDATE 舊值比對、也不需要 checkMeetAtLocked 那樣的鎖定檢查。
 	passwordSQL := "join_password_hash"
-	args := []any{id, in.Title, in.MeetAt, in.Region, in.PlaceLabel, in.Lat, in.Lng,
+	args := []any{id, in.Title, in.MeetAt, in.EndsAt, in.Region, in.PlaceLabel, in.Lat, in.Lng,
 		in.MeetingDetail, in.Capacity, in.Description, in.ImageURLs, in.ApprovalRequired, in.NoLocation, showCover}
 	if in.Password != nil {
 		if *in.Password == "" {
@@ -568,9 +588,9 @@ func (r *Repository) UpdateMeet(ctx context.Context, uid, id string, in *MeetInp
 
 	if _, err = tx.Exec(ctx, `
 		UPDATE run_meets
-		   SET title=$2, meet_at=$3, region=$4, place_label=$5, lat=$6, lng=$7,
-		       meeting_detail=$8, capacity=$9, description=$10, image_urls=$11,
-		       approval_required=$12, no_location=$13, show_cover=$14, join_password_hash=`+passwordSQL+`, updated_at=NOW()
+		   SET title=$2, meet_at=$3, ends_at=$4, region=$5, place_label=$6, lat=$7, lng=$8,
+		       meeting_detail=$9, capacity=$10, description=$11, image_urls=$12,
+		       approval_required=$13, no_location=$14, show_cover=$15, join_password_hash=`+passwordSQL+`, updated_at=NOW()
 		 WHERE id=$1`, args...); err != nil {
 		return res, err
 	}

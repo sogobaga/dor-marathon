@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { overlayMount } from '@/lib/overlayMount'
-import type { RunMeetCard } from '@/lib/api'
-import { coverFallbackGlyph, distanceBandLabel, fmtMeetAt, meetCountdown, memberCountText, memberPct, runMeetLocationIcon, runMeetLocationText } from '@/lib/runMeet'
+import type { RunMeetCard, RunMeetPhase } from '@/lib/api'
+import { MEET_PHASE_LABEL, coverFallbackGlyph, distanceBandLabel, fmtMeetRange, memberCountText, memberPct, phaseCountdown, runMeetLocationIcon, runMeetLocationText } from '@/lib/runMeet'
 
 // 團練邀請共用 UI：樣式常數、彈窗殼、toast、卡片。
 // ⚠️ 所有彈窗一律 createPortal 到 overlayMount()——桌機 .phone-shell 有 transform，
@@ -110,6 +110,19 @@ export function Avatar({ url, name, size = 30 }: { url?: string; name?: string; 
   )
 }
 
+/** 生命週期三態徽章（phase-2，2026-09-04 使用者定案）：即將開始／進行中／已結束，
+ *  全站唯一入口——卡片、詳情、管理面板都呼叫這支，不要各自寫死文字或顏色。
+ *  ⚠️「已結束」用淡化的 tx-faint（規格「muted styling for ended」）；「進行中」用品牌色 fug
+ *  強調「現在正在發生」；「即將開始」維持 tagPill 預設中性色，不需要特別強調。 */
+export function PhaseBadge({ phase }: { phase: RunMeetPhase }) {
+  const style: React.CSSProperties = phase === 'ended'
+    ? { ...tagPill, color: 'var(--tx-faint)' }
+    : phase === 'ongoing'
+      ? { ...tagPill, color: 'var(--fug)', borderColor: 'var(--fug)' }
+      : tagPill
+  return <span style={style}>{MEET_PHASE_LABEL[phase]}</span>
+}
+
 /** 無封面時的漸層底：私密團顯示 🔒（不透露團練名稱首字這種可辨識資訊），
  * 非私密團維持既有的標題首字（不留白框）。
  * ⚠️ 私密團在「未解鎖」與「已解鎖但 show_cover=false」兩種情況下都會走到這支
@@ -127,11 +140,11 @@ function CoverFallback({ title, isPrivate }: { title: string; isPrivate: boolean
 // 卡片：名稱、預計時間（絕對＋相對）、公開層地點、人數 x/上限、簡短說明、公開/🔒私密標籤。
 // ⚠️ 地點只顯示 region / place_label 兩個公開欄位——列表永遠拿不到 lat/lng（後端 DTO 就沒有）。
 export function MeetCard({ meet, onOpen, now }: { meet: RunMeetCard; onOpen: () => void; now?: Date }) {
-  const cd = meetCountdown(meet.meet_at, now)
+  const cd = phaseCountdown(meet.phase, meet.meet_at, now)
   const pct = memberPct(meet.member_count, meet.capacity)
   const full = meet.member_count >= meet.capacity
   const band = distanceBandLabel(meet.distance_band)
-  const dimmed = meet.is_ended || meet.status !== 'open'
+  const dimmed = meet.phase === 'ended' || meet.status !== 'open'
   return (
     <div
       onClick={onOpen}
@@ -151,7 +164,7 @@ export function MeetCard({ meet, onOpen, now }: { meet: RunMeetCard; onOpen: () 
         </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 8px', marginTop: 7, fontSize: 12, color: 'var(--tx-dim)' }}>
-          <span>🕕 {fmtMeetAt(meet.meet_at, now)}</span>
+          <span>🕕 {fmtMeetRange(meet.meet_at, meet.ends_at, now)}</span>
           <span style={{ color: cd.urgent ? '#f4623a' : 'var(--tx-faint)', fontWeight: cd.urgent ? 800 : 400 }}>· {cd.text}</span>
         </div>
         <div style={{ marginTop: 4, fontSize: 12, color: 'var(--tx-dim)', wordBreak: 'break-word' }}>
@@ -167,9 +180,9 @@ export function MeetCard({ meet, onOpen, now }: { meet: RunMeetCard; onOpen: () 
             <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: full ? 'var(--gold)' : 'var(--fug)', borderRadius: 999 }} />
           </span>
           {full && <span style={tagPill}>✅ 已滿</span>}
-          {meet.is_ended && <span style={tagPill}>已結束</span>}
-          {!meet.is_ended && meet.status === 'closed' && <span style={tagPill}>已關閉</span>}
-          {!meet.is_ended && meet.status === 'cancelled' && <span style={tagPill}>已中止</span>}
+          <PhaseBadge phase={meet.phase} />
+          {meet.phase !== 'ended' && meet.status === 'closed' && <span style={tagPill}>已關閉</span>}
+          {meet.phase !== 'ended' && meet.status === 'cancelled' && <span style={tagPill}>已中止</span>}
           {/* 只有發起人／後台視角才會是 true（見 api.ts RunMeetCard.hidden_by_owner 註解），
               其他人看到的這張卡永遠不會帶著這個標籤——不會外洩「這團被誰隱藏了」。 */}
           {meet.hidden_by_owner && <span style={tagPill}>🙈 已隱藏</span>}

@@ -7,7 +7,7 @@
 // ⚠️ 中文顯示文案一律用「團練」，不得出現「跑團」二字（賽事已有「跑團分組」，撞名會混淆）。
 
 import type {
-  RunMeetCard, RunMeetComment, RunMeetDistanceBand, RunMeetMyState, RunMeetQuota, RunMeetReactionKind, RunMeetStatus,
+  RunMeetCard, RunMeetComment, RunMeetDistanceBand, RunMeetMyState, RunMeetPhase, RunMeetQuota, RunMeetReactionKind, RunMeetStatus,
 } from './api'
 
 // ─────────────────────────────────────────────────────────────
@@ -100,13 +100,67 @@ export function fmtMeetAtConfirm(iso: string): string {
   return `將於 ${t.m}/${t.d}（${t.wd}）${pad2(t.hh)}:${pad2(t.mm)}（台北時間）開跑`
 }
 
+/** 「9/12（五）09:00–10:30」／「今天 09:00–10:30」：有結束時間（migration 168）時的區間顯示，
+ *  是全站顯示「時間」欄位的唯一入口——元件不應該再自己組字串，一律呼叫這支。
+ *  ends_at 為 null（migration 168 上線前建立的舊資料）時退回 fmtMeetAt，只顯示開始時間，
+ *  維持既有樣式不變。
+ *  ⚠️ 時間部分刻意改用 24 小時制 HH:mm，不沿用 fmtMeetAt 的「上午/下午」時段語意——
+ *  範圍一旦跨越時段邊界會變成「上午 11:00–下午 12:30」這種不好讀的組合，24 小時制的
+ *  區間寫法（09:00–10:30）才是慣用寫法。日期前綴（今天／M/D（週））仍沿用 fmtMeetAt 的判斷。
+ *  ⚠️ 後端已強制 ends_at 與 meet_at 同一台北日曆日，這裡不需要、也不應該再顯示第二個日期。 */
+export function fmtMeetRange(meetAtIso: string, endsAtIso: string | null | undefined, now: Date = new Date()): string {
+  if (!endsAtIso) return fmtMeetAt(meetAtIso, now)
+  const t = taipeiParts(meetAtIso)
+  const n = taipeiParts(now)
+  const e = taipeiParts(endsAtIso)
+  const range = `${pad2(t.hh)}:${pad2(t.mm)}–${pad2(e.hh)}:${pad2(e.mm)}`
+  // ⚠️ 空格規則跟 fmtMeetAt 一致，不是「前綴 + 空格 + 時間」無腦套用：「今天」後面才加空格，
+  // 「M/D（週）」的全形括號後面直接接時間、不留空格（比對 fmtMeetAt 的 `今天 ${time}` 與
+  // `${t.m}/${t.d}（${t.wd}）${time}` 這兩支寫法）——之前這裡兩種前綴都無條件補一個空格，
+  // 會讓「M/D（週）」那支多出一格看起來像排版錯誤，被 verify-run-meet.mjs 的新測資抓到。
+  return t.y === n.y && t.m === n.m && t.d === n.d ? `今天 ${range}` : `${t.m}/${t.d}（${t.wd}）${range}`
+}
+
+// ─────────────────────────────────────────────────────────────
+// 生命週期三態（phase-2，2026-09-04 使用者定案）
+//
+// 「結束後該團練就會自動關閉」：anchor 是 effectiveEnd = COALESCE(ends_at, meet_at)，不是
+// meet_at 本身——舊資料（migration 168 上線前建立、ends_at=null）effectiveEnd 退回 meet_at，
+// 維持既有行為不變。now >= effectiveEnd 才是「已結束」；meet_at 到 effectiveEnd 之間是
+// 「進行中」（可加入、可留言，跟 upcoming 一樣不受限——只有 ended 才關閉加入/編輯/新留言）。
+// ⚠️ 這支純函式跟後端 is_ended／CardView.phase 必須算出同一個答案——後端已直接回 phase
+// 欄位（見 api.ts RunMeetCard.phase），大多數畫面應該直接讀那個欄位，不必再自己重算一次；
+// 只有 share 頁（/m/[id]，SSR 專用的精簡 DTO，沒有 phase 欄位）需要在前端呼叫這支自己算。
+// ─────────────────────────────────────────────────────────────
+
+/** now 落在 meet_at／effectiveEnd 的哪一段。只有沒有 phase 欄位可用的地方（目前只有分享頁）
+ *  才需要呼叫這支——其餘畫面一律直接讀後端算好的 RunMeetCard.phase，避免前後端各算一次
+ *  卻因為時鐘/邊界條件不同而兜不起來。 */
+export function meetPhase(meetAtIso: string, endsAtIso: string | null | undefined, now: Date = new Date()): RunMeetPhase {
+  const t = now.getTime()
+  const start = new Date(meetAtIso).getTime()
+  const effectiveEnd = endsAtIso ? new Date(endsAtIso).getTime() : start
+  if (t >= effectiveEnd) return 'ended'
+  if (t >= start) return 'ongoing'
+  return 'upcoming'
+}
+
+/** 三態顯示文字：即將開始／進行中／已結束。全站狀態徽章的唯一文案來源，不要在元件裡各自寫死。 */
+export const MEET_PHASE_LABEL: Record<RunMeetPhase, string> = {
+  upcoming: '即將開始',
+  ongoing: '進行中',
+  ended: '已結束',
+}
+
 export interface MeetCountdown {
   text: string      // 「還有 2 天」／「還有 3 小時」／「還有 25 分鐘」／「已結束」
   urgent: boolean   // 6 小時內 → 橘色強調
   ended: boolean
 }
 
-/** 相對時間。分鐘/小時/天三段，不做「x 週」（團練最多只能設到 90 天後，天數夠用）。 */
+/** 相對時間。分鐘/小時/天三段，不做「x 週」（團練最多只能設到 90 天後，天數夠用）。
+ *  ⚠️ 這支只認 meet_at，一旦開始時間過了就直接判「已結束」——有 ends_at（migration 168）之後
+ *  這句話對「進行中」的團練是錯的，元件不要再直接拿這支的文字顯示，改用下面的 phaseCountdown。 */
 export function meetCountdown(iso: string, now: Date = new Date()): MeetCountdown {
   const ms = new Date(iso).getTime() - now.getTime()
   if (!Number.isFinite(ms) || ms <= 0) return { text: '已結束', urgent: false, ended: true }
@@ -115,6 +169,16 @@ export function meetCountdown(iso: string, now: Date = new Date()): MeetCountdow
   const hr = Math.floor(min / 60)
   if (hr < 24) return { text: `還有 ${hr} 小時`, urgent: hr < 6, ended: false }
   return { text: `還有 ${Math.floor(hr / 24)} 天`, urgent: false, ended: false }
+}
+
+/** 卡片／詳情倒數文字：upcoming 沿用 meetCountdown 倒數到開始（含 urgent 6 小時內強調）；
+ *  ongoing（已開始、還沒到 effectiveEnd）改顯示「進行中」，不能再用 meetCountdown 對 meet_at
+ *  單獨算出的「已結束」——那句話會跟旁邊的 PhaseBadge／狀態文字互相矛盾；ended 統一顯示
+ *  「已結束」，一律以 phase 為準，不再各自對 meet_at/ends_at 重算一次。 */
+export function phaseCountdown(phase: RunMeetPhase, meetAtIso: string, now: Date = new Date()): MeetCountdown {
+  if (phase === 'ongoing') return { text: '進行中', urgent: false, ended: false }
+  if (phase === 'ended') return { text: '已結束', urgent: false, ended: true }
+  return meetCountdown(meetAtIso, now)
 }
 
 // ─────────────────────────────────────────────────────────────

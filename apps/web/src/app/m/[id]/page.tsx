@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { cache } from 'react'
-import { fmtMeetAt, memberCountText, runMeetLocationIcon, runMeetLocationText } from '@/lib/runMeet'
+import type { RunMeetPhase } from '@/lib/api'
+import { MEET_PHASE_LABEL, fmtMeetRange, meetPhase, memberCountText, runMeetLocationIcon, runMeetLocationText } from '@/lib/runMeet'
 import DeletedRedirect from './DeletedRedirect'
 
 // 團練分享短網址 /m/{id}：給社群分享用（RunMeetDetailView.tsx 的分享按鈕會產生這個網址取代
@@ -24,6 +25,7 @@ interface ShareInfo {
   deleted?: boolean
   title?: string
   meet_at?: string
+  ends_at?: string | null // migration 168；舊資料為 null（見 lib/api.ts RunMeetCard.ends_at 的說明）
   region?: string
   place_label?: string
   // 「不限地點」（migration 161）：true 時 region/place_label 是「不限」佔位文字——一律先判斷
@@ -77,7 +79,7 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
   const description = share.is_private
     ? '私密團練・需要密碼加入'
     : [
-        share.meet_at ? fmtMeetAt(share.meet_at) : '',
+        share.meet_at ? fmtMeetRange(share.meet_at, share.ends_at) : '',
         // 「不限地點」一律顯示固定文字，不把 region/place_label 兩欄拼進來——no_location=true
         // 時兩欄後端固定回「不限」，字面拼接會變成「不限・不限」。
         ...(share.no_location ? ['🌏 不限地點'] : [share.region || '', share.place_label || '']),
@@ -133,9 +135,14 @@ export default async function RunMeetSharePage({ params }: { params: { id: strin
     )
   }
 
-  // 「已結束」前端自己用 meet_at 跟現在的時間比較即可——share 端點沒有、也不需要多回一個
-  // is_ended 欄位（那是詳情/卡片層的計算欄位，見 lib/api.ts），這裡已經有 meet_at 了。
-  const ended = !!share.meet_at && new Date(share.meet_at).getTime() <= Date.now()
+  // 生命週期三態（phase-2）前端自己用 meet_at/ends_at 跟現在的時間比較即可——share 端點是給
+  // 社群預覽卡用的精簡 DTO，沒有、也不需要多回一個 phase 欄位（那是詳情/卡片層 RunMeetCard 才有
+  // 的計算欄位，見 lib/api.ts），這裡已經有 meet_at/ends_at 了，直接呼叫 lib/runMeet.ts 的
+  // meetPhase（純函式，anchor＝effectiveEnd=COALESCE(ends_at, meet_at)，與後端演算法一致）。
+  const phase: RunMeetPhase | null = share.meet_at ? meetPhase(share.meet_at, share.ends_at) : null
+  // CTA／已結束提示只在乎「是不是已經結束」這個二分——進行中（ongoing）跟即將開始（upcoming）
+  // 一樣可以正常引導登入加入，只有 ended 才不再引導（見下面的用法）。
+  const ended = phase === 'ended'
   const isFull = !!share.capacity && (share.member_count ?? 0) >= share.capacity
   const memberText = share.capacity ? memberCountText(share.member_count ?? 0, share.capacity) : ''
 
@@ -171,11 +178,11 @@ export default async function RunMeetSharePage({ params }: { params: { id: strin
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 21, fontWeight: 800, lineHeight: 1.4, wordBreak: 'break-word' }}>{share.title}</div>
-          {ended && <span style={endedPillStyle}>已結束</span>}
+          {phase && <span style={phasePillStyle(phase)}>{MEET_PHASE_LABEL[phase]}</span>}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13.5, color: 'rgba(255,255,255,0.82)', lineHeight: 1.8 }}>
-          {share.meet_at && <div>🕕 {fmtMeetAt(share.meet_at)}</div>}
+          {share.meet_at && <div>🕕 {fmtMeetRange(share.meet_at, share.ends_at)}</div>}
           {share.is_private ? (
             <div>🔒 私密團練・需要密碼加入</div>
           ) : (
@@ -304,13 +311,22 @@ const descStyle: React.CSSProperties = {
   wordBreak: 'break-word',
 }
 
-const endedPillStyle: React.CSSProperties = {
+const phasePillBase: React.CSSProperties = {
   display: 'inline-block',
   fontSize: 11,
   fontWeight: 800,
-  color: 'rgba(255,255,255,0.75)',
-  background: 'rgba(255,255,255,0.12)',
   padding: '3px 9px',
   borderRadius: 999,
   flexShrink: 0,
+}
+
+// 三態徽章（phase-2）：ended 維持原本淡化的灰白樣式；upcoming/ongoing 改用跟下方 CTA 按鈕
+// 同一個品牌綠（#2DE59A），呼應「這場團練還活著、還能加入」——這頁沒有掛 app 主題（無
+// data-skin），CSS 變數（如 var(--fug)）在這裡取不到值，一律用字面色碼，比照本檔其他樣式常數。
+// 與站內 PhaseBadge（components/runmeet/ui.tsx）同一規則：只有「進行中」用品牌綠強調，「即將開始」中性、「已結束」灰化
+// （審查抓到分享頁曾把即將開始也塗綠，與站內不一致）。
+function phasePillStyle(phase: RunMeetPhase): React.CSSProperties {
+  if (phase === 'ongoing') return { ...phasePillBase, color: '#2DE59A', background: 'rgba(45,229,154,0.16)' }
+  if (phase === 'ended') return { ...phasePillBase, color: 'rgba(255,255,255,0.55)', background: 'rgba(255,255,255,0.10)' }
+  return { ...phasePillBase, color: 'rgba(255,255,255,0.9)', background: 'rgba(255,255,255,0.16)' }
 }

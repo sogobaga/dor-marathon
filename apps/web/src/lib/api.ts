@@ -4230,11 +4230,21 @@ export type RunMeetStatusAction = 'open' | 'close' | 'cancel'
 //    三角定位反推出精確地點，等於繞過整套地點分層設計。只在帶 near_lat/near_lng 查詢時出現。
 export type RunMeetDistanceBand = 'lt1' | '1to3' | '3to5' | '5to10' | 'gt10'
 export type RunMeetReactionKind = 'like' | 'fire' | 'muscle' | 'pray' | 'heart'
+// 團練生命週期三態（phase-2，anchor＝effectiveEnd=COALESCE(ends_at, meet_at)）：
+// upcoming（尚未到 meet_at）／ongoing（meet_at ≤ 現在 < effectiveEnd）／ended（現在 ≥ effectiveEnd）。
+// is_ended 是這裡的 boolean 化簡版（is_ended === (phase === 'ended')）——兩者恆一致，元件挑一個用即可，
+// 不需要每處都改成 phase；3 態文字（即將開始／進行中／已結束）才是非用 phase 不可的地方
+// （見 lib/runMeet.ts meetPhase／MEET_PHASE_LABEL）。
+export type RunMeetPhase = 'upcoming' | 'ongoing' | 'ended'
 
 export interface RunMeetCard {
   id: string
   title: string
   meet_at: string            // RFC3339；顯示一律用 Asia/Taipei 格式化（見 lib/runMeet.ts）
+  // 結束時間（migration 168）。RFC3339，恆與 meet_at 同一台北日曆日且晚於 meet_at（後端已驗證）。
+  // 為 null 僅發生在 migration 168 上線前建立的舊資料——顯示一律走 lib/runMeet.ts fmtMeetRange，
+  // 它會在 ends_at 為 null 時自動退回只顯示開始時間，不要在元件裡各自寫判斷。
+  ends_at: string | null
   region: string             // 公開層：縣市・行政區
   place_label: string        // 公開層：地標名
   // 「不限地點」（migration 161）：true 時 region/place_label 固定是「不限」佔位文字——
@@ -4252,7 +4262,11 @@ export interface RunMeetCard {
   // 不要用 cover_url==null 反推（那也可能單純是沒圖，或私密團未解鎖）。
   show_cover: boolean
   status: RunMeetStatus
+  // is_ended 現在的定義是 now >= COALESCE(ends_at, meet_at)（migration 168 phase-2），
+  // 不再只看 meet_at——舊資料 ends_at=null 時等同舊行為不變。
   is_ended: boolean
+  // 三態顯示用（見上方 RunMeetPhase 說明）；is_ended 與這個欄位的 'ended' 恆一致。
+  phase: RunMeetPhase
   owner: RunMeetOwner
   my_state: RunMeetMyState
   reaction_count: number
@@ -4344,6 +4358,11 @@ export interface RunMeetPlaceSuggestion { region: string; place: string; lat: nu
 export interface RunMeetInput {
   title: string
   meet_at: string        // ISO（表單以台北時間解讀後轉出，見 lib/runMeet.ts taipeiLocalToISO）
+  // 結束時間（migration 168）：建立／編輯皆必填，須與 meet_at 同一台北日曆日且晚於 meet_at
+  // （後端 400「請填寫結束時間」／「結束時間須晚於開始時間」／「結束時間須在當天」）。
+  // 刻意宣告成必填（不是 `ends_at?:`），理由同 show_cover 正下方那則註解——逼所有建構
+  // RunMeetInput 的呼叫端都要明確帶值。
+  ends_at: string
   region: string
   place_label: string
   // 「不限地點」：true 時後端會強制清空 lat/lng、region/place_label 空白時補「不限」
@@ -4369,6 +4388,7 @@ export interface RunMeetAdminRow {
   id: string
   title: string
   meet_at: string
+  ends_at: string | null // migration 168；舊資料為 null，見 RunMeetCard.ends_at 的說明
   region: string
   place_label: string
   capacity: number

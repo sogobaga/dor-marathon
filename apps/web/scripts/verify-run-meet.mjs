@@ -5,7 +5,8 @@
 // 這幾組規則錯了不會有畫面報錯，只會默默顯示錯的按鈕/時間，所以一定要有可重跑的驗證。
 const modUrl = new URL('../src/lib/runMeet.ts', import.meta.url).href
 const {
-  taipeiParts, taipeiLocalToISO, isoToTaipeiLocalInput, fmtMeetAt, fmtMeetAtConfirm, meetCountdown,
+  taipeiParts, taipeiLocalToISO, isoToTaipeiLocalInput, fmtMeetAt, fmtMeetAtConfirm, fmtMeetRange,
+  meetCountdown, meetPhase, phaseCountdown,
   isFetchPending, isAbsorbing, shouldShowError,
   distanceBandLabel, runMeetLocationIcon, runMeetLocationText, coverFallbackGlyph, createBtnText, resetDayText, remainingText,
   memberCountText, memberPct, confirmSubText, runMeetCta, isDeviceTaipei, createGate,
@@ -55,12 +56,56 @@ eq(AT('2026-08-30T11:00:00.000Z'), '8/30（日）晚上 7:00', '19:00 → 晚上
 eq(AT('2026-08-30T15:00:00.000Z'), '8/30（日）晚上 11:00', '23:00 → 晚上 11:00')
 eq(fmtMeetAtConfirm(MEET_ISO), '將於 8/31（一）06:00（台北時間）開跑', '表單反算確認行（維持 24 小時制，這行不受本次變更影響）')
 
+// ── 團練時間區間顯示（fmtMeetRange，migration 168 ends_at）───────────────
+// MEET_ISO = 2026-08-31（一）06:00 台北；ENDS_ISO 是同一天 07:30 台北，全站顯示「時間」的唯一入口。
+const ENDS_ISO = '2026-08-30T23:30:00.000Z' // = 2026-08-31（一）07:30 台北，跟 MEET_ISO 同一天
+// 同日區間：今天／非今天兩種日期前綴都要蓋到（前綴判斷沿用 fmtMeetAt 的邏輯，時間部分改 24 小時制區間）。
+eq(fmtMeetRange(MEET_ISO, ENDS_ISO, new Date('2026-08-31T05:00:00+08:00')), '今天 06:00–07:30', 'fmtMeetRange｜同日區間・今天')
+eq(fmtMeetRange(MEET_ISO, ENDS_ISO, new Date('2026-08-29T10:00:00+08:00')), '8/31（一）06:00–07:30', 'fmtMeetRange｜同日區間・非今天（月/日（週））')
+// 跨日（防禦性：後端已強制 ends_at 與 meet_at 同一台北日曆日，理論上不會發生，但驗證這支不會
+// 因此顯示出第二個日期——日期前綴恆取自 meet_at，結束時間一律只印 HH:mm）。
+eq(
+  fmtMeetRange(MEET_ISO, '2026-08-31T17:00:00.000Z', new Date('2026-08-29T10:00:00+08:00')),
+  '8/31（一）06:00–01:00',
+  'fmtMeetRange｜ends_at 落在隔天（防禦性）：仍只用 meet_at 的日期前綴，不冒出第二個日期',
+)
+// null／undefined 退回 fmtMeetAt（migration 168 上線前的舊資料，只顯示開始時間，維持既有樣式）。
+eq(fmtMeetRange(MEET_ISO, null, new Date('2026-08-31T05:00:00+08:00')), fmtMeetAt(MEET_ISO, new Date('2026-08-31T05:00:00+08:00')), 'fmtMeetRange｜ends_at=null → 退回 fmtMeetAt（今天）')
+eq(fmtMeetRange(MEET_ISO, undefined, new Date('2026-08-29T10:00:00+08:00')), fmtMeetAt(MEET_ISO, new Date('2026-08-29T10:00:00+08:00')), 'fmtMeetRange｜ends_at=undefined → 退回 fmtMeetAt（非今天）')
+// 23:00–23:59 邊界：兩個時間都在同一天最後一小時，不該冒出任何額外的日期標籤（例如誤植成隔天）。
+eq(
+  fmtMeetRange('2026-08-31T15:00:00.000Z', '2026-08-31T15:59:00.000Z', new Date('2026-08-29T10:00:00+08:00')),
+  '8/31（一）23:00–23:59',
+  'fmtMeetRange｜23:00–23:59 同日邊界，不冒出多餘日期標籤',
+)
+
 // ── 相對時間 ────────────────────────────────────────────────────
 eq(meetCountdown(MEET_ISO, new Date('2026-08-29T06:00:00+08:00')), { text: '還有 2 天', urgent: false, ended: false }, '48 小時 → 還有 2 天')
 eq(meetCountdown(MEET_ISO, new Date('2026-08-31T03:00:00+08:00')), { text: '還有 3 小時', urgent: true, ended: false }, '3 小時 → urgent（6 小時內橘色）')
 eq(meetCountdown(MEET_ISO, new Date('2026-08-30T22:00:00+08:00')), { text: '還有 8 小時', urgent: false, ended: false }, '8 小時 → 不 urgent')
 eq(meetCountdown(MEET_ISO, new Date('2026-08-31T05:35:00+08:00')), { text: '還有 25 分鐘', urgent: true, ended: false }, '25 分鐘 → 分鐘級')
 eq(meetCountdown(MEET_ISO, new Date('2026-08-31T06:00:01+08:00')), { text: '已結束', urgent: false, ended: true }, '時間已過 → 已結束')
+
+// ── 生命週期三態（phase-2，2026-09-04 使用者定案）────────────────────────
+// MEET_ISO = 06:00 台北開始，ENDS_ISO = 07:30 台北結束（同一天，見上面 fmtMeetRange 那節）。
+// anchor＝effectiveEnd = COALESCE(ends_at, meet_at)；both 邊界都是「>= 才算」（左閉右開），
+// 跟後端 is_ended／phase 的判斷式必須算出同一個答案。
+eq(meetPhase(MEET_ISO, ENDS_ISO, new Date('2026-08-31T05:59:00+08:00')), 'upcoming', 'meetPhase｜開始前一分鐘 → upcoming')
+eq(meetPhase(MEET_ISO, ENDS_ISO, new Date('2026-08-31T06:00:00+08:00')), 'ongoing', 'meetPhase｜恰好 meet_at → ongoing（左閉）')
+eq(meetPhase(MEET_ISO, ENDS_ISO, new Date('2026-08-31T07:00:00+08:00')), 'ongoing', 'meetPhase｜meet_at 與 ends_at 之間 → ongoing')
+eq(meetPhase(MEET_ISO, ENDS_ISO, new Date('2026-08-31T07:30:00+08:00')), 'ended', 'meetPhase｜恰好 ends_at → ended（右閉，不是開區間）')
+eq(meetPhase(MEET_ISO, ENDS_ISO, new Date('2026-08-31T08:00:00+08:00')), 'ended', 'meetPhase｜ends_at 之後 → ended')
+// ends_at 為 null／undefined（migration 168 上線前的舊資料）：effectiveEnd 退回 meet_at 本身，
+// 沒有「進行中」這個窗口——一到 meet_at 就直接是 ended，跟改動前的舊行為一致。
+eq(meetPhase(MEET_ISO, null, new Date('2026-08-31T05:59:00+08:00')), 'upcoming', 'meetPhase｜ends_at=null・開始前 → upcoming')
+eq(meetPhase(MEET_ISO, null, new Date('2026-08-31T06:00:00+08:00')), 'ended', 'meetPhase｜ends_at=null・恰好開始 → 直接 ended，沒有 ongoing 窗口')
+eq(meetPhase(MEET_ISO, undefined, new Date('2026-08-31T06:00:00+08:00')), 'ended', 'meetPhase｜ends_at=undefined 與 null 同一種退回行為')
+
+// phaseCountdown：ongoing/ended 不再各自對 meet_at 重算一次（避免跟旁邊的三態徽章互相矛盾），
+// upcoming 原樣委派給 meetCountdown（含 urgent 6 小時內強調）。
+eq(phaseCountdown('ongoing', MEET_ISO), { text: '進行中', urgent: false, ended: false }, 'phaseCountdown｜ongoing → 固定「進行中」，不管 meet_at 早就已經「過了」')
+eq(phaseCountdown('ended', MEET_ISO), { text: '已結束', urgent: false, ended: true }, 'phaseCountdown｜ended → 固定「已結束」')
+eq(phaseCountdown('upcoming', MEET_ISO, new Date('2026-08-29T06:00:00+08:00')), { text: '還有 2 天', urgent: false, ended: false }, 'phaseCountdown｜upcoming → 委派給 meetCountdown')
 
 // ── 距離分級（⚠️ 後端刻意不回精確距離，前端只翻譯 band）──────────
 eq(distanceBandLabel('lt1'), '1 公里內', 'band lt1')

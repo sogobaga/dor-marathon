@@ -285,10 +285,15 @@ func (h *Handler) buildCard(m *meetRow, viewer string, withBand, isAdmin bool) C
 	// 封面：先判權限（私密團未解鎖不給，excerpt 仍給——需求 2(c) 明寫列表要有摘要），
 	// 再判 show_cover 偏好（migration 162）。順序寫死在 resolveCoverURL 裡，這裡不得自己拆開判。
 	cover := resolveCoverURL(hasAccess, m.ShowCover, m.ImageURLs)
+	// is_ended／phase 統一由 effectiveEnd 判定（2026-09-04 owner 決策 phase 2）：有 ends_at 用
+	// ends_at，舊資料退回 meet_at——見 model.go effectiveEnd／meetPhase 檔頭。
+	now := time.Now()
+	end := effectiveEnd(m.MeetAt, m.EndsAt)
 	c := CardView{
 		ID:               m.ID,
 		Title:            m.Title,
 		MeetAt:           m.MeetAt,
+		EndsAt:           m.EndsAt,
 		Region:           m.Region,
 		PlaceLabel:       m.PlaceLabel,
 		NoLocation:       m.NoLocation,
@@ -300,7 +305,8 @@ func (h *Handler) buildCard(m *meetRow, viewer string, withBand, isAdmin bool) C
 		CoverURL:         cover,
 		ShowCover:        m.ShowCover,
 		Status:           m.Status,
-		IsEnded:          !m.MeetAt.After(time.Now()),
+		IsEnded:          !end.After(now),
+		Phase:            meetPhase(m.MeetAt, end, now),
 		Owner:            OwnerView{ID: m.OwnerID, Name: m.OwnerName, AvatarURL: m.OwnerAvatar},
 		MyState:          MyState(isOwner, m.MyStatus),
 		ReactionCount:    m.ReactionCount,
@@ -333,7 +339,7 @@ func (h *Handler) buildDetail(m *meetRow, viewer string, isAdmin bool) any {
 		Description: m.Description,
 		ImageURLs:   m.ImageURLs,
 		ImageLimit:  m.ImageLimit,
-		CanComment:  canComment(isOwner, m.MyStatus, m.Status, m.MeetAt),
+		CanComment:  canComment(isOwner, m.MyStatus, m.Status, effectiveEnd(m.MeetAt, m.EndsAt)),
 	}
 	if base.ImageURLs == nil {
 		base.ImageURLs = []string{} // 前端契約：image_urls 恆為陣列，不會是 null
@@ -355,14 +361,19 @@ func (h *Handler) buildDetail(m *meetRow, viewer string, isAdmin bool) any {
 }
 
 // canComment 留言權：joined/owner，且未超過「結束後 7 天」的唯讀界線，且團未取消。
-func canComment(isOwner bool, myStatus *string, status string, meetAt time.Time) bool {
+//
+// ⚠️ end 是呼叫端算好的「這個團練實際結束時刻」（傳 effectiveEnd(m.MeetAt, m.EndsAt)，見
+// model.go effectiveEnd），不是 meet_at——2026-09-04 owner 決策 phase 2：「結束後 7 天」的
+// 7 天要從真正的結束時間算起，一個 ends_at 訂 3 小時後的團練，不該在開跑當下就開始倒數
+// 留言唯讀期。參數刻意不叫 effectiveEnd，避免與同名的套件層級函式互相遮蔽。
+func canComment(isOwner bool, myStatus *string, status string, end time.Time) bool {
 	if !isOwner && (myStatus == nil || *myStatus != MemberJoined) {
 		return false
 	}
 	if status == StatusCancelled {
 		return false
 	}
-	return time.Now().Before(meetAt.Add(endedCommentDays * 24 * time.Hour))
+	return time.Now().Before(end.Add(endedCommentDays * 24 * time.Hour))
 }
 
 // --- 前台 handlers ---
@@ -1139,7 +1150,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := uid(r)
-	if !canComment(m.OwnerID == u, m.MyStatus, m.Status, m.MeetAt) {
+	if !canComment(m.OwnerID == u, m.MyStatus, m.Status, effectiveEnd(m.MeetAt, m.EndsAt)) {
 		// 已結束 7 天後留言區唯讀（規格 5.6；回覆同樣受這條唯讀期限制）
 		respondAPIErr(w, newErr(http.StatusConflict, "這個團練已結束超過 7 天，留言區已關閉。"))
 		return

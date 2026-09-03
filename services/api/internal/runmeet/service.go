@@ -77,14 +77,20 @@ var (
 	errDescriptionLen = newErr(http.StatusBadRequest, "說明最多 500 字。")
 	errMeetAtPast     = newErr(http.StatusBadRequest, "預計時間必須晚於現在。")
 	errMeetAtFar      = newErr(http.StatusBadRequest, "預計時間最多只能設定到 90 天後。")
-	errBadCoord       = newErr(http.StatusBadRequest, "座標格式不正確。")
-	errImageSource    = newErr(http.StatusBadRequest, "圖片來源不正確，請重新上傳。")
-	errCommentEmpty   = newErr(http.StatusBadRequest, "留言不能空白。")
-	errCommentLen     = newErr(http.StatusBadRequest, "留言最多 200 字。")
-	errCommentDup     = newErr(http.StatusBadRequest, "請勿重複張貼相同內容。")
-	errCommentFast    = newErr(http.StatusTooManyRequests, "留言太快了，休息一下再發吧。")
-	errCommentCap     = newErr(http.StatusTooManyRequests, "今天的留言則數已達上限，明天再來吧。")
-	errBadReaction    = newErr(http.StatusBadRequest, "不支援這個心情。")
+	// ends_at 三條規則（migration 168；2026-09-04 owner 決策）。與 errMeetAtPast/errMeetAtFar
+	// 不同，這三條**不分建立／編輯**都要檢查——ends_at 沒有像 meet_at 那樣被 repository 鎖死，
+	// 編輯時使用者送出新的 ends_at 一樣要驗證（見 validateMeetInput 呼叫端）。
+	errEndsAtRequired    = newErr(http.StatusBadRequest, "請填寫結束時間。")
+	errEndsAtBeforeStart = newErr(http.StatusBadRequest, "結束時間須晚於開始時間。")
+	errEndsAtDiffDay     = newErr(http.StatusBadRequest, "結束時間須在當天。")
+	errBadCoord          = newErr(http.StatusBadRequest, "座標格式不正確。")
+	errImageSource       = newErr(http.StatusBadRequest, "圖片來源不正確，請重新上傳。")
+	errCommentEmpty      = newErr(http.StatusBadRequest, "留言不能空白。")
+	errCommentLen        = newErr(http.StatusBadRequest, "留言最多 200 字。")
+	errCommentDup        = newErr(http.StatusBadRequest, "請勿重複張貼相同內容。")
+	errCommentFast       = newErr(http.StatusTooManyRequests, "留言太快了，休息一下再發吧。")
+	errCommentCap        = newErr(http.StatusTooManyRequests, "今天的留言則數已達上限，明天再來吧。")
+	errBadReaction       = newErr(http.StatusBadRequest, "不支援這個心情。")
 
 	// 討論串（migration 159：留言升級為 Threads 式回覆＋表情反應）
 	errCommentParentNotFound = newErr(http.StatusNotFound, "找不到要回覆的留言。")
@@ -251,8 +257,12 @@ func imageIDFromURL(u string) string {
 // uid 一律取自 r.Context().Value(auth.CtxKeyUserID)。路徑 {uid} 只用於「指定操作對象」，
 // 且每次先驗 run_meets.owner_id = ctxUID。
 type MeetInput struct {
-	Title      string    `json:"title"`
-	MeetAt     time.Time `json:"meet_at"`
+	Title  string    `json:"title"`
+	MeetAt time.Time `json:"meet_at"`
+	// EndsAt migration 168：建立／編輯皆為必填（與 MeetAt 不同，MeetAt 只在建立時檢查「未來/
+	// 90 天內」，編輯時已由 repository 鎖死；EndsAt 沒有鎖死機制，編輯時一樣要通過
+	// validateEndsAt）。非指標——zero value 即代表「未帶欄位」，由 validateEndsAt 判定。
+	EndsAt     time.Time `json:"ends_at"`
 	Region     string    `json:"region"`
 	PlaceLabel string    `json:"place_label"`
 	// NoLocation 「不限地點」（migration 161）：true 時 validateMeetInput 會強制清空 Lat/Lng、
@@ -365,6 +375,13 @@ func validateMeetInput(in *MeetInput, now time.Time, capacityMax, imageLimit, vi
 		}
 	}
 
+	// ends_at（migration 168）：與上面 isCreate 區塊刻意不同，這裡建立／編輯都要驗證——
+	// ends_at 沒有像 meet_at 那樣被 repository.UpdateMeet 鎖死成資料庫既有值，編輯時使用者
+	// 送出的新 ends_at 一樣要通過「必填／須晚於 meet_at／須同一台北日」三條規則。
+	if err := validateEndsAt(in.MeetAt, in.EndsAt); err != nil {
+		return err
+	}
+
 	if capacityMax < 2 {
 		capacityMax = defCapacityMax
 	}
@@ -399,6 +416,33 @@ func validateMeetInput(in *MeetInput, now time.Time, capacityMax, imageLimit, vi
 }
 
 func runeLen(s string) int { return len([]rune(s)) }
+
+// taipeiZone Asia/Taipei 固定 UTC+8（台灣不用日光節約時間，位移恆定）。用 time.FixedZone 不需要
+// tzdata（distroless 沒裝），與 reminder.go taipeiTime()「手動 t.UTC().Add(8*time.Hour)」語意等價
+// ——這裡改用具名時區（.In(taipeiZone)）而非套用既有的手動位移寫法，是 2026-09-04 owner 對
+// ends_at 這條新規則的明確指示，屬本次刻意的表達方式選擇，不是要汰換 reminder.go 的既有慣例。
+var taipeiZone = time.FixedZone("Asia/Taipei", 8*3600)
+
+// validateEndsAt ends_at 三條規則的純函式（不碰 DB，可單元測試）：
+//  1. 必填——zero value 視為「未填」（MeetInput.EndsAt 用非指標，前端沒帶欄位時 JSON 解出來就是
+//     zero value，語意與「使用者忘了填」相同，不需要額外的 *time.Time 判斷）。
+//  2. 必須晚於 meetAt（不得等於或早於）。
+//  3. 必須與 meetAt 落在同一個台北日曆日——團練是單日活動，跨日（例如夜跑跨過午夜）不支援，
+//     見 migration 168 檔頭；用台北時間的年/月/日三者比對，不是用 24 小時差判斷（後者在
+//     23:30→隔天 00:30 這種「時間差 1 小時但跨日」的案例會誤判成合法）。
+func validateEndsAt(meetAt, endsAt time.Time) error {
+	if endsAt.IsZero() {
+		return errEndsAtRequired
+	}
+	if !endsAt.After(meetAt) {
+		return errEndsAtBeforeStart
+	}
+	ms, es := meetAt.In(taipeiZone), endsAt.In(taipeiZone)
+	if ms.Year() != es.Year() || ms.Month() != es.Month() || ms.Day() != es.Day() {
+		return errEndsAtDiffDay
+	}
+	return nil
+}
 
 // joinStatusBlocks status → 該狀態擋加入時要用哪個既有錯誤物件（套件層級單例指標）。
 //

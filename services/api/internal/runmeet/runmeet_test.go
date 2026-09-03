@@ -354,6 +354,9 @@ func TestMyState(t *testing.T) {
 	}
 }
 
+// TestCanComment 第四個參數現在是呼叫端算好的 effectiveEnd（見 handler.go canComment
+// 檔頭），不是 meet_at 本身——這支測試直接餵時間值，不需要另外組 meetRow，所以變數名沿用
+// 「未來／過去 N 天」不特別區分，語意在 handler.go 呼叫端才轉換。
 func TestCanComment(t *testing.T) {
 	future := time.Now().Add(24 * time.Hour)
 	past8d := time.Now().Add(-8 * 24 * time.Hour)
@@ -454,10 +457,16 @@ func TestValidImageURL(t *testing.T) {
 
 // --- 建立/編輯輸入驗證 ---
 
+// baseInput meetAt 刻意釘在「now 起 48 小時後那個台北日曆日的上午 9 點」而不是單純
+// now.Add(48*time.Hour)：這樣 endsAt（meetAt+1h）恆不會跨越台北日界（見 validateEndsAt 的
+// 同日檢查），測試才不會因為實際執行時間點（例如剛好跑在台北時間 23:xx）而隨機失敗。
 func baseInput(now time.Time) MeetInput {
+	base := now.In(taipeiZone).AddDate(0, 0, 2)
+	meetAt := time.Date(base.Year(), base.Month(), base.Day(), 9, 0, 0, 0, taipeiZone)
 	return MeetInput{
 		Title:      "大安森林公園晨跑 10K",
-		MeetAt:     now.Add(48 * time.Hour),
+		MeetAt:     meetAt,
+		EndsAt:     meetAt.Add(time.Hour), // migration 168：建立/編輯皆必填，同一台北日、晚於 MeetAt
 		Region:     "臺北市・大安區",
 		PlaceLabel: "大安森林公園",
 		Capacity:   12,
@@ -572,8 +581,22 @@ func TestValidateMeetInputEditSkipsMeetAtFutureCheck(t *testing.T) {
 	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errMeetAtPast) {
 		t.Fatalf("建立時過去時間應被拒，得 %v", err)
 	}
+	// ⚠️ 以下三個 isCreate=false 案例都額外把 in.EndsAt 改成「新 in.MeetAt + 1 小時」——
+	// migration 168 之後 ends_at 驗證不分建立／編輯都會跑（見 validateMeetInput），若沿用
+	// baseInput 原本那組（對應建立時的未來時間）的 EndsAt，會被這裡刻意改壞的 MeetAt 觸發
+	// errEndsAtDiffDay／errEndsAtBeforeStart，而不是這個測試真正要驗證的「meet_at 檢查有沒有
+	// 被跳過」。改成 meetAt+1h 讓 ends_at 恆合法，這樣才是在單獨測 meet_at 那兩條檢查。
+	//
+	// ⚠️ 「過去時間」用「昨天台北上午 9 點」而不是 now.Add(-time.Minute)：後者在台北時間
+	// 接近午夜（23:xx）執行測試時，+1h 會跨過台北日界，讓上面這個 EndsAt 補值本身變成
+	// errEndsAtDiffDay，反而造成測試隨執行時間點間歇性失敗。用固定日曆日錨點徹底避開。
+	yesterdayTaipei9am := func() time.Time {
+		d := now.In(taipeiZone).AddDate(0, 0, -1)
+		return time.Date(d.Year(), d.Month(), d.Day(), 9, 0, 0, 0, taipeiZone)
+	}()
 	in = baseInput(now)
-	in.MeetAt = now.Add(-time.Minute)
+	in.MeetAt = yesterdayTaipei9am
+	in.EndsAt = in.MeetAt.Add(time.Hour)
 	if err := validateMeetInput(&in, now, 50, 4, 4, false); err != nil {
 		t.Fatalf("編輯時不應檢查 meet_at 是否在未來（該檢查只在建立時適用）：%v", err)
 	}
@@ -584,8 +607,13 @@ func TestValidateMeetInputEditSkipsMeetAtFutureCheck(t *testing.T) {
 	if err := validateMeetInput(&in, now, 50, 4, 4, true); !errors.Is(err, errMeetAtFar) {
 		t.Fatalf("建立時 91 天後應被拒，得 %v", err)
 	}
+	far91Taipei9am := func() time.Time {
+		d := now.In(taipeiZone).AddDate(0, 0, 91)
+		return time.Date(d.Year(), d.Month(), d.Day(), 9, 0, 0, 0, taipeiZone)
+	}()
 	in = baseInput(now)
-	in.MeetAt = now.Add(91 * 24 * time.Hour)
+	in.MeetAt = far91Taipei9am
+	in.EndsAt = in.MeetAt.Add(time.Hour)
 	if err := validateMeetInput(&in, now, 50, 4, 4, false); err != nil {
 		t.Fatalf("編輯時不應檢查 meet_at 最遠 90 天（該檢查只在建立時適用）：%v", err)
 	}
@@ -599,6 +627,7 @@ func TestValidateMeetInputEditSkipsMeetAtFutureCheck(t *testing.T) {
 	}
 	in = baseInput(now)
 	in.MeetAt = time.Time{}
+	in.EndsAt = in.MeetAt.Add(time.Hour) // 零值+1h 仍是同一個台北日曆日（見 validateEndsAt 註解）
 	if err := validateMeetInput(&in, now, 50, 4, 4, false); err != nil {
 		t.Fatalf("編輯時零值 meet_at 不應在這一層被擋（交給 repository 層擋）：%v", err)
 	}
@@ -643,6 +672,62 @@ func TestCheckMeetAtLocked(t *testing.T) {
 	// 零值（例如前端誤送空 meet_at）與任何真實時間都不相等，一樣要被擋
 	if err := checkMeetAtLocked(base, time.Time{}); !errors.Is(err, errMeetAtLocked) {
 		t.Fatalf("零值 meet_at 應被判定為變更並拒絕，得 %v", err)
+	}
+}
+
+// --- 結束時間（migration 168；2026-09-04 owner 決策）---
+
+// TestValidateEndsAt ends_at 三條規則的純函式版：必填／須晚於 meet_at／須與 meet_at 同一個
+// 台北日曆日。重點覆蓋台北日界的邊界案例（見下面兩個子測試），因為這條規則是本次唯一
+// 用具名時區（taipeiZone）而非全站既有手動 UTC+8 位移寫法（reminder.go taipeiTime）算的，
+// 錯誤的日界判定最容易在「跨 UTC 午夜但同一個台北日」或「跨台北午夜」這兩種情況現形。
+func TestValidateEndsAt(t *testing.T) {
+	meetAt := time.Date(2026, 9, 10, 9, 0, 0, 0, taipeiZone)
+
+	// 必填：zero value 視為未填
+	if err := validateEndsAt(meetAt, time.Time{}); !errors.Is(err, errEndsAtRequired) {
+		t.Fatalf("ends_at 為零值應回 errEndsAtRequired，得 %v", err)
+	}
+
+	// 必須晚於 meet_at：相等與早於都要擋
+	if err := validateEndsAt(meetAt, meetAt); !errors.Is(err, errEndsAtBeforeStart) {
+		t.Fatalf("ends_at 等於 meet_at 應回 errEndsAtBeforeStart，得 %v", err)
+	}
+	if err := validateEndsAt(meetAt, meetAt.Add(-time.Minute)); !errors.Is(err, errEndsAtBeforeStart) {
+		t.Fatalf("ends_at 早於 meet_at 應回 errEndsAtBeforeStart，得 %v", err)
+	}
+
+	// 正常案例：同一天、晚於 meet_at
+	if err := validateEndsAt(meetAt, meetAt.Add(90*time.Minute)); err != nil {
+		t.Fatalf("同一台北日、晚於 meet_at 應通過，得 %v", err)
+	}
+}
+
+// TestValidateEndsAtRejectsTaipeiDayCrossing 23:30 開始、隔天 00:30 結束——ends_at 確實晚於
+// meet_at（相差僅 1 小時），但已經跨過台北午夜，落在不同的台北日曆日，必須被拒絕。這是
+// 「須在當天」規則存在的理由：純比較時間先後不足以判斷是否跨日。
+func TestValidateEndsAtRejectsTaipeiDayCrossing(t *testing.T) {
+	meetAt := time.Date(2026, 9, 10, 23, 30, 0, 0, taipeiZone)
+	endsAt := time.Date(2026, 9, 11, 0, 30, 0, 0, taipeiZone)
+	if err := validateEndsAt(meetAt, endsAt); !errors.Is(err, errEndsAtDiffDay) {
+		t.Fatalf("23:30→隔天 00:30 跨台北日應被拒，得 %v", err)
+	}
+}
+
+// TestValidateEndsAtAcceptsUTCDayCrossingSameTaipeiDay meet_at/ends_at 的底層 time.Time
+// 若帶的是 UTC location（例如剛從資料庫掃出來、或前端送來的是 Z 結尾 ISO 字串經 Go 標準庫解析
+// 出來的值），兩者可能跨過 UTC 午夜（.UTC() 算出來的 .Day() 不同），但换算成台北時間其實是
+// 同一天——這正是 validateEndsAt 必須先 .In(taipeiZone) 轉換、不能直接比較傳入值原始 Location
+// 下的年月日的原因。用 UTC 23:10 / 00:10（隔天）建構：兩者都落在台北時間 9/10 這一天
+// （23:10+8h=07:10 隔天；00:10（隔天）+8h=08:10 同一隔天），必須通過。
+func TestValidateEndsAtAcceptsUTCDayCrossingSameTaipeiDay(t *testing.T) {
+	meetAt := time.Date(2026, 9, 9, 23, 10, 0, 0, time.UTC) // 台北 9/10 07:10
+	endsAt := time.Date(2026, 9, 10, 0, 10, 0, 0, time.UTC) // 台北 9/10 08:10（UTC 日期已跨到 9/10）
+	if meetAt.UTC().Day() == endsAt.UTC().Day() {
+		t.Fatal("測試前提不成立：這兩個時間的 UTC 日期應該不同，否則沒測到跨 UTC 日的情境")
+	}
+	if err := validateEndsAt(meetAt, endsAt); err != nil {
+		t.Fatalf("UTC 日期雖跨界，但台北日曆日相同，應通過，得 %v", err)
 	}
 }
 
@@ -1360,10 +1445,10 @@ func TestBuildShareViewDescriptionExcerptedTo200Runes(t *testing.T) {
 	}
 }
 
-// TestShareViewJSONHasNoMemberLayerFields 回應契約：只能有這 11 個 key（description 是
-// migration 後新增的公開層欄位，見 buildShareView），尤其不得出現 lat/lng/meeting_detail/
-// owner/id/成員名單/發起人 email 或帳號編碼/留言等任何成員層或個資欄位——這支端點連身分都
-// 沒有，沒有後續閘門能補救多回的欄位。
+// TestShareViewJSONHasNoMemberLayerFields 回應契約：只能有這 12 個 key（description 是
+// migration 後新增的公開層欄位，ends_at 是 migration 168 新增的公開層欄位，見 buildShareView），
+// 尤其不得出現 lat/lng/meeting_detail/owner/id/成員名單/發起人 email 或帳號編碼/留言等任何
+// 成員層或個資欄位——這支端點連身分都沒有，沒有後續閘門能補救多回的欄位。
 func TestShareViewJSONHasNoMemberLayerFields(t *testing.T) {
 	imgs := []string{"/api/v1/images/0123abcd-4567-89ab-cdef-0123456789ab"}
 	v := buildShareView(shareTestRow(false, imgs))
@@ -1375,7 +1460,7 @@ func TestShareViewJSONHasNoMemberLayerFields(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"available", "title", "meet_at", "region", "place_label", "no_location",
+	want := []string{"available", "title", "meet_at", "ends_at", "region", "place_label", "no_location",
 		"cover_url", "is_private", "description", "member_count", "capacity"}
 	if len(got) != len(want) {
 		t.Fatalf("回應欄位數應為 %d，得 %d：%s", len(want), len(got), raw)
@@ -1526,6 +1611,66 @@ func TestCanSeeWhenHidden(t *testing.T) {
 		if CanSeeWhenHidden(false, s) {
 			t.Fatalf("非 owner 且 status=%q 不應看得到隱藏的團", s)
 		}
+	}
+}
+
+// --- effectiveEnd／meetPhase（model.go；2026-09-04 owner 決策 phase 2：「結束後該團練就會
+// 自動關閉」的唯一判定出口，is_ended／可加入／可編輯／可留言全部改呼叫這裡）---
+
+func timePtr(t time.Time) *time.Time { return &t }
+
+// TestEffectiveEnd 沒有 ends_at（舊資料）退回 meet_at；有 ends_at 一律採用 ends_at 本身，
+// 不管它是在 meet_at 之前或之後——effectiveEnd 只負責「有沒有值就用」，晚於 meet_at 這件事
+// 是 validateEndsAt 在輸入端保證的，effectiveEnd 不重複驗證。
+func TestEffectiveEnd(t *testing.T) {
+	meetAt := time.Date(2026, 9, 10, 9, 0, 0, 0, taipeiZone)
+
+	if got := effectiveEnd(meetAt, nil); !got.Equal(meetAt) {
+		t.Fatalf("ends_at 為 nil（舊資料）應退回 meet_at，得 %v", got)
+	}
+	ends := meetAt.Add(90 * time.Minute)
+	if got := effectiveEnd(meetAt, timePtr(ends)); !got.Equal(ends) {
+		t.Fatalf("ends_at 非 nil 應採用 ends_at 本身，得 %v want %v", got, ends)
+	}
+}
+
+// TestMeetPhase 三態邊界：now < meet_at → upcoming；meet_at <= now < end → ongoing
+// （含 now == meet_at 這個邊界，見規格「開始時間到了就進行中」）；now >= end → ended
+// （含 now == end 這個邊界，「結束時間到了就自動關閉」，不是要等超過才算結束）。
+func TestMeetPhase(t *testing.T) {
+	meetAt := time.Date(2026, 9, 10, 9, 0, 0, 0, taipeiZone)
+	end := meetAt.Add(90 * time.Minute)
+
+	cases := []struct {
+		name string
+		now  time.Time
+		want string
+	}{
+		{"開始前", meetAt.Add(-time.Minute), PhaseUpcoming},
+		{"恰好開始", meetAt, PhaseOngoing},
+		{"進行中", meetAt.Add(45 * time.Minute), PhaseOngoing},
+		{"恰好結束", end, PhaseEnded},
+		{"結束後", end.Add(time.Minute), PhaseEnded},
+	}
+	for _, c := range cases {
+		if got := meetPhase(meetAt, end, c.now); got != c.want {
+			t.Errorf("%s：meetPhase() = %q，want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestMeetPhaseLegacyRowFallsBackToMeetAt 舊資料（ends_at NULL）：effectiveEnd 退回 meet_at
+// 後，meetPhase 沒有「進行中」這個中間態可言——meet_at 一到就直接視為 ended，與 migration 168
+// 上線前「meet_at <= now 即結束」的既有行為完全一致（不因為這次改版而讓舊資料多出一段
+// 「進行中」的緩衝期）。
+func TestMeetPhaseLegacyRowFallsBackToMeetAt(t *testing.T) {
+	meetAt := time.Date(2026, 9, 10, 9, 0, 0, 0, taipeiZone)
+	end := effectiveEnd(meetAt, nil)
+	if got := meetPhase(meetAt, end, meetAt); got != PhaseEnded {
+		t.Fatalf("舊資料 now==meet_at 應直接是 ended（無 ongoing 緩衝），得 %q", got)
+	}
+	if got := meetPhase(meetAt, end, meetAt.Add(-time.Second)); got != PhaseUpcoming {
+		t.Fatalf("舊資料 now<meet_at 應是 upcoming，得 %q", got)
 	}
 }
 

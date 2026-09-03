@@ -61,24 +61,27 @@ func (h *Handler) AdminRouter() http.Handler {
 
 // AdminMeetRow 後台列表項。含 is_private 布林，**不含 hash**。
 type AdminMeetRow struct {
-	ID            string    `json:"id"`
-	Title         string    `json:"title"`
-	MeetAt        time.Time `json:"meet_at"`
-	Region        string    `json:"region"`
-	PlaceLabel    string    `json:"place_label"`
-	Capacity      int       `json:"capacity"`
-	MemberCount   int       `json:"member_count"`
-	PendingCount  int       `json:"pending_count"`
-	IsPrivate     bool      `json:"is_private"`
-	Status        string    `json:"status"`
-	HiddenByAdmin bool      `json:"hidden_by_admin"`
-	HiddenReason  string    `json:"hidden_reason"`
-	Deleted       bool      `json:"deleted"`
-	CommentCount  int       `json:"comment_count"`
-	ReactionCount int       `json:"reaction_count"`
-	QuotaMonth    string    `json:"quota_month"`
-	CreatedAt     time.Time `json:"created_at"`
-	Owner         OwnerView `json:"owner"`
+	ID     string    `json:"id"`
+	Title  string    `json:"title"`
+	MeetAt time.Time `json:"meet_at"`
+	// EndsAt migration 168；舊資料 NULL。這個 struct 有自己獨立的查詢（不是 meetCols/scanMeet），
+	// 要獨立加欄位。
+	EndsAt        *time.Time `json:"ends_at"`
+	Region        string     `json:"region"`
+	PlaceLabel    string     `json:"place_label"`
+	Capacity      int        `json:"capacity"`
+	MemberCount   int        `json:"member_count"`
+	PendingCount  int        `json:"pending_count"`
+	IsPrivate     bool       `json:"is_private"`
+	Status        string     `json:"status"`
+	HiddenByAdmin bool       `json:"hidden_by_admin"`
+	HiddenReason  string     `json:"hidden_reason"`
+	Deleted       bool       `json:"deleted"`
+	CommentCount  int        `json:"comment_count"`
+	ReactionCount int        `json:"reaction_count"`
+	QuotaMonth    string     `json:"quota_month"`
+	CreatedAt     time.Time  `json:"created_at"`
+	Owner         OwnerView  `json:"owner"`
 }
 
 // GET /admin/run-meets?q=&status=&owner=&include_deleted=1&limit=&offset=
@@ -119,7 +122,7 @@ func (h *Handler) AdminList(w http.ResponseWriter, r *http.Request) {
 
 	args = append(args, limit, offset)
 	rows, err := h.db.Query(r.Context(), `
-		SELECT m.id, m.title, m.meet_at, m.region, m.place_label, m.capacity, m.member_count,
+		SELECT m.id, m.title, m.meet_at, m.ends_at, m.region, m.place_label, m.capacity, m.member_count,
 		       m.pending_count, (m.join_password_hash IS NOT NULL), m.status, m.hidden_by_admin,
 		       m.hidden_reason, (m.deleted_at IS NOT NULL), m.comment_count, m.reaction_count,
 		       m.quota_month, m.created_at,
@@ -134,7 +137,7 @@ func (h *Handler) AdminList(w http.ResponseWriter, r *http.Request) {
 	items := []AdminMeetRow{}
 	for rows.Next() {
 		var a AdminMeetRow
-		if err := rows.Scan(&a.ID, &a.Title, &a.MeetAt, &a.Region, &a.PlaceLabel, &a.Capacity,
+		if err := rows.Scan(&a.ID, &a.Title, &a.MeetAt, &a.EndsAt, &a.Region, &a.PlaceLabel, &a.Capacity,
 			&a.MemberCount, &a.PendingCount, &a.IsPrivate, &a.Status, &a.HiddenByAdmin,
 			&a.HiddenReason, &a.Deleted, &a.CommentCount, &a.ReactionCount, &a.QuotaMonth,
 			&a.CreatedAt, &a.Owner.ID, &a.Owner.Name, &a.Owner.AvatarURL); err != nil {

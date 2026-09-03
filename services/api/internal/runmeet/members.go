@@ -21,12 +21,16 @@ import (
 
 // lockedMeet FOR UPDATE 鎖出來的團練狀態。
 type lockedMeet struct {
-	OwnerID       string
-	Capacity      int
-	MemberCount   int
-	PendingCount  int
-	Status        string
-	MeetAt        time.Time
+	OwnerID      string
+	Capacity     int
+	MemberCount  int
+	PendingCount int
+	Status       string
+	MeetAt       time.Time
+	// EndsAt migration 168；舊資料 NULL。目前只有 Join() 用（算 effectiveEnd 判斷加入閘門，
+	// 2026-09-04 owner 決策 phase 2），Approve/Reject/Kick 三支仍只檢查 Status（同意/婉拒/剔除
+	// 待審申請與「這團結束了沒」無關，決策沒有要求連動關閉）。
+	EndsAt        *time.Time
 	IsPrivate     bool
 	Approval      bool
 	HiddenByOwner bool
@@ -46,12 +50,12 @@ type lockedMeet struct {
 func lockMeet(ctx context.Context, tx pgx.Tx, meetID string) (lockedMeet, error) {
 	var m lockedMeet
 	err := tx.QueryRow(ctx, `
-		SELECT owner_id, capacity, member_count, pending_count, status, meet_at,
+		SELECT owner_id, capacity, member_count, pending_count, status, meet_at, ends_at,
 		       (join_password_hash IS NOT NULL), approval_required, hidden_by_owner
 		  FROM run_meets
 		 WHERE id=$1 AND deleted_at IS NULL AND hidden_by_admin = FALSE
 		 FOR UPDATE`, meetID).
-		Scan(&m.OwnerID, &m.Capacity, &m.MemberCount, &m.PendingCount, &m.Status, &m.MeetAt,
+		Scan(&m.OwnerID, &m.Capacity, &m.MemberCount, &m.PendingCount, &m.Status, &m.MeetAt, &m.EndsAt,
 			&m.IsPrivate, &m.Approval, &m.HiddenByOwner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return m, errNotFound
@@ -101,7 +105,10 @@ func (r *Repository) Join(ctx context.Context, uid, meetID, note string, s Setti
 		return res, errNotFound
 	}
 
-	if e := meetStatusError(m.Status, !m.MeetAt.After(time.Now())); e != nil {
+	// 「結束後該團練就會自動關閉」（2026-09-04 owner 決策 phase 2）：加入閘門一律以
+	// effectiveEnd（有 ends_at 用 ends_at，沒有退回 meet_at）判斷，不再只看 meet_at——
+	// 一個 ends_at 訂 3 小時後的團練，開跑當下（進行中）仍應該收得到新成員。
+	if e := meetStatusError(m.Status, !effectiveEnd(m.MeetAt, m.EndsAt).After(time.Now())); e != nil {
 		return res, e
 	}
 	switch cur {
