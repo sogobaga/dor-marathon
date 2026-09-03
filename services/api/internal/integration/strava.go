@@ -622,6 +622,8 @@ func isRun(a *stravaActivity) bool {
 	switch t {
 	case "Run", "TrailRun", "VirtualRun":
 		return true
+	case "Walk", "Hike": // 2026-09-03 使用者定案：DOR 接受走路或跑步（與 terra.go terraRunningTypes 同口徑）
+		return true
 	}
 	return false
 }

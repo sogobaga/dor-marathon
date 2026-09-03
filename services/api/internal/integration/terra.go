@@ -459,6 +459,20 @@ func terraSplitWindows(now time.Time, days int) []terraImportWindow {
 	return out
 }
 
+// terraWindowUnix 把日期窗口換成 Terra 查詢用的 unix 秒：start＝From 當天 00:00Z，end＝To 隔天 00:00Z、
+// 但以 now 封頂（不送未來時間）。純函式供測試。
+func terraWindowUnix(from, to, now time.Time) (int64, int64) {
+	start := from.UTC().Truncate(24 * time.Hour)
+	end := to.UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+	if end.After(now) {
+		end = now
+	}
+	if !end.After(start) { // 防呆：窗口退化時至少給 1 秒
+		end = start.Add(time.Second)
+	}
+	return start.Unix(), end.Unix()
+}
+
 // fetchTerraActivities GET /v2/activity?user_id=&start_date=&end_date=&to_webhook=false&with_samples=false
 // 單一窗口（≤28 天，見 terraSplitWindows）。20 秒逾時（比 fetchTerraUserInfo/Connect 的 10 秒長：
 // 活動列表 payload 可能較大、筆數不定）。
@@ -472,10 +486,13 @@ func terraSplitWindows(now time.Time, days int) []terraImportWindow {
 func (h *TerraHandler) fetchTerraActivities(ctx context.Context, terraUserID string, from, to time.Time) ([]terraActivity, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
+	// 日期改用 unix 秒（Terra 兩種格式都收）：文件與 OpenAPI 都沒寫 end_date 是否含當天（2026-09-03 查證），
+	// 用「From 當天 00:00Z ～ To 隔天 00:00Z（但不超過現在）」的秒數，含不含端點都不會漏掉今天剛跑完的活動。
+	startTS, endTS := terraWindowUnix(from, to, time.Now())
 	q := url.Values{
 		"user_id":      {terraUserID},
-		"start_date":   {from.UTC().Format("2006-01-02")},
-		"end_date":     {to.UTC().Format("2006-01-02")},
+		"start_date":   {strconv.FormatInt(startTS, 10)},
+		"end_date":     {strconv.FormatInt(endTS, 10)},
 		"to_webhook":   {"false"},
 		"with_samples": {"false"},
 	}
@@ -732,11 +749,15 @@ type terraActivity struct {
 	} `json:"movement_data"`
 }
 
-// terraRunningTypes：Terra 活動類型 enum 中屬於「跑步」的代碼（見 unified-api/activity-types.md）。
-// 8=RUNNING 56=JOGGING 57=RUNNING_ON_SAND 58=TREADMILL_RUNNING 133=INDOOR_RUNNING 149=TRAIL_RUNNING。
-// 刻意排除健走/健行類代碼（7/35/93/95/116），比照 coros.go corosRunningModes 只認跑步。
+// terraRunningTypes：Terra 活動類型 enum 中 DOR 接受的「跑步＋走路」代碼（enum 對照自
+// docs.tryterra.co/reference/health-and-fitness-api/data-models 的 ActivityType，2026-09-03 查證）。
+// 跑步類：8=Running 56=Jogging 57=Running On Sand 58=Treadmill Running 88=Treadmill 133=INDOOR_RUNNING 149=TRAIL_RUNNING。
+// 走路類：7=Walking 35=Hiking 93=Walking Fitness 94=Nordic Walking 95=Walking Treadmill 116=Walking Stroller。
+// ⚠️ 2026-09-03 使用者定案：DOR 要能接受走路或跑步（COROS 的「跑步／跑步機／越野跑／運動場跑步／徒步」都要進）
+// ——使用者當天那筆 COROS「徒步」就是被舊的「只認跑步」規則擋掉的；騎車/游泳等仍排除。
 var terraRunningTypes = map[int]bool{
-	8: true, 56: true, 57: true, 58: true, 133: true, 149: true,
+	8: true, 56: true, 57: true, 58: true, 88: true, 133: true, 149: true,
+	7: true, 35: true, 93: true, 94: true, 95: true, 116: true,
 }
 
 func isTerraRunningActivity(t int) bool { return terraRunningTypes[t] }
@@ -971,7 +992,7 @@ func (h *TerraHandler) handleActivityEvent(ctx context.Context, body []byte) {
 }
 
 // mapTerraActivity 純函式：把單筆 Terra activity 正規化成 NormalizedActivity（不碰 DB，供單元測試）。
-// ok=false 代表這筆不該匯入：非跑步類型／缺距離或時間／開始時間解析失敗／早於 floor（連接當下）。
+// ok=false 代表這筆不該匯入：非跑步／走路類型／缺距離或時間／開始時間解析失敗／早於 floor（連接當下）。
 func mapTerraActivity(userID, source string, floor time.Time, a *terraActivity) (*NormalizedActivity, bool) {
 	if !isTerraRunningActivity(a.Metadata.Type) {
 		return nil, false

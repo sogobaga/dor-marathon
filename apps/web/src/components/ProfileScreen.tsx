@@ -512,7 +512,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         let msg = `${brand} 匯入完成：新增 ${r.imported} 筆`
         if (r.duplicate > 0) msg += `、重複 ${r.duplicate} 筆`
         if (r.skipped_before_connect > 0) msg += `、${r.skipped_before_connect} 筆為連接前的紀錄未計入`
-        if (r.skipped_non_running > 0) msg += `、${r.skipped_non_running} 筆非跑步`
+        if (r.skipped_non_running > 0) msg += `、${r.skipped_non_running} 筆非跑步／走路類`
         if (r.errors > 0) msg += `、${r.errors} 筆失敗`
         msg += r.fetched === 0
           ? `（Terra 近 ${r.days} 天沒有回傳任何活動——請確認 ${brand} App 已把活動同步到雲端）`
@@ -861,7 +861,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             </div>
             {terra?.enabled && terra.connections.length > 0 && (
               <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4, lineHeight: 1.6 }}>
-                裝置同步的跑步通常會自動匯入；若沒進來，按「匯入數據」會向 Terra 抓近 30 天的紀錄（只計入連接之後的跑步）。
+                裝置同步的跑步／走路（跑步機、越野跑、運動場跑步、徒步都算）通常會自動匯入；若沒進來，按「匯入數據」會向 Terra 抓近 30 天的紀錄（只計入連接之後的活動）。
               </div>
             )}
           </div>

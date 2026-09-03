@@ -160,10 +160,17 @@ func TestIsTerraRunningActivity(t *testing.T) {
 		{"TREADMILL_RUNNING", 58, true},
 		{"INDOOR_RUNNING", 133, true},
 		{"TRAIL_RUNNING", 149, true},
-		{"WALKING 不算跑步", 7, false},
-		{"HIKING 不算跑步", 35, false},
-		{"code 0 不算跑步", 0, false},
-		{"騎車不算跑步", 9, false},
+		{"TREADMILL", 88, true},
+		{"WALKING（2026-09-03 起接受走路）", 7, true},
+		{"HIKING（COROS 徒步）", 35, true},
+		{"WALKING_FITNESS", 93, true},
+		{"NORDIC_WALKING", 94, true},
+		{"WALKING_TREADMILL", 95, true},
+		{"WALKING_STROLLER", 116, true},
+		{"code 0 不接受", 0, false},
+		{"騎車不接受", 9, false},
+		{"雪鞋不接受", 75, false},
+		{"登山不接受", 130, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -334,8 +341,11 @@ func TestFetchTerraActivities_TwoActivitiesDecoded(t *testing.T) {
 	if data[0].Metadata.SummaryID != "terra-sum-001" {
 		t.Errorf("data[0].Metadata.SummaryID = %q, want terra-sum-001", data[0].Metadata.SummaryID)
 	}
-	if !strings.Contains(gotQuery, "start_date=2026-08-01") || !strings.Contains(gotQuery, "end_date=2026-08-28") {
-		t.Errorf("query = %q, want start_date=2026-08-01 & end_date=2026-08-28", gotQuery)
+	// 日期以 unix 秒送出（Terra 兩種格式都收；文件沒寫 end_date 是否含當天，用秒數＋隔天 00:00Z 端點就沒有這個問題）
+	wantStart := strconv.FormatInt(time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC).Unix(), 10)
+	wantEnd := strconv.FormatInt(time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC).Unix(), 10)
+	if !strings.Contains(gotQuery, "start_date="+wantStart) || !strings.Contains(gotQuery, "end_date="+wantEnd) {
+		t.Errorf("query = %q, want start_date=%s & end_date=%s", gotQuery, wantStart, wantEnd)
 	}
 	if !strings.Contains(gotQuery, "to_webhook=false") || !strings.Contains(gotQuery, "with_samples=false") {
 		t.Errorf("query = %q, want to_webhook=false & with_samples=false", gotQuery)
@@ -380,6 +390,25 @@ func TestFetchTerraActivities_ServerErrorReturnsErr(t *testing.T) {
 }
 
 // --- POST /import：terraSplitWindows ---
+
+func TestTerraWindowUnix(t *testing.T) {
+	from := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	// 正常：end＝To 隔天 00:00Z（含不含端點都涵蓋 To 整天）
+	s, e := terraWindowUnix(from, to, time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC))
+	if s != from.Unix() || e != time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC).Unix() {
+		t.Fatalf("terraWindowUnix() = (%d,%d), want (%d,%d)", s, e, from.Unix(), time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC).Unix())
+	}
+	// 今天的窗口：end 以 now 封頂（不送未來時間），才抓得到「剛跑完」的活動
+	now := time.Date(2026, 9, 3, 4, 30, 0, 0, time.UTC)
+	s, e = terraWindowUnix(time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC), time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC), now)
+	if e != now.Unix() {
+		t.Fatalf("terraWindowUnix() end = %d, want now %d", e, now.Unix())
+	}
+	if s != time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC).Unix() {
+		t.Fatalf("terraWindowUnix() start = %d", s)
+	}
+}
 
 func TestTerraSplitWindows(t *testing.T) {
 	now, err := time.Parse(time.RFC3339, "2026-09-03T12:00:00Z")
