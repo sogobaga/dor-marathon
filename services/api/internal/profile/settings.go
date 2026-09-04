@@ -20,13 +20,18 @@ type SiteSettings struct {
 }
 
 // siteSettingsCacheTTL 見下方 siteSettingsCache 註解。
-const siteSettingsCacheTTL = 10 * time.Minute
+//
+// 2026-09-04（Neon 夜間喚醒問題，owner 要求持續查清楚原因）：10 分鐘 → 60 分鐘，理由同
+// appsettings.publicSettingsCacheTTL——TTL 必須遠高於 Neon 的 5 分鐘休眠門檻，否則快取本身就是一個
+// 「每 TTL 週期固定醒一次」的喚醒源。寫入端（PutSettings）本來就會主動 Invalidate，60 分鐘 TTL
+// 不影響「改設定立即生效」的體感。
+const siteSettingsCacheTTL = 6 * time.Hour // 同 appsettings：寫入即失效，TTL 純保險
 
-// siteSettingsCache 快取 GET /settings（site_settings 單例資料表）的回應（10 分鐘 TTL）。理由同
-// appsettings.publicSettingsCache（Neon 夜間喚醒問題「先做 A」）——這支雖然主要是前台 client 端
-// useSWR/useEffect 呼叫（見 AchievementScreen/MemberPanel/ProfileScreen 等），仍會經 Next.js
-// rewrite 落到這支 Go handler、每次都對 site_settings 現查 DB；改走快取後穩態下最多每 10 分鐘一次
-// 查詢。
+// siteSettingsCache 快取 GET /settings（site_settings 單例資料表）的回應（60 分鐘 TTL，理由見上）。
+// 理由同 appsettings.publicSettingsCache（Neon 夜間喚醒問題「先做 A」）——這支雖然主要是前台 client
+// 端 useSWR/useEffect 呼叫（見 AchievementScreen/MemberPanel/ProfileScreen 等），仍會經 Next.js
+// rewrite 落到這支 Go handler、每次都對 site_settings 現查 DB；改走快取後穩態下最多每
+// siteSettingsCacheTTL 一次查詢。
 //
 // 在 NewHandler 建構時就綁死 load closure（不用 sync.Once 延遲初始化）：main.go 只呼叫一次
 // profile.NewHandler（唯一正式入口），建構當下是單一 goroutine（HTTP server 尚未開始收

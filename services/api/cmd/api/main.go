@@ -26,6 +26,7 @@ import (
 	"github.com/dor/api/internal/cache"
 	"github.com/dor/api/internal/config"
 	"github.com/dor/api/internal/db"
+	"github.com/dor/api/internal/dbwake"
 	"github.com/dor/api/internal/emailbroadcast"
 	"github.com/dor/api/internal/event"
 	"github.com/dor/api/internal/explore"
@@ -325,6 +326,10 @@ func main() {
 
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
+	// DB 喚醒歸因（2026-09-04）：把 method/path/UA/IP 存進 context，供 internal/dbwake.Tracer
+	// 在偵測到「這次查詢很可能剛喚醒 Neon compute」時記 log 歸因。必須掛在 RealIP 之後
+	// （reqip.ClientIP 沒有 CF-Connecting-IP 時會退回 r.RemoteAddr，需要 RealIP 先正規化過）。
+	r.Use(dbwake.Middleware)
 	r.Use(chimiddleware.Recoverer)
 	// panic 告警：需掛在 Recoverer 之後（更內層），才能在 Recoverer 吞掉 panic 之前先攔截到並送出 Telegram。
 	r.Use(middleware.PanicAlert)
@@ -360,7 +365,8 @@ func main() {
 		fmt.Fprintln(w, `{"status":"ok"}`)
 	})
 	r.Get("/health/db", func(w http.ResponseWriter, r *http.Request) {
-		if err := pool.Ping(r.Context()); err != nil {
+		// 用 Exec("SELECT 1") 而非 pool.Ping：Ping 走 pgconn 底層、不經 QueryTracer，外部監控若打這支喚醒 Neon 會查不到元凶（審查抓到）
+		if _, err := pool.Exec(r.Context(), "SELECT 1"); err != nil {
 			http.Error(w, `{"status":"db_down"}`, http.StatusServiceUnavailable)
 			return
 		}
@@ -655,31 +661,33 @@ func main() {
 
 	// 背景：定期清理逾時未完成的多人事件參與者（Phase B auto-expire）
 	bgCtx, bgCancel := context.WithCancel(context.Background())
-	go eventHandler.RunExpiryLoop(bgCtx)
+	go eventHandler.RunExpiryLoop(dbwake.WithJob(bgCtx, "event_expiry"))
 	// 背景：Phase B3 排程主動觸發（到點且有人在跑才建立 collective 事件實例）
-	go eventHandler.RunScheduleLoop(bgCtx)
+	go eventHandler.RunScheduleLoop(dbwake.WithJob(bgCtx, "event_schedule"))
 	// 背景：VIP 訂閱 Phase D 每日續約排程（到期前 1 天起用綁定卡背景扣款，3 天寬限×最多 3 次重試）
-	go bindHandler.RunRenewalLoop(bgCtx)
+	// dbwake.WithJob：DB 喚醒歸因（2026-09-04）——這幾支 hourly ticker 各自帶一個具名 job，
+	// 喚醒 log 才能標出是哪個排程觸發，而不是籠統的「background」（見 internal/dbwake 套件註解）。
+	go bindHandler.RunRenewalLoop(dbwake.WithJob(bgCtx, "vip_renewal"))
 	// 背景：參賽虛擬獎勵排程（migration 140）——已開賽的賽事每 5 分鐘掃描一次，把設定的虛擬獎勵發給
 	// 所有已報名(paid)者（不看任務條件，人人有獎）
-	go raceSvc.RunEntryRewardLoop(bgCtx)
+	go raceSvc.RunEntryRewardLoop(dbwake.WithJob(bgCtx, "entry_reward"))
 	// 背景：每日資料一致性自檢排程（台灣時間 08:00-08:59 執行一次；金流/報名表健檢異常送 Telegram）
-	go opsHandler.RunSelfCheckLoop(bgCtx)
+	go opsHandler.RunSelfCheckLoop(dbwake.WithJob(bgCtx, "selfcheck"))
 	// 背景：每日營運報告排程（同一 08:00-08:59 執行窗口，固定發送，不論當天有無異常；見
 	// internal/ops/dailyreport.go）
-	go opsHandler.RunDailyReportLoop(bgCtx)
+	go opsHandler.RunDailyReportLoop(dbwake.WithJob(bgCtx, "dailyreport"))
 	// 背景：會員活躍度分析每日排程（台灣時間 03:00-03:59 執行窗口，彙整六大區塊存進
 	// member_analytics_reports；啟動時若最新報告超過 25h 未算會先補跑一次，見
 	// internal/analytics/schedule.go）
-	go analyticsHandler.RunLoop(bgCtx)
+	go analyticsHandler.RunLoop(dbwake.WithJob(bgCtx, "analytics"))
 	// 背景：IP/流量每日聚合 flush（每 5 分鐘批次寫入 ops_ip_daily + 每天順手清理 30 天前舊資料）
-	go ipDailyAgg.Run(bgCtx)
+	go ipDailyAgg.Run(dbwake.WithJob(bgCtx, "ipdaily_flush"))
 	// 背景：虛擬選手數據生成引擎 Phase 2（對齊台灣整點 H∈{5,6,7,20,21,22,23}，替 enabled 選手
 	// 自動生成 window_hour=H-1 這個活躍時段的活動；天氣/機率/防重寫入見 internal/virtualrunner/generator.go）
-	go virtualrunner.NewGenerator(pool).RunGenerateLoop(bgCtx)
+	go virtualrunner.NewGenerator(pool).RunGenerateLoop(dbwake.WithJob(bgCtx, "virtualrunner_generator"))
 	// 背景：團練「開跑前提醒」排程（每小時 tick；meet_at 落在 now~now+N 小時且尚未提醒過才發，
 	// 站內信 + Email，一人多場合併發一封；見 internal/runmeet/reminder.go）
-	go runMeetHandler.RunReminderLoop(bgCtx)
+	go runMeetHandler.RunReminderLoop(dbwake.WithJob(bgCtx, "runmeet_reminder"))
 
 	go func() {
 		log.Info().Str("port", cfg.Port).Msg("DOR API server starting")

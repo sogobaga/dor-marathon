@@ -16,6 +16,7 @@ package ttlcache
 
 import (
 	"context"
+	"github.com/dor/api/internal/dbwake"
 	"sync"
 	"time"
 )
@@ -70,7 +71,7 @@ func (c *Cache[T]) Get(ctx context.Context) T {
 	}
 	// 有舊值可用：背景刷新（若目前沒有人在刷新中），立刻回舊值。
 	stale := c.value
-	c.startRefreshLocked()
+	c.startRefreshLocked(ctx)
 	c.mu.Unlock()
 	return stale
 }
@@ -95,7 +96,7 @@ func (c *Cache[T]) Invalidate() {
 
 // startRefreshLocked 若目前沒有刷新在進行中，起一個背景 goroutine 執行刷新。呼叫端須持有 c.mu
 // （方法內不解鎖，回到 Get 才解鎖）。
-func (c *Cache[T]) startRefreshLocked() {
+func (c *Cache[T]) startRefreshLocked(ctx context.Context) {
 	if c.refreshing {
 		return
 	}
@@ -103,7 +104,8 @@ func (c *Cache[T]) startRefreshLocked() {
 	c.done = make(chan struct{})
 	// 背景刷新固定用獨立的 context.Background()：原本觸發這次刷新的 request context 可能在這個
 	// goroutine 跑完前就被取消（例如 HTTP handler 已經回應完畢），若沿用它會讓刷新常態性提早失敗。
-	go c.runRefresh(context.Background())
+	// dbwake.Detach：脫離 request 的取消／期限，但保留喚醒歸因（誰觸發了這次刷新）
+	go c.runRefresh(dbwake.Detach(ctx))
 }
 
 // loadTimeout：單次 load 的硬上限。DB 若是「卡住」而非回錯（Neon 冷啟動停滯、半開連線、連線池耗盡），

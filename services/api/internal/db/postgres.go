@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dor/api/internal/dbwake"
 )
 
 func Connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
@@ -18,6 +20,10 @@ func Connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	cfg.MaxConns = 20
 	// MinConns=0：閒置時不保留熱連線 → Neon compute 可完全休眠(scale-to-zero)，有請求再懶惰重連。
 	cfg.MinConns = 0
+
+	// DB 喚醒歸因（2026-09-04）：每條查詢都會經過這支 QueryTracer；偵測到「距上次查詢已超過
+	// Neon 休眠門檻」時記一行 log，帶上是誰觸發的（見 internal/dbwake 套件註解）。
+	cfg.ConnConfig.Tracer = dbwake.NewTracer()
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

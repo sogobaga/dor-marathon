@@ -245,12 +245,19 @@ type Handler struct {
 }
 
 // publicSettingsCacheTTL 見下方 publicSettingsCache 註解。
-const publicSettingsCacheTTL = 10 * time.Minute
+//
+// 2026-09-04（Neon 夜間喚醒問題，owner 要求持續查清楚原因）：10 分鐘 → 60 分鐘。TTL 必須遠高於
+// Neon 的 5 分鐘休眠門檻，否則快取本身就變成一個「每 TTL 週期固定醒一次」的喚醒源——只要穩態下
+// 有任何 request（爬蟲/監控探針）落在快取剛好過期後，就會觸發一次 DB 查詢喚醒 compute；10 分鐘
+// TTL 只比休眠門檻(5 分鐘)高一點，夜間長時間沒人手動觸發寫入端 Invalidate 的情況下，幾乎保證
+// compute 一整晚每 10 分鐘醒一次。寫入端（Set/InvalidateCache）本來就會主動清快取，60 分鐘 TTL
+// 不影響「改設定立即生效」的體感，純粹拉高「沒人寫入時，穩態被動查詢」的週期上限。
+const publicSettingsCacheTTL = 6 * time.Hour // 只靠寫入失效；TTL 純保險（外部 SSR 請求不斷時，TTL 就是 DB 喚醒週期）
 
-// publicSettingsCache 快取 GET /app-settings/public 的完整回應 map（10 分鐘 TTL）。與下面「套件內
-// 記憶體快取（60 秒 TTL）」是兩層不同粒度：這層快取「整包公開 map」本身（省掉每次對 app_settings
-// 整表 SELECT），下面那層快取「單一 key 現查」（GetInt/GetString 用）。兩者互不影響，但寫入端都
-// 要一起清（見 InvalidateCache，也是本檔案唯一改動兩層快取的入口）。
+// publicSettingsCache 快取 GET /app-settings/public 的完整回應 map（60 分鐘 TTL，理由見上）。與
+// 下面「套件內記憶體快取（60 秒 TTL）」是兩層不同粒度：這層快取「整包公開 map」本身（省掉每次對
+// app_settings 整表 SELECT），下面那層快取「單一 key 現查」（GetInt/GetString 用）。兩者互不影響，
+// 但寫入端都要一起清（見 InvalidateCache，也是本檔案唯一改動兩層快取的入口）。
 //
 // 在 NewHandler 建構時就綁死 load closure（不用 sync.Once 延遲到第一次 Public() 呼叫才建）：本
 // Handler 只會在 main.go 建構一次，建構當下是單一 goroutine（HTTP server 尚未開始收 request），
@@ -308,11 +315,12 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 // Public 前台（可未登入）讀取白名單設定，如 active_skin。
 //
-// 效能（2026-09-03，Neon 夜間喚醒問題「先做 A」）：這支被 apps/web RootLayout（layout.tsx
-// getPublicSettings）幾乎每個 request 都呼叫一次。原本每次都對 app_settings 整表 SELECT；改走
-// publicSettingsCache 後，穩態下不管多少 request／爬蟲掃多少頁，最多每 10 分鐘一次查詢。
-// Cache-Control 順手加 60 秒——對瀏覽器與 Next.js fetch cache 有幫助；Cloudflare 對這條路徑仍判定
-// DYNAMIC（回應帶這個 header 不影響 CF 快取分類），純粹錦上添花、無害。
+// 效能（2026-09-03，Neon 夜間喚醒問題「先做 A」；2026-09-04 TTL 拉到 60 分鐘見上方常數註解）：這支
+// 被 apps/web RootLayout（layout.tsx getPublicSettings）幾乎每個 request 都呼叫一次。原本每次都對
+// app_settings 整表 SELECT；改走 publicSettingsCache 後，穩態下不管多少 request／爬蟲掃多少頁，
+// 最多每 publicSettingsCacheTTL 一次查詢。Cache-Control 順手加 60 秒——對瀏覽器與 Next.js fetch
+// cache 有幫助；Cloudflare 對這條路徑仍判定 DYNAMIC（回應帶這個 header 不影響 CF 快取分類），純粹
+// 錦上添花、無害。
 func (h *Handler) Public(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	respondJSON(w, http.StatusOK, map[string]any{"settings": publicSettingsCache.Get(r.Context())})

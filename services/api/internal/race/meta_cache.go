@@ -7,9 +7,9 @@
 // 因此一直醒著（5 分鐘沒查詢才休眠）。
 //
 // 解法：GET /races/{slug}/meta 只回傳這幾個精簡欄位，資料來源是「一次查完所有已上線賽事」的
-// map（見 Repository.ListPublicRaceMeta），包一層 ttlcache（10 分鐘 TTL）。穩態下無論爬蟲掃幾個
-// slug，每 10 分鐘最多一次 DB 查詢；查無的 slug 也不直接穿透查 DB（見 GetRaceMeta 下方的
-// raceMetaMissRefreshGrace 規則）。
+// map（見 Repository.ListPublicRaceMeta），包一層 ttlcache（30 分鐘 TTL，見下方 raceMetaCacheTTL
+// 常數註解）。穩態下無論爬蟲掃幾個 slug，每 30 分鐘最多一次 DB 查詢；查無的 slug 也不直接穿透查
+// DB（見 GetRaceMeta 下方的 raceMetaMissRefreshGrace 規則）。
 package race
 
 import (
@@ -19,16 +19,22 @@ import (
 	"github.com/dor/api/internal/ttlcache"
 )
 
-// raceMetaCacheTTL 賽事 meta 表快取存活期。10 分鐘——遠短於賽事審核/上線的節奏，管理端寫入又會
-// 主動 Invalidate，不會有「改了卻十分鐘看不到」的體感問題（管理後台本身讀的是 AdminGetRace，走
-// 未快取的即時查詢，不受影響）。
-const raceMetaCacheTTL = 10 * time.Minute
+// raceMetaCacheTTL 賽事 meta 表快取存活期。
+//
+// 2026-09-04（Neon 夜間喚醒問題，owner 要求持續查清楚原因）：10 分鐘 → 30 分鐘。TTL 必須遠高於
+// Neon 的 5 分鐘休眠門檻，否則快取本身就是一個「每 TTL 週期固定醒一次」的喚醒源——夜間爬蟲掃過的
+// 任一 slug 只要落在快取剛好過期後，就會觸發一次背景刷新查詢喚醒 compute。30 分鐘仍遠短於賽事
+// 審核/上線的節奏，管理端寫入又會主動 Invalidate，不會有「改了卻等半小時看不到」的體感問題
+// （管理後台本身讀的是 AdminGetRace，走未快取的即時查詢，不受影響）——選 30 分鐘而非比照
+// appsettings/profile 的 60 分鐘：SSR metadata 對「上線後多快能被爬到」的新鮮度比純外觀設定敏感，
+// 折衷取一半。
+const raceMetaCacheTTL = 2 * time.Hour // 後台賽事寫入即失效；TTL 只保底（分享卡片的 title/圖），拉長免得爬蟲把 TTL 變成喚醒週期
 
 // raceMetaMissRefreshGrace 查無某 slug 時，只有在快取表「距上次成功載入已超過這個時間」才值得多
-// 花一次同步查詢去確認——可能是剛核准上線的新賽事，快取還沒來得及收錄（10 分鐘 TTL 到期前這段
-// 時間背景刷新還沒被觸發）。設 60 秒（遠短於 10 分鐘 TTL）：新賽事上線後最多 60 秒內對其 slug 的
-// 查詢會各自多付一次查詢成本，超過這個時間才動用「強制刷新」；其餘一律直接 404，不讓爬蟲對從來
-// 不存在的 slug 每次都打穿快取查 DB。
+// 花一次同步查詢去確認——可能是剛核准上線的新賽事，快取還沒來得及收錄（raceMetaCacheTTL 到期前這
+// 段時間背景刷新還沒被觸發）。設 60 秒（遠短於 raceMetaCacheTTL）：新賽事上線後最多 60 秒內對其
+// slug 的查詢會各自多付一次查詢成本，超過這個時間才動用「強制刷新」；其餘一律直接 404，不讓爬蟲
+// 對從來不存在的 slug 每次都打穿快取查 DB。
 const raceMetaMissRefreshGrace = 60 * time.Second
 
 // RaceMeta 是 GET /races/{slug}/meta 的精簡回應欄位——刻意不含分組/加購/物資/報名狀態/取消退費
