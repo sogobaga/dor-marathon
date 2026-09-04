@@ -153,6 +153,12 @@ export async function generateViewport(): Promise<Viewport> {
 //    診斷補強：v.ts（transferSize）在 CriOS 對網路供應的文件也回 0，**不能**再當快取供應的證據；每份文件離開決策
 //    後把「本份的 ar|nav|referrer host」寫進 sessionStorage dor.prevAr，下一份文件開機讀成 v.prev 進面板，真機
 //    就能看出「病態文件是誰生的、上一份做了什麼決定」；v.sa／v.la＝距上次 tabSeen／上次治療的毫秒數。
+// F. /track 不再一律排除（v783，第八輪；Railway HTTP log 2026-09-04 11:07:50Z）：使用者截圖 /track 頁又出現症狀 A
+//    （地圖上緣被切、底部留白），log 只有 /track 的開機 API（先 401 再刷新 token）、**沒有 /track 的 HTML 請求**——
+//    就是 D 的「分頁回收後從快取還原」路徑，但 /track 從 v753 起被 skip:track 一律排除（怕打斷跑步中的 GPS 恢復）。
+//    改為只在「本機有進行中／待上傳的跑步」（localStorage dor_gps_run 存在：跑步中每個 GPS 點都會寫、結束上傳後才清）
+//    時才跳過（skip:track-run）；閒置的 /track 文件照 arrival／restore 規則治療。首頁「開始跑步」是 <a href="/track">
+//    硬導覽（同源 referrer → no-trigger），這條不動，只治還原與外部到站。
 // C. bounced 標記：由彈跳頁 replace 過來的文件 referrer 是同源（strict-origin-when-cross-origin 對同源給完整網址），
 //    本來就落在 no-trigger；帶 dor_b=1 cookie 時只是把標籤改成 skip:bounced 讓 ?vpdebug=1 面板看得出走了哪條路。
 //    刻意「不」把 cookie 當成跳過重載的理由：cookie 跨分頁共享（5 秒），同一支手機 5 秒內再掃一張 QR 時 middleware
@@ -182,6 +188,7 @@ function showVeil(){
     setTimeout(function(){try{d.adoptedStyleSheets=[]}catch(x){}},6000);
   }catch(x){}
 }
+function hasRun(){try{return !!localStorage.getItem('dor_gps_run')}catch(x){return false}}
 function refHost(){return ref?(ref.split('/')[2]||ref):'-'}
 function mark(){try{sessionStorage.setItem('dor.prevAr',(v.ar||'-')+'|'+(v.n||'?')+'|'+refHost())}catch(x){}}
 function renav(){var L=w.location;try{if(L.hash){L.reload();return}L.replace(L.href)}catch(x){try{L.reload()}catch(y){}}}
@@ -212,7 +219,7 @@ var skip='';
 if(!/iPhone|iPod/.test(ua))skip='not-iphone';
 else if(n.standalone===true){skip='standalone';try{d.cookie='dor_pwa=1;Max-Age=31536000;Path=/;SameSite=Lax'}catch(x){}}
 else if(/vpfix=off|noreload=1/.test(q))skip='opt-out';
-else if(/^[/]track([/]|$)/.test(path))skip='track';
+else if(/^[/]track([/]|$)/.test(path)&&hasRun())skip='track-run';
 else if(/[?&#](code|state|token|access_token|id_token)=/i.test(q))skip='auth-url';
 else if(!why)skip=/(^|; )dor_b=1(;|$)/.test(d.cookie||'')?'bounced':'no-trigger';
 else if(last&&now-last<120000)skip='recent';
