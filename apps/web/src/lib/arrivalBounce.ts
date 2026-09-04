@@ -40,6 +40,9 @@ export function decideBounce(
   method: string
 ): BounceDecision {
   if (method !== 'GET') return { bounce: false, reason: 'method' }
+  // Google 登入整頁導轉（/auth/*，2026-09-04）：一律不彈跳，且必須放在 Sec-Fetch-Site 之前——完成頁是 Google
+  // 跨站 POST → 303 而來的導覽，Sec-Fetch-Site 不會是 none，放在後面永遠輪不到這條（審查以 decideBounce 實測）。
+  if (/^[/]auth([/]|$)/.test(url.pathname)) return { bounce: false, reason: 'auth-path' }
 
   const site = h.get('sec-fetch-site')
   const mode = h.get('sec-fetch-mode')
@@ -66,6 +69,11 @@ export function decideBounce(
   // （面板 ar=skip:not-safari）；靜態 C/D 卡在同一支 Chrome 上 0ms/150ms 彈跳皆正常＝療法沒錯、閘門錯。
   // Safari 本體到底有沒有這病目前**沒有任何一次真機證據**（每次都是 Chrome）——別再依 UA 猜哪家會發病：
   // iPhone 上所有瀏覽器都是 WebKit，多彈一次只是多一趟 1KB 請求，所以只排 bot；PWA 由 cookie dor_pwa=1 排。
+  // Google 登入整頁導轉完成頁（google_login_ux_mode='redirect'，2026-09-04）：/auth/ 底下一律不彈跳。
+  // /auth/google/complete 帶著一次性 credential（藏在 URL fragment，伺服器端本來就看不到），彈跳頁的
+  // location.replace 雖然會保留 hash（見 bounceHtml 內 v766 的 hash 差異化處理），但這條路徑沒有必要
+  // 再多繞一手、也不該有任何被快取/中介層截留的風險——直接放行給真正的頁面處理。
+
   if (BOT_RE.test(ua)) return { bounce: false, reason: 'bot' }
 
   // Sec-Fetch-Site:none 的導覽依規範不帶 Referer；出現 Referer 就代表不是「真到站」（見上方保險②）。

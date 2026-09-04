@@ -17,6 +17,22 @@ export interface SettingSpec {
 }
 
 export const SETTINGS_SPECS: SettingSpec[] = [
+  // ── 登入（見 apps/web/src/components/UserAuthBar.tsx、app/auth/google/，2026-09-04）──
+  // 背景：iOS 上 Google 登入彈出視窗（ux_mode='popup'）有時會被瀏覽器開成新分頁，選完帳號後那個分頁被關掉、
+  // 畫面「跳回」的卻是使用者原本開著的另一個分頁（不是本站）——改走整頁導轉（ux_mode='redirect'）沒有這個問題。
+  {
+    key: 'google_login_ux_mode', group: '登入', label: 'Google 登入彈出模式', type: 'select', def: 'popup',
+    help: 'iOS（iPhone/iPad）上 Google 登入彈出視窗有時會被瀏覽器開成「新分頁」，使用者選完帳號後那個分頁關閉、'
+      + '瀏覽器卻「跳回」原本另一個已開的分頁（不是回到本站）——這是分頁回跳的瀏覽器層問題，不是本站的 bug。'
+      + '改選「整頁導轉」後，iPhone/iPad 會改走整頁跳到 Google 登入頁、選完帳號再整頁跳回本站（不開新分頁），'
+      + '桌機與 Android 不受影響、仍用彈出視窗。⚠️ 開啟前必須先在 Google Cloud Console 的 OAuth 用戶端「已授權的'
+      + '重新導向 URI」加入 https://www.dor.tw/auth/google/callback，否則整頁導轉在 iOS 會直接登入失敗；'
+      + '建議先用測試帳號在真機驗證通過（能正常登入、且沒有跳回錯分頁）再正式開啟。',
+    options: [
+      { value: 'popup', label: '彈出視窗（預設，桌機／Android 皆用此）' },
+      { value: 'redirect', label: '整頁導轉（僅 iPhone/iPad 生效，修正分頁回跳問題）' },
+    ],
+  },
   {
     key: 'active_skin', group: '前台主題（Skin）', label: '前台風格', type: 'select', def: 'default',
     help: '切換前台整體視覺風格。之後可為不同主打主題活動加入對應風格。切換後前台「下次載入」即套用（後台不受影響）。',

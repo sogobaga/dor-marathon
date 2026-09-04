@@ -105,12 +105,12 @@ export async function middleware(req: NextRequest, event: NextFetchEvent) {
   }
 
   if (!decision.bounce) {
-    if (req.nextUrl.searchParams.get('vpdebug') === '1') {
-      const headers = new Headers()
-      headers.set('x-dor-bounce', `skip:${decision.reason}`)
-      return NextResponse.next({ headers })
-    }
-    return NextResponse.next()
+    const headers = new Headers()
+    let hasHeaders = false
+    // Google 登入整頁導轉完成頁：一次性 credential 藏在 URL fragment，任何快取層（瀏覽器/CDN）都不能保留這份回應。
+    if (decision.reason === 'auth-path') { headers.set('cache-control', 'no-store'); hasHeaders = true }
+    if (req.nextUrl.searchParams.get('vpdebug') === '1') { headers.set('x-dor-bounce', `skip:${decision.reason}`); hasHeaders = true }
+    return hasHeaders ? NextResponse.next({ headers }) : NextResponse.next()
   }
 
   const skin = await getSkin(event)

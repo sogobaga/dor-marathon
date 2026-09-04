@@ -9,7 +9,12 @@ import { googleConfigured } from './GoogleAuthProvider'
 import { overlayMount } from '@/lib/overlayMount'
 import { buildAcqPayload } from '@/lib/acquisition'
 
-const REF_CODE_KEY = 'dor:ref_code'
+// 兩者皆 export：app/auth/google/complete/GoogleCompleteClient.tsx（整頁導轉登入完成頁）與這裡共用同一組
+// key，避免兩處各自硬編字串、之後改名漏改一邊。
+export const REF_CODE_KEY = 'dor:ref_code'
+// Google 登入整頁導轉（iOS 分頁回跳修正，2026-09-04）：LoginModal 掛載時把「回跳路徑」存這裡，
+// /auth/google/complete 登入成功後讀出來、location.replace 回去。
+export const LOGIN_RETURN_KEY = 'dor:login_return'
 
 export default function UserAuthBar({ onProfile }: { onProfile?: () => void }) {
   const user = useUser()
@@ -65,6 +70,32 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
     setHasRefCode(!!localStorage.getItem(REF_CODE_KEY))
   }, [])
 
+  // Google 登入彈出模式：預設彈出視窗；後台開整頁導轉（data-glogin="redirect"，見 layout.tsx）且是 iOS
+  // （iPhone/iPad/iPod，桌機與 Android 仍用彈出視窗——問題只在 iOS 的分頁回跳）時才切換。掛載後才讀
+  // document.documentElement.dataset，避免 SSR 不一致；切到 redirect 的同時記下目前路徑，供登入完成頁導回。
+  // 初始值就從 <html data-glogin> 讀（lazy initializer）：若先以 'popup' 掛載再 effect 切成 'redirect'，
+  // @react-oauth/google 的 GoogleLogin 內部 effect 不會因 ux_mode/login_uri 變動重跑，GIS 元件會永遠停在 popup
+  // （審查以 react-dom 實測）；下面兩個 <GoogleLogin> 另外加 key，確保模式切換一定是重新掛載而非 prop 更新。
+  const [glogin, setGlogin] = useState<'popup' | 'redirect'>(() => {
+    try {
+      if (typeof document === 'undefined') return 'popup'
+      const mode = document.documentElement.dataset.glogin
+      return mode === 'redirect' && /iPhone|iPad|iPod/.test(navigator.userAgent) ? 'redirect' : 'popup'
+    } catch { return 'popup' }
+  })
+  useEffect(() => {
+    try {
+      const mode = document.documentElement.dataset.glogin
+      const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
+      if (mode === 'redirect' && isIOS) {
+        sessionStorage.setItem(LOGIN_RETURN_KEY, location.pathname + location.search)
+        setGlogin('redirect')
+      }
+    } catch {
+      // 讀不到（無痕模式等）→ 維持預設彈出視窗
+    }
+  }, [])
+
   // 掛載點：手機模擬框內→portal 進框(桌機不鋪滿視窗)；獨立路由(無手機框)→退回 document.body(視窗)
   const om = overlayMount()
   const content = (
@@ -81,27 +112,42 @@ export function LoginModal({ onClose }: { onClose: () => void }) {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, opacity: busy ? 0.5 : 1, pointerEvents: busy ? 'none' : 'auto' }}>
           {googleConfigured ? (
-            <GoogleLogin
-              onSuccess={async (cred) => {
-                if (!cred.credential) { setErr('未取得 Google 憑證'); return }
-                setErr(''); setBusy(true)
-                try {
-                  // 若之前透過推廣連結進站，帶上暫存的推薦碼（後端只在「新帳號」分支綁定，舊帳號會忽略）
-                  const refCode = localStorage.getItem(REF_CODE_KEY) || undefined
-                  // 來源歸因（first-touch landing/referrer，見 lib/acquisition.ts）：同樣只在新帳號分支被後端使用
-                  const res = await authApi.google(cred.credential, refCode, buildAcqPayload())
-                  setUserSession(res.tokens.access_token, res.tokens.refresh_token, res.user, res.tokens.session_epoch) // 觸發 useUser 更新；session_epoch 供單一登入判定
-                  localStorage.removeItem(REF_CODE_KEY) // 不論新舊帳號都清，避免下次登入又誤帶
-                  onClose()
-                } catch (e: any) {
-                  setErr(e?.message || '登入失敗')
-                } finally {
-                  setBusy(false)
-                }
-              }}
-              onError={() => setErr('Google 登入失敗')}
-              width="280"
-            />
+            glogin === 'redirect' ? (
+              // 整頁導轉（iOS）：GIS 收到 ux_mode="redirect" 後會忽略 callback、改把結果 POST 到
+              // login_uri（apps/web/src/app/auth/google/callback/route.ts）；onSuccess 這裡官方文件保證
+              // 不會被呼叫，留著只為滿足元件型別必填。真正的登入完成流程在 /auth/google/complete 頁面。
+              <GoogleLogin
+                key="redirect"
+                ux_mode="redirect"
+                login_uri={`${window.location.origin}/auth/google/callback`}
+                onSuccess={() => {}}
+                onError={() => setErr('Google 登入失敗')}
+                width="280"
+              />
+            ) : (
+              <GoogleLogin
+                key="popup"
+                onSuccess={async (cred) => {
+                  if (!cred.credential) { setErr('未取得 Google 憑證'); return }
+                  setErr(''); setBusy(true)
+                  try {
+                    // 若之前透過推廣連結進站，帶上暫存的推薦碼（後端只在「新帳號」分支綁定，舊帳號會忽略）
+                    const refCode = localStorage.getItem(REF_CODE_KEY) || undefined
+                    // 來源歸因（first-touch landing/referrer，見 lib/acquisition.ts）：同樣只在新帳號分支被後端使用
+                    const res = await authApi.google(cred.credential, refCode, buildAcqPayload())
+                    setUserSession(res.tokens.access_token, res.tokens.refresh_token, res.user, res.tokens.session_epoch) // 觸發 useUser 更新；session_epoch 供單一登入判定
+                    localStorage.removeItem(REF_CODE_KEY) // 不論新舊帳號都清，避免下次登入又誤帶
+                    onClose()
+                  } catch (e: any) {
+                    setErr(e?.message || '登入失敗')
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+                onError={() => setErr('Google 登入失敗')}
+                width="280"
+              />
+            )
           ) : (
             <div style={{ fontSize: 13, color: 'var(--tx-faint)', padding: '10px 0' }}>Google 登入尚未設定</div>
           )}

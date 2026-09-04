@@ -102,7 +102,19 @@ eq(decide({ cookie: 'dor_b=1' }), { bounce: false, reason: 'cookie' }, 'cookie d
 eq(decide({ cookie: 'theme=dark; dor_b=1; sid=abc' }), { bounce: false, reason: 'cookie' }, 'cookie dor_b=1（夾在其他 cookie 中間）→ cookie')
 eq(decide({}, url('/', '?vpfix=off')), { bounce: false, reason: 'opt-out' }, '?vpfix=off → opt-out')
 eq(decide({}, url('/', '?noreload=1')), { bounce: false, reason: 'opt-out' }, '?noreload=1 → opt-out')
-eq(decide({}, url('/auth/callback', '?code=abc123&state=xyz')), { bounce: false, reason: 'auth-url' }, '?code= 授權回跳網址 → auth-url（一次性授權碼禁不起被彈跳頁多消費一次網址）')
+eq(decide({}, url('/race/x', '?code=abc123&state=xyz')), { bounce: false, reason: 'auth-url' }, '?code= 授權回跳網址（/auth/ 以外的路徑）→ auth-url（一次性授權碼禁不起被彈跳頁多消費一次網址）')
+// Google 登入整頁導轉（google_login_ux_mode='redirect'，2026-09-04）：/auth/ 路徑一律不彈跳，這道判斷插在
+// auth-url 的 query-string 檢查之前（見 arrivalBounce.ts），所以 /auth/ 底下即使也帶著 ?code= 也會先命中
+// auth-path——這正是要的：credential 可能藏在 URL fragment（伺服器端本來就看不到，query-string 判斷不到），
+// 路徑前綴是唯一保證涵蓋得到的判斷。
+eq(decide({}, url('/auth/callback', '?code=abc123&state=xyz')), { bounce: false, reason: 'auth-path' }, '/auth/callback（/auth/ 前綴，即使帶 ?code=）→ auth-path 優先於 auth-url')
+eq(decide({}, url('/auth/google/complete', '')), { bounce: false, reason: 'auth-path' }, '/auth/google/complete（無 query，credential 在 fragment）→ auth-path')
+eq(decide({}, url('/auth/google/callback', '')), { bounce: false, reason: 'auth-path' }, '/auth/google/callback → auth-path')
+// 完成頁是 Google 跨站 POST → 303 而來的導覽：Sec-Fetch-Site 不會是 none。auth-path 必須排在 site 檢查之前，
+// 否則永遠輪不到（審查以 decideBounce 實測抓到）。
+eq(decide({ 'sec-fetch-site': 'same-origin' }, url('/auth/google/complete', '')), { bounce: false, reason: 'auth-path' }, '/auth/google/complete 帶 Sec-Fetch-Site: same-origin → 仍是 auth-path（不是 site）')
+eq(decide({ 'sec-fetch-site': 'cross-site', referer: 'https://accounts.google.com/' }, url('/auth/google/complete', '')), { bounce: false, reason: 'auth-path' }, '/auth/google/complete 跨站導覽（referer google）→ auth-path')
+eq(decide({}, url('/authorize', '')), { bounce: true }, '/authorize（非 /auth/ 前綴、只是字首相似）→ 仍照常彈跳')
 eq(decide({ 'user-agent': IPHONE_GOOGLEBOT }), { bounce: false, reason: 'bot' }, 'Googlebot UA（即使宣稱 iPhone Safari）→ bot')
 eq(decide({ 'user-agent': IPHONE_FBEXT }), { bounce: false, reason: 'bot' }, 'facebookexternalhit UA → bot')
 

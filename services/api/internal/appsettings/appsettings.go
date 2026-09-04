@@ -33,6 +33,12 @@ var specs = map[string]func(string) bool{
 	"favicon_url": func(v string) bool {
 		return v == "" || (len(v) <= 512 && (strings.HasPrefix(v, "/") || strings.HasPrefix(v, "http")))
 	},
+	// Google 登入 ux_mode（2026-09-04 owner decision）：iOS（Chrome iOS 已證實、Safari 推測同樣）用
+	// GIS popup 模式時，選帳號分頁關閉後瀏覽器會「回跳」到錯的分頁（例如已開著的 500.gov.tw），並非
+	// 我方程式主動開啟——改用 redirect（整頁導轉到 Google 再導回，不開新分頁）可避免，但要先讓 iOS
+	// 真機驗證過再開，故做成後台可調、預設維持 popup。RootLayout 讀此值 stamp <html data-glogin>，
+	// 前台 LoginModal 只在 iOS 才切換分支，桌機恆維持 popup。
+	"google_login_ux_mode": func(v string) bool { return v == "" || v == "popup" || v == "redirect" },
 	// 入口可見性：hidden 前台隱藏 / locked 顯示但不能按 / whitelist 顯示且指定帳號可按 / open 顯示且全部開放
 	"personal_entry_state":        isEntryState,
 	"personal_entry_whitelist":    isWhitelist,  // 換行/逗號分隔的帳號編碼或 email
@@ -229,7 +235,7 @@ func isFiniteInRange(v, min, max float64) bool {
 }
 
 // publicKeys 允許未登入前台讀取的 key（皆為非敏感外觀設定）。
-var publicKeys = map[string]bool{"active_skin": true, "favicon_url": true}
+var publicKeys = map[string]bool{"active_skin": true, "favicon_url": true, "google_login_ux_mode": true}
 
 func isNonNegInt(v string) bool {
 	if v == "" {

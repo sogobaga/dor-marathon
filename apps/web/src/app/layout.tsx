@@ -37,6 +37,12 @@ function skinOf(s: Record<string, string>): string {
   return typeof v === 'string' && SKIN_THEME_COLOR[v] && v !== 'default' ? v : 'default'
 }
 
+// Google 登入彈出模式（見 lib/appSettings.ts google_login_ux_mode、components/UserAuthBar.tsx）：
+// 未設定／非法值一律視為預設 'popup'——同一份 skinOf 旁的容錯寫法，後端 migration 沒套用前這裡永遠回 'popup'。
+function gloginOf(s: Record<string, string>): 'popup' | 'redirect' {
+  return s.google_login_ux_mode === 'redirect' ? 'redirect' : 'popup'
+}
+
 export async function generateMetadata(): Promise<Metadata> {
   const s = await getPublicSettings()
   const fav = s.favicon_url // 後台可自訂的瀏覽器分頁 favicon（未設 → 用內建 icon）
@@ -220,7 +226,7 @@ if(!/iPhone|iPod/.test(ua))skip='not-iphone';
 else if(n.standalone===true){skip='standalone';try{d.cookie='dor_pwa=1;Max-Age=31536000;Path=/;SameSite=Lax'}catch(x){}}
 else if(/vpfix=off|noreload=1/.test(q))skip='opt-out';
 else if(/^[/]track([/]|$)/.test(path)&&hasRun())skip='track-run';
-else if(/[?&#](code|state|token|access_token|id_token)=/i.test(q))skip='auth-url';
+else if(/[?&#](code|state|token|access_token|id_token|credential)=/i.test(q))skip='auth-url';
 else if(!why)skip=/(^|; )dor_b=1(;|$)/.test(d.cookie||'')?'bounced':'no-trigger';
 else if(last&&now-last<120000)skip='recent';
 if(skip){v.ar='skip:'+skip;mark()}else reload(why);
@@ -228,10 +234,12 @@ if(skip){v.ar='skip:'+skip;mark()}else reload(why);
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const skin = skinOf(await getPublicSettings())
+  const settings = await getPublicSettings()
+  const skin = skinOf(settings)
+  const glogin = gloginOf(settings)
   const [veilBg, veilFg] = veilColorsOf(skin)
   return (
-    <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined}>
+    <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined} data-glogin={glogin === 'redirect' ? 'redirect' : undefined}>
       <body><script dangerouslySetInnerHTML={{ __html: bootJs(veilBg, veilFg) }} /><AppProviders><BounceCleanup /><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><PwaInstallPrompt /><UpdateNotice /><LandscapeNotice />{children}</AppProviders></body>
     </html>
   )
