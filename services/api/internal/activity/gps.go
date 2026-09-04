@@ -203,11 +203,16 @@ func computeRun(points []gpsPoint, k float64) (runCalc, error) {
 	}, nil
 }
 
+// polylineSegmentSep 多段 polyline 的分隔符。⚠️ 必須是 encoded polyline 字元集（ASCII 63~126，'?'～'~'）
+// 以外的字元：v772 曾用 '|'（ASCII 124，正好在字元集內），舊軌跡裡合法出現的 '|' 被前端當分隔符錯切，
+// 解碼成 (0,0) 飛到非洲外海（2026-09-04 使用者回報「定位壞了」；106 筆中 59 筆含 '|'）。';'（ASCII 59）不在字元集內。
+const polylineSegmentSep = ";"
+
 // encodePolylineSegments 是 SaveGPSRun 軌跡壓縮的純函式核心（無 DB 依賴，方便單元測試，見
 // gps_test.go）：依 breakBefore 標記的斷點把一條軌跡切成多段，各段分別做 Douglas-Peucker 簡化
-// (5m) + encode，用 "|" 串接——無效區段（超速/訊號斷點，見 computeRun 的 gapInvalid/speedInvalid）
+// (5m) + encode，用 polylineSegmentSep（';'）串接——無效區段（超速/訊號斷點，見 computeRun 的 gapInvalid/speedInvalid）
 // 不會被畫成一條直線。breakBefore[i]==true 代表 points[i]（無效區段的遠端點）前另起一段，即 i 是
-// 新一段的第一個點。沒有任何斷點時退化成單一 polyline，與舊資料格式（無 "|"）相容。少於 2 個點的
+// 新一段的第一個點。沒有任何斷點時退化成單一 polyline，與舊資料格式（無分隔符）相容。少於 2 個點的
 // 子段仍會被 encode（單點也是合法、可還原的 encoded polyline，只是不會畫出線段）——刻意不捨棄，
 // 讓「排除了什麼」在 polyline 的段落切分上如實呈現。
 func encodePolylineSegments(points []gpsPoint, breakBefore map[int]bool) string {
@@ -227,7 +232,7 @@ func encodePolylineSegments(points []gpsPoint, breakBefore map[int]bool) string 
 		cur = append(cur, [2]float64{p.Lat, p.Lng})
 	}
 	flush()
-	return strings.Join(segments, "|")
+	return strings.Join(segments, polylineSegmentSep)
 }
 
 // SaveGPSRun 伺服器端重算 + 防弊；未標記者推入活動管線（記錄+里程EXP）。
@@ -265,8 +270,8 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 	started, _ := time.Parse(time.RFC3339, req.StartedAt)
 	ended, _ := time.Parse(time.RFC3339, req.EndedAt)
 	// 軌跡壓縮：精度過差的點剔除 → 依斷點切段 → 各段分別 Douglas-Peucker 簡化(5m) + encode，
-	// 用 "|" 串接（見 encodePolylineSegments）——無效區段（超速/訊號斷點）不畫線連過去；
-	// 舊資料（無 "|"）維持單一 polyline 格式相容。
+	// 用 ';' 串接（見 encodePolylineSegments／polylineSegmentSep）——無效區段（超速/訊號斷點）不畫線連過去；
+	// 舊資料（無分隔符）維持單一 polyline 格式相容。
 	usedPts := make([]gpsPoint, 0, len(req.Points))
 	for _, p := range req.Points {
 		if p.Acc == 0 || p.Acc <= gpsMaxAccuracyM {

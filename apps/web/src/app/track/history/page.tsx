@@ -221,8 +221,8 @@ export default function TrackHistoryPage() {
 
   useEffect(() => {
     if (!sel) return
-    // 一趟軌跡可能存成多段 '|' 相接的 encoded polyline（斷訊/跳點期間排除，見 lib/polyline.ts 註解）；
-    // 每段各畫一條 Leaflet polyline、段落間不連線——舊資料無 '|' 時就是單一段，行為與過去相同。
+    // 一趟軌跡可能存成多段 ';' 相接的 encoded polyline（斷訊/跳點期間排除，見 lib/polyline.ts 註解）；
+    // 每段各畫一條 Leaflet polyline、段落間不連線——舊資料無 ';' 時就是單一段，行為與過去相同。
     const segments = decodePolylineSegments(sel.polyline || '')
     const coords = segments.flat()
     coordsRef.current = coords // snapshotMap 重投影仍用扁平座標：只取起訖點畫圓點，中間排除段不連線不影響

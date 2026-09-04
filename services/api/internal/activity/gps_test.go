@@ -164,8 +164,8 @@ func TestComputeRun_MRTGapExcluded(t *testing.T) {
 	}
 
 	poly := encodePolylineSegments(pts, calc.BreakBefore)
-	if n := strings.Count(poly, "|"); n != 1 {
-		t.Errorf("polyline has %d '|' separators, want exactly 1 (one break at the MRT jump): %q", n, poly)
+	if n := strings.Count(poly, ";"); n != 1 {
+		t.Errorf("polyline has %d ';' separators, want exactly 1 (one break at the MRT jump): %q", n, poly)
 	}
 }
 
@@ -218,7 +218,7 @@ func TestComputeRun_GapDistanceThreshold(t *testing.T) {
 	}
 }
 
-// TestEncodePolylineSegments_BreakInMiddle 直接測純函式：中間一個斷點應切成兩段、以 "|" 串接，
+// TestEncodePolylineSegments_BreakInMiddle 直接測純函式：中間一個斷點應切成兩段、以 ";" 串接，
 // 兩段各自都是非空、可還原的 encoded polyline（見函式註解——沒有斷點時等同單一 polyline，
 // 與舊資料格式相容）。
 func TestEncodePolylineSegments_BreakInMiddle(t *testing.T) {
@@ -231,7 +231,7 @@ func TestEncodePolylineSegments_BreakInMiddle(t *testing.T) {
 		{Lat: 25.0502, Lng: 121.5304, T: 50000},
 	}
 	poly := encodePolylineSegments(pts, map[int]bool{3: true})
-	parts := strings.Split(poly, "|")
+	parts := strings.Split(poly, ";")
 	if len(parts) != 2 {
 		t.Fatalf("expected 2 segments (1 break) in %q, got %d part(s)", poly, len(parts))
 	}
@@ -244,7 +244,7 @@ func TestEncodePolylineSegments_BreakInMiddle(t *testing.T) {
 
 // TestEncodePolylineSegments_NoBreaksMatchesPlainEncoding 沒有任何斷點時，
 // encodePolylineSegments 必須退化成與 encodePolyline(simplifyPath(...)) 完全相同的單一字串
-// （不含 "|"）——保證舊資料格式（無 "|"）相容，前端不用特判新舊格式。
+// （不含 ";"）——保證舊資料格式（無 ";"）相容，前端不用特判新舊格式。
 func TestEncodePolylineSegments_NoBreaksMatchesPlainEncoding(t *testing.T) {
 	pts := []gpsPoint{
 		{Lat: 25.0330, Lng: 121.5000, T: 0},
@@ -252,12 +252,24 @@ func TestEncodePolylineSegments_NoBreaksMatchesPlainEncoding(t *testing.T) {
 		{Lat: 25.0332, Lng: 121.5004, T: 20000},
 	}
 	got := encodePolylineSegments(pts, map[int]bool{})
-	if strings.Contains(got, "|") {
+	if strings.Contains(got, ";") {
 		t.Errorf("expected no '|' when there are no breaks, got %q", got)
 	}
 	latlng := [][2]float64{{pts[0].Lat, pts[0].Lng}, {pts[1].Lat, pts[1].Lng}, {pts[2].Lat, pts[2].Lng}}
 	want := encodePolyline(simplifyPath(latlng, 5))
 	if got != want {
 		t.Errorf("encodePolylineSegments (no breaks) = %q, want %q (identical to plain encodePolyline)", got, want)
+	}
+}
+
+// TestPolylineSegmentSep_OutsideAlphabet 分隔符必須落在 encoded polyline 字元集（ASCII 63~126）之外：
+// v772 用 '|'（124）踩雷——舊軌跡裡合法的 '|' 被前端錯切成 (0,0)（2026-09-04 回報）。這條測試把規則釘死。
+func TestPolylineSegmentSep_OutsideAlphabet(t *testing.T) {
+	if len(polylineSegmentSep) != 1 {
+		t.Fatalf("separator must be a single byte, got %q", polylineSegmentSep)
+	}
+	c := polylineSegmentSep[0]
+	if c >= 63 && c <= 126 {
+		t.Fatalf("separator %q (ASCII %d) is inside the polyline alphabet 63..126", polylineSegmentSep, c)
 	}
 }
