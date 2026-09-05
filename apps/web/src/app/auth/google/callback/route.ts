@@ -58,6 +58,17 @@ function failurePage(): NextResponse {
   })
 }
 
+// 導向網址一律用「公開」origin：Railway 代理後面 req.url 是容器內部位址（真機實測 303 到
+// http://72a0b80769e3:3000/...，2026-09-05 使用者「登不進去」），不能拿它拼 Location。優先用
+// NEXT_PUBLIC_SITE_URL，其次 x-forwarded-host／host 標頭（強制 https），最後退回正式網域。
+function publicOrigin(req: NextRequest): string {
+  const env = (process.env.NEXT_PUBLIC_SITE_URL || '').replace(/\/+$/, '')
+  if (/^https:\/\//.test(env)) return env
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || ''
+  if (host && !/^(localhost|127\.|\[?::1)|:3000$/.test(host) && /\./.test(host)) return `https://${host.split(',')[0].trim()}`
+  return 'https://www.dor.tw'
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const cookieToken = req.cookies.get('g_csrf_token')?.value || null
   const { credential, csrfToken: bodyToken } = await parseBody(req)
@@ -69,7 +80,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // 303 See Other：把這次 POST 轉成 GET 導覽，credential 只放在 fragment（# 後面，永遠不會送到任何伺服器，
   // 也不會出現在 Railway/CDN 的存取記錄裡）。fragment 內容經 encodeURIComponent，避免 JWT 本身若含特殊字元
   // 破壞網址結構（一般 JWT 只含 base64url 字元集，但保守處理不假設）。
-  const target = new URL('/auth/google/complete', req.url)
+  const target = new URL('/auth/google/complete', publicOrigin(req))
   target.hash = `credential=${encodeURIComponent(credential)}`
 
   return NextResponse.redirect(target, {
@@ -80,7 +91,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
 // 直接用 GET 訪問這支端點（不是 Google 導回的正常流程）：導去首頁，不留在一支只接受 POST 的路由上出錯頁。
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  return NextResponse.redirect(new URL('/', req.url), {
+  return NextResponse.redirect(new URL('/', publicOrigin(req)), {
     status: 302,
     headers: { 'cache-control': 'no-store' },
   })
