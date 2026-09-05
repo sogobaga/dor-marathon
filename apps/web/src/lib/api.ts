@@ -537,8 +537,21 @@ class ApiError extends Error {
 // 401 自動回復：由 adminAuth 註冊（用 refresh 換新 token 後重試一次），以回呼註冊避免 api.ts↔adminAuth 循環依賴。
 // 回傳新 token 才重試；回 null（非後台 token / 續期失敗）則照常拋 401，交給呼叫端處理。
 type AuthRecovery = (failedToken: string) => Promise<string | null>
-let authRecovery: AuthRecovery | null = null
-export function setAuthRecovery(fn: AuthRecovery | null) { authRecovery = fn }
+// 401 續期掛勾可以有多個（後台 token 由 adminAuth 註冊、會員 token 由 userAuth 註冊）：request() 依序詢問，
+// 誰認得這把 token 就由誰續期。2026-09-05 之前只有後台註冊——會員端直接帶 token 的 SWR 抓取一遇 401
+// 不會刷新、也不會登出，被 SWR 無限重試＋30 秒輪詢，一台被單一登入踢掉的裝置一天打出上千次 401
+// （日報「登入失敗異常 IP 1172 次」＝ 846/846 全是 401 的那台）。
+const authRecoveries: AuthRecovery[] = []
+export function setAuthRecovery(fn: AuthRecovery | null) { if (fn) authRecoveries.push(fn) }
+async function runAuthRecovery(failedToken: string): Promise<string | null> {
+  for (const fn of authRecoveries) {
+    try {
+      const nt = await fn(failedToken)
+      if (nt) return nt
+    } catch { /* 單一掛勾失敗不影響其他掛勾 */ }
+  }
+  return null
+}
 
 async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
   const res = await fetch(BASE + path, {
@@ -549,12 +562,12 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
     },
   })
   // 401 且尚未重試：若這次帶的是後台 token → 續期後用新 token 重試一次（避免 token 剛過期就被登出）
-  if (res.status === 401 && !retried && authRecovery) {
+  if (res.status === 401 && !retried && authRecoveries.length > 0) {
     const h = init?.headers as Record<string, string> | undefined
     const auth = h?.Authorization // 所有呼叫都用 withAuth（大寫 Authorization），重試時原樣覆寫、不會產生重複 header
     const token = typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : ''
     if (token) {
-      const nt = await authRecovery(token)
+      const nt = await runAuthRecovery(token)
       if (nt) return request<T>(path, { ...init, headers: { ...init?.headers, Authorization: `Bearer ${nt}` } }, true)
     }
   }

@@ -1,7 +1,7 @@
 // 前台使用者 session 管理（localStorage）
 
 import { useEffect, useState } from 'react'
-import { authApi, type User } from './api'
+import { authApi, setAuthRecovery, type User } from './api'
 import { clearSwrCache } from './swrCache'
 
 const TOKEN_KEY = 'dor_user_token'
@@ -84,6 +84,23 @@ export function refreshUserToken(): Promise<string | null> {
   })
   return refreshInFlight
 }
+
+// 註冊給 api.ts request() 的 401 續期掛勾（會員 token 版）：任何直接帶會員 token 的請求（含所有未經
+// withUserAuth 的 SWR 抓取，如 races/progress/leaderboard/detail）收到 401 時 → 用 refresh token 續期並重試一次；
+// refresh 明確失敗（401/400＝session 已死、或被單一登入踢掉）→ clearUserSession 讓整個 app 回到未登入、
+// 停止繼續帶壞 token 打 API。網路／5xx 這類暫時性錯誤不登出（回 null → 該請求照常 401 一次）。
+setAuthRecovery(async (failedToken: string) => {
+  const cur = getUserToken()
+  if (!cur) return null                 // 目前沒有會員 session → 不是我的 token（可能是後台 token，交給 adminAuth）
+  if (cur !== failedToken) return cur   // 已被並行請求刷新 → 直接用現行 token 重試
+  try {
+    const fresh = await refreshUserToken()
+    if (!fresh) clearUserSession()      // refresh token 無效 → 登出，SWR 各 key 隨 dor-auth-changed 換成未登入狀態
+    return fresh
+  } catch {
+    return null                         // 暫時性錯誤：保留 session，不登出
+  }
+})
 
 // 包裝需登入的 API 呼叫：token 過期（401）時自動 refresh 後重試一次。
 // refresh 也失敗則清除 session 並丟出 SessionExpiredError。
