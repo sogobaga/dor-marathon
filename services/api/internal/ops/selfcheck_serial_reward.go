@@ -53,6 +53,8 @@ import (
 )
 
 const (
+	// ⚠️ 潛在得主一律排除虛擬選手（users.is_virtual）：虛擬選手不領序號獎勵（reward_draw／personal_reward／settlement
+	// 皆已排除），估算若把他們算進去會誤報庫存缺口（2026-09-04 日報「缺口 15 人」即此誤差，使用者指示修正）。
 	// serialShortageProgressRatio 「潛在得主」的達標門檻：進度 >= 80%。
 	serialShortageProgressRatio = 0.8
 
@@ -254,6 +256,7 @@ func (h *Handler) personalAchieverCount(ctx context.Context, raceID string, rule
 			SELECT COUNT(*) FROM (
 				SELECT reg.user_id
 				FROM registrations reg
+				JOIN users u ON u.id = reg.user_id AND NOT u.is_virtual
 				JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 				   AND a.recorded_at >= reg.challenge_started_at
 				   AND a.recorded_at < reg.challenge_started_at + make_interval(days => $2)
@@ -278,6 +281,7 @@ func (h *Handler) personalAchieverCount(ctx context.Context, raceID string, rule
 			SELECT COUNT(*) FROM (
 				SELECT reg.user_id
 				FROM registrations reg
+				JOIN users u ON u.id = reg.user_id AND NOT u.is_virtual
 				JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 				   AND a.recorded_at >= reg.challenge_started_at
 				   AND (a.source IS NULL OR ($2 AND a.source <> 'strava'))
@@ -305,6 +309,7 @@ func (h *Handler) personalAchieverCount(ctx context.Context, raceID string, rule
 			WITH daily AS (
 				SELECT reg.user_id AS user_id, (a.recorded_at AT TIME ZONE 'Asia/Taipei')::date AS d
 				FROM registrations reg
+				JOIN users u ON u.id = reg.user_id AND NOT u.is_virtual
 				JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 				   AND a.recorded_at >= reg.challenge_started_at
 				   AND (a.source IS NULL OR ($3 AND a.source <> 'strava'))
@@ -467,6 +472,7 @@ func (h *Handler) taskAchieverCount(ctx context.Context, raceID string, t shorta
 		SELECT COUNT(*) FROM (
 			SELECT reg.user_id
 			FROM registrations reg
+			JOIN users u ON u.id = reg.user_id AND NOT u.is_virtual
 			JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
 			   AND a.recorded_at >= $2 AND a.recorded_at <= $3
 			   AND (a.source IS NULL OR ($4 AND a.source <> 'strava'))
