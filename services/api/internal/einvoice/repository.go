@@ -282,12 +282,24 @@ func (r *Repository) ApplySync(ctx context.Context, orderID string, resp GetIssu
 		status = "failed"
 	}
 	remain := int(resp.IISRemainAllowanceAmt)
+	// 同步到 issued/void（正式環境實測：第一張 Issue 已開成但回應解析失敗 → failed/skipped，之後靠
+	// GetIssue 收斂）時，把前幾次失敗留下的 last_error／skip_reason／next_attempt_at 一併清掉——否則後台
+	// 會同時看到「已開立 FX…」和「略過原因 / 錯誤：自訂編號重覆」，使用者分不清到底成功沒。
+	// 開立日期與 relate_number 也從查詢結果回填（MarkIssued 沒跑到時本地是空的，作廢/折讓需要 InvoiceDate）。
+	invDate, invDT := parseECPayDateTime(string(resp.IISCreateDate))
 	if _, err := r.db.Exec(ctx, `
 		UPDATE order_invoices SET
 			invoice_status = $2, invoice_number = $3, random_number = $4,
-			remain_allowance_ntd = $5, sales_amount_ntd = $6, updated_at = NOW()
+			remain_allowance_ntd = $5, sales_amount_ntd = $6,
+			relate_number = CASE WHEN relate_number = '' THEN $7 ELSE relate_number END,
+			invoice_date = COALESCE(invoice_date, $8), invoice_datetime = COALESCE(invoice_datetime, $9),
+			last_error = CASE WHEN $2 IN ('issued','void') THEN '' ELSE last_error END,
+			skip_reason = CASE WHEN $2 IN ('issued','void') THEN '' ELSE skip_reason END,
+			next_attempt_at = CASE WHEN $2 IN ('issued','void') THEN NULL ELSE next_attempt_at END,
+			updated_at = NOW()
 		WHERE order_id = $1`,
 		orderID, status, string(resp.IISNumber), string(resp.IISRandomNumber), remain, int(resp.IISSalesAmount),
+		string(resp.IISRelateNumber), invDate, invDT,
 	); err != nil {
 		return fmt.Errorf("einvoice: apply sync: %w", err)
 	}
