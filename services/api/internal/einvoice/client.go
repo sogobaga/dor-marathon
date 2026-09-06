@@ -1,6 +1,8 @@
 package einvoice
 
 import (
+	"math"
+	"sort"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -100,6 +102,27 @@ func (f *FlexString) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// jsonKind 回傳 JSON 值的粗略型別名（string/number/bool/null/object/array），供 decode 失敗時記 log 用。
+func jsonKind(v json.RawMessage) string {
+	t := strings.TrimSpace(string(v))
+	switch {
+	case t == "":
+		return "empty"
+	case strings.HasPrefix(t, `"`):
+		return "string"
+	case strings.HasPrefix(t, "{"):
+		return "object"
+	case strings.HasPrefix(t, "["):
+		return "array"
+	case t == "true" || t == "false":
+		return "bool"
+	case t == "null":
+		return "null"
+	default:
+		return "number"
+	}
+}
+
 // FlexInt 容錯解碼綠界回應中「有時是 JSON 數字、有時是加引號字串」的整數欄位（RtnCode 等）——官方
 // 文件定義為 int，但已知會回傳字串型別，若直接用 int 解碼會整包 Unmarshal 失敗，把「其實已成功」的
 // 回應誤判成解析錯誤。空字串/null 視為 0。
@@ -113,9 +136,31 @@ func (n *FlexInt) UnmarshalJSON(b []byte) error {
 	}
 	v, err := strconv.Atoi(s)
 	if err != nil {
-		return fmt.Errorf("einvoice: expected integer RtnCode-like field, got %q: %w", s, err)
+		// 綠界金額類欄位偶爾帶小數（如 50.0）：整數解析失敗再試浮點並四捨五入
+		f, ferr := strconv.ParseFloat(s, 64)
+		if ferr != nil {
+			return fmt.Errorf("einvoice: expected integer RtnCode-like field, got %q: %w", s, err)
+		}
+		v = int(math.Round(f))
 	}
 	*n = FlexInt(v)
+	return nil
+}
+
+// FlexNum 容錯解碼數字欄位（數量／單價／小計可含小數；也可能被加引號）。
+type FlexNum float64
+
+func (n *FlexNum) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(strings.TrimSpace(string(b)), `"`)
+	if s == "" || s == "null" {
+		*n = 0
+		return nil
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return fmt.Errorf("einvoice: expected numeric field, got %q: %w", s, err)
+	}
+	*n = FlexNum(f)
 	return nil
 }
 
@@ -200,6 +245,15 @@ func (c *Client) call(ctx context.Context, path string, reqData, respData any) e
 		return fmt.Errorf("einvoice: decrypt response data: %w", err)
 	}
 	if err := json.Unmarshal([]byte(decJSON), respData); err != nil {
+		// 只記欄位名不記值（Data 含客戶姓名/Email）；欄位名足以判斷是哪個欄位型別對不上
+		var probe map[string]json.RawMessage
+		_ = json.Unmarshal([]byte(decJSON), &probe)
+		keys := make([]string, 0, len(probe))
+		for k, v := range probe {
+			keys = append(keys, k+":"+jsonKind(v))
+		}
+		sort.Strings(keys)
+		log.Warn().Str("path", path).Strs("fields", keys).Err(err).Msg("einvoice: response data decode failed")
 		return fmt.Errorf("einvoice: unmarshal response data: %w", err)
 	}
 	return nil
@@ -363,28 +417,31 @@ type GetIssueReq struct {
 
 // GetIssueItem /B2CInvoice/GetIssue 回應 Data.Items 單筆明細。
 type GetIssueItem struct {
-	ItemSeq    int    `json:"ItemSeq"`
-	ItemName   string `json:"ItemName"`
-	ItemCount  int    `json:"ItemCount"`
-	ItemWord   string `json:"ItemWord"`
-	ItemPrice  int    `json:"ItemPrice"`
-	ItemAmount int    `json:"ItemAmount"`
+	ItemSeq    FlexInt    `json:"ItemSeq"`
+	ItemName   string     `json:"ItemName"`
+	ItemCount  FlexNum    `json:"ItemCount"`
+	ItemWord   string     `json:"ItemWord"`
+	ItemPrice  FlexNum    `json:"ItemPrice"`
+	ItemAmount FlexNum    `json:"ItemAmount"`
 }
 
 // GetIssueResp /B2CInvoice/GetIssue 回應 Data。
 type GetIssueResp struct {
 	RtnCode               FlexInt        `json:"RtnCode"`
 	RtnMsg                string         `json:"RtnMsg"`
-	IISNumber             string         `json:"IIS_Number"`
-	IISRelateNumber       string         `json:"IIS_Relate_Number"`
+	// 全部用 FlexString：正式環境已實測外層 MerchantID 回數字，Data 內的狀態旗標／隨機碼／載具類型
+	// 同樣可能是數字（文件皆寫 String）。嚴格字串型別會讓整包解析失敗，重試前的 GetIssue 回收就
+	// 靜默失敗，接著 Issue 撞「自訂編號重覆」（2026-09-06 正式環境第一張實測）。
+	IISNumber             FlexString     `json:"IIS_Number"`
+	IISRelateNumber       FlexString     `json:"IIS_Relate_Number"`
 	IISSalesAmount        FlexInt        `json:"IIS_Sales_Amount"`
-	IISIssueStatus        string         `json:"IIS_Issue_Status"`   // '1' 已開立／'0' 已取消
-	IISInvalidStatus      string         `json:"IIS_Invalid_Status"` // '1' 已作廢
-	IISUploadStatus       string         `json:"IIS_Upload_Status"`
-	IISCreateDate         string         `json:"IIS_Create_Date"`
-	IISRandomNumber       string         `json:"IIS_Random_Number"`
-	IISCarrierType        string         `json:"IIS_Carrier_Type"`
-	IISLoveCode           string         `json:"IIS_Love_Code"`
+	IISIssueStatus        FlexString     `json:"IIS_Issue_Status"`   // '1' 已開立／'0' 已取消
+	IISInvalidStatus      FlexString     `json:"IIS_Invalid_Status"` // '1' 已作廢
+	IISUploadStatus       FlexString     `json:"IIS_Upload_Status"`
+	IISCreateDate         FlexString     `json:"IIS_Create_Date"`
+	IISRandomNumber       FlexString     `json:"IIS_Random_Number"`
+	IISCarrierType        FlexString     `json:"IIS_Carrier_Type"`
+	IISLoveCode           FlexString     `json:"IIS_Love_Code"`
 	IISRemainAllowanceAmt FlexInt        `json:"IIS_Remain_Allowance_Amt"`
 	Items                 []GetIssueItem `json:"Items"`
 }

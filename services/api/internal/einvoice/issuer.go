@@ -263,9 +263,12 @@ func (h *Issuer) fail(ctx context.Context, orderID string, attempts int, manual 
 func (h *Issuer) RecoverByRelateNumber(ctx context.Context, orderID, relateNumber string) (recovered bool, err error) {
 	resp, err := h.client.GetIssue(ctx, GetIssueReq{RelateNumber: relateNumber})
 	if err != nil {
+		// 查無此筆（RtnCode!=1）＝尚未開立過，屬正常；傳輸／解析失敗也不中止流程，但一定要留 log——
+		// 靜默吞掉會讓「其實已開成、只是讀不回」的情況直接撞 Issue 的自訂編號重覆錯誤（正式環境實測）。
+		log.Warn().Err(err).Str("order_id", orderID).Str("relate_number", relateNumber).Msg("einvoice: GetIssue recovery lookup failed; proceeding as not issued")
 		return false, nil
 	}
-	if resp.IISIssueStatus != "1" {
+	if string(resp.IISIssueStatus) != "1" {
 		return false, nil
 	}
 	if err := h.repo.ApplySync(ctx, orderID, *resp); err != nil {

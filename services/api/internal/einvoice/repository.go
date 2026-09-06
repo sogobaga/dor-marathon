@@ -272,9 +272,9 @@ func (r *Repository) MarkVoided(ctx context.Context, orderID, reason string) err
 func (r *Repository) ApplySync(ctx context.Context, orderID string, resp GetIssueResp) error {
 	status := "issued"
 	switch {
-	case resp.IISInvalidStatus == "1":
+	case string(resp.IISInvalidStatus) == "1":
 		status = "void"
-	case resp.IISIssueStatus == "1":
+	case string(resp.IISIssueStatus) == "1":
 		status = "issued"
 	default:
 		// 查無已開立紀錄／Issue_Status='0'（已取消）：不當作我方的 failed 覆寫既有 attempts/
@@ -287,7 +287,7 @@ func (r *Repository) ApplySync(ctx context.Context, orderID string, resp GetIssu
 			invoice_status = $2, invoice_number = $3, random_number = $4,
 			remain_allowance_ntd = $5, sales_amount_ntd = $6, updated_at = NOW()
 		WHERE order_id = $1`,
-		orderID, status, resp.IISNumber, resp.IISRandomNumber, remain, int(resp.IISSalesAmount),
+		orderID, status, string(resp.IISNumber), string(resp.IISRandomNumber), remain, int(resp.IISSalesAmount),
 	); err != nil {
 		return fmt.Errorf("einvoice: apply sync: %w", err)
 	}
