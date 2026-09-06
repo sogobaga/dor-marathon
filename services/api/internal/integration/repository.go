@@ -489,6 +489,16 @@ type ActivityRow struct {
 	// 「兩者相同」，不必額外判斷 null。
 	RawDistanceKm float64  `json:"raw_distance_km"`
 	CalibFactor   *float64 `json:"calib_factor,omitempty"`
+	// 跨來源去重（見 internal/profile/dedup.go）：flagged=TRUE 時 dup_of 指向「被保留」的那筆活動。
+	// DupOfID/DupOfSource 只在保留活動屬於「同一個使用者」時才非空（SQL 端已用 d.user_id = a.user_id
+	// 的 join 條件擋掉 cross_account_duplicate 這種 dup_of 指向別人活動的情況，見 ListActivities）——
+	// 這個端點是使用者本人的活動清單，絕不能把別人的活動 id/來源帶出去。
+	// 空字串＝沒有對應的保留活動（未被標重複、保留活動已被刪除、或保留活動屬於別的帳號）。
+	// DupOfSource 是保留活動的來源，讓前端能顯示「⚠ 與 {DupOfSource} 來源資料重複」；
+	// 這裡 NULL→'gps'（不是 'manual'，見下方 COALESCE(a.source,'manual') 旁的說明），
+	// 因為前端 label 對 null/'manual'/'gps' 一律顯示同一個「App GPS」字樣，兩種 fallback 值對使用者透明。
+	DupOfID     string `json:"dup_of_id,omitempty"`
+	DupOfSource string `json:"dup_of_source,omitempty"`
 }
 
 // ListActivities 取得使用者活動（最新 N 筆，含賽事名稱與 flagged 狀態）
@@ -497,12 +507,27 @@ func (r *Repository) ListActivities(ctx context.Context, userID string, limit in
 		limit = 30
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT a.id::text, COALESCE(a.source,'manual'), a.distance_km, a.duration_s, a.avg_pace_s,
+		SELECT a.id::text,
+		       -- NULL source 涵蓋兩種寫入路徑：一般 App GPS 上傳，以及後台補登里程 AdminAddMileage
+		       -- （見 internal/activity/service.go AdminAddMileage → 同一 Redis 事件 → internal/activity/
+		       -- repository.go 的 INSERT，該路徑本來就不寫 source 欄位）。兩者概念上都算「App GPS 上傳」，
+		       -- 沒有可回連的外部裝置，故維持既有 COALESCE 成 'manual'、不改為 'gps'；前端對
+		       -- null/'manual'/'gps' 三個值一律顯示「App GPS」即可蓋掉這個歷史差異，不必在這裡動 DB 值。
+		       COALESCE(a.source,'manual'), a.distance_km, a.duration_s, a.avg_pace_s,
 		       a.ascent_m, a.avg_hr, a.recorded_at,
 		       CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END AS started_at,
 		       COALESCE(r.title,''), a.flagged, COALESCE(a.flag_reason,''),
-		       COALESCE(a.external_id,''), COALESCE(a.raw_distance_km, a.distance_km), a.calib_factor
-		FROM activities a LEFT JOIN races r ON r.id = a.race_id
+		       COALESCE(a.external_id,''), COALESCE(a.raw_distance_km, a.distance_km), a.calib_factor,
+		       CASE WHEN d.id IS NOT NULL THEN a.dup_of::text ELSE '' END,
+		       CASE WHEN d.id IS NOT NULL THEN COALESCE(d.source,'gps') ELSE '' END
+		FROM activities a
+		LEFT JOIN races r ON r.id = a.race_id
+		-- d.user_id 限同帳號：dup_of 在 cross_account_duplicate 時指向「別人」的活動列（見 detectDuplicate/
+		-- ImportActivity），此端點是使用者本人的活動清單，絕不可把別人的活動 id/來源透過這個 join 帶出去。
+		-- 加上 user_id 條件後，跨帳號那筆的 d 不會 join 到任何列，d.id 為 NULL，上面兩個 CASE 就回傳空字串，
+		-- 等同前端既有邏輯（DUP_SOURCE_FLAG_REASONS 本就不含 cross_account_duplicate）：資料庫層也守住，
+		-- 不只是前端顯示層懶得秀而已。
+		LEFT JOIN activities d ON d.id = a.dup_of AND d.user_id = a.user_id
 		WHERE a.user_id=$1
 		ORDER BY a.recorded_at DESC
 		LIMIT $2`, userID, limit)
@@ -515,7 +540,7 @@ func (r *Repository) ListActivities(ctx context.Context, userID string, limit in
 		var a ActivityRow
 		if err := rows.Scan(&a.ID, &a.Source, &a.DistanceKm, &a.DurationS, &a.AvgPaceS,
 			&a.AscentM, &a.AvgHR, &a.RecordedAt, &a.StartedAt, &a.RaceTitle, &a.Flagged, &a.FlagReason, &a.ExternalID,
-			&a.RawDistanceKm, &a.CalibFactor); err != nil {
+			&a.RawDistanceKm, &a.CalibFactor, &a.DupOfID, &a.DupOfSource); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

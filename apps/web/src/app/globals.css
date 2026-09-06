@@ -20,6 +20,7 @@
   --gold:   #FFC24B;   /* 里程金 */
   --violet: #9D8CFF;   /* 紫 */
   --dim:    rgba(255,255,255,.18);
+  --strava-tx: #fc4c02; /* Strava 品牌橘字：暗底可讀，淺色 skin（warm/warm2）需覆寫成較深值見下方，否則對比不足 */
 
   /* Glows */
   --glow-fug:  0 0 20px rgba(45,229,154,.25);
@@ -47,6 +48,7 @@
   --gold:   #FFC24B;
   --violet: #9D8CFF;
   --dim:    rgba(255,255,255,.18);
+  --strava-tx: #fc4c02;
   --glow-fug:  0 0 20px rgba(45,229,154,.25);
   --glow-hunt: 0 0 20px rgba(255,75,92,.25);
   --glow-gold: 0 0 20px rgba(255,194,75,.25);
@@ -69,6 +71,8 @@
   --gold:   #C4881E;   /* 金（琥珀，於淺底可讀） */
   --violet: #B26FAB;   /* 紫（柔和梅紫） */
   --dim:    rgba(90,71,55,.18);
+  --strava-tx: #A83C0C; /* Strava 品牌橘在暗色版是 #fc4c02，但對本 skin 淺色 --bg-2 (#F4E9D7) 只有 2.83:1，
+                            未達 WCAG AA 4.5:1；改用較深的燒橘紅，對同一底色約 5.3:1 */
 
   --glow-fug:  0 0 20px rgba(78,158,99,.22);
   --glow-hunt: 0 0 20px rgba(219,90,82,.22);
@@ -104,6 +108,7 @@
   --gold:   #C58B1D;   /* Reward / progress */
   --violet: #B26FAB;
   --dim:    rgba(83,66,54,.18);
+  --strava-tx: #A83C0C; /* 同 warm skin 的理由：#fc4c02 對本 skin --bg-2 (#F4EAD9) 對比不足 4.5:1 */
 
   --glow-fug:  0 0 20px rgba(79,167,106,.22);
   --glow-hunt: 0 0 20px rgba(221,90,85,.22);

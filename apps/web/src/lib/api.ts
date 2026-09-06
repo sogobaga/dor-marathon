@@ -1303,6 +1303,11 @@ export interface SyncedActivity {
   // 是 1.0 而非 null——用 calib_factor != null && calib_factor < 1 判斷是否顯示「校正後/原始」對照。
   raw_distance_km: number
   calib_factor: number | null
+  // 跨來源去重（見 internal/profile/dedup.go）：flagged 為多裝置/跨來源重複時，dup_of_id 指向被保留的
+  // 那筆活動，dup_of_source 是它的來源（null 一律 fallback 成 'gps'，與 source 的 'manual' fallback
+  // 對使用者顯示上等價，都是「App GPS」）。沒有對應保留活動時兩欄皆缺席（後端 omitempty）。
+  dup_of_id?: string
+  dup_of_source?: string
 }
 
 export interface SyncResult {

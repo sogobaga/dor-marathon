@@ -41,6 +41,20 @@ function terraBrandName(provider: string): string {
   const key = provider.toLowerCase()
   return TERRA_BRAND_LABEL[key] ?? (key.charAt(0).toUpperCase() + key.slice(1))
 }
+// 「已同步活動」來源徽章＋重複標示共用的來源顯示名稱。null/'manual'/'gps' 都顯示「App GPS」——
+// activities.source 的 NULL 落在 'manual'（見 repository.go ListActivities 註解），而
+// dup_of_source（保留活動的來源）NULL 落在 'gps'，兩種 fallback 值對使用者來說是同一件事。
+// 注意跟上面 lib/api.ts 的 sourceLabel() 不是同一份：那個是「里程優先來源」選單專用（gps 顯示成
+// 「GPS 跑步追蹤」），這裡是活動列表徽章專用（一律簡稱「App GPS」）。
+function activitySourceLabel(source: string): string {
+  if (!source || source === 'manual' || source === 'gps') return 'App GPS'
+  if (source === 'strava') return 'Strava'
+  return terraBrandName(source)
+}
+// 標成重複、且能指出「跟哪個來源重複」的 flag_reason：見 internal/profile/dedup.go（跨來源）與
+// internal/integration/repository.go detectDuplicate（多裝置）。其餘 flag_reason（跨帳號作弊、
+// 後台回收異常等）沒有「重複來源」語意，沿用舊的 FLAG_LABEL 文字。
+const DUP_SOURCE_FLAG_REASONS = new Set(['multi_device_duplicate', 'cross_source_duplicate', 'duplicate'])
 // GPS 距離校正（見 internal/gpscalib，2026-08-30）
 const GPS_CALIB_STATUS_LABEL: Record<string, string> = {
   warming: '暖機中（配對數不足）',
@@ -322,6 +336,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
     }
     loadStrava()
     loadTerra()
+    loadActivities() // 已同步活動不再依賴 Strava 連接：App GPS／各手錶品牌都可能有資料，一律載入
     settingsApi.get().then((r) => setSite(r.settings)).catch(() => {}) // Strava 標章雙版本 URL
     // 處理 Strava／Terra 導回參數（同一頁面、同一組 query string 邏輯）
     if (typeof window !== 'undefined') {
@@ -893,18 +908,40 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             </div>
           )}
 
-          {/* 已同步活動 */}
-          {strava?.connected && (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 8 }}>已同步活動</div>
-              {!activities && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>載入中…</div>}
-              {activities && activities.length === 0 && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚無活動，按「重新同步」匯入近 30 日跑步。</div>}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {activities?.map((a) => (
+          {/* 已同步活動：不再依賴 Strava 連接——App GPS、後台補登、各手錶品牌（Terra）都可能有資料，
+              一律顯示；loadActivities() 在分頁掛載時就會呼叫（見上方 useEffect）。 */}
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--tx-dim)', marginBottom: 2 }}>已同步活動</div>
+            <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginBottom: 8 }}>
+              同一趟從多個來源進來時都會列出，只有一筆計入；其餘標示為重複。
+            </div>
+            {!activities && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>載入中…</div>}
+            {activities && activities.length === 0 && (
+              <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚無活動。App GPS 跑步、已連接的手錶或 Strava 匯入後會列在這裡。</div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {activities?.map((a) => {
+                const srcLabel = activitySourceLabel(a.source)
+                const isStrava = a.source === 'strava'
+                let flagText = ''
+                if (a.flagged) {
+                  const reason = a.flag_reason ?? ''
+                  if (DUP_SOURCE_FLAG_REASONS.has(reason)) {
+                    flagText = a.dup_of_source
+                      ? `⚠ 與 ${activitySourceLabel(a.dup_of_source)} 來源資料重複，不計入活動或任務結算`
+                      : '⚠ 與其他來源資料重複，不計入活動或任務結算'
+                  } else {
+                    flagText = `⚠ ${FLAG_LABEL[reason] ?? '重複'}，不計入活動或任務結算`
+                  }
+                }
+                return (
                   <div key={a.id} style={{ ...recCard, padding: 12, opacity: a.flagged ? 0.6 : 1 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
                       <span style={{ fontWeight: 700, fontSize: 14 }}>{a.distance_km.toFixed(2)} K</span>
-                      <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{fmtDate(a.started_at || a.recorded_at)}</span>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: isStrava ? 'var(--strava-tx)' : 'var(--tx-dim)', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 6, padding: '2px 6px' }}>
+                        {srcLabel}
+                      </span>
+                      <span style={{ fontSize: 11, color: 'var(--tx-faint)', marginLeft: 'auto' }}>{fmtDate(a.started_at || a.recorded_at)}</span>
                     </div>
                     {/* GPS 距離校正（見 internal/gpscalib，2026-08-30）：calib_factor!=null 且 <1 才代表這筆
                         App GPS 活動實際套用過校正——只在這種情況下才多顯示一行「校正後/原始」對照。 */}
@@ -920,7 +957,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                     </div>
                     <div style={{ fontSize: 11, marginTop: 3 }}>
                       {a.flagged
-                        ? <span style={{ color: 'var(--hunt)' }}>⚠ {FLAG_LABEL[a.flag_reason ?? ''] ?? '重複'}（不計入賽事）</span>
+                        ? <span style={{ color: 'var(--hunt)' }}>{flagText}</span>
                         : a.race_title
                           ? <span style={{ color: 'var(--fug)' }}>計入：{a.race_title}</span>
                           : <span style={{ color: 'var(--tx-faint)' }}>未對應賽事</span>}
@@ -932,10 +969,10 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                       </a>
                     )}
                   </div>
-                ))}
-              </div>
+                )
+              })}
             </div>
-          )}
+          </div>
 
           {/* GPS 距離校正（見 internal/gpscalib，2026-08-30）：以連接的手錶/App(Strava/Garmin/COROS)紀錄
               為參考，估計 App GPS 距離的系統性偏差、只准向下修正、只向前生效。hidden 不渲染；locked 顯示
