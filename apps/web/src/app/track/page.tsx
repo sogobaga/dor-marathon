@@ -2095,8 +2095,18 @@ export default function TrackPage() {
               <Big compact label="平均配速" value={fmtPace(avgPace)} unit="/km" />
               <Big compact label="分段即時配速" value={fmtPace(segLivePace)} unit="/km" />
             </div>
+            {/* 揮汗有禮直接截圖需求（2026-09-07 使用者：「這一頁也要加上跑步時間和姓名資訊」）：面板常駐一行
+                日期＋開始（～結束）時間＋跑者真實姓名，跑前/跑中/跑完都看得到，截這一頁就有時間與姓名。
+                真實姓名未填時退回顯示名稱（同結果卡口徑）。 */}
+            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--tx)', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+              {status === 'idle'
+                ? <>{fmtDateBig(new Date())}　跑者 <b>{realName || user?.name || user?.handle || 'DOR 跑者'}</b></>
+                : <>{fmtDateBig(new Date(startRef.current))}　開始 {fmtHm(new Date(startRef.current))}
+                    {status === 'done' && result ? ` ～ 結束 ${fmtHm(pointsRef.current.length ? new Date(pointsRef.current[pointsRef.current.length - 1].t) : new Date(startRef.current + result.duration_s * 1000))}` : ''}
+                    　跑者 <b>{realName || user?.name || user?.handle || 'DOR 跑者'}</b></>}
+            </div>
             {/* #4 依「GPS 有移動時的實際時間」（排除靜止/停等）計的移動時間與配速 */}
-            <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--tx-dim)', textAlign: 'center', letterSpacing: 0.2 }}>
+            <div style={{ marginTop: 4, fontSize: 11.5, color: 'var(--tx-dim)', textAlign: 'center', letterSpacing: 0.2 }}>
               移動時間 {fmtTime(movingS)} · 移動配速 {fmtPace(movingAvgPace)}/km · 分段 {fmtPace(movingSegLivePace)}/km
             </div>
             {/* 里程獎勵進度：每滿 1km 一份（本趟上限），即時看到距下一份還差多少 → 誘因持續跑 */}
