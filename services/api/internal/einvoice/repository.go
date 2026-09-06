@@ -339,8 +339,10 @@ func (r *Repository) DuePending(ctx context.Context, maxAttempts int) ([]string,
 	rows, err := r.db.Query(ctx, `
 		SELECT order_id FROM order_invoices
 		WHERE (
-		        (invoice_status IN ('pending','failed') AND attempts < $1
+		        (invoice_status = 'pending' AND attempts < $1
 		         AND (next_attempt_at IS NULL OR next_attempt_at <= NOW()))
+		     OR (invoice_status = 'failed' AND attempts < $1
+		         AND next_attempt_at IS NOT NULL AND next_attempt_at <= NOW())
 		     OR (invoice_status = 'skipped' AND skip_reason = ANY($2))
 		      )
 		ORDER BY updated_at ASC LIMIT 200`, maxAttempts, softSkipReasons)

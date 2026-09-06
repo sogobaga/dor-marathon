@@ -49,9 +49,9 @@ func newEinvoiceTestServer(t *testing.T, handler einvoiceTestHandler) *httptest.
 		transCode, transMsg, respData := handler(t, r.URL.Path, reqData)
 
 		respEnv := respEnvelope{
-			MerchantID: env.MerchantID,
+			MerchantID: FlexString(env.MerchantID),
 			RpHeader:   rpHeader{Timestamp: 1234567890},
-			TransCode:  transCode,
+			TransCode:  FlexInt(transCode),
 			TransMsg:   transMsg,
 		}
 		if respData != nil {

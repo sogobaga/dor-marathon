@@ -65,15 +65,39 @@ type rqHeader struct {
 }
 
 type respEnvelope struct {
-	MerchantID string   `json:"MerchantID"`
-	RpHeader   rpHeader `json:"RpHeader"`
-	TransCode  int      `json:"TransCode"`
+	// MerchantID／TransCode／RpHeader.Timestamp 一律用容錯型別：正式環境實測（2026-09-06 第一張手動開立）
+	// 綠界回的外層 MerchantID 是 JSON 數字 3504994 而非字串（測試環境文件寫 String(10)），嚴格型別會在
+	// http 200 時整包 unmarshal 失敗、把已送出的 Issue 誤判成失敗。
+	MerchantID FlexString `json:"MerchantID"`
+	RpHeader   rpHeader   `json:"RpHeader"`
+	TransCode  FlexInt    `json:"TransCode"`
 	TransMsg   string   `json:"TransMsg"`
 	Data       string   `json:"Data"`
 }
 
 type rpHeader struct {
-	Timestamp int64 `json:"Timestamp"`
+	Timestamp FlexInt `json:"Timestamp"`
+}
+
+// FlexString 容錯解碼「文件說是字串、實際可能是 JSON 數字」的欄位（如回應外層 MerchantID）。
+type FlexString string
+
+func (f *FlexString) UnmarshalJSON(b []byte) error {
+	t := strings.TrimSpace(string(b))
+	if t == "null" || t == "" {
+		*f = ""
+		return nil
+	}
+	if strings.HasPrefix(t, `"`) {
+		var v string
+		if err := json.Unmarshal(b, &v); err != nil {
+			return err
+		}
+		*f = FlexString(v)
+		return nil
+	}
+	*f = FlexString(t) // 數字／布林：原文字面值
+	return nil
 }
 
 // FlexInt 容錯解碼綠界回應中「有時是 JSON 數字、有時是加引號字串」的整數欄位（RtnCode 等）——官方
@@ -165,10 +189,10 @@ func (c *Client) call(ctx context.Context, path string, reqData, respData any) e
 		return fmt.Errorf("einvoice: unmarshal response envelope (http status %d): %w", httpResp.StatusCode, err)
 	}
 
-	if respEnv.TransCode != 1 {
-		log.Info().Str("path", path).Int("trans_code", respEnv.TransCode).Str("trans_msg", respEnv.TransMsg).
+	if int(respEnv.TransCode) != 1 {
+		log.Info().Str("path", path).Int("trans_code", int(respEnv.TransCode)).Str("trans_msg", respEnv.TransMsg).
 			Msg("einvoice: ecpay call transport error")
-		return &APIError{TransCode: respEnv.TransCode, RtnMsg: respEnv.TransMsg}
+		return &APIError{TransCode: int(respEnv.TransCode), RtnMsg: respEnv.TransMsg}
 	}
 
 	decJSON, err := payment.AESDecrypt(c.HashKey, c.HashIV, respEnv.Data)

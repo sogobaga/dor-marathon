@@ -119,11 +119,11 @@ func (h *Issuer) attempt(ctx context.Context, orderID string, manual bool) error
 
 	req, err := BuildIssueRequest(*snap, h.cfg.Env)
 	if err != nil {
-		return h.fail(ctx, orderID, attempts, err.Error())
+		return h.fail(ctx, orderID, attempts, manual, err.Error())
 	}
 	resp, err := h.client.Issue(ctx, req)
 	if err != nil {
-		return h.fail(ctx, orderID, attempts, err.Error())
+		return h.fail(ctx, orderID, attempts, manual, err.Error())
 	}
 	// 落地寫入用獨立的短逾時 context（WithoutCancel 脫離呼叫端 ctx 的取消/逾時，另外套一個
 	// 自己的 5s 上限）：ECPay 這通 Issue 已經回應成功，代表一張真實發票已經存在，即使呼叫端的
@@ -140,7 +140,7 @@ func (h *Issuer) attempt(ctx context.Context, orderID string, manual bool) error
 		// 找回這張已經真實存在的發票並收斂為 issued，不會對 ECPay 重複送出 Issue。
 		log.Error().Err(err).Str("order_id", orderID).Str("invoice_no", resp.InvoiceNo).
 			Msg("einvoice: ECPay issued but local MarkIssued write failed; will recover via GetIssue on retry")
-		return h.fail(ctx, orderID, attempts,
+		return h.fail(ctx, orderID, attempts, manual,
 			fmt.Sprintf("ECPay issued (invoice_no=%s) but local write failed: %s", resp.InvoiceNo, err.Error()))
 	}
 	log.Info().Str("order_id", orderID).Str("invoice_no", resp.InvoiceNo).Msg("einvoice: issued")
@@ -219,9 +219,14 @@ func decideSkip(in decideSkipInput) (skip bool, reason string) {
 }
 
 // fail 記錄本次失敗、視 attempts 決定要不要排下一次重試或直接告警放棄。
-func (h *Issuer) fail(ctx context.Context, orderID string, attempts int, errMsg string) error {
+func (h *Issuer) fail(ctx context.Context, orderID string, attempts int, manual bool, errMsg string) error {
 	var next *time.Time
-	if attempts < maxAttempts {
+	switch {
+	case manual:
+		// 後台手動開立失敗：不排自動重試、不發告警——錯誤已直接顯示在後台面板，由管理者看過訊息再按一次。
+		// next_attempt_at 留 NULL，DuePending 對 failed 列要求 next_attempt_at 非 NULL 才撿回，故整點掃描
+		// 也不會用自動路徑（manual=false → 自動開立關閉時會被改標 skipped，把錯誤訊息蓋掉）去碰它。
+	case attempts < maxAttempts:
 		idx := attempts - 1
 		if idx < 0 {
 			idx = 0
@@ -232,7 +237,7 @@ func (h *Issuer) fail(ctx context.Context, orderID string, attempts int, errMsg 
 		t := time.Now().Add(backoffSchedule[idx])
 		next = &t
 		time.AfterFunc(backoffSchedule[idx], func() { h.Enqueue(orderID) })
-	} else {
+	default:
 		notify.Alert("einvoice_failed", "電子發票開立失敗（已達重試上限）",
 			fmt.Sprintf("order_id=%s attempts=%d error=%s", orderID, attempts, errMsg))
 	}
