@@ -39,6 +39,7 @@ export default function TrackHistoryPage() {
   const user = useUser()
   const [runs, setRuns] = useState<GpsRunHistory[] | null>(null)
   const [sel, setSel] = useState<GpsRunHistory | null>(null)
+  const detailRef = useRef<HTMLDivElement>(null) // 點列表後把詳情區捲到最上面（2026-09-07 使用者需求）
   const [err, setErr] = useState('')
   const mapRef = useRef<any>(null)
   const { dash } = useDashboard() // 共用會員儀表板快取（見 lib/useDashboard.ts）；這裡只用來讀 gov500_entry
@@ -66,6 +67,9 @@ export default function TrackHistoryPage() {
 
   useEffect(() => {
     if (!sel) return
+    // 點下方列表的紀錄後，詳情區渲染在列表上方、但視窗還停在剛才點的位置——自動捲到詳情區頂端，
+    // 讓日期/時間/姓名/分段第一時間入眼（也方便直接截圖）。scrollIntoView 會捲最近的可捲動祖先（ScrollArea）。
+    detailRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
     // 一趟軌跡可能存成多段 ';' 相接的 encoded polyline（斷訊/跳點期間排除，見 lib/polyline.ts 註解）；
     // 每段各畫一條 Leaflet polyline、段落間不連線——舊資料無 ';' 時就是單一段，行為與過去相同。
     const segments = decodePolylineSegments(sel.polyline || '')
@@ -113,7 +117,7 @@ export default function TrackHistoryPage() {
 
       <ScrollArea>
       {sel && (
-        <div style={{ padding: 16 }}>
+        <div ref={detailRef} style={{ padding: 16 }}>
           {/* 揮汗有禮直接截圖需求（2026-09-06 owner 定案）：第一畫面就要看得到日期、開始/結束時間、
               真實姓名——不再靠另一個「截圖模式」畫面湊，這個畫面本身就是要截的畫面。 */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
