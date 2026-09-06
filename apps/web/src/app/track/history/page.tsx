@@ -239,6 +239,7 @@ export default function TrackHistoryPage() {
           displayName={user?.name || user?.handle || 'DOR 跑者'}
           recordId={sel.id}
           runKey={selRunKey}
+          track={decodePolylineSegments(sel.polyline || '')}
           onClose={() => setGov500ScreenOpen(false)}
         />
       )}

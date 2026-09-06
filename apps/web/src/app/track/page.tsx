@@ -2303,7 +2303,8 @@ export default function TrackPage() {
             模式」按鈕後開啟，讓使用者自己用手機系統截圖鍵擷取整個畫面上傳 500.gov.tw。startedAt 用
             startRef（開跑時間戳）、endedAt 優先取本趟最後一個 GPS 點的時間（比 result.duration_s 更
             精確），沒有點時（理論上不會發生，pts.length<2 早在 finish() 就會擋掉上傳）才退回 null 讓
-            元件內部用 durationS 頂上。 */}
+            元件內部用 durationS 頂上。track 這裡整趟只當「一段」給——訊號中斷/跳點的排除斷點是後端
+            重算軌跡時才產生（見 lib/polyline.ts），/track 當下只有原始點，沒有分段資訊，可接受。 */}
         {gov500ScreenOpen && status === 'done' && result && (
           <RunProofScreen
             startedAt={new Date(startRef.current)}
@@ -2314,6 +2315,7 @@ export default function TrackPage() {
             avgPaceS={result.avg_pace_s > 0 ? result.avg_pace_s : null}
             displayName={user?.name || user?.handle || 'DOR 跑者'}
             runKey={gov500RunKey(new Date(startRef.current).toISOString())}
+            track={[pointsRef.current.map((p) => [p.lat, p.lng])]}
             onClose={() => setGov500ScreenOpen(false)}
           />
         )}
