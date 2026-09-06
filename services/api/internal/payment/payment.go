@@ -380,14 +380,39 @@ type OrderMarker interface {
 	MarkOrderRefunded(ctx context.Context, orderID string) error
 }
 
+// InvoiceOrderPaidHook 電子發票開立掛勾（見 internal/einvoice，migration 169）：VIP 綁卡首次扣款／
+// 續約扣款結算成功時觸發（BindHandler.settleVipBindPayment／settleVipRenewal，兩者皆內聯 CAS、
+// 不經過 race.Repository.MarkOrderPaid，見各自函式頂端註解，因此需要自己的一份掛勾，不能共用
+// race.InvoiceHook）。由 einvoice.Issuer 實作（OrderPaid 方法，內部委派 Enqueue）。
+type InvoiceOrderPaidHook interface {
+	OrderPaid(orderID string)
+}
+
+// InvoiceRefundHook 電子發票折讓掛勾（見 internal/einvoice，migration 169）：一筆退款結案成功
+// （CreateRefund 的 API 退款成功，或後台 AdminMarkRefundManualDone 人工退款完成）時觸發，若該訂單
+// 有已開立的發票，對其開立折讓。由 einvoice.Issuer 實作（RefundSettled 方法，內部另開 goroutine +
+// timeout context 呼叫 Allowance，失敗只記 log／告警，不影響退款本身）。用小介面而非直接
+// import internal/einvoice，比照 MailInserter／OrderMarker 同一慣例。
+type InvoiceRefundHook interface {
+	RefundSettled(orderID, refundID string, amountCents int, reason string)
+}
+
 type Handler struct {
 	multi  *MultiConfig
 	repo   *Repository
 	marker OrderMarker
+	// invoiceHook 見上方 InvoiceRefundHook 註解。注入自 einvoice.Issuer（見 main.go 的
+	// paymentHandler.SetInvoiceHook），晚於本 Handler 建構。未設定時退款流程直接跳過，不影響退款本身。
+	invoiceHook InvoiceRefundHook
 }
 
 func NewHandler(multi *MultiConfig, repo *Repository, marker OrderMarker) *Handler {
 	return &Handler{multi: multi, repo: repo, marker: marker}
+}
+
+// SetInvoiceHook 見上方 invoiceHook 欄位註解。
+func (h *Handler) SetInvoiceHook(v InvoiceRefundHook) {
+	h.invoiceHook = v
 }
 
 // Checkout POST /api/v1/payments/ecpay/checkout（需登入）

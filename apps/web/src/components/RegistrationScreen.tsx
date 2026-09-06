@@ -975,7 +975,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                     placeholder="例如 /ABC1234"
                   />
                   {invoice.carrier_id.trim() === '' ? (
-                    <span style={hint}>未填寫將開立雲端發票存證</span>
+                    <span style={hint}>未填寫將以綠界電子發票載具開立，並寄到你的 Email</span>
                   ) : !CARRIER_ID_RE.test(invoice.carrier_id.trim()) ? (
                     <span style={{ fontSize: 12, color: 'var(--hunt)' }}>手機條碼載具格式有誤，請確認（例如 /ABC1234）</span>
                   ) : null}

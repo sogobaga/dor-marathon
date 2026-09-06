@@ -250,6 +250,12 @@ type MyRegistration struct {
 	// 報名」按鈕換成「本活動不適用七天鑑賞期」灰字說明——CanCancel 本身不受影響（不退費≠不可取消，見
 	// EffectiveCancellationPolicy），只是這裡選擇不再讓玩家走一趟必為 0 元的取消流程。
 	RefundDisabled bool `json:"refund_disabled"`
+
+	// 電子發票（見 services/api/internal/einvoice，migration 169）；無資料列（舊資料／尚未觸發開立）
+	// ＝三欄皆空值，json omitempty 使前端收到 undefined（見 ProfileScreen.tsx invoiceLine）。
+	InvoiceNumber string     `json:"invoice_number,omitempty"`
+	InvoiceStatus string     `json:"invoice_status,omitempty"` // pending|issuing|issued|void|failed|skipped
+	IssuedAt      *time.Time `json:"issued_at,omitempty"`
 }
 
 // GET /api/v1/profile/registrations — 我的報名紀錄
@@ -263,11 +269,13 @@ func (h *Handler) Registrations(w http.ResponseWriter, r *http.Request) {
 		SELECT reg.id, reg.race_id, rc.title, rc.slug, COALESCE(g.name,''),
 		       reg.group_revealed, reg.status, reg.created_at,
 		       COALESCE(o.id::text,''), COALESCE(o.total_cents,0), COALESCE(o.status,''),
-		       rc.start_date, rc.config, COALESCE(cr.status,'')
+		       rc.start_date, rc.config, COALESCE(cr.status,''),
+		       COALESCE(oinv.invoice_number,''), COALESCE(oinv.invoice_status,''), oinv.invoice_datetime
 		FROM registrations reg
 		JOIN races rc ON rc.id = reg.race_id
 		LEFT JOIN race_groups g ON g.id = reg.group_id
 		LEFT JOIN orders o ON o.registration_id = reg.id
+		LEFT JOIN order_invoices oinv ON oinv.order_id = o.id
 		LEFT JOIN LATERAL (
 			SELECT status FROM registration_cancel_requests
 			WHERE registration_id = reg.id
@@ -292,7 +300,8 @@ func (h *Handler) Registrations(w http.ResponseWriter, r *http.Request) {
 		var crStatus string
 		if err := rows.Scan(&m.RegistrationID, &m.RaceID, &m.RaceTitle, &m.RaceSlug, &m.GroupName,
 			&m.GroupRevealed, &m.Status, &m.CreatedAt, &m.OrderID, &m.OrderTotal, &m.OrderStatus,
-			&startDate, &configBytes, &crStatus); err != nil {
+			&startDate, &configBytes, &crStatus,
+			&m.InvoiceNumber, &m.InvoiceStatus, &m.IssuedAt); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}

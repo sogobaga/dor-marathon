@@ -104,6 +104,14 @@ type dailyReportData struct {
 	Checks []CheckResult // 重用 selfcheck 全部檢查（runChecks）
 
 	Traffic trafficSummary
+
+	// 電子發票（見 internal/einvoice，migration 169）：EInvoiceEnabled=false 時整行不顯示（見
+	// assembleDailyReportMessage）——auto-issue 關閉且從未有過任何發票紀錄時，這行永遠 0/0/0
+	// 只是雜訊，見 Issuer.ShouldReportDaily。
+	EInvoiceEnabled bool
+	EInvoiceIssued  int
+	EInvoiceFailed  int
+	EInvoicePending int
 }
 
 // inDailyReportWindow 是否落在今天的執行窗口。直接沿用 selfcheck 的 08:00-08:59 判斷（見檔頭註解），
@@ -367,6 +375,26 @@ func (h *Handler) buildDailyReportData(ctx context.Context) (dailyReportData, er
 	}
 	d.Traffic = traffic
 
+	// 6) 電子發票（見 internal/einvoice）：einvoice 未注入（測試/尚未接上）時安靜跳過整段，
+	// 沿用同一個 windowStart/windowEnd（昨日台灣曆日 00:00-24:00 的 UTC 邊界）。任何一步查詢失敗
+	// 只記警告、不讓整份報告失敗——這一行本來就是錦上添花，不該拖垮其餘固定段落。
+	if h.einvoice != nil {
+		show, err := h.einvoice.ShouldReportDaily(ctx)
+		if err != nil {
+			log.Warn().Err(err).Msg("daily report: einvoice should-report check failed")
+		} else if show {
+			issued, failed, pending, err := h.einvoice.DailyCounts(ctx, windowStart, windowEnd)
+			if err != nil {
+				log.Warn().Err(err).Msg("daily report: einvoice daily counts failed")
+			} else {
+				d.EInvoiceEnabled = true
+				d.EInvoiceIssued = issued
+				d.EInvoiceFailed = failed
+				d.EInvoicePending = pending
+			}
+		}
+	}
+
 	return d, nil
 }
 
@@ -601,6 +629,11 @@ func assembleDailyReportMessage(d dailyReportData, raceKeep int) string {
 
 	b.WriteString("🌐 流量安全：\n")
 	b.WriteString(formatTrafficSection(d.Traffic))
+
+	if d.EInvoiceEnabled {
+		b.WriteString("\n\n")
+		fmt.Fprintf(&b, "🧾 電子發票：昨日開立 %d／失敗 %d／待處理 %d", d.EInvoiceIssued, d.EInvoiceFailed, d.EInvoicePending)
+	}
 
 	return strings.TrimRight(b.String(), "\n")
 }

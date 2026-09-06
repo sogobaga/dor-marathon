@@ -471,4 +471,20 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '每累積達此趟數就從已解鎖稱號中隨機重抽展示稱號；預設 10。首次指派（尚無展示稱號）一律立即隨機指派，不受此間隔限制。',
     min: 1, max: 10000, def: '10',
   },
+  // ── 電子發票（見 services/api/internal/einvoice，migration 169）──
+  // 訂單付款完成後是否自動向綠界開立 B2C 電子發票；正式環境需另外在 Railway 設定 ECPAY_INVOICE_* 三寶，
+  // 否則會被 invoiceEnvGuard 強制降回 stage（測試環境不會真的開立正式發票）。
+  {
+    key: 'einvoice_auto_issue', group: '電子發票', label: '付款後自動開立', type: 'select', def: 'off',
+    help: '開啟後付款完成即自動向綠界開立；需先在 Railway 設定 ECPAY_INVOICE_*，正式環境才會開真發票。關閉時仍可在訂單管理／電子發票頁手動開立。',
+    options: [
+      { value: 'off', label: '關閉（僅能手動開立）' },
+      { value: 'on', label: '開啟（付款後自動開立）' },
+    ],
+  },
+  {
+    key: 'einvoice_issue_since', group: '電子發票', label: '自動開立起始日期', type: 'text', def: '2026-09-07',
+    help: '早於此日期付款的訂單不自動開立，避免回溯開舊單；後台仍可手動開立。格式 YYYY-MM-DD。',
+    placeholder: '2026-09-07',
+  },
 ]

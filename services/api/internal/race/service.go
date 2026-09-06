@@ -141,6 +141,13 @@ type MailInserter interface {
 	InsertForUsers(ctx context.Context, userIDs []string, level, title, body, url string) (int, error)
 }
 
+// InvoiceHook 電子發票開立掛勾（見 internal/einvoice，migration 169）：訂單付款 CAS 真正翻轉
+// pending→paid 時觸發非同步開立。由 einvoice.Issuer 實作（OrderPaid 方法，內部委派 Enqueue）。
+// 用小介面而非直接 import internal/einvoice，比照上面 MailInserter 同一慣例，讓依賴方向單純、好測試。
+type InvoiceHook interface {
+	OrderPaid(orderID string)
+}
+
 type Service struct {
 	repo  *Repository
 	rdb   *redis.Client
@@ -155,6 +162,10 @@ type Service struct {
 	// 建構需要 wsManager，兩者初始化順序無法互換，只能用 setter 晚繫結。未設定時通知直接跳過，不影響
 	// 發獎本身（比照 payment.BindHandler.sendRenewalMail 的取捨）。
 	mail MailInserter
+	// invoiceHook：付款成功觸發電子發票開立用（見上方 InvoiceHook 註解）。注入自 einvoice.Issuer
+	// （見 main.go 的 raceSvc.SetInvoiceHook），晚於本 Service 建構——同 mail 欄位的晚繫結理由。
+	// 未設定時 MarkOrderPaid 直接跳過，不影響付款本身（比照 mail 欄位的取捨）。
+	invoiceHook InvoiceHook
 	// raceMetaCache 見 meta_cache.go：GET /races/{slug}/meta 用的「所有已上線賽事精簡欄位」快取
 	// （10 分鐘 TTL）。NewService 建構時就綁好 load closure，不用 sync.Once 延遲初始化——本 Service
 	// 只會在 main.go 建構一次，建構當下還是單一 goroutine（HTTP server 尚未開始收 request），沒有
@@ -176,6 +187,11 @@ func (s *Service) SetRefundCreator(fn RefundCreatorFunc) {
 // SetMailInserter 見上方欄位註解。
 func (s *Service) SetMailInserter(m MailInserter) {
 	s.mail = m
+}
+
+// SetInvoiceHook 見上方欄位註解。
+func (s *Service) SetInvoiceHook(h InvoiceHook) {
+	s.invoiceHook = h
 }
 
 // List 回傳賽事列表（admin 用，含全部 control_status，填入 display_status）
@@ -1368,7 +1384,16 @@ func (s *Service) GetOrderDetail(ctx context.Context, orderID string) (*OrderDet
 }
 
 func (s *Service) MarkOrderPaid(ctx context.Context, orderID, paymentRef string) error {
-	return s.repo.MarkOrderPaid(ctx, orderID, paymentRef)
+	flipped, err := s.repo.MarkOrderPaid(ctx, orderID, paymentRef)
+	if err != nil {
+		return err
+	}
+	// 只在 CAS 真正翻轉（首次入帳）才觸發開立——見 Repository.MarkOrderPaid 的 flipped 註解，
+	// 避免同一筆付款通知的重送把發票重試 backoff 打亂。
+	if flipped && s.invoiceHook != nil {
+		s.invoiceHook.OrderPaid(orderID)
+	}
+	return nil
 }
 
 // MarkOrderRefunded 標記訂單已退款（供 payment.OrderMarker 介面使用）

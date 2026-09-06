@@ -638,6 +638,11 @@ type OrderRow struct {
 	RegistrationID string       `json:"registration_id,omitempty"`
 	Invoice        *InvoiceInfo `json:"invoice"`  // 發票資訊（過渡期人工開立用）；舊訂單沒有資料則為 null
 	IsVirtual      bool         `json:"is_virtual"` // 虛擬選手（users.is_virtual），供後台勾選隱藏＋🤖標記
+	// 電子發票實際開立狀態（見 internal/einvoice，migration 169）；與上面 Invoice（買受人快照）不同，
+	// 這是綠界開立結果摘要。LEFT JOIN order_invoices 查無列（訂單尚未觸發開立流程）＝兩者皆空字串，
+	// json omitempty 使前端收到 undefined（見 ListOrders/GetOrderDetail）。
+	InvoiceNumber string `json:"invoice_number,omitempty"`
+	InvoiceStatus string `json:"invoice_status,omitempty"` // pending|issuing|issued|void|failed|skipped
 }
 
 // OrderItemRow 訂單明細單筆

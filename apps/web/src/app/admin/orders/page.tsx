@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminRacesApi, adminOrdersApi, adminPaymentsApi, type Race, type OrderRow, type OrderDetail, type RefundRow, type EcpayEnvCheck } from '@/lib/api'
+import { adminRacesApi, adminOrdersApi, adminPaymentsApi, adminInvoiceApi, type Race, type OrderRow, type OrderDetail, type RefundRow, type EcpayEnvCheck, type EInvoiceDetail, type EInvoiceAllowance } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import * as XLSX from 'xlsx'
 
@@ -29,6 +29,16 @@ const INVOICE_BUYER_LABEL: Record<string, string> = {
   personal: '二聯式（個人）',
   company: '三聯式（公司，可報帳）',
   donation: '捐贈發票',
+}
+
+// 電子發票（見 services/api/internal/einvoice）實際開立狀態；跟上面 INVOICE_BUYER_LABEL（報名時填的買受人快照）是兩件事。
+const EINVOICE_STATUS_LABEL: Record<string, { t: string; c: string }> = {
+  pending: { t: '待處理', c: 'var(--tx-faint)' },
+  issuing: { t: '開立中', c: 'var(--gold)' },
+  issued: { t: '已開立', c: 'var(--fug)' },
+  failed: { t: '失敗', c: 'var(--hunt)' },
+  skipped: { t: '免開立', c: 'var(--tx-faint)' },
+  void: { t: '已作廢', c: 'var(--tx-faint)' },
 }
 
 function ntd(c: number) {
@@ -64,10 +74,18 @@ export default function AdminOrdersPage() {
   const [token, setTok] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Record<string, OrderDetail | null>>({})
   const [refunds, setRefunds] = useState<Record<string, RefundRow[]>>({})
+  const [invoices, setInvoices] = useState<Record<string, { invoice: EInvoiceDetail | null; allowances: EInvoiceAllowance[] }>>({})
   const [busy, setBusy] = useState<string>('') // 進行中的 orderID/refundID，避免重複點擊
   const [envCheck, setEnvCheck] = useState<EcpayEnvCheck | null>(null)
   const [envCheckErr, setEnvCheckErr] = useState('')
   const [exporting, setExporting] = useState(false)
+  // 從「電子發票」列表頁點「查看訂單」帶 ?order_id= 過來：載入後自動展開該筆（若不在目前篩選/分頁範圍內則額外補抓一筆插到最前面）。
+  // 用 lazy state 直接讀 window.location.search（而非 useSearchParams），避免多帶一個 Suspense 邊界。
+  const [highlightOrderID] = useState<string>(() => {
+    if (typeof window === 'undefined') return ''
+    return new URLSearchParams(window.location.search).get('order_id') || ''
+  })
+  const [highlightDone, setHighlightDone] = useState(false)
 
   useEffect(() => {
     const t = getToken()
@@ -80,14 +98,47 @@ export default function AdminOrdersPage() {
     adminPaymentsApi.envCheck(t, origin).then(setEnvCheck).catch((e) => setEnvCheckErr(e?.message || '金流環境診斷載入失敗'))
   }, [router])
 
+  const loadRefunds = useCallback((orderID: string) => {
+    const t = getToken()
+    if (!t) return
+    adminPaymentsApi.listRefunds(t, orderID)
+      .then((r) => setRefunds((rs) => ({ ...rs, [orderID]: r.refunds })))
+      .catch(() => {})
+  }, [])
+
+  const loadInvoice = useCallback((orderID: string) => {
+    const t = getToken()
+    if (!t) return
+    adminInvoiceApi.get(t, orderID)
+      .then((r) => setInvoices((m) => ({ ...m, [orderID]: { invoice: r.invoice, allowances: r.allowances } })))
+      .catch(() => {})
+  }, [])
+
   const load = useCallback((rid: string, st: string, hideVirtualArg: boolean) => {
     const t = getToken()
     if (!t) return
     setRows(null)
     adminOrdersApi.list(t, { race_id: rid || undefined, status: st || undefined, hideVirtual: hideVirtualArg })
-      .then((r) => setRows(r.orders))
+      .then((r) => {
+        setRows(r.orders)
+        if (!highlightOrderID || highlightDone) return
+        setHighlightDone(true)
+        const hit = r.orders.find((x) => x.id === highlightOrderID)
+        if (hit) {
+          setExpanded((e) => ({ ...e, [hit.id]: null }))
+          adminOrdersApi.get(t, hit.id).then(({ order }) => setExpanded((e) => ({ ...e, [order.id]: order }))).catch(() => {})
+          loadRefunds(hit.id); loadInvoice(hit.id)
+        } else {
+          // 不在目前篩選/分頁範圍內（例如換了篩選、或超過預設 100 筆）——直接補抓這一筆插到列表最前面
+          adminOrdersApi.get(t, highlightOrderID).then(({ order }) => {
+            setRows((rs) => (rs?.some((x) => x.id === order.id) ? rs : [order, ...(rs ?? [])]))
+            setExpanded((e) => ({ ...e, [order.id]: order }))
+            loadRefunds(order.id); loadInvoice(order.id)
+          }).catch((e) => setErr(e?.message || '找不到指定訂單'))
+        }
+      })
       .catch((e) => setErr(e?.message || '載入失敗'))
-  }, [])
+  }, [highlightOrderID, highlightDone, loadRefunds, loadInvoice])
 
   useEffect(() => { load(raceID, status, hideVirtual) }, [raceID, status, hideVirtual, load])
 
@@ -101,16 +152,65 @@ export default function AdminOrdersPage() {
       const { order } = await adminOrdersApi.get(token, o.id)
       setExpanded((e) => ({ ...e, [o.id]: order }))
       loadRefunds(o.id)
+      loadInvoice(o.id)
     } catch (e: any) { setErr(e?.message || '載入明細失敗') }
   }
 
-  const loadRefunds = useCallback((orderID: string) => {
-    const t = getToken()
-    if (!t) return
-    adminPaymentsApi.listRefunds(t, orderID)
-      .then((r) => setRefunds((rs) => ({ ...rs, [orderID]: r.refunds })))
-      .catch(() => {})
-  }, [])
+  // 發票開立/作廢/同步查詢的回應都帶回最新 invoice 快照——順便同步列表列上的 invoice_status/invoice_number，
+  // 不必整批重新 GET /admin/orders。
+  function applyInvoiceUpdate(orderID: string, inv: EInvoiceDetail) {
+    setInvoices((m) => ({ ...m, [orderID]: { invoice: inv, allowances: m[orderID]?.allowances ?? [] } }))
+    setRows((rs) => rs?.map((x) => x.id === orderID ? { ...x, invoice_status: inv.invoice_status, invoice_number: inv.invoice_number } : x) ?? rs)
+  }
+
+  async function issueInvoice(orderID: string) {
+    if (!token || busy) return
+    setBusy(orderID)
+    try {
+      const r = await adminInvoiceApi.issue(token, orderID)
+      applyInvoiceUpdate(orderID, r.invoice)
+    } catch (e: any) { setErr(e?.message || '開立發票失敗') } finally { setBusy('') }
+  }
+
+  async function syncInvoice(orderID: string) {
+    if (!token || busy) return
+    setBusy(orderID)
+    try {
+      const r = await adminInvoiceApi.sync(token, orderID)
+      applyInvoiceUpdate(orderID, r.invoice)
+    } catch (e: any) { setErr(e?.message || '同步查詢失敗') } finally { setBusy('') }
+  }
+
+  async function voidInvoice(orderID: string) {
+    if (!token || busy) return
+    const reason = window.prompt('作廢原因（必填，20 字以內）：', '')
+    if (reason === null) return
+    const trimmed = reason.trim()
+    if (!trimmed) { setErr('作廢原因為必填'); return }
+    if ([...trimmed].length > 20) { setErr('作廢原因請在 20 字以內'); return }
+    if (!window.confirm('確定要作廢此張發票嗎？此動作無法復原。')) return
+    setBusy(orderID)
+    try {
+      const r = await adminInvoiceApi.void(token, orderID, trimmed)
+      applyInvoiceUpdate(orderID, r.invoice)
+    } catch (e: any) { setErr(e?.message || '作廢發票失敗') } finally { setBusy('') }
+  }
+
+  async function manualAllowance(orderID: string) {
+    if (!token || busy) return
+    const amountStr = window.prompt('折讓金額（新台幣整數）：', '')
+    if (amountStr === null) return
+    const n = Number(amountStr.trim())
+    if (!Number.isFinite(n) || n <= 0) { setErr('折讓金額格式錯誤'); return }
+    const reason = window.prompt('折讓原因：', '')
+    if (reason === null) return
+    if (!window.confirm(`確定要對此發票開立 NT$ ${Math.round(n).toLocaleString('zh-TW')} 折讓嗎？`)) return
+    setBusy(orderID)
+    try {
+      await adminInvoiceApi.allowance(token, orderID, Math.round(n), reason.trim())
+      loadInvoice(orderID)
+    } catch (e: any) { setErr(e?.message || '折讓失敗') } finally { setBusy('') }
+  }
 
   async function markPaid(o: OrderRow) {
     if (!token) return
@@ -135,7 +235,7 @@ export default function AdminOrdersPage() {
     let amountCents: number | undefined
     if (amountStr.trim()) {
       const n = Number(amountStr.trim())
-      if (!Number.isFinite(n) || n <= 0) { setErr('退款金額格式錯誤'); return }
+      if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) { setErr('退款金額請填整數新台幣'); return }
       amountCents = Math.round(n * 100)
     }
     if (!window.confirm(`確定要對此訂單退款嗎？\n金額：${amountCents ? 'NT$ ' + Math.round(amountCents / 100).toLocaleString('zh-TW') : '剩餘可退全額'}\n原因：${reason}`)) return
@@ -299,10 +399,13 @@ export default function AdminOrdersPage() {
 
       {rows && rows.length > 0 && (
         <div style={{ border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
-          <Row head><C w={2}>會員</C><C w={2}>賽事</C><C w={1}>金額</C><C w={1}>狀態</C><C w={1.2}>付款時間</C><C w={1}>操作</C></Row>
+        <div style={{ overflowX: 'auto' }}>
+        <div style={{ minWidth: 860 }}>
+          <Row head><C w={2}>會員</C><C w={2}>賽事</C><C w={1}>金額</C><C w={1}>狀態</C><C w={1.2}>付款時間</C><C w={1}>發票</C><C w={1}>操作</C></Row>
           {rows.map((o) => {
             const st = STATUS_LABEL[o.status] ?? { t: o.status, c: 'var(--tx-dim)' }
             const det = expanded[o.id]
+            const ist = o.invoice_status ? (EINVOICE_STATUS_LABEL[o.invoice_status] ?? { t: o.invoice_status, c: 'var(--tx-dim)' }) : null
             return (
               <div key={o.id}>
                 <Row>
@@ -316,6 +419,14 @@ export default function AdminOrdersPage() {
                   <C w={1}>{ntd(o.total_cents)}</C>
                   <C w={1}><span style={{ color: st.c }}>{st.t}</span></C>
                   <C w={1.2}><span style={{ fontSize: 13, color: o.paid_at ? 'var(--tx-dim)' : 'var(--tx-faint)' }}>{fmtDT(o.paid_at)}</span></C>
+                  <C w={1}>
+                    {ist ? (
+                      <>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: ist.c }}>{ist.t}</span>
+                        {o.invoice_number && <div style={{ fontSize: 10, color: 'var(--tx-faint)' }}>{o.invoice_number}</div>}
+                      </>
+                    ) : <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>—</span>}
+                  </C>
                   <C w={1}>
                     {o.status === 'pending'
                       ? <button onClick={() => markPaid(o)} style={payBtn}>標記已付</button>
@@ -344,6 +455,93 @@ export default function AdminOrdersPage() {
                         </>
                       ) : '無發票資料'}
                     </div>
+
+                    {/* 電子發票（見 services/api/internal/einvoice）：這是實際向綠界開立的結果；上面「發票資訊」只是報名時填的買受人快照 */}
+                    {(() => {
+                      const invData = invoices[o.id]
+                      const inv = invData?.invoice
+                      return (
+                        <div style={{ marginTop: 10, borderTop: '1px solid var(--line)', paddingTop: 8 }}>
+                          <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 4, letterSpacing: '.05em', textTransform: 'uppercase' }}>電子發票（綠界）</div>
+                          {!invData ? (
+                            <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>載入中…</div>
+                          ) : !inv ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚無發票資料</span>
+                              {o.status === 'paid' && (
+                                <button onClick={() => issueInvoice(o.id)} disabled={busy === o.id} style={smallBtn}>
+                                  {busy === o.id ? '處理中…' : '開立'}
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12 }}>
+                                <span style={{ fontWeight: 700, color: (EINVOICE_STATUS_LABEL[inv.invoice_status] ?? { c: 'var(--tx-dim)' }).c }}>
+                                  {EINVOICE_STATUS_LABEL[inv.invoice_status]?.t ?? inv.invoice_status}
+                                </span>
+                                {inv.invoice_number && <span style={{ color: 'var(--tx)' }}>{inv.invoice_number}</span>}
+                                {inv.invoice_date && <span style={{ color: 'var(--tx-faint)' }}>{inv.invoice_date}</span>}
+                                {inv.random_number && <span style={{ color: 'var(--tx-faint)' }}>隨機碼 {inv.random_number}</span>}
+                                {inv.ecpay_env && (
+                                  <span style={{
+                                    background: inv.ecpay_env === 'prod' ? 'var(--hunt)' : 'var(--tx-faint)',
+                                    color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 999,
+                                  }}>{inv.ecpay_env === 'prod' ? '正式' : '測試'}</span>
+                                )}
+                                {inv.attempts > 0 && <span style={{ color: 'var(--tx-faint)' }}>嘗試 {inv.attempts} 次</span>}
+                              </div>
+                              {inv.skip_reason && <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>略過原因：{inv.skip_reason}</div>}
+                              {inv.last_error && <div style={{ fontSize: 11, color: 'var(--hunt)' }}>錯誤：{inv.last_error}</div>}
+                              {inv.void_reason && <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>作廢原因：{inv.void_reason}</div>}
+                              {inv.remain_allowance_ntd != null && <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>剩餘可折讓 {ntd(inv.remain_allowance_ntd * 100)}</div>}
+
+                              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                {(inv.invoice_status === 'pending' || inv.invoice_status === 'failed' || inv.invoice_status === 'skipped') && (
+                                  <button onClick={() => issueInvoice(o.id)} disabled={busy === o.id} style={smallBtn}>
+                                    {busy === o.id ? '處理中…' : '開立／重試'}
+                                  </button>
+                                )}
+                                <button onClick={() => syncInvoice(o.id)} disabled={busy === o.id} style={smallBtn}>同步查詢</button>
+                                {inv.invoice_status === 'issued' && (
+                                  inv.buyer_type === 'donation' ? (
+                                    <span style={{ fontSize: 11, color: 'var(--tx-faint)', alignSelf: 'center' }}>捐贈發票不可作廢</span>
+                                  ) : (
+                                    <button onClick={() => voidInvoice(o.id)} disabled={busy === o.id} style={{ ...smallBtn, color: 'var(--hunt)', borderColor: 'var(--hunt)' }}>作廢</button>
+                                  )
+                                )}
+                                {inv.invoice_status === 'issued' && (
+                                  <button onClick={() => manualAllowance(o.id)} disabled={busy === o.id} style={smallBtn}>手動折讓</button>
+                                )}
+                              </div>
+
+                              {invData.allowances.length > 0 && (
+                                <div style={{ marginTop: 2 }}>
+                                  <div style={{ fontSize: 10, color: 'var(--tx-faint)', marginBottom: 3, letterSpacing: '.05em', textTransform: 'uppercase' }}>折讓紀錄</div>
+                                  <div style={{ overflowX: 'auto' }}>
+                                    <div style={{ minWidth: 460 }}>
+                                      {invData.allowances.map((a) => (
+                                        <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, color: 'var(--tx-dim)', padding: '3px 0' }}>
+                                          <span>
+                                            {ntd(a.amount_ntd * 100)} · {a.allowance_no || '—'}{a.allowance_date ? ` · ${a.allowance_date.slice(0, 10)}` : ''}
+                                            {a.reason ? ` · ${a.reason}` : ''}
+                                            {a.last_error ? ` · ${a.last_error}` : ''}
+                                          </span>
+                                          <span style={{ color: a.status === 'success' ? 'var(--fug)' : a.status === 'failed' ? 'var(--hunt)' : 'var(--gold)' }}>
+                                            {a.status === 'success' ? '成功' : a.status === 'failed' ? '失敗' : '處理中'}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
+
                     {(refunds[o.id]?.length ?? 0) > 0 && (
                       <div style={{ marginTop: 10, borderTop: '1px solid var(--line)', paddingTop: 8 }}>
                         <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginBottom: 4, letterSpacing: '.05em', textTransform: 'uppercase' }}>退款紀錄</div>
@@ -372,6 +570,8 @@ export default function AdminOrdersPage() {
               </div>
             )
           })}
+        </div>
+        </div>
         </div>
       )}
     </div>

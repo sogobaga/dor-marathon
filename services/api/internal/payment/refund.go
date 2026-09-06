@@ -523,6 +523,12 @@ func (h *Handler) CreateRefund(ctx context.Context, orderID string, amountCents 
 			fmt.Errorf("退款已成功但訂單狀態更新失敗，請人工核對: %w", err)
 	}
 
+	// 電子發票折讓（見 internal/einvoice）：該訂單若有已開立的發票才會真的觸發折讓 API，未開立/
+	// 已略過的訂單由 hook 內部安靜跳過；失敗只記 log／告警，不影響這筆退款本身已經成功的事實。
+	if h.invoiceHook != nil {
+		h.invoiceHook.RefundSettled(orderID, refundID, amountCents, reason)
+	}
+
 	return CreateRefundResult{RefundID: refundID, Status: "success", Method: "api"}, nil
 }
 
@@ -636,6 +642,10 @@ func (h *Handler) AdminMarkRefundManualDone(w http.ResponseWriter, r *http.Reque
 	if err := h.finalizeIfFullyRefunded(r.Context(), refund.OrderID, refund.TransactionID, order.TotalCents); err != nil {
 		respondErr(w, http.StatusInternalServerError, "退款已標記完成但訂單狀態更新失敗，請人工核對")
 		return
+	}
+	// 電子發票折讓（見 CreateRefund 同款註解）：人工退款完成同樣要觸發折讓，不能只有 API 退款路徑有。
+	if h.invoiceHook != nil {
+		h.invoiceHook.RefundSettled(refund.OrderID, refundID, refund.AmountCents, refund.Reason)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

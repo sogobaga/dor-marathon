@@ -69,9 +69,24 @@ type CheckResult struct {
 	Detail string `json:"detail"`
 }
 
+// EinvoiceReporter 電子發票背景重試兜底掃描 + 每日報告數據來源（見 internal/einvoice.Issuer）。用小
+// 介面而非直接 import internal/einvoice，比照 race.MailInserter／payment.OrderMarker 等既有慣例。
+type EinvoiceReporter interface {
+	// SweepPending 見 einvoice.Issuer.SweepPending：撿回逾期未重試（in-process 計時器因服務重啟而
+	// 遺失）且未達重試上限的訂單，重新排入。
+	SweepPending(ctx context.Context)
+	// ShouldReportDaily／DailyCounts 供 dailyreport.go 組「電子發票」那一行使用。
+	ShouldReportDaily(ctx context.Context) (bool, error)
+	DailyCounts(ctx context.Context, dayStart, dayEnd time.Time) (issued, failed, pending int, err error)
+}
+
 // Handler 每日自檢排程 + 手動觸發端點。
 type Handler struct {
 	db *pgxpool.Pool
+
+	// einvoice 見 EinvoiceReporter 註解。注入自 einvoice.Issuer（見 main.go 的
+	// opsHandler.SetEinvoiceReporter），晚於本 Handler 建構。未設定時兩處呼叫皆安靜跳過。
+	einvoice EinvoiceReporter
 
 	mu          sync.Mutex
 	lastRunDate string // 台灣日期 YYYY-MM-DD：最近一次「已認領要執行」自檢的日期（in-memory 標記，見檔頭）
@@ -85,6 +100,11 @@ type Handler struct {
 // NewHandler 建構子。
 func NewHandler(db *pgxpool.Pool) *Handler {
 	return &Handler{db: db}
+}
+
+// SetEinvoiceReporter 見 EinvoiceReporter 欄位註解。
+func (h *Handler) SetEinvoiceReporter(r EinvoiceReporter) {
+	h.einvoice = r
 }
 
 // taiwanNow 目前的台灣時間（UTC+8 固定 offset 手算，禁用 time.LoadLocation("Asia/Taipei")——
@@ -101,8 +121,13 @@ func inSelfCheckWindow(t time.Time) bool {
 
 // RunSelfCheckLoop 背景每日自檢排程。啟動時先檢查一次（若服務剛好在窗口內重啟，補跑當天），
 // 之後每小時檢查一次；ctx 取消即結束。比照 payment.BindHandler.RunRenewalLoop 的迴圈骨架。
+//
+// 電子發票兜底掃描（見 EinvoiceReporter）搭這裡同一顆每小時 ticker 一起跑，不另開週期性排程
+// （⚠️ Neon 必須允許休眠，見 internal/einvoice/issuer.go SweepPending 註解）——與每日自檢本身的
+// 08:00-08:59 執行窗口無關，每小時都要跑一次。
 func (h *Handler) RunSelfCheckLoop(ctx context.Context) {
 	h.maybeRunDaily(ctx)
+	h.sweepEinvoice(ctx)
 	t := time.NewTicker(selfCheckTickInterval)
 	defer t.Stop()
 	for {
@@ -111,8 +136,17 @@ func (h *Handler) RunSelfCheckLoop(ctx context.Context) {
 			return
 		case <-t.C:
 			h.maybeRunDaily(ctx)
+			h.sweepEinvoice(ctx)
 		}
 	}
+}
+
+// sweepEinvoice 見 RunSelfCheckLoop 註解；einvoice 未注入（測試/尚未接上）時安靜跳過。
+func (h *Handler) sweepEinvoice(ctx context.Context) {
+	if h.einvoice == nil {
+		return
+	}
+	h.einvoice.SweepPending(ctx)
 }
 
 const (

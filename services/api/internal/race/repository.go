@@ -1966,9 +1966,12 @@ func (r *Repository) ChangeSignupGroup(ctx context.Context, regID, newGroupID st
 }
 
 // invoiceColsSQL order_invoices 的 LEFT JOIN 欄位（COALESCE 成空字串：LEFT JOIN 不到時 buyer_type 是空字串，
-// 代表「這張訂單沒有發票資料」——舊訂單、或本功能上線前建立的訂單）。
+// 代表「這張訂單沒有發票資料」——舊訂單、或本功能上線前建立的訂單）。invoice_number/invoice_status
+// 是電子發票（見 internal/einvoice，migration 169）實際開立狀態，與前 6 欄（買受人快照）用途不同，
+// 呼叫端另外 scan 進 OrderRow.InvoiceNumber/InvoiceStatus，不併入 scanInvoicePtr。
 const invoiceColsSQL = `COALESCE(inv.buyer_type,''), COALESCE(inv.tax_id,''), COALESCE(inv.title,''),
-	       COALESCE(inv.carrier_type,''), COALESCE(inv.carrier_id,''), COALESCE(inv.love_code,'')`
+	       COALESCE(inv.carrier_type,''), COALESCE(inv.carrier_id,''), COALESCE(inv.love_code,''),
+	       COALESCE(inv.invoice_number,''), COALESCE(inv.invoice_status,'')`
 
 // scanInvoicePtr 依 buyer_type 是否為空字串決定要不要組出 *InvoiceInfo（空字串＝LEFT JOIN 不到，回 nil）
 func scanInvoicePtr(buyerType, taxID, title, carrierType, carrierID, loveCode string) *InvoiceInfo {
@@ -2010,7 +2013,8 @@ func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limi
 		var invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode string
 		if err := rows.Scan(&o.ID, &o.UserName, &o.UserEmail, &o.RaceTitle, &o.TotalCents,
 			&o.Status, &o.PaymentRef, &o.PaidAt, &o.CreatedAt, &o.RegistrationID,
-			&invBuyerType, &invTaxID, &invTitle, &invCarrierType, &invCarrierID, &invLoveCode, &o.IsVirtual); err != nil {
+			&invBuyerType, &invTaxID, &invTitle, &invCarrierType, &invCarrierID, &invLoveCode,
+			&o.InvoiceNumber, &o.InvoiceStatus, &o.IsVirtual); err != nil {
 			return nil, err
 		}
 		o.Invoice = scanInvoicePtr(invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode)
@@ -2033,7 +2037,8 @@ func (r *Repository) GetOrderDetail(ctx context.Context, orderID string) (*Order
 		WHERE o.id=$1`, orderID).Scan(
 		&o.ID, &o.UserName, &o.UserEmail, &o.RaceTitle, &o.TotalCents, &o.Status,
 		&o.PaymentRef, &o.PaidAt, &o.CreatedAt, &o.RegistrationID,
-		&invBuyerType, &invTaxID, &invTitle, &invCarrierType, &invCarrierID, &invLoveCode)
+		&invBuyerType, &invTaxID, &invTitle, &invCarrierType, &invCarrierID, &invLoveCode,
+		&o.InvoiceNumber, &o.InvoiceStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -2135,10 +2140,15 @@ func (r *Repository) CreateVipOrder(ctx context.Context, userID, plan string, am
 // 訂單不存在 → ErrOrderNotFound；訂單已是 paid（重送/重放的冪等重複通知）→ 安靜回傳成功；
 // 訂單存在但是其他非 pending 狀態（refunded/cancelled）→ 回傳 ErrOrderNotPending，代表「錢已收到但無法入帳」，
 // 呼叫端（Notify handler）應該把這個情況記成告警，而不是當作成功悄悄吞掉。
-func (r *Repository) MarkOrderPaid(ctx context.Context, orderID, paymentRef string) error {
+//
+// flipped 回傳這次呼叫是否真的把 CAS 從 pending 翻成 paid（=首次入帳）：供 Service.MarkOrderPaid
+// 判斷要不要觸發電子發票開立（見 internal/einvoice）——同一筆付款通知可能因 ECPay 重送而呼叫多次，
+// 若不分辨「真的翻轉」與「冪等 no-op」，重送會讓已經進入重試 backoff 的發票任務被提早、過量地重新
+// 排入（跳過 issuer.go 的 1m/5m/30m 間隔，提早耗盡重試上限），而非只在真正的付款事件發生時觸發一次。
+func (r *Repository) MarkOrderPaid(ctx context.Context, orderID, paymentRef string) (flipped bool, err error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
 
@@ -2151,22 +2161,22 @@ func (r *Repository) MarkOrderPaid(ctx context.Context, orderID, paymentRef stri
 		var curStatus string
 		checkErr := tx.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, orderID).Scan(&curStatus)
 		if errors.Is(checkErr, pgx.ErrNoRows) {
-			return ErrOrderNotFound
+			return false, ErrOrderNotFound
 		}
 		if checkErr != nil {
-			return fmt.Errorf("check order status: %w", checkErr)
+			return false, fmt.Errorf("check order status: %w", checkErr)
 		}
 		if curStatus == "paid" {
-			return tx.Commit(ctx) // 冪等：已經是 paid（重送/重放的重複通知），安靜成功
+			return false, tx.Commit(ctx) // 冪等：已經是 paid（重送/重放的重複通知），安靜成功
 		}
 		// 訂單存在但處於 refunded/cancelled 等非 pending 狀態：不覆寫，但要讓呼叫端知道這不是單純的冪等成功。
 		if commitErr := tx.Commit(ctx); commitErr != nil {
-			return commitErr
+			return false, commitErr
 		}
-		return fmt.Errorf("%w: order %s status=%s", ErrOrderNotPending, orderID, curStatus)
+		return false, fmt.Errorf("%w: order %s status=%s", ErrOrderNotPending, orderID, curStatus)
 	}
 	if err != nil {
-		return fmt.Errorf("mark order paid: %w", err)
+		return false, fmt.Errorf("mark order paid: %w", err)
 	}
 	if regID != nil {
 		// 個人挑戰模式(personal)：付款成功＝挑戰起算點，順便設 challenge_started_at（若尚未設，冪等）。
@@ -2180,10 +2190,13 @@ func (r *Repository) MarkOrderPaid(ctx context.Context, orderID, paymentRef stri
 				END
 			FROM races r
 			WHERE reg.id=$1 AND reg.status='pending' AND r.id = reg.race_id`, *regID); err != nil {
-			return fmt.Errorf("mark reg paid: %w", err)
+			return false, fmt.Errorf("mark reg paid: %w", err)
 		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // MarkOrderRefunded 標記訂單已退款，並連動取消其對應 registration + 完整取消結算（釋放分組名額、

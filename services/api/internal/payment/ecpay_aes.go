@@ -32,6 +32,18 @@ const (
 	ecpayQueryProdURL  = "https://ecpayment.ecpay.com.tw"
 )
 
+// AESEncrypt 是 ecpayAESEncrypt 的匯出版本，供其他套件（如 internal/einvoice 電子發票 API，同樣走
+// MerchantID+RqHeader+Data 三層 AES-JSON envelope）重用這份已對照官方測試向量驗證過的實作，不需要
+// 各自重新實作一份 AES-128-CBC/urlencode 邏輯（也不會不小心和 CheckMacValue 那套 dotNetURLEncode 混用）。
+func AESEncrypt(hashKey, hashIV, plaintextJSON string) (string, error) {
+	return ecpayAESEncrypt(hashKey, hashIV, plaintextJSON)
+}
+
+// AESDecrypt 是 ecpayAESDecrypt 的匯出版本，見 AESEncrypt 說明。
+func AESDecrypt(hashKey, hashIV, b64Cipher string) (string, error) {
+	return ecpayAESDecrypt(hashKey, hashIV, b64Cipher)
+}
+
 // ecpayAESEncrypt 依綠界站內付2.0 Data 欄位加密規格：
 //
 //	明文 JSON 字串 → UrlEncode → AES-128-CBC(PKCS7 padding, key=HashKey 前16 bytes, iv=HashIV 前16 bytes) → Base64

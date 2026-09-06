@@ -24,6 +24,17 @@ const REG_STATUS: Record<string, { t: string; c: string }> = {
   pending: { t: '待繳費', c: 'var(--gold)' },
   cancelled: { t: '已取消', c: 'var(--tx-faint)' },
 }
+// 電子發票（見 services/api/internal/einvoice）：會員自己看的簡化措辭，不暴露 pending/issuing/failed 等內部狀態細節。
+// 只在 order_status==='paid' 時才會被渲染（見下方呼叫處）——order_invoices 列在報名當下就建立、
+// 預設 invoice_status='pending'，若改成只排除 status==='cancelled'，未繳費訂單也會顯示「開立處理
+// 中」，誤導使用者以為系統已經在對還沒收到的錢開發票（見 review finding #6）。
+function invoiceLine(r: MyRegistration): string {
+  if (r.invoice_status === 'issued') return `已開立 ${r.invoice_number || ''}`.trim()
+  if (r.invoice_status === 'void') return '已作廢'
+  if (r.invoice_status === 'skipped') return '免開立（0 元）'
+  if (r.invoice_status === 'pending' || r.invoice_status === 'issuing' || r.invoice_status === 'failed') return '開立處理中'
+  return '未開立'
+}
 const ITEM_LABEL: Record<string, string> = {
   entry: '報名費', addon: '加購', discount: '優惠折抵',
   vip_month: 'VIP 月費訂閱', vip_year: 'VIP 年費訂閱', // VIP 訂閱訂單（無賽事，見 orders.race_id 可空）
@@ -1114,6 +1125,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                           <button onClick={() => openPay(r.order_id!)} style={payBtn}>前往繳費</button>
                         )}
                       </div>
+                      {r.order_status === 'paid' && (
+                        <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 4 }}>發票：{invoiceLine(r)}</div>
+                      )}
 
                       {/* 取消報名 / 分級退費申請狀態 */}
                       <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }}>

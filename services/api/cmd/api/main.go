@@ -27,6 +27,7 @@ import (
 	"github.com/dor/api/internal/config"
 	"github.com/dor/api/internal/db"
 	"github.com/dor/api/internal/dbwake"
+	"github.com/dor/api/internal/einvoice"
 	"github.com/dor/api/internal/emailbroadcast"
 	"github.com/dor/api/internal/event"
 	"github.com/dor/api/internal/explore"
@@ -158,10 +159,27 @@ func main() {
 	bindClient := payment.NewBindClient(cfg.ECPayBindEnv, cfg.ECPayBindMerchantID, cfg.ECPayBindHashKey, cfg.ECPayBindHashIV)
 	bindHandler := payment.NewBindHandler(bindClient, payRepo, pool, raceRepo, mailHandler, cfg.ECPayBindEnv, cfg.ECPayBindReturnURL, cfg.ECPayBindResultURL, cfg.FrontendURL)
 
+	// 電子發票（綠界 B2C，見 internal/einvoice，migration 169）——第三條獨立於上面兩條 ECPay 產品線
+	// 的憑證/傳輸協定（見 einvoice/config.go 檔頭註解）。憑證故障安全 guard（prod 缺憑證強制降級
+	// stage）已在 config.invoiceEnvGuard 做過，這裡直接信任 cfg.ECPayInvoiceEnv。
+	einvoiceCfg := einvoice.NewConfigFromEnv(cfg.ECPayInvoiceEnv, cfg.ECPayInvoiceMerchantID, cfg.ECPayInvoiceHashKey, cfg.ECPayInvoiceHashIV)
+	einvoiceIssuer := einvoice.NewIssuer(einvoiceCfg, pool)
+	einvoiceAdminHandler := einvoice.NewAdminHandler(einvoiceIssuer, einvoice.NewRepository(pool))
+	// 三處付款結算 CAS 成功後觸發非同步開立（見各自 SetInvoiceHook 欄位註解：race.Service.
+	// MarkOrderPaid／BindHandler 的 settleVipBindPayment／settleVipRenewal），退款結案成功後觸發折讓
+	// （payment.Handler 的 CreateRefund／AdminMarkRefundManualDone）。*einvoice.Issuer 同時滿足這三個
+	// 小介面（OrderPaid／RefundSettled 方法名對齊），不需要額外轉接層，見 issuer.go 檔尾註解。
+	raceSvc.SetInvoiceHook(einvoiceIssuer)
+	bindHandler.SetInvoiceHook(einvoiceIssuer)
+	paymentHandler.SetInvoiceHook(einvoiceIssuer)
+
 	// Ops（每日資料一致性自檢排程：orders/payment_transactions/vip_subscriptions 等金流表的一致性
 	// 健檢，異常送 Telegram，比照 bindHandler.RunRenewalLoop 的排程骨架，見 internal/ops/selfcheck.go；
 	// 同一個 Handler 也承載每日營運報告排程，見 internal/ops/dailyreport.go）
 	opsHandler := ops.NewHandler(pool)
+	// 電子發票兜底掃描 + 每日報告數據來源（見 internal/ops EinvoiceReporter 註解）；掛在自檢排程同一顆
+	// 每小時 ticker 上，不另開排程。
+	opsHandler.SetEinvoiceReporter(einvoiceIssuer)
 	// 會員活躍度分析（六大區塊每日彙整報告，台灣時間 03:00 排程，見 internal/analytics/schedule.go；
 	// 與上面 opsHandler 的 08:00 自檢/營運報告排程分開時段、分開 advisory lock，互不搶跑）。
 	analyticsHandler := analytics.NewHandler(pool)
@@ -584,7 +602,15 @@ func main() {
 			r.With(perm("settings")).Mount("/admin/test-whitelist", raceHandler.TestWhitelistRouter())
 			r.Mount("/admin/images", imageHandler.AdminRouter()) // 共用工具，任何 admin 可上傳
 			r.With(perm("signups")).Mount("/admin/signups", raceHandler.SignupRouter())
-			r.With(perm("orders")).Mount("/admin/orders", raceHandler.OrderRouter())
+			// 電子發票（見 internal/einvoice，migration 169）端點與訂單管理共用同一個 /admin/orders
+			// 前綴，掛在 {orderID}/invoice 底下（沿用 orders 權限）；chi 支援同一段路徑下並列多個
+			// Mount，只要各自的子路徑不衝突（raceHandler.OrderRouter() 定義 "/"、"/{orderID}"、
+			// "/{orderID}/pay"，這裡的 "/{orderID}/invoice" 不與其重疊）。
+			r.With(perm("orders")).Route("/admin/orders", func(r chi.Router) {
+				r.Mount("/", raceHandler.OrderRouter())
+				r.Mount("/{orderID}/invoice", einvoiceAdminHandler.OrderInvoiceRouter())
+			})
+			r.With(perm("orders")).Get("/admin/invoices", einvoiceAdminHandler.ListInvoices)
 			r.With(perm("orders")).Mount("/admin/payments", paymentHandler.AdminRouter())                  // 退款（沿用 orders 權限）
 			r.With(perm("orders")).Mount("/admin/cancel-requests", raceHandler.CancelRequestAdminRouter()) // 取消報名審核（沿用 orders 權限）
 			r.With(perm("promo")).Mount("/admin/promo-codes", promoHandler.Router())

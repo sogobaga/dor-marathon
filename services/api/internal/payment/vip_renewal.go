@@ -927,5 +927,10 @@ func (h *BindHandler) settleVipRenewal(ctx context.Context, orderID, attemptID s
 	if err := tx.Commit(ctx); err != nil {
 		return "", time.Time{}, fmt.Errorf("settle vip renewal: commit: %w", err)
 	}
+	// 電子發票（見 internal/einvoice）：同 settleVipBindPayment，只在真正走完整包結算（非冪等 no-op）
+	// 才觸發，避免續約 webhook 重送把同一筆訂單重複排入開立。
+	if h.invoiceHook != nil {
+		h.invoiceHook.OrderPaid(orderID)
+	}
 	return userID, periodEnd, nil
 }

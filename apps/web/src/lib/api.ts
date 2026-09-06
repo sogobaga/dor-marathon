@@ -2026,6 +2026,10 @@ export interface MyRegistration {
   estimated_refund_cents: number
   cancel_request_status: string // ''|'pending'|'processing'|'approved'|'rejected'
   refund_disabled: boolean // 該賽事 config.refund_disabled；true 時報名紀錄頁不顯示「申請取消報名」，改顯示「本活動不適用七天鑑賞期」
+  // 電子發票（見 services/api/internal/einvoice）；無資料列（舊資料／尚未觸發開立）＝undefined
+  invoice_number?: string
+  invoice_status?: string // pending|issuing|issued|void|failed|skipped
+  issued_at?: string | null
 }
 
 export interface MyOrderItem {
@@ -3082,6 +3086,9 @@ export interface OrderRow {
   registration_id?: string
   invoice: InvoiceInfo | null // 發票資訊（過渡期人工開立用）；舊訂單沒有資料則為 null
   is_virtual: boolean // 虛擬選手（users.is_virtual），供🤖標記
+  // 電子發票實際開立狀態（見 adminInvoiceApi）；與上面 invoice（買受人快照）不同，這是綠界開立結果摘要
+  invoice_number?: string
+  invoice_status?: string // pending|issuing|issued|void|failed|skipped（無資料列＝undefined）
 }
 
 export interface OrderDetail extends OrderRow {
@@ -3169,6 +3176,87 @@ export const adminOrdersApi = {
       headers: withAuth(token),
       body: JSON.stringify({ payment_ref: payment_ref ?? '' }),
     }),
+}
+
+// --- Admin: 電子發票（見 services/api/internal/einvoice，migration 169）---
+
+export interface EInvoiceDetail {
+  order_id: string
+  buyer_type: string
+  tax_id?: string
+  title?: string
+  carrier_type?: string
+  carrier_id?: string
+  love_code?: string
+  invoice_status: string // pending|issuing|issued|void|failed|skipped
+  invoice_number?: string
+  invoice_date?: string
+  random_number?: string
+  relate_number?: string
+  ecpay_env?: string // stage|prod
+  sales_amount_ntd: number
+  attempts: number
+  last_error?: string
+  skip_reason?: string
+  issued_at?: string | null
+  voided_at?: string | null
+  void_reason?: string
+  remain_allowance_ntd?: number | null
+}
+
+export interface EInvoiceAllowance {
+  id: string
+  refund_id?: string | null
+  amount_ntd: number
+  reason?: string
+  status: string // pending|success|failed
+  allowance_no?: string
+  allowance_date?: string | null
+  last_error?: string
+  created_at: string
+}
+
+export interface AdminInvoiceRow {
+  order_id: string
+  user_name: string
+  amount_ntd: number
+  invoice_status: string
+  invoice_number?: string
+  invoice_date?: string
+  last_error?: string
+  skip_reason?: string
+  updated_at: string
+  buyer_type: string
+}
+
+export const adminInvoiceApi = {
+  get: (token: string, orderID: string) =>
+    request<{ invoice: EInvoiceDetail | null; allowances: EInvoiceAllowance[] }>(`/admin/orders/${orderID}/invoice`, {
+      headers: withAuth(token),
+    }),
+  issue: (token: string, orderID: string) =>
+    request<{ ok: boolean; invoice: EInvoiceDetail }>(`/admin/orders/${orderID}/invoice/issue`, {
+      method: 'POST', headers: withAuth(token),
+    }),
+  void: (token: string, orderID: string, reason: string) =>
+    request<{ ok: boolean; invoice: EInvoiceDetail }>(`/admin/orders/${orderID}/invoice/void`, {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify({ reason }),
+    }),
+  sync: (token: string, orderID: string) =>
+    request<{ ok: boolean; invoice: EInvoiceDetail }>(`/admin/orders/${orderID}/invoice/sync`, {
+      method: 'POST', headers: withAuth(token),
+    }),
+  allowance: (token: string, orderID: string, amount_ntd: number, reason: string) =>
+    request<{ ok: boolean; allowance: EInvoiceAllowance }>(`/admin/orders/${orderID}/invoice/allowance`, {
+      method: 'POST', headers: withAuth(token), body: JSON.stringify({ amount_ntd, reason }),
+    }),
+  list: (token: string, params?: { status?: string; limit?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.status) qs.set('status', params.status)
+    if (params?.limit) qs.set('limit', String(params.limit))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ invoices: AdminInvoiceRow[] }>(`/admin/invoices${suffix}`, { headers: withAuth(token) })
+  },
 }
 
 // --- 取消報名審核（後台） ---

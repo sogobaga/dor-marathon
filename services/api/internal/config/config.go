@@ -56,6 +56,17 @@ type Config struct {
 	ECPayBindReturnURL string
 	ECPayBindResultURL string
 
+	// 綠界 ECPay — B2C 電子發票（migration 169 einvoice）。第三條獨立產品線，MerchantID/HashKey/
+	// HashIV 與上面 AIO／站內付2.0 都不共用。預設值＝綠界官方公開的電子發票測試特店憑證
+	// （2000132/ejCk326UnaZWKisg/q9jcZX8Ib9LM8wYk），部署即可打 stage 端點；正式上線前由業務提供
+	// 專屬憑證覆蓋 ECPAY_INVOICE_* 環境變數。
+	// ⚠️ 防呆同 bindEnvGuard：ECPAY_INVOICE_MERCHANT_ID 未設＝仍是公開測試碼，此時即使
+	// ECPAY_INVOICE_ENV/ECPAY_ENV 為 prod 也強制降為 stage，避免測試憑證打正式端點。
+	ECPayInvoiceEnv        string
+	ECPayInvoiceMerchantID string
+	ECPayInvoiceHashKey    string
+	ECPayInvoiceHashIV     string
+
 	// Strava 運動數據整合（選用：空 ClientID = 未啟用）
 	StravaClientID           string
 	StravaClientSecret       string
@@ -109,6 +120,13 @@ func Load() *Config {
 		ECPayBindReturnURL:  getEnv("ECPAY_BIND_RETURN_URL", "https://www.dor.tw/api/v1/payments/ecpay/bind/notify"),
 		ECPayBindResultURL:  getEnv("ECPAY_BIND_RESULT_URL", "https://www.dor.tw/api/v1/payments/ecpay/bind/result"),
 
+		// 電子發票（見上方欄位註解）。guard 用法同 bindEnvGuard：先以空字串預設值單獨檢查
+		// ECPAY_INVOICE_MERCHANT_ID 是否真的被設定過，避免和下面「有預設值」的正式讀取互相干擾。
+		ECPayInvoiceEnv:        invoiceEnvGuard(getEnv("ECPAY_INVOICE_ENV", ecpayEnv), getEnv("ECPAY_INVOICE_MERCHANT_ID", ""), getEnv("ECPAY_INVOICE_HASH_KEY", ""), getEnv("ECPAY_INVOICE_HASH_IV", "")),
+		ECPayInvoiceMerchantID: getEnv("ECPAY_INVOICE_MERCHANT_ID", "2000132"),
+		ECPayInvoiceHashKey:    getEnv("ECPAY_INVOICE_HASH_KEY", "ejCk326UnaZWKisg"),
+		ECPayInvoiceHashIV:     getEnv("ECPAY_INVOICE_HASH_IV", "q9jcZX8Ib9LM8wYk"),
+
 		StravaClientID:           getEnv("STRAVA_CLIENT_ID", ""),
 		StravaClientSecret:       getEnv("STRAVA_CLIENT_SECRET", ""),
 		StravaRedirectURI:        getEnv("STRAVA_REDIRECT_URI", "https://www.dor.tw/api/v1/integrations/strava/callback"),
@@ -128,6 +146,17 @@ func (c *Config) IsDev() bool { return c.Env == "development" }
 // 綠界拒絕（fail-safe：寧可停留測試環境，也不用測試憑證打正式站）。
 func bindEnvGuard(env, bindMerchantID string) string {
 	if bindMerchantID == "" {
+		return "stage"
+	}
+	return env
+}
+
+// invoiceEnvGuard 電子發票環境防呆，邏輯比照 bindEnvGuard 但更嚴：發票金鑰（MerchantID/HashKey/HashIV）
+// 三者任一未設＝仍在用公開測試碼，此時無論 env 參數為何一律回 "stage"——只設了特店代號、沒設金鑰
+// 也算沒設齊（用測試金鑰打正式端點只會被綠界拒絕，沒有意義）。要上正式：三個 ECPAY_INVOICE_* 全設＋
+// ECPAY_INVOICE_ENV=prod。
+func invoiceEnvGuard(env, invoiceMerchantID, hashKey, hashIV string) string {
+	if invoiceMerchantID == "" || hashKey == "" || hashIV == "" {
 		return "stage"
 	}
 	return env

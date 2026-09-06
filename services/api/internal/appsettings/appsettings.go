@@ -125,6 +125,10 @@ var specs = map[string]func(string) bool{
 	// 開跑前提醒（見 internal/runmeet/reminder.go，migration 163）：站內信 + Email，排程每小時掃描。
 	"runmeet_reminder_enabled": func(v string) bool { return v == "" || v == "0" || v == "1" }, // 總開關，'1' 才跑
 	"runmeet_reminder_hours":   isPosIntMax(72),                                                // 開跑前幾小時發送（預設 3）
+	// 電子發票（見 internal/einvoice，migration 169）：auto_issue 總開關預設 off（先跑完 Wire 階段
+	// 驗收再開）；issue_since 只對「此日期（台北曆日）之後付款」的訂單自動開立，避免回溯處理歷史訂單。
+	"einvoice_auto_issue":  func(v string) bool { return v == "" || v == "off" || v == "on" },
+	"einvoice_issue_since": isDateYYYYMMDD,
 }
 
 func isEntryState(v string) bool {
@@ -236,6 +240,15 @@ func isFiniteInRange(v, min, max float64) bool {
 
 // publicKeys 允許未登入前台讀取的 key（皆為非敏感外觀設定）。
 var publicKeys = map[string]bool{"active_skin": true, "favicon_url": true, "google_login_ux_mode": true}
+
+// isDateYYYYMMDD 空字串(用程式內建預設)或合法的 'YYYY-MM-DD' 曆日字串（einvoice_issue_since 用）。
+func isDateYYYYMMDD(v string) bool {
+	if v == "" {
+		return true
+	}
+	_, err := time.Parse("2006-01-02", v)
+	return err == nil
+}
 
 func isNonNegInt(v string) bool {
 	if v == "" {

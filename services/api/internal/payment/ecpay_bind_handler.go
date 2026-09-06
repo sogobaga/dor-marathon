@@ -81,6 +81,11 @@ type BindHandler struct {
 	returnURL   string       // ReturnURL：server-to-server webhook（見 Notify）；Phase D 續約請款也重用同一個 ReturnURL，共用同一入口做結算分流（見 handleBindWebhookData）
 	resultURL   string       // OrderResultURL：3D 驗證完成後瀏覽器導回（見 Result）
 	frontendURL string       // Result 3D 導回結果頁用（沿用 config.FrontendURL，Strava OAuth 已用同一欄位）
+	// invoiceHook 電子發票開立掛勾（見 internal/einvoice，migration 169）：VIP 綁卡首次扣款／續約
+	// 扣款結算成功時觸發（settleVipBindPayment／settleVipRenewal，兩者皆內聯 CAS、不經過
+	// race.Repository.MarkOrderPaid，見各自函式頂端註解）。注入自 einvoice.Issuer（見 main.go 的
+	// bindHandler.SetInvoiceHook）。未設定時直接跳過，不影響金流本身。
+	invoiceHook InvoiceOrderPaidHook
 }
 
 func NewBindHandler(client *BindClient, repo *Repository, db *pgxpool.Pool, orders VipOrderCreator, mail MailInserter, bindEnv, returnURL, resultURL, frontendURL string) *BindHandler {
@@ -88,6 +93,11 @@ func NewBindHandler(client *BindClient, repo *Repository, db *pgxpool.Pool, orde
 		client: client, repo: repo, db: db, orders: orders, mail: mail,
 		bindEnv: bindEnv, returnURL: returnURL, resultURL: resultURL, frontendURL: frontendURL,
 	}
+}
+
+// SetInvoiceHook 見上方 invoiceHook 欄位註解。
+func (h *BindHandler) SetInvoiceHook(v InvoiceOrderPaidHook) {
+	h.invoiceHook = v
 }
 
 // ================= §1 訂閱發起 =================
@@ -828,6 +838,11 @@ func (h *BindHandler) settleVipBindPayment(ctx context.Context, orderID string, 
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("settle vip bind: commit: %w", err)
+	}
+	// 電子發票（見 internal/einvoice）：只在這裡（CAS 真正翻轉成功、走完整包結算）觸發，
+	// 上面「已被結算過」的冪等出口不會走到這裡，同一筆付款不會被重複排入開立。
+	if h.invoiceHook != nil {
+		h.invoiceHook.OrderPaid(orderID)
 	}
 	return nil
 }
