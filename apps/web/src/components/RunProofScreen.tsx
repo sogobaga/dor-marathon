@@ -121,7 +121,7 @@ export default function RunProofScreen({
         <div style={{ borderTop: '1px solid var(--line)', paddingTop: 8, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 3 }}>
           <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayName}</div>
           <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>
-            紀錄來源：{source || 'App GPS 即時追蹤'}{recordId ? ` · 編號 ${recordId.slice(0, 8)}` : ''}
+            紀錄來源：{source || 'DOR GPS 即時追蹤'}{recordId ? ` · 編號 ${recordId.slice(0, 8)}` : ''}
           </div>
         </div>
       </div>

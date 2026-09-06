@@ -41,13 +41,13 @@ function terraBrandName(provider: string): string {
   const key = provider.toLowerCase()
   return TERRA_BRAND_LABEL[key] ?? (key.charAt(0).toUpperCase() + key.slice(1))
 }
-// 「已同步活動」來源徽章＋重複標示共用的來源顯示名稱。null/'manual'/'gps' 都顯示「App GPS」——
+// 「已同步活動」來源徽章＋重複標示共用的來源顯示名稱。null/'manual'/'gps' 都顯示「DOR GPS」（使用者 2026-09-06 定名，原為 App GPS）——
 // activities.source 的 NULL 落在 'manual'（見 repository.go ListActivities 註解），而
 // dup_of_source（保留活動的來源）NULL 落在 'gps'，兩種 fallback 值對使用者來說是同一件事。
 // 注意跟上面 lib/api.ts 的 sourceLabel() 不是同一份：那個是「里程優先來源」選單專用（gps 顯示成
 // 「GPS 跑步追蹤」），這裡是活動列表徽章專用（一律簡稱「App GPS」）。
 function activitySourceLabel(source: string): string {
-  if (!source || source === 'manual' || source === 'gps') return 'App GPS'
+  if (!source || source === 'manual' || source === 'gps') return 'DOR GPS'
   if (source === 'strava') return 'Strava'
   return terraBrandName(source)
 }
@@ -917,7 +917,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             </div>
             {!activities && <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>載入中…</div>}
             {activities && activities.length === 0 && (
-              <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚無活動。App GPS 跑步、已連接的手錶或 Strava 匯入後會列在這裡。</div>
+              <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>尚無活動。DOR GPS 跑步、已連接的手錶或 Strava 匯入後會列在這裡。</div>
             )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {activities?.map((a) => {
