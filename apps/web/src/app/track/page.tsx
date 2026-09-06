@@ -2344,14 +2344,21 @@ export default function TrackPage() {
         {splits.length > 0 && (
           <div style={{ marginTop: 16 }}>
             <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 5 }}>每公里分段</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {splits.map((s, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-2)', borderRadius: 8, padding: '5px 10px', fontSize: 12.5 }}>
-                  <span style={{ color: 'var(--tx-dim)', whiteSpace: 'nowrap' }}>第{i + 1}km</span>
-                  <span style={{ fontWeight: 700 }}>{fmtPace(s)} /km</span>
+            {/* 超過 10 段改兩欄（>20 三欄）並排、先直後橫，與歷史頁同規則（2026-09-07 使用者：同高度要放得下 20km） */}
+            {(() => {
+              const cols = splits.length <= 10 ? 1 : splits.length <= 20 ? 2 : 3
+              const rows = Math.ceil(splits.length / cols)
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, columnGap: 6, rowGap: 4 }}>
+                  {splits.map((s, i) => (
+                    <div key={i} style={{ gridColumn: Math.floor(i / rows) + 1, gridRow: (i % rows) + 1, display: 'flex', justifyContent: 'space-between', gap: 6, background: 'var(--bg-2)', borderRadius: 8, padding: cols > 1 ? '4px 8px' : '5px 10px', fontSize: cols > 1 ? 11.5 : 12.5, minWidth: 0 }}>
+                      <span style={{ color: 'var(--tx-dim)', whiteSpace: 'nowrap' }}>{cols > 1 ? `${i + 1}km` : `第${i + 1}km`}</span>
+                      <span style={{ fontWeight: 700, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{cols > 1 ? fmtPace(s) : `${fmtPace(s)} /km`}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              )
+            })()}
           </div>
         )}
 

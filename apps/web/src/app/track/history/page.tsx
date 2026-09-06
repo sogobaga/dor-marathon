@@ -166,26 +166,33 @@ export default function TrackHistoryPage() {
           {sel.km_paces && sel.km_paces.length > 0 ? (
             <div style={{ marginTop: 12 }}>
               <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 5 }}>每公里分段配速</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {(() => {
-                  const paces = sel.km_paces!
-                  const mx = Math.max(...paces), mn = Math.min(...paces)
-                  return paces.map((p, i) => {
-                    const pct = mx > mn ? 100 - ((p - mn) / (mx - mn)) * 62 : 100 // 越快(秒少)條越長
-                    return (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
-                        {/* 不換行＋自然寬度（minWidth 對齊常見 1-2 位數）：第1km～第100km 皆單行，
-                            量條 flex:1 自動讓位——原本硬限 46px 使「第 2 km」就折行、一列變兩列高 */}
-                        <span style={{ minWidth: 42, whiteSpace: 'nowrap', color: 'var(--tx-dim)', flexShrink: 0 }}>第{i + 1}km</span>
-                        <div style={{ flex: 1, height: 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#FFD24D,#46E3A0)', borderRadius: 999 }} />
+              {(() => {
+                const paces = sel.km_paces!
+                const mx = Math.max(...paces), mn = Math.min(...paces)
+                // 超過 10 段改多欄並排（2026-09-07 使用者：同一塊高度要放得下 20km）：≤10 段一欄、11–20 段兩欄、
+                // 更多三欄；多欄模式把「第」「/km」拿掉、字級縮小，讓 375px 寬每欄仍放得下「12 ▮▮▮ 6:39」。
+                // 順序採「先直後橫」（column-major）：第 1–10 段在左欄、11–20 在右欄，跟閱讀習慣一致。
+                const cols = paces.length <= 10 ? 1 : paces.length <= 20 ? 2 : 3
+                const rows = Math.ceil(paces.length / cols)
+                const compact = cols > 1
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, columnGap: 10, rowGap: 4 }}>
+                    {paces.map((p, i) => {
+                      const pct = mx > mn ? 100 - ((p - mn) / (mx - mn)) * 62 : 100 // 越快(秒少)條越長
+                      const col = Math.floor(i / rows), row = i % rows
+                      return (
+                        <div key={i} style={{ gridColumn: col + 1, gridRow: row + 1, display: 'flex', alignItems: 'center', gap: compact ? 5 : 8, fontSize: compact ? 11.5 : 12.5, minWidth: 0 }}>
+                          <span style={{ minWidth: compact ? 18 : 42, whiteSpace: 'nowrap', color: 'var(--tx-dim)', flexShrink: 0, textAlign: compact ? 'right' : 'left', fontVariantNumeric: 'tabular-nums' }}>{compact ? i + 1 : `第${i + 1}km`}</span>
+                          <div style={{ flex: 1, height: compact ? 6 : 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#FFD24D,#46E3A0)', borderRadius: 999 }} />
+                          </div>
+                          <span style={{ minWidth: compact ? 32 : 54, whiteSpace: 'nowrap', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{compact ? fmtPace(p) : `${fmtPace(p)}/km`}</span>
                         </div>
-                        <span style={{ minWidth: 54, whiteSpace: 'nowrap', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtPace(p)}/km</span>
-                      </div>
-                    )
-                  })
-                })()}
-              </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
             </div>
           ) : (
             <div style={{ marginTop: 12, fontSize: 11.5, color: 'var(--tx-faint)' }}>（此筆沒有每公里分段資料；v0.1.205 之後的新 GPS 跑步才會記錄）</div>
