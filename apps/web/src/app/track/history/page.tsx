@@ -1,12 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { activitiesApi, type GpsRunHistory } from '@/lib/api'
+import { activitiesApi, profileApi, type GpsRunHistory } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { decodePolylineSegments } from '@/lib/polyline'
+import { kmMarkerPositions, addKmMarkers } from '@/lib/kmMarkers'
 import { useDashboard } from '@/lib/useDashboard'
-import { qualifiesGov500, gov500RunKey, hasGov500ShotThisWeek } from '@/lib/gov500'
-import RunProofScreen from '@/components/RunProofScreen'
+import { qualifiesGov500, gov500RunKey, markGov500Shot, hasGov500ShotThisWeek } from '@/lib/gov500'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
 
@@ -29,6 +29,11 @@ function loadLeaflet(): Promise<any> {
 const fmtPace = (s: number) => (!s || s <= 0 ? '--:--' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`)
 const fmtTime = (s: number) => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = Math.floor(s % 60); const p = (n: number) => String(n).padStart(2, '0'); return h > 0 ? `${h}:${p(m)}:${p(x)}` : `${p(m)}:${p(x)}` }
 const fmtDt = (iso: string) => { const d = new Date(iso); return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }
+// 揮汗有禮直接截圖需求（2026-09-06）：第一畫面要看得到日期/時段/跑者姓名，比照 RunProofScreen（已刪除）的格式
+const WEEKDAY_ZH = ['日', '一', '二', '三', '四', '五', '六']
+const p2 = (n: number) => String(n).padStart(2, '0')
+const fmtDateBig = (d: Date) => `${d.getFullYear()}/${p2(d.getMonth() + 1)}/${p2(d.getDate())}（${WEEKDAY_ZH[d.getDay()]}）`
+const fmtHm = (d: Date) => `${p2(d.getHours())}:${p2(d.getMinutes())}`
 
 export default function TrackHistoryPage() {
   const user = useUser()
@@ -37,10 +42,13 @@ export default function TrackHistoryPage() {
   const [err, setErr] = useState('')
   const mapRef = useRef<any>(null)
   const { dash } = useDashboard() // 共用會員儀表板快取（見 lib/useDashboard.ts）；這裡只用來讀 gov500_entry
-  // 截圖模式（RunProofScreen，見 lib/gov500.ts 頂部說明 2026-09-06 規則變動）：不再產生任何圖片，
-  // 純粹開/關一個全螢幕畫面，選中的紀錄（sel）本身就是要顯示的資料來源。
-  const [gov500ScreenOpen, setGov500ScreenOpen] = useState(false)
-  useEffect(() => { setGov500ScreenOpen(false) }, [sel]) // 換選別筆紀錄 → 關掉還開著的截圖模式畫面
+  // 揮汗有禮直接截圖需求（2026-09-06 owner 定案，見 lib/gov500.ts 頂部說明）：紀錄畫面本身要顯示
+  // 真實姓名，只在掛載時抓一次（不必每次選別筆紀錄重抓，同一使用者姓名不會變）。
+  const [realName, setRealName] = useState('')
+  useEffect(() => {
+    const t = getUserToken(); if (!t) return
+    withUserAuth((tk) => profileApi.getMe(tk)).then((r) => setRealName(r.profile?.real_name || '')).catch(() => {})
+  }, [])
 
   const load = useCallback(() => {
     const t = getUserToken(); if (!t) return
@@ -71,10 +79,18 @@ export default function TrackHistoryPage() {
       const map = L.map('hist-map').setView(center, 15)
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap', crossOrigin: true }).addTo(map) // crossOrigin：磚要能畫進證明圖 canvas 而不汙染（OSM 有 ACAO:*）
       const lines = segments.filter((seg) => seg.length > 1).map((seg) => L.polyline(seg, { color: sel.flagged ? '#ff5a5a' : '#46E3A0', weight: 5 }).addTo(map))
+      // 揮汗有禮直接截圖需求（2026-09-06）：軌跡上疊 1/2/3…號碼標記代表跑到第 N 公里的分段完成點，
+      // 讓截圖本身就能佐證距離——即使整趟被標異常（紅線），標記仍用一般品牌色，不需要跟著變色。
+      // 對抗式審查修正：kmMarkerPositions 只算「原始」haversine 距離，不吃 GPS 距離校正係數，但這個
+      // 畫面的「距離」統計（見下方 selQual/Stat）一律優先顯示 calib_distance_km（校正後）——若不換算，
+      // 套用過校正的那趟，標記位置／顆數會跟畫面上的校正後距離、每公里分段對不上。校正後距離每滿
+      // 1000m ⟺ 原始距離每滿 1000/k m，把 everyM 除以 k 即可，不必更動純函式本身。
+      const calibK = sel.calib_factor && sel.calib_factor > 0 ? sel.calib_factor : 1
+      const kmMarks = addKmMarkers(L, map, kmMarkerPositions(segments, 1000 / calibK), '#46E3A0')
       if (coords.length > 1 && lines.length > 0) {
         L.circleMarker(coords[0], { radius: 7, color: '#fff', fillColor: '#46E3A0', fillOpacity: 1 }).addTo(map).bindTooltip('起')
         L.circleMarker(coords[coords.length - 1], { radius: 7, color: '#fff', fillColor: '#ff5a5a', fillOpacity: 1 }).addTo(map).bindTooltip('終')
-        const group = L.featureGroup(lines)
+        const group = L.featureGroup([...lines, ...kmMarks])
         map.fitBounds(group.getBounds(), { padding: [22, 22] })
       }
       mapRef.current = map
@@ -98,12 +114,20 @@ export default function TrackHistoryPage() {
       <ScrollArea>
       {sel && (
         <div style={{ padding: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <strong>{fmtDt(sel.started_at)}</strong>
+          {/* 揮汗有禮直接截圖需求（2026-09-06 owner 定案）：第一畫面就要看得到日期、開始/結束時間、
+              真實姓名——不再靠另一個「截圖模式」畫面湊，這個畫面本身就是要截的畫面。 */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+            <strong style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums' }}>{fmtDateBig(new Date(sel.started_at))}</strong>
             <button onClick={() => { setSel(null); if (mapRef.current) { mapRef.current.remove(); mapRef.current = null } }} style={ghost}>關閉</button>
           </div>
-          <div id="hist-map" style={{ width: '100%', height: 300, borderRadius: 10, overflow: 'hidden', background: 'var(--bg-2)' }} />
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginTop: 12 }}>
+          <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginBottom: 2 }}>
+            開始 {fmtHm(new Date(sel.started_at))} ～ 結束 {fmtHm(sel.ended_at ? new Date(sel.ended_at) : new Date(new Date(sel.started_at).getTime() + sel.duration_s * 1000))}
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginBottom: 12 }}>
+            跑者　{realName || user?.name || user?.handle || 'DOR 跑者'}
+            {!realName && <span style={{ color: 'var(--tx-faint)', fontSize: 11 }}>（請至個人資料填寫真實姓名）</span>}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
             <Stat label="距離" v={`${(sel.calib_distance_km ?? sel.distance_km).toFixed(2)} km`} />
             <Stat label="時間" v={fmtTime(sel.duration_s)} />
             <Stat label="平均配速" v={`${fmtPace(sel.calib_avg_pace_s ?? sel.avg_pace_s)}/km`} />
@@ -137,24 +161,26 @@ export default function TrackHistoryPage() {
                     : ''}
             </div>
           )}
+          {/* 每公里分段配速：移到地圖上方（揮汗有禮截圖優先看得到分段，2026-09-06），壓縮列高
+              （fontSize 12.5、gap 4）讓前 5 段連同上面日期/統計仍能一起塞進第一畫面。 */}
           {sel.km_paces && sel.km_paces.length > 0 ? (
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}>每公里分段配速</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 5 }}>每公里分段配速</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {(() => {
                   const paces = sel.km_paces!
                   const mx = Math.max(...paces), mn = Math.min(...paces)
                   return paces.map((p, i) => {
                     const pct = mx > mn ? 100 - ((p - mn) / (mx - mn)) * 62 : 100 // 越快(秒少)條越長
                     return (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
                         {/* 不換行＋自然寬度（minWidth 對齊常見 1-2 位數）：第1km～第100km 皆單行，
                             量條 flex:1 自動讓位——原本硬限 46px 使「第 2 km」就折行、一列變兩列高 */}
-                        <span style={{ minWidth: 46, whiteSpace: 'nowrap', color: 'var(--tx-dim)', flexShrink: 0 }}>第{i + 1}km</span>
-                        <div style={{ flex: 1, height: 8, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden' }}>
+                        <span style={{ minWidth: 42, whiteSpace: 'nowrap', color: 'var(--tx-dim)', flexShrink: 0 }}>第{i + 1}km</span>
+                        <div style={{ flex: 1, height: 7, background: 'var(--bg-2)', borderRadius: 999, overflow: 'hidden' }}>
                           <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#FFD24D,#46E3A0)', borderRadius: 999 }} />
                         </div>
-                        <span style={{ minWidth: 58, whiteSpace: 'nowrap', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtPace(p)}/km</span>
+                        <span style={{ minWidth: 54, whiteSpace: 'nowrap', textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtPace(p)}/km</span>
                       </div>
                     )
                   })
@@ -164,32 +190,27 @@ export default function TrackHistoryPage() {
           ) : (
             <div style={{ marginTop: 12, fontSize: 11.5, color: 'var(--tx-faint)' }}>（此筆沒有每公里分段資料；v0.1.205 之後的新 GPS 跑步才會記錄）</div>
           )}
+          <div id="hist-map" style={{ width: '100%', height: 220, borderRadius: 10, overflow: 'hidden', background: 'var(--bg-2)', marginTop: 12 }} />
           {/* 運動部「揮汗有禮」活動：先只給超管看（gov500_entry，見系統設定 gov500_entry_state），
-              之後備妥後由系統設定開放給一般玩家。2026-09-06 規則變動（見 lib/gov500.ts 頂部說明）：
-              500.gov.tw 只收手機截圖鍵截出的 App 原始畫面，改開「截圖模式」全螢幕畫面讓使用者自己截。 */}
+              之後備妥後由系統設定開放給一般玩家。2026-09-06 規則變動（owner 定案，見 lib/gov500.ts
+              頂部說明）：500.gov.tw 只收手機系統截圖鍵截出的 App 原始紀錄畫面——這個畫面現在「就是」
+              那個原始畫面（日期/時間/姓名/距離/時間/分段配速/軌跡號碼標記全都在上面），不再需要另開
+              一個「截圖模式」畫面，使用者直接對這裡按截圖鍵即可。 */}
           {dash?.gov500_entry === 'shown' && (
             <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
               <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>運動部「揮汗有禮・全民動起來」活動</div>
-              <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
-                單次跑滿 5 公里或 30 分鐘即可完成本週任務：開啟截圖模式後，用手機截圖鍵擷取整個畫面，再到 500.gov.tw 上傳。
+              <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 8, lineHeight: 1.5 }}>
+                單次跑滿 5 公里或 30 分鐘即可完成本週任務。達標後直接用手機截圖鍵擷取這個畫面（整個畫面、不要裁切，需看得到日期與達標數值），再到 500.gov.tw 上傳。
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {selQual?.ok ? (
-                  <button onClick={() => setGov500ScreenOpen(true)}
-                    style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                    開啟截圖模式
-                  </button>
-                ) : (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', fontSize: 12, color: 'var(--tx-faint)', padding: '0 4px' }}>
-                    {selQual?.shortfallText}
-                  </div>
-                )}
-                <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
-                  style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                  <span style={{ display: 'block', lineHeight: 1.35 }}>上傳證明圖</span>
-                  <span style={{ display: 'block', fontSize: 11, opacity: 0.8, lineHeight: 1.35 }}>500.gov.tw</span>
-                </button>
-              </div>
+              {selQual?.ok ? (
+                <div style={{ fontSize: 12.5, color: 'var(--fug)', fontWeight: 700, marginBottom: 10 }}>✓ 本趟已達標，直接截圖此畫面即可</div>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10 }}>{selQual?.shortfallText}</div>
+              )}
+              <button onClick={() => { markGov500Shot(selRunKey); window.open('https://500.gov.tw/registrant/', '_blank', 'noopener') }}
+                style={{ width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
+                前往運動部活動網頁，上傳截圖
+              </button>
               {hasGov500ShotThisWeek(selRunKey) && (
                 <div style={{ fontSize: 11.5, color: 'var(--fug)', marginTop: 8, lineHeight: 1.5 }}>✓ 本週已截圖</div>
               )}
@@ -226,23 +247,6 @@ export default function TrackHistoryPage() {
         </div>
       </div>
       </ScrollArea>
-
-      {/* 截圖模式全螢幕畫面（RunProofScreen，見 lib/gov500.ts 頂部說明）：sel 是這筆歷史紀錄的完整
-          detail（含 started_at/ended_at），比 /track 剛跑完當下更精確、不必猜結束時間。 */}
-      {gov500ScreenOpen && sel && (
-        <RunProofScreen
-          startedAt={new Date(sel.started_at)}
-          endedAt={sel.ended_at ? new Date(sel.ended_at) : null}
-          durationS={sel.duration_s}
-          distanceKm={sel.calib_distance_km ?? sel.distance_km}
-          avgPaceS={(sel.calib_avg_pace_s ?? sel.avg_pace_s) > 0 ? (sel.calib_avg_pace_s ?? sel.avg_pace_s) : null}
-          displayName={user?.name || user?.handle || 'DOR 跑者'}
-          recordId={sel.id}
-          runKey={selRunKey}
-          track={decodePolylineSegments(sel.polyline || '')}
-          onClose={() => setGov500ScreenOpen(false)}
-        />
-      )}
     </PhoneFrame>
   )
 }

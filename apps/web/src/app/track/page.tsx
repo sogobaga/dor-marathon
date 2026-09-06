@@ -25,8 +25,8 @@ import { useIsLandscape } from '@/lib/useIsLandscape'
 import { useDraggableSheet } from '@/lib/useDraggableSheet'
 import { initMovingState, advanceMovingState, classifyMoveSignal, currentMovingS, flushMovingState, classifyDistSignal, shouldCommitDist, MOVE_JUDGE_WINDOW_S, RETRO_WINDOW_S, type MovingState } from '@/lib/movingTime'
 import { useDashboard } from '@/lib/useDashboard'
-import RunProofScreen from '@/components/RunProofScreen'
-import { qualifiesGov500, gov500RunKey } from '@/lib/gov500'
+import { kmMarkerPositions, addKmMarkers } from '@/lib/kmMarkers'
+import { qualifiesGov500, gov500RunKey, markGov500Shot } from '@/lib/gov500'
 import { APP_VERSION } from '@/lib/version'
 import RaceFocusMode from './RaceFocusMode'
 import CheerShow from './CheerShow'
@@ -60,6 +60,11 @@ function fmtPace(s: number) {
   if (!s || !isFinite(s) || s <= 0) return '--:--'
   return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
 }
+// 揮汗有禮直接截圖需求（2026-09-06）：結果卡要顯示日期/開始～結束時間，比照 track/history/page.tsx 同款格式
+const WEEKDAY_ZH = ['日', '一', '二', '三', '四', '五', '六']
+const p2 = (n: number) => String(n).padStart(2, '0')
+function fmtDateBig(d: Date) { return `${d.getFullYear()}/${p2(d.getMonth() + 1)}/${p2(d.getDate())}（${WEEKDAY_ZH[d.getDay()]}）` }
+function fmtHm(d: Date) { return `${p2(d.getHours())}:${p2(d.getMinutes())}` }
 
 // 每公里鼓勵語內建 fallback（後台文案 API 失敗/池為空時使用）：{done}=已完成量、{remain}=剩餘量，見 lib/runGoal.ts
 const CHEER_FALLBACK: { before: string[]; after: string[] } = {
@@ -92,18 +97,19 @@ export default function TrackPage() {
   const [result, setResult] = useState<GpsRunResult | null>(null)
   const [stravaPriority, setStravaPriority] = useState(false) // 里程優先來源＝外部來源（Strava／手錶品牌）且已連接：GPS 結束不自動上傳，先讓使用者選
   const [holdSourceLabel, setHoldSourceLabel] = useState('') // stravaPriority 成立時，對應外部來源的顯示名稱（''=無暫緩）；供下方彈窗文案共用
+  const [realName, setRealName] = useState('') // 揮汗有禮直接截圖需求（2026-09-06）：結果卡要顯示真實姓名，見下方 profileApi.getMe 呼叫點
   const [confirmStravaHold, setConfirmStravaHold] = useState<null | { km: number; mins: number; paceS: number }>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [showActiveRaces, setShowActiveRaces] = useState(false) // 「進行中活動/賽事」面板開關
   const [showStartTip, setShowStartTip] = useState(false) // 從賽事詳情頁「前往挑戰」進入（?from=race）→ idle 時顯示一次性新手提醒，可點擊/X關閉
   const [uploading, setUploading] = useState(false)
-  // 運動部「揮汗有禮」截圖模式（gov500_entry，見 lib/gov500.ts 頂部註解說明 2026-09-06 規則變動）：
-  // 純顯示畫面（RunProofScreen），不產生任何圖片，開關只是一顆 boolean。
-  const [gov500ScreenOpen, setGov500ScreenOpen] = useState(false)
+  // 運動部「揮汗有禮」（gov500_entry，見 lib/gov500.ts 頂部註解說明 2026-09-06 規則變動）：
+  // 500.gov.tw 只收手機系統截圖鍵截出的 App 原始紀錄畫面——直接對這個結果畫面截圖即可，不再需要
+  // 另一個「截圖模式」全螢幕畫面（RunProofScreen，已刪除）。
   const [gov500Modal, setGov500Modal] = useState(false)  // 跑完達標自動彈出的活動視窗
   const gov500PromptedRef = useRef(false)                // 每趟只自動彈一次（關掉後不再糾纏）
   useEffect(() => {
-    if (!result) { gov500PromptedRef.current = false; setGov500Modal(false); setGov500ScreenOpen(false) } // 新一趟開始 → 全部重置
+    if (!result) { gov500PromptedRef.current = false; setGov500Modal(false) } // 新一趟開始 → 全部重置
   }, [result])
   const [checkpoints, setCheckpoints] = useState<ActiveCheckpoint[]>([])
   const [curPos, setCurPos] = useState<{ lat: number; lng: number; acc: number } | null>(null)
@@ -199,6 +205,28 @@ export default function TrackPage() {
       setGov500Modal(true)
     }
   }, [status, result, dash])
+  // 揮汗有禮直接截圖需求（2026-09-06）：跑完（status 變 done，無論是一般 finish()、暫緩後三選一、
+  // 或撿回「上次未上傳的跑步」uploadRecovered）一律從 pointsRef 全量重建一次號碼標記——commitSeg
+  // 即時加的標記只涵蓋「本次頁面全程在追蹤中」那條路徑，頁面重整後恢復的那趟不會有即時標記，
+  // 這裡補齊，順便也統一套用 addKmMarkers 的 >42 顆才每 5 顆取一顆那條 cap（即時單點加不到那個 cap）。
+  // 對抗式審查修正：kmMarkerPositions 本身只算「原始」haversine 距離，不吃 GPS 距離校正係數；
+  // commitSeg 即時標記是用校正後的 distRef（見該處 dSeg * calibKRef.current）判斷跨公里，若這裡重建
+  // 時仍用未校正距離，套用校正的那趟會整批標記位置對不上（也對不上同畫面顯示的校正後公里數）。
+  // 用 result.calib_factor（該趟後端真正入帳採用的係數，recovered 上傳也適用，比 calibKRef.current
+  // 更可靠——calibKRef 是「這次頁面 session 的快照」，recovered 那趟未必等於它）換算等效門檻：
+  // 校正後距離每滿 1000m ⟺ 原始距離每滿 1000/k m，直接把 everyM 除以 k 即可、不必改動純函式本身。
+  // 另加 mapReady 依賴：ensureMap 是 async，理論上跑完那一刻 kmMarkersRef.current 可能還沒建好
+  // （例如撿回「上次未上傳的跑步」時很快點擊上傳）；只靠 [status] 只會觸發一次、錯過就不會重試，
+  // 併入 mapReady 依賴後，一旦地圖稍後就緒，effect 會因依賴變動而重新執行、補畫標記。
+  useEffect(() => {
+    if (status !== 'done' || !mapReady) return
+    const Lg = (window as any).L // eslint-disable-line @typescript-eslint/no-explicit-any -- 地圖已由 ensureMap 建立過，window.L 必已載入
+    if (!Lg || !kmMarkersRef.current) return
+    kmMarkersRef.current.clearLayers()
+    const track: [number, number][][] = [pointsRef.current.map((p) => [p.lat, p.lng])]
+    const k = result && result.calib_factor > 0 ? result.calib_factor : 1
+    addKmMarkers(Lg, kmMarkersRef.current, kmMarkerPositions(track, 1000 / k), '#46E3A0')
+  }, [status, mapReady, result])
   // GPS 距離校正（見 internal/gpscalib，2026-08-30）：開跑當下對 dash 的係數拍一張快照、整趟固定
   // （重算只發生在跑完匯入之後，不會在跑步過程中變動）——commitSeg 用 calibKRef.current 乘上有效位移，
   // 其餘（超速判定/疑似搭車偵測/上傳軌跡點）一律用原始值，見下方 commitSeg 與 doUploadGps。
@@ -295,6 +323,9 @@ export default function TrackPage() {
   const markRef = useRef<any>(null)
   const markShownRef = useRef(false) // 目前位置綠點是否已「加到地圖上」——只在拿到真實 GPS 定位後才顯示（避免預設中心=信義區冒出假定位點）
   const cpLayerRef = useRef<any>(null) // 地圖上的打卡點圖層
+  // 揮汗有禮直接截圖需求（2026-09-06 owner 定案，見 lib/kmMarkers.ts）：軌跡上的 1/2/3…號碼標記
+  // 圖層——commitSeg 每跨一整公里即時加一個；重開跑/re-render 整批重建時用 clearLayers() 清空重畫。
+  const kmMarkersRef = useRef<any>(null)
   const warnTimer = useRef<any>(null)
   const errTimerRef = useRef<any>(null) // 「軌跡太短」等暫時訊息的自動淡出計時
   const statusRef = useRef(status)
@@ -337,6 +368,7 @@ export default function TrackPage() {
     lineRef.current = L.polyline([], { color: '#46E3A0', weight: 5 }).addTo(map)
     routeLineRef.current = L.polyline([], { color: '#FF8A3D', weight: 4, dashArray: '6 8', opacity: 0.9 }).addTo(map) // 建議路線（虛線橘）
     cpLayerRef.current = L.layerGroup().addTo(map)
+    kmMarkersRef.current = L.layerGroup().addTo(map) // 每公里號碼標記圖層（見 kmMarkersRef 宣告處）
     // 目前位置綠點：先建立但「不」加到地圖——在真正拿到 GPS 定位（onPos）時才 addTo，避免預設中心(信義區)冒出假定位點
     markRef.current = L.circleMarker([lat, lng], { radius: 7, color: '#fff', fillColor: '#46E3A0', fillOpacity: 1, weight: 2 })
     // 使用者手動拖曳/縮放地圖 → 暫停自動跟隨（否則每次 GPS 更新都會把畫面拉回目前位置，無法看前方路線）
@@ -443,6 +475,11 @@ export default function TrackPage() {
         // 整公里分段當下拍移動時間快照，供「移動分段配速」用（與 splitMarkRef 同步）
         movingSplitMarkRef.current.push(currentMovingS(movingStateRef.current, Date.now()))
         fireCheer(splitMarkRef.current.length, el) // 剛跨過的整公里數 + 同基準已耗秒數 → 每公里鼓勵語
+        // 揮汗有禮直接截圖需求（2026-09-06）：即時在地圖上加這個剛跨過整公里的號碼標記（見 lib/kmMarkers.ts）
+        if (kmMarkersRef.current) {
+          const Lg = (window as any).L // eslint-disable-line @typescript-eslint/no-explicit-any -- 走到這裡地圖必已由 ensureMap 建立過
+          if (Lg) addKmMarkers(Lg, kmMarkersRef.current, [{ km: splitMarkRef.current.length, lat: cp.lat, lng: cp.lng }], '#46E3A0')
+        }
       }
       pointsRef.current.push(cp)
       if (lineRef.current) lineRef.current.addLatLng([cp.lat, cp.lng])
@@ -561,6 +598,7 @@ export default function TrackPage() {
       const hold = isStravaHold || isTerraHold
       setStravaPriority(hold)
       setHoldSourceLabel(hold && pref ? sourceLabel(pref) : '')
+      setRealName(me?.profile?.real_name || '') // 揮汗有禮直接截圖需求（2026-09-06）：結果畫面要顯示真實姓名
     })
   }, [user?.id])
 
@@ -1098,6 +1136,7 @@ export default function TrackPage() {
     vehicleLikeRef.current = false; setVehicleWarn(false)
     followRef.current = true; setFollowing(true) // 每趟開始都恢復自動跟隨（即使 idle 時曾手動看地圖）
     if (lineRef.current) lineRef.current.setLatLngs([]) // 清掉上一趟的軌跡線（避免地圖殘留）
+    if (kmMarkersRef.current) kmMarkersRef.current.clearLayers() // 清掉上一趟的每公里號碼標記
     // 事件引擎重置
     distSamplesRef.current = []; activeEventRef.current = null; armIdRef.current = 0; lastEventEndRef.current = 0
     rollNextEvent(true) // 開始跑步：第一個事件用「前幾趟較短」的等待（若伺服器有帶）
@@ -1207,8 +1246,14 @@ export default function TrackPage() {
   useEffect(() => { if (confirmEnd && !activeEvent) setConfirmEnd(false) }, [confirmEnd, activeEvent])
 
   useEffect(() => { setMuted(isMuted()) }, [])
-  // 依狀態預設面板停靠：完成全展（看結果）、其餘半展（同時看得到地圖與數據/警告/打卡，可再上拉看更多或下拉看更多地圖）
-  useEffect(() => { sheet.setSnap(status === 'done' || woPhase === 'running' || woPhase === 'done' ? 'full' : 'half') }, [status, woPhase]) // eslint-disable-line react-hooks/exhaustive-deps
+  // 依狀態預設面板停靠：workout（自主訓練分段）進行中/完成需要看完整 HUD → 全展；其餘半展
+  // （同時看得到地圖與數據/警告/打卡，可再上拉看更多或下拉看更多地圖）。
+  // 對抗式審查修正：跑完（status==='done'）曾也強制全展——但 full 的下移量是 0（見
+  // useDraggableSheet.offsetFor 註解「full=不下移(蓋住背景)」），面板會整片蓋住下方 id="gps-map"
+  // 地圖（z-index 500 > 0），使剛畫好的每公里號碼標記完全被結果卡蓋住、無法跟地圖同框截圖——
+  // 直接違背這次「一張截圖同時看到地圖標記＋日期/距離/分段」的需求。改成跑完也停在 half，地圖與
+  // 結果卡各佔半屏可同時入鏡；使用者仍可自行上拉看更完整的分段/揮汗有禮卡片。
+  useEffect(() => { sheet.setSnap(woPhase === 'running' || woPhase === 'done' ? 'full' : 'half') }, [status, woPhase]) // eslint-disable-line react-hooks/exhaustive-deps
   // 面板高度變動 → 讓 Leaflet 重算尺寸（避免地圖灰塊/破圖）
   useEffect(() => { if (mapReady && mapRef.current) { try { mapRef.current.invalidateSize() } catch { /* ignore */ } } }, [mapReady, sheet.H])
   // 面板停靠點改變（半展/全展/收合）→ 可視地圖區高度變了 → 若正在跟隨且已定位，立即把定位點重新置中到新的可視中心
@@ -1293,8 +1338,9 @@ export default function TrackPage() {
         points: pts,
         client_version: APP_VERSION,
       }))
-      // 截圖模式（RunProofScreen）讀 startRef/pointsRef 當這趟的開始時間與終點：恢復上傳走的不是 start()，
-      // 這兩顆 ref 仍是初始值或上一趟殘留（審查抓到會顯示 1970 或別趟日期）——上傳成功時同步寫回。
+      // 結果卡（揮汗有禮直接截圖需求，見上方「結果」區塊）讀 startRef/pointsRef 當這趟的開始時間與
+      // 終點：恢復上傳走的不是 start()，這兩顆 ref 仍是初始值或上一趟殘留（審查抓到會顯示 1970 或
+      // 別趟日期）——上傳成功時同步寫回，順便也讓 status→'done' 的號碼標記重建效果拿到正確軌跡。
       startRef.current = recover.start; pointsRef.current = pts
       setResult(result); setStatus('done'); localStorage.removeItem(LS_KEY); setRecover(null)
       revalidateDash() // 同 doUploadGps：見該處對抗式審查修正註解
@@ -2114,42 +2160,36 @@ export default function TrackPage() {
             {/* warn / err 已改為浮在面板上方的常駐提示（見地圖區），此處不再重複顯示 */}
 
         {/* 運動部「揮汗有禮」常駐入口（在打卡點任務上方）：跑者一進頁就知道這裡能做活動。
-            2026-09-06 規則變動（見 lib/gov500.ts 頂部說明）：500.gov.tw 只收手機截圖鍵截出的 App
-            原始畫面，不再是這裡產生的圖——改開「截圖模式」全螢幕畫面（RunProofScreen）讓使用者自己截。
-            未跑完（本趟無結果）→ 主按鈕兩行導向歷史頁挑既有紀錄；剛跑完且達標 → 開啟截圖模式；
-            剛跑完但未達標 → 顯示還差多少（見 gov500Qual，單次 5 公里或 30 分鐘擇一）。 */}
+            2026-09-06 規則變動（owner 定案，見 lib/gov500.ts 頂部說明）：500.gov.tw 只收手機系統
+            截圖鍵截出的 App 原始紀錄畫面——達標時直接對下方「結果」卡截圖即可，不再需要另開一個
+            「截圖模式」畫面。未跑完（本趟無結果）→ 主按鈕兩行導向歷史頁挑既有紀錄；剛跑完且達標 →
+            綠字提示＋前往上傳鈕；剛跑完但未達標 → 顯示還差多少（見 gov500Qual，單次 5 公里或 30
+            分鐘擇一）。 */}
         {dash?.gov500_entry === 'shown' && (
           <div style={{ marginTop: 16, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
             <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>運動部「揮汗有禮・全民動起來」活動</div>
             <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
-              單次跑滿 5 公里或 30 分鐘即可完成本週任務：開啟截圖模式後，用手機截圖鍵擷取整個畫面，再到 500.gov.tw 上傳。
+              單次跑滿 5 公里或 30 分鐘即可完成本週任務。達標後直接用手機截圖鍵擷取這個畫面（整個畫面、不要裁切，需看得到日期與達標數值），再到 500.gov.tw 上傳。
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {status === 'done' && result ? (
-                gov500Qual?.ok ? (
-                  <button onClick={() => { setGov500Modal(false); setGov500ScreenOpen(true) }}
-                    style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                    開啟截圖模式
+            {status === 'done' && result ? (
+              gov500Qual?.ok ? (
+                <>
+                  <div style={{ fontSize: 12.5, color: 'var(--fug)', fontWeight: 700, marginBottom: 10 }}>✓ 本趟已達標，直接截圖此畫面即可</div>
+                  <button onClick={() => { markGov500Shot(gov500RunKey(new Date(startRef.current).toISOString())); window.open('https://500.gov.tw/registrant/', '_blank', 'noopener') }}
+                    style={{ width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
+                    前往運動部活動網頁，上傳截圖
                   </button>
-                ) : (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', fontSize: 12, color: 'var(--tx-faint)', padding: '0 4px' }}>
-                    {gov500Qual?.shortfallText}
-                  </div>
-                )
+                </>
               ) : (
-                // 兩行結構與右側「上傳證明圖／500.gov.tw」同款（主行在上、小字在下），左右對齊
-                <a href="/track/history"
-                  style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, textAlign: 'center', textDecoration: 'none' }}>
-                  <span style={{ display: 'block', lineHeight: 1.35 }}>開啟截圖模式</span>
-                  <span style={{ display: 'block', fontSize: 11, opacity: 0.8, lineHeight: 1.35 }}>前往歷史紀錄</span>
-                </a>
-              )}
-              <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
-                style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                <span style={{ display: 'block', lineHeight: 1.35 }}>上傳證明圖</span>
-                <span style={{ display: 'block', fontSize: 11, opacity: 0.8, lineHeight: 1.35 }}>500.gov.tw</span>
-              </button>
-            </div>
+                <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>{gov500Qual?.shortfallText}</div>
+              )
+            ) : (
+              <a href="/track/history"
+                style={{ display: 'block', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, textAlign: 'center', textDecoration: 'none' }}>
+                <span style={{ display: 'block', lineHeight: 1.35 }}>前往歷史紀錄</span>
+                <span style={{ display: 'block', fontSize: 11, opacity: 0.8, lineHeight: 1.35 }}>挑一筆已跑過的紀錄截圖</span>
+              </a>
+            )}
           </div>
         )}
 
@@ -2240,30 +2280,23 @@ export default function TrackPage() {
         )}
 
         {/* 政府「揮汗有禮」活動——跑後總結卡：先只給超管看（gov500_entry，見系統設定
-            gov500_entry_state），之後備妥後由系統設定開放給一般玩家。純前端功能，跑完才有 result 可用。 */}
+            gov500_entry_state），之後備妥後由系統設定開放給一般玩家。純前端功能，跑完才有 result 可用。
+            2026-09-06 owner 定案：直接截這張卡＋下方「結果」卡即可，不再開額外的「截圖模式」畫面。 */}
         {status === 'done' && result && dash?.gov500_entry === 'shown' && (
           <div style={{ marginTop: 16, background: 'var(--bg-2)', borderRadius: 'var(--radius-md, 10px)', padding: 14 }}>
             <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 4 }}>運動部「揮汗有禮・全民動起來」活動</div>
-            <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10, lineHeight: 1.5 }}>
-              單次跑滿 5 公里或 30 分鐘即可完成本週任務：開啟截圖模式後，用手機截圖鍵擷取整個畫面，再到 500.gov.tw 上傳。
+            <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 8, lineHeight: 1.5 }}>
+              單次跑滿 5 公里或 30 分鐘即可完成本週任務。達標後直接用手機截圖鍵擷取這個畫面（整個畫面、不要裁切，需看得到日期與達標數值），再到 500.gov.tw 上傳。
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {gov500Qual?.ok ? (
-                <button onClick={() => setGov500ScreenOpen(true)}
-                  style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                  開啟截圖模式
-                </button>
-              ) : (
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', fontSize: 12, color: 'var(--tx-faint)', padding: '0 4px' }}>
-                  {gov500Qual?.shortfallText}
-                </div>
-              )}
-              <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
-                style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                <span style={{ display: 'block', lineHeight: 1.35 }}>上傳證明圖</span>
-                <span style={{ display: 'block', fontSize: 11, opacity: 0.8, lineHeight: 1.35 }}>500.gov.tw</span>
-              </button>
-            </div>
+            {gov500Qual?.ok ? (
+              <div style={{ fontSize: 12.5, color: 'var(--fug)', fontWeight: 700, marginBottom: 10 }}>✓ 本趟已達標，直接截圖此畫面即可</div>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 10 }}>{gov500Qual?.shortfallText}</div>
+            )}
+            <button onClick={() => { markGov500Shot(gov500RunKey(new Date(startRef.current).toISOString())); window.open('https://500.gov.tw/registrant/', '_blank', 'noopener') }}
+              style={{ width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
+              前往運動部活動網頁，上傳截圖
+            </button>
             <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.5 }}>
               小提示：政府網站第一次登入時，讓 Safari「儲存密碼」——之後回訪只要 Face ID 自動填入，免重打帳密。
             </div>
@@ -2272,61 +2305,38 @@ export default function TrackPage() {
 
         {/* 跑完達標自動彈出的「揮汗有禮」視窗：內容與上方卡片相同（只在達標時才會被彈出，見上方
             自動彈窗 effect，故這裡不再重複判斷 gov500Qual.ok）。手機全螢幕路由（PhoneFrame），
-            fixed 覆蓋可視區即可。 */}
+            fixed 覆蓋可視區即可。
+            對抗式審查修正：這個彈窗本身蓋住整個畫面（含下方真正要截的日期/距離/地圖標記），若照文案
+            字面「直接截圖這個畫面」去做，使用者截到的只會是這個沒有任何跑步數據的小對話框——彈窗
+            必須先關閉、露出下面真正的結果卡＋地圖，截圖才有意義。因此主按鈕除了記錄/開新分頁前往
+            500.gov.tw 外，也一併關閉本彈窗（同一頁下方仍有一份一模一樣的「揮汗有禮」卡片＋按鈕，
+            關閉後使用者可以先截圖、再切去已經開好的 500.gov.tw 分頁上傳）。 */}
         {gov500Modal && status === 'done' && result && dash?.gov500_entry === 'shown' && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1600, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
             <div style={{ width: '100%', maxWidth: 340, background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 14, padding: 18 }}>
               <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>運動部「揮汗有禮・全民動起來」活動</div>
               <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', lineHeight: 1.6, marginBottom: 12 }}>
-                本趟已達成單次 5 公里或 30 分鐘標準！開啟截圖模式，用手機截圖鍵擷取整個畫面，再到 500.gov.tw 上傳完成本週任務。
+                本趟已達成單次 5 公里或 30 分鐘標準！點下方按鈕後本視窗會自動關閉，回到完整的跑步紀錄畫面（含日期/距離/分段與地圖公里標記）——直接用手機截圖鍵擷取整個畫面、不要裁切，再切去已開啟的 500.gov.tw 分頁上傳。
               </div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                <button onClick={() => { setGov500Modal(false); setGov500ScreenOpen(true) }}
-                  style={{ flex: 1, background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                  開啟截圖模式
-                </button>
-                <button onClick={() => window.open('https://500.gov.tw/registrant/', '_blank', 'noopener')}
-                  style={{ flex: 1, background: 'var(--bg-2)', color: 'var(--tx)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer' }}>
-                  <span style={{ display: 'block', lineHeight: 1.35 }}>上傳證明圖</span>
-                  <span style={{ display: 'block', fontSize: 11, opacity: 0.8, lineHeight: 1.35 }}>500.gov.tw</span>
-                </button>
-              </div>
+              <button onClick={() => { markGov500Shot(gov500RunKey(new Date(startRef.current).toISOString())); window.open('https://500.gov.tw/registrant/', '_blank', 'noopener'); setGov500Modal(false) }}
+                style={{ width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer', marginBottom: 8 }}>
+                前往運動部活動網頁，上傳截圖
+              </button>
               <button onClick={() => setGov500Modal(false)}
                 style={{ width: '100%', background: 'var(--bg-2)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '9px', fontSize: 13, cursor: 'pointer' }}>
-                稍後再說
+                關閉
               </button>
             </div>
           </div>
         )}
 
-        {/* 截圖模式全螢幕畫面（RunProofScreen，見 lib/gov500.ts 頂部說明）：使用者按下任一「開啟截圖
-            模式」按鈕後開啟，讓使用者自己用手機系統截圖鍵擷取整個畫面上傳 500.gov.tw。startedAt 用
-            startRef（開跑時間戳）、endedAt 優先取本趟最後一個 GPS 點的時間（比 result.duration_s 更
-            精確），沒有點時（理論上不會發生，pts.length<2 早在 finish() 就會擋掉上傳）才退回 null 讓
-            元件內部用 durationS 頂上。track 這裡整趟只當「一段」給——訊號中斷/跳點的排除斷點是後端
-            重算軌跡時才產生（見 lib/polyline.ts），/track 當下只有原始點，沒有分段資訊，可接受。 */}
-        {gov500ScreenOpen && status === 'done' && result && (
-          <RunProofScreen
-            startedAt={new Date(startRef.current)}
-            endedAt={pointsRef.current.length ? new Date(pointsRef.current[pointsRef.current.length - 1].t) : null}
-            durationS={result.duration_s}
-            movingS={movingS}
-            distanceKm={result.distance_km}
-            avgPaceS={result.avg_pace_s > 0 ? result.avg_pace_s : null}
-            displayName={user?.name || user?.handle || 'DOR 跑者'}
-            runKey={gov500RunKey(new Date(startRef.current).toISOString())}
-            track={[pointsRef.current.map((p) => [p.lat, p.lng])]}
-            onClose={() => setGov500ScreenOpen(false)}
-          />
-        )}
-
         {/* 分段 */}
         {splits.length > 0 && (
           <div style={{ marginTop: 16 }}>
-            <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 6 }}>每公里分段</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginBottom: 5 }}>每公里分段</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {splits.map((s, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-2)', borderRadius: 8, padding: '7px 12px', fontSize: 13 }}>
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', background: 'var(--bg-2)', borderRadius: 8, padding: '5px 10px', fontSize: 12.5 }}>
                   <span style={{ color: 'var(--tx-dim)', whiteSpace: 'nowrap' }}>第{i + 1}km</span>
                   <span style={{ fontWeight: 700 }}>{fmtPace(s)} /km</span>
                 </div>
@@ -2335,9 +2345,17 @@ export default function TrackPage() {
           </div>
         )}
 
-        {/* 結果 */}
+        {/* 結果：揮汗有禮直接截圖需求（2026-09-06）在最上面補日期/開始～結束時間、跑者姓名——
+            這張卡片本身現在就是使用者要截圖上傳的「原始紀錄」畫面之一。 */}
         {status === 'done' && result && (
           <div style={{ marginTop: 16, background: 'var(--bg-1)', border: `1px solid ${result.flagged ? 'rgba(255,90,90,.4)' : 'var(--line-2)'}`, borderRadius: 'var(--radius-lg, 12px)', padding: 14, boxShadow: 'var(--card-shadow, none)', wordBreak: 'break-word' }}>
+            <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginBottom: 2 }}>
+              {fmtDateBig(new Date(startRef.current))}　開始 {fmtHm(new Date(startRef.current))} ～ 結束 {fmtHm(pointsRef.current.length ? new Date(pointsRef.current[pointsRef.current.length - 1].t) : new Date(startRef.current + result.duration_s * 1000))}
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', marginBottom: 8 }}>
+              跑者　{realName || user?.name || user?.handle || 'DOR 跑者'}
+              {!realName && <span style={{ color: 'var(--tx-faint)', fontSize: 11 }}>（請至個人資料填寫真實姓名）</span>}
+            </div>
             <div style={{ fontWeight: 800, marginBottom: 8 }}>
               {result.too_short ? 'ℹ️ 移動距離不足，無法計算' : result.flagged ? '⚠️ 數據異常，已標記待審' : '✓ 已記錄'}
             </div>

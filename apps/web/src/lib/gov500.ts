@@ -1,18 +1,21 @@
-// 運動部「揮汗有禮・全民動起來」500.gov.tw 活動：截圖模式（screenshot mode）純函式。
+// 運動部「揮汗有禮・全民動起來」500.gov.tw 活動：純函式（達標判定＋本週已截圖提醒）。
 //
 // 2026-09-06 規則變動（owner 定案）：500.gov.tw 只收「手機截圖鍵」截出的運動 App 原始紀錄畫面
 // （未裁切、看得到日期與達標數值），四種情形一律退件——
 //   ① 裁切／拼貼過的圖片　② 非 App 畫面的照片（例如翻拍手錶螢幕）
 //   ③ 文字編輯或另外產生的圖　④ 手動輸入的數據
-// 我們原本的 canvas 產「證明圖」（lib/runProof.ts，已刪除）正是③——不管畫得多像，本質仍是一張
-// 「生成圖」，必被退件。全面改用 components/RunProofScreen.tsx 這個「原始紀錄」全螢幕畫面，讓使用者
-// 自己用手機系統截圖鍵擷取——那才是①②③④都不成立的合格證明。
+// 我們原本的 canvas 產「證明圖」（lib/runProof.ts，已刪除）正是③；後來改用一個獨立的「截圖模式」
+// 全螢幕畫面（components/RunProofScreen.tsx）也已刪除——那其實是多此一舉：一般的跑步紀錄畫面
+// （/track 跑完的結果卡、/track/history 的歷史紀錄詳情）本身已經是①②③④都不成立的「App 原始
+// 畫面」，只要把日期、開始/結束時間、真實姓名、距離、運動時間、每公里分段配速、GPS 軌跡上的
+// 1/2/3…公里號碼標記（見 lib/kmMarkers.ts）都放進第一畫面，使用者直接對那個畫面按手機系統截圖鍵
+// 即可，不需要另開一個專門畫面產生「看起來像」原始紀錄的東西。
 //
-// 本檔只放「無 React／無 DOM」的純函式，元件只負責渲染：達標判定（單次 5 公里或 30 分鐘擇一即可，
-// owner 2026-09-06 定案）與「本週已截圖」提醒標記（純前端 localStorage——沒有伺服器可信來源，
-// 純粹提醒使用者「這筆這週截過了」，不是任何審核依據，也不代表真的已上傳）。
-// 可用 apps/web/scripts（或本次驗證用的 scratchpad gov500_check.mjs）以 Node 原生 TS type-stripping
-// 直接 import 這個檔驗證，比照 lib/runMeet.ts + scripts/verify-run-meet.mjs 的既有慣例。
+// 本檔只放「無 React／無 DOM」的純函式，畫面（track/page.tsx、track/history/page.tsx）只負責渲染：
+// 達標判定（單次 5 公里或 30 分鐘擇一即可，owner 2026-09-06 定案）與「本週已截圖」提醒標記（純前端
+// localStorage——沒有伺服器可信來源，純粹提醒使用者「這筆這週截過了」，不是任何審核依據，也不代表
+// 真的已上傳）。可用 apps/web/scripts 以 Node 原生 TS type-stripping 直接 import 這個檔驗證，比照
+// lib/runMeet.ts + scripts/verify-run-meet.mjs 的既有慣例。
 
 export const GOV500_DISTANCE_KM = 5
 export const GOV500_TIME_S = 30 * 60 // 30 分鐘
@@ -67,7 +70,7 @@ function readShots(): ShotsMap {
   }
 }
 
-/** 使用者按下「我截好了 → 前往上傳」時呼叫：記下這個 runKey 這次被標記的時間。 */
+/** 使用者按下「前往運動部活動網頁，上傳截圖」時呼叫：記下這個 runKey 這次被標記的時間。 */
 export function markGov500Shot(runKey: string, at: Date = new Date()): void {
   if (!runKey || typeof localStorage === 'undefined') return
   try {
