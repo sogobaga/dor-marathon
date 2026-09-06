@@ -2,13 +2,19 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useUser, getUserToken, clearUserSession, getSessionEpoch } from '@/lib/userAuth'
+import { useUser, getUserToken, clearUserSession, getSessionEpoch, refreshUserToken, userTokenExpiresInSec } from '@/lib/userAuth'
 import { createSiteSocket } from '@/lib/api'
 import { useSiteRealtimeStore, DATA_TOPICS, type DataTopic } from '@/lib/siteRealtimeStore'
 import { overlayMount } from '@/lib/overlayMount'
 
 const INITIAL_BACKOFF_MS = 1000
 const MAX_BACKOFF_MS = 30000
+// 連續握手失敗（從未 onopen）達此次數後改用長退避：多半是 token 已失效（後端 /ws/site 回 401 不 upgrade），
+// 瀏覽器只給 onclose 1006、分不出 401 或斷網——2026-09-05 日報「登入失敗異常 IP 1663 次」就是一台裝置每 30 秒重連一次
+// 打出來的。策略：連線前 token 快過期先續期；握手連續失敗 2 次就試著續期，續期明確失敗（session 已死）→ 登出停止；
+// 之後退避拉長到 5 分鐘（推播不是關鍵功能，慢慢重連就好）。
+const FAIL_STREAK_REFRESH = 2
+const LONG_BACKOFF_MS = 5 * 60_000
 
 interface DataUpdatedMsg {
   type: string
@@ -34,6 +40,7 @@ export default function SiteRealtime() {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const backoffRef = useRef(INITIAL_BACKOFF_MS)
+  const failStreakRef = useRef(0) // 連續「從未 onopen 就 onclose」的次數（握手失敗＝多半 401）
   const closingRef = useRef(false) // true = 主動關閉（登出/卸載），不再重連
   const userIdRef = useRef<string | null>(userId)
   userIdRef.current = userId
@@ -51,16 +58,29 @@ export default function SiteRealtime() {
       }
     }
 
-    const connect = () => {
+    const connect = async () => {
       if (closingRef.current) return
-      const token = getUserToken()
+      let token = getUserToken()
       if (!token) return
       clearReconnectTimer()
+      // token 已過期／30 秒內過期 → 先續期再連（避免用一把必定 401 的 token 去握手）
+      const left = userTokenExpiresInSec(token)
+      if (left != null && left < 30) {
+        try {
+          const fresh = await refreshUserToken()
+          if (!fresh) { clearUserSession(); return } // refresh 明確失敗＝session 已死 → 登出、不再重連
+          token = fresh
+        } catch { /* 暫時性錯誤：照用舊 token 試一次，失敗走下面的退避 */ }
+        if (closingRef.current) return
+      }
 
+      let opened = false
       const ws = createSiteSocket(token)
       wsRef.current = ws
 
       ws.onopen = () => {
+        opened = true
+        failStreakRef.current = 0
         backoffRef.current = INITIAL_BACKOFF_MS // 連上後重置退避
       }
       ws.onmessage = (ev) => {
@@ -96,8 +116,23 @@ export default function SiteRealtime() {
       ws.onclose = () => {
         if (wsRef.current === ws) wsRef.current = null
         if (closingRef.current) return
+        if (!opened) failStreakRef.current += 1
+        const streak = failStreakRef.current
+        if (streak > 0 && streak % FAIL_STREAK_REFRESH === 0) {
+          // 連續握手失敗：最可能是 token 失效（後端 401 不 upgrade）。試著續期，明確失敗就登出停止。
+          reconnectTimerRef.current = setTimeout(async () => {
+            reconnectTimerRef.current = null
+            try {
+              const fresh = await refreshUserToken()
+              if (!fresh) { clearUserSession(); return }
+            } catch { /* 暫時性錯誤：繼續退避重連 */ }
+            if (!closingRef.current) connect()
+          }, backoffRef.current)
+          backoffRef.current = LONG_BACKOFF_MS
+          return
+        }
         const delay = backoffRef.current
-        backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF_MS)
+        backoffRef.current = Math.min(backoffRef.current * 2, streak >= FAIL_STREAK_REFRESH ? LONG_BACKOFF_MS : MAX_BACKOFF_MS)
         reconnectTimerRef.current = setTimeout(connect, delay)
       }
       // onerror 不重複處理：瀏覽器會接著觸發 onclose，重連邏輯統一交給 onclose

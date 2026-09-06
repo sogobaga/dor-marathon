@@ -102,6 +102,17 @@ setAuthRecovery(async (failedToken: string) => {
   }
 })
 
+// 解出會員 access token（JWT）的 exp；判讀不了回 null。給 WebSocket 連線前判斷「這把 token 是不是已經過期／快過期」
+// （WS 握手失敗瀏覽器不會告訴前端是 401 還是斷網，只能事前自己看 exp）。
+export function userTokenExpiresInSec(token: string): number | null {
+  try {
+    let b = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    b += '='.repeat((4 - (b.length % 4)) % 4)
+    const payload = JSON.parse(atob(b))
+    return typeof payload.exp === 'number' ? Math.round(payload.exp - Date.now() / 1000) : null
+  } catch { return null }
+}
+
 // 包裝需登入的 API 呼叫：token 過期（401）時自動 refresh 後重試一次。
 // refresh 也失敗則清除 session 並丟出 SessionExpiredError。
 export class SessionExpiredError extends Error {
