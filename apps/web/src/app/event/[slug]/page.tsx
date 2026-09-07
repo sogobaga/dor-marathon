@@ -39,7 +39,8 @@ const getRaceMeta = cache(async (slug: string): Promise<PublicRaceMeta | null> =
   }
 })
 
-export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
+export async function generateMetadata(props: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const params = await props.params;
   const race = await getRaceMeta(params.slug)
   if (!race) {
     return { title: '活動｜DOR' }
@@ -76,6 +77,7 @@ export async function generateMetadata({ params }: { params: { slug: string } })
 // 對「測試(testing)」控制狀態的活動，後端會因 userID/email 為空而回 404 → 連白名單使用者都被誤擋。
 // 因此一律渲染 EventLanding，交給帶著 token 的前端（PhoneShell openEventBrochure）判定可見性；
 // 公開活動的 OG 由 generateMetadata 盡力抓取，測試/查無者退回通用標題（可接受）。
-export default function EventPage({ params }: { params: { slug: string } }) {
+export default async function EventPage(props: { params: Promise<{ slug: string }> }) {
+  const params = await props.params;
   return <EventLanding slug={params.slug} />
 }

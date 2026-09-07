@@ -29,7 +29,8 @@ const getShop = cache(async (id: string): Promise<PublicShop | null> => {
   }
 })
 
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
+export async function generateMetadata(props: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const params = await props.params;
   const shop = await getShop(params.id)
   if (!shop) {
     return { title: '合作商家｜DOR' }
@@ -59,7 +60,8 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
   }
 }
 
-export default async function ShopPage({ params }: { params: { id: string } }) {
+export default async function ShopPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const shop = await getShop(params.id)
 
   // 查無此商家（不存在／已下架）→ 簡單置中訊息頁，不依賴其他元件，避免 SSR 出錯。

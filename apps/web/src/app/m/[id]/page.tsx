@@ -66,7 +66,8 @@ function absoluteUrl(u: string | null | undefined, site: string): string | null 
   return u.startsWith('http') ? u : site + u
 }
 
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
+export async function generateMetadata(props: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const params = await props.params;
   const share = await getShare(params.id)
   const site = siteUrl()
 
@@ -107,7 +108,8 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
   }
 }
 
-export default async function RunMeetSharePage({ params }: { params: { id: string } }) {
+export default async function RunMeetSharePage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const share = await getShare(params.id)
   const openHref = `/?runmeet=${encodeURIComponent(params.id)}` // PhoneShell 既有 ?runmeet= 深連結處理（保留不動）
   const listHref = '/?runmeet=list'
