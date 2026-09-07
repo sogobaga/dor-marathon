@@ -137,13 +137,24 @@ type PaidTx struct {
 	PaidAt          *time.Time
 }
 
-// GetPaidTxForOrder 取該訂單最近一筆已付款交易
+// GetPaidTxForOrder 取該訂單最近一筆已付款交易。
+//
+// 也接受 status='paid_superseded'（M4 修補，見 payment.go MarkSupersededTxPaid）——但僅限該訂單
+// 「沒有其他 paid 交易」時才會選到：舊付款頁事後才付款成功的案例，訂單唯一一筆記到錢的交易就是那筆
+// paid_superseded，若仍只認 status='paid' 會永遠找不到憑證、擋死退款流程（ErrRefundNoPaidTx）。
+// 一旦訂單同時有 paid 與 paid_superseded（代表真的被兩邊都扣款的「雙重收款」），WHERE 子句的
+// NOT EXISTS 會讓 paid_superseded 那筆整個被排除，仍固定選到 paid 那筆走既有退款流程——多出來的
+// paid_superseded 那筆屬於需要人工核對的雙重收款，留給 Notify 當下已發出的 payment_superseded_paid
+// 告警處理，不在這裡自動退款。
 func (r *Repository) GetPaidTxForOrder(ctx context.Context, orderID string) (*PaidTx, error) {
 	t := &PaidTx{}
 	err := r.db.QueryRow(ctx, `
 		SELECT id::text, merchant_trade_no, COALESCE(ecpay_trade_no,''), ecpay_env, COALESCE(payment_type,''), amount_cents, paid_at
 		FROM payment_transactions
-		WHERE order_id=$1 AND status='paid'
+		WHERE order_id=$1
+		  AND (status='paid'
+		       OR (status='paid_superseded'
+		           AND NOT EXISTS (SELECT 1 FROM payment_transactions p2 WHERE p2.order_id=$1 AND p2.status='paid')))
 		ORDER BY paid_at DESC NULLS LAST LIMIT 1`, orderID).
 		Scan(&t.ID, &t.MerchantTradeNo, &t.EcpayTradeNo, &t.EcpayEnv, &t.PaymentType, &t.AmountCents, &t.PaidAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -261,9 +272,13 @@ func (r *Repository) ListRefundsByOrder(ctx context.Context, orderID string) ([]
 	return out, rows.Err()
 }
 
-// MarkTxRefunded 標記交易已退款（僅在目前是 paid 時生效）
+// MarkTxRefunded 標記交易已退款（僅在目前是 paid 或 paid_superseded 時生效）。
+// 補上 paid_superseded 是 GetPaidTxForOrder 上面那段擴充的必要配套：一旦退款來源是 paid_superseded
+// 交易（舊付款頁事後付款成功的案例），退款成功後這裡若仍只認 status='paid' 會直接 CAS 不到、
+// 0 rows affected 且不報錯——這筆交易就會永遠卡在 paid_superseded，看起來像沒退成，之後對帳/
+// 防重複退款都會被這筆錯誤狀態誤導。
 func (r *Repository) MarkTxRefunded(ctx context.Context, txID string) error {
-	_, err := r.db.Exec(ctx, `UPDATE payment_transactions SET status='refunded' WHERE id=$1 AND status='paid'`, txID)
+	_, err := r.db.Exec(ctx, `UPDATE payment_transactions SET status='refunded' WHERE id=$1 AND status IN ('paid','paid_superseded')`, txID)
 	return err
 }
 

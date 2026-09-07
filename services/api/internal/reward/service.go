@@ -39,11 +39,29 @@ func (s *Service) SpinQuota(ctx context.Context, userID, raceID string) (remaini
 }
 
 // Spin 執行抽獎
+//
+// 併發修補（SEC M5）：原本「查剩餘次數 → 判斷 → 插入抽獎紀錄」是三個各自 autocommit 的步驟，
+// 中間沒有鎖——同一使用者兩個併發請求（雙擊/兩個分頁）可能都在「剩餘 1 次」時通過檢查，各自插入
+// 一筆 wheel_spins，實際多發一次抽獎機會/獎項。改成用 BeginSpinTx 開一筆交易並立刻對
+// (userID, raceID) 取 pg_advisory_xact_lock，讓第二個請求必須等第一個交易 COMMIT 後才能繼續，
+// 此時它重新查到的剩餘次數已經反映第一個請求剛插入的那筆，才不會被多算（比照
+// internal/race/reward_draw.go DrawRaceRewardWinners 同一模式）。
 func (s *Service) Spin(ctx context.Context, userID, raceID string) (*SpinResult, error) {
-	remaining, _, err := s.SpinQuota(ctx, userID, raceID)
+	tx, err := s.repo.BeginSpinTx(ctx, userID, raceID)
 	if err != nil {
 		return nil, err
 	}
+	defer tx.Rollback(ctx) // Commit 後為 no-op
+
+	completedMissions, err := s.repo.CountCompletedMissionsTx(ctx, tx, userID, raceID)
+	if err != nil {
+		return nil, err
+	}
+	usedSpins, err := s.repo.CountSpinsAllTx(ctx, tx, userID, raceID)
+	if err != nil {
+		return nil, err
+	}
+	remaining := completedMissions - usedSpins
 	if remaining <= 0 {
 		return nil, ErrNoSpinsLeft
 	}
@@ -51,8 +69,12 @@ func (s *Service) Spin(ctx context.Context, userID, raceID string) (*SpinResult,
 	// 加權隨機抽獎
 	item := weightedRandom(defaultWheelPool)
 
-	// 記錄抽獎結果
-	if err := s.repo.RecordSpin(ctx, userID, raceID, item.ID, item.Kind, item.Amount); err != nil {
+	// 記錄抽獎結果（同一交易內，advisory lock 保護下不會與其他併發請求交錯）
+	if err := s.repo.RecordSpinTx(ctx, tx, userID, raceID, item.ID, item.Kind, item.Amount); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 

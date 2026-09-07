@@ -1,9 +1,13 @@
 package activity
 
 import (
+	"context"
+	"errors"
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // syntheticTrack 產生一段固定往正東移動、平均配速 6:00/km 的軌跡（10 個點，每點間隔 60 秒、
@@ -271,5 +275,65 @@ func TestPolylineSegmentSep_OutsideAlphabet(t *testing.T) {
 	c := polylineSegmentSep[0]
 	if c >= 63 && c <= 126 {
 		t.Fatalf("separator %q (ASCII %d) is inside the polyline alphabet 63..126", polylineSegmentSep, c)
+	}
+}
+
+// --- H4：enqueueActivityEvent / 補償刪除路徑 ---
+//
+// SaveGPSRun 本身無法在不牽動真正 Postgres（Repository.db 是具體 *pgxpool.Pool，非介面）的情況下
+// 做完整單元測試，所以這裡把「XAdd 失敗」這件事單獨抽成 enqueueActivityEvent 並注入假的
+// activityStreamXAdder 來驗證：XAdd 出錯時錯誤會原封不動往上傳（SaveGPSRun 依此觸發 log+alert+
+// 補償刪除 gps_runs+回 ErrGPSEnqueueFailed，見 gps.go），成功時回 nil、且送出的 stream/payload
+// 正確。
+
+// fakeXAdder 是 activityStreamXAdder 的測試替身：可設定固定回傳的 err，並記錄最後一次呼叫的
+// stream 名稱與呼叫次數，供斷言用。
+type fakeXAdder struct {
+	err        error
+	calls      int
+	lastStream string
+}
+
+func (f *fakeXAdder) XAdd(ctx context.Context, a *redis.XAddArgs) *redis.StringCmd {
+	f.calls++
+	f.lastStream = a.Stream
+	cmd := redis.NewStringCmd(ctx)
+	cmd.SetErr(f.err) // err 為 nil 時等同成功（Err() 回 nil）
+	return cmd
+}
+
+func TestEnqueueActivityEvent_Success(t *testing.T) {
+	fake := &fakeXAdder{}
+	evt := ActivityEvent{UserID: "u1", DistanceKm: 5.2, DurationS: 1800, AvgPaceS: 346}
+
+	if err := enqueueActivityEvent(context.Background(), fake, evt); err != nil {
+		t.Fatalf("expected nil error on successful XAdd, got %v", err)
+	}
+	if fake.calls != 1 {
+		t.Errorf("expected exactly 1 XAdd call, got %d", fake.calls)
+	}
+	if fake.lastStream != streamKey {
+		t.Errorf("stream = %q, want %q", fake.lastStream, streamKey)
+	}
+}
+
+// TestEnqueueActivityEvent_XAddErrorPropagates 是補償刪除路徑的前提測試：enqueueActivityEvent
+// 必須把 Redis 的錯誤原封不動往上送，SaveGPSRun 才能靠這個訊號觸發 notify.Alert + DeleteGPSRun
+// 回滾 + 回 ErrGPSEnqueueFailed（見 gps.go SaveGPSRun 對 enqueueActivityEvent 的呼叫）——如果這裡
+// 錯誤被吞掉，H4 要修的「XAdd 失敗卻回成功」問題就會原地重現。
+func TestEnqueueActivityEvent_XAddErrorPropagates(t *testing.T) {
+	wantErr := errors.New("redis: connection refused")
+	fake := &fakeXAdder{err: wantErr}
+	evt := ActivityEvent{UserID: "u1", DistanceKm: 5.2, DurationS: 1800, AvgPaceS: 346}
+
+	err := enqueueActivityEvent(context.Background(), fake, evt)
+	if err == nil {
+		t.Fatal("expected error to propagate from XAdd, got nil")
+	}
+	if !errors.Is(err, wantErr) {
+		t.Errorf("error = %v, want wrapping/equal to %v", err, wantErr)
+	}
+	if fake.calls != 1 {
+		t.Errorf("expected exactly 1 XAdd call, got %d", fake.calls)
 	}
 }

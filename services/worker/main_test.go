@@ -107,3 +107,65 @@ func TestBenignReasonsSQLIn_EmptyMap(t *testing.T) {
 		t.Fatalf("empty map should produce empty string, got %q", got)
 	}
 }
+
+// --- H5（2026-09-07 audit）：readAndProcessRound 只 XReadGroup '>' + XAck，處理失敗的訊息永遠
+// 卡在 PEL、從不重試，stream 也從未 XTrim。下面兩個測試涵蓋新增的「死信判斷」與「payload 截斷」
+// 純函式邏輯——reclaimStaleMessages/fetchRetryCounts/trimStream 本身要打真正的 Redis
+// （*redis.Client 是具體型別，Worker.rdb 未介面化），無法在不牽動真正連線的情況下單元測試，
+// 這點與 recomputeStandings 等既有函式的處境相同（見上面 TestShouldRecompute 只測抽出的純函式）。
+
+// TestDeadLetterDecision 涵蓋 reclaimStaleMessages 的死信判斷邏輯：
+//   - 處理成功 → 一律 ACK、非死信，不管投遞次數多少。
+//   - 處理失敗但投遞次數未達門檻 → 不 ACK（留在 PEL 等下一輪重試）。
+//   - 處理失敗且投遞次數已達門檻（>=）→ ACK 並標記死信。
+//   - 門檻是「大於等於」不是「大於」：deliveryCount 剛好等於 threshold 那一次就要死信化，不必再多等一輪。
+func TestDeadLetterDecision(t *testing.T) {
+	cases := []struct {
+		name           string
+		processOK      bool
+		deliveryCount  int64
+		threshold      int64
+		wantAck        bool
+		wantDeadLetter bool
+	}{
+		{"success with high delivery count still acks non-dead-letter", true, 999, 5, true, false},
+		{"success on first delivery acks non-dead-letter", true, 1, 5, true, false},
+		{"first failure below threshold does not ack", false, 1, 5, false, false},
+		{"failure just below threshold does not ack", false, 4, 5, false, false},
+		{"failure exactly at threshold acks as dead letter", false, 5, 5, true, true},
+		{"failure above threshold acks as dead letter", false, 9, 5, true, true},
+		{"missing retry count (zero value) treated as not-yet-dead-letter", false, 0, 5, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ack, dead := deadLetterDecision(c.processOK, c.deliveryCount, c.threshold)
+			if ack != c.wantAck {
+				t.Errorf("shouldAck = %v, want %v", ack, c.wantAck)
+			}
+			if dead != c.wantDeadLetter {
+				t.Errorf("isDeadLetter = %v, want %v", dead, c.wantDeadLetter)
+			}
+		})
+	}
+}
+
+// TestTruncatePayload 確認死信告警不會把完整（可能很長的）payload 塞進 Telegram 訊息，
+// 但短 payload 應原封不動保留（利於診斷）。
+func TestTruncatePayload(t *testing.T) {
+	short := `{"user_id":"u1","distance_km":5.2}`
+	if got := truncatePayload(short); got != short {
+		t.Errorf("short payload should be unchanged, got %q", got)
+	}
+
+	long := make([]byte, 1000)
+	for i := range long {
+		long[i] = 'a'
+	}
+	got := truncatePayload(string(long))
+	if len(got) <= 300 {
+		t.Errorf("expected truncated output longer than raw 300-char cutoff (includes suffix marker), got len=%d", len(got))
+	}
+	if got[:300] != string(long[:300]) {
+		t.Error("truncated payload should keep the original prefix intact")
+	}
+}

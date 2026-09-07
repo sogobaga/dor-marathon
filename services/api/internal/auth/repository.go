@@ -194,15 +194,38 @@ func (r *Repository) CreateGoogleUser(ctx context.Context, email, handle, name, 
 	return u, nil
 }
 
-// LinkIdentity 為既有 email 帳號補一筆 Google 身分（帳號連結）
-func (r *Repository) LinkIdentity(ctx context.Context, userID, sub, email string) error {
-	_, err := r.db.Exec(ctx, `
+// LinkIdentity 為既有 email 帳號補一筆 Google 身分（帳號連結）。isAdmin 為 true 時只補身分、
+// 不動密碼與 session（後台管理者的密碼登入與玩家端 Google 連結分屬不同信任邊界，不應互相影響）；
+// 一般會員帳號則在同一交易內把 password_hash 清空並遞增 session_epoch —— H2 修法（pre-registration
+// hijack）：若攻擊者搶先用受害者的 email 註冊了一個密碼帳號，受害者之後改用 Google 登入、且 Google
+// 已驗證這個 email 真的屬於他本人時（呼叫端只在 email_verified==true 才會走到這裡，見
+// Service.LoginWithGoogle），這裡順勢奪回帳號：清掉攻擊者設的密碼（密碼登入路徑立即失效）、
+// 遞增 epoch 踢掉攻擊者當下可能持有的任何 session。
+func (r *Repository) LinkIdentity(ctx context.Context, userID, sub, email string, isAdmin bool) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO user_identities (user_id, provider, provider_uid, email)
 		VALUES ($1, 'google', $2, $3)
 		ON CONFLICT (provider, provider_uid) DO NOTHING
-	`, userID, sub, email)
-	if err != nil {
+	`, userID, sub, email); err != nil {
 		return fmt.Errorf("link identity: %w", err)
+	}
+
+	if !isAdmin {
+		if _, err := tx.Exec(ctx, `
+			UPDATE users SET password_hash = NULL, session_epoch = session_epoch + 1 WHERE id = $1
+		`, userID); err != nil {
+			return fmt.Errorf("clear password on link: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
 }

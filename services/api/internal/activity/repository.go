@@ -95,26 +95,10 @@ func (r *Repository) TotalKmInRace(ctx context.Context, userID, raceID string) (
 	return total, err
 }
 
-// IsMissionDone 檢查某日任務是否已完成
-func (r *Repository) IsMissionDone(ctx context.Context, userID, raceID string, day int) (bool, error) {
-	var exists bool
-	err := r.db.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM mission_completions WHERE user_id=$1 AND race_id=$2 AND day=$3)
-	`, userID, raceID, day).Scan(&exists)
-	return exists, err
-}
-
-// RecordMissionCompletion 記錄任務完成
-func (r *Repository) RecordMissionCompletion(ctx context.Context, userID, raceID string, day int, activityID string, rescueCount int) error {
-	_, err := r.db.Exec(ctx, `
-		INSERT INTO mission_completions (user_id, race_id, day, activity_id, rescue_count)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (user_id, race_id, day) DO NOTHING
-	`, userID, raceID, day, activityID, rescueCount)
-	return err
-}
-
 // GetMissionCompletions 取得使用者在某賽事的任務完成紀錄
+// （寫入端 IsMissionDone/RecordMissionCompletion 隨著 2026-09-07 移除的 legacy POST /activities
+// 自報端點一併移除——那是 mission_completions 表僅存的寫入路徑，已無來源可寫入新紀錄；
+// 這個讀取端維持原樣，讓既有歷史紀錄仍可查詢。）
 func (r *Repository) GetMissionCompletions(ctx context.Context, userID, raceID string) (map[int]int, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT day, rescue_count FROM mission_completions WHERE user_id=$1 AND race_id=$2

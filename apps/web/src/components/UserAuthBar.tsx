@@ -26,7 +26,7 @@ export default function UserAuthBar({ onProfile }: { onProfile?: () => void }) {
   }, [])
 
   function logout() {
-    clearUserSession() // 觸發 useUser 更新
+    clearUserSession(true) // 使用者主動登出：連同後端 access+refresh token 一起撤銷（見 userAuth.ts）
   }
 
   // 已登入：顯示名稱 + 登出

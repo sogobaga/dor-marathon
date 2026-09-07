@@ -110,6 +110,18 @@ func TestResolveByOriginScenarios(t *testing.T) {
 	}
 }
 
+// TestMarkSupersededTxPaidCAS 涵蓋 M4 修補（Notify 對 superseded tx 補記 paid_superseded）：
+// MarkSupersededTxPaid／GetPaidTxForOrder 的 paid_superseded fallback 都是純 SQL CAS，邏輯全在
+// WHERE 子句裡（Repository.db 是具體的 *pgxpool.Pool，直接送原生 SQL，沒有像其他語言常見的
+// query builder/interface 可注入假連線），本 repo 也沒有 sqlmock/pgxmock 一類的套件（go.mod 未見、
+// 其他 _test.go 也一律只測不碰 DB 的純邏輯，如上面 CheckMacValue／ResolveByOrigin），因此無法在不接
+// 真實 Postgres 的情況下驗證這兩條 UPDATE/SELECT 是否真的照預期 CAS。跳過、留下這則說明，而非硬做一個
+// 測不到真正邏輯的假測試；真正的行為需求已寫在 payment.go MarkSupersededTxPaid 與 refund.go
+// GetPaidTxForOrder 的函式註解，並經 go build/go vet 確認可編譯。
+func TestMarkSupersededTxPaidCAS(t *testing.T) {
+	t.Skip("需要真實 Postgres 連線才能驗證 CAS 行為；repo 未附 sqlmock/pgxmock，見上方註解")
+}
+
 func TestDotNetURLEncode(t *testing.T) {
 	cases := map[string]string{
 		"a b":   "a+b",   // 空白 → +

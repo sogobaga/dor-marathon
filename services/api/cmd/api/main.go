@@ -92,8 +92,9 @@ func main() {
 	authSvc := auth.NewService(authRepo, rdb, cfg.JWTSecret, cfg.AccessTTL, cfg.RefreshTTL, cfg.GoogleClientID)
 	authHandler := auth.NewHandler(authSvc)
 
-	// WebSocket Manager（各模組共用）
-	wsManager := realtime.NewManager(rdb)
+	// WebSocket Manager（各模組共用）。傳入 pool 供 /ws/race 建立 Hub 前查 raceID 是否存在
+	// （H7 資安修補，見 internal/realtime/raceexists.go）。
+	wsManager := realtime.NewManager(rdb, pool)
 	// 單一登入：authHandler 建立時 wsManager 尚未就緒，故用 setter 補注入，
 	// 讓登入成功後可推播 session_revoked 踢除舊裝置連線。
 	authHandler.SetRealtime(wsManager)
@@ -649,16 +650,40 @@ func main() {
 	})
 
 	// WebSocket 端點（WS 無法送 Authorization header，改用 query param token）
-	r.Get("/ws/race/{raceID}", func(w http.ResponseWriter, r *http.Request) {
-		raceID := chi.URLParam(r, "raceID")
-		userID := ""
-		if token := r.URL.Query().Get("token"); token != "" {
-			if claims, err := authSvc.ValidateAccessToken(r.Context(), token); err == nil {
-				userID = claims.UserID
+	//
+	// H7 資安修補：原本 (1) raceID 可以是 "global"（混進站台頻道）(2) 不帶/帶錯 token 一樣能
+	// upgrade、只是 userID="" (3) 任意不存在的 raceID 都會建立 Hub＋goroutine＋Redis 訂閱，
+	// 是可放大的資源耗盡缺口。前端唯一呼叫點 createRaceSocket(raceID, token)
+	// （apps/web/src/lib/api.ts）本來就一定帶真實賽事 id 與有效 token，這裡收緊不影響正常使用。
+	// 2026-09-07 audit：raceExistCache 只對「同一個 raceID 重複探測」有效——攻擊者只要每次
+	// 換不同（甚至格式不合法的）raceID，快取永遠 miss，就能無限制打 RaceExists 的 DB 查詢。
+	// 這裡在 upgrade 之前先掛一層 per-IP 限流（用 ClientIP，而非 UserOrIP：這段路徑的
+	// token 驗證是 handler 自己做的，跑到這裡時 RequireAuth 還沒執行過，context 裡沒有
+	// userID 可用），擋掉「換 raceID 繞過快取」這條路；上限比照既有 activities 端點的
+	// 60/分鐘，不影響正常使用者（一次連線頂多重連幾次）。
+	r.With(middleware.RateLimit(rdb, "ws_race_exists", 60, time.Minute, middleware.ClientIP)).
+		Get("/ws/race/{raceID}", func(w http.ResponseWriter, r *http.Request) {
+			raceID := chi.URLParam(r, "raceID")
+			if raceID == "global" {
+				http.Error(w, "invalid race id", http.StatusBadRequest)
+				return
 			}
-		}
-		wsManager.ServeWS(w, r, raceID, userID)
-	})
+			token := r.URL.Query().Get("token")
+			if token == "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			claims, err := authSvc.ValidateAccessToken(r.Context(), token)
+			if err != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if !wsManager.RaceExists(r.Context(), raceID) {
+				http.Error(w, "race not found", http.StatusNotFound)
+				return
+			}
+			wsManager.ServeWS(w, r, raceID, claims.UserID)
+		})
 
 	// 全站推播端點（data_updated 快取失效通知）：raceID 固定為 "global"，複用既有 Hub 機制。
 	// 與 /ws/race 不同：這裡要擋匿名連線，無效/缺 token 一律 401，不 upgrade。

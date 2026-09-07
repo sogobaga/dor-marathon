@@ -2,9 +2,11 @@
 package image
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	stdimage "image"
 	"io"
 	"net/http"
 	"strings"
@@ -15,6 +17,21 @@ import (
 )
 
 const maxUpload = 5 << 20 // 5MB
+
+// MaxImageSide／MaxImagePixels 防 decompression bomb：幾 KB 的檔案宣稱是 JPEG/PNG，實際解出來
+// 卻是幾萬像素見方的圖，若直接 image.Decode 會在記憶體中展開成數百 MB 甚至數 GB 的緩衝，5MB 的
+// 檔案位元組上限完全擋不住（image.Decode 對「檔案多小、解出來多大」沒有防禦）。
+// 匯出給 internal/runmeet 上傳鏈共用同一組數字，避免兩份定義各自漂移。
+const (
+	MaxImageSide   = 8000
+	MaxImagePixels = 40_000_000
+)
+
+// DecodeSem 全域圖片解碼併發信號量（cap=4）：一張壓得很扁的圖一樣能解成滿版 40M 像素、約 160MB
+// 的 RGBA/NRGBA 緩衝，多個上傳並發 Decode 有把容器記憶體撐爆的風險。/admin/images、
+// /profile/avatar（本套件 Upload）與 internal/runmeet 上傳鏈共用同一個信號量，
+// 因此「同時最多幾個 Decode 在跑」是全服務層級的上限，不是各自套件分別 cap=4 疊加。
+var DecodeSem = make(chan struct{}, 4)
 
 // --- Repository ---
 
@@ -93,8 +110,27 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 自動壓縮：只對可安全處理的 JPEG/PNG 生效，其餘（含 GIF/SVG/ICO/webp/音檔或解碼失敗）原樣保留
-	if compressed, compressedMime, changed := CompressImage(data, mime); changed {
+	// 壓縮前先用 DecodeConfig 檢查像素尺寸（只讀 header，不做全量解碼）：擋 decompression bomb
+	// ——與下面 CompressImage 判斷「要不要解碼」用同一個 mime 條件，其餘格式（GIF/SVG/ICO/webp/
+	// 音檔）本來就不會走到 image.Decode，不需要也不做這個檢查。DecodeConfig 失敗（壞檔/格式
+	// 與宣稱不符）時不在此攔，交給下面 CompressImage 的 image.Decode 走原本「解碼失敗→原樣保留」
+	// 的路徑即可，不須為同一件事重複判斷一次錯誤訊息。
+	if mime == "image/jpeg" || mime == "image/png" {
+		if cfg, _, err := stdimage.DecodeConfig(bytes.NewReader(data)); err == nil {
+			if cfg.Width > MaxImageSide || cfg.Height > MaxImageSide ||
+				int64(cfg.Width)*int64(cfg.Height) > MaxImagePixels {
+				respondErr(w, http.StatusBadRequest, "圖片尺寸過大")
+				return
+			}
+		}
+	}
+
+	// 自動壓縮：只對可安全處理的 JPEG/PNG 生效，其餘（含 GIF/SVG/ICO/webp/音檔或解碼失敗）原樣保留。
+	// 用 DecodeSem 限制同時解碼數（見該變數註解），避免多個大圖併發 Decode 撐爆記憶體。
+	DecodeSem <- struct{}{}
+	compressed, compressedMime, changed := CompressImage(data, mime)
+	<-DecodeSem
+	if changed {
 		data, mime = compressed, compressedMime
 	}
 

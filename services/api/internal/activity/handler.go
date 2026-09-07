@@ -2,7 +2,6 @@ package activity
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 
@@ -19,9 +18,14 @@ func NewHandler(svc *Service) *Handler {
 }
 
 // Router 回傳活動相關路由（掛載在 /api/v1/activities）
+//
+// 2026-09-07 audit：舊有 POST "/"（self-report 上傳，見已移除的 Handler.Upload/Service.Upload）
+// 已移除——grep 全前端確認零呼叫端，卻仍會餵給 worker 一筆 source=NULL、完全不設防（無 GPS 重算/
+// 無防弊）的「無旗標」活動，等同讓任何人繞過 GPS 軌跡直接自報里程。真正的上傳路徑只剩
+// POST /gps（伺服器端重算+防弊，見 gps.go SaveGPSRun）與後台 AdminAddMileage（測試/補償用，
+// 有明確操作者與稽核軌跡）。
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Post("/", h.Upload)
 	r.Post("/gps", h.UploadGPS)
 	r.Get("/gps/history", h.GPSHistory)
 	r.Get("/gps/{id}", h.GPSDetail)
@@ -50,52 +54,6 @@ func (h *Handler) AdminAddMileage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
-}
-
-// POST /api/v1/activities
-// 上傳跑步資料 — 核心業務端點
-func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
-	if userID == "" {
-		respondErr(w, http.StatusUnauthorized, "login required")
-		return
-	}
-
-	var req UploadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondErr(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-
-	// 基本欄位驗證
-	if req.DistanceKm <= 0 || req.DurationS <= 0 || req.RecordedAt == "" {
-		respondErr(w, http.StatusBadRequest, "distance_km, duration_s, recorded_at are required")
-		return
-	}
-
-	result, err := h.svc.Upload(r.Context(), userID, &req)
-	if errors.Is(err, ErrInvalidDistance) {
-		respondErr(w, http.StatusBadRequest, "distance must be at least 0.1 km")
-		return
-	}
-	if errors.Is(err, ErrInvalidPace) {
-		respondErr(w, http.StatusBadRequest, "pace must be between 2:00–20:00 /km")
-		return
-	}
-	if errors.Is(err, ErrFutureDate) {
-		respondErr(w, http.StatusBadRequest, "recorded_at cannot be in the future")
-		return
-	}
-	if errors.Is(err, ErrNotRegistered) {
-		respondErr(w, http.StatusForbidden, "not registered for this race")
-		return
-	}
-	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "upload failed: "+err.Error())
-		return
-	}
-
-	respondJSON(w, http.StatusCreated, result)
 }
 
 // GET /api/v1/activities/me?limit=20

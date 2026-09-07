@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -209,10 +210,13 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 
-	// userID は JWT middleware が context に入れる
+	// userID 由 JWT middleware 寫入 context（這支路由已掛 RequireAuth）。
 	userID, _ := r.Context().Value(CtxKeyUserID).(string)
-	if userID != "" && req.RefreshToken != "" {
-		h.svc.Logout(r.Context(), userID, req.RefreshToken)
+	// H1 修法：登出要連這次請求本身帶的 access token 也一併撤銷（見 Service.Logout），不只撤銷
+	// refresh token——否則登出後、access token 到期前（最長 accessTTL）仍可繼續打 API。
+	accessToken := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if userID != "" && (req.RefreshToken != "" || accessToken != "") {
+		h.svc.Logout(r.Context(), userID, accessToken, req.RefreshToken)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

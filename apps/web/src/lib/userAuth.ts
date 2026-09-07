@@ -20,6 +20,13 @@ export function getUserToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
 
+// H1 修法：clearUserSession(true) 主動登出時要把這顆 refresh token 一起交給後端撤銷
+// （見 authApi.logout），所以需要能單獨讀出來（不像 access token 已有 getUserToken() 可用）。
+export function getRefreshToken(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem(REFRESH_KEY)
+}
+
 export function getUser(): User | null {
   if (typeof window === 'undefined') return null
   const raw = localStorage.getItem(USER_KEY)
@@ -39,12 +46,25 @@ export function setUserSession(accessToken: string, refreshToken: string, user: 
   emitAuthChange()
 }
 
-export function clearUserSession() {
+// userInitiated：true=使用者主動按「登出」（見 UserAuthBar.tsx／RacesScreen.tsx），會 best-effort
+// 呼叫後端 DELETE /auth/logout 把這組 access+refresh token 一起撤銷（H1 修法），登出立即生效，
+// 不必等 access token 自然過期（最長 accessTTL，預設 60 分鐘）。false／省略＝內部自動登出路徑
+// （401 續期失敗、refresh token 已死等，見下方 setAuthRecovery／withUserAuth）——這幾處呼叫的當下
+// refresh 通常已經證實失效，沒必要再打一次注定失敗的請求；也避免「登出觸發登出」的遞迴呼叫。
+// best-effort：後端這通打不通完全不影響前端登出，本地 session 一定會被清掉。
+export function clearUserSession(userInitiated = false) {
+  if (userInitiated) {
+    const token = getUserToken()
+    const refresh = getRefreshToken()
+    if (token && refresh) {
+      authApi.logout(token, refresh).catch(() => {})
+    }
+  }
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(REFRESH_KEY)
   localStorage.removeItem(USER_KEY)
   localStorage.removeItem(SEV_KEY)
-  clearSwrCache() // 清持久化快取：避免同裝置下一位使用者刷新後看到上一位的資料
+  clearSwrCache() // 清持久化快取 + 當前分頁的 SWR 記憶體快取：避免同裝置下一位使用者看到上一位的資料
   emitAuthChange()
 }
 

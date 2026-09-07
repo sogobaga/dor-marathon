@@ -62,9 +62,14 @@ export default function RacesScreen({
 }) {
   const user = useUser() // 登入狀態變動時重新渲染
   const token = getUserToken() || undefined
-  // 活動獎勵 P4：共用 RewardsWalletScreen 同一個 SWR key（['profile-rewards']），不多打一次 API；
+  // 活動獎勵 P4：共用 RewardsWalletScreen 同一個 SWR key，不多打一次 API；
   // 首屏不阻擋——只在資料就緒且算出 count>0 時才渲染提醒，載入中不顯示任何佔位。
-  const { data: rewardsData } = useSWR(token ? ['profile-rewards'] : null, () => withUserAuth((t) => rewardsApi.list(t)))
+  // M3 修法：key 加上 user id——原本只有 ['profile-rewards']（不分使用者），同裝置換人登入若
+  // SWR 記憶體快取沒被清乾淨（見 lib/swrCache.ts clearSwrCache），下一位使用者可能短暫吃到
+  // 上一位的獎勵資料。⚠️ RewardsWalletScreen.tsx 目前仍用未加 uid 的 ['profile-rewards']——
+  // 兩處共用快取的設計前提，那邊也需要同步改成 ['profile-rewards', user?.id ?? null]（不在本檔
+  // 可改範圍，留給該檔案的負責批次處理）。
+  const { data: rewardsData } = useSWR(token ? ['profile-rewards', user?.id ?? null] : null, () => withUserAuth((t) => rewardsApi.list(t)))
   const rewardsSoonCount = countRewardsSoon(rewardsData?.rewards)
   const { dash } = useDashboard()
   const [showUpgrade, setShowUpgrade] = useState(false)
@@ -86,7 +91,7 @@ export default function RacesScreen({
               >✦ 升級VIP</button>
             )}
             <button
-              onClick={() => clearUserSession()}
+              onClick={() => clearUserSession(true)}
               style={{ background: 'rgba(255,255,255,.05)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '5px 11px', cursor: 'pointer', fontSize: 12 }}
             >登出</button>
           </div>

@@ -293,7 +293,11 @@ func (h *TerraHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// POST /import?provider=<brand>&days=<1-90，預設30> — 手動匯入近期活動。
+// POST /import?provider=<brand>&days=<1-30，預設30> — 手動匯入近期活動。
+// 上限鎖在 30 天（2026-09-07 audit）：worker 的跨來源去重（resolveCrossSourceDups，見
+// services/worker/main.go）假設外部來源不會讓需要比對的一對活動之一落在 45 天以前（30 天回填窗
+// + 15 天緩衝），此端點若允許超過 30 天，該假設就會被繞過而漏比對、造成里程/EXP/GP 重複入帳。
+// 兩處數字互相依賴：要調大這裡，worker 那邊的時間窗也要跟著調大。
 // 背景（2026-09-03）：使用者連上 COROS（透過 Terra）當天，Terra 只送了 daily 等事件，activity
 // webhook 遲遲沒到（見 handleActivityEvent／WebhookEvent：at-least-once 送達但無時效保證，也可能
 // 因帳號當下沒有任何 activity 事件觸發而永遠不送），前台需要一個「使用者主動要求現在拉一次」的入口，
@@ -334,8 +338,8 @@ func (h *TerraHandler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 	if days < 1 {
 		days = 1
-	} else if days > 90 {
-		days = 90
+	} else if days > 30 {
+		days = 30
 	}
 
 	res, err := h.importRecent(r.Context(), conn, source, days)

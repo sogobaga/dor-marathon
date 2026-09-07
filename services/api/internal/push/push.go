@@ -11,7 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -23,6 +25,103 @@ import (
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/mailer"
 )
+
+// M6 資安修補：push_subscriptions.endpoint 是使用者瀏覽器 PushManager.subscribe() 回傳的
+// URL，Subscribe 原本完全不驗證就存進 DB；h.send() 之後會直接對這個 URL 發 HTTP 請求
+// （帶 VAPID 簽章 body）—— 等於任何登入使用者都能把後端變成一台可控 SSRF 代理，打內網
+// 位址、雲端 metadata 服務、或任何第三方站台。
+//
+// 修法：只放行各大瀏覽器/OS 廠商已公開文件的推播閘道網域，訂閱當下（Subscribe）與
+// 每次真正送出前（send）都各驗一次；沒有 "*." 前綴的三個是要求「完全相符」，其餘允許
+// 該網域本身或任一層子網域（用 isAllowedPushHost 判斷，而非裸 strings.HasSuffix，避免
+// "evilpush.apple.com"（沒有前置的點）之類的尾碼混淆誤判為合法）。
+var allowedPushHostSuffixes = []string{
+	"fcm.googleapis.com",                // 完全相符：Chrome/Edge/Android (FCM)
+	"android.googleapis.com",            // 完全相符：Android (FCM 舊端點)
+	"updates.push.services.mozilla.com", // 完全相符：Firefox（雖然下面的萬用字元也涵蓋，明列求一致）
+	".push.services.mozilla.com",        // 萬用字元：Firefox 其餘推播節點
+	".notify.windows.com",               // 萬用字元：Windows (WNS)
+	".push.apple.com",                   // 萬用字元：Safari/iOS (APNs Web Push)，涵蓋 web.push.apple.com
+}
+
+// errInvalidPushEndpoint：訂閱端點格式不合法或主機名稱不在白名單內。
+var errInvalidPushEndpoint = errors.New("不支援的推播服務端點")
+
+// noRedirectHTTPClient：webpush-go 沒帶 Options.HTTPClient 時會退回零值 *http.Client{}，
+// 而零值 client 預設會自動跟隨最多 10 次 HTTP 轉址——上面 send() 對 host 白名單/DNS 私有位址
+// 的檢查都只驗證了「請求當下這個 URL」，若白名單網域（或其 DNS）被騙／被攻破而回一個 3xx，
+// 轉址目標完全沒有經過同樣的檢查就被直接跟去，等於繞過整套 M6 SSRF 防護。這裡改用
+// CheckRedirect 回傳 http.ErrUseLastResponse，讓轉址回應本身被當成最終回應處理（webpush-go
+// 只看狀態碼決定刪除/重試，3xx 落入下面 send() 的 `resp.StatusCode >= 300` 分支回錯，
+// 不會真的去 fetch Location）。
+var noRedirectHTTPClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
+// isAllowedPushHost 判斷 host（已含 port 會先被 url.URL.Hostname() 去除）是否落在白名單內。
+func isAllowedPushHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "" {
+		return false
+	}
+	for _, suffix := range allowedPushHostSuffixes {
+		if strings.HasPrefix(suffix, ".") {
+			if host == suffix[1:] || strings.HasSuffix(host, suffix) {
+				return true
+			}
+		} else if host == suffix {
+			return true
+		}
+	}
+	return false
+}
+
+// validatePushEndpoint 只做「格式＋主機名稱白名單」的靜態檢查：必須是 https，且 host
+// 通過 isAllowedPushHost。DNS 解析＋私有位址檢查留到真正要送出時（send()）才做——訂閱
+// 當下就查 DNS 一來沒必要拖慢使用者操作，二來 send() 本來就會查一次，沒理由查兩次。
+func validatePushEndpoint(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme != "https" {
+		return errInvalidPushEndpoint
+	}
+	if !isAllowedPushHost(u.Hostname()) {
+		return errInvalidPushEndpoint
+	}
+	return nil
+}
+
+// isSafePushHost 額外解析 DNS，確認**所有**回傳的 IP 都不是私有(RFC1918)／迴圈／連結本地
+// (link-local)／CGNAT(100.64.0.0/10) 位址（M6 深度防禦）：即使主機名稱通過白名單，也不該
+// 讓後端對內部位址發起請求——例如白名單網域的 DNS 遭劫持/快取污染，或部署環境的 DNS 解析異常。
+// 只在 send() 真正要發送前呼叫（訂閱當下不查，見 validatePushEndpoint 註解）。
+func isSafePushHost(ctx context.Context, host string) bool {
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	for _, ip := range ips {
+		if !isPublicIP(ip.IP) {
+			return false
+		}
+	}
+	return true
+}
+
+// isPublicIP 排除私有網段／迴圈／連結本地／未指定／多播位址；net.IP 的 IsPrivate 已涵蓋
+// RFC1918（10/8、172.16/12、192.168/16）與 fc00::/7，這裡額外手動排除 CGNAT
+// (100.64.0.0/10)——Go 標準庫沒有內建判斷。
+func isPublicIP(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	if ip4 := ip.To4(); ip4 != nil && ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+		return false // 100.64.0.0/10 CGNAT（Carrier-Grade NAT，供應商內部位址）
+	}
+	return true
+}
 
 // Config VAPID 設定，全來自環境變數（由 cmd/api/main.go 傳入）。
 type Config struct {
@@ -112,6 +211,11 @@ func (h *Handler) Subscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	if sub.Endpoint == "" || sub.Keys.P256dh == "" || sub.Keys.Auth == "" {
 		respondErr(w, http.StatusBadRequest, "missing endpoint or keys")
+		return
+	}
+	// M6 資安修補：見檔頭 validatePushEndpoint 註解。
+	if err := validatePushEndpoint(sub.Endpoint); err != nil {
+		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -465,6 +569,21 @@ func (h *Handler) send(ctx context.Context, s storedSubscription, payload []byte
 		return nil
 	}
 
+	// M6 資安修補：即使訂閱當下已通過 validatePushEndpoint，DB 裡也可能還有
+	// migration 170 上線前留下的舊資料（或未來繞過驗證寫入的資料）；送出前一律再驗一次
+	// 主機名稱白名單，格式/白名單不過直接視為失效訂閱一併刪除（不可能靠重試變合法）。
+	u, err := url.Parse(s.Endpoint)
+	if err != nil || u.Scheme != "https" || !isAllowedPushHost(u.Hostname()) {
+		_, _ = h.db.Exec(ctx, `DELETE FROM push_subscriptions WHERE id = $1`, s.ID)
+		return errInvalidPushEndpoint
+	}
+	// 再解析 DNS 排除私有/迴圈/連結本地/CGNAT 位址（深度防禦，見 isSafePushHost 註解）。
+	// 這裡失敗**不刪**訂閱：可能只是暫時性 DNS 問題，白名單網域本身沒有理由長期解析成
+	// 內網位址，留著讓下次送出時重新判斷即可。
+	if !isSafePushHost(ctx, u.Hostname()) {
+		return errInvalidPushEndpoint
+	}
+
 	resp, err := webpush.SendNotificationWithContext(ctx, payload, &webpush.Subscription{
 		Endpoint: s.Endpoint,
 		Keys: webpush.Keys{
@@ -472,6 +591,7 @@ func (h *Handler) send(ctx context.Context, s storedSubscription, payload []byte
 			Auth:   s.Auth,
 		},
 	}, &webpush.Options{
+		HTTPClient:      noRedirectHTTPClient,
 		Subscriber:      h.cfg.Subject,
 		VAPIDPublicKey:  h.cfg.PublicKey,
 		VAPIDPrivateKey: h.cfg.PrivateKey,

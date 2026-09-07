@@ -7,11 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -46,6 +49,25 @@ const (
 	// Worker.maybeRecomputeStandings），下次真正執行時一併帶入，不會丟失。節流後排行榜/去重
 	// 最多延遲 recomputeThrottle（60 秒），可接受。
 	recomputeThrottle = 60 * time.Second
+
+	// reclaimMinIdle：readAndProcessRound 讀到但處理失敗的訊息會保留在 consumer group 的 PEL
+	// （pending entries list）裡不被 ACK。H5（2026-09-07 audit）：舊版完全沒有回收機制——PEL 裡
+	// 失敗過的訊息永遠不會有第二次機會，也不會被任何人重新讀到。這裡設定「已投遞超過這麼久還沒
+	// 被 ACK」才視為滯留、可以被 reclaimStaleMessages 用 XAutoClaim 認領重試；設 5 分鐘，遠高於
+	// 單筆訊息正常處理時間（DB 寫入+對帳，毫秒等級），避免把「還在處理中」的訊息誤判成滯留。
+	reclaimMinIdle = 5 * time.Minute
+
+	// deadLetterThreshold：訊息投遞次數（Redis PEL 官方計數，見 fetchRetryCounts）達到此值仍處理
+	// 失敗 → 視為死信：ACK 掉＋告警，不再無限重試卡住整個 stream 的排空（H5）。
+	deadLetterThreshold = 5
+
+	// streamTrimInterval/streamTrimMaxLen：activity_queue 這個 stream 目前只 XAck、從不 XTrim
+	// （H5）——已 ACK 的訊息會隨時間無限累積佔用 Redis 記憶體。每小時做一次近似裁剪，只保留最新
+	// 5 萬筆：遠高於正常運作下的訊息量（batchSize=100、每 tick 最多排空 maxDrainRounds=10 輪，
+	// 即 1000 筆/5 秒），只有 worker 停機很久或大量事故重試累積時才可能逼近，屆時多半也代表需要
+	// 人工介入。用 `~` 近似模式（MAXLEN ~）讓 Redis 用內部巨集節點邊界裁剪，比精確裁剪省 CPU。
+	streamTrimInterval = time.Hour
+	streamTrimMaxLen   = 50000
 )
 
 // ActivityEvent is the message pushed to Redis Streams when a user uploads a run.
@@ -131,6 +153,11 @@ func (w *Worker) run(ctx context.Context) {
 	ticker := time.NewTicker(batchInterval)
 	defer ticker.Stop()
 
+	// H5（2026-09-07 audit）：獨立的每小時裁剪 ticker，與批次處理節奏脫鉤——裁剪跟「這一輪有沒有
+	// 新活動」無關，固定頻率跑即可（見 streamTrimInterval 註解）。
+	trimTicker := time.NewTicker(streamTrimInterval)
+	defer trimTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -138,6 +165,15 @@ func (w *Worker) run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			processed, userIDs := w.processBatch(ctx)
+			// H5：每個 ticker round 都嘗試認領一次滯留超過 reclaimMinIdle 的失敗訊息（見
+			// reclaimStaleMessages）——不另外節流，XAutoClaim 在 PEL 沒有符合條件的項目時本身就很
+			// 便宜（單一 Redis 指令），成功回收的訊息併入本輪 userIDs/processed，一起判斷要不要
+			// 觸發 recomputeStandings。
+			reclaimed, reclaimedUserIDs := w.reclaimStaleMessages(ctx)
+			for uid := range reclaimedUserIDs {
+				userIDs[uid] = struct{}{}
+			}
+			processed += reclaimed
 			// 對抗式審查修正：節流跳過期間累積的 pendingUserIDs 必須「不依賴新活動」也能被 flush，
 			// 否則若節流到期後恰好進入閒置空窗（夜間/離峰、完全沒有新活動），pendingUserIDs 會卡在
 			// 記憶體裡無上限延遲，直到系統中任何人下一筆活動出現才重算——與「最多延遲 60 秒」的承諾矛盾。
@@ -147,6 +183,8 @@ func (w *Worker) run(ctx context.Context) {
 			if processed > 0 || len(w.pendingUserIDs) > 0 {
 				w.maybeRecomputeStandings(ctx, userIDs)
 			}
+		case <-trimTicker.C:
+			w.trimStream(ctx)
 		}
 	}
 }
@@ -345,6 +383,14 @@ func (w *Worker) resolveCrossSourceDups(ctx context.Context) {
 	// 再 garmin>coros>strava）；對每筆活動，若有時間重疊、且優先序更高（rank 更小）的另一筆存在 →
 	// 標記為 cross_source_duplicate、dup_of 指向重疊中優先序最高那筆。每個時間叢集只保留優先序最高的一筆。
 	// 起始時間統一：GPS(source NULL) 存結束時間 → 起=recorded_at-dur；其餘來源存起始時間 → 起=recorded_at。
+	//
+	// P1（2026-09-07 audit）：ranked CTE 原本掃全表未標記活動，隨資料量成長，這條每 30 秒（受
+	// recomputeThrottle 節流）就要跑一次的 UPDATE 會越跑越貴。外部來源（Terra 手動匯入預設/上限
+	// 30 天，見 internal/integration/terra.go POST /import 的 days 參數；Strava 是連線當下才開始
+	// backfill，不會晚很久才冒出「舊」活動）不會讓需要跨來源比對的一對活動,其中一筆的 recorded_at
+	// 落在 45 天以前——45 天＝30 天回填窗 + 15 天緩衝（使用者拖延才連上/上傳的餘裕）。加這道下限
+	// 把每輪掃描範圍鎖在近期活動，不影響正確性；下面的自癒 UPDATE（healTag）刻意維持全表無時間
+	// 限制——它匹配的是「已標記的 stale 記錄」，正常情況下 0 筆，不构成效能負擔。
 	tag, err := tx.Exec(cctx, `
 		WITH pref AS (SELECT user_id, COALESCE(preferred_data_source,'gps') AS src FROM user_profiles),
 		ranked AS (
@@ -360,6 +406,7 @@ func (w *Worker) resolveCrossSourceDups(ctx context.Context) {
 			FROM activities a
 			LEFT JOIN pref p ON p.user_id = a.user_id
 			WHERE a.duration_s > 0 AND NOT a.flagged
+			  AND a.recorded_at > NOW() - INTERVAL '45 days'
 		)
 		UPDATE activities a SET flagged = TRUE, flag_reason = 'cross_source_duplicate', dup_of = w.id
 		FROM ranked lo
@@ -510,14 +557,14 @@ func (w *Worker) readAndProcessRound(ctx context.Context, block bool) (int, map[
 	userIDs := make(map[string]struct{})
 	var ids []string
 	for _, msg := range msgs {
-		ids = append(ids, msg.ID)
-		uid, err := w.processOne(ctx, msg)
-		if err != nil {
-			log.Error().Err(err).Str("msg_id", msg.ID).Msg("failed to process activity")
-			// 保留在 pending list，稍後重試
-			ids = ids[:len(ids)-1]
+		uid, ok := w.processMessage(ctx, msg)
+		if !ok {
+			// 保留在 pending list（PEL）：不 ACK。H5（2026-09-07 audit）——舊版到此為止，這筆訊息
+			// 從此再也不會被任何人讀到；現在改由 reclaimStaleMessages 在 reclaimMinIdle 之後用
+			// XAutoClaim 認領重試，見該函式與 run() 的呼叫點。
 			continue
 		}
+		ids = append(ids, msg.ID)
 		if uid != "" {
 			userIDs[uid] = struct{}{}
 		}
@@ -528,6 +575,133 @@ func (w *Worker) readAndProcessRound(ctx context.Context, block bool) (int, map[
 		w.rdb.XAck(ctx, streamKey, consumerGroup, ids...)
 	}
 	return len(ids), userIDs, true
+}
+
+// processMessage 是 readAndProcessRound（新訊息，XReadGroup '>'）與 reclaimStaleMessages
+// （認領回來的滯留訊息，XAutoClaim）共用的單筆處理核心（H5，2026-09-07 audit：抽出以避免兩條
+// 路徑各自維護一份幾乎相同的邏輯）：呼叫 processOne，成功回傳 (userID, true)；失敗只記錄 log、
+// 回傳 ("", false)——要不要 ACK、要不要死信化交由呼叫端依各自的重試規則決定。
+func (w *Worker) processMessage(ctx context.Context, msg redis.XMessage) (string, bool) {
+	uid, err := w.processOne(ctx, msg)
+	if err != nil {
+		log.Error().Err(err).Str("msg_id", msg.ID).Msg("failed to process activity")
+		return "", false
+	}
+	return uid, true
+}
+
+// deadLetterDecision 是 reclaimStaleMessages 每筆訊息「要不要 ACK／要不要死信化」的判斷邏輯，抽成
+// 純函式方便單元測試（見 main_test.go）：
+//   - 處理成功 → 一律 ACK，非死信。
+//   - 處理失敗但投遞次數未達門檻 → 不 ACK（留在 PEL，等下一次 reclaimMinIdle 過後再被認領重試）。
+//   - 處理失敗且投遞次數已達門檻 → ACK（死信，不再重試），呼叫端據此發告警。
+func deadLetterDecision(processOK bool, deliveryCount, threshold int64) (shouldAck, isDeadLetter bool) {
+	if processOK {
+		return true, false
+	}
+	if deliveryCount >= threshold {
+		return true, true
+	}
+	return false, false
+}
+
+// reclaimStaleMessages 用 XAutoClaim 認領「已投遞給某個 consumer、卻超過 reclaimMinIdle 都沒被
+// ACK」的訊息——不論原本的 consumer 是誰（可能已經當掉/重啟過），一律轉給目前這個 consumer 重新
+// 處理（H5，2026-09-07 audit：舊版 readAndProcessRound 只 XReadGroup '>' + XAck，處理失敗的訊息
+// 從此不會再被任何人讀到）。用 processMessage 處理；死信判斷委由 deadLetterDecision：達到
+// deadLetterThreshold 仍失敗才 ACK+告警，否則留著等下一輪繼續重試。
+func (w *Worker) reclaimStaleMessages(ctx context.Context) (int, map[string]struct{}) {
+	messages, _, err := w.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+		Stream:   streamKey,
+		Group:    consumerGroup,
+		Consumer: w.consumerName,
+		MinIdle:  reclaimMinIdle,
+		Start:    "0-0",
+		Count:    batchSize,
+	}).Result()
+	if err != nil {
+		log.Error().Err(err).Msg("reclaimStaleMessages: XAutoClaim failed")
+		return 0, nil
+	}
+	if len(messages) == 0 {
+		return 0, nil
+	}
+	log.Info().Int("count", len(messages)).Msg("reclaimStaleMessages: reclaimed stale pending messages")
+
+	retryCounts := w.fetchRetryCounts(ctx, messages)
+
+	userIDs := make(map[string]struct{})
+	var ackIDs []string
+	for _, msg := range messages {
+		uid, ok := w.processMessage(ctx, msg)
+		shouldAck, isDeadLetter := deadLetterDecision(ok, retryCounts[msg.ID], deadLetterThreshold)
+		if ok && uid != "" {
+			userIDs[uid] = struct{}{}
+		}
+		if !shouldAck {
+			continue
+		}
+		if isDeadLetter {
+			raw, _ := msg.Values["data"].(string)
+			log.Error().Str("msg_id", msg.ID).Int64("delivery_count", retryCounts[msg.ID]).
+				Msg("reclaimStaleMessages: message exceeded retry threshold, dead-lettering")
+			notifyAlert("worker_activity_dead_letter", "活動佇列訊息重試多次仍失敗，已放棄並標記死信",
+				fmt.Sprintf("msg_id=%s delivery_count=%d payload=%s", msg.ID, retryCounts[msg.ID], truncatePayload(raw)))
+		}
+		ackIDs = append(ackIDs, msg.ID)
+	}
+	if len(ackIDs) > 0 {
+		w.rdb.XAck(ctx, streamKey, consumerGroup, ackIDs...)
+	}
+	return len(ackIDs), userIDs
+}
+
+// fetchRetryCounts 查這批（剛被 XAutoClaim 認領的）訊息目前的投遞次數，用 Redis PEL 的官方計數
+// （XPendingExt.RetryCount）而非 worker 自己在記憶體維護的計數——worker 重啟、或未來擴成多個實例
+// 時都還是準的。查詢失敗時回傳空 map，deadLetterDecision 對查無資料的 msg.ID 會拿到零值 0（未達
+// 門檻），保守地視為「尚未死信」，寧可多重試也不要誤殺。
+func (w *Worker) fetchRetryCounts(ctx context.Context, messages []redis.XMessage) map[string]int64 {
+	counts := make(map[string]int64, len(messages))
+	if len(messages) == 0 {
+		return counts
+	}
+	ext, err := w.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
+		Stream: streamKey,
+		Group:  consumerGroup,
+		Start:  messages[0].ID,
+		End:    messages[len(messages)-1].ID,
+		Count:  int64(len(messages)) * 2, // 留餘裕：ID 範圍內可能夾雜其他未被本輪認領的訊息
+	}).Result()
+	if err != nil {
+		log.Error().Err(err).Msg("fetchRetryCounts: XPendingExt failed")
+		return counts
+	}
+	for _, e := range ext {
+		counts[e.ID] = e.RetryCount
+	}
+	return counts
+}
+
+// truncatePayload 供死信告警使用：Telegram 訊息不宜塞入完整、可能含大量欄位的活動 payload，截到
+// 一個足夠診斷（看得出是誰、多少距離）又不會洗版的長度。
+func truncatePayload(raw string) string {
+	const maxLen = 300
+	if len(raw) <= maxLen {
+		return raw
+	}
+	return raw[:maxLen] + "…(truncated)"
+}
+
+// trimStream 近似裁剪 activity_queue（見 streamTrimInterval/streamTrimMaxLen 常數註解）。
+func (w *Worker) trimStream(ctx context.Context) {
+	n, err := w.rdb.XTrimMaxLenApprox(ctx, streamKey, streamTrimMaxLen, 0).Result()
+	if err != nil {
+		log.Error().Err(err).Msg("trimStream: XTrimMaxLenApprox failed")
+		return
+	}
+	if n > 0 {
+		log.Info().Int64("trimmed", n).Msg("trimStream: activity_queue trimmed")
+	}
 }
 
 // processOne 處理單筆活動訊息，回傳該訊息的 user_id（供 processBatch 收集本批涉及的使用者集合）
@@ -976,6 +1150,70 @@ func extendVIP(ctx context.Context, tx pgx.Tx, userID string, days int) error {
 		  vip_plan       = CASE WHEN COALESCE(vip_plan,'')='' THEN 'bonus' ELSE vip_plan END
 		WHERE id = $1`, userID, days)
 	return err
+}
+
+// --- worker 本地告警（複製自 services/api/internal/notify.Alert/Telegram） ---
+//
+// worker 是獨立的 Go module、不能 import services/api 的 internal package（同上方 awardMileageDedup
+// 等函式頭反覆說明的理由），這裡只複製「per-kind 節流 + 發 Telegram」這一小段最小邏輯，供 H5 的
+// 死信告警（reclaimStaleMessages）使用。⚠️ 若 api 端 notify.Alert 的節流窗口/訊息格式改了，這裡
+// 需要同步。
+
+// alertThrottle 同一 kind 的告警節流窗口：窗口內只送第一次，避免同一種訊息反覆死信在短時間內把
+// Telegram 洗版。
+const alertThrottle = 30 * time.Minute
+
+var (
+	alertMu   sync.Mutex
+	alertSeen = map[string]time.Time{} // kind -> 最近一次通過節流檢查的時間；worker 若跑多個實例，
+	// 各自獨立節流，可能偶爾重複發送，但不會因此漏報（比照 api 端 notify.Alert 同樣的設計取捨）。
+)
+
+func alertShouldSend(kind string) bool {
+	alertMu.Lock()
+	defer alertMu.Unlock()
+	if last, ok := alertSeen[kind]; ok && time.Since(last) < alertThrottle {
+		return false
+	}
+	alertSeen[kind] = time.Now()
+	return true
+}
+
+var alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
+// notifyAlert 關鍵事件告警：per-kind 30 分鐘節流；TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID 未設時靜默
+// no-op。非阻塞：內部開 goroutine 送出，不拖慢呼叫端（reclaimStaleMessages 的死信處理路徑）。
+func notifyAlert(kind, title, detail string) {
+	if !alertShouldSend(kind) {
+		return
+	}
+	token := os.Getenv("TELEGRAM_BOT_TOKEN")
+	chatID := os.Getenv("TELEGRAM_CHAT_ID")
+	if token == "" || chatID == "" {
+		return
+	}
+	msg := fmt.Sprintf("🚨 [DOR] %s\n%s\n%s", title, detail, time.Now().UTC().Add(8*time.Hour).Format("01/02 15:04"))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		form := url.Values{"chat_id": {chatID}, "text": {msg}, "parse_mode": {"HTML"}}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			"https://api.telegram.org/bot"+token+"/sendMessage", strings.NewReader(form.Encode()))
+		if err != nil {
+			log.Warn().Err(err).Str("kind", kind).Msg("notifyAlert: build request failed")
+			return
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := alertHTTPClient.Do(req)
+		if err != nil {
+			log.Warn().Err(err).Str("kind", kind).Msg("notifyAlert: telegram send failed")
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			log.Warn().Int("status", resp.StatusCode).Str("kind", kind).Msg("notifyAlert: telegram non-2xx response")
+		}
+	}()
 }
 
 func nullableString(s string) interface{} {

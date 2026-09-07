@@ -2,10 +2,12 @@ package auth
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"strings"
 	"time"
@@ -14,6 +16,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/api/idtoken"
+
+	"github.com/dor/api/internal/notify"
 )
 
 var (
@@ -50,6 +54,13 @@ type Claims struct {
 	// SessionEpoch 單一登入強制用：舊 token（簽發時沒有此欄位）JSON 解析後為零值 0，
 	// 與帳號 session_epoch 預設值 0 相容（legacy token 在帳號從未被新登入踢過的情況下仍可用）。
 	SessionEpoch int `json:"sev"`
+	// Typ 標記這顆 token 的用途："access" 或 "refresh"（H1 修法：token 用途區分，避免短效 access
+	// token 被拿去當長效 refresh token 用、或反過來）。本次修法上線前簽出的 token 沒有這個欄位，
+	// JSON 解析後為零值 ""——ValidateAccessToken 與 Refresh 都給 legacyRefreshCutoff 為止的寬限期
+	// 相容零值（見 isAcceptableAccessTyp／isAcceptableRefreshTyp），讓部署當下已登入、尚未換上
+	// 新 typ token 的 session（含後台不勾選「保持登入」、完全沒有 refresh token 可換的那類 session）
+	// 不會被立即強制登出。
+	Typ string `json:"typ,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -163,6 +174,15 @@ func (s *Service) LoginWithGoogle(ctx context.Context, idToken, refCode string, 
 	email, _ := payload.Claims["email"].(string)
 	name, _ := payload.Claims["name"].(string)
 	picture, _ := payload.Claims["picture"].(string)
+	// email_verified：Google 對某些 email（如未驗證的第三方 IdP 轉聯）也可能回傳 email 欄位卻標記
+	// 未驗證。JSON 布林值通常解成 Go bool，保守起見也接受字串 "true"（不同來源/版本的 claim 型別
+	// 曾有出入），其餘一律視為未驗證（H2 修法：見下方第 2 步為何要卡這個旗標）。
+	emailVerified, _ := payload.Claims["email_verified"].(bool)
+	if !emailVerified {
+		if ev, ok := payload.Claims["email_verified"].(string); ok {
+			emailVerified = ev == "true"
+		}
+	}
 	if sub == "" {
 		return nil, nil, ErrGoogleTokenInvalid
 	}
@@ -180,15 +200,29 @@ func (s *Service) LoginWithGoogle(ctx context.Context, idToken, refCode string, 
 		return nil, nil, err
 	}
 
-	// 2) 同 email 既有帳號 → 連結
-	if user == nil && email != "" {
+	// 2) 同 email 既有帳號 → 連結。H2 修法（pre-registration hijack）：只有在 Google 已驗證這個
+	// email 真的屬於登入者本人（email_verified==true）時，才可以拿它去比對/連結既有帳號——否則
+	// 攻擊者能用一個「填了受害者 email 但 Google 自己都不保證是本人」的身分，直接接管受害者在本站
+	// 用密碼註冊的帳號。email_verified==false 時，user 維持 nil、往下走「全新會員」分支（此時
+	// email 唯一鍵會在 DB 層擋下建立重複帳號，不會有機可乘）。
+	if user == nil && email != "" && emailVerified {
 		existing, err := s.repo.FindByEmail(ctx, email)
 		if err != nil {
 			return nil, nil, err
 		}
 		if existing != nil {
-			if err := s.repo.LinkIdentity(ctx, existing.ID, sub, email); err != nil {
+			isAdmin := existing.Role == "admin"
+			// admin 帳號豁免：後台密碼登入與玩家端 Google 連結分屬不同信任邊界，不因此被清空密碼。
+			hadPassword := !isAdmin && existing.PasswordHash != ""
+			if err := s.repo.LinkIdentity(ctx, existing.ID, sub, email, isAdmin); err != nil {
 				return nil, nil, err
+			}
+			if hadPassword {
+				// 代表這裡真的奪回了一個「已被設過密碼」的既有帳號（可能是攻擊者搶先用受害者 email
+				// 註冊的釣魚帳號，也可能只是使用者自己改用 Google 登入）——密碼已在 LinkIdentity 的
+				// 同一交易內清空、session_epoch 已遞增踢掉舊 session，這裡只發告警供人工複查，
+				// 不影響本次登入流程。detail 只帶 user id，不帶 email（避免告警內容外洩個資）。
+				notify.Alert("google_link_took_over_password_account", "Google 登入連結既有帳號並清空密碼", fmt.Sprintf("user_id=%s", existing.ID))
 			}
 			user = existing
 		}
@@ -268,11 +302,55 @@ func randSuffix(n int) string {
 	return string(b)
 }
 
+// genJTI 產生 refresh token 的隨機 jti（M1 修法，見 issueTokens 呼叫點的說明）。用
+// crypto/rand（而非上面 handle 字尾用的 math/rand，那個只是為了人類可讀、不需要密碼學等級亂數）。
+func genJTI() string {
+	b := make([]byte, 16)
+	if _, err := cryptorand.Read(b); err != nil {
+		// 極端情況：作業系統熵源讀取失敗。退回用奈秒級時間戳，仍能讓同一使用者在同一秒內兩次
+		// issueTokens 呼叫大機率產生不同 jti；這裡只是降低 token 內容重複機率的輔助措施，
+		// 不是唯一安全防線（撤銷仍以整顆 token 的 sha256 為準，見 revokeKey）。
+		return hex.EncodeToString([]byte(fmt.Sprintf("fallback-%d", time.Now().UnixNano())))
+	}
+	return hex.EncodeToString(b)
+}
+
 // revokeKey 用整個 refresh token 的 SHA-256 當撤銷名單的 key。
 // （舊版用 refreshToken[:16] 是 JWT 標頭前綴、所有 token 都相同 → 撤銷會誤傷，已修正）
 func revokeKey(userID, refreshToken string) string {
 	h := sha256.Sum256([]byte(refreshToken))
 	return "revoked:refresh:" + userID + ":" + hex.EncodeToString(h[:])
+}
+
+// legacyRefreshCutoff H1 修法的相容寬限期截止日：本次修法上線前簽出的 refresh token 沒有 typ
+// 欄位（JSON 解析後零值 ""），refresh token 最長效期就是 30 天（見 config.go JWT_REFRESH_TTL），
+// 寬限期滿後所有沒有 typ 的舊 token 必已自然過期，屆時 isAcceptableRefreshTyp 這段相容判斷可以整段拿掉。
+var legacyRefreshCutoff = time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
+
+// isAcceptableRefreshTyp 判斷 refresh 端點是否接受這個 typ claim。抽成獨立函式方便單元測試
+// （不需要 DB/Redis 就能驗證 access/refresh/legacy 三種情況的判定邏輯）。
+func isAcceptableRefreshTyp(typ string, now time.Time) bool {
+	if typ == "refresh" {
+		return true
+	}
+	return typ == "" && now.Before(legacyRefreshCutoff)
+}
+
+// isAcceptableAccessTyp 判斷 ValidateAccessToken 是否接受這個 typ claim（2026-09-07 audit 補上）。
+// 原本沒有寬限期的理由是「access token 效期只有 accessTTL（預設 60 分鐘），部署後前端 401 會
+// 自動用 refresh token 換發新 token，使用者感受不到差異」——但這個假設對後台「不勾選保持登入」
+// 的 session 不成立：那類 session 完全不存 refresh token（見 apps/web/src/lib/adminAuth.ts
+// setSession，keep=false 分支只寫 sessionStorage、還主動清掉 REFRESH_KEY），refreshSession()
+// 一開頭 `if (!rt) return null` 直接放棄，401 永遠無法自動恢復，等於部署當下就把這批已登入的
+// admin 直接踢出、只能重新輸入帳密。這裡補上與 isAcceptableRefreshTyp 相同的寬限期截止日
+// （legacyRefreshCutoff）：寬限期內沒有 typ 的舊 access token 仍被接受，讓這批 session 撐到
+// 自然登出/換上有 typ 的新 token 為止；因為舊 access token 本身效期只有 60 分鐘、又不可能在
+// 這次修法上線「之後」簽出，寬限期本身不放寬任何有效攻擊面，純粹是相容期限的對齊。
+func isAcceptableAccessTyp(typ string, now time.Time) bool {
+	if typ == "access" {
+		return true
+	}
+	return typ == "" && now.Before(legacyRefreshCutoff)
 }
 
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
@@ -281,10 +359,10 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 		return nil, ErrTokenInvalid // 簽章/效期無效（含過期 30 天）
 	}
 
-	// 撤銷名單（denylist）：只有「明確被撤銷」的 token 才拒絕。
-	// Redis 查無 = 放行 —— 避免 Redis 重啟/清空時把所有人誤登出（refresh token 本身是
-	// 簽章有效、未過期的 JWT，足以信任）。
-	if s.rdb.Exists(ctx, revokeKey(claims.UserID, refreshToken)).Val() > 0 {
+	// H1 修法（token 用途區分）：refresh 端點只接受 typ="refresh" 的 token；access token
+	// （typ="access"）拿來打這支一律拒絕，避免短效 access token 被誤用/濫用成能無限續命的
+	// 長效 refresh token。見 isAcceptableRefreshTyp 的寬限期說明。
+	if !isAcceptableRefreshTyp(claims.Typ, time.Now()) {
 		return nil, ErrTokenInvalid
 	}
 
@@ -305,24 +383,59 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*TokenPair,
 		return nil, ErrSessionSuperseded
 	}
 
-	// 一次性輪替：把用掉的舊 refresh token 加入撤銷名單（剩餘效期內）
+	// 一次性輪替（M1 修法，原子化）：SET NX + TTL 一次完成「檢查是否已用過」與「標記為已用」，
+	// 取代原本 Exists-then-Set 的兩次往返——兩次往返之間若同一顆 refresh token 被併發打兩次，
+	// 會在兩邊都通過 Exists 檢查（都還沒被標記）後才各自 Set，結果同一顆 token 兌換出兩組新
+	// token，違反 single-use 前提。SetNX 把「查」與「標記」壓進 Redis 保證的單一原子操作，
+	// 第二個併發請求必定拿到 ok=false 被拒絕。
+	ttl := s.refreshTTL
 	if claims.ExpiresAt != nil {
-		if ttl := time.Until(claims.ExpiresAt.Time); ttl > 0 {
-			s.rdb.Set(ctx, revokeKey(claims.UserID, refreshToken), 1, ttl)
+		if d := time.Until(claims.ExpiresAt.Time); d > 0 {
+			ttl = d
 		}
+	}
+	if ok, err := s.rdb.SetNX(ctx, revokeKey(claims.UserID, refreshToken), 1, ttl).Result(); err != nil {
+		// Redis 不可用 → fail-open（比照既有撤銷名單政策「查無=放行」：refresh 撤銷/限流機制本身
+		// 不該變成單點故障，擋掉所有人的登入續期）；只記 log，不中斷這次 refresh。
+		log.Printf("auth.Refresh: WARN redis setnx failed, fail-open user=%s err=%v", claims.UserID, err)
+	} else if !ok {
+		return nil, ErrTokenInvalid // key 已存在 = 這顆 refresh token 已經被用過一次
 	}
 	// refresh 不遞增 epoch（不踢自己）——沿用原 claims 的 epoch 續命。
 	return s.issueTokens(ctx, user.ID, user.Role, claims.SessionEpoch)
 }
 
-func (s *Service) Logout(ctx context.Context, userID, refreshToken string) error {
-	ttl := s.refreshTTL
-	if claims, err := s.parseToken(refreshToken); err == nil && claims.ExpiresAt != nil {
-		if d := time.Until(claims.ExpiresAt.Time); d > 0 {
-			ttl = d
+// Logout 撤銷這一組請求帶來的 access token 與 refresh token（H1 修法）：先前只撤銷 refresh
+// token，access token 本身在到期前仍可繼續打 API——「登出」在使用者認知裡應該是立刻生效，不是
+// 等 access token 自然過期（最長 accessTTL，預設 60 分鐘）才失效。兩者共用同一個撤銷名單 key
+// 空間（revokeKey），ValidateAccessToken 每次請求都會查。accessToken/refreshToken 任一為空字串
+// 就略過該側（呼叫端 handler 允許只帶其中一個）；個別 Redis 寫入失敗只記錄第一個錯誤回傳，
+// 不因其中一側失敗就放棄撤銷另一側。
+func (s *Service) Logout(ctx context.Context, userID, accessToken, refreshToken string) error {
+	var firstErr error
+	if accessToken != "" {
+		ttl := s.accessTTL
+		if claims, err := s.parseToken(accessToken); err == nil && claims.ExpiresAt != nil {
+			if d := time.Until(claims.ExpiresAt.Time); d > 0 {
+				ttl = d
+			}
+		}
+		if err := s.rdb.Set(ctx, revokeKey(userID, accessToken), 1, ttl).Err(); err != nil {
+			firstErr = err
 		}
 	}
-	return s.rdb.Set(ctx, revokeKey(userID, refreshToken), 1, ttl).Err()
+	if refreshToken != "" {
+		ttl := s.refreshTTL
+		if claims, err := s.parseToken(refreshToken); err == nil && claims.ExpiresAt != nil {
+			if d := time.Until(claims.ExpiresAt.Time); d > 0 {
+				ttl = d
+			}
+		}
+		if err := s.rdb.Set(ctx, revokeKey(userID, refreshToken), 1, ttl).Err(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // GetUserByID 查詢使用者資料（供 handler 呼叫）
@@ -343,7 +456,31 @@ func (s *Service) ListLoginLogs(ctx context.Context, q string, limit, offset int
 }
 
 func (s *Service) ValidateAccessToken(ctx context.Context, tokenStr string) (*Claims, error) {
-	return s.parseToken(tokenStr)
+	claims, err := s.parseToken(tokenStr)
+	if err != nil {
+		return nil, err
+	}
+	// H1 修法（token 用途區分）：只接受 typ="access"，或本次修法上線前簽出、沒有 typ 欄位的舊
+	// access token（見 isAcceptableAccessTyp 的寬限期說明）；typ="refresh" 一律拒絕，不讓 refresh
+	// token 被當 access token 濫用。
+	if !isAcceptableAccessTyp(claims.Typ, time.Now()) {
+		return nil, ErrTokenInvalid
+	}
+	// 撤銷名單（denylist）：登出（Logout）時 access token 本身也會被撤銷，與 refresh 撤銷共用
+	// 同一個 key 空間（revokeKey）；查無 = 放行（Redis 重啟/清空不應把所有人誤登出，比照既有
+	// refresh 撤銷名單政策）。這裡是全站每個受保護請求都會經過的路徑，刻意只做一次 EXISTS
+	// （成本低），不追加其他 Redis 往返。
+	// 這條查詢在「每一個」帶 token 的請求路徑上：Redis 失聯時不能讓整站每個請求都卡到 go-redis 預設的
+	// 讀取逾時（秒級）才 fail-open，故另給 300ms 的獨立上限——查不到／逾時一律放行並記 Warn（沿用既有
+	// refresh denylist「查無＝放行」政策），撤銷檢查退化為盡力而為，不影響可用性。
+	rctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	if exists, err := s.rdb.Exists(rctx, revokeKey(claims.UserID, tokenStr)).Result(); err != nil {
+		log.Printf("auth.ValidateAccessToken: WARN redis exists check failed, fail-open user=%s err=%v", claims.UserID, err)
+	} else if exists > 0 {
+		return nil, ErrTokenInvalid
+	}
+	return claims, nil
 }
 
 // issueTokens 簽發 access+refresh token 對。sessionEpoch 會寫進兩顆 token 的 sev claim：
@@ -357,6 +494,7 @@ func (s *Service) issueTokens(ctx context.Context, userID, role string, sessionE
 		UserID:       userID,
 		Role:         role,
 		SessionEpoch: sessionEpoch,
+		Typ:          "access",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -367,14 +505,20 @@ func (s *Service) issueTokens(ctx context.Context, userID, role string, sessionE
 		return nil, fmt.Errorf("sign access token: %w", err)
 	}
 
-	// Refresh Token（長效，也帶 role 方便 refresh 時判斷）
+	// Refresh Token（長效，也帶 role 方便 refresh 時判斷）。M1 修法：帶一個 crypto/rand 產生的隨機
+	// jti（RegisteredClaims.ID），避免同一使用者在同一秒內（IssuedAt/ExpiresAt 精度為秒）簽出的
+	// 兩顆 refresh token 除了 jti 外其餘 claim 完全相同時，簽出位元組完全相同的 JWT
+	// （HS256 對相同 header+payload 一定簽出相同簽章）——不只是理論疑慮，token 內容若可預測/重複，
+	// 會讓撤銷名單的 key（整顆 token 的 sha256）也跟著重複，模糊了「這是哪一次登入簽出的哪一顆」。
 	refreshClaims := &Claims{
 		UserID:       userID,
 		Role:         role,
 		SessionEpoch: sessionEpoch,
+		Typ:          "refresh",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.refreshTTL)),
 			IssuedAt:  jwt.NewNumericDate(now),
+			ID:        genJTI(),
 		},
 	}
 	refreshToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims).SignedString(s.jwtSecret)

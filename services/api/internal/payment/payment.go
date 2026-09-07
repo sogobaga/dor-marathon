@@ -21,6 +21,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/notify"
 )
 
 const (
@@ -359,6 +360,27 @@ func (r *Repository) MarkTxPaid(ctx context.Context, tradeNo, rtnCode, rtnMsg, e
 	return ct.RowsAffected() > 0, nil
 }
 
+// MarkSupersededTxPaid 把一筆已被作廢（superseded）的交易補記為「事後才發現真的付款成功」
+// （CAS：僅在目前狀態是 superseded 時才更新；paid_superseded 是獨立終態，不會再被其他 CAS 覆寫）。
+// 情境（M4 修補）：使用者對「已被新結帳作廢」的舊付款頁完成付款（如中途返回又重新結帳一次，卻回到
+// 舊分頁按下付款）——錢是真的被綠界收走了，但原本 MarkTxPaid 的 CAS（WHERE status IN
+// ('pending','failed')）不會命中 superseded 的 tx，導致這筆真實入帳完全沒有 payment_transactions
+// 列紀錄，之後對帳/退款只認 status IN ('paid','paid_superseded')（見 refund.go GetPaidTxForOrder）
+// 會找不到憑證。回傳這次呼叫是否真的觸發了入帳（true＝首次記錄）；呼叫端仍需視情況另外告警
+// （見 Notify），因為這種「舊頁面事後付款」的案例每一筆都代表需要人工核對是否有雙重收款風險。
+func (r *Repository) MarkSupersededTxPaid(ctx context.Context, tradeNo, rtnCode, rtnMsg, ecpayTradeNo, paymentType string, tradeAmtCents int, raw []byte) (bool, error) {
+	ct, err := r.db.Exec(ctx, `
+		UPDATE payment_transactions
+		SET status='paid_superseded', rtn_code=$2, rtn_msg=$3, ecpay_trade_no=NULLIF($4,''),
+		    payment_type=NULLIF($5,''), trade_amt_cents=$6, raw=$7, paid_at=NOW()
+		WHERE merchant_trade_no=$1 AND status='superseded'`,
+		tradeNo, rtnCode, rtnMsg, ecpayTradeNo, paymentType, tradeAmtCents, raw)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
+}
+
 // MarkTxFailed 標記付款失敗/異常（RtnCode != 1，或金額比對不符）；只更新 payment_transactions，
 // 訂單(orders)維持 pending 讓玩家仍可重新付款。僅在交易目前是 pending 或 failed 時才覆寫——避免晚到的失敗
 // 通知把已成功入帳(paid)或已退款(refunded)的交易洗掉狀態。
@@ -572,18 +594,33 @@ func (h *Handler) Notify(w http.ResponseWriter, r *http.Request) {
 		if !applied && tx.Status != "paid" {
 			// MarkTxPaid 的 CAS（WHERE status IN ('pending','failed')）沒有命中：這筆 tx 目前是
 			// superseded 或 refunded（tx.Status=='paid' 是 ECPay 對同一筆交易重送 Notify 的正常重放，
-			// 上面已排除、不需要告警）。代表綠界真的回報這筆交易付款成功，但 payment_transactions
-			// 沒有任何 row 被標成 paid 來記錄這筆真實入帳——尤其是 superseded 的情況：使用者對「已被
-			// 更新一筆結帳取代」的舊付款頁完成付款（如中途返回又重新結帳一次，卻回到舊分頁按下付款），
-			// 錢是真的被收走了，但這筆 tx 停在 superseded；之後對帳/退款只認 status='paid'
-			// （見 refund.go GetPaidTxForOrder）會找不到這筆交易，需要人工介入登記，故在此留下告警痕跡。
+			// 上面已排除、不需要告警）。代表綠界真的回報這筆交易付款成功，但 MarkTxPaid 沒能把它標成
+			// paid 來記錄這筆真實入帳。
+			if tx.Status == "superseded" {
+				// 使用者對「已被更新一筆結帳取代」的舊付款頁完成付款（如中途返回又重新結帳一次，
+				// 卻回到舊分頁按下付款）：錢是真的被收走了，補記成 paid_superseded（見
+				// MarkSupersededTxPaid 註解），讓之後對帳/退款（refund.go GetPaidTxForOrder）
+				// 找得到這筆交易，而不是只留一行 log 就讓這筆真實收款憑證消失。
+				if _, err := h.repo.MarkSupersededTxPaid(r.Context(), tradeNo, rtnCode, rtnMsg, params["TradeNo"], params["PaymentType"], tradeAmtNTD*100, raw); err != nil {
+					log.Error().Err(err).
+						Str("merchant_trade_no", tradeNo).
+						Str("order_id", tx.OrderID).
+						Msg("ecpay notify: mark superseded tx paid failed")
+				}
+				notify.Alert("payment_superseded_paid", "舊付款頁完成付款（需人工對帳）",
+					fmt.Sprintf("order_id=%s merchant_trade_no=%s ecpay_trade_no=%s trade_amt_ntd=%d",
+						tx.OrderID, tradeNo, params["TradeNo"], tradeAmtNTD))
+			} else {
+				// 理論上不應該再走到這裡（refunded 已被 MarkTxPaid 的 CAS 明確排除、不可能是其他值），
+				// 保留這行告警作最後防線，供尚未涵蓋到的狀態組合排查用。
+				log.Warn().
+					Str("merchant_trade_no", tradeNo).
+					Str("order_id", tx.OrderID).
+					Str("tx_status", tx.Status).
+					Msg("ecpay notify: payment confirmed but MarkTxPaid CAS did not update this tx row (status not pending/failed) — needs manual reconciliation")
+			}
 			// 不因此擋下訂單入帳：下面仍會呼叫 MarkOrderPaid（其本身是 CAS，冪等），避免使用者已經
 			// 真實付款卻因為這筆 tx 沒被標到而拿不到報名資格——那會比「多一筆需要人工對帳的告警」更糟。
-			log.Warn().
-				Str("merchant_trade_no", tradeNo).
-				Str("order_id", tx.OrderID).
-				Str("tx_status", tx.Status).
-				Msg("ecpay notify: payment confirmed but MarkTxPaid CAS did not update this tx row (status not pending/failed) — needs manual reconciliation")
 		}
 		// 無論這次是否真的觸發了 tx 從 pending 轉成 paid（applied），都要呼叫 MarkOrderPaid：
 		// 它本身是 CAS（WHERE status='pending'），對重送/重放天生冪等。若只在 applied=true 時才呼叫，

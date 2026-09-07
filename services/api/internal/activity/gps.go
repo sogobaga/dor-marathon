@@ -13,11 +13,18 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/gpscalib"
+	"github.com/dor/api/internal/notify"
 	"github.com/dor/api/internal/stamina"
 )
+
+// ErrGPSEnqueueFailed：這趟 GPS 距離達標、已寫入 gps_runs，但推進 Redis Stream（worker 消費用，
+// 見 SaveGPSRun）失敗——已對應補償刪除該筆 gps_runs（不留孤兒列），前端應視為「上傳失敗、
+// 可重試」而非資料有問題（見 UploadGPS 的 503 對應）。
+var ErrGPSEnqueueFailed = errors.New("推入活動佇列失敗，請稍後再試")
 
 // 防弊參數
 const (
@@ -235,6 +242,15 @@ func encodePolylineSegments(points []gpsPoint, breakBefore map[int]bool) string 
 	return strings.Join(segments, polylineSegmentSep)
 }
 
+// enqueueActivityEvent 把一筆活動事件序列化後推進 Redis Stream（worker 端非同步消費落地 DB，
+// 見 services/worker/main.go）。抽成獨立函式（吃 activityStreamXAdder 介面而非具體
+// *redis.Client）方便單元測試注入假的失敗客戶端，驗證 SaveGPSRun 的補償刪除路徑（見 gps_test.go）
+// 不必牽動真正的 Redis 連線。
+func enqueueActivityEvent(ctx context.Context, rdb activityStreamXAdder, evt ActivityEvent) error {
+	b, _ := json.Marshal(evt)
+	return rdb.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{"data": string(b)}}).Err()
+}
+
 // SaveGPSRun 伺服器端重算 + 防弊；未標記者推入活動管線（記錄+里程EXP）。
 //
 // GPS 距離校正（見 internal/gpscalib）：k 是這位使用者「上傳當下生效」的校正係數（入口非白名單/
@@ -279,7 +295,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		}
 	}
 	polyline := encodePolylineSegments(usedPts, calc.BreakBefore)
-	inserted, err := s.repo.InsertGPSRun(ctx, userID, req.RaceID, started, ended,
+	id, inserted, err := s.repo.InsertGPSRun(ctx, userID, req.RaceID, started, ended,
 		round2(rawKm), durationS, rawAvgPaceS, flagged, flagReason, len(req.Points), polyline, kmSplits,
 		k, round2(distanceKm), req.ClientVersion, calc.AccP50, calc.AccP90, calc.UsedPointCount,
 		excludedKm, calc.ExcludedSegs)
@@ -297,7 +313,12 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		}, nil
 	}
 
-	// 未標記 → 進既有活動管線（記錄活動 + 日常里程 EXP，皆用校正後的值）
+	// 未標記 → 進既有活動管線（記錄活動 + 日常里程 EXP，皆用校正後的值）。
+	// H4（2026-09-07 audit）：XAdd 失敗過去被吃掉（略過錯誤直接回成功）——這一筆會靜靜卡在
+	// gps_runs 裡「已入庫但沒有對應活動/EXP」，且因 uq_gps_runs_user_start 冪等索引，使用者
+	// 重傳同一趟只會被當成重複擋下、永遠補不回來。現在改成：XAdd 失敗 → 記錄告警 + 補償刪除
+	// 這筆 gps_runs（讓它可以重傳）+ 回錯誤（503，前端可重試，資料仍在手機上）；ChargeSP 這類
+	// 有副作用的操作一律延後到 XAdd 確認成功之後才做，避免「入隊失敗但體力已經扣了」。
 	if !flagged && distanceKm > 0 {
 		evt := ActivityEvent{
 			UserID:        userID,
@@ -310,9 +331,21 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 			RawDistanceKm: round2(rawKm),
 			CalibFactor:   k,
 		}
-		b, _ := json.Marshal(evt)
-		s.rdb.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{"data": string(b)}})
-		// 體力值 SP：跑步完成後扣血（依距離×強度；扣到 0 凍結 6 小時；僅未標記才扣）
+		if err := enqueueActivityEvent(ctx, s.rdb, evt); err != nil {
+			log.Error().Err(err).Str("user_id", userID).Str("gps_run_id", id).
+				Msg("SaveGPSRun: XAdd enqueue failed, rolling back gps_runs")
+			notify.Alert("gps_enqueue_failed", "GPS 上傳寫入活動佇列失敗（已回滾）",
+				fmt.Sprintf("user_id=%s gps_run_id=%s distance_km=%.2f err=%v", userID, id, round2(distanceKm), err))
+			if delErr := s.repo.DeleteGPSRun(context.Background(), id); delErr != nil {
+				// 補償刪除本身也失敗——這下真的留下孤兒列了，另外告警讓人工介入，不要吞掉。
+				log.Error().Err(delErr).Str("gps_run_id", id).
+					Msg("SaveGPSRun: compensating DeleteGPSRun also failed, orphan row left behind")
+				notify.Alert("gps_enqueue_failed_delete_failed", "GPS 補償刪除也失敗，留下孤兒列，需人工處理",
+					fmt.Sprintf("gps_run_id=%s user_id=%s delete_err=%v", id, userID, delErr))
+			}
+			return nil, ErrGPSEnqueueFailed
+		}
+		// 體力值 SP：跑步完成後扣血（依距離×強度；扣到 0 凍結 6 小時；僅未標記、且 XAdd 確認成功才扣）
 		stamina.ChargeSP(ctx, s.repo.db, userID, round2(distanceKm), avgPaceS)
 	}
 
@@ -359,16 +392,17 @@ func (r *Repository) HistAvgPace(ctx context.Context, userID string) int {
 // InsertGPSRun 寫入 GPS 軌跡（壓縮 polyline）+ 防弊結果。
 // 冪等：靠 uq_gps_runs_user_start(user_id, started_at) 唯一索引 + ON CONFLICT DO NOTHING——
 // 同一 user 的同一起跑時間已存在時不再插入、回 inserted=false，呼叫端據此不重複進活動管線/發獎。
+// 回傳新增列的 id（inserted=false 時為空字串）——SaveGPSRun 需要這個 id 在 XAdd 失敗時
+// 呼叫 DeleteGPSRun 補償回滾（見該函式與 H4 的說明）。
 func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, started, ended time.Time,
 	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, polyline string, kmPaces []int,
 	calibFactor, calibDistanceKm float64, clientVersion string, accP50, accP90 *float64, usedPointCount int,
-	excludedKm float64, excludedSegments int) (bool, error) {
+	excludedKm float64, excludedSegments int) (id string, inserted bool, err error) {
 	var rid interface{}
 	if raceID != "" {
 		rid = raceID
 	}
-	var id string
-	err := r.db.QueryRow(ctx, `
+	err = r.db.QueryRow(ctx, `
 		INSERT INTO gps_runs (user_id, race_id, started_at, ended_at, distance_km, duration_s,
 		                      avg_pace_s, flagged, flag_reason, point_count, polyline, km_paces,
 		                      calib_factor, calib_distance_km, client_version, acc_p50, acc_p90, used_point_count,
@@ -380,12 +414,20 @@ func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, st
 		calibFactor, calibDistanceKm, clientVersion, accP50, accP90, usedPointCount,
 		excludedKm, excludedSegments).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil // 同一趟已上傳過 → 冪等 no-op
+		return "", false, nil // 同一趟已上傳過 → 冪等 no-op
 	}
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
-	return true, nil
+	return id, true, nil
+}
+
+// DeleteGPSRun 補償刪除：SaveGPSRun 寫入 gps_runs 後，若推入活動佇列（XAdd）失敗，
+// 用這個回滾剛剛那筆——避免留下「已入庫、卻永遠不會被 worker 消費」的孤兒列，也避免使用者
+// 重新上傳同一趟時被 uq_gps_runs_user_start 冪等擋下、以為已經成功卻其實從未發過 EXP/SP。
+func (r *Repository) DeleteGPSRun(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM gps_runs WHERE id = $1`, id)
+	return err
 }
 
 // POST /api/v1/activities/gps — 上傳網頁 GPS 跑步軌跡
@@ -418,6 +460,12 @@ func (h *Handler) UploadGPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.svc.SaveGPSRun(r.Context(), userID, req)
+	if errors.Is(err, ErrGPSEnqueueFailed) {
+		// H4：入隊失敗已於 SaveGPSRun 內補償回滾，這裡回 503 讓前端走既有「重試」流程——
+		// 資料仍在手機本地快取，不是驗證錯誤（400），不能讓前端誤以為這趟資料本身有問題而丟棄。
+		http.Error(w, `{"error":"上傳暫時失敗，請稍後再試（資料未遺失，仍在手機上）"}`, http.StatusServiceUnavailable)
+		return
+	}
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
 		return

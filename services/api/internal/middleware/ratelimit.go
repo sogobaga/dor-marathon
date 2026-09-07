@@ -118,7 +118,20 @@ func AccountField(field string) func(*http.Request) string {
 		if err := json.Unmarshal(body, &payload); err != nil {
 			return ""
 		}
+		// M7 修法：大小寫不敏感比對 JSON 欄位名。encoding/json 把 body 解到 struct（如 handler 的
+		// login/register request）時，欄位比對本身就是大小寫不敏感（Go 既定行為：先找完全相同大小寫，
+		// 找不到才退而求其次比對忽略大小寫）；這裡解到 map[string]json.RawMessage 卻是精確字串比對，
+		// 若不比照，{"Email":"x"} 這種大小寫不同的請求會被判定成「沒有 email 欄位」直接跳過帳號級
+		// 限流——帳號維度是擋暴力破解/憑證填充的關鍵防線（見上方註解），不能被大小寫繞過。
 		raw, ok := payload[field]
+		if !ok {
+			for k, v := range payload {
+				if strings.EqualFold(k, field) {
+					raw, ok = v, true
+					break
+				}
+			}
+		}
 		if !ok {
 			return ""
 		}

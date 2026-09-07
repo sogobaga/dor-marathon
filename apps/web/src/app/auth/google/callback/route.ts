@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 
 // Google 登入整頁導轉（google_login_ux_mode='redirect'，見 lib/appSettings.ts、components/UserAuthBar.tsx）
@@ -15,6 +16,17 @@ import { NextRequest, NextResponse } from 'next/server'
 // 【安全】credential 是使用者的 Google ID token，等同一次性登入憑證：全程不得寫進 console.log／任何持久化
 // 記錄，只透過 303 redirect 的 URL fragment（伺服器端本來就讀不到、也不會被任何 log 記下）轉交給客端頁面
 // app/auth/google/complete/page.tsx 處理。回應一律 no-store，避免被瀏覽器或中介層快取。
+//
+// 【登入 CSRF / M2 修法】只把 credential 放進 URL fragment 還不夠：任何人只要能拿到、或自己造出一段
+// 「#credential=<某個有效 Google ID token>」網址（例如攻擊者用自己的 Google 帳號走一次這個流程，
+// 把導出來的網址原封不動傳給受害者），受害者的瀏覽器打開後，/auth/google/complete 頁面會直接拿這顆
+// credential 去換發本站 token——受害者就這樣被登入成了「攻擊者指定的帳號」（登入 CSRF）。修法：
+// 這裡額外種一顆隨機值的 HttpOnly Secure SameSite=Lax cookie（90 秒效期，dor_glogin_ok），並把同一個
+// 隨機值也塞進導轉網址的 fragment（…&t=<value>）；complete 頁面必須先呼叫同源的
+// GET /auth/google/ticket?t=<value>，該端點比對「cookie 是否存在且與 t 相符」才放行、且比對後立刻
+// 清掉 cookie（一次性）。攻擊者能自己算出/複製 t 這個字串，但無法讓「受害者的瀏覽器」也剛好持有一顆
+// 內容相符的 HttpOnly cookie——那顆 cookie 只會在真正跑過這支路由（且通過上面的 g_csrf_token 雙重
+// 送出驗證）的那次瀏覽器裡被種下，攻擊者無法從外部替受害者的瀏覽器植入。
 
 async function parseBody(req: NextRequest): Promise<{ credential: string | null; csrfToken: string | null }> {
   const contentType = req.headers.get('content-type') || ''
@@ -80,13 +92,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // 303 See Other：把這次 POST 轉成 GET 導覽，credential 只放在 fragment（# 後面，永遠不會送到任何伺服器，
   // 也不會出現在 Railway/CDN 的存取記錄裡）。fragment 內容經 encodeURIComponent，避免 JWT 本身若含特殊字元
   // 破壞網址結構（一般 JWT 只含 base64url 字元集，但保守處理不假設）。
+  // ticket：M2 修法用的一次性隨機值，見上方檔案註解——同時放進 cookie 與 fragment，complete 頁面
+  // 靠 GET /auth/google/ticket 比對兩者是否相符才放行後續的 credential 兌換。
+  const ticket = randomBytes(24).toString('hex')
   const target = new URL('/auth/google/complete', publicOrigin(req))
-  target.hash = `credential=${encodeURIComponent(credential)}`
+  target.hash = `credential=${encodeURIComponent(credential)}&t=${ticket}`
 
-  return NextResponse.redirect(target, {
+  const res = NextResponse.redirect(target, {
     status: 303,
     headers: { 'cache-control': 'no-store' },
   })
+  res.cookies.set('dor_glogin_ok', ticket, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 90, // 秒——只需要撐過「303 redirect → complete 頁讀 hash → 打 /auth/google/ticket」這幾步
+    path: '/',
+  })
+  return res
 }
 
 // 直接用 GET 訪問這支端點（不是 Google 導回的正常流程）：導去首頁，不留在一支只接受 POST 的路由上出錯頁。

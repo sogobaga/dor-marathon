@@ -34,11 +34,16 @@ const (
 	// 惡意送超大檔或前端壓縮失敗/被繞過的異常請求，不是「請把圖片壓到 25MB 以下」的提示值
 	// （錯誤文案因此故意不叫使用者自己壓縮，見 errImageTooLarge）。
 	maxUploadBytes = 25 << 20
-	// maxImageDim／maxImagePixels 防的是 decompression bomb（幾 KB 的檔案解出上萬像素見方的圖），
-	// 與檔案位元組大小無關，**不隨 maxUploadBytes 調整**：25MB 的手機照片解出來通常遠低於
-	// 40M 像素，兩者不衝突；真的衝突時以這兩個像素上限為準，回 errImageDims 明確文案。
-	maxImageDim    = 8000
-	maxImagePixels = 40_000_000
+)
+
+// maxImageDim／maxImagePixels 防的是 decompression bomb（幾 KB 的檔案解出上萬像素見方的圖），
+// 與檔案位元組大小無關，**不隨 maxUploadBytes 調整**：25MB 的手機照片解出來通常遠低於
+// 40M 像素，兩者不衝突；真的衝突時以這兩個像素上限為準，回 errImageDims 明確文案。
+// 改為直接引用 internal/image 匯出的常數（H6 資安修補後兩套上傳鏈共用同一組數字），
+// 數值未變（8000px／4000萬像素），對本套件行為無影響。
+const (
+	maxImageDim    = dorimage.MaxImageSide
+	maxImagePixels = dorimage.MaxImagePixels
 )
 
 // decodeSem 全域解碼併發信號量。
@@ -52,7 +57,11 @@ const (
 // ——但這段本來就不受 decodeSem 保護，真正的邊界是 route 級 20 次/小時/人的限流
 // （見 handler.go Router() 的 runmeet_image）與必須登入＋過入口閘門，不是無限併發，
 // 因此維持 cap=4、不需要另外調小或新增讀取階段的信號量。
-var decodeSem = make(chan struct{}, 4)
+//
+// H6 資安修補：改為直接共用 internal/image.DecodeSem，不再自己另開一個 cap=4——
+// 否則 /admin/images、/profile/avatar 與本套件三邊各自 cap=4，同時最多仍可能有
+// 12 個大圖併發 Decode，與「全服務層級上限 4」的設計意圖不符。
+var decodeSem = dorimage.DecodeSem
 
 var (
 	errImageFormat = newErr(http.StatusBadRequest, "只接受 JPG 或 PNG 圖片，請換一張再試。")
