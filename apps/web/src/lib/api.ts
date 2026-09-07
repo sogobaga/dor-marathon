@@ -3089,10 +3089,61 @@ export interface OrderRow {
   // 電子發票實際開立狀態（見 adminInvoiceApi）；與上面 invoice（買受人快照）不同，這是綠界開立結果摘要
   invoice_number?: string
   invoice_status?: string // pending|issuing|issued|void|failed|skipped（無資料列＝undefined）
+  // 2026-09-08 owner request：後台訂單管理需看得到報名者真實個資，LEFT JOIN registrations/user_profiles
+  // 取得（VIP 訂閱訂單無 registration，以下皆為零值/空字串）
+  real_name: string // 真實姓名：優先報名快照，快照空退回會員個資
+  phone: string
+  address: string
+  distance_km: number // 報名組別對應距離（km）；VIP 訂單為 0
+  faction?: string // 陣營（分組對抗模式）
+  group_name?: string // 報名分組名稱
+  user_handle: string // 會員帳號 handle
 }
 
 export interface OrderDetail extends OrderRow {
   items: OrderItemRow[]
+}
+
+// --- 匯出賽事訂單（含加購）：GET /admin/orders/export，見 services/api/internal/race ExportOrderRow ---
+
+export interface ExportOrderItem {
+  name: string
+  qty: number
+  unit_price_cents: number
+  subtotal_cents: number
+}
+
+export interface ExportOrderRow {
+  id: string
+  created_at: string
+  paid_at?: string | null
+  status: string
+  user_email: string
+  user_handle: string
+  user_name: string
+  real_name: string
+  phone: string
+  address: string
+  distance_km: number
+  faction: string
+  group_name: string
+  entry_cents: number
+  addons: ExportOrderItem[]
+  addon_cents: number
+  discount_cents: number // 負數＝有折抵，0＝無
+  total_cents: number
+  invoice_number?: string
+  invoice_status?: string
+  buyer_type?: string
+  tax_id?: string
+  title?: string // 三聯式發票抬頭
+  carrier_id?: string
+  love_code?: string
+}
+
+export interface ExportOrdersResponse {
+  race: { id: string; title: string }
+  orders: ExportOrderRow[]
 }
 
 export interface RefundRow {
@@ -3176,6 +3227,14 @@ export const adminOrdersApi = {
       headers: withAuth(token),
       body: JSON.stringify({ payment_ref: payment_ref ?? '' }),
     }),
+  // race_id 必填；status 預設 all（不篩）；hideVirtual 預設 true（後端亦預設 true，帶 false 才會顯式關閉＝hide_virtual=0）
+  export: (token: string, params: { race_id: string; status?: string; hideVirtual?: boolean }) => {
+    const qs = new URLSearchParams()
+    qs.set('race_id', params.race_id)
+    if (params.status) qs.set('status', params.status)
+    if (params.hideVirtual === false) qs.set('hide_virtual', '0')
+    return request<ExportOrdersResponse>(`/admin/orders/export?${qs.toString()}`, { headers: withAuth(token) })
+  },
 }
 
 // --- Admin: 電子發票（見 services/api/internal/einvoice，migration 169）---

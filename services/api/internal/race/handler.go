@@ -143,6 +143,9 @@ func (h *Handler) SignupRouter() http.Handler {
 func (h *Handler) OrderRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", h.AdminListOrders)
+	// /export 是靜態路徑，chi 的路由樹一律靜態節點優先於 {orderID} 參數節點比對，
+	// 不會被下面的 "/{orderID}" 攔走，註冊順序無影響。
+	r.Get("/export", h.AdminExportOrders)
 	r.Get("/{orderID}", h.AdminGetOrder)
 	r.Patch("/{orderID}/pay", h.AdminMarkOrderPaid)
 	return r
@@ -247,6 +250,40 @@ func (h *Handler) AdminListOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"orders": orders, "count": len(orders)})
+}
+
+// validExportStatuses 匯出訂單 status 篩選白名單；「all」與空字串等義（不篩，全部狀態），
+// 其餘沿用訂單既有狀態機（見 orders.status 註解 pending|paid|cancelled|refunded）。非法值一律當「all」。
+var validExportStatuses = map[string]bool{
+	"paid": true, "pending": true, "cancelled": true, "refunded": true,
+}
+
+// GET /api/v1/admin/orders/export?race_id=<uuid>[&status=paid|all][&hide_virtual=1]
+// 匯出單一賽事的全部訂單（含加購明細），供後台「訂單管理」產生 Excel 報表用（2026-09-08 owner request）。
+// race_id 必填（400）；status 預設 all（不篩）；hide_virtual 預設「開」（true，排除虛擬選手），帶 hide_virtual=0 才關閉
+// ——與 AdminListOrders/AdminListSignupRows 的預設「關」相反，因為匯出通常是要給主辦方拿去對真人物流/發票，
+// 虛擬選手預設就不該混進去。
+func (h *Handler) AdminExportOrders(w http.ResponseWriter, r *http.Request) {
+	raceID := r.URL.Query().Get("race_id")
+	if raceID == "" {
+		respondErr(w, http.StatusBadRequest, "race_id is required")
+		return
+	}
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if !validExportStatuses[status] {
+		status = "" // all / 空字串 / 非法值 一律不篩
+	}
+	hideVirtual := r.URL.Query().Get("hide_virtual") != "0" // 預設 true，帶 0 才關閉
+	resp, err := h.svc.ExportOrders(r.Context(), raceID, status, hideVirtual)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to export orders")
+		return
+	}
+	respondJSON(w, http.StatusOK, resp)
 }
 
 // GET /api/v1/admin/orders/{orderID}

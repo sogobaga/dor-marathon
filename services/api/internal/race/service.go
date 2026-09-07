@@ -1383,6 +1383,26 @@ func (s *Service) GetOrderDetail(ctx context.Context, orderID string) (*OrderDet
 	return d, nil
 }
 
+// ExportOrders 匯出單一賽事全部訂單（含加購）——後台「訂單管理」匯出功能，2026-09-08 owner request。
+// raceID 必填（呼叫端 Handler 已擋空字串），status 空字串＝不篩（全部狀態）。
+func (s *Service) ExportOrders(ctx context.Context, raceID, status string, hideVirtual bool) (*ExportOrdersResponse, error) {
+	race, err := s.repo.GetByID(ctx, raceID)
+	if err != nil {
+		return nil, err
+	}
+	if race == nil {
+		return nil, ErrRaceNotFound
+	}
+	orders, err := s.repo.ExportOrders(ctx, raceID, status, hideVirtual)
+	if err != nil {
+		return nil, err
+	}
+	return &ExportOrdersResponse{
+		Race:   ExportRaceMeta{ID: race.ID, Title: race.Title},
+		Orders: orders,
+	}, nil
+}
+
 func (s *Service) MarkOrderPaid(ctx context.Context, orderID, paymentRef string) error {
 	flipped, err := s.repo.MarkOrderPaid(ctx, orderID, paymentRef)
 	if err != nil {

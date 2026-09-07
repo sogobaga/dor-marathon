@@ -2,6 +2,7 @@ package race
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -1984,19 +1985,42 @@ func scanInvoicePtr(buyerType, taxID, title, carrierType, carrierID, loveCode st
 	}
 }
 
+// orderIdentityJoinSQL 訂單管理明細需要看得到報名者真實個資（2026-09-08 owner request）：LEFT JOIN
+// registrations(o.registration_id) 取報名當下快照／分組／距離／陣營，LEFT JOIN race_groups 解析分組
+// 名稱（比照 ListSignups 同一套寫法），LEFT JOIN user_profiles 供快照為空時的回退值。VIP 訂閱訂單
+// （orders.registration_id 為 NULL，見 CreateVipOrder）三個 LEFT JOIN 全落空，對應欄位皆為零值/空字串。
+const orderIdentityJoinSQL = `
+		LEFT JOIN registrations reg ON reg.id = o.registration_id
+		LEFT JOIN race_groups g ON g.id = reg.group_id
+		LEFT JOIN user_profiles up ON up.user_id = o.user_id`
+
+// orderIdentityColsSQL 對應 orderIdentityJoinSQL 的 SELECT 欄位：真實姓名/手機/地址優先用報名當下快照
+// （snap_*），快照為空（NULLIF 轉 NULL）才退回 user_profiles 目前最新值；仍無資料則空字串。
+const orderIdentityColsSQL = `
+		       COALESCE(NULLIF(reg.snap_real_name,''), up.real_name, '') AS real_name,
+		       COALESCE(NULLIF(reg.snap_phone,''), up.phone, '') AS phone,
+		       COALESCE(NULLIF(reg.snap_address,''), up.address, '') AS address,
+		       COALESCE(reg.distance,0) AS distance_km,
+		       COALESCE(reg.faction,'') AS faction,
+		       COALESCE(g.name,'') AS group_name,
+		       u.handle`
+
 // ListOrders 列出訂單（race_id/status 可選過濾）。hideVirtual＝true 時排除虛擬選手（users.is_virtual，
 // 見 migrations/146_virtual_runner.sql），比照會員管理頁模式。
 func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limit, offset int, hideVirtual bool) ([]OrderRow, error) {
 	// LEFT JOIN races：VIP 訂閱訂單無賽事（orders.race_id 可為 NULL，見 migration 132），rc.title COALESCE
-	// 成空字串，前端/後台 race_title 為空時顯示「VIP 訂閱」。
+	// 成空字串，前端/後台 race_title 為空時顯示「VIP 訂閱」。真實個資欄位見 orderIdentityJoinSQL 註解——
+	// 全部併在同一條查詢的 LEFT JOIN，不額外多打查詢（不 N+1）。
 	rows, err := r.db.Query(ctx, `
 		SELECT o.id, u.name, u.email, COALESCE(rc.title,''), o.total_cents, o.status,
 		       COALESCE(o.payment_ref,''), o.paid_at, o.created_at, COALESCE(o.registration_id::text,''),
-		       `+invoiceColsSQL+`, u.is_virtual
+		       `+invoiceColsSQL+`, u.is_virtual,
+		       `+orderIdentityColsSQL+`
 		FROM orders o
 		JOIN users u ON u.id = o.user_id
 		LEFT JOIN races rc ON rc.id = o.race_id
 		LEFT JOIN order_invoices inv ON inv.order_id = o.id
+		`+orderIdentityJoinSQL+`
 		WHERE ($1='' OR o.race_id = $1::uuid)
 		  AND ($2='' OR o.status = $2)
 		  AND ($5 = false OR NOT u.is_virtual)
@@ -2014,7 +2038,8 @@ func (r *Repository) ListOrders(ctx context.Context, raceID, status string, limi
 		if err := rows.Scan(&o.ID, &o.UserName, &o.UserEmail, &o.RaceTitle, &o.TotalCents,
 			&o.Status, &o.PaymentRef, &o.PaidAt, &o.CreatedAt, &o.RegistrationID,
 			&invBuyerType, &invTaxID, &invTitle, &invCarrierType, &invCarrierID, &invLoveCode,
-			&o.InvoiceNumber, &o.InvoiceStatus, &o.IsVirtual); err != nil {
+			&o.InvoiceNumber, &o.InvoiceStatus, &o.IsVirtual,
+			&o.RealName, &o.Phone, &o.Address, &o.DistanceKm, &o.Faction, &o.GroupName, &o.UserHandle); err != nil {
 			return nil, err
 		}
 		o.Invoice = scanInvoicePtr(invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode)
@@ -2028,17 +2053,21 @@ func (r *Repository) GetOrderDetail(ctx context.Context, orderID string) (*Order
 	var o OrderRow
 	var invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode string
 	// LEFT JOIN races：VIP 訂閱訂單無賽事（orders.race_id 可為 NULL，見 migration 132），同 ListOrders。
+	// 真實個資欄位見 orderIdentityJoinSQL 註解。
 	err := r.db.QueryRow(ctx, `
 		SELECT o.id, u.name, u.email, COALESCE(rc.title,''), o.total_cents, o.status,
 		       COALESCE(o.payment_ref,''), o.paid_at, o.created_at, COALESCE(o.registration_id::text,''),
-		       `+invoiceColsSQL+`
+		       `+invoiceColsSQL+`,
+		       `+orderIdentityColsSQL+`
 		FROM orders o JOIN users u ON u.id=o.user_id LEFT JOIN races rc ON rc.id=o.race_id
 		LEFT JOIN order_invoices inv ON inv.order_id = o.id
+		`+orderIdentityJoinSQL+`
 		WHERE o.id=$1`, orderID).Scan(
 		&o.ID, &o.UserName, &o.UserEmail, &o.RaceTitle, &o.TotalCents, &o.Status,
 		&o.PaymentRef, &o.PaidAt, &o.CreatedAt, &o.RegistrationID,
 		&invBuyerType, &invTaxID, &invTitle, &invCarrierType, &invCarrierID, &invLoveCode,
-		&o.InvoiceNumber, &o.InvoiceStatus)
+		&o.InvoiceNumber, &o.InvoiceStatus,
+		&o.RealName, &o.Phone, &o.Address, &o.DistanceKm, &o.Faction, &o.GroupName, &o.UserHandle)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -2065,6 +2094,74 @@ func (r *Repository) GetOrderDetail(ctx context.Context, orderID string) (*Order
 		detail.Items = append(detail.Items, it)
 	}
 	return detail, rows.Err()
+}
+
+// ExportOrders 匯出單一賽事的全部訂單（含加購，聚合成「訂單管理」匯出 xlsx 用的形狀）——2026-09-08
+// owner request。單一查詢：用 LEFT JOIN LATERAL 對每筆訂單依 order_items.item_type 分類加總
+// entry/discount/addon 金額，加購明細另外 json_agg 成陣列，避免對每筆訂單多打一次查詢（不 N+1）。
+// status 篩選：空字串＝不篩（全部狀態）；非空則等值比對 orders.status（比照 ListOrders）。
+// hideVirtual＝true 時排除虛擬選手訂單（users.is_virtual），預設值由呼叫端（Service.ExportOrders）決定。
+func (r *Repository) ExportOrders(ctx context.Context, raceID, status string, hideVirtual bool) ([]ExportOrderRow, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT o.id, o.created_at, o.paid_at, o.status,
+		       u.email, u.handle, COALESCE(u.name, u.handle) AS user_name,
+		       COALESCE(NULLIF(reg.snap_real_name,''), up.real_name, '') AS real_name,
+		       COALESCE(NULLIF(reg.snap_phone,''), up.phone, '') AS phone,
+		       COALESCE(NULLIF(reg.snap_address,''), up.address, '') AS address,
+		       COALESCE(reg.distance,0) AS distance_km,
+		       COALESCE(reg.faction,'') AS faction,
+		       COALESCE(g.name,'') AS group_name,
+		       COALESCE(items.entry_cents,0), COALESCE(items.addon_items,'[]'), COALESCE(items.addon_cents,0),
+		       COALESCE(items.discount_cents,0), o.total_cents,
+		       `+invoiceColsSQL+`
+		FROM orders o
+		JOIN users u ON u.id = o.user_id
+		LEFT JOIN order_invoices inv ON inv.order_id = o.id
+		`+orderIdentityJoinSQL+`
+		LEFT JOIN LATERAL (
+			SELECT
+				COALESCE(SUM(oi.subtotal_cents) FILTER (WHERE oi.item_type = 'entry'), 0) AS entry_cents,
+				COALESCE(SUM(oi.subtotal_cents) FILTER (WHERE oi.item_type = 'discount'), 0) AS discount_cents,
+				COALESCE(SUM(oi.subtotal_cents) FILTER (WHERE oi.item_type = 'addon'), 0) AS addon_cents,
+				json_agg(json_build_object(
+					'name', COALESCE(a.name,''), 'qty', oi.qty,
+					'unit_price_cents', oi.unit_price_cents, 'subtotal_cents', oi.subtotal_cents
+				) ORDER BY a.name) FILTER (WHERE oi.item_type = 'addon') AS addon_items
+			FROM order_items oi LEFT JOIN race_addons a ON a.id = oi.addon_id
+			WHERE oi.order_id = o.id
+		) items ON true
+		WHERE o.race_id = $1::uuid
+		  AND ($2 = '' OR o.status = $2)
+		  AND ($3 = false OR NOT u.is_virtual)
+		ORDER BY o.created_at`, raceID, status, hideVirtual)
+	if err != nil {
+		return nil, fmt.Errorf("export orders: %w", err)
+	}
+	defer rows.Close()
+
+	out := []ExportOrderRow{}
+	for rows.Next() {
+		var e ExportOrderRow
+		var invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode string
+		var addonItemsBytes []byte
+		if err := rows.Scan(&e.ID, &e.CreatedAt, &e.PaidAt, &e.Status,
+			&e.UserEmail, &e.UserHandle, &e.UserName,
+			&e.RealName, &e.Phone, &e.Address, &e.DistanceKm, &e.Faction, &e.GroupName,
+			&e.EntryCents, &addonItemsBytes, &e.AddonCents, &e.DiscountCents, &e.TotalCents,
+			&invBuyerType, &invTaxID, &invTitle, &invCarrierType, &invCarrierID, &invLoveCode,
+			&e.InvoiceNumber, &e.InvoiceStatus); err != nil {
+			return nil, err
+		}
+		e.Addons = []ExportOrderItem{}
+		if len(addonItemsBytes) > 0 {
+			if err := json.Unmarshal(addonItemsBytes, &e.Addons); err != nil {
+				return nil, fmt.Errorf("unmarshal export addon items: %w", err)
+			}
+		}
+		e.BuyerType, e.TaxID, e.Title, e.CarrierID, e.LoveCode = invBuyerType, invTaxID, invTitle, invCarrierID, invLoveCode
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // CreateVipOrder 建立一筆「無賽事」的 VIP 訂閱 pending 訂單（VIP 訂閱 Phase C1：訂單模型一般化）。

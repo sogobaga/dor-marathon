@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminRacesApi, adminOrdersApi, adminPaymentsApi, adminInvoiceApi, type Race, type OrderRow, type OrderDetail, type RefundRow, type EcpayEnvCheck, type EInvoiceDetail, type EInvoiceAllowance } from '@/lib/api'
+import { adminRacesApi, adminOrdersApi, adminPaymentsApi, adminInvoiceApi, type Race, type OrderRow, type OrderDetail, type RefundRow, type EcpayEnvCheck, type EInvoiceDetail, type EInvoiceAllowance, type ExportOrderRow } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import * as XLSX from 'xlsx'
 
@@ -63,6 +63,17 @@ function invoiceText(inv: OrderRow['invoice']): string {
   return label
 }
 
+// 同 invoiceText，但吃匯出訂單那組扁平欄位（buyer_type/tax_id/title/carrier_id/love_code，沒有 carrier_type
+// 因為匯出目前只收手機條碼載具，見 ExportOrderRow／後端 orderIdentityColsSQL 未帶 carrier_type）。
+function exportInvoiceBuyerText(o: ExportOrderRow): string {
+  if (!o.buyer_type) return ''
+  const label = INVOICE_BUYER_LABEL[o.buyer_type] ?? o.buyer_type
+  if (o.buyer_type === 'company') return `${label}｜統編 ${o.tax_id || '—'}｜抬頭 ${o.title || '—'}`
+  if (o.buyer_type === 'personal') return `${label}｜手機條碼 ${o.carrier_id || '雲端發票存證'}`
+  if (o.buyer_type === 'donation') return `${label}｜愛心碼 ${o.love_code || '—'}`
+  return label
+}
+
 export default function AdminOrdersPage() {
   const router = useRouter()
   const [races, setRaces] = useState<Race[]>([])
@@ -79,6 +90,7 @@ export default function AdminOrdersPage() {
   const [envCheck, setEnvCheck] = useState<EcpayEnvCheck | null>(null)
   const [envCheckErr, setEnvCheckErr] = useState('')
   const [exporting, setExporting] = useState(false)
+  const [exportingRace, setExportingRace] = useState(false) // 「匯出賽事訂單（含加購）」進行中旗標，與上面通用 exporting 分開
   // 從「電子發票」列表頁點「查看訂單」帶 ?order_id= 過來：載入後自動展開該筆（若不在目前篩選/分頁範圍內則額外補抓一筆插到最前面）。
   // 用 lazy state 直接讀 window.location.search（而非 useSearchParams），避免多帶一個 Suspense 邊界。
   const [highlightOrderID] = useState<string>(() => {
@@ -318,6 +330,83 @@ export default function AdminOrdersPage() {
     }
   }
 
+  // 匯出「單一賽事」訂單（含加購明細）——後台管明細用，2026-09-08 owner request：每列要看得到真實姓名/
+  // 地址/手機/賽事/組別/加購品項數量/金額/總金額。改打專用 /admin/orders/export（後端已聚合好每筆訂單的
+  // 品項小計，不必像上面 exportXlsx 一樣逐頁翻頁湊資料）。只在已選定賽事篩選時可用（race_id 必填）。
+  async function exportRaceOrdersXlsx() {
+    if (!token || exportingRace || !raceID) return
+    setExportingRace(true)
+    setErr('')
+    try {
+      const resp = await adminOrdersApi.export(token, { race_id: raceID, status: status || undefined, hideVirtual })
+      if (resp.orders.length === 0) { window.alert('沒有符合篩選條件的訂單可匯出'); return }
+
+      const orderRows = resp.orders.map((o) => ({
+        '訂單編號': o.id,
+        '建立時間': fmtDT(o.created_at),
+        '付款時間': fmtDT(o.paid_at),
+        '狀態': STATUS_LABEL[o.status]?.t ?? o.status,
+        '會員帳號(Email)': o.user_email,
+        '帳號 handle': o.user_handle,
+        '顯示名稱': o.user_name,
+        '真實姓名': o.real_name || '未填',
+        '手機': o.phone || '未填',
+        '地址': o.address || '未填',
+        '賽事': resp.race.title,
+        '組別(距離 km)': o.distance_km || '',
+        '陣營': o.faction || '',
+        '分組': o.group_name || '',
+        '報名費': Math.round(o.entry_cents / 100),
+        '加購品項': o.addons.map((a) => `${a.name}×${a.qty}`).join('；'),
+        '加購金額': Math.round(o.addon_cents / 100),
+        '折扣': Math.round(o.discount_cents / 100),
+        '總金額': Math.round(o.total_cents / 100),
+        '發票狀態': o.invoice_status ? (EINVOICE_STATUS_LABEL[o.invoice_status]?.t ?? o.invoice_status) : '',
+        '發票號碼': o.invoice_number || '',
+        '發票買受人': exportInvoiceBuyerText(o),
+      }))
+
+      // 品項明細：報名費/折扣由 entry_cents/discount_cents 各自合成一列（非 0 才列出），加購每筆各自一列
+      const itemRows: Record<string, string | number>[] = []
+      resp.orders.forEach((o) => {
+        if (o.entry_cents) {
+          itemRows.push({
+            '訂單編號': o.id, '會員帳號': o.user_email, '真實姓名': o.real_name || '未填',
+            '品項類型': '報名費', '品項名稱': '報名費', '數量': 1,
+            '單價': Math.round(o.entry_cents / 100), '小計': Math.round(o.entry_cents / 100),
+          })
+        }
+        o.addons.forEach((a) => {
+          itemRows.push({
+            '訂單編號': o.id, '會員帳號': o.user_email, '真實姓名': o.real_name || '未填',
+            '品項類型': '加購', '品項名稱': a.name, '數量': a.qty,
+            '單價': Math.round(a.unit_price_cents / 100), '小計': Math.round(a.subtotal_cents / 100),
+          })
+        })
+        if (o.discount_cents) {
+          itemRows.push({
+            '訂單編號': o.id, '會員帳號': o.user_email, '真實姓名': o.real_name || '未填',
+            '品項類型': '折扣', '品項名稱': '折扣', '數量': 1,
+            '單價': Math.round(o.discount_cents / 100), '小計': Math.round(o.discount_cents / 100),
+          })
+        }
+      })
+
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orderRows), '訂單')
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(itemRows), '品項明細')
+      const d = new Date()
+      const p = (n: number) => String(n).padStart(2, '0')
+      const race = races.find((r) => r.id === raceID)
+      const slug = race?.slug || raceID
+      XLSX.writeFile(wb, `race_orders_${slug}_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.xlsx`)
+    } catch (e: any) {
+      setErr(e?.message || '匯出失敗')
+    } finally {
+      setExportingRace(false)
+    }
+  }
+
   return (
     <div>
       <h1 style={{ margin: '0 0 18px', fontSize: 24, fontWeight: 800 }}>訂單管理</h1>
@@ -391,6 +480,13 @@ export default function AdminOrdersPage() {
         >
           {exporting ? '匯出中…' : '匯出 xlsx'}
         </button>
+        <button
+          onClick={exportRaceOrdersXlsx} disabled={exportingRace || !raceID}
+          title={!raceID ? '請先選擇單一賽事才能匯出' : undefined}
+          style={{ ...exportBtn, opacity: exportingRace || !raceID ? 0.5 : 1, cursor: exportingRace || !raceID ? 'default' : 'pointer' }}
+        >
+          {exportingRace ? '匯出中…' : '匯出賽事訂單（含加購）'}
+        </button>
       </div>
 
       {err && <div style={{ color: 'var(--hunt)', padding: 16 }}>{err}</div>}
@@ -413,6 +509,7 @@ export default function AdminOrdersPage() {
                     <button onClick={() => toggle(o)} style={linkBtn}>
                       {expanded[o.id] !== undefined ? '▾ ' : '▸ '}{o.user_name}
                     </button>
+                    {o.real_name && <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}> ({o.real_name})</span>}
                     <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{o.user_email}</div>
                   </C>
                   <C w={2}>{o.race_title || 'VIP 訂閱'}</C>
@@ -444,6 +541,15 @@ export default function AdminOrdersPage() {
                       </div>
                     ))}
                     {det.paid_at && <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>付款時間：{new Date(det.paid_at).toLocaleString('zh-TW')}{det.payment_ref ? ` · 金流號 ${det.payment_ref}` : ''}</div>}
+
+                    {/* 真實個資（2026-09-08 owner request）：僅後台訂單管理明細可見，一律不進會員可見端點 */}
+                    <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 8 }}>真實姓名：{det.real_name || '未填'}</div>
+                    <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>手機：{det.phone || '未填'}</div>
+                    <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>地址：{det.address || '未填'}</div>
+                    <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
+                      組別：{det.distance_km ? `${det.distance_km} km` : '未填'}・陣營：{det.faction || '未填'}・分組：{det.group_name || '未填'}
+                    </div>
+
                     <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>
                       發票資訊：
                       {det.invoice ? (

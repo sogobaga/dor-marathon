@@ -31,23 +31,23 @@ type Race struct {
 	// （尚未選定分組）該顯示的報名費。uniform 模式＝EntryFee；per_group 模式＝各組有效報名費
 	// （COALESCE(組獨立價, 預設價)）的最小值，賽事沒有任何分組則回退 EntryFee。前端 per_group 顯示
 	// 「NT$ {此值} 起」。純 Go 對照邏輯見 MinGroupFeeCents，供單元測試驗證正確性。
-	DisplayFeeCents  int                          `json:"display_fee_cents"`
-	RegStart         *time.Time                   `json:"registration_start,omitempty"` // 報名開始
-	RegEnd           *time.Time                   `json:"registration_end,omitempty"`   // 報名截止
-	StartDate        time.Time                    `json:"start_date"`                   // 競賽時間 起
-	EndDate          time.Time                    `json:"end_date"`                     // 競賽時間 迄
-	Config           RaceConfig                   `json:"config"`
-	RequiredFields   []string                     `json:"required_fields"`      // 報名必填欄位：real_name|nickname|phone|address|birthday|gender
-	BrochureTitle    string                       `json:"brochure_title"`       // 簡章大主標
-	ControlStatus    string                       `json:"control_status"`       // active|paused|suspended|closed|hidden|testing（admin 手動）
-	StartingSoonDays int                          `json:"starting_soon_days"`   // 賽事即將開始 倒數天數
-	AllowTeamGroups  bool                         `json:"allow_team_groups"`    // 競賽模式：是否開放前台自建跑團分組
-	DisplayStatus    string                       `json:"display_status"`       // 計算欄位（讀取時填）：upcoming_reg|registering|reg_closed|starting_soon|racing|ended|paused|suspended
-	CanRegister      bool                         `json:"can_register"`         // 計算欄位
+	DisplayFeeCents  int        `json:"display_fee_cents"`
+	RegStart         *time.Time `json:"registration_start,omitempty"` // 報名開始
+	RegEnd           *time.Time `json:"registration_end,omitempty"`   // 報名截止
+	StartDate        time.Time  `json:"start_date"`                   // 競賽時間 起
+	EndDate          time.Time  `json:"end_date"`                     // 競賽時間 迄
+	Config           RaceConfig `json:"config"`
+	RequiredFields   []string   `json:"required_fields"`    // 報名必填欄位：real_name|nickname|phone|address|birthday|gender
+	BrochureTitle    string     `json:"brochure_title"`     // 簡章大主標
+	ControlStatus    string     `json:"control_status"`     // active|paused|suspended|closed|hidden|testing（admin 手動）
+	StartingSoonDays int        `json:"starting_soon_days"` // 賽事即將開始 倒數天數
+	AllowTeamGroups  bool       `json:"allow_team_groups"`  // 競賽模式：是否開放前台自建跑團分組
+	DisplayStatus    string     `json:"display_status"`     // 計算欄位（讀取時填）：upcoming_reg|registering|reg_closed|starting_soon|racing|ended|paused|suspended
+	CanRegister      bool       `json:"can_register"`       // 計算欄位
 	// IsTesting 計算欄位（讀取時由 FillDisplay 填，等同 control_status=="testing"）：前台識別標籤用。
 	// 不是獨立的資訊外洩面——ListPublic/GetPublicDetail 已在白名單守門通過「之後」才呼叫 FillDisplay，
 	// 看不到這場測試賽事的人本來就收不到這筆 race 資料，自然也不會收到 is_testing=true。
-	IsTesting bool `json:"is_testing"`
+	IsTesting        bool                         `json:"is_testing"`
 	CreatedBy        string                       `json:"created_by,omitempty"` // organizer userID
 	ReviewStatus     string                       `json:"review_status"`        // pending|approved|rejected
 	ReviewNote       string                       `json:"review_note,omitempty"`
@@ -621,7 +621,7 @@ type SignupRow struct {
 	OrderTotal    int       `json:"order_total_cents"`
 	OrderStatus   string    `json:"order_status,omitempty"`
 	RaceTitle     string    `json:"race_title,omitempty"` // 僅「全部賽事」模式（race_id 留空）需要，前端多顯示一欄賽事名稱
-	IsVirtual     bool      `json:"is_virtual"`            // 虛擬選手（users.is_virtual），供後台勾選隱藏＋🤖標記
+	IsVirtual     bool      `json:"is_virtual"`           // 虛擬選手（users.is_virtual），供後台勾選隱藏＋🤖標記
 }
 
 // OrderRow 後台訂單管理列表單筆
@@ -636,18 +636,28 @@ type OrderRow struct {
 	PaidAt         *time.Time   `json:"paid_at,omitempty"`
 	CreatedAt      time.Time    `json:"created_at"`
 	RegistrationID string       `json:"registration_id,omitempty"`
-	Invoice        *InvoiceInfo `json:"invoice"`  // 發票資訊（過渡期人工開立用）；舊訂單沒有資料則為 null
+	Invoice        *InvoiceInfo `json:"invoice"`    // 發票資訊（過渡期人工開立用）；舊訂單沒有資料則為 null
 	IsVirtual      bool         `json:"is_virtual"` // 虛擬選手（users.is_virtual），供後台勾選隱藏＋🤖標記
 	// 電子發票實際開立狀態（見 internal/einvoice，migration 169）；與上面 Invoice（買受人快照）不同，
 	// 這是綠界開立結果摘要。LEFT JOIN order_invoices 查無列（訂單尚未觸發開立流程）＝兩者皆空字串，
 	// json omitempty 使前端收到 undefined（見 ListOrders/GetOrderDetail）。
 	InvoiceNumber string `json:"invoice_number,omitempty"`
 	InvoiceStatus string `json:"invoice_status,omitempty"` // pending|issuing|issued|void|failed|skipped
+	// 以下為 2026-09-08 owner request（後台「訂單管理」需看得到報名者真實個資）新增：一律 LEFT JOIN
+	// registrations(o.registration_id)/race_groups/user_profiles 取得，VIP 訂閱訂單（無 registration）
+	// 全部回傳零值/空字串，見 ListOrders/GetOrderDetail 註解。
+	RealName   string `json:"real_name"`            // 真實姓名：優先報名當下快照 registrations.snap_real_name，快照空才退回 user_profiles.real_name
+	Phone      string `json:"phone"`                // 手機：同上，優先快照 snap_phone
+	Address    string `json:"address"`              // 地址：同上，優先快照 snap_address
+	DistanceKm int    `json:"distance_km"`          // 報名組別對應距離（km）；registrations.distance，無報名（VIP 訂單）＝0
+	Faction    string `json:"faction,omitempty"`    // 陣營（分組對抗模式），一般模式為空
+	GroupName  string `json:"group_name,omitempty"` // 報名分組名稱（race_groups.name），無分組/VIP 訂單為空
+	UserHandle string `json:"user_handle"`          // 會員帳號 handle（users.handle）
 }
 
 // OrderItemRow 訂單明細單筆
 type OrderItemRow struct {
-	ItemType       string `json:"item_type"` // entry|addon
+	ItemType       string `json:"item_type"` // entry|addon|discount|vip_month|vip_year
 	AddonName      string `json:"addon_name,omitempty"`
 	Qty            int    `json:"qty"`
 	UnitPriceCents int    `json:"unit_price_cents"`
@@ -658,6 +668,61 @@ type OrderItemRow struct {
 type OrderDetail struct {
 	OrderRow
 	Items []OrderItemRow `json:"items"`
+}
+
+// ExportOrderItem 匯出賽事訂單的加購品項單筆（見 Repository.ExportOrders／Handler.AdminExportOrders）
+type ExportOrderItem struct {
+	Name           string `json:"name"`
+	Qty            int    `json:"qty"`
+	UnitPriceCents int    `json:"unit_price_cents"`
+	SubtotalCents  int    `json:"subtotal_cents"`
+}
+
+// ExportOrderRow 匯出賽事訂單（含加購）單筆——後台「訂單管理」匯出功能專用，2026-09-08 owner request。
+// 與 OrderRow 不同：這裡把整張訂單所有品項在 SQL 端就依類型聚合好（報名費/加購/折扣分開加總＋加購明細
+// json_agg 成陣列），前端據此直接拼出「訂單」與「品項明細」兩張匯出表，不必再對每筆訂單多打一次
+// GetOrderDetail（避免 N+1）。
+type ExportOrderRow struct {
+	ID         string     `json:"id"`
+	CreatedAt  time.Time  `json:"created_at"`
+	PaidAt     *time.Time `json:"paid_at,omitempty"`
+	Status     string     `json:"status"`
+	UserEmail  string     `json:"user_email"`
+	UserHandle string     `json:"user_handle"`
+	UserName   string     `json:"user_name"` // 顯示名稱：COALESCE(u.name,u.handle)
+	RealName   string     `json:"real_name"`
+	Phone      string     `json:"phone"`
+	Address    string     `json:"address"`
+	DistanceKm int        `json:"distance_km"`
+	Faction    string     `json:"faction"`
+	GroupName  string     `json:"group_name"`
+	// EntryCents/AddonCents/DiscountCents 皆為 SQL 端依 order_items.item_type 分類加總（entry/addon/discount）；
+	// entry_cents 恆為單一報名費項目的小計（同一訂單只會有一筆 entry 品項，見 RegisterWithOrder），
+	// discount_cents 為負數（優惠折抵，比照 order_items.subtotal_cents 的既有語意）或 0（無折抵）。
+	EntryCents    int               `json:"entry_cents"`
+	Addons        []ExportOrderItem `json:"addons"`
+	AddonCents    int               `json:"addon_cents"`
+	DiscountCents int               `json:"discount_cents"`
+	TotalCents    int               `json:"total_cents"`
+	InvoiceNumber string            `json:"invoice_number,omitempty"`
+	InvoiceStatus string            `json:"invoice_status,omitempty"`
+	BuyerType     string            `json:"buyer_type,omitempty"`
+	TaxID         string            `json:"tax_id,omitempty"`
+	Title         string            `json:"title,omitempty"` // 三聯式發票抬頭（公司名稱），與 Race 無關——同名沿用 InvoiceInfo.Title 欄位命名
+	CarrierID     string            `json:"carrier_id,omitempty"`
+	LoveCode      string            `json:"love_code,omitempty"`
+}
+
+// ExportRaceMeta 匯出賽事訂單回應內的賽事摘要
+type ExportRaceMeta struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+// ExportOrdersResponse 匯出賽事訂單 API 回應（GET /api/v1/admin/orders/export）
+type ExportOrdersResponse struct {
+	Race   ExportRaceMeta   `json:"race"`
+	Orders []ExportOrderRow `json:"orders"`
 }
 
 // MyRegLite 使用者在某賽事的精簡報名狀態（賽事列表附帶用）
