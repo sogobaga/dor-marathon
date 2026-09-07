@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminRacesApi, adminOrdersApi, adminPaymentsApi, adminInvoiceApi, type Race, type OrderRow, type OrderDetail, type RefundRow, type EcpayEnvCheck, type EInvoiceDetail, type EInvoiceAllowance, type ExportOrderRow } from '@/lib/api'
+import { adminRacesApi, adminOrdersApi, adminPaymentsApi, adminInvoiceApi, type Race, type OrderRow, type OrderDetail, type RefundRow, type EcpayEnvCheck, type EInvoiceDetail, type EInvoiceAllowance, type ExportOrderRow, type InvoiceVerifyResult } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import * as XLSX from 'xlsx'
 
@@ -86,6 +86,9 @@ export default function AdminOrdersPage() {
   const [expanded, setExpanded] = useState<Record<string, OrderDetail | null>>({})
   const [refunds, setRefunds] = useState<Record<string, RefundRow[]>>({})
   const [invoices, setInvoices] = useState<Record<string, { invoice: EInvoiceDetail | null; allowances: EInvoiceAllowance[] }>>({})
+  // 「驗證載具」（見 einvoice/verify.go）：對每筆訂單目前存的手機條碼/愛心碼即時查驗一次，
+  // 結果只存在畫面上（不落地），orderID → 查驗結果；busy 用共用的 busy 狀態避免重複點擊。
+  const [carrierChecks, setCarrierChecks] = useState<Record<string, InvoiceVerifyResult | 'busy' | 'error'>>({})
   const [busy, setBusy] = useState<string>('') // 進行中的 orderID/refundID，避免重複點擊
   const [envCheck, setEnvCheck] = useState<EcpayEnvCheck | null>(null)
   const [envCheckErr, setEnvCheckErr] = useState('')
@@ -222,6 +225,19 @@ export default function AdminOrdersPage() {
       await adminInvoiceApi.allowance(token, orderID, Math.round(n), reason.trim())
       loadInvoice(orderID)
     } catch (e: any) { setErr(e?.message || '折讓失敗') } finally { setBusy('') }
+  }
+
+  // 「驗證載具」：對訂單目前存的手機條碼/愛心碼重打一次 ECPay CheckBarcode/CheckLoveCode
+  // （見 einvoice/verify.go VerifyCarrier）。純唯讀查詢，不落地，失敗一律顯示「無法查驗」不擋操作。
+  async function verifyCarrier(orderID: string) {
+    if (!token) return
+    setCarrierChecks((m) => ({ ...m, [orderID]: 'busy' }))
+    try {
+      const r = await adminInvoiceApi.verifyCarrier(token, orderID)
+      setCarrierChecks((m) => ({ ...m, [orderID]: r }))
+    } catch {
+      setCarrierChecks((m) => ({ ...m, [orderID]: 'error' }))
+    }
   }
 
   async function markPaid(o: OrderRow) {
@@ -558,6 +574,31 @@ export default function AdminOrdersPage() {
                           {det.invoice.buyer_type === 'company' && ` · 統編 ${det.invoice.tax_id || '—'} · 抬頭 ${det.invoice.title || '—'}`}
                           {det.invoice.buyer_type === 'personal' && ` · 載具 ${det.invoice.carrier_type === 'mobile' && det.invoice.carrier_id ? det.invoice.carrier_id : '雲端發票存證'}`}
                           {det.invoice.buyer_type === 'donation' && ` · 愛心碼 ${det.invoice.love_code || '—'}`}
+                          {/* 「驗證載具」（見 einvoice/verify.go）：只有手機條碼載具/捐贈愛心碼才有可查驗的號碼——
+                              雲端發票存證（無載具）或公司統編走不同的驗證 API（CheckCompanyIdentifier，本次不做），不顯示按鈕 */}
+                          {((det.invoice.buyer_type === 'personal' && det.invoice.carrier_type === 'mobile' && det.invoice.carrier_id) ||
+                            (det.invoice.buyer_type === 'donation' && det.invoice.love_code)) && (
+                            <>
+                              {' '}
+                              <button
+                                onClick={() => verifyCarrier(o.id)}
+                                disabled={carrierChecks[o.id] === 'busy'}
+                                style={{ ...smallBtn, padding: '1px 8px', fontSize: 10.5 }}
+                              >
+                                {carrierChecks[o.id] === 'busy' ? '查驗中…' : '驗證載具'}
+                              </button>
+                              {(() => {
+                                const c = carrierChecks[o.id]
+                                if (!c || c === 'busy') return null
+                                if (c === 'error' || !c.checked) {
+                                  return <span style={{ color: 'var(--tx-faint)' }}> ⚪ 無法查驗{c !== 'error' && c.message ? `（${c.message}）` : ''}</span>
+                                }
+                                return c.exists
+                                  ? <span style={{ color: 'var(--fug)' }}> ✓ 存在</span>
+                                  : <span style={{ color: 'var(--hunt)' }}> ✗ 查無（{c.message}）</span>
+                              })()}
+                            </>
+                          )}
                         </>
                       ) : '無發票資料'}
                     </div>

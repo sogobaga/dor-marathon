@@ -462,3 +462,77 @@ func (c *Client) GetIssue(ctx context.Context, req GetIssueReq) (*GetIssueResp, 
 	}
 	return &resp, nil
 }
+
+// ================= CheckBarcode（手機條碼查驗） =================
+//
+// 官方規格（2026-09-08 web_fetch https://developers.ecpay.com.tw/7886.md 確認）：
+// 請求 Data：MerchantID String(10) 必填、BarCode String(8) 必填（"/"開頭＋7碼，數字/大寫英文/+-.）。
+// 回應 Data：RtnCode Int（1=成功；其餘失敗，9000001＝呼叫財政部 API 失敗/財政部系統維護中）、
+// RtnMsg String(200)、IsExist String(1)（Y/N，⚠️只有 RtnCode==1 時才可信）。
+
+// CheckBarcodeReq /B2CInvoice/CheckBarcode 請求 Data。
+type CheckBarcodeReq struct {
+	MerchantID string `json:"MerchantID"`
+	BarCode    string `json:"BarCode"`
+}
+
+// CheckBarcodeResp /B2CInvoice/CheckBarcode 回應 Data。
+type CheckBarcodeResp struct {
+	RtnCode FlexInt    `json:"RtnCode"`
+	RtnMsg  string     `json:"RtnMsg"`
+	IsExist FlexString `json:"IsExist"`
+}
+
+// CheckBarcode 查驗手機條碼是否存在於財政部載具歸戶資料庫。RtnCode!=1（含 9000001 財政部 API
+// 暫時失敗）一律回傳 *APIError——呼叫端（verify.go）必須把這種情況當「暫時無法查驗」而非
+// 「條碼不存在」，不可誤判擋下合法輸入。⚠️ 不記錄 barcode 本身（同檔頭註解：客戶資料不進 log）。
+func (c *Client) CheckBarcode(ctx context.Context, barcode string) (exists bool, err error) {
+	req := CheckBarcodeReq{MerchantID: c.MerchantID, BarCode: barcode}
+	var resp CheckBarcodeResp
+	if err := c.call(ctx, "/B2CInvoice/CheckBarcode", req, &resp); err != nil {
+		return false, err
+	}
+	log.Info().Str("path", "/B2CInvoice/CheckBarcode").
+		Int("rtn_code", int(resp.RtnCode)).Str("rtn_msg", resp.RtnMsg).Msg("einvoice: ecpay call")
+	if int(resp.RtnCode) != 1 {
+		return false, &APIError{TransCode: 1, RtnCode: int(resp.RtnCode), RtnMsg: resp.RtnMsg}
+	}
+	return string(resp.IsExist) == "Y", nil
+}
+
+// ================= CheckLoveCode（愛心碼查驗） =================
+//
+// 官方規格（2026-09-08 web_fetch https://developers.ecpay.com.tw/7891.md 確認）：
+// 請求 Data：MerchantID String(10) 必填、LoveCode String(7) 必填（純數字 3-7 碼，可含前導 0）。
+// 回應 Data：RtnCode Int（1=成功取得查詢結果，其餘失敗）、RtnMsg String(200)、
+// IsExist String(1)（Y=存在/N=不存在）、OrganName String(100)（僅 IsExist=='Y' 時有值，本檔不使用）。
+
+// CheckLoveCodeReq /B2CInvoice/CheckLoveCode 請求 Data。
+type CheckLoveCodeReq struct {
+	MerchantID string `json:"MerchantID"`
+	LoveCode   string `json:"LoveCode"`
+}
+
+// CheckLoveCodeResp /B2CInvoice/CheckLoveCode 回應 Data。
+type CheckLoveCodeResp struct {
+	RtnCode   FlexInt    `json:"RtnCode"`
+	RtnMsg    string     `json:"RtnMsg"`
+	IsExist   FlexString `json:"IsExist"`
+	OrganName string     `json:"OrganName"`
+}
+
+// CheckLoveCode 查驗捐贈碼（愛心碼）是否存在。行為（RtnCode!=1 一律 *APIError）與 CheckBarcode 對稱，
+// 見上方註解。
+func (c *Client) CheckLoveCode(ctx context.Context, code string) (exists bool, err error) {
+	req := CheckLoveCodeReq{MerchantID: c.MerchantID, LoveCode: code}
+	var resp CheckLoveCodeResp
+	if err := c.call(ctx, "/B2CInvoice/CheckLoveCode", req, &resp); err != nil {
+		return false, err
+	}
+	log.Info().Str("path", "/B2CInvoice/CheckLoveCode").
+		Int("rtn_code", int(resp.RtnCode)).Str("rtn_msg", resp.RtnMsg).Msg("einvoice: ecpay call")
+	if int(resp.RtnCode) != 1 {
+		return false, &APIError{TransCode: 1, RtnCode: int(resp.RtnCode), RtnMsg: resp.RtnMsg}
+	}
+	return string(resp.IsExist) == "Y", nil
+}

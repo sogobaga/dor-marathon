@@ -166,6 +166,9 @@ func main() {
 	einvoiceCfg := einvoice.NewConfigFromEnv(cfg.ECPayInvoiceEnv, cfg.ECPayInvoiceMerchantID, cfg.ECPayInvoiceHashKey, cfg.ECPayInvoiceHashIV)
 	einvoiceIssuer := einvoice.NewIssuer(einvoiceCfg, pool)
 	einvoiceAdminHandler := einvoice.NewAdminHandler(einvoiceIssuer, einvoice.NewRepository(pool))
+	// 會員端「輸入時查驗」（2026-09-08：手機條碼/愛心碼格式對但打錯字，見 einvoice/verify.go）；
+	// 獨立一支輕量 handler，不需要 Issuer 的 DB/決策邏輯，只需要同一組憑證建自己的 *Client。
+	einvoiceMemberHandler := einvoice.NewMemberHandler(einvoiceCfg)
 	// 三處付款結算 CAS 成功後觸發非同步開立（見各自 SetInvoiceHook 欄位註解：race.Service.
 	// MarkOrderPaid／BindHandler 的 settleVipBindPayment／settleVipRenewal），退款結案成功後觸發折讓
 	// （payment.Handler 的 CreateRefund／AdminMarkRefundManualDone）。*einvoice.Issuer 同時滿足這三個
@@ -543,6 +546,12 @@ func main() {
 			// GPS 距離校正（見 internal/gpscalib）— 三個端點皆掛套件私有 requireEntry
 			// （gps_calib_entry_state/whitelist），比照 monopoly/cheer-layout 前例：非白名單一律 403。
 			r.Mount("/me/gps-calib", gpsCalibHandler.Router())
+
+			// 電子發票輸入時查驗（見 internal/einvoice/verify.go）：報名表單填手機條碼/愛心碼時
+			// 即時打 ECPay CheckBarcode/CheckLoveCode 確認號碼真的存在（抓 0/O、1/I 這類格式合法
+			// 但打錯字的輸入）— SEC-H1：20/min 防止被當成任意條碼枚舉工具。
+			r.With(middleware.RateLimit(rdb, "invoice_verify", 20, time.Minute, middleware.UserOrIP)).
+				Post("/invoice/verify", einvoiceMemberHandler.Verify)
 
 			// 取消報名申請/撤回（審核由後台 /admin/cancel-requests 進行）
 			r.Post("/profile/registrations/{registrationID}/cancel-request", raceHandler.CreateCancelRequest)

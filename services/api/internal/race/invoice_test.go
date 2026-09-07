@@ -103,7 +103,10 @@ func TestValidateInvoice_Personal(t *testing.T) {
 		{"valid mobile carrier", InvoiceInfo{BuyerType: "personal", CarrierType: "mobile", CarrierID: "/AB12345"}, false},
 		{"mobile carrier missing id", InvoiceInfo{BuyerType: "personal", CarrierType: "mobile"}, true},
 		{"mobile carrier bad format (no slash)", InvoiceInfo{BuyerType: "personal", CarrierType: "mobile", CarrierID: "AB123456"}, true},
-		{"mobile carrier bad format (lowercase)", InvoiceInfo{BuyerType: "personal", CarrierType: "mobile", CarrierID: "/ab12345"}, true},
+		// 2026-09-08 起 ValidateInvoice 會先把 CarrierID 轉大寫再驗證格式（見該函式內
+		// strings.ToUpper 正規化註解），讓「儲存進 DB 的值」保證是同一種正規形——因此小寫輸入
+		// 不再視為格式錯誤，而是正規化成大寫後通過（見下面 TestValidateInvoice_NormalizesCarrierIDCase）。
+		{"mobile carrier lowercase gets normalized", InvoiceInfo{BuyerType: "personal", CarrierType: "mobile", CarrierID: "/ab12345"}, false},
 		{"mobile carrier bad format (too short)", InvoiceInfo{BuyerType: "personal", CarrierType: "mobile", CarrierID: "/AB1234"}, true},
 		{"unknown carrier_type", InvoiceInfo{BuyerType: "personal", CarrierType: "citizen_cert"}, true},
 		{"carrier_id without carrier_type", InvoiceInfo{BuyerType: "personal", CarrierID: "/AB12345"}, true},
@@ -119,6 +122,20 @@ func TestValidateInvoice_Personal(t *testing.T) {
 				t.Errorf("ValidateInvoice(%+v) error = %v, wantErr %v", c.in, err, c.wantErr)
 			}
 		})
+	}
+}
+
+// TestValidateInvoice_NormalizesCarrierIDCase 驗證 ValidateInvoice 把手機條碼載具正規化成
+// 大寫、去除中間空白後才儲存（2026-09-08：讓 DB 存的值恆為 ECPay CheckBarcode 查驗會用到的
+// 那種正規形，也讓「同一支手機條碼、大小寫打法不同」的兩筆輸入視為同一組值）。
+func TestValidateInvoice_NormalizesCarrierIDCase(t *testing.T) {
+	in := InvoiceInfo{BuyerType: "personal", CarrierType: "mobile", CarrierID: "/ab12345"}
+	out, err := ValidateInvoice(&in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.CarrierID != "/AB12345" {
+		t.Errorf("expected normalized CarrierID /AB12345, got %q", out.CarrierID)
 	}
 }
 

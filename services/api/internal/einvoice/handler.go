@@ -51,6 +51,7 @@ func (h *AdminHandler) OrderInvoiceRouter() http.Handler {
 	r.Post("/void", h.Void)
 	r.Post("/sync", h.Sync)
 	r.Post("/allowance", h.CreateAllowance)
+	r.Post("/verify-carrier", h.VerifyCarrier)
 	return r
 }
 
@@ -209,6 +210,36 @@ func (h *AdminHandler) CreateAllowance(w http.ResponseWriter, r *http.Request) {
 		"ok":        true,
 		"allowance": toAllowanceJSON(after.Allowances[len(after.Allowances)-1]),
 	})
+}
+
+// VerifyCarrier POST /admin/orders/{orderID}/invoice/verify-carrier
+// 對這筆訂單目前存的手機條碼載具／愛心碼重新查驗一次（見 verify.go）：例如發票開立失敗、
+// 或客服懷疑會員當初打錯字時，管理者可在後台直接查，不必請會員回報名頁重新輸入觸發查驗。
+// 只讀 InvoiceDetail 既有的 CarrierType/CarrierID/LoveCode 快照（買受人資訊，見 mapping.go），
+// 不重新驗證格式（那是 race.ValidateInvoice 報名當下的責任，這裡的資料理論上已通過格式驗證）。
+func (h *AdminHandler) VerifyCarrier(w http.ResponseWriter, r *http.Request) {
+	orderID := chi.URLParam(r, "orderID")
+	detail, err := h.repo.GetInvoiceDetail(r.Context(), orderID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to load invoice")
+		return
+	}
+	if detail == nil {
+		respondErr(w, http.StatusConflict, "此訂單尚無發票資訊可查驗")
+		return
+	}
+	var kind, value string
+	switch {
+	case detail.CarrierType == "mobile" && detail.CarrierID != "":
+		kind, value = "mobile", detail.CarrierID
+	case detail.LoveCode != "":
+		kind, value = "love_code", detail.LoveCode
+	default:
+		respondErr(w, http.StatusConflict, "此訂單非手機條碼或捐贈發票，無載具可查驗")
+		return
+	}
+	result := verifyMobileOrLoveCode(r.Context(), h.issuer.client, h.issuer.cfg.Env, kind, value)
+	respondJSON(w, http.StatusOK, result)
 }
 
 // respondInvoice Issue/Sync/Void 共用的「操作後讀回最新發票快照」尾段。

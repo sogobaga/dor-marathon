@@ -6,6 +6,7 @@ import {
   profileApi,
   paymentsApi,
   rewardsApi,
+  invoiceApi,
   METRIC_BY_KEY,
   formatChallengeRule,
   effectiveGroupFee,
@@ -17,6 +18,7 @@ import {
   type ParticipantField,
   type RecommendRow,
   type InvoiceInfo,
+  type InvoiceVerifyResult,
   type UserReward,
 } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError, useUser } from '@/lib/userAuth'
@@ -130,6 +132,47 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [invoice, setInvoice] = useState<InvoiceInfo>({
     buyer_type: 'personal', tax_id: '', title: '', carrier_type: '', carrier_id: '', love_code: '',
   })
+  // 手機條碼載具／愛心碼「輸入時查驗」（2026-09-08，見 services/api/internal/einvoice/verify.go）：
+  // value 記錄「這次查驗結果對應的正規化後輸入值」，畫面判斷是否顯示這個結果一律比對
+  // value === 目前輸入值——值一改就視為過期（不再顯示，也不會被拿去擋送出），不用另外清空狀態。
+  type CarrierVerifyState = { value: string; busy: boolean; result: InvoiceVerifyResult | null }
+  const [carrierVerify, setCarrierVerify] = useState<CarrierVerifyState | null>(null)
+  const [loveVerify, setLoveVerify] = useState<CarrierVerifyState | null>(null)
+
+  async function checkCarrier(value: string) {
+    if (!CARRIER_ID_RE.test(value)) return
+    setCarrierVerify({ value, busy: true, result: null })
+    try {
+      const result = await withUserAuth((t) => invoiceApi.verify(t, { type: 'mobile', value }))
+      setCarrierVerify({ value, busy: false, result })
+    } catch {
+      setCarrierVerify({ value, busy: false, result: null }) // 查驗失敗一律 fail-open，不擋輸入
+    }
+  }
+
+  async function checkLoveCode(value: string) {
+    if (!LOVE_CODE_RE.test(value)) return
+    setLoveVerify({ value, busy: true, result: null })
+    try {
+      const result = await withUserAuth((t) => invoiceApi.verify(t, { type: 'love_code', value }))
+      setLoveVerify({ value, busy: false, result })
+    } catch {
+      setLoveVerify({ value, busy: false, result: null })
+    }
+  }
+
+  // 查驗狀態小提示：value 與目前輸入值不同（使用者改過但還沒重新查驗）一律視為「沒有可顯示的結果」。
+  function verifyHint(v: CarrierVerifyState | null, currentValue: string) {
+    if (!v || v.value !== currentValue) return null
+    if (v.busy) return <span style={hint}>查驗中…</span>
+    if (!v.result || !v.result.checked) {
+      return <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>⚠ {v.result?.message || '暫時無法向財政部查驗，請再試一次或稍後再填'}</span>
+    }
+    const envTag = v.result.env && v.result.env !== 'prod' ? '（測試環境）' : ''
+    return v.result.exists
+      ? <span style={{ fontSize: 12, color: 'var(--fug)' }}>✓ {v.result.message}{envTag}</span>
+      : <span style={{ fontSize: 12, color: 'var(--hunt)' }}>✗ {v.result.message}{envTag}</span>
+  }
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState<{ group: string; revealed: boolean; paid: boolean; payable: number; orderId: string } | null>(null)
   const [paying, setPaying] = useState(false)
@@ -412,14 +455,28 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         return
       }
     } else if (invoice.buyer_type === 'donation') {
-      if (!LOVE_CODE_RE.test(invoice.love_code.trim())) {
+      const v = invoice.love_code.trim()
+      if (!LOVE_CODE_RE.test(v)) {
         setErr('愛心碼格式有誤，請輸入 3-7 位數字')
         return
       }
-    } else if (invoice.buyer_type === 'personal') {
-      if (invoice.carrier_type === 'mobile' && !CARRIER_ID_RE.test(invoice.carrier_id.trim())) {
-        setErr('手機條碼載具格式有誤，請確認（例如 /ABC1234）')
+      // 只有「這次查驗的值＝目前輸入值」且明確回報查無時才擋——未查驗／查驗中／查驗本身失敗
+      // （transport error）一律放行，不能因為財政部 API 一時打不通就擋掉合法的報名（見任務規格）。
+      if (loveVerify?.value === v && loveVerify.result?.checked && loveVerify.result.exists === false) {
+        setErr('愛心碼查無此號，請修正是否打錯')
         return
+      }
+    } else if (invoice.buyer_type === 'personal') {
+      if (invoice.carrier_type === 'mobile') {
+        const v = invoice.carrier_id.trim()
+        if (!CARRIER_ID_RE.test(v)) {
+          setErr('手機條碼載具格式有誤，請確認（例如 /ABC1234）')
+          return
+        }
+        if (carrierVerify?.value === v && carrierVerify.result?.checked && carrierVerify.result.exists === false) {
+          setErr('手機條碼查無此號，請修正或改用 Email 載具')
+          return
+        }
       }
     }
     setSubmitting(true)
@@ -950,7 +1007,10 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                   <button
                     key={o.v}
                     type="button"
-                    onClick={() => setInvoice({ buyer_type: o.v, tax_id: '', title: '', carrier_type: '', carrier_id: '', love_code: '' })}
+                    onClick={() => {
+                      setInvoice({ buyer_type: o.v, tax_id: '', title: '', carrier_type: '', carrier_id: '', love_code: '' })
+                      setCarrierVerify(null); setLoveVerify(null) // 切換發票類型：舊查驗結果一律作廢
+                    }}
                     style={{
                       ...ghostBtn, textAlign: 'center',
                       border: invoice.buyer_type === o.v ? '1.5px solid var(--fug)' : '1px dashed var(--line-2)',
@@ -969,16 +1029,26 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                   <input
                     style={inp} type="text" value={invoice.carrier_id}
                     onChange={(e) => {
-                      const v = e.target.value
+                      // 正規化：轉大寫＋去除中間空白（比照後端 race.ValidateInvoice 的正規化規則，
+                      // 見任務規格 2026-09-08）；使用者打滿 7 碼合法字元卻忘記開頭「/」時自動補上。
+                      let v = e.target.value.toUpperCase().replace(/\s+/g, '')
+                      if (!v.startsWith('/') && /^[0-9A-Z.+-]{7}$/.test(v)) v = '/' + v
                       setInvoice((p) => ({ ...p, carrier_id: v, carrier_type: v.trim() ? 'mobile' : '' }))
+                    }}
+                    onBlur={() => {
+                      const v = invoice.carrier_id.trim()
+                      if (CARRIER_ID_RE.test(v) && carrierVerify?.value !== v) checkCarrier(v)
                     }}
                     placeholder="例如 /ABC1234"
                   />
+                  <span style={hint}>格式：「/」＋7 碼（大寫英數與 . + -），例如 /AB12+CD。輸入完會即時向財政部查驗</span>
                   {invoice.carrier_id.trim() === '' ? (
                     <span style={hint}>未填寫將以綠界電子發票載具開立，並寄到你的 Email</span>
                   ) : !CARRIER_ID_RE.test(invoice.carrier_id.trim()) ? (
                     <span style={{ fontSize: 12, color: 'var(--hunt)' }}>手機條碼載具格式有誤，請確認（例如 /ABC1234）</span>
-                  ) : null}
+                  ) : (
+                    verifyHint(carrierVerify, invoice.carrier_id.trim())
+                  )}
                 </label>
               )}
 
@@ -1015,10 +1085,17 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                   </span>
                   <input
                     style={inp} type="text" value={invoice.love_code}
-                    onChange={(e) => setInvoice((p) => ({ ...p, love_code: e.target.value }))}
+                    onChange={(e) => setInvoice((p) => ({ ...p, love_code: e.target.value.replace(/\s+/g, '') }))}
+                    onBlur={() => {
+                      const v = invoice.love_code.trim()
+                      if (LOVE_CODE_RE.test(v) && loveVerify?.value !== v) checkLoveCode(v)
+                    }}
                   />
-                  {invoice.love_code.trim() !== '' && !LOVE_CODE_RE.test(invoice.love_code.trim()) && (
+                  <span style={hint}>格式：3-7 位數字。輸入完會即時向財政部查驗</span>
+                  {invoice.love_code.trim() !== '' && !LOVE_CODE_RE.test(invoice.love_code.trim()) ? (
                     <span style={{ fontSize: 12, color: 'var(--hunt)' }}>愛心碼格式有誤，請輸入 3-7 位數字</span>
+                  ) : (
+                    verifyHint(loveVerify, invoice.love_code.trim())
                   )}
                 </label>
               )}

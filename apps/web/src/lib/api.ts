@@ -1209,6 +1209,21 @@ export interface InvoiceInfo {
   love_code: string            // donation 專用，愛心碼
 }
 
+// --- 電子發票輸入時查驗（見 services/api/internal/einvoice/verify.go，2026-09-08）---
+
+export interface InvoiceVerifyResult {
+  format_ok: boolean
+  exists: boolean | null // null＝未查驗（格式不合法，或 ECPay/財政部暫時無法查）
+  checked: boolean
+  message: string
+  env: string // stage｜prod：env !== 'prod' 時前端顯示「（測試環境）」
+}
+
+export const invoiceApi = {
+  verify: (token: string, body: { type: 'mobile' | 'love_code'; value: string }) =>
+    request<InvoiceVerifyResult>('/invoice/verify', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+}
+
 export interface RegisterPayload {
   group_id?: string
   group_key?: string // 加入需鑰匙的分組時帶入
@@ -3316,6 +3331,11 @@ export const adminInvoiceApi = {
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     return request<{ invoices: AdminInvoiceRow[] }>(`/admin/invoices${suffix}`, { headers: withAuth(token) })
   },
+  // 對這筆訂單目前存的手機條碼載具／愛心碼重新查驗一次（見 einvoice/verify.go VerifyCarrier）
+  verifyCarrier: (token: string, orderID: string) =>
+    request<InvoiceVerifyResult>(`/admin/orders/${orderID}/invoice/verify-carrier`, {
+      method: 'POST', headers: withAuth(token),
+    }),
 }
 
 // --- 取消報名審核（後台） ---

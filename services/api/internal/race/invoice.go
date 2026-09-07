@@ -68,7 +68,11 @@ func ValidateInvoice(inv *InvoiceInfo) (InvoiceInfo, error) {
 	v.TaxID = strings.TrimSpace(v.TaxID)
 	v.Title = strings.TrimSpace(v.Title)
 	v.CarrierType = strings.TrimSpace(v.CarrierType)
-	v.CarrierID = strings.TrimSpace(v.CarrierID)
+	// CarrierID 轉大寫＋去除中間空白：手機條碼規則本身只收大寫英數（見 mobileCarrierRe），前端
+	// 2026-09-08 起已在輸入當下就近做同樣正規化（RegistrationScreen.tsx），這裡再做一次是為了
+	// 讓「儲存進 DB 的值」對任何呼叫端（含未來的 API 直打）都保證是同一種大小寫、無空白的正規形，
+	// 不依賴前端有沒有做過這一步——單一事實來源在後端，前端只是提早給使用者回饋。
+	v.CarrierID = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(v.CarrierID), " ", ""))
 	v.LoveCode = strings.TrimSpace(v.LoveCode)
 
 	switch v.BuyerType {

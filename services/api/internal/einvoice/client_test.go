@@ -271,6 +271,104 @@ func TestFlexInt_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestClient_CheckBarcode_Exists(t *testing.T) {
+	srv := newEinvoiceTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		if path != "/B2CInvoice/CheckBarcode" {
+			t.Fatalf("unexpected path: %s", path)
+		}
+		if reqData["BarCode"] != "/AB12345" {
+			t.Fatalf("unexpected BarCode: %v", reqData["BarCode"])
+		}
+		return 1, "", map[string]any{"RtnCode": 1, "RtnMsg": "查詢成功", "IsExist": "Y"}
+	})
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	exists, err := c.CheckBarcode(t.Context(), "/AB12345")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !exists {
+		t.Error("expected exists=true for IsExist=Y")
+	}
+}
+
+func TestClient_CheckBarcode_NotExist(t *testing.T) {
+	srv := newEinvoiceTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		return 1, "", map[string]any{"RtnCode": 1, "RtnMsg": "查詢成功", "IsExist": "N"}
+	})
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	exists, err := c.CheckBarcode(t.Context(), "/AB99999")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exists {
+		t.Error("expected exists=false for IsExist=N")
+	}
+}
+
+// TestClient_CheckBarcode_TransientAPIError 驗證財政部 API 暫時失敗（RtnCode 9000001，非 1）
+// 一律回傳 *APIError，呼叫端不可把這種情況誤判為「條碼不存在」。
+func TestClient_CheckBarcode_TransientAPIError(t *testing.T) {
+	srv := newEinvoiceTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		return 1, "", map[string]any{"RtnCode": 9000001, "RtnMsg": "呼叫財政部API失敗"}
+	})
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	_, err := c.CheckBarcode(t.Context(), "/AB12345")
+	if err == nil {
+		t.Fatal("expected error for RtnCode=9000001")
+	}
+	var apiErr *APIError
+	if !isAPIError(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T: %v", err, err)
+	}
+	if apiErr.RtnCode != 9000001 {
+		t.Errorf("unexpected RtnCode: %d", apiErr.RtnCode)
+	}
+}
+
+func TestClient_CheckLoveCode_Exists(t *testing.T) {
+	srv := newEinvoiceTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		if path != "/B2CInvoice/CheckLoveCode" {
+			t.Fatalf("unexpected path: %s", path)
+		}
+		if reqData["LoveCode"] != "168001" {
+			t.Fatalf("unexpected LoveCode: %v", reqData["LoveCode"])
+		}
+		return 1, "", map[string]any{"RtnCode": 1, "RtnMsg": "查詢成功", "IsExist": "Y", "OrganName": "測試社福團體"}
+	})
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	exists, err := c.CheckLoveCode(t.Context(), "168001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !exists {
+		t.Error("expected exists=true for IsExist=Y")
+	}
+}
+
+func TestClient_CheckLoveCode_NotExist(t *testing.T) {
+	srv := newEinvoiceTestServer(t, func(t *testing.T, path string, reqData map[string]any) (int, string, any) {
+		return 1, "", map[string]any{"RtnCode": 1, "RtnMsg": "查詢成功", "IsExist": "N"}
+	})
+	defer srv.Close()
+
+	c := newTestClient(srv.URL)
+	exists, err := c.CheckLoveCode(t.Context(), "999999")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exists {
+		t.Error("expected exists=false for IsExist=N")
+	}
+}
+
 // isAPIError 是 errors.As 的薄包裝，避免每個測試各自 import errors 只為了這一行。
 func isAPIError(err error, target **APIError) bool {
 	ae, ok := err.(*APIError)
