@@ -410,7 +410,7 @@ func main() {
 		// 版號（公開）：v<base>.<commit>
 		r.Get("/version", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"version":%q,"base":%q,"serial":%q,"commit":%q,"origin_verified":%t,"ip_source":%q}`, version.Full(), version.Base, version.Serial, version.Commit(), reqip.OriginVerified(r), reqip.IPSource(r)) // origin_verified/ip_source：維運診斷 Cloudflare X-Origin-Verify 規則是否生效（見 reqip.computeClientIPDetail）
+			fmt.Fprintf(w, `{"version":%q,"base":%q,"serial":%q,"commit":%q,"origin_verified":%t,"origin_header_present":%t,"origin_header_len":%d,"ip_source":%q}`, version.Full(), version.Base, version.Serial, version.Commit(), reqip.OriginVerified(r), r.Header.Get("X-Origin-Verify") != "", len(r.Header.Get("X-Origin-Verify")), reqip.IPSource(r)) // origin_verified/ip_source：維運診斷 Cloudflare X-Origin-Verify 規則是否生效（見 reqip.computeClientIPDetail）
 		})
 
 		// --- 公開端點 ---
