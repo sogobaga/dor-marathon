@@ -37,7 +37,11 @@ func originVerified(r *http.Request) bool {
 // 意外相撞，比照 internal/middleware 既有 roleKey{}／internal/dbwake 既有 ctxKey 的做法）。
 type ctxKey int
 
-const ctxKeyIP ctxKey = iota
+const (
+	ctxKeyIP ctxKey = iota
+	ctxKeyVerified
+	ctxKeySource
+)
 
 // warnOriginVerifyOnce 見 Middleware 內的使用說明：只在伺服器啟動、Middleware 被建構時記一次，
 // 不是每個請求都記。
@@ -66,29 +70,65 @@ func Middleware(next http.Handler) http.Handler {
 		})
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := computeClientIP(r)
+		ip, source, verified := computeClientIPDetail(r)
 		r.RemoteAddr = ip
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyIP, ip)))
+		ctx := context.WithValue(r.Context(), ctxKeyIP, ip)
+		ctx = context.WithValue(ctx, ctxKeyVerified, verified)
+		ctx = context.WithValue(ctx, ctxKeySource, source)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 // computeClientIP 見 Middleware 上方的三層判斷說明；獨立成函式供 Middleware 與 ClientIP
 // （沒經過 Middleware 時的退回邏輯）共用同一套規則。
 func computeClientIP(r *http.Request) string {
-	if cf := r.Header.Get("CF-Connecting-IP"); cf != "" && originVerified(r) {
-		return cf
+	ip, _, _ := computeClientIPDetail(r)
+	return ip
+}
+
+// computeClientIPDetail 回傳 (ip, 來源, origin 是否驗證通過)。
+//
+// 2026-09-08 正式環境實測修正：原本「X-Origin-Verify 驗證失敗就改信 X-Forwarded-For 最右側」在
+// Cloudflare → Railway edge → Next.js rewrite → api 這條路徑上，最右側永遠是 Railway edge 的代理位址
+// （DataPacket/Datacamp 機房 IP，且會在 5～10 個位址間輪替），結果一旦 Cloudflare 的標頭規則沒生效，
+// 全站所有使用者都被歸到同一小撮代理 IP：IP 限流變成全站共用、登入紀錄與流量統計全錯。
+// 這比「信任可能被偽造的 CF-Connecting-IP」嚴重得多——偽造只有繞過 Cloudflare 直打源站才辦得到，
+// 而源站封鎖是另一層待做的防線。因此政策改為：
+//   1. 有 CF-Connecting-IP → 一律採用（verified 依 X-Origin-Verify 是否吻合標記，供診斷／統計，不改變 IP）。
+//   2. 沒有 CF-Connecting-IP（非經 Cloudflare 的請求）→ X-Forwarded-For 最右側（代理附加）→ TCP peer。
+// /api/v1/version 會回報 origin_verified／ip_source，讓維運能直接看出 Cloudflare 標頭規則是否生效。
+func computeClientIPDetail(r *http.Request) (ip, source string, verified bool) {
+	if cf := r.Header.Get("CF-Connecting-IP"); cf != "" {
+		return cf, "cf", originVerified(r)
 	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
 		if last := strings.TrimSpace(parts[len(parts)-1]); last != "" {
-			return last
+			return last, "xff", false
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		return r.RemoteAddr, "peer", false
 	}
-	return host
+	return host, "peer", false
+}
+
+// OriginVerified 這個請求的 X-Origin-Verify 是否與 ORIGIN_VERIFY_SECRET 吻合（未設密鑰＝視為通過）。
+func OriginVerified(r *http.Request) bool {
+	if v, ok := r.Context().Value(ctxKeyVerified).(bool); ok {
+		return v
+	}
+	return originVerified(r)
+}
+
+// IPSource 這個請求的 client IP 取自哪裡：cf（CF-Connecting-IP）／xff（X-Forwarded-For 最右側）／peer（TCP）。
+func IPSource(r *http.Request) string {
+	if v, ok := r.Context().Value(ctxKeySource).(string); ok && v != "" {
+		return v
+	}
+	_, src, _ := computeClientIPDetail(r)
+	return src
 }
 
 // ClientIP 取得請求的真實 client IP。優先讀 Middleware 已經算好、存進 context 的值（全站路由都
