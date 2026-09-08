@@ -132,6 +132,16 @@ var (
 	// ErrCertificateDisabled 此賽事關閉完賽證明／完賽歷程顯示（config.certificate_disabled，見
 	// GetMyCertificate／GetPersonalHistory）。handler 層回 403，防止繞過前端隱藏直接呼叫 API。
 	ErrCertificateDisabled = errors.New("此賽事未開放完賽證明")
+
+	// --- 寵物雲端馬拉松（2026-09-08 owner request，僅報名部分；見 pets.go ValidatePets）---
+	// ErrPetsRequired 寵物賽事(race.pet_kind非空)報名卻一筆寵物都沒填。
+	ErrPetsRequired = errors.New("請填寫寵物資料")
+	// ErrPetCountMismatch 寵物筆數與「基本名額＋本次加購寵物參賽名額」不符，或超過賽事寵物上限。
+	ErrPetCountMismatch = errors.New("寵物數量與加購名額不符")
+	// ErrPetNameRequired 寵物名稱必填（去頭尾空白後 1..40 個 rune）。
+	ErrPetNameRequired = errors.New("請填寫寵物名稱")
+	// ErrInvalidPetChip 晶片號碼格式錯誤（選填，但填了就要符合 ^[A-Za-z0-9-]{0,32}$）。
+	ErrInvalidPetChip = errors.New("晶片號碼格式錯誤")
 )
 
 // MailInserter 站內信最小介面（參賽虛擬獎勵發放通知用，migration 140）：由 mail.Handler 實作。用小介面
@@ -557,6 +567,36 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		return nil, err
 	}
 
+	// 寵物資料（migration 173，D5）：race.pet_kind==""（非寵物賽事）時 ValidatePets 直接略過（回 nil,nil）。
+	// 寵物賽事才需要先找出本次是否選購「加購寵物參賽名額」(kind=pet_slot) 及其數量——寵物筆數必須
+	// 恰好等於 pet_base_slots + 這個數量。
+	petSlotQty := 0
+	if race.PetKind != "" {
+		addons, err := s.repo.GetAddons(ctx, req.RaceID)
+		if err != nil {
+			return nil, err
+		}
+		petAddonID := ""
+		for _, a := range addons {
+			if a.Kind == "pet_slot" {
+				petAddonID = a.ID
+				break
+			}
+		}
+		if petAddonID != "" {
+			for _, a := range req.Addons {
+				if a.AddonID == petAddonID {
+					petSlotQty = a.Qty
+					break
+				}
+			}
+		}
+	}
+	pets, err := ValidatePets(race, req.Pets, petSlotQty)
+	if err != nil {
+		return nil, err
+	}
+
 	distance := 0
 	if chosen.TargetDistanceKm != nil {
 		distance = int(*chosen.TargetDistanceKm)
@@ -582,6 +622,10 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest) (*Register
 		// 只有本次報名真的帶了 invoice 物件才覆寫 user_profiles 的發票預填欄位；完全沒帶（例如舊版
 		// 前端）時維持既有預填不變，避免被正規化出來的空白值誤蓋掉使用者之前填過的統編/載具。
 		SaveInvoiceToProfile: req.Invoice != nil,
+		// PetKind/Pets（migration 173）：PetKind==""（非寵物賽事）時 pets 恆為 nil，RegisterWithOrder
+		// 完全略過寫入 registration_pets。
+		PetKind: race.PetKind,
+		Pets:    pets,
 	})
 }
 
@@ -886,6 +930,10 @@ var (
 	validTaskScope   = map[string]bool{
 		ScopeRaceCollective: true, ScopeGroupTeam: true, ScopeGroupIndividual: true,
 	}
+	// validPetKinds 寵物雲端馬拉松（migration 173）：''=非寵物賽事｜dog｜cat。
+	validPetKinds = map[string]bool{"": true, "dog": true, "cat": true}
+	// validAddonKinds 加購項目種類：item=一般品項（預設）｜pet_slot=加購寵物參賽名額。
+	validAddonKinds = map[string]bool{"item": true, "pet_slot": true}
 )
 
 // validateTaskMetric 驗證任務指標與其數值（threshold 需 target>0；range 需 lo/hi 且 lo<=hi）。
@@ -959,6 +1007,24 @@ func normalizeRequest(req *CreateRaceRequest) error {
 	if err := req.EntryRewardConfig.Validate(); err != nil {
 		return fmt.Errorf("entry_reward_config: %w", err)
 	}
+	// 寵物雲端馬拉松（migration 173）：pet_kind 合法性 + pet_max_per_reg/pet_base_slots 夾限。
+	// 不論 pet_kind 是否為空都要夾成合法值——DB 欄位有 CHECK(pet_max_per_reg BETWEEN 1 AND 20)，
+	// 非寵物賽事這兩個數字本身無意義，但仍要給合法預設值（比照 repository.go 的 defaultPetMaxPerReg
+	// 第二道防線：這裡是 admin 全欄位表單路徑的第一道，CreateRaceWithReview 等簡單路徑走 repository 那道）。
+	if !validPetKinds[req.PetKind] {
+		return fmt.Errorf("invalid pet_kind: %s", req.PetKind)
+	}
+	if req.PetMaxPerReg <= 0 {
+		req.PetMaxPerReg = 1
+	} else if req.PetMaxPerReg > 20 {
+		req.PetMaxPerReg = 20
+	}
+	if req.PetBaseSlots <= 0 {
+		req.PetBaseSlots = 1
+	} else if req.PetBaseSlots > req.PetMaxPerReg {
+		// 基本名額不能超過上限，否則 ValidatePets 的 want=base+加購 永遠 > 上限、整場報不了名（審查抓到）
+		req.PetBaseSlots = req.PetMaxPerReg
+	}
 
 	for i := range req.Groups {
 		g := &req.Groups[i]
@@ -971,6 +1037,16 @@ func normalizeRequest(req *CreateRaceRequest) error {
 		if !validGenderLimit[g.GenderLimit] {
 			return fmt.Errorf("group %d: invalid gender_limit", i)
 		}
+		// for_owner/for_pet（migration 173）：前端未帶（nil）一律預設 TRUE，比照 DB 欄位預設值——
+		// 見 model.go RaceGroup.ForOwner/ForPet 註解，這裡是「沒帶」與「明確 false」唯一能分辨的地方。
+		if g.ForOwner == nil {
+			t := true
+			g.ForOwner = &t
+		}
+		if g.ForPet == nil {
+			t := true
+			g.ForPet = &t
+		}
 	}
 	for i := range req.Supplies {
 		su := &req.Supplies[i]
@@ -980,6 +1056,30 @@ func normalizeRequest(req *CreateRaceRequest) error {
 		if !validSupplyKinds[su.Kind] {
 			return fmt.Errorf("supply %d: invalid kind", i)
 		}
+	}
+	// 加購項目種類（migration 173）：kind 未帶（空字串）一律視為 item；同一賽事至多一個 pet_slot
+	// 加購（「加購寵物參賽名額」，每份 +1 隻寵物，見 D3／ValidatePets）。
+	petSlotAddons := 0
+	for i := range req.Addons {
+		a := &req.Addons[i]
+		if a.Kind == "" {
+			a.Kind = "item"
+		}
+		if !validAddonKinds[a.Kind] {
+			return fmt.Errorf("addon %d: invalid kind", i)
+		}
+		if a.Kind == "pet_slot" {
+			if req.PetKind == "" {
+				// 非寵物賽事不可有寵物名額加購：買了也不會收寵物資料，變成付錢無效的品項（審查抓到）
+				return fmt.Errorf("非寵物賽事不可設定寵物名額加購")
+			}
+			petSlotAddons++
+		}
+	}
+	if petSlotAddons > 1 {
+		// 錯誤訊息為 owner 指定 400 文案（D3），handler 層 err.Error() 直接原樣回給後台前端顯示，
+		// 不比照其餘欄位驗證錯誤用英文（那些目前後台沒有特別要求中文文案）。
+		return fmt.Errorf("每場賽事只能有一個寵物名額加購")
 	}
 	for i := range req.Tasks {
 		t := &req.Tasks[i]

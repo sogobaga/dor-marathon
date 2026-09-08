@@ -617,6 +617,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		errors.Is(err, ErrGroupRestriction), errors.Is(err, ErrAddonNotFound),
 		errors.Is(err, ErrAddonLimit), errors.Is(err, ErrAddonQtyInvalid),
 		errors.Is(err, ErrInvalidInvoice),
+		errors.Is(err, ErrPetsRequired), errors.Is(err, ErrPetCountMismatch),
+		errors.Is(err, ErrPetNameRequired), errors.Is(err, ErrInvalidPetChip),
 		errors.Is(err, promo.ErrNotFound), errors.Is(err, promo.ErrInactive),
 		errors.Is(err, promo.ErrNotStarted), errors.Is(err, promo.ErrExpired),
 		errors.Is(err, promo.ErrWrongRace), errors.Is(err, promo.ErrWrongUser):

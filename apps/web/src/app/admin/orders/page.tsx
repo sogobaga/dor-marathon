@@ -372,6 +372,8 @@ export default function AdminOrdersPage() {
         '組別(距離 km)': o.distance_km || '',
         '陣營': o.faction || '',
         '分組': o.group_name || '',
+        // 寵物雲端馬拉松（2026-09-08，D6）：後端已用「；」join 好名稱，一般賽事一律空字串
+        '寵物': o.pets_text || '',
         '報名費': Math.round(o.entry_cents / 100),
         '加購品項': o.addons.map((a) => `${a.name}×${a.qty}`).join('；'),
         '加購金額': Math.round(o.addon_cents / 100),
@@ -408,9 +410,24 @@ export default function AdminOrdersPage() {
         }
       })
 
+      // 寵物明細（D6 第三張 sheet）：每隻寵物一列（含晶片號碼）；非寵物賽事沒有 pets → 不產生這張 sheet
+      // 後端刻意不另開頂層 pets 陣列（單一查詢，見 race/model.go ExportOrderRow.Pets 註解），
+      // 這裡從 orders[].pets 攤平；審查抓到原本讀不存在的 resp.pets 導致這張 sheet 永遠不會產生。
+      const petRows = resp.orders.flatMap((o) => (o.pets ?? []).map((p) => ({
+        '訂單編號': o.id,
+        '會員帳號': o.user_handle,
+        '真實姓名': o.real_name || '未填',
+        '序號': p.seq,
+        '寵物名稱': p.name,
+        '晶片號碼': p.chip_id || '',
+      })))
+
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(orderRows), '訂單')
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(itemRows), '品項明細')
+      if (petRows.length > 0) {
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(petRows), '寵物明細')
+      }
       const d = new Date()
       const p = (n: number) => String(n).padStart(2, '0')
       const race = races.find((r) => r.id === raceID)
@@ -565,6 +582,12 @@ export default function AdminOrdersPage() {
                     <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>
                       組別：{det.distance_km ? `${det.distance_km} km` : '未填'}・陣營：{det.faction || '未填'}・分組：{det.group_name || '未填'}
                     </div>
+                    {/* 寵物雲端馬拉松（2026-09-08）：僅寵物賽事訂單有 pets */}
+                    {det.pets && det.pets.length > 0 && (
+                      <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4 }}>
+                        寵物：{det.pets.map((p) => `${p.name}${p.chip_id ? `（晶片 ${p.chip_id}）` : ''}`).join('、')}
+                      </div>
+                    )}
 
                     <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6 }}>
                       發票資訊：

@@ -277,6 +277,9 @@ export default function RaceDetailScreen({
               {race.event_mode === 'competition' ? '競賽' : race.event_mode === 'faction_battle' ? '分組對抗' : isPersonal ? '個人挑戰' : '一般'}
             </span>
             {race.vip_only && <span style={vipBadge}>✦ VIP專屬</span>}
+            {/* 寵物雲端馬拉松（2026-09-08）：race.pet_kind !== '' 才顯示，一般賽事不受影響（D9） */}
+            {race.pet_kind === 'dog' && <span style={petBadge}>🐶 狗狗賽事</span>}
+            {race.pet_kind === 'cat' && <span style={petBadge}>🐱 貓貓賽事</span>}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 4, marginTop: 10, fontSize: 12 }}>
             <Row k="報名期間" v={`${fmt(race.registration_start)} – ${fmt(race.registration_end)}`} />
@@ -1002,6 +1005,7 @@ const testingBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color
 const registeredBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: 'var(--fug-ink)', background: 'var(--fug)', borderRadius: 999, padding: '2px 10px' }
 // VIP 專屬徽章：金底白字（金黃色實心底框上的文字一律用白色）
 const vipBadge: React.CSSProperties = { fontSize: 11, fontWeight: 800, color: '#fff', background: 'var(--gold)', borderRadius: 999, padding: '2px 10px', whiteSpace: 'nowrap' }
+const petBadge: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '2px 10px', whiteSpace: 'nowrap' }
 const registerBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 700, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '12px 20px', cursor: 'pointer', fontSize: 15, width: '100%' }
 const certBtn: React.CSSProperties = { marginTop: 10, width: '100%', background: 'linear-gradient(135deg,#E5C46B,#caa64e)', color: '#fff', fontWeight: 800, border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '12px 20px', cursor: 'pointer', fontSize: 15 }
 const certRetryBtn: React.CSSProperties = { width: '100%', background: 'var(--bg-2)', color: 'var(--tx-dim)', fontWeight: 700, border: '1px solid var(--line-2)', borderRadius: 'var(--radius-btn, 12px)', padding: '10px 20px', cursor: 'pointer', fontSize: 13 }

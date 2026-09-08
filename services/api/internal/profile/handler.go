@@ -256,6 +256,9 @@ type MyRegistration struct {
 	InvoiceNumber string     `json:"invoice_number,omitempty"`
 	InvoiceStatus string     `json:"invoice_status,omitempty"` // pending|issuing|issued|void|failed|skipped
 	IssuedAt      *time.Time `json:"issued_at,omitempty"`
+
+	// Pets 該筆報名登記的寵物名單（寵物雲端馬拉松，migration 173，D6）；非寵物賽事/未登記寵物為空陣列。
+	Pets []race.RegistrationPet `json:"pets,omitempty"`
 }
 
 // GET /api/v1/profile/registrations — 我的報名紀錄
@@ -343,6 +346,22 @@ func (h *Handler) Registrations(w http.ResponseWriter, r *http.Request) {
 
 		out = append(out, m)
 	}
+
+	// 寵物名單（migration 173，D6）：批次查一次，避免每筆報名各打一次（不 N+1）；
+	// race.LoadPetsByRegistrationIDs 內建過濾空字串 id，空切片時也直接回空 map、不打 DB。
+	ids := make([]string, len(out))
+	for i := range out {
+		ids[i] = out[i].RegistrationID
+	}
+	petsByReg, err := race.LoadPetsByRegistrationIDs(r.Context(), h.db, ids)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to load pets")
+		return
+	}
+	for i := range out {
+		out[i].Pets = petsByReg[out[i].RegistrationID]
+	}
+
 	respondJSON(w, http.StatusOK, map[string]any{"registrations": out, "count": len(out)})
 }
 

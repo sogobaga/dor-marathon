@@ -312,6 +312,9 @@ export default function AdminRacesList() {
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <div style={{ fontSize: 16, fontWeight: 700 }}>{r.title}</div>
+                    {/* 寵物雲端馬拉松（2026-09-08）：標題旁徽章，一般賽事(pet_kind==='')不顯示不影響原排版 */}
+                    {r.pet_kind === 'dog' && <span title="狗狗賽事">🐶</span>}
+                    {r.pet_kind === 'cat' && <span title="貓貓賽事">🐱</span>}
                     <Badge tone={EVENT_STATUS_TONE[eventStatusOf(r)]}>{EVENT_STATUS_LABEL[eventStatusOf(r)]}</Badge>
                     <Badge tone={REG_STATUS_TONE[regStatusOf(r)]}>{REG_STATUS_LABEL[regStatusOf(r)]}</Badge>
                   </div>
@@ -375,6 +378,8 @@ export default function AdminRacesList() {
                 }}
               >
                 <InfoItem label="賽事模式" value={MODE_LABEL[r.event_mode] ?? r.event_mode} />
+                {/* 寵物雲端馬拉松（2026-09-08）：僅寵物賽事顯示這格，一般賽事(pet_kind==='')沿用原本 4 欄不變 */}
+                {r.pet_kind && <InfoItem label="寵物賽事" value={r.pet_kind === 'dog' ? '🐶 狗狗賽事' : '🐱 貓貓賽事'} />}
                 <InfoItem label="報名費" value={r.fee_mode === 'per_group' ? `${fmtFee(r.display_fee_cents)} 起（各組獨立）` : fmtFee(r.entry_fee)} />
                 <InfoItem label="顯示狀態" value={DISPLAY_LABEL[r.display_status] ?? r.display_status} />
                 <InfoItem label="控制狀態" value={CONTROL_LABEL[r.control_status] ?? r.control_status} />

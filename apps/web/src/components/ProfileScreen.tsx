@@ -1119,6 +1119,12 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                       <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>
                         {r.group_revealed ? (r.group_name || '—') : '分組賽事當天公布'}
                       </div>
+                      {/* 寵物雲端馬拉松（2026-09-08）：僅寵物賽事報名有 pets */}
+                      {r.pets && r.pets.length > 0 && (
+                        <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 4 }}>
+                          寵物：{r.pets.map((p) => p.name).join('、')}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
                         <span style={{ fontSize: 13, color: 'var(--tx-dim)' }}>應繳 {ntd(r.order_total_cents)}</span>
                         {r.status === 'pending' && r.order_id && (

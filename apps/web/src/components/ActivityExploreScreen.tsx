@@ -216,11 +216,20 @@ function RaceCard({
           <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--tx)', lineHeight: 1.3, wordBreak: 'keep-all', overflowWrap: 'break-word', display: 'block' }}>{race.title}</span>
           {/* 同一列：參加資格（VIP專屬金底白字／所有會員線框無底，置左）＋ 狀態徽章（進行中／報名中，置右） */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-            {race.vip_only ? (
-              <span style={{ fontSize: 11.5, fontWeight: 800, padding: '2px 9px', borderRadius: 8, background: 'var(--gold)', color: '#fff', flexShrink: 0 }}>VIP專屬</span>
-            ) : (
-              <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 8, background: 'transparent', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0 }}>所有會員</span>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              {race.vip_only ? (
+                <span style={{ fontSize: 11.5, fontWeight: 800, padding: '2px 9px', borderRadius: 8, background: 'var(--gold)', color: '#fff', flexShrink: 0 }}>VIP專屬</span>
+              ) : (
+                <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 8, background: 'transparent', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0 }}>所有會員</span>
+              )}
+              {/* 寵物雲端馬拉松（2026-09-08）：race.pet_kind !== '' 才顯示，一般賽事不受影響（D9） */}
+              {race.pet_kind === 'dog' && (
+                <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 8, background: 'transparent', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0, whiteSpace: 'nowrap' }}>🐶 狗狗賽事</span>
+              )}
+              {race.pet_kind === 'cat' && (
+                <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 9px', borderRadius: 8, background: 'transparent', border: '1px solid var(--line-2)', color: 'var(--tx)', flexShrink: 0, whiteSpace: 'nowrap' }}>🐱 貓貓賽事</span>
+              )}
+            </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               {/* 測試中標籤：只有白名單成員能看到這場賽事本身，能看到就代表本來就有權限看，不是外洩——
                   用虛線框＋紫色系跟正式狀態徽章（實線框）區隔，避免誤以為是已開放的正式狀態 */}

@@ -119,14 +119,23 @@ function emptyGroup(order: number): RaceGroup {
     name: '', description: '', display_order: order, slot_limit: null,
     gender_limit: 'any', age_min: null, age_max: null, target_distance_km: null,
     requires_key: false, group_key: '', exp_reward: 0, dp_reward: 0,
+    for_owner: true, for_pet: true, // 寵物雲端馬拉松（2026-09-08）：預設兩者皆勾選，與後端 DB 預設一致
   }
 }
 function emptyAddon(order: number): RaceAddon {
   return {
     name: '', description: '', image_url: '', price_cents: 0,
     per_user_limit: null, total_stock: null, display_order: order, active: true,
+    kind: 'item', // 寵物雲端馬拉松：預設一般加購品項，'pet_slot' 需在編輯器另外切換
   }
 }
+
+// 寵物賽事類型選單（D7：races.pet_kind）
+const PET_KIND_OPTS: { v: '' | 'dog' | 'cat'; t: string }[] = [
+  { v: '', t: '無' },
+  { v: 'dog', t: '狗狗賽事' },
+  { v: 'cat', t: '貓貓賽事' },
+]
 
 // ISO → datetime-local 值（本地時間，去秒）
 function toLocalInput(iso?: string | null): string {
@@ -352,6 +361,9 @@ export default function RaceForm({
   const [showDistanceRank, setShowDistanceRank] = useState(initial?.show_distance_rank ?? true)
   const [showTimeRank, setShowTimeRank] = useState(initial?.show_time_rank ?? true)
   const [vipOnly, setVipOnly] = useState<boolean>(initial?.vip_only ?? false)
+  // 寵物雲端馬拉松（2026-09-08，D7）：petMaxPerReg 用字串裝 input value（同 startingSoonDays 慣例）
+  const [petKind, setPetKind] = useState<'' | 'dog' | 'cat'>(initial?.pet_kind ?? '')
+  const [petMaxPerReg, setPetMaxPerReg] = useState(String(initial?.pet_max_per_reg ?? 1))
   const [externalData, setExternalData] = useState<boolean>(initial?.external_data ?? true) // 2026-09-03 使用者定案：手錶打通後新賽事預設開放外部數據；既有賽事沿用各自設定
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -1279,6 +1291,10 @@ export default function RaceForm({
       allow_team_groups: mode === 'competition' ? allowTeamGroups : false,
       vip_only: vipOnly,
       external_data: externalData,
+      // 寵物雲端馬拉松（D7）：pet_base_slots 目前恆為 1（後端 D1 預設同值，僅先存欄位供未來調整）
+      pet_kind: petKind,
+      pet_max_per_reg: petKind ? Math.min(20, Math.max(1, parseInt(petMaxPerReg || '1', 10) || 1)) : 1,
+      pet_base_slots: 1,
       challenge_rule: mode === 'personal' ? buildChallengeRule() : null,
       // 即時獎勵設定一般化（migration 134）：不再限 personal 模式，其餘模式完成任一「個人額外挑戰」
       // (group_individual scope 任務) 觸發（見後端 progress.go MarkRaceTaskCompletedAndGrant）。
@@ -1318,7 +1334,9 @@ export default function RaceForm({
       start_date: startDate ? new Date(startDate).toISOString() : new Date().toISOString(),
       end_date: endDate ? new Date(endDate).toISOString() : new Date().toISOString(),
       groups: cleanGroups,
-      addons: addons.filter((a) => a.name.trim()).map((a, idx) => ({ ...a, display_order: idx })),
+      // 非寵物賽事一律把加購種類收斂回 item：否則把寵物賽事切回「無」後，殘留的 pet_slot 加購沒有 UI 可改，
+      // 報名頁會把它的數量上限算成 0、永遠買不到（審查抓到）。
+      addons: addons.filter((a) => a.name.trim()).map((a, idx) => ({ ...a, kind: petKind ? (a.kind ?? 'item') : 'item', display_order: idx })),
       supplies: supplies
         .filter((s) => s.name.trim())
         .map((s, idx) => ({
@@ -1527,6 +1545,25 @@ export default function RaceForm({
             </Row>
             {feeMode === 'per_group' && (
               <div style={hint}>各組獨立報名費請至「分組」分頁逐組設定；留空的組別（含前台跑團成員新增的組別）自動套用上方預設報名費。</div>
+            )}
+            {/* 寵物雲端馬拉松（2026-09-08，D7）：與 event_mode（賽事模式，上方 MODES）是獨立的兩個維度——
+                event_mode 決定計分/分組玩法，pet_kind 決定該場是否為寵物賽事（飼主+寵物一起報名）。 */}
+            <Row>
+              <Field label="寵物賽事">
+                <select style={inp} value={petKind} onChange={(e) => setPetKind(e.target.value as '' | 'dog' | 'cat')}>
+                  {PET_KIND_OPTS.map((o) => <option key={o.v} value={o.v}>{o.t}</option>)}
+                </select>
+              </Field>
+              {petKind ? (
+                <Field label="每筆報名寵物上限（含基本 1 隻）">
+                  <input style={inp} type="number" min={1} max={20} value={petMaxPerReg} onChange={(e) => setPetMaxPerReg(e.target.value)} />
+                </Field>
+              ) : (
+                <div style={{ flex: 1 }} />
+              )}
+            </Row>
+            {petKind && (
+              <div style={hint}>基本名額 1 隻，多的透過「加購寵物參賽名額」增加。</div>
             )}
             <Row>
               <Field label="賽事即將開始 倒數天數">
@@ -1928,6 +1965,22 @@ export default function RaceForm({
                     <input style={inp} type="number" value={g.age_max ?? ''} onChange={(e) => updateGroup(i, { age_max: e.target.value === '' ? null : parseInt(e.target.value, 10) })} />
                   </Field>
                 </Row>
+                {petKind && (
+                  <Row>
+                    <Field label="適用對象（供未來寵物計分使用）">
+                      <div style={{ display: 'flex', gap: 16, paddingTop: 2 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tx)' }}>
+                          <input type="checkbox" checked={g.for_owner ?? true} onChange={(e) => updateGroup(i, { for_owner: e.target.checked })} />
+                          飼主
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tx)' }}>
+                          <input type="checkbox" checked={g.for_pet ?? true} onChange={(e) => updateGroup(i, { for_pet: e.target.checked })} />
+                          寵物
+                        </label>
+                      </div>
+                    </Field>
+                  </Row>
+                )}
                 <Row>
                   <Field label="跑團鑰匙">
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--tx)', padding: '6px 0' }}>
@@ -1956,6 +2009,28 @@ export default function RaceForm({
                   <strong style={{ fontSize: 13 }}>加購 {i + 1}</strong>
                   <button onClick={() => setAddons((as) => as.filter((_, idx) => idx !== i))} style={linkBtn}>移除</button>
                 </div>
+                {petKind && (
+                  <Row>
+                    <Field label="類型">
+                      <select
+                        style={inp}
+                        value={a.kind ?? 'item'}
+                        onChange={(e) => setAddons((as) => as.map((x, idx) => (idx === i ? { ...x, kind: e.target.value as RaceAddon['kind'] } : x)))}
+                      >
+                        <option value="item">一般加購品項</option>
+                        {/* 每場賽事至多一個 pet_slot 加購（D3）；此處禁用選項做前端防呆，後端仍會驗證 */}
+                        <option value="pet_slot" disabled={addons.some((x, idx) => idx !== i && x.kind === 'pet_slot')}>
+                          加購寵物參賽名額（每份 +1 隻）
+                        </option>
+                      </select>
+                      {/* 已有其他加購被設為 pet_slot 時提示為何本項的「加購寵物參賽名額」選項被鎖住 */}
+                      {a.kind !== 'pet_slot' && addons.some((x, idx) => idx !== i && x.kind === 'pet_slot') && (
+                        <div style={{ ...hint, marginTop: 4 }}>每場賽事只能有一個寵物名額加購</div>
+                      )}
+                    </Field>
+                    <div style={{ flex: 1 }} />
+                  </Row>
+                )}
                 <Row>
                   <Field label="名稱">
                     <input style={inp} value={a.name} onChange={(e) => setAddons((as) => as.map((x, idx) => (idx === i ? { ...x, name: e.target.value } : x)))} />

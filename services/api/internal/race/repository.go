@@ -47,6 +47,7 @@ const selectCols = `
 	       reward_config,
 	       entry_reward_config,
 	       created_at,
+	       pet_kind, pet_max_per_reg, pet_base_slots,
 	       CASE WHEN fee_mode = 'per_group'
 	            THEN COALESCE(
 	                   (SELECT MIN(COALESCE(g.entry_fee_cents, races.entry_fee)) FROM race_groups g WHERE g.race_id = races.id),
@@ -186,13 +187,15 @@ func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
 			status=$7, distances=$8, group_type=$9, group_mode=$10,
 			slots_total=$11, entry_fee=$12, fee_mode=$13, start_date=$14, end_date=$15, config=$16,
 			event_mode=$17, goal_type=$18, registration_start=$19, registration_end=$20,
-			vip_only=$21, external_data=$22, challenge_rule=$23, reward_config=$24, entry_reward_config=$25, updated_at=NOW()
-		WHERE id=$26`,
+			vip_only=$21, external_data=$22, challenge_rule=$23, reward_config=$24, entry_reward_config=$25,
+			pet_kind=$26, pet_max_per_reg=$27, pet_base_slots=$28, updated_at=NOW()
+		WHERE id=$29`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, defaultStr(race.FeeMode, "uniform"), race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
-		race.VipOnly, race.ExternalData, challengeRuleArg, rewardConfigArg, entryRewardConfigArg, race.ID,
+		race.VipOnly, race.ExternalData, challengeRuleArg, rewardConfigArg, entryRewardConfigArg,
+		race.PetKind, defaultPetMaxPerReg(race.PetMaxPerReg), defaultPetBaseSlots(race.PetBaseSlots), race.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -274,8 +277,9 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		                   slots_total, entry_fee, fee_mode, registration_start, registration_end,
 		                   start_date, end_date, config, created_by, review_status, required_fields,
 		                   control_status, starting_soon_days, brochure_title, allow_team_groups, vip_only,
-		                   external_data, challenge_rule, reward_config, entry_reward_config)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
+		                   external_data, challenge_rule, reward_config, entry_reward_config,
+		                   pet_kind, pet_max_per_reg, pet_base_slots)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
@@ -283,6 +287,7 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus, requiredFields,
 		controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
 		race.ExternalData, challengeRuleArg, rewardConfigArg, entryRewardConfigArg,
+		race.PetKind, defaultPetMaxPerReg(race.PetMaxPerReg), defaultPetBaseSlots(race.PetBaseSlots),
 	).Scan(&raceID)
 	if err != nil {
 		return nil, fmt.Errorf("insert race: %w", err)
@@ -310,12 +315,14 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		err = tx.QueryRow(ctx, `
 			INSERT INTO race_groups (race_id, name, description, display_order,
 			                         slot_limit, gender_limit, age_min, age_max, target_distance_km,
-			                         requires_key, group_key, exp_reward, dp_reward, entry_fee_cents)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			                         requires_key, group_key, exp_reward, dp_reward, entry_fee_cents,
+			                         for_owner, for_pet)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 			RETURNING id`,
 			raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
 			g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
 			g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward, g.EntryFeeCents,
+			groupBoolDefaultTrue(g.ForOwner), groupBoolDefaultTrue(g.ForPet),
 		).Scan(&gid)
 		if err != nil {
 			return nil, fmt.Errorf("insert group %d: %w", i, err)
@@ -328,10 +335,10 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		a := &req.Addons[i]
 		_, err = tx.Exec(ctx, `
 			INSERT INTO race_addons (race_id, name, description, image_url, price_cents,
-			                         per_user_limit, total_stock, display_order, active)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			                         per_user_limit, total_stock, display_order, active, kind)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 			raceID, a.Name, nullStr(a.Description), nullStr(a.ImageURL), a.PriceCents,
-			a.PerUserLimit, a.TotalStock, a.DisplayOrder, a.Active,
+			a.PerUserLimit, a.TotalStock, a.DisplayOrder, a.Active, defaultStr(a.Kind, "item"),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert addon %d: %w", i, err)
@@ -435,14 +442,15 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			event_mode=$17, goal_type=$18, registration_start=$19, registration_end=$20,
 			required_fields=$21, control_status=$22, starting_soon_days=$23, brochure_title=$24,
 			allow_team_groups=$25, vip_only=$26, external_data=$27, challenge_rule=$28, reward_config=$29,
-			entry_reward_config=$30, updated_at=NOW()
-		WHERE id=$31`,
+			entry_reward_config=$30, pet_kind=$31, pet_max_per_reg=$32, pet_base_slots=$33, updated_at=NOW()
+		WHERE id=$34`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, defaultStr(race.FeeMode, "uniform"), race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
 		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
-		race.ExternalData, challengeRuleArg, rewardConfigArg, entryRewardConfigArg, raceID,
+		race.ExternalData, challengeRuleArg, rewardConfigArg, entryRewardConfigArg,
+		race.PetKind, defaultPetMaxPerReg(race.PetMaxPerReg), defaultPetBaseSlots(race.PetBaseSlots), raceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -512,11 +520,13 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 				_, err = tx.Exec(ctx, `
 					UPDATE race_groups SET name=$1, description=$2, display_order=$3,
 					    slot_limit=$4, gender_limit=$5, age_min=$6, age_max=$7, target_distance_km=$8,
-					    requires_key=$9, group_key=$10, exp_reward=$11, dp_reward=$12, entry_fee_cents=$13
-					WHERE id=$14 AND race_id=$15`,
+					    requires_key=$9, group_key=$10, exp_reward=$11, dp_reward=$12, entry_fee_cents=$13,
+					    for_owner=$14, for_pet=$15
+					WHERE id=$16 AND race_id=$17`,
 					g.Name, nullStr(g.Description), g.DisplayOrder,
 					g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
-					g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward, g.EntryFeeCents, g.ID, raceID,
+					g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward, g.EntryFeeCents,
+					groupBoolDefaultTrue(g.ForOwner), groupBoolDefaultTrue(g.ForPet), g.ID, raceID,
 				)
 				if err != nil {
 					return nil, fmt.Errorf("update group %d: %w", i, err)
@@ -527,11 +537,13 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 				err = tx.QueryRow(ctx, `
 					INSERT INTO race_groups (race_id, name, description, display_order,
 					                         slot_limit, gender_limit, age_min, age_max, target_distance_km,
-					                         requires_key, group_key, exp_reward, dp_reward, entry_fee_cents)
-					VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+					                         requires_key, group_key, exp_reward, dp_reward, entry_fee_cents,
+					                         for_owner, for_pet)
+					VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
 					raceID, g.Name, nullStr(g.Description), g.DisplayOrder,
 					g.SlotLimit, defaultStr(g.GenderLimit, "any"), g.AgeMin, g.AgeMax, g.TargetDistanceKm,
 					g.RequiresKey, groupKeyVal(g.RequiresKey, g.GroupKey), g.ExpReward, g.DpReward, g.EntryFeeCents,
+					groupBoolDefaultTrue(g.ForOwner), groupBoolDefaultTrue(g.ForPet),
 				).Scan(&gid)
 				if err != nil {
 					return nil, fmt.Errorf("insert group %d: %w", i, err)
@@ -557,10 +569,10 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 		if a.ID != "" {
 			_, err = tx.Exec(ctx, `
 				UPDATE race_addons SET name=$1, description=$2, image_url=$3, price_cents=$4,
-				    per_user_limit=$5, total_stock=$6, display_order=$7, active=$8
-				WHERE id=$9 AND race_id=$10`,
+				    per_user_limit=$5, total_stock=$6, display_order=$7, active=$8, kind=$9
+				WHERE id=$10 AND race_id=$11`,
 				a.Name, nullStr(a.Description), nullStr(a.ImageURL), a.PriceCents,
-				a.PerUserLimit, a.TotalStock, a.DisplayOrder, a.Active, a.ID, raceID,
+				a.PerUserLimit, a.TotalStock, a.DisplayOrder, a.Active, defaultStr(a.Kind, "item"), a.ID, raceID,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("update addon %d: %w", i, err)
@@ -570,10 +582,10 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			var aid string
 			err = tx.QueryRow(ctx, `
 				INSERT INTO race_addons (race_id, name, description, image_url, price_cents,
-				                         per_user_limit, total_stock, display_order, active)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+				                         per_user_limit, total_stock, display_order, active, kind)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
 				raceID, a.Name, nullStr(a.Description), nullStr(a.ImageURL), a.PriceCents,
-				a.PerUserLimit, a.TotalStock, a.DisplayOrder, a.Active,
+				a.PerUserLimit, a.TotalStock, a.DisplayOrder, a.Active, defaultStr(a.Kind, "item"),
 			).Scan(&aid)
 			if err != nil {
 				return nil, fmt.Errorf("insert addon %d: %w", i, err)
@@ -1077,7 +1089,7 @@ func (r *Repository) GetGroups(ctx context.Context, raceID string) ([]RaceGroup,
 		SELECT id, race_id, name, COALESCE(description,''), display_order,
 		       slot_limit, slots_taken, gender_limit, age_min, age_max, target_distance_km,
 		       requires_key, COALESCE(group_key,''), COALESCE(created_by::text,''), exp_reward, dp_reward,
-		       entry_fee_cents
+		       entry_fee_cents, for_owner, for_pet
 		FROM race_groups WHERE race_id=$1 ORDER BY display_order, created_at`, raceID)
 	if err != nil {
 		return nil, fmt.Errorf("list groups: %w", err)
@@ -1087,12 +1099,17 @@ func (r *Repository) GetGroups(ctx context.Context, raceID string) ([]RaceGroup,
 	groups := []RaceGroup{}
 	for rows.Next() {
 		var g RaceGroup
+		// forOwner/forPet 先掃進區域變數再取址塞回 *bool 欄位（migration 173）：讀取路徑一律回傳非 nil
+		// 值（DB 欄位 NOT NULL），對外 JSON 恆為布林值 true/false，不影響既有前端假設——見 model.go
+		// RaceGroup.ForOwner/ForPet 註解，*bool 只是為了讓寫入路徑分辨「未帶」與「明確 false」。
+		var forOwner, forPet bool
 		if err := rows.Scan(&g.ID, &g.RaceID, &g.Name, &g.Description, &g.DisplayOrder,
 			&g.SlotLimit, &g.SlotsTaken, &g.GenderLimit, &g.AgeMin, &g.AgeMax, &g.TargetDistanceKm,
 			&g.RequiresKey, &g.GroupKey, &g.CreatedBy, &g.ExpReward, &g.DpReward,
-			&g.EntryFeeCents); err != nil {
+			&g.EntryFeeCents, &forOwner, &forPet); err != nil {
 			return nil, err
 		}
+		g.ForOwner, g.ForPet = &forOwner, &forPet
 		g.IsUserCreated = g.CreatedBy != ""
 		groups = append(groups, g)
 	}
@@ -1103,7 +1120,7 @@ func (r *Repository) GetGroups(ctx context.Context, raceID string) ([]RaceGroup,
 func (r *Repository) GetAddons(ctx context.Context, raceID string) ([]RaceAddon, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, race_id, name, COALESCE(description,''), COALESCE(image_url,''),
-		       price_cents, per_user_limit, total_stock, sold_count, display_order, active
+		       price_cents, per_user_limit, total_stock, sold_count, display_order, active, kind
 		FROM race_addons WHERE race_id=$1 ORDER BY display_order, created_at`, raceID)
 	if err != nil {
 		return nil, fmt.Errorf("list addons: %w", err)
@@ -1114,7 +1131,7 @@ func (r *Repository) GetAddons(ctx context.Context, raceID string) ([]RaceAddon,
 	for rows.Next() {
 		var a RaceAddon
 		if err := rows.Scan(&a.ID, &a.RaceID, &a.Name, &a.Description, &a.ImageURL,
-			&a.PriceCents, &a.PerUserLimit, &a.TotalStock, &a.SoldCount, &a.DisplayOrder, &a.Active); err != nil {
+			&a.PriceCents, &a.PerUserLimit, &a.TotalStock, &a.SoldCount, &a.DisplayOrder, &a.Active, &a.Kind); err != nil {
 			return nil, err
 		}
 		addons = append(addons, a)
@@ -1291,6 +1308,42 @@ func groupKeyVal(requiresKey bool, key string) interface{} {
 	return key
 }
 
+// defaultPetMaxPerReg races.pet_max_per_reg 有 DB CHECK(BETWEEN 1 AND 20)。<=0 是「呼叫端根本不知道
+// 寵物欄位」的訊號（例如合作方賽事提交 CreateRaceWithReview、或尚未走過 service.normalizeRequest 的
+// 呼叫路徑），一律夾成預設 1；>20 夾成 20。這是 normalizeRequest 那道 app 層驗證之外的第二道防線，
+// 確保任何寫入路徑都不會因為這個新欄位讓整個建立/更新賽事流程因 CHECK 違反而失敗。
+func defaultPetMaxPerReg(n int) int {
+	if n <= 0 {
+		return 1
+	}
+	if n > 20 {
+		return 20
+	}
+	return n
+}
+
+// defaultPetBaseSlots races.pet_base_slots 目前語意固定為 1（D1）；<=0 一律夾成 1，理由同上。
+func defaultPetBaseSlots(n int) int {
+	if n <= 0 {
+		return 1
+	}
+	if n > 20 {
+		return 20 // 與 pet_max_per_reg 的 CHECK 上限同口徑（審查抓到無上限）
+	}
+	return n
+}
+
+// groupBoolDefaultTrue race_groups.for_owner/for_pet：nil（呼叫端未帶此欄位，見 model.go
+// RaceGroup.ForOwner/ForPet 註解）一律視為 TRUE，比照 DB 欄位預設值；非 nil 則用呼叫端明確給的值。
+// service.normalizeRequest 已經對 CreateRaceFull/UpdateRaceFull 這條路徑做過這件事，這裡是給
+// 所有寫入路徑（含未經 normalizeRequest 的呼叫）的最後一道防線。
+func groupBoolDefaultTrue(b *bool) bool {
+	if b == nil {
+		return true
+	}
+	return *b
+}
+
 // UserCanCreateTeamGroup 讀取使用者是否具「開放建立跑團分組」權限
 func (r *Repository) UserCanCreateTeamGroup(ctx context.Context, userID string) (bool, error) {
 	if userID == "" {
@@ -1460,6 +1513,13 @@ type RegisterTxInput struct {
 	// 只有使用者這次報名真的帶了 invoice 物件才覆寫，避免舊版前端沒帶 invoice 時，被正規化出來的空白值
 	// 誤蓋掉使用者之前填過的統編/載具（inv_* 語意上每次都覆寫成最新值，不是像 real_name 只補空欄位）。
 	SaveInvoiceToProfile bool
+
+	// --- 寵物雲端馬拉松（migration 173）---
+	// PetKind race.PetKind 原樣傳入（''=非寵物賽事）：寫入 registration_pets.species 用；空字串時
+	// Pets 恆為空，本函式完全略過寫入該表。
+	PetKind string
+	// Pets 已由 service.ValidatePets 驗證/正規化過的寵物名單（PetKind==""時必為 nil）。
+	Pets []PetEntry
 }
 
 // RegisterWithOrder 在單一交易內完成報名：分組名額 row-lock 防超賣、加購庫存、
@@ -1682,6 +1742,20 @@ func (r *Repository) RegisterWithOrder(ctx context.Context, in RegisterTxInput) 
 		return nil, fmt.Errorf("insert registration: %w", err)
 	}
 
+	// 3b. 寵物資料（migration 173）：race.pet_kind!=''時 in.Pets 已由 service.ValidatePets 驗證非空且
+	// 筆數正確；race.pet_kind==''時 in.Pets 恆為 nil，迴圈零次略過。seq 從 1 起算，對應
+	// UNIQUE(registration_id, seq)。
+	for i := range in.Pets {
+		p := &in.Pets[i]
+		if _, err = tx.Exec(ctx, `
+			INSERT INTO registration_pets (registration_id, race_id, user_id, seq, species, name, chip_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			reg.ID, in.RaceID, in.UserID, i+1, in.PetKind, p.Name, p.ChipID,
+		); err != nil {
+			return nil, fmt.Errorf("insert registration pet %d: %w", i, err)
+		}
+	}
+
 	// 4. order + order_items
 	// coupon_used 不論這筆訂單當下是否已付清都要記（不能只在 paid 時靠 payment_ref='COUPON' 推斷——
 	// 券面額通常不足以覆蓋整筆報名費+加購，多數用券訂單其實是 pending 走金流，payment_ref 那時是 NULL），
@@ -1901,6 +1975,57 @@ func (r *Repository) ListSignups(ctx context.Context, raceID, q string, hideVirt
 		}
 		out = append(out, s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// 寵物名單（migration 173，D6）：批次查一次，避免每筆報名各打一次（不 N+1）。
+	ids := make([]string, len(out))
+	for i := range out {
+		ids[i] = out[i].ID
+	}
+	petsByReg, err := LoadPetsByRegistrationIDs(ctx, r.db, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Pets = petsByReg[out[i].ID]
+	}
+	return out, nil
+}
+
+// LoadPetsByRegistrationIDs 批次查詢多筆報名底下的寵物名單（寵物雲端馬拉松，migration 173，D6），
+// 依 seq 排序回傳 map[registration_id][]RegistrationPet。供 ListSignups／GetOrderDetail／ExportOrders
+// （本套件）與 profile.Handler.Registrations（我的報名紀錄；profile 套件已引用 race 套件型別，
+// 直接呼叫這個匯出函式即可，不必另外複製一份查詢）共用，一次查完，避免逐筆報名各打一次造成 N+1。
+// ids 為空（例如整批都是無 registration 的 VIP 訂閱訂單）直接回傳空 map，不打 DB。
+func LoadPetsByRegistrationIDs(ctx context.Context, db *pgxpool.Pool, ids []string) (map[string][]RegistrationPet, error) {
+	out := map[string][]RegistrationPet{}
+	filtered := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			filtered = append(filtered, id)
+		}
+	}
+	if len(filtered) == 0 {
+		return out, nil
+	}
+	rows, err := db.Query(ctx, `
+		SELECT registration_id::text, seq, name, chip_id
+		FROM registration_pets
+		WHERE registration_id = ANY($1::uuid[])
+		ORDER BY registration_id, seq`, filtered)
+	if err != nil {
+		return nil, fmt.Errorf("load pets by registration ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var regID string
+		var p RegistrationPet
+		if err := rows.Scan(&regID, &p.Seq, &p.Name, &p.ChipID); err != nil {
+			return nil, err
+		}
+		out[regID] = append(out[regID], p)
+	}
 	return out, rows.Err()
 }
 
@@ -2093,7 +2218,17 @@ func (r *Repository) GetOrderDetail(ctx context.Context, orderID string) (*Order
 		}
 		detail.Items = append(detail.Items, it)
 	}
-	return detail, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// 寵物名單（migration 173，D6）：VIP 訂閱訂單（o.RegistrationID 空字串）LoadPetsByRegistrationIDs
+	// 內建過濾掉空字串 id，直接回空 map，不打 DB。
+	petsByReg, err := LoadPetsByRegistrationIDs(ctx, r.db, []string{o.RegistrationID})
+	if err != nil {
+		return nil, err
+	}
+	detail.Pets = petsByReg[o.RegistrationID]
+	return detail, nil
 }
 
 // ExportOrders 匯出單一賽事的全部訂單（含加購，聚合成「訂單管理」匯出 xlsx 用的形狀）——2026-09-08
@@ -2103,7 +2238,7 @@ func (r *Repository) GetOrderDetail(ctx context.Context, orderID string) (*Order
 // hideVirtual＝true 時排除虛擬選手訂單（users.is_virtual），預設值由呼叫端（Service.ExportOrders）決定。
 func (r *Repository) ExportOrders(ctx context.Context, raceID, status string, hideVirtual bool) ([]ExportOrderRow, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT o.id, o.created_at, o.paid_at, o.status,
+		SELECT o.id, COALESCE(reg.id::text,''), o.created_at, o.paid_at, o.status,
 		       u.email, u.handle, COALESCE(u.name, u.handle) AS user_name,
 		       COALESCE(NULLIF(reg.snap_real_name,''), up.real_name, '') AS real_name,
 		       COALESCE(NULLIF(reg.snap_phone,''), up.phone, '') AS phone,
@@ -2140,11 +2275,13 @@ func (r *Repository) ExportOrders(ctx context.Context, raceID, status string, hi
 	defer rows.Close()
 
 	out := []ExportOrderRow{}
+	regIDs := []string{} // 寵物名單批次查詢用（migration 173，D6），與 out 索引一一對應（含空字串佔位）
 	for rows.Next() {
 		var e ExportOrderRow
+		var regID string
 		var invBuyerType, invTaxID, invTitle, invCarrierType, invCarrierID, invLoveCode string
 		var addonItemsBytes []byte
-		if err := rows.Scan(&e.ID, &e.CreatedAt, &e.PaidAt, &e.Status,
+		if err := rows.Scan(&e.ID, &regID, &e.CreatedAt, &e.PaidAt, &e.Status,
 			&e.UserEmail, &e.UserHandle, &e.UserName,
 			&e.RealName, &e.Phone, &e.Address, &e.DistanceKm, &e.Faction, &e.GroupName,
 			&e.EntryCents, &addonItemsBytes, &e.AddonCents, &e.DiscountCents, &e.TotalCents,
@@ -2160,8 +2297,29 @@ func (r *Repository) ExportOrders(ctx context.Context, raceID, status string, hi
 		}
 		e.BuyerType, e.TaxID, e.Title, e.CarrierID, e.LoveCode = invBuyerType, invTaxID, invTitle, invCarrierID, invLoveCode
 		out = append(out, e)
+		regIDs = append(regIDs, regID)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// 寵物名單（migration 173，D6）：批次查一次（不 N+1）。PetsText 供「訂單」sheet 的「寵物」欄——
+	// 寵物名字依 seq 序以「；」join，非寵物賽事/未登記一律空字串。
+	petsByReg, err := LoadPetsByRegistrationIDs(ctx, r.db, regIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		pets := petsByReg[regIDs[i]]
+		out[i].Pets = pets
+		if len(pets) > 0 {
+			names := make([]string, len(pets))
+			for j, p := range pets {
+				names[j] = p.Name
+			}
+			out[i].PetsText = strings.Join(names, "；")
+		}
+	}
+	return out, nil
 }
 
 // CreateVipOrder 建立一筆「無賽事」的 VIP 訂閱 pending 訂單（VIP 訂閱 Phase C1：訂單模型一般化）。
@@ -2589,6 +2747,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&rewardConfigBytes,
 		&entryRewardConfigBytes,
 		&race.CreatedAt,
+		&race.PetKind, &race.PetMaxPerReg, &race.PetBaseSlots,
 		&race.DisplayFeeCents,
 	)
 	if err != nil {
@@ -2638,6 +2797,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&rewardConfigBytes,
 		&entryRewardConfigBytes,
 		&race.CreatedAt,
+		&race.PetKind, &race.PetMaxPerReg, &race.PetBaseSlots,
 		&race.DisplayFeeCents,
 	)
 	if err != nil {

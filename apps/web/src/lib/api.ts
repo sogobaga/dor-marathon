@@ -262,6 +262,11 @@ export interface Race {
   // （ListPublic/GetPublicDetail）一律清空，前台改走 racesApi.entryRewardPreview 取得展示用清單；選填。
   entry_reward_config?: RewardConfig | null
   created_at: string
+  // 寵物雲端馬拉松（2026-09-08）：''=一般賽事（不影響既有行為）、'dog'/'cat'=寵物賽事。
+  // pet_max_per_reg 含基本名額（1..20 上限，UI 於等於 20 時鎖住加購 stepper）；pet_base_slots 目前恆為 1，仍照後端回傳值使用不寫死。
+  pet_kind: '' | 'dog' | 'cat'
+  pet_max_per_reg: number
+  pet_base_slots: number
 }
 
 // --- 取消退費政策（見後端 race.CancellationPolicy／race.ResolveCancellationPolicy）---
@@ -362,6 +367,10 @@ export interface RaceGroup {
   // 該組獨立報名費（分）；僅 race.fee_mode='per_group' 時生效，null/undefined=沿用 race.entry_fee（預設報名費）。
   // 前台跑團成員自建分組一律不會帶這個欄位（無定價權，永遠沿用預設）；僅後台官方分組可設定。
   entry_fee_cents?: number | null
+  // 寵物雲端馬拉松（2026-09-08）：此分組是否計入飼主／寵物成績（供未來計分邏輯使用，目前僅後台可勾選、
+  // 前台不消費）；後端預設兩者皆 true，前台跑團成員自建分組不帶這兩欄，一律沿用後端預設。
+  for_owner?: boolean
+  for_pet?: boolean
 }
 
 // effectiveGroupFee 是「有效組價」的單一事實來源（分），與後端 race.EffectiveGroupFee 對應一致：
@@ -385,6 +394,9 @@ export interface RaceAddon {
   total_stock?: number | null
   display_order: number
   active: boolean
+  // 寵物雲端馬拉松（2026-09-08）：'pet_slot'＝加購寵物參賽名額（每份 qty +1 隻），每場賽事至多一個；
+  // 其餘一律 'item'（一般加購品項，既有行為）。舊資料/未帶＝視同 'item'。
+  kind?: 'item' | 'pet_slot'
 }
 
 export interface RaceSupply {
@@ -1228,6 +1240,19 @@ export const invoiceApi = {
     request<InvoiceVerifyResult>('/invoice/verify', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
 }
 
+// 寵物雲端馬拉松（2026-09-08，migration 173）：報名請求送出的單隻寵物資料；chip_id 選填、預留未來
+// 第三方寵物資料平台串接，格式比照後端寬鬆驗證（^[A-Za-z0-9-]{0,32}$）。
+export interface PetEntryPayload {
+  name: string
+  chip_id?: string
+}
+// 報名/訂單讀回的寵物資料（含 seq 供匯出/明細顯示排序）；chip_id 後端一律回傳空字串而非省略。
+export interface RegistrationPet {
+  seq: number
+  name: string
+  chip_id: string
+}
+
 export interface RegisterPayload {
   group_id?: string
   group_key?: string // 加入需鑰匙的分組時帶入
@@ -1237,6 +1262,9 @@ export interface RegisterPayload {
   promo_code?: string
   use_coupon?: boolean // 使用 VIP 活動優惠券($100)；與 promo_code、coupon_reward_id 三擇一
   coupon_reward_id?: string // 使用活動優惠券（migration 138，user_rewards.id）；三者互斥
+  // 寵物雲端馬拉松：race.pet_kind !== '' 時必填（數量＝1 + 加購「寵物參賽名額」qty，見 D5/D8）；
+  // 一般賽事（pet_kind===''）不帶。
+  pets?: PetEntryPayload[]
 }
 
 export interface CreateTeamGroupPayload {
@@ -2049,6 +2077,8 @@ export interface MyRegistration {
   invoice_number?: string
   invoice_status?: string // pending|issuing|issued|void|failed|skipped
   issued_at?: string | null
+  // 寵物雲端馬拉松：僅寵物賽事（該場 race.pet_kind !== ''）有值；一般賽事省略。
+  pets?: RegistrationPet[]
 }
 
 export interface MyOrderItem {
@@ -3082,6 +3112,8 @@ export interface SignupRow {
   order_status?: string
   race_title?: string // 僅「全部賽事」模式（race_id 留空）有值，後端多回傳供前端顯示賽事名稱欄
   is_virtual: boolean // 虛擬選手（users.is_virtual），供🤖標記
+  // 寵物雲端馬拉松：僅寵物賽事報名有值。
+  pets?: RegistrationPet[]
 }
 
 export interface OrderItemRow {
@@ -3117,6 +3149,8 @@ export interface OrderRow {
   faction?: string // 陣營（分組對抗模式）
   group_name?: string // 報名分組名稱
   user_handle: string // 會員帳號 handle
+  // 寵物雲端馬拉松：僅寵物賽事訂單有值（後台訂單明細顯示用）。
+  pets?: RegistrationPet[]
 }
 
 export interface OrderDetail extends OrderRow {
@@ -3158,11 +3192,16 @@ export interface ExportOrderRow {
   title?: string // 三聯式發票抬頭
   carrier_id?: string
   love_code?: string
+  // 寵物雲端馬拉松：與 registration/order DTO 同形狀的完整寵物清單（僅寵物賽事有值）。
+  pets?: RegistrationPet[]
+  // 後端已用「；」join 好的名稱清單，訂單 sheet 「寵物」欄直接顯示用（僅寵物賽事有值，一般賽事省略/空字串）。
+  pets_text?: string
 }
 
+// 寵物明細（訂單匯出第三張 sheet）：每隻寵物一列，含晶片號碼；訂單 sheet 的「寵物」欄只顯示 pets_text 名稱清單。
 export interface ExportOrdersResponse {
   race: { id: string; title: string }
-  orders: ExportOrderRow[]
+  orders: ExportOrderRow[] // 寵物在 orders[].pets／pets_text，後端不另給頂層陣列
 }
 
 export interface RefundRow {

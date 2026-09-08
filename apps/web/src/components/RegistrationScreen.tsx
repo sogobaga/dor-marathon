@@ -52,6 +52,7 @@ function isValidTwTaxId(id: string): boolean {
 }
 const CARRIER_ID_RE = /^\/[0-9A-Z.+-]{7}$/
 const LOVE_CODE_RE = /^[0-9]{3,7}$/
+const PET_CHIP_ID_RE = /^[A-Za-z0-9-]{0,32}$/ // 寵物晶片號碼格式，鏡射後端 pets.go chipIDRe
 
 function ntd(cents: number) {
   return 'NT$ ' + Math.round(cents / 100).toLocaleString('zh-TW')
@@ -117,6 +118,9 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
   const [previewId, setPreviewId] = useState<string | null>(null) // 選單內展開預覽任務的分組
   const [expandedId, setExpandedId] = useState<string | null>(null) // 內嵌清單中展開任務的分組（可再點收合）
   const [qty, setQty] = useState<Record<string, number>>({})
+  // 寵物雲端馬拉松（2026-09-08，D8）：race.pet_kind !== '' 時每一列對應一隻寵物；長度隨加購「寵物參賽
+  // 名額」數量同步增減（見下方 useEffect），已輸入的內容盡量保留。
+  const [pets, setPets] = useState<{ name: string; chip_id: string }[]>([])
 
   // 自建跑團分組表單
   const [showCreate, setShowCreate] = useState(false)
@@ -343,6 +347,27 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
     [qty]
   )
 
+  // 寵物雲端馬拉松（D8）：detail 尚未載入時退回 race 本身的欄位（兩者同一場賽事，欄位同源）；
+  // 用 `|| ''`／`|| 1` 保底，避免後端尚未部署新欄位時 race.pet_kind 為 undefined 造成整頁判斷錯亂。
+  const petKind = (detail?.pet_kind ?? race.pet_kind) || ''
+  const petMaxPerReg = (detail?.pet_max_per_reg ?? race.pet_max_per_reg) || 1
+  const petBaseSlots = (detail?.pet_base_slots ?? race.pet_base_slots) || 1
+  // 加購寵物參賽名額：每場賽事至多一個 kind==='pet_slot' 的加購項目（見後端 D3）
+  const petSlotAddon = useMemo(() => detail?.addons.find((a) => a.kind === 'pet_slot') ?? null, [detail])
+  const petSlotMax = Math.max(0, petMaxPerReg - petBaseSlots) // 加購 stepper 上限：不能讓寵物總數超過每筆上限
+  const petCount = petKind
+    ? Math.min(petBaseSlots + (petSlotAddon ? Math.min(qty[petSlotAddon.id!] || 0, petSlotMax) : 0), petMaxPerReg)
+    : 0
+  useEffect(() => {
+    if (!petKind) { setPets((prev) => (prev.length ? [] : prev)); return }
+    setPets((prev) => {
+      if (prev.length === petCount) return prev
+      const next = prev.slice(0, petCount)
+      while (next.length < petCount) next.push({ name: '', chip_id: '' })
+      return next
+    })
+  }, [petKind, petCount])
+
   // 未選組別時的報名費顯示：per_group（各組獨立計價）模式下各組價格可能不同，未選組前顯示賽事
   // 預設價會誤導（2026-08-22 使用者回報《月映菊島》未選組顯示 1060）→ 未選組一律當 0，選了組才
   // 顯示該組有效價；uniform（全場統一價）模式價格固定，未選組即可直接顯示統一價。
@@ -445,6 +470,14 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
         return
       }
     }
+    // 寵物雲端馬拉松（D8/D5）：客端驗證鏡射後端 ValidatePets——名稱必填、晶片號碼格式選填比對。
+    if (petKind) {
+      if (pets.length === 0) { setErr('請填寫寵物資料'); return }
+      for (const p of pets) {
+        if (!p.name.trim()) { setErr('請填寫寵物名稱'); return }
+        if (p.chip_id.trim() && !PET_CHIP_ID_RE.test(p.chip_id.trim())) { setErr('晶片號碼格式錯誤'); return }
+      }
+    }
     if (invoice.buyer_type === 'company') {
       if (!invoice.tax_id.trim() || !isValidTwTaxId(invoice.tax_id.trim())) {
         setErr('統一編號有誤，請確認')
@@ -496,6 +529,7 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
           promo_code: useCoupon || couponRewardId ? undefined : (promoCode.trim() || undefined),
           use_coupon: useCoupon || undefined,
           coupon_reward_id: useCoupon ? undefined : (couponRewardId || undefined),
+          pets: petKind ? pets.map((p) => ({ name: p.name.trim(), chip_id: p.chip_id.trim() || undefined })) : undefined,
         })
       )
       setDone({ group: res.assigned_group, revealed: res.group_revealed, paid: res.paid, payable: res.payable_cents, orderId: res.order.id })
@@ -805,7 +839,9 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {detail.addons.map((a) => {
                     const q = qty[a.id!] || 0
-                    const max = a.per_user_limit ?? Infinity
+                    // 「加購寵物參賽名額」stepper 上限比照 petSlotMax（不能讓寵物總數超過每筆報名寵物上限），
+                    // 其餘一般品項沿用既有個人限購邏輯。
+                    const max = a.kind === 'pet_slot' ? Math.min(a.per_user_limit ?? Infinity, petSlotMax) : (a.per_user_limit ?? Infinity)
                     return (
                       <div key={a.id} style={groupRow}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
@@ -995,6 +1031,35 @@ export default function RegistrationScreen({ race, onBack }: { race: Race; onBac
                 </label>
               ))}
             </Section>
+
+            {/* 寵物資料（寵物雲端馬拉松，D8）：race.pet_kind !== '' 才顯示，列數＝1（基本名額）+ 加購數量 */}
+            {petKind && (
+              <Section title={`寵物資料（${petKind === 'dog' ? '狗狗賽事' : '貓貓賽事'}）`}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {pets.map((p, i) => (
+                    <div key={i} style={{ ...card, padding: 14 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tx-faint)', marginBottom: 8 }}>
+                        {petKind === 'dog' ? '🐶' : '🐱'} 寵物 {i + 1}
+                      </div>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
+                        <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>寵物名稱<span style={{ color: 'var(--hunt)' }}> *</span></span>
+                        <input
+                          style={inp} value={p.name} maxLength={40}
+                          onChange={(e) => setPets((ps) => ps.map((x, idx) => (idx === i ? { ...x, name: e.target.value } : x)))}
+                        />
+                      </label>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>晶片號碼（選填，未來串接寵物資料平台）</span>
+                        <input
+                          style={inp} value={p.chip_id} maxLength={32}
+                          onChange={(e) => setPets((ps) => ps.map((x, idx) => (idx === i ? { ...x, chip_id: e.target.value } : x)))}
+                        />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            )}
 
             {/* 電子發票 */}
             <Section title="電子發票">

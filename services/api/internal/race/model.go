@@ -64,6 +64,14 @@ type Race struct {
 	// 場景管理者自己會把各項 prob_bp 設為 10000(100%)。選填，nil＝此賽事不設定參賽虛擬獎勵。
 	EntryRewardConfig *activityreward.RewardConfig `json:"entry_reward_config,omitempty"`
 	CreatedAt         time.Time                    `json:"created_at"`
+	// --- 寵物雲端馬拉松（2026-09-08 owner request，僅報名部分；計分邏輯留待之後）---
+	// PetKind：''=非寵物賽事｜dog=狗狗賽事｜cat=貓貓賽事（一場賽事只會是其一，人類完賽條件不受影響）。
+	PetKind string `json:"pet_kind"`
+	// PetMaxPerReg 每筆報名最多可登記幾隻寵物（含 PetBaseSlots 基本名額），後台設定，範圍 1..20。
+	// 非寵物賽事(PetKind=="")本欄位無意義，但仍會有合法值（DB CHECK 約束需要），前端應忽略。
+	PetMaxPerReg int `json:"pet_max_per_reg"`
+	// PetBaseSlots 報名即內含的基本寵物名額，目前固定為 1，存成欄位（而非寫死常數）供未來調整彈性。
+	PetBaseSlots int `json:"pet_base_slots"`
 }
 
 // ChallengeRule 個人挑戰模式（event_mode=personal）的完成條件參數化模板。存於 races.challenge_rule JSONB。
@@ -203,6 +211,17 @@ type RaceGroup struct {
 	// uniform 模式下本欄位一律忽略。前台跑團成員自建分組(created_by 非空)一律不設（無定價權，永遠 NULL），
 	// 只有後台官方分組編輯（RaceForm）可設定。見 EffectiveGroupFee 為唯一計價事實來源。
 	EntryFeeCents *int `json:"entry_fee_cents"`
+	// ForOwner/ForPet（migration 173，寵物雲端馬拉松）：此分組是否分別納入「飼主成績」／「寵物成績」
+	// （供之後的計分邏輯使用，本輪只落地資料與後台顯示）。DB 兩者預設皆 TRUE。
+	//
+	// 用 *bool 而非 bool：這個 struct 兼做讀取(GetGroups回傳)與寫入(CreateRaceRequest.Groups)兩種用途，
+	// 後台表單（RaceForm）尚未加上這兩個勾選框前，送上來的 JSON 完全不會帶 for_owner/for_pet 這兩個 key，
+	// 若用一般 bool，Go 對「缺欄位」與「明確帶 false」都會得到零值 false，會把所有既有分組在下次
+	// 編輯儲存時整批誤寫成 for_owner=false、for_pet=false。用指標讓 normalizeRequest／repository 能
+	// 分辨「沒帶」(nil→預設 true)與「明確設 false」，讀取端(GetGroups)一律填入非 nil 值，故對外 JSON
+	// 仍恆為布林值 true/false，不影響既有/未來前端「for_owner: boolean」的介面假設。
+	ForOwner *bool `json:"for_owner"`
+	ForPet   *bool `json:"for_pet"`
 }
 
 // EffectiveGroupFee 是「有效組價」的單一事實來源（分）：race.fee_mode=per_group 且該組設有獨立報名費
@@ -376,6 +395,10 @@ type RaceAddon struct {
 	SoldCount    int    `json:"sold_count"`
 	DisplayOrder int    `json:"display_order"`
 	Active       bool   `json:"active"`
+	// Kind（migration 173）：item=一般加購品項（預設，向下相容既有資料）｜pet_slot=加購寵物參賽名額
+	// （每份 +1 隻寵物，見 races.pet_max_per_reg／ValidatePets）。同一賽事至多一個 pet_slot 加購
+	// （service.normalizeRequest 擋）。空字串一律視為 item（defaultStr），現有前端未帶此欄位時不受影響。
+	Kind string `json:"kind"`
 }
 
 // RaceSupply 物資（共用 or 分組 × 參賽 or 完賽）
@@ -567,6 +590,20 @@ type AddonSelection struct {
 	Qty     int    `json:"qty"`
 }
 
+// PetEntry 報名時填的單隻寵物資料（寵物雲端馬拉松，migration 173）。ChipID 為晶片號碼，選填，
+// 保留給未來串接第三方寵物資料平台（見 RegistrationPet／registration_pets.platform*）。
+type PetEntry struct {
+	Name   string `json:"name"`
+	ChipID string `json:"chip_id,omitempty"`
+}
+
+// RegistrationPet 報名底下寵物資料的讀取用 DTO（我的報名／後台報名管理／後台訂單明細共用）。
+type RegistrationPet struct {
+	Seq    int    `json:"seq"`
+	Name   string `json:"name"`
+	ChipID string `json:"chip_id,omitempty"`
+}
+
 // InvoiceInfo 電子發票資料（personal 二聯式／company 三聯式／donation 捐贈，三擇一）。
 // 本輪只收集儲存，不觸發實際開立——欄位名為前後台共用合約，不可更動。
 type InvoiceInfo struct {
@@ -593,6 +630,9 @@ type RegisterRequest struct {
 	// （見 Service.Register 的 ErrDiscountConflict 前置守門）。
 	CouponRewardID string       `json:"coupon_reward_id,omitempty"`
 	Invoice        *InvoiceInfo `json:"invoice,omitempty"` // 發票資訊；未帶=預設 personal 且全空（雲端發票存證），不影響報名成功
+	// Pets 寵物資料（migration 173）：只有 race.pet_kind != '' 才會被驗證/使用（見 ValidatePets），
+	// 非寵物賽事帶了也會被忽略。筆數須等於 race.pet_base_slots + 本次選購的 pet_slot 加購數量。
+	Pets []PetEntry `json:"pets,omitempty"`
 }
 
 // PromoQuote 優惠序號折抵預覽（報名前即時試算）
@@ -622,6 +662,8 @@ type SignupRow struct {
 	OrderStatus   string    `json:"order_status,omitempty"`
 	RaceTitle     string    `json:"race_title,omitempty"` // 僅「全部賽事」模式（race_id 留空）需要，前端多顯示一欄賽事名稱
 	IsVirtual     bool      `json:"is_virtual"`           // 虛擬選手（users.is_virtual），供後台勾選隱藏＋🤖標記
+	// Pets 該筆報名登記的寵物名單（寵物雲端馬拉松，migration 173）；非寵物賽事/未登記寵物為空陣列。
+	Pets []RegistrationPet `json:"pets,omitempty"`
 }
 
 // OrderRow 後台訂單管理列表單筆
@@ -668,6 +710,9 @@ type OrderItemRow struct {
 type OrderDetail struct {
 	OrderRow
 	Items []OrderItemRow `json:"items"`
+	// Pets 該訂單對應報名登記的寵物名單（寵物雲端馬拉松，migration 173）；VIP 訂閱訂單（無 registration）
+	// 或非寵物賽事一律為空陣列。
+	Pets []RegistrationPet `json:"pets,omitempty"`
 }
 
 // ExportOrderItem 匯出賽事訂單的加購品項單筆（見 Repository.ExportOrders／Handler.AdminExportOrders）
@@ -711,6 +756,14 @@ type ExportOrderRow struct {
 	Title         string            `json:"title,omitempty"` // 三聯式發票抬頭（公司名稱），與 Race 無關——同名沿用 InvoiceInfo.Title 欄位命名
 	CarrierID     string            `json:"carrier_id,omitempty"`
 	LoveCode      string            `json:"love_code,omitempty"`
+	// Pets 該訂單對應報名登記的寵物名單（寵物雲端馬拉松，migration 173）：「寵物明細」第三張 sheet
+	// 的每一列＝本筆訂單的 OrderID/UserHandle/RealName（本 struct 上已有）＋這裡每一筆 Pets 的
+	// Seq/Name/ChipID——不另外開一個扁平化的頂層陣列/查詢，前端從 orders[].pets 直接攤平即可，
+	// 沿用單一查詢、避免 N+1。
+	Pets []RegistrationPet `json:"pets,omitempty"`
+	// PetsText 「訂單」sheet 的「寵物」欄專用便捷欄位：Pets 的 name 已由後端依 seq 序以「；」join好，
+	// 前端不必自己重算一次；非寵物賽事/未登記寵物為空字串。
+	PetsText string `json:"pets_text,omitempty"`
 }
 
 // ExportRaceMeta 匯出賽事訂單回應內的賽事摘要
