@@ -169,6 +169,7 @@ func TestValidatePets_TrimsChipIDWhitespace(t *testing.T) {
 // owner 指定文案「每場賽事只能有一個寵物名額加購」（handler 層 err.Error() 原樣回給後台前端顯示，見 D3）。
 func TestNormalizeRequest_AtMostOnePetSlotAddon(t *testing.T) {
 	req := &CreateRaceRequest{
+		Race: Race{PetKind: "dog", PetMaxPerReg: 5}, // pet_slot 加購只允許在寵物賽事（審查修正後的規則）
 		Addons: []RaceAddon{
 			{Name: "寵物名額 A", Kind: "pet_slot"},
 			{Name: "寵物名額 B", Kind: "pet_slot"},
@@ -187,6 +188,7 @@ func TestNormalizeRequest_AtMostOnePetSlotAddon(t *testing.T) {
 // Kind 維持/正規化正確（未帶 kind 的舊資料一律預設 item，向下相容）。
 func TestNormalizeRequest_OnePetSlotAddonOK(t *testing.T) {
 	req := &CreateRaceRequest{
+		Race: Race{PetKind: "dog", PetMaxPerReg: 5}, // pet_slot 加購只允許在寵物賽事（審查修正後的規則）
 		Addons: []RaceAddon{
 			{Name: "紀念衣", Kind: ""}, // 未帶 kind，應正規化為 item
 			{Name: "寵物名額", Kind: "pet_slot"},
