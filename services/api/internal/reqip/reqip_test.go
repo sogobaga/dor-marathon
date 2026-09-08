@@ -94,3 +94,24 @@ func TestClientIP_FallsBackWithoutMiddleware(t *testing.T) {
 		t.Errorf("ClientIP() without Middleware = %q, want direct computeClientIP result", got)
 	}
 }
+
+// TestComputeClientIP_UnverifiedOriginIgnoresCFHeader 設了密鑰但 X-Origin-Verify 不吻合：不信任
+// CF-Connecting-IP，退回 X-Forwarded-For 最右側（2026-09-09 收緊政策）。
+func TestComputeClientIP_UnverifiedOriginIgnoresCFHeader(t *testing.T) {
+	prev := originVerifySecret
+	originVerifySecret = "test-secret"
+	defer func() { originVerifySecret = prev }()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("CF-Connecting-IP", "203.0.113.9")
+	r.Header.Set("X-Forwarded-For", "203.0.113.9, 198.51.100.7")
+	r.Header.Set("X-Origin-Verify", "wrong")
+	ip, src, verified := computeClientIPDetail(r)
+	if verified || src != "xff" || ip != "198.51.100.7" {
+		t.Errorf("got ip=%q src=%q verified=%v, want xff 198.51.100.7 unverified", ip, src, verified)
+	}
+	r.Header.Set("X-Origin-Verify", "test-secret")
+	ip, src, verified = computeClientIPDetail(r)
+	if !verified || src != "cf" || ip != "203.0.113.9" {
+		t.Errorf("got ip=%q src=%q verified=%v, want cf 203.0.113.9 verified", ip, src, verified)
+	}
+}

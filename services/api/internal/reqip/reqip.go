@@ -7,6 +7,9 @@
 package reqip
 
 import (
+	"fmt"
+	"time"
+	"github.com/dor/api/internal/notify"
 	"context"
 	"crypto/subtle"
 	"net"
@@ -98,8 +101,17 @@ func computeClientIP(r *http.Request) string {
 //   2. 沒有 CF-Connecting-IP（非經 Cloudflare 的請求）→ X-Forwarded-For 最右側（代理附加）→ TCP peer。
 // /api/v1/version 會回報 origin_verified／ip_source，讓維運能直接看出 Cloudflare 標頭規則是否生效。
 func computeClientIPDetail(r *http.Request) (ip, source string, verified bool) {
-	if cf := r.Header.Get("CF-Connecting-IP"); cf != "" {
-		return cf, "cf", originVerified(r)
+	// 2026-09-09 Cloudflare 規則修好（/api/v1/version origin_verified=true）後收緊回稽核原意：
+	// 有 CF-Connecting-IP 且 X-Origin-Verify 吻合 → 採用；有 CF-Connecting-IP 但未吻合（＝繞過 Cloudflare
+	// 直打源站、自帶偽造標頭）→ 不信任，退回代理附加的 X-Forwarded-For 最右側／TCP peer，並計數告警
+	// （noteUnverified）：規則若再失效，幾分鐘內就會收到 TG 通知，而不是全站 IP 無聲塌到代理位址。
+	// 未設 ORIGIN_VERIFY_SECRET 時 originVerified 恆為 true，行為與從前相同。
+	cf := r.Header.Get("CF-Connecting-IP")
+	if cf != "" && originVerified(r) {
+		return cf, "cf", true
+	}
+	if cf != "" {
+		noteUnverified()
 	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
@@ -112,6 +124,38 @@ func computeClientIPDetail(r *http.Request) (ip, source string, verified bool) {
 		return r.RemoteAddr, "peer", false
 	}
 	return host, "peer", false
+}
+
+// 未驗證流量計數／告警：5 分鐘視窗內帶 CF-Connecting-IP 卻驗證失敗的請求 ≥ unverifiedAlertThreshold 就發
+// 一次 TG 告警（notify.Alert 本身另有同 kind 冷卻），並在 log 記 Warn。兩種情境都需要人看：
+//   - 正常營運下幾乎為 0：出現大量＝有人繞過 Cloudflare 直打源站（偽造來源 IP 的前置動作）；
+//   - 全站突然全部未驗證＝Cloudflare 轉換規則被改壞／密鑰不一致（2026-09-08 曾發生），限流與統計會失真。
+const (
+	unverifiedWindow         = 5 * time.Minute
+	unverifiedAlertThreshold = 30
+)
+
+var (
+	unverifiedMu          sync.Mutex
+	unverifiedWindowStart time.Time
+	unverifiedCount       int
+	unverifiedAlerted     bool
+)
+
+func noteUnverified() {
+	unverifiedMu.Lock()
+	defer unverifiedMu.Unlock()
+	now := time.Now()
+	if now.Sub(unverifiedWindowStart) > unverifiedWindow {
+		unverifiedWindowStart, unverifiedCount, unverifiedAlerted = now, 0, false
+	}
+	unverifiedCount++
+	if unverifiedCount >= unverifiedAlertThreshold && !unverifiedAlerted {
+		unverifiedAlerted = true
+		log.Warn().Int("count", unverifiedCount).Msg("reqip: origin-unverified requests exceeded threshold in window")
+		notify.Alert("origin_unverified_traffic", "來源驗證失敗的流量超過門檻",
+			fmt.Sprintf("5 分鐘內 %d 筆帶 CF-Connecting-IP 但 X-Origin-Verify 不吻合的請求：若 /api/v1/version 的 origin_verified 為 false，代表 Cloudflare 轉換規則失效或密鑰不一致；否則可能有人繞過 Cloudflare 直打源站。", unverifiedCount))
+	}
 }
 
 // OriginVerified 這個請求的 X-Origin-Verify 是否與 ORIGIN_VERIFY_SECRET 吻合（未設密鑰＝視為通過）。
