@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +147,35 @@ func TestDeadLetterDecision(t *testing.T) {
 				t.Errorf("isDeadLetter = %v, want %v", dead, c.wantDeadLetter)
 			}
 		})
+	}
+}
+
+// --- finding 3（2026-09-08 第二次稽核）：trimStream 改用 XTRIM MINID 取代 MAXLEN——insertDeadLetter/
+// computeTrimMinID/ReplayDeadLetter 本身要打真正的 Redis/Postgres（w.rdb/w.db 皆為具體型別，未
+// 介面化），無法在不牽動真正連線的情況下單元測試，這點與上面 TestDeadLetterDecision 只測抽出的
+// 純函式處境相同。下面驗證抽出的 trimStreamRetentionMinID 純函式：給定 now，算出的 MINID 字串
+// 必須是「now 往前推 streamTrimRetention（7 天）」、序號固定為 0 的合法 Redis Stream ID 格式。
+
+// TestTrimStreamRetentionMinID_Format 驗證輸出格式恆為 "<ms>-0"（序號固定 0，代表該毫秒的第一筆）。
+func TestTrimStreamRetentionMinID_Format(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	got := trimStreamRetentionMinID(now)
+	if !strings.HasSuffix(got, "-0") {
+		t.Fatalf("expected MINID to end with \"-0\", got %q", got)
+	}
+}
+
+// TestTrimStreamRetentionMinID_SevenDaysBack 驗證算出的毫秒時間戳確實是 now 往前推 7 天
+// （streamTrimRetention），不多不少——這是 trimStream 在完全沒有 pending 訊息時的裁剪下限，
+// 算錯會導致裁太多（誤刪還在保留窗口內的訊息）或裁太少（起不到清理效果）。
+func TestTrimStreamRetentionMinID_SevenDaysBack(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	want := fmt.Sprintf("%d-0", now.Add(-streamTrimRetention).UnixMilli())
+	if got := trimStreamRetentionMinID(now); got != want {
+		t.Fatalf("trimStreamRetentionMinID(%v) = %q, want %q", now, got, want)
+	}
+	if streamTrimRetention != 7*24*time.Hour {
+		t.Fatalf("streamTrimRetention changed from documented 7 days to %v — update this test's expectation intentionally", streamTrimRetention)
 	}
 }
 

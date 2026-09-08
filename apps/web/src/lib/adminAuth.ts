@@ -3,6 +3,7 @@
 // 不勾選 → access 只存 sessionStorage（關閉分頁即失效），不存 refresh。
 // 存的是「token」而非密碼：不是明碼、且可在伺服器端撤銷（refresh denylist）；access TTL 60 分、refresh 30 天滑動。
 import { authApi, setAuthRecovery } from './api'
+import { broadcastAuthChange } from './swrCache'
 
 const ACCESS_KEY = 'dor_admin_token'    // keep 模式在 localStorage；session 模式在 sessionStorage
 const REFRESH_KEY = 'dor_admin_refresh' // 只有「保持登入」才存（localStorage）
@@ -36,6 +37,9 @@ export function setSession(access: string, refresh: string, keep: boolean) {
     localStorage.removeItem(REFRESH_KEY)
   }
   remember(access)
+  // 2026-09-08 修法：通知同裝置其他分頁「後台登入者變了」，見 lib/swrCache.ts broadcastAuthChange
+  // ／listenAuthBroadcast 註解（前後台共用同一個廣播頻道，其他分頁收到一律清快取＋重新整理）。
+  broadcastAuthChange()
 }
 // 相容舊呼叫：把新 access 寫回「目前所在」的儲存
 export function setToken(access: string) {
@@ -48,6 +52,8 @@ export function clearToken() {
   localStorage.removeItem(ACCESS_KEY)
   localStorage.removeItem(REFRESH_KEY)
   sessionStorage.removeItem(ACCESS_KEY)
+  // 2026-09-08 修法：見 setSession 同一批註解。
+  broadcastAuthChange()
 }
 
 // 解出 JWT 的 exp（base64url）；無法判讀回 null

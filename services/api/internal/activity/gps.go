@@ -345,6 +345,14 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 			}
 			return nil, ErrGPSEnqueueFailed
 		}
+		// finding 2（2026-09-08 第二次稽核）：標記已成功入隊（migrations/172 gps_runs.enqueued_at）。
+		// 若這裡的 UPDATE 本身失敗（極罕見：DB 抖動），不影響這次上傳結果——至多讓
+		// RequeueUnenqueued 的孤兒列掃描白跑一次（該掃描查無對應活動才會補送，見 ListUnenqueuedGPS
+		// 註解），不會造成重複入帳；因此只記錄，不因此讓這次上傳失敗。
+		if err := s.repo.markGPSEnqueued(ctx, id); err != nil {
+			log.Error().Err(err).Str("gps_run_id", id).
+				Msg("SaveGPSRun: markGPSEnqueued failed (non-fatal, enqueue itself succeeded)")
+		}
 		// 體力值 SP：跑步完成後扣血（依距離×強度；扣到 0 凍結 6 小時；僅未標記、且 XAdd 確認成功才扣）
 		stamina.ChargeSP(ctx, s.repo.db, userID, round2(distanceKm), avgPaceS)
 	}
@@ -428,6 +436,125 @@ func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, st
 func (r *Repository) DeleteGPSRun(ctx context.Context, id string) error {
 	_, err := r.db.Exec(ctx, `DELETE FROM gps_runs WHERE id = $1`, id)
 	return err
+}
+
+// unenqueuedGPSRun 是 ListUnenqueuedGPS 一列的完整欄位（RequeueUnenqueued 據此重建 ActivityEvent，
+// 欄位口徑與 SaveGPSRun/AdminApproveGPS 組出的事件一致，見兩處的 gpsReviewResult／calc 欄位對照）。
+type unenqueuedGPSRun struct {
+	ID, UserID, RaceID         string
+	RawDistanceKm, CalibFactor float64
+	CalibDistanceKm            *float64 // NULL 時退化成 RawDistanceKm（等同係數 1.0），比照 reviewGPS
+	DurationS, RawAvgPaceS     int
+	EndedAt                    time.Time
+	KmPaces                    []int
+	Flagged                    bool
+}
+
+// ListUnenqueuedGPS 找出「已寫入 gps_runs，卻因程序中斷（INSERT 與 XAdd 之間當機）而漏推入活動
+// 佇列」的孤兒列（finding 2，2026-09-08 第二次稽核；migrations/172 gps_runs.enqueued_at）——
+// SaveGPSRun/AdminApproveGPS 走的是「先寫 DB、後 XAdd」，兩步之間若整個程序被殺掉，DB 這筆已經
+// 落地但活動事件永遠不會被送出，且因 uq_gps_runs_user_start 冪等索引，使用者重傳同一趟只會被當
+// 重複擋下、永遠補不回來——RequeueUnenqueued 是這個缺口的背景兜底掃描。
+//
+// 篩選條件：
+//   - enqueued_at IS NULL（尚未成功入隊，見 markGPSEnqueued）。
+//   - created_at < 門檻：給正常路徑（含 finding 1 的 revert 重試）足夠時間先走完，避免跟「還在
+//     處理中」的請求搶著入隊同一筆。
+//   - (NOT flagged OR review_action = 'approved')：flagged 且尚待審（review_action IS NULL）的
+//     一律排除——這類本就不該自動入隊，要等管理者核准；flagged 且已駁回（'rejected'）也排除——
+//     永遠不該入隊。只有「未標記的一般上傳」或「已核准」兩種狀態才是入隊的合法候選，跟
+//     SaveGPSRun／AdminApproveGPS 本身「誰會呼叫 enqueueActivityEvent」的判斷完全對齊。
+//   - 額外防線：NOT EXISTS 對應活動（同 user、source IS NULL、recorded_at=ended_at 取到秒——activities.recorded_at
+//     是由 RFC3339（無毫秒）字串寫入、gps_runs.ended_at 保留毫秒，兩邊必須 date_trunc('second') 才對得上，
+//     否則這道防線永遠不命中、補送會重複入帳（審查抓到）；配對慣例同
+//     gps_recall.go 檔頭註解）——activities 表對 GPS 來源（source IS NULL）沒有有效的唯一約束
+//     （見 migrations/113_gps_run_idempotency.sql 檔頭說明：idx_activities_source_ext(source,
+//     external_id) 對 NULL 形同虛設），若只因為 markGPSEnqueued 這個「標記」寫入失敗（XAdd 本身
+//     其實已成功、活動也已建立）就誤判成「未入隊」而重新 XAdd，worker 會真的插入第二筆重複活動、
+//     且不會被任何去重邏輯攔下（resolveCrossSourceDups 只處理跨來源，不處理同源 GPS 重複）。
+//     這道 NOT EXISTS 保證只有「真的還沒有對應活動」的孤兒列才會被重新入隊。
+func (r *Repository) ListUnenqueuedGPS(ctx context.Context, olderThan time.Duration, limit int) ([]unenqueuedGPSRun, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT g.id::text, g.user_id::text, COALESCE(g.race_id::text,''), g.distance_km, g.duration_s,
+		       g.avg_pace_s, g.ended_at, g.calib_distance_km, g.calib_factor, g.km_paces, g.flagged
+		FROM gps_runs g
+		WHERE g.enqueued_at IS NULL
+		  AND g.created_at < $1
+		  AND (NOT g.flagged OR g.review_action = 'approved')
+		  AND NOT EXISTS (
+		    SELECT 1 FROM activities a
+		    WHERE a.user_id = g.user_id AND a.source IS NULL AND date_trunc('second', a.recorded_at) = date_trunc('second', g.ended_at))
+		ORDER BY g.created_at ASC
+		LIMIT $2`, time.Now().Add(-olderThan), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []unenqueuedGPSRun{}
+	for rows.Next() {
+		var g unenqueuedGPSRun
+		var calibDist *float64
+		if err := rows.Scan(&g.ID, &g.UserID, &g.RaceID, &g.RawDistanceKm, &g.DurationS,
+			&g.RawAvgPaceS, &g.EndedAt, &calibDist, &g.CalibFactor, &g.KmPaces, &g.Flagged); err != nil {
+			return nil, err
+		}
+		g.CalibDistanceKm = calibDist
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// gpsRequeueOlderThan/gpsRequeueLimit：RequeueUnenqueued 每輪的篩選門檻與上限（見
+// ListUnenqueuedGPS 註解）。15 分鐘遠高於正常上傳/核准流程的入隊耗時（毫秒等級），足夠讓「還在
+// 處理中」的請求先走完，避免搶跑；200 筆足夠涵蓋單輪異常量，掃描本身走 hourly ops selfcheck loop
+// （見 internal/ops/selfcheck.go），下一輪還會再掃一次剩下的。
+const (
+	gpsRequeueOlderThan = 15 * time.Minute
+	gpsRequeueLimit     = 200
+)
+
+// RequeueUnenqueued 背景兜底：補送 ListUnenqueuedGPS 找出的孤兒列（見該函式與 finding 2 註解）。
+// 供 internal/ops/selfcheck.go 的每小時排程呼叫（比照 EinvoiceReporter.SweepPending 的小介面
+// 注入模式，見該檔案 GPSRequeuer）。單筆失敗只記錄+告警並繼續下一筆，不中止整批——enqueued_at
+// 仍是 NULL，下一輪排程會再試一次。
+func (s *Service) RequeueUnenqueued(ctx context.Context) {
+	runs, err := s.repo.ListUnenqueuedGPS(ctx, gpsRequeueOlderThan, gpsRequeueLimit)
+	if err != nil {
+		log.Error().Err(err).Msg("RequeueUnenqueued: ListUnenqueuedGPS failed")
+		return
+	}
+	for _, g := range runs {
+		avgPaceS := g.RawAvgPaceS
+		calibDistanceKm := g.RawDistanceKm
+		if g.CalibDistanceKm != nil && *g.CalibDistanceKm > 0 {
+			calibDistanceKm = *g.CalibDistanceKm
+			avgPaceS = int(float64(g.DurationS) / calibDistanceKm)
+		}
+		evt := ActivityEvent{
+			UserID: g.UserID, RaceID: g.RaceID, DistanceKm: round2(calibDistanceKm),
+			DurationS: g.DurationS, AvgPaceS: avgPaceS, RecordedAt: g.EndedAt.Format(time.RFC3339),
+			RawDistanceKm: round2(g.RawDistanceKm), CalibFactor: g.CalibFactor,
+		}
+		if !g.Flagged {
+			// 只有「一般上傳、未標記」路徑的原始事件才帶每公里分段配速，比照 SaveGPSRun 的組法；
+			// AdminApproveGPS 核准路徑本就不帶這欄，這裡維持跟各自「原本會產生的事件」一致，不
+			// 在補送時無中生有多帶欄位。
+			evt.KmPaces = g.KmPaces
+		}
+		if err := enqueueActivityEvent(ctx, s.rdb, evt); err != nil {
+			log.Error().Err(err).Str("gps_run_id", g.ID).Str("user_id", g.UserID).
+				Msg("RequeueUnenqueued: XAdd failed, will retry next round")
+			notify.Alert("gps_requeue_failed", "GPS 孤兒列補送入隊失敗",
+				fmt.Sprintf("gps_run_id=%s user_id=%s err=%v", g.ID, g.UserID, err))
+			continue
+		}
+		if err := s.repo.markGPSEnqueued(ctx, g.ID); err != nil {
+			log.Error().Err(err).Str("gps_run_id", g.ID).
+				Msg("RequeueUnenqueued: markGPSEnqueued failed after successful XAdd")
+			notify.Alert("gps_requeue_mark_failed", "GPS 孤兒列補送入隊成功但標記失敗（下一輪可能重複掃到，仍受 NOT EXISTS 防重複保護）",
+				fmt.Sprintf("gps_run_id=%s user_id=%s err=%v", g.ID, g.UserID, err))
+		}
+	}
 }
 
 // POST /api/v1/activities/gps — 上傳網頁 GPS 跑步軌跡

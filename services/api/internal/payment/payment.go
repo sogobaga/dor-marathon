@@ -601,11 +601,23 @@ func (h *Handler) Notify(w http.ResponseWriter, r *http.Request) {
 				// 卻回到舊分頁按下付款）：錢是真的被收走了，補記成 paid_superseded（見
 				// MarkSupersededTxPaid 註解），讓之後對帳/退款（refund.go GetPaidTxForOrder）
 				// 找得到這筆交易，而不是只留一行 log 就讓這筆真實收款憑證消失。
+				//
+				// finding 4（2026-09-08 第二次稽核）：過去 MarkSupersededTxPaid 失敗時只 log 就
+				// 繼續往下回 1|OK——這筆真實收款從此不會再有第二次機會被記錄（ECPay 收到 1|OK 就
+				// 不會重送這通 Notify），對帳上會永久少一筆已收款的憑證。改成：失敗時回
+				// 0|MarkSupersededFailed（ECPay 判讀為失敗會重送 Notify，下次重試 CAS 仍是同一筆
+				// superseded tx，可再次嘗試補記）並直接 return，不繼續往下呼叫 MarkOrderPaid——
+				// 告警照發，讓人工也知道發生過失敗（即使後續重送多半會自己補上）。
 				if _, err := h.repo.MarkSupersededTxPaid(r.Context(), tradeNo, rtnCode, rtnMsg, params["TradeNo"], params["PaymentType"], tradeAmtNTD*100, raw); err != nil {
 					log.Error().Err(err).
 						Str("merchant_trade_no", tradeNo).
 						Str("order_id", tx.OrderID).
 						Msg("ecpay notify: mark superseded tx paid failed")
+					notify.Alert("payment_superseded_paid_mark_failed", "舊付款頁完成付款但補記失敗（需人工對帳，將等待 ECPay 重送 Notify 重試）",
+						fmt.Sprintf("order_id=%s merchant_trade_no=%s ecpay_trade_no=%s trade_amt_ntd=%d err=%v",
+							tx.OrderID, tradeNo, params["TradeNo"], tradeAmtNTD, err))
+					w.Write([]byte("0|MarkSupersededFailed"))
+					return
 				}
 				notify.Alert("payment_superseded_paid", "舊付款頁完成付款（需人工對帳）",
 					fmt.Sprintf("order_id=%s merchant_trade_no=%s ecpay_trade_no=%s trade_amt_ntd=%d",

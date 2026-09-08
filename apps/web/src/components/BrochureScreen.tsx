@@ -4,7 +4,7 @@ import useSWR from 'swr'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { racesApi, type Race, type RaceDetail, type BrochureBlock, type BrochureImageItem, normalizeBrochureImage } from '@/lib/api'
-import { getUserToken } from '@/lib/userAuth'
+import { getUserToken, useUser } from '@/lib/userAuth'
 import { navigateLink } from '@/lib/links'
 import { MediaCarousel, Lightbox, YouTubeEmbed, ytId, FBReelEmbed, fbReelHref } from '@/components/shared/MediaCarousel'
 import { buildRefundScheduleRows, formatCutoffDate } from '@/lib/refundSchedule'
@@ -35,7 +35,10 @@ export default function BrochureScreen({
   onRegister?: (race: Race) => void
 }) {
   const token = getUserToken() || undefined
-  const { data, error, isLoading } = useSWR(['brochure', race.id], () => racesApi.detail(race.id, token))
+  // 2026-09-08 第二次稽核修法：racesApi.detail 帶 token 會回登入者自己的報名狀態，key 要加 user id
+  // （比照 RaceDetailScreen.tsx 的 ['detail', race.id, uid]），避免同分頁換帳號時撞到別人的快取。
+  const uid = useUser()?.id ?? null
+  const { data, error, isLoading } = useSWR(['brochure', race.id, uid], () => racesApi.detail(race.id, token))
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null)
   const zoom = (images: string[], index: number) => setLightbox({ images, index })
 

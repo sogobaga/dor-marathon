@@ -126,6 +126,36 @@ func (r *Repository) BumpSessionEpoch(ctx context.Context, userID string) (int, 
 	return epoch, nil
 }
 
+// GetSessionState 讀取 ValidateAccessToken／Refresh 要用的最小欄位集合（角色/session_epoch/
+// tokens_not_before，見 migration 171），2026-09-08 audit finding 3。刻意不是整個 User row
+// （見 FindByID）——ValidateAccessToken 這一支會被行程內快取包住（見 Service.getSessionState，
+// 60 秒 TTL），但快取沒命中時仍是每個受保護請求都可能觸發的查詢，SELECT 欄位越窄越好；
+// tokens_not_before 為 NULL（從未被設定過）時回傳 nil，代表「沒有下限」。
+func (r *Repository) GetSessionState(ctx context.Context, userID string) (role string, sessionEpoch int, tokensNotBefore *time.Time, err error) {
+	err = r.db.QueryRow(ctx, `
+		SELECT role, session_epoch, tokens_not_before FROM users WHERE id = $1
+	`, userID).Scan(&role, &sessionEpoch, &tokensNotBefore)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, nil, fmt.Errorf("get session state: %w", ErrUserNotFound)
+	}
+	if err != nil {
+		return "", 0, nil, fmt.Errorf("get session state: %w", err)
+	}
+	return role, sessionEpoch, tokensNotBefore, nil
+}
+
+// SetTokensNotBefore 設定使用者的 tokens_not_before：自此刻起，所有「IssuedAt 早於這個時間」的
+// access／refresh token 一律失效——不分角色，含 admin（與 session_epoch 只對非 admin 生效不同，
+// 見 Service.ValidateAccessToken／Refresh 的檢查）。供「密碼被改」「懷疑帳號外洩、要求強制登出
+// 全部裝置」這類需要立即讓現有全部 session 失效的場景使用，見 Service.RevokeAllSessions 呼叫點。
+func (r *Repository) SetTokensNotBefore(ctx context.Context, userID string, t time.Time) error {
+	_, err := r.db.Exec(ctx, `UPDATE users SET tokens_not_before = $2 WHERE id = $1`, userID, t)
+	if err != nil {
+		return fmt.Errorf("set tokens not before: %w", err)
+	}
+	return nil
+}
+
 // FindByGoogleSub 透過 Google sub（user_identities）找使用者
 func (r *Repository) FindByGoogleSub(ctx context.Context, sub string) (*User, error) {
 	u := &User{}
@@ -302,3 +332,8 @@ func (r *Repository) HandleExists(ctx context.Context, handle string) (bool, err
 	err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE handle=$1)`, handle).Scan(&exists)
 	return exists, err
 }
+
+// ErrUserNotFound GetSessionState 查無此帳號（已刪除）。呼叫端必須把它與「DB 暫時故障」分開對待：
+// 前者 fail-closed（token 立即失效，審查抓到：管理者被刪後舊 access token 仍可打未加 perm 的 /admin 路由），
+// 後者才 fail-open。
+var ErrUserNotFound = errors.New("user not found")

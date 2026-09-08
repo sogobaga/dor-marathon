@@ -299,8 +299,17 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
 		}
+		// 2026-09-08 audit finding 3(d)：密碼變更後一併把 tokens_not_before 設成 NOW()（見
+		// migration 171），讓這個管理者「現有全部」access/refresh token 立即失效——不分角色，
+		// 含這次操作者自己（若改的是自己的密碼，本次請求所用的 session 也會在最多
+		// sessionCacheTTL（見 internal/auth.Service）之後跟著失效，之後動作需要重新登入，
+		// 屬預期行為）。與 auth.Repository.SetTokensNotBefore 是同一份 SQL 語意，這裡直接
+		// 併入既有的 UPDATE 一次寫完，不額外呼叫 auth 套件（adminacct 不持有 auth.Service
+		// 參照）。⚠️ 需要 migration 171（ALTER TABLE users ADD COLUMN tokens_not_before）
+		// 已套用，否則這支 UPDATE 會因為欄位不存在而失敗——部署順序：先套 migration 再上線
+		// 這版程式。
 		if _, err := h.db.Exec(r.Context(),
-			`UPDATE users SET password_hash=$1 WHERE id=$2`, string(hash), id); err != nil {
+			`UPDATE users SET password_hash=$1, tokens_not_before=$3 WHERE id=$2`, string(hash), id, time.Now()); err != nil { // 用 API 時鐘（與 iat 同源），不用 DB NOW()：跨主機時鐘偏差會漏撤（審查抓到）
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
 		}

@@ -1104,11 +1104,15 @@ export const authApi = {
       body: JSON.stringify({ refresh_token }),
     }),
 
-  logout: (token: string, refresh_token: string) =>
+  // 2026-09-08 第二次稽核修法：後端現在收到空 refresh_token 也會照樣撤銷這顆 access token
+  // （之前呼叫端「沒有 refresh token 就整個跳過撤銷請求」，等於 session-only 模式登出時 access
+  // token 完全沒被撤銷，只是本機清掉——理論上還能在到期前繼續使用）。refresh_token 改成 optional，
+  // 呼叫端只要有 access token 就該打這支，沒有 refresh 就傳空字串。
+  logout: (token: string, refresh_token?: string) =>
     request<void>('/auth/logout', {
       method: 'DELETE',
       headers: withAuth(token),
-      body: JSON.stringify({ refresh_token }),
+      body: JSON.stringify({ refresh_token: refresh_token || '' }),
     }),
 
   me: (token: string) =>
@@ -3242,14 +3246,22 @@ export const adminOrdersApi = {
       headers: withAuth(token),
       body: JSON.stringify({ payment_ref: payment_ref ?? '' }),
     }),
-  // race_id 必填；status 預設 all（不篩）；hideVirtual 預設 true（後端亦預設 true，帶 false 才會顯式關閉＝hide_virtual=0）
-  export: (token: string, params: { race_id: string; status?: string; hideVirtual?: boolean }) => {
-    const qs = new URLSearchParams()
-    qs.set('race_id', params.race_id)
-    if (params.status) qs.set('status', params.status)
-    if (params.hideVirtual === false) qs.set('hide_virtual', '0')
-    return request<ExportOrdersResponse>(`/admin/orders/export?${qs.toString()}`, { headers: withAuth(token) })
-  },
+  // race_id 必填；status 預設 all（不篩）；hideVirtual 預設 true（後端亦預設 true，帶 false 才會顯式關閉）。
+  // 2026-09-08 第二次稽核修法：後端改成 POST + JSON body（原 GET + query string 不會進後端的操作
+  // 稽核記錄，匯出訂單這種含個資/金流資料的動作要留稽核軌跡，比照其他會異動/匯出敏感資料的端點
+  // 一律改用有 body 的方法）；回應格式不變。
+  // status 合法值：'all'|'paid'|'pending'|'cancelled'|'refunded'（比照 list() 的 status 用寬鬆 string，
+  // 呼叫端目前用同一顆 <select> 驅動 list 與 export，型別一致才不必為了這裡另外轉型）。
+  export: (token: string, params: { race_id: string; status?: string; hideVirtual?: boolean }) =>
+    request<ExportOrdersResponse>('/admin/orders/export', {
+      method: 'POST',
+      headers: withAuth(token),
+      body: JSON.stringify({
+        race_id: params.race_id,
+        ...(params.status ? { status: params.status } : {}),
+        ...(params.hideVirtual === false ? { hide_virtual: false } : {}),
+      }),
+    }),
 }
 
 // --- Admin: 電子發票（見 services/api/internal/einvoice，migration 169）---

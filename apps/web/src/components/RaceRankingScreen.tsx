@@ -4,7 +4,7 @@ import useSWR from 'swr'
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { racesApi, followApi, type Race, type StandingRank, type LeaderboardRow, type Contributor, type PersonalLeaderRow } from '@/lib/api'
-import { getUserToken } from '@/lib/userAuth'
+import { getUserToken, useUser } from '@/lib/userAuth'
 import { overlayMount } from '@/lib/overlayMount'
 import FollowHeartButton from './shared/FollowHeartButton'
 
@@ -147,7 +147,9 @@ function CompetitionStandings({ race }: { race: Race }) {
 // GeneralLeaderboard 一般模式個人完成排名（完成時間榜 + 累計時間榜 + 追蹤鈕）
 function GeneralLeaderboard({ race }: { race: Race }) {
   const token = getUserToken() || undefined
-  const { data, isLoading } = useSWR(['leaderboard', race.id], () => racesApi.leaderboard(race.id, token), { refreshInterval: 30000 })
+  // 帶 token 含追蹤狀態(is_following)，key 加 user id，見 RaceDetailScreen.tsx 2026-09-08 修法註解
+  const uid = useUser()?.id ?? null
+  const { data, isLoading } = useSWR(['leaderboard', race.id, uid], () => racesApi.leaderboard(race.id, token), { refreshInterval: 30000 })
   const [override, setOverride] = useState<Record<string, boolean>>({})
   const lb = data?.leaderboard
   if (isLoading || !lb) return <Hint>載入排名…</Hint>
@@ -238,7 +240,9 @@ function LbList({
 // 登入 optional（未登入時不顯示追蹤鈕，is_me 恆 false）。登入者若在榜外，底部顯示自己的名次/次數。
 function PersonalChallengeLeaderboard({ race }: { race: Race }) {
   const token = getUserToken() || undefined
-  const { data, isLoading } = useSWR(['personal-leaderboard', race.id], () => racesApi.personalLeaderboard(race.id, token), { refreshInterval: 30000 })
+  // 帶 token 含 is_me/is_following/my_rank，key 加 user id，見 RaceDetailScreen.tsx 2026-09-08 修法註解
+  const uid = useUser()?.id ?? null
+  const { data, isLoading } = useSWR(['personal-leaderboard', race.id, uid], () => racesApi.personalLeaderboard(race.id, token), { refreshInterval: 30000 })
   const [override, setOverride] = useState<Record<string, boolean>>({})
   if (isLoading || !data) return <Hint>載入排名…</Hint>
 
@@ -376,7 +380,9 @@ function RankList({
 // GroupMembersModal 點某分組 → 看該組成員依累積里程的排名（含稱號＋顯示名稱＋追蹤）
 function GroupMembersModal({ race, group, onClose }: { race: Race; group: StandingRank; onClose: () => void }) {
   const token = getUserToken() || undefined
-  const { data, isLoading, error } = useSWR(['group-members', race.id, group.group_id], () => racesApi.groupMembers(race.id, group.group_id, token))
+  // 帶 token 含 is_following，key 加 user id，見 RaceDetailScreen.tsx 2026-09-08 修法註解
+  const uid = useUser()?.id ?? null
+  const { data, isLoading, error } = useSWR(['group-members', race.id, group.group_id, uid], () => racesApi.groupMembers(race.id, group.group_id, token))
   const members = data?.members
   const [override, setOverride] = useState<Record<string, boolean>>({})
   const isFollowing = (m: Contributor) => override[m.user_id] ?? m.is_following

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { authApi, setAuthRecovery, type User } from './api'
-import { clearSwrCache } from './swrCache'
+import { clearSwrCache, broadcastAuthChange } from './swrCache'
 
 const TOKEN_KEY = 'dor_user_token'
 const REFRESH_KEY = 'dor_user_refresh'
@@ -44,6 +44,9 @@ export function setUserSession(accessToken: string, refreshToken: string, user: 
   localStorage.setItem(USER_KEY, JSON.stringify(user))
   localStorage.setItem(SEV_KEY, String(sessionEpoch)) // 單一登入：記下這次登入的 session_epoch
   emitAuthChange()
+  // 2026-09-08 修法：通知同裝置其他分頁「登入者變了」——它們可能還留著上一位使用者的 SWR 快取，
+  // 見 lib/swrCache.ts broadcastAuthChange／listenAuthBroadcast 註解。
+  broadcastAuthChange()
 }
 
 // userInitiated：true=使用者主動按「登出」（見 UserAuthBar.tsx／RacesScreen.tsx），會 best-effort
@@ -54,10 +57,14 @@ export function setUserSession(accessToken: string, refreshToken: string, user: 
 // best-effort：後端這通打不通完全不影響前端登出，本地 session 一定會被清掉。
 export function clearUserSession(userInitiated = false) {
   if (userInitiated) {
+    // 2026-09-08 第二次稽核修法：後端現在連 access token 本身也會撤銷、且接受空 refresh_token，
+    // 只要有 access token 就該打這支，不能因為沒有 refresh token 就整個跳過撤銷請求（見
+    // authApi.logout／AdminShell.tsx 同一批修法）。best-effort：打不通（含 503）不影響登出，
+    // 下面本機清除一律照常執行。
     const token = getUserToken()
     const refresh = getRefreshToken()
-    if (token && refresh) {
-      authApi.logout(token, refresh).catch(() => {})
+    if (token) {
+      authApi.logout(token, refresh || '').catch(() => {})
     }
   }
   localStorage.removeItem(TOKEN_KEY)
@@ -66,6 +73,9 @@ export function clearUserSession(userInitiated = false) {
   localStorage.removeItem(SEV_KEY)
   clearSwrCache() // 清持久化快取 + 當前分頁的 SWR 記憶體快取：避免同裝置下一位使用者看到上一位的資料
   emitAuthChange()
+  // 2026-09-08 修法：不論主動登出或內部自動登出（401 續期失敗／被單一登入踢掉），都要通知同裝置
+  // 其他分頁一起清快取＋重新整理，見 lib/swrCache.ts broadcastAuthChange／listenAuthBroadcast 註解。
+  broadcastAuthChange()
 }
 
 // 讀取目前這台裝置記錄的 session_epoch（單一登入判定用；未登入或讀不到 = 0）

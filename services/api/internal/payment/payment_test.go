@@ -118,6 +118,12 @@ func TestResolveByOriginScenarios(t *testing.T) {
 // 真實 Postgres 的情況下驗證這兩條 UPDATE/SELECT 是否真的照預期 CAS。跳過、留下這則說明，而非硬做一個
 // 測不到真正邏輯的假測試；真正的行為需求已寫在 payment.go MarkSupersededTxPaid 與 refund.go
 // GetPaidTxForOrder 的函式註解，並經 go build/go vet 確認可編譯。
+//
+// finding 4（2026-09-08 第二次稽核，同一份 skip 說明追加）：Notify 對 MarkSupersededTxPaid 失敗
+// 的處理也改了（見 payment.go Notify 該分支）——失敗時回 "0|MarkSupersededFailed" 並直接 return
+// （不再往下呼叫 MarkOrderPaid），讓 ECPay 判讀為失敗而重送 Notify、下次重試同一筆 CAS；成功才
+// 繼續原本流程。這段分支邏輯同樣綁死在 h.repo（具體 *Repository）與 http.ResponseWriter，非純函式，
+// 一樣無法在不接真實 Postgres 的情況下單元測試，理由同上；已用 go build/go vet 確認可編譯。
 func TestMarkSupersededTxPaidCAS(t *testing.T) {
 	t.Skip("需要真實 Postgres 連線才能驗證 CAS 行為；repo 未附 sqlmock/pgxmock，見上方註解")
 }

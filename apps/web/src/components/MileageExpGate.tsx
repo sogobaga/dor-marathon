@@ -11,8 +11,11 @@ import ExpSettlementModal from './ExpSettlementModal'
 export default function MileageExpGate() {
   const user = useUser()
   const token = getUserToken() || undefined
+  // 2026-09-08 第二次稽核修法：key 加 user id——這是登入者自己的未顯示里程 EXP，原本用不分
+  // 使用者的裸字串 'mileage-exp'，且這個 Gate 元件是全域常駐掛載，同裝置換帳號時特別容易撞到
+  // 上一位使用者留在 SWR 快取裡的資料（見 lib/swrCache.ts／RaceDetailScreen.tsx 同一批修法）。
   const { data, mutate } = useSWR(
-    user && token ? 'mileage-exp' : null,
+    user && token ? ['mileage-exp', user.id] : null,
     () => withUserAuth((t) => mileageExpApi.get(t)),
     { refreshInterval: 60000, revalidateOnFocus: true },
   )

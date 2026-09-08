@@ -61,13 +61,18 @@ const (
 	// 失敗 → 視為死信：ACK 掉＋告警，不再無限重試卡住整個 stream 的排空（H5）。
 	deadLetterThreshold = 5
 
-	// streamTrimInterval/streamTrimMaxLen：activity_queue 這個 stream 目前只 XAck、從不 XTrim
-	// （H5）——已 ACK 的訊息會隨時間無限累積佔用 Redis 記憶體。每小時做一次近似裁剪，只保留最新
-	// 5 萬筆：遠高於正常運作下的訊息量（batchSize=100、每 tick 最多排空 maxDrainRounds=10 輪，
-	// 即 1000 筆/5 秒），只有 worker 停機很久或大量事故重試累積時才可能逼近，屆時多半也代表需要
-	// 人工介入。用 `~` 近似模式（MAXLEN ~）讓 Redis 用內部巨集節點邊界裁剪，比精確裁剪省 CPU。
+	// streamTrimInterval：activity_queue 這個 stream 目前只 XAck、從不 XTrim（H5）——已 ACK 的訊息
+	// 會隨時間無限累積佔用 Redis 記憶體。每小時做一次近似裁剪，見 trimStream。
 	streamTrimInterval = time.Hour
-	streamTrimMaxLen   = 50000
+
+	// streamTrimRetention：finding 3（2026-09-08 第二次稽核）——trimStream 原本用 XTRIM MAXLEN ~
+	// 只保留最新 5 萬筆，但 MAXLEN 完全不看 PEL（pending entries list）：若累積超過 5 萬筆「尚未
+	// ACK」的訊息（還在等 reclaimStaleMessages 認領重試），MAXLEN 裁剪會把還沒處理完的訊息直接
+	// 砍掉、永久遺失（不像已 ACK 的死信訊息還能在 activity_dead_letters 找回）。改用 XTRIM MINID：
+	// 有 pending 訊息時，一律以「目前最舊的 pending entry id」為下限（見 computeTrimMinID，絕不
+	// 裁到任何尚未確認的訊息之上）；完全沒有 pending 時才退化成這裡的「7 天前」時間戳當下限
+	// （近似 TTL，避免已 ACK 訊息無上限累積，用途同舊版 MAXLEN 5 萬筆，只是換一種裁剪基準）。
+	streamTrimRetention = 7 * 24 * time.Hour
 )
 
 // ActivityEvent is the message pushed to Redis Streams when a user uploads a run.
@@ -557,8 +562,8 @@ func (w *Worker) readAndProcessRound(ctx context.Context, block bool) (int, map[
 	userIDs := make(map[string]struct{})
 	var ids []string
 	for _, msg := range msgs {
-		uid, ok := w.processMessage(ctx, msg)
-		if !ok {
+		uid, err := w.processMessage(ctx, msg)
+		if err != nil {
 			// 保留在 pending list（PEL）：不 ACK。H5（2026-09-07 audit）——舊版到此為止，這筆訊息
 			// 從此再也不會被任何人讀到；現在改由 reclaimStaleMessages 在 reclaimMinIdle 之後用
 			// XAutoClaim 認領重試，見該函式與 run() 的呼叫點。
@@ -579,15 +584,17 @@ func (w *Worker) readAndProcessRound(ctx context.Context, block bool) (int, map[
 
 // processMessage 是 readAndProcessRound（新訊息，XReadGroup '>'）與 reclaimStaleMessages
 // （認領回來的滯留訊息，XAutoClaim）共用的單筆處理核心（H5，2026-09-07 audit：抽出以避免兩條
-// 路徑各自維護一份幾乎相同的邏輯）：呼叫 processOne，成功回傳 (userID, true)；失敗只記錄 log、
-// 回傳 ("", false)——要不要 ACK、要不要死信化交由呼叫端依各自的重試規則決定。
-func (w *Worker) processMessage(ctx context.Context, msg redis.XMessage) (string, bool) {
+// 路徑各自維護一份幾乎相同的邏輯）：呼叫 processOne，成功回傳 (userID, nil)；失敗記錄 log 並把
+// 錯誤原樣往上傳（finding 3，2026-09-08 第二次稽核：reclaimStaleMessages 死信化時需要把這個錯誤
+// 訊息存進 activity_dead_letters.error，供事後排查，原本的 bool 回傳把錯誤內容整個丟棄了）——
+// 要不要 ACK、要不要死信化仍交由呼叫端依各自的重試規則決定。
+func (w *Worker) processMessage(ctx context.Context, msg redis.XMessage) (string, error) {
 	uid, err := w.processOne(ctx, msg)
 	if err != nil {
 		log.Error().Err(err).Str("msg_id", msg.ID).Msg("failed to process activity")
-		return "", false
+		return "", err
 	}
-	return uid, true
+	return uid, nil
 }
 
 // deadLetterDecision 是 reclaimStaleMessages 每筆訊息「要不要 ACK／要不要死信化」的判斷邏輯，抽成
@@ -609,7 +616,13 @@ func deadLetterDecision(processOK bool, deliveryCount, threshold int64) (shouldA
 // ACK」的訊息——不論原本的 consumer 是誰（可能已經當掉/重啟過），一律轉給目前這個 consumer 重新
 // 處理（H5，2026-09-07 audit：舊版 readAndProcessRound 只 XReadGroup '>' + XAck，處理失敗的訊息
 // 從此不會再被任何人讀到）。用 processMessage 處理；死信判斷委由 deadLetterDecision：達到
-// deadLetterThreshold 仍失敗才 ACK+告警，否則留著等下一輪繼續重試。
+// deadLetterThreshold 仍失敗才死信化+告警，否則留著等下一輪繼續重試。
+//
+// finding 3（2026-09-08 第二次稽核）：死信化過去只告警就直接 ACK——訊息內容從此在 Redis PEL 消失、
+// 事後無從查起或重放，加上 trimStream 定期裁剪，一旦裁到已 ACK 的死信訊息連 stream 本身也找不到。
+// 現在改成「先落地 activity_dead_letters 再 ACK」：insertDeadLetter 成功才視為「已妥善保存」進而
+// ACK；insertDeadLetter 失敗則不 ACK（skip，留在 PEL 給下一輪 reclaimStaleMessages 重試插入）——
+// 寧可訊息暫時卡著多重試幾輪，也不要在還沒存好備份前就先 ACK 掉，讓它徹底遺失。
 func (w *Worker) reclaimStaleMessages(ctx context.Context) (int, map[string]struct{}) {
 	messages, _, err := w.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 		Stream:   streamKey,
@@ -633,7 +646,8 @@ func (w *Worker) reclaimStaleMessages(ctx context.Context) (int, map[string]stru
 	userIDs := make(map[string]struct{})
 	var ackIDs []string
 	for _, msg := range messages {
-		uid, ok := w.processMessage(ctx, msg)
+		uid, procErr := w.processMessage(ctx, msg)
+		ok := procErr == nil
 		shouldAck, isDeadLetter := deadLetterDecision(ok, retryCounts[msg.ID], deadLetterThreshold)
 		if ok && uid != "" {
 			userIDs[uid] = struct{}{}
@@ -643,9 +657,18 @@ func (w *Worker) reclaimStaleMessages(ctx context.Context) (int, map[string]stru
 		}
 		if isDeadLetter {
 			raw, _ := msg.Values["data"].(string)
+			errMsg := ""
+			if procErr != nil {
+				errMsg = procErr.Error()
+			}
+			if insertErr := w.insertDeadLetter(ctx, msg.ID, raw, errMsg, retryCounts[msg.ID]); insertErr != nil {
+				log.Error().Err(insertErr).Str("msg_id", msg.ID).
+					Msg("reclaimStaleMessages: insertDeadLetter failed, not acking (will retry next round)")
+				continue // finding 3：落地失敗就不 ACK，見函式頭註解
+			}
 			log.Error().Str("msg_id", msg.ID).Int64("delivery_count", retryCounts[msg.ID]).
 				Msg("reclaimStaleMessages: message exceeded retry threshold, dead-lettering")
-			notifyAlert("worker_activity_dead_letter", "活動佇列訊息重試多次仍失敗，已放棄並標記死信",
+			notifyAlert("worker_activity_dead_letter", "活動佇列訊息重試多次仍失敗，已放棄並標記死信（已存入 activity_dead_letters，可重放）",
 				fmt.Sprintf("msg_id=%s delivery_count=%d payload=%s", msg.ID, retryCounts[msg.ID], truncatePayload(raw)))
 		}
 		ackIDs = append(ackIDs, msg.ID)
@@ -654,6 +677,43 @@ func (w *Worker) reclaimStaleMessages(ctx context.Context) (int, map[string]stru
 		w.rdb.XAck(ctx, streamKey, consumerGroup, ackIDs...)
 	}
 	return len(ackIDs), userIDs
+}
+
+// insertDeadLetter 落地一筆死信（activity_dead_letters，migrations/172）：msg_id/payload/error/
+// delivery_count 供事後排查與 ReplayDeadLetter 重放。見 reclaimStaleMessages 函式頭「finding 3」
+// 註解——插入成功後呼叫端才會 ACK 這筆訊息，插入失敗絕不能先 ACK。
+func (w *Worker) insertDeadLetter(ctx context.Context, msgID, payload, errMsg string, deliveryCount int64) error {
+	_, err := w.db.Exec(ctx, `
+		INSERT INTO activity_dead_letters (msg_id, payload, error, delivery_count)
+		VALUES ($1, $2, $3, $4)`, msgID, payload, errMsg, deliveryCount)
+	return err
+}
+
+// ReplayDeadLetter 重新送出一筆死信：把當初存下的 payload 重新 XAdd 進 activity_queue（讓它走正常
+// 的 processOne 流程再處理一次）並標記 replayed_at。已重放過的（replayed_at 非 NULL）不可再重放，
+// 避免同一筆死信被重放兩次造成重複活動（activities 對 GPS 來源沒有有效唯一約束，見 activity 套件
+// migrations/113 的說明，重複 XAdd 極可能真的插入重複列）。
+//
+// 匯出方法本身＋下面的純函式決策邏輯先上，後台管理介面（列出死信、按鈕觸發重放）留待後續。
+func (w *Worker) ReplayDeadLetter(ctx context.Context, id string) error {
+	// 原子搶佔：先用單一 UPDATE … WHERE replayed_at IS NULL RETURNING 把這筆標成已重播（check-then-act 在
+	// 併發呼叫下會雙重 XAdd，審查抓到），搶到才 XAdd；XAdd 失敗再把 replayed_at 還原讓下次可重試。
+	var payload string
+	err := w.db.QueryRow(ctx,
+		`UPDATE activity_dead_letters SET replayed_at = NOW() WHERE id = $1 AND replayed_at IS NULL RETURNING payload`, id).Scan(&payload)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("dead letter not found or already replayed: %s", id)
+	}
+	if err != nil {
+		return fmt.Errorf("claim dead letter: %w", err)
+	}
+	if err := w.rdb.XAdd(ctx, &redis.XAddArgs{Stream: streamKey, Values: map[string]any{"data": payload}}).Err(); err != nil {
+		if _, uErr := w.db.Exec(ctx, `UPDATE activity_dead_letters SET replayed_at = NULL WHERE id = $1`, id); uErr != nil {
+			log.Error().Err(uErr).Str("dead_letter_id", id).Msg("ReplayDeadLetter: xadd failed and could not release claim")
+		}
+		return fmt.Errorf("xadd replay: %w", err)
+	}
+	return nil
 }
 
 // fetchRetryCounts 查這批（剛被 XAutoClaim 認領的）訊息目前的投遞次數，用 Redis PEL 的官方計數
@@ -692,16 +752,48 @@ func truncatePayload(raw string) string {
 	return raw[:maxLen] + "…(truncated)"
 }
 
-// trimStream 近似裁剪 activity_queue（見 streamTrimInterval/streamTrimMaxLen 常數註解）。
+// trimStream 近似裁剪 activity_queue（見 streamTrimInterval/streamTrimRetention 常數註解）。
+// finding 3（2026-09-08 第二次稽核）：改用 XTRIM MINID ~ 取代舊版 XTRIM MAXLEN ~——MAXLEN 不看
+// PEL，可能把還沒處理完（尚未 ACK）的訊息直接砍掉、永久遺失；MINID 讓 computeTrimMinID 保證下限
+// 一律不超過目前最舊的 pending entry id，不會裁到任何尚未確認的訊息。
 func (w *Worker) trimStream(ctx context.Context) {
-	n, err := w.rdb.XTrimMaxLenApprox(ctx, streamKey, streamTrimMaxLen, 0).Result()
+	minID, err := w.computeTrimMinID(ctx)
 	if err != nil {
-		log.Error().Err(err).Msg("trimStream: XTrimMaxLenApprox failed")
+		log.Error().Err(err).Msg("trimStream: compute minID failed")
+		return
+	}
+	n, err := w.rdb.XTrimMinIDApprox(ctx, streamKey, minID, 0).Result()
+	if err != nil {
+		log.Error().Err(err).Msg("trimStream: XTrimMinIDApprox failed")
 		return
 	}
 	if n > 0 {
-		log.Info().Int64("trimmed", n).Msg("trimStream: activity_queue trimmed")
+		log.Info().Int64("trimmed", n).Str("min_id", minID).Msg("trimStream: activity_queue trimmed")
 	}
+}
+
+// computeTrimMinID 見 trimStream／streamTrimRetention 註解：consumer group 目前有 pending
+// （PEL 非空）時，用 XPENDING 摘要回傳的 Lower（目前最舊、尚未 ACK 的 entry id）當下限——絕不會
+// 裁到它或比它更新的任何訊息；完全沒有 pending（一切都已 ACK 或死信化）時，退化成
+// trimStreamRetentionMinID 算出的「7 天前」時間戳當下限，近似 TTL。
+func (w *Worker) computeTrimMinID(ctx context.Context) (string, error) {
+	summary, err := w.rdb.XPending(ctx, streamKey, consumerGroup).Result()
+	if err != nil {
+		return "", fmt.Errorf("XPending summary: %w", err)
+	}
+	if summary.Count > 0 && summary.Lower != "" {
+		return summary.Lower, nil
+	}
+	return trimStreamRetentionMinID(time.Now()), nil
+}
+
+// trimStreamRetentionMinID 是 computeTrimMinID 在「目前完全沒有 pending 訊息」時的退化案例：算出
+// 「now 往前推 streamTrimRetention」的時間戳，組成 Redis Stream ID 格式（"<ms>-0"，序號固定用 0，
+// 代表該毫秒的第一筆——XTRIM MINID 語意上等同「這個 id（含）之後的訊息都保留」）。純函式抽出方便
+// 單元測試，不牽動真正 Redis 連線（見 main_test.go）。
+func trimStreamRetentionMinID(now time.Time) string {
+	ms := now.Add(-streamTrimRetention).UnixMilli()
+	return fmt.Sprintf("%d-0", ms)
 }
 
 // processOne 處理單筆活動訊息，回傳該訊息的 user_id（供 processBatch 收集本批涉及的使用者集合）

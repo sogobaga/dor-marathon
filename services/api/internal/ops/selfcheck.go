@@ -80,6 +80,14 @@ type EinvoiceReporter interface {
 	DailyCounts(ctx context.Context, dayStart, dayEnd time.Time) (issued, failed, pending int, err error)
 }
 
+// GPSRequeuer 補送「已寫入 gps_runs 但因程序中斷（INSERT 與 XAdd 之間當機）而漏推入活動佇列」的
+// 孤兒列（finding 2，2026-09-08 第二次稽核；見 internal/activity.Service.RequeueUnenqueued 與
+// migrations/172 gps_runs.enqueued_at）。小介面模式比照上方 EinvoiceReporter，注入自
+// activity.Service（見 main.go 的 opsHandler.SetGPSRequeuer），避免本套件直接 import internal/activity。
+type GPSRequeuer interface {
+	RequeueUnenqueued(ctx context.Context)
+}
+
 // Handler 每日自檢排程 + 手動觸發端點。
 type Handler struct {
 	db *pgxpool.Pool
@@ -87,6 +95,10 @@ type Handler struct {
 	// einvoice 見 EinvoiceReporter 註解。注入自 einvoice.Issuer（見 main.go 的
 	// opsHandler.SetEinvoiceReporter），晚於本 Handler 建構。未設定時兩處呼叫皆安靜跳過。
 	einvoice EinvoiceReporter
+
+	// gpsRequeuer 見 GPSRequeuer 註解。注入自 activity.Service（見 main.go 的
+	// opsHandler.SetGPSRequeuer），晚於本 Handler 建構。未設定時安靜跳過。
+	gpsRequeuer GPSRequeuer
 
 	mu          sync.Mutex
 	lastRunDate string // 台灣日期 YYYY-MM-DD：最近一次「已認領要執行」自檢的日期（in-memory 標記，見檔頭）
@@ -105,6 +117,11 @@ func NewHandler(db *pgxpool.Pool) *Handler {
 // SetEinvoiceReporter 見 EinvoiceReporter 欄位註解。
 func (h *Handler) SetEinvoiceReporter(r EinvoiceReporter) {
 	h.einvoice = r
+}
+
+// SetGPSRequeuer 見 GPSRequeuer 欄位註解。
+func (h *Handler) SetGPSRequeuer(r GPSRequeuer) {
+	h.gpsRequeuer = r
 }
 
 // taiwanNow 目前的台灣時間（UTC+8 固定 offset 手算，禁用 time.LoadLocation("Asia/Taipei")——
@@ -128,6 +145,7 @@ func inSelfCheckWindow(t time.Time) bool {
 func (h *Handler) RunSelfCheckLoop(ctx context.Context) {
 	h.maybeRunDaily(ctx)
 	h.sweepEinvoice(ctx)
+	h.sweepGPSRequeue(ctx)
 	t := time.NewTicker(selfCheckTickInterval)
 	defer t.Stop()
 	for {
@@ -137,6 +155,7 @@ func (h *Handler) RunSelfCheckLoop(ctx context.Context) {
 		case <-t.C:
 			h.maybeRunDaily(ctx)
 			h.sweepEinvoice(ctx)
+			h.sweepGPSRequeue(ctx)
 		}
 	}
 }
@@ -147,6 +166,16 @@ func (h *Handler) sweepEinvoice(ctx context.Context) {
 		return
 	}
 	h.einvoice.SweepPending(ctx)
+}
+
+// sweepGPSRequeue 見 RunSelfCheckLoop／GPSRequeuer 註解；gpsRequeuer 未注入（測試/尚未接上）時
+// 安靜跳過。跟電子發票兜底掃描一樣搭同一顆每小時 ticker，不受每日 08:00-08:59 執行窗口限制
+// （GPS 孤兒列需要比一天一次更即時的補救）。
+func (h *Handler) sweepGPSRequeue(ctx context.Context) {
+	if h.gpsRequeuer == nil {
+		return
+	}
+	h.gpsRequeuer.RequeueUnenqueued(ctx)
 }
 
 const (

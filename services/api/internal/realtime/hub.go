@@ -35,6 +35,14 @@ const (
 	// 合法使用者集體觸頂而被 429。maxTotalConns=2000 留了充足空間，拉高單 IP 上限風險很低。
 	maxTotalConns = 2000
 	maxPerIPConn  = 60
+
+	// revalidateInterval／closeCodeRevalidateFailed：2026-09-08 audit finding 4——ServeWS 原本
+	// 只在連線建立那一刻驗證一次 token，之後這條連線就算 token 過期/被撤銷（登出、密碼被改、
+	// 單一登入踢除…）也會一直活著，直到使用者自己重新整理頁面。見 Client.writePump 的重新
+	// 驗證迴圈：每 revalidateInterval 重打一次呼叫端注入的 revalidate closure，失敗就用
+	// closeCodeRevalidateFailed（RFC 6455 4000-4999 私有區段）主動關閉連線。
+	revalidateInterval        = 5 * time.Minute
+	closeCodeRevalidateFailed = 4401
 )
 
 var upgrader = websocket.Upgrader{
@@ -70,6 +78,12 @@ type Client struct {
 	raceID string
 	ip     string // 連線來源 IP（reqip.ClientIP），供 Manager 連線數配額回收用
 	config ClientConfig
+
+	// revalidate：2026-09-08 audit finding 4，見 revalidateInterval 的說明與 ServeWS 的參數。
+	// 呼叫端（cmd/api/main.go 的 /ws/race、/ws/site handler）注入一個重跑 authSvc.
+	// ValidateAccessToken(ctx, token) 的 closure（同一顆連線建立時用的 token）；為 nil 時
+	// writePump 整段重新驗證迴圈跳過，行為等同修法前（僅供保守起見，正常呼叫路徑一定會傳）。
+	revalidate func(context.Context) error
 }
 
 // Hub manages all WebSocket clients for a single race.
@@ -359,7 +373,10 @@ func (h *Hub) ClientCount() int {
 // ServeWS upgrades an HTTP connection to WebSocket and registers the client.
 // H7 資安修補：先套連線數配額（reserveConn，全域/單一 IP 上限），再用 tryJoin 掛進 Hub
 // （若剛好撞上該 Hub 被閒置回收，重新拿一顆新的再試，見 tryJoin 註解）。
-func (m *Manager) ServeWS(w http.ResponseWriter, r *http.Request, raceID, userID string) {
+// revalidate：2026-09-08 audit finding 4，見 Client.revalidate 欄位與 writePump 的重新驗證
+// 迴圈說明；呼叫端（cmd/api/main.go）在連線建立當下已經驗證過一次 token，這裡再傳入一個閉包
+// 讓連線存活期間可以定期重打同一個驗證。
+func (m *Manager) ServeWS(w http.ResponseWriter, r *http.Request, raceID, userID string, revalidate func(context.Context) error) {
 	ip := reqip.ClientIP(r)
 	if ok, status := m.reserveConn(ip); !ok {
 		http.Error(w, "too many connections", status)
@@ -374,11 +391,12 @@ func (m *Manager) ServeWS(w http.ResponseWriter, r *http.Request, raceID, userID
 	}
 
 	client := &Client{
-		conn:   conn,
-		send:   make(chan []byte, 128),
-		userID: userID,
-		raceID: raceID,
-		ip:     ip,
+		conn:       conn,
+		send:       make(chan []byte, 128),
+		userID:     userID,
+		raceID:     raceID,
+		ip:         ip,
+		revalidate: revalidate,
 		config: ClientConfig{
 			Enabled:            true,
 			RankingIntervalSec: 15,
@@ -440,12 +458,21 @@ func (c *Client) readPump() {
 }
 
 // writePump sends outgoing messages to the client.
+// 2026-09-08 audit finding 4：新增一個每 revalidateInterval 觸發一次的重新驗證分支——見
+// Client.revalidate 欄位與上方常數說明。revalidate 為 nil（理論上不會，ServeWS 的兩個呼叫點都
+// 會傳，只是防呆）時 revalidateChan 保持 nil，select 上 nil channel 永遠不會被選中，這個分支
+// 整段跳過，行為等同修法前。
 func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
-	defer func() {
-		ticker.Stop()
-		c.conn.Close()
-	}()
+	defer ticker.Stop()
+	defer c.conn.Close()
+
+	var revalidateChan <-chan time.Time
+	if c.revalidate != nil {
+		revalidateTicker := time.NewTicker(revalidateInterval)
+		defer revalidateTicker.Stop()
+		revalidateChan = revalidateTicker.C
+	}
 
 	for {
 		select {
@@ -464,6 +491,16 @@ func (c *Client) writePump() {
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		case <-revalidateChan:
+			rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := c.revalidate(rctx)
+			cancel()
+			if err != nil {
+				log.Debug().Err(err).Str("user", c.userID).Msg("ws revalidate failed, closing connection")
+				c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+				c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(closeCodeRevalidateFailed, "token revalidation failed"))
 				return
 			}
 		}

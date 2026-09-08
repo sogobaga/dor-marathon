@@ -151,7 +151,7 @@ func (r *Repository) ListRecentGPS(ctx context.Context, days, limit int, q strin
 		       a.id::text, a.exp_awarded
 		FROM gps_runs g
 		JOIN users u ON u.id = g.user_id
-		LEFT JOIN activities a ON a.user_id = g.user_id AND a.source IS NULL AND a.recorded_at = g.ended_at
+		LEFT JOIN activities a ON a.user_id = g.user_id AND a.source IS NULL AND date_trunc('second', a.recorded_at) = date_trunc('second', g.ended_at)
 		WHERE g.started_at >= NOW() - make_interval(days => $1::int)
 		  AND ($2 = '' OR g.user_id::text ILIKE '%'||$2||'%' OR u.email ILIKE '%'||$2||'%' OR u.name ILIKE '%'||$2||'%')
 		ORDER BY g.started_at DESC
@@ -246,7 +246,7 @@ func (r *Repository) RecallGPSRun(ctx context.Context, runID string, req RecallR
 		var id string
 		err := tx.QueryRow(ctx, `
 			SELECT id::text, distance_km, recorded_at, COALESCE(race_id::text,'')
-			FROM activities WHERE user_id=$1 AND source IS NULL AND recorded_at=$2
+			FROM activities WHERE user_id=$1 AND source IS NULL AND date_trunc('second', recorded_at)=date_trunc('second', $2::timestamptz)
 			ORDER BY created_at LIMIT 1`, userID, runEndedAt).
 			Scan(&id, &actDistanceKm, &actRecordedAt, &actRaceID)
 		if errors.Is(err, pgx.ErrNoRows) {

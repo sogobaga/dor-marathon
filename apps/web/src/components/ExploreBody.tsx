@@ -3,7 +3,7 @@
 import useSWR from 'swr'
 import { useEffect, useRef, useState } from 'react'
 import { racesApi, checkpointApi, type Race } from '@/lib/api'
-import { getUserToken } from '@/lib/userAuth'
+import { getUserToken, useUser } from '@/lib/userAuth'
 import { loadLeaflet } from '@/lib/leaflet'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -20,7 +20,10 @@ type CP = { id: string; lat: number; lng: number; radius_m: number; title?: stri
 // 賽事資訊頁「探索」頁籤：顯示此賽事的打卡點（地圖 + 狀態 + 就近打卡）
 export function ExploreBody({ race }: { race: Race }) {
   const token = getUserToken() || undefined
-  const { data, mutate } = useSWR(['progress', race.id], () => racesApi.progress(race.id, token), { refreshInterval: 30000 })
+  // key 要跟 RaceDetailScreen.tsx 的 ProgressBody/progData 完全一致（同一支 racesApi.progress(race.id, token)
+  // 三處共用一份快取靠 SWR 去重）——2026-09-08 修法幫這三處都加了 user id，這裡也要同步加，見該檔案註解。
+  const uid = useUser()?.id ?? null
+  const { data, mutate } = useSWR(['progress', race.id, uid], () => racesApi.progress(race.id, token), { refreshInterval: 30000 })
   const registered = data?.progress.registered ?? false
   const cpTasks = (data?.progress.tasks ?? []).filter((t) => t.metric_type === 'checkpoint')
   const points: CP[] = cpTasks.flatMap((t) => (t.checkpoints ?? []).map((c) => ({ ...c, id: c.id ?? '', taskTitle: t.title })))

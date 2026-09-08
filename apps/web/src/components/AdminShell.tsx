@@ -105,9 +105,13 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   }
 
   function logout() {
-    // 先請伺服器把 refresh token 加入 denylist（撤銷），再清本機；不阻塞登出流程
+    // 2026-09-08 第二次稽核修法：後端 DELETE /auth/logout 現在連 access token 本身也會撤銷
+    // （之前只撤 refresh），且接受空 refresh_token——只要有 access token 就該打這支撤銷請求，
+    // 不能因為「沒有 refresh token」（session-only／未勾保持登入）就整個跳過，那樣 access token
+    // 到期前理論上還能繼續用。best-effort：這裡打不通（含後端 503）完全不影響登出，
+    // 本機 session 一律照常清掉。
     const at = getToken(), rt = getRefresh()
-    if (at && rt) authApi.logout(at, rt).catch(() => {})
+    if (at) authApi.logout(at, rt || '').catch(() => {})
     clearToken()
     router.replace('/admin/login')
   }

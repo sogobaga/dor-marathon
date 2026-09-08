@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import useSWR from 'swr'
 import { rewardsApi, type UserReward } from '@/lib/api'
-import { getUserToken, withUserAuth } from '@/lib/userAuth'
+import { getUserToken, getUser, withUserAuth } from '@/lib/userAuth'
 import { overlayMount } from '@/lib/overlayMount'
 
 function fmtDateTime(iso?: string) {
@@ -137,8 +137,13 @@ function groupRewards(list: UserReward[]): WalletCard[] {
 
 export default function RewardsWalletScreen({ onBack }: { onBack: () => void }) {
   const token = getUserToken() || undefined
+  // 2026-09-08 第二次稽核修法：key 一定要帶 user id，否則同裝置換帳號（甚至同分頁登出/登入
+  // 另一位使用者）會共用同一個 'profile-rewards' bucket，讀到上一位使用者的獎勵錢包快取
+  // （見 lib/swrCache.ts 跨分頁隔離修法的同一批問題；RacesScreen.tsx 的 'profile-rewards'
+  // 對照組本來就有帶 user?.id，這裡漏了）。
+  const uid = getUser()?.id ?? null
   const { data, error, isLoading, mutate } = useSWR(
-    token ? ['profile-rewards'] : null,
+    token ? ['profile-rewards', uid] : null,
     () => withUserAuth((t) => rewardsApi.list(t)),
   )
   const rewards = data?.rewards ?? null

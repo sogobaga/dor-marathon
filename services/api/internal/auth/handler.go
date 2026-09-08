@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 
 	"github.com/dor/api/internal/realtime"
@@ -160,6 +161,16 @@ func (h *Handler) Google(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusUnauthorized, "invalid google token")
 		return
 	}
+	// 2026-09-08 audit finding 7：既有帳號不符合自動連結信任條件（見 Service.isGoogleLinkTrusted），
+	// 要求使用者先以原方式（密碼）登入本站既有帳號，或（管理者）改走後台登入。
+	if errors.Is(err, ErrGoogleLinkAdmin) {
+		respondErr(w, http.StatusConflict, "管理者帳號請由後台登入")
+		return
+	}
+	if errors.Is(err, ErrLinkRequiresPassword) {
+		respondErr(w, http.StatusConflict, "此 Email 已有帳號，請先以原方式登入")
+		return
+	}
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "google login failed")
 		return
@@ -195,6 +206,12 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusUnauthorized, "session superseded by a newer login")
 		return
 	}
+	// 2026-09-08 audit finding 3(e)：Redis SetNX 打不通時 Refresh 不再 fail-open（見
+	// Service.Refresh 註解），改回 503 讓前端重試，而不是靜默放行破壞 single-use 輪替保證。
+	if errors.Is(err, ErrAuthUnavailable) {
+		respondErr(w, http.StatusServiceUnavailable, "auth service temporarily unavailable, please retry")
+		return
+	}
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "refresh failed")
 		return
@@ -216,9 +233,33 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	// refresh token——否則登出後、access token 到期前（最長 accessTTL）仍可繼續打 API。
 	accessToken := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if userID != "" && (req.RefreshToken != "" || accessToken != "") {
-		h.svc.Logout(r.Context(), userID, accessToken, req.RefreshToken)
+		// 2026-09-08 audit finding 3(e)：撤銷寫入失敗現在會回 503（而非過去忽略錯誤一律 204）——
+		// 「登出」若沒有真的把 token 送進撤銷名單，該 token 在到期前仍可繼續使用、使用者卻以為
+		// 已經登出，是比「多按一次登出」更糟的落差。前端仍會照樣清掉本地 token（不受此影響），
+		// 只是後端撤銷本身失敗時誠實回報，讓前端可以選擇重試。
+		if err := h.svc.Logout(r.Context(), userID, accessToken, req.RefreshToken); err != nil {
+			respondErr(w, http.StatusServiceUnavailable, "logout failed, please try again")
+			return
+		}
 	}
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /admin/accounts/{id}/revoke-sessions（僅超級管理員，見 cmd/api/main.go 掛
+// adminAcctHandler.RequireSuper）—— 2026-09-08 audit finding 3(d)：讓某帳號「現有全部」
+// access/refresh token 立即失效（tokens_not_before=now，不分角色），供懷疑帳號外洩、需要強制
+// 登出全部裝置時使用；不改密碼，也不需要目標帳號是 admin（任何 users.id 都可以）。
+func (h *Handler) AdminRevokeSessions(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondErr(w, http.StatusBadRequest, "missing id")
+		return
+	}
+	if err := h.svc.RevokeAllSessions(r.Context(), id); err != nil {
+		respondErr(w, http.StatusInternalServerError, "revoke failed")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

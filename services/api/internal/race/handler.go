@@ -145,7 +145,10 @@ func (h *Handler) OrderRouter() http.Handler {
 	r.Get("/", h.AdminListOrders)
 	// /export 是靜態路徑，chi 的路由樹一律靜態節點優先於 {orderID} 參數節點比對，
 	// 不會被下面的 "/{orderID}" 攔走，註冊順序無影響。
-	r.Get("/export", h.AdminExportOrders)
+	// finding 5（2026-09-08 第二次稽核）：後台稽核中介層（adminacct.go）只記 GET 以外的變更性操作
+	// ——GET /export 這種會匯出全量個資/金流明細的操作卻因為是 GET 而完全不留稽核紀錄。改成 POST
+	// 讓它落入既有稽核範圍，參數也一併從 query string 改讀 JSON body（見 AdminExportOrders）。
+	r.Post("/export", h.AdminExportOrders)
 	r.Get("/{orderID}", h.AdminGetOrder)
 	r.Patch("/{orderID}/pay", h.AdminMarkOrderPaid)
 	return r
@@ -258,22 +261,38 @@ var validExportStatuses = map[string]bool{
 	"paid": true, "pending": true, "cancelled": true, "refunded": true,
 }
 
-// GET /api/v1/admin/orders/export?race_id=<uuid>[&status=paid|all][&hide_virtual=1]
+// POST /api/v1/admin/orders/export  {race_id, status?, hide_virtual?}
 // 匯出單一賽事的全部訂單（含加購明細），供後台「訂單管理」產生 Excel 報表用（2026-09-08 owner request）。
-// race_id 必填（400）；status 預設 all（不篩）；hide_virtual 預設「開」（true，排除虛擬選手），帶 hide_virtual=0 才關閉
-// ——與 AdminListOrders/AdminListSignupRows 的預設「關」相反，因為匯出通常是要給主辦方拿去對真人物流/發票，
-// 虛擬選手預設就不該混進去。
+// race_id 必填（400）；status 預設 all（不篩）；hide_virtual 預設「開」（true，排除虛擬選手），帶
+// hide_virtual=false 才關閉——與 AdminListOrders/AdminListSignupRows 的預設「關」相反，因為匯出通常
+// 是要給主辦方拿去對真人物流/發票，虛擬選手預設就不該混進去。
+//
+// finding 5（2026-09-08 第二次稽核）：原本是 GET + query string，後台稽核中介層（adminacct.go）
+// 只記錄 GET 以外的方法，這個會匯出全量個資/金流明細的操作因此完全沒有稽核紀錄——改成 POST + JSON
+// body 讓它落入既有稽核範圍；驗證/預設值（race_id 必填、status 白名單、hide_virtual 預設 true）
+// 與原本 GET 版本完全相同，只是改讀 body。hide_virtual 用 *bool 區分「沒帶」（nil，套預設 true）
+// 跟「明確帶 false」（關閉），JSON query string 早期版本的 "hide_virtual=0" 慣例在 body 版沒有
+// 對應語法，故改用明確的布林值。
 func (h *Handler) AdminExportOrders(w http.ResponseWriter, r *http.Request) {
-	raceID := r.URL.Query().Get("race_id")
+	var body struct {
+		RaceID      string `json:"race_id"`
+		Status      string `json:"status"`
+		HideVirtual *bool  `json:"hide_virtual"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	raceID := body.RaceID
 	if raceID == "" {
 		respondErr(w, http.StatusBadRequest, "race_id is required")
 		return
 	}
-	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	status := strings.TrimSpace(body.Status)
 	if !validExportStatuses[status] {
 		status = "" // all / 空字串 / 非法值 一律不篩
 	}
-	hideVirtual := r.URL.Query().Get("hide_virtual") != "0" // 預設 true，帶 0 才關閉
+	hideVirtual := body.HideVirtual == nil || *body.HideVirtual // 預設 true，明確帶 false 才關閉
 	resp, err := h.svc.ExportOrders(r.Context(), raceID, status, hideVirtual)
 	if errors.Is(err, ErrRaceNotFound) {
 		respondErr(w, http.StatusNotFound, "race not found")

@@ -48,6 +48,7 @@ import (
 	"github.com/dor/api/internal/push"
 	"github.com/dor/api/internal/race"
 	"github.com/dor/api/internal/realtime"
+	"github.com/dor/api/internal/reqip"
 	"github.com/dor/api/internal/reward"
 	"github.com/dor/api/internal/rewardserial"
 	"github.com/dor/api/internal/routing"
@@ -194,6 +195,8 @@ func main() {
 	// Activity
 	actRepo := activity.NewRepository(pool)
 	actSvc := activity.NewService(actRepo, raceSvc, rdb, wsManager)
+	// GPS outbox 補送（2026-09-08 第二輪稽核）：gps_runs.enqueued_at 為空且逾 15 分鐘的列由 hourly selfcheck 重新入隊（見 activity.RequeueUnenqueued）。
+	opsHandler.SetGPSRequeuer(actSvc)
 	actHandler := activity.NewHandler(actSvc)
 
 	// Organizer
@@ -347,10 +350,17 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.RequestID)
-	r.Use(chimiddleware.RealIP)
+	// 2026-09-08 audit finding 5：取代原本的 chimiddleware.RealIP——那個只認 True-Client-IP／
+	// X-Real-IP／X-Forwarded-For「最左側」一段，三者皆可被客戶端任意偽造標頭繞過（等同完全不
+	// 設防，SEC-M8 提過的缺口）。reqip.Middleware 改為：originVerified 時信任 CF-Connecting-IP
+	// （Cloudflare 設定並清除客戶端自帶同名標頭，見 internal/reqip 套件註解），否則取
+	// X-Forwarded-For「最右側」一段（Railway 代理層自己附加、不可被客戶端偽造覆蓋的那一段），
+	// 都沒有才退回 TCP peer。同時把算出的 IP 寫回 r.RemoteAddr，下游沿用 RealIP 慣例的程式碼
+	// （dbwake.Middleware、internal/adminacct 稽核 log 等）不必改。
+	r.Use(reqip.Middleware)
 	// DB 喚醒歸因（2026-09-04）：把 method/path/UA/IP 存進 context，供 internal/dbwake.Tracer
-	// 在偵測到「這次查詢很可能剛喚醒 Neon compute」時記 log 歸因。必須掛在 RealIP 之後
-	// （reqip.ClientIP 沒有 CF-Connecting-IP 時會退回 r.RemoteAddr，需要 RealIP 先正規化過）。
+	// 在偵測到「這次查詢很可能剛喚醒 Neon compute」時記 log 歸因。必須掛在 reqip.Middleware 之後
+	// （reqip.ClientIP 沒有 CF-Connecting-IP 時會退回 r.RemoteAddr，需要先正規化過）。
 	r.Use(dbwake.Middleware)
 	r.Use(chimiddleware.Recoverer)
 	// panic 告警：需掛在 Recoverer 之後（更內層），才能在 Recoverer 吞掉 panic 之前先攔截到並送出 Telegram。
@@ -405,9 +415,10 @@ func main() {
 
 		// --- 公開端點 ---
 		// SEC-H1：登入/註冊/refresh/Google 皆為公開端點、無帳號可綁，以 IP 維度節流
-		// （各自獨立 10/min，防暴破/憑證填充/refresh 濫用）——但 IP 維度依賴 chi RealIP，
-		// 可被客戶端偽造的 X-Forwarded-For/X-Real-IP/True-Client-IP 繞過（SEC-M8，
-		// Cloudflare 上線前無法根治，見 middleware.ClientIP 註解）。
+		// （各自獨立 10/min，防暴破/憑證填充/refresh 濫用）——IP 維度現在走 reqip.Middleware
+		// （2026-09-08 audit finding 5 已修，見上方掛載點註解），ORIGIN_VERIFY_SECRET 有設定時
+		// CF-Connecting-IP 不可偽造；未設定時仍是原本 SEC-M8 的殘留風險（見 internal/reqip 套件
+		// 註解的 warnOriginVerifyOnce）。
 		// 因此 login/register/google 再疊加「帳號維度」限流（10 次/5min，見
 		// middleware.AccountField/GoogleIDTokenAccount）：以 body 內的 email/id_token
 		// 帳號當 key，不可被 header 偽造繞過，即使攻擊者每次都換 IP/偽造標頭，
@@ -535,8 +546,10 @@ func main() {
 			// 個人資料（完賽紀錄 + 統計）
 			r.Mount("/profile", profileHandler.Router())
 
-			// 頭像上傳（重用圖片上傳，登入即可）
-			r.Post("/profile/avatar", imageHandler.Upload)
+			// 頭像上傳（重用圖片上傳，登入即可）— 2026-09-08 audit finding 6：原本沒有節流，
+			// 任何登入使用者可無限次上傳（每次都跑 sharp 壓縮＋R2 上傳，成本不低）。
+			r.With(middleware.RateLimit(rdb, "avatar_upload", 10, time.Hour, middleware.UserOrIP)).
+				Post("/profile/avatar", imageHandler.Upload)
 
 			// 啦啦隊角色位置校正（GPS 跑步頁校正模式）— requireEntry(cheer_edit_entry_state/whitelist)：
 			// 非白名單一律 403（SEC-H5 同款：前端 UI 隱藏不等於後端有擋）。前端呼叫的是 /me/cheer-layout
@@ -596,6 +609,10 @@ func main() {
 			// 管理者管理 + 操作紀錄（僅超級管理員）
 			r.With(adminAcctHandler.RequireSuper).Mount("/admin/admins", adminAcctHandler.Router())
 			r.With(adminAcctHandler.RequireSuper).Get("/admin/audit", adminAcctHandler.AuditList)
+			// 2026-09-08 audit finding 3(d)：強制登出某帳號現有全部裝置（tokens_not_before=now，
+			// 見 auth.Service.RevokeAllSessions）——僅超級管理員，比照上面 /admin/admins 的權限
+			// 模式；目標可以是任何 users.id（不限 admin 帳號），懷疑帳號外洩時使用，不需要改密碼。
+			r.With(adminAcctHandler.RequireSuper).Post("/admin/accounts/{id}/revoke-sessions", authHandler.AdminRevokeSessions)
 
 			r.With(perm("races")).Mount("/admin/races", raceHandler.AdminRouter())
 			r.With(perm("races")).Mount("/admin/group-presets", raceHandler.PresetRouter())
@@ -691,7 +708,15 @@ func main() {
 				http.Error(w, "race not found", http.StatusNotFound)
 				return
 			}
-			wsManager.ServeWS(w, r, raceID, claims.UserID)
+			// 2026-09-08 audit finding 4：連線建立當下只驗證這一次 token，之後長連線期間 token
+			// 過期/被撤銷（登出、密碼被改、單一登入踢除…）都不會中斷這條連線——傳入一個重跑
+			// 同一次 ValidateAccessToken 的 closure，讓 wsManager.ServeWS 在連線存活期間每
+			// 5 分鐘重新驗證一次（見 internal/realtime/hub.go Client.writePump），失敗即以
+			// 4401 關閉連線。
+			wsManager.ServeWS(w, r, raceID, claims.UserID, func(ctx context.Context) error {
+				_, err := authSvc.RevalidateAccessToken(ctx, token) // 不看 exp，只抓撤銷/被踢（見 auth.Service.RevalidateAccessToken）
+				return err
+			})
 		})
 
 	// 全站推播端點（data_updated 快取失效通知）：raceID 固定為 "global"，複用既有 Hub 機制。
@@ -707,7 +732,11 @@ func main() {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		wsManager.ServeWS(w, r, "global", claims.UserID)
+		// 2026-09-08 audit finding 4：見 /ws/race 掛載點的說明，同樣的重新驗證 closure。
+		wsManager.ServeWS(w, r, "global", claims.UserID, func(ctx context.Context) error {
+			_, err := authSvc.RevalidateAccessToken(ctx, token) // 不看 exp，只抓撤銷/被踢（見 auth.Service.RevalidateAccessToken）
+			return err
+		})
 	})
 
 	// 啟動伺服器

@@ -66,9 +66,9 @@ export default function RacesScreen({
   // 首屏不阻擋——只在資料就緒且算出 count>0 時才渲染提醒，載入中不顯示任何佔位。
   // M3 修法：key 加上 user id——原本只有 ['profile-rewards']（不分使用者），同裝置換人登入若
   // SWR 記憶體快取沒被清乾淨（見 lib/swrCache.ts clearSwrCache），下一位使用者可能短暫吃到
-  // 上一位的獎勵資料。⚠️ RewardsWalletScreen.tsx 目前仍用未加 uid 的 ['profile-rewards']——
-  // 兩處共用快取的設計前提，那邊也需要同步改成 ['profile-rewards', user?.id ?? null]（不在本檔
-  // 可改範圍，留給該檔案的負責批次處理）。
+  // 上一位的獎勵資料。2026-09-08 第二次稽核修法：RewardsWalletScreen.tsx 那邊當時漏改、仍用
+  // 未加 uid 的 ['profile-rewards']，已同步補上 ['profile-rewards', uid]（見該檔案），
+  // 兩處 key 現在完全一致，繼續共用同一份快取。
   const { data: rewardsData } = useSWR(token ? ['profile-rewards', user?.id ?? null] : null, () => withUserAuth((t) => rewardsApi.list(t)))
   const rewardsSoonCount = countRewardsSoon(rewardsData?.rewards)
   const { dash } = useDashboard()

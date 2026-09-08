@@ -4,7 +4,7 @@ import useSWR from 'swr'
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail, type GrantedReward, type RewardPreviewItem, type RaceSupply, type PersonalHistory } from '@/lib/api'
-import { getUserToken } from '@/lib/userAuth'
+import { getUserToken, useUser } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
 import { useScrollLock } from '@/lib/useScrollLock'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
@@ -80,12 +80,21 @@ export default function RaceDetailScreen({
   initialTab?: Tab
 }) {
   const token = getUserToken() || undefined
+  // 2026-09-08 第二次稽核修法：這裡幾乎每支 useSWR 只要帶 token 就會回登入者「自己的」資料
+  // （報名狀態/完賽證明/個人進度/個人歷程…），但 key 只有 race.id，沒有 user id——同一分頁內
+  // A 登出、B 馬上登入（SPA 無整頁重新整理）時，B 開同一場賽事詳情頁會先吃到 A 留在 SWR 記憶體
+  // /持久化快取裡的舊資料（stale-while-revalidate 先顯示快取再背景重抓），等於看到別人的個資。
+  // 加 uid 讓不同使用者天生就是不同 key，登出/登入必定是全新 key、不會有快取可撞（見
+  // lib/swrCache.ts 同一批修法）。uid 附加在陣列最後一個位置，不影響既有 key[0]/key[1] 比對
+  // （見 lib/siteRealtimeStore.ts 的 TOPIC_MATCHERS、lib/useDashboard.ts 的 refreshDashboard()）。
+  const user = useUser()
+  const uid = user?.id ?? null
   const { dash } = useDashboard()
   const [showUpgrade, setShowUpgrade] = useState(false)
   const vipFlow = useVipSubscribeFlow() // VIP 訂閱 Phase E：Subscribe → BindCardModal（比照 ProfileScreen 接線）
-  const { data: detailData } = useSWR(['detail', race.id], () => racesApi.detail(race.id, token))
+  const { data: detailData } = useSWR(['detail', race.id, uid], () => racesApi.detail(race.id, token))
   const { data: standings } = useSWR(
-    race.event_mode === 'competition' ? ['standings', race.id] : null,
+    race.event_mode === 'competition' ? ['standings', race.id, uid] : null,
     () => racesApi.standings(race.id, token),
   )
   const detail = detailData?.race
@@ -109,7 +118,7 @@ export default function RaceDetailScreen({
   // 一般完賽證明對 personal 不適用（後端 GetMyCertificate 也已擋下 personal，見 certificate.go）
   const ended = race.display_status === 'ended'
   const { data: certData } = useSWR(
-    !isPersonal && !certificateDisabled && ended && registration && token ? ['cert', race.id] : null,
+    !isPersonal && !certificateDisabled && ended && registration && token ? ['cert', race.id, uid] : null,
     () => racesApi.certificate(race.id, token!),
   )
   const cert = certData?.certificate
@@ -143,7 +152,7 @@ export default function RaceDetailScreen({
 
   // 本場 EXP 結算明細（賽事結束 + 已報名）
   const { data: bdData } = useSWR(
-    ended && registration && token ? ['exp-bd', race.id] : null,
+    ended && registration && token ? ['exp-bd', race.id, uid] : null,
     () => racesApi.expBreakdown(race.id, token!),
   )
   const breakdown = bdData?.breakdown
@@ -166,13 +175,13 @@ export default function RaceDetailScreen({
   // 個人挑戰模式完成判定引擎觸發點：開頁即打，即時評估規則＋CAS 標記完成/逾期（見後端 GetPersonalProgress）。
   // revalidateOnFocus 全域預設 true（AppProviders.tsx）：跑步結束回前景時會自動重打，不用額外接 hook。
   const { data: pp } = useSWR(
-    isPersonal && token ? ['personal-progress', race.id] : null,
+    isPersonal && token ? ['personal-progress', race.id, uid] : null,
     () => racesApi.personalProgress(race.id, token!),
   )
   // 完賽歷程（取代一般模式完賽證明，見上方 certificateDisabled 註解）：等 detail 載入才判斷開關，
   // 避免開關關閉時先打一次 API 才收回（比照 cert 的 !certificateDisabled 閘門寫法）。
   const { data: historyData } = useSWR(
-    isPersonal && token && detail && !certificateDisabled ? ['personal-history', race.id] : null,
+    isPersonal && token && detail && !certificateDisabled ? ['personal-history', race.id, uid] : null,
     () => racesApi.personalHistory(race.id, token!),
   )
   const history = historyData?.history
@@ -186,10 +195,11 @@ export default function RaceDetailScreen({
   }, [pp?.newly_granted])
   // 即時獎勵一般化（migration 134）：非 personal 賽事完成「個人額外挑戰」(group_individual scope 任務)
   // 觸發點在一般進度輪詢（見後端 progress.go GetRaceProgress／MarkRaceTaskCompletedAndGrant）。這裡與
-  // ProgressBody 內建的 SWR 共用同一個 key(['progress', race.id])，SWR 自動去重不會重複打兩次 API；
+  // ProgressBody 內建的 SWR 共用同一個 key(['progress', race.id, uid])，SWR 自動去重不會重複打兩次 API
+  // （兩邊都加了 uid，見上方 2026-09-08 修法註解——兩處 uid 算法相同，key 才會繼續相等、維持去重）；
   // 拉到父層是為了不論使用者目前停在哪個頁籤，只要輪詢在跑就能接住 newly_granted 彈窗（比照上面 pp 的寫法）。
   const { data: progData } = useSWR(
-    !isPersonal && token ? ['progress', race.id] : null,
+    !isPersonal && token ? ['progress', race.id, uid] : null,
     () => racesApi.progress(race.id, token),
     { refreshInterval: 30000 },
   )
@@ -490,7 +500,8 @@ export default function RaceDetailScreen({
 // 改顯示報名引導；用父層已算好的狀態而非等這支 API 的 registered 欄位回來，避免先閃一下錯誤內容。
 function ProgressBody({ race, registered, onRegister }: { race: Race; registered: boolean; onRegister?: () => void }) {
   const token = getUserToken() || undefined
-  const { data, error, isLoading, mutate } = useSWR(['progress', race.id], () => racesApi.progress(race.id, token), { refreshInterval: 30000 })
+  const uid = useUser()?.id ?? null // 見上方父層 2026-09-08 修法註解：key 要跟父層的 progData 完全一致才能繼續去重
+  const { data, error, isLoading, mutate } = useSWR(['progress', race.id, uid], () => racesApi.progress(race.id, token), { refreshInterval: 30000 })
   const [detailTask, setDetailTask] = useState<TaskProgress | null>(null)
   const [rangeTask, setRangeTask] = useState<TaskProgress | null>(null)
   const prog = data?.progress
@@ -589,8 +600,9 @@ const sourceChip: React.CSSProperties = { fontSize: 10, fontWeight: 700, color: 
 //（時間/距離/時長/配速/來源）。里程窗與 GetRaceProgress 的「我的里程」一致，每日加總對得起總里程。
 function DailyHistory({ race }: { race: Race }) {
   const token = getUserToken() || undefined
+  const uid = useUser()?.id ?? null // 個人歷程 key 加 user id，見檔案上方 2026-09-08 修法註解
   // 未登入無個人歷程可查（後端未登入回 404）→ 傳 null key 直接停用抓取，避免無謂請求
-  const { data, isLoading } = useSWR(token ? ['daily', race.id] : null, () => racesApi.myDailyActivities(race.id, token), { refreshInterval: 30000 })
+  const { data, isLoading } = useSWR(token ? ['daily', race.id, uid] : null, () => racesApi.myDailyActivities(race.id, token), { refreshInterval: 30000 })
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const days = data?.days ?? []
   if (isLoading || days.length === 0) return null // 靜默：載入中或尚無活動就不佔位（避免空白區塊）
@@ -753,7 +765,8 @@ function TaskContributorsModal({ race, task, onClose }: { race: Race; task: Task
   useScrollLock() // 開啟時鎖背景捲動 → 只滑得動本彈窗清單
   const { panelRef, dy } = useSheetDismiss(onClose) // 下滑關閉 → 短清單也有反應
   const token = getUserToken() || undefined
-  const { data, isLoading, error } = useSWR(['contrib', race.id, task.id], () => racesApi.taskContributors(race.id, task.id!, token))
+  const uid = useUser()?.id ?? null // 貢獻榜含「自己」排名，key 加 user id，見檔案上方 2026-09-08 修法註解
+  const { data, isLoading, error } = useSWR(['contrib', race.id, task.id, uid], () => racesApi.taskContributors(race.id, task.id!, token))
   const c: TaskContributors | undefined = data?.contributors
   const meInTop = c?.top.some((x) => x.is_me)
   // 追蹤（樂觀更新）：先切換本地狀態、再打 API，失敗回滾
@@ -829,7 +842,8 @@ function RangeDetailModal({ race, task, onClose }: { race: Race; task: TaskProgr
   useScrollLock() // 開啟時鎖背景捲動 → 只滑得動本彈窗清單
   const { panelRef, dy } = useSheetDismiss(onClose) // 下滑關閉 → 短清單也有反應
   const token = getUserToken() || undefined
-  const { data, isLoading, error } = useSWR(['rangedetail', race.id, task.id], () => racesApi.taskRangeDetail(race.id, task.id!, token))
+  const uid = useUser()?.id ?? null // 個人達標明細，key 加 user id，見檔案上方 2026-09-08 修法註解
+  const { data, isLoading, error } = useSWR(['rangedetail', race.id, task.id, uid], () => racesApi.taskRangeDetail(race.id, task.id!, token))
   const d: TaskRangeDetail | undefined = data?.detail
   const isPace = task.metric_type === 'avg_pace_range'
   const rangeText = d ? (isPace ? `${paceFmt(d.range_lo)}–${paceFmt(d.range_hi)} /km` : `${d.range_lo}–${d.range_hi}`) : ''
