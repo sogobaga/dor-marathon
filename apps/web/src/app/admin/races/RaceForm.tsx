@@ -137,6 +137,13 @@ const PET_KIND_OPTS: { v: '' | 'dog' | 'cat'; t: string }[] = [
   { v: 'cat', t: '貓貓賽事' },
 ]
 
+// 寵物成績規則選單（races.pet_score_mode；只在 pet_kind!=='' 時渲染，非寵物賽事一律強制送出 ''）
+const PET_SCORE_MODE_OPTS: { v: '' | 'pet' | 'owner_pet_sum'; t: string }[] = [
+  { v: '', t: '依飼主里程（預設）' },
+  { v: 'pet', t: '狗狗累積里程' },
+  { v: 'owner_pet_sum', t: '飼主＋狗狗里程加總' },
+]
+
 // ISO → datetime-local 值（本地時間，去秒）
 function toLocalInput(iso?: string | null): string {
   if (!iso) return ''
@@ -364,6 +371,8 @@ export default function RaceForm({
   // 寵物雲端馬拉松（2026-09-08，D7）：petMaxPerReg 用字串裝 input value（同 startingSoonDays 慣例）
   const [petKind, setPetKind] = useState<'' | 'dog' | 'cat'>(initial?.pet_kind ?? '')
   const [petMaxPerReg, setPetMaxPerReg] = useState(String(initial?.pet_max_per_reg ?? 1))
+  // 寵物成績規則（D1）：非寵物賽事一律強制送出 ''，見下方 payload 組裝。
+  const [petScoreMode, setPetScoreMode] = useState<'' | 'pet' | 'owner_pet_sum'>(initial?.pet_score_mode ?? '')
   const [externalData, setExternalData] = useState<boolean>(initial?.external_data ?? true) // 2026-09-03 使用者定案：手錶打通後新賽事預設開放外部數據；既有賽事沿用各自設定
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -764,6 +773,19 @@ export default function RaceForm({
   useEffect(() => {
     if (mode === 'personal' && tab === 'groups') setTab('basic')
   }, [mode, tab])
+
+  // 寵物雲端馬拉松（2026-09-09 review 修正）：competition 模式（分組對抗）的排名依據
+  // race_group_standings 由 worker aggregateStandings 預聚合，該查詢目前只加總飼主里程，完全不知道
+  // pet_activities——若讓 petKind 跟 competition 並存，後端 service.go normalizeRequest 會在送出時
+  // 把 pet_kind 靜默清空（避免分組排行榜與個人排行榜/進度顯示互相矛盾的數字，見該處註解），但那樣
+  // 管理者在表單上選了寵物賽事、送出後卻發現不見了，一頭霧水。切到 competition 時前端同步清空，
+  // 並停用選單＋提示原因，行為跟後端一致、管理者當下就看得懂為什麼。
+  useEffect(() => {
+    if (mode === 'competition' && petKind) {
+      setPetKind('')
+      setPetScoreMode('')
+    }
+  }, [mode, petKind])
 
   const isRandom = mode === 'faction_battle'
 
@@ -1295,6 +1317,9 @@ export default function RaceForm({
       pet_kind: petKind,
       pet_max_per_reg: petKind ? Math.min(20, Math.max(1, parseInt(petMaxPerReg || '1', 10) || 1)) : 1,
       pet_base_slots: 1,
+      // D1：非寵物賽事、或 personal 模式（見上方選單/useEffect 註解）一律強制送出 ''（後端也會校驗），
+      // 比照上方 addons kind 遇非寵物賽事強制回 'item' 的既有模式。
+      pet_score_mode: petKind && mode !== 'personal' ? petScoreMode : '',
       challenge_rule: mode === 'personal' ? buildChallengeRule() : null,
       // 即時獎勵設定一般化（migration 134）：不再限 personal 模式，其餘模式完成任一「個人額外挑戰」
       // (group_individual scope 任務) 觸發（見後端 progress.go MarkRaceTaskCompletedAndGrant）。
@@ -1546,11 +1571,18 @@ export default function RaceForm({
             {feeMode === 'per_group' && (
               <div style={hint}>各組獨立報名費請至「分組」分頁逐組設定；留空的組別（含前台跑團成員新增的組別）自動套用上方預設報名費。</div>
             )}
-            {/* 寵物雲端馬拉松（2026-09-08，D7）：與 event_mode（賽事模式，上方 MODES）是獨立的兩個維度——
-                event_mode 決定計分/分組玩法，pet_kind 決定該場是否為寵物賽事（飼主+寵物一起報名）。 */}
+            {/* 寵物雲端馬拉松（2026-09-08，D7）：與 event_mode（賽事模式，上方 MODES）原則上是獨立的兩個
+                維度——event_mode 決定計分/分組玩法，pet_kind 決定該場是否為寵物賽事（飼主+寵物一起報名）。
+                唯一例外是 competition（分組對抗）：見下方 useEffect／disabled 註解，worker
+                aggregateStandings 的分組排行榜還不認得寵物里程，這個組合暫時鎖住。 */}
             <Row>
               <Field label="寵物賽事">
-                <select style={inp} value={petKind} onChange={(e) => setPetKind(e.target.value as '' | 'dog' | 'cat')}>
+                <select
+                  style={inp}
+                  value={petKind}
+                  disabled={mode === 'competition'}
+                  onChange={(e) => setPetKind(e.target.value as '' | 'dog' | 'cat')}
+                >
                   {PET_KIND_OPTS.map((o) => <option key={o.v} value={o.v}>{o.t}</option>)}
                 </select>
               </Field>
@@ -1561,9 +1593,28 @@ export default function RaceForm({
               ) : (
                 <div style={{ flex: 1 }} />
               )}
+              {/* D1：寵物成績規則——只在寵物賽事才需要選，非寵物賽事送出時強制清空（見上方 payload 組裝）。
+                  personal（個人挑戰）模式排除：personal_progress.go 完全沒有寵物計分程式碼，選了也是
+                  永遠套用不到的死設定（見 2026-09-09 review 修正、service.go normalizeRequest 同款
+                  強制清空），與其讓管理者選了卻不生效，不如直接不給選、用提示說明原因。 */}
+              {petKind && mode !== 'personal' ? (
+                <Field label="寵物成績規則">
+                  <select style={inp} value={petScoreMode} onChange={(e) => setPetScoreMode(e.target.value as '' | 'pet' | 'owner_pet_sum')}>
+                    {PET_SCORE_MODE_OPTS.map((o) => <option key={o.v} value={o.v}>{o.t}</option>)}
+                  </select>
+                </Field>
+              ) : (
+                <div style={{ flex: 1 }} />
+              )}
             </Row>
+            {petKind && mode === 'personal' && (
+              <div style={hint}>個人挑戰模式的完成判定固定只算飼主里程，不支援寵物成績規則。</div>
+            )}
             {petKind && (
               <div style={hint}>基本名額 1 隻，多的透過「加購寵物參賽名額」增加。</div>
+            )}
+            {mode === 'competition' && (
+              <div style={hint}>分組對抗模式的分組排行榜暫不支援寵物成績，此模式下寵物賽事無法開啟。</div>
             )}
             <Row>
               <Field label="賽事即將開始 倒數天數">

@@ -121,6 +121,7 @@ type gpsReviewResult struct {
 	CalibDistanceKm            float64 // = round2(RawDistanceKm × CalibFactor)；calib_distance_km 為 NULL 時退化成 RawDistanceKm（等同係數 1.0）
 	DurationS, RawAvgPaceS     int
 	EndedAt                    time.Time
+	PetIDs                     []string // 寵物歸戶（migration 174）；讀回 gps_runs.pet_ids，核准入隊時原樣帶回 ActivityEvent
 }
 
 // claimPendingGPS 取出待審且鎖定（回傳發活動所需欄位，含校正後距離——見 gpsReviewResult 註解）；
@@ -132,9 +133,9 @@ func (r *Repository) reviewGPS(ctx context.Context, id, action string) (gpsRevie
 		UPDATE gps_runs SET reviewed_at=NOW(), review_action=$2
 		WHERE id=$1 AND flagged AND reviewed_at IS NULL
 		RETURNING user_id::text, COALESCE(race_id::text,''), distance_km, duration_s, avg_pace_s, ended_at,
-		          calib_distance_km, calib_factor`,
+		          calib_distance_km, calib_factor, pet_ids`,
 		id, action).Scan(&res.UserID, &res.RaceID, &res.RawDistanceKm, &res.DurationS, &res.RawAvgPaceS, &res.EndedAt,
-		&calibDistN, &res.CalibFactor)
+		&calibDistN, &res.CalibFactor, &res.PetIDs)
 	res.CalibDistanceKm = res.RawDistanceKm
 	if calibDistN != nil {
 		res.CalibDistanceKm = *calibDistN
@@ -189,6 +190,7 @@ func (s *Service) AdminApproveGPS(ctx context.Context, id string) error {
 		UserID: res.UserID, RaceID: res.RaceID, DistanceKm: round2(res.CalibDistanceKm),
 		DurationS: res.DurationS, AvgPaceS: avgPaceS, RecordedAt: res.EndedAt.Format(time.RFC3339),
 		RawDistanceKm: round2(res.RawDistanceKm), CalibFactor: res.CalibFactor,
+		PetIDs: res.PetIDs,
 	}
 	// finding 1（2026-09-08 第二次稽核）：XAdd 失敗過去被吃掉（連錯誤都不檢查）——這筆已經被標成
 	// approved，卻沒有真的入隊，且 reviewGPS 的 WHERE reviewed_at IS NULL 讓它從此無法被重新核准

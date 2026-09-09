@@ -99,6 +99,11 @@ export default function TrackPage() {
   const [holdSourceLabel, setHoldSourceLabel] = useState('') // stravaPriority 成立時，對應外部來源的顯示名稱（''=無暫緩）；供下方彈窗文案共用
   const [realName, setRealName] = useState('') // 揮汗有禮直接截圖需求（2026-09-06）：結果卡要顯示真實姓名，見下方 profileApi.getMe 呼叫點
   const [confirmStravaHold, setConfirmStravaHold] = useState<null | { km: number; mins: number; paceS: number }>(null)
+  // D5：狗狗歸屬——「這趟狗狗有一起跑嗎？」卡片。petChoices=null 時不顯示；上傳前（一般結束/里程優先來源
+  // 「直接使用本次數據」/回復上傳三處共用）先查一次候選寵物，有才彈卡，選擇結果隨 GPS 上傳一起送出。
+  const [petChoices, setPetChoices] = useState<{ id: string; name: string }[] | null>(null)
+  const [petSelected, setPetSelected] = useState<Set<string>>(new Set())
+  const pendingUploadRef = useRef<null | { kind: 'live'; pts: GpsPoint[] } | { kind: 'recovered' }>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [showActiveRaces, setShowActiveRaces] = useState(false) // 「進行中活動/賽事」面板開關
   const [showStartTip, setShowStartTip] = useState(false) // 從賽事詳情頁「前往挑戰」進入（?from=race）→ idle 時顯示一次性新手提醒，可點擊/X關閉
@@ -1262,7 +1267,29 @@ export default function TrackPage() {
   useEffect(() => { const t = getUserToken(); if (t) loadEffectAssets(t).then(setFxAssets) }, [user?.id])
   function toggleMute() { const next = !isMuted(); sfxSetMuted(next); setMuted(next); if (!next) unlockAudio() }
 
-  async function doUploadGps(pts: GpsPoint[]): Promise<GpsRunResult | null> {
+  // D5：狗狗歸屬——目前有效(paid)報名、屬於寵物賽事（pet_kind!==''）且該場仍在「這趟會被計入」的進行中
+  // 賽事清單（racesApi.myActive 才有 event_mode/日期可判斷區間，Phase B 的 eventRaceApi.context 只回
+  // id/title 不夠用）內的報名之寵物，去重後回傳；純前端組合兩個既有端點，不必為此另開新 API。
+  async function loadPetChoices(): Promise<{ id: string; name: string }[]> {
+    const token = getUserToken()
+    if (!token) return []
+    try {
+      const [{ races }, { registrations }] = await Promise.all([
+        racesApi.myActive(token),
+        profileApi.registrations(token),
+      ])
+      const activeIds = new Set(races.map((r) => r.id))
+      const out = new Map<string, { id: string; name: string }>()
+      for (const reg of registrations) {
+        if (reg.status !== 'paid' || !reg.pets?.length) continue
+        if (!activeIds.has(reg.race_id)) continue
+        for (const p of reg.pets) out.set(p.id, { id: p.id, name: p.name })
+      }
+      return Array.from(out.values())
+    } catch { return [] }
+  }
+
+  async function doUploadGps(pts: GpsPoint[], petIds: string[] = []): Promise<GpsRunResult | null> {
     setUploading(true)
     try {
       const { result } = await withUserAuth((t) => activitiesApi.uploadGps(t, {
@@ -1270,6 +1297,7 @@ export default function TrackPage() {
         ended_at: new Date(pts[pts.length - 1].t).toISOString(),
         points: pts,
         client_version: APP_VERSION,
+        pet_ids: petIds.length ? petIds : undefined,
       }))
       setResult(result)
       // 結束後以後端分段為單一真相：後端由軌跡重算、可信，且與 avg_pace_s 同源。
@@ -1305,7 +1333,29 @@ export default function TrackPage() {
     if (pts.length < 2) { flashErr('軌跡太短，未上傳'); localStorage.removeItem(LS_KEY); return null }
     const token = getUserToken()
     if (!token) { setErr('未登入，無法上傳'); return null }
-    return doUploadGps(pts)
+    return finalizeUpload(pts)
+  }
+
+  // D5：一般結束路徑與「里程優先來源」彈窗「直接使用本次數據」按鈕共用同一次上傳，兩處都要套用同一個
+  // 寵物確認關卡（否則後者會繞過去）——上傳前先查候選寵物，有才彈卡暫緩，選擇結果由 submitPetConfirm 接手上傳。
+  async function finalizeUpload(pts: GpsPoint[]): Promise<GpsRunResult | null> {
+    const pets = await loadPetChoices()
+    if (pets.length) {
+      pendingUploadRef.current = { kind: 'live', pts }
+      setPetSelected(new Set(pets.map((p) => p.id))) // 預設全選（有帶就跑，較常見）
+      setPetChoices(pets)
+      return null
+    }
+    return doUploadGps(pts, [])
+  }
+
+  // 「這趟狗狗有一起跑嗎？」卡片送出（含「沒有帶狗」＝空陣列）：接續原本被暫緩的上傳。
+  function submitPetConfirm(selected: string[]) {
+    const pending = pendingUploadRef.current
+    setPetChoices(null); pendingUploadRef.current = null
+    if (!pending) return
+    if (pending.kind === 'live') doUploadGps(pending.pts, selected)
+    else doUploadRecoveredNow(selected)
   }
 
   // 進頁偵測「上次未上傳的跑步」（LS_KEY 備份）→ 提示可恢復上傳，避免忘記上傳整趟白跑
@@ -1329,6 +1379,19 @@ export default function TrackPage() {
     if (!recover) return
     const token = getUserToken()
     if (!token) { setShowLogin(true); return }
+    // D5：回復上傳路徑也套同一個寵物確認關卡——有候選才彈卡暫緩，交給 submitPetConfirm 接手。
+    const pets = await loadPetChoices()
+    if (pets.length) {
+      pendingUploadRef.current = { kind: 'recovered' }
+      setPetSelected(new Set(pets.map((p) => p.id)))
+      setPetChoices(pets)
+      return
+    }
+    await doUploadRecoveredNow([])
+  }
+
+  async function doUploadRecoveredNow(petIds: string[]) {
+    if (!recover) return
     const pts = recover.points
     setUploading(true)
     try {
@@ -1337,6 +1400,7 @@ export default function TrackPage() {
         ended_at: new Date(pts[pts.length - 1].t).toISOString(),
         points: pts,
         client_version: APP_VERSION,
+        pet_ids: petIds.length ? petIds : undefined,
       }))
       // 結果卡（揮汗有禮直接截圖需求，見上方「結果」區塊）讀 startRef/pointsRef 當這趟的開始時間與
       // 終點：恢復上傳走的不是 start()，這兩顆 ref 仍是初始值或上一趟殘留（審查抓到會顯示 1970 或
@@ -1824,7 +1888,7 @@ export default function TrackPage() {
     <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
       {/* 上次未上傳的跑步 → 可恢復上傳 */}
-      {recover && status !== 'tracking' && (
+      {recover && status !== 'tracking' && !petChoices && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 3300, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
           <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 16, padding: '20px 18px', maxWidth: 340, width: '100%', boxShadow: '0 12px 40px rgba(0,0,0,.6)' }}>
             <div style={{ fontSize: 17, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>🏃 有一趟未上傳的跑步</div>
@@ -1851,7 +1915,7 @@ export default function TrackPage() {
               {confirmStravaHold.paceS > 0 ? ` · 配速 ${Math.floor(confirmStravaHold.paceS / 60)}:${String(confirmStravaHold.paceS % 60).padStart(2, '0')}/km` : ''}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-              <button onClick={() => { setConfirmStravaHold(null); cleanup(); setStatus('done'); doUploadGps(pointsRef.current) }} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>
+              <button onClick={() => { setConfirmStravaHold(null); cleanup(); setStatus('done'); finalizeUpload(pointsRef.current) }} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>
                 {uploading ? '上傳中…' : '直接使用本次數據'}
               </button>
               <button onClick={() => { leavingRef.current = true; cleanup(); setStatus('done'); window.location.href = '/?profile=sports' }} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>
@@ -1861,6 +1925,37 @@ export default function TrackPage() {
               <button onClick={() => setConfirmStravaHold(null)} disabled={uploading} style={{ background: 'transparent', color: 'var(--fug)', border: 'none', padding: '8px', fontSize: 13.5, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>
                 ▶ 繼續進行跑步
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* D5：狗狗歸屬——上傳前確認「這趟狗狗有一起跑嗎？」，預設全選，選擇結果隨 GPS 上傳一起送出。 */}
+      {petChoices && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 3300, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 16, padding: '20px 18px', maxWidth: 340, width: '100%', boxShadow: '0 12px 40px rgba(0,0,0,.6)' }}>
+            <div style={{ fontSize: 17, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>🐾 這趟狗狗有一起跑嗎？</div>
+            <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7, marginBottom: 4 }}>勾選的狗狗會併計這趟里程到寵物賽事成績。</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: '10px 0' }}>
+              {petChoices.map((p) => (
+                <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: 'var(--tx)', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={petSelected.has(p.id)}
+                    onChange={(e) => {
+                      setPetSelected((prev) => {
+                        const next = new Set(prev)
+                        if (e.target.checked) next.add(p.id); else next.delete(p.id)
+                        return next
+                      })
+                    }}
+                  />
+                  {p.name}
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+              <button onClick={() => submitPetConfirm(Array.from(petSelected))} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>{uploading ? '上傳中…' : '送出'}</button>
+              <button onClick={() => submitPetConfirm([])} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>沒有帶狗</button>
             </div>
           </div>
         </div>

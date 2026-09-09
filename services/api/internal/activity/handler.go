@@ -2,6 +2,7 @@ package activity
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -32,7 +33,57 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/me", h.MyActivities)
 	r.Get("/me/race/{raceID}", h.MyRaceActivities)
 	r.Get("/missions/{raceID}", h.MissionStatus)
+	// 寵物雲端馬拉松：活動 × 寵物歸戶（migration 174，D3(b)）
+	r.Get("/{activityID}/pets", h.GetActivityPets)
+	r.Post("/{activityID}/pets", h.SetActivityPets)
 	return r
+}
+
+// GET /api/v1/activities/{activityID}/pets — 查詢這趟活動目前「狗狗一起跑」的歸戶名單
+func (h *Handler) GetActivityPets(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	activityID := chi.URLParam(r, "activityID")
+	petIDs, err := h.svc.repo.GetActivityPetIDs(r.Context(), activityID, userID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to load pet attribution")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"pet_ids": petIDs})
+}
+
+// POST /api/v1/activities/{activityID}/pets — 整批重建這趟活動的「狗狗一起跑」歸戶名單（D3(b)：
+// 任何來源的活動、任何時間點皆可調整；空陣列＝清空全部歸戶，對應「取消勾選」）
+func (h *Handler) SetActivityPets(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	activityID := chi.URLParam(r, "activityID")
+	var body struct {
+		PetIDs []string `json:"pet_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	petIDs, err := h.svc.SetActivityPets(r.Context(), userID, activityID, body.PetIDs)
+	switch {
+	case errors.Is(err, ErrActivityNotFound):
+		respondErr(w, http.StatusNotFound, err.Error())
+		return
+	case errors.Is(err, ErrPetOwnershipMismatch):
+		respondErr(w, http.StatusBadRequest, err.Error())
+		return
+	case err != nil:
+		respondErr(w, http.StatusInternalServerError, "failed to save pet attribution")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"pet_ids": petIDs})
 }
 
 // POST /api/v1/admin/activities/add-mileage — 後台模擬加里程（測試用）

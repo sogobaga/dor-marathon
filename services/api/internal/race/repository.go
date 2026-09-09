@@ -47,7 +47,7 @@ const selectCols = `
 	       reward_config,
 	       entry_reward_config,
 	       created_at,
-	       pet_kind, pet_max_per_reg, pet_base_slots,
+	       pet_kind, pet_max_per_reg, pet_base_slots, pet_score_mode,
 	       CASE WHEN fee_mode = 'per_group'
 	            THEN COALESCE(
 	                   (SELECT MIN(COALESCE(g.entry_fee_cents, races.entry_fee)) FROM race_groups g WHERE g.race_id = races.id),
@@ -188,14 +188,14 @@ func (r *Repository) Update(ctx context.Context, race *Race) (*Race, error) {
 			slots_total=$11, entry_fee=$12, fee_mode=$13, start_date=$14, end_date=$15, config=$16,
 			event_mode=$17, goal_type=$18, registration_start=$19, registration_end=$20,
 			vip_only=$21, external_data=$22, challenge_rule=$23, reward_config=$24, entry_reward_config=$25,
-			pet_kind=$26, pet_max_per_reg=$27, pet_base_slots=$28, updated_at=NOW()
-		WHERE id=$29`,
+			pet_kind=$26, pet_max_per_reg=$27, pet_base_slots=$28, pet_score_mode=$29, updated_at=NOW()
+		WHERE id=$30`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, defaultStr(race.FeeMode, "uniform"), race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
 		race.VipOnly, race.ExternalData, challengeRuleArg, rewardConfigArg, entryRewardConfigArg,
-		race.PetKind, defaultPetMaxPerReg(race.PetMaxPerReg), defaultPetBaseSlots(race.PetBaseSlots), race.ID,
+		race.PetKind, defaultPetMaxPerReg(race.PetMaxPerReg), defaultPetBaseSlots(race.PetBaseSlots), race.PetScoreMode, race.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -278,8 +278,8 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		                   start_date, end_date, config, created_by, review_status, required_fields,
 		                   control_status, starting_soon_days, brochure_title, allow_team_groups, vip_only,
 		                   external_data, challenge_rule, reward_config, entry_reward_config,
-		                   pet_kind, pet_max_per_reg, pet_base_slots)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
+		                   pet_kind, pet_max_per_reg, pet_base_slots, pet_score_mode)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
 		RETURNING id`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, race.EventMode, race.GoalType, dist32, race.GroupType, race.GroupMode,
@@ -287,7 +287,7 @@ func (r *Repository) CreateWithChildren(ctx context.Context, req *CreateRaceRequ
 		race.StartDate, race.EndDate, cfgBytes, createdBy, reviewStatus, requiredFields,
 		controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
 		race.ExternalData, challengeRuleArg, rewardConfigArg, entryRewardConfigArg,
-		race.PetKind, defaultPetMaxPerReg(race.PetMaxPerReg), defaultPetBaseSlots(race.PetBaseSlots),
+		race.PetKind, defaultPetMaxPerReg(race.PetMaxPerReg), defaultPetBaseSlots(race.PetBaseSlots), race.PetScoreMode,
 	).Scan(&raceID)
 	if err != nil {
 		return nil, fmt.Errorf("insert race: %w", err)
@@ -442,15 +442,15 @@ func (r *Repository) UpdateWithChildren(ctx context.Context, raceID string, req 
 			event_mode=$17, goal_type=$18, registration_start=$19, registration_end=$20,
 			required_fields=$21, control_status=$22, starting_soon_days=$23, brochure_title=$24,
 			allow_team_groups=$25, vip_only=$26, external_data=$27, challenge_rule=$28, reward_config=$29,
-			entry_reward_config=$30, pet_kind=$31, pet_max_per_reg=$32, pet_base_slots=$33, updated_at=NOW()
-		WHERE id=$34`,
+			entry_reward_config=$30, pet_kind=$31, pet_max_per_reg=$32, pet_base_slots=$33, pet_score_mode=$34, updated_at=NOW()
+		WHERE id=$35`,
 		race.Slug, race.Title, race.Subtitle, race.World, race.Blurb, race.HeroImageURL,
 		race.Status, dist32, race.GroupType, race.GroupMode,
 		race.SlotsTotal, race.EntryFee, defaultStr(race.FeeMode, "uniform"), race.StartDate, race.EndDate, cfgBytes,
 		race.EventMode, race.GoalType, race.RegStart, race.RegEnd,
 		requiredFields, controlStatus, startingSoonDays, race.BrochureTitle, race.AllowTeamGroups, race.VipOnly,
 		race.ExternalData, challengeRuleArg, rewardConfigArg, entryRewardConfigArg,
-		race.PetKind, defaultPetMaxPerReg(race.PetMaxPerReg), defaultPetBaseSlots(race.PetBaseSlots), raceID,
+		race.PetKind, defaultPetMaxPerReg(race.PetMaxPerReg), defaultPetBaseSlots(race.PetBaseSlots), race.PetScoreMode, raceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update race: %w", err)
@@ -2010,7 +2010,7 @@ func LoadPetsByRegistrationIDs(ctx context.Context, db *pgxpool.Pool, ids []stri
 		return out, nil
 	}
 	rows, err := db.Query(ctx, `
-		SELECT registration_id::text, seq, name, chip_id
+		SELECT registration_id::text, id::text, seq, name, chip_id
 		FROM registration_pets
 		WHERE registration_id = ANY($1::uuid[])
 		ORDER BY registration_id, seq`, filtered)
@@ -2021,7 +2021,7 @@ func LoadPetsByRegistrationIDs(ctx context.Context, db *pgxpool.Pool, ids []stri
 	for rows.Next() {
 		var regID string
 		var p RegistrationPet
-		if err := rows.Scan(&regID, &p.Seq, &p.Name, &p.ChipID); err != nil {
+		if err := rows.Scan(&regID, &p.ID, &p.Seq, &p.Name, &p.ChipID); err != nil {
 			return nil, err
 		}
 		out[regID] = append(out[regID], p)
@@ -2747,7 +2747,7 @@ func scanRaceRow(row pgx.Row) (*Race, error) {
 		&rewardConfigBytes,
 		&entryRewardConfigBytes,
 		&race.CreatedAt,
-		&race.PetKind, &race.PetMaxPerReg, &race.PetBaseSlots,
+		&race.PetKind, &race.PetMaxPerReg, &race.PetBaseSlots, &race.PetScoreMode,
 		&race.DisplayFeeCents,
 	)
 	if err != nil {
@@ -2797,7 +2797,7 @@ func scanRaceFromRow(rows pgx.Rows) (*Race, error) {
 		&rewardConfigBytes,
 		&entryRewardConfigBytes,
 		&race.CreatedAt,
-		&race.PetKind, &race.PetMaxPerReg, &race.PetBaseSlots,
+		&race.PetKind, &race.PetMaxPerReg, &race.PetBaseSlots, &race.PetScoreMode,
 		&race.DisplayFeeCents,
 	)
 	if err != nil {

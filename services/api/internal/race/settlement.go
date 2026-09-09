@@ -185,12 +185,31 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 	groupTarget := map[string]float64{}
 	groupReward := map[string]int{}
 	groupDpReward := map[string]int{}
+	groupForOwner := map[string]bool{}
+	groupForPet := map[string]bool{}
 	for i := range groups {
 		if groups[i].TargetDistanceKm != nil {
 			groupTarget[groups[i].ID] = *groups[i].TargetDistanceKm
 		}
 		groupReward[groups[i].ID] = groups[i].ExpReward
 		groupDpReward[groups[i].ID] = groups[i].DpReward
+		fo, fp := true, true
+		if groups[i].ForOwner != nil {
+			fo = *groups[i].ForOwner
+		}
+		if groups[i].ForPet != nil {
+			fp = *groups[i].ForPet
+		}
+		groupForOwner[groups[i].ID], groupForPet[groups[i].ID] = fo, fp
+	}
+	// 寵物雲端馬拉松（migration 174，D4）：完賽 EXP 判定改比較「score」而非單純飼主里程——
+	// 非寵物賽事（race.PetKind==""）petTotals 恆為 nil、下面迴圈內 score==totalKm，行為不變。
+	var petTotals map[string]float64
+	if race.PetKind != "" {
+		petTotals, err = loadPetKmTotals(ctx, r.db, race.ID, race.StartDate, race.EndDate)
+		if err != nil {
+			return nil, fmt.Errorf("load pet km totals: %w", err)
+		}
 	}
 
 	// awards[userID][source] = {exp, dp, vipDays, gp}（同一 source 同列記 EXP、DP、VIP 天數與 GP）
@@ -267,7 +286,12 @@ func (r *Repository) settleRaceEXP(ctx context.Context, race *Race, force bool) 
 		for _, a := range byUser[p.userID] {
 			totalKm += a.Dist
 		}
-		if tgt := groupTarget[p.groupID]; tgt > 0 && totalKm >= tgt {
+		score := totalKm
+		if race.PetKind != "" {
+			mode := EffectivePetScoreMode(race.PetKind, race.PetScoreMode, groupForOwner[p.groupID], groupForPet[p.groupID])
+			score = ComposeScore(mode, totalKm, petTotals[p.userID])
+		}
+		if tgt := groupTarget[p.groupID]; tgt > 0 && score >= tgt {
 			add(p.userID, "completion", groupReward[p.groupID], groupDpReward[p.groupID], 0, 0)
 		}
 	}

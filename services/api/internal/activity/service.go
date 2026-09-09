@@ -45,6 +45,25 @@ func NewService(repo *Repository, raceSvc *race.Service, rdb *redis.Client, wsm 
 	}
 }
 
+// SetActivityPets 重建某活動的「狗狗一起跑」歸戶名單（migration 174，D3(b)）：任何來源的活動皆可
+// （GPS/Strava/Terra/後台補登），只要是呼叫者自己的；petIDs 全部必須屬於呼叫者名下的寵物報名紀錄，
+// 否則整批拒絕（ErrPetOwnershipMismatch），不做部分接受。活動不存在或不是呼叫者的回
+// ErrActivityNotFound（兩種情況刻意回同一錯誤，見該常數註解）。
+func (s *Service) SetActivityPets(ctx context.Context, userID, activityID string, petIDs []string) ([]string, error) {
+	petIDs = dedupeStrings(petIDs)
+	meta, err := s.repo.LoadOwnedPetMeta(ctx, userID, petIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(meta) != len(petIDs) {
+		return nil, ErrPetOwnershipMismatch
+	}
+	if err := s.repo.ReplaceActivityPets(ctx, userID, activityID, meta); err != nil {
+		return nil, err
+	}
+	return petIDs, nil
+}
+
 // AdminAddMileage 後台模擬一筆里程活動（無賽事）：推入 stream，worker 寫入並發日常里程 EXP
 func (s *Service) AdminAddMileage(ctx context.Context, userID string, distanceKm float64) error {
 	if distanceKm <= 0 {

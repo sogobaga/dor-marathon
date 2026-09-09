@@ -64,4 +64,12 @@ type ActivityEvent struct {
 	// RawDistanceKm=DistanceKm、CalibFactor=1.0（見 services/worker/main.go processOne）。
 	RawDistanceKm float64 `json:"raw_distance_km,omitempty"`
 	CalibFactor   float64 `json:"calib_factor,omitempty"`
+	// PetIDs 寵物雲端馬拉松歸戶（2026-09-09 owner request，migration 174，D3(a)）：這趟跑步「一起跑」
+	// 的寵物（registration_pets.id），來自 GPS 上傳當下（gps.go SaveGPSRun）或後續核准/補送路徑
+	// 讀回 gps_runs.pet_ids。worker 在插入這筆活動列之後，依此逐筆寫入 pet_activities
+	// （source='owner_run'，見 services/worker/main.go processOne）。空＝這趟沒有勾選任何寵物。
+	//
+	// ⚠️ 這個 struct 在 services/worker/main.go 有獨立第二份定義（worker 是獨立 Go module，見該檔
+	// 註解），兩邊欄位必須手動同步，這裡新增了 PetIDs 那邊也要加。
+	PetIDs []string `json:"pet_ids,omitempty"`
 }
