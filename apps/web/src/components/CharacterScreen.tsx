@@ -51,7 +51,7 @@ export default function CharacterScreen({ onBack }: { onBack: () => void }) {
       <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <h1 style={{ margin: '10px 0 2px', fontSize: 23, fontWeight: 800, color: 'var(--tx)' }}>🎮 角色</h1>
-        <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>基本素質配點（參考 RO 素質系統）</div>
+        <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>基本素質配點</div>
       </header>
 
       <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '14px 18px 28px' }}>
