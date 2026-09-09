@@ -11,6 +11,7 @@ import (
 	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/gpscalib"
+	"github.com/dor/api/internal/rpg"
 	"github.com/dor/api/internal/runmeet"
 	"github.com/dor/api/internal/stamina"
 	"github.com/go-chi/chi/v5"
@@ -137,6 +138,10 @@ type DashboardInfo struct {
 	MonopolyEntry    string `json:"monopoly_entry"`    // 環台大富翁入口可見性（同上）
 	KnowledgeEntry   string `json:"knowledge_entry"`   // 知識探索入口可見性（同上）
 	Gov500Entry      string `json:"gov500_entry"`      // 500.gov.tw「揮汗有禮」運動證明圖入口可見性（同上）
+	// RpgEntry 遊戲化角色數值（RO 素質系統，見 internal/rpg）入口可見性：只有 hidden|shown 兩態
+	// （無 locked——不對一般會員揭露「有這個功能但鎖住」），由 rpg.DashboardEntry 解析
+	// rpg_entry_state/whitelist + users.is_vvip，hidden 時連超管都看不到（見該函式註解，D3 明文）。
+	RpgEntry string `json:"rpg_entry"`
 	// 團練邀請（見 internal/runmeet）：入口可見性 + 本月剩餘發起次數（給入口徽章「本月 0/1」顯示）。
 	// ⚠️ 入口非 shown 時 runmeet.DashboardSummary 完全不查 DB（回 0），dashboard 熱路徑零額外成本；
 	// 規格否決的是「跨表 COUNT 待審申請數」，不是這個 users 主鍵讀取。
@@ -231,6 +236,10 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	// state 未設定＝hidden＝一般玩家看不到，只有超管旁路看得到——正是「先只給站長」的預設；
 	// 之後系統設定開放（whitelist/open）即可讓一般跑者也看到。
 	d.Gov500Entry = resolveEntry(r.Context(), h.db, "gov500_entry_state", "gov500_entry_whitelist", email, code, isSuperAdmin)
+	// RpgEntry：獨立實作於 internal/rpg（比照 gpscalib 前例），不走上面這支泛用 resolveEntry——
+	// 判斷規則多了 is_vvip 這個 OR 分支，且 hidden 連超管旁路都不給（其餘功能 hidden 仍對超管放行），
+	// 形狀不同不能共用同一支函式。
+	d.RpgEntry = rpg.DashboardEntry(r.Context(), h.db, userID, email, code, isSuperAdmin)
 	d.GpsCalibEntry, d.GpsCalibFactor, d.GpsCalibStatus, d.GpsCalibPairs, d.GpsCalibEnabled =
 		gpscalib.DashboardSummary(r.Context(), h.db, userID, email, code, isSuperAdmin)
 	levels, err := h.levelConfigList(r.Context())

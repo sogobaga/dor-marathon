@@ -30,6 +30,7 @@ export default function MemberPanel({
   onOpenRewards,
   onOpenHeroes,
   onOpenRunMeet,
+  onOpenRpg,
   onUploadAvatar,
   uploadingAvatar,
   onReady,
@@ -49,6 +50,7 @@ export default function MemberPanel({
   onOpenRewards?: () => void
   onOpenHeroes?: () => void
   onOpenRunMeet?: () => void
+  onOpenRpg?: () => void // 遊戲化角色數值（第 21 套）：只有 VVIP／白名單管理者看得到（dash.rpg_entry）
   onUploadAvatar?: (file: File) => void
   uploadingAvatar?: boolean
   onReady?: () => void
@@ -311,6 +313,17 @@ export default function MemberPanel({
               style={{ ...entryBtn, opacity: dash.monopoly_entry === 'shown' ? 1 : 0.6, cursor: dash.monopoly_entry === 'shown' ? 'pointer' : 'default' }}>
               <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎲 環台大富翁</span>
               <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>{dash.monopoly_entry === 'locked' ? '即將開放 ›' : '擲骰前進，好運等你 ›'}</span>
+            </button>
+          )}
+          {/* 遊戲化角色數值（第 21 套，參考 RO 素質系統）：只有 VVIP／白名單管理者看得到（後端解析
+              rpg_entry_state/whitelist + is_vvip），一般會員 rpg_entry='hidden' 不渲染——這格對大多數
+              會員永遠不存在，不揭露「有這個功能」。無 locked 態，故只判斷 !== 'hidden'。 */}
+          {dash.rpg_entry === 'shown' && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onOpenRpg?.() }}
+              style={entryBtn}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: 'var(--tx)' }}>🎮 角色</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--tx-dim)' }}>配置你的素質點數 ›</span>
             </button>
           )}
           {/* 百里英雄榜：不比照 *_entry 三態控管，全體會員恆顯示（比照跑者充電站/活動獎勵） */}

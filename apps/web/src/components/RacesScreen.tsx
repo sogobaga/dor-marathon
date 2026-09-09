@@ -45,6 +45,7 @@ export default function RacesScreen({
   onOpenRewards,
   onOpenHeroes,
   onOpenRunMeet,
+  onOpenRpg,
 }: {
   onOpenProfile?: () => void
   onOpenActivityExplore?: () => void
@@ -59,6 +60,7 @@ export default function RacesScreen({
   onOpenRewards?: () => void
   onOpenHeroes?: () => void
   onOpenRunMeet?: () => void
+  onOpenRpg?: () => void
 }) {
   const user = useUser() // 登入狀態變動時重新渲染
   const token = getUserToken() || undefined
@@ -144,6 +146,7 @@ export default function RacesScreen({
             onOpenRewards={onOpenRewards}
             onOpenHeroes={onOpenHeroes}
             onOpenRunMeet={onOpenRunMeet}
+            onOpenRpg={onOpenRpg}
             showEntries
           />
         ) : (

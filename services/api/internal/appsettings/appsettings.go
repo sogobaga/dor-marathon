@@ -67,6 +67,15 @@ var specs = map[string]func(string) bool{
 	"gov500_entry_whitelist":      isWhitelist,
 	"gps_calib_entry_state":       isEntryState, // App GPS 距離校正入口（見 internal/gpscalib）
 	"gps_calib_entry_whitelist":   isWhitelist,
+	// 遊戲化角色數值（RO 素質系統，見 internal/rpg，migration 175）：入口刻意比其餘 *_entry_state
+	// 多一層限制——hidden 連 super_admin 都不放行（見 internal/rpg.ResolveEntry），owner 要求開發期
+	// 「只有 VVIP／白名單看得到，避免揭露給現有會員」。isEntryState 允許的 hidden/whitelist/open/
+	// locked/off 是超集，rpg 只使用 hidden/whitelist/shown 三態——寫 "open" 在 rpg.ResolveEntry
+	// 眼中會落到 default 分支＝hidden（非同義詞），後台頁請一律填 hidden/whitelist/shown。
+	// rpg_config（數值參數 JSON）本身走專屬端點 /admin/rpg/config（見 internal/rpg/admin.go），
+	// 不透過這裡的泛用 Set handler，故不在 specs 註冊。
+	"rpg_entry_state":     isEntryState,
+	"rpg_entry_whitelist": isWhitelist,
 	// 站內信通知白名單：與上面「是否套用校正」的入口白名單**刻意分開**——入口一旦改成 open（全站
 	// 套用），仍然只有這份名單裡的帳號會收到「GPS 距離校正已啟用／暫停中」站內信。空字串＝一封都
 	// 不發（fail-closed，見 internal/gpscalib.notifyAllowed），與 entry_whitelist 的空值語意不同。

@@ -192,6 +192,13 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '僅在上方選「指定帳號可按」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email。',
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
+  // 遊戲化角色數值（第 21 套，RO 素質系統）的 rpg_entry_state / rpg_entry_whitelist 刻意不列在這裡：
+  // 該功能只給 VVIP（users.is_vvip）與白名單管理者看，管理獨立收在後台「遊戲化」頁
+  // （/admin/rpg，見 app/admin/rpg/page.tsx「入口與 VVIP」分頁），與 rpg_config（素質係數）同頁管理，
+  // 避免管理者要分兩頁才能完整設定同一套功能。兩個 key 本身仍是普通 app_settings，照樣可用
+  // adminAppSettingsApi 讀寫，只是不在這份通用表單裡重複出現。⚠️ rpg_entry_state 的合法值是
+  // hidden|whitelist|shown（見 internal/rpg.ResolveEntry，"hidden" 連超管都不旁路——刻意比照本檔
+  // 其他 *_entry_state 更嚴格，別套用一般 isEntryState 的 hidden|locked|whitelist|open|off 語彙）。
   {
     key: 'training_entry_state', group: '自主訓練入口', label: '入口顯示狀態', type: 'select', def: 'whitelist',
     help: '控制「會員面板的自主訓練按鈕」對前台玩家的可見性（VIP 限定功能）。測試中，建議先「僅指定帳號」。',

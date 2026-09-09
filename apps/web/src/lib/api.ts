@@ -1848,6 +1848,9 @@ export interface DashboardInfo {
   monopoly_entry: 'hidden' | 'locked' | 'shown'    // 環台大富翁入口可見性
   knowledge_entry: 'hidden' | 'locked' | 'shown'   // 知識探索(知識卡圖鑑)入口可見性
   gov500_entry: 'hidden' | 'locked' | 'shown'      // 500.gov.tw「揮汗有禮」截圖模式入口可見性（純前端 UI 開關，見 lib/gov500.ts）
+  // 遊戲化角色數值（RO 素質系統，見 internal/rpg）：只有 VVIP／白名單管理者看得到，故只有 hidden|shown 兩態
+  // （無 locked——不對一般會員揭露「有這個功能但鎖住」）。後端以 rpg_entry_state/whitelist + is_vvip 解析。
+  rpg_entry: 'hidden' | 'shown'
   // 團練邀請（見 internal/runmeet）：入口三態 + 本月剩餘發起次數（只用在「＋ 發起團練」按鈕文案，
   // 不做成入口徽章——會被誤讀成「還能加入 N 個團練」，見 lib/runMeet.ts createBtnText 註解）。
   // entry 非 shown 時 runmeet_remaining 恆 0（後端不查 DB，dashboard 熱路徑零額外成本）。
@@ -4857,4 +4860,159 @@ export const adminRunMeetsApi = {
     }),
   imageGC: (token: string) =>
     request<{ ok: boolean; deleted: number }>('/admin/run-meets/images/gc', { method: 'POST', headers: withAuth(token) }),
+}
+
+// --- 遊戲化角色數值（RO 素質系統，見 internal/rpg・migration 175）---
+// 只有 VVIP（users.is_vvip）與白名單管理者看得到；後端同步以 rpg_entry_state/rpg_entry_whitelist
+// （一般 appsettings key-value，透過 adminAppSettingsApi 讀寫，見 admin/rpg 頁「入口與 VVIP」分頁）
+// 控管，前端一律以 dashboard 的 rpg_entry 為準（'hidden'|'shown'，無 locked 態）。
+
+export type RpgStatKey = 'str' | 'agi' | 'vit' | 'dex' | 'int' | 'luk'
+export type RpgStats = Record<RpgStatKey, number>
+
+// RpgConfig 欄位名稱與後端 internal/rpg.Config 完全一致（勿自行改名）；後台「參數設定」分頁逐欄可調，
+// 每項係數對應 owner 提供的 RO 素質對照表（見 lib/rpgMeta.ts 的中文標籤/說明）。
+export interface RpgConfig {
+  initial_stat: number
+  initial_free_points: number
+  max_stat: number
+  cost_base: number
+  cost_step_every: number
+  default_weapon_type: 'melee' | 'ranged'
+  base_hp: number
+  hp_per_base_level: number
+  base_mp: number
+  mp_per_base_level: number
+  aspd_base: number
+  aspd_per_agi: number
+  aspd_per_dex: number
+  aspd_cap: number
+  weight_base: number
+  weight_per_str: number
+  str_melee_atk: number
+  str_equip_atk_pct: number
+  str_ranged_atk_per: number
+  agi_flee: number
+  agi_def_per: number
+  vit_hp_pct: number
+  vit_item_hp_pct: number
+  vit_def_per: number
+  vit_mdef_per: number
+  vit_hp_regen_per: number
+  hp_regen_per_max_hp: number
+  dex_ranged_atk: number
+  dex_equip_atk_pct: number
+  dex_hit: number
+  dex_melee_atk_per: number
+  dex_matk_per: number
+  dex_mdef_per: number
+  int_matk: number
+  int_mdef: number
+  int_mp_pct: number
+  int_item_mp_pct: number
+  int_mp_regen_per: number
+  int_mp_regen_at_120: number
+  int_mp_regen_per_after_120: number
+  mp_regen_per_max_mp: number
+  luk_crit: number
+  luk_atk_per: number
+  luk_matk_per: number
+  luk_hit_per: number
+  luk_flee_per: number
+  luk_crit_shield_per: number
+  luk_perfect_dodge_per: number
+  lv_hit: number
+  lv_flee: number
+  lv_def_per: number
+  lv_atk_per: number
+  lv_matk_per: number
+  lv_mdef_per: number
+  cast_unit_dex: number
+  cast_unit_int: number
+  cast_pct_per_unit: number
+  cast_cap_pct: number
+  resist_pct_per_point: number
+  flee_cap_pct: number
+}
+
+export interface RpgDerived {
+  atk: number
+  def: number
+  matk: number
+  mdef: number
+  hit: number
+  flee: number
+  perfect_dodge: number
+  crit_pct: number
+  crit_shield: number
+  aspd: number
+  weight: number
+  hp_regen: number
+  mp_regen: number
+  cast_reduction_pct: number
+  resists: Record<string, number> // key 名稱由後端決定（狀態異常代碼），前端以 lib/rpgMeta.ts RESIST_LABEL 轉中文、未對到的 key 原樣顯示
+}
+
+export interface RpgCharacter {
+  base_level: number
+  job_level: number
+  job_exp: number
+  stats: RpgStats
+  free_points: number
+  next_cost: Partial<RpgStats> // 缺該項鍵＝已達上限（max_stat），前端據此關閉該項 +1/+5
+  max_hp: number
+  max_mp: number
+  derived: RpgDerived
+}
+
+export interface RpgMe {
+  enabled: boolean
+  character?: RpgCharacter // enabled=false 時省略（未達入口資格）
+}
+
+export const rpgApi = {
+  me: (token: string) => request<RpgMe>('/rpg/me', { headers: withAuth(token) }),
+  allocate: (token: string, body: { stat: RpgStatKey; points: number }) =>
+    request<RpgMe>('/rpg/allocate', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+}
+
+// --- Admin: 遊戲化角色數值（perm scope 'rpg'；見 internal/rpg admin.go） ---
+
+export interface AdminRpgUser {
+  id: string
+  name: string
+  email: string
+  is_vvip: boolean
+  has_character: boolean
+  free_points: number
+  job_level: number
+  stats?: RpgStats
+}
+
+export const adminRpgApi = {
+  config: (token: string) => request<{ config: RpgConfig; defaults: RpgConfig }>('/admin/rpg/config', { headers: withAuth(token) }),
+  setConfig: (token: string, config: RpgConfig) =>
+    request<{ config: RpgConfig; defaults: RpgConfig }>('/admin/rpg/config', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ config }) }),
+  // 入口狀態＋白名單：走專屬端點（perm 'rpg'），不透過 /admin/app-settings（那條路徑掛
+  // perm 'settings'，只勾「遊戲化」權限的管理者會被擋——見 code review finding，已修）。
+  getEntry: (token: string) => request<{ state: string; whitelist: string }>('/admin/rpg/entry', { headers: withAuth(token) }),
+  setEntry: (token: string, state: string, whitelist: string) =>
+    request<{ state: string; whitelist: string }>('/admin/rpg/entry', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ state, whitelist }) }),
+  users: (token: string, q?: string) => {
+    const qs = q ? `?q=${encodeURIComponent(q)}` : ''
+    return request<{ users: AdminRpgUser[] }>(`/admin/rpg/users${qs}`, { headers: withAuth(token) })
+  },
+  setVvip: (token: string, id: string, on: boolean) =>
+    request<{ ok: boolean }>(`/admin/rpg/users/${id}/vvip`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ on }) }),
+  reset: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/rpg/users/${id}/reset`, { method: 'POST', headers: withAuth(token) }),
+  setJobLevel: (token: string, id: string, jobLevel: number) =>
+    request<{ ok: boolean }>(`/admin/rpg/users/${id}/job-level`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ job_level: jobLevel }) }),
+  preview: (token: string, params: { base_level: number; job_level: number } & RpgStats) => {
+    const qs = new URLSearchParams()
+    qs.set('base_level', String(params.base_level))
+    qs.set('job_level', String(params.job_level))
+    ;(['str', 'agi', 'vit', 'dex', 'int', 'luk'] as RpgStatKey[]).forEach((k) => qs.set(k, String(params[k])))
+    return request<{ derived: RpgDerived; max_hp: number; max_mp: number; next_cost: Partial<RpgStats> }>(`/admin/rpg/preview?${qs.toString()}`, { headers: withAuth(token) })
+  },
 }

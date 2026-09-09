@@ -52,6 +52,7 @@ import (
 	"github.com/dor/api/internal/reward"
 	"github.com/dor/api/internal/rewardserial"
 	"github.com/dor/api/internal/routing"
+	"github.com/dor/api/internal/rpg"
 	"github.com/dor/api/internal/runcheer"
 	"github.com/dor/api/internal/runmeet"
 	"github.com/dor/api/internal/training"
@@ -232,6 +233,10 @@ func main() {
 
 	// Profile（完賽紀錄 + 個人統計）
 	profileHandler := profile.NewHandler(pool, wsManager)
+
+	// 遊戲化角色數值（見 internal/rpg，migration 175）：RO 素質系統，只有 VVIP／白名單管理者看得到
+	// （rpg_entry_state/whitelist + users.is_vvip），一般會員完全無感。
+	rpgHandler := rpg.NewHandler(pool)
 
 	// GPS 距離校正（見 internal/gpscalib）：以穿戴裝置匯入的活動為參考，估計 App GPS 系統性偏差。
 	gpsCalibHandler := gpscalib.NewHandler(pool)
@@ -560,6 +565,10 @@ func main() {
 			// （gps_calib_entry_state/whitelist），比照 monopoly/cheer-layout 前例：非白名單一律 403。
 			r.Mount("/me/gps-calib", gpsCalibHandler.Router())
 
+			// 遊戲化角色數值（見 internal/rpg）— GET /rpg/me、POST /rpg/allocate 皆掛套件私有
+			// requireEntry（rpg_entry_state/whitelist + is_vvip），非白名單一律 403（SEC-H5 同款）。
+			r.Mount("/rpg", rpgHandler.Router())
+
 			// 電子發票輸入時查驗（見 internal/einvoice/verify.go）：報名表單填手機條碼/愛心碼時
 			// 即時打 ECPay CheckBarcode/CheckLoveCode 確認號碼真的存在（抓 0/O、1/I 這類格式合法
 			// 但打錯字的輸入）— SEC-H1：20/min 防止被當成任意條碼枚舉工具。
@@ -656,6 +665,7 @@ func main() {
 			r.With(perm("organizer")).Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 			r.With(perm("partners")).Mount("/admin/partner-shops", partnerHandler.AdminRouter())
 			r.With(perm("monopoly")).Mount("/admin/monopoly", monopolyHandler.AdminRouter())
+			r.With(perm("rpg")).Mount("/admin/rpg", rpgHandler.AdminRouter())                 // 遊戲化角色數值（見 internal/rpg）
 			r.With(perm("run_meets")).Mount("/admin/run-meets", runMeetHandler.AdminRouter()) // 團練邀請（列表/下架/檢舉/配額/孤兒圖 GC）
 			r.With(perm("rewards")).Mount("/admin/reward-merchants", rewardSerialHandler.MerchantRouter())
 			r.With(perm("rewards")).Mount("/admin/reward-groups", rewardSerialHandler.GroupRouter())

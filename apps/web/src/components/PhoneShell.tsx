@@ -45,6 +45,7 @@ const MonopolyScreen = dynamic(() => import('./MonopolyScreen'), {
 })
 const RaceDetailScreen = dynamic(() => import('./RaceDetailScreen'), { ssr: false })
 const RunMeetScreen = dynamic(() => import('./RunMeetScreen'), { ssr: false })
+const CharacterScreen = dynamic(() => import('./CharacterScreen'), { ssr: false })
 
 // openEventSlug：廣告落地頁 /event/{slug} 傳入，開頁即直接顯示該活動簡章（見 app/event/[slug]/EventLanding.tsx）。
 // openShopId：合作商家專屬連結 /shop/{id} 傳入，開頁即直接顯示該商家詳細頁（見 app/shop/[id]/ShopLanding.tsx）。
@@ -71,6 +72,8 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
   // 團練邀請（見 components/RunMeetScreen）：?runmeet={id} 深連結可直接開到某個團練詳情
   const [showRunMeet, setShowRunMeet] = useState(false)
   const [runMeetInitialId, setRunMeetInitialId] = useState<string | undefined>(undefined)
+  // 遊戲化角色數值（第 21 套）：入口只在 dash.rpg_entry==='shown' 時出現，見 MemberPanel
+  const [showCharacter, setShowCharacter] = useState(false)
   const [titlesModal, setTitlesModal] = useState<{ code: string; name: string; tier: number; category: string }[]>([])
   const titlesHandled = useRef(false)
   const [unlockCardId, setUnlockCardId] = useState<string | undefined>(undefined)
@@ -210,6 +213,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     else if (showMonopoly) { path = '/monopoly'; title = '環台大富翁' }
     else if (showHeroes) { path = '/heroes'; title = '百里英雄榜' }
     else if (showRunMeet) { path = '/run-meets'; title = '團練邀請' }
+    else if (showCharacter) { path = '/character'; title = '角色' }
     else if (showExplore) { path = '/explore'; title = '城市探索' }
     else if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
     else if (showProfile || payRace) { path = '/profile'; title = '會員管理' }
@@ -218,7 +222,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     // 活動探索：與畫面渲染鏈同一順序評估（見下方 JSX），registerRace/detailRace 蓋在它上面時優先算那兩個
     else if (showActivityExplore) { path = '/activities'; title = '活動探索' }
     pageview(path, title)
-  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showRewards, showMonopoly, showHeroes, showRunMeet, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace, showActivityExplore])
+  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showRewards, showMonopoly, showHeroes, showRunMeet, showCharacter, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace, showActivityExplore])
 
   return (
     <GoogleAuthProvider>
@@ -253,6 +257,8 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
           <HundredHeroesScreen onBack={() => setShowHeroes(false)} />
         ) : showRunMeet ? (
           <RunMeetScreen onBack={() => { setShowRunMeet(false); setRunMeetInitialId(undefined) }} initialMeetId={runMeetInitialId} />
+        ) : showCharacter ? (
+          <CharacterScreen onBack={() => setShowCharacter(false)} />
         ) : showExplore ? (
           <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={(bossId) => { window.location.href = bossId ? '/track?focus=' + encodeURIComponent(bossId) : '/track' }} />
         ) : showPersonalTasks ? (
@@ -308,6 +314,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
             onOpenRewards={() => setShowRewards(true)}
             onOpenHeroes={() => setShowHeroes(true)}
             onOpenRunMeet={() => setShowRunMeet(true)}
+            onOpenRpg={() => setShowCharacter(true)}
           />
         )}
       </div>

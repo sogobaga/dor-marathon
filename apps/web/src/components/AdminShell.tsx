@@ -47,6 +47,9 @@ const NAV: { grp: string; items: NavItem[] }[] = [
       // ⚠️ 不接管上面營運群組既有的 teams 佔位——那是賽事的「跑團分組」語意，兩者無關。
       { k: 'run-meets', t: '團練邀請', href: '/admin/run-meets', perm: 'run_meets' },
       { k: 'monopoly', t: '環台大富翁', href: '/admin/monopoly', perm: 'monopoly' },
+      // 遊戲化角色數值（第 21 套，RO 素質系統）：只有 VVIP／白名單管理者能在前台看到，後台這頁管
+      // 參數（RpgConfig）＋入口白名單／VVIP 名單＋預覽計算。perm 需先在後端 adminacct.Scopes 註冊。
+      { k: 'rpg', t: '遊戲化', href: '/admin/rpg', perm: 'rpg' },
       { k: 'reward-serials', t: '序號/獎勵管理', href: '/admin/reward-serials', perm: 'rewards' },
       { k: 'reward-coupons', t: '活動優惠券管理', href: '/admin/reward-coupons', perm: 'rewards' },
       { k: 'interstitial', t: '蓋板廣告', href: '/admin/interstitial', perm: 'settings' },
