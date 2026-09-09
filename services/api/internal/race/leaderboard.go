@@ -157,21 +157,36 @@ func computeFinishersWith(ctx context.Context, db pgQueryer, raceID string) ([]f
 
 	var finishers []finisher
 	for uid, ua := range users {
-		sort.Slice(ua.events, func(i, j int) bool { return ua.events[i].at.Before(ua.events[j].at) })
+		// 穩定排序：同一時間點的事件飼主先、寵物後（同一趟跑步的飼主活動與寵物歸戶 recorded_at 相同）。
+		sort.SliceStable(ua.events, func(i, j int) bool {
+			if ua.events[i].at.Equal(ua.events[j].at) {
+				return ua.events[i].kind != "pet" && ua.events[j].kind == "pet"
+			}
+			return ua.events[i].at.Before(ua.events[j].at)
+		})
 		var ownerAcc, petAcc float64
 		var accTime int
-		for _, ev := range ua.events {
-			if ev.kind == "pet" {
-				petAcc += ev.dist
-			} else {
-				ownerAcc += ev.dist
-				accTime += ev.dur // 總時間只計飼主自己的跑步時長（見檔頭註解），不因寵物加總模式而重複計入同一趟時長
+		// 同一時間點（同一趟）的飼主＋寵物事件先全部累加、再判定達標：否則誰先被處理就決定「完賽當下」的分項數字
+		// （實測：飼主 0、狗狗 15.53，或飼主 6.82、狗狗 0），與「同一趟一起跑」的語意不符。
+		for i := 0; i < len(ua.events); {
+			j := i
+			for j < len(ua.events) && ua.events[j].at.Equal(ua.events[i].at) {
+				ev := ua.events[j]
+				if ev.kind == "pet" {
+					petAcc += ev.dist
+				} else {
+					ownerAcc += ev.dist
+					accTime += ev.dur // 總時間只計飼主自己的跑步時長（見檔頭註解），不因寵物加總模式而重複計入同一趟時長
+				}
+				j++
 			}
+			at := ua.events[i].at
+			i = j
 			score := ComposeScore(ua.mode, ownerAcc, petAcc)
 			if ua.target > 0 && score >= ua.target {
 				finishers = append(finishers, finisher{
 					userID: uid, groupID: ua.groupID, email: ua.email, nickname: ua.nickname, title: ua.title, groupName: ua.groupName,
-					completionAt: ev.at, totalTimeS: accTime, distanceKm: score,
+					completionAt: at, totalTimeS: accTime, distanceKm: score,
 					ownerKm: round2(ownerAcc), petKm: round2(petAcc), score: round2(score), petScoreMode: ua.mode,
 				})
 				break
