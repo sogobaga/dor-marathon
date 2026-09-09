@@ -41,6 +41,14 @@ type MyRaceStats struct {
 	TotalKm    float64 `json:"total_km"`
 	Activities int     `json:"activities"`
 	AscentM    float64 `json:"ascent_m"`
+	// OwnerKm/PetKm/Score/PetScoreMode：寵物雲端馬拉松成績規則（migration 174，D4）。非寵物賽事
+	// （race.pet_kind==""）或 personal 模式（本輪不支援，見 GetRaceProgress 註解）恆
+	// PetScoreMode=""（wirePetScoreMode 轉換過，見 pet_scoring.go）、PetKm=0、Score==OwnerKm==TotalKm，
+	// 前端可忽略這三個新欄位。
+	OwnerKm      float64 `json:"owner_km"`
+	PetKm        float64 `json:"pet_km"`
+	Score        float64 `json:"score"`
+	PetScoreMode string  `json:"pet_score_mode"`
 }
 
 // RaceProgress 進度頁回應
@@ -300,8 +308,10 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 		return nil, err
 	}
 	groupName := map[string]string{}
+	groupByID := map[string]*RaceGroup{}
 	for i := range groups {
 		groupName[groups[i].ID] = groups[i].Name
+		groupByID[groups[i].ID] = &groups[i]
 	}
 
 	myGroup := ""
@@ -358,6 +368,33 @@ func (s *Service) GetRaceProgress(ctx context.Context, raceID, userID string) (*
 		prog.My.AscentM += a.Ascent
 		prog.My.Activities++
 	}
+	// 寵物雲端馬拉松（migration 174，D4）：只在寵物賽事、非 personal 模式計算——personal 挑戰模式
+	// 「隨報隨進行」的個人時間窗與寵物成績規則如何互動尚未定案（沒有 race_groups/for_owner/for_pet
+	// 可用），本輪不處理，維持該組合下 PetKm=0/PetScoreMode="owner"（等同今天行為，不擋 personal
+	// 賽事本身其餘功能）。
+	prog.My.OwnerKm = round2(prog.My.TotalKm)
+	prog.My.PetScoreMode = PetScoreModeOwner
+	if race.PetKind != "" && race.EventMode != "personal" && userID != "" {
+		forOwner, forPet := true, true
+		if g := groupByID[myGroup]; g != nil {
+			if g.ForOwner != nil {
+				forOwner = *g.ForOwner
+			}
+			if g.ForPet != nil {
+				forPet = *g.ForPet
+			}
+		}
+		prog.My.PetScoreMode = EffectivePetScoreMode(race.PetKind, race.PetScoreMode, forOwner, forPet)
+		petTotals, err := loadPetKmTotals(ctx, s.repo.db, raceID, race.StartDate, race.EndDate)
+		if err != nil {
+			return nil, err
+		}
+		prog.My.PetKm = round2(petTotals[userID])
+	}
+	prog.My.Score = round2(ComposeScore(prog.My.PetScoreMode, prog.My.TotalKm, prog.My.PetKm))
+	// wirePetScoreMode：Score 算完才轉換，避免內部 sentinel "owner" 外洩成 JSON 非空字串誤導前端
+	// （見 pet_scoring.go 註解）。
+	prog.My.PetScoreMode = wirePetScoreMode(prog.My.PetScoreMode)
 
 	// 該分組成員活動
 	var groupActs []progAct

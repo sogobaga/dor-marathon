@@ -215,7 +215,7 @@ func TestNormalizeRequest_InvalidAddonKind(t *testing.T) {
 	}
 }
 
-// TestNormalizeRequest_PetKindValidation pet_kind 只能是 ''｜dog｜cat；pet_max_per_reg/pet_base_slots
+// TestNormalizeRequest_PetKindValidation pet_kind 只能是 ”｜dog｜cat；pet_max_per_reg/pet_base_slots
 // 缺省或超界一律夾回合法範圍（D1；DB CHECK BETWEEN 1 AND 20）。
 func TestNormalizeRequest_PetKindValidation(t *testing.T) {
 	if err := normalizeRequest(&CreateRaceRequest{Race: Race{PetKind: "bird"}}); err == nil {
@@ -277,5 +277,71 @@ func TestNormalizeRequest_GroupForOwnerForPetExplicitFalsePreserved(t *testing.T
 	}
 	if g.ForPet == nil || *g.ForPet {
 		t.Errorf("ForPet = %v, want *false preserved", g.ForPet)
+	}
+}
+
+// TestNormalizeRequest_PetScoreModeValidation 寵物成績規則（2026-09-09 owner request，migration 174，
+// D1）：只能是 ”｜pet｜owner_pet_sum；非寵物賽事（pet_kind==""）一律強制清空，比照 pet_slot 加購
+// 同一套守門邏輯（寵物成績規則對非寵物賽事無意義，殘留舊值只會製造混淆）。
+func TestNormalizeRequest_PetScoreModeValidation(t *testing.T) {
+	if err := normalizeRequest(&CreateRaceRequest{Race: Race{PetKind: "dog", PetScoreMode: "bogus"}}); err == nil {
+		t.Error("invalid pet_score_mode should error")
+	}
+
+	// 非寵物賽事：即使帶了 pet_score_mode 也強制清空，不報錯。
+	req := &CreateRaceRequest{Race: Race{PetKind: "", PetScoreMode: "owner_pet_sum"}}
+	if err := normalizeRequest(req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if req.PetScoreMode != "" {
+		t.Errorf("PetScoreMode = %q, want forced empty for non-pet race", req.PetScoreMode)
+	}
+
+	// 寵物賽事：合法值原樣保留。
+	for _, mode := range []string{"", "pet", "owner_pet_sum"} {
+		req := &CreateRaceRequest{Race: Race{PetKind: "dog", PetScoreMode: mode}}
+		if err := normalizeRequest(req); err != nil {
+			t.Fatalf("unexpected error for mode=%q: %v", mode, err)
+		}
+		if req.PetScoreMode != mode {
+			t.Errorf("PetScoreMode = %q, want preserved %q", req.PetScoreMode, mode)
+		}
+	}
+}
+
+// TestNormalizeRequest_CompetitionModeForcesPetKindEmpty 2026-09-09 review 修正：worker
+// aggregateStandings（分組對抗排行榜）不認得寵物成績，event_mode='competition' 一律強制
+// pet_kind=''（連帶 pet_score_mode 也一起清空），避免同一場賽事的分組排行榜（飼主里程）跟個人
+// 排行榜/進度（依寵物規則計分）數字互相矛盾。
+func TestNormalizeRequest_CompetitionModeForcesPetKindEmpty(t *testing.T) {
+	req := &CreateRaceRequest{Race: Race{EventMode: "competition", PetKind: "dog", PetScoreMode: "owner_pet_sum"}}
+	if err := normalizeRequest(req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if req.PetKind != "" {
+		t.Errorf("PetKind = %q, want forced empty for competition mode", req.PetKind)
+	}
+	if req.PetScoreMode != "" {
+		t.Errorf("PetScoreMode = %q, want forced empty for competition mode", req.PetScoreMode)
+	}
+}
+
+// TestNormalizeRequest_PersonalModeForcesPetScoreModeEmpty 2026-09-09 review 修正：
+// personal_progress.go 完全沒有寵物計分程式碼（progress.go/my_active.go 也明文排除 personal 模式），
+// event_mode='personal' 一律強制 pet_score_mode=''，避免管理表單殘留一個永遠不生效的規則值——
+// pet_kind 本身不受影響（個人挑戰賽仍可報名寵物，只是不採計寵物成績）。
+func TestNormalizeRequest_PersonalModeForcesPetScoreModeEmpty(t *testing.T) {
+	req := &CreateRaceRequest{Race: Race{
+		EventMode: "personal", PetKind: "dog", PetScoreMode: "pet",
+		ChallengeRule: &ChallengeRule{CompletionType: CompletionStreakDays, Days: 1, MinKmPerDay: 1},
+	}}
+	if err := normalizeRequest(req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if req.PetKind != "dog" {
+		t.Errorf("PetKind = %q, want preserved for personal mode", req.PetKind)
+	}
+	if req.PetScoreMode != "" {
+		t.Errorf("PetScoreMode = %q, want forced empty for personal mode", req.PetScoreMode)
 	}
 }

@@ -95,6 +95,14 @@ type ActivityEvent struct {
 	KmPaces       []int   `json:"km_paces,omitempty"` // 每公里分段配速(秒/km)
 	RawDistanceKm float64 `json:"raw_distance_km,omitempty"`
 	CalibFactor   float64 `json:"calib_factor,omitempty"`
+	// PetIDs 寵物雲端馬拉松歸戶（2026-09-09 owner request，migration 174，D3(a)）：這趟跑步「一起跑」
+	// 的寵物（registration_pets.id）。processOne 插入這筆活動列成功（真正新插入，非重複事件）後，
+	// 依此逐筆解析出 registration_id/race_id（見 insertPetActivities）並寫入 pet_activities
+	// （source='owner_run'）。空＝這趟沒有勾選任何寵物。
+	//
+	// ⚠️ 與 services/api/internal/activity/model.go 的同名 struct 是獨立第二份定義（worker 是獨立
+	// Go module，理由同上方註解），兩邊欄位必須手動同步。
+	PetIDs []string `json:"pet_ids,omitempty"`
 }
 
 func main() {
@@ -847,6 +855,17 @@ func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) (string, er
 		return "", fmt.Errorf("insert activity: %w", err)
 	}
 
+	// 寵物雲端馬拉松歸戶（migration 174，D3(a)）：只在「真正新插入」這個分支做（上面 ErrNoRows 分支
+	// 是重複事件，不重複記歸戶——pet_activities 的 UNIQUE(registration_pet_id, activity_id) 本來就
+	// 會擋，但這裡 newID 是空字串，查也查不到對應活動，提前跳過比較乾淨）。單筆失敗只記錄+告警，
+	// 不讓整趟活動因為寵物歸戶寫入失敗而回滾/重試（里程/EXP 已經發生，不能因為附屬資料失敗而卡住）。
+	if len(evt.PetIDs) > 0 {
+		if err := w.insertPetActivities(ctx, evt, newID); err != nil {
+			log.Error().Err(err).Str("activity_id", newID).Str("user_id", evt.UserID).
+				Msg("processOne: insertPetActivities failed (non-fatal, activity/EXP already recorded)")
+		}
+	}
+
 	// 去重感知、冪等地發放里程 EXP/DP/total_km（取代舊的「無條件 UPDATE total_km」+ awardMileageExp）：
 	// 若同一使用者存在時間重疊、已由其他來源（Strava/Terra）發放過的活動，這裡就不重發，
 	// 避免同一趟跑步被 GPS 與第三方來源各發一次。
@@ -855,6 +874,50 @@ func (w *Worker) processOne(ctx context.Context, msg redis.XMessage) (string, er
 	}
 
 	return evt.UserID, nil
+}
+
+// insertPetActivities 寵物雲端馬拉松歸戶（migration 174，D3(a)）：evt.PetIDs 依 registration_pets
+// 解析出各自的 registration_id/race_id（不是用 evt.RaceID——見 ActivityEvent 註解，evt.RaceID
+// 在一般上傳流程常是空字串/不可靠，registration_pets 才是權威來源），逐筆寫入 pet_activities
+// （source='owner_run'，distance/duration/recorded_at 複製這筆活動已寫入的校正後數值）。
+//
+// 冪等：靠 migrations/174 的 partial unique index uq_pet_activities_pet_activity
+// (registration_pet_id, activity_id) WHERE activity_id IS NOT NULL——ON CONFLICT DO NOTHING，
+// 不需要額外判斷是否已存在。以 user_id=evt.UserID 一併篩選 registration_pets，防止事件被竄改夾帶
+// 別人的寵物 id（API 層 SaveGPSRun 已驗證過一次，這裡是第二道防線，成本很低）。
+func (w *Worker) insertPetActivities(ctx context.Context, evt ActivityEvent, activityID string) error {
+	rows, err := w.db.Query(ctx, `
+		SELECT id::text, registration_id::text, race_id::text
+		FROM registration_pets
+		WHERE id = ANY($1::uuid[]) AND user_id = $2`, evt.PetIDs, evt.UserID)
+	if err != nil {
+		return fmt.Errorf("resolve registration_pets: %w", err)
+	}
+	type petRow struct{ petID, regID, raceID string }
+	var pets []petRow
+	for rows.Next() {
+		var p petRow
+		if err := rows.Scan(&p.petID, &p.regID, &p.raceID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan registration_pets: %w", err)
+		}
+		pets = append(pets, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, p := range pets {
+		if _, err := w.db.Exec(ctx, `
+			INSERT INTO pet_activities (registration_pet_id, registration_id, race_id, user_id, activity_id,
+			                            source, distance_km, duration_s, recorded_at)
+			VALUES ($1,$2,$3,$4,$5,'owner_run',$6,$7,$8)
+			ON CONFLICT (registration_pet_id, activity_id) DO NOTHING`,
+			p.petID, p.regID, p.raceID, evt.UserID, activityID, evt.DistanceKm, evt.DurationS, evt.RecordedAt); err != nil {
+			return fmt.Errorf("insert pet_activities (pet_id=%s): %w", p.petID, err)
+		}
+	}
+	return nil
 }
 
 // benignFlagReasons：flagged=true 但屬於「同帳號跨裝置/跨來源/同源重複」的良性標記——不是作弊，

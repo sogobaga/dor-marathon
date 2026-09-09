@@ -523,6 +523,12 @@ function ProgressBody({ race, registered, onRegister }: { race: Race; registered
 
   const tasks = prog.tasks ?? []
   const my = prog.my ?? { total_km: 0, activities: 0, ascent_m: 0 }
+  // 寵物雲端馬拉松（D4）：pet_score_mode 非空才是寵物賽事的有效計分規則；score＝依規則算出的成績
+  // （完賽判定/進度實際用的數字），非寵物賽事沒有這幾個欄位時 fallback 回 total_km 維持既有行為。
+  const petMode = my.pet_score_mode
+  const myScore = my.score ?? my.total_km
+  const ownerKm = my.owner_km ?? my.total_km
+  const petKm = my.pet_km ?? 0
   const groupsBy: { label: string; tasks: TaskProgress[] }[] = []
   for (const label of ['賽事集體', '所有分組共同（團體）', '本組團體', '所有分組共同（個人）', '本組個人']) {
     const ts = tasks.filter((t) => t.scope_label === label)
@@ -533,10 +539,19 @@ function ProgressBody({ race, registered, onRegister }: { race: Race; registered
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* 我的統計：未報名者顯示報名引導取代（見上方元件註解） */}
       {registered ? (
-        <div style={{ display: 'flex', gap: 10 }}>
-          <Stat label="我的里程" value={`${my.total_km.toFixed(1)} K`} />
-          <Stat label="活動" value={`${my.activities}`} />
-          <Stat label="爬升" value={`${Math.round(my.ascent_m)} m`} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Stat label="我的里程" value={`${myScore.toFixed(1)} K`} />
+            <Stat label="活動" value={`${my.activities}`} />
+            <Stat label="爬升" value={`${Math.round(my.ascent_m)} m`} />
+          </div>
+          {petMode ? (
+            <div style={{ display: 'flex', gap: 14, fontSize: 12, color: 'var(--tx-dim)' }}>
+              <span>飼主里程 {ownerKm.toFixed(1)} K</span>
+              <span>狗狗里程 {petKm.toFixed(1)} K</span>
+              {petMode === 'owner_pet_sum' && <span>合計 {myScore.toFixed(1)} K</span>}
+            </div>
+          ) : null}
         </div>
       ) : (
         <div style={progressRegHint}>

@@ -27,9 +27,18 @@ type MyActiveRace struct {
 	TasksDone    int       `json:"tasks_done"`  // 非 personal 適用；personal 恆為 0
 	TasksTotal   int       `json:"tasks_total"` // 非 personal 適用；personal 恆為 0
 
+	// OwnerKm/PetKm/Score/PetScoreMode：寵物雲端馬拉松成績規則（migration 174，D4）——非 personal
+	// 賽事直接取用下方 GetRaceProgress 已算好的 prog.My（同一份計算，見該函式，已經過 wirePetScoreMode
+	// 轉換）；personal 模式本輪不支援寵物成績（見 progress.go 註解），恆 PetScoreMode=""、
+	// OwnerKm==MyTotalKm、Score==MyTotalKm。
+	OwnerKm      float64 `json:"owner_km"`
+	PetKm        float64 `json:"pet_km"`
+	Score        float64 `json:"score"`
+	PetScoreMode string  `json:"pet_score_mode"`
+
 	ChallengeRule     *ChallengeRule     `json:"challenge_rule,omitempty"`     // personal 專用；其餘 nil
 	ChallengeProgress *ChallengeProgress `json:"challenge_progress,omitempty"` // personal 專用；其餘 nil
-	AttemptNo         int                `json:"attempt_no,omitempty"`        // personal 專用（reg.attempt_no）
+	AttemptNo         int                `json:"attempt_no,omitempty"`         // personal 專用（reg.attempt_no）
 }
 
 // activeRegRow 目前使用者「現在跑步會被計入」的候選賽事報名列（精簡欄位，供逐場組裝 MyActiveRace）。
@@ -119,6 +128,9 @@ func (s *Service) GetMyActiveRaces(ctx context.Context, userID string) ([]MyActi
 			EndDate:      race.EndDate,
 			MyTotalKm:    round2(totalKm),
 			MyActivities: count,
+			OwnerKm:      round2(totalKm),
+			Score:        round2(totalKm),
+			PetScoreMode: "", // wire 值：非寵物/personal 預設一律空字串，見 pet_scoring.go wirePetScoreMode 註解
 		}
 
 		if race.EventMode == "personal" {
@@ -142,6 +154,11 @@ func (s *Service) GetMyActiveRaces(ctx context.Context, userID string) ([]MyActi
 					item.TasksDone++
 				}
 			}
+			// 寵物雲端馬拉松（migration 174，D4）：直接沿用 GetRaceProgress 已算好的 prog.My，
+			// 不重複查一次 pet_activities（該函式內部已依 race.PetKind/EventMode 守門，非寵物賽事
+			// 這裡取到的就是 OwnerKm==MyTotalKm 的今天行為）。
+			item.OwnerKm, item.PetKm, item.Score, item.PetScoreMode =
+				prog.My.OwnerKm, prog.My.PetKm, prog.My.Score, prog.My.PetScoreMode
 		}
 
 		out = append(out, item)

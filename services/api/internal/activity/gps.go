@@ -54,6 +54,11 @@ type gpsRunReq struct {
 	EndedAt       string     `json:"ended_at"`
 	Points        []gpsPoint `json:"points"`
 	ClientVersion string     `json:"client_version"` // App/前端版號（量測用途，見 gpscalib acc_p50/p90 同批欄位）
+	// PetIDs 寵物雲端馬拉松歸戶（migration 174，D3(a)／D5）：這趟跑步「一起跑」的寵物
+	// （registration_pets.id），前端在結束跑步、上傳前的「這趟狗狗有一起跑嗎？」卡片勾選後帶入。
+	// 選填；必須全部屬於呼叫者名下的寵物報名紀錄（見 SaveGPSRun 對 Repository.ValidateOwnedPets 的呼叫），
+	// 否則整筆上傳回 400，不做「部分接受、忽略無效 ID」——避免冒用他人寵物歸戶出不實的寵物里程。
+	PetIDs []string `json:"pet_ids,omitempty"`
 }
 
 type gpsRunResult struct {
@@ -263,6 +268,13 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 		return nil, fmt.Errorf("軌跡點不足")
 	}
 
+	// 寵物歸戶（migration 174，D3(a)）：去重後驗證全部屬於呼叫者名下——放在最前面盡早失敗，
+	// 避免白算一輪 computeRun 卻因寵物名單有誤整筆打回。
+	req.PetIDs = dedupeStrings(req.PetIDs)
+	if err := s.repo.ValidateOwnedPets(ctx, userID, req.PetIDs); err != nil {
+		return nil, err
+	}
+
 	k, _ := gpscalib.EffectiveFactor(ctx, s.repo.db, userID)
 	calc, err := computeRun(req.Points, k)
 	if err != nil {
@@ -298,7 +310,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 	id, inserted, err := s.repo.InsertGPSRun(ctx, userID, req.RaceID, started, ended,
 		round2(rawKm), durationS, rawAvgPaceS, flagged, flagReason, len(req.Points), polyline, kmSplits,
 		k, round2(distanceKm), req.ClientVersion, calc.AccP50, calc.AccP90, calc.UsedPointCount,
-		excludedKm, calc.ExcludedSegs)
+		excludedKm, calc.ExcludedSegs, req.PetIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -330,6 +342,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 			KmPaces:       kmSplits,
 			RawDistanceKm: round2(rawKm),
 			CalibFactor:   k,
+			PetIDs:        req.PetIDs,
 		}
 		if err := enqueueActivityEvent(ctx, s.rdb, evt); err != nil {
 			log.Error().Err(err).Str("user_id", userID).Str("gps_run_id", id).
@@ -388,6 +401,24 @@ func accPercentiles(accs []float64) (p50, p90 *float64) {
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
 func round3(v float64) float64 { return math.Round(v*1000) / 1000 }
 
+// dedupeStrings 去除空字串與重複值，保留原始順序（GPS 上傳 pet_ids 用：避免前端誤帶重複 ID
+// 導致 Repository.ValidateOwnedPets 的筆數比對誤判失敗，見 SaveGPSRun）。
+func dedupeStrings(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
 // HistAvgPace 該會員歷史日常平均配速（秒/km；無資料回 0）
 func (r *Repository) HistAvgPace(ctx context.Context, userID string) int {
 	var v float64
@@ -405,22 +436,25 @@ func (r *Repository) HistAvgPace(ctx context.Context, userID string) int {
 func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, started, ended time.Time,
 	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, polyline string, kmPaces []int,
 	calibFactor, calibDistanceKm float64, clientVersion string, accP50, accP90 *float64, usedPointCount int,
-	excludedKm float64, excludedSegments int) (id string, inserted bool, err error) {
+	excludedKm float64, excludedSegments int, petIDs []string) (id string, inserted bool, err error) {
 	var rid interface{}
 	if raceID != "" {
 		rid = raceID
+	}
+	if petIDs == nil {
+		petIDs = []string{} // gps_runs.pet_ids NOT NULL DEFAULT '{}'（migration 174），避免傳 NULL 進去
 	}
 	err = r.db.QueryRow(ctx, `
 		INSERT INTO gps_runs (user_id, race_id, started_at, ended_at, distance_km, duration_s,
 		                      avg_pace_s, flagged, flag_reason, point_count, polyline, km_paces,
 		                      calib_factor, calib_distance_km, client_version, acc_p50, acc_p90, used_point_count,
-		                      excluded_km, excluded_segments)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12,$13,$14,NULLIF($15,''),$16,$17,$18,$19,$20)
+		                      excluded_km, excluded_segments, pet_ids)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12,$13,$14,NULLIF($15,''),$16,$17,$18,$19,$20,$21)
 		ON CONFLICT (user_id, started_at) DO NOTHING
 		RETURNING id`,
 		userID, rid, started, ended, distanceKm, durationS, avgPaceS, flagged, flagReason, pointCount, polyline, kmPaces,
 		calibFactor, calibDistanceKm, clientVersion, accP50, accP90, usedPointCount,
-		excludedKm, excludedSegments).Scan(&id)
+		excludedKm, excludedSegments, petIDs).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, nil // 同一趟已上傳過 → 冪等 no-op
 	}
@@ -448,6 +482,7 @@ type unenqueuedGPSRun struct {
 	EndedAt                    time.Time
 	KmPaces                    []int
 	Flagged                    bool
+	PetIDs                     []string // 寵物歸戶（migration 174）；讀回 gps_runs.pet_ids，補送時原樣帶回 ActivityEvent
 }
 
 // ListUnenqueuedGPS 找出「已寫入 gps_runs，卻因程序中斷（INSERT 與 XAdd 之間當機）而漏推入活動
@@ -476,7 +511,7 @@ type unenqueuedGPSRun struct {
 func (r *Repository) ListUnenqueuedGPS(ctx context.Context, olderThan time.Duration, limit int) ([]unenqueuedGPSRun, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT g.id::text, g.user_id::text, COALESCE(g.race_id::text,''), g.distance_km, g.duration_s,
-		       g.avg_pace_s, g.ended_at, g.calib_distance_km, g.calib_factor, g.km_paces, g.flagged
+		       g.avg_pace_s, g.ended_at, g.calib_distance_km, g.calib_factor, g.km_paces, g.flagged, g.pet_ids
 		FROM gps_runs g
 		WHERE g.enqueued_at IS NULL
 		  AND g.created_at < $1
@@ -495,7 +530,7 @@ func (r *Repository) ListUnenqueuedGPS(ctx context.Context, olderThan time.Durat
 		var g unenqueuedGPSRun
 		var calibDist *float64
 		if err := rows.Scan(&g.ID, &g.UserID, &g.RaceID, &g.RawDistanceKm, &g.DurationS,
-			&g.RawAvgPaceS, &g.EndedAt, &calibDist, &g.CalibFactor, &g.KmPaces, &g.Flagged); err != nil {
+			&g.RawAvgPaceS, &g.EndedAt, &calibDist, &g.CalibFactor, &g.KmPaces, &g.Flagged, &g.PetIDs); err != nil {
 			return nil, err
 		}
 		g.CalibDistanceKm = calibDist
@@ -534,6 +569,7 @@ func (s *Service) RequeueUnenqueued(ctx context.Context) {
 			UserID: g.UserID, RaceID: g.RaceID, DistanceKm: round2(calibDistanceKm),
 			DurationS: g.DurationS, AvgPaceS: avgPaceS, RecordedAt: g.EndedAt.Format(time.RFC3339),
 			RawDistanceKm: round2(g.RawDistanceKm), CalibFactor: g.CalibFactor,
+			PetIDs: g.PetIDs,
 		}
 		if !g.Flagged {
 			// 只有「一般上傳、未標記」路徑的原始事件才帶每公里分段配速，比照 SaveGPSRun 的組法；

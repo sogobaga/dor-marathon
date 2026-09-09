@@ -932,6 +932,9 @@ var (
 	}
 	// validPetKinds 寵物雲端馬拉松（migration 173）：''=非寵物賽事｜dog｜cat。
 	validPetKinds = map[string]bool{"": true, "dog": true, "cat": true}
+	// validPetScoreModes 寵物成績規則（2026-09-09 owner request，migration 174）：
+	// ''=依飼主里程（預設）｜pet=狗狗累積里程｜owner_pet_sum=飼主＋狗狗里程加總。
+	validPetScoreModes = map[string]bool{"": true, "pet": true, "owner_pet_sum": true}
 	// validAddonKinds 加購項目種類：item=一般品項（預設）｜pet_slot=加購寵物參賽名額。
 	validAddonKinds = map[string]bool{"item": true, "pet_slot": true}
 )
@@ -1011,6 +1014,18 @@ func normalizeRequest(req *CreateRaceRequest) error {
 	// 不論 pet_kind 是否為空都要夾成合法值——DB 欄位有 CHECK(pet_max_per_reg BETWEEN 1 AND 20)，
 	// 非寵物賽事這兩個數字本身無意義，但仍要給合法預設值（比照 repository.go 的 defaultPetMaxPerReg
 	// 第二道防線：這裡是 admin 全欄位表單路徑的第一道，CreateRaceWithReview 等簡單路徑走 repository 那道）。
+	//
+	// ⚠️ 2026-09-09 review 修正：competition 模式（分組對抗，worker aggregateStandings 預聚合
+	// race_group_standings 的排名依據）暫不支援寵物成績——該查詢只加總 activities.distance_km，
+	// 完全不知道 pet_activities 存在，若讓 pet_kind 跟 event_mode='competition' 並存，
+	// CompetitionStandings（分組排行榜）永遠只算飼主里程，跟同一場賽事的個人排行榜/進度/完賽證明
+	// （已套用寵物成績規則）兜不起來，兩邊數字互相矛盾。在把 aggregateStandings 也一併改寫成
+	// 寵物感知（需要接上真實 DB 才能驗證那段 SQL 不會因為 owner/pet 兩個 1-對-多 LEFT JOIN 疊在一起
+	// 而重複計算里程，本輪沒有可驗證的環境，不冒然動它）之前，先在這裡擋下這個組合，避免兩個子系統
+	// 顯示互相矛盾的數字——比照下面 goal_type／challenge_rule 對不相關模式強制清空的既有慣例。
+	if req.EventMode == "competition" {
+		req.PetKind = ""
+	}
 	if !validPetKinds[req.PetKind] {
 		return fmt.Errorf("invalid pet_kind: %s", req.PetKind)
 	}
@@ -1024,6 +1039,21 @@ func normalizeRequest(req *CreateRaceRequest) error {
 	} else if req.PetBaseSlots > req.PetMaxPerReg {
 		// 基本名額不能超過上限，否則 ValidatePets 的 want=base+加購 永遠 > 上限、整場報不了名（審查抓到）
 		req.PetBaseSlots = req.PetMaxPerReg
+	}
+	// PetScoreMode（migration 174）：合法性 + 非寵物賽事強制清空——比照上面 pet_slot 加購同一套守門
+	// 邏輯（寵物成績規則對非寵物賽事無意義，殘留舊值只會製造混淆）。
+	//
+	// ⚠️ 2026-09-09 review 修正：personal（個人挑戰）模式也強制清空——personal_progress.go 完全沒有
+	// pet_kind/pet_activities 相關程式碼（evaluateChallengeRule 不知道寵物成績這回事），progress.go／
+	// my_active.go 也已經明文把 personal 模式排除在寵物計分之外（見該處註解：「本輪不支援」）。若讓
+	// pet_score_mode 在 personal 賽事留著非空值，管理表單上選了一個實際上永遠不會被套用的規則、
+	// 之後查資料庫也看不出這是「刻意不支援」還是「忘了實作」——跟上面 pet_kind=="" 強制清空同一個
+	// 理由：殘留無效值只會製造混淆，及早清乾淨。
+	if !validPetScoreModes[req.PetScoreMode] {
+		return fmt.Errorf("invalid pet_score_mode: %s", req.PetScoreMode)
+	}
+	if req.PetKind == "" || req.EventMode == "personal" {
+		req.PetScoreMode = ""
 	}
 
 	for i := range req.Groups {
