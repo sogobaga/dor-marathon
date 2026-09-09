@@ -72,10 +72,6 @@ type Race struct {
 	PetMaxPerReg int `json:"pet_max_per_reg"`
 	// PetBaseSlots 報名即內含的基本寵物名額，目前固定為 1，存成欄位（而非寫死常數）供未來調整彈性。
 	PetBaseSlots int `json:"pet_base_slots"`
-	// PetScoreMode 寵物成績規則（2026-09-09 owner request，migration 174）：僅 PetKind!="" 時有意義，
-	// 非寵物賽事一律必須是 ""（service.normalizeRequest 強制清空，比照 pet_slot 加購的守門模式）。
-	// ""=依飼主里程（預設，等同今天行為）｜pet=狗狗累積里程｜owner_pet_sum=飼主＋狗狗里程加總。
-	PetScoreMode string `json:"pet_score_mode"`
 }
 
 // ChallengeRule 個人挑戰模式（event_mode=personal）的完成條件參數化模板。存於 races.challenge_rule JSONB。
@@ -602,9 +598,7 @@ type PetEntry struct {
 }
 
 // RegistrationPet 報名底下寵物資料的讀取用 DTO（我的報名／後台報名管理／後台訂單明細共用）。
-// ID 為 registration_pets.id（2026-09-09 補齊，D3(b) 供前端 pet_ids 勾選/歸戶用的穩定鍵）。
 type RegistrationPet struct {
-	ID     string `json:"id"`
 	Seq    int    `json:"seq"`
 	Name   string `json:"name"`
 	ChipID string `json:"chip_id,omitempty"`

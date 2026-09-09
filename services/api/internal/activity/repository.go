@@ -2,7 +2,6 @@ package activity
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -26,33 +25,6 @@ func (r *Repository) CurrentSessionEpoch(ctx context.Context, userID string) (in
 		return 0, fmt.Errorf("current session epoch: %w", err)
 	}
 	return epoch, nil
-}
-
-// ValidateOwnedPets 驗證 petIDs 全部屬於 userID 名下、且該筆報名「目前未取消」的寵物報名紀錄
-// （registration_pets.user_id，寵物雲端馬拉松 GPS 上傳歸戶用，migration 174，D3(a)）。空清單直接
-// 放行；任何一筆不存在、屬於別人、或所屬報名已取消都算驗證失敗（不做「部分接受、忽略無效 ID」），
-// 避免冒用他人寵物歸戶出不實的寵物里程。
-//
-// ⚠️ 2026-09-09 review 修正：加上 JOIN registrations reg ON ... AND reg.status <> 'cancelled'——
-// 非 personal 賽事允許取消後重新報名同一賽事（見 race/service.go），若不擋，使用者取消／退費某筆
-// 報名後仍能繼續拿該筆報名底下的 registration_pets 幫「新」報名歸戶寵物里程，讓已取消報名的寵物
-// 名額變相復活（見 pet_scoring.go petActivityRegJoinSQL 同款修正的完整說明）。
-func (r *Repository) ValidateOwnedPets(ctx context.Context, userID string, petIDs []string) error {
-	if len(petIDs) == 0 {
-		return nil
-	}
-	var cnt int
-	if err := r.db.QueryRow(ctx,
-		`SELECT COUNT(*) FROM registration_pets rp
-		 JOIN registrations reg ON reg.id = rp.registration_id AND reg.status <> 'cancelled'
-		 WHERE rp.id = ANY($1::uuid[]) AND rp.user_id=$2`,
-		petIDs, userID).Scan(&cnt); err != nil {
-		return fmt.Errorf("validate owned pets: %w", err)
-	}
-	if cnt != len(petIDs) {
-		return errors.New("寵物名單有誤")
-	}
-	return nil
 }
 
 // ListByUser 取得使用者的活動記錄（最新 N 筆）

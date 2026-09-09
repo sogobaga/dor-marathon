@@ -21,12 +21,6 @@ type Certificate struct {
 	RaceEnd       *time.Time `json:"race_end,omitempty"`
 	RaceEnded     bool       `json:"race_ended"`       // 賽事是否已結束（迄日已過）
 	BgURL         string     `json:"bg_url,omitempty"` // 後台自訂底圖（空=前台用預設設計）
-	// OwnerKm/PetKm/PetScoreMode：寵物雲端馬拉松成績規則（migration 174，D4）。非寵物賽事恆
-	// PetScoreMode=""（wirePetScoreMode 轉換過，見 pet_scoring.go）、PetKm=0、OwnerKm==CompletedKm，
-	// 前端可忽略。
-	OwnerKm      float64 `json:"owner_km,omitempty"`
-	PetKm        float64 `json:"pet_km,omitempty"`
-	PetScoreMode string  `json:"pet_score_mode,omitempty"`
 	// Layout 完賽證明可視化排版覆寫（見 RaceConfig.CertLayout）；此賽事未設定任何覆寫時為 nil，
 	// JSON 序列化省略此欄位（前端 renderCertificate 收到 undefined 時等同用內建預設，行為與 null 相同）。
 	Layout map[string]CertElementLayout `json:"layout,omitempty"`
@@ -97,7 +91,6 @@ func (s *Service) GetMyCertificate(ctx context.Context, raceID, userID string) (
 			cert.CompletionAt = &c
 			cert.TotalTimeS = f.totalTimeS
 			cert.FinishRank = i + 1
-			cert.OwnerKm, cert.PetKm, cert.PetScoreMode = f.ownerKm, f.petKm, wirePetScoreMode(f.petScoreMode)
 			break
 		}
 	}

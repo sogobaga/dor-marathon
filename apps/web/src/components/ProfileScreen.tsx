@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, gpsCalibApi, sourceLabel, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type TerraStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo, type VipCardInfo, type GpsCalibInfo, type DataSource } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendingGps'
@@ -62,65 +62,6 @@ function activitySourceLabel(source: string): string {
   if (source === 'strava') return 'Strava'
   return terraBrandName(source)
 }
-// 候選寵物名冊的一列——由 ProfileScreen 已載入的 profileApi.registrations() 在前端組出（見 petRoster
-// useMemo），不是後端 /activities/{id}/pets 回傳的（該端點只回目前勾選中的 id 名單，見下方註解）。
-type PetRosterEntry = { registration_pet_id: string; name: string; race_title: string }
-
-// 寵物雲端馬拉松（D3b）：單筆活動的「狗狗一起跑」歸屬切換（GET/POST /activities/{id}/pets）。點開才打
-// API（避免已同步活動一長串時 N+1）；POST 為整組取代，勾/取消勾都送目前勾選中的完整清單。
-//
-// ⚠️ 2026-09-09 review 修正：後端這兩支 API 只回傳「目前歸戶中的 registration_pet id 名單」
-// （{"pet_ids": string[]}）——沒有活動可比對，本來就不可能回傳「候選寵物有哪些」（名字/所屬賽事）。
-// 完整候選名冊（使用者名下所有未取消的寵物賽事報名底下的寵物）改由呼叫端傳入 roster prop（取自
-// ProfileScreen 既有的 regs 狀態，不必再打一次 API），這裡只用 pet_ids 決定 roster 裡哪些目前打勾。
-function PetAttributionToggle({ activityID, roster }: { activityID: string; roster: PetRosterEntry[] }) {
-  const [open, setOpen] = useState(false)
-  const [attributedIDs, setAttributedIDs] = useState<string[] | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  if (roster.length === 0) return null // 名下沒有任何寵物賽事的寵物，這顆按鈕沒有意義
-
-  async function onClick() {
-    if (attributedIDs) { setOpen((o) => !o); return }
-    try {
-      const { pet_ids } = await withUserAuth((t) => activitiesApi.getActivityPets(t, activityID))
-      setAttributedIDs(pet_ids); setOpen(true)
-    } catch { /* 靜默失敗：保持收合，使用者可再點一次重試 */ }
-  }
-  async function toggle(id: string, checked: boolean) {
-    if (!attributedIDs || busy) return
-    const nextIDs = checked ? [...new Set([...attributedIDs, id])] : attributedIDs.filter((x) => x !== id)
-    setBusy(true)
-    try {
-      const { pet_ids } = await withUserAuth((t) => activitiesApi.setActivityPets(t, activityID, nextIDs))
-      setAttributedIDs(pet_ids)
-    } catch { /* 忽略，畫面維持上次成功狀態 */ }
-    finally { setBusy(false) }
-  }
-
-  return (
-    <div style={{ marginTop: 3 }}>
-      <button onClick={onClick} style={{ background: 'transparent', border: 'none', padding: 0, fontSize: 11, fontWeight: 700, color: 'var(--fug)', cursor: 'pointer' }}>
-        🐾 狗狗一起跑{open ? ' ▲' : ' ▼'}
-      </button>
-      {open && attributedIDs && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-          {roster.map((p) => (
-            <label key={p.registration_pet_id} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--tx-dim)' }}>
-              <input
-                type="checkbox"
-                checked={attributedIDs.includes(p.registration_pet_id)}
-                disabled={busy}
-                onChange={(e) => toggle(p.registration_pet_id, e.target.checked)}
-              />
-              {p.name}
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 // 標成重複、且能指出「跟哪個來源重複」的 flag_reason：見 internal/profile/dedup.go（跨來源）與
 // internal/integration/repository.go detectDuplicate（多裝置）。其餘 flag_reason（跨帳號作弊、
 // 後台回收異常等）沒有「重複來源」語意，沿用舊的 FLAG_LABEL 文字。
@@ -168,17 +109,6 @@ function paceStr(sec: number) {
 export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenPersonalTasks, onOpenExplore, onOpenGallery, onOpenTitle, onOpenAchievement, onOpenTraining, onOpenPerks, onOpenMonopoly, onOpenRewards, onOpenHeroes, onOpenRunMeet }: { onBack: () => void; focusRaceID?: string; initialTab?: 'info' | 'sports' | 'records' | 'follows'; onOpenPersonalTasks?: () => void; onOpenExplore?: () => void; onOpenGallery?: () => void; onOpenTitle?: () => void; onOpenAchievement?: () => void; onOpenTraining?: () => void; onOpenPerks?: () => void; onOpenMonopoly?: () => void; onOpenRewards?: () => void; onOpenHeroes?: () => void; onOpenRunMeet?: () => void }) {
   const [p, setP] = useState<Profile | null>(null)
   const [regs, setRegs] = useState<MyRegistration[] | null>(null)
-  // 寵物雲端馬拉松（D5，2026-09-09 review 修正）：候選寵物名冊——名下所有「未取消」寵物賽事報名底下
-  // 的寵物，供已同步活動卡片的 PetAttributionToggle 使用，不必再為此另打一支 API（regs 本來就已含
-  // pets，見 MyRegistration.pets 註解）。
-  const petRoster = useMemo(() => {
-    const out: { registration_pet_id: string; name: string; race_title: string }[] = []
-    for (const r of regs ?? []) {
-      if (r.status === 'cancelled' || !r.pets) continue
-      for (const pet of r.pets) out.push({ registration_pet_id: pet.id, name: pet.name, race_title: r.race_title })
-    }
-    return out
-  }, [regs])
   const [payOrder, setPayOrder] = useState<MyOrder | null>(null)
   const [paying, setPaying] = useState(false)
   const [err, setErr] = useState('')
@@ -1049,9 +979,6 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                         View on Strava ↗
                       </a>
                     )}
-                    {/* 寵物雲端馬拉松（D3b）：任何來源(App GPS/Strava/Terra/歷史紀錄)的活動都能事後標記/取消
-                        「狗狗一起跑」——歸屬不限本次上傳當下，比照 track 頁「這趟狗狗有一起跑嗎？」同一套後端。 */}
-                    <PetAttributionToggle activityID={a.id} roster={petRoster} />
                   </div>
                 )
               })}

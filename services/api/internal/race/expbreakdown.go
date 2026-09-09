@@ -117,39 +117,20 @@ func (r *Repository) expBreakdown(ctx context.Context, raceID, userID string) (*
 		out.ExpBefore = 0
 	}
 
-	// 完成度：本場累積 score / 分組目標里程（無目標則視為 100%）。寵物雲端馬拉松（migration 174，
-	// D4）：score 依有效規則由飼主里程／狗狗累積里程／兩者加總組成（見 pet_scoring.go）；非寵物賽事
-	// （race.pet_kind==""）petKind 讀回空字串，score==totalKm，行為與 migration 174 之前完全相同。
-	// pet_km 子查詢重用 petActivityJoinGateSQL（與 leaderboard.go／progress.go 等其他計分呼叫端
-	// 同一套資料來源 gate），相關聯到外層 rc/reg 別名。
-	var totalKm, targetKm, petKm float64
-	var petKind, petScoreMode string
-	var forOwner, forPet bool
+	// 完成度：本場累積里程 / 分組目標里程（無目標則視為 100%）
+	var totalKm, targetKm float64
 	_ = r.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(a.distance_km),0), COALESCE(MAX(g.target_distance_km),0),
-		       COALESCE(MAX(rc.pet_kind),''), COALESCE(MAX(rc.pet_score_mode),''),
-		       COALESCE(BOOL_AND(COALESCE(g.for_owner,TRUE)),TRUE), COALESCE(BOOL_AND(COALESCE(g.for_pet,TRUE)),TRUE),
-		       COALESCE((
-		         SELECT SUM(pa.distance_km) FROM pet_activities pa
-		         LEFT JOIN activities la ON la.id = pa.activity_id
-		         WHERE pa.race_id = rc.id AND pa.registration_id = reg.id
-		           AND pa.recorded_at BETWEEN rc.start_date AND rc.end_date AND `+petActivityJoinGateSQL+`
-		       ), 0)
+		SELECT COALESCE(SUM(a.distance_km),0), COALESCE(MAX(g.target_distance_km),0)
 		FROM registrations reg
-		JOIN races rc ON rc.id = reg.race_id
+		JOIN races r ON r.id = reg.race_id
 		LEFT JOIN race_groups g ON g.id = reg.group_id
 		LEFT JOIN activities a ON a.user_id = reg.user_id AND NOT a.flagged
-		                      AND a.recorded_at BETWEEN rc.start_date AND rc.end_date
-		                      AND (a.source IS NULL OR (rc.external_data AND a.source <> 'strava'))
+		                      AND a.recorded_at BETWEEN r.start_date AND r.end_date
+		                      AND (a.source IS NULL OR (r.external_data AND a.source <> 'strava'))
 		WHERE reg.user_id=$1 AND reg.race_id=$2 AND reg.status<>'cancelled'`,
-		userID, raceID).Scan(&totalKm, &targetKm, &petKind, &petScoreMode, &forOwner, &forPet, &petKm)
-	completionScore := totalKm
-	if petKind != "" {
-		mode := EffectivePetScoreMode(petKind, petScoreMode, forOwner, forPet)
-		completionScore = ComposeScore(mode, totalKm, petKm)
-	}
+		userID, raceID).Scan(&totalKm, &targetKm)
 	if targetKm > 0 {
-		out.CompletionPct = completionScore / targetKm * 100
+		out.CompletionPct = totalKm / targetKm * 100
 		if out.CompletionPct > 100 {
 			out.CompletionPct = 100
 		}

@@ -222,15 +222,7 @@ function LbList({
                 <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--tx)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {r.nickname}{r.is_me ? '（我）' : ''}
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{r.group_name || ''} · {(r.score ?? r.distance_km).toFixed(1)}K</div>
-                {/* 寵物雲端馬拉松（D4）：pet_score_mode 非空才是寵物賽事的有效計分規則，依規則顯示飼主/狗狗拆分。 */}
-                {r.pet_score_mode ? (
-                  <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>
-                    {r.pet_score_mode === 'pet'
-                      ? `狗狗里程 ${(r.pet_km ?? 0).toFixed(1)}K`
-                      : `飼主 ${(r.owner_km ?? r.distance_km).toFixed(1)}K ＋ 狗狗 ${(r.pet_km ?? 0).toFixed(1)}K`}
-                  </div>
-                ) : null}
+                <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{r.group_name || ''} · {r.distance_km.toFixed(1)}K</div>
               </div>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fug)', whiteSpace: 'nowrap' }}>{metric(r)}</div>
               {loggedIn && !r.is_me && (

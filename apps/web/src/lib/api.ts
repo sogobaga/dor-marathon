@@ -267,12 +267,6 @@ export interface Race {
   pet_kind: '' | 'dog' | 'cat'
   pet_max_per_reg: number
   pet_base_slots: number
-  // 寵物成績規則（僅 pet_kind!=='' 時有意義；非寵物賽事恆為 ''=不影響既有行為）：
-  // ''=依飼主里程（預設，等同無寵物功能前）／'pet'=狗狗累積里程／'owner_pet_sum'=飼主＋狗狗里程加總。
-  // 實際生效規則仍受分組 for_owner/for_pet 限制（for_pet=false→視同'pet'不可能→退化 owner；
-  // for_owner=false 時 owner_pet_sum 退化為 pet），前端顯示以後端算好的 LeaderboardRow/RaceProgress
-  // 各欄位為準，這裡的欄位只用於表單編輯與「賽事設定」原樣顯示。
-  pet_score_mode: '' | 'pet' | 'owner_pet_sum'
 }
 
 // --- 取消退費政策（見後端 race.CancellationPolicy／race.ResolveCancellationPolicy）---
@@ -669,27 +663,12 @@ export interface GpsRunHistory {
 }
 export const activitiesApi = {
   // client_version：App/前端版號，供 GPS 距離校正量測用（見 internal/gpscalib），可不送。
-  // pet_ids：D5 狗狗歸屬——上傳當下勾選「這趟狗狗有一起跑」的 registration_pet id（見 track/page.tsx
-  // 的「這趟狗狗有一起跑嗎？」卡片），非寵物賽事/沒勾就不帶。
-  uploadGps: (token: string, body: { race_id?: string; started_at: string; ended_at: string; points: GpsPoint[]; client_version?: string; pet_ids?: string[] }) =>
+  uploadGps: (token: string, body: { race_id?: string; started_at: string; ended_at: string; points: GpsPoint[]; client_version?: string }) =>
     request<{ result: GpsRunResult }>('/activities/gps', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   gpsHistory: (token: string) => request<{ runs: GpsRunHistory[] }>('/activities/gps/history', { headers: withAuth(token) }),
   gpsDetail: (token: string, id: string) => request<{ run: GpsRunHistory }>(`/activities/gps/${id}`, { headers: withAuth(token) }),
   // 跑步中心跳（後台「目前在跑名單」用）；失敗可忽略
   trackPing: (token: string) => request<void>('/track/ping', { method: 'POST', headers: withAuth(token) }),
-  // D5：狗狗歸屬——查詢／覆寫某筆活動（任何來源：App GPS／Strava／Terra／歷史紀錄）目前歸屬的狗狗
-  // registration_pet id 名單。POST 為「整組取代」（見後端註解：insert missing, delete removed），
-  // 不是增量勾選。⚠️ 2026-09-09 review 修正：這兩支後端 handler（services/api/internal/activity/
-  // handler.go GetActivityPets/SetActivityPets）實際回傳的是 {"pet_ids": string[]}——只有目前歸戶中
-  // 的 id 名單，不含寵物名字/賽事名稱（那些沒有活動 id 可比對，本來就不知道「哪些是候選、哪些已
-  // 勾選」）。舊版這裡宣告成 {pets: ActivityPetOption[]} 一個前端自己想像出來、後端從未實作過的形狀，
-  // 導致 ProfileScreen 解構出來的 pets 恆為 undefined，checkbox 清單永遠不會顯示（見
-  // ProfileScreen.tsx PetAttributionToggle 同步修正：候選寵物名冊改由已載入的 profileApi.registrations()
-  // 在前端組出，這裡只負責「這筆活動目前勾了哪些」）。
-  getActivityPets: (token: string, activityID: string) =>
-    request<{ pet_ids: string[] }>(`/activities/${activityID}/pets`, { headers: withAuth(token) }),
-  setActivityPets: (token: string, activityID: string, petIDs: string[]) =>
-    request<{ pet_ids: string[] }>(`/activities/${activityID}/pets`, { method: 'POST', headers: withAuth(token), body: JSON.stringify({ pet_ids: petIDs }) }),
 }
 
 // --- GPS 距離校正（見 internal/gpscalib，2026-08-30）：以穿戴裝置(Strava/Garmin/COROS)匯入的活動為
@@ -1268,9 +1247,7 @@ export interface PetEntryPayload {
   chip_id?: string
 }
 // 報名/訂單讀回的寵物資料（含 seq 供匯出/明細顯示排序）；chip_id 後端一律回傳空字串而非省略。
-// id＝registration_pets.id，供 GPS 上傳的 pet_ids 勾選與 /activities/{id}/pets 歸屬切換使用。
 export interface RegistrationPet {
-  id: string
   seq: number
   name: string
   chip_id: string
@@ -1520,9 +1497,7 @@ export interface TaskProgress extends RaceTask {
   qualify_count: number
 }
 export interface RaceProgress {
-  // owner_km/pet_km/score/pet_score_mode：同 LeaderboardRow 註解，僅寵物賽事有意義；進度條/完賽判定
-  // 一律改用 score（非寵物賽事 score===total_km）。
-  my: { total_km: number; activities: number; ascent_m: number; owner_km?: number; pet_km?: number; score?: number; pet_score_mode?: '' | 'pet' | 'owner_pet_sum' }
+  my: { total_km: number; activities: number; ascent_m: number }
   has_group: boolean
   group_name?: string
   started: boolean
@@ -2012,13 +1987,6 @@ export interface LeaderboardRow {
   distance_km: number
   is_following: boolean
   is_me: boolean
-  // 寵物雲端馬拉松（僅該場 race.pet_kind!==''才有意義；非寵物賽事恆 owner_km===distance_km、
-  // pet_km===0、pet_score_mode===''）：owner_km=飼主里程、pet_km=狗狗累積里程、
-  // score=依 pet_score_mode 算出的成績（排名/完賽判定實際用的數字，distance_km 保留供舊版相容顯示）。
-  owner_km?: number
-  pet_km?: number
-  score?: number
-  pet_score_mode?: '' | 'pet' | 'owner_pet_sum'
 }
 export interface Leaderboard {
   finished_count: number
