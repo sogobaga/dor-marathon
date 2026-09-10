@@ -255,6 +255,10 @@ func main() {
 
 	// Admin 帳號管理 + 各模組權限
 	adminAcctHandler := adminacct.NewHandler(pool)
+	// 2026-09-10 事件驅動踢除：後台改管理者密碼（不經 auth.Service，直接下 SQL 寫
+	// tokens_not_before，見 adminacct.Handler.Update 的說明）成功後也要立即踢掉舊 WS 連線，
+	// 晚繫結注入 authSvc.PublishKick（見該方法與 KickChannel 的完整說明）。
+	adminAcctHandler.SetSessionKicker(authSvc.PublishKick)
 
 	// 事件任務（日常隨機事件 + Phase B 賽事多人連動）
 	eventHandler := event.NewHandler(pool, wsManager)
@@ -720,11 +724,17 @@ func main() {
 			}
 			// 2026-09-08 audit finding 4：連線建立當下只驗證這一次 token，之後長連線期間 token
 			// 過期/被撤銷（登出、密碼被改、單一登入踢除…）都不會中斷這條連線——傳入一個重跑
-			// 同一次 ValidateAccessToken 的 closure，讓 wsManager.ServeWS 在連線存活期間每
-			// 5 分鐘重新驗證一次（見 internal/realtime/hub.go Client.writePump），失敗即以
-			// 4401 關閉連線。
+			// 驗證的 closure，讓 wsManager.ServeWS 在連線存活期間每 revalidateInterval 重新
+			// 驗證一次（見 internal/realtime/hub.go Client.writePump），失敗即以 4401 關閉連線。
+			//
+			// 2026-09-10：改用 RevalidateAccessTokenNoDB（不查 DB，只查 Redis 撤銷名單）取代
+			// RevalidateAccessToken——「立即生效」的保證已改由 Kick 事件（見 auth.Service.
+			// PublishKick／wsManager 對 KickChannel 的訂閱）負責，這裡不再需要每條 WS 都定期查一次
+			// DB，這正是 Neon compute 永遠醒著、無法自動 suspend 的根因（見 go-live-todos）。
+			// dbwake.WithJob 只是防呆歸因：萬一日後又在這條路徑加回 DB 查詢，喚醒 log 至少能標出
+			// 是這裡觸發的，而不是籠統的 "background"（見 internal/dbwake 套件說明）。
 			wsManager.ServeWS(w, r, raceID, claims.UserID, func(ctx context.Context) error {
-				_, err := authSvc.RevalidateAccessToken(ctx, token) // 不看 exp，只抓撤銷/被踢（見 auth.Service.RevalidateAccessToken）
+				_, err := authSvc.RevalidateAccessTokenNoDB(dbwake.WithJob(ctx, "ws_revalidate"), token)
 				return err
 			})
 		})
@@ -742,9 +752,10 @@ func main() {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// 2026-09-08 audit finding 4：見 /ws/race 掛載點的說明，同樣的重新驗證 closure。
+		// 2026-09-08 audit finding 4／2026-09-10：見 /ws/race 掛載點的說明，同樣改用
+		// RevalidateAccessTokenNoDB + dbwake.WithJob 的重新驗證 closure。
 		wsManager.ServeWS(w, r, "global", claims.UserID, func(ctx context.Context) error {
-			_, err := authSvc.RevalidateAccessToken(ctx, token) // 不看 exp，只抓撤銷/被踢（見 auth.Service.RevalidateAccessToken）
+			_, err := authSvc.RevalidateAccessTokenNoDB(dbwake.WithJob(ctx, "ws_revalidate"), token)
 			return err
 		})
 	})

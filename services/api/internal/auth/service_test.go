@@ -409,6 +409,90 @@ func TestValidateAccessToken_HonoursRevocation_LegacyNoJTI(t *testing.T) {
 	}
 }
 
+// --- 2026-09-10：RevalidateAccessTokenNoDB（Neon 喚醒週期修法，見 service.go 該函式的完整說明）---
+//
+// 三個測試都用 newTestService()／newFakeRedisService(t)，兩者建構的 Service 皆帶 nil repo
+// （見各自函式註解）。若 RevalidateAccessTokenNoDB 不小心呼叫了 s.repo 的任何方法，會在 nil
+// pointer receiver 內部存取欄位時直接 panic、讓整個測試二進位失敗——這是本檔既有的慣例（見
+// validateAccess 對 `s.repo != nil` 的判斷式與其註解），不需要另外造一個「呼叫就 fail」的
+// repo 樁：nil 本身就是那個樁。
+
+// signAccessTokenWithExpiry 手刻一顆 typ="access" 的 token，可指定任意 iat/exp（含已過期）——
+// isAcceptableAccessTyp 對 typ=="access" 完全不看效期跨距（只有 typ=="" 的 legacy token 才檢查
+// exp-iat），parseTokenOpts(...WithoutClaimsValidation()) 也不驗證 exp，兩者合起來就是
+// RevalidateAccessTokenNoDB／RevalidateAccessToken 用來重驗「已建立的長連線」的核心行為：
+// 連線建立當下已經驗證過一次，重驗只抓撤銷/被踢，不該因為 access token 自然過期就斷線。
+func signAccessTokenWithExpiry(t *testing.T, s *Service, userID, jti string, iat, exp time.Time) string {
+	t.Helper()
+	claims := &Claims{
+		UserID: userID,
+		Role:   "user",
+		Typ:    "access",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(exp),
+			IssuedAt:  jwt.NewNumericDate(iat),
+			ID:        jti,
+		},
+	}
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.jwtSecret)
+	if err != nil {
+		t.Fatalf("sign access token: %v", err)
+	}
+	return tok
+}
+
+func TestRevalidateAccessTokenNoDB_AcceptsExpiredButValidAccessToken(t *testing.T) {
+	s := newTestService() // redis 打不通 → checkDenylist 對一般會員 fail-open，符合既有政策
+	now := time.Now()
+	tok := signAccessTokenWithExpiry(t, s, "u1", "jti-expired", now.Add(-2*time.Hour), now.Add(-time.Hour))
+
+	claims, err := s.RevalidateAccessTokenNoDB(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("expected an expired-but-otherwise-valid access token to be accepted, got err=%v", err)
+	}
+	if claims.UserID != "u1" {
+		t.Errorf("unexpected claims: %+v", claims)
+	}
+}
+
+func TestRevalidateAccessTokenNoDB_RejectsRefreshTyp(t *testing.T) {
+	s := newTestService()
+	pair, err := s.issueTokens(context.Background(), "u1", "user", 0)
+	if err != nil {
+		t.Fatalf("issueTokens: %v", err)
+	}
+	// refresh token 拿去打「WS 重驗」必須被拒絕，理由同 ValidateAccessToken：不讓長效 refresh
+	// token 冒充短效 access token（見 TestValidateAccessToken_RejectsRefreshTyp）。
+	if _, err := s.RevalidateAccessTokenNoDB(context.Background(), pair.RefreshToken); err != ErrTokenInvalid {
+		t.Errorf("expected ErrTokenInvalid for a refresh-typ token, got %v", err)
+	}
+}
+
+// TestRevalidateAccessTokenNoDB_RejectsDenylistedJTI 用 newFakeRedisService 讓 Redis 互動真的
+// 落地（比照 TestValidateAccessToken_HonoursRevocation）：Logout 撤銷一顆 access token 之後，
+// RevalidateAccessTokenNoDB 必須拒絕它——這是本修法唯一保留的 DB-free 撤銷檢查（denylist），
+// 也是「立即生效」保證從 DB 查詢搬到 Redis Pub/Sub（Kick 事件）之外，仍然留住的最後一層。
+func TestRevalidateAccessTokenNoDB_RejectsDenylistedJTI(t *testing.T) {
+	s := newFakeRedisService(t)
+	ctx := context.Background()
+
+	pair, err := s.issueTokens(ctx, "u1", "user", 0)
+	if err != nil {
+		t.Fatalf("issueTokens: %v", err)
+	}
+	if _, err := s.RevalidateAccessTokenNoDB(ctx, pair.AccessToken); err != nil {
+		t.Fatalf("token should be valid before logout, got err=%v", err)
+	}
+
+	if err := s.Logout(ctx, "u1", pair.AccessToken, ""); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+
+	if _, err := s.RevalidateAccessTokenNoDB(ctx, pair.AccessToken); err != ErrTokenInvalid {
+		t.Errorf("expected ErrTokenInvalid for a denylisted (revoked) access token, got %v", err)
+	}
+}
+
 // --- 2026-09-08 audit finding 7：Google 自動連結信任判斷（純函式）---
 
 func TestIsGoogleLinkTrusted(t *testing.T) {

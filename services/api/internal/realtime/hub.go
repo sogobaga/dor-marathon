@@ -41,8 +41,20 @@ const (
 	// 單一登入踢除…）也會一直活著，直到使用者自己重新整理頁面。見 Client.writePump 的重新
 	// 驗證迴圈：每 revalidateInterval 重打一次呼叫端注入的 revalidate closure，失敗就用
 	// closeCodeRevalidateFailed（RFC 6455 4000-4999 私有區段）主動關閉連線。
-	revalidateInterval        = 5 * time.Minute
+	//
+	// 2026-09-10：5→15 分鐘——呼叫端已改用 auth.Service.RevalidateAccessTokenNoDB（不查 DB，
+	// 只查 Redis 撤銷名單），且「立即生效」的保證已改由 KickUser／subscribeKicks 這條事件驅動
+	// 路徑負責（登入/改密碼/撤銷當下透過 Redis Pub/Sub 主動關閉舊連線），這裡退化成單純的
+	// backstop（Kick 事件因 Redis 短暫抖動漏送時的最後防線），可以拉長週期、降低成本。
+	revalidateInterval        = 15 * time.Minute
 	closeCodeRevalidateFailed = 4401
+
+	// kickChannel 是「單一登入強制踢除」的 Redis Pub/Sub 頻道名稱，必須與 auth.KickChannel 的值
+	// 完全一致（"user_kick"）——auth 套件已 import 本套件（見 auth.Handler.SetRealtime／
+	// PublishSessionRevoked 既有用法），這裡不能反過來 import auth 取常數（會造成 import
+	// cycle），故兩邊各自宣告同一個字串常數，純粹靠 Redis 頻道名稱字串本身耦合（與既有的
+	// "pubsub:race:"+raceID／PublishData 用固定 raceID "global" 是同一種耦合方式）。
+	kickChannel = "user_kick"
 )
 
 var upgrader = websocket.Upgrader{
@@ -84,6 +96,14 @@ type Client struct {
 	// ValidateAccessToken(ctx, token) 的 closure（同一顆連線建立時用的 token）；為 nil 時
 	// writePump 整段重新驗證迴圈跳過，行為等同修法前（僅供保守起見，正常呼叫路徑一定會傳）。
 	revalidate func(context.Context) error
+
+	// kick：2026-09-10 事件驅動踢除（見 kickChannel／Manager.KickUser／subscribeKicks）用的
+	// 信號 channel——buffered 1，non-blocking send（Hub.kickUser 觸發）。刻意不讓觸發端
+	// （subscribeKicks 的 goroutine）直接對 c.conn 呼叫 WriteMessage/Close：gorilla/websocket
+	// 的 *Conn 不支援併發寫入，目前整個套件只有 writePump 這一個 goroutine 會寫 conn，讓
+	// kickUser 也遵守這條規則、只送一個訊號，實際關閉動作仍在 writePump 自己的 select 迴圈裡
+	// 完成（與 revalidate 失敗時的關閉走同一段程式碼路徑：4401 close code）。
+	kick chan struct{}
 }
 
 // Hub manages all WebSocket clients for a single race.
@@ -124,12 +144,17 @@ type Manager struct {
 }
 
 func NewManager(rdb *redis.Client, pool pgxQueryer) *Manager {
-	return &Manager{
+	m := &Manager{
 		hubs:      make(map[string]*Hub),
 		rdb:       rdb,
 		raceCache: newRaceExistCache(pool),
 		perIPConn: make(map[string]int),
 	}
+	// 2026-09-10 事件驅動踢除：Manager 是行程存活期間唯一一份（main.go 只建一次），這裡直接起一顆
+	// 背景 goroutine 訂閱 kickChannel，比照既有各 Hub 的 run()/subscribeRedis() 用 context.
+	// Background()——這幾個背景 goroutine 目前都沒有明確的行程級關閉流程，進程結束時一併收工。
+	go m.subscribeKicks(context.Background())
+	return m
 }
 
 // RaceExists 回報 raceID 是否為真實存在的賽事（帶 TTL 快取，見 raceexists.go）。
@@ -363,6 +388,95 @@ func (m *Manager) PublishSessionRevoked(ctx context.Context, userID string, epoc
 	}
 }
 
+// subscribeKicks 訂閱 kickChannel（見該常數與 auth.Service.PublishKick 的完整說明，2026-09-10）：
+// 單一登入/改密碼/後台強制登出 事件驅動地即時關閉舊連線，取代讓每條 WS 定期回頭查 DB 才能發現
+// 「已被踢」的做法（revalidateInterval 現在只是 backstop，見上方常數說明）。純 Redis pub/sub，
+// 不碰 DB；訂閱斷線（Redis 重啟/網路抖動）用簡單的固定退避重連——這條背景連線斷了頂多退化回
+// 「依賴 revalidateInterval 這個 backstop」，不影響其他功能，不需要更複雜的重試策略。
+func (m *Manager) subscribeKicks(ctx context.Context) {
+	backoff := time.Second
+	const maxBackoff = 30 * time.Second
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		sub := m.rdb.Subscribe(ctx, kickChannel)
+		// 先用 Receive 確認訂閱真的成功（go-redis 的 Subscribe 本身不會立即回報連線層錯誤）；
+		// 失敗（含 Redis 打不通、ctx 取消）才進退避重試，成功後把退避重置。
+		if _, err := sub.Receive(ctx); err != nil {
+			sub.Close()
+			if ctx.Err() != nil {
+				return
+			}
+			log.Warn().Err(err).Msg("realtime: kick channel subscribe failed, retrying")
+			time.Sleep(backoff)
+			if backoff < maxBackoff {
+				backoff *= 2
+			}
+			continue
+		}
+		backoff = time.Second
+
+		ch := sub.Channel()
+	readLoop:
+		for {
+			select {
+			case <-ctx.Done():
+				sub.Close()
+				return
+			case msg, ok := <-ch:
+				if !ok {
+					break readLoop // 連線斷線（channel 關閉）：跳出內層迴圈，外層重新訂閱
+				}
+				log.Debug().Str("user", msg.Payload).Msg("realtime: kick received")
+				m.KickUser(msg.Payload)
+			}
+		}
+		sub.Close()
+	}
+}
+
+// KickUser 立即關閉所有屬於 userID 的 WebSocket 連線（不分 race／global），供 subscribeKicks
+// 收到 kickChannel 訊息時呼叫；獨立成方法也方便單元測試直接呼叫、不需要真的起一個 Redis
+// pub/sub（見 hub_test.go）。逐一走訪目前所有 Hub，在各自既有的 h.mu 保護下找出 userID 相符的
+// client 送出關閉信號——不另外維護一份 userID→client 的全域索引（多一份索引就多一個要跟
+// h.clients 保持同步的地方；連線總數上限只有 maxTotalConns=2000，逐一走訪的成本可忽略）。
+func (m *Manager) KickUser(userID string) {
+	if userID == "" {
+		return
+	}
+	m.mu.RLock()
+	hubs := make([]*Hub, 0, len(m.hubs))
+	for _, h := range m.hubs {
+		hubs = append(hubs, h)
+	}
+	m.mu.RUnlock()
+
+	for _, h := range hubs {
+		h.kickUser(userID)
+	}
+}
+
+// kickUser 對這個 Hub 底下所有 userID 相符的 client 送出關閉信號（見 Client.kick 欄位註解：
+// 實際關閉動作留給各自的 writePump goroutine 做，這裡不直接碰 c.conn）。
+func (h *Hub) kickUser(userID string) {
+	h.mu.RLock()
+	var targets []*Client
+	for c := range h.clients {
+		if c.userID == userID {
+			targets = append(targets, c)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, c := range targets {
+		select {
+		case c.kick <- struct{}{}:
+		default: // 已經有一個待處理的 kick 信號／writePump 正好在處理，不需要疊加
+		}
+	}
+}
+
 // ClientCount returns the number of connected clients.
 func (h *Hub) ClientCount() int {
 	h.mu.RLock()
@@ -397,6 +511,7 @@ func (m *Manager) ServeWS(w http.ResponseWriter, r *http.Request, raceID, userID
 		raceID:     raceID,
 		ip:         ip,
 		revalidate: revalidate,
+		kick:       make(chan struct{}, 1),
 		config: ClientConfig{
 			Enabled:            true,
 			RankingIntervalSec: 15,
@@ -503,6 +618,14 @@ func (c *Client) writePump() {
 				c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(closeCodeRevalidateFailed, "token revalidation failed"))
 				return
 			}
+		case <-c.kick:
+			// 2026-09-10 事件驅動踢除（見 kickChannel／Manager.KickUser 說明）：與上面 revalidate
+			// 失敗走同一個 4401 close code，前端既有的 WS onclose 處理不需要區分這條連線是被
+			// 「背景重驗踢的」還是「單一登入/改密碼即時踢的」。
+			log.Debug().Str("user", c.userID).Msg("ws client kicked, closing connection")
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(closeCodeRevalidateFailed, "session revoked"))
+			return
 		}
 	}
 }

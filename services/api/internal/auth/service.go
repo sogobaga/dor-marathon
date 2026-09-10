@@ -140,6 +140,7 @@ func (s *Service) Register(ctx context.Context, email, handle, name, password, r
 		return nil, nil, err
 	}
 	s.invalidateSessionCache(user.ID) // 見 Service.sessionCache 欄位註解
+	s.PublishKick(ctx, user.ID)       // 見 PublishKick：事件驅動踢舊 WS 連線，不靠它們背景重驗查 DB
 
 	pair, err := s.issueTokens(ctx, user.ID, user.Role, epoch)
 	if err != nil {
@@ -168,6 +169,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (*User, *To
 		return nil, nil, err
 	}
 	s.invalidateSessionCache(user.ID) // 見 Service.sessionCache 欄位註解
+	s.PublishKick(ctx, user.ID)       // 見 PublishKick：事件驅動踢舊 WS 連線，不靠它們背景重驗查 DB
 
 	pair, err := s.issueTokens(ctx, user.ID, user.Role, epoch)
 	if err != nil {
@@ -282,6 +284,7 @@ func (s *Service) LoginWithGoogle(ctx context.Context, idToken, refCode string, 
 		return nil, nil, err
 	}
 	s.invalidateSessionCache(user.ID) // 見 Service.sessionCache 欄位註解
+	s.PublishKick(ctx, user.ID)       // 見 PublishKick：事件驅動踢舊 WS 連線，不靠它們背景重驗查 DB
 
 	pair, err := s.issueTokens(ctx, user.ID, user.Role, epoch)
 	if err != nil {
@@ -579,6 +582,11 @@ func (s *Service) Logout(ctx context.Context, userID, accessToken, refreshToken 
 			firstErr = err
 		}
 	}
+	// 2026-09-10 review finding：revalidateInterval 這版從 5 分鐘拉到 15 分鐘（backstop 用途，
+	// 平常靠事件式踢除），若登出不順便發一次 kick，該分頁的 WS 連線最長要等 15 分鐘才會被
+	// backstop（走 checkDenylist）關掉——比原本 5 分鐘的窗口寬了 3 倍。這裡不論撤銷成功與否都
+	// 發，反正是 best-effort、不影響回傳的錯誤。
+	s.PublishKick(ctx, userID)
 	return firstErr
 }
 
@@ -594,7 +602,36 @@ func (s *Service) RevokeAllSessions(ctx context.Context, userID string) error {
 		return err
 	}
 	s.invalidateSessionCache(userID)
+	s.PublishKick(ctx, userID) // 見 PublishKick：事件驅動踢舊 WS 連線，不靠它們背景重驗查 DB
 	return nil
+}
+
+// KickChannel 是「單一登入強制踢除」的 Redis Pub/Sub 頻道名稱（2026-09-10 Neon 喚醒週期修法，
+// 見 PublishKick／RevalidateAccessTokenNoDB 的完整說明，以及 internal/realtime.Manager 對本頻道
+// 的訂閱）。訊息內容就是被踢帳號的 userID（純字串，不包 JSON）——realtime 套件已被 auth 套件
+// import（見 Handler.SetRealtime／PublishSessionRevoked），無法反過來 import auth 取用這個常數
+// 避免 import cycle，故 realtime 套件另外宣告一份同值的字串常數，純粹靠 Redis 頻道名稱本身耦合。
+const KickChannel = "user_kick"
+
+// PublishKick 廣播「這個使用者的所有 WebSocket 連線應立即中斷」事件（2026-09-10 Neon 喚醒週期
+// 修法）：Redis Pub/Sub，純盡力而為——沒有訂閱者、Redis 短暫不通都只記一行警告，不影響呼叫端
+// （登入／改密碼／後台強制登出）本身的流程，也不回傳錯誤（呼叫端不該因為「踢舊連線」這種
+// 錦上添花的動作失敗就讓整個登入/改密碼請求失敗）。
+//
+// 呼叫點：Register／Login／LoginWithGoogle 的 BumpSessionEpoch 之後（新登入踢舊裝置）、
+// RevokeAllSessions（密碼變更／後台 /admin/accounts/{id}/revoke-sessions 強制登出全部裝置）、
+// adminacct.Handler 密碼變更段落（透過 main.go 注入的 SetSessionKicker hook，因為 adminacct
+// 不持有 auth.Service 參照，直接對 users 表下 SQL，見該檔案的說明）。
+//
+// realtime.Manager 訂閱本頻道後直接關閉匹配 userID 的既有 WS 連線（見 hub.go 的
+// subscribeKicks／KickUser）——auth 與 realtime 兩個套件不互相持有對方的參照，只靠這個 Redis
+// 頻道名稱解耦串接，是本次修法把「WS 背景重驗改成不查 DB」（RevalidateAccessTokenNoDB）之後，
+// 用來補回「立即生效」保證的另一半：兩者合起來仍等同修法前的行為（token 被撤銷/踢除後，連線
+// 很快就會被關閉），差別只在於不再需要每條連線每 revalidateInterval 就查一次 DB。
+func (s *Service) PublishKick(ctx context.Context, userID string) {
+	if err := s.rdb.Publish(ctx, KickChannel, userID).Err(); err != nil {
+		log.Printf("auth.PublishKick: WARN redis publish failed user=%s err=%v", userID, err)
+	}
 }
 
 // GetUserByID 查詢使用者資料（供 handler 呼叫）
@@ -627,6 +664,45 @@ func (s *Service) RevalidateAccessToken(ctx context.Context, tokenStr string) (*
 	return s.validateAccess(ctx, tokenStr, true)
 }
 
+// RevalidateAccessTokenNoDB 給「已建立的長連線」（WebSocket）背景重驗用，取代 RevalidateAccessToken
+// ——2026-09-10 生產環境調查（見 go-live-todos）：v806 加的 WS 背景重驗（每 revalidateInterval 重打一次
+// RevalidateAccessToken）會經 getSessionState 查一次 DB（role/session_epoch/tokens_not_before），
+// 60 秒行程內快取只能壓低頻率、壓不到零——任何一個開著的 App/後台分頁都會維持一條 socket，等於
+// DB 永遠每 5 分鐘至少被查一次，Neon serverless compute 因此永遠無法閒置 5 分鐘、自動 suspend
+// 失效（觀測：awake ratio 67%→81%）。
+//
+// 修法：把「立即生效」的保證從「背景重驗查 DB」搬到「事件驅動」——登入/改密碼/撤銷當下透過
+// Redis Pub/Sub 主動關閉舊連線（見 PublishKick 與 internal/realtime.Manager 對 KickChannel 的
+// 訂閱），背景重驗只需要保留「token 本身還沒被撤銷」這一層檢查（撤銷名單 EXISTS，Redis-only），
+// 完全不碰 DB／不查 tokens_not_before／session_epoch、也不用行程內快取（sessionCache 本來就是
+// 為了省下這條查詢，這裡直接不查，快取無用武之地）。revalidateInterval 從 5 分鐘拉長到 15 分鐘
+// 只是備援（backstop）：萬一 Kick 事件因為 Redis 短暫抖動漏送，連線最慢 15 分鐘內仍會被這條
+// 路徑清掉，不是主要防線。
+//
+// 與 validateAccess 共用 parseTokenOpts(...WithoutClaimsValidation())（不看 exp，理由同
+// RevalidateAccessToken）、isAcceptableAccessTyp（typ 檢查）、checkDenylist（撤銷名單，fail-open
+// 給一般會員／fail-closed 給 admin，見該函式）；刻意不呼叫 s.getSessionState／s.repo 任何方法。
+func (s *Service) RevalidateAccessTokenNoDB(ctx context.Context, tokenStr string) (*Claims, error) {
+	claims, err := s.parseTokenOpts(tokenStr, jwt.WithoutClaimsValidation())
+	if err != nil {
+		return nil, err
+	}
+	var iat, exp time.Time
+	if claims.IssuedAt != nil {
+		iat = claims.IssuedAt.Time
+	}
+	if claims.ExpiresAt != nil {
+		exp = claims.ExpiresAt.Time
+	}
+	if !isAcceptableAccessTyp(claims.Typ, time.Now(), iat, exp, s.accessTTL) {
+		return nil, ErrTokenInvalid
+	}
+	if err := s.checkDenylist(ctx, claims, tokenStr); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
 func (s *Service) validateAccess(ctx context.Context, tokenStr string, ignoreExpiry bool) (*Claims, error) {
 	var claims *Claims
 	var err error
@@ -651,29 +727,10 @@ func (s *Service) validateAccess(ctx context.Context, tokenStr string, ignoreExp
 	if !isAcceptableAccessTyp(claims.Typ, time.Now(), iat, exp, s.accessTTL) {
 		return nil, ErrTokenInvalid
 	}
-	// 撤銷名單（denylist）：登出（Logout）時 access token 本身也會被撤銷，與 refresh 撤銷共用
-	// 同一個 key 空間（revocationKey）；查無 = 放行（Redis 重啟/清空不應把所有人誤登出，比照
-	// 既有 refresh 撤銷名單政策）。這裡是全站每個受保護請求都會經過的路徑，刻意只做一次 EXISTS
-	// （成本低），不追加其他 Redis 往返。
-	// 這條查詢在「每一個」帶 token 的請求路徑上：Redis 失聯時不能讓整站每個請求都卡到 go-redis 預設的
-	// 讀取逾時（秒級）才 fail-open，故另給 300ms 的獨立上限——查不到／逾時一律放行並記 Warn（沿用既有
-	// refresh denylist「查無＝放行」政策），撤銷檢查退化為盡力而為，不影響可用性。
-	//
-	// 2026-09-08 audit finding 3(e)：一般會員維持既有 fail-open（不能讓 Redis 短暫抖動變成全站
-	// 中斷）；admin token fail-closed——admin 能操作的範圍（後台改資料、退費、發送廣播…）風險
-	// 遠高於一般會員，寧可讓後台在 Redis 故障時暫時 503（前端可重試），也不要讓一顆本該被撤銷
-	// 的 admin token 在撤銷名單失效的當下繼續暢行無阻。claims.Role 是 JWT 自帶的角色宣告，與
-	// RequireAdmin／RequirePerm 等既有授權判斷信任同一個來源，非新的信任假設。
-	rctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	defer cancel()
-	if exists, err := s.rdb.Exists(rctx, revocationKey(claims, tokenStr)).Result(); err != nil {
-		if claims.Role == "admin" {
-			log.Printf("auth.ValidateAccessToken: WARN redis exists check failed, fail-closed for admin user=%s err=%v", claims.UserID, err)
-			return nil, ErrAuthUnavailable
-		}
-		log.Printf("auth.ValidateAccessToken: WARN redis exists check failed, fail-open user=%s err=%v", claims.UserID, err)
-	} else if exists > 0 {
-		return nil, ErrTokenInvalid
+	// 撤銷名單（denylist）：見 checkDenylist 的完整說明（2026-09-10 抽成獨立方法，供
+	// RevalidateAccessTokenNoDB 共用同一份 fail-open/fail-closed 政策，不重複這段邏輯）。
+	if err := s.checkDenylist(ctx, claims, tokenStr); err != nil {
+		return nil, err
 	}
 
 	// 2026-09-08 audit finding 3：tokens_not_before（全角色）＋ session_epoch（非 admin）現在也在
@@ -702,6 +759,38 @@ func (s *Service) validateAccess(ctx context.Context, tokenStr string, ignoreExp
 	}
 
 	return claims, nil
+}
+
+// checkDenylist 查詢撤銷名單（denylist）是否命中——登出（Logout）時 access token 本身也會被
+// 撤銷，與 refresh 撤銷共用同一個 key 空間（revocationKey）；查無 = 放行（Redis 重啟/清空不應
+// 把所有人誤登出，比照既有 refresh 撤銷名單政策）。這是全站每個受保護請求（含 WS 背景重驗）都
+// 會經過的路徑，刻意只做一次 EXISTS（成本低），不追加其他 Redis 往返。
+//
+// 這條查詢在「每一個」帶 token 的請求路徑上：Redis 失聯時不能讓整站每個請求都卡到 go-redis 預設
+// 的讀取逾時（秒級）才 fail-open，故另給 300ms 的獨立上限——查不到／逾時一律放行並記 Warn（沿用
+// 既有 refresh denylist「查無＝放行」政策），撤銷檢查退化為盡力而為，不影響可用性。
+//
+// 2026-09-08 audit finding 3(e)：一般會員維持既有 fail-open（不能讓 Redis 短暫抖動變成全站
+// 中斷）；admin token fail-closed——admin 能操作的範圍（後台改資料、退費、發送廣播…）風險
+// 遠高於一般會員，寧可讓後台在 Redis 故障時暫時 503（前端可重試），也不要讓一顆本該被撤銷
+// 的 admin token 在撤銷名單失效的當下繼續暢行無阻。claims.Role 是 JWT 自帶的角色宣告，與
+// RequireAdmin／RequirePerm 等既有授權判斷信任同一個來源，非新的信任假設。
+//
+// 2026-09-10：抽成獨立方法，供 validateAccess 與 RevalidateAccessTokenNoDB（WS 背景重驗，
+// 刻意不查 DB，見該函式說明）共用同一份政策，避免兩處各維護一份容易日後改一邊漏改另一邊。
+func (s *Service) checkDenylist(ctx context.Context, claims *Claims, tokenStr string) error {
+	rctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	if exists, err := s.rdb.Exists(rctx, revocationKey(claims, tokenStr)).Result(); err != nil {
+		if claims.Role == "admin" {
+			log.Printf("auth.checkDenylist: WARN redis exists check failed, fail-closed for admin user=%s err=%v", claims.UserID, err)
+			return ErrAuthUnavailable
+		}
+		log.Printf("auth.checkDenylist: WARN redis exists check failed, fail-open user=%s err=%v", claims.UserID, err)
+	} else if exists > 0 {
+		return ErrTokenInvalid
+	}
+	return nil
 }
 
 // sessionCacheTTL 見 Service.sessionCache 欄位註解：ValidateAccessToken 每個受保護請求都可能

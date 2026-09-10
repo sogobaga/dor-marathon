@@ -82,10 +82,23 @@ type Admin struct {
 
 type Handler struct {
 	db *pgxpool.Pool
+
+	// sessionKicker：2026-09-10 事件驅動踢除（見 auth.Service.PublishKick／
+	// internal/realtime.Manager 對 KickChannel 的訂閱）——adminacct 不持有 auth.Service 參照
+	// （見 Update 密碼變更段落的說明：這裡的 tokens_not_before UPDATE 直接下 SQL 完成，不透過
+	// auth 套件），main.go 用 setter 晚繫結注入 authSvc.PublishKick；未呼叫（如測試環境）時
+	// 維持 nil，Update 安全略過，行為等同修法前——只是少了「立即斷線」，仍靠 access token 的
+	// revalidateInterval backstop 兜底（見 hub.go）。
+	sessionKicker func(ctx context.Context, userID string)
 }
 
 func NewHandler(db *pgxpool.Pool) *Handler {
 	return &Handler{db: db}
+}
+
+// SetSessionKicker 注入「立即關閉此帳號所有 WebSocket 連線」的 hook，見 sessionKicker 欄位註解。
+func (h *Handler) SetSessionKicker(f func(ctx context.Context, userID string)) {
+	h.sessionKicker = f
 }
 
 // loadPerms 讀取某管理者的 is_super 與權限鍵；非 admin 回 (false,nil,nil)
@@ -314,6 +327,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
 		}
+		// 2026-09-10：UPDATE 成功後立即踢掉這個帳號現有的 WS 連線（見 sessionKicker 欄位註解），
+		// 不用等它們的 revalidateInterval backstop 才發現 tokens_not_before 已經變了。
+		if h.sessionKicker != nil {
+			h.sessionKicker(r.Context(), id)
+		}
 	}
 
 	var a Admin
@@ -358,6 +376,11 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.db.Exec(r.Context(), `DELETE FROM users WHERE id=$1 AND role='admin'`, id); err != nil {
 		respondErr(w, http.StatusBadRequest, "刪除失敗（此帳號可能有關聯資料）")
 		return
+	}
+	// 2026-09-10 review finding：帳號都刪了，現有 WS 連線不能留著——RevalidateAccessTokenNoDB
+	// 不查 DB，帳號被刪不會讓它失效，只能靠這裡主動踢，否則要等到瀏覽器分頁關掉為止。
+	if h.sessionKicker != nil {
+		h.sessionKicker(r.Context(), id)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
