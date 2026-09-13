@@ -18,6 +18,13 @@ export type SkillTrayProps = {
   onOffset: (n: number) => void;
   /** 每個技能 id 的剩餘冷卻毫秒；>0 才畫 CD 圓底＋秒數。 */
   cooldownMs?: Record<string, number>;
+  /**
+   * P1：即使沒有冷卻也要顯示為不可用的 id（MP 不足、或玩家目前不是 idle——依 engine/dispatch.ts 的
+   * 實際規則，charging/casting/guarding/recovering/dead 任何一種非 idle 狀態送 USE_SKILL/USE_ITEM
+   * 都會被拒絕，不只契約文字例示的「casting/guarding」兩種）。跟 cooldownMs 分開一條路徑，因為這類
+   * 不可用不需要顯示秒數倒數，只需要灰階＋disabled。
+   */
+  unavailableIds?: Set<string>;
   selectedId?: string | null;
   onPick: (id: string) => void;
   /** 邏輯寬高（預設 390×114）；元件內一律用百分比與 --s 縮放係數，不寫死 390。 */
@@ -93,6 +100,7 @@ export default function SkillTray({
   offset,
   onOffset,
   cooldownMs,
+  unavailableIds,
   selectedId,
   onPick,
   width = TRAY.width,
@@ -176,6 +184,7 @@ export default function SkillTray({
             key={`${mode}-${cur + i}`}
             entry={entry}
             cooldownMs={entry?.kind === 'skill' ? cooldownMs?.[entry.skill.id] ?? 0 : 0}
+            forcedUnavailable={!!entry && !!unavailableIds?.has(entry.kind === 'skill' ? entry.skill.id : entry.item.id)}
             selected={
               !!selectedId &&
               ((entry?.kind === 'skill' && entry.skill.id === selectedId) ||
@@ -206,11 +215,13 @@ export default function SkillTray({
 type TrayCellProps = {
   entry: CellEntry;
   cooldownMs: number;
+  /** P1：MP 不足或玩家忙碌中，即使沒有冷卻也顯示不可用（見 SkillTrayProps.unavailableIds）。 */
+  forcedUnavailable: boolean;
   selected: boolean;
   onPick: (id: string) => void;
 };
 
-function TrayCell({ entry, cooldownMs, selected, onPick }: TrayCellProps) {
+function TrayCell({ entry, cooldownMs, forcedUnavailable, selected, onPick }: TrayCellProps) {
   // 空格：只畫 frame_skill_empty，不可點。
   if (!entry) {
     return (
@@ -226,8 +237,8 @@ function TrayCell({ entry, cooldownMs, selected, onPick }: TrayCellProps) {
   const quantity = entry.kind === 'item' ? entry.item.quantity : null;
   const cooling = cooldownMs > 0;
   const depleted = quantity !== null && quantity <= 0;
-  // 冷卻中／數量 0 時不可點（kit preview 同樣把格子 disabled），圖示降飽和表示不可用。
-  const disabled = cooling || depleted;
+  // 冷卻中／數量 0／（P1）MP 不足或玩家忙碌中皆不可點，圖示降飽和表示不可用。
+  const disabled = cooling || depleted || forcedUnavailable;
 
   const cellClass = [
     styles.cell,
@@ -239,9 +250,11 @@ function TrayCell({ entry, cooldownMs, selected, onPick }: TrayCellProps) {
 
   const ariaLabel = cooling
     ? `${name}，冷卻中 ${Math.ceil(cooldownMs / 1000)} 秒`
-    : quantity !== null
-      ? `${name}，數量 ${quantity}`
-      : name;
+    : forcedUnavailable
+      ? `${name}，目前無法使用`
+      : quantity !== null
+        ? `${name}，數量 ${quantity}`
+        : name;
 
   return (
     <button

@@ -46,6 +46,14 @@
   position: absolute;
   pointer-events: none;
 }
+
+/* 攻擊特效層的定位 wrapper：CombatFxLayer 自己只有 canvas{position:absolute;inset:0}，沒有開放
+   style/zIndex prop，包一層純定位盒子帶 z-index，不必為此改 AUDIO_FX 的檔案。 */
+.fxLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
 .ring,
 .chevron {
   display: block;

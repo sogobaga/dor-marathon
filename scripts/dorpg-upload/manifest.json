@@ -1,0 +1,346 @@
+{
+ "dorpg/bgm/boss.mp3": {
+  "contentType": "audio/mpeg",
+  "etag": "8140ebcbdba630f79651ebebebeb9ab8",
+  "size": 4311502,
+  "srcSha256": "be8e14a523dc422436541e1c71c104eb26872c79cb641727cecaef813a2f25b8",
+  "uploadedAt": "2026-09-13T16:25:20+00:00",
+  "url": "https://img.dor.tw/dorpg/bgm/boss.mp3"
+ },
+ "dorpg/bgm/master.mp3": {
+  "contentType": "audio/mpeg",
+  "etag": "1be781b0c21adef47bf31e21e6743979",
+  "size": 4159155,
+  "srcSha256": "5674f807ab19a038cfba0f81219876da89e29339c4d6b229aa7b62517b692902",
+  "uploadedAt": "2026-09-13T16:25:19+00:00",
+  "url": "https://img.dor.tw/dorpg/bgm/master.mp3"
+ },
+ "dorpg/fx/digits/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "778b718e353317c45575b524aa2a8a58",
+  "size": 128800,
+  "srcSha256": "02094e6f116cc635c9c2a61ac50ac2a96b235056a46d6e9cac52a3ae02791e9e",
+  "uploadedAt": "2026-09-13T16:25:31+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/digits/atlas.webp"
+ },
+ "dorpg/fx/effects/bow/critical/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "c89242af1541c34196fa23e29530e385",
+  "size": 357116,
+  "srcSha256": "51def9ee92bfdee7e0a10d9ebb537ee75b0b2e960f33a727c732de85c090f117",
+  "uploadedAt": "2026-09-13T16:25:25+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/bow/critical/atlas.webp"
+ },
+ "dorpg/fx/effects/bow/immune/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "3175b8c965b94c7708852f982b703588",
+  "size": 146110,
+  "srcSha256": "3563186881f20c5443887d5a620e555b090f6a6a6615a0984d4d258b7f5188e6",
+  "uploadedAt": "2026-09-13T16:25:26+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/bow/immune/atlas.webp"
+ },
+ "dorpg/fx/effects/bow/miss/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "79926f646ff9b5174c7867e054b303fd",
+  "size": 93028,
+  "srcSha256": "0f55fe5063750c4880055a9fe8fdd1001d15daabaf8aa6123bac712a8efe894a",
+  "uploadedAt": "2026-09-13T16:25:26+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/bow/miss/atlas.webp"
+ },
+ "dorpg/fx/effects/bow/normal/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "dff054d044d1c32220860b16266a16ec",
+  "size": 173194,
+  "srcSha256": "6c505b7f4e5d25627a799f677df218d3fbb228989021064fa71d758c1fc5b33e",
+  "uploadedAt": "2026-09-13T16:25:25+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/bow/normal/atlas.webp"
+ },
+ "dorpg/fx/effects/greatsword/critical/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "50a7250f8a3c9ea41c90b8a475517409",
+  "size": 540406,
+  "srcSha256": "ad73e6d30c27a1a5cf3b2d1aa70e364f250c744ac277d28c8bdd1ae0847c50f0",
+  "uploadedAt": "2026-09-13T16:25:27+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/greatsword/critical/atlas.webp"
+ },
+ "dorpg/fx/effects/greatsword/immune/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "6cddee1615b744505c95ccdd9fa3b037",
+  "size": 291572,
+  "srcSha256": "1c92f03b4ad9326943c65456aafeb03db0ec6d7806e9b7621d90aa47130da4a6",
+  "uploadedAt": "2026-09-13T16:25:28+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/greatsword/immune/atlas.webp"
+ },
+ "dorpg/fx/effects/greatsword/miss/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "35ccc915a04058afe270e8f30f042c68",
+  "size": 334850,
+  "srcSha256": "ce7ce0d1e031af510a1e9ccad81cf55fa60e8d93755a7bf6b75d972b15806758",
+  "uploadedAt": "2026-09-13T16:25:28+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/greatsword/miss/atlas.webp"
+ },
+ "dorpg/fx/effects/greatsword/normal/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "5bc9fd2845091d0e2330cccc0ef70331",
+  "size": 464816,
+  "srcSha256": "864b024d6ea7ba00d2346a1d449985c153954d56803655cb6cccf859c576f789",
+  "uploadedAt": "2026-09-13T16:25:26+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/greatsword/normal/atlas.webp"
+ },
+ "dorpg/fx/effects/staff/critical/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "24f45f1c9016a4dfeb5a7ba6b838917d",
+  "size": 380412,
+  "srcSha256": "b8ed602e652e3f1418724cdc6abbe2066ca19ffaa915aa6c650cddc5afa55088",
+  "uploadedAt": "2026-09-13T16:25:23+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/staff/critical/atlas.webp"
+ },
+ "dorpg/fx/effects/staff/immune/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "71f324c109574a7629f991b4ccc756f0",
+  "size": 303486,
+  "srcSha256": "b2d954b5b0f56a2ae509b2c5ca9d2d03dcfe1c7c2389cb19b274ac6494774a8f",
+  "uploadedAt": "2026-09-13T16:25:24+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/staff/immune/atlas.webp"
+ },
+ "dorpg/fx/effects/staff/miss/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "d25f0aa59b560b4b8c2283f8dd873a53",
+  "size": 163276,
+  "srcSha256": "fbe023013ebeba12d4eb23b7df238e06d5cf692cf5622887d320305811156fef",
+  "uploadedAt": "2026-09-13T16:25:24+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/staff/miss/atlas.webp"
+ },
+ "dorpg/fx/effects/staff/normal/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "07286423ef600228d923b1331753fa5d",
+  "size": 216120,
+  "srcSha256": "5468a3aca36f9134f23f88c147447d698a99956c8bec8a450bd1b7d9e6c6585c",
+  "uploadedAt": "2026-09-13T16:25:23+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/staff/normal/atlas.webp"
+ },
+ "dorpg/fx/effects/sword/critical/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "22caba818acd9fd4c0c8a1c039ea8e2a",
+  "size": 435370,
+  "srcSha256": "88adcb648871abe173ee0976f0ca1cda818427981a1ed309526b6605ea88ab30",
+  "uploadedAt": "2026-09-13T16:25:21+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/sword/critical/atlas.webp"
+ },
+ "dorpg/fx/effects/sword/immune/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "9eea328a8b940f8242bfb80ec99506f3",
+  "size": 181584,
+  "srcSha256": "d675e88d8fc44352e26661cd2a75a9c8038fa63c99a01916144cd6f813049767",
+  "uploadedAt": "2026-09-13T16:25:22+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/sword/immune/atlas.webp"
+ },
+ "dorpg/fx/effects/sword/miss/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "2125fde3b5069638c36947668424ac50",
+  "size": 187272,
+  "srcSha256": "e8db299cf767514420b08f390cc99d95ab54d5467a95104dc4d5e8abd5d6743e",
+  "uploadedAt": "2026-09-13T16:25:22+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/sword/miss/atlas.webp"
+ },
+ "dorpg/fx/effects/sword/normal/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "a5c595955279f8184f34ff608f5f1c12",
+  "size": 180236,
+  "srcSha256": "f8779e147e5965fcff550f0d58e6363fa33ae9b196957e9bcf974aa72c9033e4",
+  "uploadedAt": "2026-09-13T16:25:21+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/effects/sword/normal/atlas.webp"
+ },
+ "dorpg/fx/labels/critical/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "04a918abcbf7c4d64cacc67b3a69e2c0",
+  "size": 583616,
+  "srcSha256": "789d1ae3d8c1d843677da4a0ee3dfe4561d650fd42264edb142dea5dad0801ed",
+  "uploadedAt": "2026-09-13T16:25:29+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/labels/critical/atlas.webp"
+ },
+ "dorpg/fx/labels/critical/label.webp": {
+  "contentType": "image/webp",
+  "etag": "07506ec306ef5be3e280a12c6cf085c9",
+  "size": 144770,
+  "srcSha256": "e4fe0c1ef6630182df275724699341a0fa313d80a45f03558f6fa7d8d2701a3d",
+  "uploadedAt": "2026-09-13T16:25:29+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/labels/critical/label.webp"
+ },
+ "dorpg/fx/labels/miss/atlas.webp": {
+  "contentType": "image/webp",
+  "etag": "94b2b8f2ff57374baaa5ce164b0cd69c",
+  "size": 321150,
+  "srcSha256": "6f65ee31ffb2866e126000653be431388249a7416abff7bfc9e893147ea7dcaf",
+  "uploadedAt": "2026-09-13T16:25:30+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/labels/miss/atlas.webp"
+ },
+ "dorpg/fx/labels/miss/label.webp": {
+  "contentType": "image/webp",
+  "etag": "f4e86e1ece67a37aa7dcbf32dd4f7bf4",
+  "size": 79250,
+  "srcSha256": "2bd2e0877bd1cde62317e10485bdcc8ad8982433e08979b7d0fed85a98c7676d",
+  "uploadedAt": "2026-09-13T16:25:30+00:00",
+  "url": "https://img.dor.tw/dorpg/fx/labels/miss/label.webp"
+ },
+ "dorpg/mon/DOR-MON-A-67000200001/attack.webp": {
+  "contentType": "image/webp",
+  "etag": "f46d2d0cd291deb00025e01abdf9565d",
+  "size": 443096,
+  "srcSha256": "9971edb46d2ef60fe8b0cf0e7cb14c857de5731abd339a5d682a557ef50e05f4",
+  "uploadedAt": "2026-09-13T16:25:08+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-A-67000200001/attack.webp"
+ },
+ "dorpg/mon/DOR-MON-A-67000200001/death.webp": {
+  "contentType": "image/webp",
+  "etag": "49f23b6a6037c0869c1021a844486240",
+  "size": 337238,
+  "srcSha256": "f21888befe461896e12abc0e1b158980839be9df487e6a7f31ae21667aed98c4",
+  "uploadedAt": "2026-09-13T16:25:09+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-A-67000200001/death.webp"
+ },
+ "dorpg/mon/DOR-MON-A-67000200001/hit.webp": {
+  "contentType": "image/webp",
+  "etag": "c2f768ea912f97bcae901264db142fac",
+  "size": 388378,
+  "srcSha256": "02d475f9415c93ba816bc08af5540ad532a0b79ab6da6e94a567edbeff7ab06a",
+  "uploadedAt": "2026-09-13T16:25:08+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-A-67000200001/hit.webp"
+ },
+ "dorpg/mon/DOR-MON-A-67000200001/idle.webp": {
+  "contentType": "image/webp",
+  "etag": "cc06d7b4b638e324a75bf697604c6fbb",
+  "size": 393134,
+  "srcSha256": "339611f9095d6839f00c28e2ec20d8437dfb6ea84259f6776084746544241479",
+  "uploadedAt": "2026-09-13T16:25:07+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-A-67000200001/idle.webp"
+ },
+ "dorpg/mon/DOR-MON-B-0089/attack.webp": {
+  "contentType": "image/webp",
+  "etag": "ee52c03c8277e944a586de1519cf59c2",
+  "size": 299228,
+  "srcSha256": "92990cba7c4902a48a1e5f888711dd5f31b5485af56eb83067b672b47980993b",
+  "uploadedAt": "2026-09-13T16:25:10+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-B-0089/attack.webp"
+ },
+ "dorpg/mon/DOR-MON-B-0089/death.webp": {
+  "contentType": "image/webp",
+  "etag": "dbfd3982f19adc730429d26d70ca48e3",
+  "size": 262576,
+  "srcSha256": "a0e3ec177229c07452e29418552c4ffd5d19006525c2878ec5097d1fbf4e5e06",
+  "uploadedAt": "2026-09-13T16:25:11+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-B-0089/death.webp"
+ },
+ "dorpg/mon/DOR-MON-B-0089/hit.webp": {
+  "contentType": "image/webp",
+  "etag": "a1c33ab782544875c54c7185199ffc88",
+  "size": 304396,
+  "srcSha256": "ec4902fee575cbd7bddcfe4b0d7ada3c1e66aed606295ee75562ddecf4a30240",
+  "uploadedAt": "2026-09-13T16:25:10+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-B-0089/hit.webp"
+ },
+ "dorpg/mon/DOR-MON-B-0089/idle.webp": {
+  "contentType": "image/webp",
+  "etag": "a18797720b03dc0ca592042c32d47989",
+  "size": 292984,
+  "srcSha256": "afc43cbdfb25957b52e2e6d09ed9bc58f5b68256b509173db9b5e39a0394619a",
+  "uploadedAt": "2026-09-13T16:25:09+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-B-0089/idle.webp"
+ },
+ "dorpg/mon/DOR-MON-C-0229/attack.webp": {
+  "contentType": "image/webp",
+  "etag": "b579e2bbb3c197aefc6340eedf3a76ea",
+  "size": 346558,
+  "srcSha256": "66e28c3ac3d06b7a23a4d32315a30fc61458682b7ff3b10e7e82682bf2e0db59",
+  "uploadedAt": "2026-09-13T16:25:13+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-C-0229/attack.webp"
+ },
+ "dorpg/mon/DOR-MON-C-0229/death.webp": {
+  "contentType": "image/webp",
+  "etag": "c80b65636d5a257e39ab46da5ec27138",
+  "size": 291392,
+  "srcSha256": "b95959c0aef38ff157d11a68aeb1aa2e9e1a59e9cabc40853cb71e01cc8d4144",
+  "uploadedAt": "2026-09-13T16:25:14+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-C-0229/death.webp"
+ },
+ "dorpg/mon/DOR-MON-C-0229/hit.webp": {
+  "contentType": "image/webp",
+  "etag": "4c6c755b8a826815afad5ae2497207a7",
+  "size": 351834,
+  "srcSha256": "ce124e8e621e2f723ed5363db84201f20d93be8b0c9cfada1a95c3d48d6d3840",
+  "uploadedAt": "2026-09-13T16:25:13+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-C-0229/hit.webp"
+ },
+ "dorpg/mon/DOR-MON-C-0229/idle.webp": {
+  "contentType": "image/webp",
+  "etag": "62f1a9856b0ddd2ffafc1a0dc8d762eb",
+  "size": 341486,
+  "srcSha256": "5f0624e7b073f951d06d1abfa20171ed344e357dd0939af452a29e5a6d21c947",
+  "uploadedAt": "2026-09-13T16:25:12+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-C-0229/idle.webp"
+ },
+ "dorpg/mon/DOR-MON-D-0182/attack.webp": {
+  "contentType": "image/webp",
+  "etag": "deb2644cc9a94a1556086afe2434c136",
+  "size": 291114,
+  "srcSha256": "b20af5bdb9a71b0cb6b15c8065563c7a4946de61f238744d61b42875d959d657",
+  "uploadedAt": "2026-09-13T16:25:15+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-D-0182/attack.webp"
+ },
+ "dorpg/mon/DOR-MON-D-0182/death.webp": {
+  "contentType": "image/webp",
+  "etag": "f3f9fcce50b5b7fe26e79abc515c87d7",
+  "size": 211768,
+  "srcSha256": "f864079aacf0683c1e3d9426fa276a3b98d8e48e6bc253268978183933f53b89",
+  "uploadedAt": "2026-09-13T16:25:16+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-D-0182/death.webp"
+ },
+ "dorpg/mon/DOR-MON-D-0182/hit.webp": {
+  "contentType": "image/webp",
+  "etag": "6bb47c44653b1ec6448c958154f9f735",
+  "size": 286330,
+  "srcSha256": "6b0e981cfcbc363da10c92c151d5a381731b288988be0f84c7f39c31f5004222",
+  "uploadedAt": "2026-09-13T16:25:16+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-D-0182/hit.webp"
+ },
+ "dorpg/mon/DOR-MON-D-0182/idle.webp": {
+  "contentType": "image/webp",
+  "etag": "d55f75a6b921c60870673949becfb529",
+  "size": 286634,
+  "srcSha256": "d056ebc8f59c250067ca59bcb929ec0f95fbe30139dc8658b12b9595e43f7544",
+  "uploadedAt": "2026-09-13T16:25:15+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-D-0182/idle.webp"
+ },
+ "dorpg/mon/DOR-MON-E-0052/attack.webp": {
+  "contentType": "image/webp",
+  "etag": "304fb2c0600e8da7425271dde8be24aa",
+  "size": 307250,
+  "srcSha256": "f77f490f519e3226569db1a08085d1d290b5cb21adbcc5493bf8ca915c1ab7a3",
+  "uploadedAt": "2026-09-13T16:25:17+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-E-0052/attack.webp"
+ },
+ "dorpg/mon/DOR-MON-E-0052/death.webp": {
+  "contentType": "image/webp",
+  "etag": "52febfdd02710344f8516fb4d2e7834e",
+  "size": 279850,
+  "srcSha256": "c50624f78f7e3c7e868356560171d04e39ceb03e9ed4c4e15a7eb653387995da",
+  "uploadedAt": "2026-09-13T16:25:18+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-E-0052/death.webp"
+ },
+ "dorpg/mon/DOR-MON-E-0052/hit.webp": {
+  "contentType": "image/webp",
+  "etag": "f83b5d5f9d2e11d6fa8b1347be5136b0",
+  "size": 330878,
+  "srcSha256": "cc6da2637d3f96b7efd0dd378f1c69fa24d271b99b213142fca5a233826d2586",
+  "uploadedAt": "2026-09-13T16:25:18+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-E-0052/hit.webp"
+ },
+ "dorpg/mon/DOR-MON-E-0052/idle.webp": {
+  "contentType": "image/webp",
+  "etag": "49306591fd027b2f61e59e6066bbcd39",
+  "size": 291124,
+  "srcSha256": "0f82cbfe20f52aa4012151fbb42530d76800b4c64a6f2641fafecf93d6167b32",
+  "uploadedAt": "2026-09-13T16:25:17+00:00",
+  "url": "https://img.dor.tw/dorpg/mon/DOR-MON-E-0052/idle.webp"
+ }
+}

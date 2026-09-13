@@ -1,11 +1,18 @@
 'use client';
 
-// DORPG 隊員卡（P0 靜態畫面）：panel_party_empty 底圖 → 頭像 → 姓名/Lv/HP/MP 文字＋血條 → 選取/瀕死/死亡覆層。
+// DORPG 隊員卡（P0 靜態畫面＋P1 手勢/飄字）：panel_party_empty 底圖 → 頭像 → 姓名/Lv/HP/MP 文字＋血條
+// → 選取/瀕死/死亡覆層 → （P1）可選為目標的金框脈動、飄字。
 // 所有子層都用 PARTY_SLOTS 的百分比絕對定位、字級再乘 (width/72)，因此換任何卡寬都整體等比，不必碰 3× 的 PNG 像素。
 // 「HP」「MP」兩個標籤已烤進底圖（kit 說明），這裡只畫動態欄位；member 為 null 時只留底圖、不畫 0。
+//
+// P1 新增一層外層 <div>（非 overflow:hidden）包住原本的 <button>：FloatText 要飄在「卡片上方」，也就是卡片
+// 外面，但 .card 本身有 overflow:hidden（讓底圖/頭像/覆層四個角落乾淨地被裁掉），飄字若還是 .card 的子層
+// 就會被一起裁掉、永遠看不到。外層 wrap 尺寸與原本 button 完全相同，不影響既有版面（BattleScreen 的隊伍列
+// 只把 PartyCard 當一顆固定寬高的方塊排，不在意它內部是不是恰好只有一個 <button>）。
 import type { CSSProperties } from 'react';
 import type { PartyMember } from '@/lib/dorpg/types';
 import { ANIM, CRITICAL_RATIO, PALETTE, PARTY_SLOTS, barClipPath, fracStyle, kitAsset } from '@/lib/dorpg/assets';
+import FloatText, { type FloatTextTone } from './FloatText';
 import styles from './PartyCard.module.css';
 
 export type PartyCardProps = {
@@ -14,6 +21,12 @@ export type PartyCardProps = {
   onSelect?: () => void;
   /** 邏輯寬 px（高固定為 2 倍）；預設 72 = panel_party_empty 的邏輯尺寸。 */
   width?: number;
+  /** P1：處於 chooseAlly 選目標模式——金框脈動＋可點（reduced-motion 時脈動改常駐靜態）。 */
+  targetable?: boolean;
+  /** P1：targetable 時點卡片觸發（取代 onSelect，選目標與瀏覽隊員是兩件事）。 */
+  onPick?: () => void;
+  /** P1：掛在卡片上方的飄字（傷害／治療／護盾／未命中）；key 換新值即重播同一句文字。 */
+  floatText?: { text: string; tone: FloatTextTone; key: number };
 };
 
 /** 規格書表5（W390 基準）：姓名 14/600、Lv 12/500、HP/MP 主數值 18/700；實際字級再乘 width/72。 */
@@ -26,7 +39,15 @@ function valueFontPx(text: string): number {
   return FONT.value;
 }
 
-export default function PartyCard({ member, selected = false, onSelect, width = PARTY_SLOTS.w }: PartyCardProps) {
+export default function PartyCard({
+  member,
+  selected = false,
+  onSelect,
+  width = PARTY_SLOTS.w,
+  targetable = false,
+  onPick,
+  floatText,
+}: PartyCardProps) {
   const scale = width / PARTY_SLOTS.w;
   const dead = member !== null && member.hp <= 0;
   // 瀕死門檻 0 < hp/hpMax ≤ 0.2（kit 說明）；hp = 0 走死亡態，不再算瀕死。
@@ -35,107 +56,125 @@ export default function PartyCard({ member, selected = false, onSelect, width = 
   const mpText = member ? String(Math.max(0, member.mp)) : '';
 
   const ariaLabel = member
-    ? `${member.name}，等級 ${member.level}，HP ${hpText}／${member.hpMax}，MP ${mpText}／${member.mpMax}${dead ? '，已倒下' : critical ? '，瀕死' : ''}`
+    ? `${member.name}，等級 ${member.level}，HP ${hpText}／${member.hpMax}，MP ${mpText}／${member.mpMax}${dead ? '，已倒下' : critical ? '，瀕死' : ''}${targetable ? '，可選為目標' : ''}`
     : '空白隊員欄位';
 
-  // 顏色只從 assets.ts 的 PALETTE 來（畫面固定暗色，不讀前台 skin 變數）；focus 環顏色以自訂變數交給 CSS。
+  // targetable 時點卡片＝選目標（onPick），不是瀏覽隊員（onSelect）；沒給 onPick 就退回 onSelect，
+  // 讓只加了 targetable 忘記接 onPick 的呼叫端至少還有反應，而不是點了完全沒事。
+  const handleClick = targetable ? (onPick ?? onSelect) : onSelect;
+
+  // 顏色只從 assets.ts 的 PALETTE 來（畫面固定暗色，不讀前台 skin 變數）；focus 環顏色、可選目標金框顏色
+  // 都以自訂變數交給 CSS。rootStyle 留在 button 上（不是外層 wrap），因為 :focus-visible 與 --dorpg-* 都是
+  // 給 button 自己與其內部覆層用的。
   const rootStyle = {
     width,
     height: width * 2,
     color: PALETTE.textPrimary,
     '--dorpg-focus': PALETTE.targetGold,
+    '--dorpg-target-gold': PALETTE.targetGold,
   } as CSSProperties;
 
   return (
-    <button
-      type="button"
-      className={styles.card}
-      style={rootStyle}
-      onClick={onSelect}
-      disabled={!member}
-      aria-label={ariaLabel}
-      aria-pressed={member ? selected : undefined}
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img className={styles.art} src={kitAsset('panel_party_empty')} alt="" draggable={false} />
+    <div className={styles.wrap} style={{ width, height: width * 2 }}>
+      <button
+        type="button"
+        className={styles.card}
+        style={rootStyle}
+        onClick={handleClick}
+        disabled={!member}
+        aria-label={ariaLabel}
+        aria-pressed={member ? selected : undefined}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className={styles.art} src={kitAsset('panel_party_empty')} alt="" draggable={false} />
 
-      {member?.portraitUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          className={dead ? `${styles.portrait} ${styles.portraitDead}` : styles.portrait}
-          style={fracStyle(PARTY_SLOTS.portrait)}
-          src={member.portraitUrl}
-          alt=""
-          draggable={false}
-        />
-      ) : null}
+        {member?.portraitUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            className={dead ? `${styles.portrait} ${styles.portraitDead}` : styles.portrait}
+            style={fracStyle(PARTY_SLOTS.portrait)}
+            src={member.portraitUrl}
+            alt=""
+            draggable={false}
+          />
+        ) : null}
 
-      {member ? (
-        <>
-          <div className={`${styles.field} ${styles.name}`} style={{ ...fracStyle(PARTY_SLOTS.name), fontSize: FONT.name * scale }}>
-            {member.name}
-          </div>
-          <div className={`${styles.field} ${styles.level}`} style={{ ...fracStyle(PARTY_SLOTS.level), fontSize: FONT.level * scale }}>
-            Lv.{member.level}
-          </div>
-          <div
-            className={`${styles.field} ${styles.value}`}
-            style={{ ...fracStyle(PARTY_SLOTS.hp), fontSize: valueFontPx(hpText) * scale, color: critical ? PALETTE.hpCritical : undefined }}
-          >
-            {hpText}
-          </div>
-          <div className={`${styles.field} ${styles.value}`} style={{ ...fracStyle(PARTY_SLOTS.mp), fontSize: valueFontPx(mpText) * scale }}>
-            {mpText}
-          </div>
-          {/* 血條：填色圖鋪滿插槽、只用 clip-path 裁右側（kit：不要替每個百分比出圖）。hp = 0 時 barClipPath 自然裁掉 100% ＝ 空槽。 */}
-          <div className={styles.bar} style={fracStyle(PARTY_SLOTS.hpFill)}>
+        {member ? (
+          <>
+            <div className={`${styles.field} ${styles.name}`} style={{ ...fracStyle(PARTY_SLOTS.name), fontSize: FONT.name * scale }}>
+              {member.name}
+            </div>
+            <div className={`${styles.field} ${styles.level}`} style={{ ...fracStyle(PARTY_SLOTS.level), fontSize: FONT.level * scale }}>
+              Lv.{member.level}
+            </div>
+            <div
+              className={`${styles.field} ${styles.value}`}
+              style={{ ...fracStyle(PARTY_SLOTS.hp), fontSize: valueFontPx(hpText) * scale, color: critical ? PALETTE.hpCritical : undefined }}
+            >
+              {hpText}
+            </div>
+            <div className={`${styles.field} ${styles.value}`} style={{ ...fracStyle(PARTY_SLOTS.mp), fontSize: valueFontPx(mpText) * scale }}>
+              {mpText}
+            </div>
+            {/* 血條：填色圖鋪滿插槽、只用 clip-path 裁右側（kit：不要替每個百分比出圖）。hp = 0 時 barClipPath 自然裁掉 100% ＝ 空槽。 */}
+            <div className={styles.bar} style={fracStyle(PARTY_SLOTS.hpFill)}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                className={styles.fill}
+                src={kitAsset(critical ? 'bar_fill_hp_critical' : 'bar_fill_hp_green')}
+                style={{ clipPath: barClipPath(member.hp, member.hpMax) }}
+                alt=""
+                draggable={false}
+              />
+            </div>
+            <div className={styles.bar} style={fracStyle(PARTY_SLOTS.mpFill)}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                className={styles.fill}
+                src={kitAsset('bar_fill_mp_blue')}
+                style={{ clipPath: barClipPath(member.mp, member.mpMax) }}
+                alt=""
+                draggable={false}
+              />
+            </div>
+          </>
+        ) : null}
+
+        {/* 狀態覆層（純疊圖、pointer-events:none）：選取金框 → 瀕死紅光（1200ms 脈動）→ 死亡灰幕＋「倒下」。 */}
+        {member && selected ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img className={styles.art} src={kitAsset('overlay_party_selected')} alt="" draggable={false} />
+        ) : null}
+        {critical ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            className={`${styles.art} ${styles.critical}`}
+            style={{ animationDuration: `${ANIM.criticalPulseMs}ms` }}
+            src={kitAsset('overlay_party_critical')}
+            alt=""
+            draggable={false}
+          />
+        ) : null}
+        {dead ? (
+          <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              className={styles.fill}
-              src={kitAsset(critical ? 'bar_fill_hp_critical' : 'bar_fill_hp_green')}
-              style={{ clipPath: barClipPath(member.hp, member.hpMax) }}
-              alt=""
-              draggable={false}
-            />
-          </div>
-          <div className={styles.bar} style={fracStyle(PARTY_SLOTS.mpFill)}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              className={styles.fill}
-              src={kitAsset('bar_fill_mp_blue')}
-              style={{ clipPath: barClipPath(member.mp, member.mpMax) }}
-              alt=""
-              draggable={false}
-            />
-          </div>
-        </>
-      ) : null}
+            <img className={styles.art} src={kitAsset('overlay_party_dead')} alt="" draggable={false} />
+            {/* 「倒下」置於頭像插槽正中；aria-label 已含「已倒下」，故對輔助技術隱藏避免重複播報 */}
+            <div className={styles.down} style={{ ...fracStyle(PARTY_SLOTS.portrait), fontSize: FONT.level * scale }} aria-hidden="true">
+              <span style={{ background: PALETTE.overlayScrim }}>倒下</span>
+            </div>
+          </>
+        ) : null}
 
-      {/* 狀態覆層（純疊圖、pointer-events:none）：選取金框 → 瀕死紅光（1200ms 脈動）→ 死亡灰幕＋「倒下」。 */}
-      {member && selected ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img className={styles.art} src={kitAsset('overlay_party_selected')} alt="" draggable={false} />
-      ) : null}
-      {critical ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          className={`${styles.art} ${styles.critical}`}
-          style={{ animationDuration: `${ANIM.criticalPulseMs}ms` }}
-          src={kitAsset('overlay_party_critical')}
-          alt=""
-          draggable={false}
-        />
-      ) : null}
-      {dead ? (
-        <>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className={styles.art} src={kitAsset('overlay_party_dead')} alt="" draggable={false} />
-          {/* 「倒下」置於頭像插槽正中；aria-label 已含「已倒下」，故對輔助技術隱藏避免重複播報 */}
-          <div className={styles.down} style={{ ...fracStyle(PARTY_SLOTS.portrait), fontSize: FONT.level * scale }} aria-hidden="true">
-            <span style={{ background: PALETTE.overlayScrim }}>倒下</span>
-          </div>
-        </>
-      ) : null}
-    </button>
+        {/* 可選為目標（chooseAlly）：金框脈動。kit 資產清單沒有專屬覆層圖（本工作者只拿得到 frame_dialog／
+            button_confirm／bar_fill_charge_gold／overlay_cooldown_disc 四張），改用 CSS box-shadow 模擬金框，
+            週期沿用瀕死脈動同一個 1200ms（ANIM.criticalPulseMs），reduced-motion 時常駐不脈動。 */}
+        {member && targetable ? <div className={styles.targetableGlow} aria-hidden="true" /> : null}
+      </button>
+
+      {/* FloatText 必須是 wrap 的子層、button 的手足層級，否則會被 .card 的 overflow:hidden 裁掉
+          （見檔頭註解）。key 換新值時 React 整個重新掛載 FloatText，動畫／700ms 計時器自然重播。 */}
+      {floatText ? <FloatText key={floatText.key} text={floatText.text} tone={floatText.tone} /> : null}
+    </div>
   );
 }

@@ -59,6 +59,17 @@
   align-items: center;
 }
 
+/* ---- 結算彈窗（z400，蓋過設定面板 z300 與各 band 的 z100） ----
+   ResultOverlay.tsx 自己的 .overlay 刻意不設 z-index（見該檔檔頭註解：z-index 由這裡決定），
+   若沒有這層 wrapper，它會被下面各 band 的 z-index:100 蓋住——position:fixed 但 z-index:auto 的元素，
+   在同一個 stacking context 裡會排在「有明確 z-index」的手足之後，不受 DOM 順序影響
+   （2026-09-14 CDP 截圖走查時發現：DOM 查詢/文字斷言都過，但畫面上完全看不到彈窗，才抓到）。 */
+.resultLayer {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+}
+
 /* ---- 設定面板（z300 提示與彈窗層） ---- */
 .overlay {
   position: absolute;

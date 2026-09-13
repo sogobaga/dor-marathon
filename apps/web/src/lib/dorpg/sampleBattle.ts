@@ -40,21 +40,24 @@ const scene: Scene = {
 };
 
 // 裝備欄固定 8 格；示範裝五個原畫面技能，其餘三格 null 保留空白。
+// P1 戰鬥欄位（規格 §2 公式：damage raw=floor((atk×coef+flat)×elem×charge)、heal=floor(matk×coef+flat)）：
+// 係數為示範值、非平衡後正式數值（規格明講展示 HP/傷害皆測試資料）。
 const skills: (Skill | null)[] = [
-  { id: 'slash', name: '斬擊', iconUrl: kitAsset('icon_skill_slash'), cooldownMs: 4000 },
-  { id: 'fireball', name: '火球', iconUrl: kitAsset('icon_skill_fireball'), cooldownMs: 12000 },
-  { id: 'heal', name: '治療', iconUrl: kitAsset('icon_skill_heal'), cooldownMs: 8000 },
-  { id: 'ice_lance', name: '冰槍', iconUrl: kitAsset('icon_skill_ice_lance'), cooldownMs: 6000 },
-  { id: 'shield', name: '護盾', iconUrl: kitAsset('icon_skill_shield'), cooldownMs: 10000 },
+  { id: 'slash', name: '斬擊', iconUrl: kitAsset('icon_skill_slash'), cooldownMs: 4000, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1.6, flat: 20, element: 'neutral', weapon: 'sword', castMs: 300 },
+  { id: 'fireball', name: '火球', iconUrl: kitAsset('icon_skill_fireball'), cooldownMs: 12000, kind: 'damage', target: 'enemy', mpCost: 25, coefficient: 2.4, flat: 60, element: 'fire', weapon: 'staff', castMs: 600 },
+  { id: 'heal', name: '治療', iconUrl: kitAsset('icon_skill_heal'), cooldownMs: 8000, kind: 'heal', target: 'ally', mpCost: 20, coefficient: 2.0, flat: 80, element: 'light', weapon: 'staff', castMs: 500 },
+  { id: 'ice_lance', name: '冰槍', iconUrl: kitAsset('icon_skill_ice_lance'), cooldownMs: 6000, kind: 'damage', target: 'enemy', mpCost: 15, coefficient: 2.0, flat: 30, element: 'water', weapon: 'staff', castMs: 400 },
+  { id: 'shield', name: '護盾', iconUrl: kitAsset('icon_skill_shield'), cooldownMs: 10000, kind: 'shield', target: 'self', mpCost: 15, coefficient: 1.5, flat: 60, element: 'light', weapon: 'staff', castMs: 300 },
   null,
   null,
   null,
 ];
 
+// 道具一律對隊友（含自己）；revive 的 amount 為復活後 HP 佔 hpMax 的百分比。
 const items: Item[] = [
-  { id: 'hp_potion', name: '紅藥水', iconUrl: kitAsset('icon_item_hp_potion'), quantity: 3 },
-  { id: 'mp_potion', name: '藍藥水', iconUrl: kitAsset('icon_item_mp_potion'), quantity: 2 },
-  { id: 'revive_feather', name: '復甦羽毛', iconUrl: kitAsset('icon_item_revive_feather'), quantity: 1 },
+  { id: 'hp_potion', name: '紅藥水', iconUrl: kitAsset('icon_item_hp_potion'), quantity: 3, kind: 'hp', amount: 300 },
+  { id: 'mp_potion', name: '藍藥水', iconUrl: kitAsset('icon_item_mp_potion'), quantity: 2, kind: 'mp', amount: 120 },
+  { id: 'revive_feather', name: '復甦羽毛', iconUrl: kitAsset('icon_item_revive_feather'), quantity: 1, kind: 'revive', amount: 50 },
 ];
 
 export const SAMPLE_BATTLE: BattleSample = {

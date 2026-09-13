@@ -13,8 +13,11 @@ const BattleScreen = dynamic(() => import('@/components/dorpg/BattleScreen'), {
 export default function Preview() {
   return (
     <div style={{ position: 'fixed', inset: 0, background: PALETTE.surfaceBase }}>
-      {/* 預覽頁沒有「上一頁」可回；逃跑鈕在這裡是 no-op */}
-      <BattleScreen onBack={() => {}} />
+      {/* 預覽頁沒有「上一頁」可回；逃跑鈕在這裡是 no-op。
+          debugAllowed=true：這頁本來就只在 DORPG_DEV=1 才存在（見 app/dev/dorpg/page.tsx 的 notFound()
+          守門），是唯一允許 ?dorpgDebug=1 生效的地方——2026-09-14 審查修正：正式戰鬥入口不會傳這個
+          prop，就算網址加了 query 也不會有任何效果。 */}
+      <BattleScreen onBack={() => {}} debugAllowed />
     </div>
   )
 }

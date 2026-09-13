@@ -1,11 +1,12 @@
 'use client'
 
-// DORPG 戰場：場景背景＋怪物＋敵人 Lv/HP 小面板＋目標標記（光環、箭頭）。
-// P0 純靜態：只吃 props、只有父層傳進來的選取狀態，不接 API／DB。
+// DORPG 戰場：場景背景＋怪物精靈＋敵人 Lv/HP 小面板＋目標標記（光環、箭頭）＋攻擊特效層。
+// P1：改吃引擎狀態（EnemyActor 形狀的簡化投影，見 StageEnemy）——怪物動作直接由 anim 欄位驅動，
+// 不另外維護一份「顯示用」動畫狀態，避免兩份狀態機不同步。
 // 所有尺寸都是「邏輯 px」：父層決定 width/height（W390 基準、480 封頂），這裡以 width/390 等比縮放固定尺寸，
 // 刻意不用 container query——規格要父層掌握寬度，元件自行量測會在 SSR 水合時閃一下。
-import { Fragment, type CSSProperties } from 'react'
-import type { Enemy, EnemySlotId, Scene, SceneSlot } from '@/lib/dorpg/types'
+import { Fragment, forwardRef, useImperativeHandle, useRef, type CSSProperties } from 'react'
+import type { EnemySlotId, Scene, SceneSlot } from '@/lib/dorpg/types'
 import {
   ENEMY_PLATE,
   KIT_SIZES,
@@ -17,15 +18,20 @@ import {
   fracStyle,
   kitAsset,
 } from '@/lib/dorpg/assets'
+import MonsterSprite from './MonsterSprite'
+import type { SpriteActionKind } from '@/lib/dorpg/useSpritePlayer'
+import CombatFxLayer from './CombatFxLayer'
+import type { CombatFxLayerHandle, CombatFxPlayOptions } from './CombatFxLayer'
 import s from './BattleStage.module.css'
 import p from './EnemyPlate.module.css'
 
 // 圖層（規格 §3 z-index 表；戰場 .stage 自成 stacking context）：
 // z20 光環（腳底）→ z30+ 怪物與其小面板（後排在下、同排依腳點 y 由小到大往上疊；每隻怪佔兩層：
-// 怪物 30+2i、自己的面板 31+2i）→ z60 目標箭頭。
+// 怪物 30+2i、自己的面板 31+2i）→ z50 攻擊特效（疊在所有怪物/面板之上，斬擊/傷害數字才不會被怪物擋住）
+// → z60 目標箭頭（頭頂，永遠看得到）。
 // 2026-09-14 使用者定案：前排怪物要「遮住」後排怪的血量面板才有前後排的縱深感——所以面板不再是所有敵人
 // 共用的最上層平面，而是緊貼在自己怪物之上、但在更前排的怪物之下。箭頭仍在最上層（在頭頂、不會被擋）。
-const Z = { ring: 20, monsterBase: 30, chevron: 60 } as const
+const Z = { ring: 20, monsterBase: 30, fx: 50, chevron: 60 } as const
 const zMonster = (idx: number) => Z.monsterBase + idx * 2
 const zPlate = (idx: number) => Z.monsterBase + idx * 2 + 1
 
@@ -38,16 +44,50 @@ const RING_WIDTH_RATIO = 0.8
 /** 小面板頂邊比腳點高 5 邏輯 px（content pack preview `translate(-50%,-5px)`）：面板中心落在腳點略下方，前排（y=0.89）在 244 高場景內不被裁掉。 */
 const PLATE_LIFT = 5
 
+/** P1：怪物動畫狀態（對齊 engine/types.ts 的 EnemyAnimState 字面量，但刻意不 import engine 型別——
+ *  BattleStage 只需要知道「這幾種字串」，用結構相容的方式接住 BattleScreen 傳來的資料，不建立對 engine
+ *  內部型別的硬依賴，換引擎實作只要字串值不變就不必動這個檔案）。 */
+export type StageEnemyAnim = 'spawning' | 'idle' | 'windup' | 'attacking' | 'hitReaction' | 'dying' | 'removed'
+
+/** BattleStage 需要的敵人資料最小集合：由 BattleScreen 把 engine 的 EnemyActor 投影成這個形狀。 */
+export type StageEnemy = {
+  id: string
+  name: string
+  level: number
+  hp: number
+  hpMax: number
+  slot: EnemySlotId
+  imageUrl: string
+  anim: StageEnemyAnim
+  rank?: string
+  attribute?: string
+  size?: string
+  race?: string
+}
+
+export type BattleStageHandle = {
+  /** 排一次攻擊特效（見 CombatFxLayer）；回傳的 Promise 於 impact 時 resolve。 */
+  play(opts: CombatFxPlayOptions): Promise<void>
+  /** 清空所有進行中的特效（戰鬥結束／畫面卸載時呼叫）。 */
+  cancelAll(): void
+  /** 契約 §7：取得怪物「軀幹中心」座標（腳點 − dw×0.45）供特效/傷害數字定位；查無該敵人回 null。 */
+  getEnemyAnchor(enemyId: string): { x: number; y: number } | null
+}
+
 export type BattleStageProps = {
   scene: Scene
-  enemies: Enemy[]
+  enemies: StageEnemy[]
   /** 目前鎖定的敵人 id；null = 沒有目標（不畫光環／箭頭）。 */
   targetId: string | null
   onSelect: (id: string) => void
+  /** P1：點擊戰場空白處（非怪物）——用於「再點戰場空白 → CANCEL_TARGETING」。 */
+  onBackgroundClick?: () => void
   /** 戰場邏輯寬（px，例 390）；所有固定尺寸都以 width/390 等比縮放。 */
   width: number
   /** 戰場高（px，例 244）：由父層依版面帶高算出（sceneHeightFor）。 */
   height: number
+  /** 減少動態：轉給每隻 MonsterSprite，只顯示各動作第一格。 */
+  reducedMotion?: boolean
 }
 
 /** 後排先畫（在下），前排後畫（在上）。 */
@@ -55,13 +95,100 @@ function rowRank(slot: SceneSlot): number {
   return slot.row === 'front' ? 1 : 0
 }
 
-export default function BattleStage({ scene, enemies, targetId, onSelect, width, height }: BattleStageProps) {
+/** 怪物 sprite 動作對應（契約 §7）：windup/attacking→attack、hitReaction→hit、dying→death，其餘 idle。
+ *  'removed' 不會走到這裡（呼叫端在 placed 階段就濾掉），保留在型別裡只是因為它是 StageEnemyAnim 的成員。 */
+function spriteActionForAnim(anim: StageEnemyAnim): SpriteActionKind {
+  switch (anim) {
+    case 'windup':
+    case 'attacking':
+      return 'attack'
+    case 'hitReaction':
+      return 'hit'
+    case 'dying':
+      return 'death'
+    default:
+      return 'idle'
+  }
+}
+
+/**
+ * content pack 擺放公式：怪物是 displayWidth 的正方形，左上角 = (腳點x − dw×0.5, 腳點y − dw×0.87890625)，
+ * 讓畫布 (256,450) 的腳點落在站位上。抽成獨立函式讓 render 迴圈與 computeEnemyFxAnchor（給 BattleScreen
+ * 算特效座標用）共用同一份幾何邏輯，不必抄兩次。
+ */
+function computeEnemyPlacement(slot: SceneSlot, width: number, height: number) {
+  const k = width / LAYOUT.designWidth
+  const dw = slot.scale * width
+  const footX = slot.x * width
+  // 站位 y 不是直接乘整個場景高：scene.json 的槽位是照 390×244 設計盒排的，而標準版面的場景高
+  // 會長到 430（H−414），怪物又只隨寬度縮放——若 y 乘全高，前後排會被拉開、前排怪碰不到後排怪的
+  // 小面板，就沒有前後排的縱深（2026-09-14 使用者定案：前排怪要遮住後排怪的血量面板）。
+  // 做法：把 244×(width/390) 高的「站位帶」貼齊場景底部，多出來的高度全變成上方天空（背景 cover 本就會
+  // 把畫面往上延伸）；場景比站位帶矮時（緊湊/短屏）退回整高壓縮，和以前一樣。
+  const bandH = Math.min(height, SCENE_VIEWPORT.h * k)
+  const footY = height - (1 - slot.y) * bandH
+  const left = footX - dw * MONSTER_ANCHOR.x
+  const top = footY - dw * MONSTER_ANCHOR.y
+  return { dw, footX, footY, left, top }
+}
+
+/** 特效座標＝怪物軀幹中心：腳點往上 dw×0.45（比腳底高，落在軀幹中段而非腳跟）。契約 §7 原文用詞。 */
+function computeEnemyFxAnchor(slot: SceneSlot, width: number, height: number): { x: number; y: number } {
+  const { footX, footY, dw } = computeEnemyPlacement(slot, width, height)
+  return { x: footX, y: footY - dw * 0.45 }
+}
+
+/**
+ * ASSETS 的 monsterAnim.ts / cdn.ts 用「怪物圖鑑 id」（如 DOR-MON-A-67000200001）當 key，但契約給
+ * BattleStage 的 Enemy/EnemyActor 只有「本場戰鬥的實例 id」（如 enemy_1，同一隻怪可能多次出場）——
+ * 兩者不是同一個 id，且契約的 Enemy/EnemyActor 型別（ENGINE/ASSETS 兩位第一輪工作者已定案、非本輪
+ * ASSEMBLE 可寫範圍）沒有另外開一個「圖鑑 id」欄位可查。sampleBattle.ts 的 imageUrl 是用
+ * `monsterPoster(圖鑑id)` 組出來的（/ui/dorpg/mon/<圖鑑id>.webp），等於已經把圖鑑 id 編碼進 URL 裡，
+ * 這裡反解回來，避免為了這一個欄位去動不屬於本輪 ASSEMBLE 可寫清單的 types.ts/sampleBattle.ts。
+ * 解不出來（正式資料改了 imageUrl 命名規則）時原樣傳回整段 URL 當 key：MonsterSprite 內部找不到
+ * 對應的 MONSTER_ANIMS 會自動退回 FALLBACK_ANIMS＋poster，不會炸畫面，只是動畫播不出來。
+ */
+function catalogIdFromPosterUrl(url: string): string {
+  const m = /\/mon\/([^/]+)\.webp(?:[?#].*)?$/.exec(url)
+  return m ? m[1] : url
+}
+
+const BattleStage = forwardRef<BattleStageHandle, BattleStageProps>(function BattleStage(
+  { scene, enemies, targetId, onSelect, onBackgroundClick, width, height, reducedMotion },
+  ref,
+) {
+  const fxRef = useRef<CombatFxLayerHandle>(null)
+  // getEnemyAnchor 用 ref 存最新的幾何相關 props：useImperativeHandle 的 deps 是 []（identity 穩定，
+  // BattleScreen 不必因為拿到新的 ref 物件就重新處理），實際資料一律從這份 ref 讀最新值。
+  const geomRef = useRef({ scene, enemies, width, height })
+  geomRef.current = { scene, enemies, width, height }
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      play: (opts) => fxRef.current?.play(opts) ?? Promise.resolve(),
+      cancelAll: () => fxRef.current?.cancelAll(),
+      getEnemyAnchor: (enemyId) => {
+        const g = geomRef.current
+        const enemy = g.enemies.find((e) => e.id === enemyId)
+        if (!enemy) return null
+        const slot = g.scene.slots.find((sl) => sl.id === enemy.slot)
+        if (!slot) return null
+        return computeEnemyFxAnchor(slot, g.width, g.height)
+      },
+    }),
+    [],
+  )
+
   const k = width / LAYOUT.designWidth
   const slotById = new Map<EnemySlotId, SceneSlot>(scene.slots.map((sl) => [sl.id, sl]))
 
-  // 找不到站位的敵人直接不畫：資料錯誤不該讓整個戰場崩掉。
-  const placed: { enemy: Enemy; slot: SceneSlot }[] = []
+  // 找不到站位、或已經播完死亡動畫（anim==='removed'）的敵人直接不畫：
+  // 契約允許「不渲染」或「淡出後不渲染」兩種做法之一，這裡選前者（較單純，死亡動畫本身已經有
+  // enemyDeathMs 的播放時間讓玩家看到倒下，removed 之後留在畫面上沒有additional 資訊價值）。
+  const placed: { enemy: StageEnemy; slot: SceneSlot }[] = []
   for (const enemy of enemies) {
+    if (enemy.anim === 'removed') continue
     const slot = slotById.get(enemy.slot)
     if (slot) placed.push({ enemy, slot })
   }
@@ -76,21 +203,14 @@ export default function BattleStage({ scene, enemies, targetId, onSelect, width,
       role="group"
       aria-label={`戰場：${scene.name}`}
       style={{ width, height, backgroundColor: PALETTE.surfaceBase, backgroundImage: `url("${scene.imageUrl}")` }}
+      onClick={(e) => {
+        // 只有直接點在戰場背景（沒有經過任何子層按鈕冒泡）才算「點空白」；怪物按鈕自己的 onClick
+        // 沒有 stopPropagation，但 e.target 會是那顆 button 而不是這個 div，用這個差異區分兩種點擊。
+        if (e.target === e.currentTarget) onBackgroundClick?.()
+      }}
     >
       {placed.map(({ enemy, slot }, idx) => {
-        // content pack 擺放公式：怪物是 displayWidth 的正方形，
-        // 左上角 = (腳點x − dw×0.5, 腳點y − dw×0.87890625)，讓畫布 (256,450) 的腳點落在站位上。
-        const dw = slot.scale * width
-        const footX = slot.x * width
-        // 站位 y 不是直接乘整個場景高：scene.json 的槽位是照 390×244 設計盒排的，而標準版面的場景高
-        // 會長到 430（H−414），怪物又只隨寬度縮放——若 y 乘全高，前後排會被拉開、前排怪碰不到後排怪的
-        // 小面板，就沒有前後排的縱深（2026-09-14 使用者定案：前排怪要遮住後排怪的血量面板）。
-        // 做法：把 244×(width/390) 高的「站位帶」貼齊場景底部，多出來的高度全變成上方天空（背景 cover 本就會
-        // 把畫面往上延伸）；場景比站位帶矮時（緊湊/短屏）退回整高壓縮，和以前一樣。
-        const bandH = Math.min(height, SCENE_VIEWPORT.h * k)
-        const footY = height - (1 - slot.y) * bandH
-        const left = footX - dw * MONSTER_ANCHOR.x
-        const top = footY - dw * MONSTER_ANCHOR.y
+        const { dw, footX, footY, left, top } = computeEnemyPlacement(slot, width, height)
         const selected = enemy.id === targetId
 
         const plateW = ENEMY_PLATE.w * k
@@ -124,7 +244,13 @@ export default function BattleStage({ scene, enemies, targetId, onSelect, width,
               onClick={() => onSelect(enemy.id)}
               style={{ left: Math.round(left), top: Math.round(top), width: Math.round(dw), height: Math.round(dw), zIndex: zMonster(idx) }}
             >
-              <img src={enemy.imageUrl} alt="" draggable={false} />
+              <MonsterSprite
+                monsterId={catalogIdFromPosterUrl(enemy.imageUrl)}
+                action={spriteActionForAnim(enemy.anim)}
+                size={Math.round(dw)}
+                posterUrl={enemy.imageUrl}
+                reducedMotion={reducedMotion}
+              />
             </button>
             <EnemyPlate
               level={enemy.level}
@@ -155,9 +281,18 @@ export default function BattleStage({ scene, enemies, targetId, onSelect, width,
           </Fragment>
         )
       })}
+
+      {/* 攻擊特效層：疊在所有怪物/面板之上（Z.fx=50），斬擊/暴擊字樣/傷害數字才不會被怪物擋住。
+          CombatFxLayerProps 沒有開放 style/zIndex，用一個純定位 wrapper 包住即可，不必為此改 AUDIO_FX 的檔案。 */}
+      <div className={s.fxLayer} style={{ zIndex: Z.fx }}>
+        <CombatFxLayer ref={fxRef} width={width} height={height} />
+      </div>
     </div>
   )
-}
+})
+
+BattleStage.displayName = 'BattleStage'
+export default BattleStage
 
 // ---------------------------------------------------------------------------
 // EnemyPlate：怪物 Lv／HP 小面板（panel_enemy_empty 邏輯 82×25）。

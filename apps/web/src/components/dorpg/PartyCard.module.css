@@ -1,3 +1,15 @@
+/* 外層包裝：position:relative 讓 FloatText（.wrap 的手足層級，見 PartyCard.tsx 檔頭註解）能相對這個
+   容器（而非視窗）定位。2026-09-14 審查修正後 FloatText 改成全程停留在卡片高度 5%–35% 之間飄動
+   （見 FloatText.module.css），不會再跑到容器外，這裡補上 overflow:hidden 當保險——跟 .card 一致，
+   萬一之後座標算錯也不會又蓋到頂欄。 */
+.wrap {
+  position: relative;
+  display: block;
+  flex: none;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
 /* 隊員卡：所有子層絕對定位（百分比由 TSX 以 PARTY_SLOTS 帶入），卡寬改變時整體等比縮放。
    顏色一律由 TSX 從 assets.ts 的 PALETTE 以 inline style / 自訂變數帶入，這裡不讀前台 skin 變數。 */
 .card {
@@ -127,4 +139,30 @@
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.12em;
+}
+
+/* 可選為目標（chooseAlly）：金框脈動 1200ms。kit 沒有專屬覆層圖，這裡用 inset box-shadow 模擬金框
+   （顏色由 TSX 以 --dorpg-target-gold 帶入，預設落回 targetGold 色票）。 */
+.targetableGlow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 3px var(--dorpg-target-gold, #ffd46a);
+  animation: dorpgTargetPulse 1200ms ease-in-out infinite;
+}
+@keyframes dorpgTargetPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 減少動態：常駐金框、不脈動（同 .critical 的作法） */
+  .targetableGlow {
+    animation: none;
+    opacity: 0.9;
+  }
 }

@@ -1,0 +1,51 @@
+/* DORPG 飄字。父容器（如 PartyCard 的 .wrap）需為 position:relative 才能讓這裡的 absolute 對齊卡片。
+   顏色由 FloatText.tsx 用 assets.ts 的 PALETTE 以 inline style 帶入，這裡不寫死色碼。
+   消失時機由 FloatText.tsx 的 700ms setTimeout 控制；這裡的 keyframes 只負責「還沒被關掉動態」時的視覺效果，
+   即使被上層「減少動態」的全域 animation:none 蓋掉，元件仍會準時被 JS 卸載、不會卡在畫面上。
+   2026-09-14 審查修正：原本用 bottom:100% 把飄字定位在卡片「上方」（容器外），隊伍列緊貼頂欄、卡片又
+   填滿整個帶高時，飄字會直接蓋住 DORPG 標題。改用相對卡片自身高度的 top 百分比：起點 35%（約在頭像
+   下緣）→ 終點 5%（貼近卡片頂但不超出），全程留在卡片範圍內；淡出時間（700ms）與節奏不變。 */
+.text {
+  position: absolute;
+  left: 50%;
+  top: 35%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  animation: dorpgFloatUp 700ms ease-out forwards;
+  z-index: 5;
+}
+
+@keyframes dorpgFloatUp {
+  0% {
+    opacity: 0;
+    top: 35%;
+  }
+  15% {
+    opacity: 1;
+    top: 33%;
+  }
+  100% {
+    opacity: 0;
+    top: 5%;
+  }
+}
+
+/* 減少動態：不跑位移／淡出，原地（卡片高 20% 處，起訖點之間）不透明直到元件被 JS 計時器卸載。 */
+.reduced {
+  animation: none;
+  opacity: 1;
+  top: 20%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .text {
+    animation: none;
+    opacity: 1;
+    top: 20%;
+  }
+}

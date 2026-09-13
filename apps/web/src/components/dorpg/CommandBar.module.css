@@ -54,11 +54,12 @@
   -webkit-user-drag: none;
 }
 
-/* 攻擊鈕內的蓄氣軌道：kit .charge-track（left 13%、bottom 5%、寬 74%、高 4/74） */
+/* 攻擊鈕內的蓄氣軌道：P1 契約改成貼「上緣」顯示（原 kit .charge-track 是 bottom 5%，這裡只把錨點換成
+   top，其餘 left/width/height 沿用 kit 的比例，蓄氣條視覺寬度與圓角不變）。 */
 .chargeTrack {
   position: absolute;
   left: 13%;
-  bottom: 5%;
+  top: 5%;
   width: 74%;
   height: 5.4%;
   background: #032033;
@@ -71,6 +72,32 @@
   display: block;
   width: 100%;
   height: 100%;
+}
+
+/* 攻擊鈕冷卻圓底＋秒數：位置由 CommandBar.tsx 以 ATTACK_CD_STYLE（fracStyle）帶入，樣式抄 SkillTray 的
+   .cooldown（同一顆 overlay_cooldown_disc 素材、同一種置中疊字排法）。 */
+.cooldown {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.cooldown img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.cooldown span {
+  position: relative;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px #000;
 }
 
 .btn:focus-visible {

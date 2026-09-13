@@ -1,0 +1,93 @@
+/* DORPG 結算彈窗。z-index 由 BattleScreen 組裝時包住本元件的外層 class 決定（契約 §6），
+   這裡的 .overlay 只負責 fixed inset:0 置中版面＋遮罩。顏色一律由 TSX 以 inline style／nineSliceStyle 帶入，
+   此檔不寫死色碼、不得讀前台 skin 變數（畫面固定暗色）。 */
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  font-family: 'Noto Sans TC', 'Microsoft JhengHei', 'PingFang TC', sans-serif;
+}
+
+.overlay * {
+  box-sizing: border-box;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  /* 契約只列 Escape／主鈕能關閉，遮罩本身不接收點擊，避免誤觸略過結算摘要。 */
+  pointer-events: none;
+}
+
+/* frame_dialog 九宮格由 TSX 以 nineSliceStyle('frame_dialog') 帶入 border-image；
+   manifest contentRect 內縮 20 = border 16 + 這裡 padding 4，同 BattleScreen SettingsSheet 的作法。 */
+.dialog {
+  position: relative;
+  width: min(340px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 4px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.title {
+  margin: 8px 0 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.rows {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+.rowValue {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.confirm {
+  display: block;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.confirm img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.confirm:focus-visible {
+  outline: 2px solid #b2eeff;
+  outline-offset: 2px;
+}

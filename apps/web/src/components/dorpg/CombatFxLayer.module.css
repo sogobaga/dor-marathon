@@ -1,0 +1,6 @@
+/* 特效畫布：絕對定位滿版覆蓋戰鬥舞台，不可攔截點擊（隊友卡/技能列/怪物點擊都在它之下或之上都要能點）。 */
+.canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
