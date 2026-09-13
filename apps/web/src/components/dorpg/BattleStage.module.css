@@ -1,0 +1,73 @@
+/* DORPG 戰場（BattleStage）樣式。顏色一律來自 assets.ts 的 PALETTE（inline 帶入），
+   這裡只放版面與動畫；唯一的色碼是 :focus-visible 外框（= PALETTE.targetGold），因為偽類無法 inline。 */
+
+.stage {
+  position: relative;
+  overflow: hidden;
+  /* 內部 z20/30/50 只在戰場內比大小，不外洩去和父層 HUD（z100+）打架 */
+  isolation: isolate;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: 50% 50%;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+/* 怪物點擊區：整張正方形畫布都是 hit area（≥44×44 由 min-* 保底，實際 scale×width 皆 ≥90）。 */
+.monster {
+  position: absolute;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.monster:focus-visible {
+  outline: 2px solid #ffd46a;
+  outline-offset: 2px;
+}
+.monster > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* 光環／小面板／箭頭都是裝飾層：規格要求 pointer-events:none，不得攔截點擊 */
+.ring,
+.plate,
+.chevron {
+  position: absolute;
+  pointer-events: none;
+}
+.ring,
+.chevron {
+  display: block;
+  -webkit-user-drag: none;
+}
+
+/* 目標箭頭上下漂動（kit 說明：animate translateY；週期 1200ms = ANIM.chevronBobMs）。
+   位移用自身高度百分比而非固定 px，480 寬時等比放大。 */
+.chevron {
+  animation: bob 1200ms ease-in-out infinite;
+}
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-18%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    animation: none;
+  }
+}

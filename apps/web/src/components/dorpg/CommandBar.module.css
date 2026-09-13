@@ -1,0 +1,78 @@
+/* DORPG 主操作列。尺寸由 CommandBar.tsx 以 CSS 變數餵入（--pad-x / --pad-y / --gap / --btn-w / --btn-ratio）。
+   按鈕圖四態同畫布整張換圖，不裁切、不九宮格（kit 說明：對主按鈕九宮格會拉壞插畫與固定字）。 */
+
+.bar {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: var(--pad-y) var(--pad-x);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.bar * {
+  box-sizing: border-box;
+}
+
+/* 寬 = (內容寬 − 2×gap)/3、比例 122:74；托盤帶變矮（短屏 76）或變寬（480）時以 max-height 夾住，
+   圖用 contain 置中，按鈕本體可比圖略寬但插畫絕不變形。 */
+.btn {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--btn-w);
+  max-height: 100%;
+  aspect-ratio: var(--btn-ratio);
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  cursor: default;
+}
+
+/* 長按類按鈕（防禦／攻擊）：關掉瀏覽器手勢，避免長按時觸發捲動或選取 */
+.hold {
+  touch-action: none;
+}
+
+.art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* 攻擊鈕內的蓄氣軌道：kit .charge-track（left 13%、bottom 5%、寬 74%、高 4/74） */
+.chargeTrack {
+  position: absolute;
+  left: 13%;
+  bottom: 5%;
+  width: 74%;
+  height: 5.4%;
+  background: #032033;
+  border-radius: 8px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.chargeTrack img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.btn:focus-visible {
+  outline: 2px solid #b2eeff;
+}

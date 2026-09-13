@@ -1,0 +1,193 @@
+/* DORPG 技能／道具列。所有尺寸走百分比或由 SkillTray.tsx 依縮放係數 --s 餵進來的 CSS 變數；
+   顏色亦由 tsx 以規格色票寫入 --c-*，此檔不得自行寫死色碼或讀前台 skin 變數。 */
+
+.tray {
+  position: relative;
+  box-sizing: border-box;
+  overflow: hidden;
+  font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  color: var(--c-text);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.tray * {
+  box-sizing: border-box;
+}
+
+/* 鋪滿整個托盤的底板圖（kit .dor-art 作法） */
+.art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* 右上角「已裝備 n/8」／「可用 n 種」：manifest slot count {260,8,112,17}，靠右對齊 */
+.count {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: var(--fs-count);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--c-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* 五格＋箭頭 lane：絕對定位百分比矩形（left/right 2、top 35、高 75 換算），grid 抄 kit preview #skill-lane */
+.lane {
+  position: absolute;
+  display: grid;
+  grid-template-columns: var(--arrow-col) repeat(5, minmax(0, 1fr)) var(--arrow-col);
+  gap: var(--lane-gap);
+  align-items: start;
+  justify-items: center;
+  touch-action: pan-y;
+}
+
+/* 箭頭鈕：點擊區 44×54（manifest hitArea 44 高、kit preview 用 54），圖 28×44 置中 */
+.arrow {
+  width: 100%;
+  height: var(--arrow-hit-h);
+  padding: 0;
+  border: 0;
+  background: none;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.arrow img {
+  width: var(--arrow-w);
+  height: var(--arrow-h);
+  display: block;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.arrow:disabled {
+  cursor: default;
+}
+
+/* 格子 54×74（寬撐滿欄位、上限 54×s），高度由 aspect-ratio 推得 */
+.cell {
+  position: relative;
+  width: 100%;
+  max-width: var(--cell-w);
+  aspect-ratio: 54 / 74;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cell:disabled {
+  cursor: default;
+}
+
+/* 技能／道具插畫（512² 方圖）：貼 contentRect 內縮 3.3，cover 裁滿 */
+.icon {
+  position: absolute;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* 冷卻中／數量 0：插畫降飽和（kit [disabled] .skill-image 同值） */
+.isDimmed .icon {
+  filter: saturate(0.35) brightness(0.6);
+}
+
+/* 金框／選取覆層：蓋住上方 54×54 區（格高的 72.973%） */
+.frame {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: var(--frame-h);
+  display: block;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* 名稱：13px/600、單行省略號、置中 */
+.name {
+  position: absolute;
+  font-size: var(--fs-name);
+  font-weight: 600;
+  line-height: 1.15;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+}
+
+/* CD 圓底（半透明）＋秒數 18px/700 置中 */
+.cooldown {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.cooldown img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.cooldown span {
+  position: relative;
+  font-size: var(--fs-cd);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px #000;
+}
+
+/* 數量小標 24×15 貼金框右下 */
+.badge {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.badge img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.badge span {
+  position: relative;
+  font-size: var(--fs-badge);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.cell:focus-visible,
+.arrow:focus-visible {
+  outline: 2px solid #b2eeff;
+  outline-offset: 2px;
+}

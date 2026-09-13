@@ -1,0 +1,130 @@
+/* 隊員卡：所有子層絕對定位（百分比由 TSX 以 PARTY_SLOTS 帶入），卡寬改變時整體等比縮放。
+   顏色一律由 TSX 從 assets.ts 的 PALETTE 以 inline style / 自訂變數帶入，這裡不讀前台 skin 變數。 */
+.card {
+  position: relative;
+  display: block;
+  flex: none;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: hidden;
+  cursor: pointer;
+  font-family: 'Noto Sans TC', 'Microsoft JhengHei', 'PingFang TC', sans-serif;
+  line-height: 1.15;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.card:disabled {
+  cursor: default;
+}
+.card:focus-visible {
+  outline: 2px solid var(--dorpg-focus, #ffd46a);
+  outline-offset: 2px;
+}
+
+/* 鋪滿整卡的圖層（底圖與三種覆層共用） */
+.art {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* 頭像：cover 填滿插槽；八角 clip 對齊底圖的切角（抄 kit dorpg-ui.css） */
+.portrait {
+  position: absolute;
+  display: block;
+  object-fit: cover;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  clip-path: polygon(3% 0, 97% 0, 100% 3%, 100% 97%, 97% 100%, 3% 100%, 0 97%, 0 3%);
+}
+/* HP = 0：頭像去飽和（規格書第 07 章） */
+.portraitDead {
+  filter: saturate(0) brightness(0.75);
+}
+
+.field {
+  position: absolute;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+/* 姓名插槽高 15px、字 14px：line-height 壓到 1.05 才不會被 overflow:hidden 切到 */
+.name {
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.05;
+}
+/* Lv 插槽高只有 10px 但規格要 12px 字：不裁切、讓字框稍微溢出插槽（下方 HP 數值仍留有間距） */
+.level {
+  font-weight: 500;
+  text-align: center;
+  line-height: 1;
+  overflow: visible;
+  font-variant-numeric: tabular-nums;
+}
+/* HP/MP 實值：靠右、等寬數字；Georgia 與底圖烤進去的 HP/MP 字形同源（kit 以 Georgia 轉 path） */
+.value {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 700;
+  line-height: 1;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+}
+.fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  -webkit-user-drag: none;
+}
+
+/* 瀕死紅光：緩慢脈動只影響覆層（不影響數字）；週期由 TSX 以 ANIM.criticalPulseMs 覆寫 animation-duration */
+.critical {
+  animation: dorpgCriticalPulse 1200ms ease-in-out infinite;
+}
+@keyframes dorpgCriticalPulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 減少動態：改靜態紅邊、不閃動（kit 說明） */
+  .critical {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+/* 「倒下」：置於頭像插槽正中，疊在死亡灰幕之上 */
+.down {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.down span {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.12em;
+}

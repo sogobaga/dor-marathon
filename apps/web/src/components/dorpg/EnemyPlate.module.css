@@ -1,0 +1,40 @@
+/* 怪物 Lv／HP 小面板（panel_enemy_empty，邏輯 82×25）。「Lv.」已烤在底圖，這裡只疊等級數字與紅色 HP 填色。
+   插槽座標由 assets.ts ENEMY_PLATE 以百分比 inline 帶入，CSS 只管疊法。 */
+
+.plate {
+  position: relative;
+  display: block;
+  pointer-events: none;
+  /* 與 kit 預覽同款 Georgia（舊式數字），退回一般 serif */
+  font-family: Georgia, 'Times New Roman', serif;
+}
+
+.base {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  -webkit-user-drag: none;
+}
+
+/* 等級數字緊接烤好的「Lv.」之後，靠左；不設 overflow:hidden，12px 字比 11px 插槽略高，裁掉會缺筆畫 */
+.level {
+  position: absolute;
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* HP 填色圖鋪滿插槽，只用 clip-path 裁右側（kit 規則：不要為每個百分比出圖） */
+.hp {
+  position: absolute;
+  overflow: hidden;
+}
+.hp > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  -webkit-user-drag: none;
+}

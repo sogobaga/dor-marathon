@@ -8,7 +8,8 @@ import { rpgApi, type RpgMe, type RpgStatKey } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
 import { STAT_META, DERIVED_META, resistLabel } from '@/lib/rpgMeta'
 
-export default function CharacterScreen({ onBack }: { onBack: () => void }) {
+// onOpenBattle：DORPG 戰鬥畫面入口（P0 靜態畫面預覽）；本頁已受 dash.rpg_entry 閘門，不另設資格判斷。
+export default function CharacterScreen({ onBack, onOpenBattle }: { onBack: () => void; onOpenBattle?: () => void }) {
   const [data, setData] = useState<RpgMe | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadErr, setLoadErr] = useState('')
@@ -52,6 +53,12 @@ export default function CharacterScreen({ onBack }: { onBack: () => void }) {
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <h1 style={{ margin: '10px 0 2px', fontSize: 23, fontWeight: 800, color: 'var(--tx)' }}>🎮 角色</h1>
         <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>基本素質配點</div>
+        {onOpenBattle && (
+          <div style={{ marginTop: 10 }}>
+            <button onClick={onOpenBattle} style={battleBtn}>⚔️ 進入戰鬥（預覽）</button>
+            <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 4 }}>P0 為靜態畫面預覽：範例資料、尚無真實戰鬥</div>
+          </div>
+        )}
       </header>
 
       <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', padding: '14px 18px 28px' }}>
@@ -168,6 +175,8 @@ function fmtNum(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(1)
 }
 
+// 金底白字（全站通則）
+const battleBtn: React.CSSProperties = { background: 'var(--gold)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 14px', fontSize: 13.5, fontWeight: 800, fontFamily: 'inherit', cursor: 'pointer' }
 const backBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--tx-dim)', fontSize: 13, padding: 0, cursor: 'pointer', fontFamily: 'inherit' }
 const statRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 12px' }
 const plusBtn: React.CSSProperties = { background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 7, padding: '4px 9px', fontSize: 11.5, fontWeight: 800, fontFamily: 'inherit' }

@@ -1,0 +1,66 @@
+/* 頂欄：三欄 grid（左 1fr / 中 auto / 右 1fr）讓標誌真正置中；顏色由 TSX 以 PALETTE 帶入，不讀前台 skin 變數 */
+.bar {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0 3px;
+  font-family: 'Noto Sans TC', 'Microsoft JhengHei', 'PingFang TC', sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.right {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.btn:disabled {
+  cursor: default;
+}
+.btn:focus-visible {
+  outline: 2px solid var(--dorpg-focus, #ffd46a);
+  outline-offset: -2px;
+}
+.btn img {
+  display: block;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* 逃跑結果：10px、最多兩行（同 kit 預覽 #escape-result），塞在逃跑鈕與標誌之間約 46px 的空間 */
+.message {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.15;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.logo {
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
