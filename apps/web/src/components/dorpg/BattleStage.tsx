@@ -12,6 +12,7 @@ import {
   LAYOUT,
   MONSTER_ANCHOR,
   PALETTE,
+  SCENE_VIEWPORT,
   barClipPath,
   fracStyle,
   kitAsset,
@@ -20,9 +21,13 @@ import s from './BattleStage.module.css'
 import p from './EnemyPlate.module.css'
 
 // 圖層（規格 §3 z-index 表；戰場 .stage 自成 stacking context）：
-// z20 光環（腳底）→ z30+ 怪物（後排在下、同排依腳點 y 由小到大往上疊）→ z50 敵人資訊 → z51 目標箭頭。
-// 面板／箭頭是所有敵人共用的平面圖層（不是包在各自怪物裡），後排怪的面板才不會被前排怪蓋住。
-const Z = { ring: 20, monsterBase: 30, plate: 50, chevron: 51 } as const
+// z20 光環（腳底）→ z30+ 怪物與其小面板（後排在下、同排依腳點 y 由小到大往上疊；每隻怪佔兩層：
+// 怪物 30+2i、自己的面板 31+2i）→ z60 目標箭頭。
+// 2026-09-14 使用者定案：前排怪物要「遮住」後排怪的血量面板才有前後排的縱深感——所以面板不再是所有敵人
+// 共用的最上層平面，而是緊貼在自己怪物之上、但在更前排的怪物之下。箭頭仍在最上層（在頭頂、不會被擋）。
+const Z = { ring: 20, monsterBase: 30, chevron: 60 } as const
+const zMonster = (idx: number) => Z.monsterBase + idx * 2
+const zPlate = (idx: number) => Z.monsterBase + idx * 2 + 1
 
 /** 目標箭頭顯示寬（邏輯 px）：manifest 給 40×36，但 kit 與 content pack 兩份預覽都縮到 ~24×22 才不會壓過怪物頭部；高依 40:36 等比。 */
 const CHEVRON_W = 24
@@ -77,7 +82,13 @@ export default function BattleStage({ scene, enemies, targetId, onSelect, width,
         // 左上角 = (腳點x − dw×0.5, 腳點y − dw×0.87890625)，讓畫布 (256,450) 的腳點落在站位上。
         const dw = slot.scale * width
         const footX = slot.x * width
-        const footY = slot.y * height
+        // 站位 y 不是直接乘整個場景高：scene.json 的槽位是照 390×244 設計盒排的，而標準版面的場景高
+        // 會長到 430（H−414），怪物又只隨寬度縮放——若 y 乘全高，前後排會被拉開、前排怪碰不到後排怪的
+        // 小面板，就沒有前後排的縱深（2026-09-14 使用者定案：前排怪要遮住後排怪的血量面板）。
+        // 做法：把 244×(width/390) 高的「站位帶」貼齊場景底部，多出來的高度全變成上方天空（背景 cover 本就會
+        // 把畫面往上延伸）；場景比站位帶矮時（緊湊/短屏）退回整高壓縮，和以前一樣。
+        const bandH = Math.min(height, SCENE_VIEWPORT.h * k)
+        const footY = height - (1 - slot.y) * bandH
         const left = footX - dw * MONSTER_ANCHOR.x
         const top = footY - dw * MONSTER_ANCHOR.y
         const selected = enemy.id === targetId
@@ -111,7 +122,7 @@ export default function BattleStage({ scene, enemies, targetId, onSelect, width,
               aria-label={`選擇 ${enemy.name}，等級 ${enemy.level}，HP ${enemy.hp}／${enemy.hpMax}`}
               aria-pressed={selected}
               onClick={() => onSelect(enemy.id)}
-              style={{ left: Math.round(left), top: Math.round(top), width: Math.round(dw), height: Math.round(dw), zIndex: Z.monsterBase + idx }}
+              style={{ left: Math.round(left), top: Math.round(top), width: Math.round(dw), height: Math.round(dw), zIndex: zMonster(idx) }}
             >
               <img src={enemy.imageUrl} alt="" draggable={false} />
             </button>
@@ -123,7 +134,7 @@ export default function BattleStage({ scene, enemies, targetId, onSelect, width,
               className={s.plate}
               // position 用 inline 寫死：EnemyPlate.module.css 的 .plate{position:relative} 與本檔 .plate{position:absolute}
               // 同權重、誰後載入誰贏——曾讓面板變成 in-flow 元素逐個往下堆，前排三張面板被推出場景底部被裁掉（2026-09-13）。
-              style={{ position: 'absolute', left: Math.round(footX - plateW / 2), top: Math.round(footY - PLATE_LIFT * k), zIndex: Z.plate }}
+              style={{ position: 'absolute', left: Math.round(footX - plateW / 2), top: Math.round(footY - PLATE_LIFT * k), zIndex: zPlate(idx) }}
             />
             {selected && (
               <img
