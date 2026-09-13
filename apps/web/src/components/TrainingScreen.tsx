@@ -10,6 +10,7 @@ import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
 import RaceStrategyTab from './RaceStrategyTab'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
+import { scrollIntoNearest } from '@/lib/scrollIntoNearest'
 
 // 自主訓練（VIP 專屬）：
 // P1「📚 課表庫」——依分類列出，選配速等級後即時解析出總距離/預估時間；「開始訓練」把解析後的分段
@@ -566,14 +567,16 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     return out
   }, [calRange.startYmd, calRange.endYmd])
 
-  // 進頁/範圍變更後自動把「今天」捲進可視範圍；今天不在範圍內則捲到起始週，避免長計畫一開要滑很久
+  // 進頁/範圍變更後自動把「今天」捲進可視範圍；今天不在範圍內則捲到起始週，避免長計畫一開要滑很久。
+  // 2026-09-13 改 scrollIntoNearest：scrollIntoView 會連 overflow:hidden 的根容器一起捲，iOS 上根容器比視窗高時
+  // 頁首會被推出視窗且捲不回（見 lib/scrollIntoNearest.ts 檔頭）；只捲最近的 ScrollArea 一層。
   const todayCellRef = useRef<HTMLButtonElement | null>(null)
   const startWeekRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     if (tab !== 'calendar' || !unlocked) return
     const raf = requestAnimationFrame(() => {
-      if (todayCellRef.current) todayCellRef.current.scrollIntoView({ block: 'center' })
-      else startWeekRef.current?.scrollIntoView({ block: 'start' })
+      if (todayCellRef.current) scrollIntoNearest(todayCellRef.current, { block: 'center' })
+      else scrollIntoNearest(startWeekRef.current, { block: 'start' })
     })
     return () => cancelAnimationFrame(raf)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -796,7 +799,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
       if (e?.status === 409 && e?.message === 'plan_limit') {
         setShowAutoPlan(false)
         setPlanLimitMsg('已達 3 個訓練計畫上限，請先清除一個')
-        setTimeout(() => plansRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+        setTimeout(() => scrollIntoNearest(plansRef.current, { behavior: 'smooth', block: 'start' }), 50) // 不用 scrollIntoView：理由見 lib/scrollIntoNearest.ts
       } else if (e?.status === 400 && e?.message === 'need_training_day') {
         setApErr('至少需保留 1 天非休息日才能排課')
       } else if (e?.status === 400 && e?.message === 'invalid race_date') {

@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { adminGpsCalibApi, type GpsCalibRow, type GpsCalibInfo, type GpsCalibPair, type GpsCalibLogEntry } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
+import { scrollIntoNearest } from '@/lib/scrollIntoNearest'
 
 const PAGE = 50
 
@@ -170,10 +171,12 @@ export default function AdminGpsCalibPage() {
   }
   // 對抗式審查修正（low finding）：後台外殼實際捲動的是 AdminShell 主內容區那個 overflowY:'auto'
   // 的 div（root 是 height:100vh），document/window 從不產生捲軸，所以 window.scrollTo 是 no-op；
-  // 列表長時點下面的列，詳情面板（渲染在列表上方）會開在畫面外，看起來像沒反應。改用
-  // scrollIntoView，由瀏覽器自己找最近的可捲動祖先。
+  // 列表長時點下面的列，詳情面板（渲染在列表上方）會開在畫面外，看起來像沒反應。
+  // 2026-09-13 改 lib/scrollIntoNearest：scrollIntoView 並非「只捲最近的可捲動祖先」，而是把所有可捲動祖先
+  // （含 overflow:hidden 的 html/body/.app-h 根容器）一起捲——iOS 上根容器比視窗高 10–24px 時頁首會被推出
+  // 視窗且捲不回來。改為自己算目標 scrollTop、只捲那個 overflowY:'auto' 的主內容區。
   useEffect(() => {
-    if (sel) detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (sel) scrollIntoNearest(detailRef.current, { behavior: 'smooth', block: 'start' })
   }, [sel])
 
   function changeStatus(v: string) {

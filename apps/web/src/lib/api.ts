@@ -671,8 +671,10 @@ export const activitiesApi = {
   // client_version：App/前端版號，供 GPS 距離校正量測用（見 internal/gpscalib），可不送。
   // pet_ids：D5 狗狗歸屬——上傳當下勾選「這趟狗狗有一起跑」的 registration_pet id（見 track/page.tsx
   // 的「這趟狗狗有一起跑嗎？」卡片），非寵物賽事/沒勾就不帶。
-  uploadGps: (token: string, body: { race_id?: string; started_at: string; ended_at: string; points: GpsPoint[]; client_version?: string; pet_ids?: string[] }) =>
-    request<{ result: GpsRunResult }>('/activities/gps', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  // signal：呼叫端可帶 AbortSignal.timeout(...)——request() 的 fetch 本身沒有逾時，iOS 上網路停滯時 fetch 可能
+  // 幾分鐘不 reject，跑完的上傳若懸著、結束畫面就沒有任何出口（2026-09-13 對抗式審查）。
+  uploadGps: (token: string, body: { race_id?: string; started_at: string; ended_at: string; points: GpsPoint[]; client_version?: string; pet_ids?: string[] }, signal?: AbortSignal) =>
+    request<{ result: GpsRunResult }>('/activities/gps', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body), signal }),
   gpsHistory: (token: string) => request<{ runs: GpsRunHistory[] }>('/activities/gps/history', { headers: withAuth(token) }),
   gpsDetail: (token: string, id: string) => request<{ run: GpsRunHistory }>(`/activities/gps/${id}`, { headers: withAuth(token) }),
   // 跑步中心跳（後台「目前在跑名單」用）；失敗可忽略

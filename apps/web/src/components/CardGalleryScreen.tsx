@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { exploreApi, type ExploreGalleryCard } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
+import { scrollIntoNearest } from '@/lib/scrollIntoNearest'
 
 // 卡片圖鑑：收集到的關主卡片。9 張/頁，未收集顯示灰底「？」，右上顯示已收集數（不給總數，卡片持續擴充）。
 // focusCardId：從關主挑戰完成導入（?unlock）→ 跳到該卡所在頁 + 播放翻轉解鎖 + 星星粒子特效。
@@ -87,7 +88,7 @@ export default function CardGalleryScreen({ onBack, focusCardId }: { onBack: () 
                 return (
                   <div
                     key={b?.id ?? `empty-${i}`}
-                    ref={unlocking ? (el) => el?.scrollIntoView({ block: 'center', behavior: 'smooth' }) : undefined}
+                    ref={unlocking ? (el) => scrollIntoNearest(el, { block: 'center', behavior: 'smooth' }) : undefined} // 不用 scrollIntoView（會把 overflow:hidden 根容器一起捲、iOS 頁首捲不回），見 lib/scrollIntoNearest.ts
                     style={{ aspectRatio: '3 / 4', borderRadius: 10, position: 'relative', overflow: unlocking ? 'visible' : 'hidden', zIndex: unlocking ? 5 : undefined, border: '1px solid var(--line)', background: 'var(--bg-2)', animation: unlocking ? 'cardGlow 1.5s ease-out' : undefined }}
                   >
                     {b && b.card_obtained ? (

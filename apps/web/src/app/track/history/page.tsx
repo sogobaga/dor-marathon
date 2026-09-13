@@ -7,6 +7,7 @@ import { decodePolylineSegments } from '@/lib/polyline'
 import { kmMarkerPositions, addKmMarkers } from '@/lib/kmMarkers'
 import { useDashboard } from '@/lib/useDashboard'
 import { qualifiesGov500, gov500RunKey, markGov500Shot, hasGov500ShotThisWeek } from '@/lib/gov500'
+import { scrollIntoNearest } from '@/lib/scrollIntoNearest'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
 
@@ -68,8 +69,11 @@ export default function TrackHistoryPage() {
   useEffect(() => {
     if (!sel) return
     // 點下方列表的紀錄後，詳情區渲染在列表上方、但視窗還停在剛才點的位置——自動捲到詳情區頂端，
-    // 讓日期/時間/姓名/分段第一時間入眼（也方便直接截圖）。scrollIntoView 會捲最近的可捲動祖先（ScrollArea）。
-    detailRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    // 讓日期/時間/姓名/分段第一時間入眼（也方便直接截圖）。
+    // ⚠️ 不用 scrollIntoView（2026-09-13）：它不是「只捲最近的可捲動祖先」，而是把所有可捲動祖先一起捲，
+    // 含 overflow:hidden 的 html/body/.phone-frame；iOS 上根容器比視窗高 10–24px 時頁首會被推出視窗且
+    // 使用者捲不回來（v801 加的就是這行，症狀＝標題被裁）。改只捲 ScrollArea 那一層（lib/scrollIntoNearest.ts）。
+    scrollIntoNearest(detailRef.current, { block: 'start', behavior: 'smooth' })
     // 一趟軌跡可能存成多段 ';' 相接的 encoded polyline（斷訊/跳點期間排除，見 lib/polyline.ts 註解）；
     // 每段各畫一條 Leaflet polyline、段落間不連線——舊資料無 ';' 時就是單一段，行為與過去相同。
     const segments = decodePolylineSegments(sel.polyline || '')

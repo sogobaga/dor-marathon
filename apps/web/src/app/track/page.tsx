@@ -104,6 +104,9 @@ export default function TrackPage() {
   const [petChoices, setPetChoices] = useState<{ id: string; name: string }[] | null>(null)
   const [petSelected, setPetSelected] = useState<Set<string>>(new Set())
   const pendingUploadRef = useRef<null | { kind: 'live'; pts: GpsPoint[] } | { kind: 'recovered' }>(null)
+  // 2026-09-13：一般結束路徑上傳失敗/逾時後的重試資料——結束畫面補一顆「重新上傳」（軌跡仍在記憶體與 LS_KEY），
+  // 不必逼使用者重整頁面走撿回流程；成功即清空。
+  const [retryUpload, setRetryUpload] = useState<null | { pts: GpsPoint[]; petIds: string[] }>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [showActiveRaces, setShowActiveRaces] = useState(false) // 「進行中活動/賽事」面板開關
   const [showStartTip, setShowStartTip] = useState(false) // 從賽事詳情頁「前往挑戰」進入（?from=race）→ idle 時顯示一次性新手提醒，可點擊/X關閉
@@ -1135,7 +1138,7 @@ export default function TrackPage() {
     calibKRef.current = dash?.gps_calib_entry === 'shown' && dash.gps_calib_factor > 0 ? dash.gps_calib_factor : lastKnownKRef.current
     movingStateRef.current = initMovingState(); lastMoveRef.current = null // #4 移動時間狀態機重置（見 lib/movingTime.ts）
     pendingRef.current = [] // 距離防漂移：清掉上一趟未回補的暫存段
-    setDistance(0); setElapsed(0); setSplits([]); setExcluded({ segs: 0, km: 0 }); setResult(null); setMovingS(0)
+    setDistance(0); setElapsed(0); setSplits([]); setExcluded({ segs: 0, km: 0 }); setResult(null); setRetryUpload(null); setMovingS(0)
     // 每公里鼓勵語重置：避免上一趟結束前顯示中的句子/去重記憶殘留到這一趟
     setCheer(null); lastCheerTextRef.current = null; if (cheerTimerRef.current) clearTimeout(cheerTimerRef.current)
     vehicleLikeRef.current = false; setVehicleWarn(false)
@@ -1289,8 +1292,19 @@ export default function TrackPage() {
     } catch { return [] }
   }
 
+  // 上傳逾時（2026-09-13 對抗式審查）：request() 的 fetch 沒有逾時，iOS 網路停滯時可能幾分鐘不 reject；
+  // 寵物確認卡現在會等上傳結束才關、「再跑一次」上傳中也停用，若請求懸著、結束畫面就沒有任何出口。
+  // 60 秒足以涵蓋大軌跡的後端簡化與 Neon 冷啟（實測 1 小時軌跡上傳 1.5 秒）；舊瀏覽器沒有 AbortSignal.timeout 就不設。
+  function uploadTimeoutSignal(): AbortSignal | undefined {
+    return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(60_000) : undefined
+  }
+  function uploadErrMsg(e: any): string { // eslint-disable-line @typescript-eslint/no-explicit-any
+    if (e?.name === 'TimeoutError' || e?.name === 'AbortError') return '上傳逾時，請確認網路後按「重新上傳」（這趟紀錄已保留）'
+    return e?.message || '上傳失敗'
+  }
+
   async function doUploadGps(pts: GpsPoint[], petIds: string[] = []): Promise<GpsRunResult | null> {
-    setUploading(true)
+    setUploading(true); setErr('')
     try {
       const { result } = await withUserAuth((t) => activitiesApi.uploadGps(t, {
         started_at: new Date(startRef.current).toISOString(),
@@ -1298,8 +1312,8 @@ export default function TrackPage() {
         points: pts,
         client_version: APP_VERSION,
         pet_ids: petIds.length ? petIds : undefined,
-      }))
-      setResult(result)
+      }, uploadTimeoutSignal()))
+      setResult(result); setRetryUpload(null)
       // 結束後以後端分段為單一真相：後端由軌跡重算、可信，且與 avg_pace_s 同源。
       // 覆寫本地即時分段（可能因 paceBaseMs 時間差而略有誤差），讓結束畫面「分段」與「均配速」一致。
       if (result.km_paces?.length) setSplits(result.km_paces)
@@ -1309,7 +1323,7 @@ export default function TrackPage() {
       revalidateDash()
       return result
     } catch (e: any) {
-      setErr(e?.message || '上傳失敗')
+      setErr(uploadErrMsg(e)); setRetryUpload({ pts, petIds })
       return null
     } finally { setUploading(false) }
   }
@@ -1350,12 +1364,20 @@ export default function TrackPage() {
   }
 
   // 「這趟狗狗有一起跑嗎？」卡片送出（含「沒有帶狗」＝空陣列）：接續原本被暫緩的上傳。
-  function submitPetConfirm(selected: string[]) {
+  // 2026-09-13：改 async、上傳期間卡片保持開著（兩顆按鈕本來就吃 uploading 顯示「上傳中…」並 disable），
+  // 上傳結束才關卡。原本先關卡再上傳，但此時 status 早已是 'done'、「（上傳中…）」提示只在 tracking 才渲染，
+  // 結束畫面完全沒有上傳中回饋，使用者以為卡住；失敗時 finally 也會關卡，讓 err 橫幅（zIndex 900、低於本卡
+  // 3300）露得出來。上傳語意/賽事 gate/loadPetChoices 條件皆不變。
+  async function submitPetConfirm(selected: string[]) {
     const pending = pendingUploadRef.current
-    setPetChoices(null); pendingUploadRef.current = null
-    if (!pending) return
-    if (pending.kind === 'live') doUploadGps(pending.pts, selected)
-    else doUploadRecoveredNow(selected)
+    if (!pending) { setPetChoices(null); return }
+    try {
+      if (pending.kind === 'live') await doUploadGps(pending.pts, selected)
+      else await doUploadRecoveredNow(selected)
+    } finally {
+      pendingUploadRef.current = null
+      setPetChoices(null)
+    }
   }
 
   // 進頁偵測「上次未上傳的跑步」（LS_KEY 備份）→ 提示可恢復上傳，避免忘記上傳整趟白跑
@@ -1379,6 +1401,7 @@ export default function TrackPage() {
     if (!recover) return
     const token = getUserToken()
     if (!token) { setShowLogin(true); return }
+    setErr('') // 撿回視窗內會顯示上次失敗原因（2026-09-13），重試前先清掉，否則重試中/同訊息再失敗畫面零變化
     // D5：回復上傳路徑也套同一個寵物確認關卡——有候選才彈卡暫緩，交給 submitPetConfirm 接手。
     const pets = await loadPetChoices()
     if (pets.length) {
@@ -1401,14 +1424,14 @@ export default function TrackPage() {
         points: pts,
         client_version: APP_VERSION,
         pet_ids: petIds.length ? petIds : undefined,
-      }))
+      }, uploadTimeoutSignal()))
       // 結果卡（揮汗有禮直接截圖需求，見上方「結果」區塊）讀 startRef/pointsRef 當這趟的開始時間與
       // 終點：恢復上傳走的不是 start()，這兩顆 ref 仍是初始值或上一趟殘留（審查抓到會顯示 1970 或
       // 別趟日期）——上傳成功時同步寫回，順便也讓 status→'done' 的號碼標記重建效果拿到正確軌跡。
       startRef.current = recover.start; pointsRef.current = pts
       setResult(result); setStatus('done'); localStorage.removeItem(LS_KEY); setRecover(null)
       revalidateDash() // 同 doUploadGps：見該處對抗式審查修正註解
-    } catch (e: any) { setErr(e?.message || '上傳失敗') }
+    } catch (e: any) { setErr(uploadErrMsg(e)) }
     finally { setUploading(false) }
   }
   function discardRecovered() { localStorage.removeItem(LS_KEY); setRecover(null) }
@@ -1895,6 +1918,9 @@ export default function TrackPage() {
             <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
               偵測到上次離開時尚未上傳的跑步紀錄（約 <strong style={{ color: 'var(--fug)' }}>{recover.km} km</strong>、<strong style={{ color: 'var(--tx)' }}>{recover.mins} 分鐘</strong>）。要現在上傳嗎？
             </div>
+            {/* 2026-09-13：恢復上傳失敗時 setErr 的橫幅（zIndex 900）被本彈窗（3300）蓋住，使用者只看到按鈕又能按、
+                像在迴圈——把失敗原因直接顯示在卡片內。 */}
+            {err && <div style={{ marginTop: 8, fontSize: 12.5, color: '#ff8080' }}>{err}</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
               <button onClick={uploadRecovered} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>{uploading ? '上傳中…' : '上傳這趟'}</button>
               <button onClick={discardRecovered} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>捨棄</button>
@@ -1957,6 +1983,38 @@ export default function TrackPage() {
               <button onClick={() => submitPetConfirm(Array.from(petSelected))} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>{uploading ? '上傳中…' : '送出'}</button>
               <button onClick={() => submitPetConfirm([])} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>沒有帶狗</button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* 跑完達標自動彈出的「揮汗有禮」視窗：內容與面板內的「揮汗有禮」卡片相同（只在達標時才會被彈出，
+          見上方自動彈窗 effect，故這裡不再重複判斷 gov500Qual.ok）。手機全螢幕路由（PhoneFrame），
+          fixed 覆蓋可視區即可。
+          2026-09-13 根因修正（Railway HTTP 時間軸＋DB 對帳確認）：這個覆蓋層原本放在資訊面板的可捲動內容區
+          （overflowY:auto＋-webkit-overflow-scrolling:touch）裡——iOS 上 position:fixed 元素放進 momentum
+          捲動容器會錯位/被裁切：遮罩蓋住整個面板、對話框（含「關閉」鈕）卻按不到，使用者回報「關閉寵物視窗後
+          畫面卡住無法操作」（當天 07:04 那趟 7.46 km 是第一趟達標；gov500_entry_state 對全體會員 open，故每個
+          跑滿 5km/30 分的會員都會中）。通則：覆蓋層不可放在面板的 -webkit-overflow-scrolling 捲動容器內，一律和
+          recover/confirmStravaHold/petChoices 一樣直接掛在 PhoneFrame 下、zIndex 3300 同層。
+          對抗式審查修正：這個彈窗本身蓋住整個畫面（含下方真正要截的日期/距離/地圖標記），若照文案
+          字面「直接截圖這個畫面」去做，使用者截到的只會是這個沒有任何跑步數據的小對話框——彈窗
+          必須先關閉、露出下面真正的結果卡＋地圖，截圖才有意義。因此主按鈕除了記錄/開新分頁前往
+          500.gov.tw 外，也一併關閉本彈窗（面板內仍有一份一模一樣的「揮汗有禮」卡片＋按鈕，
+          關閉後使用者可以先截圖、再切去已經開好的 500.gov.tw 分頁上傳）。 */}
+      {gov500Modal && status === 'done' && result && dash?.gov500_entry === 'shown' && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 3300, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ width: '100%', maxWidth: 340, background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 14, padding: 18 }}>
+            <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>運動部「揮汗有禮・全民動起來」活動</div>
+            <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', lineHeight: 1.6, marginBottom: 12 }}>
+              本趟已達成單次 5 公里或 30 分鐘標準！點下方按鈕後本視窗會自動關閉，回到完整的跑步紀錄畫面（含日期/距離/分段與地圖公里標記）——直接用手機截圖鍵擷取整個畫面、不要裁切，再切去已開啟的 500.gov.tw 分頁上傳。
+            </div>
+            <button onClick={() => { markGov500Shot(gov500RunKey(new Date(startRef.current).toISOString())); window.open('https://500.gov.tw/registrant/', '_blank', 'noopener'); setGov500Modal(false) }}
+              style={{ width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer', marginBottom: 8 }}>
+              前往運動部活動網頁，上傳截圖
+            </button>
+            <button onClick={() => setGov500Modal(false)}
+              style={{ width: '100%', background: 'var(--bg-2)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '9px', fontSize: 13, cursor: 'pointer' }}>
+              關閉
+            </button>
           </div>
         </div>
       )}
@@ -2408,33 +2466,6 @@ export default function TrackPage() {
           </div>
         )}
 
-        {/* 跑完達標自動彈出的「揮汗有禮」視窗：內容與上方卡片相同（只在達標時才會被彈出，見上方
-            自動彈窗 effect，故這裡不再重複判斷 gov500Qual.ok）。手機全螢幕路由（PhoneFrame），
-            fixed 覆蓋可視區即可。
-            對抗式審查修正：這個彈窗本身蓋住整個畫面（含下方真正要截的日期/距離/地圖標記），若照文案
-            字面「直接截圖這個畫面」去做，使用者截到的只會是這個沒有任何跑步數據的小對話框——彈窗
-            必須先關閉、露出下面真正的結果卡＋地圖，截圖才有意義。因此主按鈕除了記錄/開新分頁前往
-            500.gov.tw 外，也一併關閉本彈窗（同一頁下方仍有一份一模一樣的「揮汗有禮」卡片＋按鈕，
-            關閉後使用者可以先截圖、再切去已經開好的 500.gov.tw 分頁上傳）。 */}
-        {gov500Modal && status === 'done' && result && dash?.gov500_entry === 'shown' && (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 1600, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-            <div style={{ width: '100%', maxWidth: 340, background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 14, padding: 18 }}>
-              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>運動部「揮汗有禮・全民動起來」活動</div>
-              <div style={{ fontSize: 12.5, color: 'var(--tx-dim)', lineHeight: 1.6, marginBottom: 12 }}>
-                本趟已達成單次 5 公里或 30 分鐘標準！點下方按鈕後本視窗會自動關閉，回到完整的跑步紀錄畫面（含日期/距離/分段與地圖公里標記）——直接用手機截圖鍵擷取整個畫面、不要裁切，再切去已開啟的 500.gov.tw 分頁上傳。
-              </div>
-              <button onClick={() => { markGov500Shot(gov500RunKey(new Date(startRef.current).toISOString())); window.open('https://500.gov.tw/registrant/', '_blank', 'noopener'); setGov500Modal(false) }}
-                style={{ width: '100%', background: 'var(--fug)', color: 'var(--fug-ink)', fontWeight: 800, border: 'none', borderRadius: 9, padding: '10px', fontSize: 13, cursor: 'pointer', marginBottom: 8 }}>
-                前往運動部活動網頁，上傳截圖
-              </button>
-              <button onClick={() => setGov500Modal(false)}
-                style={{ width: '100%', background: 'var(--bg-2)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 9, padding: '9px', fontSize: 13, cursor: 'pointer' }}>
-                關閉
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* 分段 */}
         {splits.length > 0 && (
           <div style={{ marginTop: 16 }}>
@@ -2533,7 +2564,12 @@ export default function TrackPage() {
             : <button onClick={() => setShowLogin(true)} style={btn}>請先登入</button>
         )}
         {status === 'tracking' && <button onClick={requestFinish} className="skin-btn-end" style={{ ...btn, background: 'var(--hunt)', color: '#fff' }}>■ 結束並上傳</button>}
-        {status === 'done' && <button onClick={() => { setStatus('idle'); setElapsed(0); setDistance(0); setSplits([]); setExcluded({ segs: 0, km: 0 }) }} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)' }}>再跑一次</button>}
+        {/* 2026-09-13：上傳中（寵物確認卡送出後 status 已是 done）禁用並顯示「上傳中…」，結束畫面才有上傳回饋 */}
+        {/* 上傳失敗/逾時：軌跡仍在（retryUpload＋LS_KEY），直接重送，不必重整走撿回流程 */}
+        {status === 'done' && !result && retryUpload && !uploading && (
+          <button onClick={() => doUploadGps(retryUpload.pts, retryUpload.petIds)} style={{ ...btn, marginBottom: 8 }}>⟳ 重新上傳這趟</button>
+        )}
+        {status === 'done' && <button onClick={() => { setStatus('idle'); setElapsed(0); setDistance(0); setSplits([]); setExcluded({ segs: 0, km: 0 }) }} disabled={uploading} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)', opacity: uploading ? 0.6 : 1 }}>{uploading ? '上傳中…' : '再跑一次'}</button>}
         {status === 'tracking' && <div className="track-blink" style={{ textAlign: 'center', fontSize: 12.5, fontWeight: 800, color: 'var(--hunt)', marginTop: 8, lineHeight: 1.5 }}>⚠️ 數據偵測中，請勿離開或關閉視窗！跑完請按「結束並上傳」{uploading ? '（上傳中…）' : ''}</div>}
       </div>
 
