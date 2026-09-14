@@ -87,32 +87,34 @@ type wireItem struct {
 }
 
 type wirePartyMember struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name"`
-	Level       int         `json:"level"`
-	HP          int         `json:"hp"`
-	HPMax       int         `json:"hpMax"`
-	MP          int         `json:"mp"`
-	MPMax       int         `json:"mpMax"`
-	PortraitURL *string     `json:"portraitUrl"`
-	Stats       *ActorStats `json:"stats,omitempty"`
-	Weapon      string      `json:"weapon,omitempty"`
+	ID          string        `json:"id"`
+	Name        string        `json:"name"`
+	Level       int           `json:"level"`
+	HP          int           `json:"hp"`
+	HPMax       int           `json:"hpMax"`
+	MP          int           `json:"mp"`
+	MPMax       int           `json:"mpMax"`
+	PortraitURL *string       `json:"portraitUrl"`
+	Stats       *ActorStats   `json:"stats,omitempty"`
+	Weapon      string        `json:"weapon,omitempty"`
+	Rating      *CombatRating `json:"rating,omitempty"` // P2：命中/暴擊評級，見 scaling.go CombatRating
 }
 
 type wireEnemy struct {
-	ID             string      `json:"id"`
-	Name           string      `json:"name"`
-	Level          int         `json:"level"`
-	HP             int         `json:"hp"`
-	HPMax          int         `json:"hpMax"`
-	Slot           string      `json:"slot"`
-	ImageURL       string      `json:"imageUrl"`
-	Rank           string      `json:"rank,omitempty"`
-	Attribute      string      `json:"attribute,omitempty"`
-	Size           string      `json:"size,omitempty"`
-	Race           string      `json:"race,omitempty"`
-	Stats          *ActorStats `json:"stats,omitempty"`
-	ThreatPriority int         `json:"threatPriority,omitempty"`
+	ID             string        `json:"id"`
+	Name           string        `json:"name"`
+	Level          int           `json:"level"`
+	HP             int           `json:"hp"`
+	HPMax          int           `json:"hpMax"`
+	Slot           string        `json:"slot"`
+	ImageURL       string        `json:"imageUrl"`
+	Rank           string        `json:"rank,omitempty"`
+	Attribute      string        `json:"attribute,omitempty"`
+	Size           string        `json:"size,omitempty"`
+	Race           string        `json:"race,omitempty"`
+	Stats          *ActorStats   `json:"stats,omitempty"`
+	ThreatPriority int           `json:"threatPriority,omitempty"`
+	Rating         *CombatRating `json:"rating,omitempty"` // P2：命中/暴擊評級，見 scaling.go CombatRating
 	// ⚠️ 不能加 omitempty：Go 的 omitempty 對 bool 是「等於零值(false)就省略」，會讓
 	// canEscape=false（契約最在意的那個值，BOSS 場整場不能逃）被吃掉、前端收到 undefined
 	// 又落回預設 true——這裡刻意每筆都明確送 true/false，比省略省一點 bytes 更重要。
@@ -148,6 +150,25 @@ type wireBattleConfig struct {
 	CritRate              float64 `json:"critRate"`
 	CritMultiplier        float64 `json:"critMultiplier"`
 	ResolveDelayMs        int     `json:"resolveDelayMs"`
+
+	// ---- P2（暴擊／Miss／無效攻擊）新增：對齊前端 engine/types.ts BattleConfig 同名欄位。 ----
+	BaseMissPct           float64                       `json:"baseMissPct"`
+	HitFleeScale          float64                       `json:"hitFleeScale"`
+	MissMinPct            float64                       `json:"missMinPct"`
+	MissMaxPct            float64                       `json:"missMaxPct"`
+	MonsterHitBase        float64                       `json:"monsterHitBase"`
+	MonsterFleeBase       float64                       `json:"monsterFleeBase"`
+	MonsterCritPct        float64                       `json:"monsterCritPct"`
+	MonsterCritShieldBase float64                       `json:"monsterCritShieldBase"`
+	ElementChart          map[string]map[string]float64 `json:"elementChart"`
+
+	// ---- P2 修正第 3 輪新增：怪物命中/迴避等級基線斜率、AGI→攻速、DEX→詠唱縮減換算參數。
+	// 命名沿用本檔一貫轉換規則（去掉 battle_ 前綴後轉 camelCase）。 ----
+	MonsterHitPerLevel  float64 `json:"monsterHitPerLevel"`
+	MonsterFleePerLevel float64 `json:"monsterFleePerLevel"`
+	AspdReference       float64 `json:"aspdReference"`
+	AttackCooldownMinMs int     `json:"attackCooldownMinMs"`
+	CastMinMs           int     `json:"castMinMs"`
 }
 
 func buildWireConfig(cfg Config) wireBattleConfig {
@@ -166,6 +187,22 @@ func buildWireConfig(cfg Config) wireBattleConfig {
 		CritRate:              cfg.BattleCritRate,
 		CritMultiplier:        cfg.BattleCritMultiplier,
 		ResolveDelayMs:        cfg.BattleResolveDelayMs,
+
+		BaseMissPct:           cfg.BattleBaseMissPct,
+		HitFleeScale:          cfg.BattleHitFleeScale,
+		MissMinPct:            cfg.BattleMissMinPct,
+		MissMaxPct:            cfg.BattleMissMaxPct,
+		MonsterHitBase:        cfg.BattleMonsterHitBase,
+		MonsterFleeBase:       cfg.BattleMonsterFleeBase,
+		MonsterCritPct:        cfg.BattleMonsterCritPct,
+		MonsterCritShieldBase: cfg.BattleMonsterCritShieldBase,
+		ElementChart:          cfg.BattleElementChart,
+
+		MonsterHitPerLevel:  cfg.BattleMonsterHitPerLevel,
+		MonsterFleePerLevel: cfg.BattleMonsterFleePerLevel,
+		AspdReference:       cfg.BattleAspdReference,
+		AttackCooldownMinMs: cfg.BattleAttackCooldownMinMs,
+		CastMinMs:           cfg.BattleCastMinMs,
 	}
 }
 
@@ -499,6 +536,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		MP: roundInt(pbs.MPMax), MPMax: roundInt(pbs.MPMax),
 		PortraitURL: playerPortraitURL,
 		Stats:       &ActorStats{HPMax: pbs.HPMax, MPMax: pbs.MPMax, Atk: pbs.Atk, Matk: pbs.Matk, Def: pbs.Def, Mdef: pbs.Mdef},
+		Rating:      &pbs.Rating,
 	}}
 
 	companions, err := h.listPartyCompanions(ctx, 4)
@@ -511,6 +549,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, c := range companions {
 		cs := ScaleCompanion(cfg, pbs, c)
+		cr := CompanionRating(cfg, pbs.Rating, c)
 		party = append(party, wirePartyMember{
 			ID: c.ID, Name: c.Name, Level: baseLevel + c.LevelOffset,
 			HP: roundInt(cs.HPMax), HPMax: roundInt(cs.HPMax),
@@ -518,6 +557,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 			PortraitURL: func() *string { u := charPortraitURL(c.PortraitID); return &u }(),
 			Stats:       &cs,
 			Weapon:      c.Weapon,
+			Rating:      &cr,
 		})
 	}
 
@@ -559,6 +599,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 			Rank: mr.Rank, Attribute: mr.Attribute, Size: mr.Size, Race: mr.Race,
 			Stats:          &ActorStats{HPMax: float64(sm.HPMax), MPMax: 0, Atk: float64(sm.Atk), Matk: float64(sm.Matk), Def: float64(sm.Def), Mdef: float64(sm.Mdef)},
 			ThreatPriority: mr.Threat,
+			Rating:         &sm.Rating,
 			CanEscape:      enc.CanEscape, // DDL 只有 encounter 層級的 can_escape，套到每隻怪身上（契約 D：BOSS 場整場不能逃）
 		}
 		enemies = append(enemies, enemy)

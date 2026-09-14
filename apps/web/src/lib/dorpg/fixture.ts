@@ -12,7 +12,11 @@
 // 「內容」與「D2 縮放公式」。
 
 import { charPortrait, kitAsset, monsterPoster, sceneImage } from './assets';
-import type { BattleSample, ElementKind, Enemy, EnemySlotId, Item, PartyMember, Scene, SceneSlot, Skill, WeaponKind } from './types';
+import type { BattleSample, CombatRating, ElementKind, Enemy, EnemySlotId, Item, PartyMember, Scene, SceneSlot, Skill, WeaponKind } from './types';
+// P2（暴擊／Miss／無效攻擊）：只借用 engine 已凍結匯出的預設常數算怪物評級基準，不是改動 engine
+// 本身——這裡是純消費端（跟 BattleScreen.tsx 呼叫 engine 的方式一樣），避免在本檔重複硬寫一份
+// monsterHitBase 等數字、之後 engine 那邊調預設值卻忘記回頭同步這裡。
+import { DEFAULT_BATTLE_CONFIG } from './engine';
 
 // ---------------------------------------------------------------------------
 // 內容列型別（鏡像 migration 176 的表；只保留 buildFixtureSample 實際用得到的欄位——
@@ -342,6 +346,61 @@ const FIXTURE_PLAYER_LEVEL = 60;
 /** 怪物顯示等級＝玩家 Base Lv（boss +5），契約 §3.2 明講的規則。 */
 const BOSS_LEVEL_BONUS = 5;
 
+/**
+ * P2（暴擊／Miss／無效攻擊）：離線預覽沒有登入後的角色配點資料，沒辦法像正式環境一樣呼叫
+ * internal/rpg Compute 算出真正的 Hit/Flee/CritPct/CritShield（那需要 DEX/AGI/LUK 等配點與
+ * Base Lv）——這裡給一組 fixture 專屬的固定值，刻意不是「完全命中／永不暴擊」的中性數字，
+ * 才能讓 /dev/dorpg 預覽實際看到三個新機制發生；不代表任何真實玩家的配點結果。
+ * 隊友沿用同一份值（SPEC §1 D1：「沒有〔對應倍率〕的話沿用玩家值」——CompanionRow 本來就沒有
+ * 這批倍率欄位，且依規則不得新增 migration，即玩家值就是最終值，不是偷懶省略），但 aspd／
+ * castReductionPct 例外：見下面 FIXTURE_COMPANION_RATING 的說明。
+ *
+ * P3（AGI 攻速／DEX 詠唱縮減，審查 dorpg_p3 r5）：aspd/castReductionPct 刻意給高於中性值
+ * （aspdReference=150、0）的示範數字，讓 /dev/dorpg 預覽能實際看到「攻擊間隔變快」「詠唱時間
+ * 縮短」這兩個新機制發生，跟 hit/flee/critPct/critShield 選非中性值同一份精神——不代表任何
+ * 真實玩家的配點結果。
+ */
+const FIXTURE_PLAYER_RATING: CombatRating = { hit: 92, flee: 8, critPct: 12, critShield: 4, aspd: 165, castReductionPct: 15 };
+
+/**
+ * 隊友評級（審查 dorpg_p3 r5 §D、對齊 services/api/internal/rpg/scaling.go CompanionRating）：
+ * hit/flee/critPct/critShield 沿用玩家值（理由見 FIXTURE_PLAYER_RATING 上方註解），但 aspd／
+ * castReductionPct 強制覆寫為中性值——後端 CompanionRating 明講「AGI/DEX 效果只限玩家本人，
+ * 隊友的攻擊冷卻/施放時間固定走 config 值，不隨玩家配點連動加速，避免隊友 AI 節奏被打亂」，
+ * 離線鏡像若讓隊友沿用玩家的示範性 aspd:165/castReductionPct:15，會跟正式環境的實際行為
+ * （隊友固定 aspdReference/0）不一致，看起來像「隊友也變快了」的誤導假象。
+ */
+const FIXTURE_COMPANION_RATING: CombatRating = { ...FIXTURE_PLAYER_RATING, aspd: DEFAULT_BATTLE_CONFIG.aspdReference, castReductionPct: 0 };
+
+/**
+ * 怪物命中/暴擊評級（審查 dorpg_p3 r5 §A 修復，對齊 services/api/internal/rpg MonsterRating()）：
+ * 命中/迴避改成跟著「玩家等級基線」走（不再是跟等級無關的絕對常數）——
+ *   monsterHit  = playerBaseLevel × monsterHitPerLevel  + monsterHitBase
+ *   monsterFlee = (playerBaseLevel × monsterFleePerLevel + monsterFleeBase) × speedMult
+ * critShield 乘該怪 defMult（同一組倍率也用在下面 scaleMonster 的 D2 縮放公式，語意一致：
+ * 越靈活的怪越難打中、越硬的怪越扛得住暴擊）。基準值直接讀 engine 的 DEFAULT_BATTLE_CONFIG
+ * ——離線預覽沒有後台 rpg_config 可讀，這是它唯一的資料來源；正式環境改吃 bootstrap 回應的
+ * config（見 fromApi.ts configFromBootstrap）。playerBaseLevel 離線預覽沒有真正登入資料可用，
+ * 沿用本檔既有的 FIXTURE_PLAYER_LEVEL 常數（跟怪物顯示等級同一個錨點，理由見該常數上方註解，
+ * 不另外新增一個常數）。aspd/castReductionPct 給 cfg.aspdReference/0——怪物在正式環境本來就
+ * 不吃這兩個欄位（節奏固定走 ActMinMs/ActMaxMs，不受配點影響），純粹填滿 CombatRating 型別，
+ * 避免零值造成「這隻怪 aspd=0」的誤解（對齊後端 MonsterRating 同一個理由）。
+ */
+function monsterRating(monster: MonsterRow): CombatRating {
+  const cfg = DEFAULT_BATTLE_CONFIG;
+  const lv = FIXTURE_PLAYER_LEVEL;
+  // 與 Go 的 MonsterRating 一致：夾在 monsterHitMax 之下，避免高等級玩家的 AGI 迴避失效。
+  const rawHit = lv * cfg.monsterHitPerLevel + cfg.monsterHitBase;
+  return {
+    hit: cfg.monsterHitMax > 0 ? Math.min(rawHit, cfg.monsterHitMax) : rawHit,
+    flee: (lv * cfg.monsterFleePerLevel + cfg.monsterFleeBase) * monster.speedMult,
+    critPct: cfg.monsterCritPct,
+    critShield: cfg.monsterCritShieldBase * monster.defMult,
+    aspd: cfg.aspdReference,
+    castReductionPct: 0,
+  };
+}
+
 interface ScaledMonsterStats {
   hpMax: number;
   atk: number;
@@ -470,6 +529,7 @@ export function buildFixtureSample(code: string, opts?: { playerAtk?: number; pl
       // 在離線預覽／verify_p2.mjs 這條路徑完全沒被套用，只有真打 API 才生效。逐場的值就是
       // encounter.canEscape（同一場所有敵人共用，非逐怪欄位），對齊 battle.go 的 wireEnemy.CanEscape。
       canEscape: encounter.canEscape,
+      rating: monsterRating(em.monster),
     };
   });
 
@@ -497,6 +557,7 @@ export function buildFixtureSample(code: string, opts?: { playerAtk?: number; pl
     mp: FIXTURE_PLAYER_MP,
     mpMax: FIXTURE_PLAYER_MP,
     portraitUrl: charPortrait(portraitRow.portraitId, 256),
+    rating: FIXTURE_PLAYER_RATING,
   };
 
   const companions: PartyMember[] = RPG_COMPANIONS.filter((c) => !c.isPlayerPortrait)
@@ -524,6 +585,9 @@ export function buildFixtureSample(code: string, opts?: { playerAtk?: number; pl
           mdef: Math.round(playerDef * c.mdefMult),
         },
         weapon: c.weapon,
+        // SPEC §1 D1：沒有對應倍率欄位就沿用玩家值，但 aspd/castReductionPct 固定中性值
+        // （見 FIXTURE_COMPANION_RATING 上方註解，對齊後端 CompanionRating）。
+        rating: FIXTURE_COMPANION_RATING,
       };
     });
 

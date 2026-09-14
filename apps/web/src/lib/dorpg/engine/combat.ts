@@ -1,10 +1,10 @@
 // 傷害/治療/護盾的效果套用（純函式風格：吃 Ctx 直接在裡面改，呼叫端保證是本次呼叫的工作副本）。
 // dispatch（玩家普攻/技能）、ai（隊友普攻/治療）、tick（敵人攻擊、施法完成結算）三邊共用，
 // 避免同一段「算傷害→套用→處理死亡/受擊」邏輯抄三次、規則跑掉。
-import type { Skill, WeaponKind } from '../types';
+import type { CombatRating, ElementKind, Skill, WeaponKind } from '../types';
 import type { Ctx } from './context';
 import { pushEvent, pushLog } from './context';
-import { computeDamage, computeHeal, selectAliveByThreat } from './formulas';
+import { computeHeal, computeRawDamage, critChance, elementMultiplier, missChance, selectAliveByThreat } from './formulas';
 import type { EnemyActor, PartyActor, PendingCast } from './types';
 
 /** 對敵人造成傷害後的死亡/受擊處理：死亡→dying+enemyDeath+目標自動換人；存活→hitReaction 覆蓋層。 */
@@ -39,8 +39,14 @@ function applyEnemyDamage(ctx: Ctx, enemy: EnemyActor, damage: number): void {
 
 /**
  * 玩家/隊友對敵人造成傷害（含普攻與技能傷害，事件 kind 都是 'attack'，見契約 §2 event 定義的註解）。
- * hitRate/critRate 目前預設 100%/0%（規格：「待平衡後由 profile 開啟」），這裡仍照規則走 rng 兩次，
- * 好讓未來調高 critRate 或注入自訂 rng 的測試都能吃到一致的行為。
+ * P2（暴擊／Miss／無效攻擊）結算順序照 SPEC §4：
+ *   1. 命中判定（missChance）→ 沒中：'miss'，damage=0。
+ *   2. 屬性倍率（elementMultiplier）→ 0 倍：'immune'，damage=0（不必再算暴擊/傷害）。
+ *   3. 暴擊判定（critChance）→ critMul 疊在跟蓄氣倍率同一個「命中後、扣防禦前」的乘數位置。
+ *   4. computeRawDamage 算出 net（刻意不套 max(1,...)）→ net≤0：也是 'immune'，damage=0；
+ *      否則才是真正的 'normal'/'critical' 傷害。
+ * 這支函式本身沒有「no rating」分支：opts.attackerRating 與 enemy.rating 一定是具體數值
+ * （createBattle 已經幫忙補好，見 formulas.ts 的 deriveDefaultPartyRating/deriveDefaultMonsterRating）。
  */
 export function resolveAttackOrDamageSkill(
   ctx: Ctx,
@@ -53,6 +59,10 @@ export function resolveAttackOrDamageSkill(
     targetEnemyId: string;
     chargeMul: number;
     charged: boolean;
+    /** 攻擊者評級（命中/暴擊判定用）；呼叫端一律從 PartyActor.rating 帶入。 */
+    attackerRating: CombatRating;
+    /** 技能的 element；不傳＝普攻，固定 'neutral'（SPEC §4）。 */
+    element?: ElementKind;
   },
 ): void {
   const enemy = ctx.enemies.find((e) => e.id === opts.targetEnemyId);
@@ -60,26 +70,47 @@ export function resolveAttackOrDamageSkill(
     pushLog(ctx, `${opts.actorId} 的攻擊目標已消失，落空`);
     return;
   }
-  const isHit = ctx.rng() < ctx.cfg.hitRate;
-  const isCrit = isHit && ctx.rng() < ctx.cfg.critRate;
-  // crit 目前預設不會發生（critRate=0）；一旦開啟，設計上讓爆擊倍率跟蓄氣倍率一樣疊在 chargeMul 這個
-  // 乘數位置——兩者概念上都是「命中後、扣防禦前」的加成，公式本身（computeDamage 簽章）沒有另外開 crit 參數。
-  const effectiveChargeMul = opts.chargeMul * (isCrit ? ctx.cfg.critMultiplier : 1);
-  const damage = isHit
-    ? computeDamage(opts.atk, opts.coefficient, opts.flat, 1, effectiveChargeMul, enemy.stats.def, false, ctx.cfg)
-    : 0;
-  const result: 'normal' | 'critical' | 'miss' = !isHit ? 'miss' : isCrit ? 'critical' : 'normal';
-  pushEvent(ctx, {
-    kind: 'attack',
-    actorId: opts.actorId,
-    targetId: enemy.id,
-    weapon: opts.weapon,
-    result,
-    damage,
-    charged: opts.charged,
-  });
-  pushLog(ctx, `${opts.actorId} 對 ${enemy.name} ${result === 'miss' ? '揮空' : `造成 ${damage} 點傷害`}`);
-  if (damage > 0) applyEnemyDamage(ctx, enemy, damage);
+  const element: string = opts.element ?? 'neutral';
+  const emitAttack = (result: 'normal' | 'critical' | 'miss' | 'immune', damage: number) =>
+    pushEvent(ctx, {
+      kind: 'attack',
+      actorId: opts.actorId,
+      targetId: enemy.id,
+      weapon: opts.weapon,
+      result,
+      damage,
+      charged: opts.charged,
+    });
+
+  const missPct = missChance(opts.attackerRating, enemy.rating, ctx.cfg);
+  const isHit = ctx.rng() >= missPct / 100;
+  if (!isHit) {
+    emitAttack('miss', 0);
+    pushLog(ctx, `${opts.actorId} 對 ${enemy.name} 揮空`);
+    return;
+  }
+
+  const elementMul = elementMultiplier(ctx.cfg, enemy.attribute, element);
+  if (elementMul === 0) {
+    emitAttack('immune', 0);
+    pushLog(ctx, `${opts.actorId} 對 ${enemy.name} 的攻擊完全無效（屬性剋制）`);
+    return;
+  }
+
+  const critPct = critChance(opts.attackerRating, enemy.rating, ctx.cfg);
+  const isCrit = ctx.rng() < critPct / 100;
+  const critMul = isCrit ? ctx.cfg.critMultiplier : 1;
+  const net = computeRawDamage(opts.atk, opts.coefficient, opts.flat, elementMul, opts.chargeMul, critMul, enemy.stats.def);
+  if (net <= 0) {
+    emitAttack('immune', 0);
+    pushLog(ctx, `${opts.actorId} 對 ${enemy.name} 的攻擊被完全擋下`);
+    return;
+  }
+
+  const result: 'normal' | 'critical' = isCrit ? 'critical' : 'normal';
+  emitAttack(result, net);
+  pushLog(ctx, `${opts.actorId} 對 ${enemy.name}${isCrit ? '爆擊，' : ''}造成 ${net} 點傷害`);
+  applyEnemyDamage(ctx, enemy, net);
 }
 
 /** 敵人打隊友：先扣盾再扣 HP（規格 §2）；打死當場記 actorDown，且若玩家正在逃跑判定中則立即取消判定記失敗。 */
@@ -151,6 +182,8 @@ export function resolveCastEffect(ctx: Ctx, actor: PartyActor, skill: Skill, pen
         targetEnemyId: pending.targetId,
         chargeMul: 1,
         charged: false,
+        attackerRating: actor.rating,
+        element: skill.element,
       });
     }
     return;

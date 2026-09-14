@@ -2,12 +2,32 @@
 // 對外的公開介面只有這裡列出的具名 export；內部切成 types/context/formulas/combat/ai/tick/dispatch
 // 方便維護，其他工作者只需要依賴這個檔名匯出的東西。
 import type { BattleSample, Enemy, PartyMember } from '../types';
-import { deriveDefaultActorStats, deriveDefaultEnemyStats, pickInitialTarget, randRange } from './formulas';
+import {
+  deriveDefaultActorStats,
+  deriveDefaultEnemyStats,
+  deriveDefaultMonsterRating,
+  deriveDefaultPartyRating,
+  pickInitialTarget,
+  randRange,
+} from './formulas';
 import type { BattleConfig, BattleEvent, BattleState, EnemyActor, PartyActor } from './types';
 import { DEFAULT_BATTLE_CONFIG } from './types';
 
 export * from './types';
-export { chargeMultiplier, chargeRatio, computeDamage, computeHeal, pickInitialTarget, pickNextTarget } from './formulas';
+export {
+  attackCooldownFor,
+  chargeMultiplier,
+  chargeRatio,
+  computeDamage,
+  computeHeal,
+  computeRawDamage,
+  critChance,
+  effectiveCastMs,
+  elementMultiplier,
+  missChance,
+  pickInitialTarget,
+  pickNextTarget,
+} from './formulas';
 export { dispatch } from './dispatch';
 export { tick } from './tick';
 
@@ -30,6 +50,8 @@ function toPartyActor(pm: PartyMember, index: number, now: number, cfg: BattleCo
     portraitUrl: pm.portraitUrl,
     slotIndex: index,
     weapon: pm.weapon ?? 'sword',
+    // P2：有真實評級（internal/rpg Compute 算出來的）就直接用，沒有就退回 config 推導的後備值。
+    rating: pm.rating ?? deriveDefaultPartyRating(cfg),
   };
 }
 
@@ -53,6 +75,8 @@ function toEnemyActor(e: Enemy, now: number, cfg: BattleConfig, rng: () => numbe
     attribute: e.attribute,
     size: e.size,
     race: e.race,
+    // P2：怪物沒有個別覆寫就用 config 係數推導的預設（跟等級無關，見 formulas.ts 的註解）。
+    rating: e.rating ?? deriveDefaultMonsterRating(cfg),
   };
 }
 

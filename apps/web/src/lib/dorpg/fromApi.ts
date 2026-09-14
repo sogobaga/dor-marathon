@@ -17,11 +17,15 @@ import type {
   RpgBootstrapEnemyRaw,
   RpgBootstrapItemRaw,
   RpgBootstrapPartyMemberRaw,
+  RpgBootstrapRatingRaw,
   RpgBootstrapSampleRaw,
   RpgBootstrapSkillRaw,
 } from '@/lib/api';
-import type { BattleSample, ElementKind, Enemy, EnemySlotId, Item, PartyMember, Skill, WeaponKind } from '@/lib/dorpg/types';
+import type { BattleSample, CombatRating, ElementKind, Enemy, EnemySlotId, Item, PartyMember, Skill, WeaponKind } from '@/lib/dorpg/types';
 import type { BattleConfig } from '@/lib/dorpg/engine';
+// P3：asRating() 用它的 aspdReference 當 rating.aspd 缺欄位時的中性後備值（見該函式註解）——
+// 只借用這個已凍結匯出的常數，不是改動 engine 本身，跟 fixture.ts 借用同一個常數的方式一致。
+import { DEFAULT_BATTLE_CONFIG } from '@/lib/dorpg/engine';
 
 const WEAPON_KINDS: readonly WeaponKind[] = ['sword', 'staff', 'bow', 'greatsword'];
 // 兩個多載：技能的 weapon 必填（給 fallback 時回傳一定是 WeaponKind，不含 undefined）；
@@ -43,6 +47,37 @@ function asSlot(s: string): EnemySlotId {
   return (ENEMY_SLOTS as readonly string[]).includes(s) ? (s as EnemySlotId) : 'front_center';
 }
 
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+/**
+ * P2（暴擊／Miss／無效攻擊）：bootstrap 的 rating 子物件缺欄位、型別跑掉（例如 DB 髒資料把某個
+ * 欄位存成字串）就整包丟棄退回 undefined——engine 的 toPartyActor/toEnemyActor 看到 undefined
+ * 會自己呼叫 deriveDefaultPartyRating/deriveDefaultMonsterRating 補一份用 config 推導的後備值
+ * （見 engine/index.ts），這比塞一份 NaN 混雜的 CombatRating 進去安全：NaN 會讓 missChance／
+ * critChance 的 clamp/比較全部壞掉，變成「看似有算，其實每次都命中或都不命中」的隱性 bug。
+ *
+ * P3（AGI 攻速／DEX 詠唱縮減）：aspd/castReductionPct 是本輪新增欄位，舊版後端（本輪部署前）
+ * 可能還沒送——這兩個缺欄位／型別跑掉時只退回中性預設值（等同「沒有攻速/詠唱加成」的表現，
+ * 跟 engine/formulas.ts deriveDefaultPartyRating／deriveDefaultMonsterRating 的中性語意一致），
+ * 不影響 hit/flee/critPct/critShield 已經驗證過的資料整包被丟棄。刻意跟核心 4 欄位「一壞全丟」
+ * 的策略不同：核心 4 欄位少一個會讓 missChance/critChance 算出 NaN，這兩個新欄位少了只是
+ * attackCooldownFor/effectiveCastMs 沒有加成可套用，不會讓其餘已驗證的評級資料一起陪葬。
+ */
+function asRating(r: RpgBootstrapRatingRaw | undefined): CombatRating | undefined {
+  if (!r) return undefined;
+  const { hit, flee, critPct, critShield, aspd, castReductionPct } = r;
+  if (!isFiniteNumber(hit) || !isFiniteNumber(flee) || !isFiniteNumber(critPct) || !isFiniteNumber(critShield)) {
+    return undefined;
+  }
+  return {
+    hit, flee, critPct, critShield,
+    aspd: isFiniteNumber(aspd) ? aspd : DEFAULT_BATTLE_CONFIG.aspdReference,
+    castReductionPct: isFiniteNumber(castReductionPct) ? castReductionPct : 0,
+  };
+}
+
 function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
   return {
     id: p.id,
@@ -55,6 +90,7 @@ function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
     portraitUrl: p.portraitUrl,
     stats: p.stats,
     weapon: asWeapon(p.weapon),
+    rating: asRating(p.rating),
   };
 }
 
@@ -77,6 +113,7 @@ function mapEnemy(e: RpgBootstrapEnemyRaw): Enemy {
     // （後端 battle.go 的 json tag 本來就沒有 omitempty，此欄位恆為 true/false），不再需要防禦性地
     // 猜測 undefined 語意。
     canEscape: e.canEscape,
+    rating: asRating(e.rating),
   };
 }
 
@@ -138,6 +175,20 @@ function isMsRange(v: unknown): v is [number, number] {
 }
 
 /**
+ * P2 新增：battle_element_chart 是巢狀 map（怪物 attribute 中文 → 技能 element 英文 → 倍率），
+ * 形狀比 [min,max] 複雜得多——後台「進階 JSON 編輯」或未來 DB 資料都可能塞出非預期形狀（例如某個
+ * attribute 對到陣列而不是物件）。這裡整份驗證，只要有一層不對就整欄丟棄退回 DEFAULT_BATTLE_CONFIG
+ * 的預設表，比讓 elementMultiplier() 在執行期查到非數字值安全。
+ */
+function isElementChart(v: unknown): v is Record<string, Record<string, number>> {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false;
+  return Object.values(v as Record<string, unknown>).every((row) => {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) return false;
+    return Object.values(row as Record<string, unknown>).every((n) => typeof n === 'number' && Number.isFinite(n));
+  });
+}
+
+/**
  * bootstrap 回應的 config 區塊 → Partial<BattleConfig>。契約 §3.4：這個子物件直接對齊 engine 欄位名
  * （camelCase），理論上不需要轉換；這裡只做防禦——[min,max] 這種陣列欄位若形狀不對就整欄丟掉，交給
  * createBattle() 的 `{...DEFAULT_BATTLE_CONFIG, ...config}` 合併補上預設值，不會讓 engine 的
@@ -148,5 +199,6 @@ export function configFromBootstrap(raw: RpgBootstrapConfigRaw | null | undefine
   const cfg: Partial<BattleConfig> = { ...raw };
   if (!isMsRange(cfg.enemyActIntervalMs)) delete cfg.enemyActIntervalMs;
   if (!isMsRange(cfg.allyActIntervalMs)) delete cfg.allyActIntervalMs;
+  if (cfg.elementChart !== undefined && !isElementChart(cfg.elementChart)) delete cfg.elementChart;
   return cfg;
 }

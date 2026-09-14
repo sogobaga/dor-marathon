@@ -4,7 +4,7 @@ import type { Skill } from '../types';
 import { resolveAttackOrDamageSkill } from './combat';
 import type { Ctx } from './context';
 import { fromCtx, pushEvent, pushLog, toCtx } from './context';
-import { chargeMultiplier } from './formulas';
+import { attackCooldownFor, chargeMultiplier, effectiveCastMs } from './formulas';
 import type { BattleState, Command, PartyActor } from './types';
 import { beginResolving, computeVictoryDefeatDraw, tick } from './tick';
 
@@ -25,12 +25,17 @@ function reject(ctx: Ctx, reason: string): BattleState {
   return finish(ctx);
 }
 
-/** 開始施法：扣 MP、技能進冷卻（規格：「冷卻從施放起算」）、記下 pendingCast 等 tick 到 actionUntil 時結算效果。 */
+/**
+ * 開始施法：扣 MP、技能進冷卻（規格：「冷卻從施放起算」）、記下 pendingCast 等 tick 到 actionUntil
+ * 時結算效果。commitCast 只有 dispatch 的 USE_SKILL 分支會呼叫、actor 一律是玩家（AI 隊友的技能
+ * 走 ai.ts 的 resolveSupportSkill，完全不經過這裡）——所以 effectiveCastMs 套用 actor.rating 的
+ * castReductionPct（P3：DEX→詠唱縮減）在這裡永遠只影響玩家，不需要另外分支判斷。
+ */
 function commitCast(ctx: Ctx, actor: PartyActor, skill: Skill, targetId: string | 'ALL'): BattleState {
   actor.mp -= skill.mpCost;
   ctx.skillReadyAt[skill.id] = ctx.now + skill.cooldownMs;
   actor.action = 'casting';
-  actor.actionUntil = ctx.now + (skill.castMs ?? ctx.cfg.defaultCastMs);
+  actor.actionUntil = ctx.now + effectiveCastMs(skill.castMs ?? ctx.cfg.defaultCastMs, actor.rating, ctx.cfg);
   ctx.pendingCasts[actor.id] = { skillId: skill.id, targetId };
   ctx.targeting = { mode: 'none' };
   pushEvent(ctx, {
@@ -84,11 +89,14 @@ function applyCommand(state: BattleState, cmd: Command, now: number): BattleStat
           targetEnemyId: ctx.targetId,
           chargeMul,
           charged,
+          attackerRating: player.rating, // 普攻不傳 element，combat.ts 內定 'neutral'。
         });
       }
       player.action = 'recovering';
       player.actionUntil = ctx.now + ctx.cfg.recoveryMs;
-      player.attackReadyAt = ctx.now + ctx.cfg.attackCooldownMs;
+      // P3：AGI→攻速→攻擊冷卻，只套用在玩家身上（隊友的節奏在 ai.ts 用 allyActIntervalMs 排程，
+      // 完全不呼叫 attackCooldownFor，不受這裡的改動影響）。
+      player.attackReadyAt = ctx.now + attackCooldownFor(player.rating, ctx.cfg);
       player.chargeStartedAt = null;
       return finish(ctx);
     }

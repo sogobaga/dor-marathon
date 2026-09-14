@@ -29,8 +29,14 @@ export async function resolve(specifier, context, nextResolve) {
 register('data:text/javascript,' + encodeURIComponent(loaderSrc), import.meta.url)
 
 const modUrl = new URL('../src/lib/dorpg/engine/index.ts', import.meta.url).href
-const { createBattle, dispatch, tick, drainEvents, chargeMultiplier, chargeRatio, computeDamage, computeHeal, pickInitialTarget, pickNextTarget, DEFAULT_BATTLE_CONFIG } =
-  await import(modUrl)
+const {
+  createBattle, dispatch, tick, drainEvents, chargeMultiplier, chargeRatio, computeDamage, computeHeal,
+  pickInitialTarget, pickNextTarget, DEFAULT_BATTLE_CONFIG,
+  // P2（暴擊／Miss／無效攻擊）新增匯出：
+  missChance, critChance, elementMultiplier, computeRawDamage,
+  // P3（AGI 攻速／DEX 詠唱縮減）新增匯出：
+  attackCooldownFor, effectiveCastMs,
+} = await import(modUrl)
 
 let pass = 0, fail = 0
 function ok(cond, label) {
@@ -77,7 +83,24 @@ function makeSample(overrides = {}) {
 }
 
 const NEVER = [999999, 999999] // AI 排程區間設成永遠不到，等於這場戰鬥停用該 AI。
-const FAR_CONFIG = { enemyActIntervalMs: NEVER, allyActIntervalMs: NEVER }
+// P2（暴擊／Miss／無效攻擊）上線後，DEFAULT_BATTLE_CONFIG 的 baseMissPct/critRate 不再是 0，
+// 會讓原本假設「恆定命中、恆不暴擊」的舊測試（1–30 號區塊）變成靠 rng 決定、不再確定。
+// 這裡把舊測試共用的 FAR_CONFIG 一併把新機制的機率全部歸零，等價於機制上線前的 hitRate=1/
+// critRate=0：missMaxPct=0 讓 missChance() 的 clamp(...) 不管算出什麼都封死在 0（不用去追每個
+// 假人的 rating 細節），crit 同理靠 critRate/monsterCritPct/monsterCritShieldBase 三者歸零讓
+// critChance() 恆為 0。已知全部 30 個舊區塊都是透過 `{ ...FAR_CONFIG, ... }` 或直接用 FAR_CONFIG
+// 建立戰鬥（grep 過，沒有例外），所以這裡改一次就能讓舊斷言全部維持原本的行為與期望值，
+// 不用逐一去改每個測試——新機制的測試（31 號之後）另外在各自區塊用自訂 config 覆寫這幾個欄位。
+const FAR_CONFIG = {
+  enemyActIntervalMs: NEVER,
+  allyActIntervalMs: NEVER,
+  baseMissPct: 0,
+  missMinPct: 0,
+  missMaxPct: 0,
+  critRate: 0,
+  monsterCritPct: 0,
+  monsterCritShieldBase: 0,
+}
 
 function fixedRng(seq) {
   let i = 0
@@ -662,6 +685,310 @@ function fixedRng(seq) {
     const healEv = s.events.find((e) => e.kind === 'heal' && e.actorId === 'healer')
     ok(!!healEv && healEv.targetId === 'healer', 'healer 自己 <15% 時，優先救自己')
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// P2（暴擊／Miss／無效攻擊）新增測試：31 號起。
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── 31) missChance：clamp 上下限 + flee/hit 方向性（DEFAULT_BATTLE_CONFIG：base=0, scale=0.35, min=2, max=35） ──
+// baseMissPct 由 TUNE 套用 BALANCE 建議從 SPEC 預設 8 改成 0（見 config.go/engine/types.ts 同一處
+// 註解），下面期望值跟著改用 base=0 重新算過；higherFlee/higherHit 的方向性（迴避高於命中的那個
+// 方向落空率較高）在 base 改變後依然成立，只是 higherHit 這組現在直接落在下限 2（見各行算式）。
+{
+  eq(
+    missChance({ hit: 100, flee: 0, critPct: 0, critShield: 0 }, { hit: 0, flee: 0, critPct: 0, critShield: 0 }, DEFAULT_BATTLE_CONFIG),
+    2,
+    'missChance：0+(0-100)*0.35=-35，算出負值時封頂在 missMinPct=2（下限）',
+  )
+  eq(
+    missChance({ hit: 0, flee: 0, critPct: 0, critShield: 0 }, { hit: 0, flee: 200, critPct: 0, critShield: 0 }, DEFAULT_BATTLE_CONFIG),
+    35,
+    'missChance：0+(200-0)*0.35=70，超過時封頂在 missMaxPct=35（上限）',
+  )
+  const higherFlee = missChance({ hit: 60, flee: 0, critPct: 0, critShield: 0 }, { hit: 0, flee: 70, critPct: 0, critShield: 0 }, DEFAULT_BATTLE_CONFIG)
+  const higherHit = missChance({ hit: 70, flee: 0, critPct: 0, critShield: 0 }, { hit: 0, flee: 60, critPct: 0, critShield: 0 }, DEFAULT_BATTLE_CONFIG)
+  eq(higherFlee, 3.5, 'missChance：defender.flee(70) > attacker.hit(60) → 0+(70-60)*0.35=3.5')
+  eq(higherHit, 2, 'missChance：attacker.hit(70) > defender.flee(60) → 0+(60-70)*0.35=-3.5，封頂在下限 2')
+  ok(higherFlee > higherHit, 'missChance：defender 迴避高於 attacker 命中的那個方向，落空率確實比反過來高')
+}
+
+// ── 32) critChance：全體基礎暴擊率（cfg.critRate）+ attacker.critPct − defender.critShield，下限 0 ──
+{
+  const cfg = { ...DEFAULT_BATTLE_CONFIG, critRate: 0.08 }
+  eq(
+    critChance({ hit: 0, flee: 0, critPct: 10, critShield: 0 }, { hit: 0, flee: 0, critPct: 0, critShield: 5 }, cfg),
+    13,
+    'critChance：10(attacker.critPct) + 8(全體基礎) - 5(defender.critShield) = 13',
+  )
+  eq(
+    critChance({ hit: 0, flee: 0, critPct: 0, critShield: 0 }, { hit: 0, flee: 0, critPct: 0, critShield: 50 }, cfg),
+    0,
+    'critChance：critShield 扣過頭時封底在 0（不會變成負機率）',
+  )
+}
+
+// ── 33) computeRawDamage：crit 倍率疊在跟蓄氣倍率同一個乘數位置；刻意不套 max(1,...) ──
+{
+  eq(computeRawDamage(100, 1, 0, 1, 2.5, 2, 0), 500, 'computeRawDamage：crit(×2) 疊在 chargeMul(×2.5) 上 → floor(100*2.5*2)-0=500')
+  eq(computeRawDamage(100, 1, 0, 1, 2.5, 1, 0), 250, '（對照組）沒有暴擊時同一擊只有 250，證明 crit 確實把傷害翻倍')
+  eq(computeRawDamage(10, 1, 0, 1, 1, 1, 10), 0, 'computeRawDamage：raw 剛好等於 def → net=0（immune 判定的邊界值）')
+  eq(computeRawDamage(10, 1, 0, 1, 1, 1, 15), -5, 'computeRawDamage：刻意不套 max(1,...)，def 超過 raw 時允許回傳負值')
+}
+
+// ── 34) elementMultiplier：查表、未列出＝1.0、0＝完全無效，查無 attribute/元素都安全回退 ──
+{
+  const cfg = DEFAULT_BATTLE_CONFIG
+  eq(elementMultiplier(cfg, '金', 'water'), 0, '金屬性怪物被 water 攻擊 → 0 倍（規格範例：無效攻擊）')
+  eq(elementMultiplier(cfg, '金', 'fire'), 1.25, '金屬性怪物被 fire 攻擊 → 1.25 倍（吃剋）')
+  eq(elementMultiplier(cfg, '木', 'fire'), 1.6, '木屬性怪物被 fire 攻擊 → 1.6 倍')
+  eq(elementMultiplier(cfg, '闇', 'dark'), 0, '闇屬性怪物被 dark 攻擊 → 0 倍')
+  eq(elementMultiplier(cfg, '金', 'wood'), 1, '表中查無的組合（金×wood）預設 1.0，不相剋也不吃虧')
+  eq(elementMultiplier(cfg, '無', 'fire'), 1, '「無」屬性怪物的表是空物件，任何 element 都落回 1.0')
+  eq(elementMultiplier(cfg, undefined, 'water'), 1, '怪物沒有填 attribute → 視為中性，直接回 1.0')
+  eq(elementMultiplier(cfg, '不存在的屬性', 'fire'), 1, '整個屬性都不在表中 → 回 1.0')
+}
+
+// ── 35) 端到端：屬性剋制造成 'immune'（技能 element='water' 打 attribute='金' 的怪物） ──
+{
+  const sample = makeSample({
+    enemies: [
+      {
+        id: 'e1', name: '鋼鐵巨鉗蟹', level: 1, hp: 999, hpMax: 999, slot: 'front_center', imageUrl: '',
+        attribute: '金', stats: { hpMax: 999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 },
+      },
+    ],
+    skills: [
+      { id: 'icebolt', name: '冰槍術', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 2, flat: 0, weapon: 'staff', element: 'water', castMs: 100 },
+      null, null, null, null, null, null, null,
+    ],
+  })
+  // 不需要固定 rng：FAR_CONFIG 已把 missPct 封死在 0（必中），elementMul=0 在算暴擊前就 return，
+  // 所以這條路徑完全不吃 rng 的實際數值，用 Math.random 也一樣確定。
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'icebolt' }, 0)
+  // P3 新增 castMinMs（預設 120）：即使玩家 castReductionPct=0（這裡沒帶 rating，退回中性後備值），
+  // effectiveCastMs 仍會把低於 120ms 的 castMs 夾到 120——這支測試技能的 castMs=100 本來就低於
+  // 這個新地板，改成 tick 到 120 才會命中 actionUntil，行為改變合理（P3 刻意設計的全域下限，不是
+  // 這個測試原本要驗證的屬性剋制邏輯跑掉）。
+  s = tick(s, 120)
+  const ev = s.events.find((e) => e.kind === 'attack' && e.actorId === 'player')
+  ok(!!ev && ev.result === 'immune' && ev.damage === 0, '冰屬性技能打金屬性怪物 → elementMultiplier=0 → result=immune，damage=0')
+  eq(s.enemies[0].hp, 999, 'immune 攻擊完全不扣血')
+}
+
+// ── 36) 端到端：net≤0（非屬性剋制，純數值被完全擋下）也判 'immune' ──
+{
+  const sample = makeSample({
+    party: [{ id: 'player', name: '弱雞', level: 1, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 10, matk: 10, def: 10, mdef: 10 } }],
+    enemies: [{ id: 'e1', name: '銅牆鐵壁', level: 1, hp: 999, hpMax: 999, slot: 'front_center', imageUrl: '', stats: { hpMax: 999, mpMax: 0, atk: 1, matk: 1, def: 50, mdef: 50 } }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0) // holdMs=0 → chargeMul=1；raw=floor(10*1)=10，net=10-50=-40≤0
+  const ev = s.events.find((e) => e.kind === 'attack')
+  ok(!!ev && ev.result === 'immune' && ev.damage === 0, 'atk 遠低於 def（非屬性剋制）時 net≤0 也判 immune')
+  eq(s.enemies[0].hp, 999, 'immune 攻擊完全不扣血（net≤0 這條路徑也一樣）')
+}
+
+// ── 37) 端到端：missPct=100% 時玩家攻擊必定 miss，不扣血 ──
+{
+  const cfg = { ...FAR_CONFIG, baseMissPct: 100, missMinPct: 100, missMaxPct: 100 }
+  let s = createBattle(makeSample(), { now: 0, config: cfg, rng: fixedRng([0]) })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const ev = s.events.find((e) => e.kind === 'attack')
+  ok(!!ev && ev.result === 'miss' && ev.damage === 0, 'missPct=100% 時玩家攻擊必定 miss，damage=0')
+  eq(s.enemies[0].hp, 5000, 'miss 攻擊完全不扣血')
+}
+
+// ── 38) 端到端：critRate=100% 時玩家攻擊必定 critical，傷害吃到 critMultiplier ──
+{
+  const cfg = { ...FAR_CONFIG, critRate: 1 } // critPct = 0(attacker.critPct，後備評級無資料) + 1*100 - 0 = 100
+  let s = createBattle(makeSample(), { now: 0, config: cfg, rng: fixedRng([0.5]) })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const ev = s.events.find((e) => e.kind === 'attack')
+  ok(!!ev && ev.result === 'critical', 'critRate=100% 時攻擊必定 critical')
+  // raw = floor(135*1*1*1*2) = 270（critMultiplier 預設 2）；net = 270-35 = 235
+  eq(ev.damage, 235, '暴擊傷害＝floor(135*1*2)-35=235（critMul 疊在跟蓄氣倍率同一個乘數位置）')
+  eq(s.enemies[0].hp, 5000 - 235, '暴擊傷害正確套用在敵人血量上')
+}
+
+// ── 39) 端到端：怪物攻擊 miss 時不扣 HP、也不扣護盾（規格 §5：「miss 時 damage=0、不扣盾」） ──
+{
+  const cfg = { ...FAR_CONFIG, enemyActIntervalMs: [0, 0], baseMissPct: 100, missMinPct: 100, missMaxPct: 100 }
+  let s = createBattle(makeSample(), { now: 0, config: cfg, rng: fixedRng([0]) })
+  s.party[0].shield = 50
+  s = tick(s, 0) // idle→windup
+  s = tick(s, DEFAULT_BATTLE_CONFIG.enemyWindupMs) // windup→attacking，結算（強制 miss）
+  const ev = s.events.find((e) => e.kind === 'enemyAttack')
+  ok(!!ev && ev.result === 'miss' && ev.damage === 0, '怪物攻擊 miss：enemyAttack 事件 result=miss、damage=0')
+  eq(s.party[0].hp, 800, '怪物攻擊 miss 不扣 HP')
+  eq(s.party[0].shield, 50, '怪物攻擊 miss 也不扣護盾（applyPartyDamage 完全沒被呼叫）')
+}
+
+// ── 40) 端到端：monsterCritPct=100% 時怪物攻擊必定 critical，傷害吃到 critMultiplier ──
+{
+  const cfg = { ...FAR_CONFIG, enemyActIntervalMs: [0, 0], monsterCritPct: 100 }
+  let s = createBattle(makeSample(), { now: 0, config: cfg, rng: fixedRng([0.5]) })
+  s = tick(s, 0) // idle→windup
+  s = tick(s, DEFAULT_BATTLE_CONFIG.enemyWindupMs) // windup→attacking
+  const ev = s.events.find((e) => e.kind === 'enemyAttack')
+  ok(!!ev && ev.result === 'critical', '怪物 monsterCritPct=100 時攻擊必定 critical')
+  // computeDamage(50,1,0,elementMul=1,critMul=2,def=35,guarded=false) = max(1, 50*2-35) = 65
+  eq(ev.damage, 65, '怪物暴擊傷害＝computeDamage 用 chargeMul 位置疊 critMultiplier＝max(1,100-35)=65')
+}
+
+// ── 41) createBattle 的 rating 後備推導：沒帶 rating 的隊員/怪物分別用 hitRate／monster_* 係數推導 ──
+{
+  const cfg = { ...FAR_CONFIG, hitRate: 0.9, monsterHitBase: 77, monsterFleeBase: 12, monsterCritPct: 3, monsterCritShieldBase: 4 }
+  const s = createBattle(makeSample(), { now: 0, config: cfg })
+  // P3：cfg 沒覆寫 aspdReference，沿用 DEFAULT_BATTLE_CONFIG 的 150——後備評級的 aspd/
+  // castReductionPct 也要一併核對，不然 P3 把這兩個新欄位漏接（例如忘記在 deriveDefault*Rating
+  // 補上）不會被任何既有斷言抓到。
+  eq(
+    s.party[0].rating,
+    { hit: 90, flee: 0, critPct: 0, critShield: 0, aspd: 150, castReductionPct: 0 },
+    '沒有帶 rating 的隊員：後備評級的 hit 沿用 cfg.hitRate(0.9→90)、aspd 沿用 cfg.aspdReference(150)，其餘給 0（沒有更多資訊可推）',
+  )
+  eq(
+    s.enemies[0].rating,
+    { hit: 77, flee: 12, critPct: 3, critShield: 4, aspd: 150, castReductionPct: 0 },
+    '沒有帶 rating 的怪物：由 config 係數直接推導（deriveDefaultMonsterRating，跟等級無關），aspd 同樣沿用 cfg.aspdReference',
+  )
+}
+
+// ── 42) createBattle：呼叫端真的帶了 rating 時直接採用，不會被後備推導覆蓋 ──
+{
+  const customPartyRating = { hit: 55, flee: 66, critPct: 77, critShield: 88, aspd: 175, castReductionPct: 20 }
+  const customMonsterRating = { hit: 11, flee: 22, critPct: 33, critShield: 44, aspd: 150, castReductionPct: 0 }
+  const sample = makeSample({
+    party: [
+      {
+        id: 'player', name: '有評級的玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null,
+        stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, rating: customPartyRating,
+      },
+    ],
+    enemies: [
+      { id: 'e1', name: '有評級的怪物', level: 50, hp: 999, hpMax: 999, slot: 'front_center', imageUrl: '', rating: customMonsterRating },
+    ],
+  })
+  const s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  eq(s.party[0].rating, customPartyRating, '呼叫端帶了真實 rating 時，createBattle 直接採用，不覆蓋成後備預設')
+  eq(s.enemies[0].rating, customMonsterRating, '怪物帶了真實 rating 時同樣直接採用，不覆蓋成 config 推導的預設')
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// P3（AGI 攻速／DEX 詠唱縮減，審查 dorpg_p3 r5 使用者當面要求）新增區塊。
+// DEFAULT_BATTLE_CONFIG 相關常數：attackCooldownMs=1500、aspdReference=150、
+// attackCooldownMinMs=700、castMinMs=120。
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── 43) attackCooldownFor：aspd=reference→冷卻恰為 base；高於/低於 reference 的方向性＋上下 clamp；rating.aspd 缺省的後備 ──
+{
+  const cfg = DEFAULT_BATTLE_CONFIG
+  const r = (aspd) => ({ hit: 0, flee: 0, critPct: 0, critShield: 0, aspd, castReductionPct: 0 })
+  eq(attackCooldownFor(r(150), cfg), 1500, 'attackCooldownFor：aspd=aspdReference(150) → 冷卻恰為 base=1500，不配 AGI 的人手感不變')
+  eq(attackCooldownFor(r(175), cfg), 750, 'attackCooldownFor：aspd=175(高於 reference) → 1500*(200-175)/(200-150)=750，變快')
+  eq(attackCooldownFor(r(199), cfg), 700, 'attackCooldownFor：aspd=199(逼近上限) → 算出 30ms，封頂在 attackCooldownMinMs=700（下限）')
+  eq(attackCooldownFor(r(100), cfg), 1500, 'attackCooldownFor：aspd=100(低於 reference) → 算出 3000ms，上夾封頂在 base=1500（不會比不配點還慢）')
+  eq(attackCooldownFor(r(0), cfg), 1500, 'attackCooldownFor：aspd=0(掉到底) 同樣被上夾封頂在 base=1500')
+  eq(
+    attackCooldownFor({ hit: 0, flee: 0, critPct: 0, critShield: 0 }, cfg),
+    1500,
+    'attackCooldownFor：rating.aspd 缺省（呼叫端沒填這個新欄位）→ 視為中性 aspdReference，退回 base 冷卻，不是 NaN',
+  )
+}
+
+// ── 44) effectiveCastMs：castReductionPct 0/50/100 三檔＋min clamp＋rating.castReductionPct 缺省的後備 ──
+{
+  const cfg = DEFAULT_BATTLE_CONFIG
+  const r = (pct) => ({ hit: 0, flee: 0, critPct: 0, critShield: 0, aspd: cfg.aspdReference, castReductionPct: pct })
+  eq(effectiveCastMs(400, r(0), cfg), 400, 'effectiveCastMs：castReductionPct=0 → 完全不縮減')
+  eq(effectiveCastMs(400, r(50), cfg), 200, 'effectiveCastMs：castReductionPct=50 → round(400*0.5)=200')
+  eq(effectiveCastMs(400, r(100), cfg), 120, 'effectiveCastMs：castReductionPct=100 → 算出 0，封頂在 castMinMs=120（下限）')
+  eq(effectiveCastMs(200, r(50), cfg), 120, 'effectiveCastMs：castReductionPct=50 但 baseCastMs 較小 → round(200*0.5)=100，仍被 min 夾到 120')
+  eq(
+    effectiveCastMs(300, { hit: 0, flee: 0, critPct: 0, critShield: 0 }, cfg),
+    300,
+    'effectiveCastMs：rating.castReductionPct 缺省（呼叫端沒填這個新欄位）→ 視為 0，不縮減，不是 NaN',
+  )
+}
+
+// ── 45) 端到端：玩家 rating.aspd 真的透過 dispatch 的 ATTACK_RELEASE 換算成攻擊冷卻（驗證 dispatch.ts 接線，不是只測公式本身） ──
+{
+  const sample = makeSample({
+    party: [
+      {
+        id: 'player', name: '快手玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null,
+        stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 },
+        rating: { hit: 100, flee: 0, critPct: 0, critShield: 0, aspd: 175, castReductionPct: 0 },
+      },
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  eq(s.party[0].attackReadyAt, 750, 'dispatch ATTACK_RELEASE：玩家 rating.aspd=175 透過 attackCooldownFor 算出冷卻 750ms（不再是寫死的 1500）')
+}
+
+// ── 46) 端到端：玩家 rating.castReductionPct 真的透過 dispatch 的 commitCast 換算成施法時間（驗證 dispatch.ts 接線） ──
+{
+  const sample = makeSample({
+    party: [
+      {
+        id: 'player', name: '快嘴玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null,
+        stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 },
+        rating: { hit: 100, flee: 0, critPct: 0, critShield: 0, aspd: 150, castReductionPct: 50 },
+      },
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'slash' }, 0) // slash castMs=300
+  eq(s.party[0].actionUntil, 150, 'dispatch USE_SKILL：玩家 rating.castReductionPct=50 透過 effectiveCastMs 把 300ms 縮成 150ms')
+}
+
+// ── 47) 端到端：隊友即使 rating.aspd 極端高，出手節奏仍固定吃 allyActIntervalMs，不套 attackCooldownFor（審查要求「隊友不受影響」） ──
+{
+  const sample = makeSample({
+    party: [
+      { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 } },
+      {
+        id: 'ally1', name: '快腿隊友', level: 56, hp: 500, hpMax: 500, mp: 50, mpMax: 50, portraitUrl: null,
+        stats: { hpMax: 500, mpMax: 50, atk: 100, matk: 50, def: 20, mdef: 15 },
+        rating: { hit: 100, flee: 0, critPct: 0, critShield: 0, aspd: 199, castReductionPct: 0 }, // 極端高攻速
+      },
+    ],
+  })
+  const cfg = { ...FAR_CONFIG, allyActIntervalMs: [1000, 1000] }
+  let s = createBattle(sample, { now: 0, config: cfg })
+  s = tick(s, 1000) // ally1 的 attackReadyAt(=1000) 到，出手一次
+  const ally = s.party.find((p) => p.id === 'ally1')
+  ok(s.events.some((e) => e.kind === 'attack' && e.actorId === 'ally1'), '（前提）隊友這次 tick 真的出手了')
+  eq(ally.attackReadyAt, 2000, '隊友 rating.aspd=199 極端值不影響節奏：下次出手時間固定用 allyActIntervalMs=1000（1000+1000=2000），不套 attackCooldownFor')
+}
+
+// ── 48) 端到端：怪物即使 rating.aspd 極端高，行動節奏仍固定吃 enemyActIntervalMs，不套 attackCooldownFor（審查要求「怪物不受影響」） ──
+{
+  // 沿用區塊 20（敵人 AI 完整時序）已驗證過的 enemyActIntervalMs=[0,0] 設定與 tick 序列，唯一差異
+  // 只有加上一個帶極端高 aspd 的 rating——如果最後算出的 nextActAt 跟區塊 20 的基準值（沒有這個
+  // rating 欄位時）完全相同，就證明 rating.aspd 對怪物的行動排程完全沒有作用。
+  let s = createBattle(makeSample({
+    enemies: [{
+      id: 'e1', name: '假人', level: 1, hp: 999, hpMax: 999, slot: 'front_center', imageUrl: '',
+      stats: { hpMax: 999, mpMax: 0, atk: 10, matk: 10, def: 0, mdef: 0 },
+      rating: { hit: 100, flee: 0, critPct: 0, critShield: 0, aspd: 199, castReductionPct: 0 }, // 極端高攻速
+    }],
+  }), { now: 0, config: { ...FAR_CONFIG, enemyActIntervalMs: [0, 0] }, rng: fixedRng([0]) })
+  s = tick(s, 0) // idle→windup（nextActAt=now+rand([0,0])=0，立刻觸發）
+  s = tick(s, DEFAULT_BATTLE_CONFIG.enemyWindupMs) // windup→attacking
+  s = tick(s, DEFAULT_BATTLE_CONFIG.enemyWindupMs + DEFAULT_BATTLE_CONFIG.enemyAttackMs) // attacking→idle，排下一次行動
+  eq(
+    s.enemies[0].nextActAt,
+    DEFAULT_BATTLE_CONFIG.enemyWindupMs + DEFAULT_BATTLE_CONFIG.enemyAttackMs,
+    '怪物 rating.aspd=199 極端值不影響節奏：算出的 nextActAt 跟區塊20沒有 rating.aspd 時的基準值完全相同，不套 attackCooldownFor',
+  )
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

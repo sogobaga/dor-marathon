@@ -184,6 +184,88 @@ type Config struct {
 	// （scaling.go）用這兩個參考值算出 ratioHP/ratioMP，等比例縮放 flat/amount。
 	BattleReferenceHP float64 `json:"battle_reference_hp"` // 技能/道具絕對回復量的參考玩家 HPMax（預設 300）
 	BattleReferenceMP float64 `json:"battle_reference_mp"` // 同上，MP 類（預設 100）
+
+	// --- DORPG P2 修正第 2 輪（暴擊／Miss／無效攻擊上線，SPEC §6）：json tag 對齊前端
+	// engine/types.ts BattleConfig 新增欄位（camelCase↔snake_case 對照見 battle.go
+	// buildWireConfig）；battle_element_chart 的 key 是「怪物 attribute」，DB 現況存的就是
+	// 中文字串（金/木/水/火/土/光/闇/無），value 表的 key 是「技能 element」英文代碼
+	// （ElementKind），因此刻意混用中英文 key，不是輸入錯誤。 ---
+
+	// BattleBaseMissPct/HitFleeScale/MissMinPct/MissMaxPct：missChance() 的基礎落空率、
+	// (defender.flee−attacker.hit) 差額換算成落空率的係數、clamp 上下限。三個 *Pct 欄位是
+	// missPct 這個「輸出值」本身（0~100 的機率百分比），HitFleeScale 是換算係數（不是機率）。
+	BattleBaseMissPct  float64 `json:"battle_base_miss_pct"`
+	BattleHitFleeScale float64 `json:"battle_hit_flee_scale"`
+	BattleMissMinPct   float64 `json:"battle_miss_min_pct"`
+	BattleMissMaxPct   float64 `json:"battle_miss_max_pct"`
+	// BattleMonsterHitBase/FleeBase：怪物命中/迴避＝「跟著玩家等級基線走的一次函數」的截距
+	// （見下面 BattleMonsterHitPerLevel/FleePerLevel），不再是絕對常數（P2 修正第 3 輪，審查
+	// data.md 缺陷1/2 CONFIRMED 根因修復）：
+	//
+	//	monsterHit  = playerBaseLevel × battle_monster_hit_per_level  + battle_monster_hit_base
+	//	monsterFlee = (playerBaseLevel × battle_monster_flee_per_level + battle_monster_flee_base) × speed_mult
+	//
+	// ⚠️ 語意改變：這兩個欄位的 json tag 沒變、但意義從「絕對基準值」改成「相對等級基線的
+	// 偏移量」——舊語意下 HitBase=100/FleeBase=8 是固定常數，玩家 hit/flee 隨等級線性成長、
+	// 約 Lv9 起就穩定超過怪物 flee（DEX 配點在中後期形同虛設）、而玩家 flee 被 flee_cap_pct=95
+	// 封頂、(95−100)×hit_flee_scale 恆為負值（AGI 配到滿也不可能提高迴避率）。新語意下兩邊
+	// 等級成長同步（維持既有 D1「怪物數值依玩家縮放、等級無關」架構），預設值改為 2：完全不配
+	// AGI/DEX 的角色（Hit=Flee=baseLv×1+2）與怪物打平、missChance 落在下限，每配一點 AGI/DEX
+	// 才會真的把差距拉開（效果驗算見本輪 SPEC：Lv27 AGI 2→missChance 2%下限、AGI
+	// 40→約13%、AGI滿(flee封頂95)→約23%）。同樣不做 0~100 範圍檢查，只擋負值（理由同舊註解：
+	// 這是「評級數值空間」不是機率本身）。FleeBase 一項另乘 monster.speed_mult、由 scaling.go
+	// MonsterRating 推導。
+	BattleMonsterHitBase  float64 `json:"battle_monster_hit_base"`
+	BattleMonsterFleeBase float64 `json:"battle_monster_flee_base"`
+	// BattleMonsterHitPerLevel/FleePerLevel：上述公式裡「每級」的係數，預設 1.0 對齊
+	// compute.go 玩家端 LvHit/LvFlee 預設值（都是 1），確保兩邊等級成長曲線斜率一致——不然即使
+	// 修好截距，斜率不同還是會讓中後期再度失衡。只擋負值（0 是合法的「怪物命中/迴避跟等級完全
+	// 無關，退化回舊的絕對常數模式」設計選擇）。
+	BattleMonsterHitPerLevel  float64 `json:"battle_monster_hit_per_level"`
+	// 怪物命中的絕對上限（2026-09-14 對抗式審查 CONFIRMED 修正）：玩家的 flee 被 flee_cap_pct（預設 95）
+	// 硬性封頂，但上面那條「隨玩家 Base Lv 線性成長」的怪物命中不封頂——Base Lv 93 之後怪物命中就會
+	// 超過玩家可能達到的最高 flee，AGI 配再多迴避率都會掉回下限，等於「AGI 無效」這個缺陷在高等級重演。
+	// 夾在這個上限（預設 75，刻意留 20 點空間給 flee_cap_pct=95）之下，任何等級都保證還有可投資空間。
+	BattleMonsterHitMax float64 `json:"battle_monster_hit_max"`
+	BattleMonsterFleePerLevel float64 `json:"battle_monster_flee_per_level"`
+	// BattleMonsterCritPct/CritShieldBase：怪物沒有個別 rating 覆寫時的暴擊率/暴擊迴避基準，
+	// 這兩個語意對齊玩家 Derived.CritPct/CritShield，同樣是「%」尺度但比照既有 Derived 欄位
+	// 的既有慣例（compute.go 從不封頂 CritPct/CritShield），所以只擋負值不擋上限——後台若想
+	// 讓某隻怪物暴擊率設 150% 造成「必爆擊」也是合理的極端設計，不視為系統壞掉。
+	// CritShieldBase 另乘 monster.def_mult、由 scaling.go MonsterRating 推導。
+	BattleMonsterCritPct        float64 `json:"battle_monster_crit_pct"`
+	BattleMonsterCritShieldBase float64 `json:"battle_monster_crit_shield_base"`
+	// BattleElementChart 屬性相剋表：外層 key＝怪物 attribute（中文），內層 key＝技能/攻擊
+	// element（英文 ElementKind 字面值）；查無 key 或查無 element 一律視為 1.0（不相剋也不
+	// 吃虧），0.0＝完全無效（engine elementMultiplier() 用來判 'immune'）。
+	//
+	// ⚠️ 這是全 Config 唯一的 map 欄位：ParseConfig 對它有特別處理（見該函式註解），
+	// 因為 encoding/json 對「已存在的非 nil map」是逐鍵合併、不是整體覆蓋——若不特別處理，
+	// 管理者在後台刪掉某個屬性/element key 存檔後，DefaultConfig() 的舊值會在下次讀取時復活
+	// （P2 修正第 3 輪，審查 data.md 缺陷3 CONFIRMED）。
+	BattleElementChart map[string]map[string]float64 `json:"battle_element_chart"`
+
+	// --- DORPG P2 修正第 3 輪：AGI→攻速→攻擊冷卻、DEX→詠唱縮減→技能施放時間（使用者當面
+	// 要求；同時緩解缺陷2：DEX 除了命中，戰鬥裡多一個一路有感的用途）。只套用在玩家身上——
+	// 隊友沿用 config 固定值（battle_attack_cooldown_ms／castMs 原樣），避免隊友 AI 被連帶
+	// 加速影響既有平衡；怪物本來就沒有攻速/詠唱概念。公式見 scaling.go
+	// PlayerBattleStatsFrom／battle.go 呼叫端（實際套用點在前端引擎，這裡只負責把
+	// aspd/castReductionPct 透過 CombatRating 帶到前端）。 ---
+
+	// BattleAspdReference 攻速換算的基準點（RO「攻擊間隔與 200−ASPD 成正比」公式裡的參考
+	// ASPD），預設 150＝AspdBase 預設值，讓完全不配 AGI/DEX 的角色維持現有 1500ms
+	// 攻擊冷卻、不動既有平衡，配點越多才越快。必須嚴格落在 (0,200)：Compute() 的 AspdCap
+	// 上限是 193，200 是這個 RO 公式的天花板（(200−aspd) 若 <=0 或 aspd>=200 會讓换算出的
+	// 冷卻時間變成 0 或負值，除以 (200−reference) 為 0 則直接除零）。
+	BattleAspdReference float64 `json:"battle_aspd_reference"`
+	// BattleAttackCooldownMinMs 玩家攻擊冷卻換算後的下限（AGI 配滿也不會快過這個值），
+	// 預設 700ms。必須 >0 且 <= battle_attack_cooldown_ms（下限不能比未加速的基準值還慢，
+	// 否則「配 AGI 變快」這個效果會反過來被下限吃掉，變成配了也沒用甚至配了更慢的錯亂）。
+	BattleAttackCooldownMinMs int `json:"battle_attack_cooldown_min_ms"`
+	// BattleCastMinMs 玩家技能施放時間（套用 DEX 詠唱縮減後）的下限，預設 120ms。必須 >0 且
+	// <= battle_default_cast_ms（詠唱縮到底也不該比「預設沒詠唱時間的技能」瞬發得更誇張，
+	// 且避免下限設得比基準還高導致縮短完全沒有下界意義）。
+	BattleCastMinMs int `json:"battle_cast_min_ms"`
 }
 
 // DefaultConfig 站長截圖對照表原封不動編碼成的預設值（所有數字皆可由後台覆寫）。
@@ -282,12 +364,50 @@ func DefaultConfig() Config {
 		BattleAllyActMinMs:        2200,
 		BattleAllyActMaxMs:        3600,
 		BattleHitRate:             1.0,
-		BattleCritRate:            0.0,
-		BattleCritMultiplier:      2.0,
-		BattleExpPreviewPerLevel:  3.0,
+		// BattleCritRate 語意由「只有玩家吃得到的暴擊機率」改為「全體基礎暴擊率」（SPEC §6）：
+		// 0→0.08，讓 LUK 沒特別配點的角色也看得到暴擊發生，實際數值交給 BALANCE 之後調整。
+		BattleCritRate:           0.08,
+		BattleCritMultiplier:     2.0,
+		BattleExpPreviewPerLevel: 3.0,
 
 		BattleReferenceHP: 300,
 		BattleReferenceMP: 100,
+
+		// BattleBaseMissPct 由 SPEC §6 預設值 8 改為 0（TUNE 套用 BALANCE 建議，見
+		// scratchpad/dorpg_p2/REBALANCE_CRIT.md §3）：8% 的固定基礎值對低等級玩家（hit 值小、
+		// 未被 missMinPct 下限保護）殺傷力遠大於高等級玩家（hit 早被下限吃掉、這個參數對他們
+		// 形同虛設），會讓 Lv5 在多個難度2+場次的勝率腰斬到目標區間之下；調到 0 後 Lv5 全部回到
+		// 既有基準，Lv27/Lv50 完全不受影響（他們的自我 miss 率本來就已經被下限夾住）。
+		BattleBaseMissPct:  0,
+		BattleHitFleeScale: 0.35,
+		BattleMissMinPct:   2,
+		BattleMissMaxPct:   35,
+
+		// BattleMonsterHitBase/FleeBase 由絕對常數 100/8 改為等級基線的偏移量 2（P2 修正第 3
+		// 輪，見欄位註解）；HitPerLevel/FleePerLevel 預設 1.0 對齊玩家 LvHit/LvFlee=1。
+		BattleMonsterHitBase:        2,
+		BattleMonsterFleeBase:       2,
+		BattleMonsterHitPerLevel:    1.0,
+		BattleMonsterHitMax:      75,
+		BattleMonsterFleePerLevel:   1.0,
+		BattleMonsterCritPct:        0,
+		BattleMonsterCritShieldBase: 0,
+
+		// SPEC §3 暫定值（跟前端 engine/types.ts DEFAULT_BATTLE_CONFIG.elementChart 逐字對齊）：
+		// 後台可改；刻意讓「冰槍打鋼鐵巨鉗蟹」變成無效，玩家才看得到這個機制。
+		BattleElementChart: map[string]map[string]float64{
+			"金": {"water": 0.0, "fire": 1.25},
+			"木": {"fire": 1.6, "water": 0.6},
+			"土": {"water": 1.3, "fire": 0.5},
+			"闇": {"light": 1.5, "dark": 0.0, "fire": 1.15},
+			"無": {},
+		},
+
+		// P2 修正第 3 輪：AGI→攻速→攻擊冷卻、DEX→詠唱縮減。150＝AspdBase 預設值，讓不配
+		// AGI/DEX 的角色維持現有 1500ms 攻擊冷卻（既有平衡不動）。
+		BattleAspdReference:       150,
+		BattleAttackCooldownMinMs: 700,
+		BattleCastMinMs:           120,
 	}
 }
 
@@ -295,6 +415,15 @@ func DefaultConfig() Config {
 // 除零/算出負值可利用漏洞）。
 func requirePositive(errs *[]string, name string, v float64) {
 	if v <= 0 {
+		*errs = append(*errs, name)
+	}
+}
+
+// requireNonNegative 收集「必須 >= 0」的欄位檢查（0 是合法的「暫時關閉這個加成」設計選擇，
+// 但負值會讓 scaling.go 算出方向相反的評級——例如 hit_flee_scale 若允許負值，迴避越高反而
+// 命中率越高，這是邏輯反轉的漏洞而非合理的極端設計）。
+func requireNonNegative(errs *[]string, name string, v float64) {
+	if v < 0 {
 		*errs = append(*errs, name)
 	}
 }
@@ -401,6 +530,11 @@ func (c Config) Validate() error {
 	if c.BattleCritRate < 0 || c.BattleCritRate > 1 {
 		return fmt.Errorf("battle_crit_rate must be within [0,1]")
 	}
+	// ⚠️ 已知限制（審查 data.md，本輪刻意不修）：BattleCritMultiplier 無上限，且這裡不擋
+	// 「def_mult × power_scale 過高、疊加 mob_def_ratio 導致 mobDef 逼近 playerAtk」這種讓
+	// hitDamage 被 max(1,...) 保底吃住、實質造成非預期 'immune'（傷害恆為地板值 1）的組合——
+	// 那是 ScaleMonster 公式與怪物資料的交互作用，不是這個欄位本身的邊界問題，留給 P3
+	// 連同怪物資料驗證一起處理。
 	if c.BattleCritMultiplier < 0 {
 		return fmt.Errorf("battle_crit_multiplier must be >= 0")
 	}
@@ -412,17 +546,97 @@ func (c Config) Validate() error {
 	if len(bad) > 0 {
 		return fmt.Errorf("these fields must be > 0 (used as divisors): %v", bad)
 	}
+
+	// --- DORPG P2 修正第 2 輪（暴擊／Miss／無效攻擊）檢查：百分比欄位夾在 [0,100]、
+	// min<=max、相剋表倍率 >=0；其餘（hit_flee_scale、monster_hit_base/flee_base/
+	// crit_pct/crit_shield_base）語意對齊玩家 Compute() 算出的 Hit/Flee/CritPct/CritShield
+	// ——那些既有 Derived 欄位本來就不封頂在 100（見 compute.go），所以這裡只擋負值，不擋
+	// 上限（本檔開頭的一貫原則：只擋系統壞掉的邊界，不擋設計上合理的極端值）。 ---
+	if c.BattleBaseMissPct < 0 || c.BattleBaseMissPct > 100 {
+		return fmt.Errorf("battle_base_miss_pct must be within [0,100]")
+	}
+	if c.BattleMissMinPct < 0 || c.BattleMissMinPct > 100 {
+		return fmt.Errorf("battle_miss_min_pct must be within [0,100]")
+	}
+	if c.BattleMissMaxPct < 0 || c.BattleMissMaxPct > 100 {
+		return fmt.Errorf("battle_miss_max_pct must be within [0,100]")
+	}
+	if c.BattleMissMaxPct < c.BattleMissMinPct {
+		return fmt.Errorf("battle_miss_max_pct must be >= battle_miss_min_pct")
+	}
+	var bad2 []string
+	requireNonNegative(&bad2, "battle_hit_flee_scale", c.BattleHitFleeScale)
+	requireNonNegative(&bad2, "battle_monster_hit_base", c.BattleMonsterHitBase)
+	requireNonNegative(&bad2, "battle_monster_flee_base", c.BattleMonsterFleeBase)
+	requireNonNegative(&bad2, "battle_monster_crit_pct", c.BattleMonsterCritPct)
+	requireNonNegative(&bad2, "battle_monster_crit_shield_base", c.BattleMonsterCritShieldBase)
+	if len(bad2) > 0 {
+		return fmt.Errorf("these fields must be >= 0: %v", bad2)
+	}
+	for attribute, row := range c.BattleElementChart {
+		for element, mul := range row {
+			if mul < 0 {
+				return fmt.Errorf("battle_element_chart[%s][%s] must be >= 0", attribute, element)
+			}
+		}
+	}
+
+	// --- DORPG P2 修正第 3 輪（怪物命中/迴避改跟等級基線走＋AGI 攻速＋DEX 詠唱縮減）檢查：
+	// per_level 與 base 只擋負值（0 是合法的「退化回舊常數模式/關閉」設計選擇）；
+	// aspd_reference 必須嚴格落在 (0,200)（見欄位註解：200 是 RO 公式天花板，>=200 會讓
+	// (200−aspd) 变成 <=0、除以 (200−reference)=0 直接除零）；兩個 min_ms 必須 >0 且不超過
+	// 對應的基準值，否則「配點變快/變短」的效果會被下限本身吃掉甚至邏輯反轉。 ---
+	var bad3 []string
+	requireNonNegative(&bad3, "battle_monster_hit_per_level", c.BattleMonsterHitPerLevel)
+	requireNonNegative(&bad3, "battle_monster_flee_per_level", c.BattleMonsterFleePerLevel)
+	// battle_monster_hit_max 必須嚴格小於 flee_cap_pct，否則高等級的玩家不管怎麼配 AGI，
+	// 迴避率都會被夾在下限（見 MonsterRating 的高等級保護註解）。
+	if c.BattleMonsterHitMax <= 0 || c.BattleMonsterHitMax >= c.FleeCapPct {
+		bad3 = append(bad3, "battle_monster_hit_max 必須 > 0 且小於 flee_cap_pct")
+	}
+	if len(bad3) > 0 {
+		return fmt.Errorf("these fields must be >= 0: %v", bad3)
+	}
+	if c.BattleAspdReference <= 0 || c.BattleAspdReference >= 200 {
+		return fmt.Errorf("battle_aspd_reference must be within (0,200)")
+	}
+	if c.BattleAttackCooldownMinMs <= 0 || c.BattleAttackCooldownMinMs > c.BattleAttackCooldownMs {
+		return fmt.Errorf("battle_attack_cooldown_min_ms must be within (0, battle_attack_cooldown_ms]")
+	}
+	if c.BattleCastMinMs <= 0 || c.BattleCastMinMs > c.BattleDefaultCastMs {
+		return fmt.Errorf("battle_cast_min_ms must be within (0, battle_default_cast_ms]")
+	}
 	return nil
 }
 
 // ParseConfig 解析後台 JSON 設定（appsettings key "rpg_config"）；空字串回預設值。未出現在 JSON
 // 裡的欄位維持 DefaultConfig() 的值（先套預設值再 Unmarshal 覆蓋，避免後台只想改一兩個係數時
 // 其餘欄位被歸零）。
+//
+// ⚠️ BattleElementChart 特殊處理（P2 修正第 3 輪，審查 data.md 缺陷3 CONFIRMED）：Go 的
+// encoding/json 對「已存在的非 nil map」欄位是逐鍵合併、不是整體覆蓋——上面「先套預設值再
+// Unmarshal」對純數值/字串欄位是刻意的（未出現的欄位維持預設值），但套在 map 欄位上會有副作用：
+// 管理者在後台 PUT 時如果刪掉某個屬性 key（或某屬性底下的某個 element key），Unmarshal 只會
+// 新增/覆蓋 JSON 裡出現的 key，DefaultConfig() 裡沒被提到的舊 key 會原封不動留著、等於「刪除」
+// 操作在下次讀取時被復活。修法：先探測 raw 頂層是否真的含有 "battle_element_chart" 這個 key——
+//   - 沒有這個 key：完全不動 cfg.BattleElementChart，維持既有「未出現的欄位維持預設值」慣例
+//     （這正是本函式一貫的設計，不能被這個修復破壞：只想調別的係數的 PUT 不該連帶清空整張表）。
+//   - 有這個 key（不論值是完整表、部分表甚至 {}）：把 cfg.BattleElementChart 重設為空 map，
+//     讓 Unmarshal 對它的「合併」在解碼當下必定是對著空 map 操作，等同整體覆蓋——刪掉的 key
+//     就真的消失，不會被空 map 裡不存在的舊值復活。
 func ParseConfig(raw string) (Config, error) {
 	cfg := DefaultConfig()
 	if raw == "" {
 		return cfg, nil
 	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &probe); err == nil {
+		if _, hasChart := probe["battle_element_chart"]; hasChart {
+			cfg.BattleElementChart = map[string]map[string]float64{}
+		}
+	}
+	// probe 解析失敗（例如 raw 頂層不是 JSON 物件）時刻意不在此處回錯——沿用下面的正式
+	// Unmarshal 去回報真正的錯誤訊息，避免同一種輸入錯誤在兩處產生不同措辭的錯誤。
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return Config{}, fmt.Errorf("invalid rpg_config json: %w", err)
 	}

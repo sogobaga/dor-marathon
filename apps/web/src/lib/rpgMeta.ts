@@ -70,8 +70,47 @@ export const RESIST_LABEL: Record<string, string> = {
 }
 export function resistLabel(key: string): string { return RESIST_LABEL[key] ?? key }
 
-// 後台「參數設定」分頁分組欄位 — 逐項對照 RpgConfig 欄位（勿漏改名）。type 省略＝number 輸入框。
-export interface ConfigField { key: keyof RpgConfig; label: string; help?: string; type?: 'select'; options?: { value: string; label: string }[]; step?: number }
+// ---------------------------------------------------------------------------
+// P3（AGI 攻速／DEX 詠唱縮減，審查 dorpg_p3 r5 使用者當面要求）：CharacterScreen 顯示用估算。
+//
+// GET /rpg/me 目前只回傳 derived（含 aspd 這個「評級數值」），沒有一併帶戰鬥 config（
+// battle_attack_cooldown_ms 等係數）——「攻擊速度 150.6」這個原始評級數字對玩家沒有意義，
+// 需要換算成「攻擊間隔 X 秒」才看得懂效果，但換算需要的係數只存在戰鬥 config，角色頁拿不到。
+// 這裡鏡射 services/api/internal/rpg/config.go DefaultConfig() 與 engine/types.ts
+// DEFAULT_BATTLE_CONFIG 的預設值，供角色頁在沒有實際 config 可用時做「預設值下的估算」。
+// ⚠️ 若後台在「參數設定→戰鬥」分頁調過這幾個係數，這裡顯示的數字會跟真實戰鬥（吃後端
+// bootstrap 送來的真實 config）不同步——這只是給玩家一個「配這麼多 AGI/DEX 大概有多少效果」
+// 的大致感覺，不是精算值；要精算需要 /rpg/me 一併回傳這三個數字，或角色頁改打
+// GET /rpg/battle/bootstrap 換取真實 config（兩者都不在本輪 FRONTEND 角色可寫清單內，見任務
+// 回報建議）。公式與 engine/formulas.ts attackCooldownFor／effectiveCastMs 逐項一致，
+// 後台調整這幾個係數的預設值時，這裡要同步修改，否則角色頁的估算會離題。
+export const BATTLE_DISPLAY_DEFAULTS = {
+  attackCooldownMs: 1500,
+  aspdReference: 150,
+  attackCooldownMinMs: 700,
+  defaultCastMs: 500,
+  castMinMs: 120,
+}
+
+/** 與 engine/formulas.ts attackCooldownFor 相同公式（毫秒）；僅供 CharacterScreen 顯示用途的預設值估算。 */
+export function estimateAttackCooldownMs(aspd: number): number {
+  const { attackCooldownMs, aspdReference, attackCooldownMinMs } = BATTLE_DISPLAY_DEFAULTS
+  const denom = 200 - aspdReference
+  if (denom <= 0) return attackCooldownMs // 防呆同 engine：aspdReference 誤設 ≥200 時不要除以零/負值
+  const raw = (attackCooldownMs * (200 - aspd)) / denom
+  return Math.min(attackCooldownMs, Math.max(attackCooldownMinMs, raw))
+}
+
+/** 與 engine/formulas.ts effectiveCastMs 相同公式（毫秒）；僅供 CharacterScreen 顯示用途的預設值估算。 */
+export function estimateCastMs(baseCastMs: number, castReductionPct: number): number {
+  const reduced = baseCastMs * (1 - castReductionPct / 100)
+  return Math.max(BATTLE_DISPLAY_DEFAULTS.castMinMs, Math.round(reduced))
+}
+
+// 後台「參數設定」分頁分組欄位 — 逐項對照 RpgConfig 欄位（勿漏改名）。type 省略＝number 輸入框；
+// 'json' 是 P2 新增（battle_element_chart 巢狀 map 專用），admin/rpg/page.tsx 的 ConfigTab 用它
+// 決定渲染 textarea 而非 <input type="number">，存檔前另外做 JSON.parse 驗證。
+export interface ConfigField { key: keyof RpgConfig; label: string; help?: string; type?: 'select' | 'json'; options?: { value: string; label: string }[]; step?: number }
 export interface ConfigGroup { title: string; fields: ConfigField[] }
 
 export const CONFIG_GROUPS: ConfigGroup[] = [
@@ -209,23 +248,84 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
       { key: 'battle_enemy_dps_ratio', label: '全場敵人合計 DPS ÷ 玩家 MaxHP（每秒，例：0.010≈100 秒打死不防禦的玩家）' },
       { key: 'battle_player_min_atk', label: '玩家 ATK 保底（P2 專用，P3 會取消）' },
       { key: 'battle_player_min_hp', label: '玩家 MaxHP 保底（P2 專用，P3 會取消）' },
-      { key: 'battle_attack_cooldown_ms', label: '普攻冷卻（毫秒）' },
+      { key: 'battle_attack_cooldown_ms', label: '普攻冷卻（毫秒，AGI 攻速為 0 或後台未調整時的基準冷卻，即「未配任何攻速加成」的手感）' },
+      {
+        key: 'battle_aspd_reference',
+        label: '攻速換算基準點（AGI/DEX 攻速評級等於此值時，攻擊冷卻恰好＝上面的普攻冷卻，即「完全不配 AGI/DEX」的中性表現；只套用在玩家身上；必須嚴格介於 0～200 之間，見下方公式）',
+      },
+      {
+        key: 'battle_attack_cooldown_min_ms',
+        label: '玩家攻擊冷卻下限（毫秒，AGI 配再高也不會快過此值；需 >0 且 ≤ 上面的普攻冷卻，否則「配 AGI 變快」會被下限吃掉甚至配了更慢）',
+      },
       { key: 'battle_charge_min_ms', label: '蓄氣最短時間（毫秒，需 ≤ 蓄氣全滿時間）' },
       { key: 'battle_charge_full_ms', label: '蓄氣全滿時間（毫秒）' },
       { key: 'battle_charge_max_multiplier', label: '蓄氣全滿傷害倍率' },
       { key: 'battle_guard_multiplier', label: '防禦時受到傷害倍率（0~1）' },
       { key: 'battle_recovery_ms', label: '出手後硬直恢復時間（毫秒）' },
       { key: 'battle_default_cast_ms', label: '技能預設施放時間（毫秒，技能未個別設定時使用）' },
+      {
+        key: 'battle_cast_min_ms',
+        label: '玩家技能施放時間下限（毫秒，DEX/INT 詠唱縮減後不會低於此值；只套用在玩家身上；需 >0 且 ≤ 上面的技能預設施放時間，避免縮到比預設無詠唱技能還誇張）',
+      },
       { key: 'battle_escape_judge_ms', label: '逃跑判定動畫時間（毫秒）' },
       { key: 'battle_resolve_delay_ms', label: '戰鬥結算延遲（毫秒，讓最後一擊動畫播完）' },
       { key: 'battle_enemy_act_min_ms', label: '敵人行動間隔下限（毫秒，乘怪物 speed_mult 前）' },
       { key: 'battle_enemy_act_max_ms', label: '敵人行動間隔上限（毫秒，需 ≥ 下限）' },
       { key: 'battle_ally_act_min_ms', label: '隊友 AI 行動間隔下限（毫秒）' },
       { key: 'battle_ally_act_max_ms', label: '隊友 AI 行動間隔上限（毫秒，需 ≥ 下限）' },
-      { key: 'battle_hit_rate', label: '命中率（0~1，1＝必中）' },
-      { key: 'battle_crit_rate', label: '暴擊率（0~1）' },
+      {
+        key: 'battle_hit_rate',
+        label: '命中率後備值（0~1，1＝必中；只在攻擊方沒有「戰鬥評級」資料時當退路使用——正常情況下命中改由下方「戰鬥評級」機制決定，見 battle_base_miss_pct）',
+      },
+      {
+        key: 'battle_crit_rate',
+        label: '全體基礎暴擊率（0~1；P2 起攻守雙方都會加上這個基準值，讓 LUK 配一點就能看到暴擊，非玩家專屬）',
+      },
       { key: 'battle_crit_multiplier', label: '暴擊傷害倍率' },
       { key: 'battle_exp_preview_per_level', label: '結算畫面「預估經驗」係數（純顯示，不入帳，＝Σ敵人等級×此值）' },
+    ],
+  },
+  // P2（暴擊／Miss／無效攻擊）新增：戰鬥評級（命中/迴避/暴擊/暴擊迴避）與屬性相剋表，全部走
+  // rpg_config JSON（沒有新增 migration）。玩家/隊友的評級來自既有 RO 素質系統（DEX→命中、
+  // AGI→迴避、LUK→暴擊）算出的 Hit/Flee/CritPct/CritShield，這裡只調「怪物沒有個別覆寫時」的
+  // 基準值與雙方共用的落空率/暴擊率公式係數。
+  {
+    title: '戰鬥評級（命中／迴避／暴擊）',
+    fields: [
+      { key: 'battle_base_miss_pct', label: '基礎落空率（%，clamp 前的起始值）' },
+      { key: 'battle_hit_flee_scale', label: '每 1 點 (防守方迴避－攻擊方命中) 差額，增加的落空率（%）' },
+      { key: 'battle_miss_min_pct', label: '落空率下限（%，即使命中遠高於迴避也至少會落空這麼多）' },
+      {
+        key: 'battle_miss_max_pct',
+        label: '落空率上限（%，即使迴避遠高於命中也不會高過這個值）⚠️ 設到 100 會讓攻擊永遠落空；不能逃跑的關底場次（見「遭遇」分頁 canEscape）一旦打不到怪就無法脫身，會變成死局，設定前務必確認該場可以逃跑或怪物打得死',
+      },
+      {
+        key: 'battle_monster_hit_base',
+        label: '怪物命中基準偏移量（P3 已改語意：不再是絕對值，而是相對「玩家等級基線」的偏移——實際命中＝玩家 Base Lv × 下方每級命中係數 + 此值；配合每級係數讓怪物命中跟著玩家等級同步成長，DEX 配點才會一直有效）',
+      },
+      {
+        key: 'battle_monster_hit_per_level',
+        label: '怪物命中隨玩家 Base Lv 增加的斜率（每級 +N；預設 1.0 對齊玩家「基本等級加成」的每級命中——沒有這個係數，怪物命中會跟等級無關，中後期被玩家等級成長甩開，DEX 配點形同虛設）',
+      },
+      {
+        key: 'battle_monster_hit_max',
+        label: '怪物命中上限（絕對天花板，必須小於「迴避率上限 flee_cap_pct」預設 95）⚠️ 上面那條命中會隨玩家等級無限成長，但玩家迴避被 flee_cap_pct 硬性封頂——沒有這個上限，Base Lv 93 之後怪物命中就超過玩家可能達到的最高迴避，AGI 配到滿閃避率也會掉回下限、等於完全無效。預設 75，刻意留 20 點投資空間',
+      },
+      {
+        key: 'battle_monster_flee_base',
+        label: '怪物迴避基準偏移量（P3 已改語意：不再是絕對值，而是相對「玩家等級基線」的偏移——實際迴避＝(玩家 Base Lv × 下方每級迴避係數 + 此值) × 該怪 speed_mult）',
+      },
+      {
+        key: 'battle_monster_flee_per_level',
+        label: '怪物迴避隨玩家 Base Lv 增加的斜率（每級 +N；預設 1.0 對齊玩家「基本等級加成」的每級迴避——沒有這個係數，AGI 配到滿也不可能提高迴避率，見上方 battle_monster_hit_base 語意改寫的理由）',
+      },
+      { key: 'battle_monster_crit_pct', label: '怪物暴擊率基準（%）' },
+      { key: 'battle_monster_crit_shield_base', label: '怪物暴擊迴避基準（實際＝此值 × 該怪 def_mult）' },
+      {
+        key: 'battle_element_chart',
+        label: '屬性相剋表（JSON：外層 key＝怪物屬性【中文，如「金」「木」】→ 內層 key＝技能屬性【英文 ElementKind，如 water/fire】→ 數字倍率；0＝完全無效／玩家會看到「無效攻擊」，未列出的屬性或組合＝1.0 不相剋不吃虧。刪除某個屬性/element key 現在會真的生效，不會在下次讀取時被預設表復活）',
+        type: 'json',
+      },
     ],
   },
 ]

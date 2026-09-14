@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { rpgApi, type RpgMe, type RpgStatKey } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
-import { STAT_META, DERIVED_META, resistLabel } from '@/lib/rpgMeta'
+import { STAT_META, DERIVED_META, resistLabel, BATTLE_DISPLAY_DEFAULTS, estimateAttackCooldownMs, estimateCastMs } from '@/lib/rpgMeta'
 
 // onOpenBattle：DORPG 戰鬥畫面入口（P0 靜態畫面預覽）；本頁已受 dash.rpg_entry 閘門，不另設資格判斷。
 export default function CharacterScreen({ onBack, onOpenBattle }: { onBack: () => void; onOpenBattle?: () => void }) {
@@ -122,14 +122,56 @@ export default function CharacterScreen({ onBack, onOpenBattle }: { onBack: () =
             {/* 衍生數值 */}
             <h2 style={{ margin: '22px 0 8px', fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>衍生數值</h2>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              {DERIVED_META.map((d) => (
-                <div key={d.key} style={derivedCell}>
-                  <div style={{ fontSize: 10.5, color: 'var(--tx-dim)' }}>{d.label} <span style={{ color: 'var(--tx-faint)' }}>{d.abbr}</span></div>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>
-                    {fmtNum(ch.derived[d.key] as number)}{d.suffix ?? ''}
+              {DERIVED_META.map((d) => {
+                const raw = ch.derived[d.key] as number
+
+                // P3（AGI 攻速／DEX 詠唱縮減，使用者當面要求）：aspd 原始評級數字（如「150.6」）
+                // 對玩家沒有意義，換算成看得懂的「攻擊間隔 X 秒」；換算係數見 rpgMeta.ts
+                // BATTLE_DISPLAY_DEFAULTS 上方註解（/rpg/me 目前不回傳戰鬥 config，這裡是
+                // 預設值下的估算，非精算）。
+                if (d.key === 'aspd') {
+                  const cooldownMs = estimateAttackCooldownMs(raw)
+                  return (
+                    <div key={d.key} style={derivedCell}>
+                      <div style={{ fontSize: 10.5, color: 'var(--tx-dim)' }}>
+                        {d.label} <span style={{ color: 'var(--tx-faint)' }}>{d.abbr} {fmtNum(raw)}</span>
+                      </div>
+                      <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>
+                        攻擊間隔 {(cooldownMs / 1000).toFixed(2)} 秒
+                      </div>
+                      <div style={{ fontSize: 9.5, color: 'var(--tx-faint)', marginTop: 2, lineHeight: 1.3 }}>
+                        AGI/DEX 越高攻擊越快；估算值，若後台調過戰鬥參數以實際對戰為準
+                      </div>
+                    </div>
+                  )
+                }
+
+                // 同理：「詠唱縮減 x%」旁邊補上實際效果說明——以戰鬥預設施放時間為例算出縮短後的
+                // 毫秒數，比單看百分比更有感。
+                if (d.key === 'cast_reduction_pct') {
+                  const exampleMs = estimateCastMs(BATTLE_DISPLAY_DEFAULTS.defaultCastMs, raw)
+                  return (
+                    <div key={d.key} style={derivedCell}>
+                      <div style={{ fontSize: 10.5, color: 'var(--tx-dim)' }}>{d.label} <span style={{ color: 'var(--tx-faint)' }}>{d.abbr}</span></div>
+                      <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>
+                        {fmtNum(raw)}{d.suffix ?? ''}
+                      </div>
+                      <div style={{ fontSize: 9.5, color: 'var(--tx-faint)', marginTop: 2, lineHeight: 1.3 }}>
+                        技能施放更快；以 {BATTLE_DISPLAY_DEFAULTS.defaultCastMs}ms 的技能為例約縮短至 {exampleMs}ms（估算值）
+                      </div>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div key={d.key} style={derivedCell}>
+                    <div style={{ fontSize: 10.5, color: 'var(--tx-dim)' }}>{d.label} <span style={{ color: 'var(--tx-faint)' }}>{d.abbr}</span></div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--tx)', fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtNum(raw)}{d.suffix ?? ''}
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
             {!!ch.derived.resists && Object.keys(ch.derived.resists).length > 0 && (

@@ -125,14 +125,29 @@ function ConfigTab({ token, config, defaults, onSaved, onErr }: {
 
   function seedEdit(c: RpgConfig): Record<string, string> {
     const next: Record<string, string> = {}
-    for (const g of CONFIG_GROUPS) for (const f of g.fields) next[f.key] = String((c as any)[f.key])
+    // battle_element_chart 是巢狀 map（物件），String(obj) 只會得到沒用的 "[object Object]"——
+    // 'json' 型欄位改存成排版過的 JSON 字串，textarea 才看得出內容；其餘欄位維持原本 String() 行為。
+    for (const g of CONFIG_GROUPS) for (const f of g.fields) {
+      const v = (c as any)[f.key]
+      next[f.key] = f.type === 'json' ? JSON.stringify(v ?? {}, null, 2) : String(v)
+    }
     return next
   }
 
+  // 拋錯（而非回傳 null）讓呼叫端（save/openJson）沿用既有 try/catch 顯示錯誤訊息，不必各自重寫
+  // 一份判斷——'json' 型欄位存的是使用者可編輯的原始文字，存檔/開進階編輯前都要先驗證格式。
   function buildConfig(): RpgConfig {
     const obj: any = {}
     for (const g of CONFIG_GROUPS) for (const f of g.fields) {
-      obj[f.key] = f.type === 'select' ? edit[f.key] : Number(edit[f.key])
+      if (f.type === 'json') {
+        try {
+          obj[f.key] = JSON.parse(edit[f.key] || '{}')
+        } catch {
+          throw new Error(`「${f.label}」不是合法的 JSON，請修正後再儲存`)
+        }
+      } else {
+        obj[f.key] = f.type === 'select' ? edit[f.key] : Number(edit[f.key])
+      }
     }
     return obj as RpgConfig
   }
@@ -150,13 +165,21 @@ function ConfigTab({ token, config, defaults, onSaved, onErr }: {
     setEdit(seedEdit(defaults))
   }
 
-  function openJson() { setJsonText(JSON.stringify(buildConfig(), null, 2)); setShowJson(true) }
+  function openJson() {
+    // buildConfig() 現在可能因為 'json' 型欄位（battle_element_chart）格式不對而拋錯——
+    // 開進階編輯前也要驗證，不然會把例外丟到呼叫端沒接住的地方。
+    try { setJsonText(JSON.stringify(buildConfig(), null, 2)); setShowJson(true) }
+    catch (e: any) { onErr(e?.message || 'JSON 格式錯誤，未開啟') }
+  }
   function applyJson() {
     try {
       const obj = JSON.parse(jsonText)
       const next: Record<string, string> = { ...edit }
       for (const g of CONFIG_GROUPS) for (const f of g.fields) {
-        if (obj[f.key] !== undefined) next[f.key] = String(obj[f.key])
+        if (obj[f.key] !== undefined) {
+          // 'json' 型欄位（物件）套回表單也要存成排版過的字串，理由同 seedEdit()。
+          next[f.key] = f.type === 'json' ? JSON.stringify(obj[f.key], null, 2) : String(obj[f.key])
+        }
       }
       setEdit(next)
       setShowJson(false)
@@ -184,11 +207,17 @@ function ConfigTab({ token, config, defaults, onSaved, onErr }: {
           <h2 style={{ fontSize: 15, fontWeight: 800, margin: '0 0 10px' }}>{g.title}</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
             {g.fields.map((f) => (
-              <F key={f.key} label={f.label}>
+              <F key={f.key} label={f.label} full={f.type === 'json'}>
                 {f.type === 'select' ? (
                   <select style={inp} value={edit[f.key] ?? ''} onChange={(e) => setEdit((s) => ({ ...s, [f.key]: e.target.value }))}>
                     {f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
+                ) : f.type === 'json' ? (
+                  <textarea
+                    style={{ ...ta, height: 160, fontFamily: 'monospace', fontSize: 12 }}
+                    value={edit[f.key] ?? ''}
+                    onChange={(e) => setEdit((s) => ({ ...s, [f.key]: e.target.value }))}
+                  />
                 ) : (
                   <input style={inp} type="number" step="any" value={edit[f.key] ?? ''} onChange={(e) => setEdit((s) => ({ ...s, [f.key]: e.target.value }))} />
                 )}
@@ -963,9 +992,11 @@ function BattleLogsTab({ token, onErr }: { token: string; onErr: (m: string) => 
 
 // ============================== 共用小元件／樣式（比照 admin/monopoly） ==============================
 
-function F({ label, children }: { label: string; children: React.ReactNode }) {
+// full：讓這個欄位在 CONFIG_GROUPS 的 grid 排版裡橫跨整列（P2 新增，battle_element_chart 的 JSON
+// textarea 塞進 minmax(200px,1fr) 的單一格會太窄，其餘呼叫端不傳就維持原本單格寬度）。
+function F({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, ...(full ? { gridColumn: '1 / -1' } : {}) }}>
       <span style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{label}</span>
       {children}
     </label>

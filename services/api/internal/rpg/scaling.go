@@ -23,6 +23,34 @@ import "math"
 type PlayerBattleStats struct {
 	Atk, Matk, Def, Mdef, HPMax, MPMax float64
 	BaseLevel                          int
+	// Rating P2（暴擊／Miss／無效攻擊）新增：命中/暴擊評級，直接取自 Compute() 的
+	// Derived.Hit/Flee/CritPct/CritShield，不套用任何保底——SPEC 只點名 Atk/HPMax 需要下限
+	// （owner 現有角色六圍多數點數未配，完全打不動任何怪），Hit/Flee/CritPct/CritShield 維持
+	// 角色真實數值，DEX/AGI/LUK 的配點才第一次對戰鬥產生意義（保底掉配點差異就沒有意義了）。
+	Rating CombatRating
+}
+
+// CombatRating 對齊前端 apps/web/src/lib/dorpg/types.ts 的 CombatRating（P2）。命名慣例同檔頭
+// 「混用命名慣例」：這裡直接用 camelCase，因為要被組進 wire party[].rating / enemies[].rating，
+// 前端型別「直接吃」，不再轉換一次大小寫。
+//
+// ⚠️ Hit/Flee 不是 0~100 的機率百分比制——它們是跟玩家 Compute()/怪物 MonsterRating 一樣的
+// 「評級數值空間」，隨等級與素質線性成長、本來就不封頂在 100（前端 missChance() 拿
+// (defenderFlee−attackerHit) 的差額去換算才是真正的機率）；只有 CritPct/CritShield 才是
+// 0~100 的百分比制（P2 修正第 3 輪：審查 data.md 抓到本檔先前這段註解誤植成「0~100 百分比」，
+// 這裡改成如實描述，不影響任何計算，純粹是文件正確性修正）。
+type CombatRating struct {
+	Hit        float64 `json:"hit"`
+	Flee       float64 `json:"flee"`
+	CritPct    float64 `json:"critPct"`
+	CritShield float64 `json:"critShield"`
+	// Aspd/CastReductionPct P2 修正第 3 輪新增：AGI→攻速→攻擊冷卻、DEX→詠唱縮減（使用者當面
+	// 要求，同時緩解「DEX 中後期只剩命中一個用途」的問題）。玩家直接取 Compute() 的
+	// Derived.Aspd/CastReductionPct；隊友與怪物給 Aspd=battle_aspd_reference、
+	// CastReductionPct=0（＝維持 config 固定的攻擊冷卻/施放時間，見 PlayerBattleStatsFrom
+	// 與 MonsterRating/CompanionRating 各自的組裝邏輯），只有玩家的配點會影響戰鬥節奏。
+	Aspd             float64 `json:"aspd"`
+	CastReductionPct float64 `json:"castReductionPct"`
 }
 
 // PlayerBattleStatsFrom 從既有 Compute() 的 Derived + Base Lv 組出 PlayerBattleStats，套用
@@ -47,6 +75,14 @@ func PlayerBattleStatsFrom(cfg Config, baseLevel int, d Derived) PlayerBattleSta
 		HPMax:     hpMax,
 		MPMax:     float64(d.MaxMP),
 		BaseLevel: baseLevel,
+		// CritPct 在 Compute() 已經是百分比尺度（compute.go：`CritPct float64 json:"crit_pct"
+		// // 暴擊率（%）`），這裡直接沿用不再乘 100——呼叫端 SPEC 特別提醒過這一點。
+		// Aspd/CastReductionPct 同樣直接取自 Compute() 的 Derived（已套用 aspd_cap/cast_cap_pct
+		// 上限），不另外保底——保底只點名 Atk/HPMax（見上）。
+		Rating: CombatRating{
+			Hit: d.Hit, Flee: d.Flee, CritPct: d.CritPct, CritShield: d.CritShield,
+			Aspd: d.Aspd, CastReductionPct: d.CastReductionPct,
+		},
 	}
 }
 
@@ -107,6 +143,8 @@ type ScaledMonster struct {
 	HPMax, Atk, Matk, Def, Mdef int
 	ActMinMs, ActMaxMs          int
 	Level                       int
+	// Rating P2 新增：這隻怪的命中/暴擊評級（見 MonsterRating），組進 wire Enemy.rating。
+	Rating CombatRating
 }
 
 // minActIntervalMs 行動間隔下限防呆：DDL 沒有 CHECK 約束擋後台把 speed_mult 誤填成 0 或負值，
@@ -174,7 +212,71 @@ func ScaleMonster(cfg Config, p PlayerBattleStats, m MonsterRow, encounterScale,
 		ActMinMs: actMin,
 		ActMaxMs: actMax,
 		Level:    level,
+		Rating:   MonsterRating(cfg, p, m),
 	}
+}
+
+// MonsterRating P2 修正第 3 輪（審查 data.md 缺陷1/2 CONFIRMED 根因修復）：怪物沒有配點系統，
+// 命中/迴避改成跟著「玩家等級基線」走，不再是與等級無關的絕對常數——舊版
+// hit=battle_monster_hit_base(100固定)、flee=battle_monster_flee_base(8)×speed_mult，
+// 而玩家 hit/flee 隨 Base Lv 線性成長且不封頂（flee 另被 flee_cap_pct=95 封頂），兩邊尺度不搭
+// 造成兩個 CONFIRMED 缺陷：① 玩家 flee 封頂 95 後 (95−100)<0 恆為負，AGI 配到滿也不可能提高
+// 迴避率；② 約 Lv9 起 playerHit 穩定超過怪物 flee=8，missChance 恆卡下限，DEX 配點中後期
+// 形同虛設。修法：兩邊都用「玩家 Base Lv」當基線，且斜率（*_per_level 預設 1.0）對齊玩家
+// LvHit/LvFlee=1，讓兩邊等級成長同步（維持 D1「怪物數值依玩家縮放、等級無關」架構——這裡的
+// 「等級」用的是玩家 Base Lv，不是怪物自己的等級，怪物依然沒有獨立等級概念）：
+//
+//	hit        = playerBaseLevel × battle_monster_hit_per_level  + battle_monster_hit_base
+//	flee       = (playerBaseLevel × battle_monster_flee_per_level + battle_monster_flee_base) × speed_mult
+//	critPct    = battle_monster_crit_pct
+//	critShield = battle_monster_crit_shield_base × def_mult（越硬的怪越不容易被暴擊，直覺對應防禦力）
+//
+// 語意：完全不配 AGI/DEX 的角色（Compute() 算出的 Hit/Flee 恰好等於 baseLv×1+2）與怪物打平，
+// missChance 落在下限；每配一點 AGI/DEX 才會真的把差距拉開（效果驗算見 config.go
+// BattleMonsterHitBase/FleeBase 欄位註解）。
+//
+// 不吃 encounterScale/slotScale：SPEC 明講這兩個縮放只影響 HP（跟 ScaleMonster 的 mobDef/mobAtk
+// 一致，只有 HP 有 slotScale 這個額外維度），評級是「這隻怪天生的閃避/防暴擊體質（疊加玩家等級
+// 基線）」，不該因為同一場戰鬥用不同 power_scale 開場就跟著變。
+func MonsterRating(cfg Config, p PlayerBattleStats, m MonsterRow) CombatRating {
+	lv := float64(p.BaseLevel)
+	// 高等級保護（2026-09-14 對抗式審查 CONFIRMED）：玩家 flee 被 flee_cap_pct（預設 95）硬性封頂，
+	// 而這裡的 hit 隨 Base Lv 線性成長不封頂——Lv93 之後 hit ≥ 95，玩家 AGI 配到滿（flee 也只到 95）
+	// 都無法讓 missChance 離開下限，「AGI 有沒有用」這個缺陷會在高等級原樣重演。夾在
+	// battle_monster_hit_max（預設 75，刻意比 flee_cap_pct 低 20）之下，任何等級都保證留有投資空間。
+	hit := lv*cfg.BattleMonsterHitPerLevel + cfg.BattleMonsterHitBase
+	if cfg.BattleMonsterHitMax > 0 && hit > cfg.BattleMonsterHitMax {
+		hit = cfg.BattleMonsterHitMax
+	}
+	return CombatRating{
+		Hit:        hit,
+		Flee:       (lv*cfg.BattleMonsterFleePerLevel + cfg.BattleMonsterFleeBase) * m.SpeedMult,
+		CritPct:    cfg.BattleMonsterCritPct,
+		CritShield: cfg.BattleMonsterCritShieldBase * m.DefMult,
+		// 怪物沒有攻速/詠唱概念（P2 敵人只有固定行動間隔 ActMinMs/ActMaxMs，跟玩家的攻擊
+		// 冷卻/施放時間是兩套獨立機制），這裡給 aspd_reference 只是讓 CombatRating 這個共用
+		// 結構體有個一致的「基準值」可填，wire 序列化上前端引擎目前也不會拿怪物的 aspd 做任何
+		// 事——純粹避免欄位是零值造成誤解（例如以為這隻怪 aspd=0）。
+		Aspd:             cfg.BattleAspdReference,
+		CastReductionPct: 0,
+	}
+}
+
+// CompanionRating SPEC §1：「隊友再乘 companion 的對應倍率，沒有的話沿用玩家值」——
+// rpg_companions（migration 176/177 既定 DDL）目前沒有 hit_mult/flee_mult/crit_pct_mult/
+// crit_shield_mult 這類欄位，本輪硬規則禁止新增 migration，所以「沒有的話」目前是唯一情形：
+// Hit/Flee/CritPct/CritShield 直接沿用玩家評級。c 參數保留（不使用）只是為了跟 ScaleCompanion
+// 簽名對稱——之後 DB 若真的加上這些倍率欄位，呼叫端不必再改函式簽名，只要在這裡補上乘法。
+//
+// Aspd/CastReductionPct 是本輪（P2 修正第 3 輪）新增的例外：明講只套用在玩家身上（使用者當面
+// 要求），隊友的攻擊冷卻/施放時間固定走 config 值，不隨玩家配點連動加速——否則玩家配好 AGI/DEX
+// 會連帶讓隊友 AI 也跟著變快，既有隊友節奏平衡（BattleAllyActMinMs/MaxMs 等既有調校）會被打亂，
+// 且不是這次要解決的問題（AGI/DEX 該影響的是「玩家自己打得多快」）。
+func CompanionRating(cfg Config, playerRating CombatRating, c CompanionRow) CombatRating {
+	r := playerRating
+	r.Aspd = cfg.BattleAspdReference
+	r.CastReductionPct = 0
+	return r
 }
 
 // ScaleCompanion 契約 D3：隊友數值＝玩家數值 × rpg_companions.*_mult，不另存絕對值。
@@ -308,7 +410,7 @@ func ScaleItem(cfg Config, p PlayerBattleStats, it ItemRow) ItemRow {
 			amt = 1
 		}
 		out.Amount = int(amt)
-	// case "revive"：不動（契約明講；amount 是百分比，跟玩家 HPMax 無關）。
+		// case "revive"：不動（契約明講；amount 是百分比，跟玩家 HPMax 無關）。
 	}
 	return out
 }

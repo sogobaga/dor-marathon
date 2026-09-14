@@ -2,7 +2,7 @@
 import { applyPartyDamage, resolveAttackOrDamageSkill, resolveSupportSkill } from './combat';
 import type { Ctx } from './context';
 import { pushEvent, pushLog } from './context';
-import { computeDamage, pickWeightedAliveTarget, randRange } from './formulas';
+import { computeDamage, critChance, missChance, pickWeightedAliveTarget, randRange } from './formulas';
 import type { EnemyActor, PartyActor } from './types';
 
 /** 挑治療目標：一般情況選比例最低者；但若「比例最低者」正好是治療者自己、且還有別的隊友也在
@@ -52,6 +52,7 @@ export function advanceAllyAI(ctx: Ctx, actor: PartyActor, healerId: string): vo
       targetEnemyId: ctx.targetId,
       chargeMul: 1,
       charged: false,
+      attackerRating: actor.rating,
     });
   } else {
     return; // 沒目標可打，這次不消耗行動（下個 tick 再試）。
@@ -113,10 +114,26 @@ export function advanceEnemyAI(ctx: Ctx, enemy: EnemyActor): void {
       enemy.animUntil = ctx.now + ctx.cfg.enemyAttackMs;
       if (target) {
         const guarded = target.action === 'guarding';
-        const damage = computeDamage(enemy.stats.atk, 1, 0, 1, 1, target.stats.def, guarded, ctx.cfg);
-        pushEvent(ctx, { kind: 'enemyAttack', enemyId: enemy.id, targetId: target.id, damage, guarded });
-        pushLog(ctx, `${enemy.name} 攻擊 ${target.name}，造成 ${damage} 點傷害`);
-        applyPartyDamage(ctx, target, damage);
+        // SPEC §5：敵人打隊友也套同一套 missChance 公式（攻方=怪物、守方=隊友），AGI 的迴避
+        // 才真的有防禦意義；miss 時 damage=0、不扣盾（不呼叫 applyPartyDamage，盾牌完全不動）。
+        const missPct = missChance(enemy.rating, target.rating, ctx.cfg);
+        const isHit = ctx.rng() >= missPct / 100;
+        if (!isHit) {
+          pushEvent(ctx, { kind: 'enemyAttack', enemyId: enemy.id, targetId: target.id, damage: 0, guarded, result: 'miss' });
+          pushLog(ctx, `${enemy.name} 的攻擊被 ${target.name} 閃避`);
+        } else {
+          // 怪物暴擊率預設 0%（monsterCritPct），但仍走同一套 critChance 公式，方便後台調高。
+          // critMul 沿用既有 computeDamage 的 chargeMul 參數位置疊乘——跟玩家普攻同一個做法
+          // （見 combat.ts 對 chargeMul／critMul 疊加位置的註解）。
+          const critPct = critChance(enemy.rating, target.rating, ctx.cfg);
+          const isCrit = ctx.rng() < critPct / 100;
+          const effectiveMul = isCrit ? ctx.cfg.critMultiplier : 1;
+          const damage = computeDamage(enemy.stats.atk, 1, 0, 1, effectiveMul, target.stats.def, guarded, ctx.cfg);
+          const result: 'normal' | 'critical' = isCrit ? 'critical' : 'normal';
+          pushEvent(ctx, { kind: 'enemyAttack', enemyId: enemy.id, targetId: target.id, damage, guarded, result });
+          pushLog(ctx, `${enemy.name} 攻擊 ${target.name}，造成 ${damage} 點傷害`);
+          applyPartyDamage(ctx, target, damage);
+        }
       }
     }
     return;

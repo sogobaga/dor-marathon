@@ -403,6 +403,291 @@ func TestScaleSkill_RatioOneLeavesFlatUnchanged(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// MonsterRating / CompanionRating / PlayerBattleStatsFrom.Rating / ScaleMonster.Rating：
+// P2 修正第 2 輪（暴擊／Miss／無效攻擊上線，SPEC §1）＋第 3 輪（等級基線／AGI 攻速／DEX 詠唱
+// 縮減，審查 data.md 缺陷1/2 CONFIRMED 修復）。≥8 案例逐條核對 CombatRating 推導。
+//
+// 第 3 輪語意改變：MonsterRating 簽名新增 PlayerBattleStats 參數，Hit/Flee 不再是純 config
+// 常數，改成「baseLv×per_level + base」（Flee 另乘 speed_mult）。以下測試凡是隻想驗證
+// speed_mult/def_mult 這類「與等級無關」的行為時，一律把 p.BaseLevel 設為 0，讓等級項歸零、
+// 維持測試原本只驗證單一變數的意圖；驗證等級基線本身的行為則獨立成新案例。
+// =============================================================================
+
+// --- MonsterRating：BaseLevel=0 時退化成純 config 基準值（隔離等級項，驗證 speed_mult=1、
+// def_mult=1 時 Hit/Flee 恰好等於 base）---
+
+func TestMonsterRating_BaselineWhenLevelZeroAndMultipliersAreOne(t *testing.T) {
+	cfg := DefaultConfig()
+	p := PlayerBattleStats{BaseLevel: 0}
+	m := MonsterRow{ID: "m1", SpeedMult: 1, DefMult: 1}
+	r := MonsterRating(cfg, p, m)
+	if r.Hit != cfg.BattleMonsterHitBase {
+		t.Fatalf("Hit want %v got %v", cfg.BattleMonsterHitBase, r.Hit)
+	}
+	if r.Flee != cfg.BattleMonsterFleeBase {
+		t.Fatalf("Flee want %v got %v", cfg.BattleMonsterFleeBase, r.Flee)
+	}
+	if r.CritPct != cfg.BattleMonsterCritPct {
+		t.Fatalf("CritPct want %v got %v", cfg.BattleMonsterCritPct, r.CritPct)
+	}
+	if r.CritShield != cfg.BattleMonsterCritShieldBase {
+		t.Fatalf("CritShield want %v got %v", cfg.BattleMonsterCritShieldBase, r.CritShield)
+	}
+}
+
+// --- MonsterRating：等級基線對齊——不特別投資 AGI/DEX（維持在 base 偏移量對應的基準值 2）時，
+// 玩家自己算出的 Hit/Flee（Compute()）恰好等於怪物的 Flee/Hit，讓 missChance 落在下限
+// （審查 data.md 缺陷1/2 CONFIRMED 的核心驗收：兩邊等級基線必須對齊）。 ---
+
+func TestMonsterRating_LevelBaselineMatchesUninvestedPlayerHitFlee(t *testing.T) {
+	cfg := DefaultConfig() // HitPerLevel=FleePerLevel=1、HitBase=FleeBase=2，對齊 LvHit=LvFlee=1
+	const baseLv = 27
+	// Dex=2/Agi=2：SPEC 效果驗算範例的基準點（Lv27 AGI 2 → flee 29 = monsterHit 29）。
+	d := Compute(cfg, ComputeInput{BaseLevel: baseLv, Stats: Stats{Agi: 2, Dex: 2}})
+	p := PlayerBattleStats{BaseLevel: baseLv}
+	m := MonsterRow{ID: "m1", SpeedMult: 1}
+	r := MonsterRating(cfg, p, m)
+	if !approxEqual(d.Flee, r.Hit, 1e-9) {
+		t.Fatalf("不投資時玩家 Flee(%v) 應等於怪物 Hit(%v)（打平，missChance 落在下限）", d.Flee, r.Hit)
+	}
+	if !approxEqual(d.Hit, r.Flee, 1e-9) {
+		t.Fatalf("不投資時玩家 Hit(%v) 應等於怪物 Flee(%v)（打平）", d.Hit, r.Flee)
+	}
+	if d.Flee != 29 || r.Hit != 29 {
+		t.Fatalf("SPEC 效果驗算基準點應為 29，got playerFlee=%v monsterHit=%v", d.Flee, r.Hit)
+	}
+}
+
+// --- MonsterRating：投資 AGI 後，玩家 Flee 與怪物 Hit 的差距真的被拉開（缺陷1 的直接驗收：
+// AGI 配到越多，missChance 該用的差額越大，不會恆卡在下限） ---
+
+func TestMonsterRating_InvestingAgiWidensFleeVsMonsterHitGap(t *testing.T) {
+	cfg := DefaultConfig()
+	const baseLv = 27
+	p := PlayerBattleStats{BaseLevel: baseLv}
+	m := MonsterRow{ID: "m1", SpeedMult: 1}
+	monsterHit := MonsterRating(cfg, p, m).Hit
+
+	low := Compute(cfg, ComputeInput{BaseLevel: baseLv, Stats: Stats{Agi: 2}})
+	high := Compute(cfg, ComputeInput{BaseLevel: baseLv, Stats: Stats{Agi: 40}})
+
+	gapLow := low.Flee - monsterHit
+	gapHigh := high.Flee - monsterHit
+	if gapLow > 0.01 {
+		t.Fatalf("AGI=2（基準點）時差距應約為 0，got %v", gapLow)
+	}
+	if gapHigh <= gapLow {
+		t.Fatalf("AGI=40 應讓差距比 AGI=2 更大：gapLow=%v gapHigh=%v", gapLow, gapHigh)
+	}
+	if gapHigh < 30 { // AGI 40 → flee 67，67-29=38，留寬鬆容差防止公式微調就誤報
+		t.Fatalf("AGI=40 差距(%v)應顯著為正，AGI 配點才有意義", gapHigh)
+	}
+}
+
+// --- MonsterRating：flee 隨 speed_mult 縮放，hit/critPct/critShield 不受 speed_mult 影響
+// （BaseLevel=0 隔離等級項）---
+
+func TestMonsterRating_FleeScalesWithSpeedMult(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.BattleMonsterFleeBase = 10
+	p := PlayerBattleStats{BaseLevel: 0}
+	m := MonsterRow{ID: "fast", SpeedMult: 2, DefMult: 1}
+	r := MonsterRating(cfg, p, m)
+	if r.Flee != 20 {
+		t.Fatalf("Flee 應為 flee_base(10)×speed_mult(2)=20，got %v", r.Flee)
+	}
+	if r.Hit != cfg.BattleMonsterHitBase || r.CritPct != cfg.BattleMonsterCritPct {
+		t.Fatalf("speed_mult 不該影響 Hit/CritPct：%+v", r)
+	}
+}
+
+// --- MonsterRating：speed_mult 只影響 flee，即使等級項不為 0 也一樣只乘在 flee 上（跟
+// hit 的等級項完全獨立） ---
+
+func TestMonsterRating_SpeedMultOnlyAffectsFleeNotHit(t *testing.T) {
+	cfg := DefaultConfig()
+	p := PlayerBattleStats{BaseLevel: 30}
+	slow := MonsterRating(cfg, p, MonsterRow{ID: "slow", SpeedMult: 1})
+	fast := MonsterRating(cfg, p, MonsterRow{ID: "fast", SpeedMult: 2})
+	if slow.Hit != fast.Hit {
+		t.Fatalf("speed_mult 不該影響 Hit：slow=%v fast=%v", slow.Hit, fast.Hit)
+	}
+	if fast.Flee != slow.Flee*2 {
+		t.Fatalf("speed_mult=2 應讓 Flee 剛好乘 2：slow=%v fast=%v", slow.Flee, fast.Flee)
+	}
+}
+
+// --- MonsterRating：critShield 隨 def_mult 縮放，其餘不受 def_mult 影響（BaseLevel=0 隔離）---
+
+func TestMonsterRating_CritShieldScalesWithDefMult(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.BattleMonsterCritShieldBase = 15
+	p := PlayerBattleStats{BaseLevel: 0}
+	m := MonsterRow{ID: "tanky", SpeedMult: 1, DefMult: 3}
+	r := MonsterRating(cfg, p, m)
+	if r.CritShield != 45 {
+		t.Fatalf("CritShield 應為 crit_shield_base(15)×def_mult(3)=45，got %v", r.CritShield)
+	}
+	if r.Hit != cfg.BattleMonsterHitBase || r.Flee != cfg.BattleMonsterFleeBase {
+		t.Fatalf("def_mult 不該影響 Hit/Flee：%+v", r)
+	}
+}
+
+// --- MonsterRating：speed_mult/def_mult=0（髒資料）讓對應評級歸零，不 panic、不算出負值
+// （BaseLevel=0 隔離等級項，單純驗證倍率=0 的乘法行為）---
+
+func TestMonsterRating_ZeroMultipliersZeroOutFleeAndCritShield(t *testing.T) {
+	cfg := DefaultConfig()
+	p := PlayerBattleStats{BaseLevel: 0}
+	m := MonsterRow{ID: "zero", SpeedMult: 0, DefMult: 0}
+	r := MonsterRating(cfg, p, m)
+	if r.Flee != 0 {
+		t.Fatalf("speed_mult=0 應讓 Flee=0，got %v", r.Flee)
+	}
+	if r.CritShield != 0 {
+		t.Fatalf("def_mult=0 應讓 CritShield=0，got %v", r.CritShield)
+	}
+	// Hit/CritPct 是純 config 基準值，不受這兩個倍率影響，維持原樣。
+	if r.Hit != cfg.BattleMonsterHitBase || r.CritPct != cfg.BattleMonsterCritPct {
+		t.Fatalf("Hit/CritPct 不該被歸零：%+v", r)
+	}
+}
+
+// --- MonsterRating：per_level 係數生效——調高 HitPerLevel/FleePerLevel 應讓同一等級算出更高
+// 的 Hit/Flee（驗證兩個新欄位真的接進公式，不是擺著沒用）---
+
+func TestMonsterRating_PerLevelCoefficientTakesEffect(t *testing.T) {
+	cfg := DefaultConfig()
+	p := PlayerBattleStats{BaseLevel: 10}
+	m := MonsterRow{ID: "m1", SpeedMult: 1}
+
+	base := MonsterRating(cfg, p, m)
+
+	cfg2 := cfg
+	cfg2.BattleMonsterHitPerLevel = 2
+	cfg2.BattleMonsterFleePerLevel = 3
+	scaled := MonsterRating(cfg2, p, m)
+
+	wantHit := 10*2 + cfg.BattleMonsterHitBase
+	wantFlee := 10*3 + cfg.BattleMonsterFleeBase
+	if scaled.Hit != wantHit {
+		t.Fatalf("hit_per_level=2 時 Hit want %v got %v", wantHit, scaled.Hit)
+	}
+	if scaled.Flee != wantFlee {
+		t.Fatalf("flee_per_level=3 時 Flee want %v got %v", wantFlee, scaled.Flee)
+	}
+	if scaled.Hit <= base.Hit || scaled.Flee <= base.Flee {
+		t.Fatalf("提高 per_level 係數應讓 Hit/Flee 都變高：base=%+v scaled=%+v", base, scaled)
+	}
+}
+
+// --- MonsterRating：Aspd 一律等於 battle_aspd_reference、CastReductionPct 恆為 0（怪物沒有
+// 攻速/詠唱概念，見欄位註解）---
+
+func TestMonsterRating_AspdIsFixedReferenceAndNoCastReduction(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.BattleAspdReference = 160
+	p := PlayerBattleStats{BaseLevel: 50}
+	r := MonsterRating(cfg, p, MonsterRow{ID: "m1", SpeedMult: 1.5, DefMult: 2})
+	if r.Aspd != 160 {
+		t.Fatalf("怪物 Aspd 應恆等於 battle_aspd_reference=160，got %v", r.Aspd)
+	}
+	if r.CastReductionPct != 0 {
+		t.Fatalf("怪物 CastReductionPct 應恆為 0，got %v", r.CastReductionPct)
+	}
+}
+
+// --- MonsterRating：不吃 encounterScale/slotScale（SPEC 明講這兩個縮放只影響 HP）---
+
+func TestMonsterRating_IgnoresEncounterAndSlotScale(t *testing.T) {
+	cfg := DefaultConfig()
+	m := MonsterRow{ID: "m1", SpeedMult: 1.5, DefMult: 1.5}
+	// MonsterRating 簽名本身就沒有 encounterScale/slotScale 參數——用 ScaleMonster 傳入不同
+	// encounterScale/slotScale，驗證組出來的 sm.Rating 完全相同（只吃 m 本身的倍率）。
+	p := PlayerBattleStats{Atk: 135, Def: 35, HPMax: 820, BaseLevel: 50}
+	smLow := ScaleMonster(cfg, p, m, 1, 1, 1)
+	smHigh := ScaleMonster(cfg, p, m, 3, 5, 1)
+	if smLow.Rating != smHigh.Rating {
+		t.Fatalf("encounterScale/slotScale 不該影響 Rating：low=%+v high=%+v", smLow.Rating, smHigh.Rating)
+	}
+}
+
+// --- ScaleMonster：回傳的 Rating 與獨立呼叫 MonsterRating 結果一致 ---
+
+func TestScaleMonster_RatingMatchesMonsterRating(t *testing.T) {
+	cfg := DefaultConfig()
+	p := PlayerBattleStats{Atk: 135, Def: 35, HPMax: 820, BaseLevel: 50}
+	m := MonsterRow{ID: "m1", HPMult: 1, AtkMult: 1, DefMult: 1.2, SpeedMult: 0.8}
+	sm := ScaleMonster(cfg, p, m, 1, 1, 1)
+	want := MonsterRating(cfg, p, m)
+	if sm.Rating != want {
+		t.Fatalf("sm.Rating=%+v 應等於 MonsterRating(cfg,p,m)=%+v", sm.Rating, want)
+	}
+}
+
+// --- CompanionRating：Hit/Flee/CritPct/CritShield 目前無 migration 可加倍率欄位，一律原樣
+// 沿用玩家評級（SPEC §1「沒有的話沿用玩家值」）；Aspd/CastReductionPct 是 P2 修正第 3 輪的
+// 例外——固定走 battle_aspd_reference/0，不隨玩家配點連動（見 CompanionRating 函式註解）。---
+
+func TestCompanionRating_FallsBackToPlayerRatingExceptAspd(t *testing.T) {
+	cfg := DefaultConfig()
+	playerRating := CombatRating{Hit: 42, Flee: 7, CritPct: 3.5, CritShield: 1, Aspd: 175, CastReductionPct: 30}
+	xiaomi := CompanionRow{ID: "char_xiaomi", HPMult: 0.7, MatkMult: 1.2}
+	got := CompanionRating(cfg, playerRating, xiaomi)
+	want := playerRating
+	want.Aspd = cfg.BattleAspdReference
+	want.CastReductionPct = 0
+	if got != want {
+		t.Fatalf("CompanionRating 應沿用玩家 Hit/Flee/CritPct/CritShield、但固定 Aspd/CastReductionPct：want %+v got %+v", want, got)
+	}
+}
+
+// --- CompanionRating：不同 CompanionRow 內容不影響結果（證明目前完全不吃 companion 欄位）---
+
+func TestCompanionRating_IgnoresCompanionRowFields(t *testing.T) {
+	cfg := DefaultConfig()
+	playerRating := CombatRating{Hit: 100, Flee: 20, CritPct: 10, CritShield: 5}
+	a := CompanionRow{ID: "a", HPMult: 0.5, AtkMult: 2, DefMult: 3}
+	b := CompanionRow{ID: "b", HPMult: 5, AtkMult: 0.1, DefMult: 0.1}
+	gotA := CompanionRating(cfg, playerRating, a)
+	gotB := CompanionRating(cfg, playerRating, b)
+	if gotA != gotB {
+		t.Fatalf("不同 companion 欄位不該產生不同評級：gotA=%+v gotB=%+v", gotA, gotB)
+	}
+	if gotA.Hit != playerRating.Hit || gotA.Flee != playerRating.Flee {
+		t.Fatalf("Hit/Flee 應沿用玩家評級：gotA=%+v playerRating=%+v", gotA, playerRating)
+	}
+}
+
+// --- PlayerBattleStatsFrom：Rating 直接取自 Derived.Hit/Flee/CritPct/CritShield/Aspd/
+// CastReductionPct，不做任何換算/保底 ---
+
+func TestPlayerBattleStatsFrom_RatingPassesThroughDerivedFields(t *testing.T) {
+	cfg := DefaultConfig()
+	d := Derived{Atk: 135, Matk: 80, Def: 35, Mdef: 28, MaxHP: 820, MaxMP: 100,
+		Hit: 63.5, Flee: 41.2, CritPct: 9, CritShield: 2, Aspd: 168.5, CastReductionPct: 22}
+	p := PlayerBattleStatsFrom(cfg, 50, d)
+	want := CombatRating{Hit: 63.5, Flee: 41.2, CritPct: 9, CritShield: 2, Aspd: 168.5, CastReductionPct: 22}
+	if p.Rating != want {
+		t.Fatalf("Rating 應直接取自 Derived 對應欄位：want %+v got %+v", want, p.Rating)
+	}
+}
+
+// --- PlayerBattleStatsFrom：Atk/HPMax 保底生效時，Rating 完全不受影響（保底只套 Atk/HPMax） ---
+
+func TestPlayerBattleStatsFrom_RatingUnaffectedByAtkHPFloor(t *testing.T) {
+	cfg := DefaultConfig() // BattlePlayerMinAtk=30、BattlePlayerMinHP=300
+	d := Derived{Atk: 5, MaxHP: 100, MaxMP: 50, Hit: 12, Flee: 3, CritPct: 0, CritShield: 0}
+	p := PlayerBattleStatsFrom(cfg, 5, d)
+	if p.Atk != cfg.BattlePlayerMinAtk || p.HPMax != cfg.BattlePlayerMinHP {
+		t.Fatalf("前置條件錯誤：保底應已生效，got Atk=%v HPMax=%v", p.Atk, p.HPMax)
+	}
+	if p.Rating.Hit != 12 || p.Rating.Flee != 3 {
+		t.Fatalf("Rating 不該被 Atk/HPMax 保底邏輯連帶影響：got %+v", p.Rating)
+	}
+}
+
 func TestScaleItem_RatioOneLeavesAmountUnchanged(t *testing.T) {
 	cfg := DefaultConfig()
 	p := PlayerBattleStats{HPMax: cfg.BattleReferenceHP, MPMax: cfg.BattleReferenceMP}
@@ -413,5 +698,42 @@ func TestScaleItem_RatioOneLeavesAmountUnchanged(t *testing.T) {
 	}
 	if out := ScaleItem(cfg, p, mp); out.Amount != 60 {
 		t.Fatalf("ratioMP=1 時 mp amount 不該改變，want 60 got %d", out.Amount)
+	}
+}
+
+// 高等級保護（2026-09-14 對抗式審查 CONFIRMED）：Base Lv 夠高時怪物命中必須被 battle_monster_hit_max
+// 夾住，否則會超過玩家 flee 的硬性上限（flee_cap_pct），AGI 配到滿也無法離開 missChance 下限。
+func TestMonsterRating_HitIsCappedAtHighLevelSoAgiStaysUseful(t *testing.T) {
+	cfg := DefaultConfig()
+	m := MonsterRow{SpeedMult: 1, DefMult: 1}
+
+	// 低等級：還沒碰到上限，維持等級基線
+	low := MonsterRating(cfg, PlayerBattleStats{BaseLevel: 27}, m)
+	if want := 27*cfg.BattleMonsterHitPerLevel + cfg.BattleMonsterHitBase; low.Hit != want {
+		t.Fatalf("Lv27 未觸及上限時 Hit 應為 %v，實得 %v", want, low.Hit)
+	}
+
+	// 高等級：被夾在 battle_monster_hit_max，且必須嚴格小於 flee_cap_pct 才留得住投資空間
+	for _, lv := range []int{93, 99, 150} {
+		got := MonsterRating(cfg, PlayerBattleStats{BaseLevel: lv}, m)
+		if got.Hit != cfg.BattleMonsterHitMax {
+			t.Fatalf("Lv%d 應被夾到 %v，實得 %v", lv, cfg.BattleMonsterHitMax, got.Hit)
+		}
+		if got.Hit >= cfg.FleeCapPct {
+			t.Fatalf("Lv%d 的怪物命中 %v 不該 >= flee_cap_pct %v（AGI 會失效）", lv, got.Hit, cfg.FleeCapPct)
+		}
+	}
+}
+
+// Validate 必須擋下「怪物命中上限 >= 迴避上限」這種會讓 AGI 永遠無效的設定。
+func TestValidate_RejectsMonsterHitMaxAboveFleeCap(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.BattleMonsterHitMax = cfg.FleeCapPct
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("battle_monster_hit_max 等於 flee_cap_pct 時應被 Validate 擋下")
+	}
+	cfg.BattleMonsterHitMax = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("battle_monster_hit_max = 0 時應被 Validate 擋下")
 	}
 }

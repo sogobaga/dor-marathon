@@ -4961,6 +4961,33 @@ export interface RpgConfig {
   battle_crit_rate: number
   battle_crit_multiplier: number
   battle_exp_preview_per_level: number
+
+  // --- P2（暴擊／Miss／無效攻擊）新增：全部走這份既有 rpg_config JSON，不新增 migration。
+  // json tag 逐字對齊後端 internal/rpg/config.go 與前端 engine/types.ts BattleConfig 的同名欄位
+  // （camelCase↔snake_case 轉換規則跟其餘 battle_* 欄位一致）。---
+  battle_base_miss_pct: number
+  battle_hit_flee_scale: number
+  battle_miss_min_pct: number
+  battle_miss_max_pct: number
+  battle_monster_hit_base: number
+  battle_monster_flee_base: number
+  battle_monster_crit_pct: number
+  battle_monster_crit_shield_base: number
+  /** 怪物 attribute（中文）→ 技能 element（英文）→ 倍率；0＝無效攻擊，未列出＝1.0。 */
+  battle_element_chart: Record<string, Record<string, number>>
+
+  // --- P3（AGI 攻速／DEX 詠唱縮減，審查 dorpg_p3 r5）新增：全部走這份既有 rpg_config JSON，
+  // 不新增 migration。json tag 逐字對齊後端 internal/rpg/config.go 與前端 engine/types.ts
+  // BattleConfig 的同名欄位（camelCase↔snake_case 轉換規則同其餘 battle_* 欄位）。
+  // battle_monster_hit_base/flee_base 的語意本輪已改（見 rpgMeta.ts 對應說明文字改寫）：
+  // 從「絕對基準值」改成「相對玩家等級基線的偏移量」，這兩個新欄位是同一條公式的「每級」係數。---
+  battle_monster_hit_per_level: number
+  /** 怪物命中的絕對上限：必須小於 flee_cap_pct，否則高等級玩家的 AGI 迴避永遠卡在下限（見 rpgMeta 說明）。 */
+  battle_monster_hit_max: number
+  battle_monster_flee_per_level: number
+  battle_aspd_reference: number
+  battle_attack_cooldown_min_ms: number
+  battle_cast_min_ms: number
 }
 
 export interface RpgDerived {
@@ -5308,6 +5335,21 @@ export interface RpgBootstrapActorStatsRaw {
   def: number
   mdef: number
 }
+// P2（暴擊／Miss／無效攻擊）新增：命中/暴擊評級，逐欄對齊 apps/web/src/lib/dorpg/types.ts 的
+// CombatRating（camelCase，同一份「wire 格式已經是引擎形狀」慣例，見本檔上方對照表說明）。
+// 玩家/隊友取自 internal/rpg Compute 的 Hit/Flee/CritPct/CritShield；怪物由後端依
+// battle_monster_* 係數推導。可選——後端尚未送這欄，或未來欄位缺漏時，fromApi.ts 整包丟棄、
+// 交給 engine 自己用 config 推導後備值，不強行塞半殘資料。
+export interface RpgBootstrapRatingRaw {
+  hit: number
+  flee: number
+  critPct: number
+  critShield: number
+  // P3（AGI 攻速／DEX 詠唱縮減）新增：可選——舊版後端（本輪部署前）可能還沒送這兩個欄位，
+  // fromApi.ts asRating() 缺欄位時給中性預設值（不是整包丟棄 rating，見該函式註解）。
+  aspd?: number
+  castReductionPct?: number
+}
 export interface RpgBootstrapPartyMemberRaw {
   id: string
   name: string
@@ -5319,6 +5361,7 @@ export interface RpgBootstrapPartyMemberRaw {
   portraitUrl: string | null
   stats?: RpgBootstrapActorStatsRaw
   weapon?: string
+  rating?: RpgBootstrapRatingRaw
 }
 export interface RpgBootstrapEnemyRaw {
   id: string
@@ -5334,6 +5377,7 @@ export interface RpgBootstrapEnemyRaw {
   race?: string
   stats?: RpgBootstrapActorStatsRaw
   threatPriority?: number
+  rating?: RpgBootstrapRatingRaw
   /**
    * 2026-09-14 P2 修正第1輪 審查5（CONFIRMED）：這裡原本的註解描述一個「omitempty 吞掉 false」的
    * 已知 bug，但已對照 services/api/internal/rpg/battle.go 目前程式碼確認該檔的 wireEnemy.CanEscape

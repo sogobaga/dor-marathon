@@ -287,8 +287,15 @@ export default function BattleScreen({
         case 'enemyAttack': {
           // 全隊（含隊友）承受的傷害合計，跟 damageDealt 的「全隊造成」口徑對稱——見 BattleStats 型別註解。
           statsRef.current.damageTaken += ev.damage;
-          pushFloat(ev.targetId, ev.guarded ? `防禦 -${ev.damage}` : `-${ev.damage}`, 'damage');
-          if (ev.targetId === next.playerId && settingsRef.current.vibrate) battleAudio.vibrate([30]);
+          // P2：怪物攻擊 miss 時 damage 恆為 0、不扣盾不扣血（engine/ai.ts 的 missChance 分支
+          // 沒有呼叫 applyPartyDamage）——這裡只補畫面回饋，不震動（沒有真的受到傷害），
+          // 沿用既有 FloatTextTone 的 'miss' 色調（灰），不用另外新增色票。
+          if (ev.result === 'miss') {
+            pushFloat(ev.targetId, 'Miss', 'miss');
+          } else {
+            pushFloat(ev.targetId, ev.guarded ? `防禦 -${ev.damage}` : `-${ev.damage}`, 'damage');
+            if (ev.targetId === next.playerId && settingsRef.current.vibrate) battleAudio.vibrate([30]);
+          }
           break;
         }
         case 'heal':

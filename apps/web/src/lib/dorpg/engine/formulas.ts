@@ -1,6 +1,6 @@
 // 引擎公式與目標挑選（純函式，無 React/DOM，無 Date.now()）。
 // 型別引用在 Node type-stripping 下整段消失，不影響本檔被 node 直接 import 執行。
-import type { ActorStats, EnemySlotId } from '../types';
+import type { ActorStats, CombatRating, EnemySlotId } from '../types';
 import type { BattleConfig, BattleState, EnemyActor } from './types';
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -45,6 +45,138 @@ export function computeDamage(
 /** 規格 §2：治療 = floor(MATK×coefficient+flat)；封頂 hpMax 的動作交給呼叫端（這裡只算原始量）。 */
 export function computeHeal(matk: number, coefficient: number, flat: number): number {
   return Math.floor(matk * coefficient + flat);
+}
+
+// ---- P2（暴擊／Miss／無效攻擊）新增：命中/暴擊評級公式、屬性倍率查表、不套底限的傷害公式。 ----
+
+/**
+ * SPEC §2：missPct = clamp(baseMissPct + (defender.flee − attacker.hit) × hitFleeScale, missMin, missMax)。
+ * 攻守雙方通用——玩家/隊友打怪、怪物打隊友都呼叫這支，只是 attacker/defender 對調。
+ */
+export function missChance(attacker: CombatRating, defender: CombatRating, cfg: BattleConfig): number {
+  const raw = cfg.baseMissPct + (defender.flee - attacker.hit) * cfg.hitFleeScale;
+  return clamp(raw, cfg.missMinPct, cfg.missMaxPct);
+}
+
+/**
+ * SPEC §2：critPct = max(0, attacker.critPct + battle_crit_rate×100 − defender.critShield)。
+ * cfg.critRate（json tag 沿用 battle_crit_rate）語意已改為「全體基礎暴擊率」：所有戰鬥雙方
+ * 都吃得到這個基準，不是只有玩家——LUK=0 的怪物一樣有這個基礎暴擊率（見 BattleConfig.critRate
+ * 的型別註解）。下限 0：critShield 扣過頭時只是「不會被暴擊」，不會變成負機率。
+ */
+export function critChance(attacker: CombatRating, defender: CombatRating, cfg: BattleConfig): number {
+  return Math.max(0, attacker.critPct + cfg.critRate * 100 - defender.critShield);
+}
+
+/**
+ * SPEC §3：屬性倍率查表，key 是怪物 attribute（中文）→ 技能/攻擊 element（英文，ElementKind）。
+ * 查無 attribute（怪物沒填）、查無該 attribute 對應的表、或表裡沒列出這個 element，一律回傳
+ * 1.0（不相剋也不吃虧）；只有表裡明確寫 0 才是「完全無效」（呼叫端據此判 'immune'）。
+ * skillElement 用 string 而非 ElementKind：呼叫端傳入的 element 已經是具體字面值，這裡只是查表，
+ * 沒必要把型別收窄綁死，避免未來 ElementKind 增減成員時這支函式也要跟著改。
+ */
+export function elementMultiplier(cfg: BattleConfig, enemyAttribute: string | undefined, skillElement: string): number {
+  if (!enemyAttribute) return 1;
+  const row = cfg.elementChart[enemyAttribute];
+  if (!row) return 1;
+  const v = row[skillElement];
+  return v === undefined ? 1 : v;
+}
+
+/**
+ * SPEC §4：raw = floor((atk×coef+flat) × elementMul × chargeMul × critMul)；net = raw − def。
+ * 刻意不套 max(1,...)——net≤0 要能被呼叫端看出「完全被擋下」判成 'immune'，這是它跟既有
+ * computeDamage（保留不動，仍給其他呼叫端與測試用）唯一但關鍵的差異。
+ * ⚠️ 跟 deriveDefaultEnemyStats／fixture.ts 的 D2 怪物 HP 縮放公式 max(1, playerAtk−mobDef) 是
+ * 兩回事、刻意不同：那支是「用預期打法估算血量池」（血量規劃不能因為 0/負值而失真），這支才是
+ * 「實戰結算」（要能真的打出無效攻擊這個玩家看得到的戰鬥事件）。不要為了「看起來像同一條公式」
+ * 而合併兩者。
+ */
+export function computeRawDamage(
+  atk: number,
+  coefficient: number,
+  flat: number,
+  elementMul: number,
+  chargeMul: number,
+  critMul: number,
+  def: number,
+): number {
+  const raw = Math.floor((atk * coefficient + flat) * elementMul * chargeMul * critMul);
+  return raw - def;
+}
+
+// ---- P3（AGI 攻速／DEX 詠唱縮減，審查 dorpg_p3 r5 使用者當面要求）新增。 ----
+
+/**
+ * 使用者當面要求：AGI→攻速(aspd)→攻擊冷卻，沿用 RO 的換算（攻擊間隔與 200−ASPD 成正比）：
+ *   attackCooldownMs = clamp( cfg.attackCooldownMs × (200−aspd) / (200−cfg.aspdReference),
+ *                              cfg.attackCooldownMinMs, cfg.attackCooldownMs )
+ * aspd 等於 aspdReference 時算出的比例恰好是 1，冷卻＝base——「完全不配 AGI/DEX 的角色」維持
+ * 上一輪就有的手感，只有真的配點才會感覺到差異。上界故意夾在 base（不是無限大）：aspd 低於
+ * reference（配了負面效果或後台把 reference 設太高）時，攻擊絕不會比「沒有這個機制以前」更慢，
+ * 只有 aspd 高於 reference 時才會變快。
+ * 只套用在玩家身上（見 dispatch.ts 對 ATTACK_RELEASE 的呼叫點）；隊友的節奏固定吃
+ * cfg.allyActIntervalMs、怪物固定吃 cfg.enemyActIntervalMs，兩者都不呼叫這支函式，AI 手感不受
+ * 玩家配點影響——即使呼叫端不慎把很高的 rating.aspd 塞進隊友/怪物的 CombatRating，也不會有
+ * 任何效果，因為根本沒有程式碼路徑會拿它們的 rating.aspd 來算冷卻。
+ * rating.aspd 缺省（呼叫端手動組的 CombatRating 沒填這個新欄位，例如舊測試資料）時退回
+ * cfg.aspdReference，等同中性表現，不會算出 NaN。
+ */
+export function attackCooldownFor(rating: CombatRating, cfg: BattleConfig): number {
+  const aspd = rating.aspd ?? cfg.aspdReference;
+  const denom = 200 - cfg.aspdReference;
+  if (denom <= 0) return cfg.attackCooldownMs; // 防呆：aspdReference 誤設 ≥200 時避免除以零/負值把方向算反
+  const raw = (cfg.attackCooldownMs * (200 - aspd)) / denom;
+  return clamp(raw, cfg.attackCooldownMinMs, cfg.attackCooldownMs);
+}
+
+/**
+ * 使用者當面要求：DEX（經 internal/rpg Compute 算出的 CastReductionPct）→技能施放時間縮減：
+ *   castMs_effective = max(cfg.castMinMs, round(baseCastMs × (1 − castReductionPct/100)))
+ * 只套用在玩家身上（見 dispatch.ts commitCast 的呼叫點——AI 隊友的技能結算走 ai.ts 的
+ * resolveSupportSkill，完全不經過 casting 狀態/commitCast，這支函式不會被拿去算隊友的施法時間）。
+ * rating.castReductionPct 缺省時退回 0（不縮減），等同中性表現。
+ */
+export function effectiveCastMs(baseCastMs: number, rating: CombatRating, cfg: BattleConfig): number {
+  const pct = rating.castReductionPct ?? 0;
+  const reduced = baseCastMs * (1 - pct / 100);
+  return Math.max(cfg.castMinMs, Math.round(reduced));
+}
+
+/**
+ * 玩家/隊友沒有外部（internal/rpg Compute）評級資料時的後備評級（規格 §6：「battle_hit_rate
+ * 保留但改為只在沒有評級資料時的後備路徑使用」）：hit 直接沿用舊欄位 cfg.hitRate（0–1 換算成
+ * 0–100 的百分比制），flee/critPct/critShield 給 0——沒有更多資訊可以推導這幾項，給 0 代表
+ * 「不額外加成也不額外扣分」，讓 missChance/critChance 的結果完全由 baseMissPct/critRate 這些
+ * 全域基準決定（等同還沒有配點系統資料時的中性表現）。一旦呼叫端（PartyMember.rating）真的
+ * 帶了 internal/rpg Compute 算出的評級，createBattle 就直接採用那份真實資料，這支函式完全不會
+ * 被呼叫到。
+ */
+export function deriveDefaultPartyRating(cfg: BattleConfig): CombatRating {
+  // P3：aspd 給 cfg.aspdReference（attackCooldownFor 在這個值算出的冷卻恰好是 base，等於
+  // 「沒有配 AGI/DEX 加成」的中性表現）、castReductionPct 給 0（不縮短施法時間）——跟
+  // hit/flee/critPct/critShield 給 0 是同一個精神：沒有更多資訊可以推導，就當作中性、不加成也不扣分。
+  return { hit: cfg.hitRate * 100, flee: 0, critPct: 0, critShield: 0, aspd: cfg.aspdReference, castReductionPct: 0 };
+}
+
+/**
+ * 怪物沒有個別覆寫時的預設評級：由 config 係數直接推導、跟等級無關（規格 §1 與既有
+ * deriveDefaultEnemyStats「同款作法」的精神一致，但這裡刻意不做等級縮放——規格原文的
+ * speed_mult／def_mult 是內容層/後端才有的怪物屬性資料，engine 這一層沒有這些資訊，
+ * 交給呼叫端透過 Enemy.rating 直接帶入真實值來套用；engine 只保底最單純的 config 基準版本）。
+ */
+export function deriveDefaultMonsterRating(cfg: BattleConfig): CombatRating {
+  return {
+    hit: cfg.monsterHitBase,
+    flee: cfg.monsterFleeBase,
+    critPct: cfg.monsterCritPct,
+    critShield: cfg.monsterCritShieldBase,
+    // P3：怪物沒有 attackCooldownFor/effectiveCastMs 可套（敵人節奏固定吃 enemyActIntervalMs，
+    // 不看 rating.aspd），這兩個欄位只是把 CombatRating 填滿成完整值，語意上等同「跟玩家
+    // aspdReference 打平、不縮減施法」的中性表現。
+    aspd: cfg.aspdReference,
+    castReductionPct: 0,
+  };
 }
 
 /** 敵人固定站位序（規格 §1：同 threatPriority 取槽位順序最小者）。 */
