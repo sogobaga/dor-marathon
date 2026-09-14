@@ -69,14 +69,46 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* P2：三顆按鈕（再戰一場／換一場／返回）垂直排列；只有一顆時（舊呼叫端）看起來跟 P1 完全一樣，
+   因為 .actions 只是排版容器、不額外加邊框/背景。 */
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .confirm {
   display: block;
-  margin-top: 4px;
+  margin-top: 0;
   padding: 0;
   border: 0;
   background: none;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* 「換一場」沒有專屬 kit 圖（本工作者只有 button_confirm／button_cancel 兩張對話框按鈕圖），
+   用素色描邊鈕頂著同樣的 112×40 版位，顏色由 TSX 以 PALETTE 帶入。 */
+.secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-width: 1.5px;
+  border-style: solid;
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.secondary:focus-visible {
+  outline: 2px solid #b2eeff;
+  outline-offset: 2px;
 }
 
 .confirm img {

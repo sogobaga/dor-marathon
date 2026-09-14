@@ -4935,6 +4935,32 @@ export interface RpgConfig {
   cast_cap_pct: number
   resist_pct_per_point: number
   flee_cap_pct: number
+
+  // --- DORPG P2：戰鬥內容/縮放/手感參數（契約 dorpg_p2 §3.1，後端 internal/rpg/config.go 同名
+  // json tag）。獨立一群方便後台開「戰鬥」分頁，見 lib/rpgMeta.ts CONFIG_GROUPS。---
+  battle_scale_mode: 'power' | 'level' | 'fixed'
+  battle_mob_hits: number
+  battle_mob_def_ratio: number
+  battle_enemy_dps_ratio: number
+  battle_player_min_atk: number
+  battle_player_min_hp: number
+  battle_attack_cooldown_ms: number
+  battle_charge_min_ms: number
+  battle_charge_full_ms: number
+  battle_charge_max_multiplier: number
+  battle_guard_multiplier: number
+  battle_recovery_ms: number
+  battle_default_cast_ms: number
+  battle_escape_judge_ms: number
+  battle_resolve_delay_ms: number
+  battle_enemy_act_min_ms: number
+  battle_enemy_act_max_ms: number
+  battle_ally_act_min_ms: number
+  battle_ally_act_max_ms: number
+  battle_hit_rate: number
+  battle_crit_rate: number
+  battle_crit_multiplier: number
+  battle_exp_preview_per_level: number
 }
 
 export interface RpgDerived {
@@ -4991,6 +5017,152 @@ export interface AdminRpgUser {
   stats?: RpgStats
 }
 
+// --- DORPG P2：戰鬥內容 CRUD 型別（怪物/技能/道具/場景/隊友/遭遇/戰鬥數據）。json tag 逐欄對照
+// 後端 internal/rpg/{scaling.go,content.go,content_repo.go} 的同名 Row struct（2026-09-14 已對照
+// 原始碼核對，非憑空照契約寫），供 /admin/rpg 七個內容分頁使用。這批型別只給 adminRpgApi 用，
+// 跟上面 FE_MEMBER 的 RpgBootstrap* 系列（camelCase、玩家端 bootstrap wire 格式）刻意分開。
+
+/** rpg_monsters 一列。對照 internal/rpg/scaling.go MonsterRow。 */
+export interface RpgMonster {
+  id: string
+  name: string
+  rank: string
+  attribute: string
+  size: string
+  race: string
+  sprite_id: string
+  poster_url: string
+  hp_mult: number
+  atk_mult: number
+  def_mult: number
+  speed_mult: number
+  threat: number
+  is_boss: boolean
+  is_active: boolean
+  sort_order: number
+}
+
+/** rpg_skills 一列。對照 internal/rpg/content.go SkillRow。 */
+export interface RpgSkill {
+  id: string
+  name: string
+  icon_id: string
+  kind: 'damage' | 'heal' | 'shield'
+  target: 'enemy' | 'ally' | 'self' | 'allAllies'
+  weapon: 'sword' | 'staff' | 'bow' | 'greatsword'
+  element: string
+  mp_cost: number
+  cooldown_ms: number
+  coefficient: number
+  flat: number
+  cast_ms: number
+  is_default: boolean
+  is_active: boolean
+  sort_order: number
+}
+
+/** rpg_items 一列。對照 internal/rpg/content.go ItemRow。 */
+export interface RpgItem {
+  id: string
+  name: string
+  icon_id: string
+  kind: 'hp' | 'mp' | 'revive'
+  amount: number
+  default_quantity: number
+  is_active: boolean
+  sort_order: number
+}
+
+/** rpg_scenes.slots 陣列元素。對照 internal/rpg/content.go SceneSlotRow。 */
+export interface RpgSceneSlot {
+  id: string
+  x: number
+  y: number
+  scale: number
+  row: 'rear' | 'front'
+}
+
+/** rpg_scenes 一列。對照 internal/rpg/content.go SceneRow。 */
+export interface RpgScene {
+  id: string
+  name: string
+  image_url: string
+  slots: RpgSceneSlot[]
+  location_note: string
+  is_active: boolean
+  sort_order: number
+}
+
+/** rpg_companions 一列。對照 internal/rpg/scaling.go CompanionRow。 */
+export interface RpgCompanion {
+  id: string
+  name: string
+  portrait_id: string
+  role: string
+  weapon: 'sword' | 'staff' | 'bow' | 'greatsword'
+  level_offset: number
+  hp_mult: number
+  mp_mult: number
+  atk_mult: number
+  matk_mult: number
+  def_mult: number
+  mdef_mult: number
+  act_interval_mult: number
+  skill_ids: string[]
+  is_player_portrait: boolean
+  is_active: boolean
+  sort_order: number
+}
+
+/** rpg_encounter_monsters 一列（編組其中一個槽位）。對照 internal/rpg/content.go EncounterMonsterRow。 */
+export interface RpgEncounterMonster {
+  slot: 'rear_left' | 'rear_right' | 'front_left' | 'front_center' | 'front_right'
+  monster_id: string
+  power_scale: number
+}
+
+/** rpg_encounters 一列（含編組）。對照 internal/rpg/content.go EncounterRow——id 是 DB 內部 UUID，
+ *  刻意不對外匯出，對外一律用 code 識別（PUT/DELETE 皆用 code）。 */
+export interface RpgEncounter {
+  code: string
+  title: string
+  subtitle: string
+  scene_id: string
+  scene_kind: 'normal' | 'boss'
+  difficulty: number
+  power_scale: number
+  escape_chance: number
+  can_escape: boolean
+  is_active: boolean
+  sort_order: number
+  monsters: RpgEncounterMonster[]
+}
+
+/** GET /admin/rpg/battle-logs 明細列（不含 email/account_code——隱私規則，見後端 SQL 只
+ *  SELECT COALESCE(name,handle)）。對照 internal/rpg/content_repo.go battleLogListRow。 */
+export interface RpgBattleLogRow {
+  created_at: string
+  display_name: string
+  encounter_code: string
+  outcome: RpgBattleOutcomeAdmin
+  duration_ms: number
+  damage_dealt: number
+  damage_taken: number
+}
+export type RpgBattleOutcomeAdmin = 'victory' | 'defeat' | 'draw' | 'escaped' | 'abandoned'
+
+/** GET /admin/rpg/battle-logs 每遭遇彙總列。對照 internal/rpg/content_repo.go battleLogSummaryRow。 */
+export interface RpgBattleLogSummary {
+  encounter_code: string
+  plays: number
+  wins: number
+  win_rate: number
+  avg_duration_ms: number
+  p50_duration_ms: number
+  avg_damage_taken: number
+  defeat_rate: number
+}
+
 export const adminRpgApi = {
   config: (token: string) => request<{ config: RpgConfig; defaults: RpgConfig }>('/admin/rpg/config', { headers: withAuth(token) }),
   setConfig: (token: string, config: RpgConfig) =>
@@ -5017,4 +5189,239 @@ export const adminRpgApi = {
     ;(['str', 'agi', 'vit', 'dex', 'int', 'luk'] as RpgStatKey[]).forEach((k) => qs.set(k, String(params[k])))
     return request<{ derived: RpgDerived; max_hp: number; max_mp: number; next_cost: Partial<RpgStats> }>(`/admin/rpg/preview?${qs.toString()}`, { headers: withAuth(token) })
   },
+
+  // --- DORPG P2：內容 CRUD（怪物/技能/道具/場景/隊友/遭遇）＋戰鬥數據，對照
+  // internal/rpg/battle_admin.go 實際掛載路徑（2026-09-14 已對照原始碼，未照契約憑空寫）。---
+  monsters: (token: string) => request<{ monsters: RpgMonster[] }>('/admin/rpg/monsters', { headers: withAuth(token) }),
+  putMonster: (token: string, row: RpgMonster) =>
+    request<RpgMonster>('/admin/rpg/monsters', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+  deleteMonster: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/rpg/monsters/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+
+  skills: (token: string) => request<{ skills: RpgSkill[] }>('/admin/rpg/skills', { headers: withAuth(token) }),
+  putSkill: (token: string, row: RpgSkill) =>
+    request<RpgSkill>('/admin/rpg/skills', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+  deleteSkill: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/rpg/skills/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+
+  items: (token: string) => request<{ items: RpgItem[] }>('/admin/rpg/items', { headers: withAuth(token) }),
+  putItem: (token: string, row: RpgItem) =>
+    request<RpgItem>('/admin/rpg/items', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+  deleteItem: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/rpg/items/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+
+  scenes: (token: string) => request<{ scenes: RpgScene[] }>('/admin/rpg/scenes', { headers: withAuth(token) }),
+  putScene: (token: string, row: RpgScene) =>
+    request<RpgScene>('/admin/rpg/scenes', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+  deleteScene: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/rpg/scenes/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+
+  companions: (token: string) => request<{ companions: RpgCompanion[] }>('/admin/rpg/companions', { headers: withAuth(token) }),
+  putCompanion: (token: string, row: RpgCompanion) =>
+    request<RpgCompanion>('/admin/rpg/companions', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+  deleteCompanion: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/rpg/companions/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+
+  encounters: (token: string) => request<{ encounters: RpgEncounter[] }>('/admin/rpg/encounters', { headers: withAuth(token) }),
+  putEncounter: (token: string, row: RpgEncounter) =>
+    request<RpgEncounter>('/admin/rpg/encounters', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+  deleteEncounter: (token: string, code: string) =>
+    request<{ ok: boolean }>(`/admin/rpg/encounters/${encodeURIComponent(code)}`, { method: 'DELETE', headers: withAuth(token) }),
+
+  // 戰鬥數據：期間 days（7/30，後端夾在 1..90）＋可選 code 篩選單一遭遇；limit 明細筆數上限。
+  battleLogs: (token: string, params: { code?: string; days: 7 | 30; limit?: number }) => {
+    const qs = new URLSearchParams()
+    if (params.code) qs.set('code', params.code)
+    qs.set('days', String(params.days))
+    qs.set('limit', String(params.limit ?? 200))
+    return request<{ rows: RpgBattleLogRow[]; summary: RpgBattleLogSummary[] }>(`/admin/rpg/battle-logs?${qs.toString()}`, { headers: withAuth(token) })
+  },
+}
+
+// --- DORPG P2：戰鬥內容（怪物/技能/道具/場景/隊友/遭遇）＋玩家真實角色接入的會員端 API ---
+// 見後端 rpg/battle.go（契約 §3.4）。本區塊 + 上面的 rpgApi 屬於 FE_MEMBER；adminRpgApi 區塊為
+// FE_ADMIN 所有，兩邊只各自動自己的區塊、不重排檔案（契約 §0）。
+
+/** 遭遇卡片列表其中一隻怪的簡要（挑選畫面用縮圖，不含完整戰鬥數值）。對照 services/api/internal/rpg/battle.go wireEncounterMonsterInfo。 */
+export interface RpgEncounterMonsterBrief {
+  slot: string
+  name: string
+  poster_url: string
+  is_boss: boolean
+}
+
+/** 本人在這個遭遇的累計戰績（GET /rpg/battle/encounters 依 rpg_battle_logs 對本人聚合）。對照 wireEncounterStats。 */
+export interface RpgEncounterStats {
+  plays: number
+  wins: number
+  best_ms: number | null // 後端存 *int：尚未有任何一場勝利可算「最快」時是 null，不是 0
+  last_outcome: string // ''＝尚未挑戰過；否則 victory|defeat|draw|escaped|abandoned
+}
+
+/** bootstrap 回應的「encounter」子物件形狀（不含 monsters/stats，那兩個只有列表端點才有）——
+ *  對照 wireEncounterInfo。 */
+export interface RpgBootstrapEncounterInfo {
+  code: string
+  title: string
+  subtitle: string
+  scene_id: string
+  scene_image_url: string
+  scene_kind: 'normal' | 'boss'
+  difficulty: number // 1~5，前端畫星
+  can_escape: boolean
+}
+
+/** 對照 wireEncounterSummary（= wireEncounterInfo 內嵌 + monsters + stats，Go struct embedding 展平）。 */
+export interface RpgEncounterSummary extends RpgBootstrapEncounterInfo {
+  monsters: RpgEncounterMonsterBrief[]
+  stats: RpgEncounterStats
+}
+
+/** 選單頁角色摘要（只給挑選遭遇時看戰力用；完整配點介面仍在角色頁）。對照 BattleEncounters 回應的 "character"。
+ *  ⚠️ unspent_hint 是後端算好的布林（ch.FreePoints>0），不是文案字串——文案（「你還有 N 點未配置」）
+ *  要靠 free_points 自己組，這裡命名沿用後端 JSON key，容易誤讀成字串，故特別註記。 */
+export interface RpgBattleCharacterBrief {
+  base_level: number
+  free_points: number
+  power: number
+  max_hp: number
+  max_mp: number
+  unspent_hint: boolean
+}
+
+export interface RpgBattleEncounters {
+  encounters: RpgEncounterSummary[]
+  character: RpgBattleCharacterBrief
+}
+
+// bootstrap 的「sample」／「config」子物件依 services/api/internal/rpg/battle.go 檔頭明講的命名慣例
+// 直接對齊 apps/web/src/lib/dorpg/types.ts／engine/types.ts 的 camelCase 欄位名（不是全站 snake_case
+// 慣例），而且 portraitUrl／imageUrl／iconUrl 後端已經算好完整路徑——這裡不需要再呼叫
+// charPortrait()/kitAsset() 轉換一次（那是 sampleBattle.ts 组「id → 路徑」用的，wire 格式已經是路徑）。
+// 型別逐欄對照 wirePartyMember/wireEnemy/wireScene/wireSkill/wireItem/wireBattleSample（2026-09-14
+// 已對照 battle.go 原始碼核對過，非憑空假設）。
+export interface RpgBootstrapActorStatsRaw {
+  hpMax: number
+  mpMax: number
+  atk: number
+  matk: number
+  def: number
+  mdef: number
+}
+export interface RpgBootstrapPartyMemberRaw {
+  id: string
+  name: string
+  level: number
+  hp: number
+  hpMax: number
+  mp: number
+  mpMax: number
+  portraitUrl: string | null
+  stats?: RpgBootstrapActorStatsRaw
+  weapon?: string
+}
+export interface RpgBootstrapEnemyRaw {
+  id: string
+  name: string
+  level: number
+  hp: number
+  hpMax: number
+  slot: string
+  imageUrl: string
+  rank?: string
+  attribute?: string
+  size?: string
+  race?: string
+  stats?: RpgBootstrapActorStatsRaw
+  threatPriority?: number
+  /**
+   * 2026-09-14 P2 修正第1輪 審查5（CONFIRMED）：這裡原本的註解描述一個「omitempty 吞掉 false」的
+   * 已知 bug，但已對照 services/api/internal/rpg/battle.go 目前程式碼確認該檔的 wireEnemy.CanEscape
+   * 是 `json:"canEscape"`（刻意沒有 omitempty，該檔自己也有註解說明原因）——bug 已不存在，舊註解
+   * 誤導後續維護者去調查一個不存在的問題，或誤以為這欄位在正式 API 回應裡真的可能是 undefined
+   * 而多寫防禦邏輯。正式回應裡這個欄位恆為 true/false，故型別收斂為必有的 boolean。
+   */
+  canEscape: boolean
+}
+export interface RpgBootstrapSceneSlotRaw {
+  id: string
+  x: number
+  y: number
+  scale: number
+  row: 'rear' | 'front'
+}
+export interface RpgBootstrapSceneRaw {
+  id: string
+  name: string
+  imageUrl: string
+  slots: RpgBootstrapSceneSlotRaw[]
+}
+export interface RpgBootstrapSkillRaw {
+  id: string
+  name: string
+  iconUrl: string
+  cooldownMs: number
+  kind: string
+  target: string
+  mpCost: number
+  coefficient: number
+  flat: number
+  element?: string
+  weapon: string
+  castMs?: number
+}
+export interface RpgBootstrapItemRaw {
+  id: string
+  name: string
+  iconUrl: string
+  quantity: number
+  kind: string
+  amount: number
+}
+export interface RpgBootstrapSampleRaw {
+  party: RpgBootstrapPartyMemberRaw[]
+  enemies: RpgBootstrapEnemyRaw[]
+  scene: RpgBootstrapSceneRaw
+  skills: (RpgBootstrapSkillRaw | null)[] // 後端固定回傳長度 8（Go [8]*wireSkill），未裝備的槽位是 null
+  items: RpgBootstrapItemRaw[]
+  initialTargetId: string
+  sceneKind?: 'normal' | 'boss'
+  escapeChance?: number
+}
+// config 子物件對齊 engine 的 BattleConfig（camelCase）——用 inline import type 借用該型別，避免在這個
+// 沒有任何 import 的檔案頂端另開一行 import 造成跟 FE_ADMIN 同時編輯本檔時的不必要衝突面。
+export type RpgBootstrapConfigRaw = Partial<import('@/lib/dorpg/engine').BattleConfig>
+export interface RpgBattleBootstrap {
+  encounter: RpgBootstrapEncounterInfo
+  sample: RpgBootstrapSampleRaw
+  config: RpgBootstrapConfigRaw
+  hints: { free_points: number }
+}
+
+// POST /rpg/battle/report body（純遙測，見 §2 rpg_battle_logs／§3.4 健全性檢查；不影響任何帳本/獎勵）。
+export type RpgBattleOutcome = 'victory' | 'defeat' | 'draw' | 'escaped' | 'abandoned'
+export interface RpgBattleReportBody {
+  encounter_code: string
+  outcome: RpgBattleOutcome
+  duration_ms: number
+  damage_dealt: number
+  damage_taken: number
+  enemies_defeated: number
+  attacks: number
+  charged_attacks: number
+  skills_used: number
+  items_used: number
+  guard_ms: number
+  player_level: number
+  player_power: number
+  client_version: string
+}
+
+export const rpgBattleApi = {
+  encounters: (token: string) => request<RpgBattleEncounters>('/rpg/battle/encounters', { headers: withAuth(token) }),
+  bootstrap: (token: string, code: string) =>
+    request<RpgBattleBootstrap>(`/rpg/battle/bootstrap?code=${encodeURIComponent(code)}`, { headers: withAuth(token) }),
+  // 204 No Content；呼叫端（PhoneShell）失敗只 console.warn，不擋 UI（契約 §4）。
+  report: (token: string, body: RpgBattleReportBody) =>
+    request<void>('/rpg/battle/report', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
 }

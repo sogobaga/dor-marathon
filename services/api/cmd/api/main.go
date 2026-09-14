@@ -572,6 +572,19 @@ func main() {
 			// 遊戲化角色數值（見 internal/rpg）— GET /rpg/me、POST /rpg/allocate 皆掛套件私有
 			// requireEntry（rpg_entry_state/whitelist + is_vvip），非白名單一律 403（SEC-H5 同款）。
 			r.Mount("/rpg", rpgHandler.Router())
+			// DORPG P2：戰鬥內容/連打多場（見 internal/rpg battle.go，migration 176）——
+			// "/rpg/battle" 是 "/rpg" 底下的靜態子路徑，跟上面那個 Mount 用同一個 chi 路由樹
+			// 共存（chi 對靜態子路徑的比對優先於父層掛載的萬用字元，此處故意利用這個規則），
+			// 套的是同一套 requireEntry 白名單，不另外重複判斷。
+			// SEC-H1（P2 修正第 1 輪 審查1 CONFIRMED）：原本這個 mount 完全沒有節流——
+			// POST /rpg/battle/report 每次呼叫無論有沒有超過每日上限都會先跑一次
+			// SELECT COUNT(*) FROM rpg_battle_logs（content_repo.go countBattleLogsToday），
+			// token 被盜用或前端進入重試迴圈可以長時間對 DB 產生真實查詢流量——比照
+			// checkpoints/events 既有寫法加節流；encounters/bootstrap 是互動操作（開選單/開戰
+			// 各觸發一次）、report 每場結算觸發一次，三者共用同一個 mount 級節流，數字比照
+			// events 的 60/min（互動操作，不是後台批次）。
+			r.With(middleware.RateLimit(rdb, "rpg_battle", 60, time.Minute, middleware.UserOrIP)).
+				Mount("/rpg/battle", rpgHandler.BattleRouter())
 
 			// 電子發票輸入時查驗（見 internal/einvoice/verify.go）：報名表單填手機條碼/愛心碼時
 			// 即時打 ECPay CheckBarcode/CheckLoveCode 確認號碼真的存在（抓 0/O、1/I 這類格式合法
@@ -669,7 +682,20 @@ func main() {
 			r.With(perm("organizer")).Mount("/admin/organizer", orgHandler.AdminOrganizerRouter())
 			r.With(perm("partners")).Mount("/admin/partner-shops", partnerHandler.AdminRouter())
 			r.With(perm("monopoly")).Mount("/admin/monopoly", monopolyHandler.AdminRouter())
-			r.With(perm("rpg")).Mount("/admin/rpg", rpgHandler.AdminRouter())                 // 遊戲化角色數值（見 internal/rpg）
+			r.With(perm("rpg")).Mount("/admin/rpg", rpgHandler.AdminRouter()) // 遊戲化角色數值（見 internal/rpg）
+			// DORPG P2 內容 CRUD + 戰鬥數據（見 internal/rpg battle_admin.go，migration 176）：
+			// 這些是 "/admin/rpg" 底下的靜態子路徑，跟上面那個 Mount 共存在同一個 chi 路由樹
+			// （靜態子路徑優先於父層掛載的萬用字元），對外行為等同「掛在既有 AdminRouter() 之
+			// 下」；權限沿用同一個 perm("rpg")，不另立一組。
+			r.With(perm("rpg")).Mount("/admin/rpg/monsters", rpgHandler.AdminMonstersRouter())
+			r.With(perm("rpg")).Mount("/admin/rpg/skills", rpgHandler.AdminSkillsRouter())
+			r.With(perm("rpg")).Mount("/admin/rpg/items", rpgHandler.AdminItemsRouter())
+			r.With(perm("rpg")).Mount("/admin/rpg/scenes", rpgHandler.AdminScenesRouter())
+			r.With(perm("rpg")).Mount("/admin/rpg/companions", rpgHandler.AdminCompanionsRouter())
+			r.With(perm("rpg")).Mount("/admin/rpg/encounters", rpgHandler.AdminEncountersRouter())
+			// 較寬鬆的節流（後台讀取型端點，僅防止表格分頁被寫成緊迴圈誤打）。
+			r.With(perm("rpg"), middleware.RateLimit(rdb, "admin_rpg_battle_logs", 60, time.Minute, middleware.UserOrIP)).
+				Get("/admin/rpg/battle-logs", rpgHandler.AdminBattleLogs)
 			r.With(perm("run_meets")).Mount("/admin/run-meets", runMeetHandler.AdminRouter()) // 團練邀請（列表/下架/檢舉/配額/孤兒圖 GC）
 			r.With(perm("rewards")).Mount("/admin/reward-merchants", rewardSerialHandler.MerchantRouter())
 			r.With(perm("rewards")).Mount("/admin/reward-groups", rewardSerialHandler.GroupRouter())

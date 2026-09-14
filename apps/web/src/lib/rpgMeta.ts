@@ -190,4 +190,42 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
       { key: 'flee_cap_pct', label: '迴避率上限 %（完全迴避不設上限）' },
     ],
   },
+  // DORPG P2：戰鬥內容/縮放/手感參數（契約 dorpg_p2 §3.1、§1 D2）。這批影響「怪很不很硬、多快
+  // 打死玩家」，調參前建議先看「戰鬥數據」分頁的實測勝率/時長再回來改這裡（BALANCE 報告見
+  // scratchpad/dorpg_p2/BALANCE.md 的建議值與理由）。
+  {
+    title: '戰鬥',
+    fields: [
+      {
+        key: 'battle_scale_mode', label: '怪物數值縮放模式', type: 'select',
+        options: [
+          { value: 'power', label: 'power（以玩家戰力動態縮放，P2 唯一實作）' },
+          { value: 'level', label: 'level（依 Base Lv 絕對表，P3 保留分支，P2 選了等同 power 行為）' },
+          { value: 'fixed', label: 'fixed（直接用 DB 絕對值，P3 保留分支，P2 選了等同 power 行為）' },
+        ],
+      },
+      { key: 'battle_mob_hits', label: '未蓄氣普攻打死一般怪的目標次數' },
+      { key: 'battle_mob_def_ratio', label: '怪物 DEF ÷ 玩家 ATK 比例' },
+      { key: 'battle_enemy_dps_ratio', label: '全場敵人合計 DPS ÷ 玩家 MaxHP（每秒，例：0.010≈100 秒打死不防禦的玩家）' },
+      { key: 'battle_player_min_atk', label: '玩家 ATK 保底（P2 專用，P3 會取消）' },
+      { key: 'battle_player_min_hp', label: '玩家 MaxHP 保底（P2 專用，P3 會取消）' },
+      { key: 'battle_attack_cooldown_ms', label: '普攻冷卻（毫秒）' },
+      { key: 'battle_charge_min_ms', label: '蓄氣最短時間（毫秒，需 ≤ 蓄氣全滿時間）' },
+      { key: 'battle_charge_full_ms', label: '蓄氣全滿時間（毫秒）' },
+      { key: 'battle_charge_max_multiplier', label: '蓄氣全滿傷害倍率' },
+      { key: 'battle_guard_multiplier', label: '防禦時受到傷害倍率（0~1）' },
+      { key: 'battle_recovery_ms', label: '出手後硬直恢復時間（毫秒）' },
+      { key: 'battle_default_cast_ms', label: '技能預設施放時間（毫秒，技能未個別設定時使用）' },
+      { key: 'battle_escape_judge_ms', label: '逃跑判定動畫時間（毫秒）' },
+      { key: 'battle_resolve_delay_ms', label: '戰鬥結算延遲（毫秒，讓最後一擊動畫播完）' },
+      { key: 'battle_enemy_act_min_ms', label: '敵人行動間隔下限（毫秒，乘怪物 speed_mult 前）' },
+      { key: 'battle_enemy_act_max_ms', label: '敵人行動間隔上限（毫秒，需 ≥ 下限）' },
+      { key: 'battle_ally_act_min_ms', label: '隊友 AI 行動間隔下限（毫秒）' },
+      { key: 'battle_ally_act_max_ms', label: '隊友 AI 行動間隔上限（毫秒，需 ≥ 下限）' },
+      { key: 'battle_hit_rate', label: '命中率（0~1，1＝必中）' },
+      { key: 'battle_crit_rate', label: '暴擊率（0~1）' },
+      { key: 'battle_crit_multiplier', label: '暴擊傷害倍率' },
+      { key: 'battle_exp_preview_per_level', label: '結算畫面「預估經驗」係數（純顯示，不入帳，＝Σ敵人等級×此值）' },
+    ],
+  },
 ]

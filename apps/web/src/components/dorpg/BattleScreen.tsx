@@ -26,14 +26,51 @@ import type { FloatTextTone } from './FloatText';
 import styles from './BattleScreen.module.css';
 import { useBattle } from '@/lib/dorpg/useBattle';
 import { chargeRatio as engineChargeRatio } from '@/lib/dorpg/engine';
-import type { BattleEvent, BattleState, PartyActor } from '@/lib/dorpg/engine';
+import type { BattleConfig, BattleEvent, BattleState, PartyActor } from '@/lib/dorpg/engine';
 import { useHoldGesture } from '@/lib/dorpg/useHoldGesture';
 import { battleAudio } from '@/lib/dorpg/audio';
+
+/**
+ * P2：戰鬥結束時交給上層（PhoneShell／dev Preview）打 POST /rpg/battle/report 的純統計（契約 §4）。
+ * 只含 BattleScreen 自己量得到的數字——encounter_code 由上層從呼叫端已知的 code 補上，
+ * player_level/player_power/client_version 由上層依 bootstrap 的角色資料/APP_VERSION 補上，
+ * 這樣 BattleScreen 不需要認識「玩家角色」以外的任何後端概念。
+ */
+export type BattleReportStats = {
+  encounterCode: string;
+  // 2026-09-14 P2 修正第1輪 審查6：新增 'abandoned'（中途離開，尚未分出勝負）——後端
+  // rpg_battle_logs.outcome 與後台 outcomeLabel() 本來就已預留這個值，只差前端從未有路徑產生過。
+  outcome: 'victory' | 'defeat' | 'draw' | 'escaped' | 'abandoned';
+  durationMs: number;
+  damageDealt: number;
+  damageTaken: number;
+  enemiesDefeated: number;
+  attacks: number;
+  chargedAttacks: number;
+  skillsUsed: number;
+  itemsUsed: number;
+  guardMs: number;
+};
+
+/** 契約 §4：BattleScreen 只需要知道遭遇的 code（組 report）；title 純供未來擴充顯示用，非必要。 */
+export type BattleScreenEncounter = { code: string; title?: string };
+
+const DEFAULT_ENCOUNTER: BattleScreenEncounter = { code: 'sample' };
 
 export type BattleScreenProps = {
   onBack: () => void;
   /** 未給時用 SAMPLE_BATTLE（kit 測試資料＋content pack 素材）。 */
   sample?: BattleSample;
+  /** P2：後端 bootstrap 回應的 config（見 fromApi.ts configFromBootstrap）；未給則全部用引擎預設值。 */
+  config?: Partial<BattleConfig>;
+  /** P2：目前這場遭遇（供組 report 用）；未給時退回 DEFAULT_ENCOUNTER（/dev 預覽等尚未接真實遭遇的呼叫端）。 */
+  encounter?: BattleScreenEncounter;
+  /** P2：「再戰一場」（同一遭遇重來）；未給則 ResultOverlay 不顯示這顆鈕。 */
+  onRestart?: () => void;
+  /** P2：「換一場」（回遭遇選單）；未給則 ResultOverlay 不顯示這顆鈕。 */
+  onNext?: () => void;
+  /** P2：戰鬥結束時回報統計，上層打 API、失敗只 console.warn（契約 §4，不擋 UI）。 */
+  onReport?: (stats: BattleReportStats) => void;
   /**
    * 是否允許 `?dorpgDebug=1` 生效（預設 false）。2026-09-14 審查抓到：原本只憑 URL query 判斷，
    * 正式站只要在網址加這個參數就能把敵人血量全部壓到 1、還會掛 window.__dorpgBattle 讓任何人直接
@@ -100,8 +137,22 @@ function toPartyMemberView(actor: PartyActor): PartyMember {
 
 type SettingsValues = { music: number; sfx: number; vibrate: boolean; reduceMotion: boolean };
 
-/** 累積整場戰鬥的統計數字（跨事件累加，不屬於引擎狀態——引擎只在乎「現在」，摘要是 UI 自己記的）。 */
-type BattleStats = { damageDealt: number; defeatedLevels: number[] };
+/**
+ * 累積整場戰鬥的統計數字（跨事件累加，不屬於引擎狀態——引擎只在乎「現在」，摘要是 UI 自己記的）。
+ * P2 新增給 onReport 用的欄位：attacks/chargedAttacks 只算「玩家本人」的普攻（engine 的 'attack' 事件
+ * 普攻/技能傷害共用同一個 kind，不分是誰觸發——見下面 handleBattleEvents 的 pendingSkillDamageRef
+ * 說明）；damageTaken 是全隊（含隊友）受到的傷害合計，跟既有 damageDealt 的口徑（全隊造成）對稱。
+ */
+type BattleStats = {
+  damageDealt: number;
+  damageTaken: number;
+  defeatedLevels: number[];
+  attacks: number;
+  chargedAttacks: number;
+  skillsUsed: number;
+  itemsUsed: number;
+  guardMs: number;
+};
 
 // 高頻更新（蓄氣條／冷卻倒數）只會改變 CommandBar/SkillTray 的 props，其餘子樹用 memo 包起來，
 // 讓它們在那些 tick 期間直接沿用舊渲染結果，不必每幀重新計算整棵 PartyCard×5／BattleStage。
@@ -110,7 +161,16 @@ const MemoBattleStage = memo(BattleStage);
 const MemoTargetBar = memo(TargetBar);
 const MemoTopBar = memo(TopBar);
 
-export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTLE, debugAllowed = false }: BattleScreenProps) {
+export default function BattleScreen({
+  onBack,
+  sample: sampleProp = SAMPLE_BATTLE,
+  config,
+  encounter = DEFAULT_ENCOUNTER,
+  onRestart,
+  onNext,
+  onReport,
+  debugAllowed = false,
+}: BattleScreenProps) {
   // ---- 除錯模式（契約 §7/§8）----
   // ?dorpgDebug=1 時把敵人血量全部壓到 1：verify 腳本才能用「真的按住攻擊鈕」這種寫實輸入，在合理秒數內
   // 打完五隻全滅→勝利面板的完整流程，而不必另外開一條直接改引擎內部狀態的後門（那樣就驗證不到真實手感）。
@@ -165,7 +225,25 @@ export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTL
   }, []);
 
   const stageRef = useRef<BattleStageHandle>(null);
-  const statsRef = useRef<BattleStats>({ damageDealt: 0, defeatedLevels: [] });
+  const statsRef = useRef<BattleStats>({ damageDealt: 0, damageTaken: 0, defeatedLevels: [], attacks: 0, chargedAttacks: 0, skillsUsed: 0, itemsUsed: 0, guardMs: 0 });
+  // P2 遙測：engine 的 'attack' 事件普攻／技能傷害共用同一個 kind、不帶 skillId（見 engine/combat.ts
+  // resolveAttackOrDamageSkill 同時被 dispatch.ts 的 ATTACK_RELEASE 與 combat.ts 的 resolveCastEffect
+  // 呼叫）。玩家的傷害技能會先發一個 'skillCast' 事件（cast 完成後才真正結算傷害、補發 'attack'），
+  // 這裡記「下一個屬於玩家的 attack 事件其實是這次技能的結算」，避免把它重複算進普攻次數；
+  // heal/shield 技能各自有專屬事件（'heal'/'shield'），不會有後續的 'attack'，不需要設這個旗標。
+  // 邊界情況：玩家在技能結算前死亡，pendingCasts 會被引擎靜默丟棄（tick.ts）、不會補發 'attack' 事件，
+  // 這裡靠 'actorDown' 順手重置旗標，避免旗標卡 true 誤吃掉下一次真正的普攻統計。
+  const pendingSkillDamageRef = useRef(false);
+
+  // reportedRef 提前到這裡宣告（原本在 phase→'ended' 遙測 effect 正上方）——2026-09-14 P2 修正第1輪
+  // 審查6 新增的「卸載時判定棄戰」effect 也需要用到它，而該 effect 位置在檔案較前段（音訊 effect
+  // 旁），提前宣告避免用到尚未宣告的變數。battleStartAtRef 不能一起提前——它的初始值是 state.now，
+  // 但 state 要等下面 `const battle = useBattle(...)` 之後才存在，故 battleStartAtRef 改宣告在
+  // player 之後（見下方），只有 reportedRef（純 useRef(false)，不依賴 state）留在這裡。
+  // P2 遙測共用旗標：「戰鬥結束」與「中途卸載視為棄戰」兩個 effect 都會嘗試送出一筆 report，
+  // 這顆旗標確保無論哪一邊先發生，全場最多只送一次；也防 StrictMode 雙渲染造成的重複呼叫
+  // （上層打 API 是否去重是上層的事，這裡只保證「只報一次」）。
+  const reportedRef = useRef(false);
 
   // ---- 事件 → 效果：音效／特效／飄字／震動。engine 只負責「發生了什麼」，這裡負責「畫面怎麼演」。 ----
   function handleBattleEvents(events: BattleEvent[], next: BattleState) {
@@ -174,6 +252,14 @@ export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTL
         case 'attack': {
           // 玩家／隊友打敵人（含技能傷害）：特效座標＝目標怪物軀幹中心（BattleStageHandle.getEnemyAnchor）。
           statsRef.current.damageDealt += ev.damage;
+          if (ev.actorId === next.playerId) {
+            if (pendingSkillDamageRef.current) {
+              pendingSkillDamageRef.current = false; // 這一下是技能結算，已經在 'skillCast' 那筆算過 skillsUsed 了
+            } else {
+              statsRef.current.attacks += 1;
+              if (ev.charged) statsRef.current.chargedAttacks += 1;
+            }
+          }
           const anchor = stageRef.current?.getEnemyAnchor(ev.targetId);
           if (anchor) {
             void stageRef.current?.play({
@@ -190,7 +276,17 @@ export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTL
           battleAudio.playSfx(`sfx_${ev.weapon}_${ev.result}`);
           break;
         }
+        case 'skillCast': {
+          if (ev.actorId === next.playerId) {
+            statsRef.current.skillsUsed += 1;
+            const def = sample.skills.find((s) => s?.id === ev.skillId);
+            if (def?.kind === 'damage') pendingSkillDamageRef.current = true;
+          }
+          break;
+        }
         case 'enemyAttack': {
+          // 全隊（含隊友）承受的傷害合計，跟 damageDealt 的「全隊造成」口徑對稱——見 BattleStats 型別註解。
+          statsRef.current.damageTaken += ev.damage;
           pushFloat(ev.targetId, ev.guarded ? `防禦 -${ev.damage}` : `-${ev.damage}`, 'damage');
           if (ev.targetId === next.playerId && settingsRef.current.vibrate) battleAudio.vibrate([30]);
           break;
@@ -202,6 +298,8 @@ export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTL
           pushFloat(ev.targetId, `+${ev.amount} 護盾`, 'shield');
           break;
         case 'itemUsed': {
+          // 引擎只有玩家能觸發 USE_ITEM（AI 隊友沒有這個指令），不必再篩 actorId。
+          statsRef.current.itemsUsed += 1;
           const def = sample.items.find((it) => it.id === ev.itemId);
           const text = def?.kind === 'revive' ? `復活 ${ev.amount}%` : `+${ev.amount}`;
           pushFloat(ev.targetId, text, 'heal');
@@ -212,7 +310,10 @@ export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTL
           if (enemy) statsRef.current.defeatedLevels.push(enemy.level);
           break;
         }
-        // actorDown：卡片的「倒下」覆層由 hp<=0 直接算出（PartyCard 自己判斷），不需要另外處理。
+        case 'actorDown': {
+          if (ev.actorId === next.playerId) pendingSkillDamageRef.current = false; // 見上面檔頭說明的邊界情況
+          break;
+        }
         // escapeJudging/escapeFailed/escaped：TopBar 的訊息直接從 state.escape 算，不需要在這裡處理。
         default:
           break;
@@ -220,9 +321,13 @@ export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTL
     }
   }
 
-  const battle = useBattle(sample, { onEvents: handleBattleEvents });
+  const battle = useBattle(sample, { config, onEvents: handleBattleEvents });
   const { state, send } = battle;
   const player = state.party[0]; // 契約：party[0] 恆為玩家（state.playerId 也指向它）。
+
+  // battleStartAtRef 必須宣告在 state 之後（初始值取 state.now，即開戰那一刻的引擎時鐘）；
+  // resultSummary／phase→'ended' 遙測 effect／下面新增的「卸載視為棄戰」effect 都會用到它。
+  const battleStartAtRef = useRef(state.now); // useRef 只在首次 render 採用這個值，之後忽略——正好是開戰時刻
 
   // 除錯句柄：只在 ?dorpgDebug=1 時掛，供 verify 腳本讀狀態／直接送指令（不繞過引擎規則）。
   useEffect(() => {
@@ -233,6 +338,21 @@ export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTL
       delete w.__dorpgBattle;
     };
   }, [dorpgDebug, state, send, sample]);
+
+  // ---- P2 遙測：guard_ms（防禦累積時長）。engine 的 GUARD_BEGIN/GUARD_END 不發專屬事件（純狀態轉移），
+  // 用 player.action 的轉場自己量：進 'guarding' 記起點，離開時（GUARD_END／或倒下打斷）用當下 state.now
+  // 減起點累加。這個 effect 只依賴 player.action，一次轉場只會跑一次，state.now 用閉包裡「這次轉場當下
+  // render」的值即可（不需要也不該列進 deps——列了只是額外空轉，因為只有 action 真的變了才需要重新配對）。
+  const guardStartRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (player.action === 'guarding') {
+      guardStartRef.current = state.now;
+    } else if (guardStartRef.current !== null) {
+      statsRef.current.guardMs += state.now - guardStartRef.current;
+      guardStartRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.action]);
 
   // ---- 音訊：每次 pointerdown 解鎖＋開 BGM＋預載常用音效；卸載/離開時停 BGM＋清特效。 ----
   // 2026-09-14 審查修正：原本用 audioUnlockedRef 只在第一次 pointerdown 嘗試一次，若當下 unlock()/
@@ -248,14 +368,67 @@ export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTL
       void battleAudio.preloadSfx(PRELOAD_SFX_IDS);
     });
   };
+
+  // phaseRef／onReportRef：讓下面「掛載/卸載各跑一次」的 effect（deps=[]，故意不列 phase/onReport，
+  // 否則每次 phase 變動就會重新訂閱 suspendOnHidden／重播一次 BGM）在真正卸載那一刻仍能讀到*當下*
+  // 的 phase／onReport，而不是掛載那一刻閉包住的舊值——沿用檔案裡 settingsRef 同一種手法。
+  const phaseRef = useRef(state.phase);
+  phaseRef.current = state.phase;
+  const onReportRef = useRef(onReport);
+  onReportRef.current = onReport;
+  // 2026-09-14 P2 修正第1輪 審查6：卸載時若戰鬥尚未結束視為「棄戰」，見下面 effect 的 cleanup。
+  // 用 setTimeout(0) 延後送出＋讓下一次 setup 取消它，藉此分辨「真的卸載」跟 React StrictMode 開發
+  // 模式下的模擬卸載（同一個 fiber 的 mount→cleanup→mount 會在計時器觸發前的同一輪同步跑完）。
+  const abandonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    if (abandonTimerRef.current !== null) {
+      clearTimeout(abandonTimerRef.current);
+      abandonTimerRef.current = null;
+    }
     const cleanupHidden = battleAudio.suspendOnHidden();
+    // 2026-09-14 P2 修正第1輪 審查3（PLAUSIBLE）：掛載當下就嘗試恢復 BGM／預載音效，不必等玩家在
+    // 新實例點下第一個攻擊/道具鈕——「再戰一場」用 key={nonce} 整個卸載重掛（PhoneShell.tsx／
+    // Preview.tsx），觸發卸載的那次點擊（按在結算面板的「再戰一場」鈕上）發生在*舊*實例身上，
+    // 新實例原本要等下一次 pointerdown 才會播，連打多場時每次都會有一小段靜音。iOS 對「非使用者
+    // 手勢觸發的第一次 play()」仍可能拒絕，上面 handleRootPointerDownCapture 的每次 pointerdown
+    // 重試邏輯原樣保留當備援——unlock/playBgm/preloadSfx 皆冪等，兩者疊加不衝突。
+    void battleAudio.unlock().then(() => {
+      battleAudio.playBgm(sample.sceneKind === 'boss' ? 'boss' : 'master');
+      void battleAudio.preloadSfx(PRELOAD_SFX_IDS);
+    });
     return () => {
       cleanupHidden();
       battleAudio.stopBgm();
       stageRef.current?.cancelAll();
+      // 審查6（觀察→已修）：目前唯一已知會在 phase!=='ended' 時卸載 BattleScreen 的路徑是外層
+      // 狀態被迫切走（例如 single-session-auth 踢除舊裝置、token 失效導致 PhoneShell 整層改渲染
+      // 登入畫面），但這裡不假設「未來只會有這一種路徑」——只要不是正常打完（勝/敗/逃跑）就卸載，
+      // 一律算棄戰，讓後台「戰鬥數據」看得到玩家半途而廢的比例，不然這種場次直接消失、分母只剩
+      // 打完的場次，勝率會被高估（見 review/data.md 佐證）。reportedRef 跟 phase→'ended' 的遙測
+      // 共用同一顆旗標防重複：如果已經正常結算並回報過，這裡就不會再送第二筆。
+      if (phaseRef.current !== 'ended' && !reportedRef.current) {
+        abandonTimerRef.current = setTimeout(() => {
+          abandonTimerRef.current = null;
+          if (reportedRef.current) return;
+          reportedRef.current = true;
+          onReportRef.current?.({
+            encounterCode: encounter.code,
+            outcome: 'abandoned',
+            durationMs: Math.max(0, performance.now() - battleStartAtRef.current),
+            damageDealt: statsRef.current.damageDealt,
+            damageTaken: statsRef.current.damageTaken,
+            enemiesDefeated: statsRef.current.defeatedLevels.length,
+            attacks: statsRef.current.attacks,
+            chargedAttacks: statsRef.current.chargedAttacks,
+            skillsUsed: statsRef.current.skillsUsed,
+            itemsUsed: statsRef.current.itemsUsed,
+            guardMs: statsRef.current.guardMs,
+          });
+        }, 0);
+      }
     };
-    // 只在掛載/卸載各跑一次：suspendOnHidden／stopBgm／cancelAll 都是單例/imperative API，不依賴 render 值。
+    // 只在掛載/卸載各跑一次：suspendOnHidden／stopBgm／cancelAll 都是單例/imperative API，不依賴 render
+    // 值；phase/onReport 一律經 ref 讀取（見上面兩顆 ref 的說明），故意不列進 deps。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const handleBack = useCallback(() => {
@@ -446,8 +619,8 @@ export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTL
   const escapeState: EscapeState = !isInactive && state.escape.flow === 'available' ? 'normal' : 'disabled';
   const escapeMessage = state.escape.flow === 'judging' ? '判定中…' : state.escape.message || undefined;
 
-  // ---- 結算摘要（ResultOverlay）：擊敗數／總傷害用 statsRef 全場累加；經驗值為示範值，非正式數值。 ----
-  const battleStartAtRef = useRef(state.now); // useRef 只在首次 render 採用這個值，之後忽略——正好是開戰時刻
+  // ---- 結算摘要（ResultOverlay）：擊敗數／總傷害用 statsRef 全場累加；經驗值為示範值，非正式數值。
+  // battleStartAtRef 已提前到上面宣告（見該處註解）。----
   const resultSummary = useMemo(() => {
     const defeatedLevels = statsRef.current.defeatedLevels;
     return {
@@ -459,6 +632,27 @@ export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTL
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.phase, state.now]);
+
+  // ---- P2 遙測：戰鬥結束（phase→'ended'）就把累積統計交給上層 onReport。reportedRef 已提前到上面
+  // 宣告（與「中途卸載視為棄戰」的 effect 共用，見該處註解）。----
+  useEffect(() => {
+    if (state.phase !== 'ended' || !state.outcome || reportedRef.current) return;
+    reportedRef.current = true;
+    onReport?.({
+      encounterCode: encounter.code,
+      outcome: state.outcome,
+      durationMs: resultSummary.durationMs,
+      damageDealt: statsRef.current.damageDealt,
+      damageTaken: statsRef.current.damageTaken,
+      enemiesDefeated: statsRef.current.defeatedLevels.length,
+      attacks: statsRef.current.attacks,
+      chargedAttacks: statsRef.current.chargedAttacks,
+      skillsUsed: statsRef.current.skillsUsed,
+      itemsUsed: statsRef.current.itemsUsed,
+      guardMs: statsRef.current.guardMs,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.phase, state.outcome]);
 
   // 顏色只從 PALETTE 來（根節點固定 data-skin="default" 暗色，不讀前台 skin 變數）；CSS 只透過這些自訂變數取色。
   const rootStyle = {
@@ -570,7 +764,7 @@ export default function BattleScreen({ onBack, sample: sampleProp = SAMPLE_BATTL
         // wrapper 會被上面各 band 的 z-index:100 蓋住，畫面上完全看不到（DOM 查詢/文字斷言仍會過，
         // 是純視覺 bug——2026-09-14 CDP 截圖走查抓到，見 .module.css 的 .resultLayer 說明）。
         <div className={styles.resultLayer}>
-          <ResultOverlay outcome={state.outcome} summary={resultSummary} onClose={handleBack} />
+          <ResultOverlay outcome={state.outcome} summary={resultSummary} onClose={handleBack} onRestart={onRestart} onPickAnother={onNext} />
         </div>
       )}
     </div>

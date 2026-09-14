@@ -22,7 +22,13 @@ export type ResultOverlaySummary = {
 export type ResultOverlayProps = {
   outcome: BattleOutcome;
   summary: ResultOverlaySummary;
+  /** 「返回」（離開整場 DORPG，回上一層）；contract P1 就有的唯一按鈕，P2 起在有 onRestart/onPickAnother
+   *  時退居第三顆（最不顯眼）。 */
   onClose: () => void;
+  /** P2：「再戰一場」（同一遭遇重來，主要按鈕）；未給則不顯示——沿用者不必跟著改。 */
+  onRestart?: () => void;
+  /** P2：「換一場」（回遭遇選單挑別的）；未給則不顯示。 */
+  onPickAnother?: () => void;
 };
 
 const TITLE: Record<BattleOutcome, string> = {
@@ -47,7 +53,7 @@ function formatDuration(ms: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export default function ResultOverlay({ outcome, summary, onClose }: ResultOverlayProps) {
+export default function ResultOverlay({ outcome, summary, onClose, onRestart, onPickAnother }: ResultOverlayProps) {
   const titleId = useId();
 
   // Escape 關閉（契約：Escape／主鈕 → onClose）。scrim 點擊刻意不列入關閉方式，避免使用者誤觸略過結算摘要。
@@ -93,18 +99,42 @@ export default function ResultOverlay({ outcome, summary, onClose }: ResultOverl
           ))}
         </ul>
 
-        {/* button_confirm 圖上烤的固定字是「確認」，但這顆鈕語意是「返回」戰鬥外層——aria-label 蓋掉圖上文字，
-            img 本身 alt="" 當純裝飾（同 CommandBar／SkillTray 的既有作法）。 */}
-        <button
-          type="button"
-          className={styles.confirm}
-          style={{ width: DIALOG_BTN.w, height: DIALOG_BTN.h }}
-          aria-label="返回"
-          onClick={onClose}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={kitAsset('button_confirm')} alt="" draggable={false} />
-        </button>
+        {/* P2（契約 §4）：「再戰一場（主要）／換一場／返回」三顆，逃跑/戰敗跟勝利同一套按鈕，不特殊處理。
+            舊呼叫端（沒接 onRestart/onPickAnother，如尚未接上遭遇選單的呼叫）維持 P1 原本唯一一顆
+            「返回」（button_confirm），畫面不因為多了兩個 optional prop 而變樣。
+            button_confirm/button_cancel 圖上烤的固定字是「確認/取消」，語意跟這裡的按鈕不同——
+            一律用 aria-label 蓋掉圖上文字，img 本身 alt="" 當純裝飾（同 CommandBar／SkillTray 的既有作法）。 */}
+        <div className={styles.actions}>
+          {onRestart ? (
+            <button type="button" className={styles.confirm} style={{ width: DIALOG_BTN.w, height: DIALOG_BTN.h }} aria-label="再戰一場" onClick={onRestart}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={kitAsset('button_confirm')} alt="" draggable={false} />
+            </button>
+          ) : null}
+
+          {onPickAnother ? (
+            <button
+              type="button"
+              className={styles.secondary}
+              style={{ width: DIALOG_BTN.w, height: DIALOG_BTN.h, borderColor: PALETTE.borderGold, color: PALETTE.textPrimary }}
+              onClick={onPickAnother}
+            >
+              換一場
+            </button>
+          ) : null}
+
+          {onRestart || onPickAnother ? (
+            <button type="button" className={styles.confirm} style={{ width: DIALOG_BTN.w, height: DIALOG_BTN.h }} aria-label="返回" onClick={onClose}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={kitAsset('button_cancel')} alt="" draggable={false} />
+            </button>
+          ) : (
+            <button type="button" className={styles.confirm} style={{ width: DIALOG_BTN.w, height: DIALOG_BTN.h }} aria-label="返回" onClick={onClose}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={kitAsset('button_confirm')} alt="" draggable={false} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

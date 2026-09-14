@@ -118,6 +118,72 @@ type Config struct {
 	// --- 狀態抗性（AGI/VIT/INT/LUK 共用同一係數，見 compute.go 各狀態對應表）／迴避率上限 ---
 	ResistPctPerPoint float64 `json:"resist_pct_per_point"` // 每點狀態抗性 %（預設0.1）
 	FleeCapPct        float64 `json:"flee_cap_pct"`         // 迴避率上限（完全迴避不受此限，預設95）
+
+	// --- DORPG P2：戰鬥內容/縮放/手感參數（契約 dorpg_p2 §3.1）。json tag 必須與
+	// apps/web/src/lib/rpgMeta.ts CONFIG_GROUPS 逐欄一致——沿用上面同一條規則，這批欄位是
+	// battle_* 前綴、跟六圍素質欄位分開一群，方便後台開新分頁「戰鬥」。 ---
+
+	// BattleScaleMode 怪物數值縮放模式（D1）："power"＝以玩家戰力動態縮放（P2 唯一實作）；
+	// "level"＝依 Base Lv 絕對表（P3 保留分支點）；"fixed"＝直接用 DB 絕對值（同上）。
+	BattleScaleMode string `json:"battle_scale_mode"`
+	// BattleMobHits 未蓄氣普攻打死一般怪的目標次數（D2 mobHp 公式的係數）。TUNE 依 BALANCE.md
+	// 模擬報告從草案 6 調到 56（＋833%）：草案是用「玩家單打獨鬥」估算，但實際戰鬥是玩家＋4 位
+	// 隊友同時對同一目標出手，整隊 DPS 遠高於玩家單人——用單人尺度校準時，訓練場 3 隻雜魚 5~8
+	// 秒就團滅（目標 30~50 秒，差 6~8 倍），必須用「整隊」尺度重新校準才成立（見 BALANCE.md §0-1）。
+	BattleMobHits float64 `json:"battle_mob_hits"`
+	// BattleMobDefRatio 怪物 DEF ÷ 玩家 ATK 的比例（D2 mobDef 公式）。BALANCE 模擬顯示未蓄氣一拳
+	// 傷害／玩家 ATK 落在 82~87% 之間，沒有出現防禦吃到剩 1 或幾乎無視防禦的極端，沿用草案值。
+	BattleMobDefRatio float64 `json:"battle_mob_def_ratio"`
+	// BattleEnemyDPSRatio 全場敵人合計 DPS ÷ 玩家 MaxHP（每秒）。TUNE 依 BALANCE.md 模擬報告從
+	// 草案 0.010 調到 0.2（20 倍）：草案只以「玩家一人的 HP」抓 DPS，但敵人攻擊目標隨機分配到
+	// 全隊 5 人（合計 HPMax 是玩家單人的 5 倍）、且隊友「小咪」的治療技能有 flat=80 高額固定回血，
+	// 草案數值下全場幾乎零死亡風險，20 倍才能讓難度 2 以上場次出現契約要求的「不防禦不補血會輸」
+	// 的風險（見 BALANCE.md §0-2、§4）。
+	BattleEnemyDPSRatio float64 `json:"battle_enemy_dps_ratio"`
+	// BattlePlayerMinAtk 玩家 ATK 保底（P2 專用：owner 現有角色多數點數未配，沒有保底完全打不動；
+	// P3 接上裝備/技能成長後這個保底會取消，見契約 §1 D1）。
+	BattlePlayerMinAtk float64 `json:"battle_player_min_atk"`
+	// BattlePlayerMinHP 玩家 MaxHP 保底，理由同上。
+	BattlePlayerMinHP float64 `json:"battle_player_min_hp"`
+	// BattleAttackCooldownMs/ChargeMinMs/.../CritMultiplier 這一批直接對齊前端
+	// engine/types.ts 的 BattleConfig 同名欄位（camelCase↔snake_case 一對一），開放後台調整手感
+	// 之後由 battle.go 的 GET /rpg/battle/bootstrap 轉成 Partial<BattleConfig> 送給前端引擎；
+	// 前端沒對應欄位的（enemyWindupMs 等純動畫時間常數）不開放，繼續吃引擎預設值。
+	BattleAttackCooldownMs    int     `json:"battle_attack_cooldown_ms"`
+	BattleChargeMinMs         int     `json:"battle_charge_min_ms"`
+	BattleChargeFullMs        int     `json:"battle_charge_full_ms"`
+	BattleChargeMaxMultiplier float64 `json:"battle_charge_max_multiplier"`
+	BattleGuardMultiplier     float64 `json:"battle_guard_multiplier"`
+	BattleRecoveryMs          int     `json:"battle_recovery_ms"`
+	BattleDefaultCastMs       int     `json:"battle_default_cast_ms"`
+	BattleEscapeJudgeMs       int     `json:"battle_escape_judge_ms"`
+	BattleResolveDelayMs      int     `json:"battle_resolve_delay_ms"`
+	// BattleEnemyActMinMs/MaxMs 怪物行動間隔隨機範圍（乘上各怪 speed_mult 後才是實際間隔，見
+	// scaling.go ScaleMonster），也用於 D2 mobAtk 公式算 actSec。
+	BattleEnemyActMinMs int `json:"battle_enemy_act_min_ms"`
+	BattleEnemyActMaxMs int `json:"battle_enemy_act_max_ms"`
+	// BattleAllyActMinMs/MaxMs 隊友 AI 行動間隔隨機範圍（直接對齊前端 allyActIntervalMs，
+	// P2 沒有 D2 公式使用它，只是原樣轉發給引擎）。
+	BattleAllyActMinMs   int     `json:"battle_ally_act_min_ms"`
+	BattleAllyActMaxMs   int     `json:"battle_ally_act_max_ms"`
+	BattleHitRate        float64 `json:"battle_hit_rate"`
+	BattleCritRate       float64 `json:"battle_crit_rate"`
+	BattleCritMultiplier float64 `json:"battle_crit_multiplier"`
+	// BattleExpPreviewPerLevel 結算畫面「預估經驗」＝Σ敵人等級×此值，純顯示用，不入帳、不影響
+	// 任何獎勵/EXP 系統（D5：P2 沒有伺服器判定也沒有獎勵發放）。
+	BattleExpPreviewPerLevel float64 `json:"battle_exp_preview_per_level"`
+
+	// --- DORPG P2 修正第 1 輪（審查 data.md 缺陷1 根因修復）：參考 HP/MP 縮放 ---
+	//
+	// rpg_skills.flat（heal/shield）與 rpg_items.amount（hp/mp）在 DB 裡存的是絕對值，語意是
+	// 「參考玩家（HPMax=battle_reference_hp、MPMax=battle_reference_mp）身上的絕對回復量」，
+	// 不是任何角色都通用的絕對值。怪物 HP/ATK/DEF 全部隨玩家戰力縮放（ScaleMonster），但治療
+	// 技能/道具的絕對值原本完全沒有縮放：owner 實測 Base Lv 27、HPMax 919（種子假設是 Lv5/300）
+	// 時，同一瓶 150 的紅藥水從補 50% HP 掉到補 16%，小咪的 flat=80 治療從 27% 掉到 8.7%——這讓
+	// 「對任何角色都即刻可玩、節奏一致」（契約 D1）在高等級完全失效。ScaleSkill/ScaleItem
+	// （scaling.go）用這兩個參考值算出 ratioHP/ratioMP，等比例縮放 flat/amount。
+	BattleReferenceHP float64 `json:"battle_reference_hp"` // 技能/道具絕對回復量的參考玩家 HPMax（預設 300）
+	BattleReferenceMP float64 `json:"battle_reference_mp"` // 同上，MP 類（預設 100）
 }
 
 // DefaultConfig 站長截圖對照表原封不動編碼成的預設值（所有數字皆可由後台覆寫）。
@@ -194,6 +260,34 @@ func DefaultConfig() Config {
 
 		ResistPctPerPoint: 0.1,
 		FleeCapPct:        95,
+
+		BattleScaleMode:     "power",
+		BattleMobHits:       56,
+		BattleMobDefRatio:   0.25,
+		BattleEnemyDPSRatio: 0.2,
+		BattlePlayerMinAtk:  30,
+		BattlePlayerMinHP:   300,
+
+		BattleAttackCooldownMs:    1500,
+		BattleChargeMinMs:         300,
+		BattleChargeFullMs:        1200,
+		BattleChargeMaxMultiplier: 2.5,
+		BattleGuardMultiplier:     0.40,
+		BattleRecoveryMs:          400,
+		BattleDefaultCastMs:       500,
+		BattleEscapeJudgeMs:       1200,
+		BattleResolveDelayMs:      800,
+		BattleEnemyActMinMs:       2500,
+		BattleEnemyActMaxMs:       4500,
+		BattleAllyActMinMs:        2200,
+		BattleAllyActMaxMs:        3600,
+		BattleHitRate:             1.0,
+		BattleCritRate:            0.0,
+		BattleCritMultiplier:      2.0,
+		BattleExpPreviewPerLevel:  3.0,
+
+		BattleReferenceHP: 300,
+		BattleReferenceMP: 100,
 	}
 }
 
@@ -264,6 +358,57 @@ func (c Config) Validate() error {
 	requirePositive(&bad, "lv_atk_per", c.LvAtkPer)
 	requirePositive(&bad, "lv_matk_per", c.LvMatkPer)
 	requirePositive(&bad, "lv_mdef_per", c.LvMdefPer)
+	if len(bad) > 0 {
+		return fmt.Errorf("these fields must be > 0 (used as divisors): %v", bad)
+	}
+
+	// --- DORPG P2 戰鬥參數檢查：只擋會讓 scaling.go 算出負值/除零/當機等級的邊界，
+	// 不擋設計上合理的極端值（例如 crit_rate 想暫時設 0）。---
+	if c.BattleScaleMode != "power" && c.BattleScaleMode != "level" && c.BattleScaleMode != "fixed" {
+		return fmt.Errorf("battle_scale_mode must be power, level or fixed")
+	}
+	requirePositive(&bad, "battle_mob_hits", c.BattleMobHits)
+	requirePositive(&bad, "battle_mob_def_ratio", c.BattleMobDefRatio)
+	requirePositive(&bad, "battle_enemy_dps_ratio", c.BattleEnemyDPSRatio)
+	requirePositive(&bad, "battle_player_min_atk", c.BattlePlayerMinAtk)
+	requirePositive(&bad, "battle_player_min_hp", c.BattlePlayerMinHP)
+	requirePositive(&bad, "battle_attack_cooldown_ms", float64(c.BattleAttackCooldownMs))
+	requirePositive(&bad, "battle_charge_full_ms", float64(c.BattleChargeFullMs))
+	requirePositive(&bad, "battle_charge_max_multiplier", c.BattleChargeMaxMultiplier)
+	requirePositive(&bad, "battle_recovery_ms", float64(c.BattleRecoveryMs))
+	requirePositive(&bad, "battle_default_cast_ms", float64(c.BattleDefaultCastMs))
+	requirePositive(&bad, "battle_escape_judge_ms", float64(c.BattleEscapeJudgeMs))
+	requirePositive(&bad, "battle_resolve_delay_ms", float64(c.BattleResolveDelayMs))
+	requirePositive(&bad, "battle_enemy_act_min_ms", float64(c.BattleEnemyActMinMs))
+	requirePositive(&bad, "battle_enemy_act_max_ms", float64(c.BattleEnemyActMaxMs))
+	requirePositive(&bad, "battle_ally_act_min_ms", float64(c.BattleAllyActMinMs))
+	requirePositive(&bad, "battle_ally_act_max_ms", float64(c.BattleAllyActMaxMs))
+	if c.BattleEnemyActMaxMs < c.BattleEnemyActMinMs {
+		return fmt.Errorf("battle_enemy_act_max_ms must be >= battle_enemy_act_min_ms")
+	}
+	if c.BattleAllyActMaxMs < c.BattleAllyActMinMs {
+		return fmt.Errorf("battle_ally_act_max_ms must be >= battle_ally_act_min_ms")
+	}
+	if c.BattleChargeMinMs < 0 || c.BattleChargeMinMs > c.BattleChargeFullMs {
+		return fmt.Errorf("battle_charge_min_ms must be within [0, battle_charge_full_ms]")
+	}
+	if c.BattleGuardMultiplier < 0 || c.BattleGuardMultiplier > 1 {
+		return fmt.Errorf("battle_guard_multiplier must be within [0,1]")
+	}
+	if c.BattleHitRate < 0 || c.BattleHitRate > 1 {
+		return fmt.Errorf("battle_hit_rate must be within [0,1]")
+	}
+	if c.BattleCritRate < 0 || c.BattleCritRate > 1 {
+		return fmt.Errorf("battle_crit_rate must be within [0,1]")
+	}
+	if c.BattleCritMultiplier < 0 {
+		return fmt.Errorf("battle_crit_multiplier must be >= 0")
+	}
+	if c.BattleExpPreviewPerLevel < 0 {
+		return fmt.Errorf("battle_exp_preview_per_level must be >= 0")
+	}
+	requirePositive(&bad, "battle_reference_hp", c.BattleReferenceHP)
+	requirePositive(&bad, "battle_reference_mp", c.BattleReferenceMP)
 	if len(bad) > 0 {
 		return fmt.Errorf("these fields must be > 0 (used as divisors): %v", bad)
 	}

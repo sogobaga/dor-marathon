@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useIsMobile } from '@/lib/useIsMobile'
 import RacesScreen from './RacesScreen'
@@ -11,12 +11,15 @@ import GoogleAuthProvider from './GoogleAuthProvider'
 import VersionBadge from './VersionBadge'
 import MileageExpGate from './MileageExpGate'
 import DedupNoticeGate from './DedupNoticeGate'
-import { validateSession, getUserToken } from '@/lib/userAuth'
+import { validateSession, getUserToken, withUserAuth } from '@/lib/userAuth'
 import { captureAcquisition } from '@/lib/acquisition'
 import { useDashboard, refreshDashboard } from '@/lib/useDashboard'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
 import { pageview } from '@/lib/analytics'
-import { profileApi, titleApi, racesApi, type Race } from '@/lib/api'
+import { profileApi, titleApi, racesApi, rpgBattleApi, type Race, type RpgBattleBootstrap } from '@/lib/api'
+import { APP_VERSION } from '@/lib/version'
+import { sampleFromBootstrap, configFromBootstrap } from '@/lib/dorpg/fromApi'
+import type { BattleReportStats } from './dorpg/BattleScreen'
 import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
 
@@ -46,8 +49,10 @@ const MonopolyScreen = dynamic(() => import('./MonopolyScreen'), {
 const RaceDetailScreen = dynamic(() => import('./RaceDetailScreen'), { ssr: false })
 const RunMeetScreen = dynamic(() => import('./RunMeetScreen'), { ssr: false })
 const CharacterScreen = dynamic(() => import('./CharacterScreen'), { ssr: false })
-// DORPG 戰鬥畫面（P0 靜態預覽）：素材約 3MB、只從角色頁進入，故獨立 chunk 且不 SSR（元件自量尺寸）
+// DORPG 戰鬥畫面：素材約 3MB、只從角色頁進入，故獨立 chunk 且不 SSR（元件自量尺寸）。
+// P2 起中間多一層遭遇選單（EncounterPicker），同樣只從角色頁進入、同一顆 chunk 群組。
 const BattleScreen = dynamic(() => import('./dorpg/BattleScreen'), { ssr: false })
+const EncounterPicker = dynamic(() => import('./dorpg/EncounterPicker'), { ssr: false })
 
 // openEventSlug：廣告落地頁 /event/{slug} 傳入，開頁即直接顯示該活動簡章（見 app/event/[slug]/EventLanding.tsx）。
 // openShopId：合作商家專屬連結 /shop/{id} 傳入，開頁即直接顯示該商家詳細頁（見 app/shop/[id]/ShopLanding.tsx）。
@@ -76,8 +81,13 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
   const [runMeetInitialId, setRunMeetInitialId] = useState<string | undefined>(undefined)
   // 遊戲化角色數值（第 21 套）：入口只在 dash.rpg_entry==='shown' 時出現，見 MemberPanel
   const [showCharacter, setShowCharacter] = useState(false)
-  // DORPG 戰鬥畫面：只能從角色頁的「進入戰鬥（預覽）」開啟，疊在角色頁之上（渲染鏈排在 showCharacter 前）
-  const [showBattle, setShowBattle] = useState(false)
+  // DORPG 戰鬥畫面（第 21 套 P2）：只能從角色頁的「進入戰鬥」開啟，疊在角色頁之上（渲染鏈排在
+  // showCharacter 前）。P2 起中間多一層遭遇選單：null→未開；{mode:'picker'}→選單；
+  // {mode:'battle',code,nonce}→戰鬥中。nonce 只在「再戰一場」遞增，用來強制重建 BattleScreen
+  // （key={nonce}）卻不重新打 bootstrap——bootstrap 結果快取在下面的 battleBootstrapCache
+  // （契約 §4：「再戰一場」不得重新 fetch，300ms 內要能回到可操作）。
+  const [battleView, setBattleView] = useState<null | { mode: 'picker' } | { mode: 'battle'; code: string; nonce: number }>(null)
+  const battleBootstrapCache = useRef<Map<string, RpgBattleBootstrap>>(new Map())
   const [titlesModal, setTitlesModal] = useState<{ code: string; name: string; tier: number; category: string }[]>([])
   const titlesHandled = useRef(false)
   const [unlockCardId, setUnlockCardId] = useState<string | undefined>(undefined)
@@ -217,7 +227,8 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     else if (showMonopoly) { path = '/monopoly'; title = '環台大富翁' }
     else if (showHeroes) { path = '/heroes'; title = '百里英雄榜' }
     else if (showRunMeet) { path = '/run-meets'; title = '團練邀請' }
-    else if (showBattle) { path = '/battle'; title = '戰鬥' }
+    else if (battleView?.mode === 'battle') { path = '/battle'; title = '戰鬥' }
+    else if (battleView?.mode === 'picker') { path = '/battle/picker'; title = '戰鬥選單' }
     else if (showCharacter) { path = '/character'; title = '角色' }
     else if (showExplore) { path = '/explore'; title = '城市探索' }
     else if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
@@ -227,7 +238,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     // 活動探索：與畫面渲染鏈同一順序評估（見下方 JSX），registerRace/detailRace 蓋在它上面時優先算那兩個
     else if (showActivityExplore) { path = '/activities'; title = '活動探索' }
     pageview(path, title)
-  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showRewards, showMonopoly, showHeroes, showRunMeet, showBattle, showCharacter, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace, showActivityExplore])
+  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showRewards, showMonopoly, showHeroes, showRunMeet, battleView, showCharacter, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace, showActivityExplore])
 
   return (
     <GoogleAuthProvider>
@@ -262,10 +273,36 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
           <HundredHeroesScreen onBack={() => setShowHeroes(false)} />
         ) : showRunMeet ? (
           <RunMeetScreen onBack={() => { setShowRunMeet(false); setRunMeetInitialId(undefined) }} initialMeetId={runMeetInitialId} />
-        ) : showBattle ? (
-          <BattleScreen onBack={() => setShowBattle(false)} />
+        ) : battleView && battleView.mode === 'picker' ? (
+          <EncounterPicker
+            onBack={() => { setBattleView(null); setShowCharacter(true) }}
+            onOpenCharacter={() => { setBattleView(null); setShowCharacter(true) }}
+            onPick={(code) => setBattleView({ mode: 'battle', code, nonce: 0 })}
+          />
+        ) : battleView && battleView.mode === 'battle' ? (
+          // key={battleView.code}：換到不同遭遇（「換一場」在選單挑了別的卡）才整個重掛、重新打
+          // bootstrap；同一個 code 只有 nonce 變動（「再戰一場」）不會重掛這層，bootstrap 快取才留得住。
+          <DorpgBattleFlow
+            key={battleView.code}
+            code={battleView.code}
+            nonce={battleView.nonce}
+            cache={battleBootstrapCache.current}
+            onExit={() => { setBattleView(null); setShowCharacter(true) }}
+            onSwitch={() => setBattleView({ mode: 'picker' })}
+            onRestart={() => setBattleView((v) => (v && v.mode === 'battle' ? { ...v, nonce: v.nonce + 1 } : v))}
+          />
         ) : showCharacter ? (
-          <CharacterScreen onBack={() => setShowCharacter(false)} onOpenBattle={() => setShowBattle(true)} />
+          <CharacterScreen
+            onBack={() => setShowCharacter(false)}
+            onOpenBattle={() => {
+              // 從角色頁進戰鬥選單前清掉 bootstrap 快取：玩家很可能剛在這頁配點，快取住的舊角色
+              // 數值（atk/hp 等）會讓下一場戰鬥用到配點前的數字——寧可讓「換一場/重進選單」多打一次
+              // API，也不要讓「剛配完點」變成沒生效的錯覺。同一次選單內來回「再戰一場」不受影響
+              // （nonce 遞增不經過這裡，也不會重新叫 onOpenBattle）。
+              battleBootstrapCache.current.clear()
+              setBattleView({ mode: 'picker' })
+            }}
+          />
         ) : showExplore ? (
           <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={(bossId) => { window.location.href = bossId ? '/track?focus=' + encodeURIComponent(bossId) : '/track' }} />
         ) : showPersonalTasks ? (
@@ -386,5 +423,139 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
       )}
     </div>
     </GoogleAuthProvider>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// DORPG P2：遭遇選單→戰鬥中間的 bootstrap 載入層。獨立成元件（而不是寫在 PhoneShell 本體裡）單純是
+// 為了讓「同一 code 換 nonce 不重掛」這件事乾淨——靠 PhoneShell 用 key={battleView.code} 掛/卸載這整層，
+// nonce 只往下傳給 BattleScreen 當 key，兩層 key 的職責分得很清楚：外層 key 控制「要不要重新打
+// bootstrap」，內層 key 控制「要不要重建戰鬥引擎」。
+// ---------------------------------------------------------------------------
+function DorpgBattleFlow({
+  code,
+  nonce,
+  cache,
+  onExit,
+  onSwitch,
+  onRestart,
+}: {
+  code: string
+  nonce: number
+  cache: Map<string, RpgBattleBootstrap>
+  onExit: () => void
+  onSwitch: () => void
+  onRestart: () => void
+}) {
+  const [bootstrap, setBootstrap] = useState<RpgBattleBootstrap | null>(() => cache.get(code) ?? null)
+  const [loading, setLoading] = useState(() => !cache.has(code))
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const cached = cache.get(code)
+    if (cached) {
+      setBootstrap(cached)
+      setLoading(false)
+      return
+    }
+    let alive = true
+    setLoading(true)
+    setError('')
+    const token = getUserToken()
+    if (!token) {
+      setError('尚未登入，無法進入戰鬥')
+      setLoading(false)
+      return
+    }
+    withUserAuth((t) => rpgBattleApi.bootstrap(t, code))
+      .then((r) => {
+        if (!alive) return
+        cache.set(code, r) // 契約 §4：只有這裡（真的打了 API）才寫入快取，「再戰一場」永遠不會走到這條路
+        setBootstrap(r)
+      })
+      .catch((e: any) => {
+        if (!alive) return
+        // 401/403：入口理論上已 gate 過，這裡只是保險；503＝migration 176 尚未套用，訊息由後端帶（e.message）。
+        setError(e?.status === 401 || e?.status === 403 ? '尚未登入或沒有權限使用戰鬥功能' : e?.message || '載入失敗，請稍後再試')
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code])
+
+  // 遙測回報：只在真的有 bootstrap 資料時才可能觸發（BattleScreen 還沒渲染前 onReport 不會被呼叫），
+  // player_power 是契約 §3.2 PlayerPower 公式（round(Atk+Def+HPMax/10)）的前端鏡像——純遙測不要求
+  // 跟後端逐位元一致，只是給後台儀表板一個大致戰力參考。失敗只 console.warn，不影響任何戰鬥流程。
+  const handleReport = useCallback(
+    (stats: BattleReportStats) => {
+      const token = getUserToken()
+      const player = bootstrap?.sample.party[0]
+      if (!token || !player) return
+      const atk = player.stats?.atk ?? 0
+      const def = player.stats?.def ?? 0
+      const hpMax = player.stats?.hpMax ?? player.hpMax ?? 0
+      withUserAuth((t) =>
+        rpgBattleApi.report(t, {
+          encounter_code: stats.encounterCode,
+          outcome: stats.outcome,
+          duration_ms: stats.durationMs,
+          damage_dealt: stats.damageDealt,
+          damage_taken: stats.damageTaken,
+          enemies_defeated: stats.enemiesDefeated,
+          attacks: stats.attacks,
+          charged_attacks: stats.chargedAttacks,
+          skills_used: stats.skillsUsed,
+          items_used: stats.itemsUsed,
+          guard_ms: stats.guardMs,
+          player_level: player.level,
+          player_power: Math.round(atk + def + hpMax / 10),
+          client_version: APP_VERSION,
+        }),
+      ).catch((e) => console.warn('[dorpg] battle report failed', e))
+    },
+    [bootstrap],
+  )
+
+  // 2026-09-14 P2 修正第1輪 審查2（PLAUSIBLE）：原本直接寫在 JSX 裡的 sampleFromBootstrap(...)／
+  // configFromBootstrap(...) 每次 render 都會回傳全新物件——bootstrap 不變時用 useMemo 鎖住 identity，
+  // 避免 PhoneShell 因任何無關原因重繪（全站 WS data_updated／SWR revalidate／VIP 輪詢…都會讓
+  // PhoneShell 重繪，進而重繪這層）時，新的 identity 一路往下傳到 BattleStage 的 scene prop，擊穿
+  // BattleScreen.tsx 內 MemoBattleStage 的 React.memo 保護。bootstrap 本身在同一個 DorpgBattleFlow
+  // 實例存活期間只會被 setBootstrap 設定一次（見上面 effect：cache 命中或 fetch 成功各設一次），
+  // 「再戰一場」的 nonce 遞增不經過這裡，故依賴 [bootstrap] 已足夠、不必依賴 nonce。
+  const sample = useMemo(() => (bootstrap ? sampleFromBootstrap(bootstrap.sample) : undefined), [bootstrap])
+  const config = useMemo(() => (bootstrap ? configFromBootstrap(bootstrap.config) : undefined), [bootstrap])
+
+  if (loading) {
+    return (
+      <div data-skin="default" style={{ position: 'absolute', inset: 0, background: '#001523', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#B8CCD6', fontSize: 13 }}>
+        載入中…
+      </div>
+    )
+  }
+  if (error || !bootstrap) {
+    return (
+      <div data-skin="default" style={{ position: 'absolute', inset: 0, background: '#001523', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, color: '#FFF9EA', textAlign: 'center' }}>
+        <div style={{ fontSize: 13, lineHeight: 1.7, color: '#B8CCD6' }}>{error || '載入失敗'}</div>
+        <button onClick={onSwitch} style={{ background: '#F3BD62', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 22px', fontSize: 13.5, fontWeight: 800, fontFamily: 'inherit', cursor: 'pointer' }}>返回選單</button>
+      </div>
+    )
+  }
+
+  return (
+    <BattleScreen
+      key={nonce}
+      sample={sample}
+      config={config}
+      encounter={{ code, title: bootstrap.encounter.title }}
+      onBack={onExit}
+      onRestart={onRestart}
+      onNext={onSwitch}
+      onReport={handleReport}
+    />
   )
 }

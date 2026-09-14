@@ -1,0 +1,272 @@
+/* DORPG P2 遭遇選單。顏色以 PALETTE 由 TSX 帶入（畫面固定 data-skin="default" 暗色，跟 BattleScreen/
+   ResultOverlay 同一套色票），此檔只管版面/間距，不寫死品牌色（邊框的淡金半透明色例外，屬裝飾線非文字/底色）。 */
+.root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  font-family: 'Noto Sans TC', 'Microsoft JhengHei', 'PingFang TC', sans-serif;
+}
+.root * {
+  box-sizing: border-box;
+}
+
+.header {
+  flex-shrink: 0;
+  height: 44px;
+  padding: var(--app-top, 0px) 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.backBtn {
+  background: none;
+  border: none;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 4px;
+  /* 2026-09-14 P2 修正第1輪 審查4（CONFIRMED）：原本只靠 padding 撐高，實際命中區約 28px，
+     低於 44px 觸控目標建議值——用 min-height 補足點擊區，不改文字/padding 視覺大小。 */
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.logo {
+  height: 20px;
+  width: auto;
+  object-fit: contain;
+  margin: 0 auto;
+  -webkit-user-drag: none;
+}
+
+.headerSpacer {
+  width: 44px;
+  flex-shrink: 0;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.inner {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 12px 14px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.center {
+  text-align: center;
+  padding: 40px 12px;
+}
+
+.errorText {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.retryBtn {
+  border: 1.5px solid;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  /* 2026-09-14 P2 修正第1輪 審查4（CONFIRMED）：原本實際命中區約 31px，補到 44px 觸控目標建議值，
+     不改文字/padding 視覺大小；display:inline-flex 讓文字在加高後仍維持置中，不是靠 line-height 硬撐。 */
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 角色摘要列：frame_dialog 九宮格由 TSX 帶入 border-image（跟 SettingsSheet 同一手法），本身是可點的按鈕。 */
+.charCard {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 10px 12px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.charTop {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.charLv {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.chip {
+  font-size: 12.5px;
+  font-weight: 600;
+  opacity: 0.92;
+}
+.chip b {
+  font-variant-numeric: tabular-nums;
+}
+
+.hint {
+  margin-top: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  text-align: left;
+  border: 1px solid;
+  border-radius: 14px;
+  padding: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.thumbWrap {
+  position: relative;
+  width: 96px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  aspect-ratio: 8 / 5;
+}
+
+.thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  -webkit-user-drag: none;
+}
+
+.bossTag {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.cardBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 2px 2px 0;
+}
+
+.cardTitleRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.cardTitle {
+  font-size: 14.5px;
+  font-weight: 800;
+}
+
+.stars {
+  font-size: 11px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.cardSubtitle {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.monsterRow {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.monsterThumb {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.25);
+  -webkit-user-drag: none;
+}
+
+.monsterBoss {
+  border-color: #f3bd62;
+}
+
+.record {
+  margin-top: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.skeletonList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeletonCard {
+  height: 96px;
+  border-radius: 14px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
+  background-size: 200% 100%;
+  animation: dorpg-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes dorpg-skeleton-pulse {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonCard {
+    animation: none;
+  }
+}
