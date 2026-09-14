@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { rpgBattleApi, type RpgBattleEncounters, type RpgEncounterSummary } from '@/lib/api';
 import { getUserToken, withUserAuth } from '@/lib/userAuth';
 import { PALETTE, kitAsset, nineSliceStyle } from '@/lib/dorpg/assets';
+import { battleAudio } from '@/lib/dorpg/audio';
 import styles from './EncounterPicker.module.css';
 
 export type EncounterPickerProps = {
@@ -66,8 +67,27 @@ export default function EncounterPicker({ onBack, onPick, onOpenCharacter, loadO
 
   const ch = data?.character;
 
+  // 2026-09-14 SCREENS 接線：選單是整個戰鬥流程的入口，音樂應該從這裡就開始、跨越多場戰鬥連續播放
+  // （見 audio.ts 檔頭修復記錄）。playBgmFromGesture 必須同步呼叫、前面不可有 await——第一行就是
+  // handler 本體。固定播 'master'：進 boss 場遭遇後由 BattleScreen 自己的手勢入口切成 'boss'，
+  // 同一顆 <audio> 元素接續播放，不會有斷音；playBgmFromGesture 對同一個 kind 重複呼叫是 no-op，
+  // 玩家在選單多次點按不會重播/重設進度。
+  // 2026-09-14 修復 C：同時掛在 pointerdown/pointerup/click 三種事件的 capture 階段——理由與
+  // BattleScreen.tsx 同一處註解一致：WebKit 對合法使用者手勢的認定比 Chromium 嚴格，只掛
+  // pointerdown 一種若剛好不被 iOS 認可，會讓每次重試都卡在同一個被拒模式裡。
+  const handleRootPointerDownCapture = () => {
+    battleAudio.playBgmFromGesture('master');
+  };
+
   return (
-    <div className={styles.root} data-skin="default" style={{ background: PALETTE.surfaceBase, color: PALETTE.textPrimary }}>
+    <div
+      className={styles.root}
+      data-skin="default"
+      style={{ background: PALETTE.surfaceBase, color: PALETTE.textPrimary }}
+      onPointerDownCapture={handleRootPointerDownCapture}
+      onPointerUpCapture={handleRootPointerDownCapture}
+      onClickCapture={handleRootPointerDownCapture}
+    >
       <header className={styles.header}>
         <button type="button" className={styles.backBtn} style={{ color: PALETTE.textSecondary }} onClick={onBack}>
           ← 返回

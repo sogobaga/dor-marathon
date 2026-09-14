@@ -19,6 +19,7 @@ import { pageview } from '@/lib/analytics'
 import { profileApi, titleApi, racesApi, rpgBattleApi, type Race, type RpgBattleBootstrap } from '@/lib/api'
 import { APP_VERSION } from '@/lib/version'
 import { sampleFromBootstrap, configFromBootstrap } from '@/lib/dorpg/fromApi'
+import { battleAudio } from '@/lib/dorpg/audio'
 import type { BattleReportStats } from './dorpg/BattleScreen'
 import UpgradeVipModal from './UpgradeVipModal'
 import BindCardModal from './BindCardModal'
@@ -88,6 +89,35 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
   // （契約 §4：「再戰一場」不得重新 fetch，300ms 內要能回到可操作）。
   const [battleView, setBattleView] = useState<null | { mode: 'picker' } | { mode: 'battle'; code: string; nonce: number }>(null)
   const battleBootstrapCache = useRef<Map<string, RpgBattleBootstrap>>(new Map())
+  // 2026-09-14 SCREENS 接線：BGM 要跨越「選單→戰鬥→再戰一場→換一場」連續播放，只有真的離開整個
+  // 戰鬥流程才停。不在進入時主動播放（自動播放政策），播放交給 EncounterPicker／BattleScreen 自己
+  // 的手勢 handler。
+  //
+  // 2026-09-14 修復 E：battleView !== null 只代表「有意進入戰鬥流程」，不代表戰鬥畫面此刻真的被
+  // 渲染出來——下面 return 的渲染三元鏈裡，battleView 分支之前還排著 9 個全螢幕布林
+  // （showGallery/showTitle/showAchievement/showTraining/showPerks/showRewards/showMonopoly/
+  // showHeroes/showRunMeet），任一個為 true 都會蓋過戰鬥畫面。若只拿 battleView !== null 當「該不
+  // 該播戰鬥音樂」的依據，未來任何新入口在戰鬥中把其中一個布林設成 true，戰鬥畫面會被靜默取代、
+  // 但 battleView 仍非 null，音樂就永遠停不下來。改用「戰鬥畫面此刻是否真的被渲染」這個具名布林
+  // 當 effect 依賴（不改動三元鏈本身的順序，只是把同一份判斷抽出來命名）；battleView 內的
+  // code/nonce 變動（換一場／再戰一場）不影響這個布林的值，effect 依然不會重新 setup/cleanup。
+  const battleScreenRendered =
+    battleView !== null &&
+    !showGallery &&
+    !showTitle &&
+    !showAchievement &&
+    !showTraining &&
+    !showPerks &&
+    !showRewards &&
+    !showMonopoly &&
+    !showHeroes &&
+    !showRunMeet
+  useEffect(() => {
+    if (!battleScreenRendered) return
+    return () => {
+      battleAudio.stopBgm()
+    }
+  }, [battleScreenRendered])
   const [titlesModal, setTitlesModal] = useState<{ code: string; name: string; tier: number; category: string }[]>([])
   const titlesHandled = useRef(false)
   const [unlockCardId, setUnlockCardId] = useState<string | undefined>(undefined)

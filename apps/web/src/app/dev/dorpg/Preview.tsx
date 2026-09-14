@@ -14,6 +14,7 @@ import { PALETTE } from '@/lib/dorpg/assets'
 import type { RpgBattleEncounters } from '@/lib/api'
 import type { BattleReportStats } from '@/components/dorpg/BattleScreen'
 import { RPG_ENCOUNTERS, RPG_MONSTERS, RPG_SCENES, buildFixtureSample } from '@/lib/dorpg/fixture'
+import { battleAudio } from '@/lib/dorpg/audio'
 
 const BattleScreen = dynamic(() => import('@/components/dorpg/BattleScreen'), {
   ssr: false,
@@ -59,6 +60,15 @@ export default function Preview() {
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get('code')
     if (code) setView({ mode: 'battle', code, nonce: 0 })
+  }, [])
+
+  // 2026-09-14 SCREENS 接線：這個頁面本身就是整個戰鬥流程（picker↔battle 沒有頁內的「流程外」狀態），
+  // 「離開整個戰鬥流程」對應到離開這個頁面（元件卸載）——BGM 要跨 picker/battle/再戰一場連續播放，
+  // 只在卸載時才停，對齊 PhoneShell 那層「battleView 變回 null 才 stopBgm」的同一個決策。
+  useEffect(() => {
+    return () => {
+      battleAudio.stopBgm()
+    }
   }, [])
 
   const handleReport = useCallback((stats: BattleReportStats) => {

@@ -354,17 +354,19 @@ export default function BattleScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [player.action]);
 
-  // ---- 音訊：每次 pointerdown 解鎖＋開 BGM＋預載常用音效；卸載/離開時停 BGM＋清特效。 ----
-  // 2026-09-14 審查修正：原本用 audioUnlockedRef 只在第一次 pointerdown 嘗試一次，若當下 unlock()/
-  // el.play() 被瀏覽器拒絕（常見於 iOS Safari 對第一個手勢的判定），之後就永遠沒有機會重試、整場靜音。
-  // audio.ts 沒有暴露「BGM 是否真的在播」的查詢方法（也不在本輪可改檔案清單內，不能加），改用最簡單
-  // 可靠的做法：不設鎖，每次 pointerdown（capture）都重新呼叫——unlock() 對已 resume 的 AudioContext
-  // 是 no-op，playBgm() 對同一個 kind 重複呼叫也只是確保在播（見 audio.ts 註解：不重播/不重置進度），
-  // preloadSfx() 對已快取的 id 直接命中快取，三者皆冪等、呼叫成本可忽略，藉此讓「重試」自然發生在使用者
-  // 之後的每一次操作上，不需要額外偵測播放是否成功。
+  // ---- 音訊：每次手勢同步播 BGM（手勢堆疊）＋預載常用音效；離開整個戰鬥流程時才停 BGM。 ----
+  // 2026-09-14 SCREENS 接線（AUDIO_CORE 根因修復：playBgmFromGesture 必須是手勢 handler 的第一行，
+  // 前面不可有 await/then——原本的 `unlock().then(() => playBgm(...))` 結構會讓 play() 落在 await
+  // 之後，脫離使用者手勢的同步呼叫堆疊，iOS Safari 一律拒絕，見 audio.ts 檔頭）。playBgmFromGesture
+  // 對同一個 kind 重複呼叫是 no-op（不重播/不重置進度），每次呼叫成本可忽略，也讓「重試」自然發生在
+  // 使用者之後的每一次操作上。preloadSfx 不需要手勢，仍可留在 unlock().then() 之後。
+  // 2026-09-14 修復 C：同時掛在 pointerdown/pointerup/click 三種事件的 capture 階段（而非只有
+  // pointerdown）——WebKit 對「哪種事件算合法使用者手勢」比 Chromium 嚴格，業界慣例是掛在手勢
+  // *完成*的 click/pointerup，若只掛 pointerdown 這一種、剛好 iOS 不認，就會重演「每次重試都在同一
+  // 個被拒模式裡打轉」。三個都掛、任何一個先觸發就先播，沒有副作用（同首不重播）。
   const handleRootPointerDownCapture = () => {
+    battleAudio.playBgmFromGesture(sample.sceneKind === 'boss' ? 'boss' : 'master');
     void battleAudio.unlock().then(() => {
-      battleAudio.playBgm(sample.sceneKind === 'boss' ? 'boss' : 'master');
       void battleAudio.preloadSfx(PRELOAD_SFX_IDS);
     });
   };
@@ -386,19 +388,19 @@ export default function BattleScreen({
       abandonTimerRef.current = null;
     }
     const cleanupHidden = battleAudio.suspendOnHidden();
-    // 2026-09-14 P2 修正第1輪 審查3（PLAUSIBLE）：掛載當下就嘗試恢復 BGM／預載音效，不必等玩家在
-    // 新實例點下第一個攻擊/道具鈕——「再戰一場」用 key={nonce} 整個卸載重掛（PhoneShell.tsx／
-    // Preview.tsx），觸發卸載的那次點擊（按在結算面板的「再戰一場」鈕上）發生在*舊*實例身上，
-    // 新實例原本要等下一次 pointerdown 才會播，連打多場時每次都會有一小段靜音。iOS 對「非使用者
-    // 手勢觸發的第一次 play()」仍可能拒絕，上面 handleRootPointerDownCapture 的每次 pointerdown
-    // 重試邏輯原樣保留當備援——unlock/playBgm/preloadSfx 皆冪等，兩者疊加不衝突。
-    void battleAudio.unlock().then(() => {
-      battleAudio.playBgm(sample.sceneKind === 'boss' ? 'boss' : 'master');
-      void battleAudio.preloadSfx(PRELOAD_SFX_IDS);
-    });
+    // 2026-09-14 SCREENS 接線：掛載當下就嘗試恢復/接續 BGM，不必等玩家在新實例點下第一個攻擊/道具
+    // 鈕——「再戰一場」用 key={nonce} 整個卸載重掛（PhoneShell.tsx／Preview.tsx），觸發卸載的那次
+    // 點擊（按在結算面板的「再戰一場」鈕上）發生在*舊*實例身上。這裡改呼叫非手勢版的 playBgm()（不
+    // 再包 unlock().then()）：對已經在播的同一首（EncounterPicker 的 pointerdown 或前一場已經解鎖並
+    // 播放過）是 no-op，銜接無縫；對尚未解鎖的情境（例如深連結直接開戰鬥）會嘗試同步 play()，若被
+    // iOS 拒絕就交給上面 handleRootPointerDownCapture 的手勢入口重試。preloadSfx 不需要手勢，可直接呼叫。
+    battleAudio.playBgm(sample.sceneKind === 'boss' ? 'boss' : 'master');
+    void battleAudio.preloadSfx(PRELOAD_SFX_IDS);
     return () => {
       cleanupHidden();
-      battleAudio.stopBgm();
+      // 2026-09-14 SCREENS：不在這裡 stopBgm()——連續多場戰鬥（「再戰一場」的卸載重掛）不該斷音樂。
+      // 停止 BGM 改由 PhoneShell／Preview 這層在「離開整個戰鬥流程」（battleView 變回 null／
+      // view 離開 battle+picker）時呼叫，這裡卸載只清這個實例自己開的特效層與棄戰計時器。
       stageRef.current?.cancelAll();
       // 審查6（觀察→已修）：目前唯一已知會在 phase!=='ended' 時卸載 BattleScreen 的路徑是外層
       // 狀態被迫切走（例如 single-session-auth 踢除舊裝置、token 失效導致 PhoneShell 整層改渲染
@@ -427,12 +429,14 @@ export default function BattleScreen({
         }, 0);
       }
     };
-    // 只在掛載/卸載各跑一次：suspendOnHidden／stopBgm／cancelAll 都是單例/imperative API，不依賴 render
+    // 只在掛載/卸載各跑一次：suspendOnHidden／playBgm／cancelAll 都是單例/imperative API，不依賴 render
     // 值；phase/onReport 一律經 ref 讀取（見上面兩顆 ref 的說明），故意不列進 deps。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const handleBack = useCallback(() => {
-    battleAudio.stopBgm();
+    // 2026-09-14 SCREENS：不在這裡 stopBgm()——「關閉結算面板」通常還留在戰鬥流程內（PhoneShell
+    // 回角色頁前的 onExit、Preview 回選單的 onNext 都算，音樂應該連續），交給 PhoneShell／Preview
+    // 依「離開整個戰鬥流程」與否決定要不要停。
     stageRef.current?.cancelAll();
     onBack();
   }, [onBack]);
@@ -674,6 +678,8 @@ export default function BattleScreen({
       data-skin="default"
       data-reduce-motion={settings.reduceMotion ? 'true' : undefined}
       onPointerDownCapture={handleRootPointerDownCapture}
+      onPointerUpCapture={handleRootPointerDownCapture}
+      onClickCapture={handleRootPointerDownCapture}
     >
       {measured && (
         <div className={scrollable ? `${styles.column} ${styles.scrollable}` : styles.column} style={{ width: w }}>

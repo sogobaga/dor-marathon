@@ -1,7 +1,7 @@
 // 版號：v<VERSION_BASE>.<VERSION_SERIAL>.<commit8>。進大版號改 VERSION_BASE；每次推送遞增 VERSION_SERIAL
 //（= git commit 累計數 `git rev-list --count HEAD`）。兩者皆需與後端 internal/version 同步。
 const VERSION_BASE = '1.2'
-const VERSION_SERIAL = '823'
+const VERSION_SERIAL = '824'
 const COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || 'dev').slice(0, 8)
 
 /** @type {import('next').NextConfig} */
@@ -53,11 +53,27 @@ const nextConfig = {
     //   plugins/video.php iframe）。
     // 其餘：GSI 走 accounts.google.com、地圖圖磚/商家圖靠 img-src https:、Next.js 水合靠 'unsafe-inline'。
     // ⚠️ 日後若新增外部資源，務必同步加對應 directive，否則 enforce 會直接擋下。
+    // DORPG 戰鬥 BGM 修復第 2 輪（2026-09-14）新增：
+    // - media-src img.dor.tw：<audio src="https://img.dor.tw/dorpg/bgm/...">（lib/dorpg/audio.ts）
+    //   之前一直沒播出來——CSP 沒有獨立的 media-src 指令時，<audio>/<video> 會 fallback 吃
+    //   default-src 'self'，跨網域的 R2 媒體因此被整個擋下（實跑 console：Refused to load media
+    //   ... 'media-src' was not explicitly set）。這是跟 iOS 手勢限制正交的另一個獨立根因，兩個都要
+    //   修才會有聲音。刻意不比照 img-src 放寬成 `https:`：img-src 需要廣域是因為後台合作商家/簡章
+    //   欄位允許管理者自填任意外部圖片網址（見上方 img-src 註解），但 BGM 只會從我們自己的 R2 bucket
+    //   （img.dor.tw）載入，沒有「任意外部音檔網址」這種使用情境，範圍鎖到單一網域可以在不影響功能
+    //   下縮小攻擊面（例如某處 XSS 注入 <audio src="https://evil.example/x.mp3"> 會被這裡擋下）。
+    // 2026-09-14：本機 `npm run dev` 整站無法水合的既有問題——Next dev 的 webpack HMR 用
+    // eval-source-map 載入模組，需要 'unsafe-eval'，但這份 CSP 對所有環境無條件套用同一字串，
+    // dev 下所有 'use client' 元件都掛不上（console：Evaluating a string as JavaScript violates ...
+    // 'unsafe-eval' is not an allowed source of script）。只在非 production 加這一項，正式環境的
+    // script-src 完全不變（不放寬任何正式站的攻擊面）。
+    const devScriptSrc = process.env.NODE_ENV === 'production' ? '' : " 'unsafe-eval'"
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com https://apis.google.com https://www.googletagmanager.com https://static.cloudflareinsights.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw https://code.jquery.com https://cdn.jsdelivr.net",
+      "script-src 'self' 'unsafe-inline'" + devScriptSrc + " https://unpkg.com https://accounts.google.com https://apis.google.com https://www.googletagmanager.com https://static.cloudflareinsights.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw https://code.jquery.com https://cdn.jsdelivr.net",
       "style-src 'self' 'unsafe-inline' https://unpkg.com https://accounts.google.com",
       "img-src 'self' data: blob: https:",
+      "media-src 'self' https://img.dor.tw",
       "font-src 'self' data:",
       "connect-src 'self' wss: ws: https://accounts.google.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://cloudflareinsights.com https://unpkg.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw",
       "frame-src https://www.youtube-nocookie.com https://accounts.google.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw https://www.facebook.com",
