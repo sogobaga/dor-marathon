@@ -3894,6 +3894,11 @@ export interface RewardSerialGroup {
   issued_count: number
   void_count: number
   total_count: number
+  // 共用序號組容量（migration 178＋GroupCapacity，後端尚未上線前可能缺值）：
+  // use_limit_type='repeat'→ remaining_issues=Σ剩餘可發人數；'unlimited'→ unlimited=true（remaining_issues 無意義）；
+  // 'single' 不使用這兩欄，沿用 available_count 既有語意。缺值時前端一律 fallback 回舊版 available_count 顯示。
+  remaining_issues?: number
+  unlimited?: boolean
 }
 
 export interface RewardSerialGroupWriteBody {
@@ -3985,6 +3990,10 @@ export interface RewardSerial {
   issued_to: string | null
   issued_at: string | null
   created_at: string
+  // 共用序號（migration 178）：此列已發給幾位得主／上限（unlimited 組無上限，issue_limit 為 null）。
+  // single 型組別此欄恆為 0／null，畫面沿用舊版狀態顯示。後端尚未上線前可能缺值（undefined）。
+  issue_count?: number
+  issue_limit?: number | null
 }
 
 export interface RewardSerialImportResult {

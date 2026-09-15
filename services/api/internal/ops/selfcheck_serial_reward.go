@@ -37,6 +37,11 @@
 //   - 同一賽事若有多個 group_individual 任務共用同一份 race.RewardConfig，本檢查對每個任務的「近達標
 //     人數」各自獨立跟同一份庫存比較，不加總跨任務同時達標的疊加需求（同一時刻多個任務一起被推爆的
 //     機率遠低於單一任務被推爆，這裡取捨為「每任務獨立示警」而非窮舉組合，保持查詢與訊息單純）。
+//   - migration 178（共用序號可發給多位得主）之後：unlimited 面額永不缺貨，整個排除在容量加總之外；
+//     若一個獎勵項目底下的候選面額「全數」unlimited，代表這個項目本來就不可能出現缺口，不告警——但
+//     若只是「部分」unlimited（同項目下混搭 repeat 與 unlimited 面額），仍以「有明確總量上限」的那些
+//     面額算缺口並告警，理由：不同面額通常代表不同折扣/商品，即使其中一款不限量，另一款限量的用完了
+//     仍是值得營運知道的事實（見 shortageLinesForItems）。
 package ops
 
 import (
@@ -50,6 +55,7 @@ import (
 
 	"github.com/dor/api/internal/activityreward"
 	"github.com/dor/api/internal/race"
+	"github.com/dor/api/internal/rewardserial"
 )
 
 const (
@@ -87,24 +93,32 @@ func meetsShortageThreshold(current, target float64) bool {
 }
 
 // serialGroupStock 單一序號組的庫存快照（供 capacity 估算純函式使用）。
+//
+// ⚠️ migration 178 之後：Capacity 改由 rewardserial.GroupCapacity 提供（單一真相，見該套件文件）——
+// 「共用序號」（use_limit_type=repeat/unlimited）一列可以發給多位得主，「available 張數」已不等於
+// 「還能再發給幾位得主」，本檔不再自己數 status='available' 的列數。
 type serialGroupStock struct {
 	GroupID      string
 	Name         string
 	MerchantName string
-	Available    int
 	GrantCount   int
+	Capacity     rewardserial.GroupCapacity
 }
 
-// remainingCapacity 序號組「大約還能配發給幾人」＝ available／grant_count（grant_count<1 視為 1，防禦
-// 資料異常；理論上 NOT NULL DEFAULT 1，見 migration 126）。整數除法無條件捨去——比照
+// remainingCapacity 序號組「大約還能配發給幾人」＝ Capacity.Remaining／grant_count（grant_count<1 視為
+// 1，防禦資料異常；理論上 NOT NULL DEFAULT 1，見 migration 126）。整數除法無條件捨去——比照
 // activityreward.claimSerialsFromGroup「庫存中途不足即跳過」的保守精神，寧可低估可服務人數（多告警）
-// 也不要高估（漏告警）。
+// 也不要高估（漏告警）。unlimited 序號組回 0：本函式不對外代表「無限」，呼叫端（shortageLinesForItems）
+// 必須先用 Capacity.Unlimited 判斷、把 unlimited 面額整個排除在加總之外，不能靠這裡的回傳值判斷。
 func (s serialGroupStock) remainingCapacity() int {
+	if s.Capacity.Unlimited {
+		return 0
+	}
 	gc := s.GrantCount
 	if gc < 1 {
 		gc = 1
 	}
-	return s.Available / gc
+	return s.Capacity.Remaining / gc
 }
 
 // totalCapacity 一個 serial 獎勵項目底下所有候選面額（denominations）合計可服務人數——依
@@ -516,6 +530,9 @@ func (h *Handler) shortageLinesForItems(ctx context.Context, label string, popul
 
 	var lines []string
 	for _, it := range items {
+		// groups 只收「有明確總量上限」的面額（single/repeat）；unlimited 面額本來就發不完，不進總容量
+		// 加總——見下方迴圈與 remainingCapacity 文件。若一個項目的候選面額全數 unlimited（或全數查無
+		// 資料），groups 會是空的，此時「不告警」才是正確答案（不能把空清單的加總 0 誤判成缺口）。
 		var groups []serialGroupStock
 		var parts []string
 		for _, d := range it.ValidDenominations() {
@@ -523,12 +540,17 @@ func (h *Handler) shortageLinesForItems(ctx context.Context, label string, popul
 			if !ok {
 				continue // 面額指向的序號組查無資料（如已被刪除）：跳過此面額，不誤報也不硬湊資料
 			}
-			groups = append(groups, g)
 			groupLabel := g.Name
 			if g.MerchantName != "" {
 				groupLabel = g.MerchantName + "/" + g.Name
 			}
-			parts = append(parts, fmt.Sprintf("%s(剩%d，每中1次發%d枚)", groupLabel, g.Available, max(g.GrantCount, 1)))
+			if g.Capacity.Unlimited {
+				// 共用序號且不限得主人數（migration 178）：永遠發得出來，明細照列供對照，但不計入容量加總。
+				parts = append(parts, fmt.Sprintf("%s(不限)", groupLabel))
+				continue
+			}
+			groups = append(groups, g)
+			parts = append(parts, fmt.Sprintf("%s(可再發%d份)", groupLabel, g.remainingCapacity()))
 		}
 		if len(groups) == 0 {
 			continue
@@ -544,27 +566,40 @@ func (h *Handler) shortageLinesForItems(ctx context.Context, label string, popul
 	return lines, nil
 }
 
-// serialGroupStocks 批次查一批序號組的庫存快照（名稱/商家/每次配發枚數/目前可發數）。
+// serialGroupStocks 批次查一批序號組的庫存快照（名稱/商家/每次配發枚數/容量）。容量（可再發份數／是否
+// unlimited）改交給 rewardserial.GroupCapacities 算（單一真相，避免這裡跟 activityreward 各自維護一套
+// 「available 是什麼意思」而長期跑偏——2026-09-15 根因正是舊語意「一列序號＝一位得主」從未支援共用碼）。
 func (h *Handler) serialGroupStocks(ctx context.Context, groupIDs []string) (map[string]serialGroupStock, error) {
 	rows, err := h.db.Query(ctx, `
-		SELECT g.id::text, COALESCE(g.name,''), COALESCE(m.name,''), g.grant_count,
-		       COUNT(s.id) FILTER (WHERE s.status='available')
+		SELECT g.id::text, COALESCE(g.name,''), COALESCE(m.name,''), g.grant_count
 		FROM reward_serial_groups g
 		LEFT JOIN reward_merchants m ON m.id = g.merchant_id
-		LEFT JOIN reward_serials s ON s.group_id = g.id
-		WHERE g.id = ANY($1::uuid[])
-		GROUP BY g.id, g.name, m.name, g.grant_count`, groupIDs)
+		WHERE g.id = ANY($1::uuid[])`, groupIDs)
 	if err != nil {
 		return nil, fmt.Errorf("load serial group stocks: %w", err)
 	}
-	defer rows.Close()
 	out := map[string]serialGroupStock{}
 	for rows.Next() {
 		var s serialGroupStock
-		if err := rows.Scan(&s.GroupID, &s.Name, &s.MerchantName, &s.GrantCount, &s.Available); err != nil {
+		if err := rows.Scan(&s.GroupID, &s.Name, &s.MerchantName, &s.GrantCount); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out[s.GroupID] = s
 	}
-	return out, rows.Err()
+	scanErr := rows.Err()
+	rows.Close()
+	if scanErr != nil {
+		return nil, scanErr
+	}
+
+	caps, err := rewardserial.GroupCapacities(ctx, h.db, groupIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load serial group capacities: %w", err)
+	}
+	for id, s := range out {
+		s.Capacity = caps[id]
+		out[id] = s
+	}
+	return out, nil
 }

@@ -205,9 +205,16 @@ func (s *Service) validateBundleItems(ctx context.Context, in *GroupInput, selfI
 	return validateBundleChildMeta(in.BundleItems, metas)
 }
 
-// validateBundleChildMeta 純函式：依序檢查每個子項是否符合「子面額組存在＋非組合型（防巢狀）＋與其餘
-// 子項同一商家」，第一個違規即回傳描述性錯誤；全部合法回 nil。metas 是預先查好的 child id → 中繼資料
-// （見 loadGroupMetaByIDs），本函式本身不碰 DB，方便單元測試涵蓋巢狀／跨商家等邊界情況。
+// validateBundleChildMeta 純函式：依序檢查每個子項是否符合「子面額組存在＋非組合型（防巢狀）＋
+// use_limit_type 須為 single（migration 178）＋與其餘子項同一商家」，第一個違規即回傳描述性錯誤；全部
+// 合法回 nil。metas 是預先查好的 child id → 中繼資料（見 loadGroupMetaByIDs），本函式本身不碰 DB，方便
+// 單元測試涵蓋巢狀／跨商家等邊界情況。
+//
+// 為什麼組合包子面額組不支援共用碼（repeat/unlimited）：grantSerialBundle 的 all-or-nothing 鎖定
+// （lockAvailableSerialIDs）是「鎖 N 列 available 序號」，這對「一列可以發給多人」的共用碼語意完全不成
+// 立——鎖到的是列數而非人數額度。與其讓組合包的鎖定/發放邏輯另外支援一套「鎖額度而非鎖列」的路徑
+// （會讓 all-or-nothing 交易邊界複雜到難以驗證，且組合包子面額組本來就是「單張序號兌換單一票券」的
+// 情境，沒有共用碼的實際需求），選擇在建立/更新組合包時直接擋下，逼子面額組維持 single。
 func validateBundleChildMeta(items []GroupBundleItem, metas map[string]childGroupMeta) error {
 	var commonMerchant *string
 	first := true
@@ -218,6 +225,9 @@ func validateBundleChildMeta(items []GroupBundleItem, metas map[string]childGrou
 		}
 		if m.IsBundle {
 			return fmt.Errorf("%w: 組合子項 %d 的子面額組本身也是組合型，不可巢狀", ErrInvalidInput, i)
+		}
+		if m.UseLimitType != "single" {
+			return fmt.Errorf("%w: 組合子項 %d 的子面額組須為「單次」使用次數限制，不可設為共用序號", ErrInvalidInput, i)
 		}
 		if first {
 			commonMerchant = m.MerchantID
@@ -308,11 +318,14 @@ func dedupeValidUUIDs(raw []string) (valid []string, invalidCount int) {
 	return valid, invalidCount
 }
 
-// buildDeleteReasons 把 DeleteSerials 的跳過原因彙總成人類可讀字串（供前端顯示批次結果）。
+// buildDeleteReasons 把 DeleteSerials 的跳過原因彙總成人類可讀字串（供前端顯示批次結果）。skippedIssued
+// 這個參數名稱維持既有語意不變（呼叫端 Skipped 計數口徑照舊），但涵蓋範圍已擴大：除了 status='issued'
+// 外，也包含共用碼組別 issue_count>0 但 status 仍是 available 的序號（見 Repository.DeleteSerials 的
+// CONFIRMED-2 修正），文案一併改成涵蓋兩種情況，避免管理員誤以為「還顯示未發送」卻刪不掉是系統錯誤。
 func buildDeleteReasons(skippedIssued, skippedNotFound int) []string {
 	reasons := []string{}
 	if skippedIssued > 0 {
-		reasons = append(reasons, fmt.Sprintf("已發送的序號不可刪除（%d 筆）", skippedIssued))
+		reasons = append(reasons, fmt.Sprintf("已發送或已被共用碼發放引用的序號不可刪除（%d 筆）", skippedIssued))
 	}
 	if skippedNotFound > 0 {
 		reasons = append(reasons, fmt.Sprintf("序號不存在（%d 筆）", skippedNotFound))
@@ -328,9 +341,10 @@ func buildNotFoundReasons(skippedNotFound int) []string {
 	return []string{}
 }
 
-// DeleteSerials 批次真刪除序號（單筆亦透過此方法，ids 傳 1 個即可）。安全邊界：只允許刪除
-// status IN ('available','void') 的序號；issued（已發送，user_rewards.serial_id 可能已外鍵引用）一律拒絕，
-// 回應列出被拒數量與原因，避免管理員誤刪已發放給玩家的序號造成資料不一致（見 Repository.DeleteSerials）。
+// DeleteSerials 批次真刪除序號（單筆亦透過此方法，ids 傳 1 個即可）。安全邊界：只允許刪除從未被引用過的
+// 序號；issued（已發送），或共用碼組別（migration 178）issue_count>0（即使 status 仍是 available、代表
+// 已經發給過至少一位得主，user_rewards.serial_id 已外鍵引用）一律拒絕，回應列出被拒數量與原因，避免
+// 管理員誤刪已發放給玩家的序號造成資料不一致、或撞上外鍵 RESTRICT 讓整批刪除失敗（見 Repository.DeleteSerials）。
 func (s *Service) DeleteSerials(ctx context.Context, groupID string, rawIDs []string) (*SerialDeleteResult, error) {
 	if len(rawIDs) == 0 {
 		return nil, fmt.Errorf("%w: 沒有指定要刪除的序號", ErrInvalidInput)

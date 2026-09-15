@@ -14,7 +14,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/dor/api/internal/notify"
+	"github.com/dor/api/internal/rewardserial"
 	"github.com/dor/api/internal/vip"
 	"github.com/dor/api/internal/wallet"
 )
@@ -354,10 +357,13 @@ func grantSerialTwoLayer(ctx context.Context, db Execer, userID, sourceType, sou
 	return nil, nil, nil
 }
 
-// groupAvailableCount 回傳 groupID 這個序號組目前可發放的「份數」：一般序號組＝status='available' 的
-// 序號張數；組合型序號組（is_bundle=true，migration 150）＝能湊滿幾包（min(floor(子面額組可用張數/該
-// 子項所需數量))，見 bundlePackAvailable）。序號組不存在（如剛好被刪除）→ 回 0，不算 error（沿用既有
-// 「序號組不存在→跳過」慣例）。
+// groupAvailableCount 回傳 groupID 這個序號組目前可發放的「份數」：一般序號組＝依 use_limit_type
+// 換算的剩餘容量（migration 178，見 rewardserial.GroupCapacityOf——single/repeat 用 Remaining；unlimited
+// 只要仍有至少 1 列非 void 序號就回傳一個非零哨兵值 1，因為本函式唯一呼叫端 grantSerialTwoLayer 只用
+// avail>0 判斷是否列入加權池，不把這個數字當實際份數使用，見該函式文件註解，unlimited 沒有「實際份數」
+// 可言）；組合型序號組（is_bundle=true，migration 150）＝能湊滿幾包（min(floor(子面額組可用張數/該子項
+// 所需數量))，見 bundlePackAvailable）。序號組不存在（如剛好被刪除）→ 回 0，不算 error（沿用既有
+// 「序號組不存在→跳過」慣例，GroupCapacityOf 對查無的 id 本就回零值）。
 func groupAvailableCount(ctx context.Context, db Execer, groupID string) (int, error) {
 	var isBundle bool
 	err := db.QueryRow(ctx, `SELECT is_bundle FROM reward_serial_groups WHERE id=$1`, groupID).Scan(&isBundle)
@@ -367,16 +373,17 @@ func groupAvailableCount(ctx context.Context, db Execer, groupID string) (int, e
 	if err != nil {
 		return 0, fmt.Errorf("check group is_bundle %s: %w", groupID, err)
 	}
-	if !isBundle {
-		var avail int
-		if err := db.QueryRow(ctx,
-			`SELECT COUNT(*) FILTER (WHERE status='available') FROM reward_serials WHERE group_id=$1`, groupID,
-		).Scan(&avail); err != nil {
-			return 0, fmt.Errorf("check denom stock %s: %w", groupID, err)
-		}
-		return avail, nil
+	if isBundle {
+		return bundlePackAvailable(ctx, db, groupID)
 	}
-	return bundlePackAvailable(ctx, db, groupID)
+	capacity, err := rewardserial.GroupCapacityOf(ctx, db, groupID)
+	if err != nil {
+		return 0, fmt.Errorf("check denom stock %s: %w", groupID, err)
+	}
+	if capacity.Unlimited {
+		return 1, nil
+	}
+	return capacity.Remaining, nil
 }
 
 // bundlePackAvailable 查 groupID（組合型序號組）目前每個子項的「所需數量」與「該子面額組可用張數」，
@@ -458,18 +465,23 @@ func claimSerialsFromGroup(ctx context.Context, db Execer, userID, sourceType, s
 		return nil, nil, nil
 	}
 
-	// 一次查齊 is_bundle（分派用）、grant_count（配發枚數）與顯示欄位（含 join 商家名稱），避免多次查詢。
-	// grant_count 欄位理論上 NOT NULL DEFAULT 1（見 migration 126），<1 視為髒資料保底當 1，
-	// 避免因異常資料完全不發獎。序號組不存在（如已被刪除）→ 視為跳過，不算錯誤。
+	// 一次查齊 is_bundle（分派用）、grant_count（配發枚數）、use_limit_type/use_limit_count（migration
+	// 178：共用碼配發分支用）與顯示欄位（含 join 商家名稱），避免多次查詢。grant_count 欄位理論上
+	// NOT NULL DEFAULT 1（見 migration 126），<1 視為髒資料保底當 1，避免因異常資料完全不發獎。序號組
+	// 不存在（如已被刪除）→ 視為跳過，不算錯誤。
 	var isBundle bool
 	var grantCount int
+	var useLimitType string
+	var useLimitCount *int
 	var itemLabel, merchantName, usageNote, iconURL, description string
 	var validFrom, validUntil *time.Time
 	err := db.QueryRow(ctx, `
-		SELECT g.is_bundle, g.grant_count, COALESCE(g.item_label,''), COALESCE(m.name,''), COALESCE(g.usage_note,''),
+		SELECT g.is_bundle, g.grant_count, g.use_limit_type, g.use_limit_count,
+		       COALESCE(g.item_label,''), COALESCE(m.name,''), COALESCE(g.usage_note,''),
 		       COALESCE(g.icon_url,''), COALESCE(g.description,''), g.valid_from, g.valid_until
 		FROM reward_serial_groups g LEFT JOIN reward_merchants m ON m.id = g.merchant_id
-		WHERE g.id = $1`, groupID).Scan(&isBundle, &grantCount, &itemLabel, &merchantName, &usageNote, &iconURL, &description, &validFrom, &validUntil)
+		WHERE g.id = $1`, groupID).Scan(&isBundle, &grantCount, &useLimitType, &useLimitCount,
+		&itemLabel, &merchantName, &usageNote, &iconURL, &description, &validFrom, &validUntil)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, nil // 序號組不存在：跳過，不視為錯誤
 	}
@@ -486,6 +498,80 @@ func claimSerialsFromGroup(ctx context.Context, db Execer, userID, sourceType, s
 		grantCount = 1
 	}
 
+	// 共用碼組別（migration 178：use_limit_type=repeat/unlimited，同一列可以發給多位不同得主）：同一位
+	// 得主不重複拿同一組共用碼——這組碼可能同時掛在多個觸發點（如「參賽即發」與「任務完成獎勵」，正是
+	// 2026-09-15 使用者實案的根因情境），若不去重，同一人會在不同觸發點各被算成一個名額、或共用碼發第二
+	// 次也毫無意義。single 型不去重，維持既有行為（一列一位得主，本來就不會重複發同一張序號）。
+	//
+	// grant_count 對共用碼組別一律視為 1（2026-09-15 第二輪對抗審查 CONFIRMED-A）：去重只在進迴圈前查
+	// 一次，若管理員把共用碼組別的「每次中獎配發序號數」設成 >1，下方迴圈會在同一次呼叫內對同一位使用者
+	// 連續搶 N 次——同一列 issue_count 一口氣 +N、或搶到 N 列——一次事件就吃掉本該給 N 位不同得主的名額、
+	// 該玩家自己也入帳 N 筆，而且是確定性觸發、不需要任何併發。共用碼的語意本來就是「一組碼給一個人一次」，
+	// 所以在帳本端直接封頂，不依賴後台設定值正確（寧可少發不可多發）。single 型維持 grant_count 語意不變。
+	sharedIssue := useLimitType != "single"
+	if sharedIssue && grantCount != 1 {
+		log.Warn().Str("group_id", groupID).Int("grant_count", grantCount).
+			Msg("shared serial group grant_count>1 ignored, capped to 1 per user")
+		grantCount = 1
+	}
+
+	// fail-closed（2026-09-15 對抗審查 PLAUSIBLE-3）：repeat 型理論上 CRUD 已擋必填正整數，但若手動改壞
+	// DB（use_limit_count 缺漏或 <=0），這裡必須跟 rewardserial.computeGroupCapacity 的 repeat 分支算出
+	// 一致的答案——該函式對同樣的髒資料算 Total=n*0=0、Remaining=0（已經判定「沒有名額」），若這裡卻把
+	// limitArg 當成 0＝「無上限」（fail-open）發放，會出現「容量端說沒有、實際卻無限發」的矛盾，且是往
+	// 「多發」的方向錯，違反本系統「發獎邏輯寧可少發不可多發」的鐵律。改成不發、不算錯誤，只記警告——這
+	// 是資料本身有問題，不該讓玩家去承擔或讓程式硬猜一個行為。
+	if useLimitType == "repeat" && (useLimitCount == nil || *useLimitCount <= 0) {
+		log.Warn().Str("group_id", groupID).Msg(
+			"shared serial group is repeat but use_limit_count is missing/invalid, fail-closed (no grant)")
+		return nil, nil, nil
+	}
+
+	if sharedIssue {
+		// 併發情境（2026-09-15 對抗審查 CONFIRMED-1）：「參賽即發」(entry_reward_schedule.go
+		// GrantEntryRewardCAS) 與「任務完成獎勵」(personal_progress.go MarkAttemptCompletedAndGrant／
+		// progress.go MarkRaceTaskCompletedAndGrant) 各自開獨立交易；READ COMMITTED 隔離層級下，同一人
+		// 幾乎同時觸發兩個觸發點，會各自在自己的交易內對下面 alreadySharedSerialGrant 查到「尚未拿過」
+		// （彼此都看不到對方尚未 commit 的異動），導致同一人被發兩份共用碼——這正是 2026-09-15 使用者
+		// 實案的根因。用 pg_advisory_xact_lock 讓「同一人＋同一組」的兩筆交易在這裡序列化：後到的交易會
+		// 卡住直到先到的交易 Commit／Rollback 釋放鎖，此時鎖後重新執行的 EXISTS 是全新語句，READ
+		// COMMITTED 下能看到對方已提交的 user_rewards 列。
+		//
+		// 鎖 key 刻意不用「user_id+group_id 唯一索引」這種資料庫約束層級的防線來擋（審查特別提醒）：
+		// single 型 grant_count>1、以及個人挑戰模式同一人重複中獎，都會合法產生「同一人、同一組」的多筆
+		// user_rewards 列，唯一索引會誤擋這些合法情境；advisory lock 只序列化「檢查+搶碼」這段臨界區的
+		// 執行順序，不對資料表結構加任何約束，不會有這個副作用。
+		//
+		// ⚠️ 這把鎖只在呼叫端全程用同一個交易（pgx.Tx）貫穿本次配發時才有效（鎖隨交易 Commit/Rollback
+		// 才釋放）；若某條呼叫鏈把 Execer 換成非交易連線（如直接傳 *pgxpool.Pool），鎖會在這行陳述式執行
+		// 完當下就釋放，起不到序列化保護。已盤點目前三條呼叫鏈，全部確認是交易（見本次回報）。
+		//
+		// 鎖 key 只用 userID、不含 groupID（2026-09-15 第二輪對抗審查 PLAUSIBLE-B）：一次 RollAndGrant 可能
+		// 因 reward_config 有多個序號項目、或加權抽獎撞空重抽，在同一交易內依序鎖住多個不同 group；而同一人
+		// 的兩個觸發點（各自獨立 CAS、各自交易）items 順序可能相反，用 (user, group) 當 key 理論上會形成循環
+		// 等待（Postgres 會偵測到並讓其中一筆 deadlock 回滾，不會多發但會白白失敗一次）。改成每位使用者一把鎖
+		// 之後，同一交易內對任何共用碼組都是重複取同一把鎖（advisory xact lock 在同一交易內可重入），只剩
+		// 一個 key 就不存在鎖序問題；代價是同一人的兩筆配發交易會整段序列化——本來就是想要的效果。
+		lockKey := "reward_serial_shared_user:" + userID
+		if _, err := db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
+			return nil, nil, fmt.Errorf("advisory lock shared serial dedupe %s: %w", groupID, err)
+		}
+
+		alreadyGot, err := alreadySharedSerialGrant(ctx, db, userID, groupID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("check shared serial dedupe %s: %w", groupID, err)
+		}
+		if alreadyGot {
+			log.Info().Str("user_id", userID).Str("group_id", groupID).
+				Msg("shared serial group already granted to this user, skip (no error)")
+			return nil, nil, nil
+		}
+	}
+	limitArg := 0 // unlimited：0 代表「無上限」；repeat 到這裡 useLimitCount 已確定非 nil 且 >0（見上方 fail-closed 檢查）
+	if useLimitType == "repeat" {
+		limitArg = *useLimitCount
+	}
+
 	var raceIDArg, regIDArg any
 	if sourceRaceID != "" {
 		raceIDArg = sourceRaceID
@@ -499,14 +585,31 @@ func claimSerialsFromGroup(ctx context.Context, db Execer, userID, sourceType, s
 	var granted []GrantedReward
 	for i := 0; i < grantCount; i++ {
 		var serialID, code, link string
-		err := db.QueryRow(ctx, `
-			UPDATE reward_serials SET status='issued', issued_to=$1, issued_at=NOW()
-			WHERE id = (
-				SELECT id FROM reward_serials
-				WHERE group_id=$2 AND status='available'
-				ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED
-			)
-			RETURNING id, code, COALESCE(link,'')`, userID, groupID).Scan(&serialID, &code, &link)
+		var err error
+		if sharedIssue {
+			// 共用碼（migration 178）：同一列可發給 limitArg 位得主（limitArg<=0＝unlimited，無上限）。
+			// 挑「issue_count 最小、其次最舊」的一列——優先把名額集中發完同一列再輪到下一列，貼近直覺的
+			// 「這組碼先發完再換下一組碼」。issue_count 遞增後若已達上限才把 status 標成 issued（耗盡）；
+			// 未達上限則維持/改回 available，讓下一次配發還能查到它（見 migration 178 檔頭語意）。
+			err = db.QueryRow(ctx, `
+				UPDATE reward_serials SET issue_count = issue_count + 1, issued_to=$1, issued_at=NOW(),
+				       status = CASE WHEN $3 > 0 AND issue_count + 1 >= $3 THEN 'issued' ELSE 'available' END
+				WHERE id = (
+					SELECT id FROM reward_serials
+					WHERE group_id=$2 AND status <> 'void' AND ($3 <= 0 OR issue_count < $3)
+					ORDER BY issue_count, created_at LIMIT 1 FOR UPDATE SKIP LOCKED
+				)
+				RETURNING id, code, COALESCE(link,'')`, userID, groupID, limitArg).Scan(&serialID, &code, &link)
+		} else {
+			err = db.QueryRow(ctx, `
+				UPDATE reward_serials SET status='issued', issued_to=$1, issued_at=NOW()
+				WHERE id = (
+					SELECT id FROM reward_serials
+					WHERE group_id=$2 AND status='available'
+					ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED
+				)
+				RETURNING id, code, COALESCE(link,'')`, userID, groupID).Scan(&serialID, &code, &link)
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			break // 庫存中途不足：跳過剩餘配額，不視為錯誤；已成功發出的照留
 		}
@@ -532,6 +635,21 @@ func claimSerialsFromGroup(ctx context.Context, db Execer, userID, sourceType, s
 		return granted, []string{groupID}, nil
 	}
 	return granted, nil, nil
+}
+
+// alreadySharedSerialGrant 「同一得主不重複拿同一組共用碼」查詢（migration 178，見 claimSerialsFromGroup
+// 文件註解）：檢查 userID 是否已經因任何來源（參賽即發／任務完成獎勵…）拿過 groupID 這組序號。只有
+// use_limit_type 為 repeat/unlimited 的共用碼組別需要這個檢查——single 型每張序號本來就只能發一次，不會
+// 有同一人重複拿到同一組序號的問題，呼叫端（claimSerialsFromGroup）只在 sharedIssue 分支呼叫本函式。
+func alreadySharedSerialGrant(ctx context.Context, db Execer, userID, groupID string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM user_rewards WHERE user_id=$1 AND group_id=$2 AND serial_id IS NOT NULL)`,
+		userID, groupID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check shared serial dedupe: %w", err)
+	}
+	return exists, nil
 }
 
 // grantSerialBundle serial 類【組合型序號組，migration 150】：groupID 指定的序號組 is_bundle=true 時的
