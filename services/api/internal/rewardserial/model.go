@@ -46,19 +46,11 @@ type Group struct {
 	Description     string            `json:"description"` // 獎勵詳情：活動/獎勵說明
 	CreatedAt       time.Time         `json:"created_at"`
 	// AvailableCount 統計：一般序號組＝未發送序號張數；組合型＝目前能湊滿幾包（min(floor(子面額組可用
-	// 張數/該子項所需數量))，見 Repository.hydrateGroups）。migration 178 起，repeat/unlimited 型的
-	// 「可用列數」不再等於「剩餘可發人數」（一列可能已發給多人但仍是 available）——這兩種型別要看
-	// RemainingIssues／Unlimited 才是正確的剩餘容量，AvailableCount 對它們僅供參考（列數本身）。
+	// 張數/該子項所需數量))，見 Repository.hydrateGroups）。
 	AvailableCount int `json:"available_count"`
 	IssuedCount    int `json:"issued_count"` // 統計：已發送（組合型：本身無自有序號，恆為 0）
 	VoidCount      int `json:"void_count"`   // 統計：已註銷（組合型：恆為 0）
 	TotalCount     int `json:"total_count"`  // 統計：總數（組合型：恆為 0）
-	// RemainingIssues／Unlimited migration 178：容量「單一真相」（見 rewardserial.GroupCapacities）——
-	// single＝還能再發的列數；repeat＝Σ每列剩餘可發人數；unlimited＝Unlimited=true 時 RemainingIssues
-	// 無意義固定 0。組合型序號組（IsBundle=true）沒有自己的容量，改沿用 AvailableCount（能湊滿幾包）
-	// 當 RemainingIssues、Unlimited 恆 false（見 Repository.hydrateGroups）。
-	RemainingIssues int  `json:"remaining_issues"`
-	Unlimited       bool `json:"unlimited"`
 }
 
 // GroupBundleItem 組合型序號組（is_bundle=true，migration 150）的一個子項：子面額組 × 數量。子面額組
@@ -102,13 +94,6 @@ type Serial struct {
 	IssuedTo  *string    `json:"issued_to"`
 	IssuedAt  *time.Time `json:"issued_at"`
 	CreatedAt time.Time  `json:"created_at"`
-	// IssueCount migration 178：這一列已經發給幾位不同得主（single 型恆讀不到遞增、正常情況下最多 1；
-	// repeat/unlimited 型會累加，見 activityreward.claimSerialsFromGroup）。
-	IssueCount int `json:"issue_count"`
-	// IssueLimit 這一列的發放人數上限：所屬序號組 use_limit_type='repeat' 時＝該組 use_limit_count；
-	// single／unlimited 皆為 nil（single 概念上恆為 1，前端已由 Status 判斷；unlimited 無上限），供前端
-	// 顯示「已發 x／N」用，見 Repository.scanSerial。
-	IssueLimit *int `json:"issue_limit,omitempty"`
 }
 
 // ImportInput 一筆待匯入序號
@@ -135,10 +120,9 @@ type SerialIDsInput struct {
 	IDs []string `json:"ids"`
 }
 
-// SerialDeleteResult 批次刪除序號的結果。安全邊界：只允許刪除 status='available' 且 issue_count=0（從未
-// 被任何 user_rewards 引用過）或 status='void' 的序號；status='issued'，或共用碼組別（migration 178）
-// issue_count>0（即使 status 仍是 available，代表已經有得主引用這張序號、外鍵 RESTRICT 會擋刪除）一律
-// 拒絕，Reasons 列出被拒數量與原因，供前端顯示「已選 N 筆：成功 n／跳過 n（原因）」。
+// SerialDeleteResult 批次刪除序號的結果。安全邊界：只允許刪除 status IN ('available','void') 的序號；
+// issued（已發送，user_rewards.serial_id 可能已外鍵引用）一律拒絕，Reasons 列出被拒數量與原因，供前端
+// 顯示「已選 N 筆：成功 n／跳過 n（原因）」。
 type SerialDeleteResult struct {
 	Deleted int      `json:"deleted"`
 	Skipped int      `json:"skipped"`

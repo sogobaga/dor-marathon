@@ -8,10 +8,8 @@ import (
 )
 
 // TestValidateBundleChildMeta 純函式：組合型序號組（is_bundle=true，migration 150）的子項規則——子面額組
-// 須存在、非組合型（防巢狀）、use_limit_type 須為 single（migration 178：共用碼組別不支援組合包鎖定
-// 語意，見 validateBundleChildMeta 文件註解）、與其餘子項同一商家。涵蓋合法組合、巢狀（子項本身也是組合
-// 型）、非 single 使用次數限制、跨商家、子項不存在（metas 缺該 id）、merchant_id 皆為 nil（未指定商家，
-// 視為相同）等邊界。
+// 須存在、非組合型（防巢狀）、與其餘子項同一商家。涵蓋合法組合、巢狀（子項本身也是組合型）、跨商家、
+// 子項不存在（metas 缺該 id）、merchant_id 皆為 nil（未指定商家，視為相同）等邊界。
 func TestValidateBundleChildMeta(t *testing.T) {
 	merchantA := "merchant-a"
 	merchantB := "merchant-b"
@@ -26,8 +24,8 @@ func TestValidateBundleChildMeta(t *testing.T) {
 			name:  "合法：兩個子項同商家",
 			items: []GroupBundleItem{{ChildGroupID: "g1", Count: 3}, {ChildGroupID: "g2", Count: 1}},
 			metas: map[string]childGroupMeta{
-				"g1": {IsBundle: false, MerchantID: &merchantA, UseLimitType: "single"},
-				"g2": {IsBundle: false, MerchantID: &merchantA, UseLimitType: "single"},
+				"g1": {IsBundle: false, MerchantID: &merchantA},
+				"g2": {IsBundle: false, MerchantID: &merchantA},
 			},
 			wantErr: false,
 		},
@@ -35,7 +33,7 @@ func TestValidateBundleChildMeta(t *testing.T) {
 			name:  "合法：單一子項",
 			items: []GroupBundleItem{{ChildGroupID: "g1", Count: 5}},
 			metas: map[string]childGroupMeta{
-				"g1": {IsBundle: false, MerchantID: &merchantA, UseLimitType: "single"},
+				"g1": {IsBundle: false, MerchantID: &merchantA},
 			},
 			wantErr: false,
 		},
@@ -43,8 +41,8 @@ func TestValidateBundleChildMeta(t *testing.T) {
 			name:  "合法：皆未指定商家（nil 視為相同）",
 			items: []GroupBundleItem{{ChildGroupID: "g1", Count: 1}, {ChildGroupID: "g2", Count: 1}},
 			metas: map[string]childGroupMeta{
-				"g1": {IsBundle: false, MerchantID: nil, UseLimitType: "single"},
-				"g2": {IsBundle: false, MerchantID: nil, UseLimitType: "single"},
+				"g1": {IsBundle: false, MerchantID: nil},
+				"g2": {IsBundle: false, MerchantID: nil},
 			},
 			wantErr: false,
 		},
@@ -52,7 +50,7 @@ func TestValidateBundleChildMeta(t *testing.T) {
 			name:  "防巢狀：子項本身也是組合型 → 錯誤",
 			items: []GroupBundleItem{{ChildGroupID: "g1", Count: 1}},
 			metas: map[string]childGroupMeta{
-				"g1": {IsBundle: true, MerchantID: &merchantA, UseLimitType: "single"},
+				"g1": {IsBundle: true, MerchantID: &merchantA},
 			},
 			wantErr: true,
 		},
@@ -60,24 +58,8 @@ func TestValidateBundleChildMeta(t *testing.T) {
 			name:  "防巢狀：第二個子項才是組合型 → 錯誤",
 			items: []GroupBundleItem{{ChildGroupID: "g1", Count: 1}, {ChildGroupID: "g2", Count: 1}},
 			metas: map[string]childGroupMeta{
-				"g1": {IsBundle: false, MerchantID: &merchantA, UseLimitType: "single"},
-				"g2": {IsBundle: true, MerchantID: &merchantA, UseLimitType: "single"},
-			},
-			wantErr: true,
-		},
-		{
-			name:  "共用碼子項（migration 178）：use_limit_type=repeat → 錯誤",
-			items: []GroupBundleItem{{ChildGroupID: "g1", Count: 1}},
-			metas: map[string]childGroupMeta{
-				"g1": {IsBundle: false, MerchantID: &merchantA, UseLimitType: "repeat"},
-			},
-			wantErr: true,
-		},
-		{
-			name:  "共用碼子項（migration 178）：use_limit_type=unlimited → 錯誤",
-			items: []GroupBundleItem{{ChildGroupID: "g1", Count: 1}},
-			metas: map[string]childGroupMeta{
-				"g1": {IsBundle: false, MerchantID: &merchantA, UseLimitType: "unlimited"},
+				"g1": {IsBundle: false, MerchantID: &merchantA},
+				"g2": {IsBundle: true, MerchantID: &merchantA},
 			},
 			wantErr: true,
 		},
@@ -85,8 +67,8 @@ func TestValidateBundleChildMeta(t *testing.T) {
 			name:  "跨商家：兩個子項商家不同 → 錯誤",
 			items: []GroupBundleItem{{ChildGroupID: "g1", Count: 1}, {ChildGroupID: "g2", Count: 1}},
 			metas: map[string]childGroupMeta{
-				"g1": {IsBundle: false, MerchantID: &merchantA, UseLimitType: "single"},
-				"g2": {IsBundle: false, MerchantID: &merchantB, UseLimitType: "single"},
+				"g1": {IsBundle: false, MerchantID: &merchantA},
+				"g2": {IsBundle: false, MerchantID: &merchantB},
 			},
 			wantErr: true,
 		},
@@ -94,8 +76,8 @@ func TestValidateBundleChildMeta(t *testing.T) {
 			name:  "跨商家：一個有商家一個 nil → 錯誤",
 			items: []GroupBundleItem{{ChildGroupID: "g1", Count: 1}, {ChildGroupID: "g2", Count: 1}},
 			metas: map[string]childGroupMeta{
-				"g1": {IsBundle: false, MerchantID: &merchantA, UseLimitType: "single"},
-				"g2": {IsBundle: false, MerchantID: nil, UseLimitType: "single"},
+				"g1": {IsBundle: false, MerchantID: &merchantA},
+				"g2": {IsBundle: false, MerchantID: nil},
 			},
 			wantErr: true,
 		},
@@ -173,9 +155,8 @@ func TestDedupeValidUUIDs(t *testing.T) {
 	}
 }
 
-// TestBuildDeleteReasons 驗證批次刪除的跳過原因彙總文字：只有被拒（issued，migration 178 後也涵蓋
-// issue_count>0 的共用碼）或查無時才出現對應句子，兩者皆 0 時回傳空陣列（而非 nil，供前端穩定渲染 JSON
-// 陣列）。
+// TestBuildDeleteReasons 驗證批次刪除的跳過原因彙總文字：只有被拒（issued）或查無時才出現對應句子，
+// 兩者皆 0 時回傳空陣列（而非 nil，供前端穩定渲染 JSON 陣列）。
 func TestBuildDeleteReasons(t *testing.T) {
 	cases := []struct {
 		name                         string
@@ -183,9 +164,9 @@ func TestBuildDeleteReasons(t *testing.T) {
 		want                         []string
 	}{
 		{"皆 0 → 空陣列", 0, 0, []string{}},
-		{"只有 issued 被拒", 2, 0, []string{"已發送或已被共用碼發放引用的序號不可刪除（2 筆）"}},
+		{"只有 issued 被拒", 2, 0, []string{"已發送的序號不可刪除（2 筆）"}},
 		{"只有查無", 0, 3, []string{"序號不存在（3 筆）"}},
-		{"兩者皆有", 1, 1, []string{"已發送或已被共用碼發放引用的序號不可刪除（1 筆）", "序號不存在（1 筆）"}},
+		{"兩者皆有", 1, 1, []string{"已發送的序號不可刪除（1 筆）", "序號不存在（1 筆）"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

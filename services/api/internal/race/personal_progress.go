@@ -19,7 +19,6 @@ import (
 
 	"github.com/dor/api/internal/activityreward"
 	"github.com/dor/api/internal/notify"
-	"github.com/dor/api/internal/rewardserial"
 )
 
 // ChallengeProgress 個人挑戰進行中 attempt 的即時進度（依 rule.CompletionType 只填相關欄位）。
@@ -223,30 +222,19 @@ func lowStockShouldNotify(groupID string) bool {
 }
 
 // checkAndNotifyLowStock 對這批「這次呼叫實際發過序號」的序號組（去重），用 db（呼叫端必須傳入
-// *pgxpool.Pool 而非 tx——必須保證只在外層交易 Commit 成功後才呼叫，見上）用 rewardserial.GroupCapacityOf
-// 查目前真實容量，<20% 且未被節流才送 Telegram。
-//
-// ⚠️ migration 178（共用序號可發給多位得主）之後：容量改吃 rewardserial 套件的單一真相，本檔不再自己
-// 用 status='available' 數列數——「一列序號＝一位得主」的舊語意從未支援 use_limit_type=repeat/unlimited
-// 共用碼（2026-09-15 根因），改用 GroupCapacityOf 才能正確反映「同一列還能再發給幾位得主」。unlimited
-// 序號組視為永不缺貨，一律跳過、不進本告警（unlimited 組若被誤判成低庫存，會是比「漏報」更糟的誤導）。
-// 每組各自獨立判斷、各自獨立節流；每一則 Telegram 訊息各自用獨立的 context.WithTimeout（而非整批共用
-// 一個 timeout），避免前面一則卡住/變慢就把後面幾則的可用時間一起吃光。
-//
-// ⚠️ 命名協調（2026-09-15）：rewardserial 套件的「單一序號組容量」查詢函式定名為 GroupCapacityOf，
-// 不是 GroupCapacity——GroupCapacity 這個名字已被容量快照的 struct type 佔用（Go 不允許同一套件內
-// 型別與函式同名），見 rewardserial/capacity.go 文件註解。此處呼叫已配合改名，非行為變更。
+// *pgxpool.Pool 而非 tx——必須保證只在外層交易 Commit 成功後才呼叫，見上）查目前真實庫存，<20% 且未被
+// 節流才送 Telegram。每組各自獨立判斷、各自獨立節流；每一則 Telegram 訊息各自用獨立的
+// context.WithTimeout（而非整批共用一個 timeout），避免前面一則卡住/變慢就把後面幾則的可用時間一起吃光。
 func checkAndNotifyLowStock(db *pgxpool.Pool, raceTitle string, groupIDs []string) {
 	for _, groupID := range groupIDs {
-		capacity, err := rewardserial.GroupCapacityOf(context.Background(), db, groupID)
-		if err != nil {
+		var available, total int
+		if err := db.QueryRow(context.Background(), `
+			SELECT COUNT(*) FILTER (WHERE status='available'), COUNT(*)
+			FROM reward_serials WHERE group_id=$1`, groupID).Scan(&available, &total); err != nil {
 			log.Warn().Err(err).Str("group_id", groupID).Msg("low stock check query failed")
 			continue
 		}
-		if capacity.Unlimited {
-			continue // 共用碼且不限得主人數：永不缺貨，見 migration 178 語意
-		}
-		if capacity.Total <= 0 || capacity.Remaining*5 >= capacity.Total { // remaining/total >= 20%：容量健康，不告警
+		if total <= 0 || available*5 >= total { // available/total >= 20%：庫存健康，不告警
 			continue
 		}
 		if !lowStockShouldNotify(groupID) {
@@ -263,7 +251,7 @@ func checkAndNotifyLowStock(db *pgxpool.Pool, raceTitle string, groupIDs []strin
 		text := fmt.Sprintf(
 			"⚠️ <b>序號庫存低於 20%%</b>\n賽事：%s\n商家：%s\n序號組：%s\n剩餘 / 總數：%d / %d",
 			html.EscapeString(raceTitle), html.EscapeString(merchantName), html.EscapeString(groupName),
-			capacity.Remaining, capacity.Total)
+			available, total)
 		func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()

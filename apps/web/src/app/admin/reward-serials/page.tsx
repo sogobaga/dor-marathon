@@ -13,44 +13,13 @@ import { getToken, clearToken } from '@/lib/adminAuth'
 // （手動貼上或 .csv 匯入、全系統唯一去重、狀態：未發送／已發送／註銷）。設計見 memory activity-reward-system。
 // 即時獎勵 roll(P2)、玩家錢包(P3)、到期提醒(P4) 待後續上線，本頁只管序號庫存。
 
-// 文案語意（2026-09-15 修正）：use_limit_type 真正的意思是「同一列序號可以發給幾位不同得主」
-// （不是「持有人可核銷幾次」）。之前的舊文案「可重複使用」讓使用者誤以為已經照此語意實作，
-// 但後端配發邏輯其實是一列序號＝一位得主、用完即關——這正是「茶事漫漫」65折序號組庫存誤報的根因。
-// 文案改清楚後，同一組共用碼要發給多位得主，才需要真的選「共用序號」。
 const USE_LIMIT_LABEL: Record<RewardUseLimitType, string> = {
-  single: '單次（每張序號只發給一位得主）',
-  repeat: '共用序號（同一組序號可發給 N 位得主）',
-  unlimited: '共用序號（不限得主人數）',
+  single: '單次使用',
+  repeat: '可重複使用',
+  unlimited: '無使用次數限制',
 }
 const STATUS_LABEL: Record<string, string> = { available: '未發送', issued: '已發送', void: '已註銷' }
 const SERIAL_PAGE = 50
-
-// 共用序號組的「剩餘可發份數」文案：unlimited 恆不限；repeat 用後端算好的 remaining_issues，
-// 後端尚未回傳（欄位缺值）時 fallback 顯示 null，呼叫端會退回舊版 available_count 顯示，不誤導成 0。
-function remainingIssuesLabel(g: RewardSerialGroup): string | null {
-  if (g.use_limit_type === 'single') return null
-  if (g.unlimited) return '不限'
-  if (g.remaining_issues == null) return null
-  return `${g.remaining_issues} 份`
-}
-
-// 序號列的共用碼發放狀態：「已發 x／N 位」（unlimited 無上限則只顯示已發人數），取代 single 型的
-// 「未發送／已發送」——共用碼即使還沒發完（status 仍是 available），已經發給過幾位得主也該看得到，
-// 不能等到全部額度用完（status 變 issued）才顯示任何進度。single 型或後端未回傳 issue_count 時回 null，呼叫端 fallback 舊版狀態顯示。
-function serialSharedLabel(s: RewardSerial, g: RewardSerialGroup): string | null {
-  if (g.use_limit_type === 'single' || s.issue_count == null) return null
-  if (g.use_limit_type === 'unlimited') return `已發 ${s.issue_count} 位`
-  const limit = s.issue_limit ?? g.use_limit_count
-  return `已發 ${s.issue_count}／${limit ?? '?'} 位`
-}
-
-// 這張序號目前能不能真的刪除（2026-09-15 對抗審查 CONFIRMED-2）：後端安全網已改成 status==='issued' 或
-// issue_count>0 都拒刪——共用碼組別（use_limit_type=repeat/unlimited）未發滿名額時 status 仍是
-// available，但只要 issue_count>0 就代表已有 user_rewards 列引用（外鍵 RESTRICT），刪除會失敗。前端條件
-// 必須跟後端對齊，否則管理員會看到「未發送」卻點刪除後才發現刪不掉、體驗矛盾。
-function isSerialDeletable(s: RewardSerial): boolean {
-  return s.status !== 'issued' && (s.issue_count ?? 0) === 0
-}
 
 type MerchantForm = { id?: string; name: string; note: string }
 const EMPTY_MERCHANT: MerchantForm = { name: '', note: '' }
@@ -280,7 +249,7 @@ export default function AdminRewardSerialsPage() {
     if (!name) { setErr('請填序號組名稱'); return }
     if (!groupForm.applies_all_races && groupForm.race_ids.length === 0) { setErr('未勾選「全部活動」時需至少指定一場活動'); return }
     if (!groupForm.is_bundle && groupForm.use_limit_type === 'repeat' && !(parseInt(groupForm.use_limit_count || '0', 10) > 0)) {
-      setErr('選擇「共用序號」需填可發給幾位得主（正整數）'); return
+      setErr('選擇「可重複使用」需填使用次數（正整數）'); return
     }
     if (groupForm.valid_from && groupForm.valid_until && new Date(groupForm.valid_from) >= new Date(groupForm.valid_until)) {
       setErr('開始時間需早於使用期限'); return
@@ -410,21 +379,11 @@ export default function AdminRewardSerialsPage() {
 
   async function batchDeleteSerials() {
     if (!token || !selectedGroupId || selectedSerialIds.size === 0) return
-    // 勾選一併排除不可刪除的列（2026-09-15 對抗審查 CONFIRMED-2）：只用當頁已載入的 serials 資料判斷
-    // ——只找得到「當頁」勾選項的可刪除性，跨頁勾選但已翻頁看不到的項目無法在前端預判，直接照送給後端，
-    // 由後端安全網（status==='issued' 或 issue_count>0 拒刪）做最終把關，不會因此誤刪。
     const ids = Array.from(selectedSerialIds)
-    const knownIds = new Set((serials ?? []).map((s) => s.id))
-    const excluded = (serials ?? []).filter((s) => selectedSerialIds.has(s.id) && !isSerialDeletable(s)).length
-    const sendIds = ids.filter((id) => !knownIds.has(id) || isSerialDeletable((serials ?? []).find((s) => s.id === id)!))
-    if (sendIds.length === 0) { setErr('所選序號皆不可刪除（已發送，或已被共用碼發放引用）'); return }
-    const confirmMsg = excluded > 0
-      ? `確定批次刪除？已選取 ${ids.length} 筆中有 ${excluded} 筆不可刪除（已發送或已被共用碼發放引用）將自動排除，實際送出 ${sendIds.length} 筆，無法復原。`
-      : `確定批次刪除已選取的 ${sendIds.length} 筆序號？此操作無法復原。`
-    if (!confirm(confirmMsg)) return
+    if (!confirm(`確定批次刪除已選取的 ${ids.length} 筆序號？已發送的序號不會被刪除，其餘將直接刪除、無法復原。`)) return
     setBatchBusy(true); setErr(''); setMsg(''); setBatchResult(null)
     try {
-      const res = await adminRewardGroupsApi.deleteSerials(token, selectedGroupId, sendIds)
+      const res = await adminRewardGroupsApi.deleteSerials(token, selectedGroupId, ids)
       setBatchResult({ label: '批次刪除', ok: res.deleted, skipped: res.skipped, reasons: res.reasons })
       setSelectedSerialIds(new Set())
       loadSerials(selectedGroupId, serialStatus, serialOffset)
@@ -551,9 +510,7 @@ export default function AdminRewardSerialsPage() {
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 3 }}>
                     {g.is_bundle
                       ? <>可發 {g.available_count} 包</>
-                      : remainingIssuesLabel(g) != null
-                        ? <>剩餘可發 {remainingIssuesLabel(g)} · 序號列 {g.total_count} 筆</>
-                        : <>可用 {g.available_count} · 已發送 {g.issued_count} · 註銷 {g.void_count} ／ 共 {g.total_count}</>}
+                      : <>可用 {g.available_count} · 已發送 {g.issued_count} · 註銷 {g.void_count} ／ 共 {g.total_count}</>}
                   </div>
                 </div>
               ))}
@@ -674,7 +631,7 @@ export default function AdminRewardSerialsPage() {
                   </select>
                 </F>
                 {groupForm.use_limit_type === 'repeat' && (
-                  <F label="可發給幾位得主"><input style={inp} type="number" min={1} value={groupForm.use_limit_count} onChange={(e) => setGroupForm((f) => ({ ...f, use_limit_count: e.target.value }))} /></F>
+                  <F label="可重複次數"><input style={inp} type="number" min={1} value={groupForm.use_limit_count} onChange={(e) => setGroupForm((f) => ({ ...f, use_limit_count: e.target.value }))} /></F>
                 )}
                 <F label="每次中獎配發序號數"><input style={inp} type="number" min={1} value={groupForm.grant_count} onChange={(e) => setGroupForm((f) => ({ ...f, grant_count: e.target.value }))} /></F>
               </div>
@@ -733,9 +690,7 @@ export default function AdminRewardSerialsPage() {
         <div style={{ ...card, marginTop: 16 }}>
           <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px' }}>序號清單 · {selectedGroup.name}</h2>
           <p style={{ fontSize: 12, color: 'var(--tx-dim)', margin: '0 0 12px' }}>
-            {remainingIssuesLabel(selectedGroup) != null
-              ? <>剩餘可發 {remainingIssuesLabel(selectedGroup)}（共用序號）／ 序號列 {selectedGroup.total_count} 筆</>
-              : <>可用 {selectedGroup.available_count} · 已發送 {selectedGroup.issued_count} · 已註銷 {selectedGroup.void_count} ／ 共 {selectedGroup.total_count} 筆</>}
+            可用 {selectedGroup.available_count} · 已發送 {selectedGroup.issued_count} · 已註銷 {selectedGroup.void_count} ／ 共 {selectedGroup.total_count} 筆
           </p>
 
           {/* 匯入 */}
@@ -757,7 +712,6 @@ export default function AdminRewardSerialsPage() {
                 : '每行一筆，格式為「序號」或「序號,連結」（也可用 Tab 分隔）；亦可上傳 .csv／.xlsx（欄位：序號 code / 連結 link，或依序取前兩欄）。'}
               　序號**全系統唯一**，撞碼（含跨其他序號組、本次批次內重複）若原序號仍在使用中（未發送或已發送）會被跳過不建立；
               若原序號**已註銷且從未發送過**，會視為復活搬移到本組並重新變為可用（不算跳過），匯入結果會分別列出新增／復活／跳過清單。
-              　共用折扣碼（多位得主共用同一組碼）只需貼一列，序號組設成「共用序號」即可依設定的人數上限（或不限）發給多人，不必貼多列重複碼。
             </div>
             <textarea style={{ ...ta, fontFamily: 'monospace', fontSize: 12.5 }} rows={14} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={importMode === 'link' ? 'https://line.me/R/xxxxx\nhttps://line.me/R/yyyyy\n…（一行一個，大量連結可直接整批貼入，右下角可再拉大）' : 'ABC123,https://line.me/xxx\nABC124'} />
             {importText.trim() && (
@@ -828,17 +782,13 @@ export default function AdminRewardSerialsPage() {
                   <div style={{ flex: 2, fontFamily: 'monospace', fontSize: 12.5, wordBreak: 'break-all' }}>{s.code}</div>
                   <div style={{ flex: 2, fontSize: 11.5, color: 'var(--tx-dim)', wordBreak: 'break-all' }}>{s.link || '—'}</div>
                   <div style={{ flex: 1, fontSize: 12 }}>
-                    {s.status !== 'void' && serialSharedLabel(s, selectedGroup) != null ? (
-                      <span style={{ color: s.status === 'issued' ? 'var(--fug)' : 'var(--tx-dim)' }}>{serialSharedLabel(s, selectedGroup)}</span>
-                    ) : (
-                      <span style={{ color: s.status === 'void' ? 'var(--hunt)' : s.status === 'issued' ? 'var(--fug)' : 'var(--tx-dim)' }}>{STATUS_LABEL[s.status] || s.status}</span>
-                    )}
+                    <span style={{ color: s.status === 'void' ? 'var(--hunt)' : s.status === 'issued' ? 'var(--fug)' : 'var(--tx-dim)' }}>{STATUS_LABEL[s.status] || s.status}</span>
                     {s.used && <span style={{ color: 'var(--tx-faint)' }}>・已使用</span>}
                   </div>
                   <div style={{ flex: 2, fontSize: 11.5, color: 'var(--tx-faint)' }}>{new Date(s.created_at).toLocaleString('zh-TW')}</div>
                   <div style={{ flex: 1.4, display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
                     {s.status !== 'void' && <button onClick={() => voidSerial(s)} style={{ ...tinyBtn, color: 'var(--hunt)' }}>註銷</button>}
-                    {isSerialDeletable(s) && <button onClick={() => deleteSerial(s)} style={{ ...tinyBtn, color: 'var(--hunt)' }}>刪除</button>}
+                    {s.status !== 'issued' && <button onClick={() => deleteSerial(s)} style={{ ...tinyBtn, color: 'var(--hunt)' }}>刪除</button>}
                   </div>
                 </div>
               ))}

@@ -212,18 +212,6 @@ func (r *Repository) hydrateGroups(ctx context.Context, groups []Group) error {
 	if err != nil {
 		return err
 	}
-	// 容量（migration 178）：只對非組合型序號組查（組合型本身不持有 reward_serials，容量另外用湊包數
-	// 算，見下方迴圈），批次查詢避免每個序號組各查一次造成 N+1。
-	nonBundleIDs := make([]string, 0, len(groups))
-	for i := range groups {
-		if !groups[i].IsBundle {
-			nonBundleIDs = append(nonBundleIDs, groups[i].ID)
-		}
-	}
-	capMap, err := GroupCapacities(ctx, r.db, nonBundleIDs)
-	if err != nil {
-		return err
-	}
 	for i := range groups {
 		g := &groups[i]
 		g.RaceIDs = raceMap[g.ID]
@@ -235,9 +223,6 @@ func (r *Repository) hydrateGroups(ctx context.Context, groups []Group) error {
 
 		g.BundleItems = []GroupBundleItem{}
 		if !g.IsBundle {
-			c := capMap[g.ID]
-			g.RemainingIssues = c.Remaining
-			g.Unlimited = c.Unlimited
 			continue
 		}
 		children := bundleMap[g.ID]
@@ -260,10 +245,6 @@ func (r *Repository) hydrateGroups(ctx context.Context, groups []Group) error {
 		}
 		g.FaceValue = faceTotal
 		g.AvailableCount = packs
-		// 組合包子面額組（migration 178 起）只允許 use_limit_type=single（見 validateBundleChildMeta），
-		// 「還能湊幾包」本身就是組合型序號組唯一有意義的剩餘容量，直接沿用；Unlimited 維持零值 false
-		// ——組合包的可發包數恆由子面額組庫存決定，不會是「不限」。
-		g.RemainingIssues = packs
 		// IssuedCount/VoidCount/TotalCount：組合型序號組本身不持有 reward_serials（那些欄位屬於各子面額
 		// 組自己的統計，不歸在 parent 底下），statMap 對 parent id 天然查無資料，維持 0，不需額外處理。
 	}
@@ -281,21 +262,18 @@ func (r *Repository) countSerialsInGroup(ctx context.Context, groupID string) (i
 	return n, err
 }
 
-// childGroupMeta 供 Service.validateBundleItems 驗證組合子項「非組合型（防巢狀）＋ 同一商家＋
-// use_limit_type 須為 single（migration 178：組合包子面額組不支援共用碼，見 validateBundleChildMeta）」
-// 用，見 loadGroupMetaByIDs。
+// childGroupMeta 供 Service.validateBundleItems 驗證組合子項「非組合型（防巢狀）＋ 同一商家」用，
+// 見 loadGroupMetaByIDs。
 type childGroupMeta struct {
-	IsBundle     bool
-	MerchantID   *string
-	UseLimitType string
+	IsBundle   bool
+	MerchantID *string
 }
 
-// loadGroupMetaByIDs 查 ids 這些序號組的 is_bundle/merchant_id/use_limit_type，供 CreateGroup/UpdateGroup
-// 寫入組合定義前驗證用（見 Service.validateBundleItems）。查無的 id 不會出現在回傳 map 中，由呼叫端判斷
-// 「不存在」。
+// loadGroupMetaByIDs 查 ids 這些序號組的 is_bundle/merchant_id，供 CreateGroup/UpdateGroup 寫入組合定義
+// 前驗證用（見 Service.validateBundleItems）。查無的 id 不會出現在回傳 map 中，由呼叫端判斷「不存在」。
 func (r *Repository) loadGroupMetaByIDs(ctx context.Context, ids []string) (map[string]childGroupMeta, error) {
 	rows, err := r.db.Query(ctx,
-		`SELECT id::text, is_bundle, merchant_id, use_limit_type FROM reward_serial_groups WHERE id = ANY($1::uuid[])`, ids)
+		`SELECT id::text, is_bundle, merchant_id FROM reward_serial_groups WHERE id = ANY($1::uuid[])`, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +282,7 @@ func (r *Repository) loadGroupMetaByIDs(ctx context.Context, ids []string) (map[
 	for rows.Next() {
 		var id string
 		var m childGroupMeta
-		if err := rows.Scan(&id, &m.IsBundle, &m.MerchantID, &m.UseLimitType); err != nil {
+		if err := rows.Scan(&id, &m.IsBundle, &m.MerchantID); err != nil {
 			return nil, err
 		}
 		out[id] = m
@@ -482,26 +460,16 @@ func (r *Repository) DeleteGroup(ctx context.Context, id string) error {
 
 // --- 序號 ---
 
-// serialCols 帶 s./g. 別名前綴——ListSerials 起 JOIN 序號組表取 use_limit_type/use_limit_count 算
-// IssueLimit（migration 178，見 scanSerial），避免 group_id/status/created_at 兩表皆有同名欄位造成
-// ambiguous column 錯誤。
-const serialCols = `s.id, s.group_id, s.code, COALESCE(s.link,''), s.status, s.used, s.used_at, s.issued_to, s.issued_at, s.created_at,
-	s.issue_count, g.use_limit_type, g.use_limit_count`
+const serialCols = `id, group_id, code, COALESCE(link,''), status, used, used_at, issued_to, issued_at, created_at`
 
 func scanSerial(row pgx.Row) (*Serial, error) {
 	s := &Serial{}
 	var issuedTo *string
-	var useLimitType string
-	var useLimitCount *int
-	err := row.Scan(&s.ID, &s.GroupID, &s.Code, &s.Link, &s.Status, &s.Used, &s.UsedAt, &issuedTo, &s.IssuedAt, &s.CreatedAt,
-		&s.IssueCount, &useLimitType, &useLimitCount)
+	err := row.Scan(&s.ID, &s.GroupID, &s.Code, &s.Link, &s.Status, &s.Used, &s.UsedAt, &issuedTo, &s.IssuedAt, &s.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	s.IssuedTo = issuedTo
-	if useLimitType == "repeat" {
-		s.IssueLimit = useLimitCount // single/unlimited 皆無上限可顯示，維持 nil（見 Serial.IssueLimit 註解）
-	}
 	return s, nil
 }
 
@@ -513,10 +481,9 @@ func (r *Repository) ListSerials(ctx context.Context, groupID, status string, li
 		return nil, 0, err
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT `+serialCols+`
-		FROM reward_serials s JOIN reward_serial_groups g ON g.id = s.group_id
-		WHERE s.group_id=$1 AND ($2='' OR s.status=$2)
-		ORDER BY s.created_at DESC LIMIT $3 OFFSET $4`, groupID, status, limit, offset)
+		SELECT `+serialCols+` FROM reward_serials
+		WHERE group_id=$1 AND ($2='' OR status=$2)
+		ORDER BY created_at DESC LIMIT $3 OFFSET $4`, groupID, status, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -673,29 +640,19 @@ func (r *Repository) DeleteSerials(ctx context.Context, groupID string, ids []st
 	}
 	defer tx.Rollback(ctx)
 
-	// 一併讀 issue_count（migration 178 對抗審查 CONFIRMED-2）：共用碼組別（use_limit_type=repeat/
-	// unlimited）在還沒發滿名額時，status 仍是 available，但只要 issue_count>0 就代表已經有 user_rewards
-	// 列引用這張序號（外鍵 RESTRICT）；若只看 status=='issued' 判斷可否刪除，下面的 DELETE 會因為外鍵
-	// 違反而整個失敗（deleted=0，這一批全部卡住，不是只卡住這一筆），而不是原本設計預期的「安全跳過
-	// 這一筆、其餘照刪」。issue_count 一律要跳過，不論 status 是 available 或 issued。
 	rows, err := tx.Query(ctx,
-		`SELECT id, status, issue_count FROM reward_serials WHERE group_id=$1 AND id = ANY($2::uuid[]) FOR UPDATE`, groupID, ids)
+		`SELECT id, status FROM reward_serials WHERE group_id=$1 AND id = ANY($2::uuid[]) FOR UPDATE`, groupID, ids)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	type serialFlag struct {
-		status     string
-		issueCount int
-	}
-	flagByID := map[string]serialFlag{}
+	statusByID := map[string]string{}
 	for rows.Next() {
 		var id, status string
-		var issueCount int
-		if err := rows.Scan(&id, &status, &issueCount); err != nil {
+		if err := rows.Scan(&id, &status); err != nil {
 			rows.Close()
 			return 0, 0, 0, err
 		}
-		flagByID[id] = serialFlag{status: status, issueCount: issueCount}
+		statusByID[id] = status
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -705,12 +662,12 @@ func (r *Repository) DeleteSerials(ctx context.Context, groupID string, ids []st
 
 	deletable := make([]string, 0, len(ids))
 	for _, id := range ids {
-		f, ok := flagByID[id]
+		status, ok := statusByID[id]
 		if !ok {
 			skippedNotFound++
 			continue
 		}
-		if f.status == "issued" || f.issueCount > 0 {
+		if status == "issued" {
 			skippedIssued++
 			continue
 		}

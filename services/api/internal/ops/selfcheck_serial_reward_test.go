@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/dor/api/internal/activityreward"
-	"github.com/dor/api/internal/rewardserial"
 )
 
 func TestSerialShortageThreshold(t *testing.T) {
@@ -55,27 +54,22 @@ func TestMeetsShortageThreshold(t *testing.T) {
 func TestSerialGroupStockRemainingCapacity(t *testing.T) {
 	cases := []struct {
 		name       string
-		remaining  int
+		available  int
 		grantCount int
-		unlimited  bool
 		want       int
 	}{
-		{"整除：5/1=5", 5, 1, false, 5},
-		{"整除：6/2=3", 6, 2, false, 3},
-		{"非整除無條件捨去：5/2=2", 5, 2, false, 2},
-		{"grant_count=0 視為 1（防禦資料異常）", 5, 0, false, 5},
-		{"grant_count 負值視為 1", 5, -1, false, 5},
-		{"容量為 0", 0, 3, false, 0},
-		{"unlimited 一律回 0（migration 178：呼叫端須用 Capacity.Unlimited 判斷，不能靠這裡的回傳值）", 999, 1, true, 0},
+		{"整除：5/1=5", 5, 1, 5},
+		{"整除：6/2=3", 6, 2, 3},
+		{"非整除無條件捨去：5/2=2", 5, 2, 2},
+		{"grant_count=0 視為 1（防禦資料異常）", 5, 0, 5},
+		{"grant_count 負值視為 1", 5, -1, 5},
+		{"庫存為 0", 0, 3, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s := serialGroupStock{
-				Capacity:   rewardserial.GroupCapacity{Remaining: c.remaining, Unlimited: c.unlimited},
-				GrantCount: c.grantCount,
-			}
+			s := serialGroupStock{Available: c.available, GrantCount: c.grantCount}
 			if got := s.remainingCapacity(); got != c.want {
-				t.Errorf("remainingCapacity(remaining=%d,grant=%d,unlimited=%v) = %d, want %d", c.remaining, c.grantCount, c.unlimited, got, c.want)
+				t.Errorf("remainingCapacity(avail=%d,grant=%d) = %d, want %d", c.available, c.grantCount, got, c.want)
 			}
 		})
 	}
@@ -83,9 +77,9 @@ func TestSerialGroupStockRemainingCapacity(t *testing.T) {
 
 func TestTotalCapacity(t *testing.T) {
 	groups := []serialGroupStock{
-		{Capacity: rewardserial.GroupCapacity{Remaining: 5}, GrantCount: 2}, // 2
-		{Capacity: rewardserial.GroupCapacity{Remaining: 3}, GrantCount: 1}, // 3
-		{Capacity: rewardserial.GroupCapacity{Remaining: 0}, GrantCount: 1}, // 0
+		{Available: 5, GrantCount: 2}, // 2
+		{Available: 3, GrantCount: 1}, // 3
+		{Available: 0, GrantCount: 1}, // 0
 	}
 	if got := totalCapacity(groups); got != 5 {
 		t.Errorf("totalCapacity() = %d, want 5", got)
