@@ -9,6 +9,8 @@ export interface SettingSpec {
   unit?: string
   min?: number
   max?: number
+  step?: number // number 型別專用：input 的 step 屬性＋儲存端四捨五入的顆粒度。省略＝1（多數欄位是整數）；
+                // 需要小數（如虛擬選手活動倍率 0.75）時必填，否則後台 save() 的整數捨入會把小數存成整數
   def: string // 預設值（統一字串化）
   scale?: number // number 型別專用：後端儲存值＝顯示值×scale（例：面額用「元」顯示，換算成「分」存 app_settings）。省略＝1（顯示=儲存，多數欄位如此）
   options?: { value: string; label: string }[]
@@ -478,6 +480,17 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     key: 'virtual_title_reroll_every', group: '虛擬選手', label: '虛擬選手稱號重抽間隔（趟）', type: 'number', unit: '趟',
     help: '每累積達此趟數就從已解鎖稱號中隨機重抽展示稱號；預設 10。首次指派（尚無展示稱號）一律立即隨機指派，不受此間隔限制。',
     min: 1, max: 10000, def: '10',
+  },
+  // 虛擬選手全域活動倍率（見 services/api/internal/virtualrunner/generator.go RunnerParams.ActivityScale，
+  // migration 179）：使用者原話「先降低虛擬選手的頻率和距離，如果現在是 1 的話請改成 0.75，未來我可以
+  // 透過這個數字來調整虛擬選手的能力」。step=0.05 允許輸入小數——這個欄位刻意不是整數，若沿用預設 step=1，
+  // 後台儲存時會被 Math.round() 捨成整數，0.75 會存不進去。
+  {
+    key: 'virtual_activity_scale', group: '虛擬選手', label: '虛擬選手活動倍率', type: 'number',
+    help: '同時調整虛擬選手的「出勤頻率」與「單次跑步距離」，一個數字掌控整體活躍程度。1＝現行標準能力；'
+      + '0.75＝頻率與距離各降到約 75%，因兩者相乘，月里程期望值約降到 75%×75%≈56%（不是單純的 75%）；'
+      + '數字越小虛擬選手越安靜，越大則越活躍（上限 3）。改動後於下一個整點批次生效，不影響已產生的歷史活動。',
+    min: 0.1, max: 3, step: 0.05, def: '1',
   },
   // ── 電子發票（見 services/api/internal/einvoice，migration 169）──
   // 訂單付款完成後是否自動向綠界開立 B2C 電子發票；正式環境需另外在 Railway 設定 ECPAY_INVOICE_* 三寶，

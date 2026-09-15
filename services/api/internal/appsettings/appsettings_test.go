@@ -69,6 +69,38 @@ func TestSettingsCacheSetGetInvalidate(t *testing.T) {
 	}
 }
 
+// TestIsFloatRange_VirtualActivityScale 驗證 virtual_activity_scale 用的驗證器（isFloatRange(0.1,3.0)）：
+// 空字串（用程式預設）、範圍內的整數/小數字面值皆合法；範圍外、非數字、以及 strconv.ParseFloat 能
+// 解析但語意上不是「有限數」的 "NaN"/"Inf" 字面字串（isFiniteInRange 的 IsNaN/IsInf 檢查要擋下這兩者，
+// 否則 ParseFloat 對它們不會回傳 error，會被誤判為合法值存進 app_settings）皆應拒絕。
+func TestIsFloatRange_VirtualActivityScale(t *testing.T) {
+	validate := isFloatRange(0.1, 3.0)
+	cases := []struct {
+		name string
+		v    string
+		want bool
+	}{
+		{"空字串合法(用程式預設1.0)", "", true},
+		{"0.75合法", "0.75", true},
+		{"1合法", "1", true},
+		{"3合法(上限)", "3", true},
+		{"0.05不合法(低於下限0.1)", "0.05", false},
+		{"0.1合法(恰為下限)", "0.1", true},
+		{"abc不合法(非數字)", "abc", false},
+		{"NaN不合法(ParseFloat不報錯但非有限數)", "NaN", false},
+		{"Inf不合法(ParseFloat不報錯但非有限數)", "Inf", false},
+		{"3.5不合法(超出上限3.0)", "3.5", false},
+		{"0不合法(等於下限外)", "0", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := validate(c.v); got != c.want {
+				t.Errorf("isFloatRange(0.1,3.0)(%q) = %v, want %v", c.v, got, c.want)
+			}
+		})
+	}
+}
+
 // TestIsCheerLayoutJSON 涵蓋合法(空字串/只有3key/完整8key)、未知key、壞JSON、非物件、各數值超範圍
 // 的情況。對應啦啦隊角色位置校正值（見 internal/profile.normalizeCheerLayout 的儲存端正規化邏輯，
 // 兩邊各自獨立實作以避免循環依賴，範圍常數需保持一致：dx/dy -300~300、scale 0.2~4）。key 可少

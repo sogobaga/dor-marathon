@@ -7,6 +7,17 @@ import { SETTINGS_SPECS, type SettingSpec } from '@/lib/appSettings'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import { CancellationPolicyFields, DEFAULT_CANCELLATION_POLICY, sortTiers, validateCancellationPolicy } from '../CancelPolicyEditor'
 
+// roundToStep 把 v 四捨五入到 step 的整數倍（例：step=0.05 時 0.7583→0.75）。step<=0 視為 1（防呆，
+// 理論上不會發生——SETTINGS_SPECS 沒有欄位把 step 設成 0 或負數）。用 toFixed 依 step 的小數位數
+// 二次修整，避免純浮點數運算的誤差尾巴（例：Math.round(0.75/0.05)*0.05 可能得到 0.7500000000000001，
+// 直接 String() 會顯示醜陋的長小數）。
+function roundToStep(v: number, step: number): number {
+  if (step <= 0) return Math.round(v)
+  const n = Math.round(v / step) * step
+  const decimals = (String(step).split('.')[1] || '').length
+  return Number(n.toFixed(decimals))
+}
+
 export default function AdminSystemPage() {
   const router = useRouter()
   const [token, setToken] = useState<string | null>(null)
@@ -98,10 +109,14 @@ export default function AdminSystemPage() {
     let editVal: string
     if (spec.type === 'number') {
       const scale = spec.scale ?? 1
+      const step = spec.step ?? 1
       const min = spec.min ?? 0, max = spec.max ?? 999999, def = parseFloat(spec.def) || 0
-      const disp = raw === '' ? def : Math.min(max, Math.max(min, Math.round(parseFloat(raw) || def)))
+      // roundToStep 而非硬 Math.round：多數欄位是整數（step 省略＝1，效果與舊版 Math.round 完全相同），
+      // 但虛擬選手活動倍率這類欄位需要小數（step=0.05）——沿用舊版 Math.round 會把 0.75 捨成 1，
+      // 存不進小數（對抗式審查抓到的問題）。
+      const disp = raw === '' ? def : Math.min(max, Math.max(min, roundToStep(parseFloat(raw) || def, step)))
       editVal = String(disp)
-      val = String(Math.round(disp * scale))
+      val = String(roundToStep(disp * scale, step))
     } else if (spec.type === 'text') {
       val = raw // 多行文字：允許清空（存空字串）
       editVal = val
@@ -194,7 +209,7 @@ export default function AdminSystemPage() {
                         style={{ ...inp, width: '100%', resize: 'vertical', lineHeight: 1.6 }} />
                     ) : (
                       <>
-                        <input type="number" min={s.min} max={s.max} value={edit[s.key] ?? ''} placeholder={`預設 ${s.def}`}
+                        <input type="number" min={s.min} max={s.max} step={s.step ?? 1} value={edit[s.key] ?? ''} placeholder={`預設 ${s.def}`}
                           onChange={(e) => setEdit((st) => ({ ...st, [s.key]: e.target.value }))} style={inp} />
                         <span style={{ fontSize: 12, color: 'var(--tx-faint)' }}>{s.unit}</span>
                       </>

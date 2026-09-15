@@ -26,6 +26,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+
+	"github.com/dor/api/internal/appsettings"
 )
 
 // --- 純函式核心（生成規格⑥：給定選手參數＋天氣＋隨機源 → 決定跑不跑＋距離＋配速＋起跑時刻）---
@@ -37,6 +39,23 @@ type RunnerParams struct {
 	PaceFastS int
 	PaceSlowS int
 	Diligence int // 1-5
+	// ActivityScale 全域活動倍率（見 appsettings key virtual_activity_scale）：使用者原話「先降低
+	// 虛擬選手的頻率和距離……未來我可以透過這個數字來調整虛擬選手的能力」——同一個數字分別乘在
+	// decideRun 的出勤機率與 generateDistanceKm 的單次距離上，因此月里程期望值約是 scale²（例如
+	// 0.75 → 約現行 56%），這是刻意設計，讓一個數字就能同時壓低兩個維度。<=0（含零值，即既有呼叫端
+	// 沒有設定這個新欄位）一律視為 1，等同改動前的行為，讓既有測試與呼叫端零改動——正規化邏輯見
+	// normalizeScale，由 decideRun/generateDistanceKm 各自呼叫，不在此處預先夾限。
+	ActivityScale float64
+}
+
+// normalizeScale 純函式：ActivityScale <= 0（未設定的零值，或設定錯誤的負數）一律視為 1，避免
+// 呼叫端忘記帶這個新欄位、或 appsettings 給出邊界外的值時整批選手變成「永不出門/永遠不跑」。
+// decideRun 與 generateDistanceKm 各自呼叫一次，維持兩者可獨立作為純函式單元測試的特性。
+func normalizeScale(scale float64) float64 {
+	if scale <= 0 {
+		return 1
+	}
+	return scale
 }
 
 // GeneratedActivity 這個時段的生成結果。Ran=false 時其餘欄位皆為零值。
@@ -84,13 +103,18 @@ func decideRun(p RunnerParams, bad bool, rng *rand.Rand) bool {
 		}
 		pRun *= factor
 	}
+	// 全域活動倍率（見 RunnerParams.ActivityScale 註解）：0.75 代表「現行機率的 75%」；>1 可拉高
+	// 但仍 clamp 在 [0,1]，不會讓機率超過必然發生。刻意乘在「積極度／天氣都算完之後」的最終機率，
+	// 而不是揉進 p_run 公式本身，確保倍率是對「最終出勤機率」的乾淨線性縮放，好驗證也好說明。
+	pRun = clampFloat(pRun*normalizeScale(p.ActivityScale), 0, 1)
 	return rng.Float64() < pRun
 }
 
-// generateDistanceKm 純函式：這次跑量 = avg_km × U(0.90,1.10)，壞天氣再 × U(0.70,0.80)（雨天/
-// 高溫縮短跑量），下限 1.0 公里、四捨五入 2 位。
-func generateDistanceKm(avgKm float64, bad bool, rng *rand.Rand) float64 {
-	d := avgKm * uniform(rng, 0.90, 1.10)
+// generateDistanceKm 純函式：這次跑量 = avg_km × scale × U(0.90,1.10)，壞天氣再 × U(0.70,0.80)
+// （雨天/高溫縮短跑量），下限 1.0 公里、四捨五入 2 位。scale 見 RunnerParams.ActivityScale 註解，
+// <=0 視為 1（normalizeScale）。
+func generateDistanceKm(avgKm, scale float64, bad bool, rng *rand.Rand) float64 {
+	d := avgKm * normalizeScale(scale) * uniform(rng, 0.90, 1.10)
 	if bad {
 		d *= uniform(rng, 0.70, 0.80)
 	}
@@ -151,7 +175,7 @@ func GenerateActivity(p RunnerParams, w Weather, windowHour int, rng *rand.Rand)
 	if !decideRun(p, bad, rng) {
 		return GeneratedActivity{Ran: false}
 	}
-	distanceKm := generateDistanceKm(p.AvgKm, bad, rng)
+	distanceKm := generateDistanceKm(p.AvgKm, p.ActivityScale, bad, rng)
 	paceS := generatePaceS(p.PaceFastS, p.PaceSlowS, rng)
 	durationS := int(math.Round(distanceKm * float64(paceS)))
 	minute, second := generateStartOffset(rng)
@@ -417,6 +441,11 @@ func (g *Generator) runBatch(ctx context.Context) {
 		return
 	}
 
+	// 全域活動倍率：批次層級只讀一次（硬規則：禁止在迴圈內逐選手查設定），clamp 到 specs 登記的合法
+	// 範圍防呆（appsettings.Set 寫入時已擋過一次，這裡是第二層防線，避免正式庫繞過 API 直接下 SQL
+	// 塞入邊界外的值）。見 RunnerParams.ActivityScale 註解：同一個數字同時乘在頻率與距離上。
+	activityScale := clampFloat(appsettings.GetFloat(ctx, g.db, "virtual_activity_scale", 1.0), 0.1, 3.0)
+
 	cache := NewWeatherCache(g.weather)
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	generatedAt := time.Now()
@@ -424,7 +453,7 @@ func (g *Generator) runBatch(ctx context.Context) {
 	var ranUserIDs []string
 	generated, skipped, failed := 0, 0, 0
 	for _, rn := range runners {
-		ran, ok := g.processRunnerSafe(ctx, now, windowHour, cache, rng, generatedAt, rn)
+		ran, ok := g.processRunnerSafe(ctx, now, windowHour, cache, rng, generatedAt, activityScale, rn)
 		if !ok {
 			failed++
 			continue
@@ -454,13 +483,14 @@ func (g *Generator) runBatch(ctx context.Context) {
 
 	log.Info().Int("window_hour", windowHour).Int("candidates", len(runners)).
 		Int("generated", generated).Int("skipped", skipped).Int("failed", failed).
+		Float64("activity_scale", activityScale).
 		Msg("virtual runner generator: batch done")
 }
 
 // processRunnerSafe 處理單一選手，panic recover 隔離（比照 internal/payment/vip_renewal.go
 // processRenewalCandidateSafe：單筆候選出狀況不應拖垮整批）。回傳 ok=false 代表這位選手處理失敗
 // （error 或 panic），呼叫端只計入 failed 統計、不影響其餘選手；ran 僅在 ok=true 時有意義。
-func (g *Generator) processRunnerSafe(ctx context.Context, now time.Time, windowHour int, cache *WeatherCache, rng *rand.Rand, generatedAt time.Time, rn genRunner) (ran bool, ok bool) {
+func (g *Generator) processRunnerSafe(ctx context.Context, now time.Time, windowHour int, cache *WeatherCache, rng *rand.Rand, generatedAt time.Time, activityScale float64, rn genRunner) (ran bool, ok bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error().Interface("panic", r).Str("user_id", rn.UserID).
@@ -473,6 +503,7 @@ func (g *Generator) processRunnerSafe(ctx context.Context, now time.Time, window
 	params := RunnerParams{
 		AvgKm: rn.AvgKm, MonthlyKm: rn.MonthlyKm,
 		PaceFastS: rn.PaceFastS, PaceSlowS: rn.PaceSlowS, Diligence: rn.Diligence,
+		ActivityScale: activityScale,
 	}
 	act := GenerateActivity(params, weather, windowHour, rng)
 

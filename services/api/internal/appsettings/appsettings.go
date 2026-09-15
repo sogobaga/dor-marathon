@@ -138,6 +138,12 @@ var specs = map[string]func(string) bool{
 	// 驗收再開）；issue_since 只對「此日期（台北曆日）之後付款」的訂單自動開立，避免回溯處理歷史訂單。
 	"einvoice_auto_issue":  func(v string) bool { return v == "" || v == "off" || v == "on" },
 	"einvoice_issue_since": isDateYYYYMMDD,
+	// 虛擬選手全域活動倍率（見 internal/virtualrunner/generator.go runBatch）：使用者原話「先降低
+	// 虛擬選手的頻率和距離……未來我可以透過這個數字來調整虛擬選手的能力」——後台一個數字同時乘在
+	// decideRun 的出勤機率與 generateDistanceKm 的單次距離上，不必分別調兩個參數。程式內建預設
+	// 1.0＝改動前的現行行為；合法範圍 0.1~3.0 且允許小數（isFloatRange，非 isPosIntMax 那種整數限定），
+	// 避免 0 或負數讓整批選手「永不出門」、或超過 3 倍失真到看得出破綻。
+	"virtual_activity_scale": isFloatRange(0.1, 3.0),
 }
 
 func isEntryState(v string) bool {
@@ -173,6 +179,20 @@ func isPosIntMax(max int) func(string) bool {
 		}
 		n, err := strconv.Atoi(v)
 		return err == nil && n >= 1 && n <= max
+	}
+}
+
+// isFloatRange 回傳一個驗證器：空字串(用程式內建預設)或落在 [min,max] 的有限浮點數（允許小數）。
+// 比照 isPosIntMax 的整數版本，但改用 ParseFloat＋isFiniteInRange——ParseFloat 對 "NaN"/"Inf"/"+Inf"
+// 這類字面字串不會回傳 err（Go 的 strconv 慣例），必須額外靠 isFiniteInRange 的 IsNaN/IsInf 檢查擋下，
+// 否則後台可能把非有限值存進 app_settings，讀取端 GetFloat 又沒有二次防呆時會整批選手行為異常。
+func isFloatRange(min, max float64) func(string) bool {
+	return func(v string) bool {
+		if v == "" {
+			return true
+		}
+		n, err := strconv.ParseFloat(v, 64)
+		return err == nil && isFiniteInRange(n, min, max)
 	}
 }
 
@@ -483,6 +503,20 @@ func GetInt(ctx context.Context, db *pgxpool.Pool, key string, def int) int {
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(v))
 	if err != nil {
+		return def
+	}
+	return n
+}
+
+// GetFloat 讀浮點數設定；查無/解析失敗/非有限值（NaN/Inf）回 def。比照 GetInt 的快取路徑與慣例；
+// 新增給 internal/virtualrunner 讀 virtual_activity_scale 用（原套件只有 GetInt/GetString）。
+func GetFloat(ctx context.Context, db *pgxpool.Pool, key string, def float64) float64 {
+	v, found := getRawSetting(ctx, db, key)
+	if !found {
+		return def
+	}
+	n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
 		return def
 	}
 	return n
