@@ -674,6 +674,18 @@ func TestPlayerBattleStatsFrom_RatingPassesThroughDerivedFields(t *testing.T) {
 	}
 }
 
+// 審查#5【低・PLAUSIBLE】根因回歸測試：Derived.CritDmgPct 有算（被動技能 crit_dmg_pct 加總）但
+// 過去沒有接進 PlayerBattleStats.Rating，前端 engine 的暴擊倍率計算永遠讀不到玩家的暴擊傷害加成。
+func TestPlayerBattleStatsFrom_RatingIncludesCritDmgPct(t *testing.T) {
+	cfg := DefaultConfig()
+	d := Derived{Atk: 135, Matk: 80, Def: 35, Mdef: 28, MaxHP: 820, MaxMP: 100,
+		Hit: 63.5, Flee: 41.2, CritPct: 9, CritShield: 2, Aspd: 168.5, CastReductionPct: 22, CritDmgPct: 35}
+	p := PlayerBattleStatsFrom(cfg, 50, d)
+	if p.Rating.CritDmgPct != 35 {
+		t.Fatalf("Rating.CritDmgPct 應直接取自 Derived.CritDmgPct：want 35 got %v", p.Rating.CritDmgPct)
+	}
+}
+
 // --- PlayerBattleStatsFrom：Atk/HPMax 保底生效時，Rating 完全不受影響（保底只套 Atk/HPMax） ---
 
 func TestPlayerBattleStatsFrom_RatingUnaffectedByAtkHPFloor(t *testing.T) {

@@ -90,6 +90,37 @@ func resolveIdentity(ctx context.Context, db *pgxpool.Pool, userID string) (iden
 	return id, err
 }
 
+// baseLevelForUser 只查真實 Base Level（依 users.exp 換算，完全不套用 test_level）。抽成獨立函式
+// 供 handler.go Allocate／skills.go SkillsAllocate 在交易內使用——審查#6 CONFIRMED：那兩支端點
+// 要把「當下 test_level」跟六圍/技能點鎖在同一個交易內一起讀，不能再透過 loadEffectiveLevel
+// 一次到位（那樣 test_level 會在交易外讀取，見該函式與呼叫端的修復註解）。
+func (h *Handler) baseLevelForUser(ctx context.Context, userID string) (int, error) {
+	var exp int
+	if err := h.db.QueryRow(ctx, `SELECT COALESCE(exp,0) FROM users WHERE id=$1`, userID).Scan(&exp); err != nil {
+		return 0, err
+	}
+	return baseLevelFromExp(ctx, h.db, exp)
+}
+
+// loadEffectiveLevel P5：查 users.exp 換算真實 Base Level，再套用 EffectiveLevel(test_level,...)
+// 得到「這次計算要用哪個等級」——handler.go（/rpg/me）、battle.go（bootstrap）、skills.go
+// （GET /rpg/skills）共用，避免各自重複「查 exp→查 level_config→套 test_level」三步。回傳
+// (realBaseLevel, effectiveLevel, error)：某些呼叫端兩個都要（例如 /rpg/me 的 base_level 欄位
+// 仍顯示真實等級，effective_level 才是拿去算配點/技能點/Compute 的那個，見 CONTRACT §2）。
+//
+// 審查#2 CONFIRMED：cfg.TestLevelEnabled 關閉時，透過 effectiveTestLevel() 忽略既有 test_level
+// （即使 DB 裡還留著舊值）——不然只擋新的 PUT /rpg/test-level 請求，玩家先前設定過的測試等級
+// 在關掉開關後仍會繼續套用，讓「正式上線前先關閉測試等級功能」形同虛設。Allocate/SkillsAllocate
+// 因為要把 test_level 的讀取移進交易內（審查#6），不透過這支函式，而是直接呼叫
+// baseLevelForUser()＋effectiveTestLevel()＋EffectiveLevel() 三步，邏輯完全相同。
+func (h *Handler) loadEffectiveLevel(ctx context.Context, userID string, cfg Config, testLevel *int) (int, int, error) {
+	baseLevel, err := h.baseLevelForUser(ctx, userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	return baseLevel, EffectiveLevel(effectiveTestLevel(cfg, testLevel), baseLevel), nil
+}
+
 // baseLevelFromExp 依 exp 與 level_config 門檻表推導「基本等級」（沿用既有 DOR 等級系統，
 // 見 profile.membership.go computeLevel 的同一概念；獨立重查一次是為了不 import profile 造成
 // profile↔rpg 循環依賴，見檔頭註解）。查無等級設定時回 1（比照 computeLevel 的預設）。

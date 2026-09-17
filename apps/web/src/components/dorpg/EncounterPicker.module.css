@@ -97,6 +97,34 @@
   justify-content: center;
 }
 
+/* DORPG P5：職業切換列（簡潔版，見 CharacterScreen.tsx 的完整卡片版）——橫向捲動的藥丸鈕列，
+   窄螢幕（~400px）六個職業放不下一行時可左右滑動，不強制換行擠壓卡片高度。 */
+.jobRow {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+
+.jobPill {
+  flex-shrink: 0;
+  border: 1.5px solid;
+  background: transparent;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.jobPillActive {
+  font-weight: 800;
+}
+
 /* 角色摘要列：frame_dialog 九宮格由 TSX 帶入 border-image（跟 SettingsSheet 同一手法），本身是可點的按鈕。 */
 .charCard {
   display: block;

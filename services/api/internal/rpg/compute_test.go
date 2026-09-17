@@ -5,11 +5,13 @@ import "testing"
 // 逐條對照站長提供的 RO stat/attr 截圖對照表（見 config.go 開頭註解的來源），每個測試把其餘
 // 素質/等級留在 0（Compute 直接吃「目前值」而非「加點數」，孤立變數即可還原表格數字）。
 
+// P5 起 Compute() 多算了 STR 整十階梯（見 TestCompute_StrTierSteps）：STR=10 → floor(10/10)²×
+// str_tier_coef(1)=+1，這裡的期望值一併加上這個新增的加成，不是這兩個既有測試本身的公式錯。
 func TestCompute_STR10Melee(t *testing.T) {
 	cfg := DefaultConfig() // DefaultWeaponType 預設 "melee"
 	d := Compute(cfg, ComputeInput{Stats: Stats{Str: 10}})
-	if d.Atk != 10 {
-		t.Fatalf("STR 10 melee: 素質物攻應為 +10，got %v", d.Atk)
+	if d.Atk != 11 { // 10（每1點+1）+ 1（P5 整十階梯）
+		t.Fatalf("STR 10 melee: 素質物攻應為 +11（含 P5 整十階梯 +1），got %v", d.Atk)
 	}
 	if d.Weight != cfg.WeightBase+300 {
 		t.Fatalf("STR 10: 負重應為基礎值+300，got %v (base=%v)", d.Weight, cfg.WeightBase)
@@ -19,11 +21,12 @@ func TestCompute_STR10Melee(t *testing.T) {
 func TestCompute_STR10Ranged(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.DefaultWeaponType = "ranged"
-	// STR 每 5 點才 +1（遠程分支），STR=10 → +2；DEX=0 不額外貢獻。
+	// STR 每 5 點才 +1（遠程分支），STR=10 → +2；+ P5 整十階梯 +1 → 3；DEX=0 不額外貢獻。
 	d := Compute(cfg, ComputeInput{Stats: Stats{Str: 10}})
-	if d.Atk != 2 {
-		t.Fatalf("STR 10 ranged: 素質物攻應為 +2（每5點+1），got %v", d.Atk)
+	if d.Atk != 3 {
+		t.Fatalf("STR 10 ranged: 素質物攻應為 +3（每5點+1=2，含 P5 整十階梯 +1），got %v", d.Atk)
 	}
+	// Str=0 時 P5 整十階梯貢獻 0，這組既有斷言不受影響。
 	d2 := Compute(cfg, ComputeInput{Stats: Stats{Dex: 10}})
 	if d2.Atk != 10 {
 		t.Fatalf("DEX 10 ranged: 素質物攻應為 +10（每1點+1），got %v", d2.Atk)
@@ -243,5 +246,267 @@ func TestCompute_NextCostOmitsMaxedStat(t *testing.T) {
 	}
 	if _, ok := d.NextCost["agi"]; !ok {
 		t.Fatalf("AGI 未達上限，NextCost 應包含 agi 鍵")
+	}
+}
+
+// =============================================================================
+// DORPG P5：職業／測試等級／配點規則／技能等級／戰鬥公式微調（CONTRACT §2/§3/§4/§6）
+// =============================================================================
+
+// --- lvDef 新曲線：Lv<=50 每級 0.5、Lv>50 每級改 0.35，取代舊版 floor(L/2) ---
+
+func TestLvDef_Curve(t *testing.T) {
+	cfg := DefaultConfig()
+	cases := []struct {
+		level int
+		want  float64
+	}{
+		{1, 0},   // floor(1*0.5)=0
+		{27, 13}, // floor(27*0.5)=floor(13.5)=13
+		{50, 25}, // floor(50*0.5)=25（斷點本身仍用 per_low）
+		{51, 25}, // floor(25 + 1*0.35)=floor(25.35)=25
+		{99, 42}, // floor(25 + 49*0.35)=floor(25+17.15)=floor(42.15)=42
+	}
+	for _, c := range cases {
+		if got := lvDef(cfg, c.level); got != c.want {
+			t.Fatalf("lvDef(%d): want %v, got %v", c.level, c.want, got)
+		}
+	}
+}
+
+// Compute() 的 Def 欄位要吃到新曲線（取代舊版 floorDiv(BaseLevel,lv_def_per)），Mdef 的等級項
+// 維持既有線性除數不變（契約明講只換 Def 這條）。
+func TestCompute_DefUsesNewLvDefCurve(t *testing.T) {
+	cfg := DefaultConfig()
+	d := Compute(cfg, ComputeInput{BaseLevel: 51, Stats: Stats{}})
+	if d.Def != 25 { // lvDef(51)=25（見 TestLvDef_Curve），AGI/VIT=0 無其餘貢獻
+		t.Fatalf("Lv51 Def 應為 25（新曲線），got %v", d.Def)
+	}
+	if d.Mdef != 12 { // floor(51/4)=12，未變的線性除數
+		t.Fatalf("Lv51 Mdef 應維持舊線性除數 12，got %v", d.Mdef)
+	}
+}
+
+// --- STR/INT 整十階梯：atk += floor(STR/10)²×coef、matk += floor(INT/10)²×coef ---
+
+func TestCompute_StrTierSteps(t *testing.T) {
+	cfg := DefaultConfig() // melee 分支：statusAtk = STR*1
+	cases := []struct {
+		str      int
+		wantStep float64 // floor(str/10)²
+	}{
+		{9, 0},
+		{10, 1},
+		{19, 1},
+		{20, 4},
+	}
+	for _, c := range cases {
+		d := Compute(cfg, ComputeInput{Stats: Stats{Str: c.str}})
+		want := float64(c.str)*cfg.StrMeleeAtk + c.wantStep*cfg.StrTierCoef
+		if d.Atk != want {
+			t.Fatalf("STR=%d: Atk 應為 %v（含整十階梯 %v），got %v", c.str, want, c.wantStep, d.Atk)
+		}
+	}
+}
+
+func TestCompute_IntTierSteps(t *testing.T) {
+	cfg := DefaultConfig()
+	cases := []struct {
+		intStat  int
+		wantStep float64
+	}{
+		{9, 0},
+		{10, 1},
+		{19, 1},
+		{20, 4},
+	}
+	for _, c := range cases {
+		d := Compute(cfg, ComputeInput{Stats: Stats{Int: c.intStat}})
+		want := float64(c.intStat)*cfg.IntMatk + c.wantStep*cfg.IntTierCoef
+		if d.Matk != want {
+			t.Fatalf("INT=%d: Matk 應為 %v（含整十階梯 %v），got %v", c.intStat, want, c.wantStep, d.Matk)
+		}
+	}
+}
+
+// --- WeaponType 覆寫：空字串退回 cfg.DefaultWeaponType（既有行為不變），有值時依角色職業覆寫 ---
+
+func TestCompute_WeaponTypeOverridesDefault(t *testing.T) {
+	cfg := DefaultConfig() // DefaultWeaponType=melee
+	// Str=20/Dex=0（刻意不對稱，避免 melee/ranged 兩組係數剛好因為 Str=Dex 對稱互換而算出同一個值）。
+	dRanged := Compute(cfg, ComputeInput{WeaponType: "ranged", Stats: Stats{Str: 20, Dex: 0}})
+	dMeleeDefault := Compute(cfg, ComputeInput{Stats: Stats{Str: 20, Dex: 0}})
+	if dRanged.Atk == dMeleeDefault.Atk {
+		t.Fatalf("WeaponType=ranged 應與空字串（沿用 melee 預設）算出不同的 Atk，皆為 %v", dRanged.Atk)
+	}
+	dEmpty := Compute(cfg, ComputeInput{WeaponType: "", Stats: Stats{Str: 20, Dex: 0}})
+	if dEmpty.Atk != dMeleeDefault.Atk {
+		t.Fatalf("WeaponType 空字串應完全比照 cfg.DefaultWeaponType：want %v got %v", dMeleeDefault.Atk, dEmpty.Atk)
+	}
+}
+
+// --- Passives：pct 類乘在最終值、flat 類直接加總 ---
+
+func TestCompute_PassiveAtkPct(t *testing.T) {
+	cfg := DefaultConfig()
+	base := Compute(cfg, ComputeInput{Stats: Stats{Str: 10}})
+	withPassive := Compute(cfg, ComputeInput{Stats: Stats{Str: 10}, Passives: []PassiveEffect{{Stat: "atk_pct", Value: 50}}})
+	want := base.Atk * 1.5
+	if withPassive.Atk != want {
+		t.Fatalf("atk_pct=50 應讓 Atk 變為 1.5 倍：want %v got %v", want, withPassive.Atk)
+	}
+}
+
+func TestCompute_PassiveFlatStats(t *testing.T) {
+	cfg := DefaultConfig()
+	base := Compute(cfg, ComputeInput{BaseLevel: 10, Stats: Stats{}})
+	d := Compute(cfg, ComputeInput{BaseLevel: 10, Stats: Stats{}, Passives: []PassiveEffect{
+		{Stat: "hit", Value: 5},
+		{Stat: "flee", Value: 3},
+		{Stat: "crit_pct", Value: 2},
+		{Stat: "perfect_dodge", Value: 1},
+		{Stat: "aspd", Value: 4},
+		{Stat: "crit_dmg_pct", Value: 10},
+	}})
+	if d.Hit != base.Hit+5 {
+		t.Fatalf("hit 被動應直接加總：want %v got %v", base.Hit+5, d.Hit)
+	}
+	if d.Flee != base.Flee+3 {
+		t.Fatalf("flee 被動應直接加總：want %v got %v", base.Flee+3, d.Flee)
+	}
+	if d.CritPct != base.CritPct+2 {
+		t.Fatalf("crit_pct 被動應直接加總：want %v got %v", base.CritPct+2, d.CritPct)
+	}
+	if d.PerfectDodge != base.PerfectDodge+1 {
+		t.Fatalf("perfect_dodge 被動應直接加總：want %v got %v", base.PerfectDodge+1, d.PerfectDodge)
+	}
+	if d.Aspd != base.Aspd+4 {
+		t.Fatalf("aspd 被動應直接加總：want %v got %v", base.Aspd+4, d.Aspd)
+	}
+	if d.CritDmgPct != 10 {
+		t.Fatalf("crit_dmg_pct 應為被動加總（沒有底值）：want 10 got %v", d.CritDmgPct)
+	}
+	if base.CritDmgPct != 0 {
+		t.Fatalf("沒有被動時 CritDmgPct 應為 0，got %v", base.CritDmgPct)
+	}
+}
+
+func TestCompute_PassiveHPMaxPct(t *testing.T) {
+	cfg := DefaultConfig()
+	base := Compute(cfg, ComputeInput{Stats: Stats{Vit: 10}})
+	d := Compute(cfg, ComputeInput{Stats: Stats{Vit: 10}, Passives: []PassiveEffect{{Stat: "hp_max_pct", Value: 20}}})
+	want := int(float64(base.MaxHP) * 1.2)
+	if d.MaxHP != want {
+		t.Fatalf("hp_max_pct=20 應讓 MaxHP 變為 1.2 倍：want %v got %v", want, d.MaxHP)
+	}
+}
+
+// --- TotalStatPoints：逐級核對 RO pre-renewal 官方 statpoint.yml（Lv1..99），來源：
+// scratchpad/ro_classic/src/rathena/db/statpoint.yml（2026-09-17 讀取）。index 0 對應 Lv1。 ---
+
+var roStatPointTable = [99]int{
+	48, 51, 54, 57, 60, 64, 68, 72, 76, 80,
+	85, 90, 95, 100, 105, 111, 117, 123, 129, 135,
+	142, 149, 156, 163, 170, 178, 186, 194, 202, 210,
+	219, 228, 237, 246, 255, 265, 275, 285, 295, 305,
+	316, 327, 338, 349, 360, 372, 384, 396, 408, 420,
+	433, 446, 459, 472, 485, 499, 513, 527, 541, 555,
+	570, 585, 600, 615, 630, 646, 662, 678, 694, 710,
+	727, 744, 761, 778, 795, 813, 831, 849, 867, 885,
+	904, 923, 942, 961, 980, 1000, 1020, 1040, 1060, 1080,
+	1101, 1122, 1143, 1164, 1185, 1207, 1229, 1251, 1273,
+}
+
+func TestTotalStatPoints_MatchesROStatpointTable(t *testing.T) {
+	cfg := DefaultConfig() // stat_points_initial=48, per_level_base=3, step_levels=5
+	for lv := 1; lv <= 99; lv++ {
+		want := roStatPointTable[lv-1]
+		if got := TotalStatPoints(cfg, lv); got != want {
+			t.Fatalf("TotalStatPoints(Lv%d): want %d（RO statpoint.yml）, got %d", lv, want, got)
+		}
+	}
+}
+
+func TestTotalStatPoints_BelowLv1ClampsToLv1(t *testing.T) {
+	cfg := DefaultConfig()
+	if got := TotalStatPoints(cfg, 0); got != cfg.StatPointsInitial {
+		t.Fatalf("TotalStatPoints(0) 應視為 Lv1，want %d got %d", cfg.StatPointsInitial, got)
+	}
+}
+
+// --- TotalSkillPoints ---
+
+func TestTotalSkillPoints_DefaultFormula(t *testing.T) {
+	cfg := DefaultConfig() // initial=0, per_level=1
+	if got := TotalSkillPoints(cfg, 1); got != 0 {
+		t.Fatalf("Lv1 技能點應為 0，got %d", got)
+	}
+	if got := TotalSkillPoints(cfg, 27); got != 26 {
+		t.Fatalf("Lv27 技能點應為 26，got %d", got)
+	}
+}
+
+// --- StatCap ---
+
+func TestStatCap_MinOfMaxStatAndLevel(t *testing.T) {
+	cfg := DefaultConfig() // max_stat=99
+	if got := StatCap(cfg, 1); got != 1 {
+		t.Fatalf("Lv1 StatCap 應為 1（等同 InitialStat，Lv1 不能加點），got %d", got)
+	}
+	if got := StatCap(cfg, 27); got != 27 {
+		t.Fatalf("Lv27 StatCap 應為 27，got %d", got)
+	}
+	if got := StatCap(cfg, 150); got != cfg.MaxStat {
+		t.Fatalf("超過 MaxStat 的等級應夾在 MaxStat=%d，got %d", cfg.MaxStat, got)
+	}
+}
+
+// --- EffectiveLevel ---
+
+func TestEffectiveLevel_TestLevelOverridesRealLevel(t *testing.T) {
+	tl := 42
+	if got := EffectiveLevel(&tl, 5); got != 42 {
+		t.Fatalf("有 test_level 時應完全採用，want 42 got %d", got)
+	}
+	if got := EffectiveLevel(nil, 5); got != 5 {
+		t.Fatalf("test_level=nil 時應採用真實等級，want 5 got %d", got)
+	}
+}
+
+// --- effectiveTestLevel（審查#2 CONFIRMED 根因回歸測試）---
+
+func TestEffectiveTestLevel_EnabledPassesThroughExistingValue(t *testing.T) {
+	tl := 42
+	cfg := DefaultConfig() // TestLevelEnabled 預設 true
+	got := effectiveTestLevel(cfg, &tl)
+	if got == nil || *got != 42 {
+		t.Fatalf("開關開啟時應照常採用既有 test_level，got %v", got)
+	}
+}
+
+func TestEffectiveTestLevel_DisabledIgnoresExistingValue(t *testing.T) {
+	tl := 42
+	cfg := DefaultConfig()
+	cfg.TestLevelEnabled = false
+	got := effectiveTestLevel(cfg, &tl)
+	if got != nil {
+		t.Fatalf("開關關閉時應忽略既有 test_level（即使 DB 裡還留著舊值），got %v", *got)
+	}
+}
+
+func TestEffectiveTestLevel_NilStaysNilRegardlessOfSwitch(t *testing.T) {
+	cfg := DefaultConfig()
+	if got := effectiveTestLevel(cfg, nil); got != nil {
+		t.Fatalf("test_level 本來就是 nil 時，開關開啟也應該回 nil，got %v", *got)
+	}
+	cfg.TestLevelEnabled = false
+	if got := effectiveTestLevel(cfg, nil); got != nil {
+		t.Fatalf("test_level 本來就是 nil 時，開關關閉也應該回 nil，got %v", *got)
+	}
+}
+
+func TestDefaultConfig_TestLevelEnabledDefaultsTrue(t *testing.T) {
+	if !DefaultConfig().TestLevelEnabled {
+		t.Fatalf("DefaultConfig().TestLevelEnabled 應預設為 true（維持現行行為，正式上線前才手動關閉）")
 	}
 }

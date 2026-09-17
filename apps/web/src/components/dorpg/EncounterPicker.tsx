@@ -9,8 +9,9 @@
 // 畫面固定 data-skin="default" 暗色（跟 BattleScreen/ResultOverlay 同一套 PALETTE），不是站方 skin
 // 系統的可切換配色——這是 DORPG 這整包子系統自己的視覺語言,不是既有「事件面板」那種要固定亮字的情況。
 import { useCallback, useEffect, useState } from 'react';
-import { rpgBattleApi, type RpgBattleEncounters, type RpgEncounterSummary } from '@/lib/api';
+import { rpgApi, rpgBattleApi, type JobDTO, type RpgBattleEncounters, type RpgEncounterSummary } from '@/lib/api';
 import { getUserToken, withUserAuth } from '@/lib/userAuth';
+import { sortJobs } from '@/lib/rpgMeta';
 import { PALETTE, kitAsset, nineSliceStyle } from '@/lib/dorpg/assets';
 import { battleAudio } from '@/lib/dorpg/audio';
 import styles from './EncounterPicker.module.css';
@@ -65,6 +66,43 @@ export default function EncounterPicker({ onBack, onPick, onOpenCharacter, loadO
     load();
   }, [load]);
 
+  // DORPG P5：職業切換列（見契約 §1／WIRE §會員端 REST）。RpgBattleCharacterBrief（bootstrap 的
+  // character 摘要）沒有帶 job 欄位——契約沒有把它加進那個 wire 型別，這裡改叫既有的 /rpg/jobs
+  // + /rpg/me 取得清單與目前職業，不擅自幫 BACKEND 的 wire 型別加欄位。/dev 離線 fixture 模式
+  // （loadOverride 有值）或未登入時不打真正 API，職業列直接不顯示（失敗也不擋主畫面）。
+  const [jobs, setJobs] = useState<JobDTO[]>([]);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [jobBusy, setJobBusy] = useState(false);
+
+  const loadJob = useCallback(() => {
+    if (loadOverride || !getUserToken()) return;
+    Promise.all([withUserAuth((t) => rpgApi.jobs(t)), withUserAuth((t) => rpgApi.me(t))])
+      .then(([jobsRes, me]) => {
+        setJobs(sortJobs(jobsRes.jobs));
+        setCurrentJobId(me.character?.job?.id ?? null);
+      })
+      .catch(() => {});
+  }, [loadOverride]);
+  useEffect(() => {
+    loadJob();
+  }, [loadJob]);
+
+  async function selectJob(id: string) {
+    if (jobBusy || id === currentJobId) return;
+    setJobBusy(true);
+    try {
+      const me = await withUserAuth((t) => rpgApi.setJob(t, id));
+      setCurrentJobId(me.character?.job?.id ?? null);
+      // 職業會決定 bootstrap 的武器視覺（契約 §1）；重新打一次既有的 encounters 摘要載入機制，
+      // 之後玩家挑選遭遇打 bootstrap 時後端已經是新職業，會自動反映新武器，這裡不必自己重打 bootstrap。
+      load();
+    } catch {
+      /* 職業切換列是加分功能，失敗不顯示錯誤橫幅、不擋主畫面（沿用 loadJob 的靜默失敗原則） */
+    } finally {
+      setJobBusy(false);
+    }
+  }
+
   const ch = data?.character;
 
   // 2026-09-14 SCREENS 接線：選單是整個戰鬥流程的入口，音樂應該從這裡就開始、跨越多場戰鬥連續播放
@@ -114,6 +152,26 @@ export default function EncounterPicker({ onBack, onPick, onOpenCharacter, loadO
 
           {!loading && !error && data && (
             <>
+              {jobs.length > 0 && (
+                <div className={styles.jobRow} role="group" aria-label="切換職業">
+                  {jobs.map((j) => {
+                    const active = j.id === currentJobId;
+                    return (
+                      <button
+                        key={j.id}
+                        type="button"
+                        className={active ? `${styles.jobPill} ${styles.jobPillActive}` : styles.jobPill}
+                        style={active ? { background: PALETTE.borderGold, borderColor: PALETTE.borderGold, color: '#fff' } : { borderColor: 'rgba(243,189,98,.3)', color: PALETTE.textSecondary }}
+                        disabled={jobBusy}
+                        onClick={() => selectJob(j.id)}
+                      >
+                        {j.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               {ch && (
                 <button
                   type="button"

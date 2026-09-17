@@ -51,6 +51,12 @@ type CombatRating struct {
 	// 與 MonsterRating/CompanionRating 各自的組裝邏輯），只有玩家的配點會影響戰鬥節奏。
 	Aspd             float64 `json:"aspd"`
 	CastReductionPct float64 `json:"castReductionPct"`
+	// CritDmgPct 審查#5【低・PLAUSIBLE】新增：被動技能 crit_dmg_pct 加成的總和（%，見 compute.go
+	// Derived.CritDmgPct 註解）。過去 Compute() 算出這個值卻從未接進 PlayerBattleStats.Rating，
+	// engine 的暴擊倍率（effects.ts rollCritMultiplier）因此永遠讀不到玩家的暴擊傷害加成——
+	// 玩家點了 crit_dmg_pct 被動技能，角色頁看得到數字，實戰卻毫無效果。怪物/隊友沒有這個加成
+	// 來源（MonsterRating 不設值，零值即 0；CompanionRating 直接沿用玩家值，同其餘欄位）。
+	CritDmgPct float64 `json:"critDmgPct"`
 }
 
 // PlayerBattleStatsFrom 從既有 Compute() 的 Derived + Base Lv 組出 PlayerBattleStats，套用
@@ -82,6 +88,9 @@ func PlayerBattleStatsFrom(cfg Config, baseLevel int, d Derived) PlayerBattleSta
 		Rating: CombatRating{
 			Hit: d.Hit, Flee: d.Flee, CritPct: d.CritPct, CritShield: d.CritShield,
 			Aspd: d.Aspd, CastReductionPct: d.CastReductionPct,
+			// 審查#5：CritDmgPct 直接取自 Compute() 的 Derived.CritDmgPct，不套用任何保底/換算
+			// （跟 Hit/Flee/CritPct/CritShield 同一個精神，只有 Atk/HPMax 才有保底，見上方註解）。
+			CritDmgPct: d.CritDmgPct,
 		},
 	}
 }
@@ -115,6 +124,12 @@ type MonsterRow struct {
 	IsBoss    bool    `json:"is_boss"`
 	IsActive  bool    `json:"is_active"`
 	SortOrder int     `json:"sort_order"`
+	// WeakElements P5（CONTRACT §6）：這隻怪的弱點屬性桶（DOR 8 桶英文代碼，例如
+	// metal/wood/water/fire/earth/light/dark/neutral——見 content.go validElementKinds）。
+	// 技能 element 命中其中之一 → 傷害 ×(1+battle_weakness_bonus_pct/100)，見 battle.go
+	// buildWireConfig／wireEnemy。既有 5 隻怪的實際清單由另一個 Workflow 產生，貼進
+	// migration 180 的 MONSTER WEAKNESS SEED 標記之間，本檔只負責型別/讀寫。
+	WeakElements []string `json:"weak_elements"`
 }
 
 // CompanionRow rpg_companions 資料列，共用原則同 MonsterRow。

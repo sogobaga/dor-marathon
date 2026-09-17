@@ -4997,6 +4997,48 @@ export interface RpgConfig {
   battle_aspd_reference: number
   battle_attack_cooldown_min_ms: number
   battle_cast_min_ms: number
+
+  // --- DORPG P5（職業／測試等級／配點技能規則調整，見契約 dorpg_p5 CONTRACT.md §3/§4/§6）新增：
+  // 全部走這份既有 rpg_config JSON，不新增 migration。
+  // ⚠️ 這批欄位名稱是 FRONTEND 依 CONTRACT.md 文字敘述擬定（後端尚未落地時無法逐字核對 internal/
+  // rpg/config.go 的 json tag）——整合時請以 BACKEND 實際欄位名為準，若不同只需在這裡＋
+  // lib/rpgMeta.ts CONFIG_GROUPS 同步改名，ConfigTab 是完全依 CONFIG_GROUPS 驅動的通用表單，
+  // 不必再改 admin/rpg/page.tsx。---
+  /** 配點公式初始值 TotalStatPoints(1)（契約預設 48）。 */
+  stat_points_initial: number
+  /** 配點公式：floor((k−1)/此值) 每幾級遞增一階（契約預設 5）。 */
+  stat_points_step_levels: number
+  /** 配點公式：每級基礎點數（契約預設 3）。 */
+  stat_points_per_level_base: number
+  /** 技能點公式初始值 TotalSkillPoints(1)（契約預設 0）。 */
+  skill_points_initial: number
+  /** 技能點公式：每級技能點（契約預設 1）。 */
+  skill_points_per_level: number
+  /** 暴擊傷害浮動倍率下界，取代固定的 battle_crit_multiplier（契約預設 1.75）。
+   *  ⚠️ INTEGRATOR 對齊：json tag 依 internal/rpg/config.go 實際欄位為準，不加 battle_ 前綴。 */
+  crit_mult_min: number
+  /** 暴擊傷害浮動倍率上界（契約預設 2.25）。同上，對齊 config.go 的 crit_mult_max。 */
+  crit_mult_max: number
+  /** 技能屬性命中怪物 weak_elements 時的傷害加成 %（契約預設 25）。 */
+  battle_weakness_bonus_pct: number
+  /** STR 整十階梯：atk += floor(STR/10)² × 此值（契約預設 1，全職業統一，弓箭手也吃 STR）。 */
+  str_tier_coef: number
+  /** INT 整十階梯：matk += floor(INT/10)² × 此值（契約預設 1）。 */
+  int_tier_coef: number
+  /** 等級→防禦二段線性的轉折等級（契約預設 50，取代現行 floor(L/2)）。 */
+  lv_def_breakpoint: number
+  /** 轉折等級（含）以下，每級防禦加成（契約預設 0.5）。 */
+  lv_def_per_low: number
+  /** 轉折等級以上，每級防禦加成（契約預設 0.35）。 */
+  lv_def_per_high: number
+  /**
+   * 審查#2 修正新增：測試等級功能的獨立總開關（正式上線前關閉）。過去 test_level 只靠
+   * requireEntry 白名單擋，白名單放寬後任何在白名單內的人都能把自己等級設成 99，沒有第二道
+   * 閘門。關閉後 PUT /rpg/test-level 一律 403（error:"test_level_disabled"），且既有 test_level
+   * 也會被後端忽略（不是只擋新的寫入請求）。預設 true。對齊後端 internal/rpg/config.go 同名
+   * json tag（test_level_enabled）。
+   */
+  test_level_enabled: boolean
 }
 
 export interface RpgDerived {
@@ -5017,16 +5059,45 @@ export interface RpgDerived {
   resists: Record<string, number> // key 名稱由後端決定（狀態異常代碼），前端以 lib/rpgMeta.ts RESIST_LABEL 轉中文、未對到的 key 原樣顯示
 }
 
+// --- DORPG P5：六職業（見契約 dorpg_p5 CONTRACT.md §1，id 固定不隨語系/顯示名變動）---
+export type RpgJobId = 'light_knight' | 'archer' | 'heavy_knight' | 'cleric' | 'merchant' | 'mage'
+export interface JobPathDTO {
+  id: string
+  name: string
+  desc: string
+}
+export interface JobDTO {
+  id: string
+  name: string
+  tagline: string
+  description: string
+  path_a: JobPathDTO
+  path_b: JobPathDTO
+  weapon: 'sword' | 'staff' | 'bow' | 'greatsword'
+  atk_branch: 'melee' | 'ranged'
+  recommended_stats: string
+  sort_order: number
+}
+
 export interface RpgCharacter {
   base_level: number
   job_level: number
   job_exp: number
   stats: RpgStats
-  free_points: number
-  next_cost: Partial<RpgStats> // 缺該項鍵＝已達上限（max_stat），前端據此關閉該項 +1/+5
+  free_points: number // P5：現為推導值，等同 stat_points_free（契約 §3：free_points 欄位不再是真相，僅為相容舊碼保留）
+  next_cost: Partial<RpgStats> // 缺該項鍵＝已達上限（stat_cap），前端據此關閉該項 +1/Max
   max_hp: number
   max_mp: number
   derived: RpgDerived
+  // --- P5 新增（見契約 §1-§4、WIRE §會員端 REST GET /rpg/me） ---
+  job: JobDTO | null
+  test_level: number | null // 1–99；null＝使用真實等級（測試用，不影響真實資料）
+  effective_level: number // test_level ?? base_level；配點/技能點/上限一律用這個
+  stat_points_total: number
+  stat_points_free: number
+  stat_cap: number // = min(max_stat, effective_level)
+  skill_points_total: number
+  skill_points_free: number
 }
 
 export interface RpgMe {
@@ -5034,10 +5105,82 @@ export interface RpgMe {
   character?: RpgCharacter // enabled=false 時省略（未達入口資格）
 }
 
+// --- DORPG P5：技能效果詞彙（見契約 §5、WIRE §引擎（TS）要吃的新欄位）---
+export type SkillKind = 'damage' | 'heal' | 'shield' | 'buff' | 'debuff' | 'passive' | 'special'
+export type SkillDmgType = 'physical' | 'magic'
+export type SkillTarget = 'enemy' | 'allEnemies' | 'self' | 'ally' | 'allAllies'
+// 怪物屬性桶（DOR 8 桶英文代碼，同 apps/web/src/lib/dorpg/types.ts ElementKind，這裡不 import
+// 該檔避免跨角色檔案耦合——兩邊字面量集合須保持一致，改動時兩處都要同步）。
+export type RpgElement = 'metal' | 'wood' | 'water' | 'fire' | 'earth' | 'light' | 'dark' | 'neutral'
+
+/** 已依技能等級展開成即時數值的效果快照（WIRE：base+per_level×(lv−1)）。各 kind 只會用到其中一部分欄位。 */
+export interface EffectAtLevel {
+  kind: SkillKind
+  stat?: string // buff/debuff/passive 用；集合見契約 §5（atk_pct/matk_pct/def_pct/...）
+  value?: number // buff/debuff/passive 用
+  duration_ms?: number // buff/debuff 用
+  coef?: number // damage/heal 用
+  flat?: number // damage/heal/shield 用
+  hits?: number // damage 用，>1 表示多段
+  target: SkillTarget
+  mp_cost: number
+}
+
+/** GET /rpg/skills 單一技能列（含目前職業已配等級與可升條件）。 */
+export interface SkillDTO {
+  id: string
+  name: string
+  path: 'a' | 'b'
+  tier: number
+  kind: SkillKind
+  dmg_type?: SkillDmgType // damage 才有意義
+  element?: RpgElement // damage 才有意義
+  target: SkillTarget
+  max_level: number
+  level: number // 目前已配等級，0＝尚未學習
+  prereq_skill_id?: string | null
+  prereq_level?: number | null
+  prereq_ok: boolean
+  can_level_up: boolean
+  mp_cost: number
+  mp_cost_per_level: number
+  cooldown_ms: number
+  cast_ms: number
+  display_text: string
+  implemented: boolean // false＝本輪引擎未實裝（special 類），可配點但戰鬥中不可用
+  effect_at_level: EffectAtLevel // level=0 時用 lv=1 的數值預覽
+  effect_next_level: EffectAtLevel | null // 已達 max_level 時為 null
+  lv_preview: { '1': string; '5': string; '10': string }
+}
+
+export interface RpgSkillsResponse {
+  job: JobDTO | null
+  skills: SkillDTO[] // 未選職業＝空陣列
+  skill_points_total: number
+  skill_points_free: number
+}
+
 export const rpgApi = {
   me: (token: string) => request<RpgMe>('/rpg/me', { headers: withAuth(token) }),
-  allocate: (token: string, body: { stat: RpgStatKey; points: number }) =>
+  // P5：六職業清單（含路線 A/B 說明、武器、物攻分支）；EncounterPicker 簡潔切換列與角色頁完整
+  // 卡片共用同一份資料，各自只取用需要的欄位。
+  jobs: (token: string) => request<{ jobs: JobDTO[] }>('/rpg/jobs', { headers: withAuth(token) }),
+  // job_id: null＝清除職業選擇（回到未選職業狀態，沿用全域預設武器、無職業技能）。
+  setJob: (token: string, jobId: string | null) =>
+    request<RpgMe>('/rpg/job', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ job_id: jobId }) }),
+  // level: null＝使用真實等級（清除測試等級）。
+  setTestLevel: (token: string, level: number | null) =>
+    request<RpgMe>('/rpg/test-level', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ level }) }),
+  // P5：points 與 mode 二選一——mode='max' 由伺服器反覆 +1 直到點數不夠或達上限（契約 §3）。
+  allocate: (token: string, body: { stat: RpgStatKey; points?: number; mode?: 'max' }) =>
     request<RpgMe>('/rpg/allocate', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  // 六圍全回 initial，寫 6 筆負值 player_stat_log（契約 §3）。
+  resetStats: (token: string) => request<RpgMe>('/rpg/stats/reset', { method: 'POST', headers: withAuth(token) }),
+  // P5：技能（契約 §4）。未選職業時 skills 為空陣列。
+  skills: (token: string) => request<RpgSkillsResponse>('/rpg/skills', { headers: withAuth(token) }),
+  allocateSkill: (token: string, body: { skill_id: string; delta: 1 | -1 | 'max' }) =>
+    request<RpgSkillsResponse>('/rpg/skills/allocate', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  resetSkills: (token: string) => request<RpgSkillsResponse>('/rpg/skills/reset', { method: 'POST', headers: withAuth(token) }),
 }
 
 // --- Admin: 遊戲化角色數值（perm scope 'rpg'；見 internal/rpg admin.go） ---
@@ -5358,6 +5501,10 @@ export interface RpgBootstrapRatingRaw {
   // fromApi.ts asRating() 缺欄位時給中性預設值（不是整包丟棄 rating，見該函式註解）。
   aspd?: number
   castReductionPct?: number
+  // 審查#5【低・PLAUSIBLE】新增：被動技能 crit_dmg_pct 加成的總和（%），疊在浮動暴擊倍率之上
+  // （見 engine/effects.ts rollCritMultiplier 呼叫端）。可選、缺欄位視為 0（無加成），理由同
+  // aspd/castReductionPct——舊版後端可能還沒送這個欄位。
+  critDmgPct?: number
 }
 export interface RpgBootstrapPartyMemberRaw {
   id: string
@@ -5371,6 +5518,9 @@ export interface RpgBootstrapPartyMemberRaw {
   stats?: RpgBootstrapActorStatsRaw
   weapon?: string
   rating?: RpgBootstrapRatingRaw
+  // P5：玩家目前選擇的職業（見契約 §1／WIRE）——武器已由後端依職業決定填在上面的 weapon，
+  // 這個 id 只給前端顯示/除錯用，選填（AI 隊友恆為 undefined）。
+  jobId?: string | null
 }
 export interface RpgBootstrapEnemyRaw {
   id: string
@@ -5395,6 +5545,9 @@ export interface RpgBootstrapEnemyRaw {
    * 而多寫防禦邏輯。正式回應裡這個欄位恆為 true/false，故型別收斂為必有的 boolean。
    */
   canEscape: boolean
+  // P5：怪物弱點屬性桶（見契約 §6／WIRE elementMultiplier）；技能 element 命中其中之一 →
+  // 傷害 ×(1+battle_weakness_bonus_pct/100)。選填——舊版後端（本輪部署前）可能還沒送。
+  weakElements?: string[]
 }
 export interface RpgBootstrapSceneSlotRaw {
   id: string
@@ -5409,6 +5562,29 @@ export interface RpgBootstrapSceneRaw {
   imageUrl: string
   slots: RpgBootstrapSceneSlotRaw[]
 }
+/**
+ * wireSkill.effect 的裸資料形狀（WIRE.md 引擎章節）。
+ * ⚠️ 審查#1(b) 修正：這裡曾經誤宣告成 `import('@/lib/dorpg/types').EffectAtLevel`（camelCase
+ * durationMs/mpCost），註解還寫「bootstrap 沿用戰鬥引擎自己的 camelCase 慣例」——但實際上後端
+ * services/api/internal/rpg/skills.go 的 EffectAtLevel struct／WIRE.md 逐字列出的都是
+ * snake_case（duration_ms/mp_cost，跟本檔會員端 REST 的 EffectAtLevel 用同一套命名，兩者其實是
+ * 同一份命名慣例，不是「不同」），前一版註解對現實的描述反了。沿用舊型別會讓 fromApi.ts 讀
+ * `e.durationMs`/`e.mpCost` 永遠讀到 undefined（真正的 key 是 duration_ms/mp_cost），buff/debuff
+ * 的持續時間因此恆為 0——這是純執行期的資料遺失，型別檢查完全抓不到。獨立宣告一份 snake_case
+ * 的裸資料型別，fromApi.ts 的 asEffect() 負責轉成 engine 內部要的 camelCase EffectAtLevel。
+ */
+export interface RpgBootstrapEffectRaw {
+  kind?: string
+  stat?: string
+  value?: number
+  duration_ms?: number
+  coef?: number
+  flat?: number
+  hits?: number
+  target?: string
+  mp_cost?: number
+}
+
 export interface RpgBootstrapSkillRaw {
   id: string
   name: string
@@ -5422,6 +5598,18 @@ export interface RpgBootstrapSkillRaw {
   element?: string
   weapon: string
   castMs?: number
+  // --- P5 新增（見契約 §4/§6、WIRE §戰鬥 bootstrap）：職業技能才會帶這些欄位；未選職業維持
+  // 現行 is_default 技能填法（這批欄位缺省）。effect 已依 level 展開成即時數值，前端不再自己算。---
+  // 審查#1【高・CONFIRMED】新增：一次施放命中次數的頂層欄位（後端 battle.go toWireSkillLeveled/
+  // toWireSkillLegacy 新增，既有 5 個一般技能固定送 1，缺欄位＝舊版後端，維持 undefined→引擎
+  // 預設 1 的既有語意，見 dorpg/types.ts Skill.hits 型別註解）。
+  hits?: number
+  level?: number
+  maxLevel?: number
+  displayText?: string
+  dmgType?: string
+  implemented?: boolean
+  effect?: RpgBootstrapEffectRaw
 }
 export interface RpgBootstrapItemRaw {
   id: string
@@ -5435,7 +5623,10 @@ export interface RpgBootstrapSampleRaw {
   party: RpgBootstrapPartyMemberRaw[]
   enemies: RpgBootstrapEnemyRaw[]
   scene: RpgBootstrapSceneRaw
-  skills: (RpgBootstrapSkillRaw | null)[] // 後端固定回傳長度 8（Go [8]*wireSkill），未裝備的槽位是 null
+  // P5 起：未選職業維持現行長度 8（Go [8]*wireSkill）；已選職業改回傳最多 10 格（兩排各 5，依
+  // path→tier 排序，見契約 §6／WIRE），未裝備／未達等級的槽位是 null。前端一律用陣列實際長度，
+  // 不要寫死 8（SkillTray 改用 ENGINE 匯出的 SKILL_SLOTS 常數）。
+  skills: (RpgBootstrapSkillRaw | null)[]
   items: RpgBootstrapItemRaw[]
   initialTargetId: string
   sceneKind?: 'normal' | 'boss'

@@ -36,7 +36,12 @@ const {
   missChance, critChance, elementMultiplier, computeRawDamage,
   // P3（AGI 攻速／DEX 詠唱縮減）新增匯出：
   attackCooldownFor, effectiveCastMs,
+  // P5（職業／配點／技能）新增匯出：
+  rollCritMultiplier, activeStatSum, effectiveRating, effectiveStats, damageTakenMultiplier,
 } = await import(modUrl)
+
+const typesUrl = new URL('../src/lib/dorpg/types.ts', import.meta.url).href
+const { SKILL_SLOTS } = await import(typesUrl)
 
 let pass = 0, fail = 0
 function ok(cond, label) {
@@ -736,36 +741,42 @@ function fixedRng(seq) {
   eq(computeRawDamage(10, 1, 0, 1, 1, 1, 15), -5, 'computeRawDamage：刻意不套 max(1,...)，def 超過 raw 時允許回傳負值')
 }
 
-// ── 34) elementMultiplier：查表、未列出＝1.0、0＝完全無效，查無 attribute/元素都安全回退 ──
+// ── 34) elementMultiplier：P5 改版——chart 覆寫優先、否則 weakElements 命中 +25%、否則 1.0；
+//        DEFAULT_BATTLE_CONFIG.elementChart 改成清空（CONTRACT §0/§6，弱點改由 Enemy.weakElements
+//        表達）；elementMultiplier() 簽章也從「(cfg, attribute, element)」改成「(cfg, enemy, element)」
+//        ——這是本輪對既有 P2 測試刻意的行為變更，不是回歸，舊測試改用管理者覆寫 cfg 驗證同一段邏輯。──
 {
-  const cfg = DEFAULT_BATTLE_CONFIG
-  eq(elementMultiplier(cfg, '金', 'water'), 0, '金屬性怪物被 water 攻擊 → 0 倍（規格範例：無效攻擊）')
-  eq(elementMultiplier(cfg, '金', 'fire'), 1.25, '金屬性怪物被 fire 攻擊 → 1.25 倍（吃剋）')
-  eq(elementMultiplier(cfg, '木', 'fire'), 1.6, '木屬性怪物被 fire 攻擊 → 1.6 倍')
-  eq(elementMultiplier(cfg, '闇', 'dark'), 0, '闇屬性怪物被 dark 攻擊 → 0 倍')
-  eq(elementMultiplier(cfg, '金', 'wood'), 1, '表中查無的組合（金×wood）預設 1.0，不相剋也不吃虧')
-  eq(elementMultiplier(cfg, '無', 'fire'), 1, '「無」屬性怪物的表是空物件，任何 element 都落回 1.0')
-  eq(elementMultiplier(cfg, undefined, 'water'), 1, '怪物沒有填 attribute → 視為中性，直接回 1.0')
-  eq(elementMultiplier(cfg, '不存在的屬性', 'fire'), 1, '整個屬性都不在表中 → 回 1.0')
+  eq(Object.keys(DEFAULT_BATTLE_CONFIG.elementChart).length, 0, 'P5：DEFAULT_BATTLE_CONFIG.elementChart 預設清空成 {}（P2 那組金/木/土/闇示範表已移除）')
+
+  const chartCfg = { ...DEFAULT_BATTLE_CONFIG, elementChart: { 金: { water: 0.0, fire: 1.6 } } }
+  eq(elementMultiplier(chartCfg, { attribute: '金', weakElements: ['fire'] }, 'water'), 0, 'chart 覆寫優先：金×water 查表命中 0（管理者覆寫可做免疫），即使 water 沒列在 weakElements')
+  eq(elementMultiplier(chartCfg, { attribute: '金', weakElements: ['fire'] }, 'fire'), 1.6, 'chart 覆寫優先：金×fire 查表命中 1.6，蓋過 weakElements 規則算出來的 1.25')
+  eq(elementMultiplier(chartCfg, { attribute: '木', weakElements: ['fire'] }, 'fire'), 1.25, '查無 chart 覆寫（木不在表中）→ 落到 weakElements 規則：命中弱點 → 1+weaknessBonusPct/100=1.25')
+  eq(elementMultiplier(chartCfg, { attribute: '木', weakElements: ['fire'] }, 'water'), 1, '查無 chart 覆寫、也沒命中 weakElements → 1.0（不相剋也不吃虧）')
+  eq(elementMultiplier(chartCfg, { attribute: '無', weakElements: [] }, 'fire'), 1, '沒有弱點的怪物（weakElements=[]）→ 恆 1.0')
+  eq(elementMultiplier(chartCfg, undefined, 'water'), 1, '怪物物件本身是 undefined → 視為中性，直接回 1.0')
+  eq(elementMultiplier(DEFAULT_BATTLE_CONFIG, { attribute: '金', weakElements: ['fire'] }, 'fire'), 1.25, 'DEFAULT config（沒有管理者覆寫，elementChart={}）：金×fire 命中 weakElements → 1.25')
+  eq(elementMultiplier({ ...DEFAULT_BATTLE_CONFIG, weaknessBonusPct: 50 }, { attribute: '金', weakElements: ['fire'] }, 'fire'), 1.5, 'weaknessBonusPct 可調整：改 50 之後命中弱點變成 ×1.5')
 }
 
-// ── 35) 端到端：屬性剋制造成 'immune'（技能 element='water' 打 attribute='金' 的怪物） ──
+// ── 35) 端到端：chart 覆寫可以做出 'immune'（0 倍） ──
 {
   const sample = makeSample({
     enemies: [
       {
         id: 'e1', name: '鋼鐵巨鉗蟹', level: 1, hp: 999, hpMax: 999, slot: 'front_center', imageUrl: '',
-        attribute: '金', stats: { hpMax: 999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 },
+        attribute: '金', weakElements: ['fire'], stats: { hpMax: 999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 },
       },
     ],
     skills: [
       { id: 'icebolt', name: '冰槍術', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 2, flat: 0, weapon: 'staff', element: 'water', castMs: 100 },
-      null, null, null, null, null, null, null,
+      null, null, null, null, null, null, null, null, null,
     ],
   })
   // 不需要固定 rng：FAR_CONFIG 已把 missPct 封死在 0（必中），elementMul=0 在算暴擊前就 return，
   // 所以這條路徑完全不吃 rng 的實際數值，用 Math.random 也一樣確定。
-  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  const immuneCfg = { ...FAR_CONFIG, elementChart: { 金: { water: 0.0 } } } // 管理者覆寫示範：金免疫 water
+  let s = createBattle(sample, { now: 0, config: immuneCfg })
   s = dispatch(s, { type: 'USE_SKILL', skillId: 'icebolt' }, 0)
   // P3 新增 castMinMs（預設 120）：即使玩家 castReductionPct=0（這裡沒帶 rating，退回中性後備值），
   // effectiveCastMs 仍會把低於 120ms 的 castMs 夾到 120——這支測試技能的 castMs=100 本來就低於
@@ -773,8 +784,34 @@ function fixedRng(seq) {
   // 這個測試原本要驗證的屬性剋制邏輯跑掉）。
   s = tick(s, 120)
   const ev = s.events.find((e) => e.kind === 'attack' && e.actorId === 'player')
-  ok(!!ev && ev.result === 'immune' && ev.damage === 0, '冰屬性技能打金屬性怪物 → elementMultiplier=0 → result=immune，damage=0')
+  ok(!!ev && ev.result === 'immune' && ev.damage === 0, 'chart 覆寫金×water=0 → elementMultiplier=0 → result=immune，damage=0')
   eq(s.enemies[0].hp, 999, 'immune 攻擊完全不扣血')
+}
+
+// ── 35b) 端到端：weakElements 命中（沒有 chart 覆寫時的預設行為）→ +25% 傷害，非 immune ──
+{
+  const sample = makeSample({
+    enemies: [
+      {
+        id: 'e1', name: '鋼鐵巨鉗蟹', level: 1, hp: 5000, hpMax: 5000, slot: 'front_center', imageUrl: '',
+        attribute: '金', weakElements: ['fire'], stats: { hpMax: 5000, mpMax: 0, atk: 1, matk: 1, def: 35, mdef: 0 },
+      },
+    ],
+    skills: [
+      { id: 'fireskill', name: '火球術', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1, flat: 0, weapon: 'staff', element: 'fire', castMs: 100 },
+      null, null, null, null, null, null, null, null, null,
+    ],
+  })
+  // FAR_CONFIG 的 elementChart 沿用 DEFAULT_BATTLE_CONFIG（P5 起已清空成 {}），所以這裡真的是在測
+  // weakElements 規則本身、不是被管理者覆寫表蓋掉。
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'fireskill' }, 0)
+  s = tick(s, 120)
+  const ev = s.events.find((e) => e.kind === 'attack' && e.actorId === 'player')
+  ok(!!ev, '（前提）技能有造成攻擊事件')
+  // raw = floor(135×1×1.25×1×1) = 168；168-35=133（135 是 makeSample 玩家的預設 ATK）。
+  eq(ev && ev.damage, Math.floor(135 * 1.25) - 35, '火屬性命中金屬性怪物的 weakElements → ×1.25，傷害符合 +25% 加成（非 immune）')
+  ok(ev && ev.result !== 'immune', 'weakElements 命中只是加成，不是 immune（跟 chart 覆寫 0 倍的語意不同）')
 }
 
 // ── 36) 端到端：net≤0（非屬性剋制，純數值被完全擋下）也判 'immune' ──
@@ -849,12 +886,14 @@ function fixedRng(seq) {
   // 補上）不會被任何既有斷言抓到。
   eq(
     s.party[0].rating,
-    { hit: 90, flee: 0, critPct: 0, critShield: 0, aspd: 150, castReductionPct: 0 },
+    // P5 修正（審查#5）：deriveDefaultPartyRating 新增 critDmgPct:0（中性值，見該函式註解）。
+    { hit: 90, flee: 0, critPct: 0, critShield: 0, aspd: 150, castReductionPct: 0, critDmgPct: 0 },
     '沒有帶 rating 的隊員：後備評級的 hit 沿用 cfg.hitRate(0.9→90)、aspd 沿用 cfg.aspdReference(150)，其餘給 0（沒有更多資訊可推）',
   )
   eq(
     s.enemies[0].rating,
-    { hit: 77, flee: 12, critPct: 3, critShield: 4, aspd: 150, castReductionPct: 0 },
+    // P5 修正（審查#5）：deriveDefaultMonsterRating 新增 critDmgPct:0（怪物沒有這個加成來源）。
+    { hit: 77, flee: 12, critPct: 3, critShield: 4, aspd: 150, castReductionPct: 0, critDmgPct: 0 },
     '沒有帶 rating 的怪物：由 config 係數直接推導（deriveDefaultMonsterRating，跟等級無關），aspd 同樣沿用 cfg.aspdReference',
   )
 }
@@ -989,6 +1028,391 @@ function fixedRng(seq) {
     DEFAULT_BATTLE_CONFIG.enemyWindupMs + DEFAULT_BATTLE_CONFIG.enemyAttackMs,
     '怪物 rating.aspd=199 極端值不影響節奏：算出的 nextActAt 跟區塊20沒有 rating.aspd 時的基準值完全相同，不套 attackCooldownFor',
   )
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// P5（DORPG_P5：職業／配點／技能——ENGINE 角色）新增測試：49 號起。
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── 49) effects.ts 純函式單元測試：activeStatSum／effectiveRating／damageTakenMultiplier／effectiveStats ──
+{
+  const effects = [
+    { stat: 'atk_pct', value: 10, expiresAt: 999999, sourceSkillId: 'a', kind: 'buff' },
+    { stat: 'atk_pct', value: 5, expiresAt: 999999, sourceSkillId: 'b', kind: 'buff' },
+    { stat: 'def_pct', value: -20, expiresAt: 999999, sourceSkillId: 'c', kind: 'debuff' },
+  ]
+  eq(activeStatSum(effects, 'atk_pct'), 15, 'activeStatSum：同 stat 不同來源各自疊加（10+5=15）')
+  eq(activeStatSum(effects, 'flee'), 0, 'activeStatSum：查無該 stat → 0')
+
+  eq(
+    effectiveRating({ hit: 10, flee: 5, critPct: 2, critShield: 1, aspd: 150, castReductionPct: 0 }, effects),
+    // P5 修正（審查#5）：effectiveRating 新增 critDmgPct 原樣通過（base 沒給，缺省視為 0）。
+    { hit: 10, flee: 5, critPct: 2, critShield: 1, aspd: 150, castReductionPct: 0, critDmgPct: 0 },
+    'effectiveRating：這組 effects 沒有 hit/flee/crit_pct/aspd，評級完全不變',
+  )
+  eq(
+    effectiveRating({ hit: 10, flee: 5, critPct: 2, critShield: 1, aspd: 150, castReductionPct: 0 }, [
+      { stat: 'hit', value: 20, expiresAt: 1, sourceSkillId: 'x', kind: 'buff' },
+      { stat: 'aspd', value: -30, expiresAt: 1, sourceSkillId: 'y', kind: 'debuff' },
+    ]),
+    { hit: 30, flee: 5, critPct: 2, critShield: 1, aspd: 120, castReductionPct: 0, critDmgPct: 0 },
+    'effectiveRating：hit/aspd 各自疊加對應的 buff/debuff，critShield/castReductionPct 沒有對應詞彙、原樣通過',
+  )
+
+  eq(damageTakenMultiplier([]), 1, 'damageTakenMultiplier：沒有效果時＝1（中性）')
+  eq(damageTakenMultiplier([{ stat: 'damage_taken_pct', value: -30, expiresAt: 1, sourceSkillId: 'z', kind: 'buff' }]), 0.7, 'damageTakenMultiplier：-30% → 0.7 倍')
+  eq(damageTakenMultiplier([{ stat: 'damage_taken_pct', value: -200, expiresAt: 1, sourceSkillId: 'z', kind: 'buff' }]), 0, 'damageTakenMultiplier：clamp 下限 0，不會變成負數（倒扣血）')
+
+  eq(
+    effectiveStats({ hpMax: 100, mpMax: 50, atk: 100, matk: 80, def: 20, mdef: 10 }, [{ stat: 'atk_pct', value: 50, expiresAt: 1, sourceSkillId: 'a', kind: 'buff' }]),
+    { hpMax: 100, mpMax: 50, atk: 150, matk: 80, def: 20, mdef: 10 },
+    'effectiveStats：atk_pct+50% → atk 從 100 變 150，其餘欄位不變',
+  )
+}
+
+// ── 50) SKILL_SLOTS：技能欄容量 8→10；engine 對技能陣列長度無主張（由呼叫端決定），只驗證常數值
+//        與 createBattle 原樣保留呼叫端傳入的長度（不截斷/不強制補滿）。 ──
+{
+  eq(SKILL_SLOTS, 10, 'SKILL_SLOTS 常數＝10（CONTRACT §6：技能欄容量 8→10，兩排各 5）')
+  const tenSlots = [
+    { id: 'slash', name: '斬擊', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1.6, flat: 20, weapon: 'sword', castMs: 300 },
+    null, null, null, null, null, null, null, null, null,
+  ]
+  eq(tenSlots.length, 10, '（前提）測試資料本身就是 10 格')
+  const s = createBattle(makeSample({ skills: tenSlots }), { now: 0, config: FAR_CONFIG })
+  eq(s.skills.length, 10, 'createBattle 原樣保留呼叫端傳入的 10 格技能陣列，engine 本身不寫死 8')
+}
+
+// ── 51) rollCritMultiplier：抽樣落在 [critMultMin, critMultMax]（固定種子多次涵蓋全區間），邊界值精確 ──
+{
+  const cfg = DEFAULT_BATTLE_CONFIG
+  eq(rollCritMultiplier(fixedRng([0]), cfg), 1.75, 'rng()=0 → 落在下限 critMultMin=1.75')
+  eq(rollCritMultiplier(fixedRng([1]), cfg), 2.25, 'rng()=1（邊界測試值，Math.random() 實際不會回傳 1）→ 落在上限 critMultMax=2.25')
+  eq(rollCritMultiplier(fixedRng([0.5]), cfg), 2.0, 'rng()=0.5（中點）→ 剛好等於舊的固定值 2.0（拍板值刻意的中點設計）')
+  const samples = Array.from({ length: 21 }, (_, i) => i / 20) // 0, 0.05, ..., 1，覆蓋整個 [0,1] 區間
+  const mults = samples.map((v) => rollCritMultiplier(fixedRng([v]), cfg))
+  ok(mults.every((m) => m >= cfg.critMultMin && m <= cfg.critMultMax), `21 次抽樣（固定種子涵蓋 [0,1]）全部落在 [1.75,2.25] 內（實際：${mults.join(',')}）`)
+  eq(rollCritMultiplier(fixedRng([0]), { ...cfg, critMultMin: 3, critMultMax: 5 }), 3, '自訂區間下限也正確換算（不是寫死 1.75/2.25）')
+  eq(rollCritMultiplier(fixedRng([1]), { ...cfg, critMultMin: 3, critMultMax: 5 }), 5, '自訂區間上限也正確換算')
+}
+
+// ── 52) 端到端：每次暴擊各自抽樣暴擊倍率（不再是固定 2.0）——同樣必定暴擊，不同 rng 序列 → 不同傷害 ──
+{
+  const cfg = { ...FAR_CONFIG, critRate: 1 } // critPct 恆 100%，攻擊必定暴擊
+  // rng 消耗順序：createBattle 建立敵人時 toEnemyActor 呼叫 randRange(rng, enemyActIntervalMs) 算
+  // nextActAt——即使 min===max（FAR_CONFIG 的 NEVER=[999999,999999]）randRange 內部還是會呼叫一次
+  // rng()（結果不受影響，但序列往前消耗了一格，這是既有 P1 行為，不是本輪改動），所以「第一次攻擊」
+  // 實際消耗的是序列的第 2～4 個值，不是第 1～3 個——用長度 4 的序列，第 0 格墊給這次建場消耗掉。
+  // 第 1 格＝miss 判定（值不重要，missPct=0 恆命中）、第 2 格＝crit 判定（<1 恆真）、第 3 格＝crit 倍率抽樣。
+  let low = createBattle(makeSample(), { now: 0, config: cfg, rng: fixedRng([0, 0, 0, 0]) })
+  low = dispatch(low, { type: 'ATTACK_BEGIN' }, 0)
+  low = dispatch(low, { type: 'ATTACK_RELEASE' }, 0)
+  const lowEv = low.events.find((e) => e.kind === 'attack')
+  eq(lowEv.damage, Math.floor(135 * 1.75) - 35, 'rng 恆 0 時暴擊倍率抽到下限 1.75，傷害對應變小（不再是固定 235）')
+
+  let high = createBattle(makeSample(), { now: 0, config: cfg, rng: fixedRng([0, 0, 0, 0.999999]) })
+  high = dispatch(high, { type: 'ATTACK_BEGIN' }, 0)
+  high = dispatch(high, { type: 'ATTACK_RELEASE' }, 0)
+  const highEv = high.events.find((e) => e.kind === 'attack')
+  ok(highEv.damage > lowEv.damage, '不同 rng 序列抽到不同暴擊倍率 → 傷害不同（證明暴擊倍率確實是浮動抽樣，不是常數）')
+}
+
+// ── 53) 端到端：kind='damage' 的 hits>1 每段各自獨立結算與事件（多段命中） ──
+{
+  const sample = makeSample({
+    enemies: [{ id: 'e1', name: '沙包', level: 1, hp: 99999, hpMax: 99999, slot: 'front_center', imageUrl: '', stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 } }],
+    skills: [
+      { id: 'triple_slash', name: '三連斬', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy', mpCost: 10, coefficient: 1, flat: 0, weapon: 'sword', castMs: 100, hits: 3 },
+      null, null, null, null, null, null, null, null, null,
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG }) // 必中必不暴擊，方便算出每段固定傷害
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'triple_slash' }, 0)
+  s = tick(s, 120) // castMs=100 被 castMinMs=120 夾到 120
+  const hitEvents = s.events.filter((e) => e.kind === 'attack' && e.actorId === 'player')
+  eq(hitEvents.length, 3, 'hits=3 的技能命中後產生 3 筆各自獨立的 attack 事件')
+  ok(hitEvents.every((e) => e.damage === 135 - 10), '每段各自獨立結算，傷害一致：floor(135×1)-10=125')
+  eq(s.enemies[0].hp, 99999 - 3 * (135 - 10), '三段傷害各自扣血，總扣血量＝3×單段傷害')
+}
+
+// ── 54) 端到端：target='allEnemies' 打全體存活敵人，已死亡的敵人不會被打到 ──
+{
+  const sample = makeSample({
+    enemies: [
+      { id: 'e1', name: '甲（已死）', level: 1, hp: 0, hpMax: 100, slot: 'front_left', imageUrl: '', stats: { hpMax: 100, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'e2', name: '乙', level: 1, hp: 500, hpMax: 500, slot: 'front_center', imageUrl: '', stats: { hpMax: 500, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 } },
+      { id: 'e3', name: '丙', level: 1, hp: 500, hpMax: 500, slot: 'front_right', imageUrl: '', stats: { hpMax: 500, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 } },
+    ],
+    initialTargetId: 'e2',
+    skills: [
+      { id: 'meteor', name: '流星火雨', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'allEnemies', mpCost: 20, coefficient: 1, flat: 0, weapon: 'staff', castMs: 100 },
+      null, null, null, null, null, null, null, null, null,
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'meteor' }, 0)
+  s = tick(s, 120)
+  const hitEvents = s.events.filter((e) => e.kind === 'attack' && e.actorId === 'player')
+  eq(hitEvents.length, 2, 'allEnemies 只打存活的 2 隻（e1 已死不算），各命中一次')
+  eq(hitEvents.map((e) => e.targetId).sort(), ['e2', 'e3'], 'allEnemies 命中的正是兩隻存活敵人，e1（已死）沒被打到')
+}
+
+// ── 55) 端到端：dmgType='magic' 用 MATK 扣 MDEF，不是 ATK 扣 DEF ──
+{
+  const sample = makeSample({
+    party: [
+      { id: 'player', name: '法師', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 10, matk: 200, def: 35, mdef: 28 } },
+    ],
+    enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 5000, hpMax: 5000, slot: 'front_center', imageUrl: '', stats: { hpMax: 5000, mpMax: 0, atk: 50, matk: 50, def: 999, mdef: 20 } }],
+    skills: [
+      { id: 'magic_bolt', name: '奧術飛彈', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy', mpCost: 10, coefficient: 1, flat: 0, weapon: 'staff', castMs: 100, dmgType: 'magic' },
+      null, null, null, null, null, null, null, null, null,
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'magic_bolt' }, 0)
+  s = tick(s, 120)
+  const ev = s.events.find((e) => e.kind === 'attack' && e.actorId === 'player')
+  // 若誤用 ATK(10)-DEF(999) 會是負值判 immune；用 MATK(200)-MDEF(20)=180 才會是正常命中。
+  ok(!!ev && ev.result !== 'immune', 'dmgType=magic 用 MATK/MDEF 結算，不會被巨大的 DEF(999) 誤判成 immune')
+  eq(ev.damage, 200 - 20, 'dmgType=magic：傷害＝floor(MATK×1)-MDEF＝200-20=180')
+}
+
+// ── 56) 端到端：buff（atk_pct）套用生效、同 stat 同來源刷新不疊加、生效期間普攻吃到加成、到期自動移除 ──
+{
+  const sample = makeSample({
+    skills: [
+      { id: 'slash', name: '斬擊', iconUrl: '', cooldownMs: 0, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1, flat: 0, weapon: 'sword', castMs: 100 },
+      {
+        id: 'war_cry', name: '戰吼', iconUrl: '', cooldownMs: 0, kind: 'buff', target: 'self', mpCost: 15, coefficient: 0, flat: 0, weapon: 'sword', castMs: 100,
+        effect: { kind: 'buff', stat: 'atk_pct', value: 20, durationMs: 1000, target: 'self', mpCost: 15 },
+      },
+      null, null, null, null, null, null, null, null,
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'war_cry' }, 0)
+  s = tick(s, 120) // castMs 被夾到 120，效果在這一刻結算
+  eq(s.party[0].activeEffects.length, 1, '施放 buff 後 party[0] 身上多一筆 activeEffects')
+  eq(
+    s.party[0].activeEffects[0],
+    { stat: 'atk_pct', value: 20, expiresAt: 1120, sourceSkillId: 'war_cry', kind: 'buff' },
+    'ActiveEffect 內容正確（expiresAt＝施放完成時間 120＋durationMs 1000）',
+  )
+  ok(s.events.some((e) => e.kind === 'statusApplied' && e.stat === 'atk_pct' && e.value === 20), '推了 statusApplied 事件')
+
+  // 同一顆技能（同 sourceSkillId）在到期前重複命中同一個 stat → 刷新（取代），不會變成兩筆疊加。
+  s = tick(s, 520) // recovering(400ms) 過後回 idle
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'war_cry' }, 521)
+  s = tick(s, 521 + 120)
+  eq(s.party[0].activeEffects.length, 1, '同一顆技能重複命中同一個 stat → 刷新成一筆，不疊加成兩筆')
+  eq(s.party[0].activeEffects[0].expiresAt, 521 + 120 + 1000, '刷新後 expiresAt 更新成最新一次施放的到期時間')
+
+  // 生效期間：普攻傷害要吃到 atk_pct+20% 加成（即使剛才刷新過，仍只有一份 20%，不是疊成 40%）。
+  s = tick(s, 521 + 120 + DEFAULT_BATTLE_CONFIG.recoveryMs)
+  const beforeHp = s.enemies[0].hp
+  const atkAt = 521 + 120 + DEFAULT_BATTLE_CONFIG.recoveryMs + 1
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, atkAt)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, atkAt)
+  eq(beforeHp - s.enemies[0].hp, Math.round(135 * 1.2) - 35, 'buff 生效期間（即使剛刷新過）普攻仍只吃到單一份 atk_pct+20% 加成')
+
+  // 到期：tick 到期前一刻仍在，到期當下自動移除並推 statusExpired 事件。
+  const expiresAt = s.party[0].activeEffects[0].expiresAt
+  const before = tick(s, expiresAt - 1)
+  ok(before.party[0].activeEffects.some((e) => e.stat === 'atk_pct'), 'buff 到期前一刻仍在')
+  const after = tick(before, expiresAt)
+  eq(after.party[0].activeEffects.length, 0, 'buff 到期後自動移除')
+  ok(after.events.some((e) => e.kind === 'statusExpired' && e.stat === 'atk_pct'), '到期時推了 statusExpired 事件')
+}
+
+// ── 57) 端到端：debuff（def_pct）套用在敵人身上使其承受更多傷害；debuff target='allEnemies' 命中全體存活敵人 ──
+{
+  const sample = makeSample({
+    enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 5000, hpMax: 5000, slot: 'front_center', imageUrl: '', stats: { hpMax: 5000, mpMax: 0, atk: 50, matk: 50, def: 100, mdef: 20 } }],
+    skills: [
+      { id: 'slash', name: '斬擊', iconUrl: '', cooldownMs: 0, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1, flat: 0, weapon: 'sword', castMs: 100 },
+      {
+        id: 'armor_break', name: '破甲箭', iconUrl: '', cooldownMs: 0, kind: 'debuff', target: 'enemy', mpCost: 12, coefficient: 0, flat: 0, weapon: 'bow', castMs: 100,
+        effect: { kind: 'debuff', stat: 'def_pct', value: -50, durationMs: 5000, target: 'enemy', mpCost: 12 },
+      },
+      null, null, null, null, null, null, null, null,
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'armor_break' }, 0) // target='enemy' 直接吃 ctx.targetId
+  s = tick(s, 120)
+  eq(s.enemies[0].activeEffects.length, 1, 'debuff 命中後敵人身上多一筆 activeEffects')
+  eq(
+    s.enemies[0].activeEffects[0],
+    { stat: 'def_pct', value: -50, expiresAt: 5120, sourceSkillId: 'armor_break', kind: 'debuff' }, // 120＋durationMs(5000)
+    'ActiveEffect 內容正確',
+  )
+
+  s = tick(s, 120 + DEFAULT_BATTLE_CONFIG.recoveryMs)
+  const beforeHp = s.enemies[0].hp
+  const atkAt = 120 + DEFAULT_BATTLE_CONFIG.recoveryMs + 1
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, atkAt)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, atkAt)
+  // def 套 -50% → round(100*0.5)=50；raw=floor(135×1)=135；135-50=85（沒有 debuff 的話會是 135-100=35）。
+  eq(beforeHp - s.enemies[0].hp, 135 - 50, 'debuff def_pct=-50% 讓敵人有效防禦減半，承受更多傷害')
+}
+{
+  const sample = makeSample({
+    enemies: [
+      { id: 'e1', name: '甲', level: 1, hp: 500, hpMax: 500, slot: 'front_left', imageUrl: '', stats: { hpMax: 500, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 } },
+      { id: 'e2', name: '乙', level: 1, hp: 500, hpMax: 500, slot: 'front_center', imageUrl: '', stats: { hpMax: 500, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 } },
+    ],
+    initialTargetId: 'e1',
+    skills: [
+      {
+        id: 'war_drums', name: '戰鼓', iconUrl: '', cooldownMs: 0, kind: 'debuff', target: 'allEnemies', mpCost: 20, coefficient: 0, flat: 0, weapon: 'sword', castMs: 100,
+        effect: { kind: 'debuff', stat: 'atk_pct', value: -30, durationMs: 5000, target: 'allEnemies', mpCost: 20 },
+      },
+      null, null, null, null, null, null, null, null, null,
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'war_drums' }, 0)
+  s = tick(s, 120)
+  ok(s.enemies.every((e) => e.activeEffects.some((x) => x.stat === 'atk_pct' && x.value === -30)), 'debuff target=allEnemies 命中全體存活敵人')
+  eq(s.events.filter((e) => e.kind === 'statusApplied').length, 2, 'allEnemies debuff 對 2 隻敵人各推一筆 statusApplied 事件')
+}
+
+// ── 58) 端到端：special（implemented=false）技能被直接拒絕並發 skillUnavailable 事件；
+//        passive 若誤入技能欄，USE_SKILL 同樣被拒絕（防呆分支，正常情況不會發生） ──
+{
+  const sample = makeSample({
+    skills: [
+      {
+        id: 'merchants_intuition', name: '商人的直覺', iconUrl: '', cooldownMs: 0, kind: 'special', target: 'self', mpCost: 10, coefficient: 0, flat: 0, weapon: 'sword', castMs: 0,
+        implemented: false,
+      },
+      null, null, null, null, null, null, null, null, null,
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  const beforeMp = s.party[0].mp
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'merchants_intuition' }, 0)
+  eq(s.party[0].mp, beforeMp, 'implemented=false 的技能被拒絕，不扣 MP')
+  eq(s.party[0].action, 'idle', 'implemented=false 的技能被拒絕，不會進入 casting')
+  ok(s.events.some((e) => e.kind === 'skillUnavailable' && e.skillId === 'merchants_intuition'), '推了 skillUnavailable 事件')
+  ok(s.log.some((l) => l.includes('拒絕')), '也留了一般拒絕 log')
+}
+{
+  const sample = makeSample({
+    skills: [
+      { id: 'fortitude', name: '堅毅', iconUrl: '', cooldownMs: 0, kind: 'passive', target: 'self', mpCost: 0, coefficient: 0, flat: 0, weapon: 'sword', castMs: 0 },
+      null, null, null, null, null, null, null, null, null,
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'fortitude' }, 0)
+  eq(s.party[0].action, 'idle', 'passive 技能萬一出現在技能欄，USE_SKILL 一樣被拒絕（防呆分支）')
+}
+
+// ── 59) 端到端：buff（hp_regen_pct）每 1000ms 定時回復一次，不是套用當下立刻回一次 ──
+{
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 100, hpMax: 1000, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 1000, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 } }],
+    skills: [
+      {
+        id: 'regen_aura', name: '生命之泉', iconUrl: '', cooldownMs: 0, kind: 'buff', target: 'self', mpCost: 20, coefficient: 0, flat: 0, weapon: 'staff', castMs: 100,
+        effect: { kind: 'buff', stat: 'hp_regen_pct', value: 10, durationMs: 3000, target: 'self', mpCost: 20 },
+      },
+      null, null, null, null, null, null, null, null, null,
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'regen_aura' }, 0)
+  s = tick(s, 120) // 效果套用時刻＝120，hp_regen_pct 的 nextTickAt 從「120+1000」開始算，不是套用當下
+  eq(s.party[0].hp, 100, '套用當下還沒到第一次回復時機，血量不變')
+
+  s = tick(s, 120 + 999)
+  eq(s.party[0].hp, 100, '未滿 1000ms 前不會回復（此刻在 1119，nextTickAt=1120 還沒到）')
+
+  s = tick(s, 120 + 1000)
+  eq(s.party[0].hp, 100 + Math.round(1000 * 0.1), '滿 1000ms（nextTickAt=1120）→ 回復一次，量＝round(hpMax×10%)=100')
+  ok(s.events.some((e) => e.kind === 'heal' && e.actorId === 'player' && e.targetId === 'player'), '回復透過既有的 heal 事件通知（自我回復，actorId=targetId）')
+
+  s = tick(s, 120 + 2000)
+  eq(s.party[0].hp, 100 + 2 * Math.round(1000 * 0.1), '第二次 1000ms 窗口再回復一次，累計回復兩次')
+}
+
+// ── 60) 端到端：buff（damage_taken_pct）降低承受傷害（詞彙表只在 buff 那邊列出，debuff 沒有這一項，見 BuffDebuffStat 型別註解） ──
+{
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 0, mdef: 28 } }],
+    enemies: [{ id: 'e1', name: '打手', level: 1, hp: 999, hpMax: 999, slot: 'front_center', imageUrl: '', stats: { hpMax: 999, mpMax: 0, atk: 100, matk: 0, def: 0, mdef: 0 } }],
+    skills: [
+      {
+        id: 'iron_skin', name: '鐵壁之心', iconUrl: '', cooldownMs: 0, kind: 'buff', target: 'self', mpCost: 15, coefficient: 0, flat: 0, weapon: 'sword', castMs: 100,
+        effect: { kind: 'buff', stat: 'damage_taken_pct', value: -50, durationMs: 5000, target: 'self', mpCost: 15 },
+      },
+      null, null, null, null, null, null, null, null, null,
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: { ...FAR_CONFIG, enemyActIntervalMs: [0, 0] } })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'iron_skin' }, 0)
+  s = tick(s, 120) // 施法完成套用 buff；同一個 tick 也讓敵人 idle→windup（nextActAt=0 早已到）
+  s = tick(s, 120 + DEFAULT_BATTLE_CONFIG.enemyWindupMs) // windup→attacking，結算傷害
+  const ev = s.events.find((e) => e.kind === 'enemyAttack')
+  // raw damage = max(1, 100-0) = 100；enemyAttack 事件記錄的是「套用 damage_taken_pct 之前」的完整傷害
+  // （damage_taken_pct 是在 applyPartyDamage 才套用，屬於「扣血」那一步，不是「算傷害」那一步）。
+  eq(ev.damage, 100, 'enemyAttack 事件本身仍是完整傷害（damage_taken_pct 不影響事件記錄的原始傷害數字）')
+  eq(s.party[0].hp, 800 - 50, 'damage_taken_pct=-50% 讓玩家實際扣血減半（100→round(100×0.5)=50）')
+}
+
+// ── 61) 端到端（審查#5【低・PLAUSIBLE】回歸）：CombatRating.critDmgPct 疊在浮動暴擊倍率之上——
+//        暴擊發生時傷害對應變大，且落在 [critMultMin×(1+critDmgPct/100), critMultMax×(1+critDmgPct/100)] ──
+{
+  const cfg = { ...FAR_CONFIG, critRate: 1 } // critPct 恆 100%，攻擊必定暴擊
+  const sample = makeSample({
+    party: [
+      {
+        id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100,
+        portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 },
+        weapon: 'sword',
+        // critDmgPct=50 → 暴擊倍率額外 ×1.5，跟 rollCritMultiplier 抽到的 [1.75,2.25] 疊乘。
+        rating: { hit: 999, flee: 0, critPct: 100, critShield: 0, aspd: 150, castReductionPct: 0, critDmgPct: 50 },
+      },
+    ],
+  })
+  // rng 消耗順序同第 52 號測試：第 0 格墊給建場消耗、第 1 格 miss 判定、第 2 格 crit 判定、
+  // 第 3 格暴擊倍率抽樣。
+  let low = createBattle(sample, { now: 0, config: cfg, rng: fixedRng([0, 0, 0, 0]) })
+  low = dispatch(low, { type: 'ATTACK_BEGIN' }, 0)
+  low = dispatch(low, { type: 'ATTACK_RELEASE' }, 0)
+  const lowEv = low.events.find((e) => e.kind === 'attack')
+  // rng=0 → rollCritMultiplier 抽到下限 1.75；critDmgPct=50 → 總倍率 1.75×1.5=2.625。
+  eq(lowEv.damage, Math.floor(135 * 1.75 * 1.5) - 35, 'critDmgPct=50 疊在暴擊倍率下限 1.75 之上（×1.5），傷害對應變大於沒有這個加成時的 201（floor(135×1.75)-35）')
+
+  let high = createBattle(sample, { now: 0, config: cfg, rng: fixedRng([0, 0, 0, 0.999999]) })
+  high = dispatch(high, { type: 'ATTACK_BEGIN' }, 0)
+  high = dispatch(high, { type: 'ATTACK_RELEASE' }, 0)
+  const highEv = high.events.find((e) => e.kind === 'attack')
+  // rng≈1 → rollCritMultiplier 抽到上限 2.25；critDmgPct=50 → 總倍率 2.25×1.5=3.375。
+  eq(highEv.damage, Math.floor(135 * 2.25 * 1.5) - 35, 'critDmgPct=50 疊在暴擊倍率上限 2.25 之上（×1.5）')
+
+  ok(
+    lowEv.damage >= Math.floor(135 * 1.75 * 1.5) - 35 && highEv.damage <= Math.floor(135 * 2.25 * 1.5) - 35,
+    '整場傷害落在 [critMultMin×1.5, critMultMax×1.5] 對應的傷害區間內',
+  )
+
+  // 對照組：critDmgPct=0（未提供該欄位，effectiveRating 缺省視為 0）時應回到沒有加成的既有傷害。
+  const sampleNoBonus = makeSample({
+    party: [
+      {
+        id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100,
+        portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 },
+        weapon: 'sword', rating: { hit: 999, flee: 0, critPct: 100, critShield: 0, aspd: 150, castReductionPct: 0 },
+      },
+    ],
+  })
+  let noBonus = createBattle(sampleNoBonus, { now: 0, config: cfg, rng: fixedRng([0, 0, 0, 0]) })
+  noBonus = dispatch(noBonus, { type: 'ATTACK_BEGIN' }, 0)
+  noBonus = dispatch(noBonus, { type: 'ATTACK_RELEASE' }, 0)
+  const noBonusEv = noBonus.events.find((e) => e.kind === 'attack')
+  eq(noBonusEv.damage, Math.floor(135 * 1.75) - 35, '沒有 critDmgPct 的對照組回到既有傷害（跟第 52 號測試一致），確認新加成不是恆定套用')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

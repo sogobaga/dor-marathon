@@ -1,7 +1,7 @@
 // 遊戲化角色數值（RO 素質系統）共用中文標籤／說明 — CharacterScreen（會員）與 admin/rpg（後台）
 // 兩處共用，避免文案各自維護、之後改一次兩邊同步。數字係數本身一律吃 RpgConfig／預覽 API 算出的
 // 結果，本檔只放「怎麼顯示」，不放任何算式（算式在後端 internal/rpg，前端不重算，見任務決策 D2）。
-import type { RpgConfig, RpgDerived, RpgStatKey } from './api'
+import type { EffectAtLevel, JobDTO, RpgConfig, RpgDerived, RpgStatKey, SkillKind } from './api'
 
 export interface StatMeta {
   key: RpgStatKey
@@ -71,6 +71,90 @@ export const RESIST_LABEL: Record<string, string> = {
 export function resistLabel(key: string): string { return RESIST_LABEL[key] ?? key }
 
 // ---------------------------------------------------------------------------
+// DORPG P5（職業／測試等級／配點技能規則）：職業卡片裝飾用 emoji（純視覺，非後端資料——JobDTO
+// 本身已含 name/tagline/description，這裡只補一個好認的圖示，找不到 id 時退回通用圖示）。
+export const JOB_EMOJI: Record<string, string> = {
+  light_knight: '🗡️',
+  archer: '🏹',
+  heavy_knight: '🛡️',
+  cleric: '✨',
+  merchant: '💰',
+  mage: '🔮',
+}
+export function jobEmoji(jobId: string | null | undefined): string {
+  return (jobId && JOB_EMOJI[jobId]) || '⚔️'
+}
+
+// 技能 kind 中文標籤（見契約 §5 七種詞彙；special＝本輪引擎未實裝，UI 上直接顯示這個字樣而非「特殊」）。
+export const SKILL_KIND_LABEL: Record<SkillKind, string> = {
+  damage: '傷害',
+  heal: '治療',
+  shield: '護盾',
+  buff: '增益',
+  debuff: '減益',
+  passive: '被動',
+  special: '尚未實裝',
+}
+
+// buff/debuff/passive 的 stat 詞彙中文標籤（見契約 §5 三個 kind 各自的 stat 集合聯集）。
+export const SKILL_STAT_LABEL: Record<string, string> = {
+  atk_pct: '物攻', matk_pct: '魔攻', def_pct: '物防', mdef_pct: '魔防',
+  aspd: '攻速', crit_pct: '暴擊率', crit_dmg_pct: '暴擊傷害', flee: '迴避', hit: '命中',
+  hp_regen_pct: 'HP恢復', damage_taken_pct: '受到傷害', hp_max_pct: '最大HP', mp_max_pct: '最大MP',
+  perfect_dodge: '完全迴避',
+}
+export function skillStatLabel(stat: string): string { return SKILL_STAT_LABEL[stat] ?? stat }
+
+/**
+ * 把 EffectAtLevel（已依技能等級展開的即時數值）組成一句人看得懂的效果描述，供 CharacterScreen
+ * 「目前效果」／「下一級預覽」共用同一顆函式（見契約 §5 各 kind 欄位集合）。純顯示用途，不做任何
+ * 戰鬥判斷——實際戰鬥數值一律以 bootstrap 送來的 effect 為準（本函式不參與戰鬥計算）。
+ */
+export function formatEffectAtLevel(e: EffectAtLevel | null | undefined): string {
+  if (!e) return ''
+  const targetLabel: Record<string, string> = { enemy: '單體敵人', allEnemies: '全體敵人', self: '自己', ally: '單一隊友', allAllies: '全體隊友' }
+  switch (e.kind) {
+    case 'damage': {
+      const parts = [`威力係數 ${fmtCoef(e.coef)}`]
+      if (e.flat) parts.push(`固定 +${fmtCoef(e.flat)}`)
+      if (e.hits && e.hits > 1) parts.push(`${e.hits} 段`)
+      parts.push(targetLabel[e.target] ?? e.target)
+      return parts.join('・')
+    }
+    case 'heal': {
+      const parts = [`治療係數 ${fmtCoef(e.coef)}`]
+      if (e.flat) parts.push(`固定 +${fmtCoef(e.flat)}`)
+      parts.push(targetLabel[e.target] ?? e.target)
+      return parts.join('・')
+    }
+    case 'shield':
+      return `護盾量 ${fmtCoef(e.flat)}${e.duration_ms ? `・持續 ${(e.duration_ms / 1000).toFixed(1)}s` : ''}`
+    case 'buff':
+    case 'debuff': {
+      const sign = (e.value ?? 0) >= 0 ? '+' : ''
+      return `${skillStatLabel(e.stat ?? '')} ${sign}${fmtCoef(e.value)}${e.duration_ms ? `・持續 ${(e.duration_ms / 1000).toFixed(1)}s` : ''}・${targetLabel[e.target] ?? e.target}`
+    }
+    case 'passive': {
+      const sign = (e.value ?? 0) >= 0 ? '+' : ''
+      return `${skillStatLabel(e.stat ?? '')} ${sign}${fmtCoef(e.value)}（常駐）`
+    }
+    case 'special':
+    default:
+      return '本輪尚未實裝數值'
+  }
+}
+function fmtCoef(n: number | undefined): string {
+  if (n == null || isNaN(n)) return '0'
+  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')
+}
+
+/** 六職業固定順序（依 sort_order 保底：後端已排序，這裡只在資料異常/尚未載入時當 fallback）。 */
+export const JOB_ORDER: string[] = ['light_knight', 'archer', 'heavy_knight', 'cleric', 'merchant', 'mage']
+export function sortJobs(jobs: JobDTO[]): JobDTO[] {
+  return [...jobs].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || JOB_ORDER.indexOf(a.id) - JOB_ORDER.indexOf(b.id))
+}
+
+// ---------------------------------------------------------------------------
 // P3（AGI 攻速／DEX 詠唱縮減，審查 dorpg_p3 r5 使用者當面要求）：CharacterScreen 顯示用估算。
 //
 // GET /rpg/me 目前只回傳 derived（含 aspd 這個「評級數值」），沒有一併帶戰鬥 config（
@@ -110,7 +194,9 @@ export function estimateCastMs(baseCastMs: number, castReductionPct: number): nu
 // 後台「參數設定」分頁分組欄位 — 逐項對照 RpgConfig 欄位（勿漏改名）。type 省略＝number 輸入框；
 // 'json' 是 P2 新增（battle_element_chart 巢狀 map 專用），admin/rpg/page.tsx 的 ConfigTab 用它
 // 決定渲染 textarea 而非 <input type="number">，存檔前另外做 JSON.parse 驗證。
-export interface ConfigField { key: keyof RpgConfig; label: string; help?: string; type?: 'select' | 'json'; options?: { value: string; label: string }[]; step?: number }
+// 審查#2 新增 'checkbox'：布林欄位（目前只有 test_level_enabled）用勾選框呈現，見
+// admin/rpg/page.tsx ConfigTab 的渲染分支與 buildConfig() 的型別轉換。
+export interface ConfigField { key: keyof RpgConfig; label: string; help?: string; type?: 'select' | 'json' | 'checkbox'; options?: { value: string; label: string }[]; step?: number }
 export interface ConfigGroup { title: string; fields: ConfigField[] }
 
 export const CONFIG_GROUPS: ConfigGroup[] = [
@@ -123,6 +209,26 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
       { key: 'cost_base', label: '配點基礎花費 base_cost' },
       { key: 'cost_step_every', label: '花費每 N 點遞增一次' },
       { key: 'default_weapon_type', label: '預設武器類型（本階段無裝備，用於判定近戰/遠程加成）', type: 'select', options: [{ value: 'melee', label: '近距離' }, { value: 'ranged', label: '遠距離' }] },
+    ],
+  },
+  // DORPG P5：配點/技能點公式改為可調（契約 §3/§4）。initial_stat/initial_free_points/max_stat/
+  // cost_base/cost_step_every 仍是上面「基礎規則」既有欄位（單項素質上限、加點成本 floor((n-1)/cost_step_every)+cost_base），
+  // 這裡新增的是「總點數隨等級成長」的公式係數，兩組欄位配合才是完整的配點規則。
+  {
+    title: '配點與技能點（P5）',
+    fields: [
+      {
+        key: 'stat_points_initial',
+        label: '配點總數公式初始值：TotalStatPoints(1)（契約預設 48，對齊 RO pre-re statpoint.yml）',
+      },
+      { key: 'stat_points_step_levels', label: '配點總數公式：每幾級 ⌊(k−1)/此值⌋ 遞增一階（契約預設 5）' },
+      { key: 'stat_points_per_level_base', label: '配點總數公式：每級基礎點數（契約預設 3；Lv27 應得 186 點、Lv99 應得 1273 點）' },
+      { key: 'skill_points_initial', label: '技能點總數公式初始值：TotalSkillPoints(1)（契約預設 0）' },
+      { key: 'skill_points_per_level', label: '技能點總數公式：每級技能點（契約預設 1；Lv27 應得 26 點）' },
+      {
+        key: 'test_level_enabled', type: 'checkbox',
+        label: '測試等級功能開關（正式上線前關閉）——關閉後 PUT /rpg/test-level 一律 403，且既有 test_level 也會被忽略（不是只擋新的設定請求）',
+      },
     ],
   },
   {
@@ -151,6 +257,10 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
       { key: 'str_melee_atk', label: '每 1 點：近戰素質物攻' },
       { key: 'str_equip_atk_pct', label: '每 1 點：裝備物攻 %' },
       { key: 'str_ranged_atk_per', label: '每幾點：遠程素質物攻+1（點數門檻）' },
+      {
+        key: 'str_tier_coef',
+        label: '（P5）整十階梯係數：物攻 += ⌊STR/10⌋² × 此值（全職業統一，弓箭手也吃 STR，已知簡化）',
+      },
     ],
   },
   {
@@ -193,6 +303,7 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
       { key: 'int_mp_regen_at_120', label: '達到 120 時：MP自然恢復額外值' },
       { key: 'int_mp_regen_per_after_120', label: '達 120 後每幾點：MP自然恢復+1' },
       { key: 'mp_regen_per_max_mp', label: '每多少最大MP：MP自然恢復+1' },
+      { key: 'int_tier_coef', label: '（P5）整十階梯係數：魔攻 += ⌊INT/10⌋² × 此值' },
     ],
   },
   {
@@ -212,10 +323,19 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
     fields: [
       { key: 'lv_hit', label: '每 1 級：命中率' },
       { key: 'lv_flee', label: '每 1 級：迴避率' },
-      { key: 'lv_def_per', label: '每幾級：物防+1（等級門檻）' },
+      {
+        key: 'lv_def_per',
+        label: '每幾級：物防+1（等級門檻，舊版係數——P5 新增下面三個欄位取代等級對「防禦」的線性公式，此欄若已被取代可忽略，以 BACKEND 實際仍在用哪個為準）',
+      },
       { key: 'lv_atk_per', label: '每幾級：物攻+1（等級門檻）' },
       { key: 'lv_matk_per', label: '每幾級：魔攻+1（等級門檻）' },
       { key: 'lv_mdef_per', label: '每幾級：魔防+1（等級門檻）' },
+      {
+        key: 'lv_def_breakpoint',
+        label: '（P5）等級防禦二段線性的轉折等級：Lv≤此值走「低段每級」、Lv>此值走「高段每級」（契約預設 50，取代現行 floor(L/2)）',
+      },
+      { key: 'lv_def_per_low', label: '（P5）轉折等級（含）以下，每級防禦加成（契約預設 0.5）' },
+      { key: 'lv_def_per_high', label: '（P5）轉折等級以上，每級防禦加成（契約預設 0.35）' },
     ],
   },
   {
@@ -281,8 +401,17 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
         key: 'battle_crit_rate',
         label: '全體基礎暴擊率（0~1；P2 起攻守雙方都會加上這個基準值，讓 LUK 配一點就能看到暴擊，非玩家專屬）',
       },
-      { key: 'battle_crit_multiplier', label: '暴擊傷害倍率' },
+      {
+        key: 'battle_crit_multiplier',
+        label: '暴擊傷害倍率（舊版固定值——P5 起暴擊改用下面「暴擊傷害浮動倍率」區間隨機抽，此欄前端已不使用，僅供沒套新版時的相容後備）',
+      },
       { key: 'battle_exp_preview_per_level', label: '結算畫面「預估經驗」係數（純顯示，不入帳，＝Σ敵人等級×此值）' },
+      { key: 'crit_mult_min', label: '（P5）暴擊傷害浮動倍率下界（契約預設 1.75；每次暴擊在下界～上界之間均勻抽，仍會扣防）' },
+      { key: 'crit_mult_max', label: '（P5）暴擊傷害浮動倍率上界（契約預設 2.25）' },
+      {
+        key: 'battle_weakness_bonus_pct',
+        label: '（P5）技能屬性命中怪物弱點屬性時的傷害加成 %（契約預設 25；管理者可在下方「屬性相剋表」個別覆寫，含設 0 做免疫）',
+      },
     ],
   },
   // P2（暴擊／Miss／無效攻擊）新增：戰鬥評級（命中/迴避/暴擊/暴擊迴避）與屬性相剋表，全部走

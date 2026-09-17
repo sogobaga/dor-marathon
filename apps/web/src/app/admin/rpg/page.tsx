@@ -145,6 +145,10 @@ function ConfigTab({ token, config, defaults, onSaved, onErr }: {
         } catch {
           throw new Error(`「${f.label}」不是合法的 JSON，請修正後再儲存`)
         }
+      } else if (f.type === 'checkbox') {
+        // 審查#2：checkbox 型欄位存的是 'true'/'false' 字串（見 seedEdit() 的 String(v) 慣例），
+        // 存檔前轉回真正的 boolean。
+        obj[f.key] = edit[f.key] === 'true'
       } else {
         obj[f.key] = f.type === 'select' ? edit[f.key] : Number(edit[f.key])
       }
@@ -217,6 +221,13 @@ function ConfigTab({ token, config, defaults, onSaved, onErr }: {
                     style={{ ...ta, height: 160, fontFamily: 'monospace', fontSize: 12 }}
                     value={edit[f.key] ?? ''}
                     onChange={(e) => setEdit((s) => ({ ...s, [f.key]: e.target.value }))}
+                  />
+                ) : f.type === 'checkbox' ? (
+                  <input
+                    type="checkbox"
+                    checked={edit[f.key] === 'true'}
+                    onChange={(e) => setEdit((s) => ({ ...s, [f.key]: String(e.target.checked) }))}
+                    style={{ width: 18, height: 18 }}
                   />
                 ) : (
                   <input style={inp} type="number" step="any" value={edit[f.key] ?? ''} onChange={(e) => setEdit((s) => ({ ...s, [f.key]: e.target.value }))} />

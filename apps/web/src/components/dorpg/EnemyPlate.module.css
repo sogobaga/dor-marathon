@@ -38,3 +38,24 @@
   height: 100%;
   -webkit-user-drag: none;
 }
+
+/* P5 POLISH：怪物身上 buff/debuff 標籤列。EnemyPlate 元件本體與怪物站位幾何都定義在
+   BattleStage.tsx（本輪 POLISH-UI 寫入範圍不含該檔，見任務交接），改由 BattleScreen.tsx 用
+   BattleStageHandle 已對外開放的站位公式另外疊一層 overlay、重用這份樣式表——視覺上緊貼在
+   EnemyPlate（Lv/HP 面板）正上方，跟 PartyCard.module.css 的 .tags 同一套「一行、超出用 +N、
+   深底淺字」設計語言，只是定位方式從卡片百分比換成戰場絕對像素座標（見 BattleScreen.tsx
+   enemyTagOverlay）。 */
+.tagLine {
+  position: absolute;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+  font-weight: 700;
+  line-height: 1.3;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 3px;
+  padding: 0 2px;
+}

@@ -49,3 +49,48 @@
     top: 20%;
   }
 }
+
+/* P5 POLISH：定點模式（FloatText.tsx anchorPx，敵人身上的 statusApplied 飄字用）。left/top 由 TSX
+   inline 帶入絕對像素座標（戰場座標系），這裡只管「以那個點為錨」往上飄——用 transform 而非 top
+   百分比，跟 .text／.reduced 那組「相對卡片高度」的寫法完全獨立，不會互相牽動。 */
+.point {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  white-space: nowrap;
+  pointer-events: none;
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  animation: dorpgFloatUpPoint 700ms ease-out forwards;
+  z-index: 5;
+}
+
+@keyframes dorpgFloatUpPoint {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -100%);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -112%);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -170%);
+  }
+}
+
+.pointReduced {
+  animation: none;
+  opacity: 1;
+  transform: translate(-50%, -130%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .point {
+    animation: none;
+    opacity: 1;
+    transform: translate(-50%, -130%);
+  }
+}

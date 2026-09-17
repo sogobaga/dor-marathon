@@ -28,6 +28,17 @@ export {
   pickInitialTarget,
   pickNextTarget,
 } from './formulas';
+// P5：buff/debuff 狀態效果的查詢／套用／暴擊倍率抽樣（見 effects.ts）；跟 formulas.ts 分開匯出檔案
+// 但一樣攤平在引擎的公開介面上，呼叫端不需要知道內部是哪個檔案實作的。
+export {
+  activeStatSum,
+  applyStatusEffect,
+  damageTakenMultiplier,
+  effectiveRating,
+  effectiveStats,
+  pruneAndRegenEffects,
+  rollCritMultiplier,
+} from './effects';
 export { dispatch } from './dispatch';
 export { tick } from './tick';
 
@@ -52,6 +63,9 @@ function toPartyActor(pm: PartyMember, index: number, now: number, cfg: BattleCo
     weapon: pm.weapon ?? 'sword',
     // P2：有真實評級（internal/rpg Compute 算出來的）就直接用，沒有就退回 config 推導的後備值。
     rating: pm.rating ?? deriveDefaultPartyRating(cfg),
+    // P5：戰鬥開始時沒有任何 buff（buff 只能在戰鬥中靠技能施放取得，不存在「開場自帶」的設計）。
+    activeEffects: [],
+    jobId: pm.jobId ?? null,
   };
 }
 
@@ -77,6 +91,9 @@ function toEnemyActor(e: Enemy, now: number, cfg: BattleConfig, rng: () => numbe
     race: e.race,
     // P2：怪物沒有個別覆寫就用 config 係數推導的預設（跟等級無關，見 formulas.ts 的註解）。
     rating: e.rating ?? deriveDefaultMonsterRating(cfg),
+    // P5：戰鬥開始時沒有任何 debuff；weakElements 缺省 []（無弱點）。
+    activeEffects: [],
+    weakElements: e.weakElements ?? [],
   };
 }
 

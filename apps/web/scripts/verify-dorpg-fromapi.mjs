@@ -1,0 +1,163 @@
+// 審查 dorpg_p5 修正輪 #1(d)：驗證 apps/web/src/lib/dorpg/fromApi.ts 的 sampleFromBootstrap()/
+// mapSkill() 能正確把「後端 wire JSON」轉成引擎吃的 Skill——直接鎖 fromApi.ts 這一層轉換，而不是
+// 只測 engine 本身（verify-dorpg-engine.mjs）：審查抓到的兩個根因缺陷
+//   ① battle.go toWireSkillLeveled 過去頂層 coefficient/flat/mpCost 沒有依 level 展開、也沒有
+//     頂層 hits 欄位（見 battle_test.go 的 Go 端回歸測試）
+//   ② api.ts 曾經誤把 wireSkill.effect 的裸資料型別宣告成 camelCase（durationMs/mpCost），但實際
+//     wire JSON 是 snake_case（duration_ms/mp_cost，對齊 WIRE.md／後端 skills.go EffectAtLevel）
+// 都發生在「wire JSON → Skill」這一層轉換，verify-dorpg-engine.mjs 的測試全部直接手造 Skill 物件
+// 餵給 engine，從來不會經過 fromApi.ts，完全測不到這兩個問題——所以另外開一支腳本，直接偽造
+// battle.go 修好後會送出的 wire JSON 格式，跑過 sampleFromBootstrap() 再進 engine 驗證。
+//
+// 執行方式（apps/web 目錄下）：
+//   node --experimental-strip-types scripts/verify-dorpg-fromapi.mjs
+//
+// fromApi.ts 只有一個真正的執行期匯入（其餘都是 `import type`，Node 的 TS type-stripping 會把
+// type-only import 整段削掉，完全不需要真的 resolve，跟 verify-dorpg-engine.mjs 檔頭註解說的
+// 是同一件事）：`import { DEFAULT_BATTLE_CONFIG } from '@/lib/dorpg/engine'`。純 Node ESM 不吃
+// tsconfig 的 `@/* -> src/*` path alias，且 `@/lib/dorpg/engine` 實際指到一個目錄（index.ts），
+// 這裡的 loader hook 補這兩件事：① 把 `@/` 開頭的 specifier 換算成 src 目錄下的絕對檔案路徑；
+// ② 解析失敗時依序補 .ts/.tsx/index.ts/index.tsx 重試（比 verify-dorpg-engine.mjs 既有的 loader
+// 多了目錄 index 這個候選，因為既有 loader從來不需要處理「specifier 其實是個目錄」的情況）。
+import { register } from 'node:module'
+
+const SRC_DIR = new URL('../src/', import.meta.url).href
+const loaderSrc = `
+const SRC_DIR = ${JSON.stringify(SRC_DIR)}
+export async function resolve(specifier, context, nextResolve) {
+  let spec = specifier
+  if (spec.startsWith('@/')) spec = SRC_DIR + spec.slice(2)
+  try {
+    return await nextResolve(spec, context)
+  } catch (err) {
+    // ERR_MODULE_NOT_FOUND：一般缺副檔名（.ts/.tsx）。
+    // ERR_UNSUPPORTED_DIR_IMPORT：specifier 其實指到一個目錄（例如 @/lib/dorpg/engine 對應
+    // engine/index.ts）——Node 認得出目錄存在，但純 ESM 不做目錄 index 解析，要另外補 /index.ts。
+    if (err && (err.code === 'ERR_MODULE_NOT_FOUND' || err.code === 'ERR_UNSUPPORTED_DIR_IMPORT')) {
+      for (const suffix of ['.ts', '.tsx', '/index.ts', '/index.tsx']) {
+        try { return await nextResolve(spec + suffix, context) } catch {}
+      }
+    }
+    throw err
+  }
+}
+`
+register('data:text/javascript,' + encodeURIComponent(loaderSrc), import.meta.url)
+
+const { sampleFromBootstrap } = await import(new URL('../src/lib/dorpg/fromApi.ts', import.meta.url).href)
+const { createBattle, dispatch, tick } = await import(new URL('../src/lib/dorpg/engine/index.ts', import.meta.url).href)
+
+let pass = 0, fail = 0
+function ok(cond, label) {
+  if (cond) { pass++; console.log(`PASS ${label}`) }
+  else { fail++; console.log(`FAIL ${label}`) }
+}
+function eq(actual, expected, label) {
+  const a = JSON.stringify(actual), e = JSON.stringify(expected)
+  if (a === e) { pass++; console.log(`PASS ${label}`) }
+  else { fail++; console.log(`FAIL ${label}\n  actual:   ${a}\n  expected: ${e}`) }
+}
+
+/** 最小可用 raw bootstrap sample（模擬 GET /rpg/battle/bootstrap 的 sample 區塊）：1 玩家 + 1
+ *  血量超厚的假人，skills 陣列由呼叫端傳入（固定 10 格，未用到的槽位補 null）。 */
+function makeRawSample(skills) {
+  return {
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100,
+      portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, weapon: 'sword',
+    }],
+    enemies: [{
+      id: 'e1', name: '測試假人', level: 50, hp: 99999, hpMax: 99999, slot: 'front_center',
+      imageUrl: '', canEscape: true, stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 },
+    }],
+    scene: { id: 's', name: 's', imageUrl: '', slots: [] },
+    skills,
+    items: [],
+    initialTargetId: 'e1',
+  }
+}
+const pad10 = (s) => [s, null, null, null, null, null, null, null, null, null]
+
+// ── 1) toWireSkillLeveled 修好後，battle.go 送出的頂層欄位＝ExpandEffect 展開值——這裡直接偽造
+//      「Lv1」與「Lv5」兩份 wire JSON（模擬後端在兩個等級各自算出的展開結果），驗證
+//      sampleFromBootstrap()→mapSkill() 對這批頂層欄位／effect 是原樣照抄，Lv1/Lv5 應該不同。 ──
+{
+  const base = {
+    id: 'combo_strike', name: '連擊', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy',
+    weapon: 'sword', castMs: 300, dmgType: 'physical', maxLevel: 10, displayText: '連續斬擊', implemented: true,
+  }
+  const rawLv1 = {
+    ...base, level: 1, mpCost: 10, coefficient: 1.0, flat: 5, hits: 1,
+    effect: { kind: 'damage', coef: 1.0, flat: 5, hits: 1, target: 'enemy', mp_cost: 10 },
+  }
+  const rawLv5 = {
+    ...base, level: 5, mpCost: 16, coefficient: 1.8, flat: 13, hits: 3,
+    effect: { kind: 'damage', coef: 1.8, flat: 13, hits: 3, target: 'enemy', mp_cost: 16 },
+  }
+  const skill1 = sampleFromBootstrap(makeRawSample(pad10(rawLv1))).skills[0]
+  const skill5 = sampleFromBootstrap(makeRawSample(pad10(rawLv5))).skills[0]
+
+  ok(skill1.coefficient !== skill5.coefficient, 'Lv1/Lv5 頂層 coefficient 不同（審查#1：曾經恆等於 Lv1 基準值，升級沒有任何效果）')
+  ok(skill1.flat !== skill5.flat, 'Lv1/Lv5 頂層 flat 不同')
+  ok(skill1.mpCost !== skill5.mpCost, 'Lv1/Lv5 頂層 mpCost 不同')
+  eq(skill5.hits, 3, 'Lv5 的頂層 hits 正確讀到 3（連段技能；曾經沒有頂層 hits 欄位，永遠只能讀到 undefined→1）')
+  eq(skill5.coefficient, 1.8, 'Lv5 的頂層 coefficient 正確讀到展開值 1.8')
+  eq(skill5.flat, 13, 'Lv5 的頂層 flat 正確讀到展開值 13')
+  eq(skill5.mpCost, 16, 'Lv5 的頂層 mpCost 正確讀到展開值 16')
+}
+
+// ── 2) 連段技能（hits=3）經過 fromApi 轉換後，實際跑進 engine 仍然產生 3 段獨立命中——不只是
+//      型別欄位對了，戰鬥結算也真的吃到（呼應 verify-dorpg-engine.mjs #53，這次從 wire JSON
+//      出發，涵蓋 fromApi.ts 這一層轉換）。 ──
+{
+  const rawLv5 = {
+    id: 'combo_strike', name: '連擊', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy',
+    weapon: 'sword', castMs: 100, dmgType: 'physical', maxLevel: 10, displayText: '', implemented: true,
+    level: 5, mpCost: 16, coefficient: 1.0, flat: 0, hits: 3,
+    effect: { kind: 'damage', coef: 1.0, flat: 0, hits: 3, target: 'enemy', mp_cost: 16 },
+  }
+  const sample = sampleFromBootstrap(makeRawSample(pad10(rawLv5)))
+  const cfg = {
+    enemyActIntervalMs: [999999, 999999], allyActIntervalMs: [999999, 999999],
+    baseMissPct: 0, missMinPct: 0, missMaxPct: 0, critRate: 0, monsterCritPct: 0, monsterCritShieldBase: 0,
+  }
+  let s = createBattle(sample, { now: 0, config: cfg })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'combo_strike' }, 0)
+  s = tick(s, 120) // castMs=100 被 castMinMs(120) 夾到 120
+  const hitEvents = s.events.filter((e) => e.kind === 'attack' && e.actorId === 'player')
+  eq(hitEvents.length, 3, '經 fromApi 轉換後的 hits=3 技能，實戰仍產生 3 筆獨立 attack 事件')
+}
+
+// ── 3) 審查#1(b) 命名對齊修正：effect 的裸資料是 snake_case（duration_ms/mp_cost，對齊 WIRE.md／
+//      後端 skills.go EffectAtLevel 的 json tag），api.ts 曾經誤宣告成 camelCase（durationMs/
+//      mpCost）——若這裡讀到 undefined，buff/debuff 的持續時間會恆為 0（不會壞在型別檢查，只會
+//      在執行期悄悄遺失資料）。 ──
+{
+  const raw = {
+    id: 'war_cry', name: '戰吼', iconUrl: '', cooldownMs: 0, kind: 'buff', target: 'self',
+    mpCost: 15, coefficient: 0, flat: 0, weapon: 'sword', castMs: 100,
+    level: 3, maxLevel: 5, displayText: '', dmgType: 'physical', implemented: true,
+    effect: { kind: 'buff', stat: 'atk_pct', value: 20, duration_ms: 8000, target: 'self', mp_cost: 15 },
+  }
+  const skill = sampleFromBootstrap(makeRawSample(pad10(raw))).skills[0]
+  eq(skill.effect?.durationMs, 8000, 'effect.duration_ms（真實 wire 格式，snake_case）正確映射成引擎用的 durationMs（曾因型別誤植成 durationMs 而永遠讀到 undefined）')
+  eq(skill.effect?.mpCost, 15, 'effect.mp_cost 同理正確映射成 mpCost')
+  eq(skill.effect?.value, 20, 'effect.value 本來就同名，確認沒有被上面的修正連帶弄壞')
+}
+
+// ── 4) 缺 effect（既有 5 個一般技能／舊版後端）時，mapSkill 仍照舊只讀頂層欄位，不因為新增的
+//      深度防禦邏輯而壞掉。 ──
+{
+  const raw = {
+    id: 'slash', name: '斬擊', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy',
+    mpCost: 5, coefficient: 1.6, flat: 20, weapon: 'sword', castMs: 300,
+  }
+  const skill = sampleFromBootstrap(makeRawSample(pad10(raw))).skills[0]
+  eq(skill.coefficient, 1.6, '沒有 effect 時，coefficient 落回頂層欄位')
+  eq(skill.flat, 20, '沒有 effect 時，flat 落回頂層欄位')
+  eq(skill.mpCost, 5, '沒有 effect 時，mpCost 落回頂層欄位')
+  ok(skill.hits === undefined, '沒有 effect 也沒有頂層 hits 時，hits 維持 undefined（交給 Skill 型別的缺省語意＝1）')
+}
+
+console.log(`\n${pass} passed, ${fail} failed`)
+if (fail > 0) process.exit(1)

@@ -3,20 +3,35 @@
 // DORPG 技能／道具列（P0：純展示、只吃 props，不含 API／全域狀態）。
 // 版面數字全部來自 @/lib/dorpg/assets 的 TRAY／SKILL_SLOT 常數，這裡只把邏輯 px 換成百分比與縮放係數，
 // 讓同一份元件在 390 基準、480 封頂或緊湊／短屏的托盤高度下都能等比縮放而不必碰 3× 圖檔像素。
+//
+// DORPG P5（職業／測試等級／配點技能規則，見 scratchpad/dorpg_p5/CONTRACT.md §4/§6、WIRE.md）：
+// 職業技能改成最多 10 格（兩排各 5，依路線排列），且職業技能沒有個別插畫（只有 display_text 文字
+// 描述），因此 mode='skills' 改成「純文字」兩排格線，不再套用 kit 的圖示格框素材；mode='items'
+// （道具列）完全不受本輪影響，原封不動沿用舊版「8 格裝備欄、畫面顯示 5 格＋左右箭頭翻頁」的
+// 圖像化格線。兩種模式因此在本檔內分成兩條完全獨立的渲染路徑，只共用外層 props 介面與冷卻/選取
+// 的視覺語彙（半透明遮罩＋秒數、選中金框）。
+//
+// 2026-09-17 整合核對：ENGINE 已在 `@/lib/dorpg/types` 落地 P5 型別（SKILL_SLOTS=10、Skill 的
+// kind/target 擴充集合、level/maxLevel/displayText/implemented/effect 等欄位），本檔直接使用
+// 這些正式匯出，不再需要本地擴充型別頂替（原本的 JobSkill/本地 SKILL_SLOTS 已移除）。
 import type { CSSProperties } from 'react';
-import type { Item, Skill, TrayMode } from '@/lib/dorpg/types';
+import { SKILL_SLOTS, type Item, type Skill, type TrayMode } from '@/lib/dorpg/types';
 import { PALETTE, SKILL_SLOT, TRAY, fracStyle, kitAsset } from '@/lib/dorpg/assets';
+import { SKILL_KIND_LABEL } from '@/lib/rpgMeta';
 import styles from './SkillTray.module.css';
 
 export type SkillTrayProps = {
   mode: TrayMode;
-  /** 固定 8 格裝備欄（未裝備補 null）；不足 8 格時元件自行補 null。 */
+  /**
+   * mode='skills'：最多 10 格（兩排各 5，依路線／順序排列，不足補 null）；未選職業時沿用舊版
+   * is_default 技能填法（最多 8 格）。mode='items'：固定 8 格裝備欄（未裝備補 null），不受本輪影響。
+   */
   skills: (Skill | null)[];
   items: Item[];
-  /** 五格視窗的起點 0–3（不循環）。 */
+  /** 五格視窗的起點 0–3（不循環）；只在 mode='items' 有意義，mode='skills' 兩排全顯示、忽略此值。 */
   offset: number;
   onOffset: (n: number) => void;
-  /** 每個技能 id 的剩餘冷卻毫秒；>0 才畫 CD 圓底＋秒數。 */
+  /** 每個技能 id 的剩餘冷卻毫秒；>0 才畫 CD 遮罩＋秒數。 */
   cooldownMs?: Record<string, number>;
   /**
    * P1：即使沒有冷卻也要顯示為不可用的 id（MP 不足、或玩家目前不是 idle——依 engine/dispatch.ts 的
@@ -32,12 +47,14 @@ export type SkillTrayProps = {
   height?: number;
 };
 
-/** 裝備欄固定 8 格（kit 說明：裝備列固定 8 格、畫面顯示 5 格、offset 0–3）。 */
-const LOADOUT_SIZE = 8;
+/** 道具欄固定 8 格（kit 說明：裝備列固定 8 格、畫面顯示 5 格、offset 0–3）；mode='items' 專用。 */
+const ITEMS_LOADOUT_SIZE = 8;
+/** 職業技能欄格數＝ENGINE 匯出的 SKILL_SLOTS（10，兩排各 5，見契約 §6／WIRE）。 */
+const SKILLS_GRID_SIZE = SKILL_SLOTS;
 
 type CellEntry = { kind: 'skill'; skill: Skill } | { kind: 'item'; item: Item } | null;
 
-// ---- 靜態幾何（全部由常數推導，模組載入時算一次） ----
+// ---- 靜態幾何（全部由常數推導，模組載入時算一次）——只給 mode='items' 的圖像化格線使用 ----
 // 五格＋箭頭的 lane：kit preview #skill-lane 的 left/right 2px、top 35px、高 75px，換成托盤 390×114 的比例。
 const LANE_RECT = {
   x: TRAY.lane.inset / TRAY.width,
@@ -93,9 +110,118 @@ function clampOffset(n: number): number {
   return Math.max(0, Math.min(TRAY.maxOffset, Math.floor(n)));
 }
 
-export default function SkillTray({
-  mode,
+export default function SkillTray(props: SkillTrayProps) {
+  return props.mode === 'skills' ? <SkillsGrid {...props} /> : <ItemsLane {...props} />;
+}
+
+// ============================== mode='skills'：P5 純文字兩排格線 ==============================
+
+function SkillsGrid({
   skills,
+  cooldownMs,
+  unavailableIds,
+  selectedId,
+  onPick,
+  width = TRAY.width,
+  height = TRAY.height,
+}: SkillTrayProps) {
+  const slots = padTo(skills, SKILLS_GRID_SIZE);
+  const rows: (Skill | null)[][] = [slots.slice(0, 5), slots.slice(5, 10)];
+  const equipped = skills.filter(Boolean).length;
+
+  const rootStyle = {
+    width: `${width}px`,
+    height: `${height}px`,
+  } as CSSProperties;
+
+  return (
+    <div className={styles.textTray} style={rootStyle} role="group" aria-label="技能列" data-mode="skills">
+      <div className={styles.textCount}>已裝備 {equipped}/{SKILLS_GRID_SIZE}</div>
+      <div className={styles.textRows}>
+        {rows.map((row, ri) => (
+          <div key={ri} className={styles.textRow}>
+            {row.map((sk, ci) => (
+              <SkillTextCell
+                key={sk?.id ?? `empty-${ri}-${ci}`}
+                skill={sk}
+                cooldownMs={sk ? cooldownMs?.[sk.id] ?? 0 : 0}
+                forcedUnavailable={!!sk && !!unavailableIds?.has(sk.id)}
+                selected={!!selectedId && sk?.id === selectedId}
+                onPick={onPick}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+type SkillTextCellProps = {
+  skill: Skill | null;
+  cooldownMs: number;
+  forcedUnavailable: boolean;
+  selected: boolean;
+  onPick: (id: string) => void;
+};
+
+function SkillTextCell({ skill, cooldownMs, forcedUnavailable, selected, onPick }: SkillTextCellProps) {
+  // 空格：無圖時不留空圖框（契約 UI 要求）——純文字模式的空格就是完全空白的佔位方塊，不畫任何素材。
+  if (!skill) {
+    return <div className={styles.textCellEmpty} aria-hidden="true" />;
+  }
+
+  const sk = skill;
+  // 缺省語意：未選職業的舊版 is_default 技能沒有 implemented/maxLevel 欄位（見 types.ts Skill
+  // 註解：代表「數值已經是最終值，沒有等級可言」），視同「已實裝、固定等級 1」。
+  const implemented = sk.implemented !== false;
+  const level = sk.level ?? 1;
+  const maxLevel = sk.maxLevel ?? level;
+  const cooling = cooldownMs > 0;
+  const disabled = cooling || forcedUnavailable || !implemented;
+  const kindLabel = SKILL_KIND_LABEL[sk.kind] ?? '';
+
+  const cellClass = [
+    styles.textCell,
+    disabled ? styles.textCellDimmed : '',
+    selected ? styles.textCellSelected : '',
+  ].filter(Boolean).join(' ');
+
+  const ariaLabel = !implemented
+    ? `${sk.name}，尚未實裝`
+    : cooling
+      ? `${sk.name}，冷卻中 ${Math.ceil(cooldownMs / 1000)} 秒`
+      : forcedUnavailable
+        ? `${sk.name}，目前無法使用`
+        : `${sk.name}，等級 ${level}${maxLevel > 1 ? `／${maxLevel}` : ''}`;
+
+  return (
+    <button
+      type="button"
+      className={cellClass}
+      style={{ borderColor: selected ? PALETTE.targetGold : 'rgba(243,189,98,.32)', color: PALETTE.textPrimary }}
+      aria-label={ariaLabel}
+      aria-pressed={selected || undefined}
+      disabled={disabled}
+      onClick={() => onPick(sk.id)}
+    >
+      <span className={styles.textCellName}>{sk.name}</span>
+      <span className={styles.textCellMeta} style={{ color: PALETTE.textSecondary }}>
+        {implemented ? `Lv${level}${maxLevel > 1 ? `/${maxLevel}` : ''}` : '未實裝'}
+        {kindLabel ? `・${kindLabel}` : ''}
+      </span>
+      {cooling && (
+        <div className={styles.textCellCooldown} aria-hidden="true">
+          <span>{Math.ceil(cooldownMs / 1000)}s</span>
+        </div>
+      )}
+    </button>
+  );
+}
+
+// ============================== mode='items'：舊版圖像化格線（本輪不變） ==============================
+
+function ItemsLane({
   items,
   offset,
   onOffset,
@@ -110,21 +236,15 @@ export default function SkillTray({
   const s = Math.min(width / TRAY.width, height / TRAY.height);
   const cur = clampOffset(offset);
 
-  const loadout: CellEntry[] =
-    mode === 'skills'
-      ? padTo(skills, LOADOUT_SIZE).map((sk) => (sk ? { kind: 'skill', skill: sk } : null))
-      : padTo(items, LOADOUT_SIZE).map((it) => (it ? { kind: 'item', item: it } : null));
+  const loadout: CellEntry[] = padTo(items, ITEMS_LOADOUT_SIZE).map((it) => (it ? { kind: 'item', item: it } : null));
   const visible = loadout.slice(cur, cur + TRAY.visibleCells);
 
-  const counter =
-    mode === 'skills'
-      ? `已裝備 ${skills.filter(Boolean).length}/${LOADOUT_SIZE}`
-      : `可用 ${items.filter((it) => it.quantity > 0).length} 種`;
+  const counter = `可用 ${items.filter((it) => it.quantity > 0).length} 種`;
 
   const prevDisabled = cur <= 0;
   const nextDisabled = cur >= TRAY.maxOffset;
 
-  // 顏色只走規格色票（畫面根節點固定 data-skin="default"，不得讀前台 skin 變數）；縮放後的尺寸用 CSS 變數餵給 module。
+  // 顏色只走規格色票（畫面根節點固定 data-skin="default"），不得讀前台 skin 變數）；縮放後的尺寸用 CSS 變數餵給 module。
   const rootStyle = {
     width: `${width}px`,
     height: `${height}px`,
@@ -149,13 +269,13 @@ export default function SkillTray({
       className={styles.tray}
       style={rootStyle}
       role="group"
-      aria-label={mode === 'skills' ? '技能列' : '道具列'}
-      data-mode={mode}
+      aria-label="道具列"
+      data-mode="items"
     >
-      {/* 底板（「技能」／「道具」標題已烤進圖裡） */}
+      {/* 底板（「道具」標題已烤進圖裡） */}
       <img
         className={styles.art}
-        src={kitAsset(mode === 'skills' ? 'panel_tray_skills' : 'panel_tray_items')}
+        src={kitAsset('panel_tray_items')}
         alt=""
         draggable={false}
       />
@@ -181,14 +301,15 @@ export default function SkillTray({
 
         {visible.map((entry, i) => (
           <TrayCell
-            key={`${mode}-${cur + i}`}
+            key={`items-${cur + i}`}
             entry={entry}
-            cooldownMs={entry?.kind === 'skill' ? cooldownMs?.[entry.skill.id] ?? 0 : 0}
+            cooldownMs={0}
             forcedUnavailable={!!entry && !!unavailableIds?.has(entry.kind === 'skill' ? entry.skill.id : entry.item.id)}
             selected={
               !!selectedId &&
-              ((entry?.kind === 'skill' && entry.skill.id === selectedId) ||
-                (entry?.kind === 'item' && entry.item.id === selectedId))
+              !!entry &&
+              entry.kind === 'item' &&
+              entry.item.id === selectedId
             }
             onPick={onPick}
           />

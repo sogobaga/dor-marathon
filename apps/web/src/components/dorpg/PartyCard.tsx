@@ -10,8 +10,9 @@
 // 就會被一起裁掉、永遠看不到。外層 wrap 尺寸與原本 button 完全相同，不影響既有版面（BattleScreen 的隊伍列
 // 只把 PartyCard 當一顆固定寬高的方塊排，不在意它內部是不是恰好只有一個 <button>）。
 import type { CSSProperties } from 'react';
-import type { PartyMember } from '@/lib/dorpg/types';
+import type { BuffDebuffStat, PartyMember } from '@/lib/dorpg/types';
 import { ANIM, CRITICAL_RATIO, PALETTE, PARTY_SLOTS, barClipPath, fracStyle, kitAsset } from '@/lib/dorpg/assets';
+import { skillStatLabel } from '@/lib/rpgMeta';
 import FloatText, { type FloatTextTone } from './FloatText';
 import styles from './PartyCard.module.css';
 
@@ -27,6 +28,9 @@ export type PartyCardProps = {
   onPick?: () => void;
   /** P1：掛在卡片上方的飄字（傷害／治療／護盾／未命中）；key 換新值即重播同一句文字。 */
   floatText?: { text: string; tone: FloatTextTone; key: number };
+  /** P5 POLISH：目前生效中的 buff/debuff（engine PartyActor.activeEffects 的精簡投影，見
+   *  BattleScreen.tsx 的 partyStatusTags）；只顯示、不做任何戰鬥判斷。未給或空陣列＝不畫標籤列。 */
+  statusTags?: { stat: BuffDebuffStat; value: number }[];
 };
 
 /** 規格書表5（W390 基準）：姓名 14/600、Lv 12/500、HP/MP 主數值 18/700；實際字級再乘 width/72。 */
@@ -47,6 +51,7 @@ export default function PartyCard({
   targetable = false,
   onPick,
   floatText,
+  statusTags,
 }: PartyCardProps) {
   const scale = width / PARTY_SLOTS.w;
   const dead = member !== null && member.hp <= 0;
@@ -137,6 +142,20 @@ export default function PartyCard({
                 draggable={false}
               />
             </div>
+
+            {/* P5 POLISH：buff/debuff 標籤列——最多顯示 3 個，超出以 +N 表示（任務規格）。貼在卡片
+                頂端、疊在頭像插槽之上；深底淺字不需要為每個 tag 分色，箭頭（↑增益／↓減益，看 value
+                正負，跟 buff/debuff 分類是兩件事——見 skillStatLabel 呼叫處）已經足夠表達方向。
+                一整行用 overflow:hidden + ellipsis 兜底，不會因為中文字數不同而撐破卡寬。 */}
+            {statusTags && statusTags.length > 0 ? (
+              <div className={styles.tags} style={{ fontSize: 9 * scale }}>
+                {statusTags
+                  .slice(0, 3)
+                  .map((t) => `${t.value >= 0 ? '↑' : '↓'}${skillStatLabel(t.stat)}`)
+                  .join(' ')}
+                {statusTags.length > 3 ? ` +${statusTags.length - 3}` : ''}
+              </div>
+            ) : null}
           </>
         ) : null}
 

@@ -59,12 +59,20 @@ func (h *Handler) requireEntry(next http.Handler) http.Handler {
 	})
 }
 
-// Router 掛 /rpg（main.go 內 Mount 路徑）：GET /me、POST /allocate，兩者皆吃 requireEntry。
+// Router 掛 /rpg（main.go 內 Mount 路徑）。P5 新增職業／測試等級／技能端點，皆吃既有
+// requireEntry（WIRE：「全部沿用 requireEntry 白名單閘門與既有 RateLimit」）。
 func (h *Handler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(h.requireEntry)
 	r.Get("/me", h.Me)
 	r.Post("/allocate", h.Allocate)
+	r.Get("/jobs", h.Jobs)
+	r.Put("/job", h.PutJob)
+	r.Put("/test-level", h.PutTestLevel)
+	r.Post("/stats/reset", h.StatsReset)
+	r.Get("/skills", h.Skills)
+	r.Post("/skills/allocate", h.SkillsAllocate)
+	r.Post("/skills/reset", h.SkillsReset)
 	return r
 }
 
@@ -73,25 +81,31 @@ func (h *Handler) loadConfig(ctx context.Context) (Config, error) {
 	return ParseConfig(raw)
 }
 
-// character 角色列（player_characters）的 DB 對應。
+// character 角色列（player_characters）的 DB 對應。P5 新增 UserID（skills.go/jobs.go 需要拿使用者
+// id 去查職業技能樹/被動加成，不必每個呼叫端另外多帶一個參數）、JobID、TestLevel。
 type character struct {
+	UserID                       string
 	Str, Agi, Vit, Dex, Int, Luk int
 	FreePoints                   int
 	JobLevel                     int
 	JobExp                       int
+	JobID                        *string
+	TestLevel                    *int
 }
 
-const characterCols = `str_pt, agi_pt, vit_pt, dex_pt, int_pt, luk_pt, free_points, job_level, job_exp`
+const characterCols = `user_id, str_pt, agi_pt, vit_pt, dex_pt, int_pt, luk_pt, free_points, job_level, job_exp, job_id, test_level`
 
 func scanCharacter(row pgx.Row) (character, error) {
 	var c character
-	err := row.Scan(&c.Str, &c.Agi, &c.Vit, &c.Dex, &c.Int, &c.Luk, &c.FreePoints, &c.JobLevel, &c.JobExp)
+	err := row.Scan(&c.UserID, &c.Str, &c.Agi, &c.Vit, &c.Dex, &c.Int, &c.Luk, &c.FreePoints, &c.JobLevel, &c.JobExp,
+		&c.JobID, &c.TestLevel)
 	return c, err
 }
 
 // getOrCreateCharacter 查角色列；查無則依 cfg 的初始值 lazy-create（D5：「Lazy-create the
 // character row on first /me for allowed users」）。ON CONFLICT DO NOTHING + 重讀一次應付併發
-// （兩個分頁同時第一次打開角色頁）。
+// （兩個分頁同時第一次打開角色頁）。job_id/test_level 新建角色一律 NULL（未選職業／不使用測試
+// 等級），INSERT 不需要特別指定就會吃到欄位預設值。
 func (h *Handler) getOrCreateCharacter(ctx context.Context, userID string, cfg Config) (character, error) {
 	row := h.db.QueryRow(ctx, `SELECT `+characterCols+` FROM player_characters WHERE user_id=$1`, userID)
 	c, err := scanCharacter(row)
@@ -124,28 +138,101 @@ type characterView struct {
 	JobLevel   int            `json:"job_level"`
 	JobExp     int            `json:"job_exp"`
 	Stats      Stats          `json:"stats"`
-	FreePoints int            `json:"free_points"`
-	NextCost   map[string]int `json:"next_cost"` // 已達上限的素質不出現在這裡（Partial<RpgStats>）
+	FreePoints int            `json:"free_points"` // P5：推導值，等同 stat_points_free（WIRE，不再讀 DB 欄位）
+	NextCost   map[string]int `json:"next_cost"`   // 已達上限的素質不出現在這裡（Partial<RpgStats>）
 	MaxHP      int            `json:"max_hp"`
 	MaxMP      int            `json:"max_mp"`
 	Derived    Derived        `json:"derived"`
+
+	// --- P5 新增（WIRE：GET /rpg/me 新增欄位）---
+	Job              *JobRow `json:"job"`
+	TestLevel        *int    `json:"test_level"`
+	EffectiveLevel   int     `json:"effective_level"`
+	StatPointsTotal  int     `json:"stat_points_total"`
+	StatPointsFree   int     `json:"stat_points_free"`
+	StatCap          int     `json:"stat_cap"`
+	SkillPointsTotal int     `json:"skill_points_total"`
+	SkillPointsFree  int     `json:"skill_points_free"`
 }
 
-// buildCharacterView 角色列 + Config → 完整衍生數值（Me/Allocate 共用）。
-func buildCharacterView(cfg Config, baseLevel int, ch character) characterView {
+// buildCharacterView 角色列 + Config + 真實 Base Level → 完整衍生數值（Me/Allocate/PutJob/
+// PutTestLevel/StatsReset 共用）。P5 改為 Handler 方法：需要查目前職業（決定 WeaponType／
+// atk_branch 顯示）與已配點被動技能（Compute 的 Passives 輸入），純函式時代已無法勝任。
+// baseLevel 是真實等級（顯示用，回應的 base_level 欄位维持顯示真實值）；effective level（拿去
+// 算配點/技能點總量與 Compute 用哪個等級）一律用 EffectiveLevel(ch.TestLevel, baseLevel) 推導
+// （CONTRACT §2）。
+func (h *Handler) buildCharacterView(ctx context.Context, cfg Config, baseLevel int, ch character) (characterView, error) {
+	// 審查#2 CONFIRMED：test_level_enabled 關閉時，透過 effectiveTestLevel() 忽略 ch.TestLevel
+	// （即使 DB 裡還留著舊值）——這裡是 /rpg/me 顯示與配點/技能點總量計算共用的唯一入口，不修
+	// 這裡的話，關掉開關對已經設定過測試等級的玩家完全沒有效果（見 compute.go 函式註解）。
+	effLevel := EffectiveLevel(effectiveTestLevel(cfg, ch.TestLevel), baseLevel)
 	stats := Stats{Str: ch.Str, Agi: ch.Agi, Vit: ch.Vit, Dex: ch.Dex, Int: ch.Int, Luk: ch.Luk}
-	d := Compute(cfg, ComputeInput{BaseLevel: baseLevel, JobLevel: ch.JobLevel, Stats: stats})
+
+	var job *JobRow
+	if ch.JobID != nil {
+		j, err := h.getJobByID(ctx, *ch.JobID)
+		switch {
+		case err == nil:
+			job = &j
+		case errors.Is(err, pgx.ErrNoRows):
+			// 職業被刪除／查無（本輪沒有職業 CRUD，理論上不會發生）——保守視為未選職業。
+		default:
+			return characterView{}, err
+		}
+	}
+
+	in := ComputeInput{BaseLevel: effLevel, JobLevel: ch.JobLevel, Stats: stats}
+	if job != nil {
+		in.WeaponType = job.AtkBranch
+	}
+	passives, err := h.loadPassives(ctx, ch.UserID, ch.JobID)
+	if err != nil {
+		return characterView{}, err
+	}
+	in.Passives = passives
+
+	d := Compute(cfg, in)
+
+	statTotal := TotalStatPoints(cfg, effLevel)
+	statFree := statTotal - d.TotalSpent
+	if statFree < 0 {
+		// 防呆：測試等級被調低導致「已花費的點數」超過新的總量時，不倒扣成負的可配點數
+		// （UI 顯示「可配點數 0」比顯示負數更合理，且 /rpg/allocate 本來就會用 StatCap 另外
+		// 擋住超額配點，這裡只影響顯示）。
+		statFree = 0
+	}
+	statCap := StatCap(cfg, effLevel)
+
+	skillTotal := TotalSkillPoints(cfg, effLevel)
+	skillSpent, err := h.sumSkillPointsSpent(ctx, ch.UserID, ch.JobID)
+	if err != nil {
+		return characterView{}, err
+	}
+	skillFree := skillTotal - skillSpent
+	if skillFree < 0 {
+		skillFree = 0
+	}
+
 	return characterView{
 		BaseLevel:  baseLevel,
 		JobLevel:   ch.JobLevel,
 		JobExp:     ch.JobExp,
 		Stats:      stats,
-		FreePoints: ch.FreePoints,
+		FreePoints: statFree,
 		NextCost:   d.NextCost,
 		MaxHP:      d.MaxHP,
 		MaxMP:      d.MaxMP,
 		Derived:    d,
-	}
+
+		Job:              job,
+		TestLevel:        ch.TestLevel,
+		EffectiveLevel:   effLevel,
+		StatPointsTotal:  statTotal,
+		StatPointsFree:   statFree,
+		StatCap:          statCap,
+		SkillPointsTotal: skillTotal,
+		SkillPointsFree:  skillFree,
+	}, nil
 }
 
 // GET /rpg/me
@@ -155,7 +242,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 }
 
 // respondMe 查角色列（lazy-create）+ Base Level（依 users.exp 換算）→ 回完整 /me payload。
-// Allocate 加點成功後也呼叫這支，回傳格式與 GET /me 完全一致（D5）。
+// Allocate/PutJob/PutTestLevel/StatsReset 成功後也呼叫這支，回傳格式與 GET /me 完全一致（D5）。
 func (h *Handler) respondMe(w http.ResponseWriter, r *http.Request, userID string) {
 	ctx := r.Context()
 	cfg, err := h.loadConfig(ctx)
@@ -168,23 +255,28 @@ func (h *Handler) respondMe(w http.ResponseWriter, r *http.Request, userID strin
 		respondErr(w, http.StatusInternalServerError, "failed to load character")
 		return
 	}
-	var exp int
-	if err := h.db.QueryRow(ctx, `SELECT COALESCE(exp,0) FROM users WHERE id=$1`, userID).Scan(&exp); err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to load user")
-		return
-	}
-	baseLevel, err := baseLevelFromExp(ctx, h.db, exp)
+	baseLevel, _, err := h.loadEffectiveLevel(ctx, userID, cfg, ch.TestLevel)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load level config")
 		return
 	}
-	view := buildCharacterView(cfg, baseLevel, ch)
+	view, err := h.buildCharacterView(ctx, cfg, baseLevel, ch)
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errJobsNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to load character")
+		return
+	}
 	respondJSON(w, http.StatusOK, meResponse{Enabled: true, Character: &view})
 }
 
+// allocateRequest points 與 mode 二選一（WIRE）：mode="max" 時 points 必須是 0（省略）；
+// 否則 points 必須落在 1..10（既有行為）。
 type allocateRequest struct {
 	Stat   string `json:"stat"`
 	Points int    `json:"points"`
+	Mode   string `json:"mode"`
 }
 
 // statColumns 白名單：req.Stat 只會查出這 6 個固定欄位名之一，絕不會把使用者輸入直接拼進 SQL。
@@ -192,9 +284,12 @@ var statColumns = map[string]string{
 	"str": "str_pt", "agi": "agi_pt", "vit": "vit_pt", "dex": "dex_pt", "int": "int_pt", "luk": "luk_pt",
 }
 
-// POST /rpg/allocate {"stat":"str","points":1..10}：依序計費（第 n 點成本可能不同，見
-// compute.go pointCost）、SELECT...FOR UPDATE 鎖角色列防同一使用者連點造成的併發超花，
-// free_points 不足或會超過 max_stat 一律拒絕，成功寫 player_stat_log 稽核列。
+// POST /rpg/allocate {"stat":"str","points":1..10} 或 {"stat":"str","mode":"max"}：依序計費
+// （第 n 點成本可能不同，見 compute.go pointCost）、SELECT...FOR UPDATE 鎖六圍整列（P5：判斷
+// 「這次加點花多少」需要當下全部六圍的總花費，不能只鎖被加點的那一欄）防同一使用者連點造成
+// 的併發超花；點數不足或會超過 stat_cap（=min(max_stat,有效等級)，CONTRACT §3）一律拒絕，
+// 成功寫 player_stat_log 稽核列。P5 起 free_points 欄位不再寫入（不再是真相，見
+// buildCharacterView），可配點數改用 TotalStatPoints(cfg,effLevel)-已花費 現算。
 func (h *Handler) Allocate(w http.ResponseWriter, r *http.Request) {
 	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	var req allocateRequest
@@ -207,7 +302,16 @@ func (h *Handler) Allocate(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusBadRequest, "invalid stat")
 		return
 	}
-	if req.Points < 1 || req.Points > 10 {
+	maxMode := req.Mode == "max"
+	if req.Mode != "" && !maxMode {
+		respondErr(w, http.StatusBadRequest, `mode must be "max"`)
+		return
+	}
+	if maxMode && req.Points != 0 {
+		respondErr(w, http.StatusBadRequest, "points 與 mode 只能擇一")
+		return
+	}
+	if !maxMode && (req.Points < 1 || req.Points > 10) {
 		respondErr(w, http.StatusBadRequest, "points must be within 1..10")
 		return
 	}
@@ -223,6 +327,13 @@ func (h *Handler) Allocate(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to load character")
 		return
 	}
+	// baseLevel 只需要 users.exp，不受這支端點的鎖影響，交易外查詢即可（審查#6 只在意
+	// test_level 跟六圍要不要鎖在同一個交易內一起讀，baseLevel 本身不是併發爭用的對象）。
+	baseLevel, err := h.baseLevelForUser(ctx, uid)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to load level config")
+		return
+	}
 
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
@@ -231,37 +342,65 @@ func (h *Handler) Allocate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // 成功路徑會先 Commit，Rollback 在那之後為 no-op
 
-	var current, freePoints int
-	selectQuery := fmt.Sprintf(`SELECT %s, free_points FROM player_characters WHERE user_id=$1 FOR UPDATE`, col)
-	if err := tx.QueryRow(ctx, selectQuery, uid).Scan(&current, &freePoints); err != nil {
+	// 審查#6【極低・PLAUSIBLE】根因修復：effLevel/statCap 曾經在交易「外」用 getOrCreateCharacter
+	// 讀到的 ch.TestLevel 算好，六圍卻是交易「內」FOR UPDATE 才鎖、重新讀一次——兩次讀取之間若
+	// 另一個分頁同時呼叫 PUT /rpg/test-level 把等級改掉，這裡用的 statCap 就是依「舊」等級算出的
+	// 過期值，跟這次真正鎖住、即將寫入的六圍不是同一個時間點的快照。修法：test_level 跟六圍改成
+	// 同一個 SELECT...FOR UPDATE 一次讀出，effLevel/statCap 都在鎖之後才算。
+	var cur Stats
+	var testLevel *int
+	if err := tx.QueryRow(ctx, `SELECT str_pt, agi_pt, vit_pt, dex_pt, int_pt, luk_pt, test_level FROM player_characters WHERE user_id=$1 FOR UPDATE`, uid).
+		Scan(&cur.Str, &cur.Agi, &cur.Vit, &cur.Dex, &cur.Int, &cur.Luk, &testLevel); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load character")
 		return
+	}
+	effLevel := EffectiveLevel(effectiveTestLevel(cfg, testLevel), baseLevel)
+	statCap := StatCap(cfg, effLevel)
+	current := statFieldValue(cur, req.Stat)
+	pointsFree := TotalStatPoints(cfg, effLevel) - TotalSpentStats(cfg, cur)
+	if pointsFree < 0 {
+		pointsFree = 0
 	}
 
 	cost := 0
 	newVal := current
-	for i := 0; i < req.Points; i++ {
-		if newVal >= cfg.MaxStat {
-			respondErr(w, http.StatusBadRequest, "已達素質上限")
-			return
+	if maxMode {
+		for newVal < statCap {
+			c := pointCost(cfg, newVal)
+			if cost+c > pointsFree {
+				break
+			}
+			cost += c
+			newVal++
 		}
-		cost += pointCost(cfg, newVal)
-		newVal++
-	}
-	if cost > freePoints {
-		respondErr(w, http.StatusBadRequest, "可配點數不足")
-		return
+		// mode=max：卡在 0 點沒有變化也視為成功（伺服器盡力而為），不特別報錯。
+	} else {
+		for i := 0; i < req.Points; i++ {
+			if newVal >= statCap {
+				respondErr(w, http.StatusBadRequest, "stat_cap")
+				return
+			}
+			c := pointCost(cfg, newVal)
+			if cost+c > pointsFree {
+				respondErr(w, http.StatusBadRequest, "可配點數不足")
+				return
+			}
+			cost += c
+			newVal++
+		}
 	}
 
-	updateQuery := fmt.Sprintf(`UPDATE player_characters SET %s=$1, free_points=free_points-$2, updated_at=NOW() WHERE user_id=$3`, col)
-	if _, err := tx.Exec(ctx, updateQuery, newVal, cost, uid); err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to save")
-		return
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO player_stat_log (user_id, stat, from_value, to_value, cost) VALUES ($1,$2,$3,$4,$5)`,
-		uid, req.Stat, current, newVal, cost); err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed to log")
-		return
+	if newVal != current {
+		updateQuery := fmt.Sprintf(`UPDATE player_characters SET %s=$1, updated_at=NOW() WHERE user_id=$2`, col)
+		if _, err := tx.Exec(ctx, updateQuery, newVal, uid); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to save")
+			return
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO player_stat_log (user_id, stat, from_value, to_value, cost) VALUES ($1,$2,$3,$4,$5)`,
+			uid, req.Stat, current, newVal, cost); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to log")
+			return
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to commit")

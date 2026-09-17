@@ -60,6 +60,14 @@ export type CombatRating = {
    * （AI 的技能結算本來就不走 casting 狀態，見 ai.ts 開頭註解，這個欄位對它們無意義）。
    */
   castReductionPct: number;
+  /**
+   * P5 修正（審查#5【低・PLAUSIBLE】）：被動技能 crit_dmg_pct 加成的總和（%，對齊 internal/rpg
+   * Derived.CritDmgPct），疊在浮動暴擊倍率（rollCritMultiplier）之上——engine/combat.ts 的
+   * resolveAttackOrDamageSkill 在判定暴擊成立時，會把這個值換算成 ×(1+critDmgPct/100) 疊乘
+   * 進 critMul。可選欄位，缺省視為 0（沒有這個被動加成時完全不影響既有暴擊倍率計算），怪物/
+   * 沒有真實評級資料的隊友一律中性值 0（見 engine/formulas.ts deriveDefault*Rating）。
+   */
+  critDmgPct?: number;
 };
 
 export type PartyMember = {
@@ -78,6 +86,12 @@ export type PartyMember = {
   weapon?: WeaponKind;
   /** P2：命中/暴擊評級；缺省由 engine 依 cfg.hitRate 推導後備值（見 CombatRating 型別註解）。 */
   rating?: CombatRating;
+  /**
+   * P5（DORPG_P5 CONTRACT §1）：目前職業 id；只影響武器視覺／物攻分支／技能集合，不影響 HP/MP
+   * 係數，engine 的戰鬥數值計算完全不讀這個欄位——單純透傳給 FRONTEND 顯示職業徽章用。
+   * 未選職業＝null（沿用現行行為：全域預設武器、無職業技能）。
+   */
+  jobId?: string | null;
 };
 
 /** 場景五個怪物站位 ID，與 content pack scene.json 的 monsterSlots[].id 同名。 */
@@ -128,19 +142,76 @@ export type Enemy = {
   canEscape?: boolean;
   /** P2：命中/暴擊評級；缺省由 engine 依 config 的 battle_monster_* 係數推導。 */
   rating?: CombatRating;
+  /**
+   * P5（CONTRACT §6）：這隻怪的弱點屬性桶（DOR 8 桶英文代碼，與 ElementKind 同一個詞彙表）；
+   * 技能 element 命中其中之一 → 傷害 ×(1+weaknessBonusPct/100)，見 engine/formulas.ts
+   * elementMultiplier() 的「chart 覆寫優先，否則 weakElements 命中」規則。缺省 []（無弱點）。
+   */
+  weakElements?: ElementKind[];
 };
+
+// ---- P5（DORPG_P5 CONTRACT §5/§6）新增：技能等級、傷害屬性、buff/debuff/passive/special 詞彙。 ----
+
+/** CONTRACT §6：`dmg_type` 決定傷害公式用哪組攻防——physical 用 ATK 扣 DEF（沿用既有行為），
+ *  magic 用 MATK 扣 MDEF。Skill.dmgType 缺省視為 'physical'（既有 5 個技能沒有這個欄位，向下相容）。 */
+export type DmgType = 'physical' | 'magic';
+
+/**
+ * CONTRACT §5 buff/debuff/passive 共用的 stat 詞彙表（僅列出 engine 這輪要認得的字面值；
+ * 各 kind 實際允許的子集見 CONTRACT §5，engine 不在型別層另外收窄——只在套用時各自只讀取
+ * buff/debuff 目標陣營真正會出現的那幾種，多餘的字面值單純被忽略，不會壞掉）。
+ */
+export type BuffDebuffStat =
+  | 'atk_pct'
+  | 'matk_pct'
+  | 'def_pct'
+  | 'mdef_pct'
+  | 'aspd'
+  | 'crit_pct'
+  | 'flee'
+  | 'hit'
+  | 'hp_regen_pct'
+  | 'damage_taken_pct';
+
+/**
+ * WIRE.md 引擎要吃的新欄位：wireSkill.effect，「已依 level 展開」的即時數值——base+per_level×(lv-1)
+ * 的計算永遠由後端（或 fixture.ts 的離線鏡像）做好，engine 只管讀最終值，不重新推導等級公式。
+ * 刻意用同一個扁平形狀涵蓋全部 7 種 kind（跟 WIRE.md 給的字面定義逐欄對齊），而不是每個 kind
+ * 各自一個判別聯集：buff/debuff/passive 的欄位（stat/value/durationMs）跟 damage/heal/shield 的欄位
+ * （coef/flat/hits）本來就不會同時有意義，讓消費端（resolveBuffDebuff 等）自己只挑需要的欄位讀，
+ * 比維護 7 條判別聯集成員更貼近 WIRE 契約字面、也更不容易在雙方各自實作時對不上形狀。
+ */
+export interface EffectAtLevel {
+  kind: Skill['kind'];
+  stat?: BuffDebuffStat;
+  value?: number;
+  durationMs?: number;
+  coef?: number;
+  flat?: number;
+  hits?: number;
+  target: Skill['target'];
+  mpCost: number;
+}
 
 export type Skill = {
   id: string;
   name: string;
   iconUrl: string;
   cooldownMs: number;
-  /** P1：技能效果種類。 */
-  kind: 'damage' | 'heal' | 'shield';
-  /** P1：目標規則；'ally' 需經 chooseAlly 選隊友（含自己）。 */
-  target: 'enemy' | 'ally' | 'self' | 'allAllies';
+  /**
+   * P1：damage/heal/shield。P5（CONTRACT §5）新增 buff/debuff/passive/special：
+   * buff/debuff＝暫時性 stat 加成／減成（見 BuffDebuffStat），passive＝不進技能欄（後端已算進
+   * stats，engine 完全忽略），special＝本輪引擎未實裝的技能（UI 顯示但不可用，見 `implemented`）。
+   */
+  kind: 'damage' | 'heal' | 'shield' | 'buff' | 'debuff' | 'passive' | 'special';
+  /**
+   * P1：目標規則；'ally' 需經 chooseAlly 選隊友（含自己）。P5 新增 'allEnemies'（damage/debuff
+   * 專用：一次打全體敵人，跟既有 'allAllies' 對稱）。
+   */
+  target: 'enemy' | 'ally' | 'self' | 'allAllies' | 'allEnemies';
   mpCost: number;
-  /** 規格 §2：raw = floor((攻擊力×coefficient + flat)×element×charge)；治療 = floor(MATK×coefficient + flat)。 */
+  /** 規格 §2：raw = floor((攻擊力×coefficient + flat)×element×charge)；治療 = floor(MATK×coefficient + flat)。
+   *  P5：buff/debuff/passive/special 不使用這兩個欄位（該讀 `effect`），維持 0 即可。 */
   coefficient: number;
   flat: number;
   element?: ElementKind;
@@ -148,7 +219,36 @@ export type Skill = {
   weapon: WeaponKind;
   /** 施放時間（casting 行為鎖），缺省 config.defaultCastMs。 */
   castMs?: number;
+  /** P5：kind='damage' 專用，一次施放命中次數；缺省 1（既有技能沒有這個欄位，向下相容）。
+   *  >1 時每段各自獨立跑 miss/crit/傷害結算與各自的 'attack' 事件（見 engine/combat.ts）。 */
+  hits?: number;
+  /** P5：kind='damage' 專用傷害屬性；缺省 'physical'（見 DmgType 型別註解）。 */
+  dmgType?: DmgType;
+  /** P5：職業技能的目前等級／等級上限；一般技能（既有 5 個預設技能）沒有這兩個欄位，
+   *  代表「數值已經是最終值，沒有等級可言」。 */
+  level?: number;
+  maxLevel?: number;
+  /** P5：後台/設計填的效果說明文字，角色頁技能區塊與技能欄 tooltip 直接顯示，engine 不解析。 */
+  displayText?: string;
+  /**
+   * P5：CONTRACT §5 special 詞彙——本輪引擎未實裝的技能（賺錢效益、掉落品質、免疫異常、反擊…）。
+   * 缺省 true（既有技能與已實裝的新 kind 一律可用）；false 時 dispatch 的 USE_SKILL 直接拒絕並發
+   * 'skillUnavailable' 事件（見 engine/dispatch.ts），戰鬥中完全不可用，但仍會出現在技能欄
+   * （UI 顯示成不可按，讓玩家看得到「這技能存在，只是還沒做」）。
+   */
+  implemented?: boolean;
+  /**
+   * P5：依目前等級展開後的即時數值（WIRE.md：「已依 level 展開」）。damage/heal/shield 的實際戰鬥
+   * 結算仍讀上面的頂層 coefficient/flat/hits/target（跟既有 5 個技能的用法保持一致，不重新繞一層），
+   * 這個欄位對它們只是鏡射方便 FRONTEND 顯示；buff/debuff 的 stat/value/durationMs 沒有對應的頂層
+   * 欄位可放，`effect` 是它們唯一的權威資料來源（見 engine/combat.ts 的 resolveBuffDebuff）。
+   */
+  effect?: EffectAtLevel;
 };
+
+/** P5（CONTRACT §6）：技能欄容量 8→10（兩排各 5）。FRONTEND 的 SkillTray/CommandBar 應改讀這個常數，
+ *  不要沿用原本寫死的 8（見 SkillTray.tsx 的 LOADOUT_SIZE）。 */
+export const SKILL_SLOTS = 10;
 
 export type Item = {
   id: string;
@@ -166,7 +266,7 @@ export type BattleSample = {
   party: PartyMember[];
   enemies: Enemy[];
   scene: Scene;
-  /** 固定 8 格裝備欄，未裝備補 null；畫面一次只顯示 5 格（offset 0–3）。 */
+  /** P5：固定 SKILL_SLOTS（10）格裝備欄（兩排各 5），未裝備補 null；畫面一次只顯示 5 格（offset）。 */
   skills: (Skill | null)[];
   items: Item[];
   initialTargetId: string;

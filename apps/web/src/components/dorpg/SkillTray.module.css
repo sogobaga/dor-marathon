@@ -191,3 +191,128 @@
   outline: 2px solid #b2eeff;
   outline-offset: 2px;
 }
+
+/* ============================== P5：mode='skills' 純文字兩排格線 ==============================
+   職業技能沒有個別插畫，改用純文字卡片、不套 kit 的圖示格框素材（無圖時不留空圖框）。顏色走
+   PALETTE（由 SkillTray.tsx 以 inline style 帶入 --c-* 等同值），此檔只管版面。 */
+.textTray {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 2px 2px;
+  font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+  overflow: hidden;
+}
+
+.textTray * {
+  box-sizing: border-box;
+}
+
+.textCount {
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-muted, rgba(255, 255, 255, 0.72));
+  font-variant-numeric: tabular-nums;
+  padding-right: 2px;
+}
+
+.textRows {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.textRow {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.textCellEmpty {
+  border-radius: 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+}
+
+.textCell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border: 1.5px solid;
+  border-radius: 8px;
+  background: rgba(6, 40, 59, 0.55);
+  padding: 3px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  cursor: pointer;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
+}
+
+.textCell:disabled {
+  cursor: default;
+}
+
+.textCellDimmed {
+  opacity: 0.45;
+  filter: saturate(0.6);
+}
+
+.textCellSelected {
+  box-shadow: 0 0 0 1.5px rgba(255, 212, 106, 0.55) inset;
+}
+
+.textCellName {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.15;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.textCellMeta {
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.textCellCooldown {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.62);
+  pointer-events: none;
+}
+
+.textCellCooldown span {
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px #000;
+}
+
+.textCell:focus-visible {
+  outline: 2px solid #b2eeff;
+  outline-offset: 2px;
+}

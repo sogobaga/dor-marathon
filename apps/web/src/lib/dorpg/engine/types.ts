@@ -4,7 +4,7 @@
 //
 // import type 的東西在 Node 的 TS type-stripping 下會整段被削掉、完全不會嘗試 resolve，
 // 所以這裡引用 ../types（純型別檔）不影響 verify-dorpg-engine.mjs 用 node 直接執行本檔。
-import type { ActorStats, CombatRating, EnemySlotId, Item, Skill, TrayMode, WeaponKind } from '../types';
+import type { ActorStats, BuffDebuffStat, CombatRating, EnemySlotId, Item, Skill, TrayMode, WeaponKind } from '../types';
 
 export type ActorActionState = 'idle' | 'charging' | 'guarding' | 'casting' | 'recovering' | 'dead';
 export type EnemyAnimState = 'spawning' | 'idle' | 'windup' | 'attacking' | 'hitReaction' | 'dying' | 'removed';
@@ -12,6 +12,23 @@ export type BattlePhase = 'loading' | 'active' | 'resolving' | 'ended';
 export type BattleOutcome = 'victory' | 'defeat' | 'draw' | 'escaped';
 export type TargetingMode = 'none' | 'chooseAlly' | 'chooseEnemy';
 export type EscapeFlow = 'available' | 'judging' | 'failed' | 'unavailable';
+
+/**
+ * P5（CONTRACT §5）：套用中的 buff/debuff 狀態（戰鬥中資料，跟 PartyActor/EnemyActor 一樣只活在
+ * BattleState 裡）。「同 stat 同來源刷新不疊加」的疊加規則（見 engine/effects.ts applyStatusEffect）
+ * 靠 (stat, sourceSkillId) 這組複合鍵判斷是否已有同一筆——不同技能即使打同一個 stat 也視為各自獨立、
+ * 可以共存疊加（value 加總，見 activeStatSum）。
+ * hp_regen_pct 專用：nextTickAt 記錄下一次觸發回復的時間點（每 1000ms 一次，見
+ * engine/effects.ts pruneAndRegenEffects）；其餘 stat 不使用這個欄位。
+ */
+export interface ActiveEffect {
+  stat: BuffDebuffStat;
+  value: number;
+  expiresAt: number;
+  sourceSkillId: string;
+  kind: 'buff' | 'debuff';
+  nextTickAt?: number;
+}
 
 export interface PartyActor {
   id: string;
@@ -40,6 +57,14 @@ export interface PartyActor {
    * critChance）因此不用處理「rating 不存在」的分支，永遠當作已定義的具體數值使用。
    */
   rating: CombatRating;
+  /** P5：目前套用中的 buff（buff 詞彙表只打隊伍側，見 BuffDebuffStat 型別註解）；createBattle 一律
+   *  初始化成 []，不會是 undefined。 */
+  activeEffects: ActiveEffect[];
+  /**
+   * P5（CONTRACT §1）：目前職業 id，純透傳供 FRONTEND 顯示用（見 PartyMember.jobId 型別註解）；
+   * engine 的任何戰鬥數值計算都不讀這個欄位。
+   */
+  jobId: string | null;
 }
 
 export interface EnemyActor {
@@ -68,6 +93,12 @@ export interface EnemyActor {
   resumeAnimUntil?: number;
   /** P2：命中/暴擊評級。Enemy.rating 有給就直接用，沒給就呼叫 deriveDefaultMonsterRating 推導。 */
   rating: CombatRating;
+  /** P5：目前套用中的 debuff（debuff 詞彙表只打敵方側，見 BuffDebuffStat 型別註解）；createBattle
+   *  一律初始化成 []，不會是 undefined。 */
+  activeEffects: ActiveEffect[];
+  /** P5（CONTRACT §6）：弱點屬性桶，缺省 []；見 Enemy.weakElements 型別註解與 formulas.ts
+   *  elementMultiplier() 的「chart 覆寫優先，否則 weakElements 命中」規則。 */
+  weakElements: string[];
 }
 
 export interface BattleConfig {
@@ -99,7 +130,18 @@ export interface BattleConfig {
    * 預設由 0 改成 0.08（＝8%），實際數值交給 BALANCE 之後調整（見 SPEC §6）。
    */
   critRate: number;
+  /** P5：不再直接用於傷害結算（見 effects.ts rollCritMultiplier 改吃 critMultMin/critMultMax
+   *  的浮動區間）；保留欄位＋預設值只為向下相容舊資料／WIRE.md「既有 critMultiplier 可保留但
+   *  前端不再使用」的說明，engine 內部（combat.ts／ai.ts）已經沒有任何地方讀它。 */
   critMultiplier: number;
+  /** P5（CONTRACT §6）：暴擊倍率浮動區間下限；每次暴擊在 [critMultMin, critMultMax] 均勻抽樣
+   *  （見 effects.ts rollCritMultiplier），取代舊的固定 critMultiplier。 */
+  critMultMin: number;
+  /** 暴擊倍率浮動區間上限，見 critMultMin 型別註解。 */
+  critMultMax: number;
+  /** P5（CONTRACT §6）：技能 element 命中怪物 weakElements 時的傷害加成百分比（預設 25＝+25%）；
+   *  見 formulas.ts elementMultiplier()。 */
+  weaknessBonusPct: number;
   /**
    * 審查修復（見 §1）：勝利瞬間結案會把敵人死亡動畫蓋掉，改成先進 'resolving' 再等待。
    * 戰敗/平手沒有動畫可等，改用這個固定延遲（不是等敵人 anim，敵人也可能還活著）。
@@ -136,8 +178,12 @@ export interface BattleConfig {
   monsterCritShieldBase: number;
   /**
    * 屬性相剋表：key＝怪物 attribute（中文，資料庫現況存的就是中文字串，例如「金」「木」），
-   * value 是「技能/攻擊 element（英文，ElementKind）→ 倍率」的表。查無 key 或查無 element
-   * 一律視為 1.0（不相剋也不吃虧）；0.0＝完全無效（elementMultiplier() 用來判 'immune'）。
+   * value 是「技能/攻擊 element（英文，ElementKind）→ 倍率」的表。
+   * P5（CONTRACT §0/§6）語意改變：這張表現在只是「管理者覆寫」——查有 [attribute][element] 這組
+   * key 才用（可以是 0.0＝完全無效，elementMultiplier() 用來判 'immune'）；查無 key 一律落到
+   * Enemy.weakElements 規則（命中弱點桶 → 1+weaknessBonusPct/100，否則 1.0），不再是「查無就當
+   * 1.0」的單純預設表。DEFAULT_BATTLE_CONFIG 的預設值也跟著清空成 {}（見下方常數），弱點改由
+   * 個別怪物的 weakElements 資料表達，不再靠這張全域表模擬。
    */
   elementChart: Record<string, Record<string, number>>;
 
@@ -186,6 +232,13 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   hitRate: 1,
   critRate: 0.08,
   critMultiplier: 2,
+  // P5（CONTRACT §0/§6 使用者拍板）：暴擊倍率固定 2.0 改成 [1.75, 2.25] 均勻抽樣，「要 RO 的爽感：
+  // 暴擊＋高速連擊」——固定倍率每次都一樣沒有驚喜，浮動區間讓暴擊本身也有大小之分。中點 (1.75+2.25)/2
+  // 剛好等於舊的固定值 2，數值感覺維持在同一個量級，只是加了隨機性，不是整體加強或減弱。
+  critMultMin: 1.75,
+  critMultMax: 2.25,
+  // CONTRACT §6：技能 element 命中怪物 weakElements → +25% 傷害，拍板值。
+  weaknessBonusPct: 25,
   resolveDelayMs: 800,
 
   // baseMissPct 由 SPEC §6 預設值 8 改為 0（TUNE 套用 BALANCE 建議，見
@@ -203,14 +256,10 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   monsterFleeBase: 2,
   monsterCritPct: 0,
   monsterCritShieldBase: 0,
-  // SPEC §3 暫定值：後台可改；刻意讓「冰槍打鋼鐵巨鉗蟹」變成無效，玩家才看得到這個機制。
-  elementChart: {
-    金: { water: 0.0, fire: 1.25 },
-    木: { fire: 1.6, water: 0.6 },
-    土: { water: 1.3, fire: 0.5 },
-    闇: { light: 1.5, dark: 0.0, fire: 1.15 },
-    無: {},
-  },
+  // P5（CONTRACT §0/§6 使用者拍板）：「既有 battle_element_chart 保留為管理者覆寫...預設表清空」
+  // ——P2 那組示範表（金/木/土/闇/無）已被 Enemy.weakElements（見 fixture.ts RPG_MONSTERS 的
+  // weakElements 欄位）取代，DEFAULT 不再預先塞任何 attribute，只有後台真的手動覆寫時才會非空。
+  elementChart: {},
 
   // P3（AGI 攻速／DEX 詠唱縮減）新增，對齊 internal/rpg Config 的 DefaultConfig()：
   monsterHitPerLevel: 1.0,
@@ -221,10 +270,11 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   castMinMs: 120,
 };
 
-/** 施法中尚未結算的技能，key=actorId；'ALL' 代表 allAllies（單一 targetId 欄位放不下「全體」語意）。 */
+/** 施法中尚未結算的技能，key=actorId；'ALL' 代表 allAllies、'ALL_ENEMIES' 代表 allEnemies
+ *  （P5 新增；單一 targetId 欄位放不下「全體」語意，兩個方向各自一個 sentinel）。 */
 export interface PendingCast {
   skillId: string;
-  targetId: string | 'ALL' | null;
+  targetId: string | 'ALL' | 'ALL_ENEMIES' | null;
 }
 
 export type Command =
@@ -273,7 +323,28 @@ export type BattleEvent =
   | { seq: number; at: number; kind: 'itemUsed'; itemId: string; targetId: string; amount: number }
   | { seq: number; at: number; kind: 'escapeJudging' | 'escapeFailed' | 'escaped' }
   | { seq: number; at: number; kind: 'targetChanged'; enemyId: string | null }
-  | { seq: number; at: number; kind: 'ended'; outcome: BattleOutcome };
+  | { seq: number; at: number; kind: 'ended'; outcome: BattleOutcome }
+  // ---- P5（CONTRACT §5）新增：special 拒絕、buff/debuff 套用與到期。 ----
+  /** special（implemented=false）技能被 USE_SKILL 指到時發出（見 dispatch.ts），跟一般拒絕的差異是
+   *  這個有專屬事件可以讓 FRONTEND 顯示「尚未實裝」提示，不是只有 log 那一行。 */
+  | { seq: number; at: number; kind: 'skillUnavailable'; actorId: string; skillId: string }
+  /** buff/debuff 技能命中目標、真的套用了一筆 ActiveEffect 時發出（見 engine/combat.ts
+   *  resolveBuffDebuff）。effectKind 跟外層 kind:'statusApplied' 是兩件事——外層 kind 是「這是什麼
+   *  事件」，effectKind 是「套用的是 buff 還是 debuff」，取不同名字避免混淆判別聯集的 kind 欄位。 */
+  | {
+      seq: number;
+      at: number;
+      kind: 'statusApplied';
+      actorId: string;
+      targetId: string;
+      effectKind: 'buff' | 'debuff';
+      stat: BuffDebuffStat;
+      value: number;
+      durationMs: number;
+    }
+  /** 到期自動移除時發出（見 effects.ts pruneAndRegenEffects），供 FRONTEND 收掉狀態圖示用；
+   *  非必要（引擎內部一定會清除，這個事件只是給 UI 知道「什麼時候清除的」）。 */
+  | { seq: number; at: number; kind: 'statusExpired'; targetId: string; stat: BuffDebuffStat };
 
 export interface BattleState {
   phase: BattlePhase;

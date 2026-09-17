@@ -12,8 +12,9 @@
 // 拖著 PartyCard×5／BattleStage（內含 5 個 MonsterSprite canvas＋CombatFxLayer）一起重繪，
 // 這幾個子元件在檔尾用 React.memo 包一層：只要傳給它們的 props 沒變，記憶體裡的舊渲染結果就直接沿用。
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { BattleSample, BtnState, EscapeState, Item, PartyMember, TrayMode } from '@/lib/dorpg/types';
-import { KIT_SIZES, LAYOUT, PALETTE, kitAsset, layoutFor, nineSliceStyle, sceneHeightFor } from '@/lib/dorpg/assets';
+import type { BattleSample, BtnState, BuffDebuffStat, EscapeState, Item, PartyMember, TrayMode } from '@/lib/dorpg/types';
+import { ENEMY_PLATE, KIT_SIZES, LAYOUT, PALETTE, SCENE_VIEWPORT, kitAsset, layoutFor, nineSliceStyle, sceneHeightFor } from '@/lib/dorpg/assets';
+import { skillStatLabel } from '@/lib/rpgMeta';
 import { SAMPLE_BATTLE } from '@/lib/dorpg/sampleBattle';
 import TopBar from './TopBar';
 import PartyCard from './PartyCard';
@@ -22,7 +23,8 @@ import TargetBar from './TargetBar';
 import SkillTray from './SkillTray';
 import CommandBar from './CommandBar';
 import ResultOverlay from './ResultOverlay';
-import type { FloatTextTone } from './FloatText';
+import FloatText, { type FloatTextTone } from './FloatText';
+import enemyPlateStyles from './EnemyPlate.module.css';
 import styles from './BattleScreen.module.css';
 import { useBattle } from '@/lib/dorpg/useBattle';
 import { chargeRatio as engineChargeRatio } from '@/lib/dorpg/engine';
@@ -93,6 +95,16 @@ const SCROLL_MIN_H = 520;
 const SCROLL_MIN_W = 360;
 /** icon_close 邏輯 44×44（manifest；KIT_SIZES 未列，與 icon_settings 同尺寸）。 */
 const ICON_CLOSE = 44;
+
+/**
+ * P5 POLISH：EnemyPlate（怪物 Lv/HP 面板）在 BattleStage.tsx 內部用同名常數把面板頂邊定在
+ * 「腳點 − 5 邏輯 px」（見該檔 PLATE_LIFT 註解）。EnemyPlate 本體與怪物站位公式都定義在
+ * BattleStage.tsx（本輪 POLISH-UI 寫入範圍不含該檔），這裡的敵人 buff/debuff 標籤列改在
+ * BattleScreen.tsx 自己重算一次站位、疊一層獨立 overlay（見 enemyTagOverlay），數字必須跟
+ * BattleStage.tsx 那份保持一致，才能讓標籤剛好貼在面板正上方——重複一份純位置常數是本輪
+ * 寫入範圍限制下的必要代價，不是選擇上的疏忽。
+ */
+const PLATE_LIFT_DUP = 5;
 
 /** 開場預載的 8 個音效 id：SAMPLE_BATTLE 唯一用到的兩種武器（sword／staff）× 四種結果。
  *  之後若樣本資料加入 bow/greatsword，這份清單要跟著補，見 fxManifest.ts 的 FX_MANIFEST.audio。 */
@@ -225,6 +237,22 @@ export default function BattleScreen({
   }, []);
 
   const stageRef = useRef<BattleStageHandle>(null);
+
+  // P5 POLISH：敵人身上的 statusApplied 飄字（buff 打隊友走既有 floatTexts／PartyCard，debuff 打
+  // 敵人沒有現成的容器可掛百分比座標）——改記一份「目前戰場上飄字」映射，位置用 BattleStageHandle
+  // 已對外開放的 getEnemyAnchor() 現查（跟下面 'attack' 分支算特效座標用的是同一支函式），交給
+  // FloatText 的「定點模式」（見 FloatText.tsx anchorPx）渲染。跟 floatTexts／pushFloat 同一種
+  // 「key 換新值即重播」設計，找不到站位（例如敵人剛好死亡動畫播完被移除）就略過，不強求一定要飄出來。
+  const [enemyFloatTexts, setEnemyFloatTexts] = useState<Record<string, { text: string; tone: FloatTextTone; key: number; x: number; y: number }>>({});
+  const enemyFloatKeyRef = useRef(0);
+  const pushEnemyFloat = useCallback((enemyId: string, text: string, tone: FloatTextTone) => {
+    const anchor = stageRef.current?.getEnemyAnchor(enemyId);
+    if (!anchor) return;
+    enemyFloatKeyRef.current += 1;
+    const key = enemyFloatKeyRef.current;
+    setEnemyFloatTexts((prev) => ({ ...prev, [enemyId]: { text, tone, key, x: anchor.x, y: anchor.y } }));
+  }, []);
+
   const statsRef = useRef<BattleStats>({ damageDealt: 0, damageTaken: 0, defeatedLevels: [], attacks: 0, chargedAttacks: 0, skillsUsed: 0, itemsUsed: 0, guardMs: 0 });
   // P2 遙測：engine 的 'attack' 事件普攻／技能傷害共用同一個 kind、不帶 skillId（見 engine/combat.ts
   // resolveAttackOrDamageSkill 同時被 dispatch.ts 的 ATTACK_RELEASE 與 combat.ts 的 resolveCastEffect
@@ -321,6 +349,27 @@ export default function BattleScreen({
           if (ev.actorId === next.playerId) pendingSkillDamageRef.current = false; // 見上面檔頭說明的邊界情況
           break;
         }
+        // ---- P5 POLISH：special 拒絕、buff/debuff 套用與到期的畫面回饋（契約 §5，任務指示）。----
+        case 'skillUnavailable':
+          // engine/dispatch.ts 該事件的檔頭註解：這條路徑 actorId 恆為 player.id（只有玩家自己的
+          // USE_SKILL 分支會拒絕 implemented=false 的技能，AI 隊友不會走到這裡），不必判斷 actorId。
+          // 沿用既有 FloatText 樣式＋'miss' 色調（灰）——語意上跟「這個操作沒有效果」是同一件事。
+          pushFloat(next.playerId, '尚未實裝', 'miss');
+          break;
+        case 'statusApplied': {
+          // 箭頭方向只看數值正負（任務規格：正值↑負值↓），跟 tone（buff=藍／debuff=紅）是兩個獨立
+          // 維度——例如「降低受到傷害」是 buff 但 value 是負的，會顯示「↓受到傷害」＋buff 色調。
+          const arrow = ev.value >= 0 ? '↑' : '↓';
+          const label = `${arrow}${skillStatLabel(ev.stat)}`;
+          const tone: FloatTextTone = ev.effectKind === 'buff' ? 'buff' : 'debuff';
+          if (next.party.some((p) => p.id === ev.targetId)) pushFloat(ev.targetId, label, tone);
+          else pushEnemyFloat(ev.targetId, label, tone);
+          break;
+        }
+        case 'statusExpired':
+          // 標籤列（partyStatusTags／enemyTagOverlay，見下方）直接讀當下的 activeEffects 即時算，
+          // 到期那一格下一次渲染自然消失；任務規格明講不必飄字，這裡刻意不做事。
+          break;
         // escapeJudging/escapeFailed/escaped：TopBar 的訊息直接從 state.escape 算，不需要在這裡處理。
         default:
           break;
@@ -528,6 +577,40 @@ export default function BattleScreen({
   );
   const target = useMemo(() => state.enemies.find((e) => e.id === state.targetId) ?? null, [state.enemies, state.targetId]);
   const partyViews = useMemo(() => state.party.map(toPartyMemberView), [state.party]);
+  // P5 POLISH：隊員身上目前生效的 buff/debuff（PartyCard 標籤列用），只投影 stat/value 兩個欄位。
+  const partyStatusTags = useMemo(
+    () => state.party.map((p) => p.activeEffects.map((e): { stat: BuffDebuffStat; value: number } => ({ stat: e.stat, value: e.value }))),
+    [state.party],
+  );
+  // P5 POLISH：敵人身上的 buff/debuff 標籤列——EnemyPlate 本體定義在 BattleStage.tsx（本輪寫入範圍
+  // 不含該檔），改在這裡重算一次站位（同 BattleStage.tsx computeEnemyPlacement 的 footX/footY 公式，
+  // 見 PLATE_LIFT_DUP 常數註解）疊一層獨立 overlay，只加不改 BattleStage 既有的渲染樹。
+  const enemyTagOverlay = useMemo(() => {
+    const out: Record<string, { left: number; top: number; width: number; fontSize: number; text: string }> = {};
+    if (!measured) return out;
+    const k = w / LAYOUT.designWidth;
+    for (const e of state.enemies) {
+      if (e.anim === 'removed' || e.activeEffects.length === 0) continue;
+      const slot = sample.scene.slots.find((sl) => sl.id === e.slot);
+      if (!slot) continue;
+      const bandH = Math.min(stageH, SCENE_VIEWPORT.h * k);
+      const footX = slot.x * w;
+      const footY = stageH - (1 - slot.y) * bandH;
+      const plateW = ENEMY_PLATE.w * k;
+      const tags = e.activeEffects.slice(0, 3).map((eff) => `${eff.value >= 0 ? '↑' : '↓'}${skillStatLabel(eff.stat)}`);
+      const extra = e.activeEffects.length > 3 ? ` +${e.activeEffects.length - 3}` : '';
+      out[e.id] = {
+        left: Math.round(footX - plateW / 2),
+        // 貼在 EnemyPlate 上緣（footY − PLATE_LIFT_DUP×k）再留 2px 縫；實際渲染再疊
+        // transform:translateY(-100%) 讓文字整塊往上長，不必事先知道自己的行高。
+        top: Math.round(footY - PLATE_LIFT_DUP * k - 2),
+        width: Math.round(plateW),
+        fontSize: Math.max(8, Math.round(9 * k)),
+        text: tags.join(' ') + extra,
+      };
+    }
+    return out;
+  }, [measured, state.enemies, sample.scene.slots, w, stageH]);
   // phase !== 'active'（resolving：勝負已定但最後一隻怪的死亡動畫還沒播完；ended：已結算）一律鎖死互動——
   // engine 的 dispatch.ts 本來就會在非 active 時直接拒絕所有指令（純防禦性，不影響正確性），這裡要做的
   // 是「UI 看起來也對得上」：指令鈕全部 disabled、隊員卡不可點；trayMode/targeting 兩個欄位不動它，
@@ -712,6 +795,7 @@ export default function BattleScreen({
                 targetable={targetableFlags[i] ?? false}
                 onPick={isInactive ? undefined : partyPickHandlers[i]}
                 floatText={state.party[i] ? floatTexts[state.party[i].id] : undefined}
+                statusTags={partyStatusTags[i]}
               />
             ))}
           </div>
@@ -728,6 +812,21 @@ export default function BattleScreen({
               height={stageH}
               reducedMotion={settings.reduceMotion}
             />
+            {/* P5 POLISH：敵人 buff/debuff 標籤列——見 enemyTagOverlay 的站位公式與寫入範圍限制說明。
+                純疊圖、不吃點擊，才不會擋到 BattleStage 自己的怪物選取按鈕。 */}
+            {Object.entries(enemyTagOverlay).map(([id, t]) => (
+              <div
+                key={id}
+                className={enemyPlateStyles.tagLine}
+                style={{ left: t.left, top: t.top, width: t.width, transform: 'translateY(-100%)', fontSize: t.fontSize, color: PALETTE.textPrimary }}
+              >
+                {t.text}
+              </div>
+            ))}
+            {/* P5 POLISH：debuff 命中敵人時的飄字（定點模式，見 FloatText.tsx anchorPx）。 */}
+            {Object.entries(enemyFloatTexts).map(([id, ft]) => (
+              <FloatText key={`${id}-${ft.key}`} text={ft.text} tone={ft.tone} anchorPx={{ x: ft.x, y: ft.y }} reducedMotion={settings.reduceMotion} />
+            ))}
           </div>
 
           <div className={`${styles.band} ${styles.targetRow}`} style={{ height: bands.target }}>

@@ -12,7 +12,22 @@
 // 「內容」與「D2 縮放公式」。
 
 import { charPortrait, kitAsset, monsterPoster, sceneImage } from './assets';
-import type { BattleSample, CombatRating, ElementKind, Enemy, EnemySlotId, Item, PartyMember, Scene, SceneSlot, Skill, WeaponKind } from './types';
+import type {
+  BattleSample,
+  CombatRating,
+  DmgType,
+  EffectAtLevel,
+  ElementKind,
+  Enemy,
+  EnemySlotId,
+  Item,
+  PartyMember,
+  Scene,
+  SceneSlot,
+  Skill,
+  WeaponKind,
+} from './types';
+import { SKILL_SLOTS } from './types';
 // P2（暴擊／Miss／無效攻擊）：只借用 engine 已凍結匯出的預設常數算怪物評級基準，不是改動 engine
 // 本身——這裡是純消費端（跟 BattleScreen.tsx 呼叫 engine 的方式一樣），避免在本檔重複硬寫一份
 // monsterHitBase 等數字、之後 engine 那邊調預設值卻忘記回頭同步這裡。
@@ -42,6 +57,9 @@ export interface MonsterRow {
   threat: number;
   isBoss: boolean;
   sortOrder: number;
+  /** P5（CONTRACT §6）：弱點屬性桶，鏡射 migration 180 預計加的 rpg_monsters.weak_elements
+   *  （尚未套用，見任務回報）；離線 fixture 先依各怪物既有 attribute 給一組合理值示範相剋機制。 */
+  weakElements: ElementKind[];
 }
 
 export interface SkillRow {
@@ -59,6 +77,19 @@ export interface SkillRow {
   castMs: number;
   isDefault: boolean;
   sortOrder: number;
+  /** P5：kind='damage' 專用，一次施放命中次數；缺省 1（見 Skill.hits 型別註解）。 */
+  hits?: number;
+  /** P5：kind='damage' 專用傷害屬性；缺省 'physical'。 */
+  dmgType?: DmgType;
+  /** P5：職業技能等級（示範技能固定給 1，離線預覽不做配點）；一般技能（既有 5 個）不填。 */
+  level?: number;
+  maxLevel?: number;
+  /** P5：角色頁/技能欄要顯示的效果說明文字。 */
+  displayText?: string;
+  /** P5：special 詞彙——本輪引擎未實裝；缺省視為 true（可用）。 */
+  implemented?: boolean;
+  /** P5：buff/debuff 專屬——展開後的即時數值（離線示範技能固定給 level=1 的數值，不做等級縮放）。 */
+  effect?: EffectAtLevel;
 }
 
 export interface ItemRow {
@@ -140,22 +171,62 @@ export const RPG_SCENES: SceneRow[] = [
   { id: 'scene_jiannan_mountain', name: '劍南山', imageUrl: sceneImage('scene_jiannan_mountain'), slots: SHARED_SCENE_SLOTS, sortOrder: 6 },
 ];
 
-/** id/name/rank/attribute/size/race 逐字取自各 monster.json；倍率為契約 §2 給的草案值。 */
+/**
+ * id/name/rank/attribute/size/race 逐字取自各 monster.json；倍率為契約 §2 給的草案值。
+ * weakElements（P5 CONTRACT §6）：離線 fixture 先依各怪物既有中文 attribute 給一組合理弱點桶
+ * （沿用 P2 時期 elementChart 的相剋直覺——金弱火、木弱火、土弱水、闇弱光；無屬性視為真中性、
+ * 不給弱點），只是資料表達方式從「全域 elementChart」搬到「個別怪物 weakElements」；真正的正式值
+ * 由 migration 180 決定（本輪未套用，見任務回報），這裡不是權威資料來源。
+ */
 export const RPG_MONSTERS: MonsterRow[] = [
-  { id: 'DOR-MON-A-67000200001', name: '幽暗食人花首領', rank: 'A', attribute: '闇', size: '大型', race: '植物', posterUrl: monsterPoster('DOR-MON-A-67000200001'), hpMult: 7.0, atkMult: 1.6, defMult: 1.5, speedMult: 1.1, threat: 100, isBoss: true, sortOrder: 1 },
-  { id: 'DOR-MON-B-0089', name: '鋼鐵巨鉗蟹', rank: 'B', attribute: '金', size: '大型', race: '魚貝', posterUrl: monsterPoster('DOR-MON-B-0089'), hpMult: 1.8, atkMult: 1.25, defMult: 1.35, speedMult: 1.15, threat: 40, isBoss: false, sortOrder: 2 },
-  { id: 'DOR-MON-C-0229', name: '沙塵骷髏騎士', rank: 'C', attribute: '土', size: '中型', race: '不死', posterUrl: monsterPoster('DOR-MON-C-0229'), hpMult: 1.3, atkMult: 1.15, defMult: 1.2, speedMult: 1.05, threat: 30, isBoss: false, sortOrder: 3 },
-  { id: 'DOR-MON-D-0182', name: '灰白獸人', rank: 'D', attribute: '無', size: '中型', race: '人形', posterUrl: monsterPoster('DOR-MON-D-0182'), hpMult: 0.9, atkMult: 1.0, defMult: 1.0, speedMult: 1.0, threat: 20, isBoss: false, sortOrder: 4 },
-  { id: 'DOR-MON-E-0052', name: '荊棘毒蛾', rank: 'E', attribute: '木', size: '小型', race: '昆蟲', posterUrl: monsterPoster('DOR-MON-E-0052'), hpMult: 0.6, atkMult: 0.8, defMult: 0.8, speedMult: 0.9, threat: 10, isBoss: false, sortOrder: 5 },
+  { id: 'DOR-MON-A-67000200001', name: '幽暗食人花首領', rank: 'A', attribute: '闇', size: '大型', race: '植物', posterUrl: monsterPoster('DOR-MON-A-67000200001'), hpMult: 7.0, atkMult: 1.6, defMult: 1.5, speedMult: 1.1, threat: 100, isBoss: true, sortOrder: 1, weakElements: ['light'] },
+  { id: 'DOR-MON-B-0089', name: '鋼鐵巨鉗蟹', rank: 'B', attribute: '金', size: '大型', race: '魚貝', posterUrl: monsterPoster('DOR-MON-B-0089'), hpMult: 1.8, atkMult: 1.25, defMult: 1.35, speedMult: 1.15, threat: 40, isBoss: false, sortOrder: 2, weakElements: ['fire'] },
+  { id: 'DOR-MON-C-0229', name: '沙塵骷髏騎士', rank: 'C', attribute: '土', size: '中型', race: '不死', posterUrl: monsterPoster('DOR-MON-C-0229'), hpMult: 1.3, atkMult: 1.15, defMult: 1.2, speedMult: 1.05, threat: 30, isBoss: false, sortOrder: 3, weakElements: ['water'] },
+  { id: 'DOR-MON-D-0182', name: '灰白獸人', rank: 'D', attribute: '無', size: '中型', race: '人形', posterUrl: monsterPoster('DOR-MON-D-0182'), hpMult: 0.9, atkMult: 1.0, defMult: 1.0, speedMult: 1.0, threat: 20, isBoss: false, sortOrder: 4, weakElements: [] },
+  { id: 'DOR-MON-E-0052', name: '荊棘毒蛾', rank: 'E', attribute: '木', size: '小型', race: '昆蟲', posterUrl: monsterPoster('DOR-MON-E-0052'), hpMult: 0.6, atkMult: 0.8, defMult: 0.8, speedMult: 0.9, threat: 10, isBoss: false, sortOrder: 5, weakElements: ['fire'] },
 ];
 
-/** 全部欄位沿用 sampleBattle.ts 既有的 5 個技能（is_default=TRUE）。 */
+/**
+ * 前 5 個欄位沿用 sampleBattle.ts 既有的技能（is_default=TRUE）。
+ * P5（CONTRACT §5）新增 4 個示範技能，涵蓋 damage/heal/shield 以外的 4 種新 kind 各一個
+ * （buff/debuff/passive/special——任務要求「各 kind 至少一個」讓 /dev/dorpg 能預覽這些新機制）：
+ *   - war_cry（buff）：自己 atk_pct +20%，持續 8 秒。
+ *   - armor_break（debuff）：對單一敵人 def_pct −20%，持續 6 秒。
+ *   - fortitude（passive）：不進技能欄（見下面 buildFixtureSample 的 tray 篩選），純資料展示——
+ *     正式環境這種技能的數值由後端直接算進玩家 stats，離線 fixture 不做這層轉換（範圍見任務回報）。
+ *   - merchants_intuition（special）：implemented=false，示範「尚未實裝」的 UI 呈現。
+ * 這 4 個是全新示範技能，不對應任何既有 sampleBattle.ts 技能，數值落在既有技能同一個量級
+ * （mpCost 10–15、cooldown 6–12 秒、cast 300–500ms，跟現有 5 個技能一致）。
+ */
 export const RPG_SKILLS: SkillRow[] = [
   { id: 'slash', name: '斬擊', iconId: 'icon_skill_slash', kind: 'damage', target: 'enemy', weapon: 'sword', element: 'neutral', mpCost: 5, cooldownMs: 4000, coefficient: 1.6, flat: 20, castMs: 300, isDefault: true, sortOrder: 1 },
   { id: 'fireball', name: '火球', iconId: 'icon_skill_fireball', kind: 'damage', target: 'enemy', weapon: 'staff', element: 'fire', mpCost: 25, cooldownMs: 12000, coefficient: 2.4, flat: 60, castMs: 600, isDefault: true, sortOrder: 2 },
   { id: 'heal', name: '治療', iconId: 'icon_skill_heal', kind: 'heal', target: 'ally', weapon: 'staff', element: 'light', mpCost: 20, cooldownMs: 8000, coefficient: 2.0, flat: 80, castMs: 500, isDefault: true, sortOrder: 3 },
   { id: 'ice_lance', name: '冰槍', iconId: 'icon_skill_ice_lance', kind: 'damage', target: 'enemy', weapon: 'staff', element: 'water', mpCost: 15, cooldownMs: 6000, coefficient: 2.0, flat: 30, castMs: 400, isDefault: true, sortOrder: 4 },
   { id: 'shield', name: '護盾', iconId: 'icon_skill_shield', kind: 'shield', target: 'self', weapon: 'staff', element: 'light', mpCost: 15, cooldownMs: 10000, coefficient: 1.5, flat: 60, castMs: 300, isDefault: true, sortOrder: 5 },
+  {
+    id: 'war_cry', name: '戰吼', iconId: 'icon_skill_slash', kind: 'buff', target: 'self', weapon: 'sword', element: 'neutral',
+    mpCost: 15, cooldownMs: 12000, coefficient: 0, flat: 0, castMs: 400, isDefault: true, sortOrder: 6,
+    level: 1, maxLevel: 5, displayText: '提升自身物理攻擊力 20%，持續 8 秒。',
+    effect: { kind: 'buff', stat: 'atk_pct', value: 20, durationMs: 8000, target: 'self', mpCost: 15 },
+  },
+  {
+    id: 'armor_break', name: '破甲箭', iconId: 'icon_skill_ice_lance', kind: 'debuff', target: 'enemy', weapon: 'bow', element: 'neutral',
+    mpCost: 12, cooldownMs: 10000, coefficient: 0, flat: 0, castMs: 350, isDefault: true, sortOrder: 7,
+    level: 1, maxLevel: 5, displayText: '降低目標防禦力 20%，持續 6 秒。',
+    effect: { kind: 'debuff', stat: 'def_pct', value: -20, durationMs: 6000, target: 'enemy', mpCost: 12 },
+  },
+  {
+    id: 'fortitude', name: '堅毅', iconId: 'icon_skill_shield', kind: 'passive', target: 'self', weapon: 'sword', element: 'neutral',
+    mpCost: 0, cooldownMs: 0, coefficient: 0, flat: 0, castMs: 0, isDefault: true, sortOrder: 8,
+    level: 1, maxLevel: 5, displayText: '被動提升防禦力 10%（後端已算進角色 stats，不進技能欄）。',
+    effect: { kind: 'passive', stat: 'def_pct', value: 10, target: 'self', mpCost: 0 },
+  },
+  {
+    id: 'merchants_intuition', name: '商人的直覺', iconId: 'icon_skill_heal', kind: 'special', target: 'self', weapon: 'sword', element: 'neutral',
+    mpCost: 10, cooldownMs: 0, coefficient: 0, flat: 0, castMs: 0, isDefault: true, sortOrder: 9,
+    level: 1, maxLevel: 5, displayText: '提升掉落品質（尚未實裝）。', implemented: false,
+  },
 ];
 
 /** amount 由 TUNE 依 BALANCE.md §5 調整（hp_potion 300→150、mp_potion 120→80，與 migration 176
@@ -360,7 +431,7 @@ const BOSS_LEVEL_BONUS = 5;
  * 縮短」這兩個新機制發生，跟 hit/flee/critPct/critShield 選非中性值同一份精神——不代表任何
  * 真實玩家的配點結果。
  */
-const FIXTURE_PLAYER_RATING: CombatRating = { hit: 92, flee: 8, critPct: 12, critShield: 4, aspd: 165, castReductionPct: 15 };
+const FIXTURE_PLAYER_RATING: CombatRating = { hit: 92, flee: 8, critPct: 12, critShield: 4, aspd: 165, castReductionPct: 15, critDmgPct: 0 };
 
 /**
  * 隊友評級（審查 dorpg_p3 r5 §D、對齊 services/api/internal/rpg/scaling.go CompanionRating）：
@@ -398,6 +469,7 @@ function monsterRating(monster: MonsterRow): CombatRating {
     critShield: cfg.monsterCritShieldBase * monster.defMult,
     aspd: cfg.aspdReference,
     castReductionPct: 0,
+    critDmgPct: 0,
   };
 }
 
@@ -481,6 +553,13 @@ function toSkill(row: SkillRow): Skill {
     element: row.element,
     weapon: row.weapon,
     castMs: row.castMs,
+    hits: row.hits,
+    dmgType: row.dmgType,
+    level: row.level,
+    maxLevel: row.maxLevel,
+    displayText: row.displayText,
+    implemented: row.implemented,
+    effect: row.effect,
   };
 }
 
@@ -530,6 +609,8 @@ export function buildFixtureSample(code: string, opts?: { playerAtk?: number; pl
       // encounter.canEscape（同一場所有敵人共用，非逐怪欄位），對齊 battle.go 的 wireEnemy.CanEscape。
       canEscape: encounter.canEscape,
       rating: monsterRating(em.monster),
+      // P5（CONTRACT §6）：見 MonsterRow.weakElements 型別註解——離線示範值，非權威資料。
+      weakElements: em.monster.weakElements,
     };
   });
 
@@ -594,11 +675,13 @@ export function buildFixtureSample(code: string, opts?: { playerAtk?: number; pl
   // 2026-09-14 P2 修正第1輪：flat/amount 套參考 HP/MP 縮放（見上面 scaleSkillFlat/scaleItemAmount）
   // ——playerHp 已經套過 battlePlayerMinHp 保底（上面那行），跟 Go 端「保底先套用再進縮放公式」的
   // 順序一致。
+  // P5（CONTRACT §5：「passive 不出現在技能欄」）：即使 isDefault=true 也排除 passive——它的
+  // 效果理論上由後端直接算進玩家 stats，技能欄本身不該有這一格可按。技能欄容量 8→SKILL_SLOTS（10）。
   const skills: (Skill | null)[] = [...RPG_SKILLS]
-    .filter((s) => s.isDefault)
+    .filter((s) => s.isDefault && s.kind !== 'passive')
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((s) => toSkill({ ...s, flat: scaleSkillFlat(cfg, playerHp, s) }));
-  while (skills.length < 8) skills.push(null);
+  while (skills.length < SKILL_SLOTS) skills.push(null);
 
   const items: Item[] = RPG_ITEMS.filter((i) => i.defaultQuantity > 0)
     .sort((a, b) => a.sortOrder - b.sortOrder)

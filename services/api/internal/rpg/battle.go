@@ -75,6 +75,20 @@ type wireSkill struct {
 	Element     string  `json:"element,omitempty"`
 	Weapon      string  `json:"weapon"`
 	CastMs      int     `json:"castMs,omitempty"`
+
+	// --- P5（WIRE：戰鬥 bootstrap 技能欄新增欄位）---
+	Level       int           `json:"level"`
+	MaxLevel    int           `json:"maxLevel"`
+	DisplayText string        `json:"displayText"`
+	DmgType     string        `json:"dmgType"`
+	Implemented bool          `json:"implemented"`
+	Effect      EffectAtLevel `json:"effect"`
+	// Hits 審查#1 CONFIRMED 新增：一次施放命中次數的「頂層」鏡射，跟上面 Coefficient/Flat/MPCost
+	// 同一批既有欄位——前端 fromApi.ts mapSkill()／engine/combat.ts 讀的正是這批頂層欄位（既有
+	// 5 個一般技能的既有慣例），從來不讀 Effect 這個巢狀物件；Effect.Hits 只是給 FRONTEND 顯示
+	// 鏡射用。缺這個頂層欄位會讓連段技能（hits>1）在戰鬥裡永遠只打 1 下（見 toWireSkillLeveled
+	// 註解）。toWireSkillLegacy（既有技能，沒有等級概念）固定填 1。
+	Hits int `json:"hits"`
 }
 
 type wireItem struct {
@@ -98,6 +112,7 @@ type wirePartyMember struct {
 	Stats       *ActorStats   `json:"stats,omitempty"`
 	Weapon      string        `json:"weapon,omitempty"`
 	Rating      *CombatRating `json:"rating,omitempty"` // P2：命中/暴擊評級，見 scaling.go CombatRating
+	JobID       *string       `json:"jobId,omitempty"`  // P5：目前職業（未選職業 omit，維持現行預設）
 }
 
 type wireEnemy struct {
@@ -115,6 +130,7 @@ type wireEnemy struct {
 	Stats          *ActorStats   `json:"stats,omitempty"`
 	ThreatPriority int           `json:"threatPriority,omitempty"`
 	Rating         *CombatRating `json:"rating,omitempty"` // P2：命中/暴擊評級，見 scaling.go CombatRating
+	WeakElements   []string      `json:"weakElements"`     // P5：CONTRACT §6 屬性相剋，DOR 8 桶英文代碼
 	// ⚠️ 不能加 omitempty：Go 的 omitempty 對 bool 是「等於零值(false)就省略」，會讓
 	// canEscape=false（契約最在意的那個值，BOSS 場整場不能逃）被吃掉、前端收到 undefined
 	// 又落回預設 true——這裡刻意每筆都明確送 true/false，比省略省一點 bytes 更重要。
@@ -125,7 +141,7 @@ type wireBattleSample struct {
 	Party           []wirePartyMember `json:"party"`
 	Enemies         []wireEnemy       `json:"enemies"`
 	Scene           wireScene         `json:"scene"`
-	Skills          [8]*wireSkill     `json:"skills"`
+	Skills          [10]*wireSkill    `json:"skills"` // P5：8→10 格（兩排各 5，見 CONTRACT §4）
 	Items           []wireItem        `json:"items"`
 	InitialTargetID string            `json:"initialTargetId"`
 	SceneKind       string            `json:"sceneKind"`
@@ -169,6 +185,12 @@ type wireBattleConfig struct {
 	AspdReference       float64 `json:"aspdReference"`
 	AttackCooldownMinMs int     `json:"attackCooldownMinMs"`
 	CastMinMs           int     `json:"castMinMs"`
+
+	// ---- P5（CONTRACT §6）新增：暴擊倍率改浮動範圍、屬性相剋加成 %。既有 CritMultiplier 保留
+	// 欄位相容，前端起這輪不再使用它（改用 CritMultMin/Max 均勻抽），見 config.go 對應欄位註解。----
+	CritMultMin      float64 `json:"critMultMin"`
+	CritMultMax      float64 `json:"critMultMax"`
+	WeaknessBonusPct float64 `json:"weaknessBonusPct"`
 }
 
 func buildWireConfig(cfg Config) wireBattleConfig {
@@ -203,6 +225,10 @@ func buildWireConfig(cfg Config) wireBattleConfig {
 		AspdReference:       cfg.BattleAspdReference,
 		AttackCooldownMinMs: cfg.BattleAttackCooldownMinMs,
 		CastMinMs:           cfg.BattleCastMinMs,
+
+		CritMultMin:      cfg.CritMultMin,
+		CritMultMax:      cfg.CritMultMax,
+		WeaknessBonusPct: cfg.BattleWeaknessBonusPct,
 	}
 }
 
@@ -211,6 +237,53 @@ func toWireSkill(s SkillRow) wireSkill {
 		ID: s.ID, Name: s.Name, IconURL: kitAssetURL(s.IconID), CooldownMs: s.CooldownMs,
 		Kind: s.Kind, Target: s.Target, MPCost: s.MPCost, Coefficient: s.Coefficient,
 		Flat: s.Flat, Element: s.Element, Weapon: s.Weapon, CastMs: s.CastMs,
+	}
+}
+
+// toWireSkillLegacy P5：未選職業時的既有 is_default 技能填法。新欄位（level/maxLevel/...）用
+// 頂層既有欄位（Coefficient/Flat/MPCost）合成一個 EffectAtLevel，不吃 s.Effect JSONB——既有
+// 5 個技能列這個欄位是預設空物件，語意上沒有分級數值，讀了只會是全 0。Level/MaxLevel 固定 1：
+// 這些技能沒有「配點升級」概念，永遠視為「已在唯一等級」。
+func toWireSkillLegacy(s SkillRow) wireSkill {
+	w := toWireSkill(s)
+	w.Level = 1
+	w.MaxLevel = 1
+	w.DisplayText = s.DisplayText
+	w.DmgType = s.DmgType
+	w.Implemented = s.Implemented
+	// Hits 審查#1：既有技能沒有等級/連段概念，頂層鏡射固定 1（跟下面 Effect.Hits 一致）。
+	w.Hits = 1
+	w.Effect = EffectAtLevel{
+		Kind: s.Kind, Target: s.Target, Element: s.Element,
+		Coef: s.Coefficient, Flat: float64(s.Flat), Hits: 1, MPCost: float64(s.MPCost),
+	}
+	return w
+}
+
+// toWireSkillLeveled P5：已選職業時的職業技能填法，effect 依玩家目前等級展開（ExpandEffect，
+// 見 skills.go）。呼叫端保證只在 level>=1 時呼叫（WIRE：「該職業 level≥1 的技能...填入」）。
+//
+// 審查#1【高・CONFIRMED】根因修復：這裡曾經把頂層 Coefficient/Flat/MPCost 設成 SkillRow 的
+// 原始欄位（s.Coefficient/s.Flat/s.MPCost，語意是「rpg_skills 資料列本身」的基準值，不是任何
+// 特定等級的展開值），只有巢狀 Effect 欄位才是 ExpandEffect() 依 level 展開後的即時值——但
+// apps/web/src/lib/dorpg/fromApi.ts mapSkill() 讀的是頂層 coefficient/flat/mpCost（跟既有 5 個
+// 一般技能同一套欄位，見 types.ts Skill 型別「damage/heal/shield 的實際戰鬥結算仍讀上面的頂層
+// coefficient/flat/hits...」的註解），engine/combat.ts 的傷害結算與 dispatch.ts 的 MP 扣除
+// 也只讀這批頂層欄位，從未讀 Effect.coef/flat/hits。結果：玩家把技能練到 Lv10，戰鬥裡打出來的
+// 數值仍然是 Lv1 基準值（升級沒有任何效果），而且舊版 wireSkill 根本沒有頂層 Hits 欄位，連段技能
+// （hits>1，例如 lk_a4/ar_a4/ar_b1/mg_a5/mg_b5）永遠只觸發 1 次攻擊事件。
+// 修法：頂層 Coefficient/Flat/MPCost/Hits 全部改吃 ExpandEffect(s, level) 的展開值（跟 Effect
+// 欄位算的是同一份數字，只是一個攤平在頂層供既有戰鬥邏輯讀、一個保留巢狀物件供 FRONTEND 顯示／
+// buff-debuff 讀取），兩邊数字保證一致（見 battle_test.go 的回歸測試）。
+func toWireSkillLeveled(s SkillRow, level int) wireSkill {
+	e := ExpandEffect(s, level)
+	return wireSkill{
+		ID: s.ID, Name: s.Name, IconURL: kitAssetURL(s.IconID), CooldownMs: s.CooldownMs,
+		Kind: s.Kind, Target: s.Target,
+		MPCost: roundInt(e.MPCost), Coefficient: e.Coef, Flat: roundInt(e.Flat),
+		Element: s.Element, Weapon: s.Weapon, CastMs: s.CastMs,
+		Level: level, MaxLevel: s.MaxLevel, DisplayText: s.DisplayText, DmgType: s.DmgType,
+		Implemented: s.Implemented, Hits: e.Hits, Effect: e,
 	}
 }
 
@@ -237,22 +310,37 @@ func (h *Handler) BattleRouter() http.Handler {
 // 數值」，抽成共用函式避免重複「角色列→exp→Base Lv→Compute→套保底」五步查詢。回傳的
 // PlayerBattleStats 已套用 battle_player_min_atk/min_hp 保底——角色摘要列跟實際戰鬥用同一組
 // 數字，不會出現「選單顯示的血量」跟「戰鬥裡的血量」對不上的情況。
+//
+// P5：回傳的等級（第三個回傳值、也是 PlayerBattleStats.BaseLevel）改用「有效等級」
+// EffectiveLevel(test_level, 真實 Base Lv)——CONTRACT §2 明講「戰鬥 bootstrap」是必須套用
+// test_level 的場合之一。同時依角色目前職業決定 Compute 的 WeaponType（atk_branch）與被動
+// 技能加成（Passives），未選職業維持既有全域行為。
 func (h *Handler) loadPlayerBattleStats(ctx context.Context, uid string, cfg Config) (PlayerBattleStats, character, int, error) {
 	ch, err := h.getOrCreateCharacter(ctx, uid, cfg)
 	if err != nil {
 		return PlayerBattleStats{}, character{}, 0, err
 	}
-	var exp int
-	if err := h.db.QueryRow(ctx, `SELECT COALESCE(exp,0) FROM users WHERE id=$1`, uid).Scan(&exp); err != nil {
-		return PlayerBattleStats{}, character{}, 0, err
-	}
-	baseLevel, err := baseLevelFromExp(ctx, h.db, exp)
+	_, effLevel, err := h.loadEffectiveLevel(ctx, uid, cfg, ch.TestLevel)
 	if err != nil {
 		return PlayerBattleStats{}, character{}, 0, err
 	}
 	stats := Stats{Str: ch.Str, Agi: ch.Agi, Vit: ch.Vit, Dex: ch.Dex, Int: ch.Int, Luk: ch.Luk}
-	d := Compute(cfg, ComputeInput{BaseLevel: baseLevel, JobLevel: ch.JobLevel, Stats: stats})
-	return PlayerBattleStatsFrom(cfg, baseLevel, d), ch, baseLevel, nil
+	in := ComputeInput{BaseLevel: effLevel, JobLevel: ch.JobLevel, Stats: stats}
+	if ch.JobID != nil {
+		job, err := h.getJobByID(ctx, *ch.JobID)
+		if err == nil {
+			in.WeaponType = job.AtkBranch
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return PlayerBattleStats{}, character{}, 0, err
+		}
+	}
+	passives, err := h.loadPassives(ctx, uid, ch.JobID)
+	if err != nil {
+		return PlayerBattleStats{}, character{}, 0, err
+	}
+	in.Passives = passives
+	d := Compute(cfg, in)
+	return PlayerBattleStatsFrom(cfg, effLevel, d), ch, effLevel, nil
 }
 
 // --- 缺表統一回應（契約 §3.4：503 帶固定訊息，不噴 SQL） ---
@@ -367,6 +455,15 @@ func (h *Handler) BattleEncounters(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to load character")
 		return
 	}
+	// P5：free_points 欄位不再是真相（見 handler.go buildCharacterView），這裡改現算——
+	// 不這樣改的話，玩家改用新版 /rpg/allocate 加點後這個摘要會凍結在部署當下的舊數字
+	// （新版 Allocate 不再遞減這個 DB 欄位）。baseLevel 這裡其實已經是 loadPlayerBattleStats
+	// 回傳的「有效等級」（P5 改動，見該函式註解），跟配點總量公式用的是同一個等級基準。
+	statsNow := Stats{Str: ch.Str, Agi: ch.Agi, Vit: ch.Vit, Dex: ch.Dex, Int: ch.Int, Luk: ch.Luk}
+	statFree := TotalStatPoints(cfg, baseLevel) - TotalSpentStats(cfg, statsNow)
+	if statFree < 0 {
+		statFree = 0
+	}
 
 	list := make([]wireEncounterSummary, 0, len(encounters))
 	for _, e := range encounters {
@@ -391,11 +488,11 @@ func (h *Handler) BattleEncounters(w http.ResponseWriter, r *http.Request) {
 		"encounters": list,
 		"character": map[string]any{
 			"base_level":   baseLevel,
-			"free_points":  ch.FreePoints,
+			"free_points":  statFree,
 			"power":        PlayerPower(pbs),
 			"max_hp":       roundInt(pbs.HPMax),
 			"max_mp":       roundInt(pbs.MPMax),
-			"unspent_hint": ch.FreePoints > 0,
+			"unspent_hint": statFree > 0,
 		},
 	})
 }
@@ -411,14 +508,54 @@ func (h *Handler) getLoadout(ctx context.Context, userID string) ([]string, erro
 	return loadout, err
 }
 
-// buildSkillSlots 契約：「玩家 loadout 非空就照它、否則取 is_default 的技能依 sort_order 補；
-// 不足補 null」——兩種來源互斥，不會混用（loadout 有值時完全不看 is_default）。
+// buildSkillSlots P5：已選職業（jobID!=nil）→ 該職業 level>=1 的技能依 path→tier 排序填入
+// （最多 10 格，見 CONTRACT §4／WIRE）；未選職業 → 維持既有契約：「玩家 loadout 非空就照它、
+// 否則取 is_default 的技能依 sort_order 補；不足補 null」（兩種來源互斥，不會混用），8 格上限
+// 不變，其餘 2 格恆為 null。
 //
 // cfg/pbs：P2 修正第 1 輪——DB 存的 flat 是「參考玩家」身上的絕對值，組進 wire 之前要先用
-// ScaleSkill 依這場戰鬥的實際玩家 HPMax 縮放（見 scaling.go 檔頭），heal/shield 以外的技能
-// ScaleSkill 會原樣回傳，這裡不需要另外判斷 kind。
-func (h *Handler) buildSkillSlots(ctx context.Context, cfg Config, pbs PlayerBattleStats, loadout []string) ([8]*wireSkill, error) {
-	var slots [8]*wireSkill
+// ScaleSkill 依這場戰鬥的實際玩家 HPMax 縮放（見 scaling.go 檔頭），只用在未選職業的既有路徑；
+// 職業技能的真正數值在 effect JSONB（ExpandEffect 展開），本輪不對它套用參考 HP 縮放（已知
+// 簡化，留給之後決定是否需要）。
+func (h *Handler) buildSkillSlots(ctx context.Context, cfg Config, pbs PlayerBattleStats, loadout []string, jobID *string, userID string) ([10]*wireSkill, error) {
+	var slots [10]*wireSkill
+
+	if jobID != nil {
+		jobSkills, err := h.listSkillsByJob(ctx, *jobID)
+		if err != nil {
+			return slots, err
+		}
+		ids := make([]string, len(jobSkills))
+		for i, s := range jobSkills {
+			ids[i] = s.ID
+		}
+		levels, err := h.getPlayerSkillLevels(ctx, userID, ids)
+		if err != nil {
+			return slots, err
+		}
+		i := 0
+		for _, s := range jobSkills { // listSkillsByJob 已經 ORDER BY path, tier, sort_order
+			if i >= 10 {
+				break
+			}
+			lvl := levels[s.ID]
+			if lvl < 1 {
+				continue // 未配點的職業技能不佔欄位（WIRE：「level>=1 的技能...填入」）
+			}
+			// INTEGRATOR 對齊：WIRE.md「passive（不出現在技能欄；後端已算進 stats）」——passive
+			// 技能即使已配點（level>=1）也不得佔用技能欄位，數值已由 loadPassives()/Compute() 算進
+			// stats。原本這裡漏了這個 continue，會讓已點的被動技能誤佔一格送給前端。
+			if s.Kind == "passive" {
+				continue
+			}
+			w := toWireSkillLeveled(s, lvl)
+			slots[i] = &w
+			i++
+		}
+		return slots, nil
+	}
+
+	// 未選職業：維持現行 is_default 技能填法（8 格上限，其餘 2 格沿用 null）。
 	if len(loadout) > 0 {
 		ids := loadout
 		if len(ids) > 8 {
@@ -430,7 +567,7 @@ func (h *Handler) buildSkillSlots(ctx context.Context, cfg Config, pbs PlayerBat
 		}
 		for i, id := range ids {
 			if sr, ok := bySkillID[id]; ok && sr.IsActive {
-				w := toWireSkill(ScaleSkill(cfg, pbs, sr))
+				w := toWireSkillLegacy(ScaleSkill(cfg, pbs, sr))
 				slots[i] = &w
 			}
 		}
@@ -445,7 +582,7 @@ func (h *Handler) buildSkillSlots(ctx context.Context, cfg Config, pbs PlayerBat
 		if !sr.IsDefault || i >= 8 {
 			continue
 		}
-		w := toWireSkill(ScaleSkill(cfg, pbs, sr))
+		w := toWireSkillLegacy(ScaleSkill(cfg, pbs, sr))
 		slots[i] = &w
 		i++
 	}
@@ -530,6 +667,19 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 玩家武器視覺：P5 起依目前職業決定（未選職業維持現行預設——不設定這個欄位，前端沿用既有
+	// fallback，見 WIRE）。查無職業（理論上不會發生，見 loadPlayerBattleStats 同樣的容錯）時
+	// 一併保守視為未選職業。
+	var playerWeapon string
+	if ch.JobID != nil {
+		if job, jerr := h.getJobByID(ctx, *ch.JobID); jerr == nil {
+			playerWeapon = job.Weapon
+		} else if !errors.Is(jerr, pgx.ErrNoRows) {
+			respondErr(w, http.StatusInternalServerError, "failed to load job")
+			return
+		}
+	}
+
 	party := []wirePartyMember{{
 		ID: uid, Name: displayName, Level: baseLevel,
 		HP: roundInt(pbs.HPMax), HPMax: roundInt(pbs.HPMax),
@@ -537,6 +687,8 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		PortraitURL: playerPortraitURL,
 		Stats:       &ActorStats{HPMax: pbs.HPMax, MPMax: pbs.MPMax, Atk: pbs.Atk, Matk: pbs.Matk, Def: pbs.Def, Mdef: pbs.Mdef},
 		Rating:      &pbs.Rating,
+		Weapon:      playerWeapon,
+		JobID:       ch.JobID,
 	}}
 
 	companions, err := h.listPartyCompanions(ctx, 4)
@@ -593,6 +745,10 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		// TODO(P3)：cfg.BattleScaleMode 目前只有 "power" 真的被使用；"level"/"fixed" 是
 		// Config.Validate() 已經開放的列舉值，但這裡還沒有依模式切換分支（見 scaling.go 檔頭）。
 		sm := ScaleMonster(cfg, pbs, mr, enc.PowerScale, em.PowerScale, shares[i])
+		weakElements := mr.WeakElements
+		if weakElements == nil {
+			weakElements = []string{}
+		}
 		enemy := wireEnemy{
 			ID: em.Slot, Name: mr.Name, Level: sm.Level,
 			HP: sm.HPMax, HPMax: sm.HPMax, Slot: em.Slot, ImageURL: mr.PosterURL,
@@ -600,6 +756,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 			Stats:          &ActorStats{HPMax: float64(sm.HPMax), MPMax: 0, Atk: float64(sm.Atk), Matk: float64(sm.Matk), Def: float64(sm.Def), Mdef: float64(sm.Mdef)},
 			ThreatPriority: mr.Threat,
 			Rating:         &sm.Rating,
+			WeakElements:   weakElements,  // P5：CONTRACT §6 屬性相剋
 			CanEscape:      enc.CanEscape, // DDL 只有 encounter 層級的 can_escape，套到每隻怪身上（契約 D：BOSS 場整場不能逃）
 		}
 		enemies = append(enemies, enemy)
@@ -615,7 +772,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to load loadout")
 		return
 	}
-	skillSlots, err := h.buildSkillSlots(ctx, cfg, pbs, loadout)
+	skillSlots, err := h.buildSkillSlots(ctx, cfg, pbs, loadout, ch.JobID, uid)
 	if err != nil {
 		if respondIfMissingRelation(w, err) {
 			return
@@ -658,7 +815,16 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		},
 		"sample": sample,
 		"config": buildWireConfig(cfg),
-		"hints":  map[string]any{"free_points": ch.FreePoints},
+		// P5：free_points 不再是真相（見 handler.go buildCharacterView），現算避免新版
+		// /rpg/allocate 不再遞減 DB 欄位後這裡凍結在舊數字（同 BattleEncounters 的修法）。
+		"hints": map[string]any{"free_points": func() int {
+			statsNow := Stats{Str: ch.Str, Agi: ch.Agi, Vit: ch.Vit, Dex: ch.Dex, Int: ch.Int, Luk: ch.Luk}
+			free := TotalStatPoints(cfg, baseLevel) - TotalSpentStats(cfg, statsNow)
+			if free < 0 {
+				return 0
+			}
+			return free
+		}()},
 	})
 }
 

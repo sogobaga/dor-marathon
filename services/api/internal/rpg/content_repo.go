@@ -29,12 +29,16 @@ func isMissingRelation(err error) bool {
 // rpg_monsters
 // ---------------------------------------------------------------------------
 
-const monsterCols = `id, name, rank, attribute, size, race, sprite_id, poster_url, hp_mult, atk_mult, def_mult, speed_mult, threat, is_boss, is_active, sort_order`
+const monsterCols = `id, name, rank, attribute, size, race, sprite_id, poster_url, hp_mult, atk_mult, def_mult, speed_mult, threat, is_boss, is_active, sort_order, weak_elements`
 
 func scanMonster(row pgx.Row) (MonsterRow, error) {
 	var m MonsterRow
 	err := row.Scan(&m.ID, &m.Name, &m.Rank, &m.Attribute, &m.Size, &m.Race, &m.SpriteID, &m.PosterURL,
-		&m.HPMult, &m.AtkMult, &m.DefMult, &m.SpeedMult, &m.Threat, &m.IsBoss, &m.IsActive, &m.SortOrder)
+		&m.HPMult, &m.AtkMult, &m.DefMult, &m.SpeedMult, &m.Threat, &m.IsBoss, &m.IsActive, &m.SortOrder,
+		&m.WeakElements)
+	if m.WeakElements == nil {
+		m.WeakElements = []string{}
+	}
 	return m, err
 }
 
@@ -82,15 +86,19 @@ func (h *Handler) getMonstersByIDs(ctx context.Context, ids []string) (map[strin
 }
 
 func (h *Handler) upsertMonster(ctx context.Context, m MonsterRow) error {
+	weakElements := m.WeakElements
+	if weakElements == nil {
+		weakElements = []string{} // nil slice 傳給 pgx text[] 會變 SQL NULL（比照 CompanionRow.SkillIDs 慣例）
+	}
 	_, err := h.db.Exec(ctx, `
-		INSERT INTO rpg_monsters (id, name, rank, attribute, size, race, sprite_id, poster_url, hp_mult, atk_mult, def_mult, speed_mult, threat, is_boss, is_active, sort_order, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
+		INSERT INTO rpg_monsters (id, name, rank, attribute, size, race, sprite_id, poster_url, hp_mult, atk_mult, def_mult, speed_mult, threat, is_boss, is_active, sort_order, weak_elements, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW())
 		ON CONFLICT (id) DO UPDATE SET
 			name=$2, rank=$3, attribute=$4, size=$5, race=$6, sprite_id=$7, poster_url=$8,
 			hp_mult=$9, atk_mult=$10, def_mult=$11, speed_mult=$12, threat=$13, is_boss=$14,
-			is_active=$15, sort_order=$16, updated_at=NOW()`,
+			is_active=$15, sort_order=$16, weak_elements=$17, updated_at=NOW()`,
 		m.ID, m.Name, m.Rank, m.Attribute, m.Size, m.Race, m.SpriteID, m.PosterURL,
-		m.HPMult, m.AtkMult, m.DefMult, m.SpeedMult, m.Threat, m.IsBoss, m.IsActive, m.SortOrder)
+		m.HPMult, m.AtkMult, m.DefMult, m.SpeedMult, m.Threat, m.IsBoss, m.IsActive, m.SortOrder, weakElements)
 	return err
 }
 
@@ -103,16 +111,67 @@ func (h *Handler) deleteMonster(ctx context.Context, id string) (bool, error) {
 }
 
 // ---------------------------------------------------------------------------
+// rpg_jobs（P5：只需要 list/get，本輪沒有後台 CRUD——見 CONTRACT §7「後台 CRUD 不做」）。
+// ---------------------------------------------------------------------------
+
+const jobCols = `id, name, tagline, description, path_a_id, path_a_name, path_a_desc, path_b_id, path_b_name, path_b_desc, weapon, atk_branch, recommended_stats, sort_order`
+
+func scanJob(row pgx.Row) (JobRow, error) {
+	var j JobRow
+	err := row.Scan(&j.ID, &j.Name, &j.Tagline, &j.Description,
+		&j.PathA.ID, &j.PathA.Name, &j.PathA.Desc,
+		&j.PathB.ID, &j.PathB.Name, &j.PathB.Desc,
+		&j.Weapon, &j.AtkBranch, &j.RecommendedStats, &j.SortOrder)
+	return j, err
+}
+
+func (h *Handler) listJobs(ctx context.Context) ([]JobRow, error) {
+	rows, err := h.db.Query(ctx, `SELECT `+jobCols+` FROM rpg_jobs ORDER BY sort_order, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []JobRow{}
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// getJobByID 查無資料回 pgx.ErrNoRows（呼叫端依情境決定要回 400 還是保守視為「未選職業」）。
+func (h *Handler) getJobByID(ctx context.Context, id string) (JobRow, error) {
+	row := h.db.QueryRow(ctx, `SELECT `+jobCols+` FROM rpg_jobs WHERE id=$1`, id)
+	return scanJob(row)
+}
+
+// ---------------------------------------------------------------------------
 // rpg_skills
 // ---------------------------------------------------------------------------
 
-const skillCols = `id, name, icon_id, kind, target, weapon, element, mp_cost, cooldown_ms, coefficient, flat, cast_ms, is_default, is_active, sort_order`
+const skillCols = `id, name, icon_id, kind, target, weapon, element, mp_cost, cooldown_ms, coefficient, flat, cast_ms, is_default, is_active, sort_order, job_id, path, tier, max_level, effect, dmg_type, prereq_skill_id, prereq_level, mp_cost_per_level, display_text, implemented`
 
 func scanSkill(row pgx.Row) (SkillRow, error) {
 	var s SkillRow
+	var effectRaw []byte
 	err := row.Scan(&s.ID, &s.Name, &s.IconID, &s.Kind, &s.Target, &s.Weapon, &s.Element,
-		&s.MPCost, &s.CooldownMs, &s.Coefficient, &s.Flat, &s.CastMs, &s.IsDefault, &s.IsActive, &s.SortOrder)
-	return s, err
+		&s.MPCost, &s.CooldownMs, &s.Coefficient, &s.Flat, &s.CastMs, &s.IsDefault, &s.IsActive, &s.SortOrder,
+		&s.JobID, &s.Path, &s.Tier, &s.MaxLevel, &effectRaw, &s.DmgType, &s.PrereqSkillID, &s.PrereqLevel,
+		&s.MPCostPerLevel, &s.DisplayText, &s.Implemented)
+	if err != nil {
+		return s, err
+	}
+	if len(effectRaw) > 0 {
+		if err := json.Unmarshal(effectRaw, &s.Effect); err != nil {
+			// 壞掉的 JSON 不該讓整支 API 500（比照 scanScene 對 slots 的既有慣例）——回零值，
+			// 這個技能展開出來的效果會是全 0，後台看得到，可以馬上重新存檔修正。
+			s.Effect = SkillEffect{}
+		}
+	}
+	return s, nil
 }
 
 func (h *Handler) listSkills(ctx context.Context, activeOnly bool) ([]SkillRow, error) {
@@ -158,14 +217,23 @@ func (h *Handler) getSkillsByIDs(ctx context.Context, ids []string) (map[string]
 }
 
 func (h *Handler) upsertSkill(ctx context.Context, s SkillRow) error {
-	_, err := h.db.Exec(ctx, `
-		INSERT INTO rpg_skills (id, name, icon_id, kind, target, weapon, element, mp_cost, cooldown_ms, coefficient, flat, cast_ms, is_default, is_active, sort_order, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
+	effectRaw, err := json.Marshal(s.Effect)
+	if err != nil {
+		return err
+	}
+	_, err = h.db.Exec(ctx, `
+		INSERT INTO rpg_skills (id, name, icon_id, kind, target, weapon, element, mp_cost, cooldown_ms, coefficient, flat, cast_ms, is_default, is_active, sort_order,
+			job_id, path, tier, max_level, effect, dmg_type, prereq_skill_id, prereq_level, mp_cost_per_level, display_text, implemented, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26, NOW())
 		ON CONFLICT (id) DO UPDATE SET
 			name=$2, icon_id=$3, kind=$4, target=$5, weapon=$6, element=$7, mp_cost=$8, cooldown_ms=$9,
-			coefficient=$10, flat=$11, cast_ms=$12, is_default=$13, is_active=$14, sort_order=$15, updated_at=NOW()`,
+			coefficient=$10, flat=$11, cast_ms=$12, is_default=$13, is_active=$14, sort_order=$15,
+			job_id=$16, path=$17, tier=$18, max_level=$19, effect=$20, dmg_type=$21, prereq_skill_id=$22,
+			prereq_level=$23, mp_cost_per_level=$24, display_text=$25, implemented=$26, updated_at=NOW()`,
 		s.ID, s.Name, s.IconID, s.Kind, s.Target, s.Weapon, s.Element, s.MPCost, s.CooldownMs,
-		s.Coefficient, s.Flat, s.CastMs, s.IsDefault, s.IsActive, s.SortOrder)
+		s.Coefficient, s.Flat, s.CastMs, s.IsDefault, s.IsActive, s.SortOrder,
+		s.JobID, s.Path, s.Tier, s.MaxLevel, effectRaw, s.DmgType, s.PrereqSkillID, s.PrereqLevel,
+		s.MPCostPerLevel, s.DisplayText, s.Implemented)
 	return err
 }
 
@@ -175,6 +243,111 @@ func (h *Handler) deleteSkill(ctx context.Context, id string) (bool, error) {
 		return false, err
 	}
 	return ct.RowsAffected() > 0, nil
+}
+
+// ---------------------------------------------------------------------------
+// P5：職業技能樹讀取（skills.go /rpg/skills、battle.go bootstrap 共用）。
+// ---------------------------------------------------------------------------
+
+// listSkillsByJob 某職業目前啟用中的全部技能，依 path→tier→sort_order 排序（WIRE：battle
+// bootstrap 與 GET /rpg/skills 都依這個順序展示/填欄）。
+func (h *Handler) listSkillsByJob(ctx context.Context, jobID string) ([]SkillRow, error) {
+	rows, err := h.db.Query(ctx, `SELECT `+skillCols+` FROM rpg_skills WHERE job_id=$1 AND is_active ORDER BY path, tier, sort_order, id`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SkillRow{}
+	for rows.Next() {
+		s, err := scanSkill(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// getPlayerSkillLevels 批次查詢玩家在給定技能 id 清單上的目前等級；查無列的技能不會出現在
+// 回傳 map 裡（呼叫端用 `levels[id]`——Go map 查無 key 回傳零值 0，語意上等同「尚未配點」，
+// 不需要另外判斷 ok）。
+func (h *Handler) getPlayerSkillLevels(ctx context.Context, userID string, skillIDs []string) (map[string]int, error) {
+	out := map[string]int{}
+	if len(skillIDs) == 0 {
+		return out, nil
+	}
+	rows, err := h.db.Query(ctx, `SELECT skill_id, level FROM player_skill_levels WHERE user_id=$1 AND skill_id = ANY($2)`, userID, skillIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var lvl int
+		if err := rows.Scan(&id, &lvl); err != nil {
+			return nil, err
+		}
+		out[id] = lvl
+	}
+	return out, rows.Err()
+}
+
+// sumSkillPointsSpent 目前職業已花費的技能點總數（每級花 1 點，見 CONTRACT §4）。jobID 為 nil
+// （未選職業）時直接回 0，不查表——沒有職業就沒有「目前職業的技能」這個集合。
+func (h *Handler) sumSkillPointsSpent(ctx context.Context, userID string, jobID *string) (int, error) {
+	if jobID == nil {
+		return 0, nil
+	}
+	var sum int
+	err := h.db.QueryRow(ctx, `
+		SELECT COALESCE(SUM(psl.level),0) FROM player_skill_levels psl
+		JOIN rpg_skills s ON s.id = psl.skill_id
+		WHERE psl.user_id=$1 AND s.job_id=$2`, userID, *jobID).Scan(&sum)
+	return sum, err
+}
+
+// loadPassives 目前職業已配點（level>=1）的 kind=passive 技能，展開成 Compute() 要吃的
+// []PassiveEffect（見 skills.go ExpandEffect）。jobID 為 nil 時回空切片。
+//
+// SELECT 清單刻意把 psl.level 接在 skillCols 後面而不是重用 scanSkill——scanSkill 的 Scan
+// 目的地數量與 skillCols 逐欄對應，多一欄 level 會讓那個共用函式的重用方式變得不直覺；這裡
+// 技能數量最多 10 筆（一個職業的被動技能上限），直接展開 Scan 呼叫比為了重用硬拆一個新的
+// scanSkill 變體更清楚。
+func (h *Handler) loadPassives(ctx context.Context, userID string, jobID *string) ([]PassiveEffect, error) {
+	if jobID == nil {
+		return nil, nil
+	}
+	rows, err := h.db.Query(ctx, `
+		SELECT `+skillCols+`, psl.level FROM rpg_skills s
+		JOIN player_skill_levels psl ON psl.skill_id = s.id
+		WHERE psl.user_id=$1 AND s.job_id=$2 AND s.kind='passive' AND psl.level > 0`, userID, *jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PassiveEffect
+	for rows.Next() {
+		var s SkillRow
+		var effectRaw []byte
+		var lvl int
+		if err := rows.Scan(&s.ID, &s.Name, &s.IconID, &s.Kind, &s.Target, &s.Weapon, &s.Element,
+			&s.MPCost, &s.CooldownMs, &s.Coefficient, &s.Flat, &s.CastMs, &s.IsDefault, &s.IsActive, &s.SortOrder,
+			&s.JobID, &s.Path, &s.Tier, &s.MaxLevel, &effectRaw, &s.DmgType, &s.PrereqSkillID, &s.PrereqLevel,
+			&s.MPCostPerLevel, &s.DisplayText, &s.Implemented, &lvl); err != nil {
+			return nil, err
+		}
+		if len(effectRaw) > 0 {
+			if err := json.Unmarshal(effectRaw, &s.Effect); err != nil {
+				continue // 壞掉的 effect JSON：略過這個被動技能而非讓整個角色頁掛掉
+			}
+		}
+		e := ExpandEffect(s, lvl)
+		if e.Stat == "" {
+			continue // effect JSONB 沒填 stat（設計疏漏或尚未 seed）——略過而非讓整個角色頁掛掉
+		}
+		out = append(out, PassiveEffect{Stat: e.Stat, Value: e.Value})
+	}
+	return out, rows.Err()
 }
 
 // ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 import { applyPartyDamage, resolveAttackOrDamageSkill, resolveSupportSkill } from './combat';
 import type { Ctx } from './context';
 import { pushEvent, pushLog } from './context';
+import { activeStatSum, effectiveRating, rollCritMultiplier } from './effects';
 import { computeDamage, critChance, missChance, pickWeightedAliveTarget, randRange } from './formulas';
 import type { EnemyActor, PartyActor } from './types';
 
@@ -45,7 +46,8 @@ export function advanceAllyAI(ctx: Ctx, actor: PartyActor, healerId: string): vo
   } else if (ctx.targetId) {
     resolveAttackOrDamageSkill(ctx, {
       actorId: actor.id,
-      atk: actor.stats.atk,
+      attackerStats: actor.stats,
+      attackerEffects: actor.activeEffects,
       coefficient: 1,
       flat: 0,
       weapon: actor.weapon,
@@ -116,19 +118,30 @@ export function advanceEnemyAI(ctx: Ctx, enemy: EnemyActor): void {
         const guarded = target.action === 'guarding';
         // SPEC §5：敵人打隊友也套同一套 missChance 公式（攻方=怪物、守方=隊友），AGI 的迴避
         // 才真的有防禦意義；miss 時 damage=0、不扣盾（不呼叫 applyPartyDamage，盾牌完全不動）。
-        const missPct = missChance(enemy.rating, target.rating, ctx.cfg);
+        // P5：怪物可能身上有 debuff（atk_pct/aspd/flee/hit）、隊友可能有 buff（def_pct/flee/hit/…），
+        // 一律用 effectiveRating 疊加後的評級判定，不再直接讀 base rating。
+        const attackerRating = effectiveRating(enemy.rating, enemy.activeEffects);
+        const defenderRating = effectiveRating(target.rating, target.activeEffects);
+        const missPct = missChance(attackerRating, defenderRating, ctx.cfg);
         const isHit = ctx.rng() >= missPct / 100;
         if (!isHit) {
           pushEvent(ctx, { kind: 'enemyAttack', enemyId: enemy.id, targetId: target.id, damage: 0, guarded, result: 'miss' });
           pushLog(ctx, `${enemy.name} 的攻擊被 ${target.name} 閃避`);
         } else {
           // 怪物暴擊率預設 0%（monsterCritPct），但仍走同一套 critChance 公式，方便後台調高。
-          // critMul 沿用既有 computeDamage 的 chargeMul 參數位置疊乘——跟玩家普攻同一個做法
-          // （見 combat.ts 對 chargeMul／critMul 疊加位置的註解）。
-          const critPct = critChance(enemy.rating, target.rating, ctx.cfg);
+          // critMul 改吃 P5 的浮動抽樣（見 effects.ts rollCritMultiplier），沿用既有 computeDamage
+          // 的 chargeMul 參數位置疊乘——跟玩家普攻同一個做法（見 combat.ts 對 chargeMul／critMul
+          // 疊加位置的註解）。
+          const critPct = critChance(attackerRating, defenderRating, ctx.cfg);
           const isCrit = ctx.rng() < critPct / 100;
-          const effectiveMul = isCrit ? ctx.cfg.critMultiplier : 1;
-          const damage = computeDamage(enemy.stats.atk, 1, 0, 1, effectiveMul, target.stats.def, guarded, ctx.cfg);
+          // 審查#5：跟 combat.ts resolveAttackOrDamageSkill 同一份修法——攻擊者的 critDmgPct 疊在
+          // 浮動暴擊倍率之上。怪物目前恆為 0（MonsterRating() 不設這個欄位），這裡加上只是讓兩條
+          // 平行的暴擊結算路徑維持一致、不互相漂移，不影響現有數值。
+          const effectiveMul = isCrit ? rollCritMultiplier(ctx.rng, ctx.cfg) * (1 + (attackerRating.critDmgPct ?? 0) / 100) : 1;
+          // P5：套用怪物 atk_pct debuff／隊友 def_pct buff（見 effects.ts activeStatSum）。
+          const effAtk = Math.round(enemy.stats.atk * (1 + activeStatSum(enemy.activeEffects, 'atk_pct') / 100));
+          const effDef = Math.round(target.stats.def * (1 + activeStatSum(target.activeEffects, 'def_pct') / 100));
+          const damage = computeDamage(effAtk, 1, 0, 1, effectiveMul, effDef, guarded, ctx.cfg);
           const result: 'normal' | 'critical' = isCrit ? 'critical' : 'normal';
           pushEvent(ctx, { kind: 'enemyAttack', enemyId: enemy.id, targetId: target.id, damage, guarded, result });
           pushLog(ctx, `${enemy.name} 攻擊 ${target.name}，造成 ${damage} 點傷害`);

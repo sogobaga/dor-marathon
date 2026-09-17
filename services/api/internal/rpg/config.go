@@ -221,12 +221,12 @@ type Config struct {
 	// compute.go 玩家端 LvHit/LvFlee 預設值（都是 1），確保兩邊等級成長曲線斜率一致——不然即使
 	// 修好截距，斜率不同還是會讓中後期再度失衡。只擋負值（0 是合法的「怪物命中/迴避跟等級完全
 	// 無關，退化回舊的絕對常數模式」設計選擇）。
-	BattleMonsterHitPerLevel  float64 `json:"battle_monster_hit_per_level"`
+	BattleMonsterHitPerLevel float64 `json:"battle_monster_hit_per_level"`
 	// 怪物命中的絕對上限（2026-09-14 對抗式審查 CONFIRMED 修正）：玩家的 flee 被 flee_cap_pct（預設 95）
 	// 硬性封頂，但上面那條「隨玩家 Base Lv 線性成長」的怪物命中不封頂——Base Lv 93 之後怪物命中就會
 	// 超過玩家可能達到的最高 flee，AGI 配再多迴避率都會掉回下限，等於「AGI 無效」這個缺陷在高等級重演。
 	// 夾在這個上限（預設 75，刻意留 20 點空間給 flee_cap_pct=95）之下，任何等級都保證還有可投資空間。
-	BattleMonsterHitMax float64 `json:"battle_monster_hit_max"`
+	BattleMonsterHitMax       float64 `json:"battle_monster_hit_max"`
 	BattleMonsterFleePerLevel float64 `json:"battle_monster_flee_per_level"`
 	// BattleMonsterCritPct/CritShieldBase：怪物沒有個別 rating 覆寫時的暴擊率/暴擊迴避基準，
 	// 這兩個語意對齊玩家 Derived.CritPct/CritShield，同樣是「%」尺度但比照既有 Derived 欄位
@@ -266,6 +266,53 @@ type Config struct {
 	// <= battle_default_cast_ms（詠唱縮到底也不該比「預設沒詠唱時間的技能」瞬發得更誇張，
 	// 且避免下限設得比基準還高導致縮短完全沒有下界意義）。
 	BattleCastMinMs int `json:"battle_cast_min_ms"`
+
+	// --- DORPG P5（CONTRACT §2/§3/§4/§6）：職業／測試等級／配點規則／技能等級／戰鬥公式微調。
+	// json tag 沿用本檔一貫命名規則，FRONTEND 需同步把這批欄位加進 apps/web/src/lib/rpgMeta.ts
+	// CONFIG_GROUPS 才會出現在 /admin/rpg 設定頁（本檔只負責後端這一半）。---
+
+	// StatPointsInitial/PerLevelBase/StepLevels：RO 給點公式 TotalStatPoints(L) = initial +
+	// Σ_{k=2..L}(floor((k-1)/step)+base)，見 compute.go TotalStatPoints()。預設 48/3/5 對照
+	// RO pre-renewal statpoint.yml（Lv1=48、Lv27=186、Lv99=1273，compute_test.go 逐級核對）。
+	StatPointsInitial      int `json:"stat_points_initial"`
+	StatPointsPerLevelBase int `json:"stat_points_per_level_base"`
+	StatPointsStepLevels   int `json:"stat_points_step_levels"`
+
+	// SkillPointsInitial/PerLevel：TotalSkillPoints(L) = initial + max(0,L-1)×per_level，
+	// 預設 0/1（Lv27 → 26 點）。
+	SkillPointsInitial  int `json:"skill_points_initial"`
+	SkillPointsPerLevel int `json:"skill_points_per_level"`
+
+	// StrTierCoef/IntTierCoef：STR/INT 整十階梯係數（CONTRACT §6）：
+	// atk += floor(STR/10)²×str_tier_coef、matk += floor(INT/10)²×int_tier_coef。全職業統一
+	// （弓箭手也吃 STR 階梯，契約明講「已知簡化」）。
+	StrTierCoef float64 `json:"str_tier_coef"`
+	IntTierCoef float64 `json:"int_tier_coef"`
+
+	// LvDefBreakpoint/PerLow/PerHigh：等級→防禦新曲線（CONTRACT §6），取代舊版 floor(L/2)：
+	// lvDef(L) = L<=breakpoint ? L×per_low : breakpoint×per_low + (L-breakpoint)×per_high，取
+	// floor。lv_def_per 舊欄位保留讀取相容（後台舊資料不會因為多一個欄位就整包解析失敗），
+	// 但 Compute() 不再使用它——新曲線是唯一生效的路徑。
+	LvDefBreakpoint int     `json:"lv_def_breakpoint"`
+	LvDefPerLow     float64 `json:"lv_def_per_low"`
+	LvDefPerHigh    float64 `json:"lv_def_per_high"`
+
+	// CritMultMin/Max：暴擊倍率改為每次暴擊在 [min,max] 均勻抽（取代固定 battle_crit_multiplier，
+	// 後者保留欄位但前端不再使用，見 battle.go buildWireConfig 註解）。預設 1.75/2.25。
+	CritMultMin float64 `json:"crit_mult_min"`
+	CritMultMax float64 `json:"crit_mult_max"`
+
+	// BattleWeaknessBonusPct：技能 element 命中怪物 weak_elements 時的傷害加成百分比，預設 25
+	// （即 ×1.25）。見 scaling.go 檔頭與 battle.go buildWireConfig。
+	BattleWeaknessBonusPct float64 `json:"battle_weakness_bonus_pct"`
+
+	// TestLevelEnabled 審查#2【中・CONFIRMED】新增：測試等級功能的獨立總開關。CONTRACT §2 的
+	// test_level 原本只靠 requireEntry 白名單擋（見 handler.go）——但白名單本來就是拿來放寬給
+	// 更多人測試用的，一旦放寬，任何在白名單內的人都能把自己的等級設成 99，沒有第二道閘門。
+	// 正式上線前把這個開關關掉（PutTestLevel 開頭檢查，見 jobs.go），既有 test_level 也會被
+	// effectiveTestLevel()／loadEffectiveLevel() 忽略（見 compute.go 該函式註解），不是只擋新的
+	// PUT 請求。預設 true（開發/測試階段維持現行行為，不影響本輪其餘測試），正式上線前手動關閉。
+	TestLevelEnabled bool `json:"test_level_enabled"`
 }
 
 // DefaultConfig 站長截圖對照表原封不動編碼成的預設值（所有數字皆可由後台覆寫）。
@@ -388,26 +435,46 @@ func DefaultConfig() Config {
 		BattleMonsterHitBase:        2,
 		BattleMonsterFleeBase:       2,
 		BattleMonsterHitPerLevel:    1.0,
-		BattleMonsterHitMax:      75,
+		BattleMonsterHitMax:         75,
 		BattleMonsterFleePerLevel:   1.0,
 		BattleMonsterCritPct:        0,
 		BattleMonsterCritShieldBase: 0,
 
-		// SPEC §3 暫定值（跟前端 engine/types.ts DEFAULT_BATTLE_CONFIG.elementChart 逐字對齊）：
-		// 後台可改；刻意讓「冰槍打鋼鐵巨鉗蟹」變成無效，玩家才看得到這個機制。
-		BattleElementChart: map[string]map[string]float64{
-			"金": {"water": 0.0, "fire": 1.25},
-			"木": {"fire": 1.6, "water": 0.6},
-			"土": {"water": 1.3, "fire": 0.5},
-			"闇": {"light": 1.5, "dark": 0.0, "fire": 1.15},
-			"無": {},
-		},
+		// DORPG P5（CONTRACT §6）：預設表清空，屬性相剋改由 rpg_monsters.weak_elements 驅動
+		// （技能 element ∈ 怪物 weak_elements → ×(1+battle_weakness_bonus_pct/100)）。這張表
+		// 保留給管理者「覆寫」用（有對應 key 才用，可做 0 倍免疫），不再預先寫死任何一組——P2
+		// 那組草案值（金/木/土/闇/無）已由 weak_elements 機制取代，繼續放著會讓兩套相剋規則
+		// 同時生效、互相打架。ParseConfig 的 probe-and-reset 邏輯不受影響（見該函式註解）。
+		BattleElementChart: map[string]map[string]float64{},
 
 		// P2 修正第 3 輪：AGI→攻速→攻擊冷卻、DEX→詠唱縮減。150＝AspdBase 預設值，讓不配
 		// AGI/DEX 的角色維持現有 1500ms 攻擊冷卻（既有平衡不動）。
 		BattleAspdReference:       150,
 		BattleAttackCooldownMinMs: 700,
 		BattleCastMinMs:           120,
+
+		// DORPG P5（CONTRACT §0/§2/§3/§4/§6 拍板值）：
+		StatPointsInitial:      48,
+		StatPointsPerLevelBase: 3,
+		StatPointsStepLevels:   5,
+
+		SkillPointsInitial:  0,
+		SkillPointsPerLevel: 1,
+
+		StrTierCoef: 1.0,
+		IntTierCoef: 1.0,
+
+		LvDefBreakpoint: 50,
+		LvDefPerLow:     0.5,
+		LvDefPerHigh:    0.35,
+
+		CritMultMin: 1.75,
+		CritMultMax: 2.25,
+
+		BattleWeaknessBonusPct: 25,
+
+		// 審查#2：預設開啟（維持現行「測試階段人人可設」行為），正式上線前由後台手動關閉。
+		TestLevelEnabled: true,
 	}
 }
 
@@ -605,6 +672,42 @@ func (c Config) Validate() error {
 	}
 	if c.BattleCastMinMs <= 0 || c.BattleCastMinMs > c.BattleDefaultCastMs {
 		return fmt.Errorf("battle_cast_min_ms must be within (0, battle_default_cast_ms]")
+	}
+
+	// --- DORPG P5（CONTRACT §2/§3/§4/§6）新增欄位檢查：只擋會讓 compute.go 除零/算出負值可
+	// 利用漏洞的邊界，其餘沿用本檔一貫的寬鬆風格（0 是合法的「暫時關閉這個加成」設計選擇）。---
+	if c.StatPointsInitial < 0 {
+		return fmt.Errorf("stat_points_initial must be >= 0")
+	}
+	if c.StatPointsPerLevelBase < 0 {
+		return fmt.Errorf("stat_points_per_level_base must be >= 0")
+	}
+	if c.StatPointsStepLevels <= 0 {
+		return fmt.Errorf("stat_points_step_levels must be > 0")
+	}
+	if c.SkillPointsInitial < 0 {
+		return fmt.Errorf("skill_points_initial must be >= 0")
+	}
+	if c.SkillPointsPerLevel < 0 {
+		return fmt.Errorf("skill_points_per_level must be >= 0")
+	}
+	if c.StrTierCoef < 0 || c.IntTierCoef < 0 {
+		return fmt.Errorf("str_tier_coef/int_tier_coef must be >= 0")
+	}
+	if c.LvDefBreakpoint < 0 {
+		return fmt.Errorf("lv_def_breakpoint must be >= 0")
+	}
+	if c.LvDefPerLow < 0 || c.LvDefPerHigh < 0 {
+		return fmt.Errorf("lv_def_per_low/lv_def_per_high must be >= 0")
+	}
+	if c.CritMultMin <= 0 || c.CritMultMax <= 0 {
+		return fmt.Errorf("crit_mult_min/crit_mult_max must be > 0")
+	}
+	if c.CritMultMax < c.CritMultMin {
+		return fmt.Errorf("crit_mult_max must be >= crit_mult_min")
+	}
+	if c.BattleWeaknessBonusPct < 0 {
+		return fmt.Errorf("battle_weakness_bonus_pct must be >= 0")
 	}
 	return nil
 }

@@ -42,8 +42,11 @@ export function toCtx(state: BattleState, now: number): Ctx {
     cfg: state.config,
     rng: state.rng,
     playerId: state.playerId,
-    party: state.party.map((p) => ({ ...p })),
-    enemies: state.enemies.map((e) => ({ ...e })),
+    // P5：activeEffects 是會被本次呼叫 push/移除元素的可變陣列（跟 stats 這種「只讀、從不原地修改」
+    // 的巢狀物件不同），淺拷貝 {...p} 只會複製陣列的參照本身，仍然共用同一個底層陣列——這裡額外
+    // map 一層淺拷貝每個 ActiveEffect，確保本次呼叫對它的增刪不會反過來汙染傳入的 state。
+    party: state.party.map((p) => ({ ...p, activeEffects: p.activeEffects.map((e) => ({ ...e })) })),
+    enemies: state.enemies.map((e) => ({ ...e, activeEffects: e.activeEffects.map((x) => ({ ...x })) })),
     targetId: state.targetId,
     trayMode: state.trayMode,
     targeting: { ...state.targeting },

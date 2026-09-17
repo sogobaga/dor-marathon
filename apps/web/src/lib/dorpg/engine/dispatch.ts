@@ -4,6 +4,7 @@ import type { Skill } from '../types';
 import { resolveAttackOrDamageSkill } from './combat';
 import type { Ctx } from './context';
 import { fromCtx, pushEvent, pushLog, toCtx } from './context';
+import { effectiveRating } from './effects';
 import { attackCooldownFor, chargeMultiplier, effectiveCastMs } from './formulas';
 import type { BattleState, Command, PartyActor } from './types';
 import { beginResolving, computeVictoryDefeatDraw, tick } from './tick';
@@ -31,18 +32,20 @@ function reject(ctx: Ctx, reason: string): BattleState {
  * 走 ai.ts 的 resolveSupportSkill，完全不經過這裡）——所以 effectiveCastMs 套用 actor.rating 的
  * castReductionPct（P3：DEX→詠唱縮減）在這裡永遠只影響玩家，不需要另外分支判斷。
  */
-function commitCast(ctx: Ctx, actor: PartyActor, skill: Skill, targetId: string | 'ALL'): BattleState {
+function commitCast(ctx: Ctx, actor: PartyActor, skill: Skill, targetId: string | 'ALL' | 'ALL_ENEMIES'): BattleState {
   actor.mp -= skill.mpCost;
   ctx.skillReadyAt[skill.id] = ctx.now + skill.cooldownMs;
   actor.action = 'casting';
-  actor.actionUntil = ctx.now + effectiveCastMs(skill.castMs ?? ctx.cfg.defaultCastMs, actor.rating, ctx.cfg);
+  // P5：玩家身上的 buff 可能有 castReductionPct 加成（DEX/INT 效果之外的額外來源），套 effectiveRating
+  // 才會反映在施法時間上。
+  actor.actionUntil = ctx.now + effectiveCastMs(skill.castMs ?? ctx.cfg.defaultCastMs, effectiveRating(actor.rating, actor.activeEffects), ctx.cfg);
   ctx.pendingCasts[actor.id] = { skillId: skill.id, targetId };
   ctx.targeting = { mode: 'none' };
   pushEvent(ctx, {
     kind: 'skillCast',
     actorId: actor.id,
     skillId: skill.id,
-    targetId: targetId === 'ALL' ? null : targetId,
+    targetId: targetId === 'ALL' || targetId === 'ALL_ENEMIES' ? null : targetId,
   });
   return finish(ctx);
 }
@@ -82,7 +85,8 @@ function applyCommand(state: BattleState, cmd: Command, now: number): BattleStat
       if (ctx.targetId) {
         resolveAttackOrDamageSkill(ctx, {
           actorId: player.id,
-          atk: player.stats.atk,
+          attackerStats: player.stats,
+          attackerEffects: player.activeEffects,
           coefficient: 1,
           flat: 0,
           weapon: player.weapon,
@@ -95,8 +99,9 @@ function applyCommand(state: BattleState, cmd: Command, now: number): BattleStat
       player.action = 'recovering';
       player.actionUntil = ctx.now + ctx.cfg.recoveryMs;
       // P3：AGI→攻速→攻擊冷卻，只套用在玩家身上（隊友的節奏在 ai.ts 用 allyActIntervalMs 排程，
-      // 完全不呼叫 attackCooldownFor，不受這裡的改動影響）。
-      player.attackReadyAt = ctx.now + attackCooldownFor(player.rating, ctx.cfg);
+      // 完全不呼叫 attackCooldownFor，不受這裡的改動影響）。P5：套 effectiveRating 讓玩家身上的
+      // aspd buff 也能反映在攻擊冷卻上。
+      player.attackReadyAt = ctx.now + attackCooldownFor(effectiveRating(player.rating, player.activeEffects), ctx.cfg);
       player.chargeStartedAt = null;
       return finish(ctx);
     }
@@ -139,6 +144,17 @@ function applyCommand(state: BattleState, cmd: Command, now: number): BattleStat
     case 'USE_SKILL': {
       const skill = ctx.skills.find((s) => s?.id === cmd.skillId) ?? null;
       if (!skill) return reject(ctx, '技能未裝備');
+      // P5（CONTRACT §5 special 詞彙）：implemented=false 的技能一律直接拒絕，且發專屬事件
+      // 讓 FRONTEND 能跳「尚未實裝」提示，跟其它拒絕只留一行 log 不同——這個檢查刻意放在最前面，
+      // 不管冷卻/MP/action 狀態如何，這種技能永遠不能用。
+      if (skill.implemented === false) {
+        pushEvent(ctx, { kind: 'skillUnavailable', actorId: player.id, skillId: skill.id });
+        return reject(ctx, `${skill.name} 尚未實裝`);
+      }
+      // 防呆：passive 依規則不該出現在技能欄（後端已把它算進玩家 stats），正常情況下不會走到這裡；
+      // 萬一離線資料/測試資料誤塞了一顆，明確拒絕比讓它落進下面的 target 判斷、意外套用一次 buff/
+      // debuff 邏輯要安全。
+      if (skill.kind === 'passive') return reject(ctx, '被動技能不會出現在技能欄，不可主動施放');
       if ((ctx.skillReadyAt[skill.id] ?? 0) > ctx.now) return reject(ctx, '技能冷卻中');
       if (player.mp < skill.mpCost) return reject(ctx, 'MP 不足');
       if (player.action !== 'idle') return reject(ctx, '非待命狀態不能施放技能');
@@ -161,6 +177,11 @@ function applyCommand(state: BattleState, cmd: Command, now: number): BattleStat
       }
       if (skill.target === 'self') {
         return commitCast(ctx, player, skill, player.id);
+      }
+      // P5：target='allEnemies'（damage/debuff 專用）跟既有 'allAllies' 對稱，同樣不要求事先選好
+      // 目標——資源結算時 (resolveCastEffect/resolveBuffDebuff) 才即時篩選存活敵人。
+      if (skill.target === 'allEnemies') {
+        return commitCast(ctx, player, skill, 'ALL_ENEMIES');
       }
       return commitCast(ctx, player, skill, 'ALL'); // allAllies
     }

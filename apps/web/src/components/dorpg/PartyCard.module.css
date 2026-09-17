@@ -166,3 +166,23 @@
     opacity: 0.9;
   }
 }
+
+/* P5 POLISH：buff/debuff 標籤列（見 PartyCard.tsx statusTags）。貼卡片頂端、疊在頭像插槽之上；
+   深底＋淺字（顏色繼承 .card 的 PALETTE.textPrimary，不必另外指定）在任何底圖顏色上都看得清楚，
+   不需要為了區分 buff/debuff 再各自上色——方向已經用 ↑/↓ 表達。 */
+.tags {
+  position: absolute;
+  top: 2%;
+  left: 4%;
+  right: 4%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+  font-weight: 700;
+  line-height: 1.3;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 3px;
+}

@@ -69,18 +69,29 @@ export function critChance(attacker: CombatRating, defender: CombatRating, cfg: 
 }
 
 /**
- * SPEC §3：屬性倍率查表，key 是怪物 attribute（中文）→ 技能/攻擊 element（英文，ElementKind）。
- * 查無 attribute（怪物沒填）、查無該 attribute 對應的表、或表裡沒列出這個 element，一律回傳
- * 1.0（不相剋也不吃虧）；只有表裡明確寫 0 才是「完全無效」（呼叫端據此判 'immune'）。
- * skillElement 用 string 而非 ElementKind：呼叫端傳入的 element 已經是具體字面值，這裡只是查表，
- * 沒必要把型別收窄綁死，避免未來 ElementKind 增減成員時這支函式也要跟著改。
+ * P5（CONTRACT §6）：屬性倍率改成兩層規則——
+ *   1. battle_element_chart 管理者覆寫優先：查有 [enemy.attribute][skillElement] 這組 key 就直接用
+ *      （可以是 0＝完全無效，呼叫端據此判 'immune'）。
+ *   2. 查無覆寫 → 落到 Enemy.weakElements：skillElement 命中弱點桶 → 1+weaknessBonusPct/100；
+ *      否則 1.0（不相剋也不吃虧）。
+ * P2 時期「查無 key 一律當 1.0」的單純預設表語意已被取代（見 BattleConfig.elementChart 型別註解、
+ * DEFAULT_BATTLE_CONFIG 預設清空成 {}）。cfg 維持第一個參數（跟本檔其餘公式一致的呼叫慣例），
+ * enemy 只取用得到的兩個欄位、用最小 shape 而非整個 EnemyActor，方便非戰鬥情境（例如未來的
+ * 傷害試算器）也能呼叫。
  */
-export function elementMultiplier(cfg: BattleConfig, enemyAttribute: string | undefined, skillElement: string): number {
-  if (!enemyAttribute) return 1;
-  const row = cfg.elementChart[enemyAttribute];
-  if (!row) return 1;
-  const v = row[skillElement];
-  return v === undefined ? 1 : v;
+export function elementMultiplier(
+  cfg: BattleConfig,
+  enemy: { attribute?: string; weakElements?: string[] } | undefined,
+  skillElement: string,
+): number {
+  const attribute = enemy?.attribute;
+  if (attribute) {
+    const row = cfg.elementChart[attribute];
+    const v = row?.[skillElement];
+    if (v !== undefined) return v;
+  }
+  if (enemy?.weakElements?.includes(skillElement)) return 1 + cfg.weaknessBonusPct / 100;
+  return 1;
 }
 
 /**
@@ -156,7 +167,7 @@ export function deriveDefaultPartyRating(cfg: BattleConfig): CombatRating {
   // P3：aspd 給 cfg.aspdReference（attackCooldownFor 在這個值算出的冷卻恰好是 base，等於
   // 「沒有配 AGI/DEX 加成」的中性表現）、castReductionPct 給 0（不縮短施法時間）——跟
   // hit/flee/critPct/critShield 給 0 是同一個精神：沒有更多資訊可以推導，就當作中性、不加成也不扣分。
-  return { hit: cfg.hitRate * 100, flee: 0, critPct: 0, critShield: 0, aspd: cfg.aspdReference, castReductionPct: 0 };
+  return { hit: cfg.hitRate * 100, flee: 0, critPct: 0, critShield: 0, aspd: cfg.aspdReference, castReductionPct: 0, critDmgPct: 0 };
 }
 
 /**
@@ -176,6 +187,7 @@ export function deriveDefaultMonsterRating(cfg: BattleConfig): CombatRating {
     // aspdReference 打平、不縮減施法」的中性表現。
     aspd: cfg.aspdReference,
     castReductionPct: 0,
+    critDmgPct: 0,
   };
 }
 

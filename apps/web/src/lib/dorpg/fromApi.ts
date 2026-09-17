@@ -14,6 +14,7 @@
 //     （PartyMember.weapon 本來就選填，undefined 由 engine 自己預設 'sword'，見 engine/index.ts toPartyActor）。
 import type {
   RpgBootstrapConfigRaw,
+  RpgBootstrapEffectRaw,
   RpgBootstrapEnemyRaw,
   RpgBootstrapItemRaw,
   RpgBootstrapPartyMemberRaw,
@@ -21,7 +22,20 @@ import type {
   RpgBootstrapSampleRaw,
   RpgBootstrapSkillRaw,
 } from '@/lib/api';
-import type { BattleSample, CombatRating, ElementKind, Enemy, EnemySlotId, Item, PartyMember, Skill, WeaponKind } from '@/lib/dorpg/types';
+import type {
+  BattleSample,
+  BuffDebuffStat,
+  CombatRating,
+  DmgType,
+  EffectAtLevel,
+  ElementKind,
+  Enemy,
+  EnemySlotId,
+  Item,
+  PartyMember,
+  Skill,
+  WeaponKind,
+} from '@/lib/dorpg/types';
 import type { BattleConfig } from '@/lib/dorpg/engine';
 // P3：asRating() 用它的 aspdReference 當 rating.aspd 缺欄位時的中性後備值（見該函式註解）——
 // 只借用這個已凍結匯出的常數，不是改動 engine 本身，跟 fixture.ts 借用同一個常數的方式一致。
@@ -67,7 +81,7 @@ function isFiniteNumber(v: unknown): v is number {
  */
 function asRating(r: RpgBootstrapRatingRaw | undefined): CombatRating | undefined {
   if (!r) return undefined;
-  const { hit, flee, critPct, critShield, aspd, castReductionPct } = r;
+  const { hit, flee, critPct, critShield, aspd, castReductionPct, critDmgPct } = r;
   if (!isFiniteNumber(hit) || !isFiniteNumber(flee) || !isFiniteNumber(critPct) || !isFiniteNumber(critShield)) {
     return undefined;
   }
@@ -75,6 +89,9 @@ function asRating(r: RpgBootstrapRatingRaw | undefined): CombatRating | undefine
     hit, flee, critPct, critShield,
     aspd: isFiniteNumber(aspd) ? aspd : DEFAULT_BATTLE_CONFIG.aspdReference,
     castReductionPct: isFiniteNumber(castReductionPct) ? castReductionPct : 0,
+    // 審查#5：跟 aspd/castReductionPct 同一個策略——新欄位缺欄位／型別跑掉只給中性預設值 0
+    // （沒有暴擊傷害加成），不連累核心 4 欄位「一壞全丟」的判斷。
+    critDmgPct: isFiniteNumber(critDmgPct) ? critDmgPct : 0,
   };
 }
 
@@ -91,7 +108,18 @@ function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
     stats: p.stats,
     weapon: asWeapon(p.weapon),
     rating: asRating(p.rating),
+    // P5：純透傳供 FRONTEND 顯示職業徽章用（見 PartyMember.jobId 型別註解），engine 戰鬥邏輯不讀它；
+    // 缺欄位（舊版後端／api.ts 尚未補上）一律當「未選職業」。
+    jobId: p.jobId ?? null,
   };
+}
+
+/** P5：weakElements 陣列裡混進非法字面值（DB 髒資料）就整個丟掉那一項，不讓 elementMultiplier()
+ *  在執行期拿到非 ElementKind 字串——跟本檔其餘 as*() 系列函式「寧可丟棄也不塞髒資料」同一個原則。
+ *  沿用檔案上方 asElement() 已經宣告的 ELEMENT_KINDS，不重複宣告一份。 */
+function asElementList(v: string[] | undefined): ElementKind[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v.filter((x): x is ElementKind => (ELEMENT_KINDS as readonly string[]).includes(x));
 }
 
 function mapEnemy(e: RpgBootstrapEnemyRaw): Enemy {
@@ -114,29 +142,94 @@ function mapEnemy(e: RpgBootstrapEnemyRaw): Enemy {
     // 猜測 undefined 語意。
     canEscape: e.canEscape,
     rating: asRating(e.rating),
+    // P5（CONTRACT §6）：缺欄位／型別跑掉一律當「無弱點」（[]），跟 engine/index.ts toEnemyActor
+    // 的 `e.weakElements ?? []` 後備值語意一致。
+    weakElements: asElementList(e.weakElements),
   };
 }
 
-const SKILL_TARGETS: readonly Skill['target'][] = ['enemy', 'ally', 'self', 'allAllies'];
+const SKILL_KINDS: readonly Skill['kind'][] = ['damage', 'heal', 'shield', 'buff', 'debuff', 'passive', 'special'];
+function asSkillKind(k: string): Skill['kind'] {
+  return (SKILL_KINDS as readonly string[]).includes(k) ? (k as Skill['kind']) : 'damage';
+}
+
+const SKILL_TARGETS: readonly Skill['target'][] = ['enemy', 'ally', 'self', 'allAllies', 'allEnemies'];
 function asSkillTarget(t: string): Skill['target'] {
   return (SKILL_TARGETS as readonly string[]).includes(t) ? (t as Skill['target']) : 'enemy';
 }
 
+const BUFF_DEBUFF_STATS: readonly BuffDebuffStat[] = [
+  'atk_pct', 'matk_pct', 'def_pct', 'mdef_pct', 'aspd', 'crit_pct', 'flee', 'hit', 'hp_regen_pct', 'damage_taken_pct',
+];
+function asBuffDebuffStat(s: string | undefined): BuffDebuffStat | undefined {
+  return s !== undefined && (BUFF_DEBUFF_STATS as readonly string[]).includes(s) ? (s as BuffDebuffStat) : undefined;
+}
+
+function asDmgType(d: string | undefined): DmgType | undefined {
+  return d === 'magic' || d === 'physical' ? d : undefined;
+}
+
+/**
+ * P5：wireSkill.effect（WIRE.md：「已依 level 展開」的即時數值）→ EffectAtLevel。kind/target 缺欄位
+ * 時退回呼叫端傳入的技能本身 kind/target（跟頂層欄位保持一致，而不是塞一個可能對不上的預設值）；
+ * mpCost 缺欄位時給 0（buff/debuff/passive 的 mpCost 理論上一定會有，這裡只是防禦寫法）。
+ *
+ * ⚠️ 審查#1(b) 修正：裸資料 e 的欄位是 snake_case（e.duration_ms/e.mp_cost，對齊後端 skills.go
+ * EffectAtLevel 的 json tag／WIRE.md 逐字定義），輸出給 engine 用的才是 camelCase
+ * （durationMs/mpCost，見 dorpg/types.ts EffectAtLevel）——這裡曾經兩邊都當 camelCase 讀，
+ * 讓 e.durationMs/e.mpCost 永遠讀到 undefined，buff/debuff 的持續時間因此恆為 0。
+ */
+function asEffect(e: RpgBootstrapEffectRaw | undefined, fallbackKind: Skill['kind'], fallbackTarget: Skill['target']): EffectAtLevel | undefined {
+  if (!e) return undefined;
+  return {
+    kind: e.kind !== undefined ? asSkillKind(e.kind) : fallbackKind,
+    stat: asBuffDebuffStat(e.stat),
+    value: isFiniteNumber(e.value) ? e.value : undefined,
+    durationMs: isFiniteNumber(e.duration_ms) ? e.duration_ms : undefined,
+    coef: isFiniteNumber(e.coef) ? e.coef : undefined,
+    flat: isFiniteNumber(e.flat) ? e.flat : undefined,
+    hits: isFiniteNumber(e.hits) ? e.hits : undefined,
+    target: e.target !== undefined ? asSkillTarget(e.target) : fallbackTarget,
+    mpCost: isFiniteNumber(e.mp_cost) ? e.mp_cost : 0,
+  };
+}
+
 function mapSkill(s: RpgBootstrapSkillRaw | null): Skill | null {
   if (!s) return null;
+  const kind = asSkillKind(s.kind);
+  const target = asSkillTarget(s.target);
+  const eff = s.effect;
+  // 審查#1(b) 深度防禦：coefficient/flat/hits/mpCost 優先取 effect 展開值，其次才落到頂層 wire
+  // 欄位——battle.go toWireSkillLeveled 已經修好讓頂層欄位等於展開值（見該函式回歸測試
+  // battle_test.go），這裡再疊一層保險，萬一後端未來又出現「頂層沒展開、只有 effect 展開」的
+  // 迴歸，戰鬥結算仍然正確，不會重演本輪審查抓到的 #1 缺陷。
+  const coefficient = isFiniteNumber(eff?.coef) ? eff.coef : s.coefficient;
+  const flat = isFiniteNumber(eff?.flat) ? eff.flat : s.flat;
+  const hits = isFiniteNumber(eff?.hits) ? eff.hits : isFiniteNumber(s.hits) ? s.hits : undefined;
+  const mpCost = isFiniteNumber(eff?.mp_cost) ? eff.mp_cost : s.mpCost;
   return {
     id: s.id,
     name: s.name,
     iconUrl: s.iconUrl,
     cooldownMs: s.cooldownMs,
-    kind: (s.kind === 'heal' || s.kind === 'shield' ? s.kind : 'damage') as Skill['kind'],
-    target: asSkillTarget(s.target),
-    mpCost: s.mpCost,
-    coefficient: s.coefficient,
-    flat: s.flat,
+    kind,
+    target,
+    mpCost,
+    coefficient,
+    flat,
     element: asElement(s.element),
     weapon: asWeapon(s.weapon, 'sword'),
     castMs: s.castMs,
+    // P5 新欄位；hits 已在上面用深度防禦邏輯算好。缺欄位（舊版後端、既有 5 個一般技能）時維持
+    // undefined，由 Skill 型別的缺省語意接手（dmgType→physical、implemented→true，見 types.ts
+    // 各欄位註解）。
+    hits,
+    dmgType: asDmgType(s.dmgType),
+    level: isFiniteNumber(s.level) ? s.level : undefined,
+    maxLevel: isFiniteNumber(s.maxLevel) ? s.maxLevel : undefined,
+    displayText: s.displayText,
+    implemented: s.implemented,
+    effect: asEffect(eff, kind, target),
   };
 }
 

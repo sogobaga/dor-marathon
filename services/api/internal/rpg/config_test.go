@@ -55,9 +55,17 @@ func TestParseConfig_ElementChartFullTableReplacesDefault(t *testing.T) {
 // 具體重現場景：管理者刪掉「金」屬性的 "fire" 相剋值後存檔）---
 
 func TestParseConfig_ElementChartDeletedSubKeyStaysDeleted(t *testing.T) {
-	def := DefaultConfig()
-	if _, ok := def.BattleElementChart["金"]["fire"]; !ok {
-		t.Fatalf("前置條件錯誤：預設表「金」應該有 fire 這個 key")
+	// DORPG P5：DefaultConfig() 的 battle_element_chart 改為空表（相剋改由 rpg_monsters.
+	// weak_elements 驅動，見 config.go 該欄位註解），這個測試原本用預設表本身當「已存檔過一次
+	// 完整表」的前置條件已經不成立——改成先用第一次 PUT 模擬「管理者存過一次完整表」，
+	// 再用第二次 PUT 模擬「刪掉 fire 這個 sub-key 後存檔」，驗證的行為本身不變。
+	raw0 := `{"battle_element_chart": {"金": {"water": 0.0, "fire": 1.25}}}`
+	cfg0, err := ParseConfig(raw0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := cfg0.BattleElementChart["金"]["fire"]; !ok {
+		t.Fatalf("前置條件錯誤：raw0 存檔後「金」應該有 fire 這個 key")
 	}
 	// 管理者存檔時只保留「金」的 water、刪掉 fire；也保留其餘屬性維持預設（模擬後台整包 PUT
 	// 但這個管理者的編輯畫面只送出他改過的屬性列——用完整表模擬更貼近真實 PUT 語意，因為

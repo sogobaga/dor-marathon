@@ -1,9 +1,10 @@
 // tick(state, now)：推進施法/硬直計時、隊友 AI、敵人 AI、逃跑判定、勝負結算。
 // 純函式：輸入的 state（及其巢狀物件）不會被動到，永遠回傳一份新的（toCtx 已淺拷貝過一輪）。
 import { advanceAllyAI, advanceEnemyAI, advanceEnemyDeath } from './ai';
-import { resolveCastEffect } from './combat';
+import { applyHealToTarget, resolveCastEffect } from './combat';
 import type { Ctx } from './context';
 import { fromCtx, pushEvent, toCtx } from './context';
+import { pruneAndRegenEffects } from './effects';
 import type { BattleOutcome, BattleState } from './types';
 
 /** 樣本資料裡第一位非玩家隊員固定當「輔助 AI」（heal 技能的施放者）——理由見 ai.ts 開頭註解。 */
@@ -32,6 +33,37 @@ function resolvePartyTimers(ctx: Ctx): void {
     } else if (actor.action === 'recovering' && ctx.now >= actor.actionUntil) {
       actor.action = 'idle';
     }
+  }
+}
+
+/**
+ * P5（CONTRACT §5）：每個 tick 清掉雙方到期的 buff/debuff，並處理 hp_regen_pct 的定時回復。
+ * 死掉的角色（hp<=0）整個跳過——買狀態沒有意義，且死亡隊友的 activeEffects 留著不會造成任何
+ * 效果（effectiveStats/effectiveRating 只在計算戰鬥數值時才會被讀取），等復活後續下一次
+ * tick 會自然接著清理，不需要在死亡當下另外清空。
+ */
+function pruneAllEffects(ctx: Ctx): void {
+  for (const actor of ctx.party) {
+    if (actor.hp <= 0) continue;
+    pruneAndRegenEffects(
+      ctx.now,
+      actor,
+      (amount) => {
+        if (amount > 0) applyHealToTarget(ctx, actor.id, actor.id, amount);
+      },
+      (expired) => pushEvent(ctx, { kind: 'statusExpired', targetId: actor.id, stat: expired.stat }),
+    );
+  }
+  for (const enemy of ctx.enemies) {
+    if (enemy.hp <= 0) continue;
+    // 怪物只會有 debuff（見 BuffDebuffStat 型別註解），詞彙表裡沒有 hp_regen_pct 這一項，
+    // onRegen 永遠不會被呼叫到——仍要傳一個空函式滿足簽章。
+    pruneAndRegenEffects(
+      ctx.now,
+      enemy,
+      () => {},
+      (expired) => pushEvent(ctx, { kind: 'statusExpired', targetId: enemy.id, stat: expired.stat }),
+    );
   }
 }
 
@@ -125,6 +157,7 @@ export function tick(state: BattleState, now: number): BattleState {
   }
 
   resolvePartyTimers(ctx);
+  pruneAllEffects(ctx); // P5：buff/debuff 到期清除＋hp_regen_pct 定時回復，跑在 AI 出手之前。
 
   const healerId = pickHealerId(ctx);
   for (const actor of ctx.party) {
