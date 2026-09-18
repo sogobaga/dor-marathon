@@ -5039,6 +5039,19 @@ export interface RpgConfig {
    * json tag（test_level_enabled）。
    */
   test_level_enabled: boolean
+
+  // --- DORPG P6（怪物等級制，見契約 dorpg_p6 CONTRACT.md §2）新增：battle_scale_mode 從本輪起
+  // 預設改 "level"；怪物 HP/ATK/DEF/MDEF 改用「參考玩家 RefPlayer(N)」乘這四個比例算出，取代 P2
+  // power 模式的「依玩家戰力動態縮放」。全部走既有 rpg_config JSON，不新增 migration 欄位以外的表。
+  // ⚠️ 同 P5 的整合警語：json tag 依 internal/rpg/config.go 實際欄位為準，這裡是依契約文字擬定。---
+  /** 怪物 HP 相對 RefPlayer(N).HPMax 的比例（契約預設 1.0）。 */
+  battle_lvl_hp_ratio: number
+  /** 怪物 ATK 相對 RefPlayer(N).ATK 的比例（契約預設 1.0）。 */
+  battle_lvl_atk_ratio: number
+  /** 怪物 DEF 相對 RefPlayer(N).DEF 的比例（契約預設 1.0）。 */
+  battle_lvl_def_ratio: number
+  /** 怪物 MDEF 相對 RefPlayer(N).MDEF 的比例（契約預設 1.0）。 */
+  battle_lvl_mdef_ratio: number
 }
 
 export interface RpgDerived {
@@ -5183,6 +5196,143 @@ export const rpgApi = {
   resetSkills: (token: string) => request<RpgSkillsResponse>('/rpg/skills/reset', { method: 'POST', headers: withAuth(token) }),
 }
 
+// --- DORPG P6：酒館／隊伍／傭兵腳本（見契約 dorpg_p6 CONTRACT.md §3、WIRE.md §REST）---
+// PresetDTO.stats 沿用既有 RpgStats（{str,agi,vit,dex,int,luk}）；skill_levels 是 {skill_id: level}
+// 的純資料 map（跟玩家 /rpg/skills 回傳的完整 SkillDTO[] 不同形狀——腳本要整包存進
+// rpg_companion_presets.skill_levels JSONB，草稿用最精簡表示法即可，顯示用的完整 SkillDTO[]
+// 交給 validate 端點另外算給你，見下面 PresetValidateResponse.skills）。
+
+/** WIRE §REST DerivedDTO：腳本套用該傭兵倍率後的最終衍生值（整數，含 crit_pct）。 */
+export interface PresetDerivedDTO {
+  hp_max: number
+  mp_max: number
+  atk: number
+  matk: number
+  def: number
+  mdef: number
+  hit: number
+  flee: number
+  aspd: number
+  crit_pct: number
+}
+
+/** WIRE §REST PresetDTO：一組傭兵腳本（系統預設或玩家自訂）。 */
+export interface CompanionPresetDTO {
+  id: string
+  companion_id: string
+  name: string
+  level: number
+  /** true＝系統預設，唯讀（契約 §3.2：只能「另存新腳本」，不能覆蓋／刪除）。 */
+  is_system: boolean
+  stats: RpgStats
+  skill_levels: Record<string, number>
+  derived: PresetDerivedDTO
+  stat_points_total: number
+  stat_points_free: number
+  stat_cap: number
+  skill_points_total: number
+  skill_points_free: number
+}
+
+/** WIRE §REST MercenaryDTO：酒館下段「傭兵」四張卡；presets 系統預設在前、使用者自訂在後。 */
+export interface MercenaryDTO {
+  id: string
+  name: string
+  portrait_id: string
+  role: string
+  job: JobDTO
+  in_party: boolean
+  presets: CompanionPresetDTO[]
+}
+
+/** WIRE §REST PartySlotDTO：隊伍 4 格其中一格；companion_id=null＝空格（顯示「空」）。 */
+export interface PartySlotDTO {
+  slot: number // 1..4
+  companion_id: string | null
+  preset_id: string | null
+  preset_name: string | null
+  level: number | null
+}
+
+/** WIRE §REST GET /rpg/tavern 的 leader 子物件——玩家本人（隊長），不是傭兵。 */
+export interface TavernLeaderDTO {
+  job: JobDTO | null
+  effective_level: number
+  name: string
+}
+
+export interface TavernResponse {
+  leader: TavernLeaderDTO
+  party: PartySlotDTO[] // 固定 4 格（沒有任何列＝預設隊伍＝小咪＋其系統預設腳本，契約 §3.1）
+  mercenaries: MercenaryDTO[] // 固定 4 位（小咪／小優／阿光／阿深）
+}
+
+/** PUT /rpg/party body 的單格；只送「有人」的格子即可——伺服器整批覆蓋 4 格（契約 §3.3）。 */
+export interface PartySlotInput {
+  slot: number
+  companion_id: string
+  preset_id: string | null
+}
+
+/** POST /rpg/presets、PUT /rpg/presets/{id} 共用的 body 形狀。 */
+export interface PresetSaveBody {
+  companion_id: string
+  name: string
+  level: number
+  stats: RpgStats
+  skill_levels: Record<string, number>
+}
+
+/** POST /rpg/presets/validate body——沒有 name（草稿試算不需要，見 WIRE 逐字列出的欄位）。 */
+export interface PresetValidateBody {
+  companion_id: string
+  level: number
+  stats: RpgStats
+  skill_levels: Record<string, number>
+}
+
+/** WIRE §REST 驗證錯誤項；message 是後端組好的備援文案，UI 找不到 code 對照表時可以直接顯示。 */
+export interface PresetValidateError {
+  field: string
+  code: string
+  message: string
+}
+
+export interface PresetValidateResponse {
+  ok: boolean
+  // 審查【CRITICAL】：型別誠實反映後端可能的原始回應——Go 的 nil slice 經 encoding/json 編碼會是
+  // null（若後端該處的初始化又被改回 var errs []PresetError，這裡的型別能在編譯期提醒要處理 null，
+  // 不會靠巧合矇混過關）；rpgTavernApi.validatePreset() 已在下方統一正規化成陣列，一般呼叫端
+  // 仍應維持安全存取（result?.errors ?? []）以防禦這個型別本身允許的 null。
+  errors: PresetValidateError[] | null
+  stat_points_total: number
+  stat_points_free: number
+  stat_cap: number
+  skill_points_total: number
+  skill_points_free: number
+  derived: PresetDerivedDTO
+  /** 該傭兵職業的 10 個技能，已依草稿 skill_levels 展開（與 /rpg/skills 的 SkillDTO 同形）。 */
+  skills: SkillDTO[]
+}
+
+export const rpgTavernApi = {
+  get: (token: string) => request<TavernResponse>('/rpg/tavern', { headers: withAuth(token) }),
+  setParty: (token: string, slots: PartySlotInput[]) =>
+    request<TavernResponse>('/rpg/party', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ slots }) }),
+  createPreset: (token: string, body: PresetSaveBody) =>
+    request<CompanionPresetDTO>('/rpg/presets', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  updatePreset: (token: string, id: string, body: PresetSaveBody) =>
+    request<CompanionPresetDTO>(`/rpg/presets/${encodeURIComponent(id)}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  deletePreset: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/rpg/presets/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+  // 草稿試算——不存檔，debounce 呼叫用（契約 §3.4：即時衍生值預覽經 validate 端點）。
+  // 審查【CRITICAL】：後端合法草稿一律回 errors:[]（見 presets.go ValidatePreset），但這裡仍在
+  // client 端正規化成陣列，防禦後端行為將來又漂移回 null、也讓呼叫端不必每處都寫 ?? []。
+  validatePreset: (token: string, body: PresetValidateBody) =>
+    request<PresetValidateResponse>('/rpg/presets/validate', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) })
+      .then((r) => ({ ...r, errors: r.errors ?? [] })),
+}
+
 // --- Admin: 遊戲化角色數值（perm scope 'rpg'；見 internal/rpg admin.go） ---
 
 export interface AdminRpgUser {
@@ -5315,6 +5465,9 @@ export interface RpgEncounter {
   is_active: boolean
   sort_order: number
   monsters: RpgEncounterMonster[]
+  /** DORPG P6（契約 §2）：這一場怪物的等級 N（1–99），驅動 battle_scale_mode="level" 時的
+   *  RefPlayer(N) 縮放；六場預設 10/20/30/40/50/60。 */
+  monster_level: number
 }
 
 /** GET /admin/rpg/battle-logs 明細列（不含 email/account_code——隱私規則，見後端 SQL 只
@@ -5448,6 +5601,8 @@ export interface RpgBootstrapEncounterInfo {
   scene_kind: 'normal' | 'boss'
   difficulty: number // 1~5，前端畫星
   can_escape: boolean
+  /** DORPG P6（契約 §2／WIRE）：這一場怪物等級 N（EncounterPicker 卡片顯示「怪物 Lv.N」）。 */
+  monster_level: number
 }
 
 /** 對照 wireEncounterSummary（= wireEncounterInfo 內嵌 + monsters + stats，Go struct embedding 展平）。 */
@@ -5518,9 +5673,15 @@ export interface RpgBootstrapPartyMemberRaw {
   stats?: RpgBootstrapActorStatsRaw
   weapon?: string
   rating?: RpgBootstrapRatingRaw
-  // P5：玩家目前選擇的職業（見契約 §1／WIRE）——武器已由後端依職業決定填在上面的 weapon，
+  // P5：玩家目前選擇的職業（見契約 §1／WIRE）——武器已由後端決定填在上面的 weapon，
   // 這個 id 只給前端顯示/除錯用，選填（AI 隊友恆為 undefined）。
   jobId?: string | null
+  // --- DORPG P6（契約 §3.2／WIRE）新增：隊友（非玩家本人）才會帶這兩個欄位 ---
+  /** 隊友 AI 可用技能（已展開、不含 passive、只含 implemented=true），供引擎的五段優先序判斷。
+   *  玩家本人這欄不會有值（玩家技能欄走既有的 sample.skills，不重複塞在這裡）。 */
+  skills?: RpgBootstrapSkillRaw[]
+  /** 這位隊友目前套用的腳本名稱（酒館頁選的），純顯示用；玩家本人恆為 undefined。 */
+  presetName?: string
 }
 export interface RpgBootstrapEnemyRaw {
   id: string
@@ -5610,6 +5771,10 @@ export interface RpgBootstrapSkillRaw {
   dmgType?: string
   implemented?: boolean
   effect?: RpgBootstrapEffectRaw
+  // DORPG P6（INTEGRATOR 補上，2026-09-18）：ENGINE 向 BACKEND 提的需求——ai.ts 隊友 AI 五段
+  // 優先序的「damage 技能挑 tier 最高的」需要真正的 tier 值，不再只靠陣列位置代理。只有職業
+  // 技能（toWireSkillLeveled）會填；既有 5 個無職業技能維持 undefined（後端 omitempty 送 0）。
+  tier?: number
 }
 export interface RpgBootstrapItemRaw {
   id: string
@@ -5634,7 +5799,10 @@ export interface RpgBootstrapSampleRaw {
 }
 // config 子物件對齊 engine 的 BattleConfig（camelCase）——用 inline import type 借用該型別，避免在這個
 // 沒有任何 import 的檔案頂端另開一行 import 造成跟 FE_ADMIN 同時編輯本檔時的不必要衝突面。
-export type RpgBootstrapConfigRaw = Partial<import('@/lib/dorpg/engine').BattleConfig>
+// DORPG P6（WIRE：「config 新增 scaleMode: "level"|"power"（純顯示／除錯）」）：只加一個純展示欄位，
+// 不需要 ENGINE 在 BattleConfig 裡也加這個 key（引擎完全不讀它），故用交集型別在 api.ts 這層自己補上，
+// 避免為了一個顯示用欄位去動 engine/types.ts（不在本輪 FRONTEND 寫入範圍內）。
+export type RpgBootstrapConfigRaw = Partial<import('@/lib/dorpg/engine').BattleConfig> & { scaleMode?: 'level' | 'power' }
 export interface RpgBattleBootstrap {
   encounter: RpgBootstrapEncounterInfo
   sample: RpgBootstrapSampleRaw

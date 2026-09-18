@@ -523,13 +523,13 @@ func (h *Handler) deleteScene(ctx context.Context, id string) (bool, error) {
 // rpg_companions
 // ---------------------------------------------------------------------------
 
-const companionCols = `id, name, portrait_id, role, weapon, level_offset, hp_mult, mp_mult, atk_mult, matk_mult, def_mult, mdef_mult, act_interval_mult, skill_ids, is_player_portrait, is_active, sort_order`
+const companionCols = `id, name, portrait_id, role, weapon, level_offset, hp_mult, mp_mult, atk_mult, matk_mult, def_mult, mdef_mult, act_interval_mult, skill_ids, is_player_portrait, is_active, sort_order, job_id`
 
 func scanCompanion(row pgx.Row) (CompanionRow, error) {
 	var c CompanionRow
 	err := row.Scan(&c.ID, &c.Name, &c.PortraitID, &c.Role, &c.Weapon, &c.LevelOffset,
 		&c.HPMult, &c.MPMult, &c.AtkMult, &c.MatkMult, &c.DefMult, &c.MdefMult, &c.ActIntervalMult,
-		&c.SkillIDs, &c.IsPlayerPortrait, &c.IsActive, &c.SortOrder)
+		&c.SkillIDs, &c.IsPlayerPortrait, &c.IsActive, &c.SortOrder, &c.JobID)
 	if c.SkillIDs == nil {
 		c.SkillIDs = []string{}
 	}
@@ -556,6 +556,14 @@ func (h *Handler) listCompanions(ctx context.Context, activeOnly bool) ([]Compan
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// getCompanionByID DORPG P6：酒館／腳本／隊伍三支新端點都要「單筆查某個傭兵」（拿它的
+// hp_mult 等倍率、job_id、portrait_id），查無資料回 pgx.ErrNoRows（呼叫端依情境決定 400 還是
+// 略過該筆，比照 getJobByID 的既有慣例）。
+func (h *Handler) getCompanionByID(ctx context.Context, id string) (CompanionRow, error) {
+	row := h.db.QueryRow(ctx, `SELECT `+companionCols+` FROM rpg_companions WHERE id=$1`, id)
+	return scanCompanion(row)
 }
 
 // getPlayerPortraitCompanion 契約 D4：is_player_portrait=TRUE 那一列（唯一，DB 有 partial unique
@@ -594,15 +602,15 @@ func (h *Handler) upsertCompanion(ctx context.Context, c CompanionRow) error {
 		skillIDs = []string{} // nil slice 傳給 pgx text[] 會變 SQL NULL（比照 race/handler.go 慣例）
 	}
 	_, err := h.db.Exec(ctx, `
-		INSERT INTO rpg_companions (id, name, portrait_id, role, weapon, level_offset, hp_mult, mp_mult, atk_mult, matk_mult, def_mult, mdef_mult, act_interval_mult, skill_ids, is_player_portrait, is_active, sort_order, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW())
+		INSERT INTO rpg_companions (id, name, portrait_id, role, weapon, level_offset, hp_mult, mp_mult, atk_mult, matk_mult, def_mult, mdef_mult, act_interval_mult, skill_ids, is_player_portrait, is_active, sort_order, job_id, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NOW())
 		ON CONFLICT (id) DO UPDATE SET
 			name=$2, portrait_id=$3, role=$4, weapon=$5, level_offset=$6, hp_mult=$7, mp_mult=$8,
 			atk_mult=$9, matk_mult=$10, def_mult=$11, mdef_mult=$12, act_interval_mult=$13, skill_ids=$14,
-			is_player_portrait=$15, is_active=$16, sort_order=$17, updated_at=NOW()`,
+			is_player_portrait=$15, is_active=$16, sort_order=$17, job_id=$18, updated_at=NOW()`,
 		c.ID, c.Name, c.PortraitID, c.Role, c.Weapon, c.LevelOffset, c.HPMult, c.MPMult,
 		c.AtkMult, c.MatkMult, c.DefMult, c.MdefMult, c.ActIntervalMult, skillIDs,
-		c.IsPlayerPortrait, c.IsActive, c.SortOrder)
+		c.IsPlayerPortrait, c.IsActive, c.SortOrder, c.JobID)
 	if err != nil && isUniqueViolation(err, "idx_rpg_companions_player_portrait") {
 		return errPlayerPortraitTaken
 	}
@@ -642,12 +650,12 @@ func (h *Handler) deleteCompanion(ctx context.Context, id string) (bool, error) 
 // rpg_encounters + rpg_encounter_monsters
 // ---------------------------------------------------------------------------
 
-const encounterCols = `id, code, title, subtitle, scene_id, scene_kind, difficulty, power_scale, escape_chance, can_escape, is_active, sort_order`
+const encounterCols = `id, code, title, subtitle, scene_id, scene_kind, difficulty, power_scale, monster_level, escape_chance, can_escape, is_active, sort_order`
 
 func scanEncounter(row pgx.Row) (EncounterRow, error) {
 	var e EncounterRow
 	err := row.Scan(&e.id, &e.Code, &e.Title, &e.Subtitle, &e.SceneID, &e.SceneKind, &e.Difficulty,
-		&e.PowerScale, &e.EscapeChance, &e.CanEscape, &e.IsActive, &e.SortOrder)
+		&e.PowerScale, &e.MonsterLevel, &e.EscapeChance, &e.CanEscape, &e.IsActive, &e.SortOrder)
 	e.Monsters = []EncounterMonsterRow{}
 	return e, err
 }
@@ -737,13 +745,13 @@ func (h *Handler) upsertEncounter(ctx context.Context, e EncounterRow) error {
 
 	var id string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO rpg_encounters (code, title, subtitle, scene_id, scene_kind, difficulty, power_scale, escape_chance, can_escape, is_active, sort_order, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+		INSERT INTO rpg_encounters (code, title, subtitle, scene_id, scene_kind, difficulty, power_scale, monster_level, escape_chance, can_escape, is_active, sort_order, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
 		ON CONFLICT (code) DO UPDATE SET
 			title=$2, subtitle=$3, scene_id=$4, scene_kind=$5, difficulty=$6, power_scale=$7,
-			escape_chance=$8, can_escape=$9, is_active=$10, sort_order=$11, updated_at=NOW()
+			monster_level=$8, escape_chance=$9, can_escape=$10, is_active=$11, sort_order=$12, updated_at=NOW()
 		RETURNING id::text`,
-		e.Code, e.Title, e.Subtitle, e.SceneID, e.SceneKind, e.Difficulty, e.PowerScale,
+		e.Code, e.Title, e.Subtitle, e.SceneID, e.SceneKind, e.Difficulty, e.PowerScale, e.MonsterLevel,
 		e.EscapeChance, e.CanEscape, e.IsActive, e.SortOrder,
 	).Scan(&id)
 	if err != nil {

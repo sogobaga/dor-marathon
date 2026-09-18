@@ -151,6 +151,10 @@ type CompanionRow struct {
 	IsPlayerPortrait bool     `json:"is_player_portrait"`
 	IsActive         bool     `json:"is_active"`
 	SortOrder        int      `json:"sort_order"`
+	// JobID DORPG P6（CONTRACT §3.1）：小咪 cleric／小優 archer／阿光 light_knight／
+	// 阿深 heavy_knight；小井（is_player_portrait）維持 NULL——不是傭兵。決定這位傭兵的腳本
+	// 只能配哪個職業的技能（presets.go ValidatePreset）與戰鬥 bootstrap 的 WeaponType/被動。
+	JobID *string `json:"job_id"`
 }
 
 // ScaledMonster 這隻怪在本場戰鬥實際要用的數值（已套保底/縮放，可直接組進 wire Enemy/stats）。
@@ -228,6 +232,82 @@ func ScaleMonster(cfg Config, p PlayerBattleStats, m MonsterRow, encounterScale,
 		ActMaxMs: actMax,
 		Level:    level,
 		Rating:   MonsterRating(cfg, p, m),
+	}
+}
+
+// ScaleMonsterByLevel DORPG P6（CONTRACT §2）：battle_scale_mode="level" 的怪物數值公式——
+// 不再用「玩家戰力」當基準（那是 ScaleMonster/"power" 模式），改用「參考玩家 RefPlayerStats(cfg,N)」
+// （reflevel.go，N＝這場遭遇的 rpg_encounters.monster_level）當絕對基準，讓六場遭遇的強度差異
+// 由「monster_level 這個數字」直接決定，跟打這場戰鬥的玩家自己多強完全無關：
+//
+//	hp   = floor(Ref.HPMax × hp_mult   × battle_lvl_hp_ratio   × encounterScale × slotScale)
+//	atk  = floor(Ref.Atk   × atk_mult  × battle_lvl_atk_ratio  × encounterScale)
+//	def  = floor(Ref.Def   × def_mult  × battle_lvl_def_ratio  × encounterScale)
+//	mdef = floor(Ref.Mdef  × mdef_mult × battle_lvl_mdef_ratio × encounterScale)
+//	matk = floor(Ref.Matk  × atk_mult)   —— 契約明講怪物施法用的 matk 只乘 atk_mult，
+//	                                        不疊加 battle_lvl_atk_ratio/encounterScale
+//	                                        （純粹給少數會施法的怪物一個粗略基準，非本輪
+//	                                        主要縮放對象，故意跟 atk 走不同公式，不是疏漏）。
+//
+// hit/flee 沿用「等級基線」公式（同 MonsterRating），但基線換成怪物自己的等級 N，不再是玩家
+// Base Lv——這正是「怪物有沒有獨立等級概念」在 level 模式下唯一的差異點：power 模式沒有怪物
+// 等級，只能借用玩家等級當命中/迴避基線；level 模式怪物本來就有自己的 N，改用它更符合直覺。
+// 行動間隔沿用既有 speed_mult 換算（跟 ScaleMonster 完全相同，不是縮放的一部分）。
+func ScaleMonsterByLevel(cfg Config, m MonsterRow, encounterScale, slotScale float64, level int) ScaledMonster {
+	ref := RefPlayerStats(cfg, level)
+
+	// MonsterRow 沒有獨立的 mdef_mult 欄位（跟 ScaleMonster/"power" 模式一樣——power 模式的
+	// mdef 也是直接沿用 mobDef，見上面 ScaleMonster「P2 敵人不分物魔」），mdef 沿用同一個
+	// DefMult，只是另外乘 battle_lvl_mdef_ratio 這個獨立比例（後台仍可分開調物防/魔防手感）。
+	hp := float64(ref.MaxHP) * m.HPMult * cfg.BattleLvHPRatio * encounterScale * slotScale
+	atk := ref.Atk * m.AtkMult * cfg.BattleLvAtkRatio * encounterScale
+	def := ref.Def * m.DefMult * cfg.BattleLvDefRatio * encounterScale
+	mdef := ref.Mdef * m.DefMult * cfg.BattleLvMdefRatio * encounterScale
+	matk := ref.Matk * m.AtkMult
+
+	hpMax := int(math.Floor(hp))
+	if hpMax < 1 {
+		hpMax = 1 // 同 ScaleMonster：避免極端小倍率把 HP 四捨五入/取整到 0（打不死也殺不掉的無效狀態）
+	}
+
+	actMin := int(math.Round(float64(cfg.BattleEnemyActMinMs) * m.SpeedMult))
+	actMax := int(math.Round(float64(cfg.BattleEnemyActMaxMs) * m.SpeedMult))
+	if actMin < minActIntervalMs {
+		actMin = minActIntervalMs
+	}
+	if actMax < actMin {
+		actMax = actMin
+	}
+
+	return ScaledMonster{
+		HPMax:    hpMax,
+		Atk:      int(math.Floor(atk)),
+		Matk:     int(math.Floor(matk)),
+		Def:      int(math.Floor(def)),
+		Mdef:     int(math.Floor(mdef)),
+		ActMinMs: actMin,
+		ActMaxMs: actMax,
+		Level:    level, // 契約：「怪物 level 欄位送前端顯示 Lv.N」——level 模式直接用 N，不像 power 模式借用玩家等級 + boss 加成
+		Rating:   MonsterRatingByLevel(cfg, level, m),
+	}
+}
+
+// MonsterRatingByLevel DORPG P6：同 MonsterRating 的等級基線公式，但基線換成怪物自己的等級 N
+// （level 模式沒有「玩家」這個縮放來源，見 ScaleMonsterByLevel 檔頭）。CritPct/CritShield 語意
+// 與 MonsterRating 完全相同（不吃等級，只吃 def_mult）。
+func MonsterRatingByLevel(cfg Config, level int, m MonsterRow) CombatRating {
+	lv := float64(level)
+	hit := lv*cfg.BattleMonsterHitPerLevel + cfg.BattleMonsterHitBase
+	if cfg.BattleMonsterHitMax > 0 && hit > cfg.BattleMonsterHitMax {
+		hit = cfg.BattleMonsterHitMax
+	}
+	return CombatRating{
+		Hit:              hit,
+		Flee:             (lv*cfg.BattleMonsterFleePerLevel + cfg.BattleMonsterFleeBase) * m.SpeedMult,
+		CritPct:          cfg.BattleMonsterCritPct,
+		CritShield:       cfg.BattleMonsterCritShieldBase * m.DefMult,
+		Aspd:             cfg.BattleAspdReference,
+		CastReductionPct: 0,
 	}
 }
 

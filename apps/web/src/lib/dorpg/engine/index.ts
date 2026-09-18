@@ -7,6 +7,7 @@ import {
   deriveDefaultEnemyStats,
   deriveDefaultMonsterRating,
   deriveDefaultPartyRating,
+  floorInt,
   pickInitialTarget,
   randRange,
 } from './formulas';
@@ -48,9 +49,12 @@ function toPartyActor(pm: PartyMember, index: number, now: number, cfg: BattleCo
     id: pm.id,
     name: pm.name,
     level: pm.level,
-    stats: pm.stats ?? deriveDefaultActorStats(pm.level, pm.hpMax, pm.mpMax),
-    hp: pm.hp,
-    mp: pm.mp,
+    // P6（CONTRACT §1）：「createBattle 時把 wire 進來的數值也 floor」——stats 有給（wire 送整包
+    // ActorStats）就地把 hpMax/mpMax 也 floor 一次；沒給就交給 deriveDefaultActorStats（該函式
+    // 內部已經 floorInt 過，見 formulas.ts）。
+    stats: pm.stats ? { ...pm.stats, hpMax: floorInt(pm.stats.hpMax), mpMax: floorInt(pm.stats.mpMax) } : deriveDefaultActorStats(pm.level, pm.hpMax, pm.mpMax),
+    hp: floorInt(pm.hp),
+    mp: floorInt(pm.mp),
     shield: 0,
     action: 'idle',
     actionUntil: now,
@@ -66,6 +70,9 @@ function toPartyActor(pm: PartyMember, index: number, now: number, cfg: BattleCo
     // P5：戰鬥開始時沒有任何 buff（buff 只能在戰鬥中靠技能施放取得，不存在「開場自帶」的設計）。
     activeEffects: [],
     jobId: pm.jobId ?? null,
+    // P6（CONTRACT §3.2）：見 PartyActor.skills/presetName 型別註解；玩家沒有這個欄位（stays []）。
+    skills: pm.skills ?? [],
+    presetName: pm.presetName ?? null,
   };
 }
 
@@ -75,8 +82,9 @@ function toEnemyActor(e: Enemy, now: number, cfg: BattleConfig, rng: () => numbe
     name: e.name,
     level: e.level,
     slot: e.slot,
-    stats: e.stats ?? deriveDefaultEnemyStats(e.level, e.hpMax),
-    hp: e.hp,
+    // P6（CONTRACT §1）：同 toPartyActor，wire 進來的 hpMax/mpMax 也 floor 一次。
+    stats: e.stats ? { ...e.stats, hpMax: floorInt(e.stats.hpMax), mpMax: floorInt(e.stats.mpMax) } : deriveDefaultEnemyStats(e.level, e.hpMax),
+    hp: floorInt(e.hp),
     // P1 沒有召喚機制，略過 spawning；hp<=0 直接給 removed（例如測試用的「一開場就平手」樣本資料）
     // ——不然會卡在 idle 永遠等不到 applyEnemyDamage 幫它轉場成 dying，resolving 階段就無法判斷
     // 「所有敵人的死亡動畫都播完了」（見 tick.ts 的 advanceResolving）。

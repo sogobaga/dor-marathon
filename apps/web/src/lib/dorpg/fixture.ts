@@ -147,6 +147,9 @@ export interface EncounterRow {
   escapeChance: number;
   canEscape: boolean;
   monsters: EncounterMonsterRow[];
+  /** P6（CONTRACT §2）：這場的怪物等級 N，鏡射 migration 181 要加的 rpg_encounters.monster_level
+   *  （尚未套用，見任務回報）；離線 fixture 先依契約給定的六場數字示範 level 模式縮放。 */
+  monsterLevel: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,12 +240,19 @@ export const RPG_ITEMS: ItemRow[] = [
   { id: 'revive_feather', name: '復甦羽毛', iconId: 'icon_item_revive_feather', kind: 'revive', amount: 50, defaultQuantity: 1, sortOrder: 3 },
 ];
 
-/** char_xiaojing 是玩家頭像（D4：is_player_portrait=TRUE，本身不列入隊友清單）。 */
+/**
+ * char_xiaojing 是玩家頭像（D4：is_player_portrait=TRUE，本身不列入隊友清單）。
+ * P6（CONTRACT §3.2／任務 4「示範隊伍＝小咪＋一位傭兵各帶 2–3 個示範技能」）：skillIds 對到
+ * 上面 RPG_SKILLS 的 id，buildFixtureSample 會把它們展開成 PartyActor.skills 餵給隊友 AI（見
+ * toCompanionSkills）——只有小咪（heal/shield，示範①②段：治療優先、護盾不重複）與阿光
+ * （war_cry/armor_break/slash，示範②③④段：buff 不重複、damage 選 tier 最高、debuff 不重複）
+ * 帶技能；小優／阿深維持 []，走⑤普攻 fallback（跟 P1 舊行為相容）。
+ */
 export const RPG_COMPANIONS: CompanionRow[] = [
   { id: 'char_xiaojing', name: '小井', portraitId: 'char_xiaojing', role: '', weapon: 'sword', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: [], isPlayerPortrait: true, sortOrder: 0 },
-  { id: 'char_xiaomi', name: '小咪', portraitId: 'char_xiaomi', role: '治療', weapon: 'staff', levelOffset: 0, hpMult: 0.7, mpMult: 1, atkMult: 1, matkMult: 1.2, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['heal'], isPlayerPortrait: false, sortOrder: 1 },
+  { id: 'char_xiaomi', name: '小咪', portraitId: 'char_xiaomi', role: '治療', weapon: 'staff', levelOffset: 0, hpMult: 0.7, mpMult: 1, atkMult: 1, matkMult: 1.2, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['heal', 'shield'], isPlayerPortrait: false, sortOrder: 1 },
   { id: 'char_xiaoyou', name: '小優', portraitId: 'char_xiaoyou', role: '游擊', weapon: 'bow', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: [], isPlayerPortrait: false, sortOrder: 2 },
-  { id: 'char_aguang', name: '阿光', portraitId: 'char_aguang', role: '劍士', weapon: 'sword', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: [], isPlayerPortrait: false, sortOrder: 3 },
+  { id: 'char_aguang', name: '阿光', portraitId: 'char_aguang', role: '劍士', weapon: 'sword', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['war_cry', 'armor_break', 'slash'], isPlayerPortrait: false, sortOrder: 3 },
   { id: 'char_ashen', name: '阿深', portraitId: 'char_ashen', role: '重裝', weapon: 'greatsword', levelOffset: 0, hpMult: 1.3, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1.25, skillIds: [], isPlayerPortrait: false, sortOrder: 4 },
 ];
 
@@ -260,6 +270,7 @@ export const RPG_ENCOUNTERS: EncounterRow[] = [
     code: 'training_ground', title: '訓練場', subtitle: '入門教學．熟悉操作手感',
     sceneId: 'scene_taipei_stadium', sceneKind: 'normal', difficulty: 1, powerScale: 0.60,
     escapeChance: 0.35, canEscape: true,
+    monsterLevel: 10,
     monsters: [
       { slot: 'front_left', monsterId: 'DOR-MON-D-0182', powerScale: 1 },
       { slot: 'front_center', monsterId: 'DOR-MON-E-0052', powerScale: 1 },
@@ -270,6 +281,7 @@ export const RPG_ENCOUNTERS: EncounterRow[] = [
     code: 'ximen_night', title: '西門町夜巡', subtitle: '夜巡邊界．小怪成群',
     sceneId: 'scene_ximending', sceneKind: 'normal', difficulty: 2, powerScale: 0.73,
     escapeChance: 0.35, canEscape: true,
+    monsterLevel: 20,
     monsters: [
       { slot: 'rear_left', monsterId: 'DOR-MON-E-0052', powerScale: 1 },
       { slot: 'front_left', monsterId: 'DOR-MON-D-0182', powerScale: 1 },
@@ -281,6 +293,7 @@ export const RPG_ENCOUNTERS: EncounterRow[] = [
     code: 'fuhe_bridge', title: '福和橋下', subtitle: '橋下盤據．小心巨鉗',
     sceneId: 'scene_fuhe_bridge', sceneKind: 'normal', difficulty: 2, powerScale: 0.60,
     escapeChance: 0.35, canEscape: true,
+    monsterLevel: 30,
     monsters: [
       { slot: 'rear_right', monsterId: 'DOR-MON-C-0229', powerScale: 1 },
       { slot: 'front_left', monsterId: 'DOR-MON-D-0182', powerScale: 1 },
@@ -292,6 +305,7 @@ export const RPG_ENCOUNTERS: EncounterRow[] = [
     code: 'tamsui_dusk', title: '淡水河口', subtitle: '河口起霧．敵勢漸強',
     sceneId: 'scene_tamsui_estuary', sceneKind: 'normal', difficulty: 3, powerScale: 0.55,
     escapeChance: 0.35, canEscape: true,
+    monsterLevel: 40,
     monsters: [
       { slot: 'rear_left', monsterId: 'DOR-MON-C-0229', powerScale: 1 },
       { slot: 'rear_right', monsterId: 'DOR-MON-C-0229', powerScale: 1 },
@@ -304,6 +318,7 @@ export const RPG_ENCOUNTERS: EncounterRow[] = [
     code: 'jiannan_trail', title: '劍南山步道', subtitle: '登山惡鬥．狹路難退',
     sceneId: 'scene_jiannan_mountain', sceneKind: 'normal', difficulty: 4, powerScale: 0.52,
     escapeChance: 0.35, canEscape: true,
+    monsterLevel: 50,
     monsters: [
       { slot: 'rear_left', monsterId: 'DOR-MON-B-0089', powerScale: 1 },
       { slot: 'rear_right', monsterId: 'DOR-MON-B-0089', powerScale: 1 },
@@ -316,6 +331,7 @@ export const RPG_ENCOUNTERS: EncounterRow[] = [
     code: 'taipei101_boss', title: '台北101首領戰', subtitle: '首領現身．無法逃跑',
     sceneId: 'scene_taipei_101', sceneKind: 'boss', difficulty: 5, powerScale: 0.46,
     escapeChance: 0.0, canEscape: false,
+    monsterLevel: 60,
     monsters: [
       { slot: 'rear_left', monsterId: 'DOR-MON-E-0052', powerScale: 1 },
       { slot: 'rear_right', monsterId: 'DOR-MON-A-67000200001', powerScale: 1 },
@@ -456,10 +472,15 @@ const FIXTURE_COMPANION_RATING: CombatRating = { ...FIXTURE_PLAYER_RATING, aspd:
  * 不另外新增一個常數）。aspd/castReductionPct 給 cfg.aspdReference/0——怪物在正式環境本來就
  * 不吃這兩個欄位（節奏固定走 ActMinMs/ActMaxMs，不受配點影響），純粹填滿 CombatRating 型別，
  * 避免零值造成「這隻怪 aspd=0」的誤解（對齊後端 MonsterRating 同一個理由）。
+ *
+ * P6（CONTRACT §2）：power 模式的「等級基線」原本恆用 FIXTURE_PLAYER_LEVEL（玩家戰力縮放跟等級
+ * 無關，只是拿玩家等級當顯示錨點）；level 模式改用「怪物自己的等級 N」（契約原文：「hit/flee
+ * 沿用『等級基線』公式但改用怪物自己的等級 N」）——`level` 參數化後兩種模式共用同一支函式，
+ * 呼叫端決定要傳哪個等級（見下方 buildFixtureSample）。
  */
-function monsterRating(monster: MonsterRow): CombatRating {
+function monsterRating(monster: MonsterRow, level: number = FIXTURE_PLAYER_LEVEL): CombatRating {
   const cfg = DEFAULT_BATTLE_CONFIG;
-  const lv = FIXTURE_PLAYER_LEVEL;
+  const lv = level;
   // 與 Go 的 MonsterRating 一致：夾在 monsterHitMax 之下，避免高等級玩家的 AGI 迴避失效。
   const rawHit = lv * cfg.monsterHitPerLevel + cfg.monsterHitBase;
   return {
@@ -507,6 +528,142 @@ function scaleMonster(
 }
 
 // ---------------------------------------------------------------------------
+// P6（CONTRACT §2）：怪物等級制（battle_scale_mode="level"）——「資料鏡像」，不移植 Compute。
+// BACKEND 用 Go 的 RefPlayerStats(cfg, N) 產生 apps/web/src/lib/dorpg/refPlayerTable.json
+// （N=1..99 的 Ref 衍生值，逐位元對齊 Go 端），本檔只負責「讀表＋套契約 §2 給的怪物縮放公式」，
+// 不重新推導六圍配點或 Compute() 本身（那條規則只活在 Go 裡，見 CONTRACT.md §2「不移植 Compute；
+// 改為資料鏡像」）。
+// ---------------------------------------------------------------------------
+
+/**
+ * refPlayerTable.json 單列的假設形狀（camelCase，比照本檔其餘 wire/鏡像慣例）：等級 N 的參考玩家
+ * （六圍依「輪流 +1 給目前最低且成本負擔得起、未達 cap」演算法配完、無職業、無 passive）套用
+ * P5 Compute 後的衍生值子集——只挑怪物縮放公式（見下方 scaleMonsterFromRef）用得到的 9 個欄位，
+ * Derived 其餘欄位（Resists／PerfectDodge…）跟怪物縮放無關，不在這裡重複。
+ * ⚠️ 本輪撰寫時 BACKEND 尚未產出這份檔案（見任務回報「需要 BACKEND 產生 refPlayerTable.json」），
+ * 這裡是依契約文字＋既有 wire 欄位命名慣例的假設；一旦檔案出現，若實際欄位名不同，只需要調整
+ * 這個介面與 loadRefPlayerTable() 的存取路徑，不影響呼叫端（buildFixtureSample opts.mode='level'）
+ * 的介面。
+ */
+export interface RefPlayerEntry {
+  level: number;
+  hpMax: number;
+  mpMax: number;
+  atk: number;
+  matk: number;
+  def: number;
+  mdef: number;
+  hit: number;
+  flee: number;
+  aspd: number;
+}
+
+export type RefPlayerTable = RefPlayerEntry[];
+
+/**
+ * 動態載入 refPlayerTable.json——刻意不寫成靜態 `import table from './refPlayerTable.json'`：
+ * 這份檔案由 BACKEND 產生（ENGINE 不可寫，見任務分工），本輪撰寫時檔案還不存在，靜態 import
+ * 會讓 tsc/`node --experimental-strip-types` 在檔案出現前直接編譯失敗，擋死所有跟這個檔案完全
+ * 無關的驗證。改用「specifier 存進變數再動態 import」：TypeScript 對非字面量的 import() 引數
+ * 不做模組解析（型別退化成 any），檔案不存在時只有「真的呼叫這支函式」才會在執行期拋錯，
+ * 由呼叫端 catch 掉退回 null——一旦 BACKEND 產出檔案，這裡不需要改任何程式碼就會自動讀到。
+ * 用 module-level cache 避免重複 import（動態 import 本身有快取，這裡的 cache 只是省一次
+ * await/catch 的開銷）。
+ *
+ * INTEGRATOR 核對（2026-09-18）：Node 24（本專案 verify 腳本的執行環境）的原生 ESM loader
+ * 規定動態 import 一個 `.json` 檔必須帶 `with { type: 'json' }` import attribute，否則丟
+ * TypeError（`needs an import attribute of "type: json"`）——這個錯誤會被下面的 catch 吞掉，
+ * 於是「檔案真的不存在」跟「檔案存在但沒帶 attribute」兩種情況表面上長得一模一樣（都是
+ * refPlayerTableCache=null 悄悄退回 power 模式），曾經讓 refPlayerTable.json 產生之後
+ * verify #40 仍然一直印 SKIP。Next.js 的 webpack/turbopack 打包器對 `.json` 動態 import
+ * 有自己的處理、不吃這條原生 ESM 規則，所以瀏覽器端本來就不受影響；這裡補上 attribute 純粹是
+ * 讓 `node --experimental-strip-types` 直接執行 .ts 時也能吃到同一份程式碼。
+ */
+let refPlayerTableCache: RefPlayerTable | null | undefined;
+export async function loadRefPlayerTable(): Promise<RefPlayerTable | null> {
+  if (refPlayerTableCache !== undefined) return refPlayerTableCache;
+  const specifier = './refPlayerTable.json';
+  try {
+    const mod: unknown = await import(specifier, { with: { type: 'json' } });
+    const table = (mod as { default?: unknown }).default ?? mod;
+    refPlayerTableCache = Array.isArray(table) ? (table as RefPlayerTable) : null;
+  } catch {
+    refPlayerTableCache = null; // 檔案還不存在，或格式不是預期的陣列——呼叫端退回 power 模式。
+  }
+  return refPlayerTableCache;
+}
+
+/** 從表中找出指定等級那一列；找不到就丟錯——契約 §2 講明 N=1..99 全部有值，缺列代表表本身
+ *  沒產完整，讓呼叫端及早發現而不是悄悄用到 undefined。 */
+export function refPlayerAt(table: RefPlayerTable, level: number): RefPlayerEntry {
+  const row = table.find((r) => r.level === level);
+  if (!row) throw new Error(`dorpg fixture: refPlayerTable.json 缺少 level=${level} 這一列`);
+  return row;
+}
+
+/** 契約 §2 給的四個新 config 欄位（怪物 HP/ATK/DEF/MDEF 相對 RefPlayer(N) 的比例）。 */
+export interface LevelScaleConfig {
+  battleLvlHpRatio: number;
+  battleLvlAtkRatio: number;
+  battleLvlDefRatio: number;
+  battleLvlMdefRatio: number;
+}
+
+/**
+ * SIM 校準（2026-09-18，逐位元對齊 services/api/internal/rpg/config.go DefaultConfig() 同一組
+ * 數字，理由見該檔欄位上方註解——不在這裡重複，改一邊要記得改另一邊）：真引擎模擬跑六場
+ * monster_level 10..60（Lv27 輕騎士玩家＋小咪／小咪+阿深）發現 1.0/1.0/1.0/1.0 雖然單調，但
+ * Lv10–40 全部 100% 勝率、Lv60 首領戰主要是 timeout（雙方打不死對方）而非乾脆的 defeat。調整
+ * HP→0.8（同比例壓低怪物總血量，讓高等級戰鬥能在時限內分出勝負）、ATK→1.25（提高威脅，把
+ * 「單一 companion 隊伍在 Lv50 幾乎必勝」拉近五五波、Lv60 從 timeout 轉成乾脆的 defeat）；
+ * DEF/MDEF 維持 1.0（見 Go 端註解：問題出在血量總量與時限的關係，不是打不動）。詳細六場勝率／
+ * 時長表見 scratchpad/dorpg_p6/sim/RESULT.md。
+ */
+export const DEFAULT_LEVEL_SCALE_CONFIG: LevelScaleConfig = {
+  battleLvlHpRatio: 0.8,
+  battleLvlAtkRatio: 1.25,
+  battleLvlDefRatio: 1.0,
+  battleLvlMdefRatio: 1.0,
+};
+
+/**
+ * 契約 §2 level 模式怪物公式的 TS 鏡像：
+ *   hp   = floor(Ref.HPMax × hp_mult × battle_lvl_hp_ratio  × power_scale × slotScale)
+ *   atk  = floor(Ref.ATK   × atk_mult × battle_lvl_atk_ratio × power_scale)
+ *   def  = floor(Ref.DEF   × def_mult × battle_lvl_def_ratio × power_scale)
+ *   mdef = floor(Ref.MDEF  × mdef_mult × battle_lvl_mdef_ratio × power_scale)
+ *   matk（怪物施法用）= Ref.MATK × atk_mult
+ * 決策（契約 §3.1 沒有另外定義 monster.mdefMult 欄位，migration 181 清單也沒有新增這一欄）：
+ * 「mdef_mult」沿用 monster.defMult——跟舊版 power 模式 scaleMonster()「mobMdef = mobDef」是
+ * 同一個precedent（同一組倍率同時決定 DEF 與 MDEF），不是漏看契約，是刻意延續既有資料模型
+ * （見任務回報，若 BACKEND 之後真的加了獨立的 mdef_mult 欄位，這裡要跟著改）。matk 契約原文
+ * 沒有寫 floor，但為了維持 ActorStats 全欄位皆整數的既有慣例（跟 hpMax/atk/def/mdef 一致），
+ * 這裡仍套用 floorInt——不在 CONTRACT §1 的「hp/mp 整數不變式」清單內，純粹是額外的一致性選擇，
+ * 已在此註解與任務回報中列為文件化的決策。slotScale 沿用既有 power 模式的前後排邏輯（呼叫端
+ * 傳入，跟 scaleMonster() 的 slotScale 同一個概念、同一個數字來源）。
+ */
+function scaleMonsterFromRef(
+  ref: RefPlayerEntry,
+  monster: MonsterRow,
+  levelCfg: LevelScaleConfig,
+  powerScale: number,
+  slotScale: number,
+): ScaledMonsterStats {
+  const hpMax = Math.max(1, Math.floor(ref.hpMax * monster.hpMult * levelCfg.battleLvlHpRatio * powerScale * slotScale));
+  const atk = Math.floor(ref.atk * monster.atkMult * levelCfg.battleLvlAtkRatio * powerScale);
+  const def = Math.floor(ref.def * monster.defMult * levelCfg.battleLvlDefRatio * powerScale);
+  const mdef = Math.floor(ref.mdef * monster.defMult * levelCfg.battleLvlMdefRatio * powerScale);
+  const matk = Math.floor(ref.matk * monster.atkMult); // 見上方註解：契約沒有明講 floor，這裡是文件化的一致性決策。
+  return { hpMax, atk, matk, def, mdef };
+}
+
+/** 怪物自己等級 N 的命中/迴避評級（level 模式）：直接重用 monsterRating()，把 level 換成 N
+ *  （見 monsterRating 型別註解「level 模式改用怪物自己的等級 N」）。 */
+function monsterRatingAtLevel(monster: MonsterRow, level: number): CombatRating {
+  return monsterRating(monster, level);
+}
+
+// ---------------------------------------------------------------------------
 // buildFixtureSample：離線組一份 BattleSample + 遭遇摘要，供 /dev/dorpg 與自動化測試使用。
 // ---------------------------------------------------------------------------
 
@@ -531,6 +688,23 @@ function monsterById(id: string): MonsterRow {
   const row = RPG_MONSTERS.find((m) => m.id === id);
   if (!row) throw new Error(`dorpg fixture: unknown monster id "${id}"`);
   return row;
+}
+
+function skillRowById(id: string): SkillRow {
+  const row = RPG_SKILLS.find((s) => s.id === id);
+  if (!row) throw new Error(`dorpg fixture: unknown skill id "${id}"`);
+  return row;
+}
+
+/** P6（CONTRACT §3.2／WIRE「member.skills…不含 passive、只含 implemented=true」）：把
+ *  CompanionRow.skillIds 展開成隊友 AI 可用的技能陣列——跟玩家技能欄的 toSkill() 共用同一份
+ *  轉換，只是多一層 kind/implemented 篩選（玩家技能欄反而是在 buildFixtureSample 主體另外篩，
+ *  兩處篩選條件不同，故不合併成一支共用函式）。 */
+function toCompanionSkills(c: CompanionRow): Skill[] {
+  return c.skillIds
+    .map(skillRowById)
+    .filter((row) => row.kind !== 'passive' && row.implemented !== false)
+    .map(toSkill);
 }
 
 function sceneById(id: string): SceneRow {
@@ -564,11 +738,19 @@ function toSkill(row: SkillRow): Skill {
 }
 
 /**
- * 依契約 §1 D2 與上面的 seed 鏡像，離線組一份 BattleSample（給 /dev/dorpg 沒有 API/DB 時用）。
- * opts 只開放 playerAtk/playerHp（契約明定簽章）；DEF/MP/等級一律用內部固定值，不接受外部覆寫
- * ——理由見 FIXTURE_PLAYER_* 常數上方註解。
+ * 依契約 §1 D2／§2 與上面的 seed 鏡像，離線組一份 BattleSample（給 /dev/dorpg 沒有 API/DB 時用）。
+ * opts.playerAtk/playerHp 只影響 power 模式（契約明定簽章）；DEF/MP/等級一律用內部固定值，不接受
+ * 外部覆寫——理由見 FIXTURE_PLAYER_* 常數上方註解。
+ * P6：新增 opts.mode（預設 'power'，向下相容既有呼叫端——contract §2「保留 power 模式分支供
+ * 對照」）與 opts.refTable（level 模式要用的 RefPlayer 表，呼叫端自行 `await loadRefPlayerTable()`
+ * 後傳入；buildFixtureSample 本身維持同步函式簽章，不強迫既有呼叫端改成 async）。mode='level'
+ * 但沒有給 refTable（或表載入失敗回傳 null）時安全退回 power 模式並印一行 console.warn——離線
+ * 預覽在 refPlayerTable.json 出現前仍然可以正常運作，不會整頁掛掉。
  */
-export function buildFixtureSample(code: string, opts?: { playerAtk?: number; playerHp?: number }): FixtureBundle {
+export function buildFixtureSample(
+  code: string,
+  opts?: { playerAtk?: number; playerHp?: number; mode?: 'power' | 'level'; refTable?: RefPlayerTable | null },
+): FixtureBundle {
   const encounter = RPG_ENCOUNTERS.find((e) => e.code === code);
   if (!encounter) throw new Error(`dorpg fixture: unknown encounter code "${code}"`);
   const scene = sceneById(encounter.sceneId);
@@ -583,8 +765,40 @@ export function buildFixtureSample(code: string, opts?: { playerAtk?: number; pl
   // 理論上 atkMult 恆為正數（DEFAULT 1、草案最低 0.8），這裡的 || 1 只是防呆，不代表真的會遇到 0。
   const atkMultSum = encounterMonsters.reduce((sum, em) => sum + em.monster.atkMult, 0) || 1;
 
+  const requestedMode = opts?.mode ?? 'power';
+  const refTable = requestedMode === 'level' ? (opts?.refTable ?? null) : null;
+  if (requestedMode === 'level' && !refTable) {
+    // eslint-disable-next-line no-console -- 離線預覽/驗證腳本需要看到這個訊號，不是靜默降級。
+    console.warn(`dorpg fixture: mode='level' 但沒有可用的 refPlayerTable（呼叫端未傳 refTable，或 refPlayerTable.json 尚未由 BACKEND 產生）——退回 power 模式`);
+  }
+  const effectiveMode: 'power' | 'level' = refTable ? 'level' : 'power';
+
   const enemies: Enemy[] = encounterMonsters.map((em) => {
     const share = em.monster.atkMult / atkMultSum;
+    if (effectiveMode === 'level' && refTable) {
+      // P6（CONTRACT §2）：level 模式怪物等級恆為 encounter.monsterLevel（六場固定 10/20/30/40/50/60，
+      // 契約沒有另外定義 boss 加成——跟 power 模式的 BOSS_LEVEL_BONUS 是兩套規則，不套用在這裡）。
+      const ref = refPlayerAt(refTable, encounter.monsterLevel);
+      const scaled = scaleMonsterFromRef(ref, em.monster, DEFAULT_LEVEL_SCALE_CONFIG, encounter.powerScale, em.powerScale);
+      return {
+        id: `enemy_${em.slot}`,
+        name: em.monster.name,
+        level: encounter.monsterLevel,
+        hp: scaled.hpMax,
+        hpMax: scaled.hpMax,
+        slot: em.slot,
+        imageUrl: em.monster.posterUrl,
+        rank: em.monster.rank,
+        attribute: em.monster.attribute,
+        size: em.monster.size,
+        race: em.monster.race,
+        stats: { hpMax: scaled.hpMax, mpMax: 0, atk: scaled.atk, matk: scaled.matk, def: scaled.def, mdef: scaled.mdef },
+        threatPriority: em.monster.threat,
+        canEscape: encounter.canEscape,
+        rating: monsterRatingAtLevel(em.monster, encounter.monsterLevel),
+        weakElements: em.monster.weakElements,
+      };
+    }
     const scaled = scaleMonster(cfg, playerAtk, playerHp, playerDef, em.monster, encounter.powerScale, em.powerScale, share);
     const level = FIXTURE_PLAYER_LEVEL + (em.monster.isBoss ? BOSS_LEVEL_BONUS : 0);
     return {
@@ -669,6 +883,11 @@ export function buildFixtureSample(code: string, opts?: { playerAtk?: number; pl
         // SPEC §1 D1：沒有對應倍率欄位就沿用玩家值，但 aspd/castReductionPct 固定中性值
         // （見 FIXTURE_COMPANION_RATING 上方註解，對齊後端 CompanionRating）。
         rating: FIXTURE_COMPANION_RATING,
+        // P6（CONTRACT §3.2／任務 4）：見 RPG_COMPANIONS 上方註解與 toCompanionSkills——只有
+        // 小咪／阿光帶示範技能，其餘維持 []（普攻 fallback）。presetName 純展示，沒有技能的
+        // 傭兵不掛名稱（沒有腳本可言）。
+        skills: toCompanionSkills(c),
+        presetName: c.skillIds.length > 0 ? `${c.name} 示範腳本` : undefined,
       };
     });
 

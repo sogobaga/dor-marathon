@@ -92,6 +92,20 @@ export type PartyMember = {
    * 未選職業＝null（沿用現行行為：全域預設武器、無職業技能）。
    */
   jobId?: string | null;
+  /**
+   * P6（CONTRACT §3.2/WIRE「戰鬥 bootstrap」）：這位隊友（非玩家）AI 可用的技能——後端已展開
+   * （不含 passive、只含 implemented=true），由 engine/ai.ts 依五段優先序挑選施放，不再借用
+   * BattleState.skills（那是玩家自己裝備的技能欄，P1 時期 AI 的簡化借用寫法已被取代，見 ai.ts
+   * 檔頭註解）。玩家（party[0]）不會有這個欄位——玩家的技能走 BattleSample.skills 技能欄與
+   * USE_SKILL 指令，跟這裡完全是兩條路徑。缺省 []（沒有可用技能時 AI 只會普攻，見 ai.ts）。
+   */
+  skills?: Skill[];
+  /**
+   * P6（CONTRACT §3.4「腳本」）：這位隊友目前套用的腳本名稱，純透傳供 FRONTEND 顯示（例如隊伍
+   * 畫面卡片上的「腳本名／Lv」），engine 的戰鬥數值計算完全不讀這個欄位。缺省 undefined＝沒有
+   * 腳本資訊可顯示（例如舊版後端、或未來的系統預設腳本理論上一定會有名稱，這裡選填只是防禦）。
+   */
+  presetName?: string;
 };
 
 /** 場景五個怪物站位 ID，與 content pack scene.json 的 monsterSlots[].id 同名。 */
@@ -228,6 +242,16 @@ export type Skill = {
    *  代表「數值已經是最終值，沒有等級可言」。 */
   level?: number;
   maxLevel?: number;
+  /**
+   * P6（CONTRACT §3.2：隊友 AI「damage 技能可用且 MP 足夠→用 tier 最高的」）：技能所屬路線內的
+   * 順位（1 起算，數字越大代表越後期／越強的技能）。P5 WIRE 已經說明「已選職業技能依 path→tier
+   * 排序填入」技能欄，故陣列順序本身就是 tier 遞增序——這個欄位是給 ai.ts 挑「tier 最高」時可以
+   * 直接比較數字，不必依賴陣列順序（陣列順序在 fixture/測試手造資料時不見得可靠）。缺省 undefined
+   * 時 ai.ts 的挑選邏輯退回「陣列中較後面的即視為較高 tier」（見 engine/ai.ts pickHighestTierSkill
+   * 的型別註解）。BACKEND 的 wireSkill 目前尚未送這個欄位（見 fromApi.ts mapPartyMemberSkills 的
+   * 型別擴充註解與本輪回報「需要 BACKEND 增加」）。
+   */
+  tier?: number;
   /** P5：後台/設計填的效果說明文字，角色頁技能區塊與技能欄 tooltip 直接顯示，engine 不解析。 */
   displayText?: string;
   /**

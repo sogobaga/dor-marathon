@@ -46,7 +46,8 @@ function friendlyErr(e: any, table: Record<string, string>, fallback: string): s
 }
 
 // onOpenBattle：DORPG 戰鬥畫面入口（P0 靜態畫面預覽）；本頁已受 dash.rpg_entry 閘門，不另設資格判斷。
-export default function CharacterScreen({ onBack, onOpenBattle }: { onBack: () => void; onOpenBattle?: () => void }) {
+// onOpenTavern（DORPG P6，見契約 dorpg_p6 CONTRACT.md §3.4）：酒館頁入口——組隊伍／雇傭兵腳本。
+export default function CharacterScreen({ onBack, onOpenBattle, onOpenTavern }: { onBack: () => void; onOpenBattle?: () => void; onOpenTavern?: () => void }) {
   const [data, setData] = useState<RpgMe | null>(null)
   const [jobs, setJobs] = useState<JobDTO[]>([])
   const [skillsData, setSkillsData] = useState<RpgSkillsResponse | null>(null)
@@ -208,9 +209,10 @@ export default function CharacterScreen({ onBack, onOpenBattle }: { onBack: () =
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <h1 style={{ margin: '10px 0 2px', fontSize: 23, fontWeight: 800, color: 'var(--tx)' }}>🎮 角色</h1>
         <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>職業／配點／技能（測試階段）</div>
-        {onOpenBattle && (
-          <div style={{ marginTop: 10 }}>
-            <button onClick={onOpenBattle} style={battleBtn}>⚔️ 進入戰鬥（預覽）</button>
+        {(onOpenBattle || onOpenTavern) && (
+          <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {onOpenBattle && <button onClick={onOpenBattle} style={battleBtn}>⚔️ 進入戰鬥（預覽）</button>}
+            {onOpenTavern && <button onClick={onOpenTavern} style={battleBtn}>🍺 酒館（隊伍／傭兵）</button>}
           </div>
         )}
       </header>

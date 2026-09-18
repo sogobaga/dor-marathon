@@ -159,5 +159,47 @@ const pad10 = (s) => [s, null, null, null, null, null, null, null, null, null]
   ok(skill.hits === undefined, '沒有 effect 也沒有頂層 hits 時，hits 維持 undefined（交給 Skill 型別的缺省語意＝1）')
 }
 
+// ── 5) P6（CONTRACT §3.2／WIRE「戰鬥 bootstrap」）：party member 的 skills/presetName 正確映射；
+//      wireSkill.tier 正確映射到 Skill.tier，且真的能餵給隊友 AI 挑出 tier 最高的技能施放
+//      （呼應 verify-dorpg-engine.mjs 36 號斷言，這次從 wire JSON 出發，涵蓋 fromApi.ts 這一層）。 ──
+{
+  const raw = {
+    party: [
+      { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, weapon: 'sword' },
+      {
+        id: 'companion', name: '傭兵', level: 56, hp: 500, hpMax: 500, mp: 50, mpMax: 50, portraitUrl: null,
+        stats: { hpMax: 500, mpMax: 50, atk: 60, matk: 60, def: 20, mdef: 20 }, weapon: 'bow',
+        presetName: '示範腳本',
+        skills: [
+          { id: 'dmg_a', name: '技能甲', iconUrl: '', cooldownMs: 0, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1.0, flat: 0, weapon: 'bow', castMs: 0, tier: 1 },
+          { id: 'dmg_b', name: '技能乙', iconUrl: '', cooldownMs: 0, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 2.0, flat: 0, weapon: 'bow', castMs: 0, tier: 2 },
+        ],
+      },
+    ],
+    enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 99999, hpMax: 99999, slot: 'front_center', imageUrl: '', canEscape: true, stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 } }],
+    scene: { id: 's', name: 's', imageUrl: '', slots: [] },
+    skills: pad10(null),
+    items: [],
+    initialTargetId: 'e1',
+  }
+  const sample = sampleFromBootstrap(raw)
+  eq(sample.party[1].presetName, '示範腳本', 'party member 的 presetName 原樣透傳')
+  eq(sample.party[1].skills.length, 2, 'party member 的 skills 陣列正確映射（2 顆技能）')
+  eq(sample.party[1].skills[0].id, 'dmg_a', '第一顆技能 id 正確')
+  eq(sample.party[1].skills[0].tier, 1, 'wireSkill.tier 正確映射到 Skill.tier')
+  eq(sample.party[1].skills[1].tier, 2, '第二顆技能 tier 也正確映射')
+  eq(sample.party[0].skills.length, 0, '玩家本人（party[0]）沒有 skills 欄位時，映射結果是空陣列（不是 undefined）')
+  ok(sample.party[0].presetName === undefined, '玩家本人沒有 presetName（未提供時保持 undefined）')
+
+  const cfg = {
+    enemyActIntervalMs: [999999, 999999], allyActIntervalMs: [0, 0],
+    baseMissPct: 0, missMinPct: 0, missMaxPct: 0, critRate: 0, monsterCritPct: 0, monsterCritShieldBase: 0,
+  }
+  let s = createBattle(sample, { now: 0, config: cfg })
+  s = tick(s, 0)
+  const cast = s.events.find((e) => e.kind === 'skillCast' && e.actorId === 'companion')
+  eq(cast?.skillId, 'dmg_b', '經 fromApi 轉換後，隊友 AI 仍正確挑出 tier 最高（tier:2）的 dmg_b 施放')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

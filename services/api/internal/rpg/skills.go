@@ -149,6 +149,44 @@ type skillsResponse struct {
 	SkillPointsFree  int        `json:"skill_points_free"`
 }
 
+// skillDTOsFromLevels DORPG P6：把「一份技能列表＋一份等級 map」轉成 SkillDTO 清單——抽成獨立
+// 純函式，供 buildSkillsResponse（玩家自己的技能，等級來自 DB）與 presets.go
+// buildPresetSkillDTOs（傭兵腳本草稿，等級來自請求 body 尚未落地）共用同一份展開/前置判斷邏輯，
+// 避免兩處各自實作後彼此漂移。
+func skillDTOsFromLevels(skills []SkillRow, levels map[string]int, skillFree int) []SkillDTO {
+	dtos := make([]SkillDTO, 0, len(skills))
+	for _, s := range skills {
+		lvl := levels[s.ID]
+		prereqOK := true
+		if s.PrereqSkillID != nil {
+			prereqOK = levels[*s.PrereqSkillID] >= s.PrereqLevel
+		}
+		canLevelUp := s.Implemented && prereqOK && lvl < s.MaxLevel && skillFree > 0
+
+		var nextEffect *EffectAtLevel
+		if lvl < s.MaxLevel {
+			e := ExpandEffect(s, lvl+1)
+			nextEffect = &e
+		}
+
+		dtos = append(dtos, SkillDTO{
+			ID: s.ID, Name: s.Name, Path: s.Path, Tier: s.Tier, Kind: s.Kind, DmgType: s.DmgType,
+			Element: s.Element, Target: s.Target, MaxLevel: s.MaxLevel, Level: lvl,
+			PrereqSkillID: s.PrereqSkillID, PrereqLevel: s.PrereqLevel, PrereqOK: prereqOK,
+			CanLevelUp: canLevelUp, MPCost: s.MPCost, MPCostPerLevel: s.MPCostPerLevel,
+			CooldownMs: s.CooldownMs, CastMs: s.CastMs, DisplayText: s.DisplayText, Implemented: s.Implemented,
+			EffectAtLevel:   ExpandEffect(s, lvl),
+			EffectNextLevel: nextEffect,
+			LvPreview: map[string]string{
+				"1":  lvPreviewText(s, minInt(1, s.MaxLevel)),
+				"5":  lvPreviewText(s, minInt(5, s.MaxLevel)),
+				"10": lvPreviewText(s, minInt(10, s.MaxLevel)),
+			},
+		})
+	}
+	return dtos
+}
+
 // buildSkillsResponse 目前職業的技能樹＋玩家等級＋已配點狀態 → 完整 DTO 清單。ch.JobID 為 nil
 // 時 skills 為空陣列（WIRE 明講）。
 func (h *Handler) buildSkillsResponse(ctx context.Context, cfg Config, ch character, effLevel int) (skillsResponse, error) {
@@ -185,36 +223,7 @@ func (h *Handler) buildSkillsResponse(ctx context.Context, cfg Config, ch charac
 		skillFree = 0
 	}
 
-	dtos := make([]SkillDTO, 0, len(skills))
-	for _, s := range skills {
-		lvl := levels[s.ID]
-		prereqOK := true
-		if s.PrereqSkillID != nil {
-			prereqOK = levels[*s.PrereqSkillID] >= s.PrereqLevel
-		}
-		canLevelUp := s.Implemented && prereqOK && lvl < s.MaxLevel && skillFree > 0
-
-		var nextEffect *EffectAtLevel
-		if lvl < s.MaxLevel {
-			e := ExpandEffect(s, lvl+1)
-			nextEffect = &e
-		}
-
-		dtos = append(dtos, SkillDTO{
-			ID: s.ID, Name: s.Name, Path: s.Path, Tier: s.Tier, Kind: s.Kind, DmgType: s.DmgType,
-			Element: s.Element, Target: s.Target, MaxLevel: s.MaxLevel, Level: lvl,
-			PrereqSkillID: s.PrereqSkillID, PrereqLevel: s.PrereqLevel, PrereqOK: prereqOK,
-			CanLevelUp: canLevelUp, MPCost: s.MPCost, MPCostPerLevel: s.MPCostPerLevel,
-			CooldownMs: s.CooldownMs, CastMs: s.CastMs, DisplayText: s.DisplayText, Implemented: s.Implemented,
-			EffectAtLevel:   ExpandEffect(s, lvl),
-			EffectNextLevel: nextEffect,
-			LvPreview: map[string]string{
-				"1":  lvPreviewText(s, minInt(1, s.MaxLevel)),
-				"5":  lvPreviewText(s, minInt(5, s.MaxLevel)),
-				"10": lvPreviewText(s, minInt(10, s.MaxLevel)),
-			},
-		})
-	}
+	dtos := skillDTOsFromLevels(skills, levels, skillFree)
 	return skillsResponse{Job: &job, Skills: dtos, SkillPointsTotal: skillTotal, SkillPointsFree: skillFree}, nil
 }
 

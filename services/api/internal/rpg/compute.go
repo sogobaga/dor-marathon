@@ -284,8 +284,10 @@ func Compute(cfg Config, in ComputeInput) Derived {
 	totalSpent := TotalSpentStats(cfg, s)
 
 	return Derived{
-		MaxHP: int(math.Round(maxHP)),
-		MaxMP: int(math.Round(maxMP)),
+		// DORPG P6（CONTRACT §1）：HP/MP 一律整數，且改用 floor（不是 Round）——戰報／戰鬥中
+		// 顯示絕不能因為四捨五入比實際能扣的血量「多」出零點幾點，floor 對玩家永遠保守。
+		MaxHP: int(math.Floor(maxHP)),
+		MaxMP: int(math.Floor(maxMP)),
 
 		Atk:  atk,
 		Def:  def,

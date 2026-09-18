@@ -8,6 +8,20 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 /**
+ * P6（CONTRACT §1）：HP/MP 整數不變式共用的取整方式——一律 Math.floor（向下取整），不是
+ * Math.round（就近取整）：契約原文逐項點名「傷害向下取整、治療向下取整、上限向下取整」，
+ * 用同一個具名函式取代散落各處的 Math.round，讓「這裡是刻意配合契約的 floor，不是隨手選的
+ * 取整方式」這件事在呼叫端一眼可見（也方便之後要稽核『所有 hp/mp 相關運算是否都改對了』時
+ * grep 這個函式名即可，不必每個 Math.round/Math.floor 呼叫點都重新判斷語意）。只用在
+ * hp/mp/hpMax/mpMax/shield 這條「整數不變式」清單內的欄位——ATK/DEF/MATK/MDEF 等戰鬥屬性
+ * 不在契約要求範圍內，沿用原本的 Math.round（見 combat.ts/effects.ts 對這兩類欄位的取整方式
+ * 刻意不同的說明）。
+ */
+export function floorInt(v: number): number {
+  return Math.floor(v);
+}
+
+/**
  * 規格 §2：蓄氣倍率 = 1 + (max-1) × clamp((hold-chargeMinMs)/chargeFullMs, 0, 1)。
  * 用 cfg 欄位泛化（不寫死 300/1200/1.5/2.5），滿蓄時間 = chargeMinMs + chargeFullMs（預設 1500ms）。
  */
@@ -228,8 +242,11 @@ export function randRange(rng: () => number, range: readonly [number, number]): 
 export function deriveDefaultActorStats(level: number, hpMax: number, mpMax: number): ActorStats {
   const scale = level / 56;
   return {
-    hpMax,
-    mpMax,
+    // P6（CONTRACT §1）：hpMax/mpMax 一律 floor——呼叫端（PartyMember.hpMax/mpMax）理論上已經是
+    // 整數（Go Derived.MaxHP/MaxMP 本身是 int），這裡只是最後一道防線，不讓任何上游浮點誤差
+    // （或未來資料來源）流進戰鬥狀態變成小數 HP。
+    hpMax: floorInt(hpMax),
+    mpMax: floorInt(mpMax),
     atk: Math.round(135 * scale),
     matk: Math.round(80 * scale),
     def: Math.round(35 * scale),
@@ -243,7 +260,8 @@ export function deriveDefaultActorStats(level: number, hpMax: number, mpMax: num
  */
 export function deriveDefaultEnemyStats(level: number, hpMax: number): ActorStats {
   return {
-    hpMax,
+    // P6（CONTRACT §1）：同 deriveDefaultActorStats，floor 是最後一道防線。
+    hpMax: floorInt(hpMax),
     mpMax: 0,
     atk: Math.round(18 + level * 2.2),
     matk: Math.round(18 + level * 2.2),

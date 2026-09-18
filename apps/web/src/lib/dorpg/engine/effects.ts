@@ -5,6 +5,7 @@
 // 見 context.ts toCtx 對 activeEffects 的深拷貝），職責跟 formulas.ts 的純數值函式不同。
 import type { ActorStats, BuffDebuffStat, CombatRating } from '../types';
 import type { ActiveEffect, BattleConfig } from './types';
+import { floorInt } from './formulas';
 
 /** 該屬性目前所有存活效果值加總。「同 stat 不同來源」本來就該疊加——只有「同 stat 同來源」才會在
  *  applyStatusEffect 被合併成一筆，這裡單純加總陣列裡剩下的每一筆，不需要再去重。 */
@@ -47,7 +48,10 @@ export function pruneAndRegenEffects(
     if (e.stat === 'hp_regen_pct' && actor.hp > 0) {
       let next = e.nextTickAt ?? now;
       while (next <= now) {
-        onRegen(Math.round(actor.stats.hpMax * (e.value / 100)));
+        // P6（CONTRACT §1）：hp_regen 明講「向下取整」，Math.round 改成 floorInt——負值 value（例如
+        // 未來設計出「持續掉血」的 debuff 誤用同一個 stat）floor 會往負無窮取整（扣更多），這正是
+        // 契約「無條件捨去」的方向性，不是四捨五入。
+        onRegen(floorInt(actor.stats.hpMax * (e.value / 100)));
         next += 1000;
       }
       kept.push({ ...e, nextTickAt: next });
@@ -63,8 +67,11 @@ export function pruneAndRegenEffects(
 export function effectiveStats(base: ActorStats, effects: ActiveEffect[]): ActorStats {
   const mul = (pct: BuffDebuffStat) => 1 + activeStatSum(effects, pct) / 100;
   return {
-    hpMax: base.hpMax,
-    mpMax: base.mpMax,
+    // P6（CONTRACT §1）：hpMax/mpMax 本身不會被任何 buff/debuff 詞彙即時改動（BuffDebuffStat 沒有
+    // hp_max_pct/mp_max_pct，那是被動技能、由後端算進 base 值），這裡的 floorInt 純粹是防禦——萬一
+    // base 本身不知何故帶了小數（例如上游資料層的臨時 bug），effectiveStats 不會把小數繼續傳下去。
+    hpMax: floorInt(base.hpMax),
+    mpMax: floorInt(base.mpMax),
     atk: Math.round(base.atk * mul('atk_pct')),
     matk: Math.round(base.matk * mul('matk_pct')),
     def: Math.round(base.def * mul('def_pct')),

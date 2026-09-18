@@ -510,3 +510,27 @@ func TestDefaultConfig_TestLevelEnabledDefaultsTrue(t *testing.T) {
 		t.Fatalf("DefaultConfig().TestLevelEnabled 應預設為 true（維持現行行為，正式上線前才手動關閉）")
 	}
 }
+
+// TestCompute_MaxHPMaxMPFloorNotRound DORPG P6（CONTRACT §1）：「後端 Compute 的 HPMax/MPMax
+// 回傳整數（passive pct 乘完 floor）」——刻意挑一組會落在 x.5 的輸入，確認用的是 math.Floor
+// 而不是 math.Round（兩者在整數輸入下無法區分，必須用小數輸入才測得出差異）。VitHPPct=1（每點
+// VIT +1% 最大HP）×VIT=150 會讓乘數變成 1+1.5=2.5，BaseHP=1 讓 hpBase=1，maxHP=1*2.5=2.5——
+// Round(2.5)=2（Go math.Round 對稱四捨五入到偶數的行為在這個值恰好是 2，容易誤判成"已經是floor"，
+// 換一組不會被四捨五入巧合掩蓋的輸入更保險：hpBase=3 → maxHP=3*2.5=7.5，Round=8、Floor=7，
+// 兩者明確不同）。
+func TestCompute_MaxHPMaxMPFloorNotRound(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.BaseHP = 3
+	cfg.HPPerBaseLevel = 0
+	cfg.VitHPPct = 150 // VIT=1 時 1+150*1/100 = 2.5 倍
+	cfg.BaseMP = 3
+	cfg.MPPerBaseLevel = 0
+	cfg.IntMPPct = 150
+	d := Compute(cfg, ComputeInput{BaseLevel: 0, Stats: Stats{Vit: 1, Int: 1}})
+	if d.MaxHP != 7 {
+		t.Fatalf("MaxHP 應為 floor(3*2.5)=7（不是 round=8），got %v", d.MaxHP)
+	}
+	if d.MaxMP != 7 {
+		t.Fatalf("MaxMP 應為 floor(3*2.5)=7（不是 round=8），got %v", d.MaxMP)
+	}
+}

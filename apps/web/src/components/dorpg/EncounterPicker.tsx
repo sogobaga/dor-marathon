@@ -248,6 +248,11 @@ function EncounterCard({ enc, onPick }: { enc: RpgEncounterSummary; onPick: () =
             {enc.subtitle}
           </div>
         ) : null}
+        {/* DORPG P6（契約 §2）：怪物等級制——每場一個固定 monster_level，六場依序 10/20/30/40/50/60，
+            讓玩家事先知道這場的強度感覺，不必打進去才發現太硬/太弱。 */}
+        <div className={styles.cardSubtitle} style={{ color: PALETTE.borderGold, fontWeight: 700 }}>
+          怪物 Lv.{Math.floor(enc.monster_level)}
+        </div>
         <div className={styles.monsterRow}>
           {enc.monsters.map((m, i) => (
             // eslint-disable-next-line @next/next/no-img-element

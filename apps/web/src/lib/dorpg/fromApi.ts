@@ -95,6 +95,16 @@ function asRating(r: RpgBootstrapRatingRaw | undefined): CombatRating | undefine
   };
 }
 
+/** P6：party member 的 skills（AI 可用技能）→ Skill[]，重用 mapSkill 逐項驗證／給預設值，
+ *  跟頂層 sample.skills（玩家技能欄）走同一套轉換規則，只是這裡不需要保留 null（沒有「10 格
+ *  裝備欄」的概念，AI 只在乎「有哪些技能可以挑」，見 engine/ai.ts 的挑選邏輯）。缺欄位（BACKEND
+ *  尚未送、或本來就是沒有 skills 的舊資料）一律回傳 []，對齊 PartyMember.skills 型別註解的
+ *  缺省語意。 */
+function mapPartyMemberSkills(skills: RpgBootstrapSkillRaw[] | undefined): Skill[] {
+  if (!Array.isArray(skills)) return [];
+  return skills.map(mapSkill).filter((s): s is Skill => s !== null);
+}
+
 function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
   return {
     id: p.id,
@@ -111,6 +121,9 @@ function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
     // P5：純透傳供 FRONTEND 顯示職業徽章用（見 PartyMember.jobId 型別註解），engine 戰鬥邏輯不讀它；
     // 缺欄位（舊版後端／api.ts 尚未補上）一律當「未選職業」。
     jobId: p.jobId ?? null,
+    // P6（CONTRACT §3.2）：AI 可用技能／腳本名稱，見上方 mapPartyMemberSkills。
+    skills: mapPartyMemberSkills(p.skills),
+    presetName: p.presetName,
   };
 }
 
@@ -230,6 +243,10 @@ function mapSkill(s: RpgBootstrapSkillRaw | null): Skill | null {
     displayText: s.displayText,
     implemented: s.implemented,
     effect: asEffect(eff, kind, target),
+    // P6（CONTRACT §3.2）：INTEGRATOR 已在 battle.go／api.ts 補上正式的 tier 欄位（2026-09-18，
+    // 見下方型別註解），未選職業的既有 5 個技能仍缺這欄（後端 omitempty 送 0 或不送），
+    // ai.ts 的 pickHighestTierSkill 對這些技能一樣退回陣列位置代理值。
+    tier: isFiniteNumber(s.tier) ? s.tier : undefined,
   };
 }
 

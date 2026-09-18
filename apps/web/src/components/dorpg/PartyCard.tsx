@@ -54,14 +54,21 @@ export default function PartyCard({
   statusTags,
 }: PartyCardProps) {
   const scale = width / PARTY_SLOTS.w;
-  const dead = member !== null && member.hp <= 0;
+  // DORPG P6（契約 §1：HP/MP 出現小數務必整數）：引擎/bootstrap 理論上已經整數化，這裡是顯示層
+  // 最後一道保險（Math.floor，向下取整同引擎規則）——即使上游哪天不小心漏 floor，畫面也絕不出現
+  // 小數點。hpMax/mpMax 同樣整數化，血條 clip-path 與 aria-label 都改吃這幾個整數變數。
+  const hp = member ? Math.floor(member.hp) : 0;
+  const hpMax = member ? Math.floor(member.hpMax) : 0;
+  const mp = member ? Math.floor(member.mp) : 0;
+  const mpMax = member ? Math.floor(member.mpMax) : 0;
+  const dead = member !== null && hp <= 0;
   // 瀕死門檻 0 < hp/hpMax ≤ 0.2（kit 說明）；hp = 0 走死亡態，不再算瀕死。
-  const critical = member !== null && !dead && member.hpMax > 0 && member.hp / member.hpMax <= CRITICAL_RATIO;
-  const hpText = member ? String(Math.max(0, member.hp)) : '';
-  const mpText = member ? String(Math.max(0, member.mp)) : '';
+  const critical = member !== null && !dead && hpMax > 0 && hp / hpMax <= CRITICAL_RATIO;
+  const hpText = member ? String(Math.max(0, hp)) : '';
+  const mpText = member ? String(Math.max(0, mp)) : '';
 
   const ariaLabel = member
-    ? `${member.name}，等級 ${member.level}，HP ${hpText}／${member.hpMax}，MP ${mpText}／${member.mpMax}${dead ? '，已倒下' : critical ? '，瀕死' : ''}${targetable ? '，可選為目標' : ''}`
+    ? `${member.name}，等級 ${member.level}，HP ${hpText}／${hpMax}，MP ${mpText}／${mpMax}${dead ? '，已倒下' : critical ? '，瀕死' : ''}${targetable ? '，可選為目標' : ''}`
     : '空白隊員欄位';
 
   // targetable 時點卡片＝選目標（onPick），不是瀏覽隊員（onSelect）；沒給 onPick 就退回 onSelect，
@@ -127,7 +134,7 @@ export default function PartyCard({
               <img
                 className={styles.fill}
                 src={kitAsset(critical ? 'bar_fill_hp_critical' : 'bar_fill_hp_green')}
-                style={{ clipPath: barClipPath(member.hp, member.hpMax) }}
+                style={{ clipPath: barClipPath(hp, hpMax) }}
                 alt=""
                 draggable={false}
               />
@@ -137,7 +144,7 @@ export default function PartyCard({
               <img
                 className={styles.fill}
                 src={kitAsset('bar_fill_mp_blue')}
-                style={{ clipPath: barClipPath(member.mp, member.mpMax) }}
+                style={{ clipPath: barClipPath(mp, mpMax) }}
                 alt=""
                 draggable={false}
               />

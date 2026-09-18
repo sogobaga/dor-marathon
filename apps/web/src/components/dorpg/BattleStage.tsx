@@ -239,7 +239,7 @@ const BattleStage = forwardRef<BattleStageHandle, BattleStageProps>(function Bat
             <button
               type="button"
               className={s.monster}
-              aria-label={`選擇 ${enemy.name}，等級 ${enemy.level}，HP ${enemy.hp}／${enemy.hpMax}`}
+              aria-label={`選擇 ${enemy.name}，等級 ${Math.floor(enemy.level)}，HP ${Math.floor(enemy.hp)}／${Math.floor(enemy.hpMax)}`}
               aria-pressed={selected}
               onClick={() => onSelect(enemy.id)}
               style={{ left: Math.round(left), top: Math.round(top), width: Math.round(dw), height: Math.round(dw), zIndex: zMonster(idx) }}
@@ -314,6 +314,11 @@ export function EnemyPlate({ level, hp, hpMax, width = ENEMY_PLATE.w, className,
   const pk = width / ENEMY_PLATE.w
   const h = ENEMY_PLATE.h * pk
   const levelBox = fracStyle(ENEMY_PLATE.level)
+  // DORPG P6（契約 §1：HP 務必整數；§2：怪物等級制 Lv.N 顯示）：Math.floor 是顯示層最後一道保險，
+  // 同 PartyCard.tsx 的處理方式——引擎/bootstrap 理論上已整數化，這裡不信任上游、自己再保一次。
+  const levelI = Math.floor(level)
+  const hpI = Math.floor(hp)
+  const hpMaxI = Math.floor(hpMax)
   return (
     <div
       className={className ? `${p.plate} ${className}` : p.plate}
@@ -332,10 +337,10 @@ export function EnemyPlate({ level, hp, hpMax, width = ENEMY_PLATE.w, className,
           lineHeight: `${ENEMY_PLATE.level.h * h}px`,
         }}
       >
-        {level}
+        {levelI}
       </span>
       <span className={p.hp} style={fracStyle(ENEMY_PLATE.hpFill)}>
-        <img src={kitAsset('bar_fill_enemy_red')} alt="" draggable={false} style={{ clipPath: barClipPath(hp, hpMax) }} />
+        <img src={kitAsset('bar_fill_enemy_red')} alt="" draggable={false} style={{ clipPath: barClipPath(hpI, hpMaxI) }} />
       </span>
     </div>
   )

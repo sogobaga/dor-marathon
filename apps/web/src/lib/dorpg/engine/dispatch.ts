@@ -5,7 +5,7 @@ import { resolveAttackOrDamageSkill } from './combat';
 import type { Ctx } from './context';
 import { fromCtx, pushEvent, pushLog, toCtx } from './context';
 import { effectiveRating } from './effects';
-import { attackCooldownFor, chargeMultiplier, effectiveCastMs } from './formulas';
+import { attackCooldownFor, chargeMultiplier, effectiveCastMs, floorInt } from './formulas';
 import type { BattleState, Command, PartyActor } from './types';
 import { beginResolving, computeVictoryDefeatDraw, tick } from './tick';
 
@@ -33,7 +33,7 @@ function reject(ctx: Ctx, reason: string): BattleState {
  * castReductionPct（P3：DEX→詠唱縮減）在這裡永遠只影響玩家，不需要另外分支判斷。
  */
 function commitCast(ctx: Ctx, actor: PartyActor, skill: Skill, targetId: string | 'ALL' | 'ALL_ENEMIES'): BattleState {
-  actor.mp -= skill.mpCost;
+  actor.mp = floorInt(actor.mp - skill.mpCost); // P6（CONTRACT §1）：MP 整數不變式，見 formulas.ts floorInt。
   ctx.skillReadyAt[skill.id] = ctx.now + skill.cooldownMs;
   actor.action = 'casting';
   // P5：玩家身上的 buff 可能有 castReductionPct 加成（DEX/INT 效果之外的額外來源），套 effectiveRating
@@ -205,13 +205,15 @@ function applyCommand(state: BattleState, cmd: Command, now: number): BattleStat
       }
       entry.quantity -= 1;
       if (isRevive) {
-        target.hp = Math.round(target.stats.hpMax * (entry.def.amount / 100));
+        // P6（CONTRACT §1）：復活量是「hpMax 的 amount%」，跟 hp_regen_pct 同一種百分比運算，
+        // 一併改 Math.round 為 floorInt（向下取整）。
+        target.hp = floorInt(target.stats.hpMax * (entry.def.amount / 100));
         target.action = 'idle';
         pushEvent(ctx, { kind: 'actorRevive', actorId: target.id });
       } else if (entry.def.kind === 'hp') {
-        target.hp = Math.min(target.stats.hpMax, target.hp + entry.def.amount);
+        target.hp = floorInt(Math.min(target.stats.hpMax, target.hp + entry.def.amount));
       } else {
-        target.mp = Math.min(target.stats.mpMax, target.mp + entry.def.amount);
+        target.mp = floorInt(Math.min(target.stats.mpMax, target.mp + entry.def.amount));
       }
       pushEvent(ctx, { kind: 'itemUsed', itemId: entry.def.id, targetId: target.id, amount: entry.def.amount });
       ctx.trayMode = 'skills';

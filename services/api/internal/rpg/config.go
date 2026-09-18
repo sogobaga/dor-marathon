@@ -306,6 +306,30 @@ type Config struct {
 	// （即 ×1.25）。見 scaling.go 檔頭與 battle.go buildWireConfig。
 	BattleWeaknessBonusPct float64 `json:"battle_weakness_bonus_pct"`
 
+	// --- DORPG P6（CONTRACT §2）：怪物等級制（battle_scale_mode="level"，本輪起為預設）。
+	// 怪物數值＝參考玩家 RefPlayerStats(cfg,N)（見 reflevel.go）的衍生值，乘上怪物自己的
+	// *_mult、乘上這四個「等級模式」專用比例、再乘上 encounter/slot 的 power_scale。matk 刻意
+	// 不乘這四個比例之一（見 ScaleMonsterByLevel 註解，契約 §2 明講 matk 只乘 atk_mult，不疊加
+	// battle_lvl_atk_ratio/power_scale）。
+	//
+	// SIM 校準（2026-09-18，真引擎模擬：Lv27 輕騎士玩家＋小咪／小咪+阿深，六場 monster_level
+	// 10..60 各 ≥50 種子，見 scratchpad/dorpg_p6/sim/RESULT.md）：1.0/1.0/1.0/1.0 這組「完全信任
+	// RefPlayerStats 曲線本身」的預設值雖然勝率曲線技術上單調，但存在兩個問題——① Lv10–40 四場
+	// 全部 100% 勝率、直到 Lv50 才斷崖式崩落（單一 companion 隊伍 100%→0–2%），難度中段幾乎沒有
+	// 感覺；② Lv60（首領戰）主要是 timeout（雙方都打不死對方）而不是真的 defeat——怪物總血量
+	// （尤其首領 hp_mult=7.0 疊乘）遠超過玩家＋隊友在 300 秒內能打穿的量，變成「耗到超時」而非
+	// 乾脆的敗北，體驗上比爽快輸掉更差。調整：HP 比例下修到 0.8（同比例壓低怪物總血量，讓高等級
+	// 戰鬥能在時限內真正分出勝負）、ATK 比例上修到 1.25（提高怪物威脅，把「單一 companion 隊伍
+	// 在 Lv50 幾乎必勝」往下拉到接近五五波，Lv60 從 timeout 轉成乾脆的 defeat）；DEF/MDEF 維持
+	// 1.0（不需要動：per-hit 傷害量本身沒有離譜到打不動或一擊必殺，問題出在血量總量與時限的關係，
+	// 動 DEF 反而會連帶影響「有沒有打得動」這個更基本的手感）。只調了兩個比例、沒有動怪物 *_mult
+	// 或任何 encounter.power_scale，符合「最小調整」原則；重跑後六場曲線見 RESULT.md，仍然單調且
+	// Lv10 輕鬆全勝／Lv60 兩組隊伍皆幾乎必敗（且是真的 defeat，不再是 timeout）。
+	BattleLvHPRatio   float64 `json:"battle_lvl_hp_ratio"`
+	BattleLvAtkRatio  float64 `json:"battle_lvl_atk_ratio"`
+	BattleLvDefRatio  float64 `json:"battle_lvl_def_ratio"`
+	BattleLvMdefRatio float64 `json:"battle_lvl_mdef_ratio"`
+
 	// TestLevelEnabled 審查#2【中・CONFIRMED】新增：測試等級功能的獨立總開關。CONTRACT §2 的
 	// test_level 原本只靠 requireEntry 白名單擋（見 handler.go）——但白名單本來就是拿來放寬給
 	// 更多人測試用的，一旦放寬，任何在白名單內的人都能把自己的等級設成 99，沒有第二道閘門。
@@ -390,7 +414,9 @@ func DefaultConfig() Config {
 		ResistPctPerPoint: 0.1,
 		FleeCapPct:        95,
 
-		BattleScaleMode:     "power",
+		// DORPG P6（CONTRACT §2）：預設模式由 "power" 改為 "level"——怪物數值改依
+		// rpg_encounters.monster_level 對照參考玩家算絕對值，"power" 路徑完整保留、可整場切回。
+		BattleScaleMode:     "level",
 		BattleMobHits:       56,
 		BattleMobDefRatio:   0.25,
 		BattleEnemyDPSRatio: 0.2,
@@ -472,6 +498,13 @@ func DefaultConfig() Config {
 		CritMultMax: 2.25,
 
 		BattleWeaknessBonusPct: 25,
+
+		// DORPG P6：level 模式四個比例——SIM 校準後之值，見欄位上方註解（HP 0.8／ATK 1.25，
+		// DEF/MDEF 維持 1.0 不變）。
+		BattleLvHPRatio:   0.8,
+		BattleLvAtkRatio:  1.25,
+		BattleLvDefRatio:  1.0,
+		BattleLvMdefRatio: 1.0,
 
 		// 審查#2：預設開啟（維持現行「測試階段人人可設」行為），正式上線前由後台手動關閉。
 		TestLevelEnabled: true,
@@ -708,6 +741,18 @@ func (c Config) Validate() error {
 	}
 	if c.BattleWeaknessBonusPct < 0 {
 		return fmt.Errorf("battle_weakness_bonus_pct must be >= 0")
+	}
+
+	// --- DORPG P6（CONTRACT §2）：level 模式四個比例必須 > 0——這四個數字是乘數，0 或負值會讓
+	// 怪物 HP/ATK/DEF/MDEF 變成 0 或負的（DEF/MDEF 是唯一沒有 max(1,...) 保底的一側，見
+	// ScaleMonsterByLevel），不是「暫時關閉某加成」的合理極端值，而是讓整場戰鬥失去意義。 ---
+	var bad4 []string
+	requirePositive(&bad4, "battle_lvl_hp_ratio", c.BattleLvHPRatio)
+	requirePositive(&bad4, "battle_lvl_atk_ratio", c.BattleLvAtkRatio)
+	requirePositive(&bad4, "battle_lvl_def_ratio", c.BattleLvDefRatio)
+	requirePositive(&bad4, "battle_lvl_mdef_ratio", c.BattleLvMdefRatio)
+	if len(bad4) > 0 {
+		return fmt.Errorf("these fields must be > 0: %v", bad4)
 	}
 	return nil
 }

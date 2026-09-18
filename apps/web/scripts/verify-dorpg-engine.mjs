@@ -9,6 +9,9 @@
 // 折衷做法：只在這支驗證腳本裡註冊一個小型 ESM resolve hook——遇到相對匯入解析失敗時，依序補
 // .ts/.tsx 副檔名重試——完全不用改 tsconfig.json 或把任何 import 路徑寫死成 .ts（那些檔案不在
 // ENGINE 的可寫清單內）。data: URL 內嵌 loader 原始碼，不需要另外一個實體檔案。
+// P6：新增載入 fixture.ts（見下方 buildFixtureSample/loadRefPlayerTable 匯入）——它內部
+// `from './engine'` 匯入的是一個目錄（對應 engine/index.ts），純 ESM 不做目錄 index 解析會丟
+// ERR_UNSUPPORTED_DIR_IMPORT，補上跟 verify-dorpg-fromapi.mjs 同款的 /index.ts 候選重試。
 import assert from 'node:assert/strict'
 import { register } from 'node:module'
 
@@ -17,9 +20,9 @@ export async function resolve(specifier, context, nextResolve) {
   try {
     return await nextResolve(specifier, context)
   } catch (err) {
-    if (err && err.code === 'ERR_MODULE_NOT_FOUND' && specifier.startsWith('.')) {
-      for (const ext of ['.ts', '.tsx']) {
-        try { return await nextResolve(specifier + ext, context) } catch {}
+    if (err && (err.code === 'ERR_MODULE_NOT_FOUND' || err.code === 'ERR_UNSUPPORTED_DIR_IMPORT') && specifier.startsWith('.')) {
+      for (const suffix of ['.ts', '.tsx', '/index.ts', '/index.tsx']) {
+        try { return await nextResolve(specifier + suffix, context) } catch {}
       }
     }
     throw err
@@ -42,6 +45,12 @@ const {
 
 const typesUrl = new URL('../src/lib/dorpg/types.ts', import.meta.url).href
 const { SKILL_SLOTS } = await import(typesUrl)
+
+// P6（CONTRACT §2）：level 模式怪物縮放公式住在 fixture.ts（離線鏡像），不是 engine 本身——這裡
+// 額外載入 fixture.ts 驗證 buildFixtureSample(..., {mode:'level', refTable}) 對 refPlayerTable
+// 某幾列算出的怪物 hp/atk/def/mdef/matk 精確值（見下方 39/40 號區塊）。
+const fixtureUrl = new URL('../src/lib/dorpg/fixture.ts', import.meta.url).href
+const { buildFixtureSample, loadRefPlayerTable } = await import(fixtureUrl)
 
 let pass = 0, fail = 0
 function ok(cond, label) {
@@ -425,12 +434,17 @@ function fixedRng(seq) {
   eq(drained.events.length > 0, true, 'drainEvents 回傳先前累積的事件')
 }
 
-// ── 19) 隊友 AI：普攻與依血量改用治療 ──
+// P6（CONTRACT §3.2）：隊友 AI 改吃自己的 PartyMember.skills（不再借用 BattleState.skills），
+// 下面的 HEAL_SKILL 對應 makeSample() 頂層 skills 陣列裡同一顆 'heal' 定義，供 19/29/30 號測試
+// 的 healer 掛在自己身上。
+const HEAL_SKILL = { id: 'heal', name: '治療', iconUrl: '', cooldownMs: 8000, kind: 'heal', target: 'ally', mpCost: 20, coefficient: 2.0, flat: 80, weapon: 'staff', castMs: 500 }
+
+// ── 19) 隊友 AI：普攻與依血量改用治療（P6：改吃 healer 自己的 skills，見上方 HEAL_SKILL） ──
 {
   const sample = makeSample({
     party: [
       { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 } },
-      { id: 'healer', name: '輔助', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 50, matk: 80, def: 20, mdef: 20 }, weapon: 'staff' },
+      { id: 'healer', name: '輔助', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 50, matk: 80, def: 20, mdef: 20 }, weapon: 'staff', skills: [HEAL_SKILL] },
     ],
   })
   // 普攻：allyActIntervalMs 設 [0,0] 讓 healer 一開始就能行動；血量都健康所以走普攻分支。
@@ -440,12 +454,12 @@ function fixedRng(seq) {
   ok(!!allyAtk, '隊友 AI 對目前目標自動普攻')
   eq(allyAtk.charged, false, '隊友普攻不蓄氣')
 
-  // 治療分支：把 player 打到 <40% hp，輔助 AI（第一位非玩家隊員）改放 heal。
+  // 治療分支（P6 CONTRACT §3.2 tier①：<50% 觸發）：把 player 打到 <50% hp，healer 改放 heal。
   let s2 = createBattle(sample, { now: 0, config: { ...FAR_CONFIG, allyActIntervalMs: [0, 0] } })
-  s2.party[0].hp = 100 // 800 的 12.5%，< 40%
+  s2.party[0].hp = 100 // 800 的 12.5%，< 50%
   s2 = tick(s2, 0)
   const healEv = s2.events.find((e) => e.kind === 'heal' && e.actorId === 'healer')
-  ok(!!healEv && healEv.targetId === 'player', '隊友血量 <40% 時輔助 AI 改用 heal 技能')
+  ok(!!healEv && healEv.targetId === 'player', '隊友血量 <50% 時，有 heal 技能的隊友改用 heal（P6 五段優先序①）')
 }
 
 // ── 20) 敵人 AI 完整時序：windup→attacking→idle 排程下一次 ──
@@ -649,11 +663,11 @@ function fixedRng(seq) {
   const sample = makeSample({
     party: [
       { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 } },
-      { id: 'healer', name: '輔助', level: 56, hp: 100, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 50, matk: 80, def: 20, mdef: 20 }, weapon: 'staff' },
+      { id: 'healer', name: '輔助', level: 56, hp: 100, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 50, matk: 80, def: 20, mdef: 20 }, weapon: 'staff', skills: [HEAL_SKILL] },
     ],
   })
   let s = createBattle(sample, { now: 0, config: { ...FAR_CONFIG, allyActIntervalMs: [0, 0] } })
-  s = tick(s, 0) // healer 血量 100/800=12.5%<40%，觸發治療（用掉的是 aiSkillReadyAt）
+  s = tick(s, 0) // healer 血量 100/800=12.5%<50%，觸發治療（用掉的是 aiSkillReadyAt）
   ok(s.events.some((e) => e.kind === 'heal' && e.actorId === 'healer'), '（前提）healer 這一步真的觸發了治療')
   eq(s.skillReadyAt['heal'] ?? 0, 0, 'AI 用掉治療技能，不會動到玩家的 skillReadyAt（UI 契約既有欄位）')
   ok((s.aiSkillReadyAt['healer']?.['heal'] ?? 0) > 0, 'AI 自己的冷卻記在 aiSkillReadyAt')
@@ -671,13 +685,13 @@ function fixedRng(seq) {
     return makeSample({
       party: [
         { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 } },
-        { id: 'healer', name: '輔助', level: 56, hp: healerHp, hpMax: 100, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 100, mpMax: 100, atk: 50, matk: 80, def: 20, mdef: 20 }, weapon: 'staff' },
+        { id: 'healer', name: '輔助', level: 56, hp: healerHp, hpMax: 100, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 100, mpMax: 100, atk: 50, matk: 80, def: 20, mdef: 20 }, weapon: 'staff', skills: [HEAL_SKILL] },
         { id: 'ally2', name: '夥伴二', level: 56, hp: ally2Hp, hpMax: 100, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 100, mpMax: 100, atk: 50, matk: 50, def: 20, mdef: 20 } },
       ],
     })
   }
   {
-    // healer 20%（最低但 ≥15%），ally2 35%，兩者都 <40% 門檻：規則要求優先救「非自己」的 ally2。
+    // healer 20%（最低但 ≥15%），ally2 35%，兩者都 <50% 門檻：規則要求優先救「非自己」的 ally2。
     let s = createBattle(makeHealPrioritySample(20, 35), { now: 0, config: { ...FAR_CONFIG, allyActIntervalMs: [0, 0] } })
     s = tick(s, 0)
     const healEv = s.events.find((e) => e.kind === 'heal' && e.actorId === 'healer')
@@ -1413,6 +1427,199 @@ function fixedRng(seq) {
   noBonus = dispatch(noBonus, { type: 'ATTACK_RELEASE' }, 0)
   const noBonusEv = noBonus.events.find((e) => e.kind === 'attack')
   eq(noBonusEv.damage, Math.floor(135 * 1.75) - 35, '沒有 critDmgPct 的對照組回到既有傷害（跟第 52 號測試一致），確認新加成不是恆定套用')
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// P6（DORPG 第六輪：HP/MP 整數不變式、隊友 AI 五段優先序、level 模式怪物公式）新增測試：34 號起。
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── 34) CONTRACT §1：HP/MP 整數不變式——pct buff／hp_regen／heal coef／multi-hit／
+//        damage_taken_pct 混雜的隨機序列跑完一整場戰鬥後，所有 party/enemy 的
+//        hp/mp/hpMax/mpMax/shield 全部仍是整數（Number.isInteger）。 ──
+{
+  const sample = makeSample({
+    party: [
+      { id: 'player', name: '玩家', level: 56, hp: 777, hpMax: 777, mp: 50, mpMax: 50, portraitUrl: null, stats: { hpMax: 777, mpMax: 50, atk: 135, matk: 83, def: 35, mdef: 28 } },
+      {
+        id: 'ally', name: '夥伴', level: 56, hp: 555, hpMax: 555, mp: 50, mpMax: 50, portraitUrl: null,
+        stats: { hpMax: 555, mpMax: 50, atk: 41, matk: 83, def: 20, mdef: 20 }, weapon: 'staff',
+        skills: [
+          // heal：coefficient/flat 刻意用非整十數字，逼 computeHeal 的 floor 派上用場。
+          { id: 'heal2', name: '雜訊治療', iconUrl: '', cooldownMs: 0, kind: 'heal', target: 'ally', mpCost: 3, coefficient: 0.31, flat: 11, weapon: 'staff', castMs: 0 },
+          // buff：hp_regen_pct（pct buff／regen）。
+          { id: 'regen_buff', name: '回氣', iconUrl: '', cooldownMs: 5000, kind: 'buff', target: 'self', mpCost: 2, coefficient: 0, flat: 0, weapon: 'staff', castMs: 0, effect: { kind: 'buff', stat: 'hp_regen_pct', value: 7, durationMs: 100000, target: 'self', mpCost: 2 } },
+          // buff：damage_taken_pct（打到 player 身上，逼 applyPartyDamage 的 floor(rawDamage×dtMul) 派上用場）。
+          { id: 'dt_shield', name: '減傷姿態', iconUrl: '', cooldownMs: 5000, kind: 'buff', target: 'ally', mpCost: 2, coefficient: 0, flat: 0, weapon: 'staff', castMs: 0, effect: { kind: 'buff', stat: 'damage_taken_pct', value: -33, durationMs: 100000, target: 'ally', mpCost: 2 } },
+          // multi-hit damage：coefficient 非整數，逼 computeRawDamage 的 floor 逐段派上用場。
+          { id: 'combo', name: '連段', iconUrl: '', cooldownMs: 0, kind: 'damage', target: 'enemy', mpCost: 3, coefficient: 0.37, flat: 7, weapon: 'sword', castMs: 0, hits: 3 },
+        ],
+      },
+    ],
+    enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 5000, hpMax: 5000, slot: 'front_center', imageUrl: '', stats: { hpMax: 5000, mpMax: 0, atk: 31, matk: 31, def: 13, mdef: 9 } }],
+  })
+  const cfg = {
+    attackCooldownMs: 1500, chargeMinMs: 300, chargeFullMs: 1200, chargeMaxMultiplier: 2.5, guardDamageMultiplier: 0.4,
+    recoveryMs: 400, defaultCastMs: 500, escapeJudgeMs: 1200,
+    enemyActIntervalMs: [300, 700], enemyWindupMs: 100, enemyAttackMs: 100, enemyHitMs: 100, enemyDeathMs: 100,
+    allyActIntervalMs: [300, 700],
+    hitRate: 1, critRate: 0.3, critMultiplier: 2, critMultMin: 1.6, critMultMax: 2.4, weaknessBonusPct: 25, resolveDelayMs: 100,
+    baseMissPct: 5, hitFleeScale: 0.35, missMinPct: 2, missMaxPct: 35,
+    monsterHitBase: 2, monsterFleeBase: 2, monsterCritPct: 5, monsterCritShieldBase: 0,
+    elementChart: {}, monsterHitPerLevel: 1, monsterHitMax: 75, monsterFleePerLevel: 1,
+    aspdReference: 150, attackCooldownMinMs: 700, castMinMs: 120, scaleMode: 'power',
+  }
+  // 偽隨機序列（0..1 均勻分布，跨多個 tick 循環使用，足夠覆蓋 miss/crit/暴擊倍率抽樣等各種分支）。
+  const seq = [0.02, 0.91, 0.33, 0.58, 0.77, 0.14, 0.49, 0.66, 0.05, 0.88, 0.21, 0.44, 0.7, 0.09, 0.95, 0.37, 0.62, 0.18, 0.83, 0.5]
+  let s = createBattle(sample, { now: 0, config: cfg, rng: fixedRng(seq) })
+  let allInts = true
+  const checkInts = (state) => {
+    for (const p of state.party) {
+      if (!Number.isInteger(p.hp) || !Number.isInteger(p.mp) || !Number.isInteger(p.stats.hpMax) || !Number.isInteger(p.stats.mpMax) || !Number.isInteger(p.shield)) allInts = false
+    }
+    for (const e of state.enemies) {
+      if (!Number.isInteger(e.hp) || !Number.isInteger(e.stats.hpMax)) allInts = false
+    }
+  }
+  checkInts(s)
+  for (let t = 0; t < 60 && s.phase === 'active'; t++) {
+    s = tick(s, (t + 1) * 250)
+    checkInts(s)
+  }
+  ok(allInts, 'P6 CONTRACT §1：pct buff／hp_regen／heal coef／multi-hit／damage_taken_pct 混合的隨機序列跑完後，party/enemy 的 hp/mp/hpMax/mpMax/shield 全部是整數')
+  ok(s.seq > 0, '（前提）這場戰鬥真的發生過事件，不是整場都卡在拒絕指令的空轉')
+}
+
+// ── 35) CONTRACT §3.2 五段優先序②：buff 已生效就不重複施放，改走⑤普攻 fallback ──
+{
+  const buffSkill = { id: 'atkup', name: '鼓舞', iconUrl: '', cooldownMs: 0, kind: 'buff', target: 'self', mpCost: 5, coefficient: 0, flat: 0, weapon: 'sword', castMs: 0, effect: { kind: 'buff', stat: 'atk_pct', value: 20, durationMs: 8000, target: 'self', mpCost: 5 } }
+  const sample = makeSample({
+    party: [
+      { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 } },
+      { id: 'buffer', name: '輔助', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 50, matk: 50, def: 20, mdef: 20 }, weapon: 'sword', skills: [buffSkill] },
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: { ...FAR_CONFIG, allyActIntervalMs: [0, 0] } })
+  s = tick(s, 0)
+  const firstCast = s.events.find((e) => e.kind === 'skillCast' && e.actorId === 'buffer')
+  ok(!!firstCast && firstCast.skillId === 'atkup', 'buffer 身上還沒有 atk_pct 時，施放 buff')
+  ok(s.party.find((p) => p.id === 'buffer').activeEffects.some((e) => e.stat === 'atk_pct'), 'buff 真的套用在自己身上')
+
+  s = tick(s, 400) // recoveryMs=400 結束→idle，同一個 tick 內緊接著讓 AI 再次判斷。
+  const repeatCasts = s.events.filter((e) => e.kind === 'skillCast' && e.actorId === 'buffer' && e.skillId === 'atkup')
+  eq(repeatCasts.length, 1, 'buff 已經生效中（且 cooldownMs=0，冷卻早就歸零）就不會重複施放')
+  ok(s.events.some((e) => e.kind === 'attack' && e.actorId === 'buffer'), '不重複施放後改走⑤普攻 fallback（沒有其它可用技能）')
+}
+
+// ── 36) CONTRACT §3.2 五段優先序③：damage 技能都可用時挑「tier 最高」的那顆 ──
+{
+  // 36a：兩顆都帶明確 tier，數字大的優先（跟陣列順序無關——dmg_low 放前面，tier 卻比較小）。
+  const dmgLow = { id: 'dmg_low', name: '弱擊', iconUrl: '', cooldownMs: 0, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1.0, flat: 0, weapon: 'sword', castMs: 0, tier: 1 }
+  const dmgHigh = { id: 'dmg_high', name: '強擊', iconUrl: '', cooldownMs: 0, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 2.0, flat: 0, weapon: 'sword', castMs: 0, tier: 2 }
+  const sampleA = makeSample({
+    party: [
+      { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 } },
+      { id: 'dps', name: '輸出', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 80, matk: 80, def: 20, mdef: 20 }, weapon: 'sword', skills: [dmgLow, dmgHigh] },
+    ],
+  })
+  let sA = createBattle(sampleA, { now: 0, config: { ...FAR_CONFIG, allyActIntervalMs: [0, 0] } })
+  sA = tick(sA, 0)
+  const castA = sA.events.find((e) => e.kind === 'skillCast' && e.actorId === 'dps')
+  eq(castA?.skillId, 'dmg_high', 'tier:2 的 dmg_high 優先於 tier:1 的 dmg_low，即使 dmg_low 排在陣列前面')
+
+  // 36b：都沒有明確 tier 時，退回陣列位置代理值（陣列越後面視為越高 tier）。
+  const dmgFirst = { id: 'dmg_first', name: '第一顆', iconUrl: '', cooldownMs: 0, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1.0, flat: 0, weapon: 'sword', castMs: 0 }
+  const dmgSecond = { id: 'dmg_second', name: '第二顆', iconUrl: '', cooldownMs: 0, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1.5, flat: 0, weapon: 'sword', castMs: 0 }
+  const sampleB = makeSample({
+    party: [
+      { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 } },
+      { id: 'dps2', name: '輸出二', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 80, matk: 80, def: 20, mdef: 20 }, weapon: 'sword', skills: [dmgFirst, dmgSecond] },
+    ],
+  })
+  let sB = createBattle(sampleB, { now: 0, config: { ...FAR_CONFIG, allyActIntervalMs: [0, 0] } })
+  sB = tick(sB, 0)
+  const castB = sB.events.find((e) => e.kind === 'skillCast' && e.actorId === 'dps2')
+  eq(castB?.skillId, 'dmg_second', '都沒有 tier 欄位時，退回陣列位置代理（陣列後面的 dmg_second 視為 tier 較高）')
+}
+
+// ── 37) CONTRACT §3.2 五段優先序④：debuff 已生效就不重複施放，改走⑤普攻 fallback ──
+{
+  const debuffSkill = { id: 'weaken', name: '破防', iconUrl: '', cooldownMs: 0, kind: 'debuff', target: 'enemy', mpCost: 5, coefficient: 0, flat: 0, weapon: 'bow', castMs: 0, effect: { kind: 'debuff', stat: 'def_pct', value: -20, durationMs: 8000, target: 'enemy', mpCost: 5 } }
+  const sample = makeSample({
+    party: [
+      { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 } },
+      { id: 'debuffer', name: '削弱', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 50, matk: 50, def: 20, mdef: 20 }, weapon: 'bow', skills: [debuffSkill] },
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: { ...FAR_CONFIG, allyActIntervalMs: [0, 0] } })
+  s = tick(s, 0)
+  const firstCast = s.events.find((e) => e.kind === 'skillCast' && e.actorId === 'debuffer')
+  ok(!!firstCast && firstCast.skillId === 'weaken', '敵人身上還沒有 def_pct 時，debuffer 施放 debuff')
+  ok(s.enemies[0].activeEffects.some((e) => e.stat === 'def_pct'), 'debuff 真的套用在敵人身上')
+
+  s = tick(s, 400)
+  const repeatCasts = s.events.filter((e) => e.kind === 'skillCast' && e.actorId === 'debuffer' && e.skillId === 'weaken')
+  eq(repeatCasts.length, 1, 'debuff 已經生效中就不會重複施放')
+  ok(s.events.some((e) => e.kind === 'attack' && e.actorId === 'debuffer'), '不重複施放後改走⑤普攻 fallback')
+}
+
+// ── 38) CONTRACT §3.2 五段優先序⑤：skills=[]（沒有可用技能）的隊友直接普攻 fallback ──
+{
+  const sample = makeSample({
+    party: [
+      { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 } },
+      { id: 'plain', name: '雜兵', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 50, matk: 50, def: 20, mdef: 20 }, weapon: 'sword', skills: [] },
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: { ...FAR_CONFIG, allyActIntervalMs: [0, 0] } })
+  s = tick(s, 0)
+  ok(s.events.some((e) => e.kind === 'attack' && e.actorId === 'plain'), 'skills=[]（沒有可用技能）的隊友直接普攻 fallback，跟 P1 舊行為相容')
+}
+
+// ── 39) CONTRACT §2：level 模式怪物公式——用自造的 RefPlayerTable（不等真正的 refPlayerTable.json，
+//        見下方 40 號區塊）鎖定 scaleMonsterFromRef 的精確算式：floor 順序／各倍率相乘順序。
+//        數值本身由本測試獨立算好寫死（不是從 fixture.ts 抄一份運算式），若實作漂移會被抓到。 ──
+{
+  const refTable = [{ level: 10, hpMax: 999, mpMax: 199, atk: 101, matk: 77, def: 53, mdef: 41, hit: 88, flee: 12, aspd: 140 }]
+  // training_ground（monsterLevel=10, powerScale=0.60）：front_left=DOR-MON-D-0182(hpMult.9/atkMult1.0/defMult1.0)，
+  // front_center/front_right=DOR-MON-E-0052(hpMult.6/atkMult0.8/defMult0.8)，三隻 powerScale 皆 1。
+  const bundle = buildFixtureSample('training_ground', { mode: 'level', refTable })
+  const byId = Object.fromEntries(bundle.sample.enemies.map((e) => [e.id, e]))
+
+  eq(byId['enemy_front_left'].level, 10, 'level 模式：怪物顯示等級＝encounter.monsterLevel（不套用 power 模式的 BOSS 等級加成）')
+  eq(
+    { hp: byId['enemy_front_left'].hpMax, atk: byId['enemy_front_left'].stats.atk, def: byId['enemy_front_left'].stats.def, mdef: byId['enemy_front_left'].stats.mdef, matk: byId['enemy_front_left'].stats.matk },
+    { hp: 431, atk: 75, def: 31, mdef: 24, matk: 77 },
+    // 2026-09-18 SIM 校準後 DEFAULT_LEVEL_SCALE_CONFIG＝hp 0.8／atk 1.25／def 1.0／mdef 1.0（config.go DefaultConfig 同步），期望值依此重算。
+    'DOR-MON-D-0182（hpMult.9/atkMult1.0/defMult1.0）：floor(999×.9×.8×.6)=431、floor(101×1×1.25×.6)=75、floor(53×1×1×.6)=31、floor(41×1×1×.6)=24、floor(77×1)=77',
+  )
+  eq(
+    { hp: byId['enemy_front_center'].hpMax, atk: byId['enemy_front_center'].stats.atk, def: byId['enemy_front_center'].stats.def, mdef: byId['enemy_front_center'].stats.mdef, matk: byId['enemy_front_center'].stats.matk },
+    { hp: 287, atk: 60, def: 25, mdef: 19, matk: 61 },
+    'DOR-MON-E-0052（hpMult.6/atkMult0.8/defMult0.8）：floor(999×.6×.8×.6)=287、floor(101×.8×1.25×.6)=60、floor(53×.8×1×.6)=25、floor(41×.8×1×.6)=19、floor(77×.8)=61',
+  )
+  ok(Number.isInteger(byId['enemy_front_left'].hpMax) && Number.isInteger(byId['enemy_front_center'].hpMax), 'level 模式算出的怪物 hp 也是整數（跟 CONTRACT §1 的整數不變式一致）')
+
+  // 對照：沒有 refTable 時 mode='level' 安全退回 power 模式（不會 throw、不會用到 undefined 的 ref）。
+  const fallback = buildFixtureSample('training_ground', { mode: 'level', refTable: null })
+  ok(fallback.sample.enemies.length === 3, "mode='level' 但沒有 refTable 時安全退回 power 模式（不 throw）")
+}
+
+// ── 40) 若 refPlayerTable.json 已經由 BACKEND 產生，額外核對表本身的基本形狀（N=1/27/99 存在、
+//        數值遞增且為正）；檔案還不存在時印一行訊息略過，不算失敗（見任務回報）。 ──
+{
+  const table = await loadRefPlayerTable()
+  if (!table) {
+    console.log('SKIP 40) refPlayerTable.json 尚未由 BACKEND 產生，略過真表核對（不計入 pass/fail）')
+  } else {
+    const lv1 = table.find((r) => r.level === 1)
+    const lv27 = table.find((r) => r.level === 27)
+    const lv99 = table.find((r) => r.level === 99)
+    ok(!!lv1 && !!lv27 && !!lv99, 'refPlayerTable.json 涵蓋 N=1/27/99（契約 §2：N=1..99 全部有值）')
+    if (lv1 && lv27 && lv99) {
+      ok(lv27.hpMax > lv1.hpMax && lv99.hpMax > lv27.hpMax, '等級越高 HPMax 越大（單調遞增）')
+      ok(lv1.hpMax > 0 && lv1.atk >= 0 && lv1.def >= 0, 'Lv1 的衍生值都是非負數')
+    }
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

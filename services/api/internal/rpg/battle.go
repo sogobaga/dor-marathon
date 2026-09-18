@@ -83,6 +83,11 @@ type wireSkill struct {
 	DmgType     string        `json:"dmgType"`
 	Implemented bool          `json:"implemented"`
 	Effect      EffectAtLevel `json:"effect"`
+	// Tier DORPG P6：INTEGRATOR 補上（2026-09-18）——ENGINE 向 BACKEND 提的需求「wireSkill 加
+	// tier」原本沒人接手，ai.ts pickHighestTierSkill() 只能用陣列位置當代理（同一路線內成立，
+	// 跨路線比較會失真）。0 是既有 5 個無職業技能的預設值（omitempty 隱藏，不影響既有前端），
+	// 只有 toWireSkillLeveled（職業技能／傭兵腳本技能）會填入真正的 s.Tier。
+	Tier int `json:"tier,omitempty"`
 	// Hits 審查#1 CONFIRMED 新增：一次施放命中次數的「頂層」鏡射，跟上面 Coefficient/Flat/MPCost
 	// 同一批既有欄位——前端 fromApi.ts mapSkill()／engine/combat.ts 讀的正是這批頂層欄位（既有
 	// 5 個一般技能的既有慣例），從來不讀 Effect 這個巢狀物件；Effect.Hits 只是給 FRONTEND 顯示
@@ -113,6 +118,15 @@ type wirePartyMember struct {
 	Weapon      string        `json:"weapon,omitempty"`
 	Rating      *CombatRating `json:"rating,omitempty"` // P2：命中/暴擊評級，見 scaling.go CombatRating
 	JobID       *string       `json:"jobId,omitempty"`  // P5：目前職業（未選職業 omit，維持現行預設）
+
+	// --- DORPG P6（WIRE：「party member（隊友）」新增欄位）---
+	// Skills 隊友 AI 可用技能（該傭兵目前腳本 level>=1 且非 passive、implemented=true 的技能，
+	// 已用 ExpandEffect 展開，見 tavern.go buildCompanionSkillsWire）。玩家（party[0]）不填這個
+	// 欄位——玩家的技能欄是既有的 Skills（[10]*wireSkill，見 wireBattleSample.Skills），跟隊友
+	// 這個「AI 決策用」的清單是兩回事，故意不共用同一個欄位名。
+	Skills []wireSkill `json:"skills,omitempty"`
+	// PresetName 這位隊友目前套用的腳本名稱（"預設"＝系統預設腳本）。玩家（party[0]）不填。
+	PresetName string `json:"presetName,omitempty"`
 }
 
 type wireEnemy struct {
@@ -191,6 +205,10 @@ type wireBattleConfig struct {
 	CritMultMin      float64 `json:"critMultMin"`
 	CritMultMax      float64 `json:"critMultMax"`
 	WeaknessBonusPct float64 `json:"weaknessBonusPct"`
+
+	// ScaleMode DORPG P6（WIRE：「config 新增 scaleMode: "level"|"power"（純顯示／除錯）」）——
+	// 純粹讓前端偵錯／顯示用，引擎本身不依這個欄位分支（怪物數值在後端就已經算好送過去）。
+	ScaleMode string `json:"scaleMode"`
 }
 
 func buildWireConfig(cfg Config) wireBattleConfig {
@@ -229,6 +247,8 @@ func buildWireConfig(cfg Config) wireBattleConfig {
 		CritMultMin:      cfg.CritMultMin,
 		CritMultMax:      cfg.CritMultMax,
 		WeaknessBonusPct: cfg.BattleWeaknessBonusPct,
+
+		ScaleMode: cfg.BattleScaleMode,
 	}
 }
 
@@ -283,7 +303,7 @@ func toWireSkillLeveled(s SkillRow, level int) wireSkill {
 		MPCost: roundInt(e.MPCost), Coefficient: e.Coef, Flat: roundInt(e.Flat),
 		Element: s.Element, Weapon: s.Weapon, CastMs: s.CastMs,
 		Level: level, MaxLevel: s.MaxLevel, DisplayText: s.DisplayText, DmgType: s.DmgType,
-		Implemented: s.Implemented, Hits: e.Hits, Effect: e,
+		Implemented: s.Implemented, Hits: e.Hits, Effect: e, Tier: s.Tier,
 	}
 }
 
@@ -362,6 +382,9 @@ type wireEncounterInfo struct {
 	SceneKind     string `json:"scene_kind"`
 	Difficulty    int    `json:"difficulty"`
 	CanEscape     bool   `json:"can_escape"`
+	// MonsterLevel DORPG P6（WIRE：「GET /rpg/battle/encounters：每場新增 monster_level」）——
+	// EncounterPicker 用它顯示「怪物 Lv.N」，跟 battle_scale_mode 是否為 "level" 無關（永遠送）。
+	MonsterLevel int `json:"monster_level"`
 }
 
 type wireEncounterMonsterInfo struct {
@@ -478,6 +501,7 @@ func (h *Handler) BattleEncounters(w http.ResponseWriter, r *http.Request) {
 			wireEncounterInfo: wireEncounterInfo{
 				Code: e.Code, Title: e.Title, Subtitle: e.Subtitle, SceneID: e.SceneID,
 				SceneImageURL: sc.ImageURL, SceneKind: e.SceneKind, Difficulty: e.Difficulty, CanEscape: e.CanEscape,
+				MonsterLevel: e.MonsterLevel,
 			},
 			Monsters: ms,
 			Stats:    wireEncounterStats{Plays: st.Plays, Wins: st.Wins, BestMs: st.BestMs, LastOutcome: st.LastOutcome},
@@ -691,25 +715,34 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		JobID:       ch.JobID,
 	}}
 
-	companions, err := h.listPartyCompanions(ctx, 4)
+	// DORPG P6（CONTRACT §3.2）：隊伍成員改由 player_party（或預設小咪）建構——每位傭兵用自己
+	// 腳本的 level/stats/skill_levels 算出自己的 Compute() 衍生值×倍率與自己的 CombatRating，
+	// 不再沿用玩家戰力（ScaleCompanion/CompanionRating 兩支 P2 舊函式保留給 "power" 模式以外
+	// 沒有腳本概念的呼叫端，這裡不再使用）。
+	members, err := h.resolvePartyForBattle(ctx, uid)
 	if err != nil {
 		if respondIfMissingRelation(w, err) {
 			return
 		}
-		respondErr(w, http.StatusInternalServerError, "failed to load companions")
+		respondErr(w, http.StatusInternalServerError, "failed to load party")
 		return
 	}
-	for _, c := range companions {
-		cs := ScaleCompanion(cfg, pbs, c)
-		cr := CompanionRating(cfg, pbs.Rating, c)
+	for _, m := range members {
+		d := computeCompanionDerived(cfg, m.Job, m.JobSkills, m.Preset.Level, m.Preset.Stats, m.Preset.SkillLevels)
+		actor := presetActorStats(m.Companion, d)
+		rating := presetCombatRating(d)
+		jobID := m.Job.ID
 		party = append(party, wirePartyMember{
-			ID: c.ID, Name: c.Name, Level: baseLevel + c.LevelOffset,
-			HP: roundInt(cs.HPMax), HPMax: roundInt(cs.HPMax),
-			MP: roundInt(cs.MPMax), MPMax: roundInt(cs.MPMax),
-			PortraitURL: func() *string { u := charPortraitURL(c.PortraitID); return &u }(),
-			Stats:       &cs,
-			Weapon:      c.Weapon,
-			Rating:      &cr,
+			ID: m.Companion.ID, Name: m.Companion.Name, Level: m.Preset.Level,
+			HP: roundInt(actor.HPMax), HPMax: roundInt(actor.HPMax),
+			MP: roundInt(actor.MPMax), MPMax: roundInt(actor.MPMax),
+			PortraitURL: func() *string { u := charPortraitURL(m.Companion.PortraitID); return &u }(),
+			Stats:       &actor,
+			Weapon:      m.Companion.Weapon,
+			Rating:      &rating,
+			JobID:       &jobID,
+			Skills:      buildCompanionSkillsWire(m.JobSkills, m.Preset.SkillLevels),
+			PresetName:  m.Preset.Name,
 		})
 	}
 
@@ -742,9 +775,16 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue // 髒資料：編組指到不存在的 monster_id，略過該槽位而非整場 500
 		}
-		// TODO(P3)：cfg.BattleScaleMode 目前只有 "power" 真的被使用；"level"/"fixed" 是
-		// Config.Validate() 已經開放的列舉值，但這裡還沒有依模式切換分支（見 scaling.go 檔頭）。
-		sm := ScaleMonster(cfg, pbs, mr, enc.PowerScale, em.PowerScale, shares[i])
+		// DORPG P6：依 cfg.BattleScaleMode 分派——"level"（本輪起預設）用怪物自己的
+		// rpg_encounters.monster_level 當基準（ScaleMonsterByLevel，跟玩家戰力無關）；
+		// "power"（P2 既有路徑）完全不動，仍以玩家戰力縮放；"fixed" 仍是保留列舉值，落到
+		// 這裡的 default 分支等同 "power"（Config.Validate() 已允許選它但本輪未實作絕對值路徑）。
+		var sm ScaledMonster
+		if cfg.BattleScaleMode == "level" {
+			sm = ScaleMonsterByLevel(cfg, mr, enc.PowerScale, em.PowerScale, enc.MonsterLevel)
+		} else {
+			sm = ScaleMonster(cfg, pbs, mr, enc.PowerScale, em.PowerScale, shares[i])
+		}
 		weakElements := mr.WeakElements
 		if weakElements == nil {
 			weakElements = []string{}
@@ -812,6 +852,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		"encounter": wireEncounterInfo{
 			Code: enc.Code, Title: enc.Title, Subtitle: enc.Subtitle, SceneID: enc.SceneID,
 			SceneImageURL: scene.ImageURL, SceneKind: enc.SceneKind, Difficulty: enc.Difficulty, CanEscape: enc.CanEscape,
+			MonsterLevel: enc.MonsterLevel,
 		},
 		"sample": sample,
 		"config": buildWireConfig(cfg),

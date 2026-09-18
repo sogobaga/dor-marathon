@@ -73,6 +73,13 @@ func (h *Handler) Router() http.Handler {
 	r.Get("/skills", h.Skills)
 	r.Post("/skills/allocate", h.SkillsAllocate)
 	r.Post("/skills/reset", h.SkillsReset)
+	// DORPG P6（CONTRACT §3.3）：酒館／隊伍／傭兵腳本，沿用同一組 requireEntry 白名單。
+	r.Get("/tavern", h.Tavern)
+	r.Put("/party", h.PutParty)
+	r.Post("/presets", h.CreatePreset)
+	r.Put("/presets/{id}", h.UpdatePreset)
+	r.Delete("/presets/{id}", h.DeletePreset)
+	r.Post("/presets/validate", h.PresetsValidate)
 	return r
 }
 

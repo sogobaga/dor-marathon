@@ -822,7 +822,7 @@ function CompanionsTab({ token, onErr, onMsg }: { token: string; onErr: (m: stri
 // ============================== 遭遇（含五槽位怪物編組） ==============================
 
 function emptyEncounter(): RpgEncounter {
-  return { code: '', title: '', subtitle: '', scene_id: '', scene_kind: 'normal', difficulty: 1, power_scale: 1, escape_chance: 0.35, can_escape: true, is_active: true, sort_order: 0, monsters: [] }
+  return { code: '', title: '', subtitle: '', scene_id: '', scene_kind: 'normal', difficulty: 1, power_scale: 1, escape_chance: 0.35, can_escape: true, is_active: true, sort_order: 0, monsters: [], monster_level: 10 }
 }
 const ENCOUNTER_FIELDS: FieldSpec<RpgEncounter>[] = [
   { key: 'code', label: '代碼 code（對外識別，API 用這個不用內部 UUID）', lockOnEdit: true },
@@ -830,7 +830,10 @@ const ENCOUNTER_FIELDS: FieldSpec<RpgEncounter>[] = [
   { key: 'subtitle', label: '副標' },
   { key: 'scene_kind', label: '場景種類（影響 BGM 選曲）', type: 'select', options: [{ value: 'normal', label: '一般' }, { value: 'boss', label: 'BOSS' }] },
   { key: 'difficulty', label: '難度（1~5，前端畫星）', type: 'number', step: '1' },
-  { key: 'power_scale', label: '整場戰力倍率（必須 > 0）', type: 'number' },
+  // DORPG P6（契約 §2）：怪物等級制——這一場怪物的等級 N，battle_scale_mode="level" 時驅動
+  // RefPlayer(N) 縮放；六場預設 10/20/30/40/50/60，EncounterPicker 卡片會顯示「怪物 Lv.N」。
+  { key: 'monster_level', label: '怪物等級 monster_level（1–99）', type: 'number', step: '1' },
+  { key: 'power_scale', label: '整場戰力倍率（power 模式用；level 模式下改由怪物等級決定強度，此欄仍保留相容）', type: 'number' },
   { key: 'escape_chance', label: '逃跑成功率（0~1）', type: 'number', step: '0.01' },
   { key: 'can_escape', label: '可逃跑', type: 'checkbox' },
   { key: 'is_active', label: '啟用（會出現在選單）', type: 'checkbox' },

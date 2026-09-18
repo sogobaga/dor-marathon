@@ -37,6 +37,7 @@ const DEV_ENCOUNTERS: RpgBattleEncounters['encounters'] = RPG_ENCOUNTERS.map((en
   scene_kind: enc.sceneKind,
   difficulty: enc.difficulty,
   can_escape: enc.canEscape,
+  monster_level: enc.monsterLevel,
   monsters: enc.monsters.map((em) => ({ slot: em.slot, ...monsterBrief(em.monsterId) })),
   stats: { plays: 0, wins: 0, best_ms: 0, last_outcome: '' },
 }))

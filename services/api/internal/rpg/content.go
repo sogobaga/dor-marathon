@@ -269,14 +269,18 @@ type EncounterMonsterRow struct {
 // EncounterRow rpg_encounters 資料列（含編組）。id 是 DB 內部 UUID，只用來 JOIN
 // rpg_encounter_monsters，刻意不匯出成 JSON 欄位——契約：「對外識別（API 用 code，不用 UUID）」。
 type EncounterRow struct {
-	id           string
-	Code         string                `json:"code"`
-	Title        string                `json:"title"`
-	Subtitle     string                `json:"subtitle"`
-	SceneID      string                `json:"scene_id"`
-	SceneKind    string                `json:"scene_kind"`
-	Difficulty   int                   `json:"difficulty"`
-	PowerScale   float64               `json:"power_scale"`
+	id         string
+	Code       string  `json:"code"`
+	Title      string  `json:"title"`
+	Subtitle   string  `json:"subtitle"`
+	SceneID    string  `json:"scene_id"`
+	SceneKind  string  `json:"scene_kind"`
+	Difficulty int     `json:"difficulty"`
+	PowerScale float64 `json:"power_scale"`
+	// MonsterLevel DORPG P6（CONTRACT §2）：battle_scale_mode="level" 時，這場遭遇的怪物一律
+	// 顯示並套用這個等級（RefPlayerStats(cfg,MonsterLevel) 當基準，見 scaling.go
+	// ScaleMonsterByLevel）。"power" 模式完全不讀這個欄位（怪物等級借用玩家 Base Lv）。
+	MonsterLevel int                   `json:"monster_level"`
 	EscapeChance float64               `json:"escape_chance"`
 	CanEscape    bool                  `json:"can_escape"`
 	IsActive     bool                  `json:"is_active"`
@@ -302,6 +306,9 @@ func (e EncounterRow) Validate() error {
 	}
 	if e.PowerScale <= 0 {
 		return fmt.Errorf("power_scale 必須 > 0")
+	}
+	if e.MonsterLevel < 1 || e.MonsterLevel > 99 {
+		return fmt.Errorf("monster_level 必須介於 1..99")
 	}
 	if e.EscapeChance < 0 || e.EscapeChance > 1 {
 		return fmt.Errorf("escape_chance 必須介於 0..1")

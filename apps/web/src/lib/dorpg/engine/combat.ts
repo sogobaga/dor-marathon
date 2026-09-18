@@ -5,12 +5,15 @@ import type { ActorStats, BuffDebuffStat, CombatRating, DmgType, ElementKind, Sk
 import type { Ctx } from './context';
 import { pushEvent, pushLog } from './context';
 import { activeStatSum, applyStatusEffect, damageTakenMultiplier, effectiveRating, rollCritMultiplier } from './effects';
-import { computeHeal, computeRawDamage, critChance, elementMultiplier, missChance, selectAliveByThreat } from './formulas';
+import { computeHeal, computeRawDamage, critChance, elementMultiplier, floorInt, missChance, selectAliveByThreat } from './formulas';
 import type { ActiveEffect, EnemyActor, PartyActor, PendingCast } from './types';
 
 /** 對敵人造成傷害後的死亡/受擊處理：死亡→dying+enemyDeath+目標自動換人；存活→hitReaction 覆蓋層。 */
 function applyEnemyDamage(ctx: Ctx, enemy: EnemyActor, damage: number): void {
-  enemy.hp = Math.max(0, enemy.hp - damage);
+  // P6（CONTRACT §1）：damage 呼叫端（computeRawDamage/computeDamage）已經是整數，這裡 floorInt
+  // 只是最後一道防線——跟 applyPartyDamage 的寫法保持對稱，稽核「hp 相關賦值都經過 floorInt」時
+  // 不必記得哪幾個賦值點可以跳過。
+  enemy.hp = floorInt(Math.max(0, enemy.hp - damage));
   if (enemy.hp <= 0) {
     enemy.anim = 'dying';
     enemy.animUntil = ctx.now + ctx.cfg.enemyDeathMs;
@@ -153,13 +156,16 @@ export function resolveAttackOrDamageSkill(
  */
 export function applyPartyDamage(ctx: Ctx, actor: PartyActor, rawDamage: number): void {
   const dtMul = damageTakenMultiplier(actor.activeEffects);
-  let dmg = Math.max(0, Math.round(rawDamage * dtMul));
+  // P6（CONTRACT §1）：damage_taken_pct 明講「在套用前 floor」——改 Math.round 為 floorInt，
+  // 兩者在 dtMul<1（減傷，最常見的用法）時會算出不同的整數，floor 是契約指定的方向（見
+  // formulas.ts floorInt 型別註解）。
+  let dmg = Math.max(0, floorInt(rawDamage * dtMul));
   if (actor.shield > 0) {
     const absorbed = Math.min(actor.shield, dmg);
-    actor.shield -= absorbed;
+    actor.shield = floorInt(actor.shield - absorbed);
     dmg -= absorbed;
   }
-  actor.hp = Math.max(0, actor.hp - dmg);
+  actor.hp = floorInt(Math.max(0, actor.hp - dmg));
   if (actor.hp <= 0 && actor.action !== 'dead') {
     actor.action = 'dead';
     pushEvent(ctx, { kind: 'actorDown', actorId: actor.id });
@@ -179,7 +185,9 @@ export function applyPartyDamage(ctx: Ctx, actor: PartyActor, rawDamage: number)
 export function applyHealToTarget(ctx: Ctx, casterId: string, targetId: string, amount: number): void {
   const target = ctx.party.find((p) => p.id === targetId);
   if (!target || target.hp <= 0) return;
-  target.hp = Math.min(target.stats.hpMax, target.hp + amount);
+  // P6（CONTRACT §1）：amount 呼叫端（computeHeal）已經 floor 過，這裡的 floorInt 只是最後一道
+  // 防線，跟 hp 相關的其它賦值點一致（見 applyEnemyDamage 同樣的理由）。
+  target.hp = floorInt(Math.min(target.stats.hpMax, target.hp + amount));
   pushEvent(ctx, { kind: 'heal', actorId: casterId, targetId, amount });
   pushLog(ctx, `${casterId} 治療 ${target.name} ${amount} 點`);
 }
@@ -187,7 +195,7 @@ export function applyHealToTarget(ctx: Ctx, casterId: string, targetId: string, 
 function applyShieldToTarget(ctx: Ctx, casterId: string, targetId: string, amount: number): void {
   const target = ctx.party.find((p) => p.id === targetId);
   if (!target || target.hp <= 0) return;
-  target.shield += amount;
+  target.shield = floorInt(target.shield + amount);
   pushEvent(ctx, { kind: 'shield', actorId: casterId, targetId, amount });
   pushLog(ctx, `${casterId} 為 ${target.name} 加上 ${amount} 點護盾`);
 }

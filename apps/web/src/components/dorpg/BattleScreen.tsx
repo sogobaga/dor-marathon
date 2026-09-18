@@ -133,16 +133,18 @@ function writeVibeSetting(v: boolean) {
 }
 
 /** PartyActor（引擎戰鬥中資料）→ PartyMember（PartyCard 吃的展示形狀）。兩邊欄位語意相同、
- *  只是 hpMax/mpMax 在引擎那邊收在 stats 裡——跟 MonsterSprite 的 adaptAnimSet 是同一種轉接手法。 */
+ *  只是 hpMax/mpMax 在引擎那邊收在 stats 裡——跟 MonsterSprite 的 adaptAnimSet 是同一種轉接手法。
+ *  DORPG P6（契約 §1：HP/MP 務必整數）：Math.floor 是顯示層保險，PartyCard.tsx 內部也會再 floor
+ *  一次——兩處都保是刻意的，任一層以後被改動都不會讓小數點重新露出來。 */
 function toPartyMemberView(actor: PartyActor): PartyMember {
   return {
     id: actor.id,
     name: actor.name,
     level: actor.level,
-    hp: actor.hp,
-    hpMax: actor.stats.hpMax,
-    mp: actor.mp,
-    mpMax: actor.stats.mpMax,
+    hp: Math.floor(actor.hp),
+    hpMax: Math.floor(actor.stats.hpMax),
+    mp: Math.floor(actor.mp),
+    mpMax: Math.floor(actor.stats.mpMax),
     portraitUrl: actor.portraitUrl,
   };
 }
@@ -562,9 +564,11 @@ export default function BattleScreen({
       state.enemies.map((e) => ({
         id: e.id,
         name: e.name,
-        level: e.level,
-        hp: e.hp,
-        hpMax: e.stats.hpMax,
+        // DORPG P6（契約 §1）：Math.floor 保險，同 toPartyMemberView 上方註解——EnemyPlate 內部
+        // 也會再 floor 一次，這裡先整數化是為了 stageEnemies 這份 useMemo 投影本身就該是乾淨資料。
+        level: Math.floor(e.level),
+        hp: Math.floor(e.hp),
+        hpMax: Math.floor(e.stats.hpMax),
         slot: e.slot,
         imageUrl: e.imageUrl,
         anim: e.anim,

@@ -7,12 +7,6 @@ import { fromCtx, pushEvent, toCtx } from './context';
 import { pruneAndRegenEffects } from './effects';
 import type { BattleOutcome, BattleState } from './types';
 
-/** 樣本資料裡第一位非玩家隊員固定當「輔助 AI」（heal 技能的施放者）——理由見 ai.ts 開頭註解。 */
-function pickHealerId(ctx: Ctx): string {
-  const ally = ctx.party.find((p) => !p.isPlayer);
-  return ally ? ally.id : '';
-}
-
 /** casting 完成→結算效果轉 recovering；recovering 到時→idle。單次呼叫只推進一步，理由同 ai.ts。 */
 function resolvePartyTimers(ctx: Ctx): void {
   for (const actor of ctx.party) {
@@ -159,9 +153,10 @@ export function tick(state: BattleState, now: number): BattleState {
   resolvePartyTimers(ctx);
   pruneAllEffects(ctx); // P5：buff/debuff 到期清除＋hp_regen_pct 定時回復，跑在 AI 出手之前。
 
-  const healerId = pickHealerId(ctx);
+  // P6（CONTRACT §3.2）：每位隊友用自己的 skills 決定要不要用技能，不再需要指定「哪一位是輔助」
+  // ——advanceAllyAI 內部依五段優先序自行判斷（見 ai.ts 檔頭註解）。
   for (const actor of ctx.party) {
-    if (!actor.isPlayer) advanceAllyAI(ctx, actor, healerId);
+    if (!actor.isPlayer) advanceAllyAI(ctx, actor);
   }
   for (const enemy of ctx.enemies) {
     advanceEnemyAI(ctx, enemy);

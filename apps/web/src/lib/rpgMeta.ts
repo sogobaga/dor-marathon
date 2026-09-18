@@ -191,6 +191,46 @@ export function estimateCastMs(baseCastMs: number, castReductionPct: number): nu
   return Math.max(BATTLE_DISPLAY_DEFAULTS.castMinMs, Math.round(reduced))
 }
 
+// ---------------------------------------------------------------------------
+// DORPG P6（酒館腳本編輯器，見契約 dorpg_p6 CONTRACT.md §3.4）：TavernScreen 的「Max」鈕估算。
+//
+// 玩家角色頁的 Max 是打 POST /rpg/allocate {mode:"max"}，由伺服器反覆 +1 算到底（契約 dorpg_p5
+// §3）。傭兵腳本沒有對應的「allocate」端點——腳本只有 POST /rpg/presets/validate 這個無副作用的
+// 純試算端點，一次只回傳「這組完整配置合不合法」，不會幫你算「還能再加幾點」。跟上面
+// BATTLE_DISPLAY_DEFAULTS／estimateAttackCooldownMs 同一個理由：TavernScreen 沒有管道拿到後台
+// 「配點與技能點」分頁調過的 cost_base／cost_step_every 即時值（那是 RpgConfig，只有 admin token
+// 讀得到），這裡鏡射契約 §3 文字寫死的公式與預設值 floor((n−1)/10)+2（n＝即將購買的第 n 點，等於
+// 「目前值＋1」）算出「本地估算的 Max」——這只是第一步猜測，不是最終答案。
+//
+// TavernScreen.tsx 的 maxStat()／skillDelta('max') 真的會把這個估算值送去 validatePreset() 收斂
+// （審查修正——舊版註解曾宣稱有這個機制但其實沒實作，現在補上）：若伺服器判定 stat_over_budget／
+// stat_over_cap（技能則是 skill_over_budget），就把該項目 −1 再重送一次，最多重試 8 次；8 次都
+// 不合法就整個放棄、退回原始值並提示使用者，不會把已知不合法的草稿留在畫面上。之所以需要這個收斂
+// 迴圈：本地估算的成本公式是寫死的 2/10（見下面 PRESET_COST_DEFAULTS），一旦後台調過這兩個係數、
+// 或其他素質/技能已經在同一次編輯裡吃掉部分預算，估算值就會偏高，必須靠伺服器再驗證一次才能確定
+// 真正能加到的最大值。
+export const PRESET_COST_DEFAULTS = { costBase: 2, costStepEvery: 10 }
+
+/** 從 currentValue 加到 currentValue+1 這一點的估算花費（見上方檔頭說明，非精算）。 */
+export function estimatePresetStatCost(currentValue: number): number {
+  const n = currentValue + 1 // 即將購買的第 n 點
+  return Math.floor((n - 1) / PRESET_COST_DEFAULTS.costStepEvery) + PRESET_COST_DEFAULTS.costBase
+}
+
+/** 在 [currentValue, cap] 內，本地估算「花完 freePoints 最多能加到多少」，供 Max 鈕先做一次樂觀
+ *  計算（實際是否合法仍以呼叫端接著打的 validatePreset() 為準，見上方檔頭說明）。 */
+export function estimateMaxStatValue(currentValue: number, freePoints: number, cap: number): number {
+  let v = currentValue
+  let free = freePoints
+  while (v < cap) {
+    const cost = estimatePresetStatCost(v)
+    if (cost > free) break
+    free -= cost
+    v += 1
+  }
+  return v
+}
+
 // 後台「參數設定」分頁分組欄位 — 逐項對照 RpgConfig 欄位（勿漏改名）。type 省略＝number 輸入框；
 // 'json' 是 P2 新增（battle_element_chart 巢狀 map 專用），admin/rpg/page.tsx 的 ConfigTab 用它
 // 決定渲染 textarea 而非 <input type="number">，存檔前另外做 JSON.parse 驗證。
@@ -358,9 +398,9 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
       {
         key: 'battle_scale_mode', label: '怪物數值縮放模式', type: 'select',
         options: [
-          { value: 'power', label: 'power（以玩家戰力動態縮放，P2 唯一實作）' },
-          { value: 'level', label: 'level（依 Base Lv 絕對表，P3 保留分支，P2 選了等同 power 行為）' },
-          { value: 'fixed', label: 'fixed（直接用 DB 絕對值，P3 保留分支，P2 選了等同 power 行為）' },
+          { value: 'level', label: 'level（依遭遇 monster_level 用 RefPlayer(N) 算絕對值，P6 起預設）' },
+          { value: 'power', label: 'power（以玩家戰力動態縮放，P2 實作，P6 起保留可切回）' },
+          { value: 'fixed', label: 'fixed（直接用 DB 絕對值，仍為預留，未實作）' },
         ],
       },
       { key: 'battle_mob_hits', label: '未蓄氣普攻打死一般怪的目標次數' },
@@ -411,6 +451,26 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
       {
         key: 'battle_weakness_bonus_pct',
         label: '（P5）技能屬性命中怪物弱點屬性時的傷害加成 %（契約預設 25；管理者可在下方「屬性相剋表」個別覆寫，含設 0 做免疫）',
+      },
+      // DORPG P6（契約 §2）：level 模式怪物數值＝RefPlayer(N) 的對應衍生值 × mult（既有 hp_mult 等
+      // 隊友/怪物個別倍率）× 這四個「等級模式」比例 × power_scale（沿用既有前後排 slotScale）。
+      // 四個都預設 1.0；四場（Lv10/20/30/40/50/60）的難度曲線主要靠 RefPlayer(N) 隨等級成長本身
+      // 拉開差距，這裡是全域再統一調整的旋鈕（例如覺得整體太肉/太脆時只調一個數字）。
+      {
+        key: 'battle_lvl_hp_ratio',
+        label: '（P6）level 模式：怪物 HP ÷ RefPlayer(N).HPMax 的比例（實際預設 0.8，非契約原始 1.0——2026-09-18 依 Lv27 六場模擬校準，見 config.go DefaultConfig）',
+      },
+      {
+        key: 'battle_lvl_atk_ratio',
+        label: '（P6）level 模式：怪物 ATK ÷ RefPlayer(N).ATK 的比例（實際預設 1.25，非契約原始 1.0——2026-09-18 依 Lv27 六場模擬校準，見 config.go DefaultConfig）',
+      },
+      {
+        key: 'battle_lvl_def_ratio',
+        label: '（P6）level 模式：怪物 DEF ÷ RefPlayer(N).DEF 的比例（契約預設 1.0）',
+      },
+      {
+        key: 'battle_lvl_mdef_ratio',
+        label: '（P6）level 模式：怪物 MDEF ÷ RefPlayer(N).MDEF 的比例（契約預設 1.0）',
       },
     ],
   },

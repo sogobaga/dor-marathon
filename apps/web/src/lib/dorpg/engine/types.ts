@@ -65,6 +65,16 @@ export interface PartyActor {
    * engine 的任何戰鬥數值計算都不讀這個欄位。
    */
   jobId: string | null;
+  /**
+   * P6（CONTRACT §3.2）：這位隊友（非玩家）AI 可用的技能，從 PartyMember.skills 原樣帶入戰鬥狀態
+   * ——engine/ai.ts 的 advanceAllyAI 依五段優先序從這裡挑技能施放，取代 P1 時期借用
+   * BattleState.skills（玩家技能欄）的簡化寫法。玩家（isPlayer=true）這個陣列恆為 []（玩家自己
+   * 的技能走 USE_SKILL 指令與 BattleState.skills，不經過這裡）。createBattle 一律填好陣列
+   * （PartyMember.skills 有給就用，沒給就 []），不會是 undefined。
+   */
+  skills: Skill[];
+  /** P6：純顯示用，見 PartyMember.presetName 型別註解；engine 的任何戰鬥數值計算都不讀這個欄位。 */
+  presetName: string | null;
 }
 
 export interface EnemyActor {
@@ -211,6 +221,16 @@ export interface BattleConfig {
   attackCooldownMinMs: number;
   /** effectiveCastMs() 的施法時間下限（clamp 下界）：避免詠唱縮減堆到 100% 時變成瞬間出招，破壞技能本來該有的節奏感。 */
   castMinMs: number;
+
+  /**
+   * P6（CONTRACT §2／WIRE「戰鬥 bootstrap」）：目前這場戰鬥的怪物數值算法，只給 FRONTEND 顯示／
+   * 除錯用（例如角落標一行「等級制」）——engine 的任何戰鬥數值計算完全不讀這個欄位，怪物的
+   * hp/atk/def/mdef/rating 一律由 createBattle 收到的 Enemy.stats/rating 決定（不管那組數字是
+   * BACKEND 用哪一套公式算出來的）。'level'＝新的怪物等級制（CONTRACT §2，本輪起的正式預設）；
+   * 'power' ＝舊的玩家戰力縮放（P2 D2 公式，保留供對照／回退）；'fixed' 為契約保留的第三種模式，
+   * 本輪未實作，engine 一樣只是原樣透傳顯示。
+   */
+  scaleMode: 'level' | 'power' | 'fixed';
 }
 
 /** 契約 §2 給的預設值，逐字照抄；可被 createBattle 的 opts.config 局部覆寫。 */
@@ -268,6 +288,10 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   aspdReference: 150, // 對齊 internal/rpg AspdBase 預設值
   attackCooldownMinMs: 700,
   castMinMs: 120,
+
+  // P6：純顯示欄位，預設跟正式環境的新預設（CONTRACT §2：「battle_scale_mode 預設改 level」）一致；
+  // engine 不讀這個值做任何運算，改哪個字串都不影響既有測試（見型別註解）。
+  scaleMode: 'level',
 };
 
 /** 施法中尚未結算的技能，key=actorId；'ALL' 代表 allAllies、'ALL_ENEMIES' 代表 allEnemies
