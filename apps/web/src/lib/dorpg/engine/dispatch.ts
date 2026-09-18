@@ -1,11 +1,11 @@
 // dispatch(state, cmd, now)：先 tick 到 now（推進計時/AI），再套用玩家指令。純函式，兩段都各自
 // 透過 toCtx/fromCtx 操作工作副本，不會動到傳入的 state。
 import type { Skill } from '../types';
-import { resolveAttackOrDamageSkill } from './combat';
+import { resolveWeaponAttack } from './combat';
 import type { Ctx } from './context';
 import { fromCtx, pushEvent, pushLog, toCtx } from './context';
 import { effectiveRating } from './effects';
-import { attackCooldownFor, chargeMultiplier, effectiveCastMs, floorInt } from './formulas';
+import { attackCooldownFor, chargeMultiplier, effectiveCastMs, floorInt, NEUTRAL_WEAPON_PROFILE } from './formulas';
 import type { BattleState, Command, PartyActor } from './types';
 import { beginResolving, computeVictoryDefeatDraw, tick } from './tick';
 
@@ -80,28 +80,34 @@ function applyCommand(state: BattleState, cmd: Command, now: number): BattleStat
     case 'ATTACK_RELEASE': {
       if (player.action !== 'charging') return reject(ctx, '沒有正在蓄力的攻擊');
       const holdMs = Math.max(0, ctx.now - (player.chargeStartedAt ?? ctx.now));
-      const chargeMul = chargeMultiplier(holdMs, ctx.cfg);
+      // P7（CONTRACT §3 巨劍）：weaponProfile 缺省時全部欄位＝NEUTRAL_WEAPON_PROFILE 中性值，
+      // 下面每一行套用武器欄位的算式因此都會退化成 P1～P6 原本的樣子，既有測試不受影響。
+      const weaponProfile = player.weaponProfile ?? NEUTRAL_WEAPON_PROFILE;
+      const rawChargeMul = chargeMultiplier(holdMs, ctx.cfg, weaponProfile.chargeTimeMul);
+      // CONTRACT §3：「蓄氣倍率超出 1 的部分 ×charge_dmg_mul」，即 1+(chargeMul−1)×chargeDmgMul
+      // ——無武器（chargeDmgMul=1）時原樣等於 rawChargeMul。
+      const chargeMul = 1 + (rawChargeMul - 1) * weaponProfile.chargeDmgMul;
       const charged = holdMs >= ctx.cfg.chargeMinMs;
       if (ctx.targetId) {
-        resolveAttackOrDamageSkill(ctx, {
+        resolveWeaponAttack(ctx, {
           actorId: player.id,
           attackerStats: player.stats,
           attackerEffects: player.activeEffects,
-          coefficient: 1,
-          flat: 0,
-          weapon: player.weapon,
+          attackerRating: player.rating,
+          weaponVisual: player.weapon,
+          weaponProfile,
           targetEnemyId: ctx.targetId,
           chargeMul,
           charged,
-          attackerRating: player.rating, // 普攻不傳 element，combat.ts 內定 'neutral'。
         });
       }
       player.action = 'recovering';
       player.actionUntil = ctx.now + ctx.cfg.recoveryMs;
       // P3：AGI→攻速→攻擊冷卻，只套用在玩家身上（隊友的節奏在 ai.ts 用 allyActIntervalMs 排程，
       // 完全不呼叫 attackCooldownFor，不受這裡的改動影響）。P5：套 effectiveRating 讓玩家身上的
-      // aspd buff 也能反映在攻擊冷卻上。
-      player.attackReadyAt = ctx.now + attackCooldownFor(effectiveRating(player.rating, player.activeEffects), ctx.cfg);
+      // aspd buff 也能反映在攻擊冷卻上。P7：intervalPct（細劍/長弓/短弓/弩/斧）乘在算出來的冷卻上。
+      player.attackReadyAt =
+        ctx.now + attackCooldownFor(effectiveRating(player.rating, player.activeEffects), ctx.cfg, weaponProfile.intervalPct);
       player.chargeStartedAt = null;
       return finish(ctx);
     }

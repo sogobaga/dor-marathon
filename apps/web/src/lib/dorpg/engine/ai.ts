@@ -15,11 +15,11 @@
 // 技能冷卻仍記在 ctx.aiSkillReadyAt[actorId]（跟玩家的 skillReadyAt 分開兩把鎖——審查修復 #2：
 // 兩者是不同角色在用同一份技能「定義」，AI 用掉技能不該把玩家 UI 上顯示的冷卻也一起打斷）。
 import type { Skill } from '../types';
-import { applyPartyDamage, resolveAttackOrDamageSkill, resolveCastEffect } from './combat';
+import { applyPartyDamage, resolveCastEffect, resolveWeaponAttack } from './combat';
 import type { Ctx } from './context';
 import { pushEvent, pushLog } from './context';
 import { activeStatSum, effectiveRating, rollCritMultiplier } from './effects';
-import { computeDamage, critChance, floorInt, missChance, pickWeightedAliveTarget, randRange } from './formulas';
+import { computeDamage, critChance, floorInt, missChance, NEUTRAL_WEAPON_PROFILE, pickWeightedAliveTarget, randRange } from './formulas';
 import type { ActiveEffect, EnemyActor, PartyActor, PendingCast } from './types';
 
 /** 該效果目前是否已經套用在這個目標身上（依 stat 判斷，不看來源技能——契約原文「目標身上沒有
@@ -228,19 +228,20 @@ export function advanceAllyAI(ctx: Ctx, actor: PartyActor): void {
     if (tryDebuff(ctx, actor, skills)) return finishAllyAction(ctx, actor);
   }
 
-  // ⑤普攻 fallback。
+  // ⑤普攻 fallback。P7：隊友普攻改走 resolveWeaponAttack（跟玩家共用同一套 hits/extraHit/splash
+  // 邏輯）；本輪傭兵尚未開放裝備，actor.weaponProfile 恆為 null → NEUTRAL_WEAPON_PROFILE，行為
+  // 跟 P1～P6 完全相容。
   if (!ctx.targetId) return; // 沒目標可打，這次不消耗行動（下個 tick 再試）。
-  resolveAttackOrDamageSkill(ctx, {
+  resolveWeaponAttack(ctx, {
     actorId: actor.id,
     attackerStats: actor.stats,
     attackerEffects: actor.activeEffects,
-    coefficient: 1,
-    flat: 0,
-    weapon: actor.weapon,
+    attackerRating: actor.rating,
+    weaponVisual: actor.weapon,
+    weaponProfile: actor.weaponProfile ?? NEUTRAL_WEAPON_PROFILE,
     targetEnemyId: ctx.targetId,
     chargeMul: 1,
     charged: false,
-    attackerRating: actor.rating,
   });
   finishAllyAction(ctx, actor);
 }
@@ -326,7 +327,9 @@ export function advanceEnemyAI(ctx: Ctx, enemy: EnemyActor): void {
           const result: 'normal' | 'critical' = isCrit ? 'critical' : 'normal';
           pushEvent(ctx, { kind: 'enemyAttack', enemyId: enemy.id, targetId: target.id, damage, guarded, result });
           pushLog(ctx, `${enemy.name} 攻擊 ${target.name}，造成 ${damage} 點傷害`);
-          applyPartyDamage(ctx, target, damage);
+          // P7（CONTRACT §1「怪物攻擊帶自己的屬性」）：怪物普攻視為攻擊屬性＝其 attribute（缺省視為
+          // neutral），供 applyPartyDamage 判斷是否套用受擊方鍊系武器的 elementResistPct。
+          applyPartyDamage(ctx, target, damage, enemy.attribute);
         }
       }
     }

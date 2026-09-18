@@ -50,6 +50,14 @@
   }
 }
 
+/* DORPG P7：濺射傷害較小樣式（見 FloatText.tsx small prop）。只縮字級——不透過這裡改 opacity，
+   因為 .text 的 dorpgFloatUp 動畫本身就持續驅動 opacity（0→1→0），同屬性的靜態宣告在動畫播放
+   期間會被動畫值蓋掉，寫在這裡不會有實際效果；動畫時間/位移曲線與一般 .text 完全共用，不另開
+   一組 keyframes。 */
+.textSmall {
+  font-size: 12px;
+}
+
 /* P5 POLISH：定點模式（FloatText.tsx anchorPx，敵人身上的 statusApplied 飄字用）。left/top 由 TSX
    inline 帶入絕對像素座標（戰場座標系），這裡只管「以那個點為錨」往上飄——用 transform 而非 top
    百分比，跟 .text／.reduced 那組「相對卡片高度」的寫法完全獨立，不會互相牽動。 */
@@ -93,4 +101,9 @@
     opacity: 1;
     transform: translate(-50%, -130%);
   }
+}
+
+/* DORPG P7：濺射傷害定點模式（敵人身上）較小樣式，同 .textSmall 的理由——只縮字級，不動 opacity。 */
+.pointSmall {
+  font-size: 11px;
 }

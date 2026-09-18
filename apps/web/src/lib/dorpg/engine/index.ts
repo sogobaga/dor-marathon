@@ -26,6 +26,9 @@ export {
   effectiveCastMs,
   elementMultiplier,
   missChance,
+  // P7（CONTRACT §3「無武器＝全部中性」）：外部（fixture.ts／verify 腳本）偶爾需要直接引用這個
+  // 中性常數（例如比對「沒有武器」跟「明確裝備一把中性武器」是否真的算出同一組數值），一併匯出。
+  NEUTRAL_WEAPON_PROFILE,
   pickInitialTarget,
   pickNextTarget,
 } from './formulas';
@@ -64,7 +67,14 @@ function toPartyActor(pm: PartyMember, index: number, now: number, cfg: BattleCo
     isPlayer,
     portraitUrl: pm.portraitUrl,
     slotIndex: index,
-    weapon: pm.weapon ?? 'sword',
+    // P7（CONTRACT §3「武器視覺＝type.visual（覆蓋職業預設）」）：equippedWeapon 存在時視覺特效組
+    // 改由武器類型的 visual 決定，否則落回既有的 pm.weapon（職業/隊友預設視覺字串），缺省 'sword'
+    // ——三層 fallback 完全對齊 PartyMember.equippedWeapon 型別註解描述的規則。
+    weapon: pm.equippedWeapon?.visual ?? pm.weapon ?? 'sword',
+    // P7：武器戰鬥效果；沒有裝備（undefined/null）一律 null，combat.ts 各處讀取時再 fallback 成
+    // NEUTRAL_WEAPON_PROFILE（見該常數型別註解），這裡不預先展開中性值——保持「有沒有裝備」這件事
+    // 在 PartyActor 層級仍然可以被明確分辨（例如未來裝備頁想顯示「目前沒有武器」的空狀態）。
+    weaponProfile: pm.equippedWeapon?.profile ?? null,
     // P2：有真實評級（internal/rpg Compute 算出來的）就直接用，沒有就退回 config 推導的後備值。
     rating: pm.rating ?? deriveDefaultPartyRating(cfg),
     // P5：戰鬥開始時沒有任何 buff（buff 只能在戰鬥中靠技能施放取得，不存在「開場自帶」的設計）。

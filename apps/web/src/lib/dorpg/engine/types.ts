@@ -4,7 +4,7 @@
 //
 // import type 的東西在 Node 的 TS type-stripping 下會整段被削掉、完全不會嘗試 resolve，
 // 所以這裡引用 ../types（純型別檔）不影響 verify-dorpg-engine.mjs 用 node 直接執行本檔。
-import type { ActorStats, BuffDebuffStat, CombatRating, EnemySlotId, Item, Skill, TrayMode, WeaponKind } from '../types';
+import type { ActorStats, BuffDebuffStat, CombatRating, EnemySlotId, Item, Skill, TrayMode, WeaponKind, WeaponProfileWire } from '../types';
 
 export type ActorActionState = 'idle' | 'charging' | 'guarding' | 'casting' | 'recovering' | 'dead';
 export type EnemyAnimState = 'spawning' | 'idle' | 'windup' | 'attacking' | 'hitReaction' | 'dying' | 'removed';
@@ -75,6 +75,13 @@ export interface PartyActor {
   skills: Skill[];
   /** P6：純顯示用，見 PartyMember.presetName 型別註解；engine 的任何戰鬥數值計算都不讀這個欄位。 */
   presetName: string | null;
+  /**
+   * P7（CONTRACT §2/§3）：目前裝備武器的戰鬥效果；null＝沒有裝備（傭兵本輪恆為 null，見
+   * PartyMember.equippedWeapon 型別註解）。engine/combat.ts 的攻擊/技能結算一律用
+   * `actor.weaponProfile ?? NEUTRAL_WEAPON_PROFILE`（見 formulas.ts）取得可安全套用的具體數值，
+   * 不必在每個呼叫點各自處理 null 分支。
+   */
+  weaponProfile: WeaponProfileWire | null;
 }
 
 export interface EnemyActor {
@@ -231,6 +238,18 @@ export interface BattleConfig {
    * 本輪未實作，engine 一樣只是原樣透傳顯示。
    */
   scaleMode: 'level' | 'power' | 'fixed';
+
+  // ---- P7（DORPG_P7 CONTRACT §1、WIRE「戰鬥 bootstrap」）新增：五行＋光暗相剋倍率的三個可調
+  // 係數，全部走 rpg_config JSON，不新增 migration。查無 battle_element_chart 管理者覆寫時，
+  // formulas.ts elementMultiplier() 的五行相剋表退回這三個係數換算倍率（見該函式型別註解）。----
+
+  /** 攻擊屬性「剋」怪物屬性（五行相剋方向或光闇互剋）時的倍率加成 %；預設 25（×1.25）。 */
+  elementAdvantagePct: number;
+  /** 攻擊屬性「被」怪物屬性剋制時的倍率減損 %；預設 −25（×0.75）。 */
+  elementDisadvantagePct: number;
+  /** 攻擊屬性與怪物屬性相同（同五行或同光/同闇）時的倍率減損 %；預設 −25（×0.75，同屬性最沒有
+   *  效率，跟兩者相剋時的懲罰同一個量級——拍板值，理由見 CONTRACT §1）。 */
+  elementSamePct: number;
 }
 
 /** 契約 §2 給的預設值，逐字照抄；可被 createBattle 的 opts.config 局部覆寫。 */
@@ -292,6 +311,11 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   // P6：純顯示欄位，預設跟正式環境的新預設（CONTRACT §2：「battle_scale_mode 預設改 level」）一致；
   // engine 不讀這個值做任何運算，改哪個字串都不影響既有測試（見型別註解）。
   scaleMode: 'level',
+
+  // P7（CONTRACT §1 拍板值）：五行＋光暗相剋倍率的三個係數預設 25/−25/−25。
+  elementAdvantagePct: 25,
+  elementDisadvantagePct: -25,
+  elementSamePct: -25,
 };
 
 /** 施法中尚未結算的技能，key=actorId；'ALL' 代表 allAllies、'ALL_ENEMIES' 代表 allEnemies
@@ -326,6 +350,11 @@ export type BattleEvent =
       result: 'normal' | 'critical' | 'miss' | 'immune';
       damage: number;
       charged: boolean;
+      /** P7（CONTRACT §3 斧／WIRE「事件帶 splash:true 供浮字區分」）：這筆傷害是濺射到相鄰怪物
+       *  的次要命中，不是玩家/隊友點的主要目標——FRONTEND 可用它決定浮字樣式跟主擊有所區別。
+       *  缺省 undefined（既有事件一律視為非濺射，跟明確給 false 語意相同，只是不強迫每個既有
+       *  呼叫點都補這個欄位）。 */
+      splash?: boolean;
     }
   | { seq: number; at: number; kind: 'skillCast'; actorId: string; skillId: string; targetId: string | null }
   | { seq: number; at: number; kind: 'heal' | 'shield'; actorId: string; targetId: string; amount: number }

@@ -78,11 +78,68 @@ func (h *Handler) PutJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, err := h.db.Exec(ctx, `UPDATE player_characters SET job_id=$1, updated_at=NOW() WHERE user_id=$2`, body.JobID, uid); err != nil {
+	// 審查#3【低】根因修復：job_id 更新與「自動卸下跨職業武器」原本是兩次獨立的非交易寫入
+	// （各自呼叫一次 h.db.Exec/QueryRow）——中途卸下那步失敗時，job_id 已經寫入 DB 卻不會回滾，
+	// 留下「已經換職業、舊職業武器卻還裝備著」的不一致狀態。改成兩步都在同一個 tx 內（比照
+	// StatsReset/Allocate 既有的多步驟寫入慣例：h.db.Begin → defer Rollback → 全部成功才 Commit），
+	// 任何一步失敗都讓整個異動一起復原。
+	tx, err := h.db.Begin(ctx)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // 成功路徑會先 Commit，Rollback 在那之後為 no-op
+
+	if _, err := tx.Exec(ctx, `UPDATE player_characters SET job_id=$1, updated_at=NOW() WHERE user_id=$2`, body.JobID, uid); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to save")
 		return
 	}
+
+	// DORPG P7（CONTRACT §2/WIRE PUT /rpg/job）：換職業（含清除職業）時，若目前裝備的武器
+	// 不屬於新職業（type.job_id 不符，或直接沒選職業），自動卸下——避免玩家帶著跨職業武器繼續
+	// 吃它的 Compute 加成。player_equipment 讀寫都改走 tx（上面 job_id 更新同一個交易）；
+	// rpg_weapons/rpg_weapon_types 是唯讀查表資料，不受這支端點寫入影響，沿用既有
+	// h.getWeaponWithType 走 h.db 即可，不必也綁進這個 tx。
+	var equippedItemID string
+	scanErr := tx.QueryRow(ctx, `SELECT item_id FROM player_equipment WHERE user_id=$1 AND slot='weapon'`, uid).Scan(&equippedItemID)
+	switch {
+	case scanErr == nil:
+		_, wtype, werr := h.getWeaponWithType(ctx, equippedItemID)
+		switch {
+		case werr == nil:
+			if shouldUnequipOnJobChange(wtype.JobID, body.JobID) {
+				if _, err := tx.Exec(ctx, `DELETE FROM player_equipment WHERE user_id=$1 AND slot='weapon'`, uid); err != nil {
+					respondErr(w, http.StatusInternalServerError, "failed to save")
+					return
+				}
+			}
+		case errors.Is(werr, pgx.ErrNoRows):
+			// 髒資料：裝備指到一把已被刪除的武器，視為不需要卸下（沒有 job_id 可比對）。
+		default:
+			respondErr(w, http.StatusInternalServerError, "failed to load equipment")
+			return
+		}
+	case errors.Is(scanErr, pgx.ErrNoRows):
+		// 沒有裝備武器，不需要卸下。
+	case isMissingRelation(scanErr):
+		// migration 183 未套用（player_equipment 表不存在）：視為「還沒有武器系統」直接略過，
+		// 不擋這支既有端點。
+	default:
+		respondErr(w, http.StatusInternalServerError, "failed to load equipment")
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to commit")
+		return
+	}
 	h.respondMe(w, r, uid)
+}
+
+// shouldUnequipOnJobChange 純函式抽出來方便單元測試（DB 讀寫本身留給 Neon 分支整合測試，見
+// jobs_test.go 檔頭）：換成 newJobID（nil＝清除職業）後，目前裝備的武器若不屬於新職業就該卸下。
+func shouldUnequipOnJobChange(equippedWeaponJobID string, newJobID *string) bool {
+	return newJobID == nil || equippedWeaponJobID != *newJobID
 }
 
 // PUT /rpg/test-level {"level": number|null}（1~99）：測試用等級，NULL 清除（改用真實等級）。

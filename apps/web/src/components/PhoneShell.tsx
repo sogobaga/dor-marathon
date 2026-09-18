@@ -56,6 +56,8 @@ const BattleScreen = dynamic(() => import('./dorpg/BattleScreen'), { ssr: false 
 const EncounterPicker = dynamic(() => import('./dorpg/EncounterPicker'), { ssr: false })
 // DORPG P6：酒館（隊伍／傭兵腳本），同樣只從角色頁進入，不需要 SSR。
 const TavernScreen = dynamic(() => import('./TavernScreen'), { ssr: false })
+// DORPG P7：裝備（武器），同樣只從角色頁進入，不需要 SSR。
+const EquipmentScreen = dynamic(() => import('./EquipmentScreen'), { ssr: false })
 
 // openEventSlug：廣告落地頁 /event/{slug} 傳入，開頁即直接顯示該活動簡章（見 app/event/[slug]/EventLanding.tsx）。
 // openShopId：合作商家專屬連結 /shop/{id} 傳入，開頁即直接顯示該商家詳細頁（見 app/shop/[id]/ShopLanding.tsx）。
@@ -87,6 +89,9 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
   // DORPG P6：酒館（隊伍／傭兵腳本）——只能從角色頁的新按鈕開啟，跟角色頁互斥顯示（見下方渲染
   // 三元鏈；onOpenTavern／TavernScreen.onBack 各自切換這兩個布林，不會同時為 true）。
   const [showTavern, setShowTavern] = useState(false)
+  // DORPG P7：裝備（武器）——同樣只能從角色頁的新按鈕開啟，跟角色頁互斥顯示（同上 showTavern
+  // 的既有慣例；onOpenEquipment／EquipmentScreen.onBack 各自切換這兩個布林，不會同時為 true）。
+  const [showEquipment, setShowEquipment] = useState(false)
   // DORPG 戰鬥畫面（第 21 套 P2）：只能從角色頁的「進入戰鬥」開啟，疊在角色頁之上（渲染鏈排在
   // showCharacter 前）。P2 起中間多一層遭遇選單：null→未開；{mode:'picker'}→選單；
   // {mode:'battle',code,nonce}→戰鬥中。nonce 只在「再戰一場」遞增，用來強制重建 BattleScreen
@@ -265,6 +270,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     else if (battleView?.mode === 'battle') { path = '/battle'; title = '戰鬥' }
     else if (battleView?.mode === 'picker') { path = '/battle/picker'; title = '戰鬥選單' }
     else if (showCharacter) { path = '/character'; title = '角色' }
+    else if (showEquipment) { path = '/equipment'; title = '裝備' }
     else if (showExplore) { path = '/explore'; title = '城市探索' }
     else if (showPersonalTasks) { path = '/personal-tasks'; title = '個人任務' }
     else if (showProfile || payRace) { path = '/profile'; title = '會員管理' }
@@ -273,7 +279,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     // 活動探索：與畫面渲染鏈同一順序評估（見下方 JSX），registerRace/detailRace 蓋在它上面時優先算那兩個
     else if (showActivityExplore) { path = '/activities'; title = '活動探索' }
     pageview(path, title)
-  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showRewards, showMonopoly, showHeroes, showRunMeet, battleView, showCharacter, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace, showActivityExplore])
+  }, [showGallery, showTitle, showAchievement, showTraining, showPerks, showRewards, showMonopoly, showHeroes, showRunMeet, battleView, showCharacter, showEquipment, showExplore, showPersonalTasks, showProfile, payRace, registerRace, detailRace, showActivityExplore])
 
   return (
     <GoogleAuthProvider>
@@ -338,9 +344,12 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
               setBattleView({ mode: 'picker' })
             }}
             onOpenTavern={() => { setShowCharacter(false); setShowTavern(true) }}
+            onOpenEquipment={() => { setShowCharacter(false); setShowEquipment(true) }}
           />
         ) : showTavern ? (
           <TavernScreen onBack={() => { setShowTavern(false); setShowCharacter(true) }} />
+        ) : showEquipment ? (
+          <EquipmentScreen onBack={() => { setShowEquipment(false); setShowCharacter(true) }} />
         ) : showExplore ? (
           <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={(bossId) => { window.location.href = bossId ? '/track?focus=' + encodeURIComponent(bossId) : '/track' }} />
         ) : showPersonalTasks ? (

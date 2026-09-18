@@ -20,12 +20,14 @@ import type {
   ElementKind,
   Enemy,
   EnemySlotId,
+  EquippedWeaponWire,
   Item,
   PartyMember,
   Scene,
   SceneSlot,
   Skill,
   WeaponKind,
+  WeaponProfileWire,
 } from './types';
 import { SKILL_SLOTS } from './types';
 // P2（暴擊／Miss／無效攻擊）：只借用 engine 已凍結匯出的預設常數算怪物評級基準，不是改動 engine
@@ -44,9 +46,28 @@ export interface MonsterRow {
   id: string;
   name: string;
   rank: MonsterRank;
-  /** 中文災害屬性（闇/金/土/無/木…），逐字取自內容包 monster.json，不是 ElementKind enum
-   *  ——見 migration 176 檔頭「資料來源」段落的理由。 */
+  /**
+   * P7（CONTRACT §1）更新：這裡改存 ElementKind 英文字面值（metal/wood/water/fire/earth/light/
+   * dark/neutral），對齊 rpg_monsters.attribute 欄位本來就宣告的 domain 註解（migration 176
+   * `attribute TEXT ... -- metal|wood|water|fire|earth|light|dark|neutral`）與本輪 P7 CONTRACT
+   * §1 的五行相剋表——engine 的 elementMultiplier() 用英文字面值跟 ELEMENT_BEATS 表比對，中文
+   * 沒有意義（永遠落到「不相干」的 1.0）。
+   * ⚠️ 已知落差（見任務回報）：正式環境 migration 176 seed 實際 INSERT 的是中文字串（'闇'/'金'/
+   * '土'/'無'/'木'），跟欄位自己宣告的英文 domain 不符——這是 P2 時期刻意的歷史決策（該檔頭有
+   * 說明理由：純顯示，當時還沒有屬性相剋機制）。本檔（fixture.ts，離線預覽/驗證腳本專用鏡像）
+   * 改成英文是為了讓 P7 的五行系統在離線環境有意義地被展示/測試，*不是*正式 DB 資料已經同步
+   * 遷移——需要 BACKEND 另外出一個 migration 把 rpg_monsters.attribute 的既有 5 筆資料轉成英文
+   * （中文→英文對照：闇→dark、金→metal、土→earth、無→neutral、木→wood），五行相剋表在此之前
+   * 對正式怪物是 no-op（weakElements／管理者覆寫兩條路徑不受影響，本來就是英文）。
+   */
   attribute: string;
+  /**
+   * P7（CONTRACT §1）更新：同 attribute，改存英文字面值（small/medium/large），對齊
+   * rpg_monsters.size 欄位宣告的 domain（migration 176 同一段 `size TEXT ... -- small|medium|
+   * large`）——engine 的武器 sizeBonus[enemy.size] 只認得這三個英文字面值，中文（'大型'/'中型'/
+   * '小型'）不會命中任何 key，永遠是 0 加成。同上，正式 DB 現況仍是中文，需要 BACKEND 另外遷移
+   * （大型→large、中型→medium、小型→small）。
+   */
   size: string;
   race: string;
   posterUrl: string;
@@ -182,11 +203,11 @@ export const RPG_SCENES: SceneRow[] = [
  * 由 migration 180 決定（本輪未套用，見任務回報），這裡不是權威資料來源。
  */
 export const RPG_MONSTERS: MonsterRow[] = [
-  { id: 'DOR-MON-A-67000200001', name: '幽暗食人花首領', rank: 'A', attribute: '闇', size: '大型', race: '植物', posterUrl: monsterPoster('DOR-MON-A-67000200001'), hpMult: 7.0, atkMult: 1.6, defMult: 1.5, speedMult: 1.1, threat: 100, isBoss: true, sortOrder: 1, weakElements: ['light'] },
-  { id: 'DOR-MON-B-0089', name: '鋼鐵巨鉗蟹', rank: 'B', attribute: '金', size: '大型', race: '魚貝', posterUrl: monsterPoster('DOR-MON-B-0089'), hpMult: 1.8, atkMult: 1.25, defMult: 1.35, speedMult: 1.15, threat: 40, isBoss: false, sortOrder: 2, weakElements: ['fire'] },
-  { id: 'DOR-MON-C-0229', name: '沙塵骷髏騎士', rank: 'C', attribute: '土', size: '中型', race: '不死', posterUrl: monsterPoster('DOR-MON-C-0229'), hpMult: 1.3, atkMult: 1.15, defMult: 1.2, speedMult: 1.05, threat: 30, isBoss: false, sortOrder: 3, weakElements: ['water'] },
-  { id: 'DOR-MON-D-0182', name: '灰白獸人', rank: 'D', attribute: '無', size: '中型', race: '人形', posterUrl: monsterPoster('DOR-MON-D-0182'), hpMult: 0.9, atkMult: 1.0, defMult: 1.0, speedMult: 1.0, threat: 20, isBoss: false, sortOrder: 4, weakElements: [] },
-  { id: 'DOR-MON-E-0052', name: '荊棘毒蛾', rank: 'E', attribute: '木', size: '小型', race: '昆蟲', posterUrl: monsterPoster('DOR-MON-E-0052'), hpMult: 0.6, atkMult: 0.8, defMult: 0.8, speedMult: 0.9, threat: 10, isBoss: false, sortOrder: 5, weakElements: ['fire'] },
+  { id: 'DOR-MON-A-67000200001', name: '幽暗食人花首領', rank: 'A', attribute: 'dark', size: 'large', race: '植物', posterUrl: monsterPoster('DOR-MON-A-67000200001'), hpMult: 7.0, atkMult: 1.6, defMult: 1.5, speedMult: 1.1, threat: 100, isBoss: true, sortOrder: 1, weakElements: ['light'] },
+  { id: 'DOR-MON-B-0089', name: '鋼鐵巨鉗蟹', rank: 'B', attribute: 'metal', size: 'large', race: '魚貝', posterUrl: monsterPoster('DOR-MON-B-0089'), hpMult: 1.8, atkMult: 1.25, defMult: 1.35, speedMult: 1.15, threat: 40, isBoss: false, sortOrder: 2, weakElements: ['fire'] },
+  { id: 'DOR-MON-C-0229', name: '沙塵骷髏騎士', rank: 'C', attribute: 'earth', size: 'medium', race: '不死', posterUrl: monsterPoster('DOR-MON-C-0229'), hpMult: 1.3, atkMult: 1.15, defMult: 1.2, speedMult: 1.05, threat: 30, isBoss: false, sortOrder: 3, weakElements: ['water'] },
+  { id: 'DOR-MON-D-0182', name: '灰白獸人', rank: 'D', attribute: 'neutral', size: 'medium', race: '人形', posterUrl: monsterPoster('DOR-MON-D-0182'), hpMult: 0.9, atkMult: 1.0, defMult: 1.0, speedMult: 1.0, threat: 20, isBoss: false, sortOrder: 4, weakElements: [] },
+  { id: 'DOR-MON-E-0052', name: '荊棘毒蛾', rank: 'E', attribute: 'wood', size: 'small', race: '昆蟲', posterUrl: monsterPoster('DOR-MON-E-0052'), hpMult: 0.6, atkMult: 0.8, defMult: 0.8, speedMult: 0.9, threat: 10, isBoss: false, sortOrder: 5, weakElements: ['fire'] },
 ];
 
 /**
@@ -255,6 +276,64 @@ export const RPG_COMPANIONS: CompanionRow[] = [
   { id: 'char_aguang', name: '阿光', portraitId: 'char_aguang', role: '劍士', weapon: 'sword', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['war_cry', 'armor_break', 'slash'], isPlayerPortrait: false, sortOrder: 3 },
   { id: 'char_ashen', name: '阿深', portraitId: 'char_ashen', role: '重裝', weapon: 'greatsword', levelOffset: 0, hpMult: 1.3, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1.25, skillIds: [], isPlayerPortrait: false, sortOrder: 4 },
 ];
+
+// ---------------------------------------------------------------------------
+// P7（DORPG_P7 CONTRACT §2/§3、WIRE「戰鬥 bootstrap」）：武器系統的離線示範資料——正式的 18 類型
+// ×390 件武器表由另一個 workflow 產生 seed（migration 183），本檔只鏡像三件有代表性的示範武器
+// （雙劍／斧／鍊，各自展示一種契約 §3 的機制），供 /dev/dorpg 離線預覽與 verify 腳本切換測試，
+// 不是完整的武器內容庫。
+// ---------------------------------------------------------------------------
+
+export interface WeaponFixtureRow {
+  id: string;
+  name: string;
+  typeId: string;
+  visual: WeaponKind;
+  profile: WeaponProfileWire;
+}
+
+/** 中性基準之外的欄位維持 0/1，只填每件示範武器真正要展示的機制（見各筆註解）。 */
+export const RPG_WEAPON_FIXTURES: Record<string, WeaponFixtureRow> = {
+  // 輕騎士．雙劍：CONTRACT §3「裝備後是二刀流，攻擊次數變兩次，攻擊力下降為 60%」。
+  demo_dual_sword: {
+    id: 'demo_dual_sword',
+    name: '風城雙刃‧壹式',
+    typeId: 'lk_dual',
+    visual: 'sword',
+    profile: {
+      atk: 40, matk: 0, hits: 2, hitMul: 0.6, extraHitChancePct: 0, intervalPct: 0,
+      chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
+      critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
+    },
+  },
+  // 重騎士．斧：CONTRACT §3「增加物理攻擊的間隔時間，會造成範圍傷害...對於大體型的怪物會有額外
+  // 傷害 5%」——intervalPct 正值＝變慢、splashPct 濺射同排相鄰、sizeBonus.large。
+  demo_axe: {
+    id: 'demo_axe',
+    name: '劍南斷木斧',
+    typeId: 'hk_axe',
+    visual: 'greatsword',
+    profile: {
+      atk: 55, matk: 0, hits: 1, hitMul: 1, extraHitChancePct: 0, intervalPct: 25,
+      chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 40, sizeBonus: { small: 0, medium: 0, large: 5 },
+      critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
+    },
+  },
+  // 聖職者．鍊：CONTRACT §3「增加魔法抗性（屬性效果減免）」——element_resist_pct 減免非 neutral
+  // 怪物造成的傷害（見 combat.ts applyPartyDamage）；element 給 light 只是示範風格，不影響機制
+  // 本身（鍊不主動攻擊，element 欄位在這個範例裡是裝飾用的顯示資訊）。
+  demo_chain: {
+    id: 'demo_chain',
+    name: '福和聖鍊',
+    typeId: 'cl_chain',
+    visual: 'staff',
+    profile: {
+      atk: 5, matk: 30, hits: 1, hitMul: 1, extraHitChancePct: 0, intervalPct: 0,
+      chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
+      critPct: 0, critDmgPct: 0, elementResistPct: 15, magicSkillPct: 0, element: 'light',
+    },
+  },
+};
 
 /**
  * 六場遭遇。第 1/2/3/6 場編組逐字取自契約 §2；第 4（淡水河口）/第 5（劍南山步道）場契約只給了
@@ -749,7 +828,14 @@ function toSkill(row: SkillRow): Skill {
  */
 export function buildFixtureSample(
   code: string,
-  opts?: { playerAtk?: number; playerHp?: number; mode?: 'power' | 'level'; refTable?: RefPlayerTable | null },
+  opts?: {
+    playerAtk?: number;
+    playerHp?: number;
+    mode?: 'power' | 'level';
+    refTable?: RefPlayerTable | null;
+    /** P7：離線預覽/測試切換玩家武器——key 對到 RPG_WEAPON_FIXTURES，缺省/null＝空手（中性）。 */
+    weaponId?: keyof typeof RPG_WEAPON_FIXTURES | null;
+  },
 ): FixtureBundle {
   const encounter = RPG_ENCOUNTERS.find((e) => e.code === code);
   if (!encounter) throw new Error(`dorpg fixture: unknown encounter code "${code}"`);
@@ -853,6 +939,8 @@ export function buildFixtureSample(
     mpMax: FIXTURE_PLAYER_MP,
     portraitUrl: charPortrait(portraitRow.portraitId, 256),
     rating: FIXTURE_PLAYER_RATING,
+    // P7：離線預覽可切換玩家武器（見 opts.weaponId 型別註解）；缺省/未知 id 一律空手。
+    equippedWeapon: opts?.weaponId ? (RPG_WEAPON_FIXTURES[opts.weaponId] as EquippedWeaponWire | undefined) ?? null : null,
   };
 
   const companions: PartyMember[] = RPG_COMPANIONS.filter((c) => !c.isPlayerPortrait)

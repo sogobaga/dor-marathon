@@ -13,7 +13,11 @@ import styles from './FloatText.module.css';
 
 // P5 POLISH：新增 'buff'/'debuff' 兩種語氣（見 engine BattleEvent 'statusApplied'）——跟既有四種
 // 共用同一顆計時器/淡出機制，只是換一份色票，不是另立一套元件。
-export type FloatTextTone = 'damage' | 'heal' | 'shield' | 'miss' | 'buff' | 'debuff';
+// DORPG P7（武器系統，見契約 dorpg_p7 CONTRACT.md §3/WIRE §引擎：「splash: true 旗標供浮字區分」）：
+// 新增 'splash' 語氣——斧的濺射傷害打在同排相鄰怪物身上，不是這次攻擊真正鎖定的目標，用比較不
+// 顯眼的樣式（見下方 `small` prop）跟主目標的傷害數字區分，避免玩家誤以為濺射到的怪物也被完整
+// 打了一次。色票沿用 'miss' 的灰（textSecondary）——語意上都是「次要/非主要」的訊息。
+export type FloatTextTone = 'damage' | 'heal' | 'shield' | 'miss' | 'buff' | 'debuff' | 'splash';
 
 export type FloatTextProps = {
   text: string;
@@ -29,13 +33,21 @@ export type FloatTextProps = {
    * 35%→5% 百分比動畫（那組數字是配合固定高度的卡片校準的，套在任意高度的戰場上會嚴重跑版）。
    */
   anchorPx?: { x: number; y: number };
+  /**
+   * DORPG P7：較小字級（見 FloatTextTone.splash 型別註解）——目前只有濺射傷害會傳 true，其餘語氣
+   * 一律沿用既有尺寸。獨立於 tone 之外開一個 prop 而不是「splash 恆小」寫死在 CSS，是因為字級跟
+   * 色票是兩個獨立維度（未來若有其他語氣也想要「較不顯眼」的樣式，不必再新增 tone）。
+   */
+  small?: boolean;
 };
 
 const DURATION_MS = 700;
 
-/** 六種語氣對應色票；miss 沒有專屬色票，借 textSecondary（灰）。buff/debuff 各借一個目前六色票裡
- *  還沒被其他語氣用過的顏色（mpFill 藍／criticalGlow 亮紅），跟 damage(粉紅)/heal(綠)/shield(金)
- *  視覺上都能分開，不必新增色碼（顏色一律只從 assets.ts 的 PALETTE 來，見檔案慣例）。 */
+/** 七種語氣對應色票；miss/splash 共用 textSecondary（灰，語意都是「次要訊息」，見 FloatTextTone
+ *  型別註解），splash 額外靠 `small` prop 縮小字級做出區隔，不需要另開一支色碼。buff/debuff
+ *  各借一個目前色票裡還沒被其他語氣用過的顏色（mpFill 藍／criticalGlow 亮紅），跟 damage(粉紅)/
+ *  heal(綠)/shield(金) 視覺上都能分開，不必新增色碼（顏色一律只從 assets.ts 的 PALETTE 來，見
+ *  檔案慣例）。 */
 const TONE_COLOR: Record<FloatTextTone, string> = {
   damage: PALETTE.hpEnemy,
   heal: PALETTE.hpNormal,
@@ -43,9 +55,10 @@ const TONE_COLOR: Record<FloatTextTone, string> = {
   miss: PALETTE.textSecondary,
   buff: PALETTE.mpFill,
   debuff: PALETTE.criticalGlow,
+  splash: PALETTE.textSecondary,
 };
 
-export default function FloatText({ text, tone, reducedMotion = false, anchorPx }: FloatTextProps) {
+export default function FloatText({ text, tone, reducedMotion = false, anchorPx, small = false }: FloatTextProps) {
   const [visible, setVisible] = useState(true);
 
   useEffect(() => {
@@ -58,9 +71,10 @@ export default function FloatText({ text, tone, reducedMotion = false, anchorPx 
   if (anchorPx) {
     // 定點模式（見 FloatTextProps.anchorPx 註解）：位置由呼叫端算好的像素座標決定，動畫走
     // transform（.point 系列 class），不依賴容器高度。
+    const cls = [styles.point, reducedMotion && styles.pointReduced, small && styles.pointSmall].filter(Boolean).join(' ');
     return (
       <div
-        className={reducedMotion ? `${styles.point} ${styles.pointReduced}` : styles.point}
+        className={cls}
         style={{ left: anchorPx.x, top: anchorPx.y, color: TONE_COLOR[tone] }}
         aria-hidden="true"
       >
@@ -69,9 +83,10 @@ export default function FloatText({ text, tone, reducedMotion = false, anchorPx 
     );
   }
 
+  const cls = [styles.text, reducedMotion && styles.reduced, small && styles.textSmall].filter(Boolean).join(' ');
   return (
     <div
-      className={reducedMotion ? `${styles.text} ${styles.reduced}` : styles.text}
+      className={cls}
       style={{ color: TONE_COLOR[tone] }}
       aria-hidden="true"
     >

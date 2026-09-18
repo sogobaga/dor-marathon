@@ -693,6 +693,10 @@ func main() {
 			r.With(perm("rpg")).Mount("/admin/rpg/scenes", rpgHandler.AdminScenesRouter())
 			r.With(perm("rpg")).Mount("/admin/rpg/companions", rpgHandler.AdminCompanionsRouter())
 			r.With(perm("rpg")).Mount("/admin/rpg/encounters", rpgHandler.AdminEncountersRouter())
+			// DORPG P7 武器系統（見 internal/rpg weapons_admin.go，migration 183）：同上，靜態
+			// 子路徑跟既有 "/admin/rpg" mount 共存，沿用同一個 perm("rpg")。
+			r.With(perm("rpg")).Mount("/admin/rpg/weapon-types", rpgHandler.AdminWeaponTypesRouter())
+			r.With(perm("rpg")).Mount("/admin/rpg/weapons", rpgHandler.AdminWeaponsRouter())
 			// 較寬鬆的節流（後台讀取型端點，僅防止表格分頁被寫成緊迴圈誤打）。
 			r.With(perm("rpg"), middleware.RateLimit(rdb, "admin_rpg_battle_logs", 60, time.Minute, middleware.UserOrIP)).
 				Get("/admin/rpg/battle-logs", rpgHandler.AdminBattleLogs)

@@ -1,11 +1,11 @@
 // 傷害/治療/護盾/buff/debuff 的效果套用（純函式風格：吃 Ctx 直接在裡面改，呼叫端保證是本次呼叫的
 // 工作副本）。dispatch（玩家普攻/技能）、ai（隊友普攻/治療）、tick（敵人攻擊、施法完成結算）三邊
 // 共用，避免同一段「算傷害→套用→處理死亡/受擊」邏輯抄三次、規則跑掉。
-import type { ActorStats, BuffDebuffStat, CombatRating, DmgType, ElementKind, Skill, WeaponKind } from '../types';
+import type { ActorStats, BuffDebuffStat, CombatRating, DmgType, ElementKind, EnemySlotId, Skill, WeaponKind, WeaponProfileWire } from '../types';
 import type { Ctx } from './context';
 import { pushEvent, pushLog } from './context';
 import { activeStatSum, applyStatusEffect, damageTakenMultiplier, effectiveRating, rollCritMultiplier } from './effects';
-import { computeHeal, computeRawDamage, critChance, elementMultiplier, floorInt, missChance, selectAliveByThreat } from './formulas';
+import { computeHeal, computeRawDamage, critChance, elementMultiplier, floorInt, missChance, NEUTRAL_WEAPON_PROFILE, normalizeElementAlias, normalizeSizeAlias, selectAliveByThreat } from './formulas';
 import type { ActiveEffect, EnemyActor, PartyActor, PendingCast } from './types';
 
 /** 對敵人造成傷害後的死亡/受擊處理：死亡→dying+enemyDeath+目標自動換人；存活→hitReaction 覆蓋層。 */
@@ -61,6 +61,14 @@ function applyEnemyDamage(ctx: Ctx, enemy: EnemyActor, damage: number): void {
  *     ATK 扣 DEF（含 def_pct debuff）——CONTRACT §6。
  *   - elementMultiplier 改吃整個 enemy（attribute+weakElements），不再只傳 attribute 字串。
  *   - critMul 改成 rollCritMultiplier() 浮動抽樣，不再是固定的 ctx.cfg.critMultiplier。
+ *
+ * P7 變更（CONTRACT §3、WIRE「引擎」）：
+ *   - 新增必填 opts.attackerWeapon（呼叫端一律傳 `actor.weaponProfile ?? NEUTRAL_WEAPON_PROFILE`，
+ *     見 formulas.ts）：sizeBonus[enemy.size] 乘在最終傷害上（普攻與技能傷害皆適用，武器對「這個
+ *     體型比較好打」的加成不分攻擊手段來源）；element 未宣告或宣告 neutral 的 physical 傷害改帶
+ *     武器 element（magic 傷害恆用自己宣告的 element，不被武器覆蓋——見下方 element 判斷式）。
+ *   - 回傳 { result, damage } 給呼叫端（目前只有 resolveWeaponAttack 會用到，算斧的濺射基準）；
+ *     既有呼叫點（resolveCastEffect）忽略回傳值，行為不變。
  */
 export function resolveAttackOrDamageSkill(
   ctx: Ctx,
@@ -80,15 +88,25 @@ export function resolveAttackOrDamageSkill(
     element?: ElementKind;
     /** P5：傷害屬性，不傳＝'physical'（普攻與既有技能的既有行為）。 */
     dmgType?: DmgType;
+    /** P7：攻擊者目前裝備武器的戰鬥效果；沒有武器時呼叫端一律傳 NEUTRAL_WEAPON_PROFILE。 */
+    attackerWeapon: WeaponProfileWire;
   },
-): void {
+): { result: 'normal' | 'critical' | 'miss' | 'immune'; damage: number } {
   const enemy = ctx.enemies.find((e) => e.id === opts.targetEnemyId);
   if (!enemy || enemy.hp <= 0) {
     pushLog(ctx, `${opts.actorId} 的攻擊目標已消失，落空`);
-    return;
+    return { result: 'miss', damage: 0 };
   }
-  const element: string = opts.element ?? 'neutral';
   const dmgType: DmgType = opts.dmgType ?? 'physical';
+  // P7（CONTRACT §3：「普攻與 element=neutral 的物理技能帶武器 element（魔法技能維持自身屬性）」）：
+  // magic 傷害恆用技能自己宣告的 element；physical 傷害（含普攻，opts.element 恆為 undefined）
+  // 只有在沒宣告或宣告 neutral 時才吃武器 element，已明確宣告非中性屬性的物理技能維持自己的宣告。
+  const element: string =
+    dmgType === 'magic'
+      ? (opts.element ?? 'neutral')
+      : !opts.element || opts.element === 'neutral'
+        ? opts.attackerWeapon.element
+        : opts.element;
   const emitAttack = (result: 'normal' | 'critical' | 'miss' | 'immune', damage: number) =>
     pushEvent(ctx, {
       kind: 'attack',
@@ -108,14 +126,14 @@ export function resolveAttackOrDamageSkill(
   if (!isHit) {
     emitAttack('miss', 0);
     pushLog(ctx, `${opts.actorId} 對 ${enemy.name} 揮空`);
-    return;
+    return { result: 'miss', damage: 0 };
   }
 
-  const elementMul = elementMultiplier(ctx.cfg, enemy, element);
+  const elementMul = elementMultiplier(ctx.cfg, element, enemy);
   if (elementMul === 0) {
     emitAttack('immune', 0);
     pushLog(ctx, `${opts.actorId} 對 ${enemy.name} 的攻擊完全無效（屬性剋制）`);
-    return;
+    return { result: 'immune', damage: 0 };
   }
 
   const critPct = critChance(attackerRating, defenderRating, ctx.cfg);
@@ -134,17 +152,116 @@ export function resolveAttackOrDamageSkill(
   const defBase = dmgType === 'magic' ? enemy.stats.mdef : enemy.stats.def;
   const def = Math.round(defBase * (1 + activeStatSum(enemy.activeEffects, defPctStat) / 100));
 
-  const net = computeRawDamage(atk, opts.coefficient, opts.flat, elementMul, opts.chargeMul, critMul, def);
+  const rawNet = computeRawDamage(atk, opts.coefficient, opts.flat, elementMul, opts.chargeMul, critMul, def);
+  // P7（CONTRACT §3／§4「對於大/小體型的怪物會有額外傷害」；INTEGRATOR 補正規化，見 formulas.ts
+  // normalizeSizeAlias 檔頭說明）：先過中文別名表（現網 rpg_monsters.size 實際是中文原文）再判斷是
+  // 否為三個英文字面值之一——兩者皆非（未知字串、缺欄位）視為 0 加成，不猜測對應關係。
+  const normalizedSize = normalizeSizeAlias(enemy.size);
+  const sizeKey = normalizedSize === 'small' || normalizedSize === 'medium' || normalizedSize === 'large' ? normalizedSize : undefined;
+  const sizeBonusPct = sizeKey ? opts.attackerWeapon.sizeBonus[sizeKey] : 0;
+  const net = sizeBonusPct ? Math.floor(rawNet * (1 + sizeBonusPct / 100)) : rawNet;
   if (net <= 0) {
     emitAttack('immune', 0);
     pushLog(ctx, `${opts.actorId} 對 ${enemy.name} 的攻擊被完全擋下`);
-    return;
+    return { result: 'immune', damage: 0 };
   }
 
   const result: 'normal' | 'critical' = isCrit ? 'critical' : 'normal';
   emitAttack(result, net);
   pushLog(ctx, `${opts.actorId} 對 ${enemy.name}${isCrit ? '爆擊，' : ''}造成 ${net} 點傷害`);
   applyEnemyDamage(ctx, enemy, net);
+  return { result, damage: net };
+}
+
+/** P7（CONTRACT §3 斧）：同排相鄰站位表——front 排三格互為鄰居（左右各鄰中間，中間鄰左右兩側），
+ *  rear 排只有兩格、互為彼此的唯一鄰居；兩排之間不相鄰（濺射不跨排）。逐字對齊 WIRE.md「front:
+ *  left/center/right；rear: left/right」的站位順序。 */
+const ROW_NEIGHBORS: Readonly<Record<EnemySlotId, readonly EnemySlotId[]>> = {
+  rear_left: ['rear_right'],
+  rear_right: ['rear_left'],
+  front_left: ['front_center'],
+  front_center: ['front_left', 'front_right'],
+  front_right: ['front_center'],
+};
+
+/**
+ * P7（CONTRACT §3 斧：「造成範圍傷害，左右兩側的怪物會受到波及造成 splashPct% 的傷害」）：主目標
+ * 這一下「已經結算完」的傷害 × splashPct/100，獨立 floor，直接套用在同排相鄰的存活敵人身上——
+ * 契約原文明講「不觸發 miss/crit 重算」，所以完全不呼叫 missChance/critChance/elementMultiplier，
+ * 也不會因為濺射目標的屬性/迴避而被閃掉或免疫，單純是主擊傷害的固定比例分潤。事件另外推一筆
+ * （不是把濺射傷害加進主擊事件裡），並標記 `splash:true` 供 FRONTEND 浮字區分主擊/濺射。
+ */
+function applySplashDamage(
+  ctx: Ctx,
+  actorId: string,
+  weaponVisual: WeaponKind,
+  primarySlot: EnemySlotId,
+  primaryDamage: number,
+  splashPct: number,
+): void {
+  const neighbors = ROW_NEIGHBORS[primarySlot] ?? [];
+  for (const slotId of neighbors) {
+    const target = ctx.enemies.find((e) => e.slot === slotId && e.hp > 0);
+    if (!target) continue;
+    const dmg = Math.floor(primaryDamage * (splashPct / 100));
+    if (dmg <= 0) continue;
+    pushEvent(ctx, { kind: 'attack', actorId, targetId: target.id, weapon: weaponVisual, result: 'normal', damage: dmg, charged: false, splash: true });
+    pushLog(ctx, `${actorId} 的攻擊波及 ${target.name}，造成 ${dmg} 點濺射傷害`);
+    applyEnemyDamage(ctx, target, dmg);
+  }
+}
+
+/**
+ * P7（CONTRACT §3／WIRE「普攻」）：武器化的普攻——取代 P1～P6「普攻恆單擊、coefficient=1」的
+ * 簡化寫法，統一給 dispatch.ts（玩家 ATTACK_RELEASE）與 ai.ts（隊友普攻 fallback）共用：
+ *   - hits 段各自獨立呼叫一次 resolveAttackOrDamageSkill（各自獨立 miss/crit/浮字），每段
+ *     coefficient=weaponProfile.hitMul（雙劍每段 60%、槍每段 50%，不是「總傷害不變、只是拆成
+ *     幾段」）。
+ *   - extraHitChancePct>0 時消耗一次 ctx.rng() 決定要不要多打一段（槍系「有機率發動成 3 連擊」）
+ *     ——沒有這個機制的武器（含 NEUTRAL_WEAPON_PROFILE）完全不消耗這次 rng()，既有測試的 rng
+ *     序列因此不受影響。
+ *   - 每段命中後若 weaponProfile.splashPct>0 觸發濺射（斧）。
+ * 無武器（weaponProfile===NEUTRAL_WEAPON_PROFILE）時 totalHits=1、coefficient=1、不消耗額外
+ * rng()、不觸發濺射，跟 P1～P6 舊行為完全等價（既有斷言因此全數維持不變）。
+ */
+export function resolveWeaponAttack(
+  ctx: Ctx,
+  opts: {
+    actorId: string;
+    attackerStats: ActorStats;
+    attackerEffects: ActiveEffect[];
+    attackerRating: CombatRating;
+    weaponVisual: WeaponKind;
+    weaponProfile: WeaponProfileWire;
+    targetEnemyId: string;
+    chargeMul: number;
+    charged: boolean;
+  },
+): void {
+  const wp = opts.weaponProfile;
+  const extra = wp.extraHitChancePct > 0 && ctx.rng() < wp.extraHitChancePct / 100 ? 1 : 0;
+  const totalHits = Math.max(1, wp.hits) + extra;
+  for (let i = 0; i < totalHits; i++) {
+    const target = ctx.enemies.find((e) => e.id === opts.targetEnemyId);
+    if (!target || target.hp <= 0) break; // 目標中途死亡（多段命中時），後續段落自然停止，不打空氣。
+    const outcome = resolveAttackOrDamageSkill(ctx, {
+      actorId: opts.actorId,
+      attackerStats: opts.attackerStats,
+      attackerEffects: opts.attackerEffects,
+      coefficient: wp.hitMul,
+      flat: 0,
+      weapon: opts.weaponVisual,
+      targetEnemyId: opts.targetEnemyId,
+      chargeMul: opts.chargeMul,
+      charged: opts.charged,
+      attackerRating: opts.attackerRating,
+      dmgType: 'physical',
+      attackerWeapon: wp,
+    });
+    if (wp.splashPct > 0 && (outcome.result === 'normal' || outcome.result === 'critical')) {
+      applySplashDamage(ctx, opts.actorId, opts.weaponVisual, target.slot, outcome.damage, wp.splashPct);
+    }
+  }
 }
 
 /**
@@ -154,12 +271,23 @@ export function resolveAttackOrDamageSkill(
  * （combat.ts 直接命中、ai.ts 敵人普攻），只要最終都走 applyPartyDamage 就一定會套到，不必在每個
  * 呼叫端各自記得套一次。clamp 下限 0（Math.max(0,...)）：不允許減傷疊過頭變成「倒扣血」。
  */
-export function applyPartyDamage(ctx: Ctx, actor: PartyActor, rawDamage: number): void {
+export function applyPartyDamage(ctx: Ctx, actor: PartyActor, rawDamage: number, attackerElement?: string): void {
   const dtMul = damageTakenMultiplier(actor.activeEffects);
+  // P7（CONTRACT §1「elementResistPct 減免非 neutral 怪物造成的傷害」）：attackerElement 由呼叫端
+  // 傳入（目前只有 ai.ts 的怪物普攻會傳 enemy.attribute），只有具體、非 'neutral' 時才用
+  // actor.weaponProfile.elementResistPct（鍊系武器）折算減免——玩家沒有「防禦屬性」可言，這是
+  // 裝備給的固定抗性，不查五行相剋表。
+  // 審查#1【中】根因修復：enemy.attribute 現網是中文原文（見 elementCycleMultiplier 檔頭說明），
+  // 灰白獸人等怪物的「無」字面值原本直接跟 'neutral' 比較永遠不相等，被誤判成「非中性攻擊」而錯誤
+  // 套用 elementResistPct 減免——先過 normalizeElementAlias 轉成英文枚舉再判斷是否為 neutral。
+  const normalizedAttackerElement = attackerElement ? normalizeElementAlias(attackerElement) : undefined;
+  const resistPct = normalizedAttackerElement && normalizedAttackerElement !== 'neutral' ? (actor.weaponProfile?.elementResistPct ?? 0) : 0;
+  const resistMul = Math.max(0, 1 - resistPct / 100);
   // P6（CONTRACT §1）：damage_taken_pct 明講「在套用前 floor」——改 Math.round 為 floorInt，
   // 兩者在 dtMul<1（減傷，最常見的用法）時會算出不同的整數，floor 是契約指定的方向（見
-  // formulas.ts floorInt 型別註解）。
-  let dmg = Math.max(0, floorInt(rawDamage * dtMul));
+  // formulas.ts floorInt 型別註解）。P7：resistMul 併入同一次 floor，跟 dtMul 是同一種「傷害減免
+  // 乘數」性質，沒有理由分兩次取整。
+  let dmg = Math.max(0, floorInt(rawDamage * dtMul * resistMul));
   if (actor.shield > 0) {
     const absorbed = Math.min(actor.shield, dmg);
     actor.shield = floorInt(actor.shield - absorbed);
@@ -208,12 +336,23 @@ function applyShieldToTarget(ctx: Ctx, casterId: string, targetId: string, amoun
  * 對稱）；targetId 型別放寬到含 'ALL_ENEMIES'（P5 新 sentinel）純粹是為了跟 PendingCast 的型別對齊，
  * heal/shield 的 dispatch 路由永遠不會真的產生這個值，落到這裡的話 `[targetId]` 找不到對應隊員、
  * 安全地什麼事都不做。
+ *
+ * P7（CONTRACT §3 書系武器「magic_skill_pct 乘在...heal 的 coef 上」）：新增可選參數
+ * magicSkillPct（預設 0），只乘進 heal 的 coefficient，不影響 shield——契約原文只點名 heal，
+ * shield 沒有另外的百分比加成可套。
  */
-export function resolveSupportSkill(ctx: Ctx, casterId: string, skill: Skill, targetId: string | 'ALL' | 'ALL_ENEMIES' | null): void {
+export function resolveSupportSkill(
+  ctx: Ctx,
+  casterId: string,
+  skill: Skill,
+  targetId: string | 'ALL' | 'ALL_ENEMIES' | null,
+  magicSkillPct = 0,
+): void {
   const caster = ctx.party.find((p) => p.id === casterId);
   if (!caster) return;
   const matk = Math.round(caster.stats.matk * (1 + activeStatSum(caster.activeEffects, 'matk_pct') / 100));
-  const amount = computeHeal(matk, skill.coefficient, skill.flat);
+  const coefficient = skill.kind === 'heal' ? skill.coefficient * (1 + magicSkillPct / 100) : skill.coefficient;
+  const amount = computeHeal(matk, coefficient, skill.flat);
   const targets =
     targetId === 'ALL' ? ctx.party.filter((p) => p.hp > 0).map((p) => p.id) : targetId ? [targetId] : [];
   for (const tId of targets) {
@@ -284,11 +423,21 @@ export function resolveBuffDebuff(ctx: Ctx, casterId: string, skill: Skill, pend
  * resolveBuffDebuff。passive 不會進技能欄（後端已把 stat 算進玩家 stats，engine 完全不處理），
  * special 在 dispatch 階段就已經被拒絕（implemented=false），兩者理論上都不會有 pendingCast 走到
  * 這裡——沒有對應分支，遇到的話單純什麼都不做（防呆，不拋例外）。
+ *
+ * P7（CONTRACT §3 書系武器「magic_skill_pct 乘在 dmg_type=magic 技能與 heal 的 coef 上」）：
+ * damage 分支只在 dmgType==='magic' 時套 magicSkillPct（物理技能不受書系武器影響）；heal/shield
+ * 分支把 weapon.magicSkillPct 轉給 resolveSupportSkill（shield 內部會忽略，見該函式型別註解）。
+ * attackerWeapon 一律傳 `actor.weaponProfile ?? NEUTRAL_WEAPON_PROFILE`，讓 sizeBonus/element
+ * 覆蓋規則（見 resolveAttackOrDamageSkill）對技能傷害跟普攻一視同仁——武器「打大型怪比較痛」是
+ * 裝備本身的物理特性，不分是揮出去的是普攻還是技能。
  */
 export function resolveCastEffect(ctx: Ctx, actor: PartyActor, skill: Skill, pending: PendingCast): void {
+  const weapon = actor.weaponProfile ?? NEUTRAL_WEAPON_PROFILE;
   if (skill.kind === 'damage') {
     const hits = skill.hits ?? 1;
     const dmgType = skill.dmgType ?? 'physical';
+    const magicMul = dmgType === 'magic' ? 1 + weapon.magicSkillPct / 100 : 1;
+    const coefficient = skill.coefficient * magicMul;
     const targetIds =
       pending.targetId === 'ALL_ENEMIES'
         ? ctx.enemies.filter((e) => e.hp > 0).map((e) => e.id)
@@ -301,7 +450,7 @@ export function resolveCastEffect(ctx: Ctx, actor: PartyActor, skill: Skill, pen
           actorId: actor.id,
           attackerStats: actor.stats,
           attackerEffects: actor.activeEffects,
-          coefficient: skill.coefficient,
+          coefficient,
           flat: skill.flat,
           weapon: skill.weapon,
           targetEnemyId: tId,
@@ -310,13 +459,14 @@ export function resolveCastEffect(ctx: Ctx, actor: PartyActor, skill: Skill, pen
           attackerRating: actor.rating,
           element: skill.element,
           dmgType,
+          attackerWeapon: weapon,
         });
       }
     }
     return;
   }
   if (skill.kind === 'heal' || skill.kind === 'shield') {
-    resolveSupportSkill(ctx, actor.id, skill, pending.targetId);
+    resolveSupportSkill(ctx, actor.id, skill, pending.targetId, weapon.magicSkillPct);
     return;
   }
   if (skill.kind === 'buff' || skill.kind === 'debuff') {

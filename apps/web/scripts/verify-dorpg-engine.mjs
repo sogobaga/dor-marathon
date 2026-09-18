@@ -41,6 +41,8 @@ const {
   attackCooldownFor, effectiveCastMs,
   // P5（職業／配點／技能）新增匯出：
   rollCritMultiplier, activeStatSum, effectiveRating, effectiveStats, damageTakenMultiplier,
+  // P7（武器系統＋怪物體型/屬性）新增匯出：
+  NEUTRAL_WEAPON_PROFILE,
 } = await import(modUrl)
 
 const typesUrl = new URL('../src/lib/dorpg/types.ts', import.meta.url).href
@@ -758,19 +760,55 @@ const HEAL_SKILL = { id: 'heal', name: '治療', iconUrl: '', cooldownMs: 8000, 
 // ── 34) elementMultiplier：P5 改版——chart 覆寫優先、否則 weakElements 命中 +25%、否則 1.0；
 //        DEFAULT_BATTLE_CONFIG.elementChart 改成清空（CONTRACT §0/§6，弱點改由 Enemy.weakElements
 //        表達）；elementMultiplier() 簽章也從「(cfg, attribute, element)」改成「(cfg, enemy, element)」
-//        ——這是本輪對既有 P2 測試刻意的行為變更，不是回歸，舊測試改用管理者覆寫 cfg 驗證同一段邏輯。──
+//        ——這是本輪對既有 P2 測試刻意的行為變更，不是回歸，舊測試改用管理者覆寫 cfg 驗證同一段邏輯。
+//        P7 再改一次簽章成「(cfg, attackElement, enemy)」（WIRE.md），下面呼叫點的第 2/3 個參數對調
+//        ——這批測試用的都是 Chinese attribute（'金'/'木'/'無'），不會命中 P7 新增的英文五行相剋表
+//        （見 formulas.ts ELEMENT_BEATS 只收 ElementKind 英文字面值），所以期望值原封不動；P7 新增
+//        的五行相剋行為改在下面新的 P7 區塊用英文 attribute 另外驗證。──
 {
   eq(Object.keys(DEFAULT_BATTLE_CONFIG.elementChart).length, 0, 'P5：DEFAULT_BATTLE_CONFIG.elementChart 預設清空成 {}（P2 那組金/木/土/闇示範表已移除）')
 
   const chartCfg = { ...DEFAULT_BATTLE_CONFIG, elementChart: { 金: { water: 0.0, fire: 1.6 } } }
-  eq(elementMultiplier(chartCfg, { attribute: '金', weakElements: ['fire'] }, 'water'), 0, 'chart 覆寫優先：金×water 查表命中 0（管理者覆寫可做免疫），即使 water 沒列在 weakElements')
-  eq(elementMultiplier(chartCfg, { attribute: '金', weakElements: ['fire'] }, 'fire'), 1.6, 'chart 覆寫優先：金×fire 查表命中 1.6，蓋過 weakElements 規則算出來的 1.25')
-  eq(elementMultiplier(chartCfg, { attribute: '木', weakElements: ['fire'] }, 'fire'), 1.25, '查無 chart 覆寫（木不在表中）→ 落到 weakElements 規則：命中弱點 → 1+weaknessBonusPct/100=1.25')
-  eq(elementMultiplier(chartCfg, { attribute: '木', weakElements: ['fire'] }, 'water'), 1, '查無 chart 覆寫、也沒命中 weakElements → 1.0（不相剋也不吃虧）')
-  eq(elementMultiplier(chartCfg, { attribute: '無', weakElements: [] }, 'fire'), 1, '沒有弱點的怪物（weakElements=[]）→ 恆 1.0')
-  eq(elementMultiplier(chartCfg, undefined, 'water'), 1, '怪物物件本身是 undefined → 視為中性，直接回 1.0')
-  eq(elementMultiplier(DEFAULT_BATTLE_CONFIG, { attribute: '金', weakElements: ['fire'] }, 'fire'), 1.25, 'DEFAULT config（沒有管理者覆寫，elementChart={}）：金×fire 命中 weakElements → 1.25')
-  eq(elementMultiplier({ ...DEFAULT_BATTLE_CONFIG, weaknessBonusPct: 50 }, { attribute: '金', weakElements: ['fire'] }, 'fire'), 1.5, 'weaknessBonusPct 可調整：改 50 之後命中弱點變成 ×1.5')
+  eq(elementMultiplier(chartCfg, 'water', { attribute: '金', weakElements: ['fire'] }), 0, 'chart 覆寫優先：金×water 查表命中 0（管理者覆寫可做免疫），即使 water 沒列在 weakElements')
+  eq(elementMultiplier(chartCfg, 'fire', { attribute: '金', weakElements: ['fire'] }), 1.6, 'chart 覆寫優先：金×fire 查表命中 1.6，蓋過 weakElements 規則算出來的 1.25')
+  eq(elementMultiplier(chartCfg, 'fire', { attribute: '木', weakElements: ['fire'] }), 1.25, '查無 chart 覆寫（木不在表中）→ 落到 weakElements 規則：命中弱點 → 1+weaknessBonusPct/100=1.25')
+  eq(elementMultiplier(chartCfg, 'water', { attribute: '木', weakElements: ['fire'] }), 1, '查無 chart 覆寫、也沒命中 weakElements、Chinese attribute 也不會命中五行表 → 1.0（不相剋也不吃虧）')
+  eq(elementMultiplier(chartCfg, 'fire', { attribute: '無', weakElements: [] }), 1, '沒有弱點的怪物（weakElements=[]）→ 恆 1.0')
+  eq(elementMultiplier(chartCfg, 'water', undefined), 1, '怪物物件本身是 undefined → 視為中性，直接回 1.0')
+  eq(elementMultiplier(DEFAULT_BATTLE_CONFIG, 'fire', { attribute: '金', weakElements: ['fire'] }), 1.25, 'DEFAULT config（沒有管理者覆寫，elementChart={}）：金×fire 命中 weakElements → 1.25')
+  eq(elementMultiplier({ ...DEFAULT_BATTLE_CONFIG, weaknessBonusPct: 50 }, 'fire', { attribute: '金', weakElements: ['fire'] }), 1.5, 'weaknessBonusPct 可調整：改 50 之後命中弱點變成 ×1.5')
+}
+
+// ── 34b) P7（CONTRACT §1）：五行＋光暗相剋表——英文 ElementKind attribute 才會命中 ELEMENT_BEATS；
+//        同屬性／相剋／被剋／neutral／不相干（金 vs 水）／weakElements 與五行表取大／管理者覆寫仍最優先。──
+{
+  const cfg = DEFAULT_BATTLE_CONFIG // elementAdvantagePct=25, elementDisadvantagePct=-25, elementSamePct=-25
+  eq(elementMultiplier(cfg, 'metal', { attribute: 'wood' }), 1.25, '五行：金剋木（A=metal, M=wood）→ 1+25%=1.25')
+  eq(elementMultiplier(cfg, 'wood', { attribute: 'metal' }), 0.75, '五行：木被金剋（A=wood, M=metal）→ 1-25%=0.75')
+  eq(elementMultiplier(cfg, 'wood', { attribute: 'earth' }), 1.25, '五行：木剋土 → 1.25')
+  eq(elementMultiplier(cfg, 'earth', { attribute: 'water' }), 1.25, '五行：土剋水 → 1.25')
+  eq(elementMultiplier(cfg, 'water', { attribute: 'fire' }), 1.25, '五行：水剋火 → 1.25')
+  eq(elementMultiplier(cfg, 'fire', { attribute: 'metal' }), 1.25, '五行：火剋金 → 1.25')
+  eq(elementMultiplier(cfg, 'light', { attribute: 'dark' }), 1.25, '光闇互剋：光剋闇 → 1.25')
+  eq(elementMultiplier(cfg, 'dark', { attribute: 'light' }), 1.25, '光闇互剋：闇剋光 → 1.25（雙向都是剋，不是「光贏闇輸」單向）')
+  eq(elementMultiplier(cfg, 'fire', { attribute: 'fire' }), 0.75, '同屬性：火×火 → 1+elementSamePct(-25%)=0.75')
+  eq(elementMultiplier(cfg, 'light', { attribute: 'light' }), 0.75, '同屬性：光×光 → 0.75')
+  eq(elementMultiplier(cfg, 'metal', { attribute: 'water' }), 1, '五行表中不相剋也不相生的組合（金 vs 水）→ 1.0（中性）')
+  eq(elementMultiplier(cfg, 'neutral', { attribute: 'fire' }), 1, '攻擊屬性 neutral → 恆 1.0，不查五行表')
+  eq(elementMultiplier(cfg, 'fire', { attribute: 'neutral' }), 1, '怪物屬性 neutral → 恆 1.0，不查五行表')
+  eq(elementMultiplier(cfg, 'fire', { attribute: undefined }), 1, '怪物沒有 attribute 欄位 → 視為 neutral，恆 1.0')
+  // weakElements 與五行表取大：木被金剋(0.75) 但木在弱點桶 → 取 max(0.75, 1.25)=1.25。
+  eq(elementMultiplier(cfg, 'wood', { attribute: 'metal', weakElements: ['wood'] }), 1.25, 'weakElements 與五行表取大：被剋的 0.75 vs 弱點桶 1.25 → 取 1.25（弱點桶保底）')
+  // 反過來：本來就相剋(1.25) 且同時也在弱點桶(1.25) → 取大結果不變，仍是 1.25，不會疊加成 1.5625。
+  eq(elementMultiplier(cfg, 'metal', { attribute: 'wood', weakElements: ['metal'] }), 1.25, '同時符合五行相剋與弱點桶 → 取大不疊加，仍是 1.25（不是兩者相乘）')
+  // 可調整係數：改預設值後同一組輸入算出不同倍率。
+  const tuned = { ...cfg, elementAdvantagePct: 50, elementDisadvantagePct: -50, elementSamePct: -50 }
+  eq(elementMultiplier(tuned, 'metal', { attribute: 'wood' }), 1.5, '五行係數可調整：elementAdvantagePct 改 50 → 剋制倍率變 1.5')
+  eq(elementMultiplier(tuned, 'wood', { attribute: 'metal' }), 0.5, 'elementDisadvantagePct 改 -50 → 被剋倍率變 0.5')
+  eq(elementMultiplier(tuned, 'fire', { attribute: 'fire' }), 0.5, 'elementSamePct 改 -50 → 同屬性倍率變 0.5')
+  // 管理者覆寫仍是最優先，蓋過五行表本身算出來的相剋結果。
+  const overrideCfg = { ...cfg, elementChart: { wood: { metal: 9.9 } } }
+  eq(elementMultiplier(overrideCfg, 'metal', { attribute: 'wood' }), 9.9, '管理者覆寫優先於五行表：金×木本來剋制算 1.25，但被 chart 覆寫成 9.9')
 }
 
 // ── 35) 端到端：chart 覆寫可以做出 'immune'（0 倍） ──
@@ -1620,6 +1658,265 @@ const HEAL_SKILL = { id: 'heal', name: '治療', iconUrl: '', cooldownMs: 8000, 
       ok(lv1.hpMax > 0 && lv1.atk >= 0 && lv1.def >= 0, 'Lv1 的衍生值都是非負數')
     }
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// P7（DORPG_P7 CONTRACT：武器系統＋怪物體型/屬性——ENGINE 角色）新增測試：本節從 1) 重新編號
+// （跟前面 P6 區塊的編號規則一致，各大階段各自一組序號，見檔案上方 P6 區塊同款做法）。
+// 共用小工具：weaponFixture(overrides) 從 NEUTRAL_WEAPON_PROFILE 疊上要測試的欄位，包成
+// PartyMember.equippedWeapon 期待的形狀，避免每個測試都要手key 15 個欄位。
+// ════════════════════════════════════════════════════════════════════════════
+
+function weaponFixture(typeId, visual, overrides) {
+  return { id: `${typeId}_test`, name: typeId, typeId, visual, profile: { ...NEUTRAL_WEAPON_PROFILE, ...overrides } }
+}
+
+// ── 1) 雙劍：hits=2、hitMul=0.6——攻擊次數變兩次，每段獨立造成 60% 傷害（不是總傷害不變只是拆段）。──
+{
+  const dual = weaponFixture('lk_dual', 'sword', { hits: 2, hitMul: 0.6 })
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: dual }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const hits = s.events.filter((e) => e.kind === 'attack' && e.actorId === 'player')
+  eq(hits.length, 2, '雙劍：二刀流，一次普攻產生 2 段獨立 attack 事件')
+  const expected = Math.floor(100 * 0.6) - 35 // computeRawDamage(100,0.6,0,1,1,1,35)
+  ok(hits.every((h) => h.damage === expected), `雙劍：每段各自用 hitMul=0.6 算傷害＝${expected}（實際：${hits.map((h) => h.damage).join(',')}）`)
+  eq(s.enemies[0].hp, 5000 - expected * 2, '雙劍：兩段傷害各自扣血，總扣血量＝2×單段傷害')
+  ok(Number.isInteger(s.enemies[0].hp), '雙劍：扣血後仍是整數（整數不變式）')
+}
+
+// ── 2) 槍：hits=2/hitMul=0.5，且 extraHitChancePct 決定第三段——固定種子下可預期第三段觸發與否。──
+{
+  const spear = (extraPct) => weaponFixture('hk_spear', 'sword', { hits: 2, hitMul: 0.5, extraHitChancePct: extraPct })
+  const sample = (extraPct) =>
+    makeSample({
+      party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: spear(extraPct) }],
+    })
+  // rng 消耗順序（FAR_CONFIG：missPct 恆 0／critPct 恆 0，見區塊 52 同款說明）：
+  //   idx0＝createBattle 敵人 nextActAt 的 randRange（NEVER 區間，值不重要）
+  //   idx1＝resolveWeaponAttack 的「要不要多打一段」判定：rng()<extraHitChancePct/100
+  //   idx2/3＝第 1 段 miss/crit 判定，idx4/5＝第 2 段，（若觸發第三段）idx6/7＝第 3 段
+  let triggered = createBattle(sample(30), { now: 0, config: FAR_CONFIG, rng: fixedRng([0, 0.1, 0, 0, 0, 0, 0, 0]) })
+  triggered = dispatch(triggered, { type: 'ATTACK_BEGIN' }, 0)
+  triggered = dispatch(triggered, { type: 'ATTACK_RELEASE' }, 0)
+  const hitsA = triggered.events.filter((e) => e.kind === 'attack' && e.actorId === 'player')
+  eq(hitsA.length, 3, '槍：固定種子 rng=0.1 < extraHitChancePct(30%) → 觸發第三段，共 3 段命中')
+  const expectedSpear = Math.floor(100 * 0.5) - 35
+  ok(hitsA.every((h) => h.damage === expectedSpear), `槍：每段 hitMul=0.5，傷害皆為 ${expectedSpear}`)
+
+  let notTriggered = createBattle(sample(30), { now: 0, config: FAR_CONFIG, rng: fixedRng([0, 0.9, 0, 0, 0, 0]) })
+  notTriggered = dispatch(notTriggered, { type: 'ATTACK_BEGIN' }, 0)
+  notTriggered = dispatch(notTriggered, { type: 'ATTACK_RELEASE' }, 0)
+  const hitsB = notTriggered.events.filter((e) => e.kind === 'attack' && e.actorId === 'player')
+  eq(hitsB.length, 2, '槍：固定種子 rng=0.9 ≥ extraHitChancePct(30%) → 不觸發第三段，只有 2 段命中')
+
+  // extraHitChancePct=0（雙劍／一般武器）完全不消耗這格 rng，既有測試序列不受擾動。
+  let neutral = createBattle(makeSample(), { now: 0, config: FAR_CONFIG, rng: fixedRng([0, 0]) })
+  neutral = dispatch(neutral, { type: 'ATTACK_BEGIN' }, 0)
+  neutral = dispatch(neutral, { type: 'ATTACK_RELEASE' }, 0)
+  eq(neutral.events.filter((e) => e.kind === 'attack').length, 1, '無 extraHitChancePct 的武器（含無武器）完全不消耗額外一次 rng()，單擊行為不變')
+}
+
+// ── 3) 斧：intervalPct 拉長冷卻＋splashPct 濺射同排相鄰存活敵人，且不濺後排。──
+{
+  const axe = weaponFixture('hk_axe', 'greatsword', { intervalPct: 25, splashPct: 40 })
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: axe }],
+    enemies: [
+      { id: 'center', name: '中', level: 1, hp: 9999, hpMax: 9999, slot: 'front_center', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'left', name: '左', level: 1, hp: 9999, hpMax: 9999, slot: 'front_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'right', name: '右', level: 1, hp: 9999, hpMax: 9999, slot: 'front_right', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'rearL', name: '後左', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+    ],
+    initialTargetId: 'center',
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const byId = Object.fromEntries(s.enemies.map((e) => [e.id, e]))
+  eq(9999 - byId.center.hp, 100, '斧：主擊傷害＝floor(100*1)-0=100')
+  eq(9999 - byId.left.hp, 40, '斧濺射：front_left（同排相鄰）受主擊 40%＝floor(100*0.4)=40')
+  eq(9999 - byId.right.hp, 40, '斧濺射：front_right（同排相鄰）受主擊 40%＝floor(100*0.4)=40')
+  eq(byId.rearL.hp, 9999, '斧濺射不濺後排：rear_left 完全不受影響（前後排不相鄰）')
+  ok(
+    Number.isInteger(byId.center.hp) && Number.isInteger(byId.left.hp) && Number.isInteger(byId.right.hp),
+    '斧：主擊與濺射扣血後皆為整數（整數不變式）',
+  )
+  const splashEvents = s.events.filter((e) => e.kind === 'attack' && e.splash === true)
+  eq(splashEvents.length, 2, '濺射各自推一筆獨立事件（左右各一）且帶 splash:true 供浮字區分')
+  ok(
+    s.events.some((e) => e.kind === 'attack' && e.actorId === 'player' && e.targetId === 'center' && !e.splash),
+    '主擊事件本身沒有 splash 旗標（只有濺射命中才標記）',
+  )
+  eq(
+    attackCooldownFor({ hit: 0, flee: 0, critPct: 0, critShield: 0, aspd: DEFAULT_BATTLE_CONFIG.aspdReference, castReductionPct: 0 }, DEFAULT_BATTLE_CONFIG, 25),
+    DEFAULT_BATTLE_CONFIG.attackCooldownMs * 1.25,
+    '斧：intervalPct=+25（間隔拉長）→ 冷卻變成 base×1.25',
+  )
+}
+
+// ── 4) 細劍／長弓：intervalPct 縮短/拉長攻擊冷卻——直接驗證公式，再用細劍端到端驗證 dispatch 真的接線。──
+{
+  const neutralRating = { hit: 0, flee: 0, critPct: 0, critShield: 0, aspd: DEFAULT_BATTLE_CONFIG.aspdReference, castReductionPct: 0 }
+  eq(
+    attackCooldownFor(neutralRating, DEFAULT_BATTLE_CONFIG, -20),
+    DEFAULT_BATTLE_CONFIG.attackCooldownMs * 0.8,
+    '細劍：intervalPct=-20（傳說級稀有度）→ 冷卻縮短成 base×0.8',
+  )
+  eq(
+    attackCooldownFor(neutralRating, DEFAULT_BATTLE_CONFIG, 20),
+    DEFAULT_BATTLE_CONFIG.attackCooldownMs * 1.2,
+    '長弓：intervalPct=+20 → 冷卻拉長成 base×1.2',
+  )
+  eq(attackCooldownFor(neutralRating, DEFAULT_BATTLE_CONFIG, 0), DEFAULT_BATTLE_CONFIG.attackCooldownMs, 'intervalPct=0（無武器/預設）→ 冷卻不變，跟舊行為一致')
+
+  const rapier = weaponFixture('lk_rapier', 'sword', { intervalPct: -20, sizeBonus: { small: 5, medium: 0, large: 0 } })
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, equippedWeapon: rapier }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  eq(s.party[0].attackReadyAt, DEFAULT_BATTLE_CONFIG.attackCooldownMs * 0.8, '端到端：裝備細劍後 dispatch 算出的 attackReadyAt 真的反映縮短的冷卻，不只是公式本身')
+}
+
+// ── 5) 巨劍：chargeTimeMul 拉長滿蓄時間、chargeDmgMul 加倍蓄氣倍率超出 1 的部分。──
+{
+  eq(chargeMultiplier(1500, DEFAULT_BATTLE_CONFIG, 1.5), 2, '巨劍：chargeTimeMul=1.5 讓蓄氣時間變長，同樣持有 1500ms 只蓄到原本 2/3 進度 → 倍率降為 2.0（不是無武器時的 2.5）')
+  eq(chargeMultiplier(300 + 1200 * 1.5, DEFAULT_BATTLE_CONFIG, 1.5), 2.5, '巨劍：等到真正的滿蓄時間（chargeMinMs+chargeFullMs×1.5=2100ms）才蓄滿 2.5 倍')
+
+  const greatsword = weaponFixture('hk_greatsword', 'greatsword', { chargeTimeMul: 1.5, chargeDmgMul: 2, sizeBonus: { small: 0, medium: 0, large: 5 } })
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: greatsword }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 300 + 1200 * 1.5) // 巨劍自己的滿蓄時間（2100ms）
+  const ev = s.events.find((e) => e.kind === 'attack')
+  // rawChargeMul(滿蓄,chargeTimeMul=1.5)=2.5；weapon-adjusted=1+(2.5-1)*chargeDmgMul(2)=4
+  // net=floor(100*1*1*4)-35=365
+  eq(ev.damage, 365, '巨劍：滿蓄倍率 1+(rawChargeMul-1)×chargeDmgMul = 1+(2.5-1)×2=4 → floor(100*4)-35=365')
+  ok(ev.charged === true, '巨劍：滿蓄攻擊仍正確標記 charged=true')
+}
+
+// ── 6) 體型：sizeBonus[enemy.size] 支援 small/medium/large 三個英文字面值，以及對齊 attribute
+//    既有中文別名手法的 大型/中型/小型（INTEGRATOR 補：現網 rpg_monsters.size 實際是中文原文，
+//    見 formulas.ts normalizeSizeAlias 檔頭說明）；真正無法辨識的字串仍視為 0 加成。──
+{
+  const rapier = weaponFixture('lk_rapier', 'sword', { sizeBonus: { small: 5, medium: 0, large: 5 } })
+  function vsSize(size) {
+    return makeSample({
+      party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: rapier }],
+      enemies: [{ id: 'e1', name: 'e', level: 1, hp: 9999, hpMax: 9999, slot: 'front_center', imageUrl: '', size, stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } }],
+    })
+  }
+  let sSmall = createBattle(vsSize('small'), { now: 0, config: FAR_CONFIG })
+  sSmall = dispatch(sSmall, { type: 'ATTACK_BEGIN' }, 0)
+  sSmall = dispatch(sSmall, { type: 'ATTACK_RELEASE' }, 0)
+  eq(sSmall.events.find((e) => e.kind === 'attack').damage, Math.floor(100 * 1.05), '對小體型：sizeBonus.small=5% → floor(100*1.05)=105（細劍對小體型額外傷害）')
+
+  let sMedium = createBattle(vsSize('medium'), { now: 0, config: FAR_CONFIG })
+  sMedium = dispatch(sMedium, { type: 'ATTACK_BEGIN' }, 0)
+  sMedium = dispatch(sMedium, { type: 'ATTACK_RELEASE' }, 0)
+  eq(sMedium.events.find((e) => e.kind === 'attack').damage, 100, '對中體型：sizeBonus.medium=0 → 沒有額外加成')
+
+  let sChineseLarge = createBattle(vsSize('大型'), { now: 0, config: FAR_CONFIG })
+  sChineseLarge = dispatch(sChineseLarge, { type: 'ATTACK_BEGIN' }, 0)
+  sChineseLarge = dispatch(sChineseLarge, { type: 'ATTACK_RELEASE' }, 0)
+  eq(sChineseLarge.events.find((e) => e.kind === 'attack').damage, Math.floor(100 * 1.05), '現網中文舊資料 "大型" 經 normalizeSizeAlias 對應到 large → sizeBonus.large=5% 正確套用（不再是 no-op）')
+
+  let sUnknown = createBattle(vsSize('giant'), { now: 0, config: FAR_CONFIG })
+  sUnknown = dispatch(sUnknown, { type: 'ATTACK_BEGIN' }, 0)
+  sUnknown = dispatch(sUnknown, { type: 'ATTACK_RELEASE' }, 0)
+  eq(sUnknown.events.find((e) => e.kind === 'attack').damage, 100, '真正無法辨識的字串（既非英文三態、也不在中文別名表）→ 視為 0 加成，不猜測對應關係')
+}
+
+// ── 7) 武器屬性五行：普攻帶武器 element，套進 elementMultiplier 的五行相剋表。──
+{
+  const metalSword = weaponFixture('lk_sword', 'sword', { element: 'metal' })
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: metalSword }],
+    enemies: [{ id: 'e1', name: '木怪', level: 1, hp: 9999, hpMax: 9999, slot: 'front_center', imageUrl: '', attribute: 'wood', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const ev = s.events.find((e) => e.kind === 'attack')
+  eq(ev.damage, Math.floor(100 * 1.25), '普攻帶武器 element=metal，對 attribute=wood 的怪物：金剋木 → ×1.25＝floor(100*1.25)=125')
+
+  // 對照組：無武器（普攻恆 neutral）打同一隻怪，完全沒有屬性加成。
+  const bare = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 } }],
+    enemies: [{ id: 'e1', name: '木怪', level: 1, hp: 9999, hpMax: 9999, slot: 'front_center', imageUrl: '', attribute: 'wood', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } }],
+  })
+  let s2 = createBattle(bare, { now: 0, config: FAR_CONFIG })
+  s2 = dispatch(s2, { type: 'ATTACK_BEGIN' }, 0)
+  s2 = dispatch(s2, { type: 'ATTACK_RELEASE' }, 0)
+  eq(s2.events.find((e) => e.kind === 'attack').damage, 100, '對照組：沒有武器時普攻恆 neutral，對 wood 怪物沒有相剋加成（跟舊行為一致）')
+}
+
+// ── 8) 鍊：elementResistPct 減免非 neutral 怪物造成的傷害（事件記錄的仍是折算前的原始傷害）。──
+{
+  const chain = weaponFixture('cl_chain', 'staff', { elementResistPct: 15 })
+  function makeVsFireMonster(equippedWeapon) {
+    return makeSample({
+      party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 0, mdef: 28 }, equippedWeapon }],
+      enemies: [{ id: 'e1', name: '火怪', level: 1, hp: 999, hpMax: 999, slot: 'front_center', imageUrl: '', attribute: 'fire', stats: { hpMax: 999, mpMax: 0, atk: 100, matk: 1, def: 0, mdef: 0 } }],
+    })
+  }
+  let s = createBattle(makeVsFireMonster(chain), { now: 0, config: { ...FAR_CONFIG, enemyActIntervalMs: [0, 0] } })
+  s = tick(s, 0) // idle→windup
+  s = tick(s, DEFAULT_BATTLE_CONFIG.enemyWindupMs) // windup→attacking，結算傷害
+  const ev = s.events.find((e) => e.kind === 'enemyAttack')
+  eq(ev.damage, 100, 'enemyAttack 事件本身仍是完整原始傷害（100）——elementResistPct 只在 applyPartyDamage 才折算，不改事件記錄')
+  eq(s.party[0].hp, 800 - 85, '鍊 elementResistPct=15%：非 neutral 怪物（fire）造成的傷害打 85 折＝floor(100*0.85)=85')
+
+  // 對照組：沒有鍊（無武器），同一隻火怪打出完整傷害，不折算。
+  let s2 = createBattle(makeVsFireMonster(undefined), { now: 0, config: { ...FAR_CONFIG, enemyActIntervalMs: [0, 0] } })
+  s2 = tick(s2, 0)
+  s2 = tick(s2, DEFAULT_BATTLE_CONFIG.enemyWindupMs)
+  eq(s2.party[0].hp, 800 - 100, '對照組：沒有鍊時沒有抗性可言，火怪的攻擊完整扣血 100')
+  ok(Number.isInteger(s.party[0].hp) && Number.isInteger(s2.party[0].hp), '鍊：折算後 HP 仍是整數（整數不變式）')
+
+  // 審查#1【中】回歸測試：現網 rpg_monsters.attribute 是中文原文，applyPartyDamage 判斷「是否為
+  // neutral」必須先正規化中文別名才比較，否則「無」（中性）會被誤判成非中性而錯誤套用抗性、
+  // 「火」也可能因為字面值不是英文 'fire' 而漏套（兩個方向都要驗證）。
+  function makeVsMonster(attribute, equippedWeapon) {
+    return makeSample({
+      party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 0, mdef: 28 }, equippedWeapon }],
+      enemies: [{ id: 'e1', name: '怪物', level: 1, hp: 999, hpMax: 999, slot: 'front_center', imageUrl: '', attribute, stats: { hpMax: 999, mpMax: 0, atk: 100, matk: 1, def: 0, mdef: 0 } }],
+    })
+  }
+  let sNoneCn = createBattle(makeVsMonster('無', chain), { now: 0, config: { ...FAR_CONFIG, enemyActIntervalMs: [0, 0] } })
+  sNoneCn = tick(sNoneCn, 0)
+  sNoneCn = tick(sNoneCn, DEFAULT_BATTLE_CONFIG.enemyWindupMs)
+  eq(sNoneCn.party[0].hp, 800 - 100, '中文別名「無」（正規化後＝neutral）的怪物打有 elementResistPct 的玩家：不減免，完整扣血 100')
+
+  let sFireCn = createBattle(makeVsMonster('火', chain), { now: 0, config: { ...FAR_CONFIG, enemyActIntervalMs: [0, 0] } })
+  sFireCn = tick(sFireCn, 0)
+  sFireCn = tick(sFireCn, DEFAULT_BATTLE_CONFIG.enemyWindupMs)
+  eq(sFireCn.party[0].hp, 800 - 85, '中文別名「火」（正規化後＝fire，非 neutral）的怪物打有 elementResistPct 的玩家：減免至 85（floor(100*0.85)）')
+}
+
+// ── 9) 書：magicSkillPct 乘在 dmg_type=magic 技能與 heal 的 coef 上（本例驗證 heal；damage 分支
+//        同一段程式碼路徑，見 combat.ts resolveCastEffect 的 magicMul 算式）。──
+{
+  const book = weaponFixture('mg_book', 'staff', { magicSkillPct: 5 })
+  const sample = makeSample({
+    party: [
+      { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, equippedWeapon: book },
+      { id: 'ally', name: '小夥伴', level: 56, hp: 100, hpMax: 500, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 500, mpMax: 100, atk: 50, matk: 50, def: 20, mdef: 20 }, weapon: 'staff' },
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'heal', targetId: 'ally' }, 0)
+  s = tick(s, 500) // heal 的 castMs=500
+  // 無武器基準（既有測試#9）：floor(80*2+80)=240；書 magicSkillPct=5% → coefficient=2*1.05=2.1
+  // → floor(80*2.1+80)=floor(168+80)=248。
+  eq(s.party[1].hp, 100 + 248, '書 magicSkillPct=5%：治療 coefficient 提高 5% → floor(MATK×2.1+80)=248（無武器基準是 240）')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

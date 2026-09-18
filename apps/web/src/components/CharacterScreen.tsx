@@ -22,7 +22,7 @@ import {
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
 import {
   STAT_META, DERIVED_META, resistLabel, BATTLE_DISPLAY_DEFAULTS, estimateAttackCooldownMs, estimateCastMs,
-  jobEmoji, SKILL_KIND_LABEL, formatEffectAtLevel, sortJobs,
+  jobEmoji, SKILL_KIND_LABEL, formatEffectAtLevel, sortJobs, elementLabel,
 } from '@/lib/rpgMeta'
 
 // 配點 400 錯誤代碼 → 中文（契約 §3：超過 stat_cap 回 400 {error:"stat_cap"}）。
@@ -47,7 +47,8 @@ function friendlyErr(e: any, table: Record<string, string>, fallback: string): s
 
 // onOpenBattle：DORPG 戰鬥畫面入口（P0 靜態畫面預覽）；本頁已受 dash.rpg_entry 閘門，不另設資格判斷。
 // onOpenTavern（DORPG P6，見契約 dorpg_p6 CONTRACT.md §3.4）：酒館頁入口——組隊伍／雇傭兵腳本。
-export default function CharacterScreen({ onBack, onOpenBattle, onOpenTavern }: { onBack: () => void; onOpenBattle?: () => void; onOpenTavern?: () => void }) {
+// onOpenEquipment（DORPG P7，見契約 dorpg_p7 CONTRACT.md §6）：裝備頁入口——武器裝備/卸下。
+export default function CharacterScreen({ onBack, onOpenBattle, onOpenTavern, onOpenEquipment }: { onBack: () => void; onOpenBattle?: () => void; onOpenTavern?: () => void; onOpenEquipment?: () => void }) {
   const [data, setData] = useState<RpgMe | null>(null)
   const [jobs, setJobs] = useState<JobDTO[]>([])
   const [skillsData, setSkillsData] = useState<RpgSkillsResponse | null>(null)
@@ -209,10 +210,11 @@ export default function CharacterScreen({ onBack, onOpenBattle, onOpenTavern }: 
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <h1 style={{ margin: '10px 0 2px', fontSize: 23, fontWeight: 800, color: 'var(--tx)' }}>🎮 角色</h1>
         <div style={{ fontSize: 12, color: 'var(--tx-dim)' }}>職業／配點／技能（測試階段）</div>
-        {(onOpenBattle || onOpenTavern) && (
+        {(onOpenBattle || onOpenTavern || onOpenEquipment) && (
           <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {onOpenBattle && <button onClick={onOpenBattle} style={battleBtn}>⚔️ 進入戰鬥（預覽）</button>}
             {onOpenTavern && <button onClick={onOpenTavern} style={battleBtn}>🍺 酒館（隊伍／傭兵）</button>}
+            {onOpenEquipment && <button onClick={onOpenEquipment} style={battleBtn}>🗡️ 裝備</button>}
           </div>
         )}
       </header>
@@ -231,6 +233,26 @@ export default function CharacterScreen({ onBack, onOpenBattle, onOpenTavern }: 
               <span>Base Lv. {ch.base_level}</span>
               {ch.test_level != null && <span style={{ color: 'var(--gold)' }}>測試 Lv. {ch.test_level}</span>}
               <span style={{ color: 'var(--tx)' }}>有效 Lv. {ch.effective_level}</span>
+            </div>
+
+            {/* ---- 目前武器摘要（DORPG P7，見契約 §6：CharacterScreen 加「裝備」按鈕與目前武器一行摘要） ---- */}
+            <div
+              onClick={onOpenEquipment}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16, fontSize: 12,
+                color: 'var(--tx-dim)', cursor: onOpenEquipment ? 'pointer' : 'default',
+              }}
+            >
+              <span>🗡️ 目前武器：</span>
+              {ch.weapon ? (
+                <span style={{ color: 'var(--tx)', fontWeight: 700 }}>
+                  {ch.weapon.name}
+                  {ch.weapon.element !== 'neutral' && <span style={{ color: 'var(--gold)' }}>（{elementLabel(ch.weapon.element)}）</span>}
+                </span>
+              ) : (
+                <span style={{ color: 'var(--tx-faint)' }}>未裝備</span>
+              )}
+              {onOpenEquipment && <span style={{ color: 'var(--tx-faint)', marginLeft: 2 }}>›</span>}
             </div>
 
             {/* ---- 職業 ---- */}

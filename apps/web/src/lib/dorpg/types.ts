@@ -70,6 +70,58 @@ export type CombatRating = {
   critDmgPct?: number;
 };
 
+/**
+ * P7（DORPG_P7 CONTRACT §2/§3、WIRE「戰鬥 bootstrap」）：wire 送的武器戰鬥時效果（camelCase）。
+ * 這是 Go 端 rpg_weapons.profile（snake_case，含 atk/matk/atk_pct/def_pct/int_bonus/mp_pct/
+ * flee_bonus/crit_pct 等純被動加成欄位）在「internal/rpg Compute() 已經把這些被動加成算進玩家
+ * stats/rating」之後，剩給 ENGINE 在戰鬥「當下」即時運算的子集——atk/matk/critPct/critDmgPct
+ * 這幾個欄位雖然仍隨 wire 送來，但只給角色頁／裝備頁顯示用（WIRE.md 原文：「Compute 已吃掉的
+ * int_bonus/mp_pct/atk_pct/matk_pct/def_pct/mdef_pct/flee_bonus/crit_pct 不再送；critPct 仍送
+ * 供除錯顯示」——crit_dmg_pct 同一個道理，Compute()《P7 CONTRACT §3》已經把它疊進
+ * CombatRating.critDmgPct），ENGINE 的傷害/治療/命中/暴擊計算完全不重複套用 atk/matk/critPct/
+ * critDmgPct 這 4 個欄位——重複套用會跟 Compute() 已經算進 PartyMember.stats/rating 的效果疊兩次。
+ * 真正被 engine 讀取套用的只有：hits/hitMul/extraHitChancePct/intervalPct/chargeTimeMul/
+ * chargeDmgMul/splashPct/sizeBonus/elementResistPct/magicSkillPct/element（見 engine/combat.ts
+ * resolveWeaponAttack／resolveAttackOrDamageSkill／resolveCastEffect／applyPartyDamage）。
+ */
+export interface WeaponProfileWire {
+  atk: number;
+  matk: number;
+  hits: number;
+  hitMul: number;
+  extraHitChancePct: number;
+  intervalPct: number;
+  chargeTimeMul: number;
+  chargeDmgMul: number;
+  splashPct: number;
+  sizeBonus: { small: number; medium: number; large: number };
+  critPct: number;
+  critDmgPct: number;
+  elementResistPct: number;
+  magicSkillPct: number;
+  element: ElementKind;
+}
+
+/**
+ * P7：目前裝備的武器（wire 頂層新欄位，WIRE.md：「玩家 party member 新增
+ * `weapon: { id, name, typeId, visual, profile: WeaponProfileWire }|null`」）。刻意不覆蓋既有的
+ * `PartyMember.weapon`（那是 P1 起沿用至今、外部消費者（BattleEvent.weapon／CombatFxLayer）都
+ * 認得的「視覺特效組」簡單字串，見該欄位型別註解，且 api.ts 目前的 RpgBootstrapPartyMemberRaw.
+ * weapon 仍是純字串，INTEGRATOR 尚未把它擴充成物件）——這裡另開一個欄位 `equippedWeapon` 承接
+ * 武器系統的完整資料，engine/index.ts 的 toPartyActor 用
+ * `equippedWeapon?.visual ?? weapon ?? 'sword'` 決定最終顯示用的視覺特效組（CONTRACT §3：
+ * 「武器視覺＝type.visual（覆蓋職業預設）」），兩個欄位並存、互不衝突，也不要求本檔的 domain
+ * 型別欄位名稱跟 wire JSON 逐字一致（fromApi.ts 負責兩者之間的映射，跟本檔其餘 wire→domain
+ * 轉換的既有做法一致，例如 EffectAtLevel 的 duration_ms/mp_cost→durationMs/mpCost）。
+ */
+export interface EquippedWeaponWire {
+  id: string;
+  name: string;
+  typeId: string;
+  visual: WeaponKind;
+  profile: WeaponProfileWire;
+}
+
 export type PartyMember = {
   id: string;
   name: string;
@@ -106,6 +158,13 @@ export type PartyMember = {
    * 腳本資訊可顯示（例如舊版後端、或未來的系統預設腳本理論上一定會有名稱，這裡選填只是防禦）。
    */
   presetName?: string;
+  /**
+   * P7（CONTRACT §2/§5）：目前裝備的武器；null＝明確卸下、undefined＝wire 尚未送這個欄位
+   * （BACKEND／INTEGRATOR 尚未上線武器系統前的舊資料，或本輪傭兵尚未開放裝備）。engine 一律用
+   * `equippedWeapon?.profile ?? null` 當作 PartyActor.weaponProfile，缺省時全部戰鬥效果退化成
+   * 中性（見 engine/formulas.ts NEUTRAL_WEAPON_PROFILE），不影響任何既有斷言。
+   */
+  equippedWeapon?: EquippedWeaponWire | null;
 };
 
 /** 場景五個怪物站位 ID，與 content pack scene.json 的 monsterSlots[].id 同名。 */

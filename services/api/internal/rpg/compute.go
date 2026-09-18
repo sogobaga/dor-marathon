@@ -41,6 +41,9 @@ type ComputeInput struct {
 	WeaponType string
 	// Passives P5：已配點的被動技能加成，見上方 PassiveEffect 註解。
 	Passives []PassiveEffect
+	// Weapon DORPG P7（CONTRACT §3）：目前裝備的武器，nil＝未裝備／沒有武器系統的呼叫端
+	// （例如隊友走 computeCompanionDerived，不經過這個欄位）——完全零改動，既有測試不受影響。
+	Weapon *WeaponProfile
 }
 
 // Derived 六圍算出的所有衍生數值。
@@ -148,6 +151,16 @@ func Compute(cfg Config, in ComputeInput) Derived {
 	s := in.Stats
 	baseLv := float64(in.BaseLevel)
 	pv := in.Passives
+	wp := in.Weapon
+
+	// --- DORPG P7（CONTRACT §3）：INT += int_bonus 必須在算任何衍生值之前套用，讓杖類武器的
+	// INT 加成連帶影響 MaxMP/MATK/MDEF/狀態抗性這些「吃 INT」的下游算式，不是只加在顯示的
+	// Stats 上（characterView.Stats 用的是 handler.go 另外組的原始六圍，這裡改的只是 Compute
+	// 內部這份局部拷貝，不影響玩家看到/能配點的六圍）。wp==nil 時 s 與 in.Stats 完全相同，
+	// 對既有呼叫端零改動。
+	if wp != nil {
+		s.Int += wp.IntBonus
+	}
 
 	// --- 武器類型：P5 新增每個角色可依職業覆寫（見 ComputeInput.WeaponType 註解），
 	// 空字串時完全比照既有行為退回全域設定。 ---
@@ -164,6 +177,9 @@ func Compute(cfg Config, in ComputeInput) Derived {
 	mpBase := cfg.BaseMP + cfg.MPPerBaseLevel*baseLv
 	maxMP := mpBase * (1 + float64(s.Int)*cfg.IntMPPct/100)
 	maxMP *= 1 + sumPassive(pv, "mp_max_pct")/100
+	if wp != nil {
+		maxMP *= 1 + wp.MpPct/100
+	}
 
 	// --- 物理攻擊力（素質）：依武器類型走近戰/遠程分支 + LUK 通用加成 + 基本等級加成 +
 	// STR 整十階梯（P5）+ 被動 atk_pct（P5，乘在最終值）---
@@ -176,26 +192,60 @@ func Compute(cfg Config, in ComputeInput) Derived {
 	statusAtk += floorDiv(s.Luk, cfg.LukAtkPer)
 	statusAtk += floorDiv(in.BaseLevel, cfg.LvAtkPer)
 	statusAtk += statTierBonus(s.Str, cfg.StrTierCoef)
-	// 現階段沒有裝備系統：EquipAtk 恆 0，StrEquipAtkPct/DexEquipAtkPct 乘在這裡，之後接裝備直接生效。
-	const equipAtk = 0.0
+	// DORPG P7：equipAtk 曾經是「現階段沒有裝備系統」的 0 佔位符（StrEquipAtkPct/DexEquipAtkPct
+	// 這兩個 config 欄位當初就是為了乘在這裡而存在，見該欄位註解），現在武器系統上線，接上
+	// wp.Atk 就直接生效，不必改動這條公式本身。
+	equipAtk := 0.0
+	if wp != nil {
+		equipAtk = wp.Atk
+	}
 	atk := statusAtk + equipAtk*(1+(float64(s.Str)*cfg.StrEquipAtkPct+float64(s.Dex)*cfg.DexEquipAtkPct)/100)
 	atk *= 1 + sumPassive(pv, "atk_pct")/100
+	if wp != nil {
+		atk *= 1 + wp.AtkPct/100
+	}
 
 	// --- 魔法攻擊力：+ INT 整十階梯（P5）+ 被動 matk_pct（P5，乘在最終值）---
 	matk := float64(s.Int)*cfg.IntMatk + floorDiv(s.Dex, cfg.DexMatkPer) + floorDiv(s.Luk, cfg.LukMatkPer)
 	matk += floorDiv(in.BaseLevel, cfg.LvMatkPer)
 	matk += statTierBonus(s.Int, cfg.IntTierCoef)
-	const equipMatk = 0.0
+	// DORPG P7：equipMatk 同上，曾是恆 0 的佔位符，接上 wp.Matk。
+	equipMatk := 0.0
+	if wp != nil {
+		equipMatk = wp.Matk
+	}
 	matk += equipMatk
 	matk *= 1 + sumPassive(pv, "matk_pct")/100
+	if wp != nil {
+		matk *= 1 + wp.MatkPct/100
+	}
 
 	// --- 物理防禦力：等級項改用 P5 新曲線 lvDef()（取代 floorDiv(BaseLevel,LvDefPer)）+
-	// 被動 def_pct（P5，乘在最終值）。魔法防禦力的等級項維持既有線性除數，未變。 ---
+	// 被動 def_pct（P5，乘在最終值）+ 武器 def_pct/mdef_pct（P7，乘在被動之後）。魔法防禦力的
+	// 等級項維持既有線性除數，未變。 ---
 	def := floorDiv(s.Agi, cfg.AgiDefPer) + floorDiv(s.Vit, cfg.VitDefPer) + lvDef(cfg, in.BaseLevel)
 	def *= 1 + sumPassive(pv, "def_pct")/100
+	if wp != nil {
+		def *= 1 + wp.DefPct/100
+	}
 	mdef := floorDiv(s.Vit, cfg.VitMdefPer) + floorDiv(s.Dex, cfg.DexMdefPer) + float64(s.Int)*cfg.IntMdef
 	mdef += floorDiv(in.BaseLevel, cfg.LvMdefPer)
 	mdef *= 1 + sumPassive(pv, "mdef_pct")/100
+	if wp != nil {
+		mdef *= 1 + wp.MdefPct/100
+	}
+
+	// DORPG P7（CONTRACT §3「全部 floor 成整數」）：只在裝備武器時才把 ATK/MATK/DEF/MDEF
+	// floor 成整數——wp==nil 時完全不動這四個欄位（既有測試斷言的是套用被動/係數後可能帶小數的
+	// float64，改成一律 floor 會讓既有 compute_test.go/scaling_test.go 大量斷言失敗，不是本輪
+	// 該動的範圍）。有裝備武器才 floor，語意上等同「玩家看得到的裝備數值都是整數」，跟 P6 對
+	// HP/MP 的處理一致（見下方 MaxHP/MaxMP 的 math.Floor）。
+	if wp != nil {
+		atk = math.Floor(atk)
+		matk = math.Floor(matk)
+		def = math.Floor(def)
+		mdef = math.Floor(mdef)
+	}
 
 	// --- 命中 / 迴避 / 完全迴避（P5：疊加被動 hit/flee/perfect_dodge，皆為 flat 加法——CONTRACT
 	// §3 只點名 pct 類乘在最終值，這三項不是 _pct 命名，比照既有 AGI/LUK 直接加成的語意）---
@@ -203,6 +253,9 @@ func Compute(cfg Config, in ComputeInput) Derived {
 	hit += sumPassive(pv, "hit")
 	flee := baseLv*cfg.LvFlee + float64(s.Agi)*cfg.AgiFlee + floorDiv(s.Luk, cfg.LukFleePer)
 	flee += sumPassive(pv, "flee")
+	if wp != nil {
+		flee += wp.FleeBonus
+	}
 	if flee > cfg.FleeCapPct {
 		flee = cfg.FleeCapPct
 	}
@@ -214,6 +267,14 @@ func Compute(cfg Config, in ComputeInput) Derived {
 	critPct := float64(s.Luk)*cfg.LukCrit + sumPassive(pv, "crit_pct")
 	critShield := floorDiv(s.Luk, cfg.LukCritShieldPer)
 	critDmgPct := sumPassive(pv, "crit_dmg_pct")
+	if wp != nil {
+		critPct += wp.CritPct
+		critDmgPct += wp.CritDmgPct
+		// 見上方 ATK/MATK/DEF/MDEF 同款註解：只在裝備武器時才 floor，wp==nil 對既有測試零改動。
+		critPct = math.Floor(critPct)
+		flee = math.Floor(flee)
+		critDmgPct = math.Floor(critDmgPct)
+	}
 
 	// --- 攻擊速度（Aspd）：P5 被動 aspd 在封頂前加總（flat，語意同 AGI/DEX 既有加成）---
 	aspd := cfg.AspdBase + float64(s.Agi)*cfg.AspdPerAgi + float64(s.Dex)*cfg.AspdPerDex

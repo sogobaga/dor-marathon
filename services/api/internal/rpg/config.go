@@ -330,6 +330,16 @@ type Config struct {
 	BattleLvDefRatio  float64 `json:"battle_lvl_def_ratio"`
 	BattleLvMdefRatio float64 `json:"battle_lvl_mdef_ratio"`
 
+	// --- DORPG P7（CONTRACT §1）：屬性相剋（五行＋光暗＋同屬性）的三個百分比係數，跟既有
+	// BattleWeaknessBonusPct（P5，weak_elements 專用加成）並存——elements.go ElementMultiplier
+	// 對「屬性關係」（剋/被剋/同屬性）用這三個，對「怪物弱點清單」仍用 BattleWeaknessBonusPct，
+	// 兩者互相獨立，取兩者較大者生效（見該函式註解）。範圍寬鬆到 −100..300：−100 是「完全免疫」
+	// 的下限（傷害歸零，不允許更負，負傷害沒有意義），300 給管理者足夠空間設計「四倍傷害」等
+	// 誇張的相剋效果，不強制對稱到 owner 目前拍板的 ±25。
+	BattleElementAdvantagePct    float64 `json:"battle_element_advantage_pct"`
+	BattleElementDisadvantagePct float64 `json:"battle_element_disadvantage_pct"`
+	BattleElementSamePct         float64 `json:"battle_element_same_pct"`
+
 	// TestLevelEnabled 審查#2【中・CONFIRMED】新增：測試等級功能的獨立總開關。CONTRACT §2 的
 	// test_level 原本只靠 requireEntry 白名單擋（見 handler.go）——但白名單本來就是拿來放寬給
 	// 更多人測試用的，一旦放寬，任何在白名單內的人都能把自己的等級設成 99，沒有第二道閘門。
@@ -498,6 +508,11 @@ func DefaultConfig() Config {
 		CritMultMax: 2.25,
 
 		BattleWeaknessBonusPct: 25,
+
+		// DORPG P7（CONTRACT §1 拍板值）：五行/光暗剋制 +25%、被剋 −25%、同屬性 −25%。
+		BattleElementAdvantagePct:    25,
+		BattleElementDisadvantagePct: -25,
+		BattleElementSamePct:         -25,
 
 		// DORPG P6：level 模式四個比例——SIM 校準後之值，見欄位上方註解（HP 0.8／ATK 1.25，
 		// DEF/MDEF 維持 1.0 不變）。
@@ -741,6 +756,17 @@ func (c Config) Validate() error {
 	}
 	if c.BattleWeaknessBonusPct < 0 {
 		return fmt.Errorf("battle_weakness_bonus_pct must be >= 0")
+	}
+
+	// --- DORPG P7（CONTRACT §1）：三個屬性相剋百分比，範圍 −100..300（見欄位註解）。 ---
+	if c.BattleElementAdvantagePct < -100 || c.BattleElementAdvantagePct > 300 {
+		return fmt.Errorf("battle_element_advantage_pct must be within [-100,300]")
+	}
+	if c.BattleElementDisadvantagePct < -100 || c.BattleElementDisadvantagePct > 300 {
+		return fmt.Errorf("battle_element_disadvantage_pct must be within [-100,300]")
+	}
+	if c.BattleElementSamePct < -100 || c.BattleElementSamePct > 300 {
+		return fmt.Errorf("battle_element_same_pct must be within [-100,300]")
 	}
 
 	// --- DORPG P6（CONTRACT §2）：level 模式四個比例必須 > 0——這四個數字是乘數，0 或負值會讓

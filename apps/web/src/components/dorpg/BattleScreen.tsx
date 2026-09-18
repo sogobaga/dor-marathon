@@ -245,14 +245,36 @@ export default function BattleScreen({
   // 已對外開放的 getEnemyAnchor() 現查（跟下面 'attack' 分支算特效座標用的是同一支函式），交給
   // FloatText 的「定點模式」（見 FloatText.tsx anchorPx）渲染。跟 floatTexts／pushFloat 同一種
   // 「key 換新值即重播」設計，找不到站位（例如敵人剛好死亡動畫播完被移除）就略過，不強求一定要飄出來。
-  const [enemyFloatTexts, setEnemyFloatTexts] = useState<Record<string, { text: string; tone: FloatTextTone; key: number; x: number; y: number }>>({});
+  const [enemyFloatTexts, setEnemyFloatTexts] = useState<Record<string, { text: string; tone: FloatTextTone; key: number; x: number; y: number; small?: boolean }>>({});
   const enemyFloatKeyRef = useRef(0);
-  const pushEnemyFloat = useCallback((enemyId: string, text: string, tone: FloatTextTone) => {
-    const anchor = stageRef.current?.getEnemyAnchor(enemyId);
+  // DORPG P7：新增選填的 `small` 參數，供斧的濺射傷害用較小樣式（見 FloatText.tsx small prop）；
+  // 既有呼叫端（statusApplied 的 buff/debuff）不傳這個參數，行為完全不變。
+  // 審查#5【低・UI】根因修復：getEnemyAnchor 讀的是 BattleStage 內部 geomRef——那份快照鎖定在
+  // BattleStage「上一次 render commit」當下的 props，而這裡是在 useBattle.ts commitEvents 裡
+  // 「setState 之前」同步呼叫（見該檔案頭註解），兩者之間天生有一個 race window：畫面剛掛載、
+  // ResizeObserver 還沒量到真正尺寸，或短時間內連續好幾批事件都搶在同一次 render commit 之前發生時，
+  // geomRef 可能跟不上最新狀態，讓 getEnemyAnchor 對明明還在場上的敵人也查無站位、回 null——原本
+  // 「查無錨點就靜默不顯示」的規則會讓這下濺射完全沒有畫面回饋（傷害其實有算、有扣血）。新增選填
+  // `fallbackAnchor`：查不到自己的錨點時退而求其次改用它（見下方 case 'attack' 的呼叫端——濺射一定
+  // 緊跟在同一次攻擊的主擊事件之後，主擊的錨點在同一輪 handleBattleEvents 內一定已經先算出來），
+  // 讓玩家至少看得到數字飄在主目標旁邊，不會整個消失；兩者都拿不到才真的放棄（維持原有行為）。
+  const pushEnemyFloat = useCallback((enemyId: string, text: string, tone: FloatTextTone, small?: boolean, fallbackAnchor?: { x: number; y: number }) => {
+    const anchor = stageRef.current?.getEnemyAnchor(enemyId) ?? fallbackAnchor ?? null;
     if (!anchor) return;
     enemyFloatKeyRef.current += 1;
     const key = enemyFloatKeyRef.current;
-    setEnemyFloatTexts((prev) => ({ ...prev, [enemyId]: { text, tone, key, x: anchor.x, y: anchor.y } }));
+    setEnemyFloatTexts((prev) => ({ ...prev, [enemyId]: { text, tone, key, x: anchor.x, y: anchor.y, small } }));
+  }, []);
+
+  // 審查#5：濺射目標永遠跟主目標同排相鄰（見 engine/combat.ts ROW_NEIGHBORS，不跨排），退回主擊
+  // 錨點時依濺射目標的站位名稱決定往左或往右偏移，視覺上至少落在正確的那一側；辨識不出左右
+  // （例如未來站位命名改變）就不偏移，直接疊在主擊錨點上，總比完全不顯示好。
+  const SPLASH_FALLBACK_OFFSET_PX = 36;
+  const splashFallbackOffsetX = useCallback((slot: string | undefined): number => {
+    if (!slot) return 0;
+    if (slot.endsWith('_left')) return -SPLASH_FALLBACK_OFFSET_PX;
+    if (slot.endsWith('_right')) return SPLASH_FALLBACK_OFFSET_PX;
+    return 0;
   }, []);
 
   const statsRef = useRef<BattleStats>({ damageDealt: 0, damageTaken: 0, defeatedLevels: [], attacks: 0, chargedAttacks: 0, skillsUsed: 0, itemsUsed: 0, guardMs: 0 });
@@ -277,12 +299,26 @@ export default function BattleScreen({
 
   // ---- 事件 → 效果：音效／特效／飄字／震動。engine 只負責「發生了什麼」，這裡負責「畫面怎麼演」。 ----
   function handleBattleEvents(events: BattleEvent[], next: BattleState) {
+    // 審查#5：本次呼叫（同一批事件）裡最近一次成功算出錨點的主擊座標，供濺射事件查不到自己的
+    // 錨點時當退路（見 pushEnemyFloat 的 fallbackAnchor 參數註解）。combat.ts resolveWeaponAttack
+    // 保證同一次攻擊一定是「先 emit 主擊事件、才視 splashPct 補發濺射事件」，所以濺射永遠排在自己
+    // 那次主擊之後，這裡由上往下掃事件陣列時，走到濺射事件當下這個變數一定已經是「這次攻擊」的值。
+    let lastPrimaryAttackAnchor: { x: number; y: number } | null = null;
     for (const ev of events) {
       switch (ev.kind) {
         case 'attack': {
           // 玩家／隊友打敵人（含技能傷害）：特效座標＝目標怪物軀幹中心（BattleStageHandle.getEnemyAnchor）。
+          //
+          // DORPG P7（WIRE §引擎：「splash 用既有傷害事件加 splash: true 旗標供浮字區分」，見契約
+          // dorpg_p7 CONTRACT.md §3 斧的濺射）：ENGINE 尚未在 engine/types.ts 的 'attack' 事件正式
+          // 加這個欄位——這裡用結構型別安全讀取（缺欄位時 undefined，等同 false），不假設它一定
+          // 存在，ENGINE 補上正式欄位後這行讀法不需要再改（見任務回報對 ENGINE 的需求）。
+          const splash = (ev as unknown as { splash?: boolean }).splash === true;
+
           statsRef.current.damageDealt += ev.damage;
-          if (ev.actorId === next.playerId) {
+          // 濺射不是玩家「另外發動了一次攻擊」，只是同一次攻擊的附帶效果，不計進 attacks／
+          // chargedAttacks 遙測，也不需要動 pendingSkillDamageRef（斧濺射只發生在普攻，見契約 §3）。
+          if (!splash && ev.actorId === next.playerId) {
             if (pendingSkillDamageRef.current) {
               pendingSkillDamageRef.current = false; // 這一下是技能結算，已經在 'skillCast' 那筆算過 skillsUsed 了
             } else {
@@ -290,20 +326,36 @@ export default function BattleScreen({
               if (ev.charged) statsRef.current.chargedAttacks += 1;
             }
           }
-          const anchor = stageRef.current?.getEnemyAnchor(ev.targetId);
-          if (anchor) {
-            void stageRef.current?.play({
-              weapon: ev.weapon,
-              result: ev.result,
-              damage: ev.damage,
-              x: anchor.x,
-              y: anchor.y,
-              targetId: ev.targetId,
-            });
+
+          if (splash) {
+            // 濺射：只在被波及的怪物身上飄一個較小的傷害數字（見 FloatText.tsx 'splash' 語氣），
+            // 不重播整套斬擊特效／音效——那些是「這次攻擊」本身的演出，濺射只是附帶效果，重播會
+            // 讓同一次攻擊看起來像對三隻怪各自發動了一次獨立攻擊。
+            // 審查#5：查不到濺射目標自己的錨點時，退回這次攻擊的主擊錨點＋依濺射目標站位左右偏移
+            // （見上方 lastPrimaryAttackAnchor／splashFallbackOffsetX 註解）。
+            const splashTarget = next.enemies.find((e) => e.id === ev.targetId);
+            const fallbackAnchor = lastPrimaryAttackAnchor
+              ? { x: lastPrimaryAttackAnchor.x + splashFallbackOffsetX(splashTarget?.slot), y: lastPrimaryAttackAnchor.y }
+              : undefined;
+            pushEnemyFloat(ev.targetId, `濺射 -${ev.damage}`, 'splash', true, fallbackAnchor);
+          } else {
+            const anchor = stageRef.current?.getEnemyAnchor(ev.targetId);
+            if (anchor) {
+              lastPrimaryAttackAnchor = anchor; // 給後面可能跟著來的濺射事件當退路基準（見上方註解）。
+              void stageRef.current?.play({
+                weapon: ev.weapon,
+                result: ev.result,
+                damage: ev.damage,
+                x: anchor.x,
+                y: anchor.y,
+                targetId: ev.targetId,
+              });
+            }
+            // miss/immune 的怪物「hit」動畫不會播（engine 只在 damage>0 時才把 anim 轉成
+            // hitReaction，見 engine/combat.ts::applyEnemyDamage），這裡不必另外判斷，BattleStage
+            // 直接照 enemy.anim 顯示。
+            battleAudio.playSfx(`sfx_${ev.weapon}_${ev.result}`);
           }
-          // miss/immune 的怪物「hit」動畫不會播（engine 只在 damage>0 時才把 anim 轉成 hitReaction，
-          // 見 engine/combat.ts::applyEnemyDamage），這裡不必另外判斷，BattleStage 直接照 enemy.anim 顯示。
-          battleAudio.playSfx(`sfx_${ev.weapon}_${ev.result}`);
           break;
         }
         case 'skillCast': {
@@ -512,7 +564,10 @@ export default function BattleScreen({
       const live = battle.liveStateRef.current;
       const p = live.party.find((pp) => pp.isPlayer);
       if (!p || p.action !== 'charging' || p.chargeStartedAt === null) return; // 已放開/取消，effect cleanup 隨後接手
-      setChargeDisplay(engineChargeRatio(performance.now() - p.chargeStartedAt, live.config));
+      // INTEGRATOR 補（ENGINE 需求：「巨劍的蓄氣條 UI 進度暫時不會反映拉長的蓄氣時間」）：補上第三
+      // 參數 chargeTimeMul，讓蓄氣條的視覺進度跟引擎判定的實際蓄氣時間一致（沒有武器／非巨劍時
+      // p.weaponProfile 為 null 或 chargeTimeMul=1，跟原本行為零改動）。
+      setChargeDisplay(engineChargeRatio(performance.now() - p.chargeStartedAt, live.config, p.weaponProfile?.chargeTimeMul ?? 1));
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -827,9 +882,10 @@ export default function BattleScreen({
                 {t.text}
               </div>
             ))}
-            {/* P5 POLISH：debuff 命中敵人時的飄字（定點模式，見 FloatText.tsx anchorPx）。 */}
+            {/* P5 POLISH：debuff 命中敵人時的飄字（定點模式，見 FloatText.tsx anchorPx）。
+                DORPG P7：斧的濺射傷害（tone='splash'）也走這個容器，small 由 pushEnemyFloat 帶入。 */}
             {Object.entries(enemyFloatTexts).map(([id, ft]) => (
-              <FloatText key={`${id}-${ft.key}`} text={ft.text} tone={ft.tone} anchorPx={{ x: ft.x, y: ft.y }} reducedMotion={settings.reduceMotion} />
+              <FloatText key={`${id}-${ft.key}`} text={ft.text} tone={ft.tone} anchorPx={{ x: ft.x, y: ft.y }} reducedMotion={settings.reduceMotion} small={ft.small} />
             ))}
           </div>
 

@@ -1,7 +1,7 @@
 // 遊戲化角色數值（RO 素質系統）共用中文標籤／說明 — CharacterScreen（會員）與 admin/rpg（後台）
 // 兩處共用，避免文案各自維護、之後改一次兩邊同步。數字係數本身一律吃 RpgConfig／預覽 API 算出的
 // 結果，本檔只放「怎麼顯示」，不放任何算式（算式在後端 internal/rpg，前端不重算，見任務決策 D2）。
-import type { EffectAtLevel, JobDTO, RpgConfig, RpgDerived, RpgStatKey, SkillKind } from './api'
+import type { EffectAtLevel, JobDTO, RpgConfig, RpgDerived, RpgElement, RpgStatKey, SkillKind, WeaponProfile, WeaponRarity } from './api'
 
 export interface StatMeta {
   key: RpgStatKey
@@ -510,11 +510,90 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
       },
       { key: 'battle_monster_crit_pct', label: '怪物暴擊率基準（%）' },
       { key: 'battle_monster_crit_shield_base', label: '怪物暴擊迴避基準（實際＝此值 × 該怪 def_mult）' },
+      // DORPG P7（契約 §1）：五行＋光暗相剋的三個全域倍率係數。管理者若在下面「屬性相剋表」對
+      // 某組（怪物屬性,技能屬性）個別覆寫，該組覆寫值優先於這三個全域係數（ElementMultiplier 的
+      // 判斷順序：chart 覆寫 > 這三個係數 > weakElements 取大 > 1）。
+      {
+        key: 'battle_element_advantage_pct',
+        label: '（P7）攻擊屬性剋制怪物屬性時的倍率加成 %（契約預設 25，即該次攻擊 ×1.25）',
+      },
+      {
+        key: 'battle_element_disadvantage_pct',
+        label: '（P7）攻擊屬性被怪物屬性剋制時的倍率減損 %（契約預設 −25，即該次攻擊 ×0.75；填正數會變成「被剋反而加成」，請填負數）',
+      },
+      {
+        key: 'battle_element_same_pct',
+        label: '（P7）攻擊屬性與怪物屬性相同時的倍率減損 %（契約預設 −25，即 ×0.75；同樣請填負數）',
+      },
       {
         key: 'battle_element_chart',
-        label: '屬性相剋表（JSON：外層 key＝怪物屬性【中文，如「金」「木」】→ 內層 key＝技能屬性【英文 ElementKind，如 water/fire】→ 數字倍率；0＝完全無效／玩家會看到「無效攻擊」，未列出的屬性或組合＝1.0 不相剋不吃虧。刪除某個屬性/element key 現在會真的生效，不會在下次讀取時被預設表復活）',
+        label: '屬性相剋表（JSON：外層 key＝怪物屬性【中文，如「金」「木」】→ 內層 key＝技能屬性【英文 ElementKind，如 water/fire】→ 數字倍率；0＝完全無效／玩家會看到「無效攻擊」，未列出的屬性或組合＝上面三個全域係數依五行/光暗規則算出的值。刪除某個屬性/element key 現在會真的生效，不會在下次讀取時被預設表復活）',
         type: 'json',
       },
     ],
   },
 ]
+
+// ---------------------------------------------------------------------------
+// DORPG P7（武器系統，見契約 dorpg_p7 CONTRACT.md §2/§3、WIRE.md）：EquipmentScreen（會員）與
+// admin/rpg（後台，武器分頁）共用的顯示文案。ATK/MATK 兩個基礎數字兩邊呼叫端都各自有獨立欄位顯示
+// （WIRE：「名稱、需 Lv、ATK／MATK、效果摘要」），formatWeaponProfile() 刻意跳過 atk/matk，只描述
+// 其餘特性，避免同一個數字被講兩次。
+
+export const ELEMENT_LABEL: Record<RpgElement, string> = {
+  metal: '金', wood: '木', water: '水', fire: '火', earth: '土', light: '光', dark: '闇', neutral: '無',
+}
+export function elementLabel(el: string | null | undefined): string {
+  return (el && ELEMENT_LABEL[el as RpgElement]) || el || '無'
+}
+/** 七屬性（不含 neutral）固定順序，供裝備頁「屬性版七顆 chip」與後台屬性選單使用。 */
+export const ELEMENT_ORDER: RpgElement[] = ['metal', 'wood', 'water', 'fire', 'earth', 'light', 'dark']
+
+export const RARITY_LABEL: Record<WeaponRarity, string> = {
+  common: '普通', rare: '稀有', epic: '史詩', legendary: '傳說',
+}
+/** 稀有度標籤底色（全部搭白字——見全站「金底白字」通則；legendary 直接用金底）。 */
+export const RARITY_COLOR: Record<WeaponRarity, string> = {
+  common: '#7c8a99', rare: '#3a8ff4', epic: '#9b5de5', legendary: 'var(--gold)',
+}
+
+const WEAPON_SIZE_LABEL: Record<string, string> = { small: '小型', medium: '中型', large: '大型' }
+
+/**
+ * 把 WeaponProfile 組成一句效果摘要，供 EquipmentScreen 武器列表與武器卡共用（WIRE：「效果摘要由
+ * rpgMeta 的 formatWeaponProfile() 產生」）。刻意跳過 atk/matk（呼叫端已有獨立欄位顯示基礎數字，
+ * 見檔頭說明），只描述其餘特性；缺省／0 值的欄位一律不顯示，避免空泛的「+0%」洗版。純顯示用途，
+ * 不做任何戰鬥判斷——實際戰鬥數值一律以 bootstrap 送來的 profile 為準（同 formatEffectAtLevel 的
+ * 既有慣例）。
+ */
+export function formatWeaponProfile(p: WeaponProfile | null | undefined): string {
+  if (!p) return ''
+  const parts: string[] = []
+  if (p.int_bonus) parts.push(`INT+${p.int_bonus}`)
+  if (p.mp_pct) parts.push(`MP+${p.mp_pct}%`)
+  if (p.atk_pct) parts.push(`物攻+${p.atk_pct}%`)
+  if (p.matk_pct) parts.push(`魔攻+${p.matk_pct}%`)
+  if (p.def_pct) parts.push(`物防+${p.def_pct}%`)
+  if (p.mdef_pct) parts.push(`魔防+${p.mdef_pct}%`)
+  if (p.hits && p.hits > 1) {
+    const mul = p.hit_mul != null && p.hit_mul !== 1 ? `（每段×${p.hit_mul}）` : ''
+    parts.push(`${p.hits} 段攻擊${mul}`)
+  }
+  if (p.extra_hit_chance_pct) parts.push(`${p.extra_hit_chance_pct}% 機率額外一段`)
+  if (p.interval_pct) parts.push(p.interval_pct < 0 ? `攻擊間隔縮短${-p.interval_pct}%` : `攻擊間隔拉長${p.interval_pct}%`)
+  if (p.charge_time_mul != null && p.charge_time_mul !== 1) parts.push(`蓄氣時間×${p.charge_time_mul}`)
+  if (p.charge_dmg_mul != null && p.charge_dmg_mul !== 1) parts.push(`蓄氣傷害×${p.charge_dmg_mul}`)
+  if (p.splash_pct) parts.push(`同排左右濺射${p.splash_pct}%`)
+  if (p.size_bonus) {
+    for (const k of ['small', 'medium', 'large'] as const) {
+      const v = p.size_bonus[k]
+      if (v) parts.push(`對${WEAPON_SIZE_LABEL[k]}怪物+${v}%傷害`)
+    }
+  }
+  if (p.crit_pct) parts.push(`暴擊率+${p.crit_pct}`)
+  if (p.crit_dmg_pct) parts.push(`暴擊傷害+${p.crit_dmg_pct}%`)
+  if (p.flee_bonus) parts.push(`迴避+${p.flee_bonus}`)
+  if (p.element_resist_pct) parts.push(`屬性抗性+${p.element_resist_pct}%`)
+  if (p.magic_skill_pct) parts.push(`魔法技能效果+${p.magic_skill_pct}%`)
+  return parts.join('・')
+}

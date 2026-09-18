@@ -31,10 +31,12 @@ import type {
   ElementKind,
   Enemy,
   EnemySlotId,
+  EquippedWeaponWire,
   Item,
   PartyMember,
   Skill,
   WeaponKind,
+  WeaponProfileWire,
 } from '@/lib/dorpg/types';
 import type { BattleConfig } from '@/lib/dorpg/engine';
 // P3：asRating() 用它的 aspdReference 當 rating.aspd 缺欄位時的中性後備值（見該函式註解）——
@@ -105,6 +107,56 @@ function mapPartyMemberSkills(skills: RpgBootstrapSkillRaw[] | undefined): Skill
   return skills.map(mapSkill).filter((s): s is Skill => s !== null);
 }
 
+/**
+ * P7（CONTRACT §2/§3、WIRE「戰鬥 bootstrap」）：wire 送的武器 profile（camelCase，戰鬥時真正
+ * 被 engine 讀取套用的子集——atk/matk/critPct/critDmgPct 只是原樣透傳供顯示，見
+ * dorpg/types.ts WeaponProfileWire 型別註解）。用 `unknown` 讀取、逐欄防禦驗證：武器系統的 wire
+ * 資料來自後台自由編輯的 JSON（跟既有 asEffect()／isElementChart() 的防禦精神一致，即使 api.ts
+ * 型別已經正確宣告，執行期資料仍可能因為後台編輯出的髒 JSON 而缺欄位/型別跑掉）。任何欄位缺失
+ * 或型別不符都給中性預設值（不是整包丟棄）——武器 profile 本來就允許只設定部分效果（例如單手劍
+ * 只給 atk_pct，其餘維持中性），這跟 asRating() 的「核心欄位一壞全丟」策略不同，是刻意的選擇。
+ */
+function asWeaponProfile(raw: unknown): WeaponProfileWire | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown, fallback: number) => (isFiniteNumber(v) ? v : fallback);
+  const sb = r.sizeBonus && typeof r.sizeBonus === 'object' ? (r.sizeBonus as Record<string, unknown>) : {};
+  return {
+    atk: num(r.atk, 0),
+    matk: num(r.matk, 0),
+    hits: num(r.hits, 1),
+    hitMul: num(r.hitMul, 1),
+    extraHitChancePct: num(r.extraHitChancePct, 0),
+    intervalPct: num(r.intervalPct, 0),
+    chargeTimeMul: num(r.chargeTimeMul, 1),
+    chargeDmgMul: num(r.chargeDmgMul, 1),
+    splashPct: num(r.splashPct, 0),
+    sizeBonus: { small: num(sb.small, 0), medium: num(sb.medium, 0), large: num(sb.large, 0) },
+    critPct: num(r.critPct, 0),
+    critDmgPct: num(r.critDmgPct, 0),
+    elementResistPct: num(r.elementResistPct, 0),
+    magicSkillPct: num(r.magicSkillPct, 0),
+    element: asElement(typeof r.element === 'string' ? r.element : undefined) ?? 'neutral',
+  };
+}
+
+/** P7：wire 送的整個裝備武器物件；profile 驗證失敗（缺失或形狀不對）視為整把武器資料無效，
+ *  整包退回 null——沒有可信的戰鬥數值，裝備一把「不知道有什麼效果」的武器沒有意義。 */
+function asEquippedWeapon(raw: unknown): EquippedWeaponWire | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.id !== 'string' || typeof r.name !== 'string' || typeof r.typeId !== 'string') return null;
+  const profile = asWeaponProfile(r.profile);
+  if (!profile) return null;
+  return {
+    id: r.id,
+    name: r.name,
+    typeId: r.typeId,
+    visual: asWeapon(typeof r.visual === 'string' ? r.visual : undefined, 'sword'),
+    profile,
+  };
+}
+
 function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
   return {
     id: p.id,
@@ -116,7 +168,10 @@ function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
     mpMax: p.mpMax,
     portraitUrl: p.portraitUrl,
     stats: p.stats,
-    weapon: asWeapon(p.weapon),
+    // P1～P6 遺留的純視覺字串讀法：只有在 p.weapon 真的是合法 WeaponKind 字串時才會成功（見
+    // asWeapon() 實作），對正式後端目前一律送物件/null 的 wire 是安全的 no-op（結果 undefined，
+    // 由 engine/index.ts 的 `equippedWeapon?.visual ?? weapon ?? 'sword'` 三層 fallback接手）。
+    weapon: asWeapon(typeof p.weapon === 'string' ? p.weapon : undefined),
     rating: asRating(p.rating),
     // P5：純透傳供 FRONTEND 顯示職業徽章用（見 PartyMember.jobId 型別註解），engine 戰鬥邏輯不讀它；
     // 缺欄位（舊版後端／api.ts 尚未補上）一律當「未選職業」。
@@ -124,6 +179,12 @@ function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
     // P6（CONTRACT §3.2）：AI 可用技能／腳本名稱，見上方 mapPartyMemberSkills。
     skills: mapPartyMemberSkills(p.skills),
     presetName: p.presetName,
+    // P7（CONTRACT §3、WIRE §戰鬥 bootstrap）：INTEGRATOR 已把 api.ts 的 `weapon` 欄位型別放寬成
+    // 物件｜字串｜null（見該檔型別註解），這裡不再需要 unknown-cast——asEquippedWeapon() 只在
+    // p.weapon 真的是合法物件形狀時才會成功，對字串/null 輸入直接短路回 null，跟上面 asWeapon()
+    // 對物件輸入直接短路回 undefined 是同一種「兩個讀法互斥、各自防禦」設計，任何一種 wire 形狀
+    // 都不會讓另一邊誤讀出垃圾值。
+    equippedWeapon: asEquippedWeapon(p.weapon),
   };
 }
 

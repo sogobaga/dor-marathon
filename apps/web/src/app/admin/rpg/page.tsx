@@ -10,13 +10,15 @@ import {
   type RpgConfig, type AdminRpgUser, type RpgDerived, type RpgStats, type RpgStatKey,
   type RpgMonster, type RpgSkill, type RpgItem, type RpgScene, type RpgSceneSlot, type RpgCompanion,
   type RpgEncounter, type RpgEncounterMonster, type RpgBattleLogRow, type RpgBattleLogSummary,
+  type RpgWeaponType, type RpgWeapon, type RpgElement, type WeaponRarity,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
-import { CONFIG_GROUPS, STAT_META, DERIVED_META, resistLabel } from '@/lib/rpgMeta'
+import { CONFIG_GROUPS, STAT_META, DERIVED_META, resistLabel, ELEMENT_LABEL, ELEMENT_ORDER, RARITY_LABEL } from '@/lib/rpgMeta'
 
 // DORPG P2（契約 dorpg_p2 §5）：怪物/技能/道具/場景/遭遇/隊友/戰鬥數據七個內容分頁。分頁一多，
 // tab 列改橫向捲動（見下方 tab 按鈕列 container 的 overflowX/flexWrap:'nowrap'）。
-type Tab = 'config' | 'entry' | 'preview' | 'monsters' | 'skills' | 'items' | 'scenes' | 'encounters' | 'companions' | 'battlelogs'
+// DORPG P7（契約 dorpg_p7 CONTRACT.md §2、WIRE §後台）：新增武器類型／武器兩個分頁。
+type Tab = 'config' | 'entry' | 'preview' | 'monsters' | 'skills' | 'items' | 'scenes' | 'encounters' | 'companions' | 'battlelogs' | 'weapontypes' | 'weapons'
 const STAT_KEYS: RpgStatKey[] = ['str', 'agi', 'vit', 'dex', 'int', 'luk']
 // rpg_encounter_monsters 槽位固定 5 個（migration 176 DDL），場景/遭遇編輯器都用這個順序渲染。
 const ENCOUNTER_SLOTS = ['rear_left', 'rear_right', 'front_left', 'front_center', 'front_right'] as const
@@ -66,6 +68,8 @@ export default function AdminRpgPage() {
           ['preview', '預覽計算'],
           ['monsters', '怪物'],
           ['skills', '技能'],
+          ['weapontypes', '武器類型'],
+          ['weapons', '武器'],
           ['items', '道具'],
           ['scenes', '場景'],
           ['encounters', '遭遇'],
@@ -100,6 +104,8 @@ export default function AdminRpgPage() {
       {tab === 'preview' && token && <PreviewTab token={token} />}
       {tab === 'monsters' && token && <MonstersTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'skills' && token && <SkillsTab token={token} onErr={setErr} onMsg={flash} />}
+      {tab === 'weapontypes' && token && <WeaponTypesTab token={token} onErr={setErr} onMsg={flash} />}
+      {tab === 'weapons' && token && <WeaponsTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'items' && token && <ItemsTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'scenes' && token && <ScenesTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'encounters' && token && <EncountersTab token={token} onErr={setErr} onMsg={flash} />}
@@ -1000,6 +1006,339 @@ function BattleLogsTab({ token, onErr }: { token: string; onErr: (m: string) => 
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ============================== 武器類型（DORPG P7，契約 §2） ==============================
+// 18 筆固定資料（每職業 3 種）。後端只開放 GET/PUT（見 adminRpgApi.weaponTypes 型別註解），沒有
+// DELETE 路由——這裡不提供刪除按鈕；PUT 比照其餘內容表的既有慣例視為 upsert，仍保留「新增」以便
+// 補建 migration 183 之外臨時想加的一列。沒有 is_active／sort_order 兩欄以外的「啟用」開關可切，
+// 故不套用 SimpleContentTab（那顆共用元件的表格固定畫「啟用」欄，這裡的資料形狀對不上）。
+
+const JOB_LABEL: Record<string, string> = {
+  light_knight: '輕騎士', archer: '弓箭手', heavy_knight: '重騎士', cleric: '聖職者', merchant: '商人', mage: '魔法師',
+}
+const WEAPON_VISUAL_OPTIONS = [
+  { value: 'sword', label: '劍（sword）' },
+  { value: 'bow', label: '弓（bow）' },
+  { value: 'staff', label: '法杖（staff）' },
+  { value: 'greatsword', label: '大劍（greatsword）' },
+]
+
+function emptyWeaponType(): RpgWeaponType {
+  return { id: '', job_id: 'light_knight', name: '', visual: 'sword', elemental_capable: false, description: '', traits: {}, sort_order: 0 }
+}
+
+function WeaponTypesTab({ token, onErr, onMsg }: { token: string; onErr: (m: string) => void; onMsg: (m: string) => void }) {
+  const [rows, setRows] = useState<RpgWeaponType[] | null>(null)
+  const [form, setForm] = useState<RpgWeaponType | null>(null)
+  const [traitsText, setTraitsText] = useState('{}') // traits 是巢狀物件，比照 ConfigTab 的既有慣例存成排版過的字串編輯
+  const [isNew, setIsNew] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(() => {
+    adminRpgApi.weaponTypes(token).then((r) => setRows(r.weapon_types)).catch((e: any) => onErr(e?.message || '載入失敗'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+  useEffect(() => { load() }, [load])
+
+  function startNew() { const f = emptyWeaponType(); setForm(f); setTraitsText(JSON.stringify(f.traits, null, 2)); setIsNew(true) }
+  function startEdit(r: RpgWeaponType) { setForm({ ...r }); setTraitsText(JSON.stringify(r.traits ?? {}, null, 2)); setIsNew(false) }
+
+  async function save() {
+    if (!form) return
+    if (!form.id.trim()) { onErr('請填 ID'); return }
+    if (!form.name.trim()) { onErr('請填名稱'); return }
+    let traits: Record<string, unknown>
+    try { traits = JSON.parse(traitsText || '{}') } catch { onErr('「型別特性 traits」不是合法的 JSON，請修正後再儲存'); return }
+    setBusy(true)
+    try {
+      const saved = await adminRpgApi.putWeaponType(token, { ...form, traits })
+      onMsg(`已儲存「${saved.name}」`)
+      setForm(null)
+      load()
+    } catch (e: any) { onErr(e?.message || '儲存失敗') } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
+        <div>
+          <h2 style={{ fontSize: 15, fontWeight: 800, margin: '0 0 4px' }}>武器類型管理</h2>
+          <p style={{ fontSize: 12, color: 'var(--tx-dim)', margin: 0, maxWidth: 640, lineHeight: 1.7 }}>
+            每職業固定 3 種武器類型（見契約 §2）。traits 是型別層固定特性，純供顯示／設計依據，實際數值全部在「武器」分頁各一級武器的 profile。
+          </p>
+        </div>
+        {!form && <button onClick={startNew} style={primaryBtn}>＋ 新增</button>}
+      </div>
+
+      {rows === null && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>載入中…</div>}
+      {rows && rows.length === 0 && !form && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>尚無資料。</div>}
+      {rows && rows.length > 0 && (
+        <div style={{ overflowX: 'auto' }}>
+          <Row head>
+            <C w={2}>ID</C>
+            <C w={1}>職業</C>
+            <C w={1}>名稱</C>
+            <C w={1}>視覺</C>
+            <C w={1}>屬性版</C>
+            <C w={1}>操作</C>
+          </Row>
+          {[...rows].sort((a, b) => (JOB_LABEL[a.job_id] ?? a.job_id).localeCompare(JOB_LABEL[b.job_id] ?? b.job_id) || a.sort_order - b.sort_order).map((r) => (
+            <Row key={r.id}>
+              <C w={2} dim>{r.id}</C>
+              <C w={1}>{JOB_LABEL[r.job_id] ?? r.job_id}</C>
+              <C w={1}>{r.name}</C>
+              <C w={1} dim>{r.visual}</C>
+              <C w={1}>{r.elemental_capable ? <span style={{ color: 'var(--fug)' }}>✓</span> : <span style={{ color: 'var(--tx-faint)' }}>—</span>}</C>
+              <C w={1}><button onClick={() => startEdit(r)} style={linkBtn}>編輯</button></C>
+            </Row>
+          ))}
+        </div>
+      )}
+
+      {form && (
+        <div style={panel}>
+          <h3 style={{ fontSize: 14, fontWeight: 800, margin: '0 0 10px' }}>{isNew ? '新增' : `編輯：${form.name || form.id}`}</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+            <F label="ID（如 lk_sword）">
+              <input style={inp} type="text" value={form.id} disabled={!isNew} onChange={(e) => setForm({ ...form, id: e.target.value })} />
+            </F>
+            <F label="職業">
+              <select style={inp} value={form.job_id} onChange={(e) => setForm({ ...form, job_id: e.target.value })}>
+                {Object.entries(JOB_LABEL).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </F>
+            <F label="名稱">
+              <input style={inp} type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </F>
+            <F label="視覺（特效/音效組）">
+              <select style={inp} value={form.visual} onChange={(e) => setForm({ ...form, visual: e.target.value as RpgWeaponType['visual'] })}>
+                {WEAPON_VISUAL_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </F>
+            <F label="可有屬性版（7 元素）">
+              <input type="checkbox" checked={form.elemental_capable} onChange={(e) => setForm({ ...form, elemental_capable: e.target.checked })} style={{ width: 18, height: 18 }} />
+            </F>
+            <F label="排序">
+              <input style={inp} type="number" step="1" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) })} />
+            </F>
+            <F label="描述" full>
+              <textarea style={{ ...ta, height: 70 }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            </F>
+            <F label="型別特性 traits（JSON，純顯示／設計依據，不影響戰鬥計算）" full>
+              <textarea style={{ ...ta, height: 120, fontFamily: 'monospace', fontSize: 12 }} value={traitsText} onChange={(e) => setTraitsText(e.target.value)} />
+            </F>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            <button onClick={save} disabled={busy} style={primaryBtn}>{busy ? '儲存中…' : '儲存'}</button>
+            <button onClick={() => setForm(null)} style={ghostBtn}>取消</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================== 武器（DORPG P7，契約 §2/§3） ==============================
+// 職業／類型／等級三個篩選器只影響這裡的列表顯示，不影響後端查詢（一次抓全部武器＋全部類型，
+// 資料量固定 390 筆內，前端篩選即可，不必為此開新的後端查詢參數）。profile 是契約 §3
+// WeaponProfile 的 JSON，比照 ConfigTab／WeaponTypesTab traits 的既有慣例存成排版過的字串編輯。
+
+const WEAPON_RARITY_OPTIONS: WeaponRarity[] = ['common', 'rare', 'epic', 'legendary']
+const WEAPON_ELEMENT_OPTIONS: RpgElement[] = ['neutral', ...ELEMENT_ORDER]
+
+function emptyWeapon(defaultTypeId: string): RpgWeapon {
+  return {
+    id: '', type_id: defaultTypeId, tier: 1, name: '', rarity: 'common', level_req: 1, element: 'neutral',
+    profile: {}, description: '', is_active: true, sort_order: 0,
+  }
+}
+
+function WeaponsTab({ token, onErr, onMsg }: { token: string; onErr: (m: string) => void; onMsg: (m: string) => void }) {
+  const [types, setTypes] = useState<RpgWeaponType[] | null>(null)
+  const [rows, setRows] = useState<RpgWeapon[] | null>(null)
+  const [form, setForm] = useState<RpgWeapon | null>(null)
+  const [profileText, setProfileText] = useState('{}')
+  const [isNew, setIsNew] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  // 篩選器（純前端篩選，見檔頭說明）：'' 代表「全部」。
+  const [filterJob, setFilterJob] = useState('')
+  const [filterType, setFilterType] = useState('')
+  const [filterTier, setFilterTier] = useState('')
+
+  const load = useCallback(() => {
+    Promise.all([adminRpgApi.weaponTypes(token), adminRpgApi.weapons(token)])
+      .then(([t, w]) => { setTypes(t.weapon_types); setRows(w.weapons) })
+      .catch((e: any) => onErr(e?.message || '載入失敗'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+  useEffect(() => { load() }, [load])
+
+  const typeById = new Map((types ?? []).map((t) => [t.id, t]))
+  const typesForJobFilter = filterJob ? (types ?? []).filter((t) => t.job_id === filterJob) : (types ?? [])
+  const filteredRows = (rows ?? []).filter((w) => {
+    const t = typeById.get(w.type_id)
+    if (filterJob && t?.job_id !== filterJob) return false
+    if (filterType && w.type_id !== filterType) return false
+    if (filterTier && w.tier !== Number(filterTier)) return false
+    return true
+  })
+
+  function startNew() {
+    const defaultType = types?.[0]?.id ?? ''
+    const f = emptyWeapon(defaultType)
+    setForm(f); setProfileText(JSON.stringify(f.profile, null, 2)); setIsNew(true)
+  }
+  function startEdit(r: RpgWeapon) { setForm({ ...r }); setProfileText(JSON.stringify(r.profile ?? {}, null, 2)); setIsNew(false) }
+
+  async function save() {
+    if (!form) return
+    if (!form.id.trim()) { onErr('請填 ID'); return }
+    if (!form.name.trim()) { onErr('請填名稱'); return }
+    let profile: RpgWeapon['profile']
+    try { profile = JSON.parse(profileText || '{}') } catch { onErr('「效果 profile」不是合法的 JSON，請修正後再儲存'); return }
+    setBusy(true)
+    try {
+      const saved = await adminRpgApi.putWeapon(token, { ...form, profile })
+      onMsg(`已儲存「${saved.name}」`)
+      setForm(null)
+      load()
+    } catch (e: any) { onErr(e?.message || '儲存失敗') } finally { setBusy(false) }
+  }
+
+  async function del(r: RpgWeapon) {
+    if (!window.confirm(`確定刪除「${r.name}」？`)) return
+    setBusy(true)
+    try {
+      await adminRpgApi.deleteWeapon(token, r.id)
+      onMsg(`已刪除「${r.name}」`)
+      if (form?.id === r.id) setForm(null)
+      load()
+    } catch (e: any) { onErr(e?.message || '刪除失敗') } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
+        <div>
+          <h2 style={{ fontSize: 15, fontWeight: 800, margin: '0 0 4px' }}>武器管理</h2>
+          <p style={{ fontSize: 12, color: 'var(--tx-dim)', margin: 0, maxWidth: 640, lineHeight: 1.7 }}>
+            每類型 10 級（tier 1–10），可有屬性版的類型另有 7 元素×10 級。profile 是契約 §3 的效果 JSON，缺省欄位＝中性值，戰鬥/角色頁一律照這裡存的值計算。
+          </p>
+        </div>
+        {!form && <button onClick={startNew} disabled={!types || types.length === 0} style={primaryBtn}>＋ 新增</button>}
+      </div>
+
+      {!form && (
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <F label="篩選：職業">
+            <select style={inp} value={filterJob} onChange={(e) => { setFilterJob(e.target.value); setFilterType('') }}>
+              <option value="">全部</option>
+              {Object.entries(JOB_LABEL).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+            </select>
+          </F>
+          <F label="篩選：類型">
+            <select style={inp} value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+              <option value="">全部</option>
+              {typesForJobFilter.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </F>
+          <F label="篩選：等級（tier）">
+            <select style={inp} value={filterTier} onChange={(e) => setFilterTier(e.target.value)}>
+              <option value="">全部</option>
+              {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </F>
+        </div>
+      )}
+
+      {rows === null && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>載入中…</div>}
+      {rows && filteredRows.length === 0 && !form && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>尚無符合篩選條件的資料。</div>}
+      {rows && filteredRows.length > 0 && !form && (
+        <div style={{ overflowX: 'auto' }}>
+          <Row head>
+            <C w={2}>ID</C>
+            <C w={2}>名稱</C>
+            <C w={2}>類型</C>
+            <C w={1}>Tier</C>
+            <C w={1}>需 Lv</C>
+            <C w={1}>屬性</C>
+            <C w={1}>啟用</C>
+            <C w={2}>操作</C>
+          </Row>
+          {[...filteredRows].sort((a, b) => a.type_id.localeCompare(b.type_id) || a.tier - b.tier).map((w) => (
+            <Row key={w.id}>
+              <C w={2} dim>{w.id}</C>
+              <C w={2}>{w.name}</C>
+              <C w={2} dim>{typeById.get(w.type_id)?.name ?? w.type_id}</C>
+              <C w={1}>{w.tier}</C>
+              <C w={1} dim>{w.level_req}</C>
+              <C w={1}>{ELEMENT_LABEL[w.element] ?? w.element}</C>
+              <C w={1}>{w.is_active ? <span style={{ color: 'var(--fug)' }}>✓</span> : <span style={{ color: 'var(--tx-faint)' }}>—</span>}</C>
+              <C w={2}>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => startEdit(w)} style={linkBtn}>編輯</button>
+                  <button onClick={() => del(w)} disabled={busy} style={{ ...linkBtn, color: 'var(--hunt)' }}>刪除</button>
+                </div>
+              </C>
+            </Row>
+          ))}
+        </div>
+      )}
+
+      {form && (
+        <div style={panel}>
+          <h3 style={{ fontSize: 14, fontWeight: 800, margin: '0 0 10px' }}>{isNew ? '新增' : `編輯：${form.name || form.id}`}</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+            <F label="ID（如 lk_sword_t3 或 lk_sword_t3_fire）">
+              <input style={inp} type="text" value={form.id} disabled={!isNew} onChange={(e) => setForm({ ...form, id: e.target.value })} />
+            </F>
+            <F label="類型">
+              <select style={inp} value={form.type_id} onChange={(e) => setForm({ ...form, type_id: e.target.value })}>
+                {(types ?? []).map((t) => <option key={t.id} value={t.id}>{JOB_LABEL[t.job_id] ?? t.job_id}・{t.name}</option>)}
+              </select>
+            </F>
+            <F label="Tier（1–10）">
+              <input style={inp} type="number" step="1" min={1} max={10} value={form.tier} onChange={(e) => setForm({ ...form, tier: Number(e.target.value) })} />
+            </F>
+            <F label="名稱">
+              <input style={inp} type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </F>
+            <F label="稀有度">
+              <select style={inp} value={form.rarity} onChange={(e) => setForm({ ...form, rarity: e.target.value as WeaponRarity })}>
+                {WEAPON_RARITY_OPTIONS.map((r) => <option key={r} value={r}>{RARITY_LABEL[r]}</option>)}
+              </select>
+            </F>
+            <F label="需求等級 level_req">
+              <input style={inp} type="number" step="1" value={form.level_req} onChange={(e) => setForm({ ...form, level_req: Number(e.target.value) })} />
+            </F>
+            <F label="屬性">
+              <select style={inp} value={form.element} onChange={(e) => setForm({ ...form, element: e.target.value as RpgElement })}>
+                {WEAPON_ELEMENT_OPTIONS.map((el) => <option key={el} value={el}>{ELEMENT_LABEL[el]}</option>)}
+              </select>
+            </F>
+            <F label="啟用">
+              <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} style={{ width: 18, height: 18 }} />
+            </F>
+            <F label="排序">
+              <input style={inp} type="number" step="1" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) })} />
+            </F>
+            <F label="描述" full>
+              <textarea style={{ ...ta, height: 70 }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            </F>
+            <F label="效果 profile（JSON，見契約 §3 WeaponProfile；缺欄位＝中性值）" full>
+              <textarea style={{ ...ta, height: 220, fontFamily: 'monospace', fontSize: 12 }} value={profileText} onChange={(e) => setProfileText(e.target.value)} />
+            </F>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            <button onClick={save} disabled={busy} style={primaryBtn}>{busy ? '儲存中…' : '儲存'}</button>
+            <button onClick={() => setForm(null)} style={ghostBtn}>取消</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

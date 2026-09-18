@@ -1,6 +1,6 @@
 // 引擎公式與目標挑選（純函式，無 React/DOM，無 Date.now()）。
 // 型別引用在 Node type-stripping 下整段消失，不影響本檔被 node 直接 import 執行。
-import type { ActorStats, CombatRating, EnemySlotId } from '../types';
+import type { ActorStats, CombatRating, EnemySlotId, WeaponProfileWire } from '../types';
 import type { BattleConfig, BattleState, EnemyActor } from './types';
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -24,15 +24,23 @@ export function floorInt(v: number): number {
 /**
  * 規格 §2：蓄氣倍率 = 1 + (max-1) × clamp((hold-chargeMinMs)/chargeFullMs, 0, 1)。
  * 用 cfg 欄位泛化（不寫死 300/1200/1.5/2.5），滿蓄時間 = chargeMinMs + chargeFullMs（預設 1500ms）。
+ * P7（CONTRACT §3 巨劍）：新增可選參數 chargeTimeMul（預設 1，武器 profile.chargeTimeMul）——
+ * 巨劍「增加物理攻擊的蓄氣時間」＝把 chargeFullMs 整個拉長，滿蓄要等更久；缺省 1 時算式跟 P1
+ * 完全相同，不影響任何既有測試。武器對「傷害倍率」的額外加成（charge_dmg_mul）不在這裡套用
+ * ——那是疊在這支函式回傳值之上的第二層調整，見呼叫端 dispatch.ts ATTACK_RELEASE 的
+ * `1 + (rawChargeMul-1)×chargeDmgMul` 算式，理由是這支函式的回傳值同時也被拿去算 chargeRatio
+ * 的等價分母，不該混進「傷害倍率」這個跟蓄氣進度無關的語意。
  */
-export function chargeMultiplier(holdMs: number, cfg: BattleConfig): number {
-  const t = clamp((holdMs - cfg.chargeMinMs) / cfg.chargeFullMs, 0, 1);
+export function chargeMultiplier(holdMs: number, cfg: BattleConfig, chargeTimeMul = 1): number {
+  const fullMs = cfg.chargeFullMs * chargeTimeMul;
+  const t = clamp((holdMs - cfg.chargeMinMs) / fullMs, 0, 1);
   return 1 + (cfg.chargeMaxMultiplier - 1) * t;
 }
 
-/** UI 蓄氣條用的 0–1 比例；跟 chargeMultiplier 共用同一個 clamp 區間，只是不做倍率換算。 */
-export function chargeRatio(holdMs: number, cfg: BattleConfig): number {
-  return clamp((holdMs - cfg.chargeMinMs) / cfg.chargeFullMs, 0, 1);
+/** UI 蓄氣條用的 0–1 比例；跟 chargeMultiplier 共用同一個 clamp 區間與 chargeTimeMul 參數，只是
+ *  不做倍率換算。 */
+export function chargeRatio(holdMs: number, cfg: BattleConfig, chargeTimeMul = 1): number {
+  return clamp((holdMs - cfg.chargeMinMs) / (cfg.chargeFullMs * chargeTimeMul), 0, 1);
 }
 
 /**
@@ -83,30 +91,151 @@ export function critChance(attacker: CombatRating, defender: CombatRating, cfg: 
 }
 
 /**
- * P5（CONTRACT §6）：屬性倍率改成兩層規則——
- *   1. battle_element_chart 管理者覆寫優先：查有 [enemy.attribute][skillElement] 這組 key 就直接用
- *      （可以是 0＝完全無效，呼叫端據此判 'immune'）。
- *   2. 查無覆寫 → 落到 Enemy.weakElements：skillElement 命中弱點桶 → 1+weaknessBonusPct/100；
- *      否則 1.0（不相剋也不吃虧）。
- * P2 時期「查無 key 一律當 1.0」的單純預設表語意已被取代（見 BattleConfig.elementChart 型別註解、
- * DEFAULT_BATTLE_CONFIG 預設清空成 {}）。cfg 維持第一個參數（跟本檔其餘公式一致的呼叫慣例），
- * enemy 只取用得到的兩個欄位、用最小 shape 而非整個 EnemyActor，方便非戰鬥情境（例如未來的
- * 傷害試算器）也能呼叫。
+ * P7（CONTRACT §1）：五行＋光暗「A 剋 M」有向表——key 剋 value。金→木、木→土、土→水、水→火、
+ * 火→金（五行相剋方向，不是相生）；光↔闇互剋，各自佔一列（兩個方向都要在表裡各寫一次，不能只
+ * 靠對稱推導，因為呼叫端是單向查表）。字面值對齊 ElementKind（不含 'neutral'——neutral 由
+ * elementCycleMultiplier 開頭直接短路成 1，不會走到這張表）。
+ */
+const ELEMENT_BEATS: Readonly<Record<string, string>> = {
+  metal: 'wood',
+  wood: 'earth',
+  earth: 'water',
+  water: 'fire',
+  fire: 'metal',
+  light: 'dark',
+  dark: 'light',
+};
+
+/**
+ * P7（CONTRACT §1／BACKEND element_cases.json 的 chinese_* 系列案例）：現網 rpg_monsters.attribute
+ * 舊資料仍是中文（migration 176 seed 刻意存中文原文，見 fixture.ts MonsterRow.attribute 型別
+ * 註解），在 BACKEND 出遷移把既有資料轉成英文之前，五行相剋表要先認得這 8 個中文字面值，否則
+ * 全部退化成「不相干→1.0」對正式怪物是 no-op。跟 Go 端（BACKEND ElementMultiplier 鏡像實作）
+ * 用同一份對照表，兩邊對同一批中文輸入必須算出同一個結果（見 element_cases.json 的
+ * chinese_metal／chinese_dark_light_counter／chinese_same_element／chinese_neutral 四個案例）。
+ */
+const CHINESE_ELEMENT_ALIASES: Readonly<Record<string, string>> = {
+  金: 'metal',
+  木: 'wood',
+  水: 'water',
+  火: 'fire',
+  土: 'earth',
+  光: 'light',
+  闇: 'dark',
+  無: 'neutral',
+};
+
+/** 中文別名→英文 ElementKind；已經是英文（或任何非表列字面值）原樣通過。
+ *  審查#1【中】：原本只在本檔內部（elementCycleMultiplier／elementMultiplier 的 weakElements
+ *  比對）使用，combat.ts applyPartyDamage 判斷「攻擊方是否為非 neutral 怪物」時卻直接比較
+ *  attackerElement 原始字串，對正式庫「無」（中文中性別名）會被誤判成非中性、錯誤套用
+ *  elementResistPct 減免——這裡改為 export，讓 combat.ts 能在比較前先正規化，兩處判斷「是否為
+ *  neutral」的邏輯統一走同一份別名表，不再各自維護一份判斷標準。 */
+export function normalizeElementAlias(v: string): string {
+  return CHINESE_ELEMENT_ALIASES[v] ?? v;
+}
+
+/**
+ * P7（INTEGRATOR 補：CONTRACT §1/§3「sizeBonus 對小/大型 +5%」對齊 attribute 的既有中文別名
+ * 手法）：現網 rpg_monsters.size 跟 attribute 一樣是 migration 176 seed 的中文原文
+ * （'大型'/'中型'/'小型'），combat.ts 原本只認英文字面值 small/medium/large，對正式怪物資料
+ * 會恆是 0 加成（no-op）——跟 elementCycleMultiplier 對 attribute 中文字面值的處理是同一個問題、
+ * 同一種解法，這裡補上對稱的別名表，在 BACKEND 出遷移把 rpg_monsters.size 轉成英文之前先讓
+ * sizeBonus 對正式內容也生效；BACKEND 若日後把資料轉成英文，這裡的別名表原樣相容（英文值查表
+ * 落空、直接回傳原值）。
+ */
+const CHINESE_SIZE_ALIASES: Readonly<Record<string, string>> = {
+  大型: 'large',
+  中型: 'medium',
+  小型: 'small',
+};
+
+/** 中文體型別名→英文 size 字面值；已經是英文（或任何非表列字面值）原樣通過。 */
+export function normalizeSizeAlias(v: string | undefined): string | undefined {
+  if (v === undefined) return undefined;
+  return CHINESE_SIZE_ALIASES[v] ?? v;
+}
+
+/**
+ * P7（CONTRACT §1）：五行＋光暗相剋倍率——任一方 neutral（或缺值/空字串，正規化後才判斷）→ 1
+ * （不看表，兩者都要是具體屬性才有相剋可言）；A===M（同屬性，非 neutral）→ elementSamePct；
+ * A 剋 M（A 是 M 的剋星，查 ELEMENT_BEATS[A]===M）→ elementAdvantagePct；M 剋 A（A 反被 M 剋，
+ * 查 ELEMENT_BEATS[M]===A）→ elementDisadvantagePct；其餘（例如金 vs 水，五行表中彼此不相剋也
+ * 不相生）→ 1（不加成也不吃虧，跟 P5 時期「查無相剋關係」的中性語意一致）。兩個參數都先過
+ * normalizeElementAlias（見上方型別註解）——中文舊資料因此也能正確走五行表，不只是英文枚舉。
+ */
+function elementCycleMultiplier(cfg: BattleConfig, attackElement: string, monsterAttribute: string): number {
+  const a = normalizeElementAlias(attackElement || 'neutral');
+  const m = normalizeElementAlias(monsterAttribute || 'neutral');
+  if (a === 'neutral' || m === 'neutral') return 1;
+  if (a === m) return 1 + cfg.elementSamePct / 100;
+  if (ELEMENT_BEATS[a] === m) return 1 + cfg.elementAdvantagePct / 100;
+  if (ELEMENT_BEATS[m] === a) return 1 + cfg.elementDisadvantagePct / 100;
+  return 1;
+}
+
+/**
+ * P7（CONTRACT §1，取代 P5 版本）：屬性倍率改成三層規則——
+ *   1. battle_element_chart 管理者覆寫優先：查有 [enemy.attribute][attackElement] 這組 key 就
+ *      直接用（可以是 0＝完全無效，呼叫端據此判 'immune'）——跟 P5 版本完全相同，不變。
+ *   2. 查無覆寫 → 五行＋光暗相剋表（elementCycleMultiplier）算出一個基準倍率。
+ *   3. 若 attackElement ∈ Enemy.weakElements（弱點桶）→ 跟步驟 2 的結果取「較大值」（弱點桶保證
+ *      至少有 1+weaknessBonusPct/100 這麼多，即使五行表本身算出來是劣勢或無關）。
+ * P5 時期「查無 chart 覆寫 → 只看 weakElements，否則 1.0」的規則被步驟 2/3 取代／擴充——弱點桶
+ * 沒有被拿掉，只是不再是唯一的非覆寫規則，改成跟五行表並存取大（見 CONTRACT §1 原文「另：A ∈
+ * 怪物 weak_elements → 至少 1+battle_weakness_bonus_pct/100（取兩者較大）」）。
+ * 簽章對齊 WIRE.md「elementMultiplier(cfg, attackElement, enemy)」——cfg 打頭陣的既有慣例不變，
+ * attackElement/enemy 對調順序（P5 版本是 (cfg, enemy, skillElement)，呼叫端已同步更新）。
  */
 export function elementMultiplier(
   cfg: BattleConfig,
+  attackElement: string,
   enemy: { attribute?: string; weakElements?: string[] } | undefined,
-  skillElement: string,
 ): number {
   const attribute = enemy?.attribute;
   if (attribute) {
     const row = cfg.elementChart[attribute];
-    const v = row?.[skillElement];
+    const v = row?.[attackElement];
     if (v !== undefined) return v;
   }
-  if (enemy?.weakElements?.includes(skillElement)) return 1 + cfg.weaknessBonusPct / 100;
-  return 1;
+  let mul = elementCycleMultiplier(cfg, attackElement, attribute ?? 'neutral');
+  // 審查#4【低】：Go 端 elements.go 對 weakElements 逐項 canonicalElement 正規化後才比對，這裡原本
+  // 用原始字串 .includes(attackElement)——正式庫 weakElements 若存中文（例如 ['火']），attackElement
+  // 傳進來的英文 'fire' 永遠比不中，弱點桶對中文資料整組失效。改成兩邊都先過 normalizeElementAlias
+  // 再比對，跟 Go 端行為對齊（元素別名表本來就是中英雙邊都要能命中，不只是攻擊方）。
+  const normalizedAttack = normalizeElementAlias(attackElement);
+  if (enemy?.weakElements?.some((w) => normalizeElementAlias(w) === normalizedAttack)) {
+    mul = Math.max(mul, 1 + cfg.weaknessBonusPct / 100);
+  }
+  return mul;
 }
+
+/**
+ * P7（CONTRACT §3「無武器＝全部中性」）：所有數值欄位都是「不改變任何既有行為」的中性值——
+ * hits=1/hitMul=1 等同單擊全額傷害、interval/charge 相關的 *Mul=1 等同不調整、*Pct=0 等同沒有
+ * 額外效果、element='neutral' 等同 P1～P6 普攻／物理技能原本恆用的隱性屬性。engine/combat.ts 在
+ * `actor.weaponProfile` 是 null 時一律 fallback 到這份常數，讓「沒有武器系統資料」與「明確裝備
+ * 一把中性武器」在戰鬥數值上完全等價，也是既有（P7 之前）測試在沒有任何改動下仍應全數通過的
+ * 根本原因——這份物件的每一個欄位都必須維持中性語意，日後若要改動這裡的預設值，等同改變「沒有
+ * 武器」時的戰鬥手感，需要另外評估。
+ */
+export const NEUTRAL_WEAPON_PROFILE: WeaponProfileWire = {
+  atk: 0,
+  matk: 0,
+  hits: 1,
+  hitMul: 1,
+  extraHitChancePct: 0,
+  intervalPct: 0,
+  chargeTimeMul: 1,
+  chargeDmgMul: 1,
+  splashPct: 0,
+  sizeBonus: { small: 0, medium: 0, large: 0 },
+  critPct: 0,
+  critDmgPct: 0,
+  elementResistPct: 0,
+  magicSkillPct: 0,
+  element: 'neutral',
+};
 
 /**
  * SPEC §4：raw = floor((atk×coef+flat) × elementMul × chargeMul × critMul)；net = raw − def。
@@ -146,13 +275,19 @@ export function computeRawDamage(
  * 任何效果，因為根本沒有程式碼路徑會拿它們的 rating.aspd 來算冷卻。
  * rating.aspd 缺省（呼叫端手動組的 CombatRating 沒填這個新欄位，例如舊測試資料）時退回
  * cfg.aspdReference，等同中性表現，不會算出 NaN。
+ *
+ * P7（CONTRACT §3 細劍/長弓/弩/斧「interval_pct 乘在 attackCooldownFor 結果」）：新增可選參數
+ * intervalPct（預設 0，武器 profile.intervalPct），在 AGI/DEX 換算出的冷卻（含 min/max clamp）
+ * 之上再乘一次 `1+intervalPct/100`——負值（細劍/短弓/弩）變快、正值（長弓/斧）變慢。刻意放在
+ * clamp 之後才乘（不是把 intervalPct 摻進 clamp 之前的算式），對齊契約原文「乘在...結果」的字面
+ * 順序；預設 0 時這行等同 ×1，不影響任何既有測試。
  */
-export function attackCooldownFor(rating: CombatRating, cfg: BattleConfig): number {
+export function attackCooldownFor(rating: CombatRating, cfg: BattleConfig, intervalPct = 0): number {
   const aspd = rating.aspd ?? cfg.aspdReference;
   const denom = 200 - cfg.aspdReference;
-  if (denom <= 0) return cfg.attackCooldownMs; // 防呆：aspdReference 誤設 ≥200 時避免除以零/負值把方向算反
-  const raw = (cfg.attackCooldownMs * (200 - aspd)) / denom;
-  return clamp(raw, cfg.attackCooldownMinMs, cfg.attackCooldownMs);
+  const base =
+    denom <= 0 ? cfg.attackCooldownMs : clamp((cfg.attackCooldownMs * (200 - aspd)) / denom, cfg.attackCooldownMinMs, cfg.attackCooldownMs); // 防呆：aspdReference 誤設 ≥200 時避免除以零/負值把方向算反
+  return base * (1 + intervalPct / 100);
 }
 
 /**

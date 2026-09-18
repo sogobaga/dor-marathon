@@ -5052,6 +5052,17 @@ export interface RpgConfig {
   battle_lvl_def_ratio: number
   /** 怪物 MDEF 相對 RefPlayer(N).MDEF 的比例（契約預設 1.0）。 */
   battle_lvl_mdef_ratio: number
+
+  // --- DORPG P7（武器系統，見契約 dorpg_p7 CONTRACT.md §1、WIRE §REST）新增：屬性相剋倍率的
+  // 三個全域係數（管理者 battle_element_chart 個別覆寫仍最優先，見該欄位說明）。全部走既有
+  // rpg_config JSON，不新增 migration。⚠️ 同 P5/P6 的整合警語：json tag 依 internal/rpg/config.go
+  // 實際欄位為準，這裡是依契約文字擬定。---
+  /** 攻擊屬性剋制怪物屬性時的倍率加成 %（契約預設 25，即 ×1.25）。 */
+  battle_element_advantage_pct: number
+  /** 攻擊屬性被怪物屬性剋制時的倍率減損 %（契約預設 −25，即 ×0.75）。 */
+  battle_element_disadvantage_pct: number
+  /** 攻擊屬性與怪物屬性相同時的倍率減損 %（契約預設 −25，即 ×0.75）。 */
+  battle_element_same_pct: number
 }
 
 export interface RpgDerived {
@@ -5111,6 +5122,11 @@ export interface RpgCharacter {
   stat_cap: number // = min(max_stat, effective_level)
   skill_points_total: number
   skill_points_free: number
+  // --- DORPG P7（見契約 §2/§3、WIRE §REST「/rpg/me 新增 weapon」）：目前裝備的武器（未裝備＝
+  // null）。衍生值（上面的 derived/max_hp/max_mp）已經套用武器 WeaponProfile 的效果，這個欄位
+  // 只是給畫面顯示「目前武器是哪一件」用，不需要前端自己再疊加一次數值。WeaponDTO 定義在本檔
+  // 下方 P7 專節（TS interface 宣告順序不影響型別檢查，故可以先在這裡引用）。 ---
+  weapon: WeaponDTO | null
 }
 
 export interface RpgMe {
@@ -5333,6 +5349,90 @@ export const rpgTavernApi = {
       .then((r) => ({ ...r, errors: r.errors ?? [] })),
 }
 
+// --- DORPG P7：武器裝備（見契約 dorpg_p7 CONTRACT.md §2/§3、WIRE.md §REST）---
+// WeaponProfile 是契約 §3 的「引擎詞彙」JSON，缺省欄位＝中性值（後端 omitempty，前端一律用 ?? 0／
+// ?? 'neutral' 讀取，不假設每個欄位都存在）。這份 snake_case 形狀同時是 GET /rpg/equipment、
+// GET /rpg/me 的 weapon.profile，也是後台 rpg_weapons.profile 編輯器（adminRpgApi）要吃的形狀，
+// 兩處共用同一個型別，欄位改名只需要改這裡一處。
+export interface WeaponSizeBonus {
+  small?: number
+  medium?: number
+  large?: number
+}
+export interface WeaponProfile {
+  atk?: number
+  matk?: number
+  int_bonus?: number
+  mp_pct?: number
+  atk_pct?: number
+  matk_pct?: number
+  def_pct?: number
+  mdef_pct?: number
+  hits?: number
+  hit_mul?: number
+  extra_hit_chance_pct?: number
+  interval_pct?: number
+  charge_time_mul?: number
+  charge_dmg_mul?: number
+  splash_pct?: number
+  size_bonus?: WeaponSizeBonus
+  crit_pct?: number
+  crit_dmg_pct?: number
+  flee_bonus?: number
+  element_resist_pct?: number
+  magic_skill_pct?: number
+  element?: RpgElement
+}
+
+export type WeaponRarity = 'common' | 'rare' | 'epic' | 'legendary'
+
+/** WIRE §REST WeaponTypeDTO：該職業其中一種武器類型（如「單手劍」），traits 是型別層固定特性
+ *  （純顯示／設計依據，engine 不讀這個物件——實際效果數值全部在每件武器各自的 profile）。 */
+export interface WeaponTypeDTO {
+  id: string
+  job_id: string
+  name: string
+  visual: 'sword' | 'staff' | 'bow' | 'greatsword'
+  elemental_capable: boolean
+  description: string
+  traits: Record<string, unknown>
+  sort_order: number
+}
+
+/** WIRE §REST WeaponDTO：該類型其中一級武器；can_equip／equipped 是後端依「目前職業＋有效等級」
+ *  算好的旗標，前端不必自己重算門檻判斷（見契約 §2「唯一條件＝有效等級 ≥ level_req」）。 */
+export interface WeaponDTO {
+  id: string
+  type_id: string
+  tier: number
+  name: string
+  rarity: WeaponRarity
+  level_req: number
+  element: RpgElement
+  profile: WeaponProfile
+  description: string
+  can_equip: boolean
+  equipped: boolean
+}
+
+/** GET /rpg/equipment、PUT /rpg/equipment/weapon 共用回應形狀（WIRE §REST）。weapons／weapon_types
+ *  只反映「目前職業」；未選職業時兩者皆為空陣列（契約 §2）。 */
+export interface RpgEquipmentResponse {
+  job: JobDTO | null
+  effective_level: number
+  equipped: { weapon: WeaponDTO | null }
+  weapon_types: WeaponTypeDTO[]
+  weapons: WeaponDTO[]
+}
+
+// PUT /rpg/equipment/weapon 400 錯誤碼（WIRE §REST）：not_found／wrong_job／level_too_low——
+// 呼叫端（EquipmentScreen）比照其餘 rpg* API 的 friendlyErr() 慣例自行對照中文文案。
+export const rpgEquipmentApi = {
+  get: (token: string) => request<RpgEquipmentResponse>('/rpg/equipment', { headers: withAuth(token) }),
+  setWeapon: (token: string, itemId: string | null) =>
+    request<RpgEquipmentResponse>('/rpg/equipment/weapon', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ item_id: itemId }) }),
+}
+
 // --- Admin: 遊戲化角色數值（perm scope 'rpg'；見 internal/rpg admin.go） ---
 
 export interface AdminRpgUser {
@@ -5470,6 +5570,41 @@ export interface RpgEncounter {
   monster_level: number
 }
 
+// --- DORPG P7：武器內容 CRUD 型別（見契約 dorpg_p7 CONTRACT.md §2、WIRE §後台）。與上面 FE_MEMBER
+// 的 WeaponTypeDTO/WeaponDTO 刻意分開宣告（跟其餘七個內容分頁的既有慣例一致：admin 用 snake_case
+// row 直接對照 DB 欄位，會員端 wire 另外挑選欄位/加旗標），profile 共用同一個 WeaponProfile 型別。
+
+/** rpg_weapon_types 一列。18 筆固定資料（每職業 3 種），後台只能編輯既有列（WIRE：後端只開放
+ *  GET/PUT，沒有 DELETE 路由），故 WeaponTypesTab 不提供刪除／新增按鈕。沒有 is_active 欄位——
+ *  契約沒有把「停用整個武器類型」設計進資料模型，要下架請改動該類型底下個別武器的 is_active。 */
+export interface RpgWeaponType {
+  id: string
+  job_id: string
+  name: string
+  visual: 'sword' | 'staff' | 'bow' | 'greatsword'
+  elemental_capable: boolean
+  description: string
+  traits: Record<string, unknown>
+  sort_order: number
+}
+
+/** rpg_weapons 一列。level_req 對照 tier→1/10/20/30/40/50/60/70/80/90（契約 §2），後台直接顯示/
+ *  編輯後端存的值，不重算。profile 是契約 §3 WeaponProfile 的 JSON，後台以 JSON textarea 編輯
+ *  （比照 RpgConfig.battle_element_chart 的既有慣例），存檔前另外做 JSON.parse 驗證。 */
+export interface RpgWeapon {
+  id: string
+  type_id: string
+  tier: number
+  name: string
+  rarity: WeaponRarity
+  level_req: number
+  element: RpgElement
+  profile: WeaponProfile
+  description: string
+  is_active: boolean
+  sort_order: number
+}
+
 /** GET /admin/rpg/battle-logs 明細列（不含 email/account_code——隱私規則，見後端 SQL 只
  *  SELECT COALESCE(name,handle)）。對照 internal/rpg/content_repo.go battleLogListRow。 */
 export interface RpgBattleLogRow {
@@ -5559,6 +5694,18 @@ export const adminRpgApi = {
     request<RpgEncounter>('/admin/rpg/encounters', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
   deleteEncounter: (token: string, code: string) =>
     request<{ ok: boolean }>(`/admin/rpg/encounters/${encodeURIComponent(code)}`, { method: 'DELETE', headers: withAuth(token) }),
+
+  // --- DORPG P7：武器類型／武器 CRUD（見契約 dorpg_p7 CONTRACT.md §2、WIRE §後台）。
+  // weapon-types 只有 GET/PUT（沒有 DELETE 路由，見 RpgWeaponType 型別註解）。---
+  weaponTypes: (token: string) => request<{ weapon_types: RpgWeaponType[] }>('/admin/rpg/weapon-types', { headers: withAuth(token) }),
+  putWeaponType: (token: string, row: RpgWeaponType) =>
+    request<RpgWeaponType>('/admin/rpg/weapon-types', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+
+  weapons: (token: string) => request<{ weapons: RpgWeapon[] }>('/admin/rpg/weapons', { headers: withAuth(token) }),
+  putWeapon: (token: string, row: RpgWeapon) =>
+    request<RpgWeapon>('/admin/rpg/weapons', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+  deleteWeapon: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/rpg/weapons/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
 
   // 戰鬥數據：期間 days（7/30，後端夾在 1..90）＋可選 code 篩選單一遭遇；limit 明細筆數上限。
   battleLogs: (token: string, params: { code?: string; days: 7 | 30; limit?: number }) => {
@@ -5671,7 +5818,19 @@ export interface RpgBootstrapPartyMemberRaw {
   mpMax: number
   portraitUrl: string | null
   stats?: RpgBootstrapActorStatsRaw
-  weapon?: string
+  /**
+   * DORPG P7（WIRE §戰鬥 bootstrap）破壞性變更：INTEGRATOR 對照 services/api/internal/rpg/
+   * battle.go 確認——`wirePartyMember.Weapon` 是 `*wireWeapon`（`json:"weapon"`，無 omitempty），
+   * 正式後端這個鍵一律送完整物件或 JSON null，P1～P6 時期的純視覺字串已被完全取代，wire 上
+   * 不會再有 `weapon: "sword"` 這種寫法。這裡型別放寬成三選一（物件｜字串｜null）只是配合
+   * fromApi.ts mapPartyMember() 的雙軌防禦式讀取（asWeapon() 只在收到合法字串時成功、
+   * asEquippedWeapon() 只在收到合法物件時成功，兩者互斥）——不代表正式後端真的還會送字串，純粹
+   * 讓型別誠實涵蓋「舊格式測試 fixture／理論上的降級回應」這個邊界，也讓這裡不必再靠
+   * unknown-cast 繞過型別檢查。未裝備＝物件（INTEGRATOR 已在 battle.go resolvePlayerWeaponWire
+   * 補回職業預設視覺，玩家這個鍵幾乎不會是 null；查無職業這種理論邊界才會是 null）；隊友固定
+   * 送視覺物件（Profile 中性值，本輪不裝備，見契約 §2）。
+   */
+  weapon?: RpgBootstrapEquippedWeaponRaw | string | null
   rating?: RpgBootstrapRatingRaw
   // P5：玩家目前選擇的職業（見契約 §1／WIRE）——武器已由後端決定填在上面的 weapon，
   // 這個 id 只給前端顯示/除錯用，選填（AI 隊友恆為 undefined）。
@@ -5682,6 +5841,40 @@ export interface RpgBootstrapPartyMemberRaw {
   skills?: RpgBootstrapSkillRaw[]
   /** 這位隊友目前套用的腳本名稱（酒館頁選的），純顯示用；玩家本人恆為 undefined。 */
   presetName?: string
+}
+/**
+ * WIRE §戰鬥 bootstrap WeaponProfileWire（camelCase，「已展開成引擎詞彙」版本）：Compute 已經吃掉
+ * 的 int_bonus/mp_pct/atk_pct/matk_pct/def_pct/mdef_pct/flee_bonus/crit_pct 不再送（那些只影響
+ * Compute 算好的 stats，戰鬥引擎不需要再套一次），critPct 仍送供除錯顯示（同 RpgBootstrapRatingRaw
+ * 的既有慣例）。⚠️ 逐欄對齊 ENGINE lib/dorpg/types.ts 的 WeaponProfileWire——那邊每個欄位都是必填
+ * number（非 optional），這裡跟著用必填欄位，避免 fromApi.ts 映射時還要處理「wire 缺欄位」的
+ * ?? 預設值分支（後端 toWireWeaponProfile 應該逐欄都給值，缺省語意在 rpg_weapons.profile 那層
+ * 的 snake_case WeaponProfile 才需要 optional）。
+ */
+export interface RpgBootstrapWeaponProfileRaw {
+  atk: number
+  matk: number
+  hits: number
+  hitMul: number
+  extraHitChancePct: number
+  intervalPct: number
+  chargeTimeMul: number
+  chargeDmgMul: number
+  splashPct: number
+  sizeBonus: { small: number; medium: number; large: number }
+  critPct: number
+  critDmgPct: number
+  elementResistPct: number
+  magicSkillPct: number
+  element: string
+}
+/** 對齊 ENGINE lib/dorpg/types.ts 的 EquippedWeaponWire。 */
+export interface RpgBootstrapEquippedWeaponRaw {
+  id: string
+  name: string
+  typeId: string
+  visual: string
+  profile: RpgBootstrapWeaponProfileRaw
 }
 export interface RpgBootstrapEnemyRaw {
   id: string
@@ -5802,7 +5995,16 @@ export interface RpgBootstrapSampleRaw {
 // DORPG P6（WIRE：「config 新增 scaleMode: "level"|"power"（純顯示／除錯）」）：只加一個純展示欄位，
 // 不需要 ENGINE 在 BattleConfig 裡也加這個 key（引擎完全不讀它），故用交集型別在 api.ts 這層自己補上，
 // 避免為了一個顯示用欄位去動 engine/types.ts（不在本輪 FRONTEND 寫入範圍內）。
-export type RpgBootstrapConfigRaw = Partial<import('@/lib/dorpg/engine').BattleConfig> & { scaleMode?: 'level' | 'power' }
+// DORPG P7（WIRE §引擎：「config 新增 elementAdvantagePct、elementDisadvantagePct、elementSamePct」）：
+// 這三個是 elementMultiplier() 真正要讀的係數，不是純展示欄位，但仍屬於「BACKEND 送、ENGINE 讀」的
+// BattleConfig 擴充——ENGINE 尚未在 engine/types.ts BattleConfig 加這三個欄位時，用同一招交集型別
+// 先把 wire 形狀鋪好，不硬改 engine/types.ts（不在本輪 FRONTEND 寫入範圍內，見任務回報對 ENGINE 的需求）。
+export type RpgBootstrapConfigRaw = Partial<import('@/lib/dorpg/engine').BattleConfig> & {
+  scaleMode?: 'level' | 'power'
+  elementAdvantagePct?: number
+  elementDisadvantagePct?: number
+  elementSamePct?: number
+}
 export interface RpgBattleBootstrap {
   encounter: RpgBootstrapEncounterInfo
   sample: RpgBootstrapSampleRaw

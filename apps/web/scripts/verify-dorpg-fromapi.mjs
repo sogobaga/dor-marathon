@@ -201,5 +201,50 @@ const pad10 = (s) => [s, null, null, null, null, null, null, null, null, null]
   eq(cast?.skillId, 'dmg_b', '經 fromApi 轉換後，隊友 AI 仍正確挑出 tier 最高（tier:2）的 dmg_b 施放')
 }
 
+// ── 6) DORPG P7（CONTRACT §2/§3、WIRE「戰鬥 bootstrap」）：party member 的 weapon 若已經是
+//      BACKEND／INTEGRATOR 未來會送的富物件形狀（{id,name,typeId,visual,profile}），
+//      mapPartyMember() 的 asEquippedWeapon() 要能正確解析成 PartyMember.equippedWeapon，
+//      且這份資料真的能餵進 engine 產生武器效果（本例用雙劍 hits=2 驗證端到端）。
+//      api.ts 目前的 RpgBootstrapPartyMemberRaw.weapon 型別仍是舊的 `string`（見任務回報），
+//      這裡直接餵未來形狀的裸 JSON 給 sampleFromBootstrap()，證明 fromApi.ts 讀取邏輯不依賴
+//      該型別宣告、一旦 INTEGRATOR 補上正式型別就能立刻生效，不需要改動 fromApi.ts。 ──
+{
+  const dualSwordWire = {
+    id: 'lk_dual_t5', name: '風城雙刃‧伍式', typeId: 'lk_dual', visual: 'sword',
+    profile: {
+      atk: 40, matk: 0, hits: 2, hitMul: 0.6, extraHitChancePct: 0, intervalPct: 0,
+      chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
+      critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
+    },
+  }
+  const raw = {
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100,
+      portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 },
+      weapon: dualSwordWire,
+    }],
+    enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 99999, hpMax: 99999, slot: 'front_center', imageUrl: '', canEscape: true, stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 35, mdef: 10 } }],
+    scene: { id: 's', name: 's', imageUrl: '', slots: [] },
+    skills: pad10(null),
+    items: [],
+    initialTargetId: 'e1',
+  }
+  const sample = sampleFromBootstrap(raw)
+  ok(!!sample.party[0].equippedWeapon, 'wire 送富物件形狀的 weapon 時，mapPartyMember 正確解析出 equippedWeapon（不是 null）')
+  eq(sample.party[0].equippedWeapon?.profile.hits, 2, 'equippedWeapon.profile.hits 正確映射成 2（雙劍二刀流）')
+  eq(sample.party[0].weapon, undefined, '既有的 PartyMember.weapon（視覺特效組字串欄位）不受影響——這批 wire 沒有送舊格式的字串，維持 undefined')
+
+  const cfg = {
+    enemyActIntervalMs: [999999, 999999], allyActIntervalMs: [999999, 999999],
+    baseMissPct: 0, missMinPct: 0, missMaxPct: 0, critRate: 0, monsterCritPct: 0, monsterCritShieldBase: 0,
+  }
+  let s = createBattle(sample, { now: 0, config: cfg })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const hitEvents = s.events.filter((e) => e.kind === 'attack' && e.actorId === 'player')
+  eq(hitEvents.length, 2, '經 fromApi 轉換後的雙劍武器，實戰普攻仍產生 2 段獨立 attack 事件（hits=2）')
+  ok(hitEvents.every((e) => e.damage === Math.floor(100 * 0.6) - 35), '雙劍每段傷害＝floor(100×hitMul0.6)-def35=25，經完整 wire→fromApi→engine 管線驗證')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

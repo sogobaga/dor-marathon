@@ -80,6 +80,9 @@ func (h *Handler) Router() http.Handler {
 	r.Put("/presets/{id}", h.UpdatePreset)
 	r.Delete("/presets/{id}", h.DeletePreset)
 	r.Post("/presets/validate", h.PresetsValidate)
+	// DORPG P7（CONTRACT §2/§5、WIRE）：武器裝備，沿用同一組 requireEntry 白名單。
+	r.Get("/equipment", h.GetEquipment)
+	r.Put("/equipment/weapon", h.PutEquipmentWeapon)
 	return r
 }
 
@@ -160,6 +163,10 @@ type characterView struct {
 	StatCap          int     `json:"stat_cap"`
 	SkillPointsTotal int     `json:"skill_points_total"`
 	SkillPointsFree  int     `json:"skill_points_free"`
+
+	// Weapon DORPG P7（WIRE：/rpg/me 新增欄位）：目前裝備的武器，nil＝未裝備。衍生值
+	// （上面的 Derived）已經套用它的效果，這裡只是給前端顯示用。
+	Weapon *weaponDTO `json:"weapon"`
 }
 
 // buildCharacterView 角色列 + Config + 真實 Base Level → 完整衍生數值（Me/Allocate/PutJob/
@@ -197,6 +204,25 @@ func (h *Handler) buildCharacterView(ctx context.Context, cfg Config, baseLevel 
 		return characterView{}, err
 	}
 	in.Passives = passives
+
+	// DORPG P7：目前裝備的武器套進 Compute（CONTRACT §3），nil＝未裝備＝零改動。查無資料
+	// （髒資料/武器被刪）已經在 getEquippedWeaponDetail 內部保守處理成「視為未裝備」。
+	var weaponDTOOut *weaponDTO
+	weaponRow, _, err := h.getEquippedWeaponDetail(ctx, ch.UserID)
+	if err != nil {
+		if !isMissingRelation(err) {
+			return characterView{}, err
+		}
+		// migration 183 未套用：武器系統當作「尚未初始化」處理，/rpg/me 其餘部分正常運作
+		// （既有玩家角色頁不該因為武器表還沒套用就整頁 500）。
+		weaponRow = nil
+	}
+	if weaponRow != nil {
+		p := weaponRow.Profile
+		in.Weapon = &p
+		dto := toWeaponDTO(*weaponRow, effLevel, weaponRow.ID)
+		weaponDTOOut = &dto
+	}
 
 	d := Compute(cfg, in)
 
@@ -239,6 +265,7 @@ func (h *Handler) buildCharacterView(ctx context.Context, cfg Config, baseLevel 
 		StatCap:          statCap,
 		SkillPointsTotal: skillTotal,
 		SkillPointsFree:  skillFree,
+		Weapon:           weaponDTOOut,
 	}, nil
 }
 

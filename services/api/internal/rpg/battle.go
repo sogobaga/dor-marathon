@@ -105,19 +105,72 @@ type wireItem struct {
 	Amount   int    `json:"amount"`
 }
 
+// wireWeapon DORPG P7（WIRE：戰鬥 bootstrap party member.weapon 的物件形狀）——id/name/typeId
+// 留空代表「沒有真正的武器實體」（隊友的固定視覺、或理論上的未來擴充），只有 visual 保證有值。
+type wireWeapon struct {
+	ID      string            `json:"id"`
+	Name    string            `json:"name"`
+	TypeID  string            `json:"typeId"`
+	Visual  string            `json:"visual"`
+	Profile WeaponProfileWire `json:"profile"`
+}
+
+// buildCompanionWeaponWire 傭兵本輪不裝備（CONTRACT §2「維持腳本＋固定視覺」）：固定送
+// visual=CompanionRow.Weapon、Profile=中性值（等同過去「沒有武器系統」時的戰鬥行為，crit_pct
+// 等欄位全 0、hits=1/hit_mul=1 不改變攻擊次數與傷害）。
+func buildCompanionWeaponWire(visual string) *wireWeapon {
+	return &wireWeapon{Visual: visual, Profile: ToWeaponProfileWire(DefaultWeaponProfile())}
+}
+
+// buildPlayerWeaponWire 玩家目前裝備的武器（nil＝未裝備）。visual 用 type.visual（CONTRACT §3
+// 「武器視覺＝type.visual（覆蓋職業預設）」），未裝備時整個物件送 nil，前端／引擎沿用職業預設
+// 視覺（不需要後端重複塞一份 job.Weapon 進來）。
+func buildPlayerWeaponWire(weapon *WeaponRow, wtype *WeaponTypeRow) *wireWeapon {
+	if weapon == nil || wtype == nil {
+		return nil
+	}
+	return &wireWeapon{
+		ID: weapon.ID, Name: weapon.Name, TypeID: weapon.TypeID, Visual: wtype.Visual,
+		Profile: ToWeaponProfileWire(weapon.Profile),
+	}
+}
+
+// resolvePlayerWeaponWire DORPG P7（INTEGRATOR 補，BattleBootstrap 呼叫）：玩家有裝備武器就用
+// 它（buildPlayerWeaponWire 非 nil）；未裝備／migration 183 未套用時退回職業預設視覺（比照
+// buildCompanionWeaponWire 對傭兵的既有處理：id/name/typeId 留空、只有 visual 有意義、Profile
+// 中性值），而不是整個送 null——P7 之前 wirePartyMember.Weapon 本來就是 job.Weapon 這個字串
+// （見 git blame，本輪被物件形狀取代），前端沒有另外實作「jobId＋Jobs 清單」查表退回機制
+// （ENGINE/FRONTEND 交接記錄皆承認尚未做）；若這裡真的送 null，武器系統上線當下（甚至 migration
+// 183 套用前）每一位玩家戰鬥畫面都會顯示成引擎寫死的預設劍，等同讓非劍職業的戰鬥視覺整批倒退。
+// job 為 nil（未選職業，或查無職業列）時保守回傳 nil，跟原本 buildPlayerWeaponWire 的行為一致。
+func resolvePlayerWeaponWire(weaponRow *WeaponRow, wtype *WeaponTypeRow, job *JobRow) *wireWeapon {
+	if w := buildPlayerWeaponWire(weaponRow, wtype); w != nil {
+		return w
+	}
+	if job == nil {
+		return nil
+	}
+	return buildCompanionWeaponWire(job.Weapon)
+}
+
 type wirePartyMember struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Level       int           `json:"level"`
-	HP          int           `json:"hp"`
-	HPMax       int           `json:"hpMax"`
-	MP          int           `json:"mp"`
-	MPMax       int           `json:"mpMax"`
-	PortraitURL *string       `json:"portraitUrl"`
-	Stats       *ActorStats   `json:"stats,omitempty"`
-	Weapon      string        `json:"weapon,omitempty"`
-	Rating      *CombatRating `json:"rating,omitempty"` // P2：命中/暴擊評級，見 scaling.go CombatRating
-	JobID       *string       `json:"jobId,omitempty"`  // P5：目前職業（未選職業 omit，維持現行預設）
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Level       int         `json:"level"`
+	HP          int         `json:"hp"`
+	HPMax       int         `json:"hpMax"`
+	MP          int         `json:"mp"`
+	MPMax       int         `json:"mpMax"`
+	PortraitURL *string     `json:"portraitUrl"`
+	Stats       *ActorStats `json:"stats,omitempty"`
+	// Weapon DORPG P7（WIRE：party member.weapon 由純視覺字串升級為完整武器物件）：玩家未裝備
+	// 武器時為 nil（前端可依 JobID 從 Jobs 清單找職業預設視覺頂替顯示，見 CONTRACT §3「武器
+	// 視覺＝type.visual（覆蓋職業預設）」——沒有覆蓋值時退回職業預設是前端的既有能力，不需要
+	// 後端在這裡重複塞一份）；隊友本輪不裝備，固定送一個只有 visual 有意義、Profile 為中性值的
+	// 物件（等同「沒有武器系統」的舊行為，不影響既有戰鬥手感，見 buildCompanionWeaponWire）。
+	Weapon *wireWeapon   `json:"weapon"`
+	Rating *CombatRating `json:"rating,omitempty"` // P2：命中/暴擊評級，見 scaling.go CombatRating
+	JobID  *string       `json:"jobId,omitempty"`  // P5：目前職業（未選職業 omit，維持現行預設）
 
 	// --- DORPG P6（WIRE：「party member（隊友）」新增欄位）---
 	// Skills 隊友 AI 可用技能（該傭兵目前腳本 level>=1 且非 passive、implemented=true 的技能，
@@ -206,6 +259,12 @@ type wireBattleConfig struct {
 	CritMultMax      float64 `json:"critMultMax"`
 	WeaknessBonusPct float64 `json:"weaknessBonusPct"`
 
+	// ---- P7（CONTRACT §1、WIRE）新增：五行＋光暗＋同屬性相剋的三個百分比，供 ENGINE 的
+	// elementMultiplier() 鏡像 elements.go ElementMultiplier() 同一份規則。----
+	ElementAdvantagePct    float64 `json:"elementAdvantagePct"`
+	ElementDisadvantagePct float64 `json:"elementDisadvantagePct"`
+	ElementSamePct         float64 `json:"elementSamePct"`
+
 	// ScaleMode DORPG P6（WIRE：「config 新增 scaleMode: "level"|"power"（純顯示／除錯）」）——
 	// 純粹讓前端偵錯／顯示用，引擎本身不依這個欄位分支（怪物數值在後端就已經算好送過去）。
 	ScaleMode string `json:"scaleMode"`
@@ -247,6 +306,10 @@ func buildWireConfig(cfg Config) wireBattleConfig {
 		CritMultMin:      cfg.CritMultMin,
 		CritMultMax:      cfg.CritMultMax,
 		WeaknessBonusPct: cfg.BattleWeaknessBonusPct,
+
+		ElementAdvantagePct:    cfg.BattleElementAdvantagePct,
+		ElementDisadvantagePct: cfg.BattleElementDisadvantagePct,
+		ElementSamePct:         cfg.BattleElementSamePct,
 
 		ScaleMode: cfg.BattleScaleMode,
 	}
@@ -359,6 +422,19 @@ func (h *Handler) loadPlayerBattleStats(ctx context.Context, uid string, cfg Con
 		return PlayerBattleStats{}, character{}, 0, err
 	}
 	in.Passives = passives
+
+	// DORPG P7：目前裝備的武器套進 Compute，讓戰鬥用的 PlayerBattleStats（Atk/Matk/Def/Mdef/
+	// Rating）反映裝備效果（CONTRACT §3）。migration 183 未套用時視為「還沒有武器系統」，
+	// 不讓這支既有端點因此 500（比照 buildCharacterView 同款容錯）。
+	weaponRow, _, err := h.getEquippedWeaponDetail(ctx, uid)
+	if err != nil && !isMissingRelation(err) {
+		return PlayerBattleStats{}, character{}, 0, err
+	}
+	if weaponRow != nil {
+		p := weaponRow.Profile
+		in.Weapon = &p
+	}
+
 	d := Compute(cfg, in)
 	return PlayerBattleStatsFrom(cfg, effLevel, d), ch, effLevel, nil
 }
@@ -691,18 +767,30 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 玩家武器視覺：P5 起依目前職業決定（未選職業維持現行預設——不設定這個欄位，前端沿用既有
-	// fallback，見 WIRE）。查無職業（理論上不會發生，見 loadPlayerBattleStats 同樣的容錯）時
-	// 一併保守視為未選職業。
-	var playerWeapon string
-	if ch.JobID != nil {
-		if job, jerr := h.getJobByID(ctx, *ch.JobID); jerr == nil {
-			playerWeapon = job.Weapon
-		} else if !errors.Is(jerr, pgx.ErrNoRows) {
-			respondErr(w, http.StatusInternalServerError, "failed to load job")
-			return
-		}
+	// 玩家目前裝備的武器（DORPG P7）：未裝備／migration 183 未套用時 buildPlayerWeaponWire 回
+	// nil——INTEGRATOR 補：在這裡退回職業預設視覺（比照 buildCompanionWeaponWire 對傭兵的既有
+	// 處理，沒有真正的武器實體時 id/name/typeId 留空、只有 visual 有意義、Profile 中性值），而
+	// 不是整個送 null。理由：P7 之前 wirePartyMember.Weapon 本來就是 job.Weapon 這個字串（見
+	// git blame，本輪直接被物件形狀取代），前端目前沒有另外實作「jobId＋Jobs 清單」的查表退回
+	// 機制（ENGINE/FRONTEND 交接記錄皆承認尚未做），若這裡真的送 null，武器系統上線當下（甚至
+	// migration 183 套用前）每一位玩家在戰鬥畫面都會顯示成引擎寫死的預設劍，等同讓魔法師/弓箭手
+	// 這些非劍職業戰鬥視覺整批倒退——這裡補回職業預設視覺，讓「未裝備」跟 P7 之前的既有行為
+	// 完全一致；真正裝備武器後 type.visual 才會覆蓋它（CONTRACT §3「武器視覺＝type.visual
+	// （覆蓋職業預設）」，語意不變，只是把「職業預設」這個底線值找回來）。
+	weaponRow, wtype, err := h.getEquippedWeaponDetail(ctx, uid)
+	if err != nil && !isMissingRelation(err) {
+		respondErr(w, http.StatusInternalServerError, "failed to load equipment")
+		return
 	}
+	var job *JobRow
+	if ch.JobID != nil {
+		if j, jerr := h.getJobByID(ctx, *ch.JobID); jerr == nil {
+			job = &j
+		}
+		// 查無職業（理論上不會發生，職業被刪除）：job 維持 nil，resolvePlayerWeaponWire 保守
+		// 退回 nil，前端仍有引擎寫死的 'sword' 兜底，不讓整支 API 因此 500。
+	}
+	playerWeaponWire := resolvePlayerWeaponWire(weaponRow, wtype, job)
 
 	party := []wirePartyMember{{
 		ID: uid, Name: displayName, Level: baseLevel,
@@ -711,7 +799,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		PortraitURL: playerPortraitURL,
 		Stats:       &ActorStats{HPMax: pbs.HPMax, MPMax: pbs.MPMax, Atk: pbs.Atk, Matk: pbs.Matk, Def: pbs.Def, Mdef: pbs.Mdef},
 		Rating:      &pbs.Rating,
-		Weapon:      playerWeapon,
+		Weapon:      playerWeaponWire,
 		JobID:       ch.JobID,
 	}}
 
@@ -738,7 +826,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 			MP: roundInt(actor.MPMax), MPMax: roundInt(actor.MPMax),
 			PortraitURL: func() *string { u := charPortraitURL(m.Companion.PortraitID); return &u }(),
 			Stats:       &actor,
-			Weapon:      m.Companion.Weapon,
+			Weapon:      buildCompanionWeaponWire(m.Companion.Weapon),
 			Rating:      &rating,
 			JobID:       &jobID,
 			Skills:      buildCompanionSkillsWire(m.JobSkills, m.Preset.SkillLevels),
