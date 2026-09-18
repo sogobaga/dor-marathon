@@ -11,14 +11,16 @@ import {
   type RpgMonster, type RpgSkill, type RpgItem, type RpgScene, type RpgSceneSlot, type RpgCompanion,
   type RpgEncounter, type RpgEncounterMonster, type RpgBattleLogRow, type RpgBattleLogSummary,
   type RpgWeaponType, type RpgWeapon, type RpgElement, type WeaponRarity,
+  type RpgArmorItem, type ArmorItemSlot,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
-import { CONFIG_GROUPS, STAT_META, DERIVED_META, resistLabel, ELEMENT_LABEL, ELEMENT_ORDER, RARITY_LABEL } from '@/lib/rpgMeta'
+import { CONFIG_GROUPS, STAT_META, DERIVED_META, resistLabel, ELEMENT_LABEL, ELEMENT_ORDER, RARITY_LABEL, ARMOR_SLOT_LABEL } from '@/lib/rpgMeta'
 
 // DORPG P2（契約 dorpg_p2 §5）：怪物/技能/道具/場景/遭遇/隊友/戰鬥數據七個內容分頁。分頁一多，
 // tab 列改橫向捲動（見下方 tab 按鈕列 container 的 overflowX/flexWrap:'nowrap'）。
 // DORPG P7（契約 dorpg_p7 CONTRACT.md §2、WIRE §後台）：新增武器類型／武器兩個分頁。
-type Tab = 'config' | 'entry' | 'preview' | 'monsters' | 'skills' | 'items' | 'scenes' | 'encounters' | 'companions' | 'battlelogs' | 'weapontypes' | 'weapons'
+// DORPG P8（契約 dorpg_p8 CONTRACT.md §1、WIRE §後台）：新增防具（含飾品）分頁。
+type Tab = 'config' | 'entry' | 'preview' | 'monsters' | 'skills' | 'items' | 'scenes' | 'encounters' | 'companions' | 'battlelogs' | 'weapontypes' | 'weapons' | 'armoritems'
 const STAT_KEYS: RpgStatKey[] = ['str', 'agi', 'vit', 'dex', 'int', 'luk']
 // rpg_encounter_monsters 槽位固定 5 個（migration 176 DDL），場景/遭遇編輯器都用這個順序渲染。
 const ENCOUNTER_SLOTS = ['rear_left', 'rear_right', 'front_left', 'front_center', 'front_right'] as const
@@ -70,6 +72,7 @@ export default function AdminRpgPage() {
           ['skills', '技能'],
           ['weapontypes', '武器類型'],
           ['weapons', '武器'],
+          ['armoritems', '防具'],
           ['items', '道具'],
           ['scenes', '場景'],
           ['encounters', '遭遇'],
@@ -106,6 +109,7 @@ export default function AdminRpgPage() {
       {tab === 'skills' && token && <SkillsTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'weapontypes' && token && <WeaponTypesTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'weapons' && token && <WeaponsTab token={token} onErr={setErr} onMsg={flash} />}
+      {tab === 'armoritems' && token && <ArmorItemsTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'items' && token && <ItemsTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'scenes' && token && <ScenesTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'encounters' && token && <EncountersTab token={token} onErr={setErr} onMsg={flash} />}
@@ -1330,6 +1334,197 @@ function WeaponsTab({ token, onErr, onMsg }: { token: string; onErr: (m: string)
               <textarea style={{ ...ta, height: 70 }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             </F>
             <F label="效果 profile（JSON，見契約 §3 WeaponProfile；缺欄位＝中性值）" full>
+              <textarea style={{ ...ta, height: 220, fontFamily: 'monospace', fontSize: 12 }} value={profileText} onChange={(e) => setProfileText(e.target.value)} />
+            </F>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            <button onClick={save} disabled={busy} style={primaryBtn}>{busy ? '儲存中…' : '儲存'}</button>
+            <button onClick={() => setForm(null)} style={ghostBtn}>取消</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// --- DORPG P8：防具（含飾品）CRUD（見契約 dorpg_p8 CONTRACT.md §1、WIRE §後台）。job_id 由後端
+// 開放 job_id/slot 兩個查詢參數篩選，但比照 WeaponsTab 既有慣例——一次抓全部 390 筆、前端自行
+// 篩選。profile 是契約 §2 ArmorProfile 的 JSON，比照 WeaponsTab 存成排版過的字串編輯。
+
+const ARMOR_SLOT_OPTIONS: ArmorItemSlot[] = ['helmet', 'gloves', 'armor', 'legs', 'boots', 'accessory']
+
+function emptyArmorItem(defaultJobId: string): RpgArmorItem {
+  return {
+    id: '', job_id: defaultJobId, slot: 'helmet', tier: 1, name: '', rarity: 'common', level_req: 1,
+    profile: {}, description: '', is_active: true, sort_order: 0,
+  }
+}
+
+function ArmorItemsTab({ token, onErr, onMsg }: { token: string; onErr: (m: string) => void; onMsg: (m: string) => void }) {
+  const [rows, setRows] = useState<RpgArmorItem[] | null>(null)
+  const [form, setForm] = useState<RpgArmorItem | null>(null)
+  const [profileText, setProfileText] = useState('{}')
+  const [isNew, setIsNew] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  // 篩選器（純前端篩選，見檔頭說明）：'' 代表「全部」；filterJob 額外支援 'null' 代表「通用（飾品）」。
+  const [filterJob, setFilterJob] = useState('')
+  const [filterSlot, setFilterSlot] = useState('')
+
+  const load = useCallback(() => {
+    adminRpgApi.armorItems(token).then((r) => setRows(r.armor_items)).catch((e: any) => onErr(e?.message || '載入失敗'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+  useEffect(() => { load() }, [load])
+
+  const filteredRows = (rows ?? []).filter((a) => {
+    if (filterJob === 'null' && a.job_id !== null) return false
+    if (filterJob && filterJob !== 'null' && a.job_id !== filterJob) return false
+    if (filterSlot && a.slot !== filterSlot) return false
+    return true
+  })
+
+  function startNew() {
+    const f = emptyArmorItem(Object.keys(JOB_LABEL)[0] ?? 'light_knight')
+    setForm(f); setProfileText(JSON.stringify(f.profile, null, 2)); setIsNew(true)
+  }
+  function startEdit(r: RpgArmorItem) { setForm({ ...r }); setProfileText(JSON.stringify(r.profile ?? {}, null, 2)); setIsNew(false) }
+
+  async function save() {
+    if (!form) return
+    if (!form.id.trim()) { onErr('請填 ID'); return }
+    if (!form.name.trim()) { onErr('請填名稱'); return }
+    let profile: RpgArmorItem['profile']
+    try { profile = JSON.parse(profileText || '{}') } catch { onErr('「效果 profile」不是合法的 JSON，請修正後再儲存'); return }
+    setBusy(true)
+    try {
+      const saved = await adminRpgApi.putArmorItem(token, { ...form, profile })
+      onMsg(`已儲存「${saved.name}」`)
+      setForm(null)
+      load()
+    } catch (e: any) { onErr(e?.message || '儲存失敗') } finally { setBusy(false) }
+  }
+
+  async function del(r: RpgArmorItem) {
+    if (!window.confirm(`確定刪除「${r.name}」？`)) return
+    setBusy(true)
+    try {
+      await adminRpgApi.deleteArmorItem(token, r.id)
+      onMsg(`已刪除「${r.name}」`)
+      if (form?.id === r.id) setForm(null)
+      load()
+    } catch (e: any) { onErr(e?.message || '刪除失敗') } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
+        <div>
+          <h2 style={{ fontSize: 15, fontWeight: 800, margin: '0 0 4px' }}>防具管理</h2>
+          <p style={{ fontSize: 12, color: 'var(--tx-dim)', margin: 0, maxWidth: 640, lineHeight: 1.7 }}>
+            五部位（頭盔/手套/衣服/褲裙/鞋子）依職業各 10 級；飾品（accessory）通用（職業留空），18 種效果各 5 級。
+            profile 是契約 §2 的效果 JSON，缺省欄位＝中性值，戰鬥/角色頁一律照這裡存的值計算。
+          </p>
+        </div>
+        {!form && <button onClick={startNew} style={primaryBtn}>＋ 新增</button>}
+      </div>
+
+      {!form && (
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <F label="篩選：職業">
+            <select style={inp} value={filterJob} onChange={(e) => setFilterJob(e.target.value)}>
+              <option value="">全部</option>
+              {Object.entries(JOB_LABEL).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              <option value="null">通用（飾品）</option>
+            </select>
+          </F>
+          <F label="篩選：部位">
+            <select style={inp} value={filterSlot} onChange={(e) => setFilterSlot(e.target.value)}>
+              <option value="">全部</option>
+              {ARMOR_SLOT_OPTIONS.map((s) => <option key={s} value={s}>{ARMOR_SLOT_LABEL[s]}</option>)}
+            </select>
+          </F>
+        </div>
+      )}
+
+      {rows === null && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>載入中…</div>}
+      {rows && filteredRows.length === 0 && !form && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>尚無符合篩選條件的資料。</div>}
+      {rows && filteredRows.length > 0 && !form && (
+        <div style={{ overflowX: 'auto' }}>
+          <Row head>
+            <C w={2}>ID</C>
+            <C w={2}>名稱</C>
+            <C w={1}>職業</C>
+            <C w={1}>部位</C>
+            <C w={1}>Tier</C>
+            <C w={1}>需 Lv</C>
+            <C w={1}>啟用</C>
+            <C w={2}>操作</C>
+          </Row>
+          {[...filteredRows]
+            .sort((a, b) => (a.job_id ?? '').localeCompare(b.job_id ?? '') || a.slot.localeCompare(b.slot) || a.tier - b.tier)
+            .map((a) => (
+              <Row key={a.id}>
+                <C w={2} dim>{a.id}</C>
+                <C w={2}>{a.name}</C>
+                <C w={1} dim>{a.job_id ? (JOB_LABEL[a.job_id] ?? a.job_id) : '通用'}</C>
+                <C w={1}>{ARMOR_SLOT_LABEL[a.slot]}</C>
+                <C w={1}>{a.tier}</C>
+                <C w={1} dim>{a.level_req}</C>
+                <C w={1}>{a.is_active ? <span style={{ color: 'var(--fug)' }}>✓</span> : <span style={{ color: 'var(--tx-faint)' }}>—</span>}</C>
+                <C w={2}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={() => startEdit(a)} style={linkBtn}>編輯</button>
+                    <button onClick={() => del(a)} disabled={busy} style={{ ...linkBtn, color: 'var(--hunt)' }}>刪除</button>
+                  </div>
+                </C>
+              </Row>
+            ))}
+        </div>
+      )}
+
+      {form && (
+        <div style={panel}>
+          <h3 style={{ fontSize: 14, fontWeight: 800, margin: '0 0 10px' }}>{isNew ? '新增' : `編輯：${form.name || form.id}`}</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+            <F label="ID（如 hk_armor_t3 或 acc_hp_pct_t3）">
+              <input style={inp} type="text" value={form.id} disabled={!isNew} onChange={(e) => setForm({ ...form, id: e.target.value })} />
+            </F>
+            <F label="職業（飾品留空＝通用）">
+              <select style={inp} value={form.job_id ?? ''} onChange={(e) => setForm({ ...form, job_id: e.target.value || null })}>
+                <option value="">（通用，僅飾品）</option>
+                {Object.entries(JOB_LABEL).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </F>
+            <F label="部位">
+              <select style={inp} value={form.slot} onChange={(e) => setForm({ ...form, slot: e.target.value as RpgArmorItem['slot'] })}>
+                {ARMOR_SLOT_OPTIONS.map((s) => <option key={s} value={s}>{ARMOR_SLOT_LABEL[s]}</option>)}
+              </select>
+            </F>
+            <F label="Tier（防具 1–10／飾品 1–5）">
+              <input style={inp} type="number" step="1" min={1} max={10} value={form.tier} onChange={(e) => setForm({ ...form, tier: Number(e.target.value) })} />
+            </F>
+            <F label="名稱">
+              <input style={inp} type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </F>
+            <F label="稀有度">
+              <select style={inp} value={form.rarity} onChange={(e) => setForm({ ...form, rarity: e.target.value as WeaponRarity })}>
+                {WEAPON_RARITY_OPTIONS.map((r) => <option key={r} value={r}>{RARITY_LABEL[r]}</option>)}
+              </select>
+            </F>
+            <F label="需求等級 level_req">
+              <input style={inp} type="number" step="1" value={form.level_req} onChange={(e) => setForm({ ...form, level_req: Number(e.target.value) })} />
+            </F>
+            <F label="啟用">
+              <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} style={{ width: 18, height: 18 }} />
+            </F>
+            <F label="排序">
+              <input style={inp} type="number" step="1" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) })} />
+            </F>
+            <F label="描述" full>
+              <textarea style={{ ...ta, height: 70 }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            </F>
+            <F label="效果 profile（JSON，見契約 §2 ArmorProfile；缺欄位＝中性值）" full>
               <textarea style={{ ...ta, height: 220, fontFamily: 'monospace', fontSize: 12 }} value={profileText} onChange={(e) => setProfileText(e.target.value)} />
             </F>
           </div>

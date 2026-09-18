@@ -5,6 +5,7 @@ import { applyHealToTarget, resolveCastEffect } from './combat';
 import type { Ctx } from './context';
 import { fromCtx, pushEvent, toCtx } from './context';
 import { pruneAndRegenEffects } from './effects';
+import { floorInt } from './formulas';
 import type { BattleOutcome, BattleState } from './types';
 
 /** casting 完成→結算效果轉 recovering；recovering 到時→idle。單次呼叫只推進一步，理由同 ai.ts。 */
@@ -58,6 +59,41 @@ function pruneAllEffects(ctx: Ctx): void {
       () => {},
       (expired) => pushEvent(ctx, { kind: 'statusExpired', targetId: enemy.id, stat: expired.stat }),
     );
+  }
+}
+
+/**
+ * P8（DORPG_P8 CONTRACT §2／WIRE「引擎」：「每 5000ms 依戰鬥時鐘對玩家回復...」）：裝備
+ * （防具＋飾品彙總，不含武器）的定時回復——跟 hp_regen_pct buff 的 1000ms 節奏是完全獨立的兩套
+ * 排程（見 PartyActor.nextEquipRegenAt 型別註解），對所有隊員一視同仁套用同一段邏輯：契約明講
+ * 「傭兵一律零值物件」，傭兵的 equipmentEffects 恆為零值，算出來的回復量恆為 0，等同沒有效果，
+ * 不需要另外用 isPlayer 分支排除。
+ * HP 回復沿用既有的 applyHealToTarget（推 'heal' 事件，浮字沿用，見任務回報決策）；MP 回復目前
+ * 沒有對應的「既有事件」可沿用（回顧全引擎，MP 的任何變化——技能消耗／道具回復——本來就是純
+ * 狀態更新、不推專屬事件，MP 條本身就是靠讀 actor.mp 即時渲染），這裡比照同一慣例直接更新
+ * actor.mp，不發明一個新的 BattleEvent kind（回報見任務回報，若 FRONTEND 之後需要 MP 回復的浮字，
+ * 需要另外請 FRONTEND 決定要不要新增事件）。
+ * while 迴圈同 pruneAndRegenEffects：一次 tick 若跨過不只一個 5000ms 窗口，要把該回的量一次全部
+ * 補上，不能只回一次就把 nextEquipRegenAt 推到未來、丟掉中間應該發生的幾次回復；死亡（hp≤0）
+ * 期間整個跳過、不推進這個時間點（跟 hp_regen_pct 對死亡角色的既有處理一致，見 pruneAllEffects）。
+ */
+function applyEquipmentRegen(ctx: Ctx): void {
+  for (const actor of ctx.party) {
+    if (actor.hp <= 0) continue; // 死亡不回（CONTRACT 明講）。
+    const eff = actor.equipmentEffects;
+    let next = actor.nextEquipRegenAt;
+    while (next <= ctx.now) {
+      if (eff.hpRegenPctPer5s > 0 && actor.hp > 0) {
+        const hpAmt = floorInt(actor.stats.hpMax * (eff.hpRegenPctPer5s / 100));
+        if (hpAmt > 0) applyHealToTarget(ctx, actor.id, actor.id, hpAmt); // 封頂 hpMax 由 applyHealToTarget 負責。
+      }
+      if (eff.mpRegenPctPer5s > 0) {
+        const mpAmt = floorInt(actor.stats.mpMax * (eff.mpRegenPctPer5s / 100));
+        if (mpAmt > 0) actor.mp = floorInt(Math.min(actor.stats.mpMax, actor.mp + mpAmt));
+      }
+      next += 5000;
+    }
+    actor.nextEquipRegenAt = next;
   }
 }
 
@@ -152,6 +188,7 @@ export function tick(state: BattleState, now: number): BattleState {
 
   resolvePartyTimers(ctx);
   pruneAllEffects(ctx); // P5：buff/debuff 到期清除＋hp_regen_pct 定時回復，跑在 AI 出手之前。
+  applyEquipmentRegen(ctx); // P8：裝備（防具＋飾品）每 5000ms 定時回復，跟上面 buff 的 1000ms 節奏各自獨立。
 
   // P6（CONTRACT §3.2）：每位隊友用自己的 skills 決定要不要用技能，不再需要指定「哪一位是輔助」
   // ——advanceAllyAI 內部依五段優先序自行判斷（見 ai.ts 檔頭註解）。

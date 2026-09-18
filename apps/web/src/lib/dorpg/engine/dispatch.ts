@@ -5,7 +5,7 @@ import { resolveWeaponAttack } from './combat';
 import type { Ctx } from './context';
 import { fromCtx, pushEvent, pushLog, toCtx } from './context';
 import { effectiveRating } from './effects';
-import { attackCooldownFor, chargeMultiplier, effectiveCastMs, floorInt, NEUTRAL_WEAPON_PROFILE } from './formulas';
+import { attackCooldownFor, chargeMultiplier, combineIntervalPct, effectiveCastMs, effectiveMpCost, floorInt, NEUTRAL_WEAPON_PROFILE } from './formulas';
 import type { BattleState, Command, PartyActor } from './types';
 import { beginResolving, computeVictoryDefeatDraw, tick } from './tick';
 
@@ -29,11 +29,17 @@ function reject(ctx: Ctx, reason: string): BattleState {
 /**
  * 開始施法：扣 MP、技能進冷卻（規格：「冷卻從施放起算」）、記下 pendingCast 等 tick 到 actionUntil
  * 時結算效果。commitCast 只有 dispatch 的 USE_SKILL 分支會呼叫、actor 一律是玩家（AI 隊友的技能
- * 走 ai.ts 的 resolveSupportSkill，完全不經過這裡）——所以 effectiveCastMs 套用 actor.rating 的
- * castReductionPct（P3：DEX→詠唱縮減）在這裡永遠只影響玩家，不需要另外分支判斷。
+ * 走 ai.ts 的 resolveSupportSkill/castNow，完全不經過這裡，也不吃 equipmentEffects——見 ai.ts
+ * castNow 型別註解）——所以 effectiveCastMs 套用 actor.rating 的 castReductionPct（P3：DEX→詠唱
+ * 縮減）與下面 effectiveMpCost 套用 actor.equipmentEffects.mpCostReducePct（P8）在這裡永遠只影響
+ * 玩家，不需要另外分支判斷。
+ * P8（CONTRACT §2／WIRE「引擎」）：實際扣除的 MP 改用 effectiveMpCost(skill.mpCost,
+ * actor.equipmentEffects.mpCostReducePct)——跟下面 USE_SKILL 分支「MP 是否足夠」的檢查呼叫同一支
+ * 純函式、同樣的兩個輸入（在同一次指令處理中都不會變），保證兩處算出同一個數字。
  */
 function commitCast(ctx: Ctx, actor: PartyActor, skill: Skill, targetId: string | 'ALL' | 'ALL_ENEMIES'): BattleState {
-  actor.mp = floorInt(actor.mp - skill.mpCost); // P6（CONTRACT §1）：MP 整數不變式，見 formulas.ts floorInt。
+  const mpCost = effectiveMpCost(skill.mpCost, actor.equipmentEffects.mpCostReducePct);
+  actor.mp = floorInt(actor.mp - mpCost); // P6（CONTRACT §1）：MP 整數不變式，見 formulas.ts floorInt。
   ctx.skillReadyAt[skill.id] = ctx.now + skill.cooldownMs;
   actor.action = 'casting';
   // P5：玩家身上的 buff 可能有 castReductionPct 加成（DEX/INT 效果之外的額外來源），套 effectiveRating
@@ -106,8 +112,15 @@ function applyCommand(state: BattleState, cmd: Command, now: number): BattleStat
       // P3：AGI→攻速→攻擊冷卻，只套用在玩家身上（隊友的節奏在 ai.ts 用 allyActIntervalMs 排程，
       // 完全不呼叫 attackCooldownFor，不受這裡的改動影響）。P5：套 effectiveRating 讓玩家身上的
       // aspd buff 也能反映在攻擊冷卻上。P7：intervalPct（細劍/長弓/短弓/弩/斧）乘在算出來的冷卻上。
+      // P8：武器與裝備（防具/飾品彙總）的 intervalPct 先相加、clamp ≥ −50（combineIntervalPct），
+      // 再交給 attackCooldownFor——沒有裝備效果（equipmentEffects.intervalPct=0）時退化成 P7 原樣。
       player.attackReadyAt =
-        ctx.now + attackCooldownFor(effectiveRating(player.rating, player.activeEffects), ctx.cfg, weaponProfile.intervalPct);
+        ctx.now +
+        attackCooldownFor(
+          effectiveRating(player.rating, player.activeEffects),
+          ctx.cfg,
+          combineIntervalPct(weaponProfile.intervalPct, player.equipmentEffects.intervalPct),
+        );
       player.chargeStartedAt = null;
       return finish(ctx);
     }
@@ -162,7 +175,10 @@ function applyCommand(state: BattleState, cmd: Command, now: number): BattleStat
       // debuff 邏輯要安全。
       if (skill.kind === 'passive') return reject(ctx, '被動技能不會出現在技能欄，不可主動施放');
       if ((ctx.skillReadyAt[skill.id] ?? 0) > ctx.now) return reject(ctx, '技能冷卻中');
-      if (player.mp < skill.mpCost) return reject(ctx, 'MP 不足');
+      // P8（CONTRACT §2／WIRE「引擎」）：MP 是否足夠的檢查改用 effectiveMpCost（同一支函式、同樣
+      // 兩個輸入也用於 commitCast 的實際扣除，見該函式呼叫端註解），不再直接比對未打折的
+      // skill.mpCost——equipmentEffects.mpCostReducePct=0（無裝備）時退化成原本的行為。
+      if (player.mp < effectiveMpCost(skill.mpCost, player.equipmentEffects.mpCostReducePct)) return reject(ctx, 'MP 不足');
       if (player.action !== 'idle') return reject(ctx, '非待命狀態不能施放技能');
 
       if (skill.target === 'ally') {

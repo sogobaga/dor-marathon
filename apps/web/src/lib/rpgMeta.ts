@@ -1,7 +1,10 @@
 // 遊戲化角色數值（RO 素質系統）共用中文標籤／說明 — CharacterScreen（會員）與 admin/rpg（後台）
 // 兩處共用，避免文案各自維護、之後改一次兩邊同步。數字係數本身一律吃 RpgConfig／預覽 API 算出的
 // 結果，本檔只放「怎麼顯示」，不放任何算式（算式在後端 internal/rpg，前端不重算，見任務決策 D2）。
-import type { EffectAtLevel, JobDTO, RpgConfig, RpgDerived, RpgElement, RpgStatKey, SkillKind, WeaponProfile, WeaponRarity } from './api'
+import type {
+  ArmorItemSlot, ArmorProfile, EffectAtLevel, EquipBonusDTO, EquipmentSlot, JobDTO, RpgConfig, RpgDerived, RpgElement,
+  RpgStatKey, SkillKind, WeaponProfile, WeaponRarity,
+} from './api'
 
 export interface StatMeta {
   key: RpgStatKey
@@ -595,5 +598,115 @@ export function formatWeaponProfile(p: WeaponProfile | null | undefined): string
   if (p.flee_bonus) parts.push(`迴避+${p.flee_bonus}`)
   if (p.element_resist_pct) parts.push(`屬性抗性+${p.element_resist_pct}%`)
   if (p.magic_skill_pct) parts.push(`魔法技能效果+${p.magic_skill_pct}%`)
+  return parts.join('・')
+}
+
+// ---------------------------------------------------------------------------
+// DORPG P8（防具＋飾品裝備，見契約 dorpg_p8 CONTRACT.md §1/§2/§3、WIRE.md）：EquipmentScreen（會員）
+// 與 admin/rpg（後台，防具分頁）共用的顯示文案。
+
+/** 防具品項固定占用的格子（ArmorDTO.slot）中文標籤。 */
+export const ARMOR_SLOT_LABEL: Record<ArmorItemSlot, string> = {
+  helmet: '頭盔', gloves: '手套', armor: '衣服', legs: '褲裙', boots: '鞋子', accessory: '飾品',
+}
+
+/** 八格裝備欄（EquipmentSlot）中文標籤——飾品兩格分開標「飾品1／飾品2」。 */
+export const EQUIP_SLOT_LABEL: Record<EquipmentSlot, string> = {
+  weapon: '武器', helmet: '頭盔', gloves: '手套', armor: '衣服', legs: '褲裙', boots: '鞋子',
+  accessory1: '飾品1', accessory2: '飾品2',
+}
+
+/** 八格裝備欄固定顯示順序（契約 §5：武器、頭盔、手套、衣服、褲裙、鞋子、飾品1、飾品2）。 */
+export const EQUIP_SLOT_ORDER: EquipmentSlot[] = ['weapon', 'helmet', 'gloves', 'armor', 'legs', 'boots', 'accessory1', 'accessory2']
+/** 五個防具格（不含武器／飾品），EquipmentScreen 判斷「目前選的格子是不是防具」時用。 */
+export const ARMOR_EQUIP_SLOTS: EquipmentSlot[] = ['helmet', 'gloves', 'armor', 'legs', 'boots']
+
+/**
+ * 飾品 18 種效果依契約 §3 原文順序（供 EquipmentScreen 分組列表與後台下拉選單一致排序）。
+ * 這 18 個 key 恰好就是 ArmorProfile 扣掉 def 之後的全部欄位——契約設計成「每件飾品恰好只有一個
+ * 非零效果欄位」，所以可以直接拿這份順序表逐一掃描找出該件飾品是哪一組效果（見下面
+ * accessoryEffectKey()），不必依賴 id/name 命名慣例（防具 seed 由另一個 workflow 產生，這裡只信
+ * 任契約保證的 profile 欄位語意）。
+ */
+export const ACCESSORY_EFFECT_ORDER: (keyof ArmorProfile)[] = [
+  'hp_pct', 'mp_pct', 'str', 'vit', 'dex', 'agi', 'int', 'luk',
+  'interval_pct', 'crit_pct', 'crit_dmg_pct', 'mp_cost_reduce_pct',
+  'hp_regen_pct_per_5s', 'mp_regen_pct_per_5s', 'atk_pct', 'matk_pct',
+  'damage_taken_pct', 'element_resist_pct',
+]
+export const ACCESSORY_EFFECT_LABEL: Record<string, string> = {
+  hp_pct: 'HP 上限', mp_pct: 'MP 上限',
+  str: '力量 STR', vit: '體質 VIT', dex: '靈巧 DEX', agi: '敏捷 AGI', int: '智力 INT', luk: '幸運 LUK',
+  interval_pct: '降低攻擊間隔', crit_pct: '爆擊率', crit_dmg_pct: '爆擊傷害', mp_cost_reduce_pct: '減少 MP 消耗',
+  hp_regen_pct_per_5s: '定時恢復 HP', mp_regen_pct_per_5s: '定時恢復 MP',
+  atk_pct: '增加 ATK', matk_pct: '增加 MATK', damage_taken_pct: '減少 HP 傷害', element_resist_pct: '屬性傷害降低',
+}
+
+/** 找出這件飾品的主效果欄位（見上方 ACCESSORY_EFFECT_ORDER 說明：每件飾品恰好只有一個非零效果
+ *  欄位）。找不到非零欄位（理論上不會發生於合法飾品資料，防禦用）回傳 null。 */
+export function accessoryEffectKey(p: ArmorProfile | null | undefined): (keyof ArmorProfile) | null {
+  if (!p) return null
+  for (const k of ACCESSORY_EFFECT_ORDER) {
+    if (p[k]) return k
+  }
+  return null
+}
+
+/**
+ * 把 ArmorProfile 組成一句效果摘要，供 EquipmentScreen 防具/飾品列表與目前裝備卡共用（同
+ * formatWeaponProfile 的既有慣例）。刻意跳過 def（呼叫端已有獨立欄位顯示基礎防禦力，比照武器
+ * 跳過 atk/matk 的既有慣例）；缺省／0 值的欄位一律不顯示。純顯示用途，不做任何戰鬥判斷。
+ */
+export function formatArmorProfile(p: ArmorProfile | null | undefined): string {
+  if (!p) return ''
+  const parts: string[] = []
+  if (p.str) parts.push(`STR+${p.str}`)
+  if (p.agi) parts.push(`AGI+${p.agi}`)
+  if (p.vit) parts.push(`VIT+${p.vit}`)
+  if (p.dex) parts.push(`DEX+${p.dex}`)
+  if (p.int) parts.push(`INT+${p.int}`)
+  if (p.luk) parts.push(`LUK+${p.luk}`)
+  if (p.hp_pct) parts.push(`HP+${p.hp_pct}%`)
+  if (p.mp_pct) parts.push(`MP+${p.mp_pct}%`)
+  if (p.atk_pct) parts.push(`物攻+${p.atk_pct}%`)
+  if (p.matk_pct) parts.push(`魔攻+${p.matk_pct}%`)
+  if (p.interval_pct) parts.push(p.interval_pct < 0 ? `攻擊間隔縮短${-p.interval_pct}%` : `攻擊間隔拉長${p.interval_pct}%`)
+  if (p.crit_pct) parts.push(`暴擊率+${p.crit_pct}`)
+  if (p.crit_dmg_pct) parts.push(`暴擊傷害+${p.crit_dmg_pct}%`)
+  if (p.mp_cost_reduce_pct) parts.push(`MP 消耗-${p.mp_cost_reduce_pct}%`)
+  if (p.hp_regen_pct_per_5s) parts.push(`每 5 秒回 HP ${p.hp_regen_pct_per_5s}%`)
+  if (p.mp_regen_pct_per_5s) parts.push(`每 5 秒回 MP ${p.mp_regen_pct_per_5s}%`)
+  if (p.damage_taken_pct) parts.push(`受到傷害${p.damage_taken_pct > 0 ? '+' : ''}${p.damage_taken_pct}%`)
+  if (p.element_resist_pct) parts.push(`屬性傷害-${p.element_resist_pct}%`)
+  return parts.join('・')
+}
+
+/**
+ * 把彙總後的 EquipBonusDTO 組成一句加成摘要（「DEF+n、VIT+n…」），供 CharacterScreen 裝備摘要區塊
+ * 使用（任務 §3）。跟 formatArmorProfile 不同——這裡不跳過任何欄位（含 def／六素質），因為呼叫端
+ * 本身沒有另外顯示這些數字的獨立欄位，此函式就是唯一的顯示位置。
+ */
+export function formatEquipBonus(b: EquipBonusDTO | null | undefined): string {
+  if (!b) return ''
+  const parts: string[] = []
+  if (b.def) parts.push(`DEF+${b.def}`)
+  if (b.str) parts.push(`STR+${b.str}`)
+  if (b.agi) parts.push(`AGI+${b.agi}`)
+  if (b.vit) parts.push(`VIT+${b.vit}`)
+  if (b.dex) parts.push(`DEX+${b.dex}`)
+  if (b.int) parts.push(`INT+${b.int}`)
+  if (b.luk) parts.push(`LUK+${b.luk}`)
+  if (b.hp_pct) parts.push(`HP+${b.hp_pct}%`)
+  if (b.mp_pct) parts.push(`MP+${b.mp_pct}%`)
+  if (b.atk_pct) parts.push(`物攻+${b.atk_pct}%`)
+  if (b.matk_pct) parts.push(`魔攻+${b.matk_pct}%`)
+  if (b.interval_pct) parts.push(b.interval_pct < 0 ? `攻擊間隔縮短${-b.interval_pct}%` : `攻擊間隔拉長${b.interval_pct}%`)
+  if (b.crit_pct) parts.push(`暴擊率+${b.crit_pct}`)
+  if (b.crit_dmg_pct) parts.push(`暴擊傷害+${b.crit_dmg_pct}%`)
+  if (b.mp_cost_reduce_pct) parts.push(`MP 消耗-${b.mp_cost_reduce_pct}%`)
+  if (b.hp_regen_pct_per_5s) parts.push(`每 5 秒回 HP ${b.hp_regen_pct_per_5s}%`)
+  if (b.mp_regen_pct_per_5s) parts.push(`每 5 秒回 MP ${b.mp_regen_pct_per_5s}%`)
+  if (b.damage_taken_pct) parts.push(`受到傷害${b.damage_taken_pct > 0 ? '+' : ''}${b.damage_taken_pct}%`)
+  if (b.element_resist_pct) parts.push(`屬性傷害-${b.element_resist_pct}%`)
   return parts.join('・')
 }

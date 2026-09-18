@@ -41,9 +41,12 @@ type ComputeInput struct {
 	WeaponType string
 	// Passives P5：已配點的被動技能加成，見上方 PassiveEffect 註解。
 	Passives []PassiveEffect
-	// Weapon DORPG P7（CONTRACT §3）：目前裝備的武器，nil＝未裝備／沒有武器系統的呼叫端
-	// （例如隊友走 computeCompanionDerived，不經過這個欄位）——完全零改動，既有測試不受影響。
-	Weapon *WeaponProfile
+	// Equip DORPG P8（CONTRACT §2）：武器＋防具/飾品彙總後的裝備加成，nil＝完全沒有裝備／沒有
+	// 裝備系統的呼叫端（例如隊友走 computeCompanionDerived，不經過這個欄位）——完全零改動，既有
+	// 測試不受影響。P7 時代這裡是 `Weapon *WeaponProfile`，只吃武器；P8 起呼叫端一律先用
+	// AggregateEquipment(weapon, armors) 把武器與已裝備的防具/飾品彙總成 EquipBonus 再餵進來，
+	// 只有武器、armors 為空時彙總結果與 P7 逐位元一致（見 compute_weapon_test.go）。
+	Equip *EquipBonus
 }
 
 // Derived 六圍算出的所有衍生數值。
@@ -151,15 +154,21 @@ func Compute(cfg Config, in ComputeInput) Derived {
 	s := in.Stats
 	baseLv := float64(in.BaseLevel)
 	pv := in.Passives
-	wp := in.Weapon
+	eq := in.Equip
 
-	// --- DORPG P7（CONTRACT §3）：INT += int_bonus 必須在算任何衍生值之前套用，讓杖類武器的
-	// INT 加成連帶影響 MaxMP/MATK/MDEF/狀態抗性這些「吃 INT」的下游算式，不是只加在顯示的
-	// Stats 上（characterView.Stats 用的是 handler.go 另外組的原始六圍，這裡改的只是 Compute
-	// 內部這份局部拷貝，不影響玩家看到/能配點的六圍）。wp==nil 時 s 與 in.Stats 完全相同，
-	// 對既有呼叫端零改動。
-	if wp != nil {
-		s.Int += wp.IntBonus
+	// --- DORPG P7/P8（CONTRACT §3/§2）：六素質 flat（含武器 int_bonus）必須在算任何衍生值之前
+	// 套用，讓杖類武器的 INT 加成、防具的 STR/VIT/…連帶影響 MaxMP/MATK/MDEF/狀態抗性這些下游
+	// 算式，不是只加在顯示的 Stats 上（characterView.Stats 用的是 handler.go 另外組的原始六圍，
+	// 這裡改的只是 Compute 內部這份局部拷貝，不影響玩家看到/能配點的六圍）。eq==nil 時 s 與
+	// in.Stats 完全相同，對既有呼叫端零改動；只有武器時 eq.Str/Agi/Vit/Dex/Luk 恆為 0（防具才會
+	// 貢獻這五項，見 AggregateEquipment），跟 P7 只加 IntBonus 的行為逐位元一致。
+	if eq != nil {
+		s.Str += eq.Str
+		s.Agi += eq.Agi
+		s.Vit += eq.Vit
+		s.Dex += eq.Dex
+		s.Int += eq.Int
+		s.Luk += eq.Luk
 	}
 
 	// --- 武器類型：P5 新增每個角色可依職業覆寫（見 ComputeInput.WeaponType 註解），
@@ -177,8 +186,9 @@ func Compute(cfg Config, in ComputeInput) Derived {
 	mpBase := cfg.BaseMP + cfg.MPPerBaseLevel*baseLv
 	maxMP := mpBase * (1 + float64(s.Int)*cfg.IntMPPct/100)
 	maxMP *= 1 + sumPassive(pv, "mp_max_pct")/100
-	if wp != nil {
-		maxMP *= 1 + wp.MpPct/100
+	if eq != nil {
+		maxHP *= 1 + eq.HpPct/100
+		maxMP *= 1 + eq.MpPct/100
 	}
 
 	// --- 物理攻擊力（素質）：依武器類型走近戰/遠程分支 + LUK 通用加成 + 基本等級加成 +
@@ -194,53 +204,57 @@ func Compute(cfg Config, in ComputeInput) Derived {
 	statusAtk += statTierBonus(s.Str, cfg.StrTierCoef)
 	// DORPG P7：equipAtk 曾經是「現階段沒有裝備系統」的 0 佔位符（StrEquipAtkPct/DexEquipAtkPct
 	// 這兩個 config 欄位當初就是為了乘在這裡而存在，見該欄位註解），現在武器系統上線，接上
-	// wp.Atk 就直接生效，不必改動這條公式本身。
+	// eq.Atk 就直接生效，不必改動這條公式本身。P8：Atk 只有武器貢獻（見 EquipBonus 檔頭註解），
+	// 防具不提供 flat atk，eq.Atk 恆等於武器自己的 Atk。
 	equipAtk := 0.0
-	if wp != nil {
-		equipAtk = wp.Atk
+	if eq != nil {
+		equipAtk = eq.Atk
 	}
 	atk := statusAtk + equipAtk*(1+(float64(s.Str)*cfg.StrEquipAtkPct+float64(s.Dex)*cfg.DexEquipAtkPct)/100)
 	atk *= 1 + sumPassive(pv, "atk_pct")/100
-	if wp != nil {
-		atk *= 1 + wp.AtkPct/100
+	if eq != nil {
+		atk *= 1 + eq.AtkPct/100
 	}
 
 	// --- 魔法攻擊力：+ INT 整十階梯（P5）+ 被動 matk_pct（P5，乘在最終值）---
 	matk := float64(s.Int)*cfg.IntMatk + floorDiv(s.Dex, cfg.DexMatkPer) + floorDiv(s.Luk, cfg.LukMatkPer)
 	matk += floorDiv(in.BaseLevel, cfg.LvMatkPer)
 	matk += statTierBonus(s.Int, cfg.IntTierCoef)
-	// DORPG P7：equipMatk 同上，曾是恆 0 的佔位符，接上 wp.Matk。
+	// DORPG P7：equipMatk 同上，曾是恆 0 的佔位符，接上 eq.Matk（P8：同 Atk，只有武器貢獻）。
 	equipMatk := 0.0
-	if wp != nil {
-		equipMatk = wp.Matk
+	if eq != nil {
+		equipMatk = eq.Matk
 	}
 	matk += equipMatk
 	matk *= 1 + sumPassive(pv, "matk_pct")/100
-	if wp != nil {
-		matk *= 1 + wp.MatkPct/100
+	if eq != nil {
+		matk *= 1 + eq.MatkPct/100
 	}
 
 	// --- 物理防禦力：等級項改用 P5 新曲線 lvDef()（取代 floorDiv(BaseLevel,LvDefPer)）+
-	// 被動 def_pct（P5，乘在最終值）+ 武器 def_pct/mdef_pct（P7，乘在被動之後）。魔法防禦力的
-	// 等級項維持既有線性除數，未變。 ---
+	// 被動 def_pct（P5，乘在最終值）+ 防具 flat def（P8，CONTRACT §2「DEF = (statusDEF + def) ×
+	// (1+def_pct/100)」）+ 武器 def_pct/mdef_pct（P7，乘在防具 flat def 加總之後）。魔法防禦力
+	// 沒有對應的 flat 欄位（防具沒有 mdef 項），等級項維持既有線性除數，未變。 ---
 	def := floorDiv(s.Agi, cfg.AgiDefPer) + floorDiv(s.Vit, cfg.VitDefPer) + lvDef(cfg, in.BaseLevel)
 	def *= 1 + sumPassive(pv, "def_pct")/100
-	if wp != nil {
-		def *= 1 + wp.DefPct/100
+	if eq != nil {
+		// eq.Def 只有防具貢獻（武器沒有 flat def 欄位），只有武器時 eq.Def=0，(def+0)*(1+wp.DefPct
+		// /100) 與 P7 原公式逐位元一致。
+		def = (def + float64(eq.Def)) * (1 + eq.DefPct/100)
 	}
 	mdef := floorDiv(s.Vit, cfg.VitMdefPer) + floorDiv(s.Dex, cfg.DexMdefPer) + float64(s.Int)*cfg.IntMdef
 	mdef += floorDiv(in.BaseLevel, cfg.LvMdefPer)
 	mdef *= 1 + sumPassive(pv, "mdef_pct")/100
-	if wp != nil {
-		mdef *= 1 + wp.MdefPct/100
+	if eq != nil {
+		mdef *= 1 + eq.MdefPct/100
 	}
 
-	// DORPG P7（CONTRACT §3「全部 floor 成整數」）：只在裝備武器時才把 ATK/MATK/DEF/MDEF
-	// floor 成整數——wp==nil 時完全不動這四個欄位（既有測試斷言的是套用被動/係數後可能帶小數的
-	// float64，改成一律 floor 會讓既有 compute_test.go/scaling_test.go 大量斷言失敗，不是本輪
-	// 該動的範圍）。有裝備武器才 floor，語意上等同「玩家看得到的裝備數值都是整數」，跟 P6 對
-	// HP/MP 的處理一致（見下方 MaxHP/MaxMP 的 math.Floor）。
-	if wp != nil {
+	// DORPG P7（CONTRACT §3「全部 floor 成整數」）：只在裝備武器或防具/飾品時才把 ATK/MATK/
+	// DEF/MDEF floor 成整數——eq==nil（完全沒有裝備）時完全不動這四個欄位（既有測試斷言的是
+	// 套用被動/係數後可能帶小數的 float64，改成一律 floor 會讓既有 compute_test.go/
+	// scaling_test.go 大量斷言失敗，不是本輪該動的範圍）。有裝備才 floor，語意上等同「玩家看
+	// 得到的裝備數值都是整數」，跟 P6 對 HP/MP 的處理一致（見下方 MaxHP/MaxMP 的 math.Floor）。
+	if eq != nil {
 		atk = math.Floor(atk)
 		matk = math.Floor(matk)
 		def = math.Floor(def)
@@ -253,8 +267,8 @@ func Compute(cfg Config, in ComputeInput) Derived {
 	hit += sumPassive(pv, "hit")
 	flee := baseLv*cfg.LvFlee + float64(s.Agi)*cfg.AgiFlee + floorDiv(s.Luk, cfg.LukFleePer)
 	flee += sumPassive(pv, "flee")
-	if wp != nil {
-		flee += wp.FleeBonus
+	if eq != nil {
+		flee += eq.FleeBonus
 	}
 	if flee > cfg.FleeCapPct {
 		flee = cfg.FleeCapPct
@@ -267,10 +281,10 @@ func Compute(cfg Config, in ComputeInput) Derived {
 	critPct := float64(s.Luk)*cfg.LukCrit + sumPassive(pv, "crit_pct")
 	critShield := floorDiv(s.Luk, cfg.LukCritShieldPer)
 	critDmgPct := sumPassive(pv, "crit_dmg_pct")
-	if wp != nil {
-		critPct += wp.CritPct
-		critDmgPct += wp.CritDmgPct
-		// 見上方 ATK/MATK/DEF/MDEF 同款註解：只在裝備武器時才 floor，wp==nil 對既有測試零改動。
+	if eq != nil {
+		critPct += eq.CritPct
+		critDmgPct += eq.CritDmgPct
+		// 見上方 ATK/MATK/DEF/MDEF 同款註解：只在有裝備時才 floor，eq==nil 對既有測試零改動。
 		critPct = math.Floor(critPct)
 		flee = math.Floor(flee)
 		critDmgPct = math.Floor(critDmgPct)

@@ -180,6 +180,35 @@ type wirePartyMember struct {
 	Skills []wireSkill `json:"skills,omitempty"`
 	// PresetName 這位隊友目前套用的腳本名稱（"預設"＝系統預設腳本）。玩家（party[0]）不填。
 	PresetName string `json:"presetName,omitempty"`
+
+	// EquipmentEffects DORPG P8（WIRE：party member「equipmentEffects」，只彙總防具與飾品，不含
+	// 武器——武器仍走上面的 Weapon.Profile）：引擎用它算攻擊冷卻（跟 weapon.intervalPct 相加）、
+	// 技能 MP 成本減免、每 5 秒 HP/MP 回復、受到傷害/屬性抗性（跟 weapon/buff 相加）。傭兵本輪
+	// 不裝備防具，一律零值物件（見 buildCompanionWeaponWire 對武器的既有慣例），不是省略欄位
+	// ——前端／引擎不必額外判斷這個欄位存不存在。
+	EquipmentEffects wireEquipmentEffects `json:"equipmentEffects"`
+}
+
+// wireEquipmentEffects DORPG P8（WIRE：戰鬥 bootstrap party member.equipmentEffects 的形狀）
+// ——camelCase 對齊前端 engine 詞彙，六個欄位皆為 EquipBonus 裡「只彙總防具與飾品」的子集（見
+// armor.go EquipBonus 檔頭註解）。
+type wireEquipmentEffects struct {
+	IntervalPct      float64 `json:"intervalPct"`
+	MpCostReducePct  float64 `json:"mpCostReducePct"`
+	HpRegenPctPer5s  float64 `json:"hpRegenPctPer5s"`
+	MpRegenPctPer5s  float64 `json:"mpRegenPctPer5s"`
+	DamageTakenPct   float64 `json:"damageTakenPct"`
+	ElementResistPct float64 `json:"elementResistPct"`
+}
+
+// toWireEquipmentEffects 轉換 EquipBonus（AggregateEquipment(nil, armors) 只彙總防具/飾品的
+// 結果）成戰鬥 bootstrap 要送給引擎的形狀。
+func toWireEquipmentEffects(b EquipBonus) wireEquipmentEffects {
+	return wireEquipmentEffects{
+		IntervalPct: b.IntervalPct, MpCostReducePct: b.MpCostReducePct,
+		HpRegenPctPer5s: b.HpRegenPctPer5s, MpRegenPctPer5s: b.MpRegenPctPer5s,
+		DamageTakenPct: b.DamageTakenPct, ElementResistPct: b.ElementResistPct,
+	}
 }
 
 type wireEnemy struct {
@@ -423,17 +452,15 @@ func (h *Handler) loadPlayerBattleStats(ctx context.Context, uid string, cfg Con
 	}
 	in.Passives = passives
 
-	// DORPG P7：目前裝備的武器套進 Compute，讓戰鬥用的 PlayerBattleStats（Atk/Matk/Def/Mdef/
-	// Rating）反映裝備效果（CONTRACT §3）。migration 183 未套用時視為「還沒有武器系統」，
-	// 不讓這支既有端點因此 500（比照 buildCharacterView 同款容錯）。
-	weaponRow, _, err := h.getEquippedWeaponDetail(ctx, uid)
-	if err != nil && !isMissingRelation(err) {
+	// DORPG P7/P8：目前裝備的武器＋防具/飾品彙總後套進 Compute，讓戰鬥用的 PlayerBattleStats
+	// （Atk/Matk/Def/Mdef/Rating）反映裝備效果（CONTRACT §2/§3）。migration 183/184 未套用時
+	// 視為「還沒有裝備系統」，不讓這支既有端點因此 500（比照 buildCharacterView 同款容錯，見
+	// loadPlayerEquipment 內部處理）。
+	equipSnap, err := h.loadPlayerEquipment(ctx, uid)
+	if err != nil {
 		return PlayerBattleStats{}, character{}, 0, err
 	}
-	if weaponRow != nil {
-		p := weaponRow.Profile
-		in.Weapon = &p
-	}
+	in.Equip = equipSnap.Equip()
 
 	d := Compute(cfg, in)
 	return PlayerBattleStatsFrom(cfg, effLevel, d), ch, effLevel, nil
@@ -777,11 +804,15 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 	// 這些非劍職業戰鬥視覺整批倒退——這裡補回職業預設視覺，讓「未裝備」跟 P7 之前的既有行為
 	// 完全一致；真正裝備武器後 type.visual 才會覆蓋它（CONTRACT §3「武器視覺＝type.visual
 	// （覆蓋職業預設）」，語意不變，只是把「職業預設」這個底線值找回來）。
-	weaponRow, wtype, err := h.getEquippedWeaponDetail(ctx, uid)
-	if err != nil && !isMissingRelation(err) {
+	// DORPG P8：同一份查詢也帶出目前裝備的防具/飾品（migration 184 未套用時視為皆未裝備，見
+	// loadPlayerEquipment 內部容錯），組出 equipmentEffects（只彙總防具與飾品，不含武器，見
+	// PlayerEquipmentSnapshot.EquipmentEffects 註解）。
+	equipSnap, err := h.loadPlayerEquipment(ctx, uid)
+	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load equipment")
 		return
 	}
+	weaponRow, wtype := equipSnap.Weapon, equipSnap.WeaponType
 	var job *JobRow
 	if ch.JobID != nil {
 		if j, jerr := h.getJobByID(ctx, *ch.JobID); jerr == nil {
@@ -791,6 +822,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		// 退回 nil，前端仍有引擎寫死的 'sword' 兜底，不讓整支 API 因此 500。
 	}
 	playerWeaponWire := resolvePlayerWeaponWire(weaponRow, wtype, job)
+	playerEquipmentEffects := toWireEquipmentEffects(equipSnap.EquipmentEffects())
 
 	party := []wirePartyMember{{
 		ID: uid, Name: displayName, Level: baseLevel,
@@ -801,6 +833,8 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		Rating:      &pbs.Rating,
 		Weapon:      playerWeaponWire,
 		JobID:       ch.JobID,
+
+		EquipmentEffects: playerEquipmentEffects,
 	}}
 
 	// DORPG P6（CONTRACT §3.2）：隊伍成員改由 player_party（或預設小咪）建構——每位傭兵用自己

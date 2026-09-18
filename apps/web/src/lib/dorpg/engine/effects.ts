@@ -96,10 +96,22 @@ export function effectiveRating(base: CombatRating, effects: ActiveEffect[]): Co
   };
 }
 
-/** 承受傷害倍率（damage_taken_pct，詞彙表只在 buff 那邊列出——debuff 沒有這個 stat，所以只有隊伍
- *  側會用到這支函式）；clamp 下限 0，不允許疊出「倒扣血」的荒謬結果。 */
-export function damageTakenMultiplier(effects: ActiveEffect[]): number {
-  return Math.max(0, 1 + activeStatSum(effects, 'damage_taken_pct') / 100);
+/**
+ * 承受傷害倍率（damage_taken_pct，詞彙表只在 buff 那邊列出——debuff 沒有這個 stat，所以只有隊伍
+ * 側會用到這支函式）。
+ * P8（DORPG_P8 CONTRACT §2／WIRE「引擎」）：新增可選參數 equipmentDamageTakenPct（預設 0，
+ * PartyActor.equipmentEffects.damageTakenPct）——跟 buff 的 damage_taken_pct 相加後，改成 clamp
+ * 下限 −60%（契約「與 buff 相加（≥ −60）」）取代舊版「clamp 最終倍率下限 0」的規則：疊加上限從
+ * 「理論上可以無限疊到倒扣血邊緣（倍率 0）」收斂成「最多減傷 60%」，賦予裝備與 buff 一個有意義
+ * 的疊加天花板。因為 clamp 後的 pct 恆 ≥ −60，換算出的倍率恆 ≥ 0.4，天生就不會變成負數，
+ * 不需要再另外套一層 `Math.max(0, ...)`。equipmentDamageTakenPct 缺省 0 時（呼叫端沒有裝備資料，
+ * 例如既有測試直接手造 activeEffects 陣列）行為等同「只有 buff 部分」，但 clamp 下限已經從舊版的
+ * 「倍率 0」變成「倍率 0.4」——這是契約明講的新規則，不是相容性妥協（見任務回報／verify 腳本
+ * 更新後的期望值）。
+ */
+export function damageTakenMultiplier(effects: ActiveEffect[], equipmentDamageTakenPct = 0): number {
+  const sum = equipmentDamageTakenPct + activeStatSum(effects, 'damage_taken_pct');
+  return 1 + Math.max(-60, sum) / 100;
 }
 
 /**

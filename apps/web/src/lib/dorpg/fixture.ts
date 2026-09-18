@@ -20,6 +20,7 @@ import type {
   ElementKind,
   Enemy,
   EnemySlotId,
+  EquipmentEffectsWire,
   EquippedWeaponWire,
   Item,
   PartyMember,
@@ -332,6 +333,31 @@ export const RPG_WEAPON_FIXTURES: Record<string, WeaponFixtureRow> = {
       chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
       critPct: 0, critDmgPct: 0, elementResistPct: 15, magicSkillPct: 0, element: 'light',
     },
+  },
+};
+
+// ---------------------------------------------------------------------------
+// P8（DORPG_P8 CONTRACT §2/§3、WIRE「戰鬥 bootstrap」）：裝備（防具＋飾品）效果彙總的離線示範
+// 資料——正式的 300 件防具＋90 件飾品由另一個 workflow 產生 seed（migration 184），本檔只鏡像一組
+// 「多欄位同時非零」的示範組合，供 /dev/dorpg 離線預覽與 verify 腳本切換測試「這幾個效果同時生效」
+// 的端到端行為，不是完整的裝備內容庫（跟 RPG_WEAPON_FIXTURES 對武器系統的角色定位一致）。
+// ---------------------------------------------------------------------------
+
+/**
+ * 示範數值刻意都給有感、但不誇張的量（跟契約 §3 飾品 t3「大致等於原提案值」的量級對齊）：
+ * intervalPct=-8（攻擊間隔縮短 8%）、mpCostReducePct=20（技能 MP 消耗打 8 折）、hpRegenPctPer5s／
+ * mpRegenPctPer5s=2（每 5 秒回復 2% 上限）、damageTakenPct=-10（少受 10% 傷害）、
+ * elementResistPct=10（額外 10% 屬性抗性）——每個欄位在 /dev/dorpg 預覽時都應該看得出效果，不是
+ * 為了展示邊界值（clamp 邊界另外在 verify-dorpg-engine.mjs 用手造極端值測試，不靠這份 fixture）。
+ */
+export const RPG_EQUIPMENT_EFFECTS_FIXTURES: Record<string, EquipmentEffectsWire> = {
+  demo_full_set: {
+    intervalPct: -8,
+    mpCostReducePct: 20,
+    hpRegenPctPer5s: 2,
+    mpRegenPctPer5s: 2,
+    damageTakenPct: -10,
+    elementResistPct: 10,
   },
 };
 
@@ -835,6 +861,10 @@ export function buildFixtureSample(
     refTable?: RefPlayerTable | null;
     /** P7：離線預覽/測試切換玩家武器——key 對到 RPG_WEAPON_FIXTURES，缺省/null＝空手（中性）。 */
     weaponId?: keyof typeof RPG_WEAPON_FIXTURES | null;
+    /** P8：離線預覽/測試切換玩家裝備效果——key 對到 RPG_EQUIPMENT_EFFECTS_FIXTURES，缺省/null＝
+     *  空裝（中性，PartyMember.equipmentEffects 維持 undefined，由 engine 端 fallback 成
+     *  NEUTRAL_EQUIPMENT_EFFECTS，見 engine/index.ts toPartyActor）。 */
+    equipmentEffectsId?: keyof typeof RPG_EQUIPMENT_EFFECTS_FIXTURES | null;
   },
 ): FixtureBundle {
   const encounter = RPG_ENCOUNTERS.find((e) => e.code === code);
@@ -941,6 +971,10 @@ export function buildFixtureSample(
     rating: FIXTURE_PLAYER_RATING,
     // P7：離線預覽可切換玩家武器（見 opts.weaponId 型別註解）；缺省/未知 id 一律空手。
     equippedWeapon: opts?.weaponId ? (RPG_WEAPON_FIXTURES[opts.weaponId] as EquippedWeaponWire | undefined) ?? null : null,
+    // P8：離線預覽可切換玩家裝備效果（見 opts.equipmentEffectsId 型別註解）；缺省/未知 id 維持
+    // undefined（不是塞一份全零物件——跟 equippedWeapon 缺省給 null 是同一種「沒有指定就不裝」的
+    // 表達方式，由 engine 端各自的中性 fallback 常數接手）。
+    equipmentEffects: opts?.equipmentEffectsId ? RPG_EQUIPMENT_EFFECTS_FIXTURES[opts.equipmentEffectsId] : undefined,
   };
 
   const companions: PartyMember[] = RPG_COMPANIONS.filter((c) => !c.isPlayerPortrait)

@@ -1,6 +1,6 @@
 // 引擎公式與目標挑選（純函式，無 React/DOM，無 Date.now()）。
 // 型別引用在 Node type-stripping 下整段消失，不影響本檔被 node 直接 import 執行。
-import type { ActorStats, CombatRating, EnemySlotId, WeaponProfileWire } from '../types';
+import type { ActorStats, CombatRating, EnemySlotId, EquipmentEffectsWire, WeaponProfileWire } from '../types';
 import type { BattleConfig, BattleState, EnemyActor } from './types';
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -257,6 +257,55 @@ export function computeRawDamage(
 ): number {
   const raw = Math.floor((atk * coefficient + flat) * elementMul * chargeMul * critMul);
   return raw - def;
+}
+
+/**
+ * P8（DORPG_P8 CONTRACT §2「無裝備＝全部中性」，比照 P7 NEUTRAL_WEAPON_PROFILE 的精神）：
+ * 六個欄位皆是「不改變任何既有行為」的中性值——intervalPct/damageTakenPct/elementResistPct=0
+ * 等同沒有額外加成/減損，mpCostReducePct=0 等同 MP 消耗不打折，hpRegenPctPer5s/mpRegenPctPer5s
+ * =0 等同沒有定時回復。actor.equipmentEffects 恆有值（createBattle 用 `pm.equipmentEffects ??
+ * NEUTRAL_EQUIPMENT_EFFECTS` 保底，見 engine/index.ts toPartyActor），這裡匯出純粹是給 fromApi.ts
+ * 的 asEquipmentEffects()／fixture.ts 需要一份中性預設值時直接引用，不必各自重複宣告六個 0。
+ */
+export const NEUTRAL_EQUIPMENT_EFFECTS: EquipmentEffectsWire = {
+  intervalPct: 0,
+  mpCostReducePct: 0,
+  hpRegenPctPer5s: 0,
+  mpRegenPctPer5s: 0,
+  damageTakenPct: 0,
+  elementResistPct: 0,
+};
+
+/**
+ * P8（CONTRACT §2／WIRE「引擎」）：技能 MP 消耗套用 equipmentEffects.mpCostReducePct 減免，
+ * 下限 1（不會打到 0 或負值，讓「有 MP 消耗」這件事的意義永遠存在）——`Math.max(1, ...)` 在
+ * `Math.floor` 之後才夾，對齊契約字面 `max(1, floor(mpCost×(1−pct/100)))` 的運算順序。
+ * 同一支函式必須同時用於 dispatch.ts 的「MP 是否足夠」檢查與「實際扣除」兩處呼叫——兩邊給同樣的
+ * 輸入（skill.mpCost、actor.equipmentEffects.mpCostReducePct，兩者在同一次指令處理中都不會變）
+ * 必定算出同一個數字，不會出現「檢查時用未打折的原始值、卻扣打折後的值」這種邏輯不一致。
+ */
+export function effectiveMpCost(mpCost: number, mpCostReducePct: number): number {
+  return Math.max(1, Math.floor(mpCost * (1 - mpCostReducePct / 100)));
+}
+
+/**
+ * P8（CONTRACT §2／WIRE「引擎」）：攻擊冷卻的 intervalPct 疊加來源——武器（P7 weapon.intervalPct）
+ * 與裝備（防具/飾品彙總 equipmentEffects.intervalPct）相加後夾在 −50 以上（契約「clamp ≥ −50」），
+ * 避免無限疊加把攻擊間隔壓到荒謬地接近 0；契約只點名下限，正值（變慢）不設上限。呼叫端把相加後
+ * 的結果傳給 attackCooldownFor() 的 intervalPct 參數（見 dispatch.ts ATTACK_RELEASE）。
+ */
+export function combineIntervalPct(weaponIntervalPct: number, equipmentIntervalPct: number): number {
+  return Math.max(-50, weaponIntervalPct + equipmentIntervalPct);
+}
+
+/**
+ * P8（CONTRACT §2／WIRE「引擎」）：受傷時的屬性抗性——武器（鍊，P7 elementResistPct）與裝備
+ * （防具/飾品彙總 equipmentEffects.elementResistPct）相加後夾在 60 以下（契約「clamp ≤ 60」），
+ * 避免疊到完全免疫非中性傷害；契約只點名上限，不設下限。套用位置同既有的 combat.ts
+ * applyPartyDamage（只在攻擊方屬性非 neutral 時才會用到這個折算後的抗性）。
+ */
+export function combineElementResistPct(weaponResistPct: number, equipmentResistPct: number): number {
+  return Math.min(60, weaponResistPct + equipmentResistPct);
 }
 
 // ---- P3（AGI 攻速／DEX 詠唱縮減，審查 dorpg_p3 r5 使用者當面要求）新增。 ----

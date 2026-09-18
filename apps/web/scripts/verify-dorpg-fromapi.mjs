@@ -246,5 +246,57 @@ const pad10 = (s) => [s, null, null, null, null, null, null, null, null, null]
   ok(hitEvents.every((e) => e.damage === Math.floor(100 * 0.6) - 35), '雙劍每段傷害＝floor(100×hitMul0.6)-def35=25，經完整 wire→fromApi→engine 管線驗證')
 }
 
+// ── 7) DORPG P8（CONTRACT §2、WIRE「戰鬥 bootstrap」）：party member 的 equipmentEffects 正確
+//      映射（缺欄位/整包缺失時退回中性值 0；有給值時逐欄照抄），且真的能餵進 engine 產生效果
+//      （呼應 verify-dorpg-engine.mjs 的 MP 減免測試，這次從 wire JSON 出發，涵蓋 fromApi.ts
+//      這一層轉換）。 ──
+{
+  // 7a）沒有送這個欄位（舊版後端）：六欄位全部退回 0。
+  const rawNoEquip = {
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, weapon: 'sword' }],
+    enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 99999, hpMax: 99999, slot: 'front_center', imageUrl: '', canEscape: true, stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 } }],
+    scene: { id: 's', name: 's', imageUrl: '', slots: [] },
+    skills: pad10(null),
+    items: [],
+    initialTargetId: 'e1',
+  }
+  const memberNoEquip = sampleFromBootstrap(rawNoEquip).party[0]
+  eq(
+    memberNoEquip.equipmentEffects,
+    { intervalPct: 0, mpCostReducePct: 0, hpRegenPctPer5s: 0, mpRegenPctPer5s: 0, damageTakenPct: 0, elementResistPct: 0 },
+    '沒有送 equipmentEffects 欄位（舊版後端）時，映射結果六欄位全部是中性值 0',
+  )
+
+  // 7b）送了完整物件：逐欄照抄，且真的能餵進 engine 讓 MP 消耗打折（檢查與扣除一致）。
+  const rawWithEquip = {
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 3, mpMax: 100, portraitUrl: null,
+      stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, weapon: 'sword',
+      equipmentEffects: { intervalPct: -8, mpCostReducePct: 60, hpRegenPctPer5s: 2, mpRegenPctPer5s: 2, damageTakenPct: -10, elementResistPct: 10 },
+    }],
+    enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 99999, hpMax: 99999, slot: 'front_center', imageUrl: '', canEscape: true, stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 } }],
+    scene: { id: 's', name: 's', imageUrl: '', slots: [] },
+    skills: pad10({ id: 'slash', name: '斬擊', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1.6, flat: 20, weapon: 'sword', castMs: 300 }),
+    items: [],
+    initialTargetId: 'e1',
+  }
+  const sample = sampleFromBootstrap(rawWithEquip)
+  eq(
+    sample.party[0].equipmentEffects,
+    { intervalPct: -8, mpCostReducePct: 60, hpRegenPctPer5s: 2, mpRegenPctPer5s: 2, damageTakenPct: -10, elementResistPct: 10 },
+    '送了完整 equipmentEffects 物件時，六欄位逐欄照抄',
+  )
+
+  const cfg = {
+    enemyActIntervalMs: [999999, 999999], allyActIntervalMs: [999999, 999999],
+    baseMissPct: 0, missMinPct: 0, missMaxPct: 0, critRate: 0, monsterCritPct: 0, monsterCritShieldBase: 0,
+  }
+  let s = createBattle(sample, { now: 0, config: cfg })
+  // slash 的 mpCost=5，原始需求超過玩家現有 mp=3；mpCostReducePct=60% → effectiveMpCost=floor(5×0.4)=2，mp=3 足夠。
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'slash' }, 0)
+  ok(s.party[0].action === 'casting', '經 fromApi 轉換後的 mpCostReducePct=60%，讓 mp=3 的玩家仍能施放原始 mpCost=5 的技能（打折後只需 2）')
+  eq(s.party[0].mp, 1, '經 fromApi 轉換後，實際扣除的也是打折後的成本 2（3-2=1）')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

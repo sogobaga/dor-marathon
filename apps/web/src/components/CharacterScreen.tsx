@@ -22,7 +22,8 @@ import {
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
 import {
   STAT_META, DERIVED_META, resistLabel, BATTLE_DISPLAY_DEFAULTS, estimateAttackCooldownMs, estimateCastMs,
-  jobEmoji, SKILL_KIND_LABEL, formatEffectAtLevel, sortJobs, elementLabel,
+  jobEmoji, SKILL_KIND_LABEL, formatEffectAtLevel, sortJobs,
+  EQUIP_SLOT_ORDER, formatEquipBonus,
 } from '@/lib/rpgMeta'
 
 // 配點 400 錯誤代碼 → 中文（契約 §3：超過 stat_cap 回 400 {error:"stat_cap"}）。
@@ -100,7 +101,11 @@ export default function CharacterScreen({ onBack, onOpenBattle, onOpenTavern, on
   }, [])
 
   async function selectJob(jobId: string | null) {
-    if (busyJob) return
+    // 第二道防線（第一道在下面 JobSection 把目前已選中的卡片直接 disabled）：即使繞過 UI 直接
+    // 呼叫，選同一個職業（含都是 null）直接 no-op——後端 jobs.go PutJob 的根因修法已經改成
+    // 「job_id 真的改變才清五部位防具」，這裡提早短路純粹省一次不必要的往返，不是安全邊界。
+    const currentJobId = data?.character?.job?.id ?? null
+    if (busyJob || jobId === currentJobId) return
     setBusyJob(true)
     try {
       const me = await withUserAuth((t) => rpgApi.setJob(t, jobId))
@@ -235,24 +240,28 @@ export default function CharacterScreen({ onBack, onOpenBattle, onOpenTavern, on
               <span style={{ color: 'var(--tx)' }}>有效 Lv. {ch.effective_level}</span>
             </div>
 
-            {/* ---- 目前武器摘要（DORPG P7，見契約 §6：CharacterScreen 加「裝備」按鈕與目前武器一行摘要） ---- */}
+            {/* ---- 裝備摘要八格（DORPG P8，見契約 §5：CharacterScreen 裝備摘要八格「・」分隔、空略過
+                 ＋ equip_bonus 加成摘要）；取代 P7 時期只顯示武器的單行摘要。 ---- */}
             <div
               onClick={onOpenEquipment}
               style={{
-                display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16, fontSize: 12,
+                display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16, fontSize: 12,
                 color: 'var(--tx-dim)', cursor: onOpenEquipment ? 'pointer' : 'default',
               }}
             >
-              <span>🗡️ 目前武器：</span>
-              {ch.weapon ? (
-                <span style={{ color: 'var(--tx)', fontWeight: 700 }}>
-                  {ch.weapon.name}
-                  {ch.weapon.element !== 'neutral' && <span style={{ color: 'var(--gold)' }}>（{elementLabel(ch.weapon.element)}）</span>}
-                </span>
-              ) : (
-                <span style={{ color: 'var(--tx-faint)' }}>未裝備</span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' }}>
+                <span>🗡️ 裝備：</span>
+                {(() => {
+                  const names = EQUIP_SLOT_ORDER.map((s) => ch.equipment?.[s]).filter((n): n is string => !!n)
+                  return names.length > 0
+                    ? <span style={{ color: 'var(--tx)', fontWeight: 700 }}>{names.join('・')}</span>
+                    : <span style={{ color: 'var(--tx-faint)' }}>尚未裝備任何裝備</span>
+                })()}
+                {onOpenEquipment && <span style={{ color: 'var(--tx-faint)', marginLeft: 2 }}>›</span>}
+              </div>
+              {formatEquipBonus(ch.equip_bonus) && (
+                <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{formatEquipBonus(ch.equip_bonus)}</div>
               )}
-              {onOpenEquipment && <span style={{ color: 'var(--tx-faint)', marginLeft: 2 }}>›</span>}
             </div>
 
             {/* ---- 職業 ---- */}
@@ -436,9 +445,9 @@ function JobSection({ jobs, currentId, busy, onSelect }: { jobs: JobDTO[]; curre
             return (
               <button
                 key={j.id}
-                disabled={busy}
+                disabled={busy || active}
                 onClick={() => onSelect(j.id)}
-                style={{ ...jobCard, ...(active ? jobCardActive : {}), opacity: busy ? 0.6 : 1, cursor: busy ? 'default' : 'pointer' }}
+                style={{ ...jobCard, ...(active ? jobCardActive : {}), opacity: busy ? 0.6 : 1, cursor: busy || active ? 'default' : 'pointer' }}
               >
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
                   <span style={{ fontSize: 15 }}>{jobEmoji(j.id)}</span>
@@ -581,7 +590,11 @@ const errBanner: React.CSSProperties = { background: 'rgba(244,98,58,.12)', colo
 const okBanner: React.CSSProperties = { background: 'rgba(45,212,150,.12)', color: 'var(--fug)', border: '1px solid rgba(45,212,150,.3)', borderRadius: 10, padding: '8px 12px', fontSize: 12.5, marginBottom: 10 }
 
 // ---- P5 新增樣式 ----
-const jobCard: React.CSSProperties = { display: 'block', textAlign: 'left', background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: '9px 10px', fontFamily: 'inherit' }
+// 審查：原本 jobCard 用 border shorthand、jobCardActive 疊加時只覆寫 borderColor longhand——同一個
+// style 物件在不同 render 之間混用 shorthand／longhand 會觸發 React 警告（覆寫順序不保證，可能
+// 造成新顏色沒真的套上的視覺 bug）。比照 EquipmentScreen.tsx 的 elementChip/slotChip 修法，兩邊
+// 統一只用 longhand（borderWidth/borderStyle/borderColor），覆寫時單純是 borderColor 蓋 borderColor。
+const jobCard: React.CSSProperties = { display: 'block', textAlign: 'left', background: 'var(--bg-1)', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--line)', borderRadius: 12, padding: '9px 10px', fontFamily: 'inherit' }
 // 金底白字（全站通則）：選中的職業卡用金底，文字強制白色。
 const jobCardActive: React.CSSProperties = { background: 'var(--gold)', borderColor: 'var(--gold)' }
 const numInput: React.CSSProperties = { width: 76, background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 10px', fontSize: 13, color: 'var(--tx)', fontFamily: 'inherit' }

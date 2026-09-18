@@ -16,6 +16,7 @@ import type {
   RpgBootstrapConfigRaw,
   RpgBootstrapEffectRaw,
   RpgBootstrapEnemyRaw,
+  RpgBootstrapEquipmentEffectsRaw,
   RpgBootstrapItemRaw,
   RpgBootstrapPartyMemberRaw,
   RpgBootstrapRatingRaw,
@@ -31,6 +32,7 @@ import type {
   ElementKind,
   Enemy,
   EnemySlotId,
+  EquipmentEffectsWire,
   EquippedWeaponWire,
   Item,
   PartyMember,
@@ -157,6 +159,29 @@ function asEquippedWeapon(raw: unknown): EquippedWeaponWire | null {
   };
 }
 
+/**
+ * P8（DORPG_P8 CONTRACT §2、WIRE「戰鬥 bootstrap」）：wire 送的裝備效果彙總（camelCase，
+ * INTEGRATOR 已在 api.ts RpgBootstrapEquipmentEffectsRaw 宣告六個必填數字欄位——見該介面型別
+ * 註解）。逐欄防禦驗證，跟 asWeaponProfile() 同一個理由——即使 api.ts 型別已經正確宣告，執行期
+ * 資料仍可能因為舊版後端尚未送這個欄位（p 本身是 undefined）或型別跑掉而缺欄位；任何欄位缺失或
+ * 非有限數字都退回中性值 0（不是整包丟棄），讓「這個裝備效果只有部分欄位異常」不會連累其餘正常
+ * 欄位失效。缺整個物件（undefined）時六欄全部退回 0，等同 NEUTRAL_EQUIPMENT_EFFECTS（不在這裡
+ * import 那個常數，避免這個純轉換函式跟 engine 的執行期匯出產生不必要的耦合——兩者的「六個 0」
+ * 語意上是同一份中性值，寫兩次比多一條 import 更符合 fromApi.ts 一貫的獨立防禦風格）。
+ */
+function asEquipmentEffects(raw: RpgBootstrapEquipmentEffectsRaw | undefined): EquipmentEffectsWire {
+  const r = (raw ?? {}) as Partial<RpgBootstrapEquipmentEffectsRaw>;
+  const num = (v: unknown, fallback: number) => (isFiniteNumber(v) ? v : fallback);
+  return {
+    intervalPct: num(r.intervalPct, 0),
+    mpCostReducePct: num(r.mpCostReducePct, 0),
+    hpRegenPctPer5s: num(r.hpRegenPctPer5s, 0),
+    mpRegenPctPer5s: num(r.mpRegenPctPer5s, 0),
+    damageTakenPct: num(r.damageTakenPct, 0),
+    elementResistPct: num(r.elementResistPct, 0),
+  };
+}
+
 function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
   return {
     id: p.id,
@@ -185,6 +210,10 @@ function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
     // 對物件輸入直接短路回 undefined 是同一種「兩個讀法互斥、各自防禦」設計，任何一種 wire 形狀
     // 都不會讓另一邊誤讀出垃圾值。
     equippedWeapon: asEquippedWeapon(p.weapon),
+    // P8（CONTRACT §2／WIRE「戰鬥 bootstrap」）：見 asEquipmentEffects() 型別註解——缺欄位/整包
+    // 缺失時安全退回中性值，不是 undefined（PartyMember.equipmentEffects 雖然型別上允許 undefined，
+    // 但 fromApi.ts 這一層一律填好完整物件，讓後續 engine 端不必再處理「wire 到底有沒有送」的分支）。
+    equipmentEffects: asEquipmentEffects(p.equipmentEffects),
   };
 }
 

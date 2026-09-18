@@ -43,6 +43,8 @@ const {
   rollCritMultiplier, activeStatSum, effectiveRating, effectiveStats, damageTakenMultiplier,
   // P7（武器系統＋怪物體型/屬性）新增匯出：
   NEUTRAL_WEAPON_PROFILE,
+  // P8（防具系統＋通用飾品）新增匯出：
+  NEUTRAL_EQUIPMENT_EFFECTS, effectiveMpCost, combineIntervalPct, combineElementResistPct,
 } = await import(modUrl)
 
 const typesUrl = new URL('../src/lib/dorpg/types.ts', import.meta.url).href
@@ -1113,7 +1115,10 @@ const HEAL_SKILL = { id: 'heal', name: '治療', iconUrl: '', cooldownMs: 8000, 
 
   eq(damageTakenMultiplier([]), 1, 'damageTakenMultiplier：沒有效果時＝1（中性）')
   eq(damageTakenMultiplier([{ stat: 'damage_taken_pct', value: -30, expiresAt: 1, sourceSkillId: 'z', kind: 'buff' }]), 0.7, 'damageTakenMultiplier：-30% → 0.7 倍')
-  eq(damageTakenMultiplier([{ stat: 'damage_taken_pct', value: -200, expiresAt: 1, sourceSkillId: 'z', kind: 'buff' }]), 0, 'damageTakenMultiplier：clamp 下限 0，不會變成負數（倒扣血）')
+  // P8（DORPG_P8 CONTRACT §2）改版：clamp 規則從「最終倍率下限 0」改成「pct 總和下限 −60」——
+  // -200% 被夾到 -60%，倍率變成 1+(-60/100)=0.4，不再是舊版的 0（見 effects.ts damageTakenMultiplier
+  // 型別註解，此斷言的期望值同步更新，不是既有行為被本輪意外改動）。
+  eq(damageTakenMultiplier([{ stat: 'damage_taken_pct', value: -200, expiresAt: 1, sourceSkillId: 'z', kind: 'buff' }]), 0.4, 'damageTakenMultiplier：P8 改版 clamp 下限 −60%（pct 總和），-200% 被夾到 -60% → 0.4 倍（不再是舊版的 0）')
 
   eq(
     effectiveStats({ hpMax: 100, mpMax: 50, atk: 100, matk: 80, def: 20, mdef: 10 }, [{ stat: 'atk_pct', value: 50, expiresAt: 1, sourceSkillId: 'a', kind: 'buff' }]),
@@ -1917,6 +1922,214 @@ function weaponFixture(typeId, visual, overrides) {
   // 無武器基準（既有測試#9）：floor(80*2+80)=240；書 magicSkillPct=5% → coefficient=2*1.05=2.1
   // → floor(80*2.1+80)=floor(168+80)=248。
   eq(s.party[1].hp, 100 + 248, '書 magicSkillPct=5%：治療 coefficient 提高 5% → floor(MATK×2.1+80)=248（無武器基準是 240）')
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// P8（DORPG_P8 CONTRACT：防具系統＋通用飾品——ENGINE 角色）新增測試：本節從 1) 重新編號
+// （跟前面 P7 區塊的編號規則一致，各大階段各自一組序號）。
+// 共用小工具：equipmentFixture(overrides) 從 NEUTRAL_EQUIPMENT_EFFECTS 疊上要測試的欄位，
+// 避免每個測試都要手key 六個欄位（跟上面 P7 區塊的 weaponFixture 同一個精神）。
+// ════════════════════════════════════════════════════════════════════════════
+
+function equipmentFixture(overrides) {
+  return { ...NEUTRAL_EQUIPMENT_EFFECTS, ...overrides }
+}
+
+// ── 1) NEUTRAL_EQUIPMENT_EFFECTS 中性值＋effectiveMpCost 純函式（含下限 1 的多種邊界）。 ──
+{
+  eq(
+    NEUTRAL_EQUIPMENT_EFFECTS,
+    { intervalPct: 0, mpCostReducePct: 0, hpRegenPctPer5s: 0, mpRegenPctPer5s: 0, damageTakenPct: 0, elementResistPct: 0 },
+    'NEUTRAL_EQUIPMENT_EFFECTS：六欄位全為中性值 0',
+  )
+  eq(effectiveMpCost(20, 0), 20, 'effectiveMpCost：mpCostReducePct=0 → 不打折')
+  eq(effectiveMpCost(20, 50), 10, 'effectiveMpCost：50% 折扣 → floor(20×0.5)=10')
+  eq(effectiveMpCost(5, 90), 1, 'effectiveMpCost：折扣後 floor(5×0.1)=0，被下限夾到 1')
+  eq(effectiveMpCost(5, 100), 1, 'effectiveMpCost：100% 折扣理論上是 0，仍被下限夾到 1（技能必定至少消耗 1 點 MP）')
+  eq(effectiveMpCost(1, 200), 1, 'effectiveMpCost：mpCostReducePct 超過 100% 時算出負值，仍被下限夾到 1（不會變成負 MP 消耗）')
+}
+
+// ── 2) combineIntervalPct／combineElementResistPct 純函式：相加＋單邊 clamp。 ──
+{
+  eq(combineIntervalPct(0, 0), 0, 'combineIntervalPct：兩者皆 0 → 0')
+  eq(combineIntervalPct(-20, -10), -30, 'combineIntervalPct：武器 -20% + 裝備 -10% 相加 = -30%')
+  eq(combineIntervalPct(-30, -40), -50, 'combineIntervalPct：相加 -70% 被 clamp 到下限 -50%')
+  eq(combineIntervalPct(25, 10), 35, 'combineIntervalPct：正值（變慢）不設上限，原樣相加')
+
+  eq(combineElementResistPct(0, 0), 0, 'combineElementResistPct：兩者皆 0 → 0')
+  eq(combineElementResistPct(15, 10), 25, 'combineElementResistPct：武器 15% + 裝備 10% 相加 = 25%')
+  eq(combineElementResistPct(40, 40), 60, 'combineElementResistPct：相加 80% 被 clamp 到上限 60%（邊界剛好等於上限）')
+  eq(combineElementResistPct(40, 41), 60, 'combineElementResistPct：相加 81% 也被 clamp 到上限 60%')
+}
+
+// ── 3) createBattle：PartyMember 沒有 equipmentEffects 欄位時，PartyActor 一律 fallback 成
+//        NEUTRAL_EQUIPMENT_EFFECTS（跟 P7 weaponProfile 缺省時 fallback 成 NEUTRAL_WEAPON_PROFILE
+//        同一個精神）。 ──
+{
+  const s = createBattle(makeSample(), { now: 0, config: FAR_CONFIG })
+  eq(s.party[0].equipmentEffects, NEUTRAL_EQUIPMENT_EFFECTS, 'PartyMember 沒有 equipmentEffects 欄位 → PartyActor.equipmentEffects 為 NEUTRAL_EQUIPMENT_EFFECTS')
+}
+
+// ── 4) 端到端：MP 減免——檢查與扣除用同一支 effectiveMpCost，算出同一個數字（不是拿未打折的
+//        原始 mpCost 判定「足夠」、卻扣打折後的值）。 ──
+{
+  const sample = makeSample({
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 3, mpMax: 100, portraitUrl: null,
+      stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 },
+      equipmentEffects: equipmentFixture({ mpCostReducePct: 60 }),
+    }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  // slash 的 mpCost=5，原始需求超過玩家現有 mp=3；mpCostReducePct=60% → effectiveMpCost=floor(5×0.4)=2，mp=3 足夠。
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'slash' }, 0)
+  ok(s.party[0].action === 'casting', 'MP 減免：檢查用打折後的成本（2）判定 mp=3 足夠，不是拿原始 mpCost=5 判定（會被誤判不足而拒絕）')
+  eq(s.party[0].mp, 1, 'MP 減免：實際扣除同樣是打折後的成本 2（3-2=1），檢查與扣除一致')
+}
+
+// ── 5) 端到端：MP 減免下限 1——即使 mpCostReducePct=100%，仍至少扣 1 點 MP，不會變成 0 消耗。 ──
+{
+  const sample = makeSample({
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null,
+      stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 },
+      equipmentEffects: equipmentFixture({ mpCostReducePct: 100 }),
+    }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'slash' }, 0) // mpCost=5 原始，100% 折扣理論上=0，被下限夾到 1
+  eq(s.party[0].mp, 99, 'MP 減免下限：mpCostReducePct=100% 仍至少扣 1 點 MP（100-1=99）')
+}
+
+// ── 6) 端到端：每 5000ms 裝備定時回復 HP/MP——整數、未滿窗口不觸發、一次 tick 跨過多個窗口時
+//        該回的量一次全部補上（不會只回一次就把時間推到未來丟掉中間幾次）。 ──
+{
+  const sample = makeSample({
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 100, hpMax: 1000, mp: 0, mpMax: 200, portraitUrl: null,
+      stats: { hpMax: 1000, mpMax: 200, atk: 135, matk: 80, def: 35, mdef: 28 },
+      equipmentEffects: equipmentFixture({ hpRegenPctPer5s: 5, mpRegenPctPer5s: 3 }),
+    }],
+  })
+  const s0 = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  eq(s0.party[0].nextEquipRegenAt, 5000, '建場時排定第一次裝備回復在 now+5000（不是套用當下就立刻回一次）')
+
+  const s1 = tick(s0, 4999)
+  eq(s1.party[0].hp, 100, '未滿 5000ms，尚未觸發裝備回復（hp 不變）')
+
+  const s2 = tick(s0, 5000)
+  eq(s2.party[0].hp, 150, '5000ms 到：floor(hpMax1000×5%)=50，100+50=150')
+  eq(s2.party[0].mp, 6, '5000ms 到：floor(mpMax200×3%)=6，0+6=6')
+  eq(s2.party[0].nextEquipRegenAt, 10000, '排定下一次在 10000')
+  ok(Number.isInteger(s2.party[0].hp) && Number.isInteger(s2.party[0].mp), '回復量整數（floorInt），符合 CONTRACT §1 整數不變式')
+
+  // 多視窗追趕：直接從建場跳到 20000ms（跨過 5000/10000/15000/20000 共 4 個視窗）。
+  const s3 = tick(s0, 20000)
+  eq(s3.party[0].hp, 100 + 50 * 4, '一次 tick 跨過 4 個視窗，該回的量一次全部補上')
+  eq(s3.party[0].mp, 0 + 6 * 4, 'MP 同理一次補滿 4 次視窗')
+  eq(s3.party[0].nextEquipRegenAt, 25000, '追趕後下一次排定在 25000（20000 之後的下一個 5000ms 邊界）')
+}
+
+// ── 7) 端到端：裝備定時回復不超過 hpMax/mpMax 上限。 ──
+{
+  const sample = makeSample({
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 990, hpMax: 1000, mp: 198, mpMax: 200, portraitUrl: null,
+      stats: { hpMax: 1000, mpMax: 200, atk: 135, matk: 80, def: 35, mdef: 28 },
+      equipmentEffects: equipmentFixture({ hpRegenPctPer5s: 5, mpRegenPctPer5s: 5 }),
+    }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = tick(s, 5000) // 想回 floor(1000×5%)=50／floor(200×5%)=10，但空間只剩 10／2。
+  eq(s.party[0].hp, 1000, '不超上限：hp 封頂在 hpMax，不會變成 990+50=1040')
+  eq(s.party[0].mp, 200, '不超上限：mp 封頂在 mpMax，不會變成 198+10=208')
+}
+
+// ── 8) 端到端：死亡不回——hp≤0 的隊員即使裝備有 hpRegenPctPer5s/mpRegenPctPer5s，也完全不會
+//        回復；nextEquipRegenAt 在死亡期間完全不推進（凍結，跟 hp_regen_pct buff 對死亡角色的
+//        既有處理一致）。用兩人隊伍（一人存活）避免全隊陣亡直接判定 defeat 提早結束戰鬥。 ──
+{
+  const sample = makeSample({
+    party: [
+      { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 } },
+      {
+        id: 'deadmate', name: '倒下的隊友', level: 56, hp: 0, hpMax: 500, mp: 0, mpMax: 100, portraitUrl: null,
+        stats: { hpMax: 500, mpMax: 100, atk: 50, matk: 50, def: 20, mdef: 20 },
+        equipmentEffects: equipmentFixture({ hpRegenPctPer5s: 10, mpRegenPctPer5s: 10 }),
+      },
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = tick(s, 20000) // 遠超過好幾個 5000ms 窗口
+  eq(s.party[1].hp, 0, '死亡不回：hp=0 的隊員即使裝備有 hpRegenPctPer5s，也完全不會回復')
+  eq(s.party[1].mp, 0, '死亡不回：mp 同理不會回復')
+  eq(s.party[1].nextEquipRegenAt, 5000, '死亡期間 nextEquipRegenAt 完全不推進（凍結在建場時的初始值 now+5000）')
+}
+
+// ── 9) 端到端：damage_taken 相加夾限——buff（-30%）與裝備 damageTakenPct（-40%）相加＝-70%，
+//        被 clamp 到 -60%（不是舊版「clamp 最終倍率下限 0」）。 ──
+{
+  const sample = makeSample({
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null,
+      stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 0, mdef: 28 },
+      equipmentEffects: equipmentFixture({ damageTakenPct: -40 }),
+    }],
+    enemies: [{ id: 'e1', name: '打手', level: 1, hp: 999, hpMax: 999, slot: 'front_center', imageUrl: '', stats: { hpMax: 999, mpMax: 0, atk: 100, matk: 0, def: 0, mdef: 0 } }],
+    skills: [
+      {
+        id: 'iron_skin', name: '鐵壁之心', iconUrl: '', cooldownMs: 0, kind: 'buff', target: 'self', mpCost: 15, coefficient: 0, flat: 0, weapon: 'sword', castMs: 100,
+        effect: { kind: 'buff', stat: 'damage_taken_pct', value: -30, durationMs: 5000, target: 'self', mpCost: 15 },
+      },
+      null, null, null, null, null, null, null, null, null,
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: { ...FAR_CONFIG, enemyActIntervalMs: [0, 0] } })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'iron_skin' }, 0)
+  s = tick(s, 120) // 施法完成套用 buff；同一個 tick 也讓敵人 idle→windup
+  s = tick(s, 120 + DEFAULT_BATTLE_CONFIG.enemyWindupMs) // windup→attacking，結算傷害
+  // buff(-30%)+裝備(-40%)=-70% 被 clamp 到 -60% → 倍率 0.4；raw damage=max(1,100-0)=100 → floor(100×0.4)=40。
+  eq(s.party[0].hp, 800 - 40, 'damage_taken 相加夾限：buff -30% + 裝備 -40% = -70%，clamp 到 -60% → 0.4 倍，實扣 40（不是未 clamp 前的 30，也不是舊版 clamp 到 0 倍的 100）')
+}
+
+// ── 10) 端到端：interval 相加夾限——武器 intervalPct（-30%）與裝備 intervalPct（-40%）相加＝
+//         -70%，被 clamp 到 -50% 才套進 attackCooldownFor。 ──
+{
+  const weapon = { id: 'w', name: 'w', typeId: 'w', visual: 'sword', profile: { ...NEUTRAL_WEAPON_PROFILE, intervalPct: -30 } }
+  const sample = makeSample({
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null,
+      stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 },
+      equippedWeapon: weapon,
+      equipmentEffects: equipmentFixture({ intervalPct: -40 }),
+    }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  // combineIntervalPct(-30,-40)=-70 被 clamp 到 -50；rating 缺省→aspd=aspdReference→base 冷卻=1500；
+  // attackCooldownFor(...,−50)=1500×(1-50/100)=750。
+  eq(s.party[0].attackReadyAt, 750, 'interval 相加夾限：武器 -30% + 裝備 -40% = -70%，clamp 到 -50% → 冷卻 1500×0.5=750（不是未 clamp 前的 450）')
+}
+
+// ── 11) 端到端：element_resist 相加夾限——鍊 elementResistPct（40%）與裝備 elementResistPct
+//         （40%）相加＝80%，被 clamp 到 60% 才折算受到的傷害。 ──
+{
+  const chain = { id: 'chain', name: 'chain', typeId: 'chain', visual: 'staff', profile: { ...NEUTRAL_WEAPON_PROFILE, elementResistPct: 40 } }
+  const sample = makeSample({
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null,
+      stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 0, mdef: 28 },
+      equippedWeapon: chain,
+      equipmentEffects: equipmentFixture({ elementResistPct: 40 }),
+    }],
+    enemies: [{ id: 'e1', name: '火怪', level: 1, hp: 999, hpMax: 999, slot: 'front_center', imageUrl: '', attribute: 'fire', stats: { hpMax: 999, mpMax: 0, atk: 100, matk: 1, def: 0, mdef: 0 } }],
+  })
+  let s = createBattle(sample, { now: 0, config: { ...FAR_CONFIG, enemyActIntervalMs: [0, 0] } })
+  s = tick(s, 0) // idle→windup
+  s = tick(s, DEFAULT_BATTLE_CONFIG.enemyWindupMs) // windup→attacking，結算傷害
+  // combineElementResistPct(40,40)=80 被 clamp 到 60；折算 floor(100×(1-60/100))=40。
+  eq(s.party[0].hp, 800 - 40, 'element_resist 相加夾限：鍊 40% + 裝備 40% = 80%，clamp 到 60% → 折算後扣 40（不是未 clamp 前的 20）')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

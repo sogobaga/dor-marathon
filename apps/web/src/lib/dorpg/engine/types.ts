@@ -4,7 +4,7 @@
 //
 // import type 的東西在 Node 的 TS type-stripping 下會整段被削掉、完全不會嘗試 resolve，
 // 所以這裡引用 ../types（純型別檔）不影響 verify-dorpg-engine.mjs 用 node 直接執行本檔。
-import type { ActorStats, BuffDebuffStat, CombatRating, EnemySlotId, Item, Skill, TrayMode, WeaponKind, WeaponProfileWire } from '../types';
+import type { ActorStats, BuffDebuffStat, CombatRating, EnemySlotId, EquipmentEffectsWire, Item, Skill, TrayMode, WeaponKind, WeaponProfileWire } from '../types';
 
 export type ActorActionState = 'idle' | 'charging' | 'guarding' | 'casting' | 'recovering' | 'dead';
 export type EnemyAnimState = 'spawning' | 'idle' | 'windup' | 'attacking' | 'hitReaction' | 'dying' | 'removed';
@@ -82,6 +82,25 @@ export interface PartyActor {
    * 不必在每個呼叫點各自處理 null 分支。
    */
   weaponProfile: WeaponProfileWire | null;
+  /**
+   * P8（CONTRACT §2／WIRE「戰鬥 bootstrap」）：目前裝備（防具＋飾品）的戰鬥效果彙總；恆有值
+   * （createBattle 用 `pm.equipmentEffects ?? NEUTRAL_EQUIPMENT_EFFECTS` 保底，見 engine/index.ts
+   * toPartyActor）——跟 weaponProfile 刻意可為 null（表達「有沒有裝備」這件事本身）不同，這裡
+   * 沒有這種區分的必要：契約明講「傭兵一律零值物件」，永遠是一份完整、只是數值可能全零的物件，
+   * 呼叫端（combat.ts／dispatch.ts／tick.ts）因此不需要處理「equipmentEffects 不存在」的分支，
+   * 永遠讀 actor.equipmentEffects.xxx 就是安全的。
+   */
+  equipmentEffects: EquipmentEffectsWire;
+  /**
+   * P8（WIRE「引擎」：「每 5000ms 依戰鬥時鐘...」）：這位隊員下一次裝備定時回復（hpRegenPctPer5s／
+   * mpRegenPctPer5s）觸發的時間點，createBattle 初始化為 `now + 5000`（見 toPartyActor）。跟
+   * hp_regen_pct buff 的 nextTickAt（1000ms 週期、記在個別 ActiveEffect 上）是完全獨立的兩套排程
+   * ——不同來源（裝備 vs. 技能施放的暫時性效果）、不同週期（5000ms vs. 1000ms），混用同一個時間戳
+   * 會讓「這個 next 到底是哪一種回復的排程」變得曖昧，故各自獨立一個欄位/機制。tick.ts 的
+   * applyEquipmentRegen() 用 while 迴圈追趕（同 pruneAndRegenEffects 的既有手法），死亡（hp≤0）
+   * 期間整個跳過、不推進這個時間點（跟 hp_regen_pct 對死亡角色的既有處理一致）。
+   */
+  nextEquipRegenAt: number;
 }
 
 export interface EnemyActor {

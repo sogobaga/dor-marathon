@@ -122,6 +122,35 @@ export interface EquippedWeaponWire {
   profile: WeaponProfileWire;
 }
 
+/**
+ * P8（DORPG_P8 CONTRACT §2、WIRE「戰鬥 bootstrap」）：wire 送的裝備（防具＋飾品）戰鬥時效果彙總
+ * （camelCase）——已經是「防具＋飾品全部加總、部分欄位 clamp 過」的最終結果，只給引擎在戰鬥
+ * 「當下」即時運算用；六素質 flat／def／hp_pct／mp_pct／atk_pct／matk_pct／crit_pct／crit_dmg_pct
+ * 這些防具彙總已經在 internal/rpg Compute 階段吃進玩家 stats/rating，不會也不應該再送到這裡
+ * 重複套用（同 WeaponProfileWire 型別註解「Compute 已吃掉的欄位不再送」的精神）。武器仍走自己
+ * 的 WeaponProfileWire，不含在這份彙總內——兩者在需要相加的欄位（intervalPct／elementResistPct）
+ * 各自帶著武器與裝備兩份數字，由 engine 呼叫端相加（見 engine/formulas.ts combineIntervalPct／
+ * combineElementResistPct）。各欄位套用位置：
+ *   - intervalPct：與 weapon.intervalPct 相加（combineIntervalPct，clamp ≥ −50）套進
+ *     attackCooldownFor（見 dispatch.ts ATTACK_RELEASE）。
+ *   - mpCostReducePct：技能 MP 消耗 max(1, floor(mpCost×(1−pct/100)))（見 formulas.ts
+ *     effectiveMpCost），同時用於 dispatch.ts 的 MP 足夠檢查與實際扣除。
+ *   - hpRegenPctPer5s／mpRegenPctPer5s：每 5000ms 戰鬥時鐘回復 floor(hpMax/mpMax×pct/100)
+ *     （見 tick.ts applyEquipmentRegen），不超上限、死亡不回。
+ *   - damageTakenPct：與 buff 的 damage_taken_pct 相加後 clamp ≥ −60（effects.ts
+ *     damageTakenMultiplier）。
+ *   - elementResistPct：與武器（鍊）elementResistPct 相加後 clamp ≤ 60（combineElementResistPct），
+ *     套用位置同既有的 applyPartyDamage。
+ */
+export interface EquipmentEffectsWire {
+  intervalPct: number;
+  mpCostReducePct: number;
+  hpRegenPctPer5s: number;
+  mpRegenPctPer5s: number;
+  damageTakenPct: number;
+  elementResistPct: number;
+}
+
 export type PartyMember = {
   id: string;
   name: string;
@@ -165,6 +194,15 @@ export type PartyMember = {
    * 中性（見 engine/formulas.ts NEUTRAL_WEAPON_PROFILE），不影響任何既有斷言。
    */
   equippedWeapon?: EquippedWeaponWire | null;
+  /**
+   * P8（CONTRACT §2／WIRE「戰鬥 bootstrap」）：這位玩家目前裝備（防具＋飾品）的戰鬥效果彙總；
+   * 缺省（undefined，舊版後端尚未上線 P8）engine 一律 fallback 成 NEUTRAL_EQUIPMENT_EFFECTS
+   * （見 engine/formulas.ts），讓「沒有這個欄位」與「明確送一份全零的物件」在戰鬥數值上完全
+   * 等價——WIRE.md 明講「傭兵一律零值物件」，本輪傭兵理論上會收到全零的完整物件而不是缺欄位，
+   * 但 fromApi.ts 的 asEquipmentEffects() 對兩種情況一視同仁，都會得出同一份中性值，跟 P7
+   * equippedWeapon 缺省時 fallback 成 NEUTRAL_WEAPON_PROFILE 同一個精神。
+   */
+  equipmentEffects?: EquipmentEffectsWire;
 };
 
 /** 場景五個怪物站位 ID，與 content pack scene.json 的 monsterSlots[].id 同名。 */

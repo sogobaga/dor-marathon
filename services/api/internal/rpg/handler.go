@@ -83,6 +83,9 @@ func (h *Handler) Router() http.Handler {
 	// DORPG P7（CONTRACT §2/§5、WIRE）：武器裝備，沿用同一組 requireEntry 白名單。
 	r.Get("/equipment", h.GetEquipment)
 	r.Put("/equipment/weapon", h.PutEquipmentWeapon)
+	// DORPG P8（CONTRACT §1/§4、WIRE）：五部位防具＋兩格飾品，"/equipment/weapon" 是靜態路徑，
+	// chi 對同一層路由優先比對靜態片段再退回 {slot} 萬用字元，兩條路由可以並存不衝突。
+	r.Put("/equipment/{slot}", h.PutEquipmentSlot)
 	return r
 }
 
@@ -167,6 +170,25 @@ type characterView struct {
 	// Weapon DORPG P7（WIRE：/rpg/me 新增欄位）：目前裝備的武器，nil＝未裝備。衍生值
 	// （上面的 Derived）已經套用它的效果，這裡只是給前端顯示用。
 	Weapon *weaponDTO `json:"weapon"`
+
+	// Equipment/EquipBonus DORPG P8（WIRE：/rpg/me 新增欄位）：八格裝備各格 item 名稱或 null
+	// （比 GET /rpg/equipment 的 equipped 精簡，只給名字顯示用）＋彙總後的裝備加成；衍生值
+	// （上面的 Derived）已經含全部裝備（武器＋防具＋飾品）。
+	Equipment  meEquipmentWire `json:"equipment"`
+	EquipBonus EquipBonusDTO   `json:"equip_bonus"`
+}
+
+// meEquipmentWire WIRE：/rpg/me 的 equipment 欄位——八格各自 item 名稱或 null（不像 GET
+// /rpg/equipment 的 equipped 需要完整 DTO 給裝備畫面用，這裡只給角色頁摘要顯示）。
+type meEquipmentWire struct {
+	Weapon     *string `json:"weapon"`
+	Helmet     *string `json:"helmet"`
+	Gloves     *string `json:"gloves"`
+	Armor      *string `json:"armor"`
+	Legs       *string `json:"legs"`
+	Boots      *string `json:"boots"`
+	Accessory1 *string `json:"accessory1"`
+	Accessory2 *string `json:"accessory2"`
 }
 
 // buildCharacterView 角色列 + Config + 真實 Base Level → 完整衍生數值（Me/Allocate/PutJob/
@@ -205,26 +227,52 @@ func (h *Handler) buildCharacterView(ctx context.Context, cfg Config, baseLevel 
 	}
 	in.Passives = passives
 
-	// DORPG P7：目前裝備的武器套進 Compute（CONTRACT §3），nil＝未裝備＝零改動。查無資料
-	// （髒資料/武器被刪）已經在 getEquippedWeaponDetail 內部保守處理成「視為未裝備」。
-	var weaponDTOOut *weaponDTO
-	weaponRow, _, err := h.getEquippedWeaponDetail(ctx, ch.UserID)
+	// DORPG P7/P8：目前裝備的武器＋防具/飾品彙總後套進 Compute（CONTRACT §2/§3），nil＝完全沒有
+	// 裝備＝零改動。查無資料（髒資料/物品被刪）已經在 loadPlayerEquipment 內部保守處理成
+	// 「視為未裝備」（migration 183/184 未套用時同樣視為未裝備，/rpg/me 其餘部分正常運作，既有
+	// 玩家角色頁不該因為武器/防具表還沒套用就整頁 500）。
+	equipSnap, err := h.loadPlayerEquipment(ctx, ch.UserID)
 	if err != nil {
-		if !isMissingRelation(err) {
-			return characterView{}, err
-		}
-		// migration 183 未套用：武器系統當作「尚未初始化」處理，/rpg/me 其餘部分正常運作
-		// （既有玩家角色頁不該因為武器表還沒套用就整頁 500）。
-		weaponRow = nil
+		return characterView{}, err
 	}
-	if weaponRow != nil {
-		p := weaponRow.Profile
-		in.Weapon = &p
-		dto := toWeaponDTO(*weaponRow, effLevel, weaponRow.ID)
+	in.Equip = equipSnap.Equip()
+
+	var weaponDTOOut *weaponDTO
+	if equipSnap.Weapon != nil {
+		dto := toWeaponDTO(*equipSnap.Weapon, effLevel, equipSnap.Weapon.ID)
 		weaponDTOOut = &dto
 	}
 
 	d := Compute(cfg, in)
+
+	// DORPG P8（WIRE：/rpg/me equipment/equip_bonus）：八格各自 item 名稱或 null＋彙總後的裝備
+	// 加成，供角色頁摘要顯示（比 GET /rpg/equipment 的完整 equipped DTO 精簡）。
+	nameOf := func(row *ArmorRow) *string {
+		if row == nil {
+			return nil
+		}
+		n := row.Name
+		return &n
+	}
+	var weaponNameOut *string
+	if equipSnap.Weapon != nil {
+		n := equipSnap.Weapon.Name
+		weaponNameOut = &n
+	}
+	equipmentOut := meEquipmentWire{
+		Weapon:     weaponNameOut,
+		Helmet:     nameOf(equipSnap.Armor["helmet"]),
+		Gloves:     nameOf(equipSnap.Armor["gloves"]),
+		Armor:      nameOf(equipSnap.Armor["armor"]),
+		Legs:       nameOf(equipSnap.Armor["legs"]),
+		Boots:      nameOf(equipSnap.Armor["boots"]),
+		Accessory1: nameOf(equipSnap.Armor["accessory1"]),
+		Accessory2: nameOf(equipSnap.Armor["accessory2"]),
+	}
+	var equipBonusOut EquipBonusDTO
+	if in.Equip != nil {
+		equipBonusOut = ToEquipBonusDTO(*in.Equip)
+	}
 
 	statTotal := TotalStatPoints(cfg, effLevel)
 	statFree := statTotal - d.TotalSpent
@@ -266,6 +314,8 @@ func (h *Handler) buildCharacterView(ctx context.Context, cfg Config, baseLevel 
 		SkillPointsTotal: skillTotal,
 		SkillPointsFree:  skillFree,
 		Weapon:           weaponDTOOut,
+		Equipment:        equipmentOut,
+		EquipBonus:       equipBonusOut,
 	}, nil
 }
 

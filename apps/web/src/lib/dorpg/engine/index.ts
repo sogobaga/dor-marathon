@@ -8,6 +8,7 @@ import {
   deriveDefaultMonsterRating,
   deriveDefaultPartyRating,
   floorInt,
+  NEUTRAL_EQUIPMENT_EFFECTS,
   pickInitialTarget,
   randRange,
 } from './formulas';
@@ -29,6 +30,11 @@ export {
   // P7（CONTRACT §3「無武器＝全部中性」）：外部（fixture.ts／verify 腳本）偶爾需要直接引用這個
   // 中性常數（例如比對「沒有武器」跟「明確裝備一把中性武器」是否真的算出同一組數值），一併匯出。
   NEUTRAL_WEAPON_PROFILE,
+  // P8：同上精神，外部（fromApi.ts／fixture.ts／verify 腳本）需要一份中性裝備效果基準時直接引用。
+  NEUTRAL_EQUIPMENT_EFFECTS,
+  effectiveMpCost,
+  combineIntervalPct,
+  combineElementResistPct,
   pickInitialTarget,
   pickNextTarget,
 } from './formulas';
@@ -75,6 +81,13 @@ function toPartyActor(pm: PartyMember, index: number, now: number, cfg: BattleCo
     // NEUTRAL_WEAPON_PROFILE（見該常數型別註解），這裡不預先展開中性值——保持「有沒有裝備」這件事
     // 在 PartyActor 層級仍然可以被明確分辨（例如未來裝備頁想顯示「目前沒有武器」的空狀態）。
     weaponProfile: pm.equippedWeapon?.profile ?? null,
+    // P8：裝備（防具＋飾品）效果彙總；跟 weaponProfile 不同，這裡在 PartyActor 層級直接展開成
+    // 具體的中性值（不保留 null 分支）——見 PartyActor.equipmentEffects 型別註解，契約明講
+    // 「傭兵一律零值物件」，沒有「有沒有裝備」這件事需要被區分。
+    equipmentEffects: pm.equipmentEffects ?? NEUTRAL_EQUIPMENT_EFFECTS,
+    // P8（WIRE「引擎」）：每 5000ms 戰鬥時鐘觸發一次裝備定時回復，第一次排在建場後的 +5000ms
+    // （跟 hp_regen_pct buff 的「套用時刻+1000ms」同一個「不要一開場/一套用就立刻回一次」精神）。
+    nextEquipRegenAt: now + 5000,
     // P2：有真實評級（internal/rpg Compute 算出來的）就直接用，沒有就退回 config 推導的後備值。
     rating: pm.rating ?? deriveDefaultPartyRating(cfg),
     // P5：戰鬥開始時沒有任何 buff（buff 只能在戰鬥中靠技能施放取得，不存在「開場自帶」的設計）。

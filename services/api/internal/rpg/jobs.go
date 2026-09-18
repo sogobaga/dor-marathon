@@ -61,7 +61,11 @@ func (h *Handler) PutJob(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to load config")
 		return
 	}
-	if _, err := h.getOrCreateCharacter(ctx, uid, cfg); err != nil {
+	// 根因修復：原本這裡把角色列丟掉，後面判斷「要不要清五部位防具」時沒有舊 job_id 可比對，
+	// 只能無條件清——導致玩家送出「跟目前職業相同」的 PUT（前端沒擋、或直接打 API）也會被清空
+	// 防具。保留 ch，下面用 ch.JobID（舊）跟 body.JobID（新）比對是否真的換了職業。
+	ch, err := h.getOrCreateCharacter(ctx, uid, cfg)
+	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load character")
 		return
 	}
@@ -129,6 +133,34 @@ func (h *Handler) PutJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// DORPG P8（CONTRACT §1/WIRE PUT /rpg/job）：換職業（含清除職業）時卸下五部位防具
+	// （armorSlotsClearedOnJobChange，飾品 accessory1/accessory2 刻意不在裡面、保留）——防具的
+	// 裝備規則本來就是「job_id＝目前職業」，換職業後舊職業的防具必定不再合法，不像武器需要先查
+	// 目前裝備的 type.job_id 才能判斷是否要卸（見上方 shouldUnequipOnJobChange）。
+	//
+	// 根因修復【CONFIRMED】：原本這段不管 body.JobID 是否與目前 job_id 相同都無條件執行——玩家
+	// 對「目前職業」重複送出同一個 PUT（例如前端沒擋、或使用者直接打 API）就會把五件防具清空，
+	// 但那根本不是換職業，是誤觸的空操作，不該有副作用。改成只有「舊 job_id 與新 job_id 實際
+	// 不同」（shouldClearArmorOnJobChange，含舊為 nil/新有值、或反過來）才清；同一職業一律略過，
+	// 沒有裝備的格子刪 0 列本來就視為成功（冪等），不受這次修法影響。migration 184 未套用時
+	// player_equipment 表仍存在（183 就建了），這幾個 slot 值本來就不可能出現在舊約束下，DELETE
+	// 天生是 no-op，不需要額外判斷 isMissingRelation。slot 清單用 = ANY($2) 參數化（pgx 原生支援
+	// []string 對應 Postgres text[]），跟下面單元測試共用同一份 slice，不必各自維護一份 SQL 字面值。
+	oldJobID := ""
+	if ch.JobID != nil {
+		oldJobID = *ch.JobID
+	}
+	newJobID := ""
+	if body.JobID != nil {
+		newJobID = *body.JobID
+	}
+	if shouldClearArmorOnJobChange(oldJobID, newJobID) {
+		if _, err := tx.Exec(ctx, `DELETE FROM player_equipment WHERE user_id=$1 AND slot = ANY($2)`, uid, armorSlotsClearedOnJobChange); err != nil {
+			respondErr(w, http.StatusInternalServerError, "failed to save")
+			return
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to commit")
 		return
@@ -141,6 +173,18 @@ func (h *Handler) PutJob(w http.ResponseWriter, r *http.Request) {
 func shouldUnequipOnJobChange(equippedWeaponJobID string, newJobID *string) bool {
 	return newJobID == nil || equippedWeaponJobID != *newJobID
 }
+
+// shouldClearArmorOnJobChange 純函式抽出來方便單元測試（同上 shouldUnequipOnJobChange）：
+// oldJob/newJob 用空字串代表「沒有職業」（PutJob 呼叫端把 *string 攤平成字串，nil→""），只要
+// 兩者不同（含一邊是「沒有職業」）就該清五部位防具；同一個非空職業維持原樣。
+func shouldClearArmorOnJobChange(oldJob, newJob string) bool {
+	return oldJob != newJob
+}
+
+// armorSlotsClearedOnJobChange DORPG P8（CONTRACT §1「換職業時自動卸下五部位防具，飾品保留」）：
+// PutJob 換職業時無條件卸下的格子——accessory1/accessory2 刻意不在這裡，任何人漏改都會被
+// TestArmorSlotsClearedOnJobChange_ExcludesAccessoriesAndWeapon 抓到。
+var armorSlotsClearedOnJobChange = []string{"helmet", "gloves", "armor", "legs", "boots"}
 
 // PUT /rpg/test-level {"level": number|null}（1~99）：測試用等級，NULL 清除（改用真實等級）。
 //

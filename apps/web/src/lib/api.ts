@@ -5127,6 +5127,13 @@ export interface RpgCharacter {
   // 只是給畫面顯示「目前武器是哪一件」用，不需要前端自己再疊加一次數值。WeaponDTO 定義在本檔
   // 下方 P7 專節（TS interface 宣告順序不影響型別檢查，故可以先在這裡引用）。 ---
   weapon: WeaponDTO | null
+  // --- DORPG P8（見契約 §4、WIRE §REST「/rpg/me 新增 equipment 與 equip_bonus」）：八格裝備各自
+  // 只送「item 名稱或 null」（不是完整 DTO——完整資料要看 EquipmentScreen 才需要，角色頁只顯示
+  // 摘要），衍生值已含全部裝備（含 P7 武器＋本輪防具/飾品）。equip_bonus 是彙總後的加成明細，供
+  // 角色頁顯示「DEF+n、VIT+n…」摘要（見 rpgMeta.ts formatEquipBonus()）。ArmorDTO/EquipBonusDTO
+  // 定義在本檔下方 P8 專節（TS interface 宣告順序不影響型別檢查）。 ---
+  equipment: RpgEquipmentNamesDTO
+  equip_bonus: EquipBonusDTO
 }
 
 export interface RpgMe {
@@ -5415,22 +5422,133 @@ export interface WeaponDTO {
   equipped: boolean
 }
 
-/** GET /rpg/equipment、PUT /rpg/equipment/weapon 共用回應形狀（WIRE §REST）。weapons／weapon_types
- *  只反映「目前職業」；未選職業時兩者皆為空陣列（契約 §2）。 */
+// --- DORPG P8：防具／飾品裝備（見契約 dorpg_p8 CONTRACT.md §1/§2、WIRE.md §REST）---
+// ArmorProfile 是契約 §2 的「引擎詞彙」JSON，缺省欄位＝中性值（同 WeaponProfile 的既有慣例，
+// 見上方檔頭說明）。防具（helmet/gloves/armor/legs/boots）只用得到 def 與少數副屬性；飾品
+// （accessory）恆不用 def，且契約設計成「每件飾品恰好只有一個非零效果欄位」——這個特性被
+// rpgMeta.ts accessoryEffectKey() 拿來把 90 件飾品分成 18 組，不必依賴 id 命名慣例（seed 由
+// 另一個 workflow 產生，id/name 措辭不受這裡控制，只有 profile 的欄位語意受契約保證）。
+export interface ArmorProfile {
+  def?: number
+  str?: number
+  agi?: number
+  vit?: number
+  dex?: number
+  int?: number
+  luk?: number
+  hp_pct?: number
+  mp_pct?: number
+  atk_pct?: number
+  matk_pct?: number
+  interval_pct?: number // 負＝攻擊間隔縮短（與武器 interval_pct 相加）
+  crit_pct?: number
+  crit_dmg_pct?: number
+  mp_cost_reduce_pct?: number
+  hp_regen_pct_per_5s?: number
+  mp_regen_pct_per_5s?: number
+  damage_taken_pct?: number // 負＝少受傷（與 buff 的 damage_taken_pct 相加）
+  element_resist_pct?: number // 與武器（鍊）相加
+}
+
+/** 防具品項本身固定占用的格子（helmet/gloves/armor/legs/boots 各自唯一對應一個裝備格；
+ *  accessory 則可以裝到 accessory1 或 accessory2 兩格其中之一，見 EquipmentSlot）。 */
+export type ArmorItemSlot = 'helmet' | 'gloves' | 'armor' | 'legs' | 'boots' | 'accessory'
+/** PUT /rpg/equipment/{slot} 可接受的防具格 slot（不含 'weapon'——武器走既有 setWeapon）。 */
+export type ArmorEquipSlot = 'helmet' | 'gloves' | 'armor' | 'legs' | 'boots' | 'accessory1' | 'accessory2'
+/** 八格裝備欄的格子名（EquipmentScreen 頂部裝備欄、/rpg/me equipment 摘要共用）。 */
+export type EquipmentSlot = 'weapon' | ArmorEquipSlot
+
+/** WIRE §REST ArmorDTO：某個部位／飾品其中一級防具；can_equip 同 WeaponDTO 慣例——後端依「目前
+ *  職業＋有效等級」算好的旗標，前端不必自己重算門檻判斷。equipped_in＝實際佔用的格子名（飾品
+ *  可能裝在 accessory1 或 accessory2 其中之一；未裝備＝null），跟 WeaponDTO 的單純布林 equipped
+ *  不同，因為同一件飾品理論上可以出現在兩個不同格子的清單裡（accessory1/2 清單其實是同一份
+ *  armor_items，只是目標格子不同）。 */
+export interface ArmorDTO {
+  id: string
+  job_id: string | null // null＝通用（僅飾品）
+  slot: ArmorItemSlot
+  tier: number
+  name: string
+  rarity: WeaponRarity // 稀有度沿用武器同一組 common/rare/epic/legendary 詞彙（契約 §1）
+  level_req: number
+  profile: ArmorProfile
+  description: string
+  can_equip: boolean
+  equipped_in: EquipmentSlot | null
+}
+
+/** WIRE §REST EquipBonusDTO：彙總後（含武器）的裝備加成，供 /rpg/equipment 與 /rpg/me 共用。 */
+export interface EquipBonusDTO {
+  str: number
+  agi: number
+  vit: number
+  dex: number
+  int: number
+  luk: number
+  def: number
+  hp_pct: number
+  mp_pct: number
+  atk_pct: number
+  matk_pct: number
+  interval_pct: number
+  crit_pct: number
+  crit_dmg_pct: number
+  mp_cost_reduce_pct: number
+  hp_regen_pct_per_5s: number
+  mp_regen_pct_per_5s: number
+  damage_taken_pct: number
+  element_resist_pct: number
+}
+
+/** GET /rpg/equipment 的 equipped 八格（契約 §4）。 */
+export interface EquippedGearDTO {
+  weapon: WeaponDTO | null
+  helmet: ArmorDTO | null
+  gloves: ArmorDTO | null
+  armor: ArmorDTO | null
+  legs: ArmorDTO | null
+  boots: ArmorDTO | null
+  accessory1: ArmorDTO | null
+  accessory2: ArmorDTO | null
+}
+
+/** /rpg/me 的 equipment 摘要（WIRE：「各格 item 名稱或 null」——跟 EquippedGearDTO 不同形狀，
+ *  角色頁只需要顯示名字，不需要完整 DTO）。 */
+export interface RpgEquipmentNamesDTO {
+  weapon: string | null
+  helmet: string | null
+  gloves: string | null
+  armor: string | null
+  legs: string | null
+  boots: string | null
+  accessory1: string | null
+  accessory2: string | null
+}
+
+/** GET /rpg/equipment、PUT /rpg/equipment/{slot} 共用回應形狀（WIRE §REST）。weapons／weapon_types
+ *  只反映「目前職業」；未選職業時兩者皆為空陣列（契約 §2）。armor_items＝目前職業的 50 件防具
+ *  ＋90 件通用飾品（未選職業→只有飾品，契約 §4）。 */
 export interface RpgEquipmentResponse {
   job: JobDTO | null
   effective_level: number
-  equipped: { weapon: WeaponDTO | null }
+  equipped: EquippedGearDTO
   weapon_types: WeaponTypeDTO[]
   weapons: WeaponDTO[]
+  armor_items: ArmorDTO[]
+  equip_bonus: EquipBonusDTO
 }
 
-// PUT /rpg/equipment/weapon 400 錯誤碼（WIRE §REST）：not_found／wrong_job／level_too_low——
-// 呼叫端（EquipmentScreen）比照其餘 rpg* API 的 friendlyErr() 慣例自行對照中文文案。
+// PUT /rpg/equipment/weapon、PUT /rpg/equipment/{防具格} 400 錯誤碼（WIRE §REST）：
+// not_found／wrong_job／wrong_slot／level_too_low／duplicate_accessory——呼叫端（EquipmentScreen）
+// 比照其餘 rpg* API 的 friendlyErr() 慣例自行對照中文文案。
 export const rpgEquipmentApi = {
   get: (token: string) => request<RpgEquipmentResponse>('/rpg/equipment', { headers: withAuth(token) }),
   setWeapon: (token: string, itemId: string | null) =>
     request<RpgEquipmentResponse>('/rpg/equipment/weapon', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ item_id: itemId }) }),
+  // P8（契約 §4）：五部位防具＋兩飾品格共用同一個端點形狀，slot 由呼叫端傳入（不含 'weapon'，
+  // 武器一律走上面的 setWeapon）。
+  setSlot: (token: string, slot: ArmorEquipSlot, itemId: string | null) =>
+    request<RpgEquipmentResponse>(`/rpg/equipment/${slot}`, { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ item_id: itemId }) }),
 }
 
 // --- Admin: 遊戲化角色數值（perm scope 'rpg'；見 internal/rpg admin.go） ---
@@ -5605,6 +5723,23 @@ export interface RpgWeapon {
   sort_order: number
 }
 
+/** rpg_armor_items 一列（見契約 dorpg_p8 CONTRACT.md §1、WIRE §後台）。job_id＝null 只會出現在
+ *  飾品（accessory）；防具（helmet/gloves/armor/legs/boots）恆有 job_id。profile 是契約 §2
+ *  ArmorProfile 的 JSON，比照 WeaponsTab 的既有慣例存成排版過的字串編輯。 */
+export interface RpgArmorItem {
+  id: string
+  job_id: string | null
+  slot: ArmorItemSlot
+  tier: number
+  name: string
+  rarity: WeaponRarity
+  level_req: number
+  profile: ArmorProfile
+  description: string
+  is_active: boolean
+  sort_order: number
+}
+
 /** GET /admin/rpg/battle-logs 明細列（不含 email/account_code——隱私規則，見後端 SQL 只
  *  SELECT COALESCE(name,handle)）。對照 internal/rpg/content_repo.go battleLogListRow。 */
 export interface RpgBattleLogRow {
@@ -5707,6 +5842,15 @@ export const adminRpgApi = {
   deleteWeapon: (token: string, id: string) =>
     request<{ ok: boolean }>(`/admin/rpg/weapons/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
 
+  // --- DORPG P8：防具／飾品 CRUD（見契約 dorpg_p8 CONTRACT.md §1、WIRE §後台）。後端支援
+  // ?job_id=／?slot= 篩選，但比照 WeaponsTab 既有慣例——一次抓全部 390 筆、前端自行篩選，不必
+  // 為此多打帶查詢參數的請求（資料量固定，前端篩選即可）。---
+  armorItems: (token: string) => request<{ armor_items: RpgArmorItem[] }>('/admin/rpg/armor-items', { headers: withAuth(token) }),
+  putArmorItem: (token: string, row: RpgArmorItem) =>
+    request<RpgArmorItem>('/admin/rpg/armor-items', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+  deleteArmorItem: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/rpg/armor-items/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+
   // 戰鬥數據：期間 days（7/30，後端夾在 1..90）＋可選 code 篩選單一遭遇；limit 明細筆數上限。
   battleLogs: (token: string, params: { code?: string; days: 7 | 30; limit?: number }) => {
     const qs = new URLSearchParams()
@@ -5808,6 +5952,20 @@ export interface RpgBootstrapRatingRaw {
   // aspd/castReductionPct——舊版後端可能還沒送這個欄位。
   critDmgPct?: number
 }
+/**
+ * WIRE §戰鬥 bootstrap「玩家 party member 新增 equipmentEffects」（契約 dorpg_p8 CONTRACT.md §2）：
+ * 防具＋飾品彙總後、引擎需要另外套用的六個欄位（其餘防具彙總——六素質 flat／def／hp_pct／
+ * mp_pct／atk_pct／matk_pct／crit_pct／crit_dmg_pct——已經在 Compute 階段吃進 stats/derived，
+ * 引擎不需要也不應該再套一次）。camelCase，同 RpgBootstrapWeaponProfileRaw 的既有慣例。
+ */
+export interface RpgBootstrapEquipmentEffectsRaw {
+  intervalPct: number
+  mpCostReducePct: number
+  hpRegenPctPer5s: number
+  mpRegenPctPer5s: number
+  damageTakenPct: number
+  elementResistPct: number
+}
 export interface RpgBootstrapPartyMemberRaw {
   id: string
   name: string
@@ -5831,6 +5989,12 @@ export interface RpgBootstrapPartyMemberRaw {
    * 送視覺物件（Profile 中性值，本輪不裝備，見契約 §2）。
    */
   weapon?: RpgBootstrapEquippedWeaponRaw | string | null
+  // DORPG P8（WIRE §戰鬥 bootstrap）新增：防具＋飾品彙總（不含武器，武器仍走上面 weapon.profile），
+  // 玩家與隊友皆會帶（契約：「傭兵一律零值物件」——本輪隊友不裝備防具，但欄位仍是完整物件而非
+  // undefined，數值全 0）。選填只是配合本檔一貫的「舊版後端可能還沒送」防禦慣例（同 rating？／
+  // weakElements？），並非契約允許省略。ENGINE 的 fromApi.ts 負責在缺欄位時填零值預設（不在本輪
+  // FRONTEND 寫入範圍內，見任務回報）。
+  equipmentEffects?: RpgBootstrapEquipmentEffectsRaw
   rating?: RpgBootstrapRatingRaw
   // P5：玩家目前選擇的職業（見契約 §1／WIRE）——武器已由後端決定填在上面的 weapon，
   // 這個 id 只給前端顯示/除錯用，選填（AI 隊友恆為 undefined）。

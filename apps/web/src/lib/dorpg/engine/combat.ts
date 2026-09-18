@@ -5,7 +5,7 @@ import type { ActorStats, BuffDebuffStat, CombatRating, DmgType, ElementKind, En
 import type { Ctx } from './context';
 import { pushEvent, pushLog } from './context';
 import { activeStatSum, applyStatusEffect, damageTakenMultiplier, effectiveRating, rollCritMultiplier } from './effects';
-import { computeHeal, computeRawDamage, critChance, elementMultiplier, floorInt, missChance, NEUTRAL_WEAPON_PROFILE, normalizeElementAlias, normalizeSizeAlias, selectAliveByThreat } from './formulas';
+import { combineElementResistPct, computeHeal, computeRawDamage, critChance, elementMultiplier, floorInt, missChance, NEUTRAL_WEAPON_PROFILE, normalizeElementAlias, normalizeSizeAlias, selectAliveByThreat } from './formulas';
 import type { ActiveEffect, EnemyActor, PartyActor, PendingCast } from './types';
 
 /** 對敵人造成傷害後的死亡/受擊處理：死亡→dying+enemyDeath+目標自動換人；存活→hitReaction 覆蓋層。 */
@@ -269,19 +269,26 @@ export function resolveWeaponAttack(
  * 記失敗。P5：進來的第一步先套 damage_taken_pct（CONTRACT §5 buff 詞彙——只有隊伍側會有這個 buff，
  * debuff 詞彙表沒有這一項，見 BuffDebuffStat 型別註解），這樣不管傷害是從哪個路徑算出來的
  * （combat.ts 直接命中、ai.ts 敵人普攻），只要最終都走 applyPartyDamage 就一定會套到，不必在每個
- * 呼叫端各自記得套一次。clamp 下限 0（Math.max(0,...)）：不允許減傷疊過頭變成「倒扣血」。
+ * 呼叫端各自記得套一次。
+ * P8（CONTRACT §2／WIRE「引擎」）：damageTakenMultiplier 新增 actor.equipmentEffects.damageTakenPct
+ * 參數——與 buff 相加後 clamp ≥ −60（見該函式型別註解，取代舊版「clamp 最終倍率下限 0」的規則）；
+ * elementResistPct 改用 combineElementResistPct 把武器（鍊）與裝備（防具/飾品彙總）兩份數字相加後
+ * clamp ≤ 60，取代舊版只讀武器單一來源。
  */
 export function applyPartyDamage(ctx: Ctx, actor: PartyActor, rawDamage: number, attackerElement?: string): void {
-  const dtMul = damageTakenMultiplier(actor.activeEffects);
+  const dtMul = damageTakenMultiplier(actor.activeEffects, actor.equipmentEffects.damageTakenPct);
   // P7（CONTRACT §1「elementResistPct 減免非 neutral 怪物造成的傷害」）：attackerElement 由呼叫端
   // 傳入（目前只有 ai.ts 的怪物普攻會傳 enemy.attribute），只有具體、非 'neutral' 時才用
-  // actor.weaponProfile.elementResistPct（鍊系武器）折算減免——玩家沒有「防禦屬性」可言，這是
-  // 裝備給的固定抗性，不查五行相剋表。
+  // 武器＋裝備合計的抗性折算減免——玩家沒有「防禦屬性」可言，這是裝備給的固定抗性，不查五行
+  // 相剋表。
   // 審查#1【中】根因修復：enemy.attribute 現網是中文原文（見 elementCycleMultiplier 檔頭說明），
   // 灰白獸人等怪物的「無」字面值原本直接跟 'neutral' 比較永遠不相等，被誤判成「非中性攻擊」而錯誤
   // 套用 elementResistPct 減免——先過 normalizeElementAlias 轉成英文枚舉再判斷是否為 neutral。
   const normalizedAttackerElement = attackerElement ? normalizeElementAlias(attackerElement) : undefined;
-  const resistPct = normalizedAttackerElement && normalizedAttackerElement !== 'neutral' ? (actor.weaponProfile?.elementResistPct ?? 0) : 0;
+  const resistPct =
+    normalizedAttackerElement && normalizedAttackerElement !== 'neutral'
+      ? combineElementResistPct(actor.weaponProfile?.elementResistPct ?? 0, actor.equipmentEffects.elementResistPct)
+      : 0;
   const resistMul = Math.max(0, 1 - resistPct / 100);
   // P6（CONTRACT §1）：damage_taken_pct 明講「在套用前 floor」——改 Math.round 為 floorInt，
   // 兩者在 dtMul<1（減傷，最常見的用法）時會算出不同的整數，floor 是契約指定的方向（見
