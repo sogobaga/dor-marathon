@@ -5090,6 +5090,15 @@ export interface JobPathDTO {
   name: string
   desc: string
 }
+// DORPG P10（CONTRACT §1/§4、WIRE §REST）：依 key 排序的路線陣列——只有 heavy_knight 會有第三個
+// 元素（key='c'，「守護」路線）。CharacterScreen/TavernScreen 的技能路線畫面改用這個陣列通用渲染
+// （見任務決策：路線 UI 一律「有 path_c 才多畫一欄」），不再各自手寫 path_a/path_b 兩份。
+export interface JobPathKeyedDTO {
+  id: string
+  key: 'a' | 'b' | 'c'
+  name: string
+  desc: string
+}
 export interface JobDTO {
   id: string
   name: string
@@ -5097,6 +5106,18 @@ export interface JobDTO {
   description: string
   path_a: JobPathDTO
   path_b: JobPathDTO
+  // DORPG P10：後端用 *JobPathRow（omitempty）——只有 heavy_knight 有值，其餘職業這個鍵在 JSON
+  // 裡直接不存在（不是 null），故這裡型別是「選填」而非「可為 null」。CharacterScreen/TavernScreen
+  // 一律改讀下面的 paths 陣列，不直接用這個欄位（留著只為型別對後端誠實）。
+  path_c?: JobPathDTO
+  // DORPG P10 新增，見上方 JobPathKeyedDTO 型別註解；既有 path_a/path_b 兩個巢狀欄位維持不變
+  // （相容既有呼叫端，WIRE：「既有欄位保留」）。
+  paths: JobPathKeyedDTO[]
+  // DORPG P10（CONTRACT §1/§3）：職業天生特性，目前只有 heavy_knight 有 `damage_taken_pct: -15`，
+  // 其餘職業缺省 {}。已經由 bootstrap 合併進戰鬥 equipmentEffects.damageTakenPct（見下方
+  // RpgBootstrapPartyMemberRaw.jobTraits 型別註解），這裡純供角色頁顯示「職業特性：...」一行，
+  // 不參與任何前端計算。
+  traits: { damage_taken_pct?: number }
   weapon: 'sword' | 'staff' | 'bow' | 'greatsword'
   atk_branch: 'melee' | 'ranged'
   recommended_stats: string
@@ -5145,7 +5166,8 @@ export interface RpgMe {
 }
 
 // --- DORPG P5：技能效果詞彙（見契約 §5、WIRE §引擎（TS）要吃的新欄位）---
-export type SkillKind = 'damage' | 'heal' | 'shield' | 'buff' | 'debuff' | 'passive' | 'special'
+// DORPG P10（CONTRACT §3/§5）新增 'taunt'（重騎士守護系列：挑釁／守護姿態）。
+export type SkillKind = 'damage' | 'heal' | 'shield' | 'buff' | 'debuff' | 'passive' | 'special' | 'taunt'
 export type SkillDmgType = 'physical' | 'magic'
 export type SkillTarget = 'enemy' | 'allEnemies' | 'self' | 'ally' | 'allAllies'
 // 怪物屬性桶（DOR 8 桶英文代碼，同 apps/web/src/lib/dorpg/types.ts ElementKind，這裡不 import
@@ -5163,13 +5185,22 @@ export interface EffectAtLevel {
   hits?: number // damage 用，>1 表示多段
   target: SkillTarget
   mp_cost: number
+  // DORPG P10（WIRE §REST：「passive 展開新增 guard_taunt: boolean」）：kind=passive 專用，只有
+  // 「守護本能」（hk_c2）這個被動有 true——學到 ≥1 級時，玩家按防禦（GUARD）期間即進入守護狀態
+  // （見契約 §3 inGuardianState）。其餘 passive 缺省 false／undefined，不影響既有顯示。
+  guard_taunt?: boolean
+  // DORPG P10：kind=taunt 專用，後端同一份展開結果也會鏡射在這兩個扁平欄位上（跟 SkillDTO.taunt
+  // 是同一份資料的兩種殼，見後端 skills.go EffectAtLevel 註解）；本檔的顯示邏輯一律讀 SkillDTO.taunt
+  // （見 formatTauntEffect），這裡純粹補齊型別讓 EffectAtLevel 對後端誠實，不是另一份資料來源。
+  retarget?: boolean
+  damage_taken_pct?: number
 }
 
 /** GET /rpg/skills 單一技能列（含目前職業已配等級與可升條件）。 */
 export interface SkillDTO {
   id: string
   name: string
-  path: 'a' | 'b'
+  path: 'a' | 'b' | 'c' // DORPG P10：'c' 目前只有 heavy_knight（守護路線）會出現
   tier: number
   kind: SkillKind
   dmg_type?: SkillDmgType // damage 才有意義
@@ -5190,6 +5221,11 @@ export interface SkillDTO {
   effect_at_level: EffectAtLevel // level=0 時用 lv=1 的數值預覽
   effect_next_level: EffectAtLevel | null // 已達 max_level 時為 null
   lv_preview: { '1': string; '5': string; '10': string }
+  // DORPG P10（CONTRACT §3/§4、WIRE §REST）：kind='taunt' 專用的展開值——WIRE 明講是額外一個
+  // `taunt` 物件（不是塞進上面 effect_at_level 既有欄位），CharacterScreen/TavernScreen 的技能列
+  // 在 kind==='taunt' 時改讀這裡顯示持續時間／減傷／是否拉怪（見 rpgMeta.ts formatTauntEffect）。
+  // 非 taunt 技能沒有這個欄位。
+  taunt?: { duration_ms: number; damage_taken_pct: number; retarget: boolean }
 }
 
 export interface RpgSkillsResponse {
@@ -5656,13 +5692,21 @@ export interface RpgMonster {
   sort_order: number
 }
 
-/** rpg_skills 一列。對照 internal/rpg/content.go SkillRow。 */
+/**
+ * rpg_skills 一列。對照 internal/rpg/content.go SkillRow。
+ *
+ * DORPG P10（CONTRACT §7 決定更新）：P5 建表時 job_id/path/tier/max_level/effect/dmg_type/
+ * prereq_skill_id/prereq_level/mp_cost_per_level/display_text/implemented 這批職業技能樹欄位
+ * 「本輪沒有後台 CRUD」，只能靠 SQL migration 編輯——這裡補齊成完整的 SkillRow 鏡射（原本只有前
+ * 5 個通用技能在用的 kind/target 兩個欄位型別也太窄，改成完整 SkillKind／SkillTarget），P10 起
+ * SkillsTab 開放編輯，讓後台能設定 kind='taunt'（重騎士守護系列）與 path='c'。
+ */
 export interface RpgSkill {
   id: string
   name: string
   icon_id: string
-  kind: 'damage' | 'heal' | 'shield'
-  target: 'enemy' | 'ally' | 'self' | 'allAllies'
+  kind: SkillKind
+  target: SkillTarget
   weapon: 'sword' | 'staff' | 'bow' | 'greatsword'
   element: string
   mp_cost: number
@@ -5672,6 +5716,65 @@ export interface RpgSkill {
   cast_ms: number
   is_default: boolean
   is_active: boolean
+  sort_order: number
+  /** null／''＝通用技能（既有 5 個），非空＝職業技能樹所屬職業。 */
+  job_id: string | null
+  /** ''＝通用技能無路線；職業技能一律 'a'|'b'（重騎士另有 'c'，見契約 dorpg_p10 §1）。 */
+  path: '' | 'a' | 'b' | 'c'
+  /** 路線內順位（1 起算，決定技能欄與角色頁排序）；通用技能為 0。 */
+  tier: number
+  /** 技能等級上限；通用技能固定 1（沒有等級概念）。 */
+  max_level: number
+  /** SkillEffect JSON（見後端 content.go SkillEffect），後台以 JSON textarea 編輯——各 kind 只
+   *  取用其中一部分欄位（damage/heal/shield 用 coef_base/flat_base/hits，buff/debuff/passive 用
+   *  stat/value_base/value_per_level，taunt 用 duration_base_ms/damage_taken_pct_base 等，見契約
+   *  dorpg_p10 CONTRACT §2 hk_c1~c4 範例）。通用技能（既有 5 個）留 {} 即可。 */
+  effect: Record<string, unknown>
+  /** 僅 kind='damage' 有意義：physical 扣 DEF、magic 扣 MDEF；其餘 kind 仍會有值但沒有實際效果。 */
+  dmg_type: '' | 'physical' | 'magic'
+  /** 前置技能 id；null＝無前置。 */
+  prereq_skill_id: string | null
+  /** 前置技能需要達到的等級；無前置時忽略。 */
+  prereq_level: number
+  /** 每級遞增的 MP 消耗（疊加在 mp_cost 之上）；通用技能固定 0。 */
+  mp_cost_per_level: number
+  /** 角色頁/腳本編輯器技能列直接顯示的效果說明文字，前端不解析。 */
+  display_text: string
+  /** false＝本輪引擎未實裝（special 類），可配點但戰鬥中不可用；通用技能恆為 true。 */
+  implemented: boolean
+}
+
+/**
+ * rpg_jobs 一列——GET /admin/rpg/jobs 回傳與 JobDTO 是同一個後端 struct（JobRow 的 *Full 版本），
+ * 形狀因此完全一致（巢狀 path_a/path_b/path_c，見 JobDTO 型別註解），不像本檔其餘 admin Row 型別
+ * 各自鏡射扁平 DB 欄位——這裡刻意跟著後端「同一個 DTO 兩處共用」的設計，不要自行拍平。
+ *
+ * ⚠️ PUT 語意跟 GET 不對稱：GET 的 path_c 是「有才出現」（undefined＝沒有第三路線）；PUT body 的
+ * path_c 後端固定要求一個完整物件，用 `id` 空字串代表「清除這條路線」（見 adminJobPutRequest 註解，
+ * 目前只有 heavy_knight 會填非空值）——JobsTab 存檔時必須自己組出 `{id,name,desc}`，不能直接把
+ * 讀到的 `path_c?: JobPathDTO`（可能 undefined）原樣送回去。
+ *
+ * DORPG P10（CONTRACT §7 決定更新、WIRE §後台）：六職業固定資料，P5 決定「本輪沒有後台 CRUD」；
+ * P10 追加後台 CRUD（PUT /admin/rpg/jobs），但六職業本身仍是固定 6 筆，只開放編輯既有列，不提供
+ * 新增／刪除。FRONTEND 這輪只在 JobsTab 開放編輯 path_c／traits 兩組欄位，其餘欄位唯讀顯示但仍
+ * 要在 PUT body 完整帶回（後端 UPDATE 會覆寫這些欄位，見同一份型別的 PUT 語意註解）。
+ */
+export interface RpgJob {
+  id: string
+  name: string
+  tagline: string
+  description: string
+  path_a: JobPathDTO
+  path_b: JobPathDTO
+  /** GET：undefined＝此職業沒有第三條路線（目前只有 heavy_knight 有值）。 */
+  path_c?: JobPathDTO
+  /** 依 key 排序的路線陣列（唯讀，後端從 path_a/b/c 組出）；本輪 JobsTab 不需要用到，僅供型別對齊。 */
+  paths: JobPathKeyedDTO[]
+  /** 職業天生特性，目前只有 heavy_knight 的 {"damage_taken_pct":-15}；其餘職業缺省 {}。 */
+  traits: { damage_taken_pct?: number }
+  weapon: 'sword' | 'staff' | 'bow' | 'greatsword'
+  atk_branch: 'melee' | 'ranged'
+  recommended_stats: string
   sort_order: number
 }
 
@@ -5888,6 +5991,12 @@ export const adminRpgApi = {
   deleteSkill: (token: string, id: string) =>
     request<{ ok: boolean }>(`/admin/rpg/skills/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
 
+  // DORPG P10（契約 §7 決定更新、WIRE §後台）：職業表——六職業固定列，沒有 DELETE／新增路由
+  // （比照 weapon-types 既有慣例），只能編輯既有列（本輪窄用途：path_c／traits，見 RpgJob 型別註解）。
+  jobs: (token: string) => request<{ jobs: RpgJob[] }>('/admin/rpg/jobs', { headers: withAuth(token) }),
+  putJob: (token: string, row: RpgJob) =>
+    request<RpgJob>('/admin/rpg/jobs', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+
   items: (token: string) => request<{ items: RpgItem[] }>('/admin/rpg/items', { headers: withAuth(token) }),
   putItem: (token: string, row: RpgItem) =>
     request<RpgItem>('/admin/rpg/items', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
@@ -6099,6 +6208,16 @@ export interface RpgBootstrapPartyMemberRaw {
    *  auto_strategy_id，隊友＝preset.strategy_id。ENGINE 的 decideAction 共用同一個決策入口，
    *  隊友與「玩家自動戰鬥」都靠這個欄位決定要用哪種策略（未知 id 引擎端一律退回 balanced）。 */
   strategyId?: string
+  /** DORPG P10（CONTRACT §3/§4、WIRE §戰鬥 bootstrap）：學過「守護本能」（hk_c2）≥1 級——玩家
+   *  按防禦（GUARD）期間即進入守護狀態（見契約 §3 inGuardianState）。後端一律送值（非
+   *  omitempty，見 battle.go wirePartyMember.GuardTaunt），非重騎士／未學到一律 false，不是
+   *  undefined；選填只是配合本檔一貫的「舊版後端可能還沒送」防禦慣例（同 rating？／weakElements？）。 */
+  guardTaunt?: boolean
+  /** DORPG P10（CONTRACT §1/§3、WIRE §戰鬥 bootstrap）：這位角色所屬職業的天生特性，目前只有
+   *  heavy_knight 的 damageTakenPct: -15（其餘一律送 0，非 undefined，見 battle.go wireJobTraits
+   *  註解）；已經合併進上面 equipmentEffects.damageTakenPct（夾限 ≥ -60 仍適用），這裡另外送一份
+   *  只給 FRONTEND 顯示/除錯用，ENGINE 的戰鬥計算不重複套用。選填同上，防禦舊版後端。 */
+  jobTraits?: { damageTakenPct: number }
 }
 /**
  * WIRE §戰鬥 bootstrap WeaponProfileWire（camelCase，「已展開成引擎詞彙」版本）：Compute 已經吃掉
@@ -6195,6 +6314,13 @@ export interface RpgBootstrapEffectRaw {
   hits?: number
   target?: string
   mp_cost?: number
+  // DORPG P10：kind=passive 專用，見 api.ts 會員端 EffectAtLevel.guard_taunt 型別註解——這裡是
+  // 同一份資料的 bootstrap（snake_case，逐欄對照後端 Go EffectAtLevel）鏡射版本。
+  guard_taunt?: boolean
+  // DORPG P10：kind=taunt 專用，同一份資料也會鏡射在 RpgBootstrapSkillRaw.taunt（camelCase）；
+  // ENGINE 的 fromApi.ts 讀哪一份是 ENGINE 的選擇，這裡純粹補齊型別對後端誠實。
+  retarget?: boolean
+  damage_taken_pct?: number
 }
 
 export interface RpgBootstrapSkillRaw {
@@ -6226,6 +6352,11 @@ export interface RpgBootstrapSkillRaw {
   // 優先序的「damage 技能挑 tier 最高的」需要真正的 tier 值，不再只靠陣列位置代理。只有職業
   // 技能（toWireSkillLeveled）會填；既有 5 個無職業技能維持 undefined（後端 omitempty 送 0）。
   tier?: number
+  // DORPG P10（CONTRACT §3/§4、WIRE §引擎）：kind='taunt' 專用展開值（camelCase，同本結構其餘
+  // BACKEND 計算好的欄位慣例，例如 iconUrl/cooldownMs/mpCost）；只有職業技能會填，非 taunt 技能
+  // 缺省 undefined。durationMs/damageTakenPct 已依等級展開（base+per_level×(lv-1)），engine 的
+  // dispatch.ts resolveTaunt() 直接讀這裡，不重新推導等級公式。
+  taunt?: { durationMs: number; damageTakenPct: number; retarget: boolean }
 }
 export interface RpgBootstrapItemRaw {
   id: string

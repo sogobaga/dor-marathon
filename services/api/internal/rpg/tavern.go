@@ -168,7 +168,8 @@ func (h *Handler) respondTavern(w http.ResponseWriter, r *http.Request, uid stri
 	}
 	var leaderJob *JobRow
 	if ch.JobID != nil {
-		j, jerr := h.getJobByID(ctx, *ch.JobID)
+		// DORPG P10：tavernResponse.Leader.Job 要含 paths/traits，改用 getJobByIDFull。
+		j, jerr := h.getJobByIDFull(ctx, *ch.JobID)
 		switch {
 		case jerr == nil:
 			leaderJob = &j
@@ -231,7 +232,9 @@ func (h *Handler) respondTavern(w http.ResponseWriter, r *http.Request, uid stri
 		if c.JobID == nil {
 			continue // 理論上不會發生：migration 181 已把四位傭兵都補上 job_id
 		}
-		job, jerr := h.getJobByID(ctx, *c.JobID)
+		// DORPG P10：MercenaryDTO.Job 要含 paths/traits（角色頁／酒館顯示職業特性），改用
+		// getJobByIDFull。
+		job, jerr := h.getJobByIDFull(ctx, *c.JobID)
 		if jerr != nil {
 			if respondIfMissingRelationMsg(w, jerr, errJobsNotReady) {
 				return
@@ -459,7 +462,9 @@ func (h *Handler) resolvePartyForBattle(ctx context.Context, userID string) ([]r
 		if comp.JobID == nil {
 			continue
 		}
-		job, jerr := h.getJobByID(ctx, *comp.JobID)
+		// DORPG P10：resolvedPartyMember.Job 要含 Traits——battle.go bootstrap 把它疊進這位
+		// 傭兵的 equipmentEffects.damageTakenPct（CONTRACT §3），改用 getJobByIDFull。
+		job, jerr := h.getJobByIDFull(ctx, *comp.JobID)
 		if jerr != nil {
 			return nil, jerr
 		}

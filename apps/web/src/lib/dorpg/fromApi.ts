@@ -199,6 +199,20 @@ function asStrategyId(v: string | undefined): string {
   return typeof v === 'string' && (STRATEGY_IDS as readonly string[]).includes(v) ? v : 'balanced';
 }
 
+/** P10：guardTaunt 只有明確 `true` 才算數（缺欄位／舊版後端／任何非 boolean 髒值一律當作沒有
+ *  這個被動），對齊本檔其餘布林旗標的防禦風格。 */
+function asGuardTaunt(v: unknown): boolean {
+  return v === true;
+}
+
+/** P10：jobTraits 整包缺失（舊版後端、或該職業沒有 traits）→ undefined（角色頁不顯示這一行，
+ *  見 PartyMember.jobTraits 型別註解）；有送但 damageTakenPct 型別跑掉→退回 0（物件本身存在，
+ *  只有那一格數字不可信，不是整包丟棄——跟 asEquipmentEffects() 缺欄位各自給中性值的精神一致）。 */
+function asJobTraits(v: { damageTakenPct?: unknown } | undefined): { damageTakenPct: number } | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  return { damageTakenPct: isFiniteNumber(v.damageTakenPct) ? v.damageTakenPct : 0 };
+}
+
 function mapPartyMember(pRaw: RpgBootstrapPartyMemberRaw): PartyMember {
   const p: PartyMemberWithStrategy = pRaw;
   return {
@@ -234,6 +248,9 @@ function mapPartyMember(pRaw: RpgBootstrapPartyMemberRaw): PartyMember {
     equipmentEffects: asEquipmentEffects(p.equipmentEffects),
     // P9：見上方 PartyMemberWithStrategy／asStrategyId 型別註解。
     strategyId: asStrategyId(p.strategyId),
+    // P10（CONTRACT §3、WIRE「戰鬥 bootstrap」）：見 asGuardTaunt／asJobTraits 型別註解。
+    guardTaunt: asGuardTaunt(p.guardTaunt),
+    jobTraits: asJobTraits(p.jobTraits),
   };
 }
 
@@ -271,7 +288,7 @@ function mapEnemy(e: RpgBootstrapEnemyRaw): Enemy {
   };
 }
 
-const SKILL_KINDS: readonly Skill['kind'][] = ['damage', 'heal', 'shield', 'buff', 'debuff', 'passive', 'special'];
+const SKILL_KINDS: readonly Skill['kind'][] = ['damage', 'heal', 'shield', 'buff', 'debuff', 'passive', 'special', 'taunt'];
 function asSkillKind(k: string): Skill['kind'] {
   return (SKILL_KINDS as readonly string[]).includes(k) ? (k as Skill['kind']) : 'damage';
 }
@@ -290,6 +307,16 @@ function asBuffDebuffStat(s: string | undefined): BuffDebuffStat | undefined {
 
 function asDmgType(d: string | undefined): DmgType | undefined {
   return d === 'magic' || d === 'physical' ? d : undefined;
+}
+
+/**
+ * P10（DORPG_P10 WIRE.md「REST」：「passive 展開新增 guard_taunt: boolean」）：raw effect 的
+ * `guard_taunt`（snake_case，同一份命名慣例——duration_ms/mp_cost，api.ts RpgBootstrapEffectRaw
+ * 已宣告）；只有明確 `true` 才回傳 true，其餘（false/undefined/髒型別）一律 undefined——跟本檔
+ * 其餘 as*() 系列「缺省就是沒有這回事」的防禦風格一致。
+ */
+function asGuardTauntFlag(e: RpgBootstrapEffectRaw): true | undefined {
+  return e.guard_taunt === true ? true : undefined;
 }
 
 /**
@@ -314,6 +341,25 @@ function asEffect(e: RpgBootstrapEffectRaw | undefined, fallbackKind: Skill['kin
     hits: isFiniteNumber(e.hits) ? e.hits : undefined,
     target: e.target !== undefined ? asSkillTarget(e.target) : fallbackTarget,
     mpCost: isFiniteNumber(e.mp_cost) ? e.mp_cost : 0,
+    guardTaunt: asGuardTauntFlag(e),
+  };
+}
+
+/**
+ * P10（DORPG_P10 CONTRACT §3、WIRE「戰鬥 bootstrap」）：wire 送的 taunt 展開值（camelCase，同
+ * asWeaponProfile()「後台自由編輯的 JSON，逐欄防禦」精神）——durationMs 是唯一真正必要的欄位
+ * （沒有它整筆視為無效，退回 undefined：一顆「持續時間不明」的挑釁/守護技能沒有意義，跟
+ * asEquippedWeapon() 對 profile 缺失整包退回 null 是同一種「核心欄位一壞全丟」判斷）；
+ * damageTakenPct/retarget 缺欄位給中性值（0／false，等同「這顆技能不附帶減傷／不強制拉怪」）。
+ */
+function asTaunt(raw: unknown): { durationMs: number; damageTakenPct: number; retarget: boolean } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  if (!isFiniteNumber(r.durationMs)) return undefined;
+  return {
+    durationMs: r.durationMs,
+    damageTakenPct: isFiniteNumber(r.damageTakenPct) ? r.damageTakenPct : 0,
+    retarget: r.retarget === true,
   };
 }
 
@@ -357,6 +403,10 @@ function mapSkill(s: RpgBootstrapSkillRaw | null): Skill | null {
     // 見下方型別註解），未選職業的既有 5 個技能仍缺這欄（後端 omitempty 送 0 或不送），
     // ai.ts 的 pickHighestTierSkill 對這些技能一樣退回陣列位置代理值。
     tier: isFiniteNumber(s.tier) ? s.tier : undefined,
+    // P10（CONTRACT §3、WIRE「戰鬥 bootstrap」）：只有 kind='taunt' 才有意義；非 taunt 技能即使
+    // wire 誤送了這個欄位也一律忽略（asTaunt 只在真的需要時才被呼叫，其它 kind 恆為 undefined，
+    // 跟 EffectAtLevel 只在對應 kind 有意義的欄位一律留空是同一個精神）。
+    taunt: kind === 'taunt' ? asTaunt(s.taunt) : undefined,
   };
 }
 

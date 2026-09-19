@@ -22,7 +22,7 @@ import {
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
 import {
   STAT_META, DERIVED_META, resistLabel, BATTLE_DISPLAY_DEFAULTS, estimateAttackCooldownMs, estimateCastMs,
-  jobEmoji, SKILL_KIND_LABEL, formatEffectAtLevel, sortJobs,
+  jobEmoji, SKILL_KIND_LABEL, formatEffectAtLevel, formatTauntEffect, jobTraitLine, sortJobs,
   EQUIP_SLOT_ORDER, formatEquipBonus, strategyLabel,
 } from '@/lib/rpgMeta'
 
@@ -464,6 +464,13 @@ function JobSection({ jobs, currentId, busy, onSelect }: { jobs: JobDTO[]; curre
                   <span style={{ fontSize: 13, fontWeight: 800, color: active ? '#fff' : 'var(--tx)' }}>{j.name}</span>
                 </div>
                 <div style={{ fontSize: 10, color: active ? 'rgba(255,255,255,.9)' : 'var(--tx-dim)', lineHeight: 1.35, marginTop: 2 }}>{j.tagline}</div>
+                {/* DORPG P10（CONTRACT §1/§3/§5）：目前唯一有 traits 的是重騎士（受到傷害 -15%），
+                    金底卡片上文字強制白色（金底白字全站通則），其餘卡片用強調色（--fug）凸顯這是加成資訊。 */}
+                {jobTraitLine(j.traits) && (
+                  <div style={{ fontSize: 9.5, fontWeight: 700, color: active ? '#fff' : 'var(--fug)', marginTop: 3 }}>
+                    {jobTraitLine(j.traits)}
+                  </div>
+                )}
               </button>
             )
           })}
@@ -476,15 +483,13 @@ function JobSection({ jobs, currentId, busy, onSelect }: { jobs: JobDTO[]; curre
   )
 }
 
-// 依路線（a/b）分兩欄呈現，每欄依 tier 排序（契約 §5：每職業 10 個＝路線 A 5 個＋路線 B 5 個）。
+// 依路線（a/b，重騎士額外有 c「守護」）分欄呈現，每欄依 tier 排序（契約 §5：每職業路線 A/B 各
+// 5 個；DORPG P10 CONTRACT §1/§4：路線改依 job.paths 陣列通用渲染，沒有 path_c 的職業畫面不變
+// ——job.paths 對這些職業本來就只有兩個元素）。
 function SkillPaths({ job, skills, busySkill, onDelta }: { job: JobDTO; skills: SkillDTO[]; busySkill: string | null; onDelta: (id: string, d: 1 | -1 | 'max') => void }) {
-  const paths: Array<{ key: 'a' | 'b'; name: string; desc: string }> = [
-    { key: 'a', name: job.path_a.name, desc: job.path_a.desc },
-    { key: 'b', name: job.path_b.name, desc: job.path_b.desc },
-  ]
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, marginTop: 10 }}>
-      {paths.map((p) => {
+      {job.paths.map((p) => {
         const list = skills.filter((s) => s.path === p.key).sort((a, b) => a.tier - b.tier)
         return (
           <div key={p.key}>
@@ -550,7 +555,17 @@ function SkillRow({ skill, allSkills, busy, onDelta }: { skill: SkillDTO; allSki
 
 // 效果數字：level=0 時 effect_at_level 已是「Lv1 預覽」（見 WIRE），故 0 級不必另外重複顯示
 // 「下一級」（那會跟 Lv1 預覽完全一樣）；level≥1 才顯示 effect_next_level（已達上限時為 null）。
+// DORPG P10（CONTRACT §3/§4/§5）：kind='taunt' 改讀 skill.taunt（持續秒數／減傷／是否拉怪，見
+// rpgMeta.ts formatTauntEffect 型別註解），WIRE 沒有 taunt 專用的「下一級預覽」欄位，故只顯示
+// 目前等級的效果，不顯示下一級預覽（跟其餘 kind 不同，是資料本身缺這個欄位，不是遺漏）。
 function EffectPreview({ skill }: { skill: SkillDTO }) {
+  if (skill.kind === 'taunt') {
+    return (
+      <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 2 }}>
+        {skill.level === 0 ? 'Lv1 效果預覽：' : `Lv${skill.level} 效果：`}{formatTauntEffect(skill.taunt)}
+      </div>
+    )
+  }
   const cur: EffectAtLevel = skill.effect_at_level
   return (
     <>

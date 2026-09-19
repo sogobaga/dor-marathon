@@ -11,11 +11,18 @@ import "fmt"
 
 // validSkillKinds P5（CONTRACT §5）新增 buff/debuff/passive/special 四種 kind——damage/heal/
 // shield 三種是 P2 既有實作，其餘四種是本輪新增的效果詞彙（passive 不進技能欄、special 本輪
-// 未實裝，皆由呼叫端依 kind 分流處理，見 skills.go ExpandEffect）。
+// 未實裝，皆由呼叫端依 kind 分流處理，見 skills.go ExpandEffect）。taunt 是 DORPG P10（CONTRACT
+// §2/§3）新增：重騎士守護路線的挑釁／守護姿態，展開規則另見 skills.go ExpandEffect 的 taunt 分支。
 var validSkillKinds = map[string]bool{
 	"damage": true, "heal": true, "shield": true,
 	"buff": true, "debuff": true, "passive": true, "special": true,
+	"taunt": true,
 }
+
+// validSkillPaths DORPG P10：技能樹路線白名單——既有 5 個無職業技能 path="" 留空字串合法，六職業
+// 一律 "a"/"b"，只有 heavy_knight 多一條 "c"（守護，CONTRACT §1/§2）。之前沒有這個白名單（P5～P9
+// 都靠職業本身只定義 a/b 兩條路線間接保證），P10 起路線數量不再固定兩條，值得補一個明確的值域檢查。
+var validSkillPaths = map[string]bool{"": true, "a": true, "b": true, "c": true}
 
 // validSkillTargets 新增 allEnemies（P5：damage 可以 target=allEnemies 打全體、debuff 同理）。
 var validSkillTargets = map[string]bool{"enemy": true, "ally": true, "self": true, "allAllies": true, "allEnemies": true}
@@ -70,16 +77,48 @@ func (m MonsterRow) Validate() error {
 	return nil
 }
 
-// JobPathRow 職業的其中一條路線（WIRE JobDTO.path_a/path_b）。
+// JobPathRow 職業的其中一條路線（WIRE JobDTO.path_a/path_b/path_c）。
 type JobPathRow struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Desc string `json:"desc"`
 }
 
-// JobRow rpg_jobs 資料列，json tag 直接對齊 WIRE 的 JobDTO——不需要另外轉一層 DTO。
-// 本輪沒有後台 CRUD（CONTRACT §7 明講），所以沒有 Validate()：六職業由 migration 180 seed，
-// id/欄位在程式生命週期內視為靜態資料。
+// JobPathKeyRow DORPG P10（WIRE JobDTO.paths）：路線陣列的單一元素，比 PathA/PathB/PathC 三個
+// 各自獨立的欄位多帶一個 Key，讓前端（酒館腳本技能區／角色頁技能頁／後台技能表）可以用同一段
+// 迴圈通用渲染「這個職業有幾條路線」，不必寫死「一定是兩條」。只有 heavy_knight 的切片含第三個
+// 元素（key="c"），見 buildJobPaths（jobs.go）。
+type JobPathKeyRow struct {
+	ID   string `json:"id"`
+	Key  string `json:"key"` // "a" | "b" | "c"
+	Name string `json:"name"`
+	Desc string `json:"desc"`
+}
+
+// JobTraits DORPG P10（CONTRACT §1/§4）：職業天生特性，目前只定義 damage_taken_pct 一項——用
+// 指標分辨「這個職業沒有這項特性」（omitempty，整個物件序列化成 {}）與「值剛好是 0」。未來若要
+// 新增別的特性鍵，在這裡加欄位＋Validate() 加一段即可，仍然共用同一份 rpg_jobs.traits JSONB。
+type JobTraits struct {
+	DamageTakenPct *float64 `json:"damage_taken_pct,omitempty"`
+}
+
+// Validate 後台 PUT /admin/rpg/jobs 用：目前唯一允許的特性鍵 damage_taken_pct 必須落在
+// [-60,0]——正值等於懲罰自己不合理；-60 是 P8 裝備彙總既有的下限（armor.go AggregateEquipment，
+// 不在本輪 BACKEND 所有權內，見下方 JobRow.PathC 註解），traits 疊加進 equipmentEffects 後還會
+// 被 battle.go 的 clampDamageTakenPct 再夾一次，這裡先擋離譜輸入。
+func (t JobTraits) Validate() error {
+	if t.DamageTakenPct != nil {
+		v := *t.DamageTakenPct
+		if v < -60 || v > 0 {
+			return fmt.Errorf("traits.damage_taken_pct 必須介於 -60..0")
+		}
+	}
+	return nil
+}
+
+// JobRow rpg_jobs 資料列，json tag 直接對齊 WIRE 的 JobDTO——不需要另外轉一層 DTO。P10 起有
+// 後台 CRUD（PUT /admin/rpg/jobs，見 battle_admin.go／jobs.go），推翻 P5 時代「本輪沒有後台
+// CRUD」的舊決策，但六職業本身仍是固定 6 筆（migration 180 seed），只開放編輯既有列。
 type JobRow struct {
 	ID               string     `json:"id"`
 	Name             string     `json:"name"`
@@ -91,6 +130,20 @@ type JobRow struct {
 	AtkBranch        string     `json:"atk_branch"`
 	RecommendedStats string     `json:"recommended_stats"`
 	SortOrder        int        `json:"sort_order"`
+
+	// PathC/Traits/Paths DORPG P10（CONTRACT §1/§2、WIRE）：第三條技能路線（只有 heavy_knight
+	// 有值，nil＝這個職業沒有）與職業天生特性。兩者都不在 content_repo.go 既有的 jobCols/scanJob
+	// 查詢欄位內——content_repo.go 屬於另一個角色的所有權（本輪 BACKEND 只能改 content.go/
+	// skills.go/jobs.go/handler.go/battle.go/tavern.go/presets.go/presets_test.go/
+	// battle_admin.go，見 migrations/187_rpg_p10_guardian.sql 檔頭），所以另外用 jobs.go 的
+	// loadJobExtras()/getJobByIDFull()/listJobsFull() 查這四個新欄位、合併進一個「完整」JobRow，
+	// 而不是去改那個檔案的 SELECT 欄位清單。凡是要把 JobDTO 回給外部（/rpg/me、/rpg/jobs、
+	// /rpg/tavern、/rpg/skills、後台）的呼叫端都必須改用 *Full 版本，否則 Paths/Traits/PathC
+	// 會靜靜地維持零值——這不是 500，但會讓某些端點「看起來」缺第三條路線／沒有特性，容易誤判成
+	// bug，見各呼叫端的修改註解。
+	PathC  *JobPathRow     `json:"path_c,omitempty"`
+	Traits JobTraits       `json:"traits"`
+	Paths  []JobPathKeyRow `json:"paths"`
 }
 
 // SkillEffect P5（CONTRACT §5）技能效果詞彙——所有 kind 共用同一個彈性結構存進 rpg_skills.effect
@@ -109,6 +162,17 @@ type SkillEffect struct {
 	ValueBase     float64 `json:"value_base,omitempty"`
 	ValuePerLevel float64 `json:"value_per_level,omitempty"`
 	Text          string  `json:"text,omitempty"` // kind=special：尚未實裝，純顯示文字
+
+	// --- DORPG P10（CONTRACT §2/§3）新增：kind=taunt 專屬欄位，與 passive 的 guard_taunt。
+	// duration_ms（既有欄位）用於「持續時間不隨等級變化」的 buff/debuff；taunt 的持續時間
+	// 會隨等級延長，所以另外開 base/per_level 這組，跟 damage/heal 的 coef_base/coef_per_level
+	// 是同一種命名慣例。---
+	DurationBaseMs         int     `json:"duration_base_ms,omitempty"`
+	DurationPerLevelMs     int     `json:"duration_per_level_ms,omitempty"`
+	Retarget               bool    `json:"retarget,omitempty"`                   // kind=taunt：是否讓場上敵人立刻改鎖施放者
+	DamageTakenPctBase     float64 `json:"damage_taken_pct_base,omitempty"`      // kind=taunt：守護姿態的減傷（負值）
+	DamageTakenPctPerLevel float64 `json:"damage_taken_pct_per_level,omitempty"` // kind=taunt
+	GuardTaunt             bool    `json:"guard_taunt,omitempty"`                // kind=passive：學到後按防禦即進入守護狀態
 }
 
 // SkillRow rpg_skills 資料列。
@@ -156,6 +220,12 @@ func (s SkillRow) Validate() error {
 	}
 	if !validSkillTargets[s.Target] {
 		return fmt.Errorf("target 不合法")
+	}
+	// DORPG P10：path 值域檢查（見 validSkillPaths 註解）——後台編輯技能表打錯字（例如 "C" 大寫、
+	// "d"）會被這裡擋下，而不是安靜地存進一個 listSkillsByJob(jobID) 永遠篩不到、ValidatePreset
+	// 也永遠比對不到前置鏈的孤兒列。
+	if !validSkillPaths[s.Path] {
+		return fmt.Errorf("path 不合法")
 	}
 	if !validWeaponKinds[s.Weapon] {
 		return fmt.Errorf("weapon 不合法")

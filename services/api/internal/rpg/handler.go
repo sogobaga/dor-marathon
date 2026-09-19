@@ -223,12 +223,15 @@ func (h *Handler) buildCharacterView(ctx context.Context, cfg Config, baseLevel 
 
 	var job *JobRow
 	if ch.JobID != nil {
-		j, err := h.getJobByID(ctx, *ch.JobID)
+		// DORPG P10：/rpg/me 的 Job 要含 paths/traits，改用 getJobByIDFull（見 content.go
+		// JobRow.PathC 註解）。
+		j, err := h.getJobByIDFull(ctx, *ch.JobID)
 		switch {
 		case err == nil:
 			job = &j
 		case errors.Is(err, pgx.ErrNoRows):
-			// 職業被刪除／查無（本輪沒有職業 CRUD，理論上不會發生）——保守視為未選職業。
+			// 職業被刪除／查無（P10 起雖有後台 PUT，但沒有刪除路徑，理論上不會發生）——保守視為
+			// 未選職業。
 		default:
 			return characterView{}, err
 		}

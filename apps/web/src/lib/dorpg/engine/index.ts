@@ -37,6 +37,10 @@ export {
   combineElementResistPct,
   pickInitialTarget,
   pickNextTarget,
+  // P10（DORPG_P10 CONTRACT §2/§3、WIRE「引擎」）：重騎士「守護」路線的仇恨規則——供 ai.ts／
+  // verify 腳本直接使用，不必各自重新 import 內部模組路徑。
+  inGuardianState,
+  pickEnemyTarget,
 } from './formulas';
 // P5：buff/debuff 狀態效果的查詢／套用／暴擊倍率抽樣（見 effects.ts）；跟 formulas.ts 分開匯出檔案
 // 但一樣攤平在引擎的公開介面上，呼叫端不需要知道內部是哪個檔案實作的。
@@ -106,6 +110,10 @@ function toPartyActor(pm: PartyMember, index: number, now: number, cfg: BattleCo
     // （含 DB 覆寫）留給 decideAction 呼叫前的 resolveStrategy(actor.strategyId, ctx.cfg.
     // aiStrategies) 統一處理（見該函式與 PartyActor.strategyId 型別註解）。
     strategyId: pm.strategyId ?? 'balanced',
+    // P10（CONTRACT §2/§3、WIRE「引擎」）：戰鬥開始時沒有人在挑釁／守護中（見 PartyActor.
+    // tauntUntil 型別註解）；guardTaunt 原樣從 PartyMember 帶入，缺省 false（沒有這個被動）。
+    tauntUntil: 0,
+    guardTaunt: pm.guardTaunt ?? false,
   };
 }
 

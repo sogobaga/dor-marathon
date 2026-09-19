@@ -439,6 +439,14 @@ export default function BattleScreen({
           // 標籤列（partyStatusTags／enemyTagOverlay，見下方）直接讀當下的 activeEffects 即時算，
           // 到期那一格下一次渲染自然消失；任務規格明講不必飄字，這裡刻意不做事。
           break;
+        // DORPG P10（CONTRACT §3/§5）：挑釁／守護姿態命中——只在施放者卡片飄「挑釁！」（金色語氣，
+        // 見 FloatText.tsx 'taunt' tone）；守護標籤列（partyGuardian，見上方）直接讀當下的
+        // tauntUntil/action 即時算，不需要在這裡另外處理。敵人被拉過來目前沒有專屬覆層可疊
+        // （CONTRACT §5「沿用 targetChanged 視覺（若有）」——'targetChanged' 事件本身目前也還沒有
+        // 畫面回饋，見本檔案沒有那個 case，故這裡沒有東西可沿用，不是遺漏）。
+        case 'taunt':
+          pushFloat(ev.actorId, '挑釁！', 'taunt');
+          break;
         // escapeJudging/escapeFailed/escaped：TopBar 的訊息直接從 state.escape 算，不需要在這裡處理。
         default:
           break;
@@ -695,6 +703,20 @@ export default function BattleScreen({
     () => state.party.map((p) => p.activeEffects.map((e): { stat: BuffDebuffStat; value: number } => ({ stat: e.stat, value: e.value }))),
     [state.party],
   );
+  // DORPG P10（CONTRACT §3：inGuardianState）：這位隊員目前是否處於「守護狀態」——存活且
+  // （tauntUntil 尚未到期，或正在按防禦且學過守護本能）。跟 partyStatusTags 一樣純顯示投影，不做
+  // 任何戰鬥判斷。ENGINE 尚未在 PartyActor 加 tauntUntil/guardTaunt 前，這裡用結構型別安全讀取
+  // （缺欄位視為 undefined→false），ENGINE 補上正式欄位後這行讀法不需要再改（見任務回報對 ENGINE
+  // 的需求，同本檔上方 'attack' 事件 splash 欄位的既有讀法慣例）。
+  const partyGuardian = useMemo(
+    () =>
+      state.party.map((p) => {
+        const tauntUntil = (p as unknown as { tauntUntil?: number }).tauntUntil ?? 0;
+        const guardTaunt = (p as unknown as { guardTaunt?: boolean }).guardTaunt ?? false;
+        return p.hp > 0 && (tauntUntil > state.now || (p.action === 'guarding' && guardTaunt));
+      }),
+    [state.party, state.now],
+  );
   // P5 POLISH：敵人身上的 buff/debuff 標籤列——EnemyPlate 本體定義在 BattleStage.tsx（本輪寫入範圍
   // 不含該檔），改在這裡重算一次站位（同 BattleStage.tsx computeEnemyPlacement 的 footX/footY 公式，
   // 見 PLATE_LIFT_DUP 常數註解）疊一層獨立 overlay，只加不改 BattleStage 既有的渲染樹。
@@ -909,6 +931,7 @@ export default function BattleScreen({
                 onPick={isInactive ? undefined : partyPickHandlers[i]}
                 floatText={state.party[i] ? floatTexts[state.party[i].id] : undefined}
                 statusTags={partyStatusTags[i]}
+                guardian={partyGuardian[i]}
               />
             ))}
           </div>

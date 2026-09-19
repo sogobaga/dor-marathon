@@ -111,6 +111,23 @@ export interface PartyActor {
    * 隊友（advanceAllyAI）亦然，兩者共用同一份 registry。
    */
   strategyId: string;
+  /**
+   * P10（DORPG_P10 CONTRACT §2/§3、WIRE「引擎」）：這位角色目前的挑釁/守護到期時間（戰鬥時鐘
+   * 毫秒，0＝無/已過期）——只由 engine/combat.ts resolveTaunt 寫入（`tauntUntil = max(現值,
+   * now+durationMs)`，重複施放取較晚的到期時間，不會被更短的新效果縮短）；createBattle 一律
+   * 初始化 0（開場沒有人在挑釁）。formulas.ts inGuardianState() 用 `tauntUntil > now` 判斷這個
+   * 來源的守護狀態是否仍然有效——過期後不需要另外清成 0，比較式本身已經失效。
+   */
+  tauntUntil: number;
+  /**
+   * P10（DORPG_P10 CONTRACT §2/§3、WIRE「引擎」）：這位角色是否學過「守護本能」被動（heavy_knight
+   * 專屬 hk_c2，≥1 級）——只有這樣的角色在 `action==='guarding'` 期間才算進入守護狀態（見
+   * formulas.ts inGuardianState）。從 PartyMember.guardTaunt 原樣帶入（createBattle 缺省
+   * false，見 index.ts toPartyActor）。AI 隊友目前不能按防禦（CONTRACT §1「隊友（AI）目前不能
+   * 按防禦」），這個欄位對隊友完全是 no-op——傭兵想靠這條路線吸引仇恨要用挑釁／守護姿態（taunt
+   * 技能寫入的 tauntUntil），不是這個被動。
+   */
+  guardTaunt: boolean;
 }
 
 export interface EnemyActor {
@@ -403,7 +420,14 @@ export type Command =
  * 直接照樣傳遞，不需要另外轉譯。
  */
 export interface Decision {
-  kind: 'heal' | 'buff' | 'damage' | 'debuff' | 'attack' | 'guard' | 'item' | 'wait';
+  /**
+   * P10（DORPG_P10 CONTRACT §3、WIRE「引擎」）新增 'taunt'：施放 kind='taunt' 的守護/挑釁技能
+   * （見 ai.ts decideGuardStance／decideProtectGuardStance）——目標恆為施放者自己（self），跟
+   * 'buff' 分開一個字面值只是讓「這是守護判斷選出來的動作」在型別上一眼可辨，執行端
+   * （ai.ts applyAllyDecision／autopilot.ts applyDecisionForPlayer）把它跟 heal/buff/damage/
+   * debuff 併在同一段「查表→castNow」執行邏輯，不需要額外分支。
+   */
+  kind: 'heal' | 'buff' | 'damage' | 'debuff' | 'attack' | 'guard' | 'item' | 'taunt' | 'wait';
   skillId?: string;
   targetId?: string | 'ALL' | 'ALL_ENEMIES';
 }
@@ -467,7 +491,16 @@ export type BattleEvent =
     }
   /** 到期自動移除時發出（見 effects.ts pruneAndRegenEffects），供 FRONTEND 收掉狀態圖示用；
    *  非必要（引擎內部一定會清除，這個事件只是給 UI 知道「什麼時候清除的」）。 */
-  | { seq: number; at: number; kind: 'statusExpired'; targetId: string; stat: BuffDebuffStat };
+  | { seq: number; at: number; kind: 'statusExpired'; targetId: string; stat: BuffDebuffStat }
+  // ---- P10（DORPG_P10 CONTRACT §3、WIRE「戰鬥 bootstrap」）新增：挑釁強制拉怪。 ----
+  /**
+   * retarget=true 的 taunt 技能（挑釁 hk_c1）施放當下發出，僅在 retarget 為 true 時推（見
+   * engine/combat.ts resolveTaunt）——retarget=false 的守護姿態（hk_c3）不會產生這個事件，
+   * 它只透過 tauntUntil 影響「之後」的選目標，沒有「立即拉怪」這個視覺事件可言。enemyIds＝
+   * 這一下被強制改鎖 actorId 的存活敵人清單（含原本正在 windup 蓄力鎖定別人的敵人），供
+   * FRONTEND 顯示浮字「挑釁！」與敵人被拉扯的視覺（若有）。
+   */
+  | { seq: number; at: number; kind: 'taunt'; actorId: string; enemyIds: string[] };
 
 export interface BattleState {
   phase: BattlePhase;

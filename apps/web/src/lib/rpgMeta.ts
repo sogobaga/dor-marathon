@@ -89,6 +89,7 @@ export function jobEmoji(jobId: string | null | undefined): string {
 }
 
 // 技能 kind 中文標籤（見契約 §5 七種詞彙；special＝本輪引擎未實裝，UI 上直接顯示這個字樣而非「特殊」）。
+// DORPG P10（CONTRACT §5）新增 taunt→「守護」（重騎士守護系列：挑釁／守護姿態）。
 export const SKILL_KIND_LABEL: Record<SkillKind, string> = {
   damage: '傷害',
   heal: '治療',
@@ -97,6 +98,7 @@ export const SKILL_KIND_LABEL: Record<SkillKind, string> = {
   debuff: '減益',
   passive: '被動',
   special: '尚未實裝',
+  taunt: '守護',
 }
 
 // buff/debuff/passive 的 stat 詞彙中文標籤（見契約 §5 三個 kind 各自的 stat 集合聯集）。
@@ -139,12 +141,50 @@ export function formatEffectAtLevel(e: EffectAtLevel | null | undefined): string
     }
     case 'passive': {
       const sign = (e.value ?? 0) >= 0 ? '+' : ''
-      return `${skillStatLabel(e.stat ?? '')} ${sign}${fmtCoef(e.value)}（常駐）`
+      // DORPG P10：guard_taunt=true（目前只有「守護本能」hk_c2）額外註明「按防禦即進入守護狀態」，
+      // 這是這顆被動唯一會影響戰鬥規則（而不只是數值加成）的地方，值得跟數值放在同一行提醒玩家。
+      const guardNote = e.guard_taunt ? '・按防禦即進入守護狀態' : ''
+      return `${skillStatLabel(e.stat ?? '')} ${sign}${fmtCoef(e.value)}（常駐）${guardNote}`
     }
+    case 'taunt':
+      // DORPG P10：taunt 的持續時間／減傷／是否拉怪不在這個扁平結構裡（WIRE 明講是額外的
+      // SkillDTO.taunt 物件），呼叫端（CharacterScreen/TavernScreen 的技能列）應改呼叫下面的
+      // formatTauntEffect(skill.taunt) 取代這支；這裡只當直接誤呼叫 formatEffectAtLevel(taunt 技能)
+      // 時的保底文字，不會出現在正常畫面上。
+      return '施放後進入守護狀態（效果見下方）'
     case 'special':
     default:
       return '本輪尚未實裝數值'
   }
+}
+
+/**
+ * DORPG P10（CONTRACT §3/§4/§5）：taunt 技能（挑釁／守護姿態）的展開效果——獨立於上面
+ * formatEffectAtLevel 之外（見 SkillDTO.taunt 型別註解，WIRE 明講是額外一個 taunt 物件，不是塞進
+ * effect_at_level 既有欄位），CharacterScreen／TavernScreen 的技能列在 kind==='taunt' 時改呼叫
+ * 這支，取代 formatEffectAtLevel(skill.effect_at_level)。
+ */
+export function formatTauntEffect(t: { duration_ms: number; damage_taken_pct: number; retarget: boolean } | null | undefined): string {
+  if (!t) return ''
+  const parts = [`持續 ${(t.duration_ms / 1000).toFixed(1)}s`]
+  if (t.damage_taken_pct) {
+    const sign = t.damage_taken_pct >= 0 ? '+' : ''
+    parts.push(`受到傷害 ${sign}${fmtCoef(t.damage_taken_pct)}%`)
+  }
+  parts.push(t.retarget ? '拉怪（敵人立刻改鎖自己）' : '不拉怪（僅影響之後選目標）')
+  return parts.join('・')
+}
+
+/**
+ * DORPG P10（CONTRACT §1/§3/§5）：角色頁職業卡「職業特性：受到傷害 −15%」一行；目前唯一用得到
+ * 的職業特性是 damage_taken_pct（重騎士 -15），沒有這個特性（值為 0/undefined）回傳 null，呼叫端
+ * 據此決定要不要渲染這一行。
+ */
+export function jobTraitLine(traits: { damage_taken_pct?: number } | null | undefined): string | null {
+  const v = traits?.damage_taken_pct
+  if (!v) return null
+  const sign = v > 0 ? '+' : '−'
+  return `職業特性：受到傷害 ${sign}${Math.abs(v)}%`
 }
 function fmtCoef(n: number | undefined): string {
   if (n == null || isNaN(n)) return '0'

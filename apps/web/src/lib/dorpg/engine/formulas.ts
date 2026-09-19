@@ -1,7 +1,8 @@
 // 引擎公式與目標挑選（純函式，無 React/DOM，無 Date.now()）。
 // 型別引用在 Node type-stripping 下整段消失，不影響本檔被 node 直接 import 執行。
 import type { ActorStats, CombatRating, EnemySlotId, EquipmentEffectsWire, WeaponProfileWire } from '../types';
-import type { BattleConfig, BattleState, EnemyActor } from './types';
+import type { Ctx } from './context';
+import type { BattleConfig, BattleState, EnemyActor, PartyActor } from './types';
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
@@ -468,4 +469,44 @@ export function pickWeightedAliveTarget(
   if (weighted.length === 0) return null;
   const idx = Math.min(weighted.length - 1, Math.floor(rng() * weighted.length));
   return weighted[idx];
+}
+
+// ---- P10（DORPG_P10 CONTRACT §2/§3、WIRE「引擎」）新增：重騎士「守護」路線的仇恨規則。 ----
+
+/**
+ * 守護狀態判定——兩種來源（CONTRACT §3）：(a) 施放中的 taunt 技能尚未到期（`tauntUntil > now`，
+ * 不管是挑釁 hk_c1 還是守護姿態 hk_c3，兩者都會寫入 tauntUntil，見 combat.ts resolveTaunt）；
+ * (b) 正在防禦（`action==='guarding'`）且學過「守護本能」被動（`guardTaunt=true`，只對玩家有意義
+ * ——AI 隊友目前不能按防禦，見 PartyActor.guardTaunt 型別註解）。死亡角色（hp<=0）一律不算，
+ * 不管 tauntUntil/guardTaunt 為何，怪物都不該被導向一具屍體。
+ */
+export function inGuardianState(
+  actor: Pick<PartyActor, 'hp' | 'action' | 'tauntUntil' | 'guardTaunt'>,
+  now: number,
+): boolean {
+  return actor.hp > 0 && (actor.tauntUntil > now || (actor.action === 'guarding' && actor.guardTaunt));
+}
+
+/**
+ * 敵人選目標（CONTRACT §3／WIRE「引擎」：「先找守護狀態中的存活角色（多人取 tauntUntil 最大；
+ * 同值取玩家）→ 有就回傳；否則沿用 pickWeightedAliveTarget」）。advanceEnemyAI 的 idle 鎖定與
+ * 「目標已死」fallback 都改走這支，取代直接呼叫 pickWeightedAliveTarget（見 ai.ts）——沒有任何
+ * 角色處於守護狀態時，這支函式的行為跟直接呼叫 pickWeightedAliveTarget 完全等價（多一層 filter
+ * 找不到東西就直接落到同一個 fallback 呼叫），既有測試不受影響。
+ * 「同值取玩家」主要處理「兩者 tauntUntil 都是 0」的情況——GUARD_BEGIN 瞬間進入的守護狀態
+ * （來源 b）沒有具體到期時間，恆為 0，兩個以上這種來源同分時優先保護玩家。
+ */
+export function pickEnemyTarget(ctx: Ctx, rng: () => number): string | null {
+  const guardians = ctx.party.filter((p) => inGuardianState(p, ctx.now));
+  if (guardians.length > 0) {
+    let best = guardians[0];
+    for (let i = 1; i < guardians.length; i++) {
+      const g = guardians[i];
+      if (g.tauntUntil > best.tauntUntil || (g.tauntUntil === best.tauntUntil && g.isPlayer && !best.isPlayer)) {
+        best = g;
+      }
+    }
+    return best.id;
+  }
+  return pickWeightedAliveTarget(ctx.party, rng);
 }

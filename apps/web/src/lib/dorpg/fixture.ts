@@ -115,6 +115,9 @@ export interface SkillRow {
   implemented?: boolean;
   /** P5：buff/debuff 專屬——展開後的即時數值（離線示範技能固定給 level=1 的數值，不做等級縮放）。 */
   effect?: EffectAtLevel;
+  /** P10（DORPG_P10 CONTRACT §3）：kind='taunt' 專屬——展開後的即時數值（離線示範直接手算指定
+   *  等級的展開結果，見 RPG_SKILLS 的 hk_c1/hk_c3 兩筆註解，不在這裡重新做等級公式）。 */
+  taunt?: { durationMs: number; damageTakenPct: number; retarget: boolean };
 }
 
 export interface ItemRow {
@@ -266,6 +269,25 @@ export const RPG_SKILLS: SkillRow[] = [
     mpCost: 10, cooldownMs: 0, coefficient: 0, flat: 0, castMs: 0, isDefault: true, sortOrder: 9,
     level: 1, maxLevel: 5, displayText: '提升掉落品質（尚未實裝）。', implemented: false,
   },
+  // P10（DORPG_P10 CONTRACT §2/§3）：重騎士「守護」路線兩顆示範技能（migration 187 hk_c1/hk_c3
+  // 的離線鏡像）——isDefault:false，不進玩家的固定 10 格技能欄（跟既有 9 個 isDefault:true 的
+  // 示範技能不同，這兩顆只給阿深這位傭兵demo用，見下面 RPG_COMPANIONS 阿深的 skillIds）。
+  // taunt 展開值＝手算「CONTRACT §2 表格 base+per_level×(lv-1)」在阿深帶的等級（挑釁 Lv3／
+  // 守護姿態 Lv4）——離線 fixture 沒有配點/升級系統，固定給這兩個等級的展開結果，不做等級公式。
+  {
+    id: 'hk_c1', name: '挑釁', iconId: 'icon_skill_slash', kind: 'taunt', target: 'self', weapon: 'greatsword', element: 'neutral',
+    mpCost: 8, cooldownMs: 6000, coefficient: 0, flat: 0, castMs: 300, isDefault: false, sortOrder: 10,
+    level: 3, maxLevel: 10, displayText: '吸引怪物的攻擊，讓所有敵人立刻把攻擊目標轉向自己。',
+    // durationMs = 4000 + 500×(3-1) = 5000；damageTakenPct 恆 0（挑釁不附帶減傷）；retarget=true。
+    taunt: { durationMs: 5000, damageTakenPct: 0, retarget: true },
+  },
+  {
+    id: 'hk_c3', name: '守護姿態', iconId: 'icon_skill_shield', kind: 'taunt', target: 'self', weapon: 'greatsword', element: 'neutral',
+    mpCost: 18, cooldownMs: 12000, coefficient: 0, flat: 0, castMs: 400, isDefault: false, sortOrder: 11,
+    level: 4, maxLevel: 5, displayText: '進入守護狀態並降低自身受到的傷害，持續一段時間。',
+    // durationMs = 10000 + 1000×(4-1) = 13000；damageTakenPct = -10 + -2×(4-1) = -16；retarget=false。
+    taunt: { durationMs: 13000, damageTakenPct: -16, retarget: false },
+  },
 ];
 
 /** amount 由 TUNE 依 BALANCE.md §5 調整（hp_potion 300→150、mp_potion 120→80，與 migration 176
@@ -280,21 +302,35 @@ export const RPG_ITEMS: ItemRow[] = [
  * char_xiaojing 是玩家頭像（D4：is_player_portrait=TRUE，本身不列入隊友清單）。
  * P6（CONTRACT §3.2／任務 4「示範隊伍＝小咪＋一位傭兵各帶 2–3 個示範技能」）：skillIds 對到
  * 上面 RPG_SKILLS 的 id，buildFixtureSample 會把它們展開成 PartyActor.skills 餵給隊友 AI（見
- * toCompanionSkills）——只有小咪（heal/shield，示範①②段：治療優先、護盾不重複）與阿光
- * （war_cry/armor_break/slash，示範②③④段：buff 不重複、damage 選 tier 最高、debuff 不重複）
- * 帶技能；小優／阿深維持 []，走⑤普攻 fallback（跟 P1 舊行為相容）。
+ * toCompanionSkills）。
+ * P10（DORPG_P10 CONTRACT §2「傭兵換職業只改資料」）更新：小咪／小優的技能示範對調，改成貼合
+ * 新職業（migration 187：小咪→mage、小優→cleric、阿光→archer，阿深維持 heavy_knight）——
+ * fixture.ts 沒有 job_id 這個概念（見 CompanionRow 型別註解「沒有對應倍率欄位就沿用玩家值」的
+ * 精神，職業本身也是同一種「離線示範不追求跟正式 preset 逐項一致」的簡化），只改 role 文字／
+ * weapon／skillIds 讓 /dev/dorpg 離線預覽看起來像對的職業：
+ *   - 小咪（法師）現在示範①②段的是「damage 選 tier 最高」（fireball/ice_lance，法師本該打輸出，
+ *     不該是治療師）；mp_conserve 策略搭配傷害技能反而比原本搭配 heal 更貼切（「MP 不足時改
+ *     普攻」對一個要花 MP 輸出的法師更有意義）。
+ *   - 小優（聖職者）接手原本小咪的 heal/shield 示範（①②段：治療優先、護盾不重複），改用
+ *     balanced 策略示範預設治療門檻。
+ *   - 阿光（弓箭手）維持原本 war_cry/armor_break/slash 示範（②③④段：buff 不重複、damage 選
+ *     tier 最高、debuff 不重複）；armor_break 本來就是 bow 視覺，跟新武器一致。給 focus_fire
+ *     策略（原本小優的位置）純粹是讓四人不全部同一種。
+ *   - 阿深（重騎士）不動＋新增 P10 挑釁/守護姿態示範（見下方註解），走⑤普攻 fallback 之外多了
+ *     守護判斷這一步（見 engine/ai.ts decideProtectGuardStance）。
  */
-// P9：四位傭兵各給一種不同策略（見 CompanionRow.strategyId 型別註解）——小咪（治療/法系）用
-// mp_conserve 展示「MP 不足時改普攻」、阿深（重裝坦克）用 protect_allies 展示「保護隊友優先」，
-// 小優/阿光沒有 heal/shield 之外的候選技能可展示差異，給 balanced/focus_fire 純粹是讓四人不
-// 全部同一種（focus_fire 至少能在多敵場景看到「全隊同目標」的效果）。阿深額外掛
-// demo_full_set 裝備效果，示範傭兵裝備確實會生效（回復/減傷/MP 減免，見 CONTRACT §3）。
+// P9：四位傭兵各給一種不同策略（見 CompanionRow.strategyId 型別註解），阿深（重裝坦克）用
+// protect_allies 展示「保護隊友優先」＋P10 守護判斷。阿深額外掛 demo_full_set 裝備效果，示範
+// 傭兵裝備確實會生效（回復/減傷/MP 減免，見 CONTRACT §3）。
+// P10（CONTRACT §2「守護系列＝重騎士專屬第三條技能路線」）：阿深帶 hk_c1（挑釁 Lv3）與 hk_c3
+// （守護姿態 Lv4）——展示 decideProtectGuardStance「有隊友被 windup 敵人鎖定→立即挑釁」與
+// 一般情況「優先守護姿態」兩條規則（見 engine/ai.ts、RPG_SKILLS 的 hk_c1/hk_c3 展開值註解）。
 export const RPG_COMPANIONS: CompanionRow[] = [
   { id: 'char_xiaojing', name: '小井', portraitId: 'char_xiaojing', role: '', weapon: 'sword', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: [], isPlayerPortrait: true, sortOrder: 0, strategyId: 'balanced' },
-  { id: 'char_xiaomi', name: '小咪', portraitId: 'char_xiaomi', role: '治療', weapon: 'staff', levelOffset: 0, hpMult: 0.7, mpMult: 1, atkMult: 1, matkMult: 1.2, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['heal', 'shield'], isPlayerPortrait: false, sortOrder: 1, strategyId: 'mp_conserve' },
-  { id: 'char_xiaoyou', name: '小優', portraitId: 'char_xiaoyou', role: '游擊', weapon: 'bow', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: [], isPlayerPortrait: false, sortOrder: 2, strategyId: 'focus_fire' },
-  { id: 'char_aguang', name: '阿光', portraitId: 'char_aguang', role: '劍士', weapon: 'sword', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['war_cry', 'armor_break', 'slash'], isPlayerPortrait: false, sortOrder: 3, strategyId: 'balanced' },
-  { id: 'char_ashen', name: '阿深', portraitId: 'char_ashen', role: '重裝', weapon: 'greatsword', levelOffset: 0, hpMult: 1.3, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1.25, skillIds: [], isPlayerPortrait: false, sortOrder: 4, strategyId: 'protect_allies', equipmentEffectsId: 'demo_full_set' },
+  { id: 'char_xiaomi', name: '小咪', portraitId: 'char_xiaomi', role: '法師', weapon: 'staff', levelOffset: 0, hpMult: 0.7, mpMult: 1, atkMult: 1, matkMult: 1.2, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['fireball', 'ice_lance'], isPlayerPortrait: false, sortOrder: 1, strategyId: 'mp_conserve' },
+  { id: 'char_xiaoyou', name: '小優', portraitId: 'char_xiaoyou', role: '治療', weapon: 'staff', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1.1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['heal', 'shield'], isPlayerPortrait: false, sortOrder: 2, strategyId: 'balanced' },
+  { id: 'char_aguang', name: '阿光', portraitId: 'char_aguang', role: '游擊', weapon: 'bow', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['war_cry', 'armor_break', 'slash'], isPlayerPortrait: false, sortOrder: 3, strategyId: 'focus_fire' },
+  { id: 'char_ashen', name: '阿深', portraitId: 'char_ashen', role: '重裝', weapon: 'greatsword', levelOffset: 0, hpMult: 1.3, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1.25, skillIds: ['hk_c1', 'hk_c3'], isPlayerPortrait: false, sortOrder: 4, strategyId: 'protect_allies', equipmentEffectsId: 'demo_full_set' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -865,6 +901,7 @@ function toSkill(row: SkillRow): Skill {
     displayText: row.displayText,
     implemented: row.implemented,
     effect: row.effect,
+    taunt: row.taunt,
   };
 }
 

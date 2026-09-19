@@ -425,11 +425,60 @@ export function resolveBuffDebuff(ctx: Ctx, casterId: string, skill: Skill, pend
 }
 
 /**
+ * P10（DORPG_P10 CONTRACT §3、WIRE「引擎」）：taunt 技能結算——`skill.taunt` 是已依目前等級展開
+ * 的即時數值（跟 resolveBuffDebuff 讀 `skill.effect` 同一種「WIRE 已展開，engine 只管讀最終值」
+ * 精神，不在這裡重新推導等級公式）：
+ *   1. `tauntUntil = max(現值, now+durationMs)`——重複施放（例如冷卻轉完又按一次）取較晚的到期
+ *      時間，不會被更短的新效果縮短守護時間。
+ *   2. `damageTakenPct !== 0` 時套一筆 `damage_taken_pct` ActiveEffect（沿用既有 buff 疊加規則
+ *      ——applyStatusEffect 對同一顆技能重複施放是「刷新」不是「疊加」，見 effects.ts）；hk_c1
+ *      挑釁的 damageTakenPct 恆為 0，這裡天然是 no-op。
+ *   3. `retarget=true` 時（挑釁 hk_c1）把所有存活敵人（含 windup 中蓄力鎖定別人的）的
+ *      `ctx.enemyTargets` 立刻改成施放者，並推 taunt 事件（浮字「挑釁！」）；`retarget=false`
+ *      （守護姿態 hk_c3）只靠上面第 1 步寫入的 tauntUntil 影響「之後」的選目標
+ *      （formulas.ts pickEnemyTarget），這裡不動 enemyTargets、不推事件（CONTRACT §3「不
+ *      retarget 的只影響之後的選目標」）。
+ * `skill.taunt` 缺欄位（理論上不會發生——dispatch/ai 只會對 kind='taunt' 的技能呼叫這支，且
+ * BACKEND／fixture 一律會展開這個欄位）時安全跳過，不拋例外，跟 resolveBuffDebuff 對缺 effect
+ * 的防呆是同一個精神。
+ */
+export function resolveTaunt(ctx: Ctx, caster: PartyActor, skill: Skill): void {
+  const taunt = skill.taunt;
+  if (!taunt) {
+    pushLog(ctx, `${caster.name} 施放的 ${skill.name} 缺少 taunt 展開資料，略過結算`);
+    return;
+  }
+  caster.tauntUntil = Math.max(caster.tauntUntil, ctx.now + taunt.durationMs);
+  if (taunt.damageTakenPct !== 0) {
+    const effect: ActiveEffect = {
+      stat: 'damage_taken_pct',
+      value: taunt.damageTakenPct,
+      expiresAt: ctx.now + taunt.durationMs,
+      sourceSkillId: skill.id,
+      kind: 'buff',
+    };
+    applyStatusEffect(caster, effect);
+  }
+  if (taunt.retarget) {
+    const enemyIds: string[] = [];
+    for (const enemy of ctx.enemies) {
+      if (enemy.hp <= 0) continue;
+      ctx.enemyTargets[enemy.id] = caster.id;
+      enemyIds.push(enemy.id);
+    }
+    pushEvent(ctx, { kind: 'taunt', actorId: caster.id, enemyIds });
+    pushLog(ctx, `${caster.name} 挑釁，敵人的攻擊全部轉向 ${caster.name}`);
+  } else {
+    pushLog(ctx, `${caster.name} 進入守護姿態，持續 ${taunt.durationMs}ms`);
+  }
+}
+
+/**
  * casting 完成時的效果結算（tick.ts 呼叫）：damage 打 pending.targetId 的敵人（P5：支援 hits>1 多段
  * 命中與 target='allEnemies' 打全體）、heal/shield 走 resolveSupportSkill、buff/debuff 走
- * resolveBuffDebuff。passive 不會進技能欄（後端已把 stat 算進玩家 stats，engine 完全不處理），
- * special 在 dispatch 階段就已經被拒絕（implemented=false），兩者理論上都不會有 pendingCast 走到
- * 這裡——沒有對應分支，遇到的話單純什麼都不做（防呆，不拋例外）。
+ * resolveBuffDebuff、taunt（P10）走 resolveTaunt。passive 不會進技能欄（後端已把 stat 算進玩家
+ * stats，engine 完全不處理），special 在 dispatch 階段就已經被拒絕（implemented=false），兩者理論
+ * 上都不會有 pendingCast 走到這裡——沒有對應分支，遇到的話單純什麼都不做（防呆，不拋例外）。
  *
  * P7（CONTRACT §3 書系武器「magic_skill_pct 乘在 dmg_type=magic 技能與 heal 的 coef 上」）：
  * damage 分支只在 dmgType==='magic' 時套 magicSkillPct（物理技能不受書系武器影響）；heal/shield
@@ -474,6 +523,10 @@ export function resolveCastEffect(ctx: Ctx, actor: PartyActor, skill: Skill, pen
   }
   if (skill.kind === 'heal' || skill.kind === 'shield') {
     resolveSupportSkill(ctx, actor.id, skill, pending.targetId, weapon.magicSkillPct);
+    return;
+  }
+  if (skill.kind === 'taunt') {
+    resolveTaunt(ctx, actor, skill);
     return;
   }
   if (skill.kind === 'buff' || skill.kind === 'debuff') {

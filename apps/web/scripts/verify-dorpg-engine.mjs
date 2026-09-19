@@ -45,6 +45,8 @@ const {
   NEUTRAL_WEAPON_PROFILE,
   // P8（防具系統＋通用飾品）新增匯出：
   NEUTRAL_EQUIPMENT_EFFECTS, effectiveMpCost, combineIntervalPct, combineElementResistPct,
+  // P10（重騎士「守護」路線：仇恨規則）新增匯出：
+  inGuardianState, pickEnemyTarget,
 } = await import(modUrl)
 
 const typesUrl = new URL('../src/lib/dorpg/types.ts', import.meta.url).href
@@ -2133,6 +2135,194 @@ function equipmentFixture(overrides) {
   s = tick(s, DEFAULT_BATTLE_CONFIG.enemyWindupMs) // windup→attacking，結算傷害
   // combineElementResistPct(40,40)=80 被 clamp 到 60；折算 floor(100×(1-60/100))=40。
   eq(s.party[0].hp, 800 - 40, 'element_resist 相加夾限：鍊 40% + 裝備 40% = 80%，clamp 到 60% → 折算後扣 40（不是未 clamp 前的 20）')
+}
+
+// ═══════════════════════════ P10（DORPG_P10 CONTRACT §2/§3、WIRE「引擎」）：
+// 重騎士「守護」路線——taunt 技能／守護狀態／仇恨規則。 ═══════════════════════════
+
+// 挑釁（retarget:true，不附帶減傷）與守護姿態（retarget:false，附帶 damage_taken_pct）的最小
+// 展開值，供下面的整合測試直接裝進 makeSample 的 skills 陣列使用。
+const TAUNT_PULL_SKILL = {
+  id: 'taunt_pull', name: '挑釁', iconUrl: '', cooldownMs: 6000, kind: 'taunt', target: 'self',
+  mpCost: 8, coefficient: 0, flat: 0, weapon: 'greatsword', castMs: 100,
+  taunt: { durationMs: 5000, damageTakenPct: 0, retarget: true },
+}
+const GUARD_STANCE_SKILL = {
+  id: 'guard_stance', name: '守護姿態', iconUrl: '', cooldownMs: 12000, kind: 'taunt', target: 'self',
+  mpCost: 18, coefficient: 0, flat: 0, weapon: 'greatsword', castMs: 100,
+  taunt: { durationMs: 8000, damageTakenPct: -20, retarget: false },
+}
+
+// ── 1) inGuardianState：純函式的來源組合（tauntUntil 到期判斷／GUARD+guardTaunt／死亡一律 false）。 ──
+{
+  const now = 1000
+  ok(inGuardianState({ hp: 100, action: 'idle', tauntUntil: 1500, guardTaunt: false }, now), 'inGuardianState：tauntUntil > now → true（不管有沒有 guardTaunt）')
+  ok(!inGuardianState({ hp: 100, action: 'idle', tauntUntil: 500, guardTaunt: true }, now), 'inGuardianState：tauntUntil 已過期＋沒有在防禦 → false')
+  ok(inGuardianState({ hp: 100, action: 'guarding', tauntUntil: 0, guardTaunt: true }, now), 'inGuardianState：guarding 中且學過守護本能（guardTaunt=true）→ true')
+  ok(!inGuardianState({ hp: 100, action: 'guarding', tauntUntil: 0, guardTaunt: false }, now), 'inGuardianState：guarding 中但沒有守護本能被動 → false')
+  ok(!inGuardianState({ hp: 0, action: 'guarding', tauntUntil: 9999, guardTaunt: true }, now), 'inGuardianState：hp<=0（已死亡）一律 false，不管 tauntUntil/guardTaunt 為何')
+}
+
+// ── 2) pickEnemyTarget：守護狀態優先於加權隨機；多人取 tauntUntil 最大、同值取玩家；到期/無人
+//         守護時落回既有的加權隨機（pickWeightedAliveTarget）。 ──
+{
+  const now = 1000
+  const guardian = { id: 'g1', isPlayer: false, hp: 500, action: 'idle', tauntUntil: 2000, guardTaunt: false }
+  const expired = { id: 'g2', isPlayer: true, hp: 500, action: 'idle', tauntUntil: 500, guardTaunt: false }
+  const ctx = { now, party: [expired, guardian] }
+  for (let i = 0; i < 100; i++) {
+    ok(pickEnemyTarget(ctx, Math.random) === 'g1', '守護狀態時敵人 100% 選該角色（100 次皆同，無視 rng）')
+  }
+}
+{
+  const now = 1000
+  const higher = { id: 'high', isPlayer: false, hp: 500, action: 'idle', tauntUntil: 3000, guardTaunt: false }
+  const lower = { id: 'low', isPlayer: true, hp: 500, action: 'idle', tauntUntil: 2000, guardTaunt: false }
+  const ctx = { now, party: [lower, higher] }
+  eq(pickEnemyTarget(ctx, () => 0.5), 'high', 'pickEnemyTarget：多人都在守護狀態時取 tauntUntil 最大者')
+}
+{
+  const now = 1000
+  const player = { id: 'player', isPlayer: true, hp: 500, action: 'guarding', tauntUntil: 0, guardTaunt: true }
+  const ally = { id: 'ally', isPlayer: false, hp: 500, action: 'guarding', tauntUntil: 0, guardTaunt: true }
+  const ctx = { now, party: [ally, player] }
+  eq(pickEnemyTarget(ctx, () => 0.5), 'player', 'pickEnemyTarget：tauntUntil 同值（都是 0，兩者皆來自 GUARD_BEGIN）時取玩家')
+}
+{
+  const now = 1000
+  // 到期後回到加權隨機：兩人都已過期／沒有 guardTaunt，pickEnemyTarget 必須落回
+  // pickWeightedAliveTarget——用唯一存活候選驗證有正確 delegate（機率分布本身不是本輪新行為）。
+  const dead = { id: 'dead', isPlayer: false, hp: 0, action: 'idle', tauntUntil: 9999, guardTaunt: true } // 死亡優先權排除
+  const alive = { id: 'alive', isPlayer: false, hp: 500, action: 'idle', tauntUntil: 0, guardTaunt: false }
+  const ctx = { now, party: [dead, alive] }
+  eq(pickEnemyTarget(ctx, () => 0.01), 'alive', 'pickEnemyTarget：到期/無人守護（含死亡不算）→ 落回加權隨機（存活者中唯一候選）')
+}
+
+// ── 3) 整合測試：挑釁（retarget:true）——tauntUntil 寫入、事件推出、立刻把所有存活敵人（含
+//         windup 中鎖定別人的）改鎖施放者；guardian 狀態下 idle→windup 的新選目標也遵守守護規則。 ──
+{
+  const sample = makeSample({
+    party: [
+      { id: 'player', name: '重騎士', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, weapon: 'greatsword' },
+      { id: 'ally', name: '隊友', level: 56, hp: 500, hpMax: 500, mp: 50, mpMax: 50, portraitUrl: null, stats: { hpMax: 500, mpMax: 50, atk: 50, matk: 50, def: 20, mdef: 20 }, weapon: 'sword' },
+    ],
+    enemies: [
+      { id: 'e1', name: '假人1', level: 50, hp: 5000, hpMax: 5000, slot: 'front_center', imageUrl: '', stats: { hpMax: 5000, mpMax: 0, atk: 50, matk: 50, def: 35, mdef: 20 } },
+      { id: 'e2', name: '假人2', level: 50, hp: 5000, hpMax: 5000, slot: 'front_left', imageUrl: '', stats: { hpMax: 5000, mpMax: 0, atk: 50, matk: 50, def: 35, mdef: 20 } },
+    ],
+    skills: [TAUNT_PULL_SKILL],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  // 模擬 e1 已經在 windup 中鎖定 ally（怪物正在蓄力打別人），e2 則還沒選過目標。
+  s.enemies[0].anim = 'windup'
+  s.enemies[0].animUntil = 999999
+  s.enemyTargets['e1'] = 'ally'
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'taunt_pull' }, 0)
+  ok(s.party[0].action === 'casting', '挑釁進入 casting（跟其它自身技能一樣要等 castMs）')
+  // castMs=100 被 castMinMs（預設 120）夾到 120，跟 verify-dorpg-fromapi.mjs #2 同一個坑。
+  s = tick(s, 120) // resolveTaunt 在這裡結算
+  eq(s.party[0].tauntUntil, 120 + 5000, '挑釁結算：tauntUntil = now(120) + durationMs(5000)')
+  eq(s.enemyTargets['e1'], 'player', '挑釁 retarget=true：原本 windup 鎖定 ally 的 e1 立刻改鎖玩家')
+  eq(s.enemyTargets['e2'], 'player', '挑釁 retarget=true：連還沒選過目標的 e2 也一併改鎖玩家（所有存活敵人）')
+  const tauntEv = s.events.find((e) => e.kind === 'taunt')
+  ok(!!tauntEv && tauntEv.actorId === 'player', '推出 taunt 事件，actorId=player')
+  eq([...tauntEv.enemyIds].sort(), ['e1', 'e2'], 'taunt 事件 enemyIds 含所有存活敵人')
+  ok(s.party[0].activeEffects.every((e) => e.stat !== 'damage_taken_pct'), '挑釁 damageTakenPct=0：不套用任何 damage_taken_pct ActiveEffect')
+
+  // 守護狀態下，之後才第一次選目標的 e2（idle→windup）也遵守守護規則，不是只有預先標記的值。
+  s.enemies[1].nextActAt = 120
+  s = tick(s, 120) // 同一個 now 再推進一次，讓 e2 用最新狀態重新走一次 idle→windup
+  eq(s.enemies[1].anim, 'windup', 'e2 idle→windup（nextActAt 已到）')
+  const windupEv = s.events.find((e) => e.kind === 'enemyWindup' && e.enemyId === 'e2')
+  eq(windupEv?.targetId, 'player', '守護狀態時，e2 第一次自己選目標（idle→windup）一樣選中守護者，不受權重隨機影響')
+}
+
+// ── 4) 整合測試：守護姿態（retarget:false）——不推 taunt 事件、不強制改變「目前」windup 中的目標
+//         （只影響之後的選目標）。 ──
+{
+  const sample = makeSample({
+    party: [
+      { id: 'player', name: '重騎士', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, weapon: 'greatsword' },
+      { id: 'ally', name: '隊友', level: 56, hp: 500, hpMax: 500, mp: 50, mpMax: 50, portraitUrl: null, stats: { hpMax: 500, mpMax: 50, atk: 50, matk: 50, def: 20, mdef: 20 }, weapon: 'sword' },
+    ],
+    skills: [GUARD_STANCE_SKILL],
+    enemies: [{ id: 'e1', name: '假人', level: 50, hp: 5000, hpMax: 5000, slot: 'front_center', imageUrl: '', stats: { hpMax: 5000, mpMax: 0, atk: 100, matk: 50, def: 35, mdef: 20 } }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s.enemies[0].anim = 'windup'
+  s.enemies[0].animUntil = 999999
+  s.enemyTargets['e1'] = 'ally' // e1 目前鎖定 ally，不該被守護姿態改變。
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'guard_stance' }, 0)
+  s = tick(s, 120) // castMs=100 被 castMinMs 夾到 120，resolveTaunt 結算
+  eq(s.party[0].tauntUntil, 120 + 8000, '守護姿態結算：tauntUntil = now(120) + durationMs(8000)')
+  ok(!s.events.some((e) => e.kind === 'taunt'), '守護姿態 retarget=false：不推 taunt 事件')
+  eq(s.enemyTargets['e1'], 'ally', '守護姿態 retarget=false：不強制改變敵人目前鎖定的目標（CONTRACT §3「只影響之後的選目標」）')
+  const buff = s.party[0].activeEffects.find((e) => e.stat === 'damage_taken_pct')
+  ok(!!buff && buff.value === -20 && buff.sourceSkillId === 'guard_stance', 'damage_taken_pct ActiveEffect 生效（值=-20，來源=guard_stance）')
+}
+
+// ── 5) 整合測試：守護姿態的 damage_taken_pct 減傷生效與到期後恢復（單人隊伍，敵人自然選中
+//         唯一候選）——連帶驗證「目標已死 fallback」也改走 pickEnemyTarget（把敵人目標指向一個
+//         不存在的舊 id，逼它走 fallback 分支）。 ──
+{
+  const sample = makeSample({
+    party: [{
+      id: 'player', name: '重騎士', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null,
+      stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 0, mdef: 28 }, weapon: 'greatsword',
+    }],
+    skills: [GUARD_STANCE_SKILL],
+    enemies: [{ id: 'e1', name: '假人', level: 50, hp: 5000, hpMax: 5000, slot: 'front_center', imageUrl: '', stats: { hpMax: 5000, mpMax: 0, atk: 100, matk: 50, def: 35, mdef: 20 } }],
+  })
+  let s = createBattle(sample, { now: 0, config: { ...FAR_CONFIG, enemyActIntervalMs: [0, 0] } })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'guard_stance' }, 0)
+  s = tick(s, 120) // resolveTaunt 結算：tauntUntil=120+8000=8120
+  eq(s.party[0].tauntUntil, 8120, '守護姿態結算：tauntUntil = 120 + 8000')
+
+  // 手動把 e1 標成「windup 中鎖定一個已經不存在的舊 id」，逼 windup→attacking 分支走
+  // 「目標已死」fallback（見 ai.ts advanceEnemyAI）——這條 fallback 已改用 pickEnemyTarget，
+  // 玩家正在守護狀態中，理應被選中。
+  s.enemies[0].anim = 'windup'
+  s.enemies[0].animUntil = 120
+  s.enemyTargets['e1'] = 'no_longer_exists'
+  s = tick(s, 120) // windup→attacking，走 fallback 選目標並結算傷害
+  // floor(atk100×1×1×1) - def0 = 100；guarded=false；damage_taken_pct=-20% → floor(100×0.8)=80。
+  eq(800 - s.party[0].hp, 80, '「目標已死」fallback 改走 pickEnemyTarget：守護狀態的玩家被選中，且減傷 20% 生效（100→80）')
+  ok(Number.isInteger(s.party[0].hp), 'HP 整數不變式：守護姿態減傷結算後仍是整數')
+
+  ok(inGuardianState(s.party[0], 8119), '到期前一刻（tauntUntil-1）仍在守護狀態')
+  ok(!inGuardianState(s.party[0], 8120), '守護姿態到期（now===tauntUntil，比較式是嚴格大於）→ 不再是守護狀態')
+}
+
+// ── 6) 整合測試：玩家 GUARD_BEGIN + guardTaunt=true → 進入守護狀態；GUARD_END 立即解除
+//         （tauntUntil 不受影響，兩種來源互相獨立）。 ──
+{
+  const sample = makeSample({
+    party: [{
+      id: 'player', name: '重騎士', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null,
+      stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, weapon: 'greatsword', guardTaunt: true,
+    }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  eq(s.party[0].guardTaunt, true, 'createBattle：PartyMember.guardTaunt 原樣帶入 PartyActor')
+  ok(!inGuardianState(s.party[0], 0), 'GUARD_BEGIN 之前：不在守護狀態')
+  s = dispatch(s, { type: 'GUARD_BEGIN' }, 0)
+  ok(inGuardianState(s.party[0], 0), 'GUARD_BEGIN 後（guardTaunt=true）：立刻進入守護狀態，不需要額外的 tauntUntil')
+  s = dispatch(s, { type: 'GUARD_END' }, 100)
+  ok(!inGuardianState(s.party[0], 100), 'GUARD_END 後：立刻解除守護狀態')
+}
+{
+  // guardTaunt=false（一般角色）：GUARD_BEGIN 不會產生守護狀態，敵人仍走加權隨機——防止「所有
+  // 玩家防禦時都自動吸引仇恨」這種過度泛化的誤解。
+  const sample = makeSample({
+    party: [{
+      id: 'player', name: '一般角色', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null,
+      stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 },
+    }],
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  eq(s.party[0].guardTaunt, false, 'createBattle：PartyMember 沒有 guardTaunt 欄位時 PartyActor 缺省 false')
+  s = dispatch(s, { type: 'GUARD_BEGIN' }, 0)
+  ok(!inGuardianState(s.party[0], 0), 'GUARD_BEGIN 後（guardTaunt=false）：仍不算守護狀態（沒有守護本能被動）')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

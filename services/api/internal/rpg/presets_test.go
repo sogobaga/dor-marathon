@@ -171,54 +171,73 @@ func archerPathASkills() []SkillRow {
 	}
 }
 
-func lightKnightPathASkills() []SkillRow {
+// magePathASkills DORPG P10（CONTRACT §2「小咪→魔法師」）：魔法師 a 路線（傷害線）技能子集，
+// 逐欄對照 migration 180 seed（180_rpg_jobs_skills.sql 第 158~161 行 mg_a1~mg_a4；mg_a5 這裡
+// 沒有列出，因為下面的系統預設沒有投資它，跟 archerPathASkills() 略過 ar_a4/ar_a5 是同一個既有
+// 慣例——ValidatePreset 只需要 jobSkills 涵蓋 skillLevels 用到的 id 與其前置鏈）。
+func magePathASkills() []SkillRow {
 	return []SkillRow{
-		{ID: "lk_a1", Kind: "damage", MaxLevel: 10},
-		{ID: "lk_a2", Kind: "passive", MaxLevel: 10, PrereqSkillID: strPtr("lk_a1"), PrereqLevel: 3},
-		{ID: "lk_a3", Kind: "buff", MaxLevel: 5, PrereqSkillID: strPtr("lk_a2"), PrereqLevel: 3},
+		{ID: "mg_a1", Kind: "damage", MaxLevel: 5},
+		{ID: "mg_a2", Kind: "debuff", MaxLevel: 5, PrereqSkillID: strPtr("mg_a1"), PrereqLevel: 3},
+		{ID: "mg_a3", Kind: "damage", MaxLevel: 10, PrereqSkillID: strPtr("mg_a2"), PrereqLevel: 3},
+		{ID: "mg_a4", Kind: "passive", MaxLevel: 10, PrereqSkillID: strPtr("mg_a3"), PrereqLevel: 5},
 	}
 }
 
-// heavyKnightPathBSkills 逐欄對照 migration 180 seed（180_rpg_jobs_skills.sql 第 133~136
-// 行）：hk_b1/hk_b2 max_level=10，hk_b3/hk_b4 max_level=5——hk_b3 之前誤抄成 10（跟
-// hk_b1/hk_b2 一樣），讓 182 要修的 hk_b3=6 違規配置在這裡「通過」了驗證，是本次資料事故的
-// 根因；改回真實值 5 後，這個 fixture 才真的能攔住超過上限的 seed。
-func heavyKnightPathBSkills() []SkillRow {
+// heavyKnightSkillsFixture DORPG P10（CONTRACT §2 表格）：path b（既有）＋新增的 path c「守護」
+// 四技能，逐欄對照 migration 180 第 133~136 行（hk_b1/hk_b2 max_level=10，hk_b3/hk_b4
+// max_level=5——hk_b3 之前誤抄成 10，是 182_rpg_preset_seed_fix.sql 要修的資料事故根因，這裡
+// 沿用改過的正確值）與 187_rpg_p10_guardian.sql 的 hk_c1~hk_c4（max_level 10/10/5/5，
+// prereq：hk_c2←hk_c1≥3、hk_c3←hk_c2≥3、hk_c4←hk_c3≥3）。原名 heavyKnightPathBSkills 改名
+// 反映「現在涵蓋 b+c 兩條路線」，本檔是唯一呼叫端，改名不影響其他檔案。
+func heavyKnightSkillsFixture() []SkillRow {
 	return []SkillRow{
 		{ID: "hk_b1", Kind: "damage", MaxLevel: 10},
 		{ID: "hk_b2", Kind: "passive", MaxLevel: 10, PrereqSkillID: strPtr("hk_b1"), PrereqLevel: 3},
 		{ID: "hk_b3", Kind: "buff", MaxLevel: 5, PrereqSkillID: strPtr("hk_b2"), PrereqLevel: 3},
 		{ID: "hk_b4", Kind: "shield", MaxLevel: 5, PrereqSkillID: strPtr("hk_b3"), PrereqLevel: 3},
+		{ID: "hk_c1", Kind: "taunt", MaxLevel: 10},
+		{ID: "hk_c2", Kind: "passive", MaxLevel: 10, PrereqSkillID: strPtr("hk_c1"), PrereqLevel: 3},
+		{ID: "hk_c3", Kind: "taunt", MaxLevel: 5, PrereqSkillID: strPtr("hk_c2"), PrereqLevel: 3},
+		{ID: "hk_c4", Kind: "buff", MaxLevel: 5, PrereqSkillID: strPtr("hk_c3"), PrereqLevel: 3},
 	}
 }
 
+// systemPresetSeeds DORPG P10（CONTRACT §2「傭兵換職業只改資料」）：四筆系統預設腳本改成新的
+// 傭兵↔職業配對——小咪→mage、小優→cleric（沿用原小咪的 cl_a1/a2/a3 配置）、阿光→archer
+// （沿用原小優的 ar_a1/a2/a3 配置），阿深維持 heavy_knight 但技能改成 CONTRACT §2 表格給定的
+// {hk_b1:5,hk_b2:6,hk_b3:3,hk_c1:3,hk_c2:3,hk_c3:4}（合計 24）。小咪的魔法師配置（走 a 路線
+// 傷害線）本檔自行推算：mg_a1:5＋mg_a2:5＋mg_a3:10＋mg_a4:4＝24，前置鏈逐一核對
+// magePathASkills() 的 max_level/prereq（mg_a2 需 mg_a1≥3＝5≥3 ✓；mg_a3 需 mg_a2≥3＝5≥3 ✓；
+// mg_a4 需 mg_a3≥5＝10≥5 ✓）。
 func systemPresetSeeds() []systemPresetSeed {
 	return []systemPresetSeed{
 		{
-			companionID: "char_xiaomi (cleric)",
+			companionID: "char_xiaomi (mage)",
+			jobSkills:   magePathASkills(),
+			stats:       Stats{Str: 1, Agi: 1, Vit: 10, Dex: 20, Int: 25, Luk: 5},
+			skillLevels: map[string]int{"mg_a1": 5, "mg_a2": 5, "mg_a3": 10, "mg_a4": 4},
+		},
+		{
+			companionID: "char_xiaoyou (cleric)",
 			jobSkills:   clericPathASkills(),
 			stats:       Stats{Str: 1, Agi: 1, Vit: 10, Dex: 20, Int: 25, Luk: 5},
 			skillLevels: map[string]int{"cl_a1": 5, "cl_a2": 5, "cl_a3": 10},
 		},
 		{
-			companionID: "char_xiaoyou (archer)",
+			companionID: "char_aguang (archer)",
 			jobSkills:   archerPathASkills(),
 			stats:       Stats{Str: 1, Agi: 25, Vit: 1, Dex: 20, Int: 1, Luk: 15},
 			skillLevels: map[string]int{"ar_a1": 10, "ar_a2": 3, "ar_a3": 5},
 		},
 		{
-			companionID: "char_aguang (light_knight)",
-			jobSkills:   lightKnightPathASkills(),
-			stats:       Stats{Str: 22, Agi: 20, Vit: 1, Dex: 1, Int: 1, Luk: 15},
-			skillLevels: map[string]int{"lk_a1": 10, "lk_a2": 9, "lk_a3": 5},
-		},
-		{
-			// migration 182 修正值（原 181 的 {"hk_b1":7,"hk_b2":6,"hk_b3":6,"hk_b4":5} 讓
-			// hk_b3 超過 max_level=5，見 182_rpg_preset_seed_fix.sql 檔頭根因說明）。
+			// CONTRACT §2：{hk_b1:5,hk_b2:6,hk_b3:3,hk_c1:3,hk_c2:3,hk_c3:4}，合計 24；前置鏈
+			// b2←b1≥3(5≥3 ✓)、b3←b2≥3(6≥3 ✓)、c2←c1≥3(3≥3 ✓)、c3←c2≥3(3≥3 ✓)。hk_b4/hk_c4
+			// 本輪不投資（0 級，不出現在 map 裡）。
 			companionID: "char_ashen (heavy_knight)",
-			jobSkills:   heavyKnightPathBSkills(),
+			jobSkills:   heavyKnightSkillsFixture(),
 			stats:       Stats{Str: 25, Agi: 1, Vit: 25, Dex: 1, Int: 1, Luk: 1},
-			skillLevels: map[string]int{"hk_b1": 8, "hk_b2": 6, "hk_b3": 5, "hk_b4": 5},
+			skillLevels: map[string]int{"hk_b1": 5, "hk_b2": 6, "hk_b3": 3, "hk_c1": 3, "hk_c2": 3, "hk_c3": 4},
 		},
 	}
 }

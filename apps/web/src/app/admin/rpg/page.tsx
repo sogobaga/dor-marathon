@@ -11,17 +11,17 @@ import {
   type RpgMonster, type RpgSkill, type RpgItem, type RpgScene, type RpgSceneSlot, type RpgCompanion,
   type RpgEncounter, type RpgEncounterMonster, type RpgBattleLogRow, type RpgBattleLogSummary,
   type RpgWeaponType, type RpgWeapon, type RpgElement, type WeaponRarity,
-  type RpgArmorItem, type ArmorItemSlot, type RpgAiStrategy,
+  type RpgArmorItem, type ArmorItemSlot, type RpgAiStrategy, type RpgJob,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
-import { CONFIG_GROUPS, STAT_META, DERIVED_META, resistLabel, ELEMENT_LABEL, ELEMENT_ORDER, RARITY_LABEL, ARMOR_SLOT_LABEL } from '@/lib/rpgMeta'
+import { CONFIG_GROUPS, STAT_META, DERIVED_META, resistLabel, ELEMENT_LABEL, ELEMENT_ORDER, RARITY_LABEL, ARMOR_SLOT_LABEL, SKILL_KIND_LABEL } from '@/lib/rpgMeta'
 
 // DORPG P2（契約 dorpg_p2 §5）：怪物/技能/道具/場景/遭遇/隊友/戰鬥數據七個內容分頁。分頁一多，
 // tab 列改橫向捲動（見下方 tab 按鈕列 container 的 overflowX/flexWrap:'nowrap'）。
 // DORPG P7（契約 dorpg_p7 CONTRACT.md §2、WIRE §後台）：新增武器類型／武器兩個分頁。
 // DORPG P8（契約 dorpg_p8 CONTRACT.md §1、WIRE §後台）：新增防具（含飾品）分頁。
 // DORPG P9（契約 dorpg_p9 CONTRACT.md §2、WIRE §後台）：新增「AI 策略」分頁。
-type Tab = 'config' | 'entry' | 'preview' | 'monsters' | 'skills' | 'items' | 'scenes' | 'encounters' | 'companions' | 'battlelogs' | 'weapontypes' | 'weapons' | 'armoritems' | 'aistrategies'
+type Tab = 'config' | 'entry' | 'preview' | 'monsters' | 'skills' | 'jobs' | 'items' | 'scenes' | 'encounters' | 'companions' | 'battlelogs' | 'weapontypes' | 'weapons' | 'armoritems' | 'aistrategies'
 const STAT_KEYS: RpgStatKey[] = ['str', 'agi', 'vit', 'dex', 'int', 'luk']
 // rpg_encounter_monsters 槽位固定 5 個（migration 176 DDL），場景/遭遇編輯器都用這個順序渲染。
 const ENCOUNTER_SLOTS = ['rear_left', 'rear_right', 'front_left', 'front_center', 'front_right'] as const
@@ -71,6 +71,7 @@ export default function AdminRpgPage() {
           ['preview', '預覽計算'],
           ['monsters', '怪物'],
           ['skills', '技能'],
+          ['jobs', '職業'],
           ['weapontypes', '武器類型'],
           ['weapons', '武器'],
           ['armoritems', '防具'],
@@ -109,6 +110,7 @@ export default function AdminRpgPage() {
       {tab === 'preview' && token && <PreviewTab token={token} />}
       {tab === 'monsters' && token && <MonstersTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'skills' && token && <SkillsTab token={token} onErr={setErr} onMsg={flash} />}
+      {tab === 'jobs' && token && <JobsTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'weapontypes' && token && <WeaponTypesTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'weapons' && token && <WeaponsTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'armoritems' && token && <ArmorItemsTab token={token} onErr={setErr} onMsg={flash} />}
@@ -663,37 +665,341 @@ function MonstersTab({ token, onErr, onMsg }: { token: string; onErr: (m: string
 }
 
 // ============================== 技能 ==============================
+// DORPG P10（契約 §7 決定更新、CONTRACT.md）：P5 建表時「本輪沒有後台 CRUD」的技術債——job_id／
+// path／tier／effect 等職業技能樹欄位過去只能靠 SQL migration 編輯。P10 為了讓後台能設定 taunt
+// （kind='taunt'）與重騎士第三路線（path='c'），順便把整個 SkillRow 補齊成後台可編輯（原本
+// SimpleContentTab 只擋在 3 個 kind、無 path 的舊表單），改成跟 WeaponsTab／ArmorItemsTab 同款
+// 手刻表單（effect 是 JSON，比照 profile 的既有慣例存成排版字串，存檔前 JSON.parse 驗證）。
 
 function emptySkill(): RpgSkill {
-  return { id: '', name: '', icon_id: '', kind: 'damage', target: 'enemy', weapon: 'sword', element: 'neutral', mp_cost: 0, cooldown_ms: 4000, coefficient: 1, flat: 0, cast_ms: 300, is_default: false, is_active: true, sort_order: 0 }
+  return {
+    id: '', name: '', icon_id: '', kind: 'damage', target: 'enemy', weapon: 'sword', element: 'neutral',
+    mp_cost: 0, cooldown_ms: 4000, coefficient: 1, flat: 0, cast_ms: 300, is_default: false, is_active: true, sort_order: 0,
+    job_id: null, path: '', tier: 0, max_level: 1, effect: {}, dmg_type: 'physical',
+    prereq_skill_id: null, prereq_level: 0, mp_cost_per_level: 0, display_text: '', implemented: true,
+  }
 }
-const SKILL_FIELDS: FieldSpec<RpgSkill>[] = [
-  { key: 'id', label: 'ID', lockOnEdit: true },
-  { key: 'name', label: '名稱' },
-  { key: 'icon_id', label: '圖示 ID（如 icon_skill_slash）' },
-  { key: 'kind', label: '種類', type: 'select', options: [{ value: 'damage', label: '傷害' }, { value: 'heal', label: '治療' }, { value: 'shield', label: '護盾' }] },
-  { key: 'target', label: '目標', type: 'select', options: [{ value: 'enemy', label: '敵方單體' }, { value: 'ally', label: '我方單體' }, { value: 'self', label: '自己' }, { value: 'allAllies', label: '我方全體' }] },
-  { key: 'weapon', label: '武器（特效/音效組）', type: 'select', options: [{ value: 'sword', label: '劍' }, { value: 'staff', label: '法杖' }, { value: 'bow', label: '弓' }, { value: 'greatsword', label: '大劍' }] },
-  { key: 'element', label: '屬性', type: 'select', options: ['metal', 'wood', 'water', 'fire', 'earth', 'light', 'dark', 'neutral'].map((v) => ({ value: v, label: v })) },
-  { key: 'mp_cost', label: 'MP 消耗', type: 'number', step: '1' },
-  { key: 'cooldown_ms', label: '冷卻（毫秒）', type: 'number', step: '1' },
-  { key: 'coefficient', label: '傷害/治療係數', type: 'number' },
-  { key: 'flat', label: '固定加成值（heal/shield：依玩家 HPMax÷battle_reference_hp 等比例縮放，見「參數設定→戰鬥」；damage：不縮放，直接加在玩家 ATK 上）', type: 'number', step: '1' },
-  { key: 'cast_ms', label: '施放時間（毫秒）', type: 'number', step: '1' },
-  { key: 'is_default', label: '預設帶入（未設定 loadout 時）', type: 'checkbox' },
-  { key: 'is_active', label: '啟用', type: 'checkbox' },
-  { key: 'sort_order', label: '排序', type: 'number', step: '1' },
+
+const SKILL_JOB_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: '（通用／既有 5 技能）' },
+  { value: 'light_knight', label: '輕騎士' },
+  { value: 'archer', label: '弓箭手' },
+  { value: 'heavy_knight', label: '重騎士' },
+  { value: 'cleric', label: '聖職者' },
+  { value: 'merchant', label: '商人' },
+  { value: 'mage', label: '魔法師' },
 ]
+const SKILL_PATH_OPTIONS: { value: RpgSkill['path']; label: string }[] = [
+  { value: '', label: '（無）' },
+  { value: 'a', label: 'A' },
+  { value: 'b', label: 'B' },
+  { value: 'c', label: 'C（目前僅重騎士「守護」使用）' },
+]
+const SKILL_TARGET_OPTIONS: { value: RpgSkill['target']; label: string }[] = [
+  { value: 'enemy', label: '敵方單體' },
+  { value: 'allEnemies', label: '敵方全體' },
+  { value: 'ally', label: '我方單體' },
+  { value: 'self', label: '自己' },
+  { value: 'allAllies', label: '我方全體' },
+]
+const SKILL_DMG_TYPE_OPTIONS: { value: RpgSkill['dmg_type']; label: string }[] = [
+  { value: 'physical', label: '物理' },
+  { value: 'magic', label: '魔法' },
+]
+
 function SkillsTab({ token, onErr, onMsg }: { token: string; onErr: (m: string) => void; onMsg: (m: string) => void }) {
+  const [rows, setRows] = useState<RpgSkill[] | null>(null)
+  const [form, setForm] = useState<RpgSkill | null>(null)
+  const [effectText, setEffectText] = useState('{}')
+  const [isNew, setIsNew] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [filterJob, setFilterJob] = useState('')
+
+  const load = useCallback(() => {
+    adminRpgApi.skills(token).then((r) => setRows(r.skills)).catch((e: any) => onErr(e?.message || '載入失敗'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+  useEffect(() => { load() }, [load])
+
+  const filteredRows = (rows ?? []).filter((s) => {
+    if (!filterJob) return true
+    if (filterJob === 'null') return !s.job_id
+    return s.job_id === filterJob
+  })
+
+  function startNew() {
+    const f = emptySkill()
+    setForm(f); setEffectText(JSON.stringify(f.effect, null, 2)); setIsNew(true)
+  }
+  function startEdit(r: RpgSkill) { setForm({ ...r }); setEffectText(JSON.stringify(r.effect ?? {}, null, 2)); setIsNew(false) }
+
+  async function save() {
+    if (!form) return
+    if (!form.id.trim()) { onErr('請填 ID'); return }
+    if (!form.name.trim()) { onErr('請填名稱'); return }
+    let effect: RpgSkill['effect']
+    try { effect = JSON.parse(effectText || '{}') } catch { onErr('「效果 effect」不是合法的 JSON，請修正後再儲存'); return }
+    setBusy(true)
+    try {
+      const saved = await adminRpgApi.putSkill(token, { ...form, job_id: form.job_id || null, prereq_skill_id: form.prereq_skill_id || null, effect })
+      onMsg(`已儲存「${saved.name}」`)
+      setForm(null)
+      load()
+    } catch (e: any) { onErr(e?.message || '儲存失敗') } finally { setBusy(false) }
+  }
+
+  async function del(r: RpgSkill) {
+    if (!window.confirm(`確定刪除「${r.name}」？`)) return
+    setBusy(true)
+    try {
+      await adminRpgApi.deleteSkill(token, r.id)
+      onMsg(`已刪除「${r.name}」`)
+      if (form?.id === r.id) setForm(null)
+      load()
+    } catch (e: any) { onErr(e?.message || '刪除失敗') } finally { setBusy(false) }
+  }
+
   return (
-    <SimpleContentTab<RpgSkill>
-      token={token} heading="技能管理" desc="8 格技能列固定容量；玩家未自訂 loadout 時，依 is_default 與排序自動補入。這裡填的 flat 是「參考玩家（HPMax=battle_reference_hp，預設300）身上」的絕對值——正式對戰會依實際玩家 HPMax 等比例縮放（heal/shield），不用因為擔心高等級玩家補太少而把數字填很大。"
-      idKey="id" nameKey="name" fields={SKILL_FIELDS}
-      list={(t) => adminRpgApi.skills(t).then((r) => r.skills)}
-      put={(t, row) => adminRpgApi.putSkill(t, row)}
-      remove={(t, id) => adminRpgApi.deleteSkill(t, id)}
-      empty={emptySkill} onErr={onErr} onMsg={onMsg}
-    />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
+        <div>
+          <h2 style={{ fontSize: 15, fontWeight: 800, margin: '0 0 4px' }}>技能管理</h2>
+          <p style={{ fontSize: 12, color: 'var(--tx-dim)', margin: 0, maxWidth: 640, lineHeight: 1.7 }}>
+            通用技能（job_id 空白）是 8 格技能列固定容量，玩家未自訂 loadout 時依 is_default 與排序自動補入；
+            flat 是「參考玩家（HPMax=battle_reference_hp，預設 300）身上」的絕對值，正式對戰依實際玩家 HPMax
+            等比例縮放（heal/shield）。指定 job_id 的是職業技能樹（path a/b/c，tier 決定路線內順位），effect 是
+            隨等級展開的效果 JSON——kind=taunt 用 duration_base_ms/duration_per_level_ms/damage_taken_pct_base/
+            damage_taken_pct_per_level/retarget，kind=passive 想讓「按防禦」也進入守護狀態則加 guard_taunt:true
+            （見契約 dorpg_p5/dorpg_p10 CONTRACT §5）。
+          </p>
+        </div>
+        {!form && <button onClick={startNew} style={primaryBtn}>＋ 新增</button>}
+      </div>
+
+      {!form && (
+        <F label="篩選：職業">
+          <select style={inp} value={filterJob} onChange={(e) => setFilterJob(e.target.value)}>
+            <option value="">全部</option>
+            <option value="null">通用（無職業）</option>
+            {SKILL_JOB_OPTIONS.filter((o) => o.value).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </F>
+      )}
+
+      {rows === null && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>載入中…</div>}
+      {rows && filteredRows.length === 0 && !form && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>尚無符合篩選條件的資料。</div>}
+      {rows && filteredRows.length > 0 && !form && (
+        <div style={{ overflowX: 'auto' }}>
+          <Row head>
+            <C w={2}>ID</C>
+            <C w={2}>名稱</C>
+            <C w={1}>種類</C>
+            <C w={2}>職業／路線／Tier</C>
+            <C w={1}>啟用</C>
+            <C w={2}>操作</C>
+          </Row>
+          {[...filteredRows]
+            .sort((a, b) => (a.job_id ?? '').localeCompare(b.job_id ?? '') || a.path.localeCompare(b.path) || a.tier - b.tier || a.sort_order - b.sort_order)
+            .map((s) => (
+              <Row key={s.id}>
+                <C w={2} dim>{s.id}</C>
+                <C w={2}>{s.name}</C>
+                <C w={1} dim>{SKILL_KIND_LABEL[s.kind] ?? s.kind}</C>
+                <C w={2} dim>{s.job_id ? `${SKILL_JOB_OPTIONS.find((o) => o.value === s.job_id)?.label ?? s.job_id}・${s.path || '—'}・T${s.tier}` : '通用'}</C>
+                <C w={1}>{s.is_active ? <span style={{ color: 'var(--fug)' }}>✓</span> : <span style={{ color: 'var(--tx-faint)' }}>—</span>}</C>
+                <C w={2}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={() => startEdit(s)} style={linkBtn}>編輯</button>
+                    <button onClick={() => del(s)} disabled={busy} style={{ ...linkBtn, color: 'var(--hunt)' }}>刪除</button>
+                  </div>
+                </C>
+              </Row>
+            ))}
+        </div>
+      )}
+
+      {form && (
+        <div style={panel}>
+          <h3 style={{ fontSize: 14, fontWeight: 800, margin: '0 0 10px' }}>{isNew ? '新增' : `編輯：${form.name || form.id}`}</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+            <F label="ID"><input style={inp} type="text" value={form.id} disabled={!isNew} onChange={(e) => setForm({ ...form, id: e.target.value })} /></F>
+            <F label="名稱"><input style={inp} type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></F>
+            <F label="圖示 ID（如 icon_skill_slash）"><input style={inp} type="text" value={form.icon_id} onChange={(e) => setForm({ ...form, icon_id: e.target.value })} /></F>
+            <F label="種類">
+              <select style={inp} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as RpgSkill['kind'] })}>
+                {(Object.keys(SKILL_KIND_LABEL) as RpgSkill['kind'][]).map((k) => <option key={k} value={k}>{SKILL_KIND_LABEL[k]}</option>)}
+              </select>
+            </F>
+            <F label="目標">
+              <select style={inp} value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value as RpgSkill['target'] })}>
+                {SKILL_TARGET_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </F>
+            <F label="武器（特效/音效組）">
+              <select style={inp} value={form.weapon} onChange={(e) => setForm({ ...form, weapon: e.target.value as RpgSkill['weapon'] })}>
+                {[{ v: 'sword', l: '劍' }, { v: 'staff', l: '法杖' }, { v: 'bow', l: '弓' }, { v: 'greatsword', l: '大劍' }].map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
+              </select>
+            </F>
+            <F label="屬性">
+              <select style={inp} value={form.element} onChange={(e) => setForm({ ...form, element: e.target.value })}>
+                {['metal', 'wood', 'water', 'fire', 'earth', 'light', 'dark', 'neutral'].map((v) => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </F>
+            <F label="MP 消耗（基礎）"><input style={inp} type="number" step="1" value={form.mp_cost} onChange={(e) => setForm({ ...form, mp_cost: Number(e.target.value) })} /></F>
+            <F label="冷卻（毫秒）"><input style={inp} type="number" step="1" value={form.cooldown_ms} onChange={(e) => setForm({ ...form, cooldown_ms: Number(e.target.value) })} /></F>
+            <F label="傷害/治療係數"><input style={inp} type="number" value={form.coefficient} onChange={(e) => setForm({ ...form, coefficient: Number(e.target.value) })} /></F>
+            <F label="固定加成值 flat"><input style={inp} type="number" step="1" value={form.flat} onChange={(e) => setForm({ ...form, flat: Number(e.target.value) })} /></F>
+            <F label="施放時間（毫秒）"><input style={inp} type="number" step="1" value={form.cast_ms} onChange={(e) => setForm({ ...form, cast_ms: Number(e.target.value) })} /></F>
+            <F label="預設帶入（未設定 loadout 時，僅通用技能有意義）">
+              <input type="checkbox" checked={form.is_default} onChange={(e) => setForm({ ...form, is_default: e.target.checked })} style={{ width: 18, height: 18 }} />
+            </F>
+            <F label="啟用"><input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} style={{ width: 18, height: 18 }} /></F>
+            <F label="排序"><input style={inp} type="number" step="1" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) })} /></F>
+
+            <F label="所屬職業（空＝通用）">
+              <select style={inp} value={form.job_id ?? ''} onChange={(e) => setForm({ ...form, job_id: e.target.value || null })}>
+                {SKILL_JOB_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </F>
+            <F label="路線 path">
+              <select style={inp} value={form.path} onChange={(e) => setForm({ ...form, path: e.target.value as RpgSkill['path'] })}>
+                {SKILL_PATH_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </F>
+            <F label="Tier（路線內順位，1 起算）"><input style={inp} type="number" step="1" value={form.tier} onChange={(e) => setForm({ ...form, tier: Number(e.target.value) })} /></F>
+            <F label="技能等級上限 max_level"><input style={inp} type="number" step="1" value={form.max_level} onChange={(e) => setForm({ ...form, max_level: Number(e.target.value) })} /></F>
+            <F label="傷害屬性 dmg_type（僅 kind=damage 有意義）">
+              <select style={inp} value={form.dmg_type} onChange={(e) => setForm({ ...form, dmg_type: e.target.value as RpgSkill['dmg_type'] })}>
+                {SKILL_DMG_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </F>
+            <F label="前置技能 ID（留空＝無前置）"><input style={inp} type="text" value={form.prereq_skill_id ?? ''} onChange={(e) => setForm({ ...form, prereq_skill_id: e.target.value || null })} /></F>
+            <F label="前置需求等級"><input style={inp} type="number" step="1" value={form.prereq_level} onChange={(e) => setForm({ ...form, prereq_level: Number(e.target.value) })} /></F>
+            <F label="每級 MP 消耗遞增 mp_cost_per_level"><input style={inp} type="number" value={form.mp_cost_per_level} onChange={(e) => setForm({ ...form, mp_cost_per_level: Number(e.target.value) })} /></F>
+            <F label="實裝（關閉＝可配點但戰鬥中不可用）">
+              <input type="checkbox" checked={form.implemented} onChange={(e) => setForm({ ...form, implemented: e.target.checked })} style={{ width: 18, height: 18 }} />
+            </F>
+            <F label="效果說明文字 display_text" full>
+              <textarea style={{ ...ta, height: 60 }} value={form.display_text} onChange={(e) => setForm({ ...form, display_text: e.target.value })} />
+            </F>
+            <F label="效果 effect（JSON，見契約 dorpg_p5/dorpg_p10 CONTRACT §5；通用技能／damage/heal/shield 留 {} 即可）" full>
+              <textarea style={{ ...ta, height: 160, fontFamily: 'monospace', fontSize: 12 }} value={effectText} onChange={(e) => setEffectText(e.target.value)} />
+            </F>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            <button onClick={save} disabled={busy} style={primaryBtn}>{busy ? '儲存中…' : '儲存'}</button>
+            <button onClick={() => setForm(null)} style={ghostBtn}>取消</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================== 職業（P10 起後台可編輯 path_c／traits） ==============================
+// DORPG P10（CONTRACT §2/§7、WIRE §後台）：六職業固定列，P5 決定「本輪沒有後台 CRUD」；P10 為了
+// 讓後台能設定重騎士第三路線與職業特性，追加這個窄用途的編輯能力——只開放編輯 path_c_id/
+// path_c_name/path_c_desc（目前只有重騎士「守護」路線在用）與 traits（職業天生特性 JSON，目前
+// 只有重騎士 damage_taken_pct:-15）；其餘欄位唯讀顯示，不提供新增／刪除（六職業由 migration 180
+// seed，id 生命週期內視為靜態資料，比照 WeaponTypesTab 既有慣例）。
+
+function JobsTab({ token, onErr, onMsg }: { token: string; onErr: (m: string) => void; onMsg: (m: string) => void }) {
+  const [rows, setRows] = useState<RpgJob[] | null>(null)
+  const [form, setForm] = useState<RpgJob | null>(null)
+  // DORPG P10：path_c 用獨立的三個字串 state 編輯（而不是直接改 form.path_c），因為 GET 回應的
+  // path_c 在多數職業上根本不存在（undefined，見 RpgJob 型別註解），存檔時再組成 PUT body 要求的
+  // 完整物件——id 空字串＝清除這條路線（見 adminJobPutRequest 後端註解）。
+  const [pathCId, setPathCId] = useState('')
+  const [pathCName, setPathCName] = useState('')
+  const [pathCDesc, setPathCDesc] = useState('')
+  const [traitsText, setTraitsText] = useState('{}')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(() => {
+    adminRpgApi.jobs(token).then((r) => setRows(r.jobs)).catch((e: any) => onErr(e?.message || '載入失敗'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+  useEffect(() => { load() }, [load])
+
+  function startEdit(r: RpgJob) {
+    setForm({ ...r })
+    setPathCId(r.path_c?.id ?? '')
+    setPathCName(r.path_c?.name ?? '')
+    setPathCDesc(r.path_c?.desc ?? '')
+    setTraitsText(JSON.stringify(r.traits ?? {}, null, 2))
+  }
+
+  async function save() {
+    if (!form) return
+    let traits: RpgJob['traits']
+    try { traits = JSON.parse(traitsText || '{}') } catch { onErr('「職業特性 traits」不是合法的 JSON，請修正後再儲存'); return }
+    setBusy(true)
+    try {
+      const saved = await adminRpgApi.putJob(token, {
+        ...form,
+        path_c: { id: pathCId.trim(), name: pathCName.trim(), desc: pathCDesc.trim() },
+        traits,
+      })
+      onMsg(`已儲存「${saved.name}」`)
+      setForm(null)
+      load()
+    } catch (e: any) { onErr(e?.message || '儲存失敗') } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <h2 style={{ fontSize: 15, fontWeight: 800, margin: '0 0 4px' }}>職業管理</h2>
+        <p style={{ fontSize: 12, color: 'var(--tx-dim)', margin: 0, maxWidth: 640, lineHeight: 1.7 }}>
+          六職業固定資料（無新增／刪除）。這裡只開放編輯第三條路線 path_c（目前僅重騎士「守護」，
+          路線 ID 留空＝此職業沒有第三條路線）與職業天生特性 traits（目前僅重騎士
+          damage_taken_pct:-15，套用在戰鬥受到傷害減免，角色頁會顯示「職業特性：受到傷害 −15%」
+          這行文字）；其餘欄位唯讀顯示，如需調整請走 migration。
+        </p>
+      </div>
+
+      {rows === null && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>載入中…</div>}
+      {rows && !form && (
+        <div style={{ overflowX: 'auto' }}>
+          <Row head>
+            <C w={2}>ID</C>
+            <C w={2}>名稱</C>
+            <C w={2}>路線 C</C>
+            <C w={2}>traits</C>
+            <C w={1}>操作</C>
+          </Row>
+          {[...rows].sort((a, b) => a.sort_order - b.sort_order).map((j) => (
+            <Row key={j.id}>
+              <C w={2} dim>{j.id}</C>
+              <C w={2}>{j.name}</C>
+              <C w={2} dim>{j.path_c?.name || '—'}</C>
+              <C w={2} dim>{Object.keys(j.traits ?? {}).length ? JSON.stringify(j.traits) : '—'}</C>
+              <C w={1}><button onClick={() => startEdit(j)} style={linkBtn}>編輯</button></C>
+            </Row>
+          ))}
+        </div>
+      )}
+
+      {form && (
+        <div style={panel}>
+          <h3 style={{ fontSize: 14, fontWeight: 800, margin: '0 0 10px' }}>編輯：{form.name}（{form.id}）</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+            <F label="路線 A（唯讀）"><input style={inp} type="text" value={`${form.path_a.name}・${form.path_a.desc}`} disabled /></F>
+            <F label="路線 B（唯讀）"><input style={inp} type="text" value={`${form.path_b.name}・${form.path_b.desc}`} disabled /></F>
+            <F label="路線 C ID（留空＝此職業無第三路線）"><input style={inp} type="text" value={pathCId} onChange={(e) => setPathCId(e.target.value)} /></F>
+            <F label="路線 C 名稱"><input style={inp} type="text" value={pathCName} onChange={(e) => setPathCName(e.target.value)} /></F>
+            <F label="路線 C 說明" full><textarea style={{ ...ta, height: 60 }} value={pathCDesc} onChange={(e) => setPathCDesc(e.target.value)} /></F>
+            <F label={'職業特性 traits（JSON，如 {"damage_taken_pct":-15}）'} full>
+              <textarea style={{ ...ta, height: 100, fontFamily: 'monospace', fontSize: 12 }} value={traitsText} onChange={(e) => setTraitsText(e.target.value)} />
+            </F>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            <button onClick={save} disabled={busy} style={primaryBtn}>{busy ? '儲存中…' : '儲存'}</button>
+            <button onClick={() => setForm(null)} style={ghostBtn}>取消</button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

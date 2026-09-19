@@ -110,6 +110,23 @@ function buffSkill(overrides = {}) {
 function shieldSkill(overrides = {}) {
   return { id: 'shield', name: '護盾', iconUrl: '', cooldownMs: 4000, kind: 'shield', target: 'ally', mpCost: 10, coefficient: 1, flat: 50, weapon: 'staff', ...overrides }
 }
+// P10（DORPG_P10 CONTRACT §3、WIRE「引擎」）：挑釁（retarget:true，不附帶減傷）與守護姿態
+// （retarget:false，附帶 damage_taken_pct）——decideGuardStance／decideProtectGuardStance 只看
+// `taunt.retarget` 這個展開欄位挑優先序，不看技能 id，這裡刻意給不同的 id 方便斷言區分。
+function tauntSkill(overrides = {}) {
+  return {
+    id: 'taunt', name: '挑釁', iconUrl: '', cooldownMs: 6000, kind: 'taunt', target: 'self', mpCost: 8, coefficient: 0, flat: 0, weapon: 'greatsword',
+    taunt: { durationMs: 5000, damageTakenPct: 0, retarget: true },
+    ...overrides,
+  }
+}
+function guardStanceSkill(overrides = {}) {
+  return {
+    id: 'guard_stance', name: '守護姿態', iconUrl: '', cooldownMs: 12000, kind: 'taunt', target: 'self', mpCost: 18, coefficient: 0, flat: 0, weapon: 'greatsword',
+    taunt: { durationMs: 8000, damageTakenPct: -20, retarget: false },
+    ...overrides,
+  }
+}
 
 // ═══════════════════════════ 1) STRATEGY_IDS / resolveStrategy ═══════════════════════════
 
@@ -347,6 +364,43 @@ eq(resolveStrategy('mp_conserve').id, 'mp_conserve', 'resolveStrategy：合法 i
   const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'earth_e', enemies: [earth] })
   eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'wood_skill', targetId: 'earth_e' }, 'element_advantage：技能優先選對目標倍率>1者（wood_skill），不是 tier 最高的中性技能')
 }
+// 修法驗證（原缺陷：只看武器屬性選目標，武器 neutral（杖等）時法師的技能屬性完全沒用到）——
+// 以下三條對齊 decideElementAdvantage 新增的「max(武器倍率, 各可用傷害技能倍率)」評估。
+{
+  const strat = resolveStrategy('element_advantage')
+  // 武器 neutral（杖）跟任何屬性都無相剋，但火屬性技能命中 wood_e 的弱點桶（weakElements:['fire']）
+  // →倍率>1，必須選 wood_e 當目標、且 Decision 直接是這顆火技能（不是「找不到相剋→balanced」）。
+  const fireSkill = damageSkill({ id: 'fire_skill', element: 'fire', tier: 1 })
+  const actor = makeActor({ skills: [fireSkill], weaponProfile: { ...NEUTRAL_WEAPON_PROFILE, element: 'neutral' } })
+  const woodWeak = makeEnemy({ id: 'wood_e', attribute: 'wood', weakElements: ['fire'] })
+  const neutralE = makeEnemy({ id: 'neutral_e' }) // 無屬性、無弱點桶 → 任何屬性對它恆 1
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'neutral_e', enemies: [neutralE, woodWeak] })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'fire_skill', targetId: 'wood_e' }, 'element_advantage：武器 neutral（杖）時改看技能屬性選目標與技能（法師修法後生效）')
+}
+{
+  const strat = resolveStrategy('element_advantage')
+  // fireSkill 的 mpCost 故意設到超出 actor.mp——isAiSkillReady 判定不足，技能整顆被排除在候選外，
+  // 必須完全退回「只看武器屬性」的舊版評估（武器 metal 對 wood_e 本身即相剋 1.25），且技能挑選也
+  // 找不到可用技能而落回普攻，不能誤把 MP 不足的技能當成「最佳來源」。
+  const fireSkill = damageSkill({ id: 'fire_skill', element: 'fire', tier: 1, mpCost: 999 })
+  const actor = makeActor({ skills: [fireSkill], mp: 5, weaponProfile: { ...NEUTRAL_WEAPON_PROFILE, element: 'metal' } })
+  const wood = makeEnemy({ id: 'wood_e', attribute: 'wood' })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'wood_e', enemies: [wood] })
+  eq(decideAction(ctx, actor, strat), { kind: 'attack', targetId: 'wood_e' }, 'element_advantage：技能 MP 不足時排除在候選外，退回武器屬性評估／普攻')
+}
+{
+  const strat = resolveStrategy('element_advantage')
+  const balancedStrat = resolveStrategy('balanced')
+  // 武器與技能皆 neutral、敵人也沒有可觸發弱點桶的屬性設定 → 全場無相剋，Decision 必須跟 balanced
+  // 完全相同（含技能挑選與目標），這條斷言的 rng 用量跟修法前一樣是 0（decideAction 全系列不摸
+  // ctx.rng()），確保「全無相剋情境」不會被這次修法意外改變。
+  const neutralSkill = damageSkill({ id: 'neutral_skill', tier: 1 })
+  const actor = makeActor({ skills: [neutralSkill], weaponProfile: { ...NEUTRAL_WEAPON_PROFILE, element: 'neutral' } })
+  const e1 = makeEnemy({ id: 'e1' })
+  const e2 = makeEnemy({ id: 'e2' })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'e2', enemies: [e1, e2] })
+  eq(decideAction(ctx, actor, strat), decideAction(ctx, actor, balancedStrat), 'element_advantage：全無相剋時 Decision 與 balanced 完全相同')
+}
 
 // ═══════════════════════════ 8) 整合測試：autopilot（真的走 createBattle/dispatch/tick） ═══════════════════════════
 
@@ -524,6 +578,167 @@ function sample_e1() {
     if (s.party[0].action === 'guarding') sawGuarding = true
   }
   ok(!sawGuarding, 'auto_guard：focus_fire 預設 auto_guard=false，即使被 windup 鎖定也不會自動防禦')
+}
+
+// ═══════════════════════════ 9) P10（DORPG_P10 CONTRACT §3、WIRE「引擎」）：
+// 重騎士「守護」路線——decideAction 對 taunt 技能的守護判斷（插在 heal 之後、buff 之前）。 ═══════════════════════════
+
+// (a) balanced：有可用 taunt 技能且自己不在守護狀態 → 優先於 buff/damage 施放。
+{
+  const strat = resolveStrategy('balanced')
+  const actor = makeActor({ skills: [tauntSkill(), buffSkill(), damageSkill()] })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'e1', enemies: [makeEnemy()] })
+  eq(decideAction(ctx, actor, strat), { kind: 'taunt', skillId: 'taunt', targetId: 'ally1' }, 'balanced：有可用 taunt 技能且不在守護狀態 → 施放（優先於 buff/damage），目標＝自己')
+}
+// (b) balanced：同時有挑釁（retarget:true）與守護姿態（retarget:false）可用 → 優先守護姿態。
+{
+  const strat = resolveStrategy('balanced')
+  const actor = makeActor({ skills: [tauntSkill(), guardStanceSkill()] })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'e1', enemies: [makeEnemy()] })
+  eq(decideAction(ctx, actor, strat), { kind: 'taunt', skillId: 'guard_stance', targetId: 'ally1' }, 'balanced：挑釁與守護姿態都可用 → 優先 retarget=false 的守護姿態')
+}
+// (c) balanced：自己已經在守護狀態（tauntUntil 未到期）→ 不重複施放，落到下一段（damage）。
+{
+  const strat = resolveStrategy('balanced')
+  const actor = makeActor({ tauntUntil: 20000, skills: [tauntSkill(), damageSkill({ tier: 1 })] })
+  const ctx = makeCtx({ now: 10000, party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'e1', enemies: [makeEnemy()] })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'dmg', targetId: 'e1' }, 'balanced：已在守護狀態（tauntUntil>now）→ 守護判斷跳過，落到 damage')
+}
+// (d) balanced：guardTaunt 來源（GUARD_BEGIN 中）同樣視為已在守護狀態，不重複施放 taunt。
+{
+  const strat = resolveStrategy('balanced')
+  const actor = makeActor({ action: 'guarding', guardTaunt: true, skills: [tauntSkill(), damageSkill({ tier: 1 })] })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'e1', enemies: [makeEnemy()] })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'dmg', targetId: 'e1' }, 'balanced：guarding+guardTaunt 已算守護狀態 → 守護判斷跳過，落到 damage')
+}
+// (e) balanced：taunt 技能冷卻中（未 ready）→ 守護判斷自然跳過，不需要額外分支。
+{
+  const strat = resolveStrategy('balanced')
+  const actor = makeActor({ skills: [tauntSkill(), damageSkill({ tier: 1 })] })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'e1', enemies: [makeEnemy()], aiSkillReadyAt: { [actor.id]: { taunt: 999999 } } })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'dmg', targetId: 'e1' }, 'balanced：taunt 冷卻中 → 沒有候選，落到 damage')
+}
+// (f) balanced：heal 仍然優先於守護判斷（既有優先序不變——heal 之後才輪到 guard）。
+{
+  const strat = resolveStrategy('balanced')
+  const healer = makeActor({ id: 'healer', skills: [healSkill(), tauntSkill()] })
+  const lowAlly = makeActor({ id: 'lowhp', hp: 300 })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), healer, lowAlly], targetId: 'e1', enemies: [makeEnemy()] })
+  eq(decideAction(ctx, healer, strat), { kind: 'heal', skillId: 'heal', targetId: 'lowhp' }, 'balanced：heal 仍優先於守護判斷（CONTRACT「在 buff 階段前」＝heal 之後）')
+}
+// (g) mp_conserve：MP<reserve 時守護判斷不生效（「受 MP 門檻限制」），落到普攻，不是施放 taunt。
+{
+  const strat = resolveStrategy('mp_conserve') // mp_reserve_pct=50
+  const actor = makeActor({ mp: 20, skills: [tauntSkill(), damageSkill()] }) // 20/200=10% < 50%
+  const okAlly = makeActor({ id: 'ok', hp: 900 }) // 沒有人達 emergency 門檻
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor, okAlly], targetId: 'e1', enemies: [makeEnemy()] })
+  eq(decideAction(ctx, actor, strat), { kind: 'attack', targetId: 'e1' }, 'mp_conserve：MP<reserve 時不放 taunt（守護判斷只插在 MP 充足分支）')
+}
+// (h) mp_conserve：MP<reserve 且有隊友命在旦夕（emergency）→ 治療例外仍不含挑釁，一樣治療優先。
+{
+  const strat = resolveStrategy('mp_conserve')
+  const actor = makeActor({ mp: 20, skills: [healSkill(), tauntSkill(), damageSkill()] })
+  const critical = makeActor({ id: 'crit', hp: 200 }) // 20% < 30% emergency
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor, critical], targetId: 'e1', enemies: [makeEnemy()] })
+  eq(decideAction(ctx, actor, strat), { kind: 'heal', skillId: 'heal', targetId: 'crit' }, 'mp_conserve：MP<reserve 的 emergency 治療例外不含挑釁，仍治療優先')
+}
+// (i) mp_conserve：MP 充足時比照 balanced，守護判斷生效。
+{
+  const strat = resolveStrategy('mp_conserve')
+  const actor = makeActor({ mp: 150, skills: [tauntSkill(), damageSkill()] }) // 75% ≥ 50% reserve
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'e1', enemies: [makeEnemy()] })
+  eq(decideAction(ctx, actor, strat), { kind: 'taunt', skillId: 'taunt', targetId: 'ally1' }, 'mp_conserve：MP 充足時守護判斷比照 balanced 生效')
+}
+// (j) skill_aggressive：守護判斷插在 heal 之後、buff 之前，優先於傷害技能。
+{
+  const strat = resolveStrategy('skill_aggressive')
+  const actor = makeActor({ skills: [tauntSkill(), damageSkill({ coefficient: 3.0 })] })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'e1', enemies: [makeEnemy()] })
+  eq(decideAction(ctx, actor, strat), { kind: 'taunt', skillId: 'taunt', targetId: 'ally1' }, 'skill_aggressive：守護判斷優先於「選 coefficient 最高」的傷害技能')
+}
+// (k) focus_fire：守護判斷優先於 focus target 的傷害技能。
+{
+  const strat = resolveStrategy('focus_fire')
+  const actor = makeActor({ skills: [tauntSkill(), damageSkill()] })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'e1', enemies: [makeEnemy()], focusTargetId: 'e1' })
+  eq(decideAction(ctx, actor, strat), { kind: 'taunt', skillId: 'taunt', targetId: 'ally1' }, 'focus_fire：守護判斷優先於集中火力的傷害技能')
+}
+// (l) element_advantage：守護判斷優先於屬性相剋的目標/技能挑選。
+{
+  const strat = resolveStrategy('element_advantage')
+  const actor = makeActor({ skills: [tauntSkill()], weaponProfile: { ...NEUTRAL_WEAPON_PROFILE, element: 'metal' } })
+  const wood = makeEnemy({ id: 'wood_e', attribute: 'wood' })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'wood_e', enemies: [wood] })
+  eq(decideAction(ctx, actor, strat), { kind: 'taunt', skillId: 'taunt', targetId: 'ally1' }, 'element_advantage：守護判斷優先於屬性相剋的傷害技能挑選')
+}
+// (m) protect_allies：一般情況（沒有隊友被 windup 鎖定）→ 跟其它策略一樣優先守護姿態。
+{
+  const strat = resolveStrategy('protect_allies')
+  const actor = makeActor({ skills: [tauntSkill(), guardStanceSkill()] })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'e1', enemies: [makeEnemy()] })
+  eq(decideAction(ctx, actor, strat), { kind: 'taunt', skillId: 'guard_stance', targetId: 'ally1' }, 'protect_allies：沒有隊友被 windup 鎖定時，一般規則仍是優先守護姿態')
+}
+// (n) protect_allies：有隊友正被 windup 中的敵人鎖定 → 立即改放挑釁（即使守護姿態也可用，
+//     這條「立即挑釁」的優先序高於「一般情況優先守護姿態」）。
+{
+  const strat = resolveStrategy('protect_allies')
+  const actor = makeActor({ skills: [tauntSkill(), guardStanceSkill()] })
+  const weakest = makeActor({ id: 'weak', hp: 100 })
+  const threateningEnemy = makeEnemy({ id: 'threat', anim: 'windup' })
+  const ctx = makeCtx({
+    party: [makeActor({ id: 'player', isPlayer: true }), actor, weakest],
+    targetId: 'e1', enemies: [threateningEnemy],
+    enemyTargets: { threat: 'weak' }, // threat 正在 windup 鎖定 weakest
+  })
+  eq(decideAction(ctx, actor, strat), { kind: 'taunt', skillId: 'taunt', targetId: 'ally1' }, 'protect_allies：隊友被 windup 中敵人鎖定 → 立即改放挑釁（retarget），不是預設的守護姿態')
+}
+// (o) protect_allies：隊友被 windup 鎖定，但手上只有守護姿態（沒有挑釁可用）→ 落回一般規則，
+//     放得出來的那一顆（守護姿態），不會因為挑釁不可用就整段放棄守護判斷。
+{
+  const strat = resolveStrategy('protect_allies')
+  const actor = makeActor({ skills: [guardStanceSkill()] })
+  const weakest = makeActor({ id: 'weak', hp: 100 })
+  const threateningEnemy = makeEnemy({ id: 'threat', anim: 'windup' })
+  const ctx = makeCtx({
+    party: [makeActor({ id: 'player', isPlayer: true }), actor, weakest],
+    targetId: 'e1', enemies: [threateningEnemy],
+    enemyTargets: { threat: 'weak' },
+  })
+  eq(decideAction(ctx, actor, strat), { kind: 'taunt', skillId: 'guard_stance', targetId: 'ally1' }, 'protect_allies：隊友被鎖定但沒有挑釁可用 → 落回一般規則施放守護姿態')
+}
+// (p) protect_allies：自己已經在守護狀態時，即使隊友被 windup 鎖定，也不重複施放
+//     （inGuardianState 檢查對「立即挑釁」這條特例同樣適用）。
+{
+  const strat = resolveStrategy('protect_allies')
+  const actor = makeActor({ tauntUntil: 20000, skills: [tauntSkill(), damageSkill({ tier: 1 })] })
+  const weakest = makeActor({ id: 'weak', hp: 900 }) // 高於 shield_pct 門檻，不會被 decideProtectShieldOrBuff 攔下
+  const threateningEnemy = makeEnemy({ id: 'threat', anim: 'windup' })
+  const ctx = makeCtx({
+    now: 10000,
+    party: [makeActor({ id: 'player', isPlayer: true }), actor, weakest],
+    targetId: 'threat', enemies: [threateningEnemy],
+    enemyTargets: { threat: 'weak' },
+  })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'dmg', targetId: 'threat' }, 'protect_allies：自己已在守護狀態 → 即使隊友被鎖定也不重複施放，落到 damage')
+}
+// (q) 沒有 taunt 技能的角色：既有決策序列零改動（balanced／protect_allies 對照組）。
+{
+  const strat = resolveStrategy('balanced')
+  const actor = makeActor({ skills: [damageSkill({ tier: 1 })] })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'e1', enemies: [makeEnemy()] })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'dmg', targetId: 'e1' }, '沒有 taunt 技能的角色：balanced 決策序列零改動')
+}
+{
+  const strat = resolveStrategy('protect_allies')
+  const actor = makeActor({ skills: [damageSkill()] })
+  const weakest = makeActor({ id: 'weak', hp: 100 })
+  const threateningEnemy = makeEnemy({ id: 'threat' })
+  const ctx = makeCtx({
+    party: [makeActor({ id: 'player', isPlayer: true }), actor, weakest],
+    targetId: 'other', enemies: [threateningEnemy, makeEnemy({ id: 'other' })],
+    enemyTargets: { threat: 'weak' },
+  })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'dmg', targetId: 'threat' }, '沒有 taunt 技能的角色：protect_allies 既有目標規則（打鎖定最低 HP% 隊友的敵人）零改動')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

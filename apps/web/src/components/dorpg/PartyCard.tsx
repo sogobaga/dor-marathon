@@ -31,6 +31,12 @@ export type PartyCardProps = {
   /** P5 POLISH：目前生效中的 buff/debuff（engine PartyActor.activeEffects 的精簡投影，見
    *  BattleScreen.tsx 的 partyStatusTags）；只顯示、不做任何戰鬥判斷。未給或空陣列＝不畫標籤列。 */
   statusTags?: { stat: BuffDebuffStat; value: number }[];
+  /**
+   * DORPG P10（CONTRACT §3/§5）：這位隊員目前是否處於「守護狀態」（tauntUntil 尚未到期，或正在
+   * 按防禦且學過守護本能）——敵人本回合只會攻擊這個角色。跟 statusTags 一樣純顯示投影，不做任何
+   * 戰鬥判斷（BattleScreen 用 inGuardianState 的邏輯投影出這個布林值，見 partyGuardian）。
+   */
+  guardian?: boolean;
 };
 
 /** 規格書表5（W390 基準）：姓名 14/600、Lv 12/500、HP/MP 主數值 18/700；實際字級再乘 width/72。 */
@@ -52,6 +58,7 @@ export default function PartyCard({
   onPick,
   floatText,
   statusTags,
+  guardian = false,
 }: PartyCardProps) {
   const scale = width / PARTY_SLOTS.w;
   // DORPG P6（契約 §1：HP/MP 出現小數務必整數）：引擎/bootstrap 理論上已經整數化，這裡是顯示層
@@ -154,13 +161,19 @@ export default function PartyCard({
                 頂端、疊在頭像插槽之上；深底淺字不需要為每個 tag 分色，箭頭（↑增益／↓減益，看 value
                 正負，跟 buff/debuff 分類是兩件事——見 skillStatLabel 呼叫處）已經足夠表達方向。
                 一整行用 overflow:hidden + ellipsis 兜底，不會因為中文字數不同而撐破卡寬。 */}
-            {statusTags && statusTags.length > 0 ? (
+            {/* DORPG P10（CONTRACT §5）：守護狀態標籤跟 buff/debuff 共用同一個標籤列容器（單行
+                ellipsis），文字上金色凸顯、排在最前面——守護是「敵人只打這個人」的關鍵戰場資訊，
+                不該被 +N 折疊掉，故不佔用 statusTags 的 3 個顯示額度，獨立疊在最前面。 */}
+            {guardian || (statusTags && statusTags.length > 0) ? (
               <div className={styles.tags} style={{ fontSize: 9 * scale }}>
-                {statusTags
-                  .slice(0, 3)
-                  .map((t) => `${t.value >= 0 ? '↑' : '↓'}${skillStatLabel(t.stat)}`)
-                  .join(' ')}
-                {statusTags.length > 3 ? ` +${statusTags.length - 3}` : ''}
+                {guardian ? <span style={{ color: PALETTE.targetGold }}>守護</span> : null}
+                {guardian && statusTags && statusTags.length > 0 ? ' ' : ''}
+                {statusTags && statusTags.length > 0
+                  ? statusTags
+                      .slice(0, 3)
+                      .map((t) => `${t.value >= 0 ? '↑' : '↓'}${skillStatLabel(t.stat)}`)
+                      .join(' ') + (statusTags.length > 3 ? ` +${statusTags.length - 3}` : '')
+                  : null}
               </div>
             ) : null}
           </>

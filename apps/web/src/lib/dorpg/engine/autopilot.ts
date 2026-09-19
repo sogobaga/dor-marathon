@@ -45,6 +45,7 @@ function applyDecisionForPlayer(ctx: Ctx, decision: Decision): void {
     }
     case 'heal':
     case 'buff':
+    case 'taunt':
     case 'damage':
     case 'debuff': {
       if (!decision.skillId) return;

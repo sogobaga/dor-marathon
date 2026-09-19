@@ -32,6 +32,23 @@ type EffectAtLevel struct {
 	Target     string  `json:"target,omitempty"`
 	MPCost     float64 `json:"mp_cost,omitempty"`
 	Element    string  `json:"element,omitempty"`
+
+	// --- DORPG P10（CONTRACT §3、WIRE）新增：kind=taunt 專屬展開值＋passive 的 guard_taunt。
+	// DurationMs 上面已經有欄位（既有 buff/debuff 用「固定不隨等級變化」的 duration_ms），
+	// taunt 會覆寫成 base+per_level×(lv-1) 展開後的值，見 ExpandEffect 的 taunt 分支。 ---
+	Retarget       bool    `json:"retarget,omitempty"`
+	DamageTakenPct float64 `json:"damage_taken_pct,omitempty"`
+	GuardTaunt     bool    `json:"guard_taunt,omitempty"`
+}
+
+// TauntEffectDTO DORPG P10（CONTRACT §3、WIRE）：kind=taunt 技能展開後的專屬子物件
+// （GET /rpg/skills SkillDTO.taunt，僅 kind=taunt 才非 nil）。battle.go 的 wireSkill 用同樣
+// 三個值另外組一份 camelCase 版本（wireTaunt）——兩邊都是從同一份 ExpandEffect() 結果讀出來，
+// 不會漂移。
+type TauntEffectDTO struct {
+	DurationMs     int     `json:"duration_ms"`
+	DamageTakenPct float64 `json:"damage_taken_pct"`
+	Retarget       bool    `json:"retarget"`
 }
 
 // ExpandEffect 依技能目前等級展開 base+per_level×(lv-1) 為即時數值。level<=0 時比照 lv=1 預覽
@@ -68,6 +85,16 @@ func ExpandEffect(s SkillRow, level int) EffectAtLevel {
 	case "buff", "debuff", "passive":
 		out.Stat = e.Stat
 		out.Value = e.ValueBase + e.ValuePerLevel*steps
+		// GuardTaunt DORPG P10（CONTRACT §3）：只有 passive 會帶這個布林（hk_c2 守護本能），
+		// 其餘 buff/debuff 的 e.GuardTaunt 永遠是零值 false，複製過來無副作用。
+		out.GuardTaunt = e.GuardTaunt
+	case "taunt":
+		// DORPG P10（CONTRACT §2/§3）：持續時間跟 damage_taken_pct 都是 base+per_level×(lv-1)
+		// 展開，覆寫掉上面預設抄自 e.DurationMs 的值（taunt 技能的 effect JSONB 不填舊式
+		// duration_ms，只填 duration_base_ms/duration_per_level_ms）。
+		out.DurationMs = int(float64(e.DurationBaseMs) + float64(e.DurationPerLevelMs)*steps)
+		out.DamageTakenPct = e.DamageTakenPctBase + e.DamageTakenPctPerLevel*steps
+		out.Retarget = e.Retarget
 	case "special":
 		// 未實裝：CONTRACT §5 明講「不進行任何數值展開，前端只顯示文字」。
 	}
@@ -95,6 +122,11 @@ func lvPreviewText(s SkillRow, lv int) string {
 		numeric = fmt.Sprintf("護盾量 %.0f", e.Flat)
 	case "buff", "debuff", "passive":
 		numeric = fmt.Sprintf("%s %+.1f", e.Stat, e.Value)
+	case "taunt":
+		numeric = fmt.Sprintf("持續 %dms", e.DurationMs)
+		if e.DamageTakenPct != 0 {
+			numeric += fmt.Sprintf("、受到傷害 %+.0f%%", e.DamageTakenPct)
+		}
 	}
 	switch {
 	case numeric == "":
@@ -131,6 +163,9 @@ type SkillDTO struct {
 	EffectAtLevel   EffectAtLevel     `json:"effect_at_level"`
 	EffectNextLevel *EffectAtLevel    `json:"effect_next_level"`
 	LvPreview       map[string]string `json:"lv_preview"`
+
+	// Taunt DORPG P10（CONTRACT §3、WIRE）：僅 kind=taunt 才非 nil，見 TauntEffectDTO 註解。
+	Taunt *TauntEffectDTO `json:"taunt,omitempty"`
 }
 
 func minInt(a, b int) int {
@@ -169,14 +204,25 @@ func skillDTOsFromLevels(skills []SkillRow, levels map[string]int, skillFree int
 			nextEffect = &e
 		}
 
+		effAtLevel := ExpandEffect(s, lvl)
+		// Taunt DORPG P10（CONTRACT §3、WIRE「僅 kind=taunt」）：從同一份展開結果拆出專屬子物件，
+		// 不重複算一次 ExpandEffect。
+		var taunt *TauntEffectDTO
+		if s.Kind == "taunt" {
+			taunt = &TauntEffectDTO{
+				DurationMs: effAtLevel.DurationMs, DamageTakenPct: effAtLevel.DamageTakenPct, Retarget: effAtLevel.Retarget,
+			}
+		}
+
 		dtos = append(dtos, SkillDTO{
 			ID: s.ID, Name: s.Name, Path: s.Path, Tier: s.Tier, Kind: s.Kind, DmgType: s.DmgType,
 			Element: s.Element, Target: s.Target, MaxLevel: s.MaxLevel, Level: lvl,
 			PrereqSkillID: s.PrereqSkillID, PrereqLevel: s.PrereqLevel, PrereqOK: prereqOK,
 			CanLevelUp: canLevelUp, MPCost: s.MPCost, MPCostPerLevel: s.MPCostPerLevel,
 			CooldownMs: s.CooldownMs, CastMs: s.CastMs, DisplayText: s.DisplayText, Implemented: s.Implemented,
-			EffectAtLevel:   ExpandEffect(s, lvl),
+			EffectAtLevel:   effAtLevel,
 			EffectNextLevel: nextEffect,
+			Taunt:           taunt,
 			LvPreview: map[string]string{
 				"1":  lvPreviewText(s, minInt(1, s.MaxLevel)),
 				"5":  lvPreviewText(s, minInt(5, s.MaxLevel)),
@@ -193,7 +239,9 @@ func (h *Handler) buildSkillsResponse(ctx context.Context, cfg Config, ch charac
 	if ch.JobID == nil {
 		return skillsResponse{Job: nil, Skills: []SkillDTO{}, SkillPointsTotal: 0, SkillPointsFree: 0}, nil
 	}
-	job, err := h.getJobByID(ctx, *ch.JobID)
+	// DORPG P10：GET /rpg/skills 回傳的 Job 是同一個 JobDTO 型別，改用 getJobByIDFull 讓
+	// paths/traits 跟 /rpg/me、/rpg/jobs、/rpg/tavern 一致（見 content.go JobRow.PathC 註解）。
+	job, err := h.getJobByIDFull(ctx, *ch.JobID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return skillsResponse{Job: nil, Skills: []SkillDTO{}, SkillPointsTotal: 0, SkillPointsFree: 0}, nil
@@ -500,4 +548,21 @@ func (h *Handler) SkillsReset(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.respondSkills(w, r, uid)
+}
+
+// hasGuardTauntPassive DORPG P10（CONTRACT §3「guardTaunt 由被動 guard_taunt:true...在 bootstrap
+// 展開成 party member 欄位」）：純函式——jobSkills 是這位角色（玩家或傭兵）目前職業/腳本可用的
+// 技能表，skillLevels 是對應的等級 map。刻意不寫死「hk_c2」：只要有任何 passive 技能的 effect
+// 帶 guard_taunt:true 且已投資 ≥1 級就成立，未來若某個職業／某支腳本學到另一個帶這個效果的被動
+// 也會自動生效，不必回來改這支函式。battle.go bootstrap 對玩家與傭兵都呼叫這支。
+func hasGuardTauntPassive(jobSkills []SkillRow, skillLevels map[string]int) bool {
+	for _, s := range jobSkills {
+		if s.Kind != "passive" || !s.Effect.GuardTaunt {
+			continue
+		}
+		if skillLevels[s.ID] >= 1 {
+			return true
+		}
+	}
+	return false
 }

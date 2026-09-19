@@ -94,6 +94,19 @@ type wireSkill struct {
 	// 鏡射用。缺這個頂層欄位會讓連段技能（hits>1）在戰鬥裡永遠只打 1 下（見 toWireSkillLeveled
 	// 註解）。toWireSkillLegacy（既有技能，沒有等級概念）固定填 1。
 	Hits int `json:"hits"`
+
+	// Taunt DORPG P10（CONTRACT §3、WIRE「wire skill 新增 kind:"taunt" 與 taunt:{...}」）：
+	// 僅 kind=taunt 才非 nil，見 wireTaunt 註解。
+	Taunt *wireTaunt `json:"taunt,omitempty"`
+}
+
+// wireTaunt DORPG P10（WIRE）：kind=taunt 技能展開後的專屬子物件，camelCase 對齊引擎詞彙——跟
+// skills.go TauntEffectDTO 是同一份 EffectAtLevel 展開結果的兩種殼（snake_case／camelCase），
+// 不會漂移。
+type wireTaunt struct {
+	DurationMs     int     `json:"durationMs"`
+	DamageTakenPct float64 `json:"damageTakenPct"`
+	Retarget       bool    `json:"retarget"`
 }
 
 type wireItem struct {
@@ -204,6 +217,42 @@ type wirePartyMember struct {
 	// auto_strategy_id，傭兵＝目前套用腳本的 strategy_id。引擎 decideAction() 用它決定行為，
 	// 未知 id 一律退回 balanced（見 strategies.go DefaultStrategyID）。
 	StrategyID string `json:"strategyId"`
+
+	// GuardTaunt DORPG P10（CONTRACT §3、WIRE）：這位成員是否學到「守護本能」（passive，effect
+	// 帶 guard_taunt:true）≥1 級——引擎的 inGuardianState() 用它判斷「按防禦（GUARD）期間」是否
+	// 也算進入守護狀態（見 hasGuardTauntPassive，skills.go）。
+	GuardTaunt bool `json:"guardTaunt"`
+	// JobTraits DORPG P10（CONTRACT §1/§4、WIRE）：職業天生特性，目前只有 damageTakenPct 一項。
+	// 數值已經合併進上面 EquipmentEffects.DamageTakenPct（引擎只需要讀那個欄位就會生效），這裡
+	// 另外原樣送一份純粹供顯示（角色頁「職業特性：受到傷害 −15%」，見 wireJobTraits 註解）。
+	JobTraits wireJobTraits `json:"jobTraits"`
+}
+
+// wireJobTraits DORPG P10（WIRE：戰鬥 bootstrap party member.jobTraits 的形狀）——camelCase，
+// 目前只有一項；沒有這項特性的職業一律送 0（跟「沒有 traits」語意相同，battle.go 呼叫端不必
+// 另外判斷這個欄位存不存在，比照 wireEquipmentEffects 對缺裝備時全零的既有慣例）。
+type wireJobTraits struct {
+	DamageTakenPct float64 `json:"damageTakenPct"`
+}
+
+// jobTraitsDamageTakenPct 讀 JobTraits.DamageTakenPct（nil＝這個職業沒有這項特性，回 0）。
+func jobTraitsDamageTakenPct(t JobTraits) float64 {
+	if t.DamageTakenPct == nil {
+		return 0
+	}
+	return *t.DamageTakenPct
+}
+
+// clampDamageTakenPct DORPG P10（CONTRACT §1「（職業特性）套用到玩家與同職業傭兵的戰鬥
+// equipmentEffects.damageTakenPct（相加，仍受 −60 夾限）」）：armor.go AggregateEquipment 對
+// 純裝備彙總已經套用同一個 -60 下限，但那支函式不在本輪 BACKEND 所有權內（見 content.go
+// JobRow.PathC 檔頭說明），這裡疊加職業特性之後要重新夾一次——只能在自己的檔案內複寫同一個
+// 常數，兩處之後若要改動夾限值，需要一起改。
+func clampDamageTakenPct(v float64) float64 {
+	if v < -60 {
+		return -60
+	}
+	return v
 }
 
 // wireEquipmentEffects DORPG P8（WIRE：戰鬥 bootstrap party member.equipmentEffects 的形狀）
@@ -411,7 +460,7 @@ func toWireSkillLegacy(s SkillRow) wireSkill {
 // buff-debuff 讀取），兩邊数字保證一致（見 battle_test.go 的回歸測試）。
 func toWireSkillLeveled(s SkillRow, level int) wireSkill {
 	e := ExpandEffect(s, level)
-	return wireSkill{
+	w := wireSkill{
 		ID: s.ID, Name: s.Name, IconURL: kitAssetURL(s.IconID), CooldownMs: s.CooldownMs,
 		Kind: s.Kind, Target: s.Target,
 		MPCost: roundInt(e.MPCost), Coefficient: e.Coef, Flat: roundInt(e.Flat),
@@ -419,6 +468,12 @@ func toWireSkillLeveled(s SkillRow, level int) wireSkill {
 		Level: level, MaxLevel: s.MaxLevel, DisplayText: s.DisplayText, DmgType: s.DmgType,
 		Implemented: s.Implemented, Hits: e.Hits, Effect: e, Tier: s.Tier,
 	}
+	// DORPG P10（CONTRACT §3、WIRE）：僅 kind=taunt 才帶這個子物件，理由同 skills.go
+	// skillDTOsFromLevels 的 Taunt 欄位（同一份 ExpandEffect 結果拆出來，不重算）。
+	if s.Kind == "taunt" {
+		w.Taunt = &wireTaunt{DurationMs: e.DurationMs, DamageTakenPct: e.DamageTakenPct, Retarget: e.Retarget}
+	}
+	return w
 }
 
 func toWireItem(it ItemRow) wireItem {
@@ -836,15 +891,40 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	weaponRow, wtype := equipSnap.Weapon, equipSnap.WeaponType
 	var job *JobRow
+	var playerGuardTaunt bool
 	if ch.JobID != nil {
-		if j, jerr := h.getJobByID(ctx, *ch.JobID); jerr == nil {
+		// DORPG P10：改用 getJobByIDFull——下面要讀 job.Traits 疊進 equipmentEffects。
+		if j, jerr := h.getJobByIDFull(ctx, *ch.JobID); jerr == nil {
 			job = &j
 		}
 		// 查無職業（理論上不會發生，職業被刪除）：job 維持 nil，resolvePlayerWeaponWire 保守
 		// 退回 nil，前端仍有引擎寫死的 'sword' 兜底，不讓整支 API 因此 500。
+
+		// DORPG P10（CONTRACT §3）：guardTaunt＝玩家目前職業技能裡「守護本能」（guard_taunt
+		// 被動）≥1 級。查詢失敗（理論上不會發生，職業/技能表存在才走得到這裡）保守視為 false，
+		// 不讓整支 bootstrap 因此 500——守護狀態只是少一個判定來源，不影響戰鬥能不能開打。
+		if jobSkillsForGuard, jerr := h.listSkillsByJob(ctx, *ch.JobID); jerr == nil {
+			ids := make([]string, len(jobSkillsForGuard))
+			for i, s := range jobSkillsForGuard {
+				ids[i] = s.ID
+			}
+			if levels, lerr := h.getPlayerSkillLevels(ctx, uid, ids); lerr == nil {
+				playerGuardTaunt = hasGuardTauntPassive(jobSkillsForGuard, levels)
+			}
+		}
 	}
 	playerWeaponWire := resolvePlayerWeaponWire(weaponRow, wtype, job)
-	playerEquipmentEffects := toWireEquipmentEffects(equipSnap.EquipmentEffects())
+	// DORPG P10（CONTRACT §1「套用到玩家與同職業傭兵的戰鬥 equipmentEffects.damageTakenPct
+	// （相加，仍受 −60 夾限）」）：職業特性疊加進裝備彙總的 damageTakenPct，再重新夾一次
+	// （clampDamageTakenPct，見該函式註解）。job 為 nil（未選職業）時 jobTraitsDamageTakenPct
+	// 吃零值 JobTraits 回 0，等同零改動。
+	playerEquipBonus := equipSnap.EquipmentEffects()
+	var playerJobTraits JobTraits
+	if job != nil {
+		playerJobTraits = job.Traits
+	}
+	playerEquipBonus.DamageTakenPct = clampDamageTakenPct(playerEquipBonus.DamageTakenPct + jobTraitsDamageTakenPct(playerJobTraits))
+	playerEquipmentEffects := toWireEquipmentEffects(playerEquipBonus)
 
 	// DORPG P9（CONTRACT §1、WIRE）：玩家成員的 strategyId＝auto_strategy_id；空字串（理論上
 	// 不會發生，DB 欄位 NOT NULL DEFAULT 'balanced'）保守退回 DefaultStrategyID。
@@ -865,6 +945,8 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 
 		EquipmentEffects: playerEquipmentEffects,
 		StrategyID:       playerStrategyID,
+		GuardTaunt:       playerGuardTaunt,
+		JobTraits:        wireJobTraits{DamageTakenPct: jobTraitsDamageTakenPct(playerJobTraits)},
 	}}
 
 	// DORPG P6（CONTRACT §3.2）：隊伍成員改由 player_party（或預設小咪）建構——每位傭兵用自己
@@ -905,6 +987,16 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		if strategyID == "" {
 			strategyID = DefaultStrategyID
 		}
+
+		// DORPG P10（CONTRACT §1/§3）：companion 版的「疊加職業特性」與「守護狀態旗標」，理由
+		// 同上方玩家那份（m.Job 由 tavern.go resolvePartyForBattle 用 getJobByIDFull 查出，已經
+		// 含 Traits，見該函式修改註解）。guardTaunt 用這位傭兵自己目前腳本的技能等級判斷——
+		// 系統預設腳本本輪沒有任何一位投資 hk_c2，這裡仍是通用邏輯，之後腳本編輯器讓玩家自己在
+		// 阿深身上點守護本能一樣會自動生效，不必回來改這段。
+		compEquipBonus := presetEquipmentEffects(eqSlots)
+		compEquipBonus.DamageTakenPct = clampDamageTakenPct(compEquipBonus.DamageTakenPct + jobTraitsDamageTakenPct(m.Job.Traits))
+		compGuardTaunt := hasGuardTauntPassive(m.JobSkills, m.Preset.SkillLevels)
+
 		party = append(party, wirePartyMember{
 			ID: m.Companion.ID, Name: m.Companion.Name, Level: m.Preset.Level,
 			HP: roundInt(actor.HPMax), HPMax: roundInt(actor.HPMax),
@@ -917,8 +1009,10 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 			Skills:      buildCompanionSkillsWire(m.JobSkills, m.Preset.SkillLevels),
 			PresetName:  m.Preset.Name,
 
-			EquipmentEffects: toWireEquipmentEffects(presetEquipmentEffects(eqSlots)),
+			EquipmentEffects: toWireEquipmentEffects(compEquipBonus),
 			StrategyID:       strategyID,
+			GuardTaunt:       compGuardTaunt,
+			JobTraits:        wireJobTraits{DamageTakenPct: jobTraitsDamageTakenPct(m.Job.Traits)},
 		})
 	}
 

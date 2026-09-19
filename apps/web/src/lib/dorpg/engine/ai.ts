@@ -37,9 +37,10 @@ import {
   effectiveMpCost,
   elementMultiplier,
   floorInt,
+  inGuardianState,
   missChance,
   NEUTRAL_WEAPON_PROFILE,
-  pickWeightedAliveTarget,
+  pickEnemyTarget,
   randRange,
 } from './formulas';
 import { numParam, resolveStrategy } from './strategies';
@@ -279,14 +280,71 @@ function decideAttackFallback(targetId: string | null): Decision {
   return { kind: 'attack', targetId };
 }
 
-/** CONTRACT §4 balanced：現行五段優先序，目標一律用 ctx.targetId（玩家鎖定的目標）——零改動，
- *  既有 375 條斷言必須維持通過。 */
+// ──────────────────────────────────────────────────────────────────────────
+// P10（DORPG_P10 CONTRACT §3、WIRE「引擎」）：重騎士「守護」路線的守護判斷——插在每個策略「heal
+// 之後、buff 之前」（CONTRACT 原文「在 buff 階段前新增守護判斷」）。沒有 kind='taunt' 技能的角色
+// （所有既有測試角色）tauntCandidates 恆為 []，decideGuardStance/decideProtectGuardStance 恆回傳
+// null，對既有決策序列零改動——這是「沒有 taunt 技能的角色決策序列零改動」這條要求的實作方式：
+// 不是額外判斷「這個角色有沒有 taunt 技能」再決定要不要插這一步，而是讓這一步本身在沒有候選時
+// 自然是 no-op。
+// ──────────────────────────────────────────────────────────────────────────
+
+/** 目前可用（冷卻/MP 皆足夠）的 taunt 技能候選。 */
+function tauntCandidates(ctx: Ctx, actor: PartyActor, skills: Skill[]): Skill[] {
+  return skills.filter((s) => s.kind === 'taunt' && isAiSkillReady(ctx, actor, s));
+}
+
+/** CONTRACT §3「優先 retarget=false 的守護姿態，其次挑釁」——retarget 展開值缺欄位（理論上不會
+ *  發生，防呆）視為 false（守護姿態優先序更高，不是更低）。 */
+function pickPreferredTaunt(cands: Skill[]): Skill | undefined {
+  return cands.find((s) => !s.taunt?.retarget) ?? cands[0];
+}
+
+/** balanced／mp_conserve／skill_aggressive／focus_fire／element_advantage 共用：自己不在守護狀態
+ *  且有可用 taunt 技能 → 施放（優先守護姿態，其次挑釁）。 */
+function decideGuardStance(ctx: Ctx, actor: PartyActor, skills: Skill[]): Decision | null {
+  if (inGuardianState(actor, ctx.now)) return null;
+  const cands = tauntCandidates(ctx, actor, skills);
+  if (cands.length === 0) return null;
+  const skill = pickPreferredTaunt(cands);
+  if (!skill) return null;
+  return { kind: 'taunt', skillId: skill.id, targetId: actor.id };
+}
+
+/** CONTRACT §4 protect_allies 目標規則（protectAlliesTargetId）同一份精神：掃描 ctx.enemyTargets
+ *  找「正在 windup 蓄力、且鎖定某個存活隊友」的敵人是否存在——不看鎖定的是不是「HP% 最低者」，
+ *  這裡只在乎「有沒有隊友正被蓄力中的敵人瞄準」這件事本身（CONTRACT §3 原文「任一隊友正被 ≥1
+ *  個 windup 中的敵人鎖定」）。 */
+function anyAllyTargetedByWindupEnemy(ctx: Ctx): boolean {
+  return ctx.enemies.some((e) => e.hp > 0 && e.anim === 'windup' && ctx.party.some((p) => p.hp > 0 && p.id === ctx.enemyTargets[e.id]));
+}
+
+/** protect_allies 專用守護判斷：一般情況跟其它策略一樣（守護姿態優先、其次挑釁），但「任一隊友
+ *  正被 windup 中的敵人鎖定且挑釁可用」時，不管手上有沒有守護姿態，一律立即改放挑釁（retarget）
+ *  把那隻敵人拉過來——CONTRACT §3「protect_allies 額外：...→ 立即挑釁」，這是比「優先守護姿態」
+ *  更高的優先序，只在這個策略才有。 */
+function decideProtectGuardStance(ctx: Ctx, actor: PartyActor, skills: Skill[]): Decision | null {
+  if (inGuardianState(actor, ctx.now)) return null;
+  const cands = tauntCandidates(ctx, actor, skills);
+  if (cands.length === 0) return null;
+  if (anyAllyTargetedByWindupEnemy(ctx)) {
+    const retargetSkill = cands.find((s) => s.taunt?.retarget);
+    if (retargetSkill) return { kind: 'taunt', skillId: retargetSkill.id, targetId: actor.id };
+  }
+  const skill = pickPreferredTaunt(cands);
+  return skill ? { kind: 'taunt', skillId: skill.id, targetId: actor.id } : null;
+}
+
+/** CONTRACT §4 balanced：現行五段優先序，目標一律用 ctx.targetId（玩家鎖定的目標）；P10 在
+ *  heal 之後、buff 之前插入守護判斷——既有（無 taunt 技能）角色的 375 條斷言必須維持通過。 */
 function decideBalanced(ctx: Ctx, actor: PartyActor, params: StrategyParams): Decision {
   const skills = actorSkills(ctx, actor);
   const healPct = numParam(params, 'heal_pct', 50);
   const selfHealFloorPct = numParam(params, 'self_heal_floor_pct', 15);
   const heal = decideHeal(ctx, actor, skills, healPct, selfHealFloorPct);
   if (heal) return heal;
+  const guard = decideGuardStance(ctx, actor, skills);
+  if (guard) return guard;
   const buff = decideBuffOrShield(ctx, actor, skills);
   if (buff) return buff;
   const damage = decideDamage(ctx, actor, skills, ctx.targetId);
@@ -298,7 +356,10 @@ function decideBalanced(ctx: Ctx, actor: PartyActor, params: StrategyParams): De
 
 /** CONTRACT §4 mp_conserve：「MP 比例 < mp_reserve_pct 時不放任何技能改普攻；例外：有治療技能
  *  且任一隊友 HP% < emergency_heal_pct 仍治療」；MP 充足時比照 balanced 完整流程（heal 門檻沿用
- *  balanced 的 50/15，因為 mp_conserve 的 params 沒有另外覆寫這兩個 key）。 */
+ *  balanced 的 50/15，因為 mp_conserve 的 params 沒有另外覆寫這兩個 key）。
+ *  P10（CONTRACT §3「mp_conserve 受 MP 門檻限制（緊急治療例外不含挑釁）」）：守護判斷只插在
+ *  「MP 充足」分支（跟 balanced 同一個位置），MP<reserve 的節流分支（含 emergency 治療例外）
+ *  一律不放 taunt——即使隊友命在旦夕，這個策略的定位是省 MP，不會為了守護反而多花 MP。 */
 function decideMpConserve(ctx: Ctx, actor: PartyActor, params: StrategyParams): Decision {
   const skills = actorSkills(ctx, actor);
   const reservePct = numParam(params, 'mp_reserve_pct', 50);
@@ -311,6 +372,8 @@ function decideMpConserve(ctx: Ctx, actor: PartyActor, params: StrategyParams): 
   }
   const heal = decideHeal(ctx, actor, skills, 50, 15);
   if (heal) return heal;
+  const guard = decideGuardStance(ctx, actor, skills);
+  if (guard) return guard;
   const buff = decideBuffOrShield(ctx, actor, skills);
   if (buff) return buff;
   const damage = decideDamage(ctx, actor, skills, ctx.targetId);
@@ -320,13 +383,15 @@ function decideMpConserve(ctx: Ctx, actor: PartyActor, params: StrategyParams): 
   return decideAttackFallback(ctx.targetId);
 }
 
-/** CONTRACT §4 skill_aggressive：治療沿用 balanced 門檻（最優先）；其次 buff；然後傷害技能挑
- *  coefficient 最高者（受 min_mp_reserve_pct 節流）；沒有候選才普攻——跳過 debuff 階段（契約
- *  原文沒有提到 debuff）。 */
+/** CONTRACT §4 skill_aggressive：治療沿用 balanced 門檻（最優先）；P10 守護判斷插在其次；然後
+ *  buff；然後傷害技能挑 coefficient 最高者（受 min_mp_reserve_pct 節流）；沒有候選才普攻——跳過
+ *  debuff 階段（契約原文沒有提到 debuff）。 */
 function decideSkillAggressive(ctx: Ctx, actor: PartyActor, params: StrategyParams): Decision {
   const skills = actorSkills(ctx, actor);
   const heal = decideHeal(ctx, actor, skills, 50, 15);
   if (heal) return heal;
+  const guard = decideGuardStance(ctx, actor, skills);
+  if (guard) return guard;
   const buff = decideBuffOrShield(ctx, actor, skills);
   if (buff) return buff;
   const minMpReservePct = numParam(params, 'min_mp_reserve_pct', 0);
@@ -392,6 +457,8 @@ function decideProtectAllies(ctx: Ctx, actor: PartyActor, params: StrategyParams
   const shieldPct = numParam(params, 'shield_pct', 75);
   const heal = decideHeal(ctx, actor, skills, healPct, 15);
   if (heal) return heal;
+  const guard = decideProtectGuardStance(ctx, actor, skills);
+  if (guard) return guard;
   const protect = decideProtectShieldOrBuff(ctx, actor, skills, shieldPct);
   if (protect) return protect;
   const targetId = protectAlliesTargetId(ctx);
@@ -430,6 +497,8 @@ function decideFocusFire(ctx: Ctx, actor: PartyActor, params: StrategyParams): D
   const skills = actorSkills(ctx, actor);
   const heal = decideHeal(ctx, actor, skills, 50, 15);
   if (heal) return heal;
+  const guard = decideGuardStance(ctx, actor, skills);
+  if (guard) return guard;
   const buff = decideBuffOrShield(ctx, actor, skills);
   if (buff) return buff;
   const targetId = ctx.focusTargetId;
@@ -440,26 +509,45 @@ function decideFocusFire(ctx: Ctx, actor: PartyActor, params: StrategyParams): D
   return decideAttackFallback(targetId);
 }
 
-/** CONTRACT §4 element_advantage：「自身普攻屬性＝武器屬性」——沒有裝備（weaponProfile=null）
- *  一律 NEUTRAL_WEAPON_PROFILE.element='neutral'，跟 elementMultiplier 的「任一方 neutral→1」
- *  規則搭配，天然等於「沒有相剋可言」，會直接落回 balanced。 */
+/** CONTRACT §4 element_advantage：「自身普攻屬性＝武器屬性；技能屬性＝技能 element」——修法前
+ *  這裡只評估武器屬性選目標，武器是 neutral（法師的杖／未裝備）時 elementMultiplier 對任何敵人
+ *  恆為 1，直接落回 balanced，即使手上的技能本身有火／冰等屬性也完全沒用到（法師套這條策略等於
+ *  白選）。修法：對每個存活敵人同時評估「武器倍率」與「每顆冷卻好、MP 夠的傷害技能倍率」，取
+ *  全場最大值 > 1 者當目標；若那個最大值的來源是技能，就直接用該技能打該目標（技能屬性本身已經
+ *  是「對這個目標 > 1」，不需要再走一次「技能優先」的次選邏輯）；來源是武器（含打平，武器優先）
+ *  則完全沿用舊版流程不動，維持既有斷言（技能優先選對目標 > 1 者，否則退回 tier 最高）。
+ *  沒有裝備（weaponProfile=null）一律 NEUTRAL_WEAPON_PROFILE.element='neutral'，沒有任何傷害
+ *  技能時 damageCandidates=[]，兩種情況疊加起來就是舊版「全無相剋→balanced」的行為，不受影響。 */
 function decideElementAdvantage(ctx: Ctx, actor: PartyActor, params: StrategyParams): Decision {
   void params;
   const skills = actorSkills(ctx, actor);
   const heal = decideHeal(ctx, actor, skills, 50, 15);
   if (heal) return heal;
+  const guard = decideGuardStance(ctx, actor, skills);
+  if (guard) return guard;
   const buff = decideBuffOrShield(ctx, actor, skills);
   if (buff) return buff;
 
   const attackElement: string = actor.weaponProfile?.element ?? 'neutral';
+  const damageCandidates = skills.filter((s) => s.kind === 'damage' && isAiSkillReady(ctx, actor, s));
   const alive = ctx.enemies.filter((e) => e.hp > 0);
   let bestTargetId: string | null = null;
   let bestMul = 1;
+  let bestSkill: Skill | null = null; // 目前最佳倍率若來自技能就記下是哪一顆；武器（或打平）維持 null。
   for (const e of alive) {
-    const mul = elementMultiplier(ctx.cfg, attackElement, e);
-    if (mul > bestMul) {
-      bestMul = mul;
+    const weaponMul = elementMultiplier(ctx.cfg, attackElement, e);
+    if (weaponMul > bestMul) {
+      bestMul = weaponMul;
       bestTargetId = e.id;
+      bestSkill = null;
+    }
+    for (const skill of damageCandidates) {
+      const skillMul = elementMultiplier(ctx.cfg, skill.element ?? 'neutral', e);
+      if (skillMul > bestMul) {
+        bestMul = skillMul;
+        bestTargetId = e.id;
+        bestSkill = skill;
+      }
     }
   }
   if (!bestTargetId) {
@@ -471,9 +559,15 @@ function decideElementAdvantage(ctx: Ctx, actor: PartyActor, params: StrategyPar
     return decideAttackFallback(ctx.targetId);
   }
 
-  // 「技能優先選對該目標倍率 > 1 的傷害技能」——找不到才退回 tier 最高（balanced 規則）。
+  if (bestSkill) {
+    // 最佳倍率的來源就是這顆技能本身（技能屬性＝技能 element），不需要再走武器分支的次選邏輯。
+    const targetId = bestSkill.target === 'allEnemies' ? 'ALL_ENEMIES' : bestTargetId;
+    return { kind: 'damage', skillId: bestSkill.id, targetId };
+  }
+
+  // 最佳倍率來源是武器：沿用舊版流程——「技能優先選對該目標倍率 > 1 的傷害技能」，找不到才退回
+  // tier 最高（balanced 規則）。
   const targetEnemy = ctx.enemies.find((e) => e.id === bestTargetId);
-  const damageCandidates = skills.filter((s) => s.kind === 'damage' && isAiSkillReady(ctx, actor, s));
   const advantageSkill = damageCandidates.find((s) => elementMultiplier(ctx.cfg, s.element ?? 'neutral', targetEnemy) > 1);
   if (advantageSkill) {
     const targetId = advantageSkill.target === 'allEnemies' ? 'ALL_ENEMIES' : bestTargetId;
@@ -514,12 +608,13 @@ export function decideAction(ctx: Ctx, actor: PartyActor, strategy: ResolvedStra
   }
 }
 
-/** 隊友執行 Decision：heal/buff/damage/debuff 走 castNow（技能查表用 actor.skills，跟
+/** 隊友執行 Decision：heal/buff/taunt/damage/debuff 走 castNow（技能查表用 actor.skills，跟
  *  decideAction 讀技能的來源一致）；attack 走既有的 resolveWeaponAttack 普攻路徑。 */
 function applyAllyDecision(ctx: Ctx, actor: PartyActor, decision: Decision): void {
   switch (decision.kind) {
     case 'heal':
     case 'buff':
+    case 'taunt':
     case 'damage':
     case 'debuff': {
       const skill = actor.skills.find((s) => s.id === decision.skillId);
@@ -604,7 +699,8 @@ export function advanceEnemyAI(ctx: Ctx, enemy: EnemyActor): void {
 
   if (enemy.anim === 'idle') {
     if (ctx.now >= enemy.nextActAt) {
-      const targetId = pickWeightedAliveTarget(ctx.party, ctx.rng);
+      // P10（CONTRACT §3／WIRE「引擎」）：守護狀態優先於加權隨機——見 formulas.ts pickEnemyTarget。
+      const targetId = pickEnemyTarget(ctx, ctx.rng);
       if (!targetId) return;
       ctx.enemyTargets[enemy.id] = targetId;
       enemy.anim = 'windup';
@@ -619,7 +715,8 @@ export function advanceEnemyAI(ctx: Ctx, enemy: EnemyActor): void {
       const chosenId = ctx.enemyTargets[enemy.id];
       let target = ctx.party.find((p) => p.id === chosenId && p.hp > 0);
       if (!target) {
-        const fallbackId = pickWeightedAliveTarget(ctx.party, ctx.rng);
+        // P10：目標死亡 fallback 同樣改走 pickEnemyTarget（見上面 idle 分支的理由）。
+        const fallbackId = pickEnemyTarget(ctx, ctx.rng);
         target = ctx.party.find((p) => p.id === fallbackId);
       }
       enemy.anim = 'attacking';

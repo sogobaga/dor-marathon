@@ -17,7 +17,10 @@ import styles from './FloatText.module.css';
 // 新增 'splash' 語氣——斧的濺射傷害打在同排相鄰怪物身上，不是這次攻擊真正鎖定的目標，用比較不
 // 顯眼的樣式（見下方 `small` prop）跟主目標的傷害數字區分，避免玩家誤以為濺射到的怪物也被完整
 // 打了一次。色票沿用 'miss' 的灰（textSecondary）——語意上都是「次要/非主要」的訊息。
-export type FloatTextTone = 'damage' | 'heal' | 'shield' | 'miss' | 'buff' | 'debuff' | 'splash';
+// DORPG P10（CONTRACT §5：「挑釁浮字『挑釁！』（金色語氣）」）：新增 'taunt' 語氣，借用既有
+// PALETTE.targetGold（本檔所在的 dorpg/assets.ts 不在本輪 FRONTEND 寫入範圍內，不新增色碼）——
+// 這個顏色本來就用在「可選為目標」的金框脈動，語意上跟「拉怪／被鎖定」同一個方向，沿用不新增。
+export type FloatTextTone = 'damage' | 'heal' | 'shield' | 'miss' | 'buff' | 'debuff' | 'splash' | 'taunt';
 
 export type FloatTextProps = {
   text: string;
@@ -43,11 +46,11 @@ export type FloatTextProps = {
 
 const DURATION_MS = 700;
 
-/** 七種語氣對應色票；miss/splash 共用 textSecondary（灰，語意都是「次要訊息」，見 FloatTextTone
+/** 八種語氣對應色票；miss/splash 共用 textSecondary（灰，語意都是「次要訊息」，見 FloatTextTone
  *  型別註解），splash 額外靠 `small` prop 縮小字級做出區隔，不需要另開一支色碼。buff/debuff
  *  各借一個目前色票裡還沒被其他語氣用過的顏色（mpFill 藍／criticalGlow 亮紅），跟 damage(粉紅)/
  *  heal(綠)/shield(金) 視覺上都能分開，不必新增色碼（顏色一律只從 assets.ts 的 PALETTE 來，見
- *  檔案慣例）。 */
+ *  檔案慣例）；taunt（DORPG P10）借用 targetGold，見上方型別註解。 */
 const TONE_COLOR: Record<FloatTextTone, string> = {
   damage: PALETTE.hpEnemy,
   heal: PALETTE.hpNormal,
@@ -56,6 +59,7 @@ const TONE_COLOR: Record<FloatTextTone, string> = {
   buff: PALETTE.mpFill,
   debuff: PALETTE.criticalGlow,
   splash: PALETTE.textSecondary,
+  taunt: PALETTE.targetGold,
 };
 
 export default function FloatText({ text, tone, reducedMotion = false, anchorPx, small = false }: FloatTextProps) {

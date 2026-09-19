@@ -386,6 +386,61 @@ func (h *Handler) AdminDeleteEncounter(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// AdminJobsRouter DORPG P10（CONTRACT §1/§5、WIRE「後台可編輯 path_c 三欄與 traits JSON」）：
+// 六職業本身固定（migration 180 seed），本輪只開放編輯既有列，不給新增/刪除，所以只有 GET/PUT
+// 兩個路由，跟其餘 Admin*Router（monsters/skills/...）的 GET+PUT+DELETE 三件套不同，是刻意的。
+// jobs.go 放實際的資料存取（jobExtras/upsertJobRow 等），這裡只放 HTTP 轉接層，比照本檔其餘
+// Admin*Router 的既有分工。
+func (h *Handler) AdminJobsRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/", h.AdminListJobs)
+	r.Put("/", h.AdminPutJob)
+	return r
+}
+
+func (h *Handler) AdminListJobs(w http.ResponseWriter, r *http.Request) {
+	jobs, err := h.listJobsFull(r.Context())
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errJobsNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to list jobs")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"jobs": jobs})
+}
+
+func (h *Handler) AdminPutJob(w http.ResponseWriter, r *http.Request) {
+	var body adminJobPutRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := body.validate(); err != nil {
+		respondErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx := r.Context()
+	ok, err := h.upsertJobRow(ctx, body)
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errJobsNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to save")
+		return
+	}
+	if !ok {
+		respondErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	full, err := h.getJobByIDFull(ctx, body.ID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to load job")
+		return
+	}
+	respondJSON(w, http.StatusOK, full)
+}
+
 // --- 戰鬥數據（單一 GET 端點，main.go 直接掛 perm("rpg").Get，不需要獨立 Router）---
 
 // clampQueryInt 讀 query string 的整數參數並夾在 [min,max]（缺省/非法值一律回 def）。

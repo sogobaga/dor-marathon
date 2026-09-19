@@ -35,7 +35,7 @@ import {
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
 import { charPortrait } from '@/lib/dorpg/assets'
 import {
-  STAT_META, jobEmoji, SKILL_KIND_LABEL, formatEffectAtLevel, estimateMaxStatValue,
+  STAT_META, jobEmoji, SKILL_KIND_LABEL, formatEffectAtLevel, formatTauntEffect, estimateMaxStatValue,
   EQUIP_SLOT_LABEL, EQUIP_SLOT_ORDER, formatEquipBonus,
 } from '@/lib/rpgMeta'
 import EquipmentPanel from './EquipmentPanel'
@@ -851,19 +851,17 @@ function PresetEditor({ merc, preset, strategies, onBack, onSaved }: {
 // 依路線（a/b）分兩欄，跟 CharacterScreen.tsx 的 SkillPaths 佈局一致（契約 §5：每職業 10 個＝路線 A
 // 5 個＋路線 B 5 個）；不重用該檔的元件是因為那邊操作對象是「已持久化的玩家技能」，這裡是「草稿」，
 // 兩者的 onDelta 語意（打 API vs 純本地 state）不同，硬共用反而要塞一堆條件分支。
+// DORPG P10（CONTRACT §1/§4）：路線改依 job.paths 陣列通用渲染（重騎士額外有 key='c' 的「守護」
+// 路線），沒有 path_c 的職業畫面不變——job.paths 對這些職業本來就只有兩個元素。
 function PresetSkillPaths({ job, skills, disabled, onDelta }: {
   job: JobDTO
   skills: SkillDTO[]
   disabled: boolean
   onDelta: (skill: SkillDTO, d: 1 | -1 | 'max') => void
 }) {
-  const paths: Array<{ key: 'a' | 'b'; name: string; desc: string }> = [
-    { key: 'a', name: job.path_a.name, desc: job.path_a.desc },
-    { key: 'b', name: job.path_b.name, desc: job.path_b.desc },
-  ]
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, marginTop: 10 }}>
-      {paths.map((p) => {
+      {job.paths.map((p) => {
         const list = skills.filter((s) => s.path === p.key).sort((a, b) => a.tier - b.tier)
         return (
           <div key={p.key}>
@@ -891,6 +889,9 @@ function PresetSkillRow({ skill, allSkills, disabled, onDelta }: {
   const canMinus = skill.level > 0 && !disabled
   const canPlus = skill.can_level_up && !disabled
   const kindLabel = SKILL_KIND_LABEL[skill.kind] ?? skill.kind
+  // DORPG P10（CONTRACT §3/§4/§5）：kind='taunt' 改讀 skill.taunt（持續秒數／減傷／是否拉怪），
+  // 沒有下一級預覽欄位可顯示，同 CharacterScreen.tsx EffectPreview 的既有取捨。
+  const effectText = skill.kind === 'taunt' ? formatTauntEffect(skill.taunt) : formatEffectAtLevel(skill.effect_at_level)
   return (
     <div style={skillRowStyle}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
@@ -905,7 +906,7 @@ function PresetSkillRow({ skill, allSkills, disabled, onDelta }: {
       </div>
       <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.5 }}>{skill.display_text}</div>
       <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 2 }}>
-        {skill.level === 0 ? 'Lv1 效果預覽：' : `Lv${skill.level} 效果：`}{formatEffectAtLevel(skill.effect_at_level)}
+        {skill.level === 0 ? 'Lv1 效果預覽：' : `Lv${skill.level} 效果：`}{effectText}
       </div>
       <div style={{ fontSize: 10, color: 'var(--tx-faint)', marginTop: 4 }}>
         MP {skill.mp_cost}・冷卻 {(skill.cooldown_ms / 1000).toFixed(1)}s・詠唱 {skill.cast_ms}ms

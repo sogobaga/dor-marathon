@@ -213,6 +213,22 @@ export type PartyMember = {
    * fromApi.ts／fixture.ts 給 'balanced' 預設值。
    */
   strategyId?: string;
+  /**
+   * P10（DORPG_P10 CONTRACT §2/§3、WIRE「戰鬥 bootstrap」）：這位角色是否學過「守護本能」被動
+   * （heavy_knight 專屬 hk_c2，≥1 級）——後端已經算好（不是原始技能等級，engine 完全不重新推導），
+   * 只有 true 時 GUARD_BEGIN 期間才算進入守護狀態（見 engine/formulas.ts inGuardianState）。
+   * AI 隊友目前不能按防禦（CONTRACT §1），這個欄位對非玩家隊員是 no-op；缺省 undefined 由
+   * engine/index.ts toPartyActor 的 `pm.guardTaunt ?? false` 接手。
+   */
+  guardTaunt?: boolean;
+  /**
+   * P10（CONTRACT §3、WIRE「戰鬥 bootstrap」）：職業天生特性中的「受到傷害」百分比調整（目前只有
+   * 重騎士 traits.damage_taken_pct=-15）。bootstrap 已經把它加總進 `equipmentEffects.damageTakenPct`
+   * ——這裡只是原樣「另送供顯示」的一份拷貝（角色頁「職業特性：受到傷害 −15%」），engine 的戰鬥
+   * 數值計算完全不讀這個欄位（避免透過 PartyMember 重複套用一次已經算進 equipmentEffects 的效果）。
+   * 缺省 undefined＝沒有職業特性可顯示（舊版後端，或該職業沒有 traits）。
+   */
+  jobTraits?: { damageTakenPct: number };
 };
 
 /** 場景五個怪物站位 ID，與 content pack scene.json 的 monsterSlots[].id 同名。 */
@@ -312,6 +328,14 @@ export interface EffectAtLevel {
   hits?: number;
   target: Skill['target'];
   mpCost: number;
+  /**
+   * P10（DORPG_P10 WIRE.md「REST」：「passive 展開新增 guard_taunt: boolean」）：只有 kind='passive'
+   * 的「守護本能」（hk_c2）會帶這個旗標＝true——純粹是技能目錄／角色頁展示用（例如標示「此被動
+   * 提供守護狀態」），engine 完全不讀它：真正決定戰鬥中守護狀態的是 PartyMember.guardTaunt／
+   * PartyActor.guardTaunt（後端已經依「這位角色是否學過這顆被動」算好的彙總布林，見該欄位型別
+   * 註解），不是重新解析技能欄裡每一顆被動的 effect。缺省 undefined＝不是這個特殊被動。
+   */
+  guardTaunt?: boolean;
 }
 
 export type Skill = {
@@ -323,8 +347,11 @@ export type Skill = {
    * P1：damage/heal/shield。P5（CONTRACT §5）新增 buff/debuff/passive/special：
    * buff/debuff＝暫時性 stat 加成／減成（見 BuffDebuffStat），passive＝不進技能欄（後端已算進
    * stats，engine 完全忽略），special＝本輪引擎未實裝的技能（UI 顯示但不可用，見 `implemented`）。
+   * P10（DORPG_P10 CONTRACT §3、WIRE「引擎」）新增 taunt＝重騎士「守護」路線專屬：施放後把自己
+   * 導入守護狀態（吸引怪物攻擊），展開後的即時數值見下面 `taunt` 欄位、結算見 engine/combat.ts
+   * resolveTaunt。
    */
-  kind: 'damage' | 'heal' | 'shield' | 'buff' | 'debuff' | 'passive' | 'special';
+  kind: 'damage' | 'heal' | 'shield' | 'buff' | 'debuff' | 'passive' | 'special' | 'taunt';
   /**
    * P1：目標規則；'ally' 需經 chooseAlly 選隊友（含自己）。P5 新增 'allEnemies'（damage/debuff
    * 專用：一次打全體敵人，跟既有 'allAllies' 對稱）。
@@ -375,6 +402,17 @@ export type Skill = {
    * 欄位可放，`effect` 是它們唯一的權威資料來源（見 engine/combat.ts 的 resolveBuffDebuff）。
    */
   effect?: EffectAtLevel;
+  /**
+   * P10（DORPG_P10 CONTRACT §3、WIRE「戰鬥 bootstrap」）：kind='taunt' 專屬、已依目前等級展開的
+   * 即時數值（跟 `effect` 之於 buff/debuff 是同一種「WIRE 已展開，engine 只管讀最終值」的關係，
+   * 兩者分開放是因為 taunt 的欄位形狀跟 EffectAtLevel 對不上——它沒有 stat/value，多了
+   * retarget 這個 buff/debuff 詞彙表沒有的布林）。durationMs＝這次守護/挑釁持續多久（戰鬥時鐘
+   * 毫秒）；damageTakenPct＝套用的 damage_taken_pct buff 值（0＝這顆技能不附帶減傷，例如挑釁）；
+   * retarget＝true 時施放當下立刻把所有存活敵人（含 windup 中）的鎖定目標改成施放者（見
+   * engine/combat.ts resolveTaunt），false 時只影響之後的選目標（守護姿態）。非 kind='taunt'
+   * 的技能恆為 undefined。
+   */
+  taunt?: { durationMs: number; damageTakenPct: number; retarget: boolean };
 };
 
 /** P5（CONTRACT §6）：技能欄容量 8→10（兩排各 5）。FRONTEND 的 SkillTray/CommandBar 應改讀這個常數，

@@ -45,7 +45,7 @@ export async function resolve(specifier, context, nextResolve) {
 register('data:text/javascript,' + encodeURIComponent(loaderSrc), import.meta.url)
 
 const { sampleFromBootstrap } = await import(new URL('../src/lib/dorpg/fromApi.ts', import.meta.url).href)
-const { createBattle, dispatch, tick } = await import(new URL('../src/lib/dorpg/engine/index.ts', import.meta.url).href)
+const { createBattle, dispatch, tick, inGuardianState } = await import(new URL('../src/lib/dorpg/engine/index.ts', import.meta.url).href)
 
 let pass = 0, fail = 0
 function ok(cond, label) {
@@ -296,6 +296,88 @@ const pad10 = (s) => [s, null, null, null, null, null, null, null, null, null]
   s = dispatch(s, { type: 'USE_SKILL', skillId: 'slash' }, 0)
   ok(s.party[0].action === 'casting', '經 fromApi 轉換後的 mpCostReducePct=60%，讓 mp=3 的玩家仍能施放原始 mpCost=5 的技能（打折後只需 2）')
   eq(s.party[0].mp, 1, '經 fromApi 轉換後，實際扣除的也是打折後的成本 2（3-2=1）')
+}
+
+// ── 8) DORPG P10（CONTRACT §3、WIRE「戰鬥 bootstrap」）：kind='taunt' 技能的 taunt 展開值、
+//      party member 的 guardTaunt／jobTraits，且真的能餵進 engine 產生守護狀態（端到端）。 ──
+{
+  // 8a）kind='taunt' 的 wire skill：taunt 展開值正確映射（camelCase 直接照抄，非 taunt 技能
+  //     即使誤送這個欄位也一律忽略）。
+  const rawTaunt = {
+    id: 'hk_c1', name: '挑釁', iconUrl: '', cooldownMs: 6000, kind: 'taunt', target: 'self',
+    mpCost: 8, coefficient: 0, flat: 0, weapon: 'greatsword', castMs: 300, implemented: true,
+    taunt: { durationMs: 5000, damageTakenPct: 0, retarget: true },
+  }
+  const rawNonTaunt = {
+    id: 'slash', name: '斬擊', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy',
+    mpCost: 5, coefficient: 1.6, flat: 20, weapon: 'sword', castMs: 300,
+    taunt: { durationMs: 9999, damageTakenPct: -50, retarget: true }, // 誤送，應被忽略。
+  }
+  const skills = sampleFromBootstrap(makeRawSample([rawTaunt, rawNonTaunt, null, null, null, null, null, null, null, null])).skills
+  eq(skills[0].kind, 'taunt', 'kind="taunt" 正確映射')
+  eq(skills[0].taunt, { durationMs: 5000, damageTakenPct: 0, retarget: true }, 'taunt 展開值（durationMs/damageTakenPct/retarget）逐欄照抄')
+  ok(skills[1].taunt === undefined, '非 taunt 技能即使 wire 誤送 taunt 欄位也一律忽略（kind="damage" 的 slash）')
+}
+{
+  // 8b）taunt 缺 durationMs（核心欄位）→ 整包視為無效，退回 undefined（跟 asEquippedWeapon()
+  //     對 profile 缺失的「核心欄位一壞全丟」判斷同一個精神）。
+  const raw = {
+    id: 'hk_c1', name: '挑釁', iconUrl: '', cooldownMs: 6000, kind: 'taunt', target: 'self',
+    mpCost: 8, coefficient: 0, flat: 0, weapon: 'greatsword', castMs: 300,
+    taunt: { damageTakenPct: 0, retarget: true },
+  }
+  const skill = sampleFromBootstrap(makeRawSample(pad10(raw))).skills[0]
+  ok(skill.taunt === undefined, 'taunt 缺 durationMs（核心欄位）→ 整包退回 undefined')
+}
+{
+  // 8c）party member 的 guardTaunt／jobTraits：缺欄位退回中性值（false／undefined），
+  //     有送值時正確映射。
+  const rawMissing = {
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, weapon: 'sword' }],
+    enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 99999, hpMax: 99999, slot: 'front_center', imageUrl: '', canEscape: true, stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 } }],
+    scene: { id: 's', name: 's', imageUrl: '', slots: [] },
+    skills: pad10(null),
+    items: [],
+    initialTargetId: 'e1',
+  }
+  const memberMissing = sampleFromBootstrap(rawMissing).party[0]
+  eq(memberMissing.guardTaunt, false, '沒有送 guardTaunt（舊版後端）時，映射結果是 false（沒有這個被動）')
+  ok(memberMissing.jobTraits === undefined, '沒有送 jobTraits（舊版後端／該職業沒有 traits）時，映射結果是 undefined（角色頁不顯示這一行）')
+
+  const rawWithP10 = {
+    ...rawMissing,
+    party: [{ ...rawMissing.party[0], guardTaunt: true, jobTraits: { damageTakenPct: -15 } }],
+  }
+  const memberWithP10 = sampleFromBootstrap(rawWithP10).party[0]
+  eq(memberWithP10.guardTaunt, true, 'guardTaunt=true 正確映射')
+  eq(memberWithP10.jobTraits, { damageTakenPct: -15 }, 'jobTraits.damageTakenPct 正確映射')
+}
+{
+  // 8d）端到端：guardTaunt=true 的玩家經完整 wire→fromApi→engine 管線，GUARD_BEGIN 後真的進入
+  //     守護狀態（inGuardianState）——不是只有型別欄位對了，戰鬥中的仇恨規則也真的吃到。
+  const raw = {
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null,
+      stats: { hpMax: 800, mpMax: 100, atk: 135, matk: 80, def: 35, mdef: 28 }, weapon: 'greatsword',
+      guardTaunt: true,
+    }],
+    enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 99999, hpMax: 99999, slot: 'front_center', imageUrl: '', canEscape: true, stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 } }],
+    scene: { id: 's', name: 's', imageUrl: '', slots: [] },
+    skills: pad10(null),
+    items: [],
+    initialTargetId: 'e1',
+  }
+  const sample = sampleFromBootstrap(raw)
+  const cfg = {
+    enemyActIntervalMs: [999999, 999999], allyActIntervalMs: [999999, 999999],
+    baseMissPct: 0, missMinPct: 0, missMaxPct: 0, critRate: 0, monsterCritPct: 0, monsterCritShieldBase: 0,
+  }
+  let s = createBattle(sample, { now: 0, config: cfg })
+  eq(s.party[0].guardTaunt, true, '經 fromApi 轉換後，PartyActor.guardTaunt 正確為 true')
+  s = dispatch(s, { type: 'GUARD_BEGIN' }, 0)
+  ok(s.party[0].action === 'guarding', '經 fromApi 轉換後，GUARD_BEGIN 仍正常生效')
+  eq(s.party[0].tauntUntil, 0, 'GUARD_BEGIN 來源的守護狀態不需要寫入 tauntUntil（維持 0）')
+  ok(inGuardianState(s.party[0], 0), '經完整 wire→fromApi→engine 管線，GUARD_BEGIN 後 inGuardianState 判定為 true（仇恨規則真的吃到，不只是型別欄位對了）')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

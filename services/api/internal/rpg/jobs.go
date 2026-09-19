@@ -4,8 +4,10 @@
 package rpg
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -28,9 +30,10 @@ func respondIfMissingRelationMsg(w http.ResponseWriter, err error, msg string) b
 	return false
 }
 
-// GET /rpg/jobs：六職業清單，唯讀、不吃任何參數。
+// GET /rpg/jobs：六職業清單，唯讀、不吃任何參數。DORPG P10 起用 listJobsFull（見下方）帶出
+// paths/traits，前端不必另外呼叫別的端點才看得到重騎士的第三條路線。
 func (h *Handler) Jobs(w http.ResponseWriter, r *http.Request) {
-	jobs, err := h.listJobs(r.Context())
+	jobs, err := h.listJobsFull(r.Context())
 	if err != nil {
 		if respondIfMissingRelationMsg(w, err, errJobsNotReady) {
 			return
@@ -39,6 +42,205 @@ func (h *Handler) Jobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"jobs": jobs})
+}
+
+// ---------------------------------------------------------------------------
+// DORPG P10（CONTRACT §1/§2、WIRE）：path_c/traits 兩個新欄位不在 content_repo.go 既有的
+// jobCols/scanJob 查詢範圍內（該檔屬於另一個角色的所有權，見 content.go JobRow.PathC 檔頭
+// 說明）——這裡另外查一次 rpg_jobs 合併出「完整」JobRow，而不是去改那支既有函式。
+// ---------------------------------------------------------------------------
+
+// jobExtras migration 187 新增的四個欄位，查詢結果的中繼型別（不直接對外，見 mergeJobExtras）。
+type jobExtras struct {
+	PathC  *JobPathRow
+	Traits JobTraits
+}
+
+// scanJobExtras 把一列 `path_c_id, path_c_name, path_c_desc, traits` 的掃描結果組成 jobExtras。
+// pcID 為 nil＝這個職業沒有第三條路線（PathC 保持 nil，不是空字串三元組）；traitsRaw 壞掉的 JSON
+// 視為沒有特性，不讓整支 API 500（比照 presets.go scanPreset 對 stats/skill_levels 的既有慣例）。
+func scanJobExtras(pcID, pcName, pcDesc *string, traitsRaw []byte) jobExtras {
+	var e jobExtras
+	if pcID != nil {
+		name, desc := "", ""
+		if pcName != nil {
+			name = *pcName
+		}
+		if pcDesc != nil {
+			desc = *pcDesc
+		}
+		e.PathC = &JobPathRow{ID: *pcID, Name: name, Desc: desc}
+	}
+	if len(traitsRaw) > 0 {
+		_ = json.Unmarshal(traitsRaw, &e.Traits)
+	}
+	return e
+}
+
+// loadJobExtras 單一職業版本（getJobByIDFull 用）。⚠️ migration 187 未套用時 path_c_id/traits
+// 欄位不存在，這裡會拿到 42703（欄位不存在，不是 42P01 缺表）——沿用既有的
+// respondIfMissingRelationMsg 系列接不住這個錯碼，這是刻意的：比照 migration 180 檔頭「既有
+// 表格加欄位」的部署順序慣例（db-before-code-push.md），使用者必須先套用 187 才能上線這輪
+// 程式碼，不是這裡要優雅降級 503 的情境。
+func (h *Handler) loadJobExtras(ctx context.Context, id string) (jobExtras, error) {
+	var pcID, pcName, pcDesc *string
+	var traitsRaw []byte
+	err := h.db.QueryRow(ctx, `SELECT path_c_id, path_c_name, path_c_desc, traits FROM rpg_jobs WHERE id=$1`, id).
+		Scan(&pcID, &pcName, &pcDesc, &traitsRaw)
+	if err != nil {
+		return jobExtras{}, err
+	}
+	return scanJobExtras(pcID, pcName, pcDesc, traitsRaw), nil
+}
+
+// loadAllJobExtras listJobsFull 用：一次查全部六職業，比逐筆呼叫 loadJobExtras 少 5 次往返。
+func (h *Handler) loadAllJobExtras(ctx context.Context) (map[string]jobExtras, error) {
+	rows, err := h.db.Query(ctx, `SELECT id, path_c_id, path_c_name, path_c_desc, traits FROM rpg_jobs`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]jobExtras{}
+	for rows.Next() {
+		var id string
+		var pcID, pcName, pcDesc *string
+		var traitsRaw []byte
+		if err := rows.Scan(&id, &pcID, &pcName, &pcDesc, &traitsRaw); err != nil {
+			return nil, err
+		}
+		out[id] = scanJobExtras(pcID, pcName, pcDesc, traitsRaw)
+	}
+	return out, rows.Err()
+}
+
+// buildJobPaths DORPG P10（WIRE JobDTO.paths）：從 PathA/PathB/PathC 組出依 key 排序（a→b→c）
+// 的路線陣列——PathA/PathB 一律存在，PathC 為 nil 時（除 heavy_knight 外的五個職業）切片只有
+// 兩個元素。
+func buildJobPaths(j JobRow) []JobPathKeyRow {
+	paths := []JobPathKeyRow{
+		{ID: j.PathA.ID, Key: "a", Name: j.PathA.Name, Desc: j.PathA.Desc},
+		{ID: j.PathB.ID, Key: "b", Name: j.PathB.Name, Desc: j.PathB.Desc},
+	}
+	if j.PathC != nil {
+		paths = append(paths, JobPathKeyRow{ID: j.PathC.ID, Key: "c", Name: j.PathC.Name, Desc: j.PathC.Desc})
+	}
+	return paths
+}
+
+// mergeJobExtras 把 content_repo.go scanJob() 查出的基本 JobRow 與上面查到的 P10 新欄位合併，
+// 順便算出 Paths。
+func mergeJobExtras(j JobRow, e jobExtras) JobRow {
+	j.PathC = e.PathC
+	j.Traits = e.Traits
+	j.Paths = buildJobPaths(j)
+	return j
+}
+
+// getJobByIDFull／listJobsFull DORPG P10：對外回傳 JobDTO 的唯一入口（/rpg/me、/rpg/jobs、
+// /rpg/tavern、/rpg/skills、後台）——一律用這兩支取代 content_repo.go 的 getJobByID／listJobs，
+// 確保 paths/traits 不會在某些端點缺席、某些端點才有。純粹「查詢職業本身、且不外洩 JobDTO」的
+// 內部用途（例如 loadPlayerBattleStats 只要 job.AtkBranch、jobAndSkillsForCompanion 只要
+// job.ID/AtkBranch 拿去驗證裝備/算 Compute）不需要改用這兩支，繼續用原本的 getJobByID／listJobs
+// 省一次查詢即可。
+func (h *Handler) getJobByIDFull(ctx context.Context, id string) (JobRow, error) {
+	j, err := h.getJobByID(ctx, id)
+	if err != nil {
+		return JobRow{}, err
+	}
+	e, err := h.loadJobExtras(ctx, id)
+	if err != nil {
+		return JobRow{}, err
+	}
+	return mergeJobExtras(j, e), nil
+}
+
+func (h *Handler) listJobsFull(ctx context.Context) ([]JobRow, error) {
+	jobs, err := h.listJobs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	extras, err := h.loadAllJobExtras(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]JobRow, len(jobs))
+	for i, j := range jobs {
+		out[i] = mergeJobExtras(j, extras[j.ID])
+	}
+	return out, nil
+}
+
+// ---------------------------------------------------------------------------
+// DORPG P10（CONTRACT §1/§5、WIRE）：後台 PUT /admin/rpg/jobs——六職業本身仍是固定 6 筆
+// （migration 180 seed），本輪只開放編輯既有列（新增 path_c_*/traits 兩組欄位，也一併開放
+// P5 時代就有、當時「本輪沒有後台 CRUD」而從沒開放編輯過的 name/tagline/description/path_a/
+// path_b/weapon/atk_branch/recommended_stats/sort_order），不做新增/刪除——路由掛載
+// （main.go Mount "/admin/rpg/jobs"）不在本輪 BACKEND 所有權內，由 INTEGRATOR 補上一行
+// r.With(perm("rpg")).Mount("/admin/rpg/jobs", rpgHandler.AdminJobsRouter())，比照既有
+// AdminMonstersRouter 等一模一樣的掛法。
+// ---------------------------------------------------------------------------
+
+// adminJobPutRequest PUT /admin/rpg/jobs body——形狀對齊 JobRow（GET 那支回的同一個 DTO），
+// PathC 用同一個 JobPathRow 結構，ID 空字串＝清除這條路線（目前只有 heavy_knight 會填非空值）。
+type adminJobPutRequest struct {
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	Tagline          string     `json:"tagline"`
+	Description      string     `json:"description"`
+	PathA            JobPathRow `json:"path_a"`
+	PathB            JobPathRow `json:"path_b"`
+	PathC            JobPathRow `json:"path_c"`
+	Weapon           string     `json:"weapon"`
+	AtkBranch        string     `json:"atk_branch"`
+	RecommendedStats string     `json:"recommended_stats"`
+	SortOrder        int        `json:"sort_order"`
+	Traits           JobTraits  `json:"traits"`
+}
+
+// validate 比照既有 XxxRow.Validate() 的寬鬆風格（content.go 檔頭）：只擋會讓查詢/前端渲染壞掉
+// 的欄位，atk_branch 沿用既有慣例不設值域（P5～P9 從未對這欄位做值域檢查，Compute() 收到未知字串
+// 時自行退回預設 WeaponType，不會壞）。
+func (b adminJobPutRequest) validate() error {
+	if b.ID == "" || b.Name == "" {
+		return fmt.Errorf("id/name 不可為空")
+	}
+	if !validWeaponKinds[b.Weapon] {
+		return fmt.Errorf("weapon 不合法")
+	}
+	return b.Traits.Validate()
+}
+
+// upsertJobRow 只 UPDATE（不 INSERT）：六職業的 id 集合固定，migration 180 已經 seed 過，後台
+// PUT 一個不存在的 id 應該當成「找不到」而不是靜靜長出一筆新職業（AdminPutJob 依 RowsAffected
+// 判斷）。
+func (h *Handler) upsertJobRow(ctx context.Context, b adminJobPutRequest) (bool, error) {
+	traitsRaw, err := json.Marshal(b.Traits)
+	if err != nil {
+		return false, err
+	}
+	var pathCID, pathCName, pathCDesc *string
+	if b.PathC.ID != "" {
+		pathCID, pathCName, pathCDesc = &b.PathC.ID, &b.PathC.Name, &b.PathC.Desc
+	}
+	ct, err := h.db.Exec(ctx, `
+		UPDATE rpg_jobs SET
+			name=$2, tagline=$3, description=$4,
+			path_a_id=$5, path_a_name=$6, path_a_desc=$7,
+			path_b_id=$8, path_b_name=$9, path_b_desc=$10,
+			path_c_id=$11, path_c_name=$12, path_c_desc=$13,
+			weapon=$14, atk_branch=$15, recommended_stats=$16, sort_order=$17,
+			traits=$18, updated_at=NOW()
+		WHERE id=$1`,
+		b.ID, b.Name, b.Tagline, b.Description,
+		b.PathA.ID, b.PathA.Name, b.PathA.Desc,
+		b.PathB.ID, b.PathB.Name, b.PathB.Desc,
+		pathCID, pathCName, pathCDesc,
+		b.Weapon, b.AtkBranch, b.RecommendedStats, b.SortOrder,
+		traitsRaw)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
 }
 
 type putJobRequest struct {
