@@ -457,23 +457,25 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
       },
       // DORPG P6（契約 §2）：level 模式怪物數值＝RefPlayer(N) 的對應衍生值 × mult（既有 hp_mult 等
       // 隊友/怪物個別倍率）× 這四個「等級模式」比例 × power_scale（沿用既有前後排 slotScale）。
-      // 四個都預設 1.0；四場（Lv10/20/30/40/50/60）的難度曲線主要靠 RefPlayer(N) 隨等級成長本身
-      // 拉開差距，這裡是全域再統一調整的旋鈕（例如覺得整體太肉/太脆時只調一個數字）。
+      // 契約原始預設皆為 1.0；2026-09-19 起實際預設改為 hp/atk=3.0、def/mdef=0.4（見下方各欄位
+      // label 與 config.go DefaultConfig），六場 power_scale 同時歸 1.0（migration 185）改當
+      // 「單場微調」用，怪物強度主要由這四個全域比例決定；六場（Lv10/20/30/40/50/60）的難度曲線
+      // 仍主要靠 RefPlayer(N) 隨等級成長本身拉開差距。
       {
         key: 'battle_lvl_hp_ratio',
-        label: '（P6）level 模式：怪物 HP ÷ RefPlayer(N).HPMax 的比例（實際預設 0.8，非契約原始 1.0——2026-09-18 依 Lv27 六場模擬校準，見 config.go DefaultConfig）',
+        label: '（P6）level 模式：怪物 HP ÷ RefPlayer(N).HPMax 的比例（實際預設 3.0，非契約原始 1.0——2026-09-19 依「怪物至少同級玩家 3–4 倍」決策＋滿隊模擬校準，見 config.go DefaultConfig；docs/dorpg/MONSTER_X3_CALIBRATION.md）',
       },
       {
         key: 'battle_lvl_atk_ratio',
-        label: '（P6）level 模式：怪物 ATK ÷ RefPlayer(N).ATK 的比例（實際預設 1.25，非契約原始 1.0——2026-09-18 依 Lv27 六場模擬校準，見 config.go DefaultConfig）',
+        label: '（P6）level 模式：怪物 ATK ÷ RefPlayer(N).ATK 的比例（實際預設 3.0，非契約原始 1.0——2026-09-19 依「怪物至少同級玩家 3–4 倍」決策＋滿隊模擬校準，見 config.go DefaultConfig；docs/dorpg/MONSTER_X3_CALIBRATION.md）',
       },
       {
         key: 'battle_lvl_def_ratio',
-        label: '（P6）level 模式：怪物 DEF ÷ RefPlayer(N).DEF 的比例（契約預設 1.0）',
+        label: '（P6）level 模式：怪物 DEF ÷ RefPlayer(N).DEF 的比例（實際預設 0.4，非契約原始 1.0——線性減防公式下 DEF 若也放大到 3–4 倍會讓玩家幾乎打不到怪，2026-09-19 滿隊模擬證實調低才可玩，見 config.go DefaultConfig；docs/dorpg/MONSTER_X3_CALIBRATION.md）',
       },
       {
         key: 'battle_lvl_mdef_ratio',
-        label: '（P6）level 模式：怪物 MDEF ÷ RefPlayer(N).MDEF 的比例（契約預設 1.0）',
+        label: '（P6）level 模式：怪物 MDEF ÷ RefPlayer(N).MDEF 的比例（實際預設 0.4，理由同上方 DEF，見 docs/dorpg/MONSTER_X3_CALIBRATION.md）',
       },
     ],
   },

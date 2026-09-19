@@ -1623,22 +1623,25 @@ const HEAL_SKILL = { id: 'heal', name: '治療', iconUrl: '', cooldownMs: 8000, 
 //        數值本身由本測試獨立算好寫死（不是從 fixture.ts 抄一份運算式），若實作漂移會被抓到。 ──
 {
   const refTable = [{ level: 10, hpMax: 999, mpMax: 199, atk: 101, matk: 77, def: 53, mdef: 41, hit: 88, flee: 12, aspd: 140 }]
-  // training_ground（monsterLevel=10, powerScale=0.60）：front_left=DOR-MON-D-0182(hpMult.9/atkMult1.0/defMult1.0)，
-  // front_center/front_right=DOR-MON-E-0052(hpMult.6/atkMult0.8/defMult0.8)，三隻 powerScale 皆 1。
+  // training_ground（monsterLevel=10, powerScale=1.0——2026-09-19 起六場皆歸 1.0，鏡像 migration 185）：
+  // front_left=DOR-MON-D-0182(hpMult.9/atkMult1.0/defMult1.0)，
+  // front_center/front_right=DOR-MON-E-0052(hpMult.6/atkMult0.8/defMult0.8)，三隻各自 powerScale 皆 1。
   const bundle = buildFixtureSample('training_ground', { mode: 'level', refTable })
   const byId = Object.fromEntries(bundle.sample.enemies.map((e) => [e.id, e]))
 
   eq(byId['enemy_front_left'].level, 10, 'level 模式：怪物顯示等級＝encounter.monsterLevel（不套用 power 模式的 BOSS 等級加成）')
   eq(
     { hp: byId['enemy_front_left'].hpMax, atk: byId['enemy_front_left'].stats.atk, def: byId['enemy_front_left'].stats.def, mdef: byId['enemy_front_left'].stats.mdef, matk: byId['enemy_front_left'].stats.matk },
-    { hp: 431, atk: 75, def: 31, mdef: 24, matk: 77 },
-    // 2026-09-18 SIM 校準後 DEFAULT_LEVEL_SCALE_CONFIG＝hp 0.8／atk 1.25／def 1.0／mdef 1.0（config.go DefaultConfig 同步），期望值依此重算。
-    'DOR-MON-D-0182（hpMult.9/atkMult1.0/defMult1.0）：floor(999×.9×.8×.6)=431、floor(101×1×1.25×.6)=75、floor(53×1×1×.6)=31、floor(41×1×1×.6)=24、floor(77×1)=77',
+    { hp: 2697, atk: 303, def: 21, mdef: 16, matk: 77 },
+    // 2026-09-19 使用者決策「怪物基礎能力至少同級玩家 3–4 倍」＋滿隊模擬校準後 DEFAULT_LEVEL_SCALE_CONFIG＝
+    // hp 3.0／atk 3.0／def 0.4／mdef 0.4（config.go DefaultConfig 同步，依據見 docs/dorpg/MONSTER_X3_CALIBRATION.md），
+    // 且 rpg_encounters.power_scale 六場全部歸 1.0（migration 185），期望值依此重算。
+    'DOR-MON-D-0182（hpMult.9/atkMult1.0/defMult1.0）：floor(999×.9×3.0×1.0)=2697、floor(101×1×3.0×1.0)=303、floor(53×1×0.4×1.0)=21、floor(41×1×0.4×1.0)=16、floor(77×1)=77',
   )
   eq(
     { hp: byId['enemy_front_center'].hpMax, atk: byId['enemy_front_center'].stats.atk, def: byId['enemy_front_center'].stats.def, mdef: byId['enemy_front_center'].stats.mdef, matk: byId['enemy_front_center'].stats.matk },
-    { hp: 287, atk: 60, def: 25, mdef: 19, matk: 61 },
-    'DOR-MON-E-0052（hpMult.6/atkMult0.8/defMult0.8）：floor(999×.6×.8×.6)=287、floor(101×.8×1.25×.6)=60、floor(53×.8×1×.6)=25、floor(41×.8×1×.6)=19、floor(77×.8)=61',
+    { hp: 1798, atk: 242, def: 16, mdef: 13, matk: 61 },
+    'DOR-MON-E-0052（hpMult.6/atkMult0.8/defMult0.8）：floor(999×.6×3.0×1.0)=1798、floor(101×.8×3.0×1.0)=242、floor(53×.8×0.4×1.0)=16、floor(41×.8×0.4×1.0)=13、floor(77×.8)=61',
   )
   ok(Number.isInteger(byId['enemy_front_left'].hpMax) && Number.isInteger(byId['enemy_front_center'].hpMax), 'level 模式算出的怪物 hp 也是整數（跟 CONTRACT §1 的整數不變式一致）')
 

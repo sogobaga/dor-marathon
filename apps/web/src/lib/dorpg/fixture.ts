@@ -366,14 +366,20 @@ export const RPG_EQUIPMENT_EFFECTS_FIXTURES: Record<string, EquipmentEffectsWire
  * 「難度＋power_scale＋隻數」，編組與 migration 176 的同一份設計同步（見該檔
  * rpg_encounter_monsters 區塊註解）。
  *
- * powerScale 由 TUNE 依 BALANCE.md 全面下修並實測微調（理由與逐場數值見 migration 176 對應
- * INSERT 前的註解，兩邊逐項一致，不在此重複）；tamsui_dusk/jiannan_trail 的編組也依 BALANCE 的
- * 模擬版本（scratchpad/dorpg_p2/sim_lib.mjs ENCOUNTER_DEFS）校正過一個槽位，理由同上。
+ * powerScale 原本由 TUNE 依 BALANCE.md 全面下修並實測微調（0.60/0.73/0.60/0.55/0.52/0.46，理由見
+ * migration 176 對應 INSERT 前的註解）；2026-09-19 隨怪物「同級玩家 3–4 倍」改版全部歸 1.0——
+ * power_scale 是 P2「power 模式」校準留下來的值，在等級制（level 模式）公式裡照樣乘進 HP/ATK/
+ * DEF/MDEF，會把怪物壓到遠低於新的 battle_lvl_*_ratio 想要的強度，兩邊互相打架；歸 1.0 之後
+ * power_scale 只當「單場微調」用，怪物強度改交給 battle_lvl_*_ratio ＋ 每隻怪物自己的
+ * hp_mult/atk_mult/def_mult 決定。鏡像 migration 185（該檔已把 rpg_encounters.power_scale 全部
+ * UPDATE 成 1.0），本檔是前端本地鏡像、不會自動跟資料庫同步，需要手動一起改。
+ * tamsui_dusk/jiannan_trail 的編組也依 BALANCE 的模擬版本（scratchpad/dorpg_p2/sim_lib.mjs
+ * ENCOUNTER_DEFS）校正過一個槽位，理由同上（跟 powerScale 改版無關）。
  */
 export const RPG_ENCOUNTERS: EncounterRow[] = [
   {
     code: 'training_ground', title: '訓練場', subtitle: '入門教學．熟悉操作手感',
-    sceneId: 'scene_taipei_stadium', sceneKind: 'normal', difficulty: 1, powerScale: 0.60,
+    sceneId: 'scene_taipei_stadium', sceneKind: 'normal', difficulty: 1, powerScale: 1.0,
     escapeChance: 0.35, canEscape: true,
     monsterLevel: 10,
     monsters: [
@@ -384,7 +390,7 @@ export const RPG_ENCOUNTERS: EncounterRow[] = [
   },
   {
     code: 'ximen_night', title: '西門町夜巡', subtitle: '夜巡邊界．小怪成群',
-    sceneId: 'scene_ximending', sceneKind: 'normal', difficulty: 2, powerScale: 0.73,
+    sceneId: 'scene_ximending', sceneKind: 'normal', difficulty: 2, powerScale: 1.0,
     escapeChance: 0.35, canEscape: true,
     monsterLevel: 20,
     monsters: [
@@ -396,7 +402,7 @@ export const RPG_ENCOUNTERS: EncounterRow[] = [
   },
   {
     code: 'fuhe_bridge', title: '福和橋下', subtitle: '橋下盤據．小心巨鉗',
-    sceneId: 'scene_fuhe_bridge', sceneKind: 'normal', difficulty: 2, powerScale: 0.60,
+    sceneId: 'scene_fuhe_bridge', sceneKind: 'normal', difficulty: 2, powerScale: 1.0,
     escapeChance: 0.35, canEscape: true,
     monsterLevel: 30,
     monsters: [
@@ -408,7 +414,7 @@ export const RPG_ENCOUNTERS: EncounterRow[] = [
   },
   {
     code: 'tamsui_dusk', title: '淡水河口', subtitle: '河口起霧．敵勢漸強',
-    sceneId: 'scene_tamsui_estuary', sceneKind: 'normal', difficulty: 3, powerScale: 0.55,
+    sceneId: 'scene_tamsui_estuary', sceneKind: 'normal', difficulty: 3, powerScale: 1.0,
     escapeChance: 0.35, canEscape: true,
     monsterLevel: 40,
     monsters: [
@@ -421,7 +427,7 @@ export const RPG_ENCOUNTERS: EncounterRow[] = [
   },
   {
     code: 'jiannan_trail', title: '劍南山步道', subtitle: '登山惡鬥．狹路難退',
-    sceneId: 'scene_jiannan_mountain', sceneKind: 'normal', difficulty: 4, powerScale: 0.52,
+    sceneId: 'scene_jiannan_mountain', sceneKind: 'normal', difficulty: 4, powerScale: 1.0,
     escapeChance: 0.35, canEscape: true,
     monsterLevel: 50,
     monsters: [
@@ -434,7 +440,7 @@ export const RPG_ENCOUNTERS: EncounterRow[] = [
   },
   {
     code: 'taipei101_boss', title: '台北101首領戰', subtitle: '首領現身．無法逃跑',
-    sceneId: 'scene_taipei_101', sceneKind: 'boss', difficulty: 5, powerScale: 0.46,
+    sceneId: 'scene_taipei_101', sceneKind: 'boss', difficulty: 5, powerScale: 1.0,
     escapeChance: 0.0, canEscape: false,
     monsterLevel: 60,
     monsters: [
@@ -715,20 +721,21 @@ export interface LevelScaleConfig {
 }
 
 /**
- * SIM 校準（2026-09-18，逐位元對齊 services/api/internal/rpg/config.go DefaultConfig() 同一組
- * 數字，理由見該檔欄位上方註解——不在這裡重複，改一邊要記得改另一邊）：真引擎模擬跑六場
- * monster_level 10..60（Lv27 輕騎士玩家＋小咪／小咪+阿深）發現 1.0/1.0/1.0/1.0 雖然單調，但
- * Lv10–40 全部 100% 勝率、Lv60 首領戰主要是 timeout（雙方打不死對方）而非乾脆的 defeat。調整
- * HP→0.8（同比例壓低怪物總血量，讓高等級戰鬥能在時限內分出勝負）、ATK→1.25（提高威脅，把
- * 「單一 companion 隊伍在 Lv50 幾乎必勝」拉近五五波、Lv60 從 timeout 轉成乾脆的 defeat）；
- * DEF/MDEF 維持 1.0（見 Go 端註解：問題出在血量總量與時限的關係，不是打不動）。詳細六場勝率／
- * 時長表見 scratchpad/dorpg_p6/sim/RESULT.md。
+ * 2026-09-19 使用者決策改版（逐位元對齊 services/api/internal/rpg/config.go DefaultConfig() 同一組
+ * 數字，理由見該檔欄位上方註解——不在這裡重複，改一邊要記得改另一邊）：怪物基礎能力至少是同級
+ * 參考玩家的 3–4 倍（怪物沒技能沒裝備）。真引擎滿隊模擬（玩家＋4 傭兵同級，Lv10–60 三職業，
+ * 50 種子，17 組設定；報告整理於 docs/dorpg/MONSTER_X3_CALIBRATION.md）證實 HP/ATK 可以
+ * 一起放大到 3 倍（ATK×3 讓被打≈2% HPMax、HP×3 讓戰鬥拉長到約三倍），但 DEF/MDEF 不能跟著等比例
+ * 放大——線性減防 `max(1, atk-def)` 之下 DEF/MDEF×3 會讓玩家幾乎打不到怪（滿隊測試 18 格 17 格
+ * 勝率 0%），DEF/MDEF 反而要調低（0.4，比舊值 1.0 更低）才能維持可玩。殘留待辦（Lv60 首領
+ * hpMult=7.0 與全域倍率相乘後有效 21 倍血量、法師 Lv40+ 職業曲線問題）見
+ * docs/dorpg/MONSTER_X3_CALIBRATION.md，不在這四個全域比例的可解範圍內。
  */
 export const DEFAULT_LEVEL_SCALE_CONFIG: LevelScaleConfig = {
-  battleLvlHpRatio: 0.8,
-  battleLvlAtkRatio: 1.25,
-  battleLvlDefRatio: 1.0,
-  battleLvlMdefRatio: 1.0,
+  battleLvlHpRatio: 3.0,
+  battleLvlAtkRatio: 3.0,
+  battleLvlDefRatio: 0.4,
+  battleLvlMdefRatio: 0.4,
 };
 
 /**

@@ -514,12 +514,29 @@ func DefaultConfig() Config {
 		BattleElementDisadvantagePct: -25,
 		BattleElementSamePct:         -25,
 
-		// DORPG P6：level 模式四個比例——SIM 校準後之值，見欄位上方註解（HP 0.8／ATK 1.25，
-		// DEF/MDEF 維持 1.0 不變）。
-		BattleLvHPRatio:   0.8,
-		BattleLvAtkRatio:  1.25,
-		BattleLvDefRatio:  1.0,
-		BattleLvMdefRatio: 1.0,
+		// DORPG P6：level 模式四個比例。2026-09-19 使用者決策改版：怪物基礎能力（HP/ATK/DEF/MDEF）
+		// 至少是同級參考玩家的 3–4 倍，理由是怪物沒有技能也沒有裝備，理論上該比玩家單體強得多。
+		// 真引擎滿隊模擬（玩家＋4 傭兵同級，Lv10–60 三職業，50 種子，17 組設定；報告整理於
+		// docs/dorpg/MONSTER_X3_CALIBRATION.md）發現 HP/ATK/DEF/MDEF 不能等比例
+		// 一起放大到 3 倍：ATK×3 讓玩家每次被打≈2% HPMax（終於有痛感）、HP×3 讓戰鬥時長拉長到約
+		// 三倍（換取「怪物真的變壯」的體感），但 DEF/MDEF×3 在 `max(1, atk-def)` 線性減防公式下
+		// 會讓玩家幾乎每次普攻都被夾成傷害 1、殺不死怪（滿隊模擬 fp_u3：18 格裡 17 格勝率 0%）——
+		// DEF/MDEF 只決定「玩家砍穿怪物要多久」這個時間軸維度，跟「怪物多能打」正交，所以刻意反向
+		// 調低（1.5→1.0→0.4 單調改善，實測直接證實方向與幅度），最終選最低點 0.4，讓怪物防禦力
+		// 提升有感、但不會讓戰鬥卡死。四個比例現在改用同一個公式性質（× RefPlayer(N)）但方向不同，
+		// 不是同一個「整體放大 3–4 倍」的字面意思均分到四個欄位。
+		//
+		// 殘留待辦（此輪 monster-side 調參範圍之外，留給後續處理）：
+		//   1. Lv60 台北101 首領（DOR-MON-A-67000200001）自身 hpMult=7.0 與這次全域下限相乘＝有效
+		//      21 倍血量，導致 Lv60 三職業勝率恆為 0%，需要另外調整該首領自身倍率或重新設計編組。
+		//   2. 法師職業在 Lv40 起近乎必敗（非 monster MDEF 過高——已用 mdef=0.15 的非對稱測試排除
+		//      這個假設），是既有職業強度曲線問題，需要跟角色技能/成長曲線一起校準。
+		//   3. 模擬用的玩家技能點固定配置在 Lv25 那組配點，高等級（Lv50/60）數據可能偏悲觀。
+		// 詳細判準、17 組設定總表與完整驗證數據見 docs/dorpg/MONSTER_X3_CALIBRATION.md。
+		BattleLvHPRatio:   3.0,
+		BattleLvAtkRatio:  3.0,
+		BattleLvDefRatio:  0.4,
+		BattleLvMdefRatio: 0.4,
 
 		// 審查#2：預設開啟（維持現行「測試階段人人可設」行為），正式上線前由後台手動關閉。
 		TestLevelEnabled: true,

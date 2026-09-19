@@ -843,7 +843,7 @@ const ENCOUNTER_FIELDS: FieldSpec<RpgEncounter>[] = [
   // DORPG P6（契約 §2）：怪物等級制——這一場怪物的等級 N，battle_scale_mode="level" 時驅動
   // RefPlayer(N) 縮放；六場預設 10/20/30/40/50/60，EncounterPicker 卡片會顯示「怪物 Lv.N」。
   { key: 'monster_level', label: '怪物等級 monster_level（1–99）', type: 'number', step: '1' },
-  { key: 'power_scale', label: '整場戰力倍率（power 模式用；level 模式下改由怪物等級決定強度，此欄仍保留相容）', type: 'number' },
+  { key: 'power_scale', label: '整場戰力倍率 power_scale（level 模式也會乘進怪物 HP/ATK/DEF/MDEF；migration 185 起六場預設 1.0＝不調，只當單場微調用）', type: 'number' },
   { key: 'escape_chance', label: '逃跑成功率（0~1）', type: 'number', step: '0.01' },
   { key: 'can_escape', label: '可逃跑', type: 'checkbox' },
   { key: 'is_active', label: '啟用（會出現在選單）', type: 'checkbox' },
