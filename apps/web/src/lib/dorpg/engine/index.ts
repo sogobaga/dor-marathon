@@ -51,6 +51,12 @@ export {
 } from './effects';
 export { dispatch } from './dispatch';
 export { tick } from './tick';
+// P9（CONTRACT §1／WIRE「引擎」）：AI 策略 registry 與決策入口——匯出給 FRONTEND（策略選單/
+// 顯示）與驗證腳本（每種策略的決定性斷言）直接使用，不必各自重新 import 內部模組路徑。
+export { boolParam, numParam, resolveStrategy, STRATEGY_IDS } from './strategies';
+export type { ResolvedStrategy, StrategyDef, StrategyId, StrategyParams } from './strategies';
+export { decideAction } from './ai';
+export { advanceAutoBattle } from './autopilot';
 
 function toPartyActor(pm: PartyMember, index: number, now: number, cfg: BattleConfig, rng: () => number): PartyActor {
   const isPlayer = index === 0; // 規格：玩家只操控自己的角色，其他隊員由 AI 控制——約定 party[0] 是玩家。
@@ -96,6 +102,10 @@ function toPartyActor(pm: PartyMember, index: number, now: number, cfg: BattleCo
     // P6（CONTRACT §3.2）：見 PartyActor.skills/presetName 型別註解；玩家沒有這個欄位（stays []）。
     skills: pm.skills ?? [],
     presetName: pm.presetName ?? null,
+    // P9（CONTRACT §1）：原始字串直接帶入，未知/缺省一律先給 'balanced'——真正的白名單正規化
+    // （含 DB 覆寫）留給 decideAction 呼叫前的 resolveStrategy(actor.strategyId, ctx.cfg.
+    // aiStrategies) 統一處理（見該函式與 PartyActor.strategyId 型別註解）。
+    strategyId: pm.strategyId ?? 'balanced',
   };
 }
 
@@ -130,7 +140,20 @@ function toEnemyActor(e: Enemy, now: number, cfg: BattleConfig, rng: () => numbe
 
 export function createBattle(
   sample: BattleSample,
-  opts: { now: number; rng?: () => number; config?: Partial<BattleConfig> },
+  opts: {
+    now: number;
+    rng?: () => number;
+    config?: Partial<BattleConfig>;
+    /**
+     * P9（CONTRACT §1／WIRE「戰鬥 bootstrap」：「頂層新增 autoBattle: boolean」）：bootstrap
+     * 回應的 autoBattle 是整個回應的頂層欄位（跟 sample/config 平行，不在 sample 裡面），
+     * 跟既有的 opts.config 是同一種「wire 頂層欄位經由 opts 傳進 createBattle」的做法——呼叫端
+     * （FRONTEND）直接把 `bootstrap.autoBattle` 傳進來即可，不需要額外的 fromApi.ts 轉換函式
+     * （純布林，缺省/型別不對就當 false，呼叫端用 `Boolean(bootstrap.autoBattle)` 或 `??false`
+     * 保底）。缺省 false（離線預覽／舊版後端尚未送這個欄位時，自動戰鬥預設關閉）。
+     */
+    autoBattle?: boolean;
+  },
 ): BattleState {
   const { now } = opts;
   const rng = opts.rng ?? Math.random;
@@ -174,6 +197,8 @@ export function createBattle(
     enemyTargets: {},
     resolvingSince: null,
     aiSkillReadyAt: {},
+    autoBattle: opts.autoBattle ?? false,
+    focusTargetId: null,
   };
 }
 

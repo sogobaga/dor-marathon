@@ -101,6 +101,16 @@ export interface PartyActor {
    * 期間整個跳過、不推進這個時間點（跟 hp_regen_pct 對死亡角色的既有處理一致）。
    */
   nextEquipRegenAt: number;
+  /**
+   * P9（CONTRACT §1／WIRE「引擎」）：這位角色目前套用的 AI 策略 id，原樣從 PartyMember.strategyId
+   * 帶入（缺省 'balanced'，見 engine/index.ts toPartyActor）——刻意不在建場當下就正規化成白名單
+   * 字面值，因為 DB 覆寫（ctx.cfg.aiStrategies）跟「這個 id 存不存在」的判斷都收斂在
+   * `resolveStrategy(actor.strategyId, ctx.cfg.aiStrategies)` 這一個地方（ai.ts／autopilot.ts
+   * 每次要決策時才呼叫），未知 id 一律退回 balanced；PartyActor 這裡只是原始值的容器。玩家與
+   * 隊友都有這個欄位——玩家自己的策略同時也是自動戰鬥（autopilot.ts）decideAction 的依據，
+   * 隊友（advanceAllyAI）亦然，兩者共用同一份 registry。
+   */
+  strategyId: string;
 }
 
 export interface EnemyActor {
@@ -269,6 +279,15 @@ export interface BattleConfig {
   /** 攻擊屬性與怪物屬性相同（同五行或同光/同闇）時的倍率減損 %；預設 −25（×0.75，同屬性最沒有
    *  效率，跟兩者相剋時的懲罰同一個量級——拍板值，理由見 CONTRACT §1）。 */
   elementSamePct: number;
+
+  /**
+   * P9（CONTRACT §1／WIRE「戰鬥 bootstrap」：「config 新增 aiStrategies」）：AI 策略 registry
+   * 的資料庫覆寫——key＝策略 id，value.params 淺合併蓋過 engine/strategies.ts 的 defaultParams
+   * （見 resolveStrategy）。只含 is_active 的 id（後端負責篩選，engine 這一層對「查無某個 id」
+   * 與「查有但 params 是空物件」一視同仁，兩者都等同「完全採用 registry 預設值」）。預設 {}
+   * （沒有任何覆寫，等同 P9 上線前的行為——所有策略都用 registry 寫死的預設參數）。
+   */
+  aiStrategies: Record<string, { params?: Record<string, unknown> }>;
 }
 
 /** 契約 §2 給的預設值，逐字照抄；可被 createBattle 的 opts.config 局部覆寫。 */
@@ -335,6 +354,10 @@ export const DEFAULT_BATTLE_CONFIG: BattleConfig = {
   elementAdvantagePct: 25,
   elementDisadvantagePct: -25,
   elementSamePct: -25,
+
+  // P9：預設沒有任何 DB 覆寫——STRATEGY_IDS 全部採用 engine/strategies.ts registry 寫死的
+  // defaultParams（見該檔）。
+  aiStrategies: {},
 };
 
 /** 施法中尚未結算的技能，key=actorId；'ALL' 代表 allAllies、'ALL_ENEMIES' 代表 allEnemies
@@ -355,7 +378,35 @@ export type Command =
   | { type: 'USE_SKILL'; skillId: string; targetId?: string }
   | { type: 'USE_ITEM'; itemId: string; targetId?: string }
   | { type: 'CANCEL_TARGETING' }
-  | { type: 'TRY_ESCAPE' };
+  | { type: 'TRY_ESCAPE' }
+  /**
+   * P9（CONTRACT §1／WIRE「引擎」）：切換玩家自動戰鬥／策略，本地立即生效（不驗證/不打 API）
+   * ——持久化是前端另外呼叫 `PUT /rpg/auto-battle` 的事，跟這裡的本地即時狀態是兩件事（本地
+   * 這份純粹是給 BattleState 用，讓 tick() 知道要不要跑 autopilot.ts）。strategyId 未知時
+   * dispatch.ts 用 resolveStrategy() 正規化成 balanced，不會把非法字串存進 PartyActor。
+   */
+  | { type: 'SET_AUTO_BATTLE'; enabled: boolean; strategyId: string };
+
+/**
+ * P9（CONTRACT §4／WIRE「引擎」）：`decideAction(ctx, actor, strategy) → Decision`——AI 策略與
+ * 玩家自動戰鬥共用的「決定要做什麼」純函式回傳值，本身不含任何執行邏輯（見 ai.ts decideAction
+ * 型別註解）。
+ * kind 對齊 WIRE 逐字定義：'guard'／'item' 是為了讓這個型別完整涵蓋「玩家自動戰鬥可能做的所有
+ * 事」（型別簽章需要跟 WIRE 一致，供 FRONTEND 對照），但目前的 decideAction 實作永遠不會回傳
+ * 這兩種——防禦（windup 鎖定＋auto_guard）與吃藥（HP%<30）是 autopilot.ts 在呼叫 decideAction
+ * 之前就先攔下的獨立判斷（見該檔），理由：這兩件事只對玩家有意義（隊友沒有防禦/藥水機制），
+ * 混進 decideAction 本體會需要額外的 `actor.isPlayer` 分支，徒增「balanced 對隊友的既有 375
+ * 條斷言會不會被新分支影響」的稽核面——拆開後 decideAction 對隊友/玩家永遠是同一套五段式邏輯，
+ * 差別只在讀哪一份技能欄/冷卻表（見 ai.ts actorSkills／skillReadyAt 輔助函式）。
+ * targetId 允許 'ALL'／'ALL_ENEMIES' 兩個 sentinel（跟 PendingCast.targetId 同一組字面值），
+ * 對應 allAllies／allEnemies 目標技能——執行端（ai.ts castNow／autopilot.ts 轉換成 Command）
+ * 直接照樣傳遞，不需要另外轉譯。
+ */
+export interface Decision {
+  kind: 'heal' | 'buff' | 'damage' | 'debuff' | 'attack' | 'guard' | 'item' | 'wait';
+  skillId?: string;
+  targetId?: string | 'ALL' | 'ALL_ENEMIES';
+}
 
 export type BattleEvent =
   | { seq: number; at: number; kind: 'chargeStart' | 'chargeCancel'; actorId: string }
@@ -455,4 +506,16 @@ export interface BattleState {
    * 顯示的冷卻也一起打斷（兩者本來就是不同角色在用同一個技能定義，不該共用同一把鎖）。
    */
   aiSkillReadyAt: Record<string, Record<string, number>>;
+  /**
+   * P9（CONTRACT §1／WIRE「引擎」）：玩家自動戰鬥開關——tick() 只在這裡是 true 且玩家可行動時
+   * 才呼叫 autopilot.ts 的 advanceAutoBattle（見 tick.ts）；SET_AUTO_BATTLE 指令本地即時切換
+   * （見 dispatch.ts），持久化交給前端另外呼叫 REST。createBattle 預設 false（見 index.ts）。
+   */
+  autoBattle: boolean;
+  /**
+   * P9（CONTRACT §4「集中火力」）：focus_fire 策略全隊共用的目標——每個 tick 開頭由
+   * ai.ts 的 refreshFocusTarget 更新（「目標死亡才換」，見該函式型別註解），採其它策略的角色
+   * 完全不讀寫這個欄位。createBattle 初始化 null（尚未挑過目標，第一個 tick 才會補上）。
+   */
+  focusTargetId: string | null;
 }

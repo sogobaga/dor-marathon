@@ -364,6 +364,58 @@ func (h *Handler) getWeaponWithType(ctx context.Context, id string) (WeaponRow, 
 	return w, t, nil
 }
 
+// WeaponWithType DORPG P9 N+1 修復（見 presets.go loadGearCatalog 檔頭說明）：批次查詢的武器＋
+// 類型合併結果，取代 resolvePresetEquipmentSlots 原本逐格呼叫 getWeaponWithType 的個別查詢。
+type WeaponWithType struct {
+	Weapon WeaponRow
+	Type   WeaponTypeRow
+}
+
+// loadWeaponsWithTypesByIDs 一次撈出多把武器＋各自的類型（JOIN rpg_weapon_types，
+// `WHERE w.id = ANY($1)`），取代呼叫端對每個 id 各發一次 getWeaponWithType 的做法。ids 為空時
+// 略過查詢直接回空 map（避免對 Postgres 傳空陣列的邊界行為疑慮，且呼叫端本來就不需要查）。
+// 查無資料的 id 純粹不會出現在回傳 map 裡（不是錯誤）——呼叫端（resolvePresetEquipmentSlots）
+// 用 map 的 ok 判斷是否查到，查不到視為「該格未裝備」。
+func (h *Handler) loadWeaponsWithTypesByIDs(ctx context.Context, ids []string) (map[string]WeaponWithType, error) {
+	out := map[string]WeaponWithType{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := h.db.Query(ctx, `
+		SELECT `+weaponColsPrefixed+`, t.id, t.job_id, t.name, t.visual, t.elemental_capable, t.description, t.traits, t.sort_order
+		FROM rpg_weapons w
+		JOIN rpg_weapon_types t ON t.id = w.type_id
+		WHERE w.id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var wr WeaponRow
+		var wraw []byte
+		var tr WeaponTypeRow
+		var traw []byte
+		if err := rows.Scan(&wr.ID, &wr.TypeID, &wr.Tier, &wr.Name, &wr.Rarity, &wr.LevelReq, &wr.Element, &wraw, &wr.Description, &wr.IsActive, &wr.SortOrder,
+			&tr.ID, &tr.JobID, &tr.Name, &tr.Visual, &tr.ElementalCapable, &tr.Description, &traw, &tr.SortOrder); err != nil {
+			return nil, err
+		}
+		profile, perr := ParseWeaponProfile(wraw)
+		if perr != nil {
+			// 壞掉/不合法的 profile JSON 不該讓整支 API 500，比照 scanWeapon 的既有慣例回中性值。
+			profile = DefaultWeaponProfile()
+		}
+		wr.Profile = profile
+		tr.Traits = map[string]any{}
+		if len(traw) > 0 {
+			if jerr := json.Unmarshal(traw, &tr.Traits); jerr != nil {
+				tr.Traits = map[string]any{}
+			}
+		}
+		out[wr.ID] = WeaponWithType{Weapon: wr, Type: tr}
+	}
+	return out, rows.Err()
+}
+
 func (h *Handler) upsertWeapon(ctx context.Context, w WeaponRow) error {
 	profileRaw, err := json.Marshal(w.Profile)
 	if err != nil {

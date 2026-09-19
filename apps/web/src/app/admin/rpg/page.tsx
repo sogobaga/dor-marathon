@@ -11,7 +11,7 @@ import {
   type RpgMonster, type RpgSkill, type RpgItem, type RpgScene, type RpgSceneSlot, type RpgCompanion,
   type RpgEncounter, type RpgEncounterMonster, type RpgBattleLogRow, type RpgBattleLogSummary,
   type RpgWeaponType, type RpgWeapon, type RpgElement, type WeaponRarity,
-  type RpgArmorItem, type ArmorItemSlot,
+  type RpgArmorItem, type ArmorItemSlot, type RpgAiStrategy,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 import { CONFIG_GROUPS, STAT_META, DERIVED_META, resistLabel, ELEMENT_LABEL, ELEMENT_ORDER, RARITY_LABEL, ARMOR_SLOT_LABEL } from '@/lib/rpgMeta'
@@ -20,7 +20,8 @@ import { CONFIG_GROUPS, STAT_META, DERIVED_META, resistLabel, ELEMENT_LABEL, ELE
 // tab 列改橫向捲動（見下方 tab 按鈕列 container 的 overflowX/flexWrap:'nowrap'）。
 // DORPG P7（契約 dorpg_p7 CONTRACT.md §2、WIRE §後台）：新增武器類型／武器兩個分頁。
 // DORPG P8（契約 dorpg_p8 CONTRACT.md §1、WIRE §後台）：新增防具（含飾品）分頁。
-type Tab = 'config' | 'entry' | 'preview' | 'monsters' | 'skills' | 'items' | 'scenes' | 'encounters' | 'companions' | 'battlelogs' | 'weapontypes' | 'weapons' | 'armoritems'
+// DORPG P9（契約 dorpg_p9 CONTRACT.md §2、WIRE §後台）：新增「AI 策略」分頁。
+type Tab = 'config' | 'entry' | 'preview' | 'monsters' | 'skills' | 'items' | 'scenes' | 'encounters' | 'companions' | 'battlelogs' | 'weapontypes' | 'weapons' | 'armoritems' | 'aistrategies'
 const STAT_KEYS: RpgStatKey[] = ['str', 'agi', 'vit', 'dex', 'int', 'luk']
 // rpg_encounter_monsters 槽位固定 5 個（migration 176 DDL），場景/遭遇編輯器都用這個順序渲染。
 const ENCOUNTER_SLOTS = ['rear_left', 'rear_right', 'front_left', 'front_center', 'front_right'] as const
@@ -73,6 +74,7 @@ export default function AdminRpgPage() {
           ['weapontypes', '武器類型'],
           ['weapons', '武器'],
           ['armoritems', '防具'],
+          ['aistrategies', 'AI 策略'],
           ['items', '道具'],
           ['scenes', '場景'],
           ['encounters', '遭遇'],
@@ -110,6 +112,7 @@ export default function AdminRpgPage() {
       {tab === 'weapontypes' && token && <WeaponTypesTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'weapons' && token && <WeaponsTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'armoritems' && token && <ArmorItemsTab token={token} onErr={setErr} onMsg={flash} />}
+      {tab === 'aistrategies' && token && <AiStrategiesTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'items' && token && <ItemsTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'scenes' && token && <ScenesTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'encounters' && token && <EncountersTab token={token} onErr={setErr} onMsg={flash} />}
@@ -1526,6 +1529,132 @@ function ArmorItemsTab({ token, onErr, onMsg }: { token: string; onErr: (m: stri
             </F>
             <F label="效果 profile（JSON，見契約 §2 ArmorProfile；缺欄位＝中性值）" full>
               <textarea style={{ ...ta, height: 220, fontFamily: 'monospace', fontSize: 12 }} value={profileText} onChange={(e) => setProfileText(e.target.value)} />
+            </F>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            <button onClick={save} disabled={busy} style={primaryBtn}>{busy ? '儲存中…' : '儲存'}</button>
+            <button onClick={() => setForm(null)} style={ghostBtn}>取消</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================== AI 策略（DORPG P9，契約 §2） ==============================
+// id 集合固定六種（引擎 registry 白名單，後端持有同一份常數）——後台只能編輯既有列的顯示/參數/
+// 啟用/排序；「新增」理論上只在 ENGINE 未來擴充 registry＋補 seed 之後才有新 id 可用，這裡仍給
+// 一顆「＋新增」鈕（比照 WeaponTypesTab／ArmorItemsTab 的既有慣例，id 可編輯輸入），送出後端會用
+// 同一份白名單常數擋掉不存在的 id（400 unknown_strategy）。
+
+function emptyAiStrategy(): RpgAiStrategy {
+  return { id: '', name: '', description: '', params: {}, is_active: true, sort_order: 0 }
+}
+
+function AiStrategiesTab({ token, onErr, onMsg }: { token: string; onErr: (m: string) => void; onMsg: (m: string) => void }) {
+  const [rows, setRows] = useState<RpgAiStrategy[] | null>(null)
+  const [form, setForm] = useState<RpgAiStrategy | null>(null)
+  const [paramsText, setParamsText] = useState('{}') // params 是覆寫引擎預設門檻的 JSON，比照 WeaponTypesTab traits 的既有慣例存成排版過的字串編輯
+  const [isNew, setIsNew] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(() => {
+    adminRpgApi.aiStrategies(token).then((r) => setRows(r.ai_strategies)).catch((e: any) => onErr(e?.message || '載入失敗'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+  useEffect(() => { load() }, [load])
+
+  function startNew() { const f = emptyAiStrategy(); setForm(f); setParamsText('{}'); setIsNew(true) }
+  function startEdit(r: RpgAiStrategy) { setForm({ ...r }); setParamsText(JSON.stringify(r.params ?? {}, null, 2)); setIsNew(false) }
+
+  async function save() {
+    if (!form) return
+    if (!form.id.trim()) { onErr('請填 ID（須為引擎已知的策略 id）'); return }
+    if (!form.name.trim()) { onErr('請填名稱'); return }
+    let params: Record<string, unknown>
+    try { params = JSON.parse(paramsText || '{}') } catch { onErr('「參數 params」不是合法的 JSON，請修正後再儲存'); return }
+    setBusy(true)
+    try {
+      const saved = await adminRpgApi.putAiStrategy(token, { ...form, params })
+      onMsg(`已儲存「${saved.name}」`)
+      setForm(null)
+      load()
+    } catch (e: any) { onErr(e?.message || '儲存失敗') } finally { setBusy(false) }
+  }
+
+  async function del(r: RpgAiStrategy) {
+    if (!window.confirm(`確定刪除「${r.name}」？若仍有腳本／玩家引用會被拒絕。`)) return
+    setBusy(true)
+    try {
+      await adminRpgApi.deleteAiStrategy(token, r.id)
+      onMsg(`已刪除「${r.name}」`)
+      if (form?.id === r.id) setForm(null)
+      load()
+    } catch (e: any) { onErr(e?.status === 409 ? '仍有腳本或玩家在使用這個策略，無法刪除' : (e?.message || '刪除失敗')) } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
+        <div>
+          <h2 style={{ fontSize: 15, fontWeight: 800, margin: '0 0 4px' }}>AI 戰鬥策略管理</h2>
+          <p style={{ fontSize: 12, color: 'var(--tx-dim)', margin: 0, maxWidth: 640, lineHeight: 1.7 }}>
+            傭兵腳本與玩家自動戰鬥共用這份策略表（見契約 §4）。這裡只能調整顯示名稱/說明/參數覆寫/
+            啟用/排序，不能發明引擎沒有的行為——id 必須是引擎 registry 已知的六種之一，否則儲存時會被拒絕。
+          </p>
+        </div>
+        {!form && <button onClick={startNew} style={primaryBtn}>＋ 新增</button>}
+      </div>
+
+      {rows === null && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>載入中…</div>}
+      {rows && rows.length === 0 && !form && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>尚無資料。</div>}
+      {rows && rows.length > 0 && !form && (
+        <div style={{ overflowX: 'auto' }}>
+          <Row head>
+            <C w={2}>ID</C>
+            <C w={2}>名稱</C>
+            <C w={1}>啟用</C>
+            <C w={1}>排序</C>
+            <C w={2}>操作</C>
+          </Row>
+          {[...rows].sort((a, b) => a.sort_order - b.sort_order).map((r) => (
+            <Row key={r.id}>
+              <C w={2} dim>{r.id}</C>
+              <C w={2}>{r.name}</C>
+              <C w={1}>{r.is_active ? <span style={{ color: 'var(--fug)' }}>✓</span> : <span style={{ color: 'var(--tx-faint)' }}>—</span>}</C>
+              <C w={1} dim>{r.sort_order}</C>
+              <C w={2}>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => startEdit(r)} style={linkBtn}>編輯</button>
+                  <button onClick={() => del(r)} disabled={busy} style={{ ...linkBtn, color: 'var(--hunt)' }}>刪除</button>
+                </div>
+              </C>
+            </Row>
+          ))}
+        </div>
+      )}
+
+      {form && (
+        <div style={panel}>
+          <h3 style={{ fontSize: 14, fontWeight: 800, margin: '0 0 10px' }}>{isNew ? '新增' : `編輯：${form.name || form.id}`}</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+            <F label="ID（引擎 registry 已知的策略 id，如 mp_conserve）">
+              <input style={inp} type="text" value={form.id} disabled={!isNew} onChange={(e) => setForm({ ...form, id: e.target.value })} />
+            </F>
+            <F label="名稱">
+              <input style={inp} type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </F>
+            <F label="啟用">
+              <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} style={{ width: 18, height: 18 }} />
+            </F>
+            <F label="排序">
+              <input style={inp} type="number" step="1" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) })} />
+            </F>
+            <F label="說明（玩家在酒館腳本編輯器／戰鬥 HUD 看到的一句話）" full>
+              <textarea style={{ ...ta, height: 70 }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            </F>
+            <F label="參數 params（JSON，覆寫引擎預設門檻，見契約 §4 各策略欄位，例如 heal_pct/mp_reserve_pct）" full>
+              <textarea style={{ ...ta, height: 160, fontFamily: 'monospace', fontSize: 12 }} value={paramsText} onChange={(e) => setParamsText(e.target.value)} />
             </F>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>

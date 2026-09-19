@@ -700,6 +700,9 @@ func main() {
 			// DORPG P8 防具系統（見 internal/rpg armor_admin.go，migration 184）：同上，靜態
 			// 子路徑跟既有 "/admin/rpg" mount 共存，沿用同一個 perm("rpg")。
 			r.With(perm("rpg")).Mount("/admin/rpg/armor-items", rpgHandler.AdminArmorItemsRouter())
+			// DORPG P9 AI 戰鬥策略（見 internal/rpg strategies_admin.go，migration 186）：同上，
+			// 靜態子路徑跟既有 "/admin/rpg" mount 共存，沿用同一個 perm("rpg")。
+			r.With(perm("rpg")).Mount("/admin/rpg/ai-strategies", rpgHandler.AdminAiStrategiesRouter())
 			// 較寬鬆的節流（後台讀取型端點，僅防止表格分頁被寫成緊迴圈誤打）。
 			r.With(perm("rpg"), middleware.RateLimit(rdb, "admin_rpg_battle_logs", 60, time.Minute, middleware.UserOrIP)).
 				Get("/admin/rpg/battle-logs", rpgHandler.AdminBattleLogs)

@@ -712,3 +712,26 @@ export function formatEquipBonus(b: EquipBonusDTO | null | undefined): string {
   if (b.element_resist_pct) parts.push(`屬性傷害-${b.element_resist_pct}%`)
   return parts.join('・')
 }
+
+// ---------------------------------------------------------------------------
+// DORPG P9（AI 戰鬥策略＋自動戰鬥，見契約 dorpg_p9 CONTRACT.md §1/§2）：本檔只加這份靜態標籤表
+// （任務 §0 FRONTEND 所有權：rpgMeta.ts 只加策略標籤），六種 id 固定（引擎 registry 白名單）。
+// 這份表是「後端資料尚未到位或呼叫端沒有整包 StrategyDTO」時的顯示備援（例如 CharacterScreen
+// 的 /rpg/me 只回 auto_battle.strategy_id，沒有附帶名稱）；有拿到 StrategyDTO[] 的地方
+// （TavernScreen 腳本編輯器、戰鬥 HUD 的 AutoBattleBar、後台）一律優先顯示後端給的 name/description
+// （後台可調文案），這份表只在拿不到時當備援，不能取代後端資料。
+export const STRATEGY_IDS = ['balanced', 'mp_conserve', 'skill_aggressive', 'protect_allies', 'focus_fire', 'element_advantage'] as const
+export type StrategyId = (typeof STRATEGY_IDS)[number]
+export const STRATEGY_LABEL: Record<string, string> = {
+  balanced: '均衡',
+  mp_conserve: 'MP 保守使用',
+  skill_aggressive: '技能積極使用',
+  protect_allies: '保護隊友優先',
+  focus_fire: '集中火力',
+  element_advantage: '屬性相剋優先',
+}
+/** 找不到時退回 id 原文（未知 id 理論上不會發生，畢竟引擎也會退回 balanced，這裡純防禦）。 */
+export function strategyLabel(id: string | null | undefined): string {
+  if (!id) return STRATEGY_LABEL.balanced
+  return STRATEGY_LABEL[id] ?? id
+}

@@ -203,6 +203,16 @@ export type PartyMember = {
    * equippedWeapon 缺省時 fallback 成 NEUTRAL_WEAPON_PROFILE 同一個精神。
    */
   equipmentEffects?: EquipmentEffectsWire;
+  /**
+   * P9（DORPG_P9 CONTRACT §1／WIRE「戰鬥 bootstrap」）：這位角色目前套用的 AI 策略 id
+   * （balanced｜mp_conserve｜skill_aggressive｜protect_allies｜focus_fire｜element_advantage）；
+   * 玩家＝player_characters.auto_strategy_id，傭兵＝preset.strategy_id。engine 端一律經
+   * `resolveStrategy(strategyId, config.aiStrategies)` 正規化（未知/缺欄位一律退回 balanced，
+   * 見 engine/strategies.ts），故這裡刻意維持寬鬆的 string、不在型別層收斂成字面量聯集——
+   * 避免舊版後端／未升級的資料送出這裡還沒收錄的新策略 id 時讓整包型別檢查失敗，缺省交給
+   * fromApi.ts／fixture.ts 給 'balanced' 預設值。
+   */
+  strategyId?: string;
 };
 
 /** 場景五個怪物站位 ID，與 content pack scene.json 的 monsterSlots[].id 同名。 */

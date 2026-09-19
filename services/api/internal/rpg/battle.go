@@ -153,6 +153,18 @@ func resolvePlayerWeaponWire(weaponRow *WeaponRow, wtype *WeaponTypeRow, job *Jo
 	return buildCompanionWeaponWire(job.Weapon)
 }
 
+// resolveCompanionWeaponWire DORPG P9（CONTRACT §2/§3、WIRE「傭兵 party member 新增 weapon
+// （WeaponWire，同玩家）...未裝備時沿用 companion 表的 weapon 欄位」）：傭兵腳本裝備了武器就用
+// 它自己的 id/name/typeId/type.visual/profile（buildPlayerWeaponWire，跟玩家同一條路徑）；
+// 未裝備／查無資料時退回這位傭兵表定的固定視覺＋中性 profile（buildCompanionWeaponWire，P6/P7
+// 時代的既有行為），理由同 resolvePlayerWeaponWire 對玩家未裝備時的既有處理。
+func resolveCompanionWeaponWire(weaponRow *WeaponRow, wtype *WeaponTypeRow, fallbackVisual string) *wireWeapon {
+	if w := buildPlayerWeaponWire(weaponRow, wtype); w != nil {
+		return w
+	}
+	return buildCompanionWeaponWire(fallbackVisual)
+}
+
 type wirePartyMember struct {
 	ID          string      `json:"id"`
 	Name        string      `json:"name"`
@@ -183,10 +195,15 @@ type wirePartyMember struct {
 
 	// EquipmentEffects DORPG P8（WIRE：party member「equipmentEffects」，只彙總防具與飾品，不含
 	// 武器——武器仍走上面的 Weapon.Profile）：引擎用它算攻擊冷卻（跟 weapon.intervalPct 相加）、
-	// 技能 MP 成本減免、每 5 秒 HP/MP 回復、受到傷害/屬性抗性（跟 weapon/buff 相加）。傭兵本輪
-	// 不裝備防具，一律零值物件（見 buildCompanionWeaponWire 對武器的既有慣例），不是省略欄位
-	// ——前端／引擎不必額外判斷這個欄位存不存在。
+	// 技能 MP 成本減免、每 5 秒 HP/MP 回復、受到傷害/屬性抗性（跟 weapon/buff 相加）。DORPG P9
+	// 起傭兵也會裝備防具/飾品（presetEquipmentEffects），沒有配置的格子自然貢獻零值，不需要另外
+	// 判斷——前端／引擎不必額外判斷這個欄位存不存在。
 	EquipmentEffects wireEquipmentEffects `json:"equipmentEffects"`
+
+	// StrategyID DORPG P9（CONTRACT §1/§4、WIRE）：這位成員的 AI 戰鬥策略 id——玩家＝
+	// auto_strategy_id，傭兵＝目前套用腳本的 strategy_id。引擎 decideAction() 用它決定行為，
+	// 未知 id 一律退回 balanced（見 strategies.go DefaultStrategyID）。
+	StrategyID string `json:"strategyId"`
 }
 
 // wireEquipmentEffects DORPG P8（WIRE：戰鬥 bootstrap party member.equipmentEffects 的形狀）
@@ -297,6 +314,11 @@ type wireBattleConfig struct {
 	// ScaleMode DORPG P6（WIRE：「config 新增 scaleMode: "level"|"power"（純顯示／除錯）」）——
 	// 純粹讓前端偵錯／顯示用，引擎本身不依這個欄位分支（怪物數值在後端就已經算好送過去）。
 	ScaleMode string `json:"scaleMode"`
+
+	// AiStrategies DORPG P9（WIRE：「config 新增 aiStrategies: { [id]: { params } }（引擎預設 ⊕
+	// DB 覆寫，只含 is_active 的 id）」）——buildWireConfig() 本身不連 DB，這個欄位由呼叫端
+	// （BattleBootstrap）算好後另外賦值（見該函式）。
+	AiStrategies map[string]wireStrategyParams `json:"aiStrategies"`
 }
 
 func buildWireConfig(cfg Config) wireBattleConfig {
@@ -824,6 +846,13 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 	playerWeaponWire := resolvePlayerWeaponWire(weaponRow, wtype, job)
 	playerEquipmentEffects := toWireEquipmentEffects(equipSnap.EquipmentEffects())
 
+	// DORPG P9（CONTRACT §1、WIRE）：玩家成員的 strategyId＝auto_strategy_id；空字串（理論上
+	// 不會發生，DB 欄位 NOT NULL DEFAULT 'balanced'）保守退回 DefaultStrategyID。
+	playerStrategyID := ch.AutoStrategyID
+	if playerStrategyID == "" {
+		playerStrategyID = DefaultStrategyID
+	}
+
 	party := []wirePartyMember{{
 		ID: uid, Name: displayName, Level: baseLevel,
 		HP: roundInt(pbs.HPMax), HPMax: roundInt(pbs.HPMax),
@@ -835,12 +864,14 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		JobID:       ch.JobID,
 
 		EquipmentEffects: playerEquipmentEffects,
+		StrategyID:       playerStrategyID,
 	}}
 
 	// DORPG P6（CONTRACT §3.2）：隊伍成員改由 player_party（或預設小咪）建構——每位傭兵用自己
 	// 腳本的 level/stats/skill_levels 算出自己的 Compute() 衍生值×倍率與自己的 CombatRating，
 	// 不再沿用玩家戰力（ScaleCompanion/CompanionRating 兩支 P2 舊函式保留給 "power" 模式以外
-	// 沒有腳本概念的呼叫端，這裡不再使用）。
+	// 沒有腳本概念的呼叫端，這裡不再使用）。DORPG P9：每位傭兵再加上自己腳本的裝備（weapon/
+	// equipmentEffects/strategyId），解析方式與 tavern.go 的展示路徑共用同一組純函式。
 	members, err := h.resolvePartyForBattle(ctx, uid)
 	if err != nil {
 		if respondIfMissingRelation(w, err) {
@@ -849,22 +880,45 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed to load party")
 		return
 	}
+	// DORPG P9 N+1 修復（2026-09-19，見 presets.go loadGearCatalog 檔頭說明）：原本這裡對每位
+	// 隊友各自呼叫 resolvePresetEquipmentSlots(ctx,...)、逐格打 DB。改成先收集全部隊友腳本的
+	// 裝備 item_id 一次性批次載入，下面迴圈裡 resolvePresetEquipmentSlots 才不再碰 DB。
+	var memberWeaponIDs, memberArmorIDs []string
 	for _, m := range members {
-		d := computeCompanionDerived(cfg, m.Job, m.JobSkills, m.Preset.Level, m.Preset.Stats, m.Preset.SkillLevels)
+		wIDs, aIDs := presetEquipmentIDs(m.Preset.Equipment)
+		memberWeaponIDs = append(memberWeaponIDs, wIDs...)
+		memberArmorIDs = append(memberArmorIDs, aIDs...)
+	}
+	memberWeapons, memberArmor, err := h.loadGearCatalog(ctx, dedupeNonEmpty(memberWeaponIDs), dedupeNonEmpty(memberArmorIDs))
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to load companion equipment")
+		return
+	}
+	for _, m := range members {
+		eqSlots := resolvePresetEquipmentSlots(m.Preset.Equipment, memberWeapons, memberArmor)
+		d := computeCompanionDerived(cfg, m.Job, m.JobSkills, m.Preset.Level, m.Preset.Stats, m.Preset.SkillLevels, presetEquip(eqSlots))
 		actor := presetActorStats(m.Companion, d)
 		rating := presetCombatRating(d)
 		jobID := m.Job.ID
+		compWeaponRow, compWeaponType := presetWeaponRowAndType(eqSlots)
+		strategyID := m.Preset.StrategyID
+		if strategyID == "" {
+			strategyID = DefaultStrategyID
+		}
 		party = append(party, wirePartyMember{
 			ID: m.Companion.ID, Name: m.Companion.Name, Level: m.Preset.Level,
 			HP: roundInt(actor.HPMax), HPMax: roundInt(actor.HPMax),
 			MP: roundInt(actor.MPMax), MPMax: roundInt(actor.MPMax),
 			PortraitURL: func() *string { u := charPortraitURL(m.Companion.PortraitID); return &u }(),
 			Stats:       &actor,
-			Weapon:      buildCompanionWeaponWire(m.Companion.Weapon),
+			Weapon:      resolveCompanionWeaponWire(compWeaponRow, compWeaponType, m.Companion.Weapon),
 			Rating:      &rating,
 			JobID:       &jobID,
 			Skills:      buildCompanionSkillsWire(m.JobSkills, m.Preset.SkillLevels),
 			PresetName:  m.Preset.Name,
+
+			EquipmentEffects: toWireEquipmentEffects(presetEquipmentEffects(eqSlots)),
+			StrategyID:       strategyID,
 		})
 	}
 
@@ -970,6 +1024,19 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		EscapeChance:    enc.EscapeChance,
 	}
 
+	// DORPG P9（WIRE）：config.aiStrategies——只含目前 is_active 的策略，供引擎 resolveStrategy()
+	// 跟自己的內建預設參數 merge。
+	strategies, err := h.listActiveStrategies(ctx)
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errStrategiesNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to load strategies")
+		return
+	}
+	wireCfg := buildWireConfig(cfg)
+	wireCfg.AiStrategies = buildAiStrategiesWire(strategies)
+
 	respondJSON(w, http.StatusOK, map[string]any{
 		"encounter": wireEncounterInfo{
 			Code: enc.Code, Title: enc.Title, Subtitle: enc.Subtitle, SceneID: enc.SceneID,
@@ -977,7 +1044,10 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 			MonsterLevel: enc.MonsterLevel,
 		},
 		"sample": sample,
-		"config": buildWireConfig(cfg),
+		"config": wireCfg,
+		// autoBattle DORPG P9（WIRE：「頂層新增 autoBattle: boolean」）：玩家角色列的開關，戰鬥中
+		// dispatch.SET_AUTO_BATTLE 本地即時生效由引擎自己處理，這裡只送 bootstrap 當下的持久化值。
+		"autoBattle": ch.AutoBattle,
 		// P5：free_points 不再是真相（見 handler.go buildCharacterView），現算避免新版
 		// /rpg/allocate 不再遞減 DB 欄位後這裡凍結在舊數字（同 BattleEncounters 的修法）。
 		"hints": map[string]any{"free_points": func() int {

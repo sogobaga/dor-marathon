@@ -1,6 +1,7 @@
 // tick(state, now)：推進施法/硬直計時、隊友 AI、敵人 AI、逃跑判定、勝負結算。
 // 純函式：輸入的 state（及其巢狀物件）不會被動到，永遠回傳一份新的（toCtx 已淺拷貝過一輪）。
-import { advanceAllyAI, advanceEnemyAI, advanceEnemyDeath } from './ai';
+import { advanceAllyAI, advanceEnemyAI, advanceEnemyDeath, refreshFocusTarget } from './ai';
+import { advanceAutoBattle } from './autopilot';
 import { applyHealToTarget, resolveCastEffect } from './combat';
 import type { Ctx } from './context';
 import { fromCtx, pushEvent, toCtx } from './context';
@@ -189,6 +190,8 @@ export function tick(state: BattleState, now: number): BattleState {
   resolvePartyTimers(ctx);
   pruneAllEffects(ctx); // P5：buff/debuff 到期清除＋hp_regen_pct 定時回復，跑在 AI 出手之前。
   applyEquipmentRegen(ctx); // P8：裝備（防具＋飾品）每 5000ms 定時回復，跟上面 buff 的 1000ms 節奏各自獨立。
+  refreshFocusTarget(ctx); // P9：focus_fire 全隊共用目標，要在隊友 AI／玩家自動戰鬥之前就先算好。
+  advanceAutoBattle(ctx); // P9（WIRE「引擎」：「tick 在隊友 AI 之前呼叫」）：玩家自動戰鬥。
 
   // P6（CONTRACT §3.2）：每位隊友用自己的 skills 決定要不要用技能，不再需要指定「哪一位是輔助」
   // ——advanceAllyAI 內部依五段優先序自行判斷（見 ai.ts 檔頭註解）。

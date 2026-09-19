@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 
@@ -105,6 +106,9 @@ type tavernResponse struct {
 	Leader      tavernLeaderDTO `json:"leader"`
 	Party       [4]PartySlotDTO `json:"party"`
 	Mercenaries []MercenaryDTO  `json:"mercenaries"`
+	// Strategies DORPG P9（CONTRACT §2、WIRE）：只含 is_active，依 sort_order——酒館腳本編輯器
+	// 的「AI 策略」下拉選單資料來源。
+	Strategies []StrategyDTO `json:"strategies"`
 }
 
 // buildPartySlotDTOs 契約 §3.1：rows 為空時套用 defaultPartySlots()；每一格再解析出腳本
@@ -210,7 +214,19 @@ func (h *Handler) respondTavern(w http.ResponseWriter, r *http.Request, uid stri
 		inParty[s.CompanionID] = true
 	}
 
-	mercDTOs := make([]MercenaryDTO, 0, len(mercenaries))
+	// DORPG P9 N+1 修復（2026-09-19，見 presets.go loadGearCatalog 檔頭說明）：原本在下面的迴圈裡
+	// 對每份腳本各自呼叫 resolvePresetEquipmentSlots(ctx,...)、逐格打 DB，N 份腳本×8 格造成
+	// GET /rpg/tavern 實測 13–19 秒。改成分兩段：這一段先把 job/skills/presets 查好、收集全部
+	// 腳本會用到的裝備 item_id；查完後一次性批次載入（loadGearCatalog），下面第二段迴圈才組 DTO，
+	// 此時 resolvePresetEquipmentSlots 純粹查記憶體 map，不再碰 DB。
+	type mercBuild struct {
+		companion CompanionRow
+		job       JobRow
+		jobSkills []SkillRow
+		presets   []PresetRow
+	}
+	builds := make([]mercBuild, 0, len(mercenaries))
+	var allWeaponIDs, allArmorIDs []string
 	for _, c := range mercenaries {
 		if c.JobID == nil {
 			continue // 理論上不會發生：migration 181 已把四位傭兵都補上 job_id
@@ -236,20 +252,54 @@ func (h *Handler) respondTavern(w http.ResponseWriter, r *http.Request, uid stri
 			respondErr(w, http.StatusInternalServerError, "failed to load presets")
 			return
 		}
-		presetDTOs := make([]PresetDTO, 0, len(presets))
 		for _, p := range presets {
-			presetDTOs = append(presetDTOs, buildPresetDTO(cfg, job, jobSkills, c, p))
+			wIDs, aIDs := presetEquipmentIDs(p.Equipment)
+			allWeaponIDs = append(allWeaponIDs, wIDs...)
+			allArmorIDs = append(allArmorIDs, aIDs...)
+		}
+		builds = append(builds, mercBuild{companion: c, job: job, jobSkills: jobSkills, presets: presets})
+	}
+
+	weapons, armor, err := h.loadGearCatalog(ctx, dedupeNonEmpty(allWeaponIDs), dedupeNonEmpty(allArmorIDs))
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to load preset equipment")
+		return
+	}
+
+	mercDTOs := make([]MercenaryDTO, 0, len(builds))
+	for _, b := range builds {
+		presetDTOs := make([]PresetDTO, 0, len(b.presets))
+		for _, p := range b.presets {
+			// DORPG P9（CONTRACT §2/§3、WIRE）：每份腳本各自解析自己的 equipment 八格——已存檔的
+			// 腳本理論上早就通過 CreatePreset/UpdatePreset 的資格檢查，這裡純粹是「查得到就顯示」
+			// 的展示用途，不重新擋 canEquip（見 presetEquip 檔頭註解）。
+			eqSlots := resolvePresetEquipmentSlots(p.Equipment, weapons, armor)
+			presetDTOs = append(presetDTOs, buildPresetDTO(cfg, b.job, b.jobSkills, b.companion, p, presetEquipmentWire(eqSlots, p.Level), presetEquip(eqSlots)))
 		}
 		mercDTOs = append(mercDTOs, MercenaryDTO{
-			ID: c.ID, Name: c.Name, PortraitID: c.PortraitID, Role: c.Role,
-			Job: job, InParty: inParty[c.ID], Presets: presetDTOs,
+			ID: b.companion.ID, Name: b.companion.Name, PortraitID: b.companion.PortraitID, Role: b.companion.Role,
+			Job: b.job, InParty: inParty[b.companion.ID], Presets: presetDTOs,
 		})
+	}
+
+	strategies, err := h.listActiveStrategies(ctx)
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errStrategiesNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to load strategies")
+		return
+	}
+	strategyDTOs := make([]StrategyDTO, 0, len(strategies))
+	for _, s := range strategies {
+		strategyDTOs = append(strategyDTOs, toStrategyDTO(s))
 	}
 
 	respondJSON(w, http.StatusOK, tavernResponse{
 		Leader:      tavernLeaderDTO{Job: leaderJob, EffectiveLevel: effLevel, Name: displayName},
 		Party:       h.buildPartySlotDTOs(ctx, slots),
 		Mercenaries: mercDTOs,
+		Strategies:  strategyDTOs,
 	})
 }
 
@@ -440,4 +490,73 @@ func buildCompanionSkillsWire(jobSkills []SkillRow, skillLevels map[string]int) 
 		out = append(out, toWireSkillLeveled(s, lvl))
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// GET /rpg/tavern/gear（DORPG P9，WIRE）：酒館腳本編輯器用——某職業在某等級下的全部武器＋
+// 防具/飾品目錄，供編輯器本地比對「哪些格子目前已選、能不能裝」，不吃玩家自己目前的職業/裝備
+// （腳本可能是另一個跟玩家不同職業的傭兵，見 CONTRACT §2）。
+// ---------------------------------------------------------------------------
+
+// TavernGear GET /rpg/tavern/gear?job_id=<job>&level=<n> → { weapon_types, weapons, armor_items }
+// （WIRE：can_equip 依 level 算；equipped/equipped_in 恆 false/null——編輯器自己比對哪些格子
+// 已選）。
+func (h *Handler) TavernGear(w http.ResponseWriter, r *http.Request) {
+	jobID := r.URL.Query().Get("job_id")
+	if jobID == "" {
+		respondErr(w, http.StatusBadRequest, "缺少 job_id")
+		return
+	}
+	level, _ := strconv.Atoi(r.URL.Query().Get("level"))
+	level = clampLevel1to99(level)
+
+	ctx := r.Context()
+	if _, err := h.getJobByID(ctx, jobID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondErr(w, http.StatusBadRequest, "job not found")
+			return
+		}
+		if respondIfMissingRelationMsg(w, err, errJobsNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to load job")
+		return
+	}
+
+	weaponTypes, err := h.listWeaponTypesByJob(ctx, jobID)
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errWeaponsNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to load weapon types")
+		return
+	}
+	weaponRows, err := h.listWeaponsByJob(ctx, jobID)
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errWeaponsNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to load weapons")
+		return
+	}
+	weapons := make([]weaponDTO, 0, len(weaponRows))
+	for _, wRow := range weaponRows {
+		weapons = append(weapons, toWeaponDTO(wRow, level, "")) // equippedID="" → equipped 恆 false（WIRE）
+	}
+
+	armorRows, err := h.listArmorItemsByJobOrGeneric(ctx, jobID)
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errArmorNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to load armor items")
+		return
+	}
+	armorItems := toArmorDTOList(armorRows, level, nil) // equipped=nil → equipped_in 恆 null（WIRE）
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"weapon_types": weaponTypes,
+		"weapons":      weapons,
+		"armor_items":  armorItems,
+	})
 }

@@ -33,6 +33,9 @@ export interface Ctx {
   enemyTargets: Record<string, string>;
   resolvingSince: number | null;
   aiSkillReadyAt: Record<string, Record<string, number>>;
+  /** P9：見 types.ts BattleState.autoBattle／focusTargetId 型別註解。 */
+  autoBattle: boolean;
+  focusTargetId: string | null;
 }
 
 /** 把外部傳入的 state 拆成本次呼叫可安全改動的工作副本。 */
@@ -61,6 +64,8 @@ export function toCtx(state: BattleState, now: number): Ctx {
     enemyTargets: { ...state.enemyTargets },
     resolvingSince: state.resolvingSince,
     aiSkillReadyAt: Object.fromEntries(Object.entries(state.aiSkillReadyAt).map(([id, m]) => [id, { ...m }])),
+    autoBattle: state.autoBattle,
+    focusTargetId: state.focusTargetId,
   };
 }
 
@@ -89,6 +94,8 @@ export function fromCtx(ctx: Ctx, phase: BattleState['phase'], outcome: BattleSt
     enemyTargets: ctx.enemyTargets,
     resolvingSince: ctx.resolvingSince,
     aiSkillReadyAt: ctx.aiSkillReadyAt,
+    autoBattle: ctx.autoBattle,
+    focusTargetId: ctx.focusTargetId,
   };
 }
 

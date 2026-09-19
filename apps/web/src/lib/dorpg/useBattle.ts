@@ -39,6 +39,12 @@ export type UseBattleOptions = {
   rng?: () => number;
   /** 每次 dispatch/tick 產生新事件時呼叫（在 setState 之前同步呼叫，供 BattleScreen 觸發音效/特效/飄字）。 */
   onEvents?: (events: BattleEvent[], state: BattleState) => void;
+  /**
+   * 2026-09-19 修復：P9 玩家自動戰鬥開關的初始值（僅初始化時使用，同 config——見 createBattle
+   * 的 opts.autoBattle）。本檔原本沒有把這個欄位轉交給 createBattle()，導致每次進戰鬥都無視
+   * BattleScreenProps.autoBattle、永遠以 false 初始化引擎狀態。
+   */
+  autoBattle?: boolean;
 };
 
 export type UseBattleResult = {
@@ -83,7 +89,7 @@ export function useBattle(sample: BattleSample, opts: UseBattleOptions = {}): Us
   // 只在第一次 render 建立戰鬥（sample 之後就算換了新 identity 也不重建——與大多數「初始化用的 props」
   // 慣例一致，戰鬥中途換隊伍/敵人陣容不是 P1 的需求）。
   const [state, localSet] = useReducer(reducer, undefined, () => {
-    const initial = createBattle(sample, { now: performance.now(), rng: opts.rng, config: opts.config });
+    const initial = createBattle(sample, { now: performance.now(), rng: opts.rng, config: opts.config, autoBattle: opts.autoBattle });
     // createBattle 本身不產生事件，這裡仍過一次 drainEvents 確保回傳形狀（events:[]）跟後續一致。
     return drainEvents(initial).state;
     // eslint-disable-next-line react-hooks/exhaustive-deps

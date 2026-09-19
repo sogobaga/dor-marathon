@@ -598,6 +598,10 @@ function DorpgBattleFlow({
       key={nonce}
       sample={sample}
       config={config}
+      // 2026-09-19 修復：bootstrap.autoBattle 一直存在（WIRE §戰鬥 bootstrap 頂層欄位），但這裡
+      // 從未傳給 BattleScreen，導致玩家上次開啟的自動戰鬥每次進戰鬥都被重置成關閉（見
+      // BattleScreen.tsx autoBattle prop／useBattle.ts 的修復註解）。
+      autoBattle={bootstrap.autoBattle ?? false}
       encounter={{ code, title: bootstrap.encounter.title }}
       onBack={onExit}
       onRestart={onRestart}

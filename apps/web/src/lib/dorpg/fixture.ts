@@ -35,6 +35,9 @@ import { SKILL_SLOTS } from './types';
 // 本身——這裡是純消費端（跟 BattleScreen.tsx 呼叫 engine 的方式一樣），避免在本檔重複硬寫一份
 // monsterHitBase 等數字、之後 engine 那邊調預設值卻忘記回頭同步這裡。
 import { DEFAULT_BATTLE_CONFIG } from './engine';
+// P9：StrategyId 純粹是型別（見 CompanionRow.strategyId 型別註解），跟上面的值匯入分開一行只是
+// 沿用本檔既有的匯入分組習慣，不代表兩者來源不同。
+import type { StrategyId } from './engine';
 
 // ---------------------------------------------------------------------------
 // 內容列型別（鏡像 migration 176 的表；只保留 buildFixtureSample 實際用得到的欄位——
@@ -149,6 +152,17 @@ export interface CompanionRow {
   skillIds: string[];
   isPlayerPortrait: boolean;
   sortOrder: number;
+  /**
+   * P9（CONTRACT §1／WIRE「fixture.ts：離線示範隊伍給傭兵預設裝備與策略」）：這位傭兵離線示範
+   * 用的 AI 策略 id——四位各給一種不同策略，展示 P9 的六種策略至少有一半能在 /dev/dorpg 沒有
+   * API/DB 時就看得到差異；不是正式後端 seed（正式 seed 的策略/裝備配置見 CONTRACT §2 系統
+   * 預設腳本，那份資料活在 migration 186，跟這裡各自獨立、允許不同）。
+   */
+  strategyId: StrategyId;
+  /** P9：離線示範用的裝備效果——key 對到 RPG_EQUIPMENT_EFFECTS_FIXTURES，缺省 undefined＝空裝
+   *  （engine 端 fallback 成 NEUTRAL_EQUIPMENT_EFFECTS，跟玩家的 opts.equipmentEffectsId 同一種
+   *  「沒有指定就不裝」表達方式，見 PartyMember.equipmentEffects 型別註解）。 */
+  equipmentEffectsId?: keyof typeof RPG_EQUIPMENT_EFFECTS_FIXTURES;
 }
 
 export interface EncounterMonsterRow {
@@ -270,12 +284,17 @@ export const RPG_ITEMS: ItemRow[] = [
  * （war_cry/armor_break/slash，示範②③④段：buff 不重複、damage 選 tier 最高、debuff 不重複）
  * 帶技能；小優／阿深維持 []，走⑤普攻 fallback（跟 P1 舊行為相容）。
  */
+// P9：四位傭兵各給一種不同策略（見 CompanionRow.strategyId 型別註解）——小咪（治療/法系）用
+// mp_conserve 展示「MP 不足時改普攻」、阿深（重裝坦克）用 protect_allies 展示「保護隊友優先」，
+// 小優/阿光沒有 heal/shield 之外的候選技能可展示差異，給 balanced/focus_fire 純粹是讓四人不
+// 全部同一種（focus_fire 至少能在多敵場景看到「全隊同目標」的效果）。阿深額外掛
+// demo_full_set 裝備效果，示範傭兵裝備確實會生效（回復/減傷/MP 減免，見 CONTRACT §3）。
 export const RPG_COMPANIONS: CompanionRow[] = [
-  { id: 'char_xiaojing', name: '小井', portraitId: 'char_xiaojing', role: '', weapon: 'sword', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: [], isPlayerPortrait: true, sortOrder: 0 },
-  { id: 'char_xiaomi', name: '小咪', portraitId: 'char_xiaomi', role: '治療', weapon: 'staff', levelOffset: 0, hpMult: 0.7, mpMult: 1, atkMult: 1, matkMult: 1.2, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['heal', 'shield'], isPlayerPortrait: false, sortOrder: 1 },
-  { id: 'char_xiaoyou', name: '小優', portraitId: 'char_xiaoyou', role: '游擊', weapon: 'bow', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: [], isPlayerPortrait: false, sortOrder: 2 },
-  { id: 'char_aguang', name: '阿光', portraitId: 'char_aguang', role: '劍士', weapon: 'sword', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['war_cry', 'armor_break', 'slash'], isPlayerPortrait: false, sortOrder: 3 },
-  { id: 'char_ashen', name: '阿深', portraitId: 'char_ashen', role: '重裝', weapon: 'greatsword', levelOffset: 0, hpMult: 1.3, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1.25, skillIds: [], isPlayerPortrait: false, sortOrder: 4 },
+  { id: 'char_xiaojing', name: '小井', portraitId: 'char_xiaojing', role: '', weapon: 'sword', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: [], isPlayerPortrait: true, sortOrder: 0, strategyId: 'balanced' },
+  { id: 'char_xiaomi', name: '小咪', portraitId: 'char_xiaomi', role: '治療', weapon: 'staff', levelOffset: 0, hpMult: 0.7, mpMult: 1, atkMult: 1, matkMult: 1.2, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['heal', 'shield'], isPlayerPortrait: false, sortOrder: 1, strategyId: 'mp_conserve' },
+  { id: 'char_xiaoyou', name: '小優', portraitId: 'char_xiaoyou', role: '游擊', weapon: 'bow', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: [], isPlayerPortrait: false, sortOrder: 2, strategyId: 'focus_fire' },
+  { id: 'char_aguang', name: '阿光', portraitId: 'char_aguang', role: '劍士', weapon: 'sword', levelOffset: 0, hpMult: 1, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1, skillIds: ['war_cry', 'armor_break', 'slash'], isPlayerPortrait: false, sortOrder: 3, strategyId: 'balanced' },
+  { id: 'char_ashen', name: '阿深', portraitId: 'char_ashen', role: '重裝', weapon: 'greatsword', levelOffset: 0, hpMult: 1.3, mpMult: 1, atkMult: 1, matkMult: 1, defMult: 1, mdefMult: 1, actIntervalMult: 1.25, skillIds: [], isPlayerPortrait: false, sortOrder: 4, strategyId: 'protect_allies', equipmentEffectsId: 'demo_full_set' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1017,6 +1036,10 @@ export function buildFixtureSample(
         // 傭兵不掛名稱（沒有腳本可言）。
         skills: toCompanionSkills(c),
         presetName: c.skillIds.length > 0 ? `${c.name} 示範腳本` : undefined,
+        // P9（CONTRACT §1／WIRE「fixture.ts」）：離線示範隊伍給傭兵預設策略與裝備——見
+        // RPG_COMPANIONS 上方註解與 CompanionRow.strategyId/equipmentEffectsId 型別註解。
+        strategyId: c.strategyId,
+        equipmentEffects: c.equipmentEffectsId ? RPG_EQUIPMENT_EFFECTS_FIXTURES[c.equipmentEffectsId] : undefined,
       };
     });
 

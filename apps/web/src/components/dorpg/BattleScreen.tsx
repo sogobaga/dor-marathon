@@ -22,6 +22,7 @@ import BattleStage, { type BattleStageHandle, type StageEnemy } from './BattleSt
 import TargetBar from './TargetBar';
 import SkillTray from './SkillTray';
 import CommandBar from './CommandBar';
+import AutoBattleBar from './AutoBattleBar';
 import ResultOverlay from './ResultOverlay';
 import FloatText, { type FloatTextTone } from './FloatText';
 import enemyPlateStyles from './EnemyPlate.module.css';
@@ -31,6 +32,8 @@ import { chargeRatio as engineChargeRatio } from '@/lib/dorpg/engine';
 import type { BattleConfig, BattleEvent, BattleState, PartyActor } from '@/lib/dorpg/engine';
 import { useHoldGesture } from '@/lib/dorpg/useHoldGesture';
 import { battleAudio } from '@/lib/dorpg/audio';
+import { rpgApi } from '@/lib/api';
+import { getUserToken, withUserAuth } from '@/lib/userAuth';
 
 /**
  * P2：戰鬥結束時交給上層（PhoneShell／dev Preview）打 POST /rpg/battle/report 的純統計（契約 §4）。
@@ -65,6 +68,14 @@ export type BattleScreenProps = {
   sample?: BattleSample;
   /** P2：後端 bootstrap 回應的 config（見 fromApi.ts configFromBootstrap）；未給則全部用引擎預設值。 */
   config?: Partial<BattleConfig>;
+  /**
+   * 2026-09-19 修復：P9 玩家自動戰鬥開關（bootstrap 頂層 `autoBattle`，見 api.ts
+   * RpgBattleBootstrap.autoBattle）——本檔原本從未把這個 prop 接進 useBattle()，導致
+   * createBattle() 永遠用 autoBattle 的預設值 false 初始化，玩家上一場開啟的自動戰鬥每次
+   * 進戰鬥都被靜默重置為關閉。未給（/dev 預覽等沒有 bootstrap 的呼叫端）比照 createBattle
+   * 的既有預設，視為 false。
+   */
+  autoBattle?: boolean;
   /** P2：目前這場遭遇（供組 report 用）；未給時退回 DEFAULT_ENCOUNTER（/dev 預覽等尚未接真實遭遇的呼叫端）。 */
   encounter?: BattleScreenEncounter;
   /** P2：「再戰一場」（同一遭遇重來）；未給則 ResultOverlay 不顯示這顆鈕。 */
@@ -95,6 +106,9 @@ const SCROLL_MIN_H = 520;
 const SCROLL_MIN_W = 360;
 /** icon_close 邏輯 44×44（manifest；KIT_SIZES 未列，與 icon_settings 同尺寸）。 */
 const ICON_CLOSE = 44;
+/** DORPG P9：AutoBattleBar band 的邏輯高——從場景的彈性剩餘高度借出來（見上面 stageH 計算），
+ *  不動 assets.ts 既有的五個固定帶高度表。矮到放不下一行按鈕＋下拉選單前，30px 夠用。 */
+const AUTO_BATTLE_BAR_H = 30;
 
 /**
  * P5 POLISH：EnemyPlate（怪物 Lv/HP 面板）在 BattleStage.tsx 內部用同名常數把面板頂邊定在
@@ -179,6 +193,7 @@ export default function BattleScreen({
   onBack,
   sample: sampleProp = SAMPLE_BATTLE,
   config,
+  autoBattle = false,
   encounter = DEFAULT_ENCOUNTER,
   onRestart,
   onNext,
@@ -431,9 +446,47 @@ export default function BattleScreen({
     }
   }
 
-  const battle = useBattle(sample, { config, onEvents: handleBattleEvents });
+  const battle = useBattle(sample, { config, onEvents: handleBattleEvents, autoBattle });
   const { state, send } = battle;
   const player = state.party[0]; // 契約：party[0] 恆為玩家（state.playerId 也指向它）。
+
+  // ---- DORPG P9：玩家自動戰鬥（契約 §1/§4/§5、WIRE §引擎）----
+  // 本地一律先靠 dispatch 讓引擎立刻生效（不等待網路），PUT /rpg/auto-battle 只負責持久化；
+  // 失敗只顯示一句會自動消失的提示、不回滾本地狀態（契約 §5：「失敗 toast、不回滾本地」）。
+  // /dev 預覽等未登入情境（getUserToken() 為空）直接略過持久化，本地切換仍然生效，方便無後端測試。
+  const [autoBattleErr, setAutoBattleErr] = useState('');
+  const [autoBattleSyncing, setAutoBattleSyncing] = useState(false);
+  function persistAutoBattle(enabled: boolean, strategyId: string) {
+    if (!getUserToken()) return;
+    setAutoBattleSyncing(true);
+    withUserAuth((t) => rpgApi.setAutoBattle(t, { enabled, strategy_id: strategyId }))
+      .catch(() => {
+        setAutoBattleErr('自動戰鬥設定未能同步，稍後會再嘗試');
+        window.setTimeout(() => setAutoBattleErr(''), 3000);
+      })
+      .finally(() => setAutoBattleSyncing(false));
+  }
+  const handleToggleAutoBattle = useCallback(
+    (enabled: boolean) => {
+      const strategyId = player.strategyId ?? 'balanced';
+      send({ type: 'SET_AUTO_BATTLE', enabled, strategyId });
+      persistAutoBattle(enabled, strategyId);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [send, player.strategyId],
+  );
+  const handleSelectAutoStrategy = useCallback(
+    (strategyId: string) => {
+      send({ type: 'SET_AUTO_BATTLE', enabled: state.autoBattle, strategyId });
+      persistAutoBattle(state.autoBattle, strategyId);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [send, state.autoBattle],
+  );
+  // 可選策略清單：優先用 bootstrap config.aiStrategies 的 key（依契約只含後台 is_active 的六種）；
+  // ENGINE 尚未把這個欄位併進 BattleConfig，或 /dev 預覽沒有 bootstrap 時，AutoBattleBar 自己退回
+  // rpgMeta.STRATEGY_IDS 全部六種（見該元件 availableStrategyIds 說明）。
+  const availableStrategyIds = config?.aiStrategies ? Object.keys(config.aiStrategies) : undefined;
 
   // battleStartAtRef 必須宣告在 state 之後（初始值取 state.now，即開戰那一刻的引擎時鐘）；
   // resultSummary／phase→'ended' 遙測 effect／下面新增的「卸載視為棄戰」effect 都會用到它。
@@ -603,13 +656,14 @@ export default function BattleScreen({
     return () => cancelAnimationFrame(raf);
   }, [state.phase, battle.liveStateRef]);
 
-  // ---- 版面（沿用 P0 規則，未改動） ----
+  // ---- 版面（沿用 P0 規則，未改動；DORPG P9 從場景的彈性剩餘高度裡借 AUTO_BATTLE_BAR_H 出來，
+  // 給新增的 AutoBattleBar band，其餘五個固定帶的高度表（assets.ts LAYOUT）完全不動） ----
   const measured = size.w > 0 && size.h > 0;
   const w = size.w;
   const h = size.h;
   const tier = layoutFor(h);
   const bands = LAYOUT[tier];
-  const stageH = Math.max(MIN_STAGE_H, sceneHeightFor(h, tier));
+  const stageH = Math.max(MIN_STAGE_H, sceneHeightFor(h, tier) - AUTO_BATTLE_BAR_H);
   const scrollable = h < SCROLL_MIN_H || w < SCROLL_MIN_W;
   const cardW = Math.min((w - PARTY_PAD_X * 2 - PARTY_GAP * (PARTY_COUNT - 1)) / PARTY_COUNT, bands.party / 2);
 
@@ -908,6 +962,21 @@ export default function BattleScreen({
               onPick={handleTrayPick}
               width={w}
               height={bands.tray}
+            />
+          </div>
+
+          {/* DORPG P9：自動戰鬥切換＋策略選單，放在 CommandBar 正上方——見上面 AUTO_BATTLE_BAR_H
+              從場景彈性高度借出的說明，不影響其餘固定帶版面。 */}
+          <div className={styles.band} style={{ height: AUTO_BATTLE_BAR_H }}>
+            <AutoBattleBar
+              enabled={state.autoBattle}
+              strategyId={player.strategyId ?? 'balanced'}
+              availableStrategyIds={availableStrategyIds}
+              syncing={autoBattleSyncing}
+              errorText={autoBattleErr}
+              onToggle={handleToggleAutoBattle}
+              onSelectStrategy={handleSelectAutoStrategy}
+              height={AUTO_BATTLE_BAR_H}
             />
           </div>
 

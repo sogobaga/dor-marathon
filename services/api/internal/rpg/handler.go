@@ -86,6 +86,10 @@ func (h *Handler) Router() http.Handler {
 	// DORPG P8（CONTRACT §1/§4、WIRE）：五部位防具＋兩格飾品，"/equipment/weapon" 是靜態路徑，
 	// chi 對同一層路由優先比對靜態片段再退回 {slot} 萬用字元，兩條路由可以並存不衝突。
 	r.Put("/equipment/{slot}", h.PutEquipmentSlot)
+	// DORPG P9（CONTRACT §2/§4/§5、WIRE）：傭兵裝備＋AI 戰鬥策略＋玩家自動戰鬥，沿用同一組
+	// requireEntry 白名單；"/tavern/gear" 是 "/tavern" 底下的靜態子路徑，兩者不衝突。
+	r.Get("/tavern/gear", h.TavernGear)
+	r.Put("/auto-battle", h.PutAutoBattle)
 	return r
 }
 
@@ -95,7 +99,8 @@ func (h *Handler) loadConfig(ctx context.Context) (Config, error) {
 }
 
 // character 角色列（player_characters）的 DB 對應。P5 新增 UserID（skills.go/jobs.go 需要拿使用者
-// id 去查職業技能樹/被動加成，不必每個呼叫端另外多帶一個參數）、JobID、TestLevel。
+// id 去查職業技能樹/被動加成，不必每個呼叫端另外多帶一個參數）、JobID、TestLevel。DORPG P9
+// 新增 AutoBattle/AutoStrategyID（migration 186）。
 type character struct {
 	UserID                       string
 	Str, Agi, Vit, Dex, Int, Luk int
@@ -104,14 +109,16 @@ type character struct {
 	JobExp                       int
 	JobID                        *string
 	TestLevel                    *int
+	AutoBattle                   bool
+	AutoStrategyID               string
 }
 
-const characterCols = `user_id, str_pt, agi_pt, vit_pt, dex_pt, int_pt, luk_pt, free_points, job_level, job_exp, job_id, test_level`
+const characterCols = `user_id, str_pt, agi_pt, vit_pt, dex_pt, int_pt, luk_pt, free_points, job_level, job_exp, job_id, test_level, auto_battle, auto_strategy_id`
 
 func scanCharacter(row pgx.Row) (character, error) {
 	var c character
 	err := row.Scan(&c.UserID, &c.Str, &c.Agi, &c.Vit, &c.Dex, &c.Int, &c.Luk, &c.FreePoints, &c.JobLevel, &c.JobExp,
-		&c.JobID, &c.TestLevel)
+		&c.JobID, &c.TestLevel, &c.AutoBattle, &c.AutoStrategyID)
 	return c, err
 }
 
@@ -176,6 +183,16 @@ type characterView struct {
 	// （上面的 Derived）已經含全部裝備（武器＋防具＋飾品）。
 	Equipment  meEquipmentWire `json:"equipment"`
 	EquipBonus EquipBonusDTO   `json:"equip_bonus"`
+
+	// AutoBattle DORPG P9（WIRE：「/rpg/me 新增 auto_battle: { enabled, strategy_id }」）：唯讀
+	// 顯示用（角色頁「自動戰鬥：開／關・策略」一行），實際持久化走 PUT /rpg/auto-battle。
+	AutoBattle autoBattleWire `json:"auto_battle"`
+}
+
+// autoBattleWire WIRE：/rpg/me 的 auto_battle 欄位、PUT /rpg/auto-battle 的回應形狀。
+type autoBattleWire struct {
+	Enabled    bool   `json:"enabled"`
+	StrategyID string `json:"strategy_id"`
 }
 
 // meEquipmentWire WIRE：/rpg/me 的 equipment 欄位——八格各自 item 名稱或 null（不像 GET
@@ -316,6 +333,7 @@ func (h *Handler) buildCharacterView(ctx context.Context, cfg Config, baseLevel 
 		Weapon:           weaponDTOOut,
 		Equipment:        equipmentOut,
 		EquipBonus:       equipBonusOut,
+		AutoBattle:       autoBattleWire{Enabled: ch.AutoBattle, StrategyID: ch.AutoStrategyID},
 	}, nil
 }
 
@@ -491,4 +509,53 @@ func (h *Handler) Allocate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.respondMe(w, r, uid)
+}
+
+// putAutoBattleRequest WIRE PUT /rpg/auto-battle body：{ enabled, strategy_id }。
+type putAutoBattleRequest struct {
+	Enabled    bool   `json:"enabled"`
+	StrategyID string `json:"strategy_id"`
+}
+
+// PutAutoBattle DORPG P9（CONTRACT §1、WIRE）：玩家自動戰鬥開關＋策略持久化在
+// player_characters；戰鬥中另有引擎本地的 dispatch SET_AUTO_BATTLE 即時生效（不透過這支端點），
+// 前端在切換當下另外呼叫這裡把選擇存起來。strategy_id 空字串／未知/停用一律 unknown_strategy
+// ——這支寫入端點要求呼叫端一定送一個合法值，不像腳本驗證那樣把空字串容忍成
+// DefaultStrategyID（CONTRACT §1「未知 id 一律退回 balanced」是引擎執行期的容錯，不代表這支
+// API 可以收爛資料）。
+func (h *Handler) PutAutoBattle(w http.ResponseWriter, r *http.Request) {
+	uid, _ := r.Context().Value(auth.CtxKeyUserID).(string)
+	var body putAutoBattleRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	ctx := r.Context()
+	cfg, err := h.loadConfig(ctx)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to load config")
+		return
+	}
+	if _, err := h.getOrCreateCharacter(ctx, uid, cfg); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to load character")
+		return
+	}
+	strategyErr, err := h.checkStrategyID(ctx, body.StrategyID)
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errStrategiesNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to load strategy")
+		return
+	}
+	if strategyErr != nil {
+		respondErr(w, http.StatusBadRequest, strategyErr.Code)
+		return
+	}
+	if _, err := h.db.Exec(ctx, `UPDATE player_characters SET auto_battle=$1, auto_strategy_id=$2, updated_at=NOW() WHERE user_id=$3`,
+		body.Enabled, body.StrategyID, uid); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to save")
+		return
+	}
+	respondJSON(w, http.StatusOK, autoBattleWire{Enabled: body.Enabled, StrategyID: body.StrategyID})
 }

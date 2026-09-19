@@ -11,23 +11,34 @@
 //   2. 腳本編輯器（PresetEditor，點「編輯腳本」後整頁切換過去，不是 fixed 覆蓋層——全站規則見
 //      CLAUDE.md「PC手機模擬框覆蓋層」，本頁刻意用「同一個 return 樹裡切換整頁內容」的既有慣例
 //      （同 PhoneShell 的 battleView 分支切換手法），完全不新增 position:fixed 元素）。
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   rpgTavernApi,
+  type ArmorDTO,
   type CompanionPresetDTO,
+  type EquipmentSlot,
+  type EquippedGearDTO,
   type JobDTO,
   type MercenaryDTO,
   type PartySlotDTO,
+  type PresetEquipmentInput,
   type PresetSaveBody,
   type PresetValidateResponse,
   type RpgStatKey,
   type RpgStats,
   type SkillDTO,
+  type StrategyDTO,
+  type TavernGearResponse,
   type TavernResponse,
+  type WeaponDTO,
 } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
 import { charPortrait } from '@/lib/dorpg/assets'
-import { STAT_META, jobEmoji, SKILL_KIND_LABEL, formatEffectAtLevel, estimateMaxStatValue } from '@/lib/rpgMeta'
+import {
+  STAT_META, jobEmoji, SKILL_KIND_LABEL, formatEffectAtLevel, estimateMaxStatValue,
+  EQUIP_SLOT_LABEL, EQUIP_SLOT_ORDER, formatEquipBonus,
+} from '@/lib/rpgMeta'
+import EquipmentPanel from './EquipmentPanel'
 
 // 隊伍/腳本操作 400 錯誤碼 → 中文（WIRE §REST：PUT /rpg/party 與 POST/PUT /rpg/presets 系列）。
 const PARTY_ERR_LABEL: Record<string, string> = {
@@ -48,6 +59,18 @@ const PRESET_ERR_LABEL: Record<string, string> = {
   name_required: '請輸入腳本名稱',
   preset_readonly: '系統預設腳本唯讀，請另存新腳本',
 }
+// DORPG P9（契約 §3、WIRE §REST）：POST/PUT /rpg/presets/validate 新增的 equipment.<slot>／
+// strategy_id 錯誤碼 → 中文（equipment 五碼同 EquipmentScreen 的 EQUIP_ERR_LABEL，這裡各自獨立
+// 一份，理由同檔頭「各畫面不互相 import 對方常數」的既有慣例）。
+const EQUIPMENT_ERR_LABEL: Record<string, string> = {
+  not_found: '找不到這件裝備',
+  wrong_job: '這件裝備不屬於這位傭兵的職業',
+  wrong_slot: '這件裝備不能裝在這個格子',
+  level_too_low: '等級尚未達到裝備門檻',
+  duplicate_accessory: '兩個飾品格不能裝同一件',
+}
+const STRATEGY_ERR_LABEL: Record<string, string> = { unknown_strategy: '未知的 AI 策略，請重新選擇' }
+const DEFAULT_STRATEGY_ID = 'balanced'
 function friendlyErr(e: any, table: Record<string, string>, fallback: string): string {
   const code = e?.message
   return (code && table[code]) || (typeof code === 'string' && code && code !== 'request failed' ? code : '') || fallback
@@ -176,6 +199,7 @@ export default function TavernScreen({ onBack }: { onBack: () => void }) {
       <PresetEditor
         merc={editor.merc}
         preset={editor.preset}
+        strategies={data?.strategies ?? []}
         onBack={() => setEditor(null)}
         onSaved={afterEditorSaved}
       />
@@ -343,9 +367,26 @@ const PRESET_DERIVED_META: { key: keyof CompanionPresetDTO['derived']; label: st
   { key: 'crit_pct', label: '暴擊率' },
 ]
 
-function PresetEditor({ merc, preset, onBack, onSaved }: {
+/** EquippedGearDTO → 八格 item_id 草稿（PresetSaveBody.equipment 要送的形狀），DORPG P9。 */
+function equipmentIdsFromDTO(eq: EquippedGearDTO | null | undefined): Record<EquipmentSlot, string | null> {
+  return {
+    weapon: eq?.weapon?.id ?? null,
+    helmet: eq?.helmet?.id ?? null,
+    gloves: eq?.gloves?.id ?? null,
+    armor: eq?.armor?.id ?? null,
+    legs: eq?.legs?.id ?? null,
+    boots: eq?.boots?.id ?? null,
+    accessory1: eq?.accessory1?.id ?? null,
+    accessory2: eq?.accessory2?.id ?? null,
+  }
+}
+const ARMOR_EQUIP_SLOT_LIST: EquipmentSlot[] = ['helmet', 'gloves', 'armor', 'legs', 'boots', 'accessory1', 'accessory2']
+
+function PresetEditor({ merc, preset, strategies, onBack, onSaved }: {
   merc: MercenaryDTO
   preset: CompanionPresetDTO
+  /** DORPG P9：GET /rpg/tavern 的 strategies（只含 is_active，依 sort_order）——「AI 策略」下拉的資料來源。 */
+  strategies: StrategyDTO[]
   onBack: () => void
   onSaved: () => void | Promise<void>
 }) {
@@ -356,6 +397,12 @@ function PresetEditor({ merc, preset, onBack, onSaved }: {
   const [levelInput, setLevelInput] = useState(String(preset.level))
   const [stats, setStats] = useState<RpgStats>(preset.stats)
   const [skillLevels, setSkillLevels] = useState<Record<string, number>>(preset.skill_levels)
+  // DORPG P9（契約 §2/§5、WIRE §REST）：八格裝備草稿＋AI 策略——跟 stats/skillLevels 一樣是純
+  // 本地草稿，存檔時才整包送出；儲存前的即時預覽（可裝/等級門檻/裝備加成）一樣經 validate 端點。
+  const [equipmentIds, setEquipmentIds] = useState<Record<EquipmentSlot, string | null>>(() => equipmentIdsFromDTO(preset.equipment))
+  const [strategyId, setStrategyId] = useState(preset.strategy_id || DEFAULT_STRATEGY_ID)
+  const [gear, setGear] = useState<TavernGearResponse | null>(null)
+  const [gearErr, setGearErr] = useState('')
   const [result, setResult] = useState<PresetValidateResponse | null>(null)
   const [saving, setSaving] = useState(false)
   const [actionErr, setActionErr] = useState('')
@@ -382,32 +429,121 @@ function PresetEditor({ merc, preset, onBack, onSaved }: {
     return Math.max(1, Math.min(99, n))
   })()
 
+  // DORPG P9：腳本編輯器「裝備」區的清單來源——只在掛載時抓一次（該傭兵職業固定不變，見
+  // merc.job.id），can_equip 用目前草稿 level 在本地重新判斷（見下方 weaponsForPanel/armorForPanel），
+  // 不必每次調整等級都重打一次 API（規則就是契約 §2 那句「level_req ≤ 腳本等級」，前端可以自己算）。
+  useEffect(() => {
+    let alive = true
+    withUserAuth((t) => rpgTavernApi.gear(t, merc.job.id, preset.level))
+      .then((r) => { if (alive) setGear(r) })
+      .catch(() => { if (alive) setGearErr('裝備清單載入失敗，請重新整理再試') })
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // 純試算：只回傳結果、不寫入 result state——給下面的收斂迴圈（maxStat/skillDelta 的 'max' 分支）
   // 用，這兩處需要「立刻拿到這次試算的結果來判斷合不合法」，跟畫面預覽用的 debounce 是兩件事，
   // 共用同一顆會互踩序號、也會把使用者還沒確定的收斂中間值短暫閃現在衍生數值預覽上。
-  const validateDraft = useCallback((lv: number, st: RpgStats, sk: Record<string, number>): Promise<PresetValidateResponse | null> =>
-    withUserAuth((t) => rpgTavernApi.validatePreset(t, { companion_id: preset.companion_id, level: lv, stats: st, skill_levels: sk }))
+  const validateDraft = useCallback((
+    lv: number, st: RpgStats, sk: Record<string, number>, eq: PresetEquipmentInput, sid: string,
+  ): Promise<PresetValidateResponse | null> =>
+    withUserAuth((t) => rpgTavernApi.validatePreset(t, { companion_id: preset.companion_id, level: lv, stats: st, skill_levels: sk, equipment: eq, strategy_id: sid }))
       .catch(() => null)
   , [preset.companion_id])
 
-  const runValidate = useCallback((lv: number, st: RpgStats, sk: Record<string, number>) => {
+  const runValidate = useCallback((
+    lv: number, st: RpgStats, sk: Record<string, number>, eq: PresetEquipmentInput, sid: string,
+  ) => {
     // 審查【item4】遞增序號＋比對：只有仍是「目前最新一次」的請求才允許寫入 result，較舊的請求
     // 就算比較晚回來也直接丟棄（見上方 reqSeqRef 註解）。
     const seq = ++reqSeqRef.current
-    validateDraft(lv, st, sk).then((r) => {
+    validateDraft(lv, st, sk, eq, sid).then((r) => {
       if (r && reqSeqRef.current === seq) setResult(r)
       // r 為 null＝預覽失敗（validateDraft 已吞掉錯誤），不擋編輯，維持上一次的 result（若有）；
       // 存檔時仍會再檢查一次。
     })
   }, [validateDraft])
 
-  // 等級／素質／技能三者共用一顆 debounce 計時器（契約 §3.4：即時衍生值預覽經 validate 端點）；
-  // 按鈕類操作（+1/Max/歸零）不必額外等，300ms 對打字輸入與連續點按都夠用。
+  // 等級／素質／技能／裝備／策略共用一顆 debounce 計時器（契約 §3.4：即時衍生值預覽經 validate
+  // 端點；DORPG P9 把裝備與策略也併入同一顆，行為一致）；按鈕類操作（+1/Max/歸零）不必額外等，
+  // 300ms 對打字輸入與連續點按都夠用。
   useEffect(() => {
     if (debounceRef.current) window.clearTimeout(debounceRef.current)
-    debounceRef.current = window.setTimeout(() => runValidate(level, stats, skillLevels), 300)
+    debounceRef.current = window.setTimeout(() => runValidate(level, stats, skillLevels, equipmentIds, strategyId), 300)
     return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current) }
-  }, [level, stats, skillLevels, runValidate])
+  }, [level, stats, skillLevels, equipmentIds, strategyId, runValidate])
+
+  // DORPG P9：等級調降時，原本裝備但已經超過新等級門檻的品項自動清空並提示（契約 §3：「腳本等級
+  // 下調導致 level_too_low 時由前端自動清空該格再送出」）。用 ref 記上一次的 level 只在真的變動時
+  // 才跑，避免每次 render 都重複判斷；尚未載入裝備清單（gear===null）時無從比對 level_req，略過。
+  const prevLevelRef = useRef(level)
+  useEffect(() => {
+    if (level === prevLevelRef.current) return
+    // 2026-09-19 修復：gear 尚未載入時直接 return，且不消費（更新）prevLevelRef——舊寫法在這裡
+    // 提前把 ref 蓋成新 level，若使用者在 gear 還沒載入完就調降等級，等 gear 真正載入、effect
+    // 因 gear 這個 dep 變化而重跑時，「level === prevLevelRef.current」已經是 true（ref 早被
+    // 消費掉），比對永遠不會執行，超過新等級門檻的裝備就不會被自動清空／跳提示。改成只在
+    // 「真的走到比對」這一步才更新 ref，確保 gear 就緒後補跑的這一輪仍會觸發清空邏輯。
+    if (!gear) return
+    prevLevelRef.current = level
+    setEquipmentIds((cur) => {
+      const next = { ...cur }
+      const cleared: string[] = []
+      EQUIP_SLOT_ORDER.forEach((slot) => {
+        const id = cur[slot]
+        if (!id) return
+        const item = slot === 'weapon' ? gear.weapons.find((w) => w.id === id) : gear.armor_items.find((a) => a.id === id)
+        if (item && item.level_req > level) {
+          next[slot] = null
+          cleared.push(EQUIP_SLOT_LABEL[slot])
+        }
+      })
+      if (cleared.length > 0) showFlash(`等級調降，已自動卸下：${cleared.join('、')}`)
+      return cleared.length > 0 ? next : cur
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [level, gear])
+
+  // DORPG P9：把草稿的 item_id 八格解析成 EquipmentPanel 要的完整 DTO 形狀，並在本地重新判斷
+  // can_equip／equipped／equipped_in（gear 端點回傳的這三個欄位恆為 false/null，契約要求「腳本
+  // 編輯器自己比對」，見 TavernGearResponse 型別註解）。
+  const weaponsForPanel: WeaponDTO[] = useMemo(() => (gear?.weapons ?? []).map((w) => ({
+    ...w, can_equip: w.level_req <= level, equipped: equipmentIds.weapon === w.id,
+  })), [gear, level, equipmentIds.weapon])
+  const armorForPanel: ArmorDTO[] = useMemo(() => (gear?.armor_items ?? []).map((a) => ({
+    ...a,
+    can_equip: a.level_req <= level,
+    equipped_in: ARMOR_EQUIP_SLOT_LIST.find((slot) => equipmentIds[slot] === a.id) ?? null,
+  })), [gear, level, equipmentIds])
+  const equippedForPanel: EquippedGearDTO = useMemo(() => ({
+    weapon: weaponsForPanel.find((w) => w.id === equipmentIds.weapon) ?? null,
+    helmet: armorForPanel.find((a) => a.id === equipmentIds.helmet) ?? null,
+    gloves: armorForPanel.find((a) => a.id === equipmentIds.gloves) ?? null,
+    armor: armorForPanel.find((a) => a.id === equipmentIds.armor) ?? null,
+    legs: armorForPanel.find((a) => a.id === equipmentIds.legs) ?? null,
+    boots: armorForPanel.find((a) => a.id === equipmentIds.boots) ?? null,
+    accessory1: armorForPanel.find((a) => a.id === equipmentIds.accessory1) ?? null,
+    accessory2: armorForPanel.find((a) => a.id === equipmentIds.accessory2) ?? null,
+  }), [weaponsForPanel, armorForPanel, equipmentIds])
+  function onEquipSlot(slot: EquipmentSlot, itemId: string | null) {
+    setEquipmentIds((cur) => ({ ...cur, [slot]: itemId }))
+  }
+
+  // DORPG P9：validate 回應裡 field="equipment.<slot>" 的錯誤轉成 EquipmentPanel 要的 slot→文案 map；
+  // field="strategy_id" 的錯誤另外拉出來給策略下拉用。
+  const slotErrors = useMemo(() => {
+    const out: Partial<Record<EquipmentSlot, string>> = {}
+    for (const e of result?.errors ?? []) {
+      if (!e.field.startsWith('equipment.')) continue
+      const slot = e.field.slice('equipment.'.length) as EquipmentSlot
+      out[slot] = EQUIPMENT_ERR_LABEL[e.code] || e.message
+    }
+    return out
+  }, [result])
+  const strategyErrText = (() => {
+    const e = (result?.errors ?? []).find((x) => x.field === 'strategy_id')
+    return e ? (STRATEGY_ERR_LABEL[e.code] || e.message) : null
+  })()
 
   function errorFor(field: string): string | null {
     // 審查【CRITICAL】安全存取：後端合法草稿雖已修正為一律回 []，型別上仍允許 null（防禦未來漂移，
@@ -435,7 +571,7 @@ function PresetEditor({ merc, preset, onBack, onSaved }: {
     setMaxing(key)
     try {
       for (let attempt = 0; attempt < 8; attempt++) {
-        const r = await validateDraft(level, { ...stats, [key]: candidate }, skillLevels)
+        const r = await validateDraft(level, { ...stats, [key]: candidate }, skillLevels, equipmentIds, strategyId)
         if (!r) { showErr('Max 試算失敗，請稍後再試'); return } // 網路/伺服器錯誤，不是配置不合法，不該用「-1 再試」硬猜
         const bad = (r.errors ?? []).some((e) => e.code === 'stat_over_budget' || (e.code === 'stat_over_cap' && e.field === key))
         if (!bad) { setStat(key, candidate); return }
@@ -476,7 +612,7 @@ function PresetEditor({ merc, preset, onBack, onSaved }: {
     try {
       for (let attempt = 0; attempt < 8; attempt++) {
         const trial = { ...skillLevels, [skill.id]: candidate }
-        const r = await validateDraft(level, stats, trial)
+        const r = await validateDraft(level, stats, trial, equipmentIds, strategyId)
         if (!r) { showErr('Max 試算失敗，請稍後再試'); return }
         const bad = (r.errors ?? []).some((e) => e.code === 'skill_over_budget')
         if (!bad) { setSkillLevels((s) => ({ ...s, [skill.id]: candidate })); return }
@@ -493,7 +629,10 @@ function PresetEditor({ merc, preset, onBack, onSaved }: {
     if (!name.trim()) { showErr('請輸入腳本名稱'); return }
     if (!result || !result.ok) { showErr('目前配置不合法，請先修正上面標紅的項目'); return }
     if (saving) return
-    const body: PresetSaveBody = { companion_id: preset.companion_id, name: name.trim(), level, stats, skill_levels: skillLevels }
+    const body: PresetSaveBody = {
+      companion_id: preset.companion_id, name: name.trim(), level, stats, skill_levels: skillLevels,
+      equipment: equipmentIds, strategy_id: strategyId,
+    }
     setSaving(true)
     try {
       if (mode === 'update') {
@@ -636,6 +775,57 @@ function PresetEditor({ merc, preset, onBack, onSaved }: {
             <PresetSkillPaths job={merc.job} skills={result.skills} disabled={saving || !!maxing} onDelta={skillDelta} />
           ) : (
             <Hint>計算中…</Hint>
+          )}
+        </div>
+
+        {/* ---- DORPG P9：裝備（契約 §1/§5、WIRE §5）——重用會員裝備頁的共用元件 EquipmentPanel，
+             清單來自 GET /rpg/tavern/gear（依職業＋草稿等級），選擇結果只改本地草稿，存檔時才整包
+             送出（見上面 equipmentIds/onEquipSlot）。 ---- */}
+        <div style={{ marginTop: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+            <h2 style={sectionTitle}>裝備</h2>
+            {result && formatEquipBonus(result.equip_bonus) && (
+              <span style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>{formatEquipBonus(result.equip_bonus)}</span>
+            )}
+          </div>
+          {gearErr && <Hint>{gearErr}</Hint>}
+          {!gear && !gearErr && <Hint>載入裝備清單中…</Hint>}
+          {gear && (
+            <EquipmentPanel
+              equipped={equippedForPanel}
+              weaponTypes={gear.weapon_types}
+              weapons={weaponsForPanel}
+              armorItems={armorForPanel}
+              level={level}
+              jobId={merc.job.id}
+              busy={null}
+              onEquip={onEquipSlot}
+              errors={slotErrors}
+              disabled={saving}
+            />
+          )}
+        </div>
+
+        {/* ---- DORPG P9：AI 策略（契約 §1/§4、WIRE §REST）——名稱／說明一律吃 GET /rpg/tavern 回傳
+             的 strategies（後台可調文案），不用本地固定表。 ---- */}
+        <div style={{ marginTop: 24 }}>
+          <h2 style={sectionTitle}>AI 策略</h2>
+          <select
+            value={strategyId}
+            disabled={saving}
+            onChange={(e) => setStrategyId(e.target.value)}
+            style={{ ...presetSelect, marginTop: 8 }}
+          >
+            {strategies.length === 0 && <option value={strategyId}>{strategyId}</option>}
+            {strategies.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          {strategyErrText ? (
+            <div style={fieldErr}>{strategyErrText}</div>
+          ) : (
+            (() => {
+              const desc = strategies.find((s) => s.id === strategyId)?.description
+              return desc ? <div style={{ fontSize: 10.5, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.4 }}>{desc}</div> : null
+            })()
           )}
         </div>
 

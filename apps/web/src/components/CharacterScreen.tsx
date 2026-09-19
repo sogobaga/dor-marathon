@@ -23,7 +23,7 @@ import { getUserToken, withUserAuth } from '@/lib/userAuth'
 import {
   STAT_META, DERIVED_META, resistLabel, BATTLE_DISPLAY_DEFAULTS, estimateAttackCooldownMs, estimateCastMs,
   jobEmoji, SKILL_KIND_LABEL, formatEffectAtLevel, sortJobs,
-  EQUIP_SLOT_ORDER, formatEquipBonus,
+  EQUIP_SLOT_ORDER, formatEquipBonus, strategyLabel,
 } from '@/lib/rpgMeta'
 
 // 配點 400 錯誤代碼 → 中文（契約 §3：超過 stat_cap 回 400 {error:"stat_cap"}）。
@@ -262,6 +262,16 @@ export default function CharacterScreen({ onBack, onOpenBattle, onOpenTavern, on
               {formatEquipBonus(ch.equip_bonus) && (
                 <div style={{ fontSize: 11, color: 'var(--tx-faint)' }}>{formatEquipBonus(ch.equip_bonus)}</div>
               )}
+            </div>
+
+            {/* ---- DORPG P9（見契約 §1/§4、WIRE §REST「/rpg/me 新增 auto_battle」）：自動戰鬥狀態
+                 唯讀一行，切換在戰鬥 HUD（AutoBattleBar）操作，這裡只顯示目前設定。 ---- */}
+            <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginBottom: 16 }}>
+              🤖 自動戰鬥：
+              <span style={{ color: ch.auto_battle.enabled ? 'var(--fug)' : 'var(--tx-faint)', fontWeight: 700 }}>
+                {ch.auto_battle.enabled ? '開' : '關'}
+              </span>
+              ・{strategyLabel(ch.auto_battle.strategy_id)}
             </div>
 
             {/* ---- 職業 ---- */}

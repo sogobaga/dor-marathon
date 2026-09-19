@@ -43,7 +43,9 @@ import type {
 import type { BattleConfig } from '@/lib/dorpg/engine';
 // P3：asRating() 用它的 aspdReference 當 rating.aspd 缺欄位時的中性後備值（見該函式註解）——
 // 只借用這個已凍結匯出的常數，不是改動 engine 本身，跟 fixture.ts 借用同一個常數的方式一致。
-import { DEFAULT_BATTLE_CONFIG } from '@/lib/dorpg/engine';
+// P9：STRATEGY_IDS 用來驗證 wire 送來的 strategyId 是否落在合法字面量集合（同一招 as*() 系列
+// 防禦邏輯，見 asStrategyId）。
+import { DEFAULT_BATTLE_CONFIG, STRATEGY_IDS } from '@/lib/dorpg/engine';
 
 const WEAPON_KINDS: readonly WeaponKind[] = ['sword', 'staff', 'bow', 'greatsword'];
 // 兩個多載：技能的 weapon 必填（給 fallback 時回傳一定是 WeaponKind，不含 undefined）；
@@ -182,7 +184,23 @@ function asEquipmentEffects(raw: RpgBootstrapEquipmentEffectsRaw | undefined): E
   };
 }
 
-function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
+/**
+ * P9（DORPG_P9 CONTRACT §1／WIRE「戰鬥 bootstrap」：「每位 party member 新增 strategyId」）：
+ * 缺欄位或不在 STRATEGY_IDS 白名單一律退回 'balanced'——跟 engine 內部
+ * resolveStrategy(actor.strategyId, ...) 的「未知 id 退回 balanced」是同一個規則重複套用兩次
+ * （這裡先擋一次髒字串，engine 那層是最後一道防線），並不衝突：這裡擋掉的是「wire 送了一個
+ * STRATEGY_IDS 沒有的字串」這種情況，讓 PartyActor.strategyId 從一開始就是合法值。
+ * ⚠️ RpgBootstrapPartyMemberRaw（api.ts）尚未宣告這個欄位（P9 INTEGRATOR 待補）——用區域擴充
+ * 型別（`& { strategyId?: string }`）讀取，屬性缺省是安全的可選欄位，不需要 unknown-cast；
+ * INTEGRATOR 之後把欄位補進 api.ts 本體時，這裡的擴充型別仍然相容（多一層不影響任何行為）。
+ */
+type PartyMemberWithStrategy = RpgBootstrapPartyMemberRaw & { strategyId?: string };
+function asStrategyId(v: string | undefined): string {
+  return typeof v === 'string' && (STRATEGY_IDS as readonly string[]).includes(v) ? v : 'balanced';
+}
+
+function mapPartyMember(pRaw: RpgBootstrapPartyMemberRaw): PartyMember {
+  const p: PartyMemberWithStrategy = pRaw;
   return {
     id: p.id,
     name: p.name,
@@ -214,6 +232,8 @@ function mapPartyMember(p: RpgBootstrapPartyMemberRaw): PartyMember {
     // 缺失時安全退回中性值，不是 undefined（PartyMember.equipmentEffects 雖然型別上允許 undefined，
     // 但 fromApi.ts 這一層一律填好完整物件，讓後續 engine 端不必再處理「wire 到底有沒有送」的分支）。
     equipmentEffects: asEquipmentEffects(p.equipmentEffects),
+    // P9：見上方 PartyMemberWithStrategy／asStrategyId 型別註解。
+    strategyId: asStrategyId(p.strategyId),
   };
 }
 
@@ -375,6 +395,22 @@ function isMsRange(v: unknown): v is [number, number] {
 }
 
 /**
+ * P9（CONTRACT §1／WIRE「戰鬥 bootstrap」：「config 新增 aiStrategies」）：形狀比 [min,max] 複雜
+ * ——巢狀物件（策略 id → { params: 自由 JSON }）。跟 isElementChart() 同一個防禦精神：整份驗證，
+ * 有一層不對就整欄丟棄退回 DEFAULT_BATTLE_CONFIG.aiStrategies（空物件，等同「沒有任何 DB
+ * 覆寫」），比讓 resolveStrategy() 在執行期讀到形狀不對的 params 物件安全——resolveStrategy 本身
+ * 也會逐欄過濾非 number/boolean 的值，這裡只需要擋住「整包不是物件」這種更粗的錯誤。
+ */
+function isAiStrategiesMap(v: unknown): v is Record<string, { params?: Record<string, unknown> }> {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false;
+  return Object.values(v as Record<string, unknown>).every((row) => {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) return false;
+    const params = (row as Record<string, unknown>).params;
+    return params === undefined || (params !== null && typeof params === 'object' && !Array.isArray(params));
+  });
+}
+
+/**
  * P2 新增：battle_element_chart 是巢狀 map（怪物 attribute 中文 → 技能 element 英文 → 倍率），
  * 形狀比 [min,max] 複雜得多——後台「進階 JSON 編輯」或未來 DB 資料都可能塞出非預期形狀（例如某個
  * attribute 對到陣列而不是物件）。這裡整份驗證，只要有一層不對就整欄丟棄退回 DEFAULT_BATTLE_CONFIG
@@ -400,5 +436,6 @@ export function configFromBootstrap(raw: RpgBootstrapConfigRaw | null | undefine
   if (!isMsRange(cfg.enemyActIntervalMs)) delete cfg.enemyActIntervalMs;
   if (!isMsRange(cfg.allyActIntervalMs)) delete cfg.allyActIntervalMs;
   if (cfg.elementChart !== undefined && !isElementChart(cfg.elementChart)) delete cfg.elementChart;
+  if (cfg.aiStrategies !== undefined && !isAiStrategiesMap(cfg.aiStrategies)) delete cfg.aiStrategies;
   return cfg;
 }

@@ -5134,6 +5134,9 @@ export interface RpgCharacter {
   // 定義在本檔下方 P8 專節（TS interface 宣告順序不影響型別檢查）。 ---
   equipment: RpgEquipmentNamesDTO
   equip_bonus: EquipBonusDTO
+  // --- DORPG P9（見契約 §1/§4、WIRE §REST「/rpg/me 新增 auto_battle」）：玩家自動戰鬥開關＋
+  // 目前套用的 AI 策略，開關與策略持久化在玩家角色列，戰鬥 HUD 可隨時切換（PUT /rpg/auto-battle）。
+  auto_battle: AutoBattleDTO
 }
 
 export interface RpgMe {
@@ -5217,6 +5220,17 @@ export const rpgApi = {
   allocateSkill: (token: string, body: { skill_id: string; delta: 1 | -1 | 'max' }) =>
     request<RpgSkillsResponse>('/rpg/skills/allocate', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   resetSkills: (token: string) => request<RpgSkillsResponse>('/rpg/skills/reset', { method: 'POST', headers: withAuth(token) }),
+  // DORPG P9（契約 §1/§4、WIRE §REST）：玩家自動戰鬥開關＋策略，持久化在玩家角色列；戰鬥 HUD
+  // 的 AutoBattleBar 切換時打這支（本地先靠引擎 SET_AUTO_BATTLE 即時生效，這支只負責存檔，
+  // 失敗只 toast、不回滾本地——見任務 §3）。錯誤碼 unknown_strategy（呼叫端自行組中文文案）。
+  setAutoBattle: (token: string, body: AutoBattleDTO) =>
+    request<AutoBattleDTO>('/rpg/auto-battle', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+}
+
+/** DORPG P9（WIRE §REST）：PUT /rpg/auto-battle body／回應，與 /rpg/me 的 auto_battle 欄位同形。 */
+export interface AutoBattleDTO {
+  enabled: boolean
+  strategy_id: string
 }
 
 // --- DORPG P6：酒館／隊伍／傭兵腳本（見契約 dorpg_p6 CONTRACT.md §3、WIRE.md §REST）---
@@ -5255,6 +5269,14 @@ export interface CompanionPresetDTO {
   stat_cap: number
   skill_points_total: number
   skill_points_free: number
+  // --- DORPG P9（契約 §2、WIRE §REST）：傭兵裝備比照玩家，掛在腳本上 ---
+  /** 八格裝備（同 P8 GET /rpg/equipment 的 equipped 形狀：各格 WeaponDTO|ArmorDTO|null）。
+   *  EquippedGearDTO/WeaponDTO/ArmorDTO 定義在本檔下方 P7/P8 專節（TS interface 宣告順序不影響型別檢查）。 */
+  equipment: EquippedGearDTO
+  /** 彙總後（含武器）的裝備加成，供腳本編輯器顯示「DEF+n、VIT+n…」摘要（同 CharacterScreen 的 formatEquipBonus）。 */
+  equip_bonus: EquipBonusDTO
+  /** 這份腳本套用的 AI 策略 id（見上方 StrategyDTO），預設 'balanced'。 */
+  strategy_id: string
 }
 
 /** WIRE §REST MercenaryDTO：酒館下段「傭兵」四張卡；presets 系統預設在前、使用者自訂在後。 */
@@ -5284,10 +5306,24 @@ export interface TavernLeaderDTO {
   name: string
 }
 
+// --- DORPG P9：AI 戰鬥策略（見契約 dorpg_p9 CONTRACT.md §4、WIRE.md §REST）---
+// id 集合固定六種（balanced／mp_conserve／skill_aggressive／protect_allies／focus_fire／
+// element_advantage，引擎 registry 白名單），資料庫只管顯示名稱/說明/參數覆寫/啟用/排序，
+// 故 StrategyDTO 沒有任何「行為」欄位——實際決策邏輯全在 ENGINE 的 engine/strategies.ts。
+export interface StrategyDTO {
+  id: string
+  name: string
+  description: string
+  params: Record<string, unknown>
+  sort_order: number
+}
+
 export interface TavernResponse {
   leader: TavernLeaderDTO
   party: PartySlotDTO[] // 固定 4 格（沒有任何列＝預設隊伍＝小咪＋其系統預設腳本，契約 §3.1）
   mercenaries: MercenaryDTO[] // 固定 4 位（小咪／小優／阿光／阿深）
+  /** DORPG P9（WIRE §REST）：只含 is_active，依 sort_order——腳本編輯器「AI 策略」下拉的資料來源。 */
+  strategies: StrategyDTO[]
 }
 
 /** PUT /rpg/party body 的單格；只送「有人」的格子即可——伺服器整批覆蓋 4 格（契約 §3.3）。 */
@@ -5297,6 +5333,14 @@ export interface PartySlotInput {
   preset_id: string | null
 }
 
+/**
+ * DORPG P9（WIRE §REST）：腳本的八格裝備輸入——各格 item_id 或 null（卸下），缺鍵＝維持空。
+ * 型別上用 EquipmentSlot 索引（八個 key 恰好對齊 weapon/helmet/gloves/armor/legs/boots/
+ * accessory1/accessory2，同 P8 EquippedGearDTO 的既有慣例），全部 optional——草稿可以只送
+ * 有變動的格子，未提到的格子後端維持原樣（比照 PUT /rpg/party「只送有人的格子」的既有慣例）。
+ */
+export type PresetEquipmentInput = { [K in EquipmentSlot]?: string | null }
+
 /** POST /rpg/presets、PUT /rpg/presets/{id} 共用的 body 形狀。 */
 export interface PresetSaveBody {
   companion_id: string
@@ -5304,6 +5348,10 @@ export interface PresetSaveBody {
   level: number
   stats: RpgStats
   skill_levels: Record<string, number>
+  /** DORPG P9（契約 §2、WIRE §REST）：八格裝備。 */
+  equipment: PresetEquipmentInput
+  /** DORPG P9：這份腳本套用的 AI 策略 id。 */
+  strategy_id: string
 }
 
 /** POST /rpg/presets/validate body——沒有 name（草稿試算不需要，見 WIRE 逐字列出的欄位）。 */
@@ -5312,6 +5360,8 @@ export interface PresetValidateBody {
   level: number
   stats: RpgStats
   skill_levels: Record<string, number>
+  equipment: PresetEquipmentInput
+  strategy_id: string
 }
 
 /** WIRE §REST 驗證錯誤項；message 是後端組好的備援文案，UI 找不到 code 對照表時可以直接顯示。 */
@@ -5336,6 +5386,20 @@ export interface PresetValidateResponse {
   derived: PresetDerivedDTO
   /** 該傭兵職業的 10 個技能，已依草稿 skill_levels 展開（與 /rpg/skills 的 SkillDTO 同形）。 */
   skills: SkillDTO[]
+  /** DORPG P9（WIRE §REST）：這次草稿套用裝備後的加成彙總（含武器），derived 已經套用，這欄只供顯示摘要。 */
+  equip_bonus: EquipBonusDTO
+}
+
+/**
+ * DORPG P9（WIRE §REST）：GET /rpg/tavern/gear?job_id=&level= 回應——該職業全部武器＋該職業
+ * 防具＋通用飾品，can_equip 依傳入的 level 計算；⚠️ 契約明講「equipped／equipped_in 恆
+ * false／null——腳本編輯器自己比對」，呼叫端要拿目前草稿的 equipment 跟這份清單的 id 自行比對
+ * 標記已裝備／已裝於哪格（見 TavernScreen PresetEditor 的 gear 相關 useMemo）。
+ */
+export interface TavernGearResponse {
+  weapon_types: WeaponTypeDTO[]
+  weapons: WeaponDTO[]
+  armor_items: ArmorDTO[]
 }
 
 export const rpgTavernApi = {
@@ -5354,6 +5418,9 @@ export const rpgTavernApi = {
   validatePreset: (token: string, body: PresetValidateBody) =>
     request<PresetValidateResponse>('/rpg/presets/validate', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) })
       .then((r) => ({ ...r, errors: r.errors ?? [] })),
+  // DORPG P9：腳本編輯器「裝備」區的清單來源，依職業＋草稿等級查詢。
+  gear: (token: string, jobId: string, level: number) =>
+    request<TavernGearResponse>(`/rpg/tavern/gear?job_id=${encodeURIComponent(jobId)}&level=${encodeURIComponent(String(level))}`, { headers: withAuth(token) }),
 }
 
 // --- DORPG P7：武器裝備（見契約 dorpg_p7 CONTRACT.md §2/§3、WIRE.md §REST）---
@@ -5740,6 +5807,21 @@ export interface RpgArmorItem {
   sort_order: number
 }
 
+/**
+ * DORPG P9（契約 §2、WIRE §後台）：rpg_ai_strategies 一列。id 集合固定六種（引擎 registry 白名單，
+ * 後端持有同一份 id 清單常數）——後台只能編輯既有列的顯示/參數/啟用/排序，不能發明引擎沒有的行為
+ * （新增行為＝改 ENGINE 的 registry＋seed 一列，不是後台這裡能做的事）。
+ */
+export interface RpgAiStrategy {
+  id: string
+  name: string
+  description: string
+  /** 覆寫引擎預設門檻的參數（見契約 §4 各策略 params，例如 heal_pct/mp_reserve_pct），JSON 編輯。 */
+  params: Record<string, unknown>
+  is_active: boolean
+  sort_order: number
+}
+
 /** GET /admin/rpg/battle-logs 明細列（不含 email/account_code——隱私規則，見後端 SQL 只
  *  SELECT COALESCE(name,handle)）。對照 internal/rpg/content_repo.go battleLogListRow。 */
 export interface RpgBattleLogRow {
@@ -5850,6 +5932,14 @@ export const adminRpgApi = {
     request<RpgArmorItem>('/admin/rpg/armor-items', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
   deleteArmorItem: (token: string, id: string) =>
     request<{ ok: boolean }>(`/admin/rpg/armor-items/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
+
+  // --- DORPG P9：AI 戰鬥策略 CRUD（見契約 dorpg_p9 CONTRACT.md §2、WIRE §後台）。DELETE 只允許
+  // 非 balanced 且無腳本／玩家引用，否則後端回 409 in_use（呼叫端自行組中文文案）。---
+  aiStrategies: (token: string) => request<{ ai_strategies: RpgAiStrategy[] }>('/admin/rpg/ai-strategies', { headers: withAuth(token) }),
+  putAiStrategy: (token: string, row: RpgAiStrategy) =>
+    request<RpgAiStrategy>('/admin/rpg/ai-strategies', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+  deleteAiStrategy: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/admin/rpg/ai-strategies/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withAuth(token) }),
 
   // 戰鬥數據：期間 days（7/30，後端夾在 1..90）＋可選 code 篩選單一遭遇；limit 明細筆數上限。
   battleLogs: (token: string, params: { code?: string; days: 7 | 30; limit?: number }) => {
@@ -6005,6 +6095,10 @@ export interface RpgBootstrapPartyMemberRaw {
   skills?: RpgBootstrapSkillRaw[]
   /** 這位隊友目前套用的腳本名稱（酒館頁選的），純顯示用；玩家本人恆為 undefined。 */
   presetName?: string
+  /** DORPG P9（契約 §4、WIRE §戰鬥 bootstrap）：這位角色目前套用的 AI 策略 id——玩家＝
+   *  auto_strategy_id，隊友＝preset.strategy_id。ENGINE 的 decideAction 共用同一個決策入口，
+   *  隊友與「玩家自動戰鬥」都靠這個欄位決定要用哪種策略（未知 id 引擎端一律退回 balanced）。 */
+  strategyId?: string
 }
 /**
  * WIRE §戰鬥 bootstrap WeaponProfileWire（camelCase，「已展開成引擎詞彙」版本）：Compute 已經吃掉
@@ -6163,17 +6257,26 @@ export interface RpgBootstrapSampleRaw {
 // 這三個是 elementMultiplier() 真正要讀的係數，不是純展示欄位，但仍屬於「BACKEND 送、ENGINE 讀」的
 // BattleConfig 擴充——ENGINE 尚未在 engine/types.ts BattleConfig 加這三個欄位時，用同一招交集型別
 // 先把 wire 形狀鋪好，不硬改 engine/types.ts（不在本輪 FRONTEND 寫入範圍內，見任務回報對 ENGINE 的需求）。
+// DORPG P9（WIRE §戰鬥 bootstrap：「config 新增 aiStrategies」）：引擎預設 ⊕ DB 覆寫、只含
+// is_active 的策略參數表——ENGINE 的 resolveStrategy(id, cfg) 用這份表覆寫 registry 的
+// defaultParams（未知 id／找不到覆寫＝直接用引擎預設值）。
+export type RpgBootstrapAiStrategiesRaw = Record<string, { params: Record<string, unknown> }>
 export type RpgBootstrapConfigRaw = Partial<import('@/lib/dorpg/engine').BattleConfig> & {
   scaleMode?: 'level' | 'power'
   elementAdvantagePct?: number
   elementDisadvantagePct?: number
   elementSamePct?: number
+  aiStrategies?: RpgBootstrapAiStrategiesRaw
 }
 export interface RpgBattleBootstrap {
   encounter: RpgBootstrapEncounterInfo
   sample: RpgBootstrapSampleRaw
   config: RpgBootstrapConfigRaw
   hints: { free_points: number }
+  /** DORPG P9（WIRE §戰鬥 bootstrap：「頂層新增 autoBattle」）：玩家目前是否開啟自動戰鬥
+   *  （auto_battle.enabled）——ENGINE 的 createBattle() 用這個初始化 BattleState.autoBattle，
+   *  策略 id 走 sample.party[0]（玩家）的 strategyId，不重複送一次。 */
+  autoBattle: boolean
 }
 
 // POST /rpg/battle/report body（純遙測，見 §2 rpg_battle_logs／§3.4 健全性檢查；不影響任何帳本/獎勵）。

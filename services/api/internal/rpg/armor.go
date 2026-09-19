@@ -350,6 +350,29 @@ func (h *Handler) getArmorByID(ctx context.Context, id string) (ArmorRow, error)
 	return scanArmor(row)
 }
 
+// loadArmorByIDs DORPG P9 N+1 修復（見 presets.go loadGearCatalog 檔頭說明）：一次撈出多件防具/
+// 飾品（`WHERE id = ANY($1)`），取代呼叫端對每個 id 各發一次 getArmorByID 的做法。ids 為空時
+// 略過查詢直接回空 map；查無資料的 id 純粹不會出現在回傳 map 裡（不是錯誤）。
+func (h *Handler) loadArmorByIDs(ctx context.Context, ids []string) (map[string]ArmorRow, error) {
+	out := map[string]ArmorRow{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := h.db.Query(ctx, `SELECT `+armorCols+` FROM rpg_armor_items WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		a, err := scanArmor(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[a.ID] = a
+	}
+	return out, rows.Err()
+}
+
 // listAllArmorItems 後台 GET /admin/rpg/armor-items（可選 job_id/slot 篩選，空字串＝不篩選）。
 // jobFilter 特殊值 "none" 代表只要通用飾品（job_id IS NULL）——後台篩選 UI 用固定字面值，不是
 // 真正的職業 id（六職業 id 皆為小寫英文單字，不會撞到 "none"）。
