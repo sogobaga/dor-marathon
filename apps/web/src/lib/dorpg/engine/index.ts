@@ -143,6 +143,11 @@ function toEnemyActor(e: Enemy, now: number, cfg: BattleConfig, rng: () => numbe
     // P5：戰鬥開始時沒有任何 debuff；weakElements 缺省 []（無弱點）。
     activeEffects: [],
     weakElements: e.weakElements ?? [],
+    // P12（CONTRACT §1／WIRE「戰鬥 bootstrap」：「enemies[].row」）：原樣透傳（fromApi.ts 已經
+    // 驗證過只會是 'front'|'rear'|undefined）——缺省 undefined 時 combat.ts/formulas.ts 各讀取端
+    // 一律用 `enemy.row ?? rowOfSlot(enemy.slot)` 從必填的 slot 後備推導（見 EnemyActor.row 型別
+    // 註解），這裡不需要也不應該預先展開成具體值。
+    row: e.row,
   };
 }
 

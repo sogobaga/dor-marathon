@@ -5,7 +5,7 @@ import type { ActorStats, BuffDebuffStat, CombatRating, DmgType, ElementKind, En
 import type { Ctx } from './context';
 import { pushEvent, pushLog } from './context';
 import { activeStatSum, applyStatusEffect, damageTakenMultiplier, effectiveRating, rollCritMultiplier } from './effects';
-import { combineElementResistPct, computeHeal, computeRawDamage, critChance, elementMultiplier, floorInt, missChance, NEUTRAL_WEAPON_PROFILE, normalizeElementAlias, normalizeSizeAlias, selectAliveByThreat } from './formulas';
+import { combineElementResistPct, computeHeal, computeRawDamage, critChance, elementMultiplier, floorInt, missChance, NEUTRAL_WEAPON_PROFILE, normalizeElementAlias, normalizeSizeAlias, rowBonusMultiplier, rowOfSlot, selectAliveByThreat } from './formulas';
 import type { ActiveEffect, EnemyActor, PartyActor, PendingCast } from './types';
 
 /** 對敵人造成傷害後的死亡/受擊處理：死亡→dying+enemyDeath+目標自動換人；存活→hitReaction 覆蓋層。 */
@@ -159,7 +159,19 @@ export function resolveAttackOrDamageSkill(
   const normalizedSize = normalizeSizeAlias(enemy.size);
   const sizeKey = normalizedSize === 'small' || normalizedSize === 'medium' || normalizedSize === 'large' ? normalizedSize : undefined;
   const sizeBonusPct = sizeKey ? opts.attackerWeapon.sizeBonus[sizeKey] : 0;
-  const net = sizeBonusPct ? Math.floor(rawNet * (1 + sizeBonusPct / 100)) : rawNet;
+  // P12（CONTRACT §1「套用範圍：以武器造成的物理傷害＝普攻＋物理技能...乘在最終傷害上（在
+  // 暴擊、屬性、體型之後、floor 之前）」）：排位加成（弓打後排/鈍器打前排）只在 dmgType==='physical'
+  // 時套用——普攻恆為 physical（見 resolveWeaponAttack），物理技能同樣是 physical，魔法技能
+  // （dmgType==='magic'）不吃，跟契約「魔法技能不吃」逐字對齊。row 優先讀 enemy.row（若上游已經
+  // 直接送這個欄位），沒有的話用 rowOfSlot(enemy.slot) 推導（見該函式型別註解——slot 是
+  // EnemyActor 必填欄位，永遠推得出來，不依賴 createBattle/engine/index.ts（非 ENGINE 所有權）
+  // 是否額外寫入 row）。
+  const rowMul = dmgType === 'physical' ? rowBonusMultiplier(opts.attackerWeapon, enemy.row ?? rowOfSlot(enemy.slot)) : 1;
+  const sizeMul = 1 + sizeBonusPct / 100;
+  // 體型與排位兩個乘數合併在同一次 floor——兩者皆中性（sizeMul===1 且 rowMul===1，P7 之前／
+  // 沒有排位加成的武器打中性體型怪物的既有情況）時直接沿用 rawNet，跟舊版「sizeBonusPct 為 0
+  // 就不多算一次 floor」完全等價，不引入既有斷言看不到差異的浮點運算。
+  const net = sizeMul === 1 && rowMul === 1 ? rawNet : Math.floor(rawNet * sizeMul * rowMul);
   if (net <= 0) {
     emitAttack('immune', 0);
     pushLog(ctx, `${opts.actorId} 對 ${enemy.name} 的攻擊被完全擋下`);
@@ -212,6 +224,56 @@ function applySplashDamage(
 }
 
 /**
+ * P12（CONTRACT §1 槍：「攻擊前排的怪物，有機會造成貫穿的傷害，讓對應位置的後排怪物也受到...
+ * 波及傷害」）：前排槽位→候選後排槽位（依序嘗試，取第一個存活的）。front_left/front_right
+ * 各自只有一個固定對應（沒有 fallback——契約原文逐字列出，沒有備選）；front_center 兩側都能
+ * 打到，先試 rear_left、死亡或不存在才試 rear_right。rear_left/rear_right 本身（怪物已經是
+ * 後排）回傳 []——貫穿只從前排目標發動，這裡沒有「後排再貫穿到更後面」的機制。
+ */
+const PIERCE_CANDIDATES: Readonly<Record<EnemySlotId, readonly EnemySlotId[]>> = {
+  front_left: ['rear_left'],
+  front_right: ['rear_right'],
+  front_center: ['rear_left', 'rear_right'],
+  rear_left: [],
+  rear_right: [],
+};
+
+/**
+ * P12（CONTRACT §1／WIRE「引擎」：「resolveWeaponAttack 在前排目標命中後依 pierceChancePct
+ * （rng）對映後排目標加波及；事件 attack 加 pierce?: true」）：只有普攻（resolveWeaponAttack）
+ * 呼叫這支函式，物理技能不會（契約「只有普攻會判定」）——多段普攻（雙劍/槍）每段各自獨立呼叫，
+ * 不是整次普攻共用一次判定結果。是否要嘗試貫穿（含要不要消耗 rng）由呼叫端
+ * （resolveWeaponAttack）的 `wp.pierceChancePct > 0 && ctx.rng() < ...` 決定，這支函式只管
+ * 「機率已經判定成功之後」找目標、算傷害、套用——找不到存活的候選後排（PIERCE_CANDIDATES 回傳
+ * []，或候選槽位都沒有存活怪物）一律靜默不貫穿，不算錯誤、不推事件。
+ * 波及傷害＝floor(主擊「已經結算完」的實際傷害 × pierceDmgPct/100)，跟 applySplashDamage 同一個
+ * 精神：不重新判定 miss/crit/屬性/體型/排位，不扣後排怪的 DEF，直接呼叫 applyEnemyDamage——這裡
+ * 只呼叫 applyEnemyDamage、不會遞迴呼叫 resolveWeaponAttack/resolveAttackOrDamageSkill，天然滿足
+ * 契約「貫穿不觸發二次貫穿」；也不呼叫 applySplashDamage，滿足「貫穿與濺射互不影響」。
+ */
+function tryPierce(
+  ctx: Ctx,
+  actorId: string,
+  weaponVisual: WeaponKind,
+  primarySlot: EnemySlotId,
+  primaryDamage: number,
+  pierceDmgPct: number,
+): void {
+  const candidates = PIERCE_CANDIDATES[primarySlot] ?? [];
+  let target: EnemyActor | undefined;
+  for (const slotId of candidates) {
+    target = ctx.enemies.find((e) => e.slot === slotId && e.hp > 0);
+    if (target) break;
+  }
+  if (!target) return;
+  const dmg = Math.floor(primaryDamage * (pierceDmgPct / 100));
+  if (dmg <= 0) return;
+  pushEvent(ctx, { kind: 'attack', actorId, targetId: target.id, weapon: weaponVisual, result: 'normal', damage: dmg, charged: false, pierce: true });
+  pushLog(ctx, `${actorId} 的攻擊貫穿，波及 ${target.name}，造成 ${dmg} 點貫穿傷害`);
+  applyEnemyDamage(ctx, target, dmg);
+}
+
+/**
  * P7（CONTRACT §3／WIRE「普攻」）：武器化的普攻——取代 P1～P6「普攻恆單擊、coefficient=1」的
  * 簡化寫法，統一給 dispatch.ts（玩家 ATTACK_RELEASE）與 ai.ts（隊友普攻 fallback）共用：
  *   - hits 段各自獨立呼叫一次 resolveAttackOrDamageSkill（各自獨立 miss/crit/浮字），每段
@@ -221,8 +283,10 @@ function applySplashDamage(
  *     ——沒有這個機制的武器（含 NEUTRAL_WEAPON_PROFILE）完全不消耗這次 rng()，既有測試的 rng
  *     序列因此不受影響。
  *   - 每段命中後若 weaponProfile.splashPct>0 觸發濺射（斧）。
+ *   - P12（CONTRACT §1 槍）：每段命中後若 weaponProfile.pierceChancePct>0 再消耗一次 ctx.rng()
+ *     判定要不要貫穿到對應後排（tryPierce）——濺射與貫穿是兩個獨立判定，互不影響。
  * 無武器（weaponProfile===NEUTRAL_WEAPON_PROFILE）時 totalHits=1、coefficient=1、不消耗額外
- * rng()、不觸發濺射，跟 P1～P6 舊行為完全等價（既有斷言因此全數維持不變）。
+ * rng()、不觸發濺射／貫穿，跟 P1～P6 舊行為完全等價（既有斷言因此全數維持不變）。
  */
 export function resolveWeaponAttack(
   ctx: Ctx,
@@ -260,6 +324,20 @@ export function resolveWeaponAttack(
     });
     if (wp.splashPct > 0 && (outcome.result === 'normal' || outcome.result === 'critical')) {
       applySplashDamage(ctx, opts.actorId, opts.weaponVisual, target.slot, outcome.damage, wp.splashPct);
+    }
+    // P12（CONTRACT §1「貫穿只在普攻命中前排目標時判定」）：主目標為後排（rear_left/rear_right）
+    // 時完全不該判定貫穿——PIERCE_CANDIDATES 對 rear 槽位本來就回傳 []，tryPierce 找不到候選會
+    // 靜默不做事，但少了 isFront 短路的話，呼叫前的 `ctx.rng() < ...` 仍然會白白消耗一次 rng()，
+    // 把後續（下一段普攻的 miss/crit、或再往後的其它判定）序列整個打亂一格。isFront 用
+    // `target.row ?? rowOfSlot(target.slot)` 判斷（target 已在迴圈上方取得，跟 combat.ts 其餘
+    // 讀取 enemy.row 的既有寫法一致），跟 `wp.pierceChancePct > 0` 一樣擋在 `ctx.rng()` 之前短路。
+    // 跟 extraHitChancePct 的既有寫法同一個精神——pierceChancePct===0（沒有貫穿機制的武器，含
+    // NEUTRAL_WEAPON_PROFILE）或主目標非前排時完全不呼叫 ctx.rng()，既有測試的 rng 序列因此不受
+    // 影響。命中結果非 normal/critical（miss/immune）沒有「已結算的傷害」可言，同樣不判定貫穿、
+    // 不消耗 rng。
+    const isFront = (target.row ?? rowOfSlot(target.slot)) === 'front';
+    if (isFront && wp.pierceChancePct > 0 && (outcome.result === 'normal' || outcome.result === 'critical') && ctx.rng() < wp.pierceChancePct / 100) {
+      tryPierce(ctx, opts.actorId, opts.weaponVisual, target.slot, outcome.damage, wp.pierceDmgPct);
     }
   }
 }

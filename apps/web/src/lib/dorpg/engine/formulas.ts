@@ -2,7 +2,7 @@
 // 型別引用在 Node type-stripping 下整段消失，不影響本檔被 node 直接 import 執行。
 import type { ActorStats, CombatRating, EnemySlotId, EquipmentEffectsWire, WeaponProfileWire } from '../types';
 import type { Ctx } from './context';
-import type { BattleConfig, BattleState, EnemyActor, PartyActor } from './types';
+import type { BattleConfig, BattleState, EnemyActor, EnemyRow, PartyActor } from './types';
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
@@ -236,7 +236,41 @@ export const NEUTRAL_WEAPON_PROFILE: WeaponProfileWire = {
   elementResistPct: 0,
   magicSkillPct: 0,
   element: 'neutral',
+  // P12：rowBonusFrontPct/rowBonusRearPct/pierceChancePct/pierceDmgPct=0——跟這份物件其餘欄位
+  // 同一個精神，中性值等同「這把武器沒有排位加成／貫穿機制」，見 dorpg/types.ts WeaponProfileWire
+  // 型別註解的四欄說明。
+  rowBonusFrontPct: 0,
+  rowBonusRearPct: 0,
+  pierceChancePct: 0,
+  pierceDmgPct: 0,
 };
+
+/**
+ * P12（CONTRACT §1「排位＝既有槽位」）：前排／後排是槽位的單純衍生值，不是另一份需要保持同步
+ * 的資料——EnemySlotId 五個合法值裡 front_left/front_center/front_right 是前排、rear_left/
+ * rear_right 是後排（跟本檔 SLOT_ORDER、combat.ts ROW_NEIGHBORS 用的同一份槽位分類一致）。
+ * EnemyActor.row 是可選欄位（ENGINE 不擁有 createBattle/engine/index.ts 的寫入權，無法保證
+ * 一定會被填值），這支函式是「沒有 row 時」的權威推導來源——呼叫端一律用
+ * `enemy.row ?? rowOfSlot(enemy.slot)` 取得有效排位（見 combat.ts resolveAttackOrDamageSkill）。
+ */
+export function rowOfSlot(slot: EnemySlotId): EnemyRow {
+  return slot === 'rear_left' || slot === 'rear_right' ? 'rear' : 'front';
+}
+
+/**
+ * P12（CONTRACT §1／WIRE「引擎」：「rowBonusMultiplier(profile, enemy.row)」）：弓類武器
+ * （rowBonusRearPct）打後排怪物 +10%、鈍器類（rowBonusFrontPct）打前排怪物 +10%——兩個百分比
+ * 欄位互相獨立，一把武器理論上可以同時有兩者非零（雖然本輪內容只各自單獨設一種），這裡不假設
+ * 互斥。只套用在武器造成的「物理」傷害（見 combat.ts resolveAttackOrDamageSkill 的
+ * dmgType==='physical' 判斷，魔法技能不吃）。row 為 undefined 時回傳中性值 1，純粹是型別層的
+ * 防呆——實際呼叫端一律先用 rowOfSlot(enemy.slot) 補齊（slot 是 EnemyActor 必填欄位，一定推得
+ * 出來），這個分支理論上不會被走到。
+ */
+export function rowBonusMultiplier(profile: WeaponProfileWire, row: EnemyRow | undefined): number {
+  if (row === 'front') return 1 + profile.rowBonusFrontPct / 100;
+  if (row === 'rear') return 1 + profile.rowBonusRearPct / 100;
+  return 1;
+}
 
 /**
  * SPEC §4：raw = floor((atk×coef+flat) × elementMul × chargeMul × critMul)；net = raw − def。

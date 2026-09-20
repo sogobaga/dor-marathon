@@ -17,6 +17,7 @@ import type { ArmorDTO, EquipmentSlot, EquippedGearDTO, RpgElement, WeaponDTO, W
 import {
   ACCESSORY_EFFECT_LABEL, ACCESSORY_EFFECT_ORDER, ARMOR_EQUIP_SLOTS, ELEMENT_LABEL, ELEMENT_ORDER, EQUIP_SLOT_LABEL,
   EQUIP_SLOT_ORDER, RARITY_LABEL, RARITY_COLOR, accessoryEffectKey, elementLabel, formatArmorProfile, formatWeaponProfile,
+  formatWeaponTypeRowBonus,
 } from '@/lib/rpgMeta'
 
 export type EquipmentPanelProps = {
@@ -70,6 +71,8 @@ export default function EquipmentPanel({ equipped, weaponTypes, weapons, armorIt
   }
 
   const activeType: WeaponTypeDTO | null = weaponTypes.find((t) => t.id === resolvedTypeId) ?? null
+  // DORPG P12：該武器類型的前後排加成／貫穿一句話說明（空字串＝該類型沒有這些 traits 鍵，不顯示）。
+  const rowBonusText = formatWeaponTypeRowBonus(activeType?.traits)
   const activeElement: RpgElement = (resolvedTypeId && elementByType[resolvedTypeId]) || 'neutral'
   const listForActiveType = activeType
     ? weapons
@@ -119,6 +122,13 @@ export default function EquipmentPanel({ equipped, weaponTypes, weapons, armorIt
                 <div style={{ marginTop: 12 }}>
                   {activeType.description && (
                     <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', lineHeight: 1.5, marginBottom: 10 }}>{activeType.description}</div>
+                  )}
+
+                  {/* DORPG P12（契約 §1/§4）：前後排加成／貫穿說明——只有 traits 帶對應鍵的類型才顯示
+                      （弓/鈍器/槍三種，見 formatWeaponTypeRowBonus），其餘類型 traits 沒有這些鍵，回傳
+                      空字串就不渲染。 */}
+                  {rowBonusText && (
+                    <div style={{ fontSize: 11.5, color: 'var(--gold)', lineHeight: 1.5, marginBottom: 10, fontWeight: 700 }}>{rowBonusText}</div>
                   )}
 
                   {activeType.elemental_capable && (

@@ -82,7 +82,20 @@ export type CombatRating = {
  * critDmgPct 這 4 個欄位——重複套用會跟 Compute() 已經算進 PartyMember.stats/rating 的效果疊兩次。
  * 真正被 engine 讀取套用的只有：hits/hitMul/extraHitChancePct/intervalPct/chargeTimeMul/
  * chargeDmgMul/splashPct/sizeBonus/elementResistPct/magicSkillPct/element（見 engine/combat.ts
- * resolveWeaponAttack／resolveAttackOrDamageSkill／resolveCastEffect／applyPartyDamage）。
+ * resolveWeaponAttack／resolveAttackOrDamageSkill／resolveCastEffect／applyPartyDamage），
+ * P12（CONTRACT §1/§3、WIRE「引擎」）新增 rowBonusFrontPct/rowBonusRearPct/pierceChancePct/
+ * pierceDmgPct 四欄後同樣加入這份「真的被讀」清單（見 formulas.ts rowBonusMultiplier／
+ * combat.ts resolveWeaponAttack）。
+ *
+ * P12 新增四欄（by rpg_weapon_types.traits 的 row_bonus_front_pct／row_bonus_rear_pct／
+ * pierce_chance_pct／pierce_dmg_pct 合併進武器 profile，型別層跟既有其餘欄位一樣是「後端已經
+ * 合併好的最終值」，不在這裡重新查 traits）：
+ *   - rowBonusFrontPct／rowBonusRearPct：對「前排／後排」怪物的物理傷害加成 %（弓對後排、
+ *     鈍器對前排），見 formulas.ts rowBonusMultiplier()。
+ *   - pierceChancePct／pierceDmgPct：普攻命中前排目標時，這個機率讓攻擊「貫穿」到對應後排
+ *     位置造成 pierceDmgPct% 波及傷害（見 combat.ts resolveWeaponAttack 的貫穿判定），只有
+ *     普攻會判定，物理技能不會。
+ * 四欄缺省 0（中性值，等同沒有這個機制），見 formulas.ts NEUTRAL_WEAPON_PROFILE。
  */
 export interface WeaponProfileWire {
   atk: number;
@@ -100,6 +113,14 @@ export interface WeaponProfileWire {
   elementResistPct: number;
   magicSkillPct: number;
   element: ElementKind;
+  /** P12：對前排怪物的物理傷害加成 %（鈍器 mc_hammer/mc_mallet/mc_club，鈍器打前排肉搏更順手）。 */
+  rowBonusFrontPct: number;
+  /** P12：對後排怪物的物理傷害加成 %（弓 ar_longbow/ar_shortbow/ar_crossbow，弓箭本來就利於打後排）。 */
+  rowBonusRearPct: number;
+  /** P12：槍（hk_spear）普攻命中前排目標時的貫穿機率 %；0＝這把武器沒有貫穿機制。 */
+  pierceChancePct: number;
+  /** P12：貫穿觸發時，對應後排目標受到的波及傷害＝floor(本段實傷×這個百分比/100)。 */
+  pierceDmgPct: number;
 }
 
 /**
@@ -239,6 +260,15 @@ export type EnemySlotId =
   | 'front_center'
   | 'front_right';
 
+/**
+ * P12（CONTRACT §1「排位＝既有槽位」）：怪物前排／後排，跟 engine/types.ts 的 EnemyRow 是同一份
+ * 字面聯集——兩邊各自宣告一次（不跨檔 import）是刻意的：engine/types.ts 已經 `import type {
+ * ..., EnemySlotId, ... } from '../types'`（本檔是 engine 型別的上游），這裡若反過來 import
+ * engine/types.ts 的 EnemyRow 會形成循環依賴；字面聯集只有兩個值，重複宣告的維護成本遠低於
+ * 拆檔案打破循環的成本。
+ */
+export type EnemyRow = 'front' | 'rear';
+
 export type SceneSlot = {
   id: EnemySlotId;
   /** 腳點在場景中的 0–1 正規化 x。 */
@@ -285,6 +315,14 @@ export type Enemy = {
    * elementMultiplier() 的「chart 覆寫優先，否則 weakElements 命中」規則。缺省 []（無弱點）。
    */
   weakElements?: ElementKind[];
+  /**
+   * P12（CONTRACT §1／WIRE「戰鬥 bootstrap」：「enemies[].row」）：這隻怪目前是前排還是後排；
+   * 缺省 undefined（舊版後端尚未送這個欄位，或 fromApi.ts 驗證失敗）由 engine/index.ts 的
+   * toEnemyActor 直接透傳給 EnemyActor.row，engine 內部一律用 `enemy.row ?? rowOfSlot(enemy.slot)`
+   * 取得有效排位（見 engine/formulas.ts rowOfSlot 型別註解），不會因為這個欄位缺席而漏掉武器排位
+   * 加成／槍系貫穿機制。
+   */
+  row?: EnemyRow;
 };
 
 // ---- P5（DORPG_P5 CONTRACT §5/§6）新增：技能等級、傷害屬性、buff/debuff/passive/special 詞彙。 ----

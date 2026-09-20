@@ -292,6 +292,13 @@ export default function BattleScreen({
     return 0;
   }, []);
 
+  // DORPG P12（契約 §1/§3：槍貫穿，前排目標命中後對映的後排目標追加波及傷害＋pierce:true 旗標）：
+  // 波及目標一定是後排（scene monsterSlots：rear 的 y≈0.53～0.54，比 front 的 y≈0.88～0.89 高／
+  // 在畫面上方，見 source/ui/08_DORPG_Content_Pack_v1 場景資料），左右沿用上面 splashFallbackOffsetX
+  // 依站位判斷；這裡只在 stageRef 查不到後排目標真正錨點時才用得到（正常情況下該怪還活著在場上，
+  // pushEnemyFloat 會先試真正錨點，這只是最後防線的粗略退路，不追求精確疊圖）。
+  const PIERCE_FALLBACK_OFFSET_Y_PX = -40;
+
   const statsRef = useRef<BattleStats>({ damageDealt: 0, damageTaken: 0, defeatedLevels: [], attacks: 0, chargedAttacks: 0, skillsUsed: 0, itemsUsed: 0, guardMs: 0 });
   // P2 遙測：engine 的 'attack' 事件普攻／技能傷害共用同一個 kind、不帶 skillId（見 engine/combat.ts
   // resolveAttackOrDamageSkill 同時被 dispatch.ts 的 ATTACK_RELEASE 與 combat.ts 的 resolveCastEffect
@@ -329,11 +336,15 @@ export default function BattleScreen({
           // 加這個欄位——這裡用結構型別安全讀取（缺欄位時 undefined，等同 false），不假設它一定
           // 存在，ENGINE 補上正式欄位後這行讀法不需要再改（見任務回報對 ENGINE 的需求）。
           const splash = (ev as unknown as { splash?: boolean }).splash === true;
+          // DORPG P12（契約 §1/§3：「波及傷害事件沿用既有攻擊事件加 pierce: true」）：同上，比照
+          // splash 用結構型別安全讀取，ENGINE 尚未在 'attack' 事件正式加這個欄位也不影響本檔讀法。
+          const pierce = (ev as unknown as { pierce?: boolean }).pierce === true;
 
           statsRef.current.damageDealt += ev.damage;
-          // 濺射不是玩家「另外發動了一次攻擊」，只是同一次攻擊的附帶效果，不計進 attacks／
-          // chargedAttacks 遙測，也不需要動 pendingSkillDamageRef（斧濺射只發生在普攻，見契約 §3）。
-          if (!splash && ev.actorId === next.playerId) {
+          // 濺射／貫穿波及都不是玩家「另外發動了一次攻擊」，只是同一次普攻的附帶效果，不計進
+          // attacks／chargedAttacks 遙測，也不需要動 pendingSkillDamageRef（斧濺射與槍貫穿都只發生
+          // 在普攻，見契約 dorpg_p7 §3／dorpg_p12 §1）。
+          if (!splash && !pierce && ev.actorId === next.playerId) {
             if (pendingSkillDamageRef.current) {
               pendingSkillDamageRef.current = false; // 這一下是技能結算，已經在 'skillCast' 那筆算過 skillsUsed 了
             } else {
@@ -353,6 +364,21 @@ export default function BattleScreen({
               ? { x: lastPrimaryAttackAnchor.x + splashFallbackOffsetX(splashTarget?.slot), y: lastPrimaryAttackAnchor.y }
               : undefined;
             pushEnemyFloat(ev.targetId, `濺射 -${ev.damage}`, 'splash', true, fallbackAnchor);
+          } else if (pierce) {
+            // DORPG P12（契約 §1/§4）：貫穿波及——只在被波及的後排怪物身上飄一個「貫穿」字樣
+            // （tone='pierce'，與濺射同樣式、不同字，見 FloatText.tsx 型別註解），不重播攻擊特效／
+            // 音效——那是「這次普攻本身」的演出，波及只是附帶效果。查不到波及目標自己的錨點時，
+            // 退回這次攻擊的主擊錨點，x 依波及目標站位左右偏移（同 splashFallbackOffsetX），y 再
+            // 往上偏移 PIERCE_FALLBACK_OFFSET_Y_PX——貫穿目標一定在後排，畫面上方，跟濺射「同排
+            // 相鄰」左右偏移就好不同（見上方 PIERCE_FALLBACK_OFFSET_Y_PX 註解）。
+            const pierceTarget = next.enemies.find((e) => e.id === ev.targetId);
+            const fallbackAnchor = lastPrimaryAttackAnchor
+              ? {
+                  x: lastPrimaryAttackAnchor.x + splashFallbackOffsetX(pierceTarget?.slot),
+                  y: lastPrimaryAttackAnchor.y + PIERCE_FALLBACK_OFFSET_Y_PX,
+                }
+              : undefined;
+            pushEnemyFloat(ev.targetId, `貫穿 -${ev.damage}`, 'pierce', true, fallbackAnchor);
           } else {
             const anchor = stageRef.current?.getEnemyAnchor(ev.targetId);
             if (anchor) {
@@ -960,7 +986,8 @@ export default function BattleScreen({
               </div>
             ))}
             {/* P5 POLISH：debuff 命中敵人時的飄字（定點模式，見 FloatText.tsx anchorPx）。
-                DORPG P7：斧的濺射傷害（tone='splash'）也走這個容器，small 由 pushEnemyFloat 帶入。 */}
+                DORPG P7：斧的濺射傷害（tone='splash'）也走這個容器，small 由 pushEnemyFloat 帶入。
+                DORPG P12：槍貫穿的波及傷害（tone='pierce'）同樣走這個容器，不需另開分支。 */}
             {Object.entries(enemyFloatTexts).map(([id, ft]) => (
               <FloatText key={`${id}-${ft.key}`} text={ft.text} tone={ft.tone} anchorPx={{ x: ft.x, y: ft.y }} reducedMotion={settings.reduceMotion} small={ft.small} />
             ))}

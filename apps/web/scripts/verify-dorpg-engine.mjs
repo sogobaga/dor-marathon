@@ -2325,5 +2325,310 @@ const GUARD_STANCE_SKILL = {
   ok(!inGuardianState(s.party[0], 0), 'GUARD_BEGIN 後（guardTaunt=false）：仍不算守護狀態（沒有守護本能被動）')
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// P12（DORPG_P12 CONTRACT：怪物前排／後排 × 武器排位加成——ENGINE 角色）新增測試：本節從 1)
+// 重新編號（跟前面 P7～P10 區塊的編號規則一致，各大階段各自一組序號）。共用上面 P7 區塊已定義
+// 的 weaponFixture()／NEUTRAL_WEAPON_PROFILE，不必再開一個新的 fixture 小工具。
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── 1) 弓（rowBonusRearPct=10）對後排 +10%、對前排無加成；鈍器（rowBonusFrontPct=10）正好相反
+//    ——同一段基準傷害（atk100/def35 → floor(100)-35=65）分別乘 1.10/1.00。 ──
+{
+  const bow = weaponFixture('ar_longbow', 'bow', { rowBonusRearPct: 10 })
+  const mace = weaponFixture('mc_hammer', 'sword', { rowBonusFrontPct: 10 })
+  function vsSingleEnemy(equippedWeapon, slot) {
+    return makeSample({
+      party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon }],
+      enemies: [{ id: 'e1', name: 'e', level: 1, hp: 9999, hpMax: 9999, slot, imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 35, mdef: 0 } }],
+      initialTargetId: 'e1',
+    })
+  }
+  function attackDamage(equippedWeapon, slot) {
+    let s = createBattle(vsSingleEnemy(equippedWeapon, slot), { now: 0, config: FAR_CONFIG })
+    s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+    s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+    return s.events.find((e) => e.kind === 'attack').damage
+  }
+  eq(attackDamage(bow, 'front_center'), 65, '弓對前排：rowBonusRearPct 對前排無加成 → floor(100)-35=65（跟無排位加成的武器一致）')
+  eq(attackDamage(bow, 'rear_left'), 71, '弓對後排：rowBonusRearPct=10% → floor(65×1.10)=71')
+  eq(attackDamage(mace, 'front_center'), 71, '鈍器對前排：rowBonusFrontPct=10% → floor(65×1.10)=71')
+  eq(attackDamage(mace, 'rear_left'), 65, '鈍器對後排：rowBonusFrontPct 對後排無加成 → 65（跟無排位加成一致）')
+}
+
+// ── 2) 排位加成也套用在物理技能（dmgType='physical'，例如既有 slash），但魔法技能
+//    （dmgType='magic'）不吃——同一把弓（rowBonusRearPct=10）打同一隻後排怪。 ──
+{
+  const bow = weaponFixture('ar_longbow', 'bow', { rowBonusRearPct: 10 })
+  const rearEnemy = { id: 'e1', name: 'e', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 35, mdef: 0 } }
+  const playerWithBow = { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: bow }
+  const physicalSample = makeSample({ party: [playerWithBow], enemies: [rearEnemy], initialTargetId: 'e1' })
+  let s = createBattle(physicalSample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'USE_SKILL', skillId: 'slash', targetId: 'e1' }, 0)
+  s = tick(s, 300) // slash 的 castMs=300
+  const ev = s.events.find((e) => e.kind === 'attack')
+  // slash：coefficient=1.6/flat=20，dmgType 缺省 physical。rawNet=floor(100*1.6+20)-35=145。
+  eq(ev.damage, Math.floor(145 * 1.1), '弓對後排：物理技能（slash）也吃排位加成 → floor(145×1.10)=159')
+
+  // castMs 刻意給 200（不是 100）——effectiveCastMs() 會 clamp 到 cfg.castMinMs（預設 120），
+  // 給低於下限的值只是白白測到 clamp 邊界，不是本測試要驗證的東西。
+  const magicSkill = { id: 'magic_test', name: '測試法術', iconUrl: '', cooldownMs: 1000, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 2, flat: 0, weapon: 'staff', dmgType: 'magic', castMs: 200 }
+  const magicSample = makeSample({ party: [playerWithBow], enemies: [rearEnemy], initialTargetId: 'e1', skills: [magicSkill] })
+  let s2 = createBattle(magicSample, { now: 0, config: FAR_CONFIG })
+  s2 = dispatch(s2, { type: 'USE_SKILL', skillId: 'magic_test', targetId: 'e1' }, 0)
+  s2 = tick(s2, 200)
+  const ev2 = s2.events.find((e) => e.kind === 'attack')
+  // 魔法技能：coefficient=2/flat=0，dmgType='magic'。rawNet=floor(80*2+0)-0(mdef=0)=160。
+  // 排位加成不套用（rowMul 恆 1）→ 傷害維持 160，不是 176（160×1.10）。
+  eq(ev2.damage, 160, '弓對後排：魔法技能不吃排位加成，傷害維持 floor(80×2)-0=160（不是 ×1.10 的 176）')
+}
+
+// ── 3) 槍貫穿：機率門檻嚴格小於（rng<pierceChancePct/100 才觸發，恰等於門檻不觸發）。 ──
+{
+  const spear = weaponFixture('hk_spear', 'greatsword', { pierceChancePct: 30, pierceDmgPct: 50 })
+  function sample() {
+    return makeSample({
+      party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: spear }],
+      enemies: [
+        { id: 'fl', name: '前左', level: 1, hp: 9999, hpMax: 9999, slot: 'front_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+        { id: 'rl', name: '後左', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      ],
+      initialTargetId: 'fl',
+    })
+  }
+  // rng 消耗順序：idx0/1＝createBattle 兩隻敵人的 nextActAt；idx2＝miss；idx3＝crit；idx4＝貫穿判定。
+  let triggered = createBattle(sample(), { now: 0, config: FAR_CONFIG, rng: fixedRng([0, 0, 0, 0, 0.29]) })
+  triggered = dispatch(triggered, { type: 'ATTACK_BEGIN' }, 0)
+  triggered = dispatch(triggered, { type: 'ATTACK_RELEASE' }, 0)
+  eq(triggered.events.filter((e) => e.kind === 'attack' && e.pierce === true).length, 1, '貫穿門檻：rng=0.29 < 30% → 觸發貫穿')
+
+  let notTriggered = createBattle(sample(), { now: 0, config: FAR_CONFIG, rng: fixedRng([0, 0, 0, 0, 0.3]) })
+  notTriggered = dispatch(notTriggered, { type: 'ATTACK_BEGIN' }, 0)
+  notTriggered = dispatch(notTriggered, { type: 'ATTACK_RELEASE' }, 0)
+  eq(notTriggered.events.filter((e) => e.kind === 'attack' && e.pierce === true).length, 0, '貫穿門檻：rng=0.30（恰等於門檻）→ 嚴格小於，不觸發貫穿')
+}
+
+// ── 4) 槍貫穿：三種前排→後排對應（front_left→rear_left／front_right→rear_right／
+//    front_center 兩側皆存活時優先 rear_left）——pierceChancePct=100 保證觸發，只驗證「打到誰」。 ──
+{
+  const spear = weaponFixture('hk_spear', 'greatsword', { pierceChancePct: 100, pierceDmgPct: 50 })
+  function enemyAt(id, slot) {
+    return { id, name: id, level: 1, hp: 9999, hpMax: 9999, slot, imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } }
+  }
+  function attack(enemies, targetId) {
+    const sample = makeSample({
+      party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: spear }],
+      enemies,
+      initialTargetId: targetId,
+    })
+    let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+    s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+    s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+    return s
+  }
+
+  const sLeft = attack([enemyAt('fl', 'front_left'), enemyAt('rl', 'rear_left')], 'fl')
+  const pierceLeft = sLeft.events.find((e) => e.kind === 'attack' && e.pierce === true)
+  eq(pierceLeft?.targetId, 'rl', 'front_left→rear_left：貫穿正確命中對應後排')
+  eq(pierceLeft?.damage, 50, '貫穿波及＝floor(主擊 100×50%)=50')
+  ok(pierceLeft?.weapon === 'greatsword', '貫穿事件沿用武器視覺特效組')
+  ok(Number.isInteger(sLeft.enemies.find((e) => e.id === 'rl').hp), '貫穿扣血後仍是整數（整數不變式）')
+
+  const sRight = attack([enemyAt('fr', 'front_right'), enemyAt('rr', 'rear_right')], 'fr')
+  eq(sRight.events.find((e) => e.kind === 'attack' && e.pierce === true)?.targetId, 'rr', 'front_right→rear_right：貫穿正確命中對應後排')
+
+  const sCenterBoth = attack([enemyAt('fc', 'front_center'), enemyAt('rl', 'rear_left'), enemyAt('rr', 'rear_right')], 'fc')
+  eq(sCenterBoth.events.find((e) => e.kind === 'attack' && e.pierce === true)?.targetId, 'rl', 'front_center：兩側後排皆存活時優先貫穿 rear_left')
+  eq(sCenterBoth.enemies.find((e) => e.id === 'rr').hp, 9999, 'front_center 優先 rear_left 時，rear_right 完全不受影響')
+}
+
+// ── 5) 槍貫穿：front_center 的 rear_left 已死亡時 fallback 到 rear_right。 ──
+{
+  const spear = weaponFixture('hk_spear', 'greatsword', { pierceChancePct: 100, pierceDmgPct: 50 })
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: spear }],
+    enemies: [
+      { id: 'fc', name: 'fc', level: 1, hp: 9999, hpMax: 9999, slot: 'front_center', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'rl', name: 'rl', level: 1, hp: 0, hpMax: 9999, slot: 'rear_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'rr', name: 'rr', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_right', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+    ],
+    initialTargetId: 'fc',
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const pierce = s.events.find((e) => e.kind === 'attack' && e.pierce === true)
+  eq(pierce?.targetId, 'rr', 'front_center：rear_left 已死亡（開場即 hp=0）→ fallback 到 rear_right')
+}
+
+// ── 6) 槍貫穿：都無存活後排候選時不貫穿——front_center 場上完全沒有後排、與 front_left 沒有
+//    對應的 rear_left（單一固定對應，沒有 fallback）各一例，皆靜默不貫穿。 ──
+{
+  const spear = weaponFixture('hk_spear', 'greatsword', { pierceChancePct: 100, pierceDmgPct: 50 })
+  function onlyFront(slot, id) {
+    const sample = makeSample({
+      party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: spear }],
+      enemies: [{ id, name: id, level: 1, hp: 9999, hpMax: 9999, slot, imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } }],
+      initialTargetId: id,
+    })
+    let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+    s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+    s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+    return s
+  }
+  const sCenter = onlyFront('front_center', 'fc')
+  eq(sCenter.events.filter((e) => e.kind === 'attack').length, 1, 'front_center 場上完全沒有後排怪物：貫穿判定成功（rng<100%）但找不到候選，靜默不貫穿，只有主擊 1 筆事件')
+  const sLeft = onlyFront('front_left', 'fl')
+  eq(sLeft.events.filter((e) => e.kind === 'attack').length, 1, 'front_left 沒有對應的 rear_left 在場：同樣只有主擊 1 筆事件，不貫穿')
+}
+
+// ── 7) 槍貫穿：多段普攻（hits=2）每段各自獨立判定機率，不是整次普攻共用一次結果。 ──
+{
+  const spear2 = weaponFixture('hk_spear', 'greatsword', { hits: 2, hitMul: 0.5, extraHitChancePct: 0, pierceChancePct: 50, pierceDmgPct: 50 })
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: spear2 }],
+    enemies: [
+      { id: 'fl', name: 'fl', level: 1, hp: 9999, hpMax: 9999, slot: 'front_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'rl', name: 'rl', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+    ],
+    initialTargetId: 'fl',
+  })
+  // rng 順序：idx0/1＝createBattle 兩隻敵人 nextActAt；第 1 段 idx2=miss/idx3=crit/idx4=貫穿
+  // （0.2<50% 觸發）；第 2 段 idx5=miss/idx6=crit/idx7=貫穿（0.8≥50% 不觸發）。
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG, rng: fixedRng([0, 0, 0, 0, 0.2, 0, 0, 0.8]) })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const mainHits = s.events.filter((e) => e.kind === 'attack' && !e.pierce)
+  const pierceHits = s.events.filter((e) => e.kind === 'attack' && e.pierce === true)
+  eq(mainHits.length, 2, '槍雙段普攻：主擊仍是各自獨立的 2 筆事件（hitMul=0.5 拆段，不受貫穿影響）')
+  eq(pierceHits.length, 1, '槍雙段普攻：兩段各自判定一次貫穿機率——固定種子下第 1 段觸發、第 2 段不觸發，共 1 筆貫穿事件')
+  eq(pierceHits[0].damage, 25, '貫穿波及＝floor(該段實傷×50%)＝floor(50×0.5)=25')
+  eq(s.enemies.find((e) => e.id === 'fl').hp, 9999 - 50 * 2, '主擊：兩段各自 50 傷害，前排怪共扣 100')
+  eq(s.enemies.find((e) => e.id === 'rl').hp, 9999 - 25, '後排怪只受第 1 段的貫穿波及，共扣 25')
+}
+
+// ── 8) 槍貫穿：pierceChancePct=0（沒有貫穿機制的武器，含 NEUTRAL_WEAPON_PROFILE 缺省值）完全
+//    不呼叫 ctx.rng() 判定貫穿——用計數器包一層 rng，量測「pierceChancePct=30 比同樣場景的
+//    pierceChancePct=0 恰好多消耗 1 次 rng()」（那一次就是貫穿判定本身）。 ──
+{
+  function countingRng(seq) {
+    let i = 0
+    const state = { count: 0 }
+    return { rng: () => { state.count++; return seq[i++ % seq.length] }, state }
+  }
+  function sampleWith(equippedWeapon) {
+    return makeSample({
+      party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon }],
+      enemies: [
+        { id: 'fl', name: 'fl', level: 1, hp: 9999, hpMax: 9999, slot: 'front_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+        { id: 'rl', name: 'rl', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      ],
+      initialTargetId: 'fl',
+    })
+  }
+  const spearZero = weaponFixture('hk_spear', 'greatsword', { pierceChancePct: 0, pierceDmgPct: 50 })
+  const spear30 = weaponFixture('hk_spear', 'greatsword', { pierceChancePct: 30, pierceDmgPct: 50 })
+
+  const zeroCtl = countingRng([0, 0, 0, 0, 0, 0])
+  let sZero = createBattle(sampleWith(spearZero), { now: 0, config: FAR_CONFIG, rng: zeroCtl.rng })
+  sZero = dispatch(sZero, { type: 'ATTACK_BEGIN' }, 0)
+  sZero = dispatch(sZero, { type: 'ATTACK_RELEASE' }, 0)
+
+  const thirtyCtl = countingRng([0, 0, 0, 0, 0, 0])
+  let s30 = createBattle(sampleWith(spear30), { now: 0, config: FAR_CONFIG, rng: thirtyCtl.rng })
+  s30 = dispatch(s30, { type: 'ATTACK_BEGIN' }, 0)
+  s30 = dispatch(s30, { type: 'ATTACK_RELEASE' }, 0)
+
+  eq(zeroCtl.state.count, 4, 'pierceChancePct=0：本場戰鬥 rng() 呼叫次數＝2 隻敵人 nextActAt + miss + crit = 4 次，沒有第 5 次貫穿判定')
+  eq(thirtyCtl.state.count, zeroCtl.state.count + 1, 'pierceChancePct=30 比同場景 pierceChancePct=0 恰好多消耗 1 次 rng()（貫穿判定本身），=0 時完全不消耗，既有測試的 rng 序列因此不受影響')
+}
+
+// ── 9) 槍貫穿：波及傷害精確 floor（非整除時無條件捨去，不四捨五入）。 ──
+{
+  const spear = weaponFixture('hk_spear', 'greatsword', { pierceChancePct: 100, pierceDmgPct: 50 })
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 101, matk: 80, def: 35, mdef: 28 }, equippedWeapon: spear }],
+    enemies: [
+      { id: 'fl', name: 'fl', level: 1, hp: 9999, hpMax: 9999, slot: 'front_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'rl', name: 'rl', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+    ],
+    initialTargetId: 'fl',
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const main = s.events.find((e) => e.kind === 'attack' && !e.pierce)
+  const pierce = s.events.find((e) => e.kind === 'attack' && e.pierce === true)
+  eq(main.damage, 101, '主擊：atk101/def0 → 101（無排位加成、無體型加成的中性基準）')
+  eq(pierce.damage, 50, '貫穿波及＝floor(101×0.5)=50.5→50（無條件捨去，不進位）')
+}
+
+// ── 10) 貫穿與濺射互不影響：同一把武器同時具備 splashPct 與 pierceChancePct（假設性組合，驗證
+//     兩個機制各自獨立觸發、彼此不會嵌套——貫穿本身不會再觸發濺射或第二次貫穿）。 ──
+{
+  const hybrid = weaponFixture('hk_spear', 'greatsword', { splashPct: 40, pierceChancePct: 100, pierceDmgPct: 50 })
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: hybrid }],
+    enemies: [
+      { id: 'fc', name: 'fc', level: 1, hp: 9999, hpMax: 9999, slot: 'front_center', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'fl', name: 'fl', level: 1, hp: 9999, hpMax: 9999, slot: 'front_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'fr', name: 'fr', level: 1, hp: 9999, hpMax: 9999, slot: 'front_right', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'rl', name: 'rl', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'rr', name: 'rr', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_right', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+    ],
+    initialTargetId: 'fc',
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const attacks = s.events.filter((e) => e.kind === 'attack')
+  eq(attacks.length, 4, '主擊(fc)+濺射(fl,fr)+貫穿(優先 rl)＝共 4 筆事件，貫穿本身沒有再觸發濺射或第二次貫穿')
+  const splashEvents = attacks.filter((e) => e.splash === true)
+  const pierceEvents = attacks.filter((e) => e.pierce === true)
+  eq(splashEvents.length, 2, '濺射：front_left/front_right 各一筆，帶 splash:true')
+  eq(pierceEvents.length, 1, '貫穿：只有 rear_left 一筆，帶 pierce:true')
+  ok(pierceEvents.every((e) => e.splash !== true), '貫穿事件本身不帶 splash 旗標（兩個機制互相獨立，不會一筆事件同時是兩者）')
+  ok(splashEvents.every((e) => e.pierce !== true), '濺射事件本身不帶 pierce 旗標')
+  eq(s.enemies.find((e) => e.id === 'rr').hp, 9999, 'rear_right 完全不受影響（貫穿優先 rear_left、濺射不跨排）')
+}
+
+// ── 11) 審查 CONFIRMED 修復：主目標為後排（rear_left/rear_right）時完全不判定貫穿——isFront
+//     （target.row ?? rowOfSlot(target.slot)）短路擋在 ctx.rng() 之前，不會白白多消耗一次 rng()。
+//     用計數 rng 比較「主目標後排、pierceChancePct=30」與「同場景 pierceChancePct=0」耗用的 rng()
+//     次數完全相同（=4：2 隻敵人 nextActAt + miss + crit），證明沒有多耗；並確認完全無 pierce 事件
+//     （貫穿只在主目標為前排時判定，契約逐字對齊）。 ──
+{
+  function countingRng(seq) {
+    let i = 0
+    const state = { count: 0 }
+    return { rng: () => { state.count++; return seq[i++ % seq.length] }, state }
+  }
+  function sampleWithRearTarget(equippedWeapon) {
+    return makeSample({
+      party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon }],
+      enemies: [
+        { id: 'rl', name: 'rl', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+        { id: 'rr', name: 'rr', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_right', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      ],
+      initialTargetId: 'rl',
+    })
+  }
+  const spearZero = weaponFixture('hk_spear', 'greatsword', { pierceChancePct: 0, pierceDmgPct: 50 })
+  const spear30 = weaponFixture('hk_spear', 'greatsword', { pierceChancePct: 30, pierceDmgPct: 50 })
+
+  const zeroCtl = countingRng([0, 0, 0, 0, 0, 0])
+  let sZero = createBattle(sampleWithRearTarget(spearZero), { now: 0, config: FAR_CONFIG, rng: zeroCtl.rng })
+  sZero = dispatch(sZero, { type: 'ATTACK_BEGIN' }, 0)
+  sZero = dispatch(sZero, { type: 'ATTACK_RELEASE' }, 0)
+
+  const thirtyCtl = countingRng([0, 0, 0, 0, 0, 0])
+  let s30 = createBattle(sampleWithRearTarget(spear30), { now: 0, config: FAR_CONFIG, rng: thirtyCtl.rng })
+  s30 = dispatch(s30, { type: 'ATTACK_BEGIN' }, 0)
+  s30 = dispatch(s30, { type: 'ATTACK_RELEASE' }, 0)
+
+  eq(zeroCtl.state.count, 4, '對照組：主目標後排、pierceChancePct=0 時 rng() 呼叫次數＝2 隻敵人 nextActAt + miss + crit = 4 次')
+  eq(thirtyCtl.state.count, zeroCtl.state.count, '主目標為後排：pierceChancePct=30 與 pierceChancePct=0 消耗的 rng() 次數完全相同（isFront 短路擋在 rng() 之前，不會白白多耗一次，不打亂後續 rng 序列）')
+  eq(s30.events.filter((e) => e.kind === 'attack' && e.pierce === true).length, 0, '主目標為後排：即使 pierceChancePct=30，也完全不會產生 pierce 事件（貫穿只在主目標為前排時判定）')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

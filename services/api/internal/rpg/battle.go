@@ -53,6 +53,20 @@ var slotOrder = map[string]int{
 	"rear_left": 0, "rear_right": 1, "front_left": 2, "front_center": 3, "front_right": 4,
 }
 
+// enemyRowFromSlot DORPG P12（CONTRACT §1「排位＝既有槽位」）：怪物排位是槽位的衍生值，不是
+// 資料庫新欄位——rpg_encounter_monsters.slot 五個合法值裡 front_* 三個是前排、rear_* 兩個是
+// 後排，slotOrder（上面）已經窮舉全部合法槽位，這裡用同一份分類依據。未知槽位理論上不會發生
+// （壞資料的槽位在別處已經被略過，見 BattleBootstrap 迴圈的 `continue`），保守當前排（多數
+// 怪物是前排，且前排沒有額外的貫穿受害風險——後排才是貫穿的目標，誤判前排比誤判後排安全）。
+func enemyRowFromSlot(slot string) string {
+	switch slot {
+	case "rear_left", "rear_right":
+		return "rear"
+	default:
+		return "front"
+	}
+}
+
 // --- wire 型別：直接對齊 apps/web/src/lib/dorpg/types.ts（camelCase）---
 
 type wireScene struct {
@@ -142,9 +156,13 @@ func buildPlayerWeaponWire(weapon *WeaponRow, wtype *WeaponTypeRow) *wireWeapon 
 	if weapon == nil || wtype == nil {
 		return nil
 	}
+	// DORPG P12（CONTRACT §3）：排位加成／貫穿掛在武器類型 traits，不是武器本身的 profile——
+	// 這裡是玩家與傭兵唯一共用的組裝點（resolveCompanionWeaponWire 裝備武器時也呼叫這支函式），
+	// 合併一次就同時覆蓋兩條路徑，不需要在呼叫端各自合併。
+	profile := ToWeaponProfileWire(weapon.Profile).withRowBonus(weaponTypeRowBonus(wtype.Traits))
 	return &wireWeapon{
 		ID: weapon.ID, Name: weapon.Name, TypeID: weapon.TypeID, Visual: wtype.Visual,
-		Profile: ToWeaponProfileWire(weapon.Profile),
+		Profile: profile,
 	}
 }
 
@@ -278,12 +296,15 @@ func toWireEquipmentEffects(b EquipBonus) wireEquipmentEffects {
 }
 
 type wireEnemy struct {
-	ID             string        `json:"id"`
-	Name           string        `json:"name"`
-	Level          int           `json:"level"`
-	HP             int           `json:"hp"`
-	HPMax          int           `json:"hpMax"`
-	Slot           string        `json:"slot"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Level int    `json:"level"`
+	HP    int    `json:"hp"`
+	HPMax int    `json:"hpMax"`
+	Slot  string `json:"slot"`
+	// Row DORPG P12（CONTRACT §1/§3）：'front'|'rear'，由 Slot 推導（enemyRowFromSlot）——引擎
+	// rowBonusMultiplier()／貫穿命中判定用它決定「這隻怪是前排還是後排」，不用重新解析 Slot 字串。
+	Row            string        `json:"row"`
 	ImageURL       string        `json:"imageUrl"`
 	Rank           string        `json:"rank,omitempty"`
 	Attribute      string        `json:"attribute,omitempty"`
@@ -1061,7 +1082,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 		enemy := wireEnemy{
 			ID: em.Slot, Name: mr.Name, Level: sm.Level,
-			HP: sm.HPMax, HPMax: sm.HPMax, Slot: em.Slot, ImageURL: mr.PosterURL,
+			HP: sm.HPMax, HPMax: sm.HPMax, Slot: em.Slot, Row: enemyRowFromSlot(em.Slot), ImageURL: mr.PosterURL,
 			Rank: mr.Rank, Attribute: mr.Attribute, Size: mr.Size, Race: mr.Race,
 			Stats:          &ActorStats{HPMax: float64(sm.HPMax), MPMax: 0, Atk: float64(sm.Atk), Matk: float64(sm.Matk), Def: float64(sm.Def), Mdef: float64(sm.Mdef)},
 			ThreatPriority: mr.Threat,

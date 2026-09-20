@@ -468,6 +468,16 @@ type WeaponProfileWire struct {
 	ElementResistPct  float64             `json:"elementResistPct"`
 	MagicSkillPct     float64             `json:"magicSkillPct"`
 	Element           string              `json:"element"`
+
+	// --- DORPG P12（CONTRACT §3「weapon.profile 新增 rowBonusFrontPct／rowBonusRearPct／
+	// pierceChancePct／pierceDmgPct（由 type.traits 合併，缺省 0）」）：不是 WeaponProfile
+	// 的欄位（沒有對應 rpg_weapons.profile JSON 鍵），而是從 rpg_weapon_types.traits 合併進來
+	// ——withRowBonus() 負責合併，battle.go buildPlayerWeaponWire 呼叫（玩家與傭兵共用同一條
+	// 路徑）。沒有武器類型（未裝備／傭兵固定視覺）時維持零值，跟其餘欄位「缺省＝中性值」一致。
+	RowBonusFrontPct float64 `json:"rowBonusFrontPct"`
+	RowBonusRearPct  float64 `json:"rowBonusRearPct"`
+	PierceChancePct  float64 `json:"pierceChancePct"`
+	PierceDmgPct     float64 `json:"pierceDmgPct"`
 }
 
 // ToWeaponProfileWire 轉換成戰鬥 bootstrap 要送給引擎的形狀（battle.go 組 party member 用）。
@@ -483,4 +493,66 @@ func ToWeaponProfileWire(p WeaponProfile) WeaponProfileWire {
 		MagicSkillPct:    p.MagicSkillPct,
 		Element:          p.Element,
 	}
+}
+
+// ---------------------------------------------------------------------------
+// DORPG P12（CONTRACT §1/§2/§3）：怪物前排／後排 × 武器排位加成——弓對後排 +10%、鈍器對前排
+// +10%、槍機率貫穿波及後排。加成掛在 rpg_weapon_types.traits（migration 188 新增四個鍵，見
+// 該檔），這裡只提供讀 traits 的純函式；套用到傷害公式／貫穿判定是 ENGINE 前端的事
+// （engine/combat.ts resolveWeaponAttack，CONTRACT §3）。
+// ---------------------------------------------------------------------------
+
+// WeaponTypeRowBonus migration 188 四個新鍵解析後的結果，中性值全為 0（沒有這些鍵＝武器類型
+// 沒有排位加成／貫穿能力，不改變既有戰鬥手感，比照 WeaponProfile 缺欄位＝中性值的既有慣例）。
+type WeaponTypeRowBonus struct {
+	RowBonusFrontPct float64
+	RowBonusRearPct  float64
+	PierceChancePct  float64
+	PierceDmgPct     float64
+}
+
+// weaponTypeRowBonus 從 WeaponTypeRow.Traits（scanWeaponType 已經是解析好的 map[string]any，壞
+// JSON 已在那裡退回空物件）讀四個新鍵。刻意寬鬆：鍵不存在／型別不是數字一律當 0（traits 是後台
+// 可自由編輯的 JSONB，不能讓打錯型別的值把戰鬥 bootstrap 500 掉，比照 scanWeaponType 對整個
+// JSON 壞掉的既有退讓風格）；負值歸零（沒有「負加成」的設計意圖，之後真要做負加成再另開鍵）；
+// pct 系列額外夾在 0..100（pierce_dmg_pct 是「波及傷害佔比」，>100% 沒有意義；跟 Validate() 對
+// extra_hit_chance_pct 的既有夾限風格一致）。
+func weaponTypeRowBonus(traits map[string]any) WeaponTypeRowBonus {
+	get := func(key string) float64 {
+		v, ok := traits[key]
+		if !ok {
+			return 0
+		}
+		// encoding/json 把 JSON 數字 Unmarshal 進 map[string]any 一律是 float64（json.Number 只
+		// 有搭配 Decoder.UseNumber() 才會出現，scanWeaponType 用的是 json.Unmarshal，沒有那個
+		// 選項）；其餘型別（字串/布林/物件/陣列）視為打錯型別，當缺省處理。
+		f, ok := v.(float64)
+		if !ok {
+			return 0
+		}
+		if f < 0 {
+			return 0
+		}
+		if f > 100 {
+			return 100
+		}
+		return f
+	}
+	return WeaponTypeRowBonus{
+		RowBonusFrontPct: get("row_bonus_front_pct"),
+		RowBonusRearPct:  get("row_bonus_rear_pct"),
+		PierceChancePct:  get("pierce_chance_pct"),
+		PierceDmgPct:     get("pierce_dmg_pct"),
+	}
+}
+
+// withRowBonus 把 WeaponTypeRowBonus 併入既有 WeaponProfileWire（其餘欄位不動），battle.go
+// buildPlayerWeaponWire 呼叫——玩家與傭兵（傭兵裝備武器時走同一條 buildPlayerWeaponWire）共用
+// 這個合併點，不重複實作兩次。
+func (w WeaponProfileWire) withRowBonus(b WeaponTypeRowBonus) WeaponProfileWire {
+	w.RowBonusFrontPct = b.RowBonusFrontPct
+	w.RowBonusRearPct = b.RowBonusRearPct
+	w.PierceChancePct = b.PierceChancePct
+	w.PierceDmgPct = b.PierceDmgPct
+	return w
 }

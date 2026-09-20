@@ -30,6 +30,21 @@
 | 重騎士 | hk_spear | 槍 | greatsword | 是 | 普攻固定兩段各 50% 傷害，並有機率追加第三段（10%→30%） |
 | 重騎士 | hk_axe | 斧 | greatsword | 否 | 攻擊間隔變長，對主目標左右相鄰怪物造成 40% 濺射傷害，對大型怪物 +5% 傷害 |
 
+## 排位加成（DORPG P12）
+
+怪物分「前排」（front_left／front_center／front_right）與「後排」（rear_left／rear_right）——排位直接由既有槽位推導，不是新資料。三種武器類型額外掛有排位相關的加成／特殊效果，存放在該武器**類型**的 `traits` JSONB（不是每件武器各自的 `profile`，390 件武器數值本身不變），後端組 bootstrap 時會把 traits 的對應鍵合併進武器 `profile` 一起送給引擎，因此這幾鍵是少數「traits 真的影響戰鬥計算」的例外：
+
+| 職業 | 類型ID | 加成 | traits 鍵 |
+|---|---|---|---|
+| 弓箭手 | ar_longbow／ar_shortbow／ar_crossbow | 對後排怪物 +10% 物理傷害 | `row_bonus_rear_pct: 10` |
+| 商人 | mc_hammer／mc_mallet／mc_club | 對前排怪物 +10% 物理傷害 | `row_bonus_front_pct: 10` |
+| 重騎士 | hk_spear（槍） | 普攻命中前排怪物時，30% 機率「貫穿」，讓對應位置的後排怪物額外受到本段實際傷害 50% 的波及傷害（機率／比例後台可調） | `pierce_chance_pct: 30`、`pierce_dmg_pct: 50` |
+
+套用細節：
+- 只套用在「以武器造成的物理傷害」＝普攻＋物理技能，乘在暴擊／屬性／體型加成之後、取整之前；魔法技能不吃。
+- 貫穿只在**普攻**命中前排目標時判定（多段普攻每段各自獨立判定一次機率、各自波及）；對應後排位置：front_left→rear_left、front_right→rear_right、front_center→優先 rear_left，其已死亡或不存在則退回 rear_right，兩者皆無則不貫穿。波及傷害不重新扣後排怪的 DEF、不判定暴擊，也不會再觸發二次貫穿或濺射；貫穿與斧的濺射（同排相鄰）彼此獨立互不影響。
+- migration 188（`services/api/migrations/188_rpg_p12_row_bonus.sql`）用 `traits || '{...}'::jsonb` 只新增以上鍵，不動 P7 產生器留下的既有描述鍵（style／special／positioning／size_bonus／…_range 等）；後台「武器類型」頁的 traits JSON 欄位可直接調整。
+
 ## 各類型分級數值
 
 ### 輕騎士

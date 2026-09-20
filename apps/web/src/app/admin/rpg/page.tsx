@@ -1380,7 +1380,9 @@ function WeaponTypesTab({ token, onErr, onMsg }: { token: string; onErr: (m: str
         <div>
           <h2 style={{ fontSize: 15, fontWeight: 800, margin: '0 0 4px' }}>武器類型管理</h2>
           <p style={{ fontSize: 12, color: 'var(--tx-dim)', margin: 0, maxWidth: 640, lineHeight: 1.7 }}>
-            每職業固定 3 種武器類型（見契約 §2）。traits 是型別層固定特性，純供顯示／設計依據，實際數值全部在「武器」分頁各一級武器的 profile。
+            每職業固定 3 種武器類型（見契約 §2）。traits 大部分鍵純供顯示／設計依據，實際數值全部在「武器」分頁各一級武器的 profile；
+            但 DORPG P12 新增的四鍵 row_bonus_front_pct／row_bonus_rear_pct／pierce_chance_pct／pierce_dmg_pct
+            例外——後端會把它們合併進武器 profile 真正套用到戰鬥計算（見契約 dorpg_p12 CONTRACT.md §1/§3）。
           </p>
         </div>
         {!form && <button onClick={startNew} style={primaryBtn}>＋ 新增</button>}
@@ -1440,7 +1442,7 @@ function WeaponTypesTab({ token, onErr, onMsg }: { token: string; onErr: (m: str
             <F label="描述" full>
               <textarea style={{ ...ta, height: 70 }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             </F>
-            <F label="型別特性 traits（JSON，純顯示／設計依據，不影響戰鬥計算）" full>
+            <F label="型別特性 traits（JSON；多數鍵純顯示，但 P12 的 row_bonus_front_pct／row_bonus_rear_pct／pierce_chance_pct／pierce_dmg_pct 會真的套用到戰鬥計算，見上方說明）" full>
               <textarea style={{ ...ta, height: 120, fontFamily: 'monospace', fontSize: 12 }} value={traitsText} onChange={(e) => setTraitsText(e.target.value)} />
             </F>
           </div>

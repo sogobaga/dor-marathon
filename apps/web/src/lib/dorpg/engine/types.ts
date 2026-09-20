@@ -162,7 +162,22 @@ export interface EnemyActor {
   /** P5（CONTRACT §6）：弱點屬性桶，缺省 []；見 Enemy.weakElements 型別註解與 formulas.ts
    *  elementMultiplier() 的「chart 覆寫優先，否則 weakElements 命中」規則。 */
   weakElements: string[];
+  /**
+   * P12（CONTRACT §1「排位＝既有槽位」、WIRE「enemy 新增 slot、row」）：這隻怪目前是前排還是
+   * 後排，只影響武器排位加成（formulas.ts rowBonusMultiplier）與槍系貫穿的候選後排位置
+   * （combat.ts resolveWeaponAttack）。可選欄位——ENGINE 不擁有 createBattle（engine/index.ts）
+   * 的寫入權，無法保證這裡一定會被填值；`slot` 才是必填、唯一保證存在的權威資料，row 永遠可以
+   * 從它推導（formulas.ts rowOfSlot），這裡開一個欄位純粹是讓「上游（BACKEND／INTEGRATOR）已經
+   * 算好、直接送 row」的情況可以省一次推導，兩者算出來的值必須一致（都是 slot 的單純函式）。
+   * 所有讀取端一律用 `enemy.row ?? rowOfSlot(enemy.slot)` 取得有效排位，不會因為這個欄位缺席
+   * 而遺漏排位加成/貫穿機制。
+   */
+  row?: EnemyRow;
 }
+
+/** P12：怪物排位——前排（front_left/center/right）／後排（rear_left/right），見 EnemyActor.row
+ *  型別註解與 formulas.ts rowOfSlot()。 */
+export type EnemyRow = 'front' | 'rear';
 
 export interface BattleConfig {
   attackCooldownMs: number;
@@ -449,6 +464,14 @@ export type BattleEvent =
        *  缺省 undefined（既有事件一律視為非濺射，跟明確給 false 語意相同，只是不強迫每個既有
        *  呼叫點都補這個欄位）。 */
       splash?: boolean;
+      /**
+       * P12（CONTRACT §1 槍／WIRE「事件 attack 加 pierce:true」，比照 splash 的做法）：這筆傷害
+       * 是普攻貫穿到對應後排位置的波及命中，不是主要目標——FRONTEND 據此顯示「貫穿」浮字（與
+       * 濺射同樣式、不同字）。splash/pierce 兩個旗標互斥（同一筆事件不會同時是濺射又是貫穿——
+       * 濺射的主目標一定是主擊本身、貫穿的目標一定是後排，見 combat.ts applySplashDamage／
+       * tryPierce 各自獨立 pushEvent，不會共用同一筆）。缺省 undefined＝非貫穿。
+       */
+      pierce?: boolean;
     }
   | { seq: number; at: number; kind: 'skillCast'; actorId: string; skillId: string; targetId: string | null }
   | { seq: number; at: number; kind: 'heal' | 'shield'; actorId: string; targetId: string; amount: number }

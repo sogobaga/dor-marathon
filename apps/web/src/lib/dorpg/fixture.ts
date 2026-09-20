@@ -360,6 +360,7 @@ export const RPG_WEAPON_FIXTURES: Record<string, WeaponFixtureRow> = {
       atk: 40, matk: 0, hits: 2, hitMul: 0.6, extraHitChancePct: 0, intervalPct: 0,
       chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
       critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
+      rowBonusFrontPct: 0, rowBonusRearPct: 0, pierceChancePct: 0, pierceDmgPct: 0,
     },
   },
   // 重騎士．斧：CONTRACT §3「增加物理攻擊的間隔時間，會造成範圍傷害...對於大體型的怪物會有額外
@@ -373,6 +374,7 @@ export const RPG_WEAPON_FIXTURES: Record<string, WeaponFixtureRow> = {
       atk: 55, matk: 0, hits: 1, hitMul: 1, extraHitChancePct: 0, intervalPct: 25,
       chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 40, sizeBonus: { small: 0, medium: 0, large: 5 },
       critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
+      rowBonusFrontPct: 0, rowBonusRearPct: 0, pierceChancePct: 0, pierceDmgPct: 0,
     },
   },
   // 聖職者．鍊：CONTRACT §3「增加魔法抗性（屬性效果減免）」——element_resist_pct 減免非 neutral
@@ -387,6 +389,51 @@ export const RPG_WEAPON_FIXTURES: Record<string, WeaponFixtureRow> = {
       atk: 5, matk: 30, hits: 1, hitMul: 1, extraHitChancePct: 0, intervalPct: 0,
       chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
       critPct: 0, critDmgPct: 0, elementResistPct: 15, magicSkillPct: 0, element: 'light',
+      rowBonusFrontPct: 0, rowBonusRearPct: 0, pierceChancePct: 0, pierceDmgPct: 0,
+    },
+  },
+  // ---------------------------------------------------------------------------
+  // P12（scratchpad/dorpg_p12/CONTRACT.md §1）：怪物前排／後排 × 武器排位加成——三件示範武器
+  // 各自展示一種新機制，鏡像 migration 188 對 rpg_weapon_types.traits 新增的三組鍵（見該檔）。
+  // ---------------------------------------------------------------------------
+  // 游擊．長弓：CONTRACT §1「弓類...對於後排的怪物有 10% 的加成」——rowBonusRearPct=10。
+  demo_bow: {
+    id: 'demo_bow',
+    name: '路跑蓄力弓',
+    typeId: 'ar_longbow',
+    visual: 'bow',
+    profile: {
+      atk: 30, matk: 0, hits: 1, hitMul: 1, extraHitChancePct: 0, intervalPct: 0,
+      chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
+      critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
+      rowBonusFrontPct: 0, rowBonusRearPct: 10, pierceChancePct: 0, pierceDmgPct: 0,
+    },
+  },
+  // 商人．錘：CONTRACT §1「鈍器類的武器，對於前排的怪物有 10% 的加成」——rowBonusFrontPct=10。
+  demo_mace: {
+    id: 'demo_mace',
+    name: '市集秤重錘',
+    typeId: 'mc_hammer',
+    visual: 'sword',
+    profile: {
+      atk: 35, matk: 0, hits: 1, hitMul: 1, extraHitChancePct: 0, intervalPct: 0,
+      chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
+      critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
+      rowBonusFrontPct: 10, rowBonusRearPct: 0, pierceChancePct: 0, pierceDmgPct: 0,
+    },
+  },
+  // 重騎士．槍：CONTRACT §1「槍，攻擊前排的怪物，有機會造成貫穿的傷害，讓對應位置的後排怪物也
+  // 受到原傷害 50% 的波及傷害」——pierceChancePct=30（migration 188 拍板值）、pierceDmgPct=50。
+  demo_spear: {
+    id: 'demo_spear',
+    name: '突刺長槍',
+    typeId: 'hk_spear',
+    visual: 'greatsword',
+    profile: {
+      atk: 45, matk: 0, hits: 1, hitMul: 1, extraHitChancePct: 0, intervalPct: 0,
+      chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
+      critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
+      rowBonusFrontPct: 0, rowBonusRearPct: 0, pierceChancePct: 30, pierceDmgPct: 50,
     },
   },
 };

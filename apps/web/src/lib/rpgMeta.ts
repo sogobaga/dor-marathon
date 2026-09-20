@@ -643,6 +643,32 @@ export function formatWeaponProfile(p: WeaponProfile | null | undefined): string
   return parts.join('・')
 }
 
+/**
+ * DORPG P12（契約 dorpg_p12 CONTRACT.md §1/§3）：武器「類型」層級的前後排加成／貫穿說明——
+ * 掛在 WeaponTypeDTO.traits（JSONB，P7 已有此欄，本輪只新增以下四個鍵，其餘既有描述鍵
+ * style/special/positioning/size_bonus/interval_pct/…_range 不動、這裡也不讀）：
+ *   row_bonus_rear_pct（弓）／row_bonus_front_pct（鈍器）／pierce_chance_pct＋pierce_dmg_pct（槍）。
+ * 只讀這四個鍵，缺省或非數字一律當 0（traits 是 Record<string, unknown>，來源是後台 JSON textarea，
+ * 不假設型別正確）。純顯示用途，不做戰鬥判斷——實際數值由 bootstrap 的 weapon.profile 四個新欄位
+ * （rowBonusFrontPct/rowBonusRearPct/pierceChancePct/pierceDmgPct）帶給引擎。
+ */
+export function formatWeaponTypeRowBonus(traits: Record<string, unknown> | null | undefined): string {
+  if (!traits) return ''
+  const num = (key: string): number => {
+    const v = traits[key]
+    return typeof v === 'number' && isFinite(v) ? v : 0
+  }
+  const rearPct = num('row_bonus_rear_pct')
+  const frontPct = num('row_bonus_front_pct')
+  const pierceChancePct = num('pierce_chance_pct')
+  const pierceDmgPct = num('pierce_dmg_pct')
+  const parts: string[] = []
+  if (rearPct) parts.push(`對後排 +${rearPct}%`)
+  if (frontPct) parts.push(`對前排 +${frontPct}%`)
+  if (pierceChancePct) parts.push(`${pierceChancePct}% 機率貫穿，後排受 ${pierceDmgPct}% 波及`)
+  return parts.join('・')
+}
+
 // ---------------------------------------------------------------------------
 // DORPG P8（防具＋飾品裝備，見契約 dorpg_p8 CONTRACT.md §1/§2/§3、WIRE.md）：EquipmentScreen（會員）
 // 與 admin/rpg（後台，防具分頁）共用的顯示文案。

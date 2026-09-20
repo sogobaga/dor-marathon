@@ -31,6 +31,7 @@ import type {
   EffectAtLevel,
   ElementKind,
   Enemy,
+  EnemyRow,
   EnemySlotId,
   EquipmentEffectsWire,
   EquippedWeaponWire,
@@ -65,6 +66,16 @@ const ENEMY_SLOTS: readonly EnemySlotId[] = ['rear_left', 'rear_right', 'front_l
 /** 未知槽位保底站 front_center，至少不會讓 BattleStage 因為查無此槽位而整個崩掉。 */
 function asSlot(s: string): EnemySlotId {
   return (ENEMY_SLOTS as readonly string[]).includes(s) ? (s as EnemySlotId) : 'front_center';
+}
+
+/**
+ * P12（CONTRACT §1／WIRE「戰鬥 bootstrap」：「enemies[].row」）：只收 'front'|'rear' 這兩個合法
+ * 字面值，缺欄位／型別跑掉／任何其它字串一律退回 undefined——跟本檔其餘 as*() 系列「寧可丟棄也
+ * 不塞髒資料」同一個原則。engine/index.ts 的 toEnemyActor 對 undefined 會用
+ * `enemy.row ?? rowOfSlot(enemy.slot)` 從必填的 slot 後備推導，不影響任何排位加成/貫穿判斷。
+ */
+function asRow(r: string | undefined): EnemyRow | undefined {
+  return r === 'front' || r === 'rear' ? r : undefined;
 }
 
 function isFiniteNumber(v: unknown): v is number {
@@ -141,6 +152,14 @@ function asWeaponProfile(raw: unknown): WeaponProfileWire | null {
     elementResistPct: num(r.elementResistPct, 0),
     magicSkillPct: num(r.magicSkillPct, 0),
     element: asElement(typeof r.element === 'string' ? r.element : undefined) ?? 'neutral',
+    // P12（CONTRACT §3、WIRE「weapon.profile 新增 rowBonusFrontPct/rowBonusRearPct/
+    // pierceChancePct/pierceDmgPct（由 type.traits 合併，缺省 0）」）：跟其餘欄位同一套「缺失
+    // 或型別不符給中性預設值」的防禦風格——後端由 rpg_weapon_types.traits 合併算出，非這四種
+    // 武器類型（弓/鈍器/槍）一律送 0，舊版後端尚未上線本輪功能時整包缺欄位也一樣退回 0。
+    rowBonusFrontPct: num(r.rowBonusFrontPct, 0),
+    rowBonusRearPct: num(r.rowBonusRearPct, 0),
+    pierceChancePct: num(r.pierceChancePct, 0),
+    pierceDmgPct: num(r.pierceDmgPct, 0),
   };
 }
 
@@ -270,6 +289,8 @@ function mapEnemy(e: RpgBootstrapEnemyRaw): Enemy {
     hp: e.hp,
     hpMax: e.hpMax,
     slot: asSlot(e.slot),
+    // P12（WIRE「戰鬥 bootstrap」：「enemies[].row」）：見 asRow() 型別註解。
+    row: asRow(e.row),
     imageUrl: e.imageUrl,
     rank: e.rank,
     attribute: e.attribute,

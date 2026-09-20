@@ -5497,7 +5497,11 @@ export interface WeaponProfile {
 export type WeaponRarity = 'common' | 'rare' | 'epic' | 'legendary'
 
 /** WIRE §REST WeaponTypeDTO：該職業其中一種武器類型（如「單手劍」），traits 是型別層固定特性
- *  （純顯示／設計依據，engine 不讀這個物件——實際效果數值全部在每件武器各自的 profile）。 */
+ *  （多數鍵純顯示／設計依據，engine 不直接讀這個物件——實際效果數值全部在每件武器各自的 profile；
+ *  例外是 DORPG P12 新增的 row_bonus_front_pct／row_bonus_rear_pct／pierce_chance_pct／
+ *  pierce_dmg_pct 四鍵，後端 buildPlayerWeaponWire 會把它們合併進武器 profile 的同名四欄
+ *  （見 RpgBootstrapWeaponProfileRaw），這四鍵因此「真的」影響戰鬥計算，見契約 dorpg_p12
+ *  CONTRACT.md §1/§3、rpgMeta.ts formatWeaponTypeRowBonus）。 */
 export interface WeaponTypeDTO {
   id: string
   job_id: string
@@ -6244,6 +6248,13 @@ export interface RpgBootstrapWeaponProfileRaw {
   elementResistPct: number
   magicSkillPct: number
   element: string
+  // DORPG P12（契約 dorpg_p12 CONTRACT.md §3）：前後排加成／貫穿——由後端 buildPlayerWeaponWire
+  // 合併 rpg_weapon_types.traits 的四個新鍵算出，非武器職業/類型一律送 0（同其餘欄位「後端逐欄
+  // 都給值」慣例，不設 optional）。
+  rowBonusFrontPct: number
+  rowBonusRearPct: number
+  pierceChancePct: number
+  pierceDmgPct: number
 }
 /** 對齊 ENGINE lib/dorpg/types.ts 的 EquippedWeaponWire。 */
 export interface RpgBootstrapEquippedWeaponRaw {
@@ -6260,6 +6271,11 @@ export interface RpgBootstrapEnemyRaw {
   hp: number
   hpMax: number
   slot: string
+  // P12（CONTRACT §1/§3、WIRE「戰鬥 bootstrap」：battle.go wireEnemy.Row 恆送 'front'|'rear'，
+  // 由 Slot 推導）：選填只是防禦——舊版後端（本輪部署前）可能還沒送這個欄位，fromApi.ts 的
+  // mapEnemy() 對缺欄位／非法值一律退回 undefined，讓 engine 自己用 rowOfSlot(slot) 後備推導
+  // （見 dorpg/engine/formulas.ts rowOfSlot），不會因為這裡沒收到值而漏掉排位加成/貫穿機制。
+  row?: string
   imageUrl: string
   rank?: string
   attribute?: string

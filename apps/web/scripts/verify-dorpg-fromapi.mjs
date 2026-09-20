@@ -380,5 +380,98 @@ const pad10 = (s) => [s, null, null, null, null, null, null, null, null, null]
   ok(inGuardianState(s.party[0], 0), '經完整 wire→fromApi→engine 管線，GUARD_BEGIN 後 inGuardianState 判定為 true（仇恨規則真的吃到，不只是型別欄位對了）')
 }
 
+// ── 9) DORPG P12（CONTRACT §3、WIRE「weapon.profile 新增 rowBonusFrontPct/rowBonusRearPct/
+//      pierceChancePct/pierceDmgPct（由 type.traits 合併，缺省 0）」）：asWeaponProfile() 正確
+//      映射四個新欄位——有送值時原樣照抄，缺欄位（舊版後端／未上線本輪功能的武器類型）時比照
+//      其餘欄位的既有防禦風格，退回中性值 0，不會讓整包 weapon 解析失敗。 ──
+{
+  const spearWire = {
+    id: 'hk_spear_t5', name: '突刺長槍‧伍式', typeId: 'hk_spear', visual: 'greatsword',
+    profile: {
+      atk: 45, matk: 0, hits: 1, hitMul: 1, extraHitChancePct: 0, intervalPct: 0,
+      chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
+      critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
+      rowBonusFrontPct: 0, rowBonusRearPct: 0, pierceChancePct: 30, pierceDmgPct: 50,
+    },
+  }
+  const rawWithFourFields = {
+    party: [{
+      id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100,
+      portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 },
+      weapon: spearWire,
+    }],
+    enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 99999, hpMax: 99999, slot: 'front_center', imageUrl: '', canEscape: true, stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 35, mdef: 10 } }],
+    scene: { id: 's', name: 's', imageUrl: '', slots: [] },
+    skills: pad10(null),
+    items: [],
+    initialTargetId: 'e1',
+  }
+  const withFour = sampleFromBootstrap(rawWithFourFields).party[0].equippedWeapon?.profile
+  eq(
+    { rowBonusFrontPct: withFour?.rowBonusFrontPct, rowBonusRearPct: withFour?.rowBonusRearPct, pierceChancePct: withFour?.pierceChancePct, pierceDmgPct: withFour?.pierceDmgPct },
+    { rowBonusFrontPct: 0, rowBonusRearPct: 0, pierceChancePct: 30, pierceDmgPct: 50 },
+    'wire 有送 P12 四欄時，asWeaponProfile 原樣映射（槍：pierceChancePct=30/pierceDmgPct=50）',
+  )
+
+  // 對照組：wire 完全沒有這四個鍵（比照本檔 6) 號區塊 dualSwordWire 的既有寫法，模擬舊版後端／
+  // 尚未上線本輪功能的武器類型）——四欄應退回中性值 0，其餘既有欄位不受影響。
+  const rawMissingFourFields = {
+    ...rawWithFourFields,
+    party: [{
+      ...rawWithFourFields.party[0],
+      weapon: {
+        id: 'lk_dual_old', name: '舊版雙劍', typeId: 'lk_dual', visual: 'sword',
+        profile: {
+          atk: 40, matk: 0, hits: 2, hitMul: 0.6, extraHitChancePct: 0, intervalPct: 0,
+          chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
+          critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
+          // 刻意不送 rowBonusFrontPct/rowBonusRearPct/pierceChancePct/pierceDmgPct。
+        },
+      },
+    }],
+  }
+  const missingFour = sampleFromBootstrap(rawMissingFourFields).party[0].equippedWeapon?.profile
+  eq(
+    { rowBonusFrontPct: missingFour?.rowBonusFrontPct, rowBonusRearPct: missingFour?.rowBonusRearPct, pierceChancePct: missingFour?.pierceChancePct, pierceDmgPct: missingFour?.pierceDmgPct },
+    { rowBonusFrontPct: 0, rowBonusRearPct: 0, pierceChancePct: 0, pierceDmgPct: 0 },
+    '舊版後端／未上線本輪功能的武器：wire 完全沒有送 P12 四欄時，全部退回中性值 0（不影響整包 weapon 解析）',
+  )
+  eq(missingFour?.hits, 2, '對照組：缺 P12 四欄不影響既有欄位（hits 仍正確映射成 2）')
+}
+
+// ── 10) DORPG P12（CONTRACT §1／WIRE「戰鬥 bootstrap」：「enemies[].row」）：mapEnemy() 對
+//      wire 送的 row 正確映射——合法值（'front'/'rear'）原樣照抄；缺欄位或非法字串退回 undefined，
+//      不塞髒資料（跟本檔其餘 as*() 系列「寧可丟棄」同一個防禦風格）。 ──
+{
+  function rawSampleWithEnemy(enemyExtra) {
+    return {
+      party: [{
+        id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100,
+        portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, weapon: 'sword',
+      }],
+      enemies: [{
+        id: 'e1', name: '測試假人', level: 50, hp: 99999, hpMax: 99999, slot: 'rear_left',
+        imageUrl: '', canEscape: true, stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 },
+        ...enemyExtra,
+      }],
+      scene: { id: 's', name: 's', imageUrl: '', slots: [] },
+      skills: pad10(null),
+      items: [],
+      initialTargetId: 'e1',
+    }
+  }
+  const enemyWithRear = sampleFromBootstrap(rawSampleWithEnemy({ row: 'rear' })).enemies[0]
+  eq(enemyWithRear.row, 'rear', 'wire 送 row=\'rear\'：Enemy.row 原樣映射成 \'rear\'')
+
+  const enemyWithFront = sampleFromBootstrap(rawSampleWithEnemy({ row: 'front' })).enemies[0]
+  eq(enemyWithFront.row, 'front', 'wire 送 row=\'front\'：Enemy.row 原樣映射成 \'front\'')
+
+  const enemyWithBadRow = sampleFromBootstrap(rawSampleWithEnemy({ row: 'sideways' })).enemies[0]
+  eq(enemyWithBadRow.row, undefined, 'wire 送非法值（\'sideways\'）：Enemy.row 退回 undefined，不塞髒資料（engine 端仍能用 rowOfSlot(slot) 後備推導）')
+
+  const enemyMissingRow = sampleFromBootstrap(rawSampleWithEnemy({})).enemies[0]
+  eq(enemyMissingRow.row, undefined, '舊版後端完全沒送 row 欄位：Enemy.row 缺省 undefined')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)
