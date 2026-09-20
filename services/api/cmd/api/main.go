@@ -585,6 +585,10 @@ func main() {
 			// events 的 60/min（互動操作，不是後台批次）。
 			r.With(middleware.RateLimit(rdb, "rpg_battle", 60, time.Minute, middleware.UserOrIP)).
 				Mount("/rpg/battle", rpgHandler.BattleRouter())
+			// DORPG P11：怪物強度九級表（見 internal/rpg battle.go/ranks.go，migration 189）——
+			// "/rpg/ranks" 是跟 "/rpg"／"/rpg/battle" 同層的靜態子路徑，套用同一套 requireEntry
+			// 白名單，讀取量遠低於 battle 三支互動端點（開對戰選單時查一次），不額外節流。
+			r.Mount("/rpg/ranks", rpgHandler.RanksRouter())
 
 			// 電子發票輸入時查驗（見 internal/einvoice/verify.go）：報名表單填手機條碼/愛心碼時
 			// 即時打 ECPay CheckBarcode/CheckLoveCode 確認號碼真的存在（抓 0/O、1/I 這類格式合法
@@ -707,6 +711,9 @@ func main() {
 			// 靜態子路徑跟既有 "/admin/rpg" mount 共存，沿用同一個 perm("rpg")（INTEGRATOR 補上——
 			// BACKEND 交接時漏掛，見 jobs.go:179 的註解）。
 			r.With(perm("rpg")).Mount("/admin/rpg/jobs", rpgHandler.AdminJobsRouter())
+			// DORPG P11 怪物強度九級表後台（見 internal/rpg ranks_admin.go，migration 189）：同上，
+			// 靜態子路徑跟既有 "/admin/rpg" mount 共存，沿用同一個 perm("rpg")。
+			r.With(perm("rpg")).Mount("/admin/rpg/monster-ranks", rpgHandler.AdminMonsterRanksRouter())
 			// 較寬鬆的節流（後台讀取型端點，僅防止表格分頁被寫成緊迴圈誤打）。
 			r.With(perm("rpg"), middleware.RateLimit(rdb, "admin_rpg_battle_logs", 60, time.Minute, middleware.UserOrIP)).
 				Get("/admin/rpg/battle-logs", rpgHandler.AdminBattleLogs)

@@ -5174,6 +5174,11 @@ export type SkillTarget = 'enemy' | 'allEnemies' | 'self' | 'ally' | 'allAllies'
 // 該檔避免跨角色檔案耦合——兩邊字面量集合須保持一致，改動時兩處都要同步）。
 export type RpgElement = 'metal' | 'wood' | 'water' | 'fire' | 'earth' | 'light' | 'dark' | 'neutral'
 
+// DORPG P11（契約 dorpg_p11 CONTRACT.md §1/§2、WIRE.md）：怪物強度九級，由弱到強固定 9 個字面值，
+// 對照新表 rpg_monster_ranks 的主鍵（既有 rpg_monsters.rank 的 A–E 值皆是這九值的子集，本輪加 FK 後
+// 收斂成同一份詞彙表）。SA/SS＝特A／特S（後端/DB 用純 ASCII 代碼，中文顯示交給 rpgMeta.ts RANK_LABEL）。
+export type RpgRank = 'F' | 'E' | 'D' | 'C' | 'B' | 'A' | 'SA' | 'S' | 'SS'
+
 /** 已依技能等級展開成即時數值的效果快照（WIRE：base+per_level×(lv−1)）。各 kind 只會用到其中一部分欄位。 */
 export interface EffectAtLevel {
   kind: SkillKind
@@ -5235,6 +5240,21 @@ export interface RpgSkillsResponse {
   skill_points_free: number
 }
 
+/** DORPG P11（WIRE §REST：「GET /rpg/ranks → { ranks: RankDTO[] }」）：玩家端可查詢的九級強度說明
+ *  （不含 summon／level_curve 這種後台調參用的內部欄位）——目前 FRONTEND 這輪主要靠 EncounterPicker
+ *  卡片自帶的 rank_label/badge_color 顯示，這支端點留給未來「強度說明」畫面或角色頁引用。 */
+export interface RpgRankDTO {
+  rank: RpgRank
+  label: string
+  sort_order: number
+  hp_mult: number
+  atk_mult: number
+  def_mult: number
+  mdef_mult: number
+  description: string
+  badge_color: string
+}
+
 export const rpgApi = {
   me: (token: string) => request<RpgMe>('/rpg/me', { headers: withAuth(token) }),
   // P5：六職業清單（含路線 A/B 說明、武器、物攻分支）；EncounterPicker 簡潔切換列與角色頁完整
@@ -5261,6 +5281,8 @@ export const rpgApi = {
   // 失敗只 toast、不回滾本地——見任務 §3）。錯誤碼 unknown_strategy（呼叫端自行組中文文案）。
   setAutoBattle: (token: string, body: AutoBattleDTO) =>
     request<AutoBattleDTO>('/rpg/auto-battle', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(body) }),
+  // DORPG P11（WIRE §REST）：九級強度說明表（見 RpgRankDTO 型別註解）。
+  ranks: (token: string) => request<{ ranks: RpgRankDTO[] }>('/rpg/ranks', { headers: withAuth(token) }),
 }
 
 /** DORPG P9（WIRE §REST）：PUT /rpg/auto-battle body／回應，與 /rpg/me 的 auto_battle 欄位同形。 */
@@ -5676,11 +5698,18 @@ export interface AdminRpgUser {
 // 原始碼核對，非憑空照契約寫），供 /admin/rpg 七個內容分頁使用。這批型別只給 adminRpgApi 用，
 // 跟上面 FE_MEMBER 的 RpgBootstrap* 系列（camelCase、玩家端 bootstrap wire 格式）刻意分開。
 
-/** rpg_monsters 一列。對照 internal/rpg/scaling.go MonsterRow。 */
+/** rpg_monsters 一列。對照 internal/rpg/scaling.go MonsterRow。
+ *
+ * DORPG P11（契約 §2、WIRE §後台）：`rank` 收斂為九值字面聯集（migration 189 加 FK 參照
+ * rpg_monster_ranks，既有 A–E 值皆合法子集）；新增 `weak_elements`——P5 引擎/bootstrap 早就支援
+ * 怪物弱點屬性桶（見 dorpg/types.ts Enemy.weakElements、RpgBootstrapEnemyRaw.weakElements），但
+ * P2 建表當時漏開這個後台可編輯欄位，只能靠 SQL migration 塞值，本輪順手補齊（既有落差，非本輪
+ * 新規則）。
+ */
 export interface RpgMonster {
   id: string
   name: string
-  rank: string
+  rank: RpgRank
   attribute: string
   size: string
   race: string
@@ -5694,6 +5723,9 @@ export interface RpgMonster {
   is_boss: boolean
   is_active: boolean
   sort_order: number
+  /** 這隻怪的弱點屬性桶（DOR 8 桶，同 RpgBootstrapEnemyRaw.weakElements）；技能屬性命中其中之一時
+   *  傷害加成（見 rpgMeta.ts CONFIG_GROUPS 的 battle_weakness_bonus_pct 說明）。缺省 []（無弱點）。 */
+  weak_elements: RpgElement[]
 }
 
 /**
@@ -5860,6 +5892,58 @@ export interface RpgEncounter {
   /** DORPG P6（契約 §2）：這一場怪物的等級 N（1–99），驅動 battle_scale_mode="level" 時的
    *  RefPlayer(N) 縮放；六場預設 10/20/30/40/50/60。 */
   monster_level: number
+  /** DORPG P11（契約 §1/§2、WIRE §後台）：'legacy'＝既有六場公式（手感零改動），'rank'＝吃
+   *  rpg_monster_ranks 九級倍率（見下面 rank／monster_count）。 */
+  scaling_mode: 'legacy' | 'rank'
+  /** 'fixed'＝monster_level 欄位本身（既有語意），'player'＝怪物等級跟隨玩家有效等級（強度挑戰
+   *  20 場用這個，monster_level 欄位在這裡只是後台編輯用的預設值，不影響實際對戰）。 */
+  level_mode: 'fixed' | 'player'
+  /** scaling_mode='rank' 才有意義；null＝未設定（legacy 場次）。 */
+  rank: RpgRank | null
+  /** 這場出現的怪物隻數（1/3/5，強度挑戰用）；null＝未設定（legacy 場次沿用 monsters 編組決定）。 */
+  monster_count: number | null
+}
+
+// --- DORPG P11：怪物強度九級（見契約 dorpg_p11 CONTRACT.md §1/§2、WIRE §後台）。固定九列
+// （rank 為主鍵，PUT 語意是 upsert 但後端只認九個既有 rank 值，不接受新增/刪除——比照
+// RpgWeaponType／RpgJob「只開放 GET/PUT」的既有慣例，adminRpgApi 不提供 deleteMonsterRank）。
+
+/** rpg_monster_ranks.summon 一波召喚（契約 §1：A 以上會在 HP% 跨門檻時召喚低階怪）。
+ *  monster_ids 空陣列＝該波召喚該 rank 的分級怪（見契約 §1 九隻分級怪物）。 */
+export interface RpgMonsterRankSummonWave {
+  at_hp_pct: number
+  rank: RpgRank
+  count: number
+  /** 空＝召喚該 rank 的分級怪；後端 `monster_ids,omitempty`，空陣列時這個鍵可能整個不出現。 */
+  monster_ids?: string[]
+  /** 召喚怪整體折減（P11 sim2：完整 rank 向量太強），缺省 1.0、值域 0.05–2.0 */
+  power_scale?: number;
+}
+export interface RpgMonsterRankSummon {
+  /** 後端 `waves,omitempty`——大多數等級（F～B）沒有召喚設定，GET 回應可能整個是 `{}`
+   *  （鍵不存在），不是 `{ waves: [] }`；讀取端一律要用 `summon?.waves ?? []` 這種寫法。 */
+  waves?: RpgMonsterRankSummonWave[]
+}
+
+/** rpg_monster_ranks 一列。對照 internal/rpg（migration 189 新表）——九級（F/E/D/C/B/A/SA/S/SS）
+ *  相對「同級參考玩家 Ref(N)」的絕對倍率，`scaling_mode='rank'` 的遭遇才會用到；level_curve／summon
+ *  是 JSON，比照 WeaponsTab profile／AiStrategiesTab params 的既有慣例存成排版過的字串編輯。 */
+export interface RpgMonsterRank {
+  rank: RpgRank
+  label: string
+  sort_order: number
+  hp_mult: number
+  atk_mult: number
+  def_mult: number
+  mdef_mult: number
+  /** 每級修正係數（契約 §1：等級漂移根治留給 P13，本輪先留 JSONB 掛勾，預設 {}）。 */
+  level_curve: Record<string, unknown>
+  summon: RpgMonsterRankSummon
+  badge_color: string
+  description: string
+  /** 校準備註（RANK_TABLE.md 的錨點與已知缺口，唯讀顯示用途，PUT body 未列這欄不代表後端會拒絕，
+   *  只是本輪表單不開放編輯——調整請改 description）。 */
+  calibrated_note?: string
 }
 
 // --- DORPG P7：武器內容 CRUD 型別（見契約 dorpg_p7 CONTRACT.md §2、WIRE §後台）。與上面 FE_MEMBER
@@ -6025,6 +6109,12 @@ export const adminRpgApi = {
   deleteEncounter: (token: string, code: string) =>
     request<{ ok: boolean }>(`/admin/rpg/encounters/${encodeURIComponent(code)}`, { method: 'DELETE', headers: withAuth(token) }),
 
+  // DORPG P11（契約 §2/§3、WIRE §後台）：怪物強度九級——固定九列，只有 GET/PUT（比照
+  // weapon-types／jobs 既有慣例，不提供刪除路由，rank 固定九值不可新增刪除）。
+  monsterRanks: (token: string) => request<{ ranks: RpgMonsterRank[] }>('/admin/rpg/monster-ranks', { headers: withAuth(token) }),
+  putMonsterRank: (token: string, row: RpgMonsterRank) =>
+    request<RpgMonsterRank>('/admin/rpg/monster-ranks', { method: 'PUT', headers: withAuth(token), body: JSON.stringify(row) }),
+
   // --- DORPG P7：武器類型／武器 CRUD（見契約 dorpg_p7 CONTRACT.md §2、WIRE §後台）。
   // weapon-types 只有 GET/PUT（沒有 DELETE 路由，見 RpgWeaponType 型別註解）。---
   weaponTypes: (token: string) => request<{ weapon_types: RpgWeaponType[] }>('/admin/rpg/weapon-types', { headers: withAuth(token) }),
@@ -6095,8 +6185,25 @@ export interface RpgBootstrapEncounterInfo {
   scene_kind: 'normal' | 'boss'
   difficulty: number // 1~5，前端畫星
   can_escape: boolean
-  /** DORPG P6（契約 §2／WIRE）：這一場怪物等級 N（EncounterPicker 卡片顯示「怪物 Lv.N」）。 */
+  /** DORPG P6（契約 §2／WIRE）：這一場怪物等級 N（EncounterPicker 卡片顯示「怪物 Lv.N」）；
+   *  DORPG P11：level_mode='player' 時這裡回的是伺服器算好的玩家有效等級（見下方 level_mode）。 */
   monster_level: number
+  // DORPG P11（契約 §1/§2、WIRE §REST：「GET /rpg/battle/encounters 每場新增…」）：選填——這批欄位
+  // 只有走過 migration 189 的後端會送；舊版後端／app/dev/dorpg 的離線 fixture（Preview.tsx）沒有
+  // 這幾欄時，EncounterPicker 一律退回「無分級資料」的單一清單相容模式（見契約 §1 決策段），
+  // BattleStage 的敵人徽章也不渲染，不是本檔案的相容性漏洞。
+  /** 'legacy'＝既有六場公式，'rank'＝吃 rpg_monster_ranks 九級倍率。 */
+  scaling_mode?: 'legacy' | 'rank'
+  /** 'fixed'＝monster_level 是固定值，'player'＝monster_level 已經是玩家有效等級。 */
+  level_mode?: 'fixed' | 'player'
+  rank?: RpgRank | null
+  rank_label?: string | null
+  badge_color?: string | null
+  /** 這場的怪物隻數（1/3/5，強度挑戰卡片顯示「單挑／三隻／五隻」，見 rpgMeta.ts rankCountLabel）。 */
+  monster_count?: number | null
+  /** EncounterPicker 分組用：'story'＝既有六場劇情場景卡片外觀不變，'rank'＝強度挑戰卡片（徽章＋
+   *  隻數＋「Lv.＝你的等級」）。缺省時 EncounterPicker 視為 'story'（相容模式，見上方檔頭說明）。 */
+  group?: 'story' | 'rank'
 }
 
 /** 對照 wireEncounterSummary（= wireEncounterInfo 內嵌 + monsters + stats，Go struct embedding 展平）。 */
@@ -6295,6 +6402,12 @@ export interface RpgBootstrapEnemyRaw {
   // P5：怪物弱點屬性桶（見契約 §6／WIRE elementMultiplier）；技能 element 命中其中之一 →
   // 傷害 ×(1+battle_weakness_bonus_pct/100)。選填——舊版後端（本輪部署前）可能還沒送。
   weakElements?: string[]
+  // DORPG P11（WIRE §戰鬥 bootstrap：「enemy 新增 rankLabel/badgeColor/isSummoned」）：rank 本身
+  // P6 已存在（見上方 rank 欄位）；這三個是新加的顯示用欄位（中文標籤／徽章底色／是否為召喚物）。
+  // 選填＝舊版後端尚未送這三個欄位時，BattleStage 的徽章直接不渲染，不影響既有無分級戰鬥的畫面。
+  rankLabel?: string
+  badgeColor?: string
+  isSummoned?: boolean
 }
 export interface RpgBootstrapSceneSlotRaw {
   id: string
@@ -6415,6 +6528,14 @@ export type RpgBootstrapConfigRaw = Partial<import('@/lib/dorpg/engine').BattleC
   elementSamePct?: number
   aiStrategies?: RpgBootstrapAiStrategiesRaw
 }
+/** DORPG P11（WIRE §戰鬥 bootstrap：「新增 summonPool」）：每個召喚波次預先算好的完整敵人資料
+ *  （含數值/sprite），引擎在召喚者 HP% 跨門檻時把 `enemies` 塞進空槽（見契約 §1 召喚門檻表）。
+ *  `enemies[].id` 唯一（例如 `<summonerEnemyId>_w1_1`），形狀與 sample.enemies 的元素相同。 */
+export interface RpgBattleSummonWaveRaw {
+  summonerEnemyId: string
+  atHpPct: number
+  enemies: RpgBootstrapEnemyRaw[]
+}
 export interface RpgBattleBootstrap {
   encounter: RpgBootstrapEncounterInfo
   sample: RpgBootstrapSampleRaw
@@ -6424,6 +6545,16 @@ export interface RpgBattleBootstrap {
    *  （auto_battle.enabled）——ENGINE 的 createBattle() 用這個初始化 BattleState.autoBattle，
    *  策略 id 走 sample.party[0]（玩家）的 strategyId，不重複送一次。 */
   autoBattle: boolean
+  // DORPG P11（契約 §1/§3、WIRE §戰鬥 bootstrap：「頂層新增 scalingMode/levelMode/monsterLevel」）：
+  // 選填——舊版後端／沒有 migration 189 時整包缺席，ENGINE 的 createBattle() 缺省視為
+  // scalingMode='legacy'／levelMode='fixed'（即既有行為零改動）。monsterLevel＝這場實際使用的 N
+  // （level_mode='player' 時等於玩家有效等級，由伺服器算好，前端不重算）。
+  scalingMode?: 'legacy' | 'rank'
+  levelMode?: 'fixed' | 'player'
+  monsterLevel?: number
+  /** 契約 §1：A 以上會召喚——每波召喚已經預先算好完整敵人資料，ENGINE 的 advanceSummons() 在
+   *  召喚者 HP% 跨門檻時取用。選填＝舊版後端／非 rank 場次沒有召喚，缺省視為 []。 */
+  summonPool?: RpgBattleSummonWaveRaw[]
 }
 
 // POST /rpg/battle/report body（純遙測，見 §2 rpg_battle_logs／§3.4 健全性檢查；不影響任何帳本/獎勵）。

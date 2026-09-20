@@ -63,6 +63,16 @@ export type StageEnemy = {
   attribute?: string
   size?: string
   race?: string
+  /**
+   * DORPG P11（WIRE §引擎：「enemy 新增 rankLabel/badgeColor/isSummoned」）：怪物強度徽章的中文
+   * 標籤與底色（`rank` 本身已是既有欄位，這裡補顯示用的兩個新欄位）——三者缺任一個時 EnemyPlate
+   * 直接不畫徽章（見該元件），不強行拼湊，維持既有無分級戰鬥的畫面零改動。
+   */
+  rankLabel?: string
+  badgeColor?: string
+  /** 這隻怪是不是戰鬥中途召喚出來的（契約 §1：特A/S/特S 會召喚 A～F 級怪物）；EnemyPlate 疊一個
+   *  小字「召喚」區分，不影響戰鬥判斷，純顯示。 */
+  isSummoned?: boolean
 }
 
 export type BattleStageHandle = {
@@ -239,7 +249,7 @@ const BattleStage = forwardRef<BattleStageHandle, BattleStageProps>(function Bat
             <button
               type="button"
               className={s.monster}
-              aria-label={`選擇 ${enemy.name}，等級 ${Math.floor(enemy.level)}，HP ${Math.floor(enemy.hp)}／${Math.floor(enemy.hpMax)}`}
+              aria-label={`選擇 ${enemy.name}，等級 ${Math.floor(enemy.level)}，HP ${Math.floor(enemy.hp)}／${Math.floor(enemy.hpMax)}${enemy.rankLabel ? `，強度 ${enemy.rankLabel}` : ''}${enemy.isSummoned ? '（召喚）' : ''}`}
               aria-pressed={selected}
               onClick={() => onSelect(enemy.id)}
               style={{ left: Math.round(left), top: Math.round(top), width: Math.round(dw), height: Math.round(dw), zIndex: zMonster(idx) }}
@@ -256,6 +266,10 @@ const BattleStage = forwardRef<BattleStageHandle, BattleStageProps>(function Bat
               level={enemy.level}
               hp={enemy.hp}
               hpMax={enemy.hpMax}
+              rank={enemy.rank}
+              rankLabel={enemy.rankLabel}
+              badgeColor={enemy.badgeColor}
+              isSummoned={enemy.isSummoned}
               width={plateW}
               className={s.plate}
               // position 用 inline 寫死：EnemyPlate.module.css 的 .plate{position:relative} 與本檔 .plate{position:absolute}
@@ -308,9 +322,20 @@ export type EnemyPlateProps = {
   className?: string
   /** 由父層決定定位（position/left/top/zIndex）；元件本身只是 relative 盒。 */
   style?: CSSProperties
+  /**
+   * DORPG P11（契約 §4：「敵人名旁徽章」；WIRE §引擎 enemy.rank/rankLabel/badgeColor）：怪物強度——
+   * 三者缺任一個（既有無分級戰鬥／舊版後端）就不畫徽章，維持原本面貌零改動。`rank`（如 'S'）顯示
+   * 在徽章本體，`rankLabel`（如 'S級'）只當 title/aria 說明用（面板本身是 aria-hidden，靠呼叫端
+   * BattleStage.tsx 把它併進怪物按鈕的 aria-label）。
+   */
+  rank?: string
+  rankLabel?: string
+  badgeColor?: string
+  /** 這隻怪是不是召喚出來的（契約 §1）；true 時在面板另一角疊一個「召喚」小字。 */
+  isSummoned?: boolean
 }
 
-export function EnemyPlate({ level, hp, hpMax, width = ENEMY_PLATE.w, className, style }: EnemyPlateProps) {
+export function EnemyPlate({ level, hp, hpMax, rank, rankLabel, badgeColor, isSummoned, width = ENEMY_PLATE.w, className, style }: EnemyPlateProps) {
   const pk = width / ENEMY_PLATE.w
   const h = ENEMY_PLATE.h * pk
   const levelBox = fracStyle(ENEMY_PLATE.level)
@@ -342,6 +367,51 @@ export function EnemyPlate({ level, hp, hpMax, width = ENEMY_PLATE.w, className,
       <span className={p.hp} style={fracStyle(ENEMY_PLATE.hpFill)}>
         <img src={kitAsset('bar_fill_enemy_red')} alt="" draggable={false} style={{ clipPath: barClipPath(hpI, hpMaxI) }} />
       </span>
+      {/* DORPG P11：強度徽章——貼在面板左上角外緣（純 inline style，不新增 CSS class；.plate 本身
+          position:relative 且沒有 overflow:hidden，見 EnemyPlate.module.css，微幅溢出不會被裁掉）。 */}
+      {rank && badgeColor && (
+        <span
+          title={rankLabel || rank}
+          style={{
+            position: 'absolute',
+            left: -2 * pk,
+            top: -7 * pk,
+            minWidth: 14 * pk,
+            padding: `0 ${2 * pk}px`,
+            height: 12 * pk,
+            lineHeight: `${12 * pk}px`,
+            borderRadius: 999,
+            background: badgeColor,
+            color: '#fff',
+            fontSize: 8 * pk,
+            fontWeight: 800,
+            textAlign: 'center',
+            boxShadow: '0 1px 2px rgba(0,0,0,.6)',
+          }}
+        >
+          {rank}
+        </span>
+      )}
+      {isSummoned && (
+        <span
+          style={{
+            position: 'absolute',
+            right: -2 * pk,
+            top: -7 * pk,
+            padding: `0 ${3 * pk}px`,
+            height: 12 * pk,
+            lineHeight: `${12 * pk}px`,
+            borderRadius: 3,
+            background: 'rgba(0,0,0,.65)',
+            color: '#fff',
+            fontSize: 8 * pk,
+            fontWeight: 700,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          召喚
+        </span>
+      )}
     </div>
   )
 }

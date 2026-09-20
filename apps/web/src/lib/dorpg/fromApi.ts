@@ -13,6 +13,7 @@
 //   skills[].weapon（必填）→ 驗證失敗退回 'sword'；party[].weapon（選填，AI 隊友用）→ 驗證失敗給 undefined
 //     （PartyMember.weapon 本來就選填，undefined 由 engine 自己預設 'sword'，見 engine/index.ts toPartyActor）。
 import type {
+  RpgBattleSummonWaveRaw,
   RpgBootstrapConfigRaw,
   RpgBootstrapEffectRaw,
   RpgBootstrapEnemyRaw,
@@ -38,6 +39,7 @@ import type {
   Item,
   PartyMember,
   Skill,
+  SummonWave,
   WeaponKind,
   WeaponProfileWire,
 } from '@/lib/dorpg/types';
@@ -76,6 +78,22 @@ function asSlot(s: string): EnemySlotId {
  */
 function asRow(r: string | undefined): EnemyRow | undefined {
   return r === 'front' || r === 'rear' ? r : undefined;
+}
+
+/**
+ * P11（DORPG_P11 CONTRACT §1／WIRE「enemy 新增 rank、rankLabel、badgeColor、isSummoned」）：
+ * INTEGRATOR 對齊（2026-09-20）——api.ts 的 RpgBootstrapEnemyRaw 已宣告 rankLabel/badgeColor/
+ * isSummoned 三個選填欄位（見該檔），不再需要區域擴充型別；asOptionalString/asIsSummoned 這兩個
+ * 防禦函式仍保留（舊版後端未部署 migration 189 時這三欄可能整個缺席，語意上跟本檔其餘 as*() 系列
+ * 「缺欄位/型別跑掉一律退回中性值」一致）。
+ */
+function asOptionalString(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined;
+}
+/** 只有明確 `true` 才算數（同檔 asGuardTaunt() 的既有防禦風格）——wire 缺欄位／任何非 boolean
+ *  的髒值一律當「不是召喚出來的」。 */
+function asIsSummoned(v: unknown): boolean {
+  return v === true;
 }
 
 function isFiniteNumber(v: unknown): v is number {
@@ -303,9 +321,14 @@ function mapEnemy(e: RpgBootstrapEnemyRaw): Enemy {
     // 猜測 undefined 語意。
     canEscape: e.canEscape,
     rating: asRating(e.rating),
-    // P5（CONTRACT §6）：缺欄位／型別跑掉一律當「無弱點」（[]），跟 engine/index.ts toEnemyActor
+    // P5（CONTRACT §6）：缺欄位／型別跑掉一律當「無弱點」（[]），跟 engine/formulas.ts toEnemyActor
     // 的 `e.weakElements ?? []` 後備值語意一致。
     weakElements: asElementList(e.weakElements),
+    // P11（CONTRACT §1／WIRE「enemy 新增 rank、rankLabel、badgeColor、isSummoned」）：見
+    // EnemyRawWithRankMeta／asOptionalString／asIsSummoned 型別註解。
+    rankLabel: asOptionalString(e.rankLabel),
+    badgeColor: asOptionalString(e.badgeColor),
+    isSummoned: asIsSummoned(e.isSummoned),
   };
 }
 
@@ -509,4 +532,39 @@ export function configFromBootstrap(raw: RpgBootstrapConfigRaw | null | undefine
   if (cfg.elementChart !== undefined && !isElementChart(cfg.elementChart)) delete cfg.elementChart;
   if (cfg.aiStrategies !== undefined && !isAiStrategiesMap(cfg.aiStrategies)) delete cfg.aiStrategies;
   return cfg;
+}
+
+/**
+ * P11（DORPG_P11 CONTRACT §1「召喚（A 以上）」、WIRE「戰鬥 bootstrap」：「summonPool: [{
+ * summonerEnemyId, atHpPct, enemies: EnemyWire[] }]」）：跟 config/autoBattle 一樣是 bootstrap
+ * 回應的頂層欄位（不在 sample 裡面），呼叫端把 `bootstrap.summonPool` 原樣傳進本函式。INTEGRATOR
+ * 對齊（2026-09-20）：api.ts 已宣告 `RpgBattleBootstrap.summonPool?: RpgBattleSummonWaveRaw[]`，
+ * 入參型別收斂為它——但函式內部仍逐層防禦讀取（不假設陣列元素形狀正確），理由：召喚系統是
+ * 「錦上添花」的機制，任何一層形狀不對（例如舊版後端型別對但欄位其實是 null、或後台 JSONB
+ * 設定打錯字），寧可丟棄那一波（或整包），也不要讓一筆髒資料讓 createBattle() 在執行期整場戰鬥
+ * 都壞掉——跟本檔其餘 as*() 系列「寧可丟棄也不塞髒資料」同一個防禦哲學，只是這裡的「丟棄」單位
+ * 是陣列元素（波次），不是單一欄位。
+ * `enemies[]` 重用既有的 mapEnemy()——跟頂層 sample.enemies 走同一套驗證/預設值規則（含本輪新增
+ * 的 rank/rankLabel/badgeColor/isSummoned），最小門檻只要求每個敵人至少有 `id`/`name` 兩個字串
+ * 欄位（其餘欄位缺失時 mapEnemy 內部各自的既有防禦邏輯會接手，例如 stats 缺省交給 engine 依等級
+ * 推導）；一波召喚完全沒有合法敵人（例如整個 enemies 陣列是空的，或全部項目都不是物件）就整波
+ * 丟棄——沒有敵人可放的召喚波沒有意義。
+ */
+export function summonPoolFromBootstrap(raw: RpgBattleSummonWaveRaw[] | null | undefined): SummonWave[] {
+  if (!Array.isArray(raw)) return [];
+  const waves: SummonWave[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    // 型別上 item 已經是 RpgBattleSummonWaveRaw（api.ts 宣告的 wire 形狀），但這裡仍然逐欄防禦
+    // 讀取（見上方函式註解）——先轉 unknown 再轉 Record，繞開 tsc 對「宣告形狀」與「防禦讀取用的
+    // 索引簽名」兩種型別彼此不夠重疊的轉型警告，執行期行為不變。
+    const w = item as unknown as Record<string, unknown>;
+    if (typeof w.summonerEnemyId !== 'string' || !isFiniteNumber(w.atHpPct) || !Array.isArray(w.enemies)) continue;
+    const enemies = (w.enemies as unknown[])
+      .filter((e): e is RpgBootstrapEnemyRaw => !!e && typeof e === 'object' && typeof (e as Record<string, unknown>).id === 'string' && typeof (e as Record<string, unknown>).name === 'string')
+      .map(mapEnemy);
+    if (enemies.length === 0) continue;
+    waves.push({ summonerEnemyId: w.summonerEnemyId, atHpPct: w.atHpPct, enemies });
+  }
+  return waves;
 }

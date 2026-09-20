@@ -18,7 +18,7 @@ import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
 import { pageview } from '@/lib/analytics'
 import { profileApi, titleApi, racesApi, rpgBattleApi, type Race, type RpgBattleBootstrap } from '@/lib/api'
 import { APP_VERSION } from '@/lib/version'
-import { sampleFromBootstrap, configFromBootstrap } from '@/lib/dorpg/fromApi'
+import { sampleFromBootstrap, configFromBootstrap, summonPoolFromBootstrap } from '@/lib/dorpg/fromApi'
 import { battleAudio } from '@/lib/dorpg/audio'
 import type { BattleReportStats } from './dorpg/BattleScreen'
 import UpgradeVipModal from './UpgradeVipModal'
@@ -576,6 +576,12 @@ function DorpgBattleFlow({
   // 「再戰一場」的 nonce 遞增不經過這裡，故依賴 [bootstrap] 已足夠、不必依賴 nonce。
   const sample = useMemo(() => (bootstrap ? sampleFromBootstrap(bootstrap.sample) : undefined), [bootstrap])
   const config = useMemo(() => (bootstrap ? configFromBootstrap(bootstrap.config) : undefined), [bootstrap])
+  // DORPG P11（INTEGRATOR 2026-09-20，同上：見 sample/config 為何要 useMemo 鎖 identity 的既有
+  // 說明）：bootstrap.summonPool 是召喚池原始 wire 資料，要過 summonPoolFromBootstrap() 驗證/
+  // 防禦（同 sample 過 sampleFromBootstrap()），未鎖 identity 會讓 BattleScreen→useBattle 每次
+  // 無關重繪都拿到新陣列 identity，雖然 summonPool 目前只在 useBattle 初始化時讀一次（不影響
+  // 戰鬥中途行為），仍比照既有慣例鎖住，避免之後有人在其他地方依賴這個 prop 的 identity 穩定性。
+  const summonPool = useMemo(() => (bootstrap ? summonPoolFromBootstrap(bootstrap.summonPool) : undefined), [bootstrap])
 
   if (loading) {
     return (
@@ -602,6 +608,13 @@ function DorpgBattleFlow({
       // 從未傳給 BattleScreen，導致玩家上次開啟的自動戰鬥每次進戰鬥都被重置成關閉（見
       // BattleScreen.tsx autoBattle prop／useBattle.ts 的修復註解）。
       autoBattle={bootstrap.autoBattle ?? false}
+      // DORPG P11（INTEGRATOR 2026-09-20 補上，已知整合缺口）：bootstrap 頂層的召喚池與強度
+      // 九級標籤欄位原本從未轉給 BattleScreen，召喚機制在真實對戰裡永遠不會觸發（見
+      // BattleScreen.tsx／useBattle.ts 對應欄位的修復註解）。
+      summonPool={summonPool}
+      scalingMode={bootstrap.scalingMode}
+      levelMode={bootstrap.levelMode}
+      monsterLevel={bootstrap.monsterLevel}
       encounter={{ code, title: bootstrap.encounter.title }}
       onBack={onExit}
       onRestart={onRestart}

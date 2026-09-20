@@ -1,6 +1,6 @@
 // 引擎公式與目標挑選（純函式，無 React/DOM，無 Date.now()）。
 // 型別引用在 Node type-stripping 下整段消失，不影響本檔被 node 直接 import 執行。
-import type { ActorStats, CombatRating, EnemySlotId, EquipmentEffectsWire, WeaponProfileWire } from '../types';
+import type { ActorStats, CombatRating, Enemy, EnemySlotId, EquipmentEffectsWire, WeaponProfileWire } from '../types';
 import type { Ctx } from './context';
 import type { BattleConfig, BattleState, EnemyActor, EnemyRow, PartyActor } from './types';
 
@@ -486,6 +486,60 @@ export function deriveDefaultEnemyStats(level: number, hpMax: number): ActorStat
     matk: Math.round(18 + level * 2.2),
     def: Math.round(level * 0.9),
     mdef: Math.round(level * 0.7),
+  };
+}
+
+/**
+ * Enemy（wire 域，戰前資料）→ EnemyActor（戰鬥中資料）轉換——P1 起就住在 engine/index.ts 的
+ * createBattle 旁邊（toPartyActor 的姊妹函式），P11（DORPG_P11 CONTRACT §1「召喚（A 以上）」、
+ * WIRE「引擎」）搬來這裡：engine/summon.ts 的 advanceSummons() 需要用同一套轉換邏輯，把
+ * BattleState.summonPool 波次裡的 Enemy 資料現算成新的 EnemyActor 放進場——但 index.ts 已經
+ * `export { tick } from './tick'`，tick.ts 又要 `import { advanceSummons } from './summon'`，
+ * 若 toEnemyActor 留在 index.ts，summon.ts 想用它就必須反過來 `import from './index'`，形成
+ * index→tick→summon→index 的匯入循環。formulas.ts 沒有任何一條邊指回 index/tick/summon，讓
+ * index.ts 與 summon.ts 各自單純從這裡 import 就能兩邊共用，不需要循環——純粹是檔案搬家，逐字
+ * 保留原本的行為與註解，不是規則變動（見 engine/index.ts 現在只剩 `export { toEnemyActor } from
+ * './formulas'` 這條轉發，呼叫端的匯入路徑仍然不變）。
+ */
+export function toEnemyActor(e: Enemy, now: number, cfg: BattleConfig, rng: () => number): EnemyActor {
+  return {
+    id: e.id,
+    name: e.name,
+    level: e.level,
+    slot: e.slot,
+    // P6（CONTRACT §1）：wire 進來的 hpMax/mpMax 也 floor 一次。
+    stats: e.stats ? { ...e.stats, hpMax: floorInt(e.stats.hpMax), mpMax: floorInt(e.stats.mpMax) } : deriveDefaultEnemyStats(e.level, e.hpMax),
+    hp: floorInt(e.hp),
+    // P1 沒有召喚機制，略過 spawning；hp<=0 直接給 removed（例如測試用的「一開場就平手」樣本資料）
+    // ——不然會卡在 idle 永遠等不到 applyEnemyDamage 幫它轉場成 dying，resolving 階段就無法判斷
+    // 「所有敵人的死亡動畫都播完了」（見 tick.ts 的 advanceResolving）。P11：召喚出的敵人一律
+    // hp>0（沒有「召喚一隻已經死掉的怪」這種情境），這條分支對 summon.ts 呼叫這支函式時是 no-op。
+    anim: e.hp > 0 ? 'idle' : 'removed',
+    animUntil: now,
+    nextActAt: now + randRange(rng, cfg.enemyActIntervalMs),
+    threatPriority: e.threatPriority ?? 0,
+    imageUrl: e.imageUrl,
+    rank: e.rank,
+    attribute: e.attribute,
+    size: e.size,
+    race: e.race,
+    // P2：怪物沒有個別覆寫就用 config 係數推導的預設（跟等級無關，見本檔前面的註解）。
+    rating: e.rating ?? deriveDefaultMonsterRating(cfg),
+    // P5：戰鬥開始時沒有任何 debuff；weakElements 缺省 []（無弱點）。
+    activeEffects: [],
+    weakElements: e.weakElements ?? [],
+    // P12（CONTRACT §1／WIRE「戰鬥 bootstrap」：「enemies[].row」）：原樣透傳（fromApi.ts 已經
+    // 驗證過只會是 'front'|'rear'|undefined）——缺省 undefined 時 combat.ts/formulas.ts 各讀取端
+    // 一律用 `enemy.row ?? rowOfSlot(enemy.slot)` 從必填的 slot 後備推導，這裡不需要也不應該
+    // 預先展開成具體值。
+    row: e.row,
+    // P11（CONTRACT §1／WIRE「enemy 新增 rank、rankLabel、badgeColor、isSummoned」）：見
+    // dorpg/types.ts Enemy.rankLabel/badgeColor/isSummoned 型別註解——純透傳／缺省 false，跟既有
+    // rank/attribute/size/race 同一種「wire 已經算好，engine 只負責帶著走」的欄位。summon.ts 的
+    // advanceSummons() 會在放入場上「之後」再強制覆寫成 true，這裡先照 wire 原樣帶入即可。
+    rankLabel: e.rankLabel,
+    badgeColor: e.badgeColor,
+    isSummoned: e.isSummoned ?? false,
   };
 }
 

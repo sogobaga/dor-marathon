@@ -14,14 +14,16 @@ func TestMonsterRow_ValidateRejectsUnknownWeakElement(t *testing.T) {
 }
 
 func TestMonsterRow_ValidateAcceptsKnownWeakElements(t *testing.T) {
-	m := MonsterRow{ID: "m1", Name: "測試怪", HPMult: 1, AtkMult: 1, DefMult: 1, SpeedMult: 1, WeakElements: []string{"fire", "water"}}
+	// DORPG P11：Rank 加了九值白名單檢查（見 content.go MonsterRow.Validate()），這裡補上合法值
+	// 讓本測試繼續只測 weak_elements 本身，不被無關的 rank 檢查擋下。
+	m := MonsterRow{ID: "m1", Name: "測試怪", Rank: "F", HPMult: 1, AtkMult: 1, DefMult: 1, SpeedMult: 1, WeakElements: []string{"fire", "water"}}
 	if err := m.Validate(); err != nil {
 		t.Fatalf("合法的 weak_elements 不應被拒絕：%v", err)
 	}
 }
 
 func TestMonsterRow_ValidateAcceptsEmptyWeakElements(t *testing.T) {
-	m := MonsterRow{ID: "m1", Name: "測試怪", HPMult: 1, AtkMult: 1, DefMult: 1, SpeedMult: 1}
+	m := MonsterRow{ID: "m1", Name: "測試怪", Rank: "F", HPMult: 1, AtkMult: 1, DefMult: 1, SpeedMult: 1}
 	if err := m.Validate(); err != nil {
 		t.Fatalf("weak_elements 為空（無弱點）應合法：%v", err)
 	}

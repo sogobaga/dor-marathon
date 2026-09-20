@@ -23,7 +23,7 @@
 //   這幾個指令在畫面上會完全沒有反應（實測踩過：點「道具」鈕切不到道具列）。使用者指令的呼叫頻率
 //   遠低於 60fps，本來就不需要節流，詳見 commitEvents/send 的實作與註解。
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import type { BattleSample } from '@/lib/dorpg/types';
+import type { BattleSample, SummonWave } from '@/lib/dorpg/types';
 import {
   createBattle,
   dispatch as engineDispatch,
@@ -45,6 +45,17 @@ export type UseBattleOptions = {
    * BattleScreenProps.autoBattle、永遠以 false 初始化引擎狀態。
    */
   autoBattle?: boolean;
+  /**
+   * P11（DORPG_P11 CONTRACT §1／WIRE「戰鬥 bootstrap」）：INTEGRATOR 補（2026-09-20）——本檔原本
+   * 沒有轉發這四個欄位給 createBattle()，導致 BattleScreen.tsx 收到的 summonPool/scalingMode/
+   * levelMode/monsterLevel props 全部在這裡被吞掉，怪物強度九級的召喚機制永遠不會觸發（引擎本身
+   * engine/index.ts createBattle() 早就支援這些 opts，缺的只是這一層轉發）。同 autoBattle，僅
+   * 初始化時使用，缺省交給 createBattle() 自己的安全預設（'legacy'/'fixed'/null/[]）。
+   */
+  scalingMode?: 'legacy' | 'rank';
+  levelMode?: 'fixed' | 'player';
+  monsterLevel?: number | null;
+  summonPool?: SummonWave[];
 };
 
 export type UseBattleResult = {
@@ -89,7 +100,17 @@ export function useBattle(sample: BattleSample, opts: UseBattleOptions = {}): Us
   // 只在第一次 render 建立戰鬥（sample 之後就算換了新 identity 也不重建——與大多數「初始化用的 props」
   // 慣例一致，戰鬥中途換隊伍/敵人陣容不是 P1 的需求）。
   const [state, localSet] = useReducer(reducer, undefined, () => {
-    const initial = createBattle(sample, { now: performance.now(), rng: opts.rng, config: opts.config, autoBattle: opts.autoBattle });
+    const initial = createBattle(sample, {
+      now: performance.now(),
+      rng: opts.rng,
+      config: opts.config,
+      autoBattle: opts.autoBattle,
+      // P11：見上方 UseBattleOptions 型別註解——補上轉發，召喚機制才會真正生效。
+      scalingMode: opts.scalingMode,
+      levelMode: opts.levelMode,
+      monsterLevel: opts.monsterLevel,
+      summonPool: opts.summonPool,
+    });
     // createBattle 本身不產生事件，這裡仍過一次 drainEvents 確保回傳形狀（events:[]）跟後續一致。
     return drainEvents(initial).state;
     // eslint-disable-next-line react-hooks/exhaustive-deps

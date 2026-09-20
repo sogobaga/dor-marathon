@@ -650,12 +650,17 @@ func (h *Handler) deleteCompanion(ctx context.Context, id string) (bool, error) 
 // rpg_encounters + rpg_encounter_monsters
 // ---------------------------------------------------------------------------
 
-const encounterCols = `id, code, title, subtitle, scene_id, scene_kind, difficulty, power_scale, monster_level, escape_chance, can_escape, is_active, sort_order`
+// encounterCols DORPG P11：migration 189 在既有表加了 scaling_mode/level_mode/rank/
+// monster_count 四欄（不是新表）——比照 jobs.go loadJobExtras() 檔頭的既有決定，未套用 189
+// 時這裡會直接拿到 42703（欄位不存在）而不是優雅降級的 42P01，push 前必須先套用該 migration
+// （db-before-code-push.md），這裡不另外做容錯。
+const encounterCols = `id, code, title, subtitle, scene_id, scene_kind, difficulty, power_scale, monster_level, escape_chance, can_escape, is_active, sort_order, scaling_mode, level_mode, rank, monster_count`
 
 func scanEncounter(row pgx.Row) (EncounterRow, error) {
 	var e EncounterRow
 	err := row.Scan(&e.id, &e.Code, &e.Title, &e.Subtitle, &e.SceneID, &e.SceneKind, &e.Difficulty,
-		&e.PowerScale, &e.MonsterLevel, &e.EscapeChance, &e.CanEscape, &e.IsActive, &e.SortOrder)
+		&e.PowerScale, &e.MonsterLevel, &e.EscapeChance, &e.CanEscape, &e.IsActive, &e.SortOrder,
+		&e.ScalingMode, &e.LevelMode, &e.Rank, &e.MonsterCount)
 	e.Monsters = []EncounterMonsterRow{}
 	return e, err
 }
@@ -745,14 +750,15 @@ func (h *Handler) upsertEncounter(ctx context.Context, e EncounterRow) error {
 
 	var id string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO rpg_encounters (code, title, subtitle, scene_id, scene_kind, difficulty, power_scale, monster_level, escape_chance, can_escape, is_active, sort_order, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+		INSERT INTO rpg_encounters (code, title, subtitle, scene_id, scene_kind, difficulty, power_scale, monster_level, escape_chance, can_escape, is_active, sort_order, scaling_mode, level_mode, rank, monster_count, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
 		ON CONFLICT (code) DO UPDATE SET
 			title=$2, subtitle=$3, scene_id=$4, scene_kind=$5, difficulty=$6, power_scale=$7,
-			monster_level=$8, escape_chance=$9, can_escape=$10, is_active=$11, sort_order=$12, updated_at=NOW()
+			monster_level=$8, escape_chance=$9, can_escape=$10, is_active=$11, sort_order=$12,
+			scaling_mode=$13, level_mode=$14, rank=$15, monster_count=$16, updated_at=NOW()
 		RETURNING id::text`,
 		e.Code, e.Title, e.Subtitle, e.SceneID, e.SceneKind, e.Difficulty, e.PowerScale, e.MonsterLevel,
-		e.EscapeChance, e.CanEscape, e.IsActive, e.SortOrder,
+		e.EscapeChance, e.CanEscape, e.IsActive, e.SortOrder, e.ScalingMode, e.LevelMode, e.Rank, e.MonsterCount,
 	).Scan(&id)
 	if err != nil {
 		return err

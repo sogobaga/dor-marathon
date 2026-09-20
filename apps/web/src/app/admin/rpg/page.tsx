@@ -12,16 +12,20 @@ import {
   type RpgEncounter, type RpgEncounterMonster, type RpgBattleLogRow, type RpgBattleLogSummary,
   type RpgWeaponType, type RpgWeapon, type RpgElement, type WeaponRarity,
   type RpgArmorItem, type ArmorItemSlot, type RpgAiStrategy, type RpgJob,
+  type RpgMonsterRank, type RpgRank,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
-import { CONFIG_GROUPS, STAT_META, DERIVED_META, resistLabel, ELEMENT_LABEL, ELEMENT_ORDER, RARITY_LABEL, ARMOR_SLOT_LABEL, SKILL_KIND_LABEL } from '@/lib/rpgMeta'
+import { CONFIG_GROUPS, STAT_META, DERIVED_META, resistLabel, ELEMENT_LABEL, ELEMENT_ORDER, RARITY_LABEL, ARMOR_SLOT_LABEL, SKILL_KIND_LABEL, RANK_ORDER, RANK_LABEL } from '@/lib/rpgMeta'
 
 // DORPG P2（契約 dorpg_p2 §5）：怪物/技能/道具/場景/遭遇/隊友/戰鬥數據七個內容分頁。分頁一多，
 // tab 列改橫向捲動（見下方 tab 按鈕列 container 的 overflowX/flexWrap:'nowrap'）。
 // DORPG P7（契約 dorpg_p7 CONTRACT.md §2、WIRE §後台）：新增武器類型／武器兩個分頁。
 // DORPG P8（契約 dorpg_p8 CONTRACT.md §1、WIRE §後台）：新增防具（含飾品）分頁。
 // DORPG P9（契約 dorpg_p9 CONTRACT.md §2、WIRE §後台）：新增「AI 策略」分頁。
-type Tab = 'config' | 'entry' | 'preview' | 'monsters' | 'skills' | 'jobs' | 'items' | 'scenes' | 'encounters' | 'companions' | 'battlelogs' | 'weapontypes' | 'weapons' | 'armoritems' | 'aistrategies'
+// DORPG P11（契約 dorpg_p11 CONTRACT.md §2/§3、WIRE §後台）：新增「怪物強度」分頁（九級固定列）。
+type Tab = 'config' | 'entry' | 'preview' | 'monsters' | 'skills' | 'jobs' | 'items' | 'scenes' | 'encounters' | 'companions' | 'battlelogs' | 'weapontypes' | 'weapons' | 'armoritems' | 'aistrategies' | 'monsterranks'
+/** rank 固定九值（由弱到強），供怪物/遭遇表單的 select 與「怪物強度」分頁共用；不可新增刪除。 */
+const RANK_OPTIONS: { value: RpgRank; label: string }[] = RANK_ORDER.map((r) => ({ value: r, label: RANK_LABEL[r] }))
 const STAT_KEYS: RpgStatKey[] = ['str', 'agi', 'vit', 'dex', 'int', 'luk']
 // rpg_encounter_monsters 槽位固定 5 個（migration 176 DDL），場景/遭遇編輯器都用這個順序渲染。
 const ENCOUNTER_SLOTS = ['rear_left', 'rear_right', 'front_left', 'front_center', 'front_right'] as const
@@ -70,6 +74,7 @@ export default function AdminRpgPage() {
           ['entry', '入口與 VVIP'],
           ['preview', '預覽計算'],
           ['monsters', '怪物'],
+          ['monsterranks', '怪物強度'],
           ['skills', '技能'],
           ['jobs', '職業'],
           ['weapontypes', '武器類型'],
@@ -109,6 +114,7 @@ export default function AdminRpgPage() {
       {tab === 'entry' && token && <EntryTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'preview' && token && <PreviewTab token={token} />}
       {tab === 'monsters' && token && <MonstersTab token={token} onErr={setErr} onMsg={flash} />}
+      {tab === 'monsterranks' && token && <MonsterRanksTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'skills' && token && <SkillsTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'jobs' && token && <JobsTab token={token} onErr={setErr} onMsg={flash} />}
       {tab === 'weapontypes' && token && <WeaponTypesTab token={token} onErr={setErr} onMsg={flash} />}
@@ -630,12 +636,13 @@ function SimpleContentTab<T extends { is_active: boolean; sort_order: number }>(
 // ============================== 怪物 ==============================
 
 function emptyMonster(): RpgMonster {
-  return { id: '', name: '', rank: '', attribute: '', size: 'medium', race: '', sprite_id: '', poster_url: '', hp_mult: 1, atk_mult: 1, def_mult: 1, speed_mult: 1, threat: 0, is_boss: false, is_active: true, sort_order: 0 }
+  return { id: '', name: '', rank: 'F', attribute: '', size: 'medium', race: '', sprite_id: '', poster_url: '', hp_mult: 1, atk_mult: 1, def_mult: 1, speed_mult: 1, threat: 0, is_boss: false, is_active: true, sort_order: 0, weak_elements: [] }
 }
 const MONSTER_FIELDS: FieldSpec<RpgMonster>[] = [
   { key: 'id', label: 'ID（如 DOR-MON-A-67000200001）', lockOnEdit: true },
   { key: 'name', label: '名稱' },
-  { key: 'rank', label: '災害級（顯示文字，如 特S/S/特A/A~F）' },
+  // DORPG P11（契約 §2）：rank 收斂為九值 FK，改 select（原本是自由輸入文字，如「特S」「A」等不一致寫法）。
+  { key: 'rank', label: '強度等級 rank（九級，見「怪物強度」分頁）', type: 'select', options: RANK_OPTIONS },
   { key: 'attribute', label: '屬性（顯示文字，如 金/木/水/火/土/光/闇/無）' },
   { key: 'size', label: '體型（顯示文字，如 大型/中型/小型）' },
   { key: 'race', label: '種族' },
@@ -646,6 +653,8 @@ const MONSTER_FIELDS: FieldSpec<RpgMonster>[] = [
   { key: 'def_mult', label: 'DEF 倍率（必須 > 0）', type: 'number' },
   { key: 'speed_mult', label: '行動間隔倍率（<1 更頻繁，必須 > 0）', type: 'number' },
   { key: 'threat', label: '目標權重 threat（越高越優先被鎖定）', type: 'number', step: '1' },
+  // DORPG P11：P5 引擎/bootstrap 早支援怪物弱點屬性桶，P2 建表時漏開後台欄位，本輪補上（既有落差）。
+  { key: 'weak_elements', label: '弱點屬性（英文代碼逗號分隔，如 fire, water；對應 metal/wood/water/fire/earth/light/dark/neutral）', type: 'tags' },
   { key: 'is_boss', label: 'BOSS（顯示等級 +5）', type: 'checkbox' },
   { key: 'is_active', label: '啟用', type: 'checkbox' },
   { key: 'sort_order', label: '排序', type: 'number', step: '1' },
@@ -661,6 +670,160 @@ function MonstersTab({ token, onErr, onMsg }: { token: string; onErr: (m: string
       remove={(t, id) => adminRpgApi.deleteMonster(t, id)}
       empty={emptyMonster} onErr={onErr} onMsg={onMsg}
     />
+  )
+}
+
+// ============================== 怪物強度（DORPG P11，契約 §2/§3） ==============================
+// 固定九列（rank 為主鍵，見 RANK_OPTIONS）——沒有「新增」／「刪除」鈕，只能編輯既有列的倍率／
+// level_curve／summon／badge_color／description（比照 WeaponTypesTab／JobsTab「後端只開放
+// GET/PUT」的既有慣例）。level_curve／summon 是 JSON，比照 WeaponTypesTab traits／
+// AiStrategiesTab params 的既有慣例存成排版過的字串編輯，存檔前做 JSON.parse 驗證＋summon.waves
+// 的基本欄位檢查（WIRE §後台：rank 須為九值之一、count 1–5、at_hp_pct 1–99）。
+
+function MonsterRanksTab({ token, onErr, onMsg }: { token: string; onErr: (m: string) => void; onMsg: (m: string) => void }) {
+  const [rows, setRows] = useState<RpgMonsterRank[] | null>(null)
+  const [form, setForm] = useState<RpgMonsterRank | null>(null)
+  const [levelCurveText, setLevelCurveText] = useState('{}')
+  const [summonText, setSummonText] = useState('{"waves":[]}')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(() => {
+    adminRpgApi.monsterRanks(token).then((r) => setRows(r.ranks)).catch((e: any) => onErr(e?.message || '載入失敗'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+  useEffect(() => { load() }, [load])
+
+  function startEdit(r: RpgMonsterRank) {
+    setForm({ ...r })
+    setLevelCurveText(JSON.stringify(r.level_curve ?? {}, null, 2))
+    // 後端 summon.waves 是 `omitempty`——F～B 這幾級沒有召喚設定時，GET 回應的 summon 是 `{}`
+    // （waves 鍵不存在），不是 `{"waves":[]}`；這裡正規化成永遠帶 waves 陣列，編輯體驗一致。
+    setSummonText(JSON.stringify({ waves: r.summon?.waves ?? [] }, null, 2))
+  }
+
+  async function save() {
+    if (!form) return
+    let levelCurve: Record<string, unknown>
+    let summonRaw: RpgMonsterRank['summon']
+    try { levelCurve = JSON.parse(levelCurveText || '{}') } catch { onErr('「等級修正 level_curve」不是合法的 JSON，請修正後再儲存'); return }
+    try { summonRaw = JSON.parse(summonText || '{}') } catch { onErr('「召喚設定 summon」不是合法的 JSON，請修正後再儲存'); return }
+    // summonRaw.waves 缺席（{}）視為「無召喚」＝空陣列，比照後端 omitempty 的語意寬鬆解讀；
+    // 只有「waves 這個鍵存在但不是陣列」才真的算格式錯誤，擋下儲存。
+    if (summonRaw != null && summonRaw.waves === undefined) summonRaw = { ...summonRaw, waves: [] }
+    if (!Array.isArray(summonRaw?.waves)) { onErr('「召喚設定 summon」的 waves 必須是陣列（可省略整個鍵或給空陣列）'); return }
+    const summon: RpgMonsterRank['summon'] = summonRaw
+    for (const w of summon.waves ?? []) {
+      if (!RANK_ORDER.includes(w.rank)) { onErr(`summon.waves 有未知的 rank「${w.rank}」`); return }
+      if (!(w.count >= 1 && w.count <= 5)) { onErr('summon.waves 的 count 必須是 1–5'); return }
+      if (!(w.at_hp_pct >= 1 && w.at_hp_pct <= 99)) { onErr('summon.waves 的 at_hp_pct 必須是 1–99'); return }
+      // P11 修正（2026-09-20）：power_scale 是召喚怪整體強度折減旋鈕，缺省視為 1（不折減）——
+      // api.ts RpgMonsterRankSummonWave 型別本輪不改（不在本任務可改檔案清單內），這裡用防禦性
+      // 讀取（同 fromApi.ts 既有風格）避免 tsc 對未宣告欄位報錯，執行期行為不受影響。
+      const powerScale = (w as unknown as { power_scale?: number }).power_scale ?? 1
+      if (!(powerScale >= 0.05 && powerScale <= 2)) { onErr('summon.waves 的 power_scale 必須是 0.05–2（省略視為 1）'); return }
+    }
+    if (form.hp_mult <= 0 || form.atk_mult <= 0 || form.def_mult <= 0 || form.mdef_mult <= 0) { onErr('四個倍率都必須 > 0'); return }
+    setBusy(true)
+    try {
+      // calibrated_note 是唯讀顯示欄位（見型別註解），WIRE 的 PUT body 沒有列這一欄，存檔時排除。
+      const { calibrated_note: _calibratedNote, ...body } = form
+      const saved = await adminRpgApi.putMonsterRank(token, { ...body, level_curve: levelCurve, summon })
+      onMsg(`已儲存「${saved.label}」`)
+      setForm(null)
+      load()
+    } catch (e: any) { onErr(e?.message || '儲存失敗') } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <h2 style={{ fontSize: 15, fontWeight: 800, margin: '0 0 4px' }}>怪物強度管理</h2>
+        <p style={{ fontSize: 12, color: 'var(--tx-dim)', margin: 0, maxWidth: 640, lineHeight: 1.7 }}>
+          九級固定（F～特S，由弱到強），倍率是相對「同級參考玩家 Ref(N)」的絕對值，只有「遭遇」分頁
+          scaling_mode=rank 的場次會用到（既有六場走 legacy 公式，手感不受這裡影響）。level_curve／
+          summon 是進階 JSON（等級漂移根治留給下一輪，本輪多留 {'{}'}／{'{"waves":[]}'}），一般調參
+          只需要改四個倍率／徽章底色／說明。
+        </p>
+      </div>
+
+      {rows === null && <div style={{ fontSize: 13, color: 'var(--tx-dim)' }}>載入中…</div>}
+      {rows && !form && (
+        <div style={{ overflowX: 'auto' }}>
+          <Row head>
+            <C w={1}>Rank</C>
+            <C w={2}>顯示名稱</C>
+            <C w={1}>HP</C>
+            <C w={1}>ATK</C>
+            <C w={1}>DEF/MDEF</C>
+            <C w={1}>徽章</C>
+            <C w={1}>操作</C>
+          </Row>
+          {[...rows].sort((a, b) => a.sort_order - b.sort_order).map((r) => (
+            <Row key={r.rank}>
+              <C w={1} dim>{r.rank}</C>
+              <C w={2}>{r.label}</C>
+              <C w={1}>{fmtNum(r.hp_mult)}</C>
+              <C w={1}>{fmtNum(r.atk_mult)}</C>
+              <C w={1}>{fmtNum(r.def_mult)}</C>
+              <C w={1}>
+                <span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: '50%', background: r.badge_color, verticalAlign: 'middle' }} />
+              </C>
+              <C w={1}><button onClick={() => startEdit(r)} style={linkBtn}>編輯</button></C>
+            </Row>
+          ))}
+        </div>
+      )}
+
+      {form && (
+        <div style={panel}>
+          <h3 style={{ fontSize: 14, fontWeight: 800, margin: '0 0 10px' }}>編輯：{form.label || form.rank}</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+            <F label={`Rank（固定不可改）`}>
+              <input style={inp} type="text" value={form.rank} disabled />
+            </F>
+            <F label="顯示名稱 label">
+              <input style={inp} type="text" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} />
+            </F>
+            <F label="排序 sort_order">
+              <input style={inp} type="number" step="1" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: Number(e.target.value) })} />
+            </F>
+            <F label="HP 倍率（必須 > 0）">
+              <input style={inp} type="number" step="any" value={form.hp_mult} onChange={(e) => setForm({ ...form, hp_mult: Number(e.target.value) })} />
+            </F>
+            <F label="ATK 倍率（必須 > 0）">
+              <input style={inp} type="number" step="any" value={form.atk_mult} onChange={(e) => setForm({ ...form, atk_mult: Number(e.target.value) })} />
+            </F>
+            <F label="DEF 倍率（必須 > 0，等同 MDEF 倍率）">
+              <input style={inp} type="number" step="any" value={form.def_mult} onChange={(e) => setForm({ ...form, def_mult: Number(e.target.value) })} />
+            </F>
+            <F label="MDEF 倍率（必須 > 0）">
+              <input style={inp} type="number" step="any" value={form.mdef_mult} onChange={(e) => setForm({ ...form, mdef_mult: Number(e.target.value) })} />
+            </F>
+            <F label="徽章底色 badge_color（CSS 色碼，如 #e5484d；徽章文字固定白色，見全站金底白字通則）">
+              <input style={inp} type="text" value={form.badge_color} onChange={(e) => setForm({ ...form, badge_color: e.target.value })} />
+            </F>
+            {form.calibrated_note && (
+              <F label="校準備註 calibrated_note（唯讀，來自 RANK_TABLE.md 校準紀錄）" full>
+                <textarea style={{ ...ta, height: 60 }} value={form.calibrated_note} disabled />
+              </F>
+            )}
+            <F label="說明 description" full>
+              <textarea style={{ ...ta, height: 60 }} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            </F>
+            <F label="等級修正 level_curve（JSON，鍵＝等級字串→修正係數；本輪多留空 {}，等級漂移根治留給下一輪）" full>
+              <textarea style={{ ...ta, height: 80, fontFamily: 'monospace', fontSize: 12 }} value={levelCurveText} onChange={(e) => setLevelCurveText(e.target.value)} />
+            </F>
+            <F label='召喚設定 summon（JSON，如 {"waves":[{"at_hp_pct":60,"rank":"E","count":2,"monster_ids":[],"power_scale":1}]}；rank 須為九值之一、count 1–5、at_hp_pct 1–99、power_scale 0.05–2（省略視為 1，召喚怪整體強度折減用）、monster_ids 空陣列＝召喚該 rank 的分級怪；只有 A／特A／S／特S 通常會用到，其餘留 {"waves":[]}）' full>
+              <textarea style={{ ...ta, height: 160, fontFamily: 'monospace', fontSize: 12 }} value={summonText} onChange={(e) => setSummonText(e.target.value)} />
+            </F>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            <button onClick={save} disabled={busy} style={primaryBtn}>{busy ? '儲存中…' : '儲存'}</button>
+            <button onClick={() => setForm(null)} style={ghostBtn}>取消</button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1141,7 +1304,10 @@ function CompanionsTab({ token, onErr, onMsg }: { token: string; onErr: (m: stri
 // ============================== 遭遇（含五槽位怪物編組） ==============================
 
 function emptyEncounter(): RpgEncounter {
-  return { code: '', title: '', subtitle: '', scene_id: '', scene_kind: 'normal', difficulty: 1, power_scale: 1, escape_chance: 0.35, can_escape: true, is_active: true, sort_order: 0, monsters: [], monster_level: 10 }
+  return {
+    code: '', title: '', subtitle: '', scene_id: '', scene_kind: 'normal', difficulty: 1, power_scale: 1, escape_chance: 0.35, can_escape: true, is_active: true, sort_order: 0, monsters: [], monster_level: 10,
+    scaling_mode: 'legacy', level_mode: 'fixed', rank: null, monster_count: null,
+  }
 }
 const ENCOUNTER_FIELDS: FieldSpec<RpgEncounter>[] = [
   { key: 'code', label: '代碼 code（對外識別，API 用這個不用內部 UUID）', lockOnEdit: true },
@@ -1151,10 +1317,23 @@ const ENCOUNTER_FIELDS: FieldSpec<RpgEncounter>[] = [
   { key: 'difficulty', label: '難度（1~5，前端畫星）', type: 'number', step: '1' },
   // DORPG P6（契約 §2）：怪物等級制——這一場怪物的等級 N，battle_scale_mode="level" 時驅動
   // RefPlayer(N) 縮放；六場預設 10/20/30/40/50/60，EncounterPicker 卡片會顯示「怪物 Lv.N」。
-  { key: 'monster_level', label: '怪物等級 monster_level（1–99）', type: 'number', step: '1' },
+  // DORPG P11：level_mode='player' 時這個值只當後台編輯用的預設值，實際對戰改用玩家有效等級。
+  { key: 'monster_level', label: '怪物等級 monster_level（1–99；level_mode=player 時僅供參考，實際用玩家等級）', type: 'number', step: '1' },
+  // DORPG P11（契約 §1/§2、WIRE §後台）：強度挑戰 20 場新欄位——'rank' 空字串代表「（無）」，
+  // 存檔前由下方 EncountersTab 的 put 轉成 null；monster_count 0 代表「未設定」，同樣存檔前轉 null。
+  {
+    key: 'scaling_mode', label: '縮放模式 scaling_mode（legacy＝既有六場公式，手感零改動；rank＝吃「怪物強度」分頁的九級倍率）',
+    type: 'select', options: [{ value: 'legacy', label: 'legacy（既有公式）' }, { value: 'rank', label: 'rank（九級倍率）' }],
+  },
+  {
+    key: 'level_mode', label: '等級模式 level_mode（fixed＝用上面 monster_level；player＝怪物等級跟隨玩家有效等級，強度挑戰 20 場用這個）',
+    type: 'select', options: [{ value: 'fixed', label: 'fixed（固定等級）' }, { value: 'player', label: 'player（跟隨玩家等級）' }],
+  },
+  { key: 'rank', label: '強度等級 rank（scaling_mode=rank 才有意義）', type: 'select', options: [{ value: '', label: '（無，legacy 場次）' }, ...RANK_OPTIONS] },
+  { key: 'monster_count', label: '怪物隻數 monster_count（強度挑戰用 1/3/5；0＝未設定，沿用下方 monsters 編組）', type: 'number', step: '1' },
   { key: 'power_scale', label: '整場戰力倍率 power_scale（level 模式也會乘進怪物 HP/ATK/DEF/MDEF；migration 185 起六場預設 1.0＝不調，只當單場微調用）', type: 'number' },
   { key: 'escape_chance', label: '逃跑成功率（0~1）', type: 'number', step: '0.01' },
-  { key: 'can_escape', label: '可逃跑', type: 'checkbox' },
+  { key: 'can_escape', label: '可逃跑（S／特S 強度挑戰請取消勾選＝不可逃跑）', type: 'checkbox' },
   { key: 'is_active', label: '啟用（會出現在選單）', type: 'checkbox' },
   { key: 'sort_order', label: '排序', type: 'number', step: '1' },
 ]
@@ -1215,7 +1394,10 @@ function EncountersTab({ token, onErr, onMsg }: { token: string; onErr: (m: stri
       token={token} heading="遭遇管理" desc="一個遭遇＝一個場景＋最多 5 隻怪物編組。玩家在選單頁看到的就是這裡的 title/subtitle/怪物頭像列。"
       idKey="code" nameKey="title" fields={fieldsWithSceneSelect}
       list={(t) => adminRpgApi.encounters(t).then((r) => r.encounters)}
-      put={(t, row) => adminRpgApi.putEncounter(t, row)}
+      // DORPG P11：rank 的 select 用空字串代表「（無）」、monster_count 用 0 代表「未設定」（表單層
+      // 沒有 null 概念，見 FieldSpec 的既有限制）——存檔前正規化成後端 WIRE 要求的 null，比照
+      // SkillsTab 的 job_id/prereq_skill_id 既有轉換慣例。
+      put={(t, row) => adminRpgApi.putEncounter(t, { ...row, rank: row.rank || null, monster_count: row.monster_count ? Number(row.monster_count) : null })}
       remove={(t, code) => adminRpgApi.deleteEncounter(t, code)}
       empty={emptyEncounter} onErr={onErr} onMsg={onMsg}
       renderExtra={(form, setForm) => <EncounterMonstersEditor form={form} setForm={setForm} monsters={monsters} />}

@@ -1,7 +1,7 @@
 // 引擎內部工作狀態：dispatch/tick 在一次呼叫內把 BattleState 拆成可變動的工作物件（Ctx）直接改，
 // 呼叫結束再重新組裝成一份新的 BattleState 回傳——對外仍是純函式：toCtx 已把 party/enemies/items 等
 // 陣列與內層物件都各自淺拷貝一份，所以本次呼叫怎麼改都不會動到傳入的 state 或它的巢狀物件。
-import type { Item, Skill, TrayMode } from '../types';
+import type { Item, Skill, SummonWave, TrayMode } from '../types';
 import type { BattleConfig, BattleEvent, BattleState, EnemyActor, PartyActor, PendingCast, TargetingMode } from './types';
 
 /**
@@ -36,6 +36,13 @@ export interface Ctx {
   /** P9：見 types.ts BattleState.autoBattle／focusTargetId 型別註解。 */
   autoBattle: boolean;
   focusTargetId: string | null;
+  /** P11：見 types.ts BattleState.scalingMode／levelMode／monsterLevel／summonPool／
+   *  summonedWaves 型別註解。 */
+  scalingMode: 'legacy' | 'rank';
+  levelMode: 'fixed' | 'player';
+  monsterLevel: number | null;
+  summonPool: SummonWave[];
+  summonedWaves: string[];
 }
 
 /** 把外部傳入的 state 拆成本次呼叫可安全改動的工作副本。 */
@@ -66,6 +73,16 @@ export function toCtx(state: BattleState, now: number): Ctx {
     aiSkillReadyAt: Object.fromEntries(Object.entries(state.aiSkillReadyAt).map(([id, m]) => [id, { ...m }])),
     autoBattle: state.autoBattle,
     focusTargetId: state.focusTargetId,
+    // P11：scalingMode/levelMode/monsterLevel 是 bootstrap 給定、整場戰鬥不變的純顯示標籤，跟
+    // playerId/trayMode 一樣直接帶原始值即可，不需要另外拷貝。summonPool 是 bootstrap 給定、
+    // 本次呼叫不會修改的靜態表（見 types.ts BattleState.summonPool 型別註解），也比照 skills
+    // 直接傳參照；summonedWaves 會被 push（見 summon.ts），要淺拷貝成新陣列，不能讓本次呼叫的
+    // 增添動作反過來汙染傳入的 state。
+    scalingMode: state.scalingMode,
+    levelMode: state.levelMode,
+    monsterLevel: state.monsterLevel,
+    summonPool: state.summonPool,
+    summonedWaves: [...state.summonedWaves],
   };
 }
 
@@ -96,6 +113,11 @@ export function fromCtx(ctx: Ctx, phase: BattleState['phase'], outcome: BattleSt
     aiSkillReadyAt: ctx.aiSkillReadyAt,
     autoBattle: ctx.autoBattle,
     focusTargetId: ctx.focusTargetId,
+    scalingMode: ctx.scalingMode,
+    levelMode: ctx.levelMode,
+    monsterLevel: ctx.monsterLevel,
+    summonPool: ctx.summonPool,
+    summonedWaves: ctx.summonedWaves,
   };
 }
 

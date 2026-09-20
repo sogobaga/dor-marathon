@@ -44,7 +44,7 @@ export async function resolve(specifier, context, nextResolve) {
 `
 register('data:text/javascript,' + encodeURIComponent(loaderSrc), import.meta.url)
 
-const { sampleFromBootstrap } = await import(new URL('../src/lib/dorpg/fromApi.ts', import.meta.url).href)
+const { sampleFromBootstrap, summonPoolFromBootstrap } = await import(new URL('../src/lib/dorpg/fromApi.ts', import.meta.url).href)
 const { createBattle, dispatch, tick, inGuardianState } = await import(new URL('../src/lib/dorpg/engine/index.ts', import.meta.url).href)
 
 let pass = 0, fail = 0
@@ -471,6 +471,87 @@ const pad10 = (s) => [s, null, null, null, null, null, null, null, null, null]
 
   const enemyMissingRow = sampleFromBootstrap(rawSampleWithEnemy({})).enemies[0]
   eq(enemyMissingRow.row, undefined, '舊版後端完全沒送 row 欄位：Enemy.row 缺省 undefined')
+}
+
+// ── 11) DORPG P11（CONTRACT §1「怪物強度九級」／「召喚（A 以上）」、WIRE「戰鬥 bootstrap」：
+//      「enemy 新增 rank、rankLabel、badgeColor、isSummoned」／「summonPool」）：mapEnemy() 的
+//      rank 元資料映射（api.ts 尚未宣告，防禦讀取）；summonPoolFromBootstrap() 的整包驗證——
+//      合法波次逐欄照抄（enemies 透過既有 mapEnemy 轉換），任何一層形狀不對就整波/整包丟棄，
+//      不讓髒資料讓 createBattle() 在執行期壞掉。 ──
+{
+  // 11a）mapEnemy：rank/rankLabel/badgeColor/isSummoned 有送值時正確映射；沒送時 rankLabel/
+  //      badgeColor 為 undefined、isSummoned 缺省 false（既有五隻怪物與六場劇情場景的既有行為
+  //      不受影響）。
+  const rawNoRankMeta = {
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, weapon: 'sword' }],
+    enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 99999, hpMax: 99999, slot: 'front_center', imageUrl: '', canEscape: true, stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 10, mdef: 10 } }],
+    scene: { id: 's', name: 's', imageUrl: '', slots: [] },
+    skills: pad10(null),
+    items: [],
+    initialTargetId: 'e1',
+  }
+  const enemyNoMeta = sampleFromBootstrap(rawNoRankMeta).enemies[0]
+  ok(enemyNoMeta.rankLabel === undefined, '沒有送 rankLabel（舊版後端／既有五隻怪物）時映射結果是 undefined')
+  ok(enemyNoMeta.badgeColor === undefined, '沒有送 badgeColor 時映射結果是 undefined')
+  eq(enemyNoMeta.isSummoned, false, '沒有送 isSummoned 時缺省 false（跟既有六場劇情場景的既有行為一致）')
+
+  const rawWithRankMeta = {
+    ...rawNoRankMeta,
+    enemies: [{ ...rawNoRankMeta.enemies[0], rank: 'SA', rankLabel: '特A級', badgeColor: '#f5a623', isSummoned: true }],
+  }
+  const enemyWithMeta = sampleFromBootstrap(rawWithRankMeta).enemies[0]
+  eq(enemyWithMeta.rank, 'SA', 'rank 正確映射（九級分級標籤，沿用既有欄位）')
+  eq(enemyWithMeta.rankLabel, '特A級', 'rankLabel 正確映射')
+  eq(enemyWithMeta.badgeColor, '#f5a623', 'badgeColor 正確映射')
+  eq(enemyWithMeta.isSummoned, true, 'isSummoned=true 正確映射')
+
+  // 型別跑掉（非字串／非 boolean true）時退回中性值，不塞髒資料。
+  const rawBadTypes = {
+    ...rawNoRankMeta,
+    enemies: [{ ...rawNoRankMeta.enemies[0], rankLabel: 123, badgeColor: {}, isSummoned: 'yes' }],
+  }
+  const enemyBadTypes = sampleFromBootstrap(rawBadTypes).enemies[0]
+  ok(enemyBadTypes.rankLabel === undefined, 'rankLabel 型別跑掉（非字串）→ undefined')
+  ok(enemyBadTypes.badgeColor === undefined, 'badgeColor 型別跑掉（非字串）→ undefined')
+  eq(enemyBadTypes.isSummoned, false, 'isSummoned 型別跑掉（非 boolean true）→ 缺省 false（只有明確 true 才算數）')
+}
+{
+  // 11b）summonPoolFromBootstrap：合法整包正確映射（summonerEnemyId/atHpPct/enemies 逐欄照抄，
+  //      enemies 透過既有 mapEnemy 轉換，含本輪新增的 rank 元資料）。
+  const rawSummonPool = [
+    {
+      summonerEnemyId: 'boss1', atHpPct: 60,
+      enemies: [
+        { id: 'boss1_w1_1', name: '小怪', level: 30, hp: 100, hpMax: 100, slot: '', imageUrl: '', canEscape: true, stats: { hpMax: 100, mpMax: 0, atk: 10, matk: 0, def: 0, mdef: 0 }, rank: 'E', isSummoned: true },
+      ],
+    },
+  ]
+  const waves = summonPoolFromBootstrap(rawSummonPool)
+  eq(waves.length, 1, '合法整包：1 波正確映射')
+  eq(waves[0].summonerEnemyId, 'boss1', 'summonerEnemyId 正確映射')
+  eq(waves[0].atHpPct, 60, 'atHpPct 正確映射')
+  eq(waves[0].enemies.length, 1, 'enemies 陣列正確映射（經 mapEnemy 轉換）')
+  eq(waves[0].enemies[0].id, 'boss1_w1_1', 'enemies[].id 正確映射')
+  eq(waves[0].enemies[0].isSummoned, true, 'enemies[].isSummoned 也走同一套 mapEnemy 映射')
+
+  // 防禦：非陣列／缺欄位／型別跑掉，一律安全退回空陣列或跳過該波，不讓整包解析拋錯。
+  eq(summonPoolFromBootstrap(undefined), [], '整包缺失（舊版後端未上線本輪功能）→ 空陣列')
+  eq(summonPoolFromBootstrap(null), [], '整包為 null → 空陣列')
+  eq(summonPoolFromBootstrap('not-an-array'), [], '整包型別不是陣列 → 空陣列')
+  eq(summonPoolFromBootstrap([{ summonerEnemyId: 'boss1' /* 缺 atHpPct/enemies */ }]), [], '單一波缺必要欄位 → 該波丟棄（這裡剛好只有一波，結果是空陣列）')
+  eq(
+    summonPoolFromBootstrap([
+      { summonerEnemyId: 'boss1', atHpPct: 60, enemies: [{ id: 'ok', name: 'ok', level: 1, hp: 1, hpMax: 1, slot: '', imageUrl: '', canEscape: true, stats: { hpMax: 1, mpMax: 0, atk: 0, matk: 0, def: 0, mdef: 0 } }] },
+      { summonerEnemyId: 'boss2', atHpPct: 'bad' /* 型別跑掉 */, enemies: [] },
+    ]).length,
+    1,
+    '多波混合：合法波保留、單一波型別跑掉只丟棄那一波，不影響其它波',
+  )
+  eq(
+    summonPoolFromBootstrap([{ summonerEnemyId: 'boss1', atHpPct: 60, enemies: [{ notAnId: true }] }]).length,
+    0,
+    'enemies 陣列裡的項目缺 id/name（不是合法敵人形狀）→ 整波沒有任何合法敵人，該波丟棄',
+  )
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

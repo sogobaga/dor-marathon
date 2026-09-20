@@ -56,7 +56,7 @@ const { SKILL_SLOTS } = await import(typesUrl)
 // 額外載入 fixture.ts 驗證 buildFixtureSample(..., {mode:'level', refTable}) 對 refPlayerTable
 // 某幾列算出的怪物 hp/atk/def/mdef/matk 精確值（見下方 39/40 號區塊）。
 const fixtureUrl = new URL('../src/lib/dorpg/fixture.ts', import.meta.url).href
-const { buildFixtureSample, loadRefPlayerTable } = await import(fixtureUrl)
+const { buildFixtureSample, loadRefPlayerTable, refPlayerAt, scaleMonsterByRank, RPG_MONSTER_RANKS, buildRankDemoBundle } = await import(fixtureUrl)
 
 let pass = 0, fail = 0
 function ok(cond, label) {
@@ -2628,6 +2628,292 @@ const GUARD_STANCE_SKILL = {
   eq(zeroCtl.state.count, 4, '對照組：主目標後排、pierceChancePct=0 時 rng() 呼叫次數＝2 隻敵人 nextActAt + miss + crit = 4 次')
   eq(thirtyCtl.state.count, zeroCtl.state.count, '主目標為後排：pierceChancePct=30 與 pierceChancePct=0 消耗的 rng() 次數完全相同（isFront 短路擋在 rng() 之前，不會白白多耗一次，不打亂後續 rng 序列）')
   eq(s30.events.filter((e) => e.kind === 'attack' && e.pierce === true).length, 0, '主目標為後排：即使 pierceChancePct=30，也完全不會產生 pierce 事件（貫穿只在主目標為前排時判定）')
+}
+
+// ═══════════════════════════ P11（DORPG_P11 CONTRACT §1「召喚（A 以上）」、WIRE「引擎」）：
+// 召喚系統——advanceSummons(ctx) 未對外匯出（引擎內部機制，跟 advanceEnemyAI 等 advance*() 系列
+// 一樣），全部經由 tick() 間接驗證。 ═══════════════════════════
+
+/** 1 隻召喚者（血量整數方便算 HP%），party 沿用 makeSample 預設的 1 名玩家。 */
+function summonerSample(overrides = {}) {
+  return makeSample({
+    enemies: [
+      { id: 'summoner', name: '召喚者', level: 50, hp: 1000, hpMax: 1000, slot: 'front_center', imageUrl: '', stats: { hpMax: 1000, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+    ],
+    initialTargetId: 'summoner',
+    ...overrides,
+  })
+}
+
+/** 一波 2 隻小怪、60% 門檻；slot 刻意留空字串（WIRE：「enemies[].slot 為空字串由引擎決定」）。 */
+function summonWave(overrides = {}) {
+  return {
+    summonerEnemyId: 'summoner',
+    atHpPct: 60,
+    enemies: [
+      { id: 'minion_1', name: '小怪1', level: 50, hp: 100, hpMax: 100, slot: '', imageUrl: '', stats: { hpMax: 100, mpMax: 0, atk: 10, matk: 0, def: 0, mdef: 0 } },
+      { id: 'minion_2', name: '小怪2', level: 50, hp: 100, hpMax: 100, slot: '', imageUrl: '', stats: { hpMax: 100, mpMax: 0, atk: 10, matk: 0, def: 0, mdef: 0 } },
+    ],
+    ...overrides,
+  }
+}
+
+// ── 0) INTEGRATOR 補（2026-09-20，任務指定）：createBattle(sample, { summonPool }) 之後
+//         state.summonPool 長度／內容正確地被帶進 BattleState——這是 useBattle.ts／PhoneShell.tsx
+//         兩處整合缺口（忘了轉發 summonPool/scalingMode/levelMode/monsterLevel）修好後最容易
+//         再度回歸的地方：只要有人日後又漏轉發一個欄位，這裡就會先炸，不必等到真的打進 rank 場次
+//         才發現召喚池是空的。──
+{
+  const pool = [summonWave(), summonWave({ summonerEnemyId: 'summoner', atHpPct: 30 })]
+  const s = createBattle(summonerSample(), { now: 0, config: FAR_CONFIG, summonPool: pool })
+  eq(s.summonPool.length, 2, 'createBattle 帶入的 summonPool 長度與傳入陣列一致')
+  eq(s.summonPool[0].summonerEnemyId, 'summoner', 'summonPool[0].summonerEnemyId 原樣帶入')
+  eq(s.summonPool[1].atHpPct, 30, 'summonPool[1].atHpPct 原樣帶入')
+  eq(s.summonedWaves.length, 0, '戰鬥開始時 summonedWaves 是空陣列（尚未觸發任何一波）')
+}
+
+// ── 1) 尚未跨過門檻：hp% > atHpPct → 不觸發，enemies 陣列不變、無 summon 事件。 ──
+{
+  let s = createBattle(summonerSample(), { now: 0, config: FAR_CONFIG, summonPool: [summonWave()] })
+  s.enemies[0].hp = 700 // 70% > 60%，尚未跨過門檻
+  s = tick(s, 100)
+  eq(s.enemies.length, 1, 'HP% 尚未跨過門檻：不召喚，enemies 陣列仍只有召喚者')
+  ok(!s.events.some((e) => e.kind === 'summon'), '尚未跨過門檻：不推 summon 事件')
+}
+
+// ── 2) 跨過門檻（恰好等於，驗證「≤」邊界）：觸發一次，依契約順序放入正確空槽，事件 summon，
+//         isSummoned=true，HP 整數不變式。 ──
+let triggeredState
+{
+  let s = createBattle(summonerSample(), { now: 0, config: FAR_CONFIG, summonPool: [summonWave()] })
+  s.enemies[0].hp = 600 // 恰 60% ≤ 60%
+  s = tick(s, 100)
+  eq(s.enemies.length, 3, '跨過門檻：召喚者 + 2 隻小怪 = 3 隻')
+  const minion1 = s.enemies.find((e) => e.id === 'minion_1')
+  const minion2 = s.enemies.find((e) => e.id === 'minion_2')
+  eq(minion1?.slot, 'front_left', '第一隻小怪依序放進 front_left（契約給定順序）')
+  eq(minion2?.slot, 'front_right', '第二隻小怪放進 front_right')
+  ok(minion1?.isSummoned === true && minion2?.isSummoned === true, '召喚出的敵人 isSummoned=true（engine 強制標記，不管 wire 原始值）')
+  const summonEv = s.events.find((e) => e.kind === 'summon')
+  ok(!!summonEv && summonEv.summonerId === 'summoner', '推出 summon 事件，summonerId=summoner')
+  eq([...summonEv.enemyIds].sort(), ['minion_1', 'minion_2'], 'summon 事件 enemyIds 含兩隻新敵人')
+  ok(Number.isInteger(minion1.hp) && Number.isInteger(minion2.hp), 'HP 整數不變式：召喚出的敵人 hp 皆整數')
+  triggeredState = s
+}
+
+// ── 3) 不重複：同一波已觸發，之後的 tick 即使 HP% 仍 ≤ 門檻，也不會再次觸發。 ──
+{
+  let s = triggeredState
+  const before = s.enemies.length
+  s = tick(s, 200)
+  s = tick(s, 300)
+  eq(s.enemies.length, before, '已觸發過的波次不會重複召喚（enemies 數量不再增加）')
+  eq(s.events.filter((e) => e.kind === 'summon').length, 1, '整場戰鬥只有一筆 summon 事件（不重複）')
+}
+
+// ── 4) 上限 5（含召喚者）：場上已有 4 隻存活敵人，2 隻的波次只剩 1 個空位 → 只放 1 隻，事件只含
+//         實際放入的那 1 隻。 ──
+{
+  const sample = summonerSample({
+    enemies: [
+      { id: 'summoner', name: '召喚者', level: 50, hp: 1000, hpMax: 1000, slot: 'front_center', imageUrl: '', stats: { hpMax: 1000, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'a', name: 'a', level: 50, hp: 100, hpMax: 100, slot: 'front_left', imageUrl: '', stats: { hpMax: 100, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'b', name: 'b', level: 50, hp: 100, hpMax: 100, slot: 'front_right', imageUrl: '', stats: { hpMax: 100, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'c', name: 'c', level: 50, hp: 100, hpMax: 100, slot: 'rear_left', imageUrl: '', stats: { hpMax: 100, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+    ],
+    initialTargetId: 'summoner',
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG, summonPool: [summonWave()] })
+  s.enemies[0].hp = 600
+  s = tick(s, 100)
+  eq(s.enemies.length, 5, '上限 5：4 隻存活 + 只補 1 隻新召喚 = 5 隻（第二隻略過）')
+  const spawnedMinions = s.enemies.filter((e) => e.id.startsWith('minion_'))
+  eq(spawnedMinions.length, 1, '只有 1 隻小怪成功放入（剩下的 1 個空位）')
+  eq(spawnedMinions[0].id, 'minion_1', '依 wave.enemies 陣列順序放入，第一隻優先')
+  eq(spawnedMinions[0].slot, 'rear_right', '唯一剩下的空槽是 rear_right（front_left/front_right/rear_left 都已被既有敵人佔用）')
+  const summonEv = s.events.find((e) => e.kind === 'summon')
+  eq(summonEv.enemyIds, ['minion_1'], 'summon 事件只含實際放入的那 1 隻')
+}
+
+// ── 5) 完全無空位：場上已滿 5 隻存活 → 整波略過，不推事件，但仍標記已消耗（之後騰出空位也不會
+//         補放）。 ──
+{
+  const fiveAlive = ['summoner', 'a', 'b', 'c', 'd'].map((id, i) => ({
+    id, name: id, level: 50, hp: id === 'summoner' ? 1000 : 100, hpMax: id === 'summoner' ? 1000 : 100,
+    slot: ['front_center', 'front_left', 'front_right', 'rear_left', 'rear_right'][i], imageUrl: '',
+    stats: { hpMax: id === 'summoner' ? 1000 : 100, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 },
+  }))
+  const sample = summonerSample({ enemies: fiveAlive, initialTargetId: 'summoner' })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG, summonPool: [summonWave()] })
+  s.enemies[0].hp = 600
+  s = tick(s, 100)
+  eq(s.enemies.length, 5, '五隻已滿：完全無空位，enemies 數量不變')
+  ok(!s.events.some((e) => e.kind === 'summon'), '無空位：不推 summon 事件')
+  // 後續即使殺死一隻騰出空位，這一波也不會補放——已標記消耗過（不重複判定）。
+  s.enemies[1].hp = 0
+  s.enemies[1].anim = 'removed'
+  s = tick(s, 200)
+  eq(s.enemies.filter((e) => e.id.startsWith('minion_')).length, 0, '無空位而略過的波次不會在之後補放（即使騰出空位）')
+}
+
+// ── 6) 召喚者死亡後未觸發的波不再觸發：召喚者一擊死亡（從 100% 直接歸零，從未被任何一個 tick
+//         看到「跨越」60% 這個中間值），60% 門檻的波永遠不會觸發。 ──
+{
+  let s = createBattle(summonerSample(), { now: 0, config: FAR_CONFIG, summonPool: [summonWave()] })
+  s.enemies[0].hp = 0
+  s = tick(s, 100)
+  eq(s.enemies.length, 1, '召喚者死亡：即使 0% ≤ 60%，死亡判定優先於門檻判定，波永遠不觸發')
+  ok(!s.events.some((e) => e.kind === 'summon'), '召喚者死亡：不觸發任何召喚')
+}
+
+// ── 7) 被召喚者可被鎖定與擊殺；勝利需含召喚怪全部死亡（沿用 2) 已召喚出 minion_1/minion_2 的
+//         狀態）。 ──
+{
+  let s = triggeredState
+  s = dispatch(s, { type: 'SELECT_TARGET', enemyId: 'minion_1' }, 300)
+  eq(s.targetId, 'minion_1', '可以手動鎖定被召喚出的敵人')
+
+  // 比照本檔 16 號區塊「hp=0 時 anim 直接視為死亡動畫播完」的既有簡化手法（那裡是在 createBattle
+  // 當下就給 hp=0，這裡是戰鬥中途直接改——效果等價，都是讓 advanceResolving 的 allRemoved 判斷
+  // 不必再等一次 enemyDeathMs）：召喚者與 minion_2 先死，minion_1 仍存活。
+  const kill = (enemy) => { enemy.hp = 0; enemy.anim = 'removed' }
+  kill(s.enemies.find((e) => e.id === 'summoner'))
+  kill(s.enemies.find((e) => e.id === 'minion_2'))
+  s = tick(s, 400)
+  ok(s.phase !== 'ended', '召喚者與 minion_2 皆死，但 minion_1 仍存活：戰鬥尚未結束（勝利需含召喚怪全部死亡）')
+
+  kill(s.enemies.find((e) => e.id === 'minion_1'))
+  s = tick(s, 500)
+  eq(s.phase, 'ended', '三隻敵人（含兩隻召喚怪）全部死亡後，戰鬥才真的結束')
+  eq(s.outcome, 'victory', '結果是 victory')
+}
+
+// ── 8) 敵人 AI 對召喚怪正常運作：跟一般怪物一樣走 idle→windup→attacking，會攻擊隊伍。 ──
+{
+  const cfg = { ...FAR_CONFIG, enemyActIntervalMs: [999999, 999999] }
+  let s = createBattle(summonerSample(), { now: 0, config: cfg, summonPool: [summonWave()], rng: fixedRng([0]) })
+  s.enemies[0].hp = 600
+  s = tick(s, 100) // 召喚兩隻小怪，nextActAt = 100 + randRange([999999,999999], rng恆0) = 1000099
+  const minionBefore = s.enemies.find((e) => e.id === 'minion_1')
+  eq(minionBefore.anim, 'idle', '召喚怪進場沿用既有初始 anim＝idle（P1 起的既有規則，非新的 spawning 狀態）')
+  s = tick(s, minionBefore.nextActAt) // idle→windup
+  eq(s.enemies.find((e) => e.id === 'minion_1').anim, 'windup', '召喚怪 idle→windup 正常運作，不是卡在 idle 或其它異常狀態')
+  s = tick(s, minionBefore.nextActAt + DEFAULT_BATTLE_CONFIG.enemyWindupMs) // windup→attacking，結算傷害
+  ok(s.events.some((e) => e.kind === 'enemyAttack' && e.enemyId === 'minion_1'), '召喚怪能正常對隊伍造成一次 enemyAttack（AI 對它一視同仁）')
+}
+
+// ── 9) fixture.ts scaleMonsterByRank()：CONTRACT §1 rank 分級公式的手算期望值（比照本檔 legacy
+//         「39 號區塊」的做法——數值由本測試獨立算好寫死，不是從 fixture.ts 抄一份運算式，實作
+//         漂移會被抓到）。用自造的 ref/monster（不是真正的九隻分級怪物內容，那是 BACKEND
+//         migration 189 的範圍）鎖定 floor 順序／各倍率相乘順序／matk 不吃 slotScale。 ──
+{
+  const ref = { level: 30, hpMax: 500, mpMax: 100, atk: 50, matk: 40, def: 20, mdef: 15, hit: 88, flee: 12, aspd: 140 }
+  const sRank = RPG_MONSTER_RANKS.find((r) => r.rank === 'S')
+  ok(!!sRank, 'RPG_MONSTER_RANKS 含 S 級這一列')
+  eq(
+    { hpMult: sRank.hpMult, atkMult: sRank.atkMult, defMult: sRank.defMult, mdefMult: sRank.mdefMult },
+    { hpMult: 20, atkMult: 10, defMult: 2.66, mdefMult: 2.66 },
+    'S 級倍率逐字對齊 CONTRACT §1 校準表（hp20/atk10/def·mdef2.66）',
+  )
+  const neutralMonster = { hpMult: 1.0, atkMult: 1.0, defMult: 1.0 }
+  const scaledNeutral = scaleMonsterByRank(ref, sRank, neutralMonster, 1, 1, 30)
+  eq(
+    scaledNeutral,
+    { hpMax: 10000, atk: 500, matk: 400, def: 53, mdef: 39 },
+    'S 級×中性怪物（全部倍率1.0）：hp=floor(500×20)=10000、atk=floor(50×10)=500、matk=floor(40×10)=400、def=floor(20×2.66)=53.2→53、mdef=floor(15×2.66)=39.9→39',
+  )
+
+  const fRank = RPG_MONSTER_RANKS.find((r) => r.rank === 'F')
+  const customMonster = { hpMult: 1.5, atkMult: 1.25, defMult: 1.1 }
+  const scaledWithScales = scaleMonsterByRank(ref, fRank, customMonster, 1.2, 0.9, 10)
+  eq(
+    scaledWithScales,
+    { hpMax: 1458, atk: 135, matk: 90, def: 6, mdef: 4 },
+    'F 級×自訂怪物×powerScale1.2×slotScale0.9：hp=floor(500×1.8×1.5×1.2×0.9)=1458.0、atk=floor(50×1.8×1.25×1.2)=135.0、' +
+    'matk=floor(40×1.25×1.8)=90.0（matk 不吃 slotScale，也不吃 powerScale）、def=floor(20×0.24×1.1×1.2)=6.336→6、mdef=floor(15×0.24×1.1×1.2)=4.752→4',
+  )
+  ok(Number.isInteger(scaledWithScales.hpMax), 'rank 公式算出的怪物 hp 也是整數（跟 CONTRACT §1 的整數不變式一致）')
+
+  // level_curve：查無 key 或值 ≤0 視為 1（不修正）；有正值時真的套用。
+  const rankWithCurve = { ...fRank, levelCurve: { '10': 2, '11': 0 } }
+  const curved = scaleMonsterByRank(ref, rankWithCurve, neutralMonster, 1, 1, 10)
+  const uncurved = scaleMonsterByRank(ref, fRank, neutralMonster, 1, 1, 10)
+  eq(curved.hpMax, uncurved.hpMax * 2, 'levelCurve[10]=2：hp 正確乘上這個修正係數（相對同一份 rank/monster 但沒有 curve 的基準值 ×2）')
+  eq(scaleMonsterByRank(ref, rankWithCurve, neutralMonster, 1, 1, 11).hpMax, uncurved.hpMax, 'levelCurve[11]=0（≤0）：視為 1，不修正，等同查無這個 key')
+  eq(scaleMonsterByRank(ref, rankWithCurve, neutralMonster, 1, 1, 99).hpMax, uncurved.hpMax, '查無 levelCurve[99] 這個 key：視為 1，不修正')
+}
+
+// ── 9b) INTEGRATOR 補（2026-09-20，任務指定）：Go ScaleMonsterByRank 與 TS scaleMonsterByRank
+//          跨語言逐位元比對——用真正的 refPlayerTable.json（不是上面 9 號區塊自造的 ref）在
+//          level=27 這一列（hp1046/atk29/matk35/def23/mdef26），比照
+//          services/api/internal/rpg/p11_test.go 的
+//          TestScaleMonsterByRank_MatchesLv27ReferenceAnchor，同一組期望數字兩邊各存一份、
+//          分別手算/斷言——任一邊的 ScaleMonsterByRank 實作漂移，兩邊測試都會各自先炸，不必等到
+//          真的比對兩份測試輸出才發現不一致。refPlayerTable.json 不存在時（BACKEND 尚未產生）
+//          比照既有 40 號區塊的 SKIP 慣例，不算失敗。──
+{
+  const table = await loadRefPlayerTable()
+  if (!table) {
+    console.log('SKIP 9b) refPlayerTable.json 尚未由 BACKEND 產生，略過 Lv27 錨點跨語言核對（不計入 pass/fail）')
+  } else {
+    const ref27 = refPlayerAt(table, 27)
+    eq(
+      { hpMax: ref27.hpMax, atk: ref27.atk, matk: ref27.matk, def: ref27.def, mdef: ref27.mdef },
+      { hpMax: 1046, atk: 29, matk: 35, def: 23, mdef: 26 },
+      'refPlayerTable.json 的 level=27 仍是任務給定的校準錨點（跟 Go 端 TestScaleMonsterByRank_MatchesLv27ReferenceAnchor 用同一組數字）',
+    )
+    const neutral = { hpMult: 1, atkMult: 1, defMult: 1 }
+    // 倍率逐字取自 migration 189 seed（189_rpg_p11_ranks.sql），跟 p11_test.go 那份 Go 測試同一組常數。
+    // ⚠️ 鍵順序須跟 scaleMonsterByRank() 的 return 字面量一致（hpMax,atk,matk,def,mdef）——eq()
+    // 用 JSON.stringify 比對，物件鍵的序列化順序＝插入順序，不是字母序，順序不同會誤報不相等。
+    const anchorCases = [
+      { rank: RPG_MONSTER_RANKS.find((r) => r.rank === 'F'), want: { hpMax: 1882, atk: 52, matk: 63, def: 5, mdef: 6 } },
+      { rank: RPG_MONSTER_RANKS.find((r) => r.rank === 'E'), want: { hpMax: 732, atk: 253, matk: 306, def: 2, mdef: 2 } },
+      { rank: RPG_MONSTER_RANKS.find((r) => r.rank === 'SS'), want: { hpMax: 198740, atk: 188, matk: 227, def: 20, mdef: 22 } },
+    ]
+    for (const c of anchorCases) {
+      ok(!!c.rank, `RPG_MONSTER_RANKS 含 ${c.rank?.rank ?? '?'} 級這一列`)
+      const got = scaleMonsterByRank(ref27, c.rank, neutral, 1, 1, 27)
+      eq(got, c.want, `Lv27 錨點×${c.rank.rank} 級（中性怪物）：TS scaleMonsterByRank 與 Go ScaleMonsterByRank 期望值一致`)
+    }
+  }
+}
+
+// ── 10) fixture.ts buildRankDemoBundle()：F×1 與 S×1（S 帶兩波召喚）示範遭遇——正確組出可以
+//          直接餵進 createBattle 的資料（scalingMode/levelMode/monsterLevel/summonPool），
+//          且真的能在實戰中觸發召喚（跟本檔前面的 summon 測試接軌，證明 fixture 產出的資料
+//          形狀跟 engine 端期待的一致，不只是型別對了）。 ──
+{
+  const refTable = [{ level: 30, hpMax: 500, mpMax: 100, atk: 50, matk: 40, def: 20, mdef: 15, hit: 88, flee: 12, aspd: 140 }]
+  const bundle = buildRankDemoBundle({ refTable, level: 30 })
+  eq(bundle.scalingMode, 'rank', 'buildRankDemoBundle：scalingMode="rank"')
+  eq(bundle.levelMode, 'player', 'buildRankDemoBundle：levelMode="player"')
+  eq(bundle.monsterLevel, 30, 'buildRankDemoBundle：monsterLevel=level')
+  eq(bundle.sample.enemies.length, 2, '示範遭遇恰好 2 隻主怪：F×1 與 S×1')
+  const fEnemy = bundle.sample.enemies.find((e) => e.rank === 'F')
+  const sEnemy = bundle.sample.enemies.find((e) => e.rank === 'S')
+  ok(!!fEnemy && !!sEnemy, 'F 與 S 兩隻主怪都存在')
+  eq(fEnemy.rankLabel, 'F級', 'F 主怪 rankLabel 正確帶入')
+  eq(sEnemy.canEscape, false, 'S 主怪 canEscape=false（比照契約「S／特S 標示不可逃跑」）')
+  eq(bundle.summonPool.length, 2, 'S 帶兩波召喚')
+  eq(bundle.summonPool[0].summonerEnemyId, sEnemy.id, '第一波的召喚者是 S 這隻主怪')
+  eq(bundle.summonPool[0].enemies.length, 2, '第一波（75%）是 2 隻')
+  eq(bundle.summonPool[1].enemies.length, 1, '第二波（50%）是 1 隻')
+  ok(bundle.summonPool[0].enemies.every((e) => e.isSummoned === true), '召喚波次裡的敵人 isSummoned=true')
+
+  // 餵進 createBattle：BattleState 正確帶著這些頂層欄位；把 S 的 hp 打到門檻以下真的觸發召喚。
+  let s = createBattle(bundle.sample, {
+    now: 0, config: FAR_CONFIG, scalingMode: bundle.scalingMode, levelMode: bundle.levelMode,
+    monsterLevel: bundle.monsterLevel, summonPool: bundle.summonPool,
+  })
+  eq(s.scalingMode, 'rank', 'createBattle 正確帶入 scalingMode')
+  eq(s.levelMode, 'player', 'createBattle 正確帶入 levelMode')
+  eq(s.monsterLevel, 30, 'createBattle 正確帶入 monsterLevel')
+  const sActor = s.enemies.find((e) => e.id === sEnemy.id)
+  sActor.hp = Math.floor(sActor.stats.hpMax * 0.75) // 恰好跨過第一波 75% 門檻
+  s = tick(s, 100)
+  eq(s.enemies.length, 4, 'S 跨過 75% 門檻：F + S + 2 隻召喚出的 D = 4 隻')
+  ok(s.events.some((e) => e.kind === 'summon' && e.summonerId === sEnemy.id), 'fixture 產出的 summonPool 資料真的能讓 engine 觸發 summon 事件（端到端，不只是型別對了）')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

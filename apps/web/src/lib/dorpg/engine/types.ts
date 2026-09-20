@@ -4,7 +4,7 @@
 //
 // import type 的東西在 Node 的 TS type-stripping 下會整段被削掉、完全不會嘗試 resolve，
 // 所以這裡引用 ../types（純型別檔）不影響 verify-dorpg-engine.mjs 用 node 直接執行本檔。
-import type { ActorStats, BuffDebuffStat, CombatRating, EnemySlotId, EquipmentEffectsWire, Item, Skill, TrayMode, WeaponKind, WeaponProfileWire } from '../types';
+import type { ActorStats, BuffDebuffStat, CombatRating, EnemySlotId, EquipmentEffectsWire, Item, Skill, SummonWave, TrayMode, WeaponKind, WeaponProfileWire } from '../types';
 
 export type ActorActionState = 'idle' | 'charging' | 'guarding' | 'casting' | 'recovering' | 'dead';
 export type EnemyAnimState = 'spawning' | 'idle' | 'windup' | 'attacking' | 'hitReaction' | 'dying' | 'removed';
@@ -173,6 +173,20 @@ export interface EnemyActor {
    * 而遺漏排位加成/貫穿機制。
    */
   row?: EnemyRow;
+  /**
+   * P11（DORPG_P11 CONTRACT §1「怪物強度九級」／WIRE「enemy 新增 rank、rankLabel、badgeColor、
+   * isSummoned」）：人類可讀的強度標籤與徽章顏色，純顯示用途（見 dorpg/types.ts Enemy.rankLabel／
+   * badgeColor 型別註解——engine 的戰鬥數值計算完全不讀這兩個欄位，逐字原樣透傳）。
+   */
+  rankLabel?: string;
+  badgeColor?: string;
+  /**
+   * P11（CONTRACT §1「召喚（A 以上）」、WIRE「引擎」）：這隻怪是不是本場戰鬥中途被召喚出來的
+   * ——純顯示用途，engine 的戰鬥規則（鎖定/攻擊/勝負判定）完全不因為這個欄位而有任何分支。
+   * createBattle 建立的初始敵人一律 false（見 formulas.ts toEnemyActor）；engine/summon.ts 的
+   * advanceSummons() 對自己放進場的敵人一律強制設成 true，是這個欄位唯一的權威寫入來源。
+   */
+  isSummoned?: boolean;
 }
 
 /** P12：怪物排位——前排（front_left/center/right）／後排（rear_left/right），見 EnemyActor.row
@@ -523,7 +537,15 @@ export type BattleEvent =
    * 這一下被強制改鎖 actorId 的存活敵人清單（含原本正在 windup 蓄力鎖定別人的敵人），供
    * FRONTEND 顯示浮字「挑釁！」與敵人被拉扯的視覺（若有）。
    */
-  | { seq: number; at: number; kind: 'taunt'; actorId: string; enemyIds: string[] };
+  | { seq: number; at: number; kind: 'taunt'; actorId: string; enemyIds: string[] }
+  // ---- P11（DORPG_P11 CONTRACT §1「召喚（A 以上）」、WIRE「引擎」）新增：召喚新敵人進場。 ----
+  /**
+   * engine/summon.ts 的 advanceSummons() 在召喚者 HP% 跨越門檻、成功放入至少一隻新敵人時發出
+   * （一隻都放不下——契約「無空位略過」——就不推這個事件，見該檔）。enemyIds＝這一波實際放進場
+   * 的敵人 id（可能少於 wave.enemies 原本的數量：空位不夠時只放得下的部分會被放入，見該檔型別
+   * 註解對「部分放入」的決策說明），供 FRONTEND 顯示浮字「召喚！」與新敵人進場的視覺。
+   */
+  | { seq: number; at: number; kind: 'summon'; summonerId: string; enemyIds: string[] };
 
 export interface BattleState {
   phase: BattlePhase;
@@ -574,4 +596,35 @@ export interface BattleState {
    * 完全不讀寫這個欄位。createBattle 初始化 null（尚未挑過目標，第一個 tick 才會補上）。
    */
   focusTargetId: string | null;
+  /**
+   * P11（DORPG_P11 CONTRACT §1／WIRE「戰鬥 bootstrap」）：本場戰鬥的怪物數值算法標籤，純顯示／
+   * 除錯用——跟 P6 的 config.scaleMode 是同一種「engine 完全不讀，只是帶著走給 FRONTEND 顯示」
+   * 精神（見該欄位型別註解）：怪物實際的 hp/atk/def/mdef 一律由 BACKEND／fixture.ts 已經算好
+   * 送進 Enemy.stats 的具體數字決定，不是這個標籤本身。createBattle 缺省 'legacy'（既有六場
+   * 劇情場景、未上線本輪功能時的行為）。
+   */
+  scalingMode: 'legacy' | 'rank';
+  /** 同上，純顯示——'player' 時 monsterLevel 才有意義（怪物等級跟隨玩家有效等級的強度挑戰對戰
+   *  列表）。createBattle 缺省 'fixed'。 */
+  levelMode: 'fixed' | 'player';
+  /** level_mode='player' 時，bootstrap 已經算好、實際套用的怪物等級 N；'fixed' 模式或缺省時為
+   *  null（沒有「跟隨」這件事可言，各怪物自己的 EnemyActor.level 才是權威）。 */
+  monsterLevel: number | null;
+  /**
+   * P11（CONTRACT §1「召喚（A 以上）」、WIRE「引擎」）：bootstrap 已經算好的召喚波次表（見
+   * dorpg/types.ts SummonWave 型別註解）；engine/summon.ts 的 advanceSummons(ctx) 在召喚者 HP%
+   * 跨越 atHpPct 門檻時把對應波次的敵人放進場。createBattle 缺省 []（無召喚機制的既有場景，這
+   * 個機制對它們完全是 no-op）。這份資料本身在整場戰鬥中永遠不會被修改（只有讀取／查詢有沒有
+   * 觸發過），不像 party/enemies 那樣是「戰鬥中資料」，比較接近 skills/items 這種「bootstrap
+   * 給定、戰鬥中只查閱」的靜態表。
+   */
+  summonPool: SummonWave[];
+  /**
+   * 已觸發過的波次 key 集合，key＝`${summonerEnemyId}:${atHpPct}`（見 engine/summon.ts）。刻意
+   * 用 `string[]`（可序列化）而不是 `Set<string>`——BattleState 整體要能被 JSON 序列化/還原
+   * （例如存檔、跨 tick 傳遞），`Set` 沒有原生 JSON 表示法，往返序列化會整個遺失內容。用
+   * `includes()` 判斷是否已觸發：這個陣列在整場戰鬥中最多只會累積到 summonPool 的波數（通常
+   * 個位數），線性搜尋的成本可以忽略，不值得為此換更複雜的資料結構。createBattle 缺省 []。
+   */
+  summonedWaves: string[];
 }

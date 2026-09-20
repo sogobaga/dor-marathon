@@ -3,7 +3,7 @@
 // 結果，本檔只放「怎麼顯示」，不放任何算式（算式在後端 internal/rpg，前端不重算，見任務決策 D2）。
 import type {
   ArmorItemSlot, ArmorProfile, EffectAtLevel, EquipBonusDTO, EquipmentSlot, JobDTO, RpgConfig, RpgDerived, RpgElement,
-  RpgStatKey, SkillKind, WeaponProfile, WeaponRarity,
+  RpgRank, RpgStatKey, SkillKind, WeaponProfile, WeaponRarity,
 } from './api'
 
 export interface StatMeta {
@@ -800,4 +800,39 @@ export const STRATEGY_LABEL: Record<string, string> = {
 export function strategyLabel(id: string | null | undefined): string {
   if (!id) return STRATEGY_LABEL.balanced
   return STRATEGY_LABEL[id] ?? id
+}
+
+// ---------------------------------------------------------------------------
+// DORPG P11（怪物強度九級，見契約 dorpg_p11 CONTRACT.md §1/§2、WIRE.md）：EncounterPicker（強度挑戰
+// 卡片）、BattleStage/BattleScreen（敵人徽章）、admin/rpg（怪物強度分頁／怪物／遭遇表單的 rank
+// 下拉）共用同一份九級詞彙表——由弱到強固定 9 個，後端 `GET /rpg/ranks` 與 `rpg_monster_ranks`
+// 是唯一真相（label／badge_color 皆可後台調），這裡的 RANK_LABEL／RANK_BADGE_FALLBACK 只在後端
+// 尚未送值（舊版回應／後端還沒接上這批欄位）時當顯示備援，不能取代後端資料。
+export const RANK_ORDER: RpgRank[] = ['F', 'E', 'D', 'C', 'B', 'A', 'SA', 'S', 'SS']
+export const RANK_LABEL: Record<RpgRank, string> = {
+  F: 'F級', E: 'E級', D: 'D級', C: 'C級', B: 'B級', A: 'A級', SA: '特A級', S: 'S級', SS: '特S級',
+}
+/** 找不到（未知 rank 字面值）時原樣顯示，不會擋渲染。 */
+export function rankLabel(rank: string | null | undefined): string {
+  if (!rank) return ''
+  return RANK_LABEL[rank as RpgRank] ?? rank
+}
+/** 徽章底色備援（後端 badge_color 尚未送值時使用）——由弱到強大致對齊「越強越顯眼」的直覺配色，
+ *  非正式規格，後台隨時可用 badge_color 覆寫，這裡的值不影響任何戰鬥計算，純顯示保底。 */
+export const RANK_BADGE_FALLBACK: Record<RpgRank, string> = {
+  F: '#8d99a8', E: '#4caf7d', D: '#3a8ff4', C: '#9b5de5', B: '#f2994a',
+  A: '#e5484d', SA: '#d6409f', S: 'var(--gold, #f3bd62)', SS: '#7b1e3a',
+}
+export function rankBadgeColor(rank: string | null | undefined, badgeColor: string | null | undefined): string {
+  if (badgeColor) return badgeColor
+  if (rank && rank in RANK_BADGE_FALLBACK) return RANK_BADGE_FALLBACK[rank as RpgRank]
+  return RANK_BADGE_FALLBACK.F
+}
+/** 強度挑戰卡片「單挑／三隻／五隻」（契約 §1：每級 1/3/5 隻的對戰列表）；非這三種整除數字
+ *  （目前規格不會出現，防禦用）直接顯示「N 隻」。 */
+export function rankCountLabel(count: number | null | undefined): string {
+  if (count === 1) return '單挑'
+  if (count === 3) return '三隻'
+  if (count === 5) return '五隻'
+  return count != null ? `${count} 隻` : ''
 }

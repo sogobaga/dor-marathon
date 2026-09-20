@@ -11,10 +11,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { rpgApi, rpgBattleApi, type JobDTO, type RpgBattleEncounters, type RpgEncounterSummary } from '@/lib/api';
 import { getUserToken, withUserAuth } from '@/lib/userAuth';
-import { sortJobs } from '@/lib/rpgMeta';
+import { RANK_ORDER, rankBadgeColor, rankCountLabel, rankLabel, sortJobs } from '@/lib/rpgMeta';
 import { PALETTE, kitAsset, nineSliceStyle } from '@/lib/dorpg/assets';
 import { battleAudio } from '@/lib/dorpg/audio';
 import styles from './EncounterPicker.module.css';
+
+// DORPG P11（契約 dorpg_p11 CONTRACT.md §1/§4、WIRE §REST）：強度挑戰 rank 排序索引——後端理論上
+// 已依 sort_order 排好，這裡只是防禦性地再依「弱到強、同 rank 內隻數少到多」排一次，backend 順序
+// 若本來就對，重排是 no-op；若之後有人手動調亂 sort_order，畫面仍能維持契約要求的「由弱到強」直覺。
+const RANK_SORT_INDEX: Record<string, number> = Object.fromEntries(RANK_ORDER.map((r, i) => [r, i]));
 
 export type EncounterPickerProps = {
   onBack: () => void;
@@ -207,17 +212,129 @@ export default function EncounterPicker({ onBack, onPick, onOpenCharacter, loadO
                   <p className={styles.errorText} style={{ color: PALETTE.textSecondary }}>目前沒有可挑戰的遭遇</p>
                 </div>
               ) : (
-                <div className={styles.list}>
-                  {data.encounters.map((enc) => (
-                    <EncounterCard key={enc.code} enc={enc} onPick={() => onPick(enc.code)} />
-                  ))}
-                </div>
+                <EncounterList encounters={data.encounters} onPick={onPick} />
               )}
             </>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * DORPG P11（契約 §1/§4）：對戰選單分兩組——「劇情場景」（既有六場，卡片外觀零改動）與「強度挑戰」
+ * （新 20 場，徽章＋隻數＋「Lv.＝你的等級」，見 RankEncounterCard）。用 `group` 欄位分組（WIRE
+ * §REST：'story'|'rank'）；後端尚未送這個欄位（舊版後端／app/dev/dorpg 離線 fixture）時
+ * rankList 必然為空，直接退回原本的單一清單，相容舊資料（契約 §1 決策段明講的要求）。
+ */
+function EncounterList({ encounters, onPick }: { encounters: RpgEncounterSummary[]; onPick: (code: string) => void }) {
+  const storyList = encounters.filter((e) => e.group !== 'rank');
+  const rankList = encounters
+    .filter((e) => e.group === 'rank')
+    .slice()
+    .sort((a, b) => {
+      const ra = RANK_SORT_INDEX[a.rank ?? ''] ?? 99;
+      const rb = RANK_SORT_INDEX[b.rank ?? ''] ?? 99;
+      if (ra !== rb) return ra - rb;
+      return (a.monster_count ?? 0) - (b.monster_count ?? 0);
+    });
+
+  if (rankList.length === 0) {
+    // 相容模式：無分級資料，維持 P2～P10 原本的單一清單。
+    return (
+      <div className={styles.list}>
+        {encounters.map((enc) => (
+          <EncounterCard key={enc.code} enc={enc} onPick={() => onPick(enc.code)} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {storyList.length > 0 && (
+        <>
+          <SectionHeading>劇情場景</SectionHeading>
+          <div className={styles.list}>
+            {storyList.map((enc) => (
+              <EncounterCard key={enc.code} enc={enc} onPick={() => onPick(enc.code)} />
+            ))}
+          </div>
+        </>
+      )}
+      <SectionHeading>強度挑戰</SectionHeading>
+      <div className={styles.list}>
+        {rankList.map((enc) => (
+          <RankEncounterCard key={enc.code} enc={enc} onPick={() => onPick(enc.code)} />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: 13, fontWeight: 800, color: PALETTE.textPrimary, letterSpacing: '0.02em', margin: '2px 0 -4px' }}>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * DORPG P11（契約 §4）：強度挑戰卡片——沿用 EncounterCard 的版面骨架（縮圖／標題／怪物列／戰績），
+ * 額外疊：縮圖角落強度徽章（rank 代碼＋badge_color）、一行「F 級・單挑」文字說明、
+ * 「Lv.＝你的等級（Lv.N）」（level_mode='player' 時）取代既有的「怪物 Lv.N」、S／特S 標示「不可
+ * 逃跑」（沿用既有 can_escape 欄位，不是重新猜哪些 rank 不能逃）。
+ */
+function RankEncounterCard({ enc, onPick }: { enc: RpgEncounterSummary; onPick: () => void }) {
+  const best = formatBestTime(enc.stats.best_ms);
+  const recordText = enc.stats.plays > 0 ? `${enc.stats.plays} 戰 ${enc.stats.wins} 勝${best ? ` · 最快 ${best}` : ''}` : '尚未挑戰';
+  const badgeColor = rankBadgeColor(enc.rank, enc.badge_color);
+  const label = enc.rank_label || rankLabel(enc.rank);
+  const countText = rankCountLabel(enc.monster_count);
+
+  return (
+    <button type="button" className={styles.card} style={{ borderColor: 'rgba(243,189,98,.28)', background: PALETTE.surfacePanel }} onClick={onPick}>
+      <div className={styles.thumbWrap}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className={styles.thumb} src={enc.scene_image_url} alt="" draggable={false} />
+        {enc.rank && (
+          // 借用既有 .bossTag 樣式（貼在縮圖角落的小色塊），改貼右上角跟 BOSS 標籤（左上）區分；
+          // 顏色改吃這場的 badgeColor，不是寫死的 criticalGlow。
+          <span className={styles.bossTag} style={{ left: 'auto', right: 4, background: badgeColor }}>
+            {enc.rank}
+          </span>
+        )}
+      </div>
+      <div className={styles.cardBody}>
+        <div className={styles.cardTitleRow}>
+          <span className={styles.cardTitle}>{enc.title}</span>
+        </div>
+        {enc.subtitle ? (
+          <div className={styles.cardSubtitle} style={{ color: PALETTE.textSecondary }}>
+            {enc.subtitle}
+          </div>
+        ) : null}
+        <div className={styles.cardSubtitle} style={{ color: PALETTE.borderGold, fontWeight: 700 }}>
+          {label}
+          {countText ? `・${countText}` : ''}
+        </div>
+        <div className={styles.cardSubtitle} style={{ color: PALETTE.textSecondary }}>
+          {enc.level_mode === 'player' ? `Lv.＝你的等級（Lv.${Math.floor(enc.monster_level)}）` : `怪物 Lv.${Math.floor(enc.monster_level)}`}
+          {!enc.can_escape ? '・不可逃跑' : ''}
+        </div>
+        <div className={styles.monsterRow}>
+          {enc.monsters.map((m, i) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img key={`${m.slot}-${i}`} className={m.is_boss ? `${styles.monsterThumb} ${styles.monsterBoss}` : styles.monsterThumb} src={m.poster_url} alt={m.name} draggable={false} />
+          ))}
+        </div>
+        <div className={styles.record} style={{ color: PALETTE.textSecondary }}>
+          {recordText}
+        </div>
+      </div>
+    </button>
   );
 }
 

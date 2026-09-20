@@ -16,7 +16,10 @@
 // 的 DB 讀寫列與 battle_admin.go 後台 CRUD 的 JSON 序列化型別，逐欄對齊 migration 176 DDL。
 package rpg
 
-import "math"
+import (
+	"math"
+	"strconv"
+)
 
 // PlayerBattleStats 玩家在這場戰鬥要用的數值快照（Derived 套用保底值之後）。BaseLevel 用來決定
 // 怪物顯示等級（D1）與隊友顯示等級（D3：玩家 Base Lv + level_offset）。
@@ -288,6 +291,75 @@ func ScaleMonsterByLevel(cfg Config, m MonsterRow, encounterScale, slotScale flo
 		ActMinMs: actMin,
 		ActMaxMs: actMax,
 		Level:    level, // 契約：「怪物 level 欄位送前端顯示 Lv.N」——level 模式直接用 N，不像 power 模式借用玩家等級 + boss 加成
+		Rating:   MonsterRatingByLevel(cfg, level, m),
+	}
+}
+
+// levelCurveAt DORPG P11：rank.level_curve[strconv(level)]（JSONB 的 key 一律是字串，見
+// ranks.go RankRow.LevelCurve）。查無該鍵或值 <=0 一律視為 1——契約明講「level_curve JSONB
+// 每級修正係數，預設 {}」，本輪九級全部種空物件，這條乘數目前恆為 1，只是預留給 P13 重算
+// refPlayerTable 後回頭校準用（不影響本輪任何實際數值，見 migration 189 檔頭）。
+func levelCurveAt(curve map[string]float64, level int) float64 {
+	if curve == nil {
+		return 1
+	}
+	if v, ok := curve[strconv.Itoa(level)]; ok && v > 0 {
+		return v
+	}
+	return 1
+}
+
+// ScaleMonsterByRank DORPG P11（CONTRACT §1/§2）：scaling_mode="rank" 的怪物數值公式——強度
+// 由 rpg_monster_ranks 的九級向量承擔，不再由 monster.*_mult 承擔（既有怪物與新的九隻分級怪
+// 在 migration 189 全部把 hp_mult/atk_mult/def_mult 重設為 1.0，理由同 migration 185 對 legacy
+// 六場 power_scale 的重設：同一個乘數不能同時被兩套系統瓜分）：
+//
+//	hp   = floor(Ref(N).HPMax × rank.hp_mult   × monster.hp_mult   × curve × encounterScale × slotScale)
+//	atk  = floor(Ref(N).Atk   × rank.atk_mult  × monster.atk_mult  × curve × encounterScale)
+//	def  = floor(Ref(N).Def   × rank.def_mult  × monster.def_mult × curve × encounterScale)
+//	mdef = floor(Ref(N).Mdef  × rank.mdef_mult × monster.def_mult × curve × encounterScale)
+//	matk = floor(Ref(N).Matk  × rank.atk_mult  × monster.atk_mult × curve)
+//	                                    —— 同 ScaleMonsterByLevel 的 matk：只乘 atk 這條線的
+//	                                       倍率，不疊加 encounterScale（契約明講怪物施法用的
+//	                                       matk 是粗略基準，非本輪主要縮放對象）。
+//
+// 不吃 battle_lvl_*_ratio——那四個係數是 scaling_mode="legacy" 專用（ScaleMonsterByLevel），
+// rank 模式的等價位置整個換成 rank.*_mult，兩套模式故意不共用同一組全域比例，否則後台調 legacy
+// 手感會連動打亂已經校準過的九級數字（CONTRACT §1 檔頭原話）。MonsterRow 沒有獨立 MdefMult
+// 欄位（同 ScaleMonsterByLevel 既有處理），mdef 沿用 m.DefMult。
+func ScaleMonsterByRank(cfg Config, m MonsterRow, r RankRow, encounterScale, slotScale float64, level int) ScaledMonster {
+	ref := RefPlayerStats(cfg, level)
+	curve := levelCurveAt(r.LevelCurve, level)
+
+	hp := float64(ref.MaxHP) * r.HPMult * m.HPMult * curve * encounterScale * slotScale
+	atk := ref.Atk * r.AtkMult * m.AtkMult * curve * encounterScale
+	def := ref.Def * r.DefMult * m.DefMult * curve * encounterScale
+	mdef := ref.Mdef * r.MdefMult * m.DefMult * curve * encounterScale
+	matk := ref.Matk * r.AtkMult * m.AtkMult * curve
+
+	hpMax := int(math.Floor(hp))
+	if hpMax < 1 {
+		hpMax = 1 // 同 ScaleMonsterByLevel：避免極端小倍率把 HP 取整到 0
+	}
+
+	actMin := int(math.Round(float64(cfg.BattleEnemyActMinMs) * m.SpeedMult))
+	actMax := int(math.Round(float64(cfg.BattleEnemyActMaxMs) * m.SpeedMult))
+	if actMin < minActIntervalMs {
+		actMin = minActIntervalMs
+	}
+	if actMax < actMin {
+		actMax = actMin
+	}
+
+	return ScaledMonster{
+		HPMax:    hpMax,
+		Atk:      int(math.Floor(atk)),
+		Matk:     int(math.Floor(matk)),
+		Def:      int(math.Floor(def)),
+		Mdef:     int(math.Floor(mdef)),
+		ActMinMs: actMin,
+		ActMaxMs: actMax,
+		Level:    level, // 契約：召喚怪等級＝召喚者等級；一般敵人＝這場遭遇實際使用的 N
 		Rating:   MonsterRatingByLevel(cfg, level, m),
 	}
 }

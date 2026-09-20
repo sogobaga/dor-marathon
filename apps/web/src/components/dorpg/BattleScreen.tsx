@@ -12,7 +12,7 @@
 // 拖著 PartyCard×5／BattleStage（內含 5 個 MonsterSprite canvas＋CombatFxLayer）一起重繪，
 // 這幾個子元件在檔尾用 React.memo 包一層：只要傳給它們的 props 沒變，記憶體裡的舊渲染結果就直接沿用。
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { BattleSample, BtnState, BuffDebuffStat, EscapeState, Item, PartyMember, TrayMode } from '@/lib/dorpg/types';
+import type { BattleSample, BtnState, BuffDebuffStat, EscapeState, Item, PartyMember, SummonWave, TrayMode } from '@/lib/dorpg/types';
 import { ENEMY_PLATE, KIT_SIZES, LAYOUT, PALETTE, SCENE_VIEWPORT, kitAsset, layoutFor, nineSliceStyle, sceneHeightFor } from '@/lib/dorpg/assets';
 import { skillStatLabel } from '@/lib/rpgMeta';
 import { SAMPLE_BATTLE } from '@/lib/dorpg/sampleBattle';
@@ -76,6 +76,23 @@ export type BattleScreenProps = {
    * 的既有預設，視為 false。
    */
   autoBattle?: boolean;
+  /**
+   * DORPG P11（契約 §1、WIRE §戰鬥 bootstrap：「summonPool」；dorpg/types.ts SummonWave 型別
+   * 註解：「呼叫端（FRONTEND）直接把結果傳進 createBattle(sample, { summonPool, ... })」）：
+   * bootstrap 頂層欄位，上層（PhoneShell／Preview）用 fromApi.ts 的 summonPoolFromBootstrap()
+   * 驗證 `RpgBattleBootstrap.summonPool` 後傳進來，這裡直接轉給 useBattle()（見下方
+   * UseBattleOptions.summonPool，INTEGRATOR 2026-09-20 已補上轉發，見 useBattle.ts）。
+   */
+  summonPool?: SummonWave[];
+  /**
+   * P11（CONTRACT §1／WIRE「戰鬥 bootstrap」：「頂層新增 scalingMode、levelMode、monsterLevel」）：
+   * 同 summonPool，PhoneShell／Preview 直接把 bootstrap 頂層這三個欄位原樣轉入——純顯示／除錯用
+   * （見 engine/context.ts BattleState.scalingMode 型別註解），引擎本身不依它們分支任何戰鬥規則，
+   * 缺省交給 createBattle() 的安全預設（'legacy'/'fixed'/null）。
+   */
+  scalingMode?: 'legacy' | 'rank';
+  levelMode?: 'fixed' | 'player';
+  monsterLevel?: number | null;
   /** P2：目前這場遭遇（供組 report 用）；未給時退回 DEFAULT_ENCOUNTER（/dev 預覽等尚未接真實遭遇的呼叫端）。 */
   encounter?: BattleScreenEncounter;
   /** P2：「再戰一場」（同一遭遇重來）；未給則 ResultOverlay 不顯示這顆鈕。 */
@@ -194,6 +211,10 @@ export default function BattleScreen({
   sample: sampleProp = SAMPLE_BATTLE,
   config,
   autoBattle = false,
+  summonPool,
+  scalingMode,
+  levelMode,
+  monsterLevel,
   encounter = DEFAULT_ENCOUNTER,
   onRestart,
   onNext,
@@ -473,6 +494,14 @@ export default function BattleScreen({
         case 'taunt':
           pushFloat(ev.actorId, '挑釁！', 'taunt');
           break;
+        // DORPG P11（契約 §1/§4、WIRE §引擎：「事件 summon { summonerId, enemyIds }」）：召喚觸發時
+        // 只在召喚者（一定是敵人）身上飄「召喚！」（金色語氣，見 FloatText.tsx 'summon' tone）；
+        // 新敵人本身依 slot 自動出現，BattleStage 已經是動態渲染（見 stageEnemies 投影），這裡不需要
+        // 額外處理進場動畫。查不到召喚者站位（理論上不會發生，召喚者此刻必定還活著在場上）就略過，
+        // 同 pushEnemyFloat 的既有靜默失敗慣例。
+        case 'summon':
+          pushEnemyFloat(ev.summonerId, '召喚！', 'summon');
+          break;
         // escapeJudging/escapeFailed/escaped：TopBar 的訊息直接從 state.escape 算，不需要在這裡處理。
         default:
           break;
@@ -480,7 +509,18 @@ export default function BattleScreen({
     }
   }
 
-  const battle = useBattle(sample, { config, onEvents: handleBattleEvents, autoBattle });
+  // DORPG P11（INTEGRATOR 2026-09-20）：useBattle.ts 的 UseBattleOptions 已補上
+  // summonPool/scalingMode/levelMode/monsterLevel（見該檔），改回直接傳物件字面量，不再需要
+  // 型別加寬的區域變數繞過 tsc 的多餘屬性檢查。
+  const battle = useBattle(sample, {
+    config,
+    onEvents: handleBattleEvents,
+    autoBattle,
+    summonPool,
+    scalingMode,
+    levelMode,
+    monsterLevel,
+  });
   const { state, send } = battle;
   const player = state.party[0]; // 契約：party[0] 恆為玩家（state.playerId 也指向它）。
 
@@ -716,6 +756,11 @@ export default function BattleScreen({
         imageUrl: e.imageUrl,
         anim: e.anim,
         rank: e.rank,
+        // DORPG P11（WIRE §引擎：「enemy 新增 rankLabel/badgeColor/isSummoned」）：ENGINE 已在
+        // EnemyActor 加上這三個欄位（engine/types.ts），直接透傳即可。
+        rankLabel: e.rankLabel,
+        badgeColor: e.badgeColor,
+        isSummoned: e.isSummoned,
         attribute: e.attribute,
         size: e.size,
         race: e.race,

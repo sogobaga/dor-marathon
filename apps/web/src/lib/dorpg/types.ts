@@ -317,13 +317,57 @@ export type Enemy = {
   weakElements?: ElementKind[];
   /**
    * P12（CONTRACT §1／WIRE「戰鬥 bootstrap」：「enemies[].row」）：這隻怪目前是前排還是後排；
-   * 缺省 undefined（舊版後端尚未送這個欄位，或 fromApi.ts 驗證失敗）由 engine/index.ts 的
+   * 缺省 undefined（舊版後端尚未送這個欄位，或 fromApi.ts 驗證失敗）由 engine/formulas.ts 的
    * toEnemyActor 直接透傳給 EnemyActor.row，engine 內部一律用 `enemy.row ?? rowOfSlot(enemy.slot)`
    * 取得有效排位（見 engine/formulas.ts rowOfSlot 型別註解），不會因為這個欄位缺席而漏掉武器排位
    * 加成／槍系貫穿機制。
    */
   row?: EnemyRow;
+  /**
+   * P11（DORPG_P11 CONTRACT §1「怪物強度九級」／WIRE「enemy 新增 rank、rankLabel、badgeColor、
+   * isSummoned」）：人類可讀的強度標籤（例如「特A級」）與徽章顏色（十六進位色碼字串），純顯示
+   * 用途——engine 的戰鬥數值計算完全不讀這兩個欄位，怪物實際的 hp/atk/def/mdef 一律由 stats
+   * 決定（不管那組數字是依 rank 表算出來的還是舊版 legacy 公式）。上面既有的 `rank` 欄位本輪起
+   * 雙重使命：rank 分級模式的九級遭遇也共用同一個欄位承載 F/E/D/C/B/A/SA/S/SS 字面值，legacy
+   * 六場劇情場景的既有五隻怪物維持原本的 A–E 標籤不變（CONTRACT §1「既有五隻不動，rank 欄只是
+   * 標籤」）——不是新開一個欄位取代它，型別上仍是自由字串，不收斂成聯集（跟既有 `rank` 欄位的
+   * 型別決策一致）。缺省 undefined（舊版後端／legacy 場景沒有這兩個標籤可顯示）。
+   */
+  rankLabel?: string;
+  badgeColor?: string;
+  /**
+   * P11（CONTRACT §1「召喚（A 以上）」、WIRE「引擎」）：這隻怪是不是本場戰鬥中途被召喚出來的
+   * ——純顯示用途，engine 的戰鬥規則完全不因為這個欄位而有任何分支：召喚怪跟一般怪物一樣可以
+   * 被鎖定、攻擊、計入勝利判定。頂層 `enemies[]`（開場即存在的敵人）與 `summonPool[].enemies`
+   * （見下方 SummonWave）共用同一個 Enemy 型別，這裡缺省 undefined／false 都代表「開場就有」；
+   * true 純粹是 wire 給的原始標籤，engine/summon.ts 的 advanceSummons() 實際放入場上時一律
+   * 強制把 EnemyActor.isSummoned 設成 true（不管這裡收到的原始值是什麼），engine 才是「這隻怪
+   * 確實是召喚出來的」這件事的權威判斷來源。
+   */
+  isSummoned?: boolean;
 };
+
+/**
+ * P11（DORPG_P11 CONTRACT §1「召喚（A 以上）」、WIRE「戰鬥 bootstrap」：「summonPool: [{
+ * summonerEnemyId, atHpPct, enemies: EnemyWire[] }]」）：bootstrap 已經預先算好的一整波召喚
+ * 資料——跟 `autoBattle` 一樣是戰鬥 bootstrap 回應的頂層欄位（不在 BattleSample 裡面），
+ * fromApi.ts 的 summonPoolFromBootstrap() 負責把 wire JSON 驗證轉成這個型別的陣列，呼叫端
+ * （FRONTEND）直接把結果傳進 createBattle(sample, { summonPool, ... })（見 engine/index.ts）。
+ * `enemies` 重用既有的 Enemy 型別（跟頂層 BattleSample.enemies 同一份形狀）——WIRE 明講
+ * 「enemies[].id 唯一，例如 `<summoner>_w1_1`」、「enemies[].slot 為空字串由引擎決定」：後者
+ * 代表 wire 送來的 Enemy.slot 只是佔位值，engine/summon.ts 的 advanceSummons() 會在放入場上時
+ * 依當下空槽位另外指派真正的 slot，不會使用這裡的原始值。
+ */
+export interface SummonWave {
+  /** 召喚者（頂層 enemies[] 或更早一波召喚出來的敵人）的 id；該敵人存活且 HP% 跨過 atHpPct
+   *  門檻時才會觸發這一波（見 engine/summon.ts advanceSummons）。 */
+  summonerEnemyId: string;
+  /** 觸發門檻：召喚者 `hp/hpMax×100 ≤ atHpPct`（0–100）。 */
+  atHpPct: number;
+  /** 這一波要放進場的怪物（已經算好完整數值與 sprite），依序嘗試放進空槽位，放不下的部分
+   *  略過（CONTRACT §1「無空位略過」）。 */
+  enemies: Enemy[];
+}
 
 // ---- P5（DORPG_P5 CONTRACT §5/§6）新增：技能等級、傷害屬性、buff/debuff/passive/special 詞彙。 ----
 

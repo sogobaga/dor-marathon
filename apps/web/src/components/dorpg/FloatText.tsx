@@ -25,7 +25,10 @@ import styles from './FloatText.module.css';
 // 'pierce' 語氣——槍貫穿前排打到對映後排目標的波及傷害，跟斧濺射一樣「不是這次攻擊真正鎖定的
 // 目標」，同樣借用 textSecondary 灰＋small 縮小字級（見 BattleScreen.tsx pushEnemyFloat 呼叫處），
 // 只是文字換成「貫穿」而不是「濺射」，讓玩家看得出這兩種附帶傷害的觸發原因不同。
-export type FloatTextTone = 'damage' | 'heal' | 'shield' | 'miss' | 'buff' | 'debuff' | 'splash' | 'taunt' | 'pierce';
+// DORPG P11（契約 dorpg_p11 CONTRACT.md §1/§4：「召喚（A 以上）…浮字『召喚！』」）：新增 'summon'
+// 語氣——獨立於 'taunt' 之外開一個字面值（雖然色票同樣借用金色，見下方 TONE_COLOR），讓呼叫端
+// （BattleScreen.tsx 的 'summon' 事件分支）語意上跟「挑釁！」分開，不必共用同一個 tone 字面值。
+export type FloatTextTone = 'damage' | 'heal' | 'shield' | 'miss' | 'buff' | 'debuff' | 'splash' | 'taunt' | 'pierce' | 'summon';
 
 export type FloatTextProps = {
   text: string;
@@ -51,12 +54,13 @@ export type FloatTextProps = {
 
 const DURATION_MS = 700;
 
-/** 九種語氣對應色票；miss/splash/pierce 共用 textSecondary（灰，語意都是「次要訊息」，見
+/** 十種語氣對應色票；miss/splash/pierce 共用 textSecondary（灰，語意都是「次要訊息」，見
  *  FloatTextTone 型別註解），splash/pierce 額外靠 `small` prop 縮小字級做出區隔，不需要另開
  *  一支色碼（P12：pierce 與 splash「同樣式、不同字」，色票故意共用）。buff/debuff
  *  各借一個目前色票裡還沒被其他語氣用過的顏色（mpFill 藍／criticalGlow 亮紅），跟 damage(粉紅)/
  *  heal(綠)/shield(金) 視覺上都能分開，不必新增色碼（顏色一律只從 assets.ts 的 PALETTE 來，見
- *  檔案慣例）；taunt（DORPG P10）借用 targetGold，見上方型別註解。 */
+ *  檔案慣例）；taunt（DORPG P10）借用 targetGold，見上方型別註解。summon（DORPG P11：「金色語氣」）
+ *  同樣借用 targetGold，跟 taunt 視覺相同但字面值獨立，方便呼叫端各自語意清楚。 */
 const TONE_COLOR: Record<FloatTextTone, string> = {
   damage: PALETTE.hpEnemy,
   heal: PALETTE.hpNormal,
@@ -67,6 +71,7 @@ const TONE_COLOR: Record<FloatTextTone, string> = {
   splash: PALETTE.textSecondary,
   taunt: PALETTE.targetGold,
   pierce: PALETTE.textSecondary,
+  summon: PALETTE.targetGold,
 };
 
 export default function FloatText({ text, tone, reducedMotion = false, anchorPx, small = false }: FloatTextProps) {

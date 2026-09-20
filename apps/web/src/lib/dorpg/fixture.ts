@@ -27,6 +27,7 @@ import type {
   Scene,
   SceneSlot,
   Skill,
+  SummonWave,
   WeaponKind,
   WeaponProfileWire,
 } from './types';
@@ -875,6 +876,239 @@ function scaleMonsterFromRef(
  *  （見 monsterRating 型別註解「level 模式改用怪物自己的等級 N」）。 */
 function monsterRatingAtLevel(monster: MonsterRow, level: number): CombatRating {
   return monsterRating(monster, level);
+}
+
+// ---------------------------------------------------------------------------
+// P11（DORPG_P11 CONTRACT §1「怪物強度九級」／「召喚（A 以上）」）：怪物強度分級表——鏡像
+// migration 189 要建的 rpg_monster_ranks（BACKEND 尚未套用，見任務回報）。九列倍率逐字取自
+// CONTRACT.md §1 校準表（相對「同級參考玩家 Ref(N)」的絕對值），只有 scaling_mode='rank' 的
+// 遭遇會用它——既有六場 legacy 劇情場景（scaleMonsterFromRef，見上方）逐字零改動。
+// ---------------------------------------------------------------------------
+
+export type MonsterRankId = 'F' | 'E' | 'D' | 'C' | 'B' | 'A' | 'SA' | 'S' | 'SS';
+
+export interface MonsterRankRow {
+  rank: MonsterRankId;
+  label: string;
+  hpMult: number;
+  atkMult: number;
+  defMult: number;
+  mdefMult: number;
+  /** 每級修正係數（key=等級字串）；CONTRACT §1「先接受倍率以 Lv30 為錨、後台可調...level_curve
+   *  JSONB（每級修正係數，預設 {}）供之後填」——本輪九列全部給 {}，scaleMonsterByRank() 查無
+   *  key（或值 ≤0）時視為 1（不修正），等同校準表本身就是最終倍率，這條路徑目前是預留的死碼，
+   *  之後後台填值即可生效，不需要再改這支函式。 */
+  levelCurve: Record<string, number>;
+  badgeColor: string;
+  /**
+   * CONTRACT §1「召喚（A 以上）」給定的預設值（monster_ids 空＝該級分級怪，本檔尚未有九隻分級
+   * 怪物內容——那是 BACKEND migration 189 seed 的範圍，見任務回報）；只有 A 以上四級有召喚設定。
+   * powerScale（P11 修正 2026-09-20，預設 1、缺省視為不折減）：召喚怪整體強度折減乘數，鏡像
+   * BACKEND ranks.go SummonWave.PowerScale——模擬證實召喚怪用完整 rank 向量太強，需要獨立於
+   * rank.*Mult 之外的折減旋鈕；本檔九列的示範值全部維持缺省 1（機制本身，數值由模擬決定）。
+   */
+  summon?: { waves: { atHpPct: number; rank: MonsterRankId; count: number; powerScale?: number }[] };
+}
+
+export const RPG_MONSTER_RANKS: MonsterRankRow[] = [
+  { rank: 'F', label: 'F級', hpMult: 1.8, atkMult: 1.8, defMult: 0.24, mdefMult: 0.24, levelCurve: {}, badgeColor: '#9e9e9e' },
+  { rank: 'E', label: 'E級', hpMult: 0.7, atkMult: 8.75, defMult: 0.093, mdefMult: 0.093, levelCurve: {}, badgeColor: '#8bc34a' },
+  { rank: 'D', label: 'D級', hpMult: 6.6, atkMult: 2.2, defMult: 0.29, mdefMult: 0.29, levelCurve: {}, badgeColor: '#4caf50' },
+  { rank: 'C', label: 'C級', hpMult: 1.8, atkMult: 9.0, defMult: 0.24, mdefMult: 0.24, levelCurve: {}, badgeColor: '#2196f3' },
+  { rank: 'B', label: 'B級', hpMult: 6.0, atkMult: 6.0, defMult: 0.80, mdefMult: 0.80, levelCurve: {}, badgeColor: '#3f51b5' },
+  {
+    rank: 'A', label: 'A級', hpMult: 11.5, atkMult: 11.5, defMult: 1.53, mdefMult: 1.53, levelCurve: {}, badgeColor: '#9c27b0',
+    summon: { waves: [{ atHpPct: 60, rank: 'E', count: 2, powerScale: 0.15 }] },
+  },
+  {
+    rank: 'SA', label: '特A級', hpMult: 14.2, atkMult: 14.2, defMult: 1.89, mdefMult: 1.89, levelCurve: {}, badgeColor: '#e91e63',
+    summon: { waves: [{ atHpPct: 70, rank: 'D', count: 2, powerScale: 0.1 }, { atHpPct: 35, rank: 'C', count: 1, powerScale: 0.1 }] },
+  },
+  {
+    rank: 'S', label: 'S級', hpMult: 20, atkMult: 10, defMult: 2.66, mdefMult: 2.66, levelCurve: {}, badgeColor: '#f44336',
+    summon: { waves: [{ atHpPct: 75, rank: 'D', count: 3, powerScale: 0.25 }, { atHpPct: 50, rank: 'B', count: 2, powerScale: 0.25 }, { atHpPct: 25, rank: 'A', count: 1, powerScale: 0.25 }] },
+  },
+  {
+    rank: 'SS', label: '特S級', hpMult: 190, atkMult: 6.5, defMult: 0.87, mdefMult: 0.87, levelCurve: {}, badgeColor: '#212121',
+    summon: { waves: [{ atHpPct: 80, rank: 'C', count: 2, powerScale: 0.05 }, { atHpPct: 60, rank: 'B', count: 2, powerScale: 0.05 }, { atHpPct: 40, rank: 'A', count: 1, powerScale: 0.05 }, { atHpPct: 20, rank: 'B', count: 2, powerScale: 0.05 }] },
+  },
+];
+
+function monsterRankById(rank: MonsterRankId): MonsterRankRow {
+  const row = RPG_MONSTER_RANKS.find((r) => r.rank === rank);
+  if (!row) throw new Error(`dorpg fixture: unknown monster rank "${rank}"`);
+  return row;
+}
+
+/**
+ * CONTRACT §1 rank 分級模式怪物公式的 TS 鏡像（只有 `scaling_mode='rank'` 的遭遇用它）：
+ *   hp   = floor(Ref.HPMax × rank.hp_mult  × monster.hp_mult  × curve × power_scale × slotScale)
+ *   atk  = floor(Ref.ATK   × rank.atk_mult × monster.atk_mult × curve × power_scale)
+ *   def  = floor(Ref.DEF   × rank.def_mult × monster.def_mult × curve × power_scale)
+ *   mdef = floor(Ref.MDEF  × rank.mdef_mult× monster.def_mult × curve × power_scale)
+ *   matk = floor(Ref.MATK  × monster.atk_mult × rank.atk_mult × curve)
+ * curve＝rank.levelCurve[String(level)]，若該 key 不存在或 ≤0 一律視為 1（不修正）——見
+ * MonsterRankRow.levelCurve 型別註解，本輪九列全部是 {}，這條路徑目前恆為 1。
+ * `monster.def_mult` 同時用在 def 與 mdef——跟既有 legacy 公式（scaleMonsterFromRef）「monster
+ * row 本身沒有獨立 mdef_mult 欄位」的既有決策同一個 precedent；rank 這一層則有獨立的
+ * def_mult/mdef_mult（migration 189 schema，見 CONTRACT §2），兩者不衝突。matk 契約沒有明講
+ * floor，比照 scaleMonsterFromRef 的既有決策仍套用 floorInt，維持 ActorStats 全欄位皆整數的
+ * 一致性（不在 CONTRACT §1「hp/mp 整數不變式」清單內，純粹是額外的一致性選擇）。
+ */
+export function scaleMonsterByRank(
+  ref: RefPlayerEntry,
+  rank: MonsterRankRow,
+  monster: MonsterRow,
+  powerScale: number,
+  slotScale: number,
+  level: number,
+): ScaledMonsterStats {
+  const rawCurve = rank.levelCurve[String(level)];
+  const curve = typeof rawCurve === 'number' && rawCurve > 0 ? rawCurve : 1;
+  const hpMax = Math.max(1, Math.floor(ref.hpMax * rank.hpMult * monster.hpMult * curve * powerScale * slotScale));
+  const atk = Math.floor(ref.atk * rank.atkMult * monster.atkMult * curve * powerScale);
+  const def = Math.floor(ref.def * rank.defMult * monster.defMult * curve * powerScale);
+  const mdef = Math.floor(ref.mdef * rank.mdefMult * monster.defMult * curve * powerScale);
+  const matk = Math.floor(ref.matk * monster.atkMult * rank.atkMult * curve);
+  return { hpMax, atk, matk, def, mdef };
+}
+
+/**
+ * P11（CONTRACT §1／WIRE「戰鬥 bootstrap」）：rank 分級模式的離線示範遭遇——一個場景裡同時放
+ * F×1 與 S×1（S 帶兩波召喚），不是既有六場 legacy 劇情場景的一部分，不經過 RPG_ENCOUNTERS／
+ * buildFixtureSample() 那套「power/level 模式」管線（legacy 路徑逐字零改動，見 CONTRACT §1
+ * 「不把新分級回灌到舊場景」）；獨立一個函式組出 rank 模式需要的完整資料（BattleSample +
+ * scalingMode/levelMode/monsterLevel/summonPool），供 /dev/dorpg 沒有 API/DB 時預覽，也給
+ * verify 腳本核對 scaleMonsterByRank 是否真的能餵出一份可以進 createBattle 的資料。
+ * 本檔尚未有九隻分級怪物內容（那是 BACKEND migration 189 seed 的範圍，見任務回報）——F/S 兩隻
+ * 主怪與召喚出的 D/B 兩隻小怪，全部借用既有 RPG_MONSTERS 的圖／倍率（rank 標籤照樣蓋成
+ * F/S/D/B，不代表這些就是九級分級怪物的正式內容）。玩家數值直接讀 refTable 在 level 這一列的
+ * 衍生值（level_mode='player' 情境下，正式環境會用玩家的實際有效等級；離線預覽沒有真實玩家
+ * 資料，借用參考玩家表本身當替代）。
+ */
+export function buildRankDemoBundle(opts: { refTable: RefPlayerTable; level?: number }): {
+  sample: BattleSample;
+  scalingMode: 'rank';
+  levelMode: 'player';
+  monsterLevel: number;
+  summonPool: SummonWave[];
+  encounter: FixtureEncounterMeta;
+} {
+  const level = opts.level ?? FIXTURE_PLAYER_LEVEL;
+  const ref = refPlayerAt(opts.refTable, level);
+  const fRank = monsterRankById('F');
+  const sRank = monsterRankById('S');
+  const fMonster = monsterById('DOR-MON-E-0052');
+  const sMonster = monsterById('DOR-MON-A-67000200001');
+  const dMonster = monsterById('DOR-MON-D-0182');
+  const bMonster = monsterById('DOR-MON-B-0089');
+
+  // powerScale 參數（P11 修正）：只有召喚怪呼叫端會傳非 1 的值（見下方 summonPool 組裝），
+  // fEnemy/sEnemy 這兩隻主怪維持既有呼叫方式（省略即 1，行為不變）。
+  function toRankEnemy(id: string, slot: EnemySlotId, rank: MonsterRankRow, monster: MonsterRow, opts2: { canEscape: boolean; isSummoned?: boolean }, powerScale = 1): Enemy {
+    const scaled = scaleMonsterByRank(ref, rank, monster, powerScale, 1, level);
+    return {
+      id,
+      name: `${monster.name}（${rank.label}）`,
+      level,
+      hp: scaled.hpMax,
+      hpMax: scaled.hpMax,
+      slot,
+      imageUrl: monster.posterUrl,
+      rank: rank.rank,
+      rankLabel: rank.label,
+      badgeColor: rank.badgeColor,
+      isSummoned: opts2.isSummoned ?? false,
+      attribute: monster.attribute,
+      size: monster.size,
+      race: monster.race,
+      stats: { hpMax: scaled.hpMax, mpMax: 0, atk: scaled.atk, matk: scaled.matk, def: scaled.def, mdef: scaled.mdef },
+      threatPriority: monster.threat,
+      canEscape: opts2.canEscape,
+      rating: monsterRatingAtLevel(monster, level),
+      weakElements: monster.weakElements,
+    };
+  }
+
+  const fEnemy = toRankEnemy('rank_demo_f', 'front_left', fRank, fMonster, { canEscape: true });
+  const sEnemy = toRankEnemy('rank_demo_s', 'front_right', sRank, sMonster, { canEscape: false });
+
+  // WIRE「enemies[].slot 為空字串由引擎決定」：這裡的 slot 只是型別要求的合法佔位值（跟
+  // fromApi.ts asSlot('') 對缺欄位的既有後備一致），engine/summon.ts 的 advanceSummons() 放入
+  // 場上時一律用自己算好的空槽位覆寫，不會讀這裡的值。
+  // P11 修正：召喚怪數值乘上對應波次的 powerScale（sRank.summon.waves 依 atHpPct 對應這裡手刻的
+  // 兩波示範——見 MonsterRankRow.summon 型別註解；缺省 undefined ?? 1 ＝不折減，本檔示範值本輪
+  // 不改，行為與修正前完全一致，純粹接通機制）。
+  const w1PowerScale = sRank.summon?.waves.find((w) => w.atHpPct === 75)?.powerScale ?? 1;
+  const w2PowerScale = sRank.summon?.waves.find((w) => w.atHpPct === 50)?.powerScale ?? 1;
+  const summonPool: SummonWave[] = [
+    {
+      summonerEnemyId: 'rank_demo_s',
+      atHpPct: 75,
+      enemies: [
+        toRankEnemy('rank_demo_s_w1_1', 'front_center', monsterRankById('D'), dMonster, { canEscape: false, isSummoned: true }, w1PowerScale),
+        toRankEnemy('rank_demo_s_w1_2', 'front_center', monsterRankById('D'), dMonster, { canEscape: false, isSummoned: true }, w1PowerScale),
+      ],
+    },
+    {
+      summonerEnemyId: 'rank_demo_s',
+      atHpPct: 50,
+      enemies: [toRankEnemy('rank_demo_s_w2_1', 'front_center', monsterRankById('B'), bMonster, { canEscape: false, isSummoned: true }, w2PowerScale)],
+    },
+  ];
+
+  const scene = sceneById('scene_taipei_101');
+  const portraitRow = RPG_COMPANIONS.find((c) => c.isPlayerPortrait);
+  if (!portraitRow) throw new Error('dorpg fixture: no companion row has isPlayerPortrait=true');
+  const player: PartyMember = {
+    id: portraitRow.id,
+    name: '玩家',
+    level,
+    hp: ref.hpMax,
+    hpMax: ref.hpMax,
+    mp: ref.mpMax,
+    mpMax: ref.mpMax,
+    portraitUrl: charPortrait(portraitRow.portraitId, 256),
+    stats: { hpMax: ref.hpMax, mpMax: ref.mpMax, atk: ref.atk, matk: ref.matk, def: ref.def, mdef: ref.mdef },
+    rating: { hit: ref.hit, flee: ref.flee, critPct: 0, critShield: 0, aspd: ref.aspd, castReductionPct: 0, critDmgPct: 0 },
+  };
+
+  const skills: (Skill | null)[] = [...RPG_SKILLS]
+    .filter((s) => s.isDefault && s.kind !== 'passive')
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((s) => toSkill({ ...s, flat: scaleSkillFlat(DEFAULT_SCALE_CONFIG, ref.hpMax, s) }));
+  while (skills.length < SKILL_SLOTS) skills.push(null);
+
+  const items: Item[] = RPG_ITEMS.filter((i) => i.defaultQuantity > 0)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((i) => ({ id: i.id, name: i.name, iconUrl: kitAsset(i.iconId), quantity: i.defaultQuantity, kind: i.kind, amount: scaleItemAmount(DEFAULT_SCALE_CONFIG, ref.hpMax, ref.mpMax, i) }));
+
+  const sample: BattleSample = {
+    party: [player],
+    enemies: [fEnemy, sEnemy],
+    scene: { id: scene.id, name: scene.name, imageUrl: scene.imageUrl, slots: scene.slots },
+    skills,
+    items,
+    initialTargetId: fEnemy.id,
+    sceneKind: 'boss',
+    escapeChance: 0.35,
+  };
+
+  return {
+    sample,
+    scalingMode: 'rank',
+    levelMode: 'player',
+    monsterLevel: level,
+    summonPool,
+    encounter: {
+      code: 'rank_demo_f_x1_s_x1',
+      title: '強度挑戰示範：F 級・單挑 ＋ S 級・單挑（含召喚）',
+      subtitle: '離線 fixture 示範遭遇，非正式 20 場強度挑戰對戰列表的一部分',
+      sceneKind: 'boss',
+      difficulty: 9,
+      canEscape: false,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

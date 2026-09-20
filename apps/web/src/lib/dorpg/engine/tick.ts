@@ -7,6 +7,7 @@ import type { Ctx } from './context';
 import { fromCtx, pushEvent, toCtx } from './context';
 import { pruneAndRegenEffects } from './effects';
 import { floorInt } from './formulas';
+import { advanceSummons } from './summon';
 import type { BattleOutcome, BattleState } from './types';
 
 /** casting 完成→結算效果轉 recovering；recovering 到時→idle。單次呼叫只推進一步，理由同 ai.ts。 */
@@ -198,6 +199,7 @@ export function tick(state: BattleState, now: number): BattleState {
   for (const actor of ctx.party) {
     if (!actor.isPlayer) advanceAllyAI(ctx, actor);
   }
+  advanceSummons(ctx); // P11（CONTRACT §1「召喚（A 以上）」、WIRE「引擎」）：tick 內在敵人 AI 之前呼叫。
   for (const enemy of ctx.enemies) {
     advanceEnemyAI(ctx, enemy);
   }

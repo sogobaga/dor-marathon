@@ -318,6 +318,28 @@ type wireEnemy struct {
 	// canEscape=false（契約最在意的那個值，BOSS 場整場不能逃）被吃掉、前端收到 undefined
 	// 又落回預設 true——這裡刻意每筆都明確送 true/false，比省略省一點 bytes 更重要。
 	CanEscape bool `json:"canEscape"`
+
+	// RankLabel/BadgeColor DORPG P11（WIRE：「enemy 新增 rank/rankLabel/badgeColor」）：來自
+	// rpg_monster_ranks（透過 mr.Rank 查表，見 battle.go 呼叫端），查無資料（rank 空字串／
+	// migration 189 未套用時退化）留空，前端沒有徽章可顯示但不影響戰鬥本身。
+	RankLabel  string `json:"rankLabel,omitempty"`
+	BadgeColor string `json:"badgeColor,omitempty"`
+	// IsSummoned DORPG P11（WIRE：「isSummoned(false)」）：同 CanEscape，bool 的有意義預設值
+	// 是 false，不能用 omitempty（省略會被前端當成 undefined，理論上等同 falsy，但這裡跟隨
+	// CanEscape 的既有規則明確每筆都送，避免未來有人誤加 omitempty 造成語意混淆）。一般敵人
+	// 恆為 false；summonPool 裡的敵人恆為 true（battle.go buildSummonPool）。
+	IsSummoned bool `json:"isSummoned"`
+}
+
+// wireSummonWave DORPG P11（CONTRACT §1、WIRE：「summonPool: [{ summonerEnemyId, atHpPct,
+// enemies: EnemyWire[] }]」）：某個召喚者（rank ∈ A/SA/S/SS）在 HP% 跨越 atHpPct 門檻時要放進
+// 場上的一整波敵人（可能混合多個 rank，見 SS 20% 門檻同時召喚 2×B＋1×A——CONTRACT §1「一波可
+// 多筆」，這裡用「同一 summonerEnemyId＋同一 atHpPct」合併多筆 SummonWave 成一個 wire 物件，
+// 而不是逐一 SummonWave 各自一個 wire 物件，理由見 buildSummonPool 註解）。
+type wireSummonWave struct {
+	SummonerEnemyID string      `json:"summonerEnemyId"`
+	AtHpPct         int         `json:"atHpPct"`
+	Enemies         []wireEnemy `json:"enemies"`
 }
 
 type wireBattleSample struct {
@@ -329,6 +351,10 @@ type wireBattleSample struct {
 	InitialTargetID string            `json:"initialTargetId"`
 	SceneKind       string            `json:"sceneKind"`
 	EscapeChance    float64           `json:"escapeChance"`
+	// SummonPool DORPG P11（WIRE）：預先算好的召喚波次（見 wireSummonWave／buildSummonPool），
+	// 沒有任何召喚者時是空陣列（不是 null——比照本檔其餘 []wireXxx{} 初始化慣例，前端可以直接
+	// .length/.map 不必先判斷是否存在）。
+	SummonPool []wireSummonWave `json:"summonPool"`
 }
 
 // wireBattleConfig 對齊前端 engine/types.ts BattleConfig 的同名子集（見 config.go 新增欄位的
@@ -516,6 +542,33 @@ func (h *Handler) BattleRouter() http.Handler {
 	return r
 }
 
+// RanksRouter DORPG P11（WIRE：「GET /rpg/ranks」）掛 /rpg/ranks——獨立的靜態路徑（不是
+// "/rpg" 或 "/rpg/battle" 底下的子路徑，WIRE 給的字面路徑就是 /rpg/ranks），比照 BattleRouter
+// 套用同一個套件私有 requireEntry 白名單（main.go 直接 Mount 這個 Router，見該檔）。
+func (h *Handler) RanksRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Use(h.requireEntry)
+	r.Get("/", h.GetRanks)
+	return r
+}
+
+// GetRanks GET /rpg/ranks：九級強度表（WIRE：「不含 summon／level_curve」，見 RankDTO）。
+func (h *Handler) GetRanks(w http.ResponseWriter, r *http.Request) {
+	ranks, err := h.listRanks(r.Context())
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errRanksNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to load ranks")
+		return
+	}
+	dtos := make([]RankDTO, 0, len(ranks))
+	for _, rk := range ranks {
+		dtos = append(dtos, toRankDTO(rk))
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ranks": dtos})
+}
+
 // loadPlayerBattleStats 兩個端點（BattleEncounters/BattleBootstrap）都要「玩家這場戰鬥要用的
 // 數值」，抽成共用函式避免重複「角色列→exp→Base Lv→Compute→套保底」五步查詢。回傳的
 // PlayerBattleStats 已套用 battle_player_min_atk/min_hp 保底——角色摘要列跟實際戰鬥用同一組
@@ -585,7 +638,54 @@ type wireEncounterInfo struct {
 	CanEscape     bool   `json:"can_escape"`
 	// MonsterLevel DORPG P6（WIRE：「GET /rpg/battle/encounters：每場新增 monster_level」）——
 	// EncounterPicker 用它顯示「怪物 Lv.N」，跟 battle_scale_mode 是否為 "level" 無關（永遠送）。
+	// DORPG P11 起：level_mode="player" 的場（20 場強度挑戰）這裡改回玩家有效等級，見 WIRE
+	// 「monster_level 在 level_mode=player 時回玩家有效等級（伺服器算好）」與呼叫端
+	// resolveEncounterMonsterLevel。
 	MonsterLevel int `json:"monster_level"`
+
+	// --- DORPG P11（CONTRACT §1/§2、WIRE）新增：怪物強度九級系統，「強度挑戰」對戰列表分組用。
+	// legacy 六場：ScalingMode="legacy"、LevelMode="fixed"、Rank/RankLabel/BadgeColor/
+	// MonsterCount 皆 nil、Group="story"。20 場強度挑戰：ScalingMode="rank"、LevelMode=
+	// "player"、Group="rank"，其餘欄位由 rpg_monster_ranks 查表填入。---
+	ScalingMode  string  `json:"scaling_mode"`
+	LevelMode    string  `json:"level_mode"`
+	Rank         *string `json:"rank"`
+	RankLabel    *string `json:"rank_label"`
+	BadgeColor   *string `json:"badge_color"`
+	MonsterCount *int    `json:"monster_count"`
+	Group        string  `json:"group"` // "story"|"rank"，前端分組用
+}
+
+// encounterGroup DORPG P11（WIRE：「group: 'story'|'rank'...legacy 六場＝story」）：純粹由
+// scaling_mode 推導，不是 DB 欄位——兩者永遠一一對應，沒有另存一份的必要。
+func encounterGroup(scalingMode string) string {
+	if scalingMode == "rank" {
+		return "rank"
+	}
+	return "story"
+}
+
+// buildWireEncounterInfo DORPG P11：BattleEncounters（列表）與 BattleBootstrap（單場）共用的
+// wireEncounterInfo 組裝——避免兩處各自手寫一次 rank/rankLabel/badgeColor/group 的邏輯而漂移。
+// sceneImageURL/monsterLevel 由呼叫端算好傳入（前者要查 scenes map，後者依 level_mode 可能要
+// 換成玩家有效等級，兩邊呼叫端手上已有的資料不同，抽進來反而要多傳兩個參數的意義不大）。
+func buildWireEncounterInfo(e EncounterRow, sceneImageURL string, monsterLevel int, ranksByID map[string]RankRow) wireEncounterInfo {
+	info := wireEncounterInfo{
+		Code: e.Code, Title: e.Title, Subtitle: e.Subtitle, SceneID: e.SceneID,
+		SceneImageURL: sceneImageURL, SceneKind: e.SceneKind, Difficulty: e.Difficulty, CanEscape: e.CanEscape,
+		MonsterLevel: monsterLevel,
+		ScalingMode:  e.ScalingMode, LevelMode: e.LevelMode, MonsterCount: e.MonsterCount,
+		Group: encounterGroup(e.ScalingMode),
+	}
+	if e.Rank != nil {
+		info.Rank = e.Rank
+		if rk, ok := ranksByID[*e.Rank]; ok {
+			label, color := rk.Label, rk.BadgeColor
+			info.RankLabel = &label
+			info.BadgeColor = &color
+		}
+	}
+	return info
 }
 
 type wireEncounterMonsterInfo struct {
@@ -665,6 +765,23 @@ func (h *Handler) BattleEncounters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// DORPG P11：批次撈全部遭遇引用到的 rank（legacy 六場 e.Rank 是 nil，不會進這個集合），
+	// 用來填 wireEncounterInfo 的 rank_label/badge_color（見 buildWireEncounterInfo）。
+	rankIDs := map[string]bool{}
+	for _, e := range encounters {
+		if e.Rank != nil && *e.Rank != "" {
+			rankIDs[*e.Rank] = true
+		}
+	}
+	ranksByID, err := h.getRanksByIDs(ctx, stringSetKeys(rankIDs))
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errRanksNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to load monster ranks")
+		return
+	}
+
 	stats, err := h.loadUserBattleStats(ctx, uid)
 	if err != nil {
 		if respondIfMissingRelation(w, err) {
@@ -698,14 +815,16 @@ func (h *Handler) BattleEncounters(w http.ResponseWriter, r *http.Request) {
 			ms = append(ms, wireEncounterMonsterInfo{Slot: em.Slot, Name: mr.Name, PosterURL: mr.PosterURL, IsBoss: mr.IsBoss})
 		}
 		st := stats[e.Code]
+		// DORPG P11：level_mode="player" 的場（強度挑戰）monster_level 回玩家有效等級，其餘
+		// （legacy 六場，level_mode="fixed"）維持 e.MonsterLevel 原樣，零改動。
+		monsterLevel := e.MonsterLevel
+		if e.LevelMode == "player" {
+			monsterLevel = baseLevel
+		}
 		list = append(list, wireEncounterSummary{
-			wireEncounterInfo: wireEncounterInfo{
-				Code: e.Code, Title: e.Title, Subtitle: e.Subtitle, SceneID: e.SceneID,
-				SceneImageURL: sc.ImageURL, SceneKind: e.SceneKind, Difficulty: e.Difficulty, CanEscape: e.CanEscape,
-				MonsterLevel: e.MonsterLevel,
-			},
-			Monsters: ms,
-			Stats:    wireEncounterStats{Plays: st.Plays, Wins: st.Wins, BestMs: st.BestMs, LastOutcome: st.LastOutcome},
+			wireEncounterInfo: buildWireEncounterInfo(e, sc.ImageURL, monsterLevel, ranksByID),
+			Monsters:          ms,
+			Stats:             wireEncounterStats{Plays: st.Plays, Wins: st.Wins, BestMs: st.BestMs, LastOutcome: st.LastOutcome},
 		})
 	}
 
@@ -812,6 +931,186 @@ func (h *Handler) buildSkillSlots(ctx context.Context, cfg Config, pbs PlayerBat
 		i++
 	}
 	return slots, nil
+}
+
+// shouldBuildSummonPool 審查 CONFIRMED 修法：召喚池只該在 scaling_mode="rank"（P11 新增的
+// 20 場強度挑戰）出現，legacy 六場（scaling_mode="legacy"）即使場上怪物剛好也有
+// A/SA/S/SS 這種「有 summon.waves」的 rank（例如 taipei101_boss 的 DOR-MON-A），也不該被
+// buildSummonPool 撈去建召喚池——CONTRACT 明講既有六場零改動。抽成純函式方便不連 DB 測試。
+func shouldBuildSummonPool(enc EncounterRow) bool {
+	return enc.ScalingMode == "rank"
+}
+
+// buildSummonPool DORPG P11（CONTRACT §1、WIRE：「summonPool: [{ summonerEnemyId, atHpPct,
+// enemies: EnemyWire[] }]」）：對每一位「自己的 rank 在 rpg_monster_ranks.summon 定義了
+// waves」的敵人（目前只有 A/SA/S/SS），把每一波要召喚的怪物預先算好完整數值與 sprite——引擎
+// 收到後只需要在該召喚者 HP% 跨越 atHpPct 門檻時，把對應的 wireSummonWave.Enemies 塞進空槽
+// （tick 迴圈本身不在本輪 BACKEND 所有權內，見 WIRE「引擎（TS）」章節）。
+//
+// 分組規則（CONTRACT §1「一波可多筆」，SS 20% 門檻同時召喚 2×B＋1×A）：同一召喚者、同一
+// at_hp_pct 的多筆 SummonWave 合併成一個 wireSummonWave（同一時間點觸發一次事件、一次進場動畫，
+// 而不是同一召喚者同一時刻收到兩個各自獨立的 summon 事件）。enemies[].id 用 wave 在
+// rank.Summon.Waves 陣列裡「原始位置」編號（1-based）＋該位置內的第幾隻（1-based），保證合併
+// 後仍然唯一——例如 SS 的 20% 門檻是第 5、第 6 筆 wave，id 會是 <summoner>_w5_1/_w5_2（B×2）
+// 與 <summoner>_w6_1（A×1），不是「合併後的組編號」。
+//
+// 召喚怪的等級＝召喚者這場的等級（monsterLevel 參數，跟一般敵人同一個 N）、強度＝該波
+// wave.Rank 的向量（不是召喚者自己的 rank）——CONTRACT：「召喚怪等級＝召喚者等級、強度＝其
+// rank 向量」。encounterScale＝enc.PowerScale × wave.PowerScale（P11 修正新增：召喚怪另外疊乘
+// 自己波次的 PowerScale 折減，見 ranks.go SummonWave.PowerScale 註解——模擬證實召喚怪用完整
+// rank 向量太強，需要獨立於 rank.*_mult 之外的旋鈕），slotScale 固定 1.0（DB 沒有為召喚波次
+// 另外存個別 slot power_scale 欄位，本輪不新增）。同一 at_hp_pct 合併多筆 wave 進同一個
+// wireSummonWave 時（見下方 groupKey 分組），每一筆 need 仍各自帶著自己的 n.wave，套用時各自
+// 乘各自的 PowerScale，不會被合併群組共用同一個折減值。
+func (h *Handler) buildSummonPool(ctx context.Context, cfg Config, enc EncounterRow, monsterRows map[string]MonsterRow, ranksByID map[string]RankRow, monsterLevel int) ([]wireSummonWave, error) {
+	// 審查 CONFIRMED：召喚池是 rpg_monster_ranks.summon（migration 189）新加的機制，只有
+	// scaling_mode="rank" 的 20 場強度挑戰在契約設計上會用到。legacy 六場的怪物（例如
+	// taipei101_boss 的 DOR-MON-A）剛好也有 rank="A"，若這裡不分場次一律照 monRow.Rank 查
+	// summon.waves，六場既有故事戰鬥會無中生有冒出召喚怪，違反 CONTRACT「既有六場零改動」。
+	// 用抽出的純函式 shouldBuildSummonPool 判斷，讓這條規則本身可以不連 DB 單獨測試。
+	if !shouldBuildSummonPool(enc) {
+		return []wireSummonWave{}, nil
+	}
+	type need struct {
+		summonerID string
+		waveIndex  int // 1-based，rank.Summon.Waves 裡的原始位置
+		wave       SummonWave
+	}
+	var needs []need
+	extraRankIDs := map[string]bool{}
+	extraMonsterIDs := map[string]bool{}
+	for _, em := range enc.Monsters {
+		mr, ok := monsterRows[em.MonsterID]
+		if !ok {
+			continue
+		}
+		rk, ok := ranksByID[mr.Rank]
+		if !ok || len(rk.Summon.Waves) == 0 {
+			continue
+		}
+		for wi, wv := range rk.Summon.Waves {
+			needs = append(needs, need{summonerID: em.Slot, waveIndex: wi + 1, wave: wv})
+			if _, ok := ranksByID[wv.Rank]; !ok {
+				extraRankIDs[wv.Rank] = true
+			}
+			ids := wv.MonsterIDs
+			if len(ids) == 0 {
+				ids = []string{"DOR-MON-R-" + wv.Rank}
+			}
+			for _, id := range ids {
+				if _, ok := monsterRows[id]; !ok {
+					extraMonsterIDs[id] = true
+				}
+			}
+		}
+	}
+	if len(needs) == 0 {
+		return []wireSummonWave{}, nil
+	}
+
+	// 補齊主要敵人清單以外、召喚波次才會用到的 rank/monster 資料（多數情況下 wave.Rank 就是
+	// 場上某隻既有敵人的 rank，這裡只查缺的那幾筆，避免重複往返）。
+	if len(extraRankIDs) > 0 {
+		more, err := h.getRanksByIDs(ctx, stringSetKeys(extraRankIDs))
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range more {
+			ranksByID[k] = v
+		}
+	}
+	if len(extraMonsterIDs) > 0 {
+		more, err := h.getMonstersByIDs(ctx, stringSetKeys(extraMonsterIDs))
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range more {
+			monsterRows[k] = v
+		}
+	}
+
+	type groupKey struct {
+		summonerID string
+		atHpPct    int
+	}
+	groups := map[groupKey]*wireSummonWave{}
+	var order []groupKey
+
+	for _, n := range needs {
+		waveRank, ok := ranksByID[n.wave.Rank]
+		if !ok {
+			continue // 髒資料：summon.waves[].rank 指到查無資料的級別，略過該波而非整場 500
+		}
+		// 審查 CONFIRMED：Validate() 只把關「新寫入」的 summon.waves[].count（1–5），既有髒資料
+		// 或繞過 Validate 直接寫進 DB 的列仍可能是 0 或負值——make([]string, n.wave.Count) 對
+		// 負值會直接 panic（makeslice: len out of range）變成整個 bootstrap 500。count<=0 視同
+		// 這波沒有怪，略過；>5 一律夾回 5（防禦，對齊 Validate 的值域上限），而不是讓髒資料放大
+		// 召喚規模。
+		count := n.wave.Count
+		if count <= 0 {
+			continue
+		}
+		if count > 5 {
+			count = 5
+		}
+		ids := n.wave.MonsterIDs
+		if len(ids) == 0 {
+			ids = make([]string, count)
+			for k := range ids {
+				ids[k] = "DOR-MON-R-" + n.wave.Rank
+			}
+		}
+		key := groupKey{summonerID: n.summonerID, atHpPct: n.wave.AtHpPct}
+		grp, exists := groups[key]
+		if !exists {
+			grp = &wireSummonWave{SummonerEnemyID: n.summonerID, AtHpPct: n.wave.AtHpPct}
+			groups[key] = grp
+			order = append(order, key)
+		}
+		limit := count
+		for j, mid := range ids {
+			if j >= limit {
+				break // monster_ids 給的數量超過 count 時只取前 count 個
+			}
+			monRow, ok := monsterRows[mid]
+			if !ok {
+				continue // 髒資料：monster_ids/DOR-MON-R-<rank> 查無此怪，略過該隻而非整波失敗
+			}
+			sm := ScaleMonsterByRank(cfg, monRow, waveRank, enc.PowerScale*n.wave.PowerScale, 1.0, monsterLevel)
+			weak := monRow.WeakElements
+			if weak == nil {
+				weak = []string{}
+			}
+			grp.Enemies = append(grp.Enemies, wireEnemy{
+				ID:   fmt.Sprintf("%s_w%d_%d", n.summonerID, n.waveIndex, j+1),
+				Name: monRow.Name, Level: sm.Level,
+				HP: sm.HPMax, HPMax: sm.HPMax,
+				// Slot 留空、Row 保守給 "front"：實際站位由引擎在觸發當下依空槽位決定
+				// （WIRE：「依空槽位數放入...front_left→front_right→rear_left→rear_right→
+				// front_center 順序取空位」），bootstrap 階段還不知道屆時哪些槽位是空的。
+				Slot: "", Row: "front", ImageURL: monRow.PosterURL,
+				// 審查 CONFIRMED：monster_ids 指定特定怪物時，那隻怪自己的 monRow.Rank 可能跟
+				// wave.Rank 不同（例如 wave.Rank=S 但 monster_ids 指到一隻 rank=A 的怪，強度仍
+				// 照 waveRank 算——見上面 ScaleMonsterByRank(cfg, monRow, waveRank, ...)）。Rank/
+				// RankLabel/BadgeColor 三欄本來就該同一個來源，避免前端顯示的分級徽章跟實際數值
+				// 對不上，統一都用 waveRank。
+				Rank: waveRank.Rank, RankLabel: waveRank.Label, BadgeColor: waveRank.BadgeColor,
+				Attribute: monRow.Attribute, Size: monRow.Size, Race: monRow.Race,
+				Stats:          &ActorStats{HPMax: float64(sm.HPMax), MPMax: 0, Atk: float64(sm.Atk), Matk: float64(sm.Matk), Def: float64(sm.Def), Mdef: float64(sm.Mdef)},
+				ThreatPriority: monRow.Threat,
+				Rating:         &sm.Rating,
+				WeakElements:   weak,
+				CanEscape:      enc.CanEscape,
+				IsSummoned:     true,
+			})
+		}
+	}
+
+	out := make([]wireSummonWave, 0, len(order))
+	for _, key := range order {
+		out = append(out, *groups[key])
+	}
+	return out, nil
 }
 
 // GET /rpg/battle/bootstrap?code=<code>
@@ -1059,6 +1358,41 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	shares := AtkMultShares(atkMults)
 
+	// DORPG P11：這場遭遇實際使用的怪物等級 N——level_mode="player" 時＝玩家有效等級，
+	// "fixed"（legacy 六場）維持 enc.MonsterLevel 原樣（零改動）。
+	monsterLevel := enc.MonsterLevel
+	if enc.LevelMode == "player" {
+		monsterLevel = baseLevel
+	}
+
+	// DORPG P11：批次撈這場出現的怪物自己的 rank（不是 enc.Rank——舊六場的怪物也各自有
+	// A~E 的 rank 欄位，rankLabel/badgeColor 對所有場次都適用，不限 scaling_mode="rank"）。
+	rankIDSet := map[string]bool{}
+	for _, mr := range monsterRows {
+		if mr.Rank != "" {
+			rankIDSet[mr.Rank] = true
+		}
+	}
+	ranksByID, err := h.getRanksByIDs(ctx, stringSetKeys(rankIDSet))
+	if err != nil {
+		if respondIfMissingRelationMsg(w, err, errRanksNotReady) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to load monster ranks")
+		return
+	}
+	// scaling_mode="rank" 這場自己的向量（用 enc.Rank 查表，理論上等於場上每隻怪的 mr.Rank，
+	// 20 場強度挑戰同級同怪；用 enc.Rank 而非某一隻怪的 rank 是為了不假設槽位順序）。
+	var encRankRow RankRow
+	if enc.ScalingMode == "rank" && enc.Rank != nil {
+		if rk, ok := ranksByID[*enc.Rank]; ok {
+			encRankRow = rk
+		} else {
+			respondErr(w, http.StatusInternalServerError, "找不到這場遭遇的怪物強度資料")
+			return
+		}
+	}
+
 	enemies := make([]wireEnemy, 0, len(enc.Monsters))
 	bestThreat, bestSlotRank, initialTargetID := -1, 999, ""
 	for i, em := range enc.Monsters {
@@ -1066,14 +1400,20 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue // 髒資料：編組指到不存在的 monster_id，略過該槽位而非整場 500
 		}
-		// DORPG P6：依 cfg.BattleScaleMode 分派——"level"（本輪起預設）用怪物自己的
-		// rpg_encounters.monster_level 當基準（ScaleMonsterByLevel，跟玩家戰力無關）；
-		// "power"（P2 既有路徑）完全不動，仍以玩家戰力縮放；"fixed" 仍是保留列舉值，落到
-		// 這裡的 default 分支等同 "power"（Config.Validate() 已允許選它但本輪未實作絕對值路徑）。
+		// DORPG P11：scaling_mode="rank" 優先於 cfg.BattleScaleMode——強度挑戰的怪物數值
+		// 一律吃 rpg_monster_ranks 向量，不受後台「參數設定→戰鬥」的全域縮放模式影響。
+		// scaling_mode="legacy"（既有六場）完全維持 P6 起的既有分派，零改動：依
+		// cfg.BattleScaleMode 分派——"level"（本輪起預設）用怪物自己的 rpg_encounters.
+		// monster_level 當基準（ScaleMonsterByLevel，跟玩家戰力無關）；"power"（P2 既有路徑）
+		// 完全不動，仍以玩家戰力縮放；"fixed" 仍是保留列舉值，落到這裡的 default 分支等同
+		// "power"（Config.Validate() 已允許選它但本輪未實作絕對值路徑）。
 		var sm ScaledMonster
-		if cfg.BattleScaleMode == "level" {
-			sm = ScaleMonsterByLevel(cfg, mr, enc.PowerScale, em.PowerScale, enc.MonsterLevel)
-		} else {
+		switch {
+		case enc.ScalingMode == "rank":
+			sm = ScaleMonsterByRank(cfg, mr, encRankRow, enc.PowerScale, em.PowerScale, monsterLevel)
+		case cfg.BattleScaleMode == "level":
+			sm = ScaleMonsterByLevel(cfg, mr, enc.PowerScale, em.PowerScale, monsterLevel)
+		default:
 			sm = ScaleMonster(cfg, pbs, mr, enc.PowerScale, em.PowerScale, shares[i])
 		}
 		weakElements := mr.WeakElements
@@ -1089,6 +1429,11 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 			Rating:         &sm.Rating,
 			WeakElements:   weakElements,  // P5：CONTRACT §6 屬性相剋
 			CanEscape:      enc.CanEscape, // DDL 只有 encounter 層級的 can_escape，套到每隻怪身上（契約 D：BOSS 場整場不能逃）
+			IsSummoned:     false,         // DORPG P11：一般敵人恆為 false，召喚怪見 buildSummonPool
+		}
+		if rk, ok := ranksByID[mr.Rank]; ok {
+			enemy.RankLabel = rk.Label
+			enemy.BadgeColor = rk.BadgeColor
 		}
 		enemies = append(enemies, enemy)
 
@@ -1096,6 +1441,17 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		if mr.Threat > bestThreat || (mr.Threat == bestThreat && rank < bestSlotRank) {
 			bestThreat, bestSlotRank, initialTargetID = mr.Threat, rank, em.Slot
 		}
+	}
+
+	// DORPG P11（CONTRACT §1、WIRE）：召喚池——對每隻「自己的 rank 有 summon.waves」的敵人
+	// （目前只有 A/SA/S/SS），預先算好每一波要放進場的敵人。
+	summonPool, err := h.buildSummonPool(ctx, cfg, enc, monsterRows, ranksByID, monsterLevel)
+	if err != nil {
+		if respondIfMissingRelation(w, err) {
+			return
+		}
+		respondErr(w, http.StatusInternalServerError, "failed to build summon pool")
+		return
 	}
 
 	loadout, err := h.getLoadout(ctx, uid)
@@ -1137,6 +1493,7 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 		InitialTargetID: initialTargetID,
 		SceneKind:       enc.SceneKind,
 		EscapeChance:    enc.EscapeChance,
+		SummonPool:      summonPool,
 	}
 
 	// DORPG P9（WIRE）：config.aiStrategies——只含目前 is_active 的策略，供引擎 resolveStrategy()
@@ -1153,13 +1510,13 @@ func (h *Handler) BattleBootstrap(w http.ResponseWriter, r *http.Request) {
 	wireCfg.AiStrategies = buildAiStrategiesWire(strategies)
 
 	respondJSON(w, http.StatusOK, map[string]any{
-		"encounter": wireEncounterInfo{
-			Code: enc.Code, Title: enc.Title, Subtitle: enc.Subtitle, SceneID: enc.SceneID,
-			SceneImageURL: scene.ImageURL, SceneKind: enc.SceneKind, Difficulty: enc.Difficulty, CanEscape: enc.CanEscape,
-			MonsterLevel: enc.MonsterLevel,
-		},
-		"sample": sample,
-		"config": wireCfg,
+		"encounter": buildWireEncounterInfo(enc, scene.ImageURL, monsterLevel, ranksByID),
+		"sample":    sample,
+		"config":    wireCfg,
+		// scalingMode/levelMode/monsterLevel DORPG P11（WIRE：「頂層新增...」，camelCase 對齊
+		// wireBattleSample 的既有慣例，跟上面 encounter 那份 snake_case 是同一份資訊的兩種殼，
+		// 理由同 wireEnemy.Rank／wireEncounterInfo.rank 的既有雙殼慣例）。
+		"scalingMode": enc.ScalingMode, "levelMode": enc.LevelMode, "monsterLevel": monsterLevel,
 		// autoBattle DORPG P9（WIRE：「頂層新增 autoBattle: boolean」）：玩家角色列的開關，戰鬥中
 		// dispatch.SET_AUTO_BATTLE 本地即時生效由引擎自己處理，這裡只送 bootstrap 當下的持久化值。
 		"autoBattle": ch.AutoBattle,

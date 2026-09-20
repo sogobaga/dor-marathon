@@ -52,15 +52,36 @@ var validElementKinds = map[string]bool{
 	"metal": true, "wood": true, "water": true, "fire": true, "earth": true, "light": true, "dark": true, "neutral": true,
 }
 
+// validMonsterRanks DORPG P11（CONTRACT §1/§2、WIRE）：怪物強度九級白名單——rpg_monster_ranks
+// 的 rank PK 固定值，不開放新增/刪除（後台只能編輯既有九列的倍率/召喚規則，見 ranks.go
+// upsertRank 註解）。MonsterRow.Rank／EncounterRow.Rank／SummonWave.Rank 都要落在這個集合，
+// 才能通過 DB 層對應的 FK（rpg_monsters_rank_fkey／rpg_encounters.rank 參照
+// rpg_monster_ranks(rank)）——這裡在 400 階段就給出好懂的中文錯誤，不必等到 DB 層 23503。
+var validMonsterRanks = map[string]bool{
+	"F": true, "E": true, "D": true, "C": true, "B": true, "A": true, "SA": true, "S": true, "SS": true,
+}
+
+// validScalingModes/validLevelModes DORPG P11（CONTRACT §2、WIRE）：rpg_encounters 新增兩欄的
+// 值域——scaling_mode 決定怪物數值公式走 legacy（既有六場，battle_lvl_*_ratio）還是 rank（新的
+// 強度挑戰，rpg_monster_ranks 向量）；level_mode 決定怪物等級是固定值還是玩家有效等級，兩者
+// 彼此獨立（見 scaling.go ScaleMonsterByRank 與 battle.go BattleBootstrap 的組合邏輯）。
+var validScalingModes = map[string]bool{"legacy": true, "rank": true}
+var validLevelModes = map[string]bool{"fixed": true, "player": true}
+
 // Validate 逐欄檢查（admin PUT /admin/rpg/monsters 用）。只檢查會讓前端渲染/scaling 算式壞掉的
-// 欄位，不檢查 name/rank/race/attribute/size 這類純顯示文字的內容（見上方 validElementKinds
-// 註解：attribute/size 實際存的是中文原文，沒有封閉值域）。
+// 欄位，不檢查 name/race/attribute/size 這類純顯示文字的內容（見上方 validElementKinds
+// 註解：attribute/size 實際存的是中文原文，沒有封閉值域）。rank 是例外——DORPG P11 起
+// rpg_monsters.rank 加了 FK 參照 rpg_monster_ranks(rank)（migration 189），不再是純顯示文字，
+// 這裡先擋 400，避免管理者打錯字才在 DB 層撞見不好懂的 23503。
 func (m MonsterRow) Validate() error {
 	if m.ID == "" {
 		return fmt.Errorf("id 不可為空")
 	}
 	if m.Name == "" {
 		return fmt.Errorf("name 不可為空")
+	}
+	if !validMonsterRanks[m.Rank] {
+		return fmt.Errorf("rank 必須是九級固定值之一（F/E/D/C/B/A/SA/S/SS）")
 	}
 	if m.HPMult <= 0 || m.AtkMult <= 0 || m.DefMult <= 0 || m.SpeedMult <= 0 {
 		return fmt.Errorf("hp_mult/atk_mult/def_mult/speed_mult 必須 > 0")
@@ -356,6 +377,17 @@ type EncounterRow struct {
 	IsActive     bool                  `json:"is_active"`
 	SortOrder    int                   `json:"sort_order"`
 	Monsters     []EncounterMonsterRow `json:"monsters"`
+
+	// ScalingMode/LevelMode/Rank/MonsterCount DORPG P11（CONTRACT §1/§2、WIRE）：怪物強度九級
+	// 系統，migration 189 新增四欄。ScalingMode="legacy" 時完全零改動（既有六場，battle.go
+	// 繼續走 cfg.BattleScaleMode 分派的既有公式）；="rank" 時改用 Rank 指向的 rpg_monster_ranks
+	// 向量（scaling.go ScaleMonsterByRank）。LevelMode="player" 時怪物等級＝玩家有效等級，跟
+	// ScalingMode 是兩個彼此獨立的開關（見 battle.go BattleBootstrap 的組合邏輯）。Rank/
+	// MonsterCount 用指標對齊 DB 的 NULL（legacy 六場恆為 nil）。
+	ScalingMode  string  `json:"scaling_mode"`
+	LevelMode    string  `json:"level_mode"`
+	Rank         *string `json:"rank"`
+	MonsterCount *int    `json:"monster_count"`
 }
 
 // 審查6 PLAUSIBLE（刻意不修）：這裡只檢查欄位格式，不檢查 SceneID/monster_id 是否真的存在於
@@ -382,6 +414,23 @@ func (e EncounterRow) Validate() error {
 	}
 	if e.EscapeChance < 0 || e.EscapeChance > 1 {
 		return fmt.Errorf("escape_chance 必須介於 0..1")
+	}
+	// DORPG P11：scaling_mode/level_mode 值域＋「scaling_mode=rank 時 rank 不可為空」（WIRE：
+	// 「遭遇 PUT 接受 scaling_mode／level_mode／rank／monster_count」）。legacy 六場照舊完全
+	// 不受影響（DEFAULT 'legacy'/'fixed'，Rank/MonsterCount 維持 nil 一樣能通過）。
+	if !validScalingModes[e.ScalingMode] {
+		return fmt.Errorf("scaling_mode 不合法")
+	}
+	if !validLevelModes[e.LevelMode] {
+		return fmt.Errorf("level_mode 不合法")
+	}
+	if e.ScalingMode == "rank" {
+		if e.Rank == nil || !validMonsterRanks[*e.Rank] {
+			return fmt.Errorf("scaling_mode=rank 時 rank 必須是九級固定值之一")
+		}
+	}
+	if e.MonsterCount != nil && *e.MonsterCount < 1 {
+		return fmt.Errorf("monster_count 必須 >= 1")
 	}
 	seen := map[string]bool{}
 	for _, m := range e.Monsters {

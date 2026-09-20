@@ -1,18 +1,17 @@
 // DORPG 戰鬥引擎入口（P1，契約 §2）：純函式、無 React、時間一律由呼叫端傳入、RNG 可注入。
 // 對外的公開介面只有這裡列出的具名 export；內部切成 types/context/formulas/combat/ai/tick/dispatch
 // 方便維護，其他工作者只需要依賴這個檔名匯出的東西。
-import type { BattleSample, Enemy, PartyMember } from '../types';
+import type { BattleSample, PartyMember, SummonWave } from '../types';
 import {
   deriveDefaultActorStats,
-  deriveDefaultEnemyStats,
-  deriveDefaultMonsterRating,
   deriveDefaultPartyRating,
   floorInt,
   NEUTRAL_EQUIPMENT_EFFECTS,
   pickInitialTarget,
   randRange,
+  toEnemyActor,
 } from './formulas';
-import type { BattleConfig, BattleEvent, BattleState, EnemyActor, PartyActor } from './types';
+import type { BattleConfig, BattleEvent, BattleState, PartyActor } from './types';
 import { DEFAULT_BATTLE_CONFIG } from './types';
 
 export * from './types';
@@ -41,6 +40,10 @@ export {
   // verify 腳本直接使用，不必各自重新 import 內部模組路徑。
   inGuardianState,
   pickEnemyTarget,
+  // P11（DORPG_P11 CONTRACT §1「召喚（A 以上）」、WIRE「引擎」）：Enemy→EnemyActor 轉換——搬到
+  // formulas.ts 後在這裡轉發匯出，呼叫端（fixture.ts／verify 腳本／FRONTEND）的既有匯入路徑
+  // （`from './engine'`）不受影響，見 formulas.ts toEnemyActor 型別註解的搬家理由。
+  toEnemyActor,
 } from './formulas';
 // P5：buff/debuff 狀態效果的查詢／套用／暴擊倍率抽樣（見 effects.ts）；跟 formulas.ts 分開匯出檔案
 // 但一樣攤平在引擎的公開介面上，呼叫端不需要知道內部是哪個檔案實作的。
@@ -117,39 +120,8 @@ function toPartyActor(pm: PartyMember, index: number, now: number, cfg: BattleCo
   };
 }
 
-function toEnemyActor(e: Enemy, now: number, cfg: BattleConfig, rng: () => number): EnemyActor {
-  return {
-    id: e.id,
-    name: e.name,
-    level: e.level,
-    slot: e.slot,
-    // P6（CONTRACT §1）：同 toPartyActor，wire 進來的 hpMax/mpMax 也 floor 一次。
-    stats: e.stats ? { ...e.stats, hpMax: floorInt(e.stats.hpMax), mpMax: floorInt(e.stats.mpMax) } : deriveDefaultEnemyStats(e.level, e.hpMax),
-    hp: floorInt(e.hp),
-    // P1 沒有召喚機制，略過 spawning；hp<=0 直接給 removed（例如測試用的「一開場就平手」樣本資料）
-    // ——不然會卡在 idle 永遠等不到 applyEnemyDamage 幫它轉場成 dying，resolving 階段就無法判斷
-    // 「所有敵人的死亡動畫都播完了」（見 tick.ts 的 advanceResolving）。
-    anim: e.hp > 0 ? 'idle' : 'removed',
-    animUntil: now,
-    nextActAt: now + randRange(rng, cfg.enemyActIntervalMs),
-    threatPriority: e.threatPriority ?? 0,
-    imageUrl: e.imageUrl,
-    rank: e.rank,
-    attribute: e.attribute,
-    size: e.size,
-    race: e.race,
-    // P2：怪物沒有個別覆寫就用 config 係數推導的預設（跟等級無關，見 formulas.ts 的註解）。
-    rating: e.rating ?? deriveDefaultMonsterRating(cfg),
-    // P5：戰鬥開始時沒有任何 debuff；weakElements 缺省 []（無弱點）。
-    activeEffects: [],
-    weakElements: e.weakElements ?? [],
-    // P12（CONTRACT §1／WIRE「戰鬥 bootstrap」：「enemies[].row」）：原樣透傳（fromApi.ts 已經
-    // 驗證過只會是 'front'|'rear'|undefined）——缺省 undefined 時 combat.ts/formulas.ts 各讀取端
-    // 一律用 `enemy.row ?? rowOfSlot(enemy.slot)` 從必填的 slot 後備推導（見 EnemyActor.row 型別
-    // 註解），這裡不需要也不應該預先展開成具體值。
-    row: e.row,
-  };
-}
+// P11：Enemy→EnemyActor 的轉換（toEnemyActor）已搬到 formulas.ts（見該檔型別註解說明搬家理由：
+// 避免 index→tick→summon→index 的匯入循環）——這裡改成從那裡 import 使用，行為逐字不變。
 
 export function createBattle(
   sample: BattleSample,
@@ -166,6 +138,21 @@ export function createBattle(
      * 保底）。缺省 false（離線預覽／舊版後端尚未送這個欄位時，自動戰鬥預設關閉）。
      */
     autoBattle?: boolean;
+    /**
+     * P11（DORPG_P11 CONTRACT §1／WIRE「戰鬥 bootstrap」）：見 BattleState.scalingMode/levelMode/
+     * monsterLevel 型別註解——跟 autoBattle 同一種「FRONTEND 直接透傳 bootstrap 頂層欄位」呼叫
+     * 慣例，不需要 fromApi.ts 轉換函式（純字面量／數字，型別不對或缺欄位由下面的預設值保底）。
+     */
+    scalingMode?: 'legacy' | 'rank';
+    levelMode?: 'fixed' | 'player';
+    monsterLevel?: number | null;
+    /**
+     * P11（CONTRACT §1「召喚（A 以上）」、WIRE「戰鬥 bootstrap」）：見 dorpg/types.ts SummonWave／
+     * fromApi.ts summonPoolFromBootstrap() 型別註解——這裡收的是已經驗證過的結果（跟 sample 需要
+     * 先過 sampleFromBootstrap() 是同一種分工，不是 autoBattle 那種「wire 原始值直接透傳」）。
+     * 缺省 []（無召喚機制的既有場景）。
+     */
+    summonPool?: SummonWave[];
   },
 ): BattleState {
   const { now } = opts;
@@ -212,6 +199,14 @@ export function createBattle(
     aiSkillReadyAt: {},
     autoBattle: opts.autoBattle ?? false,
     focusTargetId: null,
+    // P11（CONTRACT §1／WIRE「戰鬥 bootstrap」）：見上方 opts 型別註解——非法字面值一律退回安全
+    // 預設（'legacy'/'fixed'/null），不讓髒資料流進 BattleState。
+    scalingMode: opts.scalingMode === 'rank' ? 'rank' : 'legacy',
+    levelMode: opts.levelMode === 'player' ? 'player' : 'fixed',
+    monsterLevel: typeof opts.monsterLevel === 'number' && Number.isFinite(opts.monsterLevel) ? opts.monsterLevel : null,
+    summonPool: opts.summonPool ?? [],
+    // P11：戰鬥開始時沒有任何一波召喚被觸發過（見 BattleState.summonedWaves 型別註解）。
+    summonedWaves: [],
   };
 }
 
