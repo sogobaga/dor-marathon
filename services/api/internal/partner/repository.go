@@ -61,6 +61,26 @@ func unmarshalPhotoURLs(b []byte) ([]string, error) {
 	return urls, nil
 }
 
+// marshalVariants / unmarshalVariants 比照 marshalPhotoURLs／unmarshalPhotoURLs：JSON 一律回陣列，
+// nil → []（見 docs/partner/VARIANTS_CONTRACT.md §1）。
+func marshalVariants(variants []PartnerVariant) ([]byte, error) {
+	if variants == nil {
+		variants = []PartnerVariant{}
+	}
+	return json.Marshal(variants)
+}
+
+func unmarshalVariants(b []byte) ([]PartnerVariant, error) {
+	variants := []PartnerVariant{}
+	if len(b) == 0 {
+		return variants, nil
+	}
+	if err := json.Unmarshal(b, &variants); err != nil {
+		return nil, err
+	}
+	return variants, nil
+}
+
 // --- 前台 ---
 
 // ListEnabled 前台列表：僅 enabled=true，依 display_order/created_at 排序。
@@ -73,7 +93,7 @@ func (r *Repository) ListEnabled(ctx context.Context, uid string) ([]*PartnerSho
 		       ($1 <> '' AND EXISTS(
 		           SELECT 1 FROM partner_shop_favorites f
 		           WHERE f.user_id = NULLIF($1,'')::uuid AND f.shop_id = ps.id
-		       ))
+		       )), ps.item_mode
 		FROM partner_shops ps
 		WHERE ps.enabled
 		ORDER BY ps.display_order, ps.created_at
@@ -87,7 +107,7 @@ func (r *Repository) ListEnabled(ctx context.Context, uid string) ([]*PartnerSho
 	for rows.Next() {
 		s := &PartnerShop{}
 		if err := rows.Scan(&s.ID, &s.Name, &s.Summary, &s.BannerURL, &s.CTAURL, &s.CTALabel,
-			&s.DisplayOrder, &s.Audience, &s.IsFavorited); err != nil {
+			&s.DisplayOrder, &s.Audience, &s.IsFavorited, &s.ItemMode); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -138,19 +158,19 @@ func (r *Repository) SetMinVIPFeaturedKm(ctx context.Context, km int) error {
 // 用 ::text 轉字串比對避免傳入 slug 時 uuid 型別轉換錯；slug 為 NULL 時 NULL=$1 不成立，只會 id 命中。
 func (r *Repository) GetDetail(ctx context.Context, id, uid string) (*PartnerShopDetail, error) {
 	d := &PartnerShopDetail{}
-	var photoBytes, videoBytes, contentBytes []byte
+	var photoBytes, videoBytes, contentBytes, variantBytes []byte
 	err := r.db.QueryRow(ctx, `
 		SELECT ps.id, COALESCE(ps.slug,''), ps.name, ps.summary, ps.banner_url, ps.cta_url, ps.cta_label, ps.display_order, ps.audience,
 		       ($2 <> '' AND EXISTS(
 		           SELECT 1 FROM partner_shop_favorites f
 		           WHERE f.user_id = NULLIF($2,'')::uuid AND f.shop_id = ps.id
 		       )),
-		       ps.detail_html, ps.photo_urls, ps.video_url, ps.video_urls, ps.content_images
+		       ps.detail_html, ps.photo_urls, ps.video_url, ps.video_urls, ps.content_images, ps.item_mode, ps.variants
 		FROM partner_shops ps
 		WHERE (ps.id::text = $1 OR ps.slug = $1) AND ps.enabled
 	`, id, uid).Scan(
 		&d.ID, &d.Slug, &d.Name, &d.Summary, &d.BannerURL, &d.CTAURL, &d.CTALabel, &d.DisplayOrder, &d.Audience, &d.IsFavorited,
-		&d.DetailHTML, &photoBytes, &d.VideoURL, &videoBytes, &contentBytes,
+		&d.DetailHTML, &photoBytes, &d.VideoURL, &videoBytes, &contentBytes, &d.ItemMode, &variantBytes,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -167,6 +187,10 @@ func (r *Repository) GetDetail(ctx context.Context, id, uid string) (*PartnerSho
 		return nil, err
 	}
 	d.ContentImages, err = unmarshalPhotoURLs(contentBytes)
+	if err != nil {
+		return nil, err
+	}
+	d.Variants, err = unmarshalVariants(variantBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -202,14 +226,15 @@ func (r *Repository) RemoveFavorite(ctx context.Context, userID, shopID string) 
 // --- 後台 ---
 
 const adminSelectCols = `id, COALESCE(slug,'') as slug, name, summary, banner_url, cta_url, cta_label, display_order, audience,
-	detail_html, photo_urls, video_url, video_urls, content_images, enabled, created_at, updated_at`
+	detail_html, photo_urls, video_url, video_urls, content_images, item_mode, variants, enabled, created_at, updated_at`
 
 // scanAdminRow 同時吃 pgx.Rows（Query）與 pgx.Row（QueryRow）——兩者皆滿足 Scan(dest ...any) error。
 func scanAdminRow(row pgx.Row) (*AdminPartnerShop, error) {
 	a := &AdminPartnerShop{}
-	var photoBytes, videoBytes, contentBytes []byte
+	var photoBytes, videoBytes, contentBytes, variantBytes []byte
 	if err := row.Scan(&a.ID, &a.Slug, &a.Name, &a.Summary, &a.BannerURL, &a.CTAURL, &a.CTALabel, &a.DisplayOrder, &a.Audience,
-		&a.DetailHTML, &photoBytes, &a.VideoURL, &videoBytes, &contentBytes, &a.Enabled, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		&a.DetailHTML, &photoBytes, &a.VideoURL, &videoBytes, &contentBytes, &a.ItemMode, &variantBytes,
+		&a.Enabled, &a.CreatedAt, &a.UpdatedAt); err != nil {
 		return nil, err
 	}
 	urls, err := unmarshalPhotoURLs(photoBytes)
@@ -227,6 +252,11 @@ func scanAdminRow(row pgx.Row) (*AdminPartnerShop, error) {
 		return nil, err
 	}
 	a.ContentImages = contentURLs
+	variants, err := unmarshalVariants(variantBytes)
+	if err != nil {
+		return nil, err
+	}
+	a.Variants = variants
 	a.DetailHTML = SanitizeDetailHTML(a.DetailHTML) // 輸出前二度消毒
 	return a, nil
 }
@@ -273,13 +303,18 @@ func (r *Repository) AdminCreate(ctx context.Context, req *AdminPartnerShopReque
 	if err != nil {
 		return nil, fmt.Errorf("marshal content_images: %w", err)
 	}
+	variantBytes, err := marshalVariants(req.Variants)
+	if err != nil {
+		return nil, fmt.Errorf("marshal variants: %w", err)
+	}
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO partner_shops
-		    (name, summary, banner_url, detail_html, photo_urls, video_url, video_urls, cta_url, cta_label, display_order, enabled, audience, slug, content_images)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		    (name, summary, banner_url, detail_html, photo_urls, video_url, video_urls, cta_url, cta_label, display_order, enabled, audience, slug, content_images, item_mode, variants)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		RETURNING `+adminSelectCols,
 		req.Name, req.Summary, req.BannerURL, req.DetailHTML, photoBytes, req.VideoURL, videoBytes,
 		req.CTAURL, req.CTALabel, req.DisplayOrder, req.Enabled, req.Audience, slugParam(req.Slug), contentBytes,
+		req.ItemMode, variantBytes,
 	)
 	a, err := scanAdminRow(row)
 	if isSlugUniqueViolation(err) {
@@ -305,14 +340,20 @@ func (r *Repository) AdminUpdate(ctx context.Context, id string, req *AdminPartn
 	if err != nil {
 		return nil, fmt.Errorf("marshal content_images: %w", err)
 	}
+	variantBytes, err := marshalVariants(req.Variants)
+	if err != nil {
+		return nil, fmt.Errorf("marshal variants: %w", err)
+	}
 	row := r.db.QueryRow(ctx, `
 		UPDATE partner_shops SET
 		    name=$1, summary=$2, banner_url=$3, detail_html=$4, photo_urls=$5, video_url=$6, video_urls=$7,
-		    cta_url=$8, cta_label=$9, display_order=$10, enabled=$11, audience=$12, slug=$13, content_images=$14, updated_at=NOW()
-		WHERE id=$15
+		    cta_url=$8, cta_label=$9, display_order=$10, enabled=$11, audience=$12, slug=$13, content_images=$14,
+		    item_mode=$15, variants=$16, updated_at=NOW()
+		WHERE id=$17
 		RETURNING `+adminSelectCols,
 		req.Name, req.Summary, req.BannerURL, req.DetailHTML, photoBytes, req.VideoURL, videoBytes,
-		req.CTAURL, req.CTALabel, req.DisplayOrder, req.Enabled, req.Audience, slugParam(req.Slug), contentBytes, id,
+		req.CTAURL, req.CTALabel, req.DisplayOrder, req.Enabled, req.Audience, slugParam(req.Slug), contentBytes,
+		req.ItemMode, variantBytes, id,
 	)
 	a, err := scanAdminRow(row)
 	if isSlugUniqueViolation(err) {

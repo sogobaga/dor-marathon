@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
-import { partnersApi, type PartnerShop, type PartnerListMeta } from '@/lib/api'
+import { partnersApi, type PartnerShop, type PartnerListMeta, type PartnerVariant } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { MediaCarousel, Lightbox, YouTubeEmbed, ytId } from './shared/MediaCarousel'
 
@@ -37,11 +37,14 @@ export default function PartnerPerksScreen({ onBack, initialShopId }: { onBack: 
   const meta = metaData?.meta ?? null
 
   // 前往 CTA 的統一處理：鎖定就開原因彈窗，否則才開新分頁。
-  function handleCta(shop: PartnerShop) {
+  // url 參數選填：多品項模式下每個 variant 有自己的連結，鎖定判斷仍共用商家層級的 cta_locked
+  // （同一把鎖，見契約 §1），未帶 url 時退回商家層級 cta_url（單一品項模式的既有行為）。
+  function handleCta(shop: PartnerShop, url?: string) {
     if (shop.cta_locked) {
       setLockedShop(shop)
-    } else if (shop.cta_url) {
-      window.open(shop.cta_url, '_blank', 'noopener,noreferrer')
+    } else {
+      const target = url ?? shop.cta_url
+      if (target) window.open(target, '_blank', 'noopener,noreferrer')
     }
   }
 
@@ -70,7 +73,7 @@ function PartnerShopListView({
   onOpenDetail: (id: string) => void
   override: Record<string, boolean>
   setOverride: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
-  onCta: (shop: PartnerShop) => void
+  onCta: (shop: PartnerShop, url?: string) => void
 }) {
   const user = useUser()
   const { data, error, isLoading } = useSWR(
@@ -203,10 +206,11 @@ function ShopCard({
   isFav: boolean
   onToggleFav: () => void
   onDetail: () => void
-  onCta: (shop: PartnerShop) => void
+  onCta: (shop: PartnerShop, url?: string) => void
 }) {
   // 鎖定的商家後端會把 cta_url 清空，所以按鈕是否顯示不能只看 cta_url，鎖定時也要顯示（點下去開原因彈窗）。
-  const showCta = !!shop.cta_url || !!shop.cta_locked
+  // 多品項模式（item_mode==='multi'）入口卡一律不顯示「前往」，只留「詳細」（見契約 §1）。
+  const showCta = shop.item_mode !== 'multi' && (!!shop.cta_url || !!shop.cta_locked)
   return (
     // 整張卡片可點 → 進詳細頁；內部的愛心／前往／詳細按鈕各自 stopPropagation，避免點它們也觸發進詳細。
     <div onClick={onDetail} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden', cursor: 'pointer' }}>
@@ -291,7 +295,7 @@ function VipLockedModal({ shop, meta, onClose }: { shop: PartnerShop; meta: Part
   )
 }
 
-function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () => void; onCta: (shop: PartnerShop) => void }) {
+function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () => void; onCta: (shop: PartnerShop, url?: string) => void }) {
   const user = useUser()
   const { data, error, isLoading } = useSWR(
     ['partner-shop-detail', id, user?.id ?? 'guest'],
@@ -300,7 +304,9 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
   const shop = data?.shop ?? null
   const [zoom, setZoom] = useState<{ images: string[]; index: number } | null>(null)
   // 同 ShopCard：鎖定的商家 cta_url 會被後端清空，按鈕顯示與否要看 cta_locked，不能只看 cta_url。
-  const showCta = !!shop && (!!shop.cta_url || !!shop.cta_locked)
+  // 多品項模式：隱藏底部固定 CTA（商家層級 cta_url 不用），改由下方「品項」區塊各自的「前往」按鈕負責。
+  const isMulti = shop?.item_mode === 'multi'
+  const showCta = !!shop && !isMulti && (!!shop.cta_url || !!shop.cta_locked)
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
@@ -371,6 +377,21 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
               )
             })()}
 
+            {/* 多品項區塊：單一品項模式完全不渲染（即使資料有 variants），見契約 §1。
+                放在 video_urls 之後、捲動內容最底部；每筆一張卡：左圖(72px 正方縮圖)＋
+                右側名稱/描述(pre-line)＋「前往」按鈕。鎖定判斷共用商家層級 cta_locked，
+                透過 onCta(shop, v.cta_url) 傳入該品項的連結。 */}
+            {isMulti && shop.variants && shop.variants.length > 0 && (
+              <div style={{ marginTop: 18 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 900, color: 'var(--tx)', marginBottom: 10 }}>品項</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {shop.variants.map((v) => (
+                    <VariantCard key={v.id} variant={v} locked={!!shop.cta_locked} onCta={(url) => onCta(shop, url)} />
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* 底部 CTA 前預留空間，避免內容被固定底列遮住 */}
             {showCta && <div style={{ height: 8 }} />}
           </>
@@ -389,6 +410,35 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
       )}
 
       {zoom && <Lightbox images={zoom.images} index={zoom.index} onClose={() => setZoom(null)} />}
+    </div>
+  )
+}
+
+// 多品項模式的細項商品卡（品名/口味）：左圖 72px 正方縮圖＋右側名稱/描述＋「前往」按鈕。
+// 描述用文字節點＋pre-line 渲染（後端存純文字，不進 HTML），不可 dangerouslySetInnerHTML。
+function VariantCard({ variant, locked, onCta }: { variant: PartnerVariant; locked: boolean; onCta: (url?: string) => void }) {
+  const showCta = !!variant.cta_url || locked
+  return (
+    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: 12 }}>
+      {variant.image_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={variant.image_url} alt="" style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
+      ) : (
+        <div style={{ width: 72, height: 72, borderRadius: 8, background: 'var(--bg-2)', flexShrink: 0 }} />
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)', wordBreak: 'break-word' }}>{variant.name}</div>
+        {variant.description && (
+          <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.6, whiteSpace: 'pre-line', wordBreak: 'break-word' }}>
+            {variant.description}
+          </div>
+        )}
+        {showCta && (
+          <button onClick={() => onCta(variant.cta_url)} style={{ ...primaryFullBtn, marginTop: 8, padding: '8px 16px' }}>
+            {locked ? '🔒 前往' : '前往'}
+          </button>
+        )}
+      </div>
     </div>
   )
 }

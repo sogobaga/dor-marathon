@@ -2,18 +2,20 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { adminPartnersApi, adminImagesApi, type AdminPartnerShop, type PartnerShopWriteBody } from '@/lib/api'
+import { adminPartnersApi, adminImagesApi, type AdminPartnerShop, type PartnerShopWriteBody, type PartnerVariant } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
 // 跑者充電站後台：特約商店（Partner Shops）CRUD——基本資訊、Banner/多圖、詳細內文(HTML)、YouTube 影片、前往連結、排序、上下架。
 
 type Form = Partial<AdminPartnerShop>
 type Audience = 'all' | 'vip_featured'
+type ItemMode = 'single' | 'multi'
 
 const EMPTY: Form = {
   slug: '', name: '', summary: '', banner_url: '', detail_html: '', photo_urls: [], video_url: '', video_urls: [],
   content_images: [],
   cta_url: '', cta_label: '', display_order: 0, enabled: true, audience: 'all',
+  item_mode: 'single', variants: [],
 }
 
 export default function AdminPartnersPage() {
@@ -23,7 +25,7 @@ export default function AdminPartnersPage() {
   const [tab, setTab] = useState<Audience>('all')
   const [form, setForm] = useState<Form>(EMPTY)
   const [busy, setBusy] = useState(false)
-  const [imgBusy, setImgBusy] = useState('') // '' | 'banner' | 'photo' | 'content'
+  const [imgBusy, setImgBusy] = useState('') // '' | 'banner' | 'photo' | 'content' | 'variant-<idx>'
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [linkCopied, setLinkCopied] = useState(false)
@@ -62,9 +64,9 @@ export default function AdminPartnersPage() {
   function edit(s: AdminPartnerShop) {
     // 既有資料若只有舊的單支 video_url、還沒有 video_urls（後端資料尚未補齊），fallback 成單一元素陣列。
     const video_urls = s.video_urls && s.video_urls.length ? s.video_urls : (s.video_url ? [s.video_url] : [])
-    setForm({ ...s, video_urls }); setMsg(''); setErr('')
+    setForm({ ...s, video_urls, item_mode: s.item_mode ?? 'single', variants: s.variants ?? [] }); setMsg(''); setErr('')
   }
-  function fresh() { setForm({ ...EMPTY, photo_urls: [], video_urls: [], content_images: [] }); setMsg(''); setErr('') }
+  function fresh() { setForm({ ...EMPTY, photo_urls: [], video_urls: [], content_images: [], variants: [] }); setMsg(''); setErr('') }
   function setF<K extends keyof Form>(k: K, v: Form[K]) { setForm((f) => ({ ...f, [k]: v })) }
 
   async function uploadBanner(file: File) {
@@ -127,6 +129,34 @@ export default function AdminPartnersPage() {
     setF('video_urls', (form.video_urls || []).filter((_, i) => i !== idx))
   }
 
+  // 多品項（variants）增刪/上傳/移動邏輯照抄 photo_urls／content_images 的寫法；id 留空由伺服器補發
+  // （見契約 §1：id 缺或非 UUID 格式→伺服器補新 uuid），前端只在既有品項上保留原 id 回傳。
+  function addVariant() {
+    const v: PartnerVariant = { id: '', name: '', description: '', image_url: '', cta_url: '' }
+    setF('variants', [...(form.variants || []), v])
+  }
+  function setVariantField(idx: number, key: keyof PartnerVariant, value: string) {
+    const arr = [...(form.variants || [])]
+    arr[idx] = { ...arr[idx], [key]: value }
+    setF('variants', arr)
+  }
+  function removeVariant(idx: number) {
+    setF('variants', (form.variants || []).filter((_, i) => i !== idx))
+  }
+  function moveVariant(idx: number, dir: -1 | 1) {
+    const arr = [...(form.variants || [])]
+    const j = idx + dir
+    if (j < 0 || j >= arr.length) return
+    ;[arr[idx], arr[j]] = [arr[j], arr[idx]]
+    setF('variants', arr)
+  }
+  async function uploadVariantImage(idx: number, file: File) {
+    if (!token) return
+    setImgBusy(`variant-${idx}`); setErr('')
+    try { const { url } = await adminImagesApi.upload(token, file); setVariantField(idx, 'image_url', url); setMsg('✓ 品項圖片已上傳') }
+    catch (e: any) { setErr(e?.message || '上傳失敗') } finally { setImgBusy('') }
+  }
+
   async function save() {
     if (!token) return
     if (!form.name?.trim()) { setErr('請填名稱'); return }
@@ -148,6 +178,8 @@ export default function AdminPartnersPage() {
         display_order: form.display_order ?? 0,
         enabled: !!form.enabled,
         audience: form.audience === 'vip_featured' ? 'vip_featured' : 'all',
+        item_mode: form.item_mode === 'multi' ? 'multi' : 'single',
+        variants: form.variants || [],
       }
       if (form.id) {
         await adminPartnersApi.update(token, form.id, body)
@@ -363,12 +395,60 @@ export default function AdminPartnersPage() {
             <F label="前往連結 cta_url"><input style={inp} value={form.cta_url || ''} onChange={(e) => setF('cta_url', e.target.value)} placeholder="https://..." /></F>
             <F label="按鈕文字 cta_label"><input style={inp} value={form.cta_label || ''} onChange={(e) => setF('cta_label', e.target.value)} placeholder="立即前往" /></F>
           </div>
+          {form.item_mode === 'multi' && (
+            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 2 }}>
+              多品項模式下入口與詳細頁不使用此連結，改由下方各品項各自的連結。
+            </div>
+          )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 4 }}>
+          {/* 多品項（variants）編輯區：只在 item_mode==='multi' 顯示；資料一律保留，切回單一品項不清空。
+              照抄 content_images 的增刪/上傳/排序寫法：每筆一張卡＝縮圖上傳＋名稱＋描述＋連結＋↑↓刪除。 */}
+          {form.item_mode === 'multi' && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 6 }}>品項列表 variants（例如：巧克力口味／蔓越莓口味…，可排序）</div>
+              {!!(form.variants && form.variants.length) && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
+                  {form.variants.map((v, i) => (
+                    <div key={i} style={{ ...rowCard, display: 'flex', gap: 10 }}>
+                      <div style={{ flexShrink: 0 }}>
+                        <div style={{ width: 72, height: 72, borderRadius: 6, overflow: 'hidden', background: 'var(--bg-2)', border: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {v.image_url ? <img src={v.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 10, color: 'var(--tx-faint)' }}>未上傳</span>}
+                        </div>
+                        <label style={{ ...tinyBtn, cursor: 'pointer', display: 'block', textAlign: 'center', marginTop: 4, opacity: imgBusy === `variant-${i}` ? 0.5 : 1 }}>
+                          {imgBusy === `variant-${i}` ? '上傳中' : v.image_url ? '更換' : '上傳'}
+                          <input type="file" accept="image/*" disabled={imgBusy === `variant-${i}`} style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadVariantImage(i, f); e.target.value = '' }} />
+                        </label>
+                        {v.image_url && <button onClick={() => setVariantField(i, 'image_url', '')} style={{ ...tinyBtn, display: 'block', width: '100%', marginTop: 4 }}>移除</button>}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <input style={inp} value={v.name} onChange={(e) => setVariantField(i, 'name', e.target.value)} placeholder="品項名稱（例：巧克力口味）" />
+                        <textarea style={{ ...ta, marginTop: 6 }} rows={2} value={v.description} onChange={(e) => setVariantField(i, 'description', e.target.value)} placeholder="品項描述（純文字，可換行）" />
+                        <input style={{ ...inp, marginTop: 6 }} value={v.cta_url} onChange={(e) => setVariantField(i, 'cta_url', e.target.value)} placeholder="此品項的前往連結 https://..." />
+                        <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                          <button onClick={() => moveVariant(i, -1)} disabled={i === 0} style={{ ...tinyBtn, opacity: i === 0 ? 0.35 : 1 }}>↑</button>
+                          <button onClick={() => moveVariant(i, 1)} disabled={i === form.variants!.length - 1} style={{ ...tinyBtn, opacity: i === form.variants!.length - 1 ? 0.35 : 1 }}>↓</button>
+                          <button onClick={() => removeVariant(i)} style={{ ...tinyBtn, color: 'var(--hunt)' }}>刪除</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button onClick={addVariant} style={ghostBtn}>＋ 新增品項</button>
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)', gap: 10, marginTop: 4 }}>
             <F label="顯示對象 audience">
               <select style={inp} value={form.audience || 'all'} onChange={(e) => setF('audience', e.target.value as Audience)}>
                 <option value="all">全部會員</option>
                 <option value="vip_featured">VIP好物分享專區</option>
+              </select>
+            </F>
+            <F label="商品模式 item_mode">
+              <select style={inp} value={form.item_mode || 'single'} onChange={(e) => setF('item_mode', e.target.value as ItemMode)}>
+                <option value="single">單一品項</option>
+                <option value="multi">多品項</option>
               </select>
             </F>
             <F label="上下架"><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, paddingTop: 8 }}><input type="checkbox" checked={!!form.enabled} onChange={(e) => setF('enabled', e.target.checked)} />啟用（上架，顯示於前台）</label></F>

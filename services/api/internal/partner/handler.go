@@ -161,7 +161,8 @@ func (h *Handler) AdminCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	shop, err := h.svc.AdminCreate(r.Context(), &req)
 	if errors.Is(err, ErrNameRequired) || errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrTooLong) ||
-		errors.Is(err, ErrInvalidAudience) || errors.Is(err, ErrInvalidSlug) || errors.Is(err, ErrSlugTaken) {
+		errors.Is(err, ErrInvalidAudience) || errors.Is(err, ErrInvalidSlug) || errors.Is(err, ErrSlugTaken) ||
+		errors.Is(err, ErrInvalidItemMode) || errors.Is(err, ErrTooManyVariants) || errors.Is(err, ErrInvalidImageURL) {
 		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -186,7 +187,8 @@ func (h *Handler) AdminUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, ErrNameRequired) || errors.Is(err, ErrInvalidURL) || errors.Is(err, ErrTooLong) ||
-		errors.Is(err, ErrInvalidAudience) || errors.Is(err, ErrInvalidSlug) || errors.Is(err, ErrSlugTaken) {
+		errors.Is(err, ErrInvalidAudience) || errors.Is(err, ErrInvalidSlug) || errors.Is(err, ErrSlugTaken) ||
+		errors.Is(err, ErrInvalidItemMode) || errors.Is(err, ErrTooManyVariants) || errors.Is(err, ErrInvalidImageURL) {
 		respondErr(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -3769,6 +3769,14 @@ export const adminEmailBroadcastApi = {
 
 // --- 跑者充電站 / 特約商店 (Partner Shops) ---
 
+export interface PartnerVariant {       // 多品項模式下的細項商品（例如同系列不同口味）
+  id: string
+  name: string
+  description: string     // 純文字，可含換行；前端用文字節點＋pre-line 渲染，不進 HTML
+  image_url: string
+  cta_url: string
+}
+
 export interface PartnerShop {          // 列表用
   id: string
   slug: string             // 自訂連結代碼（選填，空字串＝未設定）；有值時 /shop/{slug} 可取代 /shop/{id}
@@ -3782,6 +3790,7 @@ export interface PartnerShop {          // 列表用
   is_favorited: boolean
   cta_locked?: boolean       // true＝audience='vip_featured' 且該使用者不合格；此時 cta_url 已被後端清空
   cta_lock_reason?: string   // cta_locked=true 時的原因文案；false 時為空字串
+  item_mode: 'single' | 'multi' // single=入口按鈕照舊；multi=入口只保留「詳細」、隱藏「前往」
 }
 
 // 列表隨附的 VIP 精選資格資訊；後端刻意不在不合格時多回傳 vip_featured 商家內容，只給數量。
@@ -3799,6 +3808,7 @@ export interface PartnerShopDetail extends PartnerShop {   // 詳細用
   video_url: string        // 舊：單支 YouTube 原始連結（保留相容，不再是主來源）
   video_urls: string[]     // 新：多支 YouTube 原始連結（前端用 ytId() 逐支解析成 embed）
   content_images: string[] // 滿版長圖（產品 DM／長圖）；詳細頁滿版直列顯示，與 photo_urls 輪播分開
+  variants: PartnerVariant[] // 多品項模式的細項商品清單（陣列順序＝顯示順序）；single 模式通常為 []
 }
 
 // 後台清單/回應用：PartnerShop 欄位（不含 is_favorited）+ 詳細欄位 + enabled（含下架）
@@ -3808,6 +3818,7 @@ export type AdminPartnerShop = Omit<PartnerShop, 'is_favorited'> & {
   video_url: string
   video_urls: string[]
   content_images: string[] // 滿版長圖（產品 DM／長圖）；詳細頁滿版直列顯示，與 photo_urls 輪播分開
+  variants: PartnerVariant[]
   enabled: boolean
 }
 
@@ -3827,6 +3838,8 @@ export interface PartnerShopWriteBody {
   display_order: number
   enabled: boolean
   audience?: 'all' | 'vip_featured' // 空預設 all
+  item_mode: 'single' | 'multi'
+  variants: PartnerVariant[]
 }
 
 // 前台（OptionalAuth：未登入也能看，登入才有 is_favorited）

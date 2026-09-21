@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -19,6 +21,8 @@ var (
 	ErrInvalidAudience = errors.New("audience must be all or vip_featured")
 	ErrInvalidMinKm    = errors.New("min_km must be a non-negative integer")
 	ErrInvalidSlug     = errors.New("slug 僅能用小寫英數與連字號，長度 2-64 字且開頭結尾須為英數字")
+	ErrInvalidItemMode = errors.New("item_mode must be single or multi")
+	ErrTooManyVariants = errors.New("variants 最多 50 筆")
 )
 
 // slugRe 自訂連結代碼格式：小寫英數與連字號、開頭結尾須為英數字、長度 2-64
@@ -35,6 +39,13 @@ const (
 	maxNameLen     = 200
 	maxSummaryLen  = 300
 	maxCTALabelLen = 50
+)
+
+// 多品項（variants）欄位上限，見 docs/partner/VARIANTS_CONTRACT.md §1。
+const (
+	maxVariants       = 50
+	maxVariantNameLen = 60
+	maxVariantDescLen = 300
 )
 
 type Service struct {
@@ -119,7 +130,20 @@ func (s *Service) GetDetail(ctx context.Context, id, uid string) (*PartnerShopDe
 		return nil, err
 	}
 	applyCtaGate(&detail.PartnerShop, qualifies, minKm)
+	applyCtaGateToVariants(detail)
 	return detail, nil
+}
+
+// applyCtaGateToVariants 把 applyCtaGate 鎖在商家層級的同一把鎖，也套用到每個 variant 的前往連結：
+// 伺服器端真 gate，避免前端被繞過直接讀連結（見 docs/partner/VARIANTS_CONTRACT.md §1「CTA gate 擴充」）。
+// 必須在 applyCtaGate(&detail.PartnerShop, ...) 之後呼叫，讀它算出的 CtaLocked。
+func applyCtaGateToVariants(detail *PartnerShopDetail) {
+	if !detail.CtaLocked {
+		return
+	}
+	for i := range detail.Variants {
+		detail.Variants[i].CTAURL = ""
+	}
 }
 
 // --- 收藏 ---
@@ -225,6 +249,55 @@ func normalizeAndValidate(req *AdminPartnerShopRequest) error {
 		}
 	}
 	req.DetailHTML = SanitizeDetailHTML(req.DetailHTML)
+	return validateVariants(req)
+}
+
+// validateVariants 正規化並驗證 item_mode／variants（見 docs/partner/VARIANTS_CONTRACT.md §1）。
+// item_mode 空字串正規化為 single；variants 上限 50 筆；每筆 trim 後驗證，id 缺漏或非 UUID
+// 格式時伺服器補發新 uuid（前端可回傳既有 id 以保留關聯，不視為錯誤）。錯誤訊息帶索引與欄位
+// 名稱（例：variants[2].name 必填），供後台原樣顯示。
+func validateVariants(req *AdminPartnerShopRequest) error {
+	req.ItemMode = strings.TrimSpace(req.ItemMode)
+	if req.ItemMode == "" {
+		req.ItemMode = "single"
+	}
+	if req.ItemMode != "single" && req.ItemMode != "multi" {
+		return ErrInvalidItemMode
+	}
+	if req.Variants == nil {
+		req.Variants = []PartnerVariant{}
+	}
+	if len(req.Variants) > maxVariants {
+		return fmt.Errorf("variants: %w（目前 %d 筆）", ErrTooManyVariants, len(req.Variants))
+	}
+	for i := range req.Variants {
+		v := &req.Variants[i]
+		v.ID = strings.TrimSpace(v.ID)
+		if v.ID == "" || !uuidLikeRe.MatchString(v.ID) {
+			v.ID = uuid.NewString()
+		}
+		v.Name = strings.TrimSpace(v.Name)
+		if v.Name == "" {
+			// 必須用 %w 包裝 ErrNameRequired，handler.go 的 errors.Is 判斷才抓得到、回 400
+			// 而非落入 500（曾發生：VERIFY-NEON #5a 實測回 500 "failed to create partner shop"）。
+			return fmt.Errorf("variants[%d].name 必填: %w", i, ErrNameRequired)
+		}
+		if n := len([]rune(v.Name)); n > maxVariantNameLen {
+			return fmt.Errorf("variants[%d].name: %w（上限 %d 字，目前 %d 字）", i, ErrTooLong, maxVariantNameLen, n)
+		}
+		v.Description = strings.TrimSpace(v.Description)
+		if n := len([]rune(v.Description)); n > maxVariantDescLen {
+			return fmt.Errorf("variants[%d].description: %w（上限 %d 字，目前 %d 字）", i, ErrTooLong, maxVariantDescLen, n)
+		}
+		v.ImageURL = strings.TrimSpace(v.ImageURL)
+		if !validImageURL(v.ImageURL) {
+			return fmt.Errorf("variants[%d].image_url: %w", i, ErrInvalidImageURL)
+		}
+		v.CTAURL = strings.TrimSpace(v.CTAURL)
+		if !validHTTPURL(v.CTAURL) {
+			return fmt.Errorf("variants[%d].cta_url: %w", i, ErrInvalidURL)
+		}
+	}
 	return nil
 }
 
