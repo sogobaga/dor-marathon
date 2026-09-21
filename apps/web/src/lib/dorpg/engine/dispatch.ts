@@ -20,7 +20,7 @@ import { resolveWeaponAttack } from './combat';
 import type { Ctx } from './context';
 import { fromCtx, pushEvent, pushLog, toCtx } from './context';
 import { effectiveRating } from './effects';
-import { attackCooldownFor, chargeMultiplier, combineIntervalPct, effectiveCastMs, effectiveMpCost, floorInt, NEUTRAL_WEAPON_PROFILE } from './formulas';
+import { attackCooldownFor, chargeMultiplier, combineIntervalPct, effectiveCastMs, effectiveMpCost, floorInt, isTargetBlocked, NEUTRAL_WEAPON_PROFILE } from './formulas';
 import { resolveStrategy } from './strategies';
 import type { BattleState, Command, PartyActor } from './types';
 import { beginResolving, computeVictoryDefeatDraw, tick } from './tick';
@@ -177,6 +177,12 @@ export function applyCommandOnCtx(ctx: Ctx, cmd: Command): void {
     case 'SELECT_TARGET': {
       const enemy = ctx.enemies.find((e) => e.id === cmd.enemyId && e.hp > 0);
       if (!enemy) return rejectLog(ctx, '目標不存在或已消滅');
+      // P13（DORPG_P13 CONTRACT §2「SELECT_TARGET 指向被阻擋的後排敵人 → 拒絕並回 log」）：玩家
+      // 手上沒有武器（player.weaponProfile 為 null）比照 NEUTRAL_WEAPON_PROFILE 視同 melee——
+      // 這是唯一會呼叫 SELECT_TARGET 的角色（AI 隊友的目標選取完全不經過這個指令，見 ai.ts），
+      // 不需要另外處理「哪個 actor 在選」的分支。
+      const reach = (player.weaponProfile ?? NEUTRAL_WEAPON_PROFILE).reach;
+      if (isTargetBlocked(ctx.enemies, enemy, reach)) return rejectLog(ctx, '被前排阻擋');
       ctx.targetId = enemy.id;
       pushEvent(ctx, { kind: 'targetChanged', enemyId: enemy.id });
       return;

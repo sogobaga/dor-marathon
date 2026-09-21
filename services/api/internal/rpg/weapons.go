@@ -478,6 +478,11 @@ type WeaponProfileWire struct {
 	RowBonusRearPct  float64 `json:"rowBonusRearPct"`
 	PierceChancePct  float64 `json:"pierceChancePct"`
 	PierceDmgPct     float64 `json:"pierceDmgPct"`
+
+	// --- DORPG P13（CONTRACT §3「WeaponProfileWire 新增 reach:"melee"|"ranged"（後端由
+	// type.traits.reach 合併，缺省 melee；未裝備武器時 wire 的 weapon 為 null，引擎視同
+	// melee）」）：跟 RowBonus 系列同一個合併點（withRowBonus），不是 WeaponProfile 本身的欄位。
+	Reach string `json:"reach"`
 }
 
 // ToWeaponProfileWire 轉換成戰鬥 bootstrap 要送給引擎的形狀（battle.go 組 party member 用）。
@@ -509,14 +514,34 @@ type WeaponTypeRowBonus struct {
 	RowBonusRearPct  float64
 	PierceChancePct  float64
 	PierceDmgPct     float64
+
+	// Reach DORPG P13：跟上面四個欄位同一次 traits 解析、同一個合併點一起帶出去，不另外
+	// 開一支函式重讀一次 traits（traits 已經是 scanWeaponType 解析好的 map，重讀沒有額外
+	// 好處，只會讓「一種 trait 一種讀法」的模式散開）。這裡刻意存「原始值」（"ranged"／
+	// "melee"／""），不在這一層就把缺省／非法值收斂成 "melee"——P12 既有測試把
+	// WeaponTypeRowBonus{} 零值當「完全沒有這些鍵」的判斷基準（見 p12_test.go
+	// TestWeaponTypeRowBonus_MissingKeysDefaultToZero 等），Reach 的 string 零值本來就是
+	// ""，維持這個慣例就不用去動不屬於本輪所有權的既有測試檔。真正「缺省＝melee」的收斂
+	// 點在 withRowBonus（唯一消費 Reach 產出最終 wire 值的地方）。
+	Reach string
 }
 
+// weaponReachMelee／weaponReachRanged DORPG P13（CONTRACT §2）：WeaponProfileWire.Reach 最終只
+// 送出這兩個字面值；withRowBonus 是收斂點——只有明確等於 "ranged" 才算遠程，其餘（含未設定、
+// 大小寫不符、非字串、typo）一律當 melee，理由見 migration 190 檔頭註解。
+const (
+	weaponReachMelee  = "melee"
+	weaponReachRanged = "ranged"
+)
+
 // weaponTypeRowBonus 從 WeaponTypeRow.Traits（scanWeaponType 已經是解析好的 map[string]any，壞
-// JSON 已在那裡退回空物件）讀四個新鍵。刻意寬鬆：鍵不存在／型別不是數字一律當 0（traits 是後台
-// 可自由編輯的 JSONB，不能讓打錯型別的值把戰鬥 bootstrap 500 掉，比照 scanWeaponType 對整個
-// JSON 壞掉的既有退讓風格）；負值歸零（沒有「負加成」的設計意圖，之後真要做負加成再另開鍵）；
-// pct 系列額外夾在 0..100（pierce_dmg_pct 是「波及傷害佔比」，>100% 沒有意義；跟 Validate() 對
-// extra_hit_chance_pct 的既有夾限風格一致）。
+// JSON 已在那裡退回空物件）讀 P12 的四個數字鍵 + P13 的 reach 字串鍵。刻意寬鬆：鍵不存在／型別
+// 不對一律當缺省（traits 是後台可自由編輯的 JSONB，不能讓打錯型別的值把戰鬥 bootstrap 500 掉，
+// 比照 scanWeaponType 對整個 JSON 壞掉的既有退讓風格）；負值歸零（沒有「負加成」的設計意圖，之
+// 後真要做負加成再另開鍵）；pct 系列額外夾在 0..100（pierce_dmg_pct 是「波及傷害佔比」，>100%
+// 沒有意義；跟 Validate() 對 extra_hit_chance_pct 的既有夾限風格一致）。
+// traits 為 nil（未裝備武器時 withRowBonus 不會被呼叫，但這裡仍防呆）時，Go 對 nil map 讀值是
+// 合法操作、一律回傳零值＋ok=false，等同「沒有這個鍵」，不需要另外判斷 nil。
 func weaponTypeRowBonus(traits map[string]any) WeaponTypeRowBonus {
 	get := func(key string) float64 {
 		v, ok := traits[key]
@@ -538,21 +563,42 @@ func weaponTypeRowBonus(traits map[string]any) WeaponTypeRowBonus {
 		}
 		return f
 	}
+	// DORPG P13：這裡只做「原樣讀出」（見上方 Reach 欄位註解為何不在這層就收斂缺省值）——
+	// 只有字串且剛好等於 "ranged" 或 "melee" 才保留，其餘型別/值一律回傳 ""（等同沒有這個
+	// 鍵），交給 withRowBonus 統一決定最終送給引擎的值。
+	reach := ""
+	if v, ok := traits["reach"].(string); ok {
+		if v == weaponReachRanged {
+			reach = weaponReachRanged
+		} else if v == weaponReachMelee {
+			reach = weaponReachMelee
+		}
+	}
 	return WeaponTypeRowBonus{
 		RowBonusFrontPct: get("row_bonus_front_pct"),
 		RowBonusRearPct:  get("row_bonus_rear_pct"),
 		PierceChancePct:  get("pierce_chance_pct"),
 		PierceDmgPct:     get("pierce_dmg_pct"),
+		Reach:            reach,
 	}
 }
 
 // withRowBonus 把 WeaponTypeRowBonus 併入既有 WeaponProfileWire（其餘欄位不動），battle.go
 // buildPlayerWeaponWire 呼叫——玩家與傭兵（傭兵裝備武器時走同一條 buildPlayerWeaponWire）共用
-// 這個合併點，不重複實作兩次。
+// 這個合併點，不重複實作兩次。DORPG P13：Reach 比照 P12 四個欄位一起併入，同一個呼叫點就同時
+// 把「排位加成」跟「前排阻擋判定」兩份武器類型資訊送給引擎，不需要再開一條路徑。這裡是
+// 「缺省＝melee」實際收斂的地方（weaponTypeRowBonus 本身只回傳原始值，見該函式與 Reach
+// 欄位註解）：只有明確讀到 "ranged" 才算遠程，其餘（含空字串、未來任何非法值）一律 melee，
+// 確保送給引擎的 wire 值永遠是 CONTRACT §3 承諾的 "melee"|"ranged" 兩個字面值之一。
 func (w WeaponProfileWire) withRowBonus(b WeaponTypeRowBonus) WeaponProfileWire {
 	w.RowBonusFrontPct = b.RowBonusFrontPct
 	w.RowBonusRearPct = b.RowBonusRearPct
 	w.PierceChancePct = b.PierceChancePct
 	w.PierceDmgPct = b.PierceDmgPct
+	if b.Reach == weaponReachRanged {
+		w.Reach = weaponReachRanged
+	} else {
+		w.Reach = weaponReachMelee
+	}
 	return w
 }

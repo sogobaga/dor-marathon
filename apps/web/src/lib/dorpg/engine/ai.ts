@@ -26,7 +26,7 @@
 // 兩者的差異（玩家的技能欄在 ctx.skills、隊友的在 actor.skills；玩家的冷卻在 ctx.skillReadyAt、
 // 隊友的在 ctx.aiSkillReadyAt）由 actorSkills()／skillReadyAtFor() 兩個小型輔助函式吸收，
 // decide* 系列函式本身不需要知道呼叫者是誰。
-import type { Skill } from '../types';
+import type { Skill, WeaponReach } from '../types';
 import { applyPartyDamage, resolveCastEffect, resolveWeaponAttack } from './combat';
 import type { Ctx } from './context';
 import { pushEvent, pushLog } from './context';
@@ -38,6 +38,7 @@ import {
   elementMultiplier,
   floorInt,
   inGuardianState,
+  isTargetBlocked,
   missChance,
   NEUTRAL_WEAPON_PROFILE,
   pickEnemyTarget,
@@ -46,6 +47,16 @@ import {
 import { numParam, resolveStrategy } from './strategies';
 import type { ResolvedStrategy, StrategyParams } from './strategies';
 import type { ActiveEffect, Decision, EnemyActor, PartyActor, PendingCast } from './types';
+
+/**
+ * P13（DORPG_P13 CONTRACT §2「未裝備武器（徒手）＝melee」）：這位角色目前普攻／單體物理技能的
+ * 觸及範圍——跟 dispatch.ts SELECT_TARGET 讀 `(player.weaponProfile ?? NEUTRAL_WEAPON_PROFILE)
+ * .reach` 同一個精神（NEUTRAL_WEAPON_PROFILE.reach 本身就是 'melee'，兩種寫法等價，這裡另開一個
+ * 具名函式純粹是給 ai.ts 內多處呼叫端一個一致的名字）。
+ */
+function actorReach(actor: PartyActor): WeaponReach {
+  return actor.weaponProfile?.reach ?? 'melee';
+}
 
 /** 該效果目前是否已經套用在這個目標身上（依 stat 判斷，不看來源技能——契約原文「目標身上沒有
  *  同 stat 效果」，同一個 stat 不管是誰打上去的都算數，跟 combat.ts applyStatusEffect 的疊加鍵
@@ -439,13 +450,19 @@ function decideProtectShieldOrBuff(ctx: Ctx, actor: PartyActor, skills: Skill[],
 /** CONTRACT §4 protect_allies 的目標規則：「正在鎖定最低 HP% 隊友的敵人」——掃描
  *  ctx.enemyTargets（敵人 windup 當下鎖定的目標，見 tick.ts advanceEnemyAI），找出哪隻敵人鎖定
  *  隊伍中 HP% 最低者，把那隻敵人當攻擊目標（先解決威脅）；找不到（沒有敵人在 windup 中鎖定
- *  那個人）就落回 ctx.targetId（balanced 的玩家鎖定目標）。 */
-function protectAlliesTargetId(ctx: Ctx): string | null {
+ *  那個人，或那隻敵人被前排阻擋）就落回 ctx.targetId（balanced 的玩家鎖定目標）。
+ *  P13（DORPG_P13 CONTRACT §2「傭兵與自動戰鬥選目標時直接把被阻擋者排除在候選外」）：這裡是
+ *  少數幾個「自行挑 enemyId」而不是直接沿用 ctx.targetId 的策略分支之一（跟 focus_fire/
+ *  element_advantage 同類），候選要先排除被阻擋者——正鎖定最低 HP% 隊友的敵人若是被阻擋的後排，
+ *  不能真的選它（打不到），退回這支函式本來就有的次一選擇（continue 掃下一隻敵人，全部掃完仍
+ *  沒有合法候選就落回 ctx.targetId，跟原本「找不到就落回 ctx.targetId」是同一條分支，不需要
+ *  另外新增分支）。 */
+function protectAlliesTargetId(ctx: Ctx, reach: WeaponReach): string | null {
   const alive = ctx.party.filter((p) => p.hp > 0);
   if (alive.length > 0) {
     const weakest = alive.reduce((w, p) => (p.hp / p.stats.hpMax < w.hp / w.stats.hpMax ? p : w));
     for (const enemy of ctx.enemies) {
-      if (enemy.hp > 0 && ctx.enemyTargets[enemy.id] === weakest.id) return enemy.id;
+      if (enemy.hp > 0 && ctx.enemyTargets[enemy.id] === weakest.id && !isTargetBlocked(ctx.enemies, enemy, reach)) return enemy.id;
     }
   }
   return ctx.targetId;
@@ -461,7 +478,7 @@ function decideProtectAllies(ctx: Ctx, actor: PartyActor, params: StrategyParams
   if (guard) return guard;
   const protect = decideProtectShieldOrBuff(ctx, actor, skills, shieldPct);
   if (protect) return protect;
-  const targetId = protectAlliesTargetId(ctx);
+  const targetId = protectAlliesTargetId(ctx, actorReach(actor));
   const damage = decideDamage(ctx, actor, skills, targetId);
   if (damage) return damage;
   const debuff = decideDebuff(ctx, actor, skills, targetId);
@@ -492,6 +509,28 @@ export function refreshFocusTarget(ctx: Ctx): void {
   ctx.focusTargetId = lowest.id;
 }
 
+/**
+ * P13（DORPG_P13 CONTRACT §2「focus_fire 亦同：只在可打的候選中取血最低者」）：全隊共用的
+ * ctx.focusTargetId 對這位角色的武器 reach 而言若打得到（未被阻擋）就直接沿用（維持「全隊同一
+ * 目標」的既有集中火力精神）；被阻擋時改在「這位角色打得到」的候選（同樣排除被阻擋者）中挑血量
+ * 最低者——不改寫 ctx.focusTargetId 這個全隊共用欄位本身，因為不同隊友的武器 reach 可能不同，
+ * 被 melee 擋住的目標對 ranged 隊友仍然合法，兩者的候選集合本來就該各自獨立判斷。
+ * 沒有任何未被阻擋的存活敵人時回傳 null（理論上不會發生：isTargetBlocked 只在前排有存活時才會
+ * 生效，此時前排本身就是未被阻擋的候選，見 formulas.ts frontAlive 型別註解），交給
+ * decideAttackFallback(null)→'wait' 的既有語意處理。
+ */
+function focusFireCandidateTargetId(ctx: Ctx, actor: PartyActor): string | null {
+  const reach = actorReach(actor);
+  const attackable = ctx.enemies.filter((e) => e.hp > 0 && !isTargetBlocked(ctx.enemies, e, reach));
+  if (attackable.length === 0) return null;
+  if (ctx.focusTargetId && attackable.some((e) => e.id === ctx.focusTargetId)) return ctx.focusTargetId;
+  let lowest = attackable[0];
+  for (let i = 1; i < attackable.length; i++) {
+    if (attackable[i].hp < lowest.hp) lowest = attackable[i];
+  }
+  return lowest.id;
+}
+
 function decideFocusFire(ctx: Ctx, actor: PartyActor, params: StrategyParams): Decision {
   void params; // 目前沒有自己的門檻覆寫；auto_guard 只給玩家自動戰鬥（autopilot.ts）用。
   const skills = actorSkills(ctx, actor);
@@ -501,7 +540,7 @@ function decideFocusFire(ctx: Ctx, actor: PartyActor, params: StrategyParams): D
   if (guard) return guard;
   const buff = decideBuffOrShield(ctx, actor, skills);
   if (buff) return buff;
-  const targetId = ctx.focusTargetId;
+  const targetId = focusFireCandidateTargetId(ctx, actor);
   const damage = decideDamage(ctx, actor, skills, targetId);
   if (damage) return damage;
   const debuff = decideDebuff(ctx, actor, skills, targetId);
@@ -531,17 +570,27 @@ function decideElementAdvantage(ctx: Ctx, actor: PartyActor, params: StrategyPar
   const attackElement: string = actor.weaponProfile?.element ?? 'neutral';
   const damageCandidates = skills.filter((s) => s.kind === 'damage' && isAiSkillReady(ctx, actor, s));
   const alive = ctx.enemies.filter((e) => e.hp > 0);
+  // P13（CONTRACT §2「傭兵與自動戰鬥選目標時直接把被阻擋者排除在候選外...element_advantage 只在
+  // 可打候選評估相剋」）：普攻（武器屬性）恆為 physical、單體，一律受這位角色的武器 reach 管轄；
+  // 每顆候選技能是否受管轄則各自看自己的 dmgType——魔法技能（含全體技能，target='allEnemies' 本來
+  // 就不是「選中某個目標」，見 CONTRACT §2 不受阻擋清單）不受這個排除規則限制。
+  const reach = actorReach(actor);
   let bestTargetId: string | null = null;
   let bestMul = 1;
   let bestSkill: Skill | null = null; // 目前最佳倍率若來自技能就記下是哪一顆；武器（或打平）維持 null。
   for (const e of alive) {
-    const weaponMul = elementMultiplier(ctx.cfg, attackElement, e);
-    if (weaponMul > bestMul) {
-      bestMul = weaponMul;
-      bestTargetId = e.id;
-      bestSkill = null;
+    const blockedForWeapon = isTargetBlocked(ctx.enemies, e, reach);
+    if (!blockedForWeapon) {
+      const weaponMul = elementMultiplier(ctx.cfg, attackElement, e);
+      if (weaponMul > bestMul) {
+        bestMul = weaponMul;
+        bestTargetId = e.id;
+        bestSkill = null;
+      }
     }
     for (const skill of damageCandidates) {
+      const skillDmgType = skill.dmgType ?? 'physical';
+      if (skillDmgType !== 'magic' && skill.target !== 'allEnemies' && blockedForWeapon) continue;
       const skillMul = elementMultiplier(ctx.cfg, skill.element ?? 'neutral', e);
       if (skillMul > bestMul) {
         bestMul = skillMul;

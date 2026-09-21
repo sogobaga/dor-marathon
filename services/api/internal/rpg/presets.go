@@ -47,7 +47,8 @@ func statFieldMap(s Stats) map[string]int {
 }
 
 // ValidatePreset 契約 §3.2：「腳本驗證＝與玩家相同：配點總數 TotalStatPoints(level)、成本
-// floor((n−1)/10)+2、每項 ≤ min(MaxStat,level)、技能點 TotalSkillPoints(level)、前置鏈、
+// floor((n−1)/10)+2、每項 ≤ StatCap(cfg,level)（預設＝MaxStat；cfg.StatCapByLevel 開啟時才＝
+// min(MaxStat,level)，2026-09-20 P14 起，見 compute.go StatCap 型別註解）、技能點 TotalSkillPoints(level)、前置鏈、
 // max_level、只能配該傭兵職業的技能」。純函式，不碰 DB，方便單元測試逐條核對（合法／超預算／
 // 超 cap／前置／非本職技能）——jobSkills 是這個傭兵目前職業「啟用中」的全部技能
 // （listSkillsByJob 的結果），呼叫端負責依 companion_id 找出正確的職業技能集合。

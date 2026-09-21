@@ -554,5 +554,52 @@ const pad10 = (s) => [s, null, null, null, null, null, null, null, null, null]
   )
 }
 
+// ── 12) DORPG P13（CONTRACT §2「未設定（缺省）＝melee」、§3「WeaponProfileWire 新增
+//      reach:"melee"|"ranged"」）：asWeaponProfile() 正確映射 reach——合法值原樣照抄；缺欄位／
+//      型別跑掉／不合法字面值一律退回 'melee'（跟本檔其餘 as*() 系列「寧可丟棄也不塞髒資料」的
+//      既有風格一致，但預設值刻意選 'melee' 而非 undefined——見 fromApi.ts asReach() 型別註解）。 ──
+{
+  function rawSampleWithWeapon(weaponProfileExtra) {
+    return {
+      party: [{
+        id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100,
+        portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 },
+        weapon: {
+          id: 'w1', name: '測試武器', typeId: 'ar_longbow', visual: 'bow',
+          profile: {
+            atk: 30, matk: 0, hits: 1, hitMul: 1, extraHitChancePct: 0, intervalPct: 0,
+            chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
+            critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
+            rowBonusFrontPct: 0, rowBonusRearPct: 10, pierceChancePct: 0, pierceDmgPct: 0,
+            ...weaponProfileExtra,
+          },
+        },
+      }],
+      enemies: [{ id: 'e1', name: '測試假人', level: 50, hp: 99999, hpMax: 99999, slot: 'front_center', imageUrl: '', canEscape: true, stats: { hpMax: 99999, mpMax: 0, atk: 1, matk: 1, def: 35, mdef: 10 } }],
+      scene: { id: 's', name: 's', imageUrl: '', slots: [] },
+      skills: pad10(null),
+      items: [],
+      initialTargetId: 'e1',
+    }
+  }
+  const rangedProfile = sampleFromBootstrap(rawSampleWithWeapon({ reach: 'ranged' })).party[0].equippedWeapon?.profile
+  eq(rangedProfile?.reach, 'ranged', "wire 送 reach='ranged'：asWeaponProfile 原樣映射")
+
+  const meleeProfile = sampleFromBootstrap(rawSampleWithWeapon({ reach: 'melee' })).party[0].equippedWeapon?.profile
+  eq(meleeProfile?.reach, 'melee', "wire 送 reach='melee'：asWeaponProfile 原樣映射")
+
+  const rawMissingReach = rawSampleWithWeapon({})
+  delete rawMissingReach.party[0].weapon.profile.reach // 刻意完全不送這個鍵（舊版後端／未上線本輪功能）。
+  const missingProfile = sampleFromBootstrap(rawMissingReach).party[0].equippedWeapon?.profile
+  eq(missingProfile?.reach, 'melee', '舊版後端／未上線本輪功能：wire 完全沒有送 reach 鍵 → 退回中性值 melee（不影響整包 weapon 解析）')
+  eq(missingProfile?.rowBonusRearPct, 10, '對照組：缺 reach 不影響既有欄位（rowBonusRearPct 仍正確映射成 10）')
+
+  const invalidProfile = sampleFromBootstrap(rawSampleWithWeapon({ reach: 'flying' })).party[0].equippedWeapon?.profile
+  eq(invalidProfile?.reach, 'melee', "非法字面值（reach='flying'，不是 'melee'/'ranged' 之一）→ 退回中性值 melee")
+
+  const numericReachProfile = sampleFromBootstrap(rawSampleWithWeapon({ reach: 123 })).party[0].equippedWeapon?.profile
+  eq(numericReachProfile?.reach, 'melee', '型別跑掉（reach 是數字不是字串）→ 退回中性值 melee，不拋例外')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

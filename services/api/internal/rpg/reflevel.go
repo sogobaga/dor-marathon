@@ -13,8 +13,24 @@ package rpg
 // cap（=StatCap(cfg,level)）」的規則配完。固定走訪順序 str→agi→vit→dex→int→luk（同值時取
 // 這個順序中最前面那個），任何時候重跑都會得到完全相同的六圍——這是「確定性」的唯一要求，
 // 不是「戰鬥數值最優」的演算法。
+// refStatCap 參考玩家專用的素質上限：固定走 P5 原規則 min(MaxStat, level)，**刻意不吃**
+// cfg.StatCapByLevel（2026-09-20 取消玩家端等級上限的那個開關）。WHY：這張表是 ScaleMonsterByLevel
+// 與 ScaleMonsterByRank 的唯一基準，P6 的六場與 P11 的九級強度向量都以它校準；若跟著玩家規則浮動，
+// 所有怪物數值會一起位移、兩輪校準全部作廢。實務上這個上限在 99 級內從未被觸發（點數成本
+// pointCost 隨數值遞增，六圍輪流配點遠達不到 level），所以固定它也不改變任何現有數值——
+// TestRefPlayerTable_MatchesJSON 會守住這點。
+func refStatCap(cfg Config, level int) int {
+	if level < 1 {
+		level = 1
+	}
+	if level > cfg.MaxStat {
+		return cfg.MaxStat
+	}
+	return level
+}
+
 func refStatAllocate(cfg Config, level int) Stats {
-	statCap := StatCap(cfg, level)
+	statCap := refStatCap(cfg, level)
 	budget := TotalStatPoints(cfg, level)
 	s := Stats{Str: cfg.InitialStat, Agi: cfg.InitialStat, Vit: cfg.InitialStat, Dex: cfg.InitialStat, Int: cfg.InitialStat, Luk: cfg.InitialStat}
 	ptrs := [6]*int{&s.Str, &s.Agi, &s.Vit, &s.Dex, &s.Int, &s.Luk}

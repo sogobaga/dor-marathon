@@ -49,7 +49,7 @@ const PARTY_ERR_LABEL: Record<string, string> = {
 }
 const PRESET_ERR_LABEL: Record<string, string> = {
   stat_over_budget: '素質配點超過可用點數',
-  stat_over_cap: '素質超過該等級上限',
+  stat_over_cap: '素質超過上限',
   stat_below_initial: '素質不可低於初始值',
   skill_over_budget: '技能點數不足',
   skill_prereq: '尚未達成前置技能等級需求',

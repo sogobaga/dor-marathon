@@ -68,17 +68,31 @@ func TestValidatePreset_StatOverBudget(t *testing.T) {
 	if !hasCode(errs, "stat_over_budget") {
 		t.Fatalf("超預算應回報 stat_over_budget：%+v", errs)
 	}
-	if !hasCode(errs, "stat_over_cap") {
-		t.Fatalf("99 也超過 Lv25 的 cap=25，應同時回報 stat_over_cap：%+v", errs)
+	// 2026-09-20 取消等級上限後，99 正好等於 max_stat（未超過），所以只會有超預算一項錯誤——
+	// 這裡改成反向斷言，守住「取消等級上限」這個決策不會被無意間改回去。
+	if hasCode(errs, "stat_over_cap") {
+		t.Fatalf("取消等級上限後 99 等於 max_stat，不應回報 stat_over_cap：%+v", errs)
 	}
 }
 
 func TestValidatePreset_StatOverCap(t *testing.T) {
 	cfg := DefaultConfig()
+	// 取消等級上限後，唯一的上限是 max_stat=99；100 才算超過（同時也會超預算，這裡只斷言 cap）。
+	stats := Stats{Str: 100, Agi: 1, Vit: 1, Dex: 1, Int: 1, Luk: 1}
+	errs := ValidatePreset(cfg, jobSkillsFixture(), 25, stats, nil)
+	if !hasCode(errs, "stat_over_cap") {
+		t.Fatalf("超過 max_stat 應回報 stat_over_cap：%+v", errs)
+	}
+}
+
+// TestValidatePreset_StatOverCap_ByLevelSwitch 開關打開時仍依等級擋——後台還原舊規則的路徑。
+func TestValidatePreset_StatOverCap_ByLevelSwitch(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.StatCapByLevel = true
 	stats := Stats{Str: 26, Agi: 1, Vit: 1, Dex: 1, Int: 1, Luk: 1} // Lv25 cap=25，26 超過
 	errs := ValidatePreset(cfg, jobSkillsFixture(), 25, stats, nil)
 	if !hasCode(errs, "stat_over_cap") {
-		t.Fatalf("超過 cap 應回報 stat_over_cap：%+v", errs)
+		t.Fatalf("開關打開時超過等級上限應回報 stat_over_cap：%+v", errs)
 	}
 }
 
@@ -254,8 +268,10 @@ func TestSystemPresetSeeds_AreValidAtLevel25(t *testing.T) {
 		t.Fatalf("契約：Lv25 配點預算應為 170，got %d（DefaultConfig 的配點公式跟契約算的不一致，"+
 			"migration 181 的四筆 seed 是照 170 這個數字設計的）", got)
 	}
-	if got := StatCap(cfg, level); got != 25 {
-		t.Fatalf("契約：Lv25 cap 應為 25，got %d", got)
+	// 2026-09-20 取消等級上限：Lv25 的 cap 改為 max_stat；四筆 seed 的最大素質是 25，兩種模式下
+	// 都合法（這裡只確認預設模式的 cap 值，避免之後有人把預設改回等級制而沒發現）。
+	if got := StatCap(cfg, level); got != cfg.MaxStat {
+		t.Fatalf("契約（2026-09-20 起）：Lv25 cap 應為 max_stat=%d，got %d", cfg.MaxStat, got)
 	}
 	if got := TotalSkillPoints(cfg, level); got != 24 {
 		t.Fatalf("契約：Lv25 技能點應為 24，got %d", got)

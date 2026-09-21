@@ -1,6 +1,6 @@
 // 引擎公式與目標挑選（純函式，無 React/DOM，無 Date.now()）。
 // 型別引用在 Node type-stripping 下整段消失，不影響本檔被 node 直接 import 執行。
-import type { ActorStats, CombatRating, Enemy, EnemySlotId, EquipmentEffectsWire, WeaponProfileWire } from '../types';
+import type { ActorStats, CombatRating, Enemy, EnemySlotId, EquipmentEffectsWire, WeaponProfileWire, WeaponReach } from '../types';
 import type { Ctx } from './context';
 import type { BattleConfig, BattleState, EnemyActor, EnemyRow, PartyActor } from './types';
 
@@ -243,6 +243,11 @@ export const NEUTRAL_WEAPON_PROFILE: WeaponProfileWire = {
   rowBonusRearPct: 0,
   pierceChancePct: 0,
   pierceDmgPct: 0,
+  // P13（CONTRACT §2「未裝備武器（徒手）＝melee」）：中性值選 'melee' 而非某種「不受阻擋」的
+  // 特例——沒有武器系統資料時，前排阻擋規則要能正常生效（跟這份物件其餘欄位「中性＝維持既有
+  // P1～P12 行為」的精神不同：阻擋規則是 P13 全新機制，沒有「阻擋規則生效前」的舊行為可言，這裡
+  // 的中性值只需要對齊 CONTRACT §2 明講的預設，不需要額外照顧向下相容）。
+  reach: 'melee',
 };
 
 /**
@@ -427,15 +432,56 @@ export function deriveDefaultMonsterRating(cfg: BattleConfig): CombatRating {
 /** 敵人固定站位序（規格 §1：同 threatPriority 取槽位順序最小者）。 */
 const SLOT_ORDER: EnemySlotId[] = ['rear_left', 'rear_right', 'front_left', 'front_center', 'front_right'];
 
-/** 存活敵人中挑最高 threatPriority、同序取槽位順序最小者；共用於初始選取與死亡後換目標。 */
-export function selectAliveByThreat(enemies: EnemyActor[]): string | null {
-  const alive = enemies.filter((e) => e.hp > 0);
+/**
+ * P13（CONTRACT §2）：存活且滿足 predicate 的敵人中挑最高 threatPriority、同序取槽位順序最小者
+ * ——selectAliveByThreat（初始選取／死亡後換目標）與新的「排除被阻擋者」選取（dispatch.ts／
+ * combat.ts）共用同一套排序規則，只是候選集合不同。predicate 恆真時跟舊版 selectAliveByThreat
+ * 逐行等價（見下方 selectAliveByThreat 直接呼叫這支並傳 `() => true`），既有斷言不受影響。
+ */
+export function selectAliveByThreatFiltered(enemies: EnemyActor[], predicate: (e: EnemyActor) => boolean): string | null {
+  const alive = enemies.filter((e) => e.hp > 0 && predicate(e));
   if (alive.length === 0) return null;
   alive.sort((a, b) => {
     if (b.threatPriority !== a.threatPriority) return b.threatPriority - a.threatPriority;
     return SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot);
   });
   return alive[0].id;
+}
+
+/** 存活敵人中挑最高 threatPriority、同序取槽位順序最小者；共用於初始選取與死亡後換目標。 */
+export function selectAliveByThreat(enemies: EnemyActor[]): string | null {
+  return selectAliveByThreatFiltered(enemies, () => true);
+}
+
+/**
+ * P13（DORPG_P13 CONTRACT §2「前排阻擋」）：場上是否還有存活的前排敵人——只影響 melee 來源的
+ * 攻擊能不能以後排為目標（見 isTargetBlocked），不影響任何傷害倍率。前排＝EnemySlotId 的
+ * front_left/front_center/front_right（見 rowOfSlot）。
+ */
+export function frontAlive(enemies: EnemyActor[]): boolean {
+  return enemies.some((e) => e.hp > 0 && (e.row ?? rowOfSlot(e.slot)) === 'front');
+}
+
+/**
+ * P13（CONTRACT §2）：這隻敵人對 reach=melee 的攻擊者而言是否被阻擋——只有「目標是後排」且
+ * 「前排還有存活敵人」同時成立才阻擋；reach='ranged' 恆不阻擋（弓／法杖／槍的貫穿不受這條規則
+ * 限制，見契約原文）。死亡的敵人不會被問到這個問題（呼叫端一律先篩過 hp>0，見 dispatch.ts
+ * SELECT_TARGET／combat.ts 的呼叫點），這裡不重複檢查 hp，避免跟呼叫端各自的死亡判斷邏輯打架。
+ */
+export function isTargetBlocked(enemies: EnemyActor[], enemy: EnemyActor, reach: WeaponReach): boolean {
+  if (reach !== 'melee') return false;
+  if ((enemy.row ?? rowOfSlot(enemy.slot)) === 'front') return false;
+  return frontAlive(enemies);
+}
+
+/**
+ * P13（CONTRACT §2「自動改打威脅最高的存活前排敵人」）：排除被阻擋者後，用既有的威脅排序規則
+ * 選一個目標——combat.ts 的攻擊/技能結算前拿它當「原目標被阻擋時的替代目標」；理論上恆有解（
+ * isTargetBlocked 為 true 就代表前排至少有一隻存活，那隻一定不會被同一個 reach 判定阻擋，見
+ * frontAlive／isTargetBlocked 的型別註解）。
+ */
+export function selectAliveByThreatUnblocked(enemies: EnemyActor[], reach: WeaponReach): string | null {
+  return selectAliveByThreatFiltered(enemies, (e) => !isTargetBlocked(enemies, e, reach));
 }
 
 /** 載入完成的初始目標挑選（呼叫端若有 sample.initialTargetId 應優先採用，只有它無效時才落到這裡）。 */

@@ -12,6 +12,15 @@ export type EscapeState = 'normal' | 'pressed' | 'disabled';
 /** 武器種類：對應特效音效包的四組攻擊特效／音效（sword/staff/bow/greatsword）。 */
 export type WeaponKind = 'sword' | 'staff' | 'bow' | 'greatsword';
 
+/**
+ * P13（DORPG_P13 CONTRACT §2「前排阻擋」）：武器的觸及範圍——`melee`（近戰：劍／巨劍／鎚等）在
+ * 前排還有存活敵人時打不到後排；`ranged`（遠程：弓、法杖、槍的貫穿本身不算「選擇目標」）不受這
+ * 條規則限制。由 `rpg_weapon_types.traits.reach` 合併進 WeaponProfileWire（見該型別欄位註解），
+ * 缺省／未知值一律 `melee`——阻擋是預設規則，遠程才是例外，新武器類型忘了標這個欄位時行為保守
+ * （受阻擋）而不是意外免疫阻擋（漏洞）。
+ */
+export type WeaponReach = 'melee' | 'ranged';
+
 /** 規格 §2 的八屬性；初版相剋倍率全為 1.0（未定相剋前不自行推導）。 */
 export type ElementKind = 'metal' | 'wood' | 'water' | 'fire' | 'earth' | 'light' | 'dark' | 'neutral';
 
@@ -121,6 +130,13 @@ export interface WeaponProfileWire {
   pierceChancePct: number;
   /** P12：貫穿觸發時，對應後排目標受到的波及傷害＝floor(本段實傷×這個百分比/100)。 */
   pierceDmgPct: number;
+  /**
+   * P13（CONTRACT §2）：這把武器的觸及範圍，見 WeaponReach 型別註解。缺省（後端未送／未知字面
+   * 值）一律 `melee`（見 fromApi.ts asReach()／formulas.ts NEUTRAL_WEAPON_PROFILE）——只有普攻與
+   * 單體物理技能受這個欄位管轄（engine/combat.ts、engine/formulas.ts isTargetBlocked()），魔法
+   * 技能與全體技能不看這個欄位。
+   */
+  reach: WeaponReach;
 }
 
 /**

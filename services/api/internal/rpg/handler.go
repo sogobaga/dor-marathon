@@ -392,7 +392,8 @@ var statColumns = map[string]string{
 // POST /rpg/allocate {"stat":"str","points":1..10} 或 {"stat":"str","mode":"max"}：依序計費
 // （第 n 點成本可能不同，見 compute.go pointCost）、SELECT...FOR UPDATE 鎖六圍整列（P5：判斷
 // 「這次加點花多少」需要當下全部六圍的總花費，不能只鎖被加點的那一欄）防同一使用者連點造成
-// 的併發超花；點數不足或會超過 stat_cap（=min(max_stat,有效等級)，CONTRACT §3）一律拒絕，
+// 的併發超花；點數不足或會超過 stat_cap（預設＝max_stat；cfg.StatCapByLevel 開啟時才＝
+// min(max_stat,有效等級)，2026-09-20 P14 起，見 compute.go StatCap 型別註解，CONTRACT §3）一律拒絕，
 // 成功寫 player_stat_log 稽核列。P5 起 free_points 欄位不再寫入（不再是真相，見
 // buildCharacterView），可配點數改用 TotalStatPoints(cfg,effLevel)-已花費 現算。
 func (h *Handler) Allocate(w http.ResponseWriter, r *http.Request) {

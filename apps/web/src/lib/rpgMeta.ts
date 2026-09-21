@@ -289,6 +289,11 @@ export const CONFIG_GROUPS: ConfigGroup[] = [
       { key: 'initial_stat', label: '素質初始值' },
       { key: 'initial_free_points', label: '初始可配置點數' },
       { key: 'max_stat', label: '單項素質上限' },
+      // DORPG P14（2026-09-20 使用者決策「取消等級為基礎數值上限的設定」）：預設 false＝
+      // 素質只受上面的 max_stat 限制、與等級無關（低等級也能把點數集中投單一素質）；
+      // 打開則還原 P5 舊規則 cap=min(max_stat, 有效等級)。⚠️參考玩家表（怪物數值基準）刻意
+      // 不吃這個開關，改它不會讓既有怪物數值位移。
+      { key: 'stat_cap_by_level', label: '素質上限另受等級限制（關＝取消等級上限，預設關）', type: 'checkbox' },
       { key: 'cost_base', label: '配點基礎花費 base_cost' },
       { key: 'cost_step_every', label: '花費每 N 點遞增一次' },
       { key: 'default_weapon_type', label: '預設武器類型（本階段無裝備，用於判定近戰/遠程加成）', type: 'select', options: [{ value: 'melee', label: '近距離' }, { value: 'ranged', label: '遠距離' }] },
@@ -667,6 +672,19 @@ export function formatWeaponTypeRowBonus(traits: Record<string, unknown> | null 
   if (frontPct) parts.push(`對前排 +${frontPct}%`)
   if (pierceChancePct) parts.push(`${pierceChancePct}% 機率貫穿，後排受 ${pierceDmgPct}% 波及`)
   return parts.join('・')
+}
+
+/**
+ * DORPG P13（契約 P13_CONTRACT.md §2/§4）：武器「類型」層級的前排阻擋定位——讀 traits.reach
+ * （P12 四鍵之外新增的第五個鍵，migration 190 seed），只讀這一個鍵，不做戰鬥判斷（同上方
+ * formatWeaponTypeRowBonus 的既有慣例，實際能不能選目標一律以 bootstrap 的 weapon.profile.reach
+ * 合併給引擎為準）。缺省／非 'ranged' 一律當 melee——跟契約「未設定＝melee」的保守預設對齊，
+ * 不因為 traits 打錯字（例如打成 'Ranged'）就誤顯示成不受阻擋。
+ */
+export function formatWeaponTypeReach(traits: Record<string, unknown> | null | undefined): string {
+  const v = traits?.reach
+  const isRanged = v === 'ranged'
+  return isRanged ? '遠程（不受前排阻擋）' : '近戰（前排未清空時只能打前排）'
 }
 
 // ---------------------------------------------------------------------------

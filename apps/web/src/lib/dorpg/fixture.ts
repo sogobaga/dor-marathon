@@ -362,6 +362,8 @@ export const RPG_WEAPON_FIXTURES: Record<string, WeaponFixtureRow> = {
       chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
       critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
       rowBonusFrontPct: 0, rowBonusRearPct: 0, pierceChancePct: 0, pierceDmgPct: 0,
+      // P13（CONTRACT §2）：雙劍是近戰武器類型（lk_dual），reach='melee'。
+      reach: 'melee',
     },
   },
   // 重騎士．斧：CONTRACT §3「增加物理攻擊的間隔時間，會造成範圍傷害...對於大體型的怪物會有額外
@@ -376,6 +378,8 @@ export const RPG_WEAPON_FIXTURES: Record<string, WeaponFixtureRow> = {
       chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 40, sizeBonus: { small: 0, medium: 0, large: 5 },
       critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
       rowBonusFrontPct: 0, rowBonusRearPct: 0, pierceChancePct: 0, pierceDmgPct: 0,
+      // P13（CONTRACT §2）：斧是近戰武器類型（hk_axe），reach='melee'。
+      reach: 'melee',
     },
   },
   // 聖職者．鍊：CONTRACT §3「增加魔法抗性（屬性效果減免）」——element_resist_pct 減免非 neutral
@@ -391,6 +395,9 @@ export const RPG_WEAPON_FIXTURES: Record<string, WeaponFixtureRow> = {
       chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
       critPct: 0, critDmgPct: 0, elementResistPct: 15, magicSkillPct: 0, element: 'light',
       rowBonusFrontPct: 0, rowBonusRearPct: 0, pierceChancePct: 0, pierceDmgPct: 0,
+      // P13（CONTRACT §2）：鍊（cl_chain）在決策清單中歸類近戰，reach='melee'（鍊不主動攻擊，
+      // 這個欄位在這個範例裡不影響任何既有機制，純粹補齊型別）。
+      reach: 'melee',
     },
   },
   // ---------------------------------------------------------------------------
@@ -408,6 +415,9 @@ export const RPG_WEAPON_FIXTURES: Record<string, WeaponFixtureRow> = {
       chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
       critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
       rowBonusFrontPct: 0, rowBonusRearPct: 10, pierceChancePct: 0, pierceDmgPct: 0,
+      // P13（CONTRACT §2「弓...對於後排的怪物有 10% 的加成」＋「弓類...不受阻擋」）：弓是遠程
+      // 武器類型（ar_longbow），reach='ranged'。
+      reach: 'ranged',
     },
   },
   // 商人．錘：CONTRACT §1「鈍器類的武器，對於前排的怪物有 10% 的加成」——rowBonusFrontPct=10。
@@ -421,6 +431,9 @@ export const RPG_WEAPON_FIXTURES: Record<string, WeaponFixtureRow> = {
       chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
       critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
       rowBonusFrontPct: 10, rowBonusRearPct: 0, pierceChancePct: 0, pierceDmgPct: 0,
+      // P13（CONTRACT §2）：鈍器（mc_hammer）是近戰武器類型，reach='melee'——鈍器對前排的加成
+      // 正是「只能打前排時」才有戰術意義，跟阻擋規則互相呼應。
+      reach: 'melee',
     },
   },
   // 重騎士．槍：CONTRACT §1「槍，攻擊前排的怪物，有機會造成貫穿的傷害，讓對應位置的後排怪物也
@@ -435,6 +448,10 @@ export const RPG_WEAPON_FIXTURES: Record<string, WeaponFixtureRow> = {
       chargeTimeMul: 1, chargeDmgMul: 1, splashPct: 0, sizeBonus: { small: 0, medium: 0, large: 0 },
       critPct: 0, critDmgPct: 0, elementResistPct: 0, magicSkillPct: 0, element: 'neutral',
       rowBonusFrontPct: 0, rowBonusRearPct: 0, pierceChancePct: 30, pierceDmgPct: 50,
+      // P13（CONTRACT §2）：槍（hk_spear）是近戰武器類型，reach='melee'——貫穿本身不算「選擇
+      // 目標」不受阻擋規則限制（見 CONTRACT §2 不受阻擋清單），但槍的普攻本身（打前排這一下）
+      // 一樣受 melee 阻擋規則管轄，只是它本來就以前排為主要目標，不受影響。
+      reach: 'melee',
     },
   },
 };

@@ -73,6 +73,15 @@ export type StageEnemy = {
   /** 這隻怪是不是戰鬥中途召喚出來的（契約 §1：特A/S/特S 會召喚 A～F 級怪物）；EnemyPlate 疊一個
    *  小字「召喚」區分，不影響戰鬥判斷，純顯示。 */
   isSummoned?: boolean
+  /**
+   * DORPG P13（契約 P13_CONTRACT.md §2/§4）：這隻怪目前是不是被「前排阻擋」擋住——玩家武器是
+   * melee 且前排還有活著的敵人時，後排怪不能被選為目標。判定本身由呼叫端（BattleScreen）用引擎
+   * 的 isTargetBlocked 算好再投影進來，這裡（P1 起的既有分工：BattleStage 只負責畫、不重算戰鬥
+   * 規則）純粹拿來決定視覺：灰化＋補一句 aria-label，不會因為這個欄位擋掉 onClick（見下方按鈕
+   * 註解說明為什麼刻意不用原生 disabled）。缺省 undefined＝視同 false（沒有阻擋概念的既有呼叫端
+   * 例如 /dev 預覽自組資料，不受影響）。
+   */
+  blocked?: boolean
 }
 
 export type BattleStageHandle = {
@@ -222,6 +231,7 @@ const BattleStage = forwardRef<BattleStageHandle, BattleStageProps>(function Bat
       {placed.map(({ enemy, slot }, idx) => {
         const { dw, footX, footY, left, top } = computeEnemyPlacement(slot, width, height)
         const selected = enemy.id === targetId
+        const blocked = !!enemy.blocked
 
         const plateW = ENEMY_PLATE.w * k
         const ringW = Math.min(KIT_SIZES.target_ground_ring.w * k, dw * RING_WIDTH_RATIO)
@@ -249,10 +259,25 @@ const BattleStage = forwardRef<BattleStageHandle, BattleStageProps>(function Bat
             <button
               type="button"
               className={s.monster}
-              aria-label={`選擇 ${enemy.name}，等級 ${Math.floor(enemy.level)}，HP ${Math.floor(enemy.hp)}／${Math.floor(enemy.hpMax)}${enemy.rankLabel ? `，強度 ${enemy.rankLabel}` : ''}${enemy.isSummoned ? '（召喚）' : ''}`}
+              aria-label={`選擇 ${enemy.name}，等級 ${Math.floor(enemy.level)}，HP ${Math.floor(enemy.hp)}／${Math.floor(enemy.hpMax)}${enemy.rankLabel ? `，強度 ${enemy.rankLabel}` : ''}${enemy.isSummoned ? '（召喚）' : ''}${blocked ? '，被前排阻擋' : ''}`}
               aria-pressed={selected}
+              // DORPG P13（契約 §4「敵人按鈕：被阻擋時 disabled…；點擊顯示短提示」）：這兩件事在原生
+              // <button disabled> 上互斥——瀏覽器對 disabled 元素完全不派發 click，點了就沒有任何
+              // 提示可言。改用 aria-disabled（螢幕閱讀器仍會唸出上面補的「被前排阻擋」）＋視覺灰化
+              // 達到「看起來不能點」，onClick 照常呼叫 onSelect，讓 BattleScreen（已經算好同一份
+              // blocked 旗標）決定要不要送指令／飄提示——這裡不重複判斷規則本身，只是不讓原生
+              // disabled 語意擋掉契約明講要的點擊回饋。
+              aria-disabled={blocked || undefined}
               onClick={() => onSelect(enemy.id)}
-              style={{ left: Math.round(left), top: Math.round(top), width: Math.round(dw), height: Math.round(dw), zIndex: zMonster(idx) }}
+              style={{
+                left: Math.round(left),
+                top: Math.round(top),
+                width: Math.round(dw),
+                height: Math.round(dw),
+                zIndex: zMonster(idx),
+                opacity: blocked ? 0.45 : 1,
+                cursor: blocked ? 'not-allowed' : undefined,
+              }}
             >
               <MonsterSprite
                 monsterId={catalogIdFromPosterUrl(enemy.imageUrl)}

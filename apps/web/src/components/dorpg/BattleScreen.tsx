@@ -28,7 +28,7 @@ import FloatText, { type FloatTextTone } from './FloatText';
 import enemyPlateStyles from './EnemyPlate.module.css';
 import styles from './BattleScreen.module.css';
 import { useBattle } from '@/lib/dorpg/useBattle';
-import { chargeRatio as engineChargeRatio } from '@/lib/dorpg/engine';
+import { chargeRatio as engineChargeRatio, isTargetBlocked } from '@/lib/dorpg/engine';
 import type { BattleConfig, BattleEvent, BattleState, PartyActor } from '@/lib/dorpg/engine';
 import { useHoldGesture } from '@/lib/dorpg/useHoldGesture';
 import { battleAudio } from '@/lib/dorpg/audio';
@@ -742,6 +742,11 @@ export default function BattleScreen({
   const cardW = Math.min((w - PARTY_PAD_X * 2 - PARTY_GAP * (PARTY_COUNT - 1)) / PARTY_COUNT, bands.party / 2);
 
   // ---- 引擎狀態 → 子元件 props 的投影（皆以 useMemo 鎖住 identity，讓上面的 memo 包裝有意義） ----
+  // DORPG P13（契約 §2/§4、WIRE §引擎 isTargetBlocked）：玩家武器的 reach 決定要不要套用前排
+  // 阻擋——直接讀 party[0] 的 weaponProfile.reach（ENGINE 合併好的最終值），未裝備武器時
+  // weaponProfile 為 null，缺省 'melee' 跟契約「未裝備武器（徒手）＝melee」對齊，不需要另外查
+  // EquippedWeaponWire/武器類型表。
+  const playerReach = player.weaponProfile?.reach ?? 'melee';
   const stageEnemies: StageEnemy[] = useMemo(
     () =>
       state.enemies.map((e) => ({
@@ -764,8 +769,18 @@ export default function BattleScreen({
         attribute: e.attribute,
         size: e.size,
         race: e.race,
+        // DORPG P13：只影響「能不能選」的顯示狀態，不改任何戰鬥數值——實際能不能命中一律以 engine
+        // 的 SELECT_TARGET 判定為準（見下方 handleSelectTarget 註解），這裡只是讓畫面「看起來」
+        // 跟引擎一致，不重複實作規則本身（同一個 isTargetBlocked 判定函式，契約 §2「三者共用同一個
+        // 判定函式」）。
+        // 審查修復：後排怪死亡進入 dying 動畫期間（enemyDeathMs＝1580ms）仍留在 state.enemies
+        // 裡（見型別註解 EnemyActor 的 dying/removed 生命週期），沒先篩 hp>0 會被 isTargetBlocked
+        // 誤判成「前排還有活的」而錯標 blocked——先擋 hp<=0 的死怪，跟契約 §2「阻擋只看場上存活
+        // 前排」對齊（isTargetBlocked 本身也只看 hp>0，這裡是避免拿一隻已死的後排怪去問它自己
+        // 「被誰擋」這種無意義的呼叫，純粹是呼叫端這層的防線）。
+        blocked: e.hp > 0 && isTargetBlocked(state.enemies, e, playerReach),
       })),
-    [state.enemies],
+    [state.enemies, playerReach],
   );
   const target = useMemo(() => state.enemies.find((e) => e.id === state.targetId) ?? null, [state.enemies, state.targetId]);
   const partyViews = useMemo(() => state.party.map(toPartyMemberView), [state.party]);
@@ -885,7 +900,24 @@ export default function BattleScreen({
     send({ type: 'SET_TRAY', mode: state.trayMode === 'items' ? 'skills' : 'items' });
     setTrayOffset(0);
   };
-  const handleSelectTarget = useCallback((enemyId: string) => send({ type: 'SELECT_TARGET', enemyId }), [send]);
+  // DORPG P13（契約 §3/§4「點到被阻擋敵人時顯示短提示（沿用既有 log／toast 機制，不新增覆蓋
+  // 層）」）：engine 的 rejectLog 目前只寫進 state.log 字串陣列，這個畫面從來沒有把 state.log
+  // 渲染出來過（查證過整個檔案／TopBar 都沒有讀它）——只送指令、指望 engine 的拒絕自然被看見
+  // 不會有任何畫面回饋，玩家會以為按鈕壞了。改成沿用既有的 pushEnemyFloat（跟 'Miss'／'尚未實裝'
+  // 同一種「操作沒有效果」的既有機制，tone 沿用 'miss'，不新增色票），且被阻擋時乾脆不送
+  // SELECT_TARGET——stageEnemies 的 blocked 已經是用同一個 isTargetBlocked 算出來的旗標（不是
+  // 另外發明一套規則），engine 收到也只會拒絕、不會改變 targetId，省一次 dispatch 沒有任何損失。
+  const handleSelectTarget = useCallback(
+    (enemyId: string) => {
+      const enemy = stageEnemies.find((e) => e.id === enemyId);
+      if (enemy?.blocked) {
+        pushEnemyFloat(enemyId, '被前排阻擋', 'miss');
+        return;
+      }
+      send({ type: 'SELECT_TARGET', enemyId });
+    },
+    [send, stageEnemies, pushEnemyFloat],
+  );
   const handleBackgroundClick = useCallback(() => send({ type: 'CANCEL_TARGETING' }), [send]);
 
   // ---- 按鈕狀態（契約 §7 BtnState 對應表；規則照 dispatch.ts 實際會拒絕的條件推導，不是憑感覺猜的） ----

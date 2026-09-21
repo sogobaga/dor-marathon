@@ -144,9 +144,14 @@ type wireWeapon struct {
 
 // buildCompanionWeaponWire 傭兵本輪不裝備（CONTRACT §2「維持腳本＋固定視覺」）：固定送
 // visual=CompanionRow.Weapon、Profile=中性值（等同過去「沒有武器系統」時的戰鬥行為，crit_pct
-// 等欄位全 0、hits=1/hit_mul=1 不改變攻擊次數與傷害）。
+// 等欄位全 0、hits=1/hit_mul=1 不改變攻擊次數與傷害）。DORPG P13：這條路徑沒有武器類型可查
+// traits，不走 withRowBonus 合併，Reach 這裡明講填 "melee"（而不是留給 string 零值 ""）——
+// WeaponProfileWire.Reach 的型別承諾只有 "melee"|"ranged" 兩種字面值（CONTRACT §3 WIRE），
+// 且徒手／固定視覺本就該受阻擋（CONTRACT §2「未裝備武器（徒手）＝melee」）。
 func buildCompanionWeaponWire(visual string) *wireWeapon {
-	return &wireWeapon{Visual: visual, Profile: ToWeaponProfileWire(DefaultWeaponProfile())}
+	profile := ToWeaponProfileWire(DefaultWeaponProfile())
+	profile.Reach = weaponReachMelee
+	return &wireWeapon{Visual: visual, Profile: profile}
 }
 
 // buildPlayerWeaponWire 玩家目前裝備的武器（nil＝未裝備）。visual 用 type.visual（CONTRACT §3

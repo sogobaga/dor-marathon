@@ -741,5 +741,101 @@ function sample_e1() {
   eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'dmg', targetId: 'threat' }, '沒有 taunt 技能的角色：protect_allies 既有目標規則（打鎖定最低 HP% 隊友的敵人）零改動')
 }
 
+// ═══════════════════════════ 10) P13（DORPG_P13 CONTRACT §2「前排阻擋」）：focus_fire／
+// element_advantage 在阻擋下只在「可打的候選」中做各自的選擇邏輯（血量最低／屬性相剋），不會選中
+// 被阻擋的目標；ranged 不受這條規則限制。純函式單元測試，跟本檔既有 6)/7) 區塊同一種手法——
+// makeEnemy() 預設 slot='front_center'，這裡改用 slot='rear_left' 搭配一隻 front_center 敵人
+// 製造「前排存活時後排被阻擋」的情境。 ═══════════════════════════
+{
+  // (a) focus_fire＋melee（未裝備武器＝melee）：全隊共用的 focusTargetId 是血量最低的後排，但
+  // 被阻擋 → 改在可打候選（只剩前排）中取血量最低者。
+  const strat = resolveStrategy('focus_fire')
+  const actor = makeActor({ skills: [damageSkill()], weaponProfile: null })
+  const front = makeEnemy({ id: 'front', slot: 'front_center', hp: 500 })
+  const rear = makeEnemy({ id: 'rear', slot: 'rear_left', hp: 50 })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], enemies: [front, rear], focusTargetId: 'rear' })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'dmg', targetId: 'front' }, 'focus_fire＋melee：focusTargetId（血量最低的後排）被前排阻擋 → 改在可打候選中取血量最低者（front）')
+  eq(ctx.focusTargetId, 'rear', 'focus_fire：per-actor 候選過濾不會覆寫 ctx.focusTargetId 這個全隊共用欄位本身')
+}
+{
+  // (b) focus_fire＋ranged：不受阻擋限制，正常沿用全隊共用的 focusTargetId。
+  const strat = resolveStrategy('focus_fire')
+  const actor = makeActor({ skills: [damageSkill()], weaponProfile: { ...NEUTRAL_WEAPON_PROFILE, reach: 'ranged' } })
+  const front = makeEnemy({ id: 'front', slot: 'front_center', hp: 500 })
+  const rear = makeEnemy({ id: 'rear', slot: 'rear_left', hp: 50 })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], enemies: [front, rear], focusTargetId: 'rear' })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'dmg', targetId: 'rear' }, 'focus_fire＋ranged：不受阻擋規則限制，正常沿用 focusTargetId')
+}
+{
+  // (c) focus_fire＋melee＋沒有技能（decideAttackFallback 分支）：候選過濾同樣套用在普攻。
+  const strat = resolveStrategy('focus_fire')
+  const actor = makeActor({ skills: [], weaponProfile: null })
+  const front = makeEnemy({ id: 'front', slot: 'front_center', hp: 500 })
+  const rear = makeEnemy({ id: 'rear', slot: 'rear_left', hp: 50 })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], enemies: [front, rear], focusTargetId: 'rear' })
+  eq(decideAction(ctx, actor, strat), { kind: 'attack', targetId: 'front' }, 'focus_fire＋melee 普攻（沒有技能時的 decideAttackFallback）：同樣排除被阻擋的 focusTargetId，改打候選中血量最低者')
+}
+{
+  // (d) element_advantage＋melee：相剋倍率最高的後排（金剋木）被阻擋排除在候選外 → 落回
+  // 「全無相剋→balanced」（ctx.targetId=front_e，前排跟攻擊屬性 metal 不相剋）。
+  const strat = resolveStrategy('element_advantage')
+  const actor = makeActor({ skills: [], weaponProfile: { ...NEUTRAL_WEAPON_PROFILE, element: 'metal', reach: 'melee' } })
+  const front = makeEnemy({ id: 'front_e', slot: 'front_center' }) // 無 attribute → neutral，恆 1.0。
+  const rear = makeEnemy({ id: 'wood_e', slot: 'rear_left', attribute: 'wood' }) // 金剋木 → 1.25，但被阻擋。
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'front_e', enemies: [front, rear] })
+  eq(decideAction(ctx, actor, strat), { kind: 'attack', targetId: 'front_e' }, 'element_advantage＋melee：相剋倍率最高的後排被阻擋排除在候選外 → 落回全無相剋→balanced（ctx.targetId）')
+}
+{
+  // (e) element_advantage＋ranged：不受阻擋限制，直接選中相剋倍率最高的後排。
+  const strat = resolveStrategy('element_advantage')
+  const actor = makeActor({ skills: [], weaponProfile: { ...NEUTRAL_WEAPON_PROFILE, element: 'metal', reach: 'ranged' } })
+  const front = makeEnemy({ id: 'front_e', slot: 'front_center' })
+  const rear = makeEnemy({ id: 'wood_e', slot: 'rear_left', attribute: 'wood' })
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'front_e', enemies: [front, rear] })
+  eq(decideAction(ctx, actor, strat), { kind: 'attack', targetId: 'wood_e' }, 'element_advantage＋ranged：不受阻擋限制，直接選中相剋倍率最高的後排')
+}
+{
+  // (f) element_advantage：melee 普攻被阻擋，但候選技能是魔法（dmgType='magic'）不受這條規則
+  // 限制——技能本身的相剋評估仍可以選中被阻擋的後排（木剋土），跟普攻的評估各自獨立。
+  const strat = resolveStrategy('element_advantage')
+  const magicSkill = damageSkill({ id: 'magic_skill', element: 'wood', dmgType: 'magic', tier: 1 })
+  const actor = makeActor({ skills: [magicSkill], weaponProfile: { ...NEUTRAL_WEAPON_PROFILE, element: 'metal', reach: 'melee' } })
+  const front = makeEnemy({ id: 'front_e', slot: 'front_center' }) // 無 attribute → neutral，wood 對它恆 1.0。
+  const rear = makeEnemy({ id: 'earth_e', slot: 'rear_left', attribute: 'earth' }) // 木剋土 → 1.25。
+  const ctx = makeCtx({ party: [makeActor({ id: 'player', isPlayer: true }), actor], targetId: 'front_e', enemies: [front, rear] })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'magic_skill', targetId: 'earth_e' }, 'element_advantage：melee 普攻被阻擋規則排除，但候選是魔法技能時不受限，仍可選中相剋的後排')
+}
+{
+  // (g) 審查修復：protect_allies＋melee——「正在鎖定最低 HP% 隊友」的敵人是被阻擋的後排 →
+  // 決策目標不是牠，退回這支策略本來就有的次一選擇（落回 ctx.targetId，這裡設成可打的前排）。
+  const strat = resolveStrategy('protect_allies')
+  const actor = makeActor({ skills: [damageSkill()], weaponProfile: null })
+  const weakestAlly = makeActor({ id: 'ally2', hp: 100 }) // HP% 明顯最低，rear 正鎖定的就是它。
+  const front = makeEnemy({ id: 'front', slot: 'front_center', hp: 500 })
+  const rear = makeEnemy({ id: 'rear', slot: 'rear_left', hp: 50 })
+  const ctx = makeCtx({
+    party: [makeActor({ id: 'player', isPlayer: true }), actor, weakestAlly],
+    enemies: [front, rear],
+    enemyTargets: { rear: 'ally2' }, // 後排正鎖定血量最低的隊友，但被存活前排阻擋。
+    targetId: 'front',
+  })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'dmg', targetId: 'front' }, 'protect_allies＋melee：鎖定最低血隊友的敵人是被阻擋的後排 → 決策目標不是牠，退回可打的前排（ctx.targetId）')
+}
+{
+  // (h) 對照組：同樣場景但前排已清空（rear 不再被阻擋）→ 恢復原本行為，直接選中正鎖定最低血
+  // 隊友的後排（確認過濾只在真的被阻擋時才生效，沒有過度排除）。
+  const strat = resolveStrategy('protect_allies')
+  const actor = makeActor({ skills: [damageSkill()], weaponProfile: null })
+  const weakestAlly = makeActor({ id: 'ally2', hp: 100 })
+  const rear = makeEnemy({ id: 'rear', slot: 'rear_left', hp: 50 })
+  const ctx = makeCtx({
+    party: [makeActor({ id: 'player', isPlayer: true }), actor, weakestAlly],
+    enemies: [rear], // 前排清空，rear 不再被阻擋。
+    enemyTargets: { rear: 'ally2' },
+    targetId: 'rear',
+  })
+  eq(decideAction(ctx, actor, strat), { kind: 'damage', skillId: 'dmg', targetId: 'rear' }, 'protect_allies：前排清空、rear 不再被阻擋 → 正常選中正鎖定最低血隊友的 rear（過濾只在被阻擋時生效）')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail > 0) process.exit(1)

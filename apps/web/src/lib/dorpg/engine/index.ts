@@ -44,6 +44,13 @@ export {
   // formulas.ts 後在這裡轉發匯出，呼叫端（fixture.ts／verify 腳本／FRONTEND）的既有匯入路徑
   // （`from './engine'`）不受影響，見 formulas.ts toEnemyActor 型別註解的搬家理由。
   toEnemyActor,
+  // P13（DORPG_P13 CONTRACT §2/§4、WIRE「引擎」）：前排阻擋判定——FRONTEND（BattleStage 敵人
+  // 可點狀態）與 verify 腳本要跟 dispatch.ts/combat.ts/ai.ts 用同一個判定函式，不能各自重算一份
+  // 規則。frontAlive／selectAliveByThreatUnblocked 是它的組成部件，一併轉發匯出，理由同上（外部
+  // 若要驗證「前排是否清空」「排除被阻擋者後的候選」不必再各自 import 內部模組路徑）。
+  isTargetBlocked,
+  frontAlive,
+  selectAliveByThreatUnblocked,
 } from './formulas';
 // P5：buff/debuff 狀態效果的查詢／套用／暴擊倍率抽樣（見 effects.ts）；跟 formulas.ts 分開匯出檔案
 // 但一樣攤平在引擎的公開介面上，呼叫端不需要知道內部是哪個檔案實作的。

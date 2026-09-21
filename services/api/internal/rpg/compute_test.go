@@ -448,8 +448,23 @@ func TestTotalSkillPoints_DefaultFormula(t *testing.T) {
 
 // --- StatCap ---
 
-func TestStatCap_MinOfMaxStatAndLevel(t *testing.T) {
-	cfg := DefaultConfig() // max_stat=99
+// TestStatCap_DefaultIgnoresLevel 2026-09-20 使用者決策「取消等級為基礎數值上限的設定」：
+// 預設（StatCapByLevel=false）單一素質只受 max_stat 限制，任何等級都一樣，低等級可以把點數
+// 集中投在單一素質（實際能投多少仍受配點預算 TotalStatPoints 與成本 pointCost 限制）。
+func TestStatCap_DefaultIgnoresLevel(t *testing.T) {
+	cfg := DefaultConfig() // max_stat=99、StatCapByLevel=false
+	for _, lv := range []int{1, 27, 99, 150} {
+		if got := StatCap(cfg, lv); got != cfg.MaxStat {
+			t.Fatalf("取消等級上限後 Lv%d 的 StatCap 應為 max_stat=%d，got %d", lv, cfg.MaxStat, got)
+		}
+	}
+}
+
+// TestStatCap_ByLevelSwitchRestoresOldRule 開關打開時還原 P5 原規則 min(max_stat, 有效等級)——
+// 後台可一鍵回到舊手感，這條測試守住那條路徑不會在重構中壞掉。
+func TestStatCap_ByLevelSwitchRestoresOldRule(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.StatCapByLevel = true
 	if got := StatCap(cfg, 1); got != 1 {
 		t.Fatalf("Lv1 StatCap 應為 1（等同 InitialStat，Lv1 不能加點），got %d", got)
 	}

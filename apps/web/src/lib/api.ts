@@ -4887,6 +4887,9 @@ export interface RpgConfig {
   initial_stat: number
   initial_free_points: number
   max_stat: number
+  /** DORPG P14（2026-09-20）：素質上限是否另外受有效等級限制。預設 false＝取消等級上限，
+   *  只受 max_stat 限制；true 還原 P5 舊規則 min(max_stat, 有效等級)。 */
+  stat_cap_by_level: boolean
   cost_base: number
   cost_step_every: number
   default_weapon_type: 'melee' | 'ranged'
@@ -5140,7 +5143,7 @@ export interface RpgCharacter {
   effective_level: number // test_level ?? base_level；配點/技能點/上限一律用這個
   stat_points_total: number
   stat_points_free: number
-  stat_cap: number // = min(max_stat, effective_level)
+  stat_cap: number // P14 起 = max_stat（stat_cap_by_level=true 時才是 min(max_stat, effective_level)）
   skill_points_total: number
   skill_points_free: number
   // --- DORPG P7（見契約 §2/§3、WIRE §REST「/rpg/me 新增 weapon」）：目前裝備的武器（未裝備＝
@@ -6362,6 +6365,12 @@ export interface RpgBootstrapWeaponProfileRaw {
   rowBonusRearPct: number
   pierceChancePct: number
   pierceDmgPct: number
+  // DORPG P13（契約 P13_CONTRACT.md §3）：前排阻擋判定用——後端由 type.traits.reach 合併，逐欄
+  // 都會給值（"melee"|"ranged"，缺省 melee，見 weapons.go withRowBonus）。標成選填只是防禦：跟
+  // rankLabel/badgeColor 等既有新欄位同一個理由——本輪部署前，舊版後端／CDN 快取到的舊 bundle
+  // 可能還沒送這個欄位，缺欄位時交給 fromApi.ts 退回 'melee'（同「未裝備武器＝melee」的契約
+  // 缺省精神），不讓還沒部署齊全時整包 bootstrap 解析失敗。
+  reach?: string
 }
 /** 對齊 ENGINE lib/dorpg/types.ts 的 EquippedWeaponWire。 */
 export interface RpgBootstrapEquippedWeaponRaw {

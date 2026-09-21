@@ -1,11 +1,11 @@
 // 傷害/治療/護盾/buff/debuff 的效果套用（純函式風格：吃 Ctx 直接在裡面改，呼叫端保證是本次呼叫的
 // 工作副本）。dispatch（玩家普攻/技能）、ai（隊友普攻/治療）、tick（敵人攻擊、施法完成結算）三邊
 // 共用，避免同一段「算傷害→套用→處理死亡/受擊」邏輯抄三次、規則跑掉。
-import type { ActorStats, BuffDebuffStat, CombatRating, DmgType, ElementKind, EnemySlotId, Skill, WeaponKind, WeaponProfileWire } from '../types';
+import type { ActorStats, BuffDebuffStat, CombatRating, DmgType, ElementKind, EnemySlotId, Skill, WeaponKind, WeaponProfileWire, WeaponReach } from '../types';
 import type { Ctx } from './context';
 import { pushEvent, pushLog } from './context';
 import { activeStatSum, applyStatusEffect, damageTakenMultiplier, effectiveRating, rollCritMultiplier } from './effects';
-import { combineElementResistPct, computeHeal, computeRawDamage, critChance, elementMultiplier, floorInt, missChance, NEUTRAL_WEAPON_PROFILE, normalizeElementAlias, normalizeSizeAlias, rowBonusMultiplier, rowOfSlot, selectAliveByThreat } from './formulas';
+import { combineElementResistPct, computeHeal, computeRawDamage, critChance, elementMultiplier, floorInt, isTargetBlocked, missChance, NEUTRAL_WEAPON_PROFILE, normalizeElementAlias, normalizeSizeAlias, rowBonusMultiplier, rowOfSlot, selectAliveByThreatUnblocked } from './formulas';
 import type { ActiveEffect, EnemyActor, PartyActor, PendingCast } from './types';
 
 /** 對敵人造成傷害後的死亡/受擊處理：死亡→dying+enemyDeath+目標自動換人；存活→hitReaction 覆蓋層。 */
@@ -23,7 +23,15 @@ function applyEnemyDamage(ctx: Ctx, enemy: EnemyActor, damage: number): void {
     pushEvent(ctx, { kind: 'enemyDeath', enemyId: enemy.id });
     pushLog(ctx, `${enemy.name} 被擊倒`);
     if (ctx.targetId === enemy.id) {
-      const next = selectAliveByThreat(ctx.enemies);
+      // P13（DORPG_P13 CONTRACT §2「傭兵與自動戰鬥選目標時直接把被阻擋者排除在候選外」）：
+      // ctx.targetId 是玩家專屬欄位（見上方 resolveEffectiveTarget 對 actorId===ctx.playerId
+      // 的判斷），死亡換目標的候選集合一律照玩家目前武器的 reach 排除被阻擋者——舊版
+      // selectAliveByThreat 不篩阻擋，威脅值更高的後排會搶在存活前排之前被選中，讓玩家的
+      // melee 攻擊在下一次結算時立刻被 resolveEffectiveTarget 重定向、白推一次多餘的
+      // targetChanged。前排全滅時 selectAliveByThreatUnblocked 本來就會退回後排，不會選不到。
+      const player = ctx.party.find((p) => p.id === ctx.playerId);
+      const reach = (player?.weaponProfile ?? NEUTRAL_WEAPON_PROFILE).reach;
+      const next = selectAliveByThreatUnblocked(ctx.enemies, reach);
       if (next !== ctx.targetId) {
         ctx.targetId = next;
         pushEvent(ctx, { kind: 'targetChanged', enemyId: next });
@@ -39,6 +47,34 @@ function applyEnemyDamage(ctx: Ctx, enemy: EnemyActor, damage: number): void {
   }
   enemy.anim = 'hitReaction';
   enemy.animUntil = ctx.now + ctx.cfg.enemyHitMs;
+}
+
+/**
+ * P13（DORPG_P13 CONTRACT §2「已鎖定後排敵人後，因召喚/復活使前排重新有敵人 → 該目標變成被阻擋
+ * ：攻擊結算時自動改打威脅最高的存活前排敵人...不中斷攻擊、不浪費冷卻」）：普攻／單體物理技能
+ * 結算前呼叫一次（不是每段命中／每次施放各自呼叫——resolveWeaponAttack 的多段命中與
+ * resolveCastEffect 的 hits>1 迴圈都共用同一次重定向結果，避免同一次攻擊內重複推 targetChanged
+ * 事件、或後續段落各自算出不同的「威脅最高」而互相打架）。
+ * targetEnemyId 若不存在或已死亡，原樣放行——「目標消失」是既有的另一套分支（見
+ * resolveAttackOrDamageSkill 開頭的 miss 判斷），跟「目標被阻擋」是兩件互斥的事，這裡不搶著處理。
+ * 找不到替代目標時同樣原樣放行——理論上不會發生（isTargetBlocked 為 true 就代表前排至少有一隻
+ * 存活，selectAliveByThreatUnblocked 一定選得到它，見該函式型別註解），但與其在不可能發生的分支
+ * 上让後續結算對著一個不存在的替代目標，不如保守地維持原樣（呼叫端的既有「目標消失」防線仍然
+ * 兜得住）。
+ * actorId===ctx.playerId 時順便同步 ctx.targetId（玩家手動攻擊／USE_SKILL 共用的「目前鎖定目標」
+ * 欄位，UI 據此顯示）；AI 隊友沒有等價的持久欄位可寫（下次 tick 的 decideAction 會依各策略自己的
+ * 規則重新算，見 ai.ts CONTRACT §2 filtering），這裡只需要發事件讓 FRONTEND 有機會顯示提示。
+ */
+function resolveEffectiveTarget(ctx: Ctx, actorId: string, targetEnemyId: string, reach: WeaponReach): string {
+  const enemy = ctx.enemies.find((e) => e.id === targetEnemyId);
+  if (!enemy || enemy.hp <= 0) return targetEnemyId;
+  if (!isTargetBlocked(ctx.enemies, enemy, reach)) return targetEnemyId;
+  const replacement = selectAliveByThreatUnblocked(ctx.enemies, reach);
+  if (!replacement || replacement === targetEnemyId) return targetEnemyId;
+  if (actorId === ctx.playerId) ctx.targetId = replacement;
+  pushEvent(ctx, { kind: 'targetChanged', enemyId: replacement });
+  pushLog(ctx, `${actorId} 的目標被前排阻擋，自動改打其他敵人`);
+  return replacement;
 }
 
 /**
@@ -303,10 +339,14 @@ export function resolveWeaponAttack(
   },
 ): void {
   const wp = opts.weaponProfile;
+  // P13（CONTRACT §2）：普攻恆為 physical、單體，一律受前排阻擋規則管轄——結算前先解出「有效
+  // 目標」（原目標未被阻擋就是原樣，被阻擋就自動改打威脅最高的存活前排敵人，見 resolveEffective
+  // Target 型別註解），整段多段命中共用同一個結果，不逐段重算。
+  const targetEnemyId = resolveEffectiveTarget(ctx, opts.actorId, opts.targetEnemyId, wp.reach);
   const extra = wp.extraHitChancePct > 0 && ctx.rng() < wp.extraHitChancePct / 100 ? 1 : 0;
   const totalHits = Math.max(1, wp.hits) + extra;
   for (let i = 0; i < totalHits; i++) {
-    const target = ctx.enemies.find((e) => e.id === opts.targetEnemyId);
+    const target = ctx.enemies.find((e) => e.id === targetEnemyId);
     if (!target || target.hp <= 0) break; // 目標中途死亡（多段命中時），後續段落自然停止，不打空氣。
     const outcome = resolveAttackOrDamageSkill(ctx, {
       actorId: opts.actorId,
@@ -315,7 +355,7 @@ export function resolveWeaponAttack(
       coefficient: wp.hitMul,
       flat: 0,
       weapon: opts.weaponVisual,
-      targetEnemyId: opts.targetEnemyId,
+      targetEnemyId,
       chargeMul: opts.chargeMul,
       charged: opts.charged,
       attackerRating: opts.attackerRating,
@@ -572,11 +612,15 @@ export function resolveCastEffect(ctx: Ctx, actor: PartyActor, skill: Skill, pen
     const dmgType = skill.dmgType ?? 'physical';
     const magicMul = dmgType === 'magic' ? 1 + weapon.magicSkillPct / 100 : 1;
     const coefficient = skill.coefficient * magicMul;
+    // P13（CONTRACT §2「受阻擋：...物理技能（dmg_type='physical' 且單體／指定目標者）...不受阻擋
+    // ：魔法技能、全體技能」）：只有單體且 physical 的技能才解「有效目標」（見 resolveWeaponAttack
+    // 對同一支 resolveEffectiveTarget 的呼叫方式）；allEnemies 分支恆不受限（本來就打全部存活
+    // 敵人，沒有「選中哪一個」可言），magic 分支同樣不解，直接沿用 pending.targetId。
     const targetIds =
       pending.targetId === 'ALL_ENEMIES'
         ? ctx.enemies.filter((e) => e.hp > 0).map((e) => e.id)
         : typeof pending.targetId === 'string' && pending.targetId !== 'ALL'
-          ? [pending.targetId]
+          ? [dmgType === 'magic' ? pending.targetId : resolveEffectiveTarget(ctx, actor.id, pending.targetId, weapon.reach)]
           : [];
     for (const tId of targetIds) {
       for (let i = 0; i < hits; i++) {

@@ -58,6 +58,15 @@ const { SKILL_SLOTS } = await import(typesUrl)
 const fixtureUrl = new URL('../src/lib/dorpg/fixture.ts', import.meta.url).href
 const { buildFixtureSample, loadRefPlayerTable, refPlayerAt, scaleMonsterByRank, RPG_MONSTER_RANKS, buildRankDemoBundle } = await import(fixtureUrl)
 
+// P13（DORPG_P13 CONTRACT §2「前排阻擋」）：frontAlive/isTargetBlocked/selectAliveByThreatFiltered/
+// selectAliveByThreatUnblocked 是本輪新增的 formulas.ts 匯出——engine/index.ts（barrel）不在 ENGINE
+// 本輪的可寫清單內（見 CONTRACT §0 分工，跟本檔案頭「那些檔案不在 ENGINE 的可寫清單內」同一個
+// 理由），這裡直接載入 formulas.ts 本體取用，不等 barrel 補上轉發匯出（INTEGRATOR 收尾時應該把它們
+// 併進 index.ts 的既有匯出列表，跟 P10 inGuardianState/pickEnemyTarget、P12 toEnemyActor 同一個
+// 模式——本檔驗證邏輯本身不依賴這件事是否已經做完）。
+const formulasUrl = new URL('../src/lib/dorpg/engine/formulas.ts', import.meta.url).href
+const { frontAlive, isTargetBlocked, selectAliveByThreat, selectAliveByThreatFiltered, selectAliveByThreatUnblocked } = await import(formulasUrl)
+
 let pass = 0, fail = 0
 function ok(cond, label) {
   if (cond) { pass++; console.log(`PASS ${label}`) }
@@ -2914,6 +2923,264 @@ let triggeredState
   s = tick(s, 100)
   eq(s.enemies.length, 4, 'S 跨過 75% 門檻：F + S + 2 隻召喚出的 D = 4 隻')
   ok(s.events.some((e) => e.kind === 'summon' && e.summonerId === sEnemy.id), 'fixture 產出的 summonPool 資料真的能讓 engine 觸發 summon 事件（端到端，不只是型別對了）')
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// P13（DORPG_P13 CONTRACT §2「前排阻擋」——ENGINE 角色）新增測試：本節從 1) 重新編號（跟前面
+// P7/P12 區塊的編號規則一致）。共用 weaponFixture()／NEUTRAL_WEAPON_PROFILE（P7 區塊）。
+// ════════════════════════════════════════════════════════════════════════════
+
+/** 1 前排＋1 後排的最小場景，兩者 threatPriority 相同（0）以便單純測試排位規則本身，不被威脅值
+ *  干擾。frontHp=0 可以模擬「前排已清空」（toEnemyActor 對 hp<=0 的敵人一樣正確納入
+ *  frontAlive()/isTargetBlocked() 的判斷——這兩支函式只看 hp>0，不看 anim）。 */
+function frontRearSample(overrides = {}) {
+  // frontHp/rearHp/initialTargetId 是這支小工具自己的參數，其餘（party/skills/...）原樣轉給
+  // makeSample——刻意用解構＋rest 而不是直接把 `party: overrides.party` 塞進物件字面值：後者在
+  // overrides 沒有給 party 時會變成顯式 `party: undefined`，物件展開（`...overrides` 在
+  // makeSample 內部）會用這個 undefined 覆蓋掉 makeSample 預設的那份 party，讓 sample.party 整個
+  //消失（call createBattle 直接炸掉）；用 rest 展開時，沒被呼叫端提供的鍵根本不會出現在 rest 裡，
+  // 不會有「顯式 undefined 覆蓋預設值」這個問題。
+  const { frontHp, rearHp, initialTargetId, ...rest } = overrides
+  return makeSample({
+    enemies: [
+      { id: 'front', name: '前排怪', level: 1, hp: frontHp ?? 9999, hpMax: 9999, slot: 'front_center', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'rear', name: '後排怪', level: 1, hp: rearHp ?? 9999, hpMax: 9999, slot: 'rear_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+    ],
+    initialTargetId: initialTargetId ?? 'front',
+    ...rest,
+  })
+}
+
+// ── 1) frontAlive()／isTargetBlocked()：純函式邊界。 ──
+{
+  const front = { id: 'f', hp: 100, slot: 'front_center' }
+  const frontDead = { id: 'f', hp: 0, slot: 'front_center' }
+  const rear = { id: 'r', hp: 100, slot: 'rear_left' }
+  ok(frontAlive([front, rear]) === true, 'frontAlive：前排存活 → true')
+  ok(frontAlive([frontDead, rear]) === false, 'frontAlive：前排已死 → false（只看 hp>0，不看 anim）')
+  ok(frontAlive([]) === false, 'frontAlive：沒有任何敵人 → false')
+  ok(isTargetBlocked([front, rear], rear, 'melee') === true, 'isTargetBlocked：melee＋目標後排＋前排存活 → 阻擋')
+  ok(isTargetBlocked([frontDead, rear], rear, 'melee') === false, 'isTargetBlocked：前排已清空 → 不阻擋')
+  ok(isTargetBlocked([front, rear], rear, 'ranged') === false, 'isTargetBlocked：ranged 恆不阻擋（即使前排存活）')
+  ok(isTargetBlocked([front, rear], front, 'melee') === false, 'isTargetBlocked：目標本身是前排 → 不阻擋（不管前排還有沒有其它存活者）')
+  // row 欄位優先於 slot 推導（見型別註解 `enemy.row ?? rowOfSlot(enemy.slot)`）。
+  const overriddenFront = { id: 'x', hp: 100, slot: 'rear_left', row: 'front' } // slot 說後排，row 明講其實是前排。
+  ok(isTargetBlocked([front, overriddenFront], overriddenFront, 'melee') === false, 'isTargetBlocked：row 覆寫優先於 slot 推導——slot=rear_left 但 row="front" 時，這隻怪本身不算後排，不會被阻擋')
+  const overriddenRear = { id: 'y', hp: 100, slot: 'front_center', row: 'rear' } // slot 說前排，row 明講其實是後排。
+  ok(frontAlive([overriddenRear]) === false, 'frontAlive：row 覆寫優先於 slot 推導——slot=front_center 但 row="rear" 時不算前排存活')
+}
+
+// ── 2) selectAliveByThreatFiltered 與既有 selectAliveByThreat 逐行等價；selectAliveByThreatUnblocked
+//    排除被阻擋者後正確退回「威脅最高的存活前排」。 ──
+{
+  const enemies = [
+    { id: 'f1', hp: 100, slot: 'front_left', threatPriority: 1 },
+    { id: 'f2', hp: 100, slot: 'front_right', threatPriority: 5 },
+    { id: 'r1', hp: 100, slot: 'rear_left', threatPriority: 9 }, // 威脅最高，但 melee 時被阻擋。
+  ]
+  eq(selectAliveByThreatFiltered(enemies, () => true), selectAliveByThreat(enemies), 'selectAliveByThreatFiltered(恆真 predicate) 與既有 selectAliveByThreat 結果一致')
+  eq(selectAliveByThreat(enemies), 'r1', '既有 selectAliveByThreat：不排除任何人時，威脅最高的 r1（後排）本來就會被選中')
+  eq(selectAliveByThreatUnblocked(enemies, 'melee'), 'f2', 'selectAliveByThreatUnblocked(melee)：r1 被前排阻擋排除 → 前排中威脅最高的 f2')
+  eq(selectAliveByThreatUnblocked(enemies, 'ranged'), 'r1', 'selectAliveByThreatUnblocked(ranged)：不受阻擋規則限制，維持威脅最高的 r1')
+}
+
+// ── 3) dispatch.ts SELECT_TARGET：前排存活時 melee 選後排被拒（targetId／log 均維持不變、不推
+//    targetChanged）；ranged 可選；前排清空後 melee 也能選。 ──
+{
+  const bow = weaponFixture('ar_longbow', 'bow', { reach: 'ranged' })
+  // 3a）melee（未裝備武器 → NEUTRAL_WEAPON_PROFILE.reach='melee'）：前排存活時選後排被拒。
+  let s = createBattle(frontRearSample(), { now: 0, config: FAR_CONFIG })
+  eq(s.targetId, 'front', '初始目標：initialTargetId=front（威脅同分，優先採用宣告值）')
+  const beforeLogLen = s.log.length
+  s = dispatch(s, { type: 'SELECT_TARGET', enemyId: 'rear' }, 0)
+  eq(s.targetId, 'front', 'melee＋前排存活：SELECT_TARGET 選後排被拒，targetId 維持不變')
+  ok(s.log[s.log.length - 1].includes('被前排阻擋'), 'melee＋前排存活：拒絕 log 包含「被前排阻擋」')
+  ok(!s.events.some((e) => e.kind === 'targetChanged'), 'melee＋前排存活：被拒的 SELECT_TARGET 不推 targetChanged 事件')
+  ok(s.log.length > beforeLogLen, '被拒的指令仍然留下一行 log（跟既有 rejectLog 慣例一致）')
+
+  // 3b）ranged：同樣場景，裝備弓可以直接選後排。
+  let sBow = createBattle(frontRearSample({ party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: bow }] }), { now: 0, config: FAR_CONFIG })
+  sBow = dispatch(sBow, { type: 'SELECT_TARGET', enemyId: 'rear' }, 0)
+  eq(sBow.targetId, 'rear', 'ranged：前排存活時仍能直接選後排（弓／法杖／槍的貫穿不受阻擋規則限制）')
+  ok(sBow.events.some((e) => e.kind === 'targetChanged' && e.enemyId === 'rear'), 'ranged：SELECT_TARGET 成功後正常推 targetChanged')
+
+  // 3c）前排清空後，melee 也能選後排。
+  let sCleared = createBattle(frontRearSample({ frontHp: 0 }), { now: 0, config: FAR_CONFIG })
+  eq(sCleared.targetId, 'rear', '前排一開場就是空的（frontHp=0）：pickInitialTarget 直接選中唯一存活的後排')
+  sCleared = dispatch(sCleared, { type: 'SELECT_TARGET', enemyId: 'front' }, 0) // front 已死，理應被既有規則拒絕（跟 P13 無關）。
+  ok(sCleared.log[sCleared.log.length - 1].includes('已消滅'), '對照組：選一個已死的敵人被既有規則拒絕（不是被前排阻擋擋下）')
+}
+
+// ── 4) 普攻：melee 鎖定後排後、召喚/復活使前排重新有敵人 → 下次攻擊自動改打前排、發
+//    targetChanged、正常消耗冷卻（不浪費）；斧濺射／槍貫穿規則不受影響（用既有的單排場景，不
+//    混排位阻擋，維持既有斷言零改動——這裡只額外驗證「主目標本身合法未被阻擋」時兩個機制照常）。 ──
+{
+  // 4a）前排先清空 → 玩家普攻鎖定後排 rear（合法，未被阻擋）→ 手動模擬「召喚/復活」把前排補回來
+  // （summon.ts 不在 ENGINE 本輪所有權內，直接改 EnemyActor.hp 模擬其效果——跟本檔既有測試直接
+  // mutate s.enemies[0].anim/animUntil 模擬 AI 狀態轉換是同一種既有手法）→ 下一次攻擊應自動改打
+  // 威脅最高的存活前排（這裡只有一隻候選：front），發 targetChanged，且冷卻正常往前推進。
+  let s = createBattle(frontRearSample({ frontHp: 0 }), { now: 0, config: FAR_CONFIG, rng: fixedRng([0]) })
+  eq(s.targetId, 'rear', '前排清空：初始目標正確落在唯一存活的後排')
+  s.enemies.find((e) => e.id === 'front').hp = 9999 // 模擬前排被召喚/復活補上。
+  const beforeReadyAt = s.party[0].attackReadyAt
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const atkEvent = s.events.find((e) => e.kind === 'attack')
+  eq(atkEvent?.targetId, 'front', '鎖定後排後前排重新有敵人：普攻結算時自動改打前排（威脅最高的存活前排候選）')
+  ok(s.events.some((e) => e.kind === 'targetChanged' && e.enemyId === 'front'), '自動改打時發既有 targetChanged 事件')
+  eq(s.targetId, 'front', '自動改打後 ctx.targetId 同步更新（玩家攻擊，見 resolveEffectiveTarget 型別註解）')
+  ok(s.party[0].attackReadyAt > beforeReadyAt, '自動改打並未讓這次攻擊落空：冷卻正常往前推進，不是被拒絕、不浪費這次操作')
+  eq(s.enemies.find((e) => e.id === 'rear').hp, 9999, '被阻擋的原目標（後排）完全沒有受到這次攻擊影響')
+  eq(s.enemies.find((e) => e.id === 'front').hp, 9999 - atkEvent.damage, '改打後真的對前排造成傷害')
+
+  // 4b）對照組：同樣「鎖定後排」但前排「沒有」重新出現（維持清空）→ 正常打後排，不觸發任何重定向。
+  let s2 = createBattle(frontRearSample({ frontHp: 0 }), { now: 0, config: FAR_CONFIG, rng: fixedRng([0]) })
+  s2 = dispatch(s2, { type: 'ATTACK_BEGIN' }, 0)
+  s2 = dispatch(s2, { type: 'ATTACK_RELEASE' }, 0)
+  const atkEvent2 = s2.events.find((e) => e.kind === 'attack')
+  eq(atkEvent2?.targetId, 'rear', '對照組：前排持續清空 → 正常打後排，不重定向')
+  ok(!s2.events.some((e) => e.kind === 'targetChanged'), '對照組：不觸發任何 targetChanged')
+}
+
+// ── 5) 物理技能受阻擋（單體），魔法技能與 allEnemies 技能不受限。 ──
+{
+  // castMs 刻意 ≥ DEFAULT_BATTLE_CONFIG.castMinMs（120）——effectiveCastMs() 會把小於這個下限的
+  // castMs 夾到 120（見 formulas.ts 型別註解），castMs 給 100 會讓下面 tick(...,100) 差 20ms
+  // 結算不完，跟 P13 阻擋規則本身無關，純粹是這個測試小工具要避開的既有機制。
+  const magicBolt = { id: 'magic_bolt', name: '魔法彈', iconUrl: '', cooldownMs: 1000, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1, flat: 0, weapon: 'staff', castMs: 120, dmgType: 'magic' }
+  const novaAll = { id: 'nova_all', name: '全體法術', iconUrl: '', cooldownMs: 1000, kind: 'damage', target: 'allEnemies', mpCost: 5, coefficient: 1, flat: 0, weapon: 'staff', castMs: 120, dmgType: 'physical' }
+
+  // 5a）物理單體技能（既有 slash，dmgType 缺省 physical）：target='enemy' 的技能一律用
+  // ctx.targetId（不是 USE_SKILL 指令的 targetId 參數——那個欄位只給需要二段式選擇的 'ally' 技能
+  // 用，見 dispatch.ts USE_SKILL 分支），所以要讓 ctx.targetId 合法地先落在後排（frontHp:0），
+  // 再模擬前排補位（跟區塊 4 同一招）才能真正測到「已鎖定的後排目標變成被阻擋」這個情境。
+  let sPhys = createBattle(frontRearSample({ frontHp: 0, skills: [ { id: 'slash', name: '斬擊', iconUrl: '', cooldownMs: 4000, kind: 'damage', target: 'enemy', mpCost: 5, coefficient: 1.6, flat: 20, weapon: 'sword', castMs: 300 } ] }), { now: 0, config: FAR_CONFIG })
+  eq(sPhys.targetId, 'rear', '前排清空：ctx.targetId 合法落在後排')
+  sPhys.enemies.find((e) => e.id === 'front').hp = 9999 // 模擬前排補位——ctx.targetId 指向的後排變成被阻擋。
+  sPhys = dispatch(sPhys, { type: 'USE_SKILL', skillId: 'slash' }, 0)
+  sPhys = tick(sPhys, 300)
+  const physEvent = sPhys.events.find((e) => e.kind === 'attack')
+  eq(physEvent?.targetId, 'front', '物理單體技能：ctx.targetId 是被阻擋的後排時，結算前自動改打前排')
+  ok(sPhys.events.some((e) => e.kind === 'targetChanged' && e.enemyId === 'front'), '物理單體技能改打：發既有 targetChanged 事件')
+
+  // 5b）魔法單體技能：同樣場景（ctx.targetId 是被阻擋的後排），但不受阻擋——正常打中後排、不重定向。
+  let sMagic = createBattle(frontRearSample({ frontHp: 0, skills: [magicBolt] }), { now: 0, config: FAR_CONFIG })
+  sMagic.enemies.find((e) => e.id === 'front').hp = 9999
+  sMagic = dispatch(sMagic, { type: 'USE_SKILL', skillId: 'magic_bolt' }, 0)
+  sMagic = tick(sMagic, 120)
+  const magicEvent = sMagic.events.find((e) => e.kind === 'attack')
+  eq(magicEvent?.targetId, 'rear', '魔法單體技能（dmgType=magic）：即使 ctx.targetId 的後排「理應」被阻擋，魔法技能仍不受限，正常命中')
+  ok(!sMagic.events.some((e) => e.kind === 'targetChanged'), '魔法單體技能：不觸發重定向、不推 targetChanged')
+
+  // 5c）allEnemies 技能：不受阻擋，前排＋後排都吃到傷害。
+  let sAll = createBattle(frontRearSample({ skills: [novaAll] }), { now: 0, config: FAR_CONFIG })
+  sAll = dispatch(sAll, { type: 'USE_SKILL', skillId: 'nova_all' }, 0)
+  sAll = tick(sAll, 120)
+  const allEvents = sAll.events.filter((e) => e.kind === 'attack')
+  eq(allEvents.length, 2, 'allEnemies 技能：前排＋後排各一筆攻擊事件，不受任何一方阻擋規則影響')
+  ok(allEvents.some((e) => e.targetId === 'front') && allEvents.some((e) => e.targetId === 'rear'), 'allEnemies 技能：前排與後排都被打到')
+}
+
+// ── 6) 斧濺射／槍貫穿規則不受 P13 影響——沿用既有單排（同一排相鄰）場景，維持既有斷言的手法，
+//    只額外確認 reach='melee' 的斧／槍在合法目標（前排）上照常運作（合法目標本身不會被阻擋）。 ──
+{
+  const axe = weaponFixture('hk_axe', 'greatsword', { splashPct: 40, reach: 'melee' })
+  const sample = makeSample({
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 80, def: 35, mdef: 28 }, equippedWeapon: axe }],
+    enemies: [
+      { id: 'fc', name: 'e', level: 1, hp: 9999, hpMax: 9999, slot: 'front_center', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'fl', name: 'e', level: 1, hp: 9999, hpMax: 9999, slot: 'front_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+    ],
+    initialTargetId: 'fc',
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  const splash = s.events.find((e) => e.kind === 'attack' && e.splash === true)
+  ok(!!splash && splash.targetId === 'fl', 'P13 上線後：斧濺射行為不變（目標本身是前排，不受阻擋規則影響，濺射照常命中同排相鄰）')
+  ok(!s.events.some((e) => e.kind === 'targetChanged'), '合法目標（前排，前排本身沒有阻擋）：不觸發任何重定向')
+}
+
+// ── 7) 傭兵 AI／自動戰鬥不選被阻擋目標（整合測試）：ally（balanced 策略）與玩家自動戰鬥
+//    （balanced 策略）鎖定的 ctx.targetId 若是被阻擋的後排，攻擊結算時一律自動改打前排——跟
+//    區塊 4) 的玩家手動攻擊走同一套 resolveEffectiveTarget，這裡驗證「AI／自動戰鬥的攻擊也適用」
+//    這個更廣的保證（不只是玩家手動按攻擊鈕）。 ──
+{
+  // 7a）ally（隊友）：balanced 策略普攻，ctx.targetId 指向被阻擋的後排 → 隊友的攻擊改打前排。
+  const sample = frontRearSample({
+    frontHp: 0, // 先清空前排，讓 ctx.targetId 合法地落在後排（pickInitialTarget）。
+    party: [
+      { id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 1, matk: 1, def: 0, mdef: 0 }, strategyId: 'balanced' },
+      { id: 'ally1', name: '隊友', level: 56, hp: 600, hpMax: 600, mp: 50, mpMax: 50, portraitUrl: null, stats: { hpMax: 600, mpMax: 50, atk: 100, matk: 1, def: 0, mdef: 0 }, weapon: 'sword', strategyId: 'balanced' },
+    ],
+  })
+  let s = createBattle(sample, { now: 0, config: { ...FAR_CONFIG, allyActIntervalMs: [0, 0] } })
+  eq(s.targetId, 'rear', '前排清空：ctx.targetId（全隊共用）合法落在後排')
+  s.enemies.find((e) => e.id === 'front').hp = 9999 // 模擬前排補位——現在 ctx.targetId 指向的後排變成被阻擋。
+  s = tick(s, 1) // 隊友 idle→balanced→decideAttackFallback(ctx.targetId)→普攻。
+  const allyAtk = s.events.find((e) => e.kind === 'attack' && e.actorId === 'ally1')
+  eq(allyAtk?.targetId, 'front', '隊友（balanced）：ctx.targetId 被阻擋時攻擊自動改打前排，不會選中被阻擋的後排')
+
+  // 7b）玩家自動戰鬥（balanced 策略）：同樣場景，玩家自己開自動戰鬥，普攻同樣不會選中被阻擋目標。
+  // skills:[]（BattleState 的 10 格裝備欄清空）讓 actorSkills(ctx, player) 對玩家也回傳
+  // []——跟 7a 的 ally1（PartyActor.skills 缺省即為 []）同一個效果，逼 decideBalanced 落到
+  // decideAttackFallback（普攻），不被 heal/shield 之類的技能決策攔在前面（否則玩家會先去上
+  // 護盾，不會發生普攻，見型別註解 decideBuffOrShield 對 target='self' 的 shield 技能判斷）。
+  const sample2 = frontRearSample({
+    frontHp: 0,
+    skills: [],
+    party: [{ id: 'player', name: '玩家', level: 56, hp: 800, hpMax: 800, mp: 100, mpMax: 100, portraitUrl: null, stats: { hpMax: 800, mpMax: 100, atk: 100, matk: 1, def: 0, mdef: 0 }, strategyId: 'balanced' }],
+  })
+  let s2 = createBattle(sample2, { now: 0, config: FAR_CONFIG, autoBattle: true })
+  eq(s2.targetId, 'rear', '前排清空：自動戰鬥場景的 ctx.targetId 同樣合法落在後排')
+  s2.enemies.find((e) => e.id === 'front').hp = 9999
+  s2 = tick(s2, 0) // idle→advanceAutoBattle→decideAction(balanced)→decideAttackFallback→ATTACK_BEGIN。
+  // charging→自動 ATTACK_RELEASE 只在 heldMs ≥ chargeMinMs + chargeFullMs×chargeTimeMul（未裝備
+  // 武器＝NEUTRAL_WEAPON_PROFILE.chargeTimeMul=1）才觸發，見 autopilot.ts 對 'charging' 分支的判斷
+  // ——不是只到 chargeMinMs 就放開（那只是「算不算蓄力攻擊」的門檻，不是自動戰鬥放開蓄力鈕的門檻）。
+  s2 = tick(s2, DEFAULT_BATTLE_CONFIG.chargeMinMs + DEFAULT_BATTLE_CONFIG.chargeFullMs)
+  const playerAtk = s2.events.find((e) => e.kind === 'attack' && e.actorId === 'player')
+  eq(playerAtk?.targetId, 'front', '玩家自動戰鬥（balanced）：普攻同樣不會選中被阻擋的後排目標，自動改打前排')
+}
+
+// ── 8) 審查修復：目標死亡後的重選一律排除被阻擋者（combat.ts applyEnemyDamage）。ctx.targetId
+//    是玩家專屬欄位，換目標一律照玩家目前武器的 reach 走 selectAliveByThreatUnblocked——舊版
+//    selectAliveByThreat 不篩阻擋，威脅值更高的後排會搶在存活前排之前被選中。 ──
+{
+  // 8a）死亡的 f1 之外還有其它前排（f2）存活時，即使後排 r1 威脅值最高，重選也必須落在 f2（未被
+  //    阻擋的存活前排），不能選中被阻擋的 r1。
+  const sample = makeSample({
+    enemies: [
+      { id: 'f1', name: '前排甲', level: 1, hp: 1, hpMax: 9999, slot: 'front_left', imageUrl: '', threatPriority: 1, stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'f2', name: '前排乙', level: 1, hp: 9999, hpMax: 9999, slot: 'front_right', imageUrl: '', threatPriority: 5, stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'r1', name: '後排', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_left', imageUrl: '', threatPriority: 9, stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+    ],
+    initialTargetId: 'f1',
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  eq(s.targetId, 'f1', '（前提）初始目標鎖定 f1')
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  eq(s.enemies.find((e) => e.id === 'f1').hp, 0, '（前提）f1 一擊必死（hp=1，遠低於玩家傷害）')
+  eq(s.targetId, 'f2', 'f1 死亡重選：候選排除被阻擋的 r1（威脅值最高但被前排 f2 阻擋），改選威脅最高的存活前排 f2——不是舊版 selectAliveByThreat 會誤選的 r1')
+  ok(s.events.some((e) => e.kind === 'targetChanged' && e.enemyId === 'f2'), 'f1 死亡重選：正確推 targetChanged 到 f2')
+}
+{
+  // 8b）死亡的正是唯一前排 → 前排全滅，重選正確落回唯一存活的後排（selectAliveByThreatUnblocked
+  //    前排全滅時本來就退回後排，不會選不到）。
+  const sample = makeSample({
+    enemies: [
+      { id: 'f1', name: '前排', level: 1, hp: 1, hpMax: 9999, slot: 'front_center', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+      { id: 'r1', name: '後排', level: 1, hp: 9999, hpMax: 9999, slot: 'rear_left', imageUrl: '', stats: { hpMax: 9999, mpMax: 0, atk: 1, matk: 1, def: 0, mdef: 0 } },
+    ],
+    initialTargetId: 'f1',
+  })
+  let s = createBattle(sample, { now: 0, config: FAR_CONFIG })
+  s = dispatch(s, { type: 'ATTACK_BEGIN' }, 0)
+  s = dispatch(s, { type: 'ATTACK_RELEASE' }, 0)
+  eq(s.enemies.find((e) => e.id === 'f1').hp, 0, '（前提）f1 一擊必死')
+  eq(s.targetId, 'r1', '前排全滅後重選：唯一存活的後排 r1 正確被選中')
+  ok(s.events.some((e) => e.kind === 'targetChanged' && e.enemyId === 'r1'), '前排全滅後重選：正確推 targetChanged 到 r1')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

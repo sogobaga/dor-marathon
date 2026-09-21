@@ -452,9 +452,16 @@ func TotalSkillPoints(cfg Config, level int) int {
 	return cfg.SkillPointsInitial + (level-1)*cfg.SkillPointsPerLevel
 }
 
-// StatCap 單一素質上限（CONTRACT §3）：min(MaxStat, 有效等級)。Lv1 時 cap=1＝InitialStat
-// 預設值，六圍全部已經「達到上限」，等同「Lv1 不能加點」（契約明講這是刻意的）。
+// StatCap 單一素質上限。2026-09-20 使用者決策「取消等級為基礎數值上限的設定」：預設只受
+// cfg.MaxStat 限制（低等級也能把點數集中投在單一素質，例如 Lv1 就把 48 點全投 STR）。
+// cfg.StatCapByLevel=true 時還原 P5 原規則 min(MaxStat, 有效等級)（Lv1 cap=1＝InitialStat，
+// 等同「Lv1 不能加點」）——保留開關是為了能一鍵回到舊手感，後台「參數設定」可調。
+// ⚠️參考玩家表（reflevel.go refStatCap）刻意固定走等級上限，不吃這個開關：它是所有怪物數值
+// 的基準，跟著玩家規則浮動會讓 P6/P11 兩輪校準（含九級強度向量）全部位移。
 func StatCap(cfg Config, level int) int {
+	if !cfg.StatCapByLevel {
+		return cfg.MaxStat
+	}
 	if level < 1 {
 		level = 1
 	}

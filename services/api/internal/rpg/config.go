@@ -29,9 +29,14 @@ const intMPRegenThreshold = 120
 // Config 遊戲化數值參數集合。全部欄位皆可由後台 /admin/rpg/config 覆寫（JSON 整包 PUT）。
 type Config struct {
 	// --- 初始值與加點規則 ---
-	InitialStat       int    `json:"initial_stat"`        // 六圍初始值（RO 預設 1）
-	InitialFreePoints int    `json:"initial_free_points"` // 初始可配點數（owner 指定 40）
-	MaxStat           int    `json:"max_stat"`            // 單一素質上限
+	InitialStat       int `json:"initial_stat"`        // 六圍初始值（RO 預設 1）
+	InitialFreePoints int `json:"initial_free_points"` // 初始可配點數（owner 指定 40）
+	MaxStat           int `json:"max_stat"`            // 單一素質上限
+	// StatCapByLevel 單一素質是否另外受「有效等級」上限限制（P5 原規則 cap=min(max_stat, level)）。
+	// 2026-09-20 使用者決策「取消等級為基礎數值上限的設定」→ 預設 false，素質只受 max_stat 限制，
+	// 低等級也能把點數集中投在單一素質。保留這個開關是為了能一鍵還原舊規則（後台可調），
+	// 並讓既有測試同時涵蓋兩種模式。⚠️參考玩家表（reflevel.go）刻意不吃這個開關，見該檔說明。
+	StatCapByLevel    bool   `json:"stat_cap_by_level"`
 	CostBase          int    `json:"cost_base"`           // 加點成本公式基底：cost(n)=floor((n-1)/step)+base
 	CostStepEvery     int    `json:"cost_step_every"`     // 加點成本公式的級距（每幾點成本+1）
 	DefaultWeaponType string `json:"default_weapon_type"` // "melee" | "ranged"（現階段沒有裝備欄位，用系統設定決定素質物攻走哪個分支）
@@ -355,6 +360,7 @@ func DefaultConfig() Config {
 		InitialStat:       1,
 		InitialFreePoints: 40,
 		MaxStat:           99,
+		StatCapByLevel:    false,
 		CostBase:          2,
 		CostStepEvery:     10,
 		DefaultWeaponType: "melee",

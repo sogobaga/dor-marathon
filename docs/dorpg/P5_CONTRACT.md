@@ -33,6 +33,7 @@
 - 可配點數＝Total(L) − Σ_six spentBetween(InitialStat, stat)（**改為推導值**；`free_points` 欄位不再是真相，讀取時忽略、寫入時同步維護以免舊碼壞掉，或直接改成不寫）。
 - 加點成本維持 `floor((n−1)/10)+2`。
 - **上限**：每項素質 ≤ min(MaxStat, L)（L＝有效等級）。Lv1 時不能加點，這是刻意的。
+  - ⚠️**2026-09-20 起改由 P14 取代**（docs/dorpg/P14_CONTRACT.md）：使用者決策「取消等級為基礎數值上限的設定」，預設每項素質只受 MaxStat 限制；後台開關 `stat_cap_by_level=true` 可還原本行的舊規則。
 - 端點：`POST /rpg/allocate {stat, points}` 維持；新增 `{stat, mode:"max"}`＝伺服器端反覆 +1 直到「點數不夠」或「達上限」；新增 `POST /rpg/stats/reset`＝六圍全回 InitialStat、寫 6 筆 player_stat_log（cost 負值）。
 - UI：**移除 +5**；保留 +1；新增 **Max**；新增 **還原預設**（需二次確認）。顯示「可配點數 X／總點數 Y（Lv L）」與每項上限。
 

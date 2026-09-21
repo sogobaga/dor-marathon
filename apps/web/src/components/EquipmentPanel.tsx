@@ -17,7 +17,7 @@ import type { ArmorDTO, EquipmentSlot, EquippedGearDTO, RpgElement, WeaponDTO, W
 import {
   ACCESSORY_EFFECT_LABEL, ACCESSORY_EFFECT_ORDER, ARMOR_EQUIP_SLOTS, ELEMENT_LABEL, ELEMENT_ORDER, EQUIP_SLOT_LABEL,
   EQUIP_SLOT_ORDER, RARITY_LABEL, RARITY_COLOR, accessoryEffectKey, elementLabel, formatArmorProfile, formatWeaponProfile,
-  formatWeaponTypeRowBonus,
+  formatWeaponTypeReach, formatWeaponTypeRowBonus,
 } from '@/lib/rpgMeta'
 
 export type EquipmentPanelProps = {
@@ -73,6 +73,11 @@ export default function EquipmentPanel({ equipped, weaponTypes, weapons, armorIt
   const activeType: WeaponTypeDTO | null = weaponTypes.find((t) => t.id === resolvedTypeId) ?? null
   // DORPG P12：該武器類型的前後排加成／貫穿一句話說明（空字串＝該類型沒有這些 traits 鍵，不顯示）。
   const rowBonusText = formatWeaponTypeRowBonus(activeType?.traits)
+  // DORPG P13（契約 §4「裝備頁武器類型卡：顯示『近戰…』或『遠程…』」）：跟 rowBonusText 不同，
+  // 這句一律顯示（近戰／遠程二選一，沒有「沒有這個 trait 就不顯示」的空狀態）——見
+  // formatWeaponTypeReach 型別註解，缺省本來就收斂成「近戰」，讓玩家一定看得到這把武器打不打得到
+  // 被阻擋的後排。
+  const reachText = formatWeaponTypeReach(activeType?.traits)
   const activeElement: RpgElement = (resolvedTypeId && elementByType[resolvedTypeId]) || 'neutral'
   const listForActiveType = activeType
     ? weapons
@@ -130,6 +135,12 @@ export default function EquipmentPanel({ equipped, weaponTypes, weapons, armorIt
                   {rowBonusText && (
                     <div style={{ fontSize: 11.5, color: 'var(--gold)', lineHeight: 1.5, marginBottom: 10, fontWeight: 700 }}>{rowBonusText}</div>
                   )}
+
+                  {/* DORPG P13（契約 §4）：近戰／遠程一律顯示（見 reachText 型別註解，缺省即收斂成
+                      「近戰」，不會是空字串）——讓玩家換武器類型時馬上看出這把打不打得到被前排擋住
+                      的後排，跟上面 rowBonusText 的加成定位互相對照。 */}
+                  <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', lineHeight: 1.5, marginBottom: 10 }}>{reachText}</div>
+
 
                   {activeType.elemental_capable && (
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>

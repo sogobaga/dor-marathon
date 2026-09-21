@@ -42,6 +42,7 @@ import type {
   SummonWave,
   WeaponKind,
   WeaponProfileWire,
+  WeaponReach,
 } from '@/lib/dorpg/types';
 import type { BattleConfig } from '@/lib/dorpg/engine';
 // P3：asRating() 用它的 aspdReference 當 rating.aspd 缺欄位時的中性後備值（見該函式註解）——
@@ -62,6 +63,17 @@ function asWeapon(w: string | undefined, fallback?: WeaponKind): WeaponKind | un
 const ELEMENT_KINDS: readonly ElementKind[] = ['metal', 'wood', 'water', 'fire', 'earth', 'light', 'dark', 'neutral'];
 function asElement(e: string | undefined): ElementKind | undefined {
   return (ELEMENT_KINDS as readonly string[]).includes(e ?? '') ? (e as ElementKind) : undefined;
+}
+
+/**
+ * P13（CONTRACT §2「未設定（缺省）＝melee」）：只收 'melee'|'ranged' 這兩個合法字面值，缺欄位／
+ * 型別跑掉／任何其它字串一律退回 'melee'——跟本檔其餘 as*() 系列「不合法就退回安全預設」的既有
+ * 風格一致，但這裡的預設值選 'melee' 而非「維持 undefined」是刻意的：阻擋是預設規則，遠程才是
+ * 例外，後台武器類型忘了標 reach 時，武器應該表現得「保守（受阻擋）」而不是「意外免疫阻擋」。
+ */
+const WEAPON_REACHES: readonly WeaponReach[] = ['melee', 'ranged'];
+function asReach(v: unknown): WeaponReach {
+  return (WEAPON_REACHES as readonly string[]).includes(v as string) ? (v as WeaponReach) : 'melee';
 }
 
 const ENEMY_SLOTS: readonly EnemySlotId[] = ['rear_left', 'rear_right', 'front_left', 'front_center', 'front_right'];
@@ -178,6 +190,9 @@ function asWeaponProfile(raw: unknown): WeaponProfileWire | null {
     rowBonusRearPct: num(r.rowBonusRearPct, 0),
     pierceChancePct: num(r.pierceChancePct, 0),
     pierceDmgPct: num(r.pierceDmgPct, 0),
+    // P13（CONTRACT §2、WIRE §3「WeaponProfileWire 新增 reach」）：由 type.traits.reach 合併，
+    // 缺省 'melee'——見 asReach() 型別註解。
+    reach: asReach(r.reach),
   };
 }
 
