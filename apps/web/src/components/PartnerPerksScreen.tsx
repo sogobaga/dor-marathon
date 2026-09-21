@@ -378,8 +378,8 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
             })()}
 
             {/* 多品項區塊：單一品項模式完全不渲染（即使資料有 variants），見契約 §1。
-                放在 video_urls 之後、捲動內容最底部；每筆一張卡：左圖(72px 正方縮圖)＋
-                右側名稱/描述(pre-line)＋「前往」按鈕。鎖定判斷共用商家層級 cta_locked，
+                放在 video_urls 之後、捲動內容最底部；每筆一張卡：上方全寬 2:1 banner 圖
+                （v842：使用者要求 2:1 讓產品完整呈現，不用正方縮圖）＋名稱/描述(pre-line)＋「前往」按鈕。鎖定判斷共用商家層級 cta_locked，
                 透過 onCta(shop, v.cta_url) 傳入該品項的連結。 */}
             {isMulti && shop.variants && shop.variants.length > 0 && (
               <div style={{ marginTop: 18 }}>
@@ -414,19 +414,18 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
   )
 }
 
-// 多品項模式的細項商品卡（品名/口味）：左圖 72px 正方縮圖＋右側名稱/描述＋「前往」按鈕。
+// 多品項模式的細項商品卡（品名/口味）：上方全寬 2:1 banner（objectFit cover，與商家 banner 同比例）＋
+// 下方名稱/描述＋「前往」按鈕；無圖時不留空白占位（2:1 空框太搶眼）。
 // 描述用文字節點＋pre-line 渲染（後端存純文字，不進 HTML），不可 dangerouslySetInnerHTML。
 function VariantCard({ variant, locked, onCta }: { variant: PartnerVariant; locked: boolean; onCta: (url?: string) => void }) {
   const showCta = !!variant.cta_url || locked
   return (
-    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: 12 }}>
-      {variant.image_url ? (
+    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, overflow: 'hidden' }}>
+      {variant.image_url && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={variant.image_url} alt="" style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
-      ) : (
-        <div style={{ width: 72, height: 72, borderRadius: 8, background: 'var(--bg-2)', flexShrink: 0 }} />
+        <img src={variant.image_url} alt={variant.name} style={{ width: '100%', aspectRatio: '2 / 1', objectFit: 'cover', display: 'block', background: 'var(--bg-2)' }} />
       )}
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ padding: 12 }}>
         <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--tx)', wordBreak: 'break-word' }}>{variant.name}</div>
         {variant.description && (
           <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.6, whiteSpace: 'pre-line', wordBreak: 'break-word' }}>

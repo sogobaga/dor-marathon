@@ -402,16 +402,16 @@ export default function AdminPartnersPage() {
           )}
 
           {/* 多品項（variants）編輯區：只在 item_mode==='multi' 顯示；資料一律保留，切回單一品項不清空。
-              照抄 content_images 的增刪/上傳/排序寫法：每筆一張卡＝縮圖上傳＋名稱＋描述＋連結＋↑↓刪除。 */}
+              照抄 content_images 的增刪/上傳/排序寫法：每筆一張卡＝2:1 縮圖上傳（前台顯示全寬 2:1 banner）＋名稱＋描述＋連結＋↑↓刪除。 */}
           {form.item_mode === 'multi' && (
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 6 }}>品項列表 variants（例如：巧克力口味／蔓越莓口味…，可排序）</div>
+              <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginBottom: 6 }}>品項列表 variants（例如：巧克力口味／蔓越莓口味…，可排序；圖片建議 2:1 橫式，前台以全寬 banner 顯示）</div>
               {!!(form.variants && form.variants.length) && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
                   {form.variants.map((v, i) => (
                     <div key={i} style={{ ...rowCard, display: 'flex', gap: 10 }}>
                       <div style={{ flexShrink: 0 }}>
-                        <div style={{ width: 72, height: 72, borderRadius: 6, overflow: 'hidden', background: 'var(--bg-2)', border: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <div style={{ width: 144, height: 72, borderRadius: 6, overflow: 'hidden', background: 'var(--bg-2)', border: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="前台以 2:1 banner 顯示（objectFit cover）">
                           {v.image_url ? <img src={v.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 10, color: 'var(--tx-faint)' }}>未上傳</span>}
                         </div>
                         <label style={{ ...tinyBtn, cursor: 'pointer', display: 'block', textAlign: 'center', marginTop: 4, opacity: imgBusy === `variant-${i}` ? 0.5 : 1 }}>
