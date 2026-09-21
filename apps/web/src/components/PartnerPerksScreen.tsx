@@ -432,8 +432,9 @@ function VariantCard({ variant, locked, onCta }: { variant: PartnerVariant; lock
             {variant.description}
           </div>
         )}
+        {/* 寬版占滿整列（v843：使用者回饋左下角小鈕右手難按，改寬版置中） */}
         {showCta && (
-          <button onClick={() => onCta(variant.cta_url)} style={{ ...primaryFullBtn, marginTop: 8, padding: '8px 16px' }}>
+          <button onClick={() => onCta(variant.cta_url)} style={{ ...primaryFullBtn, width: '100%', marginTop: 10, padding: '11px 16px', fontSize: 14.5 }}>
             {locked ? '🔒 前往' : '前往'}
           </button>
         )}
