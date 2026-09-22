@@ -5,6 +5,7 @@ import useSWR from 'swr'
 import { partnersApi, type PartnerShop, type PartnerListMeta, type PartnerVariant } from '@/lib/api'
 import { getUserToken, useUser, withUserAuth } from '@/lib/userAuth'
 import { MediaCarousel, Lightbox, YouTubeEmbed, ytId } from './shared/MediaCarousel'
+import { LoginModal } from './UserAuthBar'
 
 // 跑者充電站（特約商店）前台，兩個畫面：
 // - 列表頁：Banner 卡 + 收藏愛心（樂觀更新＋失敗回滾，比照 RaceRankingScreen 的追蹤鈕）＋「只看最愛」篩選（本地過濾）
@@ -16,6 +17,12 @@ import { MediaCarousel, Lightbox, YouTubeEmbed, ytId } from './shared/MediaCarou
 // VIP 精選 gate：audience='vip_featured' 商家現在全體玩家都看得到卡片本身，真正的門檻擋在「前往」這顆
 // CTA 上——後端算出 cta_locked/cta_lock_reason（不合格時 cta_url 也會被清空），前端點擊時只要看
 // cta_locked 就好，不需要自己重算資格。
+//
+// 未登入的「前往」：優惠是會員才享有（使用者原話 2026-09-22），後端對未登入者清空 cta_url 並給
+// cta_login_required=true，按鈕文字改成「立即登入」、點擊就地彈出 LoginModal（比照 RunMeetScreen／
+// RegistrationScreen：不跳轉，登入後 useUser 轉真 → SWR key 換成 user.id 自動重抓，按鈕自然變回「前往」）。
+// 多品項模式（item_mode==='multi'）：每個 variant 的 cta_url 未登入時也會被後端清空（見
+// docs/partner/VARIANTS_CONTRACT.md「未登入者 CTA」節），VariantCard 同樣顯示「立即登入」。
 // initialShopId：合作商家專屬連結 /shop/{id}（或 PhoneShell 的 ?shop= 深連結）帶入，進頁即直接顯示該商家詳細頁。
 export default function PartnerPerksScreen({ onBack, initialShopId }: { onBack: () => void; initialShopId?: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(() => initialShopId ?? null)
@@ -26,6 +33,8 @@ export default function PartnerPerksScreen({ onBack, initialShopId }: { onBack: 
   // VIP 精選鎖定原因彈窗：同樣提升到這層，理由與 favOverride 一致——列表／詳細任一邊點到鎖定的
   // 「前往」都可能觸發，彈窗狀態不能放進會被卸載的子元件，否則「開彈窗 → 剛好被返回卸載」會憑空消失。
   const [lockedShop, setLockedShop] = useState<PartnerShop | null>(null)
+  // 未登入點「立即登入」的登入彈窗：同樣提升到這層（列表卡片、詳細頁底部 CTA、多品項 VariantCard 都會觸發）。
+  const [showLogin, setShowLogin] = useState(false)
 
   const user = useUser()
   // 與 PartnerShopListView 用同一個 SWR key：只是為了讓 meta（is_vip/user_km/min_km）在詳細頁的鎖定
@@ -36,11 +45,15 @@ export default function PartnerPerksScreen({ onBack, initialShopId }: { onBack: 
   )
   const meta = metaData?.meta ?? null
 
-  // 前往 CTA 的統一處理：鎖定就開原因彈窗，否則才開新分頁。
-  // url 參數選填：多品項模式下每個 variant 有自己的連結，鎖定判斷仍共用商家層級的 cta_locked
+  // 前往 CTA 的統一處理：未登入就開登入彈窗，鎖定就開原因彈窗，否則才開新分頁。
+  // `!getUserToken()` 也一併判定：SWR 快取仍是登出前抓的資料時（cta_url 還在），登出後點下去也不該直接開連結。
+  // 用同步讀 token 而非 useUser()：後者掛載後才水合（首次渲染是 null），避免已登入者在水合前點擊被誤判。
+  // url 參數選填：多品項模式下每個 variant 有自己的連結，登入／鎖定判斷仍共用商家層級的旗標
   // （同一把鎖，見契約 §1），未帶 url 時退回商家層級 cta_url（單一品項模式的既有行為）。
   function handleCta(shop: PartnerShop, url?: string) {
-    if (shop.cta_locked) {
+    if (shop.cta_login_required || !getUserToken()) {
+      setShowLogin(true)
+    } else if (shop.cta_locked) {
       setLockedShop(shop)
     } else {
       const target = url ?? shop.cta_url
@@ -62,8 +75,17 @@ export default function PartnerPerksScreen({ onBack, initialShopId }: { onBack: 
         />
       )}
       {lockedShop && <VipLockedModal shop={lockedShop} meta={meta} onClose={() => setLockedShop(null)} />}
+      {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
     </>
   )
+}
+
+// CTA 按鈕文字：未登入 →「立即登入」（優惠是會員才享有，忽略後台自訂的 cta_label）；VIP 鎖定 → 🔒 加原文字；
+// 其餘用呼叫端給的正常文字（列表卡片「前往」／詳細頁 cta_label 或「立即前往」／VariantCard「前往」）。
+// 接受最小介面而非整個 PartnerShop，讓 VariantCard（只有 locked/loginRequired 兩個布林）也能共用。
+function ctaLabel(state: { cta_login_required?: boolean; cta_locked?: boolean }, normal: string): string {
+  if (state.cta_login_required) return '立即登入'
+  return state.cta_locked ? `🔒 ${normal}` : normal
 }
 
 function PartnerShopListView({
@@ -208,9 +230,10 @@ function ShopCard({
   onDetail: () => void
   onCta: (shop: PartnerShop, url?: string) => void
 }) {
-  // 鎖定的商家後端會把 cta_url 清空，所以按鈕是否顯示不能只看 cta_url，鎖定時也要顯示（點下去開原因彈窗）。
+  // 鎖定／未登入的商家後端會把 cta_url 清空，所以按鈕是否顯示不能只看 cta_url：鎖定時要顯示（點下去開
+  // 原因彈窗）、未登入時也要顯示（文字換成「立即登入」，點下去開登入彈窗）。
   // 多品項模式（item_mode==='multi'）入口卡一律不顯示「前往」，只留「詳細」（見契約 §1）。
-  const showCta = shop.item_mode !== 'multi' && (!!shop.cta_url || !!shop.cta_locked)
+  const showCta = shop.item_mode !== 'multi' && (!!shop.cta_url || !!shop.cta_locked || !!shop.cta_login_required)
   return (
     // 整張卡片可點 → 進詳細頁；內部的愛心／前往／詳細按鈕各自 stopPropagation，避免點它們也觸發進詳細。
     <div onClick={onDetail} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden', cursor: 'pointer' }}>
@@ -244,7 +267,7 @@ function ShopCard({
         <div style={{ display: 'grid', gridTemplateColumns: showCta ? 'minmax(0,1fr) minmax(0,1fr)' : 'minmax(0,1fr)', gap: 8, marginTop: 10 }}>
           <button onClick={(e) => { e.stopPropagation(); onDetail() }} style={ghostFullBtn}>詳細</button>
           {showCta && (
-            <button onClick={(e) => { e.stopPropagation(); onCta(shop) }} style={primaryFullBtn}>{shop.cta_locked ? '🔒 前往' : '前往'}</button>
+            <button onClick={(e) => { e.stopPropagation(); onCta(shop) }} style={primaryFullBtn}>{ctaLabel(shop, '前往')}</button>
           )}
         </div>
       </div>
@@ -303,10 +326,10 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
   )
   const shop = data?.shop ?? null
   const [zoom, setZoom] = useState<{ images: string[]; index: number } | null>(null)
-  // 同 ShopCard：鎖定的商家 cta_url 會被後端清空，按鈕顯示與否要看 cta_locked，不能只看 cta_url。
+  // 同 ShopCard：鎖定／未登入的商家 cta_url 會被後端清空，按鈕顯示與否要看 cta_locked／cta_login_required，不能只看 cta_url。
   // 多品項模式：隱藏底部固定 CTA（商家層級 cta_url 不用），改由下方「品項」區塊各自的「前往」按鈕負責。
   const isMulti = shop?.item_mode === 'multi'
-  const showCta = !!shop && !isMulti && (!!shop.cta_url || !!shop.cta_locked)
+  const showCta = !!shop && !isMulti && (!!shop.cta_url || !!shop.cta_locked || !!shop.cta_login_required)
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
@@ -386,7 +409,7 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
                 <div style={{ fontSize: 14.5, fontWeight: 900, color: 'var(--tx)', marginBottom: 10 }}>品項</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {shop.variants.map((v) => (
-                    <VariantCard key={v.id} variant={v} locked={!!shop.cta_locked} onCta={(url) => onCta(shop, url)} />
+                    <VariantCard key={v.id} variant={v} onCta={(url) => onCta(shop, url)} />
                   ))}
                 </div>
               </div>
@@ -404,7 +427,7 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
             onClick={() => onCta(shop)}
             style={{ ...primaryFullBtn, width: '100%', padding: '12px 0', fontSize: 14.5 }}
           >
-            {shop.cta_locked ? '🔒 ' : ''}{shop.cta_label || '立即前往'}
+            {ctaLabel(shop, shop.cta_label || '立即前往')}
           </button>
         </div>
       )}
@@ -417,8 +440,12 @@ function PartnerShopDetailView({ id, onBack, onCta }: { id: string; onBack: () =
 // 多品項模式的細項商品卡（品名/口味）：上方全寬 2:1 banner（objectFit cover，與商家 banner 同比例）＋
 // 下方名稱/描述＋「前往」按鈕；無圖時不留空白占位（2:1 空框太搶眼）。
 // 描述用文字節點＋pre-line 渲染（後端存純文字，不進 HTML），不可 dangerouslySetInnerHTML。
-function VariantCard({ variant, locked, onCta }: { variant: PartnerVariant; locked: boolean; onCta: (url?: string) => void }) {
-  const showCta = !!variant.cta_url || locked
+// loginRequired：未登入時後端也會清空每個 variant 的 cta_url（比照 locked，見 applyCtaGateToVariants），
+// 按鈕仍要顯示、文字改「立即登入」，點下去交由 onCta → handleCta 判斷開登入彈窗（不看 url 有沒有值）。
+// 按鈕有無與文字看「該品項自己的」旗標（後端只對原本有連結的品項打 cta_login_required／cta_locked），
+// 不看商家層級旗標——否則訪客會在沒連結的品項上看到「立即登入」、會員卻看不到按鈕（2026-09-22 複審）。
+function VariantCard({ variant, onCta }: { variant: PartnerVariant; onCta: (url?: string) => void }) {
+  const showCta = !!variant.cta_url || !!variant.cta_locked || !!variant.cta_login_required
   return (
     <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, overflow: 'hidden' }}>
       {variant.image_url && (
@@ -435,7 +462,7 @@ function VariantCard({ variant, locked, onCta }: { variant: PartnerVariant; lock
         {/* 寬版占滿整列（v843：使用者回饋左下角小鈕右手難按，改寬版置中） */}
         {showCta && (
           <button onClick={() => onCta(variant.cta_url)} style={{ ...primaryFullBtn, width: '100%', marginTop: 10, padding: '11px 16px', fontSize: 14.5 }}>
-            {locked ? '🔒 前往' : '前往'}
+            {ctaLabel({ cta_login_required: variant.cta_login_required, cta_locked: variant.cta_locked }, '前往')}
           </button>
         )}
       </div>

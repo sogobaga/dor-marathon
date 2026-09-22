@@ -29,3 +29,27 @@
 - Neon 臨時分支：191 套用＋再套一次冪等；後台 POST/PUT 帶 variants 往返（順序保持、id 補發、非法 → 400 訊息含索引）；公開 list 有 item_mode 無 variants；detail 有 variants；vip_featured 不合格帳號 detail 的 shop 與每個 variant cta_url 皆空且 cta_locked=true；既有商家（未動）item_mode=single、variants=[]。
 - E2E（Playwright）：後台建多品項商家（3 筆＋排序）→ 前台入口卡只有「詳細」且寬度＝卡片內容寬（無第二欄）；單一品項商家卡仍兩顆；詳細頁多品項底部區塊順序與每筆「前往」開新分頁（攔 window.open）；鎖定情境開 VipLockedModal；四視窗（390/430/768/1280）無橫向溢出；0 新 console error。
 - 審查（唯讀）。
+
+## 4. 未登入者 CTA（v1.2.838＋，2026-09-22 追補）
+
+單一真相。使用者原話：「跑者充電站未登入者的『前往』改為『立即登入』（優惠是會員才享有）」。以下擴充 §1 的
+`applyCtaGate`，與 VIP 精選 gate 是**兩個獨立判定、順序在前**：先看「有沒有登入」，登入後才談「是不是 VIP」。
+
+- **判定順序**：`applyCtaGate(shop, loggedIn, qualifies, minKm)` 新增 `loggedIn`（＝`uid != ""`）參數，放在第一位判斷：
+  1. 未登入（`loggedIn=false`）：商家有設 `cta_url` 時 → `cta_login_required=true`＋清空 `cta_url`（比照 VIP 鎖定慣例，防前端繞過直接讀 API）；`cta_locked` 維持 `false`——VIP 資格要登入後才談。商家本來就沒設連結則三個旗標全 `false`，前端不顯示按鈕（跟登入者看到的一樣）。
+  2. 已登入：才進入既有 `audience='vip_featured'` 且不合格 → `cta_locked=true` 判定（§1 原邏輯不變）。
+  - `List`／`Detail` 皆套用（`uid != ""` 已由 OptionalAuth 中介層提供，兩端點原本就有）。
+- **Detail 對 variants 的擴充**：`applyCtaGateToVariants` 原本只在 `CtaLocked` 時清空每個 variant 的 `cta_url`；現在 `CtaLoginRequired` 也算——未登入時每個品項的 `cta_url` 一樣被清空，理由相同（防前端從 variants 陣列繞過商家層級鎖直接拿到連結）。
+- **欄位**：`PartnerShop` 加 `CtaLoginRequired bool json:"cta_login_required"`（Go）／`cta_login_required?: boolean`（TS `api.ts`）。`true` 時 `cta_url`／每個 `variant.cta_url` 皆已被後端清空。
+- **前端（`PartnerPerksScreen.tsx`）**：
+  - `showLogin` state 提升到 `PartnerPerksScreen` 最外層（比照 `lockedShop`），渲染 `<LoginModal onClose={...} />`（`./UserAuthBar`，就地彈窗、不跳轉）。
+  - `handleCta(shop, url?)` 判定順序：`shop.cta_login_required || !getUserToken()` → 開 `LoginModal`；否則 `shop.cta_locked` → 開 `VipLockedModal`；否則開連結（`url ?? shop.cta_url`）。`!getUserToken()` 是兜底：SWR 快取仍是登出前資料時，登出後點擊也不直接開連結。
+  - `ctaLabel(state, normal)`：`cta_login_required` → `'立即登入'`；否則 `cta_locked` → `` `🔒 ${normal}` ``；否則 `normal`。接受最小介面 `{cta_login_required?, cta_locked?}` 而非整個 `PartnerShop`，讓 `ShopCard`／詳細頁底部 CTA／`VariantCard` 三處共用同一份文字邏輯。
+  - `ShopCard.showCta` 加 `|| !!shop.cta_login_required`（`item_mode!=='multi'` 前提不變，多品項入口卡仍只留「詳細」）；詳細頁底部 CTA 的 `showCta` 同理加一項（`!isMulti` 前提不變）。
+  - `VariantCard` 新增 `loginRequired: boolean` prop（呼叫端傳 `!!shop.cta_login_required`）；`showCta = !!variant.cta_url || locked || loginRequired`；文字改用 `ctaLabel({ cta_login_required: loginRequired, cta_locked: locked }, '前往')`。
+- **不做**：未登入時不重算 VIP 資格（`vipFeaturedEligibility` 對空 `uid` 一律回 `qualifies=false`，但未登入分支在 §4-1 已 `return`，不會走到 §1 的 VIP 判定，`minKm` 因此不影響未登入者的訊息——未登入者看到的是「立即登入」，不是 VIP 門檻文案）。
+- **測試**：Go `service_test.go`（新增）：`TestApplyCtaGate` 純函式六情境（guest 有連結／guest 無連結／guest+vip_featured／member all／member vip_featured 不合格／合格）。`variants_test.go` 加兩條：未登入 Detail 每個 variant `cta_url` 清空、已登入非 VIP 對 `audience=all` 商家 variant `cta_url` 保留（VIP 判定只影響 `audience=vip_featured`，不影響 `all`）。
+
+## 5. 每筆品項旗標（2026-09-22 複審修正）
+- `variants[i].cta_locked`／`variants[i].cta_login_required`（輸出用、`omitempty`、寫入時歸零不入庫）：**只有原本有連結的品項**在被伺服器清空時才打旗標；沒連結的品項兩者皆 false。前台 `VariantCard` 的按鈕有無與文字**只看該品項自己的旗標**，不看商家層級——否則訪客會在沒連結的品項上看到「立即登入」而會員看不到按鈕。
+- 未登入的判定在 `applyCtaGateToVariants` 內**獨立於 `shop.cta_url`**（多品項商家依契約通常不填商家層級連結，若沿用 `applyCtaGate` 只看 `shop.cta_url` 會整批漏掉品項連結——第一輪審查 critical）；多品項且任一品項原有連結 → 商家層級 `cta_login_required=true`（前台 `handleCta` 用它決定開登入彈窗）。單一品項模式殘留的 variants 只清空不設商家層級旗標。

@@ -76,18 +76,29 @@ func ctaLockReason(minKm int) string {
 	return fmt.Sprintf("欲前往須滿足 VIP 會員身分，及累積跑步里程至少 %dKM", minKm)
 }
 
-// applyCtaGate 把「是否合格」套用到單一 shop 的 CTA 動作上：audience='vip_featured' 且不合格時，
-// 鎖住前往按鈕（CtaLocked=true + 原因文案）並清空 CTAURL（防前端被繞過直接讀連結）；
-// 商家本身內容（名稱/簡介/圖片/detail_html）一律對所有人可見，不受此影響。
-func applyCtaGate(shop *PartnerShop, qualifies bool, minKm int) {
+// applyCtaGate 把「是否合格」套用到單一 shop 的 CTA 動作上；商家本身內容（名稱/簡介/圖片/detail_html）
+// 一律對所有人可見，不受此影響。判定順序：
+//  1. 未登入（loggedIn=false）：優惠是會員才享有（使用者原話 2026-09-22：「未登入……顯示的不是『立即前往』
+//     而是『立即登入』，這是會員才享有的優惠」）。商家有設連結時 CtaLoginRequired=true 並清空 CTAURL
+//     （比照 VIP 鎖定慣例：防前端被繞過直接從 API 讀連結）；CtaLocked 維持 false——VIP 資格要登入後才談。
+//     商家本來就沒設連結則三個旗標全 false，前端不顯示按鈕（跟登入者看到的一樣）。
+//  2. audience='vip_featured' 且不合格：鎖住前往按鈕（CtaLocked=true + 原因文案）並清空 CTAURL。
+func applyCtaGate(shop *PartnerShop, loggedIn, qualifies bool, minKm int) {
+	shop.CtaLocked = false
+	shop.CtaLockReason = ""
+	shop.CtaLoginRequired = false
+	if !loggedIn {
+		if shop.CTAURL != "" {
+			shop.CtaLoginRequired = true
+			shop.CTAURL = ""
+		}
+		return
+	}
 	if shop.Audience == "vip_featured" && !qualifies {
 		shop.CtaLocked = true
 		shop.CtaLockReason = ctaLockReason(minKm)
 		shop.CTAURL = ""
-		return
 	}
-	shop.CtaLocked = false
-	shop.CtaLockReason = ""
 }
 
 // ListEnabled 回傳前台商家列表 + 資格 meta。現在所有 audience='vip_featured' 商家內容對所有人可見；
@@ -102,7 +113,7 @@ func (s *Service) ListEnabled(ctx context.Context, uid string) ([]*PartnerShop, 
 		return nil, nil, err
 	}
 	for _, shop := range shops {
-		applyCtaGate(shop, qualifies, minKm)
+		applyCtaGate(shop, uid != "", qualifies, minKm)
 	}
 	vipCount, err := s.repo.CountEnabledByAudience(ctx, "vip_featured")
 	if err != nil {
@@ -118,8 +129,8 @@ func (s *Service) ListEnabled(ctx context.Context, uid string) ([]*PartnerShop, 
 	return shops, meta, nil
 }
 
-// GetDetail 前台詳細；vip_featured 商家內容現在對所有人可見，不合格者只在 CTA 動作上被鎖住
-// （見 applyCtaGate）。
+// GetDetail 前台詳細；vip_featured 商家內容現在對所有人可見，不合格者只在 CTA 動作上被鎖住、
+// 未登入者的 CTA 則改為「須登入」（皆見 applyCtaGate）。
 func (s *Service) GetDetail(ctx context.Context, id, uid string) (*PartnerShopDetail, error) {
 	_, _, minKm, qualifies, err := s.vipFeaturedEligibility(ctx, uid)
 	if err != nil {
@@ -129,20 +140,46 @@ func (s *Service) GetDetail(ctx context.Context, id, uid string) (*PartnerShopDe
 	if err != nil {
 		return nil, err
 	}
-	applyCtaGate(&detail.PartnerShop, qualifies, minKm)
-	applyCtaGateToVariants(detail)
+	loggedIn := uid != ""
+	applyCtaGate(&detail.PartnerShop, loggedIn, qualifies, minKm)
+	applyCtaGateToVariants(detail, loggedIn)
 	return detail, nil
 }
 
-// applyCtaGateToVariants 把 applyCtaGate 鎖在商家層級的同一把鎖，也套用到每個 variant 的前往連結：
-// 伺服器端真 gate，避免前端被繞過直接讀連結（見 docs/partner/VARIANTS_CONTRACT.md §1「CTA gate 擴充」）。
-// 必須在 applyCtaGate(&detail.PartnerShop, ...) 之後呼叫，讀它算出的 CtaLocked。
-func applyCtaGateToVariants(detail *PartnerShopDetail) {
-	if !detail.CtaLocked {
+// applyCtaGateToVariants 把商家層級的 CTA 閘門也套用到每個 variant 的前往連結：伺服器端真 gate，
+// 避免前端被繞過直接讀連結（見 docs/partner/VARIANTS_CONTRACT.md §1「CTA gate 擴充」、§4「未登入者 CTA」、§5）。
+// 逐筆處理：**只有原本有連結的品項**才被清空並打上旗標（CtaLoginRequired／CtaLocked），沒連結的品項
+// 兩旗標皆 false → 前台不出按鈕，訪客與會員看到的按鈕有無一致。
+//   - 未登入：**獨立判定，不透過 shop.CtaLoginRequired**——多品項商家依契約通常不填商家層級 cta_url，
+//     applyCtaGate 只看 shop.CTAURL 會判成「沒有 CTA」而漏掉 variants（2026-09-22 審查抓到的 critical）。
+//     多品項模式且任一 variant 原本有連結 → 同時把商家層級 CtaLoginRequired 設 true（前台 handleCta 用它決定開登入彈窗）。
+//   - 已登入：只有 VIP 鎖定（CtaLocked，由 applyCtaGate 依 audience／qualifies 無條件判定）才清空並打 CtaLocked。
+//
+// 必須在 applyCtaGate(&detail.PartnerShop, ...) 之後呼叫。
+func applyCtaGateToVariants(detail *PartnerShopDetail, loggedIn bool) {
+	if !loggedIn {
+		hadURL := false
+		for i := range detail.Variants {
+			v := &detail.Variants[i]
+			v.CtaLocked, v.CtaLoginRequired = false, false
+			if v.CTAURL != "" {
+				hadURL = true
+				v.CTAURL = ""
+				v.CtaLoginRequired = true
+			}
+		}
+		if hadURL && detail.ItemMode == "multi" {
+			detail.CtaLoginRequired = true
+		}
 		return
 	}
 	for i := range detail.Variants {
-		detail.Variants[i].CTAURL = ""
+		v := &detail.Variants[i]
+		v.CtaLocked, v.CtaLoginRequired = false, false
+		if detail.CtaLocked && v.CTAURL != "" {
+			v.CTAURL = ""
+			v.CtaLocked = true
+		}
 	}
 }
 
@@ -294,6 +331,7 @@ func validateVariants(req *AdminPartnerShopRequest) error {
 			return fmt.Errorf("variants[%d].image_url: %w", i, ErrInvalidImageURL)
 		}
 		v.CTAURL = strings.TrimSpace(v.CTAURL)
+		v.CtaLocked, v.CtaLoginRequired = false, false // 輸出用旗標不入庫
 		if !validHTTPURL(v.CTAURL) {
 			return fmt.Errorf("variants[%d].cta_url: %w", i, ErrInvalidURL)
 		}

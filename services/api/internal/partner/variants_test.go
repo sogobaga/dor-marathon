@@ -225,11 +225,11 @@ func TestApplyCtaGateToVariants_LockedClearsAllCTAURLs(t *testing.T) {
 			{ID: "2", Name: "蔓越莓口味", CTAURL: "https://b.example.com"},
 		},
 	}
-	applyCtaGate(&detail.PartnerShop, false /* qualifies */, 10)
+	applyCtaGate(&detail.PartnerShop, true /* loggedIn */, false /* qualifies */, 10)
 	if !detail.CtaLocked {
 		t.Fatalf("expected CtaLocked=true after applyCtaGate with qualifies=false")
 	}
-	applyCtaGateToVariants(detail)
+	applyCtaGateToVariants(detail, true)
 	for i, v := range detail.Variants {
 		if v.CTAURL != "" {
 			t.Fatalf("Variants[%d].CTAURL = %q, want cleared", i, v.CTAURL)
@@ -244,11 +244,11 @@ func TestApplyCtaGateToVariants_UnlockedLeavesCTAURLsAlone(t *testing.T) {
 			{ID: "1", Name: "巧克力口味", CTAURL: "https://a.example.com"},
 		},
 	}
-	applyCtaGate(&detail.PartnerShop, true /* qualifies */, 10)
+	applyCtaGate(&detail.PartnerShop, true /* loggedIn */, true /* qualifies */, 10)
 	if detail.CtaLocked {
 		t.Fatalf("expected CtaLocked=false after applyCtaGate with qualifies=true")
 	}
-	applyCtaGateToVariants(detail)
+	applyCtaGateToVariants(detail, true)
 	if detail.Variants[0].CTAURL != "https://a.example.com" {
 		t.Fatalf("CTAURL was cleared despite gate being unlocked: %q", detail.Variants[0].CTAURL)
 	}
@@ -259,10 +259,161 @@ func TestApplyCtaGateToVariants_AudienceAllNeverLocked(t *testing.T) {
 		PartnerShop: PartnerShop{Audience: "all"},
 		Variants:    []PartnerVariant{{ID: "1", Name: "巧克力口味", CTAURL: "https://a.example.com"}},
 	}
-	applyCtaGate(&detail.PartnerShop, false, 10)
-	applyCtaGateToVariants(detail)
+	applyCtaGate(&detail.PartnerShop, true /* loggedIn */, false, 10)
+	applyCtaGateToVariants(detail, true)
 	if detail.Variants[0].CTAURL == "" {
 		t.Fatalf("audience=all shop should never have variants CTA cleared")
+	}
+}
+
+// TestApplyCtaGateToVariants_GuestClearsAllCTAURLs 未登入 Detail：每個 variant 的 cta_url 都要被清空
+// （比照鎖定時的行為），不能只清商家層級的 CTAURL——否則前端能繞過商家層級鎖直接從 variants 拿到連結。
+// 用「多品項商家、商家層級 cta_url 留空」這個真實資料形態（後台提示多品項不使用商家層級連結）：
+// applyCtaGate 單看 shop.CTAURL 會判成沒有 CTA，所以 variants 閘門必須自己判定並把 CtaLoginRequired 設起來。
+func TestApplyCtaGateToVariants_GuestClearsAllCTAURLs(t *testing.T) {
+	detail := &PartnerShopDetail{
+		PartnerShop: PartnerShop{Audience: "all", ItemMode: "multi", CTAURL: ""},
+		Variants: []PartnerVariant{
+			{ID: "1", Name: "巧克力口味", CTAURL: "https://a.example.com"},
+			{ID: "2", Name: "蔓越莓口味", CTAURL: ""},
+			{ID: "3", Name: "蜂蜜檸檬口味", CTAURL: "https://c.example.com"},
+		},
+	}
+	applyCtaGate(&detail.PartnerShop, false /* loggedIn */, false, 10)
+	if detail.CtaLoginRequired {
+		t.Fatalf("shop-level CTAURL is empty: applyCtaGate alone must not flag login required")
+	}
+	applyCtaGateToVariants(detail, false)
+	if !detail.CtaLoginRequired {
+		t.Fatalf("expected CtaLoginRequired=true for guest on multi shop whose variants have links")
+	}
+	if detail.CtaLocked {
+		t.Fatalf("guest must never be VIP-locked (VIP is decided after login)")
+	}
+	for i, v := range detail.Variants {
+		if v.CTAURL != "" {
+			t.Fatalf("Variants[%d].CTAURL = %q, want cleared for guest", i, v.CTAURL)
+		}
+	}
+	// 每筆旗標：原本有連結的 1、3 要 CtaLoginRequired=true；沒連結的 2 不得有旗標（訪客/會員按鈕有無一致）
+	if !detail.Variants[0].CtaLoginRequired || !detail.Variants[2].CtaLoginRequired {
+		t.Fatalf("variants with links must carry cta_login_required: %+v", detail.Variants)
+	}
+	if detail.Variants[1].CtaLoginRequired || detail.Variants[1].CtaLocked {
+		t.Fatalf("variant without link must have no flags: %+v", detail.Variants[1])
+	}
+	for i, v := range detail.Variants {
+		if v.CtaLocked {
+			t.Fatalf("Variants[%d] guest must never be CtaLocked", i)
+		}
+	}
+}
+
+// TestApplyCtaGateToVariants_LockedFlagsOnlyLinkedVariants 已登入不合格 + vip_featured：
+// 有連結的品項清空並打 CtaLocked；沒連結的品項不打旗標。
+func TestApplyCtaGateToVariants_LockedFlagsOnlyLinkedVariants(t *testing.T) {
+	detail := &PartnerShopDetail{
+		PartnerShop: PartnerShop{Audience: "vip_featured", ItemMode: "multi"},
+		Variants: []PartnerVariant{
+			{ID: "1", Name: "A", CTAURL: "https://a.example.com"},
+			{ID: "2", Name: "B"},
+		},
+	}
+	applyCtaGate(&detail.PartnerShop, true, false /* 不合格 */, 10)
+	applyCtaGateToVariants(detail, true)
+	if !detail.CtaLocked {
+		t.Fatalf("expected shop CtaLocked")
+	}
+	if detail.Variants[0].CTAURL != "" || !detail.Variants[0].CtaLocked || detail.Variants[0].CtaLoginRequired {
+		t.Fatalf("linked variant: %+v", detail.Variants[0])
+	}
+	if detail.Variants[1].CtaLocked || detail.Variants[1].CtaLoginRequired {
+		t.Fatalf("unlinked variant must have no flags: %+v", detail.Variants[1])
+	}
+}
+
+// TestApplyCtaGateToVariants_QualifiedVipMultiKeepsLinks 已登入 VIP 合格 + vip_featured 多品項：連結保留、無旗標。
+func TestApplyCtaGateToVariants_QualifiedVipMultiKeepsLinks(t *testing.T) {
+	detail := &PartnerShopDetail{
+		PartnerShop: PartnerShop{Audience: "vip_featured", ItemMode: "multi", CTAURL: "https://shop.example.com"},
+		Variants:    []PartnerVariant{{ID: "1", Name: "A", CTAURL: "https://a.example.com"}},
+	}
+	applyCtaGate(&detail.PartnerShop, true, true /* 合格 */, 10)
+	applyCtaGateToVariants(detail, true)
+	if detail.CtaLocked || detail.CtaLoginRequired || detail.Variants[0].CTAURL != "https://a.example.com" || detail.Variants[0].CtaLocked || detail.Variants[0].CtaLoginRequired {
+		t.Fatalf("qualified VIP must keep everything: shop=%+v v=%+v", detail.PartnerShop, detail.Variants[0])
+	}
+}
+
+// TestValidateVariants_ResetsOutputFlags 寫入時輸出用旗標一律歸零（不入庫）。
+func TestValidateVariants_ResetsOutputFlags(t *testing.T) {
+	req := &AdminPartnerShopRequest{ItemMode: "multi", Variants: []PartnerVariant{{Name: "A", CtaLocked: true, CtaLoginRequired: true}}}
+	if err := validateVariants(req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if req.Variants[0].CtaLocked || req.Variants[0].CtaLoginRequired {
+		t.Fatalf("output flags must be reset on write: %+v", req.Variants[0])
+	}
+}
+
+// TestApplyCtaGateToVariants_GuestVipFeaturedMultiStillCleared 未登入 + audience=vip_featured 多品項：
+// VIP 判定要登入後才談（CtaLocked 維持 false），但 variants 連結一樣不得洩漏。
+func TestApplyCtaGateToVariants_GuestVipFeaturedMultiStillCleared(t *testing.T) {
+	detail := &PartnerShopDetail{
+		PartnerShop: PartnerShop{Audience: "vip_featured", ItemMode: "multi"},
+		Variants:    []PartnerVariant{{ID: "1", Name: "A", CTAURL: "https://a.example.com"}},
+	}
+	applyCtaGate(&detail.PartnerShop, false, false, 10)
+	applyCtaGateToVariants(detail, false)
+	if detail.CtaLocked || !detail.CtaLoginRequired || detail.Variants[0].CTAURL != "" || !detail.Variants[0].CtaLoginRequired || detail.Variants[0].CtaLocked {
+		t.Fatalf("guest vip_featured multi: locked=%v loginRequired=%v v=%+v", detail.CtaLocked, detail.CtaLoginRequired, detail.Variants[0])
+	}
+}
+
+// TestApplyCtaGateToVariants_GuestNoLinksNoFlags 未登入、多品項但沒有任何連結：三個旗標全 false，
+// 前端不顯示任何按鈕（跟登入者看到的一樣）。
+func TestApplyCtaGateToVariants_GuestNoLinksNoFlags(t *testing.T) {
+	detail := &PartnerShopDetail{
+		PartnerShop: PartnerShop{Audience: "all", ItemMode: "multi"},
+		Variants:    []PartnerVariant{{ID: "1", Name: "A"}},
+	}
+	applyCtaGate(&detail.PartnerShop, false, false, 10)
+	applyCtaGateToVariants(detail, false)
+	if detail.CtaLocked || detail.CtaLoginRequired {
+		t.Fatalf("no links anywhere: expected no flags, got locked=%v loginRequired=%v", detail.CtaLocked, detail.CtaLoginRequired)
+	}
+}
+
+// TestApplyCtaGateToVariants_GuestSingleModeClearsButNoFlag 未登入、單一品項模式但殘留 variants 資料：
+// 連結仍清空（防洩漏），但不設 CtaLoginRequired——variants 在單一品項模式不渲染，設了會讓底部多出一顆按鈕。
+func TestApplyCtaGateToVariants_GuestSingleModeClearsButNoFlag(t *testing.T) {
+	detail := &PartnerShopDetail{
+		PartnerShop: PartnerShop{Audience: "all", ItemMode: "single"},
+		Variants:    []PartnerVariant{{ID: "1", Name: "A", CTAURL: "https://a.example.com"}},
+	}
+	applyCtaGate(&detail.PartnerShop, false, false, 10)
+	applyCtaGateToVariants(detail, false)
+	if detail.CtaLoginRequired || detail.Variants[0].CTAURL != "" {
+		t.Fatalf("single mode guest: loginRequired=%v url=%q", detail.CtaLoginRequired, detail.Variants[0].CTAURL)
+	}
+}
+
+// TestApplyCtaGateToVariants_LoggedInNonVIPAllAudienceKeepsVariantCTAURLs 已登入非 VIP、商家
+// audience='all'（不受 VIP 精選門檻）：不是 guest 也未被鎖定，variants 的 cta_url 應原樣保留。
+func TestApplyCtaGateToVariants_LoggedInNonVIPAllAudienceKeepsVariantCTAURLs(t *testing.T) {
+	detail := &PartnerShopDetail{
+		PartnerShop: PartnerShop{Audience: "all", CTAURL: "https://shop.example.com"},
+		Variants: []PartnerVariant{
+			{ID: "1", Name: "巧克力口味", CTAURL: "https://a.example.com"},
+		},
+	}
+	applyCtaGate(&detail.PartnerShop, true /* loggedIn */, false /* qualifies：非 VIP */, 10)
+	if detail.CtaLocked || detail.CtaLoginRequired {
+		t.Fatalf("expected no gate for logged-in user on audience=all shop: locked=%v loginRequired=%v", detail.CtaLocked, detail.CtaLoginRequired)
+	}
+	applyCtaGateToVariants(detail, true)
+	if detail.Variants[0].CTAURL != "https://a.example.com" {
+		t.Fatalf("CTAURL was cleared despite gate being unlocked: %q", detail.Variants[0].CTAURL)
 	}
 }
 

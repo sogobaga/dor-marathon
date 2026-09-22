@@ -3775,6 +3775,9 @@ export interface PartnerVariant {       // 多品項模式下的細項商品（�
   description: string     // 純文字，可含換行；前端用文字節點＋pre-line 渲染，不進 HTML
   image_url: string
   cta_url: string
+  /** 輸出用（Detail）：該品項原本有連結但被伺服器清空——未登入 → cta_login_required、VIP 鎖定 → cta_locked；沒連結的品項兩者皆缺席／false */
+  cta_locked?: boolean
+  cta_login_required?: boolean
 }
 
 export interface PartnerShop {          // 列表用
@@ -3790,6 +3793,7 @@ export interface PartnerShop {          // 列表用
   is_favorited: boolean
   cta_locked?: boolean       // true＝audience='vip_featured' 且該使用者不合格；此時 cta_url 已被後端清空
   cta_lock_reason?: string   // cta_locked=true 時的原因文案；false 時為空字串
+  cta_login_required?: boolean // true＝未登入且商家有設前往連結；cta_url 已被後端清空，前台顯示「立即登入」
   item_mode: 'single' | 'multi' // single=入口按鈕照舊；multi=入口只保留「詳細」、隱藏「前往」
 }
 

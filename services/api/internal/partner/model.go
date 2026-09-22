@@ -12,6 +12,11 @@ type PartnerVariant struct {
 	Description string `json:"description"`
 	ImageURL    string `json:"image_url"`
 	CTAURL      string `json:"cta_url"`
+	// 以下兩個是「輸出用」旗標（前台 Detail 才有意義；寫入時 validateVariants 一律歸零、不存進 JSONB）：
+	// 該品項原本有連結、但因未登入／VIP 鎖定被伺服器清空 → 前台據此顯示「立即登入」／「🔒 前往」。
+	// 沒連結的品項兩者皆 false，訪客與會員看到的按鈕有無才會一致（2026-09-22 複審抓到）。
+	CtaLocked        bool `json:"cta_locked,omitempty"`
+	CtaLoginRequired bool `json:"cta_login_required,omitempty"`
 }
 
 // PartnerShop 前台列表用（僅 enabled=true 的商家會被回傳；audience='vip_featured' 商家現在對所有人
@@ -29,7 +34,10 @@ type PartnerShop struct {
 	IsFavorited   bool   `json:"is_favorited"`
 	CtaLocked     bool   `json:"cta_locked"`      // true：audience=='vip_featured' 且使用者不合格；此時 CTAURL 已被清空
 	CtaLockReason string `json:"cta_lock_reason"` // CtaLocked=true 時的鎖定原因說明；否則空字串
-	ItemMode      string `json:"item_mode"`       // single | multi；多品項時前台入口卡只留「詳細」（見 apps/web ShopCard）
+	// CtaLoginRequired true：未登入（uid 空字串）且商家有設定前往連結；此時 CTAURL 已被清空、CtaLocked=false。
+	// 前台把「前往」換成「立即登入」（優惠是會員才享有，見 Service.applyCtaGate）。登入後重新請求即回到一般判定。
+	CtaLoginRequired bool   `json:"cta_login_required"`
+	ItemMode         string `json:"item_mode"` // single | multi；多品項時前台入口卡只留「詳細」（見 apps/web ShopCard）
 }
 
 // PartnerListMeta 隨列表一併回傳的 VIP 精選資格資訊，供前端顯示鎖定提示卡；
