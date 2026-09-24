@@ -3,6 +3,7 @@
 成品：
 - `dor-city-explore-promo.mp4`：1920×1080、30fps、47 秒，H.264 Main + AAC，含原創合成配樂
 - `dor-city-explore-promo-720p.mp4`：720p 版，適合手機傳送
+- `dor-city-explore-promo-vertical.mp4`：直式 1080×1920（9:16），給 Instagram Reels / YouTube Shorts；同一條時間軸與配樂，重要文字避開上方約 220px、下方約 360px 的平台 UI 區
 
 主題只圍繞「城市探索」：打卡 → 關主挑戰 → 卡片收集。只用正式資料，不使用 DORPG 測試素材。
 
@@ -28,7 +29,8 @@
 
 ## 修改與重新算圖
 
-- `index.html`：整支影片（CSS 動畫，`animation-delay` = 影片秒數），瀏覽器開 `index.html?t=20` 可預覽第 20 秒
+- `index.html`：橫式影片（CSS 動畫，`animation-delay` = 影片秒數），瀏覽器開 `index.html?t=20` 可預覽第 20 秒
+- `index-vertical.html`：直式影片，時間軸與橫式相同；改時間點時兩個檔案要一起改（`music.py` 的 `TRANSITIONS` 也要對齊）
 - `music.py`：純 Python 合成配樂（120 BPM，C–G–Am–F）
 - `render.mjs`：Playwright 逐格截圖 → ffmpeg 合成
 
@@ -36,7 +38,8 @@
 cd promo/city-explore
 ./fetch_assets.sh                    # 更新正式圖片（需可連 img.dor.tw）
 node render.mjs --still 3,20,34      # 輸出單張預覽 still-*.png
-node render.mjs                      # 算完整影片（約 4 分鐘）
+node render.mjs                      # 橫式完整影片（約 4 分鐘）
+node render.mjs --page index-vertical.html --out dor-city-explore-promo-vertical.mp4   # 直式版
 ```
 
 需求：Node + playwright、ffmpeg（PATH 或 `FFMPEG=` 指定）、python3。字型首次執行時自動從 Google Fonts 下載到 `fonts/`（不進 git）。

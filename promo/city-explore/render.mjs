@@ -1,5 +1,6 @@
 // DOR｜城市探索 宣傳片算圖腳本
-// 用法：node render.mjs [--fps 30] [--from 0] [--to 44] [--out dor-city-explore-promo.mp4] [--still 12,20]
+// 用法：node render.mjs [--page index.html] [--fps 30] [--from 0] [--to 47] [--out dor-city-explore-promo.mp4] [--still 12,20]
+// 直式版：node render.mjs --page index-vertical.html --out dor-city-explore-promo-vertical.mp4
 // 需求：playwright（全域或本機）、ffmpeg（PATH 或 FFMPEG 環境變數）、python3（產生配樂）
 import { createRequire } from 'node:module';
 import { spawn, execSync } from 'node:child_process';
@@ -10,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const arg = (k, d) => { const i = process.argv.indexOf(`--${k}`); return i > 0 ? process.argv[i + 1] : d; };
 const fps = +arg('fps', 30);
+const pageFile = arg('page', 'index.html');
 const out = join(here, arg('out', 'dor-city-explore-promo.mp4'));
 const ffmpeg = process.env.FFMPEG || 'ffmpeg';
 
@@ -26,7 +28,10 @@ if (!existsSync(join(here, 'fonts/local.css'))) {
 
 const browser = await playwright.chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
-await page.goto('file://' + join(here, 'index.html'));
+await page.goto('file://' + join(here, pageFile));
+// 頁面以 window.SIZE 宣告畫面尺寸（直式版 1080×1920），預設 1920×1080
+const [W, H] = await page.evaluate(() => window.SIZE || [1920, 1080]);
+await page.setViewportSize({ width: W, height: H });
 await page.evaluate(async () => {
   await document.fonts.ready;
   await Promise.all([...document.images].map(i => i.decode().catch(() => {})));
@@ -38,7 +43,7 @@ const still = arg('still');
 if (still) {
   for (const t of still.split(',').map(Number)) {
     await page.evaluate(t => window.seek(t), t);
-    await page.screenshot({ path: join(here, `still-${t}.png`) });
+    await page.screenshot({ path: join(here, `still-${pageFile.replace(/\.html$/, '')}-${t}.png`) });
     console.log('still', t);
   }
   await browser.close();

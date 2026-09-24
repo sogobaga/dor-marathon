@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>DOR 城市探索宣傳片（直式）</title>
+<link rel="stylesheet" href="fonts/local.css">
+<style>
+/* =========================================================
+   DOR｜城市探索 產品宣傳影片 — 直式版（1080×1920，47 秒，Reels / Shorts）
+   與 index.html（橫式）共用同一條時間軸與配樂；素材、文字、資料來源完全相同。
+   安全區：上方約 220px、下方約 360px、右側約 120px 會被平台 UI 蓋住，
+   重要文字都放在 y 230–1560、x 60–960 之間。
+   ========================================================= */
+:root{
+  --bg:#09090f; --card:#12141a; --fug:#2DE59A; --gold:#FFC24B; --red:#FF4B5C; --purple:#9D8CFF;
+  --ink:#f4f6fb; --dim:#9aa3b5;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1080px;height:1920px;overflow:hidden;background:var(--bg)}
+body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}
+#stage{position:relative;width:1080px;height:1920px;overflow:hidden;background:var(--bg)}
+.sc{position:absolute;inset:0;overflow:hidden;opacity:0}
+.cover{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.center{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.g{color:var(--fug)} .y{color:var(--gold)} .p{color:var(--purple)}
+
+/* ---------- 共用 keyframes（同橫式版） ---------- */
+@keyframes in{from{opacity:0}to{opacity:1}}
+@keyframes out{from{opacity:1}to{opacity:0}}
+@keyframes up{from{opacity:0;transform:translateY(60px)}to{opacity:1;transform:none}}
+@keyframes upS{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+@keyframes left{from{opacity:0;transform:translateX(-80px)}to{opacity:1;transform:none}}
+@keyframes right{from{opacity:0;transform:translateX(80px)}to{opacity:1;transform:none}}
+@keyframes pop{0%{opacity:0;transform:scale(.3)}60%{opacity:1;transform:scale(1.12)}100%{opacity:1;transform:scale(1)}}
+@keyframes popPin{0%{opacity:0;transform:translate(-50%,-100%) scale(.2)}60%{opacity:1;transform:translate(-50%,-100%) scale(1.2)}100%{opacity:1;transform:translate(-50%,-100%) scale(1)}}
+@keyframes zoomOut{from{transform:scale(1.15)}to{transform:scale(1)}}
+@keyframes blurIn{from{opacity:0;filter:blur(24px);transform:scale(1.15)}to{opacity:1;filter:blur(0);transform:none}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%{transform:translate(-50%,-50%) scale(.4);opacity:.9}100%{transform:translate(-50%,-50%) scale(1.6);opacity:0}}
+@keyframes stamp{0%{opacity:0;transform:translate(-50%,-50%) rotate(-12deg) scale(3)}55%{opacity:1;transform:translate(-50%,-50%) rotate(-12deg) scale(.92)}100%{opacity:1;transform:translate(-50%,-50%) rotate(-12deg) scale(1)}}
+@keyframes flip{0%{opacity:0;transform:perspective(1400px) rotateY(-90deg) scale(.8)}100%{opacity:1;transform:perspective(1400px) rotateY(0) scale(1)}}
+@keyframes rise{0%{opacity:0;transform:translateY(20px) scale(.6)}20%{opacity:1;transform:translateY(0) scale(1.1)}80%{opacity:1;transform:translateY(-50px) scale(1)}100%{opacity:0;transform:translateY(-80px)}}
+@keyframes shine{from{transform:translateX(-120%) skewX(-20deg)}to{transform:translateX(320%) skewX(-20deg)}}
+@keyframes starFill{from{color:#3a3f4d;transform:scale(.6)}60%{transform:scale(1.35)}to{color:var(--gold);transform:scale(1)}}
+@keyframes toGold{from{background:var(--purple)}to{background:var(--gold)}}
+@keyframes fill{from{width:0}to{width:100%}}
+@keyframes typing{from{max-width:0}to{max-width:40em}}
+@keyframes press{0%,100%{transform:scale(1)}50%{transform:scale(.93)}}
+@property --n{syntax:'<integer>';inherits:false;initial-value:0}
+@keyframes count{from{--n:0}to{--n:var(--to)}}
+.counter{counter-reset:n var(--n)}
+.counter::after{content:counter(n)}
+
+/* ---------- 共用元件 ---------- */
+.step{display:inline-flex;align-items:center;gap:16px;font-size:30px;font-weight:700;letter-spacing:.12em;color:var(--fug)}
+.step b{font-family:'Space Grotesk',sans-serif;font-size:28px;padding:6px 16px;border:2px solid var(--fug);border-radius:999px;letter-spacing:.08em}
+.h1{font-size:80px;font-weight:900;line-height:1.2;letter-spacing:.02em}
+.h2{font-size:72px;font-weight:900;line-height:1.25}
+.body{font-size:32px;line-height:1.6;color:#c9d0de;font-weight:500}
+.chip{display:inline-flex;align-items:center;gap:10px;padding:10px 24px;border-radius:999px;font-size:28px;font-weight:700;background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14)}
+.glow{position:absolute;border-radius:50%;filter:blur(120px)}
+.pin{position:absolute;width:60px;height:60px;transform:translate(-50%,-100%);display:flex;align-items:center;justify-content:center}
+.pin::before{content:'';position:absolute;inset:0;border-radius:50% 50% 50% 0;background:inherit;transform:rotate(-45deg);box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.pin i{position:relative;font-style:normal;font-weight:900;font-size:28px;color:#fff}
+.dor-icon{border-radius:22%;box-shadow:0 0 0 3px rgba(255,255,255,.12),0 30px 80px rgba(0,0,0,.6),0 0 90px rgba(45,229,154,.25)}
+
+#map{position:absolute;left:0;top:0;width:1080px;height:1920px}
+
+/* =========================================================
+   S1 開場：全台點位地圖 0 – 6.4s（文字上、地圖下）
+   ========================================================= */
+#s1{animation:in .5s both 0s,out .6s forwards 5.8s}
+#s1 .txt{position:absolute;left:70px;right:70px;top:250px}
+#s1 .l1{font-size:46px;font-weight:700;color:#d9deea;animation:up 1s cubic-bezier(.2,.8,.2,1) both .3s}
+#s1 .l2{font-size:76px;font-weight:900;line-height:1.25;margin-top:12px;animation:up 1s cubic-bezier(.2,.8,.2,1) both 1.2s}
+#s1 .stats{display:flex;gap:60px;margin-top:40px}
+#s1 .stat{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s1 .stat:nth-child(1){animation-delay:2.2s} #s1 .stat:nth-child(2){animation-delay:2.5s}
+#s1 .num{display:flex;align-items:baseline;font-family:'Space Grotesk',sans-serif;font-size:104px;font-weight:700;line-height:1}
+#s1 .num .counter{animation:count 2.4s cubic-bezier(.2,.7,.2,1) both}
+#s1 .stat:nth-child(1) .num{color:var(--purple)} #s1 .stat:nth-child(1) .counter{--to:1000;animation-delay:2.3s}
+#s1 .stat:nth-child(2) .num{color:var(--gold)}   #s1 .stat:nth-child(2) .counter{--to:570;animation-delay:2.6s}
+#s1 .num sup{font-size:60px;margin-left:4px}
+#s1 .lbl{font-size:30px;font-weight:700;margin-top:8px;display:flex;align-items:center;gap:12px}
+#s1 .lbl::before{content:'';width:16px;height:16px;border-radius:50%;background:var(--c);box-shadow:0 0 14px var(--c)}
+
+/* =========================================================
+   S2 品牌 6 – 11.2s
+   ========================================================= */
+#s2{animation:in .6s both 6s,out .6s forwards 10.6s}
+#s2 .logo{display:flex;flex-direction:column;align-items:center;gap:36px;animation:blurIn 1.1s cubic-bezier(.2,.8,.2,1) both 6.3s}
+#s2 .logo img{width:300px;height:300px}
+#s2 .logo .word{font-size:120px;font-weight:900;letter-spacing:.08em;display:flex;align-items:center;gap:10px}
+#s2 .logo .dot{color:var(--red)}
+#s2 .tag{font-size:92px;font-weight:900;line-height:1.3;margin-top:60px;animation:up 1s cubic-bezier(.2,.8,.2,1) both 7.5s}
+#s2 .pillars{display:flex;gap:20px;margin-top:60px}
+#s2 .pillars .chip{font-size:34px;padding:14px 26px}
+#s2 .pillars .chip:nth-child(1){animation:pop .6s both 8.4s}
+#s2 .pillars .chip:nth-child(2){animation:pop .6s both 8.65s}
+#s2 .pillars .chip:nth-child(3){animation:pop .6s both 8.9s}
+#s2 .pillars img{width:44px;height:44px}
+
+/* =========================================================
+   S3 STEP 01 打卡 11 – 18.8s（手機上、說明下）
+   ========================================================= */
+#s3{animation:in .6s both 11s,out .6s forwards 18.2s}
+#s3 .glow.a{left:200px;top:300px;width:680px;height:680px;background:var(--fug);opacity:.25}
+#s3 .phone{position:absolute;left:345px;top:230px;width:390px;height:740px;border-radius:58px;background:#000;padding:16px;box-shadow:0 0 0 3px #2a2e38,0 50px 120px rgba(0,0,0,.7);animation:up 1s cubic-bezier(.2,.8,.2,1) both 11.2s}
+#s3 .screen{position:relative;width:100%;height:100%;border-radius:44px;overflow:hidden;background:#101826}
+#s3 .screen svg{position:absolute;inset:0;width:100%;height:100%}
+#s3 .notch{position:absolute;left:50%;top:12px;width:120px;height:32px;border-radius:20px;background:#000;transform:translateX(-50%);z-index:5}
+#s3 .topbar{position:absolute;left:0;right:0;top:0;padding:58px 24px 16px;background:linear-gradient(#09090f,rgba(9,9,15,0));font-size:24px;font-weight:700;z-index:3}
+#s3 .topbar small{display:block;font-size:18px;color:var(--dim);font-weight:500;margin-top:4px}
+#s3 .range{position:absolute;left:52%;top:47%;width:270px;height:270px;border-radius:50%;transform:translate(-50%,-50%);background:rgba(45,229,154,.12);border:3px dashed rgba(45,229,154,.7);animation:in .6s both 12.4s}
+#s3 .ring{position:absolute;left:52%;top:47%;width:270px;height:270px;border-radius:50%;border:4px solid var(--fug);animation:pulse 1.4s ease-out 4 both 12.6s}
+#s3 .me{position:absolute;left:50%;top:78%;width:32px;height:32px;margin:-16px 0 0 -16px;border-radius:50%;background:#3b8beb;border:6px solid #fff;box-shadow:0 0 0 14px rgba(59,139,235,.3);animation:walk 1.8s cubic-bezier(.4,0,.3,1) both 12.2s}
+@keyframes walk{from{left:30%;top:86%}to{left:47%;top:53%}}
+#s3 .pin.tgt{left:52%;top:47%;background:var(--purple);animation:popPin .5s both 11.9s,toGold .3s both 14.6s}
+#s3 .pin.tgt i{animation:out .2s forwards 14.6s}
+#s3 .pin.tgt b{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:28px;color:#3a2600;opacity:0;animation:in .2s both 14.7s}
+#s3 .btn{position:absolute;left:24px;right:24px;bottom:34px;height:88px;border-radius:24px;background:var(--fug);color:#05140e;font-size:32px;font-weight:900;display:flex;align-items:center;justify-content:center;gap:12px;overflow:hidden;animation:upS .5s both 13.4s,press .3s ease-in-out both 14.2s}
+#s3 .btn::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent);animation:shine .9s ease-in-out both 13.6s}
+#s3 .toast{position:absolute;left:20px;right:20px;top:140px;padding:18px 20px;border-radius:22px;background:rgba(18,20,26,.95);border:2px solid var(--gold);font-size:23px;font-weight:900;color:var(--gold);display:flex;align-items:center;gap:12px;z-index:4;animation:pop .5s both 14.6s}
+#s3 .toast img{width:36px;height:36px}
+#s3 .reward{position:absolute;display:flex;align-items:center;gap:10px;font-family:'Space Grotesk','Noto Sans TC',sans-serif;font-size:50px;font-weight:700;z-index:6;text-shadow:0 4px 18px rgba(0,0,0,.7)}
+#s3 .reward img{width:60px;height:60px}
+#s3 .reward.dp{left:90px;top:520px;color:var(--gold);animation:rise 2s ease-out both 14.9s}
+#s3 .reward.gp{left:790px;top:600px;color:var(--fug);animation:rise 2s ease-out both 15.2s}
+#s3 .side{position:absolute;left:70px;right:70px;top:1000px}
+#s3 .side>.step,#s3 .side>.h1{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s3 .side .step{animation-delay:11.4s}
+#s3 .side .h1{font-size:66px;margin-top:14px;animation-delay:11.7s}
+#s3 .rules{margin-top:24px;display:grid;gap:14px}
+#s3 .rule{display:flex;align-items:center;gap:20px;font-size:32px;font-weight:700;animation:left .7s cubic-bezier(.2,.8,.2,1) both}
+#s3 .rule:nth-child(1){animation-delay:12.6s} #s3 .rule:nth-child(2){animation-delay:13.2s} #s3 .rule:nth-child(3){animation-delay:15.3s}
+#s3 .rule span{flex:none;width:54px;height:54px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:rgba(45,229,154,.14);border:2px solid rgba(45,229,154,.5);color:var(--fug);font-family:'Space Grotesk',sans-serif;font-size:28px}
+#s3 .rule small{display:block;font-size:24px;font-weight:500;color:var(--dim);margin-top:2px}
+
+/* =========================================================
+   S4 揭曉：場景 + 立繪 + 叫陣 18.4 – 25s
+   ========================================================= */
+#s4{animation:in .5s both 18.4s,out .6s forwards 24.4s}
+#s4 .bgblur{filter:blur(28px) brightness(.4) saturate(1.2);transform:scale(1.2)}
+#s4 .band{position:absolute;left:0;right:0;top:330px;height:560px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+#s4 .band img{width:100%;height:100%;object-fit:cover;animation:zoomOut 7s linear both 18.4s}
+#s4 .band::after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(9,9,15,0) 55%,rgba(9,9,15,.85))}
+#s4 .where{position:absolute;left:60px;right:60px;top:236px;display:flex;align-items:center;gap:16px;animation:left .8s cubic-bezier(.2,.8,.2,1) both 18.8s}
+#s4 .where .badge{padding:8px 22px;border-radius:999px;background:var(--gold);color:#3a2600;font-size:28px;font-weight:900}
+#s4 .where .pl{font-size:42px;font-weight:900;text-shadow:0 4px 20px rgba(0,0,0,.6)}
+#s4 .where .pl small{font-size:26px;font-weight:700;color:#e3e7f0;margin-left:12px}
+#s4 .stampbox{position:absolute;left:330px;top:560px;width:0;height:0}
+#s4 .stamp{position:absolute;left:0;top:0;padding:12px 30px;border:8px solid var(--red);border-radius:18px;color:var(--red);font-family:'Space Grotesk',sans-serif;font-size:64px;font-weight:700;letter-spacing:.08em;background:rgba(9,9,15,.5);white-space:nowrap;animation:stamp .45s cubic-bezier(.3,1.4,.5,1) both 19.2s}
+#s4 .master{position:absolute;left:420px;top:560px;height:1120px;filter:drop-shadow(0 30px 60px rgba(0,0,0,.7));animation:up 1s cubic-bezier(.2,.8,.2,1) both 19.6s}
+#s4 .dlg{position:absolute;left:50px;right:50px;top:1250px;padding:48px 44px 36px;border-radius:32px;background:rgba(12,14,20,.94);border:2px solid rgba(255,194,75,.55);box-shadow:0 30px 90px rgba(0,0,0,.6);animation:up .8s cubic-bezier(.2,.8,.2,1) both 20s}
+#s4 .dlg .who{position:absolute;left:40px;top:-28px;padding:8px 26px;border-radius:14px;background:var(--gold);color:#3a2600;font-size:30px;font-weight:900}
+#s4 .dlg .line{font-size:38px;font-weight:700;line-height:1.6;min-height:60px}
+#s4 .dlg .t{display:inline-block;overflow:hidden;white-space:nowrap;vertical-align:bottom}
+#s4 .dlg .l1 .t{animation:typing 1.3s steps(16) both 20.5s}
+#s4 .dlg .l2{color:var(--gold);opacity:0;animation:in .4s both 22.2s}
+#s4 .dlg .btns{display:flex;justify-content:flex-end;margin-top:18px;animation:pop .5s both 23s}
+#s4 .dlg .btns span{padding:16px 34px;border-radius:18px;font-size:32px;font-weight:900;background:var(--fug);color:#05140e;box-shadow:0 0 40px rgba(45,229,154,.5);animation:press .3s ease-in-out both 23.9s}
+
+/* =========================================================
+   S5 STEP 02 挑戰關主 24.6 – 31.8s
+   ========================================================= */
+#s5{animation:in .6s both 24.6s,out .6s forwards 31.2s}
+#s5 .bg{filter:blur(22px) brightness(.3) saturate(1.2);transform:scale(1.15)}
+#s5 .master{position:absolute;right:-20px;top:200px;height:520px;filter:drop-shadow(0 30px 80px rgba(0,0,0,.7));animation:right 1s cubic-bezier(.2,.8,.2,1) both 24.7s}
+#s5 .side{position:absolute;left:60px;top:240px;width:640px}
+#s5 .side>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s5 .side .step{animation-delay:24.8s}
+#s5 .side .name{margin-top:20px;font-size:124px;font-weight:900;line-height:1.1;background:linear-gradient(180deg,#ffffff,#b9f5d9);-webkit-background-clip:text;color:transparent;animation-delay:25.1s}
+#s5 .side .title{font-size:34px;font-weight:700;color:var(--gold);animation-delay:25.3s}
+#s5 .side .tags{display:flex;flex-wrap:wrap;gap:14px;margin-top:24px;animation-delay:25.5s}
+#s5 .side .tags .chip{font-size:26px;padding:8px 20px}
+#s5 .skill{position:absolute;left:60px;right:60px;top:690px;padding:24px 30px;border-radius:24px;background:rgba(18,40,28,.9);border:2px solid rgba(45,229,154,.5);animation:pop .55s both 26s}
+#s5 .skill small{display:block;font-size:22px;color:var(--fug);font-weight:900;letter-spacing:.12em}
+#s5 .skill b{display:block;font-size:40px;font-weight:900;margin-top:4px}
+#s5 .skill span{display:block;font-size:26px;color:#c9d0de;margin-top:6px}
+#s5 .hud{position:absolute;left:60px;right:60px;top:890px;padding:34px 40px;border-radius:32px;background:rgba(12,14,20,.92);border:2px solid rgba(255,255,255,.1);box-shadow:0 40px 120px rgba(0,0,0,.6);animation:up .9s cubic-bezier(.2,.8,.2,1) both 25.6s}
+#s5 .hud .hd{display:flex;justify-content:space-between;align-items:center;font-size:30px;font-weight:900}
+#s5 .hud .hd span{font-size:22px;padding:6px 16px;border-radius:999px;background:rgba(255,75,92,.18);color:var(--red);font-weight:900;letter-spacing:.06em}
+#s5 .hud .sub{font-size:22px;color:var(--dim);margin-top:4px}
+#s5 .segs{display:grid;gap:20px;margin-top:24px}
+#s5 .seg .row{display:flex;justify-content:space-between;align-items:baseline;font-size:28px;font-weight:700}
+#s5 .seg .row small{font-size:22px;color:var(--dim);font-weight:500}
+#s5 .seg .bar{height:16px;border-radius:8px;background:rgba(255,255,255,.08);margin-top:10px;overflow:hidden}
+#s5 .seg .bar i{display:block;height:100%;border-radius:8px;background:var(--fug);box-shadow:0 0 16px rgba(45,229,154,.7);animation:fill linear both}
+#s5 .seg:nth-child(1) .bar i{animation-duration:.9s;animation-delay:26.3s}
+#s5 .seg:nth-child(2) .bar i{animation-duration:1.5s;animation-delay:27.2s;background:var(--gold);box-shadow:0 0 16px rgba(255,194,75,.7)}
+#s5 .seg:nth-child(3) .bar i{animation-duration:.7s;animation-delay:28.7s}
+#s5 .seg .ok{color:var(--fug);opacity:0;margin-left:8px}
+#s5 .seg:nth-child(1) .ok{animation:in .2s both 27.2s} #s5 .seg:nth-child(2) .ok{animation:in .2s both 28.7s} #s5 .seg:nth-child(3) .ok{animation:in .2s both 29.4s}
+#s5 .result{margin-top:26px;padding-top:22px;border-top:2px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:16px}
+#s5 .result .s{font-size:64px;line-height:1;color:#3a3f4d}
+#s5 .result .s:nth-child(1){animation:starFill .4s both 29.5s}
+#s5 .result .s:nth-child(2){animation:starFill .4s both 29.8s}
+#s5 .result .s:nth-child(3){animation:starFill .4s both 30.1s}
+#s5 .result .lbl{white-space:nowrap;font-size:32px;font-weight:900;margin-left:10px;opacity:0;animation:in .3s both 30.4s}
+#s5 .extra{position:absolute;left:60px;right:60px;top:1462px;display:flex;gap:14px}
+#s5 .extra .chip{font-size:24px;padding:10px 20px;animation:pop .5s both}
+#s5 .extra .chip:nth-child(1){animation-delay:29.6s} #s5 .extra .chip:nth-child(2){animation-delay:29.8s}
+
+/* =========================================================
+   S6 STEP 03 收服得卡 31.4 – 37.4s（卡片上、文字下）
+   ========================================================= */
+#s6{animation:in .6s both 31.4s,out .6s forwards 36.8s}
+#s6 .rays{position:absolute;left:540px;top:680px;width:2200px;height:2200px;margin:-1100px 0 0 -1100px;background:repeating-conic-gradient(rgba(255,194,75,.14) 0 6deg,transparent 6deg 18deg);border-radius:50%;-webkit-mask:radial-gradient(circle,#000 10%,transparent 60%);mask:radial-gradient(circle,#000 10%,transparent 60%);opacity:0;animation:in .6s both 32.9s,spin 30s linear infinite 31.4s}
+#s6 .glow.a{left:240px;top:380px;width:600px;height:600px;background:var(--gold);opacity:.25}
+#s6 .flip{position:absolute;left:540px;top:680px;width:620px;height:868px;margin:-434px 0 0 -310px;perspective:2000px;animation:up .8s cubic-bezier(.2,.8,.2,1) both 31.6s}
+#s6 .flip .inner{position:relative;width:100%;height:100%;transform-style:preserve-3d;animation:turn 1s cubic-bezier(.5,0,.2,1) both 32.4s}
+@keyframes turn{from{transform:rotateY(180deg) scale(.92)}to{transform:rotateY(0) scale(1)}}
+#s6 .face{position:absolute;inset:0;border-radius:28px;overflow:hidden;backface-visibility:hidden;box-shadow:0 40px 140px rgba(0,0,0,.8),0 0 90px rgba(255,194,75,.35)}
+#s6 .face img{width:100%;height:100%;object-fit:cover}
+#s6 .back{transform:rotateY(180deg);background:radial-gradient(circle at 50% 40%,#1f2a3a,#0b0e15);border:6px solid #3a3322;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:30px}
+#s6 .back img{width:200px;height:200px;border-radius:44px;opacity:.9}
+#s6 .back b{font-size:200px;font-weight:900;color:rgba(255,194,75,.35);line-height:1}
+#s6 .sheen{position:absolute;top:0;bottom:0;left:0;width:35%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);animation:shine 1.2s ease-in-out both 33.6s}
+#s6 .side{position:absolute;left:60px;right:60px;top:1170px;text-align:center;display:flex;flex-direction:column;align-items:center}
+#s6 .side>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s6 .side .step{animation-delay:31.6s}
+#s6 .side .h1{margin-top:16px;font-size:76px;animation-delay:31.9s}
+#s6 .side .body{margin-top:10px;font-size:30px;animation-delay:32.3s}
+#s6 .got{display:inline-flex;align-items:center;gap:14px;margin-top:26px;padding:14px 30px;border-radius:999px;background:var(--fug);color:#05140e;font-size:34px;font-weight:900;animation:pop .5s both 33.4s!important}
+#s6 .got img{width:44px;height:44px}
+
+/* =========================================================
+   S7 卡片圖鑑 37 – 42.6s（4 欄 × 3 列）
+   ========================================================= */
+#s7{animation:in .6s both 37s,out .6s forwards 42s}
+#s7 .glow.a{left:-200px;top:0;width:700px;height:700px;background:var(--purple);opacity:.22}
+#s7 .glow.b{right:-200px;bottom:200px;width:800px;height:800px;background:var(--fug);opacity:.16}
+#s7 .head{position:absolute;left:60px;right:60px;top:240px}
+#s7 .head .h2{animation:up .9s cubic-bezier(.2,.8,.2,1) both 37.2s}
+#s7 .head .body{font-size:27px;margin-top:4px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 37.5s}
+#s7 .grid{position:absolute;left:60px;right:60px;top:470px;display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+#s7 .c{position:relative;aspect-ratio:857/1200;border-radius:16px;overflow:hidden;animation:flip .6s cubic-bezier(.2,.8,.2,1) both}
+#s7 .c img{width:100%;height:100%;object-fit:cover}
+#s7 .c.own{box-shadow:0 0 0 4px var(--gold),0 0 40px rgba(255,194,75,.5)}
+#s7 .c.lock{box-shadow:0 0 0 2px rgba(255,255,255,.08)}
+#s7 .c.lock img{filter:grayscale(1) brightness(.5)}
+#s7 .c.lock::after{content:'未收服';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:5px 14px;border-radius:999px;background:rgba(9,9,15,.8);border:1.5px solid rgba(255,255,255,.2);font-size:20px;font-weight:900;color:#c9d0de;white-space:nowrap}
+#s7 .grid .c:nth-child(1){animation-delay:37.8s} #s7 .grid .c:nth-child(2){animation-delay:37.9s} #s7 .grid .c:nth-child(3){animation-delay:38s}
+#s7 .grid .c:nth-child(4){animation-delay:38.1s} #s7 .grid .c:nth-child(5){animation-delay:38.2s} #s7 .grid .c:nth-child(6){animation-delay:38.3s}
+#s7 .grid .c:nth-child(7){animation-delay:38.4s} #s7 .grid .c:nth-child(8){animation-delay:38.5s} #s7 .grid .c:nth-child(9){animation-delay:38.6s}
+#s7 .grid .c:nth-child(10){animation-delay:38.7s} #s7 .grid .c:nth-child(11){animation-delay:38.8s} #s7 .grid .c:nth-child(12){animation-delay:38.9s}
+#s7 .prog{position:absolute;left:60px;right:60px;top:1470px;display:flex;align-items:baseline;justify-content:center;gap:16px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 39.2s}
+#s7 .prog .v{font-family:'Space Grotesk',sans-serif;font-size:72px;font-weight:700;color:var(--gold);line-height:1}
+#s7 .prog .v small{font-size:40px;color:var(--dim)}
+#s7 .prog .k{font-size:30px;color:#c9d0de;font-weight:700}
+
+/* =========================================================
+   S8 CTA 42.2 – 47s（背景沿用點位地圖）
+   ========================================================= */
+#s8{animation:in .6s both 42.2s}
+#s8 .shade{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(9,9,15,.5),rgba(9,9,15,.92) 70%)}
+#s8 .logo{position:relative;display:flex;flex-direction:column;align-items:center;gap:30px;animation:blurIn 1s cubic-bezier(.2,.8,.2,1) both 42.4s}
+#s8 .logo img{width:240px;height:240px}
+#s8 .logo .word{font-size:104px;font-weight:900;letter-spacing:.08em}
+#s8 .logo .dot{color:var(--red)}
+#s8 .cta{position:relative;font-size:72px;font-weight:900;line-height:1.3;margin-top:60px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 43.1s}
+#s8 .sub{position:relative;font-size:32px;color:#c9d0de;font-weight:500;margin-top:20px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 43.5s}
+#s8 .url{position:relative;overflow:hidden;margin-top:56px;padding:22px 64px;border-radius:999px;background:var(--fug);color:#05140e;font-family:'Space Grotesk',sans-serif;font-size:60px;font-weight:700;letter-spacing:.04em;box-shadow:0 0 60px rgba(45,229,154,.5);animation:pop .6s both 44s}
+#s8 .url::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent);animation:shine 1s ease-in-out both 44.9s}
+#s8 .inner{position:absolute;left:0;right:0;top:230px;bottom:360px}
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <canvas id="map" width="1080" height="1920"></canvas>
+
+  <!-- S1 開場 -->
+  <section class="sc" id="s1">
+    <div class="txt">
+      <div class="l1">你每天經過的城市，</div>
+      <div class="l2">其實是一張<br><span class="y">還沒展開的藏寶圖</span>。</div>
+      <div class="stats">
+        <div class="stat"><div class="num"><span class="counter"></span><sup>+</sup></div><div class="lbl" style="--c:var(--purple)">個打卡點</div></div>
+        <div class="stat"><div class="num"><span class="counter"></span><sup>+</sup></div><div class="lbl" style="--c:var(--gold)">位在地關主</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- S2 品牌 -->
+  <section class="sc center" id="s2">
+    <div class="glow" style="left:140px;top:560px;width:800px;height:700px;background:var(--fug);opacity:.18"></div>
+    <div class="logo">
+      <img class="dor-icon" src="../../apps/web/public/icon-512.png">
+      <div class="word">城市探索</div>
+    </div>
+    <div class="tag">把<span class="g">城市</span>，<br>變成你的<span class="y">遊戲場</span></div>
+    <div class="pillars">
+      <div class="chip"><img src="../../apps/web/public/ui/icons/icon_map_pin_gold.png">打卡揭曉</div>
+      <div class="chip"><img src="../../apps/web/public/ui/icons/icon_trophy_gold.png">挑戰關主</div>
+      <div class="chip"><img src="../../apps/web/public/ui/icons/icon_card_collect.png">收集卡片</div>
+    </div>
+  </section>
+
+  <!-- S3 STEP 01 打卡 -->
+  <section class="sc" id="s3">
+    <div class="glow a"></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="notch"></div>
+        <svg viewBox="0 0 434 904" preserveAspectRatio="xMidYMid slice">
+          <rect width="434" height="904" fill="#101826"/>
+          <path d="M-20 250 C 120 300 200 180 300 260 S 420 360 460 320" stroke="#1d4a6b" stroke-width="44" fill="none"/>
+          <path d="M0 560 L434 480 M90 0 L160 904 M330 0 L380 904 M0 700 L434 760" stroke="#27324a" stroke-width="12" fill="none"/>
+          <circle cx="330" cy="620" r="70" fill="#15301f"/>
+        </svg>
+        <div class="topbar">🗺️ 城市探索・GPS 地圖<small>大安森林公園 附近</small></div>
+        <div class="range"></div>
+        <div class="ring"></div>
+        <div class="pin tgt"><i>?</i><b>★</b></div>
+        <div class="me"></div>
+        <div class="toast"><img src="../../apps/web/public/ui/icons/icon_map_pin_gold.png">打卡成功！關主揭曉</div>
+        <div class="btn">📍 前往打卡</div>
+      </div>
+    </div>
+    <div class="reward dp"><img src="../../apps/web/public/ui/icons/icon_dp_coin.png">+DP</div>
+    <div class="reward gp">+GP</div>
+    <div class="side">
+      <div class="step"><b>STEP 01</b>打卡</div>
+      <div class="h1">走到現場，<br>神秘打卡點<span class="y">就此揭曉</span></div>
+      <div class="rules">
+        <div class="rule"><span>1</span><div>GPS 範圍內即可打卡<small>不必邊跑邊打卡，到了就算數</small></div></div>
+        <div class="rule"><span>2</span><div>揭曉場景與在地關主<small>未探索的「？」點，打卡後才知道是誰</small></div></div>
+        <div class="rule"><span>3</span><div>每次打卡隨機獲得 <em style="font-style:normal;color:var(--gold)">DP</em>＋<em style="font-style:normal;color:var(--fug)">GP</em><small>同一點過 24 小時冷卻，可再次打卡</small></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- S4 揭曉 -->
+  <section class="sc" id="s4">
+    <img class="cover bgblur" src="assets/DOR-TPE-001-scene.webp">
+    <div class="band"><img src="assets/DOR-TPE-001-scene.webp"></div>
+    <div class="where"><span class="badge">打卡揭曉</span><span class="pl">大安森林公園<small>臺北市・大安區</small></span></div>
+    <img class="master" src="assets/DOR-TPE-001-master.webp">
+    <div class="stampbox"><div class="stamp">CHECK IN!</div></div>
+    <div class="dlg">
+      <div class="who">大安小鹿</div>
+      <div class="line l1"><span class="t">「蟬都叫成這樣了，你還不加速？」</span></div>
+      <div class="line l2">要接受大安小鹿的叫陣嗎？</div>
+      <div class="btns"><span>▶ 前往挑戰</span></div>
+    </div>
+  </section>
+
+  <!-- S5 STEP 02 挑戰關主 -->
+  <section class="sc" id="s5">
+    <img class="cover bg" src="assets/DOR-TPE-001-scene.webp">
+    <img class="master" src="assets/DOR-TPE-001-master.webp">
+    <div class="side">
+      <div class="step"><b>STEP 02</b>挑戰關主</div>
+      <div class="name">大安小鹿</div>
+      <div class="title">— 大安的傳說級守門人 —</div>
+      <div class="tags"><span class="chip y">★★★★★</span><span class="chip">節奏跑混合型</span><span class="chip">主線Boss／封面級關主</span></div>
+    </div>
+    <div class="skill"><small>必殺技能</small><b>森林節奏接管</b><span>沿大安森林園道開啟極限定速，逆風也不掉拍。</span></div>
+    <div class="hud">
+      <div class="hd">關主課表<span>挑戰中</span></div>
+      <div class="sub">依課表完成每一段，GPS 自動判定</div>
+      <div class="segs">
+        <div class="seg"><div class="row"><div>暖身<span class="ok">✓</span></div><small>穩住節奏</small></div><div class="bar"><i></i></div></div>
+        <div class="seg"><div class="row"><div>節奏跑<span class="ok">✓</span></div><small>守住目標配速</small></div><div class="bar"><i></i></div></div>
+        <div class="seg"><div class="row"><div>緩和<span class="ok">✓</span></div><small>收操完成</small></div><div class="bar"><i></i></div></div>
+      </div>
+      <div class="result"><span class="s">★</span><span class="s">★</span><span class="s">★</span><span class="lbl">挑戰成功 3★</span></div>
+    </div>
+    <div class="extra"><span class="chip">⏱ 自由挑戰・刷新最短時間</span><span class="chip">🏆 挑戰者排行</span></div>
+  </section>
+
+  <!-- S6 STEP 03 收服得卡 -->
+  <section class="sc" id="s6">
+    <div class="glow a"></div>
+    <div class="rays"></div>
+    <div class="flip"><div class="inner">
+      <div class="face back"><img src="../../apps/web/public/icon-512.png"><b>?</b></div>
+      <div class="face front"><img src="assets/DOR-TPE-001-card.webp"><div class="sheen"></div></div>
+    </div></div>
+    <div class="side">
+      <div class="step"><b>STEP 03</b>收集卡片</div>
+      <div class="h1">拿下 <span class="y">3★</span>，收服關主</div>
+      <div class="body">每位關主都有專屬卡面，收服後永久收藏進卡片圖鑑</div>
+      <div class="got"><img src="../../apps/web/public/ui/icons/icon_card_collect.png">已收服此關主・卡片已收藏</div>
+    </div>
+  </section>
+
+  <!-- S7 卡片圖鑑 -->
+  <section class="sc" id="s7">
+    <div class="glow a"></div><div class="glow b"></div>
+    <div class="head">
+      <div class="h2">收集你的<span class="y">城市圖鑑</span></div>
+      <div class="body">到城市探索中進行打卡任務，可以收集意想不到的卡片唷～</div>
+    </div>
+    <div class="grid">
+      <div class="c own"><img src="assets/DOR-TPE-001-card.webp"></div>
+      <div class="c own"><img src="assets/DOR-TPE-002-card.webp"></div>
+      <div class="c own"><img src="assets/DOR-NTP-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-TXG-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-KHH-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-TNN-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-TAO-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-HSZ-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-CHA-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-ILA-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-HUA-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-TTT-001-card.webp"></div>
+    </div>
+    <div class="prog"><div class="v">3<small> / 572</small></div><div class="k">張關主卡</div></div>
+  </section>
+
+  <!-- S8 CTA -->
+  <section class="sc" id="s8">
+    <div class="shade"></div>
+    <div class="inner center">
+      <div class="logo">
+        <img class="dor-icon" src="../../apps/web/public/icon-512.png">
+        <div class="word">城市探索</div>
+      </div>
+      <div class="cta">出發吧！<br>讓城市因你的<span class="g">腳步</span>而精彩</div>
+      <div class="sub">登入會員，你的第一個打卡點就在附近</div>
+      <div class="url">www.dor.tw</div>
+    </div>
+  </section>
+
+</div>
+<script src="points.js"></script>
+<script>
+  window.DURATION = 47;
+  window.SIZE = [1080, 1920];
+
+  // ---------- 點位地圖（canvas，依 t 繪製） ----------
+  const cv = document.getElementById('map'), cx = cv.getContext('2d');
+  const LAT0 = 26.45, LAT1 = 21.85, LNG0 = 118.15, K = 1000 / (LAT0 - LAT1), KX = K * Math.cos(24 * Math.PI / 180);
+  const rnd = (i => () => (i = (i * 16807) % 2147483647) / 2147483647)(42);
+  const pts = window.PTS.map(([lng, lat, boss]) => ({ lng, lat, boss, j: rnd() }));
+  const ease = x => x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.pow(1 - x, 3);
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+
+  function drawMap(t) {
+    cx.clearRect(0, 0, 1080, 1920);
+    // S1：地圖在文字下方；S8：放大置中當背景
+    let a, ox, oy, sc;
+    if (t < 6.4) { a = clamp01(t / .4) * clamp01((6.4 - t) / .6); sc = 1.02; ox = 150; oy = 700; }
+    else if (t >= 42.2) { a = clamp01((t - 42.2) / .8) * .5; sc = 1.4; ox = 12; oy = 250; }
+    else return;
+    cx.globalAlpha = a;
+    for (const p of pts) {
+      const start = t < 6.4 ? .3 + (LAT0 - p.lat) / (LAT0 - LAT1) * 2.6 + p.j * .5 : -1;
+      const k = ease((t - start) / .45);
+      if (k <= 0) continue;
+      const x = ox + (p.lng - LNG0) * KX * sc, y = oy + (LAT0 - p.lat) * K * sc;
+      const col = p.boss ? '255,194,75' : '157,140,255';
+      const r = (p.boss ? 4.2 : 3.4) * (1 + (1 - k) * 1.6);
+      cx.fillStyle = `rgba(${col},${.18 * k})`;
+      cx.beginPath(); cx.arc(x, y, r * 2.2, 0, 7); cx.fill();
+      cx.fillStyle = `rgba(${col},${k})`;
+      cx.beginPath(); cx.arc(x, y, r, 0, 7); cx.fill();
+    }
+    cx.globalAlpha = 1;
+  }
+
+  window.seek = t => {
+    for (const a of document.getAnimations()) { a.pause(); a.currentTime = t * 1000; }
+    drawMap(t);
+  };
+  const q = new URLSearchParams(location.search);
+  window.seek(q.has('t') ? +q.get('t') : 0);
+</script>
+</body>
+</html>
