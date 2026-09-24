@@ -312,6 +312,10 @@ func main() {
 		},
 		middleware.RequireAuth(authSvc),
 	)
+	// 每日報告「穿戴串接」段落數據來源（見 internal/ops WearableReporter 註解）：*integration.
+	// TerraHandler 已滿足該介面（ProviderStatuses 方法），不需要額外轉接層。掛在自檢排程同一顆每小時
+	// ticker 上，不另開排程（比照上面 opsHandler.SetEinvoiceReporter）。
+	opsHandler.SetWearableReporter(terraHandler)
 
 	// COROS 手錶直連：OAuth2 連接 + webhook 收活動。未設定 COROS_CLIENT_ID/SECRET → enabled()=false，
 	// webhook 只 ack 不處理。token 加密沿用 STRAVA_TOKEN_KEY（跨 provider 共用金鑰，見 repository.go）。

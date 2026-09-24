@@ -1,6 +1,8 @@
 package ops
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -223,6 +225,103 @@ func TestBuildDailyReportMessage_TruncatesLongRaceList(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("expected fixed section %q to survive truncation, got:\n%s", want, msg)
 		}
+	}
+}
+
+// --- 穿戴串接（Terra，2026-09-24）：buildWearableSection / formatWearableLine ---
+
+// fakeWearableReporter 假 WearableReporter 實作，供不連 DB 的單元測試用。
+type fakeWearableReporter struct {
+	statuses []WearableProviderStatus
+	err      error
+}
+
+func (f fakeWearableReporter) ProviderStatuses(ctx context.Context) ([]WearableProviderStatus, error) {
+	return f.statuses, f.err
+}
+
+func TestBuildWearableSection_NilReporterReturnsNil(t *testing.T) {
+	if got := buildWearableSection(context.Background(), nil); got != nil {
+		t.Fatalf("buildWearableSection(nil) = %v, want nil", got)
+	}
+}
+
+func TestBuildWearableSection_ErrorReturnsNilInsteadOfFailingReport(t *testing.T) {
+	fake := fakeWearableReporter{err: errors.New("terra down")}
+	if got := buildWearableSection(context.Background(), fake); got != nil {
+		t.Fatalf("buildWearableSection() = %v, want nil when ProviderStatuses errors", got)
+	}
+}
+
+func TestBuildWearableSection_PassesThroughStatuses(t *testing.T) {
+	want := []WearableProviderStatus{{Provider: "garmin", Connected: 3}}
+	fake := fakeWearableReporter{statuses: want}
+	got := buildWearableSection(context.Background(), fake)
+	if len(got) != 1 || got[0].Provider != "garmin" || got[0].Connected != 3 {
+		t.Fatalf("buildWearableSection() = %+v, want %+v", got, want)
+	}
+}
+
+func TestFormatWearableLine_NoDataShowsUnavailable(t *testing.T) {
+	line := formatWearableLine(WearableProviderStatus{Provider: "coros", Connected: 2})
+	if !strings.Contains(line, "COROS") || !strings.Contains(line, "2 人已連結") || !strings.Contains(line, "無法取得") {
+		t.Errorf("unexpected line: %q", line)
+	}
+	if strings.Contains(line, "⚠️") {
+		t.Errorf("should not warn when last data is unknown (can't tell if stale): %q", line)
+	}
+}
+
+func TestFormatWearableLine_FreshDataNoWarning(t *testing.T) {
+	fresh := time.Now().Add(-1 * time.Hour)
+	line := formatWearableLine(WearableProviderStatus{Provider: "garmin", Connected: 5, LastDataAt: &fresh})
+	if strings.Contains(line, "⚠️") {
+		t.Errorf("fresh data (1h ago) should not warn: %q", line)
+	}
+}
+
+func TestFormatWearableLine_StaleDataWarns(t *testing.T) {
+	stale := time.Now().Add(-49 * time.Hour)
+	line := formatWearableLine(WearableProviderStatus{Provider: "garmin", Connected: 5, LastDataAt: &stale})
+	if !strings.HasPrefix(line, "⚠️ ") {
+		t.Errorf("expected ⚠️ prefix for data older than 48h, got: %q", line)
+	}
+}
+
+func TestFormatWearableLine_ExactlyAtThresholdNoWarning(t *testing.T) {
+	// time.Since(t) > wearableStaleAfter 用嚴格大於：剛好 48 小時不算逾期，避免邊界抖動誤報。
+	edge := time.Now().Add(-48 * time.Hour)
+	line := formatWearableLine(WearableProviderStatus{Provider: "garmin", Connected: 1, LastDataAt: &edge})
+	if strings.HasPrefix(line, "⚠️") {
+		t.Errorf("exactly 48h should not yet warn (strict >), got: %q", line)
+	}
+}
+
+func TestAssembleDailyReportMessage_WearableSectionAppended(t *testing.T) {
+	d := baseReportData()
+	fresh := time.Now().Add(-30 * time.Minute)
+	stale := time.Now().Add(-72 * time.Hour)
+	d.Wearable = []WearableProviderStatus{
+		{Provider: "garmin", Connected: 10, LastDataAt: &fresh},
+		{Provider: "coros", Connected: 1, LastDataAt: &stale},
+	}
+	msg := buildDailyReportMessage(d)
+	if !strings.Contains(msg, "⌚ 穿戴串接") {
+		t.Fatalf("expected wearable section header, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "GARMIN：10 人已連結") {
+		t.Errorf("expected garmin line, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "⚠️ COROS：1 人已連結") {
+		t.Errorf("expected ⚠️ COROS stale line, got:\n%s", msg)
+	}
+}
+
+func TestAssembleDailyReportMessage_NoWearableSectionWhenEmpty(t *testing.T) {
+	d := baseReportData() // d.Wearable 為 nil（未注入/查詢失敗）
+	msg := buildDailyReportMessage(d)
+	if strings.Contains(msg, "穿戴串接") {
+		t.Errorf("should not show wearable section when d.Wearable is empty, got:\n%s", msg)
 	}
 }
 

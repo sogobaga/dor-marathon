@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -328,7 +329,7 @@ func TestFetchTerraActivities_TwoActivitiesDecoded(t *testing.T) {
 	}
 	from, _ := time.Parse("2006-01-02", "2026-08-01")
 	to, _ := time.Parse("2006-01-02", "2026-08-28")
-	data, async, err := h.fetchTerraActivities(context.Background(), "terra-user-1", from, to)
+	data, async, err := h.fetchTerraActivities(context.Background(), "terra-user-1", from, to, false)
 	if err != nil {
 		t.Fatalf("fetchTerraActivities() err = %v, want nil", err)
 	}
@@ -363,7 +364,7 @@ func TestFetchTerraActivities_NoDataMeansAsync(t *testing.T) {
 	defer srv.Close()
 
 	h := &TerraHandler{cfg: TerraConfig{APIBase: srv.URL, DevID: "d", APIKey: "k"}, hc: &http.Client{}}
-	data, async, err := h.fetchTerraActivities(context.Background(), "terra-user-1", time.Now(), time.Now())
+	data, async, err := h.fetchTerraActivities(context.Background(), "terra-user-1", time.Now(), time.Now(), false)
 	if err != nil {
 		t.Fatalf("fetchTerraActivities() err = %v, want nil", err)
 	}
@@ -383,7 +384,7 @@ func TestFetchTerraActivities_ServerErrorReturnsErr(t *testing.T) {
 	defer srv.Close()
 
 	h := &TerraHandler{cfg: TerraConfig{APIBase: srv.URL, DevID: "d", APIKey: "k"}, hc: &http.Client{}}
-	_, _, err := h.fetchTerraActivities(context.Background(), "terra-user-1", time.Now(), time.Now())
+	_, _, err := h.fetchTerraActivities(context.Background(), "terra-user-1", time.Now(), time.Now(), false)
 	if err == nil {
 		t.Fatalf("fetchTerraActivities() err = nil, want error on HTTP 500")
 	}
@@ -508,4 +509,322 @@ func mustParseRFC3339(t *testing.T, s string) time.Time {
 		t.Fatalf("parse %q: %v", s, err)
 	}
 	return tm
+}
+
+// --- POST /import：手動匯入同時發補抓請求（2026-09-24，to_webhook=true） ---
+
+// terraFakeServer 一支可分別控制「同步」與「補抓」兩種請求（依 to_webhook 參數區分）回應的假 Terra
+// 伺服器，並記錄每種請求各被打了幾次、以及各次請求的 query string，供斷言用。
+type terraFakeServer struct {
+	*httptest.Server
+	mu            sync.Mutex
+	syncCalls     int
+	syncQuery     []string
+	backfillCalls int
+	backfillQuery []string
+	// backfillStatus：補抓請求要回的 HTTP 狀態碼，預設 200；設成非 2xx 用來測「補抓失敗不影響結果」。
+	backfillStatus int
+}
+
+func newTerraFakeServer(t *testing.T) *terraFakeServer {
+	t.Helper()
+	f := &terraFakeServer{backfillStatus: http.StatusOK}
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		toWebhook := r.URL.Query().Get("to_webhook")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if toWebhook == "true" {
+			f.backfillCalls++
+			f.backfillQuery = append(f.backfillQuery, r.URL.RawQuery)
+			if f.backfillStatus/100 != 2 {
+				w.WriteHeader(f.backfillStatus)
+				_, _ = w.Write([]byte("boom"))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"success","message":"request is being processed and will be sent to your webhook"}`))
+			return
+		}
+		f.syncCalls++
+		f.syncQuery = append(f.syncQuery, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":[]}`))
+	}))
+	t.Cleanup(f.Close)
+	return f
+}
+
+func newTestTerraHandler(apiBase string) *TerraHandler {
+	return &TerraHandler{
+		repo: &Repository{},
+		cfg:  TerraConfig{APIBase: apiBase, DevID: "dev-1", APIKey: "key-1"},
+		hc:   &http.Client{},
+	}
+}
+
+// TestImportRecent_RequestsBackfillAfterSync：days≤28（單一窗口）時，同步與補抓各呼叫一次
+// /v2/activity，且分別帶 to_webhook=false／true；回傳結果標記 BackfillRequested=true、
+// BackfillDays=days。
+func TestImportRecent_RequestsBackfillAfterSync(t *testing.T) {
+	srv := newTerraFakeServer(t)
+	h := newTestTerraHandler(srv.URL)
+	conn := &Connection{UserID: "u1", ProviderUserID: "terra-user-1", ConnectedAt: time.Time{}}
+
+	res, err := h.importRecent(context.Background(), conn, "garmin", 10)
+	if err != nil {
+		t.Fatalf("importRecent() err = %v, want nil", err)
+	}
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if srv.syncCalls != 1 {
+		t.Errorf("syncCalls = %d, want 1", srv.syncCalls)
+	}
+	if srv.backfillCalls != 1 {
+		t.Errorf("backfillCalls = %d, want 1", srv.backfillCalls)
+	}
+	if len(srv.syncQuery) == 1 && !strings.Contains(srv.syncQuery[0], "to_webhook=false") {
+		t.Errorf("sync query = %q, want to_webhook=false", srv.syncQuery[0])
+	}
+	if len(srv.backfillQuery) == 1 && !strings.Contains(srv.backfillQuery[0], "to_webhook=true") {
+		t.Errorf("backfill query = %q, want to_webhook=true", srv.backfillQuery[0])
+	}
+	if !res.BackfillRequested {
+		t.Errorf("res.BackfillRequested = false, want true")
+	}
+	if res.BackfillDays != 10 {
+		t.Errorf("res.BackfillDays = %d, want 10", res.BackfillDays)
+	}
+}
+
+// TestImportRecent_BackfillFailureDoesNotAffectResult：補抓請求失敗（假伺服器對 to_webhook=true
+// 回 500）時，同步結果本身（err、fetched 等）不受影響，只有 BackfillRequested 維持 false。
+func TestImportRecent_BackfillFailureDoesNotAffectResult(t *testing.T) {
+	srv := newTerraFakeServer(t)
+	srv.backfillStatus = http.StatusInternalServerError
+	h := newTestTerraHandler(srv.URL)
+	conn := &Connection{UserID: "u1", ProviderUserID: "terra-user-1", ConnectedAt: time.Time{}}
+
+	res, err := h.importRecent(context.Background(), conn, "garmin", 5)
+	if err != nil {
+		t.Fatalf("importRecent() err = %v, want nil (backfill failure must not fail the sync)", err)
+	}
+	if res.Fetched != 0 || res.Imported != 0 {
+		t.Errorf("res = %+v, want unaffected fetched/imported despite backfill failure", res)
+	}
+	if res.BackfillRequested {
+		t.Errorf("res.BackfillRequested = true, want false when the only backfill call failed")
+	}
+
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if srv.backfillCalls != 1 {
+		t.Errorf("backfillCalls = %d, want 1 (attempted despite eventual failure)", srv.backfillCalls)
+	}
+}
+
+// TestImportRecent_MultiWindow_BackfillCalledPerWindow：days>28 時切成多個窗口，同步與補抓都應
+// 各自逐段呼叫（次數相同）。
+func TestImportRecent_MultiWindow_BackfillCalledPerWindow(t *testing.T) {
+	srv := newTerraFakeServer(t)
+	h := newTestTerraHandler(srv.URL)
+	conn := &Connection{UserID: "u1", ProviderUserID: "terra-user-1", ConnectedAt: time.Time{}}
+
+	res, err := h.importRecent(context.Background(), conn, "coros", 30) // terraSplitWindows(30) = 2 段
+	if err != nil {
+		t.Fatalf("importRecent() err = %v, want nil", err)
+	}
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if srv.syncCalls != 2 {
+		t.Errorf("syncCalls = %d, want 2", srv.syncCalls)
+	}
+	if srv.backfillCalls != 2 {
+		t.Errorf("backfillCalls = %d, want 2", srv.backfillCalls)
+	}
+	if !res.BackfillRequested || res.BackfillDays != 30 {
+		t.Errorf("res = %+v, want BackfillRequested=true BackfillDays=30", res)
+	}
+}
+
+// --- requestTerraBackfill ---
+
+func TestRequestTerraBackfill_NonSuccessStatusStillOK(t *testing.T) {
+	// Terra 對 to_webhook=true 的回應本來就未必含 data；只要是 2xx 就視為受理成功（不解析 body）。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`not-even-json`))
+	}))
+	defer srv.Close()
+	h := newTestTerraHandler(srv.URL)
+	if err := h.requestTerraBackfill(context.Background(), "terra-user-1", time.Now(), time.Now()); err != nil {
+		t.Fatalf("requestTerraBackfill() err = %v, want nil for 2xx response (body content irrelevant)", err)
+	}
+}
+
+func TestRequestTerraBackfill_HTTPErrorReturnsErr(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	h := newTestTerraHandler(srv.URL)
+	if err := h.requestTerraBackfill(context.Background(), "terra-user-1", time.Now(), time.Now()); err == nil {
+		t.Fatalf("requestTerraBackfill() err = nil, want error on HTTP 503")
+	}
+}
+
+// --- terraParseLastWebhookUpdate ---
+
+func TestTerraParseLastWebhookUpdate(t *testing.T) {
+	str := func(s string) *string { return &s }
+	cases := []struct {
+		name    string
+		raw     *string
+		wantNil bool
+		want    string // RFC3339 若非 nil
+	}{
+		{"nil 回 nil", nil, true, ""},
+		{"空字串回 nil", str(""), true, ""},
+		{"官方範例格式（微秒精度）", str("2024-10-03T11:13:43.360227+00:00"), false, "2024-10-03T11:13:43Z"},
+		{"不合法格式回 nil", str("not-a-time"), true, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := terraParseLastWebhookUpdate(c.raw)
+			if c.wantNil {
+				if got != nil {
+					t.Fatalf("terraParseLastWebhookUpdate(%v) = %v, want nil", c.raw, got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("terraParseLastWebhookUpdate(%v) = nil, want non-nil", c.raw)
+			}
+			if got.UTC().Format(time.RFC3339) != c.want {
+				t.Errorf("terraParseLastWebhookUpdate(%v) = %v, want %v", *c.raw, got.UTC().Format(time.RFC3339), c.want)
+			}
+		})
+	}
+}
+
+// --- fetchTerraLastDataAt：10 分鐘快取 ---
+
+func TestFetchTerraLastDataAt_CachesAcrossCalls(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"user":{"user_id":"terra-user-1","provider":"GARMIN","last_webhook_update":"2026-09-20T00:00:00Z"}}`))
+	}))
+	defer srv.Close()
+	h := newTestTerraHandler(srv.URL)
+
+	first := h.fetchTerraLastDataAt(context.Background(), "terra-user-1")
+	if first == nil || !first.Equal(mustParseRFC3339(t, "2026-09-20T00:00:00Z")) {
+		t.Fatalf("first fetchTerraLastDataAt() = %v, want 2026-09-20T00:00:00Z", first)
+	}
+	second := h.fetchTerraLastDataAt(context.Background(), "terra-user-1")
+	if second == nil || !second.Equal(*first) {
+		t.Fatalf("second fetchTerraLastDataAt() = %v, want cached %v", second, first)
+	}
+	if calls != 1 {
+		t.Errorf("terra userInfo called %d times, want 1 (second call should hit the 10min cache)", calls)
+	}
+}
+
+func TestFetchTerraLastDataAt_FailureReturnsNilAndIsCached(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	h := newTestTerraHandler(srv.URL)
+
+	if got := h.fetchTerraLastDataAt(context.Background(), "terra-user-1"); got != nil {
+		t.Errorf("fetchTerraLastDataAt() = %v, want nil on upstream failure", got)
+	}
+	if got := h.fetchTerraLastDataAt(context.Background(), "terra-user-1"); got != nil {
+		t.Errorf("second fetchTerraLastDataAt() = %v, want nil", got)
+	}
+	if calls != 1 {
+		t.Errorf("terra userInfo called %d times, want 1 (failure result should also be cached)", calls)
+	}
+}
+
+// --- ProviderStatuses（ops.WearableReporter 實作）---
+//
+// h.repo.ListAllTerraConnections 需要真的資料庫，故這裡不呼叫 ProviderStatuses 本體（它會先打
+// DB），改為直接呼叫 aggregateProviderStatuses——ProviderStatuses 拿到 DB 查詢結果之後、實際跑
+// 迴圈/逾時/略過失敗/依品牌分組排序的那一段本體邏輯（見 terra.go 該函式拆分註解，2026-09-24）。
+// 與先前版本的差異：先前這裡是另外手寫一份等價迴圈，本體從未被單元測試呼叫過；現在餵的
+// []*Connection 直接進到生產程式碼路徑。
+func TestProviderStatuses_AggregatesMaxLastDataAtPerProvider(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uid := r.URL.Query().Get("user_id")
+		w.Header().Set("Content-Type", "application/json")
+		switch uid {
+		case "g1":
+			_, _ = w.Write([]byte(`{"user":{"user_id":"g1","last_webhook_update":"2026-09-20T00:00:00Z"}}`))
+		case "g2":
+			_, _ = w.Write([]byte(`{"user":{"user_id":"g2","last_webhook_update":"2026-09-22T00:00:00Z"}}`))
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+	h := newTestTerraHandler(srv.URL)
+
+	conns := []*Connection{
+		{Provider: "garmin", ProviderUserID: "g1"},
+		{Provider: "garmin", ProviderUserID: "g2"},
+	}
+	out := h.aggregateProviderStatuses(context.Background(), conns)
+	if len(out) != 1 || out[0].Provider != "garmin" {
+		t.Fatalf("aggregateProviderStatuses() = %+v, want single garmin entry", out)
+	}
+	if out[0].Connected != 2 {
+		t.Fatalf("Connected = %d, want 2", out[0].Connected)
+	}
+	want := mustParseRFC3339(t, "2026-09-22T00:00:00Z")
+	if out[0].LastDataAt == nil || !out[0].LastDataAt.Equal(want) {
+		t.Fatalf("LastDataAt = %v, want max %v", out[0].LastDataAt, want)
+	}
+}
+
+// TestProviderStatuses_MultipleProvidersOrderedByFirstSeen 補上原本沒覆蓋到的分組鍵/排序行為：
+// 不同品牌各自成一筆，順序依第一次出現的連線排列，單一連線查詢失敗不影響其他品牌或整體結果
+// （2026-09-24，對應 major finding：本體迴圈完全沒有測試覆蓋）。
+func TestProviderStatuses_MultipleProvidersOrderedByFirstSeen(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uid := r.URL.Query().Get("user_id")
+		w.Header().Set("Content-Type", "application/json")
+		switch uid {
+		case "c1":
+			_, _ = w.Write([]byte(`{"user":{"user_id":"c1","last_webhook_update":"2026-09-21T00:00:00Z"}}`))
+		default:
+			// garmin 連線查詢失敗：該筆該記 Connected 但 LastDataAt 應維持 nil，且不影響 coros。
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+	h := newTestTerraHandler(srv.URL)
+
+	conns := []*Connection{
+		{Provider: "garmin", ProviderUserID: "g1"},
+		{Provider: "coros", ProviderUserID: "c1"},
+	}
+	out := h.aggregateProviderStatuses(context.Background(), conns)
+	if len(out) != 2 {
+		t.Fatalf("aggregateProviderStatuses() len = %d, want 2", len(out))
+	}
+	if out[0].Provider != "garmin" || out[1].Provider != "coros" {
+		t.Fatalf("aggregateProviderStatuses() order = [%s,%s], want [garmin,coros] (first-seen order)", out[0].Provider, out[1].Provider)
+	}
+	if out[0].Connected != 1 || out[0].LastDataAt != nil {
+		t.Fatalf("garmin status = %+v, want Connected=1 LastDataAt=nil (query failed)", out[0])
+	}
+	if out[1].Connected != 1 || out[1].LastDataAt == nil {
+		t.Fatalf("coros status = %+v, want Connected=1 with LastDataAt set", out[1])
+	}
 }

@@ -88,6 +88,26 @@ type GPSRequeuer interface {
 	RequeueUnenqueued(ctx context.Context)
 }
 
+// WearableProviderStatus 每日報告「穿戴串接」段落單一品牌的彙整結果（見 dailyreport.go
+// buildWearableSection／formatWearableLine）。Provider 為小寫品牌代碼（如 garmin/coros，跟
+// activities.source 同一套命名）；LastDataAt 為 nil 代表這個品牌底下所有連結查詢皆失敗/逾時，
+// 顯示上呈現「無法取得」而非讓整份報告失敗（見 WearableReporter 註解）。
+type WearableProviderStatus struct {
+	Provider   string
+	Connected  int
+	LastDataAt *time.Time
+}
+
+// WearableReporter 每日報告「穿戴串接」段落數據來源（見 internal/integration TerraHandler.
+// ProviderStatuses 實作）。用小介面而非直接 import internal/integration，比照上方
+// EinvoiceReporter／GPSRequeuer 既有慣例，避免本套件反過來依賴各業務套件。
+type WearableReporter interface {
+	// ProviderStatuses 依品牌分組回傳目前經 Terra 連結的狀態：連結人數、以及該品牌所有連結中 Terra
+	// 回報最新的「最後收到資料」時間。呼叫方（buildWearableSection）容忍它回傳 error（該次報告
+	// 安靜跳過整段，不影響其餘固定段落）。
+	ProviderStatuses(ctx context.Context) ([]WearableProviderStatus, error)
+}
+
 // Handler 每日自檢排程 + 手動觸發端點。
 type Handler struct {
 	db *pgxpool.Pool
@@ -99,6 +119,11 @@ type Handler struct {
 	// gpsRequeuer 見 GPSRequeuer 註解。注入自 activity.Service（見 main.go 的
 	// opsHandler.SetGPSRequeuer），晚於本 Handler 建構。未設定時安靜跳過。
 	gpsRequeuer GPSRequeuer
+
+	// wearable 見 WearableReporter 註解。注入自 integration.TerraHandler（見 main.go 的
+	// opsHandler.SetWearableReporter），晚於本 Handler 建構。未設定時每日報告安靜跳過整段
+	// 「穿戴串接」（見 dailyreport.go buildWearableSection）。
+	wearable WearableReporter
 
 	mu          sync.Mutex
 	lastRunDate string // 台灣日期 YYYY-MM-DD：最近一次「已認領要執行」自檢的日期（in-memory 標記，見檔頭）
@@ -122,6 +147,11 @@ func (h *Handler) SetEinvoiceReporter(r EinvoiceReporter) {
 // SetGPSRequeuer 見 GPSRequeuer 欄位註解。
 func (h *Handler) SetGPSRequeuer(r GPSRequeuer) {
 	h.gpsRequeuer = r
+}
+
+// SetWearableReporter 見 WearableReporter 欄位註解。
+func (h *Handler) SetWearableReporter(r WearableReporter) {
+	h.wearable = r
 }
 
 // taiwanNow 目前的台灣時間（UTC+8 固定 offset 手算，禁用 time.LoadLocation("Asia/Taipei")——

@@ -112,6 +112,11 @@ type dailyReportData struct {
 	EInvoiceIssued  int
 	EInvoiceFailed  int
 	EInvoicePending int
+
+	// Wearable（2026-09-24，見 internal/ops WearableReporter／internal/integration TerraHandler.
+	// ProviderStatuses）：每個「目前有連結」的 Terra 品牌各一筆；wearable 未注入或查詢失敗時為 nil
+	// （見 buildWearableSection），此時 assembleDailyReportMessage 整段不顯示（沒有訊號比顯示假訊號好）。
+	Wearable []WearableProviderStatus
 }
 
 // inDailyReportWindow 是否落在今天的執行窗口。直接沿用 selfcheck 的 08:00-08:59 判斷（見檔頭註解），
@@ -144,6 +149,15 @@ func (h *Handler) RunDailyReportLoop(ctx context.Context) {
 // 重啟歸零、advisory lock 執行完即主動 unlock，兩層在重啟後皆無法攔截同一天已執行過的情況；
 // 持久標記跨程序存活，確保當天已執行過就不再執行。讀取失敗時 warn 後視同未跑過（寧可重發也不
 // 要漏整天報告）。
+//
+// ⚠️ 2026-09-24：DB 協調（claimDailyReportSlot，取得專屬連線＋advisory lock＋讀寫 app_settings）
+// 與實際產生報告（runAndSendDailyReport）在這裡明確拆成兩段、鎖已釋放才呼叫後者——
+// buildDailyReportData 現在含 buildWearableSection，會對至多 50 條 Terra 連線逐一序列呼叫
+// userInfo（各 5s 逾時，Terra 若普遍偏慢最壞可耗掉數分鐘），若沿用舊版把整個 runAndSendDailyReport
+// 包在 defer conn.Release()／defer unlock 之內，會讓一條連線池連線＋advisory lock 在純等待外部
+// HTTP 的期間被長時間佔用，排擠連線池其他使用者、也拖慢當天報告送出。claimDailyReportSlot 只負責
+// 「輪到我了嗎＋佔位」這段純 DB 操作，函式返回時其內部的 defer 已經 unlock／release，之後才做
+// 真正費時的報告產生與 Telegram 發送。
 func (h *Handler) maybeRunDailyReport(ctx context.Context) {
 	now := taiwanNow()
 	if !inDailyReportWindow(now) {
@@ -158,21 +172,33 @@ func (h *Handler) maybeRunDailyReport(ctx context.Context) {
 		return
 	}
 
+	if !h.claimDailyReportSlot(ctx, today) {
+		return
+	}
+
+	h.runAndSendDailyReport(ctx)
+}
+
+// claimDailyReportSlot 見 maybeRunDailyReport 的 2026-09-24 註解：三層防重判斷＋佔位
+// （advisory lock + 持久標記 + in-memory）全部在這支函式內完成，函式返回前一定已經 unlock 並釋放
+// 專屬連線——呼叫端緊接著做的「產生報告＋發送」完全在鎖外執行。回傳 true 代表輪到本實例執行
+// 今天的報告。
+func (h *Handler) claimDailyReportSlot(ctx context.Context, today string) bool {
 	conn, err := h.db.Acquire(ctx)
 	if err != nil {
 		log.Error().Err(err).Msg("ops dailyreport: acquire dedicated connection for advisory lock failed")
-		return
+		return false
 	}
 	defer conn.Release()
 
 	var gotLock bool
 	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, dailyReportAdvisoryLockName).Scan(&gotLock); err != nil {
 		log.Error().Err(err).Msg("ops dailyreport: try advisory lock failed")
-		return
+		return false
 	}
 	if !gotLock {
 		log.Debug().Msg("ops dailyreport: another instance is already running/ran today's report, skip")
-		return
+		return false
 	}
 	defer func() {
 		var unlocked bool
@@ -194,7 +220,7 @@ func (h *Handler) maybeRunDailyReport(ctx context.Context) {
 		h.lastReportDate = today
 		h.mu.Unlock()
 		log.Debug().Msg("ops dailyreport: persistent marker says already ran today, skip")
-		return
+		return false
 	}
 
 	// 搶到鎖且持久標記確認今天尚未執行，先佔位（in-memory + 持久），再執行——
@@ -211,7 +237,7 @@ func (h *Handler) maybeRunDailyReport(ctx context.Context) {
 		log.Warn().Err(err).Msg("ops dailyreport: upsert persistent date marker failed (continuing)")
 	}
 
-	h.runAndSendDailyReport(ctx)
+	return true
 }
 
 // runAndSendDailyReport 產生報告並直接用 notify.Telegram 送出（不透過 notify.Alert：Alert 有 30 分鐘
@@ -395,7 +421,27 @@ func (h *Handler) buildDailyReportData(ctx context.Context) (dailyReportData, er
 		}
 	}
 
+	// 7) 穿戴串接（Terra）：見 buildWearableSection 註解——拆成獨立小函式只接受 WearableReporter
+	// 介面（不碰 h.db），方便單元測試不需要真的連 DB 就能驗證「注入假 fetcher →組出正確結果」。
+	d.Wearable = buildWearableSection(ctx, h.wearable)
+
 	return d, nil
+}
+
+// buildWearableSection 呼叫 WearableReporter（見該介面註解）組出「穿戴串接」段落資料。獨立於
+// buildDailyReportData 之外、只依賴介面不依賴 h.db，方便單元測試注入假實作（見
+// dailyreport_test.go）。wr 為 nil（未注入，比照 einvoice 的「未接上就跳過」慣例）或查詢本身失敗
+// 都回 nil——後者只記警告，不讓整份報告失敗（這段是錦上添花的告警訊號，不是報告的核心數字）。
+func buildWearableSection(ctx context.Context, wr WearableReporter) []WearableProviderStatus {
+	if wr == nil {
+		return nil
+	}
+	statuses, err := wr.ProviderStatuses(ctx)
+	if err != nil {
+		log.Warn().Err(err).Msg("daily report: wearable provider statuses failed")
+		return nil
+	}
+	return statuses
 }
 
 // buildTrafficSummary 查 ops_ip_daily 昨日（day）資料，彙整成報告用的 trafficSummary。
@@ -635,7 +681,34 @@ func assembleDailyReportMessage(d dailyReportData, raceKeep int) string {
 		fmt.Fprintf(&b, "🧾 電子發票：昨日開立 %d／失敗 %d／待處理 %d", d.EInvoiceIssued, d.EInvoiceFailed, d.EInvoicePending)
 	}
 
+	if len(d.Wearable) > 0 {
+		b.WriteString("\n\n")
+		b.WriteString("⌚ 穿戴串接：\n")
+		for _, s := range d.Wearable {
+			b.WriteString(formatWearableLine(s) + "\n")
+		}
+	}
+
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// wearableStaleAfter：串接「太久沒收到資料」的告警門檻（見任務規格 2026-09-24：Garmin→Terra
+// 推送中斷排查背景）。只在「有人連結」時才有意義——沒人連結的品牌本來就不該有資料，不算異常。
+const wearableStaleAfter = 48 * time.Hour
+
+// formatWearableLine 組單一品牌的「穿戴串接」行。距今超過 wearableStaleAfter 且有人連結時，行首加
+// ⚠️（比照 formatTrafficSection 的可疑清單標記風格），供人工一眼掃出可能整批同步中斷的品牌。
+func formatWearableLine(s WearableProviderStatus) string {
+	line := fmt.Sprintf("%s：%d 人已連結，最後收到資料 ", strings.ToUpper(s.Provider), s.Connected)
+	if s.LastDataAt == nil {
+		line += "無法取得"
+		return line
+	}
+	line += formatTaipei(*s.LastDataAt)
+	if s.Connected >= 1 && time.Since(*s.LastDataAt) > wearableStaleAfter {
+		line = "⚠️ " + line
+	}
+	return line
 }
 
 // buildDailyReportMessage 組出最終要送出的 Telegram 文字，超過 telegramMaxLen 時逐步減少「報名」

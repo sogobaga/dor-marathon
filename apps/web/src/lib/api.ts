@@ -1335,6 +1335,10 @@ export interface TerraConnection {
   provider: string // 小寫品牌代碼，如 garmin/coros
   connected_at: string
   via: 'terra'
+  // last_data_at（2026-09-24）：Terra 回報「最後收到這個使用者資料」的時間；後端查詢失敗/逾時時缺席
+  // （非 null，是欄位整個不存在，見 services/api/internal/integration/terra.go Status handler），
+  // 前端一律用可選欄位處理、缺席時不顯示這行。
+  last_data_at?: string
 }
 export interface TerraStatus {
   enabled: boolean // 後端未設定 Terra 憑證時為 false，卡片維持「即將開放」
@@ -1354,6 +1358,10 @@ export interface TerraImportResult {
   skipped_invalid: number
   errors: number
   async: boolean
+  // BackfillRequested/BackfillDays（2026-09-24）：手動匯入同時對同一範圍發出 to_webhook=true 的補抓
+  // 請求，語意獨立於 async（見後端 TerraImportResult 欄位註解）；兩者可能同時為 true。
+  backfill_requested: boolean
+  backfill_days: number
 }
 
 export interface SyncedActivity {

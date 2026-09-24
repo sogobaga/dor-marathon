@@ -203,6 +203,28 @@ func (r *Repository) ListTerraConnections(ctx context.Context, userID string) ([
 	return out, rows.Err()
 }
 
+// ListAllTerraConnections 回傳全站經 Terra 連線的清單（via='terra'，不分使用者），依 provider 排序、
+// 上限 limit 筆——供每日營運報告「穿戴串接」段落使用（見 ops.WearableReporter／
+// TerraHandler.ProviderStatuses）。跟 ListTerraConnections 一樣不需要 decryptConnFields：
+// Terra 連線沒有我方需要刷新的 access/refresh token（見 Connection.ConnectedAt 欄位註解）。
+func (r *Repository) ListAllTerraConnections(ctx context.Context, limit int) ([]*Connection, error) {
+	rows, err := r.db.Query(ctx, connCols+` WHERE via='terra' ORDER BY provider LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Connection
+	for rows.Next() {
+		c := &Connection{}
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Provider, &c.ProviderUserID,
+			&c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.AthleteName, &c.ConnectedAt, &c.Via); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // UserExists 檢查某 id 是否為既有使用者。Terra 的 webhook/callback 只帶回 reference_id（我方連接
 // widget 時塞進去的 DOR user id）這個裸字串，任何人都能偽造 webhook 帶任意 reference_id——
 // 寫入 user_integrations 前必須先確認它真的對應一個存在的使用者（否則 FK 會直接報錯，但那是在

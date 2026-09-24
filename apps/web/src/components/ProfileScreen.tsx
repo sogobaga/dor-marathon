@@ -52,6 +52,26 @@ function terraBrandName(provider: string): string {
   const key = provider.toLowerCase()
   return TERRA_BRAND_LABEL[key] ?? (key.charAt(0).toUpperCase() + key.slice(1))
 }
+// terra last_data_at 顯示（2026-09-24）：只需要粗略的「多久前」，分/時/天三級距足夠，不追求精確到秒。
+function terraRelativeAgo(iso: string): string {
+  const t = new Date(iso).getTime()
+  if (isNaN(t)) return ''
+  const diffMs = Date.now() - t
+  const min = Math.floor(diffMs / 60000)
+  if (min < 1) return '剛剛'
+  if (min < 60) return `${min} 分鐘前`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr} 小時前`
+  return `${Math.floor(hr / 24)} 天前`
+}
+// terraDataStaleAfterMs：與後端 wearableStaleAfter（見 dailyreport.go）同一門檻（48 小時），前台單獨
+// 一份常數（比照全站「各檔各自複製一份」慣例，兩處異動需同步檢查）。
+const terraDataStaleAfterMs = 48 * 60 * 60 * 1000
+function terraDataStale(iso?: string): boolean {
+  if (!iso) return false
+  const t = new Date(iso).getTime()
+  return !isNaN(t) && Date.now() - t > terraDataStaleAfterMs
+}
 // 「已同步活動」來源徽章＋重複標示共用的來源顯示名稱。null/'manual'/'gps' 都顯示「DOR GPS」（使用者 2026-09-06 定名，原為 App GPS）——
 // activities.source 的 NULL 落在 'manual'（見 repository.go ListActivities 註解），而
 // dup_of_source（保留活動的來源）NULL 落在 'gps'，兩種 fallback 值對使用者來說是同一件事。
@@ -598,20 +618,26 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
     setTerraMsg('')
     try {
       const r = await withUserAuth((t) => integrationsApi.terraImport(t, provider))
-      if (r.async) {
-        setTerraMsg(`已向 Terra 請求重送近 ${r.days} 天的紀錄，資料會在幾分鐘內自動匯入，請稍後再回來看`)
-      } else {
-        let msg = `${brand} 匯入完成：新增 ${r.imported} 筆`
-        if (r.duplicate > 0) msg += `、重複 ${r.duplicate} 筆`
-        if (r.skipped_before_connect > 0) msg += `、${r.skipped_before_connect} 筆為連接前的紀錄未計入`
-        if (r.skipped_non_running > 0) msg += `、${r.skipped_non_running} 筆非跑步／走路類`
-        if (r.errors > 0) msg += `、${r.errors} 筆失敗`
-        msg += r.fetched === 0
-          ? `（Terra 近 ${r.days} 天沒有回傳任何活動——請確認 ${brand} App 已把活動同步到雲端）`
-          : `（Terra 回傳 ${r.fetched} 筆）`
-        setTerraMsg(msg)
-        if (r.imported > 0) loadActivities()
+      // 2026-09-24：一律先顯示筆數（新增／重複／略過），再依旗標各自追加一句——過去 async=true 時
+      // 完全不顯示筆數，使用者看不出「這次到底抓到了什麼」（見任務背景：Garmin→Terra 推送中斷排查）。
+      let msg = `${brand} 匯入完成：新增 ${r.imported} 筆`
+      if (r.duplicate > 0) msg += `、重複 ${r.duplicate} 筆`
+      if (r.skipped_before_connect > 0) msg += `、${r.skipped_before_connect} 筆為連接前的紀錄未計入`
+      if (r.skipped_non_running > 0) msg += `、${r.skipped_non_running} 筆非跑步／走路類`
+      if (r.errors > 0) msg += `、${r.errors} 筆失敗`
+      msg += r.fetched === 0
+        ? `（Terra 近 ${r.days} 天沒有回傳任何活動——請確認 ${brand} App 已把活動同步到雲端）`
+        : `（Terra 回傳 ${r.fetched} 筆）`
+      // backfill_requested 與 async 語意獨立、可能同時為 true（見後端 TerraImportResult 註解），
+      // 故各自獨立判斷、兩句都可能附加，不能用 else if 互斥（2026-09-24 修正：原本 async 那句會被吞掉）。
+      if (r.backfill_requested) {
+        msg += `；已請 Terra 向 ${brand} 補抓近 ${r.backfill_days} 天，若有新紀錄會在幾分鐘內自動匯入，請稍後再看`
       }
+      if (r.async) {
+        msg += `；已向 Terra 請求重送近 ${r.days} 天的紀錄，資料會在幾分鐘內自動匯入，請稍後再回來看`
+      }
+      setTerraMsg(msg)
+      if (r.imported > 0) loadActivities()
     } catch (e: any) {
       setTerraMsg(e?.message || '匯入失敗')
     } finally {
@@ -929,15 +955,28 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             {/* 已連接品牌清單：可能同時連好幾支不同品牌的手錶，逐一列出＋各自可斷開；「連接手錶」按鈕仍保留在上方可再加一支 */}
             {terra?.enabled && terra.connections.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
-                {terra.connections.map((c) => (
-                  <div key={c.provider} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: 'var(--bg-2)', borderRadius: 8, padding: '7px 10px' }}>
-                    <span style={{ fontSize: 12.5, color: 'var(--tx)', minWidth: 0 }}>✓ {terraBrandName(c.provider)} ・ 已連接 {fmtDate(c.connected_at).split(' ')[0]}</span>
-                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                      <button onClick={() => importTerra(c.provider)} disabled={terraBusy} style={{ ...ghostBtn, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', padding: '5px 10px', fontSize: 11.5, whiteSpace: 'nowrap' }}>{terraBusy ? '處理中…' : '匯入數據'}</button>
-                      <button onClick={() => disconnectTerra(c.provider)} disabled={terraBusy} style={{ ...ghostBtn, padding: '5px 10px', fontSize: 11.5, whiteSpace: 'nowrap' }}>斷開</button>
+                {terra.connections.map((c) => {
+                  const stale = terraDataStale(c.last_data_at)
+                  return (
+                    <div key={c.provider} style={{ display: 'flex', flexDirection: 'column', gap: 4, background: 'var(--bg-2)', borderRadius: 8, padding: '7px 10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <span style={{ fontSize: 12.5, color: 'var(--tx)', minWidth: 0 }}>✓ {terraBrandName(c.provider)} ・ 已連接 {fmtDate(c.connected_at).split(' ')[0]}</span>
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          <button onClick={() => importTerra(c.provider)} disabled={terraBusy} style={{ ...ghostBtn, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', padding: '5px 10px', fontSize: 11.5, whiteSpace: 'nowrap' }}>{terraBusy ? '處理中…' : '匯入數據'}</button>
+                          <button onClick={() => disconnectTerra(c.provider)} disabled={terraBusy} style={{ ...ghostBtn, padding: '5px 10px', fontSize: 11.5, whiteSpace: 'nowrap' }}>斷開</button>
+                        </div>
+                      </div>
+                      {/* last_data_at（2026-09-24）：後端查詢失敗/逾時時欄位整個缺席，此時不顯示這行
+                          （見 memory：Garmin→Terra 推送中斷排查，這行是給使用者的可見訊號） */}
+                      {c.last_data_at && (
+                        <div style={{ fontSize: 11, color: stale ? 'var(--gold)' : 'var(--tx-faint)', lineHeight: 1.5 }}>
+                          {terraBrandName(c.provider)} 最後同步到 DOR：{terraRelativeAgo(c.last_data_at)}
+                          {stale && <>　⚠️ 若你確定期間有跑步，可能是 {terraBrandName(c.provider)}→Terra 的同步中斷，請稍後再試或聯絡我們</>}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
 

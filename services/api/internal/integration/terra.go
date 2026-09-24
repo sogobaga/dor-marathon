@@ -23,6 +23,7 @@ import (
 
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/gpscalib"
+	"github.com/dor/api/internal/ops"
 	"github.com/dor/api/internal/stamina"
 )
 
@@ -104,6 +105,10 @@ type TerraHandler struct {
 	// 節流窗口退化成「per-instance」而非全站一致，可接受（比照 strava.go allowRate 的節流目的，取代方案）。
 	importMu   sync.Mutex
 	importLast map[string]time.Time
+
+	// lastDataCache：GET /status 與每日報告用的「Terra 最後收到該使用者資料時間」10 分鐘記憶體快取
+	// （見 terraLastDataCache／fetchTerraLastDataAt 註解）。
+	lastDataCache terraLastDataCache
 }
 
 func NewTerraHandler(repo *Repository, cfg TerraConfig, requireAuth func(http.Handler) http.Handler) *TerraHandler {
@@ -235,14 +240,31 @@ func (h *TerraHandler) Status(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	out := make([]map[string]any, 0, len(conns))
-	for _, c := range conns {
-		out = append(out, map[string]any{
+	// 逐筆查 last_data_at 平行處理（2026-09-24）：Terra 目前支援 5 個品牌，使用者理論上可同時連結
+	// 多支手錶；10 分鐘快取剛好過期時，序列呼叫要等每筆最多 3 秒逾時疊加，最壞近 15 秒才回應。
+	// 各連線互不依賴（各自獨立的 provider_user_id、各自寫入自己的 entry map），平行呼叫安全。
+	out := make([]map[string]any, len(conns))
+	var wg sync.WaitGroup
+	for i, c := range conns {
+		entry := map[string]any{
 			"provider":     c.Provider,
 			"connected_at": c.ConnectedAt.Format(time.RFC3339),
 			"via":          "terra",
-		})
+		}
+		out[i] = entry
+		wg.Add(1)
+		go func(providerUserID string, entry map[string]any) {
+			defer wg.Done()
+			// last_data_at（2026-09-24）：Terra 回報「最後收到該使用者資料」的時間，讓使用者自己看得出
+			// 手錶品牌→Terra 的同步是否中斷（背景見任務規格：Garmin→Terra 推送 9/21 起中斷，但站方程式
+			// 本身沒有濾掉任何資料，需要一個可見的訊號）。查詢失敗/逾時就不帶這個欄位，不擋整個 /status
+			// 回應（見 fetchTerraLastDataAt 註解）。
+			if last := h.fetchTerraLastDataAt(r.Context(), providerUserID); last != nil {
+				entry["last_data_at"] = last.Format(time.RFC3339)
+			}
+		}(c.ProviderUserID, entry)
 	}
+	wg.Wait()
 	providers := make([]string, 0, len(h.cfg.Providers))
 	for _, p := range h.cfg.Providers {
 		providers = append(providers, strings.ToLower(p))
@@ -379,6 +401,12 @@ type TerraImportResult struct {
 	SkippedInvalid       int    `json:"skipped_invalid"`
 	Errors               int    `json:"errors"`
 	Async                bool   `json:"async"`
+	// BackfillRequested/BackfillDays（2026-09-24）：手動匯入同時對同一範圍發出 to_webhook=true 的
+	// 補抓請求（見 importRecent 尾段），語意獨立於上面的 Async——Async 是「這次同步呼叫本身被 Terra
+	// 導向非同步」，BackfillRequested 是「另外主動請 Terra 向上游（Garmin/COROS 等）要一次資料」，
+	// 兩者可能同時為 true、也可能只有其中一個為 true，前端分開顯示兩句提示（見 ProfileScreen.tsx）。
+	BackfillRequested bool `json:"backfill_requested"`
+	BackfillDays      int  `json:"backfill_days"`
 }
 
 // importRecent 對一條 Terra 連線，依 days 切成多個 ≤28 天窗口（terraSplitWindows）逐段呼叫
@@ -389,7 +417,7 @@ type TerraImportResult struct {
 func (h *TerraHandler) importRecent(ctx context.Context, conn *Connection, source string, days int) (TerraImportResult, error) {
 	res := TerraImportResult{Provider: source, Days: days}
 	for _, win := range terraSplitWindows(time.Now(), days) {
-		data, async, err := h.fetchTerraActivities(ctx, conn.ProviderUserID, win.From, win.To)
+		data, async, err := h.fetchTerraActivities(ctx, conn.ProviderUserID, win.From, win.To, false)
 		if err != nil {
 			return res, err
 		}
@@ -431,11 +459,30 @@ func (h *TerraHandler) importRecent(ctx context.Context, conn *Connection, sourc
 			}
 		}
 	}
+
+	// 補抓請求（2026-09-24 實測背景，見任務規格）：同步抓完之後，對同一總範圍再打一次 to_webhook=true
+	// ——讓 Terra 向 Garmin/COROS 等推送型供應商主動要一次資料；上游若真的補送，之後會以既有的
+	// activity webhook 送達（走 handleActivityEvent），不是這次 HTTP 回應本身會帶到的資料。這是
+	// 2026-09-24 唯一實測能拿到「Terra 手上沒有」資料的管道，見檔案頂端/任務背景。任一段窗口的補抓
+	// 呼叫失敗只記 log，不影響本次同步已經算好的 res（fetched/imported/... 或整體回傳的 error）；
+	// 只要至少一段成功送出去，就標記 BackfillRequested，讓前端能告知使用者「已經多請求了一次」。
+	for _, win := range terraSplitWindows(time.Now(), days) {
+		if err := h.requestTerraBackfill(ctx, conn.ProviderUserID, win.From, win.To); err != nil {
+			log.Warn().Err(err).Str("provider", source).Str("user", conn.UserID).
+				Msg("terra manual import: backfill request failed, continuing")
+			continue
+		}
+		res.BackfillRequested = true
+	}
+	if res.BackfillRequested {
+		res.BackfillDays = days
+	}
+
 	log.Info().Str("provider", source).Str("user", conn.UserID).Int("days", days).
 		Int("fetched", res.Fetched).Int("imported", res.Imported).Int("duplicate", res.Duplicate).
 		Int("skipped_before_connect", res.SkippedBeforeConnect).
 		Int("skipped_non_running", res.SkippedNonRunning).Int("skipped_invalid", res.SkippedInvalid).
-		Int("errors", res.Errors).Bool("async", res.Async).
+		Int("errors", res.Errors).Bool("async", res.Async).Bool("backfill_requested", res.BackfillRequested).
 		Msg("terra manual import done")
 	return res, nil
 }
@@ -485,9 +532,14 @@ func terraWindowUnix(from, to, now time.Time) (int64, int64) {
 	return start.Unix(), end.Unix()
 }
 
-// fetchTerraActivities GET /v2/activity?user_id=&start_date=&end_date=&to_webhook=false&with_samples=false
+// fetchTerraActivities GET /v2/activity?user_id=&start_date=&end_date=&to_webhook=<toWebhook>&with_samples=false
 // 單一窗口（≤28 天，見 terraSplitWindows）。20 秒逾時（比 fetchTerraUserInfo/Connect 的 10 秒長：
 // 活動列表 payload 可能較大、筆數不定）。
+//
+// toWebhook 一律傳 false（見唯一呼叫端 importRecent 的同步抓取段）——真正發 to_webhook=true 補抓請求
+// 走獨立的 requestTerraBackfill（見該函式，2026-09-24 新增），不共用這支函式：補抓請求不關心回應內容
+// （資料改用 webhook 送達），共用反而要多一層「回應要不要解析」的分支，不值得。這個參數留著只是讓兩支
+// 函式的查詢字串組裝方式並排對照時容易核對一致（皆用同一組 start_date/end_date/with_samples 邏輯）。
 //
 // async=true 代表這個窗口 Terra 判定改走非同步（送 webhook）而非直接把 data 放在這次回應裡——依任務
 // 規格：回應沒有 data 陣列（key 不存在，區別於「存在但是空陣列」）、或 status 不是 "success"，都算這種
@@ -495,7 +547,7 @@ func terraWindowUnix(from, to, now time.Time) (int64, int64) {
 // ⚠️ Terra 真實回應在這個端點的確切形狀未經校對驗證——本檔目前只驗證過 generateWidgetSession/
 // userInfo/deauthenticateUser 三支端點的實際回應（見檔案頂端註解），/v2/activity 是依任務規格
 // （非官方文件逐字核對）先行對映，若日後發現落地筆數異常，優先懷疑這裡的欄位假設。
-func (h *TerraHandler) fetchTerraActivities(ctx context.Context, terraUserID string, from, to time.Time) ([]terraActivity, bool, error) {
+func (h *TerraHandler) fetchTerraActivities(ctx context.Context, terraUserID string, from, to time.Time, toWebhook bool) ([]terraActivity, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	// 日期改用 unix 秒（Terra 兩種格式都收）：文件與 OpenAPI 都沒寫 end_date 是否含當天（2026-09-03 查證），
@@ -505,7 +557,7 @@ func (h *TerraHandler) fetchTerraActivities(ctx context.Context, terraUserID str
 		"user_id":      {terraUserID},
 		"start_date":   {strconv.FormatInt(startTS, 10)},
 		"end_date":     {strconv.FormatInt(endTS, 10)},
-		"to_webhook":   {"false"},
+		"to_webhook":   {strconv.FormatBool(toWebhook)},
 		"with_samples": {"false"},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.cfg.APIBase+"/v2/activity?"+q.Encode(), nil)
@@ -535,6 +587,41 @@ func (h *TerraHandler) fetchTerraActivities(ctx context.Context, terraUserID str
 		return nil, true, nil
 	}
 	return out.Data, false, nil
+}
+
+// requestTerraBackfill GET /v2/activity?...&to_webhook=true — 對推送型供應商（Garmin/COROS 等）
+// 觸發 Terra 主動再向上游要一次該範圍的資料，之後以既有 activity webhook 送達（見
+// handleActivityEvent）；不是這次 HTTP 回應本身會帶資料，故只在意是否 2xx，不解析 body 內容
+// （2026-09-24 實測背景：這是唯一能拿到「Terra 手上沒有」資料的管道，見 importRecent 尾段呼叫處）。
+// 10 秒逾時（比 fetchTerraActivities 的 20 秒短——這支只是「發個請求」，不等資料回來）。
+func (h *TerraHandler) requestTerraBackfill(ctx context.Context, terraUserID string, from, to time.Time) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	startTS, endTS := terraWindowUnix(from, to, time.Now())
+	q := url.Values{
+		"user_id":      {terraUserID},
+		"start_date":   {strconv.FormatInt(startTS, 10)},
+		"end_date":     {strconv.FormatInt(endTS, 10)},
+		"to_webhook":   {"true"},
+		"with_samples": {"false"},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.cfg.APIBase+"/v2/activity?"+q.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("dev-id", h.cfg.DevID)
+	req.Header.Set("x-api-key", h.cfg.APIKey)
+	resp, err := h.hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		log.Warn().Int("status", resp.StatusCode).Str("body", string(b)).Msg("terra activity backfill request non-2xx")
+		return fmt.Errorf("terra activity backfill http %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // terraSkipReason 純函式：比照 mapTerraActivity 的判斷順序（非跑步類型 → 距離/時長無效 → 早於
@@ -674,6 +761,154 @@ func (h *TerraHandler) fetchTerraUserInfo(ctx context.Context, terraUserID strin
 	return &out.User, nil
 }
 
+// terraParseLastWebhookUpdate 解析 terraUser.LastWebhookUpdate（見該欄位註解）：RFC3339Nano 涵蓋
+// Terra 實際回應的微秒精度格式；nil／空字串／無法解析一律回 nil，呼叫端一律容忍缺值（見
+// fetchTerraLastDataAt／ProviderStatuses 註解），不因為這個欄位解析失敗就讓整個請求失敗。
+func terraParseLastWebhookUpdate(raw *string) *time.Time {
+	if raw == nil || *raw == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, *raw)
+	if err != nil {
+		log.Warn().Str("raw", *raw).Msg("terra: last_webhook_update parse failed")
+		return nil
+	}
+	return &t
+}
+
+// terraLastDataCache：以 Terra user_id 為 key 的簡易記憶體 TTL 快取，供 fetchTerraLastDataAt 用。
+// 不重用 internal/ttlcache.Cache[T]：該套件是「單一值、單一 load 函式」設計（如 race meta 表一次
+// 查全部快取成一個 map），適合「查一次涵蓋所有查詢對象」的情境；last_data_at 卻是「每個 Terra
+// user_id 各自一次 userInfo 呼叫」，沒有可以一次查全部的批次端點，語意上是鍵值各自獨立過期，
+// 不是同一份資料整包過期，故獨立寫一份、不硬套。成功與失敗（value=nil）都快取：查詢期間 Terra
+// 若剛好在鬧脾氣（見任務背景：Garmin→Terra 推送中斷），同一使用者短時間內重整頁面不該每次都再打
+// 一次 Terra API。
+type terraLastDataCache struct {
+	mu sync.Mutex
+	m  map[string]terraLastDataEntry
+}
+
+type terraLastDataEntry struct {
+	at    time.Time  // 快取寫入時間
+	value *time.Time // Terra 回報的 last_webhook_update；nil 代表查詢失敗或 Terra 回 null
+}
+
+// terraLastDataTTL：/status 與每日報告共用的快取時效（見任務規格「ttlcache 10 分鐘」）。
+const terraLastDataTTL = 10 * time.Minute
+
+func (c *terraLastDataCache) get(key string) (*time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[key]
+	if !ok || time.Since(e.at) >= terraLastDataTTL {
+		return nil, false
+	}
+	return e.value, true
+}
+
+func (c *terraLastDataCache) set(key string, v *time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.m == nil {
+		c.m = make(map[string]terraLastDataEntry)
+	}
+	now := time.Now()
+	c.m[key] = terraLastDataEntry{at: now, value: v}
+	// 順手回收過期 entry（2026-09-24）：這個 map 原本沒有任何清掃機制，使用者斷開手錶或 Terra
+	// user_id 不再被查詢後，舊 entry 會永久留著只增不減。沒有獨立的批次查詢端點可以一次性清全部，
+	// 每次 set() 時掃一遍全表、順手丟掉已過 TTL 的 entry，是不必另開背景 goroutine 的最低成本回收
+	// 時機——只要還有查詢在發生，map 大小就會被控制在「TTL 內曾被查過的 key 數」，不會無限增長。
+	for k, e := range c.m {
+		if now.Sub(e.at) >= terraLastDataTTL {
+			delete(c.m, k)
+		}
+	}
+}
+
+// fetchTerraLastDataAt 查 Terra 回報「最後收到該使用者資料」的時間，供 GET /status 顯示串接健康度
+// （見 Status handler）。10 分鐘記憶體快取（terraLastDataCache）、3 秒逾時；查詢失敗或逾時一律回
+// nil、不回錯誤——呼叫端（Status）容忍缺值，不能讓這個錦上添花的欄位擋掉整個 /status 回應。
+func (h *TerraHandler) fetchTerraLastDataAt(ctx context.Context, terraUserID string) *time.Time {
+	if v, ok := h.lastDataCache.get(terraUserID); ok {
+		return v
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	u, err := h.fetchTerraUserInfo(callCtx, terraUserID)
+	var v *time.Time
+	if err == nil && u != nil {
+		v = terraParseLastWebhookUpdate(u.LastWebhookUpdate)
+	}
+	h.lastDataCache.set(terraUserID, v)
+	return v
+}
+
+// terraProviderStatusConnLimit：每日報告「穿戴串接」段落的全站 Terra 連結數上限（見任務規格
+// 「連結數 ≤ 50」）——避免串接規模成長後，每日排程一次要打上百次 Terra userInfo。超過上限時只統計
+// 前 50 筆（依 provider 排序，見 repository.ListAllTerraConnections），報告本身求的是「哪個品牌可能
+// 整批同步中斷」的訊號，不是逐使用者的精準審計。
+const terraProviderStatusConnLimit = 50
+
+// terraProviderStatusCallTimeout：ProviderStatuses 對每一條連線各自呼叫 userInfo 的逾時（見任務規格
+// 「逾時 5 秒」）；比 fetchTerraLastDataAt 的 3 秒寬，這裡是背景排程、不是使用者等待中的請求。
+const terraProviderStatusCallTimeout = 5 * time.Second
+
+// ProviderStatuses 實作 ops.WearableReporter，供每日營運報告「穿戴串接」段落使用（見
+// internal/ops/dailyreport.go）。依品牌彙整目前經 Terra 連結的人數，以及該品牌所有連結中 Terra
+// 回報最新的 last_webhook_update——用來判斷「某品牌是否整批同步中斷」（2026-09-24 背景：Garmin→
+// Terra 推送自 9/21 起中斷，見任務規格）。單一連線查詢失敗/逾時只跳過該筆、不影響其他筆或整份
+// 報告；一個品牌的連線全部查詢失敗時，該品牌會以 LastDataAt=nil 呈現「無法取得」（見
+// dailyreport.go 格式化邏輯），不是報告整體失敗。
+//
+// ⚠️ 刻意不在這裡另外碰 DB：唯一的 DB 查詢是 ListAllTerraConnections 這一次（見任務規格「不得在
+// 週期性邏輯外多碰 DB」），其餘全是呼叫 Terra API。
+//
+// 實際彙整邏輯拆到 aggregateProviderStatuses（見該函式），讓單元測試能繞過真實 DB、直接餵一組
+// *Connection 進去驗證迴圈/逾時/略過失敗/依品牌分組排序本身（2026-09-24；原本的測試是另外重寫一份
+// 等價迴圈，本體從未被單元測試實際呼叫過）。
+func (h *TerraHandler) ProviderStatuses(ctx context.Context) ([]ops.WearableProviderStatus, error) {
+	conns, err := h.repo.ListAllTerraConnections(ctx, terraProviderStatusConnLimit)
+	if err != nil {
+		return nil, err
+	}
+	return h.aggregateProviderStatuses(ctx, conns), nil
+}
+
+// aggregateProviderStatuses 是 ProviderStatuses 扣掉 DB 查詢之後的部分：對給定的連線清單逐筆查
+// Terra userInfo，依品牌彙整 Connected 數與最新的 last_webhook_update。見 ProviderStatuses 註解。
+func (h *TerraHandler) aggregateProviderStatuses(ctx context.Context, conns []*Connection) []ops.WearableProviderStatus {
+	agg := map[string]*ops.WearableProviderStatus{}
+	var order []string
+	for _, c := range conns {
+		s, ok := agg[c.Provider]
+		if !ok {
+			s = &ops.WearableProviderStatus{Provider: c.Provider}
+			agg[c.Provider] = s
+			order = append(order, c.Provider)
+		}
+		s.Connected++
+
+		callCtx, cancel := context.WithTimeout(ctx, terraProviderStatusCallTimeout)
+		u, uerr := h.fetchTerraUserInfo(callCtx, c.ProviderUserID)
+		cancel()
+		if uerr != nil || u == nil {
+			log.Warn().Err(uerr).Str("provider", c.Provider).
+				Msg("ops daily report: terra userInfo failed for one connection, skipping")
+			continue
+		}
+		if last := terraParseLastWebhookUpdate(u.LastWebhookUpdate); last != nil {
+			if s.LastDataAt == nil || last.After(*s.LastDataAt) {
+				s.LastDataAt = last
+			}
+		}
+	}
+	out := make([]ops.WearableProviderStatus, 0, len(order))
+	for _, p := range order {
+		out = append(out, *agg[p])
+	}
+	return out
+}
+
 // terraFarFutureExpiry：Terra 連線沒有我方需要刷新的 access token（見 SaveTerra 註解），
 // expires_at 欄位是 NOT NULL，這裡填一個不具意義、遠期的值，純粹滿足欄位約束。
 func terraFarFutureExpiry() time.Time { return time.Now().AddDate(100, 0, 0) }
@@ -705,6 +940,12 @@ type terraUser struct {
 	Provider    string      `json:"provider"`
 	ReferenceID string      `json:"reference_id"`
 	Scopes      terraScopes `json:"scopes"`
+	// LastWebhookUpdate：Terra 回報「最後一次收到這個使用者資料」的時間，RFC3339（帶微秒）字串或
+	// null（2026-09-24 查證自 docs.tryterra.co llms-full.txt 的 auth/activity payload 範例，例：
+	// "2024-10-03T11:13:43.360227+00:00"）。userInfo 回應與 webhook payload 共用這個欄位形狀。
+	// 用 *string 而非 time.Time：null 與「格式無法解析」都要能分辨、且不擋整筆 JSON 解碼失敗
+	// （見 terraParseLastWebhookUpdate）。
+	LastWebhookUpdate *string `json:"last_webhook_update"`
 }
 
 // terraUserEventPayload：auth / deauth / connection_error 共用的頂層形狀。
