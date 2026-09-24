@@ -10,8 +10,8 @@
    DOR｜城市探索 產品宣傳影片 v2（1920×1080，47 秒）
    主題：打卡 → 關主挑戰 → 卡片收集。只用正式資料：
    - 點位座標：points.js（由正式 migrations 產生，1,057 個啟用點位）
-   - 關主資料：migration 063 / 119（名稱、稱號、台詞、課表）
-   - 圖片：apps/web/public/characters/DOR-TPE-001-*（大安小鹿正式卡面與場景）、官方 Logo / 圖示
+   - 關主卡面／場景／立繪：assets/（自正式圖床 img.dor.tw 下載，見 fetch_assets.sh）
+   - 關主文字（名稱、稱號、必殺技、台詞）：以正式卡面上印的內容為準
    不使用 DORPG（ui/dorpg/*）測試素材。
    所有動畫皆為 CSS animation，animation-delay = 影片絕對秒數；地圖點位由 canvas 依 t 繪製。
    ========================================================= */
@@ -157,14 +157,15 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
 #s4 .where .badge{padding:10px 24px;border-radius:999px;background:var(--gold);color:#3a2600;font-size:30px;font-weight:900}
 #s4 .where .pl{font-size:44px;font-weight:900;text-shadow:0 4px 20px rgba(0,0,0,.6)}
 #s4 .where .pl small{font-size:28px;font-weight:700;color:#e3e7f0;margin-left:14px}
-#s4 .stampbox{position:absolute;left:1560px;top:210px;width:0;height:0}
+#s4 .stampbox{position:absolute;left:560px;top:330px;width:0;height:0}
+#s4 .master{position:absolute;left:1140px;bottom:-160px;height:1080px;filter:drop-shadow(0 30px 60px rgba(0,0,0,.6));animation:up 1s cubic-bezier(.2,.8,.2,1) both 19.6s}
 #s4 .stamp{position:absolute;left:0;top:0;padding:14px 34px;border:8px solid var(--red);border-radius:18px;color:var(--red);font-family:'Space Grotesk',sans-serif;font-size:72px;font-weight:700;letter-spacing:.08em;background:rgba(9,9,15,.5);white-space:nowrap;animation:stamp .45s cubic-bezier(.3,1.4,.5,1) both 19.2s}
 #s4 .dlg{position:absolute;left:120px;right:120px;bottom:60px;padding:40px 52px 36px;border-radius:32px;background:rgba(12,14,20,.92);border:2px solid rgba(255,194,75,.55);box-shadow:0 30px 90px rgba(0,0,0,.6);animation:up .8s cubic-bezier(.2,.8,.2,1) both 20s}
 #s4 .dlg .who{position:absolute;left:44px;top:-30px;padding:8px 28px;border-radius:14px;background:var(--gold);color:#3a2600;font-size:32px;font-weight:900}
 #s4 .dlg .line{font-size:40px;font-weight:700;line-height:1.6;min-height:64px}
 #s4 .dlg .t{display:inline-block;overflow:hidden;white-space:nowrap;vertical-align:bottom}
-#s4 .dlg .l1 .t{animation:typing 1.8s steps(30) both 20.5s}
-#s4 .dlg .l2{color:var(--gold);opacity:0;animation:in .4s both 22.5s}
+#s4 .dlg .l1 .t{animation:typing 1.3s steps(16) both 20.5s}
+#s4 .dlg .l2{color:var(--gold);opacity:0;animation:in .4s both 22.2s}
 #s4 .dlg .btns{position:absolute;right:52px;bottom:34px;display:flex;gap:18px;animation:pop .5s both 23s}
 #s4 .dlg .btns span{padding:16px 34px;border-radius:18px;font-size:32px;font-weight:900;background:rgba(255,255,255,.1)}
 #s4 .dlg .btns span.go{background:var(--fug);color:#05140e;box-shadow:0 0 40px rgba(45,229,154,.5);animation:press .3s ease-in-out both 23.9s}
@@ -174,18 +175,21 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
    ========================================================= */
 #s5{animation:in .6s both 24.6s,out .6s forwards 31.2s}
 #s5 .bg{filter:blur(18px) brightness(.32) saturate(1.2);transform:scale(1.1)}
-#s5 .side{position:absolute;left:130px;top:110px;width:900px}
+#s5 .master{position:absolute;left:40px;bottom:-60px;height:1060px;filter:drop-shadow(0 30px 80px rgba(0,0,0,.7));animation:left 1s cubic-bezier(.2,.8,.2,1) both 24.7s}
+#s5 .side{position:absolute;left:680px;top:110px;width:560px}
 #s5 .side>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
 #s5 .side .step{animation-delay:24.8s}
-#s5 .side .name{margin-top:26px;font-size:140px;font-weight:900;line-height:1.1;background:linear-gradient(180deg,#ffffff,#b9f5d9);-webkit-background-clip:text;color:transparent;animation-delay:25.1s}
-#s5 .side .title{font-size:40px;font-weight:700;color:var(--gold);animation-delay:25.3s}
+#s5 .side .name{margin-top:26px;font-size:130px;font-weight:900;line-height:1.1;background:linear-gradient(180deg,#ffffff,#b9f5d9);-webkit-background-clip:text;color:transparent;animation-delay:25.1s}
+#s5 .side .title{font-size:36px;font-weight:700;color:var(--gold);animation-delay:25.3s}
 #s5 .side .tags{display:flex;flex-wrap:wrap;gap:16px;margin-top:28px;animation-delay:25.5s}
-#s5 .bubble{position:absolute;left:130px;top:640px;padding:26px 40px;border-radius:30px;background:#fffaf0;color:#3b2a1a;font-size:44px;font-weight:900;box-shadow:0 20px 60px rgba(0,0,0,.5);transform-origin:left bottom;animation:pop .55s both 25.9s}
-#s5 .bubble .t{display:inline-block;overflow:hidden;white-space:nowrap;vertical-align:bottom;animation:typing 1.3s steps(15) both 26.1s}
-#s5 .extra{position:absolute;left:130px;top:830px;display:flex;gap:18px}
-#s5 .extra .chip{font-size:28px;animation:pop .5s both}
+#s5 .skill{position:absolute;left:680px;top:690px;width:560px;padding:24px 30px;border-radius:24px;background:rgba(18,40,28,.85);border:2px solid rgba(45,229,154,.5);animation:pop .55s both 26s}
+#s5 .skill small{display:block;font-size:22px;color:var(--fug);font-weight:900;letter-spacing:.12em}
+#s5 .skill b{display:block;font-size:40px;font-weight:900;margin-top:4px}
+#s5 .skill span{display:block;font-size:22px;white-space:nowrap;color:#c9d0de;margin-top:6px;line-height:1.5}
+#s5 .extra{position:absolute;left:680px;top:920px;display:flex;gap:14px}
+#s5 .extra .chip{font-size:24px;padding:10px 20px;animation:pop .5s both}
 #s5 .extra .chip:nth-child(1){animation-delay:29.6s} #s5 .extra .chip:nth-child(2){animation-delay:29.8s}
-#s5 .hud{position:absolute;right:130px;top:130px;width:690px;padding:44px 46px;border-radius:36px;background:rgba(12,14,20,.9);border:2px solid rgba(255,255,255,.1);box-shadow:0 40px 120px rgba(0,0,0,.6);animation:left .9s cubic-bezier(.2,.8,.2,1) both 25.4s}
+#s5 .hud{position:absolute;right:80px;top:150px;width:560px;padding:44px 46px;border-radius:36px;background:rgba(12,14,20,.9);border:2px solid rgba(255,255,255,.1);box-shadow:0 40px 120px rgba(0,0,0,.6);animation:left .9s cubic-bezier(.2,.8,.2,1) both 25.4s}
 #s5 .hud .hd{display:flex;justify-content:space-between;align-items:center;font-size:30px;font-weight:900}
 #s5 .hud .hd span{font-size:22px;padding:6px 16px;border-radius:999px;background:rgba(255,75,92,.18);color:var(--red);font-weight:900;letter-spacing:.06em}
 #s5 .hud .sub{font-size:24px;color:var(--dim);margin-top:6px}
@@ -200,11 +204,11 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
 #s5 .seg .ok{color:var(--fug);opacity:0;margin-left:8px}
 #s5 .seg:nth-child(1) .ok{animation:in .2s both 27.2s} #s5 .seg:nth-child(2) .ok{animation:in .2s both 28.7s} #s5 .seg:nth-child(3) .ok{animation:in .2s both 29.4s}
 #s5 .result{margin-top:40px;padding-top:30px;border-top:2px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:18px}
-#s5 .result .s{font-size:80px;line-height:1;color:#3a3f4d}
+#s5 .result .s{font-size:66px;line-height:1;color:#3a3f4d}
 #s5 .result .s:nth-child(1){animation:starFill .4s both 29.5s}
 #s5 .result .s:nth-child(2){animation:starFill .4s both 29.8s}
 #s5 .result .s:nth-child(3){animation:starFill .4s both 30.1s}
-#s5 .result .lbl{font-size:32px;font-weight:900;margin-left:10px;opacity:0;animation:in .3s both 30.4s}
+#s5 .result .lbl{white-space:nowrap;font-size:30px;font-weight:900;margin-left:10px;opacity:0;animation:in .3s both 30.4s}
 
 /* =========================================================
    S6 STEP 03 收服得卡 31.4 – 37.4s
@@ -243,14 +247,12 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
 #s7 .prog .v small{font-size:36px;color:var(--dim)}
 #s7 .prog .k{font-size:24px;color:var(--dim);font-weight:700;margin-top:6px}
 #s7 .grid{position:absolute;left:180px;right:180px;top:300px;display:grid;grid-template-columns:repeat(6,1fr);gap:24px}
-#s7 .c{position:relative;aspect-ratio:1060/1484;border-radius:18px;overflow:hidden;animation:flip .6s cubic-bezier(.2,.8,.2,1) both}
+#s7 .c{position:relative;aspect-ratio:857/1200;border-radius:18px;overflow:hidden;animation:flip .6s cubic-bezier(.2,.8,.2,1) both}
 #s7 .c.own{box-shadow:0 0 0 4px var(--gold),0 0 50px rgba(255,194,75,.5)}
-#s7 .c.own img{width:100%;height:100%;object-fit:cover}
-#s7 .c.lock{background:linear-gradient(160deg,#1c2231,#0e1119);border:2px solid rgba(255,255,255,.1);display:flex;flex-direction:column;justify-content:flex-end;padding:18px}
-#s7 .c.lock::before{content:'?';position:absolute;left:0;right:0;top:22%;text-align:center;font-size:120px;font-weight:900;color:rgba(157,140,255,.28);line-height:1}
-#s7 .c.lock .st{font-size:20px;color:var(--gold);letter-spacing:.05em}
-#s7 .c.lock .nm{font-size:30px;font-weight:900;margin-top:4px}
-#s7 .c.lock .rg{font-size:20px;color:var(--dim);font-weight:500}
+#s7 .c img{width:100%;height:100%;object-fit:cover}
+#s7 .c.lock{box-shadow:0 0 0 2px rgba(255,255,255,.08)}
+#s7 .c.lock img{filter:grayscale(1) brightness(.5)}
+#s7 .c.lock::after{content:'未收服';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:6px 16px;border-radius:999px;background:rgba(9,9,15,.8);border:1.5px solid rgba(255,255,255,.2);font-size:20px;font-weight:900;color:#c9d0de;white-space:nowrap}
 #s7 .grid .c:nth-child(1){animation-delay:37.8s} #s7 .grid .c:nth-child(2){animation-delay:37.9s} #s7 .grid .c:nth-child(3){animation-delay:38s}
 #s7 .grid .c:nth-child(4){animation-delay:38.1s} #s7 .grid .c:nth-child(5){animation-delay:38.2s} #s7 .grid .c:nth-child(6){animation-delay:38.3s}
 #s7 .grid .c:nth-child(7){animation-delay:38.4s} #s7 .grid .c:nth-child(8){animation-delay:38.5s} #s7 .grid .c:nth-child(9){animation-delay:38.6s}
@@ -340,13 +342,14 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
 
   <!-- S4 揭曉：關主叫陣 -->
   <section class="sc" id="s4">
-    <img class="cover" src="../../apps/web/public/characters/DOR-TPE-001-Scene.png">
+    <img class="cover" src="assets/DOR-TPE-001-scene.webp">
     <div class="shade"></div>
     <div class="where"><span class="badge">打卡揭曉</span><span class="pl">大安森林公園<small>臺北市・大安區</small></span></div>
+    <img class="master" src="assets/DOR-TPE-001-master.webp">
     <div class="stampbox"><div class="stamp">CHECK IN!</div></div>
     <div class="dlg">
       <div class="who">大安小鹿</div>
-      <div class="line l1"><span class="t">「欸，等一下。這個陌生ID是你的？想讓我閉嘴還是想被我記住？」</span></div>
+      <div class="line l1"><span class="t">「蟬都叫成這樣了，你還不加速？」</span></div>
       <div class="line l2">要接受大安小鹿的叫陣嗎？</div>
       <div class="btns"><span class="go">▶ 前往挑戰</span></div>
     </div>
@@ -354,23 +357,24 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
 
   <!-- S5 STEP 02 挑戰關主 -->
   <section class="sc" id="s5">
-    <img class="cover bg" src="../../apps/web/public/characters/DOR-TPE-001-Scene.png">
+    <img class="cover bg" src="assets/DOR-TPE-001-scene.webp">
     <div class="vignette"></div>
+    <img class="master" src="assets/DOR-TPE-001-master.webp">
     <div class="side">
       <div class="step"><b>STEP 02</b>挑戰關主</div>
       <div class="name">大安小鹿</div>
       <div class="title">— 大安的傳說級守門人 —</div>
-      <div class="tags"><span class="chip y">★★★★★</span><span class="chip">節奏跑混合型</span><span class="chip">絕技・樹影瞬移</span></div>
+      <div class="tags"><span class="chip y">★★★★★</span><span class="chip">節奏跑混合型</span><span class="chip">主線Boss／封面級關主</span></div>
     </div>
-    <div class="bubble">「<span class="t">蟬都叫成這樣了，你還不加速？</span>」</div>
+    <div class="skill"><small>必殺技能</small><b>森林節奏接管</b><span>沿大安森林園道開啟極限定速，逆風也不掉拍。</span></div>
     <div class="extra"><span class="chip">⏱ 自由挑戰・刷新最短時間</span><span class="chip">🏆 挑戰者排行</span></div>
     <div class="hud">
-      <div class="hd">關主課表・節奏跑混合型<span>挑戰中</span></div>
-      <div class="sub">依關主課表完成每一段，GPS 自動判定</div>
+      <div class="hd">關主課表<span>挑戰中</span></div>
+      <div class="sub">依課表完成每一段，GPS 自動判定</div>
       <div class="segs">
-        <div class="seg"><div class="row"><div>暖身<span class="ok">✓</span></div><small>1.5 km ・ 6'39"–7'09"/km</small></div><div class="bar"><i></i></div></div>
-        <div class="seg"><div class="row"><div>節奏跑<span class="ok">✓</span></div><small>5.0 km ・ 5'06"–5'36"/km</small></div><div class="bar"><i></i></div></div>
-        <div class="seg"><div class="row"><div>緩和<span class="ok">✓</span></div><small>1.0 km ・ 6'39"–7'09"/km</small></div><div class="bar"><i></i></div></div>
+        <div class="seg"><div class="row"><div>暖身<span class="ok">✓</span></div><small>穩住節奏</small></div><div class="bar"><i></i></div></div>
+        <div class="seg"><div class="row"><div>節奏跑<span class="ok">✓</span></div><small>守住目標配速</small></div><div class="bar"><i></i></div></div>
+        <div class="seg"><div class="row"><div>緩和<span class="ok">✓</span></div><small>收操完成</small></div><div class="bar"><i></i></div></div>
       </div>
       <div class="result"><span class="s">★</span><span class="s">★</span><span class="s">★</span><span class="lbl">挑戰成功 3★</span></div>
     </div>
@@ -388,7 +392,7 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
     </div>
     <div class="flip"><div class="inner">
       <div class="face back"><img src="../../apps/web/public/icon-512.png"><b>?</b></div>
-      <div class="face front"><img src="../../apps/web/public/characters/DOR-TPE-001-Card.png"><div class="sheen"></div></div>
+      <div class="face front"><img src="assets/DOR-TPE-001-card.webp"><div class="sheen"></div></div>
     </div></div>
   </section>
 
@@ -400,21 +404,21 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
         <div class="h2">收集你的<span class="y">城市圖鑑</span></div>
         <div class="body">到城市探索中進行打卡任務，可以收集意想不到的卡片唷～</div>
       </div>
-      <div class="prog"><div class="v">1<small> / 572</small></div><div class="k">張關主卡</div></div>
+      <div class="prog"><div class="v">3<small> / 572</small></div><div class="k">張關主卡</div></div>
     </div>
     <div class="grid">
-      <div class="c own"><img src="../../apps/web/public/characters/DOR-TPE-001-Card.png"></div>
-      <div class="c lock"><div class="st">★★★★★</div><div class="nm">台北阿衝</div><div class="rg">臺北市・松山區</div></div>
-      <div class="c lock"><div class="st">★★★★★</div><div class="nm">三重小火箭</div><div class="rg">新北市・三重區</div></div>
-      <div class="c lock"><div class="st">★★★★★</div><div class="nm">台中草仔</div><div class="rg">臺中市・西屯區</div></div>
-      <div class="c lock"><div class="st">★★★★★</div><div class="nm">左營閃電雄</div><div class="rg">高雄市・左營區</div></div>
-      <div class="c lock"><div class="st">★★★★</div><div class="nm">台南疾箭</div><div class="rg">臺南市・南區</div></div>
-      <div class="c lock"><div class="st">★★★★</div><div class="nm">桃園四百哥</div><div class="rg">桃園市・桃園區</div></div>
-      <div class="c lock"><div class="st">★★★★</div><div class="nm">新竹阿速</div><div class="rg">新竹市・東區</div></div>
-      <div class="c lock"><div class="st">★★★★</div><div class="nm">彰化腿腿</div><div class="rg">彰化縣・彰化市</div></div>
-      <div class="c lock"><div class="st">★★★★</div><div class="nm">宜蘭勁梭</div><div class="rg">宜蘭縣・宜蘭市</div></div>
-      <div class="c lock"><div class="st">★★★★</div><div class="nm">花蓮小圈</div><div class="rg">花蓮縣・花蓮市</div></div>
-      <div class="c lock"><div class="st">★★★★</div><div class="nm">臺東閃翼</div><div class="rg">臺東縣・臺東市</div></div>
+      <div class="c own"><img src="assets/DOR-TPE-001-card.webp"></div>
+      <div class="c own"><img src="assets/DOR-TPE-002-card.webp"></div>
+      <div class="c own"><img src="assets/DOR-NTP-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-TXG-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-KHH-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-TNN-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-TAO-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-HSZ-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-CHA-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-ILA-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-HUA-001-card.webp"></div>
+      <div class="c lock"><img src="assets/DOR-TTT-001-card.webp"></div>
     </div>
   </section>
 
