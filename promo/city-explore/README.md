@@ -1,6 +1,6 @@
 # DOR｜城市探索 產品宣傳影片
 
-成品：`dor-city-explore-promo.mp4`（1920×1080、30fps、44 秒、H.264 Main + AAC，約 9.8MB，含原創合成配樂）；另附 `dor-city-explore-promo-720p.mp4`（約 4.6MB，適合手機傳送）
+成品：`dor-city-explore-promo.mp4`（1920×1080、30fps、44 秒、H.264 Main + AAC，約 9.8MB，含原創合成配樂）
 
 ## 分鏡
 
