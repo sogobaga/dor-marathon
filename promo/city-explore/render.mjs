@@ -56,7 +56,7 @@ const ff = spawn(ffmpeg, [
   '-y', '-loglevel', 'error',
   '-f', 'image2pipe', '-framerate', String(fps), '-c:v', 'mjpeg', '-i', '-',
   '-ss', String(from), '-i', wav,
-  '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+  '-c:v', 'libx264', '-profile:v', 'main', '-level', '4.0', '-preset', 'slow', '-crf', '24', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
   '-c:a', 'aac', '-b:a', '192k', '-shortest', out,
 ], { stdio: ['pipe', 'inherit', 'inherit'] });
 
