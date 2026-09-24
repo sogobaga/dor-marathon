@@ -7,14 +7,17 @@
 <link rel="stylesheet" href="fonts/local.css">
 <style>
 /* =========================================================
-   DOR｜城市探索 產品宣傳影片（1920×1080，約 44 秒）
-   所有動畫皆為 CSS animation，時間 = 影片絕對秒數（animation-delay）。
-   render.mjs 逐格把 document.getAnimations() 的 currentTime 設到 t，截圖後以 ffmpeg 合成。
+   DOR｜城市探索 產品宣傳影片 v2（1920×1080，47 秒）
+   主題：打卡 → 關主挑戰 → 卡片收集。只用正式資料：
+   - 點位座標：points.js（由正式 migrations 產生，1,057 個啟用點位）
+   - 關主資料：migration 063 / 119（名稱、稱號、台詞、課表）
+   - 圖片：apps/web/public/characters/DOR-TPE-001-*（大安小鹿正式卡面與場景）、官方 Logo / 圖示
+   不使用 DORPG（ui/dorpg/*）測試素材。
+   所有動畫皆為 CSS animation，animation-delay = 影片絕對秒數；地圖點位由 canvas 依 t 繪製。
    ========================================================= */
 :root{
   --bg:#09090f; --card:#12141a; --fug:#2DE59A; --gold:#FFC24B; --red:#FF4B5C; --purple:#9D8CFF;
-  --blue:#3B8BEB; --ink:#f4f6fb; --dim:#9aa3b5;
-  --P:'../../apps/web/public/';
+  --ink:#f4f6fb; --dim:#9aa3b5;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{width:1920px;height:1080px;overflow:hidden;background:var(--bg)}
@@ -22,7 +25,6 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
 .en{font-family:'Space Grotesk','Noto Sans TC',sans-serif}
 #stage{position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--bg)}
 .sc{position:absolute;inset:0;overflow:hidden;opacity:0}
-.abs{position:absolute}
 .cover{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .center{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
 .g{color:var(--fug)} .y{color:var(--gold)} .p{color:var(--purple)}
@@ -33,24 +35,22 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
 @keyframes up{from{opacity:0;transform:translateY(60px)}to{opacity:1;transform:none}}
 @keyframes upS{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
 @keyframes left{from{opacity:0;transform:translateX(-80px)}to{opacity:1;transform:none}}
-@keyframes right{from{opacity:0;transform:translateX(80px)}to{opacity:1;transform:none}}
 @keyframes pop{0%{opacity:0;transform:scale(.3)}60%{opacity:1;transform:scale(1.12)}100%{opacity:1;transform:scale(1)}}
 @keyframes popPin{0%{opacity:0;transform:translate(-50%,-100%) scale(.2)}60%{opacity:1;transform:translate(-50%,-100%) scale(1.2)}100%{opacity:1;transform:translate(-50%,-100%) scale(1)}}
-@keyframes zoomOut{from{transform:scale(1.18)}to{transform:scale(1)}}
-@keyframes zoomIn{from{transform:scale(1)}to{transform:scale(1.1)}}
+@keyframes zoomOut{from{transform:scale(1.15)}to{transform:scale(1)}}
+@keyframes zoomIn{from{transform:scale(1)}to{transform:scale(1.08)}}
 @keyframes blurIn{from{opacity:0;filter:blur(24px);transform:scale(1.15)}to{opacity:1;filter:blur(0);transform:none}}
-@keyframes wipe{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-14px)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%{transform:translate(-50%,-50%) scale(.4);opacity:.9}100%{transform:translate(-50%,-50%) scale(1.6);opacity:0}}
-@keyframes stamp{0%{opacity:0;transform:translate(-50%,-50%) rotate(-14deg) scale(3)}55%{opacity:1;transform:translate(-50%,-50%) rotate(-14deg) scale(.92)}100%{opacity:1;transform:translate(-50%,-50%) rotate(-14deg) scale(1)}}
+@keyframes stamp{0%{opacity:0;transform:translate(-50%,-50%) rotate(-12deg) scale(3)}55%{opacity:1;transform:translate(-50%,-50%) rotate(-12deg) scale(.92)}100%{opacity:1;transform:translate(-50%,-50%) rotate(-12deg) scale(1)}}
 @keyframes flip{0%{opacity:0;transform:perspective(1400px) rotateY(-90deg) scale(.8)}100%{opacity:1;transform:perspective(1400px) rotateY(0) scale(1)}}
 @keyframes rise{0%{opacity:0;transform:translateY(20px) scale(.6)}20%{opacity:1;transform:translateY(0) scale(1.1)}80%{opacity:1;transform:translateY(-50px) scale(1)}100%{opacity:0;transform:translateY(-80px)}}
-@keyframes draw{from{stroke-dashoffset:var(--len)}to{stroke-dashoffset:0}}
-@keyframes run{from{offset-distance:0%}to{offset-distance:100%}}
 @keyframes shine{from{transform:translateX(-120%) skewX(-20deg)}to{transform:translateX(320%) skewX(-20deg)}}
 @keyframes starFill{from{color:#3a3f4d;transform:scale(.6)}60%{transform:scale(1.35)}to{color:var(--gold);transform:scale(1)}}
 @keyframes toGold{from{background:var(--purple)}to{background:var(--gold)}}
+@keyframes fill{from{width:0}to{width:100%}}
+@keyframes typing{from{max-width:0}to{max-width:40em}}
 @property --n{syntax:'<integer>';inherits:false;initial-value:0}
 @keyframes count{from{--n:0}to{--n:var(--to)}}
 .counter{counter-reset:n var(--n)}
@@ -59,261 +59,253 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
 /* ---------- 共用元件 ---------- */
 .step{display:inline-flex;align-items:center;gap:18px;font-size:30px;font-weight:700;letter-spacing:.12em;color:var(--fug)}
 .step b{font-family:'Space Grotesk',sans-serif;font-size:30px;padding:6px 16px;border:2px solid var(--fug);border-radius:999px;letter-spacing:.08em}
-.h1{font-size:92px;font-weight:900;line-height:1.18;letter-spacing:.02em}
-.h2{font-size:68px;font-weight:900;line-height:1.25}
-.body{font-size:34px;line-height:1.65;color:#c9d0de;font-weight:500}
+.h1{font-size:88px;font-weight:900;line-height:1.2;letter-spacing:.02em}
+.h2{font-size:66px;font-weight:900;line-height:1.25}
+.body{font-size:32px;line-height:1.65;color:#c9d0de;font-weight:500}
 .chip{display:inline-flex;align-items:center;gap:10px;padding:10px 24px;border-radius:999px;font-size:28px;font-weight:700;background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14)}
-.glow{position:absolute;border-radius:50%;filter:blur(120px);opacity:.35}
+.glow{position:absolute;border-radius:50%;filter:blur(120px)}
 .vignette{position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 45%,rgba(0,0,0,.75) 100%)}
-.pin{position:absolute;width:64px;height:64px;border-radius:50% 50% 50% 0;transform:translate(-50%,-100%);display:flex;align-items:center;justify-content:center}
-.pin i{font-style:normal;font-weight:900;font-size:30px;color:#fff;transform:rotate(45deg)}
+.pin{position:absolute;width:64px;height:64px;transform:translate(-50%,-100%);display:flex;align-items:center;justify-content:center}
 .pin::before{content:'';position:absolute;inset:0;border-radius:50% 50% 50% 0;background:inherit;transform:rotate(-45deg);box-shadow:0 8px 24px rgba(0,0,0,.5)}
-.pin i{position:relative;transform:none}
+.pin i{position:relative;font-style:normal;font-weight:900;font-size:30px;color:#fff}
+.dor-icon{border-radius:22%;box-shadow:0 0 0 3px rgba(255,255,255,.12),0 30px 80px rgba(0,0,0,.6),0 0 90px rgba(45,229,154,.25)}
 
 /* =========================================================
-   S1 開場：夜晚城市 0 – 4.6s
+   地圖 canvas（S1 開場 + S8 結尾背景）：由 JS 依 t 繪製
    ========================================================= */
-#s1{animation:in .6s both 0s,out .6s forwards 4s}
-#s1 .cover{animation:zoomOut 5s linear both 0s}
-#s1 .shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(9,9,15,.25),rgba(9,9,15,.55) 55%,rgba(9,9,15,.92))}
-#s1 .txt{position:absolute;left:0;right:0;bottom:170px}
-#s1 .l1{font-size:64px;font-weight:700;animation:up 1s cubic-bezier(.2,.8,.2,1) both .5s}
-#s1 .l2{font-size:88px;font-weight:900;margin-top:14px;animation:up 1s cubic-bezier(.2,.8,.2,1) both 1.7s}
+#map{position:absolute;left:0;top:0;width:1920px;height:1080px}
 
 /* =========================================================
-   S2 品牌：Logo + 標語 4 – 9.2s
+   S1 開場：全台點位地圖 0 – 6.4s
    ========================================================= */
-#s2{animation:in .6s both 4s,out .6s forwards 8.6s}
-#s2 .silhouette{position:absolute;left:0;right:0;bottom:0;width:100%;height:300px;object-fit:cover;opacity:.08;filter:brightness(0) invert(1)}
-#s2 .logo{display:flex;align-items:center;gap:40px;animation:blurIn 1.1s cubic-bezier(.2,.8,.2,1) both 4.4s}
-#s2 .logo img{width:300px;height:300px;border-radius:68px;box-shadow:0 0 0 3px rgba(255,255,255,.12),0 30px 80px rgba(0,0,0,.6),0 0 90px rgba(45,229,154,.25)}
+#s1{animation:in .5s both 0s,out .6s forwards 5.8s}
+#s1 .txt{position:absolute;left:150px;top:220px;width:900px}
+#s1 .l1{font-size:52px;font-weight:700;color:#d9deea;animation:up 1s cubic-bezier(.2,.8,.2,1) both .3s}
+#s1 .l2{font-size:84px;font-weight:900;line-height:1.25;margin-top:14px;animation:up 1s cubic-bezier(.2,.8,.2,1) both 1.2s}
+#s1 .stats{display:flex;gap:70px;margin-top:64px}
+#s1 .stat{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s1 .stat:nth-child(1){animation-delay:2.2s} #s1 .stat:nth-child(2){animation-delay:2.5s}
+#s1 .num{display:flex;align-items:baseline;font-family:'Space Grotesk',sans-serif;font-size:124px;font-weight:700;line-height:1}
+#s1 .num .counter{animation:count 2.4s cubic-bezier(.2,.7,.2,1) both}
+#s1 .stat:nth-child(1) .num{color:var(--purple)} #s1 .stat:nth-child(1) .counter{--to:1000;animation-delay:2.3s}
+#s1 .stat:nth-child(2) .num{color:var(--gold)}   #s1 .stat:nth-child(2) .counter{--to:570;animation-delay:2.6s}
+#s1 .num sup{font-size:70px;margin-left:4px}
+#s1 .lbl{font-size:32px;font-weight:700;margin-top:10px;display:flex;align-items:center;gap:12px}
+#s1 .lbl::before{content:'';width:18px;height:18px;border-radius:50%;background:var(--c);box-shadow:0 0 14px var(--c)}
+
+/* =========================================================
+   S2 品牌 6 – 11.2s
+   ========================================================= */
+#s2{animation:in .6s both 6s,out .6s forwards 10.6s}
+#s2 .logo{display:flex;align-items:center;gap:40px;animation:blurIn 1.1s cubic-bezier(.2,.8,.2,1) both 6.3s}
+#s2 .logo img{width:280px;height:280px}
 #s2 .logo .word{font-size:132px;font-weight:900;letter-spacing:.08em;display:flex;align-items:center;gap:22px}
 #s2 .logo .dot{color:var(--red)}
-#s2 .logo .zh{color:#fff}
-#s2 .tag{font-size:100px;font-weight:900;margin-top:40px;animation:up 1s cubic-bezier(.2,.8,.2,1) both 5.7s}
+#s2 .tag{font-size:100px;font-weight:900;margin-top:40px;animation:up 1s cubic-bezier(.2,.8,.2,1) both 7.5s}
 #s2 .pillars{display:flex;gap:28px;margin-top:54px}
-#s2 .pillars .chip{font-size:34px;padding:14px 34px}
-#s2 .pillars .chip:nth-child(1){animation:pop .6s both 6.6s}
-#s2 .pillars .chip:nth-child(2){animation:pop .6s both 6.85s}
-#s2 .pillars .chip:nth-child(3){animation:pop .6s both 7.1s}
-#s2 .pillars img{width:44px;height:44px}
+#s2 .pillars .chip{font-size:36px;padding:14px 34px}
+#s2 .pillars .chip:nth-child(1){animation:pop .6s both 8.4s}
+#s2 .pillars .chip:nth-child(2){animation:pop .6s both 8.65s}
+#s2 .pillars .chip:nth-child(3){animation:pop .6s both 8.9s}
+#s2 .pillars img{width:46px;height:46px}
 
 /* =========================================================
-   S3 STEP 01 發現：地圖 8.8 – 15.4s
+   S3 STEP 01 打卡：手機 GPS 11 – 18.8s
    ========================================================= */
-#s3{animation:in .6s both 8.8s,out .6s forwards 14.8s}
-#s3 .map{position:absolute;left:90px;top:110px;width:1000px;height:860px;border-radius:40px;overflow:hidden;background:#0e1420;border:2px solid rgba(255,255,255,.08);box-shadow:0 40px 120px rgba(0,0,0,.6);animation:left 1s cubic-bezier(.2,.8,.2,1) both 9s}
-#s3 .map svg{position:absolute;inset:0}
-#s3 .route{fill:none;stroke:var(--fug);stroke-width:10;stroke-linecap:round;stroke-dasharray:var(--len);--len:2000;animation:draw 4.6s cubic-bezier(.4,0,.3,1) both 9.8s;filter:drop-shadow(0 0 12px rgba(45,229,154,.8))}
-#s3 .runner{position:absolute;left:0;top:0;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;background:#fff;border:8px solid var(--fug);box-shadow:0 0 0 12px rgba(45,229,154,.25),0 0 30px var(--fug);
-  offset-path:path('M 90 760 C 220 700 240 560 380 540 S 560 610 640 480 S 700 250 860 200 S 930 110 960 90');offset-rotate:0deg;animation:run 4.6s cubic-bezier(.4,0,.3,1) both 9.8s}
-#s3 .pin.m{background:var(--purple)}
-#s3 .pin.gold{background:var(--gold)}
-#s3 .pin.green{background:var(--fug)}
-#s3 .pin.green i{color:#05140e}
-#s3 .legend{position:absolute;left:36px;bottom:30px;display:flex;gap:26px;font-size:24px;font-weight:700;padding:14px 24px;border-radius:18px;background:rgba(9,9,15,.75);animation:upS .6s both 11.6s}
-#s3 .legend span{display:flex;align-items:center;gap:10px}
-#s3 .legend span::before{content:'';width:18px;height:18px;border-radius:50%;background:var(--c)}
-#s3 .side{position:absolute;left:1180px;top:200px;width:660px}
-#s3 .side>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
-#s3 .side .step{animation-delay:9.3s}
-#s3 .side .h1{margin-top:34px;animation-delay:9.6s}
-#s3 .side .big{margin-top:36px;display:flex;align-items:baseline;gap:18px;animation-delay:10.2s}
-#s3 .side .big .counter{font-family:'Space Grotesk',sans-serif;font-size:150px;font-weight:700;color:var(--gold);line-height:1;--to:1058;animation:count 2.4s cubic-bezier(.2,.7,.2,1) both 10.4s}
-#s3 .side .big span{font-size:40px;font-weight:700}
-#s3 .side .body{margin-top:30px;animation-delay:11s}
-
-/* =========================================================
-   S4 STEP 02 打卡揭曉：手機 GPS 15 – 22.4s
-   ========================================================= */
-#s4{animation:in .6s both 15s,out .6s forwards 21.8s}
-#s4 .glow.a{left:120px;top:200px;width:620px;height:620px;background:var(--fug)}
-#s4 .glow.b{right:120px;top:120px;width:720px;height:720px;background:var(--gold);opacity:.18}
-#s4 .phone{position:absolute;left:170px;top:70px;width:470px;height:940px;border-radius:64px;background:#000;padding:18px;box-shadow:0 0 0 3px #2a2e38,0 50px 120px rgba(0,0,0,.7);animation:up 1s cubic-bezier(.2,.8,.2,1) both 15.2s}
-#s4 .screen{position:relative;width:100%;height:100%;border-radius:48px;overflow:hidden;background:#101826}
-#s4 .screen svg{position:absolute;inset:0}
-#s4 .notch{position:absolute;left:50%;top:14px;width:130px;height:36px;border-radius:20px;background:#000;transform:translateX(-50%);z-index:5}
-#s4 .topbar{position:absolute;left:0;right:0;top:0;padding:66px 28px 18px;background:linear-gradient(#09090f,rgba(9,9,15,0));font-size:26px;font-weight:700;z-index:3}
-#s4 .topbar small{display:block;font-size:19px;color:var(--dim);font-weight:500;margin-top:4px}
-#s4 .range{position:absolute;left:52%;top:46%;width:300px;height:300px;border-radius:50%;transform:translate(-50%,-50%);background:rgba(45,229,154,.12);border:3px dashed rgba(45,229,154,.7);animation:in .6s both 16.4s}
-#s4 .ring{position:absolute;left:52%;top:46%;width:300px;height:300px;border-radius:50%;border:4px solid var(--fug);animation:pulse 1.4s ease-out 4 both 16.6s}
-#s4 .me{position:absolute;left:50%;top:78%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;background:#3b8beb;border:6px solid #fff;box-shadow:0 0 0 14px rgba(59,139,235,.3);animation:walk 1.8s cubic-bezier(.4,0,.3,1) both 16.2s}
+#s3{animation:in .6s both 11s,out .6s forwards 18.2s}
+#s3 .glow.a{left:120px;top:200px;width:620px;height:620px;background:var(--fug);opacity:.3}
+#s3 .glow.b{right:160px;top:220px;width:700px;height:600px;background:var(--purple);opacity:.18}
+#s3 .phone{position:absolute;left:230px;top:70px;width:470px;height:940px;border-radius:64px;background:#000;padding:18px;box-shadow:0 0 0 3px #2a2e38,0 50px 120px rgba(0,0,0,.7);animation:up 1s cubic-bezier(.2,.8,.2,1) both 11.2s}
+#s3 .screen{position:relative;width:100%;height:100%;border-radius:48px;overflow:hidden;background:#101826}
+#s3 .screen svg{position:absolute;inset:0}
+#s3 .notch{position:absolute;left:50%;top:14px;width:130px;height:36px;border-radius:20px;background:#000;transform:translateX(-50%);z-index:5}
+#s3 .topbar{position:absolute;left:0;right:0;top:0;padding:66px 28px 18px;background:linear-gradient(#09090f,rgba(9,9,15,0));font-size:26px;font-weight:700;z-index:3}
+#s3 .topbar small{display:block;font-size:19px;color:var(--dim);font-weight:500;margin-top:4px}
+#s3 .range{position:absolute;left:52%;top:46%;width:300px;height:300px;border-radius:50%;transform:translate(-50%,-50%);background:rgba(45,229,154,.12);border:3px dashed rgba(45,229,154,.7);animation:in .6s both 12.4s}
+#s3 .ring{position:absolute;left:52%;top:46%;width:300px;height:300px;border-radius:50%;border:4px solid var(--fug);animation:pulse 1.4s ease-out 4 both 12.6s}
+#s3 .me{position:absolute;left:50%;top:78%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;background:#3b8beb;border:6px solid #fff;box-shadow:0 0 0 14px rgba(59,139,235,.3);animation:walk 1.8s cubic-bezier(.4,0,.3,1) both 12.2s}
 @keyframes walk{from{left:30%;top:86%}to{left:47%;top:52%}}
-#s4 .pin.tgt{left:52%;top:46%;background:var(--purple);animation:popPin .5s both 15.9s,toGold .3s both 18.6s}
-#s4 .pin.tgt i{animation:out .2s forwards 18.6s}
-#s4 .pin.tgt b{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:30px;color:#3a2600;opacity:0;animation:in .2s both 18.7s}
-#s4 .btn{position:absolute;left:28px;right:28px;bottom:40px;height:96px;border-radius:26px;background:var(--fug);color:#05140e;font-size:34px;font-weight:900;display:flex;align-items:center;justify-content:center;gap:12px;overflow:hidden;animation:upS .5s both 17.4s,press .3s ease-in-out both 18.2s}
+#s3 .pin.tgt{left:52%;top:46%;background:var(--purple);animation:popPin .5s both 11.9s,toGold .3s both 14.6s}
+#s3 .pin.tgt i{animation:out .2s forwards 14.6s}
+#s3 .pin.tgt b{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:30px;color:#3a2600;opacity:0;animation:in .2s both 14.7s}
+#s3 .btn{position:absolute;left:28px;right:28px;bottom:40px;height:96px;border-radius:26px;background:var(--fug);color:#05140e;font-size:34px;font-weight:900;display:flex;align-items:center;justify-content:center;gap:12px;overflow:hidden;animation:upS .5s both 13.4s,press .3s ease-in-out both 14.2s}
 @keyframes press{0%,100%{transform:scale(1)}50%{transform:scale(.93)}}
-#s4 .btn::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent);animation:shine .9s ease-in-out both 17.6s}
-#s4 .toast{position:absolute;left:28px;right:28px;top:170px;padding:22px 26px;border-radius:24px;background:rgba(18,20,26,.95);border:2px solid var(--gold);font-size:26px;font-weight:900;color:var(--gold);display:flex;align-items:center;gap:14px;z-index:4;animation:pop .5s both 18.6s}
-#s4 .toast img{width:46px;height:46px}
-#s4 .reward{position:absolute;display:flex;align-items:center;gap:12px;font-family:'Space Grotesk','Noto Sans TC',sans-serif;font-size:48px;font-weight:700;z-index:6;text-shadow:0 4px 18px rgba(0,0,0,.7)}
-#s4 .reward img{width:64px;height:64px}
-#s4 .reward.dp{left:560px;top:420px;color:var(--gold);animation:rise 2s ease-out both 18.9s}
-#s4 .reward.gp{left:600px;top:540px;color:var(--fug);animation:rise 2s ease-out both 19.2s}
-#s4 .side{position:absolute;left:800px;top:90px;width:1000px}
-#s4 .side .step{animation:up .9s cubic-bezier(.2,.8,.2,1) both 15.4s}
-#s4 .side .h2{margin-top:22px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 15.7s}
-#s4 .side .body{margin-top:16px;font-size:30px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 16.1s}
-#s4 .reveal{position:absolute;left:830px;top:460px;width:960px;height:480px;border-radius:32px;overflow:hidden;border:4px solid var(--gold);box-shadow:0 30px 100px rgba(255,194,75,.25);animation:flip .9s cubic-bezier(.2,.8,.2,1) both 19.1s}
-#s4 .reveal .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:200px;font-weight:900;color:rgba(255,255,255,.15);background:repeating-linear-gradient(45deg,#1a1d27 0 30px,#151822 30px 60px)}
-#s4 .reveal img{animation:zoomIn 4s linear both 19.1s}
-#s4 .reveal .cap{position:absolute;left:0;right:0;bottom:0;padding:70px 34px 24px;background:linear-gradient(transparent,rgba(0,0,0,.85));font-size:40px;font-weight:900;display:flex;justify-content:space-between;align-items:flex-end}
-#s4 .reveal .cap small{font-size:26px;font-weight:700;color:var(--gold)}
-#s4 .stampbox{position:absolute;left:1640px;top:590px;width:0;height:0;z-index:7}
-#s4 .stamp{position:absolute;left:0;top:0;padding:14px 34px;border:8px solid var(--red);border-radius:18px;color:var(--red);font-family:'Space Grotesk',sans-serif;font-size:56px;font-weight:700;letter-spacing:.08em;background:rgba(9,9,15,.55);white-space:nowrap;animation:stamp .45s cubic-bezier(.3,1.4,.5,1) both 19.9s}
+#s3 .btn::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent);animation:shine .9s ease-in-out both 13.6s}
+#s3 .toast{position:absolute;left:28px;right:28px;top:170px;padding:20px 24px;border-radius:24px;background:rgba(18,20,26,.95);border:2px solid var(--gold);font-size:26px;font-weight:900;color:var(--gold);display:flex;align-items:center;gap:14px;z-index:4;animation:pop .5s both 14.6s}
+#s3 .toast img{width:44px;height:44px}
+#s3 .reward{position:absolute;display:flex;align-items:center;gap:12px;font-family:'Space Grotesk','Noto Sans TC',sans-serif;font-size:50px;font-weight:700;z-index:6;text-shadow:0 4px 18px rgba(0,0,0,.7)}
+#s3 .reward img{width:64px;height:64px}
+#s3 .reward.dp{left:620px;top:420px;color:var(--gold);animation:rise 2s ease-out both 14.9s}
+#s3 .reward.gp{left:660px;top:540px;color:var(--fug);animation:rise 2s ease-out both 15.2s}
+#s3 .side{position:absolute;left:880px;top:190px;width:920px}
+#s3 .side>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s3 .side .step{animation-delay:11.4s}
+#s3 .side .h1{margin-top:30px;animation-delay:11.7s}
+#s3 .rules{margin-top:48px;display:grid;gap:22px}
+#s3 .rule{display:flex;align-items:center;gap:22px;font-size:36px;font-weight:700;animation:left .7s cubic-bezier(.2,.8,.2,1) both}
+#s3 .rule:nth-child(1){animation-delay:12.6s} #s3 .rule:nth-child(2){animation-delay:13.2s} #s3 .rule:nth-child(3){animation-delay:15.3s}
+#s3 .rule span{flex:none;width:58px;height:58px;border-radius:18px;display:flex;align-items:center;justify-content:center;background:rgba(45,229,154,.14);border:2px solid rgba(45,229,154,.5);color:var(--fug);font-family:'Space Grotesk',sans-serif;font-size:30px}
+#s3 .rule small{display:block;font-size:26px;font-weight:500;color:var(--dim);margin-top:2px}
 
 /* =========================================================
-   S5 STEP 03 挑戰關主：大安小鹿 22 – 29.8s
+   S4 揭曉：大安森林公園場景 + 關主叫陣 18.4 – 25s
    ========================================================= */
-#s5{animation:in .6s both 22s,out .6s forwards 29.2s}
-#s5 .bg{filter:blur(18px) brightness(.35) saturate(1.2);transform:scale(1.1)}
-#s5 .card{position:absolute;right:170px;top:70px;height:940px;width:672px;animation:cardIn 1.1s cubic-bezier(.2,.8,.2,1) both 22.4s}
-@keyframes cardIn{from{opacity:0;transform:perspective(1600px) rotateY(35deg) translateX(200px) scale(.85)}to{opacity:1;transform:perspective(1600px) rotateY(-6deg)}}
-#s5 .card .in{position:relative;width:100%;height:100%;border-radius:26px;overflow:hidden;box-shadow:0 40px 140px rgba(0,0,0,.8),0 0 80px rgba(255,194,75,.35);animation:float 3.2s ease-in-out infinite 23.5s}
-#s5 .card img{width:100%;height:100%;object-fit:cover}
-#s5 .card .sheen{position:absolute;top:0;bottom:0;left:0;width:35%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);animation:shine 1.2s ease-in-out both 27.6s}
-#s5 .side{position:absolute;left:130px;top:120px;width:980px}
+#s4{animation:in .5s both 18.4s,out .6s forwards 24.4s}
+#s4 .cover{animation:zoomOut 7s linear both 18.4s}
+#s4 .shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(9,9,15,.55),rgba(9,9,15,0) 30%,rgba(9,9,15,0) 50%,rgba(9,9,15,.9))}
+#s4 .where{position:absolute;left:80px;top:64px;display:flex;align-items:center;gap:18px;animation:left .8s cubic-bezier(.2,.8,.2,1) both 18.8s}
+#s4 .where .badge{padding:10px 24px;border-radius:999px;background:var(--gold);color:#3a2600;font-size:30px;font-weight:900}
+#s4 .where .pl{font-size:44px;font-weight:900;text-shadow:0 4px 20px rgba(0,0,0,.6)}
+#s4 .where .pl small{font-size:28px;font-weight:700;color:#e3e7f0;margin-left:14px}
+#s4 .stampbox{position:absolute;left:1560px;top:210px;width:0;height:0}
+#s4 .stamp{position:absolute;left:0;top:0;padding:14px 34px;border:8px solid var(--red);border-radius:18px;color:var(--red);font-family:'Space Grotesk',sans-serif;font-size:72px;font-weight:700;letter-spacing:.08em;background:rgba(9,9,15,.5);white-space:nowrap;animation:stamp .45s cubic-bezier(.3,1.4,.5,1) both 19.2s}
+#s4 .dlg{position:absolute;left:120px;right:120px;bottom:60px;padding:40px 52px 36px;border-radius:32px;background:rgba(12,14,20,.92);border:2px solid rgba(255,194,75,.55);box-shadow:0 30px 90px rgba(0,0,0,.6);animation:up .8s cubic-bezier(.2,.8,.2,1) both 20s}
+#s4 .dlg .who{position:absolute;left:44px;top:-30px;padding:8px 28px;border-radius:14px;background:var(--gold);color:#3a2600;font-size:32px;font-weight:900}
+#s4 .dlg .line{font-size:40px;font-weight:700;line-height:1.6;min-height:64px}
+#s4 .dlg .t{display:inline-block;overflow:hidden;white-space:nowrap;vertical-align:bottom}
+#s4 .dlg .l1 .t{animation:typing 1.8s steps(30) both 20.5s}
+#s4 .dlg .l2{color:var(--gold);opacity:0;animation:in .4s both 22.5s}
+#s4 .dlg .btns{position:absolute;right:52px;bottom:34px;display:flex;gap:18px;animation:pop .5s both 23s}
+#s4 .dlg .btns span{padding:16px 34px;border-radius:18px;font-size:32px;font-weight:900;background:rgba(255,255,255,.1)}
+#s4 .dlg .btns span.go{background:var(--fug);color:#05140e;box-shadow:0 0 40px rgba(45,229,154,.5);animation:press .3s ease-in-out both 23.9s}
+
+/* =========================================================
+   S5 STEP 02 挑戰關主 24.6 – 31.8s
+   ========================================================= */
+#s5{animation:in .6s both 24.6s,out .6s forwards 31.2s}
+#s5 .bg{filter:blur(18px) brightness(.32) saturate(1.2);transform:scale(1.1)}
+#s5 .side{position:absolute;left:130px;top:110px;width:900px}
 #s5 .side>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
-#s5 .side .step{animation-delay:22.3s}
-#s5 .side .lead{margin-top:30px;font-size:36px;font-weight:700;color:#d9deea;animation-delay:22.6s}
-#s5 .side .name{margin-top:12px;font-size:150px;font-weight:900;line-height:1.1;background:linear-gradient(180deg,#ffffff,#b9f5d9);-webkit-background-clip:text;color:transparent;animation-delay:22.9s}
-#s5 .side .title{font-size:42px;font-weight:700;color:var(--gold);animation-delay:23.2s}
-#s5 .side .tags{display:flex;gap:16px;margin-top:28px;animation-delay:23.5s}
-#s5 .bubble{position:absolute;left:130px;top:620px;padding:28px 40px;border-radius:30px;background:#fffaf0;color:#3b2a1a;font-size:44px;font-weight:900;box-shadow:0 20px 60px rgba(0,0,0,.5);transform-origin:left bottom;animation:pop .55s both 24.3s}
-#s5 .bubble::after{content:'';position:absolute;right:-26px;top:40px;border:18px solid transparent;border-left:30px solid #fffaf0}
-#s5 .bubble .t{display:inline-block;overflow:hidden;white-space:nowrap;vertical-align:bottom;animation:typing 1.4s steps(15) both 24.6s}
-@keyframes typing{from{max-width:0}to{max-width:20em}}
-#s5 .stars{position:absolute;left:130px;top:800px;display:flex;align-items:center;gap:22px;animation:upS .5s both 26s}
-#s5 .stars .s{font-size:86px;color:#3a3f4d;line-height:1}
-#s5 .stars .s:nth-child(1){animation:starFill .4s both 26.3s}
-#s5 .stars .s:nth-child(2){animation:starFill .4s both 26.65s}
-#s5 .stars .s:nth-child(3){animation:starFill .4s both 27s}
-#s5 .stars .lbl{font-size:34px;font-weight:700;color:#d9deea;margin-left:14px}
-#s5 .got{position:absolute;left:130px;top:930px;display:flex;align-items:center;gap:16px;padding:16px 34px;border-radius:999px;background:var(--fug);color:#05140e;font-size:38px;font-weight:900;animation:pop .5s both 27.5s}
-#s5 .got img{width:48px;height:48px}
-#s5 .count{position:absolute;right:170px;bottom:24px;font-size:28px;font-weight:700;color:#d9deea;animation:in .6s both 27.9s}
+#s5 .side .step{animation-delay:24.8s}
+#s5 .side .name{margin-top:26px;font-size:140px;font-weight:900;line-height:1.1;background:linear-gradient(180deg,#ffffff,#b9f5d9);-webkit-background-clip:text;color:transparent;animation-delay:25.1s}
+#s5 .side .title{font-size:40px;font-weight:700;color:var(--gold);animation-delay:25.3s}
+#s5 .side .tags{display:flex;flex-wrap:wrap;gap:16px;margin-top:28px;animation-delay:25.5s}
+#s5 .bubble{position:absolute;left:130px;top:640px;padding:26px 40px;border-radius:30px;background:#fffaf0;color:#3b2a1a;font-size:44px;font-weight:900;box-shadow:0 20px 60px rgba(0,0,0,.5);transform-origin:left bottom;animation:pop .55s both 25.9s}
+#s5 .bubble .t{display:inline-block;overflow:hidden;white-space:nowrap;vertical-align:bottom;animation:typing 1.3s steps(15) both 26.1s}
+#s5 .extra{position:absolute;left:130px;top:830px;display:flex;gap:18px}
+#s5 .extra .chip{font-size:28px;animation:pop .5s both}
+#s5 .extra .chip:nth-child(1){animation-delay:29.6s} #s5 .extra .chip:nth-child(2){animation-delay:29.8s}
+#s5 .hud{position:absolute;right:130px;top:130px;width:690px;padding:44px 46px;border-radius:36px;background:rgba(12,14,20,.9);border:2px solid rgba(255,255,255,.1);box-shadow:0 40px 120px rgba(0,0,0,.6);animation:left .9s cubic-bezier(.2,.8,.2,1) both 25.4s}
+#s5 .hud .hd{display:flex;justify-content:space-between;align-items:center;font-size:30px;font-weight:900}
+#s5 .hud .hd span{font-size:22px;padding:6px 16px;border-radius:999px;background:rgba(255,75,92,.18);color:var(--red);font-weight:900;letter-spacing:.06em}
+#s5 .hud .sub{font-size:24px;color:var(--dim);margin-top:6px}
+#s5 .segs{display:grid;gap:26px;margin-top:36px}
+#s5 .seg .row{display:flex;justify-content:space-between;align-items:baseline;font-size:30px;font-weight:700}
+#s5 .seg .row small{font-size:22px;color:var(--dim);font-weight:500;font-family:'Space Grotesk','Noto Sans TC',sans-serif}
+#s5 .seg .bar{height:18px;border-radius:9px;background:rgba(255,255,255,.08);margin-top:12px;overflow:hidden}
+#s5 .seg .bar i{display:block;height:100%;border-radius:9px;background:var(--fug);box-shadow:0 0 16px rgba(45,229,154,.7);animation:fill linear both}
+#s5 .seg:nth-child(1) .bar i{animation-duration:.9s;animation-delay:26.3s}
+#s5 .seg:nth-child(2) .bar i{animation-duration:1.5s;animation-delay:27.2s;background:var(--gold);box-shadow:0 0 16px rgba(255,194,75,.7)}
+#s5 .seg:nth-child(3) .bar i{animation-duration:.7s;animation-delay:28.7s}
+#s5 .seg .ok{color:var(--fug);opacity:0;margin-left:8px}
+#s5 .seg:nth-child(1) .ok{animation:in .2s both 27.2s} #s5 .seg:nth-child(2) .ok{animation:in .2s both 28.7s} #s5 .seg:nth-child(3) .ok{animation:in .2s both 29.4s}
+#s5 .result{margin-top:40px;padding-top:30px;border-top:2px solid rgba(255,255,255,.08);display:flex;align-items:center;gap:18px}
+#s5 .result .s{font-size:80px;line-height:1;color:#3a3f4d}
+#s5 .result .s:nth-child(1){animation:starFill .4s both 29.5s}
+#s5 .result .s:nth-child(2){animation:starFill .4s both 29.8s}
+#s5 .result .s:nth-child(3){animation:starFill .4s both 30.1s}
+#s5 .result .lbl{font-size:32px;font-weight:900;margin-left:10px;opacity:0;animation:in .3s both 30.4s}
 
 /* =========================================================
-   S6 收集：全台場景卡牆 29.4 – 35.2s
+   S6 STEP 03 收服得卡 31.4 – 37.4s
    ========================================================= */
-#s6{animation:in .6s both 29.4s,out .6s forwards 34.6s}
-#s6 .glow.a{left:-100px;top:-100px;width:800px;height:800px;background:var(--purple);opacity:.25}
-#s6 .glow.b{right:-100px;bottom:-200px;width:900px;height:900px;background:var(--fug);opacity:.2}
-#s6 .head{position:absolute;left:0;right:0;top:70px}
-#s6 .head .h2{animation:up .9s cubic-bezier(.2,.8,.2,1) both 29.6s}
-#s6 .head .body{margin-top:6px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 29.9s}
-#s6 .grid{position:absolute;left:140px;right:140px;top:300px;display:grid;grid-template-columns:repeat(3,1fr);gap:34px}
-#s6 .tile{position:relative;height:300px;border-radius:26px;overflow:hidden;border:3px solid rgba(255,255,255,.12);box-shadow:0 20px 60px rgba(0,0,0,.5);animation:flip .7s cubic-bezier(.2,.8,.2,1) both}
-#s6 .tile img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-#s6 .tile .cap{position:absolute;left:0;right:0;bottom:0;padding:44px 24px 16px;background:linear-gradient(transparent,rgba(0,0,0,.85));font-size:32px;font-weight:900;display:flex;justify-content:space-between;align-items:center}
-#s6 .tile .cap span{font-size:22px;padding:4px 14px;border-radius:999px;background:var(--fug);color:#05140e}
-#s6 .tile:nth-child(1){animation-delay:30.2s} #s6 .tile:nth-child(2){animation-delay:30.45s} #s6 .tile:nth-child(3){animation-delay:30.7s}
-#s6 .tile:nth-child(4){animation-delay:30.95s} #s6 .tile:nth-child(5){animation-delay:31.2s} #s6 .tile:nth-child(6){animation-delay:31.45s}
-#s6 .cats{position:absolute;left:0;right:0;bottom:60px;display:flex;justify-content:center;gap:20px}
-#s6 .cats .chip{animation:pop .5s both}
-#s6 .cats .chip:nth-child(1){animation-delay:32.2s} #s6 .cats .chip:nth-child(2){animation-delay:32.35s} #s6 .cats .chip:nth-child(3){animation-delay:32.5s}
-#s6 .cats .chip:nth-child(4){animation-delay:32.65s} #s6 .cats .chip:nth-child(5){animation-delay:32.8s} #s6 .cats .chip:nth-child(6){animation-delay:32.95s}
+#s6{animation:in .6s both 31.4s,out .6s forwards 36.8s}
+#s6 .rays{position:absolute;left:1280px;top:540px;width:2000px;height:2000px;margin:-1000px 0 0 -1000px;background:repeating-conic-gradient(rgba(255,194,75,.14) 0 6deg,transparent 6deg 18deg);border-radius:50%;-webkit-mask:radial-gradient(circle,#000 10%,transparent 60%);mask:radial-gradient(circle,#000 10%,transparent 60%);opacity:0;animation:in .6s both 32.9s,spin 30s linear infinite 31.4s}
+#s6 .glow.a{left:1000px;top:260px;width:560px;height:560px;background:var(--gold);opacity:.25}
+#s6 .flip{position:absolute;left:1280px;top:540px;width:620px;height:868px;margin:-434px 0 0 -310px;perspective:2000px;animation:up .8s cubic-bezier(.2,.8,.2,1) both 31.6s}
+#s6 .flip .inner{position:relative;width:100%;height:100%;transform-style:preserve-3d;animation:turn 1s cubic-bezier(.5,0,.2,1) both 32.4s}
+@keyframes turn{from{transform:rotateY(180deg) scale(.92)}to{transform:rotateY(0) scale(1)}}
+#s6 .face{position:absolute;inset:0;border-radius:28px;overflow:hidden;backface-visibility:hidden;box-shadow:0 40px 140px rgba(0,0,0,.8),0 0 90px rgba(255,194,75,.35)}
+#s6 .face img{width:100%;height:100%;object-fit:cover}
+#s6 .back{transform:rotateY(180deg);background:radial-gradient(circle at 50% 40%,#1f2a3a,#0b0e15);border:6px solid #3a3322;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:30px}
+#s6 .back img{width:200px;height:200px;border-radius:44px;opacity:.9}
+#s6 .back b{font-size:200px;font-weight:900;color:rgba(255,194,75,.35);line-height:1}
+#s6 .sheen{position:absolute;top:0;bottom:0;left:0;width:35%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);animation:shine 1.2s ease-in-out both 33.6s}
+#s6 .side{position:absolute;left:150px;top:250px;width:760px}
+#s6 .side>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s6 .side .step{animation-delay:31.6s}
+#s6 .side .h1{margin-top:30px;animation-delay:31.9s}
+#s6 .side .body{margin-top:24px;animation-delay:32.3s}
+#s6 .got{display:inline-flex;align-items:center;gap:16px;margin-top:44px;padding:16px 34px;border-radius:999px;background:var(--fug);color:#05140e;font-size:36px;font-weight:900;animation:pop .5s both 33.4s!important}
+#s6 .got img{width:48px;height:48px}
 
 /* =========================================================
-   S7 主視覺 34.8 – 39.4s
+   S7 卡片圖鑑 37 – 42.6s
    ========================================================= */
-#s7{animation:in .6s both 34.8s,out .6s forwards 38.8s;background:#f6efe2}
-#s7 .frame{position:absolute;left:110px;top:70px;width:1700px;height:889px;border-radius:36px;overflow:hidden;box-shadow:0 40px 120px rgba(90,71,55,.35);animation:blurIn 1s cubic-bezier(.2,.8,.2,1) both 35s}
-#s7 .frame img{width:100%;height:100%;object-fit:cover;animation:zoomIn 4.4s linear both 35s;transform-origin:50% 40%}
-#s7 .foot{position:absolute;left:0;right:0;bottom:22px;font-size:34px;font-weight:900;color:#5A4737;animation:upS .6s both 36s}
+#s7{animation:in .6s both 37s,out .6s forwards 42s}
+#s7 .glow.a{left:-100px;top:-100px;width:800px;height:800px;background:var(--purple);opacity:.22}
+#s7 .glow.b{right:-100px;bottom:-200px;width:900px;height:900px;background:var(--fug);opacity:.16}
+#s7 .head{position:absolute;left:180px;right:180px;top:70px;display:flex;justify-content:space-between;align-items:flex-end}
+#s7 .head .h2{animation:up .9s cubic-bezier(.2,.8,.2,1) both 37.2s}
+#s7 .head .body{font-size:28px;margin-top:6px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 37.5s}
+#s7 .prog{text-align:right;animation:up .9s cubic-bezier(.2,.8,.2,1) both 37.6s}
+#s7 .prog .v{font-family:'Space Grotesk',sans-serif;font-size:64px;font-weight:700;color:var(--gold);line-height:1}
+#s7 .prog .v small{font-size:36px;color:var(--dim)}
+#s7 .prog .k{font-size:24px;color:var(--dim);font-weight:700;margin-top:6px}
+#s7 .grid{position:absolute;left:180px;right:180px;top:300px;display:grid;grid-template-columns:repeat(6,1fr);gap:24px}
+#s7 .c{position:relative;aspect-ratio:1060/1484;border-radius:18px;overflow:hidden;animation:flip .6s cubic-bezier(.2,.8,.2,1) both}
+#s7 .c.own{box-shadow:0 0 0 4px var(--gold),0 0 50px rgba(255,194,75,.5)}
+#s7 .c.own img{width:100%;height:100%;object-fit:cover}
+#s7 .c.lock{background:linear-gradient(160deg,#1c2231,#0e1119);border:2px solid rgba(255,255,255,.1);display:flex;flex-direction:column;justify-content:flex-end;padding:18px}
+#s7 .c.lock::before{content:'?';position:absolute;left:0;right:0;top:22%;text-align:center;font-size:120px;font-weight:900;color:rgba(157,140,255,.28);line-height:1}
+#s7 .c.lock .st{font-size:20px;color:var(--gold);letter-spacing:.05em}
+#s7 .c.lock .nm{font-size:30px;font-weight:900;margin-top:4px}
+#s7 .c.lock .rg{font-size:20px;color:var(--dim);font-weight:500}
+#s7 .grid .c:nth-child(1){animation-delay:37.8s} #s7 .grid .c:nth-child(2){animation-delay:37.9s} #s7 .grid .c:nth-child(3){animation-delay:38s}
+#s7 .grid .c:nth-child(4){animation-delay:38.1s} #s7 .grid .c:nth-child(5){animation-delay:38.2s} #s7 .grid .c:nth-child(6){animation-delay:38.3s}
+#s7 .grid .c:nth-child(7){animation-delay:38.4s} #s7 .grid .c:nth-child(8){animation-delay:38.5s} #s7 .grid .c:nth-child(9){animation-delay:38.6s}
+#s7 .grid .c:nth-child(10){animation-delay:38.7s} #s7 .grid .c:nth-child(11){animation-delay:38.8s} #s7 .grid .c:nth-child(12){animation-delay:38.9s}
 
 /* =========================================================
-   S8 CTA 39 – 44s
+   S8 CTA 42.2 – 47s（背景沿用點位地圖）
    ========================================================= */
-#s8{animation:in .6s both 39s}
-#s8 .glow.a{left:50%;top:50%;width:1100px;height:700px;margin:-350px 0 0 -550px;background:var(--fug);opacity:.22}
-#s8 .cheer{position:absolute;bottom:0;height:560px;animation:up 1s cubic-bezier(.2,.8,.2,1) both}
-#s8 .cheer.l{left:60px;animation-delay:39.8s}
-#s8 .cheer.r{right:60px;transform:scaleX(-1);animation-name:upFlip;animation-delay:40s}
-@keyframes upFlip{from{opacity:0;transform:scaleX(-1) translateY(60px)}to{opacity:1;transform:scaleX(-1)}}
-#s8 .logo{display:flex;align-items:center;gap:30px;animation:blurIn 1s cubic-bezier(.2,.8,.2,1) both 39.2s}
-#s8 .logo img{width:210px;height:210px;border-radius:48px;box-shadow:0 0 0 3px rgba(255,255,255,.12),0 0 70px rgba(45,229,154,.3)}
+#s8{animation:in .6s both 42.2s}
+#s8 .shade{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(9,9,15,.55),rgba(9,9,15,.92) 70%)}
+#s8 .logo{display:flex;align-items:center;gap:30px;animation:blurIn 1s cubic-bezier(.2,.8,.2,1) both 42.4s}
+#s8 .logo img{width:200px;height:200px}
 #s8 .logo .word{font-size:100px;font-weight:900;letter-spacing:.08em}
 #s8 .logo .dot{color:var(--red)}
-#s8 .cta{font-size:76px;font-weight:900;margin-top:34px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 40.1s}
-#s8 .sub{font-size:36px;color:#c9d0de;font-weight:500;margin-top:14px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 40.5s}
-#s8 .url{position:relative;overflow:hidden;margin-top:48px;padding:22px 64px;border-radius:999px;background:var(--fug);color:#05140e;font-family:'Space Grotesk',sans-serif;font-size:58px;font-weight:700;letter-spacing:.04em;box-shadow:0 0 60px rgba(45,229,154,.5);animation:pop .6s both 41.1s}
-#s8 .url::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent);animation:shine 1s ease-in-out both 42s}
+#s8 .cta{font-size:76px;font-weight:900;margin-top:34px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 43.1s}
+#s8 .sub{font-size:34px;color:#c9d0de;font-weight:500;margin-top:14px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 43.5s}
+#s8 .url{position:relative;overflow:hidden;margin-top:48px;padding:22px 64px;border-radius:999px;background:var(--fug);color:#05140e;font-family:'Space Grotesk',sans-serif;font-size:58px;font-weight:700;letter-spacing:.04em;box-shadow:0 0 60px rgba(45,229,154,.5);animation:pop .6s both 44s}
+#s8 .url::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.7),transparent);animation:shine 1s ease-in-out both 44.9s}
 </style>
 </head>
 <body>
 <div id="stage">
 
-  <!-- S1 開場 -->
+  <!-- 點位地圖（S1、S8 共用） -->
+  <canvas id="map" width="1920" height="1080"></canvas>
+
+  <!-- S1 開場：全台點位 -->
   <section class="sc" id="s1">
-    <img class="cover" src="../../apps/web/public/ui/dorpg/scene/scene_taipei_101.webp">
-    <div class="shade"></div>
-    <div class="txt center">
-      <div class="l1">每天經過的街角，</div>
-      <div class="l2">都藏著你還沒發現的<span class="g">冒險</span>。</div>
+    <div class="txt">
+      <div class="l1">你每天經過的城市，</div>
+      <div class="l2">其實是一張<br><span class="y">還沒展開的藏寶圖</span>。</div>
+      <div class="stats">
+        <div class="stat"><div class="num"><span class="counter"></span><sup>+</sup></div><div class="lbl" style="--c:var(--purple)">個打卡點</div></div>
+        <div class="stat"><div class="num"><span class="counter"></span><sup>+</sup></div><div class="lbl" style="--c:var(--gold)">位在地關主</div></div>
+      </div>
     </div>
   </section>
 
   <!-- S2 品牌 -->
   <section class="sc center" id="s2">
     <div class="glow" style="left:560px;top:180px;width:800px;height:500px;background:var(--fug);opacity:.18"></div>
-    <img class="silhouette" src="../../apps/web/public/ui/bg/bg_city_silhouette_landscape_1024x240.png">
     <div class="logo">
-      <img src="../../apps/web/public/icon-512.png">
-      <div class="word"><span class="dot">・</span><span class="zh">城市探索</span></div>
+      <img class="dor-icon" src="../../apps/web/public/icon-512.png">
+      <div class="word"><span class="dot">・</span>城市探索</div>
     </div>
     <div class="tag">把<span class="g">城市</span>，變成你的<span class="y">遊戲場</span></div>
     <div class="pillars">
-      <div class="chip"><img src="../../apps/web/public/ui/icons/icon_runner_orange.png">跑步即冒險</div>
-      <div class="chip"><img src="../../apps/web/public/ui/icons/icon_card_collect.png">打卡集卡片</div>
-      <div class="chip"><img src="../../apps/web/public/ui/icons/icon_map_pin_gold.png">跑旅遍台灣</div>
+      <div class="chip"><img src="../../apps/web/public/ui/icons/icon_map_pin_gold.png">打卡揭曉</div>
+      <div class="chip"><img src="../../apps/web/public/ui/icons/icon_trophy_gold.png">挑戰關主</div>
+      <div class="chip"><img src="../../apps/web/public/ui/icons/icon_card_collect.png">收集卡片</div>
     </div>
   </section>
 
-  <!-- S3 STEP 01 發現 -->
+  <!-- S3 STEP 01 打卡 -->
   <section class="sc" id="s3">
-    <div class="glow" style="left:1200px;top:300px;width:700px;height:600px;background:var(--purple);opacity:.2"></div>
-    <div class="map">
-      <svg width="1000" height="860" viewBox="0 0 1000 860">
-        <defs>
-          <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse" patternTransform="rotate(-12)">
-            <path d="M0 0H80M0 0V80" stroke="#1d2636" stroke-width="3"/>
-          </pattern>
-        </defs>
-        <rect width="1000" height="860" fill="url(#grid)"/>
-        <path d="M-40 300 C 200 360 300 200 520 300 S 800 460 1060 380" stroke="#16324a" stroke-width="70" fill="none"/>
-        <path d="M-40 300 C 200 360 300 200 520 300 S 800 460 1060 380" stroke="#1d4a6b" stroke-width="40" fill="none"/>
-        <path d="M0 620 L1000 520 M140 0 L260 860 M620 0 L700 860 M0 130 L1000 60" stroke="#27324a" stroke-width="14" fill="none"/>
-        <circle cx="820" cy="700" r="90" fill="#15301f"/>
-        <circle cx="260" cy="140" r="70" fill="#15301f"/>
-        <path class="route" d="M 90 760 C 220 700 240 560 380 540 S 560 610 640 480 S 700 250 860 200 S 930 110 960 90"/>
-      </svg>
-      <div class="pin green" style="left:380px;top:540px;animation:popPin .5s both 9.9s"><i>✓</i></div>
-      <div class="pin gold"  style="left:640px;top:480px;animation:popPin .5s both 10.1s"><i>★</i></div>
-      <div class="pin m" style="left:860px;top:200px;animation:popPin .5s both 10.3s"><i>?</i></div>
-      <div class="pin m" style="left:180px;top:330px;animation:popPin .5s both 10.5s"><i>?</i></div>
-      <div class="pin m" style="left:520px;top:180px;animation:popPin .5s both 10.7s"><i>?</i></div>
-      <div class="pin m" style="left:820px;top:640px;animation:popPin .5s both 10.9s"><i>?</i></div>
-      <div class="pin m" style="left:300px;top:760px;animation:popPin .5s both 11.1s"><i>?</i></div>
-      <div class="pin m" style="left:560px;top:760px;animation:popPin .5s both 11.3s"><i>?</i></div>
-      <div class="runner"></div>
-      <div class="legend">
-        <span style="--c:var(--purple)">未探索</span>
-        <span style="--c:var(--gold)">已揭曉</span>
-        <span style="--c:var(--fug)">已收服</span>
-      </div>
-    </div>
-    <div class="side">
-      <div class="step"><b>STEP 01</b>發現</div>
-      <div class="h1">城市裡，<br>藏著<span class="p">神秘打卡點</span></div>
-      <div class="big"><div class="counter"></div><span>個打卡點<br>遍布全台</span></div>
-      <div class="body">公園、老街、宮廟、河濱、車站……<br>出門跑一趟，就是一場尋寶。</div>
-    </div>
-  </section>
-
-  <!-- S4 STEP 02 打卡揭曉 -->
-  <section class="sc" id="s4">
     <div class="glow a"></div><div class="glow b"></div>
     <div class="phone">
       <div class="screen">
@@ -330,94 +322,158 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
         <div class="pin tgt"><i>?</i><b>★</b></div>
         <div class="me"></div>
         <div class="toast"><img src="../../apps/web/public/ui/icons/icon_map_pin_gold.png">打卡成功！關主揭曉</div>
-        <div class="btn">📍 在範圍內・立即打卡</div>
+        <div class="btn">📍 前往打卡</div>
       </div>
     </div>
-    <div class="reward dp"><img src="../../apps/web/public/ui/icons/icon_dp_coin.png">+3 DP</div>
-    <div class="reward gp">+2 GP</div>
+    <div class="reward dp"><img src="../../apps/web/public/ui/icons/icon_dp_coin.png">+DP</div>
+    <div class="reward gp">+GP</div>
     <div class="side">
-      <div class="step"><b>STEP 02</b>打卡揭曉</div>
-      <div class="h2">走進範圍，一鍵打卡</div>
-      <div class="body">不必邊跑邊按——GPS 確認抵達，就能揭曉場景與關主，<br>每次打卡都能隨機獲得 <span class="y">DP</span> 與 <span class="g">GP</span>。</div>
+      <div class="step"><b>STEP 01</b>打卡</div>
+      <div class="h1">走到現場，<br>神秘打卡點<span class="y">就此揭曉</span></div>
+      <div class="rules">
+        <div class="rule"><span>1</span><div>GPS 範圍內即可打卡<small>不必邊跑邊打卡，到了就算數</small></div></div>
+        <div class="rule"><span>2</span><div>揭曉場景與在地關主<small>未探索的「？」點，打卡後才知道是誰</small></div></div>
+        <div class="rule"><span>3</span><div>每次打卡隨機獲得 <em style="font-style:normal;color:var(--gold)">DP</em>＋<em style="font-style:normal;color:var(--fug)">GP</em><small>同一點過 24 小時冷卻，可再次打卡</small></div></div>
+      </div>
     </div>
-    <div class="reveal">
-      <div class="ph">?</div>
-      <img class="cover" src="../../apps/web/public/characters/DOR-TPE-001-Scene.png">
-      <div class="cap">大安森林公園<small>★★★★★ 關主據點</small></div>
-    </div>
-    <div class="stampbox"><div class="stamp">CHECK IN!</div></div>
   </section>
 
-  <!-- S5 STEP 03 挑戰關主 -->
+  <!-- S4 揭曉：關主叫陣 -->
+  <section class="sc" id="s4">
+    <img class="cover" src="../../apps/web/public/characters/DOR-TPE-001-Scene.png">
+    <div class="shade"></div>
+    <div class="where"><span class="badge">打卡揭曉</span><span class="pl">大安森林公園<small>臺北市・大安區</small></span></div>
+    <div class="stampbox"><div class="stamp">CHECK IN!</div></div>
+    <div class="dlg">
+      <div class="who">大安小鹿</div>
+      <div class="line l1"><span class="t">「欸，等一下。這個陌生ID是你的？想讓我閉嘴還是想被我記住？」</span></div>
+      <div class="line l2">要接受大安小鹿的叫陣嗎？</div>
+      <div class="btns"><span class="go">▶ 前往挑戰</span></div>
+    </div>
+  </section>
+
+  <!-- S5 STEP 02 挑戰關主 -->
   <section class="sc" id="s5">
     <img class="cover bg" src="../../apps/web/public/characters/DOR-TPE-001-Scene.png">
     <div class="vignette"></div>
-    <div class="card"><div class="in"><img src="../../apps/web/public/characters/DOR-TPE-001-Card.png"><div class="sheen"></div></div></div>
     <div class="side">
-      <div class="step"><b>STEP 03</b>挑戰關主</div>
-      <div class="lead">大安森林公園的在地關主現身！</div>
+      <div class="step"><b>STEP 02</b>挑戰關主</div>
       <div class="name">大安小鹿</div>
       <div class="title">— 大安的傳說級守門人 —</div>
       <div class="tags"><span class="chip y">★★★★★</span><span class="chip">節奏跑混合型</span><span class="chip">絕技・樹影瞬移</span></div>
     </div>
     <div class="bubble">「<span class="t">蟬都叫成這樣了，你還不加速？</span>」</div>
-    <div class="stars"><span class="s">★</span><span class="s">★</span><span class="s">★</span><span class="lbl">挑戰拿下 3★，即可收服</span></div>
-    <div class="got"><img src="../../apps/web/public/ui/icons/icon_card_collect.png">收服成功！限定卡片入手</div>
-    <div class="count">全台 <span class="y">572</span> 位在地關主，等你來叫陣</div>
+    <div class="extra"><span class="chip">⏱ 自由挑戰・刷新最短時間</span><span class="chip">🏆 挑戰者排行</span></div>
+    <div class="hud">
+      <div class="hd">關主課表・節奏跑混合型<span>挑戰中</span></div>
+      <div class="sub">依關主課表完成每一段，GPS 自動判定</div>
+      <div class="segs">
+        <div class="seg"><div class="row"><div>暖身<span class="ok">✓</span></div><small>1.5 km ・ 6'39"–7'09"/km</small></div><div class="bar"><i></i></div></div>
+        <div class="seg"><div class="row"><div>節奏跑<span class="ok">✓</span></div><small>5.0 km ・ 5'06"–5'36"/km</small></div><div class="bar"><i></i></div></div>
+        <div class="seg"><div class="row"><div>緩和<span class="ok">✓</span></div><small>1.0 km ・ 6'39"–7'09"/km</small></div><div class="bar"><i></i></div></div>
+      </div>
+      <div class="result"><span class="s">★</span><span class="s">★</span><span class="s">★</span><span class="lbl">挑戰成功 3★</span></div>
+    </div>
   </section>
 
-  <!-- S6 收集 -->
+  <!-- S6 STEP 03 收服得卡 -->
   <section class="sc" id="s6">
+    <div class="glow a"></div>
+    <div class="rays"></div>
+    <div class="side">
+      <div class="step"><b>STEP 03</b>收集卡片</div>
+      <div class="h1">拿下 <span class="y">3★</span><br>收服關主</div>
+      <div class="body">每位關主都有專屬卡面，<br>收服後永久收藏進你的卡片圖鑑。</div>
+      <div class="got"><img src="../../apps/web/public/ui/icons/icon_card_collect.png">已收服此關主・卡片已收藏</div>
+    </div>
+    <div class="flip"><div class="inner">
+      <div class="face back"><img src="../../apps/web/public/icon-512.png"><b>?</b></div>
+      <div class="face front"><img src="../../apps/web/public/characters/DOR-TPE-001-Card.png"><div class="sheen"></div></div>
+    </div></div>
+  </section>
+
+  <!-- S7 卡片圖鑑 -->
+  <section class="sc" id="s7">
     <div class="glow a"></div><div class="glow b"></div>
-    <div class="head center">
-      <div class="h2">一路跑，一路<span class="y">收藏整座台灣</span></div>
-      <div class="body">每一段旅程，都變成圖鑑裡的一張卡</div>
+    <div class="head">
+      <div>
+        <div class="h2">收集你的<span class="y">城市圖鑑</span></div>
+        <div class="body">到城市探索中進行打卡任務，可以收集意想不到的卡片唷～</div>
+      </div>
+      <div class="prog"><div class="v">1<small> / 572</small></div><div class="k">張關主卡</div></div>
     </div>
     <div class="grid">
-      <div class="tile"><img src="../../apps/web/public/ui/dorpg/scene/scene_taipei_101.webp"><div class="cap">信義・台北 101<span>✓ 已打卡</span></div></div>
-      <div class="tile"><img src="../../apps/web/public/ui/dorpg/scene/scene_tamsui_estuary.webp"><div class="cap">淡水河口<span>✓ 已打卡</span></div></div>
-      <div class="tile"><img src="../../apps/web/public/ui/dorpg/scene/scene_ximending.webp"><div class="cap">西門町<span>✓ 已打卡</span></div></div>
-      <div class="tile"><img src="../../apps/web/public/ui/dorpg/scene/scene_fuhe_bridge.webp"><div class="cap">福和橋<span>✓ 已打卡</span></div></div>
-      <div class="tile"><img src="../../apps/web/public/ui/dorpg/scene/scene_taipei_stadium.webp"><div class="cap">臺北田徑場<span>✓ 已打卡</span></div></div>
-      <div class="tile"><img src="../../apps/web/public/ui/dorpg/scene/scene_jiannan_mountain.webp"><div class="cap">劍南山<span>✓ 已打卡</span></div></div>
+      <div class="c own"><img src="../../apps/web/public/characters/DOR-TPE-001-Card.png"></div>
+      <div class="c lock"><div class="st">★★★★★</div><div class="nm">台北阿衝</div><div class="rg">臺北市・松山區</div></div>
+      <div class="c lock"><div class="st">★★★★★</div><div class="nm">三重小火箭</div><div class="rg">新北市・三重區</div></div>
+      <div class="c lock"><div class="st">★★★★★</div><div class="nm">台中草仔</div><div class="rg">臺中市・西屯區</div></div>
+      <div class="c lock"><div class="st">★★★★★</div><div class="nm">左營閃電雄</div><div class="rg">高雄市・左營區</div></div>
+      <div class="c lock"><div class="st">★★★★</div><div class="nm">台南疾箭</div><div class="rg">臺南市・南區</div></div>
+      <div class="c lock"><div class="st">★★★★</div><div class="nm">桃園四百哥</div><div class="rg">桃園市・桃園區</div></div>
+      <div class="c lock"><div class="st">★★★★</div><div class="nm">新竹阿速</div><div class="rg">新竹市・東區</div></div>
+      <div class="c lock"><div class="st">★★★★</div><div class="nm">彰化腿腿</div><div class="rg">彰化縣・彰化市</div></div>
+      <div class="c lock"><div class="st">★★★★</div><div class="nm">宜蘭勁梭</div><div class="rg">宜蘭縣・宜蘭市</div></div>
+      <div class="c lock"><div class="st">★★★★</div><div class="nm">花蓮小圈</div><div class="rg">花蓮縣・花蓮市</div></div>
+      <div class="c lock"><div class="st">★★★★</div><div class="nm">臺東閃翼</div><div class="rg">臺東縣・臺東市</div></div>
     </div>
-    <div class="cats">
-      <span class="chip">🌳 綠地公園</span><span class="chip">🏮 宮廟文化</span><span class="chip">🎨 藝文</span>
-      <span class="chip">🚉 鐵道</span><span class="chip">🌊 水岸</span><span class="chip">🏯 歷史</span>
-    </div>
-  </section>
-
-  <!-- S7 主視覺 -->
-  <section class="sc" id="s7">
-    <div class="frame"><img src="../../apps/web/public/brand-hero-v3.webp"></div>
-    <div class="foot center">每一步都有意義・每段旅程都是回憶</div>
   </section>
 
   <!-- S8 CTA -->
   <section class="sc center" id="s8">
-    <div class="glow a"></div>
-    <img class="cheer l" src="../../apps/web/public/ui/cheer/cheerleader-01.webp">
-    <img class="cheer r" src="../../apps/web/public/ui/cheer/cheerleader-03.webp">
-    <div class="logo">
-      <img src="../../apps/web/public/icon-512.png">
+    <div class="shade"></div>
+    <div class="logo" style="position:relative">
+      <img class="dor-icon" src="../../apps/web/public/icon-512.png">
       <div class="word"><span class="dot">・</span>城市探索</div>
     </div>
-    <div class="cta">出發吧！讓城市因你的<span class="g">腳步</span>而精彩</div>
-    <div class="sub">打開手機，登入會員，你的第一個打卡點就在附近</div>
+    <div class="cta" style="position:relative">出發吧！讓城市因你的<span class="g">腳步</span>而精彩</div>
+    <div class="sub" style="position:relative">登入會員，你的第一個打卡點就在附近</div>
     <div class="url">www.dor.tw</div>
   </section>
 
 </div>
+<script src="points.js"></script>
 <script>
-  // 影片總長（秒）；render.mjs 讀取
-  window.DURATION = 44;
-  // 逐格定位：把所有 CSS 動畫暫停並跳到 t 秒
+  window.DURATION = 47;
+
+  // ---------- 點位地圖（canvas，依 t 繪製） ----------
+  const cv = document.getElementById('map'), cx = cv.getContext('2d');
+  const LAT0 = 26.45, LAT1 = 21.85, LNG0 = 118.15, K = 1000 / (LAT0 - LAT1), KX = K * Math.cos(24 * Math.PI / 180);
+  const rnd = (i => () => (i = (i * 16807) % 2147483647) / 2147483647)(42);
+  const pts = window.PTS.map(([lng, lat, boss]) => ({ lng, lat, boss, j: rnd() }));
+  const ease = x => x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.pow(1 - x, 3);
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+
+  function drawMap(t) {
+    cx.clearRect(0, 0, 1920, 1080);
+    // S1: 0–6.4 地圖在右側；S8: 42.2 起地圖置中淡入當背景
+    let a, ox, oy, sc;
+    if (t < 6.4) { a = clamp01(t / .4) * clamp01((6.4 - t) / .6); ox = 1060; oy = 40; sc = 1; }
+    else if (t >= 42.2) { a = clamp01((t - 42.2) / .8) * .55; ox = 585; oy = 40; sc = 1; }
+    else return;
+    cx.globalAlpha = a;
+    for (const p of pts) {
+      // S1：由北往南波浪式亮起；S8：全亮
+      const start = t < 6.4 ? .3 + (LAT0 - p.lat) / (LAT0 - LAT1) * 2.6 + p.j * .5 : -1;
+      const k = ease((t - start) / .45);
+      if (k <= 0) continue;
+      const x = ox + (p.lng - LNG0) * KX * sc, y = oy + (LAT0 - p.lat) * K * sc;
+      const col = p.boss ? '255,194,75' : '157,140,255';
+      const r = (p.boss ? 4.2 : 3.4) * (1 + (1 - k) * 1.6);
+      cx.fillStyle = `rgba(${col},${.18 * k})`;
+      cx.beginPath(); cx.arc(x, y, r * 2.2, 0, 7); cx.fill();
+      cx.fillStyle = `rgba(${col},${k})`;
+      cx.beginPath(); cx.arc(x, y, r, 0, 7); cx.fill();
+    }
+    cx.globalAlpha = 1;
+  }
+
+  // 逐格定位：暫停所有 CSS 動畫並跳到 t 秒，再重繪地圖
   window.seek = t => {
     for (const a of document.getAnimations()) { a.pause(); a.currentTime = t * 1000; }
+    drawMap(t);
   };
-  // 直接開瀏覽器預覽時自動播放（?t=12 可跳到指定秒數）
   const q = new URLSearchParams(location.search);
-  if (q.has('t')) window.seek(+q.get('t'));
+  window.seek(q.has('t') ? +q.get('t') : 0);
 </script>
 </body>
 </html>

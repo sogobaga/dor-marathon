@@ -10,6 +10,10 @@ N = int(SR * DUR)
 L = [0.0] * N
 R = [0.0] * N
 BEAT = 0.5
+# 分段時間點（與 index.html 的場景切換一致）
+LOGO, ARP, END = 6.0, 11.0, 42.2
+TRANSITIONS = (6, 11, 18.4, 24.6, 31.4, 37, 42.2)
+
 random.seed(7)
 
 def hz(m):
@@ -75,49 +79,48 @@ def chord_at(t):
 for c in range(int(DUR / 2)):
     t0 = c * 2
     root, notes = chord_at(t0)
-    put(t0, pad(notes, 2.05), .13 if t0 < 4 or t0 >= 40 else .08)
+    put(t0, pad(notes, 2.05), .13 if t0 < LOGO or t0 >= END else .08)
 
-# 0–4s riser
-put(1.5, [s * (k / (2.5 * SR)) ** 2 for k, s in enumerate(noise(2.5, 0, .25))], .25)
-# 4s 衝擊（Logo 登場）
-put(4, kick(1.3), .9)
-put(4, noise(1.6, 2.5, .15), .35)
-put(4, tone(hz(36), 2.5, .01, 1.5, 'sine'), .5)
+# Logo 前 riser
+put(LOGO - 3, [s * (k / (3 * SR)) ** 2 for k, s in enumerate(noise(3, 0, .25))], .25)
+# Logo 登場衝擊
+put(LOGO, kick(1.3), .9)
+put(LOGO, noise(1.6, 2.5, .15), .35)
+put(LOGO, tone(hz(36), 2.5, .01, 1.5, 'sine'), .5)
 
 # 轉場 whoosh
-for tr in (8.8, 15, 22, 29.4, 34.8, 39):
+for tr in TRANSITIONS:
     w = noise(.6, 0, .35)
     put(tr - .45, [s * math.sin(math.pi * k / len(w)) for k, s in enumerate(w)], .22, random.choice((-.4, .4)))
 
-# 節奏段 4–39s
-end_groove = 39
-t = 4.0
-while t < end_groove - 1e-6:
-    beat = round((t - 4) / BEAT)
+# 節奏段 LOGO–END
+t = LOGO
+while t < END - 1e-6:
+    beat = round((t - LOGO) / BEAT)
     root, notes = chord_at(t)
     put(t, kick(), .85)
-    if t >= 8.8 and beat % 2 == 1:
+    if t >= ARP and beat % 2 == 1:
         put(t, noise(.18, 22, .6), .28)                       # clap
     put(t + BEAT / 2, noise(.05, 90, .9, hp=True), .22, .3)   # 反拍 hi-hat
-    if t >= 8.8:
+    if t >= ARP:
         put(t + BEAT / 4, noise(.03, 140, .9, hp=True), .1, -.3)
         put(t + 3 * BEAT / 4, noise(.03, 140, .9, hp=True), .1, -.3)
     # 貝斯：八分音符
     for e in range(2):
         put(t + e * BEAT / 2, tone(hz(root), .24, .005, 9, 'saw'), .22)
     # 琶音：十六分音符（S3 起）
-    if t >= 8.8:
+    if t >= ARP:
         arp = notes + [notes[0] + 12]
         for s in range(4):
             put(t + s * BEAT / 4, tone(hz(arp[(beat * 4 + s) % 4] + 12), .2, .003, 14), .09, .35 if s % 2 else -.35)
     t += BEAT
 
 # 結尾：大和弦 + 衝擊
-put(39, kick(1.2), .8)
-put(39, noise(2, 1.8, .15), .25)
-put(39, tone(hz(36), 4, .01, .9, 'sine'), .4)
+put(END, kick(1.2), .8)
+put(END, noise(2, 1.8, .15), .25)
+put(END, tone(hz(36), 4, .01, .9, 'sine'), .4)
 for m in (48, 60, 64, 67, 72, 76):
-    put(39, tone(hz(m), 5, .02, .7, 'tri'), .08)
+    put(END, tone(hz(m), 5, .02, .7, 'tri'), .08)
 
 # 母帶：軟限幅＋淡出
 peak = max(max(abs(x) for x in L), max(abs(x) for x in R)) or 1
