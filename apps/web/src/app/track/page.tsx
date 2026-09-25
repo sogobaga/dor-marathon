@@ -31,7 +31,7 @@ import { APP_VERSION } from '@/lib/version'
 import RaceFocusMode from './RaceFocusMode'
 import CheerShow from './CheerShow'
 import { readActiveRun, writeActiveRun, touchActiveRun, clearActiveRun, activeRunAgeMs, isActiveRunFresh, type ActiveRunState, type ActiveRunWorkoutSnapshot } from '@/lib/activeRun'
-import FocusModeTip from '@/components/track/FocusModeTip'
+import FocusModeTip, { FOCUS_TIP_SEEN_KEY } from '@/components/track/FocusModeTip'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -119,10 +119,18 @@ export default function TrackPage() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [wakeState, setWakeState] = useState<'active' | 'warn' | 'unknown'>('unknown') // 螢幕常亮狀態：小狀態膠囊顯示用（'active'＝原生或影片備援任一成功）
   const [showWakeTap, setShowWakeTap] = useState(false) // Wake Lock 因缺使用者手勢被拒 → 顯示「點一下保持螢幕常亮」常駐小膠囊
-  // 口袋模式併入專注模式（2026-09-25）：不再有獨立 state/開關，鎖定行為完全交給 RaceFocusMode 內部的
-  // locked 狀態；這裡只保留「重開頁面自動接續時，專注模式要不要直接開啟」這個一次性初始值，見
-  // resumeActiveRun()／start() 對它的寫入，以及下方 <RaceFocusMode initialOpen=.../> 的讀取。
+  // 專注模式＝鎖定模式（2026-09-25 CONTRACT.md track_autolock）：開跑/接續一律直接進入專注模式，
+  // 唯一例外是本裝置尚未看過首次提示時（見 start() 對 FOCUS_TIP_SEEN_KEY 的判斷）。
+  // focusInitialOpenRef：掛載 RaceFocusMode 那次 render 要不要直接開啟（ref 賦值不觸發 re-render，
+  // 順序上早於 setStatus('tracking') 觸發的那次掛載，沒有競態）。
   const focusInitialOpenRef = useRef<boolean | undefined>(undefined)
+  // focusEnterSignal：首次提示「知道了」的瞬間命令 RaceFocusMode 進入專注模式（見該檔 openSignal prop）。
+  const [focusEnterSignal, setFocusEnterSignal] = useState(0)
+  // focusOpen（state，供渲染：CheerShow 專注中要提高 z-index）／focusOpenRef（供 evalTick 等 setInterval
+  // 閉包同步讀取最新值，避免 state 在舊 closure 裡讀到過時值——理由同檔內既有 armingRef/completingRef 等慣例）：
+  // 事件任務抑制「strategy 或專注模式開啟」都吃 focusOpenRef.current。
+  const [focusOpen, setFocusOpen] = useState(false)
+  const focusOpenRef = useRef(false)
   const [showStartTip, setShowStartTip] = useState(false) // 從賽事詳情頁「前往挑戰」進入（?from=race）→ idle 時顯示一次性新手提醒，可點擊/X關閉
   const [uploading, setUploading] = useState(false)
   // 運動部「揮汗有禮」（gov500_entry，見 lib/gov500.ts 頂部註解說明 2026-09-06 規則變動）：
@@ -1077,10 +1085,12 @@ export default function TrackPage() {
     // 測試：跑步中、無進行中事件時輪詢認領後台手動觸發（每 30 秒；結算中不認領）
     // 效能優化：跑步中 95% 時間空轉；1000 人同時跑步時此輪詢是全站最大宗請求流量（5s 間隔約 200 req/s）
     // 拉長到 30 秒後降到約 33 req/s；管理員手動推送事件最晚 30 秒內會被領取，可接受。
-    // 賽事模式（raceStrategy 已載入）：與下方隨機事件觸發同理抑制——手動認領也是「事件任務」引擎的另一個
-    // 觸發入口（同一套 ActiveEvent/EventInteraction 全螢幕演出），賽事進行需要專注，不應被任何來源的新
-    // 事件打斷（使用者規格，見任務規格 C）。
-    if (!raceStrategy && !activeEventRef.current && !completingRef.current && now - lastClaimRef.current > 30000) {
+    // 賽事模式（raceStrategy 已載入）或專注模式開啟中：與下方隨機事件觸發同理抑制——手動認領也是「事件
+    // 任務」引擎的另一個觸發入口（同一套 ActiveEvent/EventInteraction 全螢幕演出），賽事進行/專注模式
+    // 需要專注，不應被任何來源的新事件打斷（使用者規格；2026-09-25 CONTRACT.md track_autolock §2.1
+    // 擴大為「strategy 或專注模式開啟」）。focusOpenRef 見其宣告處：本函式被 setInterval 長駐引用，
+    // 只能讀 ref 拿到最新值，讀 state 會是掛載當下的舊值。
+    if (!raceStrategy && !focusOpenRef.current && !activeEventRef.current && !completingRef.current && now - lastClaimRef.current > 30000) {
       lastClaimRef.current = now
       claimManualEvent()
     }
@@ -1182,12 +1192,13 @@ export default function TrackPage() {
     // 無進行中事件 → 等隨機等待時間到 + 符合觸發條件才挑選（結算中 / 建立 occurrence 中不 arm，避免重複觸發或蓋掉剛完成的結果）
     if (completingRef.current || armingRef.current || now < nextEventAtRef.current) return
     // 賽事模式（已載入賽事策略 raceStrategy，見 RaceStrategyTab「啟動賽事模式」帶 ?strategy=<id> 進來）
-    // 抑制「事件任務」的新觸發：賽事進行需要專注在配速/補給，GPS 即時觸發的隨機任務全螢幕紅閃演出會打斷
-    // 比賽節奏，這是使用者明確規格（見任務規格 C）。只抑制「新事件的觸發」（這裡 activeEventRef 必為
-    // null，不存在「事件已在進行中」的情況）；claimManualEvent（後台手動測試認領）與 Phase B 多人賽事
-    // 邀請走各自獨立的機制，不受此處影響。raceStrategy 在追蹤期間不會變動（見 setRaceStrategy 呼叫點：
-    // 一次為 idle 時載入、一次為 idle 時取消策略，皆早於 start()），這裡讀取一般 state 而非 ref 是安全的。
-    if (raceStrategy) return
+    // 抑制「事件任務」的新觸發：賽事進行/專注模式需要專注在配速/補給，GPS 即時觸發的隨機任務全螢幕紅閃
+    // 演出會打斷節奏，這是使用者明確規格（2026-09-25 CONTRACT.md track_autolock §2.1「strategy 或專注
+    // 模式開啟」）。只抑制「新事件的觸發」（這裡 activeEventRef 必為 null，不存在「事件已在進行中」的
+    // 情況）；claimManualEvent（後台手動測試認領）與 Phase B 多人賽事邀請走各自獨立的機制，不受此處影響。
+    // raceStrategy 在追蹤期間不會變動，讀一般 state 安全；focusOpen 會隨長按解鎖/浮動鈕反覆切換，
+    // 必須讀 focusOpenRef（見其宣告處）才能拿到最新值，讀 state 在這個長駐 setInterval 閉包裡會是舊值。
+    if (raceStrategy || focusOpenRef.current) return
     // 事件間距＝「隨機等待 nextEventAtRef([最短,最長])」＋伺服器防濫用地板(taskGateOpen)決定。
     // 舊的 per-def cooldown_sec 是「寫死 15 分鐘冷卻」的殘留：第一個事件時 lastEventEndRef=0 剛好不擋，
     // 但事件結束後 lastEventEndRef 變成真時間，會把「所有」def 擋掉整趟（cooldown 越大擋越久）→ 第二個事件永遠不觸發。移除之。
@@ -1228,9 +1239,11 @@ export default function TrackPage() {
     // Phase B2 重置（collective 貢獻節流）
     setRaceGroupProgress(null); lastContributedDistRef.current = 0; lastContributeAtRef.current = 0; contributeBusyRef.current = false
     startRef.current = Date.now()
-    // 這是全新一趟，不是重開頁面接續——專注模式初始開關交回 RaceFocusMode 既有預設規則（有 strategy
-    // 才自動開啟），不沿用同一 session 上一趟殘留的值（見 focusInitialOpenRef 宣告處說明）。
-    focusInitialOpenRef.current = undefined
+    // 開跑一律進入專注模式（CONTRACT.md track_autolock §2.2），唯一例外：本裝置尚未看過首次提示——
+    // 此時讓完整介面先可見，等提示「知道了」（見 FocusModeTip onDismiss → focusEnterSignal）才進入。
+    let tipSeen = true
+    try { tipSeen = localStorage.getItem(FOCUS_TIP_SEEN_KEY) === '1' } catch { tipSeen = true } // localStorage 不可用時退回「已看過」，不擋開跑本身
+    focusInitialOpenRef.current = tipSeen
     setStatus('tracking')
     // 只有手動才結束（CONTRACT.md §2.1）：開跑當下建立 dor_gps_active 快照，href 含完整 query
     // （例如 ?strategy=…），全站導回與三選一彈窗都靠它。workout 先清空——若是透過 beginWorkout()
@@ -1558,10 +1571,17 @@ export default function TrackPage() {
       freetrainRef.current = wo.kind === 'freetrain'
     }
     setRecover(null) // 有進行中跑步時不該同時顯示「上次未上傳」卡片
-    // 口袋模式併入專注模式：接續前若專注模式是開啟的（focusOpen），重開頁面直接把它開回來（未鎖定，
-    // 見 RaceFocusMode 的 initialOpen prop）；false／undefined 交回它既有的預設規則。必須在 setStatus
-    // 觸發 RaceFocusMode 掛載那次 render 之前指定，ref 賦值不觸發 re-render，順序上沒有競態。
-    focusInitialOpenRef.current = active.focusOpen
+    // 接續一律進入專注模式（CONTRACT.md track_autolock §2.2）：忽略 active.focusOpen 的顯式 false——
+    // 只有手動才結束的規格下，接續當下使用者多半仍在跑，理應直接回到鎖定畫面而非曝露完整介面。
+    // 唯一例外與 start() 相同：本裝置尚未看過首次提示（FocusModeTip）——2026-09-25 review 修正：原本
+    // 這裡無條件寫 true，若首次開跑提示還沒按「知道了」就被砍掉/重載（本專案「只有手動才結束」機制
+    // 常態鼓勵這麼做），接續時會直接鎖進全黑攔截層，提示（z-index 1000）被蓋在鎖定層（3900）底下
+    // 永遠看不到也點不到，使用者不知道要長按鎖頭才能解除。判斷邏輯與 start() 完全一致（同一把
+    // FOCUS_TIP_SEEN_KEY）。必須在 setStatus 觸發 RaceFocusMode 掛載那次 render 之前指定，ref 賦值
+    // 不觸發 re-render，順序上沒有競態。
+    let resumeTipSeen = true
+    try { resumeTipSeen = localStorage.getItem(FOCUS_TIP_SEEN_KEY) === '1' } catch { resumeTipSeen = true }
+    focusInitialOpenRef.current = resumeTipSeen
     setStatus('tracking')
     armTimers()
     const ageMs = activeRunAgeMs(active)
@@ -2324,37 +2344,42 @@ export default function TrackPage() {
       {status === 'tracking' && activeEvent?.phase === 'active' && isInteractionType(activeEvent.def.completion_type) && (
         <EventInteraction active={activeEvent} onDone={handleInteractionDone} paused={isLandscape} assets={fxAssets} />
       )}
-      {/* 專注模式：任何 tracking 中的跑步都能切入的全螢幕大字資訊疊層（有賽事策略時＋配速/補給提醒完整版，
-          維持開跑自動進入；無策略的一般跑步/課表/個人任務只顯示基本 4 指標，預設不自動進入，靠元件內建的
-          切換鈕手動開關，見 RaceFocusMode 內 hidden 初始值）。z-index 600（>面板 500，但低於事件演出
-          2100+/確認結束 2500/Strava 三選一與登入 3300），讓既有的警示/事件系統仍蓋在它之上；純顯示層，
+      {/* 專注模式＝鎖定模式（2026-09-25 CONTRACT.md track_autolock）：任何 tracking 中的跑步開跑/接續
+          一律直接進入，整層攔截輸入，唯一可操作的是底部鎖頭長按離開（見 RaceFocusMode 內 hidden 狀態）。
+          z-index 3900（蓋過 CheerShow 平時的 650 與其餘既有覆蓋層，但低於全站 .landscape-lock「請轉回
+          直立」蓋板的 4000——2026-09-25 review 修正：原本同為 4000 會在橫向小尺寸手機蓋過轉向警告，
+          見 RaceFocusMode.tsx 檔頭說明），讓真正更高優先的互動彈窗仍蓋在它之上；純顯示層，
           不影響 WorkoutHud/課表引擎/事件任務引擎下方繼續運作的任何邏輯。
           時間口徑：疊層內「時間/平均配速/預計完成」吃 elapsed/avgPace（大會時間，不因靜止停錶）；
           「分段即時配速」大字吃 segLivePace＝與四格完全同一個值（2026-08-27 拍板「放大鏡原則」：疊層
           四大字必須跟背景四格一模一樣，同名不同數會被當 bug）；movingSegLivePace 只供偏差提醒引擎內部
           比較、不再上畫面（見 RaceFocusMode 內口徑決策註解）。下方一般面板「移動時間/移動配速/分段」
-          那排不受影響。 */}
+          那排不受影響。openSignal／onOpenChange 見該檔 props 說明與下方 focusEnterSignal/focusOpenRef 宣告處。 */}
       {status === 'tracking' && (
         <RaceFocusMode
           strategy={raceStrategy} distanceM={distance} elapsed={elapsed} avgPace={avgPace}
-          segLivePace={segLivePace} movingSegLivePace={movingSegLivePace} movingAvgPace={movingAvgPace}
-          hasSignal={!!curPos} goal={runGoal} canTestCheer={canTestCheer} onTestCheer={testCheer}
+          segLivePace={segLivePace} movingSegLivePace={movingSegLivePace}
+          hasSignal={!!curPos} goal={runGoal}
           initialOpen={focusInitialOpenRef.current}
-          onOpenChange={(open) => writeActiveRun({ focusOpen: open })}
+          openSignal={focusEnterSignal}
+          onOpenChange={(open) => { focusOpenRef.current = open; setFocusOpen(open); writeActiveRun({ focusOpen: open }) }}
         />
       )}
       {/* 每公里鼓勵語「泡泡對話框+啦啦隊角色」演出（v1.1.664）：獨立掛在本頁頂層、不論 status，
-          z-index 650 蓋過上面的 RaceFocusMode（600）——hidden 分支切回一般畫面時本節點仍在，不需要
-          RaceFocusMode 內再各自渲染一份。 */}
+          平時 z-index 650 蓋過 RaceFocusMode 的浮動按鈕（600）；專注模式開啟時提高到 3950 蓋過整層
+          （3900），維持 pointerEvents:none，且 edit（校正模式工具列，唯一有可點元素的分支）強制關閉
+          （!focusOpen 短路）——專注模式攔截輸入期間不該露出任何可點元素（見 CheerShow.tsx focusOpen prop）。 */}
       <CheerShow
         cheer={cheer}
         layout={cheerEditOn && editLayout ? editLayout : cheerLayout}
-        edit={cheerEditOn && editLayout ? {
+        edit={cheerEditOn && editLayout && !focusOpen ? {
           layout: editLayout, onChange: cheerEditChange, onSave: cheerEditSave, onExit: cheerEditExit, saving: cheerSaving,
         } : undefined}
+        focusOpen={focusOpen}
       />
       {/* 白名單測試按鈕：cheer_test_entry==='shown' 才顯示（系統設定白名單，見上方 canTestCheer 宣告處）。
-          一般畫面固定在右上角；RaceFocusMode 完整專注模式另有一顆同款按鈕（見該檔「顯示完整介面」旁）。 */}
+          固定在一般畫面右上角；專注模式開啟時整層攔截輸入（z 3900）會蓋住它，2026-09-25 起 RaceFocusMode
+          內不再有同款按鈕（原「顯示完整介面」旁那顆已隨改版移除，見該檔檔頭說明）。 */}
       {canTestCheer && (
         <button
           data-skin="default"
@@ -2421,8 +2446,9 @@ export default function TrackPage() {
       {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗） */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)' }} />
-        {/* 首次開跑提示（口袋模式併入專注模式，每裝置一次） */}
-        <FocusModeTip active={status === 'tracking'} />
+        {/* 首次開跑提示（專注模式＝鎖定模式，每裝置一次）：按「知道了」bump focusEnterSignal，命令
+            RaceFocusMode 立即進入專注模式（見 start() 對 focusInitialOpenRef 的判斷與該檔 openSignal prop）。 */}
+        <FocusModeTip active={status === 'tracking'} onDismiss={() => setFocusEnterSignal((s) => s + 1)} />
         {/* 「定位中…」遮罩：進頁自動預熱定位期間（還沒拿到第一個座標）顯示，取代看起來像真實地點的假中心；
             拿到 curPos 或逾時/失敗（autoLocating 轉 false）即消失。不擋操作。 */}
         {status === 'idle' && !curPos && autoLocating && (

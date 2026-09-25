@@ -40,9 +40,8 @@ export function resolveRunGoal(
   return { type: 'none' }
 }
 
-// 目標進度比例（0..1，未夾限，呼叫端自行 clamp）：供 RaceFocusMode 的 GoalProgressBar 與（口袋模式併入
-// 專注模式後的）FocusLockScreen 鎖定畫面百分比共用同一套算法——兩處若各自運算，容易出現同一趟跑步在
-// 兩個畫面顯示不同百分比的「放大鏡原則」違反（見 RaceFocusMode.tsx 檔頭口徑決策說明）。
+// 目標進度比例（0..1，未夾限，呼叫端自行 clamp）：供 RaceFocusMode 的 GoalProgressBar 使用（2026-09-25
+// 起專注模式本身即鎖定模式，原獨立的 FocusLockScreen 已併入同一個元件，見 RaceFocusMode.tsx 檔頭說明）。
 export function goalProgressRatio(goal: RunGoal, distanceM: number, elapsedS: number): number {
   if (goal.type === 'distance') return goal.totalM > 0 ? distanceM / goal.totalM : 0
   if (goal.type === 'time') return goal.totalS > 0 ? elapsedS / goal.totalS : 0

@@ -1,6 +1,10 @@
 'use client'
 
-// 專注模式：任何 tracking 中的跑步都能切入的全螢幕大字資訊疊層，套在 track 頁上。
+// 專注模式＝鎖定模式（2026-09-25 CONTRACT.md track_autolock，取代同日稍早「口袋模式併入專注模式」版本）：
+// 開啟即整個疊層攔截所有輸入，沒有「可互動／已鎖定」兩層子狀態——唯一可操作的是底部鎖頭，長按 1.5 秒
+// 離開專注模式回到完整介面。取代舊版「顯示完整介面／🔒 鎖定／📣 測試應援」按鈕與閒置 10 秒自動上鎖、
+// 獨立的 FocusLockScreen.tsx 元件（其長按解鎖進度環邏輯已直接搬進本檔，見下方 startHold/holdTick）。
+// 任何 tracking 中的跑步都能切入的全螢幕大字資訊疊層，套在 track 頁上。
 // 純顯示/提醒，不寫入任何 GPS/里程/課表/事件任務狀態——所有數據皆由父層（track/page.tsx）算好傳入，
 // 這裡只讀不算第二套，也完全不碰 WorkoutHud/課表引擎/事件任務引擎的邏輯（它們在底下照常運作，
 // 專注模式只是蓋在上面的顯示層，見 track/page.tsx 掛載處的 zIndex 說明）。
@@ -8,13 +12,15 @@
 // strategy 可為 null（一般跑步/課表/個人任務等沒有賽事策略的情境）：此時只顯示大字 移動距離/時間/
 // 平均配速/當下分段配速，策略專屬的「目標配速/預計完成/補給引擎/配速偏差提醒」整組不渲染（下面每個
 // strategy 專屬區塊都用 `strategy &&` 或 `if (!strategy) return` 短路，讀者可以直接搜 `strategy` 找全部）。
-// 帶 strategy 時維持原「比賽專注模式」完整版行為不變，包括開跑自動進入（由父層決定是否預設開啟，見
-// track/page.tsx 對 initialOpen 的說明）。
+// 開跑一律自動進入專注模式（見 track/page.tsx start()／resumeActiveRun() 對 initialOpen 的寫入），
+// 首次提示尚未看過時例外：由父層先把 initialOpen 帶 false，等使用者按下提示「知道了」再透過 openSignal
+// （遞增序號）命令本元件開啟，見下方該 prop 的 effect。
 //
 // 引擎狀態機（僅在有 strategy 時運作）：pace 提醒＝「差值判斷 + 60 秒同方向去重」的邊緣觸發器；
-// fuel 提醒＝「單一游標依序消化」的有限狀態機（等待 → 倒數顯示 → due（醒目 30 秒或點擊關閉）→
+// fuel 提醒＝「單一游標依序消化」的有限狀態機（等待 → 倒數顯示 → due（醒目 60 秒後自動前進）→
 // 游標前進取下一點），兩者互不干擾、各自用 ref 存計時器，不依賴 React effect 的自動 cleanup 時機
-//（避免 GPS 高頻重繪把倒數計時器提前清掉的競態）。
+//（避免 GPS 高頻重繪把倒數計時器提前清掉的競態）。專注模式中無法手動按「補給完成」（整層攔截輸入，
+// 只有底部鎖頭可操作）——到期提醒改為純顯示，60 秒後自動視為完成並前進到下一個補給點。
 //
 // 口徑決策（v0.1.5xx 時間口徑修正）：比賽情境的時鐘＝大會時間，不因站著不動而停錶，站定不動看到
 // 「時間」歸零／不走會被誤以為故障。因此主要顯示指標（時間／平均配速／預計完成 ETA）一律改用
@@ -33,14 +39,11 @@
 // 邏輯，時間口徑統一採 elapsed；至於 page.tsx 主畫面（非本疊層）「移動時間/移動配速/分段」那排維持
 // 原樣不動——那是給一般訓練情境參考用的移動口徑，與本疊層各自獨立。
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FUEL_KIND_LABEL, type RaceStrategy, type StrategySegment } from '@/lib/api'
 import { fmtKm, goalProgressRatio, type RunGoal } from '@/lib/runGoal'
-import FocusLockScreen from '@/components/track/FocusLockScreen'
 
-// 口袋模式併入專注模式（2026-09-25 CONTRACT.md §2）：自動上鎖＝專注模式開啟（非 hidden）且連續這麼久
-// 沒有任何 pointer/touch 事件 → 進入鎖定畫面（FocusLockScreen，見下方 locked 狀態與 idle 計時器）。
-const FOCUS_AUTO_LOCK_MS = 10000
+const HOLD_MS = 1500 // 底部鎖頭長按離開專注模式所需時長（與舊 FocusLockScreen 解鎖時長一致）
 
 // 取整口徑必須與 track/page.tsx 的 fmtTime 完全一致（一律 Math.floor）：elapsed 是帶小數的秒數，
 // 若這裡先 Math.round、主面板 Math.floor，同一個值會顯示成差 1 秒的兩個數字（使用者實測回報過）。
@@ -73,8 +76,8 @@ function predictedTimeAtKm(km: number, segments: StrategySegment[]): number {
 type PaceDir = 'fast' | 'slow'
 
 export default function RaceFocusMode({
-  strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace, movingAvgPace, hasSignal, goal,
-  canTestCheer, onTestCheer, initialOpen, onOpenChange,
+  strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace, hasSignal, goal,
+  initialOpen, openSignal, onOpenChange,
 }: {
   strategy: RaceStrategy | null // null＝一般跑步/課表/個人任務等沒有賽事策略的情境，只顯示基本 4 大字指標
   distanceM: number // 目前有效距離（公尺）——與頁面主面板「距離」同一份數據（distRef）
@@ -86,48 +89,73 @@ export default function RaceFocusMode({
   // 同一個值，供「分段即時配速」大字顯示（放大鏡原則，見上方口徑決策說明）
   movingSegLivePace: number // 目前這 1km 的移動時間即時配速（秒/公里；未達門檻為 0）——只供配速偏差
   // 提醒引擎內部比較用，不再上畫面（見上方口徑決策說明）
-  movingAvgPace: number // 移動時間平均配速（秒/公里；未達門檻為 0）——頁面既有 movingAvgPace，與主面板
-  // 「移動配速」同一個值；供鎖定畫面（FocusLockScreen）「移動配速」大字使用（口袋模式併入專注模式）
-  hasSignal: boolean // 目前是否有 GPS 訊號（頁面既有 !!curPos）——只供鎖定畫面的訊號點顯示
+  hasSignal: boolean // 目前是否有 GPS 訊號（頁面既有 !!curPos）——供疊層底部訊號點顯示
   goal: RunGoal // 本次跑步目標（distance/time/none，見 lib/runGoal.ts resolveRunGoal）——驅動進度條
-  canTestCheer?: boolean // 白名單測試應援按鈕（cheer_test_entry==='shown'，見 page.tsx）——只在完整專注
-  // 模式的「顯示完整介面」按鈕旁多渲染一顆同款按鈕；hidden 分支不需要（一般畫面右上角已有一顆，見 page.tsx）
-  onTestCheer?: () => void // 按下時觸發一次應援演出（page.tsx testCheer，內部呼叫 fireCheer）
-  initialOpen?: boolean // 由父層控制初始是否開啟（重開頁面自動接續時，若 activeRun.focusOpen 為真則帶
-  // true）；省略時維持既有預設規則：有 strategy 開跑自動進入，否則不自動進入（見下方 hidden 初始值）
+  initialOpen?: boolean // 由父層決定掛載當下是否直接開啟（省略時視同 false）：一般為 true（開跑/接續
+  // 一律進入專注模式）；首次提示尚未看過時父層帶 false，讓完整介面先可見，見下方 openSignal 說明
+  openSignal?: number // 父層命令「現在進入專注模式」的遞增序號（首次提示按下「知道了」時 bump）——
+  // 序號變動（而非布林本身變 true）才觸發，避免同一個 true 值連續下達時因值未變化被 effect 忽略
   onOpenChange?: (open: boolean) => void // hidden 狀態改變（含掛載當下）時通知父層——父層藉此把
-  // open 狀態寫進 activeRun.focusOpen，供重開頁面判斷是否要直接開啟專注模式
+  // open 狀態寫進 activeRun.focusOpen（供重開頁面判斷），也藉此得知是否要抑制新事件任務觸發、
+  // CheerShow 是否要提高 z-index（見 track/page.tsx 呼叫處）
 }) {
-  // 「顯示完整介面」：暫時隱藏本覆蓋層，露出原本 UI。初始值優先吃父層帶入的 initialOpen（重開頁面自動
-  // 接續，見上方 prop 說明）；未帶時維持既有規則：有 strategy 時預設開啟（載入策略開跑自動進入專注模式），
-  // 一般跑步（無 strategy）預設不自動進入、顯示切換鈕讓使用者手動切入。
-  const [hidden, setHidden] = useState(() => (initialOpen !== undefined ? !initialOpen : !strategy))
+  const [hidden, setHidden] = useState(() => !initialOpen)
   useEffect(() => { onOpenChange?.(!hidden) }, [hidden]) // eslint-disable-line react-hooks/exhaustive-deps -- 只在 hidden 變動（含掛載當下）通知父層，onOpenChange 允許每次 render 傳新的閉包
   const distKm = distanceM / 1000
 
-  // ── 鎖定狀態（口袋模式併入專注模式）：專注模式開啟中連續 FOCUS_AUTO_LOCK_MS 沒有任何 pointer/touch
-  // 事件 → 自動上鎖；手動「🔒 鎖定」鈕立即上鎖；鎖定畫面（FocusLockScreen）長按 1.5 秒解鎖。
-  // hidden 或已經 locked 時不需要計時（連 listener 都不掛），退出專注模式（顯示完整介面）時一併清 locked。
-  const [locked, setLocked] = useState(false)
-  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 整層攔截桌機滑鼠滾輪（見下方疊層 ref）：React 17+ 對 wheel/touchmove 一律以 passive:true 掛在
+  // document 根節點，JSX 上的 onWheel={preventDefault} 是 no-op（瀏覽器直接忽略、DevTools 會警告
+  // 「Unable to preventDefault inside passive event listener invocation」），2026-09-25 review 抓到
+  // 桌機滾輪理論上仍可捲動底下頁面。改用原生 addEventListener 顯式帶 {passive:false} 才擋得住；
+  // touch 手勢（滑動/縮放）已由 CSS touchAction:'none' 擋掉，不需要也不再用 JS 攔截 touchmove。
+  const overlayRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
-    if (hidden || locked) {
-      if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null }
-      return
+    if (hidden) return
+    const el = overlayRef.current
+    if (!el) return
+    const stopWheel = (e: Event) => e.preventDefault()
+    el.addEventListener('wheel', stopWheel, { passive: false })
+    return () => el.removeEventListener('wheel', stopWheel)
+  }, [hidden])
+
+  // 首次提示「知道了」命令開啟（見上方 openSignal prop 說明）：序號變動才觸發，掛載當下若父層剛好帶入
+  // 與上次相同的初始值不會誤觸發。
+  const openSignalSeenRef = useRef(openSignal)
+  useEffect(() => {
+    if (openSignal !== undefined && openSignal !== openSignalSeenRef.current) {
+      openSignalSeenRef.current = openSignal
+      setHidden(false)
     }
-    const arm = () => {
-      if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
-      idleTimerRef.current = setTimeout(() => setLocked(true), FOCUS_AUTO_LOCK_MS)
-    }
-    arm()
-    window.addEventListener('pointerdown', arm)
-    window.addEventListener('touchstart', arm, { passive: true })
-    return () => {
-      window.removeEventListener('pointerdown', arm)
-      window.removeEventListener('touchstart', arm)
-      if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null }
-    }
-  }, [hidden, locked])
+  }, [openSignal])
+
+  // ── 底部鎖頭長按 1.5 秒離開專注模式（原 FocusLockScreen 的長按進度環邏輯，併入本檔）──
+  const [holdProgress, setHoldProgress] = useState(0) // 0..1，長按進度環
+  const holdRafRef = useRef<number | null>(null)
+  const holdStartRef = useRef(0)
+  const holdingRef = useRef(false)
+
+  const stopHold = useCallback(() => {
+    holdingRef.current = false
+    if (holdRafRef.current != null) { cancelAnimationFrame(holdRafRef.current); holdRafRef.current = null }
+    setHoldProgress(0)
+  }, [])
+
+  const holdTick = useCallback(() => {
+    if (!holdingRef.current) return
+    const p = Math.min(1, (Date.now() - holdStartRef.current) / HOLD_MS)
+    setHoldProgress(p)
+    if (p >= 1) { holdingRef.current = false; setHidden(true); return }
+    holdRafRef.current = requestAnimationFrame(holdTick)
+  }, [])
+
+  const startHold = useCallback((e: React.PointerEvent) => {
+    e.preventDefault(); e.stopPropagation()
+    holdingRef.current = true
+    holdStartRef.current = Date.now()
+    holdRafRef.current = requestAnimationFrame(holdTick)
+  }, [holdTick])
+
+  useEffect(() => () => { if (holdRafRef.current != null) cancelAnimationFrame(holdRafRef.current) }, [])
 
   // 目前所在分段：落在 [from_km, to_km) 的那一段；已超過總距離則沿用最後一段的目標配速繼續顯示
   // （以下 strategy 專屬邏輯全部短路：無 strategy 時維持安全的空/零值，不渲染對應區塊）
@@ -185,9 +213,10 @@ export default function RaceFocusMode({
   useEffect(() => {
     if (hasFuel && due && !dueActive) {
       setDueActive(true)
-      dueTimerRef.current = setTimeout(() => advanceFuel(), 30000) // 醒目提示顯示約 30 秒後自動消化、換下一點
+      // 專注模式中無法手動按「補給完成」（整層攔截輸入）：到期提示顯示 60 秒後自動視為完成、換下一點。
+      dueTimerRef.current = setTimeout(() => advanceFuel(), 60000)
     }
-    // 同上：不用 return cleanup，避免高頻重繪把這顆 30 秒計時器提前清掉
+    // 同上：不用 return cleanup，避免高頻重繪把這顆計時器提前清掉
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasFuel, due, dueActive])
   useEffect(() => () => { if (dueTimerRef.current) clearTimeout(dueTimerRef.current) }, [])
@@ -215,127 +244,120 @@ export default function RaceFocusMode({
 
   if (hidden) {
     return (
-      <>
-        {/* 每公里鼓勵語演出（泡泡框+啦啦隊角色）已改由 page.tsx 頂層的 CheerShow 獨立負責，
-            z-index 650 蓋過本疊層，hidden 模式（只有浮動按鈕）下同樣看得到，這裡不需要再渲染。 */}
-        <button
-          data-skin="default"
-          onClick={() => setHidden(false)}
-          style={{
-            position: 'fixed', right: 16, bottom: 'calc(100px + env(safe-area-inset-bottom))', zIndex: 600,
-            background: 'rgba(11,14,19,.9)', color: 'var(--tx)', border: '1px solid rgba(255,194,75,.6)',
-            borderRadius: 999, padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer',
-            boxShadow: '0 4px 16px rgba(0,0,0,.4)', fontFamily: 'inherit',
-          }}
-        >🏁 專注模式</button>
-      </>
+      <button
+        data-skin="default"
+        onClick={() => setHidden(false)}
+        style={{
+          position: 'fixed', right: 16, bottom: 'calc(100px + env(safe-area-inset-bottom))', zIndex: 600,
+          background: 'rgba(11,14,19,.9)', color: 'var(--tx)', border: '1px solid rgba(255,194,75,.6)',
+          borderRadius: 999, padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer',
+          boxShadow: '0 4px 16px rgba(0,0,0,.4)', fontFamily: 'inherit',
+        }}
+      >🏁 專注模式</button>
     )
   }
 
-  if (locked) {
-    // 鎖定畫面（口袋模式併入專注模式）：每個數字都用這裡已經算好的值傳下去，FocusLockScreen 本身不另算
-    // （見該檔檔頭說明）。progressPct 與上面 GoalProgressBar 共用 goalProgressRatio，同一套算法。
-    const progressPct = Math.min(1, Math.max(0, goalProgressRatio(goal, distanceM, elapsed))) * 100
-    const fuelLabel = strategy && hasFuel && due ? `請進行補給：${FUEL_KIND_LABEL[fp.kind]}` : null
-    return (
-      <FocusLockScreen
-        onUnlock={() => setLocked(false)}
-        elapsedS={elapsed}
-        distanceKm={distKm}
-        hasSignal={hasSignal}
-        movingPaceS={movingAvgPace}
-        progressPct={progressPct}
-        fuelLabel={fuelLabel}
-      />
-    )
-  }
+  const holdRingSize = 88, holdStroke = 5, holdR = (holdRingSize - holdStroke) / 2, holdC = 2 * Math.PI * holdR
 
   return (
-    <div data-skin="default" style={{
-      position: 'fixed', inset: 0, zIndex: 600, background: 'rgba(0,0,0,.82)',
-      color: 'var(--tx)', display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', gap: '2.6vh', padding: '24px 20px', textAlign: 'center', overflowY: 'auto',
-    }}>
-      <GoalProgressBar goal={goal} distanceM={distanceM} elapsed={elapsed} />
-      {/* 每公里鼓勵語演出（泡泡框+啦啦隊角色）改由 page.tsx 頂層的 CheerShow 負責，z-index 650 蓋過
-          本疊層（600），這裡不需要再渲染任何東西。 */}
+    <div
+      ref={overlayRef}
+      data-skin="default"
+      className="app-min-h"
+      style={{
+        position: 'fixed', inset: 0, zIndex: 3900, background: '#000',
+        color: 'var(--tx)', display: 'flex', flexDirection: 'column', alignItems: 'center',
+        justifyContent: 'space-between', padding: '24px 20px calc(20px + env(safe-area-inset-bottom))',
+        textAlign: 'center', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none',
+      }}
+      // 整層攔截所有輸入：唯一可操作的是下方鎖頭（其自身 onPointerDown 已 stopPropagation）。
+      // touchAction:none 已擋掉捲動/縮放手勢；桌機滑鼠滾輪改由上方 overlayRef 的原生
+      // {passive:false} 監聽器攔截（JSX onWheel/onTouchMove 對這兩個事件是 no-op，見上方宣告處說明）。
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.6vh', width: '100%' }}>
+        <GoalProgressBar goal={goal} distanceM={distanceM} elapsed={elapsed} />
 
-      <div style={{ fontSize: 12, letterSpacing: '.15em', color: 'var(--tx-dim)', fontWeight: 700 }}>
-        {strategy ? `比賽專注模式 · ${strategy.name}` : '專注模式'}
+        <div style={{ fontSize: 12, letterSpacing: '.15em', color: 'var(--tx-dim)', fontWeight: 700 }}>
+          {strategy ? `比賽專注模式 · ${strategy.name}` : '專注模式'}
+        </div>
       </div>
 
-      <Metric label="移動距離" value={distKm.toFixed(2)} unit="km" size="xl" />
-      <Metric label="時間" value={fmtTime(elapsed)} unit="" size="lg" />
-      <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
-        <Metric label="平均配速" value={fmtPace(avgPace)} unit="/km" size="md" />
-        <Metric label="分段即時配速" value={fmtPace(segLivePace)} unit="/km" size="md" />
-      </div>
-      {/* 以下皆為賽事策略專屬區塊：無 strategy（一般跑步/課表/個人任務等）整組不渲染 */}
-      {strategy && (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2vh' }}>
+        <Metric label="移動距離" value={distKm.toFixed(2)} unit="km" size="xl" />
+        <Metric label="時間" value={fmtTime(elapsed)} unit="" size="lg" />
         <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <Metric label="目前段目標配速" value={curSeg ? fmtPace(curSeg.pace_s) : '--:--'} unit="/km" size="md" />
-          <Metric label="預計完成時間" value={etaLabel} unit="" size="md" />
+          <Metric label="平均配速" value={fmtPace(avgPace)} unit="/km" size="md" />
+          <Metric label="分段即時配速" value={fmtPace(segLivePace)} unit="/km" size="md" />
         </div>
-      )}
-
-      {strategy && paceAlert && (
-        <div style={{
-          background: paceAlert === 'fast' ? 'rgba(255,194,75,.16)' : 'rgba(255,75,92,.16)',
-          border: `1px solid ${paceAlert === 'fast' ? 'var(--gold)' : 'var(--hunt)'}`,
-          borderRadius: 14, padding: '10px 18px', fontSize: 16, fontWeight: 900,
-          color: paceAlert === 'fast' ? 'var(--gold)' : 'var(--hunt)',
-        }}>
-          {paceAlert === 'fast' ? '⚡ 配速過快' : '🐢 配速過慢'}，目標 {fmtPace(targetPaceS)}/km
-        </div>
-      )}
-
-      {strategy && fuelLine && (
-        <div style={{
-          fontSize: 15, fontWeight: 800, color: 'var(--gold)',
-          background: 'rgba(255,194,75,.12)', border: '1px solid rgba(255,194,75,.4)',
-          borderRadius: 12, padding: '8px 16px',
-        }}>🍫 {fuelLine}</div>
-      )}
-      {strategy && hasFuel && due && dueActive && (
-        <div
-          onClick={advanceFuel}
-          className="track-blink"
-          style={{
-            cursor: 'pointer', background: 'rgba(255,75,92,.2)', border: '2px solid var(--hunt)', borderRadius: 16,
-            padding: '14px 22px', fontSize: 19, fontWeight: 900, color: 'var(--tx)',
-          }}
-        >
-          🍫 請進行補給：{FUEL_KIND_LABEL[fp.kind]}
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--tx-dim)', marginTop: 4 }}>點擊關閉</div>
-        </div>
-      )}
-
-      {/* 「顯示完整介面」＋（白名單）「📣 測試應援」同一列、同款樣式；測試按鈕見 canTestCheer/onTestCheer props 說明 */}
-      <div style={{ position: 'absolute', right: 16, bottom: 'calc(20px + env(safe-area-inset-bottom))', display: 'flex', gap: 8 }}>
-        {canTestCheer && (
-          <button
-            onClick={onTestCheer}
-            style={{
-              background: 'rgba(255,255,255,.1)', color: 'var(--tx)', border: '1px solid var(--line-2)',
-              borderRadius: 999, padding: '9px 15px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-            }}
-          >📣 測試應援</button>
+        {/* 以下皆為賽事策略專屬區塊：無 strategy（一般跑步/課表/個人任務等）整組不渲染 */}
+        {strategy && (
+          <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Metric label="目前段目標配速" value={curSeg ? fmtPace(curSeg.pace_s) : '--:--'} unit="/km" size="md" />
+            <Metric label="預計完成時間" value={etaLabel} unit="" size="md" />
+          </div>
         )}
-        {/* 手動上鎖（口袋模式併入專注模式）：立即進入 FocusLockScreen，不等 10 秒無觸控自動上鎖 */}
-        <button
-          onClick={() => setLocked(true)}
-          style={{
-            background: 'rgba(255,255,255,.1)', color: 'var(--tx)', border: '1px solid var(--line-2)',
-            borderRadius: 999, padding: '9px 15px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-          }}
-        >🔒 鎖定</button>
-        <button
-          onClick={() => { setHidden(true); setLocked(false) }}
-          style={{
-            background: 'rgba(255,255,255,.1)', color: 'var(--tx)', border: '1px solid var(--line-2)',
-            borderRadius: 999, padding: '9px 15px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-          }}
-        >顯示完整介面</button>
+
+        {strategy && paceAlert && (
+          <div style={{
+            background: paceAlert === 'fast' ? 'rgba(255,194,75,.16)' : 'rgba(255,75,92,.16)',
+            border: `1px solid ${paceAlert === 'fast' ? 'var(--gold)' : 'var(--hunt)'}`,
+            borderRadius: 14, padding: '10px 18px', fontSize: 16, fontWeight: 900,
+            color: paceAlert === 'fast' ? 'var(--gold)' : 'var(--hunt)',
+          }}>
+            {paceAlert === 'fast' ? '⚡ 配速過快' : '🐢 配速過慢'}，目標 {fmtPace(targetPaceS)}/km
+          </div>
+        )}
+
+        {strategy && fuelLine && (
+          <div style={{
+            fontSize: 15, fontWeight: 800, color: 'var(--gold)',
+            background: 'rgba(255,194,75,.12)', border: '1px solid rgba(255,194,75,.4)',
+            borderRadius: 12, padding: '8px 16px',
+          }}>🍫 {fuelLine}</div>
+        )}
+        {strategy && hasFuel && due && dueActive && (
+          <div
+            className="track-blink"
+            style={{
+              background: 'rgba(255,75,92,.2)', border: '2px solid var(--hunt)', borderRadius: 16,
+              padding: '14px 22px', fontSize: 19, fontWeight: 900, color: 'var(--tx)',
+            }}
+          >
+            🍫 請進行補給：{FUEL_KIND_LABEL[fp.kind]}
+            {/* 專注模式中無法點擊關閉（整層攔截輸入）：到期 60 秒後自動視為完成、換下一個補給點 */}
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--tx-dim)', marginTop: 4 }}>（60 秒後自動跳下一個）</div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--tx-dim)', fontWeight: 700 }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: hasSignal ? 'var(--fug)' : 'var(--tx-dim)' }} />
+          {hasSignal ? 'GPS 訊號中' : 'GPS 訊號弱／無'}
+        </div>
+      </div>
+
+      {/* 底部鎖頭：長按 1.5 秒離開專注模式回到完整介面（原 FocusLockScreen 的長按環，見檔頭說明） */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+        <div
+          onPointerDown={startHold}
+          onPointerUp={stopHold}
+          onPointerLeave={stopHold}
+          onPointerCancel={stopHold}
+          role="button"
+          aria-label="長按 1.5 秒解除專注模式"
+          style={{ position: 'relative', width: holdRingSize, height: holdRingSize, minWidth: 72, minHeight: 72, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', touchAction: 'none' }}
+        >
+          <svg width={holdRingSize} height={holdRingSize} style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
+            <circle cx={holdRingSize / 2} cy={holdRingSize / 2} r={holdR} fill="none" stroke="rgba(255,255,255,.18)" strokeWidth={holdStroke} />
+            <circle
+              cx={holdRingSize / 2} cy={holdRingSize / 2} r={holdR} fill="none" stroke="var(--gold)" strokeWidth={holdStroke}
+              strokeDasharray={holdC} strokeDashoffset={holdC * (1 - holdProgress)} strokeLinecap="round"
+              style={{ transition: holdProgress === 0 ? 'stroke-dashoffset .15s linear' : 'none' }}
+            />
+          </svg>
+          <span style={{ fontSize: 30 }}>🔒</span>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--tx-dim)', fontWeight: 700 }}>長按 1.5 秒解除專注模式</div>
       </div>
     </div>
   )
@@ -358,7 +380,7 @@ function Metric({ label, value, unit, size }: { label: string; value: string; un
 // 分段進度，讓一般跑步/混合課表也有個持續推進的視覺回饋。
 function GoalProgressBar({ goal, distanceM, elapsed }: { goal: RunGoal; distanceM: number; elapsed: number }) {
   let leftLabel: string, rightLabel: string, curLabel: string | null = null, hint: string | null = null
-  const ratio = goalProgressRatio(goal, distanceM, elapsed) // 與鎖定畫面（FocusLockScreen）進度百分比同一套算法，見該函式檔頭說明
+  const ratio = goalProgressRatio(goal, distanceM, elapsed)
   if (goal.type === 'distance') {
     leftLabel = '0 km'
     rightLabel = `${fmtKm(goal.totalM / 1000)} km`
@@ -393,5 +415,9 @@ function GoalProgressBar({ goal, distanceM, elapsed }: { goal: RunGoal; distance
 }
 
 // 舊「每公里鼓勵語橫幅」元件已移除（v1.1.664 升級成泡泡對話框+啦啦隊角色演出，改由
-// page.tsx 頂層的 track/CheerShow.tsx 獨立負責顯示，見上方 canTestCheer/onTestCheer props 說明
-// 與兩處掛載點的移除註解）。
+// page.tsx 頂層的 track/CheerShow.tsx 獨立負責顯示；專注模式開啟時 CheerShow 提高 z-index 到 3950
+// 蓋過本疊層（3900，2026-09-25 review 修正：原本兩者皆與全站 .landscape-lock「請轉回直立」蓋板
+// 同為 4000，橫向小尺寸手機 useIsMobile()=true 時 PhoneFrame 不套 .phone-shell、與 body 層級的
+// LandscapeNotice 同一個 stacking context，DOM 順序讓本疊層蓋過轉向警告——使用者卡在全黑鎖定層
+// 連轉向提示都看不到。改成 3900/3950，維持互相的蓋過關係不變，但兩者都讓出 4000 給轉向警告），
+// 仍維持 pointerEvents:none，見 track/page.tsx 呼叫處與 CheerShow.tsx 檔頭說明）。

@@ -4,9 +4,16 @@
 // （原本活在 RaceFocusMode.tsx，已隨本次改版移除）。獨立掛在 track/page.tsx 頂層、不受 status 或
 // RaceFocusMode 的 hidden/顯示切換影響——任何畫面狀態下每公里觸發都要看得到。
 //
-// z-index 650：蓋過 RaceFocusMode 專注模式疊層（600）與浮動按鈕（500/560），但仍低於事件觸發演出
+// z-index 650：蓋過 RaceFocusMode 的浮動按鈕（500/560），但仍低於事件觸發演出
 // （2100+）、確認結束（2500）、Strava 三選一與登入（3300）等更高優先的互動彈窗。純顯示、
 // pointerEvents:none（不擋底下地圖/按鈕操作）；校正模式（edit）例外，見下方。
+// 專注模式＝鎖定模式開啟時（focusOpen prop，2026-09-25 CONTRACT.md track_autolock）：z-index 提高到
+// 3950 蓋過 RaceFocusMode 整層（3900，每公里鼓勵語演出在專注模式攔截輸入期間仍要看得到）；呼叫端
+// （track/page.tsx）在專注模式開啟時強制 edit 傳 undefined，本檔不需要也不應該在這個分支另外判斷
+// 「可點元素要不要渲染」——校正工具列本來就只在 edit 有值時才渲染，父層已經把這個入口關掉了。
+// 2026-09-25 review 修正：3950/3900 原本都是 4100/4000，與全站 .landscape-lock「請轉回直立」蓋板
+// （globals.css，同為 4000）撞號——橫向小尺寸手機 PhoneFrame 不套 .phone-shell 時會蓋過轉向警告，
+// 兩者都下修 100，讓出 4000 給轉向警告，彼此蓋過關係不變。
 //
 // 動畫：cheer 變化（key 遞增）→ 泡泡＋角色各自套用進場 keyframes（角色延遲 60ms 有層次）；cheer 變
 // null 時不立即卸載——保留最後一筆內容切成 out 動畫，onAnimationEnd 後才真正清空（沿用舊版橫幅元件
@@ -85,10 +92,11 @@ export interface CheerEditProps {
   saving: boolean
 }
 
-export default function CheerShow({ cheer, layout, edit }: {
+export default function CheerShow({ cheer, layout, edit, focusOpen }: {
   cheer: { text: string; key: number } | null
   layout: CheerCharLayout
   edit?: CheerEditProps
+  focusOpen?: boolean // 專注模式（RaceFocusMode）是否開啟：true 時 z-index 提高到 3950，見上方檔頭說明
 }) {
   const [shown, setShown] = useState<{ text: string; key: number } | null>(null)
   const [phase, setPhase] = useState<'in' | 'out'>('in')
@@ -207,7 +215,7 @@ export default function CheerShow({ cheer, layout, edit }: {
       // 而 --app-h 是整個瀏覽器視窗高、會超出模擬框（角色 bottom:0 會貼到框外被裁掉）；
       // inset:0 在手機（視窗）與桌機（模擬框）兩種基準下都貼齊底部。
       // （--app-h 現已改為「只能加高的安全網」，語意見 ViewportHeightFix.tsx）
-      style={{ position: 'fixed', inset: 0, zIndex: 650, pointerEvents: edit ? 'auto' : 'none', overflow: 'hidden' }}
+      style={{ position: 'fixed', inset: 0, zIndex: focusOpen ? 3950 : 650, pointerEvents: edit ? 'auto' : 'none', overflow: 'hidden' }}
     >
       {/* 泡泡對話框：文字容器扣掉底部 27%（尾巴留白）與左右各 5%。校正模式：文字固定、不套動畫。 */}
       <div
