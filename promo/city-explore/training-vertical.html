@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>DOR 自主訓練・課表庫宣傳片（直式）</title>
+<link rel="stylesheet" href="fonts/local.css">
+<style>
+/* =========================================================
+   DOR｜自主訓練・課表庫 功能介紹 — 直式版（1080×1920，47 秒，Reels / Shorts）
+   與其他直式版共用時間軸節點與配樂（music.py TRANSITIONS）。
+   App 介面以原生尺寸（約 390px 寬）照 TrainingScreen.tsx / WorkoutHud.tsx 的樣式重建，再整體放大，
+   介面文字皆為原文；課表數值依 migration 082 + 085 預設資料以 lib/workout.ts 換算。
+   跑步中的即時數字與結果為示意。
+   安全區：重要文字放在 y 230–1560、x 60–960。
+   ========================================================= */
+:root{
+  --bg:#09090f; --bg-1:#0d0f14; --bg-2:#12141a; --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.12);
+  --tx:rgba(255,255,255,.92); --tx-dim:rgba(255,255,255,.55); --tx-faint:rgba(255,255,255,.28);
+  --fug:#2DE59A; --fug-ink:#05140e; --hunt:#FF4B5C; --gold:#FFC24B; --violet:#9D8CFF;
+  --ink:#f4f6fb; --dim2:#9aa3b5;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1080px;height:1920px;overflow:hidden;background:var(--bg)}
+body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}
+#stage{position:relative;width:1080px;height:1920px;overflow:hidden;background:var(--bg)}
+.sc{position:absolute;inset:0;overflow:hidden;opacity:0}
+.center{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.g{color:var(--fug)} .y{color:var(--gold)}
+.tab{font-variant-numeric:tabular-nums}
+
+@keyframes in{from{opacity:0}to{opacity:1}}
+@keyframes out{from{opacity:1}to{opacity:0}}
+@keyframes up{from{opacity:0;transform:translateY(60px)}to{opacity:1;transform:none}}
+@keyframes upS{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+@keyframes left{from{opacity:0;transform:translateX(-80px)}to{opacity:1;transform:none}}
+@keyframes pop{0%{opacity:0;transform:scale(.3)}60%{opacity:1;transform:scale(1.12)}100%{opacity:1;transform:scale(1)}}
+@keyframes blurIn{from{opacity:0;filter:blur(24px);transform:scale(1.15)}to{opacity:1;filter:blur(0);transform:none}}
+@keyframes press{0%,100%{transform:scale(1)}50%{transform:scale(.93)}}
+@keyframes shine{from{transform:translateX(-120%) skewX(-20deg)}to{transform:translateX(320%) skewX(-20deg)}}
+@keyframes tapA{0%{opacity:0;transform:translate(-50%,-50%) scale(1.6)}40%{opacity:.9;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-50%) scale(.8)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes fly{from{opacity:0;transform:translate(var(--fx),var(--fy)) rotate(var(--fr)) scale(.6)}to{opacity:1;transform:translate(0,0) rotate(var(--r)) scale(1)}}
+@keyframes dimOut{to{opacity:.25;filter:blur(3px)}}
+
+.step{display:inline-flex;align-items:center;gap:16px;font-size:30px;font-weight:700;letter-spacing:.12em;color:var(--fug)}
+.step b{font-family:'Space Grotesk',sans-serif;font-size:28px;padding:6px 16px;border:2px solid var(--fug);border-radius:999px;letter-spacing:.08em}
+.h1{font-size:66px;font-weight:900;line-height:1.2}
+.body{font-size:30px;line-height:1.6;color:#c9d0de;font-weight:500}
+.chip{display:inline-flex;align-items:center;gap:10px;padding:10px 24px;border-radius:999px;font-size:28px;font-weight:700;background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.14)}
+.glow{position:absolute;border-radius:50%;filter:blur(120px)}
+.dor-icon{border-radius:22%;box-shadow:0 0 0 3px rgba(255,255,255,.12),0 30px 80px rgba(0,0,0,.6),0 0 90px rgba(45,229,154,.25)}
+.note{position:absolute;right:70px;font-size:20px;color:rgba(255,255,255,.4)}
+.vip{font-size:22px;color:rgba(255,194,75,.85);font-weight:700}
+.tap{position:absolute;width:90px;height:90px;border-radius:50%;border:5px solid #fff;transform:translate(-50%,-50%);opacity:0;z-index:20;pointer-events:none}
+
+/* ---------- 手機外框 ---------- */
+.phone{position:absolute;border-radius:64px;background:#000;padding:16px;box-shadow:0 0 0 3px #2a2e38,0 50px 120px rgba(0,0,0,.7)}
+.screen{position:relative;width:100%;height:100%;border-radius:48px;overflow:hidden;background:var(--bg)}
+.notch{position:absolute;left:50%;top:12px;width:130px;height:34px;border-radius:20px;background:#000;transform:translateX(-50%);z-index:9}
+
+/* ---------- App 元件（原生尺寸，照 TrainingScreen.tsx 樣式） ---------- */
+.app{position:absolute;left:0;top:0;width:390px;transform-origin:0 0;color:var(--tx);font-size:13px}
+.a-head{padding:52px 22px 0;min-height:86px;display:flex;align-items:center;gap:12px}
+.a-head .back{font-size:14px;color:var(--tx-dim)}
+.a-head .ttl{font-size:15px;font-weight:800}
+.a-tabs{display:flex;gap:4px;padding:0 18px;border-bottom:1px solid var(--line)}
+.a-tabs span{padding:10px;font-size:13.5px;color:var(--tx-dim);font-weight:500;border-bottom:2px solid transparent}
+.a-tabs span.on{color:var(--tx);font-weight:800;border-bottom-color:var(--fug)}
+.a-body{padding:6px 18px 28px}
+.a-intro{font-size:12.5px;color:var(--tx-dim);margin:4px 2px 12px;line-height:1.7}
+.a-level{display:flex;align-items:center;gap:10px;background:var(--bg-1);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:16px}
+.a-level b{font-size:12.5px;font-weight:800;flex-shrink:0}
+.a-level .sel{position:relative;flex:1;background:var(--bg-2);border:1px solid var(--line-2);border-radius:9px;padding:8px 10px;font-size:13px}
+.a-level .sel::after{content:'▾';position:absolute;right:10px;color:var(--tx-dim)}
+.a-cat{font-size:12px;font-weight:800;color:var(--fug);margin:18px 0 8px;letter-spacing:.05em}
+.a-card{background:var(--bg-1);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:10px}
+.a-card .nm{font-size:14.5px;font-weight:800}
+.a-card .ds{font-size:12px;color:var(--tx-dim);margin-top:4px;line-height:1.6}
+.a-card .sm{font-size:11.5px;color:var(--tx-dim);margin-top:8px;line-height:1.6;padding:7px 10px;background:var(--bg-2);border-radius:8px}
+.a-card .pc{font-size:12px;color:var(--fug);font-weight:700;margin-top:6px}
+.a-card .tt{font-size:11px;color:var(--tx-faint);margin-top:5px}
+.a-card .adj{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:10px;background:var(--bg-2);border-radius:9px;padding:6px 10px}
+.a-card .adj i{font-style:normal;background:var(--bg-1);border:1px solid var(--line-2);border-radius:7px;width:28px;height:28px;font-size:15px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.a-card .adj span{font-size:12px;font-weight:800;min-width:76px;text-align:center}
+.a-card .ft{font-size:10.5px;color:var(--tx-faint);margin-top:6px}
+.a-card .go{position:relative;overflow:hidden;margin-top:10px;background:var(--fug);color:var(--fug-ink);font-weight:800;border-radius:9px;padding:9px 0;text-align:center;font-size:13.5px}
+.a-card .skel{height:9px;border-radius:5px;background:rgba(255,255,255,.07);margin-top:8px}
+/* WorkoutHud（照 WorkoutHud.tsx） */
+.hud{background:var(--bg-2);border:1px solid var(--line-2);border-radius:14px;padding:12px 14px;color:var(--tx);width:362px}
+.hud .r1{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.hud .r1 .k{font-size:10.5px;letter-spacing:.15em;color:var(--fug);font-weight:800}
+.hud .r1 .n{font-size:11px;color:var(--tx-faint)}
+.hud .r2{display:flex;align-items:baseline;gap:8px;margin-top:6px}
+.hud .r2 .lb{font-size:18px;font-weight:900}
+.hud .r2 .tg{font-size:13px;color:var(--tx-dim);font-weight:700}
+.hud .r2 .pb{font-size:12px;color:var(--tx-faint);margin-left:auto}
+.hud .bar{height:9px;background:var(--line-2);border-radius:999px;overflow:hidden;margin-top:8px}
+.hud .bar i{display:block;height:100%;border-radius:999px}
+.hud .r3{display:flex;justify-content:space-between;font-size:11.5px;margin-top:5px}
+.hud .dots{display:flex;gap:4px;margin-top:10px}
+.hud .dots span{flex:1;height:5px;min-width:8px;border-radius:999px;background:var(--line-2)}
+.hud .dots span.rest{flex:0 0 8px}
+.hud .foot{font-size:10.5px;color:var(--tx-faint);margin-top:6px}
+.hud .big{font-size:38px;font-weight:900;text-align:center;margin-top:8px;letter-spacing:.02em}
+
+/* =========================================================
+   S1 開場 0 – 6.4s：課表名稱飛入
+   ========================================================= */
+#s1{animation:in .5s both 0s,out .6s forwards 5.8s}
+#s1 .txt{position:absolute;left:70px;right:70px;top:250px}
+#s1 .l1{font-size:92px;font-weight:900;line-height:1.2;animation:up .9s cubic-bezier(.2,.8,.2,1) both .9s}
+#s1 .l2{font-size:92px;font-weight:900;line-height:1.2;color:var(--fug);animation:up .9s cubic-bezier(.2,.8,.2,1) both 2.8s}
+#s1 .cloud{position:absolute;left:0;right:0;top:620px;height:940px;animation:dimOut .6s forwards 5.2s}
+#s1 .w{position:absolute;padding:18px 28px;border-radius:22px;background:var(--bg-1);border:2px solid var(--line-2);box-shadow:0 20px 50px rgba(0,0,0,.5);animation:fly .7s cubic-bezier(.2,.8,.2,1) both;transform:rotate(var(--r))}
+#s1 .w b{display:block;font-size:40px;font-weight:900;white-space:nowrap}
+#s1 .w span{display:block;font-family:'Space Grotesk',sans-serif;font-size:28px;color:var(--tx-faint);margin-top:4px;filter:blur(3px)}
+
+/* =========================================================
+   S2 標題 6 – 11.2s
+   ========================================================= */
+#s2{animation:in .6s both 6s,out .6s forwards 10.6s}
+#s2 .logo{display:flex;flex-direction:column;align-items:center;gap:34px;animation:blurIn 1.1s cubic-bezier(.2,.8,.2,1) both 6.3s}
+#s2 .logo img{width:240px;height:240px}
+#s2 .logo .word{font-size:124px;font-weight:900;letter-spacing:.06em}
+#s2 .sub{margin-top:14px;font-size:60px;font-weight:900;color:var(--fug);animation:up .8s cubic-bezier(.2,.8,.2,1) both 7s}
+#s2 .tag{font-size:50px;font-weight:700;margin-top:30px;color:#d9deea;animation:up .9s cubic-bezier(.2,.8,.2,1) both 7.5s}
+#s2 .pillars{display:flex;flex-wrap:wrap;justify-content:center;gap:16px;margin-top:54px;width:960px}
+#s2 .pillars .chip{font-size:31px;padding:13px 24px}
+#s2 .pillars .chip:nth-child(1){animation:pop .6s both 8.4s}
+#s2 .pillars .chip:nth-child(2){animation:pop .6s both 8.65s}
+#s2 .pillars .chip:nth-child(3){animation:pop .6s both 8.9s}
+
+/* =========================================================
+   S3 STEP 01 分類挑課表 11 – 18.8s
+   ========================================================= */
+#s3{animation:in .6s both 11s,out .6s forwards 18.2s}
+#s3 .glow{left:180px;top:300px;width:720px;height:720px;background:var(--fug);opacity:.16}
+#s3 .phone{left:230px;top:230px;width:620px;height:860px;animation:up 1s cubic-bezier(.2,.8,.2,1) both 11.2s}
+#s3 .app{transform:scale(1.508)}
+#s3 .scroll{animation:scrollA 4.6s cubic-bezier(.45,0,.25,1) both 13.2s}
+@keyframes scrollA{from{transform:translateY(0)}to{transform:translateY(-2380px)}}
+#s3 .side{position:absolute;left:70px;right:70px;top:1125px}
+#s3 .side>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s3 .side .step{animation-delay:11.4s}
+#s3 .side .h1{margin-top:10px;animation-delay:11.7s}
+#s3 .side .body{margin-top:10px;animation-delay:12.2s}
+#s3 .cats{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+#s3 .cats span{font-size:22px;font-weight:800;padding:6px 14px;border-radius:999px;background:rgba(45,229,154,.12);color:var(--fug);border:1.5px solid rgba(45,229,154,.35);opacity:0;animation:pop .4s both}
+
+/* =========================================================
+   S4 STEP 02 選配速等級 18.4 – 25s
+   ========================================================= */
+#s4{animation:in .6s both 18.4s,out .6s forwards 24.4s}
+#s4 .glow{left:140px;top:420px;width:800px;height:700px;background:var(--gold);opacity:.1}
+#s4 .head{position:absolute;left:70px;right:70px;top:240px}
+#s4 .head>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s4 .head .step{animation-delay:18.6s}
+#s4 .head .h1{margin-top:10px;animation-delay:18.9s}
+#s4 .zoom{position:absolute;left:84px;top:520px}
+#s4 .zoom .app{position:relative;transform:scale(2.3);width:390px}
+#s4 .lv{animation:upS .6s both 19s}
+#s4 .lv .v5{animation:out .05s forwards 20.4s}
+#s4 .lv .v7{position:absolute;left:10px;top:8px;opacity:0;animation:in .05s both 20.4s}
+#s4 .picker{position:absolute;left:84px;top:690px;width:912px;padding:14px 0;border-radius:26px;background:rgba(30,34,44,.97);border:2px solid var(--line-2);box-shadow:0 30px 90px rgba(0,0,0,.7);z-index:5;opacity:0;animation:pickA 1.3s both 19.3s}
+@keyframes pickA{0%{opacity:0;transform:translateY(20px) scale(.96)}12%,85%{opacity:1;transform:none}100%{opacity:0;transform:scale(.98)}}
+#s4 .picker div{padding:9px 34px;font-size:30px;font-variant-numeric:tabular-nums;color:var(--tx-dim)}
+#s4 .picker div.on{background:rgba(45,229,154,.16);color:var(--fug);font-weight:800}
+#s4 .picker div.on::before{content:'✓ '}
+#s4 .cardA{position:absolute;left:0;top:0;width:390px;animation:upS .6s both 19.1s,out .3s forwards 21.8s}
+#s4 .cardB{position:absolute;left:0;top:0;width:390px;opacity:0;animation:in .3s both 21.8s}
+#s4 .swapA{animation:out .05s forwards 20.4s}
+#s4 .swapB{position:absolute;inset:0;opacity:0;animation:in .05s both 20.4s}
+#s4 .pc,#s4 .tt{position:relative}
+#s4 .flash{animation:flash .6s ease-out both 20.4s}
+@keyframes flash{0%{background:rgba(45,229,154,.35)}100%{background:transparent}}
+#s4 .plusA{animation:out .05s forwards 22.9s}
+#s4 .plusB{position:absolute;inset:0;opacity:0;animation:in .05s both 22.9s}
+#s4 .rel{position:relative}
+#s4 .flash2{animation:flash .6s ease-out both 22.9s}
+#s4 .tap1{left:620px;top:607px;animation:tapA .7s ease-out both 19.1s}
+#s4 .tap2{left:770px;top:1135px;animation:tapA .7s ease-out both 22.6s}
+#s4 .side{position:absolute;left:70px;right:70px;top:1250px}
+#s4 .side .body{animation:up .8s both 19.6s}
+#s4 .side .chipline{display:flex;gap:14px;margin-top:16px}
+#s4 .side .chipline .chip{font-size:26px;animation:pop .5s both}
+#s4 .side .chipline .chip:nth-child(1){animation-delay:20.8s} #s4 .side .chipline .chip:nth-child(2){animation-delay:23.2s}
+
+/* =========================================================
+   S5 STEP 03 Free Run 24.6 – 31.8s
+   ========================================================= */
+#s5{animation:in .6s both 24.6s,out .6s forwards 31.2s}
+#s5 .glow{left:140px;top:500px;width:800px;height:700px;background:var(--violet);opacity:.14}
+#s5 .head{position:absolute;left:70px;right:70px;top:240px}
+#s5 .head>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s5 .head .step{animation-delay:24.8s}
+#s5 .head .h1{margin-top:10px;animation-delay:25.1s}
+#s5 .zoom{position:absolute;left:84px;top:540px}
+#s5 .zoom .app{position:relative;transform:scale(2.3)}
+#s5 .fr{animation:upS .6s both 25.3s,out .3s forwards 28.3s}
+#s5 .fr .adj i.pl{animation:press .3s ease-in-out 2 both 26.2s}
+#s5 .fr .go{animation:press .3s ease-in-out both 27.7s}
+#s5 .hudwrap{position:absolute;left:0;top:0;opacity:0;animation:upS .5s both 28.4s}
+#s5 .tapF{left:540px;top:950px;animation:tapA .7s ease-out both 27.6s}
+#s5 .side{position:absolute;left:70px;right:70px;top:1110px}
+#s5 .side .body{animation:up .8s both 25.6s}
+#s5 .side .vip{margin-top:14px;animation:in .6s both 26.4s}
+
+/* =========================================================
+   S6 STEP 04 GPS 逐段帶跑 31.4 – 37.4s
+   ========================================================= */
+#s6{animation:in .6s both 31.4s,out .6s forwards 36.8s}
+#s6 .glow{left:140px;top:500px;width:800px;height:700px;background:var(--fug);opacity:.14}
+#s6 .head{position:absolute;left:70px;right:70px;top:240px}
+#s6 .head>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s6 .head .step{animation-delay:31.6s}
+#s6 .head .h1{margin-top:10px;animation-delay:31.9s}
+#s6 .count{position:absolute;left:540px;top:830px;transform:translate(-50%,-50%);font-family:'Space Grotesk',sans-serif;font-size:280px;font-weight:700;color:#fff;text-shadow:0 0 60px rgba(255,75,92,.8);opacity:0}
+#s6 .count.c3{animation:cnt .35s both 32.2s} #s6 .count.c2{animation:cnt .35s both 32.55s} #s6 .count.c1{animation:cnt .35s both 32.9s}
+@keyframes cnt{0%{opacity:0;transform:translate(-50%,-50%) scale(1.6)}30%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-50%) scale(.8)}}
+#s6 .zoom{position:absolute;left:124px;top:560px;opacity:0;animation:upS .5s both 33.3s}
+#s6 .zoom .app{position:relative;transform:scale(2.3)}
+#s6 .live{font-weight:800}
+#s6 .cues{position:absolute;left:70px;right:70px;top:1010px;display:flex;gap:14px;justify-content:center}
+#s6 .cues span{font-size:32px;font-weight:900;padding:12px 24px;border-radius:18px;animation:pop .5s both}
+#s6 .cues span:nth-child(1){color:var(--gold);background:rgba(255,194,75,.14);animation-delay:34.1s}
+#s6 .cues span:nth-child(2){color:#5aa0ff;background:rgba(90,160,255,.14);animation-delay:34.3s}
+#s6 .cues span:nth-child(3){color:var(--fug);background:rgba(45,229,154,.14);animation-delay:34.5s}
+#s6 .side{position:absolute;left:70px;right:70px;top:1130px}
+#s6 .side .body{animation:up .8s both 34.4s}
+#s6 .side .vip{margin-top:12px;animation:in .6s both 34.8s}
+
+/* =========================================================
+   S7 STEP 05 跑完照常記錄 37 – 42.6s
+   ========================================================= */
+#s7{animation:in .6s both 37s,out .6s forwards 42s}
+#s7 .glow{left:140px;top:500px;width:800px;height:800px;background:var(--fug);opacity:.14}
+#s7 .head{position:absolute;left:70px;right:70px;top:240px}
+#s7 .head>*{animation:up .9s cubic-bezier(.2,.8,.2,1) both}
+#s7 .head .step{animation-delay:37.2s}
+#s7 .head .h1{margin-top:10px;animation-delay:37.5s}
+#s7 .zoom{position:absolute;left:124px;top:560px}
+#s7 .zoom .app{position:relative;transform:scale(2.3)}
+#s7 .fin{animation:upS .5s both 37.6s,out .25s forwards 39s}
+#s7 .endbtn{position:absolute;left:124px;top:560px;width:832px;height:100px;border-radius:22px;background:var(--hunt);color:#fff;font-size:38px;font-weight:900;display:flex;align-items:center;justify-content:center;opacity:0;animation:in .2s both 39.05s,press .3s ease-in-out both 39.3s,out .2s forwards 39.7s}
+#s7 .res{position:absolute;left:124px;top:560px;width:832px;padding:30px 34px;border-radius:30px;background:var(--bg-2);border:2px solid rgba(45,229,154,.5);box-shadow:0 40px 120px rgba(0,0,0,.6);opacity:0;animation:pop .5s both 39.8s}
+#s7 .res .ok{font-size:36px;font-weight:900;color:var(--fug)}
+#s7 .res .st{margin-top:12px;font-size:29px;font-weight:700;font-variant-numeric:tabular-nums}
+#s7 .res .sb{margin-top:10px;font-size:24px;color:var(--fug)}
+#s7 .side{position:absolute;left:70px;right:70px;top:1060px;display:grid;gap:14px}
+#s7 .side .chip{font-size:26px;border-radius:18px;padding:14px 22px;animation:left .6s cubic-bezier(.2,.8,.2,1) both}
+#s7 .side .chip:nth-child(1){animation-delay:40.3s} #s7 .side .chip:nth-child(2){animation-delay:40.6s} #s7 .side .chip:nth-child(3){animation-delay:40.9s}
+
+/* =========================================================
+   S8 CTA 42.2 – 47s
+   ========================================================= */
+#s8{animation:in .6s both 42.2s}
+#s8 .glow{left:140px;top:500px;width:800px;height:800px;background:var(--fug);opacity:.18}
+#s8 .inner{position:absolute;left:0;right:0;top:230px;bottom:360px}
+#s8 .logo{display:flex;flex-direction:column;align-items:center;gap:24px;animation:blurIn 1s cubic-bezier(.2,.8,.2,1) both 42.4s}
+#s8 .logo img{width:200px;height:200px}
+#s8 .cta{font-size:78px;font-weight:900;line-height:1.3;margin-top:44px;animation:up .9s cubic-bezier(.2,.8,.2,1) both 43s}
+#s8 .entry{position:relative;overflow:hidden;margin-top:44px;width:620px;padding:22px 34px;border-radius:26px;background:var(--fug);color:var(--fug-ink);text-align:left;display:flex;align-items:center;gap:22px;box-shadow:0 0 60px rgba(45,229,154,.45);animation:pop .6s both 43.6s,press .3s ease-in-out both 44.6s}
+#s8 .entry .ic{font-size:60px}
+#s8 .entry b{display:block;font-size:44px;font-weight:900}
+#s8 .entry span{display:block;font-size:28px;font-weight:700;margin-top:2px}
+#s8 .entry::after{content:'';position:absolute;top:0;bottom:0;left:0;width:30%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent);animation:shine 1s ease-in-out both 45s}
+#s8 .url{margin-top:40px;font-family:'Space Grotesk',sans-serif;font-size:60px;font-weight:700;letter-spacing:.04em;color:var(--fug);animation:up .8s both 44.2s}
+#s8 .vip{margin-top:22px;animation:in .6s both 44.6s}
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- S1 開場：真實課表名稱飛入 -->
+  <section class="sc" id="s1">
+    <div class="txt">
+      <div class="l1">今天要練什麼？</div>
+      <div class="l2">配速該抓多少？</div>
+    </div>
+    <div class="cloud">
+      <div class="w" style="left:60px;top:20px;--r:-6deg;--fx:-300px;--fy:-60px;--fr:-30deg;animation-delay:.2s"><b>間歇 400×8</b><span>?:?? /km</span></div>
+      <div class="w" style="left:560px;top:60px;--r:5deg;--fx:300px;--fy:-40px;--fr:25deg;animation-delay:.45s"><b>節奏跑</b><span>?:?? /km</span></div>
+      <div class="w" style="left:120px;top:250px;--r:4deg;--fx:-320px;--fy:40px;--fr:20deg;animation-delay:.7s"><b>LSD 長距離</b><span>?:?? /km</span></div>
+      <div class="w" style="left:580px;top:300px;--r:-5deg;--fx:320px;--fy:30px;--fr:-25deg;animation-delay:.95s"><b>亞索 800</b><span>?:?? /km</span></div>
+      <div class="w" style="left:50px;top:490px;--r:-3deg;--fx:-300px;--fy:60px;--fr:-20deg;animation-delay:1.2s"><b>挪威 4×4</b><span>?:?? /km</span></div>
+      <div class="w" style="left:470px;top:540px;--r:6deg;--fx:300px;--fy:60px;--fr:30deg;animation-delay:1.45s"><b>法特萊克變速跑</b><span>?:?? /km</span></div>
+      <div class="w" style="left:110px;top:730px;--r:5deg;--fx:-300px;--fy:80px;--fr:25deg;animation-delay:1.7s"><b>金字塔訓練</b><span>?:?? /km</span></div>
+      <div class="w" style="left:540px;top:770px;--r:-4deg;--fx:300px;--fy:80px;--fr:-20deg;animation-delay:1.95s"><b>重複跑 200×10</b><span>?:?? /km</span></div>
+    </div>
+  </section>
+
+  <!-- S2 標題 -->
+  <section class="sc center" id="s2">
+    <div class="glow" style="left:140px;top:560px;width:800px;height:700px;background:var(--fug);opacity:.18"></div>
+    <div class="logo">
+      <img class="dor-icon" src="../../apps/web/public/icon-512.png">
+      <div class="word">自主訓練</div>
+    </div>
+    <div class="sub">📚 課表庫</div>
+    <div class="tag">打造你的專屬課表</div>
+    <div class="pillars">
+      <div class="chip">🎯 配速自動換算</div>
+      <div class="chip">📍 GPS 逐段帶跑</div>
+      <div class="chip">🏃 Free Run 自由跑</div>
+    </div>
+  </section>
+
+  <!-- S3 STEP 01 分類挑課表 -->
+  <section class="sc" id="s3">
+    <div class="glow"></div>
+    <div class="phone">
+      <div class="screen">
+        <div class="notch"></div>
+        <div class="app">
+          <div class="a-head"><span class="back">← 返回</span><span class="ttl">🏃 自主訓練</span></div>
+          <div class="a-tabs"><span class="on">📚 課表庫</span><span>🗓️ 訓練月曆</span></div>
+          <div style="height:560px;overflow:hidden">
+          <div class="a-body scroll">
+            <p class="a-intro">選擇配速等級，課表庫即自動換算成你的實際配速。挑一份「開始訓練」帶到 GPS 追蹤跑——完成即照常記錄跑步、累計里程 EXP。</p>
+            <div class="a-level"><b>配速等級</b><div class="sel tab">Lv.5 · 輕鬆 5:42-6:18</div></div>
+            <div class="a-card"><div class="nm">🏃 Free Run</div><div class="ds">自由跑 · 只設時間、不控配速與距離</div><div class="adj"><i>−</i><span>30 分鐘</span><i>＋</i></div><div class="ft">時間到會提示，並可繼續累積里程</div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">恢復</div>
+            <div class="a-card"><div class="nm">恢復跑</div><div class="ds">極輕鬆、促進恢復，全程輕鬆配速。</div><div class="sm">📋 熱身 1K → 恢復跑 4K → 恢復緩和 1K</div><div class="pc tab">🎯 目標配速 5:42–6:18 /km</div><div class="tt tab">總距離 6 K · 預估 36 分</div><div class="adj"><i>−</i><span>總距離 6 K</span><i>＋</i></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">輕鬆</div>
+            <div class="a-card"><div class="nm">輕鬆跑</div><div class="ds">有氧基礎，輕鬆對話配速。</div><div class="skel"></div><div class="skel" style="width:60%"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">長距離 LSD</div>
+            <div class="a-card"><div class="nm">LSD 長距離</div><div class="ds">長距離慢跑，建立耐力基礎。</div><div class="skel"></div><div class="skel" style="width:60%"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">節奏</div>
+            <div class="a-card"><div class="nm">節奏跑</div><div class="ds">馬拉松配速持續跑，練節奏與效率。</div><div class="skel"></div><div class="skel" style="width:60%"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">閾值</div>
+            <div class="a-card"><div class="nm">乳酸閾值跑</div><div class="ds">閾值配速持續 5 公里，提升乳酸耐受。</div><div class="skel"></div><div class="skel" style="width:60%"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">漸速</div>
+            <div class="a-card"><div class="nm">漸進跑</div><div class="ds">由輕鬆漸進到閾值，尾段加速。</div><div class="skel"></div><div class="skel" style="width:60%"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">間歇</div>
+            <div class="a-card"><div class="nm">間歇 400×8</div><div class="ds">VO2max 短間歇，400m×8。</div><div class="skel"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-card"><div class="nm">間歇 800×5</div><div class="ds">VO2max 間歇，800m×5。</div><div class="skel"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-card"><div class="nm">間歇 1000×5</div><div class="ds">VO2max 間歇，1000m×5。</div><div class="skel"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-card"><div class="nm">間歇 1200×4</div><div class="ds">VO2max 間歇，1200m×4。</div><div class="skel"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-card"><div class="nm">間歇 1600×4</div><div class="ds">較長間歇，1600m×4。</div><div class="skel"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-card"><div class="nm">間歇 2000×3</div><div class="ds">長間歇，2000m×3。</div><div class="skel"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">法特萊克</div>
+            <div class="a-card"><div class="nm">法特萊克變速跑</div><div class="ds">快慢交替變速跑，60 秒快 / 60 秒緩 ×10。</div><div class="skel"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">金字塔</div>
+            <div class="a-card"><div class="nm">金字塔訓練</div><div class="ds">400→800→1200→1600→1200→800→400，組間恢復。</div><div class="skel"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">挪威 4×4</div>
+            <div class="a-card"><div class="nm">挪威 4×4</div><div class="ds">4 分鐘高強度 ×4，組間 3 分鐘恢復。</div><div class="skel"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">亞索 800</div>
+            <div class="a-card"><div class="nm">亞索 800</div><div class="ds">800m×10（馬拉松預測課表），組間等時慢跑。</div><div class="skel"></div><div class="go">▶ 開始訓練</div></div>
+            <div class="a-cat">重複跑</div>
+            <div class="a-card"><div class="nm">重複跑 200×10</div><div class="ds">短快重複跑，練跑步經濟性，200m×10。</div><div class="skel"></div><div class="go">▶ 開始訓練</div></div>
+          </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="step"><b>STEP 01</b>分類挑課表</div>
+      <div class="h1">從恢復跑到間歇，<br>一份一份<span class="g">任你挑</span></div>
+      <div class="cats">
+        <span style="animation-delay:13.3s">恢復</span><span style="animation-delay:13.55s">輕鬆</span><span style="animation-delay:13.8s">長距離 LSD</span><span style="animation-delay:14.05s">節奏</span><span style="animation-delay:14.3s">閾值</span><span style="animation-delay:14.55s">漸速</span>
+        <span style="animation-delay:14.8s">間歇</span><span style="animation-delay:15.05s">法特萊克</span><span style="animation-delay:15.3s">金字塔</span><span style="animation-delay:15.55s">挪威 4×4</span><span style="animation-delay:15.8s">亞索 800</span><span style="animation-delay:16.05s">重複跑</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- S4 STEP 02 選配速等級，自動換算 -->
+  <section class="sc" id="s4">
+    <div class="glow"></div>
+    <div class="head">
+      <div class="step"><b>STEP 02</b>選配速等級</div>
+      <div class="h1">整份課表<br><span class="g">自動換算配速</span></div>
+    </div>
+    <div class="zoom">
+      <div class="app">
+        <div class="a-level lv" style="position:relative"><b>配速等級</b><div class="sel tab" style="position:relative"><span class="v5">Lv.5 · 輕鬆 5:42-6:18</span><span class="v7">Lv.7 · 輕鬆 4:48-5:24</span></div></div>
+        <div style="position:relative;height:250px">
+          <div class="a-card cardA">
+            <div class="nm">間歇 400×8</div><div class="ds">VO2max 短間歇，400m×8。</div>
+            <div class="sm">📋 熱身 2K → 400m 間歇 ×8 → 恢復緩和 1K</div>
+            <div class="pc tab flash"><span class="swapA">🎯 目標配速 4:29–4:45 /km</span><span class="swapB">🎯 目標配速 3:48–4:04 /km</span></div>
+            <div class="tt tab flash"><span class="swapA">總距離 6.2 K · 預估 43 分</span><span class="swapB">總距離 6.2 K · 預估 38 分</span></div>
+            <div class="adj"><i>−</i><span>8 趟</span><i>＋</i></div>
+          </div>
+          <div class="a-card cardB">
+            <div class="nm">輕鬆跑</div><div class="ds">有氧基礎，輕鬆對話配速。</div>
+            <div class="sm rel flash2"><span class="plusA">📋 熱身 1K → 輕鬆跑 6K → 恢復緩和 1K</span><span class="plusB">📋 熱身 1K → 輕鬆跑 7K → 恢復緩和 1K</span></div>
+            <div class="pc tab">🎯 目標配速 4:48–5:24 /km</div>
+            <div class="tt tab rel flash2"><span class="plusA">總距離 8 K · 預估 41 分</span><span class="plusB">總距離 9 K · 預估 46 分</span></div>
+            <div class="adj"><i>−</i><span class="rel"><span class="plusA">總距離 8 K</span><span class="plusB">總距離 9 K</span></span><i>＋</i></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="picker">
+      <div>Lv.1 · 輕鬆 7:57-8:33</div><div>Lv.2 · 輕鬆 7:17-7:53</div><div>Lv.3 · 輕鬆 6:42-7:18</div>
+      <div>Lv.4 · 輕鬆 6:12-6:48</div><div>Lv.5 · 輕鬆 5:42-6:18</div><div>Lv.6 · 輕鬆 5:15-5:51</div>
+      <div class="on">Lv.7 · 輕鬆 4:48-5:24</div><div>Lv.8 · 輕鬆 4:24-5:00</div><div>Lv.9 · 輕鬆 4:02-4:38</div>
+    </div>
+    <div class="tap tap1"></div>
+    <div class="tap tap2"></div>
+    <div class="side">
+      <div class="body">選一次配速等級，每張課表的<br>目標配速、總距離、預估時間一起換算。</div>
+      <div class="chipline"><span class="chip">🎯 配速跟著等級走</span><span class="chip">−／＋ 調距離・調趟數</span></div>
+    </div>
+    <div class="note" style="top:1540px">＊依課表庫預設資料換算，實際以 App 為準</div>
+  </section>
+
+  <!-- S5 STEP 03 Free Run -->
+  <section class="sc" id="s5">
+    <div class="glow"></div>
+    <div class="head">
+      <div class="step"><b>STEP 03</b>Free Run</div>
+      <div class="h1">不想盯配速？<br>就 <span class="g">Free Run 自由跑</span></div>
+    </div>
+    <div class="zoom">
+      <div class="app">
+        <div class="a-card fr" style="width:390px">
+          <div class="nm">🏃 Free Run</div><div class="ds">自由跑 · 只設時間、不控配速與距離</div>
+          <div class="adj"><i>−</i><span>30 分鐘</span><i class="pl">＋</i></div>
+          <div class="ft">時間到會提示，並可繼續累積里程</div>
+          <div class="go">▶ 開始訓練</div>
+        </div>
+        <div class="hudwrap">
+          <div class="hud">
+            <div class="r1"><span class="k">🏃 自主訓練 · Free Run</span><span class="n tab">第 1/1 段</span></div>
+            <div class="r2"><span class="lb" style="color:var(--tx-dim)">Free Run</span><span class="tg">1800秒</span></div>
+            <div class="bar"><i id="frbar" style="background:var(--tx-dim)"></i></div>
+            <div class="big tab" id="frt" style="color:var(--tx-dim)">0:30:00</div>
+            <div class="foot" style="text-align:center;margin-top:4px">時間到可繼續累積里程</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="tap tapF"></div>
+    <div class="side">
+      <div class="body">只設時間（10–240 分鐘），<br>不控配速與距離；時間到會提示，可繼續跑。</div>
+      <div class="vip">※ 開始訓練為 VIP 專屬功能</div>
+    </div>
+  </section>
+
+  <!-- S6 STEP 04 GPS 逐段帶跑 -->
+  <section class="sc" id="s6">
+    <div class="glow"></div>
+    <div class="head">
+      <div class="step"><b>STEP 04</b>GPS 逐段帶跑</div>
+      <div class="h1">每一段目標配速，<br><span class="g">畫面即時提示</span></div>
+    </div>
+    <div class="count c3">3</div><div class="count c2">2</div><div class="count c1">1</div>
+    <div class="zoom">
+      <div class="app">
+        <div class="hud">
+          <div class="r1"><span class="k">🏃 自主訓練 · 間歇 400×8</span><span class="n tab">第 2/17 段</span></div>
+          <div class="r2"><span class="lb" style="color:var(--fug)">400m 間歇 第 1/8 趟</span><span class="tg">400m</span><span class="pb tab">目標 3:48–4:04 /km</span></div>
+          <div class="bar"><i id="ibar" style="background:var(--fug)"></i></div>
+          <div class="r3 tab"><span style="color:var(--tx-dim)"><span id="im">0</span> / 400 m</span><span class="live" id="ilive"></span></div>
+          <div class="dots">
+            <span style="background:rgba(255,255,255,.35)"></span><span style="background:var(--fug)"></span><span class="rest"></span><span></span><span class="rest"></span><span></span><span class="rest"></span><span></span><span class="rest"></span><span></span><span class="rest"></span><span></span><span class="rest"></span><span></span><span class="rest"></span><span></span><span></span>
+          </div>
+          <div class="foot">依各段目標配速跑；完成不計星數與獎勵，日常里程 EXP 照常累積。</div>
+        </div>
+      </div>
+    </div>
+    <div class="cues"><span>再加速 ↑</span><span>稍放慢 ↓</span><span>配速剛好 ✓</span></div>
+    <div class="side">
+      <div class="body">熱身、主課、恢復、緩和一段一段帶你跑，<br>配速太慢、太快，畫面馬上告訴你。</div>
+      <div class="vip">※ 開始訓練為 VIP 專屬功能</div>
+    </div>
+    <div class="note" style="top:1540px">＊跑步中數據為示意</div>
+  </section>
+
+  <!-- S7 STEP 05 跑完照常記錄 -->
+  <section class="sc" id="s7">
+    <div class="glow"></div>
+    <div class="head">
+      <div class="step"><b>STEP 05</b>跑完照常記錄</div>
+      <div class="h1">按「結束並上傳」<br><span class="g">累計里程 EXP</span></div>
+    </div>
+    <div class="zoom">
+      <div class="app">
+        <div class="hud fin" style="border-color:var(--fug)">
+          <div style="font-size:11px;letter-spacing:.2em;color:var(--fug);font-weight:800">自主訓練</div>
+          <div style="font-size:16px;font-weight:900;margin:4px 0 8px">間歇 400×8</div>
+          <div style="text-align:center;font-size:17px;font-weight:900;padding:8px 0" class="tab">✓ 訓練完成 · 用時 38:05</div>
+          <div style="margin-top:12px;background:var(--fug);color:var(--fug-ink);font-weight:800;border-radius:10px;padding:10px;font-size:14px;text-align:center">▶ 繼續跑步</div>
+        </div>
+      </div>
+    </div>
+    <div class="endbtn">■ 結束並上傳</div>
+    <div class="res">
+      <div class="ok">✓ 已記錄</div>
+      <div class="st">距離 6.34 km · 時間 39:12 · 平均配速 6:11/km</div>
+      <div class="sb">已進活動記錄，里程 EXP 將於數秒後發放</div>
+    </div>
+    <div class="side">
+      <span class="chip">🏁 和一般跑步一樣記錄，里程 EXP 照常累積</span>
+      <span class="chip">🗓️ 課表也能排進「訓練月曆」（VIP）</span>
+      <span class="chip">🎯 純粹為自己練，不評星、不另發獎勵</span>
+    </div>
+    <div class="note" style="top:1540px">＊跑步數據為示意</div>
+  </section>
+
+  <!-- S8 CTA -->
+  <section class="sc" id="s8">
+    <div class="glow"></div>
+    <div class="inner center">
+      <div class="logo"><img class="dor-icon" src="../../apps/web/public/icon-512.png"></div>
+      <div class="cta">挑一份課表，<br>今天就<span class="g">開跑</span></div>
+      <div class="entry"><span class="ic">🏃</span><div><b>自主訓練</b><span>打造你的專屬課表 ›</span></div></div>
+      <div class="url">www.dor.tw</div>
+      <div class="vip">※ 自主訓練為 VIP 專屬功能</div>
+    </div>
+  </section>
+
+</div>
+<script>
+  window.DURATION = 47;
+  window.SIZE = [1080, 1920];
+
+  const $ = id => document.getElementById(id);
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+  const p2 = n => String(n).padStart(2, '0');
+
+  function drive(t) {
+    // S5：Free Run 倒數 0:30:00 起（示意）
+    const fr = clamp01((t - 28.6) / 2.6), left = Math.ceil(1800 - fr * 7);
+    $('frt').textContent = `${Math.floor(left / 3600)}:${p2(Math.floor((left % 3600) / 60))}:${p2(left % 60)}`;
+    $('frbar').style.width = (fr * 7 / 1800 * 100 + .4).toFixed(2) + '%';
+    // S6：第一趟 400m 間歇進度 0 → 236 m，配速 3:56 配速剛好 → 4:09 再加速
+    const a = clamp01((t - 33.4) / 3.2), m = Math.round(a * 236);
+    $('im').textContent = m;
+    $('ibar').style.width = (m / 4) + '%';
+    const live = $('ilive');
+    if (t < 33.6) { live.textContent = ''; }
+    else if (t < 35.6) { live.textContent = '3:56/km · 配速剛好 ✓'; live.style.color = 'var(--fug)'; }
+    else { live.textContent = '4:09/km · 再加速 ↑'; live.style.color = 'var(--gold)'; }
+  }
+
+  window.seek = t => {
+    for (const a of document.getAnimations()) { a.pause(); a.currentTime = t * 1000; }
+    drive(t);
+  };
+  const q = new URLSearchParams(location.search);
+  window.seek(q.has('t') ? +q.get('t') : 0);
+</script>
+</body>
+</html>
