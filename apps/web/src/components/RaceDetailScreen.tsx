@@ -2,6 +2,7 @@
 
 import useSWR from 'swr'
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import { racesApi, followApi, raceStatusFlags, METRIC_BY_KEY, formatChallengeRule, formatChallengeProgress, type Race, type TaskProgress, type TaskContributors, type TaskRangeDetail, type GrantedReward, type RewardPreviewItem, type RaceSupply, type PersonalHistory } from '@/lib/api'
 import { getUserToken, useUser } from '@/lib/userAuth'
@@ -80,6 +81,7 @@ export default function RaceDetailScreen({
   initialTab?: Tab
 }) {
   const token = getUserToken() || undefined
+  const router = useRouter()
   // 2026-09-08 第二次稽核修法：這裡幾乎每支 useSWR 只要帶 token 就會回登入者「自己的」資料
   // （報名狀態/完賽證明/個人進度/個人歷程…），但 key 只有 race.id，沒有 user id——同一分頁內
   // A 登出、B 馬上登入（SPA 無整頁重新整理）時，B 開同一場賽事詳情頁會先吃到 A 留在 SWR 記憶體
@@ -242,7 +244,7 @@ export default function RaceDetailScreen({
   // 「前往挑戰」：已報名（含個人挑戰進行中）→ 導向 GPS 跑步追蹤頁；帶 from=race 供該頁顯示一次性新手提醒
   // 「點擊下方開始跑步按鈕，立即進行挑戰」（見 track/page.tsx 的 showStartTip，只在此路徑進入時顯示）。
   function goToTrack() {
-    window.location.href = '/track?from=race'
+    router.push('/track?from=race')
   }
 
   return (

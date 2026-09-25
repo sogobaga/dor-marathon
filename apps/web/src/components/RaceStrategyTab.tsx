@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { strategiesApi, FUEL_KIND_LABEL, type RaceStrategy, type StrategySegment, type FuelPoint, type FuelKind } from '@/lib/api'
 import { getUserToken, withUserAuth } from '@/lib/userAuth'
 import { generateRaceStrategy, autoStrategyName, formatSegmentPreviewLines, formatFuelPreviewLines, DISTANCE_PRESETS, type GenerateOutput } from '@/lib/strategyGenerator'
@@ -41,6 +42,7 @@ type SegRow = { to_km: string; paceMin: string; paceSec: string }
 type FuelRow = { kind: FuelKind; mode: 'time' | 'distance'; val: string }
 
 export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean; openUpgrade: (reason: string) => void }) {
+  const router = useRouter()
   // 寫入類操作的共用守門（比照 TrainingScreen 的 vipGate）：VIP 直接執行，非 VIP 一律攔截改跳升級彈窗
   function vipGate(action: () => void) { return () => { if (isVip) action(); else openUpgrade('賽事策略為 VIP 專屬功能。') } }
 
@@ -280,7 +282,7 @@ export default function RaceStrategyTab({ isVip, openUpgrade }: { isVip: boolean
     }
   }
 
-  function startChallenge(id: string) { window.location.href = '/track?strategy=' + id }
+  function startChallenge(id: string) { router.push('/track?strategy=' + id) }
 
   return (
     <>

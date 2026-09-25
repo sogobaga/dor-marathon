@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import useSWR from 'swr'
 import { trainingApi, type WorkoutTemplate, type PaceLevel, type TrainingCalendar, type TrainingDay, type TrainingPlan, type AutoPlanRequest, type ScheduledWorkout, type WorkoutSegment } from '@/lib/api'
 import { resolveTemplate, saveFreetrainWorkout, totalKm, estMinutes, fmtDuration, segSummary, targetPaceBand, adjustMeta, adjustedValue, currentValue, pyramidPeak } from '@/lib/workout'
@@ -230,6 +231,7 @@ function loadAutoPlanForm(uid: string): Partial<AutoPlanFormSaved> | null {
 }
 
 export default function TrainingScreen({ onBack }: { onBack: () => void }) {
+  const router = useRouter()
   const user = useUser()
   const uid = user?.id ?? null
   const { data, error } = useSWR(
@@ -295,7 +297,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     const segs: WorkoutSegment[] = [{ kind: 'steady', label: 'Free Run', target_type: 'time', target: freeRunMin * 60 }]
     saveFreetrainWorkout('freerun', 'Free Run', segs, { freerun: true, freerunSec: freeRunMin * 60 })
     setNavigating(true)
-    setTimeout(() => { window.location.href = '/track' }, 380)
+    setTimeout(() => { router.push('/track') }, 380)
   }
 
   const levels = useMemo(() => data?.pace_levels ?? [], [data])
@@ -328,7 +330,7 @@ export default function TrainingScreen({ onBack }: { onBack: () => void }) {
     const segments = resolveTemplate(t.segments, useLevel, t.adjust_type, adjust)
     saveFreetrainWorkout(t.code, t.name, segments)
     setNavigating(true)
-    setTimeout(() => { window.location.href = '/track' }, 380)
+    setTimeout(() => { router.push('/track') }, 380)
   }
   function startTemplate(t: WorkoutTemplate) { startWorkout(t.code, level, libAdjust[t.code] ?? 0) }
 

@@ -46,6 +46,7 @@ const JITTER_MIN = 6 // 公尺：距上一個採納點移動不足此值視為�
 const GAP_MAX_S = 60 // 秒
 const GAP_MAX_M = 250 // 公尺
 const PACE_MIN_KM = 0.005 // 累積達此距離（5m，約顯示 0.01km 時）即顯示平均配速
+const START_COUNTDOWN_S = 3 // 開跑前可取消倒數秒數（CONTRACT.md track_start_guard §2.2）
 
 function haversineM(a: GpsPoint, b: GpsPoint) {
   const R = 6371000, rad = Math.PI / 180
@@ -132,6 +133,12 @@ export default function TrackPage() {
   const [focusOpen, setFocusOpen] = useState(false)
   const focusOpenRef = useRef(false)
   const [showStartTip, setShowStartTip] = useState(false) // 從賽事詳情頁「前往挑戰」進入（?from=race）→ idle 時顯示一次性新手提醒，可點擊/X關閉
+  // 開跑前 3 秒倒數（可取消，CONTRACT.md track_start_guard §2.2）：防止首頁置底橫幅改 client-side 導覽
+  // 落地 /track 後、大顆「開始」鈕就在眼前的誤觸連續動作直接開跑（v850 起開跑即進入專注鎖定，代價更高）；
+  // 也順便給使用者 3 秒把手機放進口袋。null＝未在倒數；否則為目前顯示的秒數（3→2→1→0 觸發真正開始）。
+  const [startCountdown, setStartCountdown] = useState<number | null>(null)
+  const startCountdownActiveRef = useRef(false) // 倒數中阻擋再次點「開始」（比照 armingRef 等既有慣例）
+  const pendingStartRef = useRef<null | (() => void)>(null) // 倒數結束要呼叫的既有開跑函式（start 或 startWorkout）
   const [uploading, setUploading] = useState(false)
   // 運動部「揮汗有禮」（gov500_entry，見 lib/gov500.ts 頂部註解說明 2026-09-06 規則變動）：
   // 500.gov.tw 只收手機系統截圖鍵截出的 App 原始紀錄畫面——直接對這個結果畫面截圖即可，不再需要
@@ -1268,6 +1275,80 @@ export default function TrackPage() {
     try { (screen.orientation as any)?.lock?.('portrait').catch(() => {}) } catch { /* 不支援就忽略 */ }
   }
 
+  // 開跑前 3 秒倒數（CONTRACT.md track_start_guard §2.2）：兩顆「開始」鈕（一般開跑 start／課表挑戰
+  // startWorkout）的 onClick 都先呼叫這裡，不直接呼叫既有開跑函式；只有「自動接續」（resumeActiveRun）
+  // 繞過此函式直接呼叫 start()——那條路徑沒有使用者手勢，本就不該也不能倒數。
+  // 使用者手勢相依的初始化（unlockAudio／orientation lock／第一次 wake lock request）必須在這次點擊
+  // 的同步流程內完成——倒數用 setTimeout 觸發的收尾已經脫離手勢，這幾項之後再做在部分瀏覽器會被拒絕。
+  // start() 內本來就會再做一次同樣三件事（給「自動接續」等其他呼叫路徑用），這裡重複呼叫不是 bug：
+  // unlockAudio／orientation.lock 重入是無副作用的（已解鎖/已鎖定就是 no-op 或再次成功鎖定），
+  // acquireWake 有自己的重入保護（見該函式）。
+  function requestStart(run: () => void) {
+    if (startCountdownActiveRef.current) return // 倒數中阻擋再次點「開始」
+    setShowStartTip(false) // 新手提醒的任務已完成，不必等倒數結束才收起
+    startCountdownActiveRef.current = true
+    pendingStartRef.current = run
+    unlockAudio()
+    try { (screen.orientation as any)?.lock?.('portrait').catch(() => {}) } catch { /* 不支援就忽略 */ }
+    acquireWake() // 不 await：失敗或延遲都不影響倒數本身，start() 內既有重取邏輯照常
+    // ⚠️ iOS：定位權限提示必須在使用者手勢「同步」流程內直接請求，不能等倒數 setTimeout 歸零才做
+    //（那時已脫離手勢，Safari 會直接判定拒絕，code 1）。原本 start() 內的 armTimers()→acquireWatch() 才是
+    // 真正呼叫 navigator.geolocation.watchPosition() 的地方，但那要等倒數結束才會跑——審查抓到的 critical
+    // finding。修法：acquireWatch() 本身是同步呼叫、且已有「先 clearWatch 再建新」的防重複保護（見該函式
+    // 開頭），這裡提前呼叫一次即可在手勢內拿到權限提示；倒數結束後 start()→armTimers() 會再呼叫一次
+    // acquireWatch()，用同一份保護機制換成新 watch，不會留下兩個。這段期間 status 還是 'idle'，onPos()
+    // 開頭 `if (statusRef.current !== 'tracking') return` 保證不會提早累積距離／分段，只會更新地圖與目前
+    // 位置（效果等同既有的頁面預熱定位）。
+    acquireWatch()
+    try { navigator.vibrate?.(30) } catch { /* 不支援就忽略 */ }
+    setStartCountdown(START_COUNTDOWN_S)
+  }
+  // 取消倒數：回到開跑前畫面，不寫任何 active 狀態（真正的 dor_gps_active 快照要到 start() 內才會寫）；
+  // 收回倒數期間為了保留手勢而預先請求的螢幕常亮／直向鎖定／GPS watch（尚未正式開跑，不該讓這些效果留著；
+  // watchPosition 是 requestStart() 為了 iOS 手勢要求而提前呼叫的 acquireWatch()，重按「開始」時會重建）。
+  function cancelStartCountdown() {
+    startCountdownActiveRef.current = false
+    pendingStartRef.current = null
+    setStartCountdown(null)
+    releaseWake()
+    try { (screen.orientation as any)?.unlock?.() } catch { /* ignore */ }
+    try { if (watchRef.current != null) { navigator.geolocation.clearWatch(watchRef.current); watchRef.current = null } } catch { /* ignore */ }
+  }
+  // 倒數計時本體：每秒遞減，歸零時呼叫倒數前存好的開跑函式；卸載/離開頁面時清掉未完成的 timer
+  // （見下方 return 的 clearTimeout），滿足「倒數期間被砍掉 → 不開跑」。
+  useEffect(() => {
+    if (startCountdown == null) return
+    if (startCountdown <= 0) {
+      const run = pendingStartRef.current
+      pendingStartRef.current = null
+      startCountdownActiveRef.current = false
+      setStartCountdown(null)
+      run?.()
+      return
+    }
+    try { navigator.vibrate?.(15) } catch { /* ignore */ }
+    const t = setTimeout(() => setStartCountdown((c) => (c == null ? null : c - 1)), 1000)
+    return () => clearTimeout(t)
+  }, [startCountdown])
+
+  // 倒數期間若元件被卸載（SPA 內導覽離開 /track，非按「取消」——例如使用者在倒數 3 秒內用手勢/瀏覽器返回
+  // 離開頁面）：上面那個 effect 的 cleanup 只清了 setTimeout，沒有釋放 requestStart() 為了保留使用者手勢
+  // 而提前拿到的螢幕常亮／直向鎖定／GPS watch，會殘留在同一個 Document 上（審查抓到的 major finding）。
+  // 這裡用依賴陣列為空的獨立 effect：cleanup 只在真正卸載時執行一次，不會被每秒 startCountdown 遞減時的
+  // cleanup 誤觸發（那屬於上面那個 effect，倒數還在進行中不該釋放）；只在倒數真的還在進行中
+  // （startCountdownActiveRef.current）才釋放，避免誤清已經真正開跑之後的 wake lock／watch。
+  useEffect(() => {
+    return () => {
+      if (startCountdownActiveRef.current) {
+        startCountdownActiveRef.current = false
+        pendingStartRef.current = null
+        releaseWake()
+        try { (screen.orientation as any)?.unlock?.() } catch { /* ignore */ }
+        try { if (watchRef.current != null) { navigator.geolocation.clearWatch(watchRef.current); watchRef.current = null } } catch { /* ignore */ }
+      }
+    }
+  }, [])
+
   // start() 與「自動接續」共用的計時器／連線啟動（見 resumeActiveRun()）：連 WS、接上 GPS watch、
   // 全程時間／移動時間 250ms tick、事件引擎 1s 評估、30s 心跳、螢幕常亮。抽成獨立函式避免兩處各寫一份、
   // 之後改其中一個忘了改另一個。
@@ -2331,6 +2412,17 @@ export default function TrackPage() {
           </div>
         </div>
       )}
+      {/* 開跑前 3 秒倒數（可取消，CONTRACT.md track_start_guard §2.2）：兩顆「開始」鈕的 onClick 都先進
+          requestStart()，不直接呼叫既有開跑函式；倒數期間全螢幕攔截，天然擋住「再次點開始」的誤觸。
+          z-index 3800：低於全站 .landscape-lock「請轉回直立」(4000) 與 RaceFocusMode 專注鎖定(3900)，
+          高於一般面板(500)/其餘既有彈窗(2500/3300)——倒數本身還沒開跑，沒有更高優先的疊層需要蓋過它。 */}
+      {startCountdown != null && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 3800, background: 'rgba(0,0,0,.86)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', marginBottom: 10 }}>準備好了嗎？</div>
+          <div key={startCountdown} style={{ fontSize: 96, fontWeight: 900, color: '#fff', lineHeight: 1, marginBottom: 30 }}>{startCountdown}</div>
+          <button onClick={cancelStartCountdown} style={{ width: '100%', maxWidth: 280, background: 'rgba(255,255,255,.14)', color: '#fff', border: '1px solid rgba(255,255,255,.4)', borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
+        </div>
+      )}
       {/* 觸發演出：Step1 全螢幕紅閃警報（Phase A/B 共用） */}
       {showFlash && <EventTriggerFlash onDone={onFlashDone} />}
       {/* Step2 任務目標面板（等接受/放棄，不自動消失） */}
@@ -2895,13 +2987,14 @@ export default function TrackPage() {
         {status === 'idle' && (
           user
             ? (workout
-                ? <button onClick={startWorkout} className="skin-btn-start" style={btn}>{workout.kind === 'freetrain' ? '▶ 開始訓練' : '▶ 開始課表挑戰'}</button>
-                : <button onClick={start} className="skin-btn-start" style={btn}>▶ 開始跑步</button>)
+                ? <button onClick={() => requestStart(startWorkout)} className="skin-btn-start" style={btn}>{workout.kind === 'freetrain' ? '▶ 開始訓練' : '▶ 開始課表挑戰'}</button>
+                : <button onClick={() => requestStart(start)} className="skin-btn-start" style={btn}>▶ 開始跑步</button>)
             : <button onClick={() => setShowLogin(true)} style={btn}>請先登入</button>
         )}
-        {/* 螢幕常亮小狀態／缺手勢時的常駐重取膠囊（CONTRACT.md §2.4）：置右，不佔滿版面。 */}
+        {/* 螢幕常亮小狀態／缺手勢時的常駐重取膠囊（CONTRACT.md §2.4）：置左——右側同一高度是 RaceFocusMode 的
+            「🏁 專注模式」浮動鈕（fixed right:16 bottom:100px+安全區），兩者靠右會疊在一起（2026-09-25 使用者截圖）。 */}
         {status === 'tracking' && wakeState !== 'unknown' && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 8, paddingRight: 140 }}>
             {showWakeTap ? (
               <button onClick={acquireWake} style={{ background: 'var(--hunt)', color: '#fff', border: 'none', borderRadius: 999, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>👆 點一下保持螢幕常亮</button>
             ) : (

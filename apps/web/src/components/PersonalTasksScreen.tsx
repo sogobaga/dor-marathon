@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import useSWR from 'swr'
 import { personalTasksApi, type PersonalPlan, type PersonalTask, type PersonalChallenge, type WorkoutSegment } from '@/lib/api'
 import { totalKm, estMinutes, fmtDuration, targetPaceBand } from '@/lib/workout'
@@ -11,6 +12,7 @@ import { refreshDashboard, useDashboard } from '@/lib/useDashboard'
 // 達標後「完成」才可按；「放棄」判失敗可重挑。可重複挑戰爬星 1→3★，難度遞增；休息日＝挑戰後
 // 窗口內不能有任何里程。第一次挑戰免費，之後重挑扣 DP。
 export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) {
+  const router = useRouter()
   const user = useUser()
   const { dash } = useDashboard()
   const uid = user?.id ?? null
@@ -60,7 +62,7 @@ export default function PersonalTasksScreen({ onBack }: { onBack: () => void }) 
   // 結構化課表 → 帶到「GPS 跑步追蹤」：簡單淡出轉場後導頁（/track 開頁偵測進行中挑戰、321 倒數開始）
   function goToTrack() {
     setNavigating(true)
-    setTimeout(() => { window.location.href = '/track' }, 380)
+    setTimeout(() => { router.push('/track') }, 380)
   }
   async function doChallenge(t: PersonalTask) {
     if (!sel) return

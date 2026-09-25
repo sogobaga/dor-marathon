@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
+import { useRouter } from 'next/navigation'
 import { useIsMobile } from '@/lib/useIsMobile'
 import RacesScreen from './RacesScreen'
 import ActivityExploreScreen from './ActivityExploreScreen'
@@ -63,6 +64,7 @@ const EquipmentScreen = dynamic(() => import('./EquipmentScreen'), { ssr: false 
 // openShopId：合作商家專屬連結 /shop/{id} 傳入，開頁即直接顯示該商家詳細頁（見 app/shop/[id]/ShopLanding.tsx）。
 export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlug?: string; openShopId?: string } = {}) {
   const isMobile = useIsMobile()
+  const router = useRouter()
   const [detailRace, setDetailRace] = useState<Race | null>(null)
   const [detailTab, setDetailTab] = useState<'brochure' | 'progress' | 'rank' | undefined>(undefined)
   const [registerRace, setRegisterRace] = useState<Race | null>(null)
@@ -351,7 +353,7 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
         ) : showEquipment ? (
           <EquipmentScreen onBack={() => { setShowEquipment(false); setShowCharacter(true) }} />
         ) : showExplore ? (
-          <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={(bossId) => { window.location.href = bossId ? '/track?focus=' + encodeURIComponent(bossId) : '/track' }} />
+          <ExploreScreen onBack={() => setShowExplore(false)} onOpenTrack={(bossId) => { router.push(bossId ? '/track?focus=' + encodeURIComponent(bossId) : '/track') }} />
         ) : showPersonalTasks ? (
           <PersonalTasksScreen onBack={() => setShowPersonalTasks(false)} />
         ) : showProfile || payRace ? (

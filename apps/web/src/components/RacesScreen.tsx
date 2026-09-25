@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import useSWR from 'swr'
 import { rewardsApi, type UserReward } from '@/lib/api'
 import { getUserToken, useUser, clearUserSession, withUserAuth } from '@/lib/userAuth'
@@ -167,7 +168,7 @@ export default function RacesScreen({
 
       {/* 開始跑步（比照 GPS 跑步追蹤頁：置底整排綠色 CTA） */}
       <div style={{ padding: '14px 16px calc(20px + var(--cta-safe, 0px))', flexShrink: 0, borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
-        <a href="/track" className="skin-btn-start" style={startBtn}>▶ 開始跑步</a>
+        <Link href="/track" prefetch={false} className="skin-btn-start" style={startBtn}>▶ 開始跑步</Link>
       </div>
     </div>
   )
