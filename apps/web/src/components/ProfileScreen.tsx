@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, gpsCalibApi, sourceLabel, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type TerraStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo, type VipCardInfo, type GpsCalibInfo, type DataSource } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendingGps'
+import { readActiveRun, type ActiveRunState } from '@/lib/activeRun'
 import { useDashboard } from '@/lib/useDashboard'
 import { APP_VERSION } from '@/lib/version'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
@@ -225,6 +226,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>(initialTab ?? 'info')
   // 本機尚未上傳的 GPS（里程優先來源=外部來源時，track 頁結束不自動上傳，留給這裡決定）
   const [pending, setPending] = useState<PendingGpsRun | null>(null)
+  const [activeRun, setActiveRun] = useState<ActiveRunState | null>(null) // 有進行中跑步（dor_gps_active）→ 顯示「跑步進行中・回到追蹤」，取代「尚未上傳」卡片
   const [pendingAsk, setPendingAsk] = useState(false) // 「是否等待外部來源同步」二次確認彈窗
   const [pendingBusy, setPendingBusy] = useState(false)
   const [pendingErr, setPendingErr] = useState('')
@@ -356,7 +358,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   }
 
   // 本機尚未上傳的 GPS（不管是否連 Strava，都可能有——里程優先來源=外部來源時 track 頁結束會保留在本機）
-  useEffect(() => { setPending(readPendingGps()) }, [])
+  useEffect(() => { setPending(readPendingGps()); try { setActiveRun(readActiveRun()) } catch { setActiveRun(null) } }, [])
 
   // GPS 距離校正：僅在入口=shown 才打 API（locked/hidden 打了也是 403，不必浪費請求）
   function loadGpsCalib() {
@@ -1011,8 +1013,20 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             </div>
           )}
 
+          {/* 只有手動才結束（CONTRACT.md §2.3）：有進行中跑步時優先顯示這張、不顯示下面的「尚未上傳」卡片 */}
+          {activeRun && (
+            <div style={{ marginTop: 12, background: 'var(--bg-2)', border: '1px solid var(--fug)', borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>🏃 跑步進行中</div>
+              <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.6 }}>
+                有一趟跑步正在追蹤中，尚未手動結束。
+              </div>
+              <a href={activeRun.href || '/track'} style={{ display: 'block', textAlign: 'center', marginTop: 10, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 13, fontWeight: 800, textDecoration: 'none' }}>
+                回到追蹤
+              </a>
+            </div>
+          )}
           {/* 本機尚未上傳的 GPS（里程優先來源=外部來源時，track 頁結束不自動上傳）——不限於已連 Strava，故不包在 strava?.connected 內 */}
-          {pending && (
+          {!activeRun && pending && (
             <div style={{ marginTop: 12, background: 'var(--bg-2)', border: '1px solid var(--fug)', borderRadius: 12, padding: '12px 14px' }}>
               <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>🏃 本機尚未上傳的跑步</div>
               <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 4, lineHeight: 1.6 }}>

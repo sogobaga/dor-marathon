@@ -11,6 +11,7 @@ import ViewportDebug from '@/components/ViewportDebug'
 import PwaInstallPrompt from '@/components/PwaInstallPrompt'
 import UpdateNotice from '@/components/UpdateNotice'
 import BounceCleanup from '@/components/BounceCleanup'
+import ActiveRunGuard from '@/components/ActiveRunGuard'
 import { veilColorsOf } from '@/lib/skinColors'
 
 // 各 skin 的瀏覽器 chrome（狀態列）色；新增 skin 時在此與 globals.css/appSettings/後端 specs 一併加。
@@ -194,7 +195,7 @@ function showVeil(){
     setTimeout(function(){try{d.adoptedStyleSheets=[]}catch(x){}},6000);
   }catch(x){}
 }
-function hasRun(){try{return !!localStorage.getItem('dor_gps_run')}catch(x){return false}}
+function hasRun(){try{return !!localStorage.getItem('dor_gps_run')||!!localStorage.getItem('dor_gps_active')}catch(x){return false}}
 function refHost(){return ref?(ref.split('/')[2]||ref):'-'}
 function mark(){try{sessionStorage.setItem('dor.prevAr',(v.ar||'-')+'|'+(v.n||'?')+'|'+refHost())}catch(x){}}
 function renav(){var L=w.location;try{if(L.hash){L.reload();return}L.replace(L.href)}catch(x){try{L.reload()}catch(y){}}}
@@ -240,7 +241,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const [veilBg, veilFg] = veilColorsOf(skin)
   return (
     <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined} data-glogin={glogin === 'redirect' ? 'redirect' : undefined}>
-      <body><script dangerouslySetInnerHTML={{ __html: bootJs(veilBg, veilFg) }} /><AppProviders><BounceCleanup /><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><PwaInstallPrompt /><UpdateNotice /><LandscapeNotice />{children}</AppProviders></body>
+      <body><script dangerouslySetInnerHTML={{ __html: bootJs(veilBg, veilFg) }} /><AppProviders><BounceCleanup /><ActiveRunGuard /><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><PwaInstallPrompt /><UpdateNotice /><LandscapeNotice />{children}</AppProviders></body>
     </html>
   )
 }

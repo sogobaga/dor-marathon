@@ -30,6 +30,9 @@ import { qualifiesGov500, gov500RunKey, markGov500Shot } from '@/lib/gov500'
 import { APP_VERSION } from '@/lib/version'
 import RaceFocusMode from './RaceFocusMode'
 import CheerShow from './CheerShow'
+import { readActiveRun, writeActiveRun, touchActiveRun, clearActiveRun, activeRunAgeMs, isActiveRunFresh, type ActiveRunState, type ActiveRunWorkoutSnapshot } from '@/lib/activeRun'
+import PocketMode from '@/components/track/PocketMode'
+import PocketModeTip from '@/components/track/PocketModeTip'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -109,6 +112,15 @@ export default function TrackPage() {
   const [retryUpload, setRetryUpload] = useState<null | { pts: GpsPoint[]; petIds: string[] }>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [showActiveRaces, setShowActiveRaces] = useState(false) // 「進行中活動/賽事」面板開關
+  // 只有手動才結束＋口袋模式（CONTRACT.md）：重開頁面偵測到「進行中跑步」超過 2 小時未更新 → 三選一彈窗
+  // （繼續追蹤／結束並上傳／捨棄）；未逾時則直接自動接續，不經過這個 state。
+  const [staleResume, setStaleResume] = useState<{ active: ActiveRunState; start: number; pts: GpsPoint[] } | null>(null)
+  const [staleConfirmDiscard, setStaleConfirmDiscard] = useState(false) // 三選一「捨棄」的二次確認
+  const [toast, setToast] = useState('') // 中性提示（自動接續／資料損毀等），與 err（紅色錯誤橫幅）分開
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [wakeState, setWakeState] = useState<'active' | 'warn' | 'unknown'>('unknown') // 螢幕常亮狀態：小狀態膠囊顯示用（'active'＝原生或影片備援任一成功）
+  const [showWakeTap, setShowWakeTap] = useState(false) // Wake Lock 因缺使用者手勢被拒 → 顯示「點一下保持螢幕常亮」常駐小膠囊
+  const [pocketMode, setPocketMode] = useState(false) // 口袋模式覆蓋層開關
   const [showStartTip, setShowStartTip] = useState(false) // 從賽事詳情頁「前往挑戰」進入（?from=race）→ idle 時顯示一次性新手提醒，可點擊/X關閉
   const [uploading, setUploading] = useState(false)
   // 運動部「揮汗有禮」（gov500_entry，見 lib/gov500.ts 頂部註解說明 2026-09-06 規則變動）：
@@ -324,6 +336,7 @@ export default function TrackPage() {
   const watchRef = useRef<number | null>(null)
   const warmWatchRef = useRef<number | null>(null) // 進頁面時的 GPS 預熱偵測（顯示精度/定位地圖，不記錄）
   const wakeRef = useRef<any>(null)
+  const noSleepRef = useRef<any>(null) // Wake Lock 備援（nosleep.js）：僅在 'wakeLock' in navigator 為 false 或原生 request 被拒時才建立/啟用
   const timerRef = useRef<any>(null)
   const pingTimerRef = useRef<any>(null) // 跑步中心跳（後台「目前在跑名單」）
   const mapRef = useRef<any>(null)
@@ -334,6 +347,7 @@ export default function TrackPage() {
   // 揮汗有禮直接截圖需求（2026-09-06 owner 定案，見 lib/kmMarkers.ts）：軌跡上的 1/2/3…號碼標記
   // 圖層——commitSeg 每跨一整公里即時加一個；重開跑/re-render 整批重建時用 clearLayers() 清空重畫。
   const kmMarkersRef = useRef<any>(null)
+  const pendingMapRedrawRef = useRef(false) // 自動接續／三選一「繼續追蹤」剛還原了 pointsRef，但地圖(ensureMap)可能還沒就緒——待 mapReady 後補畫軌跡線＋每公里標記一次
   const warnTimer = useRef<any>(null)
   const errTimerRef = useRef<any>(null) // 「軌跡太短」等暫時訊息的自動淡出計時
   const statusRef = useRef(status)
@@ -357,6 +371,9 @@ export default function TrackPage() {
   eventDefsRef.current = eventDefs
   // Phase B 用
   const wssRef = useRef<WebSocket[]>([]) // 綁定所有進行中賽事的 WS（多人事件邀請）
+  const wsConnectingRef = useRef(false) // connectRaceWS() 的 async gap 期間重入防護：racesApi.context() 尚未
+  // resolve 前 wssRef.current.length 仍是 0，若在這段空窗被連呼兩次（見 armTimers() 冪等性註解）會各自
+  // push 出一批重複 WebSocket；用同步旗標擋住第二次呼叫，比 wssRef.length 更早生效。
   const raceIdsRef = useRef<string[]>([]) // 進行中且已報名的賽事 id（供回報里程/接收邀請）
   const lastTriggerRef = useRef(0) // 里程回報節流
   const lastClaimRef = useRef(0) // 認領後台手動觸發事件的節流
@@ -577,6 +594,24 @@ export default function TrackPage() {
     if (activeEventRef.current?.phase === 'active') setEventMoved(distRef.current - activeEventRef.current.triggerD)
     // 防當掉：暫存採納後的軌跡（k=本趟固定的 GPS 校正係數快照，供意外中斷後「上次未上傳的跑步」預估距離時還原同一係數，見 calibKRef 宣告處）
     localStorage.setItem(LS_KEY, JSON.stringify({ start: startRef.current, points: pointsRef.current.slice(-2000), k: calibKRef.current }))
+    // 只有手動才結束（CONTRACT.md §2.1）：每個採納點同步更新 dor_gps_active 快照——直接存 commitSeg 剛算好
+    // 的數字（distRef/splitMarkRef/…），不另外維護一套重算邏輯，避免兩份距離/分段口徑分岔。
+    {
+      const nowMs = Date.now()
+      const marks = splitMarkRef.current
+      writeActiveRun({
+        lastSeenAt: nowMs,
+        movingAccumS: currentMovingS(movingStateRef.current, nowMs),
+        distanceM: distRef.current,
+        rawDistanceM: rawDistRef.current,
+        excludedSegs: excludedSegsRef.current,
+        excludedKm: excludedMRef.current / 1000,
+        splits: marks.map((t, i) => t - (i > 0 ? marks[i - 1] : 0)),
+        splitMarks: marks,
+        movingSplitMarks: movingSplitMarkRef.current,
+        calibK: calibKRef.current,
+      })
+    }
   }, [ensureMap])
   const onPosRef = useRef(onPos); onPosRef.current = onPos
   // 進頁面即初始化地圖（不等 GPS）：GPS 權限未授權時「預熱定位」不會啟動（見下方 permissions.query 判斷），
@@ -678,8 +713,42 @@ export default function TrackPage() {
     )
   }
 
+  // 螢幕常亮（CONTRACT.md §2.4）：原生 Wake Lock 優先；不支援/被拒（常見於缺使用者手勢的自動接續、
+  // 或系統暫時拒絕）→ 備援用 nosleep.js（靜音／playsinline／loop 的極小 webm/mp4，MIT license，動態
+  // import 避免不需要時就把影片資源打包進首屏）。兩者皆失敗 → wakeState='warn'，畫面顯示 ⚠️ 常駐警示
+  // ＋常駐小膠囊「點一下保持螢幕常亮」（點擊＝真實使用者手勢，重試多半會成功）。
+  // sentinel 的 release 事件（見 https://web.dev/wakelock/#wake-lock-lifecycle）：仍在追蹤且頁面可見時
+  // 立即重取，不等下一次 visibilitychange。
   async function acquireWake() {
-    try { wakeRef.current = await (navigator as any).wakeLock?.request('screen') } catch { /* ignore */ }
+    if (typeof navigator === 'undefined' || typeof document === 'undefined') return
+    if ('wakeLock' in navigator) {
+      try {
+        const sentinel = await (navigator as any).wakeLock.request('screen')
+        wakeRef.current = sentinel
+        setWakeState('active'); setShowWakeTap(false)
+        sentinel.addEventListener('release', () => {
+          if (statusRef.current === 'tracking' && document.visibilityState === 'visible') acquireWake()
+        })
+        return
+      } catch { /* 被拒／逾時：往下走影片備援 */ }
+    }
+    try {
+      if (!noSleepRef.current) {
+        const mod = await import('nosleep.js')
+        noSleepRef.current = new mod.default()
+      }
+      await noSleepRef.current.enable()
+      setWakeState('active'); setShowWakeTap(false)
+    } catch {
+      setWakeState('warn'); setShowWakeTap(true)
+    }
+  }
+  // 收掉螢幕常亮（結束跑步／卸載時呼叫）：原生 sentinel release + 備援影片 pause，狀態歸零。
+  function releaseWake() {
+    try { wakeRef.current?.release() } catch { /* ignore */ }
+    wakeRef.current = null
+    try { noSleepRef.current?.disable() } catch { /* ignore */ }
+    setWakeState('unknown'); setShowWakeTap(false)
   }
 
   // 「回到目前位置」：恢復自動跟隨並置中。若尚無定位（idle 未預熱／Safari／權限未知）→ 在使用者手勢內
@@ -892,7 +961,8 @@ export default function TrackPage() {
   // Phase B：對「所有進行中且已報名」的賽事各連一條 WS，任一場來邀請都收得到
   async function connectRaceWS() {
     const token = getUserToken()
-    if (!token || wssRef.current.length) return
+    if (!token || wssRef.current.length || wsConnectingRef.current) return
+    wsConnectingRef.current = true
     try {
       const { races } = await eventRaceApi.context(token)
       if (!races.length) return
@@ -903,7 +973,7 @@ export default function TrackPage() {
         ws.onclose = () => { wssRef.current = wssRef.current.filter((w) => w !== ws) }
         wssRef.current.push(ws)
       }
-    } catch { /* ignore */ }
+    } catch { /* ignore */ } finally { wsConnectingRef.current = false }
   }
   // 加入多人事件 → 轉為一般 activeEvent，交給既有引擎評估完成
   async function joinRace(inv: RaceEventInvite) {
@@ -1157,10 +1227,43 @@ export default function TrackPage() {
     setRaceGroupProgress(null); lastContributedDistRef.current = 0; lastContributeAtRef.current = 0; contributeBusyRef.current = false
     startRef.current = Date.now()
     setStatus('tracking')
+    // 只有手動才結束（CONTRACT.md §2.1）：開跑當下建立 dor_gps_active 快照，href 含完整 query
+    // （例如 ?strategy=…），全站導回與三選一彈窗都靠它。workout 先清空——若是透過 beginWorkout()
+    // 開跑，緊接著那裡會補寫正確的 workout/woPhase 快照（此處 start() 拿到的 workout 是尚未更新的舊值，
+    // 見 beginWorkout() 呼叫處註解）。
+    try {
+      const href = window.location.pathname + window.location.search
+      writeActiveRun({
+        startedAt: startRef.current, href, lastSeenAt: Date.now(),
+        movingAccumS: 0, distanceM: 0, rawDistanceM: 0, excludedSegs: 0, excludedKm: 0,
+        splits: [], splitMarks: [], movingSplitMarks: [], calibK: calibKRef.current,
+        workout: null, woPhase: undefined, woStepIdx: undefined,
+      })
+    } catch { /* ignore */ }
     unlockAudio() // 在使用者手勢內解鎖音訊（iOS 必須）
-    connectRaceWS() // 連 WS 監聽多人事件（不 await；失敗不影響跑步）
     // ⚠️ iOS：定位權限提示必須在使用者手勢「同步」流程內直接請求，不能先 await 任何東西
-    //（否則會失去使用者手勢 → Safari 直接判定拒絕，code 1）。acquireWatch() 為同步呼叫，符合此要求。
+    //（否則會失去使用者手勢 → Safari 直接判定拒絕，code 1）。armTimers() 內的 acquireWatch() 為同步呼叫，符合此要求。
+    armTimers()
+    // 盡力鎖直屏（Android/PWA 全螢幕有效；iOS Safari 不支援 → 靠下方「轉回直立」提示保底）；
+    // 需要使用者手勢，只在 start() 呼叫（自動接續沒有手勢，鎖不到就算了，不影響追蹤本身）。
+    try { (screen.orientation as any)?.lock?.('portrait').catch(() => {}) } catch { /* 不支援就忽略 */ }
+  }
+
+  // start() 與「自動接續」共用的計時器／連線啟動（見 resumeActiveRun()）：連 WS、接上 GPS watch、
+  // 全程時間／移動時間 250ms tick、事件引擎 1s 評估、30s 心跳、螢幕常亮。抽成獨立函式避免兩處各寫一份、
+  // 之後改其中一個忘了改另一個。
+  function armTimers() {
+    // 冪等性防護：React StrictMode（Next 13.4+ App Router 預設開啟，本專案 next.config.mjs 未覆寫）
+    // 在 dev 模式會對掛載 effect 做「掛載→卸載(若有 cleanup)→再掛載」；下方 :1487 掛載 effect 沒有回傳
+    // cleanup，若判定要自動接續會呼叫 resumeActiveRun()→armTimers() 兩次。acquireWatch() 本身已有
+    // 「先 clearWatch 再建新」的防重複保護（見 :699-701），但這三個 setInterval 原本會直接覆寫 ref、
+    // 舊的 interval id 遺失且永遠不會被 clearInterval——導致 elapsed/movingS 兩倍更新、事件引擎重複評估、
+    // trackPing 心跳頻率加倍。比照 acquireWatch 的模式：先清掉可能已存在的 timer 再重建，讓 armTimers()
+    // 不論被呼叫幾次，最終都只有一組 interval 在跑。
+    clearInterval(timerRef.current)
+    clearInterval(evalTimerRef.current)
+    clearInterval(pingTimerRef.current)
+    connectRaceWS() // 連 WS 監聽多人事件（不 await；失敗不影響跑步；重入防護見 connectRaceWS 內 wsConnectingRef）
     acquireWatch()
     timerRef.current = setInterval(() => {
       const now = Date.now()
@@ -1177,8 +1280,6 @@ export default function TrackPage() {
     ping()
     pingTimerRef.current = setInterval(ping, 30000)
     acquireWake() // 不 await：wake lock 失敗或延遲都不影響定位
-    // 盡力鎖直屏（Android/PWA 全螢幕有效；iOS Safari 不支援 → 靠下方「轉回直立」提示保底）
-    try { (screen.orientation as any)?.lock?.('portrait').catch(() => {}) } catch { /* 不支援就忽略 */ }
   }
 
   const cleanup = useCallback(() => {
@@ -1190,10 +1291,9 @@ export default function TrackPage() {
     clearTimeout(errTimerRef.current)
     for (const w of wssRef.current) { try { w.close() } catch { /* ignore */ } }
     wssRef.current = []; raceIdsRef.current = []
-    try { wakeRef.current?.release() } catch { /* ignore */ }
-    wakeRef.current = null
+    releaseWake()
     try { (screen.orientation as any)?.unlock?.() } catch { /* ignore */ }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 單一登入：被踢下線／refresh 失敗／手動登出都會經 clearUserSession() emit 這個事件。
   // 若當下正在跑步且已無 token（已登出）→ 停跑但「保留」軌跡待上傳：只 cleanup + 收掉可能殘留的覆蓋層，
@@ -1205,6 +1305,7 @@ export default function TrackPage() {
       if (getUserToken()) return // 還有 token：不是登出（例如剛登入/refresh 成功），略過
       cleanup()
       setStatus('done')
+      clearActiveRun() // 唯一保留的非手動結束（帳號安全設計，CONTRACT.md §2.1）：清 dor_gps_active，但保留 dor_gps_run 供重新登入後撿回上傳
       setConfirmStravaHold(null) // 收掉可能殘留的 Strava 三選一彈窗
       clearEvent() // 收掉進行中的事件演出/旗幟（含 setShowFlash(false)）
       setConfirmEnd(false) // 收掉「結束前確認」彈窗
@@ -1217,6 +1318,12 @@ export default function TrackPage() {
 
   // 按「結束並上傳」：只有「正式進行中」事件才跳確認（損失規避）；演出中（未接受）則靜默放棄後直接結束
   // 提示訊息：X 手動關閉；「軌跡太短」等暫時訊息顯示約 1 秒後自動淡出（避免擋住下方面板操作）
+  // 中性提示（自動接續成功／資料損毀等）：與 flashErr 分開，避免用紅色錯誤樣式顯示非錯誤訊息。
+  function showToast(msg: string, ms = 5000) {
+    clearTimeout(toastTimerRef.current as any)
+    setToast(msg)
+    toastTimerRef.current = setTimeout(() => setToast(''), ms)
+  }
   function dismissWarn() { clearTimeout(warnTimer.current); setWarn('') }
   function dismissErr() { clearTimeout(errTimerRef.current); setErrFade(false); setErr('') }
   function flashErr(msg: string) {
@@ -1318,6 +1425,7 @@ export default function TrackPage() {
       // 覆寫本地即時分段（可能因 paceBaseMs 時間差而略有誤差），讓結束畫面「分段」與「均配速」一致。
       if (result.km_paces?.length) setSplits(result.km_paces)
       localStorage.removeItem(LS_KEY)
+      clearActiveRun() // 該趟成功上傳：兩把 key 都清（多數情況下手動結束時已清過，這裡是保險，冪等）
       // GPS 距離校正（對抗式審查修正）：這趟上傳後 gpscalib.RecomputeAsync 可能在 5 秒後把係數
       // 改掉，讓 dash 重抓，避免不離開頁面直接開下一趟時 calibKRef 還在用這趟開跑當下的舊快照。
       revalidateDash()
@@ -1344,6 +1452,7 @@ export default function TrackPage() {
     }
     cleanup()
     setStatus('done')
+    clearActiveRun() // 只有手動才結束：使用者按「結束」完成結束流程，dor_gps_active 一律清除（dor_gps_run 是否清另由上傳結果決定）
     if (pts.length < 2) { flashErr('軌跡太短，未上傳'); localStorage.removeItem(LS_KEY); return null }
     const token = getUserToken()
     if (!token) { setErr('未登入，無法上傳'); return null }
@@ -1380,16 +1489,130 @@ export default function TrackPage() {
     }
   }
 
-  // 進頁偵測「上次未上傳的跑步」（LS_KEY 備份）→ 提示可恢復上傳，避免忘記上傳整趟白跑
+  // 只有手動才結束（CONTRACT.md §2.2）：掛載時偵測「進行中跑步」——
+  //   · lastSeenAt 在 2 小時內 → 自動接續（resumeActiveRun）。
+  //   · 超過 2 小時 → 彈三選一（staleResume state，見下方 JSX 與 continueStaleResume/finishStaleResumeUpload/discardStaleResume）。
+  //   · dor_gps_active 存在但 dor_gps_run 解不出來（損毀）→ 清除兩把 key，toast 提示，絕不靜默丟棄。
+  // 這個 effect 必須先於下面的「上次未上傳」recover 效果做出判斷：後者靠讀 localStorage 判斷是否已無
+  // dor_gps_active，兩者都只讀 localStorage、彼此獨立，執行順序不影響正確性。
+  useEffect(() => {
+    const active = readActiveRun()
+    if (!active) return
+    let raw: any = null
+    try { raw = JSON.parse(localStorage.getItem(LS_KEY) || 'null') } catch { raw = null }
+    const pts: GpsPoint[] | undefined = raw?.points
+    if (!raw || !Array.isArray(pts) || pts.length < 1 || typeof raw.start !== 'number') {
+      clearActiveRun()
+      try { localStorage.removeItem(LS_KEY) } catch { /* ignore */ }
+      showToast('上次跑步資料損毀，無法還原')
+      return
+    }
+    if (isActiveRunFresh(active)) resumeActiveRun(active, raw.start, pts)
+    else setStaleResume({ active, start: raw.start, pts })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 還原所有「跑步中」state/ref 並接回計時器/GPS/Wake Lock（自動接續與三選一「繼續追蹤」共用）。
+  // 欄位清單見 CONTRACT.md §2.1／src/lib/activeRun.ts 的 ActiveRunState：距離/排除段/分段/移動時間全部
+  // 直接讀快照還原，不重算——這些數字在 commitSeg 當下已經照既有防弊規則算好，重算等於另開一套邏輯、
+  // 有跟 onPos 既有規則分岔的風險。raceStrategy／focusBoss 不必在這裡處理：href 本身就帶著
+  // ?strategy=/?focus= query，既有的對應 effect 會在這次掛載自行重新載入，不必重複一份邏輯。
+  function resumeActiveRun(active: ActiveRunState, start: number, pts: GpsPoint[]) {
+    pointsRef.current = pts
+    startRef.current = start
+    distRef.current = active.distanceM || 0
+    rawDistRef.current = active.rawDistanceM || 0
+    excludedMRef.current = (active.excludedKm || 0) * 1000
+    excludedSegsRef.current = active.excludedSegs || 0
+    splitMarkRef.current = active.splitMarks || []
+    movingSplitMarkRef.current = active.movingSplitMarks || []
+    calibKRef.current = active.calibK && active.calibK > 0 ? active.calibK : 1
+    const lastPt = pts.length ? pts[pts.length - 1] : null
+    lastAccRef.current = lastPt // 下一筆 GPS 點的跳點規則（GAP_MAX_S/GAP_MAX_M）基準：接續後第一點比對這裡，規則零改動
+    lastMoveRef.current = lastPt
+    movingStateRef.current = { movingAccumS: active.movingAccumS || 0, movingSince: null, stillStreak: 0, moveStreak: 0 } // 中斷期間不計移動時間：movingSince 從 null（靜止）開始
+    pendingRef.current = []
+    distSamplesRef.current = []
+    setDistance(distRef.current)
+    setSplits(active.splits || [])
+    setExcluded({ segs: excludedSegsRef.current, km: excludedMRef.current / 1000 })
+    setMovingS(currentMovingS(movingStateRef.current, Date.now()))
+    setElapsed((Date.now() - start) / 1000)
+    pendingMapRedrawRef.current = true // 待地圖就緒後補畫軌跡線＋每公里標記（見下方 effect）
+    if (active.workout) {
+      const wo = active.workout
+      setWorkout(wo as any)
+      const phase = active.woPhase || 'running'
+      setWoPhase(phase)
+      const idx = active.woStepIdx || 0
+      woStepIdxRef.current = idx
+      setWoStepIdx(idx)
+      woStepStartRef.current = { dist: distRef.current, time: Date.now() } // 目前這一段的進度無法精準還原，從接續當下重新起算（僅影響單一分段內的判定，步驟本身不變）
+      woActiveRef.current = phase === 'countdown' || phase === 'running'
+      freetrainRef.current = wo.kind === 'freetrain'
+    }
+    setRecover(null) // 有進行中跑步時不該同時顯示「上次未上傳」卡片
+    setStatus('tracking')
+    armTimers()
+    const ageMs = activeRunAgeMs(active)
+    const mins = Math.floor(ageMs / 60000), secs = Math.floor((ageMs % 60000) / 1000)
+    showToast(`已接續跑步（中斷 ${mins} 分 ${secs} 秒，中斷期間未記錄 GPS）`)
+  }
+
+  // 待地圖就緒後把還原的 pointsRef 補畫成軌跡線＋每公里標記一次（自動接續／三選一「繼續追蹤」時，
+  // ensureMap 可能還沒建好；正常即時追蹤走 commitSeg 逐點加，不會經過這裡）。
+  useEffect(() => {
+    if (!pendingMapRedrawRef.current || !mapReady) return
+    pendingMapRedrawRef.current = false
+    try {
+      const pts = pointsRef.current
+      if (lineRef.current && pts.length) lineRef.current.setLatLngs(pts.map((p) => [p.lat, p.lng]))
+      const Lg = (window as any).L // eslint-disable-line @typescript-eslint/no-explicit-any
+      if (kmMarkersRef.current && Lg && pts.length) {
+        kmMarkersRef.current.clearLayers()
+        const track: [number, number][][] = [pts.map((p) => [p.lat, p.lng])]
+        addKmMarkers(Lg, kmMarkersRef.current, kmMarkerPositions(track, 1000 / calibKRef.current), '#46E3A0')
+      }
+    } catch { /* ignore：地圖補畫失敗不影響追蹤本身 */ }
+  }, [mapReady]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 三選一彈窗（>2 小時未更新，見上方 mount effect）：繼續追蹤／結束並上傳／捨棄（二次確認）。
+  function continueStaleResume() {
+    if (!staleResume) return
+    const { active, start, pts } = staleResume
+    setStaleResume(null); setStaleConfirmDiscard(false)
+    resumeActiveRun(active, start, pts)
+  }
+  async function finishStaleResumeUpload() {
+    if (!staleResume) return
+    const { start, pts } = staleResume
+    clearActiveRun()
+    startRef.current = start; pointsRef.current = pts
+    setStatus('done')
+    setStaleResume(null); setStaleConfirmDiscard(false)
+    if (pts.length < 2) { flashErr('軌跡太短，未上傳'); try { localStorage.removeItem(LS_KEY) } catch { /* ignore */ } return }
+    const token = getUserToken()
+    if (!token) { setErr('未登入，無法上傳'); return }
+    await finalizeUpload(pts)
+  }
+  function discardStaleResume() {
+    clearActiveRun()
+    try { localStorage.removeItem(LS_KEY) } catch { /* ignore */ }
+    setStaleResume(null); setStaleConfirmDiscard(false)
+  }
+
+  // 進頁偵測「上次未上傳的跑步」（LS_KEY 備份）→ 提示可恢復上傳，避免忘記上傳整趟白跑。
+  // 只在「沒有進行中跑步」（dor_gps_active 不存在）時顯示——已手動結束但上傳失敗才會走到這裡；
+  // 不再 >24h 靜默丟棄（CONTRACT.md §2.2）：一律顯示，卡片上註明日期，使用者自行決定上傳或捨棄。
   useEffect(() => {
     try {
+      if (readActiveRun()) return // 進行中跑步交給上面的自動接續/三選一處理，不重複顯示
       const raw = localStorage.getItem(LS_KEY)
       if (!raw) return
       const data = JSON.parse(raw)
       const pts: GpsPoint[] = data?.points
       if (!Array.isArray(pts) || pts.length < 2 || !data.start) { localStorage.removeItem(LS_KEY); return }
       const lastT = pts[pts.length - 1].t
-      if (Date.now() - lastT > 24 * 3600 * 1000) { localStorage.removeItem(LS_KEY); return } // 太舊(>24h)不提示
       let m = 0
       for (let i = 1; i < pts.length; i++) m += haversineM(pts[i - 1], pts[i])
       const k = typeof data.k === 'number' && data.k > 0 ? data.k : 1 // 該趟記錄當下固定的 GPS 校正係數快照（舊資料無此欄位 → 1）
@@ -1429,12 +1652,12 @@ export default function TrackPage() {
       // 終點：恢復上傳走的不是 start()，這兩顆 ref 仍是初始值或上一趟殘留（審查抓到會顯示 1970 或
       // 別趟日期）——上傳成功時同步寫回，順便也讓 status→'done' 的號碼標記重建效果拿到正確軌跡。
       startRef.current = recover.start; pointsRef.current = pts
-      setResult(result); setStatus('done'); localStorage.removeItem(LS_KEY); setRecover(null)
+      setResult(result); setStatus('done'); localStorage.removeItem(LS_KEY); clearActiveRun(); setRecover(null)
       revalidateDash() // 同 doUploadGps：見該處對抗式審查修正註解
     } catch (e: any) { setErr(uploadErrMsg(e)) }
     finally { setUploading(false) }
   }
-  function discardRecovered() { localStorage.removeItem(LS_KEY); setRecover(null) }
+  function discardRecovered() { localStorage.removeItem(LS_KEY); clearActiveRun(); setRecover(null) }
 
   // 使用者「主動」導頁（如彈窗按「前往確認數據」，此時 GPS 仍在 tracking）時抑制 beforeunload 警告；
   // 只有跑步中的「意外」離開/關窗才攔截。
@@ -1446,6 +1669,24 @@ export default function TrackPage() {
     window.addEventListener('beforeunload', h)
     return () => window.removeEventListener('beforeunload', h)
   }, [status])
+
+  // 只有手動才結束（CONTRACT.md §2.1）：每 15 秒心跳更新 dor_gps_active 的 lastSeenAt/movingAccumS
+  // （純寫 localStorage，不打網路、不碰 DB）——沒有新 GPS 點時（例如背景被系統暫停）也能讓「最後定位
+  // 時間」持續前進，全站導回與 2 小時三選一判斷才不會誤把「還活著只是暫時沒收到點」當成早就斷線。
+  useEffect(() => {
+    if (status !== 'tracking') return
+    const id = setInterval(() => { touchActiveRun(currentMovingS(movingStateRef.current, Date.now())) }, 15000)
+    return () => clearInterval(id)
+  }, [status]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 只有手動才結束：分頁被切到背景前，主動再寫一次快照（背景後 iOS standalone 常直接砍掉整個頁面，
+  // 不會有機會跑到下一次心跳或下一個 GPS 點）。
+  useEffect(() => {
+    if (status !== 'tracking') return
+    const onHidden = () => { if (document.visibilityState === 'hidden') touchActiveRun(currentMovingS(movingStateRef.current, Date.now())) }
+    document.addEventListener('visibilitychange', onHidden)
+    return () => document.removeEventListener('visibilitychange', onHidden)
+  }, [status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 個人任務「結構化課表」：面板載入 / 挑戰 / 開始 / 逐段驅動 / 完成 ──
   // 載入任務面板（各階段前沿課表卡 + 進行中挑戰卡）。有進行中挑戰 → 載入分段序列進入就緒。
@@ -1531,16 +1772,22 @@ export default function TrackPage() {
     woActiveRef.current = true // 從一開始（含 321 倒數）就暫停隨機事件，整趟課表都不被打擾
     start() // 既有 GPS 追蹤啟動（含定位權限請求，須在使用者手勢內）
     setWoPhase('countdown')
+    // start() 剛把 dor_gps_active 的 workout 寫成 null（見該處註解，start() 讀到的是尚未更新的舊 workout
+    // state）；這裡補上真正的課表快照，讓自由跑（freetrain，經 sessionStorage 一次性橋接、consume 後
+    // 不能再重載）在頁面被砍掉重開時也能還原到同一份課表與進度。
+    writeActiveRun({ workout: wo as ActiveRunWorkoutSnapshot, woPhase: 'countdown', woStepIdx: 0 })
   }
   function woCountdownDone() {
     woStepStartRef.current = { dist: distRef.current, time: Date.now() }
     woActiveRef.current = true
     setWoPhase('running')
+    writeActiveRun({ woPhase: 'running', woStepIdx: 0 })
   }
   async function finishWorkout() {
     woActiveRef.current = false
     freetrainRef.current = false
     setWoPhase('done')
+    writeActiveRun({ woPhase: 'done' })
     // 課表達標即結算成績、顯示收服演出——但「不結束整趟 GPS」：不呼叫 finish()（不 cleanup、不 setStatus('done')、
     // 不上傳），status 保持 'tracking'、GPS 繼續累積里程，讓使用者可續跑；要結束整趟(上傳)按底部「結束並上傳」即可。
     // 防弊改由「配速達標(work_in_band)」本身把關（載具配速不對拿不到星）；原本綁在 GPS upload 的 flagged 閘門與
@@ -1592,7 +1839,7 @@ export default function TrackPage() {
       const next = idx + 1
       woStepIdxRef.current = next
       if (next >= workout.steps.length) finishWorkout()
-      else { woStepStartRef.current = { dist: distRef.current, time: Date.now() }; setWoStepIdx(next) }
+      else { woStepStartRef.current = { dist: distRef.current, time: Date.now() }; setWoStepIdx(next); writeActiveRun({ woStepIdx: next }) }
     }, 500)
     return () => clearInterval(id)
   }, [woPhase, workout]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1615,7 +1862,17 @@ export default function TrackPage() {
       }
     }
     document.addEventListener('visibilitychange', onVis)
-    return () => { document.removeEventListener('visibilitychange', onVis); cleanup() }
+    // CONTRACT.md §2.4：pageshow（含 bfcache 還原，persisted 與否皆重取）與 focus（部分瀏覽器切分頁只觸發
+    // focus、不觸發 visibilitychange）也要重取螢幕常亮＋重接 GPS watch，理由與 onVis 的 visible 分支相同。
+    const onShowOrFocus = () => { if (statusRef.current === 'tracking') { acquireWake(); acquireWatch() } }
+    window.addEventListener('pageshow', onShowOrFocus)
+    window.addEventListener('focus', onShowOrFocus)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('pageshow', onShowOrFocus)
+      window.removeEventListener('focus', onShowOrFocus)
+      cleanup()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -1910,13 +2167,15 @@ export default function TrackPage() {
    <GoogleAuthProvider>
     <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
+      {/* 口袋模式（CONTRACT.md §2.5）：z-index 4000，最高層——一開就蓋住所有東西，含其餘覆蓋層 */}
+      <PocketMode open={pocketMode && status === 'tracking'} onUnlock={() => setPocketMode(false)} elapsedS={elapsed} distanceKm={distance / 1000} hasSignal={!!curPos} />
       {/* 上次未上傳的跑步 → 可恢復上傳 */}
       {recover && status !== 'tracking' && !petChoices && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 3300, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
           <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 16, padding: '20px 18px', maxWidth: 340, width: '100%', boxShadow: '0 12px 40px rgba(0,0,0,.6)' }}>
             <div style={{ fontSize: 17, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>🏃 有一趟未上傳的跑步</div>
             <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
-              偵測到上次離開時尚未上傳的跑步紀錄（約 <strong style={{ color: 'var(--fug)' }}>{recover.km} km</strong>、<strong style={{ color: 'var(--tx)' }}>{recover.mins} 分鐘</strong>）。要現在上傳嗎？
+              偵測到 <strong style={{ color: 'var(--tx)' }}>{fmtDateBig(new Date(recover.start))} {fmtHm(new Date(recover.start))}</strong> 開始、尚未上傳的跑步紀錄（約 <strong style={{ color: 'var(--fug)' }}>{recover.km} km</strong>、<strong style={{ color: 'var(--tx)' }}>{recover.mins} 分鐘</strong>）。要現在上傳嗎？
             </div>
             {/* 2026-09-13：恢復上傳失敗時 setErr 的橫幅（zIndex 900）被本彈窗（3300）蓋住，使用者只看到按鈕又能按、
                 像在迴圈——把失敗原因直接顯示在卡片內。 */}
@@ -1925,6 +2184,32 @@ export default function TrackPage() {
               <button onClick={uploadRecovered} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>{uploading ? '上傳中…' : '上傳這趟'}</button>
               <button onClick={discardRecovered} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>捨棄</button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* 只有手動才結束：進行中跑步超過 2 小時未更新（CONTRACT.md §2.2）→ 三選一，絕不自動結束/靜默丟棄 */}
+      {staleResume && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 3300, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 16, padding: '20px 18px', maxWidth: 340, width: '100%', boxShadow: '0 12px 40px rgba(0,0,0,.6)' }}>
+            <div style={{ fontSize: 17, fontWeight: 900, color: 'var(--tx)', marginBottom: 8 }}>🏃 你有一趟跑步還沒結束</div>
+            <div style={{ fontSize: 13.5, color: 'var(--tx-dim)', lineHeight: 1.7 }}>
+              開始於 <strong style={{ color: 'var(--tx)' }}>{fmtHm(new Date(staleResume.start))}</strong>，最後定位 <strong style={{ color: 'var(--hunt)' }}>{Math.floor(activeRunAgeMs(staleResume.active) / 3600000)} 小時 {Math.floor((activeRunAgeMs(staleResume.active) % 3600000) / 60000)} 分</strong>前。
+            </div>
+            {!staleConfirmDiscard ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+                <button onClick={continueStaleResume} style={{ ...btn }}>▶ 繼續追蹤</button>
+                <button onClick={finishStaleResumeUpload} disabled={uploading} style={{ background: 'var(--bg-2)', color: 'var(--tx)', border: 'none', borderRadius: 10, padding: '11px', fontSize: 14.5, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit', opacity: uploading ? 0.6 : 1 }}>{uploading ? '上傳中…' : '結束並上傳'}</button>
+                <button onClick={() => setStaleConfirmDiscard(true)} style={{ background: 'transparent', color: 'var(--hunt)', border: '1px solid rgba(255,75,92,.5)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>捨棄</button>
+              </div>
+            ) : (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 13.5, color: 'var(--hunt)', fontWeight: 700, marginBottom: 10 }}>確定要捨棄這趟跑步？這個動作無法復原。</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <button onClick={discardStaleResume} style={{ background: 'var(--hunt)', color: '#fff', border: 'none', borderRadius: 10, padding: '11px', fontSize: 14.5, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>確定捨棄</button>
+                  <button onClick={() => setStaleConfirmDiscard(false)} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1941,10 +2226,10 @@ export default function TrackPage() {
               {confirmStravaHold.paceS > 0 ? ` · 配速 ${Math.floor(confirmStravaHold.paceS / 60)}:${String(confirmStravaHold.paceS % 60).padStart(2, '0')}/km` : ''}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
-              <button onClick={() => { setConfirmStravaHold(null); cleanup(); setStatus('done'); finalizeUpload(pointsRef.current) }} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>
+              <button onClick={() => { setConfirmStravaHold(null); cleanup(); setStatus('done'); clearActiveRun(); finalizeUpload(pointsRef.current) }} disabled={uploading} style={{ ...btn, opacity: uploading ? 0.6 : 1 }}>
                 {uploading ? '上傳中…' : '直接使用本次數據'}
               </button>
-              <button onClick={() => { leavingRef.current = true; cleanup(); setStatus('done'); window.location.href = '/?profile=sports' }} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>
+              <button onClick={() => { leavingRef.current = true; cleanup(); setStatus('done'); clearActiveRun(); window.location.href = '/?profile=sports' }} disabled={uploading} style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '10px', fontSize: 13.5, cursor: 'pointer', fontFamily: 'inherit' }}>
                 前往確認數據
               </button>
               {/* 反悔/暫不決定：關彈窗、GPS 繼續追蹤續跑（此路徑從未 cleanup/未 setStatus，故直接接續）。 */}
@@ -2122,6 +2407,8 @@ export default function TrackPage() {
       {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗） */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)' }} />
+        {/* 首次開跑提示（CONTRACT.md §2.5，每裝置一次） */}
+        <PocketModeTip active={status === 'tracking'} />
         {/* 「定位中…」遮罩：進頁自動預熱定位期間（還沒拿到第一個座標）顯示，取代看起來像真實地點的假中心；
             拿到 curPos 或逾時/失敗（autoLocating 轉 false）即消失。不擋操作。 */}
         {status === 'idle' && !curPos && autoLocating && (
@@ -2154,6 +2441,15 @@ export default function TrackPage() {
                 <button onClick={dismissErr} aria-label="關閉" style={dismissBtn}>✕</button>
               </div>
             )}
+          </div>
+        )}
+        {/* 中性提示（自動接續成功／資料損毀等，CONTRACT.md）：與上面 warn/err 分開，不用紅色錯誤樣式 */}
+        {toast && (
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 900, padding: '10px 12px 0', pointerEvents: 'none' }}>
+            <div style={{ background: 'var(--bg-1)', color: 'var(--tx)', border: '1px solid var(--fug)', borderRadius: 10, padding: '9px 8px 9px 12px', fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,.4)', pointerEvents: 'auto', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+              <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{toast}</span>
+              <button onClick={() => setToast('')} aria-label="關閉" style={dismissBtn}>✕</button>
+            </div>
           </div>
         )}
         {/* 建議跑步路線資訊條（點地圖打卡點規劃後顯示） */}
@@ -2563,6 +2859,18 @@ export default function TrackPage() {
                 : <button onClick={start} className="skin-btn-start" style={btn}>▶ 開始跑步</button>)
             : <button onClick={() => setShowLogin(true)} style={btn}>請先登入</button>
         )}
+        {/* 螢幕常亮小狀態／缺手勢時的常駐重取膠囊（CONTRACT.md §2.4）：置右，不佔滿版面。 */}
+        {status === 'tracking' && wakeState !== 'unknown' && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+            {showWakeTap ? (
+              <button onClick={acquireWake} style={{ background: 'var(--hunt)', color: '#fff', border: 'none', borderRadius: 999, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>👆 點一下保持螢幕常亮</button>
+            ) : (
+              <span style={{ fontSize: 12, fontWeight: 700, color: wakeState === 'warn' ? 'var(--hunt)' : 'var(--tx-dim)' }}>{wakeState === 'active' ? '螢幕常亮 ✓' : '⚠️ 可能自動鎖定'}</span>
+            )}
+          </div>
+        )}
+        {/* 口袋模式（CONTRACT.md §2.5）：寬版按鈕（不放左下角，右撇子使用者慣用手偏好）。 */}
+        {status === 'tracking' && <button onClick={() => setPocketMode(true)} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)', marginBottom: 8 }}>📱 口袋模式</button>}
         {status === 'tracking' && <button onClick={requestFinish} className="skin-btn-end" style={{ ...btn, background: 'var(--hunt)', color: '#fff' }}>■ 結束並上傳</button>}
         {/* 2026-09-13：上傳中（寵物確認卡送出後 status 已是 done）禁用並顯示「上傳中…」，結束畫面才有上傳回饋 */}
         {/* 上傳失敗/逾時：軌跡仍在（retryUpload＋LS_KEY），直接重送，不必重整走撿回流程 */}

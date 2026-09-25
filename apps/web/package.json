@@ -16,6 +16,7 @@
     "framer-motion": "^11.3.19",
     "html2canvas": "^1.4.1",
     "next": "^15.5.25",
+    "nosleep.js": "^0.12.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "swr": "^2.2.5",
