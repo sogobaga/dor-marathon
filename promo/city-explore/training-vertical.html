@@ -164,8 +164,15 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
 #s4 .picker{position:absolute;left:84px;top:690px;width:912px;padding:14px 0;border-radius:26px;background:rgba(30,34,44,.97);border:2px solid var(--line-2);box-shadow:0 30px 90px rgba(0,0,0,.7);z-index:5;opacity:0;animation:pickA 1.3s both 19.3s}
 @keyframes pickA{0%{opacity:0;transform:translateY(20px) scale(.96)}12%,85%{opacity:1;transform:none}100%{opacity:0;transform:scale(.98)}}
 #s4 .picker div{padding:9px 34px;font-size:30px;font-variant-numeric:tabular-nums;color:var(--tx-dim)}
-#s4 .picker div.on{background:rgba(45,229,154,.16);color:var(--fug);font-weight:800}
-#s4 .picker div.on::before{content:'✓ '}
+#s4 .picker div::before{content:'✓ ';visibility:hidden}
+#s4 .picker div.o5{background:rgba(45,229,154,.16);color:var(--fug);font-weight:800;animation:pkOff .05s forwards 20.1s}
+#s4 .picker div.o5::before{visibility:visible;animation:pkHide .05s forwards 20.1s}
+#s4 .picker div.o7{animation:pkOn .05s forwards 20.1s}
+#s4 .picker div.o7::before{animation:pkShow .05s forwards 20.1s}
+@keyframes pkOff{to{background:transparent;color:var(--tx-dim);font-weight:400}}
+@keyframes pkOn{to{background:rgba(45,229,154,.16);color:var(--fug);font-weight:800}}
+@keyframes pkHide{to{visibility:hidden}}
+@keyframes pkShow{to{visibility:visible}}
 #s4 .cardA{position:absolute;left:0;top:0;width:390px;animation:upS .6s both 19.1s,out .3s forwards 21.8s}
 #s4 .cardB{position:absolute;left:0;top:0;width:390px;opacity:0;animation:in .3s both 21.8s}
 #s4 .swapA{animation:out .05s forwards 20.4s}
@@ -197,7 +204,6 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
 #s5 .zoom{position:absolute;left:84px;top:540px}
 #s5 .zoom .app{position:relative;transform:scale(2.3)}
 #s5 .fr{animation:upS .6s both 25.3s,out .3s forwards 28.3s}
-#s5 .fr .adj i.pl{animation:press .3s ease-in-out 2 both 26.2s}
 #s5 .fr .go{animation:press .3s ease-in-out both 27.7s}
 #s5 .hudwrap{position:absolute;left:0;top:0;opacity:0;animation:upS .5s both 28.4s}
 #s5 .tapF{left:540px;top:950px;animation:tapA .7s ease-out both 27.6s}
@@ -393,13 +399,13 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
     </div>
     <div class="picker">
       <div>Lv.1 · 輕鬆 7:57-8:33</div><div>Lv.2 · 輕鬆 7:17-7:53</div><div>Lv.3 · 輕鬆 6:42-7:18</div>
-      <div>Lv.4 · 輕鬆 6:12-6:48</div><div>Lv.5 · 輕鬆 5:42-6:18</div><div>Lv.6 · 輕鬆 5:15-5:51</div>
-      <div class="on">Lv.7 · 輕鬆 4:48-5:24</div><div>Lv.8 · 輕鬆 4:24-5:00</div><div>Lv.9 · 輕鬆 4:02-4:38</div>
+      <div>Lv.4 · 輕鬆 6:12-6:48</div><div class="o5">Lv.5 · 輕鬆 5:42-6:18</div><div>Lv.6 · 輕鬆 5:15-5:51</div>
+      <div class="o7">Lv.7 · 輕鬆 4:48-5:24</div><div>Lv.8 · 輕鬆 4:24-5:00</div><div>Lv.9 · 輕鬆 4:02-4:38</div>
     </div>
     <div class="tap tap1"></div>
     <div class="tap tap2"></div>
     <div class="side">
-      <div class="body">選一次配速等級，每張課表的<br>目標配速、總距離、預估時間一起換算。</div>
+      <div class="body">選一次配速等級，每張課表的<br>目標配速與預估時間一起換算。</div>
       <div class="chipline"><span class="chip">🎯 配速跟著等級走</span><span class="chip">−／＋ 調距離・調趟數</span></div>
     </div>
     <div class="note" style="top:1540px">＊依課表庫預設資料換算，實際以 App 為準</div>
@@ -416,7 +422,7 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
       <div class="app">
         <div class="a-card fr" style="width:390px">
           <div class="nm">🏃 Free Run</div><div class="ds">自由跑 · 只設時間、不控配速與距離</div>
-          <div class="adj"><i>−</i><span>30 分鐘</span><i class="pl">＋</i></div>
+          <div class="adj"><i>−</i><span>30 分鐘</span><i>＋</i></div>
           <div class="ft">時間到會提示，並可繼續累積里程</div>
           <div class="go">▶ 開始訓練</div>
         </div>
@@ -480,7 +486,7 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
         <div class="hud fin" style="border-color:var(--fug)">
           <div style="font-size:11px;letter-spacing:.2em;color:var(--fug);font-weight:800">自主訓練</div>
           <div style="font-size:16px;font-weight:900;margin:4px 0 8px">間歇 400×8</div>
-          <div style="text-align:center;font-size:17px;font-weight:900;padding:8px 0" class="tab">✓ 訓練完成 · 用時 38:05</div>
+          <div style="text-align:center;font-size:17px;font-weight:900;padding:8px 0" class="tab">✓ 訓練完成</div>
           <div style="margin-top:12px;background:var(--fug);color:var(--fug-ink);font-weight:800;border-radius:10px;padding:10px;font-size:14px;text-align:center">▶ 繼續跑步</div>
         </div>
       </div>
@@ -505,7 +511,7 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
     <div class="inner center">
       <div class="logo"><img class="dor-icon" src="../../apps/web/public/icon-512.png"></div>
       <div class="cta">挑一份課表，<br>今天就<span class="g">開跑</span></div>
-      <div class="entry"><span class="ic">🏃</span><div><b>自主訓練</b><span>打造你的專屬課表 ›</span></div></div>
+      <div class="entry"><div><b>自主訓練</b><span>打造你的專屬課表 ›</span></div></div>
       <div class="url">www.dor.tw</div>
       <div class="vip">※ 自主訓練為 VIP 專屬功能</div>
     </div>
@@ -530,7 +536,7 @@ body{font-family:'Noto Sans TC','PingFang TC','WenQuanYi Zen Hei',sans-serif;col
     $('im').textContent = m;
     $('ibar').style.width = (m / 4) + '%';
     const live = $('ilive');
-    if (t < 33.6) { live.textContent = ''; }
+    if (t < 33.6) { live.textContent = '--:--/km'; live.style.color = 'var(--tx-dim)'; }
     else if (t < 35.6) { live.textContent = '3:56/km · 配速剛好 ✓'; live.style.color = 'var(--fug)'; }
     else { live.textContent = '4:09/km · 再加速 ↑'; live.style.color = 'var(--gold)'; }
   }

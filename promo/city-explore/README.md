@@ -65,3 +65,27 @@ node render.mjs --page index-vertical.html --out dor-city-explore-promo-vertical
 ```bash
 node render.mjs --page gps-vertical.html --out dor-gps-tracking-promo-vertical.mp4
 ```
+
+## 自主訓練・課表庫 功能介紹（直式）
+
+成品：`dor-training-library-promo-vertical.mp4`（1080×1920、47 秒，Reels / Shorts），原始檔 `training-vertical.html`。
+與其他直式版共用時間軸節點與配樂。
+
+| 秒數 | 段落 | 內容 |
+|---|---|---|
+| 0–6 | 開場 | 「今天要練什麼？配速該抓多少？」＋課表庫真實課表名稱飛入 |
+| 6–11 | 標題 | 自主訓練・📚 課表庫・打造你的專屬課表 |
+| 11–18 | STEP 01 分類挑課表 | 課表庫畫面捲動：恢復 → 輕鬆 → … → 間歇 → 亞索 800 → 重複跑，12 個分類標籤 |
+| 18–25 | STEP 02 選配速等級 | Lv.5 → Lv.7，間歇 400×8 目標配速 4:29–4:45 → 3:48–4:04、預估 43 → 38 分；輕鬆跑 ＋1K（8 → 9 K、41 → 46 分） |
+| 25–31 | STEP 03 Free Run | 只設時間（10–240 分鐘）→ HUD 倒數 0:30:00 |
+| 31–37 | STEP 04 GPS 逐段帶跑 | 3‑2‑1 → 間歇 400×8 第 2/17 段、目標 3:48–4:04 /km、「配速剛好 ✓ ／再加速 ↑」 |
+| 37–42 | STEP 05 跑完照常記錄 | 「✓ 訓練完成」→「■ 結束並上傳」→「✓ 已記錄」、里程 EXP、訓練月曆（VIP）、不評星不另發獎勵 |
+| 42–47 | 結尾 | 挑一份課表，今天就開跑・「自主訓練／打造你的專屬課表 ›」・www.dor.tw・VIP 註記 |
+
+- 課表名稱、描述、分類、配速等級、目標配速／總距離／預估時間：依 migration 082 + 085 預設資料，以 `apps/web/src/lib/workout.ts` 換算並逐一驗證；後台可改，發布前建議對照正式站
+- 介面文字取自 `TrainingScreen.tsx`、`WorkoutHud.tsx`、`MemberPanel.tsx`；跑步中即時數字與結果為示意（畫面有標註）
+- **發布前確認**：正式站 `app_settings.training_entry_state` 需為 `open`（後台「自主訓練入口」→ 顯示且全部開放），否則多數使用者看不到入口按鈕
+
+```bash
+node render.mjs --page training-vertical.html --out dor-training-library-promo-vertical.mp4
+```
