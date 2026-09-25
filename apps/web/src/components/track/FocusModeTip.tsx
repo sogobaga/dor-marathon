@@ -29,14 +29,15 @@ export default function FocusModeTip({ active }: { active: boolean }) {
 
   return (
     <div style={{ position: 'absolute', left: 12, right: 12, top: 56, zIndex: 1000, pointerEvents: 'none' }}>
-      <div style={{ pointerEvents: 'auto', background: 'var(--bg-1)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '12px 14px', fontSize: 13, lineHeight: 1.7, boxShadow: '0 6px 24px rgba(0,0,0,.4)', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <span style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ pointerEvents: 'auto', background: 'var(--bg-1)', color: 'var(--tx)', border: '1px solid var(--line-2)', borderRadius: 12, padding: '12px 14px', fontSize: 13, lineHeight: 1.7, boxShadow: '0 6px 24px rgba(0,0,0,.4)' }}>
+        <div>
           跑步時請讓螢幕開著。要放口袋請先切入「專注模式」：10 秒沒碰螢幕會自動上鎖防誤觸，長按 1.5 秒解鎖。按側邊鍵鎖屏會讓 GPS 暫停，解鎖後會自動接續。
-        </span>
+        </div>
+        {/* 「知道了」＝綠底主按鈕、寬版占滿（2026-09-25 使用者要求：不用灰色小膠囊；與 track 頁主按鈕同色系 --fug/--fug-ink） */}
         <button
           onClick={dismiss}
           aria-label="知道了"
-          style={{ background: 'rgba(255,255,255,.12)', border: 'none', color: 'var(--tx)', fontSize: 13, fontWeight: 700, cursor: 'pointer', padding: '4px 10px', borderRadius: 8, flexShrink: 0 }}
+          style={{ display: 'block', width: '100%', marginTop: 10, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', fontSize: 14, fontWeight: 800, cursor: 'pointer', padding: '10px 12px', borderRadius: 10, fontFamily: 'inherit' }}
         >知道了</button>
       </div>
     </div>
