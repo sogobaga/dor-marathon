@@ -1,4 +1,4 @@
-# DOR｜城市探索 產品宣傳影片
+# DOR 產品宣傳影片（城市探索／GPS 跑步追蹤）
 
 成品：
 - `dor-city-explore-promo.mp4`：1920×1080、30fps、47 秒，H.264 Main + AAC，含原創合成配樂
@@ -43,3 +43,25 @@ node render.mjs --page index-vertical.html --out dor-city-explore-promo-vertical
 ```
 
 需求：Node + playwright、ffmpeg（PATH 或 `FFMPEG=` 指定）、python3。字型首次執行時自動從 Google Fonts 下載到 `fonts/`（不進 git）。
+
+## GPS 跑步追蹤 功能介紹（直式）
+
+成品：`dor-gps-tracking-promo-vertical.mp4`（1080×1920、47 秒，Reels / Shorts），原始檔 `gps-vertical.html`。
+與城市探索直式版共用時間軸節點與配樂。
+
+| 秒數 | 段落 | 內容 |
+|---|---|---|
+| 0–6 | 開場 | 夜色中畫出跑步軌跡與公里標記：「不用站上起跑線，每一次出門，都算數。」 |
+| 6–11 | 標題 | GPS 跑步追蹤・打開手機，城市就是你的跑道 |
+| 11–18 | STEP 01 一鍵開跑 | 「▶ 開始跑步」→「■ 結束並上傳」、GPS 精度、螢幕保持喚醒、未上傳跑步可復原 |
+| 18–25 | STEP 02 即時數據 | 距離／時間／平均配速／分段即時配速、綠色軌跡與每公里標記、移動時間 |
+| 25–31 | STEP 03 每公里應援 | 啦啦隊＋內建鼓勵語、里程獎勵進度條（每滿 1km +EXP +DP） |
+| 31–37 | STEP 04 課表挑戰 | 第 N/M 段、目標配速、「再加速 ↑／稍放慢 ↓／配速剛好 ✓」、星數規則、城市探索關主挑戰 |
+| 37–42 | STEP 05 結束並上傳 | 「✓ 已記錄」結果卡、每公里分段、計入活動／賽事、疑似搭車自動排除、Strava／手錶同步 |
+| 42–47 | 結尾 | 今天的路線，由你來畫・▶ 開始跑步・www.dor.tw |
+
+介面文字取自 `apps/web/src/app/track/page.tsx`、`components/WorkoutHud.tsx`、`lib/runGoal.ts`；距離／時間／配速與課表目標為示意（畫面有標註）。
+
+```bash
+node render.mjs --page gps-vertical.html --out dor-gps-tracking-promo-vertical.mp4
+```
