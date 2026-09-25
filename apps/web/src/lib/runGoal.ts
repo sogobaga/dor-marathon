@@ -40,6 +40,15 @@ export function resolveRunGoal(
   return { type: 'none' }
 }
 
+// 目標進度比例（0..1，未夾限，呼叫端自行 clamp）：供 RaceFocusMode 的 GoalProgressBar 與（口袋模式併入
+// 專注模式後的）FocusLockScreen 鎖定畫面百分比共用同一套算法——兩處若各自運算，容易出現同一趟跑步在
+// 兩個畫面顯示不同百分比的「放大鏡原則」違反（見 RaceFocusMode.tsx 檔頭口徑決策說明）。
+export function goalProgressRatio(goal: RunGoal, distanceM: number, elapsedS: number): number {
+  if (goal.type === 'distance') return goal.totalM > 0 ? distanceM / goal.totalM : 0
+  if (goal.type === 'time') return goal.totalS > 0 ? elapsedS / goal.totalS : 0
+  return (distanceM % 1000) / 1000 // none：每跨一整公里自然歸零，持續有進度感
+}
+
 // 公里數文字：整數不帶小數（"10"），否則四捨五入到小數第 1 位（"21.1"）——呼叫端自行接上單位（"km"）。
 export function fmtKm(km: number): string {
   const v = Math.round(Math.max(0, km) * 10) / 10

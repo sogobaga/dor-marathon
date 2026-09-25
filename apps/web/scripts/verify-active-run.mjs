@@ -84,5 +84,11 @@ try {
 check('localStorage 全面拋錯不讓呼叫端跟著炸', !threw)
 throwing = false
 
+// 10. focusOpen 往返（口袋模式併入專注模式，見 CONTRACT.md track_focus_merge）
+writeActiveRun({ focusOpen: true })
+check('focusOpen 寫入 true 可讀回', readActiveRun().focusOpen === true)
+writeActiveRun({ distanceM: 400 }) // 不帶 focusOpen，合併寫入語意應維持既有值（同 raceStrategyId 規則）
+check('focusOpen 在後續合併寫入未被清掉', readActiveRun().focusOpen === true)
+
 console.log(failed === 0 ? `\n全部通過（0 失敗）` : `\n${failed} 項失敗`)
 process.exit(failed === 0 ? 0 : 1)

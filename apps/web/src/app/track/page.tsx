@@ -31,8 +31,7 @@ import { APP_VERSION } from '@/lib/version'
 import RaceFocusMode from './RaceFocusMode'
 import CheerShow from './CheerShow'
 import { readActiveRun, writeActiveRun, touchActiveRun, clearActiveRun, activeRunAgeMs, isActiveRunFresh, type ActiveRunState, type ActiveRunWorkoutSnapshot } from '@/lib/activeRun'
-import PocketMode from '@/components/track/PocketMode'
-import PocketModeTip from '@/components/track/PocketModeTip'
+import FocusModeTip from '@/components/track/FocusModeTip'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -120,7 +119,10 @@ export default function TrackPage() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [wakeState, setWakeState] = useState<'active' | 'warn' | 'unknown'>('unknown') // 螢幕常亮狀態：小狀態膠囊顯示用（'active'＝原生或影片備援任一成功）
   const [showWakeTap, setShowWakeTap] = useState(false) // Wake Lock 因缺使用者手勢被拒 → 顯示「點一下保持螢幕常亮」常駐小膠囊
-  const [pocketMode, setPocketMode] = useState(false) // 口袋模式覆蓋層開關
+  // 口袋模式併入專注模式（2026-09-25）：不再有獨立 state/開關，鎖定行為完全交給 RaceFocusMode 內部的
+  // locked 狀態；這裡只保留「重開頁面自動接續時，專注模式要不要直接開啟」這個一次性初始值，見
+  // resumeActiveRun()／start() 對它的寫入，以及下方 <RaceFocusMode initialOpen=.../> 的讀取。
+  const focusInitialOpenRef = useRef<boolean | undefined>(undefined)
   const [showStartTip, setShowStartTip] = useState(false) // 從賽事詳情頁「前往挑戰」進入（?from=race）→ idle 時顯示一次性新手提醒，可點擊/X關閉
   const [uploading, setUploading] = useState(false)
   // 運動部「揮汗有禮」（gov500_entry，見 lib/gov500.ts 頂部註解說明 2026-09-06 規則變動）：
@@ -1226,18 +1228,22 @@ export default function TrackPage() {
     // Phase B2 重置（collective 貢獻節流）
     setRaceGroupProgress(null); lastContributedDistRef.current = 0; lastContributeAtRef.current = 0; contributeBusyRef.current = false
     startRef.current = Date.now()
+    // 這是全新一趟，不是重開頁面接續——專注模式初始開關交回 RaceFocusMode 既有預設規則（有 strategy
+    // 才自動開啟），不沿用同一 session 上一趟殘留的值（見 focusInitialOpenRef 宣告處說明）。
+    focusInitialOpenRef.current = undefined
     setStatus('tracking')
     // 只有手動才結束（CONTRACT.md §2.1）：開跑當下建立 dor_gps_active 快照，href 含完整 query
     // （例如 ?strategy=…），全站導回與三選一彈窗都靠它。workout 先清空——若是透過 beginWorkout()
     // 開跑，緊接著那裡會補寫正確的 workout/woPhase 快照（此處 start() 拿到的 workout 是尚未更新的舊值，
-    // 見 beginWorkout() 呼叫處註解）。
+    // 見 beginWorkout() 呼叫處註解）。focusOpen 先寫 false：交給 RaceFocusMode 掛載後的 onOpenChange
+    // 依它自己判斷出的初始 hidden 值補寫真正結果（避免這裡與 initialOpen=undefined 情境的預設規則重複一份）。
     try {
       const href = window.location.pathname + window.location.search
       writeActiveRun({
         startedAt: startRef.current, href, lastSeenAt: Date.now(),
         movingAccumS: 0, distanceM: 0, rawDistanceM: 0, excludedSegs: 0, excludedKm: 0,
         splits: [], splitMarks: [], movingSplitMarks: [], calibK: calibKRef.current,
-        workout: null, woPhase: undefined, woStepIdx: undefined,
+        workout: null, woPhase: undefined, woStepIdx: undefined, focusOpen: false,
       })
     } catch { /* ignore */ }
     unlockAudio() // 在使用者手勢內解鎖音訊（iOS 必須）
@@ -1552,6 +1558,10 @@ export default function TrackPage() {
       freetrainRef.current = wo.kind === 'freetrain'
     }
     setRecover(null) // 有進行中跑步時不該同時顯示「上次未上傳」卡片
+    // 口袋模式併入專注模式：接續前若專注模式是開啟的（focusOpen），重開頁面直接把它開回來（未鎖定，
+    // 見 RaceFocusMode 的 initialOpen prop）；false／undefined 交回它既有的預設規則。必須在 setStatus
+    // 觸發 RaceFocusMode 掛載那次 render 之前指定，ref 賦值不觸發 re-render，順序上沒有競態。
+    focusInitialOpenRef.current = active.focusOpen
     setStatus('tracking')
     armTimers()
     const ageMs = activeRunAgeMs(active)
@@ -2167,8 +2177,6 @@ export default function TrackPage() {
    <GoogleAuthProvider>
     <PhoneFrame>
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
-      {/* 口袋模式（CONTRACT.md §2.5）：z-index 4000，最高層——一開就蓋住所有東西，含其餘覆蓋層 */}
-      <PocketMode open={pocketMode && status === 'tracking'} onUnlock={() => setPocketMode(false)} elapsedS={elapsed} distanceKm={distance / 1000} hasSignal={!!curPos} />
       {/* 上次未上傳的跑步 → 可恢復上傳 */}
       {recover && status !== 'tracking' && !petChoices && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 3300, background: 'rgba(0,0,0,.66)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
@@ -2327,7 +2335,13 @@ export default function TrackPage() {
           比較、不再上畫面（見 RaceFocusMode 內口徑決策註解）。下方一般面板「移動時間/移動配速/分段」
           那排不受影響。 */}
       {status === 'tracking' && (
-        <RaceFocusMode strategy={raceStrategy} distanceM={distance} elapsed={elapsed} avgPace={avgPace} segLivePace={segLivePace} movingSegLivePace={movingSegLivePace} goal={runGoal} canTestCheer={canTestCheer} onTestCheer={testCheer} />
+        <RaceFocusMode
+          strategy={raceStrategy} distanceM={distance} elapsed={elapsed} avgPace={avgPace}
+          segLivePace={segLivePace} movingSegLivePace={movingSegLivePace} movingAvgPace={movingAvgPace}
+          hasSignal={!!curPos} goal={runGoal} canTestCheer={canTestCheer} onTestCheer={testCheer}
+          initialOpen={focusInitialOpenRef.current}
+          onOpenChange={(open) => writeActiveRun({ focusOpen: open })}
+        />
       )}
       {/* 每公里鼓勵語「泡泡對話框+啦啦隊角色」演出（v1.1.664）：獨立掛在本頁頂層、不論 status，
           z-index 650 蓋過上面的 RaceFocusMode（600）——hidden 分支切回一般畫面時本節點仍在，不需要
@@ -2407,8 +2421,8 @@ export default function TrackPage() {
       {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗） */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)' }} />
-        {/* 首次開跑提示（CONTRACT.md §2.5，每裝置一次） */}
-        <PocketModeTip active={status === 'tracking'} />
+        {/* 首次開跑提示（口袋模式併入專注模式，每裝置一次） */}
+        <FocusModeTip active={status === 'tracking'} />
         {/* 「定位中…」遮罩：進頁自動預熱定位期間（還沒拿到第一個座標）顯示，取代看起來像真實地點的假中心；
             拿到 curPos 或逾時/失敗（autoLocating 轉 false）即消失。不擋操作。 */}
         {status === 'idle' && !curPos && autoLocating && (
@@ -2869,8 +2883,6 @@ export default function TrackPage() {
             )}
           </div>
         )}
-        {/* 口袋模式（CONTRACT.md §2.5）：寬版按鈕（不放左下角，右撇子使用者慣用手偏好）。 */}
-        {status === 'tracking' && <button onClick={() => setPocketMode(true)} style={{ ...btn, background: 'var(--bg-2)', color: 'var(--tx)', marginBottom: 8 }}>📱 口袋模式</button>}
         {status === 'tracking' && <button onClick={requestFinish} className="skin-btn-end" style={{ ...btn, background: 'var(--hunt)', color: '#fff' }}>■ 結束並上傳</button>}
         {/* 2026-09-13：上傳中（寵物確認卡送出後 status 已是 done）禁用並顯示「上傳中…」，結束畫面才有上傳回饋 */}
         {/* 上傳失敗/逾時：軌跡仍在（retryUpload＋LS_KEY），直接重送，不必重整走撿回流程 */}

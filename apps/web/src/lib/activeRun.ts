@@ -42,6 +42,13 @@ export interface ActiveRunState {
   workout?: ActiveRunWorkoutSnapshot | null
   woPhase?: 'idle' | 'countdown' | 'running' | 'done'
   woStepIdx?: number
+  // 口袋模式併入專注模式（2026-09-25）：專注模式目前是否開啟（RaceFocusMode 的 hidden 取反），切入/退出
+  // 時由該元件的 onOpenChange 寫入。重開頁面自動接續（resumeActiveRun）時若讀到 true → 專注模式直接
+  // 開啟（未鎖定，開啟後一樣走 10 秒無觸控自動上鎖），維持接續前的使用情境；讀到顯式 false → 尊重使用者
+  // 上次手動退出的選擇，同樣直接還原為關閉（不會被 strategy 蓋回自動開啟）；只有 undefined（從未寫入，
+  // 例如舊資料或尚未進出過專注模式）才交回 RaceFocusMode 既有預設規則（有 strategy 才自動開啟）。見
+  // RaceFocusMode.tsx `initialOpen !== undefined ? !initialOpen : !strategy`。
+  focusOpen?: boolean
 }
 
 function isValid(data: unknown): data is ActiveRunState {
@@ -84,6 +91,7 @@ export function writeActiveRun(patch: Partial<ActiveRunState>): void {
       workout: patch.workout !== undefined ? patch.workout : prev?.workout,
       woPhase: patch.woPhase !== undefined ? patch.woPhase : prev?.woPhase,
       woStepIdx: patch.woStepIdx !== undefined ? patch.woStepIdx : prev?.woStepIdx,
+      focusOpen: patch.focusOpen !== undefined ? patch.focusOpen : prev?.focusOpen,
     }
     localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify(next))
   } catch {

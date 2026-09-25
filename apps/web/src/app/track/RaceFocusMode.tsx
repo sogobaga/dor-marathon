@@ -35,7 +35,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FUEL_KIND_LABEL, type RaceStrategy, type StrategySegment } from '@/lib/api'
-import { fmtKm, type RunGoal } from '@/lib/runGoal'
+import { fmtKm, goalProgressRatio, type RunGoal } from '@/lib/runGoal'
+import FocusLockScreen from '@/components/track/FocusLockScreen'
+
+// 口袋模式併入專注模式（2026-09-25 CONTRACT.md §2）：自動上鎖＝專注模式開啟（非 hidden）且連續這麼久
+// 沒有任何 pointer/touch 事件 → 進入鎖定畫面（FocusLockScreen，見下方 locked 狀態與 idle 計時器）。
+const FOCUS_AUTO_LOCK_MS = 10000
 
 // 取整口徑必須與 track/page.tsx 的 fmtTime 完全一致（一律 Math.floor）：elapsed 是帶小數的秒數，
 // 若這裡先 Math.round、主面板 Math.floor，同一個值會顯示成差 1 秒的兩個數字（使用者實測回報過）。
@@ -68,7 +73,8 @@ function predictedTimeAtKm(km: number, segments: StrategySegment[]): number {
 type PaceDir = 'fast' | 'slow'
 
 export default function RaceFocusMode({
-  strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace, goal, canTestCheer, onTestCheer,
+  strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace, movingAvgPace, hasSignal, goal,
+  canTestCheer, onTestCheer, initialOpen, onOpenChange,
 }: {
   strategy: RaceStrategy | null // null＝一般跑步/課表/個人任務等沒有賽事策略的情境，只顯示基本 4 大字指標
   distanceM: number // 目前有效距離（公尺）——與頁面主面板「距離」同一份數據（distRef）
@@ -80,15 +86,48 @@ export default function RaceFocusMode({
   // 同一個值，供「分段即時配速」大字顯示（放大鏡原則，見上方口徑決策說明）
   movingSegLivePace: number // 目前這 1km 的移動時間即時配速（秒/公里；未達門檻為 0）——只供配速偏差
   // 提醒引擎內部比較用，不再上畫面（見上方口徑決策說明）
+  movingAvgPace: number // 移動時間平均配速（秒/公里；未達門檻為 0）——頁面既有 movingAvgPace，與主面板
+  // 「移動配速」同一個值；供鎖定畫面（FocusLockScreen）「移動配速」大字使用（口袋模式併入專注模式）
+  hasSignal: boolean // 目前是否有 GPS 訊號（頁面既有 !!curPos）——只供鎖定畫面的訊號點顯示
   goal: RunGoal // 本次跑步目標（distance/time/none，見 lib/runGoal.ts resolveRunGoal）——驅動進度條
   canTestCheer?: boolean // 白名單測試應援按鈕（cheer_test_entry==='shown'，見 page.tsx）——只在完整專注
   // 模式的「顯示完整介面」按鈕旁多渲染一顆同款按鈕；hidden 分支不需要（一般畫面右上角已有一顆，見 page.tsx）
   onTestCheer?: () => void // 按下時觸發一次應援演出（page.tsx testCheer，內部呼叫 fireCheer）
+  initialOpen?: boolean // 由父層控制初始是否開啟（重開頁面自動接續時，若 activeRun.focusOpen 為真則帶
+  // true）；省略時維持既有預設規則：有 strategy 開跑自動進入，否則不自動進入（見下方 hidden 初始值）
+  onOpenChange?: (open: boolean) => void // hidden 狀態改變（含掛載當下）時通知父層——父層藉此把
+  // open 狀態寫進 activeRun.focusOpen，供重開頁面判斷是否要直接開啟專注模式
 }) {
-  // 「顯示完整介面」：暫時隱藏本覆蓋層，露出原本 UI。初始值＝有 strategy 時預設開啟（維持既有「載入策略
-  // 開跑自動進入專注模式」行為），一般跑步（無 strategy）預設不自動進入、顯示切換鈕讓使用者手動切入。
-  const [hidden, setHidden] = useState(() => !strategy)
+  // 「顯示完整介面」：暫時隱藏本覆蓋層，露出原本 UI。初始值優先吃父層帶入的 initialOpen（重開頁面自動
+  // 接續，見上方 prop 說明）；未帶時維持既有規則：有 strategy 時預設開啟（載入策略開跑自動進入專注模式），
+  // 一般跑步（無 strategy）預設不自動進入、顯示切換鈕讓使用者手動切入。
+  const [hidden, setHidden] = useState(() => (initialOpen !== undefined ? !initialOpen : !strategy))
+  useEffect(() => { onOpenChange?.(!hidden) }, [hidden]) // eslint-disable-line react-hooks/exhaustive-deps -- 只在 hidden 變動（含掛載當下）通知父層，onOpenChange 允許每次 render 傳新的閉包
   const distKm = distanceM / 1000
+
+  // ── 鎖定狀態（口袋模式併入專注模式）：專注模式開啟中連續 FOCUS_AUTO_LOCK_MS 沒有任何 pointer/touch
+  // 事件 → 自動上鎖；手動「🔒 鎖定」鈕立即上鎖；鎖定畫面（FocusLockScreen）長按 1.5 秒解鎖。
+  // hidden 或已經 locked 時不需要計時（連 listener 都不掛），退出專注模式（顯示完整介面）時一併清 locked。
+  const [locked, setLocked] = useState(false)
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (hidden || locked) {
+      if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null }
+      return
+    }
+    const arm = () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
+      idleTimerRef.current = setTimeout(() => setLocked(true), FOCUS_AUTO_LOCK_MS)
+    }
+    arm()
+    window.addEventListener('pointerdown', arm)
+    window.addEventListener('touchstart', arm, { passive: true })
+    return () => {
+      window.removeEventListener('pointerdown', arm)
+      window.removeEventListener('touchstart', arm)
+      if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null }
+    }
+  }, [hidden, locked])
 
   // 目前所在分段：落在 [from_km, to_km) 的那一段；已超過總距離則沿用最後一段的目標配速繼續顯示
   // （以下 strategy 專屬邏輯全部短路：無 strategy 時維持安全的空/零值，不渲染對應區塊）
@@ -193,6 +232,24 @@ export default function RaceFocusMode({
     )
   }
 
+  if (locked) {
+    // 鎖定畫面（口袋模式併入專注模式）：每個數字都用這裡已經算好的值傳下去，FocusLockScreen 本身不另算
+    // （見該檔檔頭說明）。progressPct 與上面 GoalProgressBar 共用 goalProgressRatio，同一套算法。
+    const progressPct = Math.min(1, Math.max(0, goalProgressRatio(goal, distanceM, elapsed))) * 100
+    const fuelLabel = strategy && hasFuel && due ? `請進行補給：${FUEL_KIND_LABEL[fp.kind]}` : null
+    return (
+      <FocusLockScreen
+        onUnlock={() => setLocked(false)}
+        elapsedS={elapsed}
+        distanceKm={distKm}
+        hasSignal={hasSignal}
+        movingPaceS={movingAvgPace}
+        progressPct={progressPct}
+        fuelLabel={fuelLabel}
+      />
+    )
+  }
+
   return (
     <div data-skin="default" style={{
       position: 'fixed', inset: 0, zIndex: 600, background: 'rgba(0,0,0,.82)',
@@ -264,8 +321,16 @@ export default function RaceFocusMode({
             }}
           >📣 測試應援</button>
         )}
+        {/* 手動上鎖（口袋模式併入專注模式）：立即進入 FocusLockScreen，不等 10 秒無觸控自動上鎖 */}
         <button
-          onClick={() => setHidden(true)}
+          onClick={() => setLocked(true)}
+          style={{
+            background: 'rgba(255,255,255,.1)', color: 'var(--tx)', border: '1px solid var(--line-2)',
+            borderRadius: 999, padding: '9px 15px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+          }}
+        >🔒 鎖定</button>
+        <button
+          onClick={() => { setHidden(true); setLocked(false) }}
           style={{
             background: 'rgba(255,255,255,.1)', color: 'var(--tx)', border: '1px solid var(--line-2)',
             borderRadius: 999, padding: '9px 15px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
@@ -292,21 +357,19 @@ function Metric({ label, value, unit, size }: { label: string; value: string; un
 // 全部走 goal（見 lib/runGoal.ts resolveRunGoal）；none（無單一目標）改成「每 1 km 一段」自然歸零的
 // 分段進度，讓一般跑步/混合課表也有個持續推進的視覺回饋。
 function GoalProgressBar({ goal, distanceM, elapsed }: { goal: RunGoal; distanceM: number; elapsed: number }) {
-  let leftLabel: string, rightLabel: string, ratio: number, curLabel: string | null = null, hint: string | null = null
+  let leftLabel: string, rightLabel: string, curLabel: string | null = null, hint: string | null = null
+  const ratio = goalProgressRatio(goal, distanceM, elapsed) // 與鎖定畫面（FocusLockScreen）進度百分比同一套算法，見該函式檔頭說明
   if (goal.type === 'distance') {
     leftLabel = '0 km'
     rightLabel = `${fmtKm(goal.totalM / 1000)} km`
-    ratio = goal.totalM > 0 ? distanceM / goal.totalM : 0
     curLabel = `${fmtKm(distanceM / 1000)} km`
   } else if (goal.type === 'time') {
     leftLabel = '00:00:00'
     rightLabel = fmtTime(goal.totalS) // 沿用檔內既有 fmtTime（floor，非 round）——與「時間」大字同一把尺
-    ratio = goal.totalS > 0 ? elapsed / goal.totalS : 0
     curLabel = fmtTime(elapsed)
   } else {
     leftLabel = '0 km'
     rightLabel = '1 km'
-    ratio = (distanceM % 1000) / 1000 // 每跨一整公里自然歸零，持續有進度感
     hint = '每 1 km 一段'
   }
   const pct = Math.min(1, Math.max(0, ratio)) * 100
