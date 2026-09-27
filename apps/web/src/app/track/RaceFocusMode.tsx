@@ -40,8 +40,22 @@
 // 原樣不動——那是給一般訓練情境參考用的移動口徑，與本疊層各自獨立。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { FUEL_KIND_LABEL, type RaceStrategy, type StrategySegment } from '@/lib/api'
 import { fmtKm, goalProgressRatio, type RunGoal } from '@/lib/runGoal'
+
+// 未來科幻世界（scifi）變體專用（CONTRACT.md §1／§4.4）：大字數字改 Orbitron＋青色光暈，其餘 skin
+// 不受影響。2026-09-27 review 修正：本檔是 track/page.tsx 靜態 import、對所有 /track 訪客無條件掛載，
+// 若在這裡頂層直接呼叫 next/font/google 的 Orbitron()，會讓它產生的 @font-face CSS chunk 進入 /track
+// 首屏 app-build-manifest——非白名單使用者（或白名單但偏好關閉）也會多一份先前不存在的 CSS 請求，
+// 牴觸 CONTRACT.md §1「所有 scifi 程式碼在 data-skin="scifi" 或動態 import 之後」的硬性隔離規則
+// （原本的實作已用像素/網路請求量測證實：即使字型檔本體因瀏覽器 lazy font loading 不會真的被下載，
+// 這個 CSS chunk 本身已經是一個對所有人都改變的可觀測事實）。改法：真正持有 Orbitron() 呼叫的程式碼
+// 搬到 track/scifi/font.ts（與 SciFiMap.tsx 共用同一實例），本檔改用 next/dynamic 動態載入
+// track/scifi/OrbitronText.tsx，且只在下方 Metric 元件 `scifi` 為真時才把它放進 JSX 樹——非白名單／
+// 偏好關閉時這個節點根本不會建立，dynamic import 的 import() 不會觸發，本檔本身不再有任何頂層
+// next/font 呼叫，對照 SciFiMap.tsx 的隔離手法一致。
+const OrbitronText = dynamic(() => import('./scifi/OrbitronText'), { ssr: false })
 
 const HOLD_MS = 1500 // 底部鎖頭長按離開專注模式所需時長（與舊 FocusLockScreen 解鎖時長一致）
 
@@ -77,7 +91,7 @@ type PaceDir = 'fast' | 'slow'
 
 export default function RaceFocusMode({
   strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace, hasSignal, goal,
-  initialOpen, openSignal, onOpenChange,
+  initialOpen, openSignal, onOpenChange, scifi,
 }: {
   strategy: RaceStrategy | null // null＝一般跑步/課表/個人任務等沒有賽事策略的情境，只顯示基本 4 大字指標
   distanceM: number // 目前有效距離（公尺）——與頁面主面板「距離」同一份數據（distRef）
@@ -98,6 +112,9 @@ export default function RaceFocusMode({
   onOpenChange?: (open: boolean) => void // hidden 狀態改變（含掛載當下）時通知父層——父層藉此把
   // open 狀態寫進 activeRun.focusOpen（供重開頁面判斷），也藉此得知是否要抑制新事件任務觸發、
   // CheerShow 是否要提高 z-index（見 track/page.tsx 呼叫處）
+  scifi?: boolean // 未來科幻世界（scifi）變體開關（CONTRACT.md §4.4）：只加樣式（背景改半透明露出下方
+  // 仍在運作的 SciFiMap、數字改 Orbitron＋青色光暈、鎖頭改霓虹圓環），長按 1.5 秒解除等行為完全不變。
+  // 省略/false＝其他 skin，維持 v850 純黑不動。
 }) {
   const [hidden, setHidden] = useState(() => !initialOpen)
   useEffect(() => { onOpenChange?.(!hidden) }, [hidden]) // eslint-disable-line react-hooks/exhaustive-deps -- 只在 hidden 變動（含掛載當下）通知父層，onOpenChange 允許每次 render 傳新的閉包
@@ -245,13 +262,14 @@ export default function RaceFocusMode({
   if (hidden) {
     return (
       <button
-        data-skin="default"
+        data-skin={scifi ? 'scifi' : 'default'}
         onClick={() => setHidden(false)}
         style={{
           position: 'fixed', right: 16, bottom: 'calc(100px + env(safe-area-inset-bottom))', zIndex: 600,
-          background: 'rgba(11,14,19,.9)', color: 'var(--tx)', border: '1px solid rgba(255,194,75,.6)',
+          background: 'rgba(11,14,19,.9)', color: 'var(--tx)',
+          border: scifi ? '1px solid rgba(53,230,255,.6)' : '1px solid rgba(255,194,75,.6)',
           borderRadius: 999, padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer',
-          boxShadow: '0 4px 16px rgba(0,0,0,.4)', fontFamily: 'inherit',
+          boxShadow: scifi ? '0 4px 16px rgba(53,230,255,.25)' : '0 4px 16px rgba(0,0,0,.4)', fontFamily: 'inherit',
         }}
       >🏁 專注模式</button>
     )
@@ -262,12 +280,19 @@ export default function RaceFocusMode({
   return (
     <div
       ref={overlayRef}
-      data-skin="default"
+      data-skin={scifi ? 'scifi' : 'default'}
       className="app-min-h"
       style={{
-        position: 'fixed', inset: 0, zIndex: 3900, background: '#000',
+        position: 'fixed', inset: 0, zIndex: 3900,
+        // scifi（CONTRACT_R2.md §4）：由上而下漸層——頂部 45% 較透明（看得到下方仍在運作的 SciFiMap
+        // 與靈魂），55% 以下轉為接近純黑，大字數字靠 justifyContent:'flex-end' 整組推到下半部（見下方
+        // 三個子區塊改用 gap 佈局，不再 space-between 把進度條釘在最頂端）。其他 skin 維持 v850 純黑不變。
+        background: scifi
+          ? 'linear-gradient(to bottom, rgba(2,4,10,.15) 0%, rgba(2,4,10,.35) 45%, rgba(2,4,10,.92) 55%, rgba(2,4,10,.92) 100%)'
+          : '#000',
         color: 'var(--tx)', display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: 'space-between', padding: '24px 20px calc(20px + env(safe-area-inset-bottom))',
+        justifyContent: scifi ? 'flex-end' : 'space-between', gap: scifi ? '2.4vh' : undefined,
+        padding: '24px 20px calc(20px + env(safe-area-inset-bottom))',
         textAlign: 'center', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none',
       }}
       // 整層攔截所有輸入：唯一可操作的是下方鎖頭（其自身 onPointerDown 已 stopPropagation）。
@@ -284,17 +309,17 @@ export default function RaceFocusMode({
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2vh' }}>
-        <Metric label="移動距離" value={distKm.toFixed(2)} unit="km" size="xl" />
-        <Metric label="時間" value={fmtTime(elapsed)} unit="" size="lg" />
+        <Metric label="移動距離" value={distKm.toFixed(2)} unit="km" size="xl" scifi={scifi} />
+        <Metric label="時間" value={fmtTime(elapsed)} unit="" size="lg" scifi={scifi} />
         <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <Metric label="平均配速" value={fmtPace(avgPace)} unit="/km" size="md" />
-          <Metric label="分段即時配速" value={fmtPace(segLivePace)} unit="/km" size="md" />
+          <Metric label="平均配速" value={fmtPace(avgPace)} unit="/km" size="md" scifi={scifi} />
+          <Metric label="分段即時配速" value={fmtPace(segLivePace)} unit="/km" size="md" scifi={scifi} />
         </div>
         {/* 以下皆為賽事策略專屬區塊：無 strategy（一般跑步/課表/個人任務等）整組不渲染 */}
         {strategy && (
           <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Metric label="目前段目標配速" value={curSeg ? fmtPace(curSeg.pace_s) : '--:--'} unit="/km" size="md" />
-            <Metric label="預計完成時間" value={etaLabel} unit="" size="md" />
+            <Metric label="目前段目標配速" value={curSeg ? fmtPace(curSeg.pace_s) : '--:--'} unit="/km" size="md" scifi={scifi} />
+            <Metric label="預計完成時間" value={etaLabel} unit="" size="md" scifi={scifi} />
           </div>
         )}
 
@@ -350,9 +375,9 @@ export default function RaceFocusMode({
           <svg width={holdRingSize} height={holdRingSize} style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
             <circle cx={holdRingSize / 2} cy={holdRingSize / 2} r={holdR} fill="none" stroke="rgba(255,255,255,.18)" strokeWidth={holdStroke} />
             <circle
-              cx={holdRingSize / 2} cy={holdRingSize / 2} r={holdR} fill="none" stroke="var(--gold)" strokeWidth={holdStroke}
+              cx={holdRingSize / 2} cy={holdRingSize / 2} r={holdR} fill="none" stroke={scifi ? 'var(--fug)' : 'var(--gold)'} strokeWidth={holdStroke}
               strokeDasharray={holdC} strokeDashoffset={holdC * (1 - holdProgress)} strokeLinecap="round"
-              style={{ transition: holdProgress === 0 ? 'stroke-dashoffset .15s linear' : 'none' }}
+              style={{ transition: holdProgress === 0 ? 'stroke-dashoffset .15s linear' : 'none', filter: scifi ? 'drop-shadow(0 0 6px rgba(53,230,255,.7))' : undefined }}
             />
           </svg>
           <span style={{ fontSize: 30 }}>🔒</span>
@@ -363,14 +388,22 @@ export default function RaceFocusMode({
   )
 }
 
-function Metric({ label, value, unit, size }: { label: string; value: string; unit: string; size: 'xl' | 'lg' | 'md' }) {
+function Metric({ label, value, unit, size, scifi }: { label: string; value: string; unit: string; size: 'xl' | 'lg' | 'md'; scifi?: boolean }) {
   const fs = size === 'xl' ? 'clamp(40px, 13vw, 76px)' : size === 'lg' ? 'clamp(26px, 8vw, 44px)' : 'clamp(20px, 6vw, 30px)'
+  const valueStyle = {
+    fontSize: fs, fontWeight: 900, fontVariantNumeric: 'tabular-nums' as const, lineHeight: 1.05,
+    color: scifi ? 'var(--fug)' : 'var(--tx)',
+    textShadow: scifi ? '0 0 12px rgba(53,230,255,.55)' : undefined,
+  }
+  const valueNode = (
+    <>{value}{unit && <span style={{ fontSize: '0.35em', marginLeft: 4, color: 'var(--tx-dim)' }}>{unit}</span>}</>
+  )
   return (
     <div>
       <div style={{ fontSize: 12, color: 'var(--tx-dim)', fontWeight: 700, marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: fs, fontWeight: 900, fontVariantNumeric: 'tabular-nums', lineHeight: 1.05, color: 'var(--tx)' }}>
-        {value}{unit && <span style={{ fontSize: '0.35em', marginLeft: 4, color: 'var(--tx-dim)' }}>{unit}</span>}
-      </div>
+      {/* scifi 為真時才建立 OrbitronText 節點（見上方 import 處說明）——非白名單／偏好關閉時走一般
+          <div>，本檔完全不觸發 next/font 的動態 import。 */}
+      {scifi ? <OrbitronText style={valueStyle}>{valueNode}</OrbitronText> : <div style={valueStyle}>{valueNode}</div>}
     </div>
   )
 }

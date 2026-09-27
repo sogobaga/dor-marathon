@@ -6,6 +6,7 @@ import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendingGps'
 import { readActiveRun, type ActiveRunState } from '@/lib/activeRun'
 import { useDashboard } from '@/lib/useDashboard'
+import { getSkinPref, setSkinPref } from '@/lib/skinOverride'
 import { APP_VERSION } from '@/lib/version'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
 import UpgradeVipModal from './UpgradeVipModal'
@@ -223,6 +224,11 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [gpsCalibDetail, setGpsCalibDetail] = useState(false) // 展開最近配對/係數歷程
   const [reminderBusy, setReminderBusy] = useState(false) // 團練開跑前 Email 提醒開關送出中
   const { dash, revalidate: loadDashboard } = useDashboard() // 共用會員儀表板快取（與首頁會員卡同一份）
+  // 未來科幻世界風格（第 22 套）裝置偏好：純前端 localStorage 開關，沒有對應後端 API（見 lib/skinOverride.ts）。
+  // 掛載後才讀（避免 SSR/CSR 不一致），初始值先當 'on'（與 getSkinPref 的預設一致），不影響其他使用者
+  // ——這個 state 只餵給下方「僅白名單者可見」的那個開關列，dash?.scifi_entry !== 'shown' 時整段不渲染。
+  const [scifiPref, setScifiPrefState] = useState<'on' | 'off'>('on')
+  useEffect(() => { setScifiPrefState(getSkinPref()) }, [])
   const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>(initialTab ?? 'info')
   // 本機尚未上傳的 GPS（里程優先來源=外部來源時，track 頁結束不自動上傳，留給這裡決定）
   const [pending, setPending] = useState<PendingGpsRun | null>(null)
@@ -927,6 +933,39 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               </button>
             </div>
           </div>
+
+          {/* 未來科幻世界風格（第 22 套）：只有後端 dashboard.scifi_entry==='shown' 才渲染這一段——
+              目前只有系統設定 scifi_entry_whitelist 命中的帳號（預設 sogobaga@gmail.com）會是 'shown'，
+              其餘帳號連這個開關列本身都看不到，不只是「看得到但按不動」。純前端偏好，沒有對應後端 API，
+              切換立即透過 SKIN_CHANGE_EVENT 廣播給 components/SkinOverride.tsx 生效／收回，不必整頁重整。 */}
+          {dash?.scifi_entry === 'shown' && (
+            <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>🌌 未來科幻世界</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>
+                    僅你的帳號可見的測試風格：全站粒子科幻視覺、GPS 跑步地圖改為 3D 光網城市與粒子軌跡。
+                    關閉會立即恢復原本風格。
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    const next = scifiPref === 'off' ? 'on' : 'off'
+                    setSkinPref(next)
+                    setScifiPrefState(next)
+                  }}
+                  style={{
+                    flexShrink: 0, padding: '9px 14px', borderRadius: 10, fontSize: 13, fontWeight: 700,
+                    whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: 'inherit',
+                    background: scifiPref !== 'off' ? 'var(--fug)' : 'transparent',
+                    color: scifiPref !== 'off' ? 'var(--fug-ink)' : 'var(--tx-dim)',
+                    border: `1px solid ${scifiPref !== 'off' ? 'var(--fug)' : 'var(--line-2)'}`,
+                  }}>
+                  {scifiPref !== 'off' ? '已開啟 ✓' : '已關閉'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 手錶直連（Garmin/COROS/Polar/Suunto/Wahoo，Terra 聚合器，Phase 1）。terra===null 或 !enabled 時維持
               「即將開放」佔位卡（production 尚未設定 Terra 憑證前的常態，見 memory terra-wearable-integration）；

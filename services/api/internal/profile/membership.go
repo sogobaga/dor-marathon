@@ -138,6 +138,11 @@ type DashboardInfo struct {
 	MonopolyEntry    string `json:"monopoly_entry"`    // 環台大富翁入口可見性（同上）
 	KnowledgeEntry   string `json:"knowledge_entry"`   // 知識探索入口可見性（同上）
 	Gov500Entry      string `json:"gov500_entry"`      // 500.gov.tw「揮汗有禮」運動證明圖入口可見性（同上）
+	// ScifiEntry 未來科幻世界風格（見 resolveScifiEntry）入口可見性：只有 hidden|shown 兩態（無
+	// locked），且刻意不給 super_admin 旁路——owner 原話「目前只有 sogobaga@gmail.com 的帳號可以
+	// 感受，其餘帳號維持不變」，與其餘 *_entry 的「hidden 仍對超管放行」慣例不同（比照 RpgEntry
+	// 的「D3 明文」前例，但這裡連 VVIP 分支都沒有，純粹 whitelist）。
+	ScifiEntry string `json:"scifi_entry"`
 	// RpgEntry 遊戲化角色數值（RO 素質系統，見 internal/rpg）入口可見性：只有 hidden|shown 兩態
 	// （無 locked——不對一般會員揭露「有這個功能但鎖住」），由 rpg.DashboardEntry 解析
 	// rpg_entry_state/whitelist + users.is_vvip，hidden 時連超管都看不到（見該函式註解，D3 明文）。
@@ -240,6 +245,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	// 判斷規則多了 is_vvip 這個 OR 分支，且 hidden 連超管旁路都不給（其餘功能 hidden 仍對超管放行），
 	// 形狀不同不能共用同一支函式。
 	d.RpgEntry = rpg.DashboardEntry(r.Context(), h.db, userID, email, code, isSuperAdmin)
+	d.ScifiEntry = resolveScifiEntry(r.Context(), h.db, email, code)
 	d.GpsCalibEntry, d.GpsCalibFactor, d.GpsCalibStatus, d.GpsCalibPairs, d.GpsCalibEnabled =
 		gpscalib.DashboardSummary(r.Context(), h.db, userID, email, code, isSuperAdmin)
 	levels, err := h.levelConfigList(r.Context())
@@ -310,6 +316,34 @@ func resolveEntry(ctx context.Context, db *pgxpool.Pool, stateKey, wlKey, email,
 	default: // hidden 或未設定
 		return "hidden"
 	}
+}
+
+// resolveScifiEntryState 純函式：依系統設定 state/whitelist 字串與使用者 email/帳號編碼判斷「未來
+// 科幻世界」風格入口可見性。只有 hidden|shown 兩態（無 locked）；state="off" 與其餘未知值一律視為
+// hidden。刻意不接 isSuperAdmin——owner 原話「目前只有 sogobaga@gmail.com 的帳號可以感受，其餘帳號
+// 維持不變、不受到影響」，與其餘 *_entry 的「hidden 仍對超管放行」慣例不同（比照 rpg.ResolveEntry
+// 的「D3 明文」前例，但這裡連 VVIP／super_admin 分支都沒有，避免將來被誤接上旁路）。
+func resolveScifiEntryState(state, whitelist, email, code string) string {
+	switch state {
+	case "open":
+		return "shown"
+	case "whitelist":
+		if personalWhitelisted(whitelist, email, code) {
+			return "shown"
+		}
+		return "hidden"
+	default: // hidden / off / 未設定 / 其他未知值
+		return "hidden"
+	}
+}
+
+// resolveScifiEntry 讀系統設定 scifi_entry_state/scifi_entry_whitelist 解析入口（見
+// resolveScifiEntryState）。缺鍵預設 state=whitelist、whitelist="sogobaga@gmail.com"——即使後台
+// 從未設定過這兩個 key，也只有這個帳號看得到（契約 §2）。
+func resolveScifiEntry(ctx context.Context, db *pgxpool.Pool, email, code string) string {
+	state := appsettings.GetString(ctx, db, "scifi_entry_state", "whitelist")
+	wl := appsettings.GetString(ctx, db, "scifi_entry_whitelist", "sogobaga@gmail.com")
+	return resolveScifiEntryState(state, wl, email, code)
 }
 
 // resolvePersonalEntry 個人任務入口可見性（沿用共用 resolveEntry）。

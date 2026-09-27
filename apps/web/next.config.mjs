@@ -1,7 +1,7 @@
 // 版號：v<VERSION_BASE>.<VERSION_SERIAL>.<commit8>。進大版號改 VERSION_BASE；每次推送遞增 VERSION_SERIAL
 //（= git commit 累計數 `git rev-list --count HEAD`）。兩者皆需與後端 internal/version 同步。
 const VERSION_BASE = '1.2'
-const VERSION_SERIAL = '852'
+const VERSION_SERIAL = '853'
 const COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || 'dev').slice(0, 8)
 
 /** @type {import('next').NextConfig} */
@@ -75,12 +75,16 @@ const nextConfig = {
       "img-src 'self' data: blob: https:",
       "media-src 'self' https://img.dor.tw",
       "font-src 'self' data:",
-      "connect-src 'self' wss: ws: https://accounts.google.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://cloudflareinsights.com https://unpkg.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw",
+      "connect-src 'self' wss: ws: https://accounts.google.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://cloudflareinsights.com https://unpkg.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw https://tiles.openfreemap.org",
       "frame-src https://www.youtube-nocookie.com https://accounts.google.com https://ecpg-stage.ecpay.com.tw https://ecpg.ecpay.com.tw https://www.facebook.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self' https://payment.ecpay.com.tw https://payment-stage.ecpay.com.tw",
       "object-src 'none'",
+      // 未來科幻世界（scifi）GPS 地圖（CONTRACT.md §5）：MapLibre GL 向量圖磚／字型走
+      // tiles.openfreemap.org（見上方 connect-src），其內部 web worker 用 blob: URL 建立。只加，
+      // 不動其餘既有 directive；非白名單使用者不會載入 maplibre-gl，這條規則對其零影響。
+      "worker-src 'self' blob:",
     ].join('; ')
 
     const securityHeaders = [

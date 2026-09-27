@@ -510,4 +510,28 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '早於此日期付款的訂單不自動開立，避免回溯開舊單；後台仍可手動開立。格式 YYYY-MM-DD。',
     placeholder: '2026-09-07',
   },
+  // ── 未來科幻世界風格（第 22 套，見 services/api/internal/profile.resolveScifiEntry）──
+  // ⚠️ 只有 hidden|whitelist|open|off 四態（無 locked——不需要「顯示但不能按」的過渡態），且刻意
+  // 不給 super_admin 旁路：owner 原話「目前只有 sogobaga@gmail.com 的帳號可以感受，其餘帳號維持
+  // 不變、不受到影響」。兩鍵缺鍵時的程式內建預設＝whitelist + sogobaga@gmail.com（即使後台從未
+  // 存過這兩個 key，也已經只讓這個帳號看得到）。
+  {
+    key: 'scifi_entry_state', group: '未來科幻世界風格', label: '入口顯示狀態', type: 'select', def: 'whitelist',
+    help: '控制「未來科幻世界」粒子風格（含 GPS 跑步頁的科幻地圖）對前台玩家的可見性。⚠️ 這裡的白名單機制'
+      + '刻意不給超管旁路——連超級管理員帳號都必須列在下方白名單才看得到，不像其他入口 hidden 仍對超管放行。'
+      + '「off」與「hidden」目前效果相同（皆隱藏），保留 off 只是與其他入口欄位共用同一組驗證器。',
+    options: [
+      { value: 'hidden', label: '前台隱藏（都看不到，含超管）' },
+      { value: 'whitelist', label: '顯示且指定帳號可用（下方白名單，預設值）' },
+      { value: 'open', label: '顯示且全部開放（正式開放給所有人）' },
+      { value: 'off', label: 'off（同 hidden，全面關閉）' },
+    ],
+  },
+  {
+    key: 'scifi_entry_whitelist', group: '未來科幻世界風格', label: '指定帳號白名單', type: 'text', def: 'sogobaga@gmail.com',
+    help: '僅在上方選「指定帳號可用」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email，大小寫不拘。'
+      + '⚠️ 留空即使選了 whitelist 也沒有任何人看得到；清空此欄位、下次讀取時仍會回退到程式內建預設'
+      + 'sogobaga@gmail.com（並非真的清空生效，除非把 state 改成 hidden/off）。',
+    placeholder: 'sogobaga@gmail.com', rows: 3,
+  },
 ]

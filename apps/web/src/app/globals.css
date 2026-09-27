@@ -446,3 +446,102 @@ html:has([data-admin-root]), html:has([data-admin-root]) body { background: #090
 .brochure-html table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 13.5px; }
 .brochure-html th, .brochure-html td { border: 1px solid var(--line); padding: 8px; text-align: left; }
 .brochure-html th { font-weight: 700; }
+
+/* ============================================================================
+   Skin: scifi（未來科幻世界 — 粒子科幻感體驗，2026-09-27）
+   契約：scratchpad/scifi_skin/CONTRACT.md（單一真相）。本區塊只負責「§3 全站視覺」——
+   何時把 data-skin="scifi" 掛上 <html>（白名單判斷、開關、防閃爍）由 lib/skinOverride.ts /
+   components/SkinOverride.tsx 另外處理；本檔案不判斷任何使用者身分，非白名單使用者的
+   <html> 永遠不會帶這個屬性值，以下規則對他們完全不生效、不影響任何既有 skin/元件行為。
+   GPS 地圖本身的科幻風格（SciFiMap／粒子跑者／專注模式露出地圖）屬於契約 §4，由另一位
+   工人在 src/app/track/scifi/ 實作，不在本檔案範圍內。
+============================================================================ */
+[data-skin="scifi"] {
+  --bg:       #02040a;
+  --bg-1:     rgba(10,22,44,.62);
+  --bg-2:     rgba(20,40,72,.55);
+  --line:     rgba(80,210,255,.18);
+  --line-2:   rgba(80,210,255,.32);
+  --tx:       #e8f7ff;
+  --tx-dim:   #9dbbd0;
+  --tx-faint: #5f7f96;
+
+  --fug:    #35e6ff;   /* 主色青 */
+  --fug-ink: #01121a;  /* 青底按鈕/分頁上的字色（青偏亮 → 用深字） */
+  --hunt:   #ff3fa0;   /* 結束／警示洋紅 */
+  --gold:   #ffd166;
+  --violet: #b98cff;
+  --dim:    rgba(200,235,255,.14);
+  --strava-tx: #fc4c02; /* 暗底（同 default 判斷邏輯），對比足夠，沿用不調整 */
+
+  --glow-fug:  0 0 20px rgba(53,230,255,.28);
+  --glow-hunt: 0 0 20px rgba(255,63,160,.28);
+  --glow-gold: 0 0 20px rgba(255,209,102,.25);
+
+  /* 卡片玻璃感（契約 §3「結構化 tokens」的外光部分）：既有元件已把 boxShadow 寫成
+     var(--card-shadow, none)（MemberPanel 入口格/卡片、ActivityExploreScreen RaceCard、
+     RaceDetailScreen dashCard、RewardsWalletScreen、track 頁量測卡片…），不必改元件檔，
+     這裡一定義，全站這些卡片自動套上發光外框；卡片的 1px 邊框則是這些元件原本就寫的
+     `border: 1px solid var(--line)`，--line 在本 skin 已經是青色半透明，一併達成
+     「1px 青色描邊」，不需要額外規則。 */
+  --card-shadow: 0 0 24px rgba(53,230,255,.12);
+
+  /* Orbitron（見 components/scifi/fonts.ts）：只給數字／英文標題用，中文維持系統字（契約 §3）。
+     var(--font-scifi-orbitron) 要有值，需要 orbitron.variable 這個 class 掛在夠高層的祖先節點
+     （THEME 工人依規範不改 layout.tsx，接線交給整合者，見 fonts.ts 檔頭的建議程式片段）——
+     掛之前這條 fallback 鏈本身仍完全合法，只是退回到 fallback 字型，不會壞版面。 */
+  --font-num: var(--font-scifi-orbitron), 'Orbitron', ui-monospace, 'SF Mono', monospace;
+}
+
+/* 數字／英文標題套用 Orbitron 的工具類。THEME 工人不得改既有元件檔加 className，這個 class
+   目前尚未掛在任何 markup 上（不影響任何人）；需要整合者視覺確認後，在 RaceFocusMode.tsx 的
+   <Metric> 大字、track 頁 HUD 數字、ProfileScreen/MemberPanel 的統計數字等處補上
+   className="skin-num"（可與既有 className 並存，例如 className="track-blink skin-num"）。 */
+[data-skin="scifi"] .skin-num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}
+
+/* 開始／結束跑步鈕（RacesScreen「開始跑步」橫幅、track 頁開始/結束鈕）：改純 CSS 霓虹描邊鈕，
+   不像 warm2 用整顆 PNG 換掉。這兩顆鈕的 inline style 已寫死 background/color
+   （見 RacesScreen.tsx startBtn、track/page.tsx 的 btn 物件），故用 !important 覆蓋；
+   圓角漸層描邊用「兩層 background-clip」畫（padding-box 填底色、border-box 畫漸層），
+   比 border-image 更能正確服貼圓角。 */
+[data-skin="scifi"] .skin-btn-start,
+[data-skin="scifi"] .skin-btn-end {
+  position: relative;
+  border: 2px solid transparent !important;
+  background:
+    linear-gradient(rgba(4,10,22,.86), rgba(4,10,22,.86)) padding-box,
+    linear-gradient(90deg, var(--fug), var(--hunt)) border-box !important;
+  color: var(--tx) !important;
+  box-shadow: var(--glow-fug);
+  text-shadow: 0 0 10px rgba(53,230,255,.55);
+  letter-spacing: .04em;
+}
+[data-skin="scifi"] .skin-btn-end {
+  box-shadow: var(--glow-hunt);
+  text-shadow: 0 0 10px rgba(255,63,160,.55);
+}
+
+/* 桌機模擬框（.phone-shell）：淡青色描邊＋外部柔光，呼應參考圖的霓虹夜景氛圍；只調邊框/陰影，
+   不動尺寸/佈局，手機（不套 .phone-shell）不受影響。 */
+[data-skin="scifi"] .phone-shell {
+  border: 1px solid rgba(80,210,255,.25);
+  box-shadow:
+    0 0 0 10px #050a14,
+    0 0 46px rgba(53,230,255,.16),
+    0 30px 90px rgba(0,0,0,.85);
+}
+
+/* 專注模式（scifi）：track/page.tsx 只加了 data-scifi-focus-hide="true" 屬性在題列／底部資訊面板／
+   GPS 相關橫幅（弱訊號、中性提示、建議路線、疑似搭車、已排除異常段）——CONTRACT_R2.md §4「開啟時…
+   全部 visibility:hidden」。只在 data-skin="scifi" 下生效，其餘 skin 完全不受影響（該屬性本身也只在
+   scifi 生效時才會被寫上，這裡的選擇器是第二層防線）。 */
+[data-skin="scifi"] [data-scifi-focus-hide="true"] {
+  visibility: hidden;
+}
+
+/* 科幻地圖授權鈕（MapLibre 精簡 ⓘ）：右上角讓出「回到目前位置」按鈕的高度（該鈕 top:12 高約 36px） */
+[data-skin="scifi"] .scifi-map .maplibregl-ctrl-top-right { top: 56px; }

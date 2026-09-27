@@ -1861,6 +1861,11 @@ export interface DashboardInfo {
   // 遊戲化角色數值（RO 素質系統，見 internal/rpg）：只有 VVIP／白名單管理者看得到，故只有 hidden|shown 兩態
   // （無 locked——不對一般會員揭露「有這個功能但鎖住」）。後端以 rpg_entry_state/whitelist + is_vvip 解析。
   rpg_entry: 'hidden' | 'shown'
+  // 未來科幻世界風格（見 services/api/internal/profile.resolveScifiEntry）：只有 hidden|shown 兩態
+  // （無 locked），且刻意不給 super_admin 旁路——owner 原話「目前只有 sogobaga@gmail.com 的帳號可以
+  // 感受，其餘帳號維持不變」。後端以 scifi_entry_state/scifi_entry_whitelist 解析，缺鍵預設
+  // whitelist + sogobaga@gmail.com。前端 SkinOverride 只在 'shown' 時才可能套用 scifi 風格。
+  scifi_entry: 'hidden' | 'shown'
   // 團練邀請（見 internal/runmeet）：入口三態 + 本月剩餘發起次數（只用在「＋ 發起團練」按鈕文案，
   // 不做成入口徽章——會被誤讀成「還能加入 N 個團練」，見 lib/runMeet.ts createBtnText 註解）。
   // entry 非 shown 時 runmeet_remaining 恆 0（後端不查 DB，dashboard 熱路徑零額外成本）。

@@ -30,6 +30,15 @@ import { qualifiesGov500, gov500RunKey, markGov500Shot } from '@/lib/gov500'
 import { APP_VERSION } from '@/lib/version'
 import RaceFocusMode from './RaceFocusMode'
 import CheerShow from './CheerShow'
+import dynamic from 'next/dynamic'
+import type { SciFiMapHandle, SciFiPos, SciFiTarget } from './scifi/types'
+import { isSciFiActive, SKIN_CHANGE_EVENT } from '@/lib/skinOverride'
+
+// 未來科幻世界（scifi）GPS 地圖（CONTRACT.md §4）：next/dynamic(ssr:false) 動態載入，只在下方
+// sciFiActive 為真時才會實際掛載 render（見 JSX 掛載處）——因此 maplibre-gl 與 track/scifi/* 全部
+// 進獨立 chunk，非白名單使用者的 /track 首屏 bundle 不會多載一行（§1／§5 Bundle 隔離驗證）。既有
+// Leaflet 地圖（ensureMap 等）完全不受影響，本檔對它們零修改，scifi 只是疊在同一位置的另一層視覺。
+const SciFiMap = dynamic(() => import('./scifi/SciFiMap'), { ssr: false })
 import { readActiveRun, writeActiveRun, touchActiveRun, clearActiveRun, activeRunAgeMs, isActiveRunFresh, type ActiveRunState, type ActiveRunWorkoutSnapshot } from '@/lib/activeRun'
 import FocusModeTip, { FOCUS_TIP_SEEN_KEY } from '@/components/track/FocusModeTip'
 
@@ -47,6 +56,22 @@ const GAP_MAX_S = 60 // 秒
 const GAP_MAX_M = 250 // 公尺
 const PACE_MIN_KM = 0.005 // 累積達此距離（5m，約顯示 0.01km 時）即顯示平均配速
 const START_COUNTDOWN_S = 3 // 開跑前可取消倒數秒數（CONTRACT.md track_start_guard §2.2）
+
+const SCIFI_LAST_POS_KEY = 'dor_scifi_last_pos' // 與 scifi/SciFiMap.tsx 的 LAST_POS_KEY 同一把 key（它每次
+// pos 更新時寫入，見該檔），這裡只在「定位前的初始中心」讀一次，兩檔不必互相 import 一個常數模組。
+const DAAN_PARK: [number, number] = [25.0296, 121.5357] // 台北大安森林公園：無任何已知位置時的預設城市中心
+
+// CONTRACT_R2.md §2：初始中心＝最後已知位置（localStorage），若沒有則台北大安森林公園；純讀取，讀不到
+// / 格式不符一律安靜退回預設值，不拋錯（scifi 地圖本來就是錦上添花的個人化視覺）。
+function readLastScifiPos(): [number, number] | null {
+  try {
+    const raw = localStorage.getItem(SCIFI_LAST_POS_KEY)
+    if (!raw) return null
+    const v = JSON.parse(raw)
+    if (typeof v?.lat === 'number' && typeof v?.lng === 'number') return [v.lat, v.lng]
+  } catch { /* ignore */ }
+  return null
+}
 
 function haversineM(a: GpsPoint, b: GpsPoint) {
   const R = 6371000, rad = Math.PI / 180
@@ -364,6 +389,85 @@ export default function TrackPage() {
   // 揮汗有禮直接截圖需求（2026-09-06 owner 定案，見 lib/kmMarkers.ts）：軌跡上的 1/2/3…號碼標記
   // 圖層——commitSeg 每跨一整公里即時加一個；重開跑/re-render 整批重建時用 clearLayers() 清空重畫。
   const kmMarkersRef = useRef<any>(null)
+
+  // ── 未來科幻世界（scifi）GPS 地圖：純加法整合，以上既有 Leaflet refs／邏輯完全不動（CONTRACT.md §4.1）──
+  // scifi 生效判斷：用 lib/skinOverride.ts 的 isSciFiActive()（單一真相，與 SkinOverride.tsx 判斷邏輯
+  // 同一份實作，讀同一個 dataset）；MutationObserver 監聽切換（開關 ON/OFF、登出等即時改 dataset），
+  // 另監聽 SKIN_CHANGE_EVENT（即 setSkinPref 廣播的事件）供偏好改變時立即生效（不必等 dataset 屬性
+  // 變動——例如關閉偏好但 dashboard 還沒重新拉取的瞬間）。
+  const [isScifi, setIsScifi] = useState(false)
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const read = () => setIsScifi(isSciFiActive())
+    read()
+    const mo = new MutationObserver(read)
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-skin'] })
+    window.addEventListener(SKIN_CHANGE_EVENT, read)
+    return () => { mo.disconnect(); window.removeEventListener(SKIN_CHANGE_EVENT, read) }
+  }, [])
+  const sciFiMapRef = useRef<SciFiMapHandle>(null)
+  // false＝已 fallback（WebGL 不支援／8 秒未 load／context lost／渲染例外）：卸載 SciFiMap、改顯示
+  // Leaflet；isScifi 重新變 true（例如切頁再進來）時重置，讓下次有機會重試（不會永久卡在退回狀態）。
+  const [sciFiOk, setSciFiOk] = useState(true)
+  useEffect(() => { if (isScifi) setSciFiOk(true) }, [isScifi])
+  const sciFiActive = isScifi && sciFiOk
+  const handleSciFiFallback = useCallback((reason: string) => {
+    console.warn('[scifi-map] fallback', reason) // eslint-disable-line no-console -- 刻意保留：CONTRACT.md §4.1 要求的退回診斷訊息，非殘留 debug log
+    setSciFiOk(false)
+  }, [])
+  // CONTRACT_R2.md §4：專注模式（scifi）開啟時，題列/底部面板/GPS 相關橫幅一律 visibility:hidden（見
+  // globals.css `[data-skin="scifi"] [data-scifi-focus-hide="true"]`），露出下方半透明的科幻地圖與靈魂；
+  // 只加了一個 data 屬性，不改這些元素原本的邏輯／內容。
+  const hideForFocus = sciFiActive && focusOpen
+  const scifiFocusHideAttr = hideForFocus ? { 'data-scifi-focus-hide': 'true' } : {}
+  // 讀取（不改）既有跳點排除規則（MAX_SPEED/GAP_MAX_S/GAP_MAX_M，見檔頭常數），把 pointsRef 依「與
+  // Leaflet/伺服器同一套規則會被判定無效」的邊界切開——CONTRACT_R2.md §3「排除段不畫」：SciFiMap 的
+  // 路線圖層只收得到真正連續、可信的子段落，跳過的那條邊本身不出現在任何一段裡（純讀取重算，完全不
+  // 碰 pointsRef/excludedMRef/excludedSegsRef 等既有累積狀態，不影響距離/上傳等跑步邏輯）。
+  function splitValidSegments(pts: GpsPoint[]): [number, number][][] {
+    const segs: [number, number][][] = []
+    let cur: [number, number][] = []
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i]
+      if (i > 0) {
+        const prev = pts[i - 1]
+        const d = haversineM(prev, p)
+        const dt = (p.t - prev.t) / 1000
+        const over = dt > 0 && d / dt > MAX_SPEED
+        const gapBad = dt > GAP_MAX_S && d > GAP_MAX_M
+        if (over || gapBad) {
+          if (cur.length >= 2) segs.push(cur)
+          cur = []
+        }
+      }
+      cur.push([p.lat, p.lng])
+    }
+    if (cur.length >= 2) segs.push(cur)
+    return segs
+  }
+
+  // 資料快照 props（節流 250ms≈4 次/秒，CONTRACT.md §4.1）：只在 scifi 生效時才計算，非白名單使用者
+  // 不多一顆計時器。segments／kmMarks 沿用既有 pointsRef／kmMarkerPositions／calibKRef（讀，不改）；
+  // targets 把既有 checkpoints／exploreCps／focusBoss 映射成統一形狀，供 SciFiMap 畫地面光環。
+  const [sciFiSnapshot, setSciFiSnapshot] = useState<{ pos: SciFiPos | null; segments: [number, number][][]; kmMarks: { km: number; lat: number; lng: number }[]; targets: SciFiTarget[] }>({ pos: null, segments: [], kmMarks: [], targets: [] })
+  useEffect(() => {
+    if (!sciFiActive) return
+    let alive = true
+    const tick = () => {
+      if (!alive) return
+      const cp = curPosRef.current
+      const segs: [number, number][][] = splitValidSegments(pointsRef.current)
+      const k = calibKRef.current > 0 ? calibKRef.current : 1
+      const targets: SciFiTarget[] = [
+        ...checkpoints.map((c) => ({ id: 'cp:' + c.id, lat: c.lat, lng: c.lng, radius: c.radius_m || 20, label: c.title || '打卡點', kind: 'checkpoint' as const, done: !!c.checked })),
+        ...exploreCps.map((b) => ({ id: 'boss:' + b.id, lat: b.lat, lng: b.lng, radius: b.radius_m || 40, label: b.discovered ? b.name : (b.place || '神秘打卡點'), kind: (b.id === focusBoss ? 'focus' : 'boss') as 'focus' | 'boss', done: !!b.card_obtained })),
+      ]
+      setSciFiSnapshot({ pos: cp ? { lat: cp.lat, lng: cp.lng, acc: cp.acc } : null, segments: segs, kmMarks: kmMarkerPositions(segs, 1000 / k), targets })
+    }
+    tick()
+    const timer = setInterval(tick, 250)
+    return () => { alive = false; clearInterval(timer) }
+  }, [sciFiActive, checkpoints, exploreCps, focusBoss])
   const pendingMapRedrawRef = useRef(false) // 自動接續／三選一「繼續追蹤」剛還原了 pointsRef，但地圖(ensureMap)可能還沒就緒——待 mapReady 後補畫軌跡線＋每公里標記一次
   const warnTimer = useRef<any>(null)
   const errTimerRef = useRef<any>(null) // 「軌跡太短」等暫時訊息的自動淡出計時
@@ -2455,6 +2559,7 @@ export default function TrackPage() {
           initialOpen={focusInitialOpenRef.current}
           openSignal={focusEnterSignal}
           onOpenChange={(open) => { focusOpenRef.current = open; setFocusOpen(open); writeActiveRun({ focusOpen: open }) }}
+          scifi={sciFiActive}
         />
       )}
       {/* 每公里鼓勵語「泡泡對話框+啦啦隊角色」演出（v1.1.664）：獨立掛在本頁頂層、不論 status，
@@ -2521,7 +2626,7 @@ export default function TrackPage() {
           </div>
         )
       })()}
-      <header style={{ padding: 'var(--app-top, 16px) 18px 12px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
+      <header {...scifiFocusHideAttr} style={{ padding: 'var(--app-top, 16px) 18px 12px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--line)' }}>
         {/* 跑步期間隱藏「返回/歷史」，避免誤離開而中斷；只能按「結束並上傳」正常結束 */}
         {status === 'tracking'
           ? <span className="track-blink" style={{ color: 'var(--hunt)', fontSize: 13, fontWeight: 800 }}>● 數據偵測中</span>
@@ -2537,7 +2642,31 @@ export default function TrackPage() {
 
       {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗） */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)' }} />
+        {/* scifi 生效時只把既有 Leaflet 容器視覺隱藏（visibility:hidden，保留尺寸避免 invalidateSize
+            異常）——Leaflet 地圖照舊建立/運作於背景，一旦 SciFiMap fallback 就立刻可見，跑步邏輯零依賴
+            地圖是否渲染（CONTRACT.md §1／§4.1）。 */}
+        <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)', visibility: sciFiActive ? 'hidden' : 'visible' }} />
+        {sciFiActive && (
+          <SciFiMap
+            ref={sciFiMapRef}
+            pos={sciFiSnapshot.pos}
+            status={status}
+            segments={sciFiSnapshot.segments}
+            kmMarks={sciFiSnapshot.kmMarks}
+            targets={sciFiSnapshot.targets}
+            focusMode={focusOpen}
+            initialCenter={curPos ? [curPos.lat, curPos.lng] : (readLastScifiPos() ?? DAAN_PARK)}
+            initialZoom={16}
+            onFallback={handleSciFiFallback}
+            onTargetClick={(t) => setCpMsg(t.label)}
+          />
+        )}
+        {sciFiActive && status !== 'done' && (
+          <div {...scifiFocusHideAttr} style={{ position: 'absolute', top: 12, left: 12, zIndex: 550, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <button onClick={() => sciFiMapRef.current?.zoomBy(1)} aria-label="放大" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>＋</button>
+            <button onClick={() => sciFiMapRef.current?.zoomBy(-1)} aria-label="縮小" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>－</button>
+          </div>
+        )}
         {/* 首次開跑提示（專注模式＝鎖定模式，每裝置一次）：按「知道了」bump focusEnterSignal，命令
             RaceFocusMode 立即進入專注模式（見 start() 對 focusInitialOpenRef 的判斷與該檔 openSignal prop）。 */}
         <FocusModeTip active={status === 'tracking'} onDismiss={() => setFocusEnterSignal((s) => s + 1)} />
@@ -2554,13 +2683,14 @@ export default function TrackPage() {
             自動定位失敗/逾時/被拒/非 iOS 未授權需手勢等情況 autoLocating 為 false，仍會顯示讓使用者手動觸發。 */}
         {status !== 'done' && (!following || !curPos) && !(status === 'idle' && !curPos && autoLocating) && (
           <button
-            onClick={recenterMap}
+            {...scifiFocusHideAttr}
+            onClick={() => { recenterMap(); if (sciFiActive) sciFiMapRef.current?.recenter() }}
             style={{ position: 'absolute', top: 12, right: 12, zIndex: 550, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '8px 13px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 3px 12px rgba(0,0,0,.28)' }}
           >◎ {curPos ? '回到目前位置' : '定位到我'}</button>
         )}
         {/* GPS 弱訊號警告 / 錯誤：浮在面板之上，任何停靠狀態都看得到（不隨面板收合而被藏起來） */}
         {(warn || err) && (
-          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 900, padding: '10px 12px 0', pointerEvents: 'none' }}>
+          <div {...scifiFocusHideAttr} style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 900, padding: '10px 12px 0', pointerEvents: 'none' }}>
             {warn && (
               <div style={{ background: '#b42020', color: '#fff', borderRadius: 10, padding: '9px 8px 9px 12px', fontSize: 13, marginBottom: 8, boxShadow: '0 4px 16px rgba(0,0,0,.4)', pointerEvents: 'auto', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                 <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>⚠️ {warn}</span>
@@ -2577,7 +2707,7 @@ export default function TrackPage() {
         )}
         {/* 中性提示（自動接續成功／資料損毀等，CONTRACT.md）：與上面 warn/err 分開，不用紅色錯誤樣式 */}
         {toast && (
-          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 900, padding: '10px 12px 0', pointerEvents: 'none' }}>
+          <div {...scifiFocusHideAttr} style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 900, padding: '10px 12px 0', pointerEvents: 'none' }}>
             <div style={{ background: 'var(--bg-1)', color: 'var(--tx)', border: '1px solid var(--fug)', borderRadius: 10, padding: '9px 8px 9px 12px', fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,.4)', pointerEvents: 'auto', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
               <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{toast}</span>
               <button onClick={() => setToast('')} aria-label="關閉" style={dismissBtn}>✕</button>
@@ -2586,7 +2716,7 @@ export default function TrackPage() {
         )}
         {/* 建議跑步路線資訊條（點地圖打卡點規劃後顯示） */}
         {(routeBusy || routePlan) && (
-          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 920, padding: '10px 12px 0', pointerEvents: 'none' }}>
+          <div {...scifiFocusHideAttr} style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 920, padding: '10px 12px 0', pointerEvents: 'none' }}>
             <div style={{ background: 'var(--bg-1)', color: 'var(--tx)', border: '1px solid #FF8A3D', borderRadius: 10, padding: '9px 10px 9px 12px', fontSize: 12.5, boxShadow: '0 4px 16px rgba(0,0,0,.35)', pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
               {routeBusy ? (
                 <span style={{ flex: 1 }}>🧭 規劃建議路線中…</span>
@@ -2602,7 +2732,7 @@ export default function TrackPage() {
         )}
         {/* 疑似搭車即時提醒 */}
         {vehicleWarn && status === 'tracking' && (
-          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 950, padding: '10px 12px 0', pointerEvents: 'none' }}>
+          <div {...scifiFocusHideAttr} style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 950, padding: '10px 12px 0', pointerEvents: 'none' }}>
             <div style={{ background: '#b46a00', color: '#fff', borderRadius: 10, padding: '10px 12px', fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,.4)', lineHeight: 1.5 }}>
               🚗 偵測到疑似搭乘車輛的速度（超過人體極限）——這段不列入有效里程與課表進度、也不觸發事件；整趟過快將標記待審、不發獎勵
             </div>
@@ -2611,7 +2741,7 @@ export default function TrackPage() {
         {/* 已排除異常段落即時提醒（超速／訊號中斷跳點，見 GAP_MAX_S/GAP_MAX_M）：常駐顯示，不像精度警告
             4 秒後自動淡出——排除掉的距離不是暫時性訊號問題，使用者應該持續知道這件事直到跑完。 */}
         {excluded.segs > 0 && status === 'tracking' && (
-          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 960, padding: '10px 12px 0', pointerEvents: 'none' }}>
+          <div {...scifiFocusHideAttr} style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 960, padding: '10px 12px 0', pointerEvents: 'none' }}>
             <div style={{ background: '#b46a00', color: '#fff', borderRadius: 10, padding: '10px 12px', fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,.4)', lineHeight: 1.5 }}>
               ⚠️ 已排除 {excluded.segs} 段異常 GPS 數據（約 {excluded.km.toFixed(1)} km）——訊號中斷或跳點期間的直線距離不計入
             </div>
@@ -2656,7 +2786,7 @@ export default function TrackPage() {
         })()}
 
         {/* 資訊面板（可拖曳）：收合只露出把手＋四格數據，上拉展開看更多（打卡/分段/結果），下拉看更多地圖 */}
-        <div style={{
+        <div {...scifiFocusHideAttr} style={{
           position: 'absolute', left: 0, right: 0, top: sheet.curY, bottom: 0,
           transition: !sheet.dragging && sheet.ready ? 'top .28s cubic-bezier(.22,.61,.36,1)' : 'none',
           opacity: sheet.ready ? 1 : 0,
@@ -2983,7 +3113,7 @@ export default function TrackPage() {
       )}
 
       {/* 操作 */}
-      <div style={{ padding: '16px 16px calc(16px + var(--cta-safe, 0px))', flexShrink: 0, borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
+      <div {...scifiFocusHideAttr} style={{ padding: '16px 16px calc(16px + var(--cta-safe, 0px))', flexShrink: 0, borderTop: '1px solid var(--line)', background: 'var(--bg)' }}>
         {status === 'idle' && (
           user
             ? (workout

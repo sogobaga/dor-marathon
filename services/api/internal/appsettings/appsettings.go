@@ -76,6 +76,13 @@ var specs = map[string]func(string) bool{
 	// 不透過這裡的泛用 Set handler，故不在 specs 註冊。
 	"rpg_entry_state":     isEntryState,
 	"rpg_entry_whitelist": isWhitelist,
+	// 未來科幻世界風格（見 internal/profile.resolveScifiEntry）：入口只有 hidden/shown 兩態，且刻意
+	// 不給 super_admin 旁路（owner 原話「目前只有 sogobaga@gmail.com 的帳號可以感受，其餘帳號維持
+	// 不變」）——isEntryState 允許的 locked/off 對這個入口沒有語意上的差異（resolveScifiEntryState
+	// 一律視為 hidden），沿用同一個驗證器只是圖後台欄位一致，不代表這兩個值真的生效。缺鍵預設值在
+	// 讀取端（resolveScifiEntry）給：state=whitelist、whitelist="sogobaga@gmail.com"。
+	"scifi_entry_state":     isEntryState,
+	"scifi_entry_whitelist": isWhitelist,
 	// 站內信通知白名單：與上面「是否套用校正」的入口白名單**刻意分開**——入口一旦改成 open（全站
 	// 套用），仍然只有這份名單裡的帳號會收到「GPS 距離校正已啟用／暫停中」站內信。空字串＝一封都
 	// 不發（fail-closed，見 internal/gpscalib.notifyAllowed），與 entry_whitelist 的空值語意不同。
