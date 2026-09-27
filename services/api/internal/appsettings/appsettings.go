@@ -76,13 +76,21 @@ var specs = map[string]func(string) bool{
 	// 不透過這裡的泛用 Set handler，故不在 specs 註冊。
 	"rpg_entry_state":     isEntryState,
 	"rpg_entry_whitelist": isWhitelist,
-	// 未來科幻世界風格（見 internal/profile.resolveScifiEntry）：入口只有 hidden/shown 兩態，且刻意
-	// 不給 super_admin 旁路（owner 原話「目前只有 sogobaga@gmail.com 的帳號可以感受，其餘帳號維持
-	// 不變」）——isEntryState 允許的 locked/off 對這個入口沒有語意上的差異（resolveScifiEntryState
-	// 一律視為 hidden），沿用同一個驗證器只是圖後台欄位一致，不代表這兩個值真的生效。缺鍵預設值在
-	// 讀取端（resolveScifiEntry）給：state=whitelist、whitelist="sogobaga@gmail.com"。
+	// ⚠️ deprecated（migration 193，見 retro_skin/CONTRACT.md §2.1）：舊「未來科幻世界」入口，已被
+	// 下面的 skin_select_entry_state/whitelist 取代（一支入口同時管 scifi／retro／default 三種
+	// 風格）。程式不再讀這兩個 key（internal/profile 已無 resolveScifiEntry），只留在 specs 裡讓
+	// 「後台曾經存過的舊值」不會在讀取/寫入時 400；後台系統設定表單（apps/web lib/appSettings.ts）
+	// 也已移除對應欄位，不會再被編輯。
 	"scifi_entry_state":     isEntryState,
 	"scifi_entry_whitelist": isWhitelist,
+	// 帳號層級「風格設定」入口（見 internal/profile.resolveSkinSelectEntry，migration 193）：會員管理→
+	// 個人資料頁的「風格設定」區塊（預設風格／未來科技／復古 RPG 三選一）對哪些帳號可見。四態
+	// hidden|whitelist|vip|open（無 locked/off——比照舊 scifi_entry_state 前例，這個入口不需要「顯示
+	// 但不能按」的過渡態）；vip＝VIP 有效期內「或」白名單命中，供未來正式對 VIP 開放時使用。刻意
+	// 不給 super_admin 旁路（owner 原話「現在只有 sogobaga@gmail.com 可以切換」）。缺鍵預設值在讀取端
+	// （resolveSkinSelectEntry）給：state=whitelist、whitelist="sogobaga@gmail.com"。
+	"skin_select_entry_state":     isSkinSelectEntryState,
+	"skin_select_entry_whitelist": isWhitelist,
 	// 站內信通知白名單：與上面「是否套用校正」的入口白名單**刻意分開**——入口一旦改成 open（全站
 	// 套用），仍然只有這份名單裡的帳號會收到「GPS 距離校正已啟用／暫停中」站內信。空字串＝一封都
 	// 不發（fail-closed，見 internal/gpscalib.notifyAllowed），與 entry_whitelist 的空值語意不同。
@@ -158,6 +166,13 @@ func isEntryState(v string) bool {
 	return v == "" || v == "hidden" || v == "locked" || v == "whitelist" || v == "open" || v == "off"
 }
 func isWhitelist(v string) bool { return len(v) <= 20000 }
+
+// isSkinSelectEntryState 帳號層級「風格設定」入口狀態驗證器：只接受 resolveSkinSelectEntryState
+// 真正認得的四個值（含空字串＝缺鍵，讀取端自行套預設）。刻意獨立於 isEntryState 之外（不共用），
+// 因為這個入口沒有 locked/off 語意，寫死允許值可以在後台表單就先擋掉打錯字的無效狀態。
+func isSkinSelectEntryState(v string) bool {
+	return v == "" || v == "hidden" || v == "whitelist" || v == "vip" || v == "open"
+}
 
 // isPct 促銷實付百分比：空(用預設) 或 1..100。
 func isPct(v string) bool {

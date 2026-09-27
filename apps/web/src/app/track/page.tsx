@@ -32,13 +32,16 @@ import RaceFocusMode from './RaceFocusMode'
 import CheerShow from './CheerShow'
 import dynamic from 'next/dynamic'
 import type { SciFiMapHandle, SciFiPos, SciFiTarget } from './scifi/types'
-import { isSciFiActive, SKIN_CHANGE_EVENT } from '@/lib/skinOverride'
+import type { RetroMapHandle } from './retro/types'
+import { getActiveSkin, SKIN_CHANGE_EVENT, type OverrideSkin } from '@/lib/skinOverride'
 
-// 未來科幻世界（scifi）GPS 地圖（CONTRACT.md §4）：next/dynamic(ssr:false) 動態載入，只在下方
-// sciFiActive 為真時才會實際掛載 render（見 JSX 掛載處）——因此 maplibre-gl 與 track/scifi/* 全部
-// 進獨立 chunk，非白名單使用者的 /track 首屏 bundle 不會多載一行（§1／§5 Bundle 隔離驗證）。既有
-// Leaflet 地圖（ensureMap 等）完全不受影響，本檔對它們零修改，scifi 只是疊在同一位置的另一層視覺。
+// 未來科技（scifi）／復古 RPG（retro）GPS 地圖（CONTRACT.md §4）：next/dynamic(ssr:false) 動態載入，
+// 只在下方 sciFiActive／retroActive 為真時才會實際掛載 render（見 JSX 掛載處）——因此 maplibre-gl 與
+// track/scifi/*、track/retro/* 全部各自進獨立 chunk，非白名單使用者的 /track 首屏 bundle 不會多載
+// 一行（§1／§5 Bundle 隔離驗證）。既有 Leaflet 地圖（ensureMap 等）完全不受影響，本檔對它們零修改，
+// 兩套風格都只是疊在同一位置的另一層視覺。
 const SciFiMap = dynamic(() => import('./scifi/SciFiMap'), { ssr: false })
+const RetroMap = dynamic(() => import('./retro/RetroMap'), { ssr: false })
 import { readActiveRun, writeActiveRun, touchActiveRun, clearActiveRun, activeRunAgeMs, isActiveRunFresh, type ActiveRunState, type ActiveRunWorkoutSnapshot } from '@/lib/activeRun'
 import FocusModeTip, { FOCUS_TIP_SEEN_KEY } from '@/components/track/FocusModeTip'
 
@@ -59,13 +62,14 @@ const START_COUNTDOWN_S = 3 // 開跑前可取消倒數秒數（CONTRACT.md trac
 
 const SCIFI_LAST_POS_KEY = 'dor_scifi_last_pos' // 與 scifi/SciFiMap.tsx 的 LAST_POS_KEY 同一把 key（它每次
 // pos 更新時寫入，見該檔），這裡只在「定位前的初始中心」讀一次，兩檔不必互相 import 一個常數模組。
+const RETRO_LAST_POS_KEY = 'dor_retro_last_pos' // 與 retro/RetroMap.tsx 的 LAST_POS_KEY 同一把 key，同上。
 const DAAN_PARK: [number, number] = [25.0296, 121.5357] // 台北大安森林公園：無任何已知位置時的預設城市中心
 
-// CONTRACT_R2.md §2：初始中心＝最後已知位置（localStorage），若沒有則台北大安森林公園；純讀取，讀不到
-// / 格式不符一律安靜退回預設值，不拋錯（scifi 地圖本來就是錦上添花的個人化視覺）。
-function readLastScifiPos(): [number, number] | null {
+// CONTRACT.md §4：初始中心＝該風格最後已知位置（localStorage），若沒有則台北大安森林公園；純讀取，
+// 讀不到／格式不符一律安靜退回預設值，不拋錯（這兩套地圖都是錦上添花的個人化視覺）。
+function readLastMapPos(key: string): [number, number] | null {
   try {
-    const raw = localStorage.getItem(SCIFI_LAST_POS_KEY)
+    const raw = localStorage.getItem(key)
     if (!raw) return null
     const v = JSON.parse(raw)
     if (typeof v?.lat === 'number' && typeof v?.lng === 'number') return [v.lat, v.lng]
@@ -390,15 +394,15 @@ export default function TrackPage() {
   // 圖層——commitSeg 每跨一整公里即時加一個；重開跑/re-render 整批重建時用 clearLayers() 清空重畫。
   const kmMarkersRef = useRef<any>(null)
 
-  // ── 未來科幻世界（scifi）GPS 地圖：純加法整合，以上既有 Leaflet refs／邏輯完全不動（CONTRACT.md §4.1）──
-  // scifi 生效判斷：用 lib/skinOverride.ts 的 isSciFiActive()（單一真相，與 SkinOverride.tsx 判斷邏輯
-  // 同一份實作，讀同一個 dataset）；MutationObserver 監聽切換（開關 ON/OFF、登出等即時改 dataset），
-  // 另監聽 SKIN_CHANGE_EVENT（即 setSkinPref 廣播的事件）供偏好改變時立即生效（不必等 dataset 屬性
-  // 變動——例如關閉偏好但 dashboard 還沒重新拉取的瞬間）。
-  const [isScifi, setIsScifi] = useState(false)
+  // ── 帳號風格覆寫 GPS 地圖（未來科技 scifi／復古 RPG retro）：純加法整合，以上既有 Leaflet
+  // refs／邏輯完全不動（CONTRACT.md §4）── 生效判斷：用 lib/skinOverride.ts 的 getActiveSkin()
+  // （單一真相，與 SkinOverride.tsx 判斷邏輯同一份實作，讀同一個 dataset）；MutationObserver 監聽
+  // 切換（帳號在「風格設定」切換、登出等即時改 dataset），另監聽 SKIN_CHANGE_EVENT 供選擇改變時立即
+  // 生效（不必等 dataset 屬性變動——例如剛切換但 dashboard 還沒重新拉取的瞬間）。
+  const [activeSkin, setActiveSkin] = useState<OverrideSkin | null>(null)
   useEffect(() => {
     if (typeof document === 'undefined') return
-    const read = () => setIsScifi(isSciFiActive())
+    const read = () => setActiveSkin(getActiveSkin())
     read()
     const mo = new MutationObserver(read)
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-skin'] })
@@ -406,19 +410,28 @@ export default function TrackPage() {
     return () => { mo.disconnect(); window.removeEventListener(SKIN_CHANGE_EVENT, read) }
   }, [])
   const sciFiMapRef = useRef<SciFiMapHandle>(null)
-  // false＝已 fallback（WebGL 不支援／8 秒未 load／context lost／渲染例外）：卸載 SciFiMap、改顯示
-  // Leaflet；isScifi 重新變 true（例如切頁再進來）時重置，讓下次有機會重試（不會永久卡在退回狀態）。
+  const retroMapRef = useRef<RetroMapHandle>(null)
+  // false＝已 fallback（WebGL 不支援／8 秒未 load／context lost／渲染例外）：卸載對應地圖、改顯示
+  // Leaflet；activeSkin 重新符合時重置，讓下次有機會重試（不會永久卡在退回狀態）。
   const [sciFiOk, setSciFiOk] = useState(true)
-  useEffect(() => { if (isScifi) setSciFiOk(true) }, [isScifi])
-  const sciFiActive = isScifi && sciFiOk
+  const [retroOk, setRetroOk] = useState(true)
+  useEffect(() => { if (activeSkin === 'scifi') setSciFiOk(true) }, [activeSkin])
+  useEffect(() => { if (activeSkin === 'retro') setRetroOk(true) }, [activeSkin])
+  const sciFiActive = activeSkin === 'scifi' && sciFiOk
+  const retroActive = activeSkin === 'retro' && retroOk
+  const mapSkinActive = sciFiActive || retroActive
   const handleSciFiFallback = useCallback((reason: string) => {
-    console.warn('[scifi-map] fallback', reason) // eslint-disable-line no-console -- 刻意保留：CONTRACT.md §4.1 要求的退回診斷訊息，非殘留 debug log
+    console.warn('[scifi-map] fallback', reason) // eslint-disable-line no-console -- 刻意保留：CONTRACT.md §4 要求的退回診斷訊息，非殘留 debug log
     setSciFiOk(false)
   }, [])
-  // CONTRACT_R2.md §4：專注模式（scifi）開啟時，題列/底部面板/GPS 相關橫幅一律 visibility:hidden（見
-  // globals.css `[data-skin="scifi"] [data-scifi-focus-hide="true"]`），露出下方半透明的科幻地圖與靈魂；
-  // 只加了一個 data 屬性，不改這些元素原本的邏輯／內容。
-  const hideForFocus = sciFiActive && focusOpen
+  const handleRetroFallback = useCallback((reason: string) => {
+    console.warn('[retro-map] fallback', reason) // eslint-disable-line no-console -- 刻意保留：CONTRACT.md §4 要求的退回診斷訊息，非殘留 debug log
+    setRetroOk(false)
+  }, [])
+  // 專注模式（scifi／retro 皆適用）開啟時，題列/底部面板/GPS 相關橫幅一律 visibility:hidden（見
+  // globals.css `[data-skin="scifi"|"retro"] [data-scifi-focus-hide="true"]`），露出下方半透明的
+  // 地圖與勇者／靈魂；只加了一個 data 屬性，不改這些元素原本的邏輯／內容。
+  const hideForFocus = mapSkinActive && focusOpen
   const scifiFocusHideAttr = hideForFocus ? { 'data-scifi-focus-hide': 'true' } : {}
   // 讀取（不改）既有跳點排除規則（MAX_SPEED/GAP_MAX_S/GAP_MAX_M，見檔頭常數），把 pointsRef 依「與
   // Leaflet/伺服器同一套規則會被判定無效」的邊界切開——CONTRACT_R2.md §3「排除段不畫」：SciFiMap 的
@@ -446,12 +459,13 @@ export default function TrackPage() {
     return segs
   }
 
-  // 資料快照 props（節流 250ms≈4 次/秒，CONTRACT.md §4.1）：只在 scifi 生效時才計算，非白名單使用者
-  // 不多一顆計時器。segments／kmMarks 沿用既有 pointsRef／kmMarkerPositions／calibKRef（讀，不改）；
-  // targets 把既有 checkpoints／exploreCps／focusBoss 映射成統一形狀，供 SciFiMap 畫地面光環。
-  const [sciFiSnapshot, setSciFiSnapshot] = useState<{ pos: SciFiPos | null; segments: [number, number][][]; kmMarks: { km: number; lat: number; lng: number }[]; targets: SciFiTarget[] }>({ pos: null, segments: [], kmMarks: [], targets: [] })
+  // 資料快照 props（節流 250ms≈4 次/秒，CONTRACT.md §4）：只在 scifi／retro 任一生效時才計算，
+  // 非白名單使用者不多一顆計時器；同一份快照餵給兩套地圖（互斥掛載，不會同時消耗）。segments／
+  // kmMarks 沿用既有 pointsRef／kmMarkerPositions／calibKRef（讀，不改）；targets 把既有
+  // checkpoints／exploreCps／focusBoss 映射成統一形狀，供地圖畫地面光環／城堡寶箱圖示。
+  const [mapSnapshot, setMapSnapshot] = useState<{ pos: SciFiPos | null; segments: [number, number][][]; kmMarks: { km: number; lat: number; lng: number }[]; targets: SciFiTarget[]; bottomInset: number }>({ pos: null, segments: [], kmMarks: [], targets: [], bottomInset: 0 })
   useEffect(() => {
-    if (!sciFiActive) return
+    if (!mapSkinActive) return
     let alive = true
     const tick = () => {
       if (!alive) return
@@ -462,12 +476,16 @@ export default function TrackPage() {
         ...checkpoints.map((c) => ({ id: 'cp:' + c.id, lat: c.lat, lng: c.lng, radius: c.radius_m || 20, label: c.title || '打卡點', kind: 'checkpoint' as const, done: !!c.checked })),
         ...exploreCps.map((b) => ({ id: 'boss:' + b.id, lat: b.lat, lng: b.lng, radius: b.radius_m || 40, label: b.discovered ? b.name : (b.place || '神秘打卡點'), kind: (b.id === focusBoss ? 'focus' : 'boss') as 'focus' | 'boss', done: !!b.card_obtained })),
       ]
-      setSciFiSnapshot({ pos: cp ? { lat: cp.lat, lng: cp.lng, acc: cp.acc } : null, segments: segs, kmMarks: kmMarkerPositions(segs, 1000 / k), targets })
+      // CONTRACT_R2 §2：底部面板頂端到畫面底的高度（＝總高 - 面板頂端 y），餵給 RetroMap 算
+      // map.setPadding({bottom})，讓 GPS 跟隨中心落在面板以上的可見地圖區——沿用既有
+      // sheetHRef／sheetYRef（見上方宣告處，本就為此讀取而存在），純讀取不改跑步邏輯。
+      const bottomInset = Math.max(0, sheetHRef.current - sheetYRef.current)
+      setMapSnapshot({ pos: cp ? { lat: cp.lat, lng: cp.lng, acc: cp.acc } : null, segments: segs, kmMarks: kmMarkerPositions(segs, 1000 / k), targets, bottomInset })
     }
     tick()
     const timer = setInterval(tick, 250)
     return () => { alive = false; clearInterval(timer) }
-  }, [sciFiActive, checkpoints, exploreCps, focusBoss])
+  }, [mapSkinActive, checkpoints, exploreCps, focusBoss])
   const pendingMapRedrawRef = useRef(false) // 自動接續／三選一「繼續追蹤」剛還原了 pointsRef，但地圖(ensureMap)可能還沒就緒——待 mapReady 後補畫軌跡線＋每公里標記一次
   const warnTimer = useRef<any>(null)
   const errTimerRef = useRef<any>(null) // 「軌跡太短」等暫時訊息的自動淡出計時
@@ -2560,6 +2578,7 @@ export default function TrackPage() {
           openSignal={focusEnterSignal}
           onOpenChange={(open) => { focusOpenRef.current = open; setFocusOpen(open); writeActiveRun({ focusOpen: open }) }}
           scifi={sciFiActive}
+          retro={retroActive}
         />
       )}
       {/* 每公里鼓勵語「泡泡對話框+啦啦隊角色」演出（v1.1.664）：獨立掛在本頁頂層、不論 status，
@@ -2642,29 +2661,45 @@ export default function TrackPage() {
 
       {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗） */}
       <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        {/* scifi 生效時只把既有 Leaflet 容器視覺隱藏（visibility:hidden，保留尺寸避免 invalidateSize
-            異常）——Leaflet 地圖照舊建立/運作於背景，一旦 SciFiMap fallback 就立刻可見，跑步邏輯零依賴
-            地圖是否渲染（CONTRACT.md §1／§4.1）。 */}
-        <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)', visibility: sciFiActive ? 'hidden' : 'visible' }} />
+        {/* scifi／retro 生效時只把既有 Leaflet 容器視覺隱藏（visibility:hidden，保留尺寸避免
+            invalidateSize 異常）——Leaflet 地圖照舊建立/運作於背景，一旦對應地圖 fallback 就立刻可見，
+            跑步邏輯零依賴地圖是否渲染（CONTRACT.md §1／§4）。 */}
+        <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)', visibility: mapSkinActive ? 'hidden' : 'visible' }} />
         {sciFiActive && (
           <SciFiMap
             ref={sciFiMapRef}
-            pos={sciFiSnapshot.pos}
+            pos={mapSnapshot.pos}
             status={status}
-            segments={sciFiSnapshot.segments}
-            kmMarks={sciFiSnapshot.kmMarks}
-            targets={sciFiSnapshot.targets}
+            segments={mapSnapshot.segments}
+            kmMarks={mapSnapshot.kmMarks}
+            targets={mapSnapshot.targets}
             focusMode={focusOpen}
-            initialCenter={curPos ? [curPos.lat, curPos.lng] : (readLastScifiPos() ?? DAAN_PARK)}
+            initialCenter={curPos ? [curPos.lat, curPos.lng] : (readLastMapPos(SCIFI_LAST_POS_KEY) ?? DAAN_PARK)}
             initialZoom={16}
             onFallback={handleSciFiFallback}
             onTargetClick={(t) => setCpMsg(t.label)}
           />
         )}
-        {sciFiActive && status !== 'done' && (
+        {retroActive && (
+          <RetroMap
+            ref={retroMapRef}
+            pos={mapSnapshot.pos}
+            status={status}
+            segments={mapSnapshot.segments}
+            kmMarks={mapSnapshot.kmMarks}
+            targets={mapSnapshot.targets}
+            focusMode={focusOpen}
+            initialCenter={curPos ? [curPos.lat, curPos.lng] : (readLastMapPos(RETRO_LAST_POS_KEY) ?? DAAN_PARK)}
+            initialZoom={16.5}
+            onFallback={handleRetroFallback}
+            onTargetClick={(t) => setCpMsg(t.label)}
+            bottomInset={mapSnapshot.bottomInset}
+          />
+        )}
+        {mapSkinActive && status !== 'done' && (
           <div {...scifiFocusHideAttr} style={{ position: 'absolute', top: 12, left: 12, zIndex: 550, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <button onClick={() => sciFiMapRef.current?.zoomBy(1)} aria-label="放大" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>＋</button>
-            <button onClick={() => sciFiMapRef.current?.zoomBy(-1)} aria-label="縮小" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>－</button>
+            <button onClick={() => { sciFiMapRef.current?.zoomBy(1); retroMapRef.current?.zoomBy(1) }} aria-label="放大" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>＋</button>
+            <button onClick={() => { sciFiMapRef.current?.zoomBy(-1); retroMapRef.current?.zoomBy(-1) }} aria-label="縮小" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>－</button>
           </div>
         )}
         {/* 首次開跑提示（專注模式＝鎖定模式，每裝置一次）：按「知道了」bump focusEnterSignal，命令
@@ -2684,7 +2719,7 @@ export default function TrackPage() {
         {status !== 'done' && (!following || !curPos) && !(status === 'idle' && !curPos && autoLocating) && (
           <button
             {...scifiFocusHideAttr}
-            onClick={() => { recenterMap(); if (sciFiActive) sciFiMapRef.current?.recenter() }}
+            onClick={() => { recenterMap(); if (sciFiActive) sciFiMapRef.current?.recenter(); if (retroActive) retroMapRef.current?.recenter() }}
             style={{ position: 'absolute', top: 12, right: 12, zIndex: 550, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '8px 13px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 3px 12px rgba(0,0,0,.28)' }}
           >◎ {curPos ? '回到目前位置' : '定位到我'}</button>
         )}

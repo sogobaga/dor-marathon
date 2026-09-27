@@ -569,6 +569,11 @@ func main() {
 			// 這個字面路徑（見 apps/web/src/lib/api.ts cheerLayoutApi），不是掛在 /profile 底下。
 			r.With(profileHandler.RequireCheerLayoutEntry).Put("/me/cheer-layout", profileHandler.PutCheerLayout)
 
+			// 帳號層級「風格設定」（見 internal/profile/skin.go，migration 193）— 權限檢查在
+			// handler 內（resolveSkinSelectEntry），比照 cheer-layout 的字面路徑慣例，不掛在
+			// /profile 底下。
+			r.Put("/me/ui-skin", profileHandler.SetUiSkin)
+
 			// GPS 距離校正（見 internal/gpscalib）— 三個端點皆掛套件私有 requireEntry
 			// （gps_calib_entry_state/whitelist），比照 monopoly/cheer-layout 前例：非白名單一律 403。
 			r.Mount("/me/gps-calib", gpsCalibHandler.Router())

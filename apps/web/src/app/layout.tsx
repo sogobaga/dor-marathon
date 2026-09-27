@@ -16,9 +16,10 @@ import SkinOverride from '@/components/SkinOverride'
 import { veilColorsOf } from '@/lib/skinColors'
 
 // 各 skin 的瀏覽器 chrome（狀態列）色；新增 skin 時在此與 globals.css/appSettings/後端 specs 一併加。
-// scifi 不在這裡登記——它不是後台可切換的 active_skin，而是白名單使用者的個人化覆寫（見
-// components/SkinOverride.tsx／lib/skinOverride.ts，第 22 套契約 §2），其主題色 #02040a 只在
-// 覆寫套用時由那支模組自己設定 meta theme-color，不影響這份「SSR 決定 active_skin」的對照表。
+// scifi/retro 不在這裡登記——它們不是後台可切換的 active_skin，而是帳號層級「風格設定」的個人化覆寫
+// （見 components/SkinOverride.tsx／lib/skinOverride.ts，契約 retro_skin/CONTRACT.md §2，沿用第 22
+// 套原始設計），主題色只在覆寫套用時由那支模組自己設定 meta theme-color，不影響這份「SSR 決定
+// active_skin」的對照表。
 const SKIN_THEME_COLOR: Record<string, string> = { default: '#09090f', warm: '#FBF4E9', warm2: '#FBF5EA' }
 
 // 伺服器端讀取前台公開系統設定（skin、favicon…）：直接寫進 SSR，第一次繪製就正確、不靠 localStorage。
@@ -238,23 +239,25 @@ if(skip){v.ar='skip:'+skip;mark()}else reload(why);
 }catch(e){}})();`
 }
 
-// scifiBootJs：未來科幻世界風格（scifi skin）防閃爍腳本（第 22 套契約 §2）。純字串 JS——不能 import
-// lib/skinOverride.ts（那是給 React 生命週期內、資料回來之後用的權威實作），這裡是它在「開機那一刻、
-// React 都還沒開始渲染」時的等效判斷，讀同一把 localStorage key（dor_skin_override）：只有「這把裝置
-// 記錄的 uid」與「目前 dor_user 記錄的登入者 id」一致、且偏好（dor_skin_pref）不是 'off' 時，才在任何
-// 內容繪製前把 <html data-skin> 設成 'scifi'，避免使用者先看到原本 skin 一瞬間才跳成 scifi 的閃爍。
-// 兩者判斷條件必須同步維護：這裡改了，lib/skinOverride.ts 的 applyScifiSkin/restoreOriginalSkin 判斷
-// 條件也要跟著改（反之亦然）。任何一步失敗（JSON 壞掉、localStorage 被封鎖…）一律 catch 掉、維持 SSR
-// 原值——寧可少一次「防閃」，也不能讓非白名單/資料壞掉的使用者看到不該有的畫面。
-function scifiBootJs(): string {
+// skinOverrideBootJs：帳號層級「風格設定」防閃爍腳本（未來科技＋復古 RPG，契約
+// retro_skin/CONTRACT.md §2；沿用第 22 套原本的 scifiBootJs，一般化成可為任一個 OverrideSkin 值
+// 生效）。純字串 JS——不能 import lib/skinOverride.ts（那是給 React 生命週期內、資料回來之後用的
+// 權威實作），這裡是它在「開機那一刻、React 都還沒開始渲染」時的等效判斷，讀同一把 localStorage key
+// （dor_skin_override）：只有「這把裝置記錄的 uid」與「目前 dor_user 記錄的登入者 id」一致、且記錄
+// 的 skin 是 'scifi' 或 'retro' 時，才在任何內容繪製前把 <html data-skin> 設成那個值，避免使用者先
+// 看到原本 skin 一瞬間才跳成 scifi/retro 的閃爍。舊版(第22套) dor_skin_pref 裝置開關已不再讀取
+// （伺服器權威 ui_skin 取代）。兩者判斷條件必須同步維護：這裡改了，lib/skinOverride.ts 的
+// applySkinOverride/restoreOriginalSkin 判斷條件也要跟著改（反之亦然）。任何一步失敗（JSON 壞掉、
+// localStorage 被封鎖…）一律 catch 掉、維持 SSR 原值——寧可少一次「防閃」，也不能讓非白名單/資料
+// 壞掉的使用者看到不該有的畫面。
+function skinOverrideBootJs(): string {
   return `(function(){try{
 var ls=window.localStorage;
-if(ls.getItem('dor_skin_pref')==='off')return;
 var ov=ls.getItem('dor_skin_override');if(!ov)return;
-var rec=JSON.parse(ov);if(!rec||rec.skin!=='scifi'||!rec.uid)return;
+var rec=JSON.parse(ov);if(!rec||(rec.skin!=='scifi'&&rec.skin!=='retro')||!rec.uid)return;
 var uraw=ls.getItem('dor_user');if(!uraw)return;
 var u=JSON.parse(uraw);if(!u||u.id!==rec.uid)return;
-document.documentElement.dataset.skin='scifi';
+document.documentElement.dataset.skin=rec.skin;
 }catch(e){}})();`
 }
 
@@ -265,13 +268,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const [veilBg, veilFg] = veilColorsOf(skin)
   const themeColor = SKIN_THEME_COLOR[skin] || SKIN_THEME_COLOR.default
   return (
-    // suppressHydrationWarning：只壓下這個元素的 hydration 屬性比對警告——scifi 覆寫（見上方
-    // scifiBootJs／components/SkinOverride.tsx）會在 React 接手前就把 data-skin 改成 'scifi'，
-    // 與 SSR 算出的 skin 字串不一致是刻意的（僅白名單使用者），不是真的渲染錯誤。
+    // suppressHydrationWarning：只壓下這個元素的 hydration 屬性比對警告——風格覆寫（見上方
+    // skinOverrideBootJs／components/SkinOverride.tsx）會在 React 接手前就把 data-skin 改成
+    // 'scifi'/'retro'，與 SSR 算出的 skin 字串不一致是刻意的（僅授權使用者），不是真的渲染錯誤。
     <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined} data-glogin={glogin === 'redirect' ? 'redirect' : undefined} suppressHydrationWarning>
       <body>
         <script dangerouslySetInnerHTML={{ __html: bootJs(veilBg, veilFg) }} />
-        <script dangerouslySetInnerHTML={{ __html: scifiBootJs() }} />
+        <script dangerouslySetInnerHTML={{ __html: skinOverrideBootJs() }} />
         <AppProviders><BounceCleanup /><ActiveRunGuard /><SkinOverride originalSkin={skin} originalThemeColor={themeColor} /><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><PwaInstallPrompt /><UpdateNotice /><LandscapeNotice />{children}</AppProviders>
       </body>
     </html>

@@ -545,3 +545,144 @@ html:has([data-admin-root]), html:has([data-admin-root]) body { background: #090
 
 /* 科幻地圖授權鈕（MapLibre 精簡 ⓘ）：右上角讓出「回到目前位置」按鈕的高度（該鈕 top:12 高約 36px） */
 [data-skin="scifi"] .scifi-map .maplibregl-ctrl-top-right { top: 56px; }
+
+/* ============================================================================
+   Skin: retro（復古 RPG — 8-bit／16-bit JRPG 俯視大地圖風格，2026-09-27）
+   契約：scratchpad/retro_skin/CONTRACT.md（單一真相）。本區塊只負責「§3 全站視覺」——
+   何時把 data-skin="retro" 掛上 <html>（白名單／VIP 判斷、開關、防閃爍）由 lib/skinOverride.ts /
+   components/SkinOverride.tsx 另外處理；本檔案不判斷任何使用者身分，非白名單使用者的
+   <html> 永遠不會帶這個屬性值，以下規則對他們完全不生效、不影響任何既有 skin/元件行為。
+   GPS 地圖本身的復古風格（app/track/retro/、勇者、原創圖塊圖層）屬於契約 §4，由另一位
+   工人實作，不在本檔案範圍內；本區塊與該工人共用 components/retro/tiles.ts 的
+   drawTile()／RETRO_PALETTE（原創 16×16 像素圖塊，全部逐像素手刻，不描摹任何商業遊戲素材，
+   見契約 §1「原創美術」）。
+============================================================================ */
+[data-skin="retro"] {
+  /* §3 根因（CONTRACT_R2）：全站每個「整頁畫面」元件（RacesScreen 等 45 處）都用
+     `background: var(--bg)` 當自己的滿版背景色，這是既有慣例、不是本風格造的——但這代表只要
+     `--bg` 仍是不透明色，這些畫面容器就會整片蓋在 RetroBackground（fixed canvas，z-index:0）
+     之上，把它完全擋住（首頁卡片間的縫隙看到的其實是 body 的 var(--bg) 落底色，不是
+     RetroBackground 沒 mount——實測 canvas 本身像素資料是正確的深綠色，只是被蓋住看不見）。
+     retro 下把 `--bg` 改成 transparent，讓這 45 處畫面容器變透明、露出 RetroBackground；
+     卡片/視窗維持不透明黑是因為它們用的是「另一個」token `--bg-1`（見 .phone-shell 等），
+     不吃這裡的改動——契約 §3「視窗卡片維持黑底」正是靠這個既有的 --bg／--bg-1 語意分工達成。 */
+  --bg:       transparent;
+  --bg-1:     #000000;
+  --bg-2:     #1b1b1b;
+  --line:     #ffffff;
+  --line-2:   #ffffff;
+  --tx:       #ffffff;
+  --tx-dim:   #c8c8c8;
+  --tx-faint: #8a8a8a;
+
+  --fug:    #3cbc3c;   /* 主色綠（RPG「確認／前進」語彙） */
+  --fug-ink: #000000;  /* 綠底按鈕上的字色 */
+  --hunt:   #e4462c;   /* 警示紅 */
+  --gold:   #f8b800;   /* 強調金 */
+  --violet: #b8b8f8;
+  --dim:    rgba(255,255,255,.18);
+  --strava-tx: #fc4c02; /* 暗底（同 default 判斷邏輯），對比足夠，沿用不調整 */
+
+  --glow-fug:  0 0 0 2px rgba(60,188,60,.6);
+  --glow-hunt: 0 0 0 2px rgba(228,70,44,.6);
+  --glow-gold: 0 0 0 2px rgba(248,184,0,.6);
+
+  /* 黑底白框「對話視窗」語彙（契約 §3）：卡片/彈窗一律黑底＋白色描邊，圓角縮小成 4px，
+     不做玻璃感／光暈——這是像素 RPG 的視窗美術，不是科幻的發光卡片。 */
+  --card-shadow: 0 0 0 3px #fff;
+  --radius-lg: 4px;
+  --radius-md: 4px;
+  --radius-btn: 4px;
+
+  /* 像素中文字「Cubic 11」（見 components/retro/fonts.ts，由 RetroBackground 掛載時以
+     FontFace API 動態載入；本檔案不宣告 @font-face，字型還沒載入完成前自動落回 monospace，
+     不會壞版面）。 */
+  --font-num: 'DORPixel', monospace;
+  font-family: 'DORPixel', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: none;
+}
+/* CONTRACT_R2 §4 根因：`data-skin` 屬性掛在 <html>（document.documentElement），上面那條
+   `[data-skin="retro"]{font-family:...}` 規則因此只直接套用在 <html> 元素本身；但更前面
+   `html, body { font-family: -apple-system,... }`（全站基礎規則）同時也直接套用在 <body>
+   ——CSS 繼承只在「該元素自己沒有任何規則命中該屬性」時才會發生，body 有自己的直接宣告，
+   永遠不會去繼承 html 算出來的 DORPixel，此規則加一條命中 body 本身，讓
+   `getComputedStyle(document.body).fontFamily` 真的以 DORPixel 開頭（驗收逐字要求）。 */
+[data-skin="retro"] body {
+  font-family: 'DORPixel', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* 數字／英文標題套用像素字的工具類（沿用 scifi 的 .skin-num 慣例；retro 下整個子樹已經是
+   'DORPixel' 字體，這裡主要補強 tabular-nums 對齊與字距，跟 scifi 的用法保持一致，方便共用
+   className="skin-num" 的既有 markup）。 */
+[data-skin="retro"] .skin-num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .01em;
+}
+
+/* 開始／結束跑步鈕：黑底白字＋白色雙框（同「對話視窗」語彙），不像 warm2 用 PNG、
+   也不像 scifi 用漸層描邊——hover/focus 時左側浮現 ▶（RPG 選單游標語彙），純 CSS 偽元素，
+   預設（非 hover/focus）不顯示，不佔版面寬度（position absolute，不推擠文字）。 */
+[data-skin="retro"] .skin-btn-start,
+[data-skin="retro"] .skin-btn-end {
+  position: relative;
+  border: 3px solid #fff !important;
+  border-radius: 4px !important;
+  background: #000 !important;
+  color: #fff !important;
+  box-shadow: 0 0 0 3px #000, 0 0 0 6px #fff;
+  text-shadow: none;
+  letter-spacing: .02em;
+}
+[data-skin="retro"] .skin-btn-start::before,
+[data-skin="retro"] .skin-btn-end::before {
+  content: '▶';
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  color: #f8b800;
+  transition: opacity .1s steps(1);
+}
+[data-skin="retro"] .skin-btn-start:hover::before,
+[data-skin="retro"] .skin-btn-start:focus-visible::before,
+[data-skin="retro"] .skin-btn-end:hover::before,
+[data-skin="retro"] .skin-btn-end:focus-visible::before {
+  opacity: 1;
+}
+[data-skin="retro"] .skin-btn-end {
+  border-color: #e4462c !important;
+  box-shadow: 0 0 0 3px #000, 0 0 0 6px #e4462c;
+}
+[data-skin="retro"] .skin-btn-end::before {
+  color: #e4462c;
+}
+
+/* 桌機模擬框（.phone-shell）：黑底白框，呼應像素 RPG 的「大地圖裝在一個黑框畫面裡」的觀感；
+   只調邊框/陰影，不動尺寸/佈局，手機（不套 .phone-shell）不受影響。 */
+[data-skin="retro"] .phone-shell {
+  border: 3px solid #fff;
+  border-radius: 4px;
+  box-shadow:
+    0 0 0 3px #000,
+    0 30px 80px rgba(0,0,0,.85);
+}
+
+/* 事件任務面板維持 default 外觀（契約 §3 明文要求，不受 retro 影響）：面板自身已包
+   data-skin="default"（見 frontend-skins 記憶），此處不需要額外規則，僅在此註記，
+   避免後續整合者誤以為漏做。 */
+
+/* 專注模式（retro）：track/page.tsx 只加了 data-scifi-focus-hide="true" 屬性在題列／底部資訊
+   面板／GPS 相關橫幅——沿用與 scifi 相同的屬性名稱與隱藏規則（契約 §3 最後一條逐字要求）。
+   只在 data-skin="retro" 下生效，其餘 skin 完全不受影響。 */
+[data-skin="retro"] [data-scifi-focus-hide="true"] {
+  visibility: hidden;
+}
+
+/* 復古 RPG：跑步頁（唯一有 #gps-map 的頁面）底部面板、標題列、CTA 區必須是不透明黑底視窗——
+   上方 [data-skin="retro"] 把 --bg 設 transparent 是為了讓首頁／列表頁透出 RetroBackground 像素草原，
+   但跑步頁的面板容器也吃 var(--bg)，會讓地圖與草原從面板底下透出、文字難讀（2026-09-27 編排者檢視截圖）。
+   :has() 只在該頁成立，其他頁不受影響；非 retro skin 完全不受影響。 */
+[data-skin="retro"]:has(#gps-map) { --bg: #000000; }

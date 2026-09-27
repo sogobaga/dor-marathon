@@ -1861,10 +1861,17 @@ export interface DashboardInfo {
   // 遊戲化角色數值（RO 素質系統，見 internal/rpg）：只有 VVIP／白名單管理者看得到，故只有 hidden|shown 兩態
   // （無 locked——不對一般會員揭露「有這個功能但鎖住」）。後端以 rpg_entry_state/whitelist + is_vvip 解析。
   rpg_entry: 'hidden' | 'shown'
-  // 未來科幻世界風格（見 services/api/internal/profile.resolveScifiEntry）：只有 hidden|shown 兩態
-  // （無 locked），且刻意不給 super_admin 旁路——owner 原話「目前只有 sogobaga@gmail.com 的帳號可以
-  // 感受，其餘帳號維持不變」。後端以 scifi_entry_state/scifi_entry_whitelist 解析，缺鍵預設
-  // whitelist + sogobaga@gmail.com。前端 SkinOverride 只在 'shown' 時才可能套用 scifi 風格。
+  // 帳號層級「風格設定」（會員管理→個人資料頁，見 services/api/internal/profile.resolveSkinSelectEntry，
+  // migration 193）：只有 hidden|shown 兩態（無 locked），且刻意不給 super_admin 旁路——owner 原話
+  // 「現在只有 sogobaga@gmail.com 可以切換」。後端以 skin_select_entry_state/whitelist（+VIP 狀態）
+  // 解析，缺鍵預設 whitelist + sogobaga@gmail.com。
+  skin_select_entry: 'hidden' | 'shown'
+  // skin_select_entry==='shown' 時固定為 ['default','scifi','retro']，否則空陣列。
+  skin_options: ('default' | 'scifi' | 'retro')[]
+  // 目前生效的帳號風格；skin_select_entry!=='shown' 時一律 null（即使 DB 有值）。
+  ui_skin: 'default' | 'scifi' | 'retro' | null
+  // ScifiEntry 舊 bundle 相容欄位：只有 skin_select_entry==='shown' 且 ui_skin==='scifi' 時才
+  // 'shown'。新前端一律改讀 ui_skin，不應該再新增這個欄位的讀取點（見後端註解）。
   scifi_entry: 'hidden' | 'shown'
   // 團練邀請（見 internal/runmeet）：入口三態 + 本月剩餘發起次數（只用在「＋ 發起團練」按鈕文案，
   // 不做成入口徽章——會被誤讀成「還能加入 N 個團練」，見 lib/runMeet.ts createBtnText 註解）。
@@ -2205,6 +2212,11 @@ export const profileApi = {
   // 通知偏好（目前：團練開跑前 Email 提醒）。比照 setDataSource 同一慣例：小 body、只改一個欄位。
   setNotifyPrefs: (token: string, body: { runmeet_reminder_email: boolean }) =>
     request<{ ok: boolean; runmeet_reminder_email: boolean }>('/profile/notify-prefs', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
+  // 帳號層級「風格設定」（見 services/api/internal/profile/skin.go，migration 193）：字面路徑
+  // /me/ui-skin（不掛在 /profile 底下，比照 cheer-layout/gps-calib 慣例）。未授權 403
+  // skin_not_allowed、值不在 default/scifi/retro 400 invalid_skin。
+  setUiSkin: (token: string, skin: 'default' | 'scifi' | 'retro') =>
+    request<{ ui_skin: string }>('/me/ui-skin', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ skin }) }),
   dedupNotice: (token: string) =>
     request<{ notice: DedupNotice | null }>('/profile/dedup-notice', { headers: withAuth(token) }),
   dedupResolve: (token: string, choice: 'gps' | 'strava', remember: boolean) =>

@@ -135,3 +135,28 @@ func TestIsCheerLayoutJSON(t *testing.T) {
 		})
 	}
 }
+
+// TestIsSkinSelectEntryState 帳號層級「風格設定」入口狀態驗證器（migration 193）：只接受
+// hidden|whitelist|vip|open 四個值與空字串（缺鍵），其餘一律不合法——包含其他入口慣用的
+// locked/off，因為這個入口刻意沒有那兩種語意。
+func TestIsSkinSelectEntryState(t *testing.T) {
+	cases := []struct {
+		v    string
+		want bool
+	}{
+		{"", true},
+		{"hidden", true},
+		{"whitelist", true},
+		{"vip", true},
+		{"open", true},
+		{"locked", false},
+		{"off", false},
+		{"weird", false},
+		{"VIP", false}, // 大小寫敏感
+	}
+	for _, c := range cases {
+		if got := isSkinSelectEntryState(c.v); got != c.want {
+			t.Errorf("isSkinSelectEntryState(%q) = %v, want %v", c.v, got, c.want)
+		}
+	}
+}

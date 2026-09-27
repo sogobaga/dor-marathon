@@ -6,7 +6,7 @@ import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendingGps'
 import { readActiveRun, type ActiveRunState } from '@/lib/activeRun'
 import { useDashboard } from '@/lib/useDashboard'
-import { getSkinPref, setSkinPref } from '@/lib/skinOverride'
+import { SKIN_CHANGE_EVENT } from '@/lib/skinOverride'
 import { APP_VERSION } from '@/lib/version'
 import { useVipSubscribeFlow } from '@/lib/useVipSubscribeFlow'
 import UpgradeVipModal from './UpgradeVipModal'
@@ -54,6 +54,14 @@ function terraBrandName(provider: string): string {
   const key = provider.toLowerCase()
   return TERRA_BRAND_LABEL[key] ?? (key.charAt(0).toUpperCase() + key.slice(1))
 }
+// SKIN_CHOICES：帳號層級「風格設定」三選一（migration 193，契約 retro_skin/CONTRACT.md §2.2）。
+// swatch 只是小色塊預覽，不是真正的風格底色（scifi/retro 各自的真實視覺在
+// components/scifi/ParticleField、components/retro/RetroBackground）。
+const SKIN_CHOICES: { key: 'default' | 'scifi' | 'retro'; label: string; desc: string; swatch: string }[] = [
+  { key: 'default', label: '預設風格', desc: '目前的標準視覺，適合大部分使用情境。', swatch: 'linear-gradient(135deg,#1a1a2e,#4b5563)' },
+  { key: 'scifi', label: '未來科技', desc: '深空霓虹主題：全站粒子背景、GPS 跑步頁改為 3D 光網城市。', swatch: 'linear-gradient(135deg,#02040a,#00fff0,#ff00ea)' },
+  { key: 'retro', label: '復古 RPG', desc: '8-bit 日式 RPG 大地圖風格：像素草地、石牆城鎮、黑底白框視窗。', swatch: 'linear-gradient(135deg,#000,#3cbc3c,#f8b800)' },
+]
 // terra last_data_at 顯示（2026-09-24）：只需要粗略的「多久前」，分/時/天三級距足夠，不追求精確到秒。
 function terraRelativeAgo(iso: string): string {
   const t = new Date(iso).getTime()
@@ -223,12 +231,12 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [gpsCalibErr, setGpsCalibErr] = useState('')
   const [gpsCalibDetail, setGpsCalibDetail] = useState(false) // 展開最近配對/係數歷程
   const [reminderBusy, setReminderBusy] = useState(false) // 團練開跑前 Email 提醒開關送出中
-  const { dash, revalidate: loadDashboard } = useDashboard() // 共用會員儀表板快取（與首頁會員卡同一份）
-  // 未來科幻世界風格（第 22 套）裝置偏好：純前端 localStorage 開關，沒有對應後端 API（見 lib/skinOverride.ts）。
-  // 掛載後才讀（避免 SSR/CSR 不一致），初始值先當 'on'（與 getSkinPref 的預設一致），不影響其他使用者
-  // ——這個 state 只餵給下方「僅白名單者可見」的那個開關列，dash?.scifi_entry !== 'shown' 時整段不渲染。
-  const [scifiPref, setScifiPrefState] = useState<'on' | 'off'>('on')
-  useEffect(() => { setScifiPrefState(getSkinPref()) }, [])
+  const { dash, revalidate: loadDashboard, user } = useDashboard() // 共用會員儀表板快取（與首頁會員卡同一份）
+  // 帳號層級「風格設定」（migration 193）：切換忙碌中／失敗提示。實際套用畫面完全交給
+  // components/SkinOverride.tsx 依 dash.ui_skin 反應式處理（見下方 chooseSkin 的樂觀快取更新），
+  // 這裡只管按鈕自身的 UI 狀態。
+  const [skinBusy, setSkinBusy] = useState(false)
+  const [skinErr, setSkinErr] = useState('')
   const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>(initialTab ?? 'info')
   // 本機尚未上傳的 GPS（里程優先來源=外部來源時，track 頁結束不自動上傳，留給這裡決定）
   const [pending, setPending] = useState<PendingGpsRun | null>(null)
@@ -393,6 +401,30 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       /* ignore，維持原值，使用者可再按一次重試 */
     } finally {
       setReminderBusy(false)
+    }
+  }
+  // chooseSkin：帳號層級「風格設定」切換（migration 193，契約 retro_skin/CONTRACT.md §2.2）。
+  // 樂觀更新走 SWR 快取本身（loadDashboard 是 useDashboard() 綁定同一個 key 的 mutate）——直接把
+  // dash.ui_skin 改成新選擇並 revalidate:false，components/SkinOverride.tsx 是同一份快取的另一個
+  // 訂閱者，會在下一個 render 立即反應套用／收回畫面，不需要整頁重整、也不需要等 PUT 回來。
+  // 失敗時把快取改回原值並提示；兩種情況最後都補一次真正的 revalidate 對齊伺服器現況。
+  async function chooseSkin(skin: 'default' | 'scifi' | 'retro') {
+    if (skinBusy || !dash || dash.ui_skin === skin) return
+    const prev = dash.ui_skin
+    setSkinErr('')
+    setSkinBusy(true)
+    loadDashboard((cur) => (cur ? { ...cur, ui_skin: skin } : cur), { revalidate: false })
+    window.dispatchEvent(new Event(SKIN_CHANGE_EVENT))
+    try {
+      await withUserAuth((t) => profileApi.setUiSkin(t, skin))
+      loadDashboard()
+    } catch (e: any) {
+      loadDashboard((cur) => (cur ? { ...cur, ui_skin: prev } : cur), { revalidate: false })
+      window.dispatchEvent(new Event(SKIN_CHANGE_EVENT))
+      setSkinErr(e?.message || '切換失敗，請稍後再試')
+      loadDashboard()
+    } finally {
+      setSkinBusy(false)
     }
   }
   async function recomputeGpsCalib() {
@@ -818,6 +850,42 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                 )}
               </div>
             </div>
+
+            {/* 帳號層級「風格設定」（migration 193，契約 retro_skin/CONTRACT.md §2.2）：只有後端
+                dashboard.skin_select_entry==='shown' 才渲染這一段——目前只有系統設定
+                skin_select_entry_whitelist 命中的帳號（預設 sogobaga@gmail.com）會是 'shown'，其餘
+                帳號整段看不到，不只是「看得到但按不動」。取代第 22 套原本放在「運動數據」分頁的
+                🌌 開關（那個開關是純前端偏好，沒有寫回伺服器）。 */}
+            {dash?.skin_select_entry === 'shown' && (
+              <div style={{ paddingBottom: 12, borderBottom: '1px solid var(--line)' }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)', marginBottom: 8 }}>風格設定</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {SKIN_CHOICES.map((c) => {
+                    const selected = (dash.ui_skin ?? 'default') === c.key
+                    return (
+                      <button key={c.key} type="button" disabled={skinBusy} onClick={() => chooseSkin(c.key)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', cursor: skinBusy ? 'default' : 'pointer',
+                          background: selected ? 'var(--bg-2)' : 'transparent',
+                          border: `1.5px solid ${selected ? 'var(--fug)' : 'var(--line-2)'}`,
+                          borderRadius: 10, padding: '10px 12px', fontFamily: 'inherit', opacity: skinBusy ? 0.6 : 1,
+                        }}>
+                        <span style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 8, background: c.swatch, border: '1px solid var(--line-2)' }} />
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: 'block', fontSize: 13, fontWeight: 700, color: 'var(--tx)' }}>{c.label}{selected ? ' ✓' : ''}</span>
+                          <span style={{ display: 'block', fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 2, lineHeight: 1.5 }}>{c.desc}</span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+                {skinErr && <div style={{ fontSize: 12, color: 'var(--hunt)', marginTop: 8 }}>{skinErr}</div>}
+                <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>
+                  此功能目前開放測試帳號，未來將提供 VIP 會員使用。
+                </div>
+              </div>
+            )}
+
             <Field label="顯示名稱"><input style={inp} value={p.name} onChange={(e) => set('name', e.target.value)} /></Field>
             <Field label="Email（Google 帳號）"><input style={{ ...inp, opacity: 0.6 }} value={p.email} disabled /></Field>
             <Field label="真實姓名"><input style={inp} value={p.real_name} onChange={(e) => set('real_name', e.target.value)} /></Field>
@@ -933,39 +1001,6 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               </button>
             </div>
           </div>
-
-          {/* 未來科幻世界風格（第 22 套）：只有後端 dashboard.scifi_entry==='shown' 才渲染這一段——
-              目前只有系統設定 scifi_entry_whitelist 命中的帳號（預設 sogobaga@gmail.com）會是 'shown'，
-              其餘帳號連這個開關列本身都看不到，不只是「看得到但按不動」。純前端偏好，沒有對應後端 API，
-              切換立即透過 SKIN_CHANGE_EVENT 廣播給 components/SkinOverride.tsx 生效／收回，不必整頁重整。 */}
-          {dash?.scifi_entry === 'shown' && (
-            <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 12, padding: '12px 14px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 800, color: 'var(--tx)' }}>🌌 未來科幻世界</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 3, lineHeight: 1.6 }}>
-                    僅你的帳號可見的測試風格：全站粒子科幻視覺、GPS 跑步地圖改為 3D 光網城市與粒子軌跡。
-                    關閉會立即恢復原本風格。
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    const next = scifiPref === 'off' ? 'on' : 'off'
-                    setSkinPref(next)
-                    setScifiPrefState(next)
-                  }}
-                  style={{
-                    flexShrink: 0, padding: '9px 14px', borderRadius: 10, fontSize: 13, fontWeight: 700,
-                    whiteSpace: 'nowrap', cursor: 'pointer', fontFamily: 'inherit',
-                    background: scifiPref !== 'off' ? 'var(--fug)' : 'transparent',
-                    color: scifiPref !== 'off' ? 'var(--fug-ink)' : 'var(--tx-dim)',
-                    border: `1px solid ${scifiPref !== 'off' ? 'var(--fug)' : 'var(--line-2)'}`,
-                  }}>
-                  {scifiPref !== 'off' ? '已開啟 ✓' : '已關閉'}
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* 手錶直連（Garmin/COROS/Polar/Suunto/Wahoo，Terra 聚合器，Phase 1）。terra===null 或 !enabled 時維持
               「即將開放」佔位卡（production 尚未設定 Terra 憑證前的常態，見 memory terra-wearable-integration）；

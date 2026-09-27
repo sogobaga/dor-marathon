@@ -91,7 +91,7 @@ type PaceDir = 'fast' | 'slow'
 
 export default function RaceFocusMode({
   strategy, distanceM, elapsed, avgPace, segLivePace, movingSegLivePace, hasSignal, goal,
-  initialOpen, openSignal, onOpenChange, scifi,
+  initialOpen, openSignal, onOpenChange, scifi, retro,
 }: {
   strategy: RaceStrategy | null // null＝一般跑步/課表/個人任務等沒有賽事策略的情境，只顯示基本 4 大字指標
   distanceM: number // 目前有效距離（公尺）——與頁面主面板「距離」同一份數據（distRef）
@@ -115,6 +115,11 @@ export default function RaceFocusMode({
   scifi?: boolean // 未來科幻世界（scifi）變體開關（CONTRACT.md §4.4）：只加樣式（背景改半透明露出下方
   // 仍在運作的 SciFiMap、數字改 Orbitron＋青色光暈、鎖頭改霓虹圓環），長按 1.5 秒解除等行為完全不變。
   // 省略/false＝其他 skin，維持 v850 純黑不動。
+  retro?: boolean // 復古 RPG（retro）變體開關（CONTRACT.md §5）：背景改上 45% 透出下方仍在運作的
+  // RetroMap 與勇者、數字區改黑底白雙框的 RPG 狀態視窗、標題「冒險中／比賽專注模式・名稱」、鎖頭改
+  // 像素鎖頭圖示；scifi 與 retro 互斥（由父層依 activeSkin 分別傳入），長按 1.5 秒解除等行為完全不變。
+  // 文字顏色／字型走 `[data-skin="retro"]` 的 CSS token 級聯（globals.css，另一工人負責），本檔不用
+  // 額外寫死顏色。
 }) {
   const [hidden, setHidden] = useState(() => !initialOpen)
   useEffect(() => { onOpenChange?.(!hidden) }, [hidden]) // eslint-disable-line react-hooks/exhaustive-deps -- 只在 hidden 變動（含掛載當下）通知父層，onOpenChange 允許每次 render 傳新的閉包
@@ -262,14 +267,14 @@ export default function RaceFocusMode({
   if (hidden) {
     return (
       <button
-        data-skin={scifi ? 'scifi' : 'default'}
+        data-skin={retro ? 'retro' : scifi ? 'scifi' : 'default'}
         onClick={() => setHidden(false)}
         style={{
           position: 'fixed', right: 16, bottom: 'calc(100px + env(safe-area-inset-bottom))', zIndex: 600,
-          background: 'rgba(11,14,19,.9)', color: 'var(--tx)',
-          border: scifi ? '1px solid rgba(53,230,255,.6)' : '1px solid rgba(255,194,75,.6)',
-          borderRadius: 999, padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer',
-          boxShadow: scifi ? '0 4px 16px rgba(53,230,255,.25)' : '0 4px 16px rgba(0,0,0,.4)', fontFamily: 'inherit',
+          background: retro ? '#000' : 'rgba(11,14,19,.9)', color: 'var(--tx)',
+          border: scifi ? '1px solid rgba(53,230,255,.6)' : retro ? 'none' : '1px solid rgba(255,194,75,.6)',
+          borderRadius: retro ? 4 : 999, padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer',
+          boxShadow: scifi ? '0 4px 16px rgba(53,230,255,.25)' : retro ? '0 0 0 3px #fff, 0 0 0 6px #000' : '0 4px 16px rgba(0,0,0,.4)', fontFamily: 'inherit',
         }}
       >🏁 專注模式</button>
     )
@@ -280,18 +285,21 @@ export default function RaceFocusMode({
   return (
     <div
       ref={overlayRef}
-      data-skin={scifi ? 'scifi' : 'default'}
+      data-skin={retro ? 'retro' : scifi ? 'scifi' : 'default'}
       className="app-min-h"
       style={{
         position: 'fixed', inset: 0, zIndex: 3900,
-        // scifi（CONTRACT_R2.md §4）：由上而下漸層——頂部 45% 較透明（看得到下方仍在運作的 SciFiMap
-        // 與靈魂），55% 以下轉為接近純黑，大字數字靠 justifyContent:'flex-end' 整組推到下半部（見下方
-        // 三個子區塊改用 gap 佈局，不再 space-between 把進度條釘在最頂端）。其他 skin 維持 v850 純黑不變。
+        // scifi／retro（CONTRACT.md §4／§5）：由上而下漸層——頂部 45% 較透明（看得到下方仍在運作的
+        // SciFiMap／RetroMap 與靈魂／勇者），55% 以下轉為接近純黑，大字數字靠 justifyContent:'flex-end'
+        // 整組推到下半部（見下方三個子區塊改用 gap 佈局，不再 space-between 把進度條釘在最頂端）。
+        // retro 用純黑漸層（不帶 scifi 的深藍色調），其餘 skin 維持 v850 純黑不變。
         background: scifi
           ? 'linear-gradient(to bottom, rgba(2,4,10,.15) 0%, rgba(2,4,10,.35) 45%, rgba(2,4,10,.92) 55%, rgba(2,4,10,.92) 100%)'
+          : retro
+          ? 'linear-gradient(to bottom, rgba(0,0,0,.12) 0%, rgba(0,0,0,.32) 45%, rgba(0,0,0,.94) 55%, rgba(0,0,0,.94) 100%)'
           : '#000',
         color: 'var(--tx)', display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: scifi ? 'flex-end' : 'space-between', gap: scifi ? '2.4vh' : undefined,
+        justifyContent: (scifi || retro) ? 'flex-end' : 'space-between', gap: (scifi || retro) ? '2.4vh' : undefined,
         padding: '24px 20px calc(20px + env(safe-area-inset-bottom))',
         textAlign: 'center', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none',
       }}
@@ -304,11 +312,19 @@ export default function RaceFocusMode({
         <GoalProgressBar goal={goal} distanceM={distanceM} elapsed={elapsed} />
 
         <div style={{ fontSize: 12, letterSpacing: '.15em', color: 'var(--tx-dim)', fontWeight: 700 }}>
-          {strategy ? `比賽專注模式 · ${strategy.name}` : '專注模式'}
+          {/* retro 標題文案（CONTRACT.md §5）：「冒險中」／「比賽專注模式・名稱」，與 scifi/default 的
+              「專注模式」／「比賽專注模式 · 名稱」用字略有不同（全形間隔點），照契約原文用字。 */}
+          {retro ? (strategy ? `比賽專注模式・${strategy.name}` : '冒險中') : (strategy ? `比賽專注模式 · ${strategy.name}` : '專注模式')}
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2vh' }}>
+      {/* retro 的數字區改成 RPG 狀態視窗：黑底＋白色雙框（CONTRACT.md §3 `--card-shadow`），其餘 skin
+          維持原本無邊框的置中欄位。 */}
+      <div style={retro ? {
+        background: '#000', borderRadius: 4, boxShadow: '0 0 0 3px #fff, 0 0 0 6px #000',
+        padding: '18px 22px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2vh',
+        maxWidth: '92vw',
+      } : { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2vh' }}>
         <Metric label="移動距離" value={distKm.toFixed(2)} unit="km" size="xl" scifi={scifi} />
         <Metric label="時間" value={fmtTime(elapsed)} unit="" size="lg" scifi={scifi} />
         <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -361,7 +377,8 @@ export default function RaceFocusMode({
         </div>
       </div>
 
-      {/* 底部鎖頭：長按 1.5 秒離開專注模式回到完整介面（原 FocusLockScreen 的長按環，見檔頭說明） */}
+      {/* 底部鎖頭：長按 1.5 秒離開專注模式回到完整介面（原 FocusLockScreen 的長按環，見檔頭說明）。
+          retro 用像素風鎖頭圖示（CONTRACT.md §5「鎖頭改像素鎖頭圖示」）取代 emoji 🔒，其餘行為不變。 */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
         <div
           onPointerDown={startHold}
@@ -375,16 +392,29 @@ export default function RaceFocusMode({
           <svg width={holdRingSize} height={holdRingSize} style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
             <circle cx={holdRingSize / 2} cy={holdRingSize / 2} r={holdR} fill="none" stroke="rgba(255,255,255,.18)" strokeWidth={holdStroke} />
             <circle
-              cx={holdRingSize / 2} cy={holdRingSize / 2} r={holdR} fill="none" stroke={scifi ? 'var(--fug)' : 'var(--gold)'} strokeWidth={holdStroke}
+              cx={holdRingSize / 2} cy={holdRingSize / 2} r={holdR} fill="none" stroke={retro ? '#f8b800' : scifi ? 'var(--fug)' : 'var(--gold)'} strokeWidth={holdStroke}
               strokeDasharray={holdC} strokeDashoffset={holdC * (1 - holdProgress)} strokeLinecap="round"
               style={{ transition: holdProgress === 0 ? 'stroke-dashoffset .15s linear' : 'none', filter: scifi ? 'drop-shadow(0 0 6px rgba(53,230,255,.7))' : undefined }}
             />
           </svg>
-          <span style={{ fontSize: 30 }}>🔒</span>
+          {retro ? <PixelLock /> : <span style={{ fontSize: 30 }}>🔒</span>}
         </div>
         <div style={{ fontSize: 12, color: 'var(--tx-dim)', fontWeight: 700 }}>長按 1.5 秒解除專注模式</div>
       </div>
     </div>
+  )
+}
+
+// 像素風鎖頭圖示（retro 變體，CONTRACT.md §5）：原創、逐像素以 SVG rect 繪製的極簡鎖頭，不使用 emoji
+// 字型，維持像素塊的觀感，色彩取自復古 RPG 調色盤（金/白/黑）。
+function PixelLock() {
+  const s = 3 // 每個邏輯像素放大成多少 px
+  return (
+    <svg width={12 * s} height={12 * s} viewBox={`0 0 ${12 * s} ${12 * s}`} shapeRendering="crispEdges">
+      <rect x={3 * s} y={5 * s} width={6 * s} height={6 * s} fill="#f8b800" />
+      <rect x={4 * s} y={2 * s} width={4 * s} height={3 * s} fill="none" stroke="#fff" strokeWidth={s} />
+      <rect x={5 * s} y={7 * s} width={2 * s} height={2 * s} fill="#000" />
+    </svg>
   )
 }
 

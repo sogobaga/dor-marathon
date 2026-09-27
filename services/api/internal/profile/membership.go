@@ -138,10 +138,22 @@ type DashboardInfo struct {
 	MonopolyEntry    string `json:"monopoly_entry"`    // 環台大富翁入口可見性（同上）
 	KnowledgeEntry   string `json:"knowledge_entry"`   // 知識探索入口可見性（同上）
 	Gov500Entry      string `json:"gov500_entry"`      // 500.gov.tw「揮汗有禮」運動證明圖入口可見性（同上）
-	// ScifiEntry 未來科幻世界風格（見 resolveScifiEntry）入口可見性：只有 hidden|shown 兩態（無
-	// locked），且刻意不給 super_admin 旁路——owner 原話「目前只有 sogobaga@gmail.com 的帳號可以
-	// 感受，其餘帳號維持不變」，與其餘 *_entry 的「hidden 仍對超管放行」慣例不同（比照 RpgEntry
-	// 的「D3 明文」前例，但這裡連 VVIP 分支都沒有，純粹 whitelist）。
+	// SkinSelectEntry 帳號層級「風格設定」（會員管理→個人資料頁，見 resolveSkinSelectEntry，
+	// migration 193）入口可見性：只有 hidden|shown 兩態（無 locked），且刻意不給 super_admin 旁路
+	// ——owner 原話「現在只有 sogobaga@gmail.com 可以切換」，與其餘 *_entry 的「hidden 仍對超管放行」
+	// 慣例不同（比照舊 ScifiEntry／RpgEntry 的「D3 明文」前例）。
+	SkinSelectEntry string `json:"skin_select_entry"`
+	// SkinOptions 可選風格清單：SkinSelectEntry=='shown' 時固定為 ['default','scifi','retro']，否則
+	// 空陣列——未授權者連「有哪些選項」都不該知道，不只是「知道選項但不能選」。
+	SkinOptions []string `json:"skin_options"`
+	// UiSkin 目前生效的帳號風格（users.ui_skin）。SkinSelectEntry!=='shown' 時一律回 null，即使 DB
+	// 裡已經有值（例如後台事後把入口關掉）——避免前端讀到「使用者選過 retro」卻已經沒有入口可以
+	// 切回來的不一致狀態。
+	UiSkin *string `json:"ui_skin"`
+	// ScifiEntry 舊 bundle 相容欄位（第 22 套原本獨立的入口／偏好機制）：現在完全由
+	// SkinSelectEntry + UiSkin 推導——只有兩者分別是 'shown' 與 'scifi' 時才 'shown'，讓還沒更新的
+	// 前端 bundle（讀 scifi_entry 判斷是否套用 ParticleField）行為等同「使用者在新版風格設定選了
+	// 未來科技」。新增的前端邏輯一律改讀 UiSkin，不應該再新增這個欄位的讀取點。
 	ScifiEntry string `json:"scifi_entry"`
 	// RpgEntry 遊戲化角色數值（RO 素質系統，見 internal/rpg）入口可見性：只有 hidden|shown 兩態
 	// （無 locked——不對一般會員揭露「有這個功能但鎖住」），由 rpg.DashboardEntry 解析
@@ -198,6 +210,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	var email string
 	var isSuperAdmin bool
 	var trialShown bool
+	var uiSkinRaw string
 	if err := h.db.QueryRow(r.Context(), `
 		SELECT u.name, u.handle, COALESCE(u.avatar_url,''), u.exp, u.dp, u.gp, u.vip_expires_at,
 		       COALESCE(u.vip_plan,''), COALESCE(u.activity_coupon_balance,0), COALESCE(u.trial_notice_shown,FALSE),
@@ -212,12 +225,13 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		       (SELECT COUNT(*) FROM registrations rg WHERE rg.user_id=u.id AND rg.status<>'cancelled'),
 		       COALESCE(u.email,''),
 		       COALESCE(td.name,''),
-		       u.is_super_admin
+		       u.is_super_admin,
+		       COALESCE(u.ui_skin,'default')
 		FROM users u
 		LEFT JOIN user_profiles p ON p.user_id=u.id
 		LEFT JOIN title_defs td ON td.code = u.displayed_title
 		WHERE u.id=$1`, userID).
-		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.Gp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &trialShown, &d.RunmeetReminderEmail, &d.TotalKm, &d.Nickname, &d.RaceCount, &email, &d.DisplayedTitle, &isSuperAdmin); err != nil {
+		Scan(&d.Name, &d.Handle, &d.AvatarURL, &d.Exp, &d.Dp, &d.Gp, &d.VIPExpiresAt, &d.VipPlan, &d.ActivityCouponBalance, &trialShown, &d.RunmeetReminderEmail, &d.TotalKm, &d.Nickname, &d.RaceCount, &email, &d.DisplayedTitle, &isSuperAdmin, &uiSkinRaw); err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to load dashboard")
 		return
 	}
@@ -245,7 +259,6 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	// 判斷規則多了 is_vvip 這個 OR 分支，且 hidden 連超管旁路都不給（其餘功能 hidden 仍對超管放行），
 	// 形狀不同不能共用同一支函式。
 	d.RpgEntry = rpg.DashboardEntry(r.Context(), h.db, userID, email, code, isSuperAdmin)
-	d.ScifiEntry = resolveScifiEntry(r.Context(), h.db, email, code)
 	d.GpsCalibEntry, d.GpsCalibFactor, d.GpsCalibStatus, d.GpsCalibPairs, d.GpsCalibEnabled =
 		gpscalib.DashboardSummary(r.Context(), h.db, userID, email, code, isSuperAdmin)
 	levels, err := h.levelConfigList(r.Context())
@@ -259,6 +272,22 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		d.Sp, d.SpMax, d.SpRecoverMin, d.SpNextRecoverSec, d.SpFreezeUntil, d.Fitness = st.SP, st.SPMax, st.RecoverMin, st.NextRecoverSec, st.FreezeUntil, st.Fitness
 	}
 	d.IsVIP = d.VIPExpiresAt != nil && d.VIPExpiresAt.After(time.Now())
+	// 帳號層級「風格設定」（migration 193）：需在 d.IsVIP 算出之後——state='vip' 時的判定要用它。
+	d.SkinSelectEntry = resolveSkinSelectEntry(r.Context(), h.db, email, code, d.IsVIP)
+	if d.SkinSelectEntry == "shown" {
+		d.SkinOptions = []string{"default", "scifi", "retro"}
+		v := uiSkinRaw
+		d.UiSkin = &v
+		if v == "scifi" {
+			d.ScifiEntry = "shown"
+		} else {
+			d.ScifiEntry = "hidden"
+		}
+	} else {
+		d.SkinOptions = []string{}
+		d.UiSkin = nil
+		d.ScifiEntry = "hidden"
+	}
 	// 團練邀請入口 + 本月剩餘發起次數（需在 d.IsVIP 算出之後——配額上限是即時依 VIP 判定的）
 	d.RunMeetEntry, d.RunMeetRemaining = runmeet.DashboardSummary(r.Context(), h.db, userID, email, code, isSuperAdmin, d.IsVIP)
 	d.ActivityCouponValueCents = appsettings.GetInt(r.Context(), h.db, "vip_coupon_value_cents", 10000)
@@ -318,32 +347,39 @@ func resolveEntry(ctx context.Context, db *pgxpool.Pool, stateKey, wlKey, email,
 	}
 }
 
-// resolveScifiEntryState 純函式：依系統設定 state/whitelist 字串與使用者 email/帳號編碼判斷「未來
-// 科幻世界」風格入口可見性。只有 hidden|shown 兩態（無 locked）；state="off" 與其餘未知值一律視為
-// hidden。刻意不接 isSuperAdmin——owner 原話「目前只有 sogobaga@gmail.com 的帳號可以感受，其餘帳號
-// 維持不變、不受到影響」，與其餘 *_entry 的「hidden 仍對超管放行」慣例不同（比照 rpg.ResolveEntry
-// 的「D3 明文」前例，但這裡連 VVIP／super_admin 分支都沒有，避免將來被誤接上旁路）。
-func resolveScifiEntryState(state, whitelist, email, code string) string {
+// resolveSkinSelectEntryState 純函式：依系統設定 state/whitelist 字串、使用者 email/帳號編碼、VIP
+// 狀態，判斷帳號層級「風格設定」（會員管理→個人資料頁，migration 193）入口可見性。只有 hidden|shown
+// 兩態（無 locked）；state 未知值一律視為 hidden。state="vip" 時 VIP 有效期內「或」白名單命中皆可
+// （供未來正式對 VIP 開放時使用，現在後台只會填 whitelist）。刻意不接 isSuperAdmin——owner 原話
+// 「現在只有 sogobaga@gmail.com 可以切換」，與其餘 *_entry 的「hidden 仍對超管放行」慣例不同（比照
+// 舊 resolveScifiEntryState／rpg.ResolveEntry 的「D3 明文」前例，這裡連 VVIP／super_admin 分支都
+// 沒有，避免將來被誤接上旁路）。
+func resolveSkinSelectEntryState(state, whitelist, email, code string, isVIP bool) string {
 	switch state {
 	case "open":
 		return "shown"
+	case "vip":
+		if isVIP || personalWhitelisted(whitelist, email, code) {
+			return "shown"
+		}
+		return "hidden"
 	case "whitelist":
 		if personalWhitelisted(whitelist, email, code) {
 			return "shown"
 		}
 		return "hidden"
-	default: // hidden / off / 未設定 / 其他未知值
+	default: // hidden / 未設定 / 其他未知值
 		return "hidden"
 	}
 }
 
-// resolveScifiEntry 讀系統設定 scifi_entry_state/scifi_entry_whitelist 解析入口（見
-// resolveScifiEntryState）。缺鍵預設 state=whitelist、whitelist="sogobaga@gmail.com"——即使後台
-// 從未設定過這兩個 key，也只有這個帳號看得到（契約 §2）。
-func resolveScifiEntry(ctx context.Context, db *pgxpool.Pool, email, code string) string {
-	state := appsettings.GetString(ctx, db, "scifi_entry_state", "whitelist")
-	wl := appsettings.GetString(ctx, db, "scifi_entry_whitelist", "sogobaga@gmail.com")
-	return resolveScifiEntryState(state, wl, email, code)
+// resolveSkinSelectEntry 讀系統設定 skin_select_entry_state/skin_select_entry_whitelist 解析入口
+// （見 resolveSkinSelectEntryState）。缺鍵預設 state=whitelist、whitelist="sogobaga@gmail.com"——
+// 即使後台從未設定過這兩個 key，也只有這個帳號看得到（契約 retro_skin/CONTRACT.md §2.1）。
+func resolveSkinSelectEntry(ctx context.Context, db *pgxpool.Pool, email, code string, isVIP bool) string {
+	state := appsettings.GetString(ctx, db, "skin_select_entry_state", "whitelist")
+	wl := appsettings.GetString(ctx, db, "skin_select_entry_whitelist", "sogobaga@gmail.com")
+	return resolveSkinSelectEntryState(state, wl, email, code, isVIP)
 }
 
 // resolvePersonalEntry 個人任務入口可見性（沿用共用 resolveEntry）。
