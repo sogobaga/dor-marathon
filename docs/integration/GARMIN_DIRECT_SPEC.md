@@ -23,10 +23,10 @@
 
 ## 2. 架構決策（編排者定案，可挑戰）
 1. **資料模型沿用 `user_integrations`**：`provider='garmin'`、`via='direct'`。與既有 Terra-Garmin 列（`via='terra'`）共用 `(user_id, provider)` 唯一鍵——**直連連上時覆蓋同一列**（`via`→`direct`、token 換成 Garmin token、`provider_user_id` 換成 Garmin API user id），**但保留 `created_at`（里程 floor）**，避免中間活動被 floor 擋掉；同時觸發一次回填（自該使用者最後一筆 garmin 活動時間或 30 天前，取較晚者）。
-2. **Push 事件先落地再處理**（新表 `integration_events`，migration 194）：`id, provider, event_type, provider_user_id, payload JSONB, received_at, status pending|done|error|dead, attempts, last_error, processed_at`。Webhook handler：驗證路徑 token → 逐筆 INSERT → 立即 200；背景處理器（api 內佇列或 services/worker 排程，≤5 秒延遲）處理，失敗指數退避重試 5 次後 `dead`；後台可重放。**這是 COROS／Terra 都沒有的可靠度層**，Garmin 直連一起補上。
+2. **Push 事件先落地再處理**（新表 `integration_events`，migration 195）：`id, provider, event_type, provider_user_id, payload JSONB, received_at, status pending|done|error|dead, attempts, last_error, processed_at`。Webhook handler：驗證路徑 token → 逐筆 INSERT → 立即 200；背景處理器（api 內佇列或 services/worker 排程，≤5 秒延遲）處理，失敗指數退避重試 5 次後 `dead`；後台可重放。**這是 COROS／Terra 都沒有的可靠度層**，Garmin 直連一起補上。
 3. **PKCE 必做**：`code_verifier` 以 state 為鍵存 Redis（TTL 10 分鐘），state 仍用既有 HMAC 簽章模式（coros.go）。
 4. **活動類型白名單**：跑步全類（RUNNING／STREET／TRACK／TRAIL／TREADMILL／VIRTUAL／INDOOR_RUNNING）＋走路類（WALKING／HIKING／INDOOR_WALKING），與 Terra 白名單語意一致；其餘（騎車／游泳／重訓）略過並計入 `skipped_non_running`。
-5. **軌跡（Phase 2，可選）**：訂閱 `activityDetails`，把樣本編成 polyline 存入 `activities.polyline`（新欄位，`km_paces` 亦可由樣本算），讓 Garmin 活動也有「跑步紀錄畫面」（揮汗有禮截圖需求）。Phase 1 先不做，欄位預留在 migration 194 內一次加好。
+5. **軌跡（Phase 2，可選）**：訂閱 `activityDetails`，把樣本編成 polyline 存入 `activities.polyline`（新欄位，`km_paces` 亦可由樣本算），讓 Garmin 活動也有「跑步紀錄畫面」（揮汗有禮截圖需求）。Phase 1 先不做，欄位預留在 migration 195 內一次加好。
 6. **停用 Terra 的 Garmin 通道**：`TERRA_PROVIDERS` 環境變數（預設 `polar,suunto,wahoo`）控制 Terra 連接 UI 顯示的品牌；Terra webhook 收到 provider=garmin 的事件一律略過並 log（避免雙來源）。
 7. **跨來源去重優先序**：直連 garmin 仍是外部來源第一順位；順手修 `services/worker/main.go` 的優先序表（缺 polar／suunto／wahoo，與 `profile/dedup.go` 漂移）。
 8. **解除授權政策**：使用者在 DOR 斷開 → 呼叫 Garmin deregistration＋刪 token＋`ResetPreferredSource`＋刪除該來源活動（與 COROS 相同）；Garmin 端撤銷 → 收到 `deregistrations` 事件後做同樣處理並發站內信。⚠️待核對 Garmin 條款是否要求刪除已匯入資料。
@@ -72,7 +72,7 @@
 - 每日 08:00 營運報告「⌚ 穿戴串接」段落：garmin 直連改由 `integration_events` 統計（連結數、24h 事件數、最後事件時間），不再打 Terra。
 - TG 告警：webhook 連續 5xx／dead 事件 >0／Garmin token refresh 連續失敗。
 
-## 4. 資料庫（migration 194，可重複執行）
+## 4. 資料庫（migration 195，可重複執行）
 - `integration_events`（§2-2）＋索引 `(provider, status, received_at)`、`(provider, provider_user_id, received_at DESC)`。
 - `activities` 加 `polyline TEXT NULL`、`km_paces INT[]`（若已存在則略過；Phase 2 用）。
 - `app_settings`：`garmin_direct_enabled`（後台總開關，預設 false，方便先部署後開）。
@@ -82,7 +82,7 @@
 
 ## 6. 驗證計畫
 - Go 單元：state／PKCE 往返、webhook token 驗證、活動類型白名單、欄位對照（含 RecordedAt＝結束時刻、pace 自算）、回填窗口、`Save` 保留 floor、事件落地／重試／dead、Terra 對 garmin 事件略過、去重優先序表兩處一致。用 httptest 假 Garmin。
-- Neon 臨時分支：194 冪等；連接→事件→活動→EXP/DP 帳本全鏈路；Terra-Garmin 列被直連覆蓋且 floor 不變；斷開清理。
+- Neon 臨時分支：195 冪等；連接→事件→活動→EXP/DP 帳本全鏈路；Terra-Garmin 列被直連覆蓋且 floor 不變；斷開清理。
 - E2E：連接卡三態、手動匯入回饋、>48h ⚠️、後台事件重放。
 - **Garmin Evaluation 環境真機**：至少 2 支錶（跑步／走路各一趟）、一次 30 天回填、一次撤銷授權；核對 §1 全部「待核對」項並更新本檔。
 - 正式切換：`garmin_direct_enabled` 開 → 站內信 → 觀察 3 天日報 → 停用 Terra Garmin 通道。

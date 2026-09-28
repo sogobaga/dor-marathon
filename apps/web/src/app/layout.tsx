@@ -239,22 +239,22 @@ if(skip){v.ar='skip:'+skip;mark()}else reload(why);
 }catch(e){}})();`
 }
 
-// skinOverrideBootJs：帳號層級「風格設定」防閃爍腳本（未來科技＋復古 RPG，契約
-// retro_skin/CONTRACT.md §2；沿用第 22 套原本的 scifiBootJs，一般化成可為任一個 OverrideSkin 值
-// 生效）。純字串 JS——不能 import lib/skinOverride.ts（那是給 React 生命週期內、資料回來之後用的
-// 權威實作），這裡是它在「開機那一刻、React 都還沒開始渲染」時的等效判斷，讀同一把 localStorage key
-// （dor_skin_override）：只有「這把裝置記錄的 uid」與「目前 dor_user 記錄的登入者 id」一致、且記錄
-// 的 skin 是 'scifi' 或 'retro' 時，才在任何內容繪製前把 <html data-skin> 設成那個值，避免使用者先
-// 看到原本 skin 一瞬間才跳成 scifi/retro 的閃爍。舊版(第22套) dor_skin_pref 裝置開關已不再讀取
-// （伺服器權威 ui_skin 取代）。兩者判斷條件必須同步維護：這裡改了，lib/skinOverride.ts 的
-// applySkinOverride/restoreOriginalSkin 判斷條件也要跟著改（反之亦然）。任何一步失敗（JSON 壞掉、
-// localStorage 被封鎖…）一律 catch 掉、維持 SSR 原值——寧可少一次「防閃」，也不能讓非白名單/資料
-// 壞掉的使用者看到不該有的畫面。
+// skinOverrideBootJs：帳號層級「風格設定」防閃爍腳本（未來科技＋復古 RPG＋溫馨可愛，契約
+// retro_skin/CONTRACT.md §2、docs/skins/CUTE_CONTRACT.md §2；沿用第 22 套原本的 scifiBootJs，
+// 一般化成可為任一個 OverrideSkin 值生效）。純字串 JS——不能 import lib/skinOverride.ts（那是給
+// React 生命週期內、資料回來之後用的權威實作），這裡是它在「開機那一刻、React 都還沒開始渲染」時的
+// 等效判斷，讀同一把 localStorage key（dor_skin_override）：只有「這把裝置記錄的 uid」與「目前
+// dor_user 記錄的登入者 id」一致、且記錄的 skin 是 'scifi'／'retro'／'cute' 時，才在任何內容繪製前
+// 把 <html data-skin> 設成那個值，避免使用者先看到原本 skin 一瞬間才跳成覆寫風格的閃爍。舊版(第22套)
+// dor_skin_pref 裝置開關已不再讀取（伺服器權威 ui_skin 取代）。兩者判斷條件必須同步維護：這裡改了，
+// lib/skinOverride.ts 的 applySkinOverride/restoreOriginalSkin 判斷條件也要跟著改（反之亦然）。任何
+// 一步失敗（JSON 壞掉、localStorage 被封鎖…）一律 catch 掉、維持 SSR 原值——寧可少一次「防閃」，也
+// 不能讓非白名單/資料壞掉的使用者看到不該有的畫面。
 function skinOverrideBootJs(): string {
   return `(function(){try{
 var ls=window.localStorage;
 var ov=ls.getItem('dor_skin_override');if(!ov)return;
-var rec=JSON.parse(ov);if(!rec||(rec.skin!=='scifi'&&rec.skin!=='retro')||!rec.uid)return;
+var rec=JSON.parse(ov);if(!rec||(rec.skin!=='scifi'&&rec.skin!=='retro'&&rec.skin!=='cute')||!rec.uid)return;
 var uraw=ls.getItem('dor_user');if(!uraw)return;
 var u=JSON.parse(uraw);if(!u||u.id!==rec.uid)return;
 document.documentElement.dataset.skin=rec.skin;

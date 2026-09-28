@@ -13,10 +13,12 @@ func TestIsValidUiSkin(t *testing.T) {
 		{"default", true},
 		{"scifi", true},
 		{"retro", true},
+		{"cute", true},
 		{"", false},
 		{"warm", false},
-		{"Scifi", false}, // 大小寫敏感，值必須完全相符 migration 193 的 CHECK 約束
+		{"Scifi", false}, // 大小寫敏感，值必須完全相符 migration 193+194 的 CHECK 約束
 		{"retro ", false},
+		{"Cute", false},
 	}
 	for _, c := range cases {
 		if got := isValidUiSkin(c.skin); got != c.want {

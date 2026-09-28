@@ -20,15 +20,18 @@
 //
 // 對其他工人的介面約定（契約明訂）：getActiveSkin()、isSciFiActive()、SKIN_CHANGE_EVENT 三個匯出
 // 是固定介面，GPS 地圖／專注模式等其他模組依此判斷該載入哪一套視覺。
+//
+// 'cute'（溫馨可愛，第 24 套）比照 scifi/retro 同一套機制加入，見 docs/skins/CUTE_CONTRACT.md
+// §2；theme-color #fff3d6（奶油黃，契約 §2）。
 
-export type OverrideSkin = 'scifi' | 'retro'
+export type OverrideSkin = 'scifi' | 'retro' | 'cute'
 
 export const SKIN_CHANGE_EVENT = 'dor-skin-change'
 
 const OVERRIDE_KEY = 'dor_skin_override'
 const LEGACY_PREF_KEY = 'dor_skin_pref' // 舊版(第22套)裝置開關，已由伺服器權威 ui_skin 取代，讀到就清
 
-const THEME_COLOR: Record<OverrideSkin, string> = { scifi: '#02040a', retro: '#000000' }
+const THEME_COLOR: Record<OverrideSkin, string> = { scifi: '#02040a', retro: '#000000', cute: '#fff3d6' }
 
 function safeGetItem(key: string): string | null {
   try {
@@ -59,12 +62,12 @@ function clearLegacyPref() {
 }
 
 // getActiveSkin 供其他模組（例如 track 頁的地圖選擇、除錯用途）查詢目前 <html data-skin> 是否為
-// 受管理的覆寫風格之一，不依賴任何 React state。非 scifi/retro（含未設定、default、warm 等 SSR
-// 原值）一律回 null。
+// 受管理的覆寫風格之一，不依賴任何 React state。非 scifi/retro/cute（含未設定、default、warm 等
+// SSR 原值）一律回 null。
 export function getActiveSkin(): OverrideSkin | null {
   if (typeof document === 'undefined') return null
   const v = document.documentElement.dataset.skin
-  return v === 'scifi' || v === 'retro' ? v : null
+  return v === 'scifi' || v === 'retro' || v === 'cute' ? v : null
 }
 
 // isSciFiActive 舊介面相容（＝getActiveSkin()==='scifi'）；track 頁等既有呼叫端沿用這支不必改名。

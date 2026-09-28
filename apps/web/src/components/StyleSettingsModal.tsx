@@ -1,29 +1,32 @@
 'use client'
 
-// 帳號層級「風格設定」選單彈窗（migration 193，契約 retro_skin/CONTRACT_R3.md §1）：把 ProfileScreen
-// 個人資料分頁原本並排的三張風格卡片，收斂成一顆「風格設定」按鈕＋這個選單彈窗。三個選項一律純文字
-// （不放圖示／emoji），目前選中者右側顯示「✓」。套用邏輯（樂觀更新 SWR 快取＋PUT /me/ui-skin＋失敗
-// 回滾）留在 ProfileScreen.chooseSkin()，本檔只負責呈現與把點擊轉呼叫出去，不重複那段邏輯。
+// 帳號層級「風格設定」選單彈窗（migration 193+194，契約 retro_skin/CONTRACT_R3.md §1、
+// docs/skins/CUTE_CONTRACT.md §2）：把 ProfileScreen 個人資料分頁原本並排的風格卡片，收斂成
+// 一顆「風格設定」按鈕＋這個選單彈窗。選項一律純文字（不放圖示／emoji），目前選中者右側顯示「✓」。
+// 套用邏輯（樂觀更新 SWR 快取＋PUT /me/ui-skin＋失敗回滾）留在 ProfileScreen.chooseSkin()，本檔只
+// 負責呈現與把點擊轉呼叫出去，不重複那段邏輯。
 //
 // 掛載慣例比照 RaceRankingScreen 的底部選單（overlayMount portal＋.phone-shell 自動框住桌機、z 3000、
-// 底部彈出）；顏色一律用 token（var(--bg-1)/var(--tx)/…），三種 skin（default/scifi/retro）下都要
-// 可讀——因此刻意不像 RewardGrantedModal/UpgradeVipModal 那樣強制 data-skin="default"。
+// 底部彈出）；顏色一律用 token（var(--bg-1)/var(--tx)/…），四種 skin（default/scifi/retro/cute）下
+// 都要可讀——因此刻意不像 RewardGrantedModal/UpgradeVipModal 那樣強制 data-skin="default"。
 import { createPortal } from 'react-dom'
 import { overlayMount } from '@/lib/overlayMount'
 
-export type SkinKey = 'default' | 'scifi' | 'retro'
+export type SkinKey = 'default' | 'scifi' | 'retro' | 'cute'
 
 // 供 ProfileScreen 的「風格設定」按鈕顯示「目前風格名稱」使用，與下方選項共用同一份文案來源。
 export const SKIN_LABEL: Record<SkinKey, string> = {
   default: '預設風格',
   scifi: '未來科技',
   retro: '復古 RPG',
+  cute: '溫馨可愛',
 }
 
 const OPTIONS: { key: SkinKey; desc: string }[] = [
   { key: 'default', desc: '網站原本的外觀。' },
   { key: 'scifi', desc: '深空霓虹主題，全站粒子背景、GPS 跑步頁改為 3D 發光城市地圖。' },
   { key: 'retro', desc: '復古 RPG 大地圖：羊皮紙選單、像素大地圖與小井勇者。' },
+  { key: 'cute', desc: '粉彩手繪風、圓體字，小井陪你散步跑。' },
 ]
 
 export default function StyleSettingsModal({ current, busy, err, onChoose, onClose }: {

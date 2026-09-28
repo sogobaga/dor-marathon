@@ -1,6 +1,7 @@
 'use client'
 
-// SkinOverride：帳號層級「風格設定」的權威切換器（第 22 套未來科技＋第 23 套復古 RPG，見契約
+// SkinOverride：帳號層級「風格設定」的權威切換器（第 22 套未來科技＋第 23 套復古 RPG＋第 24 套
+// 溫馨可愛，見契約
 // scratchpad/retro_skin/CONTRACT.md §2）。掛在 root layout 的 client providers 內，本身不渲染畫面
 // 以外的「風格背景層」（scifi 的 ParticleField／retro 的 RetroBackground），純粹依「登入 uid +
 // dashboard.skin_select_entry + dashboard.ui_skin」三個條件同步 <html data-skin>／meta
@@ -29,6 +30,11 @@ const ParticleField = dynamic(() => import('@/components/scifi/ParticleField'), 
 // 掛載。RetroBackground 由 THEME 工人另外建立於 components/retro/RetroBackground.tsx（default
 // export）；在它落地前這行 import 找不到模組是預期中的單一 tsc 錯誤（契約 §6 已註明可接受）。
 const RetroBackground = dynamic(() => import('@/components/retro/RetroBackground'), { ssr: false })
+// 全站彩色紙屑/星星/雲朵背景層（溫馨可愛，第 24 套，契約 docs/skins/CUTE_CONTRACT.md §3）：同上
+// 道理，只在 active==='cute' 時才掛載。CuteBackground 由 THEME 工人另外建立於
+// components/cute/CuteBackground.tsx（default export）；在它落地前這行 import 找不到模組是預期中的
+// 單一 tsc 錯誤（契約 §6 已註明可接受，同 RetroBackground 前例）。
+const CuteBackground = dynamic(() => import('@/components/cute/CuteBackground'), { ssr: false })
 
 export default function SkinOverride({
   originalSkin,
@@ -46,7 +52,7 @@ export default function SkinOverride({
 
   useEffect(() => {
     function sync() {
-      const isOverride = !!uid && entryShown && (uiSkin === 'scifi' || uiSkin === 'retro')
+      const isOverride = !!uid && entryShown && (uiSkin === 'scifi' || uiSkin === 'retro' || uiSkin === 'cute')
       const next: OverrideSkin | null = isOverride ? (uiSkin as OverrideSkin) : null
       setActive(next)
       if (next && uid) {
@@ -65,5 +71,6 @@ export default function SkinOverride({
 
   if (active === 'scifi') return <ParticleField />
   if (active === 'retro') return <RetroBackground />
+  if (active === 'cute') return <CuteBackground />
   return null
 }

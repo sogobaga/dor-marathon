@@ -143,8 +143,9 @@ type DashboardInfo struct {
 	// ——owner 原話「現在只有 sogobaga@gmail.com 可以切換」，與其餘 *_entry 的「hidden 仍對超管放行」
 	// 慣例不同（比照舊 ScifiEntry／RpgEntry 的「D3 明文」前例）。
 	SkinSelectEntry string `json:"skin_select_entry"`
-	// SkinOptions 可選風格清單：SkinSelectEntry=='shown' 時固定為 ['default','scifi','retro']，否則
-	// 空陣列——未授權者連「有哪些選項」都不該知道，不只是「知道選項但不能選」。
+	// SkinOptions 可選風格清單：SkinSelectEntry=='shown' 時固定為
+	// ['default','scifi','retro','cute']（migration 194），否則空陣列——未授權者連「有哪些選項」
+	// 都不該知道，不只是「知道選項但不能選」。
 	SkinOptions []string `json:"skin_options"`
 	// UiSkin 目前生效的帳號風格（users.ui_skin）。SkinSelectEntry!=='shown' 時一律回 null，即使 DB
 	// 裡已經有值（例如後台事後把入口關掉）——避免前端讀到「使用者選過 retro」卻已經沒有入口可以
@@ -275,7 +276,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	// 帳號層級「風格設定」（migration 193）：需在 d.IsVIP 算出之後——state='vip' 時的判定要用它。
 	d.SkinSelectEntry = resolveSkinSelectEntry(r.Context(), h.db, email, code, d.IsVIP)
 	if d.SkinSelectEntry == "shown" {
-		d.SkinOptions = []string{"default", "scifi", "retro"}
+		d.SkinOptions = []string{"default", "scifi", "retro", "cute"}
 		v := uiSkinRaw
 		d.UiSkin = &v
 		if v == "scifi" {

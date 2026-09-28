@@ -402,7 +402,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   // dash.ui_skin 改成新選擇並 revalidate:false，components/SkinOverride.tsx 是同一份快取的另一個
   // 訂閱者，會在下一個 render 立即反應套用／收回畫面，不需要整頁重整、也不需要等 PUT 回來。
   // 失敗時把快取改回原值並提示；兩種情況最後都補一次真正的 revalidate 對齊伺服器現況。
-  async function chooseSkin(skin: 'default' | 'scifi' | 'retro') {
+  async function chooseSkin(skin: 'default' | 'scifi' | 'retro' | 'cute') {
     if (skinBusy || !dash || dash.ui_skin === skin) return
     const prev = dash.ui_skin
     setSkinErr('')

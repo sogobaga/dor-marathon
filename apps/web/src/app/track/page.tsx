@@ -33,15 +33,18 @@ import CheerShow from './CheerShow'
 import dynamic from 'next/dynamic'
 import type { SciFiMapHandle, SciFiPos, SciFiTarget } from './scifi/types'
 import type { RetroMapHandle } from './retro/types'
+import type { CuteMapHandle } from './cute/types'
 import { getActiveSkin, SKIN_CHANGE_EVENT, type OverrideSkin } from '@/lib/skinOverride'
 
-// 未來科技（scifi）／復古 RPG（retro）GPS 地圖（CONTRACT.md §4）：next/dynamic(ssr:false) 動態載入，
-// 只在下方 sciFiActive／retroActive 為真時才會實際掛載 render（見 JSX 掛載處）——因此 maplibre-gl 與
-// track/scifi/*、track/retro/* 全部各自進獨立 chunk，非白名單使用者的 /track 首屏 bundle 不會多載
-// 一行（§1／§5 Bundle 隔離驗證）。既有 Leaflet 地圖（ensureMap 等）完全不受影響，本檔對它們零修改，
-// 兩套風格都只是疊在同一位置的另一層視覺。
+// 未來科技（scifi）／復古 RPG（retro）／溫馨可愛（cute）GPS 地圖（CONTRACT.md §4；cute 見
+// scratchpad docs/skins/CUTE_CONTRACT.md §4）：next/dynamic(ssr:false) 動態載入，只在下方
+// sciFiActive／retroActive／cuteActive 為真時才會實際掛載 render（見 JSX 掛載處）——因此 maplibre-gl
+// 與 track/scifi/*、track/retro/*、track/cute/* 全部各自進獨立 chunk，非白名單使用者的 /track 首屏
+// bundle 不會多載一行（§1／§5 Bundle 隔離驗證）。既有 Leaflet 地圖（ensureMap 等）完全不受影響，
+// 本檔對它們零修改，三套風格都只是疊在同一位置的另一層視覺。
 const SciFiMap = dynamic(() => import('./scifi/SciFiMap'), { ssr: false })
 const RetroMap = dynamic(() => import('./retro/RetroMap'), { ssr: false })
+const CuteMap = dynamic(() => import('./cute/CuteMap'), { ssr: false })
 import { readActiveRun, writeActiveRun, touchActiveRun, clearActiveRun, activeRunAgeMs, isActiveRunFresh, type ActiveRunState, type ActiveRunWorkoutSnapshot } from '@/lib/activeRun'
 import FocusModeTip, { FOCUS_TIP_SEEN_KEY } from '@/components/track/FocusModeTip'
 
@@ -63,6 +66,7 @@ const START_COUNTDOWN_S = 3 // 開跑前可取消倒數秒數（CONTRACT.md trac
 const SCIFI_LAST_POS_KEY = 'dor_scifi_last_pos' // 與 scifi/SciFiMap.tsx 的 LAST_POS_KEY 同一把 key（它每次
 // pos 更新時寫入，見該檔），這裡只在「定位前的初始中心」讀一次，兩檔不必互相 import 一個常數模組。
 const RETRO_LAST_POS_KEY = 'dor_retro_last_pos' // 與 retro/RetroMap.tsx 的 LAST_POS_KEY 同一把 key，同上。
+const CUTE_LAST_POS_KEY = 'dor_cute_last_pos' // 與 cute/CuteMap.tsx 的 LAST_POS_KEY 同一把 key，同上。
 const DAAN_PARK: [number, number] = [25.0296, 121.5357] // 台北大安森林公園：無任何已知位置時的預設城市中心
 
 // CONTRACT.md §4：初始中心＝該風格最後已知位置（localStorage），若沒有則台北大安森林公園；純讀取，
@@ -411,15 +415,20 @@ export default function TrackPage() {
   }, [])
   const sciFiMapRef = useRef<SciFiMapHandle>(null)
   const retroMapRef = useRef<RetroMapHandle>(null)
+  const cuteMapRef = useRef<CuteMapHandle>(null)
   // false＝已 fallback（WebGL 不支援／8 秒未 load／context lost／渲染例外）：卸載對應地圖、改顯示
   // Leaflet；activeSkin 重新符合時重置，讓下次有機會重試（不會永久卡在退回狀態）。
   const [sciFiOk, setSciFiOk] = useState(true)
   const [retroOk, setRetroOk] = useState(true)
+  const [cuteOk, setCuteOk] = useState(true)
   useEffect(() => { if (activeSkin === 'scifi') setSciFiOk(true) }, [activeSkin])
   useEffect(() => { if (activeSkin === 'retro') setRetroOk(true) }, [activeSkin])
+  const cuteSkinActive = activeSkin === 'cute'
+  useEffect(() => { if (cuteSkinActive) setCuteOk(true) }, [cuteSkinActive])
   const sciFiActive = activeSkin === 'scifi' && sciFiOk
   const retroActive = activeSkin === 'retro' && retroOk
-  const mapSkinActive = sciFiActive || retroActive
+  const cuteActive = cuteSkinActive && cuteOk
+  const mapSkinActive = sciFiActive || retroActive || cuteActive
   const handleSciFiFallback = useCallback((reason: string) => {
     console.warn('[scifi-map] fallback', reason) // eslint-disable-line no-console -- 刻意保留：CONTRACT.md §4 要求的退回診斷訊息，非殘留 debug log
     setSciFiOk(false)
@@ -428,9 +437,14 @@ export default function TrackPage() {
     console.warn('[retro-map] fallback', reason) // eslint-disable-line no-console -- 刻意保留：CONTRACT.md §4 要求的退回診斷訊息，非殘留 debug log
     setRetroOk(false)
   }, [])
-  // 專注模式（scifi／retro 皆適用）開啟時，題列/底部面板/GPS 相關橫幅一律 visibility:hidden（見
-  // globals.css `[data-skin="scifi"|"retro"] [data-scifi-focus-hide="true"]`），露出下方半透明的
-  // 地圖與勇者／靈魂；只加了一個 data 屬性，不改這些元素原本的邏輯／內容。
+  const handleCuteFallback = useCallback((reason: string) => {
+    console.warn('[cute-map] fallback', reason) // eslint-disable-line no-console -- 刻意保留：CONTRACT.md §4 要求的退回診斷訊息，非殘留 debug log
+    setCuteOk(false)
+  }, [])
+  // 專注模式（scifi／retro／cute 皆適用）開啟時，題列/底部面板/GPS 相關橫幅一律 visibility:hidden
+  // （見 globals.css `[data-skin="scifi"|"retro"|"cute"] [data-scifi-focus-hide="true"]`，cute 的
+  // CSS 規則由 THEME 工人補上），露出下方半透明的地圖與勇者／靈魂／小井；只加了一個 data 屬性，
+  // 不改這些元素原本的邏輯／內容。
   const hideForFocus = mapSkinActive && focusOpen
   const scifiFocusHideAttr = hideForFocus ? { 'data-scifi-focus-hide': 'true' } : {}
   // 讀取（不改）既有跳點排除規則（MAX_SPEED/GAP_MAX_S/GAP_MAX_M，見檔頭常數），把 pointsRef 依「與
@@ -2579,6 +2593,7 @@ export default function TrackPage() {
           onOpenChange={(open) => { focusOpenRef.current = open; setFocusOpen(open); writeActiveRun({ focusOpen: open }) }}
           scifi={sciFiActive}
           retro={retroActive}
+          cute={cuteActive}
         />
       )}
       {/* 每公里鼓勵語「泡泡對話框+啦啦隊角色」演出（v1.1.664）：獨立掛在本頁頂層、不論 status，
@@ -2696,10 +2711,26 @@ export default function TrackPage() {
             bottomInset={mapSnapshot.bottomInset}
           />
         )}
+        {cuteActive && (
+          <CuteMap
+            ref={cuteMapRef}
+            pos={mapSnapshot.pos}
+            status={status}
+            segments={mapSnapshot.segments}
+            kmMarks={mapSnapshot.kmMarks}
+            targets={mapSnapshot.targets}
+            focusMode={focusOpen}
+            initialCenter={curPos ? [curPos.lat, curPos.lng] : (readLastMapPos(CUTE_LAST_POS_KEY) ?? DAAN_PARK)}
+            initialZoom={16.5}
+            onFallback={handleCuteFallback}
+            onTargetClick={(t) => setCpMsg(t.label)}
+            bottomInset={mapSnapshot.bottomInset}
+          />
+        )}
         {mapSkinActive && status !== 'done' && (
           <div {...scifiFocusHideAttr} style={{ position: 'absolute', top: 12, left: 12, zIndex: 550, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <button onClick={() => { sciFiMapRef.current?.zoomBy(1); retroMapRef.current?.zoomBy(1) }} aria-label="放大" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>＋</button>
-            <button onClick={() => { sciFiMapRef.current?.zoomBy(-1); retroMapRef.current?.zoomBy(-1) }} aria-label="縮小" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>－</button>
+            <button onClick={() => { sciFiMapRef.current?.zoomBy(1); retroMapRef.current?.zoomBy(1); cuteMapRef.current?.zoomBy(1) }} aria-label="放大" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>＋</button>
+            <button onClick={() => { sciFiMapRef.current?.zoomBy(-1); retroMapRef.current?.zoomBy(-1); cuteMapRef.current?.zoomBy(-1) }} aria-label="縮小" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>－</button>
           </div>
         )}
         {/* 首次開跑提示（專注模式＝鎖定模式，每裝置一次）：按「知道了」bump focusEnterSignal，命令
@@ -2719,7 +2750,7 @@ export default function TrackPage() {
         {status !== 'done' && (!following || !curPos) && !(status === 'idle' && !curPos && autoLocating) && (
           <button
             {...scifiFocusHideAttr}
-            onClick={() => { recenterMap(); if (sciFiActive) sciFiMapRef.current?.recenter(); if (retroActive) retroMapRef.current?.recenter() }}
+            onClick={() => { recenterMap(); if (sciFiActive) sciFiMapRef.current?.recenter(); if (retroActive) retroMapRef.current?.recenter(); if (cuteActive) cuteMapRef.current?.recenter() }}
             style={{ position: 'absolute', top: 12, right: 12, zIndex: 550, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '8px 13px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 3px 12px rgba(0,0,0,.28)' }}
           >◎ {curPos ? '回到目前位置' : '定位到我'}</button>
         )}

@@ -1866,10 +1866,11 @@ export interface DashboardInfo {
   // 「現在只有 sogobaga@gmail.com 可以切換」。後端以 skin_select_entry_state/whitelist（+VIP 狀態）
   // 解析，缺鍵預設 whitelist + sogobaga@gmail.com。
   skin_select_entry: 'hidden' | 'shown'
-  // skin_select_entry==='shown' 時固定為 ['default','scifi','retro']，否則空陣列。
-  skin_options: ('default' | 'scifi' | 'retro')[]
+  // skin_select_entry==='shown' 時固定為 ['default','scifi','retro','cute']（migration 194），
+  // 否則空陣列。
+  skin_options: ('default' | 'scifi' | 'retro' | 'cute')[]
   // 目前生效的帳號風格；skin_select_entry!=='shown' 時一律 null（即使 DB 有值）。
-  ui_skin: 'default' | 'scifi' | 'retro' | null
+  ui_skin: 'default' | 'scifi' | 'retro' | 'cute' | null
   // ScifiEntry 舊 bundle 相容欄位：只有 skin_select_entry==='shown' 且 ui_skin==='scifi' 時才
   // 'shown'。新前端一律改讀 ui_skin，不應該再新增這個欄位的讀取點（見後端註解）。
   scifi_entry: 'hidden' | 'shown'
@@ -2212,10 +2213,10 @@ export const profileApi = {
   // 通知偏好（目前：團練開跑前 Email 提醒）。比照 setDataSource 同一慣例：小 body、只改一個欄位。
   setNotifyPrefs: (token: string, body: { runmeet_reminder_email: boolean }) =>
     request<{ ok: boolean; runmeet_reminder_email: boolean }>('/profile/notify-prefs', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
-  // 帳號層級「風格設定」（見 services/api/internal/profile/skin.go，migration 193）：字面路徑
+  // 帳號層級「風格設定」（見 services/api/internal/profile/skin.go，migration 193+194）：字面路徑
   // /me/ui-skin（不掛在 /profile 底下，比照 cheer-layout/gps-calib 慣例）。未授權 403
-  // skin_not_allowed、值不在 default/scifi/retro 400 invalid_skin。
-  setUiSkin: (token: string, skin: 'default' | 'scifi' | 'retro') =>
+  // skin_not_allowed、值不在 default/scifi/retro/cute 400 invalid_skin。
+  setUiSkin: (token: string, skin: 'default' | 'scifi' | 'retro' | 'cute') =>
     request<{ ui_skin: string }>('/me/ui-skin', { method: 'PUT', headers: withAuth(token), body: JSON.stringify({ skin }) }),
   dedupNotice: (token: string) =>
     request<{ notice: DedupNotice | null }>('/profile/dedup-notice', { headers: withAuth(token) }),
