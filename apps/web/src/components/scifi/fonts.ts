@@ -13,13 +13,16 @@
 //   import { orbitron } from '@/components/scifi/fonts'
 //   ...
 //   <html lang="zh-Hant" className={orbitron.variable} ...>
-import { Orbitron } from 'next/font/google'
+// v857：改用 next/font/local（同 app/track/scifi/font.ts 的自帶字型檔），不再於建置時連 Google Fonts，
+// 原因見該檔說明。
+import localFont from 'next/font/local'
 
-export const orbitron = Orbitron({
-  subsets: ['latin'],
-  weight: ['500', '700', '900'],
+export const orbitron = localFont({
+  src: '../../app/track/scifi/fonts/Orbitron-latin-var.woff2',
+  weight: '400 900',
   variable: '--font-scifi-orbitron',
   display: 'swap',
+  preload: false, // 只有 scifi 會用到，不要在任何頁面預載（非 scifi 使用者零下載）
   // Orbitron 只含拉丁字符集，中文一律走系統字體 fallback（契約要求「中文維持系統字」）。
   fallback: ['system-ui', 'sans-serif'],
 })
