@@ -547,103 +547,253 @@ html:has([data-admin-root]), html:has([data-admin-root]) body { background: #090
 [data-skin="scifi"] .scifi-map .maplibregl-ctrl-top-right { top: 56px; }
 
 /* ============================================================================
-   Skin: retro（復古 RPG — 8-bit／16-bit JRPG 俯視大地圖風格，2026-09-27）
-   契約：scratchpad/retro_skin/CONTRACT.md（單一真相）。本區塊只負責「§3 全站視覺」——
+   Skin: retro（復古 RPG — 羊皮紙＋皮革 JRPG 選單風格，2026-09-28 第三輪）
+   契約：scratchpad/retro_skin/CONTRACT_R3.md（單一真相，§3／§5）。本區塊只負責「全站視覺」——
    何時把 data-skin="retro" 掛上 <html>（白名單／VIP 判斷、開關、防閃爍）由 lib/skinOverride.ts /
    components/SkinOverride.tsx 另外處理；本檔案不判斷任何使用者身分，非白名單使用者的
    <html> 永遠不會帶這個屬性值，以下規則對他們完全不生效、不影響任何既有 skin/元件行為。
-   GPS 地圖本身的復古風格（app/track/retro/、勇者、原創圖塊圖層）屬於契約 §4，由另一位
-   工人實作，不在本檔案範圍內；本區塊與該工人共用 components/retro/tiles.ts 的
-   drawTile()／RETRO_PALETTE（原創 16×16 像素圖塊，全部逐像素手刻，不描摹任何商業遊戲素材，
-   見契約 §1「原創美術」）。
+   GPS 地圖本身、勇者、專注模式狀態視窗以外的復古風格屬於契約 §4，由另一位工人在
+   app/track/retro/ 實作，不在本檔案範圍內；本區塊只改 RaceFocusMode.tsx 的 retro 分支樣式。
+   第三輪原則（使用者原話：附圖只取「羊皮紙底／深咖啡緞帶／細褐線清單/金字/短劍游標/皮革
+   細金框」語彙，不得描摹任何素材）：v854 的黑底白色 3px 雙框全面淘汰，改細框＋暖色調。
+   §5 加碼（更精緻）：紙張斑點/纖維紋、焦邊暈、四角金線角飾、緞帶標題、按鈕斜面、短劍游標
+   hover 動畫——全部靠既有共用選擇器（header／.phone-shell／.skin-frame／.skin-btn-*／
+   button／h1,h2）與 design tokens 達成，不新增/修改任何其他元件檔案的 className。
 ============================================================================ */
 [data-skin="retro"] {
-  /* §3 根因（CONTRACT_R2）：全站每個「整頁畫面」元件（RacesScreen 等 45 處）都用
-     `background: var(--bg)` 當自己的滿版背景色，這是既有慣例、不是本風格造的——但這代表只要
-     `--bg` 仍是不透明色，這些畫面容器就會整片蓋在 RetroBackground（fixed canvas，z-index:0）
-     之上，把它完全擋住（首頁卡片間的縫隙看到的其實是 body 的 var(--bg) 落底色，不是
-     RetroBackground 沒 mount——實測 canvas 本身像素資料是正確的深綠色，只是被蓋住看不見）。
-     retro 下把 `--bg` 改成 transparent，讓這 45 處畫面容器變透明、露出 RetroBackground；
-     卡片/視窗維持不透明黑是因為它們用的是「另一個」token `--bg-1`（見 .phone-shell 等），
-     不吃這裡的改動——契約 §3「視窗卡片維持黑底」正是靠這個既有的 --bg／--bg-1 語意分工達成。 */
-  --bg:       transparent;
-  --bg-1:     #000000;
-  --bg-2:     #1b1b1b;
-  --line:     #ffffff;
-  --line-2:   #ffffff;
-  --tx:       #ffffff;
-  --tx-dim:   #c8c8c8;
-  --tx-faint: #8a8a8a;
+  /* §6 根因修補（編排者 2026-09-28 檢視 r3/theme 截圖後）：v854/R3 §3 原本讓 `--bg` 全域
+     transparent，讓每個「整頁畫面」元件（ProfileScreen/ActivityExploreScreen/RaceDetailScreen…
+     一律 `background: var(--bg)`）直接疊在暗化 .5 的 RetroBackground 像素草原上——實測會員管理
+     個人資料分頁的分頁標籤／欄位標題／帳號／會員身分文字幾乎不可讀（深褐字疊暗綠像素）。
+     改為：`--bg` 預設是「頁面底」羊皮紙（比卡片 `--bg-1` 略深一階、同樣的斑點/纖維紋，純
+     CSS，見下），讓所有全頁畫面預設不透明可讀；只有首頁（PhoneShell 主畫面／入口格那一頁）例外
+     維持 transparent 透出像素草原——見下面 `[data-screen="home"]` 覆寫（PhoneShell.tsx 在首頁
+     根容器加的屬性）。跑步頁 `:has(#gps-map)` 與專注模式黑底規則在本檔案下方照舊，不受這裡改動
+     影響（那兩條本來就用 :has() 選擇器覆寫回其他值，優先權更高）。 */
+  --bg:
+    radial-gradient(circle at 18% 22%, rgba(94,58,20,.055), transparent 42%),
+    radial-gradient(circle at 80% 68%, rgba(94,58,20,.05), transparent 46%),
+    repeating-linear-gradient(115deg, rgba(80,50,15,.035) 0px, rgba(80,50,15,.035) .5px, transparent .5px, transparent 2.5px),
+    linear-gradient(180deg, #ebddbb 0%, #dbc18d 100%);
+  /* 羊皮紙面板：--bg-1 直接放「多層 background」文字（漸層方向/色號照契約 §3 逐字），讓所有
+     既有元件（MemberPanel/RaceDetailScreen/ActivityExploreScreen/…）原本就有的
+     `background: var(--bg-1)` 自動套用紙張斑點＋纖維紋（§5 第 1 項），不必新增任何 className：
+     由上而下依序＝兩層極淡焦褐斑點(radial-gradient)、一層極細纖維紋(repeating-linear-gradient
+     0.5px 線寬、透明度 .035)、最底才是契約指定的 180deg 羊皮紙主漸層 #f3e5c3→#e3c995。
+     （已知取捨：全站僅 2 處把 --bg-1 當純色用在非 background 屬性──
+     app/admin/gps-calib/page.tsx 圖表 stroke（此頁在 app/admin/layout.tsx 的
+     data-skin="default" 子樹內，--bg-1 會被該子樹重新宣告的純色值覆蓋繼承，不受這裡影響，
+     真的是後台次要視覺）；MailPanel.tsx 未讀角標 border-color——FIX2（2026-09-28 審查修補）
+     更正：MailPanel 實際掛在前台 MemberPanel.tsx 的會員面板（非 data-skin="default" 子樹），
+     retro 白名單帳號會直接吃到這裡的多層 background 字串，border-color 收到不合法值會讓
+     border 整個 IACVT 退回初始值（等於角標失去描邊，非僅色偏），已把 MailPanel.tsx 該處
+     border-color 來源改成 --bg-2（同一份 skin 下仍是純色 token）根治，不再依賴此處的取捨。） */
+  --bg-1:
+    radial-gradient(circle at 18% 22%, rgba(110,70,25,.05), transparent 42%),
+    radial-gradient(circle at 80% 68%, rgba(110,70,25,.045), transparent 46%),
+    repeating-linear-gradient(115deg, rgba(94,60,20,.035) 0px, rgba(94,60,20,.035) .5px, transparent .5px, transparent 2.5px),
+    linear-gradient(180deg, #f3e5c3 0%, #e3c995 100%);
+  --bg-2:     #dcc28f;
+  --line:     #b98a4f;
+  --line-2:   #8f5f2e;
+  --tx:       #3b2412;
+  /* §6 校準（編排者截圖檢視後）：v854/R3 §3 的 `--tx-dim`/`--tx-faint` 是「淺暖褐」，只在疊於
+     `--bg-1`（羊皮紙卡片，較亮）時勉強可讀；本輪 `--bg`（頁面底）改深一階後，這兩個 token 直接
+     用在頁面底上的文字（例如 ProfileScreen 分頁標籤未選中態、`Field` 欄位標題、「帳號／會員
+     身分」純文字列——這些都沒有另外包一層 `--bg-1` 卡片，直接吃 `background: var(--bg)`）對比
+     會掉到 3–5:1，不合契約 §6 驗收「≥7:1」。改深（用 scratchpad contrast.js 逐一算過 WCAG
+     相對亮度公式，對本檔案下方新 `--bg` 漸層兩端與既有 `--bg-1`/`--bg-2` 兩端都驗過
+     ≥7.1:1，含安全餘裕）；三個文字 token 的深淺差距因此變小，改用粗細/字距/大小分層即可，
+     不再靠色階分層。 */
+  --tx-dim:   #40280f;
+  --tx-faint: #3f2a13;
 
-  --fug:    #3cbc3c;   /* 主色綠（RPG「確認／前進」語彙） */
-  --fug-ink: #000000;  /* 綠底按鈕上的字色 */
-  --hunt:   #e4462c;   /* 警示紅 */
-  --gold:   #f8b800;   /* 強調金 */
-  --violet: #b8b8f8;
-  --dim:    rgba(255,255,255,.18);
-  --strava-tx: #fc4c02; /* 暗底（同 default 判斷邏輯），對比足夠，沿用不調整 */
+  --fug:    #6e3a1a;   /* 主色深咖啡（RPG「確認／前進」緞帶語彙） */
+  --fug-ink: #fff3d6;  /* 深咖啡底按鈕上的米白字 */
+  --hunt:   #a8321e;   /* 警示磚紅 */
+  --gold:   #d99a1a;   /* 強調金 */
+  --violet: #6a3d78;   /* 次要強調紫（GP 徽章等），暗底羊皮紙上仍可讀 */
+  --dim:    rgba(59,36,18,.16);
+  --strava-tx: #a83c0c; /* 淺羊皮紙底（同 warm/warm2 判斷邏輯）：原橘 #fc4c02 對比不足，改暗橘 */
 
-  --glow-fug:  0 0 0 2px rgba(60,188,60,.6);
-  --glow-hunt: 0 0 0 2px rgba(228,70,44,.6);
-  --glow-gold: 0 0 0 2px rgba(248,184,0,.6);
+  --glow-fug:  0 0 14px rgba(110,58,26,.30);
+  --glow-hunt: 0 0 14px rgba(168,50,30,.30);
+  --glow-gold: 0 0 16px rgba(217,154,26,.32);
 
-  /* 黑底白框「對話視窗」語彙（契約 §3）：卡片/彈窗一律黑底＋白色描邊，圓角縮小成 4px，
-     不做玻璃感／光暈——這是像素 RPG 的視窗美術，不是科幻的發光卡片。 */
-  --card-shadow: 0 0 0 3px #fff;
-  --radius-lg: 4px;
-  --radius-md: 4px;
-  --radius-btn: 4px;
+  /* 羊皮紙＋皮革「細雙線視窗」語彙（契約 §3／§5）：淘汰 v854 的黑底白色 3px 雙框，改細框——
+     1px 描邊交給既有 `border: 1px solid var(--line)`（絕大多數卡片元件已這樣寫，見下方大量
+     `var(--line)` 使用者，token 一改全站自動變細）；--card-shadow 疊 3 層：內側 1px 金色
+     細描線（模擬「內側淺色描線形成細雙線」）、內側大範圍低透明焦邊暈（§5「面板邊緣焦邊暈」，
+     6–10px 對應 blur 10px）、外側極輕落影（契約逐字 `0 2px 0 rgba(40,20,5,.35)`）——三層皆非
+     outset spread，量測「外框寬度」時只有 border 的 1px 算數，符合驗收 ≤2px。 */
+  /* 2026-09-28 校準：inset 焦邊暈的 blur 半徑相對小型元件（例如首頁入口格，寬高僅約 150×55px）
+     幾乎覆蓋整個內部（inset 陰影的暈染範圍約 2×blur），若用太強的 blur/透明度，會讓「小面板」
+     整片被拉暗、量測平均色掉出契約 §4 要求的 #e0c38f–#f5e8c8 範圍（Playwright 自我驗證抓到：
+     10px/.18 在 150×55 的按鈕上會把 R 通道從 ~240 壓到 ~215）。調到 6px/.08——大面板（首頁主卡
+     等）邊緣仍看得出焦邊暈，小面板/入口格內部不會整片偏暗、羊皮紙色維持在契約色域內。 */
+  --card-shadow:
+    inset 0 0 0 1px rgba(217,164,65,.55),
+    inset 0 0 6px rgba(94,58,20,.08),
+    0 2px 0 rgba(40,20,5,.35);
+  --radius-lg: 8px;
+  --radius-md: 6px;
+  --radius-btn: 6px;
 
-  /* 像素中文字「Cubic 11」（見 components/retro/fonts.ts，由 RetroBackground 掛載時以
-     FontFace API 動態載入；本檔案不宣告 @font-face，字型還沒載入完成前自動落回 monospace，
-     不會壞版面）。 */
+  /* 像素中文字「Cubic 11」（見 components/retro/fonts.ts）維持不變——契約 §3「字體維持 Cubic 11
+     像素字（復古識別）」；羊皮紙上字色改深褐已在上面 --tx 系列處理，確保對比 ≥7:1。 */
   --font-num: 'DORPixel', monospace;
   font-family: 'DORPixel', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: none;
 }
-/* CONTRACT_R2 §4 根因：`data-skin` 屬性掛在 <html>（document.documentElement），上面那條
-   `[data-skin="retro"]{font-family:...}` 規則因此只直接套用在 <html> 元素本身；但更前面
-   `html, body { font-family: -apple-system,... }`（全站基礎規則）同時也直接套用在 <body>
-   ——CSS 繼承只在「該元素自己沒有任何規則命中該屬性」時才會發生，body 有自己的直接宣告，
-   永遠不會去繼承 html 算出來的 DORPixel，此規則加一條命中 body 本身，讓
-   `getComputedStyle(document.body).fontFamily` 真的以 DORPixel 開頭（驗收逐字要求）。 */
+
+/* §6 首頁例外（編排者追加）：唯一維持 `--bg: transparent`（透出 RetroBackground 像素草原）的畫面
+   是 PhoneShell 的首頁（入口格那一頁／RacesScreen）。PhoneShell.tsx 渲染鏈是一串三元運算，所有
+   全頁畫面共用同一個外層容器，沒有任何既有 className／屬性能單獨命中「目前顯示的是首頁」——
+   因此在 PhoneShell.tsx 只給首頁分支包一層帶 `data-screen="home"` 屬性的容器（不影響任何行為，
+   見該檔案註解），這裡用它把 `--bg` 疊回 transparent；custom property 會往下繼承，RacesScreen.tsx
+   自己 `background: var(--bg)` 的根 div 因此拿到 transparent，不需要改 RacesScreen.tsx。
+   非首頁的所有畫面（含 ProfileScreen）沒有這個屬性，維持上面新設的羊皮紙 `--bg`。 */
+[data-skin="retro"] [data-screen="home"] {
+  --bg: transparent;
+}
+
+/* CONTRACT_R2 §4 根因（沿用）：`data-skin` 屬性掛在 <html>，`body` 有自己的直接字型宣告不會
+   繼承 <html> 算出來的 DORPixel，這裡補一條命中 body 本身，讓
+   `getComputedStyle(document.body).fontFamily` 真的以 DORPixel 開頭。 */
 [data-skin="retro"] body {
   font-family: 'DORPixel', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* 數字／英文標題套用像素字的工具類（沿用 scifi 的 .skin-num 慣例；retro 下整個子樹已經是
-   'DORPixel' 字體，這裡主要補強 tabular-nums 對齊與字距，跟 scifi 的用法保持一致，方便共用
-   className="skin-num" 的既有 markup）。 */
+/* 數字／英文標題套用像素字的工具類（沿用 scifi 的 .skin-num 慣例）。 */
 [data-skin="retro"] .skin-num {
   font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
   letter-spacing: .01em;
 }
 
-/* 開始／結束跑步鈕：黑底白字＋白色雙框（同「對話視窗」語彙），不像 warm2 用 PNG、
-   也不像 scifi 用漸層描邊——hover/focus 時左側浮現 ▶（RPG 選單游標語彙），純 CSS 偽元素，
-   預設（非 hover/focus）不顯示，不佔版面寬度（position absolute，不推擠文字）。 */
+/* ── 全站可讀性根因修補：<header>（37 個畫面共用的既有語意標籤，見 RacesScreen/ProfileScreen/
+   track/page.tsx 等）本身多半沒有設 inline background，只靠父層 `background: var(--bg)`
+   （retro 下 transparent）——這代表任何直接寫在 header 裡、沒有再包一層卡片的文字（例如
+   RacesScreen 品牌列「DOR·城市探索」、track 頁頂部 GPS 狀態列)會直接疊在 RetroBackground
+   像素草原（暗化 .5，偏暗綠）上；--tx 系列改深褐後這些文字會「深色字疊深色底」讀不出來。
+   用既有 <header> 標籤補一條不透明羊皮紙底色，不需要改任何元件檔案，一次修好全站。 */
+[data-skin="retro"] header {
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+
+/* ── §6 全頁標題列＋分頁標籤（編排者追加，ProfileScreen.tsx 加的兩個 className，見該檔案）：
+   「← 返回＋標題」列改深咖啡緞帶底條（呼應附圖語彙），蓋掉上面泛用 <header> 的羊皮紙底；
+   分頁標籤（個人資料／運動數據／報名紀錄／追蹤列表）改羊皮紙頁籤——選中者深咖啡底米白字、
+   未選中者淺羊皮紙底深褐字、1px 細框；只認這兩個 className，不影響其他 skin、不改任何行為
+   （純視覺覆寫，用 !important 蓋掉既有 inline style 的顏色/背景/邊框）。 */
+[data-skin="retro"] .profile-header {
+  background: linear-gradient(180deg, #6b3a1c, #5a2f16) !important;
+  border-bottom: 1px solid #d9a441 !important;
+  box-shadow: inset 0 1px 0 rgba(255,224,160,.18), inset 0 -1px 0 rgba(0,0,0,.3);
+}
+[data-skin="retro"] .profile-header button,
+[data-skin="retro"] .profile-header span {
+  color: #fff3d6 !important;
+  text-shadow: 0 1px 0 rgba(0,0,0,.5);
+}
+[data-skin="retro"] .profile-tab {
+  border: 1px solid var(--line) !important;
+  border-radius: 6px 6px 0 0 !important;
+  background: var(--bg-1) !important;
+  color: var(--tx) !important;
+  font-weight: 600 !important;
+  margin-bottom: -1px !important;
+}
+[data-skin="retro"] .profile-tab[data-active="true"] {
+  background: linear-gradient(180deg, #6b3a1c, #5a2f16) !important;
+  color: #fff3d6 !important;
+  border-color: #d9a441 !important;
+  font-weight: 700 !important;
+  text-shadow: 0 1px 0 rgba(0,0,0,.5);
+}
+
+/* ── §5 緞帶標題：只套用在「沒有 className」的 h1/h2（見大量 `<h1 style={{...}}>` 慣例）——
+   `:not([class])` 精準排除 dorpg 戰鬥畫面等已用 CSS Modules 自訂樣式的標題
+   （如 BattleScreen 的 className={styles.sheetTitle}），避免疊加衝突。兩端用 clip-path 做出
+   燕尾缺口、上下各 1px 金邊＋內側暗色描線、字距 .08em、米白字，呼應附圖深咖啡緞帶語彙。
+   FIX2（2026-09-28 審查修補）：這條規則跟下面的通用 button 斜面／tr/li 斑馬紋一樣是硬寫死視覺
+   （非 var() token），只檢查 <html> 祖先是否 [data-skin="retro"]，不會被巢狀
+   [data-skin="default"]（app/admin/layout.tsx 後台根容器、EventTaskModal.tsx 事件任務面板）自動
+   覆寫回去——跟上面 header／--bg-1 系規則不同，那些是 CSS 自訂屬性，巢狀元素重新宣告
+   --bg-1/--tx 就會往下正確覆蓋繼承值；這幾條是普通描述符選擇器規則，沒有這個機制。改用
+   `:not([data-skin="default"] *)`（Selectors Level 4 允許 :not() 帶複合選擇器，本檔案已大量
+   使用同代的 :has()，瀏覽器基準一致）精準排除「是 [data-skin="default"] 子孫」的元素，讓後台與
+   事件任務面板照契約維持 default 外觀，不受 retro 影響。 */
+[data-skin="retro"] h1:not([class]):not([data-skin="default"] *),
+[data-skin="retro"] h2:not([class]):not([data-skin="default"] *) {
+  display: block;
+  background: linear-gradient(180deg, #6b3a1c, #5a2f16) !important;
+  color: #fff3d6 !important;
+  border-top: 1px solid #d9a441;
+  border-bottom: 1px solid #d9a441;
+  box-shadow:
+    inset 0 1px 0 rgba(255,224,160,.18),
+    inset 0 -1px 0 rgba(0,0,0,.35),
+    0 2px 4px rgba(40,20,5,.25);
+  padding: 10px 28px !important;
+  margin: 12px 0 14px !important;
+  clip-path: polygon(0% 0%, 5% 50%, 0% 100%, 100% 100%, 95% 50%, 100% 0%);
+  letter-spacing: .08em;
+  text-shadow: 0 1px 0 rgba(0,0,0,.5);
+  text-align: center;
+}
+
+/* 開始／結束跑步鈕：深咖啡緞帶底＋1px 金邊（契約 §3「.skin-btn-start＝深咖啡緞帶底 #5a2f16、
+   1px 金邊、米白字」），上緣亮／下緣暗細斜面（§5 按鈕斜面）；按下下沉 1px 並互換亮暗。
+   hover/focus 時左側浮現原創短劍 SVG（取代 v854 的 ▶，不描摹任何參考圖），並有 2px 左右
+   來回的輕微動畫（§5，reduced-motion 關閉）。 */
 [data-skin="retro"] .skin-btn-start,
 [data-skin="retro"] .skin-btn-end {
   position: relative;
-  border: 3px solid #fff !important;
-  border-radius: 4px !important;
-  background: #000 !important;
-  color: #fff !important;
-  box-shadow: 0 0 0 3px #000, 0 0 0 6px #fff;
-  text-shadow: none;
-  letter-spacing: .02em;
+  border: 1px solid #d9a441 !important;
+  border-radius: var(--radius-btn) !important;
+  background: linear-gradient(180deg, #6b3a1c, #4a2510) !important;
+  color: #fff3d6 !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,224,160,.35),
+    inset 0 -2px 0 rgba(0,0,0,.4),
+    0 2px 0 rgba(40,20,5,.35) !important;
+  text-shadow: 0 1px 0 rgba(0,0,0,.5);
+  letter-spacing: .04em;
+  transition: transform .05s linear;
+}
+[data-skin="retro"] .skin-btn-end {
+  background: linear-gradient(180deg, #8a2417, #5c150c) !important;
+  border-color: #d9a441 !important;
+}
+[data-skin="retro"] .skin-btn-start:active,
+[data-skin="retro"] .skin-btn-end:active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 -1px 0 rgba(255,224,160,.25),
+    inset 0 2px 0 rgba(0,0,0,.45),
+    0 1px 0 rgba(40,20,5,.3) !important;
+}
+[data-skin="retro"] .skin-btn-start:focus-visible,
+[data-skin="retro"] .skin-btn-end:focus-visible {
+  outline: 1px solid #d9a441;
+  outline-offset: 2px;
 }
 [data-skin="retro"] .skin-btn-start::before,
 [data-skin="retro"] .skin-btn-end::before {
-  content: '▶';
+  /* 原創短劍圖示（純線條＋一個三角劍尖＋一段護手，內嵌 SVG data URI，逐筆手繪，
+     不臨摹任何商業遊戲素材）。 */
+  content: '';
   position: absolute;
   left: 10px;
   top: 50%;
+  width: 15px;
+  height: 15px;
   transform: translateY(-50%);
   opacity: 0;
-  color: #f8b800;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cline x1='2' y1='8' x2='11' y2='8' stroke='%23d99a1a' stroke-width='2' stroke-linecap='round'/%3E%3Cpolygon points='10,4.5 15,8 10,11.5' fill='%23d99a1a'/%3E%3Cline x1='4' y1='5' x2='4' y2='11' stroke='%235a2f16' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center / contain;
   transition: opacity .1s steps(1);
 }
 [data-skin="retro"] .skin-btn-start:hover::before,
@@ -652,37 +802,108 @@ html:has([data-admin-root]), html:has([data-admin-root]) body { background: #090
 [data-skin="retro"] .skin-btn-end:focus-visible::before {
   opacity: 1;
 }
-[data-skin="retro"] .skin-btn-end {
-  border-color: #e4462c !important;
-  box-shadow: 0 0 0 3px #000, 0 0 0 6px #e4462c;
+@media (prefers-reduced-motion: no-preference) {
+  [data-skin="retro"] .skin-btn-start:hover::before,
+  [data-skin="retro"] .skin-btn-start:focus-visible::before,
+  [data-skin="retro"] .skin-btn-end:hover::before,
+  [data-skin="retro"] .skin-btn-end:focus-visible::before {
+    animation: retroSwordWiggle .7s ease-in-out infinite;
+  }
 }
-[data-skin="retro"] .skin-btn-end::before {
-  color: #e4462c;
+@keyframes retroSwordWiggle {
+  0%, 100% { transform: translateY(-50%) translateX(0); }
+  50%      { transform: translateY(-50%) translateX(2px); }
 }
 
-/* 桌機模擬框（.phone-shell）：黑底白框，呼應像素 RPG 的「大地圖裝在一個黑框畫面裡」的觀感；
-   只調邊框/陰影，不動尺寸/佈局，手機（不套 .phone-shell）不受影響。 */
+/* ── §5 通用按鈕細斜面／按下回饋／focus 金框：套在「所有其餵 <button>」（排除上面已完整
+   覆寫的 .skin-btn-start/.skin-btn-end），不需要改任何元件檔案就能讓全站其餘按鈕（入口格、
+   報名/確認鈕、關閉鈕…）多一層立體斜面感。用 box-shadow／transform 疊加，不動
+   background/color，故不影響各按鈕既有語意色彩；元件若已用 inline boxShadow（例如入口格的
+   `var(--card-shadow, none)`）則其 inline 樣式優先，這裡自動不生效、不衝突。 */
+/* FIX2（2026-09-28）：同上 h1/h2 緞帶的根因，補 `:not([data-skin="default"] *)` 排除巢狀後台／
+   事件任務面板子樹，避免收下/放棄/接受等 default-skin 按鈕被套上斜面／位移／金框 focus。 */
+[data-skin="retro"] button:not(.skin-btn-start):not(.skin-btn-end):not([data-skin="default"] *) {
+  position: relative;
+  box-shadow: inset 0 1px 0 rgba(255,240,210,.25), inset 0 -1px 0 rgba(40,20,5,.25);
+}
+[data-skin="retro"] button:not(.skin-btn-start):not(.skin-btn-end):not([data-skin="default"] *):active {
+  transform: translateY(1px);
+}
+[data-skin="retro"] button:focus-visible:not([data-skin="default"] *),
+[data-skin="retro"] a:focus-visible:not([data-skin="default"] *) {
+  outline: 1px solid #d9a441;
+  outline-offset: 2px;
+}
+
+/* ── §5 清單細線＋奇偶列：既有 `<tr>`/`<li>` 若沒有自帶 inline background（大部分資料列都沒有，
+   只有少數表頭手動上色），套一層極淡底色差；有 inline background 的列（表頭等）維持原樣
+   不受影響（inline 優先）。 */
+/* FIX2（2026-09-28）：同上，排除巢狀後台／事件任務面板子樹的 tr/li。 */
+[data-skin="retro"] tr:nth-child(even):not([data-skin="default"] *),
+[data-skin="retro"] li:nth-child(even):not([data-skin="default"] *) {
+  background: rgba(110,58,26,.05);
+}
+
+/* ── §5 四角金線角飾：套在既有共用卡片語彙 class `.skin-frame`（見 ActivityExploreScreen 賽事卡、
+   RaceDetailScreen 儀表卡，本來就用於「主要面板」）——4 個角各一個原創 L 形細金線＋小菱形
+   （SVG data URI，純線條原創圖案，不描摹任何參考圖），用 4 層 background-image 個別定位
+   實作，不增加任何 DOM 節點。 */
+[data-skin="retro"] .skin-frame {
+  position: relative;
+}
+[data-skin="retro"] .skin-frame::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-size: 11px 11px;
+  background-position: top left, top right, bottom right, bottom left;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M1 7 V1 H7' stroke='%23d9a441' stroke-width='1' fill='none'/%3E%3Crect x='9' y='9' width='2' height='2' fill='%23d9a441' transform='rotate(45 10 10)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M11 7 V1 H5' stroke='%23d9a441' stroke-width='1' fill='none'/%3E%3Crect x='1' y='9' width='2' height='2' fill='%23d9a441' transform='rotate(45 2 10)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M11 5 V11 H5' stroke='%23d9a441' stroke-width='1' fill='none'/%3E%3Crect x='1' y='1' width='2' height='2' fill='%23d9a441' transform='rotate(45 2 2)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M1 5 V11 H7' stroke='%23d9a441' stroke-width='1' fill='none'/%3E%3Crect x='9' y='1' width='2' height='2' fill='%23d9a441' transform='rotate(45 10 2)'/%3E%3C/svg%3E");
+}
+
+/* 桌機模擬框（.phone-shell）：維持基底 54px 圓角手機造型（跟 default/warm/scifi 一致，
+   契約重點是「內容卡片邊框變細」，外層桌機邊框只需換色，不必刻意做成尖角像素風）——
+   細深褐邊＋皮革色滾邊（取代 v854 的白色 3px／黑色 3px 雙框）。 */
 [data-skin="retro"] .phone-shell {
-  border: 3px solid #fff;
-  border-radius: 4px;
+  border: 1px solid #7a4a22;
   box-shadow:
-    0 0 0 3px #000,
-    0 30px 80px rgba(0,0,0,.85);
+    0 0 0 10px #3a2412,
+    0 0 0 11px rgba(217,164,65,.4),
+    0 30px 80px rgba(20,10,4,.6);
 }
 
-/* 事件任務面板維持 default 外觀（契約 §3 明文要求，不受 retro 影響）：面板自身已包
+/* 事件任務面板維持 default 外觀（契約明文要求，不受 retro 影響）：面板自身已包
    data-skin="default"（見 frontend-skins 記憶），此處不需要額外規則，僅在此註記，
    避免後續整合者誤以為漏做。 */
 
 /* 專注模式（retro）：track/page.tsx 只加了 data-scifi-focus-hide="true" 屬性在題列／底部資訊
-   面板／GPS 相關橫幅——沿用與 scifi 相同的屬性名稱與隱藏規則（契約 §3 最後一條逐字要求）。
-   只在 data-skin="retro" 下生效，其餘 skin 完全不受影響。 */
+   面板／GPS 相關橫幅——沿用與 scifi 相同的屬性名稱與隱藏規則。只在 data-skin="retro" 下生效，
+   其餘 skin 完全不受影響。 */
 [data-skin="retro"] [data-scifi-focus-hide="true"] {
   visibility: hidden;
 }
 
-/* 復古 RPG：跑步頁（唯一有 #gps-map 的頁面）底部面板、標題列、CTA 區必須是不透明黑底視窗——
+/* 復古 RPG：跑步頁（唯一有 #gps-map 的頁面）底部面板、標題列、CTA 區必須是不透明羊皮紙視窗——
    上方 [data-skin="retro"] 把 --bg 設 transparent 是為了讓首頁／列表頁透出 RetroBackground 像素草原，
-   但跑步頁的面板容器也吃 var(--bg)，會讓地圖與草原從面板底下透出、文字難讀（2026-09-27 編排者檢視截圖）。
+   但跑步頁的面板容器也吃 var(--bg)，會讓地圖從面板底下透出、文字難讀。第三輪使用者指示「改成
+   羊皮紙色而非黑」：直接引用 --bg-1（同一份羊皮紙紋理漸層），與其餘卡片視覺一致。
    :has() 只在該頁成立，其他頁不受影響；非 retro skin 完全不受影響。 */
-[data-skin="retro"]:has(#gps-map) { --bg: #000000; }
+[data-skin="retro"]:has(#gps-map) { --bg: var(--bg-1); }
+
+/* 根因修補（2026-09-28 自我截圖檢視發現）：專注模式全螢幕疊層開啟時，track/page.tsx 會把題列
+   （<header>）等元素動態加上 data-scifi-focus-hide="true"（見上方規則）改成 visibility:hidden——
+   該元素仍佔版面空間，只是不繪製自己的背景，於是「它底下」透出的就是頁面容器的 var(--bg)。
+   上面那條規則把 track 頁的 --bg 改成羊皮紙色（給平常/跑步中的面板可讀），但專注模式疊層本身是
+   純黑漸層（見 RaceFocusMode.tsx overlayRef 的 background），疊層頂部 45% 只帶 12% 黑色淡出、
+   會讓「地圖／勇者」透出——這裡卻變成疊層之下、header 隱形處露出一條羊皮紙色色塊（跟疊層黑底
+   不連續，實測截圖 5_focus.png 頂部可見一條米色橫帶）。RaceFocusMode.tsx 的疊層本身有既有
+   className="app-min-h"（見該檔案 overlayRef 節點），只有專注模式開啟時才會掛上這個節點，用
+   :has() 疊加偵測「同時有 #gps-map 與 .app-min-h」＝專注模式正開著，這個複合狀態下 --bg 改回
+   純黑，與疊層自己的黑色漸層無縫銜接；沒開專注模式（idle／跑步中面板）維持上面那條的羊皮紙色
+   不受影響。 */
+[data-skin="retro"]:has(#gps-map):has(.app-min-h) { --bg: #000000; }

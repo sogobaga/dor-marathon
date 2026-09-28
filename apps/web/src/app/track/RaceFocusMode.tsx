@@ -59,6 +59,20 @@ const OrbitronText = dynamic(() => import('./scifi/OrbitronText'), { ssr: false 
 
 const HOLD_MS = 1500 // 底部鎖頭長按離開專注模式所需時長（與舊 FocusLockScreen 解鎖時長一致）
 
+// 復古 RPG（retro）專注模式配色（CONTRACT_R3.md §3「專注模式狀態視窗＝深色皮革＋金框，數字米白」）：
+// 本疊層背景在所有 skin 下都維持接近純黑的漸層（上 45% 透地圖、下方漸黑，見 overlayRef 那個
+// <div> 的 background），這與 globals.css `[data-skin="retro"]` 把 --tx 系列改成「深褐」給羊皮紙
+// 淺底用完全衝突──若這裡繼續讀 var(--tx)/var(--tx-dim)/var(--gold) 等 token，深褐字疊在這層近黑
+// 背景上會讀不出來。故本檔案的 retro 分支一律改用下面這組寫死的「深色底可讀」色票，不吃全站
+// token 級聯；其餘 skin（scifi/default）完全不受影響，仍讀 var(--tx) 等既有邏輯。
+const RETRO_CREAM = '#fff3d6'   // 主要文字／大字數字（米白，契約逐字）
+const RETRO_DIM = '#c9a878'     // 次要／說明文字（暖褐，暗底可讀）
+const RETRO_GOLD = '#d99a1a'    // 強調金（契約 §3 新色號，取代 v854 #f8b800）
+const RETRO_HUNT = '#a8321e'    // 警示磚紅（契約 §3 新色號）
+const RETRO_LEATHER = '#2a1a10' // 狀態視窗深色皮革底
+const RETRO_LEATHER_LINE = '#d9a441' // 皮革面板細金框
+const RETRO_BRONZE = '#c97b2e'  // 進度條「進行中」填色（--fug 深咖啡在近黑底幾乎不可見，改用可視的青銅色）
+
 // 取整口徑必須與 track/page.tsx 的 fmtTime 完全一致（一律 Math.floor）：elapsed 是帶小數的秒數，
 // 若這裡先 Math.round、主面板 Math.floor，同一個值會顯示成差 1 秒的兩個數字（使用者實測回報過）。
 function fmtTime(s: number) {
@@ -271,10 +285,10 @@ export default function RaceFocusMode({
         onClick={() => setHidden(false)}
         style={{
           position: 'fixed', right: 16, bottom: 'calc(100px + env(safe-area-inset-bottom))', zIndex: 600,
-          background: retro ? '#000' : 'rgba(11,14,19,.9)', color: 'var(--tx)',
-          border: scifi ? '1px solid rgba(53,230,255,.6)' : retro ? 'none' : '1px solid rgba(255,194,75,.6)',
-          borderRadius: retro ? 4 : 999, padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer',
-          boxShadow: scifi ? '0 4px 16px rgba(53,230,255,.25)' : retro ? '0 0 0 3px #fff, 0 0 0 6px #000' : '0 4px 16px rgba(0,0,0,.4)', fontFamily: 'inherit',
+          background: retro ? RETRO_LEATHER : 'rgba(11,14,19,.9)', color: retro ? RETRO_CREAM : 'var(--tx)',
+          border: scifi ? '1px solid rgba(53,230,255,.6)' : retro ? `1px solid ${RETRO_LEATHER_LINE}` : '1px solid rgba(255,194,75,.6)',
+          borderRadius: retro ? 6 : 999, padding: '10px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer',
+          boxShadow: scifi ? '0 4px 16px rgba(53,230,255,.25)' : retro ? `inset 0 0 0 1px rgba(217,164,65,.3), 0 4px 12px rgba(0,0,0,.45)` : '0 4px 16px rgba(0,0,0,.4)', fontFamily: 'inherit',
         }}
       >🏁 專注模式</button>
     )
@@ -298,7 +312,7 @@ export default function RaceFocusMode({
           : retro
           ? 'linear-gradient(to bottom, rgba(0,0,0,.12) 0%, rgba(0,0,0,.32) 45%, rgba(0,0,0,.94) 55%, rgba(0,0,0,.94) 100%)'
           : '#000',
-        color: 'var(--tx)', display: 'flex', flexDirection: 'column', alignItems: 'center',
+        color: retro ? RETRO_CREAM : 'var(--tx)', display: 'flex', flexDirection: 'column', alignItems: 'center',
         justifyContent: (scifi || retro) ? 'flex-end' : 'space-between', gap: (scifi || retro) ? '2.4vh' : undefined,
         padding: '24px 20px calc(20px + env(safe-area-inset-bottom))',
         textAlign: 'center', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none',
@@ -309,42 +323,51 @@ export default function RaceFocusMode({
       onContextMenu={(e) => e.preventDefault()}
     >
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.6vh', width: '100%' }}>
-        <GoalProgressBar goal={goal} distanceM={distanceM} elapsed={elapsed} />
+        <GoalProgressBar goal={goal} distanceM={distanceM} elapsed={elapsed} retro={retro} />
 
-        <div style={{ fontSize: 12, letterSpacing: '.15em', color: 'var(--tx-dim)', fontWeight: 700 }}>
-          {/* retro 標題文案（CONTRACT.md §5）：「冒險中」／「比賽專注模式・名稱」，與 scifi/default 的
-              「專注模式」／「比賽專注模式 · 名稱」用字略有不同（全形間隔點），照契約原文用字。 */}
+        {/* retro 標題文案（CONTRACT_R3.md §3）：緞帶標題「冒險中」／「比賽專注模式・名稱」，深咖啡底＋
+            金邊＋米白字，呼應附圖緞帶語彙；本疊層背景近黑，不能吃全站 --tx 系列（見上方常數說明），
+            故直接寫死顏色。scifi/default 維持原本純文字＋var(--tx-dim)。 */}
+        <div style={retro ? {
+          fontSize: 12, letterSpacing: '.15em', fontWeight: 800, color: RETRO_CREAM,
+          background: 'linear-gradient(180deg,#6b3a1c,#5a2f16)', padding: '6px 20px',
+          borderTop: `1px solid ${RETRO_LEATHER_LINE}`, borderBottom: `1px solid ${RETRO_LEATHER_LINE}`,
+          boxShadow: 'inset 0 1px 0 rgba(255,224,160,.18), inset 0 -1px 0 rgba(0,0,0,.35)',
+          textShadow: '0 1px 0 rgba(0,0,0,.5)',
+        } : { fontSize: 12, letterSpacing: '.15em', color: 'var(--tx-dim)', fontWeight: 700 }}>
           {retro ? (strategy ? `比賽專注模式・${strategy.name}` : '冒險中') : (strategy ? `比賽專注模式 · ${strategy.name}` : '專注模式')}
         </div>
       </div>
 
-      {/* retro 的數字區改成 RPG 狀態視窗：黑底＋白色雙框（CONTRACT.md §3 `--card-shadow`），其餘 skin
-          維持原本無邊框的置中欄位。 */}
+      {/* retro 的數字區改成 RPG 狀態視窗：深色皮革＋細金框＋內側暗金線（CONTRACT_R3.md §3），
+          取代 v854 的黑底白色雙框；其餘 skin 維持原本無邊框的置中欄位。 */}
       <div style={retro ? {
-        background: '#000', borderRadius: 4, boxShadow: '0 0 0 3px #fff, 0 0 0 6px #000',
+        background: RETRO_LEATHER, borderRadius: 6,
+        border: `1px solid ${RETRO_LEATHER_LINE}`,
+        boxShadow: 'inset 0 0 0 1px rgba(217,164,65,.28), inset 0 0 14px rgba(0,0,0,.55), 0 6px 18px rgba(0,0,0,.5)',
         padding: '18px 22px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2vh',
         maxWidth: '92vw',
       } : { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2vh' }}>
-        <Metric label="移動距離" value={distKm.toFixed(2)} unit="km" size="xl" scifi={scifi} />
-        <Metric label="時間" value={fmtTime(elapsed)} unit="" size="lg" scifi={scifi} />
+        <Metric label="移動距離" value={distKm.toFixed(2)} unit="km" size="xl" scifi={scifi} retro={retro} />
+        <Metric label="時間" value={fmtTime(elapsed)} unit="" size="lg" scifi={scifi} retro={retro} />
         <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <Metric label="平均配速" value={fmtPace(avgPace)} unit="/km" size="md" scifi={scifi} />
-          <Metric label="分段即時配速" value={fmtPace(segLivePace)} unit="/km" size="md" scifi={scifi} />
+          <Metric label="平均配速" value={fmtPace(avgPace)} unit="/km" size="md" scifi={scifi} retro={retro} />
+          <Metric label="分段即時配速" value={fmtPace(segLivePace)} unit="/km" size="md" scifi={scifi} retro={retro} />
         </div>
         {/* 以下皆為賽事策略專屬區塊：無 strategy（一般跑步/課表/個人任務等）整組不渲染 */}
         {strategy && (
           <div style={{ display: 'flex', gap: '6vw', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Metric label="目前段目標配速" value={curSeg ? fmtPace(curSeg.pace_s) : '--:--'} unit="/km" size="md" scifi={scifi} />
-            <Metric label="預計完成時間" value={etaLabel} unit="" size="md" scifi={scifi} />
+            <Metric label="目前段目標配速" value={curSeg ? fmtPace(curSeg.pace_s) : '--:--'} unit="/km" size="md" scifi={scifi} retro={retro} />
+            <Metric label="預計完成時間" value={etaLabel} unit="" size="md" scifi={scifi} retro={retro} />
           </div>
         )}
 
         {strategy && paceAlert && (
           <div style={{
-            background: paceAlert === 'fast' ? 'rgba(255,194,75,.16)' : 'rgba(255,75,92,.16)',
-            border: `1px solid ${paceAlert === 'fast' ? 'var(--gold)' : 'var(--hunt)'}`,
-            borderRadius: 14, padding: '10px 18px', fontSize: 16, fontWeight: 900,
-            color: paceAlert === 'fast' ? 'var(--gold)' : 'var(--hunt)',
+            background: retro ? (paceAlert === 'fast' ? 'rgba(217,154,26,.18)' : 'rgba(168,50,30,.22)') : (paceAlert === 'fast' ? 'rgba(255,194,75,.16)' : 'rgba(255,75,92,.16)'),
+            border: `1px solid ${retro ? (paceAlert === 'fast' ? RETRO_GOLD : RETRO_HUNT) : (paceAlert === 'fast' ? 'var(--gold)' : 'var(--hunt)')}`,
+            borderRadius: retro ? 6 : 14, padding: '10px 18px', fontSize: 16, fontWeight: 900,
+            color: retro ? (paceAlert === 'fast' ? RETRO_GOLD : RETRO_HUNT) : (paceAlert === 'fast' ? 'var(--gold)' : 'var(--hunt)'),
           }}>
             {paceAlert === 'fast' ? '⚡ 配速過快' : '🐢 配速過慢'}，目標 {fmtPace(targetPaceS)}/km
           </div>
@@ -352,27 +375,27 @@ export default function RaceFocusMode({
 
         {strategy && fuelLine && (
           <div style={{
-            fontSize: 15, fontWeight: 800, color: 'var(--gold)',
-            background: 'rgba(255,194,75,.12)', border: '1px solid rgba(255,194,75,.4)',
-            borderRadius: 12, padding: '8px 16px',
+            fontSize: 15, fontWeight: 800, color: retro ? RETRO_GOLD : 'var(--gold)',
+            background: retro ? 'rgba(217,154,26,.14)' : 'rgba(255,194,75,.12)', border: `1px solid ${retro ? 'rgba(217,154,26,.4)' : 'rgba(255,194,75,.4)'}`,
+            borderRadius: retro ? 6 : 12, padding: '8px 16px',
           }}>🍫 {fuelLine}</div>
         )}
         {strategy && hasFuel && due && dueActive && (
           <div
             className="track-blink"
             style={{
-              background: 'rgba(255,75,92,.2)', border: '2px solid var(--hunt)', borderRadius: 16,
-              padding: '14px 22px', fontSize: 19, fontWeight: 900, color: 'var(--tx)',
+              background: retro ? 'rgba(168,50,30,.28)' : 'rgba(255,75,92,.2)', border: `2px solid ${retro ? RETRO_HUNT : 'var(--hunt)'}`, borderRadius: retro ? 8 : 16,
+              padding: '14px 22px', fontSize: 19, fontWeight: 900, color: retro ? RETRO_CREAM : 'var(--tx)',
             }}
           >
             🍫 請進行補給：{FUEL_KIND_LABEL[fp.kind]}
             {/* 專注模式中無法點擊關閉（整層攔截輸入）：到期 60 秒後自動視為完成、換下一個補給點 */}
-            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--tx-dim)', marginTop: 4 }}>（60 秒後自動跳下一個）</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: retro ? RETRO_DIM : 'var(--tx-dim)', marginTop: 4 }}>（60 秒後自動跳下一個）</div>
           </div>
         )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--tx-dim)', fontWeight: 700 }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: hasSignal ? 'var(--fug)' : 'var(--tx-dim)' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: retro ? RETRO_DIM : 'var(--tx-dim)', fontWeight: 700 }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: retro ? (hasSignal ? RETRO_GOLD : RETRO_DIM) : (hasSignal ? 'var(--fug)' : 'var(--tx-dim)') }} />
           {hasSignal ? 'GPS 訊號中' : 'GPS 訊號弱／無'}
         </div>
       </div>
@@ -392,45 +415,47 @@ export default function RaceFocusMode({
           <svg width={holdRingSize} height={holdRingSize} style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
             <circle cx={holdRingSize / 2} cy={holdRingSize / 2} r={holdR} fill="none" stroke="rgba(255,255,255,.18)" strokeWidth={holdStroke} />
             <circle
-              cx={holdRingSize / 2} cy={holdRingSize / 2} r={holdR} fill="none" stroke={retro ? '#f8b800' : scifi ? 'var(--fug)' : 'var(--gold)'} strokeWidth={holdStroke}
+              cx={holdRingSize / 2} cy={holdRingSize / 2} r={holdR} fill="none" stroke={retro ? RETRO_GOLD : scifi ? 'var(--fug)' : 'var(--gold)'} strokeWidth={holdStroke}
               strokeDasharray={holdC} strokeDashoffset={holdC * (1 - holdProgress)} strokeLinecap="round"
               style={{ transition: holdProgress === 0 ? 'stroke-dashoffset .15s linear' : 'none', filter: scifi ? 'drop-shadow(0 0 6px rgba(53,230,255,.7))' : undefined }}
             />
           </svg>
           {retro ? <PixelLock /> : <span style={{ fontSize: 30 }}>🔒</span>}
         </div>
-        <div style={{ fontSize: 12, color: 'var(--tx-dim)', fontWeight: 700 }}>長按 1.5 秒解除專注模式</div>
+        <div style={{ fontSize: 12, color: retro ? RETRO_DIM : 'var(--tx-dim)', fontWeight: 700 }}>長按 1.5 秒解除專注模式</div>
       </div>
     </div>
   )
 }
 
 // 像素風鎖頭圖示（retro 變體，CONTRACT.md §5）：原創、逐像素以 SVG rect 繪製的極簡鎖頭，不使用 emoji
-// 字型，維持像素塊的觀感，色彩取自復古 RPG 調色盤（金/白/黑）。
+// 字型，維持像素塊的觀感，色彩取自復古 RPG 調色盤（CONTRACT_R3 新金色 #d99a1a／白／黑）。
 function PixelLock() {
   const s = 3 // 每個邏輯像素放大成多少 px
   return (
     <svg width={12 * s} height={12 * s} viewBox={`0 0 ${12 * s} ${12 * s}`} shapeRendering="crispEdges">
-      <rect x={3 * s} y={5 * s} width={6 * s} height={6 * s} fill="#f8b800" />
+      <rect x={3 * s} y={5 * s} width={6 * s} height={6 * s} fill={RETRO_GOLD} />
       <rect x={4 * s} y={2 * s} width={4 * s} height={3 * s} fill="none" stroke="#fff" strokeWidth={s} />
       <rect x={5 * s} y={7 * s} width={2 * s} height={2 * s} fill="#000" />
     </svg>
   )
 }
 
-function Metric({ label, value, unit, size, scifi }: { label: string; value: string; unit: string; size: 'xl' | 'lg' | 'md'; scifi?: boolean }) {
+function Metric({ label, value, unit, size, scifi, retro }: { label: string; value: string; unit: string; size: 'xl' | 'lg' | 'md'; scifi?: boolean; retro?: boolean }) {
   const fs = size === 'xl' ? 'clamp(40px, 13vw, 76px)' : size === 'lg' ? 'clamp(26px, 8vw, 44px)' : 'clamp(20px, 6vw, 30px)'
   const valueStyle = {
     fontSize: fs, fontWeight: 900, fontVariantNumeric: 'tabular-nums' as const, lineHeight: 1.05,
-    color: scifi ? 'var(--fug)' : 'var(--tx)',
-    textShadow: scifi ? '0 0 12px rgba(53,230,255,.55)' : undefined,
+    color: scifi ? 'var(--fug)' : retro ? RETRO_CREAM : 'var(--tx)',
+    // retro 大字數字（CONTRACT_R3.md §5「金黃描邊字只用於標題／重點數值」）：移動距離／時間是本疊層
+    // 最重要的數值，用深色多向 text-shadow 疊出「描邊」立體感，其餘沿用原本無陰影。
+    textShadow: scifi ? '0 0 12px rgba(53,230,255,.55)' : retro ? '0 1px 0 rgba(0,0,0,.6), 0 -1px 0 rgba(0,0,0,.3), 1px 0 0 rgba(0,0,0,.3), -1px 0 0 rgba(0,0,0,.3)' : undefined,
   }
   const valueNode = (
-    <>{value}{unit && <span style={{ fontSize: '0.35em', marginLeft: 4, color: 'var(--tx-dim)' }}>{unit}</span>}</>
+    <>{value}{unit && <span style={{ fontSize: '0.35em', marginLeft: 4, color: retro ? RETRO_DIM : 'var(--tx-dim)' }}>{unit}</span>}</>
   )
   return (
     <div>
-      <div style={{ fontSize: 12, color: 'var(--tx-dim)', fontWeight: 700, marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 12, color: retro ? RETRO_DIM : 'var(--tx-dim)', fontWeight: 700, marginBottom: 2 }}>{label}</div>
       {/* scifi 為真時才建立 OrbitronText 節點（見上方 import 處說明）——非白名單／偏好關閉時走一般
           <div>，本檔完全不觸發 next/font 的動態 import。 */}
       {scifi ? <OrbitronText style={valueStyle}>{valueNode}</OrbitronText> : <div style={valueStyle}>{valueNode}</div>}
@@ -441,7 +466,9 @@ function Metric({ label, value, unit, size, scifi }: { label: string; value: str
 // 本次跑步目標進度條（疊層最上面第一個節點，見掛載處）。三種目標型態的左/右標籤、填充比例、目前值
 // 全部走 goal（見 lib/runGoal.ts resolveRunGoal）；none（無單一目標）改成「每 1 km 一段」自然歸零的
 // 分段進度，讓一般跑步/混合課表也有個持續推進的視覺回饋。
-function GoalProgressBar({ goal, distanceM, elapsed }: { goal: RunGoal; distanceM: number; elapsed: number }) {
+// retro：本疊層背景近黑，不能吃全站 --tx/--fug 系列（羊皮紙下已改深褐，見檔頭常數說明），
+// 進行中填色改用可視的青銅色 RETRO_BRONZE、已達標改 RETRO_GOLD。
+function GoalProgressBar({ goal, distanceM, elapsed, retro }: { goal: RunGoal; distanceM: number; elapsed: number; retro?: boolean }) {
   let leftLabel: string, rightLabel: string, curLabel: string | null = null, hint: string | null = null
   const ratio = goalProgressRatio(goal, distanceM, elapsed)
   if (goal.type === 'distance') {
@@ -459,19 +486,20 @@ function GoalProgressBar({ goal, distanceM, elapsed }: { goal: RunGoal; distance
   }
   const pct = Math.min(1, Math.max(0, ratio)) * 100
   const reached = ratio >= 1
+  const fillColor = retro ? (reached ? RETRO_GOLD : RETRO_BRONZE) : (reached ? 'var(--gold)' : 'var(--fug)')
   return (
     <div style={{ width: '100%', maxWidth: 520 }}>
-      {hint && <div style={{ textAlign: 'right', fontSize: 10.5, color: 'var(--tx-dim)', fontWeight: 700, marginBottom: 2 }}>{hint}</div>}
+      {hint && <div style={{ textAlign: 'right', fontSize: 10.5, color: retro ? RETRO_DIM : 'var(--tx-dim)', fontWeight: 700, marginBottom: 2 }}>{hint}</div>}
       {curLabel && (
-        <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 800, fontVariantNumeric: 'tabular-nums', marginBottom: 3, color: reached ? 'var(--gold)' : 'var(--fug)' }}>
+        <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 800, fontVariantNumeric: 'tabular-nums', marginBottom: 3, color: fillColor }}>
           {curLabel}
         </div>
       )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--tx-dim)', fontWeight: 700, marginBottom: 4 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: retro ? RETRO_DIM : 'var(--tx-dim)', fontWeight: 700, marginBottom: 4 }}>
         <span>{leftLabel}</span><span>{rightLabel}</span>
       </div>
-      <div style={{ height: 10, borderRadius: 999, background: 'rgba(255,255,255,.18)', overflow: 'hidden' }}>
-        <div style={{ height: '100%', width: `${pct}%`, background: reached ? 'var(--gold)' : 'var(--fug)', borderRadius: 999, transition: 'width .4s linear' }} />
+      <div style={{ height: 10, borderRadius: 999, background: retro ? 'rgba(0,0,0,.45)' : 'rgba(255,255,255,.18)', overflow: 'hidden', border: retro ? `1px solid ${RETRO_LEATHER_LINE}` : undefined }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: fillColor, borderRadius: 999, transition: 'width .4s linear' }} />
       </div>
     </div>
   )

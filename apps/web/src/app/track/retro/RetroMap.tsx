@@ -473,12 +473,17 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
     // 整數倍率（CONTRACT.md §4「1 個地圖像素≈3 CSS px」的像素化精神一併套用在勇者身上）：非整數倍率
     // 會讓 fillRect 落在次像素邊界，被瀏覽器抗鋸齒糊成灰邊，破壞限色像素風的銳利感（2026-09-27 冒煙
     // 截圖比對像素值時發現：headband 白色在螢幕上量到接近純白，但相鄰邊緣糊成灰階，即此問題）。
-    const heroScale = Math.round(Math.max(2, Math.min(4, (w / 360) * 3)))
+    // CONTRACT_R3 §2：勇者繪製倍率由 3 改 2（16×24 → 32×48 CSS px，w=360 的基準寬度下 heroScale 直接
+    // 等於 clamp 下限 2），使用者反映原尺寸在大地圖上遮蓋太多畫面；下面的 HERO_SCALE_RATIO 讓腳印／
+    // 足跡線寬同步依同一比例縮小，避免三者比例跑掉。
+    const heroScale = Math.round(Math.max(2, Math.min(4, (w / 360) * 2)))
     drawHero(ctx, pt.x, pt.y, heroDirRef.current, walkFrameRef.current, heroScale)
   }
 
+  // CONTRACT_R3 §2：腳印像素尺寸與勇者繪製倍率同一個基準值（原本兩者都固定用 3），倍率改 2 後這裡
+  // 同步改 2，維持「腳印大小＝勇者一個像素格」的原始比例關係。
   function drawFootprints(ctx: CanvasRenderingContext2D) {
-    footprintsRef.current.draw(ctx, 3)
+    footprintsRef.current.draw(ctx, 2)
   }
 
   function drawRoute(ctx: CanvasRenderingContext2D, map: MapLibreMap, segs: [number, number][][]) {
@@ -489,7 +494,9 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
       const screen = pts.map((p) => map.project([p[1], p[0]]))
       ctx.save()
       ctx.strokeStyle = GOLD
-      ctx.lineWidth = 4
+      // CONTRACT_R3 §2：足跡線寬跟著勇者倍率 3→2 同比例縮小（4 * 2/3 ≈ 2.67，取最接近的整數 3，
+      // 避免非整數線寬造成像素風格的抗鋸齒糊邊，同一個理由見上面 heroScale 註解）。
+      ctx.lineWidth = 3
       ctx.lineCap = 'round'
       ctx.lineJoin = 'round'
       ctx.setLineDash([6, 5]) // 「足跡道路」：金色點列虛線

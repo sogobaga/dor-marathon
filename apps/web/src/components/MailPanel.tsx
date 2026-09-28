@@ -212,7 +212,11 @@ const iconBtn: React.CSSProperties = {
 const badge: React.CSSProperties = {
   position: 'absolute', top: -2, right: -2, minWidth: 15, height: 15, borderRadius: '50%',
   background: 'var(--hunt)', color: '#fff', fontSize: 10, fontWeight: 900, display: 'flex',
-  alignItems: 'center', justifyContent: 'center', border: '1.5px solid var(--bg-1)', lineHeight: 1,
+  // FIX2（2026-09-28）：原本用 var(--bg-1) 當描邊色——retro skin 下 --bg-1 是多層 background
+  // 字串（見 globals.css），對 border-color 是不合法值，會讓整個 border 被判定 IACVT 退回初始值
+  // （角標直接失去描邊，非僅色偏，因為 MailPanel 掛在前台 MemberPanel、不在 data-skin="default"
+  // 子樹內）。改用 --bg-2：全部 skin（含 retro）下都維持純色 token，不會有這個問題。
+  alignItems: 'center', justifyContent: 'center', border: '1.5px solid var(--bg-2)', lineHeight: 1,
 }
 const overlay: React.CSSProperties = {
   position: 'fixed', inset: 0, zIndex: 600, background: 'rgba(4,8,6,.6)',

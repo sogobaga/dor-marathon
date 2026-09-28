@@ -517,8 +517,8 @@ export const SETTINGS_SPECS: SettingSpec[] = [
   // 旁路：owner 原話「現在只有 sogobaga@gmail.com 可以切換」。兩鍵缺鍵時的程式內建預設＝whitelist +
   // sogobaga@gmail.com（即使後台從未存過這兩個 key，也已經只讓這個帳號看得到）。
   {
-    key: 'skin_select_entry_state', group: '風格設定（帳號切換）', label: '入口顯示狀態', type: 'select', def: 'whitelist',
-    help: '控制會員管理→個人資料頁「風格設定」區塊（預設風格／未來科技／復古 RPG 三選一）對前台玩家的可見性。'
+    key: 'skin_select_entry_state', group: '風格設定（帳號切換）', label: '風格設定按鈕顯示對象（會員管理→個人資料）', type: 'select', def: 'whitelist',
+    help: '控制會員管理→個人資料頁的「風格設定」按鈕（點擊展開選單，預設風格／未來科技／復古 RPG 三選一）對前台玩家的可見性。'
       + '⚠️ 這裡的白名單機制刻意不給超管旁路——連超級管理員帳號都必須列在下方白名單（或符合 VIP 條件）才看得到，'
       + '不像其他入口 hidden 仍對超管放行。',
     options: [
@@ -529,7 +529,7 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     ],
   },
   {
-    key: 'skin_select_entry_whitelist', group: '風格設定（帳號切換）', label: '指定帳號白名單', type: 'text', def: 'sogobaga@gmail.com',
+    key: 'skin_select_entry_whitelist', group: '風格設定（帳號切換）', label: '風格設定白名單', type: 'text', def: 'sogobaga@gmail.com',
     help: '入口狀態選「指定帳號可用」或「VIP 有效期內或白名單可用」時生效。一行一個，可填帳號編碼（#可省）或'
       + '註冊 Email，大小寫不拘。⚠️ 留空即使選了 whitelist 也沒有任何人看得到；清空此欄位、下次讀取時仍會'
       + '回退到程式內建預設 sogobaga@gmail.com（並非真的清空生效，除非把入口狀態改成 hidden）。',

@@ -14,6 +14,7 @@ import BindCardModal from './BindCardModal'
 import PushToggle from './PushToggle'
 import ScrollArea from './ScrollArea'
 import { submitEcpayForm } from '@/lib/ecpay'
+import StyleSettingsModal, { SKIN_LABEL } from './StyleSettingsModal'
 
 const GENDERS = [
   { v: '', t: '未填' },
@@ -54,14 +55,6 @@ function terraBrandName(provider: string): string {
   const key = provider.toLowerCase()
   return TERRA_BRAND_LABEL[key] ?? (key.charAt(0).toUpperCase() + key.slice(1))
 }
-// SKIN_CHOICES：帳號層級「風格設定」三選一（migration 193，契約 retro_skin/CONTRACT.md §2.2）。
-// swatch 只是小色塊預覽，不是真正的風格底色（scifi/retro 各自的真實視覺在
-// components/scifi/ParticleField、components/retro/RetroBackground）。
-const SKIN_CHOICES: { key: 'default' | 'scifi' | 'retro'; label: string; desc: string; swatch: string }[] = [
-  { key: 'default', label: '預設風格', desc: '目前的標準視覺，適合大部分使用情境。', swatch: 'linear-gradient(135deg,#1a1a2e,#4b5563)' },
-  { key: 'scifi', label: '未來科技', desc: '深空霓虹主題：全站粒子背景、GPS 跑步頁改為 3D 光網城市。', swatch: 'linear-gradient(135deg,#02040a,#00fff0,#ff00ea)' },
-  { key: 'retro', label: '復古 RPG', desc: '8-bit 日式 RPG 大地圖風格：像素草地、石牆城鎮、黑底白框視窗。', swatch: 'linear-gradient(135deg,#000,#3cbc3c,#f8b800)' },
-]
 // terra last_data_at 顯示（2026-09-24）：只需要粗略的「多久前」，分/時/天三級距足夠，不追求精確到秒。
 function terraRelativeAgo(iso: string): string {
   const t = new Date(iso).getTime()
@@ -237,6 +230,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   // 這裡只管按鈕自身的 UI 狀態。
   const [skinBusy, setSkinBusy] = useState(false)
   const [skinErr, setSkinErr] = useState('')
+  const [showStyleModal, setShowStyleModal] = useState(false) // 風格設定選單彈窗開關（契約 R3 §1：卡片收斂成按鈕＋選單）
   const [tab, setTab] = useState<'info' | 'sports' | 'records' | 'follows'>(initialTab ?? 'info')
   // 本機尚未上傳的 GPS（里程優先來源=外部來源時，track 頁結束不自動上傳，留給這裡決定）
   const [pending, setPending] = useState<PendingGpsRun | null>(null)
@@ -725,7 +719,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   return (
     <>
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <header style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+      {/* className="profile-header"：僅供 retro skin 覆寫成深咖啡緞帶底條（見 globals.css §6），
+          其他 skin 不認得這個 class、外觀與行為完全不變。 */}
+      <header className="profile-header" style={{ padding: 'var(--app-top) 22px 0', minHeight: 'calc(var(--app-top) + 34px)', boxSizing: 'border-box', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
         <button onClick={onBack} style={backBtn}>← 返回</button>
         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--tx)' }}>會員管理</span>
         {/* 「加入社群」LINE 連結已於 2026-09-03 搬到首頁入口按鈕列（MemberPanel LINE_COMMUNITY_URL），此頁不再重複 */}
@@ -739,7 +735,10 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       {/* 分頁列（個人資料/運動數據/報名紀錄/追蹤列表）：固定在會員卡下方、不隨內容捲動 */}
       <div style={{ display: 'flex', gap: 6, padding: '12px 18px 0', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
         {([['info', '個人資料'], ['sports', '運動數據'], ['records', '報名紀錄'], ['follows', '追蹤列表']] as const).map(([v, label]) => (
-          <button key={v} onClick={() => setTab(v)} style={{
+          // className="profile-tab" + data-active：僅供 retro skin 覆寫成羊皮紙頁籤（見 globals.css
+          // §6，選中深咖啡底米白字／未選中淺羊皮紙底深褐字）；其他 skin 不認得這個 class/屬性，
+          // 外觀與切換行為（onClick/tab 狀態）完全不變。
+          <button key={v} onClick={() => setTab(v)} className="profile-tab" data-active={tab === v} style={{
             padding: '8px 9px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, whiteSpace: 'nowrap',
             color: tab === v ? 'var(--tx)' : 'var(--tx-dim)', fontWeight: tab === v ? 700 : 400,
             borderBottom: tab === v ? '2px solid var(--fug)' : '2px solid transparent',
@@ -851,39 +850,46 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               </div>
             </div>
 
-            {/* 帳號層級「風格設定」（migration 193，契約 retro_skin/CONTRACT.md §2.2）：只有後端
-                dashboard.skin_select_entry==='shown' 才渲染這一段——目前只有系統設定
+            {/* 帳號層級「風格設定」（migration 193，契約 retro_skin/CONTRACT_R3.md §1）：只有後端
+                dashboard.skin_select_entry==='shown' 才渲染這一列——目前只有系統設定
                 skin_select_entry_whitelist 命中的帳號（預設 sogobaga@gmail.com）會是 'shown'，其餘
-                帳號整段看不到，不只是「看得到但按不動」。取代第 22 套原本放在「運動數據」分頁的
-                🌌 開關（那個開關是純前端偏好，沒有寫回伺服器）。 */}
+                帳號整列看不到，不只是「看得到但按不動」。R3 把原本並排的三張卡片收斂成這顆按鈕＋
+                StyleSettingsModal 選單彈窗（點擊才展開三選一），套用/回滾邏輯不變、仍是 chooseSkin()。 */}
             {dash?.skin_select_entry === 'shown' && (
-              <div style={{ paddingBottom: 12, borderBottom: '1px solid var(--line)' }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)', marginBottom: 8 }}>風格設定</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {SKIN_CHOICES.map((c) => {
-                    const selected = (dash.ui_skin ?? 'default') === c.key
-                    return (
-                      <button key={c.key} type="button" disabled={skinBusy} onClick={() => chooseSkin(c.key)}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left', cursor: skinBusy ? 'default' : 'pointer',
-                          background: selected ? 'var(--bg-2)' : 'transparent',
-                          border: `1.5px solid ${selected ? 'var(--fug)' : 'var(--line-2)'}`,
-                          borderRadius: 10, padding: '10px 12px', fontFamily: 'inherit', opacity: skinBusy ? 0.6 : 1,
-                        }}>
-                        <span style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 8, background: c.swatch, border: '1px solid var(--line-2)' }} />
-                        <span style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ display: 'block', fontSize: 13, fontWeight: 700, color: 'var(--tx)' }}>{c.label}{selected ? ' ✓' : ''}</span>
-                          <span style={{ display: 'block', fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 2, lineHeight: 1.5 }}>{c.desc}</span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-                {skinErr && <div style={{ fontSize: 12, color: 'var(--hunt)', marginTop: 8 }}>{skinErr}</div>}
-                <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>
-                  此功能目前開放測試帳號，未來將提供 VIP 會員使用。
-                </div>
-              </div>
+              <>
+                <button
+                  type="button"
+                  onClick={() => { setSkinErr(''); setShowStyleModal(true) }}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%',
+                    background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 10,
+                    padding: '12px 14px', marginBottom: 12, cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)' }}>風格設定</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--tx-dim)' }}>
+                    {SKIN_LABEL[dash.ui_skin ?? 'default']}
+                    <span style={{ color: 'var(--tx-faint)' }}>›</span>
+                  </span>
+                </button>
+                {showStyleModal && (
+                  <StyleSettingsModal
+                    current={dash.ui_skin ?? 'default'}
+                    busy={skinBusy}
+                    err={skinErr}
+                    onChoose={(skin) => { setShowStyleModal(false); chooseSkin(skin) }}
+                    onClose={() => setShowStyleModal(false)}
+                  />
+                )}
+                {/* FIX2（2026-09-28 審查修補）：onChoose 在呼叫 chooseSkin() 前就先關閉選單，
+                    PUT 失敗時 chooseSkin() 才 setSkinErr(...)，此時 StyleSettingsModal 已卸載，
+                    err prop 沒有容器顯示——使用者看不到任何失敗提示，違反契約「失敗回滾並提示」。
+                    在按鈕外層補一則常駐錯誤列（不綁 showStyleModal），選單開著或已關閉都看得到；
+                    重新點開按鈕時 onClick 既有的 setSkinErr('') 會清掉，不影響其他行為。 */}
+                {skinErr && (
+                  <div style={{ fontSize: 12, color: 'var(--hunt)', marginTop: -6, marginBottom: 12 }}>{skinErr}</div>
+                )}
+              </>
             )}
 
             <Field label="顯示名稱"><input style={inp} value={p.name} onChange={(e) => set('name', e.target.value)} /></Field>

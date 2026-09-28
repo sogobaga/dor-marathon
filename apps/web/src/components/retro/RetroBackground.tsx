@@ -29,7 +29,7 @@ import { loadRetroFont } from './fonts'
 const TILE_PX = 16 // tiles.ts 圖塊原生尺寸（世界像素，非 CSS px）
 const DISPLAY_SCALE = 2 // 1 個世界像素 = 2 個 CSS px（backing canvas 解析度 = CSS 尺寸 / 2）
 const WATER_FRAME_INTERVAL_MS = 500 // 契約 §3：河面兩幀動畫 500ms 切換
-const OVERLAY_ALPHA = 0.45 // 契約 §3：整體壓暗，避免搶走前景文字
+const OVERLAY_ALPHA = 0.5 // 契約 §3（第三輪）：整體壓暗改 .5，避免搶走前景羊皮紙文字
 
 type Cell = { kind: TileKind }
 

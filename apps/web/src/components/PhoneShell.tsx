@@ -393,22 +393,28 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
             onOpenBrochure={(r) => { setDetailTab(undefined); setDetailRace(r) }}
           />
         ) : (
-          <RacesScreen
-            onOpenProfile={() => setShowProfile(true)}
-            onOpenActivityExplore={() => setShowActivityExplore(true)}
-            onOpenPersonalTasks={() => setShowPersonalTasks(true)}
-            onOpenTraining={() => setShowTraining(true)}
-            onOpenExplore={() => setShowExplore(true)}
-            onOpenGallery={() => setShowGallery(true)}
-            onOpenTitle={() => setShowTitle(true)}
-            onOpenAchievement={() => setShowAchievement(true)}
-            onOpenPerks={() => setShowPerks(true)}
-            onOpenMonopoly={() => setShowMonopoly(true)}
-            onOpenRewards={() => setShowRewards(true)}
-            onOpenHeroes={() => setShowHeroes(true)}
-            onOpenRunMeet={() => setShowRunMeet(true)}
-            onOpenRpg={() => setShowCharacter(true)}
-          />
+          // data-screen="home"：retro skin 唯一維持 --bg:transparent（透出像素草原）的畫面（見
+          // globals.css §6）。渲染鏈上面每個全頁畫面共用同一個外層容器、彼此沒有可辨識的
+          // className 能單獨命中「現在是首頁」，這裡包一層純標記用的 div（無樣式，不影響版面／
+          // 行為），只給 CSS 用屬性選擇器精準辨識首頁分支；非 retro skin 完全不受影響。
+          <div data-screen="home" style={{ height: '100%' }}>
+            <RacesScreen
+              onOpenProfile={() => setShowProfile(true)}
+              onOpenActivityExplore={() => setShowActivityExplore(true)}
+              onOpenPersonalTasks={() => setShowPersonalTasks(true)}
+              onOpenTraining={() => setShowTraining(true)}
+              onOpenExplore={() => setShowExplore(true)}
+              onOpenGallery={() => setShowGallery(true)}
+              onOpenTitle={() => setShowTitle(true)}
+              onOpenAchievement={() => setShowAchievement(true)}
+              onOpenPerks={() => setShowPerks(true)}
+              onOpenMonopoly={() => setShowMonopoly(true)}
+              onOpenRewards={() => setShowRewards(true)}
+              onOpenHeroes={() => setShowHeroes(true)}
+              onOpenRunMeet={() => setShowRunMeet(true)}
+              onOpenRpg={() => setShowCharacter(true)}
+            />
+          </div>
         )}
       </div>
 

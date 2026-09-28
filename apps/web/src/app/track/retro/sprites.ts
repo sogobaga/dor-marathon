@@ -35,9 +35,11 @@ export function tileImageData(kind: TileKind, frame: 0 | 1 = 0): ImageData {
 // ── 勇者（DOR 自有原創角色）：CONTRACT_R2.md §2 權威底稿（2026-09-27 第二輪，取代第一輪
 // CONTRACT.md §7 手刻矩形版）──16 寬 × 24 高，逐字解碼契約給的字元表（不手動轉譯成矩形，確保
 // 像素跟契約底稿逐格一致），四方向 × 一幀站立 + 兩幀走路（frame 0 兼作站立幀，沿用既有
-// RetroMap.tsx 呼叫慣例：靜止時固定傳 frame 0）。down 以外的方向與走路幀，依契約文字規則
-// （背面全髮無臉＋圍巾結＋劍柄；側面單片鏡框＋鏡腳＋鼻尖凸出＋後腦髮量較多；走路兩幀＝左右腳
-// 交替抬起一列＋鞋子上移 1px）對底稿做局部改寫衍生，而非另外手刻四份，確保比例/配色不會走鐘。
+// RetroMap.tsx 呼叫慣例：靜止時固定傳 frame 0）。down 與 up 依契約文字規則對 down 底稿做局部改寫
+// 衍生（背面全髮無臉＋圍巾結＋劍柄；走路兩幀＝左右腳交替抬起一列＋鞋子上移 1px），不再另外手刻，
+// 確保比例/配色不會走鐘；left／right 側面圖則自 CONTRACT_R3.md §2 起改用編排者逐字繪製的權威底稿
+// （見下方 HERO_LEFT_STAND），不再用「正面衍生規則」推出側面（第二輪的 buildLeftGrid 衍生法使用者
+// 反映「看起來像頭髮遮住眼睛，不像側臉」，已整段移除，改成跟 HERO_DOWN_STAND 同等地位的逐字底稿）。
 export type HeroDir = 'down' | 'up' | 'left' | 'right'
 
 // 契約 §2 圖例字元 → 色碼（逐字對照，E/B 與 F/P 契約本就指定同一色，不是筆誤）。
@@ -101,9 +103,10 @@ function liftFoot(rows: string[], colFrom: number, colTo: number): void {
   }
 }
 // R2 FIX（findings #3）：走路次要動態——手臂前後擺＋圍巾尾端反向擺，原版 walkVariant 只做了
-// liftFoot。guardedSet 只在「目標像素仍是預期的原始字元」時才替換：up/left/right 這幾個方向會把
-// row10 的 F（袖口）整段覆寫成髮色（buildUpGrid）或部分覆寫成髮色（buildLeftGrid 的後腦髮量），
-// 若不檢查就硬改，會在那些方向上把別的造型元素改壞；檢查失敗就整段跳過，保證對其他方向零風險。
+// liftFoot。guardedSet 只在「目標像素仍是預期的原始字元」時才替換：up 方向會把 row10 的 F（袖口）
+// 整段覆寫成髮色（buildUpGrid），若不檢查就硬改，會把 up 造型改壞；檢查失敗就整段跳過，保證零風險。
+// swingArmsAndScarf／walkVariant 現在只服務 down／up（CONTRACT_R3 §2：left／right 側面走路改用
+// 下面專屬的 swingSideHandAndScarf／sideWalkVariant，座標系不同、不能共用同一組函式）。
 function guardedSet(rows: string[], y: number, x: number, expect: string, next: string): void {
   if (rows[y][x] !== expect) return
   rows[y] = setChar(rows[y], x, next)
@@ -169,44 +172,135 @@ function buildUpGrid(base: readonly string[]): string[] {
   return rows
 }
 
-// 側面（left；right 由 mirrorGrid(left) 取得，見契約「right 為鏡像」）：正面對稱的雙眼/口罩改成
-// 前方（低 x＝面朝方向）單片鏡框＋鏡腳延伸到後腦；鼻尖 1px 突出在輪廓外緣；後腦（高 x）髮量較多；
-// 圍巾尾端在後方（高 x）多飄 1px；劍柄露在背側（高 x，覆蓋在原本的邊框格上，比照第一輪同一手法）。
-function buildLeftGrid(base: readonly string[]): string[] {
+// 側面（left；right 由 mirrorGrid(left) 取得，見契約「right 為鏡像」）：CONTRACT_R3.md §2 權威底稿，
+// 編排者逐字繪製、逐字解碼（不再像第二輪 buildLeftGrid 那樣從正面衍生出「頭髮遮眼」的誤讀）。重點
+// 對照契約說明：臉在左（低 x）、瀏海在前，r09 的 E（col3）＝單片鏡框內看得到的眼睛、col2 的 K＝
+// 鏡腳延伸到耳；鼻尖在 r10 col0（S，突出於輪廓外緣）；r11 的 F（col4）＝腮紅；胸前 r13 的 G（col4）
+// ＝金色胸針；圍巾尾端與劍護手在背側（高 x：r13-14 的 P/p＝後腦髮量延伸到肩、r15-18 的 A/G＝劍柄
+// 護手與圍巾尾端）。
+const HERO_LEFT_STAND: readonly string[] = [
+  '....KKKKKKK.....',
+  '..KKPPPPPPPKK...',
+  '.KPPPPPPPPPPPK..',
+  '.KPPPPPPPPPPPPK.',
+  'KPPPPPPPPPPPPPK.',
+  'KPPPPPPPPPPPPpK.',
+  'KPPPPPPPPPPPPpK.',
+  'KPPPPpPPPPPPPpK.',
+  '.KKKKKKKKPPPPpK.',
+  'KSKEKSSSSKPPPpK.',
+  'SSKKKSSSSSKPPpK.',
+  'KSSSFSSSSSKPPpK.',
+  '.KKSSSSSSKPPPpK.',
+  '..KRGRRRRRKPpK..',
+  '..KRRRRRRRRRRK..',
+  '...KAAWWWWRRRK..',
+  '...KAWWBWWWAGK..',
+  '...KSWWWBWWWAK..',
+  '...KSWWGGGWWWK..',
+  '...KNNNNNNNNNK..',
+  '..KNNNNNNNNNNNK.',
+  '....KwK..KwK....',
+  '...KFFK..KFFK...',
+  '...KKKK..KKKK...',
+]
+assertHeroGrid(HERO_LEFT_STAND)
+
+// 側面走路：CONTRACT_R3 §2 明訂側面走路不同於 down/up 的「單純抬腳」——前腳／後腳要交替「前後移
+// 1px」（模擬跨步）、抬腳者鞋子再上移 1px；前手與圍巾尾端各自前後／上下擺動 1px。down／up 依契約
+// 「維持 v854 不變」，繼續共用上面的 walkVariant／liftFoot／swingArmsAndScarf，不動一行；側面走路
+// 因此另外寫一組專用函式，兩邊互不影響。
+
+// 把一列裡「目前有值的欄位」整批平移 dx（±1）：依 dx 方向決定搬移順序（dx>0 先搬右邊，dx<0
+// 先搬左邊），避免同一列內把還沒讀到的來源格覆寫掉。跳過空白格（沒有腳的地方不必搬）。
+function shiftRowCols(rows: string[], y: number, cols: readonly number[], dx: 1 | -1): void {
+  const ordered = dx > 0 ? [...cols].sort((a, b) => b - a) : [...cols].sort((a, b) => a - b)
+  for (const x of ordered) {
+    const ch = rows[y][x]
+    if (ch === '.') continue
+    rows[y] = setChar(rows[y], x, '.')
+    rows[y] = setChar(rows[y], x + dx, ch)
+  }
+}
+// 鞋子上移 1px：跟 liftFoot() 同一手法（中段搬到上段、下段清空），差別是這裡直接讀「目前 rows 陣列
+// 本身」而非固定的 HERO_DOWN_STAND 來源——側面走路先做完 shiftRowCols() 水平跨步之後，腳已經不在
+// 原始欄位，必須用移動後的當下內容做上移，固定來源表無法對應新位置。
+function liftFootInPlace(rows: string[], colFrom: number, colTo: number): void {
+  for (let x = colFrom; x <= colTo; x++) {
+    const mid = rows[FOOT_TOP_ROW + 1][x]
+    const bot = rows[FOOT_TOP_ROW + 2][x]
+    rows[FOOT_TOP_ROW] = setChar(rows[FOOT_TOP_ROW], x, mid)
+    rows[FOOT_TOP_ROW + 1] = setChar(rows[FOOT_TOP_ROW + 1], x, bot)
+    rows[FOOT_TOP_ROW + 2] = setChar(rows[FOOT_TOP_ROW + 2], x, '.')
+  }
+}
+// 側面底稿 r21-23 的腳跟 down 底稿一模一樣（同一份「兩腳並排」造型，見契約 r21 "....KwK..KwK...."），
+// 前腳＝畫面上的左側欄位（col4-6／col3-6），後腳＝右側欄位（col9-11／col9-12），沿用跟 down 版
+// liftFoot() 呼叫一致的「只取中間 3 欄」慣例（略過最外側輪廓那 1 欄，同一個簡化前例）。
+const FRONT_FOOT_21 = [4, 5, 6] as const
+const FRONT_FOOT_2223 = [3, 4, 5, 6] as const
+const BACK_FOOT_21 = [9, 10, 11] as const
+const BACK_FOOT_2223 = [9, 10, 11, 12] as const
+
+// 前手（實際像素在 r17-r18 col4 的 S，契約文字「r16–r18」為概略範圍）與圍巾尾端（r14-15 右側
+// col10-12 的 R）的次要擺動。guardedSet 只在目標格仍是預期原始字元時才替換：col3（r17/r18）是
+// 身體正面輪廓的黑線，往那個方向擺會咬掉輪廓，所以只做「往身體方向收 1px」（col4→col5）這個安全
+// 方向，guardedSet 天生會讓不安全的另一個方向直接不生效，不需要額外判斷。
+function swingSideHandAndScarf(rows: string[], frame: 1 | 2): void {
+  if (frame === 1) {
+    guardedSet(rows, 17, 4, 'S', 'W')
+    guardedSet(rows, 17, 5, 'W', 'S')
+    guardedSet(rows, 18, 4, 'S', 'W')
+    guardedSet(rows, 18, 5, 'W', 'S')
+    // 圍巾尾端上擺 1px：收起 r15 這一段（改成緊鄰的白色袖口色，guarded 只在原本是 R 時才替換）。
+    guardedSet(rows, 15, 10, 'R', 'W')
+    guardedSet(rows, 15, 11, 'R', 'W')
+    guardedSet(rows, 15, 12, 'R', 'W')
+  } else {
+    // 圍巾尾端下擺 1px：往下多露 1 列（把手套/袖口那一列對應的 3 格改成圍巾色）。
+    guardedSet(rows, 16, 10, 'W', 'R')
+    guardedSet(rows, 16, 11, 'A', 'R')
+    guardedSet(rows, 16, 12, 'G', 'R')
+  }
+}
+
+// frame 0＝站立（跟契約底稿逐字一致，不做任何改寫）；frame 1＝前腳跨步向前＋抬腳，後腳退後半步；
+// frame 2＝相反（後腳跨步向前＋抬腳，前腳退後半步）——標準的兩幀交叉步態，frame1/frame2 互為對稱。
+function sideWalkVariant(base: readonly string[], frame: 0 | 1 | 2): string[] {
   const rows = cloneGrid(base)
-  // r07（口罩上緣 KKKKSSKKKKPK）／r08（雙眼 KSEKKKKESKPK）／r09（口罩下緣，同 r07 形狀）：
-  // 前方（col3-7）保留單邊鏡框＋眼睛＋鼻樑，後方（col8-12）填成頭髮（後腦看不到另一邊鏡片）。
-  for (const y of [7, 8, 9]) {
-    let row = rows[y]
-    for (let x = 8; x <= 12; x++) row = setChar(row, x, 'P')
-    rows[y] = row
+  if (frame === 0) return rows
+  if (frame === 1) {
+    shiftRowCols(rows, 21, FRONT_FOOT_21, -1)
+    shiftRowCols(rows, 22, FRONT_FOOT_2223, -1)
+    shiftRowCols(rows, 23, FRONT_FOOT_2223, -1)
+    // FIX2（2026-09-28 審查修補）：這裡原本只傳 3-5（3 欄寬，抄自腳踝 FRONT_FOOT_21 的欄寬），
+    // 但實際鞋身 FRONT_FOOT_2223 是 4 欄寬（3-6 整體 -1 之後落在 2-5），只提 3-5 會漏抬/漏清 col2，
+    // 留下一顆沒被抬起也沒被清空的孤立黑點（row23 col2）。改成 2-5，涵蓋位移後完整的鞋身寬度。
+    liftFootInPlace(rows, 2, 5) // 前腳跨步後新位置（3-6 整體 -1）
+    shiftRowCols(rows, 21, BACK_FOOT_21, 1)
+    shiftRowCols(rows, 22, BACK_FOOT_2223, 1)
+    shiftRowCols(rows, 23, BACK_FOOT_2223, 1)
+  } else {
+    shiftRowCols(rows, 21, BACK_FOOT_21, -1)
+    shiftRowCols(rows, 22, BACK_FOOT_2223, -1)
+    shiftRowCols(rows, 23, BACK_FOOT_2223, -1)
+    // FIX2（2026-09-28）：同上，後腳鞋身 BACK_FOOT_2223 是 4 欄寬（9-12 整體 -1 之後落在 8-11），
+    // 原本只傳 8-10 會漏 col11，改成 8-11。
+    liftFootInPlace(rows, 8, 11) // 後腳跨步後新位置（9-12 整體 -1）
+    shiftRowCols(rows, 21, FRONT_FOOT_21, 1)
+    shiftRowCols(rows, 22, FRONT_FOOT_2223, 1)
+    shiftRowCols(rows, 23, FRONT_FOOT_2223, 1)
   }
-  rows[8] = setChar(rows[8], 6, 'K') // 鏡腳：從鏡框往後腦延伸一小段黑線
-  rows[9] = setChar(rows[9], 2, 'S') // 鼻尖：在原本輪廓（col3=K）外多凸出 1px
-  // 後腦髮量較多：把口罩列之外、頭部下緣（r10-12）後方也覆成髮色，前方保留原本臉頰/下巴膚色。
-  for (const y of [10, 11, 12]) {
-    let row = rows[y]
-    for (let x = 9; x <= 12; x++) if (row[x] !== '.' && row[x] !== 'K') row = setChar(row, x, 'P')
-    rows[y] = row
-  }
-  // 圍巾尾端在背後（高 x）多飄 1px：col14 原本是輪廓 A，col15 原本透明，補一格 R 讓尾端露出來。
-  rows[14] = setChar(rows[14], 15, 'R')
-  rows[15] = setChar(rows[15], 15, 'R')
-  // 劍柄露在背側：覆蓋在既有輪廓格上（同第一輪手法，肩後緊鄰頭側、不重疊臉）。
-  rows[11] = setChar(rows[11], 13, 'A')
-  rows[12] = setChar(setChar(rows[12], 12, 'A'), 13, 'G')
+  swingSideHandAndScarf(rows, frame)
   return rows
 }
 
 // 各方向／幀的衍生格線只需算一次（純函式、輸入固定），快取起來避免每個動畫格都重新字串運算。
 const HERO_UP_STAND = buildUpGrid(HERO_DOWN_STAND)
-// buildLeftGrid 只改頭部／圍巾／劍柄那幾列（r7-15），完全沒碰腿部/腳部（r18-23）——所以
-// HERO_LEFT_STAND 的腳部欄位意義跟 HERO_DOWN_STAND 相同，liftFoot() 可以直接套用，不必另外
-// 為側面重寫一份「抬腳」邏輯。right 一律「鏡射 left 的同一幀」取得（見下方 HERO_GRIDS），
-// 這樣兩個方向的走路幀永遠是彼此的鏡像，不會有一邊抬錯腳的風險。
-const HERO_LEFT_STAND = buildLeftGrid(HERO_DOWN_STAND)
-const HERO_LEFT_WALK1 = walkVariant(HERO_LEFT_STAND, 1)
-const HERO_LEFT_WALK2 = walkVariant(HERO_LEFT_STAND, 2)
+const HERO_LEFT_WALK1 = sideWalkVariant(HERO_LEFT_STAND, 1)
+const HERO_LEFT_WALK2 = sideWalkVariant(HERO_LEFT_STAND, 2)
+// right 一律「鏡射 left 的同一幀」取得（而非另外手刻），這樣兩個方向的走路幀永遠是彼此的鏡像，
+// 不會有一邊抬錯腳的風險（見契約「right 為鏡像」）。
 const HERO_GRIDS: Record<HeroDir, readonly [string[], string[], string[]]> = {
   down: [walkVariant(HERO_DOWN_STAND, 0), walkVariant(HERO_DOWN_STAND, 1), walkVariant(HERO_DOWN_STAND, 2)],
   up: [walkVariant(HERO_UP_STAND, 0), walkVariant(HERO_UP_STAND, 1), walkVariant(HERO_UP_STAND, 2)],
