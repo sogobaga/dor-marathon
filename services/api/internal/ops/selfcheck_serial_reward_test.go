@@ -58,24 +58,66 @@ func TestSerialGroupStockRemainingCapacity(t *testing.T) {
 		remaining  int
 		grantCount int
 		unlimited  bool
+		isBundle   bool
 		want       int
 	}{
-		{"整除：5/1=5", 5, 1, false, 5},
-		{"整除：6/2=3", 6, 2, false, 3},
-		{"非整除無條件捨去：5/2=2", 5, 2, false, 2},
-		{"grant_count=0 視為 1（防禦資料異常）", 5, 0, false, 5},
-		{"grant_count 負值視為 1", 5, -1, false, 5},
-		{"容量為 0", 0, 3, false, 0},
-		{"unlimited 一律回 0（migration 178：呼叫端須用 Capacity.Unlimited 判斷，不能靠這裡的回傳值）", 999, 1, true, 0},
+		{"整除：5/1=5", 5, 1, false, false, 5},
+		{"整除：6/2=3", 6, 2, false, false, 3},
+		{"非整除無條件捨去：5/2=2", 5, 2, false, false, 2},
+		{"grant_count=0 視為 1（防禦資料異常）", 5, 0, false, false, 5},
+		{"grant_count 負值視為 1", 5, -1, false, false, 5},
+		{"容量為 0", 0, 3, false, false, 0},
+		{"unlimited 一律回 0（migration 178：呼叫端須用 Capacity.Unlimited 判斷，不能靠這裡的回傳值）", 999, 1, true, false, 0},
+		{"組合型：grant_count>1 也不折扣，直接回傳包數（claimSerialsFromGroup 對 is_bundle 完全不看 grant_count）", 1, 3, false, true, 1},
+		{"組合型：grant_count=1 時結果與非組合型一致", 5, 1, false, true, 5},
+		{"組合型：包數 0", 0, 1, false, true, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s := serialGroupStock{
-				Capacity:   rewardserial.GroupCapacity{Remaining: c.remaining, Unlimited: c.unlimited},
+				Capacity:   rewardserial.GroupCapacity{Remaining: c.remaining, Unlimited: c.unlimited, IsBundle: c.isBundle},
 				GrantCount: c.grantCount,
 			}
 			if got := s.remainingCapacity(); got != c.want {
-				t.Errorf("remainingCapacity(remaining=%d,grant=%d,unlimited=%v) = %d, want %d", c.remaining, c.grantCount, c.unlimited, got, c.want)
+				t.Errorf("remainingCapacity(remaining=%d,grant=%d,unlimited=%v,isBundle=%v) = %d, want %d",
+					c.remaining, c.grantCount, c.unlimited, c.isBundle, got, c.want)
+			}
+		})
+	}
+}
+
+// TestBundleCompositionLabel 組合型序號組容量明細轉可讀字串（見 shortageLinesForItems 使用場景），涵蓋
+// 2026-09-28 對抗性稽核實案（LINE POINTS 3000 = 3×LINE POINTS 1000，子面額剩 5 張）的單一子項格式、多
+// 子項格式、無子項防呆。
+func TestBundleCompositionLabel(t *testing.T) {
+	cases := []struct {
+		name       string
+		components []rewardserial.BundleComponent
+		want       string
+	}{
+		{
+			name:       "單一子項：實案格式",
+			components: []rewardserial.BundleComponent{{GroupID: "be515b36", Name: "LINE POINTS 1000", PerPack: 3, ChildRemaining: 5}},
+			want:       "組合包=3×LINE POINTS 1000，子面額剩 5 張",
+		},
+		{
+			name: "多子項：各自標明數量與剩餘",
+			components: []rewardserial.BundleComponent{
+				{GroupID: "a", Name: "A", PerPack: 2, ChildRemaining: 10},
+				{GroupID: "b", Name: "B", PerPack: 1, ChildRemaining: 3},
+			},
+			want: "組合包=2×A(剩10張)、1×B(剩3張)",
+		},
+		{
+			name:       "無子項（理論不會發生，CRUD 已擋）→ 防呆保底",
+			components: nil,
+			want:       "組合包",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := bundleCompositionLabel(c.components); got != c.want {
+				t.Errorf("bundleCompositionLabel() = %q, want %q", got, c.want)
 			}
 		})
 	}

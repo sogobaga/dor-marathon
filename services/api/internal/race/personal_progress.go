@@ -236,6 +236,14 @@ func lowStockShouldNotify(groupID string) bool {
 // ⚠️ 命名協調（2026-09-15）：rewardserial 套件的「單一序號組容量」查詢函式定名為 GroupCapacityOf，
 // 不是 GroupCapacity——GroupCapacity 這個名字已被容量快照的 struct type 佔用（Go 不允許同一套件內
 // 型別與函式同名），見 rewardserial/capacity.go 文件註解。此處呼叫已配合改名，非行為變更。
+//
+// ⚠️ 組合型序號組（is_bundle=true，migration 150）防呆（2026-09-28 對抗性稽核）：groupIDs 目前唯一的
+// 來源 activityreward.RollAndGrant 對組合包一律回傳「真正持有序號」的子面額組 id（見
+// activityreward.grantSerialBundle 文件），不會是組合包 parent 自己，故這裡理論上不會查到
+// capacity.IsBundle=true。仍加上這個分支防呆：萬一未來某個呼叫端把組合包 parent id 直接傳進來，「湊幾
+// 包」在小整數下（如 remaining=1/total=1）套用 remaining*5>=total 幾乎恆為真而永遠不告警，對真正吃緊的
+// 子面額毫無意義——改成逐一對每個子面額組件各自查真實容量、各自套用同一套 20% 規則獨立判斷、獨立節流
+// （節流 key 用子面額組自己的 id，與其餘呼叫路徑一致）。
 func checkAndNotifyLowStock(db *pgxpool.Pool, raceTitle string, groupIDs []string) {
 	for _, groupID := range groupIDs {
 		capacity, err := rewardserial.GroupCapacityOf(context.Background(), db, groupID)
@@ -246,32 +254,50 @@ func checkAndNotifyLowStock(db *pgxpool.Pool, raceTitle string, groupIDs []strin
 		if capacity.Unlimited {
 			continue // 共用碼且不限得主人數：永不缺貨，見 migration 178 語意
 		}
-		if capacity.Total <= 0 || capacity.Remaining*5 >= capacity.Total { // remaining/total >= 20%：容量健康，不告警
-			continue
-		}
-		if !lowStockShouldNotify(groupID) {
-			continue // 節流：此組近期已經告警過
-		}
-		var groupName, merchantName string
-		if err := db.QueryRow(context.Background(), `
-			SELECT g.name, COALESCE(m.name,'')
-			FROM reward_serial_groups g LEFT JOIN reward_merchants m ON m.id = g.merchant_id
-			WHERE g.id = $1`, groupID).Scan(&groupName, &merchantName); err != nil {
-			log.Warn().Err(err).Str("group_id", groupID).Msg("low stock load group name failed")
-			continue
-		}
-		text := fmt.Sprintf(
-			"⚠️ <b>序號庫存低於 20%%</b>\n賽事：%s\n商家：%s\n序號組：%s\n剩餘 / 總數：%d / %d",
-			html.EscapeString(raceTitle), html.EscapeString(merchantName), html.EscapeString(groupName),
-			capacity.Remaining, capacity.Total)
-		func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if err := notify.Telegram(ctx, text); err != nil {
-				log.Warn().Err(err).Str("group_id", groupID).Msg("low stock telegram notify failed")
+		if capacity.IsBundle {
+			for _, comp := range capacity.Components {
+				childCapacity, err := rewardserial.GroupCapacityOf(context.Background(), db, comp.GroupID)
+				if err != nil {
+					log.Warn().Err(err).Str("group_id", comp.GroupID).Msg("low stock check bundle child query failed")
+					continue
+				}
+				notifyIfLowStock(db, raceTitle, comp.GroupID, childCapacity)
 			}
-		}()
+			continue
+		}
+		notifyIfLowStock(db, raceTitle, groupID, capacity)
 	}
+}
+
+// notifyIfLowStock <20%（remaining/total）且未被節流才送 Telegram，供 checkAndNotifyLowStock 對一般
+// 序號組、以及組合型序號組的每個子面額組件分別呼叫（見該函式文件）。groupID 一律是實際持有 reward_serials
+// 的序號組 id（組合包 parent 自己不會傳進來）。
+func notifyIfLowStock(db *pgxpool.Pool, raceTitle, groupID string, capacity rewardserial.GroupCapacity) {
+	if capacity.Total <= 0 || capacity.Remaining*5 >= capacity.Total { // remaining/total >= 20%：容量健康，不告警
+		return
+	}
+	if !lowStockShouldNotify(groupID) {
+		return // 節流：此組近期已經告警過
+	}
+	var groupName, merchantName string
+	if err := db.QueryRow(context.Background(), `
+		SELECT g.name, COALESCE(m.name,'')
+		FROM reward_serial_groups g LEFT JOIN reward_merchants m ON m.id = g.merchant_id
+		WHERE g.id = $1`, groupID).Scan(&groupName, &merchantName); err != nil {
+		log.Warn().Err(err).Str("group_id", groupID).Msg("low stock load group name failed")
+		return
+	}
+	text := fmt.Sprintf(
+		"⚠️ <b>序號庫存低於 20%%</b>\n賽事：%s\n商家：%s\n序號組：%s\n剩餘 / 總數：%d / %d",
+		html.EscapeString(raceTitle), html.EscapeString(merchantName), html.EscapeString(groupName),
+		capacity.Remaining, capacity.Total)
+	func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := notify.Telegram(ctx, text); err != nil {
+			log.Warn().Err(err).Str("group_id", groupID).Msg("low stock telegram notify failed")
+		}
+	}()
 }
 
 // MarkAttemptExpired CAS 標記個人挑戰 attempt 逾期：只有 status='paid' 才會更新（冪等；已 completed

@@ -1725,6 +1725,58 @@ export const adminRewardsApi = {
     }),
 }
 
+// --- Admin: 個人挑戰模式後台唯讀監控——進行中 attempt 即時進度（見 personal_attempts_admin.go）---
+// 完全唯讀，不含任何寫入 API；三種 completion_type 各自只有對應欄位有意義，其餘固定為零值。
+
+export type PersonalAttemptCompletionType = 'streak_days' | 'window_cumulative' | 'single_distance'
+
+export interface PersonalAttemptRow {
+  registration_id: string
+  user_id: string
+  user_name: string
+  user_email: string
+  attempt_no: number
+  challenge_started_at: string
+  expected_end_at: string
+  completion_type: PersonalAttemptCompletionType
+  // streak_days 專用
+  target_days: number
+  streak_days: number
+  current_streak: number
+  qualifying_days: number
+  today_done: boolean
+  at_risk: boolean
+  earliest_complete_date?: string | null
+  can_finish_before_deadline: boolean
+  // window_cumulative／single_distance 專用
+  target_cum_km: number
+  cum_km: number
+  target_single_km: number
+  best_single_km: number
+  // 三種規則共用
+  percent: number
+  last_activity_date?: string | null
+  today_km: number
+}
+
+export interface PersonalAttemptsSummary {
+  in_progress: number
+  completed: number
+  expired: number
+  pending_payment: number
+}
+
+export interface PersonalAttemptsResponse {
+  attempts: PersonalAttemptRow[]
+  count: number
+  summary: PersonalAttemptsSummary
+}
+
+export const adminPersonalAttemptsApi = {
+  list: (token: string, raceId: string) =>
+    request<PersonalAttemptsResponse>(`/admin/races/${raceId}/personal-attempts`, { headers: withAuth(token) }),
+}
+
 // --- Admin: 獎勵管理一般化（migration 135）——非 personal 模式賽事的賽後抽獎 ---
 // 抽獎資格底線＝完賽（各分組 target_distance_km，與前台排行榜/完賽證明同一條線）；全體/分組/個人額外
 // 挑戰(race_tasks)都是疊加的額外目標，不影響資格線。personal 模式仍走上面 adminRewardsApi 舊制。

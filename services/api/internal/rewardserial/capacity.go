@@ -32,13 +32,43 @@ type DBTX interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 }
 
-// GroupCapacity 一個序號組（非組合型；組合型序號組自己不持有 reward_serials，容量看子面額組各自的
-// GroupCapacity，見 activityreward/roll.go bundlePackAvailable）目前的容量快照。
+// GroupCapacity 一個序號組目前的容量快照，含組合型（is_bundle=true，見 IsBundle）——這裡是全站「這組
+// 序號還能不能發」的單一真相，組合型與非組合型都要能從 GroupCapacities/GroupCapacityOf 查到正確答案，
+// 呼叫端不必自己先判斷 is_bundle 再走不同 API（2026-09-28 對抗性稽核抓到的根因：自檢排程/低庫存告警
+// 只認得非組合型的算法，組合包一律被 LEFT JOIN 湊成全零，見 bundle_capacity.go 檔頭）。
 type GroupCapacity struct {
-	Remaining int  // 還能再發給幾位得主（single/repeat 才有意義；unlimited 固定 0，見 Unlimited）
-	Unlimited bool // true＝unlimited 型且仍有至少 1 列非 void 序號，可無限發放
-	Total     int  // 容量上限（single=列數；repeat=列數×N；unlimited 恆 0，無上限可言）
-	Issued    int  // 已發給幾位得主（single=已發送列數；repeat/unlimited=Σ列.issue_count）
+	// Remaining 還能再發給幾位得主：非組合型 single/repeat 才有意義（unlimited 固定 0，見 Unlimited）；
+	// 組合型（IsBundle=true）＝目前「可用」子面額張數換算出的包數，見 bundle_capacity.go
+	// bundleGroupCapacities：Remaining = min_i floor(child_i.可用張數 / PerPack_i)。
+	Remaining int
+	Unlimited bool // true＝unlimited 型且仍有至少 1 列非 void 序號，可無限發放；組合型恆 false（見 IsBundle 文件）
+	// Total 容量上限：非組合型 single=列數；repeat=列數×N；unlimited 恆 0，無上限可言。組合型（IsBundle=
+	// true）＝子面額張數換算出的「原始」包數上限（含已發，非目前可用）：Total = min_i floor(child_i.非void
+	// 張數 / PerPack_i)——與 Remaining 用同一顆純函式 BundlePacksFromStock 算，只是餵進去的是非 void 張數
+	// 而非可用張數，兩者才有可比性（複合 Remaining<=Total 恆成立）。
+	Total int
+	// Issued 已發給幾位得主：非組合型 single=已發送列數；repeat/unlimited=Σ列.issue_count。組合型（IsBundle=
+	// true）＝Total-Remaining（衍生值：組合包沒有自己的 issue_count 可加總，只能反推「原本能湊幾包」與
+	// 「現在還能湊幾包」的差距，語意等同「已經发出的包數」，因為每次中獎 grantSerialBundle 都是整包發放，
+	// 不會有「發到一半」的中繼狀態）。
+	Issued int
+	// IsBundle true＝這是組合型序號組（is_bundle=true，migration 150）的容量快照：組合包自己不持有
+	// reward_serials，Remaining/Total/Issued 改用上述「湊幾包」語意；Components 是組合明細，供呼叫端（如
+	// 自檢報表）組出人類可讀的說明，不必自己重新查 reward_serial_group_items。false 時 Components 恆為
+	// nil。子面額組（children）CRUD 已強制 use_limit_type=single（見
+	// rewardserial.Service.validateBundleChildMeta），故這裡只需要數子面額組的張數，不必換算
+	// issue_count／use_limit_count。
+	IsBundle   bool
+	Components []BundleComponent
+}
+
+// BundleComponent 組合型序號組（IsBundle=true）容量明細的一個子項快照，供呼叫端組讀者可讀的說明字串
+// （如自檢報表「組合包=3×LINE POINTS 1000，子面額剩 5 張」）使用。
+type BundleComponent struct {
+	GroupID        string // 子面額組 id
+	Name           string // 子面額組名稱（reward_serial_groups.name）
+	PerPack        int    // 每包需要這個子面額幾張（reward_serial_group_items.count）
+	ChildRemaining int    // 該子面額組目前可用（status='available'）張數
 }
 
 // computeGroupCapacity 純函式：依 use_limit_type 把序號列彙總統計換算成 GroupCapacity（見本檔頭三種
@@ -59,13 +89,19 @@ func computeGroupCapacity(useLimitType string, useLimitCount, n, availRows, issu
 // GroupCapacities 批次查詢多個序號組的容量（避免 N+1；後台列表／自檢排程掃多場賽事時務必用這支，
 // 不要在迴圈裡逐一呼叫 GroupCapacityOf）。查無的 group id（如剛好被刪除）不會出現在回傳的 map 中，
 // 由呼叫端視為「查無→容量全零」自行處理（比照既有 groupAvailableCount 的「序號組不存在→跳過」慣例）。
+//
+// 組合型（is_bundle=true）與非組合型混在同一份 groupIDs 內查也沒問題：下方主查詢的 LEFT JOIN
+// reward_serials 對組合包 parent 必定湊出全零聚合（組合包自己不持有序號），此處偵測到 is_bundle=true
+// 就先跳過、收集 id，主查詢的 rows 讀完關閉後再用 bundleGroupCapacities 批次另外查一次（見該函式），
+// 避免對組合包誤用非組合型的容量公式（2026-09-28 對抗性稽核根因：自檢排程曾把組合包容量查成 0，見
+// bundle_capacity.go 檔頭）。
 func GroupCapacities(ctx context.Context, db DBTX, groupIDs []string) (map[string]GroupCapacity, error) {
 	out := map[string]GroupCapacity{}
 	if len(groupIDs) == 0 {
 		return out, nil
 	}
 	rows, err := db.Query(ctx, `
-		SELECT g.id::text, g.use_limit_type, COALESCE(g.use_limit_count,0),
+		SELECT g.id::text, g.is_bundle, g.use_limit_type, COALESCE(g.use_limit_count,0),
 		       COUNT(s.id) FILTER (WHERE s.status <> 'void'),
 		       COUNT(s.id) FILTER (WHERE s.status = 'available'),
 		       COUNT(s.id) FILTER (WHERE s.status = 'issued'),
@@ -75,20 +111,40 @@ func GroupCapacities(ctx context.Context, db DBTX, groupIDs []string) (map[strin
 		FROM reward_serial_groups g
 		LEFT JOIN reward_serials s ON s.group_id = g.id
 		WHERE g.id = ANY($1::uuid[])
-		GROUP BY g.id, g.use_limit_type, g.use_limit_count`, groupIDs)
+		GROUP BY g.id, g.is_bundle, g.use_limit_type, g.use_limit_count`, groupIDs)
 	if err != nil {
 		return nil, fmt.Errorf("group capacities: %w", err)
 	}
-	defer rows.Close()
+	var bundleIDs []string
 	for rows.Next() {
 		var id, useLimitType string
+		var isBundle bool
 		var useLimitCount, n, availRows, issuedRows, issueSum, repeatRemaining int
-		if err := rows.Scan(&id, &useLimitType, &useLimitCount, &n, &availRows, &issuedRows, &issueSum, &repeatRemaining); err != nil {
+		if err := rows.Scan(&id, &isBundle, &useLimitType, &useLimitCount, &n, &availRows, &issuedRows, &issueSum, &repeatRemaining); err != nil {
+			rows.Close()
 			return nil, err
+		}
+		if isBundle {
+			bundleIDs = append(bundleIDs, id)
+			continue
 		}
 		out[id] = computeGroupCapacity(useLimitType, useLimitCount, n, availRows, issuedRows, issueSum, repeatRemaining)
 	}
-	return out, rows.Err()
+	scanErr := rows.Err()
+	rows.Close()
+	if scanErr != nil {
+		return nil, scanErr
+	}
+	if len(bundleIDs) > 0 {
+		bundleCaps, err := bundleGroupCapacities(ctx, db, bundleIDs)
+		if err != nil {
+			return nil, err
+		}
+		for id, c := range bundleCaps {
+			out[id] = c
+		}
+	}
+	return out, nil
 }
 
 // GroupCapacityOf 單一序號組容量的便利包裝（內部就是呼叫 GroupCapacities 傳一個元素的 slice）。查無此

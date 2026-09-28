@@ -110,15 +110,44 @@ type serialGroupStock struct {
 // activityreward.claimSerialsFromGroup「庫存中途不足即跳過」的保守精神，寧可低估可服務人數（多告警）
 // 也不要高估（漏告警）。unlimited 序號組回 0：本函式不對外代表「無限」，呼叫端（shortageLinesForItems）
 // 必須先用 Capacity.Unlimited 判斷、把 unlimited 面額整個排除在加總之外，不能靠這裡的回傳值判斷。
+//
+// 組合型序號組（Capacity.IsBundle=true，migration 150）：不除以 grant_count——claimSerialsFromGroup
+// 偵測到 is_bundle=true 時整段轉呼叫 grantSerialBundle，完全不看 grant_count 欄位（每次中獎恆發一整包，
+// 見該函式文件），故「還能再服務幾人」就是 Capacity.Remaining（已經是「還能湊幾包」）本身，若像非組合型
+// 那樣再除以 grant_count，grant_count 若殘留非 1 的舊值（如序號組轉型前設定過）會把包數錯誤地打折扣
+// （2026-09-28 對抗性稽核抓到的既有慣例遺漏——舊版程式碼從未替組合型算過 remainingCapacity，此為新增
+// 分支，非既有行為變更）。
 func (s serialGroupStock) remainingCapacity() int {
 	if s.Capacity.Unlimited {
 		return 0
+	}
+	if s.Capacity.IsBundle {
+		return s.Capacity.Remaining
 	}
 	gc := s.GrantCount
 	if gc < 1 {
 		gc = 1
 	}
 	return s.Capacity.Remaining / gc
+}
+
+// bundleCompositionLabel 組合型序號組（Capacity.IsBundle=true）容量明細轉可讀字串，供
+// shortageLinesForItems 組報表訊息使用。單一子項（P1 唯一實際用例，見 memory activity-reward-system）用
+// 範例格式「組合包=3×LINE POINTS 1000，子面額剩 5 張」；多子項時每個子項各自標明數量與剩餘張數，以頓號
+// 分隔，避免把多個子項的剩餘張數誤混成一個數字。
+func bundleCompositionLabel(components []rewardserial.BundleComponent) string {
+	if len(components) == 0 {
+		return "組合包" // 理論上不會發生（組合型序號組 CRUD 已擋至少 1 個子項），防呆保底不留空白
+	}
+	if len(components) == 1 {
+		c := components[0]
+		return fmt.Sprintf("組合包=%d×%s，子面額剩 %d 張", c.PerPack, c.Name, c.ChildRemaining)
+	}
+	parts := make([]string, len(components))
+	for i, c := range components {
+		parts[i] = fmt.Sprintf("%d×%s(剩%d張)", c.PerPack, c.Name, c.ChildRemaining)
+	}
+	return "組合包=" + strings.Join(parts, "、")
 }
 
 // totalCapacity 一個 serial 獎勵項目底下所有候選面額（denominations）合計可服務人數——依
@@ -543,6 +572,12 @@ func (h *Handler) shortageLinesForItems(ctx context.Context, label string, popul
 			groupLabel := g.Name
 			if g.MerchantName != "" {
 				groupLabel = g.MerchantName + "/" + g.Name
+			}
+			if g.Capacity.IsBundle {
+				// 組合型：附註組合內容＋子面額目前剩幾張，讓看報表的人一眼看出「組合包顯示可再發 1 份」
+				// 是因為子面額只剩 5 張湊 3 份一包，而不是誤以為序號組本身壞掉查出 0（2026-09-28 對抗性
+				// 稽核修復的根因，見 capacity.go GroupCapacity.IsBundle 文件）。
+				groupLabel = fmt.Sprintf("%s（%s）", groupLabel, bundleCompositionLabel(g.Capacity.Components))
 			}
 			if g.Capacity.Unlimited {
 				// 共用序號且不限得主人數（migration 178）：永遠發得出來，明細照列供對照，但不計入容量加總。

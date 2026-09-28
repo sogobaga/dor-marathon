@@ -71,32 +71,9 @@ func TestFirstInsufficientBundleEntry(t *testing.T) {
 	}
 }
 
-// TestBundlePacksFromStock 純函式：min(floor(avail[i]/count[i])) over i，即組合型序號組（migration 150
-// is_bundle=true）目前能湊滿幾包。涵蓋「各子項餘量不同取最小」「除不盡無條件捨去」「count<=0 防呆視為
-// 1」「slice 長度不一致（防呆）」「無子項回 0」。
-func TestBundlePacksFromStock(t *testing.T) {
-	cases := []struct {
-		name         string
-		avail, count []int
-		want         int
-	}{
-		{"單一子項剛好整除", []int{10}, []int{2}, 5},
-		{"多子項取最小（瓶頸在第二項）", []int{100, 7}, []int{10, 3}, 2}, // 100/10=10, 7/3=2 → min=2
-		{"除不盡無條件捨去", []int{7}, []int{3}, 2},
-		{"某子項庫存 0 → 整體 0", []int{50, 0}, []int{5, 1}, 0},
-		{"count<=0 防呆視為 1（理論不會發生）", []int{5}, []int{0}, 5},
-		{"avail 比 count 短（防呆）：只算到較短者", []int{10, 20}, []int{2}, 5},
-		{"無子項 → 0", nil, nil, 0},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := bundlePacksFromStock(c.avail, c.count)
-			if got != c.want {
-				t.Fatalf("bundlePacksFromStock() = %d, want %d", got, c.want)
-			}
-		})
-	}
-}
+// bundlePacksFromStock 純函式已移到 rewardserial.BundlePacksFromStock（單一實作，供本套件
+// bundlePackAvailable 與 rewardserial.GroupCapacityOf 的組合型分支共用，見該函式文件與
+// rewardserial/bundle_capacity_test.go 的等價測試），本檔不再重複測試。
 
 // TestFormatBundleLabel "{商家名} {總額}"；商家名稱為空時退回固定前綴「LINE POINTS」，避免顯示空白標籤。
 func TestFormatBundleLabel(t *testing.T) {

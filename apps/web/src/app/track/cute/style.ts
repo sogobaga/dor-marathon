@@ -4,17 +4,22 @@
 // 與 retro 的差異：cute 要顯示公園／地標名稱標籤（retro 刻意不顯示任何文字），因此本檔仍宣告 glyphs
 // （只用於非中文字元的 Latin fallback）＋兩個 symbol 圖層；中文標籤走 CuteMap.tsx 建圖時設定的
 // localIdeographFontFamily（'DORCute' 開頭，見該檔），不依賴 CJK glyph 圖磚，比照 scifi/SciFiMap.tsx
-// 的既有作法。公園/水域圖案（cute-tree／cute-wave）由 CuteMap.tsx 在 'styleimagemissing' 時呼叫
-// tiles.ts 的 tileImageData() 產生並 addImage()，本檔只放圖片 id。
+// 的既有作法。公園/水域圖案（cute-tree／cute-wave）由 CuteMap.tsx 透過
+// map.setMissingStyleImageResolver()（非 'styleimagemissing' 事件，後者有 ImageManager 時序競態，
+// 見 CuteMap.tsx 根因註解）呼叫 tiles.ts 的 tileImageData() 產生並 addImage()，本檔只放圖片 id。
 import type { StyleSpecification } from 'maplibre-gl'
 
-const LAND = '#fff4df'
-const BUILDING = '#ffe3d8'
-const BUILDING_LINE = '#3d2b2b'
-const ROAD_CASING = '#3d2b2b'
+// 色票：docs/skins/CUTE_CONTRACT_R2b.md §A「地圖底色退一步，讓光點當主角」逐字色號（取代 CONTRACT_R2.md §4.5 第一版
+// ——編排者實測 4_track_running.png 抓到第一版陸地/建築/道路 casing 都還太飽和的粉色，跟光點/軌跡
+// /公里徽章搶顏色，這裡整組再退淡一階）。本檔獨立宣告（不 import components/cute/decor.ts 的
+// CUTE_PALETTE），理由同 orb.ts／icons.ts 頂端註解。
+const LAND = '#fffafc'
+const BUILDING = '#f8eef3'
+const BUILDING_LINE = '#ecd6e0' // 1px 細框
+const ROAD_CASING = '#eedfe6' // R2b「不再用粉色外框」：改成近乎無彩度的極淡藕色
 const ROAD_FILL = '#ffffff'
-const WATERWAY = '#8ecbe8'
-const LABEL_INK = '#3d2b2b'
+const WATERWAY = '#b9d9ef' // 水域線（河流）同步退淡，避免比 #dcefff 的水域面還搶眼
+const LABEL_INK = '#9a6a7e' // docs/skins/CUTE_CONTRACT_R2b.md §A 逐字地名色號
 const LABEL_HALO = '#ffffff'
 
 // z16 目標寬度（CSS px）展開成完整 zoom interpolate stops，比照 scifi/retro 的 widthAtZ16 作法。
@@ -44,13 +49,15 @@ export function buildCuteStyle(): StyleSpecification {
       { id: 'cute-water', type: 'fill', source: 'openmaptiles', 'source-layer': 'water', paint: { 'fill-pattern': 'cute-wave' } },
       { id: 'cute-waterway', type: 'line', source: 'openmaptiles', 'source-layer': 'waterway', paint: { 'line-color': WATERWAY, 'line-width': widthAtZ16(2) } },
 
-      // 道路：白色主體＋墨線 casing（先畫較寬的墨線在下面當邊框，再疊白色主線在上面），由窄到寬依序
-      // 疊（path→minor→mid→主幹道較寬），交叉口讓主幹道蓋在最上面。
+      // 道路：白色主體＋極淡藕色 casing（先畫較寬的 casing 在下面當邊框，再疊白色主線在上面），由窄到
+      // 寬依序疊（path→minor→mid→主幹道較寬），交叉口讓主幹道蓋在最上面。docs/skins/CUTE_CONTRACT_R2b.md §A「不再用
+      // 粉色外框」：casing 改 #eedfe6（比 R2 第一版的 #f3b6cc 更淡、更低彩度），本身已經夠淺，不需要
+      // 再疊 opacity 洗淡。
       {
         id: 'cute-road-path-casing', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation',
         filter: ['match', ['get', 'class'], ['path', 'footway', 'cycleway', 'steps', 'pedestrian', 'track'], true, false],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': ROAD_CASING, 'line-width': widthAtZ16(3), 'line-opacity': 0.55 },
+        paint: { 'line-color': ROAD_CASING, 'line-width': widthAtZ16(3) },
       },
       {
         id: 'cute-road-path', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation',
@@ -62,7 +69,7 @@ export function buildCuteStyle(): StyleSpecification {
         id: 'cute-road-minor-casing', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation',
         filter: ['match', ['get', 'class'], ['minor', 'service'], true, false],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': ROAD_CASING, 'line-width': widthAtZ16(5), 'line-opacity': 0.55 },
+        paint: { 'line-color': ROAD_CASING, 'line-width': widthAtZ16(5) },
       },
       {
         id: 'cute-road-minor', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation',
@@ -74,7 +81,7 @@ export function buildCuteStyle(): StyleSpecification {
         id: 'cute-road-mid-casing', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation',
         filter: ['match', ['get', 'class'], ['tertiary'], true, false],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': ROAD_CASING, 'line-width': widthAtZ16(6), 'line-opacity': 0.55 },
+        paint: { 'line-color': ROAD_CASING, 'line-width': widthAtZ16(6) },
       },
       {
         id: 'cute-road-mid', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation',
@@ -87,7 +94,7 @@ export function buildCuteStyle(): StyleSpecification {
         id: 'cute-road-main-casing', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation',
         filter: ['match', ['get', 'class'], ['primary', 'secondary', 'trunk', 'motorway'], true, false],
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': ROAD_CASING, 'line-width': widthAtZ16(9), 'line-opacity': 0.55 },
+        paint: { 'line-color': ROAD_CASING, 'line-width': widthAtZ16(9) },
       },
       {
         id: 'cute-road-main', type: 'line', source: 'openmaptiles', 'source-layer': 'transportation',
@@ -96,9 +103,10 @@ export function buildCuteStyle(): StyleSpecification {
         paint: { 'line-color': ROAD_FILL, 'line-width': widthAtZ16(7) },
       },
 
-      // 建築（淡桃＋1.5px 墨線外框，opacity .55——契約逐字）。
+      // 建築（近白淡粉＋1px 細框——docs/skins/CUTE_CONTRACT_R2b.md §A 再退淡一階，不再是 R2 第一版還偏飽和的
+      // #ffe0ec／#e3a9c0，1px 就足夠、不需要再洗淡透明度）。
       { id: 'cute-building', type: 'fill', source: 'openmaptiles', 'source-layer': 'building', minzoom: 13, paint: { 'fill-color': BUILDING } },
-      { id: 'cute-building-outline', type: 'line', source: 'openmaptiles', 'source-layer': 'building', minzoom: 13, paint: { 'line-color': BUILDING_LINE, 'line-width': 1.5, 'line-opacity': 0.55 } },
+      { id: 'cute-building-outline', type: 'line', source: 'openmaptiles', 'source-layer': 'building', minzoom: 13, paint: { 'line-color': BUILDING_LINE, 'line-width': 1 } },
 
       // 標籤：只顯示 z≥15 的公園／地標名稱（契約「只顯示 z ≥ 15 的 POI／公園名」），中文字型走
       // localIdeographFontFamily='DORCute'（CuteMap.tsx 建圖時設定），這裡的 text-font 只服務

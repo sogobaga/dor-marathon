@@ -1,6 +1,9 @@
 package rewardserial
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // TestComputeGroupCapacity 純函式：驗證 migration 178 三種 use_limit_type 的容量換算公式（見 capacity.go
 // 檔頭三種定義）。涵蓋規格書驗證清單的關鍵情境：茶事漫漫組（repeat N=10）從「1 列已發 1 人」到「發到第
@@ -61,7 +64,10 @@ func TestComputeGroupCapacity(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := computeGroupCapacity(c.useLimitType, c.useLimitCount, c.n, c.availRows, c.issuedRows, c.issueSum, c.repeatRemaining)
-			if got != c.want {
+			// GroupCapacity 現在含 Components（[]BundleComponent，見 bundle_capacity.go），slice 使
+			// struct 不可比較（不能再用 ==/!=），改用 reflect.DeepEqual；computeGroupCapacity 是非組合型
+			// 分支，Components 兩邊皆恆為 nil，不影響既有案例的比對結果。
+			if !reflect.DeepEqual(got, c.want) {
 				t.Fatalf("computeGroupCapacity(%q,...) = %+v, want %+v", c.useLimitType, got, c.want)
 			}
 		})

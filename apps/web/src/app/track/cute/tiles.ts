@@ -1,19 +1,25 @@
 // 溫馨可愛（cute）原創地面圖塊 — docs/skins/CUTE_CONTRACT.md§4：公園／綠地用「原創小圓樹點點圖案」，
 // 水域用「原創小波浪『〜』圖案」，皆為程式逐筆繪製的 16×16 可平鋪 fill-pattern，零外部素材、零任何
 // 吉伊卡哇造型語彙（純幾何圓點／波浪線，不含任何動物/角色輪廓）。
-// 用法：CuteMap.tsx 於 'styleimagemissing' 事件時呼叫 tileImageData() 產生 ImageData 並 map.addImage()
-// 掛上（id 與這裡的 TileKind 同名），比照 track/retro/sprites.ts 的 tileImageData() 做法。
+// 用法：CuteMap.tsx 透過 map.setMissingStyleImageResolver() 於圖片首次被要求時呼叫 tileImageData()
+// 產生 ImageData 並 map.addImage() 掛上（id 與這裡的 TileKind 同名）——改用 resolver 而非監聽
+// 'styleimagemissing' 事件是刻意的根因修法，見 CuteMap.tsx 該行上方註解（MapLibre ImageManager
+// 時序陷阱：event 版會讓「第一個要求該圖片的圖磚」永遠拿不到圖，resolver 版會等 addImage() 完成
+// 才組 response，從根本上不會有這個競態）。
 
 export type TileKind = 'tree' | 'wave'
 
 const TILE = 16
 
-// 色票（CONTRACT.md §3／§4 色盤，只在本檔重複宣告避免跨目錄互相 import runtime 依賴）。
-const MINT_BG = '#cdeed9'
-const MINT_DOT = '#8fd3ae' // 小圓樹主體（比背景深一階的綠）
-const MINT_DOT_CORE = '#5fae82' // 樹心（更深一階，做出「一顆小圓樹」的層次感，不是純平塗色點）
-const SKY_BG = '#bfe3f5'
-const WAVE_LINE = '#8ecbe8' // 水波線（比背景深一階的藍）
+// 色票：docs/skins/CUTE_CONTRACT_R2b.md §A「地圖底色退一步」逐字色號（公園 mint 底、水域 sky 底，比 CONTRACT_R2.md
+// §4.5 第一版再退淡一階），只在本檔重複宣告避免跨目錄互相 import runtime 依賴（理由同 style.ts／
+// icons.ts／orb.ts 頂端註解）。
+const MINT_BG = '#e3f6ec' // docs/skins/CUTE_CONTRACT_R2b.md §A 逐字公園底色
+const TREE_GREEN = '#a6e2c3' // 小圓樹主體維持「淡綠」（R2b §A 只retone 底色，樹點顏色不變）
+const TREE_GREEN_CORE = '#7cc79f' // 樹心（更深一階，做出「一顆小圓樹」的層次感，不是純平塗色點）
+const TREE_OUTLINE = '#f6c6d8' // = 契約 lineSoft，樹的「淡粉描邊」
+const SKY_BG = '#dcefff' // docs/skins/CUTE_CONTRACT_R2b.md §A 逐字水域底色
+const WAVE_LINE = 'rgba(255,255,255,0.85)' // 契約逐字：水域「sky 底＋白色小波浪」
 
 function newTileCanvas(): { ctx: CanvasRenderingContext2D; toImageData: () => ImageData } {
   const canvas = document.createElement('canvas')
@@ -25,11 +31,14 @@ function newTileCanvas(): { ctx: CanvasRenderingContext2D; toImageData: () => Im
 }
 
 // 小圓樹點點：在 16×16 磚內畫兩顆大小交錯的小圓樹（一大一小、對角錯開），讓磚與磚平鋪時看起來像
-// 自然散落的樹叢點描而非死板方格；每顆樹＝外圈淺綠圓＋內圈深綠圓心，模擬「樹冠＋樹心」的層次。
+// 自然散落的樹叢點描而非死板方格；每顆樹＝淡綠圓（細淡粉描邊）＋內圈深綠圓心，模擬「樹冠＋樹心」
+// 的層次（CONTRACT_R2.md §4.5：樹改淡綠＋淡粉描邊）。
 function drawTreeDot(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
-  ctx.fillStyle = MINT_DOT
-  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill()
-  ctx.fillStyle = MINT_DOT_CORE
+  ctx.fillStyle = TREE_GREEN
+  ctx.strokeStyle = TREE_OUTLINE
+  ctx.lineWidth = Math.max(0.5, r * 0.22)
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+  ctx.fillStyle = TREE_GREEN_CORE
   ctx.beginPath(); ctx.arc(cx, cy, r * 0.45, 0, Math.PI * 2); ctx.fill()
 }
 

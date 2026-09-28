@@ -22,7 +22,8 @@
 // 是固定介面，GPS 地圖／專注模式等其他模組依此判斷該載入哪一套視覺。
 //
 // 'cute'（溫馨可愛，第 24 套）比照 scifi/retro 同一套機制加入，見 docs/skins/CUTE_CONTRACT.md
-// §2；theme-color #fff3d6（奶油黃，契約 §2）。
+// §2；theme-color 第二輪改 #fff5f8（草莓牛奶，docs/skins/CUTE_CONTRACT_R2.md §2 milk 色號，
+// 取代第一輪的奶油黃 #fff3d6）。
 
 export type OverrideSkin = 'scifi' | 'retro' | 'cute'
 
@@ -31,7 +32,7 @@ export const SKIN_CHANGE_EVENT = 'dor-skin-change'
 const OVERRIDE_KEY = 'dor_skin_override'
 const LEGACY_PREF_KEY = 'dor_skin_pref' // 舊版(第22套)裝置開關，已由伺服器權威 ui_skin 取代，讀到就清
 
-const THEME_COLOR: Record<OverrideSkin, string> = { scifi: '#02040a', retro: '#000000', cute: '#fff3d6' }
+const THEME_COLOR: Record<OverrideSkin, string> = { scifi: '#02040a', retro: '#000000', cute: '#fff5f8' }
 
 function safeGetItem(key: string): string | null {
   try {

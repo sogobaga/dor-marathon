@@ -125,6 +125,7 @@ func (h *Handler) AdminRouter() http.Handler {
 	r.Get("/{raceID}/signups", h.AdminListSignups)
 	r.Get("/{raceID}/reward-completions", h.AdminListRewardCompletions) // 個人挑戰模式 P5
 	r.Post("/{raceID}/reward-draw", h.AdminDrawRewardWinners)           // 個人挑戰模式 P5
+	r.Get("/{raceID}/personal-attempts", h.AdminListPersonalAttempts)   // 個人挑戰模式後台唯讀監控：進行中 attempt 即時進度（見 personal_attempts_admin.go）
 	r.Post("/{raceID}/reward-draws", h.AdminCreateRewardDraw)           // 獎勵管理一般化 migration 135（非 personal）
 	r.Get("/{raceID}/reward-draws", h.AdminListRewardDraws)             // 獎勵管理一般化 migration 135（非 personal）
 	return r
@@ -1084,6 +1085,23 @@ func (h *Handler) AdminListRewardCompletions(w http.ResponseWriter, r *http.Requ
 	}
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed to list reward completions")
+		return
+	}
+	respondJSON(w, http.StatusOK, res)
+}
+
+// GET /api/v1/admin/races/:raceID/personal-attempts
+// 個人挑戰模式後台唯讀監控：列出該賽事「進行中」的挑戰 attempt 即時進度＋統計摘要（唯讀，見
+// personal_attempts_admin.go 檔頭說明）。非 personal 賽事回 404，比照 AdminListRewardCompletions 慣例。
+func (h *Handler) AdminListPersonalAttempts(w http.ResponseWriter, r *http.Request) {
+	raceID := chi.URLParam(r, "raceID")
+	res, err := h.svc.ListActivePersonalAttempts(r.Context(), raceID)
+	if errors.Is(err, ErrRaceNotFound) {
+		respondErr(w, http.StatusNotFound, "race not found")
+		return
+	}
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed to list personal attempts")
 		return
 	}
 	respondJSON(w, http.StatusOK, res)

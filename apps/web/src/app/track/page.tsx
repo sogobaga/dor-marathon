@@ -443,8 +443,9 @@ export default function TrackPage() {
   }, [])
   // 專注模式（scifi／retro／cute 皆適用）開啟時，題列/底部面板/GPS 相關橫幅一律 visibility:hidden
   // （見 globals.css `[data-skin="scifi"|"retro"|"cute"] [data-scifi-focus-hide="true"]`，cute 的
-  // CSS 規則由 THEME 工人補上），露出下方半透明的地圖與勇者／靈魂／小井；只加了一個 data 屬性，
-  // 不改這些元素原本的邏輯／內容。
+  // CSS 規則由 THEME 工人補上），露出下方半透明的地圖與靈魂／勇者／光點（scifi／retro／cute 各自的
+  // 跑者呈現；cute 第二輪起改為「靈魂光點」，不再是角色造型，見 app/track/cute/ 說明）；只加了一個
+  // data 屬性，不改這些元素原本的邏輯／內容。
   const hideForFocus = mapSkinActive && focusOpen
   const scifiFocusHideAttr = hideForFocus ? { 'data-scifi-focus-hide': 'true' } : {}
   // 讀取（不改）既有跳點排除規則（MAX_SPEED/GAP_MAX_S/GAP_MAX_M，見檔頭常數），把 pointsRef 依「與

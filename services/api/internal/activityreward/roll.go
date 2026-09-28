@@ -387,7 +387,8 @@ func groupAvailableCount(ctx context.Context, db Execer, groupID string) (int, e
 }
 
 // bundlePackAvailable 查 groupID（組合型序號組）目前每個子項的「所需數量」與「該子面額組可用張數」，
-// 交給純函式 bundlePacksFromStock 算出能湊滿幾包。
+// 交給 rewardserial.BundlePacksFromStock（單一實作，見該函式文件——rewardserial.GroupCapacityOf 對組合型
+// 序號組也是呼叫同一顆純函式，只是餵的張數來源不同，兩邊不會各自算出不同答案）算出能湊滿幾包。
 func bundlePackAvailable(ctx context.Context, db Execer, groupID string) (int, error) {
 	rows, err := db.Query(ctx, `
 		SELECT i.count, COUNT(s.id) FILTER (WHERE s.status='available')
@@ -411,36 +412,7 @@ func bundlePackAvailable(ctx context.Context, db Execer, groupID string) (int, e
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	return bundlePacksFromStock(avails, counts), nil
-}
-
-// bundlePacksFromStock 純函式：min(floor(avail[i]/count[i])) over i，即組合型序號組目前能湊滿幾包
-// （migration 150 語意，供 groupAvailableCount 展示用、grantSerialBundle 實際發放前的池篩選共用邏輯）。
-// avail/count 需等長（防呆：只算到較短者）；count[i]<=0 視為 1（理論上不會發生，CRUD 已擋 count>=1）。
-// 無子項（皆空）回 0，不 panic。
-func bundlePacksFromStock(avail, count []int) int {
-	n := len(avail)
-	if len(count) < n {
-		n = len(count)
-	}
-	if n == 0 {
-		return 0
-	}
-	best := -1
-	for i := 0; i < n; i++ {
-		c := count[i]
-		if c <= 0 {
-			c = 1
-		}
-		packs := avail[i] / c
-		if best == -1 || packs < best {
-			best = packs
-		}
-	}
-	if best < 0 {
-		return 0
-	}
-	return best
+	return rewardserial.BundlePacksFromStock(avails, counts), nil
 }
 
 // claimSerialsFromGroup 從 groupID 指定的序號組配發：一般序號組取該組 grant_count 枚可用序號逐一配發

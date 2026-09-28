@@ -242,22 +242,17 @@ func (r *Repository) hydrateGroups(ctx context.Context, groups []Group) error {
 		}
 		children := bundleMap[g.ID]
 		faceTotal := 0
-		packs := -1
-		for _, c := range children {
+		avail := make([]int, len(children))
+		counts := make([]int, len(children))
+		for i, c := range children {
 			g.BundleItems = append(g.BundleItems, GroupBundleItem{ChildGroupID: c.childGroupID, Count: c.count})
 			faceTotal += c.childFaceValue * c.count
-			cnt := c.count
-			if cnt <= 0 {
-				cnt = 1 // 防呆：CRUD 已擋 count>=1，理論不會發生
-			}
-			p := c.childAvailable / cnt
-			if packs == -1 || p < packs {
-				packs = p
-			}
+			avail[i] = c.childAvailable
+			counts[i] = c.count
 		}
-		if packs < 0 {
-			packs = 0 // 沒有子項（理論不會發生，CRUD 已擋 ≥1 子項）：視為 0 包可發
-		}
+		// 湊幾包的算式跟 GroupCapacities 組合型分支、activityreward/roll.go bundlePackAvailable 共用同一顆
+		// 純函式（見 bundle_capacity.go BundlePacksFromStock 文件），全站只有一個實作。
+		packs := BundlePacksFromStock(avail, counts)
 		g.FaceValue = faceTotal
 		g.AvailableCount = packs
 		// 組合包子面額組（migration 178 起）只允許 use_limit_type=single（見 validateBundleChildMeta），

@@ -26,7 +26,7 @@ const OPTIONS: { key: SkinKey; desc: string }[] = [
   { key: 'default', desc: '網站原本的外觀。' },
   { key: 'scifi', desc: '深空霓虹主題，全站粒子背景、GPS 跑步頁改為 3D 發光城市地圖。' },
   { key: 'retro', desc: '復古 RPG 大地圖：羊皮紙選單、像素大地圖與小井勇者。' },
-  { key: 'cute', desc: '粉彩手繪風、圓體字，小井陪你散步跑。' },
+  { key: 'cute', desc: '粉嫩手繪風、圓體字，跑步時化身閃亮小光點。' },
 ]
 
 export default function StyleSettingsModal({ current, busy, err, onChoose, onClose }: {

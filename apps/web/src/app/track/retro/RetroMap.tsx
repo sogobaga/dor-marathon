@@ -208,10 +208,14 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
     // 原創圖塊懶載入：style.ts 只放圖片 id（與 components/retro/tiles.ts 的 TileKind 同名），實際
     // ImageData 由 sprites.ts 的 tileImageData() 呼叫該共用圖塊表產生、在第一次被要求時掛上
     // （map.addImage）；找不到對應 id 就安靜略過（不影響其餘圖層照常渲染）。
+    // v857：改掛 map.setMissingStyleImageResolver()，不再用 'styleimagemissing' 事件——MapLibre 6.11.2
+    // 在事件觸發前就已組好該圖磚的圖片回應，事件裡同步 addImage 對「第一塊要求該圖片的圖磚」永遠慢一步，
+    // 那塊圖磚會整塊少掉紋理（根因與重現見 track/cute/CuteMap.tsx resolveMissingImage 註解）；resolver
+    // 會被 await 完才組回應，從根本上沒有這個時序問題。
     const TILE_IDS: readonly TileKind[] = ['grass', 'forest', 'water', 'wall', 'cobble', 'path', 'sand', 'rail']
-    const onImageMissing = (e: { id: string }) => {
+    const onImageMissing = (imageId: string) => {
       if (!isCurrent()) return
-      const id = e.id as TileKind
+      const id = imageId as TileKind
       if (map!.hasImage(id)) return
       if (!TILE_IDS.includes(id)) return
       try {
@@ -235,7 +239,7 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
         map?.off('click', onClick)
         map?.off('dataloading', onDataLoading as never)
         map?.off('data', onData as never)
-        map?.off('styleimagemissing', onImageMissing as never)
+        map?.setMissingStyleImageResolver(null)
         map?.getCanvas().removeEventListener('webglcontextlost', onContextLost)
       } catch { /* ignore */ }
     }
@@ -262,6 +266,8 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
         attributionControl: false,
       } as MapOptions)
       mapRef.current = map
+      // 建構後立刻設好（任何圖磚被請求之前），見上方 onImageMissing 說明。
+      map.setMissingStyleImageResolver(onImageMissing)
 
       timeoutId = setTimeout(() => { if (!loadedRef.current) failInstance('load-timeout-8s') }, FALLBACK_TIMEOUT_MS)
 
@@ -272,7 +278,6 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
       map.on('click', onClick)
       map.on('dataloading', onDataLoading as never)
       map.on('data', onData as never)
-      map.on('styleimagemissing', onImageMissing as never)
       try { map.getCanvas().addEventListener('webglcontextlost', onContextLost) } catch { /* ignore */ }
 
       // 水波兩幀動畫：每 500ms 切換一次。CONTRACT_R2 §1 根因調查發現：MapLibre 的

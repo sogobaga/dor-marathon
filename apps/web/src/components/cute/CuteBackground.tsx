@@ -23,14 +23,16 @@
 //
 // 無 props：呼叫端只需要 <CuteBackground />（比照 RetroBackground 的呼叫慣例）。
 import { useEffect, useRef } from 'react'
-import { drawConfettiPiece, drawStar, drawCloud, CUTE_CONFETTI_COLORS, CUTE_PALETTE, type ConfettiKind } from './decor'
+import { drawConfettiPiece, drawStar, drawCloud, drawHeart, drawBubble, CUTE_CONFETTI_COLORS, CUTE_PALETTE, type ConfettiKind } from './decor'
 import { loadCuteFont } from './fonts'
 
 const FRAME_INTERVAL_MS = 1000 / 30 // 契約 §3：更新率上限 30fps
 const MAX_PARTICLES = 56 // 契約 §3：≤60 個（留一點餘裕給不同螢幕尺寸的密度換算）
 const MAX_DPR = 2
 
-type ParticleKind = 'confetti-square' | 'confetti-curl' | 'star' | 'cloud'
+// 第二輪新增 'heart'／'bubble' 兩種粒子（契約 §3「粉／薰衣草／薄荷小愛心」「半透明泡泡」），
+// 紙屑（confetti-square/curl）數量相應減少（見 buildParticles 的 counts，契約「紙屑減量」）。
+type ParticleKind = 'confetti-square' | 'confetti-curl' | 'star' | 'cloud' | 'heart' | 'bubble'
 
 interface Particle {
   kind: ParticleKind
@@ -49,11 +51,11 @@ function rand(min: number, max: number): number {
   return min + Math.random() * (max - min)
 }
 
-function pickColor(excludeWhiteLike = false): string {
-  const pool = excludeWhiteLike
-    ? CUTE_CONFETTI_COLORS.filter((c) => c !== CUTE_PALETTE.creamYellow)
-    : CUTE_CONFETTI_COLORS
-  return pool[Math.floor(Math.random() * pool.length)]
+// 第二輪 CUTE_CONFETTI_COLORS 已經只剩 sakura/candy/lavender/mint/rose 五個粉嫩色號（見
+// decor.ts 說明），不再有奶油黃需要排除，原本的 excludeWhiteLike 篩選參數已無實際作用，
+// 直接移除簡化（呼叫端也從未真的傳入 true，是死參數）。
+function pickColor(): string {
+  return CUTE_CONFETTI_COLORS[Math.floor(Math.random() * CUTE_CONFETTI_COLORS.length)]
 }
 
 function makeParticle(kind: ParticleKind, w: number, h: number, initial: boolean): Particle {
@@ -99,6 +101,36 @@ function makeParticle(kind: ParticleKind, w: number, h: number, initial: boolean
         rotSpeed: rand(-0.2, 0.2),
         phase: rand(0, Math.PI * 2),
       }
+    case 'heart':
+      // 第二輪新增（契約 §3「粉／薰衣草／薄荷小愛心」）：跟紙屑一樣緩慢飄落，體積稍大、
+      // 下墜速度更慢，讀起來比小方塊紙屑更明顯是「愛心」而非雜訊。
+      return {
+        kind,
+        x,
+        y,
+        vx: rand(-4, 4),
+        vy: rand(6, 12),
+        size: rand(10, 16),
+        color: pickColor(),
+        rotation: rand(-0.3, 0.3),
+        rotSpeed: rand(-0.15, 0.15),
+        phase: rand(0, Math.PI * 2),
+      }
+    case 'bubble':
+      // 第二輪新增（契約 §3「半透明泡泡」）：跟其餘粒子相反方向——緩慢往上飄（真實泡泡的
+      // 行為），從畫面下緣附近生成，飄出頂端後回收到底部重新開始（見 step() 的 bubble 分支）。
+      return {
+        kind,
+        x,
+        y: initial ? rand(0, h) : h + rand(20, 60),
+        vx: rand(-3, 3),
+        vy: -rand(4, 9),
+        size: rand(9, 20),
+        color: pickColor(),
+        rotation: 0,
+        rotSpeed: 0,
+        phase: rand(0, Math.PI * 2),
+      }
     case 'cloud':
     default:
       return {
@@ -108,7 +140,7 @@ function makeParticle(kind: ParticleKind, w: number, h: number, initial: boolean
         vx: rand(-8, 8) || 6,
         vy: 0,
         size: rand(60, 110),
-        color: '#f3faff', // 見 decor.ts drawCloud() 說明：刻意不用純白，跟奶油背景才有區隔
+        color: '#fff6fa', // 見 decor.ts drawCloud() 說明：帶粉色描邊的粉白雲朵，不是灰白/藍白
         rotation: 0,
         rotSpeed: 0,
         phase: rand(0, Math.PI * 2),
@@ -118,11 +150,15 @@ function makeParticle(kind: ParticleKind, w: number, h: number, initial: boolean
 
 function buildParticles(w: number, h: number): Particle[] {
   // 依可視面積換算密度，但整體數量絕不超過 MAX_PARTICLES（契約 §3「≤60 個」）。
+  // 第二輪：紙屑（confetti-square/curl）減量，挪出配額給新增的 heart／bubble（契約
+  // 「紙屑減量」＋「粉／薰衣草／薄荷小愛心」＋「半透明泡泡」），星星／雲朵數量不變。
   const area = Math.max(1, w * h)
   const density = Math.min(1, area / (390 * 700)) // 以手機畫面尺寸為基準 1.0
   const counts = {
-    'confetti-square': Math.round(16 * density),
-    'confetti-curl': Math.round(8 * density),
+    'confetti-square': Math.round(8 * density),
+    'confetti-curl': Math.round(4 * density),
+    heart: Math.round(10 * density),
+    bubble: Math.round(6 * density),
     star: Math.round(14 * density),
     cloud: Math.round(6 * density),
   } as const
@@ -167,6 +203,12 @@ export default function CuteBackground() {
         } else if (p.kind === 'star') {
           const twinkle = 0.55 + 0.45 * Math.sin(nowSec * 1.4 + p.phase)
           drawStar(ctx, p.x, p.y, p.size, p.color, p.rotation, twinkle)
+        } else if (p.kind === 'heart') {
+          // 第二輪新增：背景飄浮小愛心不加白色貼紙外框（stickerOutline=false），保持輕盈，
+          // 跟 MAP 工人畫在軌跡上的公里徽章（有白邊，強調感更重）區隔開。
+          drawHeart(ctx, p.x, p.y, p.size, p.color, 0.75, false)
+        } else if (p.kind === 'bubble') {
+          drawBubble(ctx, p.x, p.y, p.size / 2, p.color)
         } else {
           const kind: ConfettiKind = p.kind === 'confetti-square' ? 'square' : 'curl'
           drawConfettiPiece(ctx, p.x, p.y, p.size, p.color, p.rotation, kind)
@@ -183,11 +225,24 @@ export default function CuteBackground() {
           if (p.x > cssW + p.size) p.x = -p.size
           continue
         }
+        if (p.kind === 'bubble') {
+          // 泡泡往上飄（vy 為負），飄出頂端後回收到底部重新開始，方向跟其餘「往下落」的
+          // 粒子相反，不套用下面通用的「超出下緣才回收」判斷。
+          p.x += p.vx * dt + Math.sin(p.y * 0.02 + p.phase) * 0.3
+          p.y += p.vy * dt
+          if (p.x < -30) p.x = cssW + 30
+          if (p.x > cssW + 30) p.x = -30
+          if (p.y < -30) {
+            p.y = cssH + rand(20, 60)
+            p.x = rand(0, cssW)
+          }
+          continue
+        }
         p.x += p.vx * dt
         p.y += p.vy * dt
         p.rotation += p.rotSpeed * dt
         if (p.kind !== 'star') {
-          // confetti 左右微幅擺動，飄落感比純直線自然。
+          // confetti/heart 左右微幅擺動，飄落感比純直線自然。
           p.x += Math.sin(p.y * 0.03 + p.phase) * 0.4
         }
         if (p.x < -30) p.x = cssW + 30

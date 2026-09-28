@@ -12,9 +12,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import {
-  adminRacesApi, adminRewardsApi, adminRewardDrawsApi,
+  adminRacesApi, adminRewardsApi, adminRewardDrawsApi, adminPersonalAttemptsApi,
   type RewardCompletionRow, type RewardCompletionsResponse,
   type RaceDetail, type RewardDraw, type RewardDrawScope, type RewardDrawWinRule, type RewardWinnerRow,
+  type PersonalAttemptRow, type PersonalAttemptsResponse,
 } from '@/lib/api'
 import { getToken, clearToken } from '@/lib/adminAuth'
 
@@ -89,7 +90,15 @@ const STATUS_FILTERS: { k: string; t: string }[] = [
   { k: 'fulfilled', t: '已發放' },
 ]
 
+// 個人挑戰模式獎勵管理分頁：「進行中挑戰」＝新增的唯讀即時進度監控（見 personal_attempts_admin.go）；
+// 「完成者名單」＝既有的抽獎/發放管理，邏輯完全不動，僅搬到分頁二。
+const PERSONAL_TABS: { k: 'in_progress' | 'completed'; t: string }[] = [
+  { k: 'in_progress', t: '進行中挑戰' },
+  { k: 'completed', t: '完成者名單' },
+]
+
 function PersonalRewardsPage({ token, raceId, raceTitle }: { token: string; raceId: string; raceTitle: string }) {
+  const [tab, setTab] = useState<'in_progress' | 'completed'>('in_progress')
   const router = useRouter()
   const [data, setData] = useState<RewardCompletionsResponse | null>(null)
   const [filter, setFilter] = useState('all')
@@ -159,85 +168,360 @@ function PersonalRewardsPage({ token, raceId, raceTitle }: { token: string; race
         ← 返回賽事編輯
       </Link>
       <h1 style={{ fontSize: 24, fontWeight: 800, margin: '14px 0 4px' }}>獎勵管理{raceTitle ? `：${raceTitle}` : ''}</h1>
-      <p style={{ color: 'var(--tx-dim)', fontSize: 13, marginTop: 0 }}>
-        個人挑戰模式完成者名單。每一筆「完成」皆為獨立抽獎資格；LINE Point 由後台人工發放，此頁僅記錄資格與發放狀態。
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '14px 0 4px' }}>
+        {PERSONAL_TABS.map((t) => (
+          <button key={t.k} onClick={() => setTab(t.k)} style={{ ...chip, ...(tab === t.k ? chipOn : {}) }}>
+            {t.t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'in_progress' && <InProgressAttemptsTab token={token} raceId={raceId} />}
+
+      {tab === 'completed' && (
+        <>
+        <p style={{ color: 'var(--tx-dim)', fontSize: 13, marginTop: 10 }}>
+          個人挑戰模式完成者名單。每一筆「完成」皆為獨立抽獎資格；LINE Point 由後台人工發放，此頁僅記錄資格與發放狀態。
+        </p>
+        {err && <div style={{ color: 'var(--hunt)', padding: '10px 0', fontSize: 13 }}>{err}</div>}
+
+        {summary && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10, margin: '14px 0' }}>
+            <SummaryTile label="完成總筆數" value={summary.total} c="var(--tx)" />
+            <SummaryTile label="待處理" value={summary.pending} c="var(--tx-dim)" />
+            <SummaryTile label="中獎待發" value={summary.won} c="var(--gold)" />
+            <SummaryTile label="已發放" value={summary.fulfilled} c="var(--fug)" />
+          </div>
+        )}
+
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '14px 0',
+            background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: 14,
+          }}
+        >
+          <span style={{ fontSize: 14 }}>🎲 隨機抽</span>
+          <input
+            type="number"
+            min={1}
+            value={drawN}
+            onChange={(e) => setDrawN(Math.max(1, parseInt(e.target.value, 10) || 1))}
+            style={{ ...inp, width: 80 }}
+          />
+          <span style={{ fontSize: 14 }}>位（僅從「待處理」抽取，抽中即設為中獎待發）</span>
+          <button onClick={handleDraw} disabled={drawing} style={{ ...drawBtn, opacity: drawing ? 0.6 : 1 }}>
+            {drawing ? '抽獎中…' : '開始抽獎'}
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '10px 0 14px' }}>
+          {STATUS_FILTERS.map((f) => (
+            <button
+              key={f.k}
+              onClick={() => changeFilter(f.k)}
+              style={{ ...chip, ...(filter === f.k ? chipOn : {}) }}
+            >
+              {f.t}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ border: '1px solid var(--line)', borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ ...rowStyle, ...headRow }}>
+            <span style={{ flex: '0 0 120px' }}>完成時間</span>
+            <span style={{ flex: '0 0 50px', textAlign: 'center' }}>次數</span>
+            <span style={{ flex: '0 0 130px' }}>姓名</span>
+            <span style={{ flex: '0 0 190px' }}>Email</span>
+            <span style={{ flex: '0 0 110px' }}>狀態</span>
+            <span style={{ flex: 1, minWidth: 0 }}>備註</span>
+            <span style={{ flex: '0 0 60px' }} />
+          </div>
+          {!data && <div style={{ padding: 16, color: 'var(--tx-dim)' }}>載入中…</div>}
+          {data && data.completions.length === 0 && (
+            <div style={{ padding: 16, color: 'var(--tx-dim)' }}>目前沒有符合條件的完成紀錄</div>
+          )}
+          {data?.completions.map((c) => (
+            <RewardRow key={c.registration_id} row={c} onSave={handleRowSave} />
+          ))}
+        </div>
+
+        {data && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, fontSize: 13, color: 'var(--tx-dim)' }}>
+            <span>共 {data.count} 筆 · 第 {Math.floor(offset / PAGE) + 1} / {Math.max(1, Math.ceil(data.count / PAGE))} 頁</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button disabled={offset <= 0} onClick={() => page(Math.max(0, offset - PAGE))} style={{ ...pgBtn, opacity: offset <= 0 ? 0.4 : 1 }}>
+                上一頁
+              </button>
+              <button disabled={offset + PAGE >= data.count} onClick={() => page(offset + PAGE)} style={{ ...pgBtn, opacity: offset + PAGE >= data.count ? 0.4 : 1 }}>
+                下一頁
+              </button>
+            </div>
+          </div>
+        )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ============================================================
+// 「進行中挑戰」分頁：GET /admin/races/:raceID/personal-attempts 唯讀即時進度監控
+// ============================================================
+
+function InProgressAttemptsTab({ token, raceId }: { token: string; raceId: string }) {
+  const router = useRouter()
+  const [data, setData] = useState<PersonalAttemptsResponse | null>(null)
+  const [err, setErr] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    adminPersonalAttemptsApi
+      .list(token, raceId)
+      .then((res) => {
+        setData(res)
+        setErr('')
+      })
+      .catch((e: any) => {
+        if (e?.status === 401) {
+          clearToken()
+          router.replace('/admin/login')
+        } else if (e?.status === 403) {
+          setErr('此頁僅具「賽事管理」權限的管理者可存取')
+        } else if (e?.status === 404) {
+          setErr('找不到此賽事，或此賽事非個人挑戰模式')
+        } else {
+          setErr(e?.message || '載入失敗')
+        }
+      })
+      .finally(() => setLoading(false))
+  }, [token, raceId, router])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const summary = data?.summary
+
+  return (
+    <div>
+      <p style={{ color: 'var(--tx-dim)', fontSize: 13, marginTop: 10 }}>
+        目前正在挑戰中的跑者與即時進度（僅供查看，不會改變跑者的挑戰狀態，也不會觸發發獎）。
       </p>
       {err && <div style={{ color: 'var(--hunt)', padding: '10px 0', fontSize: 13 }}>{err}</div>}
 
       {summary && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10, margin: '14px 0' }}>
-          <SummaryTile label="完成總筆數" value={summary.total} c="var(--tx)" />
-          <SummaryTile label="待處理" value={summary.pending} c="var(--tx-dim)" />
-          <SummaryTile label="中獎待發" value={summary.won} c="var(--gold)" />
-          <SummaryTile label="已發放" value={summary.fulfilled} c="var(--fug)" />
+          <SummaryTile label="進行中" value={summary.in_progress} c="var(--tx)" />
+          <SummaryTile label="已完成" value={summary.completed} c="var(--fug)" />
+          <SummaryTile label="已逾期" value={summary.expired} c="var(--hunt)" />
+          <SummaryTile label="待付款" value={summary.pending_payment} c="var(--tx-dim)" />
         </div>
       )}
 
-      <div
-        style={{
-          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '14px 0',
-          background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: 14,
-        }}
-      >
-        <span style={{ fontSize: 14 }}>🎲 隨機抽</span>
-        <input
-          type="number"
-          min={1}
-          value={drawN}
-          onChange={(e) => setDrawN(Math.max(1, parseInt(e.target.value, 10) || 1))}
-          style={{ ...inp, width: 80 }}
-        />
-        <span style={{ fontSize: 14 }}>位（僅從「待處理」抽取，抽中即設為中獎待發）</span>
-        <button onClick={handleDraw} disabled={drawing} style={{ ...drawBtn, opacity: drawing ? 0.6 : 1 }}>
-          {drawing ? '抽獎中…' : '開始抽獎'}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '0 0 10px' }}>
+        <button onClick={load} disabled={loading} style={{ ...pgBtn, opacity: loading ? 0.6 : 1 }}>
+          {loading ? '重新整理中…' : '重新整理'}
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '10px 0 14px' }}>
-        {STATUS_FILTERS.map((f) => (
-          <button
-            key={f.k}
-            onClick={() => changeFilter(f.k)}
-            style={{ ...chip, ...(filter === f.k ? chipOn : {}) }}
-          >
-            {f.t}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ border: '1px solid var(--line)', borderRadius: 12, overflow: 'hidden' }}>
-        <div style={{ ...rowStyle, ...headRow }}>
-          <span style={{ flex: '0 0 120px' }}>完成時間</span>
-          <span style={{ flex: '0 0 50px', textAlign: 'center' }}>次數</span>
-          <span style={{ flex: '0 0 130px' }}>姓名</span>
-          <span style={{ flex: '0 0 190px' }}>Email</span>
-          <span style={{ flex: '0 0 110px' }}>狀態</span>
-          <span style={{ flex: 1, minWidth: 0 }}>備註</span>
-          <span style={{ flex: '0 0 60px' }} />
+      {!data && !err && <div style={{ padding: 16, color: 'var(--tx-dim)' }}>載入中…</div>}
+      {data && data.attempts.length === 0 && (
+        <div style={{ padding: 16, color: 'var(--tx-dim)', border: '1px solid var(--line)', borderRadius: 12 }}>
+          目前沒有進行中的挑戰
         </div>
-        {!data && <div style={{ padding: 16, color: 'var(--tx-dim)' }}>載入中…</div>}
-        {data && data.completions.length === 0 && (
-          <div style={{ padding: 16, color: 'var(--tx-dim)' }}>目前沒有符合條件的完成紀錄</div>
-        )}
-        {data?.completions.map((c) => (
-          <RewardRow key={c.registration_id} row={c} onSave={handleRowSave} />
-        ))}
-      </div>
-
-      {data && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, fontSize: 13, color: 'var(--tx-dim)' }}>
-          <span>共 {data.count} 筆 · 第 {Math.floor(offset / PAGE) + 1} / {Math.max(1, Math.ceil(data.count / PAGE))} 頁</span>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button disabled={offset <= 0} onClick={() => page(Math.max(0, offset - PAGE))} style={{ ...pgBtn, opacity: offset <= 0 ? 0.4 : 1 }}>
-              上一頁
-            </button>
-            <button disabled={offset + PAGE >= data.count} onClick={() => page(offset + PAGE)} style={{ ...pgBtn, opacity: offset + PAGE >= data.count ? 0.4 : 1 }}>
-              下一頁
-            </button>
-          </div>
+      )}
+      {data && data.attempts.length > 0 && (
+        <div style={{ border: '1px solid var(--line)', borderRadius: 12, overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900, fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: 'var(--bg-2)', color: 'var(--tx-faint)', fontSize: 11, letterSpacing: '.05em', fontWeight: 700 }}>
+                <Th>跑者</Th>
+                <Th align="center">第幾次</Th>
+                <Th>開始日</Th>
+                <Th>進度</Th>
+                <Th>今日</Th>
+                <Th>最後活動日</Th>
+                <Th>最早可完成日</Th>
+                <Th>挑戰期限</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.attempts.map((a) => (
+                <AttemptRow key={`${a.registration_id}#${a.attempt_no}`} row={a} />
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
+  )
+}
+
+function Th({ children, align }: { children: React.ReactNode; align?: 'left' | 'center' | 'right' }) {
+  return (
+    <th style={{ padding: '10px 14px', textAlign: align || 'left', borderBottom: '1px solid var(--line)', whiteSpace: 'nowrap' }}>
+      {children}
+    </th>
+  )
+}
+
+function Td({ children, align, style }: { children?: React.ReactNode; align?: 'left' | 'center' | 'right'; style?: React.CSSProperties }) {
+  return (
+    <td style={{ padding: '10px 14px', textAlign: align || 'left', borderBottom: '1px solid var(--line)', verticalAlign: 'top', ...style }}>
+      {children}
+    </td>
+  )
+}
+
+function fmtDateOnly(iso: string) {
+  const d = new Date(iso)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`
+}
+
+// 兩個時間點是否落在同一個（瀏覽器本地）日曆日——比照 fmtDateOnly 同一套「用本地時間顯示日期」慣例
+// （後台操作者本來就在 Taipei，與後端 Asia/Taipei 日曆日實務上一致）。用來判斷 TodayCell「尚未開始」
+// 分支：只有「挑戰是今天才起算」才真的算尚未開始，起算日是更早之前、只是從未達標的 attempt 不該顯示
+// 同一個文字，見 TodayCell 下方說明。
+function isSameLocalDate(aIso: string, b: Date) {
+  const a = new Date(aIso)
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+}
+
+// slash：後端回傳 YYYY-MM-DD（見 personal_attempts_admin.go formatTaipeiDate），統一換成本頁其他日期
+// 欄位一致的 YYYY/MM/DD 顯示格式。
+function slash(ymd: string) {
+  return ymd.replace(/-/g, '/')
+}
+
+function AttemptRow({ row }: { row: PersonalAttemptRow }) {
+  return (
+    <tr>
+      <Td>
+        <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{row.user_name}</div>
+        <div style={{ fontSize: 11, color: 'var(--tx-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
+          {row.user_email}
+        </div>
+      </Td>
+      <Td align="center">#{row.attempt_no}</Td>
+      <Td style={{ color: 'var(--tx-dim)', fontSize: 12, whiteSpace: 'nowrap' }}>{fmtDateOnly(row.challenge_started_at)}</Td>
+      <Td style={{ minWidth: 180 }}>
+        <ProgressCell row={row} />
+      </Td>
+      <Td style={{ minWidth: 130 }}>
+        <TodayCell row={row} />
+      </Td>
+      <Td style={{ color: 'var(--tx-dim)', fontSize: 12, whiteSpace: 'nowrap' }}>
+        {row.last_activity_date ? slash(row.last_activity_date) : '—'}
+      </Td>
+      <Td style={{ minWidth: 140 }}>
+        {row.completion_type === 'streak_days' && row.earliest_complete_date ? (
+          <div style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{slash(row.earliest_complete_date)}</div>
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--tx-faint)' }}>—</div>
+        )}
+        {!row.can_finish_before_deadline && (
+          <div style={{ fontSize: 11, color: 'var(--hunt)', marginTop: 2 }}>期限前無法完成</div>
+        )}
+      </Td>
+      <Td style={{ color: 'var(--tx-dim)', fontSize: 12, whiteSpace: 'nowrap' }}>{fmtDateOnly(row.expected_end_at)}</Td>
+    </tr>
+  )
+}
+
+function ProgressCell({ row }: { row: PersonalAttemptRow }) {
+  if (row.completion_type === 'streak_days') {
+    return (
+      <div>
+        <div style={{ fontSize: 12.5 }}>目前連續 {row.current_streak} / {row.target_days} 天</div>
+        {/* 進度條跟著「目前連續」走（與上方文字一致）：連續中斷後要重新累積，row.percent 是以歷史最長
+            連續（完成判定用的數字）計算，拿來排序即可，畫成進度條會出現「目前 0 天、進度條卻 40%」的矛盾。 */}
+        <ProgressBar percent={row.target_days > 0 ? Math.round((Math.min(row.current_streak, row.target_days) / row.target_days) * 100) : 0} />
+        <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 2 }}>
+          最長 {row.streak_days} 天・累計達標 {row.qualifying_days} 天
+        </div>
+      </div>
+    )
+  }
+  if (row.completion_type === 'window_cumulative') {
+    return (
+      <div>
+        <div style={{ fontSize: 12.5 }}>累積 {row.cum_km.toFixed(1)} / {row.target_cum_km.toFixed(1)} km</div>
+        <ProgressBar percent={row.percent} />
+        {row.target_single_km > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 2 }}>
+            最長單趟 {row.best_single_km.toFixed(1)} / {row.target_single_km.toFixed(1)} km
+          </div>
+        )}
+      </div>
+    )
+  }
+  // single_distance
+  return (
+    <div>
+      <div style={{ fontSize: 12.5 }}>最長單趟 {row.best_single_km.toFixed(1)} / {row.target_single_km.toFixed(1)} km</div>
+      <ProgressBar percent={row.percent} />
+    </div>
+  )
+}
+
+function ProgressBar({ percent }: { percent: number }) {
+  const p = Math.max(0, Math.min(100, percent))
+  return (
+    <div style={{ background: 'var(--bg-2)', borderRadius: 999, height: 6, marginTop: 4, overflow: 'hidden' }}>
+      <div style={{ width: `${p}%`, height: '100%', background: 'var(--fug)', borderRadius: 999 }} />
+    </div>
+  )
+}
+
+function TodayCell({ row }: { row: PersonalAttemptRow }) {
+  if (row.completion_type !== 'streak_days') {
+    return <div style={{ fontSize: 12.5 }}>{row.today_km.toFixed(1)} km</div>
+  }
+  let text: string
+  let tone: 'success' | 'warning' | 'danger' | 'neutral'
+  if (row.today_done) {
+    text = '今日已達標'
+    tone = 'success'
+  } else if (row.at_risk) {
+    text = '今日待完成'
+    tone = 'warning'
+  } else if (row.current_streak === 0 && row.qualifying_days > 0) {
+    text = '已中斷'
+    tone = 'danger'
+  } else if (row.current_streak === 0 && row.qualifying_days === 0 && !isSameLocalDate(row.challenge_started_at, new Date())) {
+    // 「尚未開始」（下面 else）本意是「今天才起算、還沒機會跑」；current_streak===0 且
+    // qualifying_days===0 這個條件同時也會命中「起算日是更早之前，但從未有一天達標過」的 attempt
+    // （例如每天都差一點點沒到門檻），兩者原本共用同一句「尚未開始」文案會誤導後台判讀——後者需要
+    // 主動關注（一直掛零），前者只是還沒開始，不該一視同仁。用起算日是否為今天來區分。
+    text = '從未達標'
+    tone = 'danger'
+  } else {
+    text = '尚未開始'
+    tone = 'neutral'
+  }
+  return (
+    <div>
+      <div style={{ fontSize: 12.5, marginBottom: 4 }}>{row.today_km.toFixed(1)} km</div>
+      <StatusChip tone={tone}>{text}</StatusChip>
+    </div>
+  )
+}
+
+const CHIP_TONE_STYLE: Record<'success' | 'warning' | 'danger' | 'neutral', React.CSSProperties> = {
+  success: { background: 'rgba(45,229,154,.12)', color: 'var(--fug)', border: '1px solid rgba(45,229,154,.3)' },
+  warning: { background: 'rgba(255,194,75,.12)', color: 'var(--gold)', border: '1px solid rgba(255,194,75,.3)' },
+  danger: { background: 'rgba(255,75,92,.12)', color: 'var(--hunt)', border: '1px solid rgba(255,75,92,.3)' },
+  neutral: { background: 'var(--bg-2)', color: 'var(--tx-dim)', border: '1px solid var(--line-2)' },
+}
+
+function StatusChip({ tone, children }: { tone: 'success' | 'warning' | 'danger' | 'neutral'; children: React.ReactNode }) {
+  return (
+    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, fontWeight: 600, whiteSpace: 'nowrap', display: 'inline-block', ...CHIP_TONE_STYLE[tone] }}>
+      {children}
+    </span>
   )
 }
 
