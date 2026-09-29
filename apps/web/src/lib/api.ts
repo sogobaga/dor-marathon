@@ -620,6 +620,9 @@ export const settingsApi = {
 }
 
 export interface GpsRunResult {
+  // id：這趟寫入的 gps_runs.id（GPS_START_GATE_RAWLOG_CONTRACT.md §B 原始定位點記錄用，需後端在
+  // gpsRunResult 補上此欄位——本期後端尚未加，前端先預留 optional，沒有時 raw-points 上傳自動跳過）。
+  id?: string
   distance_km: number
   duration_s: number
   avg_pace_s: number
@@ -642,6 +645,11 @@ export interface GpsRunResult {
 // speed：都卜勒速度 m/s（距離防漂移的訊號分流用，見 lib/movingTime.ts）；裝置不支援時為 null。
 // 上傳相容：後端以 encoding/json 解析、忽略未知欄位，多帶 speed 不影響既有 API（後端零改動）。
 export interface GpsPoint { lat: number; lng: number; t: number; acc: number; speed?: number | null }
+// GpsRawLogRow：原始定位點記錄一列（除錯用，GPS_START_GATE_RAWLOG_CONTRACT.md §B），依序
+// [t_ms(pos.timestamp), lat(6位小數), lng(6位小數), acc(1位), speed(2位)|null, heading(整數)|null, code]。
+// code 單字元，對應 track/page.tsx onPos 內距離採納分支：a=採納計入 j=未達JITTER_MIN略過
+// p=精度差(>MAX_ACC) x=超速/斷訊排除 h=靜止暫存(尚未計入) d=暫存後丟棄 f=起點。
+export type GpsRawLogRow = [number, number, number, number, number | null, number | null, string]
 export interface GpsRunHistory {
   id: string
   distance_km: number // 原始距離（未套 GPS 距離校正，見 internal/gpscalib）；一律以 calib_distance_km 優先顯示
@@ -675,6 +683,12 @@ export const activitiesApi = {
   // 幾分鐘不 reject，跑完的上傳若懸著、結束畫面就沒有任何出口（2026-09-13 對抗式審查）。
   uploadGps: (token: string, body: { race_id?: string; started_at: string; ended_at: string; points: GpsPoint[]; client_version?: string; pet_ids?: string[] }, signal?: AbortSignal) =>
     request<{ result: GpsRunResult }>('/activities/gps', { method: 'POST', headers: withAuth(token), body: JSON.stringify(body), signal }),
+  // 原始定位點記錄（除錯用，GPS_START_GATE_RAWLOG_CONTRACT.md §B）：只有白名單帳號（dashboard
+  // gps_raw_log=true）才會呼叫，跑步上傳成功拿到 run id 後 fire-and-forget 送出，失敗不重試、不影響
+  // 主流程（呼叫端 catch 吞掉，見 track/page.tsx sendRawLog）。rows 每列型別見 GpsRawLogRow。後端成功
+  // 回 204 No Content（services/api/internal/gpsrawlog/handler.go UploadRawPoints），故回應型別為 void。
+  uploadRawPoints: (token: string, runId: string, body: { v: 1; fields: string[]; rows: GpsRawLogRow[]; truncated: boolean; client_version?: string }) =>
+    request<void>(`/me/gps-runs/${runId}/raw-points`, { method: 'POST', headers: withAuth(token), body: JSON.stringify(body) }),
   gpsHistory: (token: string) => request<{ runs: GpsRunHistory[] }>('/activities/gps/history', { headers: withAuth(token) }),
   gpsDetail: (token: string, id: string) => request<{ run: GpsRunHistory }>(`/activities/gps/${id}`, { headers: withAuth(token) }),
   // 跑步中心跳（後台「目前在跑名單」用）；失敗可忽略
@@ -1949,6 +1963,10 @@ export interface DashboardInfo {
   gps_calib_status: GpsCalibState
   gps_calib_pairs: number // 視窗內配對數
   gps_calib_enabled: boolean
+  // 原始定位點記錄（除錯用，GPS_START_GATE_RAWLOG_CONTRACT.md §B）：後端解析白名單
+  // gps_raw_log_whitelist（預設 sogobaga@gmail.com），無 super_admin 旁路。true 才會在 track 頁
+  // 收集/上傳原始 onPos 定位點；其餘會員此欄一律 false、零行為改變。
+  gps_raw_log: boolean
 }
 
 // --- 稱號系統 (PB探索) ---

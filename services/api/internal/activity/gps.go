@@ -62,6 +62,10 @@ type gpsRunReq struct {
 }
 
 type gpsRunResult struct {
+	// ID：這趟寫入的 gps_runs.id（GPS_START_GATE_RAWLOG_CONTRACT.md §B 原始定位點記錄用，前端拿到
+	// 這個 id 才會另外 fire-and-forget 上傳 raw-points，見 track/page.tsx sendRawLog）。too_short
+	// 路徑沒有寫入 gps_runs（無 id 可回）；其餘兩條路徑見 InsertGPSRun 回傳值與其 ON CONFLICT 分支。
+	ID            string  `json:"id,omitempty"`
 	DistanceKm    float64 `json:"distance_km"`
 	DurationS     int     `json:"duration_s"`
 	AvgPaceS      int     `json:"avg_pace_s"`
@@ -317,7 +321,9 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 	if !inserted {
 		// 這一趟已上傳過（同 user + 起跑時間）——冪等：不重複記錄、不重複發里程 EXP/扣 SP，直接回結果。
 		// 防「手機跳掉切回 → 出現『有一趟未上傳的跑步』提示 → 再上傳同一份快取軌跡」造成兩筆重複活動。
+		// id：ON CONFLICT DO NOTHING 這次沒有 RETURNING，InsertGPSRun 已另外查出既有列的 id（見該函式）。
 		return &gpsRunResult{
+			ID:         id,
 			DistanceKm: round2(distanceKm), DurationS: durationS, AvgPaceS: avgPaceS,
 			Flagged: flagged, FlagReason: flagReason, AnomalySegs: anomalies, ExpAwarded: false, Duplicate: true,
 			RawDistanceKm: round2(rawKm), CalibFactor: k,
@@ -375,6 +381,7 @@ func (s *Service) SaveGPSRun(ctx context.Context, userID string, req gpsRunReq) 
 	gpscalib.RecomputeAsync(s.repo.db, userID)
 
 	return &gpsRunResult{
+		ID:         id,
 		DistanceKm: round2(distanceKm), DurationS: durationS, AvgPaceS: avgPaceS,
 		Flagged: flagged, FlagReason: flagReason, AnomalySegs: anomalies, ExpAwarded: !flagged,
 		KmPaces: kmSplits, RawDistanceKm: round2(rawKm), CalibFactor: k,
@@ -431,8 +438,10 @@ func (r *Repository) HistAvgPace(ctx context.Context, userID string) int {
 // InsertGPSRun 寫入 GPS 軌跡（壓縮 polyline）+ 防弊結果。
 // 冪等：靠 uq_gps_runs_user_start(user_id, started_at) 唯一索引 + ON CONFLICT DO NOTHING——
 // 同一 user 的同一起跑時間已存在時不再插入、回 inserted=false，呼叫端據此不重複進活動管線/發獎。
-// 回傳新增列的 id（inserted=false 時為空字串）——SaveGPSRun 需要這個 id 在 XAdd 失敗時
-// 呼叫 DeleteGPSRun 補償回滾（見該函式與 H4 的說明）。
+// 回傳新增列的 id（inserted=false 時另外查出既有列的 id 一併回傳，見下方；查詢本身失敗才回空字串）——
+// SaveGPSRun 需要這個 id 在 XAdd 失敗時呼叫 DeleteGPSRun 補償回滾（見該函式與 H4 的說明），也需要
+// 這個 id 回給前端做原始定位點記錄上傳的掛勾（GPS_START_GATE_RAWLOG_CONTRACT.md §B），冪等重傳
+// 那條路徑不能沒有 id 可用。
 func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, started, ended time.Time,
 	distanceKm float64, durationS, avgPaceS int, flagged bool, flagReason string, pointCount int, polyline string, kmPaces []int,
 	calibFactor, calibDistanceKm float64, clientVersion string, accP50, accP90 *float64, usedPointCount int,
@@ -456,7 +465,14 @@ func (r *Repository) InsertGPSRun(ctx context.Context, userID, raceID string, st
 		calibFactor, calibDistanceKm, clientVersion, accP50, accP90, usedPointCount,
 		excludedKm, excludedSegments, petIDs).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil // 同一趟已上傳過 → 冪等 no-op
+		// 同一趟已上傳過 → 冪等 no-op；另外查出既有列的 id 回給呼叫端（見本函式頂端註解），
+		// 查詢失敗（極罕見 DB 抖動）不讓整次上傳失敗，回空字串讓呼叫端當作「沒有 id」處理即可。
+		var existingID string
+		if qerr := r.db.QueryRow(ctx, `SELECT id FROM gps_runs WHERE user_id=$1 AND started_at=$2`, userID, started).
+			Scan(&existingID); qerr == nil {
+			return existingID, false, nil
+		}
+		return "", false, nil
 	}
 	if err != nil {
 		return "", false, err

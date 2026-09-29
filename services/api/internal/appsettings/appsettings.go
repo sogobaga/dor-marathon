@@ -159,6 +159,11 @@ var specs = map[string]func(string) bool{
 	// 1.0＝改動前的現行行為；合法範圍 0.1~3.0 且允許小數（isFloatRange，非 isPosIntMax 那種整數限定），
 	// 避免 0 或負數讓整批選手「永不出門」、或超過 3 倍失真到看得出破綻。
 	"virtual_activity_scale": isFloatRange(0.1, 3.0),
+	// GPS 原始定位點記錄（除錯用，見 docs/gps/GPS_START_GATE_RAWLOG_CONTRACT.md 契約 B、
+	// internal/gpsrawlog）：逗號分隔 email（亦接受換行/分號/空白），缺鍵＝sogobaga@gmail.com——
+	// 獨立於上面的 *_entry_whitelist 家族（那批控制「入口顯不顯示」，這個控制「要不要真的把原始
+	// 定位點寫進 DB」，無 super_admin 旁路，見 internal/gpsrawlog.Allowed 註解）。
+	"gps_raw_log_whitelist": isWhitelist,
 }
 
 func isEntryState(v string) bool {

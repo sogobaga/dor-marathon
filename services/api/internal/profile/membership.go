@@ -11,6 +11,7 @@ import (
 	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/gpscalib"
+	"github.com/dor/api/internal/gpsrawlog"
 	"github.com/dor/api/internal/rpg"
 	"github.com/dor/api/internal/runmeet"
 	"github.com/dor/api/internal/stamina"
@@ -172,11 +173,15 @@ type DashboardInfo struct {
 	// GPS 距離校正（見 internal/gpscalib）：GpsCalibFactor 一律走 gpscalib.EffectiveFactor 同一判斷
 	// （入口/開關/狀態/過期皆已套用），未套用時為 1.0——這裡不是原始係數，是「目前生效」的係數，
 	// 與 GPS 上傳端(activity/gps.go SaveGPSRun)使用同一函式，保證「跑者看到的＝入帳的」。
-	GpsCalibEntry   string         `json:"gps_calib_entry"`
-	GpsCalibFactor  float64        `json:"gps_calib_factor"`
-	GpsCalibStatus  string         `json:"gps_calib_status"`
-	GpsCalibPairs   int            `json:"gps_calib_pairs"`
-	GpsCalibEnabled bool           `json:"gps_calib_enabled"`
+	GpsCalibEntry   string  `json:"gps_calib_entry"`
+	GpsCalibFactor  float64 `json:"gps_calib_factor"`
+	GpsCalibStatus  string  `json:"gps_calib_status"`
+	GpsCalibPairs   int     `json:"gps_calib_pairs"`
+	GpsCalibEnabled bool    `json:"gps_calib_enabled"`
+	// GpsRawLog：這個帳號的 GPS 原始定位點記錄（除錯用，見 internal/gpsrawlog、契約 B）前端是否該
+	// 收集/上傳——白名單命中才 true，無 super_admin 旁路（超管要看資料走後台端點，不代表自己的
+	// 跑步要被記錄，見 gpsrawlog.Allowed 註解）。
+	GpsRawLog       bool           `json:"gps_raw_log"`
 	CheerDisplayMs  int            `json:"cheer_display_ms"`     // 每公里應援表演（泡泡框+啦啦隊）顯示毫秒數；來自系統設定 cheer_display_ms（預設 3000）
 	CheerCharLayout string         `json:"cheer_char_layout"`    // 啦啦隊三張角色的位置校正值（原始 JSON 字串；系統設定 cheer_char_layout，前端 parseCheerCharLayout 解析）
 	NewTitles       []AwardedTitle `json:"new_titles,omitempty"` // 本次 dashboard 新解鎖（未看過）稱號
@@ -262,6 +267,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	d.RpgEntry = rpg.DashboardEntry(r.Context(), h.db, userID, email, code, isSuperAdmin)
 	d.GpsCalibEntry, d.GpsCalibFactor, d.GpsCalibStatus, d.GpsCalibPairs, d.GpsCalibEnabled =
 		gpscalib.DashboardSummary(r.Context(), h.db, userID, email, code, isSuperAdmin)
+	d.GpsRawLog = gpsrawlog.Allowed(r.Context(), h.db, email)
 	levels, err := h.levelConfigList(r.Context())
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")

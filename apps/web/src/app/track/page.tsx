@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import useSWR from 'swr'
-import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, cheerLayoutApi, parseCheerCharLayout, CHEER_CHAR_IDS, createRaceSocket, formatChallengeRule, formatChallengeProgress, sourceLabel, type GpsPoint, type GpsRunResult, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy, type CheerCharLayout } from '@/lib/api'
+import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, cheerLayoutApi, parseCheerCharLayout, CHEER_CHAR_IDS, createRaceSocket, formatChallengeRule, formatChallengeProgress, sourceLabel, type GpsPoint, type GpsRunResult, type GpsRawLogRow, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy, type CheerCharLayout } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser, getUser, AUTH_EVENT } from '@/lib/userAuth'
 import WorkoutHud from '@/components/WorkoutHud'
 import BossChallengePanel from '@/components/BossChallengePanel'
@@ -62,6 +62,18 @@ const GAP_MAX_S = 60 // 秒
 const GAP_MAX_M = 250 // 公尺
 const PACE_MIN_KM = 0.005 // 累積達此距離（5m，約顯示 0.01km 時）即顯示平均配速
 const START_COUNTDOWN_S = 3 // 開跑前可取消倒數秒數（CONTRACT.md track_start_guard §2.2）
+// 開跑精度門檻（GPS_START_GATE_RAWLOG_CONTRACT.md §A，2026-09-29 拍板）：3 秒倒數結束時，「按下開始後
+// 收到的定位」已有一筆 acc≤START_GATE_ACC_M（0 視為未知、不算達標）→ 立即開跑；否則進入「GPS 定位穩定中」
+// 等待狀態，任何一筆達標定位到達或使用者按「直接開始」→ 立即開跑，從按下開始起算滿 START_GATE_MAX_S 秒
+// → 不論精度照常開跑。不影響自動接續／三選一「繼續追蹤」（不經過此門檻）與距離/防弊演算法。
+const START_GATE_ACC_M = 20 // 公尺
+const START_GATE_MAX_S = 15 // 秒（從按下「開始」起算，含前面的 3 秒倒數）
+// 原始定位點記錄（除錯用，GPS_START_GATE_RAWLOG_CONTRACT.md §B）：只在白名單帳號（dashboard
+// gps_raw_log=true）收集，緩衝只放記憶體（不進 GPS outbox／localStorage），上限 RAW_LOG_CAP 列，
+// 超過即停止記錄並標記截斷。欄位定義與 code 對照見 lib/api.ts GpsRawLogRow 註解。
+const RAW_LOG_CAP = 30000
+const RAW_LOG_FIELDS = ['t_ms', 'lat', 'lng', 'acc', 'speed', 'heading', 'code']
+function roundN(v: number, n: number): number { const m = 10 ** n; return Math.round(v * m) / m }
 
 const SCIFI_LAST_POS_KEY = 'dor_scifi_last_pos' // 與 scifi/SciFiMap.tsx 的 LAST_POS_KEY 同一把 key（它每次
 // pos 更新時寫入，見該檔），這裡只在「定位前的初始中心」讀一次，兩檔不必互相 import 一個常數模組。
@@ -172,6 +184,17 @@ export default function TrackPage() {
   const [startCountdown, setStartCountdown] = useState<number | null>(null)
   const startCountdownActiveRef = useRef(false) // 倒數中阻擋再次點「開始」（比照 armingRef 等既有慣例）
   const pendingStartRef = useRef<null | (() => void)>(null) // 倒數結束要呼叫的既有開跑函式（start 或 startWorkout）
+  // 開跑精度門檻（GPS_START_GATE_RAWLOG_CONTRACT.md §A）：3 秒倒數（上面那組 state/ref）結束時若尚未有
+  // 一筆達標定位，進入這個「GPS 定位穩定中」等待狀態（同一個倒數疊層換內容顯示，見下方 JSX）；
+  // startGateArmedAtRef＝按下「開始」的時刻（15 秒總預算與「按下開始後收到的定位」都以此為基準，
+  // onPos 內用 ref 讀取避免 stale closure）。startGateAccOkRef：期間是否已有一筆 acc≤START_GATE_ACC_M
+  // 的定位（等待中若才滿足，onPos 直接觸發 resolveStartGate，不必等下面的 gateRemainS 倒數）。
+  const startGateArmedAtRef = useRef<number | null>(null)
+  const startGateAccOkRef = useRef(false)
+  const [startGateWaiting, setStartGateWaiting] = useState(false)
+  const startGateWaitingRef = useRef(false) // 鏡射 startGateWaiting，供 onPos 讀（同上，避免 stale closure）
+  const [gateRemainS, setGateRemainS] = useState(0) // 等待疊層「N 秒後自動開始」，每秒依 startGateArmedAtRef 重算
+  const gateTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [uploading, setUploading] = useState(false)
   // 運動部「揮汗有禮」（gov500_entry，見 lib/gov500.ts 頂部註解說明 2026-09-06 規則變動）：
   // 500.gov.tw 只收手機系統截圖鍵截出的 App 原始紀錄畫面——直接對這個結果畫面截圖即可，不再需要
@@ -276,6 +299,10 @@ export default function TrackPage() {
   const cheerDurationRef = useRef(3000)
   cheerDurationRef.current = dash?.cheer_display_ms && dash.cheer_display_ms > 0 ? dash.cheer_display_ms : 3000
   const canTestCheer = dash?.cheer_test_entry === 'shown'
+  // 原始定位點記錄開關（GPS_START_GATE_RAWLOG_CONTRACT.md §B）：ref 鏡射 dash.gps_raw_log，供 onPos
+  // 讀最新值（onPos 是 useCallback，deps=[ensureMap]，直接讀 dash 閉包會 stale，同檔既有慣例見上方）。
+  const gpsRawLogEnabledRef = useRef(false)
+  gpsRawLogEnabledRef.current = dash?.gps_raw_log === true
   // 跑完達標（單次 5 公里或 30 分鐘擇一，見 lib/gov500.ts）→ 自動彈出「揮汗有禮」視窗（dash 晚到也會補彈）
   useEffect(() => {
     if (status !== 'done' || !result || gov500PromptedRef.current) return
@@ -516,7 +543,15 @@ export default function TrackPage() {
   const statusRef = useRef(status)
   statusRef.current = status
   const lastAccRef = useRef<GpsPoint | null>(null) // 上一個「採納」的點（過濾原地抖動用）
-  const pendingRef = useRef<{ p: GpsPoint; d: number; at: number }[]>([]) // 距離防漂移：已採納但未 commit 的暫存段（狀態機靜止期間、有速度讀值的位移）；「靜止→移動」翻轉時回補最近 RETRO_WINDOW_S 秒內的，其餘老化丟棄
+  // rawRow：這筆暫存段對應的原始定位點記錄那一列（見 onPos 內 logRawFix），日後回補計入('a')或老化丟棄('d')
+  // 時同步改寫該列的 code；只在 gpsRawLogEnabledRef 開啟時才會有值，否則恆 undefined。
+  const pendingRef = useRef<{ p: GpsPoint; d: number; at: number; rawRow?: GpsRawLogRow | null }[]>([]) // 距離防漂移：已採納但未 commit 的暫存段（狀態機靜止期間、有速度讀值的位移）；「靜止→移動」翻轉時回補最近 RETRO_WINDOW_S 秒內的，其餘老化丟棄
+  // 原始定位點記錄緩衝（除錯用，CONTRACT.md §B）：只放記憶體，不進 GPS outbox／localStorage；上限見
+  // RAW_LOG_CAP，超過即停止記錄並標記截斷（rawLogTruncatedRef）。rawLogPartialRef：自動接續
+  // （resumeActiveRun，跳過 start()）之後的緩衝不含開跑起點到接續前的定位，上傳時一併視為截斷。
+  const rawLogRef = useRef<GpsRawLogRow[]>([])
+  const rawLogTruncatedRef = useRef(false)
+  const rawLogPartialRef = useRef(false)
   // 事件引擎用
   const distSamplesRef = useRef<{ t: number; d: number }[]>([]) // {時間ms, 累積距離m}
   const eventDefsRef = useRef<EventDef[]>([])
@@ -656,6 +691,14 @@ export default function TrackPage() {
     setCurPos({ lat: p.lat, lng: p.lng, acc: p.acc })
     curPosAtRef.current = Date.now() // 與 setCurPos 同步記錄「收到這筆定位」的時間（非 pos.timestamp，見宣告處），供 mapSnapshot.pos.ts
     try { localStorage.setItem('dor:gps-authorized', '1') } catch { /* ignore */ } // 曾成功定位＝已授權；供 Safari(無 permissions.query) 回訪時判斷可否預熱定位
+    // 開跑精度門檻（GPS_START_GATE_RAWLOG_CONTRACT.md §A）：與下面的 tracking 早退無關（3 秒倒數／
+    // 「GPS 定位穩定中」等待期間 status 仍是 'idle'）。只認「按下開始後」（p.t≥startGateArmedAtRef，
+    // 用定位裝置自己的時間戳排除 acquireWatch() 萬一帶回的快取舊定位）且 acc>0（0＝未知，不算達標）
+    // 且 ≤START_GATE_ACC_M 的定位；等待狀態中一旦達標就立即觸發開跑，不必等 armGateTimer 的秒數倒數完。
+    if (startGateArmedAtRef.current != null && p.t >= startGateArmedAtRef.current && p.acc > 0 && p.acc <= START_GATE_ACC_M) {
+      startGateAccOkRef.current = true
+      if (startGateWaitingRef.current) resolveStartGate()
+    }
     ensureMap(p.lat, p.lng)
     // 標記與地圖永遠跟著「目前」位置（即時感），即使該點未被採納為距離
     if (markRef.current) { if (!markShownRef.current && mapRef.current) { try { markRef.current.addTo(mapRef.current); markShownRef.current = true } catch { /* ignore */ } } markRef.current.setLatLng([p.lat, p.lng]) }
@@ -666,8 +709,25 @@ export default function TrackPage() {
       else centerMap([p.lat, p.lng])
     }
     if (statusRef.current !== 'tracking') return // 預熱階段（未開始跑步）：只顯示 GPS 精度＋地圖位置，不累積距離、不警告
+    // 原始定位點記錄（除錯用，GPS_START_GATE_RAWLOG_CONTRACT.md §B）：只在白名單開啟時收集，跑步中
+    // （status==='tracking'）每筆 onPos 記一列，code 對應下方各距離採納分支（在對應分支呼叫一次，
+    // 每筆定位恰好記一列）；h（靜止暫存）之後可能被回補成 a 或老化成 d，見 pendingRef.rawRow 的改寫處。
+    const logRawFix = (code: string): GpsRawLogRow | null => {
+      if (!gpsRawLogEnabledRef.current) return null
+      const buf = rawLogRef.current
+      if (buf.length >= RAW_LOG_CAP) { rawLogTruncatedRef.current = true; return null }
+      const row: GpsRawLogRow = [
+        p.t, roundN(p.lat, 6), roundN(p.lng, 6), roundN(p.acc, 1),
+        p.speed != null ? roundN(p.speed, 2) : null,
+        typeof pos.coords.heading === 'number' && isFinite(pos.coords.heading) ? Math.round(pos.coords.heading) : null,
+        code,
+      ]
+      buf.push(row)
+      return row
+    }
     const goodAcc = p.acc === 0 || p.acc <= MAX_ACC
     if (!goodAcc) {
+      logRawFix('p') // 精度差（>MAX_ACC）
       setWarn(`GPS 訊號較弱（±${Math.round(p.acc)}m），移動可能未被記錄，請到較空曠處`)
       clearTimeout(warnTimer.current)
       warnTimer.current = setTimeout(() => setWarn(''), 4000)
@@ -712,8 +772,14 @@ export default function TrackPage() {
       if (prev.movingSince == null && movingStateRef.current.movingSince != null && pendingRef.current.length) {
         const cutoff = nowMs - RETRO_WINDOW_S * 1000
         const retro = pendingRef.current.filter((it) => it.at >= cutoff)
+        // 原始定位點記錄：呼叫端在 push 進 pendingRef 前一般已老化過一輪，這裡保底處理漏網的老段——
+        // 標 'd'（暫存後丟棄），不讓它們被下面的回補迴圈誤標成 'a'。
+        if (gpsRawLogEnabledRef.current) { for (const it of pendingRef.current) { if (it.at < cutoff && it.rawRow) it.rawRow[6] = 'd' } }
         pendingRef.current = []
-        for (const it of retro) commitSeg(it.p, it.d) // push 順序即時間序
+        for (const it of retro) {
+          if (it.rawRow) it.rawRow[6] = 'a' // 靜止→移動翻轉回補計入：'h'（暫存）→ 'a'（採納計入）
+          commitSeg(it.p, it.d) // push 順序即時間序
+        }
       }
     }
 
@@ -722,6 +788,7 @@ export default function TrackPage() {
       const lastAcc = lastAccRef.current
       if (!lastAcc) {
         // 第一個有效點：當作起點
+        logRawFix('f') // 起點
         lastAccRef.current = p
         pointsRef.current.push(p)
         if (lineRef.current) lineRef.current.addLatLng([p.lat, p.lng])
@@ -739,6 +806,7 @@ export default function TrackPage() {
           if (invalid) {
             // 無效段（超速 或 訊號中斷跳點）完全不計入有效距離：不刷里程、不推進課表分段、不餵移動狀態機
             // （與伺服器一致——伺服器對上傳的同批點套用同一條規則重算）
+            logRawFix('x') // 超速／斷訊排除
             excludedMRef.current += d
             excludedSegsRef.current += 1
             setExcluded({ segs: excludedSegsRef.current, km: excludedMRef.current / 1000 })
@@ -748,16 +816,23 @@ export default function TrackPage() {
           } else {
             const nowMsD = Date.now()
             // 平時老化：剔除超過回補窗口的暫存段（防膨脹；它們已確定是漂移，不會再被回補）
-            if (pendingRef.current.length) pendingRef.current = pendingRef.current.filter((it) => it.at >= nowMsD - RETRO_WINDOW_S * 1000)
+            if (pendingRef.current.length) {
+              const cutoffAge = nowMsD - RETRO_WINDOW_S * 1000
+              // 原始定位點記錄：被這次老化篩掉的暫存段，標記碼改為 'd'（暫存後丟棄）
+              if (gpsRawLogEnabledRef.current) { for (const it of pendingRef.current) { if (it.at < cutoffAge && it.rawRow) it.rawRow[6] = 'd' } }
+              pendingRef.current = pendingRef.current.filter((it) => it.at >= cutoffAge)
+            }
             // ① 訊號分流（classifyDistSignal）：不再無條件餵 moving——speed<0.5 的採納段（漂移假位移）
             //    改餵 still，修「靜止 85 秒還累出 21 秒移動時間」的根因；死區/速度缺失維持現行餵 moving。
             feedMoveSignal(classifyDistSignal(p.speed), nowMsD)
             // ② commit 閘門（shouldCommitDist）：狀態機移動中、或該點速度缺失（fallback 現行行為）才立即
             //    commit；否則暫存，等「靜止→移動」翻轉時由 feedMoveSignal 回補最近 RETRO_WINDOW_S 秒內的段。
-            if (shouldCommitDist(movingStateRef.current, p.speed)) commitSeg(p, seg)
-            else pendingRef.current.push({ p, d: seg, at: nowMsD })
+            if (shouldCommitDist(movingStateRef.current, p.speed)) { logRawFix('a'); commitSeg(p, seg) }
+            else pendingRef.current.push({ p, d: seg, at: nowMsD, rawRow: logRawFix('h') })
             lastAccRef.current = p // 永遠前進採納點（未 commit 也前進：維持既有「仍前進採納點」語意，避免漂移結束後算出巨大跳段）
           }
+        } else {
+          logRawFix('j') // 未達 JITTER_MIN 略過（含 dt<=0：時間戳未前進，理論上不會發生，一併歸入此碼）
         }
       }
     }
@@ -1433,6 +1508,7 @@ export default function TrackPage() {
     calibKRef.current = dash?.gps_calib_entry === 'shown' && dash.gps_calib_factor > 0 ? dash.gps_calib_factor : lastKnownKRef.current
     movingStateRef.current = initMovingState(); lastMoveRef.current = null // #4 移動時間狀態機重置（見 lib/movingTime.ts）
     pendingRef.current = [] // 距離防漂移：清掉上一趟未回補的暫存段
+    rawLogRef.current = []; rawLogTruncatedRef.current = false; rawLogPartialRef.current = false // 原始定位點記錄：每趟開跑重置緩衝（CONTRACT.md §B）
     setDistance(0); setElapsed(0); setSplits([]); setExcluded({ segs: 0, km: 0 }); setResult(null); setRetryUpload(null); setMovingS(0)
     // 每公里鼓勵語重置：避免上一趟結束前顯示中的句子/去重記憶殘留到這一趟
     setCheer(null); lastCheerTextRef.current = null; if (cheerTimerRef.current) clearTimeout(cheerTimerRef.current)
@@ -1493,6 +1569,9 @@ export default function TrackPage() {
     setShowStartTip(false) // 新手提醒的任務已完成，不必等倒數結束才收起
     startCountdownActiveRef.current = true
     pendingStartRef.current = run
+    // 開跑精度門檻（CONTRACT.md §A）：從這一刻起算「按下開始後收到的定位」與 15 秒總預算
+    startGateArmedAtRef.current = Date.now()
+    startGateAccOkRef.current = false
     unlockAudio()
     try { (screen.orientation as any)?.lock?.('portrait').catch(() => {}) } catch { /* 不支援就忽略 */ }
     acquireWake() // 不 await：失敗或延遲都不影響倒數本身，start() 內既有重取邏輯照常
@@ -1515,20 +1594,60 @@ export default function TrackPage() {
     startCountdownActiveRef.current = false
     pendingStartRef.current = null
     setStartCountdown(null)
+    clearStartGateState() // 開跑精度門檻（CONTRACT.md §A）：等待中被取消也一併清掉門檻 state/timer
     releaseWake()
     try { (screen.orientation as any)?.unlock?.() } catch { /* ignore */ }
     try { if (watchRef.current != null) { navigator.geolocation.clearWatch(watchRef.current); watchRef.current = null } } catch { /* ignore */ }
   }
-  // 倒數計時本體：每秒遞減，歸零時呼叫倒數前存好的開跑函式；卸載/離開頁面時清掉未完成的 timer
-  // （見下方 return 的 clearTimeout），滿足「倒數期間被砍掉 → 不開跑」。
+  // 開跑精度門檻共用清理：cancelStartCountdown／resolveStartGate／卸載 cleanup 都要清同一組 state/ref，
+  // 抽成獨立函式避免各處各清一份、漏改其中之一。
+  function clearStartGateState() {
+    startGateArmedAtRef.current = null
+    startGateAccOkRef.current = false
+    if (gateTimerRef.current != null) { clearInterval(gateTimerRef.current); gateTimerRef.current = null }
+    startGateWaitingRef.current = false
+    setStartGateWaiting(false)
+    setGateRemainS(0)
+  }
+  // 開跑精度門檻（CONTRACT.md §A）：等待狀態每秒重算剩餘秒數（以 startGateArmedAtRef 為準，非等待狀態
+  // 開始的時刻——3 秒倒數本身也計入 15 秒總預算），秒數歸零就不論精度照常開跑。
+  function armGateTimer() {
+    const armedAt = startGateArmedAtRef.current ?? Date.now()
+    const deadline = armedAt + START_GATE_MAX_S * 1000
+    const tick = () => {
+      const remain = Math.max(0, Math.ceil((deadline - Date.now()) / 1000))
+      setGateRemainS(remain)
+      if (remain <= 0) resolveStartGate()
+    }
+    tick() // 立即算一次，避免進入等待狀態的第一秒顯示落後一拍
+    if (gateTimerRef.current != null) clearInterval(gateTimerRef.current)
+    gateTimerRef.current = setInterval(tick, 1000)
+  }
+  // 開跑精度門檻：真正觸發開跑（三種路徑共用——15 秒逾時／等待中收到達標定位／使用者按「直接開始」）。
+  // 用 pendingStartRef 是否還在當作「尚未觸發」的閘門，避免計時器與 onPos 幾乎同時觸發時重跑兩次。
+  function resolveStartGate() {
+    const run = pendingStartRef.current
+    if (!run) return
+    pendingStartRef.current = null
+    startCountdownActiveRef.current = false
+    clearStartGateState()
+    run()
+  }
+  // 3 秒倒數（3→2→1→0）結束時呼叫：已有達標定位（startGateAccOkRef）就直接開跑；否則進入等待狀態，
+  // 交給 armGateTimer 的每秒 tick／onPos 收到達標定位／「直接開始」按鈕三者之一觸發 resolveStartGate。
+  function settleCountdownEnd() {
+    if (startGateAccOkRef.current) { resolveStartGate(); return }
+    startGateWaitingRef.current = true
+    setStartGateWaiting(true)
+    armGateTimer()
+  }
+  // 倒數計時本體：每秒遞減，歸零時交給 settleCountdownEnd 判斷是否已達開跑精度門檻；卸載/離開頁面時
+  // 清掉未完成的 timer（見下方 return 的 clearTimeout），滿足「倒數期間被砍掉 → 不開跑」。
   useEffect(() => {
     if (startCountdown == null) return
     if (startCountdown <= 0) {
-      const run = pendingStartRef.current
-      pendingStartRef.current = null
-      startCountdownActiveRef.current = false
       setStartCountdown(null)
-      run?.()
+      settleCountdownEnd()
       return
     }
     try { navigator.vibrate?.(15) } catch { /* ignore */ }
@@ -1547,6 +1666,7 @@ export default function TrackPage() {
       if (startCountdownActiveRef.current) {
         startCountdownActiveRef.current = false
         pendingStartRef.current = null
+        clearStartGateState() // 開跑精度門檻：等待中卸載也要清掉 gateTimerRef，否則 interval 繼續跑會操作已卸載元件的 state
         releaseWake()
         try { (screen.orientation as any)?.unlock?.() } catch { /* ignore */ }
         try { if (watchRef.current != null) { navigator.geolocation.clearWatch(watchRef.current); watchRef.current = null } } catch { /* ignore */ }
@@ -1715,6 +1835,22 @@ export default function TrackPage() {
     return e?.message || '上傳失敗'
   }
 
+  // 原始定位點記錄（除錯用，GPS_START_GATE_RAWLOG_CONTRACT.md §B）：跑步上傳成功、拿到 run id 後
+  // fire-and-forget 送出，失敗不重試、不影響主流程、不顯示錯誤給使用者（.catch 吞掉）。runId 尚未拿到
+  // （後端 gpsRunResult 還沒補 id 欄位）或緩衝為空（非白名單、或撿回上傳時本機並無這趟的記憶體緩衝——
+  // 頁面重整緩衝遺失可接受，見 CONTRACT.md §B）都直接跳過，不送空請求。清空緩衝避免誤帶到下一趟
+  // （start() 也會清，這裡先清是保險）。truncated 同時涵蓋「超過 RAW_LOG_CAP」與「自動接續後緩衝不含
+  // 開跑起點到接續前的定位」兩種情況——契約的上傳 body 只有一個 truncated 欄位，不分別回報成因。
+  function sendRawLog(runId: string | undefined) {
+    if (!runId || !gpsRawLogEnabledRef.current) return
+    const rows = rawLogRef.current
+    if (!rows.length) return
+    const truncated = rawLogTruncatedRef.current || rawLogPartialRef.current
+    rawLogRef.current = []; rawLogTruncatedRef.current = false; rawLogPartialRef.current = false
+    withUserAuth((t) => activitiesApi.uploadRawPoints(t, runId, { v: 1, fields: RAW_LOG_FIELDS, rows, truncated, client_version: APP_VERSION }))
+      .catch(() => { /* 除錯用途，失敗不重試、不影響主流程、不顯示錯誤給使用者（CONTRACT.md §B） */ })
+  }
+
   async function doUploadGps(pts: GpsPoint[], petIds: string[] = []): Promise<GpsRunResult | null> {
     setUploading(true); setErr('')
     try {
@@ -1726,6 +1862,7 @@ export default function TrackPage() {
         pet_ids: petIds.length ? petIds : undefined,
       }, uploadTimeoutSignal()))
       setResult(result); setRetryUpload(null)
+      sendRawLog(result.id) // 原始定位點記錄：fire-and-forget，見 sendRawLog 宣告處
       // 結束後以後端分段為單一真相：後端由軌跡重算、可信，且與 avg_pace_s 同源。
       // 覆寫本地即時分段（可能因 paceBaseMs 時間差而略有誤差），讓結束畫面「分段」與「均配速」一致。
       if (result.km_paces?.length) setSplits(result.km_paces)
@@ -1837,6 +1974,9 @@ export default function TrackPage() {
     lastMoveRef.current = lastPt
     movingStateRef.current = { movingAccumS: active.movingAccumS || 0, movingSince: null, stillStreak: 0, moveStreak: 0 } // 中斷期間不計移動時間：movingSince 從 null（靜止）開始
     pendingRef.current = []
+    // 原始定位點記錄（CONTRACT.md §B）：自動接續繞過 start()，緩衝本來就是這次掛載才重新初始化的空陣列
+    // （記憶體緩衝本就不跨頁面重整存活），不含開跑起點到接續前的定位——標記這趟為 partial，上傳時等同截斷。
+    rawLogPartialRef.current = true
     distSamplesRef.current = []
     setDistance(distRef.current)
     setSplits(active.splits || [])
@@ -1969,6 +2109,7 @@ export default function TrackPage() {
       // 別趟日期）——上傳成功時同步寫回，順便也讓 status→'done' 的號碼標記重建效果拿到正確軌跡。
       startRef.current = recover.start; pointsRef.current = pts
       setResult(result); setStatus('done'); localStorage.removeItem(LS_KEY); clearActiveRun(); setRecover(null)
+      sendRawLog(result.id) // 原始定位點記錄：通常緩衝已因頁面重整而清空（no-op），若同一頁面內仍在記憶體則一併送出
       revalidateDash() // 同 doUploadGps：見該處對抗式審查修正註解
     } catch (e: any) { setErr(uploadErrMsg(e)) }
     finally { setUploading(false) }
@@ -2620,12 +2761,30 @@ export default function TrackPage() {
       {/* 開跑前 3 秒倒數（可取消，CONTRACT.md track_start_guard §2.2）：兩顆「開始」鈕的 onClick 都先進
           requestStart()，不直接呼叫既有開跑函式；倒數期間全螢幕攔截，天然擋住「再次點開始」的誤觸。
           z-index 3800：低於全站 .landscape-lock「請轉回直立」(4000) 與 RaceFocusMode 專注鎖定(3900)，
-          高於一般面板(500)/其餘既有彈窗(2500/3300)——倒數本身還沒開跑，沒有更高優先的疊層需要蓋過它。 */}
-      {startCountdown != null && (
+          高於一般面板(500)/其餘既有彈窗(2500/3300)——倒數本身還沒開跑，沒有更高優先的疊層需要蓋過它。
+          開跑精度門檻（GPS_START_GATE_RAWLOG_CONTRACT.md §A）：3 秒倒數結束若精度未達標，同一個疊層
+          （同 z-index、同中性深色，沒有既有 skin 分支可比照）換成「GPS 定位穩定中」內容，不是另開疊層。 */}
+      {(startCountdown != null || startGateWaiting) && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 3800, background: 'rgba(0,0,0,.86)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', marginBottom: 10 }}>準備好了嗎？</div>
-          <div key={startCountdown} style={{ fontSize: 96, fontWeight: 900, color: '#fff', lineHeight: 1, marginBottom: 30 }}>{startCountdown}</div>
-          <button onClick={cancelStartCountdown} style={{ width: '100%', maxWidth: 280, background: 'rgba(255,255,255,.14)', color: '#fff', border: '1px solid rgba(255,255,255,.4)', borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
+          {startGateWaiting ? (
+            <>
+              <div style={{ fontSize: 20, fontWeight: 900, color: '#fff', marginBottom: 12 }}>GPS 定位穩定中</div>
+              <div style={{ fontSize: 15, color: 'rgba(255,255,255,.85)', marginBottom: 8 }}>
+                {curPos ? `目前精度 ±${Math.round(curPos.acc)}m` : '搜尋訊號中…'}
+              </div>
+              <div style={{ fontSize: 13, color: 'rgba(255,255,255,.6)', marginBottom: 26 }}>{gateRemainS} 秒後自動開始</div>
+              {/* 中性深色疊層（CONTRACT.md §A：沒有既有 skin 分支可比照就用中性深色），CTA 故意用純白實心
+                  而非任何 skin 的強調色 token——這裡刻意不吃 skin，用 skin token 反而會在部分風格下顏色不明。 */}
+              <button onClick={resolveStartGate} style={{ width: '100%', maxWidth: 280, marginBottom: 10, background: '#fff', color: '#111', border: 'none', borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>直接開始</button>
+              <button onClick={cancelStartCountdown} style={{ width: '100%', maxWidth: 280, background: 'rgba(255,255,255,.14)', color: '#fff', border: '1px solid rgba(255,255,255,.4)', borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', marginBottom: 10 }}>準備好了嗎？</div>
+              <div key={startCountdown} style={{ fontSize: 96, fontWeight: 900, color: '#fff', lineHeight: 1, marginBottom: 30 }}>{startCountdown}</div>
+              <button onClick={cancelStartCountdown} style={{ width: '100%', maxWidth: 280, background: 'rgba(255,255,255,.14)', color: '#fff', border: '1px solid rgba(255,255,255,.4)', borderRadius: 'var(--radius-btn, 12px)', padding: '15px 20px', fontSize: 16, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
+            </>
+          )}
         </div>
       )}
       {/* 觸發演出：Step1 全螢幕紅閃警報（Phase A/B 共用） */}

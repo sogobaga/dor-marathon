@@ -32,6 +32,7 @@ import (
 	"github.com/dor/api/internal/event"
 	"github.com/dor/api/internal/explore"
 	"github.com/dor/api/internal/gpscalib"
+	"github.com/dor/api/internal/gpsrawlog"
 	"github.com/dor/api/internal/image"
 	"github.com/dor/api/internal/integration"
 	"github.com/dor/api/internal/mail"
@@ -243,6 +244,11 @@ func main() {
 	// 首次 active / active→stale 站內信通知（規格 §3.4，見 gpscalib.SetMailInserter 註解）；比照
 	// raceSvc.SetMailInserter 同一慣例，mailHandler 已於上方建構完成。
 	gpscalib.SetMailInserter(mailHandler)
+
+	// GPS 原始定位點記錄（除錯用，見 internal/gpsrawlog、docs/gps/GPS_START_GATE_RAWLOG_CONTRACT.md
+	// 契約 B）：只對白名單帳號保存，30 天自動清除（見 opsHandler.RunDailyReportLoop 內的 purge），
+	// 只有後台超管看得到。
+	gpsRawLogHandler := gpsrawlog.NewHandler(pool)
 
 	// 團練邀請（見 internal/runmeet，migration 156）：會員自行發起「揪人一起去跑步」的聚會。
 	// Router() 內第一行即 requireEntry（runmeet_entry_state/whitelist），非白名單一律 403（SEC-H5）。
@@ -578,6 +584,10 @@ func main() {
 			// （gps_calib_entry_state/whitelist），比照 monopoly/cheer-layout 前例：非白名單一律 403。
 			r.Mount("/me/gps-calib", gpsCalibHandler.Router())
 
+			// GPS 原始定位點記錄上傳（見 internal/gpsrawlog、契約 B）：ownership／白名單檢查在
+			// handler 內（非白名單一律 403 raw_log_not_allowed），比照 gps-calib 前例不另掛中介層。
+			r.Mount("/me/gps-runs", gpsRawLogHandler.Router())
+
 			// 遊戲化角色數值（見 internal/rpg）— GET /rpg/me、POST /rpg/allocate 皆掛套件私有
 			// requireEntry（rpg_entry_state/whitelist + is_vvip），非白名單一律 403（SEC-H5 同款）。
 			r.Mount("/rpg", rpgHandler.Router())
@@ -734,6 +744,10 @@ func main() {
 			r.With(perm("settings")).Put("/admin/settings", profileHandler.PutSettings)
 			r.With(perm("gps_review")).Post("/admin/activities/add-mileage", actHandler.AdminAddMileage)
 			r.With(perm("gps_review")).Mount("/admin/gps-runs", actHandler.AdminRouter())
+			// GPS 原始定位點記錄查詢（見 internal/gpsrawlog、契約 B）：刻意比一般 GPS 審核
+			// （perm("gps_review")）多一層——定位點屬於個資／位置資料，只有超級管理員看得到，
+			// 比照 /admin/admins、/admin/audit 的既有註冊方式（直接掛 RequireSuper，不走 perm()）。
+			r.With(adminAcctHandler.RequireSuper).Get("/admin/gps-runs/{runId}/raw-points", gpsRawLogHandler.AdminGetRawPoints)
 			r.With(perm("gps_review")).Mount("/admin/checkin-review", raceHandler.CheckinReviewRouter())
 			r.With(perm("settings")).Mount("/admin/push", pushHandler.AdminRouter())
 			r.With(perm("settings")).Mount("/admin/push-groups", pushHandler.GroupAdminRouter())

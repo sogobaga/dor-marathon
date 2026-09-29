@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
+	"github.com/dor/api/internal/gpsrawlog"
 	"github.com/dor/api/internal/notify"
 )
 
@@ -117,6 +118,10 @@ type dailyReportData struct {
 	// ProviderStatuses）：每個「目前有連結」的 Terra 品牌各一筆；wearable 未注入或查詢失敗時為 nil
 	// （見 buildWearableSection），此時 assembleDailyReportMessage 整段不顯示（沒有訊號比顯示假訊號好）。
 	Wearable []WearableProviderStatus
+
+	// RawLogPurged：GPS 原始定位點記錄（見 internal/gpsrawlog，契約 B）保存期限排程當天清除的筆數；
+	// 0 時 assembleDailyReportMessage 整行不顯示（見契約 B「保存期限」段：「有刪才顯示」）。
+	RawLogPurged int
 }
 
 // inDailyReportWindow 是否落在今天的執行窗口。直接沿用 selfcheck 的 08:00-08:59 判斷（見檔頭註解），
@@ -425,6 +430,15 @@ func (h *Handler) buildDailyReportData(ctx context.Context) (dailyReportData, er
 	// 介面（不碰 h.db），方便單元測試不需要真的連 DB 就能驗證「注入假 fetcher →組出正確結果」。
 	d.Wearable = buildWearableSection(ctx, h.wearable)
 
+	// 8) GPS 原始定位點記錄保存期限（見 internal/gpsrawlog、契約 B「保存期限」段：「不另開週期性
+	// DB 查詢」，掛在這個既有的每日排程順手做）。表尚未建立（migration 195 未套用）或查詢本身失敗
+	// 只記警告、不讓整份報告失敗——比照 einvoice/wearable 兩段「錦上添花，不拖垮固定段落」的既有慣例。
+	if purged, err := gpsrawlog.PurgeExpired(ctx, h.db); err != nil {
+		log.Warn().Err(err).Msg("daily report: purge gps raw log retention failed")
+	} else {
+		d.RawLogPurged = purged
+	}
+
 	return d, nil
 }
 
@@ -670,6 +684,11 @@ func assembleDailyReportMessage(d dailyReportData, raceKeep int) string {
 		for _, l := range failed {
 			b.WriteString(l + "\n")
 		}
+	}
+	// GPS 原始定位點保存期限清除筆數：0 時不顯示（見契約 B「保存期限」段：「有刪才顯示」），避免
+	// 每天顯示「清除 0 筆」的雜訊——絕大多數日子（尚未有白名單帳號跑滿 30 天的紀錄）都會是 0。
+	if d.RawLogPurged > 0 {
+		fmt.Fprintf(&b, "GPS 原始定位點保存到期，已清除 %d 筆\n", d.RawLogPurged)
 	}
 	b.WriteString("\n")
 
