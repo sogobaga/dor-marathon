@@ -123,6 +123,13 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
   // E2E 做「有畫 vs 沒畫」前後對照截圖用（比照 cute/CuteMap.tsx 同名欄位），預設 false。
   const overlayHiddenRef = useRef(false)
   const prevStatusRef = useRef<string | undefined>(undefined) // 供下方判斷「是否剛從非 tracking 轉進 tracking」（新一輪開跑，重置 overlayHiddenRef）
+  // A2 FALLBACK FIX（2026-09-29）：webglcontextlost／render-exception 這類「其實常常救得回來」的失敗，
+  // 舊版一律立即永久退回 Leaflet（根因調查：iOS 背景分頁的 WebGL context 遺失絕大多數可自動復原，
+  // MapLibre 自己就支援，舊版卻搶在它復原之前就把 instance 砍了）。這兩個 ref 是輕量診斷欄位，供
+  // __retroDebug 曝光「最近一次觸發過的失敗原因」與「這個 session 內自動復原成功幾次」，純觀測用，
+  // 不影響任何判斷邏輯本身；沒有前端可上報的 client-log 端點（已查證），因此只曝光在這裡＋console。
+  const lastFallbackReasonRef = useRef<string | null>(null)
+  const recoveriesRef = useRef(0)
 
   const posRef = useRef(pos); posRef.current = pos
   const statusRef = useRef(status); statusRef.current = status
@@ -143,6 +150,7 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
   const fail = (reason: string) => {
     if (failedRef.current) return
     failedRef.current = true
+    lastFallbackReasonRef.current = reason
     // eslint-disable-next-line no-console
     console.warn('[retro-map] fallback', reason)
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
@@ -244,13 +252,26 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
 
     const isCurrent = () => !cancelled && mapRef.current === map
 
+    // A2 FALLBACK FIX（2026-09-29）：webglcontextlost／8 秒 load timeout 這兩種失敗，根因調查證實絕大
+    // 多數是「暫時性、MapLibre／瀏覽器自己就會恢復」的情況（iOS 背景分頁 GPU 資源回收、背景分頁計時器
+    // 節流），舊版卻一律立即永久退回 Leaflet，完全沒有給復原機會。以下狀態只影響「要不要現在就判
+    // 死」，不動 isCurrent()／instance 隔離／DPR canvas／padding／follow 等既有邏輯。
+    let contextLost = false // MapLibre 已回報 webglcontextlost、尚未 restore／尚未放棄
+    let contextLostGraceTimer: ReturnType<typeof setTimeout> | null = null
+    let recreateAttempts = 0
+    const CONTEXT_LOST_GRACE_MS = 5000 // 回到前景後給 MapLibre 自己 restore 的寬限期（node_modules/maplibre-gl/src/ui/map.ts _contextRestored）
+    const MAX_RECREATE_ATTEMPTS = 2 // 寬限期逾時仍未 restore：就地重建 instance 最多幾次，超過才真的退回 Leaflet
+    const clearContextLostGraceTimer = () => { if (contextLostGraceTimer) { clearTimeout(contextLostGraceTimer); contextLostGraceTimer = null } }
+
     const failInstance = (reason: string) => {
       if (localFailed || failedRef.current) return
       if (!isCurrent()) return
       localFailed = true
       failedRef.current = true
+      lastFallbackReasonRef.current = reason
       // eslint-disable-next-line no-console
       console.warn('[retro-map] fallback', reason)
+      clearContextLostGraceTimer()
       if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
       if (waterTimerRef.current) { clearInterval(waterTimerRef.current); waterTimerRef.current = null }
       detachListeners()
@@ -269,6 +290,17 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
     }
     const onError = (e: unknown) => {
       if (!isCurrent()) return
+      // review 抓到的 minor 根因（與 scifi/SciFiMap.tsx 同一份分析）：MapLibre `_contextRestored()`
+      // 重新 `_setupPainter()`（取得 WebGL context）失敗時不會 fire 'webglcontextrestored'，而是直接 fire
+      // 這個 'error' 事件然後 return——此時 contextLost 仍是 true。舊寫法一律 failInstance() 永久退回
+      // Leaflet，繞過上面「寬限期＋就地重建最多兩次」安全網。改成走跟 armContextLostGrace() 逾時分支
+      // 一樣的路（recreateInstance()），重建次數用盡才 failInstance()。
+      if (contextLost && recreateAttempts < MAX_RECREATE_ATTEMPTS) {
+        clearContextLostGraceTimer()
+        recreateAttempts += 1
+        recreateInstance()
+        return
+      }
       failInstance('map-error:' + ((e as { error?: { message?: string } })?.error?.message || 'unknown'))
     }
     // ORBPOS_CONTRACT.md §A（已證實缺陷 1 的根因修正）：只有使用者手勢（事件帶 originalEvent，
@@ -293,7 +325,43 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
       }
       if (best) onTargetClickRef.current?.(best)
     }
-    const onContextLost = () => failInstance('webglcontextlost')
+    // A2 FALLBACK FIX：webglcontextlost 改成「等 MapLibre 自己救」——不再收到就立即判死。改聽 Map
+    // 自己 fire 的 'webglcontextlost'／'webglcontextrestored'（不是 DOM canvas 事件；MapLibre 在
+    // map.ts _contextLost 內已經呼叫 event.preventDefault() 並完成 painter/style 的拆卸，等它自己的
+    // Map-level 事件更能確保時序正確）。寬限期只在「頁面可見」時起算（onVisibilityChange 負責在背景/
+    // 前景切換時暫停/重新起算），逾期仍未 restore 才嘗試就地重建 instance（保留鏡頭位置），重建次數
+    // 用盡才真的退回 Leaflet。
+    const armContextLostGrace = () => {
+      if (!isCurrent() || !contextLost) return
+      if (document.hidden) return // 背景中不起算，回到前景由 onVisibilityChange 重新呼叫
+      clearContextLostGraceTimer()
+      contextLostGraceTimer = setTimeout(() => {
+        contextLostGraceTimer = null
+        if (!isCurrent() || !contextLost) return
+        if (recreateAttempts >= MAX_RECREATE_ATTEMPTS) { failInstance('webglcontextlost-unrecovered'); return }
+        recreateAttempts += 1
+        recreateInstance()
+      }, CONTEXT_LOST_GRACE_MS)
+    }
+    const onContextLost = () => {
+      if (!isCurrent()) return
+      contextLost = true
+      lastFallbackReasonRef.current = 'webglcontextlost'
+      // eslint-disable-next-line no-console
+      console.warn('[retro-map] webglcontextlost, waiting for auto-recovery')
+      armContextLostGrace()
+    }
+    const onContextRestored = () => {
+      if (!isCurrent() || !contextLost) return
+      contextLost = false
+      clearContextLostGraceTimer()
+      recreateAttempts = 0
+      recoveriesRef.current += 1
+      // eslint-disable-next-line no-console
+      console.warn('[retro-map] webglcontextrestored, recovered')
+      applyRetroPadding() // 保險：transform／padding 理論上不受影響，重套用一次不會有副作用
+      try { map!.getCanvas().style.imageRendering = 'pixelated' } catch { /* ignore */ }
+    }
     const onDataLoading = (e: unknown) => {
       if (!isCurrent()) return
       const ev = e as { dataType?: string; tile?: unknown }
@@ -326,6 +394,30 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
     // pauseFollow() 已移到元件頂層（見上方宣告處的 ORBPOS_CONTRACT.md §A 說明），這裡直接沿用外層
     // closure 抓到的那一份，不再本地重宣告一次。
 
+    // A2 FALLBACK FIX：8 秒 load timeout 改成「背景分頁不消耗額度」——原本掛載當下就無條件起算 8 秒，
+    // 若使用者在地圖 tiles/worker 尚未 load 完前就切背景/鎖屏，背景計時器只會被節流、不會整個停止，
+    // 回到前景時往往已經被誤判逾時。改成：只在頁面可見時才起算／繼續倒數，背景時清掉計時器，回到前景
+    // 給滿一輪新的 FALLBACK_TIMEOUT_MS（比恢復剩餘額度更寬裕，避免「背景時已經快到期，一回前景立刻
+    // 又被判定逾時」，對慢網路更寬容）。
+    const armLoadTimeout = () => {
+      if (!isCurrent() || loadedRef.current || document.hidden) return
+      if (timeoutId) clearTimeout(timeoutId)
+      timeoutId = setTimeout(() => {
+        timeoutId = null
+        if (isCurrent() && !loadedRef.current) failInstance('load-timeout-8s')
+      }, FALLBACK_TIMEOUT_MS)
+    }
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
+        clearContextLostGraceTimer()
+        return
+      }
+      armLoadTimeout()
+      armContextLostGrace()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
     function detachListeners() {
       try {
         map?.off('load', onLoad)
@@ -336,85 +428,138 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
         map?.off('dataloading', onDataLoading as never)
         map?.off('data', onData as never)
         map?.setMissingStyleImageResolver(null)
-        map?.getCanvas().removeEventListener('webglcontextlost', onContextLost)
+        map?.off('webglcontextlost', onContextLost)
+        map?.off('webglcontextrestored', onContextRestored)
       } catch { /* ignore */ }
     }
     detachListenersRef.current = detachListeners
 
-    try {
-      reducedMotionRef.current = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    // 像素化（CONTRACT.md §4）：目標「1 個地圖像素 ≈ 3 CSS px」，pixelRatio 設成 devicePixelRatio/3
+    // （MapOptions.pixelRatio：canvas 實際解析度＝container 尺寸 × pixelRatio，配合 CSS
+    // image-rendering:pixelated 放大時自然呈現方塊感，不需要另外縮放 DOM）——只需算一次，重建 instance
+    // 也沿用同一個值。
+    const dpr = window.devicePixelRatio || 1
+    const lowPixelRatio = Math.max(0.28, dpr / 3)
 
-      // 像素魔法光點：純幾何/fillRect 繪製，無需非同步載入任何素材，掛載時直接建立一個實例即可
-      // （比舊版角色 sprite 簡單很多，不再需要方向/走路幀狀態）。
-      orbRef.current = new MagicOrb()
+    // A2 FALLBACK FIX：把原本「只在掛載時跑一次」的建圖邏輯抽成可重入的 mountInstance()——寬限期逾時
+    // 仍未 restore 時，recreateInstance() 會呼叫它就地重建一顆新 instance（保留鏡頭位置），不需要整個
+    // React 元件重新掛載。camera 有值＝重建（沿用既有鏡頭，且不重建光點/水波計時器，這些跟地圖
+    // instance 本身無關，water timer 內部每次都重讀 mapRef.current，重建後自動接上新 instance）；
+    // 沒有值＝初次掛載（沿用 initialCenter/initialZoom）。
+    function mountInstance(camera?: { center: [number, number]; zoom: number; pitch: number; bearing: number }) {
+      if (!containerRef.current) { failInstance('recreate-no-container'); return }
+      try {
+        if (!camera) {
+          reducedMotionRef.current = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          // 像素魔法光點：純幾何/fillRect 繪製，無需非同步載入任何素材，掛載時直接建立一個實例即可
+          // （比舊版角色 sprite 簡單很多，不再需要方向/走路幀狀態）。
+          orbRef.current = new MagicOrb()
+        }
 
-      // 像素化（CONTRACT.md §4）：目標「1 個地圖像素 ≈ 3 CSS px」，pixelRatio 設成 devicePixelRatio/3
-      // （MapOptions.pixelRatio：canvas 實際解析度＝container 尺寸 × pixelRatio，配合 CSS
-      // image-rendering:pixelated 放大時自然呈現方塊感，不需要另外縮放 DOM）。
-      const dpr = window.devicePixelRatio || 1
-      const lowPixelRatio = Math.max(0.28, dpr / 3)
+        map = new MapLibreMap({
+          container: containerRef.current,
+          style: buildRetroStyle() as unknown as MapOptions['style'],
+          center: (camera?.center ?? [initialCenter[1], initialCenter[0]]) as LngLatLike,
+          zoom: camera?.zoom ?? (initialZoom ?? 16.5),
+          pitch: camera?.pitch ?? 0,
+          bearing: camera?.bearing ?? 0,
+          antialias: false,
+          pixelRatio: lowPixelRatio,
+          maxPitch: 0,
+          attributionControl: false,
+        } as MapOptions)
+        mapRef.current = map
+        loadedRef.current = false // 重建時要等新 instance 自己 load 過（render loop 靠這個旗標暫停到新地圖就緒）
+        contextLost = false
+        // 建構後立刻設好（任何圖磚被請求之前），見上方 onImageMissing 說明。
+        map.setMissingStyleImageResolver(onImageMissing)
 
-      map = new MapLibreMap({
-        container: containerRef.current,
-        style: buildRetroStyle() as unknown as MapOptions['style'],
-        center: [initialCenter[1], initialCenter[0]] as LngLatLike,
-        zoom: initialZoom ?? 16.5,
-        pitch: 0,
-        bearing: 0,
-        antialias: false,
-        pixelRatio: lowPixelRatio,
-        maxPitch: 0,
-        attributionControl: false,
-      } as MapOptions)
-      mapRef.current = map
-      // 建構後立刻設好（任何圖磚被請求之前），見上方 onImageMissing 說明。
-      map.setMissingStyleImageResolver(onImageMissing)
+        armLoadTimeout()
 
-      timeoutId = setTimeout(() => { if (!loadedRef.current) failInstance('load-timeout-8s') }, FALLBACK_TIMEOUT_MS)
+        map.on('load', onLoad)
+        map.on('error', onError)
+        map.on('dragstart', onDragStart)
+        map.on('zoomstart', onZoomStart)
+        map.on('click', onClick)
+        map.on('dataloading', onDataLoading as never)
+        map.on('data', onData as never)
+        map.on('webglcontextlost', onContextLost)
+        map.on('webglcontextrestored', onContextRestored)
 
-      map.on('load', onLoad)
-      map.on('error', onError)
-      map.on('dragstart', onDragStart)
-      map.on('zoomstart', onZoomStart)
-      map.on('click', onClick)
-      map.on('dataloading', onDataLoading as never)
-      map.on('data', onData as never)
-      try { map.getCanvas().addEventListener('webglcontextlost', onContextLost) } catch { /* ignore */ }
+        if (!camera) {
+          // 水波兩幀動畫：每 500ms 切換一次。CONTRACT_R2 §1 根因調查發現：MapLibre 的
+          // `Style.updateImage()`（map.updateImage() 底層）刻意不呼叫 `_afterImageUpdated()`
+          // （對照同檔案 addImage()/removeImage() 都會呼叫），因此不會設 `_imagesListDirty`／
+          // `_changedImages`／不會 fire 'data' 事件——也就不會觸發 `_updateTilesForChangedImages()`
+          // 把該圖片廣播給 worker（"SI" 訊息）。經隔離重現（同一份 style.ts／tiles.ts，模擬 GPS 跟隨
+          // 鏡頭每秒 easeTo()）證實：只要跑起這個 500ms updateImage() 迴圈，之後任何新載入/重新載入的
+          // 圖磚，其 fill-pattern／line-pattern 全部失敗只剩底色（背景綠＋道路黑色外框線，也就是
+          // CONTRACT_R2 §1 回報的「整片純綠＋兩條黑色斜線」），即使 map.hasImage(id) 全部回 true
+          // （CPU 端圖片登記表沒問題，問題在 worker 端沒被正確通知重新烤入圖磚）；改成
+          // removeImage()+addImage()（會完整走 `_afterImageUpdated` 那條路徑）後，同樣的 60 秒
+          // GPS 跟隨壓力測試下所有圖塊持續正確渲染。addImage() 前必須先 removeImage()，否則
+          // "Image id already exist" 會拋錯（map.on('error') 才會退回 Leaflet，這裡就地 try/catch
+          // 吞掉單次失敗即可，不影響其餘圖層）。water timer 每次 tick 都重讀 mapRef.current，只需要
+          // 建立一次，instance 重建後會自動接上新地圖，不需要在 mountInstance 重建分支重新建立。
+          waterTimerRef.current = setInterval(() => {
+            // review 抓到的 major 根因：context lost 期間（onContextLost 已把 contextLost 設 true、尚未
+            // onContextRestored／recreateInstance）MapLibre 自己已經把 map.style 設成 null
+            // （node_modules/maplibre-gl/src/ui/map.ts _contextLost：`this.style.destroy(); this.style = null`），
+            // 但 hasImage() 的實作是 `return !!this.style.getImage(id)`，完全沒判斷 this.style 是否存在，
+            // 直接呼叫就會對 null 解參考丟出例外。這個計時器不會因為 contextLost 而暫停（只有 unmount／
+            // failInstance 才會 clearInterval），寬限期最長 5 秒（背景分頁更久），這段時間每 500ms 都會丟一次
+            // 未捕捉例外。加 contextLost 檢查跳過這幾輪即可，等地圖救回來（restore 或就地重建）水波動畫
+            // 會自動接上，不需要額外收尾。
+            if (!isCurrent() || reducedMotionRef.current || contextLost) return
+            const m = mapRef.current
+            if (!m || !m.hasImage('water')) return
+            waterFrameRef.current = waterFrameRef.current ? 0 : 1
+            try {
+              m.removeImage('water')
+              m.addImage('water', tileImageData('water', waterFrameRef.current))
+            } catch { /* ignore：單次幀沒換成不影響其他圖層，下一輪 500ms 再試 */ }
+          }, 500)
+        }
 
-      // 水波兩幀動畫：每 500ms 切換一次。CONTRACT_R2 §1 根因調查發現：MapLibre 的
-      // `Style.updateImage()`（map.updateImage() 底層）刻意不呼叫 `_afterImageUpdated()`
-      // （對照同檔案 addImage()/removeImage() 都會呼叫），因此不會設 `_imagesListDirty`／
-      // `_changedImages`／不會 fire 'data' 事件——也就不會觸發 `_updateTilesForChangedImages()`
-      // 把該圖片廣播給 worker（"SI" 訊息）。經隔離重現（同一份 style.ts／tiles.ts，模擬 GPS 跟隨
-      // 鏡頭每秒 easeTo()）證實：只要跑起這個 500ms updateImage() 迴圈，之後任何新載入/重新載入的
-      // 圖磚，其 fill-pattern／line-pattern 全部失敗只剩底色（背景綠＋道路黑色外框線，也就是
-      // CONTRACT_R2 §1 回報的「整片純綠＋兩條黑色斜線」），即使 map.hasImage(id) 全部回 true
-      // （CPU 端圖片登記表沒問題，問題在 worker 端沒被正確通知重新烤入圖磚）；改成
-      // removeImage()+addImage()（會完整走 `_afterImageUpdated` 那條路徑）後，同樣的 60 秒
-      // GPS 跟隨壓力測試下所有圖塊持續正確渲染。addImage() 前必須先 removeImage()，否則
-      // "Image id already exist" 會拋錯（map.on('error') 才會退回 Leaflet，這裡就地 try/catch
-      // 吞掉單次失敗即可，不影響其餘圖層）。
-      waterTimerRef.current = setInterval(() => {
-        if (!isCurrent() || reducedMotionRef.current) return
-        const m = mapRef.current
-        if (!m || !m.hasImage('water')) return
-        waterFrameRef.current = waterFrameRef.current ? 0 : 1
-        try {
-          m.removeImage('water')
-          m.addImage('water', tileImageData('water', waterFrameRef.current))
-        } catch { /* ignore：單次幀沒換成不影響其他圖層，下一輪 500ms 再試 */ }
-      }, 500)
+        ro?.disconnect()
+        ro = new ResizeObserver(() => { if (isCurrent()) { try { map!.resize() } catch { /* ignore */ }; applyRetroPadding() } })
+        ro.observe(containerRef.current)
 
-      ro = new ResizeObserver(() => { if (isCurrent()) { try { map!.resize() } catch { /* ignore */ }; applyRetroPadding() } })
-      ro.observe(containerRef.current)
-
-      startLoop()
-    } catch (e) {
-      failInstance('init-exception:' + ((e as Error)?.message || String(e)))
+        if (!camera) startLoop() // render loop 只需要啟動一次：frame() 每幀都重讀 mapRef.current，重建後自動接上新 instance
+      } catch (e) {
+        failInstance('init-exception:' + ((e as Error)?.message || String(e)))
+      }
     }
+
+    // 寬限期逾時仍未 webglcontextrestored：就地重建一顆新 instance，盡量沿用目前鏡頭位置（讀不到就退回
+    // 最新定位或 initialCenter）；先徹底清掉舊 instance（它已經是壞的，context 不會回來）再建新的。
+    function recreateInstance() {
+      if (!isCurrent()) return
+      // eslint-disable-next-line no-console
+      console.warn('[retro-map] recreating instance after unrecovered context loss, attempt', recreateAttempts)
+      let camera: { center: [number, number]; zoom: number; pitch: number; bearing: number } | null = null
+      try {
+        if (map) camera = { center: [map.getCenter().lng, map.getCenter().lat], zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() }
+      } catch { /* ignore：退回下面 fallback */ }
+      if (!camera) {
+        const p = posRef.current
+        camera = { center: p ? [p.lng, p.lat] : [initialCenterRef.current[1], initialCenterRef.current[0]], zoom: RECENTER_ZOOM, pitch: 0, bearing: 0 }
+      }
+      detachListeners()
+      try { map?.remove() } catch { /* ignore */ }
+      mapRef.current = null
+      map = null
+      recoveriesRef.current += 1 // 就地重建成功也算一次「救回來」（未必等於新 instance 一定會 load 成功，屬輕量診斷、非精確計數）
+      mountInstance(camera)
+    }
+
+    mountInstance()
+
     return () => {
       cancelled = true
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       if (timeoutId) clearTimeout(timeoutId)
+      clearContextLostGraceTimer()
       if (resumeTimerRef.current) { clearTimeout(resumeTimerRef.current); resumeTimerRef.current = null }
       if (waterTimerRef.current) { clearInterval(waterTimerRef.current); waterTimerRef.current = null }
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
@@ -449,7 +594,13 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
       // 根因調查暫時欄位（CONTRACT_R2 §1）：patternImages/canvasSize，抓 addImage 是否真的掛上、
       // 容器尺寸是否為 0——調查完成後視情況精簡。
       const TILE_IDS = ['grass', 'forest', 'water', 'wall', 'cobble', 'path', 'sand', 'rail'] as const
-      const patternImages = Object.fromEntries(TILE_IDS.map((k) => [k, map.hasImage(k)]))
+      // review 同根因（見上方 water timer 的說明）：這個偵錯 interval 是獨立的 useEffect，拿不到
+      // mountInstance 那個 closure 裡的 contextLost 旗標，改成每個 hasImage() 呼叫各自 try/catch
+      // （比照本檔案其餘 map.project() 呼叫的既有寫法）——context lost 期間單純跳過那個 tile id，
+      // 這輪快照留 false，不影響其他欄位照常更新。
+      const patternImages = Object.fromEntries(TILE_IDS.map((k) => {
+        try { return [k, map.hasImage(k)] } catch { return [k, false] }
+      }))
       const canvas = map.getCanvas()
       let trailPoints = 0
       for (const seg of segmentsRef.current) trailPoints += seg?.length || 0
@@ -503,6 +654,11 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
         },
         // 契約 §6：只給 E2E 做「有畫 vs 沒畫」前後對照用，預設 false。
         setOverlayHidden: (v: boolean) => { overlayHiddenRef.current = !!v },
+        // A2 FALLBACK FIX 輕量診斷（見上方 lastFallbackReasonRef／recoveriesRef 宣告處）：最近一次觸發過
+        // 的失敗原因（webglcontextlost／render-exception:*／load-timeout-8s…，即使最後有救回來也會留在
+        // 這裡）、以及這個 session 內自動復原成功幾次（webglcontextrestored 或就地重建各算一次）。
+        lastFallbackReason: lastFallbackReasonRef.current,
+        recoveries: recoveriesRef.current,
       }
     }, 1000)
     return () => {
@@ -556,6 +712,11 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
   }, [pos?.lat, pos?.lng])
 
   function startLoop() {
+    // A2 FALLBACK FIX：單一 render-frame 例外不再立刻拆地圖——大多是暫時性的（例如某一幀座標算出
+    // NaN、canvas 尺寸剛切版面瞬間為 0），記一筆、跳過這一幀即可，rAF 迴圈繼續跑；只有連續很多幀都
+    // 失敗（真的壞掉，不是單一瞬間的偶發狀況）才判定不可用、真正退回 Leaflet。任何一幀成功就歸零計數。
+    let consecutiveRenderFailures = 0
+    const MAX_CONSECUTIVE_RENDER_FAILURES = 6
     const frame = (t: number) => {
       rafRef.current = requestAnimationFrame(frame)
       frameCountRef.current += 1
@@ -572,8 +733,15 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
       lastFrameTRef.current = t
       try {
         renderFrame(map, dt)
+        consecutiveRenderFailures = 0
       } catch (e) {
-        onFallbackFromRender('render-exception:' + ((e as Error)?.message || String(e)))
+        consecutiveRenderFailures += 1
+        lastFallbackReasonRef.current = 'render-exception:' + ((e as Error)?.message || String(e))
+        // eslint-disable-next-line no-console
+        console.warn('[retro-map] render-frame error, skip frame', consecutiveRenderFailures, e)
+        if (consecutiveRenderFailures >= MAX_CONSECUTIVE_RENDER_FAILURES) {
+          onFallbackFromRender('render-exception:' + ((e as Error)?.message || String(e)))
+        }
       }
     }
     rafRef.current = requestAnimationFrame(frame)
@@ -582,6 +750,7 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
   function onFallbackFromRender(reason: string) {
     if (failedRef.current) return
     failedRef.current = true
+    lastFallbackReasonRef.current = reason
     // eslint-disable-next-line no-console
     console.warn('[retro-map] fallback', reason)
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }

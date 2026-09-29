@@ -170,6 +170,13 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
   // 實際畫出來的像素位置），預設 false，不影響一般使用者。
   const overlayHiddenRef = useRef(false)
   const prevStatusRef = useRef<string | undefined>(undefined) // 比照 cute：新一趟 tracking 開始時強制歸回 false，避免卡在上一輪 E2E 呼叫的 true
+  // A2 FALLBACK FIX（2026-09-29）：webglcontextlost／render-exception 這類「其實常常救得回來」的失敗，
+  // 舊版一律立即永久退回 Leaflet（根因調查：iOS 背景分頁的 WebGL context 遺失絕大多數可自動復原，
+  // MapLibre 自己就支援，舊版卻搶在它復原之前就把 instance 砍了）。這兩個 ref 是輕量診斷欄位，供
+  // __scifiDebug 曝光「最近一次觸發過的失敗原因」與「這個 session 內自動復原成功幾次」，純觀測用，
+  // 不影響任何判斷邏輯本身；沒有前端可上報的 client-log 端點（已查證），因此只曝光在這裡＋console。
+  const lastFallbackReasonRef = useRef<string | null>(null)
+  const recoveriesRef = useRef(0)
 
   // 高頻資料走 ref（避免 rAF 迴圈依賴 useEffect 重新掛載），由 props 變動時同步寫入。
   const posRef = useRef(pos); posRef.current = pos
@@ -199,6 +206,7 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
   const fail = (reason: string) => {
     if (failedRef.current) return
     failedRef.current = true
+    lastFallbackReasonRef.current = reason
     // eslint-disable-next-line no-console
     console.warn('[scifi-map] fallback', reason)
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
@@ -310,13 +318,26 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
     // null（沒有更新的 instance 搶先接管），就視為仍是目前有效的呼叫，讓 failInstance 得以執行到底。
     const isCurrent = () => !cancelled && mapRef.current === map
 
+    // A2 FALLBACK FIX（2026-09-29）：webglcontextlost／8 秒 load timeout 這兩種失敗，根因調查證實絕大
+    // 多數是「暫時性、MapLibre／瀏覽器自己就會恢復」的情況（iOS 背景分頁 GPU 資源回收、背景分頁計時器
+    // 節流），舊版卻一律立即永久退回 Leaflet，完全沒有給復原機會。以下狀態只影響「要不要現在就判
+    // 死」，不動 isCurrent()／instance 隔離／DPR canvas／padding／follow 等既有邏輯。
+    let contextLost = false // MapLibre 已回報 webglcontextlost、尚未 restore／尚未放棄
+    let contextLostGraceTimer: ReturnType<typeof setTimeout> | null = null
+    let recreateAttempts = 0
+    const CONTEXT_LOST_GRACE_MS = 5000 // 回到前景後給 MapLibre 自己 restore 的寬限期（node_modules/maplibre-gl/src/ui/map.ts _contextRestored）
+    const MAX_RECREATE_ATTEMPTS = 2 // 寬限期逾時仍未 restore：就地重建 instance 最多幾次，超過才真的退回 Leaflet
+    const clearContextLostGraceTimer = () => { if (contextLostGraceTimer) { clearTimeout(contextLostGraceTimer); contextLostGraceTimer = null } }
+
     const failInstance = (reason: string) => {
       if (localFailed || failedRef.current) return
       if (!isCurrent()) return // 舊 instance 的遲到事件：目前使用中的已經是別的 map（或已被 cleanup），不動它
       localFailed = true
       failedRef.current = true
+      lastFallbackReasonRef.current = reason
       // eslint-disable-next-line no-console
       console.warn('[scifi-map] fallback', reason)
+      clearContextLostGraceTimer()
       if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
       detachListeners()
       try { map?.remove() } catch { /* ignore */ }
@@ -344,6 +365,18 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
     }
     const onError = (e: unknown) => {
       if (!isCurrent()) return
+      // review 抓到的 minor 根因：MapLibre `_contextRestored()`（node_modules/maplibre-gl/src/ui/map.ts）
+      // 重新 `_setupPainter()`（取得 WebGL context）失敗時不會 fire 'webglcontextrestored'，而是直接 fire
+      // 這個 'error' 事件然後 return——此時 contextLost 仍是 true（webglcontextrestored 從沒發生過）。舊
+      // 寫法不分青紅皂白一律 failInstance() 永久退回 Leaflet，等於讓這個情境完全繞過上面剛加的「寬限期＋
+      // 就地重建最多兩次」安全網。改成：只要還在 context-lost 復原流程中且重建次數沒用完，就走跟
+      // armContextLostGrace() 逾時分支一樣的路（recreateInstance()）；真的用完才 failInstance()。
+      if (contextLost && recreateAttempts < MAX_RECREATE_ATTEMPTS) {
+        clearContextLostGraceTimer()
+        recreateAttempts += 1
+        recreateInstance()
+        return
+      }
       failInstance('map-error:' + ((e as { error?: { message?: string } })?.error?.message || 'unknown'))
     }
     // docs/skins/ORBPOS_CONTRACT.md §A：只有「使用者手勢」才暫停跟隨——dragstart/zoomstart 不分使用者
@@ -368,7 +401,52 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
       }
       if (best) onTargetClickRef.current?.(best)
     }
-    const onContextLost = () => failInstance('webglcontextlost')
+    // A2 FALLBACK FIX：webglcontextlost 改成「等 MapLibre 自己救」——不再收到就立即判死。改聽 Map
+    // 自己 fire 的 'webglcontextlost'／'webglcontextrestored'（不是 DOM canvas 事件；MapLibre 在
+    // map.ts _contextLost 內已經呼叫 event.preventDefault() 並完成 painter/style 的拆卸，等它自己的
+    // Map-level 事件更能確保時序正確）。寬限期只在「頁面可見」時起算（onVisibilityChange 負責在背景/
+    // 前景切換時暫停/重新起算），逾期仍未 restore 才嘗試就地重建 instance（保留鏡頭位置），重建次數
+    // 用盡才真的退回 Leaflet。
+    const armContextLostGrace = () => {
+      if (!isCurrent() || !contextLost) return
+      if (document.hidden) return // 背景中不起算，回到前景由 onVisibilityChange 重新呼叫
+      clearContextLostGraceTimer()
+      contextLostGraceTimer = setTimeout(() => {
+        contextLostGraceTimer = null
+        if (!isCurrent() || !contextLost) return
+        if (recreateAttempts >= MAX_RECREATE_ATTEMPTS) { failInstance('webglcontextlost-unrecovered'); return }
+        recreateAttempts += 1
+        recreateInstance()
+      }, CONTEXT_LOST_GRACE_MS)
+    }
+    const onContextLost = () => {
+      if (!isCurrent()) return
+      contextLost = true
+      lastFallbackReasonRef.current = 'webglcontextlost'
+      // eslint-disable-next-line no-console
+      console.warn('[scifi-map] webglcontextlost, waiting for auto-recovery')
+      armContextLostGrace()
+    }
+    const onContextRestored = () => {
+      if (!isCurrent() || !contextLost) return
+      contextLost = false
+      clearContextLostGraceTimer()
+      recreateAttempts = 0
+      recoveriesRef.current += 1
+      // eslint-disable-next-line no-console
+      console.warn('[scifi-map] webglcontextrestored, recovered')
+      applyScifiPadding() // 保險：transform／padding 理論上不受影響，重套用一次不會有副作用
+      try {
+        map!.setSky({
+          'sky-color': '#02040a',
+          'horizon-color': '#0a2540',
+          'sky-horizon-blend': 0.9,
+          'horizon-fog-blend': 0.6,
+          'atmosphere-blend': 0.35,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any)
+      } catch { /* ignore */ }
+    }
     // maplibre-gl 的 tile 事件是 dataType==='source'（不是 'tile'）＋帶 `tile` 欄位，見
     // maplibre-gl.d.ts MapSourceDataEvent（2026-09-27 smoke test 實測抓到：舊版誤判 dataType==='tile'，
     // 導致 tilesRequested/tilesLoaded 恆為 0）。
@@ -386,6 +464,30 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
     // pauseFollow() 已移到元件頂層（見上方宣告處的 ORBPOS_CONTRACT.md §A／S2 說明），這裡直接沿用
     // 外層 closure 抓到的那一份，不再本地重宣告一次（比照 RetroMap.tsx 同一輪的改法）。
 
+    // A2 FALLBACK FIX：8 秒 load timeout 改成「背景分頁不消耗額度」——原本掛載當下就無條件起算 8 秒，
+    // 若使用者在地圖 tiles/worker 尚未 load 完前就切背景/鎖屏，背景計時器只會被節流、不會整個停止，
+    // 回到前景時往往已經被誤判逾時。改成：只在頁面可見時才起算／繼續倒數，背景時清掉計時器，回到前景
+    // 給滿一輪新的 FALLBACK_TIMEOUT_MS（比恢復剩餘額度更寬裕，避免「背景時已經快到期，一回前景立刻
+    // 又被判定逾時」，對慢網路更寬容）。
+    const armLoadTimeout = () => {
+      if (!isCurrent() || loadedRef.current || document.hidden) return
+      if (timeoutId) clearTimeout(timeoutId)
+      timeoutId = setTimeout(() => {
+        timeoutId = null
+        if (isCurrent() && !loadedRef.current) failInstance('load-timeout-8s')
+      }, FALLBACK_TIMEOUT_MS)
+    }
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
+        clearContextLostGraceTimer()
+        return
+      }
+      armLoadTimeout()
+      armContextLostGrace()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
     function detachListeners() {
       try {
         map?.off('load', onLoad)
@@ -395,57 +497,98 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
         map?.off('click', onClick)
         map?.off('dataloading', onDataLoading as never)
         map?.off('data', onData as never)
-        map?.getCanvas().removeEventListener('webglcontextlost', onContextLost)
+        map?.off('webglcontextlost', onContextLost)
+        map?.off('webglcontextrestored', onContextRestored)
       } catch { /* ignore */ }
     }
     detachListenersRef.current = detachListeners
 
-    try {
-      reducedMotionRef.current = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      const isMobile = window.innerWidth < 768
-      soulRef.current = new Soul(focusMode ? 28 : (isMobile ? 55 : 68))
-      trailRef.current = new TrailPool(focusMode ? 200 : 400)
-      rainRef.current = new LightRain(reducedMotionRef.current || focusMode ? 0 : (isMobile ? 24 : 36))
+    // A2 FALLBACK FIX：把原本「只在掛載時跑一次」的建圖邏輯抽成可重入的 mountInstance()——寬限期逾時
+    // 仍未 restore 時，recreateInstance() 會呼叫它就地重建一顆新 instance（保留鏡頭位置），不需要整個
+    // React 元件重新掛載。camera 有值＝重建（沿用既有鏡頭，且不重建 Soul/Trail/Rain／不重啟 render
+    // loop，這些跟地圖 instance 本身無關）；沒有值＝初次掛載（沿用 initialCenter/initialZoom）。
+    function mountInstance(camera?: { center: [number, number]; zoom: number; pitch: number; bearing: number }) {
+      if (!containerRef.current) { failInstance('recreate-no-container'); return }
+      try {
+        if (!camera) {
+          reducedMotionRef.current = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          const isMobile = window.innerWidth < 768
+          soulRef.current = new Soul(focusMode ? 28 : (isMobile ? 55 : 68))
+          trailRef.current = new TrailPool(focusMode ? 200 : 400)
+          rainRef.current = new LightRain(reducedMotionRef.current || focusMode ? 0 : (isMobile ? 24 : 36))
+        }
 
-      map = new MapLibreMap({
-        container: containerRef.current,
-        style: buildScifiStyle() as unknown as MapOptions['style'],
-        center: [initialCenter[1], initialCenter[0]] as LngLatLike,
-        zoom: initialZoom ?? 16,
-        pitch: 55,
-        bearing: 0,
-        antialias: true,
-        maxPitch: 70,
-        localIdeographFontFamily: "'Noto Sans TC','Microsoft JhengHei',sans-serif",
-        // 授權聲明用精簡「ⓘ」按鈕放右上（預設是展開的整條放左/右下，專注模式時會橫在下半部數字上；2026-09-27 編排者檢視截圖）。
-        attributionControl: false,
-      } as MapOptions)
-      try { map.addControl(new AttributionControl({ compact: true }), 'top-right') } catch { /* ignore */ }
-      mapRef.current = map
+        map = new MapLibreMap({
+          container: containerRef.current,
+          style: buildScifiStyle() as unknown as MapOptions['style'],
+          center: (camera?.center ?? [initialCenter[1], initialCenter[0]]) as LngLatLike,
+          zoom: camera?.zoom ?? (initialZoom ?? 16),
+          pitch: camera?.pitch ?? 55,
+          bearing: camera?.bearing ?? 0,
+          antialias: true,
+          maxPitch: 70,
+          localIdeographFontFamily: "'Noto Sans TC','Microsoft JhengHei',sans-serif",
+          // 授權聲明用精簡「ⓘ」按鈕放右上（預設是展開的整條放左/右下，專注模式時會橫在下半部數字上；2026-09-27 編排者檢視截圖）。
+          attributionControl: false,
+        } as MapOptions)
+        try { map.addControl(new AttributionControl({ compact: true }), 'top-right') } catch { /* ignore */ }
+        mapRef.current = map
+        loadedRef.current = false // 重建時要等新 instance 自己 load 過（render loop 靠這個旗標暫停到新地圖就緒）
+        contextLost = false
 
-      timeoutId = setTimeout(() => { if (!loadedRef.current) failInstance('load-timeout-8s') }, FALLBACK_TIMEOUT_MS)
+        armLoadTimeout()
 
-      map.on('load', onLoad)
-      map.on('error', onError)
-      map.on('dragstart', onDragStart)
-      map.on('zoomstart', onZoomStart)
-      map.on('click', onClick)
-      map.on('dataloading', onDataLoading as never)
-      map.on('data', onData as never)
-      try { map.getCanvas().addEventListener('webglcontextlost', onContextLost) } catch { /* ignore */ }
+        map.on('load', onLoad)
+        map.on('error', onError)
+        map.on('dragstart', onDragStart)
+        map.on('zoomstart', onZoomStart)
+        map.on('click', onClick)
+        map.on('dataloading', onDataLoading as never)
+        map.on('data', onData as never)
+        map.on('webglcontextlost', onContextLost)
+        map.on('webglcontextrestored', onContextRestored)
 
-      try { document.fonts?.load?.(`700 14px ${orbitron.style.fontFamily}`) } catch { /* 預載失敗不影響地圖，canvas 文字退回預設字型 */ }
+        try { document.fonts?.load?.(`700 14px ${orbitron.style.fontFamily}`) } catch { /* 預載失敗不影響地圖，canvas 文字退回預設字型 */ }
 
-      ro = new ResizeObserver(() => { if (isCurrent()) { try { map!.resize() } catch { /* ignore */ }; applyScifiPadding() } })
-      ro.observe(containerRef.current)
+        ro?.disconnect()
+        ro = new ResizeObserver(() => { if (isCurrent()) { try { map!.resize() } catch { /* ignore */ }; applyScifiPadding() } })
+        ro.observe(containerRef.current)
 
-      startLoop()
-    } catch (e) {
-      failInstance('init-exception:' + ((e as Error)?.message || String(e)))
+        if (!camera) startLoop() // render loop 只需要啟動一次：frame() 每幀都重讀 mapRef.current，重建後自動接上新 instance
+      } catch (e) {
+        failInstance('init-exception:' + ((e as Error)?.message || String(e)))
+      }
     }
+
+    // 寬限期逾時仍未 webglcontextrestored：就地重建一顆新 instance，盡量沿用目前鏡頭位置（讀不到就退回
+    // 最新定位或 initialCenter）；先徹底清掉舊 instance（它已經是壞的，context 不會回來）再建新的。
+    function recreateInstance() {
+      if (!isCurrent()) return
+      // eslint-disable-next-line no-console
+      console.warn('[scifi-map] recreating instance after unrecovered context loss, attempt', recreateAttempts)
+      let camera: { center: [number, number]; zoom: number; pitch: number; bearing: number } | null = null
+      try {
+        if (map) camera = { center: [map.getCenter().lng, map.getCenter().lat], zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() }
+      } catch { /* ignore：退回下面 fallback */ }
+      if (!camera) {
+        const p = posRef.current
+        camera = { center: p ? [p.lng, p.lat] : [initialCenterRef.current[1], initialCenterRef.current[0]], zoom: RECENTER_ZOOM, pitch: 55, bearing: 0 }
+      }
+      detachListeners()
+      try { map?.remove() } catch { /* ignore */ }
+      mapRef.current = null
+      map = null
+      recoveriesRef.current += 1 // 就地重建成功也算一次「救回來」（未必等於新 instance 一定會 load 成功，屬輕量診斷、非精確計數）
+      mountInstance(camera)
+    }
+
+    mountInstance()
+
     return () => {
       cancelled = true
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       if (timeoutId) clearTimeout(timeoutId)
+      clearContextLostGraceTimer()
       if (resumeTimerRef.current) { clearTimeout(resumeTimerRef.current); resumeTimerRef.current = null }
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
       ro?.disconnect()
@@ -497,6 +640,11 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
         fps: fpsRef.current,
         // 驗收14：只給 E2E 做「有畫 vs 沒畫」前後對照用，預設 false（見上方 overlayHiddenRef 宣告處）。
         setOverlayHidden: (v: boolean) => { overlayHiddenRef.current = !!v },
+        // A2 FALLBACK FIX 輕量診斷（見上方 lastFallbackReasonRef／recoveriesRef 宣告處）：最近一次觸發過
+        // 的失敗原因（webglcontextlost／render-exception:*／load-timeout-8s…，即使最後有救回來也會留在
+        // 這裡）、以及這個 session 內自動復原成功幾次（webglcontextrestored 或就地重建各算一次）。
+        lastFallbackReason: lastFallbackReasonRef.current,
+        recoveries: recoveriesRef.current,
       }
     }, 1000)
     return () => {
@@ -570,6 +718,11 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
   }, [pos?.lat, pos?.lng])
 
   function startLoop() {
+    // A2 FALLBACK FIX：單一 render-frame 例外不再立刻拆地圖——大多是暫時性的（例如某一幀座標算出
+    // NaN、canvas 尺寸剛切版面瞬間為 0），記一筆、跳過這一幀即可，rAF 迴圈繼續跑；只有連續很多幀都
+    // 失敗（真的壞掉，不是單一瞬間的偶發狀況）才判定不可用、真正退回 Leaflet。任何一幀成功就歸零計數。
+    let consecutiveRenderFailures = 0
+    const MAX_CONSECUTIVE_RENDER_FAILURES = 6
     const frame = (t: number) => {
       rafRef.current = requestAnimationFrame(frame)
       // __scifiDebug.fps：以實際 rAF 呼叫頻率量測（獨立於下方 fps 上限節流），每秒回填一次 fpsRef。
@@ -587,8 +740,15 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
       lastFrameTRef.current = t
       try {
         renderFrame(map, dt)
+        consecutiveRenderFailures = 0
       } catch (e) {
-        onFallbackFromRender('render-exception:' + ((e as Error)?.message || String(e)))
+        consecutiveRenderFailures += 1
+        lastFallbackReasonRef.current = 'render-exception:' + ((e as Error)?.message || String(e))
+        // eslint-disable-next-line no-console
+        console.warn('[scifi-map] render-frame error, skip frame', consecutiveRenderFailures, e)
+        if (consecutiveRenderFailures >= MAX_CONSECUTIVE_RENDER_FAILURES) {
+          onFallbackFromRender('render-exception:' + ((e as Error)?.message || String(e)))
+        }
       }
     }
     rafRef.current = requestAnimationFrame(frame)
@@ -601,6 +761,7 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
   function onFallbackFromRender(reason: string) {
     if (failedRef.current) return
     failedRef.current = true
+    lastFallbackReasonRef.current = reason
     // eslint-disable-next-line no-console
     console.warn('[scifi-map] fallback', reason)
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
