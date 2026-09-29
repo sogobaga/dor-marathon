@@ -318,10 +318,68 @@ func TestAssembleDailyReportMessage_WearableSectionAppended(t *testing.T) {
 }
 
 func TestAssembleDailyReportMessage_NoWearableSectionWhenEmpty(t *testing.T) {
-	d := baseReportData() // d.Wearable 為 nil（未注入/查詢失敗）
+	d := baseReportData() // d.Wearable／d.WearableSilent 皆為 nil（未注入/查詢失敗）
 	msg := buildDailyReportMessage(d)
 	if strings.Contains(msg, "穿戴串接") {
-		t.Errorf("should not show wearable section when d.Wearable is empty, got:\n%s", msg)
+		t.Errorf("should not show wearable section when both are empty, got:\n%s", msg)
+	}
+}
+
+// --- 穿戴串接「疑似靜默中斷」告警（2026-09-30）：wearableSilentCutoff / wearableSilentSinceLabel /
+// formatWearableSilentLine ---
+
+func TestWearableSilentCutoff_SubtractsWindow(t *testing.T) {
+	now := time.Date(2026, 9, 30, 8, 0, 0, 0, time.UTC)
+	want := now.Add(-3 * 24 * time.Hour)
+	if got := wearableSilentCutoff(now); !got.Equal(want) {
+		t.Errorf("wearableSilentCutoff(%v) = %v, want %v", now, got, want)
+	}
+}
+
+func TestWearableSilentSinceLabel_NilMeansNever(t *testing.T) {
+	if got := wearableSilentSinceLabel(nil); got != "從未" {
+		t.Errorf("wearableSilentSinceLabel(nil) = %q, want 從未", got)
+	}
+}
+
+func TestWearableSilentSinceLabel_DaysSinceLastActivity(t *testing.T) {
+	sevenDaysAgo := time.Now().Add(-7 * 24 * time.Hour)
+	if got := wearableSilentSinceLabel(&sevenDaysAgo); got != "7 天前" {
+		t.Errorf("wearableSilentSinceLabel(7d ago) = %q, want 7 天前", got)
+	}
+}
+
+func TestFormatWearableSilentLine_NeverSynced(t *testing.T) {
+	line := formatWearableSilentLine(WearableSilentConnection{Provider: "coros", DisplayName: "小明"})
+	for _, want := range []string{"⚠️", "COROS", "小明", "從未"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("formatWearableSilentLine() = %q, want it to contain %q", line, want)
+		}
+	}
+}
+
+func TestFormatWearableSilentLine_DaysAgo(t *testing.T) {
+	last := time.Now().Add(-10 * 24 * time.Hour)
+	line := formatWearableSilentLine(WearableSilentConnection{Provider: "garmin", DisplayName: "小華", LastActivityAt: &last})
+	for _, want := range []string{"⚠️", "GARMIN", "小華", "10 天前"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("formatWearableSilentLine() = %q, want it to contain %q", line, want)
+		}
+	}
+}
+
+func TestAssembleDailyReportMessage_WearableSilentSectionAppendedEvenWithoutWearable(t *testing.T) {
+	d := baseReportData() // d.Wearable 為 nil（例如 Terra 未注入），但仍有靜默中斷告警要顯示
+	last := time.Now().Add(-5 * 24 * time.Hour)
+	d.WearableSilent = []WearableSilentConnection{
+		{Provider: "coros", DisplayName: "小明", LastActivityAt: &last},
+	}
+	msg := buildDailyReportMessage(d)
+	if !strings.Contains(msg, "⌚ 穿戴串接") {
+		t.Fatalf("expected wearable section header even when d.Wearable is nil, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "⚠️ COROS：小明 疑似已停止同步") {
+		t.Errorf("expected silent-connection line, got:\n%s", msg)
 	}
 }
 

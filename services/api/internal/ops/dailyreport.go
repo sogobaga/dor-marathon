@@ -119,6 +119,11 @@ type dailyReportData struct {
 	// （見 buildWearableSection），此時 assembleDailyReportMessage 整段不顯示（沒有訊號比顯示假訊號好）。
 	Wearable []WearableProviderStatus
 
+	// WearableSilent（2026-09-30，見 buildWearableSilentWarnings／WearableSilentConnection）：疑似
+	// 靜默中斷的穿戴連結——近 wearableSilentWindow 內完全沒有該 provider 的活動，但同一使用者同期間
+	// 卻有其他來源的活動。查詢失敗時為 nil，同樣不讓整份報告失敗（見該函式註解）。
+	WearableSilent []WearableSilentConnection
+
 	// RawLogPurged：GPS 原始定位點記錄（見 internal/gpsrawlog，契約 B）保存期限排程當天清除的筆數；
 	// 0 時 assembleDailyReportMessage 整行不顯示（見契約 B「保存期限」段：「有刪才顯示」）。
 	RawLogPurged int
@@ -430,6 +435,11 @@ func (h *Handler) buildDailyReportData(ctx context.Context) (dailyReportData, er
 	// 介面（不碰 h.db），方便單元測試不需要真的連 DB 就能驗證「注入假 fetcher →組出正確結果」。
 	d.Wearable = buildWearableSection(ctx, h.wearable)
 
+	// 7b) 穿戴串接「疑似靜默中斷」告警（2026-09-30）：見 buildWearableSilentWarnings 註解。獨立於
+	// 上面 Terra-only 的 d.Wearable，直接查 h.db（跟 buildTrafficSummary 同一慣例），涵蓋 user_integrations
+	// 全部 provider（不限 via='terra'）。查詢本身失敗只記警告、不讓整份報告失敗。
+	d.WearableSilent = h.buildWearableSilentWarnings(ctx)
+
 	// 8) GPS 原始定位點記錄保存期限（見 internal/gpsrawlog、契約 B「保存期限」段：「不另開週期性
 	// DB 查詢」，掛在這個既有的每日排程順手做）。表尚未建立（migration 195 未套用）或查詢本身失敗
 	// 只記警告、不讓整份報告失敗——比照 einvoice/wearable 兩段「錦上添花，不拖垮固定段落」的既有慣例。
@@ -456,6 +466,91 @@ func buildWearableSection(ctx context.Context, wr WearableReporter) []WearablePr
 		return nil
 	}
 	return statuses
+}
+
+// wearableSilentWindow：判定某 provider 連結「疑似靜默中斷」的門檻（見任務規格 2026-09-30：COROS
+// 經 Terra 自 9/23 起無資料，同期間 Strava／App GPS 仍有活動的實際案例）。同一個常數也拿來要求連結
+// 本身至少存在這麼久（見 buildWearableSilentWarnings SQL 的 ui.created_at 條件）——避免剛連上、
+// 第一筆資料還沒同步進來的新連結被誤判成「從未」。
+const wearableSilentWindow = 3 * 24 * time.Hour
+
+// wearableSilentCutoff 純函式抽出 buildWearableSilentWarnings 的時間門檻計算，方便不連 DB 也能單元
+// 測試（見 dailyreport_test.go）。
+func wearableSilentCutoff(now time.Time) time.Time {
+	return now.Add(-wearableSilentWindow)
+}
+
+// buildWearableSilentWarnings 查「疑似靜默中斷」的穿戴連結（見 WearableSilentConnection 註解）：
+// user_integrations 裡任何一條連結（不限 via，direct/terra 皆涵蓋——COROS 可能是直連也可能經
+// Terra），近 wearableSilentWindow（3 天）內完全沒有該 provider 的活動，但同一使用者同一期間卻有
+// 「其他來源」（App GPS——activities.source IS NULL，或別的 provider）的活動，代表使用者仍在跑步、
+// 只是這條連結沒在送資料，值得人工複查（不是使用者本來就沒在動）。
+//
+// 單一 SQL（相關子查詢），不額外開週期性 DB 查詢，掛在既有「穿戴串接」資料組裝步驟（7b）一起做。
+// 查詢失敗只記警告、不讓整份報告失敗（比照 einvoice/wearable 既有慣例：這是錦上添花的告警訊號，
+// 不是報告的核心數字）。只回傳顯示名稱（COALESCE(u.name,u.handle)），不回傳 email／帳號編碼
+// （見 account-code-privacy：面向玩家/告警的輸出一律不得回傳他人編碼）。
+//
+// 三個子查詢都靠 idx_activities_user_recorded_unflagged(user_id, recorded_at) WHERE NOT flagged
+// （migration 130）：NOT EXISTS／EXISTS 兩個子查詢帶 recorded_at >= cutoff 範圍能直接用索引；
+// 最後一欄「這個 provider 史上最後一筆活動」的子查詢只對已經通過前面 WHERE 篩選、數量很少的
+// 「異常」列才會真的執行（Postgres 對 SELECT 清單裡的相關子查詢只在最終列才算一次）。
+//
+// JOIN 加 NOT u.is_virtual＝防禦性，比照 380 行附近營收查詢的既有慣例：虛擬選手現制只由
+// virtualrunner.CreateRunner 建立（不走 OAuth/Terra webhook），理論上不會有 user_integrations
+// 列，這裡篩掉純粹是跟全檔一致的防禦寫法，避免日後這個假設被打破時，告警把管理者自己造的
+// 虛擬帳號也算進「疑似串接中斷」。
+func (h *Handler) buildWearableSilentWarnings(ctx context.Context) []WearableSilentConnection {
+	cutoff := wearableSilentCutoff(time.Now())
+	// 刻意不排除 flagged：跨來源重複（cross_source_duplicate）等被標記的活動照樣證明「這條管線有送資料進來」／
+	// 「使用者這段期間確實有跑」，排除它們會把「資料有到、只是被判為重複」誤報成斷流（2026-09-30 使用者本人
+	// COROS 活動多被標重複，若只看未標記的會誤算成 9/03 起沒資料，實際到 9/23）。
+	rows, err := h.db.Query(ctx, `
+		SELECT
+			ui.provider,
+			COALESCE(u.name, u.handle) AS display_name,
+			(
+				SELECT MAX(a.recorded_at)
+				FROM activities a
+				WHERE a.user_id = ui.user_id AND a.source = ui.provider
+			) AS last_provider_activity
+		FROM user_integrations ui
+		JOIN users u ON u.id = ui.user_id AND NOT u.is_virtual
+		WHERE ui.created_at < $1
+		  AND NOT EXISTS (
+			SELECT 1 FROM activities a2
+			WHERE a2.user_id = ui.user_id
+			  AND a2.source = ui.provider
+			  AND a2.recorded_at >= $1
+		  )
+		  AND EXISTS (
+			SELECT 1 FROM activities a3
+			WHERE a3.user_id = ui.user_id
+			  AND a3.source IS DISTINCT FROM ui.provider
+			  AND a3.recorded_at >= $1
+		  )
+		ORDER BY ui.provider, display_name
+	`, cutoff)
+	if err != nil {
+		log.Warn().Err(err).Msg("daily report: wearable silent connections query failed")
+		return nil
+	}
+	defer rows.Close()
+
+	var out []WearableSilentConnection
+	for rows.Next() {
+		var s WearableSilentConnection
+		if err := rows.Scan(&s.Provider, &s.DisplayName, &s.LastActivityAt); err != nil {
+			log.Warn().Err(err).Msg("daily report: wearable silent connections scan failed")
+			return nil
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		log.Warn().Err(err).Msg("daily report: wearable silent connections rows failed")
+		return nil
+	}
+	return out
 }
 
 // buildTrafficSummary 查 ops_ip_daily 昨日（day）資料，彙整成報告用的 trafficSummary。
@@ -700,11 +795,14 @@ func assembleDailyReportMessage(d dailyReportData, raceKeep int) string {
 		fmt.Fprintf(&b, "🧾 電子發票：昨日開立 %d／失敗 %d／待處理 %d", d.EInvoiceIssued, d.EInvoiceFailed, d.EInvoicePending)
 	}
 
-	if len(d.Wearable) > 0 {
+	if len(d.Wearable) > 0 || len(d.WearableSilent) > 0 {
 		b.WriteString("\n\n")
 		b.WriteString("⌚ 穿戴串接：\n")
 		for _, s := range d.Wearable {
 			b.WriteString(formatWearableLine(s) + "\n")
+		}
+		for _, s := range d.WearableSilent {
+			b.WriteString(formatWearableSilentLine(s) + "\n")
 		}
 	}
 
@@ -728,6 +826,29 @@ func formatWearableLine(s WearableProviderStatus) string {
 		line = "⚠️ " + line
 	}
 	return line
+}
+
+// wearableSilentSinceLabel 把「這個 provider 史上最後一筆活動時間」轉成人類可讀的「N 天前」或
+// 「從未」（見 WearableSilentConnection.LastActivityAt 註解）。抽成純函式方便單元測試，不必連 DB
+// 也不必真的等時間流逝。
+func wearableSilentSinceLabel(last *time.Time) string {
+	if last == nil {
+		return "從未"
+	}
+	days := int(time.Since(*last).Hours() / 24)
+	if days < 0 {
+		days = 0 // 理論上不會發生（活動時間不可能晚於現在），保底避免顯示負數天數
+	}
+	return fmt.Sprintf("%d 天前", days)
+}
+
+// formatWearableSilentLine 組單一「疑似靜默中斷」連結的行（見 WearableSilentConnection 註解）。
+// 一律加 ⚠️（比照 formatWearableLine 的標記風格）——這段本身就是篩選過的異常清單，不像
+// formatWearableLine 要在「正常」與「異常」之間判斷。刻意只印 provider＋顯示名稱＋天數，不印
+// email／帳號編碼（見 account-code-privacy）。
+func formatWearableSilentLine(s WearableSilentConnection) string {
+	return fmt.Sprintf("⚠️ %s：%s 疑似已停止同步（最後活動 %s，同期間其他來源仍有跑步紀錄）",
+		strings.ToUpper(s.Provider), s.DisplayName, wearableSilentSinceLabel(s.LastActivityAt))
 }
 
 // buildDailyReportMessage 組出最終要送出的 Telegram 文字，超過 telegramMaxLen 時逐步減少「報名」

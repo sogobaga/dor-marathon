@@ -98,6 +98,19 @@ type WearableProviderStatus struct {
 	LastDataAt *time.Time
 }
 
+// WearableSilentConnection 每日報告「穿戴串接」段落「疑似靜默中斷」的單一連結（2026-09-30，見
+// dailyreport.go buildWearableSilentWarnings／formatWearableSilentLine）。與 WearableProviderStatus
+// 的差異：後者是打 Terra API 問「Terra 認為最後收到資料的時間」（只涵蓋 via='terra' 的品牌），這裡
+// 反過來查我方 activities 表「這個使用者實際有沒有從這個 provider 收到活動」（不限 via，direct/terra
+// 皆涵蓋）——兩者互補：Terra 端可能回報正常，但我方其實沒收到任何活動寫入（webhook 掉了）；也可能
+// Terra 本身就沒在推播。典型案例：使用者 COROS 經 Terra 連結但自某日起無 COROS 活動，同期間卻有
+// Strava／App GPS 活動，代表人仍在跑、只是這條連結沒在送資料。
+type WearableSilentConnection struct {
+	Provider       string
+	DisplayName    string     // COALESCE(u.name, u.handle)，見 display-name-convention（禁用 email/帳號編碼）
+	LastActivityAt *time.Time // 這個 provider 有史以來最後一筆活動時間；nil＝這條連結從未有過任何活動（顯示「從未」）
+}
+
 // WearableReporter 每日報告「穿戴串接」段落數據來源（見 internal/integration TerraHandler.
 // ProviderStatuses 實作）。用小介面而非直接 import internal/integration，比照上方
 // EinvoiceReporter／GPSRequeuer 既有慣例，避免本套件反過來依賴各業務套件。

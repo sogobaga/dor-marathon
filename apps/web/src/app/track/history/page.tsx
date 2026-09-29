@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { activitiesApi, profileApi, type GpsRunHistory } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
 import { decodePolylineSegments } from '@/lib/polyline'
@@ -8,8 +9,15 @@ import { kmMarkerPositions, addKmMarkers } from '@/lib/kmMarkers'
 import { useDashboard } from '@/lib/useDashboard'
 import { qualifiesGov500, gov500RunKey, markGov500Shot, hasGov500ShotThisWeek } from '@/lib/gov500'
 import { scrollIntoNearest } from '@/lib/scrollIntoNearest'
+import { getActiveSkin, SKIN_CHANGE_EVENT, type OverrideSkin } from '@/lib/skinOverride'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
+
+// 帳號風格覆寫（scifi／retro／cute）單趟詳細地圖（HISTORY_MAP_CONTRACT.md）：next/dynamic(ssr:false)
+// 動態載入，只在 activeSkin 命中三者之一且尚未 fallback 時才 import——非白名單使用者的
+// /track/history 首屏 bundle 完全不含 SkinRouteMap.tsx／maplibre-gl，比照 track/page.tsx 三個即時
+// 地圖的既有隔離原則。
+const SkinRouteMap = dynamic(() => import('./SkinRouteMap'), { ssr: false })
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -65,6 +73,40 @@ export default function TrackHistoryPage() {
       setSel(run)
     } catch (e: any) { setErr(e?.message || '載入軌跡失敗') }
   }
+
+  // ── 帳號風格覆寫地圖（HISTORY_MAP_CONTRACT.md）：偵測邏輯比照 track/page.tsx 同名 effect（單一
+  // 真相 lib/skinOverride.ts 的 getActiveSkin()，MutationObserver＋SKIN_CHANGE_EVENT 雙保險，帳號在
+  // 「風格設定」切換／登出等即時改 dataset 都能立刻反映）。
+  const [activeSkin, setActiveSkin] = useState<OverrideSkin | null>(null)
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const read = () => setActiveSkin(getActiveSkin())
+    read()
+    const mo = new MutationObserver(read)
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-skin'] })
+    window.addEventListener(SKIN_CHANGE_EVENT, read)
+    return () => { mo.disconnect(); window.removeEventListener(SKIN_CHANGE_EVENT, read) }
+  }, [])
+  // false＝已 fallback（WebGL 不支援／逾時／context lost／無路線資料）：改顯示原本的 Leaflet；換一筆
+  // 歷史紀錄或風格改變時重置，讓下次有機會重試（不會永久卡在退回狀態，比照 track/page.tsx 同一慣例）。
+  const [skinMapOk, setSkinMapOk] = useState(true)
+  useEffect(() => { setSkinMapOk(true) }, [sel?.id, activeSkin])
+  const useSkinMap = !!activeSkin && skinMapOk
+  const handleSkinFallback = useCallback((reason: string) => {
+    console.warn('[history-skin-map] fallback', reason) // eslint-disable-line no-console -- 契約要求的退回診斷訊息，非殘留 debug log
+    setSkinMapOk(false)
+  }, [])
+  // 風格地圖用的軌跡/公里號碼資料：與下面 Leaflet effect 各自獨立計算（沿用同一組純函式
+  // decodePolylineSegments／kmMarkerPositions、同一個 calibK 公式），刻意不共用計算結果——讓下面
+  // Leaflet 那段程式碼完全不變（契約「其他情況維持原本 Leaflet，行為與畫面完全不變」），避免任何
+  // 重構風險波及既有行為。kmMarkerPositions(segments, 1000/calibK) 本身不可改算法，這裡與 Leaflet
+  // 版本逐字相同（見下方 useEffect 內同名運算式）。
+  const skinSegments = useMemo(() => (sel ? decodePolylineSegments(sel.polyline || '') : []), [sel])
+  const skinKmMarks = useMemo(() => {
+    if (!sel) return []
+    const calibK = sel.calib_factor && sel.calib_factor > 0 ? sel.calib_factor : 1
+    return kmMarkerPositions(skinSegments, 1000 / calibK)
+  }, [sel, skinSegments])
 
   useEffect(() => {
     if (!sel) return
@@ -205,7 +247,23 @@ export default function TrackHistoryPage() {
           ) : (
             <div style={{ marginTop: 12, fontSize: 11.5, color: 'var(--tx-faint)' }}>（此筆沒有每公里分段資料；v0.1.205 之後的新 GPS 跑步才會記錄）</div>
           )}
-          <div id="hist-map" style={{ width: '100%', height: 220, borderRadius: 10, overflow: 'hidden', background: 'var(--bg-2)', marginTop: 12 }} />
+          {/* 帳號風格覆寫地圖（HISTORY_MAP_CONTRACT.md）：既有 Leaflet 地圖照舊建立/運作於背景
+              （只把容器視覺隱藏，visibility:hidden，保留尺寸避免 invalidateSize 異常）；SkinRouteMap
+              一旦 fallback 就立刻改回可見，跑步紀錄回放完全不依賴風格地圖是否成功渲染。key={sel.id}
+              讓切換到別筆歷史紀錄時整個風格地圖元件重新掛載（SkinRouteMap.tsx 只在掛載時建圖一次）。 */}
+          <div style={{ position: 'relative', width: '100%', height: 220, borderRadius: 10, overflow: 'hidden', background: 'var(--bg-2)', marginTop: 12 }}>
+            <div id="hist-map" style={{ position: 'absolute', inset: 0, visibility: useSkinMap ? 'hidden' : 'visible' }} />
+            {useSkinMap && (
+              <SkinRouteMap
+                key={sel.id}
+                skin={activeSkin as OverrideSkin}
+                segments={skinSegments}
+                kmMarks={skinKmMarks}
+                flagged={sel.flagged}
+                onFallback={handleSkinFallback}
+              />
+            )}
+          </div>
           {/* 運動部「揮汗有禮」活動：先只給超管看（gov500_entry，見系統設定 gov500_entry_state），
               之後備妥後由系統設定開放給一般玩家。2026-09-06 規則變動（owner 定案，見 lib/gov500.ts
               頂部說明）：500.gov.tw 只收手機系統截圖鍵截出的 App 原始紀錄畫面——這個畫面現在「就是」

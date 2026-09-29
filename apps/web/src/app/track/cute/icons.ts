@@ -14,7 +14,9 @@ const SKY = '#cfe8ff' // 禮物盒蓋／緞帶、一般打卡點小旗
 const GOLD = '#f6b73c' // 完成打勾貼紙（金色點綴，維持不變）
 
 // 愛心路徑（幾何中心在原點，非頂點凹陷處），供 drawKmHeartBadge／drawStartDot 共用。
-function heartPath(ctx: CanvasRenderingContext2D, size: number) {
+// 匯出（HISTORY_MAP_CONTRACT.md）：track/history/skinRouteIcons.ts 的終點小愛心圖示重用這個幾何，
+// 不重新刻一份愛心路徑；純新增匯出，函式本身邏輯與既有呼叫端（同檔內）完全不變。
+export function heartPath(ctx: CanvasRenderingContext2D, size: number) {
   const s = size / 2
   ctx.beginPath()
   ctx.moveTo(0, s * 0.5)
