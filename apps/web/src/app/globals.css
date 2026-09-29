@@ -567,7 +567,7 @@ html:has([data-admin-root]), html:has([data-admin-root]) body { background: #090
    何時把 data-skin="retro" 掛上 <html>（白名單／VIP 判斷、開關、防閃爍）由 lib/skinOverride.ts /
    components/SkinOverride.tsx 另外處理；本檔案不判斷任何使用者身分，非白名單使用者的
    <html> 永遠不會帶這個屬性值，以下規則對他們完全不生效、不影響任何既有 skin/元件行為。
-   GPS 地圖本身、勇者、專注模式狀態視窗以外的復古風格屬於契約 §4，由另一位工人在
+   GPS 地圖本身、地圖上的像素魔法光點、專注模式狀態視窗以外的復古風格屬於契約 §4，由另一位工人在
    app/track/retro/ 實作，不在本檔案範圍內；本區塊只改 RaceFocusMode.tsx 的 retro 分支樣式。
    第三輪原則（使用者原話：附圖只取「羊皮紙底／深咖啡緞帶／細褐線清單/金字/短劍游標/皮革
    細金框」語彙，不得描摹任何素材）：v854 的黑底白色 3px 雙框全面淘汰，改細框＋暖色調。
@@ -915,7 +915,7 @@ html:has([data-admin-root]), html:has([data-admin-root]) body { background: #090
    該元素仍佔版面空間，只是不繪製自己的背景，於是「它底下」透出的就是頁面容器的 var(--bg)。
    上面那條規則把 track 頁的 --bg 改成羊皮紙色（給平常/跑步中的面板可讀），但專注模式疊層本身是
    純黑漸層（見 RaceFocusMode.tsx overlayRef 的 background），疊層頂部 45% 只帶 12% 黑色淡出、
-   會讓「地圖／勇者」透出——這裡卻變成疊層之下、header 隱形處露出一條羊皮紙色色塊（跟疊層黑底
+   會讓「地圖／光點」透出——這裡卻變成疊層之下、header 隱形處露出一條羊皮紙色色塊（跟疊層黑底
    不連續，實測截圖 5_focus.png 頂部可見一條米色橫帶）。RaceFocusMode.tsx 的疊層本身有既有
    className="app-min-h"（見該檔案 overlayRef 節點），只有專注模式開啟時才會掛上這個節點，用
    :has() 疊加偵測「同時有 #gps-map 與 .app-min-h」＝專注模式正開著，這個複合狀態下 --bg 改回

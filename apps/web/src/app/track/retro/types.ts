@@ -28,10 +28,13 @@ export interface RetroMapProps {
   // CONTRACT_R2 §2：底部可拖曳資訊面板頂端到畫面底的高度（CSS px，隨面板拖曳節流更新，
   // track/page.tsx 用既有 sheet.H／sheet.curY 算出，非本檔量測）。RetroMap 拿它呼叫
   // map.setPadding({bottom})，讓 GPS 跟隨的「中心」落在面板以上的可見地圖區正中央，而不是
-  // 整個容器（含被面板蓋住那一半）的正中央——勇者畫在同一個 map.project() 出來的點，因此
-  // 不需要另外調整勇者的畫法，padding 生效後 project() 自然反映新的可見區中心。專注模式開啟
+  // 整個容器（含被面板蓋住那一半）的正中央——光點畫在同一個 map.project() 出來的點，因此
+  // 不需要另外調整光點的畫法，padding 生效後 project() 自然反映新的可見區中心。專注模式開啟
   // 時忽略這個值，改用容器高度的上 45% 當可見區（見 RetroMap.tsx）。
   bottomInset?: number
+  // ORBPOS_CONTRACT.md 第二輪 S2：使用者手勢暫停跟隨（true→false）／8 秒自動恢復或 recenter() 恢復
+  // 跟隨（→true）時呼叫，讓 page.tsx 的 followRef/setFollowing 同步，藉此驅動「回到目前位置」按鈕。
+  onFollowChange?: (following: boolean) => void
 }
 
 export interface RetroMapHandle {

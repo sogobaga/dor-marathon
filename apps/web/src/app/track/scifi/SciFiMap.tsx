@@ -11,13 +11,13 @@
 // ——跑步紀錄（GPS 取點/距離/上傳）完全不依賴本檔是否成功渲染。
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
-import { Map as MapLibreMap, AttributionControl, config as maplibreConfig, type MapOptions, type LngLatLike, type MapMouseEvent } from 'maplibre-gl'
+import { Map as MapLibreMap, AttributionControl, config as maplibreConfig, type MapOptions, type LngLatLike, type MapMouseEvent, type MapMovementEvent } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { buildScifiStyle } from './style'
 import { orbitron } from './font'
 import { Soul, TrailPool } from './particles'
 import { LightRain } from './rain'
-import type { SciFiMapHandle, SciFiMapProps, SciFiTarget } from './types'
+import type { SciFiMapHandle, SciFiMapProps, SciFiTarget, SciFiPos } from './types'
 
 // Orbitron 字型 className 現由 ./font.ts 統一持有（與 OrbitronText.tsx 共用同一實例，避免重複
 // @font-face），本檔不再自行呼叫 next/font/google（2026-09-27 review：與 RaceFocusMode.tsx 隔離修正
@@ -49,6 +49,23 @@ const HUNT = '#ff3fa0'
 const LAST_POS_KEY = 'dor_scifi_last_pos' // CONTRACT_R2.md §2：SciFiMap 自行在每次 pos 更新時寫入，供下次
 // 開頁在拿到真實定位前，初始中心就能落在「最後已知位置」而非假的城市中心
 const RESUME_FOLLOW_MS = 8000 // 使用者拖曳／縮放後暫停跟隨，8 秒後自動恢復（CONTRACT_R2.md §2）
+// docs/skins/ORBPOS_CONTRACT.md §B：「搜尋中」外觀判定門檻，數值與 cute/retro 同一慣例（各檔獨立
+// 宣告，理由同檔頭 MAPLIBRE_WORKER_URL 之後那段隔離說明）。
+const MAX_ORB_ACC = 65
+const STALE_FIX_MS = 15000
+// FIX（review 抓到的 major 根因，docs/skins/ORBPOS_CONTRACT.md 驗收項目 4「回到目前位置→zoom=16.5、
+// 之後 3 次定位更新都維持跟隨」）：recenter() 的 zoom:16.5 easeTo 若在動畫尚未跑完（500ms）前被下面
+// 「GPS 位置更新」effect 的跟隨 easeTo 打斷，會被 MapLibre 永久凍結在打斷當下的中間值，且再也不會自己
+// 恢復——根因見 node_modules/maplibre-gl/src/geo/projection/mercator_camera_helper.ts handleEaseTo()：
+// 新一次 easeTo 的 startZoom 讀的是 tr.zoom，這是「目前正在跑的動畫已經套用到 map 實際 transform 上」
+// 的即時值；跟隨 effect 的 easeTo 依 ORBPOS_CONTRACT.md §A（保留使用者縮放）刻意不帶 zoom，一旦在這
+// 種情況下打斷 recenter，endZoom=zoom=startZoom、isZooming 判定為 false，新動畫完全不會再移動
+// zoom，就此卡在那個中間值。recenterZoomPendingRef（見下方使用處）讓「recenter() 剛按下、zoom 還沒
+// 真的收斂到 16.5」這段期間，跟隨 effect 的 easeTo 繼續一起帶 zoom:16.5——即使又被下一次跟隨更新
+// 打斷，新動畫的終點依然是 16.5，只是要多花一點時間收斂，不會卡在半路；量到目前 zoom 已經夠接近
+// 16.5 就視為收斂完成，恢復「跟隨只搬 center」的原設計。
+const RECENTER_ZOOM = 16.5
+const RECENTER_ZOOM_EPS = 0.05
 
 function writeLastPos(lat: number, lng: number) {
   try { localStorage.setItem(LAST_POS_KEY, JSON.stringify({ lat, lng })) } catch { /* 私密瀏覽/storage 被封鎖：純錦上添花，略過即可 */ }
@@ -117,7 +134,7 @@ function decimate<T>(arr: T[], n: number): T[] {
 }
 
 const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(props, ref) {
-  const { pos, status, segments, kmMarks, targets, focusMode, initialCenter, initialZoom, onFallback, onTargetClick } = props
+  const { pos, status, segments, kmMarks, targets, focusMode, initialCenter, initialZoom, onFallback, onTargetClick, bottomInset, onFollowChange } = props
 
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -132,6 +149,7 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
   const failedRef = useRef(false)
   const loadedRef = useRef(false)
   const followingRef = useRef(true)
+  const recenterZoomPendingRef = useRef(false) // 見上方 RECENTER_ZOOM 宣告處：recenter() 剛按下、zoom 還沒收斂到 16.5 期間為 true
   const soulRef = useRef<Soul | null>(null)
   const trailRef = useRef<TrailPool | null>(null)
   const rainRef = useRef<LightRain | null>(null)
@@ -147,6 +165,11 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
   const fpsRef = useRef(0)
   const frameCountRef = useRef(0)
   const fpsWindowStartRef = useRef(0)
+  // docs/skins/ORBPOS_CONTRACT.md 第二輪驗收14「核心像素」量測：只給 E2E 做「有畫 vs 沒畫」前後對照用
+  // （比照 CuteMap.tsx／RetroMap.tsx 的 setOverlayHidden，scifi 原本沒有這個把手，E2E 無法乾淨量測靈魂
+  // 實際畫出來的像素位置），預設 false，不影響一般使用者。
+  const overlayHiddenRef = useRef(false)
+  const prevStatusRef = useRef<string | undefined>(undefined) // 比照 cute：新一趟 tracking 開始時強制歸回 false，避免卡在上一輪 E2E 呼叫的 true
 
   // 高頻資料走 ref（避免 rAF 迴圈依賴 useEffect 重新掛載），由 props 變動時同步寫入。
   const posRef = useRef(pos); posRef.current = pos
@@ -157,6 +180,13 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
   const focusModeRef = useRef(focusMode); focusModeRef.current = focusMode
   const onFallbackRef = useRef(onFallback); onFallbackRef.current = onFallback
   const onTargetClickRef = useRef(onTargetClick); onTargetClickRef.current = onTargetClick
+  const onFollowChangeRef = useRef(onFollowChange); onFollowChangeRef.current = onFollowChange
+  // docs/skins/ORBPOS_CONTRACT.md 第二輪 S1：底部可拖曳資訊面板頂端到畫面底的高度（CSS px，PAGE 工人
+  // 用既有 sheet.H／sheet.curY 算出，透過 mapSnapshot.bottomInset 帶入，同 cute/retro）→
+  // map.setPadding({bottom})，讓跟隨中心落在面板以上的可見地圖區正中央——做法比照
+  // CuteMap.tsx applyCutePadding／RetroMap.tsx applyRetroPadding 同一段（見下方 applyScifiPadding）。
+  const bottomInsetRef = useRef(bottomInset ?? 0); bottomInsetRef.current = bottomInset ?? 0
+  const appliedPaddingBottomRef = useRef<number | null>(null) // 上次實際 setPadding 的值，避免每次 render 都重呼叫
   initialCenterRef.current = initialCenter // 只在尚無真實定位時的「定位中」暗淡靈魂位置用，可安全每次 render 同步
 
   // fail()：component 層級的「無條件」退回入口，只在建圖之前（webgl 完全不支援，這時還沒有任何
@@ -176,18 +206,82 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
     onFallbackRef.current(reason)
   }
 
+  // docs/skins/ORBPOS_CONTRACT.md 第二輪 S1：scifi 原本完全沒有這段——跟隨把靈魂放在「整個容器」正
+  // 中央（＝面板上緣附近），scifi 又是 pitch 55＋速度 >1 m/s 時依行進方向轉 bearing（車頭朝上），
+  // 身後的軌跡整段往畫面下方延伸，完全被面板蓋住（使用者實跑用的正是 scifi，這是他真機回報「看不到
+  // 軌跡」的直接成因之一）。比照 CuteMap.tsx applyCutePadding／RetroMap.tsx applyRetroPadding 同一段：
+  // map.setPadding({bottom}) 讓可見區（面板以上那塊）的中心＝跟隨中心，MapLibre 算「center 要投影到
+  // 螢幕上哪一點」時只看 padding 設定本身（centerPoint=((padding.left-padding.right+width)/2,
+  // (padding.top-padding.bottom+height)/2)），不受 pitch/bearing 影響——pitch 55／車頭朝上 bearing
+  // 因此不受影響，project() 自動反映套用 padding 後的座標系，靈魂／軌跡/公里標記照舊呼叫同一個
+  // map.project() 畫，不需要另外調整任何繪製座標。專注模式（RaceFocusMode 全螢幕面板）用容器高度
+  // 上 45%（比照 cute/retro），其餘情況用 bottomInset（面板頂端到畫面底的高度）。
+  const applyScifiPadding = () => {
+    const map = mapRef.current
+    if (!map) return
+    const container = containerRef.current
+    const h = container?.clientHeight || 0
+    const bottom = Math.max(0, Math.round(focusModeRef.current ? h * 0.55 : bottomInsetRef.current))
+    if (appliedPaddingBottomRef.current === bottom) return
+    appliedPaddingBottomRef.current = bottom
+    try { map.setPadding({ top: 0, bottom, left: 0, right: 0 }) } catch { /* ignore */ }
+  }
+  // bottomInset／focusMode 任一改變都重算一次；每次 render 都檢查一次即可，內部已用
+  // appliedPaddingBottomRef 擋掉沒變化時的重呼叫（比照 cute/retro 同一段）。
+  useEffect(() => { applyScifiPadding() }) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 驗收14 setOverlayHidden 的歸位（比照 CuteMap.tsx 同一段 FIX）：每次「新」轉進 tracking（=開始新
+  // 一趟跑步）時把 overlayHiddenRef 強制歸回 false，避免上一輪 E2E（或任何來源）呼叫成 true 卡住，
+  // 新一趟跑步一定看得到靈魂／軌跡／公里標記，不需要整頁重新整理。
+  useEffect(() => {
+    if (status === 'tracking' && prevStatusRef.current !== 'tracking') overlayHiddenRef.current = false
+    prevStatusRef.current = status
+  }, [status])
+
+  // docs/skins/ORBPOS_CONTRACT.md §A：暫停跟隨鏡頭 8 秒。移到元件頂層（不再是建圖 useEffect 內的
+  // 區域函式，比照 RetroMap.tsx 同一輪的改法），讓下面 useImperativeHandle 的 zoomBy（+/− 按鈕，
+  // 契約「屬使用者操作，照舊暫停跟隨 8 秒」）與建圖 effect 內的 onDragStart/onZoomStart（真實使用者
+  // 手勢）共用同一份邏輯。第二輪 S2 新增：只在真的從「跟隨中」轉為「暫停」的那一刻通知
+  // onFollowChange(false)，8 秒後自動恢復時通知 onFollowChange(true)——讓 page.tsx 接得到 skin 地圖
+  // 的跟隨狀態變化，「回到目前位置」按鈕才會在使用者拖動/縮放 scifi 地圖後正確出現（S2 根因：舊版
+  // followingRef 只有本檔自己讀，page.tsx 完全不知道，按鈕永遠隱藏）。
+  function pauseFollow() {
+    if (followingRef.current) onFollowChangeRef.current?.(false)
+    followingRef.current = false
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current)
+    resumeTimerRef.current = setTimeout(() => {
+      followingRef.current = true
+      resumeTimerRef.current = null
+      onFollowChangeRef.current?.(true)
+    }, RESUME_FOLLOW_MS)
+  }
+
   useImperativeHandle(ref, () => ({
     recenter(p) {
       const map = mapRef.current
       if (!map) return
       followingRef.current = true
       if (resumeTimerRef.current) { clearTimeout(resumeTimerRef.current); resumeTimerRef.current = null }
+      // docs/skins/ORBPOS_CONTRACT.md 第二輪 S2：「回到目前位置」恢復跟隨，通知 page.tsx（按鈕消失、
+      // followRef/setFollowing 同步）——不論呼叫前 followingRef 是不是已經是 true，都無條件通知一次，
+      // page.tsx 那端是 React state，同值不會多觸發 re-render，這裡不需要另外判斷是否為「真的變化」。
+      onFollowChangeRef.current?.(true)
       const target = p || posRef.current
-      if (target) { try { map.easeTo({ center: [target.lng, target.lat], zoom: 16.5, pitch: 55, duration: 500, essential: true }) } catch { /* ignore */ } }
+      if (target) {
+        recenterZoomPendingRef.current = true // 見上方 RECENTER_ZOOM 宣告處：標記「zoom 還沒收斂」，讓跟隨 effect 之後一起帶 zoom
+        try { map.easeTo({ center: [target.lng, target.lat], zoom: RECENTER_ZOOM, pitch: 55, duration: 500, essential: true }) } catch { /* ignore */ }
+      }
     },
     zoomBy(delta: number) {
       const map = mapRef.current
       if (!map) return
+      // docs/skins/ORBPOS_CONTRACT.md §A「＋／− 按鈕屬使用者操作，照舊暫停跟隨 8 秒」＋第二輪 S2：
+      // 這裡呼叫的是程式 easeTo，觸發的 'zoomstart' 不會帶 originalEvent（見下方 onZoomStart 只認
+      // 使用者手勢），不會再被事件自動暫停，改成呼叫上面元件頂層的 pauseFollow()（比照
+      // RetroMap.tsx 同一段）——順便帶出 onFollowChange(false)／8 秒後 (true) 通知，不用像舊版
+      // 重複一份跳過通知的 inline 邏輯。
+      recenterZoomPendingRef.current = false // 使用者主動縮放：不再幫他把 zoom 拉回 16.5，尊重這次操作（見上方 RECENTER_ZOOM 說明）
+      pauseFollow()
       try { map.easeTo({ zoom: map.getZoom() + delta, duration: 250, essential: true }) } catch { /* ignore */ }
     },
   }), [])
@@ -236,6 +330,7 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
       loadedRef.current = true
       // 精簡授權鈕預設是展開狀態（整條文字），會壓到「回到目前位置」；載入後先收成 ⓘ，點擊才展開。
       try { containerRef.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show') } catch { /* ignore */ }
+      applyScifiPadding() // S1：map 剛就緒就套用一次，不必等下一次 React re-render（比照 cute/retro）
       try {
         map!.setSky({
           'sky-color': '#02040a',
@@ -251,8 +346,13 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
       if (!isCurrent()) return
       failInstance('map-error:' + ((e as { error?: { message?: string } })?.error?.message || 'unknown'))
     }
-    const onDragStart = () => { if (isCurrent()) pauseFollow() }
-    const onZoomStart = () => { if (isCurrent()) pauseFollow() }
+    // docs/skins/ORBPOS_CONTRACT.md §A：只有「使用者手勢」才暫停跟隨——dragstart/zoomstart 不分使用者
+    // 操作或程式 easeTo 觸發，只有前者的事件物件帶 originalEvent（真實 DOM
+    // MouseEvent/TouchEvent/WheelEvent）；程式呼叫 easeTo()（跟隨鏡頭更新、recenter()）觸發的同名事件
+    // originalEvent 恆為 undefined，藉此分辨兩種來源，不再無差別暫停跟隨（舊版每次跟隨更新 zoom 回
+    // 16.5 都會自己觸發一次 zoomstart，把自己剛恢復的跟隨又暫停掉）。
+    const onDragStart = (e: MapMovementEvent) => { if (isCurrent() && e.originalEvent) pauseFollow() }
+    const onZoomStart = (e: MapMovementEvent) => { if (isCurrent() && e.originalEvent) pauseFollow() }
     const onClick = (e: MapMouseEvent) => {
       if (!isCurrent()) return
       const list = targetsRef.current
@@ -283,11 +383,8 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
       if (ev?.dataType === 'source' && ev.tile) tilesLoadedRef.current += 1
     }
 
-    function pauseFollow() {
-      followingRef.current = false
-      if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current)
-      resumeTimerRef.current = setTimeout(() => { followingRef.current = true; resumeTimerRef.current = null }, RESUME_FOLLOW_MS)
-    }
+    // pauseFollow() 已移到元件頂層（見上方宣告處的 ORBPOS_CONTRACT.md §A／S2 說明），這裡直接沿用
+    // 外層 closure 抓到的那一份，不再本地重宣告一次（比照 RetroMap.tsx 同一輪的改法）。
 
     function detachListeners() {
       try {
@@ -339,7 +436,7 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
 
       try { document.fonts?.load?.(`700 14px ${orbitron.style.fontFamily}`) } catch { /* 預載失敗不影響地圖，canvas 文字退回預設字型 */ }
 
-      ro = new ResizeObserver(() => { if (isCurrent()) { try { map!.resize() } catch { /* ignore */ } } })
+      ro = new ResizeObserver(() => { if (isCurrent()) { try { map!.resize() } catch { /* ignore */ }; applyScifiPadding() } })
       ro.observe(containerRef.current)
 
       startLoop()
@@ -366,9 +463,9 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
     const id = setInterval(() => {
       const map = mapRef.current
       if (!map) return
+      const p = posRef.current
       let soulScreen = { x: 0, y: 0 }
       try {
-        const p = posRef.current
         const proj = p ? map.project([p.lng, p.lat]) : map.project([initialCenterRef.current[1], initialCenterRef.current[0]])
         soulScreen = { x: Math.round(proj.x), y: Math.round(proj.y) }
       } catch { /* ignore */ }
@@ -381,8 +478,25 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
         lastPos: lastPosRef.current ? { lat: lastPosRef.current.lat, lng: lastPosRef.current.lng } : null,
         tilesRequested: tilesRequestedRef.current,
         tilesLoaded: tilesLoadedRef.current,
+        // ORBPOS_CONTRACT.md 第二輪驗收12：直接讀 MapLibre 自己的 getPadding()（applyScifiPadding()
+        // 呼叫 setPadding 的權威回讀），讓 E2E 能算出「可見區（面板以上那塊）中心」的 CSS px。
+        padding: map.getPadding(),
         soulScreen,
+        // docs/skins/ORBPOS_CONTRACT.md §E＋偵錯把手：沒有真實定位時完全不畫靈魂（見 renderFrame），
+        // orbVisible 如實反映這件事；orbLatLng／lastFixAgeMs／orbState 用 renderFrame 同一組
+        // getFixAgeMs／isOrbSearching 判定；following＝目前是否處於跟隨狀態；projectLngLat 讓 E2E
+        // 直接驗證任意座標的 CSS px 投影是否與靈魂實際畫的位置一致。
+        orbVisible: !!p,
+        orbLatLng: p ? { lat: p.lat, lng: p.lng } : null,
+        lastFixAgeMs: p ? getFixAgeMs(p) : null,
+        orbState: p ? (isOrbSearching(p) ? 'searching' : 'normal') : null,
+        following: followingRef.current,
+        projectLngLat: (lng: number, lat: number) => {
+          try { const pt = map.project([lng, lat]); return { x: pt.x, y: pt.y } } catch { return null }
+        },
         fps: fpsRef.current,
+        // 驗收14：只給 E2E 做「有畫 vs 沒畫」前後對照用，預設 false（見上方 overlayHiddenRef 宣告處）。
+        setOverlayHidden: (v: boolean) => { overlayHiddenRef.current = !!v },
       }
     }, 1000)
     return () => {
@@ -437,7 +551,20 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
     }
     lastPosRef.current = { lat: pos.lat, lng: pos.lng, t: now }
     if (map && followingRef.current) {
-      try { map.easeTo({ center: [pos.lng, pos.lat], zoom: 16.5, pitch: 55, bearing: bearingToUse, duration: 900, essential: true }) } catch { /* ignore */ }
+      // docs/skins/ORBPOS_CONTRACT.md §A：跟隨更新只搬 center（＋沿用既有的方向性 bearing 更新），
+      // 不再強制 zoom:16.5——理由與 cute/CuteMap.tsx 同一段完全相同（使用者縮放後跟隨若仍寫死 zoom，
+      // 會持續把剛設定好的縮放層級彈回去，與「保留使用者目前的縮放」牴觸；縮放要恢復預設值只透過
+      // recenter()）。pitch 對 scifi 有意義（3D 傾角，非 cute/retro 的恆為 0），契約只點名 zoom，這裡
+      // 維持原本每次跟隨都套用固定 pitch:55 的既有行為不動。
+      const followOpts: { center: [number, number]; pitch: number; bearing: number; duration: number; essential: true; zoom?: number } =
+        { center: [pos.lng, pos.lat], pitch: 55, bearing: bearingToUse, duration: 900, essential: true }
+      // 見上方 RECENTER_ZOOM／recenterZoomPendingRef 宣告處的根因說明：recenter() 剛按下、zoom 還沒
+      // 收斂到 16.5 前，這裡也一起帶 zoom，即使被打斷也不會凍結在半路；量到已經夠接近目標就清旗標。
+      if (recenterZoomPendingRef.current) {
+        if (Math.abs(map.getZoom() - RECENTER_ZOOM) < RECENTER_ZOOM_EPS) recenterZoomPendingRef.current = false
+        else followOpts.zoom = RECENTER_ZOOM
+      }
+      try { map.easeTo(followOpts) } catch { /* ignore */ }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pos?.lat, pos?.lng])
@@ -484,12 +611,34 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
     onFallbackRef.current(reason)
   }
 
+  // docs/skins/ORBPOS_CONTRACT.md §B：最新定位距今幾毫秒沒有更新——有 pos.ts（PAGE 工人新增於
+  // scifi/types.ts SciFiPos，epoch ms，本檔不擁有那份型別檔，用安全的執行期存取避免在對方欄位進版前
+  // 就編譯失敗）就用它；還沒有這個欄位時退回「pos 最後一次真的改變的時間」（lastPosRef.current.t，
+  // performance.now() 時鐘）。兩種時鐘各自在自己的分支內使用，不互相比較。
+  function getFixAgeMs(p: SciFiPos | null): number {
+    if (!p) return Infinity
+    const ts = (p as unknown as { ts?: number }).ts
+    if (typeof ts === 'number' && Number.isFinite(ts)) return Math.max(0, Date.now() - ts)
+    const last = lastPosRef.current
+    return last ? Math.max(0, performance.now() - last.t) : 0
+  }
+
+  // 「搜尋中」＝精度差於 MAX_ORB_ACC 或最新定位已超過 STALE_FIX_MS 沒更新（契約 §B 逐字）。
+  function isOrbSearching(p: SciFiPos | null): boolean {
+    if (!p) return false
+    if (typeof p.acc === 'number' && p.acc > MAX_ORB_ACC) return true
+    return getFixAgeMs(p) > STALE_FIX_MS
+  }
+
   function renderFrame(map: MapLibreMap, dt: number) {
     const canvas = canvasRef.current
-    const container = containerRef.current
-    if (!canvas || !container) return
+    if (!canvas) return
     const dpr = window.devicePixelRatio || 1
-    const w = container.clientWidth, h = container.clientHeight
+    // docs/skins/ORBPOS_CONTRACT.md §D：疊層畫布的座標系以 MapLibre 自己的 canvas 尺寸為準（不是
+    // container 的 clientWidth/clientHeight）——兩者理論上同步，但 resize 節流／版面剛切換的瞬間可能
+    // 短暫不同步，project() 用的是 map 自己的 transform，這裡跟著它才能保證每一幀都對得上。
+    const mapCanvas = map.getCanvas()
+    const w = mapCanvas.clientWidth, h = mapCanvas.clientHeight
     if (w <= 0 || h <= 0) return
     const wantW = Math.round(w * dpr), wantH = Math.round(h * dpr)
     if (canvas.width !== wantW || canvas.height !== wantH) { canvas.width = wantW; canvas.height = wantH }
@@ -503,27 +652,39 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
       rainRef.current?.draw(ctx)
     }
 
-    drawRoute(ctx, map, segmentsRef.current)
-    drawKmMarks(ctx, map, kmMarksRef.current)
+    // docs/skins/ORBPOS_CONTRACT.md 第二輪驗收14「setOverlayHidden(bool)：暫時不畫光點／軌跡／徽章」：
+    // 只給 E2E 做「有畫 vs 沒畫」前後對照截圖用（同一畫面各截一張比對差異像素），target 圖示（打卡點/
+    // 賽事目標）不在契約列舉範圍內，維持照常繪製（比照 CuteMap.tsx 同一段）。
+    const overlayHidden = overlayHiddenRef.current
+    if (!overlayHidden) {
+      drawRoute(ctx, map, segmentsRef.current)
+      drawKmMarks(ctx, map, kmMarksRef.current)
+    }
     drawTargets(ctx, map, targetsRef.current)
 
     const p = posRef.current
-    // §2「定位前就顯示城市」：還沒有真實定位時，靈魂以「定位中」暗淡狀態畫在 initialCenter（最後已知
-    // 位置或台北大安森林公園），而不是整個不畫——讓使用者一進頁就看到城市與（暗淡的）自己，而非空地圖。
-    const soulLat = p ? p.lat : initialCenterRef.current[0]
-    const soulLng = p ? p.lng : initialCenterRef.current[1]
-    const pt = map.project([soulLng, soulLat])
+    // docs/skins/ORBPOS_CONTRACT.md §E：沒有真實定位時完全不畫靈魂——移除舊版「退回 initialCenter／
+    // 最後已知位置，用暗淡狀態畫一顆假靈魂」的 fallback（比照 cute/retro 已經是的做法：沒有 p 就不畫
+    // 任何角色）。soul.update() 仍照常呼叫，讓呼吸/環繞角度持續推進，下次真的有定位時不會卡格重播。
+    const pt = p ? map.project([p.lng, p.lat]) : null
     const soul = soulRef.current, trail = trailRef.current
     if (!reducedMotionRef.current) {
       soul?.update(dt)
-      if (p && statusRef.current === 'tracking' && movingTRef.current > 0.12 && trail) {
+      if (p && pt && statusRef.current === 'tracking' && movingTRef.current > 0.12 && trail) {
         const rate = 1 + movingTRef.current * 3
         for (let i = 0; i < rate; i++) if (Math.random() < 0.85) trail.spawn(pt.x, pt.y, dirRef.current.x, dirRef.current.y, 40 + movingTRef.current * 60)
       }
       trail?.update(dt)
     }
-    trail?.draw(ctx)
-    soul?.draw(ctx, pt.x, pt.y, p && !reducedMotionRef.current ? movingTRef.current : 0, dirRef.current.x, dirRef.current.y, !p)
+    if (!overlayHidden) trail?.draw(ctx)
+    if (p && pt) {
+      // docs/skins/ORBPOS_CONTRACT.md §B：一律用最新定位畫靈魂（p 就是 posRef.current 這個最新值，不
+      // 凍結在舊點）；精度差／久未更新時改成「搜尋中」外觀（青色細圈，見 particles.ts Soul.draw）。
+      const searching = isOrbSearching(p)
+      const mpp = metersPerPixel(p.lat, map.getZoom())
+      const accuracyPx = typeof p.acc === 'number' && mpp > 0 ? Math.min(120, p.acc / mpp) : 40
+      if (!overlayHidden) soul?.draw(ctx, pt.x, pt.y, reducedMotionRef.current ? 0 : movingTRef.current, dirRef.current.x, dirRef.current.y, { searching, accuracyPx, reducedMotion: reducedMotionRef.current })
+    }
   }
 
   function drawRoute(ctx: CanvasRenderingContext2D, map: MapLibreMap, segs: [number, number][][]) {
@@ -628,7 +789,12 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
   return (
     <div ref={wrapRef} style={{ position: 'absolute', inset: 0 }}>
       <div ref={containerRef} className="scifi-map" style={{ position: 'absolute', inset: 0 }} />
-      <canvas ref={canvasRef} className={orbitron.className} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', display: 'block' }} />
+      {/* docs/skins/ORBPOS_CONTRACT.md ★：<canvas> 是可替換元素（replaced element，跟 <img> 同一類），
+          position:absolute+inset:0 不會撐滿容器，沒有明確 width/height 時退回內在尺寸（=canvas.width/
+          height 這兩個 HTML attribute，即 renderFrame() 設的 backing pixel 尺寸）；DPR>1 手機上整層
+          疊層因此放大偏移（根因與詳細說明見 track/retro/RetroMap.tsx 同一處註解，retro 已修，scifi
+          同型寫法一併修正）。 */}
+      <canvas ref={canvasRef} className={orbitron.className} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', display: 'block' }} />
     </div>
   )
 })

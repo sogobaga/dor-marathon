@@ -28,6 +28,9 @@ export interface CuteMapProps {
   // 更新），CuteMap 拿它呼叫 map.setPadding({bottom})，讓 GPS 跟隨鏡頭的「中心」落在面板以上的可見
   // 地圖區正中央。專注模式開啟時改用容器高度的上 45%（見 CuteMap.tsx）。
   bottomInset?: number
+  // ORBPOS_CONTRACT.md 第二輪 S2：使用者手勢暫停跟隨（true→false）／8 秒自動恢復或 recenter() 恢復
+  // 跟隨（→true）時呼叫，讓 page.tsx 的 followRef/setFollowing 同步，藉此驅動「回到目前位置」按鈕。
+  onFollowChange?: (following: boolean) => void
 }
 
 export interface CuteMapHandle {

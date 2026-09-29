@@ -152,7 +152,8 @@ export default function RaceFocusMode({
   // 仍在運作的 SciFiMap、數字改 Orbitron＋青色光暈、鎖頭改霓虹圓環），長按 1.5 秒解除等行為完全不變。
   // 省略/false＝其他 skin，維持 v850 純黑不動。
   retro?: boolean // 復古 RPG（retro）變體開關（CONTRACT.md §5）：背景改上 45% 透出下方仍在運作的
-  // RetroMap 與勇者、數字區改黑底白雙框的 RPG 狀態視窗、標題「冒險中／比賽專注模式・名稱」、鎖頭改
+  // RetroMap 與像素魔法光點（docs/skins/RETRO_CONTRACT_R4.md §3 起改為光點，不再是角色造型）、
+  // 數字區改黑底白雙框的 RPG 狀態視窗、標題「冒險中／比賽專注模式・名稱」、鎖頭改
   // 像素鎖頭圖示；scifi 與 retro 互斥（由父層依 activeSkin 分別傳入），長按 1.5 秒解除等行為完全不變。
   // 文字顏色／字型走 `[data-skin="retro"]` 的 CSS token 級聯（globals.css，另一工人負責），本檔不用
   // 額外寫死顏色。
@@ -342,8 +343,9 @@ export default function RaceFocusMode({
       style={{
         position: 'fixed', inset: 0, zIndex: 3900,
         // scifi／retro／cute（CONTRACT.md §4／§5；cute 第二輪見 docs/skins/CUTE_CONTRACT_R2.md
-        // §3）：由上而下漸層——頂部 45% 較透明（看得到下方仍在運作的 SciFiMap／RetroMap／CuteMap 與
-        // 靈魂／勇者／光點），55% 以下轉為該風格的實色，大字數字靠 justifyContent:'flex-end' 整組推到
+        // §3；retro 光點見 docs/skins/RETRO_CONTRACT_R4.md §3）：由上而下漸層——頂部 45% 較透明
+        // （看得到下方仍在運作的 SciFiMap／RetroMap／CuteMap 與各自的光點/粒子呈現），55% 以下
+        // 轉為該風格的實色，大字數字靠 justifyContent:'flex-end' 整組推到
         // 下半部（見下方三個子區塊改用 gap 佈局，不再 space-between 把進度條釘在最頂端）。retro 用純黑
         // 漸層、cute 第二輪改 blush 粉色漸層（不再是第一輪的奶油色，契約「下方漸層從透明到 blush」——
         // 卡片本身另外用白底＋lineSoft 軟框呈現，見下方數字區容器），其餘 skin 維持 v850 純黑不變。

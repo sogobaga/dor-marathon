@@ -184,6 +184,7 @@ export default function TrackPage() {
   const [checkpoints, setCheckpoints] = useState<ActiveCheckpoint[]>([])
   const [curPos, setCurPos] = useState<{ lat: number; lng: number; acc: number } | null>(null)
   const curPosRef = useRef<{ lat: number; lng: number; acc: number } | null>(null); curPosRef.current = curPos // 供 marker click 等閉包讀最新位置（避免 stale）
+  const curPosAtRef = useRef<number | null>(null) // ORBPOS_CONTRACT.md 修正 B：curPos 這筆定位「被收到」的時間戳（epoch ms，非 GPS 裝置的 pos.timestamp），onPos 內與 setCurPos 同步寫入，供 mapSnapshot 帶給 scifi/retro/cute 地圖判斷「超過 15 秒沒更新」的定位中狀態
   const [routePlan, setRoutePlan] = useState<{ toName: string; km: number; etaMin: number } | null>(null) // 建議跑步路線資訊條
   const [routeBusy, setRouteBusy] = useState(false)
   const routeLineRef = useRef<any>(null) // 建議路線 polyline（虛線橘）
@@ -215,6 +216,14 @@ export default function TrackPage() {
   const sheetHRef = useRef(0); sheetHRef.current = sheet.H     // 地圖容器總高
   const sheetYRef = useRef(0); sheetYRef.current = sheet.curY  // 面板頂端 y（＝可視地圖區高度）
   const followRef = useRef(true) // 地圖是否自動跟隨目前位置；使用者拖曳/縮放地圖後暫停，按「回到目前位置」恢復
+  // 第三輪 P1：centerMap() 的程式移動旗標——true 期間 dragstart/zoomstart handler 一律忽略，不暫停跟隨。
+  // 背景：Leaflet setView 改變 zoom 時，若差距超過 zoomAnimationThreshold（預設 4）會直接走同步的
+  // _resetView（_moveStart 內同步 fire('zoomstart')），例如第一筆定位 centerMap(p,16) 是從初始 zoom 7
+  // 跳到 16（差 9）→ 同步觸發 zoomstart → 被下面的 handler 誤判成使用者操作而暫停跟隨。若差距在門檻內則
+  // 走 _tryAnimatedZoom，改成 requestAnimFrame 下一幀才非同步 fire zoomstart／moveend；用 map.once('moveend')
+  // 而非呼叫後立即歸位，兩種情況都能正確涵蓋（moveend 一定在 zoomstart 之後才觸發，不論同步或非同步）。
+  const programmaticMoveRef = useRef(false)
+  const clearProgrammaticMoveRef = useRef(() => { programmaticMoveRef.current = false })
   const zoomedToFixRef = useRef(false) // 第一次取得定位時要放大到本地 zoom（初始是全台俯視 zoom 7）；之後跟隨只平移、保留使用者縮放
   const [following, setFollowing] = useState(true) // 驅動「回到目前位置」按鈕顯示
   const [autoLocating, setAutoLocating] = useState(false) // 進頁面「預熱」正在自動嘗試定位中（尚未拿到第一個座標/尚未逾時失敗）：期間顯示「定位中…」遮罩、隱藏「定位到我」CTA，避免使用者誤以為要手動按
@@ -443,9 +452,9 @@ export default function TrackPage() {
   }, [])
   // 專注模式（scifi／retro／cute 皆適用）開啟時，題列/底部面板/GPS 相關橫幅一律 visibility:hidden
   // （見 globals.css `[data-skin="scifi"|"retro"|"cute"] [data-scifi-focus-hide="true"]`，cute 的
-  // CSS 規則由 THEME 工人補上），露出下方半透明的地圖與靈魂／勇者／光點（scifi／retro／cute 各自的
-  // 跑者呈現；cute 第二輪起改為「靈魂光點」，不再是角色造型，見 app/track/cute/ 說明）；只加了一個
-  // data 屬性，不改這些元素原本的邏輯／內容。
+  // CSS 規則由 THEME 工人補上），露出下方半透明的地圖與各自的跑者呈現（scifi＝發光粒子群、
+  // retro＝像素魔法光點、cute＝靈魂光點；三者皆非角色造型，見 app/track/retro/orb.ts、
+  // app/track/cute/orb.ts 說明）；只加了一個 data 屬性，不改這些元素原本的邏輯／內容。
   const hideForFocus = mapSkinActive && focusOpen
   const scifiFocusHideAttr = hideForFocus ? { 'data-scifi-focus-hide': 'true' } : {}
   // 讀取（不改）既有跳點排除規則（MAX_SPEED/GAP_MAX_S/GAP_MAX_M，見檔頭常數），把 pointsRef 依「與
@@ -495,7 +504,7 @@ export default function TrackPage() {
       // map.setPadding({bottom})，讓 GPS 跟隨中心落在面板以上的可見地圖區——沿用既有
       // sheetHRef／sheetYRef（見上方宣告處，本就為此讀取而存在），純讀取不改跑步邏輯。
       const bottomInset = Math.max(0, sheetHRef.current - sheetYRef.current)
-      setMapSnapshot({ pos: cp ? { lat: cp.lat, lng: cp.lng, acc: cp.acc } : null, segments: segs, kmMarks: kmMarkerPositions(segs, 1000 / k), targets, bottomInset })
+      setMapSnapshot({ pos: cp ? { lat: cp.lat, lng: cp.lng, acc: cp.acc, ts: curPosAtRef.current ?? undefined } : null, segments: segs, kmMarks: kmMarkerPositions(segs, 1000 / k), targets, bottomInset })
     }
     tick()
     const timer = setInterval(tick, 250)
@@ -550,8 +559,12 @@ export default function TrackPage() {
     kmMarkersRef.current = L.layerGroup().addTo(map) // 每公里號碼標記圖層（見 kmMarkersRef 宣告處）
     // 目前位置綠點：先建立但「不」加到地圖——在真正拿到 GPS 定位（onPos）時才 addTo，避免預設中心(信義區)冒出假定位點
     markRef.current = L.circleMarker([lat, lng], { radius: 7, color: '#fff', fillColor: '#46E3A0', fillOpacity: 1, weight: 2 })
-    // 使用者手動拖曳/縮放地圖 → 暫停自動跟隨（否則每次 GPS 更新都會把畫面拉回目前位置，無法看前方路線）
-    map.on('dragstart zoomstart', () => { if (followRef.current) { followRef.current = false; setFollowing(false) } })
+    // 使用者手動拖曳/縮放地圖 → 暫停自動跟隨（否則每次 GPS 更新都會把畫面拉回目前位置，無法看前方路線）；
+    // programmaticMoveRef 為 true 時代表這次 zoomstart/dragstart 是 centerMap() 自己呼叫 setView/panTo 引發
+    // 的（見 centerMap 與上方註解），不是使用者手勢，忽略、不暫停跟隨。
+    // dragstart 只會由使用者手勢觸發（Leaflet Draggable），一律暫停；zoomstart 程式 setView 也會觸發，才需要略過 centerMap 期間的程式移動。
+    map.on('dragstart', () => { if (followRef.current) { followRef.current = false; setFollowing(false) } })
+    map.on('zoomstart', () => { if (programmaticMoveRef.current) return; if (followRef.current) { followRef.current = false; setFollowing(false) } })
     mapRef.current = map
     setMapReady(true)
   }, [])
@@ -562,11 +575,36 @@ export default function TrackPage() {
   // 只讀 ref → 即使是舊閉包也拿到最新面板高度；面板幾乎蓋滿(可視區<80px)時退回一般置中避免把點推出畫面。
   function centerMap(latlng: [number, number], zoom?: number) {
     const map = mapRef.current; if (!map) return
+    // 防呆（審查發現）：非法座標（NaN／Infinity，例如卡住的 WebView 給出的壞定位、或關主資料缺經緯度）
+    // 若真的傳進來，Leaflet 的 LatLng 建構子會在 setView/panTo 內同步丟例外；那會發生在下面
+    // programmaticMoveRef 設成 true 之後、moveend 觸發之前，導致旗標永遠卡在 true、之後所有使用者拖曳/
+    // 縮放都被上面 ensureMap 裝的 handler 誤判成「程式移動」而忽略，跟隨永遠無法手動暫停。這裡先擋掉，
+    // 連 programmaticMoveRef 都不去動，維持原本狀態。
+    if (!Number.isFinite(latlng[0]) || !Number.isFinite(latlng[1])) return
     const H = sheetHRef.current, visH = sheetYRef.current, z = zoom ?? map.getZoom()
-    if (H <= 0 || visH < 80) { if (zoom != null) map.setView(latlng, z); else map.panTo(latlng); return }
-    const pt = map.project(latlng, z); pt.y += (H - visH) / 2
-    const c = map.unproject(pt, z)
-    if (zoom != null) map.setView(c, z); else map.panTo(c)
+    // 第三輪 P1：setView/panTo 期間標記為「程式移動」，讓上面 ensureMap 裝的 dragstart/zoomstart handler
+    // 忽略這次事件、不誤判成使用者操作而暫停跟隨。用 map.once('moveend') 才歸位（而非呼叫後立即同步歸位）：
+    // Leaflet setView 若 zoom 差距超過 zoomAnimationThreshold（預設 4，例如第一筆定位 7→16 差 9）會走同步
+    // _resetView，zoomstart／moveend 都在本次呼叫內同步觸發；若差距在門檻內則走 _tryAnimatedZoom，改成
+    // requestAnimFrame 下一幀才非同步觸發 zoomstart／moveend——moveend 必定緊接在 zoomstart 之後才觸發
+    // （不論同步或非同步路徑皆然），用它歸位兩種情況都涵蓋得到，不會在動畫還沒開始前就提早解除旗標。
+    map.off('moveend', clearProgrammaticMoveRef.current)
+    map.once('moveend', clearProgrammaticMoveRef.current)
+    programmaticMoveRef.current = true
+    // 防呆（審查發現）：上面已擋掉已知的非法座標，但 setView/panTo 內部仍可能因其他未預期原因同步拋錯
+    // （例如地圖在呼叫當下被卸載）；一旦丟例外，moveend 就不會觸發、上面註冊的 clearProgrammaticMoveRef
+    // 永遠不會執行、旗標卡死。try/catch 確保任何同步例外都會立刻復位旗標並移除這次的一次性 listener，
+    // 不影響成功路徑（moveend 正常觸發時的非同步歸位邏輯不變）。
+    try {
+      if (H <= 0 || visH < 80) { if (zoom != null) map.setView(latlng, z); else map.panTo(latlng); return }
+      const pt = map.project(latlng, z); pt.y += (H - visH) / 2
+      const c = map.unproject(pt, z)
+      if (zoom != null) map.setView(c, z); else map.panTo(c)
+    } catch (err) {
+      map.off('moveend', clearProgrammaticMoveRef.current)
+      programmaticMoveRef.current = false
+      console.error('[track] centerMap 置中失敗，已忽略本次移動', err)
+    }
   }
 
   // 每公里鼓勵語觸發：呼叫端＝commitSeg 的 while 迴圈（每跨一整公里呼叫一次）。km＝剛跨過的整公里數
@@ -616,6 +654,7 @@ export default function TrackPage() {
     const spdRaw = pos.coords.speed
     const p: GpsPoint = { lat: pos.coords.latitude, lng: pos.coords.longitude, t: pos.timestamp, acc: pos.coords.accuracy ?? 0, speed: typeof spdRaw === 'number' && isFinite(spdRaw) ? spdRaw : null }
     setCurPos({ lat: p.lat, lng: p.lng, acc: p.acc })
+    curPosAtRef.current = Date.now() // 與 setCurPos 同步記錄「收到這筆定位」的時間（非 pos.timestamp，見宣告處），供 mapSnapshot.pos.ts
     try { localStorage.setItem('dor:gps-authorized', '1') } catch { /* ignore */ } // 曾成功定位＝已授權；供 Safari(無 permissions.query) 回訪時判斷可否預熱定位
     ensureMap(p.lat, p.lng)
     // 標記與地圖永遠跟著「目前」位置（即時感），即使該點未被採納為距離
@@ -843,7 +882,29 @@ export default function TrackPage() {
       // geoOpts 換成快取優先參數，讓它盡快回、靜默成功（成功一樣經 onPos 設 'dor:gps-authorized'）
       setAutoLocating(true)
       navigator.geolocation.getCurrentPosition(
-        (pos) => { if (!cancelled) { onPosRef.current(pos); setAutoLocating(false) } },
+        (pos) => {
+          // FIX（review 抓到的 major 根因）：這個 getCurrentPosition 是非同步呼叫，可能在使用者已經按下
+          // 「開始跑步」、start() 已經同步呼叫 armTimers()→acquireWatch() 建好正式追蹤 watch 之後才 resolve
+          // （quickOpts.timeout 最長 8 秒）——這個 effect 只在 status==='idle' 時掛載（見上方 if (status
+          // !== 'idle') return），但 `cancelled` 只由本 effect 的 cleanup（下方 return，React 排到 passive
+          // effect flush 才非同步執行）設 true，`status` 從 'idle' 變成 'tracking' 到那次 cleanup 真的跑
+          // 之間有一段短暫空窗；空窗期間 `cancelled` 仍是 false，若這裡沒有另外檢查 statusRef.current，
+          // 就會把這筆最舊快取 60 秒、低精度的定位當成「正式追蹤中」的一筆 GPS 樣本餵進 onPos 的距離/防作弊
+          // 管線，且 warmWatchRef.current 已被 start()（page.tsx :1371）同步清成 null，會誤判「還沒有預熱
+          // watch」而呼叫 startWatch() 另外開一個第二條 watchPosition，與正式追蹤的 watchRef.current 同時
+          // 執行到 cleanup 真正跑到為止。比照下面「①明確已授權」分支（見上方 if ((perm...) ...) 那段）已有
+          // 的同一種保護，這裡補上同一個檢查——分支①能早在 async 函式一開始就守住是因為它在拿到 perm 結果
+          // 後立刻同步判斷；這個成功 callback 是額外一層非同步、必須在自己被呼叫的當下重新確認一次。
+          if (cancelled || statusRef.current !== 'idle') return
+          onPosRef.current(pos); setAutoLocating(false)
+          // ORBPOS_CONTRACT.md 修正 C：這筆低精度定位「成功」＝權限其實已允許（iOS permissions.query 常不可靠
+          // 回報 'prompt'，見上方策略說明）；原本只做這一次就結束，光點／地圖從此停在這筆粗略、最久快取 60 秒的
+          // 位置不再更新（使用者回報「光點不在目前定位上」的成因之一）。比照①已授權分支，立刻接上同一顆持續
+          // 高精度 watch（重用 startWatch）——權限既已允許，再呼叫一次不會多跳任何原生提示；warmWatchRef.current
+          // ==null 防重入（理論上不會與①同時跑到這裡：兩分支之間都有 return，彼此互斥，此處純屬保險）。
+          // watch 的卸載／開始跑步清理沿用本 effect 既有的 cleanup（下方 return）與 start()（:1359），不另寫一份。
+          if (warmWatchRef.current == null) startWatch()
+        },
         (e) => { if (e?.code === 1) { try { localStorage.setItem('dor:gps-declined', '1') } catch { /* ignore */ } } setAutoLocating(false) },
         quickOpts,
       )
@@ -917,6 +978,13 @@ export default function TrackPage() {
       (e) => { setErr(e?.code === 1 ? '需要定位權限才能定位到你的位置，請允許後再試。' : '無法取得目前位置，請到較空曠處再試。') },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 3000 },
     )
+  }
+  // ORBPOS_CONTRACT.md 第二輪 S2：scifi/retro/cute 地圖元件在使用者手勢暫停跟隨、8 秒自動恢復、
+  // recenter() 恢復跟隨時呼叫本函式，同步 Leaflet 拖曳/縮放共用的 followRef/setFollowing，
+  // 「回到目前位置」按鈕（依 following 顯示/隱藏）因此對三個 skin 地圖也能正確反應。
+  function handleSkinFollowChange(f: boolean) {
+    followRef.current = f
+    setFollowing(f)
   }
 
   // --- 事件任務引擎 ---
@@ -2694,6 +2762,8 @@ export default function TrackPage() {
             initialZoom={16}
             onFallback={handleSciFiFallback}
             onTargetClick={(t) => setCpMsg(t.label)}
+            bottomInset={mapSnapshot.bottomInset}
+            onFollowChange={handleSkinFollowChange}
           />
         )}
         {retroActive && (
@@ -2710,6 +2780,7 @@ export default function TrackPage() {
             onFallback={handleRetroFallback}
             onTargetClick={(t) => setCpMsg(t.label)}
             bottomInset={mapSnapshot.bottomInset}
+            onFollowChange={handleSkinFollowChange}
           />
         )}
         {cuteActive && (
@@ -2726,6 +2797,7 @@ export default function TrackPage() {
             onFallback={handleCuteFallback}
             onTargetClick={(t) => setCpMsg(t.label)}
             bottomInset={mapSnapshot.bottomInset}
+            onFollowChange={handleSkinFollowChange}
           />
         )}
         {mapSkinActive && status !== 'done' && (

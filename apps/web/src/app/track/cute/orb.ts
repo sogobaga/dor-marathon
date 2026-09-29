@@ -86,6 +86,12 @@ function drawSparkle(ctx: CanvasRenderingContext2D, x: number, y: number, r: num
 export interface SoulOrbDrawOpts {
   moving: boolean // 是否在移動（決定呼吸脈動快慢，契約 §4.2「移動中脈動略快」）
   reducedMotion?: boolean // prefers-reduced-motion：無脈動、無粒子、無星星，只畫靜態光點（契約逐字）
+  // docs/skins/ORBPOS_CONTRACT.md §B「搜尋中」：GPS acc>65 或定位超過 15 秒沒更新時為 true——本體改半
+  // 透明＋多一圈依 accuracyPx 畫的淡色精度圈＋較慢的脈動週期，reducedMotion 時圈不脈動（見 draw()）。
+  searching?: boolean
+  // 精度圈半徑（CSS px，呼叫端已用 metersPerPixel 把 pos.acc 換算成螢幕距離並 clamp 到 120px 上限，
+  // 這裡再保守 clamp 一次防呼叫端漏做）。searching=false 時不使用。
+  accuracyPx?: number
 }
 
 // SoulOrb：跑者「靈魂光點」＋旁邊 1–2 顆小星星＋移動時冒出的粒子。單一實例對應地圖上的一個光點，
@@ -154,13 +160,21 @@ export class SoulOrb {
   /** 畫在 (x, y)（螢幕 CSS px，通常是 map.project() 出來的座標）。尺寸固定，不隨 zoom 縮放。 */
   draw(ctx: CanvasRenderingContext2D, x: number, y: number, opts: SoulOrbDrawOpts): void {
     const reducedMotion = !!opts.reducedMotion
+    const searching = !!opts.searching
     ctx.save()
     ctx.translate(x, y)
 
-    // 呼吸脈動：週期約 1.6 秒、±10% 大小；移動中略快（契約逐字，×0.6 週期）。reduced-motion 恆為 1
-    // （不脈動，畫靜止幀）。
-    const period = opts.moving ? 1.6 * 0.6 : 1.6
-    const breathe = reducedMotion ? 1 : 1 + Math.sin((this.breathT / period) * Math.PI * 2) * 0.1
+    // 呼吸脈動：一般週期約 1.6 秒、±10% 大小，移動中略快（契約逐字，×0.6 週期）；「搜尋中」改用更慢
+    // （3.2 秒）、略大（±14%）的脈動，跟本體透明度一起強化「還在定位、不確定」的觀感。reduced-motion
+    // 恆為 1（不脈動，畫靜止幀）——下方精度圈共用同一個 breathe 縮放半徑，因此也一併不脈動。
+    const period = searching ? 3.2 : (opts.moving ? 1.6 * 0.6 : 1.6)
+    const amp = searching ? 0.14 : 0.1
+    const breathe = reducedMotion ? 1 : 1 + Math.sin((this.breathT / period) * Math.PI * 2) * amp
+    // docs/skins/ORBPOS_CONTRACT.md §B「本體半透明」：之後所有圖層（陰影/粒子以外/光環/光暈/本體/
+    // 高光/星星）都用 rgba 顏色字串搭配預設 alpha 混合，沒有另外設定 globalAlpha 的區塊會直接吃到
+    // 這裡的值；有各自 ctx.save()/restore() 的區塊（陰影、光環、光暈）restore 後才回到這個值，粒子
+    // 區塊自己覆寫 globalAlpha 不受影響（移動粒子不屬於「本體」，契約沒有要求粒子也變透明）。
+    if (searching) ctx.globalAlpha *= 0.55
 
     // 柔和投影（docs/skins/CUTE_CONTRACT_R2b.md §B 逐字：rgba(214,69,127,.35)、模糊 6px，畫在光球「下方」讓它浮起
     // 來）：不用 ctx.filter/shadowBlur（相容性/效能顧慮，且要精準控制只在球體下方偏移），改用扁平化
@@ -202,6 +216,19 @@ export class SoulOrb {
     ctx.lineWidth = 2.4
     ctx.beginPath(); ctx.arc(0, 0, 36 * breathe, 0, Math.PI * 2); ctx.stroke()
     ctx.restore()
+
+    // docs/skins/ORBPOS_CONTRACT.md §B「搜尋中」：一圈依 GPS acc 換算半徑的淡色精度圈（上限 120px，
+    // 由呼叫端 CuteMap.tsx 用 metersPerPixel 換算好再傳進來，這裡只負責畫＋跟本體共用同一個 breathe
+    // 做緩慢脈動）；虛線圈風格與其餘實心光暈區分開，讓人一眼看出這是「精度範圍」而非光點本體。
+    if (searching) {
+      const ringR = Math.min(120, Math.max(18, opts.accuracyPx ?? 40)) * breathe
+      ctx.save()
+      ctx.strokeStyle = 'rgba(255,111,174,0.5)'
+      ctx.lineWidth = 2
+      ctx.setLineDash([4, 5])
+      ctx.beginPath(); ctx.arc(0, 0, ringR, 0, Math.PI * 2); ctx.stroke()
+      ctx.restore()
+    }
 
     // #ff6fae 光暈：docs/skins/CUTE_CONTRACT_R2b.md §B 逐字「半徑約 30px，55%→0」（取代 R2 第一版 r≈22 的 candy
     // 光暈，範圍更大、顏色更深，才蓋得過退淡後的地圖底色）。

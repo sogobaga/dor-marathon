@@ -21,14 +21,14 @@
 // 動畫水波）；顯示公園／地標文字標籤（retro 刻意不顯示任何文字）。
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
-import { Map as MapLibreMap, config as maplibreConfig, type MapOptions, type LngLatLike, type MapMouseEvent, type MissingStyleImageResolver } from 'maplibre-gl'
+import { Map as MapLibreMap, config as maplibreConfig, type MapOptions, type LngLatLike, type MapMouseEvent, type MapMovementEvent, type MissingStyleImageResolver } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { buildCuteStyle } from './style'
 import { tileImageData, type TileKind } from './tiles'
 import { SoulOrb } from './orb'
 import { drawKmHeartBadge, drawTargetIcon, drawStartDot } from './icons'
 import { isWebglSupported, haversineM, metersPerPixel, geoCircle, decimate } from './geo'
-import type { CuteMapHandle, CuteMapProps, CuteTarget } from './types'
+import type { CuteMapHandle, CuteMapProps, CuteTarget, CutePos } from './types'
 
 // maplibre-gl worker 自架修正：與 scifi/retro 同一個根因/同一套修法（見 RetroMap.tsx 詳細註解）——
 // 三套風格共寫同一個 module-level flag（maplibreConfig.WORKER_URL），同一個 maplibre-gl 套件實例的
@@ -41,6 +41,20 @@ if (typeof window !== 'undefined' && !maplibreConfig.WORKER_URL) {
 const FALLBACK_TIMEOUT_MS = 8000
 const LAST_POS_KEY = 'dor_cute_last_pos' // 與 track/page.tsx 的 CUTE_LAST_POS_KEY 同一把 key
 const RESUME_FOLLOW_MS = 8000
+// FIX（review 抓到的 major 根因，docs/skins/ORBPOS_CONTRACT.md 驗收項目 4「回到目前位置→zoom=16.5、
+// 之後 3 次定位更新都維持跟隨」）：recenter() 的 zoom:16.5 easeTo 若在動畫尚未跑完（500ms）前被下面
+// 「GPS 位置更新」effect 的跟隨 easeTo 打斷，會被 MapLibre 永久凍結在打斷當下的中間值，且再也不會自己
+// 恢復——追出根因見 node_modules/maplibre-gl/src/geo/projection/mercator_camera_helper.ts
+// handleEaseTo()：新一次 easeTo 的 startZoom 讀的是 tr.zoom，這是「目前正在跑的動畫已經套用到 map
+// 實際 transform 上」的即時值（不是動畫開始前的舊值、也不是動畫目標值）；跟隨 effect 的 easeTo 依
+// ORBPOS_CONTRACT.md §A（保留使用者縮放）刻意不帶 zoom，一旦在這種情況下打斷 recenter，
+// endZoom=zoom=startZoom、isZooming 判定為 false，新動畫完全不會再移動 zoom，就此卡在那個中間值。
+// recenterZoomPendingRef（見下方使用處）讓「recenter() 剛按下、zoom 還沒真的收斂到 16.5」這段期間，
+// 跟隨 effect 的 easeTo 繼續一起帶 zoom:16.5——即使又被下一次跟隨更新打斷，新動畫的終點依然是
+// 16.5，只是要多花一點時間收斂，不會卡在半路；量到目前 zoom 已經夠接近 16.5 就視為收斂完成，恢復
+// 「跟隨只搬 center」的原設計，不會一直霸占使用者之後自行縮放的操作。
+const RECENTER_ZOOM = 16.5
+const RECENTER_ZOOM_EPS = 0.05
 const TILE_IDS: readonly TileKind[] = ['tree', 'wave']
 const STYLE_IMAGE_IDS: Record<TileKind, string> = { tree: 'cute-tree', wave: 'cute-wave' }
 
@@ -60,12 +74,19 @@ const MOVE_NOISE_FLOOR_M = 6
 const STILL_TIMEOUT_MS = 3000
 const TRAIL_CONNECT_MAX_ACC = 65
 
+// docs/skins/ORBPOS_CONTRACT.md §B：「搜尋中」外觀的判定門檻——GPS acc 精度差於 65m（沿用
+// TRAIL_CONNECT_MAX_ACC／page.tsx MAX_ACC 同一數字慣例）或最新定位已超過 15 秒沒有更新（背景回前景、
+// 訊號中斷）時，光點改用半透明＋精度圈的「搜尋中」外觀（見下方 isOrbSearching／renderFrame），但仍然
+// 一律畫在 posRef.current 這個最新值上，不凍結在舊點。
+const MAX_ORB_ACC = 65
+const STALE_FIX_MS = 15000
+
 function writeLastPos(lat: number, lng: number) {
   try { localStorage.setItem(LAST_POS_KEY, JSON.stringify({ lat, lng })) } catch { /* 私密瀏覽/storage 被封鎖：純錦上添花，略過即可 */ }
 }
 
 const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, ref) {
-  const { pos, status, segments, kmMarks, targets, focusMode, initialCenter, initialZoom, onFallback, onTargetClick, bottomInset } = props
+  const { pos, status, segments, kmMarks, targets, focusMode, initialCenter, initialZoom, onFallback, onTargetClick, bottomInset, onFollowChange } = props
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -75,6 +96,7 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
   const failedRef = useRef(false)
   const loadedRef = useRef(false)
   const followingRef = useRef(true)
+  const recenterZoomPendingRef = useRef(false) // 見上方 RECENTER_ZOOM 宣告處：recenter() 剛按下、zoom 還沒收斂到 16.5 期間為 true
   const lastPosRef = useRef<{ lat: number; lng: number; t: number } | null>(null)
   // 移動判定（供光點呼吸快慢／冒粒子用）——FIX round2 review 抓到根因：原本用「上一點到這一點」的
   // 瞬時位移/時間差算速度，GPS 靜止時仍會持續回報幾公尺內的抖動座標，短時間差除出來的瞬時速度
@@ -120,9 +142,23 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
   const focusModeRef = useRef(focusMode); focusModeRef.current = focusMode
   const onFallbackRef = useRef(onFallback); onFallbackRef.current = onFallback
   const onTargetClickRef = useRef(onTargetClick); onTargetClickRef.current = onTargetClick
+  // docs/skins/ORBPOS_CONTRACT.md §S2：「回到目前位置」按鈕在三個 skin 都叫不出來——page.tsx 讀不到
+  // skin 地圖被使用者手勢拖動/縮放後的跟隨狀態。新增這個回呼，用 ref 存最新的函式（比照上面
+  // onFallbackRef／onTargetClickRef 同一慣例），下方 setFollowing() 只在真的翻轉時才呼叫一次。
+  const onFollowChangeRef = useRef(onFollowChange); onFollowChangeRef.current = onFollowChange
   const bottomInsetRef = useRef(bottomInset ?? 0); bottomInsetRef.current = bottomInset ?? 0
   const appliedPaddingBottomRef = useRef<number | null>(null)
   initialCenterRef.current = initialCenter
+
+  // 統一改變 followingRef 的唯一入口：只在狀態真的翻轉（true↔false）時才呼叫 onFollowChange，避免
+  // 呼叫端（8 秒自動恢復計時器、recenter()、使用者手勢 pauseFollow、+/− 按鈕）各自重複觸發
+  // page.tsx 不必要的 re-render。只讀寫 followingRef／onFollowChangeRef 兩個穩定 ref，元件生命週期內
+  // 可以安全跨 render 重新宣告（跟 recenter/zoomBy 本身一樣）。
+  function setFollowing(v: boolean) {
+    if (followingRef.current === v) return
+    followingRef.current = v
+    onFollowChangeRef.current?.(v)
+  }
 
   // 底部可拖曳資訊面板頂端到畫面底的高度 → map.setPadding({bottom})，讓跟隨中心落在面板以上的可見
   // 地圖區正中央（比照 RetroMap.tsx CONTRACT_R2 §2 同一段邏輯）；專注模式改用容器高度的上 45%。
@@ -142,14 +178,26 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
     recenter(p) {
       const map = mapRef.current
       if (!map) return
-      followingRef.current = true
+      setFollowing(true)
       if (resumeTimerRef.current) { clearTimeout(resumeTimerRef.current); resumeTimerRef.current = null }
       const target = p || posRef.current
-      if (target) { try { map.easeTo({ center: [target.lng, target.lat], zoom: 16.5, pitch: 0, bearing: 0, duration: 500, essential: true }) } catch { /* ignore */ } }
+      if (target) {
+        recenterZoomPendingRef.current = true // 見上方 RECENTER_ZOOM 宣告處：標記「zoom 還沒收斂」，讓跟隨 effect 之後一起帶 zoom
+        try { map.easeTo({ center: [target.lng, target.lat], zoom: RECENTER_ZOOM, pitch: 0, bearing: 0, duration: 500, essential: true }) } catch { /* ignore */ }
+      }
     },
     zoomBy(delta: number) {
       const map = mapRef.current
       if (!map) return
+      // docs/skins/ORBPOS_CONTRACT.md §A「＋／− 按鈕屬使用者操作，照舊暫停跟隨 8 秒」：這裡呼叫的是
+      // 程式 easeTo，觸發的 'zoomstart' 不會帶 originalEvent（見下方 onZoomStart 改法只認使用者手勢），
+      // 不會再被事件自動暫停，所以改成直接暫停——邏輯與 mount effect 內的 pauseFollow() 相同，這裡另外
+      // 寫一份是因為 zoomBy 定義在 useImperativeHandle，摸不到 mount effect 閉包內的那個函式；
+      // followingRef／resumeTimerRef 都是元件層級的 ref，兩處各自操作同一份 ref 沒有問題。
+      recenterZoomPendingRef.current = false // 使用者主動縮放：不再幫他把 zoom 拉回 16.5，尊重這次操作（見上方 RECENTER_ZOOM 說明）
+      setFollowing(false)
+      if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current)
+      resumeTimerRef.current = setTimeout(() => { setFollowing(true); resumeTimerRef.current = null }, RESUME_FOLLOW_MS)
       try { map.easeTo({ zoom: map.getZoom() + delta, duration: 250, essential: true }) } catch { /* ignore */ }
     },
   }), [])
@@ -192,8 +240,13 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
       if (!isCurrent()) return
       failInstance('map-error:' + ((e as { error?: { message?: string } })?.error?.message || 'unknown'))
     }
-    const onDragStart = () => { if (isCurrent()) pauseFollow() }
-    const onZoomStart = () => { if (isCurrent()) pauseFollow() }
+    // docs/skins/ORBPOS_CONTRACT.md §A：只有「使用者手勢」才暫停跟隨——dragstart/zoomstart 不分使用者
+    // 操作或程式 easeTo 觸發，只有前者的事件物件帶 originalEvent（真實 DOM
+    // MouseEvent/TouchEvent/WheelEvent）；程式呼叫 easeTo()（跟隨鏡頭更新、recenter()）觸發的同名事件
+    // originalEvent 恆為 undefined，藉此分辨兩種來源，不再無差別暫停跟隨（舊版每次跟隨更新 zoom 回
+    // 16.5 都會自己觸發一次 zoomstart，把自己剛恢復的跟隨又暫停掉）。
+    const onDragStart = (e: MapMovementEvent) => { if (isCurrent() && e.originalEvent) pauseFollow() }
+    const onZoomStart = (e: MapMovementEvent) => { if (isCurrent() && e.originalEvent) pauseFollow() }
     const onClick = (e: MapMouseEvent) => {
       if (!isCurrent()) return
       const list = targetsRef.current
@@ -256,9 +309,9 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
     }
 
     function pauseFollow() {
-      followingRef.current = false
+      setFollowing(false)
       if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current)
-      resumeTimerRef.current = setTimeout(() => { followingRef.current = true; resumeTimerRef.current = null }, RESUME_FOLLOW_MS)
+      resumeTimerRef.current = setTimeout(() => { setFollowing(true); resumeTimerRef.current = null }, RESUME_FOLLOW_MS)
     }
 
     function detachListeners() {
@@ -375,6 +428,10 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
         zoom: map.getZoom(),
         pitch: map.getPitch(),
         bearing: map.getBearing(),
+        // ORBPOS_CONTRACT.md 第二輪驗收12：直接讀 MapLibre 自己的 getPadding()（applyCutePadding()
+        // 呼叫 setPadding 的權威回讀），讓 E2E 能算出「可見區（面板以上那塊）中心」的 CSS px，不必自己
+        // 另外猜測 bottomInset 換算後的實際生效值。
+        padding: map.getPadding(),
         lastPos: lastPosRef.current ? { lat: lastPosRef.current.lat, lng: lastPosRef.current.lng } : null,
         tilesRequested: tilesRequestedRef.current,
         tilesLoaded: tilesLoadedRef.current,
@@ -383,6 +440,17 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
         // initialCenter 恆顯示行為）。
         orbVisible: !!p,
         orbScreen,
+        // docs/skins/ORBPOS_CONTRACT.md 偵錯把手：orbLatLng＝實際拿來畫光點的座標（一律最新定位，不
+        // 凍結）；lastFixAgeMs／orbState 用 renderFrame 同一組 getFixAgeMs／isOrbSearching 判定；
+        // following＝目前是否處於跟隨狀態；projectLngLat 讓 E2E 直接驗證任意座標的 CSS px 投影是否與
+        // 光點實際畫的位置一致。
+        orbLatLng: p ? { lat: p.lat, lng: p.lng } : null,
+        lastFixAgeMs: p ? getFixAgeMs(p) : null,
+        orbState: p ? (isOrbSearching(p) ? 'searching' : 'normal') : null,
+        following: followingRef.current,
+        projectLngLat: (lng: number, lat: number) => {
+          try { const pt = map.project([lng, lat]); return { x: pt.x, y: pt.y } } catch { return null }
+        },
         trailPoints,
         kmBadges: kmMarksRef.current?.length || 0,
         kmBadgeScreens,
@@ -438,7 +506,20 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
     lastPosRef.current = { lat: pos.lat, lng: pos.lng, t: now }
     const map = mapRef.current
     if (map && followingRef.current) {
-      try { map.easeTo({ center: [pos.lng, pos.lat], zoom: 16.5, pitch: 0, bearing: 0, duration: 900, essential: true }) } catch { /* ignore */ }
+      // docs/skins/ORBPOS_CONTRACT.md §A：跟隨更新只搬 center，不再強制 zoom:16.5——使用者縮放過一次
+      // 之後，跟隨鏡頭若仍寫死 zoom 會持續把剛設定好的縮放層級彈回去（與「保留使用者目前的縮放」牴觸），
+      // 縮放要恢復預設值只透過 recenter()（下方「回到目前位置」）。pitch/bearing 對 cute 恆為 0
+      // （maxPitch:0，本檔從不改動 bearing），繼續帶著寫死不影響行為，維持原樣。
+      const followOpts: { center: [number, number]; pitch: number; bearing: number; duration: number; essential: true; zoom?: number } =
+        { center: [pos.lng, pos.lat], pitch: 0, bearing: 0, duration: 900, essential: true }
+      // 見上方 RECENTER_ZOOM／recenterZoomPendingRef 宣告處的根因說明：recenter() 剛按下、zoom 還沒
+      // 收斂到 16.5 前，這裡也一起帶 zoom，即使被打斷也不會凍結在半路；量到已經夠接近目標就清旗標，
+      // 之後恢復「只搬 center」。
+      if (recenterZoomPendingRef.current) {
+        if (Math.abs(map.getZoom() - RECENTER_ZOOM) < RECENTER_ZOOM_EPS) recenterZoomPendingRef.current = false
+        else followOpts.zoom = RECENTER_ZOOM
+      }
+      try { map.easeTo(followOpts) } catch { /* ignore */ }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pos?.lat, pos?.lng])
@@ -482,10 +563,13 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
 
   function renderFrame(map: MapLibreMap, dt: number) {
     const canvas = canvasRef.current
-    const container = containerRef.current
-    if (!canvas || !container) return
+    if (!canvas) return
     const dpr = window.devicePixelRatio || 1
-    const w = container.clientWidth, h = container.clientHeight
+    // docs/skins/ORBPOS_CONTRACT.md §D：疊層畫布的座標系以 MapLibre 自己的 canvas 尺寸為準（不是
+    // container 的 clientWidth/clientHeight）——兩者理論上同步，但 resize 節流／版面剛切換的瞬間可能
+    // 短暫不同步，project() 用的是 map 自己的 transform，這裡跟著它才能保證每一幀都對得上。
+    const mapCanvas = map.getCanvas()
+    const w = mapCanvas.clientWidth, h = mapCanvas.clientHeight
     if (w <= 0 || h <= 0) return
     const wantW = Math.round(w * dpr), wantH = Math.round(h * dpr)
     if (canvas.width !== wantW || canvas.height !== wantH) { canvas.width = wantW; canvas.height = wantH }
@@ -517,12 +601,37 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
       // STILL_TIMEOUT_MS 之內；用 render 迴圈當下的 performance.now() 重新評估，不是只在 pos effect
       // 觸發當下算一次，這樣時間流逝本身就會讓「移動中」自然衰減回靜止。
       const moving = statusRef.current === 'tracking' && lastMovingAtRef.current > 0 && (performance.now() - lastMovingAtRef.current) < STILL_TIMEOUT_MS
+      // docs/skins/ORBPOS_CONTRACT.md §B：一律用最新定位畫光點（p 就是 posRef.current 這個最新值，不
+      // 凍結在舊點）；精度差／久未更新時改成「搜尋中」外觀，半透明本體＋依 acc 換算的精度圈（見
+      // orb.ts SoulOrbDrawOpts.searching／accuracyPx，換算沿用 onClick 已在用的同一個 metersPerPixel）。
+      const searching = isOrbSearching(p)
+      const mpp = metersPerPixel(p.lat, map.getZoom())
+      const accuracyPx = typeof p.acc === 'number' && mpp > 0 ? Math.min(120, p.acc / mpp) : 40
       const orb = orbRef.current
       if (orb) {
         orb.update(dt, moving, reducedMotionRef.current, pt.x, pt.y)
-        if (!overlayHidden) orb.draw(ctx, pt.x, pt.y, { moving, reducedMotion: reducedMotionRef.current })
+        if (!overlayHidden) orb.draw(ctx, pt.x, pt.y, { moving, reducedMotion: reducedMotionRef.current, searching, accuracyPx })
       }
     }
+  }
+
+  // docs/skins/ORBPOS_CONTRACT.md §B：最新定位距今幾毫秒沒有更新——有 pos.ts（PAGE 工人新增於
+  // scifi/types.ts SciFiPos，epoch ms，本檔不擁有那份型別檔，用安全的執行期存取避免在對方欄位進版前
+  // 就編譯失敗）就用它；還沒有這個欄位時退回「pos 最後一次真的改變的時間」（lastPosRef.current.t，
+  // performance.now() 時鐘）。兩種時鐘各自在自己的分支內使用，不互相比較。
+  function getFixAgeMs(p: CutePos | null): number {
+    if (!p) return Infinity
+    const ts = (p as unknown as { ts?: number }).ts
+    if (typeof ts === 'number' && Number.isFinite(ts)) return Math.max(0, Date.now() - ts)
+    const last = lastPosRef.current
+    return last ? Math.max(0, performance.now() - last.t) : 0
+  }
+
+  // 「搜尋中」＝精度差於 MAX_ORB_ACC 或最新定位已超過 STALE_FIX_MS 沒更新（契約 §B 逐字）。
+  function isOrbSearching(p: CutePos | null): boolean {
+    if (!p) return false
+    if (typeof p.acc === 'number' && p.acc > MAX_ORB_ACC) return true
+    return getFixAgeMs(p) > STALE_FIX_MS
   }
 
   // 軌跡＝光點走過的路（CONTRACT_R2.md §4.3）：發光緞帶＝外層柔光（寬 14px、candy 30% 透明、
@@ -674,7 +783,11 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
       <div ref={containerRef} className="cute-map" style={{ position: 'absolute', inset: 0 }} />
-      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', display: 'block' }} />
+      {/* docs/skins/ORBPOS_CONTRACT.md ★：<canvas> 是可替換元素（replaced element，跟 <img> 同一類），
+          position:absolute+inset:0 不會撐滿容器，沒有明確 width/height 時退回內在尺寸（=canvas.width/
+          height 這兩個 HTML attribute，即 renderFrame() 設的 backing pixel 尺寸）；DPR>1 手機上整層
+          疊層因此放大偏移（根因與詳細說明見 track/retro/RetroMap.tsx 同一處註解，retro 已修）。 */}
+      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', display: 'block' }} />
     </div>
   )
 })
