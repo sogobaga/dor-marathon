@@ -29,6 +29,18 @@ import { OVERRIDE_THEME_COLOR, type OverrideSkin } from './skinColors'
 
 export type { OverrideSkin }
 
+// __dorSkinPin／__dorSkinObsInstalled：契約 TRACK_HYDRATION_CONTRACT.md 修法 2「data-skin 釘選」
+// 防線用的兩個 window 全域——同一把鍵名同時被這支檔案（React 資料回來後的權威路徑）與
+// app/layout.tsx 的 skinOverrideBootJs（開機那一刻的搶跑路徑，純字串 JS、不能 import 這支檔案）
+// 讀寫，是共用防線的單一約定，哪一邊先跑到都認得對方已經做過的事（見下方 installSkinPinObserver
+// 與 applySkinOverride/restoreOriginalSkin 的註解）。
+declare global {
+  interface Window {
+    __dorSkinPin?: OverrideSkin | null
+    __dorSkinObsInstalled?: boolean
+  }
+}
+
 export const SKIN_CHANGE_EVENT = 'dor-skin-change'
 
 const OVERRIDE_KEY = 'dor_skin_override'
@@ -111,14 +123,55 @@ function setThemeColorMeta(color: string) {
   if (meta) meta.setAttribute('content', color)
 }
 
+// installSkinPinObserver：契約修法 2「data-skin 釘選」防線。只裝一顆 MutationObserver（全域旗標
+// __dorSkinObsInstalled 防重裝——layout.tsx 的 skinOverrideBootJs 開機時可能已經裝過同語意的一顆，
+// 這裡認得那顆已經裝好，不會疊裝第二顆），只要偵測到 <html data-skin> 與 window.__dorSkinPin
+// 不同、且 pin 非 null（non-null＝目前「應該」是覆寫風格中），就立刻設回去並把 meta theme-color
+// 也重設成同一張色表對應的顏色。MutationObserver 的 callback 是 microtask，保證在瀏覽器下一次真正
+// 繪製畫面前執行完畢——不論是「未來任何一種 hydration mismatch 讓 React 從根節點清掉 <html> 所有
+// 屬性」（見契約 §根因 acquireSingletonInstance）、或其他意外把 data-skin 改掉的路徑，使用者都不會
+// 看到中間那一幀「變回預設」的畫面。防迴圈：只在真的不同時才寫（下面 if 判斷），觀察者自己觸發的
+// 那次「寫回同樣的值」不會再次觸發不同值的分支，不會無限遞迴。
+// pin 為 null（未套用覆寫／已收回）時這顆觀察者的 callback 直接 return，對沒有覆寫資格的一般使用者
+// 完全是 no-op（連比對都提早短路），不影響任何人。
+function installSkinPinObserver() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return
+  if (window.__dorSkinObsInstalled) return
+  const mo = new MutationObserver(() => {
+    try {
+      const pin = window.__dorSkinPin
+      if (pin == null) return
+      const el = document.documentElement
+      if (el.dataset.skin !== pin) {
+        el.dataset.skin = pin
+        setThemeColorMeta(THEME_COLOR[pin])
+      }
+    } catch {
+      // 同其餘防線：觀察者本身絕不能因為任何例外而中斷（例如某次 callback 執行時 document 已被
+      // 卸載），吞掉即可，下一次屬性變動還會再觸發一次 callback。
+    }
+  })
+  try {
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-skin'] })
+    window.__dorSkinObsInstalled = true
+  } catch {
+    // observe() 理論上不會丟例外（documentElement 恆存在），防禦性 catch 與其他函式風格一致。
+  }
+}
+
 // applySkinOverride 套用覆寫：寫 <html data-skin="scifi"|"retro">、meta theme-color、並記錄
 // {uid, skin} 供下次開機防閃腳本比對（見檔頭註解）。
 export function applySkinOverride(uid: string, skin: OverrideSkin) {
   clearLegacyPref()
   safeSetItem(OVERRIDE_KEY, JSON.stringify({ uid, skin }))
   if (typeof document === 'undefined') return
+  // 契約修法 2：pin 必須先於屬性寫入就設好——萬一屬性寫入後、下一行程式碼執行前這段 microtask
+  // 之間就有東西把 data-skin 改掉（理論上不會，但釘選的意義就是不假設「中間不會有意外」），
+  // pin 也已經是正確值，觀察者隨時能認出「現在該是什麼」。
+  window.__dorSkinPin = skin
   document.documentElement.dataset.skin = skin
   setThemeColorMeta(THEME_COLOR[skin])
+  installSkinPinObserver()
   // 契約修法 4：cookie 只在真的有 document（瀏覽器）時才種，SSR/測試環境 import 這支檔案不會
   // 意外寫入任何東西（上面的 early return 已經保證這裡以下都在瀏覽器）。
   setOverrideCookie(skin)
@@ -131,6 +184,9 @@ export function restoreOriginalSkin(originalSkin: string, originalThemeColor: st
   clearLegacyPref()
   safeRemoveItem(OVERRIDE_KEY)
   if (typeof document === 'undefined') return
+  // 契約修法 2：pin 先設回 null 再移除屬性——「刻意的收回」必須讓釘選防線知情，否則上面那顆
+  // 觀察者會把即將被拿掉的 data-skin 當成「被意外清掉」立刻寫回去，變成怎麼收都收不掉。
+  window.__dorSkinPin = null
   if (!originalSkin || originalSkin === 'default') {
     delete document.documentElement.dataset.skin
   } else {
@@ -138,6 +194,20 @@ export function restoreOriginalSkin(originalSkin: string, originalThemeColor: st
   }
   setThemeColorMeta(originalThemeColor)
   clearOverrideCookie()
+}
+
+// reapplyPinThemeColor：契約修法 2「防線單測」考慮到的另一種意外——MutationObserver 只看得到
+// <html data-skin> 屬性本身的變動，看不到 Next.js 重渲染 <head> 時把 <meta name="theme-color">
+// 整個節點換掉（換節點＝新節點的 content 又是 SSR 算出的原值，不是我們釘選的覆寫色，但這不會觸發
+// attributeFilter:['data-skin'] 的觀察者，因為被換的是另一個元素）。components/SkinOverride.tsx
+// 掛載後跑一次性檢查：只要 pin 非 null，就把目前的 <meta theme-color> 重設成 pin 對應的顏色；只做
+// 一次（掛載時機已晚於開機腳本／bootJs 設定 pin，足以撿回被換掉的節點），不是常駐監聽——持續監聽
+// <head> 子樹變動成本較高且目前沒有已知的持續性問題，之後如證實有需要可再升級成 MutationObserver。
+export function reapplyPinThemeColor() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return
+  const pin = window.__dorSkinPin
+  if (pin == null) return
+  setThemeColorMeta(THEME_COLOR[pin])
 }
 
 // clearSkinOverride：登出／換帳號時呼叫的語意別名（行為與 restoreOriginalSkin 完全相同，只是呼叫端

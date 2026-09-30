@@ -35,6 +35,7 @@ import type { SciFiMapHandle, SciFiPos, SciFiTarget } from './scifi/types'
 import type { RetroMapHandle } from './retro/types'
 import type { CuteMapHandle } from './cute/types'
 import { getActiveSkin, subscribeSkinChange, getSkinServerSnapshot, type OverrideSkin } from '@/lib/skinOverride'
+import { useIsClient } from '@/lib/useIsClient'
 
 // 未來科技（scifi）／復古 RPG（retro）／溫馨可愛（cute）GPS 地圖（CONTRACT.md §4；cute 見
 // scratchpad docs/skins/CUTE_CONTRACT.md §4）：next/dynamic(ssr:false) 動態載入，只在下方
@@ -477,6 +478,13 @@ export default function TrackPage() {
   // MutationObserver（監聽 dataset 變動）＋SKIN_CHANGE_EVENT（選擇改變時立即生效，不必等 dataset 屬性
   // 變動），搬去 lib/skinOverride.ts 讓 track 頁／歷史頁共用同一份實作（單一真相）。
   const activeSkin = useSyncExternalStore(subscribeSkinChange, getActiveSkin, getSkinServerSnapshot)
+  // 契約 TRACK_HYDRATION_CONTRACT.md 修法 1：idle 那行常駐日期（下面 fmtDateBig(new Date())）在
+  // SSR／hydration 那一輪必須輸出與伺服器相同的穩定占位，掛載後才能改算「現在」，否則建置當下
+  // （Railway＝UTC）凍結進 HTML 的日期字串，跟使用者瀏覽器 hydration 當下算出的在地日期不一致
+  // 就會是 React 19 #418 hydration mismatch → 整棵樹改回 client render（根因見契約 §根因，會
+  // 連帶把上面 activeSkin 剛設好的 data-skin 一併清掉）。isClient 只影響這一處顯示文字本身，
+  // 不影響 activeSkin／地圖等其他邏輯。
+  const isClient = useIsClient()
   const sciFiMapRef = useRef<SciFiMapHandle>(null)
   const retroMapRef = useRef<RetroMapHandle>(null)
   const cuteMapRef = useRef<CuteMapHandle>(null)
@@ -3310,7 +3318,10 @@ export default function TrackPage() {
                 真實姓名未填時退回顯示名稱（同結果卡口徑）。 */}
             <div style={{ marginTop: 6, fontSize: 12, color: 'var(--tx)', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
               {status === 'idle'
-                ? <>{fmtDateBig(new Date())}　跑者 <b>{realName || user?.name || user?.handle || 'DOR 跑者'}</b></>
+                // 契約 TRACK_HYDRATION_CONTRACT.md 修法 1：SSR／hydration 那一輪用穩定占位（與
+                // 伺服器輸出逐字相同），掛載後（isClient===true）才換成 new Date()——行為與今天
+                // 完全相同（每次重繪仍取「當下」日期），只差第一輪不再讓建置當下的日期凍結進 HTML。
+                ? <>{isClient ? fmtDateBig(new Date()) : ' '}　跑者 <b>{realName || user?.name || user?.handle || 'DOR 跑者'}</b></>
                 : <>{fmtDateBig(new Date(startRef.current))}　開始 {fmtHm(new Date(startRef.current))}
                     {status === 'done' && result ? ` ～ 結束 ${fmtHm(pointsRef.current.length ? new Date(pointsRef.current[pointsRef.current.length - 1].t) : new Date(startRef.current + result.duration_s * 1000))}` : ''}
                     　跑者 <b>{realName || user?.name || user?.handle || 'DOR 跑者'}</b></>}

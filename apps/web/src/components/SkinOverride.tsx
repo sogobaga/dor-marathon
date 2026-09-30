@@ -55,6 +55,7 @@ import {
   getActiveSkin,
   subscribeSkinChange,
   getSkinServerSnapshot,
+  reapplyPinThemeColor,
   SKIN_CHANGE_EVENT,
   type OverrideSkin,
 } from '@/lib/skinOverride'
@@ -124,6 +125,15 @@ export default function SkinOverride({
   const [userKnown, setUserKnown] = useState(false)
   useEffect(() => {
     setUserKnown(true)
+  }, [])
+
+  // 契約 TRACK_HYDRATION_CONTRACT.md 修法 2：一次性補checking——lib/skinOverride.ts 的
+  // MutationObserver 只看得到 <html data-skin> 屬性變動，看不到 Next.js 重渲染 <head> 把
+  // <meta name="theme-color"> 整個節點換掉這種情況（換節點的 content 是 SSR 原值，不是釘選色，
+  // 但不會觸發那顆觀察者）。掛載後跑一次 reapplyPinThemeColor()：pin 為 null（未套用覆寫的一般
+  // 使用者）直接是 no-op；只做一次，不是常駐監聽，理由見該函式註解。
+  useEffect(() => {
+    reapplyPinThemeColor()
   }, [])
 
   useEffect(() => {

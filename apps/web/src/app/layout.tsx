@@ -283,10 +283,37 @@ document.documentElement.dataset.skin=rec.skin;
 // React 資料回來後的「權威」版本，這裡是開機那一刻的「搶跑」版本），任一步失敗都不影響上面
 // 已經設好的 data-skin（各自獨立 try/catch，避免因為某支瀏覽器不支援 FontFace 就連 theme-color
 // 都不設）。
+var TC=${SKIN_OV_THEME_COLOR_JSON};
 try{
-  var TC=${SKIN_OV_THEME_COLOR_JSON};
   var meta=document.querySelector('meta[name="theme-color"]');
   if(meta&&TC[rec.skin])meta.setAttribute('content',TC[rec.skin]);
+}catch(e){}
+// 契約 TRACK_HYDRATION_CONTRACT.md 修法 2「data-skin 釘選」：這是防線的「搶跑」端——開機這一刻
+// 就把 pin 設好＋裝上觀察者，比 React 開始渲染還早，才能擋住契約 §根因描述的那種「React 從根節點
+// acquireSingletonInstance 清掉 <html> 所有屬性」（發生在 hydration mismatch 時，遠早於
+// lib/skinOverride.ts 的 applySkinOverride 有機會再跑一次）。window.__dorSkinPin／
+// __dorSkinObsInstalled 兩把全域鍵名與該檔案共用（純字串 JS 不能 import TS 模組，這裡是等效
+// 實作，語意必須同步維護：一邊改了判斷條件或鍵名，另一邊也要跟著改）。只要偵測到 data-skin 與
+// pin 不同就寫回去＋重設 meta theme-color，並用「只在真的不同時才寫」防迴圈；observer 已裝過
+// （旗標）就不重裝，lib/skinOverride.ts 之後的 applySkinOverride 認得同一顆旗標不會疊裝第二顆。
+try{
+  window.__dorSkinPin=rec.skin;
+  if(!window.__dorSkinObsInstalled){
+    var mo=new MutationObserver(function(){
+      try{
+        var pin=window.__dorSkinPin;
+        if(pin==null)return;
+        var el=document.documentElement;
+        if(el.dataset.skin!==pin){
+          el.dataset.skin=pin;
+          var m2=document.querySelector('meta[name="theme-color"]');
+          if(m2&&TC[pin])m2.setAttribute('content',TC[pin]);
+        }
+      }catch(e){}
+    });
+    mo.observe(document.documentElement,{attributes:true,attributeFilter:['data-skin']});
+    window.__dorSkinObsInstalled=true;
+  }
 }catch(e){}
 try{
   var FM=${SKIN_OV_FONT_JSON};
