@@ -19,9 +19,14 @@
 // 會觸發重繪換成圓體字，不會造成版面跳動以外的問題（純文字換字體，無 FOIT 阻塞）。
 // 子集外字元（罕見字／emoji）一律退回 fallback 鏈，不會消失或變成缺字方塊。
 
-export const CUTE_FONT_FAMILY = 'DORCute'
-
-const FONT_URL = '/fonts/dorcute/DORCute.woff2'
+// family／URL 常數改從 lib/skinFonts.ts 單一來源引入（契約 docs/skins/HOME_FLASH_CONTRACT.md
+// 修法 3，比照 components/retro/fonts.ts 同一做法）：app/layout.tsx 的開機腳本
+// skinOverrideBootJs 需要搶先用同一份 family／URL 註冊 FontFace，但那裡是伺服器端純字串組字，
+// 不能 import 這支 'use client' 相依的檔案，因此把常數抽到零依賴的 lib/skinFonts.ts，兩邊改用
+// 同一份、不會分岔。CUTE_FONT_FAMILY 在此重新匯出，呼叫端（CuteBackground.tsx 等）維持原有
+// import 路徑不必改。
+import { CUTE_FONT_FAMILY, CUTE_FONT_URL as FONT_URL } from '@/lib/skinFonts'
+export { CUTE_FONT_FAMILY }
 
 let loadPromise: Promise<void> | null = null
 

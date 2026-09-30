@@ -1,7 +1,7 @@
 // 版號：v<VERSION_BASE>.<VERSION_SERIAL>.<commit8>。進大版號改 VERSION_BASE；每次推送遞增 VERSION_SERIAL
 //（= git commit 累計數 `git rev-list --count HEAD`）。兩者皆需與後端 internal/version 同步。
 const VERSION_BASE = '1.2'
-const VERSION_SERIAL = '865'
+const VERSION_SERIAL = '866'
 const COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT || 'dev').slice(0, 8)
 
 /** @type {import('next').NextConfig} */
@@ -104,6 +104,15 @@ const nextConfig = {
       {
         source: '/manifest.json',
         headers: [{ key: 'Cache-Control', value: 'public, max-age=86400' }],
+      },
+      {
+        // 契約 docs/skins/HOME_FLASH_CONTRACT.md 修法 5（根因「風格字型晚到」第 2 點）：
+        // /fonts/* 原本沒有任何快取標頭，每次整頁載入（例如「← 返回」首頁）DORPixel／DORCute
+        // 字型檔都要重新驗證一次，即使瀏覽器磁碟快取有副本也要來回一次 304。字型檔內容不變
+        // （改內容必須連檔名一起換，見下方註解），可以放心給長 max-age；
+        // stale-while-revalidate 讓過期後的請求先吃舊檔、背景重新驗證，不會擋住渲染。
+        source: '/fonts/:path*',
+        headers: [{ key: 'Cache-Control', value: 'public, max-age=2592000, stale-while-revalidate=86400' }],
       },
     ]
   },

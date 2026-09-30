@@ -25,14 +25,43 @@
 // §2；theme-color 第二輪改 #fff5f8（草莓牛奶，docs/skins/CUTE_CONTRACT_R2.md §2 milk 色號，
 // 取代第一輪的奶油黃 #fff3d6）。
 
-export type OverrideSkin = 'scifi' | 'retro' | 'cute'
+import { OVERRIDE_THEME_COLOR, type OverrideSkin } from './skinColors'
+
+export type { OverrideSkin }
 
 export const SKIN_CHANGE_EVENT = 'dor-skin-change'
 
 const OVERRIDE_KEY = 'dor_skin_override'
 const LEGACY_PREF_KEY = 'dor_skin_pref' // 舊版(第22套)裝置開關，已由伺服器權威 ui_skin 取代，讀到就清
 
-const THEME_COLOR: Record<OverrideSkin, string> = { scifi: '#02040a', retro: '#000000', cute: '#fff5f8' }
+// 契約 docs/skins/HOME_FLASH_CONTRACT.md 修法 3：meta theme-color 色表改從 lib/skinColors.ts
+// 單一來源引入（原本這裡自己一份、app/layout.tsx 的開機腳本 skinOverrideBootJs 又自己內嵌一份，
+// 兩處各存一份色號，將來改色容易漏改一邊）。
+const THEME_COLOR = OVERRIDE_THEME_COLOR
+
+// dor_skin_ov cookie：middleware.ts 到站彈跳頁用（純外觀，判斷白幕該用哪個風格的色，見
+// lib/skinColors.ts OVERRIDE_VEIL_COLORS 的註解）。只存 skin 字串本身，不含 uid——cookie 會被
+// 伺服器讀到，而 uid 比對本來就只在瀏覽器端（localStorage dor_skin_override／dor_user）進行，
+// cookie 只是「這個瀏覽器上次生效的覆寫風格是什麼」的外觀提示，不是權威判斷來源，就算殘留過期
+// 也只會讓彈跳頁白幕色猜錯（≤600ms 的過場動畫），不影響任何實際套用邏輯。
+const OVERRIDE_COOKIE = 'dor_skin_ov'
+
+function setOverrideCookie(skin: OverrideSkin) {
+  try {
+    const secure = typeof location !== 'undefined' && location.protocol === 'https:' ? '; Secure' : ''
+    document.cookie = `${OVERRIDE_COOKIE}=${skin}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`
+  } catch {
+    // 同 safeSetItem：私密瀏覽/cookie 被封鎖時靜默放棄，彈跳頁退回 SSR skin 白幕色，外觀而已。
+  }
+}
+
+function clearOverrideCookie() {
+  try {
+    document.cookie = `${OVERRIDE_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`
+  } catch {
+    // 同上
+  }
+}
 
 function safeGetItem(key: string): string | null {
   try {
@@ -90,6 +119,9 @@ export function applySkinOverride(uid: string, skin: OverrideSkin) {
   if (typeof document === 'undefined') return
   document.documentElement.dataset.skin = skin
   setThemeColorMeta(THEME_COLOR[skin])
+  // 契約修法 4：cookie 只在真的有 document（瀏覽器）時才種，SSR/測試環境 import 這支檔案不會
+  // 意外寫入任何東西（上面的 early return 已經保證這裡以下都在瀏覽器）。
+  setOverrideCookie(skin)
 }
 
 // restoreOriginalSkin 移除覆寫並恢復呼叫端傳入的 SSR 原值（originalSkin/originalThemeColor 由
@@ -105,6 +137,7 @@ export function restoreOriginalSkin(originalSkin: string, originalThemeColor: st
     document.documentElement.dataset.skin = originalSkin
   }
   setThemeColorMeta(originalThemeColor)
+  clearOverrideCookie()
 }
 
 // clearSkinOverride：登出／換帳號時呼叫的語意別名（行為與 restoreOriginalSkin 完全相同，只是呼叫端

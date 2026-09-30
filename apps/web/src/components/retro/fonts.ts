@@ -16,9 +16,13 @@
 // 在字型還沒載入完成前，瀏覽器會先用 fallback 鏈（monospace）顯示，載入完成後 document.fonts
 // 會觸發重繪換成像素字，不會造成版面跳動以外的問題（純文字換字體，無 FOIT 阻塞）。
 
-export const RETRO_FONT_FAMILY = 'DORPixel'
-
-const FONT_URL = '/fonts/cubic11/Cubic_11.woff2'
+// family／URL 常數改從 lib/skinFonts.ts 單一來源引入（契約 docs/skins/HOME_FLASH_CONTRACT.md
+// 修法 3）：app/layout.tsx 的開機腳本 skinOverrideBootJs 需要搶先用同一份 family／URL 註冊
+// FontFace，但那裡是伺服器端純字串組字，不能 import 這支 'use client' 相依的檔案，因此把常數
+// 抽到零依賴的 lib/skinFonts.ts，兩邊改用同一份、不會分岔。RETRO_FONT_FAMILY 在此重新匯出，
+// 呼叫端（RetroBackground.tsx 等）維持原有 import 路徑不必改。
+import { RETRO_FONT_FAMILY, RETRO_FONT_URL as FONT_URL } from '@/lib/skinFonts'
+export { RETRO_FONT_FAMILY }
 
 let loadPromise: Promise<void> | null = null
 

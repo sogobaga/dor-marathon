@@ -29,26 +29,67 @@
 // 非白名單使用者完全不受影響的關鍵：useDashboard() 本來就是所有頁面共用的同一份請求（不會因為多了這個
 // 元件而多打一次 API），且當條件「確定」不滿足時這裡只會呼叫 restoreOriginalSkin（等同 no-op，因為
 // dataset.skin 本來就等於 originalSkin，从未被改成 scifi/retro 過）。
-import { useEffect, useState } from 'react'
+//
+// 契約 docs/skins/HOME_FLASH_CONTRACT.md 修法 1（「背景層跟著 <html data-skin> 走」）：畫面渲染
+// 改用 useSyncExternalStore(subscribeSkinChange, getActiveSkin, getSkinServerSnapshot) 直接讀
+// <html data-skin>，不再靠只有 dashboard 資料回來後才會被設成非 null 的 `active` state——舊寫法
+// 等於保證「開機腳本已經把 data-skin 設對、但這個元件掛哪個背景層還是 null」那一輪會先畫一次
+// 「沒有背景層」的畫面（首頁 retro/cute 的 `--bg: transparent` 因此透出去只剩平面底色，見契約
+// 根因 1），要等下面 sync() 的 effect 跑完、setActive 生效才補上——這正是「背景層晚到」的成因。
+// useSyncExternalStore 在 hydration 完成後若讀到 client 端 getSnapshot() 與 getServerSnapshot()
+// 不同（開機腳本已經把 data-skin 設成 scifi/retro/cute），會在瀏覽器真正繪製前強制同步重渲染一次
+// （見 lib/skinOverride.ts 該函式的詳細註解），第一次繪製就能直接掛上正確背景層。
+// 下面的 sync() effect（Gate 0/1/2a/2b、applySkinOverride／restoreOriginalSkin 判斷邏輯）完全
+// 不變——它仍然是「套用／收回覆寫」唯一的權威來源，只是不再額外用一顆 React state 重複記錄結果；
+// applySkinOverride／restoreOriginalSkin 改動 <html data-skin> 時，lib/skinOverride.ts 的
+// subscribeSkinChange 用 MutationObserver 監看到屬性變化，會自動觸發這裡重新渲染，效果與舊版
+// setActive(...) 相同。
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import dynamic from 'next/dynamic'
 import { useUser } from '@/lib/userAuth'
 import { useDashboard } from '@/lib/useDashboard'
-import { applySkinOverride, restoreOriginalSkin, readOverrideRecord, SKIN_CHANGE_EVENT, type OverrideSkin } from '@/lib/skinOverride'
+import {
+  applySkinOverride,
+  restoreOriginalSkin,
+  readOverrideRecord,
+  getActiveSkin,
+  subscribeSkinChange,
+  getSkinServerSnapshot,
+  SKIN_CHANGE_EVENT,
+  type OverrideSkin,
+} from '@/lib/skinOverride'
 
 // 全站背景粒子層（未來科技，契約 scifi_skin/CONTRACT.md §3）：next/dynamic(ssr:false) 動態載入，
-// 只在下方 active==='scifi' 時才會實際掛載 render——非白名單使用者（active 恆 null）從未 import 這支
-// 元件，不進首屏 bundle，也不進任何獨立 chunk 的網路請求（dynamic import 的 chunk 只在被 render
-// 時才會被瀏覽器抓取）。
+// 只在下方 activeSkin==='scifi' 時才會實際掛載 render——非白名單使用者（activeSkin 恆 null）從未
+// import 這支元件，不進首屏 bundle，也不進任何獨立 chunk 的網路請求（dynamic import 的 chunk 只在
+// 被 render 時才會被瀏覽器抓取）。
 const ParticleField = dynamic(() => import('@/components/scifi/ParticleField'), { ssr: false })
-// 全站像素背景層（復古 RPG，契約 retro_skin/CONTRACT.md §3）：同上道理，只在 active==='retro' 時才
-// 掛載。RetroBackground 由 THEME 工人另外建立於 components/retro/RetroBackground.tsx（default
+// 全站像素背景層（復古 RPG，契約 retro_skin/CONTRACT.md §3）：同上道理，只在 activeSkin==='retro'
+// 時才掛載。RetroBackground 由 THEME 工人另外建立於 components/retro/RetroBackground.tsx（default
 // export）；在它落地前這行 import 找不到模組是預期中的單一 tsc 錯誤（契約 §6 已註明可接受）。
 const RetroBackground = dynamic(() => import('@/components/retro/RetroBackground'), { ssr: false })
 // 全站彩色紙屑/星星/雲朵背景層（溫馨可愛，第 24 套，契約 docs/skins/CUTE_CONTRACT.md §3）：同上
-// 道理，只在 active==='cute' 時才掛載。CuteBackground 由 THEME 工人另外建立於
+// 道理，只在 activeSkin==='cute' 時才掛載。CuteBackground 由 THEME 工人另外建立於
 // components/cute/CuteBackground.tsx（default export）；在它落地前這行 import 找不到模組是預期中的
 // 單一 tsc 錯誤（契約 §6 已註明可接受，同 RetroBackground 前例）。
 const CuteBackground = dynamic(() => import('@/components/cute/CuteBackground'), { ssr: false })
+
+// 契約修法 2（「背景 chunk 提早抓」）：本模組被載入的當下（僅瀏覽器、hydration 前），若
+// <html data-skin> 已經是覆寫風格（開機腳本 layout.tsx skinOverrideBootJs 已經設好），就搶先
+// import() 對應背景元件——與上面 next/dynamic() 是同一個模組路徑，webpack 對同一個動態 import
+// 天然去重，不會多下載一次；只是把「開始抓 chunk」的時間點從「這個元件真正 render 該背景層」
+// 提前到「這支檔案的 module 被 evaluate」，省下等 React commit／useEffect 那幾輪的時間。
+// ⚠️ 必須同時檢查 typeof window 與 typeof document：這支檔案是 'use client'，但 Next.js 仍會在
+// 伺服器端（SSR/RSC）執行一次 client component 的 render 以產生初始 HTML，module 頂層程式碼
+// 因此也會在 Node 環境跑到一次；getActiveSkin() 內部雖然也有 `typeof document === 'undefined'`
+// 防護、伺服器上本來就會回 null，但這裡外層再包一層 typeof window 防護，語意更直接（「僅瀏覽器」
+// 一次講清楚），也避免日後有人誤把這段複製到別處、忘記 getActiveSkin() 本身就有防護。
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  const eagerSkin = getActiveSkin()
+  if (eagerSkin === 'scifi') void import('@/components/scifi/ParticleField')
+  else if (eagerSkin === 'retro') void import('@/components/retro/RetroBackground')
+  else if (eagerSkin === 'cute') void import('@/components/cute/CuteBackground')
+}
 
 export default function SkinOverride({
   originalSkin,
@@ -62,7 +103,12 @@ export default function SkinOverride({
   const uid = user?.id ?? null
   const entryShown = dash?.skin_select_entry === 'shown'
   const uiSkin = dash?.ui_skin ?? null
-  const [active, setActive] = useState<OverrideSkin | null>(null)
+  // 修法 1：渲染依據改為 useSyncExternalStore 直接讀 <html data-skin>（見上方檔頭大段註解），
+  // 不再用 useState 額外保存一份「目前該掛哪個背景層」——避免這顆 state 與 DOM 屬性暫時不同步
+  // 的那一輪造成先閃一次「沒有背景層」畫面。getServerSnapshot 固定回 null：SSR 沒有 document、
+  // <html data-skin> 從 SSR 角度本來就不可能是覆寫風格（active_skin 只允許 default/warm/warm2，
+  // 見 layout.tsx skinOf），hydration 那一輪用 null 不會造成 mismatch。
+  const activeSkin = useSyncExternalStore(subscribeSkinChange, getActiveSkin, getSkinServerSnapshot)
 
   // userKnown：「身分是否已經問過」的門閂，只在掛載後第一輪之後才會變 true，而且一旦變 true
   // 就不會再變回 false。用意：useUser() 本身故意在掛載後才用自己的 useEffect 讀 localStorage
@@ -94,12 +140,10 @@ export default function SkinOverride({
       const staleRec = uid ? readOverrideRecord() : null
       if (staleRec && staleRec.uid !== uid) {
         restoreOriginalSkin(originalSkin, originalThemeColor)
-        setActive(null)
       }
 
       if (!uid) {
         // 身分已知、且確定是「登出」（不是掛載瞬間的假 null）→ 收回覆寫。
-        setActive(null)
         restoreOriginalSkin(originalSkin, originalThemeColor)
         return
       }
@@ -125,7 +169,6 @@ export default function SkinOverride({
 
       const isOverride = entryShown && (uiSkin === 'scifi' || uiSkin === 'retro' || uiSkin === 'cute')
       const next: OverrideSkin | null = isOverride ? (uiSkin as OverrideSkin) : null
-      setActive(next)
       if (next) {
         applySkinOverride(uid, next)
       } else {
@@ -140,8 +183,8 @@ export default function SkinOverride({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, userKnown, dashLoading, dashError, entryShown, uiSkin, originalSkin, originalThemeColor])
 
-  if (active === 'scifi') return <ParticleField />
-  if (active === 'retro') return <RetroBackground />
-  if (active === 'cute') return <CuteBackground />
+  if (activeSkin === 'scifi') return <ParticleField />
+  if (activeSkin === 'retro') return <RetroBackground />
+  if (activeSkin === 'cute') return <CuteBackground />
   return null
 }

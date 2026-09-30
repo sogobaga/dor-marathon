@@ -1,6 +1,6 @@
 import { NextResponse, type NextFetchEvent, type NextRequest } from 'next/server'
 import { decideBounce, parseBounceDelay, bounceHtml } from '@/lib/arrivalBounce'
-import { veilColorsOf } from '@/lib/skinColors'
+import { veilColorsOf, overrideVeilColorsOf } from '@/lib/skinColors'
 
 // 到站彈跳頁中介層（症狀 A 主治療，v757）。
 //
@@ -114,7 +114,14 @@ export async function middleware(req: NextRequest, event: NextFetchEvent) {
   }
 
   const skin = await getSkin(event)
-  const [bg, fg] = veilColorsOf(skin)
+  // 契約 docs/skins/HOME_FLASH_CONTRACT.md 修法 4：彈跳頁白幕色優先看 dor_skin_ov cookie（帳號
+  // 層級「風格設定」覆寫，見 lib/skinOverride.ts applySkinOverride 種下的 cookie，純外觀提示，
+  // 不是權威判斷來源，過期或不存在都安全）——只有它是 scifi/retro/cute 三選一時才生效，其餘情況
+  // （未設定、default、被清除、值不合法）一律落回原本 SSR active_skin 的色表，行為與今天相同。
+  // edge runtime 安全：只用 NextRequest.cookies（Web 標準 Cookie Store，非 Node API）與純函式，
+  // 沒有任何 DOM／Node 依賴。
+  const ovCookie = req.cookies.get('dor_skin_ov')?.value
+  const [bg, fg] = overrideVeilColorsOf(ovCookie) || veilColorsOf(skin)
   const target = req.nextUrl.pathname + req.nextUrl.search
   const delayMs = parseBounceDelay(req.nextUrl.search)
   const html = bounceHtml({ bg, fg, target, delayMs })

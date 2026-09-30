@@ -13,7 +13,8 @@ import UpdateNotice from '@/components/UpdateNotice'
 import BounceCleanup from '@/components/BounceCleanup'
 import ActiveRunGuard from '@/components/ActiveRunGuard'
 import SkinOverride from '@/components/SkinOverride'
-import { veilColorsOf } from '@/lib/skinColors'
+import { veilColorsOf, OVERRIDE_THEME_COLOR, OVERRIDE_VEIL_COLORS } from '@/lib/skinColors'
+import { RETRO_FONT_FAMILY, RETRO_FONT_URL, CUTE_FONT_FAMILY, CUTE_FONT_URL } from '@/lib/skinFonts'
 
 // 各 skin 的瀏覽器 chrome（狀態列）色；新增 skin 時在此與 globals.css/appSettings/後端 specs 一併加。
 // scifi/retro 不在這裡登記——它們不是後台可切換的 active_skin，而是帳號層級「風格設定」的個人化覆寫
@@ -188,6 +189,16 @@ if(v.l==='visible')v.vt=v.t;else d.addEventListener('visibilitychange',function 
 w.addEventListener('resize',function r(){v.rt=Math.round(p.now());v.rih=w.innerHeight;w.removeEventListener('resize',r)});
 w.__dorVis=v;
 var BG='${bg}',FG='${fg}';
+// 契約 docs/skins/HOME_FLASH_CONTRACT.md 修法 4：白幕（下面 showVeil）與到站彈跳頁用的顏色
+// 原本恆用 SSR 算出的 active_skin 顏色（bg/fg 兩個參數）；但這支腳本現在排在
+// skinOverrideBootJs 之後執行（見 RootLayout 的 <script> 順序），<html data-skin> 若已被那支
+// 腳本設成帳號覆寫風格（scifi/retro/cute），白幕就該用那個風格的色，否則使用者在覆寫風格頁面
+// 觸發到站彈跳／iPhone 返回手勢還原時，白幕會先閃一下與畫面不搭的預設深色。OVC 表跟
+// lib/skinColors.ts 的 OVERRIDE_VEIL_COLORS 是同一份（伺服器端組字串時內嵌，改色只需要改
+// 那支檔案，這裡與 middleware.ts 都會自動跟著換）。
+var OVC=${JSON.stringify(OVERRIDE_VEIL_COLORS)};
+var ovSkin=d.documentElement.dataset.skin;
+if(ovSkin&&OVC[ovSkin]){BG=OVC[ovSkin][0];FG=OVC[ovSkin][1]}
 var veil=false,done=false;
 function showVeil(){
   if(veil)return;veil=true;
@@ -250,6 +261,16 @@ if(skip){v.ar='skip:'+skip;mark()}else reload(why);
 // lib/skinOverride.ts 的 applySkinOverride/restoreOriginalSkin 判斷條件也要跟著改（反之亦然）。任何
 // 一步失敗（JSON 壞掉、localStorage 被封鎖…）一律 catch 掉、維持 SSR 原值——寧可少一次「防閃」，也
 // 不能讓非白名單/資料壞掉的使用者看到不該有的畫面。
+// 修法 3 新增的兩份色表／字型表在伺服器端組字串時內嵌成 JS 物件字面值，執行期直接查表，
+// 不必另外發一次 fetch；三份資料的單一來源分別是 lib/skinColors.ts（色表）與 lib/skinFonts.ts
+// （字型 family／URL，components/{retro,cute}/fonts.ts 也是引用同一份，見該檔案註解），改色/
+// 改字型只需要改那兩支檔案，這裡下次 build 會自動帶到新值。
+const SKIN_OV_THEME_COLOR_JSON = JSON.stringify(OVERRIDE_THEME_COLOR)
+const SKIN_OV_FONT_JSON = JSON.stringify({
+  retro: [RETRO_FONT_FAMILY, RETRO_FONT_URL],
+  cute: [CUTE_FONT_FAMILY, CUTE_FONT_URL],
+})
+
 function skinOverrideBootJs(): string {
   return `(function(){try{
 var ls=window.localStorage;
@@ -258,6 +279,28 @@ var rec=JSON.parse(ov);if(!rec||(rec.skin!=='scifi'&&rec.skin!=='retro'&&rec.ski
 var uraw=ls.getItem('dor_user');if(!uraw)return;
 var u=JSON.parse(uraw);if(!u||u.id!==rec.uid)return;
 document.documentElement.dataset.skin=rec.skin;
+// 修法 3 補齊：以下三件事跟 lib/skinOverride.ts 的 applySkinOverride 是同一組副作用（那支是
+// React 資料回來後的「權威」版本，這裡是開機那一刻的「搶跑」版本），任一步失敗都不影響上面
+// 已經設好的 data-skin（各自獨立 try/catch，避免因為某支瀏覽器不支援 FontFace 就連 theme-color
+// 都不設）。
+try{
+  var TC=${SKIN_OV_THEME_COLOR_JSON};
+  var meta=document.querySelector('meta[name="theme-color"]');
+  if(meta&&TC[rec.skin])meta.setAttribute('content',TC[rec.skin]);
+}catch(e){}
+try{
+  var FM=${SKIN_OV_FONT_JSON};
+  var f=FM[rec.skin];
+  if(f&&typeof FontFace==='function'&&'fonts' in document){
+    var face=new FontFace(f[0],"url("+f[1]+") format('woff2')",{display:'swap'});
+    document.fonts.add(face);
+    face.load().catch(function(){});
+  }
+}catch(e){}
+try{
+  var secure=window.location.protocol==='https:'?';Secure':'';
+  document.cookie='dor_skin_ov='+rec.skin+';Path=/;Max-Age=31536000;SameSite=Lax'+secure;
+}catch(e){}
 }catch(e){}})();`
 }
 
@@ -273,8 +316,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     // 'scifi'/'retro'，與 SSR 算出的 skin 字串不一致是刻意的（僅授權使用者），不是真的渲染錯誤。
     <html lang="zh-TW" data-skin={skin !== 'default' ? skin : undefined} data-glogin={glogin === 'redirect' ? 'redirect' : undefined} suppressHydrationWarning>
       <body>
-        <script dangerouslySetInnerHTML={{ __html: bootJs(veilBg, veilFg) }} />
+        {/* 修法 4：skinOverrideBootJs 移到 bootJs 之前——bootJs 內部要讀 <html data-skin> 來決定
+            白幕色，必須等 skinOverrideBootJs 先把覆寫風格設好才讀得到正確值。兩支腳本仍各自完整
+            try/catch，一支失敗不影響另一支。 */}
         <script dangerouslySetInnerHTML={{ __html: skinOverrideBootJs() }} />
+        <script dangerouslySetInnerHTML={{ __html: bootJs(veilBg, veilFg) }} />
         <AppProviders><BounceCleanup /><ActiveRunGuard /><SkinOverride originalSkin={skin} originalThemeColor={themeColor} /><ViewportHeightFix /><ViewportDebug /><Analytics /><InAppBrowserNotice /><InterstitialAd /><PwaInstallPrompt /><UpdateNotice /><LandscapeNotice />{children}</AppProviders>
       </body>
     </html>
