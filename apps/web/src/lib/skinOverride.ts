@@ -111,6 +111,30 @@ export function restoreOriginalSkin(originalSkin: string, originalThemeColor: st
 // 表達的情境不同——SkinOverride.tsx 在 uid 消失時呼叫這支，行為上就是「收回覆寫、恢復原值」）。
 export const clearSkinOverride = restoreOriginalSkin
 
+// subscribeSkinChange／getSkinServerSnapshot：搭配 React 18 useSyncExternalStore 給 track 頁／歷史頁
+// 用（單一真相，避免兩處各寫一份 MutationObserver＋事件監聽）。舊版寫法是 useState(null)+useEffect，
+// 讀取時機在 commit 之後、瀏覽器真正繪製之前那一刻都還是 null——等於保證會先畫一次「沒有風格」的畫面
+// （預設 Leaflet 地圖／RaceFocusMode 預設樣式），等 effect 跑完才切回正確風格，這正是「重新進入 GPS
+// 跑步追蹤頁先顯示預設畫面、才切換風格畫面」的成因。useSyncExternalStore 在 render 當下就能同步讀到
+// 正確值：
+//   ・純client端掛載（例如站內切頁進 /track）：第一次 render 就直接呼叫 getSnapshot()，沒有「先 null」
+//     這一輪。
+//   ・SSR＋hydration（整頁載入／硬重載）：hydration 那一輪用 getServerSnapshot()（固定回 null，與伺服器
+//     端 document 不存在時 getActiveSkin() 本來就會回傳的值一致，不會有 hydration mismatch）；hydration
+//     完成後，React 對 useSyncExternalStore 有内建保證——若這時 client 端 getSnapshot() 讀到不同的值
+//     （例如 layout.tsx 的開機腳本已經在繪製前把 <html data-skin> 設成 scifi/retro/cute），會在瀏覽器
+//     真正把畫面畫出來之前強制同步重新渲染一次，使用者不會看到「先預設、才跳成風格」那一幀。
+export function subscribeSkinChange(onChange: () => void): () => void {
+  if (typeof document === 'undefined') return () => {}
+  const mo = new MutationObserver(onChange)
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-skin'] })
+  window.addEventListener(SKIN_CHANGE_EVENT, onChange)
+  return () => { mo.disconnect(); window.removeEventListener(SKIN_CHANGE_EVENT, onChange) }
+}
+export function getSkinServerSnapshot(): OverrideSkin | null {
+  return null
+}
+
 // readOverrideRecord 讀目前的覆寫記錄（除錯／單元測試用；正常運作路徑不需要呼叫，SkinOverride.tsx
 // 直接以 uid + dashboard.ui_skin 現算，不依賴讀回這份記錄）。
 export function readOverrideRecord(): { uid: string; skin: string } | null {

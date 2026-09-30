@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from 'react'
 import useSWR from 'swr'
 import { activitiesApi, checkpointApi, routeApi, eventApi, eventRaceApi, mileageExpApi, personalTasksApi, exploreApi, profileApi, integrationsApi, racesApi, strategiesApi, runCheersApi, cheerLayoutApi, parseCheerCharLayout, CHEER_CHAR_IDS, createRaceSocket, formatChallengeRule, formatChallengeProgress, sourceLabel, type GpsPoint, type GpsRunResult, type GpsRawLogRow, type ActiveCheckpoint, type EventDef, type RaceEventInvite, type GroupGoalProgressMsg, type GroupGoalReachedMsg, type CompleteEvidence, type MileageConfig, type PanelCard, type ExploreBoss, type MyActiveRace, type RaceStrategy, type CheerCharLayout } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser, getUser, AUTH_EVENT } from '@/lib/userAuth'
@@ -34,7 +34,7 @@ import dynamic from 'next/dynamic'
 import type { SciFiMapHandle, SciFiPos, SciFiTarget } from './scifi/types'
 import type { RetroMapHandle } from './retro/types'
 import type { CuteMapHandle } from './cute/types'
-import { getActiveSkin, SKIN_CHANGE_EVENT, type OverrideSkin } from '@/lib/skinOverride'
+import { getActiveSkin, subscribeSkinChange, getSkinServerSnapshot, type OverrideSkin } from '@/lib/skinOverride'
 
 // 未來科技（scifi）／復古 RPG（retro）／溫馨可愛（cute）GPS 地圖（CONTRACT.md §4；cute 見
 // scratchpad docs/skins/CUTE_CONTRACT.md §4）：next/dynamic(ssr:false) 動態載入，只在下方
@@ -419,6 +419,12 @@ export default function TrackPage() {
   // 修正「第一公里分段被 GPS 鎖定等待時間虛胖」的問題：前端 elapsed 從按鈕算，後端從第一個 GPS 點算，
   // 用 paceBaseMs() 統一前端所有配速計算的基準，使前後端保持一致。
   const paceBaseMs = () => pointsRef.current[0]?.t ?? startRef.current
+  // 配速結束凍結時間戳：null＝仍在計算中（用 Date.now() 即時算）；一旦這趟結束（cleanup() 統一寫入，
+  // 見該處），改用這個固定時間戳取代 Date.now()，讓 paceElapsed／avgPace／分段即時配速在結束（含上傳
+  // 中／上傳完成／結果畫面，只要還沒離開本頁）之後不再繼續往前跑——armTimers()（start()／自動接續共用）
+  // 重置回 null，讓下一趟重新開始即時計算（對抗式審查／使用者回報：結束並按上傳後，還沒離開 GPS 追蹤頁
+  // 時「平均配速」「分段即時配速」仍持續變動，其餘（距離/移動時間/上傳 payload）本就正確凍結，不受影響）。
+  const endedAtMsRef = useRef<number | null>(null)
   const watchRef = useRef<number | null>(null)
   const warmWatchRef = useRef<number | null>(null) // 進頁面時的 GPS 預熱偵測（顯示精度/定位地圖，不記錄）
   const wakeRef = useRef<any>(null)
@@ -434,48 +440,83 @@ export default function TrackPage() {
   // 圖層——commitSeg 每跨一整公里即時加一個；重開跑/re-render 整批重建時用 clearLayers() 清空重畫。
   const kmMarkersRef = useRef<any>(null)
 
-  // ── 帳號風格覆寫 GPS 地圖（未來科技 scifi／復古 RPG retro）：純加法整合，以上既有 Leaflet
-  // refs／邏輯完全不動（CONTRACT.md §4）── 生效判斷：用 lib/skinOverride.ts 的 getActiveSkin()
-  // （單一真相，與 SkinOverride.tsx 判斷邏輯同一份實作，讀同一個 dataset）；MutationObserver 監聽
-  // 切換（帳號在「風格設定」切換、登出等即時改 dataset），另監聽 SKIN_CHANGE_EVENT 供選擇改變時立即
-  // 生效（不必等 dataset 屬性變動——例如剛切換但 dashboard 還沒重新拉取的瞬間）。
-  const [activeSkin, setActiveSkin] = useState<OverrideSkin | null>(null)
-  useEffect(() => {
-    if (typeof document === 'undefined') return
-    const read = () => setActiveSkin(getActiveSkin())
-    read()
-    const mo = new MutationObserver(read)
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-skin'] })
-    window.addEventListener(SKIN_CHANGE_EVENT, read)
-    return () => { mo.disconnect(); window.removeEventListener(SKIN_CHANGE_EVENT, read) }
-  }, [])
+  // ── 帳號風格覆寫 GPS 地圖（未來科技 scifi／復古 RPG retro／溫馨可愛 cute）：純加法整合，以上既有
+  // Leaflet refs／邏輯完全不動（CONTRACT.md §4）── 生效判斷：用 lib/skinOverride.ts 的 getActiveSkin()
+  // （單一真相，與 SkinOverride.tsx 判斷邏輯同一份實作，讀同一個 dataset）。
+  // ⚠️ 用 useSyncExternalStore（不是 useState(null)+useEffect）：舊寫法在 commit 之後、瀏覽器真正繪製
+  // 之前都還是 null，保證會先畫一次「沒有風格」的畫面（預設 Leaflet 地圖可見、RaceFocusMode 拿到全
+  // false）才切回正確風格——這正是「重新進入 GPS 跑步追蹤頁先顯示預設畫面、才切換風格畫面」的成因
+  // （追蹤報告已確認）。useSyncExternalStore 在 render 當下就同步讀到正確值：純 client 端掛載（站內切頁
+  // 進 /track）第一次 render 就是對的；SSR＋hydration（整頁載入）用 getSkinServerSnapshot()（固定回
+  // null，與伺服器端 getActiveSkin() 一致，不會有 hydration mismatch），hydration 後 React 會在瀏覽器
+  // 真正繪製前強制同步補一次正確值，不會露出中間那一幀。subscribeSkinChange 內部就是原本這裡的
+  // MutationObserver（監聽 dataset 變動）＋SKIN_CHANGE_EVENT（選擇改變時立即生效，不必等 dataset 屬性
+  // 變動），搬去 lib/skinOverride.ts 讓 track 頁／歷史頁共用同一份實作（單一真相）。
+  const activeSkin = useSyncExternalStore(subscribeSkinChange, getActiveSkin, getSkinServerSnapshot)
   const sciFiMapRef = useRef<SciFiMapHandle>(null)
   const retroMapRef = useRef<RetroMapHandle>(null)
   const cuteMapRef = useRef<CuteMapHandle>(null)
-  // false＝已 fallback（WebGL 不支援／8 秒未 load／context lost／渲染例外）：卸載對應地圖、改顯示
-  // Leaflet；activeSkin 重新符合時重置，讓下次有機會重試（不會永久卡在退回狀態）。
-  const [sciFiOk, setSciFiOk] = useState(true)
-  const [retroOk, setRetroOk] = useState(true)
-  const [cuteOk, setCuteOk] = useState(true)
-  useEffect(() => { if (activeSkin === 'scifi') setSciFiOk(true) }, [activeSkin])
-  useEffect(() => { if (activeSkin === 'retro') setRetroOk(true) }, [activeSkin])
+  // failedSkin／skinGen＝哪一種風格的地圖已經 fallback 過（WebGL 不支援／8 秒未 load／context lost／
+  // 渲染例外），null＝都沒有；skinGen 是「目前這次生效」的世代號，每次 activeSkin 真正改變（不論改成
+  // 哪個值，含改回同一個值之前又先變成別的值）就 +1，failedSkin 只在「這次 fallback 發生當下所屬的
+  // 世代」仍等於目前世代時才算數。
+  //
+  // ⚠️ 2026-09-30 review 抓到的 regression（已修正）：原本 failedSkin 是純粹取代 sciFiOk/retroOk/
+  // cuteOk 三顆布林的單一狀態，靠「activeSkin === 'xxx' && failedSkin !== 'xxx'」這個判斷式本身「自動」
+  // 讓換風格再換回來可以重試——這句推論只對了一半：activeSkin 換成「別的」值時 sciFiActive 等的確會
+  // 立刻變 false（trivial，跟 failedSkin 無關），但沒有任何程式碼會在換回同一個值時把 failedSkin 清掉，
+  // 於是「切到別的風格 → 再切回原本失敗的那個風格」時，failedSkin 仍是舊值、判斷式依舊不成立，這個風格
+  // 在本頁剩餘生命週期永遠卡在顯示 Leaflet，即使是使用者主動切換風格這種完全正常、理應可以重新嘗試的
+  // 情境（帳號風格靠 SKIN_CHANGE_EVENT/MutationObserver 跨分頁即時生效，不需要重新整理頁面）。
+  //
+  // 修法：改記錄「世代號」而非單純風格名稱，每次 activeSkin 改變（用 React 官方建議的「render 期間比較
+  // 並直接呼叫 setState」寫法，不是 useEffect）就換代，讓「同一個風格的第二次生效」也能重新嘗試。
+  // ⚠️ 這裡刻意不能改用 useEffect(() => setSkinGen(g=>g+1), [activeSkin])：那樣寫法會重現本檔案最上面
+  // useSyncExternalStore 那段註解描述的同一種競態──activeSkin 在某次 commit 內從舊值變成新值時，若
+  // 該風格地圖在掛載當下就同步 fallback，子元件的 onFallback（同一個 commit 的 passive effect，子先於
+  // 父）會先把 failedSkin 設成新值，緊接著「activeSkin 改變」的世代 effect 才跑，把世代號加一──這個
+  // 加一動作本身雖不會覆寫 failedSkin，但世代號屬於下一輪 render 才 apply，這次 render 子元件已經同步
+  // fallback 過，等於白白浪費一次掛載/fallback 循環，且下一輪 render 因為世代號變了又會讓地圖重新掛載
+  // 一次、重新走一次 fallback 判斷──比對之下，改在 render 期間（不是 effect）直接算好世代號，能保證
+  // SciFiMap/RetroMap/CuteMap 掛載時讀到的 skinGenRef 已經是新世代，一次到位、不需要額外一輪 re-mount。
+  const [skinGen, setSkinGen] = useState(0)
+  const prevActiveSkinForGenRef = useRef(activeSkin)
+  if (prevActiveSkinForGenRef.current !== activeSkin) {
+    prevActiveSkinForGenRef.current = activeSkin
+    // render 期間直接呼叫 setState 是 React 官方認可的「調整先前 render 儲存的狀態」寫法（不是
+    // side effect）：React 會在畫面真正繪製前，用新的 skinGen 立刻重跑一次這個元件的 render（不是額外
+    // 的 commit，也不會觸發任何 effect），因此不會有前一段註解說的「世代號慢一輪」問題。
+    setSkinGen((g) => g + 1)
+  }
+  const skinGenRef = useRef(skinGen)
+  skinGenRef.current = skinGen
+  const [failedSkin, setFailedSkin] = useState<{ skin: OverrideSkin; gen: number } | null>(null)
   const cuteSkinActive = activeSkin === 'cute'
-  useEffect(() => { if (cuteSkinActive) setCuteOk(true) }, [cuteSkinActive])
-  const sciFiActive = activeSkin === 'scifi' && sciFiOk
-  const retroActive = activeSkin === 'retro' && retroOk
-  const cuteActive = cuteSkinActive && cuteOk
+  const isFailedNow = (skin: OverrideSkin) => !!failedSkin && failedSkin.skin === skin && failedSkin.gen === skinGen
+  const sciFiActive = activeSkin === 'scifi' && !isFailedNow('scifi')
+  const retroActive = activeSkin === 'retro' && !isFailedNow('retro')
+  const cuteActive = cuteSkinActive && !isFailedNow('cute')
   const mapSkinActive = sciFiActive || retroActive || cuteActive
+  // skinMapFallback：activeSkin 是 scifi/retro/cute 之一、且「目前這個世代」該風格已 fallback（與
+  // mapSkinActive 的判斷式互補，見上）── 這時要讓 CSS 的隱藏規則失效、改顯示回 Leaflet。用來在
+  // #gps-map 補上 data-map-fallback 屬性（見 globals.css `html[data-skin="…"] #gps-map:not([data-map-fallback])`
+  // 選擇器）；activeSkin 為 null（預設/非白名單）時一定是 false，不影響今天的行為。
+  const skinMapFallback = !!activeSkin && isFailedNow(activeSkin)
+  // 三個 handler 各自對應固定的風格（見下方 JSX：SciFiMap 只在 sciFiActive 為真時掛載，其餘同理），
+  // 直接寫死字面值即可──不必讀 activeSkin 變數，避免 useCallback 空 deps 情況下閉包捕捉到舊值的疑慮
+  // （改字面值＝從元件/skin prop 本身取值，不會有 stale closure 的問題）；世代號一律讀 skinGenRef（空
+  // deps 下直接閉包 skinGen 會是 stale closure，理由同上）。
   const handleSciFiFallback = useCallback((reason: string) => {
     console.warn('[scifi-map] fallback', reason) // eslint-disable-line no-console -- 刻意保留：CONTRACT.md §4 要求的退回診斷訊息，非殘留 debug log
-    setSciFiOk(false)
+    setFailedSkin({ skin: 'scifi', gen: skinGenRef.current })
   }, [])
   const handleRetroFallback = useCallback((reason: string) => {
     console.warn('[retro-map] fallback', reason) // eslint-disable-line no-console -- 刻意保留：CONTRACT.md §4 要求的退回診斷訊息，非殘留 debug log
-    setRetroOk(false)
+    setFailedSkin({ skin: 'retro', gen: skinGenRef.current })
   }, [])
   const handleCuteFallback = useCallback((reason: string) => {
     console.warn('[cute-map] fallback', reason) // eslint-disable-line no-console -- 刻意保留：CONTRACT.md §4 要求的退回診斷訊息，非殘留 debug log
-    setCuteOk(false)
+    setFailedSkin({ skin: 'cute', gen: skinGenRef.current })
   }, [])
   // 專注模式（scifi／retro／cute 皆適用）開啟時，題列/底部面板/GPS 相關橫幅一律 visibility:hidden
   // （見 globals.css `[data-skin="scifi"|"retro"|"cute"] [data-scifi-focus-hide="true"]`，cute 的
@@ -516,7 +557,19 @@ export default function TrackPage() {
   // checkpoints／exploreCps／focusBoss 映射成統一形狀，供地圖畫地面光環／城堡寶箱圖示。
   const [mapSnapshot, setMapSnapshot] = useState<{ pos: SciFiPos | null; segments: [number, number][][]; kmMarks: { km: number; lat: number; lng: number }[]; targets: SciFiTarget[]; bottomInset: number }>({ pos: null, segments: [], kmMarks: [], targets: [], bottomInset: 0 })
   useEffect(() => {
-    if (!mapSkinActive) return
+    // 只在 status==='done'（結束/上傳中，finish()/cleanup() 已同步把 status 設成 done）才停：跑步已結束
+    // 後 pointsRef／curPosRef 都不會再變，繼續每 250ms 重算只是白算＋白重繪（同一份資料算出同一個新物件
+    // 參照，觸發整頁 re-render），順便讓「結束後畫面數據持續跳動」的疑慮徹底沒有殘留來源——地圖快照維持
+    // 在結束當下那一刻（誤差 <250ms），不影響跑步邏輯本身（GPS watch／距離/上傳早就由 cleanup() 各自停
+    // 掉，這裡純粹是顯示用的節流計時器）。
+    // ⚠️ 對抗式審查抓到的 regression：原本誤寫成 status!=='tracking'，連 'idle' 也一併擋掉——但開跑前的
+    // GPS 預熱／3 秒倒數／「GPS 定位穩定中」等待門檻（up to 15 秒，見 START_GATE_MAX_S）期間 status 仍是
+    // 'idle'（見 :702-705 註解），這段期間 warmWatchRef 已經在收真實定位（onPos 無條件 setCurPos／寫
+    // curPosRef，見 :699/:719 的早退只擋「累積距離」不擋「顯示定位」），風格地圖也已經掛載渲染（scifi/
+    // retro/cute 三顆地圖的掛載條件只看 activeSkin，不看 status，見下方 JSX）、且各自的跟隨鏡頭/軌跡效果
+    // 只吃 pos 這個 prop、完全不管 status（例如 SciFiMap.tsx 的 pos 更新 effect）——只擋 'done' 才能讓
+    // idle 期間繼續看到即時定位跟隨，同時仍然在跑步真正結束後停止重算。
+    if (!mapSkinActive || status === 'done') return
     let alive = true
     const tick = () => {
       if (!alive) return
@@ -536,7 +589,7 @@ export default function TrackPage() {
     tick()
     const timer = setInterval(tick, 250)
     return () => { alive = false; clearInterval(timer) }
-  }, [mapSkinActive, checkpoints, exploreCps, focusBoss])
+  }, [mapSkinActive, status, checkpoints, exploreCps, focusBoss])
   const pendingMapRedrawRef = useRef(false) // 自動接續／三選一「繼續追蹤」剛還原了 pointsRef，但地圖(ensureMap)可能還沒就緒——待 mapReady 後補畫軌跡線＋每公里標記一次
   const warnTimer = useRef<any>(null)
   const errTimerRef = useRef<any>(null) // 「軌跡太短」等暫時訊息的自動淡出計時
@@ -1688,6 +1741,7 @@ export default function TrackPage() {
     clearInterval(timerRef.current)
     clearInterval(evalTimerRef.current)
     clearInterval(pingTimerRef.current)
+    endedAtMsRef.current = null // 重新開跑／自動接續：解除上一趟結束時凍結的配速時間戳，恢復即時計算
     connectRaceWS() // 連 WS 監聽多人事件（不 await；失敗不影響跑步；重入防護見 connectRaceWS 內 wsConnectingRef）
     acquireWatch()
     timerRef.current = setInterval(() => {
@@ -1714,6 +1768,16 @@ export default function TrackPage() {
     clearInterval(evalTimerRef.current)
     clearInterval(pingTimerRef.current)
     clearTimeout(errTimerRef.current)
+    // 凍結配速顯示（對抗式審查／使用者回報：結束並上傳後、還沒離開本頁時「平均配速」「分段即時配速」
+    // 仍持續變動）：cleanup() 是所有「跑步結束」路徑共用的唯一集中收尾點（finish()、被踢下線、Strava
+    // 三選一兩顆按鈕、卸載時的清理），在這裡統一固定 endedAtMsRef，下面 paceElapsed 就會改用這個固定
+    // 時間戳而非持續前進的 Date.now()。優先取最後一筆 GPS 點的時間（與結果卡「結束時間」同一基準，見
+    // 下方 JSX :status==='done' 那段），沒有點才退回 Date.now()；已經凍結過（例如同一趟重複呼叫
+    // cleanup()）就不覆寫，避免每次呼叫都把「結束時刻」往後推移。
+    if (endedAtMsRef.current == null) {
+      const pts = pointsRef.current
+      endedAtMsRef.current = pts.length ? pts[pts.length - 1].t : Date.now()
+    }
     for (const w of wssRef.current) { try { w.close() } catch { /* ignore */ } }
     wssRef.current = []; raceIdsRef.current = []
     releaseWake()
@@ -2044,6 +2108,17 @@ export default function TrackPage() {
     const { start, pts } = staleResume
     clearActiveRun()
     startRef.current = start; pointsRef.current = pts
+    // ⚠️ 2026-09-30 review 抓到的 regression（已修正）：這條「結束並上傳」路徑先前漏呼叫 cleanup()，
+    // 是本頁唯一沒有走到 cleanup() 的「跑步結束」路徑——這條路徑從未在本頁「開始」過（armTimers()／
+    // acquireWatch() 都沒被呼叫過，是使用者重新整理／回到頁面時直接看到 >2h 未更新的三選一彈窗），
+    // 因此 endedAtMsRef 會一直停在初始值 null，害配速凍結修補（見該 ref 宣告處註解）在這條路徑上完全
+    // 沒生效：paceElapsed 會一路用 Date.now() 繼續往前跑，avgPace／segLivePace 在上傳後、還沒離開本頁
+    // 這段時間持續變動。cleanup() 對從未 arm 過的 ref（watchRef/timerRef/wakeRef…）全部是安全的 no-op
+    // （見該函式內容），呼叫它不影響現有行為，只補上凍結時間戳這一件事。必須放在
+    // `pointsRef.current = pts` 之後——cleanup() 凍結時間戳優先取 `pointsRef.current` 最後一筆 GPS
+    // 點的時間，若在賦值之前呼叫會讀到（可能是空陣列的）舊值，退回 Date.now()，把「結束時刻」誤記成
+    // 呼叫當下而非這趟恢復紀錄實際的最後一筆 GPS 點時間。
+    cleanup()
     setStatus('done')
     setStaleResume(null); setStaleConfirmDiscard(false)
     if (pts.length < 2) { flashErr('軌跡太短，未上傳'); try { localStorage.removeItem(LS_KEY) } catch { /* ignore */ } return }
@@ -2600,7 +2675,10 @@ export default function TrackPage() {
   const distKm = distance / 1000
   // paceElapsed：從第一個 GPS 點到現在的秒數（與後端 duration_s 口徑一致）；
   // 跑步開始前（无 GPS 點）退回按鈕時間，此時兩者相同，行為不變。
-  const paceElapsed = (Date.now() - paceBaseMs()) / 1000
+  // 結束後改吃 endedAtMsRef 這個凍結時間戳（cleanup() 統一寫入）取代 Date.now()，避免上傳中／上傳完成
+  // 後還留在本頁時，avgPace／segLivePace 因為每次 re-render 都重算「現在」而持續往前跑（對抗式審查／
+  // 使用者回報）。
+  const paceElapsed = ((endedAtMsRef.current ?? Date.now()) - paceBaseMs()) / 1000
   const avgPace = distKm >= PACE_MIN_KM ? paceElapsed / distKm : 0 // 未達門檻先顯示 --:--，避免爆數字
   // 分段即時配速：當下（進行中）這一公里的即時配速（秒/公里）。跨過整公里即歸零重算；不足 30m 先顯示 --:--
   // segStartT 與 paceElapsed 同一基準（皆從第一個 GPS 點算），相減才正確。
@@ -2902,12 +2980,33 @@ export default function TrackPage() {
         </div>
       </header>
 
-      {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗） */}
-      <div ref={sheet.wrapRef} style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        {/* scifi／retro 生效時只把既有 Leaflet 容器視覺隱藏（visibility:hidden，保留尺寸避免
-            invalidateSize 異常）——Leaflet 地圖照舊建立/運作於背景，一旦對應地圖 fallback 就立刻可見，
-            跑步邏輯零依賴地圖是否渲染（CONTRACT.md §1／§4）。 */}
-        <div id="gps-map" style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)', visibility: mapSkinActive ? 'hidden' : 'visible' }} />
+      {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗）
+          id="track-map-area"：硬導覽防閃專用錨點（globals.css `html[data-skin="…"] #track-map-area`
+          在風格地圖的 chunk／MapLibre／磚圖還沒載好前，鋪上該風格自己的底色，取代預設 Leaflet 灰底）。 */}
+      <div ref={sheet.wrapRef} id="track-map-area" style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {/* scifi／retro／cute 生效時只把既有 Leaflet 容器視覺隱藏——Leaflet 地圖照舊建立/運作於背景，
+            一旦對應地圖 fallback 就立刻可見，跑步邏輯零依賴地圖是否渲染（CONTRACT.md §1／§4）。
+            ⚠️ 硬導覽防閃修補（2026-09-30）：隱藏改交給 globals.css 的
+            `html[data-skin="scifi"|"retro"|"cute"] #gps-map:not([data-map-fallback])`（在 layout.tsx
+            開機腳本已把 <html data-skin> 設好、瀏覽器「第一次繪製」那一刻就生效，不必等 React
+            hydration）──這裡絕不能再寫死 `visibility:'visible'`（inline style 優先權高於任何一般
+            選擇器，會蓋掉上面那條 CSS 規則，讓硬導覽/整頁重載時先閃出預設地圖）。mapSkinActive 為
+            true 時仍照舊補一個 inline `hidden`（與 CSS 同一個答案，純粹加強不算沒事），為 false 時
+            完全不寫這個屬性，讓瀏覽器預設值（visible）生效；SSR 與 hydration 第一輪 mapSkinActive
+            皆為 false（getSkinServerSnapshot 固定回 null），兩邊 markup 因此逐字相同、不會有
+            hydration mismatch。skinMapFallback 為 true（該風格已 fallback）時補上
+            data-map-fallback，讓 CSS 的 `:not([data-map-fallback])` 失效、地圖立刻改回可見。 */}
+        <div id="gps-map" {...(skinMapFallback ? { 'data-map-fallback': '1' } : {})} style={{ position: 'absolute', inset: 0, zIndex: 0, background: 'var(--bg-2)', ...(mapSkinActive ? { visibility: 'hidden' as const } : {}) }} />
+        {/* ⚠️ 2026-09-30 review 抓到的 major bug（已移除，不是修色號）：這裡原本多鋪了一層
+            `{mapSkinActive && <div style={{ background: 'var(--bg-2)' }} />}`，理由是「網路載入的空窗
+            要鋪底色」，但那顆 div 蓋在 `#track-map-area`（本層容器）之上，用的是**全站共用**的
+            `var(--bg-2)`（例如 retro 的 --bg-2 是 UI 次要底色 #dcc28f 淺褐，跟 grass 綠 #3cbc3c 完全
+            不同色系）——而 `#track-map-area` 容器本身早就靠上面 globals.css 新增的
+            `html[data-skin="…"] #track-map-area { background: … }` 規則鋪好了「逐字取自各風格底圖」的
+            正確底色（見該規則註解）。`#gps-map` 一旦 visibility:hidden，本來就不會擋住容器自己的底色
+            透出來，這層 overlay 純屬多餘，而且它疊在容器上面反而蓋掉容器原本已經正確的顏色，讓 retro
+            使用者在地圖 chunk 載入空窗期間看到一閃錯的淺褐色——這正是本次 CSS 防閃修補要消除的「跳出
+            另一種畫面」，不需要、也不應該再補這一層。 */}
         {sciFiActive && (
           <SciFiMap
             ref={sciFiMapRef}

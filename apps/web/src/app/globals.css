@@ -1240,3 +1240,51 @@ html:has([data-admin-root]), html:has([data-admin-root]) body { background: #090
    把首頁例外邏輯調整、或 --bg 的圓點漸層被其他規則覆寫時，跑步頁面板意外透出地圖。
    :has() 只在該頁成立，其他頁不受影響；非 cute skin 完全不受影響。 */
 [data-skin="cute"]:has(#gps-map) { --bg: var(--bg-1); }
+
+/* ============================================================================
+   GPS 追蹤頁／歷史頁地圖：硬導覽防閃（2026-09-30）
+   根因：SSR 不知道帳號個人化的風格覆寫（scifi/retro/cute，見 lib/skinOverride.ts），track/page.tsx
+   與 track/history/page.tsx 的 #gps-map／#hist-map 過去用 React state（mapSkinActive/useSkinMap）
+   算 inline `visibility:'visible'|'hidden'`──硬導覽（冷載入／重新整理／從 /track/history 點
+   `<a href="/track">`）時，瀏覽器會先把 SSR 吐出的原始 HTML 畫出來（inline style 寫死 visible），
+   等 React hydration 跑完才改成 hidden，中間有 ~90–300ms 露出預設 Leaflet 地圖的畫面。
+   修法：改用 CSS 選擇器鍵在 `html[data-skin]` 上──layout.tsx 的開機腳本
+   （skinOverrideBootJs／bootJs）是**同步**執行在 `<body>` 第一個 `<script>`，在任何內容繪製前就把
+   `<html data-skin="scifi|retro|cute">` 設好，瀏覽器「第一次繪製」那一刻這條 CSS 就已生效，不必等
+   hydration。track/page.tsx／track/history/page.tsx 兩處都已配合改成「絕不寫死 inline
+   `visibility:'visible'`」（只在 mapSkinActive/useSkinMap 為 true 時補一個 inline `hidden` 加強，
+   兩邊都同意隱藏，不衝突；為 false 時完全不寫這個屬性，讓下面這條 CSS／瀏覽器預設值自己決定）。
+   `:not([data-map-fallback])`：對應地圖 fallback（WebGL 不支援／載入逾時／context lost 等）時，
+   兩個元件會在地圖 div 補上 `data-map-fallback="1"`，讓這條隱藏規則失效、地圖立刻改回可見──跑步/
+   回放邏輯零依賴風格地圖是否成功渲染，此規則本身只管「顯示哪一顆地圖」的視覺，不影響其他一切。
+   非白名單／預設風格帳號：<html> 永遠不會帶 data-skin="scifi"/"retro"/"cute"，以下規則完全不生效，
+   跟今天的行為逐字相同。 */
+html[data-skin="scifi"] #gps-map:not([data-map-fallback]) { visibility: hidden; }
+html[data-skin="retro"] #gps-map:not([data-map-fallback]) { visibility: hidden; }
+html[data-skin="cute"] #gps-map:not([data-map-fallback]) { visibility: hidden; }
+
+html[data-skin="scifi"] #hist-map:not([data-map-fallback]) { visibility: hidden; }
+html[data-skin="retro"] #hist-map:not([data-map-fallback]) { visibility: hidden; }
+html[data-skin="cute"] #hist-map:not([data-map-fallback]) { visibility: hidden; }
+
+/* 地圖佔位底色：風格地圖的 chunk／MapLibre／磚圖還沒載好前（含硬導覽第一次繪製那一刻，
+   #track-map-area／#hist-map-area 早就在 SSR 的 HTML 裡，不必等 JS 掛載任何 div），讓地圖容器直接
+   顯示該風格自己的底色，取代預設 Leaflet 灰底（`var(--bg-2)`）閃一下才變色。色號逐字取自各風格
+   MapLibre style 自己的 background 圖層（一致「地圖底色＝容器占位底色」，不會有「跳出另一種顏色」
+   的觀感）：scifi 見 app/track/scifi/style.ts 的 BG；retro 見 app/track/retro/style.ts 的
+   GRASS_BG；cute 用契約 §2 的「草莓牛奶」milk 色號（同 lib/skinOverride.ts THEME_COLOR.cute，比
+   app/track/cute/style.ts 的 LAND 更貼近契約用字）。 */
+/* #hist-map-area 的預設底色（非白名單／預設風格帳號，跟今天行為逐字相同）：這裡改用一般選擇器
+   而非 inline style，才不會蓋掉下面優先權更高（多一層 html[data-skin="…"] 祖先）的風格佔位底色
+   規則——2026-09-30 review 抓到的 bug：先前 history/page.tsx 的 #hist-map-area 寫死了
+   inline `background: 'var(--bg-2)'`，inline style 一律蓋過外部樣式表的一般選擇器（即使沒有
+   !important），害下面那三條風格佔位底色規則對 #hist-map-area 永遠生效不了。#track-map-area
+   本來就沒有 inline background（見 track/page.tsx），不受影響、不需要這條規則。 */
+#hist-map-area { background: var(--bg-2); }
+
+html[data-skin="scifi"] #track-map-area,
+html[data-skin="scifi"] #hist-map-area { background: #02040a; }
+html[data-skin="retro"] #track-map-area,
+html[data-skin="retro"] #hist-map-area { background: #3cbc3c; }
+html[data-skin="cute"] #track-map-area,
+html[data-skin="cute"] #hist-map-area { background: #fff5f8; }

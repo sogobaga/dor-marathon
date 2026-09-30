@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import dynamic from 'next/dynamic'
 import { activitiesApi, profileApi, type GpsRunHistory } from '@/lib/api'
 import { getUserToken, withUserAuth, useUser } from '@/lib/userAuth'
@@ -9,7 +9,7 @@ import { kmMarkerPositions, addKmMarkers } from '@/lib/kmMarkers'
 import { useDashboard } from '@/lib/useDashboard'
 import { qualifiesGov500, gov500RunKey, markGov500Shot, hasGov500ShotThisWeek } from '@/lib/gov500'
 import { scrollIntoNearest } from '@/lib/scrollIntoNearest'
-import { getActiveSkin, SKIN_CHANGE_EVENT, type OverrideSkin } from '@/lib/skinOverride'
+import { getActiveSkin, subscribeSkinChange, getSkinServerSnapshot, type OverrideSkin } from '@/lib/skinOverride'
 import PhoneFrame from '@/components/PhoneFrame'
 import ScrollArea from '@/components/ScrollArea'
 
@@ -74,27 +74,55 @@ export default function TrackHistoryPage() {
     } catch (e: any) { setErr(e?.message || '載入軌跡失敗') }
   }
 
-  // ── 帳號風格覆寫地圖（HISTORY_MAP_CONTRACT.md）：偵測邏輯比照 track/page.tsx 同名 effect（單一
-  // 真相 lib/skinOverride.ts 的 getActiveSkin()，MutationObserver＋SKIN_CHANGE_EVENT 雙保險，帳號在
-  // 「風格設定」切換／登出等即時改 dataset 都能立刻反映）。
-  const [activeSkin, setActiveSkin] = useState<OverrideSkin | null>(null)
-  useEffect(() => {
-    if (typeof document === 'undefined') return
-    const read = () => setActiveSkin(getActiveSkin())
-    read()
-    const mo = new MutationObserver(read)
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-skin'] })
-    window.addEventListener(SKIN_CHANGE_EVENT, read)
-    return () => { mo.disconnect(); window.removeEventListener(SKIN_CHANGE_EVENT, read) }
-  }, [])
-  // false＝已 fallback（WebGL 不支援／逾時／context lost／無路線資料）：改顯示原本的 Leaflet；換一筆
-  // 歷史紀錄或風格改變時重置，讓下次有機會重試（不會永久卡在退回狀態，比照 track/page.tsx 同一慣例）。
-  const [skinMapOk, setSkinMapOk] = useState(true)
-  useEffect(() => { setSkinMapOk(true) }, [sel?.id, activeSkin])
-  const useSkinMap = !!activeSkin && skinMapOk
+  // ── 帳號風格覆寫地圖（HISTORY_MAP_CONTRACT.md）：偵測邏輯比照 track/page.tsx（單一真相
+  // lib/skinOverride.ts 的 getActiveSkin()／subscribeSkinChange，MutationObserver＋SKIN_CHANGE_EVENT
+  // 雙保險，帳號在「風格設定」切換／登出等即時改 dataset 都能立刻反映）。
+  // ⚠️ 用 useSyncExternalStore（不是 useState(null)+useEffect，理由與 track/page.tsx 同名處完全一致，
+  // 見該檔案註解）：避免重進本頁時先畫一次「沒有風格」的畫面（預設 Leaflet 軌跡地圖可見）才切回正確
+  // 風格地圖那一幀閃爍；getSkinServerSnapshot 固定回 null，與 SSR 時 getActiveSkin() 本來就會回傳的值
+  // 一致，不會有 hydration mismatch。
+  const activeSkin = useSyncExternalStore(subscribeSkinChange, getActiveSkin, getSkinServerSnapshot)
+  // failedFor＝{skin, runId}：哪一種風格、對應哪一筆歷史紀錄的地圖已經 fallback 過（WebGL 不支援／逾時／
+  // context lost／無路線資料），null＝都沒有。
+  //
+  // ⚠️ 2026-09-30 review 抓到的 critical regression（已修正）：原本用「單一 failedSkin 狀態 +
+  // useEffect(() => setFailedSkin(null), [sel?.id]) 重置」，理由是「sel?.id 改變是使用者主動點擊觸發，
+  // 不會跟 onFallback 同一個 tick 互踩」——這個假設是錯的。openRun() → setSel(run) 讓 sel?.id 改變的
+  // 同一次 commit，正好也是 <SkinRouteMap key={sel.id}> 換了新 key、第一次掛載的那次 commit；React 的
+  // passive effect 在同一個 commit 內固定「子先於父」執行，若 SkinRouteMap 在掛載當下就同步 fallback
+  // （isWebglSupported() 為 false，或 totalPts<2，皆為同步判斷，見 SkinRouteMap.tsx 掛載 effect 開頭
+  // 兩行），子元件的 onFallback（→ setFailedSkin(activeSkinRef.current)）會先跑，緊接著父層「sel?.id
+  // 改變」的重置 effect（deps 同一次改變）又把它蓋回 null——跟 track/page.tsx 那個已根治的 hydration
+  // 競態成因逐字相同（觸發子元件掛載的同一個值，又是另一個 effect 的重置依賴），差別只在觸發來源是
+  // 使用者點擊還是 hydration。淨結果：failedSkin 被蓋回 null，useSkinMap 判定仍要顯示風格地圖，但
+  // SkinRouteMap 已經在它自己的 fallback 分支裡 return（未呼叫 mountInstance()），畫面因此完全空白
+  // （非風格地圖、也非 Leaflet）。
+  //
+  // 修法：把「這次 fallback 屬於哪一筆紀錄」直接編碼進狀態本身（{skin, runId}），取代額外的重置
+  // effect──換一筆歷史紀錄時 runId 自然不同，判斷式自動不成立、自動重試，不存在任何「事後」把狀態蓋
+  // 回去的第二個 effect，因此不會有上述時序競態。
+  const [failedFor, setFailedFor] = useState<{ skin: OverrideSkin; runId: string } | null>(null)
+  // activeSkinRef／selIdRef：在 render 當下同步更新（不是 effect），讓下面 handleSkinFallback（空 deps，
+  // 比照子元件 SkinRouteMap 自己的 onFallbackRef 慣例）讀到呼叫當下真正生效的風格／紀錄──在 callback
+  // 裡直接閉包讀 activeSkin/sel?.id 變數會是 stale closure（空 deps 只在第一次 render 捕捉到當時的
+  // 值），必須改讀這兩顆 ref。
+  const activeSkinRef = useRef(activeSkin)
+  activeSkinRef.current = activeSkin
+  const selIdRef = useRef(sel?.id)
+  selIdRef.current = sel?.id
+  const isFailedNow = !!activeSkin && !!failedFor && failedFor.skin === activeSkin && failedFor.runId === sel?.id
+  const useSkinMap = !!activeSkin && !isFailedNow
+  // skinMapFallback：activeSkin 命中 scifi/retro/cute 之一、且「目前這個風格＋這筆紀錄」的組合已經
+  // fallback 過（與 useSkinMap 的判斷式互補，見上）──用來在 #hist-map 補上 data-map-fallback 屬性，讓
+  // globals.css 的 `html[data-skin="…"] #hist-map:not([data-map-fallback])` 隱藏規則失效、地圖立刻改回
+  // 可見（比照 track/page.tsx 的 skinMapFallback 同一慣例）；activeSkin 為 null 時一定是 false，不影響
+  // 今天行為。
+  const skinMapFallback = isFailedNow
   const handleSkinFallback = useCallback((reason: string) => {
     console.warn('[history-skin-map] fallback', reason) // eslint-disable-line no-console -- 契約要求的退回診斷訊息，非殘留 debug log
-    setSkinMapOk(false)
+    const skin = activeSkinRef.current
+    const runId = selIdRef.current
+    if (skin && runId) setFailedFor({ skin, runId })
   }, [])
   // 風格地圖用的軌跡/公里號碼資料：與下面 Leaflet effect 各自獨立計算（沿用同一組純函式
   // decodePolylineSegments／kmMarkerPositions、同一個 calibK 公式），刻意不共用計算結果——讓下面
@@ -248,11 +276,23 @@ export default function TrackHistoryPage() {
             <div style={{ marginTop: 12, fontSize: 11.5, color: 'var(--tx-faint)' }}>（此筆沒有每公里分段資料；v0.1.205 之後的新 GPS 跑步才會記錄）</div>
           )}
           {/* 帳號風格覆寫地圖（HISTORY_MAP_CONTRACT.md）：既有 Leaflet 地圖照舊建立/運作於背景
-              （只把容器視覺隱藏，visibility:hidden，保留尺寸避免 invalidateSize 異常）；SkinRouteMap
+              （只把容器視覺隱藏，保留尺寸避免 invalidateSize 異常）；SkinRouteMap
               一旦 fallback 就立刻改回可見，跑步紀錄回放完全不依賴風格地圖是否成功渲染。key={sel.id}
-              讓切換到別筆歷史紀錄時整個風格地圖元件重新掛載（SkinRouteMap.tsx 只在掛載時建圖一次）。 */}
-          <div style={{ position: 'relative', width: '100%', height: 220, borderRadius: 10, overflow: 'hidden', background: 'var(--bg-2)', marginTop: 12 }}>
-            <div id="hist-map" style={{ position: 'absolute', inset: 0, visibility: useSkinMap ? 'hidden' : 'visible' }} />
+              讓切換到別筆歷史紀錄時整個風格地圖元件重新掛載（SkinRouteMap.tsx 只在掛載時建圖一次）。
+              id="hist-map-area"：硬導覽防閃專用錨點，比照 track/page.tsx 的 #track-map-area（見
+              globals.css `html[data-skin="…"] #hist-map-area`），風格地圖還沒載好前鋪上該風格底色。
+              ⚠️ 這裡刻意不寫 inline `background`（2026-09-30 修補）：inline style 的優先權一律蓋過
+              外部樣式表的一般選擇器（即使沒有 !important），會讓 globals.css 那三條
+              `html[data-skin="…"] #hist-map-area { background: … }` 佔位底色規則永遠生效不了。
+              預設底色改由 globals.css 的 `#hist-map-area { background: var(--bg-2); }` 提供，
+              風格帳號時再被同檔案內優先權更高的 `html[data-skin="…"] #hist-map-area` 蓋過。 */}
+          <div id="hist-map-area" style={{ position: 'relative', width: '100%', height: 220, borderRadius: 10, overflow: 'hidden', marginTop: 12 }}>
+            {/* ⚠️ 硬導覽防閃修補（2026-09-30）：隱藏交給 globals.css 的
+                `html[data-skin="scifi"|"retro"|"cute"] #hist-map:not([data-map-fallback])`，這裡絕不
+                能再寫死 `visibility:'visible'`（inline style 會蓋掉那條 CSS 規則）。useSkinMap 為 true
+                時仍補一個 inline `hidden` 加強，為 false 時完全不寫，讓瀏覽器預設值生效；skinMapFallback
+                為 true 時補 data-map-fallback 讓 CSS 隱藏規則失效、立刻改回可見。 */}
+            <div id="hist-map" {...(skinMapFallback ? { 'data-map-fallback': '1' } : {})} style={{ position: 'absolute', inset: 0, ...(useSkinMap ? { visibility: 'hidden' as const } : {}) }} />
             {useSkinMap && (
               <SkinRouteMap
                 key={sel.id}
