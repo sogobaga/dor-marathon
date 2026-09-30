@@ -45,6 +45,10 @@ if (typeof window !== 'undefined' && !maplibreConfig.WORKER_URL) {
 
 const FALLBACK_TIMEOUT_MS = 8000
 const GOLD = '#f8b800'
+// ORBPOS_CONTRACT「路線規劃」FIXED INTERFACE（2026-09-30）：建議路線用像素風虛線橘，跟已跑軌跡的
+// 金黃色（GOLD）明確區隔開來——同一畫面可能同時看得到「已經跑過的路」與「建議接下來怎麼走」兩條線，
+// 顏色一樣會分不清楚。
+const ROUTE_COLOR = '#e45c10'
 const LAST_POS_KEY = 'dor_retro_last_pos' // 與 track/page.tsx 的 RETRO_LAST_POS_KEY 同一把 key
 const RESUME_FOLLOW_MS = 8000
 // 移動判定（供光點噴火花用）——比照 track/cute/CuteMap.tsx FIX round2 的根因修正：不用「上一點到
@@ -85,7 +89,7 @@ function writeLastPos(lat: number, lng: number) {
 }
 
 const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(props, ref) {
-  const { pos, status, segments, kmMarks, targets, focusMode, initialCenter, initialZoom, onFallback, onTargetClick, bottomInset, onFollowChange } = props
+  const { pos, status, segments, kmMarks, targets, focusMode, initialCenter, initialZoom, onFallback, onTargetClick, bottomInset, onFollowChange, plannedRoute } = props
 
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -130,6 +134,10 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
   // 不影響任何判斷邏輯本身；沒有前端可上報的 client-log 端點（已查證），因此只曝光在這裡＋console。
   const lastFallbackReasonRef = useRef<string | null>(null)
   const recoveriesRef = useRef(0)
+  // ORBPOS_CONTRACT 路線規劃（RetroMapProps.plannedRoute，見 types.ts）：plannedRouteHiddenRef 只給
+  // E2E 做「有畫 vs 沒畫」前後對照用（比照 overlayHiddenRef，各自獨立、互不影響——路線規劃跟光點/
+  // 軌跡/徽章是不同功能，切換其中一個不該影響另一個的可見性）。
+  const plannedRouteHiddenRef = useRef(false)
 
   const posRef = useRef(pos); posRef.current = pos
   const statusRef = useRef(status); statusRef.current = status
@@ -143,6 +151,7 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
   // skin 地圖被使用者手勢拖動/縮放後的跟隨狀態。新增這個回呼，用 ref 存最新的函式（比照上面
   // onFallbackRef／onTargetClickRef 同一慣例），下方 setFollowing() 只在真的翻轉時才呼叫一次。
   const onFollowChangeRef = useRef(onFollowChange); onFollowChangeRef.current = onFollowChange
+  const plannedRouteRef = useRef(plannedRoute); plannedRouteRef.current = plannedRoute
   const bottomInsetRef = useRef(bottomInset ?? 0); bottomInsetRef.current = bottomInset ?? 0
   const appliedPaddingBottomRef = useRef<number | null>(null) // 上次實際 setPadding 的值，避免每次 render 都重呼叫
   initialCenterRef.current = initialCenter
@@ -201,6 +210,22 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
     resumeTimerRef.current = setTimeout(() => { setFollowing(true); resumeTimerRef.current = null }, RESUME_FOLLOW_MS)
   }
 
+  // 2026-09-30 owner 拍板「路線規劃／前往打卡後鏡頭要一直停在那，不能自動跳回跟隨」修復：fitRoute()／
+  // centerOn() 是「使用者主動要求看某個畫面」，跟拖曳／縮放地圖／按＋－那種「臨時看一眼」的手勢語意
+  // 不同——比照預設 Leaflet 地圖同一套行為（page.tsx planRoute() 只設 followRef.current=false，
+  // focusBoss centerMap() 也只設 false，兩處都完全沒有計時器），鏡頭應該一路保持在使用者要求的畫面，
+  // 直到使用者自己按「回到目前位置」（recenter()）才恢復跟隨。這裡另外開一個「只暫停、不安排自動
+  // 恢復」的函式，跟上面 pauseFollow()（拖曳/縮放/＋－按鈕用，8 秒後自動恢復）分開。
+  //
+  // 邊界情況（owner 確認「兩種都可接受」，這裡選擇不特別處理）：若使用者在這個「保持」期間自己動手
+  // 拖曳/縮放地圖，下方建圖 effect 的 onDragStart/onZoomStart 仍會呼叫 pauseFollow()（會排一個新的 8
+  // 秒自動恢復）——也就是說使用者自己的手勢會讓保持提前依 8 秒規則結束，而不是永遠停留到使用者按
+  // 「回到目前位置」。這被視為合理：使用者一旦自己動手操作地圖，就代表他接手了鏡頭控制權。
+  function holdFollow() {
+    setFollowing(false)
+    if (resumeTimerRef.current) { clearTimeout(resumeTimerRef.current); resumeTimerRef.current = null }
+  }
+
   // ORBPOS_CONTRACT.md §B：這筆定位是多久以前收到的。優先用 PAGE 工人加在 pos 上的 `ts`
   // （epoch ms，每次收到新定位就填一次）；缺席（欄位不存在／值不是正數，例如 PAGE 工人的修改還沒
   // 落地、或呼叫端本來就沒有這個欄位）時退回 lastFixReceivedAtRef（見上方宣告處）。
@@ -235,6 +260,51 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
       recenterZoomPendingRef.current = false // 使用者主動縮放：不再幫他把 zoom 拉回 16.5，尊重這次操作（見上方 RECENTER_ZOOM 說明）
       pauseFollow()
       try { map.easeTo({ zoom: map.getZoom() + delta, duration: 250, essential: true }) } catch { /* ignore */ }
+    },
+    // ORBPOS_CONTRACT 路線規劃 FIXED INTERFACE：fitBounds 到整條建議路線。
+    // 2026-09-30 owner 拍板修正：改呼叫 holdFollow()（不是 pauseFollow()）——鏡頭要一直停在路線總覽，
+    // 不會 8 秒後自動跳回跟隨，直到使用者自己按「回到目前位置」（見上方 holdFollow() 宣告處的完整說明）。
+    fitRoute(points: [number, number][]) {
+      const map = mapRef.current
+      if (!map || !points?.length) return
+      holdFollow()
+      recenterZoomPendingRef.current = false // 這是使用者想看的畫面，不要之後被跟隨 effect 偷偷拉回 16.5
+      if (points.length === 1) {
+        const [lat, lng] = points[0]
+        try { map.easeTo({ center: [lng, lat], pitch: 0, bearing: 0, duration: 500, essential: true }) } catch { /* ignore */ }
+        return
+      }
+      let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity
+      for (const [lat, lng] of points) {
+        if (lat < minLat) minLat = lat
+        if (lat > maxLat) maxLat = lat
+        if (lng < minLng) minLng = lng
+        if (lng > maxLng) maxLng = lng
+      }
+      // padding 遵守 bottomInset／專注模式（比照 applyRetroPadding 的同一套公式），再加一圈固定邊距
+      // 讓整條路線不會貼著畫面邊緣。
+      const container = containerRef.current
+      const h = container?.clientHeight || 0
+      const bottomPad = Math.max(0, Math.round(focusModeRef.current ? h * 0.55 : bottomInsetRef.current))
+      try {
+        map.fitBounds([[minLng, minLat], [maxLng, maxLat]], {
+          padding: { top: 60, bottom: bottomPad + 60, left: 48, right: 48 },
+          duration: 500,
+          pitch: 0,
+          bearing: 0,
+          maxZoom: 17,
+          essential: true,
+        })
+      } catch { /* ignore */ }
+    },
+    // ORBPOS_CONTRACT 路線規劃 FIXED INTERFACE：程式化置中到指定座標（非「目前位置」）。
+    // 2026-09-30 owner 拍板修正：改呼叫 holdFollow()（不是 pauseFollow()），理由同上方 fitRoute()。
+    centerOn(lat: number, lng: number, zoom?: number) {
+      const map = mapRef.current
+      if (!map) return
+      holdFollow()
+      recenterZoomPendingRef.current = false
+      try { map.easeTo({ center: [lng, lat], zoom: zoom ?? map.getZoom(), pitch: 0, bearing: 0, duration: 500, essential: true }) } catch { /* ignore */ }
     },
   }), [])
 
@@ -618,6 +688,17 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
           try { const pt = map.project([flatTrail[idx][1], flatTrail[idx][0]]); trailScreenSample.push({ x: Math.round(pt.x), y: Math.round(pt.y) }) } catch { /* ignore */ }
         }
       }
+      // ORBPOS_CONTRACT 路線規劃 FIXED INTERFACE：plannedRoutePoints／plannedRouteScreenSample，做法
+      // 比照上面 trailPoints／trailScreenSample 同一套抽樣邏輯，供 E2E 驗證路線有沒有畫對位置。
+      const plannedRoutePts = plannedRouteRef.current || []
+      const plannedRouteScreenSample: { x: number; y: number }[] = []
+      if (plannedRoutePts.length) {
+        const nSample = Math.min(5, plannedRoutePts.length)
+        for (let i = 0; i < nSample; i++) {
+          const idx = nSample === 1 ? 0 : Math.round((i * (plannedRoutePts.length - 1)) / (nSample - 1))
+          try { const pt = map.project([plannedRoutePts[idx][1], plannedRoutePts[idx][0]]); plannedRouteScreenSample.push({ x: Math.round(pt.x), y: Math.round(pt.y) }) } catch { /* ignore */ }
+        }
+      }
       ;(window as unknown as { __retroDebug?: unknown }).__retroDebug = {
         center: { lat: c.lat, lng: c.lng },
         zoom: map.getZoom(),
@@ -654,6 +735,11 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
         },
         // 契約 §6：只給 E2E 做「有畫 vs 沒畫」前後對照用，預設 false。
         setOverlayHidden: (v: boolean) => { overlayHiddenRef.current = !!v },
+        // ORBPOS_CONTRACT 路線規劃 FIXED INTERFACE：路線點數／取樣螢幕座標／獨立的隱藏開關（不影響
+        // 也不受 setOverlayHidden 影響，兩者是各自獨立的功能開關，見上方 plannedRouteHiddenRef 宣告處）。
+        plannedRoutePoints: plannedRoutePts.length,
+        plannedRouteScreenSample,
+        setPlannedRouteHidden: (v: boolean) => { plannedRouteHiddenRef.current = !!v },
         // A2 FALLBACK FIX 輕量診斷（見上方 lastFallbackReasonRef／recoveriesRef 宣告處）：最近一次觸發過
         // 的失敗原因（webglcontextlost／render-exception:*／load-timeout-8s…，即使最後有救回來也會留在
         // 這裡）、以及這個 session 內自動復原成功幾次（webglcontextrestored 或就地重建各算一次）。
@@ -818,6 +904,9 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
       drawRoute(ctx, map, segmentsRef.current, orbScale)
       drawKmMarks(ctx, map, kmMarksRef.current, orbScale)
     }
+    // ORBPOS_CONTRACT 路線規劃 FIXED INTERFACE：畫在光點／目標圖示之下、地圖圖磚之上（獨立的
+    // plannedRouteHiddenRef，只給 E2E 用，不受上面 overlayHidden／setOverlayHidden 影響）。
+    if (!plannedRouteHiddenRef.current) drawPlannedRoute(ctx, map, plannedRouteRef.current, orbScale)
     drawTargets(ctx, map, targetsRef.current)
 
     // 光點目前位置：沒有真實 GPS 定位時完全不畫（契約「沒有定位時不畫」，取代舊版退回 initialCenter
@@ -952,6 +1041,55 @@ const RetroMap = forwardRef<RetroMapHandle, RetroMapProps>(function RetroMap(pro
       const pt = map.project([m.lng, m.lat])
       drawKmFlag(ctx, pt.x, pt.y, m.km, orbScale)
     }
+  }
+
+  // ORBPOS_CONTRACT「路線規劃」FIXED INTERFACE：畫出從目前位置到目標點的建議路線——像素風虛線橘
+  // （黑色外框＋ROUTE_COLOR 主線），跟 drawRoute() 畫的「已跑軌跡」(GOLD 金黃、實線) 明確區隔開來，
+  // 終點另外畫一個像素風小旗標記。points 是 page.tsx 呼叫 routeApi.plan 拿回來的 [lat,lng] 陣列。
+  // FIX（review 抓到的 minor 根因）：原本這裡的註解說「點數通常不多，不需要像 drawRoute() 那樣
+  // decimate」，但後端 /route（services/api/internal/routing/routing.go Plan()）其實直接透傳 ORS
+  // 未簡化的完整 geometry，路線較長/較繞（人行步道常見）時點數未必少——比照 drawRoute() 同一套上限
+  // 600 點的 decimate，只影響繪製取樣，plannedRouteRef／__retroDebug.plannedRoutePoints 等其餘讀取
+  // 仍是完整原始路線，不受影響。
+  function drawPlannedRoute(ctx: CanvasRenderingContext2D, map: MapLibreMap, points: [number, number][] | null | undefined, orbScale: number) {
+    if (!points || points.length < 2) return
+    const pts = points.length > 600 ? decimate(points, 600) : points
+    const screen = pts.map(([lat, lng]) => map.project([lng, lat]))
+    const borderW = Math.max(1, 2 * orbScale) // 比照 drawRoute() 的外框寬公式
+    const mainW = Math.max(1, 1 * orbScale)
+    const dash = Math.max(2, 3 * orbScale) // 虛線段長＝點狀像素風，跟已跑軌跡的實線區隔
+    ctx.save()
+    ctx.lineCap = 'butt' // 方頭方角，維持像素風硬邊（比照本檔其餘線條畫法）
+    ctx.lineJoin = 'miter'
+    ctx.setLineDash([dash, dash])
+    ctx.strokeStyle = '#000000'
+    ctx.lineWidth = borderW
+    ctx.beginPath()
+    screen.forEach((pt, i) => (i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y)))
+    ctx.stroke()
+    ctx.strokeStyle = ROUTE_COLOR
+    ctx.lineWidth = mainW
+    ctx.beginPath()
+    screen.forEach((pt, i) => (i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y)))
+    ctx.stroke()
+    ctx.restore() // 連同上面 setLineDash 一起還原，之後的 drawTargets 虛線圈會自己重設，不受影響
+
+    const dest = screen[screen.length - 1]
+    drawRouteDestMarker(ctx, dest.x, dest.y, orbScale)
+  }
+
+  // 終點小旗標記：像素方塊堆疊（黑色外框＋ROUTE_COLOR 旗面＋白色像素點），手法比照本檔其餘像素繪製
+  // （drawSearchRing／drawTrailLightDots 皆用 fillRect 疊色塊，不畫平滑圖形），維持整體像素風一致。
+  function drawRouteDestMarker(ctx: CanvasRenderingContext2D, x: number, y: number, orbScale: number) {
+    const s = Math.max(2, orbScale)
+    ctx.save()
+    ctx.fillStyle = '#000000'
+    ctx.fillRect(Math.round(x - s * 2), Math.round(y - s * 5), s * 4, s * 5)
+    ctx.fillStyle = ROUTE_COLOR
+    ctx.fillRect(Math.round(x - s * 1.5), Math.round(y - s * 4.5), s * 3, s * 3.5)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(Math.round(x - s * 0.5), Math.round(y - s * 3.5), s, s)
+    ctx.restore()
   }
 
   function drawTargets(ctx: CanvasRenderingContext2D, map: MapLibreMap, tgts: RetroTarget[]) {

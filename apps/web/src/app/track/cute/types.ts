@@ -31,9 +31,19 @@ export interface CuteMapProps {
   // ORBPOS_CONTRACT.md 第二輪 S2：使用者手勢暫停跟隨（true→false）／8 秒自動恢復或 recenter() 恢復
   // 跟隨（→true）時呼叫，讓 page.tsx 的 followRef/setFollowing 同步，藉此驅動「回到目前位置」按鈕。
   onFollowChange?: (following: boolean) => void
+  // ROUTEPLAN_CONTRACT（比照 scifi/types.ts 同名欄位）：「路線規劃」建議路線（[lat,lng] 陣列，從目前
+  // 位置接到目標點）；null／空陣列＝目前沒有規劃中的路線。畫法與已跑軌跡 segments 明顯區分（珊瑚色
+  // 圓點虛線＋白色描邊），疊在光點／目標點下方、圖磚上方，路線最後一點加終點標記。
+  plannedRoute?: [number, number][] | null
 }
 
 export interface CuteMapHandle {
   recenter: (pos?: { lat: number; lng: number }) => void
   zoomBy: (delta: number) => void
+  // ROUTEPLAN_CONTRACT：把鏡頭縮放到能看見整條建議路線（等同 Leaflet 的 fitBounds），比照使用者
+  // 手勢暫停跟隨的規則呼叫 onFollowChange(false)，讓「回到目前位置」按鈕出現。
+  fitRoute: (points: [number, number][]) => void
+  // ROUTEPLAN_CONTRACT：程式化置中到指定座標（例如「前往打卡」深連結置中目標關主），同樣呼叫
+  // onFollowChange(false) 暫停跟隨——避免置中後下一筆 GPS 定位又把鏡頭拉回目前位置，蓋掉這次置中。
+  centerOn: (lat: number, lng: number, zoom?: number) => void
 }

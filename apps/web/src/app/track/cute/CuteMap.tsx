@@ -26,7 +26,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { buildCuteStyle } from './style'
 import { tileImageData, type TileKind } from './tiles'
 import { SoulOrb } from './orb'
-import { drawKmHeartBadge, drawTargetIcon, drawStartDot } from './icons'
+import { drawKmHeartBadge, drawTargetIcon, drawStartDot, drawRouteDestinationMarker } from './icons'
 import { isWebglSupported, haversineM, metersPerPixel, geoCircle, decimate } from './geo'
 import type { CuteMapHandle, CuteMapProps, CuteTarget, CutePos } from './types'
 
@@ -65,6 +65,11 @@ const TRAIL_END = '#ff6fae' // 主線漸層終點（→光點端）／外層光�
 const TRAIL_START = '#b58cff' // 主線漸層起點（軌跡起點端）
 const TRAIL_CORE = '#ffffff' // 內芯（docs/skins/CUTE_CONTRACT_R2b.md §C 逐字「2px 白色」）
 
+// 建議路線（路線規劃功能，ROUTE_CONTRACT）色票：珊瑚色點狀虛線＋白色描邊，刻意跟上面的軌跡緞帶
+// （TRAIL_*，代表「已經跑過的路」）用完全不同的視覺語言（虛線 vs 漸層實線、單色 vs 漸層、無光暈），
+// 避免使用者把「建議路線」誤認成「已跑軌跡」。
+const ROUTE_COLOR = '#ff9aa8'
+
 // FIX round2（review 抓到的根因修正，見 CuteMap 內對應呼叫處的詳細註解）：
 // - MOVE_NOISE_FLOOR_M／STILL_TIMEOUT_MS：移動/靜止判定改用「位移門檻＋逾時衰減」而非瞬時速度。
 // - TRAIL_CONNECT_MAX_ACC：軌跡末端連到光點的門檻，避免精度差的瞬時定位拉出橡皮筋線。
@@ -86,7 +91,7 @@ function writeLastPos(lat: number, lng: number) {
 }
 
 const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, ref) {
-  const { pos, status, segments, kmMarks, targets, focusMode, initialCenter, initialZoom, onFallback, onTargetClick, bottomInset, onFollowChange } = props
+  const { pos, status, segments, kmMarks, targets, focusMode, initialCenter, initialZoom, onFallback, onTargetClick, bottomInset, onFollowChange, plannedRoute } = props
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -132,6 +137,9 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
   // §5 全文），加上這類 gate 反而會讓正式環境的驗收腳本本身叫不動；真正對應到 review 提出的疑慮
   // 「沒有辦法復原、只能重新整理頁面」則有實質修正：見下方「新一輪開跑自動重置」。
   const overlayHiddenRef = useRef(false)
+  // ROUTE_CONTRACT：建議路線獨立的隱藏開關（setPlannedRouteHidden），跟上面 overlayHiddenRef（光點／
+  // 軌跡／徽章）分開，供 E2E 對「有畫建議路線 vs 沒畫」單獨做前後對照，不會連動把其餘疊層也一起藏掉。
+  const plannedRouteHiddenRef = useRef(false)
   const prevStatusRef = useRef<string | undefined>(undefined) // 供下方判斷「是否剛從非 tracking 轉進 tracking」（新一輪開跑）
   // A2 FALLBACK FIX（2026-09-29）：webglcontextlost／render-exception 這類「其實常常救得回來」的失敗，
   // 舊版一律立即永久退回 Leaflet（根因調查：iOS 背景分頁的 WebGL context 遺失絕大多數可自動復原，
@@ -146,6 +154,7 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
   const segmentsRef = useRef(segments); segmentsRef.current = segments
   const kmMarksRef = useRef(kmMarks); kmMarksRef.current = kmMarks
   const targetsRef = useRef(targets); targetsRef.current = targets
+  const plannedRouteRef = useRef(plannedRoute ?? null); plannedRouteRef.current = plannedRoute ?? null
   const focusModeRef = useRef(focusMode); focusModeRef.current = focusMode
   const onFallbackRef = useRef(onFallback); onFallbackRef.current = onFallback
   const onTargetClickRef = useRef(onTargetClick); onTargetClickRef.current = onTargetClick
@@ -165,6 +174,23 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
     if (followingRef.current === v) return
     followingRef.current = v
     onFollowChangeRef.current?.(v)
+  }
+
+  // 2026-09-30 owner 拍板「路線規劃／前往打卡後鏡頭要一直停在那，不能自動跳回跟隨」修復：fitRoute()／
+  // centerOn() 是「使用者主動要求看某個畫面」，跟拖曳／縮放地圖／按＋－那種「臨時看一眼」的手勢語意
+  // 不同——比照預設 Leaflet 地圖同一套行為（page.tsx planRoute() 只設 followRef.current=false，
+  // focusBoss centerMap() 也只設 false，兩處都完全沒有計時器），鏡頭應該一路保持在使用者要求的畫面，
+  // 直到使用者自己按「回到目前位置」（recenter()）才恢復跟隨。這裡另外開一個「只暫停、不安排自動
+  // 恢復」的函式，跟下面 zoomBy()／mount effect 內 pauseFollow()（拖曳/縮放/＋－按鈕用，8 秒後自動
+  // 恢復）分開。
+  //
+  // 邊界情況（owner 確認「兩種都可接受」，這裡選擇不特別處理）：若使用者在這個「保持」期間自己動手
+  // 拖曳/縮放地圖，下方建圖 effect 的 onDragStart/onZoomStart 仍會呼叫 pauseFollow()（會排一個新的 8
+  // 秒自動恢復）——也就是說使用者自己的手勢會讓保持提前依 8 秒規則結束，而不是永遠停留到使用者按
+  // 「回到目前位置」。這被視為合理：使用者一旦自己動手操作地圖，就代表他接手了鏡頭控制權。
+  function holdFollow() {
+    setFollowing(false)
+    if (resumeTimerRef.current) { clearTimeout(resumeTimerRef.current); resumeTimerRef.current = null }
   }
 
   // 底部可拖曳資訊面板頂端到畫面底的高度 → map.setPadding({bottom})，讓跟隨中心落在面板以上的可見
@@ -206,6 +232,54 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
       if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current)
       resumeTimerRef.current = setTimeout(() => { setFollowing(true); resumeTimerRef.current = null }, RESUME_FOLLOW_MS)
       try { map.easeTo({ zoom: map.getZoom() + delta, duration: 250, essential: true }) } catch { /* ignore */ }
+    },
+    // ROUTE_CONTRACT：fitBounds 整條建議路線（page.tsx planRoute() 算出、目前位置→選定打卡點/城市探索
+    // 關主）。2026-09-30 owner 拍板：改呼叫 holdFollow()（不是暫停＋排 8 秒後自動恢復）——鏡頭要一直
+    // 停在路線總覽，直到使用者自己按「回到目前位置」，三套風格（scifi/retro/cute）行為一致，也跟
+    // 預設 Leaflet 地圖同一套行為一致（見上方 holdFollow() 宣告處的完整說明）。
+    fitRoute(points: [number, number][]) {
+      const map = mapRef.current
+      if (!map || !points?.length) return
+      recenterZoomPendingRef.current = false
+      holdFollow()
+      if (points.length === 1) {
+        try { map.easeTo({ center: [points[0][1], points[0][0]], zoom: Math.max(map.getZoom(), RECENTER_ZOOM), pitch: 0, bearing: 0, duration: 500, essential: true }) } catch { /* ignore */ }
+        return
+      }
+      let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity
+      for (const [lat, lng] of points) {
+        if (lat < minLat) minLat = lat
+        if (lat > maxLat) maxLat = lat
+        if (lng < minLng) minLng = lng
+        if (lng > maxLng) maxLng = lng
+      }
+      if (!Number.isFinite(minLat) || !Number.isFinite(minLng)) return
+      // 底部 padding 沿用 applyCutePadding 同一份「面板頂端/專注模式上 45%」換算（見上方宣告處），
+      // 再加一段留白，避免建議路線終點的小圖釘剛好貼齊面板頂端或畫面邊緣。
+      const container = containerRef.current
+      const h = container?.clientHeight || 0
+      const panelBottom = Math.max(0, Math.round(focusModeRef.current ? h * 0.55 : bottomInsetRef.current))
+      try {
+        map.fitBounds([[minLng, minLat], [maxLng, maxLat]], {
+          padding: { top: 64, bottom: panelBottom + 64, left: 56, right: 56 },
+          pitch: 0,
+          bearing: 0,
+          maxZoom: 17,
+          duration: 600,
+          linear: true, // 沿用本檔其餘相機動畫一律 easeTo 的直線位移手感（見 FitBoundsOptions.linear 說明：true=easeTo／false=flyTo）
+          essential: true,
+        })
+      } catch { /* ignore */ }
+    },
+    // ROUTE_CONTRACT：程式化置中（不依賴目前 GPS 定位），供 page.tsx 其餘原本只呼叫 Leaflet
+    // centerMap()/panTo() 的入口（例如「前往打卡」deep-link 聚焦城市探索關主）比照呼叫。2026-09-30
+    // owner 拍板：改呼叫 holdFollow()，理由同上方 fitRoute()（與 scifi/retro 的 centerOn() 行為一致）。
+    centerOn(lat: number, lng: number, zoom?: number) {
+      const map = mapRef.current
+      if (!map) return
+      recenterZoomPendingRef.current = false
+      holdFollow()
+      try { map.easeTo({ center: [lng, lat], zoom: zoom ?? map.getZoom(), pitch: 0, bearing: 0, duration: 500, essential: true }) } catch { /* ignore */ }
     },
   }), [])
 
@@ -553,6 +627,22 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
           } catch { /* ignore */ }
         }
       }
+      // ROUTE_CONTRACT §偵錯把手：plannedRoutePoints／plannedRouteScreenSample 比照上面
+      // trailPoints／trailScreenSample 同一套做法（等距抽最多 5 個點，含頭尾），供 E2E 驗證建議路線
+      // 實際畫在螢幕上的位置是否與 routeApi.plan() 回傳的座標一致。
+      const routePts = plannedRouteRef.current || []
+      const plannedRoutePoints = routePts.length
+      const plannedRouteScreenSample: { x: number; y: number }[] = []
+      if (routePts.length) {
+        const nSample = Math.min(5, routePts.length)
+        for (let i = 0; i < nSample; i++) {
+          const idx = nSample === 1 ? 0 : Math.round((i * (routePts.length - 1)) / (nSample - 1))
+          try {
+            const pt = map.project([routePts[idx][1], routePts[idx][0]])
+            plannedRouteScreenSample.push({ x: Math.round(pt.x), y: Math.round(pt.y) })
+          } catch { /* ignore */ }
+        }
+      }
       ;(window as unknown as { __cuteDebug?: unknown }).__cuteDebug = {
         center: { lat: c.lat, lng: c.lng },
         zoom: map.getZoom(),
@@ -607,6 +697,11 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
         fontReady: (typeof document !== 'undefined' && document.fonts) ? document.fonts.check('16px DORCute') : null,
         // docs/skins/CUTE_CONTRACT_R2b.md §E：只給 E2E 做「有畫 vs 沒畫」前後對照用，預設 false。
         setOverlayHidden: (v: boolean) => { overlayHiddenRef.current = !!v },
+        plannedRoutePoints,
+        plannedRouteScreenSample,
+        // ROUTE_CONTRACT：獨立於 setOverlayHidden 的建議路線開關，只給 E2E 對「有畫建議路線 vs 沒畫」
+        // 單獨做前後對照，不影響光點／軌跡／徽章。
+        setPlannedRouteHidden: (v: boolean) => { plannedRouteHiddenRef.current = !!v },
         // A2 FALLBACK FIX 輕量診斷（見上方 lastFallbackReasonRef／recoveriesRef 宣告處）：最近一次觸發過
         // 的失敗原因（webglcontextlost／render-exception:*／load-timeout-8s…，即使最後有救回來也會留在
         // 這裡）、以及這個 session 內自動復原成功幾次（webglcontextrestored 或就地重建各算一次）。
@@ -745,6 +840,11 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
     if (!overlayHidden) {
       drawRoute(ctx, map, segmentsRef.current)
       drawKmMarks(ctx, map, kmMarksRef.current)
+    }
+    // ROUTE_CONTRACT：建議路線用獨立的 plannedRouteHiddenRef 開關（不受上面 overlayHidden 連動），
+    // 畫在圖磚之上、光點與目標圖示之下（drawTargets 在下一行、光點 orb.draw 在本函式最後）。
+    if (!plannedRouteHiddenRef.current) {
+      drawPlannedRoute(ctx, map, plannedRouteRef.current)
     }
     drawTargets(ctx, map, targetsRef.current)
 
@@ -892,6 +992,44 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
       const startPt = map.project([first[1], first[0]])
       drawStartDot(ctx, startPt.x, startPt.y)
     }
+  }
+
+  // 建議路線（路線規劃功能，ROUTE_CONTRACT，2026-09-30）：page.tsx 的 routeApi.plan() 算出從目前位置
+  // 到使用者選定打卡點/城市探索關主的建議路徑，points 是 [lat,lng]（起點→終點順序）。畫成「白色描邊
+  // ＋珊瑚色點狀虛線」（見上方 ROUTE_COLOR），刻意跟 drawRoute()（已跑過的路，漸層實線＋發光）用完全
+  // 不同的視覺語言，不會被誤認成軌跡；終點另外疊一個小水滴圖釘（drawRouteDestinationMarker，見
+  // icons.ts）。只需 ≥2 個點才畫得出一條線，points 為 null/空陣列/單點時安靜跳過（呼叫端 fitRoute()
+  // 對單點另有自己的置中處理，這裡不需要重複）。
+  function drawPlannedRoute(ctx: CanvasRenderingContext2D, map: MapLibreMap, route: [number, number][] | null | undefined) {
+    if (!route || route.length < 2) return
+    // FIX（review 抓到的 minor 根因）：後端 /route（services/api/internal/routing/routing.go Plan()）
+    // 直接透傳 ORS 未簡化的完整 geometry，路線較長/較繞時點數可能不少；比照上面 drawRoute() 同一套
+    // 上限 600 點的 decimate，只影響繪製取樣，plannedRouteRef／__cuteDebug.plannedRoutePoints 等其餘
+    // 讀取仍是完整原始路線，不受影響。
+    const pts = route.length > 600 ? decimate(route, 600) : route
+    const screen = pts.map((pt) => map.project([pt[1], pt[0]]))
+    ctx.save()
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
+    // 白色外框打底（寬 6px），讓珊瑚色虛線在任何地圖底色（草地/水域/建物）上都清楚可辨——比照
+    // drawKmHeartBadge 的「白色貼紙外框」同一種手法。
+    ctx.strokeStyle = 'rgba(255,255,255,.92)'
+    ctx.lineWidth = 6
+    ctx.setLineDash([2, 9])
+    ctx.beginPath()
+    screen.forEach((pt, i) => (i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y)))
+    ctx.stroke()
+    // 珊瑚色點狀虛線本體（寬 3px，疊在白色外框正中央）。
+    ctx.strokeStyle = ROUTE_COLOR
+    ctx.lineWidth = 3
+    ctx.setLineDash([2, 9])
+    ctx.beginPath()
+    screen.forEach((pt, i) => (i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y)))
+    ctx.stroke()
+    ctx.restore()
+    // 終點小圖釘：畫在建議路線最後一點。
+    const lastPt = screen[screen.length - 1]
+    drawRouteDestinationMarker(ctx, lastPt.x, lastPt.y)
   }
 
   // FIX round2b §D 根因調查（編排者放大 4_track_running.png 抓到「kmBadges=1 但畫面上完全看不到」）：

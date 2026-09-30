@@ -210,7 +210,31 @@ export default function TrackPage() {
   const curPosAtRef = useRef<number | null>(null) // ORBPOS_CONTRACT.md 修正 B：curPos 這筆定位「被收到」的時間戳（epoch ms，非 GPS 裝置的 pos.timestamp），onPos 內與 setCurPos 同步寫入，供 mapSnapshot 帶給 scifi/retro/cute 地圖判斷「超過 15 秒沒更新」的定位中狀態
   const [routePlan, setRoutePlan] = useState<{ toName: string; km: number; etaMin: number } | null>(null) // 建議跑步路線資訊條
   const [routeBusy, setRouteBusy] = useState(false)
-  const routeLineRef = useRef<any>(null) // 建議路線 polyline（虛線橘）
+  // 建議路線資訊條（地圖頂端、撐滿寬度）顯示時的實際高度：地圖左上縮放鈕、右上「回到目前位置」鈕、
+  // Leaflet 內建縮放鈕都要往下讓到資訊條下方，否則會互相蓋住（2026-09-30 使用者截圖：回到目前位置
+  // 蓋住「清除」、縮放鈕被資訊條壓住）。0＝資訊條未顯示，控制鈕維持原本 top:12。
+  const routeBarRef = useRef<HTMLDivElement | null>(null)
+  const [routeBarH, setRouteBarH] = useState(0)
+  useEffect(() => {
+    const el = routeBarRef.current
+    if (!(routeBusy || routePlan) || !el) { setRouteBarH(0); return }
+    const measure = () => setRouteBarH(Math.ceil(el.getBoundingClientRect().height))
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [routeBusy, routePlan])
+  // 控制鈕的 top：資訊條顯示時讓到它正下方（資訊條外層已含 10px 上邊距，再留 8px 間隔）。
+  const mapCtrlTop = routeBarH > 0 ? routeBarH + 8 : 12
+  const routeLineRef = useRef<any>(null) // 建議路線 polyline（虛線橘，Leaflet 版本）
+  // ROUTEPLAN_CONTRACT（2026-09-30 修復「切換成其他風格時路線規劃壞掉」）：scifi／retro／cute 生效時
+  // #gps-map 整個隱藏，routeLineRef 畫的那條線沒人看得到——這裡另外存一份同樣的座標陣列，當成 prop
+  // 餵給目前生效的風格地圖自己畫（見各 *MapProps.plannedRoute），與 routeLineRef 完全並存、互不影響。
+  const [plannedRoute, setPlannedRoute] = useState<[number, number][] | null>(null)
+  // ROUTEPLAN_CONTRACT：風格地圖回報「點了地圖上的打卡點/關主」（onTargetClick）時，在地圖上開一張
+  // 小卡顯示名稱＋「🧭 路線規劃」／「關閉」——取代 Leaflet 版本原生 popup 的 bindRoutePopup()（風格
+  // 地圖掛載時 #gps-map 連同它的原生 popup 一起被隱藏，點不到）。null＝目前沒有開著的小卡。
+  const [skinTarget, setSkinTarget] = useState<SciFiTarget | null>(null)
   const [cpBusy, setCpBusy] = useState('') // 正在打卡的 checkpoint id
   const [cpMsg, setCpMsg] = useState('')
   const [exChecked, setExChecked] = useState<Set<string>>(new Set()) // 本 session 已成功打卡的城市探索點 id（重進頁/重抓列表後回復，冷卻後仍能再打）
@@ -295,7 +319,7 @@ export default function TrackPage() {
   // api.ts:1533），未設定/非正數 fallback 3000ms；存 ref 供 fireCheer 讀最新值（fireCheer 是具名函式宣告，
   // 只讀 ref，不受呼叫端 closure 是否為舊版影響，同檔既有慣例）。cheer_test_entry==='shown' 才顯示白名單
   // 測試按鈕（後台系統設定白名單開關，本頁不做任何權限判斷、只吃這顆旗標）。
-  const { dash, revalidate: revalidateDash } = useDashboard()
+  const { dash, revalidate: revalidateDash, loading: dashLoading } = useDashboard()
   const cheerDurationRef = useRef(3000)
   cheerDurationRef.current = dash?.cheer_display_ms && dash.cheer_display_ms > 0 ? dash.cheer_display_ms : 3000
   const canTestCheer = dash?.cheer_test_entry === 'shown'
@@ -2468,17 +2492,26 @@ export default function TrackPage() {
       const { distance_m, duration_s, coords } = await withUserAuth((t) => routeApi.plan(t, from.lat, from.lng, toLat, toLng))
       const latlngs: [number, number][] = [[from.lat, from.lng], ...coords] // 從目前位置接到 ORS 路線
       routeLineRef.current?.setLatLngs(latlngs)
-      // 看整條路線：暫停自動跟隨並縮放到路線範圍
+      // 看整條路線：暫停自動跟隨並縮放到路線範圍（Leaflet 版本；即使目前是風格地圖生效、這個隱藏中的
+      // 背景地圖也照樣算好，風格 fallback 時能立刻銜接、不必重新規劃一次）
       if (mapRef.current && latlngs.length > 1) {
         followRef.current = false; setFollowing(false)
         try { mapRef.current.fitBounds(latlngs, { padding: [40, 40] }) } catch { /* ignore */ }
+      }
+      // ROUTEPLAN_CONTRACT：scifi／retro／cute 生效中另外把同一條路線交給目前這個風格地圖自己畫＋
+      // 縮放（fitRoute，見各 *MapHandle），Leaflet 那份 fitBounds 在它是隱藏的背景地圖時不會被看到。
+      setPlannedRoute(latlngs)
+      if (latlngs.length > 1) {
+        if (sciFiActive) sciFiMapRef.current?.fitRoute(latlngs)
+        else if (retroActive) retroMapRef.current?.fitRoute(latlngs)
+        else if (cuteActive) cuteMapRef.current?.fitRoute(latlngs)
       }
       setRoutePlan({ toName, km: Math.round(distance_m / 10) / 100, etaMin: Math.max(1, Math.round(duration_s / 60)) })
     } catch (e: any) {
       setCpMsg(e?.message || '無法規劃路線，請稍後再試')
     } finally { setRouteBusy(false) }
   }
-  function clearRoute() { routeLineRef.current?.setLatLngs([]); setRoutePlan(null) }
+  function clearRoute() { routeLineRef.current?.setLatLngs([]); setPlannedRoute(null); setRoutePlan(null) }
   // 點地圖打卡點 → 彈出小卡（名稱 + 「路線規劃」按鈕）；按了按鈕「才」真的規劃、畫線。
   // 改用「彈窗按鈕」而非「點 marker 直接畫線」→ 降低誤觸、動作更明確。
   function bindRoutePopup(L: any, marker: any, lat: number, lng: number, name: string) {
@@ -2586,10 +2619,41 @@ export default function TrackPage() {
     if (focusDoneRef.current || !mapReady || !mapRef.current || !focusBoss) return
     const b = exploreCps.find((x) => x.id === focusBoss)
     if (!b || (!b.lat && !b.lng)) return
+    // FIX（review 抓到的根因：focusDoneRef 這顆「只執行一次」門閂，原本在判斷 sciFiActive／retroActive／
+    // cuteActive 之前就無條件鎖上，一旦這輪 effect 跑的時候帳號的風格設定（dashboard.ui_skin，見
+    // components/SkinOverride.tsx）還沒抓回來、三顆旗標暫時全是 false，就會走 Leaflet-only 的
+    // centerMap()、把門閂永久鎖死——之後 dashboard 資料回來、風格覆寫真的套用、sciFiActive 等旗標翻
+    // true 觸發這個 effect 重新執行，也會被最上面那行擋掉，該風格地圖的 centerOn() 就此永遠叫不到。
+    // dashLoading 為 true 代表「風格是否覆寫」這件事還沒問到答案（Gate 2a，同 SkinOverride.tsx 用的
+    // 同一份 dashLoading），這裡先不鎖門閂、也不做任何置中，等 dashboard 真的回來（dashLoading 依賴
+    // 已在下面陣列）這個 effect 會自然重新執行一次，那時 sciFiActive／retroActive／cuteActive 才是
+    // 「確定」的答案，不會再有「答案還沒到就被鎖死」的競態。
+    if (dashLoading) return
+    // FIX R2（review 抓到的根因）：dashLoading 剛轉 false 這一輪 commit，還不能保證 sciFiActive／
+    // retroActive／cuteActive 已經是「確定」答案——SkinOverride 元件（layout.tsx 內排在 {children}
+    // 之前的手足）把 <html data-skin> 真正寫進 DOM，是在同一輪 commit 的 passive effect 階段、且比
+    // 這個 effect 先執行（React 依 fiber tree 順序跑 passive effects，手足在前的先跑）；但這個 effect
+    // 讀到的 sciFiActive 等三顆是這一輪 render 當下（mutation 發生前）就已經閉包鎖住的舊答案，要等
+    // subscribeSkinChange 的 MutationObserver（微任務，要等這一整輪 passive effects 全部跑完才會
+    // 觸發）通知重繪才會更新成正確值——而且同一輪 JSX 掛載風格地圖（<SciFiMap> 等）用的也是這輪一樣
+    // 過期的旗標，代表就算這裡改成現讀 getActiveSkin()，對應的 ref 也還沒掛載掛不到。若這裡誤信舊
+    // 答案把 focusDoneRef 這顆單次門閂鎖死，之後重繪拿到正確答案、地圖也真的掛出來時，最上面那行
+    // 門閂已經鎖住直接 return，風格地圖的 centerOn() 就永遠叫不到（code review 抓到）。
+    // 修法：用 getActiveSkin() 現讀 <html data-skin> 這一刻的真實值，若跟這一輪 render 認定的
+    // activeSkin 對不上，代表 DOM 已經比這輪 props 先一步改變、重繪馬上就會發生（同一個 microtask
+    // checkpoint），先不鎖門閂、不消耗這次機會，等下一輪 render（三顆旗標與對應風格地圖都到位）自然
+    // 因為 deps 改變重新執行這個 effect。
+    if (getActiveSkin() !== activeSkin) return
     focusDoneRef.current = true
     followRef.current = false; setFollowing(false)
-    centerMap([b.lat, b.lng], 16) // 置中到可視地圖區（避開面板遮蔽）
-  }, [mapReady, exploreCps, focusBoss])
+    centerMap([b.lat, b.lng], 16) // 置中到可視地圖區（避開面板遮蔽，Leaflet 版本）
+    // ROUTEPLAN_CONTRACT：scifi／retro／cute 生效中，隱藏的 Leaflet 置中沒人看得到，另外呼叫目前這個
+    // 風格地圖自己的 centerOn——它會自行呼叫 onFollowChange(false) 暫停跟隨，不會被下一筆 GPS 定位
+    // 拉回目前位置、蓋掉這次「前往打卡」的置中結果（比照 recenter() 那種「恢復跟隨」語意刻意不同）。
+    if (sciFiActive) sciFiMapRef.current?.centerOn(b.lat, b.lng, 16)
+    else if (retroActive) retroMapRef.current?.centerOn(b.lat, b.lng, 16.5)
+    else if (cuteActive) cuteMapRef.current?.centerOn(b.lat, b.lng, 16.5)
+  }, [mapReady, exploreCps, focusBoss, sciFiActive, retroActive, cuteActive, dashLoading, activeSkin])
 
   // 打卡 → 地理驗證通過即揭露關主 → 跳出關主挑戰面板（表面打卡，實為事件觸發）
   async function doExploreCheckin(b: ExploreBoss) {
@@ -2983,7 +3047,7 @@ export default function TrackPage() {
       {/* 地圖 + COROS 式可拖曳資訊面板：地圖佔滿容器、資訊面板可上下拖曳露出更多/更少（配色與顯示資訊都不變，只改操作體驗）
           id="track-map-area"：硬導覽防閃專用錨點（globals.css `html[data-skin="…"] #track-map-area`
           在風格地圖的 chunk／MapLibre／磚圖還沒載好前，鋪上該風格自己的底色，取代預設 Leaflet 灰底）。 */}
-      <div ref={sheet.wrapRef} id="track-map-area" style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div ref={sheet.wrapRef} id="track-map-area" style={{ position: 'relative', flex: 1, minHeight: 0, overflow: 'hidden', ['--dor-map-ctrl-top' as string]: routeBarH > 0 ? `${routeBarH}px` : '0px' }}>
         {/* scifi／retro／cute 生效時只把既有 Leaflet 容器視覺隱藏——Leaflet 地圖照舊建立/運作於背景，
             一旦對應地圖 fallback 就立刻可見，跑步邏輯零依賴地圖是否渲染（CONTRACT.md §1／§4）。
             ⚠️ 硬導覽防閃修補（2026-09-30）：隱藏改交給 globals.css 的
@@ -3019,9 +3083,10 @@ export default function TrackPage() {
             initialCenter={curPos ? [curPos.lat, curPos.lng] : (readLastMapPos(SCIFI_LAST_POS_KEY) ?? DAAN_PARK)}
             initialZoom={16}
             onFallback={handleSciFiFallback}
-            onTargetClick={(t) => setCpMsg(t.label)}
+            onTargetClick={(t) => setSkinTarget(t)}
             bottomInset={mapSnapshot.bottomInset}
             onFollowChange={handleSkinFollowChange}
+            plannedRoute={plannedRoute}
           />
         )}
         {retroActive && (
@@ -3036,9 +3101,10 @@ export default function TrackPage() {
             initialCenter={curPos ? [curPos.lat, curPos.lng] : (readLastMapPos(RETRO_LAST_POS_KEY) ?? DAAN_PARK)}
             initialZoom={16.5}
             onFallback={handleRetroFallback}
-            onTargetClick={(t) => setCpMsg(t.label)}
+            onTargetClick={(t) => setSkinTarget(t)}
             bottomInset={mapSnapshot.bottomInset}
             onFollowChange={handleSkinFollowChange}
+            plannedRoute={plannedRoute}
           />
         )}
         {cuteActive && (
@@ -3053,15 +3119,40 @@ export default function TrackPage() {
             initialCenter={curPos ? [curPos.lat, curPos.lng] : (readLastMapPos(CUTE_LAST_POS_KEY) ?? DAAN_PARK)}
             initialZoom={16.5}
             onFallback={handleCuteFallback}
-            onTargetClick={(t) => setCpMsg(t.label)}
+            onTargetClick={(t) => setSkinTarget(t)}
             bottomInset={mapSnapshot.bottomInset}
             onFollowChange={handleSkinFollowChange}
+            plannedRoute={plannedRoute}
           />
         )}
         {mapSkinActive && status !== 'done' && (
-          <div {...scifiFocusHideAttr} style={{ position: 'absolute', top: 12, left: 12, zIndex: 550, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div {...scifiFocusHideAttr} style={{ position: 'absolute', top: mapCtrlTop, left: 12, zIndex: 550, display: 'flex', flexDirection: 'column', gap: 6 }}>
             <button onClick={() => { sciFiMapRef.current?.zoomBy(1); retroMapRef.current?.zoomBy(1); cuteMapRef.current?.zoomBy(1) }} aria-label="放大" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>＋</button>
             <button onClick={() => { sciFiMapRef.current?.zoomBy(-1); retroMapRef.current?.zoomBy(-1); cuteMapRef.current?.zoomBy(-1) }} aria-label="縮小" style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>－</button>
+          </div>
+        )}
+        {/* ROUTEPLAN_CONTRACT：點風格地圖上的打卡點/關主 → 開這張小卡（取代 Leaflet 版本點 marker 彈出
+            的原生 popup，見 bindRoutePopup——風格生效時 #gps-map 連同它的原生 popup 一起被隱藏，點不到）。
+            用 bottomInset 貼著底部面板上緣（而非寫死 top/bottom），面板拖曳到哪都不會被蓋住；按「🧭
+            路線規劃」才真的呼叫 planRoute() 畫線，按「關閉」單純收起、不觸發任何規劃。 */}
+        {mapSkinActive && skinTarget && status !== 'done' && (
+          <div
+            {...scifiFocusHideAttr}
+            style={{ position: 'absolute', left: 12, right: 12, bottom: (mapSnapshot.bottomInset || 0) + 12, zIndex: 960, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}
+          >
+            <div style={{ pointerEvents: 'auto', background: 'var(--bg-1)', color: 'var(--tx)', border: '1px solid var(--fug)', borderRadius: 14, padding: '12px 14px', minWidth: 200, maxWidth: 300, boxShadow: '0 4px 16px rgba(0,0,0,.35)' }}>
+              <div style={{ fontWeight: 800, fontSize: 13.5, marginBottom: 10, wordBreak: 'break-word', lineHeight: 1.35 }}>{skinTarget.label}</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => { const t = skinTarget; setSkinTarget(null); planRoute(t.lat, t.lng, t.label) }}
+                  style={{ flex: 1, background: '#FF8A3D', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 10px', fontSize: 12.5, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}
+                >🧭 路線規劃</button>
+                <button
+                  onClick={() => setSkinTarget(null)}
+                  style={{ background: 'transparent', color: 'var(--tx-dim)', border: '1px solid var(--line-2)', borderRadius: 10, padding: '9px 12px', fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit' }}
+                >關閉</button>
+              </div>
+            </div>
           </div>
         )}
         {/* 首次開跑提示（專注模式＝鎖定模式，每裝置一次）：按「知道了」bump focusEnterSignal，命令
@@ -3082,7 +3173,18 @@ export default function TrackPage() {
           <button
             {...scifiFocusHideAttr}
             onClick={() => { recenterMap(); if (sciFiActive) sciFiMapRef.current?.recenter(); if (retroActive) retroMapRef.current?.recenter(); if (cuteActive) cuteMapRef.current?.recenter() }}
-            style={{ position: 'absolute', top: 12, right: 12, zIndex: 550, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '8px 13px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 3px 12px rgba(0,0,0,.28)' }}
+            // FIX（review 抓到的根因）：原本 zIndex:550 比下面 warn/toast/建議路線/搭車/排除異常那幾條
+            // 通知橫幅（900～960）都低——橫幅是 left:0/right:0 撐滿寬度、內容可能換成 2～3 行，一旦真的
+            // 換行，橫幅的高度會往下長到蓋住這顆按鈕同一塊 top:12/right:12 的區域，而且橫幅內層（不是
+            // 外層 wrapper）有 pointerEvents:'auto'（要接住橫幅自己的 ✕/清除按鈕點擊），疊在上面時這顆
+            // 按鈕會被完全擋住點不到，也只剩下緣一點點露出來。
+            // FIX R2（review 二輪抓到：改成 970 仍不夠）：事件結算橫幅 EventResultBanner（zIndex:1000）
+            // 與多人事件邀請卡 raceInvite（zIndex:1001）這兩個外層 wrapper 沒有比照上面幾條加
+            // pointerEvents:'none'（因為整張卡本身就是可點的「收下／加入一起跑／略過」），疊到同一塊
+            // top:12/right:12 區域時一樣會把這顆按鈕完全蓋住點不到，970 還是不夠高。改成 1010，
+            // 確定比目前地圖層裡所有橫幅（含這兩張最高的 1000/1001）都高、一律畫在最上層保持可見可點；
+            // 上面的全螢幕彈窗（2500 以上）本來就該蓋過這顆按鈕，1010 沒有動到那個範圍。
+            style={{ position: 'absolute', top: mapCtrlTop, right: 12, zIndex: 1010, background: 'var(--bg-1)', color: 'var(--fug)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '8px 13px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 3px 12px rgba(0,0,0,.28)' }}
           >◎ {curPos ? '回到目前位置' : '定位到我'}</button>
         )}
         {/* GPS 弱訊號警告 / 錯誤：浮在面板之上，任何停靠狀態都看得到（不隨面板收合而被藏起來） */}
@@ -3113,7 +3215,7 @@ export default function TrackPage() {
         )}
         {/* 建議跑步路線資訊條（點地圖打卡點規劃後顯示） */}
         {(routeBusy || routePlan) && (
-          <div {...scifiFocusHideAttr} style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 920, padding: '10px 12px 0', pointerEvents: 'none' }}>
+          <div ref={routeBarRef} {...scifiFocusHideAttr} style={{ position: 'absolute', left: 0, right: 0, top: 0, zIndex: 920, padding: '10px 12px 0', pointerEvents: 'none' }}>
             <div style={{ background: 'var(--bg-1)', color: 'var(--tx)', border: '1px solid #FF8A3D', borderRadius: 10, padding: '9px 10px 9px 12px', fontSize: 12.5, boxShadow: '0 4px 16px rgba(0,0,0,.35)', pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
               {routeBusy ? (
                 <span style={{ flex: 1 }}>🧭 規劃建議路線中…</span>

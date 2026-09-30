@@ -66,6 +66,10 @@ const STALE_FIX_MS = 15000
 // 16.5 就視為收斂完成，恢復「跟隨只搬 center」的原設計。
 const RECENTER_ZOOM = 16.5
 const RECENTER_ZOOM_EPS = 0.05
+// GAP #1 修復：fitRoute() 縮放到看得見整條建議路線時，四周留白（CSS px）＋最多放大到多少 zoom（路線
+// 很短時避免貼到幾乎看不出地圖，比照一般地圖 App「導航路線總覽」慣例）。
+const ROUTE_FIT_EXTRA_PADDING = 48
+const ROUTE_FIT_MAX_ZOOM = 17
 
 function writeLastPos(lat: number, lng: number) {
   try { localStorage.setItem(LAST_POS_KEY, JSON.stringify({ lat, lng })) } catch { /* 私密瀏覽/storage 被封鎖：純錦上添花，略過即可 */ }
@@ -133,8 +137,24 @@ function decimate<T>(arr: T[], n: number): T[] {
   return out
 }
 
+// __scifiDebug.plannedRouteScreenSample 專用：均勻取「最多 n 點」（含頭尾），不像 decimate() 那樣會
+// 額外多塞一個尾端點（decimate 用途是畫圖不在意剛好幾點，這裡契約明確要求「up to 5」，多一點就超標）。
+function sampleUpTo<T>(arr: T[], n: number): T[] {
+  if (arr.length <= n) return arr
+  const out: T[] = []
+  const step = (arr.length - 1) / (n - 1)
+  for (let i = 0; i < n; i++) out.push(arr[Math.round(i * step)])
+  return out
+}
+
 const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(props, ref) {
   const { pos, status, segments, kmMarks, targets, focusMode, initialCenter, initialZoom, onFallback, onTargetClick, bottomInset, onFollowChange } = props
+  // 2026-09-30「切換風格後路線規劃壞掉」根因修復（PAGE 工人稽核 GAP #1）：plannedRoute 是新增欄位，
+  // 型別（SciFiMapProps）由 PAGE 工人同步補進 ./types.ts（本檔依契約不擁有 types.ts，見檔頭）——用
+  // intersection 轉型讓本檔可以不依賴對方進度先行開發／獨立跑 tsc；等 types.ts 真的補上同名同型別欄位
+  // 後，這裡只是多餘但無害的重複宣告。[lat,lng] 陣列，從目前位置到使用者點選的打卡點/賽事目標；
+  // null/空陣列＝目前沒有規劃中的路線。
+  const { plannedRoute } = props as SciFiMapProps & { plannedRoute?: [number, number][] | null }
 
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -184,6 +204,12 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
   const segmentsRef = useRef(segments); segmentsRef.current = segments
   const kmMarksRef = useRef(kmMarks); kmMarksRef.current = kmMarks
   const targetsRef = useRef(targets); targetsRef.current = targets
+  // GAP #1 修復：規劃路線資料走 ref（同高頻資料慣例，即使目前更新頻率不高——每次按「🧭 路線規劃」
+  // 才變一次），供 renderFrame／__scifiDebug 讀取，不用重新掛載 render loop。plannedRouteHiddenRef
+  // 是獨立於既有 overlayHiddenRef 的另一個把手（驗收14 overlayHidden 管的是「光點／軌跡／徽章」，不含
+  // 這條新的建議路線），讓 E2E 能單獨對這個新功能做「有畫 vs 沒畫」前後對照，不用連光點/軌跡一起關掉。
+  const plannedRouteRef = useRef<[number, number][] | null>(plannedRoute ?? null); plannedRouteRef.current = plannedRoute ?? null
+  const plannedRouteHiddenRef = useRef(false)
   const focusModeRef = useRef(focusMode); focusModeRef.current = focusMode
   const onFallbackRef = useRef(onFallback); onFallbackRef.current = onFallback
   const onTargetClickRef = useRef(onTargetClick); onTargetClickRef.current = onTargetClick
@@ -264,6 +290,25 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
     }, RESUME_FOLLOW_MS)
   }
 
+  // 2026-09-30 owner 拍板「路線規劃／前往打卡後鏡頭要一直停在那，不能自動跳回跟隨」修復：fitRoute()／
+  // centerOn() 是「使用者主動要求看某個畫面」（按了🧭路線規劃、或點了城市探索關主的深連結），跟拖曳／
+  // 縮放地圖／按＋－那種「臨時看一眼」的手勢語意不同——比照預設 Leaflet 地圖同一套行為（page.tsx
+  // planRoute() 只設 followRef.current=false，focusBoss centerMap() 也只設 false，兩處都完全沒有計時
+  // 器），鏡頭應該一路保持在使用者要求的畫面，直到使用者自己按「回到目前位置」（recenter()）才恢復
+  // 跟隨。因此另外開這個「只暫停、不安排自動恢復」的函式，跟上面 pauseFollow()（拖曳/縮放/＋－按鈕
+  // 用，8 秒後自動恢復）分開，讓兩種語意的呼叫端各自對應正確的行為。
+  //
+  // 邊界情況（owner 確認「兩種都可接受」，這裡選擇不特別處理）：若使用者在這個「保持」期間自己動手
+  // 拖曳/縮放地圖，下方建圖 effect 的 onDragStart/onZoomStart 仍會呼叫 pauseFollow()（會排一個新的 8
+  // 秒自動恢復）——也就是說使用者自己的手勢會讓保持提前依 8 秒規則結束，而不是永遠停留到使用者按
+  // 「回到目前位置」。這被視為合理：使用者一旦自己動手操作地圖，就代表他接手了鏡頭控制權，之後的
+  // 行為理應比照一般手勢操作，不需要再特別維護「這是不是路線規劃後的保持」這種額外狀態。
+  function holdFollow() {
+    if (followingRef.current) onFollowChangeRef.current?.(false)
+    followingRef.current = false
+    if (resumeTimerRef.current) { clearTimeout(resumeTimerRef.current); resumeTimerRef.current = null }
+  }
+
   useImperativeHandle(ref, () => ({
     recenter(p) {
       const map = mapRef.current
@@ -291,6 +336,69 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
       recenterZoomPendingRef.current = false // 使用者主動縮放：不再幫他把 zoom 拉回 16.5，尊重這次操作（見上方 RECENTER_ZOOM 說明）
       pauseFollow()
       try { map.easeTo({ zoom: map.getZoom() + delta, duration: 250, essential: true }) } catch { /* ignore */ }
+    },
+    // 2026-09-30 GAP #1（路線規劃跨風格壞掉）修復：PAGE 工人按下「🧭 路線規劃」後，除了既有 Leaflet
+    // 路線（預設風格）之外，skin 生效時改呼叫這裡——把整條建議路線（含目前位置與目的地）縮放進可視
+    // 範圍，等同 Leaflet 版 planRoute() 的 `mapRef.current.fitBounds(latlngs,...)`。
+    // 2026-09-30 owner 拍板修正：改呼叫 holdFollow()（不是 pauseFollow()）——鏡頭要一直停在路線總覽，
+    // 不會 8 秒後自動跳回跟隨，直到使用者自己按「回到目前位置」（比照 Leaflet 版 planRoute() 的
+    // followRef.current=false、完全不設計時器，見上方 holdFollow() 宣告處的完整說明）。padding 沿用
+    // applyScifiPadding() 同一套 bottomInset／focusMode 換算，避免建議路線的下半段被底部面板蓋住。
+    fitRoute(points: [number, number][]) {
+      const map = mapRef.current
+      if (!map || !points?.length) return
+      holdFollow()
+      // FIX（review 抓到的 minor 根因）：centerOn() 與 cute/retro 的 fitRoute() 都會重置這個旗標，這裡
+      // 原本漏了——若使用者先按「回到目前位置」（recenter() 設 recenterZoomPendingRef=true，zoom 動畫
+      // 還沒收斂到 16.5）、緊接著就按「🧭 路線規劃」，旗標會一路存活到跟隨恢復的那一刻，下方 GPS 位置
+      // 更新 effect 見旗標仍是 true，會把鏡頭 zoom 強制拉回 16.5，蓋掉 fitBounds 特地算好、能看到整條
+      // 路線的縮放層級。這裡是使用者明確要看路線總覽，不套用 recenter()「補足到 16.5」那套邏輯（比照
+      // centerOn() 同一行）。
+      recenterZoomPendingRef.current = false
+      try {
+        const container = containerRef.current
+        const h = container?.clientHeight || 0
+        const bottomPad = Math.max(0, Math.round(focusModeRef.current ? h * 0.55 : bottomInsetRef.current)) + ROUTE_FIT_EXTRA_PADDING
+        if (points.length === 1) {
+          map.easeTo({ center: [points[0][1], points[0][0]], zoom: RECENTER_ZOOM, pitch: 55, duration: 500, essential: true })
+          return
+        }
+        let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity
+        for (const [lat, lng] of points) {
+          if (lng < west) west = lng
+          if (lng > east) east = lng
+          if (lat < south) south = lat
+          if (lat > north) north = lat
+        }
+        // 建議路線總覽刻意壓平成俯視（pitch/bearing 都歸 0，比照 Leaflet fitBounds 一律北朝上、無傾角
+        // 的慣例）——不然 pitch 55 的透視角會讓 fitBounds 算出的邊界跟畫面上實際看到的範圍對不齊，使用者
+        // 反而看不到路線全貌；8 秒後自動恢復跟隨時，跟隨 effect 本來就會把 pitch 帶回 55，這裡不用另外處理。
+        map.fitBounds([[west, south], [east, north]], {
+          padding: { top: ROUTE_FIT_EXTRA_PADDING, bottom: bottomPad, left: ROUTE_FIT_EXTRA_PADDING, right: ROUTE_FIT_EXTRA_PADDING },
+          pitch: 0,
+          bearing: 0,
+          duration: 600,
+          essential: true,
+          maxZoom: ROUTE_FIT_MAX_ZOOM,
+        })
+      } catch { /* ignore */ }
+    },
+    // GAP #2（前往打卡 focus 深連結／未來任何「程式指定中心但不想立刻被跟隨拉回去」的呼叫）修復：舊版
+    // 只有 recenter()，一律無條件把 followingRef 設回 true＋onFollowChange(true)（見上方 recenter()
+    // 註解），下一次 pos 更新就會把鏡頭拉回使用者目前實際位置，蓋掉剛剛的程式指定中心——這正是稽核
+    // GAP #2 指出「即使呼叫了也會被下一個 GPS tick 立刻復原」的根因。
+    // 2026-09-30 owner 拍板修正：centerOn() 改用 holdFollow()（不是 pauseFollow()）——呼叫端可以把
+    // 鏡頭釘在任意座標，且會一直停留到使用者自己按「回到目前位置」，不會 8 秒後被跟隨拉走（見上方
+    // holdFollow() 宣告處的完整說明）。
+    centerOn(lat: number, lng: number, zoom?: number) {
+      const map = mapRef.current
+      if (!map) return
+      holdFollow()
+      recenterZoomPendingRef.current = false // 呼叫端明確指定（或刻意不指定）zoom，不套用 recenter() 的「補足到 16.5」邏輯
+      const opts: { center: [number, number]; pitch: number; duration: number; essential: true; zoom?: number } =
+        { center: [lng, lat], pitch: 55, duration: 500, essential: true }
+      if (typeof zoom === 'number') opts.zoom = zoom
+      try { map.easeTo(opts) } catch { /* ignore */ }
     },
   }), [])
 
@@ -640,6 +748,19 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
         fps: fpsRef.current,
         // 驗收14：只給 E2E 做「有畫 vs 沒畫」前後對照用，預設 false（見上方 overlayHiddenRef 宣告處）。
         setOverlayHidden: (v: boolean) => { overlayHiddenRef.current = !!v },
+        // 2026-09-30 GAP #1 修復：建議路線目前有幾個點／均勻取樣最多 5 個點換算成畫面 CSS px（比照
+        // 上面 projectLngLat 同一套 map.project()），讓 E2E 能驗證「plannedRoute 有沒有真的畫在螢幕
+        // 上」而不用截圖比對像素；setPlannedRouteHidden 是獨立於 setOverlayHidden 的另一個開關（見上方
+        // plannedRouteHiddenRef 宣告處），只管這條新路線的顯示/隱藏，方便 E2E 單獨對照。
+        plannedRoutePoints: plannedRouteRef.current?.length || 0,
+        plannedRouteScreenSample: (() => {
+          const route = plannedRouteRef.current
+          if (!route?.length) return []
+          return sampleUpTo(route, 5).map((pt) => {
+            try { const s = map.project([pt[1], pt[0]]); return { x: Math.round(s.x), y: Math.round(s.y) } } catch { return { x: 0, y: 0 } }
+          })
+        })(),
+        setPlannedRouteHidden: (v: boolean) => { plannedRouteHiddenRef.current = !!v },
         // A2 FALLBACK FIX 輕量診斷（見上方 lastFallbackReasonRef／recoveriesRef 宣告處）：最近一次觸發過
         // 的失敗原因（webglcontextlost／render-exception:*／load-timeout-8s…，即使最後有救回來也會留在
         // 這裡）、以及這個 session 內自動復原成功幾次（webglcontextrestored 或就地重建各算一次）。
@@ -821,6 +942,9 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
       drawRoute(ctx, map, segmentsRef.current)
       drawKmMarks(ctx, map, kmMarksRef.current)
     }
+    // 2026-09-30 GAP #1 修復：建議路線用獨立的 plannedRouteHiddenRef（不是 overlayHidden，見上方宣告
+    // 處），畫在「光點／目標圈」之下、圖磚之上——所以擺在 drawTargets() 之前、soul/trail 之前。
+    if (!plannedRouteHiddenRef.current) drawPlannedRoute(ctx, map, plannedRouteRef.current)
     drawTargets(ctx, map, targetsRef.current)
 
     const p = posRef.current
@@ -881,6 +1005,59 @@ const SciFiMap = forwardRef<SciFiMapHandle, SciFiMapProps>(function SciFiMap(pro
       }
       ctx.restore()
     }
+  }
+
+  // 2026-09-30「切換風格後路線規劃壞掉」根因修復（GAP #1）：畫出使用者點選打卡點/賽事目標後、由
+  // page.tsx routeApi.plan() 算出的建議路線（[lat,lng] 陣列，從目前位置到目的地）。刻意與 drawRoute()
+  // 畫的「已跑過的 GPS 軌跡」（青色系 FUG）用完全不同色系＋線型區分——琥珀/橙色（#ffb020）＋虛線發光，
+  // 對照 CONTRACT 既有配色只有青色（軌跡/公里標）與洋紅（已完成目標）兩組，橙色目前唯一用途就是「建議
+  // 路線」，一眼就能分辨「這是導航建議，不是我已經跑過的路」。終點另外畫一個小標記，比照 drawTargets()
+  // 的「光柱+圈」語彙但用同一組琥珀色，代表路線終點＝使用者剛剛點的那個打卡點/賽事目標。
+  function drawPlannedRoute(ctx: CanvasRenderingContext2D, map: MapLibreMap, route: [number, number][] | null) {
+    if (!route || route.length < 2) return
+    // FIX（review 抓到的 minor 根因）：後端 /route（services/api/internal/routing/routing.go Plan()）
+    // 直接透傳 ORS 未簡化的完整 geometry，路線較長/較繞（人行步道常見）時點數可能不少於逐秒 GPS 取樣的
+    // 軌跡；這裡原本沒有像下面 drawRoute() 那樣 decimate，每一幀都要重新 project() 全部點，與本檔既有
+    // 的效能守則（drawRoute() 上限 600 點的註解）不一致。比照 drawRoute() 同一套上限，只影響繪製取樣，
+    // plannedRouteRef／__scifiDebug.plannedRoutePoints 等其餘讀取仍是完整原始路線，不受影響。
+    const pts = route.length > 600 ? decimate(route, 600) : route
+    const screen = pts.map((p) => map.project([p[1], p[0]]))
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.lineJoin = 'round'
+    ctx.lineCap = 'round'
+    ctx.setLineDash([10, 8])
+    ctx.shadowColor = 'rgba(255,176,32,.65)'
+    ctx.shadowBlur = 12
+    ctx.strokeStyle = 'rgba(255,176,32,.9)'
+    ctx.lineWidth = 4
+    ctx.beginPath()
+    screen.forEach((pt, i) => (i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y)))
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.shadowBlur = 0
+    ctx.restore()
+
+    // 終點標記：琥珀色雙層圈（外圈發光框線＋內圈實心點），與 drawTargets() 的目標圈同一套視覺語彙但
+    // 換色，讓使用者一眼認出「這是我剛規劃的路線終點」。
+    const dest = screen[screen.length - 1]
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.beginPath()
+    ctx.arc(dest.x, dest.y, 9, 0, Math.PI * 2)
+    ctx.strokeStyle = '#ffb020'
+    ctx.lineWidth = 2.5
+    ctx.shadowColor = '#ffb020'
+    ctx.shadowBlur = 10
+    ctx.stroke()
+    ctx.fillStyle = 'rgba(255,176,32,.25)'
+    ctx.shadowBlur = 0
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(dest.x, dest.y, 3, 0, Math.PI * 2)
+    ctx.fillStyle = '#ffb020'
+    ctx.fill()
+    ctx.restore()
   }
 
   function drawKmMarks(ctx: CanvasRenderingContext2D, map: MapLibreMap, marks: { km: number; lat: number; lng: number }[]) {

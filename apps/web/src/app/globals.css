@@ -558,8 +558,10 @@ html:has([data-admin-root]), html:has([data-admin-root]) body { background: #090
   visibility: hidden;
 }
 
-/* 科幻地圖授權鈕（MapLibre 精簡 ⓘ）：右上角讓出「回到目前位置」按鈕的高度（該鈕 top:12 高約 36px） */
-[data-skin="scifi"] .scifi-map .maplibregl-ctrl-top-right { top: 56px; }
+/* 科幻地圖授權鈕（MapLibre 精簡 ⓘ）：右上角讓出「回到目前位置」按鈕的高度（該鈕 top:12 高約 36px）。
+   建議路線資訊條顯示時，「回到目前位置」會下移到資訊條下方（track/page.tsx 的 mapCtrlTop），這裡用
+   同一個 --dor-map-ctrl-top（資訊條高度，未顯示時 0px）一起下移，避免 ⓘ 疊在按鈕右上角。 */
+[data-skin="scifi"] .scifi-map .maplibregl-ctrl-top-right { top: calc(var(--dor-map-ctrl-top, 0px) + 56px); }
 
 /* ============================================================================
    Skin: retro（復古 RPG — 羊皮紙＋皮革 JRPG 選單風格，2026-09-28 第三輪）
@@ -1266,6 +1268,11 @@ html[data-skin="cute"] #gps-map:not([data-map-fallback]) { visibility: hidden; }
 html[data-skin="scifi"] #hist-map:not([data-map-fallback]) { visibility: hidden; }
 html[data-skin="retro"] #hist-map:not([data-map-fallback]) { visibility: hidden; }
 html[data-skin="cute"] #hist-map:not([data-map-fallback]) { visibility: hidden; }
+
+/* 跑步頁「建議路線」資訊條（地圖頂端、撐滿寬度）顯示時，Leaflet 內建的左上縮放鈕往下讓到資訊條下方，
+   避免被資訊條蓋住。--dor-map-ctrl-top 由 track/page.tsx 量資訊條實際高度寫在 #track-map-area 上，
+   資訊條沒顯示時是 0px（＝Leaflet 原本位置，行為不變）。 */
+#track-map-area #gps-map .leaflet-top { top: var(--dor-map-ctrl-top, 0px); }
 
 /* 地圖佔位底色：風格地圖的 chunk／MapLibre／磚圖還沒載好前（含硬導覽第一次繪製那一刻，
    #track-map-area／#hist-map-area 早就在 SSR 的 HTML 裡，不必等 JS 掛載任何 div），讓地圖容器直接

@@ -181,3 +181,33 @@ export function drawTargetIcon(ctx: CanvasRenderingContext2D, x: number, y: numb
   else drawGiftBox(ctx, x, y, scale)
   if (done) drawCheckSticker(ctx, x, y, scale)
 }
+
+// 建議路線終點標記（路線規劃功能，見 CuteMap.tsx drawPlannedRoute()）：水滴狀圖釘，尖端指向實際座標
+// （x,y），珊瑚色 `#ff9aa8` 填色＋白色描邊——與建議路線虛線同一色號，讓使用者一眼看出「這條虛線通往
+// 這個圖釘」；刻意用跟 drawGiftBox／drawCheckpointFlag（實際打卡點本身的圖示）完全不同的水滴形狀，
+// 避免與「這裡有一個打卡點」的既有圖示語彙混淆——這只是「建議路線的終點提示」，不是另一個可打卡的點。
+export function drawRouteDestinationMarker(ctx: CanvasRenderingContext2D, x: number, y: number, scale = 1) {
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.scale(scale, scale)
+  ctx.lineJoin = 'round'
+  ctx.shadowColor = 'rgba(214,69,127,.35)'
+  ctx.shadowBlur = 5
+  ctx.shadowOffsetY = 1
+  ctx.beginPath()
+  ctx.moveTo(0, 0) // 尖端＝實際座標點
+  ctx.bezierCurveTo(-9, -11, -9, -21, 0, -23)
+  ctx.bezierCurveTo(9, -21, 9, -11, 0, 0)
+  ctx.closePath()
+  ctx.fillStyle = '#ff9aa8'
+  ctx.fill()
+  ctx.shadowBlur = 0
+  ctx.lineWidth = 2
+  ctx.strokeStyle = '#ffffff'
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.arc(0, -14, 3.4, 0, Math.PI * 2)
+  ctx.fillStyle = '#ffffff'
+  ctx.fill()
+  ctx.restore()
+}
