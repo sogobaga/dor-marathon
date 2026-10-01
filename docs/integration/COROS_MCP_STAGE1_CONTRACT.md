@@ -75,3 +75,20 @@ MCP 工具的參數與回傳欄位（運動類型代碼、距離／時間欄位�
   （擁有者）能產生授權網址，不受影響；開放前要在 /connect 回應時種一個短效 httpOnly cookie（隨機 nonce，同時簽進 state），
   /callback 比對一致才接受。
 - state 目前以 JWT_SECRET 做 HMAC；開放前改用衍生金鑰（例如 HMAC(JWT_SECRET, "coros-mcp-state")）做用途隔離。
+
+## 正式站第一次連線實測修正（v869，2026-10-01）
+- 症狀：擁有者按「連接 COROS」→ COROS 登入授權成功 → 導回顯示「連接未完成（token_exchange_failed）」；Railway log 兩次
+  `coros mcp token http 400`。
+- 根因（唯讀查 coros_mcp_clients＋log 證實）：DCR 要求 `client_secret_basic`，COROS 仍回 200 並登記成
+  `token_endpoint_auth_method: "none"`、不發 client_secret（與官方 skill 的 public＋PKCE 一致）。v868 存的是「要求的」方法，
+  換 token 時送出「空密碼的 Basic 標頭」，COROS（Spring Authorization Server）以 400 invalid_request 拒絕。
+- 修正：一律以 COROS 實際登記的方法為準（`corosMcpEffectiveAuthMethod`：沒有 secret 就是 public）；註冊直接要求 none；
+  只有真的有 secret 才送 Basic；舊列不需改資料庫就地校正。token／DCR／revoke 錯誤改記 OAuth `error`／`error_description`
+  （不含 token），callback 錯誤帶出代碼（例 `token_exchange_failed:invalid_grant`）。
+- 一併處理：Spring AS 預設**不發 refresh token 給 public client** → 不再因缺 refresh token 判連線失敗；access token 到期且無
+  refresh token → 讀取測試回 409 `reconnect_required`，前台提示重新連接；refresh 沒輪替就沿用舊值。public client 的 revoke
+  多半被拒（metadata 不含 none）→ 照樣刪除本機授權，前台文案改成「DOR 已刪除保存的授權、不再讀取」，不再宣稱「撤銷授權」。
+- 測試：假 COROS 改成照正式站實際行為（public-only DCR、Basic 一律 400、缺 client_id 401、revoke 拒 public），新增「從正式站
+  那筆錯誤列出發」與「不發 refresh token」兩支資料庫整合測試；整合測試首次在 Neon 暫時分支實跑 4/4 通過（分支已刪除）。
+  本機注意：這台開發機的執行沙盒會改寫 127.0.0.1 的 HTTP 回應（伺服器寫 Content-Length，客戶端收到變 chunked 且未分段 →
+  讀 body 逾時），整合測試的假 COROS 改走 in-process transport（scratchpad keepalive_repro 以伺服器端 tee 對照證實）。

@@ -6,7 +6,12 @@ package integration
 //
 // 與既有 coros.go（provider='coros'，Partner API webhook）完全獨立、互不影響：
 //   - provider 用獨立值 'coros_mcp'，(user_id, provider) 與既有 'coros' 列互不干涉。
-//   - OAuth 是 public/confidential + PKCE + 動態用戶端註冊(DCR)，不是 coros.go 的固定 client_id/secret。
+//   - OAuth 是 public client + PKCE + 動態用戶端註冊(DCR)，不是 coros.go 的固定 client_id/secret。
+//     2026-10-01 正式站實測：DCR 要求 client_secret_basic，COROS 仍登記成 token_endpoint_auth_method
+//     "none"、不發 client_secret（與官方 skill coros_mcp_login.py 一致：public＋PKCE）。舊版存了「要求的」
+//     方法，換 token 時送出「空密碼的 Basic 標頭」→ COROS（Spring Authorization Server）回 400
+//     invalid_request → 擁有者看到 token_exchange_failed。現在一律以 COROS 實際登記的方法為準
+//     （corosMcpEffectiveAuthMethod），註冊也直接要求 none。
 //   - 不呼叫 h.repo 既有的 Save/SaveTerra/ImportActivity 等活動匯入管線——第一階段刻意不寫入活動。
 //
 // 安全设计重點（見契約驗收段）：
@@ -15,7 +20,7 @@ package integration
 //   - state 用既有 HMAC 簽章手法（比照 coros.go signState/verifyState），PKCE verifier 隨 state 一併簽入，
 //     不需要 Redis/DB 往返（Neon 可以繼續睡）。
 //   - secret／token 絕不進 log：DCR 回應存檔前先用 sanitizeRegistrationResponse 移除 client_secret；
-//     postToken 類函式的錯誤訊息只帶 HTTP 狀態碼，不帶回應內文。
+//     postToken 類函式的錯誤訊息只帶 HTTP 狀態碼與 OAuth error／error_description，不帶其餘回應內文。
 
 import (
 	"context"
@@ -58,6 +63,60 @@ const (
 	corosMcpMCPTimeout       = 20 * time.Second
 	corosMcpRefreshSkew      = 60 * time.Second // token 到期前 60 秒主動換新
 )
+
+// errCorosMcpReconnect：access token 已過期且無法換新（COROS 沒發 refresh token，或 refresh 被拒
+// invalid_grant）——只能請使用者重新連接。Probe 回 409 {"error":"reconnect_required"}。
+var errCorosMcpReconnect = errors.New("coros mcp: reconnect required")
+
+// corosMcpTokenError：token／revoke／DCR 端點非 2xx 的錯誤。只保留 OAuth 標準欄位 error／
+// error_description（不含任何 token），讓 Railway log 看得出 COROS 拒絕的真正原因——2026-10-01 第一次
+// 正式連線失敗時 log 只有「http 400」，要另外查 DB 才找到根因。
+type corosMcpTokenError struct {
+	Status      int
+	Code        string // OAuth error code，已驗證只含 [a-z_]
+	Description string // 已去換行、截斷
+}
+
+func (e *corosMcpTokenError) Error() string {
+	s := fmt.Sprintf("coros mcp oauth http %d", e.Status)
+	if e.Code != "" {
+		s += " " + e.Code
+	}
+	if e.Description != "" {
+		s += ": " + e.Description
+	}
+	return s
+}
+
+// corosMcpParseOAuthError 只從回應抽 error／error_description 兩個欄位（其餘一律丟棄，避免帶出 token）。
+func corosMcpParseOAuthError(status int, body []byte) *corosMcpTokenError {
+	e := &corosMcpTokenError{Status: status}
+	var m struct {
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description"`
+	}
+	if json.Unmarshal(body, &m) != nil {
+		return e
+	}
+	if code := strings.TrimSpace(m.Error); code != "" && len(code) <= 40 && strings.Trim(code, "abcdefghijklmnopqrstuvwxyz_") == "" {
+		e.Code = code
+	}
+	desc := strings.Join(strings.Fields(m.ErrorDescription), " ")
+	if r := []rune(desc); len(r) > 160 {
+		desc = string(r[:160]) + "…"
+	}
+	e.Description = desc
+	return e
+}
+
+// corosMcpEffectiveAuthMethod：實際可用的 token 端點驗證方式。只有「COROS 登記為 client_secret_basic
+// 且真的發了 secret」才用 Basic；其餘（含舊版誤存的 client_secret_basic＋空 secret）一律 public(none)。
+func corosMcpEffectiveAuthMethod(method, secret string) string {
+	if method == "client_secret_basic" && secret != "" {
+		return "client_secret_basic"
+	}
+	return "none"
+}
 
 // corosMcpProbeTools 讀取測試固定順序（契約第 8 點），queryUserInfo／FIT／任何寫入類工具一律不呼叫。
 var corosMcpProbeTools = []string{"queryDevices", "querySportRecords", "getActivityDetail", "queryActivityLapData"}
@@ -390,7 +449,8 @@ func (h *CorosMcpHandler) corosMcpRegister(ctx context.Context, endpoint, authMe
 		return "", "", nil, err
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", "", nil, fmt.Errorf("dcr http %d", resp.StatusCode) // 刻意不帶回應內文，避免洩漏
+		// 只帶 OAuth 標準 error／error_description，不帶其餘回應內文，避免洩漏。
+		return "", "", nil, fmt.Errorf("dcr: %w", corosMcpParseOAuthError(resp.StatusCode, respBody))
 	}
 	var m map[string]any
 	if err := json.Unmarshal(respBody, &m); err != nil {
@@ -437,22 +497,21 @@ func (h *CorosMcpHandler) ensureClient(ctx context.Context, issuer string, disc 
 				return nil, fmt.Errorf("decrypt coros_mcp client secret: %w", err)
 			}
 		}
+		existing.AuthMethod = corosMcpEffectiveAuthMethod(existing.AuthMethod, existing.ClientSecret)
 		return &existing, tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 
-	// 查無：confidential 優先，被拒才退回 public+PKCE（契約第 3 點／A_protocol_spec.md §1）。
-	authMethod := "client_secret_basic"
-	clientID, clientSecret, raw, regErr := h.corosMcpRegister(ctx, disc.RegistrationEndpoint, authMethod)
+	// 查無：直接以 public(none)＋PKCE 註冊（與 COROS 官方 skill 相同；COROS 即使收到 client_secret_basic
+	// 也只登記 none、不發 secret，見檔頭 2026-10-01 說明）。存「COROS 回應裡實際登記的方法」，不存要求的。
+	clientID, clientSecret, raw, regErr := h.corosMcpRegister(ctx, disc.RegistrationEndpoint, "none")
 	if regErr != nil {
-		authMethod = "none"
-		clientID, clientSecret, raw, regErr = h.corosMcpRegister(ctx, disc.RegistrationEndpoint, authMethod)
-		if regErr != nil {
-			return nil, fmt.Errorf("coros mcp DCR 註冊失敗（confidential 與 public 皆失敗）: %w", regErr)
-		}
+		return nil, fmt.Errorf("coros mcp DCR 註冊失敗: %w", regErr)
 	}
+	registered, _ := raw["token_endpoint_auth_method"].(string)
+	authMethod := corosMcpEffectiveAuthMethod(registered, clientSecret)
 	var encSecretVal any
 	if clientSecret != "" {
 		encSecretVal = encryptToken(clientSecret)
@@ -488,6 +547,8 @@ func (h *CorosMcpHandler) getClient(ctx context.Context, issuer string) (*corosM
 			return nil, fmt.Errorf("decrypt coros_mcp client secret: %w", err)
 		}
 	}
+	// 舊版（v868）誤存 client_secret_basic＋無 secret 的列在這裡就地校正成 none，不必改資料庫。
+	c.AuthMethod = corosMcpEffectiveAuthMethod(c.AuthMethod, c.ClientSecret)
 	return &c, nil
 }
 
@@ -707,8 +768,13 @@ func (h *CorosMcpHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 	tok, err := h.exchangeCode(r.Context(), disc.TokenEndpoint, client, code, verifier)
 	if err != nil {
-		log.Error().Err(err).Msg("coros mcp callback: token exchange failed")
-		redirectErr("token_exchange_failed")
+		log.Error().Err(err).Str("auth_method", client.AuthMethod).Msg("coros mcp callback: token exchange failed")
+		reason := "token_exchange_failed"
+		var te *corosMcpTokenError
+		if errors.As(err, &te) && te.Code != "" {
+			reason += ":" + te.Code // 例：token_exchange_failed:invalid_grant，擁有者截圖就看得出原因
+		}
+		redirectErr(reason)
 		return
 	}
 	expiresAt := time.Now().Add(1 * time.Hour)
@@ -738,7 +804,9 @@ func (h *CorosMcpHandler) postTokenForm(ctx context.Context, tokenURL string, fo
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if client.AuthMethod == "client_secret_basic" {
+	// 只有真的有 secret 才送 Basic：空密碼的 Basic 標頭會被 COROS 直接以 400 invalid_request 拒絕
+	// （2026-10-01 正式站第一次連線失敗的根因）。public client 只靠 body 裡的 client_id＋PKCE。
+	if corosMcpEffectiveAuthMethod(client.AuthMethod, client.ClientSecret) == "client_secret_basic" {
 		req.SetBasicAuth(client.ClientID, client.ClientSecret)
 	}
 	resp, err := h.hc.Do(req)
@@ -751,14 +819,16 @@ func (h *CorosMcpHandler) postTokenForm(ctx context.Context, tokenURL string, fo
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("coros mcp token http %d", resp.StatusCode) // 不帶回應內文（可能含 token）
+		return nil, corosMcpParseOAuthError(resp.StatusCode, body) // 只帶 error／error_description，不帶 token
 	}
 	var t corosMcpTokenResp
 	if err := json.Unmarshal(body, &t); err != nil {
 		return nil, fmt.Errorf("decode token response: %w", err)
 	}
-	if t.AccessToken == "" || t.RefreshToken == "" {
-		return nil, fmt.Errorf("token response missing access_token/refresh_token")
+	// refresh_token 可能不發：COROS 是 Spring Authorization Server，預設不發 refresh token 給 public
+	// client。沒有就只用 access token，到期後請使用者重新連接（errCorosMcpReconnect），不能因此判連線失敗。
+	if t.AccessToken == "" {
+		return nil, fmt.Errorf("token response missing access_token")
 	}
 	return &t, nil
 }
@@ -776,6 +846,9 @@ func (h *CorosMcpHandler) exchangeCode(ctx context.Context, tokenURL string, cli
 
 // refreshToken 刷新並持久化（契約第 7 點：refresh 回傳的新 refresh token 一律存回）。
 func (h *CorosMcpHandler) refreshToken(ctx context.Context, conn *corosMcpConnection) error {
+	if conn.RefreshToken == "" {
+		return errCorosMcpReconnect // COROS 沒發 refresh token：access token 到期就只能重新連接
+	}
 	client, err := h.getClient(ctx, conn.Issuer)
 	if err != nil || client == nil {
 		return fmt.Errorf("coros mcp client not found for issuer %s", conn.Issuer)
@@ -791,16 +864,25 @@ func (h *CorosMcpHandler) refreshToken(ctx context.Context, conn *corosMcpConnec
 	}
 	t, err := h.postTokenForm(ctx, disc.TokenEndpoint, form, client)
 	if err != nil {
+		var te *corosMcpTokenError
+		if errors.As(err, &te) && te.Code == "invalid_grant" {
+			return fmt.Errorf("%w: %v", errCorosMcpReconnect, err) // refresh token 已失效／被撤銷
+		}
 		return err
 	}
 	expiresAt := time.Now().Add(1 * time.Hour)
 	if t.ExpiresIn > 0 {
 		expiresAt = time.Now().Add(time.Duration(t.ExpiresIn) * time.Second)
 	}
-	if err := h.updateTokens(ctx, conn.ID, t.AccessToken, t.RefreshToken, expiresAt); err != nil {
+	// 沒輪替就沿用舊的 refresh token；有發新的一律存新的（契約第 7 點）。
+	newRefresh := t.RefreshToken
+	if newRefresh == "" {
+		newRefresh = conn.RefreshToken
+	}
+	if err := h.updateTokens(ctx, conn.ID, t.AccessToken, newRefresh, expiresAt); err != nil {
 		return err
 	}
-	conn.AccessToken, conn.RefreshToken, conn.ExpiresAt = t.AccessToken, t.RefreshToken, expiresAt
+	conn.AccessToken, conn.RefreshToken, conn.ExpiresAt = t.AccessToken, newRefresh, expiresAt
 	return nil
 }
 
@@ -914,6 +996,10 @@ func (h *CorosMcpHandler) Probe(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.ensureFreshToken(r.Context(), conn); err != nil {
 		log.Error().Err(err).Str("user", userID).Msg("coros mcp probe: token refresh failed")
+		if errors.Is(err, errCorosMcpReconnect) {
+			respondJSON(w, http.StatusConflict, map[string]string{"error": "reconnect_required"})
+			return
+		}
 		respondErr(w, http.StatusBadGateway, "token refresh failed")
 		return
 	}
@@ -1101,9 +1187,15 @@ func (h *CorosMcpHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 	}
 	revoked := false
 	if conn != nil {
-		if client, cerr := h.getClient(r.Context(), conn.Issuer); cerr == nil && client != nil && client.AuthMethod == "client_secret_basic" {
+		// 盡力撤銷（public client 也試一次：COROS metadata 的 revocation 驗證方式不含 none，多半會被拒，
+		// 但 RFC 7009 允許 public client 帶 client_id 撤銷，試了無害）；成敗都不擋本機刪除。
+		if client, cerr := h.getClient(r.Context(), conn.Issuer); cerr == nil && client != nil {
 			if disc, derr := h.discover(r.Context(), conn.Issuer); derr == nil && disc.RevocationEndpoint != "" {
-				revoked = h.revoke(r.Context(), disc.RevocationEndpoint, client, conn.AccessToken)
+				token, hint := conn.RefreshToken, "refresh_token"
+				if token == "" {
+					token, hint = conn.AccessToken, "access_token"
+				}
+				revoked = h.revoke(r.Context(), disc.RevocationEndpoint, client, token, hint)
 			}
 		}
 		if err := h.deleteConnection(r.Context(), userID); err != nil {
@@ -1114,21 +1206,31 @@ func (h *CorosMcpHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "revoked": revoked})
 }
 
-// revoke 盡力而為：失敗只記錄、不擋中斷本身（契約第 10 點）。public(none) client 無法呼叫 revoke
-// （revocation_endpoint 不接受 none 驗證，見 A_protocol_spec.md §1），呼叫端只在 confidential 時才叫。
-func (h *CorosMcpHandler) revoke(ctx context.Context, endpoint string, client *corosMcpClient, accessToken string) bool {
-	form := url.Values{"token": {accessToken}, "client_id": {client.ClientID}}
+// revoke 盡力而為：失敗只記錄、不擋中斷本身（契約第 10 點）。refresh token 優先撤銷（撤銷它通常連帶
+// 讓同一授權的 access token 失效）；只有真的有 secret 才送 Basic，public client 只帶 client_id。
+func (h *CorosMcpHandler) revoke(ctx context.Context, endpoint string, client *corosMcpClient, token, hint string) bool {
+	if token == "" {
+		return false
+	}
+	form := url.Values{"token": {token}, "token_type_hint": {hint}, "client_id": {client.ClientID}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return false
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(client.ClientID, client.ClientSecret)
+	if corosMcpEffectiveAuthMethod(client.AuthMethod, client.ClientSecret) == "client_secret_basic" {
+		req.SetBasicAuth(client.ClientID, client.ClientSecret)
+	}
 	resp, err := h.hc.Do(req)
 	if err != nil {
 		log.Warn().Err(err).Msg("coros mcp revoke failed")
 		return false
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		log.Warn().Err(corosMcpParseOAuthError(resp.StatusCode, body)).Msg("coros mcp revoke not accepted (local tokens still deleted)")
+		return false
+	}
+	return true
 }

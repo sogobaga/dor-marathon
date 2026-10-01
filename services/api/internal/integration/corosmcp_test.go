@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -453,59 +454,149 @@ func TestToolsList_Pagination(t *testing.T) {
 	}
 }
 
-// --- DCR：confidential 優先、被拒才退回 public（不碰 DB，直接測 corosMcpRegister）---
+// --- DCR／token：照 COROS 正式站實際行為（2026-10-01 實測）---
+//
+// 實測：DCR 要求 client_secret_basic，COROS 仍回 200、token_endpoint_auth_method="none"、不發 client_secret。
+// COROS 是 Spring Authorization Server：token 端點收到「空密碼的 Basic 標頭」→ 400 invalid_request（v868
+// 正式站第一次連線失敗的根因）；public client 沒帶 client_id → 401 invalid_client；PKCE 缺 verifier → 400。
+// fakeCorosSpringAS 盡量逐條模擬這些規則，讓測試抓得到同一類錯。
 
-func TestCorosMcpRegister_ConfidentialThenFallbackToPublic(t *testing.T) {
-	var gotMethods []string
+// corosRealDCRResponse：正式站 coros_mcp_clients.raw_response 去掉 client_id 後的實際內容（2026-10-01）。
+const corosRealDCRResponse = `{"client_id":"11111111-2222-3333-4444-555555555555","scope":"offline_access openid mcp.tools","client_name":"DOR","grant_types":["authorization_code","refresh_token"],"redirect_uris":["https://www.dor.tw/api/v1/integrations/coros-mcp/callback"],"client_id_issued_at":1790838960,"token_endpoint_auth_method":"none"}`
+
+type fakeTokenCall struct {
+	authHeader string
+	form       url.Values
+}
+
+// fakeCorosSpringAS：/connect/register 一律登記成 public；/oauth2/token 依 Spring AS 規則驗證；
+// issueRefresh=false 模擬「不發 refresh token 給 public client」。
+func fakeCorosSpringAS(t *testing.T, issueRefresh bool, calls *[]fakeTokenCall) http.Handler {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/connect/register", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(corosRealDCRResponse))
+	})
+	mux.HandleFunc("/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		*calls = append(*calls, fakeTokenCall{authHeader: r.Header.Get("Authorization"), form: r.PostForm})
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("Authorization") != "" {
+			// public client 根本沒有 secret：任何 Basic 標頭（含空密碼）都不合法
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_request","error_description":"OAuth 2.0 Parameter: client_secret"}`))
+			return
+		}
+		if r.PostForm.Get("client_id") == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
+			return
+		}
+		if r.PostForm.Get("grant_type") == "authorization_code" && r.PostForm.Get("code_verifier") == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+			return
+		}
+		if issueRefresh {
+			_, _ = w.Write([]byte(`{"access_token":"at-1","refresh_token":"rt-1","expires_in":3600,"token_type":"Bearer"}`))
+		} else {
+			_, _ = w.Write([]byte(`{"access_token":"at-1","expires_in":3600,"token_type":"Bearer"}`))
+		}
+	})
+	return mux
+}
+
+func TestCorosMcpRegister_RequestsPublicAndReadsRegisteredMethod(t *testing.T) {
+	var gotMethod string
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		method, _ := body["token_endpoint_auth_method"].(string)
-		gotMethods = append(gotMethods, method)
-		if method == "client_secret_basic" {
-			w.WriteHeader(http.StatusBadRequest) // 模擬 COROS 拒絕 confidential 註冊
-			return
-		}
+		gotMethod, _ = body["token_endpoint_auth_method"].(string)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"client_id":"public-client-id"}`))
+		_, _ = w.Write([]byte(corosRealDCRResponse))
 	})
 	h := newTestCorosMcpHandlerWithHandler(handler)
-	// 模擬 ensureClient 內部的「confidential 先、被拒才 fallback」邏輯（不經過 DB 層）。
-	clientID, _, _, err := h.corosMcpRegister(context.Background(), fakeCorosBase, "client_secret_basic")
-	if err == nil {
-		t.Fatalf("expected confidential registration to fail in this test server, got clientID=%s", clientID)
-	}
-	clientID, clientSecret, raw, err := h.corosMcpRegister(context.Background(), fakeCorosBase, "none")
-	if err != nil {
-		t.Fatalf("public fallback registration should succeed: %v", err)
-	}
-	if clientID != "public-client-id" || clientSecret != "" {
-		t.Fatalf("unexpected public client result: id=%q secret=%q", clientID, clientSecret)
-	}
-	if _, ok := raw["client_secret"]; ok {
-		t.Fatal("public client 回應不應含 client_secret")
-	}
-	if len(gotMethods) != 2 || gotMethods[0] != "client_secret_basic" || gotMethods[1] != "none" {
-		t.Fatalf("expected confidential attempt then public fallback, got %v", gotMethods)
-	}
-}
-
-func TestCorosMcpRegister_ConfidentialSucceeds(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"client_id":"conf-id","client_secret":"shh-secret","token_endpoint_auth_method":"client_secret_basic"}`))
-	})
-	h := newTestCorosMcpHandlerWithHandler(handler)
-	clientID, clientSecret, raw, err := h.corosMcpRegister(context.Background(), fakeCorosBase, "client_secret_basic")
+	clientID, clientSecret, raw, err := h.corosMcpRegister(context.Background(), fakeCorosBase+"/connect/register", "none")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if clientID != "conf-id" || clientSecret != "shh-secret" {
-		t.Fatalf("unexpected registration result: %q %q", clientID, clientSecret)
+	if gotMethod != "none" {
+		t.Fatalf("DCR 應直接要求 none（與 COROS 官方 skill 相同），got %q", gotMethod)
 	}
-	sanitized := corosMcpSanitizeRegistration(raw)
-	if _, ok := sanitized["client_secret"]; ok {
-		t.Fatal("sanitized raw response 不應含 client_secret")
+	if clientID == "" || clientSecret != "" {
+		t.Fatalf("unexpected registration result: id=%q secret=%q", clientID, clientSecret)
+	}
+	registered, _ := raw["token_endpoint_auth_method"].(string)
+	if got := corosMcpEffectiveAuthMethod(registered, clientSecret); got != "none" {
+		t.Fatalf("effective auth method = %q, want none", got)
+	}
+}
+
+func TestCorosMcpEffectiveAuthMethod(t *testing.T) {
+	cases := []struct{ method, secret, want string }{
+		{"client_secret_basic", "", "none"}, // v868 正式站誤存的列：要求 basic 但 COROS 沒發 secret
+		{"client_secret_basic", "s3cr3t", "client_secret_basic"},
+		{"none", "", "none"},
+		{"none", "s3cr3t", "none"},
+		{"", "", "none"},
+		{"client_secret_post", "s3cr3t", "none"}, // 未支援的方法一律退回 public
+	}
+	for _, c := range cases {
+		if got := corosMcpEffectiveAuthMethod(c.method, c.secret); got != c.want {
+			t.Errorf("corosMcpEffectiveAuthMethod(%q, secret=%v) = %q, want %q", c.method, c.secret != "", got, c.want)
+		}
+	}
+}
+
+// TestExchangeCode_LegacyRowNoBasicHeader：重現 v868 根因——DB 存 client_secret_basic＋無 secret。
+// 修正後不得送 Authorization 標頭，body 必須帶 client_id＋code_verifier＋同一個 redirect_uri。
+func TestExchangeCode_LegacyRowNoBasicHeader(t *testing.T) {
+	var calls []fakeTokenCall
+	h := newTestCorosMcpHandlerWithHandler(fakeCorosSpringAS(t, true, &calls))
+	legacy := &corosMcpClient{ClientID: "cid-123", AuthMethod: "client_secret_basic", ClientSecret: ""}
+	tok, err := h.exchangeCode(context.Background(), fakeCorosBase+"/oauth2/token", legacy, "code-abc", "verifier-xyz")
+	if err != nil {
+		t.Fatalf("exchangeCode should succeed for a public client, got %v", err)
+	}
+	if tok.AccessToken != "at-1" || tok.RefreshToken != "rt-1" {
+		t.Fatalf("unexpected tokens: %+v", tok)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 token call, got %d", len(calls))
+	}
+	c := calls[0]
+	if c.authHeader != "" {
+		t.Fatalf("public client 不得送 Authorization 標頭，got %q", c.authHeader)
+	}
+	if c.form.Get("client_id") != "cid-123" || c.form.Get("code_verifier") != "verifier-xyz" || c.form.Get("code") != "code-abc" {
+		t.Fatalf("token form missing fields: %v", c.form)
+	}
+	if c.form.Get("redirect_uri") != h.cfg.RedirectURI || c.form.Get("grant_type") != "authorization_code" {
+		t.Fatalf("token form redirect_uri/grant_type wrong: %v", c.form)
+	}
+}
+
+// TestExchangeCode_NoRefreshTokenStillConnects：COROS 不發 refresh token 給 public client 時，連線仍要成功。
+func TestExchangeCode_NoRefreshTokenStillConnects(t *testing.T) {
+	var calls []fakeTokenCall
+	h := newTestCorosMcpHandlerWithHandler(fakeCorosSpringAS(t, false, &calls))
+	client := &corosMcpClient{ClientID: "cid-123", AuthMethod: "none"}
+	tok, err := h.exchangeCode(context.Background(), fakeCorosBase+"/oauth2/token", client, "code-abc", "verifier-xyz")
+	if err != nil {
+		t.Fatalf("missing refresh_token must not fail the connection: %v", err)
+	}
+	if tok.AccessToken == "" || tok.RefreshToken != "" {
+		t.Fatalf("unexpected tokens: %+v", tok)
+	}
+}
+
+// TestRefreshToken_NoRefreshTokenNeedsReconnect：沒有 refresh token 時不打 COROS，直接回 errCorosMcpReconnect。
+func TestRefreshToken_NoRefreshTokenNeedsReconnect(t *testing.T) {
+	h := newTestCorosMcpHandler() // repo=nil：若真的往下走去查 DB 會 panic，等於斷言「沒有往下走」
+	conn := &corosMcpConnection{Issuer: "https://mcpus.coros.com", AccessToken: "old", RefreshToken: "", ExpiresAt: time.Now().Add(-time.Minute)}
+	if err := h.refreshToken(context.Background(), conn); !errors.Is(err, errCorosMcpReconnect) {
+		t.Fatalf("expected errCorosMcpReconnect, got %v", err)
 	}
 }
 
@@ -536,5 +627,26 @@ func TestPostTokenForm_ErrorNeverLeaksBody(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), leaked) {
 		t.Fatalf("error message leaked response body: %v", err)
+	}
+	// 但要帶出 OAuth 錯誤碼，log 才看得出 COROS 拒絕的原因
+	var te *corosMcpTokenError
+	if !errors.As(err, &te) || te.Code != "invalid_grant" || te.Status != http.StatusBadRequest {
+		t.Fatalf("expected *corosMcpTokenError{400 invalid_grant}, got %#v", err)
+	}
+	if !strings.Contains(err.Error(), "invalid_grant") {
+		t.Fatalf("error string should include the OAuth error code: %v", err)
+	}
+}
+
+func TestCorosMcpParseOAuthError_SanitizesCodeAndDescription(t *testing.T) {
+	e := corosMcpParseOAuthError(400, []byte(`{"error":"Invalid Grant<script>","error_description":"line1\nline2 `+strings.Repeat("x", 300)+`"}`))
+	if e.Code != "" {
+		t.Fatalf("non-[a-z_] error code must be dropped, got %q", e.Code)
+	}
+	if strings.Contains(e.Description, "\n") || len([]rune(e.Description)) > 161 {
+		t.Fatalf("description must be single-line and truncated, got %d runes", len([]rune(e.Description)))
+	}
+	if e2 := corosMcpParseOAuthError(502, []byte("<html>bad gateway</html>")); e2.Code != "" || e2.Status != 502 {
+		t.Fatalf("non-JSON body should yield status only, got %#v", e2)
 	}
 }

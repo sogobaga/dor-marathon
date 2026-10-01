@@ -79,42 +79,109 @@ func withUser(r *http.Request, userID string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), auth.CtxKeyUserID, userID))
 }
 
-// newFakeCorosMCPServer 起一個假的 COROS MCP 伺服器：DCR 註冊（固定回 confidential）、token
-// 交換／刷新、revoke、MCP JSON-RPC（initialize/tools/list/tools/call）。lastMCPAuth 讓測試斷言
-// 「token 刷新後，後續 MCP 呼叫確實帶著新的 access token」。
-func newFakeCorosMCPServer(t *testing.T) (srv *httptest.Server, lastMCPAuth *string, registerCount *int) {
+// fakeCorosOpts：假 COROS 的可調行為。issueRefresh=false 模擬 Spring Authorization Server 預設「不發
+// refresh token 給 public client」；firstExpiresIn 是 authorization_code 換到的 access token 秒數。
+type fakeCorosOpts struct {
+	issueRefresh   bool
+	firstExpiresIn int
+}
+
+// fakeCoros：測試可讀的假伺服器狀態（皆以 mu 保護）。
+type fakeCoros struct {
+	srv          *httptest.Server
+	mux          *http.ServeMux // corosMcpInProcessHTTP 直接呼叫它，不走本機 TCP（原因見該函式）
+	mu           sync.Mutex
+	lastMCPAuth  string
+	regCount     int
+	dcrMethods   []string // 每次 DCR 請求要求的 token_endpoint_auth_method
+	tokenAuthHdr []string // 每次 token 請求的 Authorization 標頭（public client 必須為空）
+	tokenCalls   int
+}
+
+func (f *fakeCoros) snapshot() (lastMCPAuth string, regCount int, dcrMethods, tokenAuthHdr []string, tokenCalls int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastMCPAuth, f.regCount, append([]string(nil), f.dcrMethods...), append([]string(nil), f.tokenAuthHdr...), f.tokenCalls
+}
+
+// newFakeCorosMCPServer 起一個「照 COROS 正式站實際行為」的假伺服器（2026-10-01 實測，見 corosmcp.go 檔頭）：
+//   - DCR：不論要求什麼方法，一律登記成 token_endpoint_auth_method="none"、不發 client_secret。
+//   - token（Spring Authorization Server 規則）：帶任何 Authorization 標頭 → 400 invalid_request（v868 正式站
+//     第一次連線失敗的根因：空密碼 Basic）；缺 client_id → 401 invalid_client；authorization_code 缺
+//     code_verifier → 400 invalid_grant；refresh token 不對 → 400 invalid_grant。
+//   - revoke：metadata 的 revocation 驗證方式不含 none → public client 一律 401 invalid_client。
+//   - MCP JSON-RPC（initialize/tools/list/tools/call），記下最後一次 Authorization 供斷言。
+func newFakeCorosMCPServer(t *testing.T, opts ...fakeCorosOpts) *fakeCoros {
 	t.Helper()
-	var mu sync.Mutex
-	var lastAuth string
-	var regCount int
+	o := fakeCorosOpts{issueRefresh: true, firstExpiresIn: 30}
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	f := &fakeCoros{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/connect/register", func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		regCount++
-		mu.Unlock()
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		method, _ := body["token_endpoint_auth_method"].(string)
+		f.mu.Lock()
+		f.regCount++
+		f.dcrMethods = append(f.dcrMethods, method)
+		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"client_id":"fake-client-id","client_secret":"regsecret-xyz","token_endpoint_auth_method":"client_secret_basic"}`))
+		_, _ = w.Write([]byte(`{"client_id":"fake-client-id","scope":"offline_access openid mcp.tools","client_name":"DOR","grant_types":["authorization_code","refresh_token"],"redirect_uris":["https://www.dor.tw/api/v1/integrations/coros-mcp/callback"],"client_id_issued_at":1790838960,"token_endpoint_auth_method":"none"}`))
 	})
 	mux.HandleFunc("/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		f.mu.Lock()
+		f.tokenCalls++
+		f.tokenAuthHdr = append(f.tokenAuthHdr, r.Header.Get("Authorization"))
+		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		switch r.Form.Get("grant_type") {
+		if r.Header.Get("Authorization") != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_request","error_description":"OAuth 2.0 Parameter: client_secret"}`))
+			return
+		}
+		if r.PostForm.Get("client_id") != "fake-client-id" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
+			return
+		}
+		refresh := func(tok string) string {
+			if !o.issueRefresh {
+				return ""
+			}
+			return fmt.Sprintf(`,"refresh_token":%q`, tok)
+		}
+		switch r.PostForm.Get("grant_type") {
 		case "authorization_code":
-			_, _ = w.Write([]byte(`{"access_token":"tok-1","refresh_token":"rtok-1","expires_in":30,"token_type":"Bearer","scope":"openid offline_access mcp.tools"}`))
+			if r.PostForm.Get("code_verifier") == "" || r.PostForm.Get("code") != "test-code" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"access_token":"tok-1"%s,"expires_in":%d,"token_type":"Bearer","scope":"openid offline_access mcp.tools"}`, refresh("rtok-1"), o.firstExpiresIn)
 		case "refresh_token":
-			_, _ = w.Write([]byte(`{"access_token":"tok-2","refresh_token":"rtok-2","expires_in":3600,"token_type":"Bearer","scope":"openid offline_access mcp.tools"}`))
+			if r.PostForm.Get("refresh_token") != "rtok-1" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"access_token":"tok-2"%s,"expires_in":3600,"token_type":"Bearer","scope":"openid offline_access mcp.tools"}`, refresh("rtok-2"))
 		default:
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":"unsupported_grant_type"}`))
 		}
 	})
 	mux.HandleFunc("/oauth2/revoke", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
 	})
 	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		lastAuth = r.Header.Get("Authorization")
-		mu.Unlock()
+		f.mu.Lock()
+		f.lastMCPAuth = r.Header.Get("Authorization")
+		f.mu.Unlock()
 		var body struct {
 			Method string `json:"method"`
 			Params struct {
@@ -153,9 +220,19 @@ func newFakeCorosMCPServer(t *testing.T) (srv *httptest.Server, lastMCPAuth *str
 			w.WriteHeader(http.StatusBadRequest)
 		}
 	})
-	srv = httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv, &lastAuth, &regCount
+	f.mux = mux
+	f.srv = httptest.NewServer(mux) // 只用來產生 URL；實際請求一律經 corosMcpInProcessHTTP 直接進 mux
+	t.Cleanup(f.srv.Close)
+	return f
+}
+
+// corosMcpInProcessHTTP：把 handler 的 HTTP client 改成直接呼叫假 COROS 的 mux（inProcessRoundTripper，見
+// corosmcp_test.go），不走本機 TCP。2026-10-01 實測：這台開發機的執行沙盒會改寫 127.0.0.1 上的 HTTP 回應——
+// 伺服器實際寫出「Content-Length: 36」的正確回應，客戶端收到的卻變成「transfer-encoding: chunked、內容沒分段」，
+// 讀 body 卡到逾時（scratchpad keepalive_repro 以伺服器端 tee 對照證實，與 DOR 程式無關）。正式站與 COROS
+// 走 HTTPS、沒有這層改寫。改走 in-process 後，資料庫部分（Neon 暫時分支）仍是真實驗證。
+func corosMcpInProcessHTTP(h *CorosMcpHandler, fc *fakeCoros) {
+	h.hc = &http.Client{Timeout: corosMcpMCPTimeout, Transport: inProcessRoundTripper{handler: fc.mux}}
 }
 
 func seedDiscovery(base string) *corosMcpDiscoveryDoc {
@@ -191,16 +268,17 @@ func TestIntegration_FullFlow(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM user_integrations WHERE user_id=$1 AND provider=$2`, ownerID, providerCoros)
 	})
 
-	srv, lastMCPAuth, regCount := newFakeCorosMCPServer(t)
-	doc := seedDiscovery(srv.URL)
+	fc := newFakeCorosMCPServer(t)
+	doc := seedDiscovery(fc.srv.URL)
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM coros_mcp_clients WHERE issuer=$1`, doc.Issuer)
 	})
 
 	h := NewCorosMcpHandler(repo, CorosMcpConfig{
-		GatewayURL: srv.URL, RedirectURI: "https://www.dor.tw/api/v1/integrations/coros-mcp/callback",
+		GatewayURL: fc.srv.URL, RedirectURI: "https://www.dor.tw/api/v1/integrations/coros-mcp/callback",
 		FrontendURL: "https://www.dor.tw", JWTSecret: "test-secret",
 	}, passthroughAuth, nil)
+	corosMcpInProcessHTTP(h, fc)
 
 	// --- 不在白名單 → 403 forbidden ---
 	{
@@ -239,8 +317,8 @@ func TestIntegration_FullFlow(t *testing.T) {
 		}
 		authorizeURL = body.URL
 	}
-	if *regCount != 1 {
-		t.Fatalf("expected exactly 1 DCR registration, got %d", *regCount)
+	if _, reg, methods, _, _ := fc.snapshot(); reg != 1 || len(methods) != 1 || methods[0] != "none" {
+		t.Fatalf("expected exactly 1 DCR registration requesting none, got %d %v", reg, methods)
 	}
 
 	parsed, err := url.Parse(authorizeURL)
@@ -267,6 +345,9 @@ func TestIntegration_FullFlow(t *testing.T) {
 		if !strings.Contains(loc, "coros_mcp=connected") {
 			t.Fatalf("expected redirect to coros_mcp=connected, got %s", loc)
 		}
+	}
+	if _, _, _, hdrs, calls := fc.snapshot(); calls != 1 || hdrs[0] != "" {
+		t.Fatalf("token exchange must be a public-client call without Authorization header, got calls=%d hdrs=%q", calls, hdrs)
 	}
 
 	// --- GET /status：已連接 ---
@@ -310,8 +391,14 @@ func TestIntegration_FullFlow(t *testing.T) {
 			}
 		}
 	}
-	if *lastMCPAuth != "Bearer tok-2" {
-		t.Fatalf("expected probe's MCP calls to use refreshed token tok-2, got %q", *lastMCPAuth)
+	if last, _, _, hdrs, _ := fc.snapshot(); last != "Bearer tok-2" {
+		t.Fatalf("expected probe's MCP calls to use refreshed token tok-2, got %q", last)
+	} else {
+		for i, hd := range hdrs {
+			if hd != "" {
+				t.Fatalf("token call %d must not send Authorization header, got %q", i, hd)
+			}
+		}
 	}
 
 	// --- 立刻再 probe 一次 → 429 rate_limited（記憶體節流，1 分鐘 1 次）---
@@ -353,15 +440,17 @@ func TestIntegration_FullFlow(t *testing.T) {
 		if err := pool.QueryRow(ctx, `SELECT raw_response FROM coros_mcp_clients WHERE issuer=$1`, doc.Issuer).Scan(&rawResponse); err != nil {
 			t.Fatalf("read coros_mcp_clients: %v", err)
 		}
-		if strings.Contains(string(rawResponse), "regsecret-xyz") {
-			t.Fatal("coros_mcp_clients.raw_response 不應包含 client_secret 原文")
+		if strings.Contains(strings.ToLower(string(rawResponse)), "secret") {
+			t.Fatal("coros_mcp_clients.raw_response 不應包含任何 secret 欄位")
 		}
 		var secretCol *string
-		if err := pool.QueryRow(ctx, `SELECT client_secret FROM coros_mcp_clients WHERE issuer=$1`, doc.Issuer).Scan(&secretCol); err != nil {
-			t.Fatalf("read client_secret column: %v", err)
+		var method string
+		if err := pool.QueryRow(ctx, `SELECT client_secret, token_endpoint_auth_method FROM coros_mcp_clients WHERE issuer=$1`, doc.Issuer).Scan(&secretCol, &method); err != nil {
+			t.Fatalf("read client row: %v", err)
 		}
-		if secretCol == nil || !strings.HasPrefix(*secretCol, "enc:") {
-			t.Fatalf("expected client_secret to be stored encrypted (enc: prefix), got %v", secretCol)
+		// COROS 只登記 public client：不發 secret；存的方法必須是 COROS 實際登記的 none（不是我們要求的）
+		if secretCol != nil || method != "none" {
+			t.Fatalf("expected public client row (secret NULL, method none), got secret=%v method=%q", secretCol != nil, method)
 		}
 
 		rows, err := pool.Query(ctx, `SELECT response FROM coros_mcp_probe_logs WHERE user_id=$1`, ownerID)
@@ -376,7 +465,7 @@ func TestIntegration_FullFlow(t *testing.T) {
 			if err := rows.Scan(&raw); err != nil {
 				t.Fatalf("scan probe log: %v", err)
 			}
-			for _, secret := range []string{"regsecret-xyz", "tok-1", "tok-2", "rtok-1", "rtok-2"} {
+			for _, secret := range []string{"tok-1", "tok-2", "rtok-1", "rtok-2"} {
 				if strings.Contains(string(raw), secret) {
 					t.Fatalf("probe_logs.response 不應包含 token/secret 原文 (%s): %s", secret, raw)
 				}
@@ -387,7 +476,7 @@ func TestIntegration_FullFlow(t *testing.T) {
 		}
 	}
 
-	// --- POST /disconnect：revoke=true（confidential client）、連線被刪、provider='coros' 不受影響 ---
+	// --- POST /disconnect：public client 的撤銷被 COROS 拒（revoked=false），本機連線照樣刪除、provider='coros' 不受影響 ---
 	{
 		req := withUser(httptest.NewRequest(http.MethodPost, "/disconnect", nil), ownerID)
 		rw := httptest.NewRecorder()
@@ -400,8 +489,8 @@ func TestIntegration_FullFlow(t *testing.T) {
 			Revoked bool `json:"revoked"`
 		}
 		_ = json.Unmarshal(rw.Body.Bytes(), &body)
-		if !body.OK || !body.Revoked {
-			t.Fatalf("expected ok=true revoked=true, got %+v", body)
+		if !body.OK || body.Revoked {
+			t.Fatalf("expected ok=true revoked=false (COROS rejects public-client revoke), got %+v", body)
 		}
 	}
 	conn, err := h.getConnection(ctx, ownerID)
@@ -436,14 +525,15 @@ func TestIntegration_EnsureClient_AdvisoryLockDedupesConcurrentDCR(t *testing.T)
 	ctx := context.Background()
 	repo := NewRepository(pool)
 
-	srv, _, regCount := newFakeCorosMCPServer(t)
-	doc := seedDiscovery(srv.URL + "/lock-test") // 獨立 issuer 字串，避免撞到其他測試的 cache/DB 列
-	doc.RegistrationEndpoint = srv.URL + "/connect/register"
+	fc := newFakeCorosMCPServer(t)
+	doc := seedDiscovery(fc.srv.URL + "/lock-test") // 獨立 issuer 字串，避免撞到其他測試的 cache/DB 列
+	doc.RegistrationEndpoint = fc.srv.URL + "/connect/register"
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM coros_mcp_clients WHERE issuer=$1`, doc.Issuer)
 	})
 
-	h := NewCorosMcpHandler(repo, CorosMcpConfig{GatewayURL: srv.URL, RedirectURI: "https://www.dor.tw/x", FrontendURL: "https://www.dor.tw", JWTSecret: "s"}, passthroughAuth, nil)
+	h := NewCorosMcpHandler(repo, CorosMcpConfig{GatewayURL: fc.srv.URL, RedirectURI: "https://www.dor.tw/x", FrontendURL: "https://www.dor.tw", JWTSecret: "s"}, passthroughAuth, nil)
+	corosMcpInProcessHTTP(h, fc)
 
 	const n = 5
 	var wg sync.WaitGroup
@@ -462,8 +552,8 @@ func TestIntegration_EnsureClient_AdvisoryLockDedupesConcurrentDCR(t *testing.T)
 			t.Fatalf("ensureClient[%d] failed: %v", i, err)
 		}
 	}
-	if *regCount != 1 {
-		t.Fatalf("expected exactly 1 DCR registration despite %d concurrent callers, got %d", n, *regCount)
+	if _, reg, _, _, _ := fc.snapshot(); reg != 1 {
+		t.Fatalf("expected exactly 1 DCR registration despite %d concurrent callers, got %d", n, reg)
 	}
 	var rowCount int
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM coros_mcp_clients WHERE issuer=$1`, doc.Issuer).Scan(&rowCount); err != nil {
@@ -471,5 +561,165 @@ func TestIntegration_EnsureClient_AdvisoryLockDedupesConcurrentDCR(t *testing.T)
 	}
 	if rowCount != 1 {
 		t.Fatalf("expected exactly 1 coros_mcp_clients row, got %d", rowCount)
+	}
+}
+
+// corosMcpConnectAndCallback：POST /connect 拿 authorize URL → 取 state → 模擬 COROS 帶 code 導回 /callback，
+// 回傳 callback 的 302 Location。
+func corosMcpConnectAndCallback(t *testing.T, h *CorosMcpHandler, userID string) string {
+	t.Helper()
+	req := withUser(httptest.NewRequest(http.MethodPost, "/connect", nil), userID)
+	rw := httptest.NewRecorder()
+	h.Router().ServeHTTP(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("connect failed: %d %s", rw.Code, rw.Body.String())
+	}
+	var body struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(rw.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode connect response: %v", err)
+	}
+	parsed, err := url.Parse(body.URL)
+	if err != nil {
+		t.Fatalf("parse authorize url: %v", err)
+	}
+	state := parsed.Query().Get("state")
+	creq := httptest.NewRequest(http.MethodGet, "/callback?code=test-code&state="+url.QueryEscape(state), nil)
+	crw := httptest.NewRecorder()
+	h.Router().ServeHTTP(crw, creq)
+	if crw.Code != http.StatusFound {
+		t.Fatalf("expected 302 from callback, got %d: %s", crw.Code, crw.Body.String())
+	}
+	return crw.Header().Get("Location")
+}
+
+// TestIntegration_LegacyClientRow_ConnectsWithPublicAuth：重現 2026-10-01 正式站狀態——coros_mcp_clients 已有一列
+// token_endpoint_auth_method='client_secret_basic'、client_secret=NULL（v868 誤存「要求的」方法）。修正後同一列不需改
+// 資料庫：不再重新註冊、換 token 不送 Authorization 標頭 → 連線成功（v868 在這裡得到 token_exchange_failed）。
+func TestIntegration_LegacyClientRow_ConnectsWithPublicAuth(t *testing.T) {
+	pool := corosMcpSetupPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	ownerEmail := "corosmcp-legacy-" + corosMcpRandSuffix() + "@example.com"
+	ownerID := corosMcpCreateUser(t, ctx, pool, ownerEmail)
+	corosMcpSetWhitelist(t, ctx, pool, ownerEmail)
+
+	fc := newFakeCorosMCPServer(t)
+	issuer := fc.srv.URL + "/legacy" // 獨立 issuer，避免撞到其他測試；端點仍指向假伺服器根路徑
+	doc := &corosMcpDiscoveryDoc{
+		Issuer:                issuer,
+		AuthorizationEndpoint: fc.srv.URL + "/oauth2/authorize",
+		TokenEndpoint:         fc.srv.URL + "/oauth2/token",
+		RevocationEndpoint:    fc.srv.URL + "/oauth2/revoke",
+		RegistrationEndpoint:  fc.srv.URL + "/connect/register",
+	}
+	corosMcpDiscoveryCacheSet(issuer, doc)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO coros_mcp_clients (issuer, client_id, client_secret, token_endpoint_auth_method, raw_response)
+		VALUES ($1, 'fake-client-id', NULL, 'client_secret_basic', '{"token_endpoint_auth_method":"none"}'::jsonb)`, issuer); err != nil {
+		t.Fatalf("seed legacy client row: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM coros_mcp_clients WHERE issuer=$1`, issuer)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM user_integrations WHERE user_id=$1 AND provider=$2`, ownerID, providerCorosMcp)
+	})
+
+	h := NewCorosMcpHandler(repo, CorosMcpConfig{
+		GatewayURL: issuer, RedirectURI: "https://www.dor.tw/api/v1/integrations/coros-mcp/callback",
+		FrontendURL: "https://www.dor.tw", JWTSecret: "test-secret",
+	}, passthroughAuth, nil)
+	corosMcpInProcessHTTP(h, fc)
+
+	loc := corosMcpConnectAndCallback(t, h, ownerID)
+	if !strings.Contains(loc, "coros_mcp=connected") {
+		t.Fatalf("legacy client row must now connect, got redirect %s", loc)
+	}
+	_, reg, _, hdrs, calls := fc.snapshot()
+	if reg != 0 {
+		t.Fatalf("existing client row must be reused (no new DCR), got %d registrations", reg)
+	}
+	if calls != 1 || hdrs[0] != "" {
+		t.Fatalf("token exchange must not send Authorization header, got calls=%d hdrs=%q", calls, hdrs)
+	}
+	conn, err := h.getConnection(ctx, ownerID)
+	if err != nil || conn == nil || conn.AccessToken != "tok-1" || conn.Issuer != issuer {
+		t.Fatalf("expected stored coros_mcp connection with tok-1, got conn=%+v err=%v", conn, err)
+	}
+}
+
+// TestIntegration_NoRefreshToken_ReconnectRequired：COROS 不發 refresh token（Spring AS 對 public client 的預設）時，
+// 連線仍成功、讀取測試可用；access token 過期後讀取測試回 409 reconnect_required（不打 COROS token 端點），
+// 中斷連線仍會刪除本機連線。
+func TestIntegration_NoRefreshToken_ReconnectRequired(t *testing.T) {
+	pool := corosMcpSetupPool(t)
+	ctx := context.Background()
+	repo := NewRepository(pool)
+
+	ownerEmail := "corosmcp-norefresh-" + corosMcpRandSuffix() + "@example.com"
+	ownerID := corosMcpCreateUser(t, ctx, pool, ownerEmail)
+	corosMcpSetWhitelist(t, ctx, pool, ownerEmail)
+
+	fc := newFakeCorosMCPServer(t, fakeCorosOpts{issueRefresh: false, firstExpiresIn: 3600})
+	doc := seedDiscovery(fc.srv.URL)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM coros_mcp_clients WHERE issuer=$1`, doc.Issuer)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM user_integrations WHERE user_id=$1 AND provider=$2`, ownerID, providerCorosMcp)
+	})
+	cfg := CorosMcpConfig{
+		GatewayURL: fc.srv.URL, RedirectURI: "https://www.dor.tw/api/v1/integrations/coros-mcp/callback",
+		FrontendURL: "https://www.dor.tw", JWTSecret: "test-secret",
+	}
+	h := NewCorosMcpHandler(repo, cfg, passthroughAuth, nil)
+	corosMcpInProcessHTTP(h, fc)
+
+	if loc := corosMcpConnectAndCallback(t, h, ownerID); !strings.Contains(loc, "coros_mcp=connected") {
+		t.Fatalf("missing refresh_token must not fail the connection, got %s", loc)
+	}
+
+	// 讀取測試：token 仍有效 → 成功，MCP 用 tok-1
+	{
+		req := withUser(httptest.NewRequest(http.MethodPost, "/probe", nil), ownerID)
+		rw := httptest.NewRecorder()
+		h.Router().ServeHTTP(rw, req)
+		if rw.Code != http.StatusOK {
+			t.Fatalf("probe failed: %d %s", rw.Code, rw.Body.String())
+		}
+		if last, _, _, _, _ := fc.snapshot(); last != "Bearer tok-1" {
+			t.Fatalf("expected MCP calls with tok-1, got %q", last)
+		}
+	}
+
+	// access token 過期 → 新的 handler（重置每分鐘節流）再讀取測試 → 409 reconnect_required，且不打 token 端點
+	if _, err := pool.Exec(ctx, `UPDATE user_integrations SET expires_at = NOW() - INTERVAL '1 minute' WHERE user_id=$1 AND provider=$2`, ownerID, providerCorosMcp); err != nil {
+		t.Fatalf("expire token: %v", err)
+	}
+	_, _, _, _, callsBefore := fc.snapshot()
+	h2 := NewCorosMcpHandler(repo, cfg, passthroughAuth, nil)
+	corosMcpInProcessHTTP(h2, fc)
+	{
+		req := withUser(httptest.NewRequest(http.MethodPost, "/probe", nil), ownerID)
+		rw := httptest.NewRecorder()
+		h2.Router().ServeHTTP(rw, req)
+		if rw.Code != http.StatusConflict || !strings.Contains(rw.Body.String(), "reconnect_required") {
+			t.Fatalf("expected 409 reconnect_required, got %d: %s", rw.Code, rw.Body.String())
+		}
+	}
+	if _, _, _, _, callsAfter := fc.snapshot(); callsAfter != callsBefore {
+		t.Fatalf("no refresh token → must not call the token endpoint, calls %d → %d", callsBefore, callsAfter)
+	}
+
+	// 中斷連線：revoke 被拒（public client）→ revoked=false，但本機連線仍刪除
+	{
+		req := withUser(httptest.NewRequest(http.MethodPost, "/disconnect", nil), ownerID)
+		rw := httptest.NewRecorder()
+		h2.Router().ServeHTTP(rw, req)
+		if rw.Code != http.StatusOK || !strings.Contains(rw.Body.String(), `"revoked":false`) {
+			t.Fatalf("expected 200 revoked=false, got %d: %s", rw.Code, rw.Body.String())
+		}
+	}
+	if conn, err := h2.getConnection(ctx, ownerID); err != nil || conn != nil {
+		t.Fatalf("connection must be deleted after disconnect, got conn=%v err=%v", conn, err)
 	}
 }

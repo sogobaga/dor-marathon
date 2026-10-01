@@ -673,7 +673,8 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       setCorosMcp((c) => (c ? { ...c, last_probe: r, last_probe_at: r.at } : c))
     } catch (e: any) {
       setCorosMcpMsg(
-        e?.status === 409 ? '尚未連接 COROS，請先按上方「連接 COROS」'
+        e?.status === 409 && e?.message === 'reconnect_required' ? 'COROS 授權已過期，請按「中斷連線」後重新連接 COROS'
+          : e?.status === 409 ? '尚未連接 COROS，請先按上方「連接 COROS」'
           : e?.status === 429 ? '讀取測試太頻繁，請稍候一分鐘再試'
           : e?.message || '讀取測試失敗，請稍後再試'
       )
@@ -682,13 +683,14 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
     }
   }
   async function disconnectCorosMcp() {
-    if (!window.confirm('中斷 COROS 連線？這會撤銷授權，之後要重新連接才能再做讀取測試。')) return
+    if (!window.confirm('中斷 COROS 連線？DOR 會刪除保存的 COROS 授權、不再讀取你的資料；之後要重新連接才能再做讀取測試。')) return
     setCorosMcpBusy(true); setCorosMcpMsg('')
     try {
-      await withUserAuth((t) => corosMcpApi.disconnect(t))
+      const r = await withUserAuth((t) => corosMcpApi.disconnect(t))
       setCorosMcp({ connected: false, issuer: null, connected_at: null, last_probe_at: null, last_probe: null })
       setCorosMcpConsent(false)
-      setCorosMcpMsg('已中斷 COROS 連線')
+      // COROS 只給 public client，撤銷請求多半會被拒（revoked=false）：DOR 端的授權照樣已刪除、不再讀取，照實說明。
+      setCorosMcpMsg(r?.revoked ? '已中斷 COROS 連線並撤銷授權' : '已中斷 COROS 連線：DOR 已刪除保存的授權，不會再讀取你的 COROS 資料')
     } catch (e: any) {
       setCorosMcpMsg(e?.message || '中斷失敗，請稍後再試')
     } finally {
@@ -1151,8 +1153,8 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                   <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.7 }}>
                     <b>會讀取哪些資料：</b>你的跑步／走路活動紀錄、分段配速、手錶型號。<br />
                     <b>用途：</b>計算你自己的賽事里程、挑戰與獎勵（僅供個人數據）。<br />
-                    <b>保存與刪除：</b>中斷連線即刪除授權；<b>測試期間不會寫入跑步紀錄</b>。<br />
-                    可隨時按「中斷連線」撤銷授權。
+                    <b>保存與刪除：</b>中斷連線即刪除 DOR 保存的授權、不再讀取；<b>測試期間不會寫入跑步紀錄</b>。<br />
+                    可隨時按「中斷連線」。
                   </div>
                   <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 10, fontSize: 11.5, color: 'var(--tx-dim)', cursor: 'pointer' }}>
                     <input type="checkbox" checked={corosMcpConsent} onChange={(e) => setCorosMcpConsent(e.target.checked)} style={{ marginTop: 2, flexShrink: 0 }} />
@@ -1190,7 +1192,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                     </div>
                   )}
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
-                    測試期間不會寫入跑步紀錄；按「中斷連線」隨時可撤銷授權。
+                    測試期間不會寫入跑步紀錄；按「中斷連線」即刪除 DOR 保存的授權。
                   </div>
                 </>
               )}
