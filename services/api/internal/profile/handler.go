@@ -22,7 +22,14 @@ import (
 type Handler struct {
 	db *pgxpool.Pool
 	rt *realtime.Manager
+	// corosMcpAutoSync：COROS MCP 第二階段「打開 DOR 時自動同步」鉤子（由 main.go 以 CorosMcpHandler.CorosMcpAutoSync
+	// 晚繫結注入；nil＝不啟用）。只在 Dashboard 判定 coros_mcp_entry=='shown'（白名單）時呼叫，且實作自己
+	// 開 goroutine、不阻塞 Dashboard。用函式注入而非直接持有 handler，維持 profile 對 integration 的依賴不變。
+	corosMcpAutoSync func(userID string)
 }
+
+// SetCorosMcpAutoSync 注入 COROS MCP 自動同步鉤子（見 Handler.corosMcpAutoSync）。
+func (h *Handler) SetCorosMcpAutoSync(fn func(userID string)) { h.corosMcpAutoSync = fn }
 
 func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler {
 	h := &Handler{db: db, rt: rt}

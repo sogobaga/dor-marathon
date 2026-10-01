@@ -274,6 +274,11 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		gpscalib.DashboardSummary(r.Context(), h.db, userID, email, code, isSuperAdmin)
 	d.GpsRawLog = gpsrawlog.Allowed(r.Context(), h.db, email)
 	d.CorosMcpEntry = integration.CorosMcpDashboardEntry(r.Context(), h.db, email)
+	// COROS MCP 自動同步（第二階段）：只有白名單帳號（entry=='shown'）才觸發，其餘使用者零額外查詢；
+	// 鉤子內部自己做 25 分鐘節流並開 goroutine 背景跑，這裡不等結果、不影響本次 Dashboard 回應。
+	if d.CorosMcpEntry == "shown" && h.corosMcpAutoSync != nil {
+		h.corosMcpAutoSync(userID)
+	}
 	levels, err := h.levelConfigList(r.Context())
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")

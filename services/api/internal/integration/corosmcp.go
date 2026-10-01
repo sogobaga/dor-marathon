@@ -12,7 +12,8 @@ package integration
 //     方法，換 token 時送出「空密碼的 Basic 標頭」→ COROS（Spring Authorization Server）回 400
 //     invalid_request → 擁有者看到 token_exchange_failed。現在一律以 COROS 實際登記的方法為準
 //     （corosMcpEffectiveAuthMethod），註冊也直接要求 none。
-//   - 不呼叫 h.repo 既有的 Save/SaveTerra/ImportActivity 等活動匯入管線——第一階段刻意不寫入活動。
+//   - 第一階段刻意不寫入活動；第二階段（v871，見 corosmcp_sync.go、COROS_MCP_STAGE2_CONTRACT.md）才經
+//     Repository.ImportActivity 匯入（source='coros'、external_id='mcp:'+labelId），仍只開放白名單。
 //
 // 安全设计重點（見契約驗收段）：
 //   - 白名單無 super_admin 旁路（比照 internal/gpsrawlog.Allowed，而非 profile.resolveEntry）。
@@ -27,6 +28,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -63,6 +65,13 @@ const (
 	corosMcpProbeWindow      = time.Minute // 讀取測試每人每分鐘最多 1 次
 	corosMcpMCPTimeout       = 20 * time.Second
 	corosMcpRefreshSkew      = 60 * time.Second // token 到期前 60 秒主動換新
+
+	// OAuth 登入 CSRF 綁定（契約第 6 點）：/connect 種 nonce cookie，/callback 比對。Path 限縮在 callback 端點，
+	// 其他請求不會夾帶；HttpOnly（JS 讀不到）、Secure、SameSite=Lax（COROS 導回是頂層 GET，Lax 會帶）、10 分鐘。
+	corosMcpNonceCookie  = "dor_cmcp_n"
+	corosMcpCallbackPath = "/api/v1/integrations/coros-mcp/callback"
+	// state HMAC 金鑰用途隔離的 domain separation 字串：JWT_SECRET 不直接當 state 簽章金鑰。
+	corosMcpStateKeyLabel = "dor/coros-mcp/state/v1"
 )
 
 // errCorosMcpReconnect：access token 已過期且無法換新（COROS 沒發 refresh token，或 refresh 被拒
@@ -142,6 +151,12 @@ type CorosMcpHandler struct {
 		mu sync.Mutex
 		m  map[string]time.Time
 	}
+	// importMu/importLast：POST /import 每人 60 秒記憶體節流（比照 terra allowImport，見 allowImport）。
+	importMu   sync.Mutex
+	importLast map[string]time.Time
+	// autoMu/autoLast：自動同步在 rdb 為 nil（或 Redis 出錯）時的記憶體節流 fallback（見 claimAutoSync）。
+	autoMu   sync.Mutex
+	autoLast map[string]time.Time
 }
 
 func NewCorosMcpHandler(repo *Repository, cfg CorosMcpConfig, requireAuth func(http.Handler) http.Handler, rdb *redis.Client) *CorosMcpHandler {
@@ -162,6 +177,7 @@ func (h *CorosMcpHandler) Router() http.Handler {
 		r.Post("/connect", h.Connect)
 		r.Get("/status", h.Status)
 		r.Post("/probe", h.Probe)
+		r.Post("/import", h.Import)
 		r.Post("/disconnect", h.Disconnect)
 	})
 	return r
@@ -240,42 +256,69 @@ func corosMcpPKCEChallenge(verifier string) string {
 
 // --- state 簽章（HMAC，比照 coros.go signState/verifyState，額外帶 issuer／PKCE verifier）---
 
+// corosMcpStateKey 用途隔離金鑰＝HMAC-SHA256(JWT_SECRET, "dor/coros-mcp/state/v1")：state 的簽章金鑰不等於
+// JWT_SECRET 本身，萬一 state 簽章被拿來當 oracle，也不會洩漏或重用到 JWT 簽章金鑰（契約第 6 點）。
+func corosMcpStateKey(jwtSecret string) string {
+	m := hmac.New(sha256.New, []byte(jwtSecret))
+	m.Write([]byte(corosMcpStateKeyLabel))
+	return string(m.Sum(nil))
+}
+
+// corosMcpMAC 以「已衍生」的 key 簽（呼叫端用 corosMcpStateKey 衍生）。
 func corosMcpMAC(secret, msg string) string {
 	m := hmac.New(sha256.New, []byte(secret))
 	m.Write([]byte(msg))
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
 }
 
-// corosMcpSignState 把 userID/issuer/verifier/到期 四個欄位簽進 state，callback 端不需 DB/Redis
-// 往返即可還原整個 PKCE 交換所需的資訊（契約第 4 點）。
-func corosMcpSignState(secret, userID, issuer, verifier string, ttl time.Duration) string {
-	msg := strings.Join([]string{userID, issuer, verifier, strconv.FormatInt(time.Now().Add(ttl).Unix(), 10)}, "\n")
-	return base64.RawURLEncoding.EncodeToString([]byte(msg)) + "." + corosMcpMAC(secret, msg)
+// corosMcpSignState 把 userID/issuer/verifier/nonce/到期 五個欄位簽進 state，callback 端不需 DB/Redis
+// 往返即可還原整個 PKCE 交換所需的資訊（契約第 4 點）。nonce 同時種在使用者瀏覽器的 cookie（見 Connect），
+// callback 要求兩者相符，擋「攻擊者把自己的授權連結（state）塞給受害者點」的登入 CSRF（契約第 6 點）。
+// secret 傳 JWT_SECRET 原值，內部以 corosMcpStateKey 衍生專用金鑰。
+func corosMcpSignState(secret, userID, issuer, verifier, nonce string, ttl time.Duration) string {
+	msg := strings.Join([]string{userID, issuer, verifier, nonce, strconv.FormatInt(time.Now().Add(ttl).Unix(), 10)}, "\n")
+	return base64.RawURLEncoding.EncodeToString([]byte(msg)) + "." + corosMcpMAC(corosMcpStateKey(secret), msg)
 }
 
-func corosMcpVerifyState(secret, state string) (userID, issuer, verifier string, ok bool) {
+func corosMcpVerifyState(secret, state string) (userID, issuer, verifier, nonce string, ok bool) {
 	i := strings.LastIndex(state, ".")
 	if i < 0 {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
 	raw, sig := state[:i], state[i+1:]
 	msgBytes, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
 	msg := string(msgBytes)
-	if !hmac.Equal([]byte(sig), []byte(corosMcpMAC(secret, msg))) {
-		return "", "", "", false
+	if !hmac.Equal([]byte(sig), []byte(corosMcpMAC(corosMcpStateKey(secret), msg))) {
+		return "", "", "", "", false
 	}
 	parts := strings.Split(msg, "\n")
-	if len(parts) != 4 {
-		return "", "", "", false
+	if len(parts) != 5 {
+		return "", "", "", "", false
 	}
-	exp, err := strconv.ParseInt(parts[3], 10, 64)
+	exp, err := strconv.ParseInt(parts[4], 10, 64)
 	if err != nil || time.Now().Unix() > exp {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
-	return parts[0], parts[1], parts[2], true
+	return parts[0], parts[1], parts[2], parts[3], true
+}
+
+// corosMcpNonceMatches 常數時間比對 cookie 值與 state 內的 nonce；任一為空一律不符。
+func corosMcpNonceMatches(cookieVal, stateNonce string) bool {
+	if cookieVal == "" || stateNonce == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(cookieVal), []byte(stateNonce)) == 1
+}
+
+// corosMcpNewNonceCookie 組 nonce cookie；maxAge<0 代表清除（http.Cookie 的 MaxAge<0 會輸出 Max-Age=0）。
+func corosMcpNewNonceCookie(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name: corosMcpNonceCookie, Value: value, Path: corosMcpCallbackPath,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: maxAge,
+	}
 }
 
 // --- host 驗證（防 SSRF，契約第 2 點：discovery 回傳的每個端點都要驗）---
@@ -565,15 +608,17 @@ type corosMcpConnection struct {
 	Scope        string
 	ConnectedAt  time.Time
 	LastProbeAt  *time.Time
+	// LastSyncedAt：最近一次成功同步時間（migration 197）；從未同步＝nil。
+	LastSyncedAt *time.Time
 }
 
 func (h *CorosMcpHandler) getConnection(ctx context.Context, userID string) (*corosMcpConnection, error) {
 	var c corosMcpConnection
 	err := h.repo.db.QueryRow(ctx, `
 		SELECT id::text, access_token, refresh_token, expires_at, COALESCE(scope,''), created_at,
-		       COALESCE(issuer,''), last_probe_at
+		       COALESCE(issuer,''), last_probe_at, last_synced_at
 		FROM user_integrations WHERE user_id=$1 AND provider=$2`, userID, providerCorosMcp).
-		Scan(&c.ID, &c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.ConnectedAt, &c.Issuer, &c.LastProbeAt)
+		Scan(&c.ID, &c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.ConnectedAt, &c.Issuer, &c.LastProbeAt, &c.LastSyncedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -714,7 +759,14 @@ func (h *CorosMcpHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
-	state := corosMcpSignState(h.cfg.JWTSecret, userID, disc.Issuer, verifier, corosMcpStateTTL)
+	nonceBytes := make([]byte, 32)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(nonceBytes)
+	state := corosMcpSignState(h.cfg.JWTSecret, userID, disc.Issuer, verifier, nonce, corosMcpStateTTL)
+	http.SetCookie(w, corosMcpNewNonceCookie(nonce, int(corosMcpStateTTL.Seconds())))
 	q := url.Values{}
 	q.Set("response_type", "code")
 	q.Set("client_id", client.ClientID)
@@ -741,9 +793,20 @@ func (h *CorosMcpHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	redirectErr := func(reason string) {
 		http.Redirect(w, r, h.corosMcpFrontendRedirect("error", reason), http.StatusFound)
 	}
-	userID, issuer, verifier, ok := corosMcpVerifyState(h.cfg.JWTSecret, r.URL.Query().Get("state"))
+	// 登入 CSRF 綁定：必須帶同一瀏覽器在 /connect 種下的 nonce cookie 才繼續。不論後面任何結果（含 state
+	// 無效）都先清 cookie，一個 nonce 只用一次。不符 → state_mismatch，不換 token、不寫連線。
+	cookieVal := ""
+	if c, err := r.Cookie(corosMcpNonceCookie); err == nil {
+		cookieVal = c.Value
+	}
+	http.SetCookie(w, corosMcpNewNonceCookie("", -1))
+	userID, issuer, verifier, nonce, ok := corosMcpVerifyState(h.cfg.JWTSecret, r.URL.Query().Get("state"))
 	if !ok {
 		redirectErr("invalid_state")
+		return
+	}
+	if !corosMcpNonceMatches(cookieVal, nonce) {
+		redirectErr("state_mismatch")
 		return
 	}
 	if r.URL.Query().Get("error") != "" {
@@ -909,12 +972,21 @@ func (h *CorosMcpHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if conn == nil {
 		respondJSON(w, http.StatusOK, map[string]any{
 			"connected": false, "issuer": nil, "connected_at": nil, "last_probe_at": nil, "last_probe": nil,
+			"last_synced_at": nil, "device_name": nil,
 		})
 		return
 	}
 	resp := map[string]any{
 		"connected": true, "issuer": conn.Issuer, "connected_at": conn.ConnectedAt.Format(time.RFC3339),
 		"last_probe_at": nil, "last_probe": nil,
+		"last_synced_at": nil, "device_name": nil,
+	}
+	if conn.LastSyncedAt != nil {
+		resp["last_synced_at"] = conn.LastSyncedAt.Format(time.RFC3339)
+	}
+	// device_name：該使用者最新一筆 MCP 匯入活動的型號（不即時打 COROS；尚無活動則為 null）。
+	if dn := h.latestDeviceName(r.Context(), userID); dn != nil {
+		resp["device_name"] = *dn
 	}
 	if conn.LastProbeAt != nil {
 		resp["last_probe_at"] = conn.LastProbeAt.Format(time.RFC3339)
@@ -1066,10 +1138,31 @@ func (h *CorosMcpHandler) recordStep(ctx context.Context, userID, tool string, r
 			summary.Count = &n
 		}
 	}
+	// 隱私：COROS 活動清單含地點與起點座標，存檔前把這兩類行拿掉（Stage 2：DOR 不保存地點／座標）。
+	if r, ok := result.(*mcpToolCallResult); ok && r != nil {
+		red := *r
+		red.Content = append(red.Content[:0:0], r.Content...)
+		for i := range red.Content {
+			red.Content[i].Text = corosMcpRedactLocation(corosMcpUnwrapText(red.Content[i].Text))
+		}
+		result = &red
+	}
 	raw, _ := json.Marshal(result)
 	stored := probeLogResponse{Raw: raw, Summary: summary}
 	_ = h.logProbe(ctx, userID, tool, request, stored, status, at)
 	return summary
+}
+
+var corosMcpLocationLineRe = regexp.MustCompile(`(?im)^[ \t]*(location|start coordinates|end coordinates|coordinates)[ \t]*[:：].*$`)
+
+// corosMcpRedactLocation 純函式：把「Location:」「Start Coordinates:」等行的內容換成 [redacted]（保留行，方便看格式）。
+func corosMcpRedactLocation(text string) string {
+	return corosMcpLocationLineRe.ReplaceAllStringFunc(text, func(line string) string {
+		if i := strings.IndexAny(line, ":："); i >= 0 {
+			return line[:i+1] + " [redacted]"
+		}
+		return line
+	})
 }
 
 // corosMcpUnwrapText：COROS 的 tools/call 結果 content[0].text 本身常是「JSON 字串字面值」（外層多一層引號，
@@ -1291,12 +1384,31 @@ func (h *CorosMcpHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 				revoked = h.revoke(r.Context(), disc.RevocationEndpoint, client, token, hint)
 			}
 		}
+	}
+	// 刪除「從 COROS 直連匯入」的活動（只刪 source='coros' AND external_id LIKE 'mcp:%'，Terra／Partner 的
+	// coros 列不動）。放在刪連線列之前：失敗就回 500、連線保留，使用者可再按一次中斷，不會留下孤兒資料。
+	// 即使目前沒有連線列（上次只刪到一半）也照跑，確保資料一定清乾淨。
+	deleted, err := h.repo.DeleteCorosMcpActivities(r.Context(), userID)
+	if err != nil {
+		log.Error().Err(err).Str("user", userID).Msg("coros mcp disconnect: delete imported activities failed")
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if conn != nil {
 		if err := h.deleteConnection(r.Context(), userID); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
 		}
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "revoked": revoked})
+	// 偏好來源是 'coros' 且已沒有任何 provider='coros'（Terra／Partner）連線 → 重設 'gps'（只 log、不擋中斷）。
+	if other, oerr := h.repo.GetByUser(r.Context(), userID, providerCoros); oerr != nil {
+		log.Warn().Err(oerr).Str("user", userID).Msg("coros mcp disconnect: check remaining coros connection failed")
+	} else if other == nil {
+		if rerr := h.repo.ResetPreferredSource(r.Context(), userID, "coros"); rerr != nil {
+			log.Warn().Err(rerr).Str("user", userID).Msg("coros mcp disconnect: reset preferred source failed")
+		}
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "revoked": revoked, "deleted_activities": deleted})
 }
 
 // revoke 盡力而為：失敗只記錄、不擋中斷本身（契約第 10 點）。refresh token 優先撤銷（撤銷它通常連帶

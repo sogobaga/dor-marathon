@@ -358,14 +358,51 @@ func (r *Repository) DeleteProviderActivities(ctx context.Context, userID, provi
 		    flagged = CASE WHEN flag_reason IN ('cross_source_duplicate','multi_device_duplicate') THEN FALSE ELSE flagged END,
 		    flag_reason = CASE WHEN flag_reason IN ('cross_source_duplicate','multi_device_duplicate') THEN NULL ELSE flag_reason END
 		WHERE user_id = $1
-		  AND dup_of IN (SELECT id FROM activities WHERE user_id = $1 AND source = $2)`,
+		  AND dup_of IN (SELECT id FROM activities WHERE user_id = $1 AND source = $2
+		                   AND NOT (source = 'coros' AND COALESCE(external_id,'') LIKE 'mcp:%'))`,
 		userID, provider); err != nil {
 		return fmt.Errorf("clear stale dup_of before provider activity delete: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM activities WHERE user_id=$1 AND source=$2`, userID, provider); err != nil {
+	// COROS MCP 直連匯入的列也是 source='coros'（external_id 'mcp:' 開頭）：中斷 Terra／Partner 的 COROS
+	// 連線時不可連帶刪掉——那批只能由 MCP 自己的中斷（DeleteCorosMcpActivities）刪（Stage 2 審查發現，
+	// 從 Terra 切換到直連時一定會踩到）。
+	if _, err := tx.Exec(ctx, `DELETE FROM activities WHERE user_id=$1 AND source=$2
+		AND NOT (source = 'coros' AND COALESCE(external_id,'') LIKE 'mcp:%')`, userID, provider); err != nil {
 		return fmt.Errorf("delete provider activities: %w", err)
 	}
 	return tx.Commit(ctx)
+}
+
+// DeleteCorosMcpActivities 刪除使用者「經 COROS MCP 直連匯入」的活動（source='coros' AND external_id LIKE 'mcp:%'）。
+//
+// 與 DeleteProviderActivities 的差異：COROS 的 source 字串 'coros' 同時被 Terra（external_id=summary_id）與
+// Partner API（純 labelId）使用，只看 source 會連它們的紀錄一起刪，所以這裡額外以 MCP 專屬的 'mcp:' 前綴限定，
+// 絕不動 Terra／Partner 的 coros 列。dup_of／flag 的善後處理與 DeleteProviderActivities 相同（原因見該函式註解），
+// 且同樣不回收已發的 EXP／total_km（external_award_ledger 防重發）。回傳刪除筆數。
+func (r *Repository) DeleteCorosMcpActivities(ctx context.Context, userID string) (int64, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE activities
+		SET dup_of = NULL,
+		    flagged = CASE WHEN flag_reason IN ('cross_source_duplicate','multi_device_duplicate') THEN FALSE ELSE flagged END,
+		    flag_reason = CASE WHEN flag_reason IN ('cross_source_duplicate','multi_device_duplicate') THEN NULL ELSE flag_reason END
+		WHERE user_id = $1
+		  AND dup_of IN (SELECT id FROM activities WHERE user_id = $1 AND source = 'coros' AND external_id LIKE 'mcp:%')`,
+		userID); err != nil {
+		return 0, fmt.Errorf("clear stale dup_of before coros mcp activity delete: %w", err)
+	}
+	ct, err := tx.Exec(ctx, `DELETE FROM activities WHERE user_id=$1 AND source='coros' AND external_id LIKE 'mcp:%'`, userID)
+	if err != nil {
+		return 0, fmt.Errorf("delete coros mcp activities: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
 }
 
 // NormalizedActivity 各 provider 正規化後的活動
@@ -389,6 +426,9 @@ type NormalizedActivity struct {
 	// DurationS=moving_time）；nil 代表無對應資訊（COROS/Terra，其 Duration 語意本來就接近經過時間）。
 	// 供 gpscalib 候選查詢時間對齊用（COALESCE 回 duration_s），DurationS/AvgPaceS 口徑不受影響。
 	ElapsedS *int
+	// DeviceName：資料來源裝置型號（migration 197 activities.device_name，VARCHAR(60)）。只有 COROS MCP 匯入會填
+	// （queryDevices 第一支裝置）；其他 importer 一律 nil（寫入 NULL，行為不變）。
+	DeviceName *string
 }
 
 // ImportResult 匯入結果
@@ -472,12 +512,12 @@ func (r *Repository) ImportActivity(ctx context.Context, a *NormalizedActivity) 
 	err := r.db.QueryRow(ctx, `
 		INSERT INTO activities
 			(user_id, race_id, distance_km, duration_s, avg_pace_s, ascent_m, avg_hr, recorded_at,
-			 processed, source, external_id, fingerprint, flagged, flag_reason, dup_of, ext_manual, elapsed_s)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10,$11,$12,$13,$14,$15,$16)
+			 processed, source, external_id, fingerprint, flagged, flag_reason, dup_of, ext_manual, elapsed_s, device_name)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		ON CONFLICT (source, external_id) DO NOTHING
 		RETURNING id::text`,
 		a.UserID, raceArg, a.DistanceKm, a.DurationS, a.AvgPaceS, a.AscentM, a.AvgHR, a.RecordedAt,
-		a.Source, a.ExternalID, a.Fingerprint, flagged, reasonArg, dupArg, a.Manual, a.ElapsedS).Scan(&newID)
+		a.Source, a.ExternalID, a.Fingerprint, flagged, reasonArg, dupArg, a.Manual, a.ElapsedS, a.DeviceName).Scan(&newID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ImportResult{Status: "exists"}, nil
 	}
@@ -521,6 +561,8 @@ type ActivityRow struct {
 	// 因為前端 label 對 null/'manual'/'gps' 一律顯示同一個「App GPS」字樣，兩種 fallback 值對使用者透明。
 	DupOfID     string `json:"dup_of_id,omitempty"`
 	DupOfSource string `json:"dup_of_source,omitempty"`
+	// DeviceName：資料來源裝置型號（migration 197），前台顯示「Data provided by COROS · <型號>」；NULL 時不出現。
+	DeviceName *string `json:"device_name,omitempty"`
 }
 
 // ListActivities 取得使用者活動（最新 N 筆，含賽事名稱與 flagged 狀態）
@@ -541,7 +583,8 @@ func (r *Repository) ListActivities(ctx context.Context, userID string, limit in
 		       COALESCE(r.title,''), a.flagged, COALESCE(a.flag_reason,''),
 		       COALESCE(a.external_id,''), COALESCE(a.raw_distance_km, a.distance_km), a.calib_factor,
 		       CASE WHEN d.id IS NOT NULL THEN a.dup_of::text ELSE '' END,
-		       CASE WHEN d.id IS NOT NULL THEN COALESCE(d.source,'gps') ELSE '' END
+		       CASE WHEN d.id IS NOT NULL THEN COALESCE(d.source,'gps') ELSE '' END,
+		       a.device_name
 		FROM activities a
 		LEFT JOIN races r ON r.id = a.race_id
 		-- d.user_id 限同帳號：dup_of 在 cross_account_duplicate 時指向「別人」的活動列（見 detectDuplicate/
@@ -562,7 +605,7 @@ func (r *Repository) ListActivities(ctx context.Context, userID string, limit in
 		var a ActivityRow
 		if err := rows.Scan(&a.ID, &a.Source, &a.DistanceKm, &a.DurationS, &a.AvgPaceS,
 			&a.AscentM, &a.AvgHR, &a.RecordedAt, &a.StartedAt, &a.RaceTitle, &a.Flagged, &a.FlagReason, &a.ExternalID,
-			&a.RawDistanceKm, &a.CalibFactor, &a.DupOfID, &a.DupOfSource); err != nil {
+			&a.RawDistanceKm, &a.CalibFactor, &a.DupOfID, &a.DupOfSource, &a.DeviceName); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

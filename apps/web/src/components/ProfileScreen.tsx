@@ -682,12 +682,33 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       setCorosMcpBusy(false)
     }
   }
+  async function importCorosMcp() {
+    setCorosMcpBusy(true); setCorosMcpMsg('')
+    try {
+      const r = await withUserAuth((t) => corosMcpApi.import(t, 30))
+      const skipped = r.skipped_before_connect + r.skipped_non_running + r.skipped_invalid + r.exists
+      setCorosMcpMsg(`匯入 ${r.imported} 筆・重複 ${r.duplicate} 筆・略過 ${skipped} 筆`)
+      setCorosMcp((c) => (c ? { ...c, last_synced_at: new Date().toISOString(), device_name: r.device_name ?? c.device_name ?? null } : c))
+      loadCorosMcp()
+      if (r.imported > 0) loadActivities()
+    } catch (e: any) {
+      setCorosMcpMsg(
+        e?.status === 409 && e?.message === 'reconnect_required' ? 'COROS 授權已過期，請按「中斷連線」後重新連接 COROS'
+          : e?.status === 409 ? '尚未連接 COROS，請先按上方「連接 COROS」'
+          : e?.status === 429 ? '匯入太頻繁，請 1 分鐘後再試'
+          : e?.status === 502 ? 'COROS 暫時無法讀取，請稍後再試'
+          : e?.message || '匯入失敗，請稍後再試'
+      )
+    } finally {
+      setCorosMcpBusy(false)
+    }
+  }
   async function disconnectCorosMcp() {
     if (!window.confirm('中斷 COROS 連線？DOR 會刪除保存的 COROS 授權、不再讀取你的資料；之後要重新連接才能再做讀取測試。')) return
     setCorosMcpBusy(true); setCorosMcpMsg('')
     try {
       const r = await withUserAuth((t) => corosMcpApi.disconnect(t))
-      setCorosMcp({ connected: false, issuer: null, connected_at: null, last_probe_at: null, last_probe: null })
+      setCorosMcp({ connected: false, issuer: null, connected_at: null, last_probe_at: null, last_probe: null, last_synced_at: null, device_name: null })
       setCorosMcpConsent(false)
       // COROS 只給 public client，撤銷請求多半會被拒（revoked=false）：DOR 端的授權照樣已刪除、不再讀取，照實說明。
       setCorosMcpMsg(r?.revoked ? '已中斷 COROS 連線並撤銷授權' : '已中斷 COROS 連線：DOR 已刪除保存的授權，不會再讀取你的 COROS 資料')
@@ -1151,10 +1172,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               {!corosMcp?.connected ? (
                 <>
                   <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.7 }}>
-                    <b>會讀取哪些資料：</b>你的跑步／走路活動紀錄、分段配速、手錶型號。<br />
-                    <b>用途：</b>計算你自己的賽事里程、挑戰與獎勵（僅供個人數據）。<br />
-                    <b>保存與刪除：</b>中斷連線即刪除 DOR 保存的授權、不再讀取；<b>測試期間不會寫入跑步紀錄</b>。<br />
-                    可隨時按「中斷連線」。
+                    會匯入你連接之後的跑步／健行／走路紀錄（距離、時間、心率、手錶型號），計入 DOR 里程、賽事與獎勵；不保存地點與座標；中斷連線會刪除從 COROS 直連匯入的紀錄。
                   </div>
                   <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 10, fontSize: 11.5, color: 'var(--tx-dim)', cursor: 'pointer' }}>
                     <input type="checkbox" checked={corosMcpConsent} onChange={(e) => setCorosMcpConsent(e.target.checked)} style={{ marginTop: 2, flexShrink: 0 }} />
@@ -1170,11 +1188,13 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                   <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 6, lineHeight: 1.6 }}>
                     ✓ 已連接{corosMcp.connected_at ? ` · ${fmtDate(corosMcp.connected_at).split(' ')[0]}` : ''}
                     {corosMcp.issuer ? ` · ${corosMcp.issuer.replace(/^https?:\/\//, '')}` : ''}
+                    <br />{corosMcp.last_synced_at ? `上次同步：${fmtDate(corosMcp.last_synced_at)}` : '尚未同步'}
                   </div>
                   <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                    <button onClick={probeCorosMcp} disabled={corosMcpBusy} style={{ ...ghostBtn, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', whiteSpace: 'nowrap' }}>
-                      {corosMcpBusy ? '測試中…' : '讀取測試'}
+                    <button onClick={importCorosMcp} disabled={corosMcpBusy} style={{ ...ghostBtn, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', whiteSpace: 'nowrap', opacity: corosMcpBusy ? 0.6 : 1 }}>
+                      {corosMcpBusy ? '匯入中…' : '匯入數據'}
                     </button>
+                    <button onClick={probeCorosMcp} disabled={corosMcpBusy} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>讀取測試</button>
                     <button onClick={disconnectCorosMcp} disabled={corosMcpBusy} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>中斷連線</button>
                   </div>
                   {corosMcp.last_probe && (
@@ -1192,7 +1212,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                     </div>
                   )}
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
-                    測試期間不會寫入跑步紀錄；按「中斷連線」即刪除 DOR 保存的授權。
+                    按「中斷連線」會刪除 DOR 保存的授權，以及從 COROS 直連匯入的紀錄。
                   </div>
                 </>
               )}
@@ -1291,6 +1311,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                       <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 1 }}>
                         校正後 · 原始 {a.raw_distance_km.toFixed(2)} K ×{a.calib_factor.toFixed(4)}
                       </div>
+                    )}
+                    {a.device_name && (
+                      <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 2 }}>Data provided by COROS · {a.device_name}</div>
                     )}
                     <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 3 }}>
                       配速 {paceStr(a.avg_pace_s)}/km · {Math.round(a.duration_s / 60)} 分

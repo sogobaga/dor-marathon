@@ -355,6 +355,9 @@ func main() {
 	// 讀取測試紀錄保存期限：併入既有每日報告清理排程，不新增排程（契約第 8 點，見
 	// ops.ProbeLogPurger／internal/integration CorosMcpHandler.PurgeExpired 註解）。
 	opsHandler.SetCorosMcpProbePurger(corosMcpHandler)
+	// COROS MCP 第二階段：使用者打開 DOR（Dashboard）時自動同步，每人最多每 25 分鐘一次、背景 goroutine，
+	// 不新增任何排程（Neon 要能睡）；只有白名單帳號會走到（見 profile.Dashboard 的 entry=='shown' 判斷）。
+	profileHandler.SetCorosMcpAutoSync(corosMcpHandler.CorosMcpAutoSync)
 
 	// SMTP Email（推播擴充的 email 頻道用）：未設 SMTP_HOST/SMTP_FROM 時 enabled=false，發送 no-op。
 	smtpPort, _ := strconv.Atoi(os.Getenv("SMTP_PORT"))

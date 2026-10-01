@@ -1402,6 +1402,7 @@ export interface SyncedActivity {
   // 對使用者顯示上等價，都是「App GPS」）。沒有對應保留活動時兩欄皆缺席（後端 omitempty）。
   dup_of_id?: string
   dup_of_source?: string
+  device_name?: string | null // 手錶型號（COROS 直連）；有值時列表顯示「Data provided by COROS · 型號」
 }
 
 export interface SyncResult {
@@ -1468,6 +1469,19 @@ export interface CorosMcpStatus {
   connected_at: string | null
   last_probe_at: string | null
   last_probe: CorosMcpProbeResult | null
+  last_synced_at?: string | null
+  device_name?: string | null
+}
+export interface CorosMcpImportResult {
+  fetched: number
+  imported: number
+  duplicate: number
+  exists: number
+  skipped_before_connect: number
+  skipped_non_running: number
+  skipped_invalid: number
+  errors: number
+  device_name: string | null
 }
 
 export const corosMcpApi = {
@@ -1479,6 +1493,9 @@ export const corosMcpApi = {
   // 409 { error: 'not_connected' }、429 { error: 'rate_limited', retry_after_s } 由呼叫端依 e.status 判斷
   probe: (token: string) =>
     request<CorosMcpProbeResult>('/integrations/coros-mcp/probe', { method: 'POST', headers: withAuth(token) }),
+  // 409 not_connected|reconnect_required、429 rate_limited、502 coros_failed（e.status / e.message）
+  import: (token: string, days = 30) =>
+    request<CorosMcpImportResult>(`/integrations/coros-mcp/import?days=${days}`, { method: 'POST', headers: withAuth(token) }),
   disconnect: (token: string) =>
     request<{ ok: true; revoked: boolean }>('/integrations/coros-mcp/disconnect', { method: 'POST', headers: withAuth(token) }),
 }

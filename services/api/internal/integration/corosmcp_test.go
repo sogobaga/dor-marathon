@@ -46,57 +46,57 @@ func TestCorosMcpPKCE_VerifierAndChallenge(t *testing.T) {
 
 func TestCorosMcpState_SignVerifyRoundTrip(t *testing.T) {
 	secret := "test-secret"
-	state := corosMcpSignState(secret, "user-1", "https://mcpus.coros.com", "verifier-abc", 10*time.Minute)
-	userID, issuer, verifier, ok := corosMcpVerifyState(secret, state)
+	state := corosMcpSignState(secret, "user-1", "https://mcpus.coros.com", "verifier-abc", "nonce-xyz", 10*time.Minute)
+	userID, issuer, verifier, nonce, ok := corosMcpVerifyState(secret, state)
 	if !ok {
 		t.Fatal("expected ok=true for valid state")
 	}
-	if userID != "user-1" || issuer != "https://mcpus.coros.com" || verifier != "verifier-abc" {
-		t.Fatalf("unexpected round-trip values: %q %q %q", userID, issuer, verifier)
+	if userID != "user-1" || issuer != "https://mcpus.coros.com" || verifier != "verifier-abc" || nonce != "nonce-xyz" {
+		t.Fatalf("unexpected round-trip values: %q %q %q %q", userID, issuer, verifier, nonce)
 	}
 }
 
 func TestCorosMcpState_Expired(t *testing.T) {
 	secret := "test-secret"
-	state := corosMcpSignState(secret, "user-1", "https://mcpus.coros.com", "v", -1*time.Second)
-	if _, _, _, ok := corosMcpVerifyState(secret, state); ok {
+	state := corosMcpSignState(secret, "user-1", "https://mcpus.coros.com", "v", "n", -1*time.Second)
+	if _, _, _, _, ok := corosMcpVerifyState(secret, state); ok {
 		t.Fatal("expected ok=false for expired state")
 	}
 }
 
 func TestCorosMcpState_TamperedSignatureRejected(t *testing.T) {
 	secret := "test-secret"
-	state := corosMcpSignState(secret, "user-1", "https://mcpus.coros.com", "v", 10*time.Minute)
+	state := corosMcpSignState(secret, "user-1", "https://mcpus.coros.com", "v", "n", 10*time.Minute)
 	i := strings.LastIndex(state, ".")
 	tampered := state[:i] + "." + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	if _, _, _, ok := corosMcpVerifyState(secret, tampered); ok {
+	if _, _, _, _, ok := corosMcpVerifyState(secret, tampered); ok {
 		t.Fatal("expected ok=false for tampered signature")
 	}
 }
 
 func TestCorosMcpState_TamperedPayloadRejected(t *testing.T) {
 	secret := "test-secret"
-	state := corosMcpSignState(secret, "user-1", "https://mcpus.coros.com", "v", 10*time.Minute)
+	state := corosMcpSignState(secret, "user-1", "https://mcpus.coros.com", "v", "n", 10*time.Minute)
 	i := strings.LastIndex(state, ".")
 	raw, sig := state[:i], state[i+1:]
 	msgBytes, _ := base64.RawURLEncoding.DecodeString(raw)
 	tamperedMsg := strings.Replace(string(msgBytes), "user-1", "user-2", 1)
 	tampered := base64.RawURLEncoding.EncodeToString([]byte(tamperedMsg)) + "." + sig
-	if _, _, _, ok := corosMcpVerifyState(secret, tampered); ok {
+	if _, _, _, _, ok := corosMcpVerifyState(secret, tampered); ok {
 		t.Fatal("expected ok=false for tampered payload (userID swapped without re-signing)")
 	}
 }
 
 func TestCorosMcpState_WrongSecretRejected(t *testing.T) {
-	state := corosMcpSignState("secret-a", "user-1", "https://mcpus.coros.com", "v", 10*time.Minute)
-	if _, _, _, ok := corosMcpVerifyState("secret-b", state); ok {
+	state := corosMcpSignState("secret-a", "user-1", "https://mcpus.coros.com", "v", "n", 10*time.Minute)
+	if _, _, _, _, ok := corosMcpVerifyState("secret-b", state); ok {
 		t.Fatal("expected ok=false when verifying with a different secret")
 	}
 }
 
 func TestCorosMcpState_MalformedRejected(t *testing.T) {
 	for _, s := range []string{"", "no-dot-here", ".sig-only", "garbage.sig"} {
-		if _, _, _, ok := corosMcpVerifyState("secret", s); ok {
+		if _, _, _, _, ok := corosMcpVerifyState("secret", s); ok {
 			t.Fatalf("expected ok=false for malformed state %q", s)
 		}
 	}

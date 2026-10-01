@@ -97,9 +97,15 @@ func (h *Handler) SetDataSource(w http.ResponseWriter, r *http.Request) {
 	// terra.go providerToSource 的落地值）。前端同步只讓使用者從已連接來源中選，這裡是後端複查。
 	if req.Source != "gps" {
 		var connected bool
+		// COROS 有兩種連線列：Terra／Partner 直連 provider='coros'，以及 COROS MCP 直連 provider='coros_mcp'
+		// （v871 起 MCP 匯入的活動 source 也是 'coros'，所以偏好來源 'coros' 兩者任一有連線都算數）。
+		providers := []string{req.Source}
+		if req.Source == "coros" {
+			providers = append(providers, "coros_mcp")
+		}
 		if err := h.db.QueryRow(r.Context(),
-			`SELECT EXISTS(SELECT 1 FROM user_integrations WHERE user_id=$1 AND provider=$2)`,
-			userID, req.Source).Scan(&connected); err != nil {
+			`SELECT EXISTS(SELECT 1 FROM user_integrations WHERE user_id=$1 AND provider = ANY($2::text[]))`,
+			userID, providers).Scan(&connected); err != nil {
 			respondErr(w, http.StatusInternalServerError, "failed")
 			return
 		}
