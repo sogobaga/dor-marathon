@@ -232,52 +232,101 @@ func TestCorosMcpSanitizeRegistration(t *testing.T) {
 	}
 }
 
-// --- querySportRecords 參數猜測 ---
+// --- querySportRecords 參數（照 2026-10-01 tools/list 實測 schema）---
 
-func TestCorosMcpSportRecordsArgs(t *testing.T) {
+// corosRealSportRecordsSchema：正式站 tools/list 回傳的 querySportRecords inputSchema（節錄 required／properties 名稱）。
+var corosRealSportRecordsSchema = map[string]any{
+	"type": "object",
+	"required": []any{"startDate", "endDate", "sportTypeCodes", "minDistanceKm", "maxDistanceKm",
+		"minDurationMinutes", "maxDurationMinutes", "maxAveragePace", "locationKeyword", "limit"},
+	"properties": map[string]any{
+		"limit": map[string]any{"type": "integer"}, "endDate": map[string]any{"type": "string"},
+		"startDate": map[string]any{"type": "string"}, "maxDistanceKm": map[string]any{"type": "number"},
+		"minDistanceKm": map[string]any{"type": "number"}, "maxAveragePace": map[string]any{"type": "string"},
+		"sportTypeCodes": map[string]any{"type": "array"}, "locationKeyword": map[string]any{"type": "string"},
+		"maxDurationMinutes": map[string]any{"type": "integer"}, "minDurationMinutes": map[string]any{"type": "integer"},
+	},
+	"additionalProperties": false,
+}
+
+func TestCorosMcpSportRecordsArgs_RealSchema(t *testing.T) {
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-
-	if args := corosMcpSportRecordsArgs(nil, now); len(args) != 0 {
-		t.Fatalf("nil schema 應回空 map，得到 %v", args)
+	args := corosMcpSportRecordsArgs(corosRealSportRecordsSchema, now)
+	// v869 送 "2026-09-17" 被 COROS 判 anomaly；必須 yyyyMMdd
+	if args["startDate"] != "20260917" || args["endDate"] != "20261001" {
+		t.Fatalf("dates must be yyyyMMdd 14-day window, got %v / %v", args["startDate"], args["endDate"])
 	}
-
-	schemaNoMatch := map[string]any{"properties": map[string]any{"sportType": map[string]any{}}}
-	if args := corosMcpSportRecordsArgs(schemaNoMatch, now); len(args) != 0 {
-		t.Fatalf("無已知日期欄位時應回空 map，得到 %v", args)
+	// required 的 10 個欄位都要出現（選填不用就給 null），且不得多出 schema 沒有的欄位（additionalProperties=false）
+	if len(args) != 10 {
+		t.Fatalf("expected exactly the 10 required keys, got %d: %v", len(args), args)
 	}
-
-	schemaWithDates := map[string]any{"properties": map[string]any{
-		"startDate": map[string]any{"type": "string"},
-		"endDate":   map[string]any{"type": "string"},
-	}}
-	args := corosMcpSportRecordsArgs(schemaWithDates, now)
-	if args["startDate"] != "2026-09-17" || args["endDate"] != "2026-10-01" {
-		t.Fatalf("unexpected 14 天日期範圍: %v", args)
+	for _, k := range []string{"minDistanceKm", "maxDistanceKm", "minDurationMinutes", "maxDurationMinutes", "maxAveragePace", "locationKeyword"} {
+		if v, ok := args[k]; !ok || v != nil {
+			t.Fatalf("optional filter %s must be present as null, got %v (present=%v)", k, v, ok)
+		}
+	}
+	codes, ok := args["sportTypeCodes"].([]int)
+	if !ok || len(codes) != 6 || codes[0] != 100 || codes[5] != 900 {
+		t.Fatalf("sportTypeCodes should be DOR run+hike+walk codes, got %v", args["sportTypeCodes"])
+	}
+	if args["limit"] != 10 {
+		t.Fatalf("limit = %v, want 10", args["limit"])
+	}
+	// 序列化後 null 欄位要真的是 null（不是被 omitempty 吃掉）
+	b, _ := json.Marshal(args)
+	if !strings.Contains(string(b), `"locationKeyword":null`) {
+		t.Fatalf("null filters must serialize as null: %s", b)
 	}
 }
 
-// --- 從 querySportRecords 回應猜活動 id ---
+func TestCorosMcpSportRecordsArgs_NoSchemaFallsBackToKnownKeys(t *testing.T) {
+	args := corosMcpSportRecordsArgs(nil, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	if len(args) != 10 || args["startDate"] != "20260917" {
+		t.Fatalf("nil schema should fall back to the known 10 keys, got %v", args)
+	}
+}
 
-func TestCorosMcpExtractFirstActivityID(t *testing.T) {
+// --- 文字解包／anomaly／活動 labelId＋sportType ---
+
+func TestCorosMcpUnwrapTextAndAnomaly(t *testing.T) {
+	// 正式站實測：content[0].text 是 JSON 字串字面值（外層多一層引號）
+	quoted := `"Tool call anomalies detected. High risk of session context pollution or request exceeds the LLM capability boundary."`
+	if got := corosMcpUnwrapText(quoted); !strings.HasPrefix(got, "Tool call anomalies detected") {
+		t.Fatalf("unwrap failed: %q", got)
+	}
+	if !corosMcpIsAnomaly(corosMcpUnwrapText(quoted)) {
+		t.Fatal("anomaly text must be detected")
+	}
+	if corosMcpIsAnomaly("Bound Devices (1)") {
+		t.Fatal("normal text must not be flagged as anomaly")
+	}
+	if got := corosMcpUnwrapText(`[{"a":1}]`); got != `[{"a":1}]` {
+		t.Fatalf("non-string JSON must be returned unchanged, got %q", got)
+	}
+}
+
+func TestCorosMcpExtractFirstActivity(t *testing.T) {
 	cases := []struct {
-		name string
-		raw  string
-		want string
+		name      string
+		text      string
+		wantID    string
+		wantSport int
+		wantOK    bool
 	}{
-		{"array of objects, id field", `[{"id":"act-1"},{"id":"act-2"}]`, "act-1"},
-		{"array of objects, labelId field", `[{"labelId":"L-9"}]`, "L-9"},
-		{"wrapped records key", `{"records":[{"activityId":"A-7"}]}`, "A-7"},
-		{"wrapped data key, numeric id", `{"data":[{"id":42}]}`, "42"},
-		{"empty array", `[]`, ""},
-		{"no recognizable id field", `[{"foo":"bar"}]`, ""},
-		{"garbage", `not json`, ""},
-		{"empty bytes", ``, ""},
+		{"json array", `[{"labelId":"476A","sportType":100,"distance":5},{"labelId":"B2","sportType":900}]`, "476A", 100, true},
+		{"json wrapped, numeric labelId", `{"data":{"records":[{"labelId":4761234567890123456,"sportType":102}]}}`, "4761234567890123456", 102, true},
+		{"json string literal wrapping text list", `"Workout Records (2)\n\n1. 2026-09-30 Outdoor Run\n   Distance: 10.02 km\n   labelId: 4761111\n   sportType: 100\n\n2. 2026-09-29 Walk\n   labelId: 4762222\n   sportType: 900"`, "4761111", 100, true},
+		{"text with Label ID spelling", "1. Outdoor Run\n   Label ID: ABC123\n   Sport Type: 101\n2. Walk\n   Label ID: DEF456\n   Sport Type: 900", "ABC123", 101, true},
+		{"anomaly text", `"Tool call anomalies detected. High risk..."`, "", 0, false},
+		{"no records", `"No workout records found in the given period."`, "", 0, false},
+		{"labelId without sportType", "labelId: 4761111", "", 0, false},
+		{"empty", "", "", 0, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := corosMcpExtractFirstActivityID([]byte(c.raw))
-			if got != c.want {
-				t.Fatalf("got %q, want %q", got, c.want)
+			id, st, ok := corosMcpExtractFirstActivity(c.text)
+			if ok != c.wantOK || id != c.wantID || st != c.wantSport {
+				t.Fatalf("got (%q,%d,%v), want (%q,%d,%v)", id, st, ok, c.wantID, c.wantSport, c.wantOK)
 			}
 		})
 	}
@@ -285,28 +334,36 @@ func TestCorosMcpExtractFirstActivityID(t *testing.T) {
 
 // --- Step 筆數摘要 ---
 
+func corosTextResult(text string) *mcpToolCallResult {
+	return &mcpToolCallResult{Content: []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}{{Type: "text", Text: text}}}
+}
+
 func TestCorosMcpCountOf(t *testing.T) {
 	tools := []mcpTool{{Name: "a"}, {Name: "b"}, {Name: "c"}}
 	if n, ok := corosMcpCountOf("tools/list", tools); !ok || n != 3 {
 		t.Fatalf("tools/list count = %d,%v, want 3,true", n, ok)
 	}
-
-	arrResult := &mcpToolCallResult{Content: []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}{{Type: "text", Text: `[{"id":1},{"id":2}]`}}}
-	if n, ok := corosMcpCountOf("queryDevices", arrResult); !ok || n != 2 {
+	if n, ok := corosMcpCountOf("queryDevices", corosTextResult(`[{"id":1},{"id":2}]`)); !ok || n != 2 {
 		t.Fatalf("array content count = %d,%v, want 2,true", n, ok)
 	}
-
-	proseResult := &mcpToolCallResult{Content: []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}{{Type: "text", Text: "not an array"}}}
-	if _, ok := corosMcpCountOf("queryDevices", proseResult); ok {
-		t.Fatal("非 JSON array 的文字內容不應給出 count")
+	// 正式站 queryDevices 實際格式：JSON 字串字面值包著人看的清單，標題帶 (N)
+	devices := `"Bound Devices (1)\n========================\n\n1. COROS PACE 4\n   Model Name: COROS R4"`
+	if n, ok := corosMcpCountOf("queryDevices", corosTextResult(devices)); !ok || n != 1 {
+		t.Fatalf("Bound Devices (1) count = %d,%v, want 1,true", n, ok)
 	}
-
+	records := "1. Run\n labelId: 4761111\n sportType: 100\n2. Walk\n labelId: 4762222\n sportType: 900"
+	if n, ok := corosMcpCountOf("querySportRecords", corosTextResult(records)); !ok || n != 2 {
+		t.Fatalf("labelId occurrences count = %d,%v, want 2,true", n, ok)
+	}
+	if _, ok := corosMcpCountOf("querySportRecords", corosTextResult(`"Tool call anomalies detected."`)); ok {
+		t.Fatal("anomaly text must not yield a count")
+	}
+	if _, ok := corosMcpCountOf("queryDevices", corosTextResult("not an array")); ok {
+		t.Fatal("prose without (N) or labelId must not yield a count")
+	}
 	if _, ok := corosMcpCountOf("queryDevices", (*mcpToolCallResult)(nil)); ok {
 		t.Fatal("nil result 不應給出 count")
 	}

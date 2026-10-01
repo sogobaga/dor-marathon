@@ -185,7 +185,8 @@ func newFakeCorosMCPServer(t *testing.T, opts ...fakeCorosOpts) *fakeCoros {
 		var body struct {
 			Method string `json:"method"`
 			Params struct {
-				Name string `json:"name"`
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
 			} `json:"params"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -201,20 +202,36 @@ func newFakeCorosMCPServer(t *testing.T, opts ...fakeCorosOpts) *fakeCoros {
 				{"name":"queryActivityLapData","inputSchema":{}}
 			]}}`))
 		case "tools/call":
+			// 照正式站實際行為（2026-10-01）：參數不合規格時 isError=false＋固定的 anomaly 文字；正常回應是
+			// 「JSON 字串字面值」包著人看的文字（外層多一層引號）。
+			const anomaly = "Tool call anomalies detected. High risk of session context pollution or request exceeds the LLM capability boundary."
+			args := body.Params.Arguments
 			var text string
 			switch body.Params.Name {
 			case "queryDevices":
-				text = `[{"deviceId":"d1","name":"COROS PACE 4"}]`
+				text = "Bound Devices (1)\n========================\n\n1. COROS PACE 4\n   Model Name: COROS R4"
 			case "querySportRecords":
-				text = `[{"id":"act-123","startTime":1234567890}]`
-			case "getActivityDetail":
-				text = `{"id":"act-123","distance":5000,"duration":1800}`
-			case "queryActivityLapData":
-				text = `[{"lap":1,"distance":1000}]`
+				sd, _ := args["startDate"].(string)
+				_, hasLoc := args["locationKeyword"]
+				if len(sd) != 8 || strings.Contains(sd, "-") || !hasLoc {
+					text = anomaly // 日期非 yyyyMMdd 或缺 required 欄位
+				} else {
+					text = "Workout Records (2)\n\n1. 2026-09-30 Outdoor Run\n   Distance: 10.02 km\n   labelId: 4761111\n   sportType: 100\n\n2. 2026-09-29 Walk\n   labelId: 4762222\n   sportType: 900"
+				}
+			case "getActivityDetail", "queryActivityLapData":
+				st, isNum := args["sportType"].(float64)
+				if args["labelId"] != "4761111" || !isNum || st != 100 {
+					text = anomaly
+				} else if body.Params.Name == "getActivityDetail" {
+					text = "Activity Detail\nDistance: 10.02 km\nDuration: 00:52:10"
+				} else {
+					text = "Laps (2)\n1. 1.00 km 5:10\n2. 1.00 km 5:05"
+				}
 			default:
-				text = `[]`
+				text = anomaly
 			}
-			resp := fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"result":{"isError":false,"content":[{"type":"text","text":%q}]}}`, text)
+			quoted, _ := json.Marshal(text)
+			resp := fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"result":{"isError":false,"content":[{"type":"text","text":%q}]}}`, string(quoted))
 			_, _ = w.Write([]byte(resp))
 		default:
 			w.WriteHeader(http.StatusBadRequest)
@@ -385,9 +402,13 @@ func TestIntegration_FullFlow(t *testing.T) {
 		if len(probeSteps) != 5 {
 			t.Fatalf("expected 5 steps (tools/list + 4 tools), got %d: %+v", len(probeSteps), probeSteps)
 		}
+		wantCount := map[string]int{"queryDevices": 1, "querySportRecords": 2}
 		for _, s := range probeSteps {
 			if !s.OK {
 				t.Fatalf("expected step %s to succeed, got %+v", s.Step, s)
+			}
+			if want, ok := wantCount[s.Step]; ok && (s.Count == nil || *s.Count != want) {
+				t.Fatalf("step %s count = %v, want %d", s.Step, s.Count, want)
 			}
 		}
 	}

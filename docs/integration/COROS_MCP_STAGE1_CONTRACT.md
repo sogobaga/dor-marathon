@@ -92,3 +92,14 @@ MCP 工具的參數與回傳欄位（運動類型代碼、距離／時間欄位�
   那筆錯誤列出發」與「不發 refresh token」兩支資料庫整合測試；整合測試首次在 Neon 暫時分支實跑 4/4 通過（分支已刪除）。
   本機注意：這台開發機的執行沙盒會改寫 127.0.0.1 的 HTTP 回應（伺服器寫 Content-Length，客戶端收到變 chunked 且未分段 →
   讀 body 逾時），整合測試的假 COROS 改走 in-process transport（scratchpad keepalive_repro 以伺服器端 tee 對照證實）。
+
+## 第一次讀取測試結果與修正（v870，2026-10-01）
+- 結果：連線成功（mcpus，access token 約 30 天）；tools/list 34 個工具 ✓；queryDevices ✓（人看的文字，含「COROS PACE 4」→
+  型號標示來源）；querySportRecords 顯示 ✓ 但**實際被拒**：COROS 對不合規格的呼叫回 isError=false＋固定文字
+  「Tool call anomalies detected…」；getActivityDetail／queryActivityLapData 因找不到活動 id 未執行。
+- 實測規格：tools/call 的 content[0].text 是「JSON 字串字面值」（外層多一層引號）；querySportRecords 的 required 列全部 10 個
+  欄位（選填不用給 null）、日期 **yyyyMMdd**；活動識別＝**labelId（字串）＋sportType（整數）**；DOR 用的運動代碼
+  100/101/102/103（跑）、104（健行）、900（走路）。
+- 修正：照 schema 組參數（日期 yyyyMMdd、10 欄位、選填 null、sportTypeCodes＝DOR 代碼、limit 10）；解開外層引號；
+  anomaly 文字判失敗（不再誤顯示 ✓）；從 JSON 或文字擷取第一筆 labelId＋sportType（JSON 用 UseNumber 保留長數字，避免
+  float64 四捨五入成錯的 id）；筆數支援文字格式（「Bound Devices (1)」、labelId 出現次數）。

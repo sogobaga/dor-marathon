@@ -35,6 +35,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1014,29 +1015,32 @@ func (h *CorosMcpHandler) Probe(w http.ResponseWriter, r *http.Request) {
 
 	// Step 2-5：queryDevices / querySportRecords / getActivityDetail / queryActivityLapData，
 	// 依契約固定順序，前一步失敗不中止後面——每步獨立回報成功/失敗，供使用者看出「連得上多少」。
-	var sportRecordsRaw []byte
+	var sportRecordsText string
 	toolSchemas := corosMcpToolSchemaIndex(tools)
 	for _, tool := range corosMcpProbeTools {
-		var args map[string]any
+		args := map[string]any{} // 無參數工具也送 {}（不送 null）
 		switch tool {
 		case "querySportRecords":
 			args = corosMcpSportRecordsArgs(toolSchemas["querySportRecords"], time.Now())
 		case "getActivityDetail", "queryActivityLapData":
-			id := corosMcpExtractFirstActivityID(sportRecordsRaw)
-			if id == "" {
+			labelID, sportType, ok := corosMcpExtractFirstActivity(sportRecordsText)
+			if !ok {
 				steps = append(steps, corosMcpStepSummary{Step: tool, OK: false, Error: "no activity id from querySportRecords"})
 				_ = h.logProbe(r.Context(), userID, tool, nil, map[string]any{"summary": steps[len(steps)-1]}, "error", probeAt)
 				continue
 			}
-			args = map[string]any{"activityId": id}
+			// 2026-10-01 tools/list 實測：兩個工具都 required ["labelId","sportType"]（labelId 字串、sportType 整數）
+			args = map[string]any{"labelId": labelID, "sportType": sportType}
 		}
 		result, callErr := h.toolsCall(r.Context(), conn, tool, args)
-		var raw []byte
-		if result != nil && len(result.Content) > 0 {
-			raw = []byte(result.Content[0].Text)
+		text := corosMcpResultText(result)
+		if callErr == nil && corosMcpIsAnomaly(text) {
+			// COROS 對不合規格的呼叫回 isError=false＋一段「Tool call anomalies detected…」文字（給 AI 助理看的），
+			// v869 第一次讀取測試把它誤判成 ✓。改判失敗，前台才看得出參數有問題。
+			callErr = errors.New("COROS 拒絕這次呼叫（參數格式不符規格）")
 		}
-		if tool == "querySportRecords" {
-			sportRecordsRaw = raw
+		if tool == "querySportRecords" && callErr == nil {
+			sportRecordsText = text
 		}
 		summary := h.recordStep(r.Context(), userID, tool, args, result, callErr, probeAt)
 		steps = append(steps, summary)
@@ -1068,8 +1072,43 @@ func (h *CorosMcpHandler) recordStep(ctx context.Context, userID, tool string, r
 	return summary
 }
 
-// corosMcpCountOf 嘗試從回應推出筆數摘要：tools/list 用自己的 slice 長度；tools/call 的結果嘗試把
-// content[0].text 當 JSON array 解析，解不出就不給 count（count=null，前端只顯示成功/失敗）。
+// corosMcpUnwrapText：COROS 的 tools/call 結果 content[0].text 本身常是「JSON 字串字面值」（外層多一層引號，
+// 2026-10-01 實測 queryDevices／querySportRecords 皆是）。能解成字串就回內文，否則原樣回傳。
+func corosMcpUnwrapText(text string) string {
+	t := strings.TrimSpace(text)
+	if strings.HasPrefix(t, `"`) {
+		var s string
+		if json.Unmarshal([]byte(t), &s) == nil {
+			return s
+		}
+	}
+	return text
+}
+
+// corosMcpResultText：取 tools/call 結果第一段文字並解開外層引號；nil／無內容回空字串。
+func corosMcpResultText(r *mcpToolCallResult) string {
+	if r == nil || len(r.Content) == 0 {
+		return ""
+	}
+	return corosMcpUnwrapText(r.Content[0].Text)
+}
+
+// corosMcpIsAnomaly：COROS 對不合規格的呼叫不回 isError，而是回一段給 AI 助理看的固定文字
+// （"Tool call anomalies detected. High risk of session context pollution…"，2026-10-01 實測）。
+func corosMcpIsAnomaly(text string) bool {
+	return strings.Contains(strings.ToLower(text), "tool call anomalies detected")
+}
+
+var (
+	corosMcpLabelIDRe   = regexp.MustCompile(`(?i)label\s*_?id["']?\s*[:：=]\s*["']?([0-9A-Za-z_-]{4,})`)
+	corosMcpSportTypeRe = regexp.MustCompile(`(?i)sport\s*_?type["']?\s*[:：=]\s*["']?(\d{1,6})`)
+	corosMcpHeaderNRe   = regexp.MustCompile(`\((\d{1,4})\)`)
+	// 活動清單分段：空行，或換行後的「1. 」「2) 」編號
+	corosMcpBlockSplitRe = regexp.MustCompile(`\n\s*\n|\n\s*\d{1,3}[.)]\s`)
+)
+
+// corosMcpCountOf 嘗試從回應推出筆數摘要：tools/list 用自己的 slice 長度；tools/call 依序嘗試
+// JSON array 長度 → 文字裡 labelId 出現次數（活動清單）→ 第一行「標題 (N)」（例：Bound Devices (1)）。
 func corosMcpCountOf(tool string, result any) (int, bool) {
 	if tool == "tools/list" {
 		if tools, ok := result.([]mcpTool); ok {
@@ -1081,9 +1120,21 @@ func corosMcpCountOf(tool string, result any) (int, bool) {
 	if !ok || r == nil || len(r.Content) == 0 {
 		return 0, false
 	}
+	text := corosMcpResultText(r)
+	if corosMcpIsAnomaly(text) {
+		return 0, false
+	}
 	var arr []json.RawMessage
-	if err := json.Unmarshal([]byte(r.Content[0].Text), &arr); err == nil {
+	if err := json.Unmarshal([]byte(text), &arr); err == nil {
 		return len(arr), true
+	}
+	if n := len(corosMcpLabelIDRe.FindAllString(text, -1)); n > 0 {
+		return n, true
+	}
+	firstLine := strings.SplitN(strings.TrimSpace(text), "\n", 2)[0]
+	if m := corosMcpHeaderNRe.FindStringSubmatch(firstLine); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n, true
 	}
 	return 0, false
 }
@@ -1098,80 +1149,122 @@ func corosMcpToolSchemaIndex(tools []mcpTool) map[string]map[string]any {
 	return idx
 }
 
-// corosMcpSportRecordsArgs 純函式：querySportRecords 的真實欄位名未公開（見契約／研究文件 §5 UNKNOWN），
-// 依 tools/list 回傳的 inputSchema 嘗試常見日期欄位命名猜測，猜不到就只回空 map（契約第 8 點：
-// 「帶不出就只帶日期」的退路其實是「帶不出就不帶」，COROS 端若有必要參數會在 isError/錯誤訊息反映，
-// 這批探索性呼叫的目的本就是取得真實錯誤/格式供第二階段設計用）。
+// corosMcpDORSportTypes：DOR 計入的 COROS 運動代碼（querySportRecords 說明的 dubbo 清單，2026-10-01 實測）：
+// 100 戶外跑、101 室內跑、102 越野跑、103 田徑場跑、104 健行、900 走路——與 Terra／Strava 收「跑步全類＋走路／健行」一致。
+var corosMcpDORSportTypes = []int{100, 101, 102, 103, 104, 900}
+
+// corosMcpSportRecordsArgs 純函式：照 tools/list 的真實 schema 組 querySportRecords 參數（2026-10-01 實測）。
+// schema 的 required 列了全部 10 個欄位（OpenAI strict 模式慣例：選填欄位也要出現、不用就給 null）；日期必須
+// yyyyMMdd（v869 送 2006-01-02 格式＋只帶日期，被 COROS 以「Tool call anomalies detected」拒絕）。
+// schema 拿不到時退回這份已知欄位清單。
 func corosMcpSportRecordsArgs(schema map[string]any, now time.Time) map[string]any {
-	args := map[string]any{}
-	if schema == nil {
-		return args
-	}
-	props, _ := schema["properties"].(map[string]any)
-	if props == nil {
-		return args
-	}
-	startDate := now.AddDate(0, 0, -14).Format("2006-01-02")
-	endDate := now.Format("2006-01-02")
-	candidates := [][2]string{
-		{"startDate", "endDate"},
-		{"startTime", "endTime"},
-		{"beginDate", "endDate"},
-		{"start", "end"},
-	}
-	for _, c := range candidates {
-		if _, ok := props[c[0]]; ok {
-			args[c[0]] = startDate
-			if _, ok2 := props[c[1]]; ok2 {
-				args[c[1]] = endDate
+	keys := []string{"startDate", "endDate", "sportTypeCodes", "minDistanceKm", "maxDistanceKm",
+		"minDurationMinutes", "maxDurationMinutes", "maxAveragePace", "locationKeyword", "limit"}
+	if schema != nil {
+		if req, ok := schema["required"].([]any); ok && len(req) > 0 {
+			keys = keys[:0]
+			for _, k := range req {
+				if s, ok := k.(string); ok {
+					keys = append(keys, s)
+				}
 			}
-			break
 		}
 	}
+	args := map[string]any{}
+	for _, k := range keys {
+		args[k] = nil // 選填篩選：不用就明確給 null
+	}
+	set := func(k string, v any) {
+		if _, ok := args[k]; ok || schema == nil {
+			args[k] = v
+		} else if props, _ := schema["properties"].(map[string]any); props != nil {
+			if _, ok := props[k]; ok {
+				args[k] = v
+			}
+		}
+	}
+	set("startDate", now.AddDate(0, 0, -14).Format("20060102"))
+	set("endDate", now.Format("20060102"))
+	set("sportTypeCodes", corosMcpDORSportTypes)
+	set("limit", 10)
 	return args
 }
 
-// corosMcpExtractFirstActivityID 純函式：querySportRecords 回應形狀未公開，依常見 id 欄位名
-// 優先序嘗試從「JSON array of objects」或「{"records":[...]}/{"data":[...]}」兩種常見外殼中
-// 取出第一筆的 id，取不到回空字串（呼叫端據此略過 getActivityDetail/queryActivityLapData 兩步，
-// 回報「找不到活動 id」而不是硬猜一個值出來呼叫）。
-func corosMcpExtractFirstActivityID(raw []byte) string {
-	if len(raw) == 0 {
-		return ""
+// corosMcpExtractFirstActivity 純函式：從 querySportRecords 回應取第一筆活動的 labelId＋sportType
+// （getActivityDetail／queryActivityLapData 都 required 這兩個）。COROS 說明「Returns … labelId, sportType」
+// 但回應可能是 JSON 也可能是人看的文字（queryDevices 就是文字），兩種都試：
+//  1. JSON：遞迴找第一個同時有 labelId 與 sportType 的物件；
+//  2. 文字：逐段（空行或編號分段）找同一段內的 labelId 與 sportType；都找不到就取全文第一個 labelId＋第一個 sportType。
+func corosMcpExtractFirstActivity(text string) (labelID string, sportType int, ok bool) {
+	text = corosMcpUnwrapText(text)
+	if strings.TrimSpace(text) == "" || corosMcpIsAnomaly(text) {
+		return "", 0, false
 	}
-	var items []map[string]any
-	if err := json.Unmarshal(raw, &items); err != nil {
-		var wrapper map[string]any
-		if err2 := json.Unmarshal(raw, &wrapper); err2 != nil {
-			return ""
-		}
-		for _, key := range []string{"records", "data", "list", "items", "sportRecords"} {
-			if arr, ok := wrapper[key].([]any); ok {
-				for _, it := range arr {
-					if m, ok := it.(map[string]any); ok {
-						items = append(items, m)
-					}
-				}
-				break
-			}
+	// UseNumber：labelId 若是超過 2^53 的長數字，用 float64 解會被四捨五入成錯的 id
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	var v any
+	if dec.Decode(&v) == nil {
+		if id, st, found := corosMcpFindActivityInJSON(v); found {
+			return id, st, true
 		}
 	}
-	if len(items) == 0 {
-		return ""
+	blocks := corosMcpBlockSplitRe.Split(text, -1)
+	for _, b := range blocks {
+		m1 := corosMcpLabelIDRe.FindStringSubmatch(b)
+		m2 := corosMcpSportTypeRe.FindStringSubmatch(b)
+		if m1 != nil && m2 != nil {
+			n, _ := strconv.Atoi(m2[1])
+			return m1[1], n, true
+		}
 	}
-	for _, key := range []string{"id", "activityId", "labelId", "recordId", "sportId"} {
-		if v, ok := items[0][key]; ok {
-			switch vv := v.(type) {
+	m1 := corosMcpLabelIDRe.FindStringSubmatch(text)
+	m2 := corosMcpSportTypeRe.FindStringSubmatch(text)
+	if m1 != nil && m2 != nil {
+		n, _ := strconv.Atoi(m2[1])
+		return m1[1], n, true
+	}
+	return "", 0, false
+}
+
+func corosMcpFindActivityInJSON(v any) (string, int, bool) {
+	switch x := v.(type) {
+	case map[string]any:
+		idv, okID := x["labelId"]
+		stv, okST := x["sportType"]
+		if okID && okST {
+			var id string
+			switch t := idv.(type) {
 			case string:
-				if vv != "" {
-					return vv
-				}
-			case float64:
-				return strconv.FormatInt(int64(vv), 10)
+				id = t
+			case json.Number:
+				id = t.String() // 原樣保留全部位數
+			}
+			var st int64
+			var stErr error = errors.New("not a number")
+			switch t := stv.(type) {
+			case json.Number:
+				st, stErr = t.Int64()
+			case string:
+				st, stErr = strconv.ParseInt(t, 10, 64)
+			}
+			if id != "" && stErr == nil {
+				return id, int(st), true
+			}
+		}
+		for _, child := range x {
+			if id, st, ok := corosMcpFindActivityInJSON(child); ok {
+				return id, st, true
+			}
+		}
+	case []any:
+		for _, child := range x {
+			if id, st, ok := corosMcpFindActivityInJSON(child); ok {
+				return id, st, true
 			}
 		}
 	}
-	return ""
+	return "", 0, false
 }
 
 // POST /disconnect
