@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { profileApi, paymentsApi, integrationsApi, followApi, settingsApi, activitiesApi, referralApi, gpsCalibApi, sourceLabel, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type TerraStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo, type VipCardInfo, type GpsCalibInfo, type DataSource } from '@/lib/api'
+import { profileApi, paymentsApi, integrationsApi, corosMcpApi, followApi, settingsApi, activitiesApi, referralApi, gpsCalibApi, sourceLabel, type Profile, type MyRegistration, type MyOrder, type StravaStatus, type TerraStatus, type SyncedActivity, type FollowRow, type SiteSettings, type ReferralInfo, type VipCardInfo, type GpsCalibInfo, type DataSource, type CorosMcpStatus } from '@/lib/api'
 import { getUserToken, withUserAuth, SessionExpiredError } from '@/lib/userAuth'
 import { readPendingGps, clearPendingGps, type PendingGpsRun } from '@/lib/pendingGps'
 import { readActiveRun, type ActiveRunState } from '@/lib/activeRun'
@@ -216,6 +216,12 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [terraMsg, setTerraMsg] = useState('')
   const [dataSrcMsg, setDataSrcMsg] = useState('') // 里程優先來源設定錯誤訊息（如選到尚未連接的來源）
   const terraPollTimers = useRef<ReturnType<typeof setTimeout>[]>([]) // auth webhook 可能晚到，導回後輪詢用；卸載時清空
+  // COROS MCP 直連（測試版，Stage 1；見契約 docs/integration/COROS_MCP_STAGE1_CONTRACT.md）：僅
+  // dash.coros_mcp_entry==='shown' 時才載入／顯示，其他人零請求。
+  const [corosMcp, setCorosMcp] = useState<CorosMcpStatus | null>(null)
+  const [corosMcpConsent, setCorosMcpConsent] = useState(false)
+  const [corosMcpBusy, setCorosMcpBusy] = useState(false)
+  const [corosMcpMsg, setCorosMcpMsg] = useState('')
   const [activities, setActivities] = useState<SyncedActivity[] | null>(null)
   const [syncing, setSyncing] = useState(false)
   // GPS 距離校正（見 internal/gpscalib，2026-08-30）：入口白名單 shown 才抓；locked 只顯示鎖定卡片、不打 API。
@@ -499,6 +505,20 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         sp.delete('terra'); sp.delete('provider'); sp.delete('reason')
         touched = true
       }
+      // COROS MCP 直連導回（?coros_mcp=connected|error&reason=...，見契約 §5：固定導回首頁，不接受任意
+      // return URL，故一律落在這裡而非 Terra 的「帶回目前頁面」做法）。
+      const cm = sp.get('coros_mcp')
+      if (cm) {
+        const cmReason = sp.get('reason') || ''
+        if (cm === 'connected') {
+          setCorosMcpMsg('✓ 已連接 COROS，可按下方「讀取測試」確認資料讀取是否正常（測試期間不會寫入跑步紀錄）')
+          loadCorosMcp()
+        } else {
+          setCorosMcpMsg(`連接未完成，請再試一次${cmReason ? `（${cmReason}）` : ''}`)
+        }
+        sp.delete('coros_mcp'); sp.delete('reason')
+        touched = true
+      }
       if (touched) {
         const qs = sp.toString()
         window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''))
@@ -628,6 +648,51 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
     } catch (e: any) {
       setTerraMsg(e?.status === 503 ? '裝置連接功能尚未開放，請稍後再試' : (e?.message || '無法連接，請再試一次'))
       setTerraBusy(false)
+    }
+  }
+  // COROS MCP 直連狀態；只在入口=shown 才打（見下方 useEffect），locked/hidden 打了也是 403，不必浪費請求。
+  function loadCorosMcp() {
+    withUserAuth((t) => corosMcpApi.status(t)).then(setCorosMcp).catch(() => {})
+  }
+  useEffect(() => { if (dash?.coros_mcp_entry === 'shown') loadCorosMcp() }, [dash?.coros_mcp_entry])
+  async function connectCorosMcp() {
+    if (!corosMcpConsent) return
+    setCorosMcpBusy(true); setCorosMcpMsg('')
+    try {
+      const { url } = await withUserAuth((t) => corosMcpApi.connect(t))
+      window.location.assign(url) // 導去 COROS 授權；固定導回首頁 /?coros_mcp=connected|error（契約 §5）
+    } catch (e: any) {
+      setCorosMcpMsg(e?.message || '無法連接，請再試一次')
+      setCorosMcpBusy(false)
+    }
+  }
+  async function probeCorosMcp() {
+    setCorosMcpBusy(true); setCorosMcpMsg('')
+    try {
+      const r = await withUserAuth((t) => corosMcpApi.probe(t))
+      setCorosMcp((c) => (c ? { ...c, last_probe: r, last_probe_at: r.at } : c))
+    } catch (e: any) {
+      setCorosMcpMsg(
+        e?.status === 409 ? '尚未連接 COROS，請先按上方「連接 COROS」'
+          : e?.status === 429 ? '讀取測試太頻繁，請稍候一分鐘再試'
+          : e?.message || '讀取測試失敗，請稍後再試'
+      )
+    } finally {
+      setCorosMcpBusy(false)
+    }
+  }
+  async function disconnectCorosMcp() {
+    if (!window.confirm('中斷 COROS 連線？這會撤銷授權，之後要重新連接才能再做讀取測試。')) return
+    setCorosMcpBusy(true); setCorosMcpMsg('')
+    try {
+      await withUserAuth((t) => corosMcpApi.disconnect(t))
+      setCorosMcp({ connected: false, issuer: null, connected_at: null, last_probe_at: null, last_probe: null })
+      setCorosMcpConsent(false)
+      setCorosMcpMsg('已中斷 COROS 連線')
+    } catch (e: any) {
+      setCorosMcpMsg(e?.message || '中斷失敗，請稍後再試')
+    } finally {
+      setCorosMcpBusy(false)
     }
   }
   async function disconnectTerra(provider: string) {
@@ -1072,6 +1137,67 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               </div>
             )}
           </div>
+
+          {/* COROS 直連（測試版，Stage 1；見契約 docs/integration/COROS_MCP_STAGE1_CONTRACT.md）：僅
+              dash.coros_mcp_entry==='shown'（白名單帳號）看得到，其他人完全看不到、零 coros-mcp 請求。
+              第一階段只做「連得上、讀取測試」，不寫入任何活動——文案與下方按鈕都要如實反映這點。 */}
+          {dash?.coros_mcp_entry === 'shown' && (
+            <div style={{ ...recCard, marginTop: 12 }}>
+              <div style={{ fontWeight: 700, color: 'var(--tx)' }}>
+                ⌚ COROS 直連<span style={{ fontSize: 10.5, color: 'var(--gold)', fontWeight: 800, marginLeft: 5 }}>· 測試版</span>
+              </div>
+              {!corosMcp?.connected ? (
+                <>
+                  <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.7 }}>
+                    <b>會讀取哪些資料：</b>你的跑步／走路活動紀錄、分段配速、手錶型號。<br />
+                    <b>用途：</b>計算你自己的賽事里程、挑戰與獎勵（僅供個人數據）。<br />
+                    <b>保存與刪除：</b>中斷連線即刪除授權；<b>測試期間不會寫入跑步紀錄</b>。<br />
+                    可隨時按「中斷連線」撤銷授權。
+                  </div>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 10, fontSize: 11.5, color: 'var(--tx-dim)', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={corosMcpConsent} onChange={(e) => setCorosMcpConsent(e.target.checked)} style={{ marginTop: 2, flexShrink: 0 }} />
+                    我已了解上述說明，同意連接 COROS
+                  </label>
+                  <button onClick={connectCorosMcp} disabled={!corosMcpConsent || corosMcpBusy}
+                    style={{ ...primaryBtn, marginTop: 10, opacity: !corosMcpConsent || corosMcpBusy ? 0.5 : 1, cursor: !corosMcpConsent || corosMcpBusy ? 'default' : 'pointer' }}>
+                    {corosMcpBusy ? '連接中…' : '連接 COROS'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 6, lineHeight: 1.6 }}>
+                    ✓ 已連接{corosMcp.connected_at ? ` · ${fmtDate(corosMcp.connected_at).split(' ')[0]}` : ''}
+                    {corosMcp.issuer ? ` · ${corosMcp.issuer.replace(/^https?:\/\//, '')}` : ''}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                    <button onClick={probeCorosMcp} disabled={corosMcpBusy} style={{ ...ghostBtn, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', whiteSpace: 'nowrap' }}>
+                      {corosMcpBusy ? '測試中…' : '讀取測試'}
+                    </button>
+                    <button onClick={disconnectCorosMcp} disabled={corosMcpBusy} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>中斷連線</button>
+                  </div>
+                  {corosMcp.last_probe && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 10, background: 'var(--bg-2)', borderRadius: 8, padding: '7px 10px' }}>
+                      <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>
+                        讀取測試 · {fmtDate(corosMcp.last_probe.at)}
+                      </div>
+                      {corosMcp.last_probe.steps.map((s) => (
+                        <div key={s.step} style={{ fontSize: 11.5, color: s.ok ? 'var(--tx-dim)' : 'var(--hunt)' }}>
+                          {s.ok ? '✓' : '✗'} {s.step}
+                          {s.count != null ? `（${s.count} 筆）` : ''}
+                          {s.error ? `：${s.error}` : ''}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
+                    測試期間不會寫入跑步紀錄；按「中斷連線」隨時可撤銷授權。
+                  </div>
+                </>
+              )}
+              {corosMcpMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginTop: 8 }}>{corosMcpMsg}</div>}
+              <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 8 }}>Data provided by COROS</div>
+            </div>
+          )}
 
           {/* 里程優先來源（連接 2 個以上來源時可設定；跨來源去重用） */}
           {connectedSources.length >= 2 && (

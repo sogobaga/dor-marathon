@@ -195,6 +195,13 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
       setShowProfile(true)
       setProfileInitialTab('sports')
     }
+    // COROS MCP 直連導回（?coros_mcp=connected|error&reason=...，見契約 COROS_MCP_STAGE1_CONTRACT.md §5：
+    // /callback 固定導回首頁，不接受任意 return URL，所以跟 Terra 一樣一律落在首頁）→ 開個人資訊頁
+    // 「運動數據」分頁顯示結果；參數由 ProfileScreen 讀完自己清。
+    if (params.has('coros_mcp')) {
+      setShowProfile(true)
+      setProfileInitialTab('sports')
+    }
     // 綠界站內付 2.0 綁卡 3D 驗證完成導回（?vip_bind=success|fail，見 BindHandler.redirectBindResult）
     // → 顯示結果彈窗；成功時順便讓全站會員儀表板重抓一次（VIP 徽章/到期日即時更新）。清參數避免重整重播。
     const vipBind = params.get('vip_bind')

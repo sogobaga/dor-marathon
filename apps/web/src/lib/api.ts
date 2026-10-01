@@ -1450,6 +1450,39 @@ export const integrationsApi = {
     }),
 }
 
+// COROS MCP 直連（測試版，Stage 1；見契約 docs/integration/COROS_MCP_STAGE1_CONTRACT.md）：僅白名單帳號
+// （dashboard.coros_mcp_entry==='shown'）看得到卡片、才會打這些 API；只連得上＋讀取測試，不寫入任何活動。
+export interface CorosMcpStep {
+  step: 'tools/list' | 'queryDevices' | 'querySportRecords' | 'getActivityDetail' | 'queryActivityLapData'
+  ok: boolean
+  count: number | null
+  error: string | null
+}
+export interface CorosMcpProbeResult {
+  at: string
+  steps: CorosMcpStep[]
+}
+export interface CorosMcpStatus {
+  connected: boolean
+  issuer: string | null       // 區域主機（authorization server），如 "https://mcp.coros.com"
+  connected_at: string | null
+  last_probe_at: string | null
+  last_probe: CorosMcpProbeResult | null
+}
+
+export const corosMcpApi = {
+  status: (token: string) =>
+    request<CorosMcpStatus>('/integrations/coros-mcp/status', { headers: withAuth(token) }),
+  // 回傳 authorize URL；前端 window.location.assign(url) 導去 COROS 授權（不經過本站 redirect 彈窗）
+  connect: (token: string) =>
+    request<{ url: string }>('/integrations/coros-mcp/connect', { method: 'POST', headers: withAuth(token) }),
+  // 409 { error: 'not_connected' }、429 { error: 'rate_limited', retry_after_s } 由呼叫端依 e.status 判斷
+  probe: (token: string) =>
+    request<CorosMcpProbeResult>('/integrations/coros-mcp/probe', { method: 'POST', headers: withAuth(token) }),
+  disconnect: (token: string) =>
+    request<{ ok: true; revoked: boolean }>('/integrations/coros-mcp/disconnect', { method: 'POST', headers: withAuth(token) }),
+}
+
 export const racesApi = {
   // 公開列表；帶 token 則附 registrations（race_id → 報名狀態）
   list: (token?: string) =>
@@ -1967,6 +2000,9 @@ export interface DashboardInfo {
   // gps_raw_log_whitelist（預設 sogobaga@gmail.com），無 super_admin 旁路。true 才會在 track 頁
   // 收集/上傳原始 onPos 定位點；其餘會員此欄一律 false、零行為改變。
   gps_raw_log: boolean
+  // COROS MCP 直連（測試版，Stage 1；見契約 docs/integration/COROS_MCP_STAGE1_CONTRACT.md）：入口白名單
+  // coros_mcp_whitelist 解析，無 super_admin 旁路。'hidden' 時前端完全不顯示卡片、零 coros-mcp 請求。
+  coros_mcp_entry: 'hidden' | 'shown'
 }
 
 // --- 稱號系統 (PB探索) ---

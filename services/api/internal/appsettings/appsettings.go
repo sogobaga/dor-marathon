@@ -164,6 +164,10 @@ var specs = map[string]func(string) bool{
 	// 獨立於上面的 *_entry_whitelist 家族（那批控制「入口顯不顯示」，這個控制「要不要真的把原始
 	// 定位點寫進 DB」，無 super_admin 旁路，見 internal/gpsrawlog.Allowed 註解）。
 	"gps_raw_log_whitelist": isWhitelist,
+	// COROS MCP 第一階段入口白名單（比照 gps_raw_log_whitelist 格式／無 super_admin 旁路，見
+	// docs/integration/COROS_MCP_STAGE1_CONTRACT.md 契約第 1 點、internal/integration/corosmcp.go）；
+	// 缺鍵預設只有擁有者帳號（migration 196 已插入預設列，這裡的驗證器只負責格式檢查）。
+	"coros_mcp_whitelist": isWhitelist,
 }
 
 func isEntryState(v string) bool {

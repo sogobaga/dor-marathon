@@ -78,6 +78,11 @@ type Config struct {
 	CorosClientID     string
 	CorosClientSecret string
 	CorosRedirectURI  string // 須與 COROS 開發者後台設定的 redirect_uri 相符
+
+	// COROS MCP 第一階段（連接＋讀取測試，見 docs/integration/COROS_MCP_STAGE1_CONTRACT.md）。
+	// 與上面的 Coros* 完全獨立：provider='coros_mcp'，走動態用戶端註冊(DCR)，不需預先申請 client_id。
+	CorosMcpGatewayURL  string // discovery 入口，預設 https://mcp.coros.com，可覆寫供測試/沙盒
+	CorosMcpRedirectURI string // 須與 DCR 註冊時送出的 redirect_uris 一致
 }
 
 func Load() *Config {
@@ -136,6 +141,9 @@ func Load() *Config {
 		CorosClientID:     getEnv("COROS_CLIENT_ID", ""),
 		CorosClientSecret: getEnv("COROS_CLIENT_SECRET", ""),
 		CorosRedirectURI:  getEnv("COROS_REDIRECT_URI", "https://www.dor.tw/api/v1/integrations/coros/callback"),
+
+		CorosMcpGatewayURL:  getEnv("COROS_MCP_GATEWAY_URL", "https://mcp.coros.com"),
+		CorosMcpRedirectURI: getEnv("COROS_MCP_REDIRECT_URI", "https://www.dor.tw/api/v1/integrations/coros-mcp/callback"),
 	}
 }
 

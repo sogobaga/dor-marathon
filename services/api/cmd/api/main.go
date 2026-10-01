@@ -338,6 +338,24 @@ func main() {
 		rdb,
 	)
 
+	// COROS MCP 第一階段（連接＋讀取測試，不寫入活動）：provider='coros_mcp'，與上面 corosHandler
+	// 的 provider='coros' 完全獨立，見 docs/integration/COROS_MCP_STAGE1_CONTRACT.md、
+	// internal/integration/corosmcp.go 檔頭註解。DCR 動態用戶端註冊，不需要預先申請 client_id。
+	corosMcpHandler := integration.NewCorosMcpHandler(
+		integration.NewRepository(pool),
+		integration.CorosMcpConfig{
+			GatewayURL:  cfg.CorosMcpGatewayURL,
+			RedirectURI: cfg.CorosMcpRedirectURI,
+			FrontendURL: cfg.FrontendURL,
+			JWTSecret:   cfg.JWTSecret,
+		},
+		middleware.RequireAuth(authSvc),
+		rdb,
+	)
+	// 讀取測試紀錄保存期限：併入既有每日報告清理排程，不新增排程（契約第 8 點，見
+	// ops.ProbeLogPurger／internal/integration CorosMcpHandler.PurgeExpired 註解）。
+	opsHandler.SetCorosMcpProbePurger(corosMcpHandler)
+
 	// SMTP Email（推播擴充的 email 頻道用）：未設 SMTP_HOST/SMTP_FROM 時 enabled=false，發送 no-op。
 	smtpPort, _ := strconv.Atoi(os.Getenv("SMTP_PORT"))
 	mailerInst := mailer.NewMailer(mailer.Config{
@@ -502,6 +520,7 @@ func main() {
 		r.Mount("/integrations/strava", stravaHandler.Router())
 		r.Mount("/integrations/terra", terraHandler.Router())
 		r.Mount("/integrations/coros", corosHandler.Router())
+		r.Mount("/integrations/coros-mcp", corosMcpHandler.Router())
 
 		// 綠界付款結果通知（公開，server 對 server，自帶 CheckMacValue 驗章）
 		r.Post("/payments/ecpay/notify", paymentHandler.Notify)

@@ -127,6 +127,10 @@ type dailyReportData struct {
 	// RawLogPurged：GPS 原始定位點記錄（見 internal/gpsrawlog，契約 B）保存期限排程當天清除的筆數；
 	// 0 時 assembleDailyReportMessage 整行不顯示（見契約 B「保存期限」段：「有刪才顯示」）。
 	RawLogPurged int
+
+	// CorosMcpProbeLogPurged：COROS MCP 讀取測試紀錄（見 internal/integration corosmcp.go、契約第 8
+	// 點）保存期限排程當天清除的筆數；0 時整行不顯示，比照 RawLogPurged 既有慣例。
+	CorosMcpProbeLogPurged int
 }
 
 // inDailyReportWindow 是否落在今天的執行窗口。直接沿用 selfcheck 的 08:00-08:59 判斷（見檔頭註解），
@@ -449,6 +453,17 @@ func (h *Handler) buildDailyReportData(ctx context.Context) (dailyReportData, er
 		d.RawLogPurged = purged
 	}
 
+	// 9) COROS MCP 讀取測試紀錄保存期限（見 internal/integration CorosMcpHandler.PurgeExpired、契約
+	// 第 8 點：「30 天保存期限，併入既有每日報告清理排程，不新增排程」）。h.corosMcpProbePurger 未注入
+	// （如測試、或尚未接上 main.go）時安靜跳過，比照 wearable／gpsrawlog 兩段既有慣例。
+	if h.corosMcpProbePurger != nil {
+		if purged, err := h.corosMcpProbePurger.PurgeExpired(ctx); err != nil {
+			log.Warn().Err(err).Msg("daily report: purge coros mcp probe log retention failed")
+		} else {
+			d.CorosMcpProbeLogPurged = purged
+		}
+	}
+
 	return d, nil
 }
 
@@ -516,7 +531,9 @@ func (h *Handler) buildWearableSilentWarnings(ctx context.Context) []WearableSil
 			) AS last_provider_activity
 		FROM user_integrations ui
 		JOIN users u ON u.id = ui.user_id AND NOT u.is_virtual
-		WHERE ui.created_at < $1
+		WHERE ui.provider <> 'coros_mcp' -- 第一階段刻意不匯入任何活動（見 COROS_MCP_STAGE1_CONTRACT.md），
+		                                  -- a.source 恆不會是 'coros_mcp'，不排除會讓每條連線永遠誤報「靜默中斷」
+		  AND ui.created_at < $1
 		  AND NOT EXISTS (
 			SELECT 1 FROM activities a2
 			WHERE a2.user_id = ui.user_id
@@ -784,6 +801,10 @@ func assembleDailyReportMessage(d dailyReportData, raceKeep int) string {
 	// 每天顯示「清除 0 筆」的雜訊——絕大多數日子（尚未有白名單帳號跑滿 30 天的紀錄）都會是 0。
 	if d.RawLogPurged > 0 {
 		fmt.Fprintf(&b, "GPS 原始定位點保存到期，已清除 %d 筆\n", d.RawLogPurged)
+	}
+	// COROS MCP 讀取測試紀錄保存期限清除筆數：0 時不顯示，比照上面 RawLogPurged 既有慣例。
+	if d.CorosMcpProbeLogPurged > 0 {
+		fmt.Fprintf(&b, "COROS MCP 讀取測試紀錄保存到期，已清除 %d 筆\n", d.CorosMcpProbeLogPurged)
 	}
 	b.WriteString("\n")
 

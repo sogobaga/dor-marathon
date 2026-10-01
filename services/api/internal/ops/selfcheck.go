@@ -121,6 +121,17 @@ type WearableReporter interface {
 	ProviderStatuses(ctx context.Context) ([]WearableProviderStatus, error)
 }
 
+// ProbeLogPurger 每日報告「COROS MCP 讀取測試紀錄保存期限」清理來源（見 internal/integration
+// CorosMcpHandler.PurgeExpiredProbeLogs 實作、docs/integration/COROS_MCP_STAGE1_CONTRACT.md 契約
+// 第 8 點：「30 天保存期限，併入既有每日報告清理排程，不新增排程」）。用小介面而非直接 import
+// internal/integration，理由同 WearableReporter 註解——internal/integration 已經 import
+// internal/ops（TerraHandler 實作 WearableReporter），反過來 import 會形成 import cycle。
+type ProbeLogPurger interface {
+	// PurgeExpired 刪除超過保存期限的讀取測試紀錄，回傳刪除筆數。呼叫方容忍它回傳 error（該次報告
+	// 只記警告、不影響其餘固定段落，比照 gpsrawlog.PurgeExpired 既有慣例）。
+	PurgeExpired(ctx context.Context) (int, error)
+}
+
 // Handler 每日自檢排程 + 手動觸發端點。
 type Handler struct {
 	db *pgxpool.Pool
@@ -137,6 +148,11 @@ type Handler struct {
 	// opsHandler.SetWearableReporter），晚於本 Handler 建構。未設定時每日報告安靜跳過整段
 	// 「穿戴串接」（見 dailyreport.go buildWearableSection）。
 	wearable WearableReporter
+
+	// corosMcpProbePurger 見 ProbeLogPurger 註解。注入自 integration.CorosMcpHandler（見 main.go 的
+	// opsHandler.SetCorosMcpProbePurger），晚於本 Handler 建構。未設定時（如測試、或 COROS MCP
+	// 尚未啟用）每日報告安靜跳過這段清理，比照 wearable／gpsRequeuer 既有慣例。
+	corosMcpProbePurger ProbeLogPurger
 
 	mu          sync.Mutex
 	lastRunDate string // 台灣日期 YYYY-MM-DD：最近一次「已認領要執行」自檢的日期（in-memory 標記，見檔頭）
@@ -165,6 +181,11 @@ func (h *Handler) SetGPSRequeuer(r GPSRequeuer) {
 // SetWearableReporter 見 WearableReporter 欄位註解。
 func (h *Handler) SetWearableReporter(r WearableReporter) {
 	h.wearable = r
+}
+
+// SetCorosMcpProbePurger 見 corosMcpProbePurger 欄位註解。
+func (h *Handler) SetCorosMcpProbePurger(p ProbeLogPurger) {
+	h.corosMcpProbePurger = p
 }
 
 // taiwanNow 目前的台灣時間（UTC+8 固定 offset 手算，禁用 time.LoadLocation("Asia/Taipei")——
