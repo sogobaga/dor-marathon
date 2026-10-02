@@ -39,6 +39,21 @@ if (typeof window !== 'undefined' && !maplibreConfig.WORKER_URL) {
 }
 
 const FALLBACK_TIMEOUT_MS = 8000
+// review round 2 抓到的 MAJOR 缺口（docs/skins/TRACK_HYDRATION_CONTRACT.md 修法 4，與
+// track/scifi/SciFiMap.tsx 同一份分析）：MapLibre 把「已嘗試過、即使失敗」的 tile 也算進
+// loaded()（node_modules/maplibre-gl/src/tile/tile_manager.ts），所以即使初始視野圖塊 100% 失敗，
+// 'load' 仍會 fire，上面 FALLBACK_TIMEOUT_MS 的保護從此失效；加上修法 4 把帶 sourceId/tile 的
+// error 一律吞掉不退回，疊加起來會出現「判定已載入完成但畫面整片空白、之後再也不會退回 Leaflet」的
+// 情況。改成獨立追蹤「持續多久沒有任何一顆圖塊真正成功」，逾時才視同失敗退回（見 onError／onData）。
+const TILE_STALL_TIMEOUT_MS = 20000
+// 底圖向量來源 id（三種風格 style.ts 都叫 'openmaptiles'）：stall 偵測與失敗圖塊重試只看底圖，不讓我們自己
+// 加的 GeoJSON 來源（歷史頁路線／公里標記）發出的成功事件把偵測關掉（2026-10-02 審查 minor 3）。
+const BASE_TILE_SOURCE = 'openmaptiles'
+// 失敗圖塊重試（2026-10-02 審查 minor 4）：MapLibre 不會自動重抓狀態為 errored 的圖塊（tile_manager 的
+// _addTile 直接回傳舊的 errored tile），單一失敗會留下一塊空白直到移出視野。只重抓失敗的那幾顆
+// （map.refreshTiles），依退避間隔最多 3 輪；背景中不重試；網路恢復（online）或回到前景時重新給 3 輪
+// （第二輪審查：斷網超過約一分鐘時，舊版 3 輪早已用完，網路好了也不再重抓）。
+const TILE_RETRY_DELAYS_MS = [8000, 20000, 45000]
 const LAST_POS_KEY = 'dor_cute_last_pos' // 與 track/page.tsx 的 CUTE_LAST_POS_KEY 同一把 key
 const RESUME_FOLLOW_MS = 8000
 // FIX（review 抓到的 major 根因，docs/skins/ORBPOS_CONTRACT.md 驗收項目 4「回到目前位置→zoom=16.5、
@@ -100,6 +115,9 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
   const detachListenersRef = useRef<() => void>(() => {})
   const failedRef = useRef(false)
   const loadedRef = useRef(false)
+  // 契約 TRACK_HYDRATION_CONTRACT.md 修法 4：帶 sourceId/tile 的圖塊／來源錯誤只記錄、不退回
+  // （見下方 onError），同一來源 10 秒內只印一次，避免 console 被洗版（純粹節流輸出，不影響判斷）。
+  const tileErrWarnedRef = useRef<Map<string, number>>(new Map())
   const followingRef = useRef(true)
   const recenterZoomPendingRef = useRef(false) // 見上方 RECENTER_ZOOM 宣告處：recenter() 剛按下、zoom 還沒收斂到 16.5 期間為 true
   const lastPosRef = useRef<{ lat: number; lng: number; t: number } | null>(null)
@@ -290,6 +308,21 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
     if (!isWebglSupported()) { lastFallbackReasonRef.current = 'webgl-unsupported'; onFallbackRef.current('webgl-unsupported'); return }
     let cancelled = false
     let timeoutId: ReturnType<typeof setTimeout> | null = null
+    let tileStallTimer: ReturnType<typeof setTimeout> | null = null // 見上方 TILE_STALL_TIMEOUT_MS 說明
+    // review round 3 修補（finding 1，比照 scifi/SciFiMap.tsx 同一份分析）：這顆計時器要跟
+    // timeoutId/contextLostGraceTimer 一樣受 document.hidden 暫停/恢復管控——tileStallPending 記錄
+    // 「是否仍在等待首次任一圖塊成功」，onVisibilityChange 隱藏時清掉 tileStallTimer 但保留旗標，回到
+    // 前景由 armTileStallTimer() 重新起算一輪；否則背景中到期時 callback 看到 document.hidden 只會
+    // return、不會重新排程，回到前景後就再也沒有任何 fallback／重試機會，地圖永久空白。
+    let tileStallPending = false
+    // review round 3 修補（finding 2）：只在「從未有任何圖塊成功過」時才會被 onError 設成 true；一旦
+    // onData 收到過一次成功的圖塊就永久設 true 且不再清掉，往後任何單一/孤立圖塊失敗都不會再起算這顆
+    // 計時器——避免對已經成功繪製、運作中的地圖，只因之後偶發一顆圖塊逾時就在 20 秒後被整張丟棄。
+    let everTileLoaded = false
+    // 失敗圖塊重試狀態（見 TILE_RETRY_DELAYS_MS）
+    let tileRetryTimer: ReturnType<typeof setTimeout> | null = null
+    let tileRetryRounds = 0
+    const failedTileIds = new Map<string, { x: number; y: number; z: number }>()
     let ro: ResizeObserver | null = null
     let localFailed = false
     let map: MapLibreMap | null = null
@@ -306,6 +339,40 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
     const CONTEXT_LOST_GRACE_MS = 5000 // 回到前景後給 MapLibre 自己 restore 的寬限期（node_modules/maplibre-gl/src/ui/map.ts _contextRestored）
     const MAX_RECREATE_ATTEMPTS = 2 // 寬限期逾時仍未 restore：就地重建 instance 最多幾次，超過才真的退回 Leaflet
     const clearContextLostGraceTimer = () => { if (contextLostGraceTimer) { clearTimeout(contextLostGraceTimer); contextLostGraceTimer = null } }
+    const clearTileStallTimer = () => { if (tileStallTimer) { clearTimeout(tileStallTimer); tileStallTimer = null } }
+    // 與 armLoadTimeout()/armContextLostGrace() 同一套規則：只在頁面可見且仍在等待（tileStallPending）
+    // 時才會（重新）起算，已經在跑就不重複起算；背景/前景切換交給 onVisibilityChange 呼叫，不再是裸 setTimeout。
+    const armTileStallTimer = () => {
+      if (!isCurrent() || !tileStallPending || document.hidden || tileStallTimer) return
+      tileStallTimer = setTimeout(() => {
+        tileStallTimer = null
+        if (!isCurrent() || document.hidden) return
+        tileStallPending = false
+        failInstance('tile-stall-timeout-20s')
+      }, TILE_STALL_TIMEOUT_MS)
+    }
+    const clearTileRetryTimer = () => { if (tileRetryTimer) { clearTimeout(tileRetryTimer); tileRetryTimer = null } }
+    const scheduleTileRetry = () => {
+      if (!isCurrent() || tileRetryTimer || failedTileIds.size === 0 || tileRetryRounds >= TILE_RETRY_DELAYS_MS.length || document.hidden) return
+      tileRetryTimer = setTimeout(() => {
+        tileRetryTimer = null
+        // WebGL context 復原中（style 已被 MapLibre 拆掉）不重試、不扣輪數；復原後 resetTileWatch 會重新偵測
+        if (!isCurrent() || document.hidden || contextLost || failedTileIds.size === 0) return
+        const ids = Array.from(failedTileIds.values())
+        failedTileIds.clear()
+        tileRetryRounds += 1
+        try { map?.refreshTiles(BASE_TILE_SOURCE, ids) } catch { /* ignore */ }
+      }, TILE_RETRY_DELAYS_MS[tileRetryRounds])
+    }
+    // 重置「圖塊全數失敗」偵測與重試（新 instance、WebGL context 復原後都要從頭偵測）
+    const resetTileWatch = () => {
+      everTileLoaded = false
+      tileStallPending = false
+      if (tileStallTimer) { clearTimeout(tileStallTimer); tileStallTimer = null }
+      failedTileIds.clear()
+      clearTileRetryTimer()
+      tileRetryRounds = 0
+    }
 
     const failInstance = (reason: string) => {
       if (localFailed || failedRef.current) return
@@ -316,6 +383,8 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
       // eslint-disable-next-line no-console
       console.warn('[cute-map] fallback', reason)
       clearContextLostGraceTimer()
+      clearTileStallTimer()
+      clearTileRetryTimer()
       if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
       detachListeners()
       try { map?.remove() } catch { /* ignore */ }
@@ -332,6 +401,38 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
     }
     const onError = (e: unknown) => {
       if (!isCurrent()) return
+      // 契約 TRACK_HYDRATION_CONTRACT.md 修法 4（與 scifi/SciFiMap.tsx 同一份分析）：帶 sourceId
+      // 或 tile 的 'error' 是來源/圖塊層級失敗（單一圖塊逾時/404），只記錄、絕不退回 Leaflet——
+      // 行動網路偶爾一顆圖塊失敗很正常，地圖本身沒事。真正的樣式載入失敗與下面既有的
+      // context-lost/逾時邏輯不變。
+      const ee = e as { sourceId?: string; tile?: unknown }
+      if (ee && (ee.sourceId != null || ee.tile != null)) {
+        const key = ee.sourceId != null ? String(ee.sourceId) : 'tile'
+        const now = Date.now()
+        const last = tileErrWarnedRef.current.get(key) || 0
+        if (now - last > 10000) {
+          tileErrWarnedRef.current.set(key, now)
+          // eslint-disable-next-line no-console
+          console.warn('[cute-map] tile/source error (ignored, no fallback)', key, e)
+        }
+        // review round 3 修補（finding 2）：一旦有任何圖塊成功過（everTileLoaded）就永久不再起算——
+        // 這個計時器只用來偵測「初次連一顆圖塊都沒成功過」的持續空白，不是用來監控已經在跑的地圖。
+        // 審查 major 2（2026-10-02）：'error' 不會排程重繪；若最後一顆收尾的圖塊剛好失敗，'load'（只在 _render
+        // 內發出）永遠不會觸發，load timeout 會把其他圖塊都正常的地圖整張丟掉。主動要一次重繪。
+        try { map?.triggerRepaint() } catch { /* ignore */ }
+        if (ee.sourceId == null || ee.sourceId === BASE_TILE_SOURCE) {
+          const c = (ee.tile as { tileID?: { canonical?: { x: number; y: number; z: number } } } | null | undefined)?.tileID?.canonical
+          if (c) {
+            failedTileIds.set(`${c.z}/${c.x}/${c.y}`, { x: c.x, y: c.y, z: c.z })
+            scheduleTileRetry()
+          }
+          if (!everTileLoaded) {
+            tileStallPending = true
+            armTileStallTimer()
+          }
+        }
+        return
+      }
       // review 抓到的 minor 根因（與 scifi/SciFiMap.tsx 同一份分析）：MapLibre `_contextRestored()`
       // 重新 `_setupPainter()`（取得 WebGL context）失敗時不會 fire 'webglcontextrestored'，而是直接 fire
       // 這個 'error' 事件然後 return——此時 contextLost 仍是 true。舊寫法一律 failInstance() 永久退回
@@ -396,6 +497,9 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
     const onContextRestored = () => {
       if (!isCurrent() || !contextLost) return
       contextLost = false
+      // 審查 major 1（2026-10-02）：MapLibre _contextRestored 會重新 setStyle、重抓 TileJSON 與全部圖塊；之前成功過
+      // 不代表這次會成功（例：iPhone 從背景回來網路還沒恢復）。不重置的話全失敗時 stall 永不起算、地圖永久空白。
+      resetTileWatch()
       clearContextLostGraceTimer()
       recreateAttempts = 0
       recoveriesRef.current += 1
@@ -410,8 +514,21 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
     }
     const onData = (e: unknown) => {
       if (!isCurrent()) return
-      const ev = e as { dataType?: string; tile?: unknown }
-      if (ev?.dataType === 'source' && ev.tile) tilesLoadedRef.current += 1
+      const ev = e as { dataType?: string; tile?: unknown; sourceId?: string }
+      if (ev?.dataType === 'source' && ev.tile) {
+        tilesLoadedRef.current += 1
+        // 有圖塊真正成功了：視為從「持續空白」復原，清掉計時器；並永久關閉 stall 偵測（everTileLoaded），
+        // 往後任何孤立的單一圖塊失敗都不會再誤判成持續空白。
+        // 只有底圖圖塊成功才算「地圖有東西」（審查 minor 3：自己加的 GeoJSON 來源也會發 'data'{tile}）
+        if (ev.sourceId == null || ev.sourceId === BASE_TILE_SOURCE) {
+          // 已成功的圖塊移出重試清單（第二輪審查 minor 3：否則之後重試可能把好的圖塊重抓成失敗）
+          const cc = (ev.tile as { tileID?: { canonical?: { x: number; y: number; z: number } } } | null | undefined)?.tileID?.canonical
+          if (cc) failedTileIds.delete(`${cc.z}/${cc.x}/${cc.y}`)
+          everTileLoaded = true
+          tileStallPending = false
+          clearTileStallTimer()
+        }
+      }
     }
     // 原創圖塊懶載入：style.ts 只放圖片 id（'cute-tree'/'cute-wave'），實際 ImageData 由 tiles.ts 的
     // tileImageData() 在第一次被要求時產生（map.addImage）；找不到對應 id 就安靜略過。
@@ -471,12 +588,24 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
       if (document.hidden) {
         if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
         clearContextLostGraceTimer()
+        clearTileStallTimer() // review round 3 修補（finding 1）：背景中不消耗額度，tileStallPending 保留給回前景重新起算
+        clearTileRetryTimer()
         return
       }
       armLoadTimeout()
       armContextLostGrace()
+      armTileStallTimer()
+      tileRetryRounds = 0 // 回到前景：重新給重試輪數
+      scheduleTileRetry()
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
+    // 網路恢復：重新給重試輪數並排程（斷網期間失敗的圖塊不必等使用者移動地圖才補）
+    const onOnline = () => {
+      if (!isCurrent()) return
+      tileRetryRounds = 0
+      scheduleTileRetry()
+    }
+    window.addEventListener('online', onOnline)
 
     function detachListeners() {
       try {
@@ -524,6 +653,10 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
         mapRef.current = map
         loadedRef.current = false // 重建時要等新 instance 自己 load 過（render loop 靠這個旗標暫停到新地圖就緒）
         contextLost = false
+        // 每顆新 instance 都重新偵測「圖塊全數失敗」（審查 round 3 MAJOR）：上一顆曾載入成功（everTileLoaded）
+        // 不代表重建後這顆也會成功（例：WebGL context lost → recreateInstance 時剛好斷網）；不重置的話新 instance
+        // 全部圖塊失敗時 tile-stall 永遠不會起算，地圖就一直空白、不會退回預設地圖。
+        resetTileWatch()
         // 必須在任何圖磚有機會被請求之前（=建構後立刻）就設好，見上方 resolveMissingImage 根因說明——
         // 同步呼叫、JS 單執行緒，這行執行完成前不可能有 tile worker 訊息插進來搶跑。
         map.setMissingStyleImageResolver(resolveMissingImage)
@@ -577,7 +710,10 @@ const CuteMap = forwardRef<CuteMapHandle, CuteMapProps>(function CuteMap(props, 
     return () => {
       cancelled = true
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('online', onOnline)
       if (timeoutId) clearTimeout(timeoutId)
+      if (tileStallTimer) clearTimeout(tileStallTimer)
+      clearTileRetryTimer()
       clearContextLostGraceTimer()
       if (resumeTimerRef.current) { clearTimeout(resumeTimerRef.current); resumeTimerRef.current = null }
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current)

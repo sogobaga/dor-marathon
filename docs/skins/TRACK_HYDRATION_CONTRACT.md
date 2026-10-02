@@ -47,3 +47,15 @@
 - 圖塊錯誤：攔截單一圖塊回 500／逾時 → 三種風格地圖都**不**退回；樣式檔回 500 → 照常退回 Leaflet（data-map-fallback）。
 - 首頁站內切頁與 v866 驗收項目不退步；tsc、next build 通過；0 console error。
 - 另案（不在本次）：WebKit 下復古地圖畫出像素草原約需 4 秒（其餘約 1.2–1.8 秒）、站內切頁進 /track 前 1.6–1.8 秒下載程式。
+
+## 第 4 項最終設計（v872，2026-10-02 接手完成）
+- 帶 sourceId／tile 的 MapLibre error 只記錄、不退回；同時 `map.triggerRepaint()`（'error' 不會排程重繪，若最後一顆圖塊失敗
+  'load' 永不觸發，8–10 秒 load timeout 會把其他圖塊都正常的地圖丟掉——審查 major 2）。
+- 全數失敗偵測（tile-stall 20 秒）：只看底圖來源 `openmaptiles`（歷史頁自己的 GeoJSON 來源也會發 'data'{tile}，會把偵測關掉——
+  minor 3）；任一底圖圖塊成功即解除；背景中暫停、回前景重算；**新 instance（recreateInstance）與 webglcontextrestored 都重置偵測**
+  （MapLibre 復原時會重新 setStyle、重抓 TileJSON 與全部圖塊；不重置的話 iPhone 從背景回來網路未恢復時地圖永久空白——審查 major 1、
+  第三輪審查 MAJOR）。
+- 失敗圖塊重試：MapLibre 不會重抓 errored 圖塊；收集失敗的底圖 tileID，依 8／20／45 秒退避用 `map.refreshTiles('openmaptiles', ids)`
+  只重抓那幾顆，最多 3 輪；網路恢復（online）或回到前景時重新給 3 輪；context 復原中不重試；成功的圖塊移出清單；背景中不重試。
+- 已知不處理：載入完成前單一圖塊「卡住不回應」超過 load timeout 仍會退回（屬既有 v860 規則）；TileJSON 失敗不重試（20 秒後退回）；
+  全 404（TileJSON 版本路徑過期）不會報錯也不會退回（既有）。
