@@ -24,6 +24,7 @@ import (
 
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/gpscalib"
+	"github.com/dor/api/internal/integration/wearablesunset"
 	"github.com/dor/api/internal/ops"
 	"github.com/dor/api/internal/stamina"
 )
@@ -117,6 +118,13 @@ type TerraHandler struct {
 	// lastDataCache：GET /status 與每日報告用的「Terra 最後收到該使用者資料時間」10 分鐘記憶體快取
 	// （見 terraLastDataCache／fetchTerraLastDataAt 註解）。
 	lastDataCache terraLastDataCache
+
+	// sunset：Terra／Strava 串接結束公告的狀態來源（見 wearable_sunset.go）。NewTerraHandler 預設讀 app_settings
+	// （repo 帶資料庫時），單元測試用 SetSunset 注入固定狀態；nil 視為 off。
+	sunset wearablesunset.Source
+	// store：persistTerraConn 寫連線列用的後端；nil＝repo（正式環境）。只有單元測試會注入假的，
+	// 好讓「announce 只更新、off 才 upsert」的分流不必連資料庫就能驗證。
+	store terraConnStore
 }
 
 func NewTerraHandler(repo *Repository, cfg TerraConfig, requireAuth func(http.Handler) http.Handler) *TerraHandler {
@@ -141,7 +149,7 @@ func NewTerraHandler(repo *Repository, cfg TerraConfig, requireAuth func(http.Ha
 	if cfg.RedirectURI == "" {
 		cfg.RedirectURI = terraDefaultRedirectURI
 	}
-	return &TerraHandler{repo: repo, cfg: cfg, requireAuth: requireAuth, hc: &http.Client{Timeout: 15 * time.Second}}
+	return &TerraHandler{repo: repo, cfg: cfg, requireAuth: requireAuth, hc: &http.Client{Timeout: 15 * time.Second}, sunset: defaultSunsetSource(repo)}
 }
 
 // terraEnvBool 解析布林環境變數（1／true／yes／on，大小寫不拘）。
@@ -204,6 +212,11 @@ func (h *TerraHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	if userID == "" {
 		respondErr(w, http.StatusUnauthorized, "login required")
+		return
+	}
+	// 串接結束公告期間（announce）不再開放新的連接，也不准既有使用者重新授權：整個擋下、回 409（wearablesunset.RefusalStatus；不是 5xx，也不會被算成登入失敗），
+	// 而且在 enabled() 之前——日後即使移除 TERRA_* 憑證也仍是 4xx 而不是 503，也不會呼叫 Terra。
+	if refuseNewConnection(w, h.sunsetInfo(r.Context())) {
 		return
 	}
 	if !h.enabled() {
@@ -312,6 +325,8 @@ func (h *TerraHandler) Status(w http.ResponseWriter, r *http.Request) {
 		"enabled":     h.enabled(),
 		"providers":   providers,
 		"connections": out,
+		// sunset：Terra／Strava 串接結束公告狀態（{state,date}），前台據此改顯示公告、隱藏連接鈕，不必另打請求。
+		"sunset": h.sunsetInfo(r.Context()),
 	})
 }
 
@@ -731,6 +746,13 @@ func (h *TerraHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 		return target
 	}
+	// 串接結束公告期間（announce）：這是「新連接／重新授權」的落地頁，一律擋下並導回前台顯示固定訊息（?terra=sunset）。
+	// 放在最前面（enabled() 與 userInfo 反查之前）：不花一趟 Terra 往返，也不依賴憑證是否還在。Terra 端已經建立的
+	// 使用者不清理（這個公開端點在驗證前就 deauth 會被濫用，而且 Terra 方案即將取消）。
+	if h.newConnectionsPaused(r.Context()) {
+		http.Redirect(w, r, redirectFront(wearablesunset.ResultValue, ""), http.StatusFound)
+		return
+	}
 	if !h.enabled() {
 		http.Redirect(w, r, redirectFront("disabled", ""), http.StatusFound)
 		return
@@ -768,7 +790,8 @@ func (h *TerraHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 守衛：目標 (user,provider) 已有 via='direct' 列（如 Garmin 官方直連）時不覆蓋——SaveTerra 會把 token 清空。
-	saved, err := h.repo.SaveTerraUnlessDirect(r.Context(), &Connection{
+	// 落地一律走 persistTerraConn（announce 期間只更新既有列、不新建，見 wearable_sunset.go）。
+	saved, err := h.persistTerraConn(r.Context(), &Connection{
 		UserID: refID, Provider: source, ProviderUserID: terraUserID,
 		Scope: string(verified.Scopes), ExpiresAt: terraFarFutureExpiry(),
 	})
@@ -778,6 +801,11 @@ func (h *TerraHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !saved {
+		if h.newConnectionsPaused(r.Context()) {
+			// 上面開頭的檢查通過後、落地前剛好切到 announce：照樣導回公告訊息，而不是誤報「已有直連」。
+			http.Redirect(w, r, redirectFront(wearablesunset.ResultValue, ""), http.StatusFound)
+			return
+		}
 		log.Info().Str("provider", source).Str("user", prefix8(refID)).Msg("terra callback: direct connection exists, terra link not saved")
 		http.Redirect(w, r, redirectFront("failed", "already_direct"), http.StatusFound)
 		return
@@ -1145,6 +1173,7 @@ func (h *TerraHandler) processWebhook(body []byte) {
 }
 
 // handleAuthEvent auth 事件：Terra 端授權成功，落地（或覆蓋）一條連線。
+// 串接結束公告（announce）期間不落地（見函式內說明與 wearable_sunset.go）。
 func (h *TerraHandler) handleAuthEvent(ctx context.Context, body []byte) {
 	var p terraUserEventPayload
 	if err := json.Unmarshal(body, &p); err != nil {
@@ -1165,11 +1194,22 @@ func (h *TerraHandler) handleAuthEvent(ctx context.Context, body []byte) {
 		log.Info().Str("provider", source).Msg("terra webhook: auth event ignored (TERRA_IGNORE_GARMIN)")
 		return
 	}
+	// 串接結束公告期間（announce）：auth 事件＝使用者在 Terra 完成了一次「連接／重新授權」，一律不落地、只記一行 Info
+	// （webhook 已先 ack，不會被 Terra 重送）。連既有列都不改寫——擁有者規定既有使用者也不能重新授權；
+	// 這次授權若讓 Terra 換了新的 user id，既有連線由 user_reauth／activity 保底自癒（兩條都只更新既有列）。
+	// 放在 UserExists 之前：被擋下的事件不碰資料庫。
+	if h.newConnectionsPaused(ctx) {
+		log.Info().Str("provider", source).Str("user", prefix8(refID)).
+			Msg("terra webhook: auth event not landed (wearable sunset announce: no new connections or re-authorizations)")
+		return
+	}
 	if ok, err := h.repo.UserExists(ctx, refID); err != nil || !ok {
 		log.Warn().Msg("terra webhook: auth event reference_id is not a known user")
 		return
 	}
-	saved, err := h.repo.SaveTerraUnlessDirect(ctx, &Connection{
+	// 落地一律走 persistTerraConn（上面已排除 announce；這裡仍受它管轄是為了「開頭檢查通過、落地前剛好切到 announce」
+	// 的極小競態：此時只更新既有列、不新建，沒有既有列就略過）。
+	saved, err := h.persistTerraConn(ctx, &Connection{
 		UserID: refID, Provider: source, ProviderUserID: terraUserID,
 		Scope: string(p.User.Scopes), ExpiresAt: terraFarFutureExpiry(),
 	})
@@ -1178,7 +1218,7 @@ func (h *TerraHandler) handleAuthEvent(ctx context.Context, body []byte) {
 		return
 	}
 	if !saved {
-		log.Info().Str("provider", source).Str("user", prefix8(refID)).Msg("terra webhook: auth event skipped, direct connection exists")
+		log.Info().Str("provider", source).Str("user", prefix8(refID)).Msg("terra webhook: auth event not saved (direct connection exists, or new connections are paused)")
 	}
 }
 
@@ -1206,7 +1246,9 @@ func (h *TerraHandler) handleReauthEvent(ctx context.Context, body []byte) {
 		return
 	}
 	// 查詢與寫入之間若剛好被直連覆蓋，守衛版的 SaveTerra 會擋下（不毀掉直連列）。
-	saved, err := h.repo.SaveTerraUnlessDirect(ctx, &Connection{
+	// 走 persistTerraConn：announce 期間只更新既有列——這條路徑本來就只處理既有連線（上面已確認舊 Terra id 對得到列），
+	// 改走更新專用 SQL 後，連「查詢與寫入之間列剛好被使用者斷開」這種極小競態也不可能因此新建連線。
+	saved, err := h.persistTerraConn(ctx, &Connection{
 		UserID: conn.UserID, Provider: source, ProviderUserID: newTerraID,
 		Scope: string(p.NewUser.Scopes), ExpiresAt: terraFarFutureExpiry(),
 	})
@@ -1215,7 +1257,7 @@ func (h *TerraHandler) handleReauthEvent(ctx context.Context, body []byte) {
 		return
 	}
 	if !saved {
-		log.Info().Str("provider", source).Msg("terra webhook: user_reauth skipped, direct connection exists")
+		log.Info().Str("provider", source).Msg("terra webhook: user_reauth not saved (direct connection exists, or the connection is gone while new connections are paused)")
 	}
 }
 
@@ -1292,7 +1334,9 @@ func (h *TerraHandler) handleActivityEvent(ctx context.Context, body []byte) {
 		}
 		// 守衛：這個使用者同品牌已有直連列（Terra 的 user_id 對不到它的 provider_user_id，所以會走到這個保底分支）
 		// 時絕不覆蓋——否則 Terra 事件會把官方直連連線的 token 清空、via 改回 terra。
-		saved, serr := h.repo.SaveTerraUnlessDirect(ctx, &Connection{
+		// 落地走 persistTerraConn：announce（串接結束公告）期間這個保底只會「自癒」既有列的 Terra user id，
+		// 沒有既有列＝新連接，不建立、整批活動略過（webhook 已先 ack，不會被重送）。
+		saved, serr := h.persistTerraConn(ctx, &Connection{
 			UserID: refID, Provider: source, ProviderUserID: terraUserID,
 			Scope: string(p.User.Scopes), ExpiresAt: terraFarFutureExpiry(),
 		})
@@ -1301,7 +1345,7 @@ func (h *TerraHandler) handleActivityEvent(ctx context.Context, body []byte) {
 			return
 		}
 		if !saved {
-			log.Info().Str("provider", source).Str("user", prefix8(refID)).Msg("terra webhook: activity event skipped, direct connection exists")
+			log.Info().Str("provider", source).Str("user", prefix8(refID)).Msg("terra webhook: activity event skipped (direct connection exists, or new connections are paused)")
 			return
 		}
 		conn, err = h.repo.GetByUser(ctx, refID, source)

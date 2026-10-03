@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dor/api/internal/integration/wearablesunset"
 )
 
 const garminITKey = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" // 合成 32 bytes hex 金鑰
@@ -676,6 +678,9 @@ func TestGarminIT_TerraHandlersNeverOverwriteDirectRow(t *testing.T) {
 		}
 	}
 	h := NewTerraHandler(repo, TerraConfig{DevID: "d", APIKey: "k", SigningSecret: "s", FrontendURL: "https://app.test/"}, nil)
+	// 這個測試驗的是「直連列守衛」，與 Terra／Strava 串接結束公告無關：固定 off，不讀 app_settings。否則另一個套件的整合測試
+	// （appsettings、wearablesunset）暫時把 wearable_sunset_state 寫成 announce 的那一瞬間，下面第 5 步「照常建立 Terra 連線」會失敗。
+	h.SetSunset(wearablesunset.Fixed(wearablesunset.Info{State: wearablesunset.StateOff}))
 	terraUID := "44444444-4444-4444-8444-444444444444"
 
 	// 1) auth 事件（Terra 端授權成功）

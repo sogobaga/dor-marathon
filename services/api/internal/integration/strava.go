@@ -21,6 +21,7 @@ import (
 
 	"github.com/dor/api/internal/auth"
 	"github.com/dor/api/internal/gpscalib"
+	"github.com/dor/api/internal/integration/wearablesunset"
 	"github.com/dor/api/internal/notify"
 	"github.com/dor/api/internal/stamina"
 )
@@ -49,10 +50,14 @@ type StravaHandler struct {
 	requireAuth func(http.Handler) http.Handler
 	hc          *http.Client
 	rdb         *redis.Client // 節流用；nil 時 allowRate 一律放行（fail-open，不因 Redis 未注入而擋正常流量）
+
+	// sunset：Terra／Strava 串接結束公告的狀態來源（見 wearable_sunset.go）。NewStravaHandler 預設讀 app_settings
+	// （repo 帶資料庫時），單元測試用 SetSunset 注入固定狀態；nil 視為 off。
+	sunset wearablesunset.Source
 }
 
 func NewStravaHandler(repo *Repository, cfg StravaConfig, requireAuth func(http.Handler) http.Handler, rdb *redis.Client) *StravaHandler {
-	return &StravaHandler{repo: repo, cfg: cfg, requireAuth: requireAuth, hc: &http.Client{Timeout: 15 * time.Second}, rdb: rdb}
+	return &StravaHandler{repo: repo, cfg: cfg, requireAuth: requireAuth, hc: &http.Client{Timeout: 15 * time.Second}, rdb: rdb, sunset: defaultSunsetSource(repo)}
 }
 
 // allowRate 簡單固定窗口節流（Redis INCR + 首次 SET EXPIRE）。
@@ -100,6 +105,11 @@ func (h *StravaHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusUnauthorized, "login required")
 		return
 	}
+	// 串接結束公告期間（announce）不再開放新的連接，也不准既有使用者重新授權：整個擋下、回 409（wearablesunset.RefusalStatus；不是 5xx，也不會被算成登入失敗）。
+	// 放在 enabled() 之前：即使日後移除 Strava 憑證也仍是 4xx。
+	if refuseNewConnection(w, h.sunsetInfo(r.Context())) {
+		return
+	}
 	if !h.enabled() {
 		respondErr(w, http.StatusServiceUnavailable, "Strava 整合尚未設定")
 		return
@@ -119,7 +129,8 @@ func (h *StravaHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"url": stravaAuthURL + "?" + q.Encode()})
 }
 
-// GET /status → { connected, athlete_name }
+// GET /status → { connected, athlete_name, sunset }
+// sunset＝Terra／Strava 串接結束公告狀態（{state,date}），前台據此改顯示公告、隱藏連接鈕，不必另打請求。
 func (h *StravaHandler) Status(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(auth.CtxKeyUserID).(string)
 	conn, err := h.repo.GetByUser(r.Context(), userID, providerStrava)
@@ -127,11 +138,12 @@ func (h *StravaHandler) Status(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
+	sunset := h.sunsetInfo(r.Context())
 	if conn == nil {
-		respondJSON(w, http.StatusOK, map[string]any{"connected": false, "enabled": h.enabled()})
+		respondJSON(w, http.StatusOK, map[string]any{"connected": false, "enabled": h.enabled(), "sunset": sunset})
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"connected": true, "enabled": h.enabled(), "athlete_name": conn.AthleteName})
+	respondJSON(w, http.StatusOK, map[string]any{"connected": true, "enabled": h.enabled(), "athlete_name": conn.AthleteName, "sunset": sunset})
 }
 
 // POST /sync — 手動匯入近期活動
@@ -223,6 +235,13 @@ func (h *StravaHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	redirectFront := func(status string) {
 		http.Redirect(w, r, appendQuery(ret, "strava", status), http.StatusFound)
 	}
+	// 串接結束公告期間（announce）：這是「新連接／重新授權」的落地頁，一律擋下並導回前台顯示固定訊息（?strava=sunset），
+	// 不換 code、不存任何東西。state 簽章有效 15 分鐘，所以「切換前已經送出授權」的人會在這裡被擋；
+	// 放在 verifyState 之後（state 不合法時 ret 不可信，維持原本的 invalid 導回）、換 token 之前。
+	if h.newConnectionsPaused(r.Context()) {
+		redirectFront(wearablesunset.ResultValue)
+		return
+	}
 	if r.URL.Query().Get("error") != "" {
 		redirectFront("denied")
 		return
@@ -232,6 +251,15 @@ func (h *StravaHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Error().Err(err).Msg("strava token exchange failed")
 		redirectFront("error")
+		return
+	}
+	// 換 token 要往返 Strava（用戶端逾時 15 秒），期間管理者可能剛好把設定切到 announce：落地前再確認一次
+	// （比照 Terra 的 persistTerraConn 在落地時才判斷），不存任何東西、導回公告訊息。
+	// 刻意不呼叫 deauthorize 撤銷剛換到的權杖：撤銷是對整個 athlete 生效——這位使用者若其實已有既有連線（重新授權的人），
+	// 撤銷會把他的既有連線一併弄壞，Strava 還會回送撤權事件、觸發本地刪除連線與已匯入的活動。留下的只是一筆我們不持有
+	// 權杖的授權（極小的競態窗口），使用者可在 Strava 設定頁自行移除。
+	if h.newConnectionsPaused(r.Context()) {
+		redirectFront(wearablesunset.ResultValue)
 		return
 	}
 	conn := &Connection{

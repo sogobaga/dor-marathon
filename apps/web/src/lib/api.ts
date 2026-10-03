@@ -1,5 +1,7 @@
 // API client — 封裝所有對 Go API 的呼叫
 
+import type { SunsetInfo } from './wearableSunset'
+
 const BASE = '/api/v1'
 
 export interface TokenPair {
@@ -1348,6 +1350,8 @@ export interface StravaStatus {
   connected: boolean
   enabled: boolean
   athlete_name?: string
+  // Terra／Strava 串接結束公告狀態（見 lib/wearableSunset.ts）；缺席＝舊後端＝off，前台一律經 normalizeSunset 處理
+  sunset?: SunsetInfo
 }
 
 // Terra（Garmin/COROS/Polar/Suunto/Wahoo 等手錶直連聚合器，Phase 1；見 memory terra-wearable-integration）
@@ -1364,6 +1368,8 @@ export interface TerraStatus {
   enabled: boolean // 後端未設定 Terra 憑證時為 false，卡片維持「即將開放」
   providers: string[] // 目前開放連接的品牌（小寫）
   connections: TerraConnection[] // 使用者已連接的品牌，可有多筆（不同手錶）
+  // Terra／Strava 串接結束公告狀態（見 lib/wearableSunset.ts）；缺席＝舊後端＝off，前台一律經 normalizeSunset 處理
+  sunset?: SunsetInfo
 }
 
 // 手動補匯（見 integrationsApi.terraImport）的回應：webhook 可能不會送 activity 事件，故留一個補救管道

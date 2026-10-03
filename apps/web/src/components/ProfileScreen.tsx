@@ -16,8 +16,13 @@ import ScrollArea from './ScrollArea'
 import { submitEcpayForm } from '@/lib/ecpay'
 import StyleSettingsModal, { SKIN_LABEL } from './StyleSettingsModal'
 import GarminCard from './profile/GarminCard'
+import SunsetBanner from './profile/SunsetBanner'
 import { garminResultNotice, type GarminNotice } from '@/lib/garminApi'
 import { sourceAttribution } from '@/lib/attribution'
+import {
+  normalizeSunset, sunsetCardView, sunsetBannerTitle, sunsetBannerLines, sunsetPausedNotice, sunsetErrorText,
+  sunsetDisconnectNote, sunsetSupportLine, sunsetRowSyncUncertain, sunsetCanNameCoros, SUNSET_RESULT, SUNSET_RESULT_TEXT,
+} from '@/lib/wearableSunset'
 
 const GENDERS = [
   { v: '', t: '未填' },
@@ -58,6 +63,20 @@ function terraBrandName(provider: string): string {
   const key = provider.toLowerCase()
   return TERRA_BRAND_LABEL[key] ?? (key.charAt(0).toUpperCase() + key.slice(1))
 }
+// Terra 導回網址（?terra=…&provider=…&reason=…）的參數任何人都能偽造（把連結傳給已登入的會員；後端 /callback 還會把 Terra 帶來的
+// reason 原樣導回前台），所以畫面上不得出現原始參數：
+//   - reason 只有長得像代碼（與下方 COROS 導回同一個樣式）才顯示，否則省略；
+//   - provider 只透過已知品牌對照表（TERRA_BRAND_LABEL）轉成名稱，未知值一律用通用字樣「裝置」——不能用上面的 terraBrandName：
+//     它對未知值會「首字大寫後原樣顯示」（給後端自己傳來的品牌用），而且 'constructor' 這類原型鏈上的名稱會查到函式。
+// 這幾個東西會被 scripts/verify-wearable-sunset.mjs 從本檔擷取出來實際執行驗證，請保持它們是不依賴其他東西的純函式／常數。
+const TERRA_REDIRECT_REASON_RE = /^[\w:.-]{1,60}$/
+function terraRedirectReason(raw: string): string {
+  return TERRA_REDIRECT_REASON_RE.test(raw) ? raw : ''
+}
+function terraRedirectBrand(raw: string): string {
+  const key = raw.toLowerCase()
+  return Object.prototype.hasOwnProperty.call(TERRA_BRAND_LABEL, key) ? TERRA_BRAND_LABEL[key] : '裝置'
+}
 // terra last_data_at 顯示（2026-09-24）：只需要粗略的「多久前」，分/時/天三級距足夠，不追求精確到秒。
 function terraRelativeAgo(iso: string): string {
   const t = new Date(iso).getTime()
@@ -78,6 +97,9 @@ function terraDataStale(iso?: string): boolean {
   const t = new Date(iso).getTime()
   return !isNaN(t) && Date.now() - t > terraDataStaleAfterMs
 }
+// Terra／Strava 串接結束公告的保守品牌（小寫代碼）：這個品牌經 Terra 的推送自 2026-09-21 起中斷（Terra 端因素、非 DOR 程式問題），
+// 所以公告橫幅對它的連線列不承諾「會照常同步到結束日」，也不引導這些會員改用其他品牌的直連（擁有者規定：未經核准前不引導）。
+const SUNSET_CAUTIOUS_BRANDS: readonly DataSource[] = ['garmin']
 // 「已同步活動」來源徽章＋重複標示共用的來源顯示名稱。null/'manual'/'gps' 都顯示「DOR GPS」（使用者 2026-09-06 定名，原為 App GPS）——
 // activities.source 的 NULL 落在 'manual'（見 repository.go ListActivities 註解），而
 // dup_of_source（保留活動的來源）NULL 落在 'gps'，兩種 fallback 值對使用者來說是同一件事。
@@ -237,6 +259,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [terra, setTerra] = useState<TerraStatus | null>(null)
   const [terraBusy, setTerraBusy] = useState(false)
   const [terraMsg, setTerraMsg] = useState('')
+  // Terra／Strava 串接結束公告（見 lib/wearableSunset.ts）：兩支 /status 都帶 sunset，取先到的；缺席（舊後端）或 off＝完全維持現狀。
+  // 兩張卡的視圖只看「公告狀態＋這張卡有沒有連線」，announce 時不再看 terra.enabled（憑證日後被移除也不會退回「即將開放」誤導文案）。
+  const sunset = normalizeSunset(strava?.sunset ?? terra?.sunset)
   const [dataSrcMsg, setDataSrcMsg] = useState('') // 里程優先來源設定錯誤訊息（如選到尚未連接的來源）
   const terraPollTimers = useRef<ReturnType<typeof setTimeout>[]>([]) // auth webhook 可能晚到，導回後輪詢用；卸載時清空
   // COROS MCP 直連（見契約 docs/integration/COROS_MCP_STAGE1_CONTRACT.md、COROS_MCP_GA_CONTRACT.md）：
@@ -515,6 +540,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       if (s) {
         setStravaMsg(s === 'connected' ? '✓ 已連接 Strava，正在同步近期活動…'
           : s === 'denied' ? '已取消授權'
+          : s === SUNSET_RESULT ? SUNSET_RESULT_TEXT // 串接結束公告期間不再開放新連接（後端導回 ?strava=sunset）
           : 'Strava 連接失敗，請再試一次')
         sp.delete('strava')
         touched = true
@@ -522,11 +548,13 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       const tr = sp.get('terra')
       if (tr) {
         const provider = sp.get('provider') || ''
-        const reason = sp.get('reason') || ''
+        const reason = terraRedirectReason(sp.get('reason') || '') // 只顯示長得像代碼的 reason；其餘一律省略（見 terraRedirectReason）
         if (tr === 'connected') {
-          setTerraMsg(`✓ 已連接 ${provider ? terraBrandName(provider) : '裝置'}，之後裝置同步的跑步會自動匯入（僅計算連接之後的紀錄）`)
+          setTerraMsg(`✓ 已連接 ${terraRedirectBrand(provider)}，之後裝置同步的跑步會自動匯入（僅計算連接之後的紀錄）`) // 品牌只經已知對照表，未知值用「裝置」
           loadTerra()
           if (provider) pollTerraForBrand(provider, 5) // webhook 可能晚到，補幾次輪詢
+        } else if (tr === SUNSET_RESULT) {
+          setTerraMsg(SUNSET_RESULT_TEXT) // 串接結束公告期間不再開放新連接（後端導回 ?terra=sunset）：固定訊息，不顯示任何參數
         } else {
           setTerraMsg(`連接未完成，請再試一次${reason ? `（${reason}）` : ''}`)
         }
@@ -664,16 +692,22 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       const { url } = await withUserAuth((t) => integrationsApi.stravaConnectUrl(t, returnUrl))
       window.location.href = url // 導去 Strava 授權
     } catch (e: any) {
-      setStravaMsg(e?.message || '無法連接 Strava')
+      // 串接結束公告期間後端回 409＋code（見 lib/wearableSunset.ts）：顯示固定訊息，並重抓狀態讓卡片切到公告畫面
+      const sunsetMsg = sunsetErrorText(e?.status, e?.body)
+      setStravaMsg(sunsetMsg ?? (e?.message || '無法連接 Strava'))
+      if (sunsetMsg) loadStrava()
       setStravaBusy(false)
     }
   }
   async function disconnectStrava() {
-    if (!window.confirm('中斷 Strava 連接？已同步的 Strava 活動將一併刪除；你已獲得的 EXP/DP 等獎勵不受影響。')) return
+    // 公告期間多一句「中斷後無法再重新連接」；off 時 note 為空字串，確認文字與改版前完全相同
+    const note = sunset.state === 'announce' ? sunsetDisconnectNote('Strava') : ''
+    if (!window.confirm(`中斷 Strava 連接？已同步的 Strava 活動將一併刪除；你已獲得的 EXP/DP 等獎勵不受影響。${note}`)) return
     setStravaBusy(true)
     try {
       await withUserAuth((t) => integrationsApi.stravaDisconnect(t))
-      setStrava({ connected: false, enabled: strava?.enabled ?? true })
+      // sunset 要原樣保留：公告期間中斷後卡片必須切成「暫停新連接」畫面，不能因為這裡覆寫掉狀態而退回有連接鈕的 normal 視圖
+      setStrava({ connected: false, enabled: strava?.enabled ?? true, sunset: strava?.sunset })
       setStravaMsg('已中斷 Strava 連接')
       loadDashboard() // 里程優先來源清單改由 Dashboard connected_sources 推導，中斷後要讓它重抓
     } catch (e: any) {
@@ -691,7 +725,10 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       const { url } = await withUserAuth((t) => integrationsApi.terraConnectUrl(t, returnUrl))
       window.location.href = url // 導去 Terra 連接 widget
     } catch (e: any) {
-      setTerraMsg(e?.status === 503 ? '裝置連接功能尚未開放，請稍後再試' : (e?.message || '無法連接，請再試一次'))
+      // 串接結束公告期間後端回 409＋code（見 lib/wearableSunset.ts）：顯示固定訊息，並重抓狀態讓卡片切到公告畫面
+      const sunsetMsg = sunsetErrorText(e?.status, e?.body)
+      setTerraMsg(sunsetMsg ?? (e?.status === 503 ? '裝置連接功能尚未開放，請稍後再試' : (e?.message || '無法連接，請再試一次')))
+      if (sunsetMsg) loadTerra()
       setTerraBusy(false)
     }
   }
@@ -799,7 +836,10 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   }
   async function disconnectTerra(provider: string) {
     const brand = terraBrandName(provider)
-    if (!window.confirm(`中斷 ${brand} 連接？之後 ${brand} 裝置同步的跑步將不再自動匯入；已獲得的 EXP/DP 等獎勵不受影響。`)) return
+    // 公告期間多一段說明（這個品牌經 Terra 匯入的活動會一併刪除、斷開後無法再重新連接）；
+    // off 時 note 為空字串，確認文字與改版前完全相同
+    const note = sunset.state === 'announce' ? sunsetDisconnectNote('Terra') : ''
+    if (!window.confirm(`中斷 ${brand} 連接？之後 ${brand} 裝置同步的跑步將不再自動匯入；已獲得的 EXP/DP 等獎勵不受影響。${note}`)) return
     setTerraBusy(true)
     try {
       await withUserAuth((t) => integrationsApi.terraDisconnect(t, provider))
@@ -891,6 +931,19 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const corosConnected = corosMcp?.connected === true
   const showCorosCard = corosEntryShown || corosConnected || !!corosMcpMsg
   const corosNotice = corosEntryShown ? corosAuthNotice(corosMcp) : null
+  // Terra／Strava 串接結束公告（announce）兩張卡各自的視圖（normal＝與改版前完全相同；connected＝橫幅＋保留同步／中斷；
+  // paused＝沒有連接鈕、只有短提示）。corosEntryShown 決定引導句要不要指名「COROS 直連」（入口沒開給這位會員就不提）。
+  const stravaView = sunsetCardView(sunset.state, strava?.connected === true)
+  const terraView = sunsetCardView(sunset.state, (terra?.connections?.length ?? 0) > 0)
+  // 公告文案的保守判斷（見 lib/wearableSunset.ts SunsetBannerContext）：
+  //  - terraSyncUncertain：Terra 卡上有「會照常同步」說不準的連線列（保守品牌，或最後資料已超過 48 小時）→ Terra 橫幅不承諾
+  //    「照常同步到結束日」、也不指名其他品牌的直連；卡片下方該列本來就會印出「同步中斷」警示，橫幅不能跟它矛盾。
+  //  - sunsetCorosHint：公告文案可以指名「COROS 直連」＝入口對這位會員開放，且這位會員沒有保守品牌的連線
+  //    （connectedSources 涵蓋 Dashboard 彙整的 Terra／直連來源）。兩張橫幅與兩個短提示共用。
+  const terraSyncUncertain = (terra?.connections ?? []).some((c) => sunsetRowSyncUncertain(c, SUNSET_CAUTIOUS_BRANDS, terraDataStale))
+  const sunsetCorosHint = sunsetCanNameCoros(corosEntryShown, connectedSources, SUNSET_CAUTIOUS_BRANDS)
+  // 已連接品牌清單：normal 與改版前相同（需 terra.enabled）；announce 不看 enabled，有連線列就列出
+  const showTerraList = (terra?.connections?.length ?? 0) > 0 && (terraView === 'connected' || terra?.enabled === true)
   // 有效選擇：後端存的偏好若已不在目前已連接清單內（如來源後來被斷開）就退回 gps，避免畫面卡在一個選不到的來源
   const effectiveSource: DataSource = p?.preferred_data_source && connectedSources.includes(p.preferred_data_source)
     ? p.preferred_data_source
@@ -1117,17 +1170,26 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         {tab === 'sports' && (
         <div>
           <div style={recCard}>
-            {/* Strava 官方連接名額誠實告知（見 memory strava-api-review：上限 10 已滿，重送審核中）；不管 Terra 是否開放都顯示，
-                不隱藏連接按鈕（有人中斷會釋出名額）。琥珀色半透明底＋var(--tx) 文字，不用金黃實心底（專案規則：實色金底才強制白字）。 */}
-            <div style={{ fontSize: 11.5, color: 'var(--tx)', background: 'rgba(245,158,11,.14)', border: '1px solid rgba(245,158,11,.35)', borderRadius: 8, padding: '8px 10px', marginBottom: 12, lineHeight: 1.6 }}>
-              ⚠ Strava 官方限制每個 App 只能連接 10 位跑者，目前名額已滿、升級審核中。{corosEntryShown ? '使用 COROS 的跑者請改用下方的「COROS 直連」；' : ''}使用 {terraBrandList} 的跑者請改用「連接你常用的跑步裝置」。
-            </div>
+            {/* Terra／Strava 串接結束公告（announce）：已連接者看橫幅（取代下面的名額告知）；沒有連線者沒有連接鈕、只有短提示。
+                off（或舊後端沒有 sunset 欄位）＝stravaView 'normal'＝下面的畫面與改版前完全相同。 */}
+            {stravaView === 'connected' && (
+              <SunsetBanner title={sunsetBannerTitle('Strava', sunset.date)} lines={sunsetBannerLines(sunset.date, { corosShown: sunsetCorosHint })} />
+            )}
+            {stravaView === 'normal' && (
+              /* Strava 官方連接名額誠實告知（見 memory strava-api-review：上限 10 已滿，重送審核中）；不管 Terra 是否開放都顯示，
+                 不隱藏連接按鈕（有人中斷會釋出名額）。琥珀色半透明底＋var(--tx) 文字，不用金黃實心底（專案規則：實色金底才強制白字）。 */
+              <div style={{ fontSize: 11.5, color: 'var(--tx)', background: 'rgba(245,158,11,.14)', border: '1px solid rgba(245,158,11,.35)', borderRadius: 8, padding: '8px 10px', marginBottom: 12, lineHeight: 1.6 }}>
+                ⚠ Strava 官方限制每個 App 只能連接 10 位跑者，目前名額已滿、升級審核中。{corosEntryShown ? '使用 COROS 的跑者請改用下方的「COROS 直連」；' : ''}使用 {terraBrandList} 的跑者請改用「連接你常用的跑步裝置」。
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, color: '#fc4c02' }}>Strava{!terra?.enabled && <span style={{ fontSize: 10.5, color: 'var(--fug)', fontWeight: 800, marginLeft: 5 }}>· 推薦</span>}</div>
+                <div style={{ fontWeight: 700, color: '#fc4c02' }}>Strava{stravaView === 'normal' && !terra?.enabled && <span style={{ fontSize: 10.5, color: 'var(--fug)', fontWeight: 800, marginLeft: 5 }}>· 推薦</span>}</div>
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
                   {strava?.connected
                     ? `已連接${strava.athlete_name ? `：${strava.athlete_name}` : ''} · 活動自動同步`
+                    : stravaView === 'paused'
+                    ? sunsetPausedNotice('Strava', sunset.date, sunsetCorosHint)
                     : `連接後自動同步跑步活動，用於個人數據（個人任務、自主訓練、稱號成就、個人里程）；依 Strava 平台規範，Strava 數據不計入活動排名或里程競賽統計——要讓裝置紀錄進賽事，請用下方${corosEntryShown ? '的「COROS 直連」或' : ''}「連接你常用的跑步裝置」`}
                 </div>
               </div>
@@ -1139,7 +1201,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                   </button>
                   <button onClick={disconnectStrava} disabled={stravaBusy} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>中斷</button>
                 </div>
-              ) : (
+              ) : stravaView === 'paused' ? null /* 串接結束公告期間不再開放新連接：沒有「Connect with Strava」按鈕 */ : (
                 <button onClick={connectStrava} disabled={stravaBusy || strava?.enabled === false}
                   aria-label="Connect with Strava"
                   style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0, alignSelf: 'flex-start', opacity: stravaBusy || strava?.enabled === false ? 0.5 : 1 }}>
@@ -1149,10 +1211,12 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                 </button>
               )}
             </div>
-            {strava?.enabled === false && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 8 }}>（Strava 整合尚未由管理者設定）</div>}
-            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>依 Strava 平台規範，Strava 數據僅用於你的個人數據，不會用於活動排名／里程競賽統計（此為 Strava 的限制，與賽事設定無關）。</div>
+            {strava?.enabled === false && stravaView === 'normal' && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 8 }}>（Strava 整合尚未由管理者設定）</div>}
+            {stravaView !== 'paused' && (
+              <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>依 Strava 平台規範，Strava 數據僅用於你的個人數據，不會用於活動排名／里程競賽統計（此為 Strava 的限制，與賽事設定無關）。</div>
+            )}
             {stravaMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginTop: 8 }}>{stravaMsg}</div>}
-            {strava?.connected && (
+            {strava?.connected && stravaView === 'normal' && (
               <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8 }}>
                 要更換 Strava 帳號？請先{' '}
                 <a href="https://www.strava.com/logout" target="_blank" rel="noreferrer" style={{ color: '#fc4c02' }}>登出 Strava</a>
@@ -1193,20 +1257,33 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               但「已連接」清單照舊列出既有的 Terra-COROS／Terra-Garmin 連線，可匯入／斷開）。terra===null 或 !enabled 時維持
               「即將開放」佔位卡（production 尚未設定 Terra 憑證前的常態，見 memory terra-wearable-integration）；
               enabled 後才是真正的連接流程，且升級為推薦卡（Strava 名額已滿，見上方卡片琥珀提示）。 */}
+          {/* Terra／Strava 串接結束公告（announce）：任何人都沒有「連接裝置」鈕；已連接者看橫幅（清單與匯入／斷開照舊），
+              沒有連線者只有短提示。off（或舊後端沒有 sunset 欄位）＝terraView 'normal'＝下面的畫面與改版前完全相同。 */}
           <div style={{ ...recCard, marginTop: 12 }}>
+            {terraView === 'connected' && (
+              <SunsetBanner title={sunsetBannerTitle('Terra', sunset.date)} lines={sunsetBannerLines(sunset.date, { corosShown: sunsetCorosHint, syncUncertain: terraSyncUncertain })} />
+            )}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 700, color: 'var(--tx)' }}>
-                  ⌚ 連接你常用的跑步裝置
-                  {terra?.enabled && <span style={{ fontSize: 10.5, color: 'var(--fug)', fontWeight: 800, marginLeft: 5 }}>· 推薦</span>}
+                  {terraView === 'normal' ? (
+                    <>
+                      ⌚ 連接你常用的跑步裝置
+                      {terra?.enabled && <span style={{ fontSize: 10.5, color: 'var(--fug)', fontWeight: 800, marginLeft: 5 }}>· 推薦</span>}
+                    </>
+                  ) : '⌚ 裝置串接（Terra）即將結束'}
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3, lineHeight: 1.6 }}>
-                  {!terra?.enabled
-                    ? <>Strava 名額已滿也沒關係——很快就能連接你的 {terraBrandList} 裝置帳號同步跑步，<b>正在開通中</b>。</>
-                    : `直接連接 ${terraBrandList} 等裝置帳號同步跑步：計入個人數據（個人任務、自主訓練、稱號成就、個人里程），主辦方開放外部數據的賽事也會計入排名與里程統計。${corosEntryShown ? 'COROS 請改用下方的「COROS 直連」。' : ''}`}
-                </div>
+                {terraView !== 'connected' && (
+                  <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3, lineHeight: 1.6 }}>
+                    {terraView === 'paused'
+                      ? sunsetPausedNotice('Terra', sunset.date, sunsetCorosHint)
+                      : !terra?.enabled
+                      ? <>Strava 名額已滿也沒關係——很快就能連接你的 {terraBrandList} 裝置帳號同步跑步，<b>正在開通中</b>。</>
+                      : `直接連接 ${terraBrandList} 等裝置帳號同步跑步：計入個人數據（個人任務、自主訓練、稱號成就、個人里程），主辦方開放外部數據的賽事也會計入排名與里程統計。${corosEntryShown ? 'COROS 請改用下方的「COROS 直連」。' : ''}`}
+                  </div>
+                )}
               </div>
-              {!terra?.enabled ? (
+              {terraView !== 'normal' ? null : !terra?.enabled ? (
                 <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: 'var(--tx-faint)', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 8, padding: '6px 10px' }}>即將開放</span>
               ) : (
                 <button onClick={connectTerra} disabled={terraBusy}
@@ -1217,7 +1294,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             </div>
 
             {/* 已連接品牌清單：可能同時連好幾支不同品牌的手錶，逐一列出＋各自可斷開；「連接手錶」按鈕仍保留在上方可再加一支 */}
-            {terra?.enabled && terra.connections.length > 0 && (
+            {showTerraList && terra && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
                 {terra.connections.map((c) => {
                   const stale = terraDataStale(c.last_data_at)
@@ -1245,10 +1322,12 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             )}
 
             {terraMsg && <div style={{ fontSize: 12.5, color: 'var(--fug)', marginTop: 8 }}>{terraMsg}</div>}
-            <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
-              連接即表示你同意透過整合商 <b>Terra</b> 取得你的跑步活動資料（跨境處理），並同意本平台 <a href="/privacy" target="_blank" rel="noreferrer" style={{ color: 'var(--fug)' }}>隱私權政策</a>。
-            </div>
-            {terra?.enabled && terra.connections.length > 0 && (
+            {terraView === 'normal' && (
+              <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
+                連接即表示你同意透過整合商 <b>Terra</b> 取得你的跑步活動資料（跨境處理），並同意本平台 <a href="/privacy" target="_blank" rel="noreferrer" style={{ color: 'var(--fug)' }}>隱私權政策</a>。
+              </div>
+            )}
+            {showTerraList && (
               <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 4, lineHeight: 1.6 }}>
                 裝置同步的跑步／走路（跑步機、越野跑、運動場跑步、徒步都算）通常會自動匯入；若沒進來，按「匯入數據」會向 Terra 抓近 30 天的紀錄（只計入連接之後的活動）。
               </div>
@@ -1708,7 +1787,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             統一編號：83005678
           </div>
           <div style={{ fontSize: 12, color: 'var(--tx-faint)', lineHeight: 1.7 }}>
-            連接 Strava：到上方「運動數據」分頁點官方「Connect with Strava」即可；要中斷請按「中斷」。我們僅匯入你連接之後的活動，並可隨時中斷。
+            {sunset.state === 'announce'
+              ? sunsetSupportLine(sunset.date) // 連接鈕已不存在：串接結束公告期間不能再叫人去點
+              : '連接 Strava：到上方「運動數據」分頁點官方「Connect with Strava」即可；要中斷請按「中斷」。我們僅匯入你連接之後的活動，並可隨時中斷。'}
           </div>
           <div style={{ fontSize: 12, color: 'var(--tx-faint)', lineHeight: 1.7 }}>
             取消與退費：可於賽事開始前，至「報名紀錄」申請取消，退費金額依申請時距賽事天數分級計算，詳見各賽事簡章規定；線上活動不適用七天鑑賞期。

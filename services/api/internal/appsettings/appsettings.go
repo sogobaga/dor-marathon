@@ -186,7 +186,30 @@ var specs = map[string]func(string) bool{
 	// COROS MCP 自動同步總開關（契約 §3.1 kill switch）：空字串／缺鍵＝開（預設 1）；0＝停自動同步
 	// （手動「匯入數據」仍可用）。進程內快取 60 秒，後台改動最慢 60 秒內全員生效。
 	"coros_mcp_autosync_enabled": func(v string) bool { return v == "" || v == "0" || v == "1" },
+	// Terra／Strava 串接結束公告（見 internal/integration/wearablesunset）。刻意不走 entrygate：entrygate 的語意是
+	// 「誰能用」、缺鍵＝whitelist，套在這裡部署當下就會把既有串接收成僅超管；這個開關的缺鍵必須是 off＝完全不改變現狀。
+	// state：寫入只收 off｜announce（announce＝不再開放新的 Terra／Strava 連接，既有連線照常同步到結束日）；
+	// 讀取端把缺鍵、空值與未知值一律當 off（見 wearablesunset.Parse）。
+	// date：最後服務日（台北曆日，含當天），空字串＝程式預設 WearableSunsetDefaultDate。
+	// 單鍵格式驗證在這裡；「announce 時結束日不得早於今天」是跨鍵規則，在 Set 內由 validateWrite→crossCheck 檢查
+	// （寫入前的唯一入口，測試會確認 Set 一定先呼叫它）。
+	WearableSunsetStateKey: isSunsetState,
+	WearableSunsetDateKey:  isDateYYYYMMDD,
 }
+
+// Terra／Strava 串接結束公告的設定鍵與預設結束日（wearablesunset 套件與這裡共用同一份常數；wearablesunset 依賴本
+// 套件，所以常數放這邊才不會循環）。三個鍵都不在 publicKeys：前台一律從已登入的 /status 回應取得。
+const (
+	WearableSunsetStateKey    = "wearable_sunset_state"
+	WearableSunsetDateKey     = "wearable_sunset_date"
+	WearableSunsetDefaultDate = "2026-10-31"
+	sunsetAnnounce            = "announce"
+)
+
+// isSunsetState wearable_sunset_state「寫入」驗證器：只收 off｜announce，不收空字串。後台下拉選單一律送 off／announce
+// （空值會被表單換成預設 off），空字串只會來自壞掉或打錯字的請求，靜默存成空值＝公告悄悄關閉。
+// 「讀取」端不受影響：缺鍵、空值（直接下 SQL 寫進去的）與未知值一律視為 off（見 wearablesunset.Parse）。
+func isSunsetState(v string) bool { return v == "off" || v == sunsetAnnounce }
 
 func isEntryState(v string) bool {
 	// "off"：階段性工具收納開關（見 internal/profile.resolveEntry）——比 hidden 多一層，連超管旁路都關閉。
@@ -364,6 +387,12 @@ func isNonNegInt(v string) bool {
 type Handler struct {
 	db *pgxpool.Pool
 	rt *realtime.Manager
+
+	// readFresh 現查（不經 60 秒快取）某個 key 的原始值，供 Set 的跨鍵檢查用；found=false＝DB 裡沒有這個 key。
+	// nil＝直接查 h.db（正式環境）；單元測試可注入假的，不必連 DB 就能驗證 validateWrite。
+	readFresh func(ctx context.Context, key string) (value string, found bool, err error)
+	// now 取得現在時間（跨鍵檢查要比對「今天」）；nil＝time.Now。
+	now func() time.Time
 }
 
 // publicSettingsCacheTTL 見下方 publicSettingsCache 註解。
@@ -388,6 +417,7 @@ const publicSettingsCacheTTL = 6 * time.Hour // 只靠寫入失效；TTL 純保�
 var publicSettingsCache *ttlcache.Cache[map[string]string]
 
 func NewHandler(db *pgxpool.Pool, rt *realtime.Manager) *Handler {
+	registerSunsetAlerts() // Terra／Strava 串接結束公告開關被後台改動時送 Telegram（見 wearable_sunset_alert.go；整個行程只註冊一次）
 	h := &Handler{db: db, rt: rt}
 	publicSettingsCache = ttlcache.New(publicSettingsCacheTTL, func(ctx context.Context) (map[string]string, error) {
 		return h.queryAllDB(ctx, true)
@@ -450,18 +480,20 @@ func (h *Handler) Public(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Set(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
-	validate, known := specs[key]
-	if !known {
-		respondErr(w, http.StatusBadRequest, "unknown setting")
+	// value 用指標：能分辨「沒給 value／value 是 null」（nil）與「value 是空字串」（合法——許多設定用 "" 表示「用程式預設」，
+	// 後台的清除鈕就是這樣送的）。解析失敗或缺 value 一律 400：舊版吞掉解碼錯誤、缺漏的 value 當成 ""，
+	// 一個壞掉的 body 或打錯字的欄位名稱（{"valu":"announce"}）就會靜默把設定清成空字串。
+	// 前端所有呼叫點都經 lib/api.ts adminAppSettingsApi.set，body 恆為 {"value": <string>}（盤點見 set_body_test.go）。
+	var b struct {
+		Value *string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Value == nil {
+		respondErr(w, http.StatusBadRequest, `invalid body: expected {"value": "<string>"}`)
 		return
 	}
-	var b struct {
-		Value string `json:"value"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&b)
-	val := strings.TrimSpace(b.Value)
-	if !validate(val) {
-		respondErr(w, http.StatusBadRequest, "invalid value")
+	val := strings.TrimSpace(*b.Value)
+	if status, msg := h.validateWrite(r.Context(), key, val); status != 0 {
+		respondErr(w, status, msg)
 		return
 	}
 	if _, err := h.db.Exec(r.Context(),
@@ -478,6 +510,93 @@ func (h *Handler) Set(w http.ResponseWriter, r *http.Request) {
 	NotifyChange(r.Context(), key, val)
 	h.rt.PublishData(r.Context(), "settings", nil)
 	respondJSON(w, http.StatusOK, map[string]any{"settings": h.queryAll(r.Context(), false)})
+}
+
+// validateWrite Set 寫入前的全部檢查（已 trim 的 val）：key 已登記 → 單鍵驗證器 → 跨鍵規則。回傳 (0,"") 代表可寫；
+// 否則是要回給後台的 HTTP 狀態與訊息。獨立成方法是為了不連 DB 就能單元測試（readFresh 可注入）。
+func (h *Handler) validateWrite(ctx context.Context, key, val string) (status int, msg string) {
+	validate, known := specs[key]
+	if !known {
+		return http.StatusBadRequest, "unknown setting"
+	}
+	if !validate(val) {
+		return http.StatusBadRequest, "invalid value"
+	}
+	rejected, why, err := h.crossCheck(ctx, key, val)
+	if err != nil {
+		return http.StatusInternalServerError, "failed"
+	}
+	if rejected {
+		return http.StatusBadRequest, why
+	}
+	return 0, ""
+}
+
+// crossCheck 跨鍵規則（目前只有 Terra／Strava 結束公告這一組）：announce 時結束日不得早於今天（台北）。
+// 兩個方向都要擋——改日期時看目前狀態，改狀態時看目前（或預設）日期；另一個鍵一律現查 DB（不用 60 秒快取，
+// 否則剛存完的另一個鍵可能讀到舊值而誤放行）。其他鍵直接放行、不碰 DB。
+func (h *Handler) crossCheck(ctx context.Context, key, val string) (rejected bool, why string, err error) {
+	var state, date string
+	switch key {
+	case WearableSunsetStateKey:
+		state = val
+		if date, err = h.readFreshValue(ctx, WearableSunsetDateKey); err != nil {
+			return false, "", err
+		}
+	case WearableSunsetDateKey:
+		date = val
+		if state, err = h.readFreshValue(ctx, WearableSunsetStateKey); err != nil {
+			return false, "", err
+		}
+	default:
+		return false, "", nil
+	}
+	nowFn := h.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	ok, why := sunsetCombinationOK(state, date, nowFn())
+	return !ok, why, nil
+}
+
+// readFreshValue 現查一個 key 的 trim 後原始值；DB 沒有這個 key 回空字串（呼叫端自行套預設）。
+func (h *Handler) readFreshValue(ctx context.Context, key string) (string, error) {
+	if h.readFresh != nil {
+		v, _, err := h.readFresh(ctx, key)
+		return strings.TrimSpace(v), err
+	}
+	var v string
+	err := h.db.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&v)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return strings.TrimSpace(v), err
+}
+
+// sunsetTaipei 台北時區（distroless 映像沒有 tzdata，禁用 LoadLocation；先例 einvoice／runmeet 的 FixedZone）。
+var sunsetTaipei = time.FixedZone("Asia/Taipei", 8*3600)
+
+// sunsetCombinationOK 純函式：Terra／Strava 公告的「狀態＋結束日」組合是否合法。
+//   - 狀態不是 announce（off／空字串）→ 一律合法（結束日只在公告期間有意義，可以先填好）。
+//   - announce：結束日（空字串＝預設 2026-10-31）必須是合法曆日，且不得早於今天（台北曆日；等於今天合法＝今天就是最後一天）。
+//
+// 不合法時回給後台看的中文原因（區分是改狀態還是改日期，所以兩種情況都用同一句帶出日期，讓操作者知道要改哪一個）。
+func sunsetCombinationOK(state, date string, now time.Time) (ok bool, why string) {
+	if strings.ToLower(strings.TrimSpace(state)) != sunsetAnnounce {
+		return true, ""
+	}
+	d := strings.TrimSpace(date)
+	if d == "" {
+		d = WearableSunsetDefaultDate
+	}
+	if _, err := time.Parse("2006-01-02", d); err != nil {
+		return false, "結束日格式不正確，請填 YYYY-MM-DD（例如 2026-10-31）"
+	}
+	today := now.In(sunsetTaipei).Format("2006-01-02")
+	if d < today { // 兩邊都是零補齊的 YYYY-MM-DD，字串比較等同曆日比較
+		return false, "公告期間的結束日（" + d + "）早於今天（" + today + "，台北時間）：請把「結束日」改成今天或之後的日期"
+	}
+	return true, ""
 }
 
 // ValidateValue 以 specs 的驗證器檢查某個設定值（known=false 代表 key 未登記）。純函式，
@@ -618,24 +737,48 @@ func invalidateSettingsCache() {
 
 // getRawSetting 讀 key 對應的原始字串值（未 trim、未套用預設值），供 GetInt/GetString 共用。
 // 命中快取（含 negative cache）直接回傳；未命中才查 DB 並回填快取。回傳 found=false 代表
-// 「DB 裡沒有這個 key」，呼叫端應回傳自己的預設值。
+// 「DB 裡沒有這個 key」（或讀取失敗——這個介面把兩者混為一談），呼叫端應回傳自己的預設值；
+// 需要分辨兩者的呼叫端用 getRawSettingErr／LookupString。
+func getRawSetting(ctx context.Context, db *pgxpool.Pool, key string) (string, bool) {
+	v, found, _ := getRawSettingErr(ctx, db, key)
+	return v, found
+}
+
+// getRawSettingErr 是 getRawSetting 的完整版：把「DB 讀取失敗」與「查無此 key」分開回報。
+//   - err != nil：查詢真的失敗（DB 暫時不可用、逾時、ctx 取消…）；value=""、found=false。
+//   - err == nil && !found：DB 裡沒有這個 key。
 //
 // 只在確定查無資料（pgx.ErrNoRows）時才寫入 negative cache；其他錯誤（如 DB 暫時不可用）不快取，
 // 讓下一次呼叫有機會在 DB 恢復後立刻拿到正確值，不必等滿一輪 TTL。
-func getRawSetting(ctx context.Context, db *pgxpool.Pool, key string) (string, bool) {
+func getRawSettingErr(ctx context.Context, db *pgxpool.Pool, key string) (value string, found bool, err error) {
 	if e, ok := getCachedSetting(key); ok {
-		return e.value, e.found
+		return e.value, e.found, nil
 	}
 	var v string
-	err := db.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&v)
-	if err != nil {
+	if err := db.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&v); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			setCachedSetting(key, "", false)
+			return "", false, nil
 		}
-		return "", false
+		return "", false, err
 	}
 	setCachedSetting(key, v, true)
-	return v, true
+	return v, true, nil
+}
+
+// LookupString 與 GetString 走同一條快取路徑，但把「DB 讀取失敗」與「查無此 key」分開回報，供「不能把故障當成缺鍵」的
+// 呼叫端使用（例如 internal/integration/wearablesunset：DB 故障時要沿用上一次成功讀到的狀態，而不是直接掉回預設值）。
+//   - err != nil：查詢真的失敗；value=""、found=false。錯誤不快取（下一次呼叫會重新查）。
+//   - err == nil && !found：DB 裡沒有這個 key（negative cache 也算）。
+//   - err == nil && found：value 是 trim 後的值，可能是空字串——不套用任何預設，由呼叫端決定空值的意義。
+//
+// GetString／GetInt／GetFloat 的行為完全不變（仍吞掉錯誤、回預設值）。
+func LookupString(ctx context.Context, db *pgxpool.Pool, key string) (value string, found bool, err error) {
+	v, found, err := getRawSettingErr(ctx, db, key)
+	if err != nil {
+		return "", false, err
+	}
+	return strings.TrimSpace(v), found, nil
 }
 
 // GetInt 讀整數設定；查無/解析失敗回 def。

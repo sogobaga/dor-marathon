@@ -289,11 +289,18 @@ func TestFormatWearableLine_StaleDataWarns(t *testing.T) {
 }
 
 func TestFormatWearableLine_ExactlyAtThresholdNoWarning(t *testing.T) {
-	// time.Since(t) > wearableStaleAfter 用嚴格大於：剛好 48 小時不算逾期，避免邊界抖動誤報。
-	edge := time.Now().Add(-48 * time.Hour)
+	// time.Since(t) > wearableStaleAfter 用嚴格大於：門檻內不算逾期，避免邊界抖動誤報。
+	// 測「門檻前 1 秒」而不是「剛好 48 小時」：formatWearableLine 內部另取 time.Now()，Linux 的奈秒時鐘在兩次取時之間
+	// 一定已過幾百奈秒（剛好 48 小時的測法只在 Windows 粗粒度時鐘下碰巧通過，2026-10-03 容器內實測失敗）。
+	edge := time.Now().Add(-48*time.Hour + time.Second)
 	line := formatWearableLine(WearableProviderStatus{Provider: "garmin", Connected: 1, LastDataAt: &edge})
 	if strings.HasPrefix(line, "⚠️") {
-		t.Errorf("exactly 48h should not yet warn (strict >), got: %q", line)
+		t.Errorf("1s inside the 48h threshold should not warn (strict >), got: %q", line)
+	}
+	// 門檻後 1 秒必須警示（確認上面不是因為永遠不警示才通過）。
+	past := time.Now().Add(-48*time.Hour - time.Second)
+	if line := formatWearableLine(WearableProviderStatus{Provider: "garmin", Connected: 1, LastDataAt: &past}); !strings.HasPrefix(line, "⚠️") {
+		t.Errorf("1s past the 48h threshold should warn, got: %q", line)
 	}
 }
 

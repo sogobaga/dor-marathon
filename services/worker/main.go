@@ -1366,13 +1366,14 @@ func notifyAlert(kind, title, detail string) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 			"https://api.telegram.org/bot"+token+"/sendMessage", strings.NewReader(form.Encode()))
 		if err != nil {
-			log.Warn().Err(err).Str("kind", kind).Msg("notifyAlert: build request failed")
+			// 不記 err：url.Parse 的錯誤文字會附上整個網址（路徑裡含 bot token）。
+			log.Warn().Str("kind", kind).Msg("notifyAlert: build request failed")
 			return
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		resp, err := alertHTTPClient.Do(req)
 		if err != nil {
-			log.Warn().Err(err).Str("kind", kind).Msg("notifyAlert: telegram send failed")
+			log.Warn().Str("kind", kind).Str("cause", telegramErrCause(err, token)).Msg("notifyAlert: telegram send failed")
 			return
 		}
 		defer resp.Body.Close()
@@ -1380,6 +1381,24 @@ func notifyAlert(kind, title, detail string) {
 			log.Warn().Int("status", resp.StatusCode).Str("kind", kind).Msg("notifyAlert: telegram non-2xx response")
 		}
 	}()
+}
+
+// telegramErrCause 把 http.Client.Do 的錯誤整理成「不帶網址、不帶 token」的原因文字再寫進日誌：
+// *url.Error 的 Error() 會原樣印出完整網址（路徑裡含 bot token），逾時、DNS 失敗這類普通錯誤就足以讓憑證進日誌
+// （與 services/api/internal/notify/telegram.go 的 sanitizeTransportErr 同一個問題；worker 是獨立 module 不能共用）。
+// 只取底層的 ue.Err；不是 *url.Error、或底層文字仍帶著 token／網址時，一律回固定字串。
+// ⚠️ 放在 main.go：worker 的 Dockerfile 只編 ./main.go 單檔。
+func telegramErrCause(err error, token string) string {
+	var ue *url.Error
+	if !errors.As(err, &ue) || ue.Err == nil {
+		return "request failed"
+	}
+	s := ue.Err.Error()
+	if strings.Contains(s, "api.telegram.org/bot") ||
+		(token != "" && (strings.Contains(s, token) || strings.Contains(s, url.PathEscape(token)) || strings.Contains(s, url.QueryEscape(token)))) {
+		return "request failed"
+	}
+	return s
 }
 
 func nullableString(s string) interface{} {

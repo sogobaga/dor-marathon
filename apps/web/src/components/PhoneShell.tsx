@@ -184,9 +184,12 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
     if (refCode) {
       localStorage.setItem('dor:ref_code', refCode)
     }
-    // Strava 授權導回（?strava=...）→ 直接開個人資訊頁顯示結果
+    // Strava 授權導回（?strava=connected|denied|error|invalid|sunset）→ 開個人資訊頁「運動數據」分頁顯示結果。
+    // 必須跟 Terra／COROS／Garmin 導回一樣切到 sports 分頁：Strava 卡片與結果訊息都在該分頁內，停在預設的「個人資料」
+    // 分頁使用者永遠看不到訊息（串接結束公告的 ?strava=sunset 也要看得到；參數由 ProfileScreen 讀完自己清）。
     if (params.has('strava')) {
       setShowProfile(true)
+      setProfileInitialTab('sports')
     }
     // Terra 手錶連接導回（?terra=connected|failed|error&provider=...，見 integration/terra.go Callback：
     // Terra widget 只能導回固定網址，所以一律落在首頁）→ 開個人資訊頁「運動數據」分頁顯示結果；

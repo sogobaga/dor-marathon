@@ -631,4 +631,28 @@ export const SETTINGS_SPECS: SettingSpec[] = [
     help: '僅在上方選「僅指定帳號」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email，大小寫不拘。超管不用列在這裡，恆可使用（緊急關閉時除外）。名單外的會員看不到 Garmin 直連卡片。',
     placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
+  // ── Terra／Strava 串接結束公告（見 services/api/internal/integration/wearablesunset；預計 2026-10-05 切到「公告中」）──
+  // 缺鍵＝off＝完全維持現狀（刻意不走 entrygate：它的缺鍵是 whitelist，部署當下就會把既有串接收成僅超管）。
+  // 「公告中」同時擋後端與前台：不再開放任何新的 Terra／Strava 連接（含既有使用者重新授權），既有連線照常同步到結束日。
+  // ⚠️ 結束日那列務必 type:'text'（理由見上面白名單的警告：誤設成 number 會被寫成字串 "NaN"）。
+  // 後端 appsettings specs 已登記同名 key（含驗證）；公告中不可把結束日填成過去日期（跨鍵檢查，後端會擋）。
+  {
+    key: 'wearable_sunset_state', group: 'Terra／Strava 關閉', label: '串接結束公告狀態', type: 'select', def: 'off',
+    help: '切換前請確認：①COROS 直連入口已開放給會員；②公告文案（站內信與 Email）已核准。'
+      + '【關閉】維持現狀，Terra／Strava 照常可連接與同步（預設值）。'
+      + '【公告中】不再開放任何新的 Terra／Strava 連接（後端與前台都擋，含既有使用者重新授權）；已連接的會員照常同步到結束日，'
+      + '個人頁「運動數據」會顯示結束公告。最慢 60 秒內生效；改回「關閉」即恢復原狀。'
+      + '⚠️ 啟用公告時下方的結束日不得早於今天（台北時間），否則儲存會被擋下。'
+      + '每次儲存狀態或結束日，系統都會送一則 Telegram 通知（誤切換時可立刻發現；若不是你操作的請立刻改回「關閉」）。',
+    options: [
+      { value: 'off', label: '關閉（維持現狀，預設）' },
+      { value: 'announce', label: '公告中（不再開放新連接，既有連線照常到結束日）' },
+    ],
+  },
+  {
+    key: 'wearable_sunset_date', group: 'Terra／Strava 關閉', label: '串接結束日（最後服務日）', type: 'text', def: '2026-10-31',
+    help: '格式 YYYY-MM-DD（台北日期，含當天）。顯示在公告橫幅與提示文字裡（例如「將於 10 月 31 日結束」）；留空＝預設 2026-10-31。'
+      + '公告中不可填過去的日期。',
+    placeholder: '2026-10-31', rows: 1,
+  },
 ]
