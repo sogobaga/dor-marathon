@@ -202,6 +202,12 @@ export default function PhoneShell({ openEventSlug, openShopId }: { openEventSlu
       setShowProfile(true)
       setProfileInitialTab('sports')
     }
+    // Garmin 官方直連導回（?garmin=connected|error&reason=…，見 services/api/internal/integration/garmin_connect.go：
+    // /callback 固定導回首頁、不接受任意 return URL）→ 同上，開個人資訊頁「運動數據」分頁；參數由 ProfileScreen 讀完自己清。
+    if (params.has('garmin')) {
+      setShowProfile(true)
+      setProfileInitialTab('sports')
+    }
     // 綠界站內付 2.0 綁卡 3D 驗證完成導回（?vip_bind=success|fail，見 BindHandler.redirectBindResult）
     // → 顯示結果彈窗；成功時順便讓全站會員儀表板重抓一次（VIP 徽章/到期日即時更新）。清參數避免重整重播。
     const vipBind = params.get('vip_bind')

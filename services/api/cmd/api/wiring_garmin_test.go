@@ -103,10 +103,13 @@ func TestGarminRoutesMountedOnceWiredIntoMain(t *testing.T) {
 		return true
 	})
 	if !garminIdent {
-		t.Skip("Garmin join pending owner approval")
+		// 2026-10-03 擁有者同意接上主程式後改為硬性失敗：Garmin 直連的接線不可被意外移除。
+		t.Fatal("main.go no longer wires the Garmin handler (NewGarminHandler / Mount / StartupSweep / Drain)")
 	}
 	mounted := false
-	for _, call := range selectorCalls(file)["Mount"] {
+	// selectorCalls 以「接收者識別字.方法名」為鍵（r.Mount → "r.Mount"）；鏈式呼叫（r.With(…).Mount）才只用 "Mount"。
+	calls := selectorCalls(file)
+	for _, call := range append(calls["Mount"], calls["r.Mount"]...) {
 		if len(call.Args) == 2 {
 			if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Value == `"/integrations/garmin"` {
 				mounted = true

@@ -223,6 +223,9 @@ type DayActivity struct {
 	FlagReason string  `json:"flag_reason"`
 	RecordedAt string  `json:"recorded_at"`
 	ExternalID string  `json:"external_id"`
+	// DeviceName：資料來源裝置型號（activities.device_name，migration 197；Garmin 直連／COROS MCP 匯入才有），
+	// 前台依 source 顯示「Garmin 〈型號〉」歸屬；NULL 時不輸出。本端點只回呼叫者自己的活動（本人視圖）。
+	DeviceName *string `json:"device_name,omitempty"`
 }
 
 // GET /api/v1/profile/achievements/day?date=YYYY-MM-DD
@@ -240,7 +243,7 @@ func (h *Handler) AchievementsDay(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.db.Query(r.Context(), `
 		SELECT id::text, COALESCE(source,'gps'), distance_km, duration_s, avg_pace_s,
-		       flagged, COALESCE(flag_reason,''), recorded_at, COALESCE(external_id,'')
+		       flagged, COALESCE(flag_reason,''), recorded_at, COALESCE(external_id,''), device_name
 		FROM activities
 		WHERE user_id=$1 AND (recorded_at AT TIME ZONE 'Asia/Taipei')::date = $2::date
 		ORDER BY recorded_at`, uid, date)
@@ -254,7 +257,7 @@ func (h *Handler) AchievementsDay(w http.ResponseWriter, r *http.Request) {
 		var a DayActivity
 		var recordedAt time.Time
 		if err := rows.Scan(&a.ID, &a.Source, &a.DistanceKm, &a.DurationS, &a.AvgPaceS,
-			&a.Flagged, &a.FlagReason, &recordedAt, &a.ExternalID); err != nil {
+			&a.Flagged, &a.FlagReason, &recordedAt, &a.ExternalID, &a.DeviceName); err != nil {
 			respondErr(w, http.StatusInternalServerError, "scan failed")
 			return
 		}

@@ -15,6 +15,9 @@ import PushToggle from './PushToggle'
 import ScrollArea from './ScrollArea'
 import { submitEcpayForm } from '@/lib/ecpay'
 import StyleSettingsModal, { SKIN_LABEL } from './StyleSettingsModal'
+import GarminCard from './profile/GarminCard'
+import { garminResultNotice, type GarminNotice } from '@/lib/garminApi'
+import { sourceAttribution } from '@/lib/attribution'
 
 const GENDERS = [
   { v: '', t: '未填' },
@@ -243,6 +246,10 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [corosMcpConsent, setCorosMcpConsent] = useState(false)
   const [corosMcpBusy, setCorosMcpBusy] = useState(false)
   const [corosMcpMsg, setCorosMcpMsg] = useState('')
+  // Garmin 官方直連（見 components/profile/GarminCard.tsx、lib/garminApi.ts）：卡片自己管 status／連接／中斷；
+  // 這裡只持有「要顯示的訊息」（?garmin= 導回結果、中斷結果）與重抓序號，卡片因入口關閉收起時使用者仍看得到結果。
+  const [garminNotice, setGarminNotice] = useState<GarminNotice | null>(null)
+  const [garminReload, setGarminReload] = useState(0)
   const [activities, setActivities] = useState<SyncedActivity[] | null>(null)
   const [syncing, setSyncing] = useState(false)
   // GPS 距離校正（見 internal/gpscalib，2026-08-30）：入口白名單 shown 才抓；locked 只顯示鎖定卡片、不打 API。
@@ -547,6 +554,15 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         sp.delete('coros_mcp'); sp.delete('reason')
         touched = true
       }
+      // Garmin 官方直連導回（?garmin=connected|error&reason=<固定詞彙>，見 integration/garmin_connect.go：/callback 固定導回首頁）。
+      // 只顯示 lib/garminApi.ts garminResultNotice 的固定句子（reason 絕不原樣顯示）；導回後要讓卡片重抓 /status。
+      const gm = sp.get('garmin')
+      if (gm) {
+        const gn = garminResultNotice(gm, sp.get('reason'))
+        if (gn) { setGarminNotice(gn); setGarminReload((v) => v + 1) }
+        sp.delete('garmin'); sp.delete('reason')
+        touched = true
+      }
       if (touched) {
         const qs = sp.toString()
         window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''))
@@ -690,6 +706,11 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const dashHasCoros = !!dash?.connected_sources?.some((s) => String(s).toLowerCase() === 'coros')
   // Dashboard 說這個人有 COROS 連線、但 status 還沒回來：先顯示「載入中…」，避免已連線者每次開頁都先閃一下「同意並連接」表單。
   const corosLoading = dashHasCoros && !corosMcpLoaded && corosMcp === null
+  // Garmin 官方直連卡片（components/profile/GarminCard.tsx）：入口 shown（Dashboard garmin_entry，與後端 API 閘門同一個判斷函式）、
+  // 或 Dashboard 顯示已有 Garmin 連線（connected_sources 含 garmin，含舊 Terra 連線——卡片再以 /status 區分）、或有訊息要顯示時才掛載；
+  // 入口 hidden 且沒有連線＝完全不顯示、零 garmin 請求。
+  const dashHasGarmin = !!dash?.connected_sources?.some((s) => String(s).toLowerCase() === 'garmin')
+  const showGarminCard = dash?.garmin_entry === 'shown' || dashHasGarmin || !!garminNotice
   // 只在「運動數據」分頁才打（卡片只在那一頁）：全員開放後，不必每次打開會員管理其他分頁都多一個 status 請求。
   useEffect(() => { if (tab === 'sports' && (dash?.coros_mcp_entry === 'shown' || dashHasCoros)) loadCorosMcp() }, [tab, dash?.coros_mcp_entry, dashHasCoros])
   // reauth=true＝已連接者重新授權（走同一個 /connect；契約 §2.4 後端對既有連線非破壞性更新 token）。首次連接才需要勾同意；
@@ -1329,6 +1350,30 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             </div>
           )}
 
+          {/* Garmin Connect 官方直連（Activity API 推送；見 components/profile/GarminCard.tsx）：入口 shown 或已有連線才掛載，
+              卡片自己決定要不要打 /status（入口 hidden 且沒連線＝零請求）。Garmin 沒有「匯入數據」（只有推送、沒有拉取）。
+              活動列的「Garmin ＋ 型號」歸屬見下方「已同步活動」。 */}
+          {showGarminCard && (
+            <div style={{ marginTop: 12 }}>
+              <GarminCard
+                entryHint={dash?.garmin_entry}
+                hasConnectionHint={dashHasGarmin}
+                notice={garminNotice}
+                onNotice={setGarminNotice}
+                reloadKey={garminReload}
+                hasOtherSourceActivity={!!activities?.some((a) => a.source !== 'garmin' && !a.flagged && Date.now() - new Date(a.started_at || a.recorded_at).getTime() < 7 * 86400000)}
+                onDisconnected={() => {
+                  // 後端同交易刪了 Garmin 活動、重設偏好來源：把依賴它們的畫面（已同步活動、Dashboard 連線來源、偏好來源）一併刷新。
+                  loadActivities()
+                  loadDashboard()
+                  withUserAuth((t) => profileApi.getMe(t))
+                    .then((m) => setP((c) => (c ? { ...c, preferred_data_source: m.profile.preferred_data_source } : c)))
+                    .catch(() => {})
+                }}
+              />
+            </div>
+          )}
+
           {/* 里程優先來源（連接 2 個以上來源時可設定；跨來源去重用） */}
           {connectedSources.length >= 2 && (
             <div style={{ marginTop: 12, background: 'var(--bg-2)', borderRadius: 12, padding: '12px 14px' }}>
@@ -1424,6 +1469,12 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                         （例如 Garmin 直連列）也不能標成 COROS——各來源之後各自標示自己的來源。 */}
                     {a.source === 'coros' && a.device_name && (
                       <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 2 }}>Data provided by COROS · {a.device_name}</div>
+                    )}
+                    {/* Garmin 歸屬（品牌規範）：source==='garmin' 的列（官方直連與舊 Terra 匯入都是 Garmin 裝置資料）一律標「Garmin ＋ 型號」，
+                        型號不明只寫 Garmin；緊貼在距離標題列下方、首屏可見，不放 tooltip／展開區（見 lib/attribution.ts）。
+                        別的來源即使帶 device_name 也不會被標成 Garmin。 */}
+                    {sourceAttribution(a.source, a.device_name) && (
+                      <div data-garmin-attribution="" style={{ fontSize: 11, fontWeight: 700, color: 'var(--tx-dim)', marginTop: 2, overflowWrap: 'anywhere' }}>{sourceAttribution(a.source, a.device_name)}</div>
                     )}
                     <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 3 }}>
                       配速 {paceStr(a.avg_pace_s)}/km · {Math.round(a.duration_s / 60)} 分

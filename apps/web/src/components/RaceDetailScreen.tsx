@@ -22,6 +22,7 @@ import { RankingBody } from './RaceRankingScreen'
 import { ExploreBody } from './ExploreBody'
 import ScrollArea from './ScrollArea'
 import ImageLightbox from './ImageLightbox'
+import { sourceAttribution, garminListAttribution } from '@/lib/attribution'
 
 const STATUS_LABEL: Record<string, string> = {
   registering: '報名中', upcoming_reg: '即將報名', reg_closed: '報名結束',
@@ -615,6 +616,8 @@ function sourceLabel(src: string): string {
   }
 }
 const sourceChip: React.CSSProperties = { fontSize: 10, fontWeight: 700, color: 'var(--tx-dim)', background: 'var(--bg-2)', border: '1px solid var(--line-2)', borderRadius: 999, padding: '1px 7px', whiteSpace: 'nowrap' }
+// Garmin 列的歸屬標籤「Garmin ＋ 型號」可能較長：允許換行、不撐破版面（其他來源維持原樣）。
+const garminSourceChip: React.CSSProperties = { ...sourceChip, whiteSpace: 'normal', overflowWrap: 'anywhere', maxWidth: '100%' }
 
 // 進度頁「每日歷程記錄」：第一層每天一列（日期＋當天總里程＋筆數），點「詳細」展開當天各筆活動
 //（時間/距離/時長/配速/來源）。里程窗與 GetRaceProgress 的「我的里程」一致，每日加總對得起總里程。
@@ -626,9 +629,15 @@ function DailyHistory({ race }: { race: Race }) {
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const days = data?.days ?? []
   if (isLoading || days.length === 0) return null // 靜默：載入中或尚無活動就不佔位（避免空白區塊）
+  // Garmin 歸屬（品牌規範：標題正下方、首屏可見、不放在可展開區）：這份歷程含 Garmin 裝置資料時，在標題下方集中標示
+  // 「Garmin ＋ 型號」（多列＝全域標示；每列展開後另有各自的來源標籤）。沒有 Garmin 列就不顯示。
+  const garminAttr = garminListAttribution(days.flatMap((d) => d.activities))
   return (
     <div>
-      <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)', marginBottom: 8 }}>歷程記錄</div>
+      <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--tx)', marginBottom: garminAttr ? 2 : 8 }}>歷程記錄</div>
+      {garminAttr && (
+        <div data-garmin-attribution="" style={{ fontSize: 11, color: 'var(--tx-dim)', marginBottom: 8, overflowWrap: 'anywhere' }}>含 {garminAttr} 資料</div>
+      )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {days.map((d) => {
           const isOpen = !!open[d.date]
@@ -649,10 +658,13 @@ function DailyHistory({ race }: { race: Race }) {
                 <div style={{ borderTop: '1px solid var(--line)', padding: '4px 13px 6px' }}>
                   {d.activities.map((a, i) => (
                     <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '7px 0', borderBottom: i < d.activities.length - 1 ? '1px solid var(--line-2)' : 'none' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, minWidth: 0 }}>
                         <span style={{ fontSize: 12, color: 'var(--tx-faint)', width: 42, flexShrink: 0 }}>{fmtTime(a.recorded_at)}</span>
                         <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--tx)' }}>{a.distance_km.toFixed(2)} km</span>
-                        {sourceLabel(a.source) && <span style={sourceChip}>{sourceLabel(a.source)}</span>}
+                        {/* Garmin 列：標籤寫「Garmin ＋ 型號」（型號不明只寫 Garmin；見 lib/attribution.ts）；其他來源維持品牌名 */}
+                        {sourceAttribution(a.source, a.device_name)
+                          ? <span data-garmin-attribution="" style={garminSourceChip}>{sourceAttribution(a.source, a.device_name)}</span>
+                          : sourceLabel(a.source) && <span style={sourceChip}>{sourceLabel(a.source)}</span>}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
                         <span style={{ fontSize: 12, color: 'var(--tx-dim)' }}>{fmtDur(a.duration_s)}</span>

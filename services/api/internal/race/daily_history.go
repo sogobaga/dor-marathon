@@ -24,6 +24,10 @@ type DailyActivity struct {
 	AvgPaceS   int       `json:"avg_pace_s"`
 	Source     string    `json:"source"`      // "" = App GPS；其餘 strava/garmin/coros
 	ExternalID string    `json:"external_id"` // provider 活動 id（Strava→「View on Strava」回連；App GPS 無此值）
+	// DeviceName：資料來源裝置型號（activities.device_name，migration 197；Garmin 直連／COROS MCP 匯入才有）。
+	// 前台依 source 顯示「Garmin 〈型號〉」歸屬；NULL 時不輸出，前台退回只顯示品牌。⚠️ 只在「本人視圖」輸出
+	// （此端點只查呼叫者自己的活動）；排行榜、貢獻榜等衍生／公開畫面不得帶這個欄位。
+	DeviceName *string `json:"device_name,omitempty"`
 }
 
 type DailyStat struct {
@@ -37,7 +41,7 @@ type DailyStat struct {
 // scoping 與 loadUserRangeActivities 完全一致（僅 SELECT 欄位不同：多取 duration_s / source）。
 func (r *Repository) loadUserDailyActivities(ctx context.Context, raceID, userID string) ([]DailyActivity, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT a.distance_km, a.duration_s, a.avg_pace_s, a.recorded_at, COALESCE(a.source,''), COALESCE(a.external_id,'')
+		SELECT a.distance_km, a.duration_s, a.avg_pace_s, a.recorded_at, COALESCE(a.source,''), COALESCE(a.external_id,''), a.device_name
 		FROM races rc
 		LEFT JOIN registrations reg ON reg.race_id = rc.id AND reg.user_id = $2
 		     AND rc.event_mode = 'personal' AND reg.status = 'paid' AND reg.challenge_started_at IS NOT NULL
@@ -55,7 +59,7 @@ func (r *Repository) loadUserDailyActivities(ctx context.Context, raceID, userID
 	out := []DailyActivity{}
 	for rows.Next() {
 		var a DailyActivity
-		if err := rows.Scan(&a.DistanceKm, &a.DurationS, &a.AvgPaceS, &a.RecordedAt, &a.Source, &a.ExternalID); err != nil {
+		if err := rows.Scan(&a.DistanceKm, &a.DurationS, &a.AvgPaceS, &a.RecordedAt, &a.Source, &a.ExternalID, &a.DeviceName); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

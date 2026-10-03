@@ -363,9 +363,24 @@ func main() {
 	// COROS MCP 第二階段：使用者打開 DOR（Dashboard）時自動同步，每人最多每 25 分鐘一次、背景 goroutine，
 	// 不新增任何排程（Neon 要能睡）；只有白名單帳號會走到（見 profile.Dashboard 的 entry=='shown' 判斷）。
 	profileHandler.SetCorosMcpAutoSync(corosMcpHandler.CorosMcpAutoSync)
-	// 每日報告「直連手錶」段（人數統計，只印人數、不印顯示名稱）：COROS MCP 註冊成直連供應商之一
-	// （Garmin 直連之後同樣 opsHandler.AddDirectWearable(garminHandler)）。
+	// 每日報告「直連手錶」段（人數統計，只印人數、不印顯示名稱）：COROS MCP 與 Garmin 直連都註冊成直連供應商。
 	opsHandler.AddDirectWearable(corosMcpHandler)
+
+	// Garmin 直連（Activity API，只收推送；見 internal/integration/garmin*.go，migration 199）。
+	// 2026-10-03 擁有者同意接上主程式。憑證與 webhook 路徑密鑰全部來自環境變數（GarminConfigFromEnv）；
+	// 未設定時各端點回 503（不影響其他功能）。入口預設 whitelist（超管恆可）——後台「Garmin 直連」可改。
+	garminHandler := integration.NewGarminHandler(integration.GarminConfigFromEnv(), integration.GarminDeps{
+		DB:          pool,
+		Redis:       rdb,
+		RequireAuth: middleware.RequireAuth(authSvc),
+		RateLimit: func(action string, limit int, window time.Duration) func(http.Handler) http.Handler {
+			return middleware.RateLimit(rdb, action, limit, window, middleware.UserOrIP)
+		},
+		FrontendURL: cfg.FrontendURL,
+		JWTSecret:   cfg.JWTSecret,
+		Mailer:      mailHandler,
+	})
+	opsHandler.AddDirectWearable(garminHandler)
 	// 競賽模式分組成績（race_group_standings 預聚合表）：外部來源匯入（COROS MCP、之後的 Garmin 直連）不經 Redis stream，
 	// worker 不會被觸發——匯入成功後經 integration.AfterImport 對該使用者報名的 competition 賽事重算
 	// （GA 契約 §3.5；沿用虛擬選手生成器同一段聚合 SQL，不新增排程）。
@@ -544,6 +559,9 @@ func main() {
 		r.Mount("/integrations/terra", terraHandler.Router())
 		r.Mount("/integrations/coros", corosHandler.Router())
 		r.Mount("/integrations/coros-mcp", corosMcpHandler.Router())
+		// Garmin 直連：公開群組——webhook（路徑密鑰）與 callback（簽章 state）必須免登入可達；
+		// connect／status／disconnect 由 router 內自帶 RequireAuth＋限流。
+		r.Mount("/integrations/garmin", garminHandler.Router())
 
 		// 綠界付款結果通知（公開，server 對 server，自帶 CheckMacValue 驗章）
 		r.Post("/payments/ecpay/notify", paymentHandler.Notify)
@@ -709,6 +727,8 @@ func main() {
 			// 管理者管理 + 操作紀錄（僅超級管理員）
 			r.With(adminAcctHandler.RequireSuper).Mount("/admin/admins", adminAcctHandler.Router())
 			r.With(adminAcctHandler.RequireSuper).Get("/admin/audit", adminAcctHandler.AuditList)
+			// Garmin 直連後台（僅超管；router 內另有超管守衛）：事件列表／重送、封鎖／解除、統計。
+			r.With(adminAcctHandler.RequireSuper).Mount("/admin/garmin", garminHandler.AdminRouter())
 			// 2026-09-08 audit finding 3(d)：強制登出某帳號現有全部裝置（tokens_not_before=now，
 			// 見 auth.Service.RevokeAllSessions）——僅超級管理員，比照上面 /admin/admins 的權限
 			// 模式；目標可以是任何 users.id（不限 admin 帳號），懷疑帳號外洩時使用，不需要改密碼。
@@ -919,6 +939,8 @@ func main() {
 	// 背景：團練「開跑前提醒」排程（每小時 tick；meet_at 落在 now~now+N 小時且尚未提醒過才發，
 	// 站內信 + Email，一人多場合併發一封；見 internal/runmeet/reminder.go）
 	go runMeetHandler.RunReminderLoop(dbwake.WithJob(bgCtx, "runmeet_reminder"))
+	// 背景：Garmin 直連啟動掃描——延遲 60 秒後只跑一次（領取上次部署遺留的到期事件），不是迴圈（Neon 要能睡）。
+	go garminHandler.StartupSweep(dbwake.WithJob(bgCtx, "garmin_startup_sweep"))
 
 	go func() {
 		log.Info().Str("port", cfg.Port).Msg("DOR API server starting")
@@ -937,5 +959,7 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	srv.Shutdown(shutdownCtx)
+	// Garmin 直連：HTTP 不再收新請求後，等進行中的事件處理結束並釋放未完成事件的租約，讓新程序的啟動掃描接手。
+	garminHandler.Drain(shutdownCtx)
 	log.Info().Msg("server stopped")
 }
