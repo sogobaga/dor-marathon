@@ -34,6 +34,9 @@ func corosMcpSetupPool(t *testing.T) *pgxpool.Pool {
 	if dsn == "" {
 		t.Skip("DOR_TEST_DATABASE_URL not set; skipping Neon 整合測試")
 	}
+	// GA 起 COROS MCP 的 token 寫入一律 fail-closed（EncryptTokenStrict）：沒有有效金鑰就拒絕連接。
+	// 測試用的假金鑰（repository_test.go 的 validKeyHex），不是任何真實環境的值。
+	t.Setenv("STRAVA_TOKEN_KEY", validKeyHex)
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -73,6 +76,46 @@ func corosMcpSetWhitelist(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	})
 }
 
+// corosMcpMakeSuper 把測試使用者設成超管（GA 起讀取測試只給超管；超管在 whitelist／open 狀態恆可通過入口閘門）。
+func corosMcpMakeSuper(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID string) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `UPDATE users SET is_super_admin=TRUE WHERE id=$1::uuid`, userID); err != nil {
+		t.Fatalf("make super: %v", err)
+	}
+}
+
+// corosMcpSetEntryState 設定 coros_mcp_entry_state（空字串＝刪除這個鍵＝缺鍵）。
+func corosMcpSetEntryState(t *testing.T, ctx context.Context, pool *pgxpool.Pool, state string) {
+	t.Helper()
+	if state == "" {
+		_, _ = pool.Exec(ctx, `DELETE FROM app_settings WHERE key=$1`, corosMcpEntryStateKey)
+	} else if _, err := pool.Exec(ctx, `
+		INSERT INTO app_settings (key, value, updated_at) VALUES ($1,$2,NOW())
+		ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`, corosMcpEntryStateKey, state); err != nil {
+		t.Fatalf("set entry state: %v", err)
+	}
+	appsettings.InvalidateCache()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM app_settings WHERE key=$1`, corosMcpEntryStateKey)
+		appsettings.InvalidateCache()
+	})
+}
+
+// corosMcpSetSetting 寫任意 app_settings 鍵（測試結束刪除）。
+func corosMcpSetSetting(t *testing.T, ctx context.Context, pool *pgxpool.Pool, key, value string) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO app_settings (key, value, updated_at) VALUES ($1,$2,NOW())
+		ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`, key, value); err != nil {
+		t.Fatalf("set %s: %v", key, err)
+	}
+	appsettings.InvalidateCache()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM app_settings WHERE key=$1`, key)
+		appsettings.InvalidateCache()
+	})
+}
+
 func passthroughAuth(next http.Handler) http.Handler { return next }
 
 func withUser(r *http.Request, userID string) *http.Request {
@@ -84,6 +127,9 @@ func withUser(r *http.Request, userID string) *http.Request {
 type fakeCorosOpts struct {
 	issueRefresh   bool
 	firstExpiresIn int
+	// idToken：非 nil 時，authorization_code 換 token 的回應帶 id_token（GA 帳號綁定，見 corosmcp_identity.go）。
+	// 參數是這台假伺服器的 issuer URL 與 DCR 發的 client_id。
+	idToken func(issuer, clientID string) string
 }
 
 // fakeCoros：測試可讀的假伺服器狀態（皆以 mu 保護）。
@@ -100,6 +146,30 @@ type fakeCoros struct {
 	records   []corosFixtureRec
 	toolCalls map[string]int
 	anomaly   bool
+	// mcpStatus 非 0 時，/mcp 一律回這個 HTTP 狀態（模擬 COROS 限流 429／故障 5xx）；mcpHits 計數所有 /mcp 請求。
+	mcpStatus int
+	mcpHits   int
+	// refreshStatus 非 0 時，refresh_token grant 回這個狀態（例 500）；jwks 非 nil 時 /jwks 回它。
+	refreshStatus int
+	jwks          []byte
+}
+
+func (f *fakeCoros) setMCPStatus(code int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.mcpStatus = code
+}
+
+func (f *fakeCoros) hits() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mcpHits
+}
+
+func (f *fakeCoros) setRefreshStatus(code int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refreshStatus = code
 }
 
 // setRecords／calls／setAnomaly：測試與假伺服器 handler 共用，皆以 mu 保護。
@@ -201,8 +271,20 @@ func newFakeCorosMCPServer(t *testing.T, opts ...fakeCorosOpts) *fakeCoros {
 				_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
 				return
 			}
-			_, _ = fmt.Fprintf(w, `{"access_token":"tok-1"%s,"expires_in":%d,"token_type":"Bearer","scope":"openid offline_access mcp.tools"}`, refresh("rtok-1"), o.firstExpiresIn)
+			idTok := ""
+			if o.idToken != nil {
+				idTok = fmt.Sprintf(`,"id_token":%q`, o.idToken(f.srv.URL, "fake-client-id"))
+			}
+			_, _ = fmt.Fprintf(w, `{"access_token":"tok-1"%s%s,"expires_in":%d,"token_type":"Bearer","scope":"openid offline_access mcp.tools"}`, refresh("rtok-1"), idTok, o.firstExpiresIn)
 		case "refresh_token":
+			f.mu.Lock()
+			rs := f.refreshStatus
+			f.mu.Unlock()
+			if rs != 0 {
+				w.WriteHeader(rs)
+				_, _ = w.Write([]byte(`{"error":"server_error"}`))
+				return
+			}
 			if r.PostForm.Get("refresh_token") != "rtok-1" {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
@@ -219,10 +301,27 @@ func newFakeCorosMCPServer(t *testing.T, opts ...fakeCorosOpts) *fakeCoros {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
 	})
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		body := f.jwks
+		f.mu.Unlock()
+		if body == nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
 	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.lastMCPAuth = r.Header.Get("Authorization")
+		f.mcpHits++
+		forced := f.mcpStatus
 		f.mu.Unlock()
+		if forced != 0 {
+			w.WriteHeader(forced)
+			return
+		}
 		var body struct {
 			Method string `json:"method"`
 			Params struct {
@@ -327,9 +426,10 @@ func TestIntegration_FullFlow(t *testing.T) {
 	ownerID := corosMcpCreateUser(t, ctx, pool, ownerEmail)
 	otherID := corosMcpCreateUser(t, ctx, pool, otherEmail)
 	corosMcpSetWhitelist(t, ctx, pool, ownerEmail)
+	corosMcpMakeSuper(t, ctx, pool, ownerID) // GA：讀取測試只給超管
 
 	// 既有 provider='coros' 連線（模擬 Partner API 直連使用者）：全程不該被 coros_mcp 的任何動作碰到。
-	if err := repo.Save(ctx, &Connection{UserID: ownerID, Provider: providerCoros, ProviderUserID: "coros-open-id", AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now().Add(24 * time.Hour)}); err != nil {
+	if err := repo.Save(ctx, &Connection{UserID: ownerID, Provider: providerCoros, ProviderUserID: "coros-open-id-" + corosMcpRandSuffix(), AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now().Add(24 * time.Hour)}); err != nil {
 		t.Fatalf("seed existing coros connection: %v", err)
 	}
 	t.Cleanup(func() {
@@ -547,9 +647,26 @@ func TestIntegration_FullFlow(t *testing.T) {
 					t.Fatalf("probe_logs.response 不應包含 token/secret 原文 (%s): %s", secret, raw)
 				}
 			}
+			// GA 契約 §3.2：只存摘要，不存任何 COROS 原始回應（工具清單、活動明細、分段…）
+			var shape map[string]any
+			if err := json.Unmarshal(raw, &shape); err != nil {
+				t.Fatalf("probe log response must be JSON: %v", err)
+			}
+			if _, hasRaw := shape["raw"]; hasRaw || len(shape) != 1 || shape["summary"] == nil {
+				t.Fatalf("probe_logs.response must contain only the summary, got %s", raw)
+			}
+			for _, leak := range []string{"inputSchema", "Distance:", "Laps", "Bound Devices", "COROS PACE 4", "labelId", "4761111"} {
+				if strings.Contains(string(raw), leak) {
+					t.Fatalf("probe_logs.response must not keep COROS raw content (%q): %s", leak, raw)
+				}
+			}
 		}
 		if n != 5 {
 			t.Fatalf("expected 5 probe_logs rows, got %d", n)
+		}
+		var nonNullReq int
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM coros_mcp_probe_logs WHERE user_id=$1 AND request IS NOT NULL`, ownerID).Scan(&nonNullReq); err != nil || nonNullReq != 0 {
+			t.Fatalf("probe_logs.request must not be stored (err=%v, rows with request=%d)", err, nonNullReq)
 		}
 	}
 
@@ -576,6 +693,10 @@ func TestIntegration_FullFlow(t *testing.T) {
 	}
 	if conn != nil {
 		t.Fatal("expected coros_mcp connection to be deleted after disconnect")
+	}
+	var probeRows int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM coros_mcp_probe_logs WHERE user_id=$1`, ownerID).Scan(&probeRows); err != nil || probeRows != 0 {
+		t.Fatalf("disconnect must delete the user's probe logs in the same transaction (err=%v rows=%d)", err, probeRows)
 	}
 	otherConn, err := repo.GetByUser(ctx, ownerID, providerCoros)
 	if err != nil || otherConn == nil {
@@ -740,6 +861,7 @@ func TestIntegration_NoRefreshToken_ReconnectRequired(t *testing.T) {
 	ownerEmail := "corosmcp-norefresh-" + corosMcpRandSuffix() + "@example.com"
 	ownerID := corosMcpCreateUser(t, ctx, pool, ownerEmail)
 	corosMcpSetWhitelist(t, ctx, pool, ownerEmail)
+	corosMcpMakeSuper(t, ctx, pool, ownerID)
 
 	fc := newFakeCorosMCPServer(t, fakeCorosOpts{issueRefresh: false, firstExpiresIn: 3600})
 	doc := seedDiscovery(fc.srv.URL)
@@ -789,6 +911,19 @@ func TestIntegration_NoRefreshToken_ReconnectRequired(t *testing.T) {
 	if _, _, _, _, callsAfter := fc.snapshot(); callsAfter != callsBefore {
 		t.Fatalf("no refresh token → must not call the token endpoint, calls %d → %d", callsBefore, callsAfter)
 	}
+	// GA 契約 §2.3：無法換新 → 寫入 reauth_required_at；/status 回 needs_reauth=true 與 access token 到期時間
+	{
+		var flagged bool
+		if err := pool.QueryRow(ctx, `SELECT reauth_required_at IS NOT NULL FROM user_integrations WHERE user_id=$1 AND provider=$2`, ownerID, providerCorosMcp).Scan(&flagged); err != nil || !flagged {
+			t.Fatalf("reauth_required_at must be set once refresh is impossible (err=%v flagged=%v)", err, flagged)
+		}
+		rw := httptest.NewRecorder()
+		h2.Router().ServeHTTP(rw, withUser(httptest.NewRequest(http.MethodGet, "/status", nil), ownerID))
+		st := decodeJSONMap(t, rw)
+		if st["needs_reauth"] != true || st["connected"] != true || st["expires_at"] == nil {
+			t.Fatalf("status must report needs_reauth with the (no-refresh-token) expiry: %v", st)
+		}
+	}
 
 	// 中斷連線：revoke 被拒（public client）→ revoked=false，但本機連線仍刪除
 	{
@@ -819,8 +954,12 @@ type mcpImportEnv struct {
 	users []string
 }
 
-func newMcpImportEnv(t *testing.T, nUsers int) *mcpImportEnv {
+func newMcpImportEnv(t *testing.T, nUsers int, opts ...fakeCorosOpts) *mcpImportEnv {
 	t.Helper()
+	fo := fakeCorosOpts{issueRefresh: true, firstExpiresIn: 3600}
+	if len(opts) > 0 {
+		fo = opts[0]
+	}
 	pool := corosMcpSetupPool(t)
 	ctx := context.Background()
 	repo := NewRepository(pool)
@@ -832,12 +971,16 @@ func newMcpImportEnv(t *testing.T, nUsers int) *mcpImportEnv {
 	}
 	corosMcpSetWhitelist(t, ctx, pool, strings.Join(emails, ","))
 
-	fc := newFakeCorosMCPServer(t, fakeCorosOpts{issueRefresh: true, firstExpiresIn: 3600})
+	fc := newFakeCorosMCPServer(t, fo)
 	doc := seedDiscovery(fc.srv.URL)
 	t.Cleanup(func() {
 		bg := context.Background()
 		_, _ = pool.Exec(bg, `DELETE FROM coros_mcp_clients WHERE issuer=$1`, doc.Issuer)
 		for _, id := range ids {
+			_, _ = pool.Exec(bg, `DELETE FROM coros_mcp_probe_logs WHERE user_id=$1`, id)
+			_, _ = pool.Exec(bg, `DELETE FROM gps_calib_pairs WHERE user_id=$1`, id)
+			_, _ = pool.Exec(bg, `DELETE FROM user_gps_calib WHERE user_id=$1`, id)
+			_, _ = pool.Exec(bg, `DELETE FROM gps_runs WHERE user_id=$1`, id)
 			_, _ = pool.Exec(bg, `DELETE FROM activities WHERE user_id=$1`, id)
 			_, _ = pool.Exec(bg, `DELETE FROM external_award_ledger WHERE user_id=$1`, id)
 			_, _ = pool.Exec(bg, `DELETE FROM user_integrations WHERE user_id=$1`, id)
@@ -847,6 +990,7 @@ func newMcpImportEnv(t *testing.T, nUsers int) *mcpImportEnv {
 		GatewayURL: fc.srv.URL, RedirectURI: "https://www.dor.tw/api/v1/integrations/coros-mcp/callback",
 		FrontendURL: "https://www.dor.tw", JWTSecret: "test-secret",
 	}, passthroughAuth, nil)
+	h.autoJitterMax = 0 // 自動同步的隨機延遲（0–30 秒）在測試裡關掉
 	corosMcpInProcessHTTP(h, fc)
 	return &mcpImportEnv{t: t, ctx: ctx, pool: pool, repo: repo, fc: fc, h: h, users: ids}
 }
@@ -870,10 +1014,15 @@ func (e *mcpImportEnv) do(method, path, uid string) *httptest.ResponseRecorder {
 	return rw
 }
 
+// resetThrottle 清掉記憶體節流表（名額／鎖／冷卻），並把所有使用者的 last_synced_at 推回 1 小時前——
+// 模擬「時間過去了」：Redis 名額到期、last_synced_at 第二道節流也放行。
 func (e *mcpImportEnv) resetThrottle() {
-	e.h.importMu.Lock()
-	e.h.importLast = nil
-	e.h.importMu.Unlock()
+	e.h.mem.mu.Lock()
+	e.h.mem.m = nil
+	e.h.mem.mu.Unlock()
+	if _, err := e.pool.Exec(e.ctx, `UPDATE user_integrations SET last_synced_at = NOW() - INTERVAL '1 hour' WHERE provider=$1 AND last_synced_at IS NOT NULL AND user_id = ANY($2::uuid[])`, providerCorosMcp, e.users); err != nil {
+		e.t.Fatalf("age last_synced_at: %v", err)
+	}
 }
 
 type mcpActRow struct {
@@ -1043,16 +1192,17 @@ func TestIntegration_Stage2_ManualImport(t *testing.T) {
 		t.Fatalf("ListActivities should expose device_name on 3 rows, got %d", withDev)
 	}
 
-	// 立刻再匯入 → 429 rate_limited（60 秒節流）
+	// 立刻再匯入 → 429 rate_limited（5 分鐘節流）
 	rw = e.do(http.MethodPost, "/import", uid)
 	if rw.Code != http.StatusTooManyRequests || !strings.Contains(rw.Body.String(), "rate_limited") {
 		t.Fatalf("expected 429 rate_limited, got %d %s", rw.Code, rw.Body.String())
 	}
-	// 解除節流後重跑 → 全部 exists、不重複計 km
+	// 解除節流後重跑 → 全部 exists、不重複計 km；已同步過一次 → 回看天數夾在 3 天（請求 7 天也只給 3）
 	e.resetThrottle()
 	m = decodeJSONMap(t, e.do(http.MethodPost, "/import?days=7", uid))
-	if jnum(m, "imported") != 0 || jnum(m, "exists") != 3 || jnum(m, "days") != 7 {
-		t.Fatalf("re-import must be idempotent (days=7), got %v", m)
+	// 3 天窗口只含 2 天前的跑步與 3 天前的走路（5 天前的第一筆在窗口外，不會被重抓）。
+	if jnum(m, "imported") != 0 || jnum(m, "exists") != 2 || jnum(m, "fetched") != 2 || jnum(m, "days") != 3 {
+		t.Fatalf("re-import must be idempotent and look back only 3 days after the first sync (days=7 requested), got %v", m)
 	}
 	if got := e.totalKm(uid); got < 16.159 || got > 16.161 {
 		t.Fatalf("total_km must not change on re-import, got %v", got)
@@ -1172,9 +1322,7 @@ func TestIntegration_Stage2_AutoSyncOncePerWindow(t *testing.T) {
 	}
 
 	// 名額過期後再同步：已有 last_synced_at（剛成功同步）→ 只回看 3 天＝1 段 querySportRecords
-	e.h.autoMu.Lock()
-	e.h.autoLast = nil
-	e.h.autoMu.Unlock()
+	e.resetThrottle()
 	recBefore := e.fc.calls("querySportRecords")
 	if ran, _, err = e.h.autoSyncOnce(e.ctx, uid); err != nil || !ran {
 		t.Fatalf("autosync after window must run, got ran=%v err=%v", ran, err)
@@ -1213,7 +1361,7 @@ func TestIntegration_Stage2_DisconnectDeletesOnlyMcpRows(t *testing.T) {
 
 	// 使用者 A 另有 Terra 直連（provider='coros'）：一筆與 MCP 列重疊的 Terra 活動
 	// （先到先贏→Terra 列被標重複、dup_of 指向 MCP 列；MCP 列刪除後必須還原成正常）
-	if err := e.repo.Save(e.ctx, &Connection{UserID: uidA, Provider: providerCoros, ProviderUserID: "coros-open-id", AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now().Add(24 * time.Hour)}); err != nil {
+	if err := e.repo.Save(e.ctx, &Connection{UserID: uidA, Provider: providerCoros, ProviderUserID: "coros-open-id-" + corosMcpRandSuffix(), AccessToken: "a", RefreshToken: "r", ExpiresAt: time.Now().Add(24 * time.Hour)}); err != nil {
 		t.Fatalf("seed terra connection: %v", err)
 	}
 	terraExt := "terra-" + corosMcpRandSuffix()

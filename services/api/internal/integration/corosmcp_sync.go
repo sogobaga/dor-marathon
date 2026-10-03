@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	mrand "math/rand"
 	"net/http"
 	"regexp"
 	"sort"
@@ -24,23 +25,25 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/dor/api/internal/gpscalib"
-	"github.com/dor/api/internal/stamina"
+	"github.com/dor/api/internal/appsettings"
+	"github.com/dor/api/internal/integration/entrygate"
 )
 
 const (
 	corosMcpSourceCoros = "coros"
 	corosMcpExtIDPrefix = "mcp:"
-	// corosMcpImportWindow：手動匯入每人節流（比照 terra allowImport，記憶體）。
-	corosMcpImportWindow = time.Minute
-	// corosMcpAutoSyncWindow：自動同步每人最短間隔（Redis SET NX EX 1500 ＝ 25 分鐘）。
+	// corosMcpAutoSyncWindow：自動同步每人最短間隔（Redis SET NX EX 1500 ＝ 25 分鐘）。手動匯入的節流窗口
+	// （5 分鐘）與 in-flight 鎖、冷卻等見 corosmcp_throttle.go。
 	corosMcpAutoSyncWindow = 1500 * time.Second
 	corosMcpAutoSyncDays   = 3                // 自動同步回看天數
-	corosMcpAutoSyncTO     = 60 * time.Second // 自動同步整體逾時
+	corosMcpAutoSyncTO     = 60 * time.Second // 自動同步整體逾時（不含觸發前的隨機延遲）
 	corosMcpMaxImportDays  = 30               // worker 去重只看 45 天，回補上限 30 天（比照 Terra）
-	corosMcpChunkDays      = 10               // querySportRecords 單次最多查 10 天
-	corosMcpRecordsLimit   = 50               // 單次回傳上限；回傳筆數＝上限時記 warn（可能被截斷）
-	corosMcpDeviceMaxRunes = 60               // activities.device_name VARCHAR(60)
+	corosMcpManualDays     = 3                // 手動匯入回看天數（GA 契約 §3.1；首次連接 30 天）
+	// corosMcpSPMaxAge：只有活動結束時間距今 ≤24 小時才扣體力 SP（見 importMcpActivity）。
+	corosMcpSPMaxAge       = 24 * time.Hour
+	corosMcpChunkDays      = 10 // querySportRecords 單次最多查 10 天
+	corosMcpRecordsLimit   = 50 // 單次回傳上限；回傳筆數＝上限時記 warn（可能被截斷）
+	corosMcpDeviceMaxRunes = 60 // activities.device_name VARCHAR(60)
 )
 
 var (
@@ -60,6 +63,9 @@ var corosMcpSportTypeSet = func() map[int]bool {
 	}
 	return m
 }()
+
+// corosMcpWalkSportTypes：DOR 計入的 COROS 運動代碼中屬於「步行類」的（104 健行、900 走路）。
+var corosMcpWalkSportTypes = map[int]bool{104: true, 900: true}
 
 // --- querySportRecords 文字解析（純函式）---
 
@@ -236,6 +242,10 @@ func mapCorosMcpRecord(userID string, floor time.Time, device *string, rec coros
 	if el := int(rec.EndUnix - rec.StartUnix); rec.EndUnix > 0 && el > 0 {
 		na.ElapsedS = &el
 	}
+	// 健行（104）、走路（900）→ 步行類：合理性檢查的配速門檻是 4:00/km（跑步類 2:30/km，見 plausibility.go）。
+	if corosMcpWalkSportTypes[rec.SportType] {
+		na.Kind = KindWalk
+	}
 	return na, corosMcpSkipNone
 }
 
@@ -325,34 +335,65 @@ func (h *CorosMcpHandler) fetchSportRecords(ctx context.Context, conn *corosMcpC
 	return recs, nil
 }
 
-// importMcpActivity 落地單筆：ImportActivity → 與 terra.go importTerra「完全相同條件」的三段尾巴。
+// importMcpActivity 落地單筆：ImportActivity（含合理性檢查、直連優先去重）→ AfterImport 尾巴
+// （S6，importtail.go）。
+//   - SkipGPSCalib：mcp 列已被 gpscalib 候選排除（GA 契約 §3.4），匯入後重算校正沒有意義。
+//   - MaxSPAge＝24 小時：補抓／重新授權補同步撈回來的舊活動不再扣體力（SP 恢復是從「現在」起算，事後才扣
+//     等於重複懲罰；稽核 low「SP 以匯入時間而非跑步時間扣血」）。
 func (h *CorosMcpHandler) importMcpActivity(ctx context.Context, na *NormalizedActivity) (ImportResult, error) {
 	res, err := h.repo.ImportActivity(ctx, na)
 	if err != nil {
 		return res, err
 	}
-	// GPS 距離校正 T1 觸發點：非同步重算（debounce），不阻塞這次匯入。
-	if res.Status == "inserted" || res.Status == "duplicate" {
-		gpscalib.RecomputeAsync(h.repo.db, na.UserID)
-	}
-	// stamina.ChargeSP 維持「僅新匯入」才扣血：SP 是扣血動作，同一趟不能被扣兩次。
-	if res.Status == "inserted" && na.DistanceKm > 0 {
-		stamina.ChargeSP(ctx, h.repo.db, na.UserID, na.DistanceKm, na.AvgPaceS)
-	}
-	// AwardMileageExp 的呼叫條件比照 strava.go/coros.go/terra.go：新匯入，或同帳號跨裝置的良性重複
-	// （multi_device_duplicate，會走差額補償流程）；其他 duplicate 原因交給函式內部的 flagged 政策擋。
-	if (res.Status == "inserted" || (res.Status == "duplicate" && res.Reason == "multi_device_duplicate")) && na.DistanceKm > 0 {
-		if err := h.repo.AwardMileageExp(ctx, res.ID, na.UserID); err != nil {
-			log.Error().Err(err).Str("activity", res.ID).Msg("coros mcp award mileage exp failed")
-		}
-	}
+	h.repo.AfterImport(ctx, na, res, TailOptions{SkipGPSCalib: true, MaxSPAge: corosMcpSPMaxAge})
 	return res, nil
 }
 
-// syncCorosMcp 同步核心（手動 /import 與自動同步共用）：取連線（無→errCorosMcpNotConnected）→ 必要時換 token
-// （errCorosMcpReconnect 照舊往上傳）→ queryDevices → 分段 querySportRecords → 逐筆（由舊到新，讓重疊偵測與
-// EXP 差額補償順序固定）對應＋匯入＋三段尾巴 → 無錯誤時更新 last_synced_at。from 會被夾到連線 floor 之後。
-func (h *CorosMcpHandler) syncCorosMcp(ctx context.Context, userID string, from, to time.Time) (CorosMcpSyncResult, error) {
+// corosMcpSyncOpts 單次同步的差異設定。
+type corosMcpSyncOpts struct {
+	// MinInterval：第二道節流（不依賴 Redis）——last_synced_at 距今不足就回 errCorosMcpTooSoon；0＝不檢查。
+	MinInterval time.Duration
+	// CatchUp：起點改用「重新授權補同步」公式（corosMcpCatchUpFrom），忽略傳入的 from。
+	CatchUp bool
+}
+
+// corosMcpTooSoonError 帶「還要等多久」的 errCorosMcpTooSoon。
+type corosMcpTooSoonError struct{ RetryAfter time.Duration }
+
+func (e *corosMcpTooSoonError) Error() string { return errCorosMcpTooSoon.Error() }
+func (e *corosMcpTooSoonError) Unwrap() error { return errCorosMcpTooSoon }
+
+// corosMcpCooldownError 帶「還要冷卻多久」的 errCorosMcpCooldown。
+type corosMcpCooldownError struct{ RetryAfter time.Duration }
+
+func (e *corosMcpCooldownError) Error() string { return errCorosMcpCooldown.Error() }
+func (e *corosMcpCooldownError) Unwrap() error { return errCorosMcpCooldown }
+
+// retryAfterSeconds 取錯誤鏈裡的「還要等幾秒」（至少 1）；沒有就用 fallback。
+func retryAfterSeconds(err error, fallback time.Duration) int {
+	var ts *corosMcpTooSoonError
+	var cd *corosMcpCooldownError
+	d := fallback
+	switch {
+	case errors.As(err, &ts):
+		d = ts.RetryAfter
+	case errors.As(err, &cd):
+		d = cd.RetryAfter
+	}
+	if s := int(d.Seconds()) + 1; s > 1 {
+		return s
+	}
+	return 1
+}
+
+// syncCorosMcp 同步核心（手動 /import、自動同步、重新授權補同步共用）：取連線（無→errCorosMcpNotConnected；
+// 已標記需要重新授權→errCorosMcpReconnect，不打 COROS）→ 第二道節流 → 必要時換 token（errCorosMcpReconnect
+// 照舊往上傳）→ queryDevices → 分段 querySportRecords → 逐筆（由舊到新，讓重疊偵測與 EXP 差額補償順序固定）
+// 對應＋匯入＋尾巴 → 無錯誤時更新 last_synced_at。from 會被夾到連線 floor（created_at）之後——重新授權不再重設
+// created_at，所以 floor 是「第一次連接」的時間。
+//
+// 呼叫端負責 in-flight 鎖（見 runSync、Import）。
+func (h *CorosMcpHandler) syncCorosMcp(ctx context.Context, userID string, from, to time.Time, opts corosMcpSyncOpts) (CorosMcpSyncResult, error) {
 	var out CorosMcpSyncResult
 	conn, err := h.getConnection(ctx, userID)
 	if err != nil {
@@ -361,7 +402,18 @@ func (h *CorosMcpHandler) syncCorosMcp(ctx context.Context, userID string, from,
 	if conn == nil {
 		return out, errCorosMcpNotConnected
 	}
-	if from.IsZero() {
+	if conn.ReauthRequiredAt != nil {
+		return out, errCorosMcpReconnect // 已知授權失效：等使用者重新授權，不白打 COROS
+	}
+	if opts.MinInterval > 0 && conn.LastSyncedAt != nil {
+		if since := h.timeNow().Sub(*conn.LastSyncedAt); since < opts.MinInterval {
+			return out, &corosMcpTooSoonError{RetryAfter: opts.MinInterval - since}
+		}
+	}
+	switch {
+	case opts.CatchUp:
+		from = corosMcpCatchUpFrom(to, conn.ConnectedAt, conn.LastSyncedAt)
+	case from.IsZero():
 		// 自動同步：從上次成功同步往回補（Stage 2 審查：只看 3 天會漏掉「超過 3 天沒開 DOR」期間的跑步）
 		from = corosMcpAutoFrom(to, conn.LastSyncedAt)
 	}
@@ -409,6 +461,8 @@ func (h *CorosMcpHandler) syncCorosMcp(ctx context.Context, userID string, from,
 			out.Imported++
 		case "duplicate":
 			out.Duplicate++
+		case "skipped": // 合理性檢查判定不該匯入（未來時間、距離／時間過短）
+			out.SkippedInvalid++
 		default:
 			out.Exists++
 		}
@@ -435,6 +489,23 @@ func corosMcpAutoFrom(now time.Time, lastSynced *time.Time) time.Time {
 	}
 	if from.Before(earliest) {
 		from = earliest
+	}
+	return from
+}
+
+// corosMcpCatchUpFrom 純函式：重新授權成功後「補同步」的起點（GA 契約 §2.4）＝ max(floor, last_synced_at − 1 天)，
+// 上限往回 30 天；從未成功同步過→往回 30 天（再被 floor 夾住）。floor 為零值＝不夾。
+func corosMcpCatchUpFrom(now, floor time.Time, lastSynced *time.Time) time.Time {
+	earliest := now.AddDate(0, 0, -corosMcpMaxImportDays)
+	from := earliest
+	if lastSynced != nil {
+		from = lastSynced.Add(-24 * time.Hour)
+	}
+	if from.Before(earliest) {
+		from = earliest
+	}
+	if !floor.IsZero() && from.Before(floor) {
+		from = floor
 	}
 	return from
 }
@@ -469,22 +540,25 @@ func (h *CorosMcpHandler) latestDeviceName(ctx context.Context, userID string) *
 	return name
 }
 
-// --- 手動匯入 ---
-
-// allowImport 每人 60 秒節流（記憶體，比照 terra allowImport）；呼叫即登記時間戳，避免慢請求期間連點。
-// 回傳 (放行, 還需等待秒數)。
-func (h *CorosMcpHandler) allowImport(userID string) (bool, int) {
-	h.importMu.Lock()
-	defer h.importMu.Unlock()
-	if h.importLast == nil {
-		h.importLast = map[string]time.Time{}
+// runSync 同步的共用外殼（自動同步、重新授權補同步）：in-flight 鎖（Redis，跨副本；占用中回 errCorosMcpBusy）→
+// 冷卻檢查（COROS 429／5xx 後 30 分鐘，回 errCorosMcpCooldown）→ syncCorosMcp → 錯誤分類（429／5xx → 設冷卻）→ 釋放鎖。
+func (h *CorosMcpHandler) runSync(ctx context.Context, userID string, from, to time.Time, opts corosMcpSyncOpts) (CorosMcpSyncResult, error) {
+	release, ok := h.acquireSyncLock(ctx, userID)
+	if !ok {
+		return CorosMcpSyncResult{}, errCorosMcpBusy
 	}
-	if last, ok := h.importLast[userID]; ok && time.Since(last) < corosMcpImportWindow {
-		return false, int((corosMcpImportWindow - time.Since(last)).Seconds()) + 1
+	defer release()
+	if left := h.cooldownLeft(ctx, userID); left > 0 {
+		return CorosMcpSyncResult{}, &corosMcpCooldownError{RetryAfter: left}
 	}
-	h.importLast[userID] = time.Now()
-	return true, 0
+	res, err := h.syncCorosMcp(ctx, userID, from, to, opts)
+	if isCorosThrottleErr(err) {
+		h.setCooldown(ctx, userID)
+	}
+	return res, err
 }
+
+// --- 手動匯入 ---
 
 // corosMcpImportResponse POST /import 回應：同步結果＋實際使用的 days。
 type corosMcpImportResponse struct {
@@ -492,15 +566,36 @@ type corosMcpImportResponse struct {
 	CorosMcpSyncResult
 }
 
-// POST /import?days=N（1–30，預設 30）
-// 409 {"error":"not_connected"|"reconnect_required"}、429 {"error":"rate_limited","retry_after_s":N}、
-// 502 {"error":"…"}（COROS 失敗，含 anomaly）、200 corosMcpImportResponse。
+// corosMcpManualDaysFor 手動匯入的回看天數上限（GA 契約 §3.1）：首次連接（從未成功同步）30 天，其餘 3 天。
+// 傳入的 days（query 參數）夾在 [1, 上限]；沒傳＝上限。
+func corosMcpManualDaysFor(lastSynced *time.Time, requested int, hasRequested bool) int {
+	max := corosMcpManualDays
+	if lastSynced == nil {
+		max = corosMcpMaxImportDays
+	}
+	if !hasRequested {
+		return max
+	}
+	if requested < 1 {
+		return 1
+	}
+	if requested > max {
+		return max
+	}
+	return requested
+}
+
+// POST /import?days=N
+// 入口閘門同 /connect。節流（契約 §3.1）：每人 ≥5 分鐘（Redis，跨副本；last_synced_at 第二道）、與自動同步共用
+// in-flight 鎖、COROS 429／5xx 後冷卻 30 分鐘。回看天數：3 天（首次連接 30 天）。
+// 409 {"error":"not_connected"|"reconnect_required"}、429 {"error":"rate_limited"|"sync_in_progress"|"cooldown",
+// "retry_after_s":N}、403 {"error":"forbidden"}、502 {"error":"…"}（COROS 失敗，含 anomaly）、200 corosMcpImportResponse。
 func (h *CorosMcpHandler) Import(w http.ResponseWriter, r *http.Request) {
-	userID, _, ok := h.requireWhitelist(w, r)
+	userID, ok := h.requireEntry(w, r)
 	if !ok {
 		return
 	}
-	conn, err := h.getConnection(r.Context(), userID)
+	conn, err := h.getConnectionMeta(r.Context(), userID)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
@@ -509,78 +604,120 @@ func (h *CorosMcpHandler) Import(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusConflict, map[string]string{"error": "not_connected"})
 		return
 	}
-	if allow, retryAfter := h.allowImport(userID); !allow {
+	if conn.NeedsReauth(h.timeNow()) {
+		respondJSON(w, http.StatusConflict, map[string]string{"error": "reconnect_required"})
+		return
+	}
+	if left := h.cooldownLeft(r.Context(), userID); left > 0 {
+		respondJSON(w, http.StatusTooManyRequests, map[string]any{"error": "cooldown", "retry_after_s": retryAfterSeconds(nil, left)})
+		return
+	}
+	release, got := h.acquireSyncLock(r.Context(), userID)
+	if !got {
+		respondJSON(w, http.StatusTooManyRequests, map[string]any{"error": "sync_in_progress", "retry_after_s": 10})
+		return
+	}
+	defer release()
+	if allow, retryAfter := h.claimManual(r.Context(), userID); !allow {
 		respondJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate_limited", "retry_after_s": retryAfter})
 		return
 	}
-	days := corosMcpMaxImportDays
+	requested, hasRequested := 0, false
 	if raw := strings.TrimSpace(r.URL.Query().Get("days")); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {
-			days = n
+			requested, hasRequested = n, true
 		}
 	}
-	if days < 1 {
-		days = 1
-	} else if days > corosMcpMaxImportDays {
-		days = corosMcpMaxImportDays
-	}
+	days := corosMcpManualDaysFor(conn.LastSyncedAt, requested, hasRequested)
 	now := time.Now()
-	res, err := h.syncCorosMcp(r.Context(), userID, now.AddDate(0, 0, -days), now)
+	res, err := h.syncCorosMcp(r.Context(), userID, now.AddDate(0, 0, -days), now, corosMcpSyncOpts{MinInterval: corosMcpManualWindow})
 	if err != nil {
+		if isCorosThrottleErr(err) {
+			h.setCooldown(r.Context(), userID)
+		}
 		switch {
 		case errors.Is(err, errCorosMcpReconnect):
 			respondJSON(w, http.StatusConflict, map[string]string{"error": "reconnect_required"})
 		case errors.Is(err, errCorosMcpNotConnected):
 			respondJSON(w, http.StatusConflict, map[string]string{"error": "not_connected"})
+		case errors.Is(err, errCorosMcpTooSoon):
+			respondJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate_limited", "retry_after_s": retryAfterSeconds(err, corosMcpManualWindow)})
 		default:
-			log.Error().Err(err).Str("user", userID).Msg("coros mcp manual import failed")
+			log.Error().Err(err).Str("user", userID).Str("code", corosMcpErrorCode(err)).Msg("coros mcp manual import failed")
 			respondErr(w, http.StatusBadGateway, "向 COROS 取得活動失敗")
 		}
 		return
 	}
+	log.Info().Str("user", userID).Int("days", days).Int("fetched", res.Fetched).Int("imported", res.Imported).
+		Int("duplicate", res.Duplicate).Int("exists", res.Exists).Int("errors", res.Errors).Msg("coros mcp manual import done")
 	respondJSON(w, http.StatusOK, corosMcpImportResponse{Days: days, CorosMcpSyncResult: res})
 }
 
 // --- 自動同步（Dashboard 觸發）---
 
-// claimAutoSync 搶「這個使用者這 25 分鐘的同步名額」：Redis SET NX EX 1500（鍵 coros_mcp:autosync:<uid>）；
-// Redis 為 nil 或出錯時退回記憶體 map（單機部署／本機測試仍能節流，寧可嚴格也不 fail-open 放大 COROS 呼叫）。
-func (h *CorosMcpHandler) claimAutoSync(ctx context.Context, userID string) bool {
-	if h.rdb != nil {
-		ok, err := h.rdb.SetNX(ctx, "coros_mcp:autosync:"+userID, "1", corosMcpAutoSyncWindow).Result()
-		if err == nil {
-			return ok
-		}
-		log.Warn().Err(err).Msg("coros mcp autosync: redis SETNX failed, falling back to memory")
+// autoSyncEnabled 自動同步總開關（app_settings coros_mcp_autosync_enabled；缺鍵＝開，0＝停）。repo 為 nil（單元測試）時視為開。
+func (h *CorosMcpHandler) autoSyncEnabled(ctx context.Context) bool {
+	if h.repo == nil || h.repo.db == nil {
+		return true
 	}
-	h.autoMu.Lock()
-	defer h.autoMu.Unlock()
-	if h.autoLast == nil {
-		h.autoLast = map[string]time.Time{}
-	}
-	if last, ok := h.autoLast[userID]; ok && time.Since(last) < corosMcpAutoSyncWindow {
-		return false
-	}
-	h.autoLast[userID] = time.Now()
-	return true
+	return appsettings.GetInt(ctx, h.repo.db, corosMcpAutoSyncKey, 1) != 0
 }
 
-// autoSyncOnce 自動同步的同步版本（測試與 goroutine 共用）：搶到名額＋有連線才跑 syncCorosMcp(now−3 天, now)。
-// 回傳 ran＝是否真的打了 COROS 同步。未連接直接結束（只查一次連線列，名額仍被占用，25 分鐘內不重查）。
+// entryEmergency 入口是否處於緊急關閉（hidden）。repo 為 nil 時視為否。
+func (h *CorosMcpHandler) entryEmergency(ctx context.Context) bool {
+	if h.repo == nil || h.repo.db == nil {
+		return false
+	}
+	return entrygate.Emergency(ctx, h.repo.db, corosMcpEntryStateKey)
+}
+
+// autoSyncOnce 自動同步的同步版本（測試與 goroutine 共用），依序：
+//  1. 總開關關閉（kill switch）或入口緊急關閉 → 不動作；
+//  2. 全域並發上限（本進程同時最多 corosMcpAutoConcurrency 個）：滿了略過，**不扣使用者名額**——使用者下次開 DOR 還有機會；
+//  3. 搶這位使用者的 25 分鐘名額（Redis SET NX EX 1500，跨副本；搶不到＝完全不動作）；
+//  4. 隨機延遲 0–30 秒（打散「後台廣播 dashboard 失效」造成的同時湧入）；
+//  5. runSync：in-flight 鎖 → 冷卻檢查 → 第二道節流（last_synced_at 距今 <25 分鐘不打 COROS）→ 同步。
+//
+// 回傳 ran＝是否真的打了 COROS。未連接、太快、同步中、冷卻中都回 (false, …, nil)。
 func (h *CorosMcpHandler) autoSyncOnce(ctx context.Context, userID string) (bool, CorosMcpSyncResult, error) {
+	if !h.autoSyncEnabled(ctx) || h.entryEmergency(ctx) {
+		return false, CorosMcpSyncResult{}, nil
+	}
+	sem := h.sem()
+	select {
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+	default:
+		return false, CorosMcpSyncResult{}, nil // 全域並發已滿：略過，不扣名額
+	}
 	if !h.claimAutoSync(ctx, userID) {
 		return false, CorosMcpSyncResult{}, nil
 	}
+	if h.autoJitterMax > 0 {
+		jitter := time.Duration(mrand.Int63n(int64(h.autoJitterMax)))
+		select {
+		case <-time.After(jitter):
+		case <-ctx.Done():
+			return false, CorosMcpSyncResult{}, ctx.Err()
+		}
+	}
+	sctx, cancel := context.WithTimeout(ctx, corosMcpAutoSyncTO)
+	defer cancel()
 	// from 傳零值＝由 syncCorosMcp 依 last_synced_at 算起點（corosMcpAutoFrom）
-	res, err := h.syncCorosMcp(ctx, userID, time.Time{}, time.Now())
-	if errors.Is(err, errCorosMcpNotConnected) {
+	res, err := h.runSync(sctx, userID, time.Time{}, h.timeNow(), corosMcpSyncOpts{MinInterval: corosMcpAutoSyncWindow})
+	switch {
+	case errors.Is(err, errCorosMcpNotConnected), errors.Is(err, errCorosMcpTooSoon),
+		errors.Is(err, errCorosMcpBusy), errors.Is(err, errCorosMcpCooldown):
 		return false, res, nil
+	case errors.Is(err, errCorosMcpReconnect):
+		// 需要重新授權（已標記，或換 token 不可能成功）：沒有打 COROS 同步；錯誤照回，呼叫端以 Debug 記錄即可。
+		return false, res, err
 	}
 	return true, res, err
 }
 
-// CorosMcpAutoSync 供 profile Dashboard 呼叫（僅白名單 coros_mcp_entry=='shown' 時）：開 goroutine 背景跑，
-// 60 秒逾時、panic recover、失敗只記 log；立即返回，絕不阻塞或改變 Dashboard 回應。
+// CorosMcpAutoSync 供 profile Dashboard 呼叫（只有「已連線且入口 shown」的使用者才會被呼叫）：開 goroutine 背景跑、
+// panic recover、失敗只記 log；立即返回，絕不阻塞或改變 Dashboard 回應。
 func (h *CorosMcpHandler) CorosMcpAutoSync(userID string) {
 	go func() {
 		defer func() {
@@ -588,16 +725,46 @@ func (h *CorosMcpHandler) CorosMcpAutoSync(userID string) {
 				log.Error().Interface("panic", rec).Str("user", userID).Msg("coros mcp autosync panic recovered")
 			}
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), corosMcpAutoSyncTO)
-		defer cancel()
-		ran, res, err := h.autoSyncOnce(ctx, userID)
+		ran, res, err := h.autoSyncOnce(context.Background(), userID)
 		if err != nil {
-			log.Warn().Err(err).Str("user", userID).Msg("coros mcp autosync failed")
+			// 需要重新授權是常態（約 30 天一次）——Debug 即可，免得開放全員後每 25 分鐘每人一行 Warn。
+			if errors.Is(err, errCorosMcpReconnect) {
+				log.Debug().Str("user", userID).Msg("coros mcp autosync skipped: reauthorization required")
+				return
+			}
+			log.Warn().Err(err).Str("user", userID).Str("code", corosMcpErrorCode(err)).Msg("coros mcp autosync failed")
 			return
 		}
 		if ran {
 			log.Info().Str("user", userID).Int("imported", res.Imported).Int("duplicate", res.Duplicate).
 				Int("exists", res.Exists).Msg(fmt.Sprintf("coros mcp autosync done (fetched %d)", res.Fetched))
+		}
+	}()
+}
+
+// reauthCatchUp 重新授權成功後立即補同步（GA 契約 §2.4）：起點 max(floor, last_synced_at − 1 天)、上限 30 天；
+// 背景執行。遵守自動同步總開關（關閉時使用者仍可按「匯入數據」手動補）、in-flight 鎖與冷卻。
+func (h *CorosMcpHandler) reauthCatchUp(userID string) {
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Error().Interface("panic", rec).Str("user", userID).Msg("coros mcp reauth catch-up panic recovered")
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), corosMcpAutoSyncTO)
+		defer cancel()
+		if !h.autoSyncEnabled(ctx) || h.entryEmergency(ctx) {
+			return
+		}
+		res, err := h.runSync(ctx, userID, time.Time{}, h.timeNow(), corosMcpSyncOpts{CatchUp: true})
+		switch {
+		case err == nil:
+			log.Info().Str("user", userID).Int("imported", res.Imported).Int("duplicate", res.Duplicate).
+				Int("exists", res.Exists).Msg(fmt.Sprintf("coros mcp reauth catch-up done (fetched %d)", res.Fetched))
+		case errors.Is(err, errCorosMcpBusy), errors.Is(err, errCorosMcpCooldown), errors.Is(err, errCorosMcpNotConnected):
+			log.Debug().Err(err).Str("user", userID).Msg("coros mcp reauth catch-up skipped")
+		default:
+			log.Warn().Err(err).Str("user", userID).Str("code", corosMcpErrorCode(err)).Msg("coros mcp reauth catch-up failed")
 		}
 	}()
 }

@@ -14,14 +14,12 @@ package ops
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 
@@ -29,8 +27,9 @@ import (
 )
 
 const (
-	// selfCheckTickInterval 每小時檢查一次「現在是否落在今天的執行窗口內」。窗口本身只有一小時寬
-	// （見 inSelfCheckWindow），每小時 tick 一次足夠準確命中，不需要更密集。
+	// selfCheckTickInterval 每小時 ticker 的間隔：只給「與每日窗口無關、每小時都要做」的兜底掃描用
+	// （電子發票 sweepEinvoice、GPS 孤兒列補送 sweepGPSRequeue）。每日自檢／營運報告本身改成每分鐘的
+	// 純時間 tick（dailyJobTickInterval，見 dailyjob.go）。
 	selfCheckTickInterval = time.Hour
 
 	// selfCheckAdvisoryLockName pg_try_advisory_lock 用的鎖名（經 hashtext 轉成 lock id）。
@@ -154,13 +153,22 @@ type Handler struct {
 	// 尚未啟用）每日報告安靜跳過這段清理，比照 wearable／gpsRequeuer 既有慣例。
 	corosMcpProbePurger ProbeLogPurger
 
-	mu          sync.Mutex
-	lastRunDate string // 台灣日期 YYYY-MM-DD：最近一次「已認領要執行」自檢的日期（in-memory 標記，見檔頭）
+	// directWearables 見 DirectWearableProvider（directwearable.go）。經 AddDirectWearable 註冊，由 mu 保護；
+	// 每日報告「直連手錶」段逐一取統計。未註冊時整段不顯示。
+	directWearables []DirectWearableProvider
 
-	// lastReportDate：每日營運報告（dailyreport.go）獨立的當日冪等標記，刻意與上面的 lastRunDate
-	// 分開——兩個排程共用同一個 Handler／同一小時執行窗口，但各自認領各自的「今天跑過了嗎」，
-	// 不能共用同一個欄位，否則其中一個先跑就會讓另一個誤判「今天已跑過」而被跳過。
-	lastReportDate string
+	mu sync.Mutex
+
+	// selfJob／reportJob：每日自檢、每日營運報告各自的 in-memory 狀態（成功才設的「已完成」標記、進行中、
+	// 重試次數與下次重試時間，見 dailyjob.go）。兩個排程共用同一個 Handler 與同一個 08:00-08:59 窗口，但各自認領
+	// 各自的「今天成功了嗎」，不能共用同一個欄位，否則其中一個先跑就會讓另一個誤判「今天已跑過」而被跳過。
+	selfJob   dailyJobState
+	reportJob dailyJobState
+
+	// 測試縫隙（nil＝正式行為）：sendTG 取代 notify.Telegram；buildReport 取代 buildDailyReportData。
+	sendTG      func(ctx context.Context, text string) error
+	buildReport func(ctx context.Context) (dailyReportData, error)
+	checks      func(ctx context.Context) []CheckResult // 取代 runChecks（自檢排程的單元測試用）
 }
 
 // NewHandler 建構子。
@@ -201,23 +209,26 @@ func inSelfCheckWindow(t time.Time) bool {
 }
 
 // RunSelfCheckLoop 背景每日自檢排程。啟動時先檢查一次（若服務剛好在窗口內重啟，補跑當天），
-// 之後每小時檢查一次；ctx 取消即結束。比照 payment.BindHandler.RunRenewalLoop 的迴圈骨架。
+// 之後每分鐘做一次「純時間」檢查（不碰 DB，見 dailyjob.go）；ctx 取消即結束。
 //
-// 電子發票兜底掃描（見 EinvoiceReporter）搭這裡同一顆每小時 ticker 一起跑，不另開週期性排程
-// （⚠️ Neon 必須允許休眠，見 internal/einvoice/issuer.go SweepPending 註解）——與每日自檢本身的
-// 08:00-08:59 執行窗口無關，每小時都要跑一次。
+// 電子發票兜底掃描（見 EinvoiceReporter）與 GPS 孤兒列補送搭另一顆「每小時」ticker（⚠️ Neon 必須允許休眠，
+// 見 internal/einvoice/issuer.go SweepPending 註解）——與每日自檢本身的 08:00-08:59 執行窗口無關，每小時都要跑
+// 一次，所以不能跟著每分鐘的 tick 跑。
 func (h *Handler) RunSelfCheckLoop(ctx context.Context) {
 	h.maybeRunDaily(ctx)
 	h.sweepEinvoice(ctx)
 	h.sweepGPSRequeue(ctx)
-	t := time.NewTicker(selfCheckTickInterval)
-	defer t.Stop()
+	tick := time.NewTicker(dailyJobTickInterval)
+	defer tick.Stop()
+	hourly := time.NewTicker(selfCheckTickInterval)
+	defer hourly.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-tick.C:
 			h.maybeRunDaily(ctx)
+		case <-hourly.C:
 			h.sweepEinvoice(ctx)
 			h.sweepGPSRequeue(ctx)
 		}
@@ -247,85 +258,89 @@ const (
 	selfCheckPersistentKey = "ops_selfcheck_last_date"
 )
 
-// maybeRunDaily 窗口 + 當日冪等閘門判斷；命中才真的執行巡檢。三層防重複：
-//  1. in-memory lastRunDate：同一實例同一天只認領一次，避免同一小時內因故被呼叫多次而重跑。
-//  2. pg_try_advisory_lock：多實例（Railway 水平擴展）情境下，同一時刻只有一個實例真的執行本輪
-//     查詢；沒搶到鎖的實例直接跳過（不影響正確性——本檢查全程唯讀，就算真的重複執行兩次，頂多是
-//     Telegram 告警因 notify.Alert 的 30 分節流被吃掉一次，不會有資料被誤改的風險，這裡用鎖純粹是
-//     避免重複查詢的效能考量，比照 vip_renewal.go 的取捨）。
-//  3. 持久標記（app_settings key=ops_selfcheck_last_date）：第三層持久防重：修部署落在08時窗口
-//     內重啟造成的重複推播（2026-08-28 實案）。in-memory 標記重啟歸零、advisory lock 執行完即
-//     主動 unlock，兩層在重啟後皆無法攔截同一天已執行過的情況；持久標記跨程序存活，確保當天已
-//     執行過就不再執行。讀取失敗時 warn 後視同未跑過（寧可重發也不要漏整天報告）。
+// maybeRunDaily 每分鐘的純時間 tick 呼叫：窗口（台灣 08:00-08:59）、今天已成功與否、重試時間都只看記憶體，
+// 命中才去搶 advisory lock／讀持久標記並執行巡檢（成功才標記、失敗 10 分鐘後重試最多 5 次、成功留 log，
+// 細節與理由見 dailyjob.go）。三層防重複：in-memory 已完成標記（同進程）、advisory lock（多實例同時段只有一個
+// 真的跑）、持久標記 app_settings.ops_selfcheck_last_date（跨重啟，2026-08-28 部署落在 08 時窗口內重啟造成
+// 重複推播的實案）。
 func (h *Handler) maybeRunDaily(ctx context.Context) {
-	now := taiwanNow()
-	if !inSelfCheckWindow(now) {
-		return
-	}
-	today := now.Format("2006-01-02")
+	runDailyJob(ctx, pgJobStore{h.db}, h.selfCheckJob(), taiwanNow())
+}
 
-	h.mu.Lock()
-	alreadyRan := h.lastRunDate == today
-	h.mu.Unlock()
-	if alreadyRan {
-		return
+// selfCheckJob 每日自檢的排程定義（見 dailyjob.go dailyJob）。
+func (h *Handler) selfCheckJob() *dailyJob {
+	return &dailyJob{
+		name:       "selfcheck",
+		lockName:   selfCheckAdvisoryLockName,
+		persistKey: selfCheckPersistentKey,
+		state:      &h.selfJob,
+		run:        h.selfCheckRun,
+		onFail:     h.onJobFail("selfcheck", "每日自檢"),
 	}
+}
 
-	conn, err := h.db.Acquire(ctx)
-	if err != nil {
-		log.Error().Err(err).Msg("ops selfcheck: acquire dedicated connection for advisory lock failed")
-		return
+// selfCheckRun 跑全部檢查並「同步」送出告警（notify.Telegram，回傳錯誤才能讓排程知道要重試——舊版用
+// notify.Alert 是背景 goroutine＋30 分鐘節流，送失敗了排程完全不知道）。全部正常只記 log、不送。
+// 排程一天只認領一次，所以不需要 Alert 的 per-kind 節流。
+func (h *Handler) selfCheckRun(ctx context.Context) (string, error) {
+	started := time.Now()
+	runChecks := h.checks
+	if runChecks == nil {
+		runChecks = h.runChecks
 	}
-	defer conn.Release()
-
-	var gotLock bool
-	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, selfCheckAdvisoryLockName).Scan(&gotLock); err != nil {
-		log.Error().Err(err).Msg("ops selfcheck: try advisory lock failed")
-		return
+	results := runChecks(ctx)
+	sum := summarizeSelfCheck(results)
+	if sum.AllOK {
+		log.Info().Int("checks", len(results)).Int64("elapsed_ms", time.Since(started).Milliseconds()).Msgf("ops selfcheck: ok (%d checks)", len(results))
+		return "", nil
 	}
-	if !gotLock {
-		log.Debug().Msg("ops selfcheck: another instance is already running/ran today's check, skip")
-		return
-	}
-	defer func() {
-		var unlocked bool
-		if err := conn.QueryRow(ctx, `SELECT pg_advisory_unlock(hashtext($1))`, selfCheckAdvisoryLockName).Scan(&unlocked); err != nil {
-			log.Warn().Err(err).Msg("ops selfcheck: advisory unlock failed (will auto-release once this connection closes)")
+	sent := 0
+	if sum.FailedCount > 0 {
+		if err := h.telegram(ctx, alertText(fmt.Sprintf("每日自檢發現 %d 項異常", sum.FailedCount), sum.AggregateDetail)); err != nil {
+			return "send", err
 		}
-	}()
-
-	// 第三層：持久標記（在 lock 內查詢，避免多實例競態）。
-	var persistedDate string
-	if err := h.db.QueryRow(ctx,
-		`SELECT value FROM app_settings WHERE key = $1`, selfCheckPersistentKey,
-	).Scan(&persistedDate); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		log.Warn().Err(err).Msg("ops selfcheck: read persistent date marker failed, treating as not-run")
+		sent++
 	}
-	if persistedDate == today {
-		// 本實例重啟前已執行過，同步 in-memory 後跳過。
-		h.mu.Lock()
-		h.lastRunDate = today
-		h.mu.Unlock()
-		log.Debug().Msg("ops selfcheck: persistent marker says already ran today, skip")
-		return
+	if sum.HeartbeatFailed {
+		if err := h.telegram(ctx, alertText("近24h平台活動上傳數為0", sum.HeartbeatDetail+"（可能為正常低谷，請留意）")); err != nil {
+			return "send", err
+		}
+		sent++
 	}
+	log.Info().Int("failed", sum.FailedCount).Bool("heartbeat_failed", sum.HeartbeatFailed).Int("messages", sent).
+		Int64("elapsed_ms", time.Since(started).Milliseconds()).Msg("ops selfcheck: sent")
+	return "", nil
+}
 
-	// 搶到鎖且持久標記確認今天尚未執行，先佔位（in-memory + 持久），再執行——
-	// 比照 vip_renewal.go 冪等閘門「先佔位再執行」的順序。
-	h.mu.Lock()
-	h.lastRunDate = today
-	h.mu.Unlock()
+// alertText 告警訊息文字（格式同 notify.Alert：🚨 [DOR] 標題／內文／台灣時間 MM/DD HH:mm）。
+func alertText(title, detail string) string {
+	return fmt.Sprintf("🚨 [DOR] %s\n%s\n%s", title, detail, taiwanNow().Format("01/02 15:04"))
+}
 
-	if _, err := h.db.Exec(ctx,
-		`INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
-		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-		selfCheckPersistentKey, today,
-	); err != nil {
-		log.Warn().Err(err).Msg("ops selfcheck: upsert persistent date marker failed (continuing)")
+// telegram 送一則 Telegram 訊息；測試可經 h.sendTG 注入假實作（nil＝notify.Telegram）。
+func (h *Handler) telegram(ctx context.Context, text string) error {
+	if h.sendTG != nil {
+		return h.sendTG(ctx, text)
 	}
+	return notify.Telegram(ctx, text)
+}
 
-	results := h.runChecks(ctx)
-	h.reportSelfCheck(results)
+// onJobFail 排程失敗回呼：log 帶階段與次數；首次失敗（build／check／lock 階段）與放棄重試時再發一則 Alert
+// （notify.Alert 本身有 30 分鐘 per-kind 節流，不會洗版；send 階段首次失敗不發——Telegram 本身可能就是壞的）。
+func (h *Handler) onJobFail(name, label string) func(stage string, err error, attempt int, giveUp bool) {
+	return func(stage string, err error, attempt int, giveUp bool) {
+		log.Error().Err(err).Str("stage", stage).Int("attempt", attempt).Int("max_attempts", dailyJobMaxAttempts).
+			Bool("give_up", giveUp).Msg("ops " + name + ": failed")
+		if giveUp || (attempt == 1 && stage != "send") {
+			detail := fmt.Sprintf("階段：%s；第 %d 次；%v", stage, attempt, err)
+			if giveUp {
+				detail = fmt.Sprintf("已重試 %d 次仍失敗，今天不再重試。", attempt) + detail
+			} else {
+				detail += fmt.Sprintf("（%d 分鐘後自動重試）", int(dailyJobRetryEvery.Minutes()))
+			}
+			notify.Alert("ops_"+name+"_fail", label+"失敗", detail)
+		}
+	}
 }
 
 // runChecks 依序執行全部 9 項檢查。單項查詢出錯（例如短暫 DB 逾時）視為該項「異常」落地，而非整批
@@ -395,23 +410,6 @@ func summarizeSelfCheck(results []CheckResult) selfCheckSummary {
 	}
 	sum.AggregateDetail = strings.Join(lines, "\n")
 	return sum
-}
-
-// reportSelfCheck 依彙整結果決定告警行為：全部正常只記 log（避免每日噪音）；1-7 有異常彙整成單一則
-// kind="selfcheck" 的 Telegram；第 8 項（活動心跳）異常另外用獨立 kind 送出、訊息註明可能為正常低谷。
-func (h *Handler) reportSelfCheck(results []CheckResult) {
-	sum := summarizeSelfCheck(results)
-	if sum.AllOK {
-		log.Info().Msgf("selfcheck ok (%d checks)", len(results))
-		return
-	}
-	if sum.FailedCount > 0 {
-		notify.Alert("selfcheck", fmt.Sprintf("每日自檢發現 %d 項異常", sum.FailedCount), sum.AggregateDetail)
-	}
-	if sum.HeartbeatFailed {
-		notify.Alert("selfcheck_activity_heartbeat", "近24h平台活動上傳數為0",
-			sum.HeartbeatDetail+"（可能為正常低谷，請留意）")
-	}
 }
 
 // SelfCheckNow POST /admin/ops/selfcheck：手動立即執行全部 9 項檢查並回傳完整 JSON 報告，

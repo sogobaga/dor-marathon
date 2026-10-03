@@ -392,9 +392,15 @@ func (w *Worker) resolveCrossSourceDups(ctx context.Context) {
 		log.Info().Int64("healed", n).Msg("stale cross_source_duplicate GPS flags healed")
 	}
 
-	// N 來源優先序去重：每筆算出「優先序 rank」（App GPS 恆 0；其餘外部來源中，使用者偏好者=1，
-	// 再 garmin>coros>strava）；對每筆活動，若有時間重疊、且優先序更高（rank 更小）的另一筆存在 →
-	// 標記為 cross_source_duplicate、dup_of 指向重疊中優先序最高那筆。每個時間叢集只保留優先序最高的一筆。
+	// N 來源優先序去重：每筆算出「優先序 rank」（App GPS 恆 0；其餘外部來源中，使用者偏好者=1（偏好 strava 除外）、
+	// 直連手錶（COROS MCP／Garmin 直連）=2，再 garmin>coros>polar>suunto>wahoo>strava）；對每筆活動，若有時間重疊、
+	// 且優先序更高（rank 更小）的另一筆存在 → 標記為 cross_source_duplicate、dup_of 指向重疊中優先序最高那筆。
+	// 每個時間叢集只保留優先序最高的一筆。
+	//
+	// ⚠️ 上面這個 CASE 必須與 services/api/internal/profile/dedup.go 的 crossSourceRankSQL 逐字一致（兩個 Go module，
+	// 無法共用；api 端 dedup_rank_test.go 讀本檔原始碼比對）。2026-10-03（COROS GA 契約 §2.7）：直連手錶列排在
+	// 偏好來源之後、其餘外部來源之前，即使使用者偏好 Strava 也勝過 Strava；順手補上先前缺的 polar／suunto／wahoo
+	// （原本落在 ELSE 5＝比 strava 還低，與 api 端 reResolveUser 不一致）。
 	// 起始時間統一：GPS(source NULL) 存結束時間 → 起=recorded_at-dur；其餘來源存起始時間 → 起=recorded_at。
 	//
 	// P1（2026-09-07 audit）：ranked CTE 原本掃全表未標記活動，隨資料量成長，這條每 30 秒（受
@@ -410,12 +416,17 @@ func (w *Worker) resolveCrossSourceDups(ctx context.Context) {
 			SELECT a.id, a.user_id, a.duration_s AS dur,
 				CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END AS st,
 				CASE
-					WHEN a.source IS NULL THEN 0                      -- App GPS 一律最高：正式紀錄一律 GPS 優先（使用者 2026-08-16 定案）
-					WHEN a.source = COALESCE(p.src,'') THEN 1          -- 使用者偏好的外部來源次之（僅在多個外部來源間取捨）
-					WHEN a.source = 'garmin' THEN 2
-					WHEN a.source = 'coros'  THEN 3
-					WHEN a.source = 'strava' THEN 4
-					ELSE 5 END AS rk
+					WHEN a.source IS NULL THEN 0
+					WHEN a.source = COALESCE(p.src,'') AND a.source <> 'strava' THEN 1
+					WHEN ((a.source='coros' AND COALESCE(a.external_id,'') LIKE 'mcp:%') OR (a.source='garmin' AND COALESCE(a.external_id,'') LIKE 'gc:%')) THEN 2
+					WHEN a.source = COALESCE(p.src,'') THEN 3
+					WHEN a.source = 'garmin' THEN 4
+					WHEN a.source = 'coros'  THEN 5
+					WHEN a.source = 'polar'  THEN 6
+					WHEN a.source = 'suunto' THEN 7
+					WHEN a.source = 'wahoo'  THEN 8
+					WHEN a.source = 'strava' THEN 9
+					ELSE 10 END AS rk
 			FROM activities a
 			LEFT JOIN pref p ON p.user_id = a.user_id
 			WHERE a.duration_s > 0 AND NOT a.flagged

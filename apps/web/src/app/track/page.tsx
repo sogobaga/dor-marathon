@@ -1042,23 +1042,30 @@ export default function TrackPage() {
   }, [])
 
   // 里程優先來源＝外部來源（Strava／手錶品牌）且已連接 → GPS 結束不自動上傳，改為讓使用者選擇（避免與外部來源同步重複而輸掉去重）
+  // COROS 直連（coros_mcp）不在 Terra 連線清單內，所以 Terra 判斷之外也認 Dashboard 的 connected_sources（後端彙整
+  // Strava／Terra／直連；缺席＝舊後端，行為與原本相同只看 Terra）。connected_sources 晚到時重跑一次，cleanup 丟掉舊結果。
+  const dashSources = dash?.connected_sources?.length ? dash.connected_sources : undefined
   useEffect(() => {
     const token = getUserToken(); if (!token) return
+    let cancelled = false
     Promise.all([
       profileApi.getMe(token).catch(() => null),
       integrationsApi.stravaStatus(token).catch(() => null),
       integrationsApi.terraStatus(token).catch(() => null),
     ]).then(([me, st, terra]) => {
+      if (cancelled) return
       const pref = me?.profile?.preferred_data_source
       const isStravaHold = pref === 'strava' && !!st?.connected
       const isTerraHold = !!pref && pref !== 'gps' && pref !== 'strava' &&
-        !!terra?.connections?.some((c) => c.provider.toLowerCase() === pref)
+        (!!terra?.connections?.some((c) => c.provider.toLowerCase() === pref) ||
+          !!dashSources?.some((s) => s.toLowerCase() === pref))
       const hold = isStravaHold || isTerraHold
       setStravaPriority(hold)
       setHoldSourceLabel(hold && pref ? sourceLabel(pref) : '')
       setRealName(me?.profile?.real_name || '') // 揮汗有禮直接截圖需求（2026-09-06）：結果畫面要顯示真實姓名
     })
-  }, [user?.id])
+    return () => { cancelled = true }
+  }, [user?.id, dashSources])
 
   // 進入頁面（idle）的 GPS「預熱」定位：立即把地圖/綠點移到目前位置，但不記錄距離。
   // ⚠️ iOS 上「所有」瀏覽器(含 Chrome/Edge/Firefox)底層都是 WebKit，permissions.query 對 geolocation

@@ -259,6 +259,12 @@ func DashboardSummary(ctx context.Context, db *pgxpool.Pool, userID, email, code
 // Strava 會填（見 integration/strava.go ElapsedTime），COROS/Terra 為 NULL 時 COALESCE 退回
 // duration_s（其語意本來就接近經過時間，不受影響）。distance 比值（LogRatio）不受此影響，仍用
 // a.duration_s 算出的 AvgPaceS 只在其他 7 個讀取點使用、與這裡無關。
+//
+// 2026-10-03（COROS GA 契約 §1／§3.4、Garmin 計畫 S4）：直連手錶列（COROS MCP：source='coros'＋external_id
+// 'mcp:%'；Garmin 直連：source='garmin'＋'gc:%'）一律排除——COROS 書面核准的用途是「計入虛擬賽事／挑戰與
+// 成就／獎勵」，拿 COROS 距離當基準去校正 DOR 自家 GPS 是二次利用，回覆之前先不做（Garmin 同理）。
+// ⚠️ 排除片語與 internal/integration.DirectWatchSQL("a") 逐字相同（gpscalib 不能 import integration——
+// integration 已 import gpscalib，會循環）；integration/directwatch_test.go 讀本檔原始碼守住兩邊一致。
 const candidateSQL = `
 	SELECT g.id::text, g.distance_km, g.duration_s, g.ended_at - make_interval(secs=>g.duration_s) AS gps_start,
 	       a.id::text, a.source, a.distance_km, COALESCE(a.elapsed_s, a.duration_s), a.recorded_at AS ext_start, COALESCE(a.flag_reason,'')
@@ -267,6 +273,7 @@ const candidateSQL = `
 	  AND g.ended_at >= now() - interval '120 days'
 	  AND ($2::timestamptz IS NULL OR g.started_at >= $2)
 	  AND a.source IN ('strava','garmin','coros','polar','suunto','wahoo') AND a.external_id IS NOT NULL AND a.duration_s > 0
+	  AND NOT ((a.source='coros' AND COALESCE(a.external_id,'') LIKE 'mcp:%') OR (a.source='garmin' AND COALESCE(a.external_id,'') LIKE 'gc:%'))
 	  AND abs(extract(epoch from (a.recorded_at - (g.ended_at - make_interval(secs=>g.duration_s))))) <= 600`
 
 func loadCandidatePairs(ctx context.Context, tx pgx.Tx, userID string, resetAt *time.Time) ([]Pair, error) {

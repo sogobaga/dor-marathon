@@ -187,6 +187,26 @@ function paceStr(sec: number) {
   if (!sec || sec <= 0) return '—'
   return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
 }
+// COROS 直連授權提醒（GA 契約 §2.3／§3.7）。後端語意（integration/corosmcp.go Status）：needs_reauth＝唯一權威旗標
+// （refresh 失敗／被撤銷，或沒有 refresh token 且 access token 已過期）；expires_at 只有「沒有可用 refresh token」時才有值，
+// 否則一律 null（有 refresh token 時 access token 會在到期前自動換新，不是使用者要處理的事）。所以 expires_at 有值＝這條連線
+// 到期後就會停、必須重新授權：已過或 3 天內到期都要預先提醒；expires_at 為 null 且 needs_reauth 為 false＝正常，不顯示橫幅。
+// 三種都導向同一個非破壞性的 /connect（保留已匯入紀錄與匯入起點，契約 §2.4）。
+const COROS_EXPIRY_WARN_MS = 3 * 24 * 60 * 60 * 1000
+function corosAuthNotice(c: CorosMcpStatus | null): { kind: 'reauth' | 'expired' | 'soon'; text: string } | null {
+  if (!c?.connected) return null
+  const t = c.expires_at ? new Date(c.expires_at).getTime() : NaN
+  const day = isNaN(t) ? '' : fmtDate(c.expires_at as string).split(' ')[0]
+  if (c.needs_reauth) {
+    return { kind: 'reauth', text: 'COROS 授權已到期或失效，DOR 暫時無法讀取你的新紀錄。請按「重新授權」——不會刪除你已匯入的紀錄。' }
+  }
+  if (!isNaN(t)) {
+    const left = t - Date.now()
+    if (left <= 0) return { kind: 'expired', text: `COROS 授權已於 ${day} 到期，DOR 可能無法讀取你的新紀錄。請按「重新授權」——不會刪除你已匯入的紀錄。` }
+    if (left <= COROS_EXPIRY_WARN_MS) return { kind: 'soon', text: `COROS 授權將於 ${day} 到期。為避免同步中斷，建議現在按「重新授權」——不會刪除你已匯入的紀錄。` }
+  }
+  return null
+}
 
 export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenPersonalTasks, onOpenExplore, onOpenGallery, onOpenTitle, onOpenAchievement, onOpenTraining, onOpenPerks, onOpenMonopoly, onOpenRewards, onOpenHeroes, onOpenRunMeet }: { onBack: () => void; focusRaceID?: string; initialTab?: 'info' | 'sports' | 'records' | 'follows'; onOpenPersonalTasks?: () => void; onOpenExplore?: () => void; onOpenGallery?: () => void; onOpenTitle?: () => void; onOpenAchievement?: () => void; onOpenTraining?: () => void; onOpenPerks?: () => void; onOpenMonopoly?: () => void; onOpenRewards?: () => void; onOpenHeroes?: () => void; onOpenRunMeet?: () => void }) {
   const [p, setP] = useState<Profile | null>(null)
@@ -216,9 +236,10 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
   const [terraMsg, setTerraMsg] = useState('')
   const [dataSrcMsg, setDataSrcMsg] = useState('') // 里程優先來源設定錯誤訊息（如選到尚未連接的來源）
   const terraPollTimers = useRef<ReturnType<typeof setTimeout>[]>([]) // auth webhook 可能晚到，導回後輪詢用；卸載時清空
-  // COROS MCP 直連（測試版，Stage 1；見契約 docs/integration/COROS_MCP_STAGE1_CONTRACT.md）：僅
-  // dash.coros_mcp_entry==='shown' 時才載入／顯示，其他人零請求。
+  // COROS MCP 直連（見契約 docs/integration/COROS_MCP_STAGE1_CONTRACT.md、COROS_MCP_GA_CONTRACT.md）：
+  // dash.coros_mcp_entry==='shown' 或 Dashboard 顯示已有 COROS 連線時才載入／顯示，其他人零請求。
   const [corosMcp, setCorosMcp] = useState<CorosMcpStatus | null>(null)
+  const [corosMcpLoaded, setCorosMcpLoaded] = useState(false) // status 請求已結束（成功或失敗）；已知有 COROS 連線的人載入前不閃同意表單
   const [corosMcpConsent, setCorosMcpConsent] = useState(false)
   const [corosMcpBusy, setCorosMcpBusy] = useState(false)
   const [corosMcpMsg, setCorosMcpMsg] = useState('')
@@ -505,16 +526,23 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
         sp.delete('terra'); sp.delete('provider'); sp.delete('reason')
         touched = true
       }
-      // COROS MCP 直連導回（?coros_mcp=connected|error&reason=...，見契約 §5：固定導回首頁，不接受任意
-      // return URL，故一律落在這裡而非 Terra 的「帶回目前頁面」做法）。
+      // COROS MCP 直連導回（?coros_mcp=connected|already_linked|error&reason=...，見契約 §5：固定導回首頁，不接受任意
+      // return URL，故一律落在這裡而非 Terra 的「帶回目前頁面」做法）。already_linked＝這個 COROS 帳號已綁在另一個
+      // DOR 帳號（GA 契約 §2.6）；也容許 error＋reason=already_linked 的寫法。connected 同時涵蓋首次連接與重新授權。
       const cm = sp.get('coros_mcp')
       if (cm) {
         const cmReason = sp.get('reason') || ''
         if (cm === 'connected') {
-          setCorosMcpMsg('✓ 已連接 COROS，可按下方「讀取測試」確認資料讀取是否正常（測試期間不會寫入跑步紀錄）')
+          setCorosMcpMsg('✓ COROS 授權完成。之後每次開啟 DOR 會自動同步你的新紀錄（只計算首次連接之後開始的活動），也可按下方「匯入數據」立即同步')
+          loadCorosMcp()
+        } else if (cm === 'already_linked' || cmReason === 'already_linked') {
+          setCorosMcpMsg('此 COROS 帳號已連結到另一個 DOR 帳號')
+          loadCorosMcp()
+        } else if (cmReason === 'denied') {
+          setCorosMcpMsg('連接未完成（授權被取消或未完成），DOR 沒有取得任何資料，可以再試一次')
           loadCorosMcp()
         } else {
-          setCorosMcpMsg(`連接未完成，請再試一次${cmReason ? `（${cmReason}）` : ''}`)
+          setCorosMcpMsg(`連接未完成，請再試一次${/^[\w:.-]{1,60}$/.test(cmReason) ? `（${cmReason}）` : ''}`)
         }
         sp.delete('coros_mcp'); sp.delete('reason')
         touched = true
@@ -631,6 +659,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       await withUserAuth((t) => integrationsApi.stravaDisconnect(t))
       setStrava({ connected: false, enabled: strava?.enabled ?? true })
       setStravaMsg('已中斷 Strava 連接')
+      loadDashboard() // 里程優先來源清單改由 Dashboard connected_sources 推導，中斷後要讓它重抓
     } catch (e: any) {
       setStravaMsg(e?.message || '中斷失敗')
     } finally {
@@ -650,19 +679,29 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       setTerraBusy(false)
     }
   }
-  // COROS MCP 直連狀態；只在入口=shown 才打（見下方 useEffect），locked/hidden 打了也是 403，不必浪費請求。
+  // COROS MCP 直連狀態：入口=shown，或 Dashboard 的 connected_sources 顯示已有 COROS 連線時才打。status 不受入口限制
+  // （GA 契約 §2.2：只要有連線列就能看、能中斷），所以入口被關掉（緊急關閉／移出白名單）的已連線者也要載入，才看得到卡片、
+  // 才能「中斷連線」；完全沒資格也沒連線的人零請求。
   function loadCorosMcp() {
-    withUserAuth((t) => corosMcpApi.status(t)).then(setCorosMcp).catch(() => {})
+    withUserAuth((t) => corosMcpApi.status(t))
+      .then((s) => { setCorosMcp(s); setCorosMcpLoaded(true) })
+      .catch(() => { setCorosMcpLoaded(true) })
   }
-  useEffect(() => { if (dash?.coros_mcp_entry === 'shown') loadCorosMcp() }, [dash?.coros_mcp_entry])
-  async function connectCorosMcp() {
-    if (!corosMcpConsent) return
+  const dashHasCoros = !!dash?.connected_sources?.some((s) => String(s).toLowerCase() === 'coros')
+  // Dashboard 說這個人有 COROS 連線、但 status 還沒回來：先顯示「載入中…」，避免已連線者每次開頁都先閃一下「同意並連接」表單。
+  const corosLoading = dashHasCoros && !corosMcpLoaded && corosMcp === null
+  // 只在「運動數據」分頁才打（卡片只在那一頁）：全員開放後，不必每次打開會員管理其他分頁都多一個 status 請求。
+  useEffect(() => { if (tab === 'sports' && (dash?.coros_mcp_entry === 'shown' || dashHasCoros)) loadCorosMcp() }, [tab, dash?.coros_mcp_entry, dashHasCoros])
+  // reauth=true＝已連接者重新授權（走同一個 /connect；契約 §2.4 後端對既有連線非破壞性更新 token）。首次連接才需要勾同意；
+  // 重新授權不再要求（同意在首次連接時已取得，且實際授權仍在 COROS 自己的頁面完成）。
+  async function connectCorosMcp(reauth = false) {
+    if (!reauth && !corosMcpConsent) return
     setCorosMcpBusy(true); setCorosMcpMsg('')
     try {
       const { url } = await withUserAuth((t) => corosMcpApi.connect(t))
-      window.location.assign(url) // 導去 COROS 授權；固定導回首頁 /?coros_mcp=connected|error（契約 §5）
+      window.location.assign(url) // 導去 COROS 授權；固定導回首頁 /?coros_mcp=connected|already_linked|error（契約 §5）
     } catch (e: any) {
-      setCorosMcpMsg(e?.message || '無法連接，請再試一次')
+      setCorosMcpMsg(e?.status === 403 ? 'COROS 直連目前未對此帳號開放，請稍後再試' : (e?.message || '無法連接，請再試一次'))
       setCorosMcpBusy(false)
     }
   }
@@ -673,9 +712,10 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       setCorosMcp((c) => (c ? { ...c, last_probe: r, last_probe_at: r.at } : c))
     } catch (e: any) {
       setCorosMcpMsg(
-        e?.status === 409 && e?.message === 'reconnect_required' ? 'COROS 授權已過期，請按「中斷連線」後重新連接 COROS'
+        e?.status === 409 && e?.message === 'reconnect_required' ? 'COROS 授權已失效，請按「重新授權」（不會刪除已匯入的紀錄）'
           : e?.status === 409 ? '尚未連接 COROS，請先按上方「連接 COROS」'
           : e?.status === 429 ? '讀取測試太頻繁，請稍候一分鐘再試'
+          : e?.status === 403 ? '讀取測試僅限超級管理員使用'
           : e?.message || '讀取測試失敗，請稍後再試'
       )
     } finally {
@@ -692,10 +732,18 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       loadCorosMcp()
       if (r.imported > 0) loadActivities()
     } catch (e: any) {
+      // 手動匯入每人至少間隔 5 分鐘（GA 契約 §3.1）：優先用後端回的剩餘秒數（Retry-After／body.retry_after_s），沒有就說 5 分鐘。
+      // 後端 429 的 error 有三種：rate_limited（5 分鐘節流）、sync_in_progress（自動同步／另一次匯入進行中，約 10 秒）、
+      // cooldown（COROS 回 429／5xx 後該使用者冷卻 30 分鐘）。
+      const ra = Number(e?.retryAfterS ?? e?.body?.retry_after_s)
+      const waitMin = Number.isFinite(ra) && ra > 0 ? Math.ceil(ra / 60) : 5
       setCorosMcpMsg(
-        e?.status === 409 && e?.message === 'reconnect_required' ? 'COROS 授權已過期，請按「中斷連線」後重新連接 COROS'
+        e?.status === 409 && e?.message === 'reconnect_required' ? 'COROS 授權已失效，請按「重新授權」（不會刪除已匯入的紀錄）'
           : e?.status === 409 ? '尚未連接 COROS，請先按上方「連接 COROS」'
-          : e?.status === 429 ? '匯入太頻繁，請 1 分鐘後再試'
+          : e?.status === 429 && e?.message === 'sync_in_progress' ? '正在同步中，請稍候幾秒再試'
+          : e?.status === 429 && e?.message === 'cooldown' ? `COROS 目前忙碌或暫時無法讀取，請 ${waitMin} 分鐘後再試`
+          : e?.status === 429 ? `匯入太頻繁，請 ${waitMin} 分鐘後再試`
+          : e?.status === 403 ? 'COROS 直連目前暫停開放，暫時無法匯入'
           : e?.status === 502 ? 'COROS 暫時無法讀取，請稍後再試'
           : e?.message || '匯入失敗，請稍後再試'
       )
@@ -704,14 +752,24 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
     }
   }
   async function disconnectCorosMcp() {
-    if (!window.confirm('中斷 COROS 連線？DOR 會刪除保存的 COROS 授權、不再讀取你的資料；之後要重新連接才能再做讀取測試。')) return
+    if (!window.confirm('中斷 COROS 連線？DOR 會刪除保存的 COROS 授權，並刪除已匯入的 COROS 紀錄（賽事成績會重新計算）；你已獲得的 EXP/DP 等獎勵不受影響。')) return
     setCorosMcpBusy(true); setCorosMcpMsg('')
     try {
       const r = await withUserAuth((t) => corosMcpApi.disconnect(t))
-      setCorosMcp({ connected: false, issuer: null, connected_at: null, last_probe_at: null, last_probe: null, last_synced_at: null, device_name: null })
+      setCorosMcp((c) => ({ connected: false, issuer: null, connected_at: null, last_probe_at: null, last_probe: null, last_synced_at: null, device_name: null, entry: c?.entry, can_probe: c?.can_probe }))
       setCorosMcpConsent(false)
-      // COROS 只給 public client，撤銷請求多半會被拒（revoked=false）：DOR 端的授權照樣已刪除、不再讀取，照實說明。
-      setCorosMcpMsg(r?.revoked ? '已中斷 COROS 連線並撤銷授權' : '已中斷 COROS 連線：DOR 已刪除保存的授權，不會再讀取你的 COROS 資料')
+      // 後端同交易刪了該來源活動、重設偏好來源（GA 契約 §3.3）：把依賴這些的畫面一併刷新，已同步活動列表不再殘留 COROS 列。
+      loadActivities()
+      loadDashboard()
+      withUserAuth((t) => profileApi.getMe(t))
+        .then((m) => setP((c) => (c ? { ...c, preferred_data_source: m.profile.preferred_data_source } : c)))
+        .catch(() => {})
+      // COROS 只給 public client，撤銷請求多半會被拒（revoked=false）：DOR 端的授權照樣已刪除、不再讀取，照實說明並引導到 COROS 端移除。
+      const n = typeof r?.deleted_activities === 'number' ? r.deleted_activities : null
+      setCorosMcpMsg(
+        (n != null ? `已中斷 COROS 連線，已刪除 ${n} 筆已匯入的紀錄。` : '已中斷 COROS 連線。')
+        + (r?.revoked ? '已撤銷授權。' : 'DOR 已刪除保存的授權，不會再讀取你的 COROS 資料；如要完全撤銷，請到 COROS 帳戶移除對 DOR 的授權。')
+      )
     } catch (e: any) {
       setCorosMcpMsg(e?.message || '中斷失敗，請稍後再試')
     } finally {
@@ -726,6 +784,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
       await withUserAuth((t) => integrationsApi.terraDisconnect(t, provider))
       setTerraMsg(`已中斷 ${brand} 連接`)
       loadTerra()
+      loadDashboard() // 同 disconnectStrava：connected_sources 要重抓
     } catch (e: any) {
       setTerraMsg(e?.message || '中斷失敗')
     } finally {
@@ -788,16 +847,29 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
     }
   }
 
-  // Terra 手錶直連品牌清單文案：enabled 後有 providers 就照後端開放的品牌顯示，否則退回全品牌（卡片仍在「即將開放」，此值不會被用到）
-  const terraBrandList = (terra?.providers?.length ? terra.providers.map(terraBrandName) : ['Garmin', 'COROS', 'Polar', 'Suunto', 'Wahoo']).join('／')
+  // Terra 手錶直連品牌清單文案：有 providers 就照後端開放的品牌顯示（後端預設現在只有 Polar／Suunto／Wahoo——COROS 改走
+  // 「COROS 直連」、Garmin 改走官方直連），否則退回這三個預設品牌（Terra 尚未啟用時卡片是「即將開放」佔位）。
+  const terraBrandList = (terra?.providers?.length ? terra.providers.map(terraBrandName) : ['Polar', 'Suunto', 'Wahoo']).join('／')
 
-  // 里程優先來源：使用者實際已連接的來源，固定順序 gps → 手錶品牌 → strava（App GPS 永遠在，其餘依是否連接過濾）
+  // 里程優先來源：使用者實際已連接的來源，固定順序 gps → 手錶品牌 → strava（App GPS 永遠在，其餘依是否連接過濾）。
+  // 來源集合優先取 Dashboard 的 connected_sources（後端彙整 Strava／Terra／COROS 直連…，所以只用 COROS 直連的人也選得到 COROS）；
+  // 欄位缺席（舊後端）才退回本頁的 strava／terra 狀態；本頁已載入到的 COROS 直連狀態一律併入。
   const connectedTerraProviders = new Set((terra?.connections ?? []).map((c) => c.provider.toLowerCase()))
+  const dashSrcList = dash?.connected_sources
+  const dashSources = Array.isArray(dashSrcList) ? new Set(dashSrcList.map((s) => String(s).toLowerCase())) : null
+  const srcConnected = (b: string): boolean =>
+    dashSources ? dashSources.has(b) : (b === 'strava' ? !!strava?.connected : connectedTerraProviders.has(b))
   const connectedSources: DataSource[] = [
     'gps',
-    ...(['garmin', 'coros', 'polar', 'suunto', 'wahoo'] as const).filter((b) => connectedTerraProviders.has(b)),
-    ...(strava?.connected ? (['strava'] as const) : []),
+    ...(['garmin', 'coros', 'polar', 'suunto', 'wahoo'] as const).filter((b) => srcConnected(b) || (b === 'coros' && corosMcp?.connected === true)),
+    ...(srcConnected('strava') ? (['strava'] as const) : []),
   ]
+  // COROS 直連卡片可見性（GA 契約 §2.2）：入口 shown 才能連接／匯入／重新授權；已有連線者即使入口被關掉也要看得到卡片
+  // （status／disconnect 不受入口限制），才能查看狀態與「中斷連線」。入口以 status 回的 entry 為準（較新），缺席退回 Dashboard。
+  const corosEntryShown = (corosMcp?.entry ?? dash?.coros_mcp_entry) === 'shown'
+  const corosConnected = corosMcp?.connected === true
+  const showCorosCard = corosEntryShown || corosConnected || !!corosMcpMsg
+  const corosNotice = corosEntryShown ? corosAuthNotice(corosMcp) : null
   // 有效選擇：後端存的偏好若已不在目前已連接清單內（如來源後來被斷開）就退回 gps，避免畫面卡在一個選不到的來源
   const effectiveSource: DataSource = p?.preferred_data_source && connectedSources.includes(p.preferred_data_source)
     ? p.preferred_data_source
@@ -1027,7 +1099,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             {/* Strava 官方連接名額誠實告知（見 memory strava-api-review：上限 10 已滿，重送審核中）；不管 Terra 是否開放都顯示，
                 不隱藏連接按鈕（有人中斷會釋出名額）。琥珀色半透明底＋var(--tx) 文字，不用金黃實心底（專案規則：實色金底才強制白字）。 */}
             <div style={{ fontSize: 11.5, color: 'var(--tx)', background: 'rgba(245,158,11,.14)', border: '1px solid rgba(245,158,11,.35)', borderRadius: 8, padding: '8px 10px', marginBottom: 12, lineHeight: 1.6 }}>
-              ⚠ Strava 官方限制每個 App 只能連接 10 位跑者，目前名額已滿、升級審核中。使用 Garmin／COROS 等裝置的跑者請改用「連接你常用的跑步裝置」。
+              ⚠ Strava 官方限制每個 App 只能連接 10 位跑者，目前名額已滿、升級審核中。{corosEntryShown ? '使用 COROS 的跑者請改用下方的「COROS 直連」；' : ''}使用 {terraBrandList} 的跑者請改用「連接你常用的跑步裝置」。
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ minWidth: 0 }}>
@@ -1035,7 +1107,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3 }}>
                   {strava?.connected
                     ? `已連接${strava.athlete_name ? `：${strava.athlete_name}` : ''} · 活動自動同步`
-                    : '連接後自動同步跑步活動，用於個人數據（個人任務、自主訓練、稱號成就、個人里程）；依 Strava 平台規範，Strava 數據不計入活動排名或里程競賽統計——要讓裝置紀錄進賽事，請用下方「連接你常用的跑步裝置」'}
+                    : `連接後自動同步跑步活動，用於個人數據（個人任務、自主訓練、稱號成就、個人里程）；依 Strava 平台規範，Strava 數據不計入活動排名或里程競賽統計——要讓裝置紀錄進賽事，請用下方${corosEntryShown ? '的「COROS 直連」或' : ''}「連接你常用的跑步裝置」`}
                 </div>
               </div>
               {strava?.connected ? (
@@ -1096,7 +1168,8 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             </div>
           </div>
 
-          {/* 手錶直連（Garmin/COROS/Polar/Suunto/Wahoo，Terra 聚合器，Phase 1）。terra===null 或 !enabled 時維持
+          {/* 手錶直連（Terra 聚合器；後端預設開放 Polar/Suunto/Wahoo——COROS 改走下方「COROS 直連」、Garmin 改走官方直連，
+              但「已連接」清單照舊列出既有的 Terra-COROS／Terra-Garmin 連線，可匯入／斷開）。terra===null 或 !enabled 時維持
               「即將開放」佔位卡（production 尚未設定 Terra 憑證前的常態，見 memory terra-wearable-integration）；
               enabled 後才是真正的連接流程，且升級為推薦卡（Strava 名額已滿，見上方卡片琥珀提示）。 */}
           <div style={{ ...recCard, marginTop: 12 }}>
@@ -1108,8 +1181,8 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 3, lineHeight: 1.6 }}>
                   {!terra?.enabled
-                    ? <>Strava 名額已滿也沒關係——很快就能連接你的 Garmin／COROS／Polar／Suunto／Wahoo 裝置帳號同步跑步，<b>正在開通中</b>。</>
-                    : `直接連接 ${terraBrandList} 等裝置帳號同步跑步：計入個人數據（個人任務、自主訓練、稱號成就、個人里程），主辦方開放外部數據的賽事也會計入排名與里程統計。`}
+                    ? <>Strava 名額已滿也沒關係——很快就能連接你的 {terraBrandList} 裝置帳號同步跑步，<b>正在開通中</b>。</>
+                    : `直接連接 ${terraBrandList} 等裝置帳號同步跑步：計入個人數據（個人任務、自主訓練、稱號成就、個人里程），主辦方開放外部數據的賽事也會計入排名與里程統計。${corosEntryShown ? 'COROS 請改用下方的「COROS 直連」。' : ''}`}
                 </div>
               </div>
               {!terra?.enabled ? (
@@ -1161,43 +1234,77 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             )}
           </div>
 
-          {/* COROS 直連（測試版，Stage 1；見契約 docs/integration/COROS_MCP_STAGE1_CONTRACT.md）：僅
-              dash.coros_mcp_entry==='shown'（白名單帳號）看得到，其他人完全看不到、零 coros-mcp 請求。
-              第一階段只做「連得上、讀取測試」，不寫入任何活動——文案與下方按鈕都要如實反映這點。 */}
-          {dash?.coros_mcp_entry === 'shown' && (
+          {/* COROS 直連（GA，見契約 docs/integration/COROS_MCP_GA_CONTRACT.md）：入口 shown（後台 coros_mcp_entry_state／白名單，
+              Dashboard 與 API 閘門同一個判斷函式）才能連接／匯入／重新授權；已有連線者即使入口被關掉也要看得到卡片，
+              才能查看狀態與「中斷連線」（status／disconnect 不受入口限制）。沒資格又沒連線的人完全看不到、零 coros-mcp 請求。 */}
+          {showCorosCard && (
             <div style={{ ...recCard, marginTop: 12 }}>
-              <div style={{ fontWeight: 700, color: 'var(--tx)' }}>
-                ⌚ COROS 直連<span style={{ fontSize: 10.5, color: 'var(--gold)', fontWeight: 800, marginLeft: 5 }}>· 測試版</span>
-              </div>
-              {!corosMcp?.connected ? (
+              <div style={{ fontWeight: 700, color: 'var(--tx)' }}>⌚ COROS 直連</div>
+              {corosLoading && <div style={{ fontSize: 11.5, color: 'var(--tx-faint)', marginTop: 8 }}>載入中…</div>}
+              {!corosConnected && corosEntryShown && !corosLoading && (
                 <>
                   <div style={{ fontSize: 11.5, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.7 }}>
-                    會匯入你連接之後的跑步／健行／走路紀錄（距離、時間、心率、手錶型號），計入 DOR 里程、賽事與獎勵；不保存地點與座標；中斷連線會刪除從 COROS 直連匯入的紀錄。
+                    連接後，DOR 會在你開啟 DOR 時自動讀取你的 COROS 跑步／健行／走路紀錄（每位使用者最短約每 25 分鐘一次，也可按「匯入數據」立即同步）。
+                  </div>
+                  <ul style={{ fontSize: 11.5, color: 'var(--tx-dim)', margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.7, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <li>只保存你連接之後開始的活動：開始與結束時間、時間、距離、配速、平均心率與手錶型號；不保存路線與位置座標，也不讀取睡眠、健康指標或個人檔案。</li>
+                    <li>用於計入 DOR 里程、經驗值與獎勵，以及你參加且開放外部裝置數據的賽事；與手機 GPS 或其他來源重複的活動只計一筆。</li>
+                    <li>你的距離、完賽與名次可能顯示在你參加的賽事排行榜；其他使用者看不到你的單筆活動、心率或路線。</li>
+                    <li>不出售、不提供給第三方，也不交給外部 AI 服務。</li>
+                    <li>可隨時按「中斷連線」：DOR 會刪除保存的授權與已匯入的 COROS 紀錄（賽事成績會重新計算；已獲得的 EXP／DP 等獎勵不受影響）。授權到期或失效時可按「重新授權」，不會刪除已匯入的紀錄。</li>
+                  </ul>
+                  <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 6, lineHeight: 1.6 }}>
+                    詳見 <a href="/privacy#coros" target="_blank" rel="noreferrer" style={{ color: 'var(--fug)' }}>隱私權政策</a>。
                   </div>
                   <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 10, fontSize: 11.5, color: 'var(--tx-dim)', cursor: 'pointer' }}>
                     <input type="checkbox" checked={corosMcpConsent} onChange={(e) => setCorosMcpConsent(e.target.checked)} style={{ marginTop: 2, flexShrink: 0 }} />
                     我已了解上述說明，同意連接 COROS
                   </label>
-                  <button onClick={connectCorosMcp} disabled={!corosMcpConsent || corosMcpBusy}
+                  <button onClick={() => connectCorosMcp()} disabled={!corosMcpConsent || corosMcpBusy}
                     style={{ ...primaryBtn, marginTop: 10, opacity: !corosMcpConsent || corosMcpBusy ? 0.5 : 1, cursor: !corosMcpConsent || corosMcpBusy ? 'default' : 'pointer' }}>
                     {corosMcpBusy ? '連接中…' : '連接 COROS'}
                   </button>
                 </>
-              ) : (
+              )}
+              {corosConnected && (
                 <>
                   <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 6, lineHeight: 1.6 }}>
-                    ✓ 已連接{corosMcp.connected_at ? ` · ${fmtDate(corosMcp.connected_at).split(' ')[0]}` : ''}
-                    {corosMcp.issuer ? ` · ${corosMcp.issuer.replace(/^https?:\/\//, '')}` : ''}
-                    <br />{corosMcp.last_synced_at ? `上次同步：${fmtDate(corosMcp.last_synced_at)}` : '尚未同步'}
+                    ✓ 已連接{corosMcp?.connected_at ? ` · ${fmtDate(corosMcp.connected_at).split(' ')[0]}` : ''}
+                    {corosMcp?.can_probe && corosMcp.issuer ? ` · ${corosMcp.issuer.replace(/^https?:\/\//, '')}` : ''}
+                    <br />{corosMcp?.last_synced_at ? `上次同步：${fmtDate(corosMcp.last_synced_at)}` : '尚未同步'}
                   </div>
+                  {/* 授權提醒橫幅（needs_reauth／已到期／3 天內到期）：半透明琥珀底＋一般文字色（不用金黃實心底）。 */}
+                  {corosNotice && (
+                    <div role="status" style={{ fontSize: 11.5, color: 'var(--tx)', background: 'rgba(245,158,11,.14)', border: '1px solid rgba(245,158,11,.35)', borderRadius: 8, padding: '8px 10px', marginTop: 10, lineHeight: 1.6 }}>
+                      {corosNotice.text}
+                    </div>
+                  )}
+                  {/* 入口被關閉（緊急關閉／移出白名單）但仍有連線：只能看狀態與中斷連線，連接／匯入／重新授權／自動同步都暫停。 */}
+                  {!corosEntryShown && (
+                    <div role="status" style={{ fontSize: 11.5, color: 'var(--tx)', background: 'rgba(245,158,11,.14)', border: '1px solid rgba(245,158,11,.35)', borderRadius: 8, padding: '8px 10px', marginTop: 10, lineHeight: 1.6 }}>
+                      COROS 直連目前暫停開放：暫時不會自動同步，也無法匯入或重新授權。你仍可隨時「中斷連線」——DOR 會刪除保存的授權與已匯入的 COROS 紀錄。
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                    <button onClick={importCorosMcp} disabled={corosMcpBusy} style={{ ...ghostBtn, background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none', whiteSpace: 'nowrap', opacity: corosMcpBusy ? 0.6 : 1 }}>
-                      {corosMcpBusy ? '匯入中…' : '匯入數據'}
-                    </button>
-                    <button onClick={probeCorosMcp} disabled={corosMcpBusy} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>讀取測試</button>
+                    {corosEntryShown && (
+                      <button onClick={importCorosMcp} disabled={corosMcpBusy || corosMcp?.needs_reauth === true}
+                        style={{ ...ghostBtn, ...(corosNotice ? {} : { background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none' }), whiteSpace: 'nowrap', opacity: corosMcpBusy || corosMcp?.needs_reauth === true ? 0.5 : 1, cursor: corosMcpBusy || corosMcp?.needs_reauth === true ? 'default' : 'pointer' }}>
+                        {corosMcpBusy ? '處理中…' : '匯入數據'}
+                      </button>
+                    )}
+                    {corosEntryShown && (
+                      <button onClick={() => connectCorosMcp(true)} disabled={corosMcpBusy}
+                        style={{ ...ghostBtn, ...(corosNotice ? { background: 'var(--fug)', color: 'var(--fug-ink)', border: 'none' } : {}), whiteSpace: 'nowrap', opacity: corosMcpBusy ? 0.6 : 1 }}>
+                        重新授權
+                      </button>
+                    )}
+                    {/* 讀取測試只給超管（GA 契約 §3.2）：前台沒有「我是超管」的來源，改看 status 回的 can_probe；缺席＝不顯示。 */}
+                    {corosEntryShown && corosMcp?.can_probe === true && (
+                      <button onClick={probeCorosMcp} disabled={corosMcpBusy} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>讀取測試</button>
+                    )}
                     <button onClick={disconnectCorosMcp} disabled={corosMcpBusy} style={{ ...ghostBtn, whiteSpace: 'nowrap' }}>中斷連線</button>
                   </div>
-                  {corosMcp.last_probe && (
+                  {corosMcp?.can_probe === true && corosMcp.last_probe && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 10, background: 'var(--bg-2)', borderRadius: 8, padding: '7px 10px' }}>
                       <div style={{ fontSize: 10.5, color: 'var(--tx-faint)' }}>
                         讀取測試 · {fmtDate(corosMcp.last_probe.at)}
@@ -1206,13 +1313,14 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                         <div key={s.step} style={{ fontSize: 11.5, color: s.ok ? 'var(--tx-dim)' : 'var(--hunt)' }}>
                           {s.ok ? '✓' : '✗'} {s.step}
                           {s.count != null ? `（${s.count} 筆）` : ''}
-                          {s.error ? `：${s.error}` : ''}
+                          {/* 只顯示簡短錯誤代碼；不把 COROS 回的原始錯誤字串秀出來（GA 契約 §3.2） */}
+                          {s.error ? `：${/^[\w.:-]{1,40}$/.test(s.error) ? s.error : '失敗'}` : ''}
                         </div>
                       ))}
                     </div>
                   )}
                   <div style={{ fontSize: 11, color: 'var(--tx-faint)', marginTop: 8, lineHeight: 1.6 }}>
-                    按「中斷連線」會刪除 DOR 保存的授權，以及從 COROS 直連匯入的紀錄。
+                    DOR 會在你開啟時自動同步新紀錄（最短約每 25 分鐘一次）。按「中斷連線」會刪除 DOR 保存的授權，以及已匯入的 COROS 紀錄（賽事成績會重新計算；已獲得的 EXP／DP 等獎勵不受影響）。
                   </div>
                 </>
               )}
@@ -1312,7 +1420,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
                         校正後 · 原始 {a.raw_distance_km.toFixed(2)} K ×{a.calib_factor.toFixed(4)}
                       </div>
                     )}
-                    {a.device_name && (
+                    {/* 資料來源標示只給 COROS 列（source==='coros' 且有型號＝COROS 直連匯入）：別的來源即使帶 device_name
+                        （例如 Garmin 直連列）也不能標成 COROS——各來源之後各自標示自己的來源。 */}
+                    {a.source === 'coros' && a.device_name && (
                       <div style={{ fontSize: 10.5, color: 'var(--tx-faint)', marginTop: 2 }}>Data provided by COROS · {a.device_name}</div>
                     )}
                     <div style={{ fontSize: 11, color: 'var(--tx-dim)', marginTop: 3 }}>
@@ -1342,8 +1452,9 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
             </div>
           </div>
 
-          {/* GPS 距離校正（見 internal/gpscalib，2026-08-30）：以連接的手錶/App(Strava/Garmin/COROS)紀錄
-              為參考，估計 App GPS 距離的系統性偏差、只准向下修正、只向前生效。hidden 不渲染；locked 顯示
+          {/* GPS 距離校正（見 internal/gpscalib，2026-08-30）：以連接的手錶/App(Strava/Garmin)紀錄
+              為參考（COROS／Garmin「直連」的資料不納入校正：COROS 回覆確認前先排除，見 COROS GA 契約 §1），估計 App GPS
+              距離的系統性偏差、只准向下修正、只向前生效。hidden 不渲染；locked 顯示
               鎖定卡片但不打 API（SEC-H5：前端隱藏不等於後端有擋，實際存取仍由 requireEntry 在後端強制複查）。 */}
           {dash && dash.gps_calib_entry !== 'hidden' && (
             <div style={{ ...recCard, marginTop: 12 }}>
@@ -1355,7 +1466,7 @@ export default function ProfileScreen({ onBack, focusRaceID, initialTab, onOpenP
               </div>
               {dash.gps_calib_entry === 'locked' ? (
                 <div style={{ fontSize: 12, color: 'var(--tx-dim)', marginTop: 8, lineHeight: 1.6 }}>
-                  以你連接的裝置/App（Strava/Garmin/COROS）紀錄為參考，自動校正 App GPS 跑步的距離系統性偏差。
+                  以你連接的裝置/App（Strava/Garmin）紀錄為參考，自動校正 App GPS 跑步的距離系統性偏差。
                 </div>
               ) : !gpsCalib ? (
                 <div style={{ fontSize: 12, color: 'var(--tx-faint)', marginTop: 8 }}>載入中…</div>

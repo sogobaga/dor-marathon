@@ -220,7 +220,7 @@ export default function AdminGpsCalibPage() {
     <div style={{ maxWidth: 980, margin: '0 auto' }}>
       <h1 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 4px' }}>GPS 校正紀錄</h1>
       <p style={{ color: 'var(--tx-dim)', fontSize: 13, marginTop: 0, lineHeight: 1.6 }}>
-        以會員連接的手錶（Strava／Garmin／COROS）活動為參考，估計 App GPS 的系統性偏差。係數只准向下修正
+        以會員連接的手錶（Strava／經 Terra 的 Garmin）活動為參考，估計 App GPS 的系統性偏差（COROS 與 Garmin 直連的資料不納入，待廠商書面確認）。係數只准向下修正
         （{CLAMP_LO.toFixed(2)}～{CLAMP_HI.toFixed(2)}）且只向前生效，不回溯改寫既有紀錄。<strong>「生效係數」</strong>
         才是目前真的乘在新上傳距離上的值；<strong>「估計係數」</strong>是系統在背景算出來的結果，入口未開放、
         會員自己關閉、或狀態未達門檻時只算不套（生效係數為 1.0000）。

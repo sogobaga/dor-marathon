@@ -137,27 +137,6 @@ func TestCorosMcpValidateHost(t *testing.T) {
 
 // --- 白名單 ---
 
-func TestCorosMcpWhitelisted(t *testing.T) {
-	list := "Owner@Example.com, second@example.com\nthird@example.com;fourth@example.com"
-	cases := []struct {
-		email string
-		want  bool
-	}{
-		{"owner@example.com", true}, // 大小寫不敏感
-		{"OWNER@EXAMPLE.COM", true},
-		{"second@example.com", true},
-		{"third@example.com", true},
-		{"fourth@example.com", true},
-		{"nobody@example.com", false},
-		{"", false},
-	}
-	for _, c := range cases {
-		if got := corosMcpWhitelisted(list, c.email); got != c.want {
-			t.Fatalf("corosMcpWhitelisted(%q) = %v, want %v", c.email, got, c.want)
-		}
-	}
-}
-
 // --- SSE / JSON 回應解析 ---
 
 func TestCorosMcpParseSSEData_SingleEvent(t *testing.T) {
@@ -508,6 +487,52 @@ func TestToolsList_Pagination(t *testing.T) {
 	}
 	if len(tools) != 2 || tools[0].Name != "a" || tools[1].Name != "b" {
 		t.Fatalf("expected both pages concatenated, got %+v", tools)
+	}
+}
+
+// 對端一直回 nextCursor：頁數上限擋住無限迴圈（稽核 low），且不會把半份清單當成功。
+func TestToolsList_PaginationIsCapped(t *testing.T) {
+	calls := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Method == "initialize" {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+			return
+		}
+		calls++
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"x"}],"nextCursor":"again"}}`))
+	})
+	h := newTestCorosMcpHandlerWithHandler(handler)
+	conn := &corosMcpConnection{Issuer: fakeCorosBase, AccessToken: "tok", ExpiresAt: time.Now().Add(time.Hour)}
+	if _, err := h.toolsList(context.Background(), conn); err == nil || !strings.Contains(err.Error(), "pagination exceeded") {
+		t.Fatalf("an endless nextCursor must be cut off with an error, got %v", err)
+	}
+	if calls != corosMcpMaxToolPages {
+		t.Fatalf("exactly %d pages may be fetched, got %d", corosMcpMaxToolPages, calls)
+	}
+}
+
+// MCP 回非 200／401 時是型別化錯誤（同步流程據此辨識 429／5xx → 冷卻），訊息不含回應原文。
+func TestMCPCall_HTTPErrorIsTypedAndHasNoBody(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte("secret-ish upstream text 王小明"))
+	})
+	h := newTestCorosMcpHandlerWithHandler(handler)
+	_, err := h.mcpCall(context.Background(), fakeCorosBase+"/mcp", "tok", "tools/call", map[string]any{}, 3)
+	var he *corosMcpHTTPError
+	if !errors.As(err, &he) || he.Status != http.StatusTooManyRequests || he.Method != "tools/call" {
+		t.Fatalf("want typed *corosMcpHTTPError(429), got %T %v", err, err)
+	}
+	if strings.Contains(err.Error(), "secret-ish") || strings.Contains(err.Error(), "王小明") {
+		t.Fatalf("error text must not echo the upstream body: %q", err.Error())
+	}
+	if !isCorosThrottleErr(err) {
+		t.Fatal("429 must be recognised as a throttling error")
 	}
 }
 

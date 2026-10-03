@@ -1,8 +1,10 @@
 // 每日營運報告：固定台灣時間 08:00 送出一則 Telegram 摘要（會員／報名／營收／資料自檢／流量安全），
-// 不論當天有沒有異常都送（區別於 selfcheck.go 的「只在異常時才告警」）。排程骨架完全比照
-// selfcheck.go（hourly tick + advisory lock + in-memory 當日冪等標記，同一 08:00-08:59 執行窗口），
-// 兩者共用同一個 Handler（因此 lastReportDate 是獨立欄位、advisory lock 是獨立 key，避免互相誤判
-// 「今天已跑過」——見各自的常數/欄位註解）。
+// 不論當天有沒有異常都送（區別於 selfcheck.go 的「只在異常時才告警」）。排程骨架與 selfcheck.go 共用
+// dailyjob.go（每分鐘純時間 tick、advisory lock、成功才標記、失敗 10 分鐘後重試最多 5 次、成功留 log），
+// 兩者共用同一個 Handler 與同一個 08:00-08:59 執行窗口（各自的 in-memory 狀態、advisory lock key、
+// 持久標記 key 都是獨立的，避免互相誤判「今天已跑過」——見各自的常數/欄位註解）。
+//
+// 訊息標題的日期是「統計的昨日」：10/02 早上送出的報告統計的是 10/01（標題明寫「昨日統計」，避免誤解）。
 //
 // 統計視窗＝前一個台灣日 00:00–24:00，用 Postgres AT TIME ZONE 'Asia/Taipei' 在 SQL 端換算成正確的
 // UTC 邊界（見 buildDailyReportData 開頭那個查詢）：Neon 是完整的 Postgres，內建 IANA tzdata，這與
@@ -13,31 +15,26 @@ package ops
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
 	"github.com/dor/api/internal/gpsrawlog"
-	"github.com/dor/api/internal/notify"
 )
 
 const (
-	// dailyReportTickInterval／dailyReportWindowHour：與 selfcheck 共用同一顆「每小時 tick、
-	// 台灣 08:00-08:59 執行」的邏輯（直接沿用 inSelfCheckWindow，見該函式註解），沒有另外定義
-	// 獨立常數的必要——兩者本來就設計成同一小時視窗內各自跑各自的（各自的 advisory lock/
-	// lastXxxDate 互不影響），差別只在於「要不要在視窗內執行」共用同一個判斷式。
-	dailyReportTickInterval = time.Hour
+	// 執行窗口（台灣 08:00-08:59）與 tick 間隔直接沿用 selfcheck／dailyjob.go（inSelfCheckWindow、
+	// dailyJobTickInterval），兩者本來就設計成同一小時視窗內各自跑各自的（各自的 advisory lock／in-memory
+	// 狀態／持久標記互不影響）。
 
 	// dailyReportAdvisoryLockName：獨立於 selfCheckAdvisoryLockName 的鎖名，避免兩個排程互搶同一把鎖。
 	dailyReportAdvisoryLockName = "ops_daily_report"
 
-	// dailyReportPersistentKey 第三層持久防重的 app_settings key（見 maybeRunDailyReport 說明）。
+	// dailyReportPersistentKey 持久防重的 app_settings key：值＝「已成功送出」的台灣日（成功才寫，見 dailyjob.go）。
 	dailyReportPersistentKey = "ops_daily_report_last_date"
 
 	// telegramMaxLen：Telegram sendMessage 文字上限（官方文件為 4096 characters，以 Unicode 字元數計，
@@ -124,6 +121,10 @@ type dailyReportData struct {
 	// 卻有其他來源的活動。查詢失敗時為 nil，同樣不讓整份報告失敗（見該函式註解）。
 	WearableSilent []WearableSilentConnection
 
+	// DirectWearable：「直連手錶」段（COROS MCP、Garmin 直連，見 directwearable.go）——只有人數，絕不含顯示名稱。
+	// 沒有註冊任何直連供應商時為零值，整段不顯示。
+	DirectWearable directWearableSection
+
 	// RawLogPurged：GPS 原始定位點記錄（見 internal/gpsrawlog，契約 B）保存期限排程當天清除的筆數；
 	// 0 時 assembleDailyReportMessage 整行不顯示（見契約 B「保存期限」段：「有刪才顯示」）。
 	RawLogPurged int
@@ -139,10 +140,10 @@ func inDailyReportWindow(t time.Time) bool {
 	return inSelfCheckWindow(t)
 }
 
-// RunDailyReportLoop 背景每日報告排程，骨架同 RunSelfCheckLoop（見該函式註解）。
+// RunDailyReportLoop 背景每日報告排程：啟動時先檢查一次，之後每分鐘做一次「純時間」檢查（不碰 DB，見 dailyjob.go）。
 func (h *Handler) RunDailyReportLoop(ctx context.Context) {
 	h.maybeRunDailyReport(ctx)
-	t := time.NewTicker(dailyReportTickInterval)
+	t := time.NewTicker(dailyJobTickInterval)
 	defer t.Stop()
 	for {
 		select {
@@ -154,122 +155,51 @@ func (h *Handler) RunDailyReportLoop(ctx context.Context) {
 	}
 }
 
-// maybeRunDailyReport 窗口 + 當日冪等閘門判斷，命中才真的產生並送出報告。三層防重複邏輯與
-// maybeRunDaily 完全對稱，唯一差異是用獨立的 lastReportDate 欄位、獨立的 advisory lock key
-// （dailyReportAdvisoryLockName）、以及獨立的持久標記 key（dailyReportPersistentKey），避免跟
-// selfcheck 排程互相誤判「今天已跑過」。
+// maybeRunDailyReport 每分鐘的純時間 tick 呼叫。可靠度設計（GA 契約 §4，細節與理由見 dailyjob.go）：
+//   - 窗口（台灣 08:00-08:59）、今天已成功與否、重試時間都只看記憶體；命中才去搶 advisory lock＋讀持久標記；
+//   - 成功才標記：產生＋Telegram 回 2xx 之後才寫持久標記（app_settings.ops_daily_report_last_date）與 in-memory
+//     已完成標記；產生或送出失敗 → 不寫標記、10 分鐘後重試（最多 5 次）；
+//   - 成功留 log `ops dailyreport: sent`（報告日、字元數、耗時），失敗 log 帶階段（build／send）。
 //
-// 第三層持久防重：修部署落在08時窗口內重啟造成的重複推播（2026-08-28 實案）。in-memory 標記
-// 重啟歸零、advisory lock 執行完即主動 unlock，兩層在重啟後皆無法攔截同一天已執行過的情況；
-// 持久標記跨程序存活，確保當天已執行過就不再執行。讀取失敗時 warn 後視同未跑過（寧可重發也不
-// 要漏整天報告）。
-//
-// ⚠️ 2026-09-24：DB 協調（claimDailyReportSlot，取得專屬連線＋advisory lock＋讀寫 app_settings）
-// 與實際產生報告（runAndSendDailyReport）在這裡明確拆成兩段、鎖已釋放才呼叫後者——
-// buildDailyReportData 現在含 buildWearableSection，會對至多 50 條 Terra 連線逐一序列呼叫
-// userInfo（各 5s 逾時，Terra 若普遍偏慢最壞可耗掉數分鐘），若沿用舊版把整個 runAndSendDailyReport
-// 包在 defer conn.Release()／defer unlock 之內，會讓一條連線池連線＋advisory lock 在純等待外部
-// HTTP 的期間被長時間佔用，排擠連線池其他使用者、也拖慢當天報告送出。claimDailyReportSlot 只負責
-// 「輪到我了嗎＋佔位」這段純 DB 操作，函式返回時其內部的 defer 已經 unlock／release，之後才做
-// 真正費時的報告產生與 Telegram 發送。
+// 鎖（advisory lock）在整個「產生＋送出＋寫標記」期間持有：舊版（2026-09-24）為了避免「產生報告」期間長時間佔用
+// 連線池連線，把鎖釋放在產生之前；但成功才標記之後，鎖一釋放別的實例就可能趁持久標記還沒寫入時重複送出，
+// 所以改回持有到寫完標記為止。代價是一天一次占用一條連線數秒到數分鐘（Terra 狀態逐一呼叫最壞情況），可接受。
 func (h *Handler) maybeRunDailyReport(ctx context.Context) {
-	now := taiwanNow()
-	if !inDailyReportWindow(now) {
-		return
-	}
-	today := now.Format("2006-01-02")
-
-	h.mu.Lock()
-	alreadyRan := h.lastReportDate == today
-	h.mu.Unlock()
-	if alreadyRan {
-		return
-	}
-
-	if !h.claimDailyReportSlot(ctx, today) {
-		return
-	}
-
-	h.runAndSendDailyReport(ctx)
+	runDailyJob(ctx, pgJobStore{h.db}, h.dailyReportJob(), taiwanNow())
 }
 
-// claimDailyReportSlot 見 maybeRunDailyReport 的 2026-09-24 註解：三層防重判斷＋佔位
-// （advisory lock + 持久標記 + in-memory）全部在這支函式內完成，函式返回前一定已經 unlock 並釋放
-// 專屬連線——呼叫端緊接著做的「產生報告＋發送」完全在鎖外執行。回傳 true 代表輪到本實例執行
-// 今天的報告。
-func (h *Handler) claimDailyReportSlot(ctx context.Context, today string) bool {
-	conn, err := h.db.Acquire(ctx)
-	if err != nil {
-		log.Error().Err(err).Msg("ops dailyreport: acquire dedicated connection for advisory lock failed")
-		return false
+// dailyReportJob 每日營運報告的排程定義（見 dailyjob.go dailyJob）。
+func (h *Handler) dailyReportJob() *dailyJob {
+	return &dailyJob{
+		name:       "dailyreport",
+		lockName:   dailyReportAdvisoryLockName,
+		persistKey: dailyReportPersistentKey,
+		state:      &h.reportJob,
+		run:        h.dailyReportRun,
+		onFail:     h.onJobFail("dailyreport", "每日營運報告"),
 	}
-	defer conn.Release()
-
-	var gotLock bool
-	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext($1))`, dailyReportAdvisoryLockName).Scan(&gotLock); err != nil {
-		log.Error().Err(err).Msg("ops dailyreport: try advisory lock failed")
-		return false
-	}
-	if !gotLock {
-		log.Debug().Msg("ops dailyreport: another instance is already running/ran today's report, skip")
-		return false
-	}
-	defer func() {
-		var unlocked bool
-		if err := conn.QueryRow(ctx, `SELECT pg_advisory_unlock(hashtext($1))`, dailyReportAdvisoryLockName).Scan(&unlocked); err != nil {
-			log.Warn().Err(err).Msg("ops dailyreport: advisory unlock failed (will auto-release once this connection closes)")
-		}
-	}()
-
-	// 第三層：持久標記（在 lock 內查詢，避免多實例競態）。
-	var persistedDate string
-	if err := h.db.QueryRow(ctx,
-		`SELECT value FROM app_settings WHERE key = $1`, dailyReportPersistentKey,
-	).Scan(&persistedDate); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		log.Warn().Err(err).Msg("ops dailyreport: read persistent date marker failed, treating as not-run")
-	}
-	if persistedDate == today {
-		// 本實例重啟前已執行過，同步 in-memory 後跳過。
-		h.mu.Lock()
-		h.lastReportDate = today
-		h.mu.Unlock()
-		log.Debug().Msg("ops dailyreport: persistent marker says already ran today, skip")
-		return false
-	}
-
-	// 搶到鎖且持久標記確認今天尚未執行，先佔位（in-memory + 持久），再執行——
-	// 比照 vip_renewal.go 冪等閘門「先佔位再執行」的順序。
-	h.mu.Lock()
-	h.lastReportDate = today
-	h.mu.Unlock()
-
-	if _, err := h.db.Exec(ctx,
-		`INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
-		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-		dailyReportPersistentKey, today,
-	); err != nil {
-		log.Warn().Err(err).Msg("ops dailyreport: upsert persistent date marker failed (continuing)")
-	}
-
-	return true
 }
 
-// runAndSendDailyReport 產生報告並直接用 notify.Telegram 送出（不透過 notify.Alert：Alert 有 30 分鐘
-// per-kind 節流，是設計給「同類錯誤重複發生」場景用的，每日報告是排程單次觸發、每天固定要送，語意上
-// 該直接呼叫不節流的 Telegram()，見任務規格與 notify/telegram.go 的行為）。產生報告本身失敗（DB 查詢
-// 出錯）改用 Alert(kind="daily_report", ...) 通知——這種情況本身節流 30 分鐘是合理的，避免 DB 持續
-// 異常時，每小時 tick 都重覆送一樣的失敗告警（雖然本排程一天只認領一次，這裡的節流主要是防禦性的）。
-func (h *Handler) runAndSendDailyReport(ctx context.Context) {
-	data, err := h.buildDailyReportData(ctx)
+// dailyReportRun 產生報告並用 notify.Telegram「同步」送出（不透過 notify.Alert：Alert 是背景 goroutine＋30 分鐘
+// per-kind 節流，設計給「同類錯誤重複發生」場景用；每日報告是排程單次觸發、每天固定要送，而且排程必須知道有沒有送成功
+// 才能決定要不要寫標記、要不要重試）。階段：build（查 DB 組資料）→ send（Telegram 回 2xx 才算成功）。
+func (h *Handler) dailyReportRun(ctx context.Context) (string, error) {
+	started := time.Now()
+	build := h.buildReport
+	if build == nil {
+		build = h.buildDailyReportData
+	}
+	data, err := build(ctx)
 	if err != nil {
-		log.Error().Err(err).Msg("ops dailyreport: build report failed")
-		notify.Alert("daily_report", "每日營運報告產生失敗", err.Error())
-		return
+		return "build", err
 	}
 	msg := buildDailyReportMessage(data)
-	if err := notify.Telegram(ctx, msg); err != nil {
-		log.Warn().Err(err).Msg("ops dailyreport: telegram send failed")
+	if err := h.telegram(ctx, msg); err != nil {
+		return "send", err
 	}
+	log.Info().Str("report_date", data.ReportDate).Int("chars", utf8.RuneCountInString(msg)).
+		Int64("elapsed_ms", time.Since(started).Milliseconds()).Msg("ops dailyreport: sent")
+	return "", nil
 }
 
 // DailyReportNow POST /admin/ops/dailyreport：手動立即產生報告，回傳完整報告文字 JSON，並實際發送
@@ -290,7 +220,7 @@ func (h *Handler) DailyReportNow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msg := buildDailyReportMessage(data)
-	sendErr := notify.Telegram(ctx, msg)
+	sendErr := h.telegram(ctx, msg)
 
 	resp := map[string]any{
 		"report_date": data.ReportDate,
@@ -444,6 +374,11 @@ func (h *Handler) buildDailyReportData(ctx context.Context) (dailyReportData, er
 	// 全部 provider（不限 via='terra'）。查詢本身失敗只記警告、不讓整份報告失敗。
 	d.WearableSilent = h.buildWearableSilentWarnings(ctx)
 
+	// 7c) 直連手錶（COROS MCP、Garmin 直連）：每供應商的連線數／24h 同步數／需重新授權數／超過 3 天未同步數
+	// （純 DB、只印人數，GA 契約 §2.9）；順手跑各供應商的每日維護（MaintainDaily，須冪等）。單一供應商失敗只在該行
+	// 顯示「統計失敗」，不讓整份報告失敗。
+	d.DirectWearable = buildDirectWearableSection(ctx, h.directWearableProviders())
+
 	// 8) GPS 原始定位點記錄保存期限（見 internal/gpsrawlog、契約 B「保存期限」段：「不另開週期性
 	// DB 查詢」，掛在這個既有的每日排程順手做）。表尚未建立（migration 195 未套用）或查詢本身失敗
 	// 只記警告、不讓整份報告失敗——比照 einvoice/wearable 兩段「錦上添花，不拖垮固定段落」的既有慣例。
@@ -520,34 +455,7 @@ func (h *Handler) buildWearableSilentWarnings(ctx context.Context) []WearableSil
 	// 刻意不排除 flagged：跨來源重複（cross_source_duplicate）等被標記的活動照樣證明「這條管線有送資料進來」／
 	// 「使用者這段期間確實有跑」，排除它們會把「資料有到、只是被判為重複」誤報成斷流（2026-09-30 使用者本人
 	// COROS 活動多被標重複，若只看未標記的會誤算成 9/03 起沒資料，實際到 9/23）。
-	rows, err := h.db.Query(ctx, `
-		SELECT
-			ui.provider,
-			COALESCE(u.name, u.handle) AS display_name,
-			(
-				SELECT MAX(a.recorded_at)
-				FROM activities a
-				WHERE a.user_id = ui.user_id AND a.source = ui.provider
-			) AS last_provider_activity
-		FROM user_integrations ui
-		JOIN users u ON u.id = ui.user_id AND NOT u.is_virtual
-		WHERE ui.provider <> 'coros_mcp' -- 第一階段刻意不匯入任何活動（見 COROS_MCP_STAGE1_CONTRACT.md），
-		                                  -- a.source 恆不會是 'coros_mcp'，不排除會讓每條連線永遠誤報「靜默中斷」
-		  AND ui.created_at < $1
-		  AND NOT EXISTS (
-			SELECT 1 FROM activities a2
-			WHERE a2.user_id = ui.user_id
-			  AND a2.source = ui.provider
-			  AND a2.recorded_at >= $1
-		  )
-		  AND EXISTS (
-			SELECT 1 FROM activities a3
-			WHERE a3.user_id = ui.user_id
-			  AND a3.source IS DISTINCT FROM ui.provider
-			  AND a3.recorded_at >= $1
-		  )
-		ORDER BY ui.provider, display_name
-	`, cutoff)
+	rows, err := h.db.Query(ctx, wearableSilentSQL, cutoff)
 	if err != nil {
 		log.Warn().Err(err).Msg("daily report: wearable silent connections query failed")
 		return nil
@@ -747,7 +655,8 @@ func formatTrafficSection(t trafficSummary) string {
 func assembleDailyReportMessage(d dailyReportData, raceKeep int) string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "📊 DOR 每日營運報告（%s）\n\n", d.ReportDate)
+	// 標題的日期是「統計的昨日」，明寫「昨日統計」：10/02 早上送出的報告統計的是 10/01（擁有者曾誤以為日期是發送日）。
+	fmt.Fprintf(&b, "📊 DOR 每日營運報告｜%s（昨日統計）\n\n", d.ReportDate)
 
 	fmt.Fprintf(&b, "👥 會員：昨日新增 %d 位（累計 %d）\n\n", d.NewMembers, d.TotalMembers)
 
@@ -816,15 +725,22 @@ func assembleDailyReportMessage(d dailyReportData, raceKeep int) string {
 		fmt.Fprintf(&b, "🧾 電子發票：昨日開立 %d／失敗 %d／待處理 %d", d.EInvoiceIssued, d.EInvoiceFailed, d.EInvoicePending)
 	}
 
-	if len(d.Wearable) > 0 || len(d.WearableSilent) > 0 {
+	if silentLines := formatWearableSilentLines(d.WearableSilent); len(d.Wearable) > 0 || len(silentLines) > 0 {
 		b.WriteString("\n\n")
 		b.WriteString("⌚ 穿戴串接：\n")
 		for _, s := range d.Wearable {
 			b.WriteString(formatWearableLine(s) + "\n")
 		}
-		for _, s := range d.WearableSilent {
-			b.WriteString(formatWearableSilentLine(s) + "\n")
+		for _, l := range silentLines {
+			b.WriteString(l + "\n")
 		}
+	}
+
+	// 直連手錶（COROS MCP、Garmin 直連）：只印人數。
+	if text := formatDirectWearableSection(d.DirectWearable); text != "" {
+		b.WriteString("\n\n")
+		b.WriteString("🔌 直連手錶：\n")
+		b.WriteString(text + "\n")
 	}
 
 	return strings.TrimRight(b.String(), "\n")

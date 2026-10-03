@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/integration"
 )
 
 // 跨來源（App GPS / 外部來源，見 validSources）重複活動去重的「使用者互動」層：偏好來源設定、首次彈窗提示/確認。
@@ -19,6 +20,33 @@ import (
 var validSources = map[string]bool{
 	"gps": true, "strava": true, "garmin": true, "coros": true,
 	"polar": true, "suunto": true, "wahoo": true,
+}
+
+// crossSourceRankSQL 跨來源去重的「優先序 rank」CASE 運算式（越小越優先，別名固定為 a，配合 a.source／
+// a.external_id）。prefExpr 是「使用者偏好來源」的 SQL 運算式：reResolveUser 傳 "$2"，worker 傳
+// COALESCE(p.src, 空字串)（見 worker 原始碼）。services/worker/main.go resolveCrossSourceDups 的 CASE 必須與這裡逐字一致
+// （worker 是獨立 Go module，無法 import；dedup_rank_test.go 讀 worker 原始碼比對，改一邊漏一邊會失敗）。
+//
+//	0 App GPS（source IS NULL）                    正式紀錄一律 GPS 優先
+//	1 使用者偏好的外部來源（偏好不是 strava 時）     僅在多個外部來源間取捨
+//	2 直連手錶（COROS MCP、Garmin 直連）            勝過 Strava，即使使用者偏好 Strava（GA 契約 §2.7）
+//	3 使用者偏好 strava                            僅勝過其餘 Terra／Partner 來源
+//	4-8 garmin > coros > polar > suunto > wahoo
+//	9 strava（最低：事後從別的 App 匯入的二手來源）
+//	10 其他
+func crossSourceRankSQL(prefExpr string) string {
+	return `CASE
+					WHEN a.source IS NULL THEN 0
+					WHEN a.source = ` + prefExpr + ` AND a.source <> 'strava' THEN 1
+					WHEN ` + integration.DirectWatchSQL("a") + ` THEN 2
+					WHEN a.source = ` + prefExpr + ` THEN 3
+					WHEN a.source = 'garmin' THEN 4
+					WHEN a.source = 'coros'  THEN 5
+					WHEN a.source = 'polar'  THEN 6
+					WHEN a.source = 'suunto' THEN 7
+					WHEN a.source = 'wahoo'  THEN 8
+					WHEN a.source = 'strava' THEN 9
+					ELSE 10 END`
 }
 
 // reResolveUser 立即重解某使用者的跨來源重複：先解除他既有的 cross_source_duplicate 標記，
@@ -32,6 +60,11 @@ var validSources = map[string]bool{
 // App GPS 恆為最高優先（rank 0）；source 參數（使用者偏好的外部來源）僅在「沒有 App GPS 記錄、
 // 多個外部來源互相重疊」時才用來取捨（次高，rank 1）；其餘外部來源依
 // garmin > coros > polar > suunto > wahoo > strava 排序。
+// 2026-10-03（COROS GA 契約 §2.7）：「直連手錶」列（COROS MCP、Garmin 直連，見
+// integration.DirectWatchSQL）排在偏好來源之後、其餘外部來源之前——即使使用者偏好 Strava，直連列也勝過
+// Strava（Strava 永遠被賽事閘門排除，先到先贏會讓整趟在任何賽事都不計）；與匯入當下的 detectDuplicate
+// 「直連手錶優先於 Strava」同一個結論。SQL 的 CASE 由 crossSourceRankSQL 單點產生，worker 那份逐字同步
+// （dedup_rank_test.go 守門）。
 func reResolveUser(ctx context.Context, db *pgxpool.Pool, userID, source string) {
 	if !validSources[source] {
 		return
@@ -49,16 +82,7 @@ func reResolveUser(ctx context.Context, db *pgxpool.Pool, userID, source string)
 		WITH ranked AS (
 			SELECT a.id, a.duration_s AS dur,
 				CASE WHEN a.source IS NULL THEN a.recorded_at - make_interval(secs=>a.duration_s) ELSE a.recorded_at END AS st,
-				CASE
-					WHEN a.source IS NULL THEN 0          -- App GPS 一律最高：正式紀錄一律 GPS 優先
-					WHEN a.source = $2 THEN 1              -- 使用者偏好的外部來源次之（僅在多個外部來源間取捨）
-					WHEN a.source = 'garmin' THEN 2
-					WHEN a.source = 'coros'  THEN 3
-					WHEN a.source = 'polar'  THEN 4
-					WHEN a.source = 'suunto' THEN 5
-					WHEN a.source = 'wahoo'  THEN 6
-					WHEN a.source = 'strava' THEN 7
-					ELSE 8 END AS rk
+				`+crossSourceRankSQL("$2")+` AS rk
 			FROM activities a
 			WHERE a.user_id=$1 AND a.duration_s>0 AND NOT a.flagged
 		)

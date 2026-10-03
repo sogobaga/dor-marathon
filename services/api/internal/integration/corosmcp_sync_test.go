@@ -208,6 +208,37 @@ func TestMapCorosMcpRecord_FullMapping(t *testing.T) {
 	}
 }
 
+// 運動代碼 → 活動大類：跑步類（100–103）Kind 留空（＝run，門檻 2:30/km）；健行 104、走路 900 → walk（門檻 4:00/km）。
+func TestMapCorosMcpRecord_KindFromSportType(t *testing.T) {
+	cases := []struct {
+		sport int
+		want  string
+	}{{100, ""}, {101, ""}, {102, ""}, {103, ""}, {104, KindWalk}, {900, KindWalk}}
+	for _, c := range cases {
+		na, skip := mapCorosMcpRecord("u1", time.Time{}, nil, corosMcpRecord{
+			LabelID: "480000000000000001", SportType: c.sport, StartUnix: 1790630201, EndUnix: 1790632700, DurationS: 2400, DistanceKm: 5,
+		})
+		if skip != corosMcpSkipNone || na == nil || na.Kind != c.want {
+			t.Errorf("sport %d: kind=%q skip=%q, want kind=%q", c.sport, func() string {
+				if na == nil {
+					return "<nil>"
+				}
+				return na.Kind
+			}(), skip, c.want)
+		}
+	}
+	// 同樣 3:00/km 的資料：跑步不算異常、走路算異常（見 plausibility.go）
+	run, _ := mapCorosMcpRecord("u1", time.Time{}, nil, corosMcpRecord{LabelID: "480000000000000002", SportType: 100, StartUnix: 1790630201, DurationS: 900, DistanceKm: 5})
+	walk, _ := mapCorosMcpRecord("u1", time.Time{}, nil, corosMcpRecord{LabelID: "480000000000000003", SportType: 900, StartUnix: 1790630201, DurationS: 900, DistanceKm: 5})
+	now := time.Unix(1790640000, 0)
+	if a, _ := CheckPlausible(run, now); a != PlausibleOK {
+		t.Fatalf("run at 3:00/km is plausible, got %q", a)
+	}
+	if a, r := CheckPlausible(walk, now); a != PlausibleFlag || r != FlagImplausiblePace {
+		t.Fatalf("walk at 3:00/km is implausible, got %q %q", a, r)
+	}
+}
+
 func TestMapCorosMcpRecord_SkipReasons(t *testing.T) {
 	recs := parseCorosMcpSportRecords(corosFixtureText(corosStaticRecs))
 	// 走路 m 單位：收（900 在白名單）、無 HR
@@ -455,49 +486,6 @@ func mustStateWithKey(key, msg string) string {
 
 // --- 手動匯入節流／自動同步名額 ---
 
-func TestCorosMcpAllowImport_PerUserOncePerMinute(t *testing.T) {
-	h := newTestCorosMcpHandler()
-	if ok, _ := h.allowImport("u1"); !ok {
-		t.Fatal("first import must pass")
-	}
-	ok, retry := h.allowImport("u1")
-	if ok || retry < 1 || retry > 61 {
-		t.Fatalf("second import within a minute must be throttled with retry hint, ok=%v retry=%d", ok, retry)
-	}
-	if ok, _ := h.allowImport("u2"); !ok {
-		t.Fatal("throttle is per user: u2 must pass")
-	}
-	h.importMu.Lock()
-	h.importLast["u1"] = time.Now().Add(-61 * time.Second)
-	h.importMu.Unlock()
-	if ok, _ := h.allowImport("u1"); !ok {
-		t.Fatal("after the window the user may import again")
-	}
-}
-
-func TestCorosMcpClaimAutoSync_MemoryFallbackOncePerWindow(t *testing.T) {
-	h := newTestCorosMcpHandler() // rdb == nil → 記憶體 fallback
-	ctx := t.Context()
-	if !h.claimAutoSync(ctx, "u1") {
-		t.Fatal("first claim must win")
-	}
-	if h.claimAutoSync(ctx, "u1") {
-		t.Fatal("second claim within the 25-minute window must lose")
-	}
-	if !h.claimAutoSync(ctx, "u2") {
-		t.Fatal("claims are per user")
-	}
-	h.autoMu.Lock()
-	h.autoLast["u1"] = time.Now().Add(-corosMcpAutoSyncWindow - time.Second)
-	h.autoMu.Unlock()
-	if !h.claimAutoSync(ctx, "u1") {
-		t.Fatal("after 25 minutes the user may be synced again")
-	}
-	if corosMcpAutoSyncWindow != 1500*time.Second {
-		t.Fatalf("window must be EX 1500s, got %v", corosMcpAutoSyncWindow)
-	}
-}
-
 func TestCorosMcpAutoSyncOnce_SecondCallDoesNotRun(t *testing.T) {
 	// repo=nil 的 handler：第一次搶到名額後會去查連線列——這裡不想碰 DB，所以先把名額占掉，確認「搶不到就完全不動作」。
 	h := newTestCorosMcpHandler()
@@ -544,20 +532,6 @@ func TestCorosMcpAutoFrom(t *testing.T) {
 		if got := corosMcpAutoFrom(now, c.last); !got.Equal(c.want) {
 			t.Errorf("%s: got %v want %v", c.name, got, c.want)
 		}
-	}
-}
-
-func TestCorosMcpRedactLocation(t *testing.T) {
-	in := "1. Outdoor Run — 2026-09-29\n   Location: Daan Park, Taipei\n   Start Coordinates: 25.0329, 121.5355\n   Duration: 40:33 | Distance: 5.31 km\n   LabelId: 480669290658299907 | SportType: 100"
-	out := corosMcpRedactLocation(in)
-	if strings.Contains(out, "Daan") || strings.Contains(out, "25.0329") || strings.Contains(out, "121.5355") {
-		t.Fatalf("location/coordinates must be redacted, got:\n%s", out)
-	}
-	if !strings.Contains(out, "Location: [redacted]") || !strings.Contains(out, "Start Coordinates: [redacted]") {
-		t.Fatalf("redacted lines should be kept as placeholders, got:\n%s", out)
-	}
-	if !strings.Contains(out, "Duration: 40:33 | Distance: 5.31 km") || !strings.Contains(out, "LabelId: 480669290658299907") {
-		t.Fatalf("other lines must be unchanged, got:\n%s", out)
 	}
 }
 

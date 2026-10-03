@@ -277,7 +277,7 @@ export const SETTINGS_SPECS: SettingSpec[] = [
   },
   {
     key: 'gps_calib_entry_state', group: 'GPS 校正', label: 'GPS 距離校正入口', type: 'select', def: 'whitelist',
-    help: '以連接的裝置/App(Strava/Garmin/COROS)紀錄為參考，自動估計並校正 App GPS 距離的系統性偏差（見個人資料頁「GPS 距離校正」卡片、GPS 上傳當下即套用）。',
+    help: '以連接的裝置/App(Strava/Garmin)紀錄為參考，自動估計並校正 App GPS 距離的系統性偏差（見個人資料頁「GPS 距離校正」卡片、GPS 上傳當下即套用）。COROS／Garmin「直連」匯入的資料不納入校正（COROS 回覆確認前先排除）。',
     options: [
       { value: 'hidden', label: '前台隱藏（都看不到）' },
       { value: 'locked', label: '顯示但不套用（即將開放）' },
@@ -580,5 +580,55 @@ export const SETTINGS_SPECS: SettingSpec[] = [
       + '註冊 Email，大小寫不拘。⚠️ 留空即使選了 whitelist 也沒有任何人看得到；清空此欄位、下次讀取時仍會'
       + '回退到程式內建預設 sogobaga@gmail.com（並非真的清空生效，除非把入口狀態改成 hidden）。',
     placeholder: 'sogobaga@gmail.com', rows: 3,
+  },
+  // ── 手錶直連入口（COROS／Garmin；見 docs/integration/COROS_MCP_GA_CONTRACT.md §2.1，共用 integration/entrygate）──
+  // 三態 hidden|whitelist|open：缺鍵＝whitelist；hidden 是「緊急關閉」，連超管都停（其他狀態超管恆可）。
+  // ⚠️ 入口狀態同時擋 API（connect／callback／import／自動同步），不是只藏畫面；但 status 與 disconnect 永遠不受限制
+  //    （只要有連線列，會員就看得到卡片、能中斷連線）。
+  // ⚠️ 白名單那列務必 type:'text'（理由見上面「團練邀請入口」的警告：誤設成 number 會被寫成字串 "NaN"）。
+  // 後端 appsettings specs 要登記同名 key（含驗證），否則 PUT 會被拒。
+  {
+    key: 'coros_mcp_entry_state', group: 'COROS 直連', label: '入口狀態', type: 'select', def: 'whitelist',
+    help: '控制會員管理→運動數據的「COROS 直連」卡片，以及連接、匯入、自動同步對誰開放；後端同一份設定也會擋 API，不是只藏畫面。'
+      + '【緊急關閉】所有人（連超管都不行）立即不能連接、匯入或自動同步，出狀況時選這個；已經連接的會員仍看得到卡片，可以自己「中斷連線」並刪除已匯入的紀錄。'
+      + '【僅指定帳號】只有下方白名單帳號（與超管）看得到並可使用，預設值，適合測試期。'
+      + '【全部開放】所有會員都看得到並可連接，正式開放時選這個。'
+      + '從開放改回限制或緊急關閉，不會強制中斷已連接的會員（連線與已匯入的紀錄都保留），只是暫停同步。',
+    options: [
+      { value: 'hidden', label: '緊急關閉（所有人停止，含超管）' },
+      { value: 'whitelist', label: '僅指定帳號（下方白名單＋超管）' },
+      { value: 'open', label: '全部開放' },
+    ],
+  },
+  {
+    key: 'coros_mcp_whitelist', group: 'COROS 直連', label: '指定帳號白名單', type: 'text', def: '',
+    help: '僅在上方選「僅指定帳號」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email，大小寫不拘。超管不用列在這裡，恆可使用（緊急關閉時除外）。名單外的會員看不到 COROS 直連卡片。',
+    placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
+  },
+  {
+    key: 'coros_mcp_autosync_enabled', group: 'COROS 直連', label: '自動同步（開啟 DOR 時）', type: 'select', def: '1',
+    help: '已連接 COROS 的會員每次開啟 DOR 時，系統會在背景自動讀取新的跑步紀錄（每位會員最短約 25 分鐘一次）。'
+      + '選「關閉」＝停止這個自動同步（出狀況時可先關）；會員仍可在「會員管理→運動數據」按「匯入數據」手動匯入（有頻率限制）。',
+    options: [
+      { value: '1', label: '開啟（預設）' },
+      { value: '0', label: '關閉（停止自動同步，手動匯入仍可用）' },
+    ],
+  },
+  {
+    key: 'garmin_entry_state', group: 'Garmin 直連', label: '入口狀態', type: 'select', def: 'whitelist',
+    help: '控制「Garmin 直連」卡片與連接對誰開放；後端同一份設定也會擋 API，不是只藏畫面。'
+      + '【緊急關閉】所有人（連超管都不行）立即不能連接，出狀況時選這個；已經連接的會員仍可自己「中斷連線」。'
+      + '【僅指定帳號】只有下方白名單帳號（與超管）可使用，預設值，適合測試期。'
+      + '【全部開放】所有會員都可連接，正式開放時選這個。',
+    options: [
+      { value: 'hidden', label: '緊急關閉（所有人停止，含超管）' },
+      { value: 'whitelist', label: '僅指定帳號（下方白名單＋超管）' },
+      { value: 'open', label: '全部開放' },
+    ],
+  },
+  {
+    key: 'garmin_whitelist', group: 'Garmin 直連', label: '指定帳號白名單', type: 'text', def: '',
+    help: '僅在上方選「僅指定帳號」時生效。一行一個，可填帳號編碼（#可省）或註冊 Email，大小寫不拘。超管不用列在這裡，恆可使用（緊急關閉時除外）。名單外的會員看不到 Garmin 直連卡片。',
+    placeholder: '#8U2TGUWE\nsomeone@example.com', rows: 4,
   },
 ]

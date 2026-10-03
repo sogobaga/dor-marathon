@@ -183,13 +183,22 @@ type DashboardInfo struct {
 	// 收集/上傳——白名單命中才 true，無 super_admin 旁路（超管要看資料走後台端點，不代表自己的
 	// 跑步要被記錄，見 gpsrawlog.Allowed 註解）。
 	GpsRawLog bool `json:"gps_raw_log"`
-	// CorosMcpEntry：COROS MCP 第一階段（連接＋讀取測試）入口可見性，見
-	// docs/integration/COROS_MCP_STAGE1_CONTRACT.md 契約第 1 點、internal/integration.CorosMcpDashboardEntry
-	// ——刻意不走 resolveEntry（那支有 super_admin 旁路，這個入口明確不給旁路）。只有 'shown'/'hidden' 兩態。
-	CorosMcpEntry   string         `json:"coros_mcp_entry"`
-	CheerDisplayMs  int            `json:"cheer_display_ms"`     // 每公里應援表演（泡泡框+啦啦隊）顯示毫秒數；來自系統設定 cheer_display_ms（預設 3000）
-	CheerCharLayout string         `json:"cheer_char_layout"`    // 啦啦隊三張角色的位置校正值（原始 JSON 字串；系統設定 cheer_char_layout，前端 parseCheerCharLayout 解析）
-	NewTitles       []AwardedTitle `json:"new_titles,omitempty"` // 本次 dashboard 新解鎖（未看過）稱號
+	// CorosMcpEntry／GarminEntry：直連手錶（COROS MCP／Garmin）入口可見性，只有 'shown'/'hidden' 兩態。
+	// 見 docs/integration/COROS_MCP_GA_CONTRACT.md §2.1：三態 hidden|whitelist|open（缺鍵＝whitelist，
+	// hidden＝緊急關閉含超管，其餘狀態超管恆可）——刻意不走本檔的 resolveEntry（那支是舊式四態、行為不同），
+	// 一律經 internal/integration.DashboardEntry → entrygate.Resolve，與各 API 閘門（EntryForUser→entrygate.Load）
+	// 是同一個判斷函式，不會出現「卡片顯示但 API 403」。
+	CorosMcpEntry string `json:"coros_mcp_entry"`
+	GarminEntry   string `json:"garmin_entry"`
+	// GarminConnected：這位使用者目前有 Garmin「直連」連線（user_integrations provider='garmin'、via='direct'）。
+	GarminConnected bool `json:"garmin_connected"`
+	// ConnectedSources：目前已連線的運動數據來源（由 user_integrations 推導，固定順序、不重複，無則空陣列）：
+	// strava／garmin／coros（含 COROS MCP 直連）／polar／suunto／wahoo。前台偏好來源選單與 /track 暫緩上傳判斷
+	// 用它認得「直連」來源（原本只看 Terra 狀態＋Strava，不認直連）。
+	ConnectedSources []string       `json:"connected_sources"`
+	CheerDisplayMs   int            `json:"cheer_display_ms"`     // 每公里應援表演（泡泡框+啦啦隊）顯示毫秒數；來自系統設定 cheer_display_ms（預設 3000）
+	CheerCharLayout  string         `json:"cheer_char_layout"`    // 啦啦隊三張角色的位置校正值（原始 JSON 字串；系統設定 cheer_char_layout，前端 parseCheerCharLayout 解析）
+	NewTitles        []AwardedTitle `json:"new_titles,omitempty"` // 本次 dashboard 新解鎖（未看過）稱號
 	// 體力值 SP（跑步後依距離×強度扣、依跑步水準以時間恢復；見 internal/stamina）
 	Sp               int        `json:"sp"`
 	SpMax            int        `json:"sp_max"`
@@ -273,10 +282,15 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	d.GpsCalibEntry, d.GpsCalibFactor, d.GpsCalibStatus, d.GpsCalibPairs, d.GpsCalibEnabled =
 		gpscalib.DashboardSummary(r.Context(), h.db, userID, email, code, isSuperAdmin)
 	d.GpsRawLog = gpsrawlog.Allowed(r.Context(), h.db, email)
-	d.CorosMcpEntry = integration.CorosMcpDashboardEntry(r.Context(), h.db, email)
-	// COROS MCP 自動同步（第二階段）：只有白名單帳號（entry=='shown'）才觸發，其餘使用者零額外查詢；
-	// 鉤子內部自己做 25 分鐘節流並開 goroutine 背景跑，這裡不等結果、不影響本次 Dashboard 回應。
-	if d.CorosMcpEntry == "shown" && h.corosMcpAutoSync != nil {
+	d.CorosMcpEntry = integration.DashboardEntry(r.Context(), h.db, integration.EntryProviderCoros, email, code, isSuperAdmin)
+	d.GarminEntry = integration.DashboardEntry(r.Context(), h.db, integration.EntryProviderGarmin, email, code, isSuperAdmin)
+	// 已連線來源（一次查詢）：connected_sources／garmin_connected，以及 COROS MCP 自動同步要不要觸發。
+	var corosMcpConnected bool
+	d.ConnectedSources, corosMcpConnected, d.GarminConnected = h.loadConnectedSources(r.Context(), userID)
+	// COROS MCP 自動同步：只有「已連線 COROS MCP 且入口 shown」的使用者才觸發（沒連線的人零額外成本——不開
+	// goroutine、不碰 Redis）；鉤子內部做緊急關閉／kill switch／全域並發／25 分鐘名額／隨機延遲，開 goroutine
+	// 背景跑，這裡不等結果、不影響本次 Dashboard 回應。
+	if corosMcpConnected && d.CorosMcpEntry == "shown" && h.corosMcpAutoSync != nil {
 		h.corosMcpAutoSync(userID)
 	}
 	levels, err := h.levelConfigList(r.Context())
@@ -421,6 +435,66 @@ func personalWhitelisted(list, email, code string) bool {
 		}
 	}
 	return false
+}
+
+// integrationConnRow user_integrations 一列的 (provider, via)。
+type integrationConnRow struct {
+	Provider string
+	Via      string
+}
+
+// connectedSourceOrder connected_sources 的固定輸出順序（JSON 穩定、前台不必再排序）。
+var connectedSourceOrder = []string{"strava", "garmin", "coros", "polar", "suunto", "wahoo"}
+
+// deriveConnectedSources 純函式：由使用者的 user_integrations 列推導已連線來源（S8）。
+//   - provider 'coros_mcp'（COROS MCP 直連）算 'coros'，並回報 corosMcp=true（自動同步據此判斷）；
+//   - 其餘 provider 照名稱，只收 connectedSourceOrder 內的；
+//   - garminDirect：provider='garmin' 且 via='direct'（Garmin 直連，不含 Terra 連的 Garmin）。
+//
+// 結果固定順序、不重複，無則回空陣列（非 nil，JSON 輸出 []）。
+func deriveConnectedSources(rows []integrationConnRow) (sources []string, corosMcp, garminDirect bool) {
+	have := map[string]bool{}
+	for _, r := range rows {
+		p := r.Provider
+		switch p {
+		case "coros_mcp":
+			corosMcp = true
+			p = "coros"
+		case "garmin":
+			if r.Via == "direct" {
+				garminDirect = true
+			}
+		}
+		have[p] = true
+	}
+	sources = make([]string, 0, len(connectedSourceOrder))
+	for _, s := range connectedSourceOrder {
+		if have[s] {
+			sources = append(sources, s)
+		}
+	}
+	return sources, corosMcp, garminDirect
+}
+
+// loadConnectedSources 查 user_integrations（只讀 provider／via，不碰 token），失敗時回空（Dashboard 不能因此失敗）。
+func (h *Handler) loadConnectedSources(ctx context.Context, userID string) (sources []string, corosMcp, garminDirect bool) {
+	rows, err := h.db.Query(ctx, `SELECT provider, COALESCE(via,'direct') FROM user_integrations WHERE user_id=$1`, userID)
+	if err != nil {
+		return []string{}, false, false
+	}
+	defer rows.Close()
+	var list []integrationConnRow
+	for rows.Next() {
+		var r integrationConnRow
+		if err := rows.Scan(&r.Provider, &r.Via); err != nil {
+			return []string{}, false, false
+		}
+		list = append(list, r)
+	}
+	if rows.Err() != nil {
+		return []string{}, false, false
+	}
+	return deriveConnectedSources(list)
 }
 
 // --- 追蹤系統 ---

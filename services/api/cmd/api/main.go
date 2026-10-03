@@ -89,6 +89,10 @@ func main() {
 	defer rdb.Close()
 	log.Info().Msg("redis connected")
 
+	// Token 加密金鑰檢查：缺失／無效 → log.Error ＋ Telegram 告警（token_key_missing）。不中止啟動——
+	// Strava／Terra 沿用明碼 fallback；直連手錶（COROS MCP／Garmin）的連接會 fail-closed 拒絕儲存。
+	integration.CheckTokenKeyAtStartup()
+
 	// --- 模組初始化 ---
 
 	// Auth
@@ -359,6 +363,17 @@ func main() {
 	// COROS MCP 第二階段：使用者打開 DOR（Dashboard）時自動同步，每人最多每 25 分鐘一次、背景 goroutine，
 	// 不新增任何排程（Neon 要能睡）；只有白名單帳號會走到（見 profile.Dashboard 的 entry=='shown' 判斷）。
 	profileHandler.SetCorosMcpAutoSync(corosMcpHandler.CorosMcpAutoSync)
+	// 每日報告「直連手錶」段（人數統計，只印人數、不印顯示名稱）：COROS MCP 註冊成直連供應商之一
+	// （Garmin 直連之後同樣 opsHandler.AddDirectWearable(garminHandler)）。
+	opsHandler.AddDirectWearable(corosMcpHandler)
+	// 競賽模式分組成績（race_group_standings 預聚合表）：外部來源匯入（COROS MCP、之後的 Garmin 直連）不經 Redis stream，
+	// worker 不會被觸發——匯入成功後經 integration.AfterImport 對該使用者報名的 competition 賽事重算
+	// （GA 契約 §3.5；沿用虛擬選手生成器同一段聚合 SQL，不新增排程）。
+	integration.SetCompetitionRecompute(func(ctx context.Context, userID string) {
+		if err := virtualrunner.RecomputeStandingsForUsers(ctx, pool, []string{userID}); err != nil {
+			log.Warn().Err(err).Str("user", userID).Msg("competition standings recompute after external import failed")
+		}
+	})
 
 	// SMTP Email（推播擴充的 email 頻道用）：未設 SMTP_HOST/SMTP_FROM 時 enabled=false，發送 no-op。
 	smtpPort, _ := strconv.Atoi(os.Getenv("SMTP_PORT"))
@@ -425,6 +440,10 @@ func main() {
 		// ⚠️ 這裡是 strings.HasPrefix 前綴比對，所以上傳路徑必須是扁平的 /run-meets/images
 		// （不能寫成 /run-meets/{id}/images）；不加這行會被 1MB 全域上限先擋成 413。
 		"/api/v1/run-meets/images",
+		// Garmin 直連 webhook（見 internal/integration/garmin*.go）：Garmin 單次 push 可達 10MB，端點自帶
+		// 請求大小上限與快速 ack（不能讓 1MB 全域上限先回 413，否則 Garmin 會判定端點失效而停推）。
+		// 前綴比對，秘密 token 在後面的路徑段（日誌／告警一律經 reqip.SafePath 遮罩）。
+		"/api/v1/integrations/garmin/webhook/",
 	))
 	// 5xx 聚合告警：短時間內大量 5xx 觸發一次 Telegram（避免每次 5xx 各自洗版）。
 	r.Use(middleware.FiveXXAlert)

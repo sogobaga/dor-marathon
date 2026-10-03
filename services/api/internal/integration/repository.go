@@ -56,20 +56,30 @@ type Connection struct {
 // 好處是設定變更後不必重啟即生效、也方便測試以 t.Setenv 切換情境。
 const encPrefix = "enc:"
 
-// stravaTokenKey 解析 STRAVA_TOKEN_KEY（32 bytes，接受 hex 或 base64 編碼）。
-func stravaTokenKey() []byte {
-	raw := os.Getenv("STRAVA_TOKEN_KEY")
+// parseTokenKey 解析 STRAVA_TOKEN_KEY 原始字串（32 bytes，接受 hex 或 base64 編碼）：
+// 回傳 (key, invalid)。raw 為空＝未設定→(nil,false)；有設定但格式不對→(nil,true)；有效→(key,false)。
+// 不記 log（供 TokenKeyConfigured／EncryptTokenStrict 這類頻繁或需要 fail-closed 的呼叫端共用，
+// 見 tokenkey.go）；stravaTokenKey 保留原本「無效就 warn 一次一次」的行為。
+func parseTokenKey(raw string) (key []byte, invalid bool) {
 	if raw == "" {
-		return nil
+		return nil, false
 	}
 	if k, err := hex.DecodeString(raw); err == nil && len(k) == 32 {
-		return k
+		return k, false
 	}
 	if k, err := base64.StdEncoding.DecodeString(raw); err == nil && len(k) == 32 {
-		return k
+		return k, false
 	}
-	log.Warn().Msg("STRAVA_TOKEN_KEY 已設定但不是有效的 32 bytes hex/base64 金鑰，token 將繼續以明碼儲存")
-	return nil
+	return nil, true
+}
+
+// stravaTokenKey 解析 STRAVA_TOKEN_KEY（32 bytes，接受 hex 或 base64 編碼）。
+func stravaTokenKey() []byte {
+	k, invalid := parseTokenKey(os.Getenv("STRAVA_TOKEN_KEY"))
+	if invalid {
+		log.Warn().Msg("STRAVA_TOKEN_KEY 已設定但不是有效的 32 bytes hex/base64 金鑰，token 將繼續以明碼儲存")
+	}
+	return k
 }
 
 // encryptToken AES-256-GCM 加密；金鑰未設定/無效或輸入為空字串時原樣回傳（明碼 fallback）。
@@ -359,15 +369,17 @@ func (r *Repository) DeleteProviderActivities(ctx context.Context, userID, provi
 		    flag_reason = CASE WHEN flag_reason IN ('cross_source_duplicate','multi_device_duplicate') THEN NULL ELSE flag_reason END
 		WHERE user_id = $1
 		  AND dup_of IN (SELECT id FROM activities WHERE user_id = $1 AND source = $2
-		                   AND NOT (source = 'coros' AND COALESCE(external_id,'') LIKE 'mcp:%'))`,
+		                   AND NOT `+DirectWatchSQL("")+`)`,
 		userID, provider); err != nil {
 		return fmt.Errorf("clear stale dup_of before provider activity delete: %w", err)
 	}
-	// COROS MCP 直連匯入的列也是 source='coros'（external_id 'mcp:' 開頭）：中斷 Terra／Partner 的 COROS
-	// 連線時不可連帶刪掉——那批只能由 MCP 自己的中斷（DeleteCorosMcpActivities）刪（Stage 2 審查發現，
-	// 從 Terra 切換到直連時一定會踩到）。
+	// 直連手錶匯入的列（COROS MCP：source='coros'＋external_id 'mcp:' 開頭；Garmin 直連：source='garmin'＋'gc:'
+	// 開頭）與 Terra／Partner 的同品牌列共用 source 字串：中斷 Terra／Partner 連線時不可連帶刪掉——那批只能由
+	// 各自直連的中斷流程刪（COROS：DeleteCorosMcpActivities；Garmin：Garmin 線自己的 Purge）。
+	// COROS 部分是 Stage 2 審查發現（從 Terra 切換到直連時一定會踩到）；Garmin 部分為 GA 契約 §2／計畫 S4 新增。
+	// 排除條件走 DirectWatchSQL（directwatch.go）單一定義，gpscalib／去重排序／這裡三處一致。
 	if _, err := tx.Exec(ctx, `DELETE FROM activities WHERE user_id=$1 AND source=$2
-		AND NOT (source = 'coros' AND COALESCE(external_id,'') LIKE 'mcp:%')`, userID, provider); err != nil {
+		AND NOT `+DirectWatchSQL(""), userID, provider); err != nil {
 		return fmt.Errorf("delete provider activities: %w", err)
 	}
 	return tx.Commit(ctx)
@@ -405,6 +417,53 @@ func (r *Repository) DeleteCorosMcpActivities(ctx context.Context, userID string
 	return ct.RowsAffected(), nil
 }
 
+// PurgeCorosMcpUser 使用者中斷 COROS MCP 時的資料清除，**單一交易**（GA 契約 §3.3）：
+//  1. 解除因這批 mcp 列而標記的良性重複（dup_of／cross_source_duplicate／multi_device_duplicate，原因同
+//     DeleteProviderActivities 註解；包含直連優先去重翻盤的 Strava 列：mcp 列一刪，Strava 列重新計入）；
+//  2. 查這位使用者的 GPS 校正配對是否含 mcp 列（回傳 hadCalibPairs，呼叫端據此重設校正係數）；
+//  3. 刪除 source='coros'＋external_id 'mcp:%' 的活動（回傳筆數；gps_calib_pairs 隨活動 CASCADE）；
+//  4. 刪除這位使用者的 coros_mcp_probe_logs；
+//  5. 刪除 provider='coros_mcp' 的連線列（絕不動 provider='coros' 的 Terra／Partner 連線）。
+//
+// 不回收已發放的 EXP／DP／total_km（external_award_ledger 防重發；使用者 2026-08 拍板：獎勵已發視為既定事實）。
+func (r *Repository) PurgeCorosMcpUser(ctx context.Context, userID string) (deleted int64, hadCalibPairs bool, err error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE activities
+		SET dup_of = NULL,
+		    flagged = CASE WHEN flag_reason IN ('cross_source_duplicate','multi_device_duplicate') THEN FALSE ELSE flagged END,
+		    flag_reason = CASE WHEN flag_reason IN ('cross_source_duplicate','multi_device_duplicate') THEN NULL ELSE flag_reason END
+		WHERE user_id = $1
+		  AND dup_of IN (SELECT id FROM activities WHERE user_id = $1 AND source = 'coros' AND external_id LIKE 'mcp:%')`,
+		userID); err != nil {
+		return 0, false, fmt.Errorf("clear stale dup_of before coros mcp purge: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM gps_calib_pairs p JOIN activities a ON a.id = p.ext_activity_id
+		               WHERE p.user_id = $1 AND a.source = 'coros' AND a.external_id LIKE 'mcp:%')`,
+		userID).Scan(&hadCalibPairs); err != nil {
+		return 0, false, fmt.Errorf("check calib pairs before coros mcp purge: %w", err)
+	}
+	ct, err := tx.Exec(ctx, `DELETE FROM activities WHERE user_id=$1 AND source='coros' AND external_id LIKE 'mcp:%'`, userID)
+	if err != nil {
+		return 0, false, fmt.Errorf("delete coros mcp activities: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM coros_mcp_probe_logs WHERE user_id=$1`, userID); err != nil {
+		return 0, false, fmt.Errorf("delete coros mcp probe logs: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM user_integrations WHERE user_id=$1 AND provider='coros_mcp'`, userID); err != nil {
+		return 0, false, fmt.Errorf("delete coros mcp connection: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, false, err
+	}
+	return ct.RowsAffected(), hadCalibPairs, nil
+}
+
 // NormalizedActivity 各 provider 正規化後的活動
 type NormalizedActivity struct {
 	UserID      string
@@ -429,13 +488,26 @@ type NormalizedActivity struct {
 	// DeviceName：資料來源裝置型號（migration 197 activities.device_name，VARCHAR(60)）。只有 COROS MCP 匯入會填
 	// （queryDevices 第一支裝置）；其他 importer 一律 nil（寫入 NULL，行為不變）。
 	DeviceName *string
+	// Kind：活動大類，"run"／"walk"，空字串視為 run（既有 importer 都不設）。只給合理性檢查
+	// （CheckPlausible）選配速門檻用：走路類門檻 4:00/km，跑步類 2:30/km（見 plausibility.go）。
+	Kind string
 }
 
 // ImportResult 匯入結果
 type ImportResult struct {
-	Status string // inserted | exists | duplicate
-	Reason string // flagged 原因（duplicate 時）
+	// Status：
+	//   inserted  新寫入、未標記（計入賽事／獎勵）
+	//   exists    (source, external_id) 已存在，沒有寫入
+	//   duplicate 已寫入但標記為不計入（Reason＝flag_reason：duplicate／multi_device_duplicate／
+	//             cross_account_duplicate／implausible_pace／implausible_distance）
+	//   skipped   合理性檢查判定不該匯入（未來時間、距離／時間過短），沒有寫入，Reason 帶原因
+	Status string
+	Reason string // flagged 原因（duplicate 時）或略過原因（skipped 時）
 	ID     string // 新插入活動的 activities.id（inserted/duplicate 時才有值；供去重感知里程 EXP/DP 發放用）
+	// Superseded：這筆新列是「直連手錶」且取代了幾筆既有重疊的 Strava 列（那些 Strava 列已被改標
+	// cross_source_duplicate、dup_of 指向這筆；見 detectDuplicate，GA 契約 §2.7）。>0 時這一趟的體力（SP）
+	// 在 Strava 那筆匯入時已扣過，呼叫端不可再扣一次（AfterImport 已處理）。
+	Superseded int
 }
 
 // FindRegisteredRace 找出 recordedAt 落在賽事期間、且該使用者有報名的賽事（取最近一場）
@@ -457,48 +529,195 @@ func (r *Repository) FindRegisteredRace(ctx context.Context, userID string, reco
 	return raceID, true, nil
 }
 
-// detectDuplicate 回傳 (flagged, reason, dupOfID)。
-// 1) 跨帳號精確指紋相同 → cross_account_duplicate（同帳號則 duplicate）
-// 2) 同帳號時間區間重疊 → multi_device_duplicate（多裝置同一筆活動）
-func (r *Repository) detectDuplicate(ctx context.Context, a *NormalizedActivity) (bool, string, string) {
-	if a.Fingerprint != "" {
-		var id, uid string
-		err := r.db.QueryRow(ctx,
-			`SELECT id::text, user_id::text FROM activities WHERE fingerprint=$1 AND NOT flagged LIMIT 1`,
-			a.Fingerprint).Scan(&id, &uid)
-		if err == nil {
-			reason := "cross_account_duplicate"
-			if uid == a.UserID {
-				reason = "duplicate"
-			}
-			return true, reason, id
-		}
-	}
-	// 同帳號時間重疊（多裝置）。新活動區間 [start, start+dur]；限 24h 窗加速。
-	start := a.RecordedAt
-	end := a.RecordedAt.Add(time.Duration(a.DurationS) * time.Second)
-	var id string
-	err := r.db.QueryRow(ctx, `
-		SELECT id::text FROM activities
-		WHERE user_id=$1 AND NOT flagged
-		  AND recorded_at >= $2 AND recorded_at <= $3
-		  AND (recorded_at + (duration_s || ' seconds')::interval) >= $4
-		LIMIT 1`,
-		a.UserID, start.Add(-24*time.Hour), end, start).Scan(&id)
-	if err == nil {
-		return true, "multi_device_duplicate", id
-	}
-	return false, "", ""
+// dupCandidate 一筆可能與新活動重複的既有活動（detectDuplicate 的 SQL 結果列；Source 空字串＝App GPS，
+// 即 activities.source IS NULL）。
+type dupCandidate struct {
+	ID         string
+	UserID     string
+	Source     string
+	ExternalID string
 }
 
-// ImportActivity 寫入活動：source+external_id 去重；偵測重複/跨帳號洗資料 → flag 且不計入賽事。
+// dupDecision detectDuplicate 的結論。
+type dupDecision struct {
+	Flagged bool
+	Reason  string
+	DupOf   string // 被保留的那筆活動 id（Flagged 時；implausible_* 沒有）
+	// SupersedeIDs：新列是「直連手錶」，且與它重疊的既有列全是 Strava → 那些 Strava 列要改標
+	// cross_source_duplicate（dup_of＝新列）、新列保持計入（GA 契約 §2.7）。只有 Flagged=false 時才可能非空。
+	SupersedeIDs []string
+}
+
+// decideDuplicate 純函式（不碰 DB，三種情境的單元測試見 repository_dedup_test.go）：給定新活動、
+// 「精確指紋相同」與「同帳號時間重疊」兩組既有未標記候選，決定新列怎麼標。
+//
+//  1. 指紋相同、屬於「別的帳號」→ cross_account_duplicate（洗資料，非良性，不發獎勵）；優先於其餘判斷。
+//  2. 指紋相同、同帳號 → duplicate；同帳號時間區間重疊 → multi_device_duplicate（多裝置同一筆活動）。
+//     先到先贏：新列標重複、既有列保留。
+//  3. 例外（GA 契約 §2.7「直連手錶優先於 Strava」）：新列是直連手錶（IsDirectWatch），且所有命中的同帳號
+//     既有列都是 Strava → 不標新列，改回傳 SupersedeIDs，由 ImportActivity 在同一交易把那些 Strava 列
+//     改標 cross_source_duplicate。理由：Strava 列永遠被賽事閘門排除（source<>'strava'），先到先贏會讓
+//     「COROS→Strava 自動同步」的使用者整趟在任何賽事都不計。只要命中任一筆非 Strava 的列（App GPS、Terra、
+//     另一支直連…），新列照舊標重複，不翻盤。
+func decideDuplicate(a *NormalizedActivity, fpMatches, overlaps []dupCandidate) dupDecision {
+	direct := IsDirectWatch(a.Source, a.ExternalID)
+	var supersede []string
+	seen := map[string]bool{}
+	addSupersede := func(id string) {
+		if !seen[id] {
+			seen[id] = true
+			supersede = append(supersede, id)
+		}
+	}
+	var sameUserFP []dupCandidate
+	for _, c := range fpMatches {
+		if c.UserID != a.UserID {
+			return dupDecision{Flagged: true, Reason: "cross_account_duplicate", DupOf: c.ID}
+		}
+		sameUserFP = append(sameUserFP, c)
+	}
+	for _, c := range sameUserFP {
+		if direct && c.Source == "strava" {
+			addSupersede(c.ID)
+			continue
+		}
+		return dupDecision{Flagged: true, Reason: "duplicate", DupOf: c.ID}
+	}
+	for _, c := range overlaps {
+		if c.UserID != a.UserID {
+			continue // SQL 已限同帳號，防禦性略過
+		}
+		if direct && c.Source == "strava" {
+			addSupersede(c.ID)
+			continue
+		}
+		return dupDecision{Flagged: true, Reason: "multi_device_duplicate", DupOf: c.ID}
+	}
+	if len(supersede) > 0 {
+		return dupDecision{SupersedeIDs: supersede}
+	}
+	return dupDecision{}
+}
+
+// overlapCandidatesSQL 同帳號、未標記、時間區間與新活動 [$4,$5] 重疊的既有活動。
+//
+// ⚠️ 時間基準（GA 契約 §2.8）：App GPS 列（source IS NULL）的 recorded_at 是「結束」時間，外部來源列
+// （Strava／Terra／COROS／Garmin）存的是「開始」時間——必須先各自正規化成 [候選起點, 候選終點] 再判重疊
+// （比照 mileage_exp.go AwardMileageExp 與 worker resolveCrossSourceDups 的 CASE）。舊寫法把 GPS 的結束
+// 時間當開始，造成兩種錯誤：GPS 比手錶晚停→漏判重複（短暫雙算）；GPS 結束後 N 分鐘才開始的獨立跑步→
+// 誤判重複（永久被排除）。
+// $2／$3 只是讓 idx_activities_user_recorded_unflagged（user_id, recorded_at）能做範圍掃描的粗略視窗
+// （新活動前後各 24 小時：GPS 列的 recorded_at 可能比新活動結束晚一個 GPS 時長），精確判斷在 CASE。
+// 排序：非 Strava 在前（dup_of 優先指向較權威的來源）、再依時間。
+const overlapCandidatesSQL = `
+	SELECT id::text, user_id::text, COALESCE(source,''), COALESCE(external_id,'')
+	FROM activities
+	WHERE user_id=$1 AND NOT flagged
+	  AND recorded_at >= $2 AND recorded_at <= $3
+	  AND (CASE WHEN source IS NULL THEN recorded_at - make_interval(secs => duration_s) ELSE recorded_at END) <= $5
+	  AND (CASE WHEN source IS NULL THEN recorded_at ELSE recorded_at + make_interval(secs => duration_s) END) >= $4
+	ORDER BY (COALESCE(source,'') = 'strava'), recorded_at
+	LIMIT 20`
+
+func scanDupCandidates(rows pgx.Rows) ([]dupCandidate, error) {
+	defer rows.Close()
+	var out []dupCandidate
+	for rows.Next() {
+		var c dupCandidate
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Source, &c.ExternalID); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// detectDuplicate 查兩組候選後交給 decideDuplicate：
+//  1. 精確指紋相同（跨帳號 → cross_account_duplicate；同帳號 → duplicate）
+//  2. 同帳號時間區間重疊 → multi_device_duplicate（多裝置同一筆活動）；直連手錶取代 Strava 見 decideDuplicate
+//
+// 查詢失敗回 error（舊版靜默當成「沒有重複」會造成雙算；呼叫端的匯入會重試，比雙算安全）。
+func (r *Repository) detectDuplicate(ctx context.Context, a *NormalizedActivity) (dupDecision, error) {
+	var fp []dupCandidate
+	if a.Fingerprint != "" {
+		rows, err := r.db.Query(ctx, `
+			SELECT id::text, user_id::text, COALESCE(source,''), COALESCE(external_id,'')
+			FROM activities WHERE fingerprint=$1 AND NOT flagged
+			ORDER BY (user_id::text <> $2) DESC, created_at LIMIT 5`, a.Fingerprint, a.UserID)
+		if err != nil {
+			return dupDecision{}, fmt.Errorf("dedup fingerprint query: %w", err)
+		}
+		if fp, err = scanDupCandidates(rows); err != nil {
+			return dupDecision{}, fmt.Errorf("dedup fingerprint scan: %w", err)
+		}
+	}
+	// 同帳號時間重疊（多裝置）。新活動區間 [start, start+dur]。
+	start := a.RecordedAt
+	end := a.RecordedAt.Add(time.Duration(a.DurationS) * time.Second)
+	rows, err := r.db.Query(ctx, overlapCandidatesSQL, a.UserID, start.Add(-24*time.Hour), end.Add(24*time.Hour), start, end)
+	if err != nil {
+		return dupDecision{}, fmt.Errorf("dedup overlap query: %w", err)
+	}
+	ov, err := scanDupCandidates(rows)
+	if err != nil {
+		return dupDecision{}, fmt.Errorf("dedup overlap scan: %w", err)
+	}
+	return decideDuplicate(a, fp, ov), nil
+}
+
+const insertActivitySQL = `
+	INSERT INTO activities
+		(user_id, race_id, distance_km, duration_s, avg_pace_s, ascent_m, avg_hr, recorded_at,
+		 processed, source, external_id, fingerprint, flagged, flag_reason, dup_of, ext_manual, elapsed_s, device_name)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+	ON CONFLICT (source, external_id) DO NOTHING
+	RETURNING id::text`
+
+// ImportActivity 寫入活動：先過合理性檢查（CheckPlausible，所有外部來源共用），再 source+external_id 去重；
+// 偵測重複/跨帳號洗資料 → flag 且不計入賽事。
+//
+//   - 合理性 skip（未來時間／距離或時間過短）→ ImportResult{Status:"skipped", Reason}，不寫 DB。
+//   - 合理性 flag（配速或距離不可能）→ 照常寫入但 flagged=TRUE、flag_reason=implausible_*，回 Status "duplicate"
+//     （與其他「已寫入但不計入」同一個狀態，既有 importer 的 switch 與三段尾巴不必改；非良性原因 →
+//     AwardMileageExp 不發獎勵、不參與差額補償基準）。
+//   - 直連手錶取代 Strava（decideDuplicate 例外）：新列＋把 Strava 列改標 cross_source_duplicate 在同一交易，
+//     回 Status "inserted"、Superseded=被取代筆數。
 func (r *Repository) ImportActivity(ctx context.Context, a *NormalizedActivity) (ImportResult, error) {
-	flagged, reason, dupOf := r.detectDuplicate(ctx, a)
+	action, plausReason := CheckPlausible(a, time.Now())
+	if action == PlausibleSkip {
+		return ImportResult{Status: "skipped", Reason: plausReason}, nil
+	}
+
+	// 已匯入過（例如 COROS 每次同步都會重抓最近幾天）：直接回 exists，省掉去重候選查詢，
+	// 也避免新列自己被當成候選（直連列的指紋與自己相同）。
+	if a.Source != "" && a.ExternalID != "" {
+		var one int
+		err := r.db.QueryRow(ctx, `SELECT 1 FROM activities WHERE source=$1 AND external_id=$2`, a.Source, a.ExternalID).Scan(&one)
+		if err == nil {
+			return ImportResult{Status: "exists"}, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return ImportResult{}, fmt.Errorf("check existing activity: %w", err)
+		}
+	}
+
+	var dec dupDecision
+	if action == PlausibleFlag {
+		// 不可能的數據：標記優先於重複判斷（非良性原因，不發獎勵、不當補償基準），也不去翻盤任何 Strava 列。
+		dec = dupDecision{Flagged: true, Reason: plausReason}
+	} else {
+		var err error
+		if dec, err = r.detectDuplicate(ctx, a); err != nil {
+			return ImportResult{}, err
+		}
+	}
 
 	var raceArg, dupArg, reasonArg interface{}
-	if flagged {
-		reasonArg = reason
-		dupArg = dupOf
+	if dec.Flagged {
+		reasonArg = dec.Reason
+		if dec.DupOf != "" {
+			dupArg = dec.DupOf
+		}
 		// flagged → race_id 留 NULL，不計入賽事
 	} else {
 		if raceID, ok, err := r.FindRegisteredRace(ctx, a.UserID, a.RecordedAt); err != nil {
@@ -507,27 +726,49 @@ func (r *Repository) ImportActivity(ctx context.Context, a *NormalizedActivity) 
 			raceArg = raceID
 		}
 	}
+	args := []interface{}{a.UserID, raceArg, a.DistanceKm, a.DurationS, a.AvgPaceS, a.AscentM, a.AvgHR, a.RecordedAt,
+		a.Source, a.ExternalID, a.Fingerprint, dec.Flagged, reasonArg, dupArg, a.Manual, a.ElapsedS, a.DeviceName}
 
 	var newID string
-	err := r.db.QueryRow(ctx, `
-		INSERT INTO activities
-			(user_id, race_id, distance_km, duration_s, avg_pace_s, ascent_m, avg_hr, recorded_at,
-			 processed, source, external_id, fingerprint, flagged, flag_reason, dup_of, ext_manual, elapsed_s, device_name)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-		ON CONFLICT (source, external_id) DO NOTHING
-		RETURNING id::text`,
-		a.UserID, raceArg, a.DistanceKm, a.DurationS, a.AvgPaceS, a.AscentM, a.AvgHR, a.RecordedAt,
-		a.Source, a.ExternalID, a.Fingerprint, flagged, reasonArg, dupArg, a.Manual, a.ElapsedS, a.DeviceName).Scan(&newID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ImportResult{Status: "exists"}, nil
+	superseded := 0
+	if len(dec.SupersedeIDs) == 0 {
+		err := r.db.QueryRow(ctx, insertActivitySQL, args...).Scan(&newID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ImportResult{Status: "exists"}, nil
+		}
+		if err != nil {
+			return ImportResult{}, fmt.Errorf("insert activity: %w", err)
+		}
+	} else {
+		tx, err := r.db.Begin(ctx)
+		if err != nil {
+			return ImportResult{}, fmt.Errorf("begin import tx: %w", err)
+		}
+		defer tx.Rollback(ctx) // 已 Commit 後為 no-op
+		if err := tx.QueryRow(ctx, insertActivitySQL, args...).Scan(&newID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ImportResult{Status: "exists"}, nil // 併發下別人先寫入：不翻盤任何東西
+			}
+			return ImportResult{}, fmt.Errorf("insert activity: %w", err)
+		}
+		// 只動「同帳號、仍未標記的 Strava 列」：AND NOT flagged 讓併發下已被別人標記的列不被覆寫，
+		// source='strava' 是防呆（候選本來就只收 Strava）。
+		ct, err := tx.Exec(ctx, `
+			UPDATE activities SET flagged=TRUE, flag_reason='cross_source_duplicate', dup_of=$2
+			WHERE id = ANY($1::uuid[]) AND user_id=$3 AND source='strava' AND NOT flagged`,
+			dec.SupersedeIDs, newID, a.UserID)
+		if err != nil {
+			return ImportResult{}, fmt.Errorf("supersede strava duplicates: %w", err)
+		}
+		superseded = int(ct.RowsAffected())
+		if err := tx.Commit(ctx); err != nil {
+			return ImportResult{}, fmt.Errorf("commit import tx: %w", err)
+		}
 	}
-	if err != nil {
-		return ImportResult{}, fmt.Errorf("insert activity: %w", err)
+	if dec.Flagged {
+		return ImportResult{Status: "duplicate", Reason: dec.Reason, ID: newID}, nil
 	}
-	if flagged {
-		return ImportResult{Status: "duplicate", Reason: reason, ID: newID}, nil
-	}
-	return ImportResult{Status: "inserted", ID: newID}, nil
+	return ImportResult{Status: "inserted", ID: newID, Superseded: superseded}, nil
 }
 
 // ActivityRow 個人活動清單單筆

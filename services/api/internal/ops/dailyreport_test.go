@@ -371,15 +371,39 @@ func TestFormatWearableSilentLine_DaysAgo(t *testing.T) {
 func TestAssembleDailyReportMessage_WearableSilentSectionAppendedEvenWithoutWearable(t *testing.T) {
 	d := baseReportData() // d.Wearable 為 nil（例如 Terra 未注入），但仍有靜默中斷告警要顯示
 	last := time.Now().Add(-5 * 24 * time.Hour)
+	// polar 屬於「具名清單」provider（garmin／coros／coros_mcp 直連手錶改只印人數，見 wearable_silent.go）。
 	d.WearableSilent = []WearableSilentConnection{
-		{Provider: "coros", DisplayName: "小明", LastActivityAt: &last},
+		{Provider: "polar", DisplayName: "小明", LastActivityAt: &last},
 	}
 	msg := buildDailyReportMessage(d)
 	if !strings.Contains(msg, "⌚ 穿戴串接") {
 		t.Fatalf("expected wearable section header even when d.Wearable is nil, got:\n%s", msg)
 	}
-	if !strings.Contains(msg, "⚠️ COROS：小明 疑似已停止同步") {
+	if !strings.Contains(msg, "⚠️ POLAR：小明 疑似已停止同步") {
 		t.Errorf("expected silent-connection line, got:\n%s", msg)
+	}
+}
+
+// 直連手錶（garmin／coros／coros_mcp）的靜默中斷只印人數，不印顯示名稱（政策稿前提 P5）。
+func TestAssembleDailyReportMessage_DirectWatchSilentIsCountOnly(t *testing.T) {
+	d := baseReportData()
+	d.WearableSilent = []WearableSilentConnection{
+		{Provider: "coros", DisplayName: "不該出現的名字A"},
+		{Provider: "coros", DisplayName: "不該出現的名字B"},
+		{Provider: "garmin", DisplayName: "不該出現的名字C"},
+		{Provider: "coros_mcp", DisplayName: "不該出現的名字D"},
+		{Provider: "polar", DisplayName: "小明"},
+	}
+	msg := buildDailyReportMessage(d)
+	for _, bad := range []string{"不該出現的名字A", "不該出現的名字B", "不該出現的名字C", "不該出現的名字D"} {
+		if strings.Contains(msg, bad) {
+			t.Fatalf("direct-watch display name %q leaked into the daily report:\n%s", bad, msg)
+		}
+	}
+	for _, want := range []string{"⚠️ COROS：2 人疑似已停止同步", "⚠️ GARMIN：1 人疑似已停止同步", "⚠️ COROS 直連：1 人疑似已停止同步", "⚠️ POLAR：小明 疑似已停止同步"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing %q in:\n%s", want, msg)
+		}
 	}
 }
 

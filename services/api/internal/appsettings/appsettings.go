@@ -177,6 +177,15 @@ var specs = map[string]func(string) bool{
 	// docs/integration/COROS_MCP_STAGE1_CONTRACT.md 契約第 1 點、internal/integration/corosmcp.go）；
 	// 缺鍵預設只有擁有者帳號（migration 196 已插入預設列，這裡的驗證器只負責格式檢查）。
 	"coros_mcp_whitelist": isWhitelist,
+	// 直連手錶入口三態（COROS GA 契約 §2.1，internal/integration/entrygate）：hidden＝緊急關閉（含超管）／
+	// whitelist＝超管＋白名單（缺鍵預設）／open＝全部開放。COROS 白名單沿用上面的 coros_mcp_whitelist；
+	// Garmin 直連用 garmin_entry_state＋garmin_whitelist（白名單格式同 isWhitelist：email 或帳號編碼）。
+	"coros_mcp_entry_state": isDirectEntryState,
+	"garmin_entry_state":    isDirectEntryState,
+	"garmin_whitelist":      isWhitelist,
+	// COROS MCP 自動同步總開關（契約 §3.1 kill switch）：空字串／缺鍵＝開（預設 1）；0＝停自動同步
+	// （手動「匯入數據」仍可用）。進程內快取 60 秒，後台改動最慢 60 秒內全員生效。
+	"coros_mcp_autosync_enabled": func(v string) bool { return v == "" || v == "0" || v == "1" },
 }
 
 func isEntryState(v string) bool {
@@ -184,6 +193,12 @@ func isEntryState(v string) bool {
 	return v == "" || v == "hidden" || v == "locked" || v == "whitelist" || v == "open" || v == "off"
 }
 func isWhitelist(v string) bool { return len(v) <= 20000 }
+
+// isDirectEntryState 直連手錶入口狀態驗證器（entrygate.Resolve 認得的三個值＋空字串＝缺鍵，讀取端套預設
+// whitelist）。刻意獨立於 isEntryState：這類入口沒有 locked／off，hidden 本身就是「緊急關閉」。
+func isDirectEntryState(v string) bool {
+	return v == "" || v == "hidden" || v == "whitelist" || v == "open"
+}
 
 // isSkinSelectEntryState 帳號層級「風格設定」入口狀態驗證器：只接受 resolveSkinSelectEntryState
 // 真正認得的四個值（含空字串＝缺鍵，讀取端自行套預設）。刻意獨立於 isEntryState 之外（不共用），

@@ -15,8 +15,13 @@ package integration
 //   - 第一階段刻意不寫入活動；第二階段（v871，見 corosmcp_sync.go、COROS_MCP_STAGE2_CONTRACT.md）才經
 //     Repository.ImportActivity 匯入（source='coros'、external_id='mcp:'+labelId），仍只開放白名單。
 //
+// GA（全員開放）修正見 docs/integration/COROS_MCP_GA_CONTRACT.md：入口三態（entrygate，status／disconnect
+// 不受限）、reauth_required_at／非破壞性重新授權、供應商帳號綁定（id_token sub）、節流改 Redis（corosmcp_throttle.go）、
+// 讀取測試僅超管且只存摘要、Disconnect 同交易刪紀錄與 probe logs。
+//
 // 安全设计重點（見契約驗收段）：
-//   - 白名單無 super_admin 旁路（比照 internal/gpsrawlog.Allowed，而非 profile.resolveEntry）。
+//   - （Stage 1 的「白名單無 super_admin 旁路」已被 GA 契約 §2.1 取代：超管在 whitelist／open 狀態恆可，
+//     hidden＝緊急關閉含超管，全部由 internal/integration/entrygate 判斷。）
 //   - discovery 回傳的每一個端點 URL 都驗證 https + host 落在 coros.com/*.coros.com，防 SSRF／被導去他處。
 //   - state 用既有 HMAC 簽章手法（比照 coros.go signState/verifyState），PKCE verifier 隨 state 一併簽入，
 //     不需要 Redis/DB 往返（Neon 可以繼續睡）。
@@ -45,18 +50,22 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 
-	"github.com/dor/api/internal/appsettings"
 	"github.com/dor/api/internal/auth"
+	"github.com/dor/api/internal/gpscalib"
+	"github.com/dor/api/internal/integration/entrygate"
 )
 
 const (
 	providerCorosMcp     = "coros_mcp"
 	corosMcpScope        = "openid offline_access mcp.tools"
 	corosMcpWhitelistKey = "coros_mcp_whitelist"
+	// corosMcpEntryStateKey 入口三態（hidden|whitelist|open；缺鍵＝whitelist），見 entrygate。
+	corosMcpEntryStateKey = "coros_mcp_entry_state"
+	// corosMcpAutoSyncKey 自動同步總開關（kill switch）：缺鍵／空值＝開，0＝停（手動匯入仍可用）。
+	corosMcpAutoSyncKey = "coros_mcp_autosync_enabled"
 	// corosMcpDefaultWhitelist 缺鍵時的預設（migration 196 已插入同值這一列，這裡只是程式面兜底，
 	// 比照 internal/gpsrawlog.defaultWhitelist 的雙重保險寫法）。
 	corosMcpDefaultWhitelist = "sogobaga@gmail.com"
@@ -139,36 +148,51 @@ type CorosMcpConfig struct {
 	JWTSecret   string
 }
 
-// CorosMcpHandler 第一階段 handler。
+// CorosMcpHandler COROS MCP handler（連接／同步／狀態／讀取測試／中斷）。
 type CorosMcpHandler struct {
 	repo        *Repository
 	cfg         CorosMcpConfig
 	requireAuth func(http.Handler) http.Handler
 	hc          *http.Client
-	rdb         *redis.Client // 讀取測試節流；nil 時退化為記憶體節流（見 allowProbe）
-	// probeMem 是 rdb 為 nil（本機/測試）時的節流 fallback，key=userID。
-	probeMem struct {
-		mu sync.Mutex
-		m  map[string]time.Time
-	}
-	// importMu/importLast：POST /import 每人 60 秒記憶體節流（比照 terra allowImport，見 allowImport）。
-	importMu   sync.Mutex
-	importLast map[string]time.Time
-	// autoMu/autoLast：自動同步在 rdb 為 nil（或 Redis 出錯）時的記憶體節流 fallback（見 claimAutoSync）。
-	autoMu   sync.Mutex
-	autoLast map[string]time.Time
+	// rdb：節流／in-flight 鎖／冷卻的跨副本儲存（見 corosmcp_throttle.go）。nil（本機／測試）或 Redis 出錯時
+	// 退回 mem（記憶體，單進程）——一律嚴格節流，不 fail-open。
+	rdb *redis.Client
+	mem corosMcpMem
+	// now：可注入的時鐘（只影響記憶體節流表；Redis 的 TTL 是 Redis 自己的時間）。nil＝time.Now。
+	now func() time.Time
+	// autoSem：自動同步全域並發上限（容量 corosMcpAutoConcurrency）；滿了略過、不扣名額。經 sem() 延遲初始化
+	// （測試直接以結構字面值建 handler 時也安全）。
+	autoSem chan struct{}
+	semOnce sync.Once
+	// autoJitterMax：自動同步觸發前的隨機延遲上限（0＝不延遲，測試用）。
+	autoJitterMax time.Duration
 }
 
 func NewCorosMcpHandler(repo *Repository, cfg CorosMcpConfig, requireAuth func(http.Handler) http.Handler, rdb *redis.Client) *CorosMcpHandler {
 	if cfg.GatewayURL == "" {
 		cfg.GatewayURL = "https://mcp.coros.com"
 	}
-	h := &CorosMcpHandler{repo: repo, cfg: cfg, requireAuth: requireAuth, hc: &http.Client{Timeout: corosMcpMCPTimeout}, rdb: rdb}
-	h.probeMem.m = map[string]time.Time{}
-	return h
+	return &CorosMcpHandler{
+		repo: repo, cfg: cfg, requireAuth: requireAuth,
+		hc:            &http.Client{Timeout: corosMcpMCPTimeout},
+		rdb:           rdb,
+		autoJitterMax: corosMcpAutoJitterMax,
+	}
 }
 
-// Router 掛在 /api/v1/integrations/coros-mcp。/callback 公開，其餘需登入＋白名單。
+// sem 自動同步並發信號量（延遲初始化）。
+func (h *CorosMcpHandler) sem() chan struct{} {
+	h.semOnce.Do(func() {
+		if h.autoSem == nil {
+			h.autoSem = make(chan struct{}, corosMcpAutoConcurrency)
+		}
+	})
+	return h.autoSem
+}
+
+// Router 掛在 /api/v1/integrations/coros-mcp。/callback 公開，其餘需登入。
+// 入口閘門（entrygate）：connect／callback／import／自動同步受限；status 與 disconnect 不受限（契約 §2.2：
+// 只要有連線列就能看、能中斷）。probe 僅超管。
 func (h *CorosMcpHandler) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/callback", h.Callback)
@@ -183,60 +207,57 @@ func (h *CorosMcpHandler) Router() http.Handler {
 	return r
 }
 
-// --- 白名單（無 super_admin 旁路，見檔頭註解）---
+// --- 入口閘門（entrygate，GA 契約 §2.1/§2.2）---
 
-// corosMcpAllowed 純粹依白名單判斷；比照 gpsrawlog.whitelisted 的格式（逗號/換行/分號/空白皆可分隔）。
-func corosMcpWhitelisted(list, email string) bool {
-	email = strings.ToLower(strings.TrimSpace(email))
-	if email == "" {
-		return false
-	}
-	for _, tok := range strings.FieldsFunc(list, func(r rune) bool {
-		return r == '\n' || r == '\r' || r == ',' || r == ';' || r == ' ' || r == '\t'
-	}) {
-		if strings.ToLower(strings.TrimSpace(tok)) == email {
-			return true
-		}
-	}
-	return false
+// corosMcpUser 閘門與 /status 需要的使用者欄位。
+type corosMcpUser struct {
+	Email   string
+	Code    string
+	IsSuper bool
 }
 
-func (h *CorosMcpHandler) allowed(ctx context.Context, email string) bool {
-	wl := appsettings.GetString(ctx, h.repo.db, corosMcpWhitelistKey, corosMcpDefaultWhitelist)
-	return corosMcpWhitelisted(wl, email)
+func (h *CorosMcpHandler) loadUser(ctx context.Context, userID string) (corosMcpUser, error) {
+	var u corosMcpUser
+	err := h.repo.db.QueryRow(ctx,
+		`SELECT COALESCE(email,''), COALESCE(account_code,''), COALESCE(is_super_admin,FALSE) FROM users WHERE id=$1`,
+		userID).Scan(&u.Email, &u.Code, &u.IsSuper)
+	return u, err
 }
 
-// CorosMcpDashboardEntry 供 internal/profile Dashboard 組 coros_mcp_entry 用（契約第 1 點：
-// 「dashboard 回 coros_mcp_entry: 'shown' | 'hidden'」，無 super_admin 旁路——與全站其餘
-// *_entry 系列刻意不同，不能共用 profile.resolveEntry，見檔頭註解）。
-func CorosMcpDashboardEntry(ctx context.Context, db *pgxpool.Pool, email string) string {
-	wl := appsettings.GetString(ctx, db, corosMcpWhitelistKey, corosMcpDefaultWhitelist)
-	if corosMcpWhitelisted(wl, email) {
-		return "shown"
-	}
-	return "hidden"
-}
-
-func (h *CorosMcpHandler) userEmail(ctx context.Context, userID string) string {
-	var email string
-	_ = h.repo.db.QueryRow(ctx, `SELECT COALESCE(email,'') FROM users WHERE id=$1`, userID).Scan(&email)
-	return email
-}
-
-// requireWhitelist 統一處理「需登入＋白名單」四個端點共用的前置檢查（/callback 除外）。
-// 回傳 userID、email；ok=false 時已經寫完 403 回應，呼叫端直接 return。
-func (h *CorosMcpHandler) requireWhitelist(w http.ResponseWriter, r *http.Request) (userID, email string, ok bool) {
+// requireEntry 「需登入＋入口開放」的共用前置檢查（connect／import；callback 與自動同步另行檢查）。
+// ok=false 時已寫完回應。與 profile Dashboard 的 coros_mcp_entry 走同一個判斷（entrygate.Resolve）。
+func (h *CorosMcpHandler) requireEntry(w http.ResponseWriter, r *http.Request) (userID string, ok bool) {
 	userID, _ = r.Context().Value(auth.CtxKeyUserID).(string)
 	if userID == "" {
 		respondErr(w, http.StatusUnauthorized, "login required")
-		return "", "", false
+		return "", false
 	}
-	email = h.userEmail(r.Context(), userID)
-	if !h.allowed(r.Context(), email) {
+	entry, err := h.entryForUser(r.Context(), userID)
+	if err != nil {
+		log.Error().Err(err).Str("user", userID).Msg("coros mcp: entry gate lookup failed")
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return "", false
+	}
+	if entry != entrygate.Shown {
 		respondJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
-		return "", "", false
+		return "", false
 	}
-	return userID, email, true
+	return userID, true
+}
+
+// entryForUser 只有 userID 時的入口判斷（API 閘門與 callback 用）。
+func (h *CorosMcpHandler) entryForUser(ctx context.Context, userID string) (string, error) {
+	return EntryForUser(ctx, h.repo.db, EntryProviderCoros, userID)
+}
+
+// requireUser 只要求登入（status／disconnect：不受入口狀態限制）。
+func (h *CorosMcpHandler) requireUser(w http.ResponseWriter, r *http.Request) (userID string, ok bool) {
+	userID, _ = r.Context().Value(auth.CtxKeyUserID).(string)
+	if userID == "" {
+		respondErr(w, http.StatusUnauthorized, "login required")
+		return "", false
+	}
+	return userID, true
 }
 
 // --- PKCE（純函式，供單元測試）---
@@ -360,6 +381,8 @@ type corosMcpDiscoveryDoc struct {
 	TokenEndpoint         string `json:"token_endpoint"`
 	RevocationEndpoint    string `json:"revocation_endpoint"`
 	RegistrationEndpoint  string `json:"registration_endpoint"`
+	// JWKSURI：OIDC 公鑰集（有的話 id_token 驗簽，見 corosmcp_identity.go）；同樣要通過 host 驗證。
+	JWKSURI string `json:"jwks_uri"`
 }
 
 type corosMcpDiscoveryCacheEntry struct {
@@ -419,7 +442,7 @@ func (h *CorosMcpHandler) discover(ctx context.Context, base string) (*corosMcpD
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil, fmt.Errorf("decode discovery: %w", err)
 	}
-	for _, u := range []string{doc.Issuer, doc.AuthorizationEndpoint, doc.TokenEndpoint, doc.RevocationEndpoint, doc.RegistrationEndpoint} {
+	for _, u := range []string{doc.Issuer, doc.AuthorizationEndpoint, doc.TokenEndpoint, doc.RevocationEndpoint, doc.RegistrationEndpoint, doc.JWKSURI} {
 		if u == "" {
 			continue
 		}
@@ -610,15 +633,33 @@ type corosMcpConnection struct {
 	LastProbeAt  *time.Time
 	// LastSyncedAt：最近一次成功同步時間（migration 197）；從未同步＝nil。
 	LastSyncedAt *time.Time
+	// ReauthRequiredAt：refresh 失敗（invalid_grant／401 後 refresh 失敗／無 refresh token 且已過期）時寫入，
+	// 成功換 token 或重新授權時清空（migration 198，GA 契約 §2.3）。nil＝目前沒有已知的授權問題。
+	ReauthRequiredAt *time.Time
+	// ProviderUserID：綁定的 COROS 帳號識別（id_token sub 衍生，見 corosmcp_identity.go；migration 198 的
+	// 部分唯一索引保證同一個 COROS 帳號只能連到一個 DOR 帳號）。空字串＝尚未綁定（舊連線或 COROS 沒發 id_token）。
+	ProviderUserID string
 }
 
-func (h *CorosMcpHandler) getConnection(ctx context.Context, userID string) (*corosMcpConnection, error) {
+// NeedsReauth 這條連線現在是否需要使用者重新授權：已被標記，或 access token 已過期且沒有 refresh token
+// （refresh 根本無從嘗試——不必等到下一次同步失敗才知道）。
+func (c *corosMcpConnection) NeedsReauth(now time.Time) bool {
+	if c.ReauthRequiredAt != nil {
+		return true
+	}
+	return c.RefreshToken == "" && !c.ExpiresAt.After(now)
+}
+
+// getConnectionMeta 讀連線列但「不解密」token（RefreshToken 欄位是資料庫存的原字串，空字串＝沒有 refresh token）。
+// /status 與 /disconnect 用它：金鑰遺失或密文損毀時這兩支仍然要能用。查無回 (nil, nil)。
+func (h *CorosMcpHandler) getConnectionMeta(ctx context.Context, userID string) (*corosMcpConnection, error) {
 	var c corosMcpConnection
 	err := h.repo.db.QueryRow(ctx, `
 		SELECT id::text, access_token, refresh_token, expires_at, COALESCE(scope,''), created_at,
-		       COALESCE(issuer,''), last_probe_at, last_synced_at
+		       COALESCE(issuer,''), last_probe_at, last_synced_at, reauth_required_at, COALESCE(provider_user_id,'')
 		FROM user_integrations WHERE user_id=$1 AND provider=$2`, userID, providerCorosMcp).
-		Scan(&c.ID, &c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.ConnectedAt, &c.Issuer, &c.LastProbeAt, &c.LastSyncedAt)
+		Scan(&c.ID, &c.AccessToken, &c.RefreshToken, &c.ExpiresAt, &c.Scope, &c.ConnectedAt, &c.Issuer, &c.LastProbeAt, &c.LastSyncedAt,
+			&c.ReauthRequiredAt, &c.ProviderUserID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -626,38 +667,90 @@ func (h *CorosMcpHandler) getConnection(ctx context.Context, userID string) (*co
 		return nil, err
 	}
 	c.UserID = userID
+	return &c, nil
+}
+
+// getConnection 讀連線列並解密 access／refresh token（同步、讀取測試、撤銷需要明文）。
+func (h *CorosMcpHandler) getConnection(ctx context.Context, userID string) (*corosMcpConnection, error) {
+	c, err := h.getConnectionMeta(ctx, userID)
+	if err != nil || c == nil {
+		return c, err
+	}
 	if c.AccessToken, err = decryptToken(c.AccessToken); err != nil {
 		return nil, fmt.Errorf("decrypt coros_mcp access token: %w", err)
 	}
 	if c.RefreshToken, err = decryptToken(c.RefreshToken); err != nil {
 		return nil, fmt.Errorf("decrypt coros_mcp refresh token: %w", err)
 	}
-	return &c, nil
+	return c, nil
 }
 
-// saveConnection upsert（見 Save 的既有慣例：重新授權也重設 created_at，floor 前移不倒灌——
-// 第一階段不匯入活動，這個 floor 概念其實用不到，純粹維持跟其他 provider 一致的落地行為）。
-func (h *CorosMcpHandler) saveConnection(ctx context.Context, userID, issuer, access, refresh string, expiresAt time.Time, scope string) error {
-	_, err := h.repo.db.Exec(ctx, `
+// saveConnection 連接成功（callback）後寫入／更新連線列。
+//   - 全新使用者：INSERT，created_at 取預設 NOW()＝匯入 floor（只匯入連接當下之後的活動）。
+//   - 已連接者重新授權（GA 契約 §2.4，非破壞性）：只更新 token／expires_at／scope／issuer 並清掉
+//     reauth_required_at；⚠️ 不動 created_at（floor）——舊版 ON CONFLICT 會 created_at=NOW()，授權到期後
+//     重新連接就把 floor 推到現在，到期～重連之間的跑步永久被當成「連接前」略過（稽核 HIGH）。
+//   - provider_user_id 只在新值非空時才覆蓋（accountID 空＝這次沒拿到帳號識別，保留舊值）。
+//   - token 一律 EncryptTokenStrict：沒有有效的加密金鑰就拒絕寫入（fail-closed，ErrTokenKeyMissing）。
+//   - 撞 (provider, provider_user_id) 部分唯一索引（migration 198）→ ErrProviderAccountLinked。
+func (h *CorosMcpHandler) saveConnection(ctx context.Context, userID, issuer, access, refresh string, expiresAt time.Time, scope, accountID string) error {
+	encAccess, err := EncryptTokenStrict(access)
+	if err != nil {
+		return err
+	}
+	encRefresh, err := EncryptTokenStrict(refresh)
+	if err != nil {
+		return err
+	}
+	_, err = h.repo.db.Exec(ctx, `
 		INSERT INTO user_integrations (user_id, provider, provider_user_id, access_token, refresh_token, expires_at, scope, athlete_name, issuer)
-		VALUES ($1,$2,'',$3,$4,$5,$6,'',$7)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,'',$8)
 		ON CONFLICT (user_id, provider) DO UPDATE SET
-			access_token  = EXCLUDED.access_token,
-			refresh_token = EXCLUDED.refresh_token,
-			expires_at    = EXCLUDED.expires_at,
-			scope         = EXCLUDED.scope,
-			issuer        = EXCLUDED.issuer,
-			updated_at    = NOW(),
-			created_at    = NOW()`,
-		userID, providerCorosMcp, encryptToken(access), encryptToken(refresh), expiresAt, scope, issuer)
+			provider_user_id   = CASE WHEN EXCLUDED.provider_user_id <> '' THEN EXCLUDED.provider_user_id ELSE user_integrations.provider_user_id END,
+			access_token       = EXCLUDED.access_token,
+			refresh_token      = EXCLUDED.refresh_token,
+			expires_at         = EXCLUDED.expires_at,
+			scope              = EXCLUDED.scope,
+			issuer             = EXCLUDED.issuer,
+			reauth_required_at = NULL,
+			updated_at         = NOW()`,
+		userID, providerCorosMcp, accountID, encAccess, encRefresh, expiresAt, scope, issuer)
+	if err != nil {
+		if IsProviderAccountConflict(err) {
+			return ErrProviderAccountLinked
+		}
+		return err
+	}
+	return nil
+}
+
+// updateTokens refresh 成功後寫回新 token，並清掉 reauth_required_at（授權已恢復）。fail-closed 加密同上。
+func (h *CorosMcpHandler) updateTokens(ctx context.Context, id, access, refresh string, expiresAt time.Time) error {
+	encAccess, err := EncryptTokenStrict(access)
+	if err != nil {
+		return err
+	}
+	encRefresh, err := EncryptTokenStrict(refresh)
+	if err != nil {
+		return err
+	}
+	_, err = h.repo.db.Exec(ctx,
+		`UPDATE user_integrations SET access_token=$1, refresh_token=$2, expires_at=$3, reauth_required_at=NULL, updated_at=NOW() WHERE id=$4`,
+		encAccess, encRefresh, expiresAt, id)
 	return err
 }
 
-func (h *CorosMcpHandler) updateTokens(ctx context.Context, id, access, refresh string, expiresAt time.Time) error {
-	_, err := h.repo.db.Exec(ctx,
-		`UPDATE user_integrations SET access_token=$1, refresh_token=$2, expires_at=$3, updated_at=NOW() WHERE id=$4`,
-		encryptToken(access), encryptToken(refresh), expiresAt, id)
-	return err
+// markReauthRequired 標記「這條連線需要使用者重新授權」（只在尚未標記時寫入，保留第一次發生的時間）。
+// 刻意不動 updated_at：日報「疑似靜默中斷」的保護期看 updated_at，標記本身不該把它往後延。
+// 呼叫端只記 log、不擋流程（標記失敗時 /status 仍會因「已過期且無 refresh token」動態判定需要重新授權）。
+func (h *CorosMcpHandler) markReauthRequired(ctx context.Context, connID string) {
+	if connID == "" || h.repo == nil || h.repo.db == nil {
+		return
+	}
+	if _, err := h.repo.db.Exec(ctx,
+		`UPDATE user_integrations SET reauth_required_at = NOW() WHERE id=$1 AND reauth_required_at IS NULL`, connID); err != nil {
+		log.Warn().Err(err).Msg("coros mcp: mark reauth_required_at failed")
+	}
 }
 
 func (h *CorosMcpHandler) touchLastProbe(ctx context.Context, userID string, at time.Time) error {
@@ -666,23 +759,21 @@ func (h *CorosMcpHandler) touchLastProbe(ctx context.Context, userID string, at 
 	return err
 }
 
-// deleteConnection 只刪 provider='coros_mcp' 這一列，絕不觸碰 provider='coros' 的 Terra／直連資料
-// （契約第 10 點）。第一階段不寫入活動，故也不需要比照 DeleteProviderActivities 清活動。
-func (h *CorosMcpHandler) deleteConnection(ctx context.Context, userID string) error {
-	_, err := h.repo.db.Exec(ctx, `DELETE FROM user_integrations WHERE user_id=$1 AND provider=$2`, userID, providerCorosMcp)
-	return err
-}
+// --- probe_logs（GA 契約 §3.2：只存摘要，不存任何 COROS 原始回應）---
 
-// --- probe_logs ---
-
-func (h *CorosMcpHandler) logProbe(ctx context.Context, userID, tool string, request, response any, status string, at time.Time) error {
-	reqJSON, _ := json.Marshal(request)
-	respJSON, _ := json.Marshal(response)
+// logProbe 寫一筆讀取測試摘要（step／ok／count／錯誤代碼）。request 欄位固定 NULL、response 只含 summary——
+// 不保存 tools/list 全文、活動明細、逐公里分段或 COROS 的錯誤字串（資料最小化；前台也不顯示 COROS 原始錯誤）。
+func (h *CorosMcpHandler) logProbe(ctx context.Context, userID string, summary corosMcpStepSummary, at time.Time) error {
+	status := "ok"
+	if !summary.OK {
+		status = "error"
+	}
+	respJSON, _ := json.Marshal(probeLogResponse{Summary: summary})
 	_, err := h.repo.db.Exec(ctx, `
 		INSERT INTO coros_mcp_probe_logs (user_id, tool, request, response, status, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6)`, userID, tool, reqJSON, respJSON, status, at)
+		VALUES ($1,$2,NULL,$3,$4,$5)`, userID, summary.Step, respJSON, status, at)
 	if err != nil {
-		log.Error().Err(err).Str("user", userID).Str("tool", tool).Msg("coros mcp: write probe log failed")
+		log.Error().Err(err).Str("user", userID).Str("tool", summary.Step).Msg("coros mcp: write probe log failed")
 	}
 	return err
 }
@@ -699,8 +790,8 @@ func corosMcpProbeLogPurgeSQL() (string, int) {
 	return `DELETE FROM coros_mcp_probe_logs WHERE created_at < now() - make_interval(days => $1)`, corosMcpProbeLogRetentionDays
 }
 
-// PurgeExpiredProbeLogs 刪除超過保存期限（見 corosMcpProbeLogRetentionDays）的讀取測試紀錄，回傳
-// 刪除筆數。供 internal/ops 每日報告排程呼叫（契約第 8 點：「不另開週期性 DB 查詢」，掛在既有排程，
+// PurgeExpired 刪除超過保存期限（見 corosMcpProbeLogRetentionDays）的讀取測試紀錄，回傳刪除筆數。
+// 供 internal/ops 每日報告排程呼叫（契約第 8 點：「不另開週期性 DB 查詢」，掛在既有排程，
 // 比照 gpsrawlog.PurgeExpired／internal/ops RunDailyReportLoop／buildDailyReportData 的既有慣例）。
 // 表尚未建立（migration 196 未套用）或查詢本身失敗時由呼叫端 warn 後略過即可，不影響報告其餘段落。
 //
@@ -720,6 +811,8 @@ func (h *CorosMcpHandler) PurgeExpired(ctx context.Context) (int, error) {
 }
 
 // corosMcpStepSummary 回傳給前台的單步摘要（契約 Step 型別），不含原始回應內文。
+// Error 是穩定的「錯誤代碼」（corosMcpErrorCode：reauth_required／anomaly／rate_limited／upstream_5xx／
+// tool_error／no_activity…），不是 COROS 的原始錯誤字串。
 type corosMcpStepSummary struct {
 	Step  string `json:"step"`
 	OK    bool   `json:"ok"`
@@ -727,19 +820,27 @@ type corosMcpStepSummary struct {
 	Error string `json:"error,omitempty"`
 }
 
-// probeLogResponse DB 裡 response 欄位的形狀：raw 保留原文（除錯用），summary 供 /status 重建摘要
-// （契約：/status 的 last_probe 只回摘要，不回原文——存檔雖含 raw，讀出來組 /status 回應時只取 summary）。
+// probeLogResponse DB 裡 response 欄位的形狀：只有 summary（供 /status 重建摘要）。舊版（Stage 1/2）存的資料
+// 還有 raw 欄位，讀取時直接忽略；不再寫入。
 type probeLogResponse struct {
-	Raw     json.RawMessage     `json:"raw,omitempty"`
 	Summary corosMcpStepSummary `json:"summary"`
 }
 
 // --- HTTP handlers ---
 
 // POST /connect → { "url": authorize URL }
+// 入口閘門：entrygate（hidden＝緊急關閉含超管；whitelist＝超管＋白名單；open＝全員）。已連接者也可以走——
+// 那就是「重新授權」（GA 契約 §2.4）：callback 對既有列只更新 token 並清掉 reauth_required_at，保留 created_at（floor）。
 func (h *CorosMcpHandler) Connect(w http.ResponseWriter, r *http.Request) {
-	userID, _, ok := h.requireWhitelist(w, r)
+	userID, ok := h.requireEntry(w, r)
 	if !ok {
+		return
+	}
+	// 沒有有效的 token 加密金鑰就別讓使用者走完 COROS 授權才在 callback 失敗（直連 token 一律 fail-closed 拒存，
+	// 見 EncryptTokenStrict；啟動時已 log.Error＋Telegram 告警，這裡讓前台立刻得到「暫時無法使用」）。
+	if !TokenKeyConfigured() {
+		log.Error().Str("user", userID).Msg("coros mcp: connect refused, token encryption key missing")
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "unavailable"})
 		return
 	}
 	disc, err := h.discover(r.Context(), h.cfg.GatewayURL)
@@ -788,6 +889,17 @@ func (h *CorosMcpHandler) corosMcpFrontendRedirect(status, reason string) string
 	return u
 }
 
+// getBinding 不解密 token 的輕量讀取：這位使用者目前有沒有連線列、已綁定的 COROS 帳號識別（可為空）。
+func (h *CorosMcpHandler) getBinding(ctx context.Context, userID string) (exists bool, accountID string, err error) {
+	err = h.repo.db.QueryRow(ctx,
+		`SELECT TRUE, COALESCE(provider_user_id,'') FROM user_integrations WHERE user_id=$1 AND provider=$2`,
+		userID, providerCorosMcp).Scan(&exists, &accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, "", nil
+	}
+	return exists, accountID, err
+}
+
 // GET /callback?code&state（公開）→ 302 固定路徑。
 func (h *CorosMcpHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	redirectErr := func(reason string) {
@@ -818,6 +930,16 @@ func (h *CorosMcpHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		redirectErr("missing_code")
 		return
 	}
+	// 入口閘門（GA 契約 §2.1）：使用者在授權頁停留期間入口可能被關掉（緊急關閉）——callback 也要再判斷一次，
+	// 不換 token、不寫連線。state 已證明 userID 是發起 /connect 的那位。
+	if entry, err := h.entryForUser(r.Context(), userID); err != nil {
+		log.Error().Err(err).Msg("coros mcp callback: entry gate lookup failed")
+		redirectErr("save_failed")
+		return
+	} else if entry != entrygate.Shown {
+		redirectErr("entry_closed")
+		return
+	}
 	disc, err := h.discover(r.Context(), issuer)
 	if err != nil {
 		log.Error().Err(err).Msg("coros mcp callback: discovery failed")
@@ -841,25 +963,58 @@ func (h *CorosMcpHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		redirectErr(reason)
 		return
 	}
+	// 帳號綁定（GA 契約 §2.6）：id_token 的 sub。沒有 id_token＝無法綁定（連線仍建立，日報備註未綁定人數）；
+	// 有 id_token 但驗證失敗＝拒絕（快速暴露實作／設定問題，也避免用不可信的識別綁定）。
+	accountID, idErr := h.corosMcpIdentity(r.Context(), disc, client.ClientID, tok.IDToken, h.timeNow())
+	if idErr != nil {
+		log.Error().Err(idErr).Msg("coros mcp callback: id_token verification failed")
+		redirectErr("identity_invalid")
+		return
+	}
+	if accountID == "" {
+		log.Warn().Str("user", userID).Msg("coros mcp callback: token response has no id_token — connecting without account binding")
+	}
+	existed, boundID, err := h.getBinding(r.Context(), userID)
+	if err != nil {
+		log.Error().Err(err).Msg("coros mcp callback: read existing connection failed")
+		redirectErr("save_failed")
+		return
+	}
+	// 重新授權時換了另一個 COROS 帳號（已綁定的識別與這次不同）：拒絕——請先中斷連線（會刪匯入紀錄）再用新帳號連接，
+	// 否則同一個 DOR 帳號可以不經中斷就輪流掛不同 COROS 帳號、把舊帳號的綁定釋出去給別人再領一次。
+	if existed && boundID != "" && accountID != "" && boundID != accountID {
+		redirectErr("account_changed")
+		return
+	}
 	expiresAt := time.Now().Add(1 * time.Hour)
 	if tok.ExpiresIn > 0 {
 		expiresAt = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
 	}
-	if err := h.saveConnection(r.Context(), userID, issuer, tok.AccessToken, tok.RefreshToken, expiresAt, tok.Scope); err != nil {
+	if err := h.saveConnection(r.Context(), userID, issuer, tok.AccessToken, tok.RefreshToken, expiresAt, tok.Scope, accountID); err != nil {
+		if errors.Is(err, ErrProviderAccountLinked) {
+			http.Redirect(w, r, h.corosMcpFrontendRedirect("already_linked", ""), http.StatusFound)
+			return
+		}
 		log.Error().Err(err).Msg("coros mcp callback: save connection failed")
 		redirectErr("save_failed")
 		return
+	}
+	if existed {
+		// 重新授權成功：立即補同步（起點 max(floor, last_synced_at − 1 天)，上限 30 天；背景執行，不擋導回）。
+		h.reauthCatchUp(userID)
 	}
 	http.Redirect(w, r, h.corosMcpFrontendRedirect("connected", ""), http.StatusFound)
 }
 
 // corosMcpTokenResp 標準 OAuth2 token 回應（access/refresh token exchange、refresh 共用）。
+// IDToken：scope 含 openid 時 token 端點會一併回 OIDC id_token（只用來取帳號識別 sub，不落地）。
 type corosMcpTokenResp struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
 	TokenType    string `json:"token_type"`
 	Scope        string `json:"scope"`
+	IDToken      string `json:"id_token"`
 }
 
 func (h *CorosMcpHandler) postTokenForm(ctx context.Context, tokenURL string, form url.Values, client *corosMcpClient) (*corosMcpTokenResp, error) {
@@ -911,7 +1066,9 @@ func (h *CorosMcpHandler) exchangeCode(ctx context.Context, tokenURL string, cli
 // refreshToken 刷新並持久化（契約第 7 點：refresh 回傳的新 refresh token 一律存回）。
 func (h *CorosMcpHandler) refreshToken(ctx context.Context, conn *corosMcpConnection) error {
 	if conn.RefreshToken == "" {
-		return errCorosMcpReconnect // COROS 沒發 refresh token：access token 到期就只能重新連接
+		// COROS 沒發 refresh token：access token 到期就只能重新授權——寫入 reauth_required_at，/status 與日報據此顯示。
+		h.markReauthRequired(ctx, conn.ID)
+		return errCorosMcpReconnect
 	}
 	client, err := h.getClient(ctx, conn.Issuer)
 	if err != nil || client == nil {
@@ -930,7 +1087,8 @@ func (h *CorosMcpHandler) refreshToken(ctx context.Context, conn *corosMcpConnec
 	if err != nil {
 		var te *corosMcpTokenError
 		if errors.As(err, &te) && te.Code == "invalid_grant" {
-			return fmt.Errorf("%w: %v", errCorosMcpReconnect, err) // refresh token 已失效／被撤銷
+			h.markReauthRequired(ctx, conn.ID) // refresh token 已失效／被撤銷：需要使用者重新授權
+			return fmt.Errorf("%w: %v", errCorosMcpReconnect, err)
 		}
 		return err
 	}
@@ -958,28 +1116,58 @@ func (h *CorosMcpHandler) ensureFreshToken(ctx context.Context, conn *corosMcpCo
 	return h.refreshToken(ctx, conn)
 }
 
+// corosMcpStatusExpiresAt /status 的 expires_at：只有「沒有可用的 refresh token」時才回 access token 到期時間
+// （RFC3339），否則回 nil（JSON null）。有可用的 refresh token 時 access token 會在到期前自動換新，它約 30 天的
+// 到期時間不是使用者需要處理的事——前台不該拿它顯示「即將到期」；是否需要使用者動作一律看 needs_reauth。
+// 「可用」＝存有 refresh token 且尚未被標記 reauth_required_at（refresh 已失敗／被撤銷就不算可用）。
+func corosMcpStatusExpiresAt(c *corosMcpConnection) any {
+	if c.RefreshToken != "" && c.ReauthRequiredAt == nil {
+		return nil
+	}
+	return c.ExpiresAt.Format(time.RFC3339)
+}
+
 // GET /status
+// 不受入口狀態限制（GA 契約 §2.2）：只要登入就能查——有連線列的人隨時看得到狀態、也能中斷。回應多了：
+//   - entry：目前入口對「這位使用者」的結果（"shown"|"hidden"），前台據此決定要不要顯示「連接」鈕；
+//   - needs_reauth：是否需要使用者重新授權（前台顯示橫幅與「重新授權」鈕）——唯一權威旗標；
+//   - expires_at：access token 到期時間，**只有沒有可用 refresh token 時才給**，否則 null（見 corosMcpStatusExpiresAt）；
+//   - can_probe：是否顯示「讀取測試」鈕（只有超管，見 Probe）。
+//
+// 只讀不解密 token（getConnectionMeta）：金鑰遺失或密文損毀時 /status 與 /disconnect 仍要能用。
 func (h *CorosMcpHandler) Status(w http.ResponseWriter, r *http.Request) {
-	userID, _, ok := h.requireWhitelist(w, r)
+	userID, ok := h.requireUser(w, r)
 	if !ok {
 		return
 	}
-	conn, err := h.getConnection(r.Context(), userID)
+	u, err := h.loadUser(r.Context(), userID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	entry := DashboardEntry(r.Context(), h.repo.db, EntryProviderCoros, u.Email, u.Code, u.IsSuper)
+	// can_probe：前台是否顯示「讀取測試」鈕——只有超管（且入口沒被緊急關閉）才是 true，與 POST /probe 的閘門一致；
+	// 前台沒有其他超管訊號可用，所以由後端明講。
+	canProbe := u.IsSuper && !h.entryEmergency(r.Context())
+	conn, err := h.getConnectionMeta(r.Context(), userID)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
 	}
 	if conn == nil {
 		respondJSON(w, http.StatusOK, map[string]any{
-			"connected": false, "issuer": nil, "connected_at": nil, "last_probe_at": nil, "last_probe": nil,
-			"last_synced_at": nil, "device_name": nil,
+			"connected": false, "entry": entry, "issuer": nil, "connected_at": nil, "last_probe_at": nil, "last_probe": nil,
+			"last_synced_at": nil, "device_name": nil, "expires_at": nil, "needs_reauth": false, "can_probe": canProbe,
 		})
 		return
 	}
 	resp := map[string]any{
-		"connected": true, "issuer": conn.Issuer, "connected_at": conn.ConnectedAt.Format(time.RFC3339),
+		"connected": true, "entry": entry, "issuer": conn.Issuer, "connected_at": conn.ConnectedAt.Format(time.RFC3339),
 		"last_probe_at": nil, "last_probe": nil,
 		"last_synced_at": nil, "device_name": nil,
+		"expires_at":   corosMcpStatusExpiresAt(conn),
+		"needs_reauth": conn.NeedsReauth(h.timeNow()),
+		"can_probe":    canProbe,
 	}
 	if conn.LastSyncedAt != nil {
 		resp["last_synced_at"] = conn.LastSyncedAt.Format(time.RFC3339)
@@ -988,7 +1176,8 @@ func (h *CorosMcpHandler) Status(w http.ResponseWriter, r *http.Request) {
 	if dn := h.latestDeviceName(r.Context(), userID); dn != nil {
 		resp["device_name"] = *dn
 	}
-	if conn.LastProbeAt != nil {
+	// 讀取測試摘要只給超管（GA 契約 §3.2：probe 是除錯工具，一般使用者看不到也沒有按鈕）。
+	if u.IsSuper && conn.LastProbeAt != nil {
 		resp["last_probe_at"] = conn.LastProbeAt.Format(time.RFC3339)
 		if steps, err := h.loadProbeSummary(r.Context(), userID, *conn.LastProbeAt); err == nil && len(steps) > 0 {
 			resp["last_probe"] = map[string]any{"at": conn.LastProbeAt.Format(time.RFC3339), "steps": steps}
@@ -1019,39 +1208,22 @@ func (h *CorosMcpHandler) loadProbeSummary(ctx context.Context, userID string, a
 	return out, rows.Err()
 }
 
-// allowProbe 每人每分鐘最多 1 次（契約第 8 點）；rdb 為 nil 時退化為記憶體節流（供本機/測試使用，
-// 比照全站 allowRate fail-open 慣例的反面——這裡 probe 是使用者主動觸發的昂貴操作，寧可嚴格節流
-// 也不要 fail-open，單機部署沒有 Redis 時仍要擋住濫用）。
-func (h *CorosMcpHandler) allowProbe(ctx context.Context, userID string) (bool, int) {
-	if h.rdb != nil {
-		key := "coros_mcp:probe:" + userID
-		n, err := h.rdb.Incr(ctx, key).Result()
-		if err != nil {
-			return true, 0 // Redis 故障：fail-open，比照全站既有慣例，不讓節流層故障擋住使用者
-		}
-		if n == 1 {
-			h.rdb.Expire(ctx, key, corosMcpProbeWindow)
-		}
-		if n > 1 {
-			ttl, _ := h.rdb.TTL(ctx, key).Result()
-			return false, int(ttl.Seconds())
-		}
-		return true, 0
-	}
-	h.probeMem.mu.Lock()
-	defer h.probeMem.mu.Unlock()
-	last, ok := h.probeMem.m[userID]
-	if ok && time.Since(last) < corosMcpProbeWindow {
-		return false, int((corosMcpProbeWindow - time.Since(last)).Seconds())
-	}
-	h.probeMem.m[userID] = time.Now()
-	return true, 0
-}
-
-// POST /probe
+// POST /probe（僅超管，GA 契約 §3.2）
+// 讀取測試是除錯工具：一般使用者沒有按鈕、打這支也是 403；入口緊急關閉（hidden）時連超管也不行。
+// 紀錄只存每一步的摘要（step／ok／count／錯誤代碼），不存任何 COROS 原始回應（tools/list 全文、活動明細、
+// 逐公里分段…一律不落地）。
 func (h *CorosMcpHandler) Probe(w http.ResponseWriter, r *http.Request) {
-	userID, _, ok := h.requireWhitelist(w, r)
+	userID, ok := h.requireUser(w, r)
 	if !ok {
+		return
+	}
+	u, err := h.loadUser(r.Context(), userID)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, "failed")
+		return
+	}
+	if !u.IsSuper || entrygate.Emergency(r.Context(), h.repo.db, corosMcpEntryStateKey) {
+		respondJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
 	conn, err := h.getConnection(r.Context(), userID)
@@ -1080,9 +1252,9 @@ func (h *CorosMcpHandler) Probe(w http.ResponseWriter, r *http.Request) {
 	probeAt := time.Now()
 	var steps []corosMcpStepSummary
 
-	// Step 1: tools/list（存完整清單含 inputSchema）
+	// Step 1: tools/list（只記工具數量）
 	tools, err := h.toolsList(r.Context(), conn)
-	listSummary := h.recordStep(r.Context(), userID, "tools/list", nil, tools, err, probeAt)
+	listSummary := h.recordStep(r.Context(), userID, "tools/list", tools, err, probeAt)
 	steps = append(steps, listSummary)
 
 	// Step 2-5：queryDevices / querySportRecords / getActivityDetail / queryActivityLapData，
@@ -1097,8 +1269,9 @@ func (h *CorosMcpHandler) Probe(w http.ResponseWriter, r *http.Request) {
 		case "getActivityDetail", "queryActivityLapData":
 			labelID, sportType, ok := corosMcpExtractFirstActivity(sportRecordsText)
 			if !ok {
-				steps = append(steps, corosMcpStepSummary{Step: tool, OK: false, Error: "no activity id from querySportRecords"})
-				_ = h.logProbe(r.Context(), userID, tool, nil, map[string]any{"summary": steps[len(steps)-1]}, "error", probeAt)
+				s := corosMcpStepSummary{Step: tool, OK: false, Error: "no_activity"}
+				steps = append(steps, s)
+				_ = h.logProbe(r.Context(), userID, s, probeAt)
 				continue
 			}
 			// 2026-10-01 tools/list 實測：兩個工具都 required ["labelId","sportType"]（labelId 字串、sportType 整數）
@@ -1109,12 +1282,12 @@ func (h *CorosMcpHandler) Probe(w http.ResponseWriter, r *http.Request) {
 		if callErr == nil && corosMcpIsAnomaly(text) {
 			// COROS 對不合規格的呼叫回 isError=false＋一段「Tool call anomalies detected…」文字（給 AI 助理看的），
 			// v869 第一次讀取測試把它誤判成 ✓。改判失敗，前台才看得出參數有問題。
-			callErr = errors.New("COROS 拒絕這次呼叫（參數格式不符規格）")
+			callErr = errCorosMcpAnomaly
 		}
 		if tool == "querySportRecords" && callErr == nil {
 			sportRecordsText = text
 		}
-		summary := h.recordStep(r.Context(), userID, tool, args, result, callErr, probeAt)
+		summary := h.recordStep(r.Context(), userID, tool, result, callErr, probeAt)
 		steps = append(steps, summary)
 	}
 
@@ -1124,45 +1297,21 @@ func (h *CorosMcpHandler) Probe(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"at": probeAt.Format(time.RFC3339), "steps": steps})
 }
 
-// recordStep 統一組 Step 摘要＋寫 probe_logs（request/response 原文存檔，回應只給摘要）。
-func (h *CorosMcpHandler) recordStep(ctx context.Context, userID, tool string, request any, result any, callErr error, at time.Time) corosMcpStepSummary {
+// recordStep 組單步摘要並寫 probe_logs。只留 step／ok／count／錯誤代碼（corosMcpErrorCode）——
+// 不保存 COROS 回應原文，也不保存 COROS 的錯誤字串（GA 契約 §3.2）。
+func (h *CorosMcpHandler) recordStep(ctx context.Context, userID, tool string, result any, callErr error, at time.Time) corosMcpStepSummary {
 	summary := corosMcpStepSummary{Step: tool}
-	status := "ok"
 	if callErr != nil {
 		summary.OK = false
-		summary.Error = callErr.Error()
-		status = "error"
+		summary.Error = corosMcpErrorCode(callErr)
 	} else {
 		summary.OK = true
 		if n, ok := corosMcpCountOf(tool, result); ok {
 			summary.Count = &n
 		}
 	}
-	// 隱私：COROS 活動清單含地點與起點座標，存檔前把這兩類行拿掉（Stage 2：DOR 不保存地點／座標）。
-	if r, ok := result.(*mcpToolCallResult); ok && r != nil {
-		red := *r
-		red.Content = append(red.Content[:0:0], r.Content...)
-		for i := range red.Content {
-			red.Content[i].Text = corosMcpRedactLocation(corosMcpUnwrapText(red.Content[i].Text))
-		}
-		result = &red
-	}
-	raw, _ := json.Marshal(result)
-	stored := probeLogResponse{Raw: raw, Summary: summary}
-	_ = h.logProbe(ctx, userID, tool, request, stored, status, at)
+	_ = h.logProbe(ctx, userID, summary, at)
 	return summary
-}
-
-var corosMcpLocationLineRe = regexp.MustCompile(`(?im)^[ \t]*(location|start coordinates|end coordinates|coordinates)[ \t]*[:：].*$`)
-
-// corosMcpRedactLocation 純函式：把「Location:」「Start Coordinates:」等行的內容換成 [redacted]（保留行，方便看格式）。
-func corosMcpRedactLocation(text string) string {
-	return corosMcpLocationLineRe.ReplaceAllStringFunc(text, func(line string) string {
-		if i := strings.IndexAny(line, ":："); i >= 0 {
-			return line[:i+1] + " [redacted]"
-		}
-		return line
-	})
 }
 
 // corosMcpUnwrapText：COROS 的 tools/call 結果 content[0].text 本身常是「JSON 字串字面值」（外層多一層引號，
@@ -1361,20 +1510,25 @@ func corosMcpFindActivityInJSON(v any) (string, int, bool) {
 }
 
 // POST /disconnect
+// 不受入口狀態限制（GA 契約 §2.2／§3.3）：只要登入就能中斷——入口從 open 退回 whitelist（或被緊急關閉）後，
+// 已連線的人仍然可以自己刪掉授權與已匯入的資料。
+//
+// 刪除內容（Repository.PurgeCorosMcpUser，單一交易）：source='coros'＋external_id 'mcp:%' 的活動、
+// 連線列、這位使用者的 probe logs（Terra／Partner 的 coros 列不動）；之後重設偏好來源（偏好是 coros 且已沒有
+// 其他 COROS 連線）與 GPS 距離校正（若其配對曾含這批 mcp 列）。已發放的 EXP／DP／里程不收回；賽事成績因為
+// 是即時由活動加總，會跟著重算（前台確認視窗要寫明，並在完成後顯示 deleted_activities 筆數）。
 func (h *CorosMcpHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
-	userID, _, ok := h.requireWhitelist(w, r)
+	userID, ok := h.requireUser(w, r)
 	if !ok {
 		return
 	}
-	conn, err := h.getConnection(r.Context(), userID)
-	if err != nil {
-		respondErr(w, http.StatusInternalServerError, "failed")
-		return
-	}
+	// 盡力撤銷（public client 也試一次：COROS metadata 的 revocation 驗證方式不含 none，多半會被拒，
+	// 但 RFC 7009 允許 public client 帶 client_id 撤銷，試了無害）；成敗都不擋本機刪除。撤銷需要明文 token——
+	// 加密金鑰遺失或密文損毀（解密失敗）時略過撤銷，本機資料照刪（使用者一定要能中斷）。
 	revoked := false
-	if conn != nil {
-		// 盡力撤銷（public client 也試一次：COROS metadata 的 revocation 驗證方式不含 none，多半會被拒，
-		// 但 RFC 7009 允許 public client 帶 client_id 撤銷，試了無害）；成敗都不擋本機刪除。
+	if conn, err := h.getConnection(r.Context(), userID); err != nil {
+		log.Warn().Err(err).Str("user", userID).Msg("coros mcp disconnect: cannot read tokens for revoke, deleting locally anyway")
+	} else if conn != nil {
 		if client, cerr := h.getClient(r.Context(), conn.Issuer); cerr == nil && client != nil {
 			if disc, derr := h.discover(r.Context(), conn.Issuer); derr == nil && disc.RevocationEndpoint != "" {
 				token, hint := conn.RefreshToken, "refresh_token"
@@ -1385,20 +1539,13 @@ func (h *CorosMcpHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// 刪除「從 COROS 直連匯入」的活動（只刪 source='coros' AND external_id LIKE 'mcp:%'，Terra／Partner 的
-	// coros 列不動）。放在刪連線列之前：失敗就回 500、連線保留，使用者可再按一次中斷，不會留下孤兒資料。
-	// 即使目前沒有連線列（上次只刪到一半）也照跑，確保資料一定清乾淨。
-	deleted, err := h.repo.DeleteCorosMcpActivities(r.Context(), userID)
+	// 單一交易：活動＋連線列＋probe logs 要嘛全刪要嘛都留（失敗回 500、使用者可再按一次）。
+	// 即使目前沒有連線列（上次只刪到一半的舊版殘留）也照跑，確保資料一定清乾淨。
+	deleted, hadCalib, err := h.repo.PurgeCorosMcpUser(r.Context(), userID)
 	if err != nil {
-		log.Error().Err(err).Str("user", userID).Msg("coros mcp disconnect: delete imported activities failed")
+		log.Error().Err(err).Str("user", userID).Msg("coros mcp disconnect: purge failed")
 		respondErr(w, http.StatusInternalServerError, "failed")
 		return
-	}
-	if conn != nil {
-		if err := h.deleteConnection(r.Context(), userID); err != nil {
-			respondErr(w, http.StatusInternalServerError, "failed")
-			return
-		}
 	}
 	// 偏好來源是 'coros' 且已沒有任何 provider='coros'（Terra／Partner）連線 → 重設 'gps'（只 log、不擋中斷）。
 	if other, oerr := h.repo.GetByUser(r.Context(), userID, providerCoros); oerr != nil {
@@ -1406,6 +1553,13 @@ func (h *CorosMcpHandler) Disconnect(w http.ResponseWriter, r *http.Request) {
 	} else if other == nil {
 		if rerr := h.repo.ResetPreferredSource(r.Context(), userID, "coros"); rerr != nil {
 			log.Warn().Err(rerr).Str("user", userID).Msg("coros mcp disconnect: reset preferred source failed")
+		}
+	}
+	// GPS 校正：配對是直接由 mcp 列算出來的（GA 前白名單期間的影子模式）→ 配對隨活動 CASCADE 消失，但係數還留著，
+	// 重設回 1.0／warming（只向前生效）。GA 之後 candidateSQL 已排除 mcp 列，新使用者不會有這種係數。
+	if hadCalib {
+		if cerr := gpscalib.AdminReset(r.Context(), h.repo.db, userID, "coros_mcp_disconnect"); cerr != nil {
+			log.Warn().Err(cerr).Str("user", userID).Msg("coros mcp disconnect: reset gps calibration failed")
 		}
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"ok": true, "revoked": revoked, "deleted_activities": deleted})

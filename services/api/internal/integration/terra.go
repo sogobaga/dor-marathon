@@ -12,6 +12,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -65,6 +66,10 @@ type TerraConfig struct {
 	APIBase       string   // Terra API base；空字串用預設 https://api.tryterra.co
 	FrontendURL   string   // callback 完成後導回前台（Terra widget 無法攜帶自訂 state，一律導回此固定路徑）
 	Providers     []string // 允許透過 Terra 連接的品牌（大寫，如 GARMIN）；空切片用預設
+	// IgnoreGarmin：Terra 關閉當天起，provider=garmin 的 activity／auth／callback 一律略過並記 log
+	// （環境變數 TERRA_IGNORE_GARMIN=1，NewTerraHandler 會合併讀取；預設 false）。
+	// 在那之前，仍是 via='terra' 的舊 Garmin 連線若 Terra 恢復推送會照常收（維持雙軌）。
+	IgnoreGarmin bool
 }
 
 const (
@@ -73,7 +78,10 @@ const (
 )
 
 // terraDefaultProviders：預設可透過 Terra 連接的品牌。刻意不含 STRAVA——見上方檔案註解。
-var terraDefaultProviders = []string{"GARMIN", "COROS", "POLAR", "SUUNTO", "WAHOO"}
+// 也不含 GARMIN（改走官方直連，見 garmin.go；Garmin 授權條款不允許經聚合器轉送資料）與 COROS（改走
+// COROS MCP 直連，見 corosmcp.go）：這份預設只影響連接 widget 與 /status 的品牌清單，**不影響 webhook 處理**
+// ——既有的 Terra-Garmin／Terra-COROS 連線與事件照舊。⚠️ 正式環境請明確設定 TERRA_PROVIDERS（空值會套用這份預設）。
+var terraDefaultProviders = []string{"POLAR", "SUUNTO", "WAHOO"}
 
 // ParseTerraProviders 解析 TERRA_PROVIDERS 環境變數（逗號分隔、大小寫不拘）。
 // 恆濾掉 STRAVA：無論環境變數怎麼設，都不允許透過 Terra 重複串接 Strava（見上方檔案註解）。
@@ -115,6 +123,18 @@ func NewTerraHandler(repo *Repository, cfg TerraConfig, requireAuth func(http.Ha
 	if len(cfg.Providers) == 0 {
 		cfg.Providers = terraDefaultProviders
 	}
+	// TERRA_IGNORE_GARMIN 在這裡直接讀環境變數（不經 config.Config），與 cfg.IgnoreGarmin 取聯集。
+	cfg.IgnoreGarmin = cfg.IgnoreGarmin || terraEnvBool("TERRA_IGNORE_GARMIN")
+	if cfg.IgnoreGarmin {
+		// 略過 Garmin 時，連接 widget／/status 的品牌清單也不再提供 GARMIN（即使 TERRA_PROVIDERS 明確列了）。
+		kept := make([]string, 0, len(cfg.Providers))
+		for _, p := range cfg.Providers {
+			if !strings.EqualFold(p, "GARMIN") {
+				kept = append(kept, p)
+			}
+		}
+		cfg.Providers = kept
+	}
 	if cfg.APIBase == "" {
 		cfg.APIBase = terraDefaultAPIBase
 	}
@@ -122,6 +142,20 @@ func NewTerraHandler(repo *Repository, cfg TerraConfig, requireAuth func(http.Ha
 		cfg.RedirectURI = terraDefaultRedirectURI
 	}
 	return &TerraHandler{repo: repo, cfg: cfg, requireAuth: requireAuth, hc: &http.Client{Timeout: 15 * time.Second}}
+}
+
+// terraEnvBool 解析布林環境變數（1／true／yes／on，大小寫不拘）。
+func terraEnvBool(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// terraIgnored：這個品牌的事件要不要略過（目前只有 TERRA_IGNORE_GARMIN 對 garmin）。
+func (h *TerraHandler) terraIgnored(source string) bool {
+	return source == "garmin" && h.cfg.IgnoreGarmin
 }
 
 // enabled 三個都要有值才算啟用：DevID/APIKey 用於 REST 呼叫（widget session／userInfo／
@@ -174,6 +208,11 @@ func (h *TerraHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.enabled() {
 		respondErr(w, http.StatusServiceUnavailable, "terra_disabled")
+		return
+	}
+	if len(h.cfg.Providers) == 0 {
+		// 例如只列了 GARMIN 又開了 TERRA_IGNORE_GARMIN：送空的 providers 給 Terra 會變成「顯示全部品牌」，必須擋下。
+		respondErr(w, http.StatusServiceUnavailable, "terra_no_providers")
 		return
 	}
 	// return= 目前只接收、不使用：Terra widget session 沒有可攜帶自訂 state 的欄位，
@@ -339,6 +378,11 @@ func (h *TerraHandler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	source := providerToSource(brandRaw)
+	if h.terraIgnored(source) {
+		// Terra 關閉後（TERRA_IGNORE_GARMIN=1）不再經 Terra 匯入 Garmin 資料，與 webhook 路徑一致。
+		respondErr(w, http.StatusServiceUnavailable, "provider_unavailable")
+		return
+	}
 	conn, err := h.repo.GetByUser(r.Context(), userID, source)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, "failed")
@@ -713,17 +757,29 @@ func (h *TerraHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	if vs := providerToSource(strings.TrimSpace(verified.Provider)); vs != "" {
 		source = vs
 	}
+	if h.terraIgnored(source) {
+		log.Info().Str("provider", source).Msg("terra callback: provider ignored (TERRA_IGNORE_GARMIN), not saving")
+		http.Redirect(w, r, redirectFront("failed", "provider_unavailable"), http.StatusFound)
+		return
+	}
 	if ok, err := h.repo.UserExists(r.Context(), refID); err != nil || !ok {
 		log.Warn().Str("reference_id", refID).Msg("terra callback: reference_id is not a known user")
 		http.Redirect(w, r, redirectFront("failed", ""), http.StatusFound)
 		return
 	}
-	if err := h.repo.SaveTerra(r.Context(), &Connection{
+	// 守衛：目標 (user,provider) 已有 via='direct' 列（如 Garmin 官方直連）時不覆蓋——SaveTerra 會把 token 清空。
+	saved, err := h.repo.SaveTerraUnlessDirect(r.Context(), &Connection{
 		UserID: refID, Provider: source, ProviderUserID: terraUserID,
 		Scope: string(verified.Scopes), ExpiresAt: terraFarFutureExpiry(),
-	}); err != nil {
+	})
+	if err != nil {
 		log.Error().Err(err).Msg("terra callback: save connection failed")
 		http.Redirect(w, r, redirectFront("error", ""), http.StatusFound)
+		return
+	}
+	if !saved {
+		log.Info().Str("provider", source).Str("user", prefix8(refID)).Msg("terra callback: direct connection exists, terra link not saved")
+		http.Redirect(w, r, redirectFront("failed", "already_direct"), http.StatusFound)
 		return
 	}
 	target := appendQuery(h.cfg.FrontendURL, "terra", "connected")
@@ -1105,15 +1161,24 @@ func (h *TerraHandler) handleAuthEvent(ctx context.Context, body []byte) {
 		log.Warn().Str("provider", p.User.Provider).Msg("terra webhook: auth event missing/invalid reference_id")
 		return
 	}
+	if h.terraIgnored(source) {
+		log.Info().Str("provider", source).Msg("terra webhook: auth event ignored (TERRA_IGNORE_GARMIN)")
+		return
+	}
 	if ok, err := h.repo.UserExists(ctx, refID); err != nil || !ok {
 		log.Warn().Msg("terra webhook: auth event reference_id is not a known user")
 		return
 	}
-	if err := h.repo.SaveTerra(ctx, &Connection{
+	saved, err := h.repo.SaveTerraUnlessDirect(ctx, &Connection{
 		UserID: refID, Provider: source, ProviderUserID: terraUserID,
 		Scope: string(p.User.Scopes), ExpiresAt: terraFarFutureExpiry(),
-	}); err != nil {
+	})
+	if err != nil {
 		log.Error().Err(err).Msg("terra webhook: auth event save connection failed")
+		return
+	}
+	if !saved {
+		log.Info().Str("provider", source).Str("user", prefix8(refID)).Msg("terra webhook: auth event skipped, direct connection exists")
 	}
 }
 
@@ -1140,11 +1205,17 @@ func (h *TerraHandler) handleReauthEvent(ctx context.Context, body []byte) {
 		log.Warn().Str("provider", source).Msg("terra webhook: user_reauth for unknown/non-terra connection")
 		return
 	}
-	if err := h.repo.SaveTerra(ctx, &Connection{
+	// 查詢與寫入之間若剛好被直連覆蓋，守衛版的 SaveTerra 會擋下（不毀掉直連列）。
+	saved, err := h.repo.SaveTerraUnlessDirect(ctx, &Connection{
 		UserID: conn.UserID, Provider: source, ProviderUserID: newTerraID,
 		Scope: string(p.NewUser.Scopes), ExpiresAt: terraFarFutureExpiry(),
-	}); err != nil {
+	})
+	if err != nil {
 		log.Error().Err(err).Msg("terra webhook: user_reauth save connection failed")
+		return
+	}
+	if !saved {
+		log.Info().Str("provider", source).Msg("terra webhook: user_reauth skipped, direct connection exists")
 	}
 }
 
@@ -1194,6 +1265,11 @@ func (h *TerraHandler) handleActivityEvent(ctx context.Context, body []byte) {
 	if source == "" || terraUserID == "" || len(p.Data) == 0 {
 		return
 	}
+	if h.terraIgnored(source) {
+		// Terra 關閉當天起：Garmin 一律走官方直連，Terra 送來的 garmin 活動不匯入（只記筆數）。
+		log.Info().Str("provider", source).Int("data", len(p.Data)).Msg("terra webhook: activity event ignored (TERRA_IGNORE_GARMIN)")
+		return
+	}
 
 	conn, err := h.repo.GetByProviderUser(ctx, source, terraUserID)
 	if err != nil {
@@ -1214,11 +1290,18 @@ func (h *TerraHandler) handleActivityEvent(ctx context.Context, body []byte) {
 			log.Warn().Msg("terra webhook: activity fallback reference_id is not a known user")
 			return
 		}
-		if err := h.repo.SaveTerra(ctx, &Connection{
+		// 守衛：這個使用者同品牌已有直連列（Terra 的 user_id 對不到它的 provider_user_id，所以會走到這個保底分支）
+		// 時絕不覆蓋——否則 Terra 事件會把官方直連連線的 token 清空、via 改回 terra。
+		saved, serr := h.repo.SaveTerraUnlessDirect(ctx, &Connection{
 			UserID: refID, Provider: source, ProviderUserID: terraUserID,
 			Scope: string(p.User.Scopes), ExpiresAt: terraFarFutureExpiry(),
-		}); err != nil {
-			log.Error().Err(err).Msg("terra webhook: activity fallback save connection failed")
+		})
+		if serr != nil {
+			log.Error().Err(serr).Msg("terra webhook: activity fallback save connection failed")
+			return
+		}
+		if !saved {
+			log.Info().Str("provider", source).Str("user", prefix8(refID)).Msg("terra webhook: activity event skipped, direct connection exists")
 			return
 		}
 		conn, err = h.repo.GetByUser(ctx, refID, source)

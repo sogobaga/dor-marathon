@@ -20,8 +20,22 @@ import (
 	"strings"
 )
 
+// corosMcpMaxToolPages tools/list 分頁最多讀幾頁（實測 34 個工具單頁就夠；上限只是防呆）。
+const corosMcpMaxToolPages = 50
+
 // errMCPUnauthorized：mcpCall 偵測到 HTTP 401 時回傳的哨兵錯誤，供 withMCP 判斷是否該刷新重試。
 var errMCPUnauthorized = errors.New("coros mcp: unauthorized")
+
+// corosMcpHTTPError：MCP 端點回非 200／401 的 HTTP 狀態（訊息只帶方法與狀態碼，不帶回應原文）。
+// 型別化是為了讓同步流程能辨識 429／5xx → 該使用者冷卻 30 分鐘（見 isCorosThrottleErr）。
+type corosMcpHTTPError struct {
+	Method string
+	Status int
+}
+
+func (e *corosMcpHTTPError) Error() string {
+	return fmt.Sprintf("coros mcp %s http %d", e.Method, e.Status)
+}
 
 type mcpJSONRPCRequest struct {
 	JSONRPC string `json:"jsonrpc"`
@@ -119,7 +133,7 @@ func (h *CorosMcpHandler) mcpCall(ctx context.Context, mcpURL, accessToken, meth
 		return nil, errMCPUnauthorized
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("coros mcp %s http %d", method, resp.StatusCode)
+		return nil, &corosMcpHTTPError{Method: method, Status: resp.StatusCode}
 	}
 	data, err := corosMcpParseResponseBody(resp.Header.Get("Content-Type"), body)
 	if err != nil {
@@ -169,7 +183,11 @@ func (h *CorosMcpHandler) toolsList(ctx context.Context, conn *corosMcpConnectio
 	err := h.withMCP(ctx, conn, func(mcpURL, accessToken string) error {
 		cursor := ""
 		id := 2
-		for {
+		// 頁數上限：對端若一直回 nextCursor（故障或惡意）也不會無限迴圈／無限打 COROS（稽核 low）。
+		for page := 0; ; page++ {
+			if page >= corosMcpMaxToolPages {
+				return fmt.Errorf("tools/list pagination exceeded %d pages", corosMcpMaxToolPages)
+			}
 			params := map[string]any{}
 			if cursor != "" {
 				params["cursor"] = cursor

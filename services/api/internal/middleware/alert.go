@@ -9,6 +9,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/dor/api/internal/notify"
+	"github.com/dor/api/internal/reqip"
 )
 
 // FiveXXWindow 5xx 回應在滑動窗口內的計數器：用於偵測「短時間內大量 5xx」並觸發聚合告警，
@@ -79,7 +80,7 @@ func FiveXXAlert(next http.Handler) http.Handler {
 		next.ServeHTTP(ww, r)
 		status := ww.Status()
 		if status >= 500 && status <= 599 {
-			if triggered, count, sample := defaultFiveXXWindow.Record(r.Method, r.URL.Path, status); triggered {
+			if triggered, count, sample := defaultFiveXXWindow.Record(r.Method, reqip.SafePath(r.URL.Path), status); triggered {
 				notify.Alert("http5xx", "API 5xx 激增",
 					fmt.Sprintf("近5分鐘 %d 次 5xx，最近一筆: %s", count, sample))
 			}
@@ -94,7 +95,7 @@ func PanicAlert(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				notify.Alert("panic", "API 發生 Panic", fmt.Sprintf("%s %s: %v", r.Method, r.URL.Path, rec))
+				notify.Alert("panic", "API 發生 Panic", fmt.Sprintf("%s %s: %v", r.Method, reqip.SafePath(r.URL.Path), rec))
 				panic(rec)
 			}
 		}()

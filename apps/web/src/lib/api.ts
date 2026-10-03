@@ -1408,7 +1408,7 @@ export interface SyncedActivity {
   // 對使用者顯示上等價，都是「App GPS」）。沒有對應保留活動時兩欄皆缺席（後端 omitempty）。
   dup_of_id?: string
   dup_of_source?: string
-  device_name?: string | null // 手錶型號（COROS 直連）；有值時列表顯示「Data provided by COROS · 型號」
+  device_name?: string | null // 手錶型號（COROS／Garmin 直連匯入才有）；只有 source==='coros' 的列顯示「Data provided by COROS · 型號」，其他來源各自標示
 }
 
 export interface SyncResult {
@@ -1457,8 +1457,9 @@ export const integrationsApi = {
     }),
 }
 
-// COROS MCP 直連（測試版，Stage 1；見契約 docs/integration/COROS_MCP_STAGE1_CONTRACT.md）：僅白名單帳號
-// （dashboard.coros_mcp_entry==='shown'）看得到卡片、才會打這些 API；只連得上＋讀取測試，不寫入任何活動。
+// COROS MCP 直連（契約 docs/integration/COROS_MCP_STAGE1_CONTRACT.md、COROS_MCP_GA_CONTRACT.md）：入口 shown
+// （dashboard.coros_mcp_entry==='shown'）或已有連線者才看得到卡片／打這些 API；連接後自動＋手動匯入跑步紀錄，
+// 讀取測試（probe）只給超管。
 export interface CorosMcpStep {
   step: 'tools/list' | 'queryDevices' | 'querySportRecords' | 'getActivityDetail' | 'queryActivityLapData'
   ok: boolean
@@ -1477,6 +1478,13 @@ export interface CorosMcpStatus {
   last_probe: CorosMcpProbeResult | null
   last_synced_at?: string | null
   device_name?: string | null
+  // GA 契約（docs/integration/COROS_MCP_GA_CONTRACT.md §2.1／§2.3）新增，全部可缺席（舊後端不回）：
+  expires_at?: string | null  // 目前 access token 到期時間（RFC3339）；null／缺席＝未知
+  needs_reauth?: boolean      // refresh 失敗或已失效 → 前台顯示「重新授權」橫幅（重新授權不刪已匯入紀錄）
+  entry?: 'shown' | 'hidden'  // 入口狀態（與 Dashboard coros_mcp_entry 同一個後端判斷）；已有連線但 hidden＝只能看狀態與中斷連線
+  // ⚠️ 契約未列、前台自訂的唯讀旗標：只有超管為 true（讀取測試鈕／最近探測區塊用）。前台目前沒有任何「我是超管」
+  // 的來源（Dashboard 不回），所以缺席或 false 一律不顯示讀取測試；後端 status 要補這一欄才看得到。
+  can_probe?: boolean
 }
 export interface CorosMcpImportResult {
   fetched: number
@@ -1499,11 +1507,13 @@ export const corosMcpApi = {
   // 409 { error: 'not_connected' }、429 { error: 'rate_limited', retry_after_s } 由呼叫端依 e.status 判斷
   probe: (token: string) =>
     request<CorosMcpProbeResult>('/integrations/coros-mcp/probe', { method: 'POST', headers: withAuth(token) }),
-  // 409 not_connected|reconnect_required、429 rate_limited、502 coros_failed（e.status / e.message）
+  // 409 not_connected|reconnect_required、429 rate_limited|sync_in_progress|cooldown（皆帶 retry_after_s）、
+  // 403 forbidden（入口關閉）、502（COROS 失敗）——e.status / e.message；回看天數由後端決定（days 只是上限提示）。
   import: (token: string, days = 30) =>
     request<CorosMcpImportResult>(`/integrations/coros-mcp/import?days=${days}`, { method: 'POST', headers: withAuth(token) }),
+  // deleted_activities：這次一併刪除的已匯入 COROS 紀錄筆數（GA 契約 §3.3；舊後端不回→undefined）
   disconnect: (token: string) =>
-    request<{ ok: true; revoked: boolean }>('/integrations/coros-mcp/disconnect', { method: 'POST', headers: withAuth(token) }),
+    request<{ ok: true; revoked: boolean; deleted_activities?: number }>('/integrations/coros-mcp/disconnect', { method: 'POST', headers: withAuth(token) }),
 }
 
 export const racesApi = {
@@ -2023,9 +2033,16 @@ export interface DashboardInfo {
   // gps_raw_log_whitelist（預設 sogobaga@gmail.com），無 super_admin 旁路。true 才會在 track 頁
   // 收集/上傳原始 onPos 定位點；其餘會員此欄一律 false、零行為改變。
   gps_raw_log: boolean
-  // COROS MCP 直連（測試版，Stage 1；見契約 docs/integration/COROS_MCP_STAGE1_CONTRACT.md）：入口白名單
-  // coros_mcp_whitelist 解析，無 super_admin 旁路。'hidden' 時前端完全不顯示卡片、零 coros-mcp 請求。
+  // COROS MCP 直連入口（GA 契約 docs/integration/COROS_MCP_GA_CONTRACT.md §2.1）：後端以共用入口閘門解析後台的
+  // coros_mcp_entry_state／coros_mcp_whitelist——hidden＝緊急關閉（含超管）、whitelist＝超管＋名單、open＝全部開放；
+  // 仍只回 'hidden'|'shown'。'hidden' 且沒有連線時前端完全不顯示卡片、零 coros-mcp 請求；已有連線的人即使 hidden 也看得到
+  // 卡片、可中斷連線（見 ProfileScreen）。
   coros_mcp_entry: 'hidden' | 'shown'
+  // 已連接的資料來源代碼（小寫：strava／garmin／coros／polar／suunto／wahoo…；後端彙整 Strava、Terra、COROS 直連
+  // （coros_mcp＝coros）等）。可缺席（舊後端）→ 前台退回由各 status 推導（ProfileScreen／track 頁的 fallback）。
+  connected_sources?: string[]
+  // Garmin 直連入口（garmin_entry_state／garmin_whitelist，GARMIN_DIRECT_SPEC）：hidden／locked／shown；可缺席＝hidden。
+  garmin_entry?: 'hidden' | 'locked' | 'shown'
 }
 
 // --- 稱號系統 (PB探索) ---

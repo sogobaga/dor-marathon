@@ -69,7 +69,7 @@ func Middleware(next http.Handler) http.Handler {
 		if len(ua) > maxUALen {
 			ua = ua[:maxUALen]
 		}
-		attr := reqAttr{method: r.Method, path: r.URL.Path, ua: ua, ip: reqip.ClientIP(r)}
+		attr := reqAttr{method: r.Method, path: reqip.SafePath(r.URL.Path), ua: ua, ip: reqip.ClientIP(r)}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyReqAttr, attr)))
 	})
 }
